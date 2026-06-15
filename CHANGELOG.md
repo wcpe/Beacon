@@ -16,5 +16,6 @@
 - 文档维护技能：新增 `update-docs`（纯文档工作：写 / 取代 ADR、原地更新架构 / API、修文档漂移、整理文档），并接入维护迭代周期路由表。
 - 审计闭环修正：补 `.env.example` / `web/dist/.gitkeep`；新增 [ADR-0008](docs/adr/0008-config-soft-delete-and-effective-md5.md)（软删唯一键哨兵 + 有效配置 md5 取舍）；验证门权威判据改挂入库真源（PRD 验收 + 高风险区测试 + 组件测试绿），不再依赖不入库的实施计划；统一 agent 模块↔jar 命名；补测试分层、备份常态化与恢复演练、`govulncheck` 漏洞入口。
 - 收尾：采用 [MIT 许可](LICENSE)；SECURITY 明确为内部项目、不对外接收漏洞报告；从 `.claude/rules` / `.claude/skills` 清除"M0 未落地"等过渡性措辞（稳态规则只陈述既定事实，过渡状态归 README 当前状态与 `.tmp` 计划）。
+- ADR 导航：CONTRIBUTING §3.1 与 adr/README 补"ADR 保持稀少、现状看 ARCHITECTURE、取代修剪活跃集、不必通读、增长过快是滥写信号"说明。
 
 > 当前处于实现前（第一期 M0 待开工）阶段，尚无可运行产物与正式版本。
