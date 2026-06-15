@@ -1,1 +1,28 @@
+# IDE / 操作系统
 /.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 过程性文档与临时文件（不入库，遵 .claude/rules/git-commit）
+/.tmp/
+
+# 环境与密钥（不入库）
+.env
+
+# Go 控制面
+/beacon
+/bin/
+*.exe
+*.out
+
+# 前端 React / Vite
+/web/node_modules/
+/web/dist/
+!/web/dist/.gitkeep
+
+# Kotlin / Gradle agent
+/agent/.gradle/
+/agent/**/build/
+/agent/**/.gradle/
