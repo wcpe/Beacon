@@ -4,7 +4,7 @@
 
 Beacon 是一个独立的后端控制面：用 **Go** 提供 API、内嵌 **React** 管理台，以 **docker-compose** 单节点部署；Minecraft 的 BungeeCord 代理与 Bukkit 子服各跑一个轻量 **Kotlin/TabooLib agent** 接入。它为整个集群提供**集中配置（动态热更、版本回滚）、服务注册/发现、健康检查**，并以"配置 + 拓扑"的形式支撑分小区、虚拟大区与合区。
 
-> **当前状态**：设计完成，**实现前（第一期 M0 待开工）**。本仓库目前只含文档，暂无可运行产物。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+> **当前状态**：第一期开发中，仓库与最小可运行骨架已落地——控制面可起服连库并返回环境列表，前端（Vite/React）与双端 agent（Kotlin/TabooLib）骨架均可构建，`docker compose up` 可起 beacon + mysql。管理台与配置中心等能力随后续里程碑逐步完善。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 为什么是独立服务而非代理插件
 
@@ -65,14 +65,15 @@ Beacon/
 
 > 实施计划等**易朽过程文档**置于 `.tmp/`（不入库）；文档治理见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。
 
-## 快速开始（规划）
+## 快速开始
 
-> 待第一期实现后可用：
+> 骨架已可运行（管理台功能随第一期里程碑逐步完善）：
 
 ```bash
 cp .env.example .env      # 配置 MySQL 密码、agent token
 docker compose up -d      # 起 beacon + mysql
 # 管理台与 API 同端口： http://localhost:8080
+# 验证：GET http://localhost:8080/admin/v1/namespaces 返回 prod/test 两个环境
 ```
 
 ## 约定

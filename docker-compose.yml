@@ -1,0 +1,56 @@
+# Beacon 单节点部署：beacon（单二进制，API 与 UI 同端口）+ mysql（配置权威库）。
+# 敏感项走 .env（见 .env.example），不入库。
+
+services:
+  mysql:
+    # MySQL 8 作为配置/版本/分配/审计的权威库
+    image: mysql:8.0
+    # 容器随宿主重启自动拉起
+    restart: unless-stopped
+    environment:
+      # root 账户密码（仅容器内与初始化使用）
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # 初始化创建的业务库名
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      # 业务库账户名
+      MYSQL_USER: ${MYSQL_USER}
+      # 业务库账户密码
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    # 健康检查：ping 通过才视为就绪，供 beacon 等待
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      # 命名卷持久化数据
+      - beacon-mysql-data:/var/lib/mysql
+
+  beacon:
+    # 由本仓库多阶段 Dockerfile 构建
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Go 模块代理；默认官方代理，受限网络可在 .env 设 GOPROXY 覆盖
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    # 随宿主重启自动拉起
+    restart: unless-stopped
+    # 等 mysql 健康后再启动
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # 监听地址（API 与管理台 UI 同端口）
+      BEACON_HTTP_ADDR: ${BEACON_HTTP_ADDR}
+      # agent 端共享 token，仅防误连
+      BEACON_BOOTSTRAP_TOKEN: ${BEACON_BOOTSTRAP_TOKEN}
+      # 由 MYSQL_* 拼装的 GORM DSN，指向同网络的 mysql 服务
+      BEACON_DB_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=UTC"
+    ports:
+      # 宿主端口 → 容器 8080（API 与管理台）；宿主端口可在 .env 用 BEACON_PUBLISH_PORT 覆盖
+      - "${BEACON_PUBLISH_PORT:-8080}:8080"
+
+volumes:
+  # MySQL 数据持久化卷
+  beacon-mysql-data:

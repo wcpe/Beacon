@@ -27,8 +27,10 @@ Beacon 是**控制面（control plane）**：集中存储"事实"（配置、拓
 cmd/beacon/main.go                 # 装配 + 启动
 internal/
   config/      Beacon 自身配置（yaml + env 覆盖）
-  server/      router / 中间件(中文日志,recover,traceId,agent token) / 统一响应与错误
-  embedweb/    //go:embed web/dist + SPA 回退
+  server/      router / 中间件（中文日志、recover、traceId、agent token）
+  render/      统一响应体与错误体写出 + traceId 上下文（handler 与 server 共用的叶子包）
+  apperr/      带业务码与 HTTP 状态的领域错误（叶子包，供各层共用，避免反向依赖）
+  embedweb/    服务内嵌前端 + SPA 回退处理器（内嵌指令 //go:embed all:web/dist 置于根包 embed.go，因 Go embed 不能跨上级目录）
   handler/     仅请求编解码 → 调 service（无业务逻辑）
   service/     事务、规则校验、触发长轮询唤醒、写审计
   repository/  各表纯 GORM CRUD

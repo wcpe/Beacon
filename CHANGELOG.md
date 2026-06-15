@@ -21,5 +21,9 @@
 - ADR 导航：CONTRIBUTING §3.1 与 adr/README 补"ADR 保持稀少、现状看 ARCHITECTURE、取代修剪活跃集、不必通读、增长过快是滥写信号"说明。
 - 功能规格：新增 `docs/specs/`（右尺寸 per-feature spec，单文件一功能 + `_template.md`）——非平凡功能开发前先写需求/设计/任务/验收；接入 `develop-feature`、CONTRIBUTING 文档地图与冷热分层（小改动免，PRD 与 spec 分工见 `docs/specs/README.md`）。
 - PRD 分期去硬编码：§7 改为按主题描述各期 + 指向 §4「期」列为唯一来源，加 FR 不再需手改区间（与"状态列""ADR 编号"同理，消除双源）；并注明分期是少数粗粒度阶段、产品成熟后改按版本 + 功能组织，不会堆到上百期。
+- 仓库骨架与最小可运行控制面落地：Go 控制面（chi + GORM）可起服连 MySQL、AutoMigrate、预置 prod/test 两环境并经 `GET /admin/v1/namespaces` 返回；分层 router→handler→service→repository，新增 render（统一响应/错误 + traceId）与 apperr（领域错误）两个叶子包；内嵌前端经根包 `//go:embed all:web/dist` + SPA 回退处理器提供。
+- 前端骨架：Vite + React + TypeScript 空壳管理台 + apiClient（react-router + @tanstack/react-query）。
+- 双端 agent 骨架：Kotlin/TabooLib 三模块 Gradle 工程（agent-core 纯 Kotlin、agent-bukkit 打包 BeaconAgent、agent-bungee 打包 BeaconAgentProxy），`gradlew build` 通过。
+- 部署：多阶段 Dockerfile（node 构建前端 → go 内嵌编译 → 极小非 root 镜像）+ docker-compose（beacon + mysql，含健康检查与命名卷）+ `config.example.yaml`，`docker compose up` 可起全栈。
 
-> 当前处于实现前（第一期 M0 待开工）阶段，尚无可运行产物与正式版本。
+> 第一期骨架已落地、控制面可起服并返回环境列表；配置中心与管理台等能力随后续里程碑推进，尚未发布正式版本。
