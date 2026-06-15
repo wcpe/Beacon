@@ -38,7 +38,7 @@ internal/
   store/       db.go(GORM 连接 + AutoMigrate) logger.go
   pkg/log/     中文分级日志
 web/           React(Vite+TS)，dist/ 被内嵌
-agent/         Kotlin/TabooLib：agent-core / agent-bukkit / agent-bungee
+agent/         Kotlin/TabooLib：agent-core / agent-bukkit（打包 BeaconAgent jar）/ agent-bungee（打包 BeaconAgentProxy jar）
 ```
 
 `runtime` 是唯一持有可变全局态的域，由 `main.go` 装配后注入 service（依赖注入，不手写有状态单例）。`merge` 全为无副作用纯函数，便于穷举单测。
@@ -58,7 +58,7 @@ agent/         Kotlin/TabooLib：agent-core / agent-bukkit / agent-bungee
 
 `config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。
 
-**软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR](adr/)，对应 P0 修正）。
+**软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。
 
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
@@ -74,7 +74,7 @@ agent 只给 `(namespace, serverId)`，服务端按 `zone_assignment` 解析出 
 - 标量覆盖、map 递归深合并、**list 整体替换**、**高层显式 `null` = 删键**。
 - 仅对结构化格式（yaml/json）做键级合并；properties 按整 key 覆盖。
 - 序列化键序固定，保证相同输入恒得相同 md5（长轮询比对依赖此幂等）。
-- **整体 md5 = `md5(concat(dataId + ":" + 单dataId_md5))`**，把 dataId 名纳入哈希，避免集合碰撞误判（P0 修正）。
+- **整体 md5 = `md5(concat(dataId + ":" + 单dataId_md5))`**，把 dataId 名纳入哈希，避免集合碰撞误判（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。
 - 发布时做结构化 parse 校验（坏 yaml/json 拒绝发布，不推爆全网）；同一 dataId 跨层 format 必须一致。
 
 agent 收到的是**已合并的有效配置文本**，不感知覆盖链。

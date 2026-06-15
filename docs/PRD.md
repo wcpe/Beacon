@@ -41,21 +41,23 @@
 
 ## 4. 功能需求（FR）
 
-| 编号 | 能力 | 期 |
-|---|---|---|
-| FR-1 | 配置中心：namespace(环境)/group(大区)/dataId + scope 覆盖链（全局←大区←zone←单服）合并下发 | P1 |
-| FR-2 | 动态热更：配置变更长轮询推送，agent 不重启 apply | P1 |
-| FR-3 | 配置版本 + 一键回滚（含 diff、历史） | P1 |
-| FR-4 | 服务注册/发现 + 元数据标签（role/version/capacity/weight/自定义） | P1 |
-| FR-5 | 健康检查：心跳 + TTL 判活（online/lost/offline） | P1 |
-| FR-6 | React 管理台：配置/实例/zone 分配/审计/namespace | P1 |
-| FR-7 | 轻量审计：谁/何时/对什么/做了什么 | P1 |
-| FR-8 | zone 指派：serverId→zone 权威分配 + 改派热推 | P1 |
-| FR-9 | 配置灰度/Beta | P2 |
-| FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 |
-| FR-11 | 鉴权/配置加密 | P2 |
-| FR-12 | 版本发布编排（蓝绿/滚动） | P3 |
-| FR-13 | 虚拟合区运行时通道 / 控制面 HA | P3 |
+> **状态流转**：`计划` → `开发中` → `已交付@vX.Y.Z`。本表是**活的路线图**：新需求加一行（状态 `计划`），`develop-feature` 推进时改 `开发中`，随版本交付时标 `已交付@vX.Y.Z` 并**保留不删**（便于追溯）。完整变更流程见 `CONTRIBUTING.md` §4。
+
+| 编号 | 能力 | 期 | 状态 |
+|---|---|---|---|
+| FR-1 | 配置中心：namespace(环境)/group(大区)/dataId + scope 覆盖链（全局←大区←zone←单服）合并下发 | P1 | 计划 |
+| FR-2 | 动态热更：配置变更长轮询推送，agent 不重启 apply | P1 | 计划 |
+| FR-3 | 配置版本 + 一键回滚（含 diff、历史） | P1 | 计划 |
+| FR-4 | 服务注册/发现 + 元数据标签（role/version/capacity/weight/自定义） | P1 | 计划 |
+| FR-5 | 健康检查：心跳 + TTL 判活（online/lost/offline） | P1 | 计划 |
+| FR-6 | React 管理台：配置/实例/zone 分配/审计/namespace | P1 | 计划 |
+| FR-7 | 轻量审计：谁/何时/对什么/做了什么 | P1 | 计划 |
+| FR-8 | zone 指派：serverId→zone 权威分配 + 改派热推 | P1 | 计划 |
+| FR-9 | 配置灰度/Beta | P2 | 计划 |
+| FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 | 计划 |
+| FR-11 | 鉴权/配置加密 | P2 | 计划 |
+| FR-12 | 版本发布编排（蓝绿/滚动） | P3 | 计划 |
+| FR-13 | 虚拟合区运行时通道 / 控制面 HA | P3 | 计划 |
 
 ## 5. 非功能需求（NFR）
 

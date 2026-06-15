@@ -58,7 +58,9 @@ Beacon/
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计：控制面/数据面、数据模型、机制、部署 |
 | [docs/API.md](docs/API.md) | REST 契约（agent 侧 + admin 侧） |
 | [docs/adr/](docs/adr/) | 架构决策记录（为什么自研、为什么 Go、为什么去 Redis …） |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 演进与维护指南（文档如何随代码更新、防漂移） |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 演进与维护指南（文档如何随代码更新、防漂移、分支模型） |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 运维手册（部署 / 升级 / MySQL 备份恢复 / 排障） |
+| [SECURITY.md](SECURITY.md) | 安全说明（信任模型、密钥、鉴权边界） |
 | [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
 
 > 实施计划等**易朽过程文档**置于 `.tmp/`（不入库）；文档治理见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)。

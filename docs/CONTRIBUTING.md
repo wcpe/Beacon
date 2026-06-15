@@ -31,6 +31,17 @@
 - 状态：`提议中 → 已接受 → 已弃用 / 已被取代`。
 - **何时写 ADR**：引入新技术、采用或推翻一个架构模式、做有长期影响且有争议的取舍。小决定不用写。
 
+### 3.1 ADR 实操（维护期）
+
+- **编号**：= 现有最大编号 + 1，永不复用、不补洞（现有最大看 `docs/adr/` 目录，别硬记某个数）。
+- **写不写**：日常加功能若落在既有决策内，不写；只有上面"何时写"的情形才写。
+- **取代长什么样**（例）：将来要给控制面做 HA、需引入 Redis —— 这推翻 ADR-0003（MVP 去 Redis）：
+  1. 新建一条新 ADR（取下一个空号，如 `00NN-control-plane-ha-with-redis.md`），背景写"取代 ADR-0003"。
+  2. 把 `0003-no-redis-in-mvp.md` 状态行从"已接受"改为"已被该新 ADR 取代" + 链接，**正文一字不动**。
+  3. 同步改 `.claude/rules/architecture-invariants.md`（撤"禁 Redis"那条）、`ARCHITECTURE.md`、相关技能。
+
+  旧决策"当初为什么"完整留存，新决策"为什么改"也有据——这就是 ADR 防漂移的价值。
+
 ## 4. 变更工作流（新需求 / 新功能如何落地）
 
 ```
@@ -61,3 +72,74 @@
 ## 7. 与 AI 协作
 
 本仓库常与 AI 代理协作。文档同步要求已固化为 `.claude/rules/doc-sync.md`，未来任何会话改代码都会被要求同步文档，避免跨会话漂移。
+
+## 8. 分支模型与发布渠道
+
+采用 GitHub Flow（适合小团队 + 持续发布）：
+
+- **`main`**：始终可发布、受保护；改动经 PR 合入（PR 模板含防漂移自检）。main 每次推送由 CI 发**快照**（`latest` 预发布，见 [ADR-0007](adr/0007-versioning-and-release-channels.md) 与 `publish-snapshot` 技能）。
+- **`feature/*`、`fix/*`、`refactor/*`**：短生命周期分支，做完发 PR 回 main。
+- **稳定发布**：在 main 打 `vX.Y.Z` tag（`release-version` 技能），CI 据 tag 出正式 Release。
+- **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 main**（`hotfix` 技能）。
+- **回滚**优先 `git revert`，不重写已 push 历史（`rollback-change` 技能）。
+
+版本号唯一来源是根 `VERSION` 文件（ADR-0007），构建注入三组件，恒一致。
+
+> 注：CI 流水线随 M0 落地；在此之前，"CI 发快照 / 据 tag 出 Release"是**既定职责而非已运行**，相应步骤需本地手动执行。
+
+## 9. 文档如何长期演进（本次会话之后）
+
+这些文档不是一次性产物，而是随项目活下去。每篇的演进方式不同：
+
+| 文档 | 演进方式 |
+|---|---|
+| `docs/PRD.md` | **增量 + 状态流转**：加需求即加一行 FR（`计划`→`开发中`→`已交付@vX.Y.Z`），已交付的保留并标版本、不删——它是活的路线图 |
+| `docs/ARCHITECTURE.md` | **原地更新**：始终反映当前系统真貌；结构 / 机制变了就改它 |
+| `docs/adr/*` | **只追加 + 取代**：决策变了写新 ADR 取代旧的，旧的不删（§3） |
+| `docs/API.md` | **原地更新**：始终是当前契约 |
+| `CHANGELOG.md` | **累积 + 发版分段**：变更先进未发布段，发版时切成 `## X.Y.Z` 段 |
+
+**文档冷热分层**（哪些常动、哪些少动，心里有数就不会该改的没改、不该动的乱动）：
+
+| 冷热 | 文档 | 多久动一次 |
+|---|---|---|
+| 🔥 高频（几乎每次迭代） | `CHANGELOG.md` | 每个用户可见变更 |
+| 🔥 高频 | `docs/PRD.md` | 每个新需求 / 交付（加行 / 改状态） |
+| 🌡 中频（有相应变化才动） | `docs/ARCHITECTURE.md`、`docs/API.md` | 结构 / 机制 / 接口变更时 |
+| 🌡 中频 | `docs/OPERATIONS.md` | 部署 / 运维方式变化时 |
+| ❄ 低频 | `docs/adr/*`、`README.md`、`SECURITY.md` | 架构决策时追加 / 总览或安全模型变化时 |
+| 🧊 近乎不变（改它=动项目根基） | `.claude/rules/*`（尤其 `architecture-invariants`）、`.claude/skills/*`、`.editorconfig`、`.gitignore`、`VERSION`（仅发版动） | 极少；改不变量 / 红线要慎重并配 ADR |
+
+把"改不变量 / 红线"当大事——它们近乎不变，真要改先走 ADR，别随手动。
+
+**会话之间如何接续**：这套靠 `.claude/rules/`（红线）+ `.claude/skills/`（流程）**自我维持**——任何新会话进入仓库会自动加载规则，按 `develop-feature` / `fix-bug` / `refactor-code` / `rollback-change` / `release-version` 等技能干活，每一步被 `doc-sync` 要求同步文档。所以"本次会话结束"不影响延续：下个会话读 PRD / ARCHITECTURE / ADR 接上下文，照技能与规则继续推进，文档随之演进、不漂移。
+
+## 10. 维护迭代周期（稳态操作手册）
+
+第一期交付后进入稳态迭代。**每个工作项的标准循环**：
+
+1. **识别工作项**，选对应技能（路由见下表）。
+2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*`（§8）。
+3. **按技能走**：读相关 PRD / ARCHITECTURE / ADR → 测试先行 → 实现（守不变量、简单优先）→ 过验证门 → `doc-sync` 同步文档。
+4. **发 PR**：填防漂移自检模板 → 评审 → 合入 `main`。
+5. **main 自动出快照**（CI / `publish-snapshot`），可随时让人试用。
+6. **攒够一批 → 发版**（`release-version`：CHANGELOG 分段、定 SemVer、bump `VERSION`、打 `vX.Y.Z` → CI 出正式 Release）。
+7. **生产事故** → `hotfix` 旁路：从发布 tag 切分支最小修 → 出补丁版 → 回流 `main`。
+
+→ 回到 1。
+
+**工作项 → 技能 路由**：
+
+| 来了什么 | 用哪个技能 |
+|---|---|
+| 新需求 / 新能力 | `develop-feature` |
+| bug / 报错 / 行为不对 | `fix-bug` |
+| 代码太乱 / 拆分 / 消除重复 | `refactor-code` |
+| 撤掉某功能 / 回退 | `rollback-change` |
+| 升级第三方依赖 | `bump-dependencies` |
+| 纯文档工作（写 ADR / 改架构说明 / 修文档漂移 / 整理文档） | `update-docs` |
+| 出快照 / 给人试用 | `publish-snapshot` |
+| 正式发版 | `release-version` |
+| 生产紧急修 | `hotfix` |
+
+**一句话**：稳态下你几乎不用从头想流程——认准工作项类型、调对应技能，它会带着你读文档、测试先行、同步文档、按分支与版本规矩走完。规则与技能就是把这套循环固化下来、跨会话不走样。

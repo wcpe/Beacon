@@ -10,5 +10,10 @@
 - REST 契约 [docs/API.md](docs/API.md)：agent 侧与 admin 侧端点。
 - 架构决策记录 [docs/adr/](docs/adr/)：自研而非用 Nacos、Go+内嵌 React 栈、MVP 去 Redis、zone 由控制面权威指派、agent 传输/序列化抽象层、REST 长轮询推送。
 - 文档治理：PRD 入库为活文档（[docs/PRD.md](docs/PRD.md)）、新增演进与维护指南（[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)）与文档同步规则（`.claude/rules/doc-sync.md`），确立"文档即代码、ADR 不可变只取代"的防漂移流程。
+- 工程化补齐：版本来源与发布渠道（[ADR-0007](docs/adr/0007-versioning-and-release-channels.md) + 根 `VERSION`）、GitHub Flow 分支模型与 PR/Issue 模板、运维手册（[docs/OPERATIONS.md](docs/OPERATIONS.md)）与安全说明（[SECURITY.md](SECURITY.md)）、迭代技能补充（`publish-snapshot` / `hotfix` / `bump-dependencies`）。
+- 可演进与静态检查：PRD 功能需求加"状态"列（计划 / 开发中 / 已交付@版本）作活路线图；CONTRIBUTING 增"文档如何长期演进"章节；新增代码静态检查规范（`.claude/rules/static-analysis.md` + 根 `.golangci.yml`）。
+- 维护期操作手册：CONTRIBUTING 增"维护迭代周期"（工作项→技能路由 + 端到端循环）、ADR 实操指引（编号 / 何时写 / 取代示例）、文档冷热分层（高频 / 中频 / 低频 / 近乎不变）。
+- 文档维护技能：新增 `update-docs`（纯文档工作：写 / 取代 ADR、原地更新架构 / API、修文档漂移、整理文档），并接入维护迭代周期路由表。
+- 审计闭环修正：补 `.env.example` / `web/dist/.gitkeep`；新增 [ADR-0008](docs/adr/0008-config-soft-delete-and-effective-md5.md)（软删唯一键哨兵 + 有效配置 md5 取舍）；验证门权威判据改挂入库真源（PRD 验收 + 高风险区测试 + 组件测试绿），不再依赖不入库的实施计划；统一 agent 模块↔jar 命名；补测试分层、备份常态化与恢复演练、`govulncheck` 漏洞入口。
 
 > 当前处于实现前（第一期 M0 待开工）阶段，尚无可运行产物与正式版本。
