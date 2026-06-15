@@ -13,6 +13,7 @@
 - 工程化补齐：版本来源与发布渠道（[ADR-0007](docs/adr/0007-versioning-and-release-channels.md) + 根 `VERSION`）、GitHub Flow 分支模型与 PR/Issue 模板、运维手册（[docs/OPERATIONS.md](docs/OPERATIONS.md)）与安全说明（[SECURITY.md](SECURITY.md)）、迭代技能补充（`publish-snapshot` / `hotfix` / `bump-dependencies`）。
 - 可演进与静态检查：PRD 功能需求加"状态"列（计划 / 开发中 / 已交付@版本）作活路线图；CONTRIBUTING 增"文档如何长期演进"章节；新增代码静态检查规范（`.claude/rules/static-analysis.md` + 根 `.golangci.yml`）。
 - 维护期操作手册：CONTRIBUTING 增"维护迭代周期"（工作项→技能路由 + 端到端循环）、ADR 实操指引（编号 / 何时写 / 取代示例）、文档冷热分层（高频 / 中频 / 低频 / 近乎不变）。
+- 变更速查：CONTRIBUTING §10.1 加"一次变更各动哪些"表（feat/fix/重构/回滚/依赖/发版/快照/架构决策/开新阶段 → 动哪些文档与产物，含版本号 / ADR / 期数的变动频率），讲清"100 feat + 100 fix 也几乎不动期数"。
 - 文档维护技能：新增 `update-docs`（纯文档工作：写 / 取代 ADR、原地更新架构 / API、修文档漂移、整理文档），并接入维护迭代周期路由表。
 - 审计闭环修正：补 `.env.example` / `web/dist/.gitkeep`；新增 [ADR-0008](docs/adr/0008-config-soft-delete-and-effective-md5.md)（软删唯一键哨兵 + 有效配置 md5 取舍）；验证门权威判据改挂入库真源（PRD 验收 + 高风险区测试 + 组件测试绿），不再依赖不入库的实施计划；统一 agent 模块↔jar 命名；补测试分层、备份常态化与恢复演练、`govulncheck` 漏洞入口。
 - 收尾：采用 [MIT 许可](LICENSE)；SECURITY 明确为内部项目、不对外接收漏洞报告；从 `.claude/rules` / `.claude/skills` 清除"M0 未落地"等过渡性措辞（稳态规则只陈述既定事实，过渡状态归 README 当前状态与 `.tmp` 计划）。
