@@ -38,6 +38,21 @@ feat(longpoll): 实现配置长轮询「唤醒即重算比对」
 feat(longpoll): add long-poll push
 ```
 
+### 1.4 禁止阶段性词语（强制）
+
+提交按**功能点**描述，不按**开发阶段**描述。commit message（标题与正文）**禁止**出现阶段 / 批次性词语：`Phase 0`、`P0` / `P1` / `P2`、`MVP`、`Sprint`、`第一期` / `本次迭代` 等。它们说的是"项目走到哪一步"而非"这次改了什么"，会随时间失效、也无法追溯到具体改动。
+
+✅ 正确（描述功能点）
+```
+feat(config): 实现 scope 覆盖链键级深合并
+```
+
+❌ 错误（用阶段词代替功能描述）
+```
+feat: 完成 MVP 第一期配置中心
+chore: P1 Sprint 3 的若干功能
+```
+
 ## 2. 文档入库边界（强制）
 
 判据：**活文档（长期维护、是真源）入库；易朽稿（做完即弃）留 `.tmp/`。**
@@ -56,8 +71,30 @@ feat(longpoll): add long-poll push
 
 > 例：PRD 是活的需求规格 → 入库 `docs/`；实施计划易朽 → 留 `.tmp/`。文档与代码的同步要求见 `docs/CONTRIBUTING.md` 与 `.claude/rules/doc-sync.md`。
 
-## 3. 其他约束
+## 3. 最小提交粒度（强制）
 
-- 一次提交只做一件事，避免无关改动混入。
+- **独立可编译**：每个 commit 落地后代码都能编译 / 构建通过，不留"半截"提交。
+- **只做一件事**：一个 commit 只对应一个功能点 / 一个修复 / 一次重构，无关改动不混入。
+- **不混类型**：不在同一 commit 里混 `feat` / `fix` / `refactor`——各自独立提交（顺手发现的 bug 单独 `fix`，重构单独 `refactor`）。
+
+✅ 正确（拆成独立、各自可编译、各做一件事）
+```
+feat(registry): 实例注册表支持按 zone 标签过滤
+fix(longpoll): 修复注册前发布导致的丢唤醒
+refactor(merge): 提取 deepMerge 为独立纯函数
+```
+
+❌ 错误（一个 commit 混了功能 + 修复 + 重构）
+```
+feat: 加 zone 过滤，顺便修个长轮询 bug 并重构 merge
+```
+
+❌ 错误（半截、单独不可编译）
+```
+feat(api): 加 discovery 端点（handler 还没接，编译不过）
+```
+
+## 4. 其他约束
+
 - 禁止跳过 hooks（`--no-verify`）。禁止对已 push 的提交 `--amend`。
 - 提交前确认未包含 `.env` / 凭据 / 大型二进制。
