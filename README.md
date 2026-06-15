@@ -79,3 +79,7 @@ docker compose up -d      # 起 beacon + mysql
 
 - 所有注释、日志、提交信息**使用简体中文**（见 `.claude/rules/`）。
 - 简单优先：50 服规模，不引入 Redis/MQ/DI 框架等重型件。
+
+## 许可
+
+本项目采用 [MIT 许可证](LICENSE)。
