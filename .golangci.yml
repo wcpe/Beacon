@@ -1,0 +1,23 @@
+# Beacon 控制面 Go 静态检查配置（golangci-lint）。
+# CI 门禁：未过不允许合并。规则见 .claude/rules/static-analysis.md。
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet          # 官方可疑构造检查
+    - staticcheck    # 综合静态分析
+    - errcheck       # 未处理的 error
+    - ineffassign    # 无效赋值
+    - unused         # 未使用的代码
+    - revive         # 风格与最佳实践
+    - gosimple       # 可简化写法
+    - gofmt          # 格式
+    - goimports      # import 分组与排序
+    - misspell       # 拼写
+    - bodyclose      # http response body 是否关闭（防资源泄露）
+    - sqlclosecheck  # rows/stmt 是否关闭
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

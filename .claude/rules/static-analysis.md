@@ -1,0 +1,21 @@
+# 代码风格与静态检查（防风格 / 质量漂移）
+
+> 统一各组件的格式化与静态检查工具，并要求 CI 强制门禁——风格一致、低级问题挡在合并前。
+
+## 1. 各组件工具链
+
+- **控制面（Go）**：`gofmt` / `goimports` 格式化 + `golangci-lint`（配置见仓库根 `.golangci.yml`，含 govet / staticcheck / errcheck / ineffassign / revive / bodyclose / sqlclosecheck 等）。
+- **前端（React / TS）**：`eslint` + `prettier`（配置随 `web/` 脚手架在 M0 落地）。
+- **agent（Kotlin）**：`ktlint`（或 detekt）（配置随 `agent/` Gradle 脚手架在 M0 落地）。
+
+## 2. 强制要求
+
+- **CI 门禁**：lint 与格式检查未过 → 不允许合并（与测试同级，见 `testing-and-quality.md`）。**注**：CI 流水线随 M0 落地；在此之前 lint / 测试 / 快照均需本地手动执行，文档里"CI 自动…"指 M0 后的既定职责。
+- **本地**：提交前自行跑对应组件的 format + lint，不把格式问题留给 CI。
+- **依赖漏洞**：Go 侧用 `govulncheck` 作漏洞发现入口（零成本，纳入 CI）；升级流程见 `bump-dependencies`。
+- 工具与规则版本固定（写进配置 / 构建），避免不同机器结果不一致。
+
+## 3. 与现有规则的关系
+
+- 本规则是 `testing-and-quality.md` 的补充：测试管"行为对不对"，静态检查管"写法干不干净"。
+- 禁用某条 lint 要在**配置里集中声明并注明原因**，不在代码里零散 `//nolint` / `// eslint-disable` 关闭（除非有明确理由并写明）。
