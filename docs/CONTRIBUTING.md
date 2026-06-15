@@ -13,6 +13,7 @@
 | 文档 | 管什么 | 何时更新 | 入库 |
 |---|---|---|---|
 | `docs/PRD.md` | 需求（WHAT/WHY）：目标、角色、功能需求、验收 | 需求增删改时 | ✓ 活文档 |
+| `docs/specs/<feature>.md` | 非平凡功能的开发期工作规格（需求/设计/任务/验收） | 开发该功能时 | ✓ 留作记录 |
 | `docs/ARCHITECTURE.md` | 系统设计（HOW）：模块、数据模型、机制、部署 | 结构/机制/依赖变化时 | ✓ |
 | `docs/adr/*` | 重大决策的"为什么" | 做出/推翻架构决策时（见 §3） | ✓ |
 | `docs/API.md` | REST 契约 | 接口变更时 | ✓ |
@@ -107,6 +108,7 @@
 | 🔥 高频 | `docs/PRD.md` | 每个新需求 / 交付（加行 / 改状态） |
 | 🌡 中频（有相应变化才动） | `docs/ARCHITECTURE.md`、`docs/API.md` | 结构 / 机制 / 接口变更时 |
 | 🌡 中频 | `docs/OPERATIONS.md` | 部署 / 运维方式变化时 |
+| 🌡 中频 | `docs/specs/<feature>.md` | 功能开发期；交付后基本不动 |
 | ❄ 低频 | `docs/adr/*`、`README.md`、`SECURITY.md` | 架构决策时追加 / 总览或安全模型变化时 |
 | 🧊 近乎不变（改它=动项目根基） | `.claude/rules/*`（尤其 `architecture-invariants`）、`.claude/skills/*`、`.editorconfig`、`.gitignore`、`VERSION`（仅发版动） | 极少；改不变量 / 红线要慎重并配 ADR |
 
