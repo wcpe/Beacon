@@ -59,12 +59,18 @@ func run() error {
 	}
 	nsHandler := handler.NewNamespaceHandler(nsService)
 
+	configRepo := repository.NewConfigItemRepository(db)
+	revRepo := repository.NewConfigRevisionRepository(db)
+	auditRepo := repository.NewAuditLogRepository(db)
+	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
+	configHandler := handler.NewConfigHandler(configService)
+
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
 	if err != nil {
 		return err
 	}
-	router := server.NewRouter(nsHandler, embedweb.Handler(dist))
+	router := server.NewRouter(nsHandler, configHandler, embedweb.Handler(dist))
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

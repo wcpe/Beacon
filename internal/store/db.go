@@ -17,6 +17,8 @@ import (
 func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{
 		Logger: newGormLogger(),
+		// 把方言专有的约束冲突错误翻译为可移植的 gorm.ErrDuplicatedKey 等
+		TranslateError: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
@@ -35,7 +37,14 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	}
 
 	// AutoMigrate 仅用于建表/补字段；DDL 由 GORM 按方言生成，业务零方言绑定。
-	if err := db.AutoMigrate(&model.Namespace{}); err != nil {
+	// instance 镜像表 MVP 不建（注册/健康运行态以内存为准）。
+	if err := db.AutoMigrate(
+		&model.Namespace{},
+		&model.ConfigItem{},
+		&model.ConfigRevision{},
+		&model.ZoneAssignment{},
+		&model.AuditLog{},
+	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
 	return db, nil

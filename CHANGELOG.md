@@ -25,5 +25,6 @@
 - 前端骨架：Vite + React + TypeScript 空壳管理台 + apiClient（react-router + @tanstack/react-query）。
 - 双端 agent 骨架：Kotlin/TabooLib 三模块 Gradle 工程（agent-core 纯 Kotlin、agent-bukkit 打包 BeaconAgent、agent-bungee 打包 BeaconAgentProxy），`gradlew build` 通过。
 - 部署：多阶段 Dockerfile（node 构建前端 → go 内嵌编译 → 极小非 root 镜像）+ docker-compose（beacon + mysql，含健康检查与命名卷）+ `config.example.yaml`，`docker compose up` 可起全栈。
+- 配置中心（无推送）：scope 覆盖链键级深合并内核（yaml/json/properties codec 键序稳定、标量覆盖/map 深合并/list 整替/null 删键、整体 md5 纳入 dataId 名）；config_item/config_revision/zone_assignment/audit_log 四表（软删唯一键用固定哨兵、content 经 GORM size 抽象不绑方言）；配置 CRUD/发布/历史/回滚/diff（事务内 item+revision+audit 原子，发布做格式/大小/解析与跨层 format 一致性校验），有效配置按覆盖链解析（收敛只看 md5）；`/admin/v1/configs` 全套端点；merge 穷举单测 + 真实 MySQL 全流程与四层合并集成测试。
 
-> 第一期骨架已落地、控制面可起服并返回环境列表；配置中心与管理台等能力随后续里程碑推进，尚未发布正式版本。
+> 第一期骨架已落地、控制面可起服并返回环境列表；配置中心（建/发布/版本/回滚/合并）已实现，热更推送与管理台等能力随后续里程碑推进，尚未发布正式版本。

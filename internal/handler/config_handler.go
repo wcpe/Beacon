@@ -1,0 +1,280 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"beacon/internal/apperr"
+	"beacon/internal/render"
+	"beacon/internal/repository"
+	"beacon/internal/service"
+)
+
+// ConfigHandler 处理配置中心相关的 admin 请求。
+type ConfigHandler struct {
+	svc *service.ConfigService
+}
+
+// NewConfigHandler 构造处理器。
+func NewConfigHandler(svc *service.ConfigService) *ConfigHandler {
+	return &ConfigHandler{svc: svc}
+}
+
+// configView 是配置项对外视图（content 仅详情返回）。
+type configView struct {
+	ID          uint      `json:"id"`
+	Namespace   string    `json:"namespace"`
+	Group       string    `json:"group"`
+	DataID      string    `json:"dataId"`
+	ScopeLevel  string    `json:"scopeLevel"`
+	ScopeTarget string    `json:"scopeTarget"`
+	Format      string    `json:"format"`
+	Version     int64     `json:"version"`
+	MD5         string    `json:"md5"`
+	Enabled     bool      `json:"enabled"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+	Content     string    `json:"content,omitempty"`
+}
+
+// revisionView 是历史版本对外视图。
+type revisionView struct {
+	Version        int64     `json:"version"`
+	MD5            string    `json:"md5"`
+	Operator       string    `json:"operator"`
+	Comment        string    `json:"comment"`
+	SourceRevision *uint     `json:"sourceRevision"`
+	CreatedAt      time.Time `json:"createdAt"`
+	Content        string    `json:"content,omitempty"`
+}
+
+// List 处理 GET /admin/v1/configs。
+func (h *ConfigHandler) List(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	items, err := h.svc.List(repository.ConfigFilter{
+		Namespace:  q.Get("namespace"),
+		Group:      q.Get("group"),
+		DataID:     q.Get("dataId"),
+		ScopeLevel: q.Get("scopeLevel"),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	views := make([]configView, 0, len(items))
+	for _, it := range items {
+		v := toView(it.ID, it.NamespaceCode, it.GroupCode, it.DataID, it.ScopeLevel, it.ScopeTarget, it.Format, it.Version, it.ContentMD5, it.Enabled, it.UpdatedAt)
+		views = append(views, v)
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+// Get 处理 GET /admin/v1/configs/{id}（含 content）。
+func (h *ConfigHandler) Get(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	it, err := h.svc.Get(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	v := toView(it.ID, it.NamespaceCode, it.GroupCode, it.DataID, it.ScopeLevel, it.ScopeTarget, it.Format, it.Version, it.ContentMD5, it.Enabled, it.UpdatedAt)
+	v.Content = it.Content
+	render.WriteJSON(w, http.StatusOK, v)
+}
+
+// configCreateRequest 是新建配置项的请求体。
+type configCreateRequest struct {
+	Namespace   string `json:"namespace"`
+	Group       string `json:"group"`
+	DataID      string `json:"dataId"`
+	ScopeLevel  string `json:"scopeLevel"`
+	ScopeTarget string `json:"scopeTarget"`
+	Format      string `json:"format"`
+	Content     string `json:"content"`
+	Operator    string `json:"operator"`
+	Comment     string `json:"comment"`
+}
+
+// Create 处理 POST /admin/v1/configs。
+func (h *ConfigHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var req configCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	it, err := h.svc.Create(service.CreateConfigParams{
+		Namespace: req.Namespace, Group: req.Group, DataID: req.DataID,
+		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget, Format: req.Format,
+		Content: req.Content, Operator: req.Operator, Comment: req.Comment,
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	v := toView(it.ID, it.NamespaceCode, it.GroupCode, it.DataID, it.ScopeLevel, it.ScopeTarget, it.Format, it.Version, it.ContentMD5, it.Enabled, it.UpdatedAt)
+	v.Content = it.Content
+	render.WriteJSON(w, http.StatusCreated, v)
+}
+
+// publishRequest 是发布新版本的请求体。
+type publishRequest struct {
+	Content  string `json:"content"`
+	Operator string `json:"operator"`
+	Comment  string `json:"comment"`
+}
+
+// Publish 处理 PUT /admin/v1/configs/{id}。
+func (h *ConfigHandler) Publish(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req publishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	it, err := h.svc.Publish(id, req.Content, req.Operator, req.Comment)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"version": it.Version, "md5": it.ContentMD5})
+}
+
+// Delete 处理 DELETE /admin/v1/configs/{id}（软删）。
+func (h *ConfigHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	operator := r.URL.Query().Get("operator")
+	if err := h.svc.Delete(id, operator, r.URL.Query().Get("comment")); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ListRevisions 处理 GET /admin/v1/configs/{id}/revisions。
+func (h *ConfigHandler) ListRevisions(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	revs, err := h.svc.ListRevisions(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	views := make([]revisionView, 0, len(revs))
+	for _, rev := range revs {
+		views = append(views, revisionView{
+			Version: rev.Version, MD5: rev.ContentMD5, Operator: rev.Operator,
+			Comment: rev.Comment, SourceRevision: rev.SourceRevision, CreatedAt: rev.CreatedAt,
+		})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+// GetRevision 处理 GET /admin/v1/configs/{id}/revisions/{version}（含 content）。
+func (h *ConfigHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	version, err := strconv.ParseInt(chi.URLParam(r, "version"), 10, 64)
+	if err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	rev, err := h.svc.GetRevision(id, version)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, revisionView{
+		Version: rev.Version, MD5: rev.ContentMD5, Operator: rev.Operator,
+		Comment: rev.Comment, SourceRevision: rev.SourceRevision, CreatedAt: rev.CreatedAt, Content: rev.Content,
+	})
+}
+
+// rollbackRequest 是回滚请求体。
+type rollbackRequest struct {
+	ToVersion int64  `json:"toVersion"`
+	Operator  string `json:"operator"`
+	Comment   string `json:"comment"`
+}
+
+// Rollback 处理 POST /admin/v1/configs/{id}/rollback。
+func (h *ConfigHandler) Rollback(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req rollbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	it, err := h.svc.Rollback(id, req.ToVersion, req.Operator, req.Comment)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"version": it.Version, "md5": it.ContentMD5})
+}
+
+// Diff 处理 GET /admin/v1/configs/{id}/diff?from=&to=。
+func (h *ConfigHandler) Diff(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	from, err1 := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+	to, err2 := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
+	if err1 != nil || err2 != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	fromContent, toContent, err := h.svc.Diff(id, from, to)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"fromVersion": from, "toVersion": to,
+		"fromContent": fromContent, "toContent": toContent,
+	})
+}
+
+// parseID 解析路径参数 {id}。
+func parseID(r *http.Request) (uint, error) {
+	n, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		return 0, apperr.ErrInvalidParam
+	}
+	return uint(n), nil
+}
+
+// toView 组装配置项基础视图（不含 content）。
+func toView(id uint, ns, group, dataID, scopeLevel, scopeTarget, format string, version int64, md5 string, enabled bool, updatedAt time.Time) configView {
+	return configView{
+		ID: id, Namespace: ns, Group: group, DataID: dataID,
+		ScopeLevel: scopeLevel, ScopeTarget: scopeTarget, Format: format,
+		Version: version, MD5: md5, Enabled: enabled, UpdatedAt: updatedAt,
+	}
+}
