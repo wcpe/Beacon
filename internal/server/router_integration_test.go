@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"beacon/internal/auth"
 	"beacon/internal/handler"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
@@ -19,6 +20,16 @@ import (
 	"beacon/internal/service"
 	"beacon/internal/testsupport"
 )
+
+// 集成测试用固定鉴权凭据（仅测试，非生产值）。
+const (
+	testAuthUser   = "admin"
+	testAuthPass   = "test-pass"
+	testAuthSecret = "test-secret"
+)
+
+// adminToken 缓存登录后获得的管理台令牌，供 doJSON 自动携带（admin 端已挂鉴权中间件）。
+var adminToken string
 
 // newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
 func newTestServer(t *testing.T) *httptest.Server {
@@ -47,6 +58,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	cfgSvc.SetNotifier(notifier)
 	fileSvc.SetNotifier(notifier)
 	zoneSvc.SetNotifier(notifier)
+	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
+	if err != nil {
+		t.Fatalf("构造测试认证器失败: %v", err)
+	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler,
 		Config:    handler.NewConfigHandler(cfgSvc),
@@ -55,12 +70,37 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Instance:  handler.NewInstanceHandler(instSvc),
 		Zone:      handler.NewZoneHandler(zoneSvc),
 		Audit:     handler.NewAuditHandler(service.NewAuditService(auditRepo)),
+		Auth:      handler.NewAuthHandler(authn),
 		Web:       http.HandlerFunc(http.NotFound),
-	}, agentToken)
-	return httptest.NewServer(router)
+	}, agentToken, authn)
+	ts := httptest.NewServer(router)
+	adminToken = loginForToken(t, ts.URL)
+	return ts
 }
 
-// doJSON 发起一次 JSON 请求并返回状态码与解析后的响应体。
+// loginForToken 登录测试服务取得管理台令牌。
+func loginForToken(t *testing.T, baseURL string) string {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{"username": testAuthUser, "password": testAuthPass})
+	resp, err := http.Post(baseURL+"/admin/v1/auth/login", "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("登录请求失败: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("登录应 200，实际 %d", resp.StatusCode)
+	}
+	var parsed map[string]any
+	data, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(data, &parsed)
+	token, _ := parsed["token"].(string)
+	if token == "" {
+		t.Fatal("登录响应缺 token")
+	}
+	return token
+}
+
+// doJSON 发起一次 JSON 请求并返回状态码与解析后的响应体；admin 端自动携带登录令牌。
 func doJSON(t *testing.T, method, url string, body any) (int, map[string]any) {
 	t.Helper()
 	var reader io.Reader
@@ -70,6 +110,9 @@ func doJSON(t *testing.T, method, url string, body any) (int, map[string]any) {
 	}
 	req, _ := http.NewRequest(method, url, reader)
 	req.Header.Set("Content-Type", "application/json")
+	if adminToken != "" {
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("请求 %s %s 失败: %v", method, url, err)
@@ -145,7 +188,7 @@ func TestAuditClientIPRecorded(t *testing.T) {
 	defer ts.Close()
 	const wantIP = "203.0.113.7"
 
-	// 经 X-Forwarded-For 指定来源 IP 发起一次请求并返回状态码。
+	// 经 X-Forwarded-For 指定来源 IP 发起一次请求并返回状态码（admin 端携带登录令牌）。
 	doWithIP := func(method, url string, body any) int {
 		var reader io.Reader
 		if body != nil {
@@ -155,6 +198,9 @@ func TestAuditClientIPRecorded(t *testing.T) {
 		req, _ := http.NewRequest(method, url, reader)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Forwarded-For", wantIP)
+		if adminToken != "" {
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("请求 %s %s 失败: %v", method, url, err)

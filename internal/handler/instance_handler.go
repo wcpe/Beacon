@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"beacon/internal/apperr"
+	"beacon/internal/auth"
 	"beacon/internal/render"
 	"beacon/internal/runtime"
 	"beacon/internal/service"
@@ -87,7 +88,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, toInstanceView(inst))
 }
 
-// Offline 处理 POST /admin/v1/instances/{serverId}/offline?namespace=&operator=。
+// Offline 处理 POST /admin/v1/instances/{serverId}/offline?namespace=。
 func (h *InstanceHandler) Offline(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ns := q.Get("namespace")
@@ -96,7 +97,7 @@ func (h *InstanceHandler) Offline(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.Offline(ns, serverID, q.Get("operator"), clientIP(r)); err != nil {
+	if err := h.svc.Offline(ns, serverID, auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

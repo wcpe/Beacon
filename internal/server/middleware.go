@@ -6,11 +6,16 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"beacon/internal/apperr"
+	"beacon/internal/auth"
 	"beacon/internal/render"
 )
+
+// bearerPrefix 是 Authorization 头的 Bearer 方案前缀。
+const bearerPrefix = "Bearer "
 
 // agentTokenMiddleware 校验 agent 端共享 token（仅防误连，非安全边界）。
 // token 为空表示停用校验（开发场景）。
@@ -22,6 +27,28 @@ func agentTokenMiddleware(token string) func(http.Handler) http.Handler {
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// adminAuthMiddleware 校验管理台登录令牌（Authorization: Bearer <token>），
+// 通过则把认证操作者身份注入 context 供写操作审计取用；缺/错令牌一律 401。
+func adminAuthMiddleware(authn *auth.Authenticator) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			if !strings.HasPrefix(header, bearerPrefix) {
+				render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+				return
+			}
+			token := strings.TrimSpace(strings.TrimPrefix(header, bearerPrefix))
+			operator, err := authn.Verify(token)
+			if err != nil {
+				slog.Warn("管理台令牌校验失败", "路径", r.URL.Path, "原因", err, "traceId", render.TraceID(r.Context()))
+				render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(auth.WithOperator(r.Context(), operator)))
 		})
 	}
 }

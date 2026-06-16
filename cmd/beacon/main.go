@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"beacon"
+	"beacon/internal/auth"
 	"beacon/internal/config"
 	"beacon/internal/embedweb"
 	"beacon/internal/handler"
@@ -46,6 +47,13 @@ func run() error {
 
 	log.Setup(cfg.Log.Level)
 	slog.Info("Beacon 控制面启动中", "监听地址", cfg.HTTPAddr)
+
+	// 管理面鉴权：单操作者认证器（凭据/密钥走配置，env 注入）
+	authn, err := auth.New(cfg.Auth.Username, cfg.Auth.Password, cfg.Auth.Secret,
+		time.Duration(cfg.Auth.TokenTTLSec)*time.Second)
+	if err != nil {
+		return err
+	}
 
 	db, err := store.Open(cfg.Database)
 	if err != nil {
@@ -100,6 +108,7 @@ func run() error {
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
+	authHandler := handler.NewAuthHandler(authn)
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
@@ -109,8 +118,8 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, Agent: agentHandler,
 		Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
-		Web: embedweb.Handler(dist),
-	}, cfg.AgentToken)
+		Auth: authHandler, Web: embedweb.Handler(dist),
+	}, cfg.AgentToken, authn)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

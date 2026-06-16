@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"beacon/internal/auth"
 	"beacon/internal/handler"
 )
 
@@ -17,12 +18,13 @@ type Handlers struct {
 	Instance  *handler.InstanceHandler
 	Zone      *handler.ZoneHandler
 	Audit     *handler.AuditHandler
+	Auth      *handler.AuthHandler
 	Web       http.Handler
 }
 
-// NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API + 内嵌前端（SPA 回退）。
+// NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂令牌中间件）+ 内嵌前端（SPA 回退）。
 // 中间件自外向内：recover → traceId → 访问日志。
-func NewRouter(h Handlers, agentToken string) http.Handler {
+func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Handler {
 	r := chi.NewRouter()
 	r.Use(recoverMiddleware, traceMiddleware, accessLog)
 
@@ -38,8 +40,12 @@ func NewRouter(h Handlers, agentToken string) http.Handler {
 		r.Get("/discovery", h.Agent.Discover)
 	})
 
-	// admin 侧
+	// 管理台登录：签发令牌，自身不挂令牌中间件
+	r.Post("/admin/v1/auth/login", h.Auth.Login)
+
+	// admin 侧：除登录外一律校验登录令牌
 	r.Route("/admin/v1", func(r chi.Router) {
+		r.Use(adminAuthMiddleware(authn))
 		r.Get("/namespaces", h.Namespace.List)
 		r.Post("/namespaces", h.Namespace.Create)
 

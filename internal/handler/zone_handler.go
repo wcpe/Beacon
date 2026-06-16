@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"beacon/internal/apperr"
+	"beacon/internal/auth"
 	"beacon/internal/model"
 	"beacon/internal/render"
 	"beacon/internal/service"
@@ -61,13 +62,12 @@ func (h *ZoneHandler) ListAssignments(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
 
-// assignRequest 是新增/改派请求体。
+// assignRequest 是新增/改派请求体（operator 由认证态派生，不接收手填）。
 type assignRequest struct {
 	Namespace string `json:"namespace"`
 	ServerID  string `json:"serverId"`
 	Group     string `json:"group"`
 	Zone      string `json:"zone"`
-	Operator  string `json:"operator"`
 	Note      string `json:"note"`
 }
 
@@ -78,7 +78,7 @@ func (h *ZoneHandler) Assign(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	a, err := h.svc.Assign(req.Namespace, req.ServerID, req.Group, req.Zone, req.Operator, req.Note, clientIP(r))
+	a, err := h.svc.Assign(req.Namespace, req.ServerID, req.Group, req.Zone, auth.Operator(r.Context()), req.Note, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -86,10 +86,10 @@ func (h *ZoneHandler) Assign(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, toAssignmentView(*a))
 }
 
-// Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=&operator=。
+// Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=。
 func (h *ZoneHandler) Unassign(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if err := h.svc.Unassign(q.Get("namespace"), q.Get("serverId"), q.Get("operator"), clientIP(r)); err != nil {
+	if err := h.svc.Unassign(q.Get("namespace"), q.Get("serverId"), auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

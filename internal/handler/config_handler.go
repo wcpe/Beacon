@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"beacon/internal/apperr"
+	"beacon/internal/auth"
 	"beacon/internal/render"
 	"beacon/internal/repository"
 	"beacon/internal/service"
@@ -89,7 +90,7 @@ func (h *ConfigHandler) Get(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, v)
 }
 
-// configCreateRequest 是新建配置项的请求体。
+// configCreateRequest 是新建配置项的请求体（operator 由认证态派生，不接收手填）。
 type configCreateRequest struct {
 	Namespace   string `json:"namespace"`
 	Group       string `json:"group"`
@@ -98,7 +99,6 @@ type configCreateRequest struct {
 	ScopeTarget string `json:"scopeTarget"`
 	Format      string `json:"format"`
 	Content     string `json:"content"`
-	Operator    string `json:"operator"`
 	Comment     string `json:"comment"`
 }
 
@@ -112,7 +112,7 @@ func (h *ConfigHandler) Create(w http.ResponseWriter, r *http.Request) {
 	it, err := h.svc.Create(service.CreateConfigParams{
 		Namespace: req.Namespace, Group: req.Group, DataID: req.DataID,
 		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget, Format: req.Format,
-		Content: req.Content, Operator: req.Operator, Comment: req.Comment, ClientIP: clientIP(r),
+		Content: req.Content, Operator: auth.Operator(r.Context()), Comment: req.Comment, ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -123,11 +123,10 @@ func (h *ConfigHandler) Create(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusCreated, v)
 }
 
-// publishRequest 是发布新版本的请求体。
+// publishRequest 是发布新版本的请求体（operator 由认证态派生，不接收手填）。
 type publishRequest struct {
-	Content  string `json:"content"`
-	Operator string `json:"operator"`
-	Comment  string `json:"comment"`
+	Content string `json:"content"`
+	Comment string `json:"comment"`
 }
 
 // Publish 处理 PUT /admin/v1/configs/{id}。
@@ -142,7 +141,7 @@ func (h *ConfigHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	it, err := h.svc.Publish(id, req.Content, req.Operator, req.Comment, clientIP(r))
+	it, err := h.svc.Publish(id, req.Content, auth.Operator(r.Context()), req.Comment, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -157,8 +156,7 @@ func (h *ConfigHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	operator := r.URL.Query().Get("operator")
-	if err := h.svc.Delete(id, operator, r.URL.Query().Get("comment"), clientIP(r)); err != nil {
+	if err := h.svc.Delete(id, auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
@@ -210,10 +208,9 @@ func (h *ConfigHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// rollbackRequest 是回滚请求体。
+// rollbackRequest 是回滚请求体（operator 由认证态派生，不接收手填）。
 type rollbackRequest struct {
 	ToVersion int64  `json:"toVersion"`
-	Operator  string `json:"operator"`
 	Comment   string `json:"comment"`
 }
 
@@ -229,7 +226,7 @@ func (h *ConfigHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	it, err := h.svc.Rollback(id, req.ToVersion, req.Operator, req.Comment, clientIP(r))
+	it, err := h.svc.Rollback(id, req.ToVersion, auth.Operator(r.Context()), req.Comment, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
