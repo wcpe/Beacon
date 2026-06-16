@@ -81,6 +81,12 @@ func run() error {
 	fileRevRepo := repository.NewFileRevisionRepository(db)
 	fileService := service.NewFileService(db, fileRepo, fileRevRepo, auditRepo)
 
+	// 三方插件文件覆盖兼容（FR-15）：覆盖集仓库 + 服务（存"目标根 + 受限重载命令 + 成员清单"事实，提供 dry-run 预览）
+	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
+	overrideSetRevRepo := repository.NewFileOverrideSetRevisionRepository(db)
+	overrideSetService := service.NewOverrideSetService(db, overrideSetRepo, overrideSetRevRepo, fileRepo, auditRepo)
+	overrideSetHandler := handler.NewOverrideSetHandler(overrideSetService)
+
 	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
 	registry := runtime.NewRegistry()
 	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
@@ -116,8 +122,8 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Config: configHandler, File: fileHandler, Agent: agentHandler,
-		Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
+		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Agent: agentHandler, Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
 		Auth: authHandler, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 

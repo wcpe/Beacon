@@ -52,6 +52,15 @@ var (
 	// ErrInvalidPath 文件相对 path 不合法（通道B）。
 	ErrInvalidPath = New(http.StatusBadRequest, "INVALID_PATH", "文件路径不合法")
 
+	// ErrOverrideSetNotFound 覆盖集不存在（FR-15）。
+	ErrOverrideSetNotFound = New(http.StatusNotFound, "OVERRIDE_SET_NOT_FOUND", "覆盖集不存在")
+	// ErrOverrideSetConflict 同标识覆盖集已存在（FR-15）。
+	ErrOverrideSetConflict = New(http.StatusConflict, "OVERRIDE_SET_CONFLICT", "同标识覆盖集已存在")
+	// ErrInvalidTargetRoot 覆盖集目标根目录不合法（FR-15，见 ADR-0011 决策 4）。
+	ErrInvalidTargetRoot = New(http.StatusBadRequest, "INVALID_TARGET_ROOT", "目标根目录不合法")
+	// ErrInvalidReloadCommand 重载命令不合法（含元字符 / 多条 / 越限等，FR-15，见 ADR-0011 决策 3）。
+	ErrInvalidReloadCommand = New(http.StatusBadRequest, "INVALID_RELOAD_COMMAND", "重载命令不合法")
+
 	// ErrUnauthorized agent 端缺少或错误的 token。
 	ErrUnauthorized = New(http.StatusUnauthorized, "UNAUTHORIZED", "缺少或非法的 token")
 	// ErrBadCredentials 管理台登录用户名或口令错误。

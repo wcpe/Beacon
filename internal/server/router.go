@@ -11,15 +11,16 @@ import (
 
 // Handlers 汇集各 HTTP 处理器，供路由装配（避免过长的位置参数）。
 type Handlers struct {
-	Namespace *handler.NamespaceHandler
-	Config    *handler.ConfigHandler
-	File      *handler.FileHandler
-	Agent     *handler.AgentHandler
-	Instance  *handler.InstanceHandler
-	Zone      *handler.ZoneHandler
-	Audit     *handler.AuditHandler
-	Auth      *handler.AuthHandler
-	Web       http.Handler
+	Namespace   *handler.NamespaceHandler
+	Config      *handler.ConfigHandler
+	File        *handler.FileHandler
+	OverrideSet *handler.OverrideSetHandler
+	Agent       *handler.AgentHandler
+	Instance    *handler.InstanceHandler
+	Zone        *handler.ZoneHandler
+	Audit       *handler.AuditHandler
+	Auth        *handler.AuthHandler
+	Web         http.Handler
 }
 
 // NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂令牌中间件）+ 内嵌前端（SPA 回退）。
@@ -69,6 +70,16 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Get("/files/{id}/revisions", h.File.ListRevisions)
 		r.Get("/files/{id}/revisions/{version}", h.File.GetRevision)
 		r.Post("/files/{id}/rollback", h.File.Rollback)
+
+		// 三方插件文件覆盖兼容：覆盖集 CRUD/发布/历史/回滚 + 发布前 dry-run 只读预览（FR-15）
+		r.Get("/override-sets", h.OverrideSet.List)
+		r.Post("/override-sets", h.OverrideSet.Create)
+		r.Get("/override-sets/{id}", h.OverrideSet.Get)
+		r.Put("/override-sets/{id}", h.OverrideSet.Publish)
+		r.Delete("/override-sets/{id}", h.OverrideSet.Delete)
+		r.Get("/override-sets/{id}/revisions", h.OverrideSet.ListRevisions)
+		r.Post("/override-sets/{id}/rollback", h.OverrideSet.Rollback)
+		r.Get("/override-sets/{id}/dry-run", h.OverrideSet.DryRun)
 
 		// 实例与健康
 		r.Get("/instances", h.Instance.List)

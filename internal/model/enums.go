@@ -36,15 +36,25 @@ const (
 	ActionFilePublish      = "file.publish"
 	ActionFileRollback     = "file.rollback"
 	ActionFileDelete       = "file.delete"
+	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
+	ActionOverrideSetCreate   = "override-set.create"
+	ActionOverrideSetPublish  = "override-set.publish"
+	ActionOverrideSetRollback = "override-set.rollback"
+	ActionOverrideSetDelete   = "override-set.delete"
 )
 
 // 审计对象类型。
 const (
-	TargetTypeConfig   = "config"
-	TargetTypeInstance = "instance"
-	TargetTypeZone     = "zone"
-	TargetTypeFile     = "file"
+	TargetTypeConfig      = "config"
+	TargetTypeInstance    = "instance"
+	TargetTypeZone        = "zone"
+	TargetTypeFile        = "file"
+	TargetTypeOverrideSet = "override-set"
 )
+
+// OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
+// 不开放 jar 替换 / 进程重启等 P3 发布编排能力，见 ADR-0011 决策 2）。
+const OverrideModeFileOverride = "file-override"
 
 // 审计结果。
 const (

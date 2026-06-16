@@ -98,6 +98,15 @@ func (r *FileObjectRepository) List(f FileFilter) ([]model.FileObject, error) {
 	return objs, nil
 }
 
+// ListByOverrideSet 列出某覆盖集（FR-15）的全部未软删成员文件，按 path 字典序稳定排序。
+func (r *FileObjectRepository) ListByOverrideSet(setID uint) ([]model.FileObject, error) {
+	var objs []model.FileObject
+	if err := r.active().Where("override_set_id = ?", setID).Order("path").Find(&objs).Error; err != nil {
+		return nil, err
+	}
+	return objs, nil
+}
+
 // SoftDelete 软删文件对象：填真实删除时间并置 enabled=false。
 func (r *FileObjectRepository) SoftDelete(id uint, deletedAt time.Time) error {
 	return r.db.Model(&model.FileObject{}).

@@ -37,6 +37,9 @@ type FileObject struct {
 	Version int64 `gorm:"column:version;not null;default:0"`
 	// 是否参与有效文件树解析
 	Enabled bool `gorm:"column:enabled;not null;default:true"`
+	// 所属覆盖集（FR-15）：>0 表示该文件是某 file_override_set 的成员（按 path 整文件覆盖三方插件目录）；
+	// 0 表示普通托管文件（通道B 默认）。成员文件仍走通道B 的整文件覆盖与同步语义，仅多一层归属标记。
+	OverrideSetID uint `gorm:"column:override_set_id;not null;default:0;index:idx_file_override_set"`
 	// 创建时间（UTC）
 	CreatedAt time.Time
 	// 更新时间（UTC）
