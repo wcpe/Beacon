@@ -40,6 +40,19 @@ class AgentLifecycle(
     private val heartbeatGen = AtomicReference(0)
     private val pollGen = AtomicReference(0)
 
+    /**
+     * 注册单飞门：任意时刻只允许一条 register→loops 在飞。
+     * 多触发点（心跳 404 / 长轮询 404 / 退避重试 / reconnectNow）并发抢占，CAS 失败者直接 no-op，
+     * 杜绝瞬时双注册、双循环。
+     */
+    private val registering = AtomicBoolean(false)
+
+    /**
+     * 注册「代」标识：reconnectNow 与各重新注册触发点递增；延迟退避重试携带触发时的代，
+     * fire 时代不符即自我作废——杜绝旧退避链与新接入链并存。
+     */
+    private val registerGen = AtomicReference(0)
+
     /** 心跳周期（毫秒）：注册成功前用兜底值，成功后用下发值。 */
     @Volatile
     private var heartbeatIntervalMs: Long = settings.heartbeatFallbackMs
@@ -54,6 +67,63 @@ class AgentLifecycle(
     fun currentState(): AgentState = state.get()
 
     /**
+     * 当前可观测状态快照（供壳层 status 命令渲染）。core 不持有平台类型（守 ADR-0005）。
+     */
+    fun snapshot(): LifecycleSnapshot = LifecycleSnapshot(
+        state = state.get(),
+        connected = isConnected(),
+        effectiveMd5 = store.currentMd5(),
+        heartbeatIntervalSec = (heartbeatIntervalMs / 1000L).toInt(),
+        endpoint = settings.primaryEndpoint(),
+    )
+
+    /**
+     * 立即重连（运维 reconnect）：打断退避、重置、重新接入控制面。
+     *
+     * 幂等 + 线程安全：经单飞门，并发多次调用不会叠加出多条 register→loops；
+     * **不清空 store / 快照**——保 fail-static，重连期间玩家仍按当前有效配置运行。
+     */
+    fun reconnectNow() {
+        if (!running.get()) return
+        // 递增注册代：作废仍在排队的旧退避重试，避免新旧接入链并存。
+        val gen = registerGen.updateAndGet { it + 1 }
+        registerBackoff.reset()
+        pollBackoff.reset()
+        // 递增循环代，使在跑的旧心跳 / 长轮询在下一跳自然退出（新循环将由本次注册成功后重启）。
+        heartbeatGen.set(heartbeatGen.get() + 1)
+        pollGen.set(pollGen.get() + 1)
+        adapter.info("收到 reconnect：重置退避并重新接入控制面（保留当前有效配置）")
+        adapter.runAsync { beginRegister(gen) }
+    }
+
+    /**
+     * 立即重拉有效配置（运维 reload）：以 md5=null 强制一次拉取并 apply，旁路长轮询 304，不等超时。
+     *
+     * 复用 ConfigApplier 的 md5 幂等守卫：内容未变则只触发一次无害读取、不重复广播。
+     * 独立一发，不接管长轮询主循环、不改其代标识。
+     */
+    fun forcePollNow() {
+        if (!running.get()) return
+        adapter.info("收到 reload：强制立刻重拉有效配置并 apply")
+        adapter.runAsync {
+            when (val result = apiClient.pollEffective(identity, currentMd5 = null, timeoutMs = settings.requestTimeoutMs)) {
+                is PollResult.Changed -> {
+                    applier.apply(result.effective)
+                    reportApplied(result.effective.md5)
+                }
+
+                is PollResult.NotModified -> adapter.info("reload 完成：有效配置无变更")
+                is PollResult.NotRegistered -> {
+                    adapter.warn("reload 时返回未注册，触发重新接入")
+                    triggerReregister()
+                }
+
+                is PollResult.Failed -> adapter.warn("reload 强制重拉失败（${result.reason}），保持当前有效配置")
+            }
+        }
+    }
+
+    /**
      * 启动：读快照→有则先 apply 点亮有效配置→再异步注册→成功后启心跳 + 长轮询。
      * 全程不阻塞调用线程（壳层在 ENABLE 调用，内部即转异步）。
      */
@@ -62,8 +132,8 @@ class AgentLifecycle(
         adapter.runAsync {
             // 1) 先点亮本地快照，玩家此刻已可进服。
             applySnapshotIfPresent()
-            // 2) 再异步注册并启循环。
-            registerThenStartLoops()
+            // 2) 再异步注册并启循环（经单飞门）。
+            beginRegister(registerGen.get())
         }
     }
 
@@ -83,8 +153,35 @@ class AgentLifecycle(
         adapter.info("已从本地快照点亮有效配置，md5=${snapshot.md5}")
     }
 
-    private fun registerThenStartLoops() {
+    /**
+     * 重新注册触发点（心跳 404 / 长轮询 404 / reload 时 404 通用入口）：
+     * 递增注册代作废旧退避链，再经单飞门发起注册。
+     */
+    private fun triggerReregister() {
         if (!running.get()) return
+        val gen = registerGen.updateAndGet { it + 1 }
+        beginRegister(gen)
+    }
+
+    /**
+     * 注册单飞入口：CAS 抢占注册门，抢到且代未过期才执行注册；否则 no-op。
+     *
+     * 单飞门 [registering] 保证任意时刻只有一条 register→loops 在飞；
+     * [registerGen] 保证延迟退避重试携带的旧代在新接入发起后自我作废。
+     */
+    private fun beginRegister(gen: Int) {
+        if (!running.get()) return
+        // 抢不到门：已有一条注册在飞，本次直接放弃（单飞）。
+        if (!registering.compareAndSet(false, true)) return
+        // 抢到门后再校验代：本次触发已被更新的代取代（如刚发起过更晚的 reconnect）→ 释放门作废。
+        if (gen != registerGen.get() || !running.get()) {
+            registering.set(false)
+            return
+        }
+        doRegister()
+    }
+
+    private fun doRegister() {
         state.set(AgentState.REGISTERING)
         when (val outcome = apiClient.register(identity)) {
             is RegisterOutcome.Success -> onRegisterSuccess(outcome.result)
@@ -122,14 +219,19 @@ class AgentLifecycle(
         )
         startHeartbeatLoop()
         startConfigPollLoop()
+        // 循环已启，本次注册收尾，释放单飞门。
+        registering.set(false)
     }
 
     /** 进降级态并退避后重试注册（保留快照、不阻断玩家）。 */
     private fun degradeAndRetryRegister() {
-        if (!running.get()) return
         state.set(AgentState.DEGRADED)
+        // 先记下本次注册所属的代，释放单飞门，再安排延迟重试（重试 fire 时按此代校验，过期则作废）。
+        val gen = registerGen.get()
+        registering.set(false)
+        if (!running.get()) return
         val delay = registerBackoff.nextDelayMs()
-        adapter.runAsyncDelayed(delay) { registerThenStartLoops() }
+        adapter.runAsyncDelayed(delay) { beginRegister(gen) }
     }
 
     // ---- 心跳循环 ----
@@ -152,8 +254,8 @@ class AgentLifecycle(
             is HeartbeatOutcome.Ok -> scheduleHeartbeat(gen, heartbeatIntervalMs)
             is HeartbeatOutcome.NotRegistered -> {
                 adapter.warn("心跳返回未注册，触发重新注册")
-                // 重新注册会重启两条循环，本代心跳到此为止。
-                registerThenStartLoops()
+                // 重新注册会重启两条循环，本代心跳到此为止；经单飞门，与其它触发点互斥。
+                triggerReregister()
             }
 
             is HeartbeatOutcome.Failed -> {
@@ -200,7 +302,7 @@ class AgentLifecycle(
 
             is PollResult.NotRegistered -> {
                 adapter.warn("长轮询返回未注册，触发重新注册")
-                registerThenStartLoops()
+                triggerReregister()
             }
 
             is PollResult.Failed -> {
