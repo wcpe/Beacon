@@ -101,7 +101,7 @@ func TestLongPollWakeOnPublish(t *testing.T) {
 	time.Sleep(80 * time.Millisecond) // 让 waiter 注册并挂起
 
 	item, _ := cfg.Get(idOfGlobal(t, cfg))
-	if _, err := cfg.Publish(item.ID, "k: 2\n", "admin", "改"); err != nil {
+	if _, err := cfg.Publish(item.ID, "k: 2\n", "admin", "改", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestLongPollOnlyAffected(t *testing.T) {
 	// 他组（area2）发布 → s1 不被唤醒 → 超时
 	ch := waitAsync(eff, "s1", "area1", cur.MD5, 250*time.Millisecond)
 	time.Sleep(80 * time.Millisecond)
-	if _, err := cfg.Publish(area2ID, "v: 99\n", "admin", "他组改"); err != nil {
+	if _, err := cfg.Publish(area2ID, "v: 99\n", "admin", "他组改", ""); err != nil {
 		t.Fatalf("发布 area2 失败: %v", err)
 	}
 	select {
@@ -170,14 +170,14 @@ func TestLongPollReassignHotPush(t *testing.T) {
 	}
 	mkZone("zoneA", "z: \"A\"\n")
 	mkZone("zoneB", "z: \"B\"\n")
-	if _, err := zone.Assign("prod", "s1", "area1", "zoneA", "admin", ""); err != nil {
+	if _, err := zone.Assign("prod", "s1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	cur, _ := eff.Resolve("prod", "s1", "area1")
 
 	ch := waitAsync(eff, "s1", "area1", cur.MD5, 3*time.Second)
 	time.Sleep(80 * time.Millisecond)
-	if _, err := zone.Assign("prod", "s1", "area1", "zoneB", "admin", ""); err != nil {
+	if _, err := zone.Assign("prod", "s1", "area1", "zoneB", "admin", "", ""); err != nil {
 		t.Fatalf("改派失败: %v", err)
 	}
 	select {

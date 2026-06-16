@@ -22,6 +22,7 @@ type RegisterParams struct {
 	Capacity  int
 	Weight    int
 	Metadata  map[string]string
+	ClientIP  string
 }
 
 // RegisterResult 是注册结果（含解析回填的归属与下发的心跳参数）。
@@ -74,12 +75,12 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	if err != nil {
 		if errors.Is(err, runtime.ErrDuplicateServerID) {
 			slog.Warn("重复 serverId 注册被拒", "namespace", p.Namespace, "serverId", p.ServerID, "address", p.Address)
-			s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultFail)
+			s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultFail, p.ClientIP)
 			return nil, apperr.ErrDuplicateServerID
 		}
 		return nil, err
 	}
-	s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultOK)
+	s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultOK, p.ClientIP)
 	slog.Info("实例注册", "namespace", p.Namespace, "serverId", p.ServerID,
 		"group", saved.ResolvedGroup, "zone", saved.ResolvedZone, "assigned", assigned)
 	return &RegisterResult{
@@ -130,11 +131,11 @@ func (s *InstanceService) RequireRegistered(ns, serverID string) (string, error)
 }
 
 // Offline 手动下线（移除内存条目）；不存在返回 INSTANCE_NOT_FOUND。
-func (s *InstanceService) Offline(ns, serverID, operator string) error {
+func (s *InstanceService) Offline(ns, serverID, operator, clientIP string) error {
 	if !s.registry.Offline(ns, serverID) {
 		return apperr.ErrInstanceNotFound
 	}
-	s.audit(ns, model.ActionInstanceOffline, serverID, operator, model.ResultOK)
+	s.audit(ns, model.ActionInstanceOffline, serverID, operator, model.ResultOK, clientIP)
 	slog.Info("手动下线实例", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
 }
@@ -146,10 +147,10 @@ func (s *InstanceService) Discover(f runtime.Filter) []*runtime.Instance {
 }
 
 // audit 记一条实例审计（best-effort：注册的真源是内存，审计写库失败仅告警，不阻断 agent）。
-func (s *InstanceService) audit(ns, action, serverID, operator, result string) {
+func (s *InstanceService) audit(ns, action, serverID, operator, result, clientIP string) {
 	entry := &model.AuditLog{
 		NamespaceCode: ns, Operator: operator, Action: action,
-		TargetType: model.TargetTypeInstance, TargetRef: ns + "/" + serverID, Result: result,
+		TargetType: model.TargetTypeInstance, TargetRef: ns + "/" + serverID, Result: result, ClientIP: clientIP,
 	}
 	if err := s.auditRepo.Create(entry); err != nil {
 		slog.Warn("写实例审计失败", "namespace", ns, "serverId", serverID, "错误", err)

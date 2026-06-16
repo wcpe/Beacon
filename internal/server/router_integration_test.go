@@ -130,6 +130,68 @@ func TestConfigRESTFlow(t *testing.T) {
 	}
 }
 
+// TestAuditClientIPRecorded 复现并守护缺陷：经 HTTP 的审计操作必须把来源 IP 写入 audit_log.client_ip。
+// 此前 config / zone / instance 审计均未从请求提取来源 IP，client_ip 恒空、前端"来源 IP"列恒为 -。
+func TestAuditClientIPRecorded(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	const wantIP = "203.0.113.7"
+
+	// 经 X-Forwarded-For 指定来源 IP 发起一次请求并返回状态码。
+	doWithIP := func(method, url string, body any) int {
+		var reader io.Reader
+		if body != nil {
+			raw, _ := json.Marshal(body)
+			reader = bytes.NewReader(raw)
+		}
+		req, _ := http.NewRequest(method, url, reader)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", wantIP)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("请求 %s %s 失败: %v", method, url, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// ① config.create（admin 侧）
+	if code := doWithIP(http.MethodPost, ts.URL+"/admin/v1/configs", map[string]any{
+		"namespace": "prod", "group": "__GLOBAL__", "dataId": "ip-audit.yml",
+		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n", "operator": "alice",
+	}); code != http.StatusCreated {
+		t.Fatalf("建配置应 201，实际 %d", code)
+	}
+	// ② zone.assign（admin 侧）
+	if code := doWithIP(http.MethodPut, ts.URL+"/admin/v1/zones/assignments", map[string]any{
+		"namespace": "prod", "serverId": "ip-s1", "group": "area1", "zone": "zoneA", "operator": "bob",
+	}); code != http.StatusOK {
+		t.Fatalf("zone 指派应 200，实际 %d", code)
+	}
+	// ③ instance.register（agent 侧；来源 IP = agent 连接地址）
+	if code := doWithIP(http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
+		"namespace": "prod", "serverId": "ip-s2", "role": "bukkit", "address": "10.0.0.9:25565",
+	}); code != http.StatusOK {
+		t.Fatalf("注册应 200，实际 %d", code)
+	}
+
+	// 三类审计的 clientIp 都应被写为来源 IP。
+	for _, action := range []string{"config.create", "zone.assign", "instance.register"} {
+		code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action="+action, nil)
+		if code != http.StatusOK {
+			t.Fatalf("查 %s 审计应 200，实际 %d", action, code)
+		}
+		items, _ := audits["items"].([]any)
+		if len(items) == 0 {
+			t.Fatalf("应有 %s 审计，实际无", action)
+		}
+		first, _ := items[0].(map[string]any)
+		if got, _ := first["clientIp"].(string); got != wantIP {
+			t.Fatalf("%s 审计 clientIp 应为 %q，实际 %q（来源 IP 未写入）", action, wantIP, got)
+		}
+	}
+}
+
 // itoa 是不引入额外依赖的小工具。
 func itoa(n int) string {
 	if n == 0 {

@@ -28,6 +28,7 @@ type CreateConfigParams struct {
 	Content     string
 	Operator    string
 	Comment     string
+	ClientIP    string
 }
 
 // ConfigService 编排配置中心：CRUD/发布/回滚/历史/diff，事务内 item+revision+audit 原子完成。
@@ -115,7 +116,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 			return err
 		}
 		return s.writeAudit(tx, item, p.Operator, model.ActionConfigCreate,
-			fmt.Sprintf(`{"version":1,"md5":"%s"}`, md5))
+			fmt.Sprintf(`{"version":1,"md5":"%s"}`, md5), p.ClientIP)
 	})
 	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -129,7 +130,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 }
 
 // Publish 发布配置新版本（version+1）。
-func (s *ConfigService) Publish(id uint, content, operator, comment string) (*model.ConfigItem, error) {
+func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP string) (*model.ConfigItem, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -152,7 +153,7 @@ func (s *ConfigService) Publish(id uint, content, operator, comment string) (*mo
 			return err
 		}
 		return s.writeAudit(tx, item, operator, model.ActionConfigPublish,
-			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5))
+			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP)
 	})
 	if err != nil {
 		return nil, err
@@ -163,7 +164,7 @@ func (s *ConfigService) Publish(id uint, content, operator, comment string) (*mo
 }
 
 // Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。
-func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment string) (*model.ConfigItem, error) {
+func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.ConfigItem, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -190,7 +191,7 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment str
 			return err
 		}
 		return s.writeAudit(tx, item, operator, model.ActionConfigRollback,
-			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"md5":"%s"}`, newVersion, toVersion, target.ContentMD5))
+			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"md5":"%s"}`, newVersion, toVersion, target.ContentMD5), clientIP)
 	})
 	if err != nil {
 		return nil, err
@@ -201,7 +202,7 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment str
 }
 
 // Delete 软删配置项（该层从合并链脱落）。
-func (s *ConfigService) Delete(id uint, operator, comment string) error {
+func (s *ConfigService) Delete(id uint, operator, comment, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}
@@ -214,7 +215,7 @@ func (s *ConfigService) Delete(id uint, operator, comment string) error {
 		if err := s.configRepo.WithTx(tx).SoftDelete(id, now); err != nil {
 			return err
 		}
-		return s.writeAudit(tx, item, operator, model.ActionConfigDelete, `{"deleted":true}`)
+		return s.writeAudit(tx, item, operator, model.ActionConfigDelete, `{"deleted":true}`, clientIP)
 	})
 	if err != nil {
 		return err
@@ -276,7 +277,7 @@ func (s *ConfigService) appendRevisionContent(tx *gorm.DB, itemID uint, format s
 }
 
 // writeAudit 在事务内写一条配置审计。
-func (s *ConfigService) writeAudit(tx *gorm.DB, item *model.ConfigItem, operator, action, detail string) error {
+func (s *ConfigService) writeAudit(tx *gorm.DB, item *model.ConfigItem, operator, action, detail, clientIP string) error {
 	return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 		NamespaceCode: item.NamespaceCode,
 		Operator:      operator,
@@ -285,6 +286,7 @@ func (s *ConfigService) writeAudit(tx *gorm.DB, item *model.ConfigItem, operator
 		TargetRef:     fmt.Sprintf("%s/%s/%s@%s:%s", item.NamespaceCode, item.GroupCode, item.DataID, item.ScopeLevel, item.ScopeTarget),
 		Detail:        detail,
 		Result:        model.ResultOK,
+		ClientIP:      clientIP,
 	})
 }
 

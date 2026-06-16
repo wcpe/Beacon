@@ -78,7 +78,7 @@ func (h *ZoneHandler) Assign(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	a, err := h.svc.Assign(req.Namespace, req.ServerID, req.Group, req.Zone, req.Operator, req.Note)
+	a, err := h.svc.Assign(req.Namespace, req.ServerID, req.Group, req.Zone, req.Operator, req.Note, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -89,7 +89,7 @@ func (h *ZoneHandler) Assign(w http.ResponseWriter, r *http.Request) {
 // Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=&operator=。
 func (h *ZoneHandler) Unassign(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if err := h.svc.Unassign(q.Get("namespace"), q.Get("serverId"), q.Get("operator")); err != nil {
+	if err := h.svc.Unassign(q.Get("namespace"), q.Get("serverId"), q.Get("operator"), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

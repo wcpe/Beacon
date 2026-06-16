@@ -96,7 +96,7 @@ func (h *InstanceHandler) Offline(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.Offline(ns, serverID, q.Get("operator")); err != nil {
+	if err := h.svc.Offline(ns, serverID, q.Get("operator"), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

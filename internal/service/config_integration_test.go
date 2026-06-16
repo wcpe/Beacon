@@ -47,7 +47,7 @@ func TestConfigLifecycle(t *testing.T) {
 	}
 
 	// 发布新版本
-	pub, err := cfg.Publish(item.ID, "pool: 20\n", "bob", "调大连接池")
+	pub, err := cfg.Publish(item.ID, "pool: 20\n", "bob", "调大连接池", "")
 	if err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestConfigLifecycle(t *testing.T) {
 	}
 
 	// 回滚到 v1
-	rb, err := cfg.Rollback(item.ID, 1, "carol", "回退")
+	rb, err := cfg.Rollback(item.ID, 1, "carol", "回退", "")
 	if err != nil {
 		t.Fatalf("回滚失败: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestConfigLifecycle(t *testing.T) {
 	}
 
 	// 软删后取不到
-	if err := cfg.Delete(item.ID, "dave", "下线"); err != nil {
+	if err := cfg.Delete(item.ID, "dave", "下线", ""); err != nil {
 		t.Fatalf("软删失败: %v", err)
 	}
 	if _, err := cfg.Get(item.ID); !errors.Is(err, apperr.ErrConfigNotFound) {

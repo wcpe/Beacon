@@ -112,7 +112,7 @@ func (h *ConfigHandler) Create(w http.ResponseWriter, r *http.Request) {
 	it, err := h.svc.Create(service.CreateConfigParams{
 		Namespace: req.Namespace, Group: req.Group, DataID: req.DataID,
 		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget, Format: req.Format,
-		Content: req.Content, Operator: req.Operator, Comment: req.Comment,
+		Content: req.Content, Operator: req.Operator, Comment: req.Comment, ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -142,7 +142,7 @@ func (h *ConfigHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	it, err := h.svc.Publish(id, req.Content, req.Operator, req.Comment)
+	it, err := h.svc.Publish(id, req.Content, req.Operator, req.Comment, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -158,7 +158,7 @@ func (h *ConfigHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operator := r.URL.Query().Get("operator")
-	if err := h.svc.Delete(id, operator, r.URL.Query().Get("comment")); err != nil {
+	if err := h.svc.Delete(id, operator, r.URL.Query().Get("comment"), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
@@ -229,7 +229,7 @@ func (h *ConfigHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	it, err := h.svc.Rollback(id, req.ToVersion, req.Operator, req.Comment)
+	it, err := h.svc.Rollback(id, req.ToVersion, req.Operator, req.Comment, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

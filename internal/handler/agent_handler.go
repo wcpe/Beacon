@@ -56,7 +56,7 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.svc.Register(service.RegisterParams{
 		Namespace: req.Namespace, ServerID: req.ServerID, Role: req.Role, GroupHint: req.GroupHint,
-		Address: req.Address, Version: req.Version, Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata,
+		Address: req.Address, Version: req.Version, Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata, ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

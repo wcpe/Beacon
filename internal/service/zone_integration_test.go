@@ -43,7 +43,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	}
 
 	// 指派 zoneA → 含 A
-	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneA", "admin", ""); err != nil {
+	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("指派失败: %v", err)
 	}
 	valA, md5A := zoneval("lobby-1")
@@ -52,7 +52,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	}
 
 	// 改派 zoneB → 重算为 B，且整体 md5 变化
-	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneB", "admin", ""); err != nil {
+	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneB", "admin", "", ""); err != nil {
 		t.Fatalf("改派失败: %v", err)
 	}
 	valB, md5B := zoneval("lobby-1")

@@ -49,7 +49,7 @@ func (s *ZoneService) notifyServer(ns, serverID string) {
 }
 
 // Assign 新增或改派 serverId→(group, zone)，事务内 upsert + 审计原子完成。
-func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note string) (*model.ZoneAssignment, error) {
+func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP string) (*model.ZoneAssignment, error) {
 	if ns == "" || serverID == "" || group == "" || zone == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -72,7 +72,7 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note string) (
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns, Operator: operator, Action: action,
 			TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID,
-			Detail: fmt.Sprintf(`{"group":"%s","zone":"%s"}`, group, zone), Result: model.ResultOK,
+			Detail: fmt.Sprintf(`{"group":"%s","zone":"%s"}`, group, zone), Result: model.ResultOK, ClientIP: clientIP,
 		})
 	})
 	if err != nil {
@@ -85,7 +85,7 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note string) (
 }
 
 // Unassign 取消指派（软删）；不存在返回 ASSIGNMENT_NOT_FOUND。
-func (s *ZoneService) Unassign(ns, serverID, operator string) error {
+func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
 	if ns == "" || serverID == "" || operator == "" {
 		return apperr.ErrInvalidParam
 	}
@@ -100,7 +100,7 @@ func (s *ZoneService) Unassign(ns, serverID, operator string) error {
 		}
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns, Operator: operator, Action: model.ActionZoneUnassign,
-			TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID, Result: model.ResultOK,
+			TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID, Result: model.ResultOK, ClientIP: clientIP,
 		})
 	})
 	if err != nil {
