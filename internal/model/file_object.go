@@ -1,6 +1,8 @@
 package model
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"time"
 
 	"gorm.io/gorm"
@@ -17,7 +19,10 @@ type FileObject struct {
 	// 大区编码（global 层用占位 __GLOBAL__）
 	GroupCode string `gorm:"column:group_code;size:64;not null;uniqueIndex:uk_file_identity,priority:2;index:idx_file_lookup,priority:2;index:idx_file_scope,priority:2"`
 	// 文件相对 path（如 ui-components/main.allin）
-	Path string `gorm:"column:path;size:512;not null;uniqueIndex:uk_file_identity,priority:3;index:idx_file_lookup,priority:3"`
+	Path string `gorm:"column:path;size:512;not null;index:idx_file_lookup,priority:3"`
+	// path 的 md5（小写 hex），仅用于唯一键：path varchar(512) 直接入 utf8mb4 复合唯一键会超 MySQL 3072 字节键长上限，
+	// 故唯一性改由定长 path_hash 承担；path 本身保留用于查询与展示（path↔path_hash 一一对应，由 BeforeSave 计算）。
+	PathHash string `gorm:"column:path_hash;size:32;not null;uniqueIndex:uk_file_identity,priority:3"`
 	// 覆盖层：global/group/zone/server
 	ScopeLevel string `gorm:"column:scope_level;size:16;not null;uniqueIndex:uk_file_identity,priority:4;index:idx_file_scope,priority:3"`
 	// 该层目标键：global/group='' ；zone=zone编码；server=serverId
@@ -48,5 +53,12 @@ func (f *FileObject) BeforeCreate(*gorm.DB) error {
 	if f.DeletedAt.IsZero() {
 		f.DeletedAt = SoftDeleteSentinel
 	}
+	return nil
+}
+
+// BeforeSave 在写入前由 path 计算 path_hash（唯一键用，与 path 一一对应；非安全用途）。
+func (f *FileObject) BeforeSave(*gorm.DB) error {
+	sum := md5.Sum([]byte(f.Path))
+	f.PathHash = hex.EncodeToString(sum[:])
 	return nil
 }
