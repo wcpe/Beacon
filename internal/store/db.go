@@ -42,6 +42,8 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.Namespace{},
 		&model.ConfigItem{},
 		&model.ConfigRevision{},
+		&model.FileObject{},
+		&model.FileRevision{},
 		&model.ZoneAssignment{},
 		&model.AuditLog{},
 	); err != nil {

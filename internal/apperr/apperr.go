@@ -45,6 +45,13 @@ var (
 	// ErrFormatInconsistent 同一 dataId 跨层格式不一致。
 	ErrFormatInconsistent = New(http.StatusUnprocessableEntity, "FORMAT_INCONSISTENT", "同一 dataId 跨层格式不一致")
 
+	// ErrFileNotFound 文件对象不存在（通道B）。
+	ErrFileNotFound = New(http.StatusNotFound, "FILE_NOT_FOUND", "文件对象不存在")
+	// ErrFileConflict 同标识文件对象已存在（通道B）。
+	ErrFileConflict = New(http.StatusConflict, "FILE_CONFLICT", "同标识文件对象已存在")
+	// ErrInvalidPath 文件相对 path 不合法（通道B）。
+	ErrInvalidPath = New(http.StatusBadRequest, "INVALID_PATH", "文件路径不合法")
+
 	// ErrUnauthorized agent 端缺少或错误的 token。
 	ErrUnauthorized = New(http.StatusUnauthorized, "UNAUTHORIZED", "缺少或非法的 token")
 	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。

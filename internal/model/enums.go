@@ -32,6 +32,10 @@ const (
 	ActionZoneAssign       = "zone.assign"
 	ActionZoneMove         = "zone.move"
 	ActionZoneUnassign     = "zone.unassign"
+	ActionFileCreate       = "file.create"
+	ActionFilePublish      = "file.publish"
+	ActionFileRollback     = "file.rollback"
+	ActionFileDelete       = "file.delete"
 )
 
 // 审计对象类型。
@@ -39,6 +43,7 @@ const (
 	TargetTypeConfig   = "config"
 	TargetTypeInstance = "instance"
 	TargetTypeZone     = "zone"
+	TargetTypeFile     = "file"
 )
 
 // 审计结果。
