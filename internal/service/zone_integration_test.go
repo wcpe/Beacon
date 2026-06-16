@@ -17,7 +17,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db), ar)
-	eff := service.NewEffectiveService(cr, asg)
+	eff := service.NewEffectiveService(cr, asg, nil)
 	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
 
 	create := func(group, scope, target, content string) {
@@ -34,7 +34,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	create("area1", model.ScopeZone, "zoneB", "zoneval: \"B\"\n")
 
 	zoneval := func(serverID string) (string, string) {
-		res, err := eff.Resolve("prod", serverID)
+		res, err := eff.Resolve("prod", serverID, "")
 		if err != nil || len(res.Items) != 1 {
 			t.Fatalf("解析失败或 items 数错误: err=%v items=%d", err, len(res.Items))
 		}

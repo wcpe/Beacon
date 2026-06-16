@@ -1,11 +1,14 @@
 package service
 
 import (
+	"context"
 	"sort"
+	"time"
 
 	"beacon/internal/merge"
 	"beacon/internal/model"
 	"beacon/internal/repository"
+	"beacon/internal/runtime/longpoll"
 )
 
 // EffectiveItem 是某 dataId 按覆盖链合并后的有效配置。
@@ -26,37 +29,22 @@ type Effective struct {
 	Items     []EffectiveItem
 }
 
-// EffectiveService 按 agent 身份解析有效配置（scope 覆盖链键级深合并）。
+// EffectiveService 按 agent 身份解析有效配置（scope 覆盖链键级深合并）+ 长轮询挂起。
 type EffectiveService struct {
 	configRepo *repository.ConfigItemRepository
 	assignRepo *repository.ZoneAssignmentRepository
+	hub        *longpoll.Hub
 }
 
-// NewEffectiveService 构造服务。
-func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository) *EffectiveService {
-	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo}
-}
-
-// scopePriority 覆盖层优先级（低→高，高覆盖低）。
-func scopePriority(level string) int {
-	switch level {
-	case model.ScopeGlobal:
-		return 0
-	case model.ScopeGroup:
-		return 1
-	case model.ScopeZone:
-		return 2
-	case model.ScopeServer:
-		return 3
-	default:
-		return -1
-	}
+// NewEffectiveService 构造服务。hub 仅长轮询用，纯解析场景可传 nil。
+func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository, hub *longpoll.Hub) *EffectiveService {
+	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo, hub: hub}
 }
 
 // Resolve 解析某 (namespace, serverId) 的有效配置：
-// 按 zone_assignment 回填 (group, zone) → 拉四层候选 → 按 dataId 分桶深合并 → 算整体 md5。
-func (s *EffectiveService) Resolve(ns, serverID string) (Effective, error) {
-	group, zone := "", ""
+// 先按 zone_assignment 得 (group, zone)，未分配则 group=groupHint、zone 为空；再拉四层候选合并。
+func (s *EffectiveService) Resolve(ns, serverID, groupHint string) (Effective, error) {
+	group, zone := groupHint, ""
 	assign, err := s.assignRepo.FindByServer(ns, serverID)
 	if err != nil {
 		return Effective{}, err
@@ -64,7 +52,36 @@ func (s *EffectiveService) Resolve(ns, serverID string) (Effective, error) {
 	if assign != nil {
 		group, zone = assign.GroupCode, assign.ZoneCode
 	}
+	return s.resolveLayers(ns, serverID, group, zone)
+}
 
+// WaitEffective 长轮询：先注册 waiter 再算 md5（消除注册前发布丢唤醒窗口）。
+// md5 与 agentMD5 不同 → 立即返回 (eff, true)；相同 → 挂起，被唤醒后重算比对；超时/断连返回 (_, false)。
+func (s *EffectiveService) WaitEffective(ctx context.Context, ns, serverID, groupHint, agentMD5 string, timeout time.Duration) (Effective, bool, error) {
+	w := s.hub.Register(ns, serverID)
+	defer s.hub.Deregister(w)
+	deadline := time.Now().Add(timeout)
+	for {
+		eff, err := s.Resolve(ns, serverID, groupHint)
+		if err != nil {
+			return Effective{}, false, err
+		}
+		if eff.MD5 != agentMD5 {
+			return eff, true, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return Effective{}, false, nil
+		}
+		if !w.Wait(ctx, remaining) {
+			return Effective{}, false, nil // 超时或客户端断连
+		}
+		// 被唤醒 → 循环重跑 Resolve 比对（唤醒即重算）
+	}
+}
+
+// resolveLayers 拉四层候选、按 dataId 分桶深合并、算单 md5 与整体 md5。
+func (s *EffectiveService) resolveLayers(ns, serverID, group, zone string) (Effective, error) {
 	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)
 	if err != nil {
 		return Effective{}, err
@@ -92,13 +109,25 @@ func (s *EffectiveService) Resolve(ns, serverID string) (Effective, error) {
 	sort.Slice(items, func(i, j int) bool { return items[i].DataID < items[j].DataID })
 
 	return Effective{
-		Namespace: ns,
-		ServerID:  serverID,
-		Group:     group,
-		Zone:      zone,
-		MD5:       merge.OverallMD5(dataIDToMD5),
-		Items:     items,
+		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
+		MD5: merge.OverallMD5(dataIDToMD5), Items: items,
 	}, nil
+}
+
+// scopePriority 覆盖层优先级（低→高，高覆盖低）。
+func scopePriority(level string) int {
+	switch level {
+	case model.ScopeGlobal:
+		return 0
+	case model.ScopeGroup:
+		return 1
+	case model.ScopeZone:
+		return 2
+	case model.ScopeServer:
+		return 3
+	default:
+		return -1
+	}
 }
 
 // mergeBucket 把同一 dataId 的多层按优先级低→高合并，返回有效文本与格式。

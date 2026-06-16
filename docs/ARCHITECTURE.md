@@ -34,7 +34,7 @@ internal/
   handler/     仅请求编解码 → 调 service（无业务逻辑）
   service/     事务、规则校验、触发长轮询唤醒、写审计
   repository/  各表纯 GORM CRUD
-  runtime/     registry.go(内存注册) health.go(TTL扫描) longpoll/{hub,waiter}.go
+  runtime/     registry.go(内存注册) health.go(TTL扫描) longpoll/hub.go(waiter 注册 + 唤醒)
   merge/       merge.go(深合并) codec.go(yaml/json/properties) digest.go(md5)
   model/       6 个 GORM 实体 + enums
   store/       db.go(GORM 连接 + AutoMigrate) logger.go

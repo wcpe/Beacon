@@ -27,7 +27,7 @@ func newStack(t *testing.T) (*service.ConfigService, *service.EffectiveService, 
 	rr := repository.NewConfigRevisionRepository(db)
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
-	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, asg), db
+	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, asg, nil), db
 }
 
 // TestConfigLifecycle 集成验证：建→发布→历史→回滚→diff→软删。
@@ -171,7 +171,7 @@ func TestEffectiveFourLayer(t *testing.T) {
 	create("area1", model.ScopeZone, "zoneA", "nest:\n  b: 20\n")
 	create("area1", model.ScopeServer, "lobby-1", "extra: \"yes\"\n")
 
-	res, err := eff.Resolve("prod", "lobby-1")
+	res, err := eff.Resolve("prod", "lobby-1", "")
 	if err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
@@ -190,13 +190,13 @@ func TestEffectiveFourLayer(t *testing.T) {
 	}
 
 	// 整体 md5 稳定（再解析一次相同）
-	res2, _ := eff.Resolve("prod", "lobby-1")
+	res2, _ := eff.Resolve("prod", "lobby-1", "")
 	if res.MD5 != res2.MD5 {
 		t.Fatalf("整体 md5 不稳定：%s vs %s", res.MD5, res2.MD5)
 	}
 
 	// 未指派的 server 只拿到 global 层
-	resUnassigned, err := eff.Resolve("prod", "ghost-9")
+	resUnassigned, err := eff.Resolve("prod", "ghost-9", "")
 	if err != nil {
 		t.Fatalf("解析未指派 server 失败: %v", err)
 	}

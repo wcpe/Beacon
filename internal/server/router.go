@@ -29,6 +29,7 @@ func NewRouter(h Handlers, agentToken string) http.Handler {
 		r.Use(agentTokenMiddleware(agentToken))
 		r.Post("/register", h.Agent.Register)
 		r.Post("/heartbeat", h.Agent.Heartbeat)
+		r.Get("/config/effective", h.Agent.Effective)
 		r.Post("/report", h.Agent.Report)
 		r.Get("/discovery", h.Agent.Discover)
 	})

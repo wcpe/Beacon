@@ -47,7 +47,7 @@
 | 编号 | 能力 | 期 | 状态 |
 |---|---|---|---|
 | FR-1 | 配置中心：namespace(环境)/group(大区)/dataId + scope 覆盖链（全局←大区←zone←单服）合并下发 | P1 | 开发中 |
-| FR-2 | 动态热更：配置变更长轮询推送，agent 不重启 apply | P1 | 计划 |
+| FR-2 | 动态热更：配置变更长轮询推送，agent 不重启 apply | P1 | 开发中 |
 | FR-3 | 配置版本 + 一键回滚（含 diff、历史） | P1 | 开发中 |
 | FR-4 | 服务注册/发现 + 元数据标签（role/version/capacity/weight/自定义） | P1 | 开发中 |
 | FR-5 | 健康检查：心跳 + TTL 判活（online/lost/offline） | P1 | 开发中 |

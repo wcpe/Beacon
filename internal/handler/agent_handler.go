@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"time"
 
 	"beacon/internal/apperr"
 	"beacon/internal/render"
@@ -10,14 +12,16 @@ import (
 	"beacon/internal/service"
 )
 
-// AgentHandler 处理 agent 侧请求（register / heartbeat / report / discovery）。
+// AgentHandler 处理 agent 侧请求（register / heartbeat / config.effective / report / discovery）。
 type AgentHandler struct {
-	svc *service.InstanceService
+	svc     *service.InstanceService
+	effSvc  *service.EffectiveService
+	maxHold time.Duration
 }
 
 // NewAgentHandler 构造处理器。
-func NewAgentHandler(svc *service.InstanceService) *AgentHandler {
-	return &AgentHandler{svc: svc}
+func NewAgentHandler(svc *service.InstanceService, effSvc *service.EffectiveService, maxHold time.Duration) *AgentHandler {
+	return &AgentHandler{svc: svc, effSvc: effSvc, maxHold: maxHold}
 }
 
 // registerRequest 是注册请求体（capacity/weight 顶层、metadata 自定义、无 canary）。
@@ -116,6 +120,56 @@ func (h *AgentHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		Namespace: q.Get("namespace"), Group: q.Get("group"), Zone: q.Get("zone"), Role: q.Get("role"),
 	})
 	render.WriteJSON(w, http.StatusOK, map[string]any{"instances": toInstanceViews(insts)})
+}
+
+// effectiveItemView 是有效配置中单个 dataId 的视图。
+type effectiveItemView struct {
+	DataID  string `json:"dataId"`
+	Format  string `json:"format"`
+	MD5     string `json:"md5"`
+	Content string `json:"content"`
+}
+
+// Effective 处理 GET /beacon/v1/agent/config/effective（长轮询）。
+// 当前 md5 ≠ 请求 md5 → 立即 200；挂起期间被唤醒且重算后变化 → 200；超时无变化 → 304。
+func (h *AgentHandler) Effective(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns, serverID, agentMD5 := q.Get("namespace"), q.Get("serverId"), q.Get("md5")
+	if ns == "" || serverID == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	groupHint, err := h.svc.RequireRegistered(ns, serverID)
+	if err != nil {
+		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
+		return
+	}
+	timeout := h.maxHold
+	if ms := q.Get("timeoutMs"); ms != "" {
+		if v, e := strconv.Atoi(ms); e == nil && v > 0 {
+			if d := time.Duration(v) * time.Millisecond; d < timeout {
+				timeout = d // 取 min(客户端 timeoutMs, 服务端上限)
+			}
+		}
+	}
+	eff, changed, err := h.effSvc.WaitEffective(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if !changed {
+		w.WriteHeader(http.StatusNotModified) // 304：无变更到超时
+		return
+	}
+	items := make([]effectiveItemView, 0, len(eff.Items))
+	for _, it := range eff.Items {
+		items = append(items, effectiveItemView{DataID: it.DataID, Format: it.Format, MD5: it.MD5, Content: it.Content})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"namespace": eff.Namespace, "serverId": eff.ServerID,
+		"group": eff.Group, "zone": nilIfEmpty(eff.Zone),
+		"md5": eff.MD5, "items": items,
+	})
 }
 
 // nilIfEmpty 把空串转为 nil（JSON 输出 null）。

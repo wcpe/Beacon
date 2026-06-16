@@ -28,11 +28,24 @@ type ZoneService struct {
 	assignRepo *repository.ZoneAssignmentRepository
 	auditRepo  *repository.AuditLogRepository
 	registry   *runtime.Registry
+	notifier   *ChangeNotifier // 可选，改派/取消后唤醒该 serverId 的长轮询
 }
 
 // NewZoneService 构造服务。
 func NewZoneService(db *gorm.DB, assignRepo *repository.ZoneAssignmentRepository, auditRepo *repository.AuditLogRepository, registry *runtime.Registry) *ZoneService {
 	return &ZoneService{db: db, assignRepo: assignRepo, auditRepo: auditRepo, registry: registry}
+}
+
+// SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
+func (s *ZoneService) SetNotifier(n *ChangeNotifier) {
+	s.notifier = n
+}
+
+// notifyServer 唤醒单个 serverId 的长轮询。
+func (s *ZoneService) notifyServer(ns, serverID string) {
+	if s.notifier != nil {
+		s.notifier.NotifyServer(ns, serverID)
+	}
 }
 
 // Assign 新增或改派 serverId→(group, zone)，事务内 upsert + 审计原子完成。
@@ -66,6 +79,7 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note string) (
 		return nil, err
 	}
 	s.registry.UpdateAssignment(ns, serverID, group, zone)
+	s.notifyServer(ns, serverID)
 	slog.Info("zone 指派", "namespace", ns, "serverId", serverID, "group", group, "zone", zone, "action", action)
 	return a, nil
 }
@@ -93,6 +107,7 @@ func (s *ZoneService) Unassign(ns, serverID, operator string) error {
 		return err
 	}
 	s.registry.ClearAssignment(ns, serverID)
+	s.notifyServer(ns, serverID)
 	slog.Info("取消 zone 指派", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
 }

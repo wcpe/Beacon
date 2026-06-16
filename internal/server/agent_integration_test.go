@@ -79,6 +79,46 @@ func TestAgentRESTFlow(t *testing.T) {
 	}
 }
 
+// TestEffectiveRESTFlow REST 集成：首拉 200、无变更 304、未注册 404。
+func TestEffectiveRESTFlow(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// 建一个 global 配置
+	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/configs", map[string]any{
+		"namespace": "prod", "group": "__GLOBAL__", "dataId": "app.yml",
+		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n", "operator": "admin",
+	}); code != http.StatusCreated {
+		t.Fatalf("建配置应 201，实际 %d", code)
+	}
+	// 注册 s1
+	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
+		"namespace": "prod", "serverId": "s1", "address": "10.0.0.1:1"}); code != http.StatusOK {
+		t.Fatalf("注册应 200，实际 %d", code)
+	}
+
+	// 首拉（md5 空）→ 200 带 items 与 md5
+	code, eff := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=s1&md5=", nil)
+	if code != http.StatusOK {
+		t.Fatalf("首拉应 200，实际 %d", code)
+	}
+	md5, _ := eff["md5"].(string)
+	if items, _ := eff["items"].([]any); len(items) != 1 || md5 == "" {
+		t.Fatalf("首拉应返回 1 个 dataId 与 md5，实际 %v", eff)
+	}
+
+	// 带当前 md5 + 短超时 → 304
+	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=s1&md5="+md5+"&timeoutMs=150", nil); code != http.StatusNotModified {
+		t.Fatalf("无变更应 304，实际 %d", code)
+	}
+
+	// 未注册 → 404 NOT_REGISTERED
+	code, nr := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/config/effective?namespace=prod&serverId=ghost&md5=", nil)
+	if code != http.StatusNotFound || nr["code"] != "NOT_REGISTERED" {
+		t.Fatalf("未注册应 404 NOT_REGISTERED，实际 %d：%v", code, nr)
+	}
+}
+
 // TestAgentTokenGuard token 中间件：错误 token → 401。
 func TestAgentTokenGuard(t *testing.T) {
 	ts := newTestServerWithToken(t, "secret-token")

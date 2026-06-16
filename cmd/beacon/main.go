@@ -20,6 +20,7 @@ import (
 	"beacon/internal/pkg/log"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
+	"beacon/internal/runtime/longpoll"
 	"beacon/internal/server"
 	"beacon/internal/service"
 	"beacon/internal/store"
@@ -77,7 +78,16 @@ func run() error {
 
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
-	agentHandler := handler.NewAgentHandler(instanceService)
+
+	// 长轮询：waiter Hub + 有效配置解析 + 事务后唤醒（注入 config/zone 服务）
+	hub := longpoll.NewHub()
+	effectiveService := service.NewEffectiveService(configRepo, assignRepo, hub)
+	notifier := service.NewChangeNotifier(hub, registry, assignRepo)
+	configService.SetNotifier(notifier)
+	zoneService.SetNotifier(notifier)
+	maxHold := time.Duration(cfg.Longpoll.MaxHoldMs) * time.Millisecond
+
+	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
 

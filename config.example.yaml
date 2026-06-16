@@ -27,6 +27,10 @@ health:
   # 后台健康扫描周期（秒）
   scan-interval-sec: 5
 
+longpoll:
+  # 服务端长轮询挂起上限（毫秒）；实际取 min(客户端 timeoutMs, 此值)
+  max-hold-ms: 30000
+
 log:
   # 日志级别：ERROR / WARN / INFO / DEBUG
   level: "INFO"

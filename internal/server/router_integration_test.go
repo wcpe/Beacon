@@ -12,6 +12,7 @@ import (
 	"beacon/internal/handler"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
+	"beacon/internal/runtime/longpoll"
 	"beacon/internal/server"
 	"beacon/internal/service"
 	"beacon/internal/testsupport"
@@ -28,17 +29,21 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	db := testsupport.OpenTestDB(t, "server")
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
+	configRepo := repository.NewConfigItemRepository(db)
 	registry := runtime.NewRegistry()
+	hub := longpoll.NewHub()
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(repository.NewNamespaceRepository(db)))
-	cfgSvc := service.NewConfigService(db,
-		repository.NewConfigItemRepository(db),
-		repository.NewConfigRevisionRepository(db), auditRepo)
+	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db), auditRepo)
 	instSvc := service.NewInstanceService(registry, assignRepo, auditRepo, 10*time.Second, 30*time.Second)
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
+	effSvc := service.NewEffectiveService(configRepo, assignRepo, hub)
+	notifier := service.NewChangeNotifier(hub, registry, assignRepo)
+	cfgSvc.SetNotifier(notifier)
+	zoneSvc.SetNotifier(notifier)
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler,
 		Config:    handler.NewConfigHandler(cfgSvc),
-		Agent:     handler.NewAgentHandler(instSvc),
+		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
 		Instance:  handler.NewInstanceHandler(instSvc),
 		Zone:      handler.NewZoneHandler(zoneSvc),
 		Web:       http.HandlerFunc(http.NotFound),

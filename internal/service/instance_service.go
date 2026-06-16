@@ -119,6 +119,16 @@ func (s *InstanceService) Get(ns, serverID string) (*runtime.Instance, error) {
 	return inst, nil
 }
 
+// RequireRegistered 校验实例已注册并返回其 groupHint；未注册返回 NOT_REGISTERED。
+// 供有效配置长轮询入口使用（agent 须先注册）。
+func (s *InstanceService) RequireRegistered(ns, serverID string) (string, error) {
+	inst := s.registry.Get(ns, serverID)
+	if inst == nil {
+		return "", apperr.ErrNotRegistered
+	}
+	return inst.GroupHint, nil
+}
+
 // Offline 手动下线（移除内存条目）；不存在返回 INSTANCE_NOT_FOUND。
 func (s *InstanceService) Offline(ns, serverID, operator string) error {
 	if !s.registry.Offline(ns, serverID) {

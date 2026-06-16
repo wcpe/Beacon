@@ -11,8 +11,16 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	// 注册健康相关参数
 	Health HealthConfig `yaml:"health"`
+	// 长轮询相关参数
+	Longpoll LongpollConfig `yaml:"longpoll"`
 	// 日志配置
 	Log LogConfig `yaml:"log"`
+}
+
+// LongpollConfig 是配置长轮询配置。
+type LongpollConfig struct {
+	// 服务端挂起上限（毫秒）；实际取 min(客户端 timeoutMs, 此值)
+	MaxHoldMs int `yaml:"max-hold-ms"`
 }
 
 // HealthConfig 是注册/心跳/健康判活配置。
@@ -62,6 +70,7 @@ func Default() Config {
 			OfflineGraceSec:      120,
 			ScanIntervalSec:      5,
 		},
-		Log: LogConfig{Level: "INFO"},
+		Longpoll: LongpollConfig{MaxHoldMs: 30000},
+		Log:      LogConfig{Level: "INFO"},
 	}
 }
