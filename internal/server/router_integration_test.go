@@ -46,6 +46,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
 		Instance:  handler.NewInstanceHandler(instSvc),
 		Zone:      handler.NewZoneHandler(zoneSvc),
+		Audit:     handler.NewAuditHandler(service.NewAuditService(auditRepo)),
 		Web:       http.HandlerFunc(http.NotFound),
 	}, agentToken)
 	return httptest.NewServer(router)

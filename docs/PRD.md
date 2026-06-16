@@ -51,7 +51,7 @@
 | FR-3 | 配置版本 + 一键回滚（含 diff、历史） | P1 | 开发中 |
 | FR-4 | 服务注册/发现 + 元数据标签（role/version/capacity/weight/自定义） | P1 | 开发中 |
 | FR-5 | 健康检查：心跳 + TTL 判活（online/lost/offline） | P1 | 开发中 |
-| FR-6 | React 管理台：配置/实例/zone 分配/审计/namespace | P1 | 计划 |
+| FR-6 | React 管理台：配置/实例/zone 分配/审计/namespace | P1 | 开发中 |
 | FR-7 | 轻量审计：谁/何时/对什么/做了什么 | P1 | 开发中 |
 | FR-8 | zone 指派：serverId→zone 权威分配 + 改派热推 | P1 | 开发中 |
 | FR-9 | 配置灰度/Beta | P2 | 计划 |

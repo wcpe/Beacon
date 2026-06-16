@@ -90,6 +90,7 @@ func run() error {
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
+	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
@@ -98,7 +99,8 @@ func run() error {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, Agent: agentHandler,
-		Instance: instanceHandler, Zone: zoneHandler, Web: embedweb.Handler(dist),
+		Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
+		Web: embedweb.Handler(dist),
 	}, cfg.AgentToken)
 
 	srv := &http.Server{

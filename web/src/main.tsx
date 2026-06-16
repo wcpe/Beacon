@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import './styles.css'
 
 // React Query 客户端：管理台所有数据请求的缓存与状态来源
 const queryClient = new QueryClient()

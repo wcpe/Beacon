@@ -28,5 +28,7 @@
 - 配置中心（无推送）：scope 覆盖链键级深合并内核（yaml/json/properties codec 键序稳定、标量覆盖/map 深合并/list 整替/null 删键、整体 md5 纳入 dataId 名）；config_item/config_revision/zone_assignment/audit_log 四表（软删唯一键用固定哨兵、content 经 GORM size 抽象不绑方言）；配置 CRUD/发布/历史/回滚/diff（事务内 item+revision+audit 原子，发布做格式/大小/解析与跨层 format 一致性校验），有效配置按覆盖链解析（收敛只看 md5）；`/admin/v1/configs` 全套端点；merge 穷举单测 + 真实 MySQL 全流程与四层合并集成测试。
 - 注册/发现/健康 + zone 分配：`runtime.Registry`（内存 map+RWMutex、读返深拷贝、重复 serverId 按 lastHeartbeat 新鲜度守卫——故障换机不误杀）+ 单 goroutine 健康扫描（online→lost→offline，offline 保留）；agent 侧 register（解析回填 group/zone）/heartbeat/report/discovery（挂 X-Beacon-Token 中间件）；admin 侧实例列表/详情/下线、zone 指派 CRUD 与汇总（改派即时重算有效配置并刷新内存归属，长轮询唤醒留待 M3）；capacity/weight 顶层、metadata 自定义、无 canary；runtime 并发单测（-race）+ REST 与改派重算集成测试。
 - 长轮询热更：`longpoll.Hub`（缓冲为 1 的 notify channel、按 serverId/namespace 唤醒）+ `config/effective` 长轮询入口"先注册 waiter 再算 md5、唤醒即重算比对"（变了 200、未变挂起、超时 304）；发布/回滚/软删/改派事务提交后按 scope 算最小受影响集合再唤醒（global→全 ns、group→查内存、zone→反查 DB、server/改派→单 serverId）；有效配置未分配回退 groupHint；Hub 并发单测 + 真实 MySQL 长轮询时序集成（立即返回/超时/唤醒/只唤醒受影响/改派热推）。
+- 审计查询端点：`GET /admin/v1/audits`（按 namespace/action/targetType/targetRef/时间过滤 + 分页，时间倒序，返回 total+items），补齐管理台审计页所需后端；集成测试覆盖过滤/分页/排序。
+- React 管理台：configs（过滤/新建/详情发布/历史/diff/回滚/软删）、instances（过滤 + 5 秒健康轮询 + 未分配高亮 + 下线）、zones（指派 CRUD + 汇总）、audits（过滤分页）、namespaces（列表/新建）；react-router 可深链 + @tanstack/react-query；纯 CSS 无新增依赖；经根包 `go:embed all:web/dist` + SPA 回退由单二进制同端口供 UI+API。深链刷新不 404、无头浏览器渲染确认 React 正常挂载。
 
-> 第一期骨架已落地；配置中心、服务注册/发现/健康/zone 分配、长轮询热更已实现，管理台与双端 agent 随后续里程碑推进，尚未发布正式版本。
+> 第一期骨架已落地；配置中心、服务注册/发现/健康/zone 分配、长轮询热更、React 管理台已实现，双端 agent 随后续里程碑推进，尚未发布正式版本。

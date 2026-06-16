@@ -15,6 +15,7 @@ type Handlers struct {
 	Agent     *handler.AgentHandler
 	Instance  *handler.InstanceHandler
 	Zone      *handler.ZoneHandler
+	Audit     *handler.AuditHandler
 	Web       http.Handler
 }
 
@@ -60,6 +61,9 @@ func NewRouter(h Handlers, agentToken string) http.Handler {
 		r.Put("/zones/assignments", h.Zone.Assign)
 		r.Delete("/zones/assignments", h.Zone.Unassign)
 		r.Get("/zones", h.Zone.Summary)
+
+		// 审计
+		r.Get("/audits", h.Audit.List)
 	})
 
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）
