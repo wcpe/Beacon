@@ -22,6 +22,14 @@ interface PlatformAdapter {
     /** agent 数据目录（快照、有效配置落点）。 */
     fun dataFolder(): File
 
+    /**
+     * 插件 plugins 基目录（文件树托管镜像落盘根，通道B）。
+     *
+     * 默认取 agent 数据目录的父目录（agent 自身在 plugins/<本插件>/ 下，父级即 plugins）。
+     * 壳层可按平台覆盖。
+     */
+    fun pluginsBaseFolder(): File = dataFolder().parentFile ?: dataFolder()
+
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(changed: Set<String>, newMd5: String)
 

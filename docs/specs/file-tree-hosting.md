@@ -27,7 +27,7 @@
 - [x] service（FileService 发布/回滚/软删 + FileEffectiveService 解析/长轮询）
 - [x] handler + 路由（admin CRUD/发布；agent manifest/content）
 - [x] 长轮询独立唤醒集合接入
-- [ ] agent 侧文件同步器 + 原子落盘（fsync）— 见 gaps
+- [x] agent 侧文件同步器 + 原子落盘（fsync）：FileSyncer 差分 + FileMirrorWriter 原子写（含父目录 fsync）+ AppliedFileManifestStore + FileTreeApplier + 文件树长轮询循环；fail-static 比配置更保守
 - [x] 文档同步：PRD 状态、ARCHITECTURE §3、API、CHANGELOG
 
 ## 5. 验收标准
@@ -37,4 +37,5 @@
 - 受影响组件单测全绿。
 
 ## 6. 风险 / 待定
-- agent 侧（Kotlin）文件同步器与原子落盘（含父目录 fsync）本轮未完成，作为后续任务；控制面侧已可独立编译与测试。
+- agent 侧（Kotlin）文件同步器与原子落盘（含父目录 fsync）已落地，`:agent-core:test` 与双端 `build` 通过。
+- `resync` 运维命令（FR-17）强制重同步文件树的实际接线尚未做，仍为占位提示；真机 MC 端到端文件热更验证待 E2E 阶段补。

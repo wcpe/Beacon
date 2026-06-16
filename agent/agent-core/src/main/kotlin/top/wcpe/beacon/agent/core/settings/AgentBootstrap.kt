@@ -26,6 +26,11 @@ object AgentBootstrap {
             ),
             snapshotEnabled = reader.boolean("snapshot.enabled", true),
             snapshotFileName = reader.string("snapshot.file-name", "effective-config.snapshot.json"),
+            fileTree = FileTreeSettings(
+                enabled = reader.boolean("file-tree.enabled", true),
+                targetSubDir = reader.string("file-tree.target-sub-dir", ""),
+                appliedManifestFileName = reader.string("file-tree.applied-manifest-file-name", "file-tree.applied.json"),
+            ),
         )
     }
 

@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.adapters.testutil
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
+import top.wcpe.beacon.agent.core.settings.FileTreeSettings
 
 /** 测试共用的 settings / identity 构造。 */
 object TestFixtures {
@@ -16,6 +17,7 @@ object TestFixtures {
         backoff = BackoffSettings(1000, 30000, 2.0, 0.2),
         snapshotEnabled = true,
         snapshotFileName = "snap.json",
+        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
     )
 
     fun identity(): AgentIdentity = AgentIdentity(

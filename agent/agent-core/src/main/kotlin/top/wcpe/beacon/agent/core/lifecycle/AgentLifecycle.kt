@@ -2,12 +2,14 @@ package top.wcpe.beacon.agent.core.lifecycle
 
 import top.wcpe.beacon.agent.core.backoff.ExponentialBackoff
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.FileManifestPollResult
 import top.wcpe.beacon.agent.core.client.HeartbeatOutcome
 import top.wcpe.beacon.agent.core.client.PollResult
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegisterResult
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
@@ -29,6 +31,7 @@ class AgentLifecycle(
     private val store: EffectiveConfigStore,
     private val applier: ConfigApplier,
     private val snapshotStore: SnapshotStore?,
+    private val fileTreeApplier: FileTreeApplier? = null,
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -39,6 +42,12 @@ class AgentLifecycle(
     /** 心跳与长轮询各自独立的「代」标识：重启循环时递增，旧循环自然退出。 */
     private val heartbeatGen = AtomicReference(0)
     private val pollGen = AtomicReference(0)
+
+    /**
+     * 文件树长轮询（通道B）的「代」标识：与配置长轮询并行、各自 gen，重启循环时递增。
+     * 唤醒集合与配置独立（fileTreeMd5 ≠ 配置 md5，见 ADR-0010）。
+     */
+    private val fileTreeGen = AtomicReference(0)
 
     /**
      * 注册单飞门：任意时刻只允许一条 register→loops 在飞。
@@ -59,6 +68,7 @@ class AgentLifecycle(
 
     private val registerBackoff = ExponentialBackoff(settings.backoff)
     private val pollBackoff = ExponentialBackoff(settings.backoff)
+    private val fileTreeBackoff = ExponentialBackoff(settings.backoff)
 
     /** 当前是否已连上控制面（供对外 API connected() 读）。 */
     fun isConnected(): Boolean = state.get() == AgentState.RUNNING
@@ -89,9 +99,11 @@ class AgentLifecycle(
         val gen = registerGen.updateAndGet { it + 1 }
         registerBackoff.reset()
         pollBackoff.reset()
-        // 递增循环代，使在跑的旧心跳 / 长轮询在下一跳自然退出（新循环将由本次注册成功后重启）。
+        fileTreeBackoff.reset()
+        // 递增循环代，使在跑的旧心跳 / 长轮询 / 文件树循环在下一跳自然退出（新循环由本次注册成功后重启）。
         heartbeatGen.set(heartbeatGen.get() + 1)
         pollGen.set(pollGen.get() + 1)
+        fileTreeGen.set(fileTreeGen.get() + 1)
         adapter.info("收到 reconnect：重置退避并重新接入控制面（保留当前有效配置）")
         adapter.runAsync { beginRegister(gen) }
     }
@@ -142,6 +154,7 @@ class AgentLifecycle(
         running.set(false)
         heartbeatGen.set(heartbeatGen.get() + 1)
         pollGen.set(pollGen.get() + 1)
+        fileTreeGen.set(fileTreeGen.get() + 1)
         adapter.info("agent 生命周期已停止")
     }
 
@@ -219,6 +232,7 @@ class AgentLifecycle(
         )
         startHeartbeatLoop()
         startConfigPollLoop()
+        startFileTreePollLoop()
         // 循环已启，本次注册收尾，释放单飞门。
         registering.set(false)
     }
@@ -329,6 +343,58 @@ class AgentLifecycle(
         val ok = apiClient.report(identity, appliedMd5, playerCount = 0, tps = 0.0)
         if (!ok) {
             adapter.warn("上报 applied 状态失败（不影响有效配置生效）")
+        }
+    }
+
+    // ---- 文件树长轮询循环（通道B，与配置长轮询并行、唤醒集合独立） ----
+
+    /** 启动文件树长轮询循环；未启用文件树（fileTreeApplier 为 null）则不启。 */
+    private fun startFileTreePollLoop() {
+        if (fileTreeApplier == null) return
+        val gen = fileTreeGen.get() + 1
+        fileTreeGen.set(gen)
+        scheduleFileTreePoll(gen, 0)
+    }
+
+    private fun scheduleFileTreePoll(gen: Int, delayMs: Long) {
+        if (!running.get()) return
+        if (delayMs <= 0) {
+            adapter.runAsync { fileTreeTick(gen) }
+        } else {
+            adapter.runAsyncDelayed(delayMs) { fileTreeTick(gen) }
+        }
+    }
+
+    private fun fileTreeTick(gen: Int) {
+        val applierLocal = fileTreeApplier ?: return
+        if (!running.get() || gen != fileTreeGen.get()) return
+        // 当前 fileTreeMd5 取本地已落盘清单（首启无清单则空，强制首拉）。
+        val currentMd5 = applierLocal.currentFileTreeMd5()
+        when (val result = apiClient.pollFileManifest(identity, currentMd5, settings.pollTimeoutMs)) {
+            is FileManifestPollResult.Changed -> {
+                // 200：差分增量同步并镜像落盘；fail-static 由 applier 内部把控（取内容失败不删既有）。
+                applierLocal.apply(result.manifest)
+                fileTreeBackoff.reset()
+                scheduleFileTreePoll(gen, 0)
+            }
+
+            is FileManifestPollResult.NotModified -> {
+                // 304：用旧 fileTreeMd5 立即续杯，不退避。
+                fileTreeBackoff.reset()
+                scheduleFileTreePoll(gen, 0)
+            }
+
+            is FileManifestPollResult.NotRegistered -> {
+                adapter.warn("文件树长轮询返回未注册，触发重新注册")
+                triggerReregister()
+            }
+
+            is FileManifestPollResult.Failed -> {
+                // 连接级失败：fail-static——不动任何已落盘文件，退避后重连。
+                val delay = fileTreeBackoff.nextDelayMs()
+                adapter.warn("文件树长轮询连接失败（${result.reason}），保留本地镜像不动，${delay}ms 后重连")
+                scheduleFileTreePoll(gen, delay)
+            }
         }
     }
 }

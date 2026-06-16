@@ -7,6 +7,9 @@ import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.filetree.AppliedFileManifestStore
+import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
+import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -53,6 +56,26 @@ object AgentAssembly {
 
         val applier = ConfigApplier(store, snapshotStore, adapter)
 
+        // 文件树托管（通道B）：启用时装配镜像落盘 + 已落盘清单 + 编排器（取内容委托 apiClient）。
+        val fileTreeApplier: FileTreeApplier? = if (settings.fileTree.enabled) {
+            val root = if (settings.fileTree.targetSubDir.isBlank()) {
+                adapter.pluginsBaseFolder()
+            } else {
+                File(adapter.pluginsBaseFolder(), settings.fileTree.targetSubDir)
+            }
+            FileTreeApplier(
+                mirrorWriter = FileMirrorWriter(root),
+                appliedStore = AppliedFileManifestStore(
+                    File(adapter.dataFolder(), settings.fileTree.appliedManifestFileName),
+                    codec,
+                ),
+                adapter = adapter,
+                fetchContent = { path -> apiClient.fetchFileContent(identity, path) },
+            )
+        } else {
+            null
+        }
+
         val lifecycle = AgentLifecycle(
             identity = identity,
             settings = settings,
@@ -61,6 +84,7 @@ object AgentAssembly {
             store = store,
             applier = applier,
             snapshotStore = snapshotStore,
+            fileTreeApplier = fileTreeApplier,
         )
 
         val discoveryView = DiscoveryView(apiClient)

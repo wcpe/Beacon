@@ -131,6 +131,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane.md)），agent 不声明 zone，从注册/拉取响应得到自己的归属；换区只改 `zone_assignment` 一行，agent 零改动。
 
+**文件树同步（通道B，FR-14，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）**：注册成功后，agent 在配置长轮询循环之外**并行**启一条文件树长轮询循环（各自 `gen` / 退避，唤醒集合独立）。每轮带本地已落盘清单（`AppliedFileManifestStore`，落 agent 数据目录的 `fileTreeMd5`）发 `GET .../files/manifest`：200 拿到新 `manifest`（path→md5，不含内容）→ `FileSyncer` 纯差分算增/改/删 → 仅对增/改 `GET .../files/content` 取整文件 → `FileMirrorWriter` **原子写**镜像到插件 `plugins` 基目录（临时文件 → `FileChannel.force` 含父目录 fsync → `ATOMIC_MOVE`，补 `SnapshotStore` 未做 fsync 的缺口），删除目标已无的 path，**全部落盘成功后才写已落盘清单**（先文件后清单，崩溃可恢复）；304 续杯；连接失败退避。落盘相对 path 经 `RelativePathGuard` 校验，拒绝绝对/`..`穿越/反斜杠逃逸目标根。**fail-static 比配置更保守**：任一变更文件取内容失败（控制面不可用）即**整轮放弃**——不删任何既有文件、不写清单，下一轮重试，绝不臆测；首启无目标态时同样不动任何已落盘文件。全程经 `adapter.runAsync` 不上 MC 主线程；HTTP/JSON 仅在适配器、core 依 `HttpTransport`/`JsonCodec` 接口（[ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）。
+
 **本地运维命令（FR-17，仅本地）**：双端壳注册根命令 `/beacon`（权限 `beacon.admin`）——`status`（打印生命周期状态 / 是否连上 / 有效配置 md5 / 心跳周期 / endpoint）、`reload`（`forcePollNow`：md5=null 强制立刻重拉一次有效配置并经 `ConfigApplier` 幂等守卫 apply，不等长轮询超时）、`reconnect`（`reconnectNow`：重置退避并重新接入，**不清空 store / 快照**以守 fail-static）。`resync`（强制重同步文件树）依赖文件树托管（FR-14）未启用，仅占位提示。命令体经 `adapter.runAsync` 落异步线程，core 控制方法不碰 Bukkit/Bungee（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）；远程下发依赖鉴权（FR-11），本期不做。**注册单飞不变量**：注册有多触发点（心跳 404 / 长轮询 404 / 退避重试 / `reconnectNow`），由 `AtomicBoolean` 单飞门 + 注册「代」标识收口，保证**任意时刻只有一条 register→loops 在飞**，杜绝瞬时双注册、双循环。
 
 ## 9. 部署

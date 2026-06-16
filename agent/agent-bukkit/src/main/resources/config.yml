@@ -51,3 +51,12 @@ snapshot:
   enabled: true
   # 快照文件名（落 agent 数据目录）。
   file-name: "effective-config.snapshot.json"
+
+file-tree:
+  # 是否启用文件树托管同步（通道B）。关闭则只跑配置中心、不拉取/不落盘任何文件。
+  enabled: true
+  # 镜像落盘目标子目录（相对本服 plugins 基目录）。留空表示直接落 plugins 根，
+  # 让各插件文件按相对 path 落到自己的目录，三方插件零改动从磁盘读取。
+  target-sub-dir: ""
+  # 本地「已落盘文件清单」文件名（落 agent 数据目录），记录本地镜像已是哪一版，用于增量比对与崩溃恢复。
+  applied-manifest-file-name: "file-tree.applied.json"

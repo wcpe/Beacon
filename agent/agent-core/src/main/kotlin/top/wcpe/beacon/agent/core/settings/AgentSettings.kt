@@ -11,6 +11,7 @@ package top.wcpe.beacon.agent.core.settings
  * @param backoff            退避参数
  * @param snapshotEnabled    是否启用本地快照 fail-static
  * @param snapshotFileName   快照文件名（落数据目录）
+ * @param fileTree           文件树托管（通道B）同步参数
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -21,10 +22,24 @@ data class AgentSettings(
     val backoff: BackoffSettings,
     val snapshotEnabled: Boolean,
     val snapshotFileName: String,
+    val fileTree: FileTreeSettings,
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')
 }
+
+/**
+ * 文件树托管（通道B）同步参数。
+ *
+ * @param enabled              是否启用文件树同步循环（关则不拉、不落盘，纯配置中心行为）
+ * @param targetSubDir         镜像目标子目录（相对插件 plugins 基目录；空串=直接落 plugins 根）
+ * @param appliedManifestFileName 本地已落盘清单文件名（落 agent 数据目录）
+ */
+data class FileTreeSettings(
+    val enabled: Boolean,
+    val targetSubDir: String,
+    val appliedManifestFileName: String,
+)
 
 /**
  * 指数退避参数。
