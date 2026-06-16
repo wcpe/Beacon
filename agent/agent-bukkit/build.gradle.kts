@@ -1,3 +1,9 @@
+import io.izzel.taboolib.gradle.Basic
+import io.izzel.taboolib.gradle.Bukkit
+import io.izzel.taboolib.gradle.BukkitHook
+import io.izzel.taboolib.gradle.BukkitUtil
+import io.izzel.taboolib.gradle.I18n
+
 // agent-bukkit：以 TabooLib 形式运行在 Bukkit 子服的数据面插件，产出 BeaconAgent.jar。
 // 装配 OkHttpTransport + KotlinxJsonCodec + 平台适配器，驱动 AgentLifecycle 接入控制面。
 plugins {
@@ -12,7 +18,7 @@ evaluationDependsOn(":agent-core")
 evaluationDependsOn(":agent-adapters")
 evaluationDependsOn(":agent-api")
 
-// 需要打进插件 jar 的运行期库与本工程模块（okhttp/okio/kotlinx + core/adapters/api）。
+// 打进插件 jar 的仅本工程模块（agent 自有 core/adapters/api）；第三方库不打包，运行期由主类 @RuntimeDependencies 下载。
 // 单独一条配置，便于在 jar 任务里精确 from(...)；显式排除 kotlin stdlib（TabooLib 运行期自带并重定位）。
 val shadowed: Configuration by configurations.creating {
     exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
@@ -22,20 +28,16 @@ val shadowed: Configuration by configurations.creating {
 }
 
 dependencies {
-    // 本工程模块：核心 + 适配器 + 对外 API，全部打进 jar。
+    // 本工程模块：核心 + 适配器 + 对外 API，全部打进 jar（agent 自有代码）。
     shadowed(project(":agent-core"))
     shadowed(project(":agent-adapters"))
     shadowed(project(":agent-api"))
-    // 第三方运行期库：随适配器进 jar。
-    shadowed("com.squareup.okhttp3:okhttp:4.12.0")
-    shadowed("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     // 编译期可见（不重复进 jar，由 shadowed 负责打包）。
+    // 第三方 okhttp/kotlinx 不打包——改由插件主类 @RuntimeDependencies 运行期动态下载（参考 CoreLib）。
     compileOnly(project(":agent-core"))
     compileOnly(project(":agent-adapters"))
     compileOnly(project(":agent-api"))
-    compileOnly("com.squareup.okhttp3:okhttp:4.12.0")
-    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     compileOnly(kotlin("stdlib"))
 }
 
@@ -48,16 +50,19 @@ taboolib {
         }
     }
     // 锁定 TabooLib 版本。
-    version { taboolib = "6.2.3" }
+    version { taboolib = "6.3.0-afd75a7" }
     env {
         // Bukkit 平台 + 配置模块（读取 config.yml）。
         // 配置模块在 TabooLib 6.2.x 的工件名为 basic-configuration。
-        install("platform-bukkit")
-        install("basic-configuration")
+        install(Basic)
+        install(Bukkit)
+        install(BukkitUtil)
+        install(BukkitHook)
+        install(I18n)
     }
-    // 重定位 taboolib 包，避免与同服其它 TabooLib 插件冲突。
-    relocate("taboolib", "${project.group}.taboolib")
-    // 重定位第三方库，避免与其它插件携带的 okhttp/okio/kotlinx 版本冲突。
+    // 第三方库本身不打包（@RuntimeDependencies 运行期下载），但仍打包期 relocate：把 agent 自身字节码里
+    // 对 okhttp3/okio/kotlinx.serialization 的引用重写到 top.wcpe.beacon.agent.lib.* —— 与运行期下载时的
+    // relocate 目标一致，运行期下载的库即落到同一隔离命名空间，彼此及与 agent 互相可见。
     relocate("okhttp3", "${project.group}.lib.okhttp3")
     relocate("okio", "${project.group}.lib.okio")
     relocate("kotlinx.serialization", "${project.group}.lib.kotlinx.serialization")

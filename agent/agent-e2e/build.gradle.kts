@@ -9,9 +9,9 @@ plugins {
     id("io.izzel.taboolib")
 }
 
-// 单独的 group：TabooLib 按 project.group 推导 relocate 根包，本模块需与 BeaconAgent（com.beacon.agent）
-// 区分，否则两插件 relocate 到同一 com.beacon.agent.taboolib 包、主类同名而在同服相互冲突。
-group = "com.beacon.e2e"
+// 单独的 group：TabooLib 按 project.group 推导 relocate 根包，本模块需与 BeaconAgent（top.wcpe.beacon.agent）
+// 区分，否则两插件 relocate 到同一 top.wcpe.beacon.agent.taboolib 包、主类同名而在同服相互冲突。
+group = "top.wcpe.beacon.e2e"
 
 // 先让 agent-api 完成评估（应用其 java 插件），再进入本壳的 afterEvaluate，避免评估锁定期 apply 冲突。
 evaluationDependsOn(":agent-api")
@@ -29,7 +29,7 @@ taboolib {
         contributors {
             name("Beacon")
         }
-        // 硬依赖 BeaconAgent：本验收插件运行期需经 BeaconAgent 暴露的 com.beacon.agent.api.* 只读 API
+        // 硬依赖 BeaconAgent：本验收插件运行期需经 BeaconAgent 暴露的 top.wcpe.beacon.agent.api.* 只读 API
         // 读有效配置。声明 depend 后 Bukkit 先加载 BeaconAgent，并让本插件 ClassLoader 可解析其 API 类，
         // 从而共享 BeaconAgentProvider 静态门面（否则类不可见，@Awake ENABLE 静默不执行）。
         dependencies {
@@ -42,8 +42,8 @@ taboolib {
         // Bukkit 平台即可：本插件只读 API + 写文件，不依赖配置 / 数据库等其它模块。
         install("platform-bukkit")
     }
-    // TabooLib 按 project.group 自动把 taboolib 重定位到 com.beacon.e2e.taboolib，
-    // 与 BeaconAgent 的 com.beacon.agent.taboolib 区分，避免同服冲突。
+    // TabooLib 按 project.group 自动把 taboolib 重定位到 top.wcpe.beacon.e2e.taboolib，
+    // 与 BeaconAgent 的 top.wcpe.beacon.agent.taboolib 区分，避免同服冲突。
 }
 
 // 产出 jar 基础名固定为 BeaconE2E（TabooLib 的 description.name 只决定展示名，不改 jar 文件名）。
@@ -99,8 +99,8 @@ val runServer by tasks.registering(JavaExec::class) {
         e2eJar.copyTo(pluginsDir.resolve("BeaconE2E.jar"), overwrite = true)
 
         // 放置 agent 的 config.yml（serverId / namespace / beacon.endpoints 等）到其数据目录。
-        // 控制面地址默认指向 http://localhost:18080，可经 -Pe2eBeaconEndpoint 覆盖。
-        val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:18080"
+        // 控制面地址默认指向 http://localhost:8848，可经 -Pe2eBeaconEndpoint 覆盖。
+        val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
         val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bukkit-1"
         val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
         val agentDataDir = pluginsDir.resolve("BeaconAgent")
@@ -150,7 +150,7 @@ val runServer by tasks.registering(JavaExec::class) {
 fun agentConfigYaml(endpoint: String, serverId: String, namespace: String): String = """
     # Beacon agent E2E 运行配置（由 runServer 任务生成，仅供端到端验收）。
     beacon:
-      # 控制面地址：指向本地起的 Beacon（默认 18080，避开 Windows 排除端口段的 8080）。
+      # 控制面地址：指向本地起的 Beacon（默认 8848，与产品默认端口一致）。
       endpoints:
         - "$endpoint"
       # 共享令牌，置于请求头 X-Beacon-Token，需与控制面 agent-token 一致。

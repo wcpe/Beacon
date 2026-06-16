@@ -9,8 +9,8 @@ plugins {
     id("io.izzel.taboolib")
 }
 
-// 单独的 group：与 BeaconAgentProxy（com.beacon.agent）区分 relocate 根包，避免同代理冲突。
-group = "com.beacon.e2e"
+// 单独的 group：与 BeaconAgentProxy（top.wcpe.beacon.agent）区分 relocate 根包，避免同代理冲突。
+group = "top.wcpe.beacon.e2e"
 
 // 先让 agent-api 完成评估，再进入本壳 afterEvaluate，避免评估锁定期 apply 冲突。
 evaluationDependsOn(":agent-api")
@@ -27,7 +27,7 @@ taboolib {
         contributors {
             name("Beacon")
         }
-        // 硬依赖 BeaconAgentProxy：运行期需经其暴露的 com.beacon.agent.api.* 只读 API 读有效配置。
+        // 硬依赖 BeaconAgentProxy：运行期需经其暴露的 top.wcpe.beacon.agent.api.* 只读 API 读有效配置。
         dependencies {
             name("BeaconAgentProxy").optional(false)
         }
@@ -37,7 +37,7 @@ taboolib {
         // BungeeCord 平台。
         install("platform-bungee")
     }
-    // TabooLib 按 project.group 自动把 taboolib 重定位到 com.beacon.e2e.taboolib。
+    // TabooLib 按 project.group 自动把 taboolib 重定位到 top.wcpe.beacon.e2e.taboolib。
 }
 
 // 产出 jar 基础名固定为 BeaconE2EProxy。
@@ -91,7 +91,7 @@ val runBungee by tasks.registering(JavaExec::class) {
         e2eJar.copyTo(pluginsDir.resolve("BeaconE2EProxy.jar"), overwrite = true)
 
         // 放置 agent 的 config.yml 到其数据目录（serverId 用 proxy 专属，namespace 与控制面一致）。
-        val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:18080"
+        val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
         val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bungee-1"
         val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
         val agentDataDir = pluginsDir.resolve("BeaconAgentProxy")
@@ -128,7 +128,7 @@ val runBungee by tasks.registering(JavaExec::class) {
 fun agentConfigYaml(endpoint: String, serverId: String, namespace: String): String = """
     # Beacon agent E2E 运行配置（由 runBungee 任务生成，仅供端到端验收）。
     beacon:
-      # 控制面地址：指向本地起的 Beacon（默认 18080）。
+      # 控制面地址：指向本地起的 Beacon（默认 8848）。
       endpoints:
         - "$endpoint"
       # 共享令牌，需与控制面 agent-token 一致。
