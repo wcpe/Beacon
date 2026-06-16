@@ -100,6 +100,9 @@ object BeaconAgentBukkit : Plugin() {
         // 对外注册门面，供同进程业务插件读取。
         BeaconAgentProvider.register(assembled.beaconAgent)
 
+        // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
+        BeaconAgentCommand.register(assembled.lifecycle, adapter)
+
         // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
         assembled.lifecycle.bootstrapWithSnapshotThenConnect()
     }
