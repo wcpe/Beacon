@@ -2,6 +2,9 @@ package top.wcpe.beacon.agent.core.client
 
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
+import top.wcpe.beacon.agent.core.filetree.FileContent
+import top.wcpe.beacon.agent.core.filetree.FileManifest
+import top.wcpe.beacon.agent.core.filetree.FileManifestEntry
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.transport.HttpRequest
@@ -10,7 +13,8 @@ import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 
 /**
- * 收口 agent 五个 REST 语义调用：register / heartbeat / pollEffective / report / discover。
+ * 收口 agent REST 语义调用：register / heartbeat / pollEffective / report / discover，
+ * 以及文件树托管（通道B）的 pollFileManifest / fetchFileContent。
  *
  * 用 Map<String,Any?> 拼请求体经 codec.encode；响应 codec.decode 成泛型树后映射到 core 数据类。
  * core 内不出现 @Serializable 类型（ADR-0005）。
@@ -177,6 +181,74 @@ class BeaconApiClient(
         return JsonTree.asList(obj["instances"]).map { JsonTree.asObject(it) }
     }
 
+    /**
+     * 长轮询文件清单：GET /beacon/v1/agent/files/manifest（通道B）。
+     *
+     * 带当前 fileTreeMd5；变了 200 返回新清单（path→md5，不含内容），未变到超时 304。
+     * 与配置长轮询唤醒集合独立（见 ADR-0010）。
+     */
+    fun pollFileManifest(identity: AgentIdentity, currentMd5: String?, timeoutMs: Long): FileManifestPollResult {
+        val md5Param = currentMd5 ?: ""
+        val url = buildString {
+            append(base)
+            append("/beacon/v1/agent/files/manifest")
+            append("?namespace=").append(urlEncode(identity.namespace))
+            append("&serverId=").append(urlEncode(identity.serverId))
+            append("&md5=").append(urlEncode(md5Param))
+            append("&timeoutMs=").append(timeoutMs)
+        }
+        // 读超时给长轮询留余量（挂起上限 + 普通读超时）。
+        val resp = exec(
+            HttpRequest(
+                method = "GET",
+                url = url,
+                headers = headers(withBody = false),
+                body = null,
+                readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
+            ),
+        ) ?: return FileManifestPollResult.Failed("连接失败")
+
+        return when (resp.statusCode) {
+            200 -> FileManifestPollResult.Changed(parseManifest(resp.body))
+            304 -> FileManifestPollResult.NotModified
+            404 -> FileManifestPollResult.NotRegistered
+            else -> FileManifestPollResult.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 取单个文件内容：GET /beacon/v1/agent/files/content（通道B）。同步调用，请在异步线程使用。
+     *
+     * 200 返回该 path 按覆盖链解析后的整文件内容；404（FILE_NOT_FOUND/未注册）或连接失败返回 null。
+     */
+    fun fetchFileContent(identity: AgentIdentity, path: String): FileContent? {
+        val url = buildString {
+            append(base)
+            append("/beacon/v1/agent/files/content")
+            append("?namespace=").append(urlEncode(identity.namespace))
+            append("&serverId=").append(urlEncode(identity.serverId))
+            append("&path=").append(urlEncode(path))
+        }
+        val resp = exec(
+            HttpRequest(
+                method = "GET",
+                url = url,
+                headers = headers(withBody = false),
+                body = null,
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return null
+        if (resp.statusCode != 200) {
+            return null
+        }
+        val obj = JsonTree.asObject(codec.decode(resp.body))
+        return FileContent(
+            path = JsonTree.strOr(obj, "path", ""),
+            md5 = JsonTree.strOr(obj, "md5", ""),
+            content = JsonTree.strOr(obj, "content", ""),
+        )
+    }
+
     /** 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。 */
     private fun exec(request: HttpRequest): HttpResponse? {
         return try {
@@ -217,6 +289,25 @@ class BeaconApiClient(
             zone = JsonTree.str(obj, "zone"),
             md5 = JsonTree.strOr(obj, "md5", ""),
             items = items,
+        )
+    }
+
+    private fun parseManifest(jsonBody: String): FileManifest {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        val entries = JsonTree.asList(obj["files"]).map { raw ->
+            val fileObj = JsonTree.asObject(raw)
+            FileManifestEntry(
+                path = JsonTree.strOr(fileObj, "path", ""),
+                md5 = JsonTree.strOr(fileObj, "md5", ""),
+            )
+        }
+        return FileManifest(
+            namespace = JsonTree.strOr(obj, "namespace", ""),
+            serverId = JsonTree.strOr(obj, "serverId", ""),
+            group = JsonTree.str(obj, "group"),
+            zone = JsonTree.str(obj, "zone"),
+            fileTreeMd5 = JsonTree.strOr(obj, "fileTreeMd5", ""),
+            entries = entries,
         )
     }
 

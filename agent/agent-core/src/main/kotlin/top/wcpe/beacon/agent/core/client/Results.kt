@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.client
 
 import top.wcpe.beacon.agent.core.config.EffectiveResult
+import top.wcpe.beacon.agent.core.filetree.FileManifest
 
 /**
  * 注册结果（对应 register 200 响应）。
@@ -41,6 +42,22 @@ sealed class PollResult {
 
     /** 连接级失败/其它非预期状态：退避后重试。 */
     data class Failed(val reason: String) : PollResult()
+}
+
+/** 长轮询文件清单的结果（通道B，与配置长轮询独立）。 */
+sealed class FileManifestPollResult {
+
+    /** 200：fileTreeMd5 有变更，携带新清单（path→md5，不含内容）。 */
+    data class Changed(val manifest: FileManifest) : FileManifestPollResult()
+
+    /** 304：超时无变更，续杯（沿用旧 fileTreeMd5）。 */
+    object NotModified : FileManifestPollResult()
+
+    /** 404：未注册，需回到注册流程。 */
+    object NotRegistered : FileManifestPollResult()
+
+    /** 连接级失败/其它非预期状态：退避后重试。 */
+    data class Failed(val reason: String) : FileManifestPollResult()
 }
 
 /** 注册结果的状态分类（区分成功 / 重复 / 鉴权失败 / 身份缺失 / 连接失败）。 */
