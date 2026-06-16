@@ -48,8 +48,8 @@ services:
       # 由 MYSQL_* 拼装的 GORM DSN，指向同网络的 mysql 服务
       BEACON_DB_DSN: "${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE}?charset=utf8mb4&parseTime=true&loc=UTC"
     ports:
-      # 宿主端口 → 容器 8080（API 与管理台）；宿主端口可在 .env 用 BEACON_PUBLISH_PORT 覆盖
-      - "${BEACON_PUBLISH_PORT:-8080}:8080"
+      # 宿主端口 → 容器 8848（API 与管理台）；宿主端口可在 .env 用 BEACON_PUBLISH_PORT 覆盖
+      - "${BEACON_PUBLISH_PORT:-8848}:8848"
 
 volumes:
   # MySQL 数据持久化卷

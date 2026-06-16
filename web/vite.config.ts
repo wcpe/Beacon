@@ -17,9 +17,9 @@ export default defineConfig({
     // 开发期把后端两类前缀代理到本地控制面，避免跨域
     proxy: {
       // 管理台 API（React 管理台调用）
-      '/admin/v1': 'http://localhost:8080',
+      '/admin/v1': 'http://localhost:8848',
       // agent 接入 API（仅调试用，开发期一并代理）
-      '/beacon/v1': 'http://localhost:8080',
+      '/beacon/v1': 'http://localhost:8848',
     },
   },
 })

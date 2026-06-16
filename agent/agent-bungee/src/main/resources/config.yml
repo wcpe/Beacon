@@ -5,7 +5,7 @@
 beacon:
   # 控制面地址列表（Go 后端 API 与 UI 同端口）。MVP 取首个；多个用于后续容灾轮询。
   endpoints:
-    - "http://127.0.0.1:8080"
+    - "http://127.0.0.1:8848"
   # 最低限度区分用的共享令牌，置于请求头 X-Beacon-Token。非安全边界，仅防误连。
   bootstrap-token: "beacon-bootstrap-2026"
 

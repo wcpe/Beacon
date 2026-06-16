@@ -31,5 +31,5 @@ RUN addgroup -S beacon && adduser -S -G beacon beacon
 COPY --from=build /out/beacon /usr/local/bin/beacon
 USER beacon
 # API 与管理台 UI 同端口
-EXPOSE 8080
+EXPOSE 8848
 ENTRYPOINT ["/usr/local/bin/beacon"]

@@ -8,8 +8,8 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加载默认配置应成功，却报错: %v", err)
 	}
-	if cfg.HTTPAddr != ":8080" {
-		t.Errorf("默认监听地址应为 :8080，实际 %q", cfg.HTTPAddr)
+	if cfg.HTTPAddr != ":8848" {
+		t.Errorf("默认监听地址应为 :8848，实际 %q", cfg.HTTPAddr)
 	}
 	if cfg.Database.MaxOpenConns != 20 {
 		t.Errorf("默认最大连接数应为 20，实际 %d", cfg.Database.MaxOpenConns)

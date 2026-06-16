@@ -3,7 +3,7 @@ package config
 // Config 是 Beacon 控制面自身的运行配置（非"配置中心"业务配置）。
 // 加载顺序：内置默认 → 可选 yaml 文件 → 环境变量覆盖（见 load.go）。
 type Config struct {
-	// API 与管理台 UI 的监听地址（二者同端口），如 ":8080"
+	// API 与管理台 UI 的监听地址（二者同端口），如 ":8848"
 	HTTPAddr string `yaml:"http-addr"`
 	// agent 端共享 token，仅防误连（非安全边界，鉴权属 P2）
 	AgentToken string `yaml:"agent-token"`
@@ -56,7 +56,7 @@ type LogConfig struct {
 // Default 返回内置默认配置（本地开发可直接使用）。
 func Default() Config {
 	return Config{
-		HTTPAddr:   ":8080",
+		HTTPAddr:   ":8848",
 		AgentToken: "change-me",
 		Database: DatabaseConfig{
 			DSN:                "root:beacon@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=true&loc=UTC",

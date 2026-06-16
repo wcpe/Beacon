@@ -72,8 +72,8 @@ Beacon/
 ```bash
 cp .env.example .env      # 配置 MySQL 密码、agent token
 docker compose up -d      # 起 beacon + mysql
-# 管理台与 API 同端口： http://localhost:8080
-# 验证：GET http://localhost:8080/admin/v1/namespaces 返回 prod/test 两个环境
+# 管理台与 API 同端口： http://localhost:8848
+# 验证：GET http://localhost:8848/admin/v1/namespaces 返回 prod/test 两个环境
 ```
 
 ## 约定

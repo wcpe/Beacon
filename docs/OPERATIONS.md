@@ -5,7 +5,7 @@
 ## 1. 部署
 - 复制 `.env.example` → `.env`，填 MySQL 密码与 `BEACON_BOOTSTRAP_TOKEN`。
 - `docker compose up -d`；待 mysql healthcheck 通过后 beacon 自动建表（GORM AutoMigrate）+ 预置 namespace（prod/test）。
-- 管理台与 API 同端口（默认 8080）。
+- 管理台与 API 同端口（默认 8848）。
 
 ## 2. 升级
 - **升级前先备份 MySQL**（见 §4）。
