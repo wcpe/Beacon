@@ -3,11 +3,13 @@
 # —— 阶段一：构建前端 dist ——
 FROM node:22-alpine AS web
 WORKDIR /web
+# 启用 corepack，按 package.json 的 packageManager 字段使用固定版 pnpm
+RUN corepack enable
 # 先拷依赖清单以利用层缓存
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY web/ ./
-RUN npm run build
+RUN pnpm run build
 
 # —— 阶段二：Go 内嵌编译 ——
 FROM golang:1.26-alpine AS build
