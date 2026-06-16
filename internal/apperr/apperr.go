@@ -54,6 +54,10 @@ var (
 
 	// ErrUnauthorized agent 端缺少或错误的 token。
 	ErrUnauthorized = New(http.StatusUnauthorized, "UNAUTHORIZED", "缺少或非法的 token")
+	// ErrBadCredentials 管理台登录用户名或口令错误。
+	ErrBadCredentials = New(http.StatusUnauthorized, "BAD_CREDENTIALS", "用户名或口令错误")
+	// ErrAdminUnauthorized 管理台缺少或非法的登录令牌。
+	ErrAdminUnauthorized = New(http.StatusUnauthorized, "ADMIN_UNAUTHORIZED", "缺少或非法的登录令牌")
 	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。
 	ErrIdentityRequired = New(http.StatusBadRequest, "IDENTITY_REQUIRED", "缺少必要的身份标识")
 	// ErrDuplicateServerID 同 serverId 已有仍新鲜的不同地址实例在线。

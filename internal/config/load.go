@@ -46,6 +46,15 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("BEACON_DB_DSN"); v != "" {
 		cfg.Database.DSN = v
 	}
+	if v := os.Getenv("BEACON_ADMIN_USERNAME"); v != "" {
+		cfg.Auth.Username = v
+	}
+	if v := os.Getenv("BEACON_ADMIN_PASSWORD"); v != "" {
+		cfg.Auth.Password = v
+	}
+	if v := os.Getenv("BEACON_AUTH_SECRET"); v != "" {
+		cfg.Auth.Secret = v
+	}
 	if v := os.Getenv("BEACON_LOG_LEVEL"); v != "" {
 		cfg.Log.Level = v
 	}
@@ -58,6 +67,15 @@ func (c Config) validate() error {
 	}
 	if strings.TrimSpace(c.Database.DSN) == "" {
 		return fmt.Errorf("配置校验失败: 数据库 dsn 不能为空")
+	}
+	if strings.TrimSpace(c.Auth.Username) == "" {
+		return fmt.Errorf("配置校验失败: 管理面操作者用户名 auth.username 不能为空")
+	}
+	if strings.TrimSpace(c.Auth.Password) == "" {
+		return fmt.Errorf("配置校验失败: 管理面操作者口令不能为空（经 env BEACON_ADMIN_PASSWORD 注入）")
+	}
+	if strings.TrimSpace(c.Auth.Secret) == "" {
+		return fmt.Errorf("配置校验失败: 令牌签名密钥不能为空（经 env BEACON_AUTH_SECRET 注入）")
 	}
 	switch strings.ToUpper(c.Log.Level) {
 	case "ERROR", "WARN", "INFO", "DEBUG":

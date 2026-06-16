@@ -9,12 +9,27 @@ type Config struct {
 	AgentToken string `yaml:"agent-token"`
 	// 配置/版本/分配/审计的权威库连接
 	Database DatabaseConfig `yaml:"database"`
+	// 管理面鉴权（操作者认证 + 令牌，见 ADR-0009）
+	Auth AuthConfig `yaml:"auth"`
 	// 注册健康相关参数
 	Health HealthConfig `yaml:"health"`
 	// 长轮询相关参数
 	Longpoll LongpollConfig `yaml:"longpoll"`
 	// 日志配置
 	Log LogConfig `yaml:"log"`
+}
+
+// AuthConfig 是管理面鉴权配置（单操作者模型，非 RBAC）。
+// 口令与签名密钥为敏感项，走环境变量注入，禁写入入库 yaml、禁硬编码。
+type AuthConfig struct {
+	// 管理台操作者用户名
+	Username string `yaml:"username"`
+	// 管理台操作者口令（走 env BEACON_ADMIN_PASSWORD）
+	Password string `yaml:"password"`
+	// 令牌 HMAC 签名密钥（走 env BEACON_AUTH_SECRET）
+	Secret string `yaml:"secret"`
+	// 登录令牌有效期（秒）
+	TokenTTLSec int `yaml:"token-ttl-sec"`
 }
 
 // LongpollConfig 是配置长轮询配置。
@@ -63,6 +78,11 @@ func Default() Config {
 			MaxOpenConns:       20,
 			MaxIdleConns:       10,
 			ConnMaxLifetimeSec: 1800,
+		},
+		Auth: AuthConfig{
+			// 用户名给默认值；口令与签名密钥默认空，必须经 env 注入（禁空凭据空跑）
+			Username:    "admin",
+			TokenTTLSec: 86400,
 		},
 		Health: HealthConfig{
 			HeartbeatIntervalSec: 10,
