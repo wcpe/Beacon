@@ -36,7 +36,8 @@ internal/
   repository/  各表纯 GORM CRUD
   runtime/     registry.go(内存注册) health.go(TTL扫描) longpoll/hub.go(waiter 注册 + 唤醒)
   merge/       merge.go(深合并) codec.go(yaml/json/properties) digest.go(md5)
-  model/       6 个 GORM 实体 + enums
+  filetree/    resolve.go(通道B 整文件覆盖 + manifest + fileTreeMd5，纯函数，与 merge 平级)
+  model/       GORM 实体 + enums
   store/       db.go(GORM 连接 + AutoMigrate) logger.go
   pkg/log/     中文分级日志
 web/           React(Vite+TS)，dist/ 被内嵌
@@ -49,7 +50,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 `runtime` 是唯一持有可变全局态的域，由 `main.go` 装配后注入 service（依赖注入，不手写有状态单例）。`merge` 全为无副作用纯函数，便于穷举单测。
 
-## 3. 数据模型（MySQL / GORM，六表）
+## 3. 数据模型（MySQL / GORM）
 
 通用约定：`id BIGINT PK`（GORM `autoIncrement`）、`created_at/updated_at`、软删 `deleted_at`；时间统一 UTC；**禁用 MySQL 专有特性**（枚举落 `VARCHAR`+应用层校验、json 落 `TEXT`、不写 `gorm:"type:..."` 方言类型），切 Postgres 仅改 driver + DSN。
 
@@ -58,13 +59,17 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `namespace` | 环境隔离（prod/test） | `code` 唯一 |
 | `config_item` | 配置项标识 + scope 维度 + 当前版本指针 | 见下 |
 | `config_revision` | 每次发布的不可变快照（append-only） | 回滚 = 读旧版内容作新版发布，`source_revision` 记来源 |
+| `file_object` | 文件树托管（通道B）整文件 blob + scope 维度 + 当前版本指针 | 见下；与 `config_item` 平行但**整文件覆盖、不深合并**（[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） |
+| `file_revision` | 文件每次发布的不可变快照（append-only） | 与 `config_revision` 同款回滚思路 |
 | `zone_assignment` | serverId → (group, zone) 权威指派 | `(namespace, server_id)` 唯一，换区改这一行 |
 | `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result` |
 | `instance` | 注册元数据镜像 | **MVP 不建**，运行态以内存为准，仅注册写一条 audit |
 
 `config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。
 
-**软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。
+`file_object` 关键字段：`(namespace_code, group_code, path, scope_level, scope_target)` 唯一定位覆盖链中的一格（唯一键含 `path`）；`content`（整文件文本，落 `TEXT` 经 GORM size 抽象不绑方言）+ `content_md5` 冗余在行上；`current_revision`、`version`、`enabled`。同 `config_item` 的 scope 维度，但解析为**整文件覆盖**（取覆盖链上拥有该 `path` 的最高层那份，见 §5.1）。
+
+**软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。`file_object` 同款哨兵软删。
 
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
@@ -85,6 +90,16 @@ agent 只给 `(namespace, serverId)`，服务端按 `zone_assignment` 解析出 
 
 agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
+### 5.1 有效文件树解析（通道B，scope 整文件覆盖）
+
+文件树托管（通道B，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）与配置中心平行但语义不同——文件按相对 `path` 整文件覆盖，**绝不深合并**：
+
+- 同 `(namespace, serverId)` 解析路径，拉 global/group/zone/server 四层候选文件；**按 `path` 分桶，每个 path 取覆盖链上层级最高的那一份整文件**（优先级同上）。
+- 服务端算出 `manifest`（path→md5）+ 独立的 `fileTreeMd5`；`fileTreeMd5 = md5(concat(path + ":" + 单文件md5))`，把 `path` 名纳入哈希防集合碰撞（沿用 ADR-0008 思路）。
+- `fileTreeMd5` 与有效配置 md5 **相互独立**，各自长轮询唤醒集合分开（见 §6），互不触发无谓重算。
+- agent 比对本地已落盘 manifest，仅取/删变更文件，镜像落盘到插件真实 dataFolder（原子写，见 §8）。
+- 解析逻辑落 `internal/filetree` 纯函数包（与 `merge` 平级、无副作用），便于穷举单测。
+
 ## 6. 动态热更：REST 长轮询（"唤醒即重算比对"）
 
 无 Redis/MQ，纯进程内通知：
@@ -96,6 +111,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 5. 无变更到超时 → 304，agent 立即续杯。
 
 内存结构：`waiters map[ns+serverId][]*Waiter`，每 waiter 一个缓冲为 1 的 notify channel；Registry / Hub / Health **三锁独立不嵌套**，DB IO 全在锁外，结构上杜绝死锁。
+
+文件树托管（通道B）复用同一 `longpoll.Hub` 实现，但**另起一个独立 Hub 实例**：agent 走 `GET .../files/manifest` 带 `fileTreeMd5` 长轮询，文件发布只唤醒文件 Hub 的 waiter、配置发布只唤醒配置 Hub 的 waiter（唤醒集合独立）；唯 zone 改派同时影响两通道归属，故同时唤醒两 Hub。被唤醒返回的是 `manifest`（path→md5，不含内容），agent 再据差异逐个 `GET .../files/content` 取整文件。
 
 ## 7. 服务注册 / 发现 / 健康
 

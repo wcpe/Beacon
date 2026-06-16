@@ -4,6 +4,9 @@
 
 ## 未发布版本
 
+### 新增
+- 文件树托管（通道B，控制面侧）：新增 `file_object` / `file_revision` 两表（整文件 blob + scope 维度 + append-only 版本，唯一键含 `path`、`content` 落 TEXT 经 GORM size 抽象不绑方言、软删哨兵同 config_item）；`internal/filetree` 纯函数包做 scope **整文件覆盖**（取覆盖链最高层那份、不深合并、不碰 merge 包）+ manifest（path→md5）+ 独立 `fileTreeMd5`（path 名纳入哈希防碰撞）；FileService（建/发布/回滚/软删，事务内 object+revision+audit 原子）+ FileEffectiveService（解析 + 文件长轮询，持独立 Hub）；admin 文件 CRUD/发布/历史/回滚端点与 agent `files/manifest`（长轮询）/`files/content` 端点；长轮询配置与文件**唤醒集合独立**（zone 改派同时唤醒两通道）；path 校验拒绝绝对路径/`..` 穿越/反斜杠防落盘逃逸。filetree 穷举单测（scope 整文件覆盖 + fileTreeMd5 幂等/防碰撞/内容敏感）全绿。agent 侧文件同步器与原子落盘（含父目录 fsync）尚未实现。
+
 ## 0.1.0（2026-06-17）
 
 ### 新增

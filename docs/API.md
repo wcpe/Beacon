@@ -72,6 +72,30 @@
 ### 5. 服务发现 `GET /beacon/v1/agent/discovery`
 查询：`?namespace=&group=&zone=&role=`。返回按标签过滤的**在线**实例列表（归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。
 
+### 6. 长轮询拉文件清单 `GET /beacon/v1/agent/files/manifest`（通道B）
+查询参数：`?namespace=&serverId=&md5=<当前fileTreeMd5>&timeoutMs=30000`（首拉 `md5` 传空）。
+返回时机同 §3：① 当前 `fileTreeMd5` ≠ 请求 md5 → 立即 200；② 挂起期间被唤醒且重算后变化 → 200；③ 到超时无变化 → `304`（空体）。**与配置长轮询唤醒集合独立**（见 ADR-0010）。
+200 响应（仅 `manifest`，**不含内容**）：
+```json
+{
+  "namespace": "prod", "serverId": "lobby-1",
+  "group": "area1", "zone": "zoneA",
+  "fileTreeMd5": "c4...9b",
+  "files": [
+    { "path": "ui-components/main.allin", "md5": "9f...c1" },
+    { "path": "scripts/hello.js",          "md5": "77...0a" }
+  ]
+}
+```
+- `files` 为**已按覆盖链整文件覆盖后的有效文件清单**（path→md5），agent 比对本地已落盘 manifest，仅取/删变更文件。未注册 → `404 NOT_REGISTERED`。
+
+### 7. 取单个文件内容 `GET /beacon/v1/agent/files/content`（通道B）
+查询：`?namespace=&serverId=&path=<相对路径>`。返回该 `path` 按覆盖链解析后的**整文件内容**：
+```json
+{ "path": "ui-components/main.allin", "md5": "9f...c1", "content": "...整文件文本..." }
+```
+- 该 `path` 不在有效文件树 → `404 FILE_NOT_FOUND`。未注册 → `404 NOT_REGISTERED`。
+
 ---
 
 ## 二、admin / UI 侧 `/admin/v1/*`
@@ -90,6 +114,21 @@
 | `GET /admin/v1/configs/{id}/diff?from=&to=` | 返回两版本文本供前端 diff |
 
 错误：配置不存在 `404 CONFIG_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 CONFIG_CONFLICT`；内容超长（> 256KB）`422 CONTENT_TOO_LARGE`；发布内容解析失败 `422 CONTENT_INVALID`；覆盖层/目标键不合法 `400 INVALID_SCOPE`；同一 dataId 跨层格式不一致 `422 FORMAT_INCONSISTENT`。
+
+### 文件树托管（通道B）
+整文件 blob，scope **整文件覆盖**（不深合并），版本/回滚同配置思路（见 [ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）。
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/files?namespace=&group=&path=&scopeLevel=` | 列出文件对象 |
+| `GET /admin/v1/files/{id}` | 取当前整文件内容 + 元数据 |
+| `POST /admin/v1/files` | 新建（首次发布）：`{ namespace, group, path, scopeLevel, scopeTarget, content, operator, comment }` |
+| `PUT /admin/v1/files/{id}` | 发布新版本：`{ content, operator, comment }` → version+1，返回新 `version`/`md5` |
+| `DELETE /admin/v1/files/{id}` | 软删（该层从覆盖链脱落，触发文件唤醒；下游 agent 据 manifest 删该 path 镜像） |
+| `GET /admin/v1/files/{id}/revisions` | 历史版本列表 |
+| `GET /admin/v1/files/{id}/revisions/{version}` | 取某历史版本内容 |
+| `POST /admin/v1/files/{id}/rollback` | 回滚：`{ toVersion, operator, comment }` |
+
+错误：文件不存在 `404 FILE_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 FILE_CONFLICT`；路径不合法（空 / 绝对路径 / 含 `..` 穿越 / 含反斜杠）`400 INVALID_PATH`；内容超长（> 1MB）`422 CONTENT_TOO_LARGE`；覆盖层/目标键不合法 `400 INVALID_SCOPE`。
 
 ### 实例与健康
 | 端点 | 说明 |
