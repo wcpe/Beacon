@@ -17,7 +17,7 @@
 
 1. 复制 `_template.md` 到 `docs/specs/<feature>.md`。
 2. 填需求 / 设计 / 任务 / 验收。
-3. 按 `develop-feature` 技能实现，对着 spec 的任务与验收推进。
+3. 按 `sdd-develop-feature` 技能实现，对着 spec 的任务与验收推进。
 4. 交付后归并回项目级文档（见上）。
 
 > spec 是 🌡 中频文档：功能开发期动，交付后基本不动。涉及架构决策时在 spec 里**引用** ADR，不重复决策正文。

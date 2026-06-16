@@ -80,11 +80,11 @@
 
 采用 GitHub Flow（适合小团队 + 持续发布）：
 
-- **`main`**：始终可发布、受保护；改动经 PR 合入（PR 模板含防漂移自检）。main 每次推送由 CI 发**快照**（`latest` 预发布，见 [ADR-0007](adr/0007-versioning-and-release-channels.md) 与 `publish-snapshot` 技能）。
+- **`main`**：始终可发布、受保护；改动经 PR 合入（PR 模板含防漂移自检）。main 每次推送由 CI 发**快照**（`latest` 预发布，见 [ADR-0007](adr/0007-versioning-and-release-channels.md) 与 `sdd-publish-snapshot` 技能）。
 - **`feature/*`、`fix/*`、`refactor/*`**：短生命周期分支，做完发 PR 回 main。
-- **稳定发布**：在 main 打 `vX.Y.Z` tag（`release-version` 技能），CI 据 tag 出正式 Release。
-- **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 main**（`hotfix` 技能）。
-- **回滚**优先 `git revert`，不重写已 push 历史（`rollback-change` 技能）。
+- **稳定发布**：在 main 打 `vX.Y.Z` tag（`sdd-release-version` 技能），CI 据 tag 出正式 Release。
+- **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 main**（`sdd-hotfix` 技能）。
+- **回滚**优先 `git revert`，不重写已 push 历史（`sdd-rollback-change` 技能）。
 
 版本号唯一来源是根 `VERSION` 文件（ADR-0007），构建注入三组件，恒一致。
 
@@ -110,11 +110,11 @@
 | 🌡 中频 | `docs/OPERATIONS.md` | 部署 / 运维方式变化时 |
 | 🌡 中频 | `docs/specs/<feature>.md` | 功能开发期；交付后基本不动 |
 | ❄ 低频 | `docs/adr/*`、`README.md`、`SECURITY.md` | 架构决策时追加 / 总览或安全模型变化时 |
-| 🧊 近乎不变（改它=动项目根基） | `.claude/rules/*`（尤其 `architecture-invariants`）、`.claude/skills/*`、`.editorconfig`、`.gitignore`、`VERSION`（仅发版动） | 极少；改不变量 / 红线要慎重并配 ADR |
+| 🧊 近乎不变（改它=动项目根基） | `.claude/rules/*`（尤其 `architecture-invariants`）、全局 `sdd-*` 技能（由 sdd-skills 插件提供）、`.editorconfig`、`.gitignore`、`VERSION`（仅发版动） | 极少；改不变量 / 红线要慎重并配 ADR |
 
 把"改不变量 / 红线"当大事——它们近乎不变，真要改先走 ADR，别随手动。
 
-**会话之间如何接续**：这套靠 `.claude/rules/`（红线）+ `.claude/skills/`（流程）**自我维持**——任何新会话进入仓库会自动加载规则，按 `develop-feature` / `fix-bug` / `refactor-code` / `rollback-change` / `release-version` 等技能干活，每一步被 `doc-sync` 要求同步文档。所以"本次会话结束"不影响延续：下个会话读 PRD / ARCHITECTURE / ADR 接上下文，照技能与规则继续推进，文档随之演进、不漂移。
+**会话之间如何接续**：这套靠 `.claude/rules/`（红线，项目内）+ 全局 `sdd-*` 技能（由 sdd-skills 插件提供）**自我维持**——任何新会话进入仓库会自动加载规则，按 `sdd-develop-feature` / `sdd-fix-bug` / `sdd-refactor-code` / `sdd-rollback-change` / `sdd-release-version` 等技能干活，每一步被 `doc-sync` 要求同步文档。所以"本次会话结束"不影响延续：下个会话读 PRD / ARCHITECTURE / ADR 接上下文，照技能与规则继续推进，文档随之演进、不漂移。
 
 ## 10. 维护迭代周期（稳态操作手册）
 
@@ -124,9 +124,9 @@
 2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*`（§8）。
 3. **按技能走**：读相关 PRD / ARCHITECTURE / ADR → 测试先行 → 实现（守不变量、简单优先）→ 过验证门 → `doc-sync` 同步文档。
 4. **发 PR**：填防漂移自检模板 → 评审 → 合入 `main`。
-5. **main 自动出快照**（CI / `publish-snapshot`），可随时让人试用。
-6. **攒够一批 → 发版**（`release-version`：CHANGELOG 分段、定 SemVer、bump `VERSION`、打 `vX.Y.Z` → CI 出正式 Release）。
-7. **生产事故** → `hotfix` 旁路：从发布 tag 切分支最小修 → 出补丁版 → 回流 `main`。
+5. **main 自动出快照**（CI / `sdd-publish-snapshot`），可随时让人试用。
+6. **攒够一批 → 发版**（`sdd-release-version`：CHANGELOG 分段、定 SemVer、bump `VERSION`、打 `vX.Y.Z` → CI 出正式 Release）。
+7. **生产事故** → `sdd-hotfix` 旁路：从发布 tag 切分支最小修 → 出补丁版 → 回流 `main`。
 
 → 回到 1。
 
@@ -134,15 +134,16 @@
 
 | 来了什么 | 用哪个技能 |
 |---|---|
-| 新需求 / 新能力 | `develop-feature` |
-| bug / 报错 / 行为不对 | `fix-bug` |
-| 代码太乱 / 拆分 / 消除重复 | `refactor-code` |
-| 撤掉某功能 / 回退 | `rollback-change` |
-| 升级第三方依赖 | `bump-dependencies` |
-| 纯文档工作（写 ADR / 改架构说明 / 修文档漂移 / 整理文档） | `update-docs` |
-| 出快照 / 给人试用 | `publish-snapshot` |
-| 正式发版 | `release-version` |
-| 生产紧急修 | `hotfix` |
+| 新需求 / 新能力 | `sdd-develop-feature` |
+| bug / 报错 / 行为不对 | `sdd-fix-bug` |
+| 代码太乱 / 拆分 / 消除重复 | `sdd-refactor-code` |
+| 撤掉某功能 / 回退 | `sdd-rollback-change` |
+| 升级第三方依赖 | `sdd-bump-dependencies` |
+| 纯文档工作（写 ADR / 改架构说明 / 修文档漂移 / 整理文档） | `sdd-update-docs` |
+| 出快照 / 给人试用 | `sdd-publish-snapshot` |
+| 正式发版 | `sdd-release-version` |
+| 生产紧急修 | `sdd-hotfix` |
+| 外部 / 计划外提交进来（队友直推、CI、合并）需对齐文档 | `sdd-reconcile-external-commits` |
 
 **一句话**：稳态下你几乎不用从头想流程——认准工作项类型、调对应技能，它会带着你读文档、测试先行、同步文档、按分支与版本规矩走完。规则与技能就是把这套循环固化下来、跨会话不走样。
 
@@ -165,6 +166,6 @@
 **谁常动 / 谁不动**：
 - 🔥 高频：`CHANGELOG`（几乎每次）、PRD FR 表（每个 feat 加行 / 发版翻状态）、`VERSION`（每次发版）。
 - ❄ 低频：ADR（只在架构决策时 +1 或取代）。
-- 🧊 几乎不动：**期数**（只在开新大阶段，罕见）、`.claude/rules` / `.claude/skills`（动它 = 动根基，要配 ADR）。
+- 🧊 几乎不动：**期数**（只在开新大阶段，罕见）、`.claude/rules`（项目内）/ 全局 `sdd-*` 技能（动它 = 动根基，要配 ADR）。
 
 > 所以"100 feat + 100 fix 怎么维护期数"——**根本不维护期数**：fix 只进 `CHANGELOG`；feat 进 FR 表（贴个已有期标签）；期数还是那 3~6 个，纹丝不动。

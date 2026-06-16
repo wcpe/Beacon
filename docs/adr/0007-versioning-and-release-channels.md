@@ -4,7 +4,7 @@
 
 ## 背景
 
-Beacon 有三个可交付物（控制面 Go 二进制 / 镜像、两个 agent jar），需要统一的版本号来源与"稳定 / 快照"两条发布渠道，让 `release-version`、`publish-snapshot` 技能与 CI 都有一致依据，不各算各的。
+Beacon 有三个可交付物（控制面 Go 二进制 / 镜像、两个 agent jar），需要统一的版本号来源与"稳定 / 快照"两条发布渠道，让 `sdd-release-version`、`sdd-publish-snapshot` 技能与 CI 都有一致依据，不各算各的。
 
 ## 决策
 
@@ -20,12 +20,12 @@ Beacon 有三个可交付物（控制面 Go 二进制 / 镜像、两个 agent ja
 
 ### 版本演进
 - 开发期 `VERSION` 指向下一目标版本，main 快照即 `<VERSION>-SNAPSHOT`。
-- 正式发布由 `release-version` 技能据提交内容判 SemVer、必要时更新 `VERSION`、打 `vX.Y.Z`；发布后把 `VERSION` 提到下一开发目标。
+- 正式发布由 `sdd-release-version` 技能据提交内容判 SemVer、必要时更新 `VERSION`、打 `vX.Y.Z`；发布后把 `VERSION` 提到下一开发目标。
 - 1.0.0 之前为 `0.y.z`，接口可不保证向后兼容（破坏性仍在 CHANGELOG 标明）。
 
 ## 后果
 
-- CI、`release-version`、`publish-snapshot` 都以 `VERSION` + tag 为准。
+- CI、`sdd-release-version`、`sdd-publish-snapshot` 都以 `VERSION` + tag 为准。
 - 快照可追溯到具体提交（`+<sha>`），稳定版与 tag 一一对应。
 - 发快照与发正式版职责分离（分别对应两个技能）。
 

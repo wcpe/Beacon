@@ -12,7 +12,7 @@
 - **单元**：纯逻辑（尤其 `merge` 合并、`digest`）—— Go `testing` / Kotlin 测试，不连外部依赖，最快最多。
 - **集成**：控制面 + 真实 MySQL（测试库 / 容器）跑配置发布/解析/长轮询；agent 对接 mock 或真实 beacon。
 - **E2E**：compose 起 beacon+mysql + 真实 agent，跑两条关键时序（首次接入、发布热更，见 ARCHITECTURE 时序与 PRD §6）。
-- **何时跑**：单元 / 集成随每次改动与 CI；E2E 在发版前（`release-version` / `hotfix`）至少跑一遍。
+- **何时跑**：单元 / 集成随每次改动与 CI；E2E 在发版前（`sdd-release-version` / `sdd-hotfix`）至少跑一遍。
 
 ## 2. 必测的高风险区
 - **merge 覆盖链合并**：标量覆盖 / map 深合并 / list 整替 / null 删键 / 序列化 md5 幂等 —— 穷举单测。

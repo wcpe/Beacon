@@ -12,7 +12,7 @@
 
 - **CI 门禁**：lint 与格式检查未过 → 不允许合并（与测试同级，见 `testing-and-quality.md`）。
 - **本地**：提交前自行跑对应组件的 format + lint，不把格式问题留给 CI。
-- **依赖漏洞**：Go 侧用 `govulncheck` 作漏洞发现入口（零成本，纳入 CI）；升级流程见 `bump-dependencies`。
+- **依赖漏洞**：Go 侧用 `govulncheck` 作漏洞发现入口（零成本，纳入 CI）；升级流程见 `sdd-bump-dependencies`。
 - 工具与规则版本固定（写进配置 / 构建），避免不同机器结果不一致。
 
 ## 3. 与现有规则的关系

@@ -28,7 +28,7 @@
 ## 5. 回滚
 - **控制面版本回滚**：部署上一个稳定镜像 tag（见 GitHub Releases）。
 - **业务配置回滚**：用管理台的配置版本回滚——这是 Beacon 自带能力，**不需重新部署**。
-- **代码层回滚**：见 `rollback-change` 技能。
+- **代码层回滚**：见 `sdd-rollback-change` 技能。
 
 ## 6. 排障
 - beacon 起不来：看日志是否连不上 MySQL（DSN / 网络 / healthcheck 未过）。
