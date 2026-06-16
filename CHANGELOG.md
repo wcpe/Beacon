@@ -30,5 +30,6 @@
 - 长轮询热更：`longpoll.Hub`（缓冲为 1 的 notify channel、按 serverId/namespace 唤醒）+ `config/effective` 长轮询入口"先注册 waiter 再算 md5、唤醒即重算比对"（变了 200、未变挂起、超时 304）；发布/回滚/软删/改派事务提交后按 scope 算最小受影响集合再唤醒（global→全 ns、group→查内存、zone→反查 DB、server/改派→单 serverId）；有效配置未分配回退 groupHint；Hub 并发单测 + 真实 MySQL 长轮询时序集成（立即返回/超时/唤醒/只唤醒受影响/改派热推）。
 - 审计查询端点：`GET /admin/v1/audits`（按 namespace/action/targetType/targetRef/时间过滤 + 分页，时间倒序，返回 total+items），补齐管理台审计页所需后端；集成测试覆盖过滤/分页/排序。
 - React 管理台：configs（过滤/新建/详情发布/历史/diff/回滚/软删）、instances（过滤 + 5 秒健康轮询 + 未分配高亮 + 下线）、zones（指派 CRUD + 汇总）、audits（过滤分页）、namespaces（列表/新建）；react-router 可深链 + @tanstack/react-query；纯 CSS 无新增依赖；经根包 `go:embed all:web/dist` + SPA 回退由单二进制同端口供 UI+API。深链刷新不 404、无头浏览器渲染确认 React 正常挂载。
+- 双端 agent（Kotlin/TabooLib，五模块实现 ADR-0005）：agent-api（纯 Java8 只读 API：读有效配置 + 查发现）/ agent-core（零具体库依赖：HttpTransport·JsonCodec 接口 + BeaconApiClient 五调用 + 生命周期状态机 + 快照 + applier + 退避）/ agent-adapters（OkHttp + kotlinx，唯一碰具体库）/ bukkit·bungee 壳。生命周期 BOOTSTRAP→REGISTERING→RUNNING→DEGRADED 全异步不阻塞主线程；先点亮本地快照 fail-static、控制面挂不回退配置不阻断玩家；长轮询续杯（200 apply+report 续新 md5、304 续旧、连接失败退避重连）；插件主类 object+@Awake 不继承 JavaPlugin、身份缺失 fail-fast；okhttp/kotlinx 打包 relocate 进 jar（BeaconAgent / BeaconAgentProxy）。无 canary、有效配置无 version 代际号、register 的 capacity/weight 顶层、metadata 仅 map<string,string>。29 个单测（core 纯逻辑 + adapters 真实 codec 对假 transport）。真机 MC 端到端属 M6。
 
-> 第一期骨架已落地；配置中心、服务注册/发现/健康/zone 分配、长轮询热更、React 管理台已实现，双端 agent 随后续里程碑推进，尚未发布正式版本。
+> 第一期骨架已落地；配置中心、服务注册/发现/健康/zone 分配、长轮询热更、React 管理台、双端 agent 均已实现，打包与端到端联调随后续里程碑推进，尚未发布正式版本。

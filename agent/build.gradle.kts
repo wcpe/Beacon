@@ -1,9 +1,8 @@
 // Beacon agent 根构建脚本：声明各子模块共用的插件版本与编译约定。
-// M0 仅搭可编译骨架，真正的接入逻辑在 M5 实现。
 plugins {
-    // 在根工程声明插件版本，子模块按需 apply（此处不直接应用）。
-    kotlin("jvm") version "1.9.22" apply false
-    id("io.izzel.taboolib") version "2.0.37" apply false
+    // 版本集中在 settings.gradle.kts 的 pluginManagement 声明；此处仅占位、不直接应用。
+    kotlin("jvm") apply false
+    id("io.izzel.taboolib") apply false
 }
 
 // 所有子模块统一的仓库与编译约定。

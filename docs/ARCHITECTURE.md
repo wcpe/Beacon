@@ -40,7 +40,11 @@ internal/
   store/       db.go(GORM 连接 + AutoMigrate) logger.go
   pkg/log/     中文分级日志
 web/           React(Vite+TS)，dist/ 被内嵌
-agent/         Kotlin/TabooLib：agent-core / agent-bukkit（打包 BeaconAgent jar）/ agent-bungee（打包 BeaconAgentProxy jar）
+agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
+                 agent-api（纯 Java8 只读契约，业务插件 compileOnly）/ agent-core（平台无关核心，零具体库依赖：
+                 transport·codec 接口 + BeaconApiClient + 生命周期 + 快照 + applier + 退避）/
+                 agent-adapters（OkHttp + kotlinx 适配器，唯一碰具体库）/
+                 agent-bukkit（打包 BeaconAgent jar）/ agent-bungee（打包 BeaconAgentProxy jar）
 ```
 
 `runtime` 是唯一持有可变全局态的域，由 `main.go` 装配后注入 service（依赖注入，不手写有状态单例）。`merge` 全为无副作用纯函数，便于穷举单测。

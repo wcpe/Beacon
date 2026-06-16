@@ -1,0 +1,53 @@
+# Beacon agent 本地引导配置（BungeeCord 代理）。由插件 ENABLE 阶段加载。
+# 本文件是 agent 的「出生证」，仅含连接控制面与本机身份的最小信息。
+# 注意：zone（小区）不在这里配置——zone 由 Beacon 控制面权威指派。
+
+beacon:
+  # 控制面地址列表（Go 后端 API 与 UI 同端口）。MVP 取首个；多个用于后续容灾轮询。
+  endpoints:
+    - "http://127.0.0.1:8080"
+  # 最低限度区分用的共享令牌，置于请求头 X-Beacon-Token。非安全边界，仅防误连。
+  bootstrap-token: "beacon-bootstrap-2026"
+
+identity:
+  # 环境（namespace）：prod / test，必须与控制面 namespace 一致。
+  namespace: "prod"
+  # 本机唯一身份，环境内唯一。必须显式配置，禁止自动生成；重复将被控制面拒绝。
+  server-id: "proxy-1"
+  # 大区提示：仅在「该 serverId 尚未被控制面分配 zone」时作为兜底 group 使用。
+  group-hint: "area1"
+  # 对外可达地址 ip:port，用于注册上报与服务发现展示。
+  address: "127.0.0.1:25577"
+  # 本服业务版本（标签，用于发现过滤），可留空。
+  version: "1.0.0"
+  # 容量（一等字段，发现过滤维度）。
+  capacity: 1000
+  # 权重（一等字段，发现过滤维度）。
+  weight: 100
+  # 自定义注册元数据：仅 string→string 键值对。
+  metadata:
+    region: "cn-east"
+
+timing:
+  # 长轮询客户端期望挂起上限（毫秒）。服务端会取 min(本值, 服务端上限)。
+  poll-timeout-ms: 30000
+  # 注册 / 心跳 / 上报普通请求的连接与读超时（毫秒）。
+  request-timeout-ms: 5000
+  # 心跳周期兜底值（毫秒）。实际以注册响应的 heartbeatIntervalSec 为准，本值仅在拿到响应前过渡。
+  heartbeat-fallback-ms: 10000
+
+backoff:
+  # 指数退避初始等待（毫秒）。
+  initial-ms: 1000
+  # 指数退避等待上限（毫秒）。
+  max-ms: 30000
+  # 每次退避的倍率。
+  multiplier: 2.0
+  # 退避抖动比例（±），避免大量实例同时重连惊群。
+  jitter-ratio: 0.2
+
+snapshot:
+  # 是否启用本地快照 fail-static（控制面不可用时按快照继续）。
+  enabled: true
+  # 快照文件名（落 agent 数据目录）。
+  file-name: "effective-config.snapshot.json"
