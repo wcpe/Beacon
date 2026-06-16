@@ -4,8 +4,19 @@
 # API 与管理台 UI 的监听地址（二者同端口）
 http-addr: ":8848"
 
-# agent 端共享 token，仅防误连（非安全边界，鉴权属 P2）
+# agent 端共享 token，仅防误连（非安全边界，语义不变）
 agent-token: "change-me"
+
+# 管理面鉴权（FR-11，单操作者模型，见 docs/adr/0009）。口令与密钥为敏感项，走环境变量，勿写入此文件
+auth:
+  # 管理台操作者用户名
+  username: "admin"
+  # 管理台操作者口令；留空，经 env BEACON_ADMIN_PASSWORD 注入（缺省启动即失败）
+  password: ""
+  # 登录令牌 HMAC 签名密钥；留空，经 env BEACON_AUTH_SECRET 注入（缺省启动即失败）
+  secret: ""
+  # 登录令牌有效期（秒），默认 86400（一天）
+  token-ttl-sec: 86400
 
 database:
   # GORM DSN；切 Postgres 时改 driver 与此串，业务代码零改。必须带 parseTime=true&loc=UTC

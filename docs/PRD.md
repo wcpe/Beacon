@@ -56,7 +56,7 @@
 | FR-8 | zone 指派：serverId→zone 权威分配 + 改派热推 | P1 | 已交付@v0.1.0 |
 | FR-9 | 配置灰度/Beta | P2 | 计划 |
 | FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 | 计划 |
-| FR-11 | 管理面鉴权：操作者认证 + 写操作授权 + 操作者入审计（命令执行/前端登录前置，自 P2 前移，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)） | P2 | 计划 |
+| FR-11 | 管理面鉴权：操作者认证 + 写操作授权 + 操作者入审计（命令执行/前端登录前置，自 P2 前移，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)） | P2 | 开发中 |
 | FR-12 | 版本发布编排（蓝绿/滚动） | P3 | 计划 |
 | FR-13 | 虚拟合区运行时通道 / 控制面 HA | P3 | 计划 |
 | FR-14 | 文件树托管（通道B）：整文件 blob、scope 整文件覆盖（不深合并）、manifest 增量同步、管理台在线改+热推；agent 镜像落盘到插件真实 dataFolder，复用既有 File 加载器/热重载/本地回退（见 [ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） | P2 | 开发中 |

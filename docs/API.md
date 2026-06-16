@@ -5,8 +5,8 @@
 ## 通用约定
 
 - 统一错误体：`{ "code": "<业务码>", "message": "<中文说明>", "traceId": "<可选>" }`。
-- HTTP 状态：400 参数错 / 401 缺 token / 404 不存在 / 409 冲突 / 422 校验失败 / 500 内部错；**304 仅用于长轮询无变更超时**。
-- 鉴权：MVP 不做认证（鉴权属 P2）。admin 端假定内网可信；agent 端用共享 `X-Beacon-Token` 仅防误连（非安全边界）。
+- HTTP 状态：400 参数错 / 401 缺 token 或登录令牌 / 404 不存在 / 409 冲突 / 422 校验失败 / 500 内部错；**304 仅用于长轮询无变更超时**。
+- 鉴权：admin 端需登录令牌（见下「管理面鉴权」，自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）；agent 端用共享 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - 时间统一 UTC；内容指纹 `md5` 为小写 hex。
 
 ---
@@ -100,17 +100,30 @@
 
 ## 二、admin / UI 侧 `/admin/v1/*`
 
+### 管理面鉴权（操作者认证 + 写操作授权）
+
+> 单操作者模型（非 RBAC）。凭据来源走配置/环境变量（`BEACON_ADMIN_USERNAME` / `BEACON_ADMIN_PASSWORD` / `BEACON_AUTH_SECRET`），禁硬编码。令牌为无状态 HMAC-SHA256 签名串，无需落库/Redis。
+
+| 端点 | 说明 |
+|---|---|
+| `POST /admin/v1/auth/login` | 登录：`{ username, password }` → `{ token, operator }`。**本端点自身不需令牌。** |
+
+- 除登录外，`/admin/v1/*` 一律需请求头 `Authorization: Bearer <token>`。缺失或非 `Bearer ` 前缀 → `401 ADMIN_UNAUTHORIZED`；令牌签名不符 / 结构非法 / 过期 → 同样 `401 ADMIN_UNAUTHORIZED`。
+- 登录凭据错误 → `401 BAD_CREDENTIALS`。
+- **操作者身份以认证态为准**：所有写操作（新建/发布/回滚/软删/改派/取消指派/手动下线）的 `operator` 由登录令牌派生写入 `audit_log`，**忽略请求体/查询里手填的 operator**（手填值不再生效）。
+- 令牌有效期由配置 `auth.token-ttl-sec` 决定（默认 86400 秒）；过期需重新登录。
+
 ### 配置管理
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/configs?namespace=&group=&dataId=&scopeLevel=` | 列出配置项 |
 | `GET /admin/v1/configs/{id}` | 取当前内容 + 元数据 |
-| `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + operator + comment |
-| `PUT /admin/v1/configs/{id}` | 发布新版本：content + operator + comment → version+1，返回新 `version`/`md5` |
-| `DELETE /admin/v1/configs/{id}` | 软删（该层从合并链脱落，触发唤醒） |
+| `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + comment（operator 由认证态派生） |
+| `PUT /admin/v1/configs/{id}` | 发布新版本：content + comment → version+1，返回新 `version`/`md5`（operator 由认证态派生） |
+| `DELETE /admin/v1/configs/{id}` | 软删（该层从合并链脱落，触发唤醒；operator 由认证态派生） |
 | `GET /admin/v1/configs/{id}/revisions` | 历史版本列表 |
 | `GET /admin/v1/configs/{id}/revisions/{version}` | 取某历史版本内容 |
-| `POST /admin/v1/configs/{id}/rollback` | 回滚：`{ toVersion, operator, comment }`（= 读旧版内容作新版发布） |
+| `POST /admin/v1/configs/{id}/rollback` | 回滚：`{ toVersion, comment }`（= 读旧版内容作新版发布；operator 由认证态派生） |
 | `GET /admin/v1/configs/{id}/diff?from=&to=` | 返回两版本文本供前端 diff |
 
 错误：配置不存在 `404 CONFIG_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 CONFIG_CONFLICT`；内容超长（> 256KB）`422 CONTENT_TOO_LARGE`；发布内容解析失败 `422 CONTENT_INVALID`；覆盖层/目标键不合法 `400 INVALID_SCOPE`；同一 dataId 跨层格式不一致 `422 FORMAT_INCONSISTENT`。
@@ -135,7 +148,7 @@
 |---|---|
 | `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表） |
 | `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情 |
-| `POST /admin/v1/instances/{serverId}/offline?namespace=&operator=` | 手动下线（移除内存条目） |
+| `POST /admin/v1/instances/{serverId}/offline?namespace=` | 手动下线（移除内存条目；operator 由认证态派生） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
@@ -143,8 +156,8 @@
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/zones/assignments?namespace=&group=&zone=` | 列出 serverId→zone 指派 |
-| `PUT /admin/v1/zones/assignments` | 新增/改派 upsert：`{ namespace, serverId, group, zone, operator, note }`，触发该 serverId 唤醒 |
-| `DELETE /admin/v1/zones/assignments?namespace=&serverId=&operator=` | 取消指派（软删），触发唤醒 |
+| `PUT /admin/v1/zones/assignments` | 新增/改派 upsert：`{ namespace, serverId, group, zone, note }`，触发该 serverId 唤醒（operator 由认证态派生） |
+| `DELETE /admin/v1/zones/assignments?namespace=&serverId=` | 取消指派（软删），触发唤醒（operator 由认证态派生） |
 | `GET /admin/v1/zones?namespace=&group=` | zone 维度汇总（每 zone 服数/在线数） |
 
 错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。

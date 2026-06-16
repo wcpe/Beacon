@@ -27,7 +27,8 @@ Beacon 是**控制面（control plane）**：集中存储"事实"（配置、拓
 cmd/beacon/main.go                 # 装配 + 启动
 internal/
   config/      Beacon 自身配置（yaml + env 覆盖）
-  server/      router / 中间件（中文日志、recover、traceId、agent token）
+  server/      router / 中间件（中文日志、recover、traceId、agent token、管理面登录令牌）
+  auth/        管理面鉴权叶子包：凭据校验 + 无状态 HMAC 签名令牌签发/校验 + 操作者上下文（见 ADR-0009）
   render/      统一响应体与错误体写出 + traceId 上下文（handler 与 server 共用的叶子包）
   apperr/      带业务码与 HTTP 状态的领域错误（叶子包，供各层共用，避免反向依赖）
   embedweb/    服务内嵌前端 + SPA 回退处理器（内嵌指令 //go:embed all:web/dist 置于根包 embed.go，因 Go embed 不能跨上级目录）
@@ -74,8 +75,9 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
 - **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`config/effective`（长轮询）、`report`、`discovery`。
-- **admin 侧 `/admin/v1/*`**：配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计、namespace。
-- 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，鉴权属 P2）。
+- **admin 侧 `/admin/v1/*`**：登录（`auth/login`）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计、namespace。
+- 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
+- **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
 
 ## 5. 有效配置解析（scope 覆盖链）
 
