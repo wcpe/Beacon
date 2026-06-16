@@ -129,6 +129,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane.md)），agent 不声明 zone，从注册/拉取响应得到自己的归属；换区只改 `zone_assignment` 一行，agent 零改动。
 
+**本地运维命令（FR-17，仅本地）**：双端壳注册根命令 `/beacon`（权限 `beacon.admin`）——`status`（打印生命周期状态 / 是否连上 / 有效配置 md5 / 心跳周期 / endpoint）、`reload`（`forcePollNow`：md5=null 强制立刻重拉一次有效配置并经 `ConfigApplier` 幂等守卫 apply，不等长轮询超时）、`reconnect`（`reconnectNow`：重置退避并重新接入，**不清空 store / 快照**以守 fail-static）。`resync`（强制重同步文件树）依赖文件树托管（FR-14）未启用，仅占位提示。命令体经 `adapter.runAsync` 落异步线程，core 控制方法不碰 Bukkit/Bungee（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）；远程下发依赖鉴权（FR-11），本期不做。**注册单飞不变量**：注册有多触发点（心跳 404 / 长轮询 404 / 退避重试 / `reconnectNow`），由 `AtomicBoolean` 单飞门 + 注册「代」标识收口，保证**任意时刻只有一条 register→loops 在飞**，杜绝瞬时双注册、双循环。
+
 ## 9. 部署
 
 docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+ `mysql`（mysql healthcheck + beacon `depends_on: service_healthy` + 命名卷持久化）。多阶段 Dockerfile：node 构建前端 dist → `go build` 内嵌（`//go:embed all:dist`）→ alpine 极小镜像、非 root、`CGO_ENABLED=0` 静态链接。前端以相对路径 `/admin/v1` 同源访问（无 CORS）；非 API、非静态文件的路径回退 `index.html`（SPA history）。敏感项（DB 密码、token）走 env，不入库。
