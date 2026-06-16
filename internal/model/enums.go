@@ -23,15 +23,22 @@ func IsValidScopeLevel(level string) bool {
 
 // 审计动作（动词点分命名）。
 const (
-	ActionConfigCreate   = "config.create"
-	ActionConfigPublish  = "config.publish"
-	ActionConfigRollback = "config.rollback"
-	ActionConfigDelete   = "config.delete"
+	ActionConfigCreate     = "config.create"
+	ActionConfigPublish    = "config.publish"
+	ActionConfigRollback   = "config.rollback"
+	ActionConfigDelete     = "config.delete"
+	ActionInstanceRegister = "instance.register"
+	ActionInstanceOffline  = "instance.offline"
+	ActionZoneAssign       = "zone.assign"
+	ActionZoneMove         = "zone.move"
+	ActionZoneUnassign     = "zone.unassign"
 )
 
 // 审计对象类型。
 const (
-	TargetTypeConfig = "config"
+	TargetTypeConfig   = "config"
+	TargetTypeInstance = "instance"
+	TargetTypeZone     = "zone"
 )
 
 // 审计结果。

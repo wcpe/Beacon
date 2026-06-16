@@ -17,6 +17,16 @@ database:
   # 单个连接最大存活秒数
   conn-max-lifetime-sec: 1800
 
+health:
+  # 下发给 agent 的心跳周期（秒）
+  heartbeat-interval-sec: 10
+  # 超过多少秒未收到心跳即判失联（online→lost）
+  ttl-sec: 30
+  # lost 后多久转 offline（秒）
+  offline-grace-sec: 120
+  # 后台健康扫描周期（秒）
+  scan-interval-sec: 5
+
 log:
   # 日志级别：ERROR / WARN / INFO / DEBUG
   level: "INFO"

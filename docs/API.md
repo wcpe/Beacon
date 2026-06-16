@@ -95,16 +95,20 @@
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表） |
-| `GET /admin/v1/instances/{serverId}` | 单实例详情 |
-| `POST /admin/v1/instances/{serverId}/offline` | 手动下线（移除内存条目） |
+| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情 |
+| `POST /admin/v1/instances/{serverId}/offline?namespace=&operator=` | 手动下线（移除内存条目） |
+
+错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
 ### zone 分配
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/zones/assignments?namespace=&group=&zone=` | 列出 serverId→zone 指派 |
 | `PUT /admin/v1/zones/assignments` | 新增/改派 upsert：`{ namespace, serverId, group, zone, operator, note }`，触发该 serverId 唤醒 |
-| `DELETE /admin/v1/zones/assignments?namespace=&serverId=` | 取消指派（软删），触发唤醒 |
+| `DELETE /admin/v1/zones/assignments?namespace=&serverId=&operator=` | 取消指派（软删），触发唤醒 |
 | `GET /admin/v1/zones?namespace=&group=` | zone 维度汇总（每 zone 服数/在线数） |
+
+错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。
 
 ### 审计与环境
 | 端点 | 说明 |

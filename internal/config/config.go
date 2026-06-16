@@ -9,8 +9,22 @@ type Config struct {
 	AgentToken string `yaml:"agent-token"`
 	// 配置/版本/分配/审计的权威库连接
 	Database DatabaseConfig `yaml:"database"`
+	// 注册健康相关参数
+	Health HealthConfig `yaml:"health"`
 	// 日志配置
 	Log LogConfig `yaml:"log"`
+}
+
+// HealthConfig 是注册/心跳/健康判活配置。
+type HealthConfig struct {
+	// 下发给 agent 的心跳周期（秒）
+	HeartbeatIntervalSec int `yaml:"heartbeat-interval-sec"`
+	// 超过多少秒未收到心跳即判失联（online→lost）
+	TTLSec int `yaml:"ttl-sec"`
+	// lost 后多久转 offline（秒）
+	OfflineGraceSec int `yaml:"offline-grace-sec"`
+	// 后台健康扫描周期（秒）
+	ScanIntervalSec int `yaml:"scan-interval-sec"`
 }
 
 // DatabaseConfig 是数据库连接与连接池配置。
@@ -41,6 +55,12 @@ func Default() Config {
 			MaxOpenConns:       20,
 			MaxIdleConns:       10,
 			ConnMaxLifetimeSec: 1800,
+		},
+		Health: HealthConfig{
+			HeartbeatIntervalSec: 10,
+			TTLSec:               30,
+			OfflineGraceSec:      120,
+			ScanIntervalSec:      5,
 		},
 		Log: LogConfig{Level: "INFO"},
 	}

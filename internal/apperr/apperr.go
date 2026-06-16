@@ -44,4 +44,17 @@ var (
 	ErrContentInvalid = New(http.StatusUnprocessableEntity, "CONTENT_INVALID", "配置内容解析失败")
 	// ErrFormatInconsistent 同一 dataId 跨层格式不一致。
 	ErrFormatInconsistent = New(http.StatusUnprocessableEntity, "FORMAT_INCONSISTENT", "同一 dataId 跨层格式不一致")
+
+	// ErrUnauthorized agent 端缺少或错误的 token。
+	ErrUnauthorized = New(http.StatusUnauthorized, "UNAUTHORIZED", "缺少或非法的 token")
+	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。
+	ErrIdentityRequired = New(http.StatusBadRequest, "IDENTITY_REQUIRED", "缺少必要的身份标识")
+	// ErrDuplicateServerID 同 serverId 已有仍新鲜的不同地址实例在线。
+	ErrDuplicateServerID = New(http.StatusConflict, "DUPLICATE_SERVER_ID", "serverId 冲突：已有不同地址实例在线")
+	// ErrNotRegistered 心跳/上报时实例未注册。
+	ErrNotRegistered = New(http.StatusNotFound, "NOT_REGISTERED", "实例未注册")
+	// ErrInstanceNotFound 实例不存在。
+	ErrInstanceNotFound = New(http.StatusNotFound, "INSTANCE_NOT_FOUND", "实例不存在")
+	// ErrAssignmentNotFound zone 指派不存在。
+	ErrAssignmentNotFound = New(http.StatusNotFound, "ASSIGNMENT_NOT_FOUND", "zone 指派不存在")
 )

@@ -2,38 +2,22 @@ package service_test
 
 import (
 	"errors"
-	"os"
 	"reflect"
 	"testing"
 
 	"gorm.io/gorm"
 
 	"beacon/internal/apperr"
-	"beacon/internal/config"
 	"beacon/internal/merge"
 	"beacon/internal/model"
 	"beacon/internal/repository"
 	"beacon/internal/service"
-	"beacon/internal/store"
+	"beacon/internal/testsupport"
 )
 
-// testDB 连接集成测试库并清表；未设 BEACON_TEST_DSN 则跳过。
+// testDB 连接 service 包独立测试库并清表；未设 BEACON_TEST_DSN 则跳过。
 func testDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	dsn := os.Getenv("BEACON_TEST_DSN")
-	if dsn == "" {
-		t.Skip("未设置 BEACON_TEST_DSN，跳过集成测试")
-	}
-	db, err := store.Open(config.DatabaseConfig{DSN: dsn, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetimeSec: 300})
-	if err != nil {
-		t.Fatalf("连接测试库失败: %v", err)
-	}
-	for _, tbl := range []string{"config_revision", "config_item", "zone_assignment", "audit_log"} {
-		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
-			t.Fatalf("清表 %s 失败: %v", tbl, err)
-		}
-	}
-	return db
+	return testsupport.OpenTestDB(t, "service")
 }
 
 // newStack 装配配置与有效配置服务。

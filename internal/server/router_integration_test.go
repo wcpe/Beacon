@@ -6,38 +6,43 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
+	"time"
 
-	"beacon/internal/config"
 	"beacon/internal/handler"
 	"beacon/internal/repository"
+	"beacon/internal/runtime"
 	"beacon/internal/server"
 	"beacon/internal/service"
-	"beacon/internal/store"
+	"beacon/internal/testsupport"
 )
 
-// newTestServer 装配真实路由与 DB-backed 服务；未设 BEACON_TEST_DSN 则跳过。
+// newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
 func newTestServer(t *testing.T) *httptest.Server {
+	return newTestServerWithToken(t, "")
+}
+
+// newTestServerWithToken 同上，但启用指定的 agent token。
+func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	t.Helper()
-	dsn := os.Getenv("BEACON_TEST_DSN")
-	if dsn == "" {
-		t.Skip("未设置 BEACON_TEST_DSN，跳过 REST 集成测试")
-	}
-	db, err := store.Open(config.DatabaseConfig{DSN: dsn, MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetimeSec: 300})
-	if err != nil {
-		t.Fatalf("连库失败: %v", err)
-	}
-	for _, tbl := range []string{"config_revision", "config_item", "zone_assignment", "audit_log"} {
-		db.Exec("DELETE FROM " + tbl)
-	}
+	db := testsupport.OpenTestDB(t, "server")
+	auditRepo := repository.NewAuditLogRepository(db)
+	assignRepo := repository.NewZoneAssignmentRepository(db)
+	registry := runtime.NewRegistry()
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(repository.NewNamespaceRepository(db)))
 	cfgSvc := service.NewConfigService(db,
 		repository.NewConfigItemRepository(db),
-		repository.NewConfigRevisionRepository(db),
-		repository.NewAuditLogRepository(db))
-	cfgHandler := handler.NewConfigHandler(cfgSvc)
-	router := server.NewRouter(nsHandler, cfgHandler, http.HandlerFunc(http.NotFound))
+		repository.NewConfigRevisionRepository(db), auditRepo)
+	instSvc := service.NewInstanceService(registry, assignRepo, auditRepo, 10*time.Second, 30*time.Second)
+	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
+	router := server.NewRouter(server.Handlers{
+		Namespace: nsHandler,
+		Config:    handler.NewConfigHandler(cfgSvc),
+		Agent:     handler.NewAgentHandler(instSvc),
+		Instance:  handler.NewInstanceHandler(instSvc),
+		Zone:      handler.NewZoneHandler(zoneSvc),
+		Web:       http.HandlerFunc(http.NotFound),
+	}, agentToken)
 	return httptest.NewServer(router)
 }
 

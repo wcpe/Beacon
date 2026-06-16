@@ -8,8 +8,23 @@ import (
 	"net/http"
 	"time"
 
+	"beacon/internal/apperr"
 	"beacon/internal/render"
 )
+
+// agentTokenMiddleware 校验 agent 端共享 token（仅防误连，非安全边界）。
+// token 为空表示停用校验（开发场景）。
+func agentTokenMiddleware(token string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token != "" && r.Header.Get("X-Beacon-Token") != token {
+				render.WriteError(w, r, apperr.ErrUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 // traceMiddleware 为每个请求生成 traceId，注入 context 并回写响应头。
 func traceMiddleware(next http.Handler) http.Handler {

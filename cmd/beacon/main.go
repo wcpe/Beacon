@@ -19,6 +19,7 @@ import (
 	"beacon/internal/handler"
 	"beacon/internal/pkg/log"
 	"beacon/internal/repository"
+	"beacon/internal/runtime"
 	"beacon/internal/server"
 	"beacon/internal/service"
 	"beacon/internal/store"
@@ -62,15 +63,33 @@ func run() error {
 	configRepo := repository.NewConfigItemRepository(db)
 	revRepo := repository.NewConfigRevisionRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
+	assignRepo := repository.NewZoneAssignmentRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	configHandler := handler.NewConfigHandler(configService)
+
+	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
+	registry := runtime.NewRegistry()
+	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
+	ttl := time.Duration(cfg.Health.TTLSec) * time.Second
+	offlineGrace := time.Duration(cfg.Health.OfflineGraceSec) * time.Second
+	scanInterval := time.Duration(cfg.Health.ScanIntervalSec) * time.Second
+	healthScanner := runtime.NewHealthScanner(registry, ttl, offlineGrace, scanInterval)
+
+	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
+	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
+	agentHandler := handler.NewAgentHandler(instanceService)
+	instanceHandler := handler.NewInstanceHandler(instanceService)
+	zoneHandler := handler.NewZoneHandler(zoneService)
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
 	if err != nil {
 		return err
 	}
-	router := server.NewRouter(nsHandler, configHandler, embedweb.Handler(dist))
+	router := server.NewRouter(server.Handlers{
+		Namespace: nsHandler, Config: configHandler, Agent: agentHandler,
+		Instance: instanceHandler, Zone: zoneHandler, Web: embedweb.Handler(dist),
+	}, cfg.AgentToken)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -80,6 +99,9 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// 启动后台健康扫描（随关停信号取消退出）
+	go healthScanner.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

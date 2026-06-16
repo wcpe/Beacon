@@ -1,0 +1,58 @@
+// Package testsupport 提供集成测试的共享脚手架。
+// 为每个测试包分配独立数据库（beacon_<suffix>），避免 go test 并行迁移同库冲突。
+package testsupport
+
+import (
+	"database/sql"
+	"os"
+	"testing"
+
+	gomysql "github.com/go-sql-driver/mysql"
+	"gorm.io/gorm"
+
+	"beacon/internal/config"
+	"beacon/internal/store"
+)
+
+// 集成测试涉及的可清空表（按外键无关顺序）。
+var resetTables = []string{"config_revision", "config_item", "zone_assignment", "audit_log"}
+
+// OpenTestDB 为某测试包打开独立数据库（beacon_<suffix>），迁移并清表。
+// 未设 BEACON_TEST_DSN 则跳过该测试。
+func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
+	t.Helper()
+	raw := os.Getenv("BEACON_TEST_DSN")
+	if raw == "" {
+		t.Skip("未设置 BEACON_TEST_DSN，跳过集成测试")
+	}
+	cfg, err := gomysql.ParseDSN(raw)
+	if err != nil {
+		t.Fatalf("解析 BEACON_TEST_DSN 失败: %v", err)
+	}
+	target := cfg.DBName + "_" + suffix
+
+	// 先连到基础库创建独立测试库（IF NOT EXISTS 并发安全）
+	admin, err := sql.Open("mysql", raw)
+	if err != nil {
+		t.Fatalf("打开基础连接失败: %v", err)
+	}
+	_, err = admin.Exec("CREATE DATABASE IF NOT EXISTS `" + target + "`")
+	_ = admin.Close()
+	if err != nil {
+		t.Fatalf("创建测试库 %s 失败: %v", target, err)
+	}
+
+	cfg.DBName = target
+	db, err := store.Open(config.DatabaseConfig{
+		DSN: cfg.FormatDSN(), MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetimeSec: 300,
+	})
+	if err != nil {
+		t.Fatalf("连接测试库失败: %v", err)
+	}
+	for _, tbl := range resetTables {
+		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
+			t.Fatalf("清表 %s 失败: %v", tbl, err)
+		}
+	}
+	return db
+}
