@@ -4,6 +4,8 @@
 
 ## 未发布版本
 
+## 0.1.0（2026-06-17）
+
 ### 新增
 - 项目立项与第一期（MVP）设计定稿：确立"控制面（Go + 内嵌 React）/ 数据面（Bukkit/Bungee agent）"架构。
 - 架构文档 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)：控制面/数据面切分、MySQL+GORM 六表数据模型、scope 覆盖链合并、REST 长轮询热更机制、docker-compose 单节点部署。
@@ -42,4 +44,4 @@
 ### 修复
 - 审计来源 IP 恒空：config / zone / instance 三处审计此前未写 `client_ip`，现由 handler 提取请求来源 IP（X-Forwarded-For 首跳 → X-Real-IP → RemoteAddr）按既有显式传参约定透传至 service 审计写入，管理台"来源 IP"列可用（FR-7 / PRD §6⑧）。
 
-> 第一期（MVP）M0–M6 全部实现并经验收：配置中心、服务注册/发现/健康/zone 分配、长轮询热更、React 管理台、双端 agent 均已落地，真机端到端（首次接入 / 发布热更 / 审计可查）双端跑通；尚未打正式版本 tag。
+> 第一期（MVP）首个正式版本：配置中心、服务注册/发现/健康/zone 分配、长轮询热更、React 管理台、双端 agent 全部落地并验收——集成测试真跑全 PASS（`-tags=integration` + MySQL），PRD §6 八条真机真集群逐条通过（秒级 apply / 回滚 / 三层合并 / zone 热推 / 健康 TTL / 杀控制面 fail-static + 重连 / 同 serverId 守卫 + 故障换机不误杀 / 审计可查），FR-1~8 已交付@v0.1.0。
