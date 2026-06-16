@@ -37,6 +37,7 @@
 - agent 包路径从 `com.beacon.agent` 迁移到 `top.wcpe.beacon.agent`（e2e 模块 `com.beacon.e2e` → `top.wcpe.beacon.e2e`）；Gradle group 同步为 `top.wcpe.beacon.agent`，第三方库经 `@RuntimeDependencies` 运行期下载不打包、其打包期/运行期 relocate 命名空间随之为 `top.wcpe.beacon.agent.lib.*`。**对 agent-api 消费方为破坏性变更**：业务插件需同步更新 `compileOnly` 坐标 group 与 `import`。并对齐 CoreLib 的 TabooLib 用法——bungee 改枚举式 `install`、双端 TabooLib 版本统一为 `6.3.0-afd75a7`、移除冗余的 `relocate("taboolib", …)`（jar 内 taboolib 命名空间不变）。
 - 控制面默认 HTTP 端口由 `8080` 改为 `8848`（管理台与 agent 同端口）；web 开发代理、agent 默认 endpoint、`.env.example` / `docker-compose.yml` / `Dockerfile` 及运维文档同步收敛到 `8848`。
 - 明确 P1 范围：心跳响应 `configDirty` 优化提示位有意不在 P1 实现、恒返 `false`（变更感知由长轮询负责，agent 不依赖），归档 P2；代码注释与 `docs/API.md` / `docs/PRD.md` 同步标注。
+- 集成测试加 `//go:build integration` 标记与单测隔离：`go test ./...` 只跑单测、`go test -tags=integration ./...`（+ `BEACON_TEST_DSN`）才跑集成，杜绝集成被静默 `t.Skip` 误判"全绿"；运行方式见 `docs/OPERATIONS.md` §8，`testing-and-quality` 规则同步。
 
 ### 修复
 - 审计来源 IP 恒空：config / zone / instance 三处审计此前未写 `client_ip`，现由 handler 提取请求来源 IP（X-Forwarded-For 首跳 → X-Real-IP → RemoteAddr）按既有显式传参约定透传至 service 审计写入，管理台"来源 IP"列可用（FR-7 / PRD §6⑧）。

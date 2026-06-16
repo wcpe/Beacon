@@ -44,3 +44,14 @@
 - Bukkit 端：`cd agent && ./gradlew :agent-e2e:runServer` —— 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
 - Bungee 端：`./gradlew :agent-e2e-bungee:runBungee` —— 自动下载 Waterfall，加载 BeaconAgentProxy 与验收插件。
 - 验证：`GET /admin/v1/instances` 看 serverId online；改配置发布后看验收插件数据目录的 `e2e-observations.log` 是否出现新值（业务插件经 agent Java 只读 API 读到热更）；`GET /admin/v1/audits` 查发布记录。
+
+## 8. 测试运行方式（单元 / 集成）
+
+- **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`internal/service` / `internal/server` 显示 `no test files` 属正常（其用例全为集成）。
+- **集成测试**（需真实 MySQL）：先起测试库、设 DSN，再带 `integration` 标记跑：
+  ```bash
+  export BEACON_TEST_DSN='root:<密码>@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=true&loc=UTC'
+  go test -tags=integration ./... -count=1
+  ```
+  `internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。
+- **CI / 发版前**：两条都跑（`go test ./...` 与 `go test -tags=integration ./...`），E2E 另见 §7。务必确认集成是 PASS 而非 SKIP。
