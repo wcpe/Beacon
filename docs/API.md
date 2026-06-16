@@ -47,7 +47,7 @@
 ### 2. 心跳 `POST /beacon/v1/agent/heartbeat`
 请求：`{ "namespace": "prod", "serverId": "lobby-1" }`
 响应：`{ "ok": true, "ttlSec": 30, "configDirty": false }`
-- 刷新内存 `lastHeartbeat=now`、状态 `online`；`configDirty` 为优化提示位。未注册 → `404 NOT_REGISTERED`。
+- 刷新内存 `lastHeartbeat=now`、状态 `online`；`configDirty` 为可选优化提示位，**P1 恒 `false`**（变更感知由长轮询负责，agent 不依赖它；提示位归档 P2）。未注册 → `404 NOT_REGISTERED`。
 
 ### 3. 长轮询拉有效配置 `GET /beacon/v1/agent/config/effective`
 查询参数：`?namespace=&serverId=&md5=<当前md5>&timeoutMs=30000`（首拉 `md5` 传空/0）。

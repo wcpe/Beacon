@@ -86,7 +86,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	// configDirty 为优化提示位，长轮询本身能感知变更；M2 暂返 false
+	// configDirty 为可选优化提示位：P1 有意不实现，变更感知由长轮询负责，故恒返 false（提示位归档 P2，agent 不依赖它）。
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "ttlSec": ttlSec, "configDirty": false})
 }
 
