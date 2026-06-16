@@ -32,19 +32,25 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 	configRepo := repository.NewConfigItemRepository(db)
+	fileRepo := repository.NewFileObjectRepository(db)
 	registry := runtime.NewRegistry()
 	hub := longpoll.NewHub()
+	fileHub := longpoll.NewHub()
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(repository.NewNamespaceRepository(db)))
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db), auditRepo)
+	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	instSvc := service.NewInstanceService(registry, assignRepo, auditRepo, 10*time.Second, 30*time.Second)
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, hub)
-	notifier := service.NewChangeNotifier(hub, registry, assignRepo)
+	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
 	cfgSvc.SetNotifier(notifier)
+	fileSvc.SetNotifier(notifier)
 	zoneSvc.SetNotifier(notifier)
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler,
 		Config:    handler.NewConfigHandler(cfgSvc),
+		File:      handler.NewFileHandler(fileSvc, fileEffSvc, instSvc, 30*time.Second),
 		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
 		Instance:  handler.NewInstanceHandler(instSvc),
 		Zone:      handler.NewZoneHandler(zoneSvc),

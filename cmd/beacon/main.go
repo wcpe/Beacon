@@ -68,6 +68,11 @@ func run() error {
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	configHandler := handler.NewConfigHandler(configService)
 
+	// 文件树托管（通道B）：file_object/file_revision 仓库 + 服务
+	fileRepo := repository.NewFileObjectRepository(db)
+	fileRevRepo := repository.NewFileRevisionRepository(db)
+	fileService := service.NewFileService(db, fileRepo, fileRevRepo, auditRepo)
+
 	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
 	registry := runtime.NewRegistry()
 	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
@@ -79,15 +84,19 @@ func run() error {
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
 
-	// 长轮询：waiter Hub + 有效配置解析 + 事务后唤醒（注入 config/zone 服务）
+	// 长轮询：配置与文件各持独立 Hub（唤醒集合分开，互不触发无谓重算）+ 有效解析 + 事务后唤醒
 	hub := longpoll.NewHub()
+	fileHub := longpoll.NewHub()
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, hub)
-	notifier := service.NewChangeNotifier(hub, registry, assignRepo)
+	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
 	configService.SetNotifier(notifier)
+	fileService.SetNotifier(notifier)
 	zoneService.SetNotifier(notifier)
 	maxHold := time.Duration(cfg.Longpoll.MaxHoldMs) * time.Millisecond
 
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
+	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, instanceService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
@@ -98,7 +107,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Config: configHandler, Agent: agentHandler,
+		Namespace: nsHandler, Config: configHandler, File: fileHandler, Agent: agentHandler,
 		Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
 		Web: embedweb.Handler(dist),
 	}, cfg.AgentToken)

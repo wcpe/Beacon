@@ -12,6 +12,7 @@ import (
 type Handlers struct {
 	Namespace *handler.NamespaceHandler
 	Config    *handler.ConfigHandler
+	File      *handler.FileHandler
 	Agent     *handler.AgentHandler
 	Instance  *handler.InstanceHandler
 	Zone      *handler.ZoneHandler
@@ -31,6 +32,8 @@ func NewRouter(h Handlers, agentToken string) http.Handler {
 		r.Post("/register", h.Agent.Register)
 		r.Post("/heartbeat", h.Agent.Heartbeat)
 		r.Get("/config/effective", h.Agent.Effective)
+		r.Get("/files/manifest", h.File.Manifest)
+		r.Get("/files/content", h.File.Content)
 		r.Post("/report", h.Agent.Report)
 		r.Get("/discovery", h.Agent.Discover)
 	})
@@ -50,6 +53,16 @@ func NewRouter(h Handlers, agentToken string) http.Handler {
 		r.Get("/configs/{id}/revisions/{version}", h.Config.GetRevision)
 		r.Post("/configs/{id}/rollback", h.Config.Rollback)
 		r.Get("/configs/{id}/diff", h.Config.Diff)
+
+		// 文件树托管（通道B）
+		r.Get("/files", h.File.List)
+		r.Post("/files", h.File.Create)
+		r.Get("/files/{id}", h.File.Get)
+		r.Put("/files/{id}", h.File.Publish)
+		r.Delete("/files/{id}", h.File.Delete)
+		r.Get("/files/{id}/revisions", h.File.ListRevisions)
+		r.Get("/files/{id}/revisions/{version}", h.File.GetRevision)
+		r.Post("/files/{id}/rollback", h.File.Rollback)
 
 		// 实例与健康
 		r.Get("/instances", h.Instance.List)
