@@ -56,9 +56,16 @@
 | FR-8 | zone 指派：serverId→zone 权威分配 + 改派热推 | P1 | 已交付@v0.1.0 |
 | FR-9 | 配置灰度/Beta | P2 | 计划 |
 | FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 | 计划 |
-| FR-11 | 鉴权/配置加密 | P2 | 计划 |
+| FR-11 | 管理面鉴权：操作者认证 + 写操作授权 + 操作者入审计（命令执行/前端登录前置，自 P2 前移，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)） | P2 | 计划 |
 | FR-12 | 版本发布编排（蓝绿/滚动） | P3 | 计划 |
 | FR-13 | 虚拟合区运行时通道 / 控制面 HA | P3 | 计划 |
+| FR-14 | 文件树托管（通道B）：整文件 blob、scope 整文件覆盖（不深合并）、manifest 增量同步、管理台在线改+热推；agent 镜像落盘到插件真实 dataFolder，复用既有 File 加载器/热重载/本地回退（见 [ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） | P2 | 计划 |
+| FR-15 | 三方插件文件覆盖兼容：基于通道B 的备份+整文件覆盖 + 受限重载命令，兼容无法改源码的三方插件；命令执行依赖鉴权（FR-11） | P2 | 计划 |
+| FR-16 | 下游 SDK 接入包：发布 agent-api（+ 接入 kit），下游软依赖、agent 不可用按 isAvailable 回退本地文件 | P2 | 计划 |
+| FR-17 | agent 运维命令：本地 reload/reconnect/resync 等基础控制；远程下发依赖鉴权（FR-11） | P2 | 计划 |
+| FR-18 | 管理台前端增强：文件树浏览/任意文本编辑/文件级版本·diff·回滚/登录身份/发布前只读 dry-run 预览 | P2 | 计划 |
+| FR-19 | SDK 与 agent-api 文档：发布坐标/版本对齐矩阵/接入示例/API 参考（随 FR-16 收尾补齐） | P2 | 计划 |
+| FR-20 | 配置加密（自 FR-11 拆分） | P3 | 计划 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 
@@ -69,7 +76,7 @@
 - **可移植**：DB 经 GORM，禁 MySQL 专有特性，可切 Postgres。
 - **简单优先**：不引入 Redis/MQ/DI 框架等重型件。
 - **可维护**：中文注释/日志/提交；分级日志（ERROR/WARN/INFO/DEBUG）。
-- **安全**：敏感项（DB 密码、token）走 env 不入库；MVP 内网可信（鉴权 P2）。
+- **安全**：敏感项（DB 密码、token）走 env 不入库；管理面鉴权前移本批（见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)），数据面内网可信不变，配置加密仍属后期（FR-20）。
 
 ## 6. 验收标准（P1）
 
