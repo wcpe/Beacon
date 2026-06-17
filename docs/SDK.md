@@ -19,6 +19,28 @@
 - **发布仓库**：默认只发 `mavenLocal()`；远程仓库可选，URL/凭据走 gradle property（`beaconPublishUrl` / `beaconPublishUsername` / `beaconPublishPassword`）或同名大写 env 注入，缺省即只本机。命令：`./gradlew publishToMavenLocal`。
 - **版本对齐矩阵（硬约束）**：**部署的 BeaconAgent 版本必须 ≥ 下游编译所用 agent-api/kit 版本**（运行期提供方不得旧于编译期契约），否则可能 `NoSuchMethodError`。
 
+### 2.1 发布到私有远程仓库（Nexus / Artifactory）
+
+仓库 URL 与凭据**全部经 env 注入**（不入库、不硬编码；CI 用 secret）；未设 `BEACON_PUBLISH_URL` 时只发本机 `mavenLocal`。
+
+```bash
+# 远程 releases 仓库地址（示例为占位，替换为贵方 Nexus/Artifactory 实际地址）
+export BEACON_PUBLISH_URL='https://nexus.example.com/repository/maven-releases/'
+# 凭据（CI secret 注入；仓库无鉴权时可省，走匿名）
+export BEACON_PUBLISH_USERNAME='<仓库账号>'
+export BEACON_PUBLISH_PASSWORD='<仓库口令或令牌>'
+
+cd agent
+# 仅发远程仓库：
+./gradlew :agent-api:publishAllPublicationsToBeaconRemoteRepository \
+          :agent-kit:publishAllPublicationsToBeaconRemoteRepository
+# 或一并发 mavenLocal + 远程：./gradlew :agent-api:publish :agent-kit:publish
+```
+
+- 产出两件工件 `beacon-agent-api` / `beacon-agent-kit`（均含 sources jar），version 跟随根 `VERSION`。
+- 远程仓库选 **releases**（version 不含 `-SNAPSHOT` 即按 release 发，覆盖策略由仓库侧 release 规则约束）。
+- Artifactory 同理：`BEACON_PUBLISH_URL` 填 `https://<artifactory>/artifactory/<repo-key>/`，凭据用账号 + API Key / 令牌。
+
 ## 3. 接入（下游 build + plugin.yml）
 
 ```kotlin
