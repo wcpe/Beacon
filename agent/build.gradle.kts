@@ -5,6 +5,14 @@ plugins {
     id("io.izzel.taboolib") apply false
 }
 
+// 从仓库根 VERSION 文件读取版本号并注入所有模块（ADR-0007：根 VERSION 为唯一版本来源、三组件版本恒一致）。
+// agent 为独立 Gradle 构建（根在 agent/），VERSION 位于其上一级；worktree 下同样成立。
+val beaconVersion: String = rootProject.projectDir.parentFile.resolve("VERSION").readText().trim()
+
+allprojects {
+    version = beaconVersion
+}
+
 // 所有子模块统一的仓库与编译约定。
 subprojects {
     repositories {
