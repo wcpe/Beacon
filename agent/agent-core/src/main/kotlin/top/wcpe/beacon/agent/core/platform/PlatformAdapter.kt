@@ -33,6 +33,22 @@ interface PlatformAdapter {
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(changed: Set<String>, newMd5: String)
 
+    /**
+     * 派发一条受限控制台命令（三方插件文件覆盖兼容的重载命令，FR-15）。
+     *
+     * 壳实现：Bukkit 走 `Bukkit.dispatchCommand(consoleSender, ...)`、Bungee 走对应 ProxyServer API；
+     * **core 与适配器一律不引入任何进程 / shell 执行 API（无 Runtime.exec / ProcessBuilder）**——物理上无法落到 OS shell（ADR-0011 决策 2）。
+     *
+     * 命令是否真正派发由 core 侧白名单 + 注入校验把关；本方法只负责把已校验的单条命令交给平台。
+     * 默认空实现：未实现命令派发的平台 / 测试桩不动作（命令执行能力不上线，符合 ADR-0009 gate 在鉴权之后）。
+     *
+     * 派发**不在 MC 主线程同步等结果**（很多 reload 主线程阻塞）：壳层要么只派发不等结果，
+     * 要么显式接受「重载命令可能造成主线程卡顿」，二选一并写清（ADR-0011 决策 6）。
+     */
+    fun dispatchConsoleCommand(command: String) {
+        // 默认不动作：命令派发是 FR-15 的高风险能力，未显式实现的平台不开放。
+    }
+
     /** INFO 级日志。 */
     fun info(msg: String)
 

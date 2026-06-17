@@ -31,6 +31,11 @@ object AgentBootstrap {
                 targetSubDir = reader.string("file-tree.target-sub-dir", ""),
                 appliedManifestFileName = reader.string("file-tree.applied-manifest-file-name", "file-tree.applied.json"),
             ),
+            override = OverrideSettings(
+                // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
+                commandWhitelist = reader.stringList("override.command-whitelist").toSet(),
+                backupDirName = reader.string("override.backup-dir-name", "override-backup"),
+            ),
         )
     }
 

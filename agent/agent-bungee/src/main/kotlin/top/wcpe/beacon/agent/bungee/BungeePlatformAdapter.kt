@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.bungee
 
+import net.md_5.bungee.api.ProxyServer
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import taboolib.common.platform.function.getDataFolder
@@ -39,6 +40,13 @@ class BungeePlatformAdapter(
     override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
         // MVP：经 API 监听器派发（业务插件通过 EffectiveConfig.onChange 订阅）。
         effectiveConfigView.fireChanged(changed, newMd5)
+    }
+
+    override fun dispatchConsoleCommand(command: String) {
+        // BungeeCord 经 PluginManager 派发控制台命令；代理端无 tick 主线程概念，直接派发、不收集结果
+        // （core 与本类均无 Runtime.exec/ProcessBuilder，物理上落不到 OS shell，ADR-0011 决策 2/6）。
+        val proxy = ProxyServer.getInstance()
+        proxy.pluginManager.dispatchCommand(proxy.console, command)
     }
 
     override fun info(msg: String) = tabooInfo(msg)

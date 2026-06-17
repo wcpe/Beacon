@@ -7,6 +7,7 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
+import top.wcpe.beacon.agent.core.settings.OverrideSettings
 import top.wcpe.beacon.agent.core.testutil.CannedJsonCodec
 import top.wcpe.beacon.agent.core.testutil.FakeBeaconBackend
 import top.wcpe.beacon.agent.core.testutil.ThreadPoolPlatformAdapter
@@ -52,6 +53,7 @@ class AgentLifecycleControlTest {
         snapshotEnabled = false,
         snapshotFileName = "snapshot.json",
         fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
     )
 
     private fun newLifecycle(): AgentLifecycle {

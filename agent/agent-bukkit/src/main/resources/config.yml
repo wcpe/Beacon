@@ -60,3 +60,13 @@ file-tree:
   target-sub-dir: ""
   # 本地「已落盘文件清单」文件名（落 agent 数据目录），记录本地镜像已是哪一版，用于增量比对与崩溃恢复。
   applied-manifest-file-name: "file-tree.applied.json"
+
+# 三方插件文件覆盖兼容（FR-15）的本地参数。命令白名单只在本地配置，控制面无权下发——
+# 即便控制面被攻破，也无法越过本地白名单让 agent 执行任意命令。
+override:
+  # 受限重载命令的「首 token」白名单，默认空。空表示不允许 agent 派发任何重载命令（命令执行能力关闭）。
+  # 只有命令第一个词命中本列表（不区分大小写）才放行，例如填 ["allin"] 才允许 "allin reload"。
+  # 命令必须是单条控制台命令，含 ; & | > < $ 等元字符或换行一律被拒（防注入）。
+  command-whitelist: []
+  # 覆盖前备份区的目录名（落在 agent 数据目录下，与镜像目标分离），用于回滚还原被改/删的原文件。
+  backup-dir-name: "override-backup"

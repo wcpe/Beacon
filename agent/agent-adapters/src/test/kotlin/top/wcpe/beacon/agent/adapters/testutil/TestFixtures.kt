@@ -4,6 +4,7 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
+import top.wcpe.beacon.agent.core.settings.OverrideSettings
 
 /** 测试共用的 settings / identity 构造。 */
 object TestFixtures {
@@ -18,6 +19,7 @@ object TestFixtures {
         snapshotEnabled = true,
         snapshotFileName = "snap.json",
         fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
     )
 
     fun identity(): AgentIdentity = AgentIdentity(

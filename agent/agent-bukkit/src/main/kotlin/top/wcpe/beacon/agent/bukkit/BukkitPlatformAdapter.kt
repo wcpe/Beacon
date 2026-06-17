@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.bukkit
 
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.submit
 import taboolib.common.platform.function.submitAsync
@@ -38,6 +39,14 @@ class BukkitPlatformAdapter(
     override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
         // MVP：经 API 监听器派发（业务插件通过 EffectiveConfig.onChange 订阅）。
         effectiveConfigView.fireChanged(changed, newMd5)
+    }
+
+    override fun dispatchConsoleCommand(command: String) {
+        // Bukkit 命令派发须在主线程；切回主线程经 TabooLib 跨平台控制台执行命令，但不收集 / 不等待结果
+        // （ADR-0011 决策 6 选项二：显式接受重载命令可能造成主线程卡顿；core 与本类均无 Runtime.exec/ProcessBuilder）。
+        submit(async = false) {
+            console().performCommand(command)
+        }
     }
 
     override fun info(msg: String) = tabooInfo(msg)

@@ -12,6 +12,7 @@ package top.wcpe.beacon.agent.core.settings
  * @param snapshotEnabled    是否启用本地快照 fail-static
  * @param snapshotFileName   快照文件名（落数据目录）
  * @param fileTree           文件树托管（通道B）同步参数
+ * @param override           三方插件文件覆盖兼容（FR-15）本地参数（含本地命令白名单）
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -23,6 +24,7 @@ data class AgentSettings(
     val snapshotEnabled: Boolean,
     val snapshotFileName: String,
     val fileTree: FileTreeSettings,
+    val override: OverrideSettings,
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')
@@ -39,6 +41,19 @@ data class FileTreeSettings(
     val enabled: Boolean,
     val targetSubDir: String,
     val appliedManifestFileName: String,
+)
+
+/**
+ * 三方插件文件覆盖兼容（FR-15）本地参数（ADR-0011）。
+ *
+ * 命令白名单**放本地、不由控制面下发**（反向制衡）：控制面被攻破也无法越白名单提权。**默认空**。
+ *
+ * @param commandWhitelist 重载命令首 token 白名单（默认空 = 命令派发能力实质关闭）
+ * @param backupDirName    覆盖前备份区目录名（落 agent 数据目录下，与镜像目标分离）
+ */
+data class OverrideSettings(
+    val commandWhitelist: Set<String>,
+    val backupDirName: String,
 )
 
 /**
