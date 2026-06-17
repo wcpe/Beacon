@@ -88,9 +88,16 @@ class OverrideApplier(
                 continue
             }
             val target = File(root, rel)
-            // 反馈环防护：检测外部改动则告警不盲盖。
+            // 反馈环防护：检测外部改动则告警不盲盖。读盘异常（目标是目录占位 / 不可读）按「跳过该文件 + 告警」处理——
+            // 不让单个文件令整个 override 异步循环静默停摆，也绝不盲盖。
             if (target.exists()) {
-                val diskMd5 = md5Hex(target.readText(StandardCharsets.UTF_8))
+                val diskMd5 = try {
+                    md5Hex(target.readText(StandardCharsets.UTF_8))
+                } catch (e: Exception) {
+                    adapter.warn("受管文件现状读盘失败（疑似目录占位 / 不可读），跳过不覆盖：$rel")
+                    allWritten = false
+                    continue
+                }
                 if (tracker.isExternallyModified(rel, diskMd5)) {
                     adapter.warn("检测到受管文件被外部改动（疑似插件自身重写），告警而非盲盖，跳过：$rel")
                     allWritten = false

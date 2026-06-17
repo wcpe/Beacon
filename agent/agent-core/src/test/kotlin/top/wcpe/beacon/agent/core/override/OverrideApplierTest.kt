@@ -108,6 +108,22 @@ class OverrideApplierTest {
     }
 
     @Test
+    fun `成员路径是目录占位 读盘失败跳过告警 不停摆 其余照写`() {
+        val applier = newApplier(setOf("allin"))
+        // 目标位置已存在同名目录（占位 / 不可读），反馈环读盘会抛异常。
+        File(targetRoot, "blocked.yml").mkdirs()
+        val files = listOf(
+            OverrideFile("blocked.yml", "x", md5("x")),
+            OverrideFile("good.yml", "ok", md5("ok")),
+        )
+        // 关键：不抛异常（否则整个 override 异步循环会静默停摆）。
+        val ok = applier.apply("set1", files, null)
+        assertFalse(ok, "有文件读盘失败应记为未全量成功")
+        assertEquals("ok", File(targetRoot, "good.yml").readText(StandardCharsets.UTF_8), "其余文件照常覆盖")
+        assertTrue(adapter.warnings.any { it.contains("读盘失败") }, "应有读盘失败告警")
+    }
+
+    @Test
     fun `越白名单命令不派发`() {
         val applier = newApplier(setOf("allin"))
         applier.apply("set1", listOf(OverrideFile("config.yml", "x", md5("x"))), reloadCommand = "lp sync")
