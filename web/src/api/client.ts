@@ -7,15 +7,30 @@ import type {
   AuditPage,
   ConfigView,
   DiffView,
+  FileRevisionView,
+  FileView,
   InstanceView,
+  LoginResult,
   NamespaceView,
+  OverrideSetDryRunView,
+  OverrideSetRevisionView,
+  OverrideSetView,
   PublishResult,
   RevisionView,
   ZoneStatView,
 } from './types'
+import { clearAuth, currentToken } from '../state/auth'
 
 // API 基址：所有管理台接口的公共前缀
 const BASE = '/admin/v1'
+
+// 令牌失效（401）时的全局回调；由应用层注册（如跳登录页），避免 client 反向依赖 router。
+let unauthorizedHandler: (() => void) | null = null
+
+// 注册 401 处理器：任意 admin 请求遇 401 时触发（清登录态后由处理器跳登录）。
+export function setOnUnauthorized(handler: () => void): void {
+  unauthorizedHandler = handler
+}
 
 // 统一错误体（与 docs/API.md 对齐）：失败时后端返回 { code, message, traceId? }
 interface ApiError {
@@ -42,15 +57,24 @@ async function toError(resp: Response): Promise<Error> {
 }
 
 // 发起请求并解析 JSON；非 2xx 时抛出携带中文说明的错误。
+// 单点注入登录令牌（Authorization: Bearer）；遇 401 清登录态并触发全局跳登录。
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = currentToken()
   const resp = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
   })
+  if (resp.status === 401) {
+    // 令牌缺失/失效/过期：清登录态并跳登录（登录接口本身凭据错也会 401，统一交由调用方提示）
+    clearAuth()
+    if (unauthorizedHandler) unauthorizedHandler()
+    throw await toError(resp)
+  }
   if (!resp.ok) throw await toError(resp)
   // 204 等空体场景返回 undefined（调用方按需忽略）
   if (resp.status === 204) return undefined as T
@@ -66,6 +90,16 @@ function qs<T extends object>(params: T): string {
   }
   const s = sp.toString()
   return s ? `?${s}` : ''
+}
+
+// ===== 登录 / 身份（FR-11 鉴权）=====
+
+// 登录：凭据 → 令牌 + 操作者身份。本端点自身不需令牌（见 docs/API.md）。
+export function login(username: string, password: string): Promise<LoginResult> {
+  return request<LoginResult>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
 }
 
 // ===== 环境（namespace）=====
@@ -243,4 +277,132 @@ export interface AuditFilter {
 
 export function listAudits(filter: AuditFilter): Promise<AuditPage> {
   return request<AuditPage>(`/audits${qs(filter)}`)
+}
+
+// ===== 文件树托管（通道B，FR-14）=====
+
+// 文件列表过滤条件
+export interface FileFilter {
+  namespace?: string
+  group?: string
+  path?: string
+  scopeLevel?: string
+}
+
+export function listFiles(filter: FileFilter): Promise<FileView[]> {
+  return request<ItemsResponse<FileView>>(`/files${qs(filter)}`).then((r) => r.items)
+}
+
+export function getFile(id: number): Promise<FileView> {
+  return request<FileView>(`/files/${id}`)
+}
+
+// 新建文件对象参数（首次发布）
+export interface CreateFileParams {
+  namespace: string
+  group: string
+  path: string
+  scopeLevel: string
+  scopeTarget: string
+  content: string
+  operator: string
+  comment: string
+}
+
+export function createFile(params: CreateFileParams): Promise<FileView> {
+  return request<FileView>('/files', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export function publishFile(
+  id: number,
+  content: string,
+  operator: string,
+  comment: string,
+): Promise<PublishResult> {
+  return request<PublishResult>(`/files/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ content, operator, comment }),
+  })
+}
+
+export function deleteFile(id: number, operator: string, comment: string): Promise<void> {
+  return request<void>(`/files/${id}${qs({ operator, comment })}`, { method: 'DELETE' })
+}
+
+export function listFileRevisions(id: number): Promise<FileRevisionView[]> {
+  return request<ItemsResponse<FileRevisionView>>(`/files/${id}/revisions`).then((r) => r.items)
+}
+
+export function getFileRevision(id: number, version: number): Promise<FileRevisionView> {
+  return request<FileRevisionView>(`/files/${id}/revisions/${version}`)
+}
+
+export function rollbackFile(
+  id: number,
+  toVersion: number,
+  operator: string,
+  comment: string,
+): Promise<PublishResult> {
+  return request<PublishResult>(`/files/${id}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ toVersion, operator, comment }),
+  })
+}
+
+// ===== 三方文件覆盖兼容（override-set，FR-15）=====
+// 写操作 operator 以登录令牌身份为准（后端忽略请求手填），故不在请求体送 operator。
+
+// 覆盖集列表过滤条件
+export interface OverrideSetFilter {
+  namespace?: string
+  group?: string
+  scopeLevel?: string
+}
+
+export function listOverrideSets(filter: OverrideSetFilter): Promise<OverrideSetView[]> {
+  return request<ItemsResponse<OverrideSetView>>(`/override-sets${qs(filter)}`).then((r) => r.items)
+}
+
+export function getOverrideSet(id: number): Promise<OverrideSetView> {
+  return request<OverrideSetView>(`/override-sets/${id}`)
+}
+
+export function publishOverrideSet(
+  id: number,
+  targetRoot: string,
+  reloadCommand: string,
+  comment: string,
+): Promise<{ version: number; targetRoot: string }> {
+  return request<{ version: number; targetRoot: string }>(`/override-sets/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ targetRoot, reloadCommand, comment }),
+  })
+}
+
+export function deleteOverrideSet(id: number, comment: string): Promise<void> {
+  return request<void>(`/override-sets/${id}${qs({ comment })}`, { method: 'DELETE' })
+}
+
+export function listOverrideSetRevisions(id: number): Promise<OverrideSetRevisionView[]> {
+  return request<ItemsResponse<OverrideSetRevisionView>>(`/override-sets/${id}/revisions`).then(
+    (r) => r.items,
+  )
+}
+
+export function rollbackOverrideSet(
+  id: number,
+  toVersion: number,
+  comment: string,
+): Promise<{ version: number; targetRoot: string }> {
+  return request<{ version: number; targetRoot: string }>(`/override-sets/${id}/rollback`, {
+    method: 'POST',
+    body: JSON.stringify({ toVersion, comment }),
+  })
+}
+
+export function dryRunOverrideSet(id: number): Promise<OverrideSetDryRunView> {
+  return request<OverrideSetDryRunView>(`/override-sets/${id}/dry-run`)
 }

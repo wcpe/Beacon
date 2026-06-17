@@ -114,3 +114,76 @@ export interface NamespaceView {
   code: string
   name: string
 }
+
+// ===== 登录 / 身份（FR-11 鉴权）=====
+
+// 登录返回体：令牌 + 操作者身份
+export interface LoginResult {
+  token: string
+  operator: string
+}
+
+// ===== 文件树托管（通道B，FR-14）=====
+
+// 文件对象视图（content 仅详情接口返回，列表不含；对齐 internal/handler/file_handler.go fileView）
+export interface FileView {
+  id: number
+  namespace: string
+  group: string
+  path: string
+  scopeLevel: string
+  scopeTarget: string
+  version: number
+  md5: string
+  enabled: boolean
+  updatedAt: string
+  content?: string
+}
+
+// 文件历史版本视图（content 仅取单版本时返回）
+export interface FileRevisionView {
+  version: number
+  md5: string
+  operator: string
+  comment: string
+  sourceRevision: number | null
+  createdAt: string
+  content?: string
+}
+
+// ===== 三方文件覆盖兼容（override-set，FR-15）=====
+
+// 覆盖集视图（对齐 internal/handler/override_set_handler.go overrideSetView）
+export interface OverrideSetView {
+  id: number
+  namespace: string
+  group: string
+  name: string
+  scopeLevel: string
+  scopeTarget: string
+  targetRoot: string
+  reloadCommand: string
+  mode: string
+  version: number
+  enabled: boolean
+  updatedAt: string
+}
+
+// 覆盖集历史版本视图
+export interface OverrideSetRevisionView {
+  version: number
+  targetRoot: string
+  reloadCommand: string
+  operator: string
+  comment: string
+  sourceRevision: number | null
+  createdAt: string
+}
+
+// 覆盖集发布前 dry-run 只读预览：将覆盖哪些成员文件 + 将执行什么命令
+export interface OverrideSetDryRunView {
+  targetRoot: string
+  reloadCommand: string
+  commandFirstToken: string
+  memberPaths: string[]
+}
