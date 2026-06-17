@@ -45,6 +45,35 @@
 - Bungee 端：`./gradlew :agent-e2e-bungee:runBungee` —— 自动下载 Waterfall，加载 BeaconAgentProxy 与验收插件。
 - 验证：`GET /admin/v1/instances` 看 serverId online；改配置发布后看验收插件数据目录的 `e2e-observations.log` 是否出现新值（业务插件经 agent Java 只读 API 读到热更）；`GET /admin/v1/audits` 查发布记录。
 
+### 7.1 FR-15 三方覆盖 + 受限重载命令真机 E2E（RCE 面，启用命令白名单前必跑）
+
+校验「三方插件文件覆盖 + 受限重载命令」整链与 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md) 安全不变量在真机成立。验收插件 `BeaconE2E` 兼作被覆盖目标：种原文件 `managed.yml`、注册受限重载命令 `beacone2ereload`、轮询观测文件变更与命令收到（记到 `e2e-override-observations.log`）。
+
+前置：本机有 Go / JDK21 / Docker；起一次性 MySQL（避让本机已占端口，例 host 33306）：
+
+```powershell
+docker run -d --name beacon-e2e-mysql -e MYSQL_ROOT_PASSWORD=beacon -e MYSQL_DATABASE=beacon -p 33306:3306 mysql:8.0
+go build -o .tmp/beacon-e2e.exe ./cmd/beacon
+```
+
+一键编排（Windows，全程自管控制面 + 真 Paper 生命周期，逐相位收口）：
+
+```powershell
+$env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
+pwsh ./test/e2e/override/run-override-e2e.ps1 -MysqlPort 33306 -McPort 25566
+```
+
+脚本依次跑四相位（任一 FAIL 即退出码非 0）：
+
+- **inert（空白名单）**：覆盖集发布后文件被覆盖为新内容、但受限重载命令**一条不派发**（ADR-0011 默认 inert）。
+- **filetree（FR-14）**：发布一个文件树文件 → agent 镜像落盘到插件真实数据目录 → 验收插件读到镜像内容。
+- **ordering（放行白名单）**：验「备份原文件 → 原子覆盖 → 落盘成功后才派发命令」次序（命令收到时磁盘已是覆盖后内容），再回滚到无命令版本验「只还原事实、不重放命令」。
+- **failstatic**：杀控制面后受管文件不动、命令不发。
+
+> 前端（FR-18）管理台可在控制面起着时人工 / 浏览器自检：`http://localhost:8848` 登录（admin + `BEACON_ADMIN_PASSWORD`）→「文件树托管」看托管文件 →「文件覆盖集」详情看**发布前 dry-run 只读预览**（将覆盖哪些文件 / 执行什么命令 + 二次确认勾选门控发布）。
+
+成员挂载当前无 admin API，驱动经数据层写 `file_object`（`override_set_id>0`）造成员——属已知缺口的临时绕过（见 CHANGELOG 已知项）。Linux 下可照脚本步骤手工等价执行（`go run -tags=e2e ./test/e2e/override -phase=<inert|ordering|failstatic>`，配 `E2E_DB_DSN`/`E2E_RUN_DIR`/`E2E_ADMIN_PASS` 等环境变量）。
+
 ## 8. 测试运行方式（单元 / 集成）
 
 - **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`internal/service` / `internal/server` 显示 `no test files` 属正常（其用例全为集成）。

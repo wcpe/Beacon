@@ -61,6 +61,13 @@ object BeaconE2EBukkit : Plugin() {
 
         // 启动异步轮询：捕获首个有效配置与监听器注册前已收敛的配置。
         startPolling(markFile)
+
+        // 启动 FR-15 覆盖 + 受限重载命令探针（种原文件、注册重载命令、轮询文件变更），
+        // 与配置观测分离，写各自的标记文件，供外部驱动断言覆盖链路与 ADR-0011 安全不变量。
+        OverrideE2EProbe.start()
+
+        // 启动 FR-14 文件树镜像探针（轮询观测 agent 把文件树文件镜像落盘到本插件数据目录）。
+        FileTreeE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)

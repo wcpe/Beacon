@@ -83,6 +83,12 @@ val runServer by tasks.registering(JavaExec::class) {
     dependsOn(":agent-bukkit:build")
     dependsOn("build")
 
+    // MC 监听端口：默认 25566，避让本机可能被其它 MC 服占用的 25565；经 -Pe2eMcPort 覆盖。
+    val mcPort = (project.findProperty("e2eMcPort") as String?) ?: "25566"
+    // agent 本地受限命令白名单（逗号分隔首 token，注入 config.yml override.command-whitelist）；
+    // 默认空 = 命令派发能力关闭（ADR-0011 默认 inert）；经 -Pe2eCommandWhitelist 覆盖，如 "beacone2ereload"。
+    val commandWhitelist = (project.findProperty("e2eCommandWhitelist") as String?) ?: ""
+
     doFirst {
         val pluginsDir = runDir.resolve("plugins")
         pluginsDir.mkdirs()
@@ -106,7 +112,7 @@ val runServer by tasks.registering(JavaExec::class) {
         val agentDataDir = pluginsDir.resolve("BeaconAgent")
         agentDataDir.mkdirs()
         agentDataDir.resolve("config.yml").writeText(
-            agentConfigYaml(beaconEndpoint, serverId, namespace),
+            agentConfigYaml(beaconEndpoint, serverId, namespace, mcPort, commandWhitelist),
             Charsets.UTF_8,
         )
 
@@ -141,13 +147,18 @@ val runServer by tasks.registering(JavaExec::class) {
         baseJvm += "-Dtaboolib.debug=true"
     }
     jvmArgs = baseJvm
-    args = listOf("--nogui")
+    // -nogui 无界面；--port 指定监听端口（默认 25566，避让 25565）。
+    args = listOf("--nogui", "--port", mcPort)
     // 透传控制台 IO，便于在前台看日志并向服务端发 stop。
     standardInput = System.`in`
 }
 
-/** 生成 E2E 用 agent config.yml；无 zone、无 canary，仅最小接入信息。 */
-fun agentConfigYaml(endpoint: String, serverId: String, namespace: String): String = """
+/** 生成 E2E 用 agent config.yml；无 zone、无 canary，仅最小接入信息 + FR-15 覆盖命令白名单。 */
+fun agentConfigYaml(endpoint: String, serverId: String, namespace: String, mcPort: String, commandWhitelist: String): String {
+    // 逗号分隔的白名单首 token → YAML 列表；空则渲染为内联空列表 []（命令派发能力关闭）。
+    val items = commandWhitelist.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    val whitelistYaml = if (items.isEmpty()) " []" else items.joinToString("") { "\n        - \"$it\"" }
+    return """
     # Beacon agent E2E 运行配置（由 runServer 任务生成，仅供端到端验收）。
     beacon:
       # 控制面地址：指向本地起的 Beacon（默认 8848，与产品默认端口一致）。
@@ -163,8 +174,8 @@ fun agentConfigYaml(endpoint: String, serverId: String, namespace: String): Stri
       server-id: "$serverId"
       # 大区提示：尚未指派 zone 时作兜底 group。
       group-hint: "area1"
-      # 对外可达地址 ip:port。
-      address: "127.0.0.1:25565"
+      # 对外可达地址 ip:port（与 --port 一致，仅作注册元数据）。
+      address: "127.0.0.1:$mcPort"
       # 业务版本标签。
       version: "1.0.0"
       # 容量（发现过滤维度）。
@@ -198,4 +209,13 @@ fun agentConfigYaml(endpoint: String, serverId: String, namespace: String): Stri
       enabled: true
       # 快照文件名。
       file-name: "effective-config.snapshot.json"
+
+    file-tree:
+      # 启用文件树/覆盖通道（通道B）：FR-15 覆盖集长轮询循环依赖它开启（默认即 true，这里显式声明）。
+      enabled: true
+
+    override:
+      # 受限重载命令首 token 本地白名单（逗号分隔注入；默认空=命令派发能力关闭，见 ADR-0011 决策 3）。
+      command-whitelist:$whitelistYaml
 """.trimIndent() + "\n"
+}
