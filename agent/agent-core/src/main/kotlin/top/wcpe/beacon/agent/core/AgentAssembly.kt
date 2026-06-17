@@ -12,6 +12,8 @@ import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.override.CommandWhitelist
+import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
@@ -76,6 +78,20 @@ object AgentAssembly {
             null
         }
 
+        // 三方覆盖集接线（FR-15）：仅在文件树启用时装配（覆盖集是通道B 的一个 profile，依赖镜像落盘能力）。
+        // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
+        val overrideApplier: OverrideSyncApplier? = if (settings.fileTree.enabled) {
+            OverrideSyncApplier(
+                pluginsBaseFolder = adapter.pluginsBaseFolder(),
+                backupRoot = File(adapter.dataFolder(), settings.override.backupDirName),
+                whitelist = CommandWhitelist(settings.override.commandWhitelist),
+                adapter = adapter,
+                fetchMember = { setName, path -> apiClient.fetchOverrideMember(identity, setName, path) },
+            )
+        } else {
+            null
+        }
+
         val lifecycle = AgentLifecycle(
             identity = identity,
             settings = settings,
@@ -85,6 +101,7 @@ object AgentAssembly {
             applier = applier,
             snapshotStore = snapshotStore,
             fileTreeApplier = fileTreeApplier,
+            overrideApplier = overrideApplier,
         )
 
         val discoveryView = DiscoveryView(apiClient)

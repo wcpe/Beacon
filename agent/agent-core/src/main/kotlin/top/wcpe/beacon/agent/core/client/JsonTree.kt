@@ -18,6 +18,9 @@ internal object JsonTree {
         return (value as? List<*>) ?: emptyList<Any?>()
     }
 
+    /** 将任意值视作字符串；非字符串返回空串（用于字符串数组元素，如成员 path 列表）。 */
+    fun asString(value: Any?): String = (value as? String) ?: ""
+
     /** 读字符串字段；缺失或非字符串返回 null。 */
     fun str(obj: Map<String, Any?>, key: String): String? = obj[key] as? String
 

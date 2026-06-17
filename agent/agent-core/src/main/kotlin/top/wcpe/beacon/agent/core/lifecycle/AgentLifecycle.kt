@@ -4,6 +4,7 @@ import top.wcpe.beacon.agent.core.backoff.ExponentialBackoff
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.FileManifestPollResult
 import top.wcpe.beacon.agent.core.client.HeartbeatOutcome
+import top.wcpe.beacon.agent.core.client.OverridePollResult
 import top.wcpe.beacon.agent.core.client.PollResult
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegisterResult
@@ -11,6 +12,7 @@ import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
@@ -32,6 +34,7 @@ class AgentLifecycle(
     private val applier: ConfigApplier,
     private val snapshotStore: SnapshotStore?,
     private val fileTreeApplier: FileTreeApplier? = null,
+    private val overrideApplier: OverrideSyncApplier? = null,
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -48,6 +51,12 @@ class AgentLifecycle(
      * 唤醒集合与配置独立（fileTreeMd5 ≠ 配置 md5，见 ADR-0010）。
      */
     private val fileTreeGen = AtomicReference(0)
+
+    /**
+     * 三方覆盖集长轮询（FR-15）的「代」标识：与配置 / 文件树长轮询并行、各自 gen，重启循环时递增。
+     * overrideMd5 维度独立（≠ 配置 md5 / fileTreeMd5，见 ADR-0011）。
+     */
+    private val overrideGen = AtomicReference(0)
 
     /**
      * 注册单飞门：任意时刻只允许一条 register→loops 在飞。
@@ -69,6 +78,7 @@ class AgentLifecycle(
     private val registerBackoff = ExponentialBackoff(settings.backoff)
     private val pollBackoff = ExponentialBackoff(settings.backoff)
     private val fileTreeBackoff = ExponentialBackoff(settings.backoff)
+    private val overrideBackoff = ExponentialBackoff(settings.backoff)
 
     /** 当前是否已连上控制面（供对外 API connected() 读）。 */
     fun isConnected(): Boolean = state.get() == AgentState.RUNNING
@@ -100,10 +110,12 @@ class AgentLifecycle(
         registerBackoff.reset()
         pollBackoff.reset()
         fileTreeBackoff.reset()
-        // 递增循环代，使在跑的旧心跳 / 长轮询 / 文件树循环在下一跳自然退出（新循环由本次注册成功后重启）。
+        overrideBackoff.reset()
+        // 递增循环代，使在跑的旧心跳 / 长轮询 / 文件树 / 覆盖集循环在下一跳自然退出（新循环由本次注册成功后重启）。
         heartbeatGen.set(heartbeatGen.get() + 1)
         pollGen.set(pollGen.get() + 1)
         fileTreeGen.set(fileTreeGen.get() + 1)
+        overrideGen.set(overrideGen.get() + 1)
         adapter.info("收到 reconnect：重置退避并重新接入控制面（保留当前有效配置）")
         adapter.runAsync { beginRegister(gen) }
     }
@@ -155,6 +167,7 @@ class AgentLifecycle(
         heartbeatGen.set(heartbeatGen.get() + 1)
         pollGen.set(pollGen.get() + 1)
         fileTreeGen.set(fileTreeGen.get() + 1)
+        overrideGen.set(overrideGen.get() + 1)
         adapter.info("agent 生命周期已停止")
     }
 
@@ -233,6 +246,7 @@ class AgentLifecycle(
         startHeartbeatLoop()
         startConfigPollLoop()
         startFileTreePollLoop()
+        startOverridePollLoop()
         // 循环已启，本次注册收尾，释放单飞门。
         registering.set(false)
     }
@@ -394,6 +408,59 @@ class AgentLifecycle(
                 val delay = fileTreeBackoff.nextDelayMs()
                 adapter.warn("文件树长轮询连接失败（${result.reason}），保留本地镜像不动，${delay}ms 后重连")
                 scheduleFileTreePoll(gen, delay)
+            }
+        }
+    }
+
+    // ---- 三方覆盖集长轮询循环（FR-15，与配置 / 文件树长轮询并行、md5 维度独立） ----
+
+    /** 启动覆盖集长轮询循环；未启用覆盖集接线（overrideApplier 为 null）则不启。 */
+    private fun startOverridePollLoop() {
+        if (overrideApplier == null) return
+        val gen = overrideGen.get() + 1
+        overrideGen.set(gen)
+        scheduleOverridePoll(gen, 0)
+    }
+
+    private fun scheduleOverridePoll(gen: Int, delayMs: Long) {
+        if (!running.get()) return
+        if (delayMs <= 0) {
+            adapter.runAsync { overrideTick(gen) }
+        } else {
+            adapter.runAsyncDelayed(delayMs) { overrideTick(gen) }
+        }
+    }
+
+    private fun overrideTick(gen: Int) {
+        val applierLocal = overrideApplier ?: return
+        if (!running.get() || gen != overrideGen.get()) return
+        // 当前 overrideMd5 取本地已收敛那一版（首启 / 上轮有集失败则为 null，强制重拉重做）。
+        val currentMd5 = applierLocal.currentOverrideMd5()
+        when (val result = apiClient.pollOverrideSets(identity, currentMd5, settings.pollTimeoutMs)) {
+            is OverridePollResult.Changed -> {
+                // 200：逐集落 targetRoot（备份 + 安全校验 + 受管标记）→ 命中白名单才派发重载命令。
+                // fail-static 由 applier 内部把控（取内容失败 / 恶意 targetRoot 不动既有、不派发）。
+                applierLocal.apply(result.manifest)
+                overrideBackoff.reset()
+                scheduleOverridePoll(gen, 0)
+            }
+
+            is OverridePollResult.NotModified -> {
+                // 304：用旧 overrideMd5 立即续杯，不退避。
+                overrideBackoff.reset()
+                scheduleOverridePoll(gen, 0)
+            }
+
+            is OverridePollResult.NotRegistered -> {
+                adapter.warn("覆盖集长轮询返回未注册，触发重新注册")
+                triggerReregister()
+            }
+
+            is OverridePollResult.Failed -> {
+                // 连接级失败：fail-static——不动任何已落盘文件、不派发命令，退避后重连。
+                val delay = overrideBackoff.nextDelayMs()
+                adapter.warn("覆盖集长轮询连接失败（${result.reason}），保留本地覆盖不动，${delay}ms 后重连")
+                scheduleOverridePoll(gen, delay)
             }
         }
     }

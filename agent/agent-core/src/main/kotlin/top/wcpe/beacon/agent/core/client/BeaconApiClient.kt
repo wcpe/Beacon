@@ -6,6 +6,8 @@ import top.wcpe.beacon.agent.core.filetree.FileContent
 import top.wcpe.beacon.agent.core.filetree.FileManifest
 import top.wcpe.beacon.agent.core.filetree.FileManifestEntry
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.override.OverrideManifest
+import top.wcpe.beacon.agent.core.override.OverrideSetEntry
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.transport.HttpRequest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
@@ -249,6 +251,74 @@ class BeaconApiClient(
         )
     }
 
+    /**
+     * 长轮询三方覆盖集投递：GET /beacon/v1/agent/override-sets（FR-15）。
+     *
+     * 带当前 overrideMd5；变了 200 返回适用覆盖集（目标根 + 命令 + 成员 path，不含内容），未变到超时 304。
+     * 与文件长轮询复用同一唤醒集合（同属通道B），但 md5 维度独立（见 ADR-0011）。
+     */
+    fun pollOverrideSets(identity: AgentIdentity, currentMd5: String?, timeoutMs: Long): OverridePollResult {
+        val md5Param = currentMd5 ?: ""
+        val url = buildString {
+            append(base)
+            append("/beacon/v1/agent/override-sets")
+            append("?namespace=").append(urlEncode(identity.namespace))
+            append("&serverId=").append(urlEncode(identity.serverId))
+            append("&md5=").append(urlEncode(md5Param))
+            append("&timeoutMs=").append(timeoutMs)
+        }
+        val resp = exec(
+            HttpRequest(
+                method = "GET",
+                url = url,
+                headers = headers(withBody = false),
+                body = null,
+                readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
+            ),
+        ) ?: return OverridePollResult.Failed("连接失败")
+
+        return when (resp.statusCode) {
+            200 -> OverridePollResult.Changed(parseOverrideManifest(resp.body))
+            304 -> OverridePollResult.NotModified
+            404 -> OverridePollResult.NotRegistered
+            else -> OverridePollResult.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 取某覆盖集成员文件内容：GET /beacon/v1/agent/override-sets/content（FR-15）。同步调用，请在异步线程使用。
+     *
+     * 200 返回该 (set, path) 按覆盖链解析后的整文件内容；404 或连接失败返回 null（触发 fail-static 放弃本轮）。
+     */
+    fun fetchOverrideMember(identity: AgentIdentity, setName: String, path: String): FileContent? {
+        val url = buildString {
+            append(base)
+            append("/beacon/v1/agent/override-sets/content")
+            append("?namespace=").append(urlEncode(identity.namespace))
+            append("&serverId=").append(urlEncode(identity.serverId))
+            append("&set=").append(urlEncode(setName))
+            append("&path=").append(urlEncode(path))
+        }
+        val resp = exec(
+            HttpRequest(
+                method = "GET",
+                url = url,
+                headers = headers(withBody = false),
+                body = null,
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return null
+        if (resp.statusCode != 200) {
+            return null
+        }
+        val obj = JsonTree.asObject(codec.decode(resp.body))
+        return FileContent(
+            path = JsonTree.strOr(obj, "path", ""),
+            md5 = JsonTree.strOr(obj, "md5", ""),
+            content = JsonTree.strOr(obj, "content", ""),
+        )
+    }
+
     /** 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。 */
     private fun exec(request: HttpRequest): HttpResponse? {
         return try {
@@ -308,6 +378,26 @@ class BeaconApiClient(
             zone = JsonTree.str(obj, "zone"),
             fileTreeMd5 = JsonTree.strOr(obj, "fileTreeMd5", ""),
             entries = entries,
+        )
+    }
+
+    private fun parseOverrideManifest(jsonBody: String): OverrideManifest {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        val sets = JsonTree.asList(obj["sets"]).map { raw ->
+            val setObj = JsonTree.asObject(raw)
+            OverrideSetEntry(
+                name = JsonTree.strOr(setObj, "name", ""),
+                targetRoot = JsonTree.strOr(setObj, "targetRoot", ""),
+                // 空命令在控制面投递为 ""；归一化为 null（不下发命令），与 OverrideApplier 入参语义一致。
+                reloadCommand = JsonTree.strOr(setObj, "reloadCommand", "").ifEmpty { null },
+                members = JsonTree.asList(setObj["members"]).map { m -> JsonTree.asString(m) },
+            )
+        }
+        return OverrideManifest(
+            namespace = JsonTree.strOr(obj, "namespace", ""),
+            serverId = JsonTree.strOr(obj, "serverId", ""),
+            overrideMd5 = JsonTree.strOr(obj, "overrideMd5", ""),
+            sets = sets,
         )
     }
 

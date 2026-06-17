@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.client
 
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.filetree.FileManifest
+import top.wcpe.beacon.agent.core.override.OverrideManifest
 
 /**
  * 注册结果（对应 register 200 响应）。
@@ -58,6 +59,22 @@ sealed class FileManifestPollResult {
 
     /** 连接级失败/其它非预期状态：退避后重试。 */
     data class Failed(val reason: String) : FileManifestPollResult()
+}
+
+/** 长轮询三方覆盖集投递的结果（FR-15，与文件长轮询独立的 md5 维度）。 */
+sealed class OverridePollResult {
+
+    /** 200：overrideMd5 有变更，携带新清单（目标根 + 命令 + 成员 path，不含内容）。 */
+    data class Changed(val manifest: OverrideManifest) : OverridePollResult()
+
+    /** 304：超时无变更，续杯（沿用旧 overrideMd5）。 */
+    object NotModified : OverridePollResult()
+
+    /** 404：未注册，需回到注册流程。 */
+    object NotRegistered : OverridePollResult()
+
+    /** 连接级失败/其它非预期状态：退避后重试。 */
+    data class Failed(val reason: String) : OverridePollResult()
 }
 
 /** 注册结果的状态分类（区分成功 / 重复 / 鉴权失败 / 身份缺失 / 连接失败）。 */
