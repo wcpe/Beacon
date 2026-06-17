@@ -18,8 +18,9 @@ pluginManagement {
 
 rootProject.name = "beacon-agent"
 
-// 子模块（依赖方向无环：bukkit/bungee → {core, adapters, api}；adapters → core → api）：
+// 子模块（依赖方向无环：bukkit/bungee → {core, adapters, api, kit}；adapters → core → api；kit → api）：
 // agent-api      纯 Java 8 只读契约，业务插件 compileOnly 依赖
+// agent-kit      纯 Java 8 便捷接入层（零三方依赖、只依赖 agent-api），下游可选依赖以收口接入样板
 // agent-core     平台无关核心（零具体库依赖：只 kotlin stdlib + agent-api）
 // agent-adapters OkHttp + kotlinx.serialization 适配器（唯一碰具体库的模块）
 // agent-bukkit   Bukkit 子服插件壳，产出 BeaconAgent.jar
@@ -27,6 +28,7 @@ rootProject.name = "beacon-agent"
 // agent-e2e       M6 端到端验收用 TabooLib Bukkit 业务插件（compileOnly agent-api），并提供 runServer 任务
 // agent-e2e-bungee 同上的 BungeeCord 验收插件，并提供 runBungee 任务
 include("agent-api")
+include("agent-kit")
 include("agent-core")
 include("agent-adapters")
 include("agent-bukkit")

@@ -38,4 +38,36 @@ subprojects {
             targetCompatibility = JavaVersion.VERSION_1_8
         }
     }
+
+    // 发布仓库统一约定（FR-16 SDK 接入包）：默认只发 mavenLocal；远程仓库可选，
+    // URL/凭据走 gradle property 或环境变量注入（不硬编码、不入库），缺省即只 mavenLocal。
+    // 不发到 repo.tabooproject.org（那是 TabooLib 的、无写权限）。
+    plugins.withType<MavenPublishPlugin> {
+        extensions.configure<PublishingExtension> {
+            repositories {
+                // 默认目标：本机 ~/.m2，零配置可用。
+                mavenLocal()
+                // 可选远程：仅当显式提供 beaconPublishUrl（property）或 BEACON_PUBLISH_URL（env）时启用。
+                val remoteUrl = (project.findProperty("beaconPublishUrl") as String?)
+                    ?: System.getenv("BEACON_PUBLISH_URL")
+                if (!remoteUrl.isNullOrBlank()) {
+                    maven {
+                        name = "beaconRemote"
+                        url = uri(remoteUrl)
+                        // 凭据同样可选，走 property 或 env，缺省则匿名（适配无鉴权内网仓库）。
+                        val user = (project.findProperty("beaconPublishUsername") as String?)
+                            ?: System.getenv("BEACON_PUBLISH_USERNAME")
+                        val pass = (project.findProperty("beaconPublishPassword") as String?)
+                            ?: System.getenv("BEACON_PUBLISH_PASSWORD")
+                        if (!user.isNullOrBlank() && !pass.isNullOrBlank()) {
+                            credentials {
+                                username = user
+                                password = pass
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -14,6 +14,7 @@ plugins {
 evaluationDependsOn(":agent-core")
 evaluationDependsOn(":agent-adapters")
 evaluationDependsOn(":agent-api")
+evaluationDependsOn(":agent-kit")
 
 // 打进插件 jar 的仅本工程模块（agent 自有 core/adapters/api）；第三方库不打包，运行期由主类 @RuntimeDependencies 下载。
 // 单独一条配置，便于在 jar 任务里精确 from(...)；显式排除 kotlin stdlib（TabooLib 运行期自带并重定位）。
@@ -25,16 +26,19 @@ val shadowed: Configuration by configurations.creating {
 }
 
 dependencies {
-    // 本工程模块：核心 + 适配器 + 对外 API，全部打进 jar（agent 自有代码）。
+    // 本工程模块：核心 + 适配器 + 对外 API + 便捷接入 kit，全部打进 jar（agent 自有代码）。
+    // kit 必须随 api 一并打包，否则下游 compileOnly kit 运行期 NoClassDefFound。
     shadowed(project(":agent-core"))
     shadowed(project(":agent-adapters"))
     shadowed(project(":agent-api"))
+    shadowed(project(":agent-kit"))
 
     // 编译期可见（不重复进 jar，由 shadowed 负责打包）。
     // 第三方 okhttp/kotlinx 不打包——改由插件主类 @RuntimeDependencies 运行期动态下载（参考 CoreLib）。
     compileOnly(project(":agent-core"))
     compileOnly(project(":agent-adapters"))
     compileOnly(project(":agent-api"))
+    compileOnly(project(":agent-kit"))
     compileOnly(kotlin("stdlib"))
 }
 
