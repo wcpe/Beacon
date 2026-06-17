@@ -64,7 +64,7 @@
 | FR-16 | 下游 SDK 接入包：发布 agent-api（+ 接入 kit），下游软依赖、agent 不可用按 isAvailable 回退本地文件 | P2 | 开发中 |
 | FR-17 | agent 运维命令：本地 reload/reconnect/resync 等基础控制；远程下发依赖鉴权（FR-11） | P2 | 开发中 |
 | FR-18 | 管理台前端增强：文件树浏览/任意文本编辑/文件级版本·diff·回滚/登录身份/发布前只读 dry-run 预览 | P2 | 开发中 |
-| FR-19 | SDK 与 agent-api 文档：发布坐标/版本对齐矩阵/接入示例/API 参考（随 FR-16 收尾补齐） | P2 | 计划 |
+| FR-19 | SDK 与 agent-api 文档：发布坐标/版本对齐矩阵/接入示例/API 参考（见 [docs/SDK.md](SDK.md)） | P2 | 开发中 |
 | FR-20 | 配置加密（自 FR-11 拆分） | P3 | 计划 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
