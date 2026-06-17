@@ -98,3 +98,9 @@ feat(api): 加 discovery 端点（handler 还没接，编译不过）
 
 - 禁止跳过 hooks（`--no-verify`）。禁止对已 push 的提交 `--amend`。
 - 提交前确认未包含 `.env` / 凭据 / 大型二进制。
+
+## 5. 集成只用 rebase / fast-forward（禁 merge 提交，强制）
+
+- **分支并入 master 必须保持线性历史**：先把特性分支 `rebase` 到最新 master，再 `git merge --ff-only`（fast-forward）并入。**禁止产生 merge 提交**——`git merge` 默认 no-ff 合并、`--no-ff`、`merge(scope):` 形式的合并提交一律不允许。
+- 并行 worktree 分支收尾同理：逐个 rebase 到 master 后 FF 并入；rebase 冲突**报告给用户、不强推**（不 `--force`、不丢提交）。
+- 本约束对**新并入**生效；历史中已存在的 merge 提交保留、不追溯重写。
