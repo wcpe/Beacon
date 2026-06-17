@@ -29,7 +29,7 @@ func findSet(sets []EffectiveOverrideSet, name string) (EffectiveOverrideSet, bo
 }
 
 // noMembers 是不返回成员的桩（不关注成员时用）。
-func noMembers(uint) []string { return nil }
+func noMembers(uint) []OverrideMember { return nil }
 
 // TestResolveOverrideSetsHigherLayerWins 同名覆盖集多层：取层级最高那份（整集覆盖）。
 func TestResolveOverrideSetsHigherLayerWins(t *testing.T) {
@@ -60,15 +60,19 @@ func TestResolveOverrideSetsDisabledSkipped(t *testing.T) {
 func TestResolveOverrideSetsMembersAttached(t *testing.T) {
 	sets := ResolveOverrideSets([]model.FileOverrideSet{
 		os(7, "AllinCore", model.ScopeGlobal, "plugins/AllinCore", "allin reload"),
-	}, func(id uint) []string {
+	}, func(id uint) []OverrideMember {
 		if id == 7 {
-			return []string{"config.yml", "scripts/hello.js"}
+			return []OverrideMember{{Path: "config.yml", ContentMD5: "m1"}, {Path: "scripts/hello.js", ContentMD5: "m2"}}
 		}
 		return nil
 	})
 	s, ok := findSet(sets, "AllinCore")
 	if !ok || len(s.MemberPaths) != 2 {
 		t.Fatalf("成员应挂上 2 个，得 %+v", s)
+	}
+	// 成员内容指纹应一并挂上（供 overrideMd5 计算，不投递给 agent）。
+	if s.MemberMD5s["config.yml"] != "m1" || s.MemberMD5s["scripts/hello.js"] != "m2" {
+		t.Fatalf("成员内容指纹未挂上：%+v", s.MemberMD5s)
 	}
 }
 
@@ -104,5 +108,40 @@ func TestOverrideMD5Idempotent(t *testing.T) {
 	}
 	if OverrideMD5(base) == OverrideMD5(changedMembers) {
 		t.Fatal("成员变更应改 md5")
+	}
+}
+
+// TestOverrideMD5SensitiveToMemberContent FR-15 内容热更缺口回归：
+// 成员「内容只改不变 path」（path/targetRoot/命令/成员清单全不变，仅 ContentMD5 变）overrideMd5 必须变；
+// 内容不变则 md5 幂等（不无谓重推）。
+func TestOverrideMD5SensitiveToMemberContent(t *testing.T) {
+	base := []EffectiveOverrideSet{
+		{
+			Name: "AllinCore", TargetRoot: "plugins/AllinCore", ReloadCommand: "allin reload",
+			MemberPaths: []string{"a.yml", "b.yml"},
+			MemberMD5s:  map[string]string{"a.yml": "h-a-1", "b.yml": "h-b-1"},
+		},
+	}
+	// 内容指纹完全相同 → md5 幂等（内容没变不重推）。
+	same := []EffectiveOverrideSet{
+		{
+			Name: "AllinCore", TargetRoot: "plugins/AllinCore", ReloadCommand: "allin reload",
+			MemberPaths: []string{"a.yml", "b.yml"},
+			MemberMD5s:  map[string]string{"a.yml": "h-a-1", "b.yml": "h-b-1"},
+		},
+	}
+	if OverrideMD5(base) != OverrideMD5(same) {
+		t.Fatal("成员内容指纹相同时 md5 应幂等")
+	}
+	// 仅某成员内容指纹改变（path 不变）→ md5 必须变（这是修复前漏掉的触发点）。
+	contentChanged := []EffectiveOverrideSet{
+		{
+			Name: "AllinCore", TargetRoot: "plugins/AllinCore", ReloadCommand: "allin reload",
+			MemberPaths: []string{"a.yml", "b.yml"},
+			MemberMD5s:  map[string]string{"a.yml": "h-a-2", "b.yml": "h-b-1"},
+		},
+	}
+	if OverrideMD5(base) == OverrideMD5(contentChanged) {
+		t.Fatal("成员内容改变（path 不变）应改 md5")
 	}
 }

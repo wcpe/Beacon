@@ -4,6 +4,17 @@
 
 ## 未发布版本
 
+### 修复
+- 三方覆盖 / 文件树镜像落盘目录重复 `plugins`（FR-14/FR-15）：TabooLib `getDataFolder()` 在真机返回相对路径（`plugins/<本插件>`）时，`PlatformAdapter.pluginsBaseFolder()` 取到相对 `File("plugins")`、其 `parentFile` 为 null，下游 `serverRoot` 回退成 `plugins` 本身，致 agent 把覆盖 / 文件树文件落到 `plugins/plugins/<目标>` 而非 `plugins/<目标>`——三方插件目录覆盖与文件树镜像在真机实际未落到正确目录（路径限定仍生效、文件仍在 `plugins/` 内，属落错位置非逃逸）。修复：`pluginsBaseFolder()` 先 `absoluteFile` 再取父级，使服务器根稳定解析；并在 `AgentAssembly` 增 fail-closed 守卫——解析出的 plugins 基目录名非 `plugins` 时关闭文件树与覆盖落盘（宁可不落、不落错）。本缺陷由 FR-15 命令执行真机 E2E 暴露。
+- 三方覆盖集成员「内容只改、path 不变」时热更不传播（FR-15，关闭本段「已知项」缺口①）：控制面 `OverrideMD5` 指纹公式只含 `name|targetRoot|reloadCommand|memberPaths`、**不含成员内容指纹**，致成员文件仅改内容（path 不变）时 overrideMd5 不变 → agent 长轮询返回 304 → 不重取落盘（连显式对该集 Publish 也不下发）。修复：把每个成员 `file_object` 行上**按字节算定**的 `content_md5`（ADR-0011 决策 9）折入 overrideMd5 计算（新增 `EffectiveOverrideSet.MemberMD5s` 仅参与指纹、**不投递给 agent**，沿用 `fileTreeMd5` 的 `path:md5` 思路），使「内容改了」也改变 overrideMd5、触发 agent 重取落盘；内容不变时 md5 幂等（不无谓重推 / 不重复 reload）。成员指纹经同一 `ListByOverrideSet` 查询取齐、无额外回表。未弱化任一 ADR-0011 约束（禁 shell / Path 级路径限定 / 本地白名单 gate / 回滚不重放命令 / fail-static 不变），经一轮对抗式安全复审（无新攻击面、`MemberMD5s` 不泄露给 agent）。补 filetree 穷举单测（内容指纹敏感 + 幂等）与控制面集成测试（内容编辑后 overrideMd5 变 + override 长轮询被唤醒）。
+
+### 安全
+- FR-15 三方覆盖命令执行真机端到端验收落地并跑通取证（关闭 0.2.0「命令执行真机 E2E 未跑」已知项）：扩 `agent/agent-e2e` 验收插件（种原文件 + 注册受限重载命令 + 观测「文件被改 / 命令收到 + 命令时磁盘 md5」）+ `test/e2e/override` Go 驱动 + `run-override-e2e.ps1` 编排，在真 Paper 1.20.4 + 控制面 + MySQL 上验三条 ADR-0011 关键链路：① 放行白名单下「备份原文件 → 原子覆盖 → 落盘成功后才派发命令」次序（命令收到时磁盘已是覆盖后内容）；② 控制面回滚到无命令版本只还原事实、不重放命令（agent 内部回滚不重放由既有单测守）；③ **默认空白名单不派发任何命令（inert）**，控制面挂掉文件不动、命令不发（fail-static）。过程未弱化任一 ADR-0011 约束，并经一轮对抗式安全复审（路径绝对化修复 + fail-closed 守卫后，逃逸向量穷举无法逃出 `plugins/<plugin>/`、无 shell 派发、无本地白名单绕过）。
+- 同批补 FR-14 文件树镜像与 FR-18 管理台前端的真机验收：文件树文件发布后 agent 镜像落盘到插件真实数据目录、验收插件读到镜像内容（与上述路径修复共同确证镜像落盘在真机生效）；管理台经浏览器自检登录 → 文件树页 → 覆盖集详情**发布前 dry-run 只读预览 + 二次确认门控**渲染正常。
+
+### 已知项
+- FR-15 覆盖集缺口（不阻断命令执行真机验收，已立工单后续处理）：控制面无成员挂载 admin API（覆盖集只能建空壳、成员仅能数据层写入），E2E 用数据层造成员绕过。（原「成员仅改内容、不变 path 时内容热更不传播」缺口已修，见上「修复」段。）
+
 ## 0.2.0（2026-06-17）
 
 > **破坏性变更（pre-1.0，按 [ADR-0007](docs/adr/0007-versioning-and-release-channels.md) 在 0.y.z 内允许、于此标明）**：管理面 `/admin/v1/*`（登录端点除外）自本版本起需 Bearer 登录令牌（FR-11）——此前开放访问的 admin API 调用方须先 `POST /admin/v1/auth/login` 取令牌再调用；agent 侧 `X-Beacon-Token` 语义不变。

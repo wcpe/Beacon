@@ -26,20 +26,22 @@ func newOverrideStack(t *testing.T) (*service.OverrideSetService, *repository.Fi
 	return svc, fileRepo
 }
 
-// overrideDeliveryStack 聚合覆盖集服务 + 投递服务 + 注册表（验证投递解析与长轮询唤醒）。
+// overrideDeliveryStack 聚合覆盖集服务 + 文件服务 + 投递服务 + 注册表（验证投递解析与长轮询唤醒）。
 type overrideDeliveryStack struct {
 	sets     *service.OverrideSetService
+	files    *service.FileService
 	ovrEff   *service.OverrideEffectiveService
 	fileRepo *repository.FileObjectRepository
 	reg      *runtime.Registry
 }
 
-// newOverrideDeliveryStack 装配覆盖集服务 + 投递服务（复用 fileHub）+ 注册表 + 唤醒器。
+// newOverrideDeliveryStack 装配覆盖集服务 + 文件服务（编辑成员内容）+ 投递服务（复用 fileHub）+ 注册表 + 唤醒器。
 func newOverrideDeliveryStack(t *testing.T) overrideDeliveryStack {
 	db := testDB(t)
 	setRepo := repository.NewFileOverrideSetRepository(db)
 	revRepo := repository.NewFileOverrideSetRevisionRepository(db)
 	fileRepo := repository.NewFileObjectRepository(db)
+	fileRevRepo := repository.NewFileRevisionRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 	reg := runtime.NewRegistry()
@@ -49,7 +51,11 @@ func newOverrideDeliveryStack(t *testing.T) overrideDeliveryStack {
 	notifier := service.NewChangeNotifier(hub, fileHub, reg, assignRepo)
 	setSvc := service.NewOverrideSetService(db, setRepo, revRepo, fileRepo, auditRepo)
 	setSvc.SetNotifier(notifier)
-	return overrideDeliveryStack{sets: setSvc, ovrEff: ovrEff, fileRepo: fileRepo, reg: reg}
+	// 文件服务共享同一 notifier：编辑成员文件内容（成员是 override_set_id>0 的 FileObject）走通道B 发布路径，
+	// 提交后经 fileHub 唤醒 override 长轮询（与覆盖集投递复用同一唤醒集合）。
+	fileSvc := service.NewFileService(db, fileRepo, fileRevRepo, auditRepo)
+	fileSvc.SetNotifier(notifier)
+	return overrideDeliveryStack{sets: setSvc, files: fileSvc, ovrEff: ovrEff, fileRepo: fileRepo, reg: reg}
 }
 
 // registerOverrideS1 把 s1 注册进内存（供 group 反查唤醒）。
@@ -298,5 +304,101 @@ func TestOverrideDeliveryWakesOnPublish(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("override 长轮询未在发布后被唤醒")
+	}
+}
+
+// newOverrideMemberSet 建一个覆盖集并关联一个成员文件（path/targetRoot/命令固定），返回 (set, 成员 FileObject)。
+// 成员是 override_set_id>0 的 FileObject，内容经通道B 文件服务编辑（FR-15 内容热更复现的前置）。
+func newOverrideMemberSet(t *testing.T, s overrideDeliveryStack) (uint, *model.FileObject) {
+	t.Helper()
+	set, err := s.sets.Create(service.CreateOverrideSetParams{
+		Namespace: "prod", Group: model.GlobalGroupCode, Name: "AllinCore",
+		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/AllinCore",
+		ReloadCommand: "allin reload", Operator: "alice",
+	})
+	if err != nil {
+		t.Fatalf("建覆盖集失败: %v", err)
+	}
+	member := &model.FileObject{
+		NamespaceCode: "prod", GroupCode: model.GlobalGroupCode, Path: "config.yml",
+		ScopeLevel: model.ScopeGlobal, Content: "v1\n", ContentMD5: "init-md5",
+		Version: 1, Enabled: true, OverrideSetID: set.ID,
+	}
+	if err := s.fileRepo.Create(member); err != nil {
+		t.Fatalf("建成员失败: %v", err)
+	}
+	return set.ID, member
+}
+
+// TestOverrideDeliveryContentEditChangesMd5 FR-15 内容热更缺口复现（黑盒）：
+// 成员「内容只改不变 path」时 overrideMd5 必须变（修复前因公式不含成员内容指纹而不变 → agent 不重取）；
+// 且内容未变时 overrideMd5 幂等（不无谓重推）。
+func TestOverrideDeliveryContentEditChangesMd5(t *testing.T) {
+	s := newOverrideDeliveryStack(t)
+	_, member := newOverrideMemberSet(t, s)
+
+	base, err := s.ovrEff.Resolve("prod", "s1", model.GlobalGroupCode)
+	if err != nil {
+		t.Fatalf("初始解析失败: %v", err)
+	}
+	// 幂等：内容未变，再解析 overrideMd5 不应变（避免无谓重推 / 重复 reload）。
+	again, err := s.ovrEff.Resolve("prod", "s1", model.GlobalGroupCode)
+	if err != nil {
+		t.Fatalf("再解析失败: %v", err)
+	}
+	if again.OverrideMD5 != base.OverrideMD5 {
+		t.Fatalf("内容未变 overrideMd5 应幂等，base=%s again=%s", base.OverrideMD5, again.OverrideMD5)
+	}
+
+	// 编辑成员文件内容（path 不变），经通道B 发布路径更新 content + 按字节算的 content_md5。
+	if _, err := s.files.Publish(member.ID, "v2-changed\n", "alice", "改成员内容", ""); err != nil {
+		t.Fatalf("编辑成员内容失败: %v", err)
+	}
+
+	after, err := s.ovrEff.Resolve("prod", "s1", model.GlobalGroupCode)
+	if err != nil {
+		t.Fatalf("内容编辑后解析失败: %v", err)
+	}
+	if after.OverrideMD5 == base.OverrideMD5 {
+		t.Fatalf("成员内容改变（path 不变）overrideMd5 必须变，base==after=%s", base.OverrideMD5)
+	}
+}
+
+// TestOverrideDeliveryWakesOnMemberContentEdit FR-15 内容热更缺口复现（长轮询端到端）：
+// 编辑覆盖集成员内容（path 不变）→ 经 fileHub 唤醒 override 长轮询 → 返回 changed + 新 overrideMd5。
+func TestOverrideDeliveryWakesOnMemberContentEdit(t *testing.T) {
+	s := newOverrideDeliveryStack(t)
+	registerOverrideS1(t, s.reg)
+	_, member := newOverrideMemberSet(t, s)
+
+	base, err := s.ovrEff.Resolve("prod", "s1", model.GlobalGroupCode)
+	if err != nil {
+		t.Fatalf("初始解析失败: %v", err)
+	}
+
+	ch := make(chan struct {
+		md5     string
+		changed bool
+	}, 1)
+	go func() {
+		eff, changed, _ := s.ovrEff.WaitOverride(context.Background(), "prod", "s1", model.GlobalGroupCode, base.OverrideMD5, 3*time.Second)
+		ch <- struct {
+			md5     string
+			changed bool
+		}{eff.OverrideMD5, changed}
+	}()
+
+	time.Sleep(100 * time.Millisecond) // 让 waiter 先挂起
+	if _, err := s.files.Publish(member.ID, "v2-changed\n", "alice", "改成员内容", ""); err != nil {
+		t.Fatalf("编辑成员内容失败: %v", err)
+	}
+
+	select {
+	case r := <-ch:
+		if !r.changed || r.md5 == base.OverrideMD5 {
+			t.Fatalf("成员内容编辑后应被唤醒并得新 md5，实际 changed=%v md5=%s", r.changed, r.md5)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("成员内容编辑后 override 长轮询未被唤醒")
 	}
 }

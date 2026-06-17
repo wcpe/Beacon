@@ -57,19 +57,20 @@ func (s *OverrideEffectiveService) Resolve(ns, serverID, groupHint string) (Effe
 	if err != nil {
 		return EffectiveOverride{}, err
 	}
-	// 成员 path 清单由 repo 注入：仅取该集 enabled 成员的 path（已早校验在发布期把关）。
-	sets := filetree.ResolveOverrideSets(candidates, func(setID uint) []string {
+	// 成员清单由 repo 注入：取该集 enabled 成员的 path + 内容指纹（同一查询取齐，无额外回表；已早校验在发布期把关）。
+	// 内容指纹纳入 overrideMd5，使成员「内容只改不变 path」也能触发 agent 重取落盘（FR-15 内容热更）。
+	sets := filetree.ResolveOverrideSets(candidates, func(setID uint) []filetree.OverrideMember {
 		members, e := s.fileRepo.ListByOverrideSet(setID)
 		if e != nil {
 			return nil // 取成员失败时返回空清单（该集本轮无成员，agent 不落盘；下轮重试）
 		}
-		paths := make([]string, 0, len(members))
+		out := make([]filetree.OverrideMember, 0, len(members))
 		for _, m := range members {
 			if m.Enabled {
-				paths = append(paths, m.Path)
+				out = append(out, filetree.OverrideMember{Path: m.Path, ContentMD5: m.ContentMD5})
 			}
 		}
-		return paths
+		return out
 	})
 	return EffectiveOverride{
 		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
