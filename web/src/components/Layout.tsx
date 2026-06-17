@@ -1,12 +1,14 @@
-// 顶层布局：侧边导航 + 全局操作人输入框 + 主内容区。
-// 写操作必须带 operator，这里提供全局录入，空值时输入框旁给出提示。
+// 顶层布局：侧边导航 + 当前登录身份 + 登出 + 主内容区。
+// 操作者身份由登录令牌决定（FR-11），写操作 operator 以认证身份为准，无需手填。
 
-import { NavLink, Outlet } from 'react-router-dom'
-import { useOperator } from '../state/operator'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { clearAuth, useAuth } from '../state/auth'
 
 // 导航项定义（路径 + 中文名）
 const NAV_ITEMS: Array<{ to: string; label: string }> = [
   { to: '/configs', label: '配置中心' },
+  { to: '/files', label: '文件树托管' },
+  { to: '/override-sets', label: '文件覆盖集' },
   { to: '/instances', label: '实例与健康' },
   { to: '/zones', label: 'zone 分配' },
   { to: '/audits', label: '审计日志' },
@@ -14,7 +16,13 @@ const NAV_ITEMS: Array<{ to: string; label: string }> = [
 ]
 
 export default function Layout() {
-  const [operator, setOperator] = useOperator()
+  const { operator } = useAuth()
+  const navigate = useNavigate()
+
+  function onLogout() {
+    clearAuth()
+    navigate('/login', { replace: true })
+  }
 
   return (
     <div className="app-shell">
@@ -32,17 +40,11 @@ export default function Layout() {
           ))}
         </nav>
         <div className="operator-box">
-          <label className="operator-label" htmlFor="operator-input">
-            操作人
-          </label>
-          <input
-            id="operator-input"
-            className="operator-input"
-            placeholder="必填：用于写操作"
-            value={operator}
-            onChange={(e) => setOperator(e.target.value)}
-          />
-          {!operator && <div className="operator-hint">发布/回滚/改派/下线前请先填写操作人</div>}
+          <div className="operator-label">当前操作人</div>
+          <div className="operator-name">{operator || '-'}</div>
+          <button type="button" className="logout-btn" onClick={onLogout}>
+            登出
+          </button>
         </div>
       </aside>
       <main className="content">

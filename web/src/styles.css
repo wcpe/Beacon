@@ -453,3 +453,183 @@ button:disabled {
   gap: 12px;
   margin-top: 14px;
 }
+
+/* ===== 登录页 ===== */
+.login-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.login-card {
+  width: 320px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-brand {
+  font-size: 18px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+/* ===== 登录身份与登出 ===== */
+.operator-name {
+  font-weight: 600;
+  margin: 2px 0 8px;
+  word-break: break-all;
+}
+
+.logout-btn {
+  width: 100%;
+  background: none;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.logout-btn:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+/* ===== 文件树（自写递归树）===== */
+.tree {
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+.tree-node {
+  white-space: nowrap;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+.tree-row:hover {
+  background: var(--bg);
+}
+
+.tree-row.selected {
+  background: #eef2ff;
+}
+
+.tree-toggle {
+  width: 14px;
+  display: inline-block;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.tree-label {
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.tree-leaf .tree-label {
+  color: var(--primary);
+}
+
+/* 文件页树 + 平铺两视图切换 */
+.view-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.view-switch button.active {
+  background: var(--primary-hover);
+}
+
+/* ===== 带行号的文本编辑区 ===== */
+.code-editor {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.code-editor-gutter {
+  flex-shrink: 0;
+  padding: 6px 8px;
+  text-align: right;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  user-select: none;
+  white-space: pre;
+  overflow: hidden;
+}
+
+.code-editor-textarea {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.code-editor-textarea:focus {
+  border: none;
+}
+
+/* ===== 模态弹窗（dry-run 预览等）===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  width: 560px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  background: var(--panel-bg);
+  border-radius: 8px;
+  padding: 20px 24px;
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.modal-head h3 {
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.confirm-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
