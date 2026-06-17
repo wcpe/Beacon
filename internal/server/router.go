@@ -37,6 +37,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Get("/config/effective", h.Agent.Effective)
 		r.Get("/files/manifest", h.File.Manifest)
 		r.Get("/files/content", h.File.Content)
+		// 三方插件文件覆盖兼容（FR-15）：投递适用覆盖集（目标根 + 受限重载命令 + 成员清单）与成员内容
+		r.Get("/override-sets", h.File.OverrideManifest)
+		r.Get("/override-sets/content", h.File.OverrideContent)
 		r.Post("/report", h.Agent.Report)
 		r.Get("/discovery", h.Agent.Discover)
 	})

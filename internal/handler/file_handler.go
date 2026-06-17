@@ -15,17 +15,18 @@ import (
 	"beacon/internal/service"
 )
 
-// FileHandler 处理文件树托管（通道B）的 admin 请求与 agent 同步请求。
+// FileHandler 处理文件树托管（通道B）的 admin 请求与 agent 同步请求，含三方覆盖集（FR-15）的 agent 投递。
 type FileHandler struct {
 	svc     *service.FileService
 	effSvc  *service.FileEffectiveService
+	ovrSvc  *service.OverrideEffectiveService
 	insSvc  *service.InstanceService
 	maxHold time.Duration
 }
 
 // NewFileHandler 构造处理器。
-func NewFileHandler(svc *service.FileService, effSvc *service.FileEffectiveService, insSvc *service.InstanceService, maxHold time.Duration) *FileHandler {
-	return &FileHandler{svc: svc, effSvc: effSvc, insSvc: insSvc, maxHold: maxHold}
+func NewFileHandler(svc *service.FileService, effSvc *service.FileEffectiveService, ovrSvc *service.OverrideEffectiveService, insSvc *service.InstanceService, maxHold time.Duration) *FileHandler {
+	return &FileHandler{svc: svc, effSvc: effSvc, ovrSvc: ovrSvc, insSvc: insSvc, maxHold: maxHold}
 }
 
 // fileView 是文件对象对外视图（content 仅详情返回）。
@@ -310,6 +311,91 @@ func (h *FileHandler) Content(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	render.WriteError(w, r, apperr.ErrFileNotFound) // 该 path 不在有效文件树
+}
+
+// overrideSetEntryView 是 override 投递中单个适用覆盖集的对外视图（FR-15，不含成员内容）。
+type overrideSetEntryView struct {
+	// 覆盖集名称（agent 取成员内容时回传定位）
+	Name string `json:"name"`
+	// 目标插件根目录（相对 plugins），agent 落盘根
+	TargetRoot string `json:"targetRoot"`
+	// 受限重载命令（可空表示不下发命令；是否真正派发由 agent 本地白名单把关）
+	ReloadCommand string `json:"reloadCommand"`
+	// 成员文件相对 path 清单（内容走 override-sets/content 取）
+	Members []string `json:"members"`
+}
+
+// OverrideManifest 处理 GET /beacon/v1/agent/override-sets（长轮询，FR-15 投递）。
+// agent 带当前 overrideMd5；变了 200 返回适用覆盖集（目标根 + 重载命令 + 成员 path，不含内容），未变到超时 304。
+// 与文件长轮询复用同一唤醒集合（同属通道B），但与配置 md5、fileTreeMd5 相互独立（见 ADR-0010/0011）。
+func (h *FileHandler) OverrideManifest(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns, serverID, agentMD5 := q.Get("namespace"), q.Get("serverId"), q.Get("md5")
+	if ns == "" || serverID == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	groupHint, err := h.insSvc.RequireRegistered(ns, serverID)
+	if err != nil {
+		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
+		return
+	}
+	timeout := h.maxHold
+	if ms := q.Get("timeoutMs"); ms != "" {
+		if v, e := strconv.Atoi(ms); e == nil && v > 0 {
+			if d := time.Duration(v) * time.Millisecond; d < timeout {
+				timeout = d // 取 min(客户端 timeoutMs, 服务端上限)
+			}
+		}
+	}
+	eff, changed, err := h.ovrSvc.WaitOverride(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if !changed {
+		w.WriteHeader(http.StatusNotModified) // 304：无变更到超时
+		return
+	}
+	entries := make([]overrideSetEntryView, 0, len(eff.Sets))
+	for _, s := range eff.Sets {
+		entries = append(entries, overrideSetEntryView{
+			Name: s.Name, TargetRoot: s.TargetRoot, ReloadCommand: s.ReloadCommand, Members: s.MemberPaths,
+		})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"namespace": eff.Namespace, "serverId": eff.ServerID,
+		"group": eff.Group, "zone": nilIfEmpty(eff.Zone),
+		"overrideMd5": eff.OverrideMD5, "sets": entries,
+	})
+}
+
+// OverrideContent 处理 GET /beacon/v1/agent/override-sets/content?namespace=&serverId=&set=&path=（FR-15）。
+// agent 比对覆盖集成员 manifest 后逐个取成员整文件内容，落盘到该集 targetRoot（经 OverrideApplier）。
+func (h *FileHandler) OverrideContent(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns, serverID, setName, path := q.Get("namespace"), q.Get("serverId"), q.Get("set"), q.Get("path")
+	if ns == "" || serverID == "" || setName == "" || path == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	groupHint, err := h.insSvc.RequireRegistered(ns, serverID)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	file, err := h.ovrSvc.MemberContent(ns, serverID, groupHint, setName, path)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if file == nil {
+		render.WriteError(w, r, apperr.ErrFileNotFound) // 该成员不在本 server 适用覆盖集
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"set": setName, "path": file.Path, "md5": file.MD5, "content": file.Content,
+	})
 }
 
 // toFileView 组装文件对象基础视图（不含 content）。

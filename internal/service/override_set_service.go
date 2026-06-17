@@ -58,6 +58,7 @@ type OverrideSetService struct {
 	revRepo   *repository.FileOverrideSetRevisionRepository
 	fileRepo  *repository.FileObjectRepository
 	auditRepo *repository.AuditLogRepository
+	notifier  *ChangeNotifier // 可选，事务提交后唤醒受影响的 override 长轮询（复用 fileHub）
 }
 
 // NewOverrideSetService 构造服务。
@@ -69,6 +70,18 @@ func NewOverrideSetService(
 	auditRepo *repository.AuditLogRepository,
 ) *OverrideSetService {
 	return &OverrideSetService{db: db, setRepo: setRepo, revRepo: revRepo, fileRepo: fileRepo, auditRepo: auditRepo}
+}
+
+// SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
+func (s *OverrideSetService) SetNotifier(n *ChangeNotifier) {
+	s.notifier = n
+}
+
+// notify 在事务提交成功后按覆盖集 scope 唤醒受影响实例（复用文件长轮询的唤醒集合，见 ADR-0010）。
+func (s *OverrideSetService) notify(set *model.FileOverrideSet) {
+	if s.notifier != nil {
+		s.notifier.NotifyFileChange(set.NamespaceCode, set.ScopeLevel, set.GroupCode, set.ScopeTarget)
+	}
 }
 
 // List 列出覆盖集。
@@ -143,6 +156,7 @@ func (s *OverrideSetService) Create(p CreateOverrideSetParams) (*model.FileOverr
 		return nil, err
 	}
 	slog.Info("新建覆盖集", "namespace", p.Namespace, "group", group, "name", p.Name, "scope", p.ScopeLevel, "targetRoot", root)
+	s.notify(set)
 	return set, nil
 }
 
@@ -184,6 +198,7 @@ func (s *OverrideSetService) Publish(id uint, p PublishOverrideSetParams) (*mode
 		return nil, err
 	}
 	slog.Info("发布覆盖集", "id", id, "version", newVersion, "targetRoot", root)
+	s.notify(set)
 	return set, nil
 }
 
@@ -222,6 +237,7 @@ func (s *OverrideSetService) Rollback(id uint, toVersion int64, operator, commen
 		return nil, err
 	}
 	slog.Info("回滚覆盖集", "id", id, "toVersion", toVersion, "newVersion", newVersion)
+	s.notify(set)
 	return set, nil
 }
 
@@ -245,6 +261,7 @@ func (s *OverrideSetService) Delete(id uint, operator, comment, clientIP string)
 		return err
 	}
 	slog.Info("软删覆盖集", "id", id)
+	s.notify(set)
 	return nil
 }
 

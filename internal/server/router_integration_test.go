@@ -54,6 +54,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, hub)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
+	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
 	cfgSvc.SetNotifier(notifier)
 	fileSvc.SetNotifier(notifier)
@@ -65,7 +67,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler,
 		Config:    handler.NewConfigHandler(cfgSvc),
-		File:      handler.NewFileHandler(fileSvc, fileEffSvc, instSvc, 30*time.Second),
+		File:      handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
 		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
 		Instance:  handler.NewInstanceHandler(instSvc),
 		Zone:      handler.NewZoneHandler(zoneSvc),

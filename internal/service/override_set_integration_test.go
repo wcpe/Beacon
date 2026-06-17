@@ -3,11 +3,15 @@
 package service_test
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"beacon/internal/apperr"
 	"beacon/internal/model"
 	"beacon/internal/repository"
+	"beacon/internal/runtime"
+	"beacon/internal/runtime/longpoll"
 	"beacon/internal/service"
 )
 
@@ -20,6 +24,42 @@ func newOverrideStack(t *testing.T) (*service.OverrideSetService, *repository.Fi
 	auditRepo := repository.NewAuditLogRepository(db)
 	svc := service.NewOverrideSetService(db, setRepo, revRepo, fileRepo, auditRepo)
 	return svc, fileRepo
+}
+
+// overrideDeliveryStack 聚合覆盖集服务 + 投递服务 + 注册表（验证投递解析与长轮询唤醒）。
+type overrideDeliveryStack struct {
+	sets     *service.OverrideSetService
+	ovrEff   *service.OverrideEffectiveService
+	fileRepo *repository.FileObjectRepository
+	reg      *runtime.Registry
+}
+
+// newOverrideDeliveryStack 装配覆盖集服务 + 投递服务（复用 fileHub）+ 注册表 + 唤醒器。
+func newOverrideDeliveryStack(t *testing.T) overrideDeliveryStack {
+	db := testDB(t)
+	setRepo := repository.NewFileOverrideSetRepository(db)
+	revRepo := repository.NewFileOverrideSetRevisionRepository(db)
+	fileRepo := repository.NewFileObjectRepository(db)
+	auditRepo := repository.NewAuditLogRepository(db)
+	assignRepo := repository.NewZoneAssignmentRepository(db)
+	reg := runtime.NewRegistry()
+	hub := longpoll.NewHub()
+	fileHub := longpoll.NewHub()
+	ovrEff := service.NewOverrideEffectiveService(setRepo, fileRepo, assignRepo, fileHub)
+	notifier := service.NewChangeNotifier(hub, fileHub, reg, assignRepo)
+	setSvc := service.NewOverrideSetService(db, setRepo, revRepo, fileRepo, auditRepo)
+	setSvc.SetNotifier(notifier)
+	return overrideDeliveryStack{sets: setSvc, ovrEff: ovrEff, fileRepo: fileRepo, reg: reg}
+}
+
+// registerOverrideS1 把 s1 注册进内存（供 group 反查唤醒）。
+func registerOverrideS1(t *testing.T, reg *runtime.Registry) {
+	t.Helper()
+	if _, err := reg.Register(&runtime.Instance{
+		Namespace: "prod", ServerID: "s1", GroupHint: model.GlobalGroupCode, ResolvedGroup: model.GlobalGroupCode, Address: "10.0.0.1:1",
+	}, 30*time.Second, time.Now().UTC()); err != nil {
+		t.Fatalf("注册实例失败: %v", err)
+	}
 }
 
 // TestOverrideSetLifecycle 集成验证：建→发布→历史→回滚→软删，覆盖集事实正确流转。
@@ -133,5 +173,130 @@ func TestOverrideSetRejectInvalid(t *testing.T) {
 	})
 	if err != apperr.ErrInvalidReloadCommand {
 		t.Fatalf("注入命令应拒，得 %v", err)
+	}
+}
+
+// TestOverrideDeliveryResolveAndContent 投递解析：建集 + 关联成员 → 解析出适用集（含目标根/命令/成员）+ 取成员内容。
+func TestOverrideDeliveryResolveAndContent(t *testing.T) {
+	s := newOverrideDeliveryStack(t)
+	set, err := s.sets.Create(service.CreateOverrideSetParams{
+		Namespace: "prod", Group: model.GlobalGroupCode, Name: "AllinCore",
+		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/AllinCore",
+		ReloadCommand: "allin reload", Operator: "alice",
+	})
+	if err != nil {
+		t.Fatalf("建覆盖集失败: %v", err)
+	}
+	// 关联一个成员文件（path 相对 targetRoot）。
+	member := &model.FileObject{
+		NamespaceCode: "prod", GroupCode: model.GlobalGroupCode, Path: "config.yml",
+		ScopeLevel: model.ScopeGlobal, Content: "members-content\n", ContentMD5: "m1",
+		Version: 1, Enabled: true, OverrideSetID: set.ID,
+	}
+	if err := s.fileRepo.Create(member); err != nil {
+		t.Fatalf("建成员失败: %v", err)
+	}
+
+	eff, err := s.ovrEff.Resolve("prod", "s1", model.GlobalGroupCode)
+	if err != nil {
+		t.Fatalf("投递解析失败: %v", err)
+	}
+	if len(eff.Sets) != 1 {
+		t.Fatalf("应解析出 1 个适用集，得 %d", len(eff.Sets))
+	}
+	got := eff.Sets[0]
+	if got.TargetRoot != "plugins/AllinCore" || got.ReloadCommand != "allin reload" {
+		t.Fatalf("目标根/命令不符：%+v", got)
+	}
+	if len(got.MemberPaths) != 1 || got.MemberPaths[0] != "config.yml" {
+		t.Fatalf("成员清单不符：%+v", got.MemberPaths)
+	}
+	if eff.OverrideMD5 == "" {
+		t.Fatal("overrideMd5 不应为空")
+	}
+
+	// 取成员内容（按 setName + 相对 path）。
+	file, err := s.ovrEff.MemberContent("prod", "s1", model.GlobalGroupCode, "AllinCore", "config.yml")
+	if err != nil || file == nil {
+		t.Fatalf("取成员内容失败 err=%v file=%v", err, file)
+	}
+	if file.Content != "members-content\n" {
+		t.Fatalf("成员内容不符：%q", file.Content)
+	}
+
+	// 不适用本 server 的集名 / 不存在的成员 → nil（不越权读）。
+	if f, _ := s.ovrEff.MemberContent("prod", "s1", model.GlobalGroupCode, "NotApplicable", "config.yml"); f != nil {
+		t.Fatal("不适用集名应取不到成员")
+	}
+}
+
+// TestOverrideMembersExcludedFromFileTree 覆盖集成员不出现在通用文件树（避免双写到错误根）。
+func TestOverrideMembersExcludedFromFileTree(t *testing.T) {
+	s := newOverrideDeliveryStack(t)
+	set, err := s.sets.Create(service.CreateOverrideSetParams{
+		Namespace: "prod", Group: model.GlobalGroupCode, Name: "AllinCore",
+		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/AllinCore", Operator: "alice",
+	})
+	if err != nil {
+		t.Fatalf("建覆盖集失败: %v", err)
+	}
+	member := &model.FileObject{
+		NamespaceCode: "prod", GroupCode: model.GlobalGroupCode, Path: "config.yml",
+		ScopeLevel: model.ScopeGlobal, Content: "x\n", ContentMD5: "m1",
+		Version: 1, Enabled: true, OverrideSetID: set.ID,
+	}
+	if err := s.fileRepo.Create(member); err != nil {
+		t.Fatalf("建成员失败: %v", err)
+	}
+	// 通用文件树候选不应含成员（override_set_id>0 被排除）。
+	cands, err := s.fileRepo.FindEffectiveCandidates("prod", model.GlobalGroupCode, "", "s1")
+	if err != nil {
+		t.Fatalf("拉通用文件树候选失败: %v", err)
+	}
+	for _, c := range cands {
+		if c.OverrideSetID != 0 {
+			t.Fatalf("通用文件树不应含覆盖集成员，得 %+v", c)
+		}
+	}
+}
+
+// TestOverrideDeliveryWakesOnPublish override 长轮询：发布覆盖集后被唤醒并返回新 overrideMd5。
+func TestOverrideDeliveryWakesOnPublish(t *testing.T) {
+	s := newOverrideDeliveryStack(t)
+	registerOverrideS1(t, s.reg)
+	// 初始无任何集时的 overrideMd5（agent 首拉基准）。
+	base, err := s.ovrEff.Resolve("prod", "s1", model.GlobalGroupCode)
+	if err != nil {
+		t.Fatalf("初始解析失败: %v", err)
+	}
+
+	ch := make(chan struct {
+		md5     string
+		changed bool
+	}, 1)
+	go func() {
+		eff, changed, _ := s.ovrEff.WaitOverride(context.Background(), "prod", "s1", model.GlobalGroupCode, base.OverrideMD5, 3*time.Second)
+		ch <- struct {
+			md5     string
+			changed bool
+		}{eff.OverrideMD5, changed}
+	}()
+
+	time.Sleep(100 * time.Millisecond) // 让 waiter 先挂起
+	if _, err := s.sets.Create(service.CreateOverrideSetParams{
+		Namespace: "prod", Group: model.GlobalGroupCode, Name: "AllinCore",
+		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/AllinCore",
+		ReloadCommand: "allin reload", Operator: "alice",
+	}); err != nil {
+		t.Fatalf("建覆盖集失败: %v", err)
+	}
+
+	select {
+	case r := <-ch:
+		if !r.changed || r.md5 == base.OverrideMD5 {
+			t.Fatalf("发布后应被唤醒并得新 md5，实际 changed=%v md5=%s", r.changed, r.md5)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("override 长轮询未在发布后被唤醒")
 	}
 }

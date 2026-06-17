@@ -103,14 +103,17 @@ func run() error {
 	fileHub := longpoll.NewHub()
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, hub)
 	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
+	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
+	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
 	configService.SetNotifier(notifier)
 	fileService.SetNotifier(notifier)
+	overrideSetService.SetNotifier(notifier)
 	zoneService.SetNotifier(notifier)
 	maxHold := time.Duration(cfg.Longpoll.MaxHoldMs) * time.Millisecond
 
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
-	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, instanceService, maxHold)
+	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))

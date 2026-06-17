@@ -94,6 +94,28 @@ func (r *FileOverrideSetRepository) List(f OverrideSetFilter) ([]model.FileOverr
 	return sets, nil
 }
 
+// FindEffectiveSets 拉取某 agent 身份的四层候选覆盖集（已 enabled 且未软删）。
+// 一条查询拉全 global/group/zone/server 四层，由上层按 Name 解析整集覆盖（同 FindEffectiveCandidates 口径）。
+func (r *FileOverrideSetRepository) FindEffectiveSets(ns, group, zone, serverID string) ([]model.FileOverrideSet, error) {
+	levelCond := r.db.
+		Where("scope_level = ? AND group_code = ?", model.ScopeGlobal, model.GlobalGroupCode).
+		Or("scope_level = ? AND group_code = ?", model.ScopeGroup, group).
+		Or("scope_level = ? AND group_code = ? AND scope_target = ?", model.ScopeZone, group, zone).
+		Or("scope_level = ? AND group_code = ? AND scope_target = ?", model.ScopeServer, group, serverID)
+
+	var sets []model.FileOverrideSet
+	err := r.db.
+		Where("deleted_at = ?", model.SoftDeleteSentinel).
+		Where("enabled = ?", true).
+		Where("namespace_code = ?", ns).
+		Where(levelCond).
+		Find(&sets).Error
+	if err != nil {
+		return nil, err
+	}
+	return sets, nil
+}
+
 // SoftDelete 软删覆盖集：填真实删除时间并置 enabled=false。
 func (r *FileOverrideSetRepository) SoftDelete(id uint, deletedAt time.Time) error {
 	return r.db.Model(&model.FileOverrideSet{}).

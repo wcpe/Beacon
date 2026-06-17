@@ -116,6 +116,10 @@ func (r *FileObjectRepository) SoftDelete(id uint, deletedAt time.Time) error {
 
 // FindEffectiveCandidates 拉取某 agent 身份的四层候选文件（已 enabled 且未软删）。
 // 一条查询拉全 global/group/zone/server 四层，由上层按 path 解析整文件覆盖。
+//
+// 排除覆盖集成员（override_set_id > 0）：成员文件落 targetRoot 须经 agent 侧
+// OverrideApplier（备份 + 受管标记 + 路径安全 + 命令派发，见 ADR-0011），不走通用文件树镜像，
+// 否则同一 path 会被双写到两个根。成员走独立的 override 投递通道（FindEffectiveSets）。
 func (r *FileObjectRepository) FindEffectiveCandidates(ns, group, zone, serverID string) ([]model.FileObject, error) {
 	levelCond := r.db.
 		Where("scope_level = ? AND group_code = ?", model.ScopeGlobal, model.GlobalGroupCode).
@@ -127,6 +131,7 @@ func (r *FileObjectRepository) FindEffectiveCandidates(ns, group, zone, serverID
 	err := r.db.
 		Where("deleted_at = ?", model.SoftDeleteSentinel).
 		Where("enabled = ?", true).
+		Where("override_set_id = ?", 0). // 排除覆盖集成员，避免与 override 投递通道双写
 		Where("namespace_code = ?", ns).
 		Where(levelCond).
 		Find(&objs).Error
@@ -134,4 +139,22 @@ func (r *FileObjectRepository) FindEffectiveCandidates(ns, group, zone, serverID
 		return nil, err
 	}
 	return objs, nil
+}
+
+// FindOverrideMember 取某覆盖集成员文件（按 path 精确匹配，已 enabled 且未软删）；不存在返回 (nil, nil)。
+// agent 取覆盖集成员内容时用：成员 path 相对 targetRoot，与通用文件树 path 空间隔离（按 override_set_id 限定）。
+func (r *FileObjectRepository) FindOverrideMember(setID uint, path string) (*model.FileObject, error) {
+	var obj model.FileObject
+	err := r.active().
+		Where("enabled = ?", true).
+		Where("override_set_id = ?", setID).
+		Where("path = ?", path).
+		First(&obj).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &obj, nil
 }
