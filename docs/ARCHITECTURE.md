@@ -62,7 +62,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `config_revision` | 每次发布的不可变快照（append-only） | 回滚 = 读旧版内容作新版发布，`source_revision` 记来源 |
 | `file_object` | 文件树托管（通道B）整文件 blob + scope 维度 + 当前版本指针 | 见下；与 `config_item` 平行但**整文件覆盖、不深合并**（[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） |
 | `file_revision` | 文件每次发布的不可变快照（append-only） | 与 `config_revision` 同款回滚思路 |
-| `file_override_set` | 三方插件文件覆盖集（FR-15）：目标插件目录 + 成员文件 + 一条受限重载命令 | scope 维度同 `file_object`；命令执行运行期“已建未接”（见 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md)） |
+| `file_override_set` | 三方插件文件覆盖集（FR-15）：目标插件目录 + 成员文件 + 一条受限重载命令 | scope 维度同 `file_object`；命令执行已接入运行期、随 agent 本地白名单生效（见 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md) 与 §8） |
 | `file_override_set_revision` | 覆盖集每次发布的不可变快照（append-only） | 同款回滚思路 |
 | `zone_assignment` | serverId → (group, zone) 权威指派 | `(namespace, server_id)` 唯一，换区改这一行 |
 | `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result` |
@@ -76,7 +76,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
-- **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`config/effective`（长轮询）、`report`、`discovery`。
+- **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`config/effective`（长轮询）、`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递）、`report`、`discovery`。
 - **admin 侧 `/admin/v1/*`**：登录（`auth/login`）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计、namespace。
 - 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
@@ -134,6 +134,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane.md)），agent 不声明 zone，从注册/拉取响应得到自己的归属；换区只改 `zone_assignment` 一行，agent 零改动。
 
 **文件树同步（通道B，FR-14，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）**：注册成功后，agent 在配置长轮询循环之外**并行**启一条文件树长轮询循环（各自 `gen` / 退避，唤醒集合独立）。每轮带本地已落盘清单（`AppliedFileManifestStore`，落 agent 数据目录的 `fileTreeMd5`）发 `GET .../files/manifest`：200 拿到新 `manifest`（path→md5，不含内容）→ `FileSyncer` 纯差分算增/改/删 → 仅对增/改 `GET .../files/content` 取整文件 → `FileMirrorWriter` **原子写**镜像到插件 `plugins` 基目录（临时文件 → `FileChannel.force` 含父目录 fsync → `ATOMIC_MOVE`，补 `SnapshotStore` 未做 fsync 的缺口），删除目标已无的 path，**全部落盘成功后才写已落盘清单**（先文件后清单，崩溃可恢复）；304 续杯；连接失败退避。落盘相对 path 经 `RelativePathGuard` 校验，拒绝绝对/`..`穿越/反斜杠逃逸目标根。**fail-static 比配置更保守**：任一变更文件取内容失败（控制面不可用）即**整轮放弃**——不删任何既有文件、不写清单，下一轮重试，绝不臆测；首启无目标态时同样不动任何已落盘文件。全程经 `adapter.runAsync` 不上 MC 主线程；HTTP/JSON 仅在适配器、core 依 `HttpTransport`/`JsonCodec` 接口（[ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）。
+
+**三方覆盖集命令执行（FR-15，[ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md)）**：覆盖集是通道B 的一个 profile（在镜像落盘之上多做"覆盖前备份 + 覆盖后执行管理台预设的受限重载命令"），仅在文件树托管启用时接线。控制面 `OverrideEffectiveService` 按 scope 覆盖链解析某 server 适用的覆盖集（同名取最高层那份），经 agent-facing 端点 `GET .../override-sets`（长轮询带 `overrideMd5`，复用文件 Hub 唤醒集合，但 md5 维度独立）投递"目标根 + 受限重载命令 + 成员 path"，成员内容经 `GET .../override-sets/content` 取；覆盖集成员（`file_object.override_set_id>0`）从通用文件树清单排除，避免同 path 双写到错误根。agent 注册成功后并行启 override 长轮询循环（独立 gen/退避、复用单飞），`OverrideSyncApplier` 逐集编排：取齐成员 → `TargetRootSecurity`（agent 侧最终校验目标根落在 `plugins/<plugin>/` 内，防控制面被攻破下发逃逸目标根）→ `OverrideApplier`（`BackupManager` 备份 → `OverridePathSecurity` 成员路径 Path 级校验 → `FileMirrorWriter` 原子覆盖 → `ManagedFileTracker` 受管标记防震荡环）→ 全量落盘成功且命中 `CommandWhitelist`（**agent 本地白名单、默认空、控制面不下发**）才经 `ReloadCommandExecutor` 派发为控制台命令（**禁 shell**：core/适配器无任何进程执行 API，经 `PlatformAdapter.dispatchConsoleCommand`，不上 MC 主线程同步等结果）。**fail-static**：控制面不可用 / 取成员失败 / 目标根非法一律不动既有、不派发命令、不更新基准，下轮向控制面目标态收敛重做（幂等）；**回滚只还原文件、绝不重放重载命令**（命令本身可能就是失败根因）。命令执行 gate 在管理面鉴权之后（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）。
 
 **本地运维命令（FR-17，仅本地）**：双端壳注册根命令 `/beacon`（权限 `beacon.admin`）——`status`（打印生命周期状态 / 是否连上 / 有效配置 md5 / 心跳周期 / endpoint）、`reload`（`forcePollNow`：md5=null 强制立刻重拉一次有效配置并经 `ConfigApplier` 幂等守卫 apply，不等长轮询超时）、`reconnect`（`reconnectNow`：重置退避并重新接入，**不清空 store / 快照**以守 fail-static）。`resync`（强制重同步文件树）依赖文件树托管（FR-14）未启用，仅占位提示。命令体经 `adapter.runAsync` 落异步线程，core 控制方法不碰 Bukkit/Bungee（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）；远程下发依赖鉴权（FR-11），本期不做。**注册单飞不变量**：注册有多触发点（心跳 404 / 长轮询 404 / 退避重试 / `reconnectNow`），由 `AtomicBoolean` 单飞门 + 注册「代」标识收口，保证**任意时刻只有一条 register→loops 在飞**，杜绝瞬时双注册、双循环。
 
