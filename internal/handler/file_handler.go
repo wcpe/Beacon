@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"beacon/internal/apperr"
+	"beacon/internal/auth"
 	"beacon/internal/render"
 	"beacon/internal/repository"
 	"beacon/internal/service"
@@ -98,7 +99,6 @@ type fileCreateRequest struct {
 	ScopeLevel  string `json:"scopeLevel"`
 	ScopeTarget string `json:"scopeTarget"`
 	Content     string `json:"content"`
-	Operator    string `json:"operator"`
 	Comment     string `json:"comment"`
 }
 
@@ -112,7 +112,7 @@ func (h *FileHandler) Create(w http.ResponseWriter, r *http.Request) {
 	o, err := h.svc.Create(service.CreateFileParams{
 		Namespace: req.Namespace, Group: req.Group, Path: req.Path,
 		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget,
-		Content: req.Content, Operator: req.Operator, Comment: req.Comment, ClientIP: clientIP(r),
+		Content: req.Content, Operator: auth.Operator(r.Context()), Comment: req.Comment, ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -125,9 +125,8 @@ func (h *FileHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // filePublishRequest 是发布文件新版本的请求体。
 type filePublishRequest struct {
-	Content  string `json:"content"`
-	Operator string `json:"operator"`
-	Comment  string `json:"comment"`
+	Content string `json:"content"`
+	Comment string `json:"comment"`
 }
 
 // Publish 处理 PUT /admin/v1/files/{id}。
@@ -142,7 +141,7 @@ func (h *FileHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	o, err := h.svc.Publish(id, req.Content, req.Operator, req.Comment, clientIP(r))
+	o, err := h.svc.Publish(id, req.Content, auth.Operator(r.Context()), req.Comment, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -157,8 +156,7 @@ func (h *FileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	operator := r.URL.Query().Get("operator")
-	if err := h.svc.Delete(id, operator, r.URL.Query().Get("comment"), clientIP(r)); err != nil {
+	if err := h.svc.Delete(id, auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
@@ -213,7 +211,6 @@ func (h *FileHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 // fileRollbackRequest 是文件回滚请求体。
 type fileRollbackRequest struct {
 	ToVersion int64  `json:"toVersion"`
-	Operator  string `json:"operator"`
 	Comment   string `json:"comment"`
 }
 
@@ -229,7 +226,7 @@ func (h *FileHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	o, err := h.svc.Rollback(id, req.ToVersion, req.Operator, req.Comment, clientIP(r))
+	o, err := h.svc.Rollback(id, req.ToVersion, auth.Operator(r.Context()), req.Comment, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

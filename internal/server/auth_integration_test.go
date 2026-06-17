@@ -127,3 +127,59 @@ func TestWriteAuditUsesAuthenticatedOperator(t *testing.T) {
 		t.Fatalf("审计 operator 应为认证身份 %q，实际 %q（手填 operator 未被覆盖）", testAuthUser, op)
 	}
 }
+
+// TestFileWriteAuditUsesAuthenticatedOperator 文件写操作（建/发布/回滚/软删）审计的 operator
+// 必须是认证身份，而非请求体/查询里手填的 operator（后端以认证身份为准，FR-11）。
+func TestFileWriteAuditUsesAuthenticatedOperator(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// 建：请求体故意手填伪造 operator，应被认证身份覆盖。
+	code, created := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/files", map[string]any{
+		"namespace": "prod", "group": "__GLOBAL__", "path": "auth/op.allin",
+		"scopeLevel": "global", "content": "v1\n", "operator": "forged-create",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("建文件应 201，实际 %d：%v", code, created)
+	}
+	idF, ok := created["id"].(float64)
+	if !ok {
+		t.Fatalf("建文件响应缺 id：%v", created)
+	}
+	itemURL := ts.URL + "/admin/v1/files/" + itoa(int(idF))
+
+	// 发布：手填伪造 operator。
+	if code, pub := doJSON(t, http.MethodPut, itemURL, map[string]any{
+		"content": "v2\n", "operator": "forged-publish",
+	}); code != http.StatusOK {
+		t.Fatalf("发布文件应 200，实际 %d：%v", code, pub)
+	}
+
+	// 回滚到 v1：手填伪造 operator。
+	if code, rb := doJSON(t, http.MethodPost, itemURL+"/rollback", map[string]any{
+		"toVersion": 1, "operator": "forged-rollback",
+	}); code != http.StatusOK {
+		t.Fatalf("回滚文件应 200，实际 %d：%v", code, rb)
+	}
+
+	// 软删：query 故意手填伪造 operator。
+	if code, _ := doJSON(t, http.MethodDelete, itemURL+"?operator=forged-delete&comment=x", nil); code != http.StatusOK {
+		t.Fatalf("软删文件应 200，实际 %d", code)
+	}
+
+	// 四类文件写审计的 operator 都应为认证身份，而非手填值。
+	for _, action := range []string{"file.create", "file.publish", "file.rollback", "file.delete"} {
+		code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action="+action, nil)
+		if code != http.StatusOK {
+			t.Fatalf("查 %s 审计应 200，实际 %d", action, code)
+		}
+		items, _ := audits["items"].([]any)
+		if len(items) == 0 {
+			t.Fatalf("应有 %s 审计，实际无", action)
+		}
+		first, _ := items[0].(map[string]any)
+		if op, _ := first["operator"].(string); op != testAuthUser {
+			t.Fatalf("%s 审计 operator 应为认证身份 %q，实际 %q（手填 operator 未被覆盖）", action, testAuthUser, op)
+		}
+	}
+}
