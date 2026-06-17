@@ -58,12 +58,26 @@ object AgentAssembly {
 
         val applier = ConfigApplier(store, snapshotStore, adapter)
 
-        // 文件树托管（通道B）：启用时装配镜像落盘 + 已落盘清单 + 编排器（取内容委托 apiClient）。
-        val fileTreeApplier: FileTreeApplier? = if (settings.fileTree.enabled) {
+        // 镜像落盘根 = plugins 基目录（FR-14 文件树 / FR-15 覆盖落盘与 ADR-0011 路径限定共用）。
+        // fail-closed 守卫：若解析出的基目录名不是 "plugins"（getDataFolder 异常 / agent 未装在 plugins/<自身> 下），
+        // 关闭文件树与三方覆盖落盘——宁可不落，也不把文件落到错误目录（该类路径解析意外正是本次 E2E 暴露的缺陷根源）。
+        val pluginsBase = adapter.pluginsBaseFolder()
+        val pluginsBaseValid = pluginsBase.name.equals("plugins", ignoreCase = true)
+        if (settings.fileTree.enabled && !pluginsBaseValid) {
+            adapter.error(
+                "plugins 基目录解析异常（期望目录名为 plugins，实得 '${pluginsBase.name}'，路径=${pluginsBase.absolutePath}）：" +
+                    "fail-closed 关闭文件树与三方覆盖落盘，避免落到错误目录",
+                null,
+            )
+        }
+        val mirrorEnabled = settings.fileTree.enabled && pluginsBaseValid
+
+        // 文件树托管（通道B）：启用且基目录有效时装配镜像落盘 + 已落盘清单 + 编排器（取内容委托 apiClient）。
+        val fileTreeApplier: FileTreeApplier? = if (mirrorEnabled) {
             val root = if (settings.fileTree.targetSubDir.isBlank()) {
-                adapter.pluginsBaseFolder()
+                pluginsBase
             } else {
-                File(adapter.pluginsBaseFolder(), settings.fileTree.targetSubDir)
+                File(pluginsBase, settings.fileTree.targetSubDir)
             }
             FileTreeApplier(
                 mirrorWriter = FileMirrorWriter(root),
@@ -78,11 +92,11 @@ object AgentAssembly {
             null
         }
 
-        // 三方覆盖集接线（FR-15）：仅在文件树启用时装配（覆盖集是通道B 的一个 profile，依赖镜像落盘能力）。
+        // 三方覆盖集接线（FR-15）：仅在文件树启用且基目录有效时装配（覆盖集是通道B 的一个 profile，依赖镜像落盘能力）。
         // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
-        val overrideApplier: OverrideSyncApplier? = if (settings.fileTree.enabled) {
+        val overrideApplier: OverrideSyncApplier? = if (mirrorEnabled) {
             OverrideSyncApplier(
-                pluginsBaseFolder = adapter.pluginsBaseFolder(),
+                pluginsBaseFolder = pluginsBase,
                 backupRoot = File(adapter.dataFolder(), settings.override.backupDirName),
                 whitelist = CommandWhitelist(settings.override.commandWhitelist),
                 adapter = adapter,

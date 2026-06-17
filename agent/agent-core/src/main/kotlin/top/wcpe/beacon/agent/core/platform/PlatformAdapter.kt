@@ -27,8 +27,14 @@ interface PlatformAdapter {
      *
      * 默认取 agent 数据目录的父目录（agent 自身在 plugins/<本插件>/ 下，父级即 plugins）。
      * 壳层可按平台覆盖。
+     *
+     * 注意：必须先 [File.getAbsoluteFile] 再取父级——TabooLib 的 getDataFolder() 在部分平台返回
+     * **相对路径**（如 `plugins/<本插件>`），此时 `File("plugins/x").parentFile` 为 `File("plugins")`、
+     * 而 `File("plugins").parentFile` 为 null；若下游再以「基目录父级 + plugins/<目标>」解析覆盖落盘根，
+     * 相对路径会令父级回退成 plugins 本身、最终把覆盖文件落到 `plugins/plugins/<目标>`（重复 plugins）。
+     * 先绝对化即可让父级稳定为服务器根，避免该路径重复缺陷（FR-14/FR-15 镜像落盘与路径限定共用此基目录）。
      */
-    fun pluginsBaseFolder(): File = dataFolder().parentFile ?: dataFolder()
+    fun pluginsBaseFolder(): File = dataFolder().absoluteFile.parentFile ?: dataFolder().absoluteFile
 
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(changed: Set<String>, newMd5: String)
