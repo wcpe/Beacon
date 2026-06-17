@@ -4,6 +4,10 @@
 
 ## 未发布版本
 
+## 0.2.0（2026-06-17）
+
+> **破坏性变更（pre-1.0，按 [ADR-0007](docs/adr/0007-versioning-and-release-channels.md) 在 0.y.z 内允许、于此标明）**：管理面 `/admin/v1/*`（登录端点除外）自本版本起需 Bearer 登录令牌（FR-11）——此前开放访问的 admin API 调用方须先 `POST /admin/v1/auth/login` 取令牌再调用；agent 侧 `X-Beacon-Token` 语义不变。
+
 ### 新增
 - 管理面鉴权（FR-11，自 P2 前移，见 [ADR-0009](docs/adr/0009-control-plane-auth-pulled-forward.md)）：新增 `POST /admin/v1/auth/login`（单操作者凭据 → 无状态 HMAC 签名令牌）；`/admin/v1/*`（登录除外）挂登录令牌中间件，缺/错/过期令牌一律 401；写操作 operator 改以认证身份为准写入审计，取代前端手填值；凭据/密钥走 env（`BEACON_ADMIN_USERNAME`/`BEACON_ADMIN_PASSWORD`/`BEACON_AUTH_SECRET`）不落库、不引 Redis；agent 侧共享 token 语义不变。
 - agent 本地运维命令（FR-17，仅本地）：双端壳注册 `/beacon`（权限 `beacon.admin`）含 `status`（生命周期 / 连接 / 有效配置 md5 / 心跳周期 / endpoint）、`reload`（`forcePollNow` 以 md5=null 强制重拉并经幂等守卫 apply，不等长轮询超时）、`reconnect`（`reconnectNow` 重置退避重连、不清空 store/快照保 fail-static）、`resync`（依赖文件树托管 FR-14 未启用，占位提示）；命令经 `adapter.runAsync` 不上 MC 主线程、core 控制方法不碰平台库（守 ADR-0005）。并修复注册多触发点（心跳 404 / 长轮询 404 / 退避重试 / reconnect）无单飞保护导致的瞬时双注册——用 `AtomicBoolean` 单飞门 + 注册代标识收口，保证任意时刻只有一条 register→loops 在飞（并发单测覆盖连续 reconnect、reconnect 与 poll 并发、register 单飞不变量）。远程下发依赖鉴权（FR-11），本期不做。
@@ -18,6 +22,16 @@
 ### 变更
 - 文件树托管端点写操作 `operator` 改取认证身份（`auth.Operator(ctx)`）而非请求体，与 override-set 写操作一致——`POST /admin/v1/files`、`PUT /admin/v1/files/{id}` 请求体移除 `operator` 字段，后端以登录令牌身份写审计。
 - 管理台前端各写操作（配置/文件/zone/实例下线 的新建/发布/回滚/软删/指派/取消指派）不再向请求体/查询发送 `operator`——后端已统一取认证身份并忽略手填值，前端发送即冗余；同时移除随之失效的 `useOperator` hook 与 `requireOperator` 空值校验（登录后身份恒在、未登录由 `RequireAuth` 守卫拦截），登录身份仅保留侧栏「当前操作人」展示用途，行为不变。
+
+### 修复
+- `file_object` 唯一键改用定长 `path_hash`：避免 `path varchar(512)` 入 utf8mb4 复合唯一键超 MySQL 3072 字节键长致 AutoMigrate 建表失败、拖垮整库迁移。
+- agent 从仓库根 `VERSION` 注入 `project.version`（兑现 ADR-0007；此前为 `unspecified`，e2e jar 名解析成空版本）。
+- bungee 壳显式 `compileOnly` 引入 `net.md-5:bungeecord-api`，修复 TabooLib `install(BungeeCord)` 未把 bungee API 上编译类路径致编译失败。
+- override 反馈环读盘异常（目标为目录占位 / 不可读）改为跳过该文件 + 告警，避免单文件令 override 同步异步循环静默停摆。
+
+### 安全
+- 管理面鉴权（FR-11）：admin API 由开放访问改为需登录令牌（见上方破坏性变更）；写操作 `operator` 取认证身份、不可手填伪造。
+- 三方覆盖命令执行（RCE 面）随 FR-15 接线正式上线，过专门对抗式安全审查（9 条 ADR-0011 约束接线后全成立、未发现可达 RCE / 路径穿越 / 鉴权绕过 / 主线程阻塞）；受 agent 本地白名单（默认空 = 不派发任何命令）兜底、控制面不下发白名单。**已知项**：命令执行的真机端到端（配置覆盖集 + 白名单 + 对真实插件派发重载命令）尚未单列 E2E（默认 inert），生产启用白名单前建议补跑。
 
 ## 0.1.0（2026-06-17）
 
