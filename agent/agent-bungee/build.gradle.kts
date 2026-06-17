@@ -40,6 +40,9 @@ dependencies {
     compileOnly(project(":agent-api"))
     compileOnly(project(":agent-kit"))
     compileOnly(kotlin("stdlib"))
+    // BungeeCord 平台 API（net.md_5.bungee.*）：TabooLib install(BungeeCord) 未把它加到编译类路径，显式 compileOnly 引入；
+    // 仅编译期可见，运行期由 BungeeCord 代理本身提供（@jar 只取主 jar、不拉传递依赖）。
+    compileOnly("net.md-5:bungeecord-api:1.20-R0.2@jar")
 }
 
 taboolib {
