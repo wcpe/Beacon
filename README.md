@@ -4,7 +4,7 @@
 
 Beacon 是一个独立的后端控制面：用 **Go** 提供 API、内嵌 **React** 管理台，以 **docker-compose** 单节点部署；Minecraft 的 BungeeCord 代理与 Bukkit 子服各跑一个轻量 **Kotlin/TabooLib agent** 接入。它为整个集群提供**集中配置（动态热更、版本回滚）、服务注册/发现、健康检查**，并以"配置 + 拓扑"的形式支撑分小区、虚拟大区与合区。
 
-> **当前状态**：第一期开发中，仓库与最小可运行骨架已落地——控制面可起服连库并返回环境列表，前端（Vite/React）与双端 agent（Kotlin/TabooLib）骨架均可构建，`docker compose up` 可起 beacon + mysql。管理台与配置中心等能力随后续里程碑逐步完善。详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+> **当前状态**：已发布 **v0.2.0**。第一期（MVP）能力全部交付并验收——配置中心（scope 覆盖链 + 动态热更 + 版本/回滚）、服务注册/发现、健康检查、zone 指派、React 管理台、审计、双端 agent（Kotlin/TabooLib）均已落地，集成测试与真机 E2E 通过。此外已**前移交付**部分 P2 能力：管理面鉴权（FR-11）、文件树托管（FR-14）、三方插件文件覆盖 + 受限重载命令（FR-15）、agent 本地运维命令（FR-17）、下游接入 SDK（FR-16/19）与管理台增强（FR-18）。当前迭代：管理台 shadcn-ui 设计系统改造（FR-21）开发中。详见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 为什么是独立服务而非代理插件
 
@@ -67,14 +67,30 @@ Beacon/
 
 ## 快速开始
 
-> 骨架已可运行（管理台功能随第一期里程碑逐步完善）：
+### 部署控制面
 
 ```bash
-cp .env.example .env      # 配置 MySQL 密码、agent token
-docker compose up -d      # 起 beacon + mysql
+cp .env.example .env      # 填 MySQL 密码、agent token、管理台账号口令、令牌签名密钥
+docker compose up -d      # 起 beacon + mysql；mysql 就绪后自动建表(AutoMigrate)+预置 prod/test 两环境
 # 管理台与 API 同端口： http://localhost:8848
 # 验证：GET http://localhost:8848/admin/v1/namespaces 返回 prod/test 两个环境
 ```
+
+浏览器打开 `http://localhost:8848`，用 `BEACON_ADMIN_USERNAME`（默认 `admin`）+ `BEACON_ADMIN_PASSWORD` 登录管理台（自 v0.2.0 起 `/admin/v1/*` 需登录令牌，见 [ADR-0009](docs/adr/0009-control-plane-auth-pulled-forward.md)）。
+
+### 业务插件接入 agent
+
+业务插件不直连控制面，而是 `compileOnly` 依赖只读 SDK、运行期由 `BeaconAgent` 提供：
+
+```kotlin
+repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
+dependencies {
+    compileOnly("top.wcpe.beacon:beacon-agent-api:0.2.0") // 只读契约
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.2.0") // 便捷门面（推荐）
+}
+```
+
+接入步骤、最小示例与回退判据等纪律见 [docs/SDK.md](docs/SDK.md)。部署、备份、升级与端到端验收见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
 ## 约定
 
