@@ -10,7 +10,6 @@ import {
 } from '../api/client'
 import type { AssignParams } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
 
@@ -24,7 +23,6 @@ interface ZoneFilter {
 export default function ZonesPage() {
   const qc = useQueryClient()
   const msg = useMessage()
-  const [operator] = useOperator()
 
   // 过滤草稿与生效值
   const [fNamespace, setFNamespace] = useState('')
@@ -57,7 +55,7 @@ export default function ZonesPage() {
 
   const unassignMut = useMutation({
     mutationFn: (vars: { namespace: string; serverId: string }) =>
-      unassignZone(vars.namespace, vars.serverId, operator),
+      unassignZone(vars.namespace, vars.serverId),
     onSuccess: (_d, vars) => {
       msg.showSuccess(`已取消 ${vars.serverId} 的指派`)
       invalidate()
@@ -81,7 +79,6 @@ export default function ZonesPage() {
 
   function onAssign(e: React.FormEvent) {
     e.preventDefault()
-    if (!msg.requireOperator(operator)) return
     if (!form.namespace.trim() || !form.serverId.trim() || !form.group.trim() || !form.zone.trim()) {
       msg.showError('环境、serverId、大区、小区均为必填')
       return
@@ -91,13 +88,11 @@ export default function ZonesPage() {
       serverId: form.serverId.trim(),
       group: form.group.trim(),
       zone: form.zone.trim(),
-      operator,
       note: form.note.trim(),
     })
   }
 
   function onUnassign(namespace: string, serverId: string) {
-    if (!msg.requireOperator(operator)) return
     if (!window.confirm(`确认取消 ${serverId} 的 zone 指派？`)) return
     unassignMut.mutate({ namespace, serverId })
   }

@@ -7,7 +7,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { createFile, listFiles } from '../api/client'
 import type { CreateFileParams, FileFilter } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
 import FileDetail from './FileDetail'
@@ -27,7 +26,6 @@ export default function FilesPage() {
   const qc = useQueryClient()
   const msg = useMessage()
   const navigate = useNavigate()
-  const [operator] = useOperator()
   const { id } = useParams<{ id: string }>()
   const selectedId = id ? Number(id) : null
 
@@ -70,7 +68,6 @@ export default function FilesPage() {
 
   function onCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!msg.requireOperator(operator)) return
     if (!form.namespace.trim() || !form.group.trim() || !form.path.trim()) {
       msg.showError('环境、大区、path 均为必填')
       return
@@ -82,7 +79,6 @@ export default function FilesPage() {
       scopeLevel: form.scopeLevel,
       scopeTarget: form.scopeTarget.trim(),
       content: form.content,
-      operator,
       comment: form.comment.trim(),
     })
   }

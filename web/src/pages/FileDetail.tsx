@@ -13,7 +13,6 @@ import {
   rollbackFile,
 } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import CodeEditor from '../components/CodeEditor'
 import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
@@ -21,7 +20,6 @@ import { useMessage } from '../components/useMessage'
 export default function FileDetail({ id, onClosed }: { id: number; onClosed: () => void }) {
   const qc = useQueryClient()
   const msg = useMessage()
-  const [operator] = useOperator()
 
   // 发布表单
   const [content, setContent] = useState('')
@@ -67,7 +65,7 @@ export default function FileDetail({ id, onClosed }: { id: number; onClosed: () 
   }
 
   const publishMut = useMutation({
-    mutationFn: () => publishFile(id, content, operator, comment.trim()),
+    mutationFn: () => publishFile(id, content, comment.trim()),
     onSuccess: (r) => {
       msg.showSuccess(`已发布版本 ${r.version}（md5 ${r.md5.slice(0, 8)}）`)
       setComment('')
@@ -77,7 +75,7 @@ export default function FileDetail({ id, onClosed }: { id: number; onClosed: () 
   })
 
   const rollbackMut = useMutation({
-    mutationFn: (toVersion: number) => rollbackFile(id, toVersion, operator, `回滚到版本 ${toVersion}`),
+    mutationFn: (toVersion: number) => rollbackFile(id, toVersion, `回滚到版本 ${toVersion}`),
     onSuccess: (r) => {
       msg.showSuccess(`已回滚，新版本 ${r.version}`)
       invalidateAll()
@@ -86,7 +84,7 @@ export default function FileDetail({ id, onClosed }: { id: number; onClosed: () 
   })
 
   const deleteMut = useMutation({
-    mutationFn: () => deleteFile(id, operator, '管理台软删'),
+    mutationFn: () => deleteFile(id, '管理台软删'),
     onSuccess: () => {
       msg.showSuccess('已软删该文件层')
       qc.invalidateQueries({ queryKey: ['files'] })

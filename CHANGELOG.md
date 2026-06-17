@@ -16,6 +16,7 @@
 
 ### 变更
 - 文件树托管端点写操作 `operator` 改取认证身份（`auth.Operator(ctx)`）而非请求体，与 override-set 写操作一致——`POST /admin/v1/files`、`PUT /admin/v1/files/{id}` 请求体移除 `operator` 字段，后端以登录令牌身份写审计。
+- 管理台前端各写操作（配置/文件/zone/实例下线 的新建/发布/回滚/软删/指派/取消指派）不再向请求体/查询发送 `operator`——后端已统一取认证身份并忽略手填值，前端发送即冗余；同时移除随之失效的 `useOperator` hook 与 `requireOperator` 空值校验（登录后身份恒在、未登录由 `RequireAuth` 守卫拦截），登录身份仅保留侧栏「当前操作人」展示用途，行为不变。
 
 ## 0.1.0（2026-06-17）
 

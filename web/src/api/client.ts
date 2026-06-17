@@ -133,7 +133,8 @@ export function getConfig(id: number): Promise<ConfigView> {
   return request<ConfigView>(`/configs/${id}`)
 }
 
-// 新建配置参数（三元组 + 覆盖层 + 格式 + 内容 + 操作人 + 备注）
+// 新建配置参数（三元组 + 覆盖层 + 格式 + 内容 + 备注）
+// 操作人由登录令牌身份决定（FR-11，后端取认证身份、忽略请求手填），故不在请求体送 operator。
 export interface CreateConfigParams {
   namespace: string
   group: string
@@ -142,7 +143,6 @@ export interface CreateConfigParams {
   scopeTarget: string
   format: string
   content: string
-  operator: string
   comment: string
 }
 
@@ -156,17 +156,16 @@ export function createConfig(params: CreateConfigParams): Promise<ConfigView> {
 export function publishConfig(
   id: number,
   content: string,
-  operator: string,
   comment: string,
 ): Promise<PublishResult> {
   return request<PublishResult>(`/configs/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ content, operator, comment }),
+    body: JSON.stringify({ content, comment }),
   })
 }
 
-export function deleteConfig(id: number, operator: string, comment: string): Promise<void> {
-  return request<void>(`/configs/${id}${qs({ operator, comment })}`, { method: 'DELETE' })
+export function deleteConfig(id: number, comment: string): Promise<void> {
+  return request<void>(`/configs/${id}${qs({ comment })}`, { method: 'DELETE' })
 }
 
 export function listRevisions(id: number): Promise<RevisionView[]> {
@@ -180,12 +179,11 @@ export function getRevision(id: number, version: number): Promise<RevisionView> 
 export function rollbackConfig(
   id: number,
   toVersion: number,
-  operator: string,
   comment: string,
 ): Promise<PublishResult> {
   return request<PublishResult>(`/configs/${id}/rollback`, {
     method: 'POST',
-    body: JSON.stringify({ toVersion, operator, comment }),
+    body: JSON.stringify({ toVersion, comment }),
   })
 }
 
@@ -208,12 +206,8 @@ export function listInstances(filter: InstanceFilter): Promise<InstanceView[]> {
   return request<ItemsResponse<InstanceView>>(`/instances${qs(filter)}`).then((r) => r.items)
 }
 
-export function offlineInstance(
-  serverId: string,
-  namespace: string,
-  operator: string,
-): Promise<void> {
-  return request<void>(`/instances/${encodeURIComponent(serverId)}/offline${qs({ namespace, operator })}`, {
+export function offlineInstance(serverId: string, namespace: string): Promise<void> {
+  return request<void>(`/instances/${encodeURIComponent(serverId)}/offline${qs({ namespace })}`, {
     method: 'POST',
   })
 }
@@ -231,12 +225,12 @@ export function listAssignments(
 }
 
 // 新增/改派参数
+// 操作人由登录令牌身份决定（FR-11，后端取认证身份、忽略请求手填），故不在请求体送 operator。
 export interface AssignParams {
   namespace: string
   serverId: string
   group: string
   zone: string
-  operator: string
   note: string
 }
 
@@ -247,12 +241,8 @@ export function assignZone(params: AssignParams): Promise<AssignmentView> {
   })
 }
 
-export function unassignZone(
-  namespace: string,
-  serverId: string,
-  operator: string,
-): Promise<void> {
-  return request<void>(`/zones/assignments${qs({ namespace, serverId, operator })}`, {
+export function unassignZone(namespace: string, serverId: string): Promise<void> {
+  return request<void>(`/zones/assignments${qs({ namespace, serverId })}`, {
     method: 'DELETE',
   })
 }
@@ -298,6 +288,7 @@ export function getFile(id: number): Promise<FileView> {
 }
 
 // 新建文件对象参数（首次发布）
+// 操作人由登录令牌身份决定（FR-11，后端取认证身份、忽略请求手填），故不在请求体送 operator。
 export interface CreateFileParams {
   namespace: string
   group: string
@@ -305,7 +296,6 @@ export interface CreateFileParams {
   scopeLevel: string
   scopeTarget: string
   content: string
-  operator: string
   comment: string
 }
 
@@ -319,17 +309,16 @@ export function createFile(params: CreateFileParams): Promise<FileView> {
 export function publishFile(
   id: number,
   content: string,
-  operator: string,
   comment: string,
 ): Promise<PublishResult> {
   return request<PublishResult>(`/files/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ content, operator, comment }),
+    body: JSON.stringify({ content, comment }),
   })
 }
 
-export function deleteFile(id: number, operator: string, comment: string): Promise<void> {
-  return request<void>(`/files/${id}${qs({ operator, comment })}`, { method: 'DELETE' })
+export function deleteFile(id: number, comment: string): Promise<void> {
+  return request<void>(`/files/${id}${qs({ comment })}`, { method: 'DELETE' })
 }
 
 export function listFileRevisions(id: number): Promise<FileRevisionView[]> {
@@ -343,12 +332,11 @@ export function getFileRevision(id: number, version: number): Promise<FileRevisi
 export function rollbackFile(
   id: number,
   toVersion: number,
-  operator: string,
   comment: string,
 ): Promise<PublishResult> {
   return request<PublishResult>(`/files/${id}/rollback`, {
     method: 'POST',
-    body: JSON.stringify({ toVersion, operator, comment }),
+    body: JSON.stringify({ toVersion, comment }),
   })
 }
 

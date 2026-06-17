@@ -15,7 +15,6 @@ import {
 } from '../api/client'
 import type { OverrideSetFilter } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
 
@@ -122,7 +121,6 @@ export default function OverrideSetsPage() {
 function OverrideSetDetail({ id, onClosed }: { id: number; onClosed: () => void }) {
   const qc = useQueryClient()
   const msg = useMessage()
-  const [operator] = useOperator()
 
   // 发布表单（确认勾选后才允许提交）
   const [targetRoot, setTargetRoot] = useState('')
@@ -174,7 +172,6 @@ function OverrideSetDetail({ id, onClosed }: { id: number; onClosed: () => void 
 
   function onPublish(e: React.FormEvent) {
     e.preventDefault()
-    if (!msg.requireOperator(operator)) return
     if (!targetRoot.trim()) {
       msg.showError('目标目录不能为空')
       return
@@ -187,7 +184,6 @@ function OverrideSetDetail({ id, onClosed }: { id: number; onClosed: () => void 
   }
 
   function onRollback(version: number) {
-    if (!msg.requireOperator(operator)) return
     if (!window.confirm(`确认回滚覆盖集到版本 ${version}？将作为新版本发布。`)) return
     rollbackMut.mutate(version)
   }

@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listInstances, offlineInstance } from '../api/client'
 import type { InstanceFilter } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import MessageBar from '../components/MessageBar'
 import StatusBadge from '../components/StatusBadge'
 import { useMessage } from '../components/useMessage'
@@ -17,7 +16,6 @@ const REFETCH_MS = 5000
 export default function InstancesPage() {
   const qc = useQueryClient()
   const msg = useMessage()
-  const [operator] = useOperator()
 
   const [namespace, setNamespace] = useState('')
   const [group, setGroup] = useState('')
@@ -36,7 +34,7 @@ export default function InstancesPage() {
     mutationFn: (serverId: string) => {
       const ns = filter.namespace
       if (!ns) throw new Error('下线需要先在过滤条件中指定环境')
-      return offlineInstance(serverId, ns, operator)
+      return offlineInstance(serverId, ns)
     },
     onSuccess: (_data, serverId) => {
       msg.showSuccess(`已下线实例 ${serverId}`)
@@ -57,7 +55,6 @@ export default function InstancesPage() {
   }
 
   function onOffline(serverId: string) {
-    if (!msg.requireOperator(operator)) return
     if (!filter.namespace) {
       msg.showError('请先在过滤条件中指定环境（下线接口需要 namespace）')
       return

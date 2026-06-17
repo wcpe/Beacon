@@ -11,14 +11,12 @@ import {
   rollbackConfig,
 } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
 
 export default function ConfigDetail({ id, onClosed }: { id: number; onClosed: () => void }) {
   const qc = useQueryClient()
   const msg = useMessage()
-  const [operator] = useOperator()
 
   // 发布表单
   const [content, setContent] = useState('')
@@ -50,7 +48,7 @@ export default function ConfigDetail({ id, onClosed }: { id: number; onClosed: (
   }
 
   const publishMut = useMutation({
-    mutationFn: () => publishConfig(id, content, operator, comment.trim()),
+    mutationFn: () => publishConfig(id, content, comment.trim()),
     onSuccess: (r) => {
       msg.showSuccess(`已发布版本 ${r.version}（md5 ${r.md5.slice(0, 8)}）`)
       setComment('')
@@ -60,7 +58,7 @@ export default function ConfigDetail({ id, onClosed }: { id: number; onClosed: (
   })
 
   const rollbackMut = useMutation({
-    mutationFn: (toVersion: number) => rollbackConfig(id, toVersion, operator, `回滚到版本 ${toVersion}`),
+    mutationFn: (toVersion: number) => rollbackConfig(id, toVersion, `回滚到版本 ${toVersion}`),
     onSuccess: (r) => {
       msg.showSuccess(`已回滚，新版本 ${r.version}`)
       invalidateAll()
@@ -69,7 +67,7 @@ export default function ConfigDetail({ id, onClosed }: { id: number; onClosed: (
   })
 
   const deleteMut = useMutation({
-    mutationFn: () => deleteConfig(id, operator, '管理台软删'),
+    mutationFn: () => deleteConfig(id, '管理台软删'),
     onSuccess: () => {
       msg.showSuccess('已软删该配置层')
       qc.invalidateQueries({ queryKey: ['configs'] })
@@ -80,7 +78,6 @@ export default function ConfigDetail({ id, onClosed }: { id: number; onClosed: (
 
   function onPublish(e: React.FormEvent) {
     e.preventDefault()
-    if (!msg.requireOperator(operator)) return
     if (!content) {
       msg.showError('发布内容不能为空')
       return
@@ -89,13 +86,11 @@ export default function ConfigDetail({ id, onClosed }: { id: number; onClosed: (
   }
 
   function onRollback(version: number) {
-    if (!msg.requireOperator(operator)) return
     if (!window.confirm(`确认回滚到版本 ${version}？将作为新版本发布。`)) return
     rollbackMut.mutate(version)
   }
 
   function onDelete() {
-    if (!msg.requireOperator(operator)) return
     if (!window.confirm('确认软删该配置层？该层将从合并链脱落并触发热更。')) return
     deleteMut.mutate()
   }

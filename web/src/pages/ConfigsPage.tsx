@@ -7,7 +7,6 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { createConfig, listConfigs } from '../api/client'
 import type { ConfigFilter, CreateConfigParams } from '../api/client'
 import { formatTime } from '../api/format'
-import { useOperator } from '../state/operator'
 import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
 import ConfigDetail from './ConfigDetail'
@@ -28,7 +27,6 @@ export default function ConfigsPage() {
   const qc = useQueryClient()
   const msg = useMessage()
   const navigate = useNavigate()
-  const [operator] = useOperator()
   const { id } = useParams<{ id: string }>()
   const selectedId = id ? Number(id) : null
 
@@ -71,7 +69,6 @@ export default function ConfigsPage() {
 
   function onCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!msg.requireOperator(operator)) return
     if (!form.namespace.trim() || !form.group.trim() || !form.dataId.trim()) {
       msg.showError('环境、大区、dataId 均为必填')
       return
@@ -84,7 +81,6 @@ export default function ConfigsPage() {
       scopeTarget: form.scopeTarget.trim(),
       format: form.format,
       content: form.content,
-      operator,
       comment: form.comment.trim(),
     })
   }
