@@ -111,6 +111,10 @@ func isCleanRelativeSafe(p string) bool {
 		if seg == ".." {
 			return false
 		}
+		// 段尾的点 / 空格会被 Windows 落盘剥离（"x.jar."→"x.jar"、"con "→"con"），借此绕过禁覆盖判定，一律拒。
+		if seg != "." && strings.TrimRight(seg, " .") != seg {
+			return false
+		}
 		// 规范化后不区分大小写比对 Windows 保留设备名（取点号前主名）。
 		base := seg
 		if dot := strings.IndexByte(seg, '.'); dot >= 0 {

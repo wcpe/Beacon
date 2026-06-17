@@ -81,6 +81,18 @@ class OverridePathSecurityTest {
     }
 
     @Test
+    fun `段尾点或空格不可绕过禁覆盖`() {
+        // Windows 落盘剥离段尾的点 / 空格，"x.jar."→"x.jar"、"bukkit.yml."→"bukkit.yml"，必须拒。
+        assertFalse(guard.isSafe("AllinCore.jar."))
+        assertFalse(guard.isSafe("bukkit.yml."))
+        assertFalse(guard.isSafe("server.properties."))
+        // 段尾空格（整串 trim 去不掉非末段、点也去不掉）。
+        assertFalse(guard.isSafe("sub /x.yml"))
+        assertFalse(guard.isSafe("con /x.yml"))
+        assertFalse(guard.isSafe("nested/x.jar."))
+    }
+
+    @Test
     fun `空路径拒绝`() {
         assertFalse(guard.isSafe(""))
         assertFalse(guard.isSafe("   "))

@@ -81,6 +81,24 @@ func TestValidateMemberPath_RejectJar(t *testing.T) {
 	}
 }
 
+// TestValidateMemberPath_RejectTrailingDotSpace 段尾点 / 空格会被 Windows 落盘剥离，
+// 借此绕过 .jar / 保留名 / server 文件禁覆盖，必须拒（与 agent OverridePathSecurity 同口径）。
+func TestValidateMemberPath_RejectTrailingDotSpace(t *testing.T) {
+	root := "plugins/AllinCore"
+	cases := []string{
+		"AllinCore.jar.",   // 尾点绕过 .jar
+		"nested/x.jar.",    // 子目录尾点绕过 .jar
+		"sub /x.yml",       // 非末段尾空格
+		"con /x.yml",       // 尾空格绕过保留名
+		"plain.yml.",       // 尾点
+	}
+	for _, p := range cases {
+		if err := ValidateMemberPath(root, p); err == nil {
+			t.Errorf("期望拒绝尾随点/空格成员 %q，却放行", p)
+		}
+	}
+}
+
 // TestValidateReloadCommand_Allow 合法单条重载命令放行（不含元字符）。
 func TestValidateReloadCommand_Allow(t *testing.T) {
 	cases := []string{

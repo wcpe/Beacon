@@ -37,6 +37,8 @@ class OverridePathSecurity(
         val segments = raw.split('/')
         for (seg in segments) {
             if (seg == "..") return false // 任一段穿越即拒（双保险，下方 Path 级再兜底）
+            // 段尾的点 / 空格会被 Windows 落盘剥离（"x.jar."→"x.jar"、"con "→"con"），借此绕过禁覆盖判定，一律拒。
+            if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
             if (isWindowsReserved(seg)) return false
         }
         if (isForbiddenTarget(raw)) return false
