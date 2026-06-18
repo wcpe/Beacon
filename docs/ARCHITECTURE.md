@@ -92,6 +92,7 @@ agent 只给 `(namespace, serverId)`，服务端按 `zone_assignment` 解析出 
 - 序列化键序固定，保证相同输入恒得相同 md5（长轮询比对依赖此幂等）。
 - **整体 md5 = `md5(concat(dataId + ":" + 单dataId_md5))`**，把 dataId 名纳入哈希，避免集合碰撞误判（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。
 - 发布时做结构化 parse 校验（坏 yaml/json 拒绝发布，不推爆全网）；同一 dataId 跨层 format 必须一致。
+- 发布前再做 schema/类型校验（FR-27）：非空内容顶层必须是键值映射（拒裸标量/列表根，否则深合并会整体冲掉其它层）、键必须非空（递归），不通过返 `CONTENT_SCHEMA_INVALID`。校验为 `merge.ValidateSchema` 纯函数、由 service 层 `validateContent` 统一接入（`Create`/`Publish`/`Rollback` 三条写路径全覆盖），handler 不碰校验细节；规则刻意保守，不引入按 dataId 的字段级 schema 注册表。
 
 agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
