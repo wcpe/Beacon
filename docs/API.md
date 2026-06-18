@@ -218,9 +218,10 @@ data: {}
 ### 实例与健康
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表） |
+| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline` |
 | `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情 |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 手动下线（移除内存条目；operator 由认证态派生） |
+| `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
@@ -256,4 +257,4 @@ data: {}
 | 指纹 | `md5` | string(32) | 小写 hex |
 | 版本 | `version` | int64 | 单调递增，回滚也 +1 |
 | 角色 | `role` | string | bukkit / bungee |
-| 健康 | `status` | string | online / lost / offline |
+| 健康 | `status` | string | online / degraded / lost / offline |

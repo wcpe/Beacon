@@ -20,6 +20,7 @@
 | [0014](0014-downstream-identity-source-direction.md) | 下游身份来源方向：优先取自 Beacon agent，本地降级 | 已接受 |
 | [0015](0015-sse-server-push-transport.md) | agent↔控制面 server→agent 推送合并为单条 SSE 流（取代 ADR-0006） | 已接受 |
 | [0016](0016-agent-cross-server-messaging-middleware.md) | agent 内置跨服消息中间件：基于 Redis 的通用通信层 | 已接受 |
+| [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

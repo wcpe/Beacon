@@ -137,7 +137,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 - **注册**：agent 只报 serverId + 元数据标签（`role/version/capacity/weight` + 自定义 metadata，**capacity/weight 为一等字段，metadata 仅 `map<string,string>`**，无 canary —— 对应 P0 修正）。Beacon 按 `zone_assignment` 解析回填 group/zone 写入内存注册表。
 - **重复 serverId 守卫**：按 `lastHeartbeat` 新鲜度判定 —— 旧条目超心跳周期未续约视为僵尸，允许新 address 顶替并告警；仍新鲜的不同 address 才拒绝（409）。避免故障换机被误杀（P0 修正）。
-- **健康**：单后台 goroutine 定期扫描，按 TTL 推进 `online → lost → offline`；收到心跳即回 online。offline 条目保留不移除（管理台可见历史），手动下线才移除。
+- **健康**：单后台 goroutine 定期扫描，按心跳陈旧度推进 `online → degraded → lost → offline`（阈值 `degraded-after-sec < ttl-sec < offline-grace-sec` 可配，FR-28）；收到心跳即从任意异常态回 online。offline 条目保留不移除（管理台可见历史），手动下线才移除。
+- **健康告警**（FR-28，[ADR-0019](adr/0019-health-alert-channel-abstraction.md)）：实例**进入异常态**（degraded/lost/offline）时主动告警，恢复 online 不告警。告警出口抽象为 `Alerter` 接口，`Dispatcher` 扇出到多个通道并**逐通道兜错**（某通道失败仅 WARN、不阻断扫描），第一版实现**站内信**（`InboxAlerter`，进程内环形缓存、独立锁不嵌套、管理台经 `GET /admin/v1/instances`… 同前缀的 `/admin/v1/alerts` 只读）与 **webhook**（`WebhookAlerter`，HTTP POST 告警 JSON，IO 在扫描循环里、不持注册表锁）；新增通道只实现 `Alerter` 接入。告警不落库（健康事件的派生，与"注册/健康真源在内存"一致，重启清零）。
 - **发现**：按标签（zone/group/role/status）过滤在线实例。agent 侧走 `/beacon/v1/agent/discovery`（归 agent 前缀 + token，P0 修正），管理台用 `/admin/v1/instances`。
 - **Proxy 目录注入（服务发现延伸出口）**：BeaconAgentProxy 注册成功后周期调用 `discovery` 同步同 namespace 下 `role=bukkit` 且在线的实例，以 `serverId` 作为 Bungee `ServerInfo` 名称、以 agent 上报 `address` 作为连接地址，自动创建/更新**仅由 Beacon 管理**的服务器条目；若同名条目已由手工 Bungee 配置存在，则 WARN 并跳过、不覆盖手工配置。控制面只提供发现事实，不操作玩家连接，不引入持久化任务队列；控制面失联时按本地已注入目录继续（fail-static）。
 

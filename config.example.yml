@@ -35,12 +35,25 @@ database:
 health:
   # 下发给 agent 的心跳周期（秒）
   heartbeat-interval-sec: 10
-  # 超过多少秒未收到心跳即判失联（online→lost）
+  # 超过多少秒未收到心跳即判亚健康（online→degraded）；须小于 ttl-sec
+  degraded-after-sec: 15
+  # 超过多少秒未收到心跳即判失联（degraded→lost）
   ttl-sec: 30
   # lost 后多久转 offline（秒）
   offline-grace-sec: 120
   # 后台健康扫描周期（秒）
   scan-interval-sec: 5
+
+# 健康告警：实例进入 degraded/lost/offline 时主动告警，通道可扩展（站内信 + webhook，见 docs/adr/0019）
+alert:
+  # 站内信保留的最近告警条数（进程内环形缓存，控制面重启清零）
+  inbox-capacity: 200
+  # webhook 告警通道
+  webhook:
+    # 告警 POST 目标 URL；留空则不启用 webhook 通道（仅站内信）
+    url: ""
+    # 单次 webhook 请求超时（毫秒）
+    timeout-ms: 3000
 
 longpoll:
   # 服务端长轮询挂起上限（毫秒）；实际取 min(客户端 timeoutMs, 此值)
