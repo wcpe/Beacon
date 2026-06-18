@@ -199,6 +199,10 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 	if target == nil {
 		return nil, apperr.ErrRevisionNotFound
 	}
+	// 回滚等同于把历史版本内容作为新版本发布，需同样过发布前 schema 校验，兜底防御历史脏数据。
+	if err := validateContent(item.Format, target.Content); err != nil {
+		return nil, err
+	}
 	newVersion := item.Version + 1
 	src := target.ID
 	err = s.db.Transaction(func(tx *gorm.DB) error {
