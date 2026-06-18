@@ -29,6 +29,17 @@ data class HeartbeatResult(
     val configDirty: Boolean,
 )
 
+/**
+ * 打开 SSE 流时上报的各通道当前 md5（供控制面"连接即对账"，FR-24）。
+ *
+ * 三通道与原长轮询一一对应；空串表示本地尚无该通道内容（首连 / 未启用），控制面据此补发全量。
+ */
+data class ReportedChannelMd5(
+    val config: String,
+    val file: String,
+    val override: String,
+)
+
 /** 长轮询有效配置的结果。 */
 sealed class PollResult {
 

@@ -8,6 +8,7 @@ import top.wcpe.beacon.agent.core.client.OverridePollResult
 import top.wcpe.beacon.agent.core.client.PollResult
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegisterResult
+import top.wcpe.beacon.agent.core.client.ReportedChannelMd5
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
@@ -16,6 +17,9 @@ import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
+import top.wcpe.beacon.agent.core.stream.StreamEventTypes
+import top.wcpe.beacon.agent.core.transport.StreamEvent
+import top.wcpe.beacon.agent.core.transport.StreamListener
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -62,6 +66,12 @@ class AgentLifecycle(
     private val overrideGen = AtomicReference(0)
 
     /**
+     * SSE 推送流（FR-24）的「代」标识：注入 streamTransport 时以本流取代上面三条长轮询，重启循环时递增。
+     * 单条流合并三通道变更通知 + 连接即对账（见 ADR-0015）。
+     */
+    private val streamGen = AtomicReference(0)
+
+    /**
      * 注册单飞门：任意时刻只允许一条 register→loops 在飞。
      * 多触发点（心跳 404 / 长轮询 404 / 退避重试 / reconnectNow）并发抢占，CAS 失败者直接 no-op，
      * 杜绝瞬时双注册、双循环。
@@ -88,6 +98,7 @@ class AgentLifecycle(
     private val pollBackoff = ExponentialBackoff(settings.backoff)
     private val fileTreeBackoff = ExponentialBackoff(settings.backoff)
     private val overrideBackoff = ExponentialBackoff(settings.backoff)
+    private val streamBackoff = ExponentialBackoff(settings.backoff)
 
     /** 当前是否已连上控制面（供对外 API connected() 读）。 */
     fun isConnected(): Boolean = state.get() == AgentState.RUNNING
@@ -140,11 +151,13 @@ class AgentLifecycle(
         pollBackoff.reset()
         fileTreeBackoff.reset()
         overrideBackoff.reset()
-        // 递增循环代，使在跑的旧心跳 / 长轮询 / 文件树 / 覆盖集循环在下一跳自然退出（新循环由本次注册成功后重启）。
+        streamBackoff.reset()
+        // 递增循环代，使在跑的旧心跳 / 长轮询 / 文件树 / 覆盖集 / SSE 流循环在下一跳自然退出（新循环由本次注册成功后重启）。
         heartbeatGen.set(heartbeatGen.get() + 1)
         pollGen.set(pollGen.get() + 1)
         fileTreeGen.set(fileTreeGen.get() + 1)
         overrideGen.set(overrideGen.get() + 1)
+        streamGen.set(streamGen.get() + 1)
         adapter.info("收到 reconnect：重置退避并重新接入控制面（保留当前有效配置）")
         adapter.runAsync { beginRegister(gen) }
     }
@@ -197,6 +210,7 @@ class AgentLifecycle(
         pollGen.set(pollGen.get() + 1)
         fileTreeGen.set(fileTreeGen.get() + 1)
         overrideGen.set(overrideGen.get() + 1)
+        streamGen.set(streamGen.get() + 1)
         adapter.info("agent 生命周期已停止")
     }
 
@@ -273,9 +287,14 @@ class AgentLifecycle(
                 "心跳周期=${result.heartbeatIntervalSec}s",
         )
         startHeartbeatLoop()
-        startConfigPollLoop()
-        startFileTreePollLoop()
-        startOverridePollLoop()
+        // 注入了 streamTransport（FR-24）：以单条 SSE 推送流取代三条长轮询；否则退回三条长轮询（迁移期兼容）。
+        if (apiClient.streamingEnabled()) {
+            startStreamLoop()
+        } else {
+            startConfigPollLoop()
+            startFileTreePollLoop()
+            startOverridePollLoop()
+        }
         // 循环已启，本次注册收尾，释放单飞门。
         registering.set(false)
         // 首次注册成功放行就绪等待者（countDown 幂等，后续注册无副作用）。
@@ -500,6 +519,149 @@ class AgentLifecycle(
                 adapter.warn("覆盖集长轮询连接失败（${result.reason}），保留本地覆盖不动，${delay}ms 后重连")
                 scheduleOverridePoll(gen, delay)
             }
+        }
+    }
+
+    // ---- SSE 推送流循环（FR-24，注入 streamTransport 时取代上面三条长轮询） ----
+
+    /** 启动单条 SSE 推送流循环：合并三通道变更通知 + 连接即对账（见 ADR-0015）。 */
+    private fun startStreamLoop() {
+        val gen = streamGen.get() + 1
+        streamGen.set(gen)
+        scheduleStream(gen, 0)
+    }
+
+    private fun scheduleStream(gen: Int, delayMs: Long) {
+        if (!running.get()) return
+        if (delayMs <= 0) {
+            adapter.runAsync { streamConnect(gen) }
+        } else {
+            adapter.runAsyncDelayed(delayMs) { streamConnect(gen) }
+        }
+    }
+
+    /**
+     * 建立一条 SSE 流并阻塞读取：上报各通道当前 md5（连接即对账），逐事件触发取数据-应用。
+     * 流结束（断线 / 关停）后按退避重连——重连即再次对账补增量，不丢更新、fail-static。
+     */
+    private fun streamConnect(gen: Int) {
+        if (!running.get() || gen != streamGen.get()) return
+        // 上报各通道本地当前 md5（空串=本地无该通道内容，控制面补全量）。
+        val reported = ReportedChannelMd5(
+            config = store.currentMd5() ?: "",
+            file = fileTreeApplier?.currentFileTreeMd5() ?: "",
+            override = overrideApplier?.currentOverrideMd5() ?: "",
+        )
+        apiClient.openStream(identity, reported, StreamLoopListener(gen))
+    }
+
+    /** SSE 事件分发：按事件类型触发对应通道的强制重取-应用（复用现有 HTTP 端点逻辑，见 ADR-0015 决策 2）。 */
+    private fun dispatchStreamEvent(gen: Int, event: StreamEvent) {
+        if (!running.get() || gen != streamGen.get()) return
+        when (event.type) {
+            StreamEventTypes.READY -> adapter.info("SSE 连接即对账完成，转入直播推送")
+            StreamEventTypes.CONFIG_CHANGED -> fetchAndApplyConfigOnce()
+            StreamEventTypes.FILE_CHANGED -> fetchAndApplyFileTreeOnce()
+            StreamEventTypes.OVERRIDE_CHANGED -> fetchAndApplyOverrideOnce()
+            else -> adapter.warn("收到未知 SSE 事件类型：${event.type}（忽略）")
+        }
+    }
+
+    /** 流结束处理：进 DEGRADED（连接级降级）、保留本地快照，退避后重连（重连即再次对账）。 */
+    private fun onStreamClosed(gen: Int, error: Throwable?) {
+        if (!running.get() || gen != streamGen.get()) return
+        state.set(AgentState.DEGRADED)
+        val delay = streamBackoff.nextDelayMs()
+        val reason = error?.message ?: "正常关闭"
+        adapter.warn("SSE 推送流断开（$reason），保持当前有效配置，${delay}ms 后重连并对账")
+        scheduleStream(gen, delay)
+    }
+
+    /**
+     * config-changed：以当前本地 md5 拉一次 config/effective（服务端 md5 已变 → 立即 200，不挂起），apply 并 report。
+     * 用 ConfigApplier 的 md5 幂等守卫兜底重复事件；404 触发重新注册。
+     */
+    private fun fetchAndApplyConfigOnce() {
+        when (val result = apiClient.pollEffective(identity, store.currentMd5(), settings.requestTimeoutMs)) {
+            is PollResult.Changed -> {
+                applier.apply(result.effective)
+                reportApplied(result.effective.md5)
+                markRunningAfterStreamSuccess()
+            }
+
+            is PollResult.NotModified -> markRunningAfterStreamSuccess() // 已是最新（重复事件），无害
+            is PollResult.NotRegistered -> {
+                adapter.warn("SSE 取配置返回未注册，触发重新注册")
+                triggerReregister()
+            }
+
+            is PollResult.Failed -> adapter.warn("SSE 取配置失败（${result.reason}），保持当前有效配置，待下次事件/重连")
+        }
+    }
+
+    /** file-changed：以当前本地 fileTreeMd5 拉一次 files/manifest 并增量同步落盘（fail-static 由 applier 内部把控）。 */
+    private fun fetchAndApplyFileTreeOnce() {
+        val applierLocal = fileTreeApplier ?: return
+        when (val result = apiClient.pollFileManifest(identity, applierLocal.currentFileTreeMd5(), settings.requestTimeoutMs)) {
+            is FileManifestPollResult.Changed -> {
+                applierLocal.apply(result.manifest)
+                markRunningAfterStreamSuccess()
+            }
+
+            is FileManifestPollResult.NotModified -> markRunningAfterStreamSuccess()
+            is FileManifestPollResult.NotRegistered -> {
+                adapter.warn("SSE 取文件清单返回未注册，触发重新注册")
+                triggerReregister()
+            }
+
+            is FileManifestPollResult.Failed -> adapter.warn("SSE 取文件清单失败（${result.reason}），保留本地镜像不动，待下次事件/重连")
+        }
+    }
+
+    /** override-changed：以当前本地 overrideMd5 拉一次 override-sets 并落盘（fail-static 由 applier 内部把控）。 */
+    private fun fetchAndApplyOverrideOnce() {
+        val applierLocal = overrideApplier ?: return
+        when (val result = apiClient.pollOverrideSets(identity, applierLocal.currentOverrideMd5(), settings.requestTimeoutMs)) {
+            is OverridePollResult.Changed -> {
+                applierLocal.apply(result.manifest)
+                markRunningAfterStreamSuccess()
+            }
+
+            is OverridePollResult.NotModified -> markRunningAfterStreamSuccess()
+            is OverridePollResult.NotRegistered -> {
+                adapter.warn("SSE 取覆盖集返回未注册，触发重新注册")
+                triggerReregister()
+            }
+
+            is OverridePollResult.Failed -> adapter.warn("SSE 取覆盖集失败（${result.reason}），保留本地覆盖不动，待下次事件/重连")
+        }
+    }
+
+    /** SSE 取数据成功一轮：重置流退避并从 DEGRADED 恢复 RUNNING（健康判活仍由心跳决定，与此解耦）。 */
+    private fun markRunningAfterStreamSuccess() {
+        streamBackoff.reset()
+        if (state.get() == AgentState.DEGRADED) {
+            state.set(AgentState.RUNNING)
+            adapter.info("SSE 推送流已恢复，回到 RUNNING")
+        }
+    }
+
+    /** SSE 流监听器：把 transport 回调桥接到生命周期的事件分发与重连，携带流代标识自我作废过期回调。 */
+    private inner class StreamLoopListener(private val gen: Int) : StreamListener {
+
+        override fun onOpen() {
+            if (!running.get() || gen != streamGen.get()) return
+            streamBackoff.reset()
+            adapter.info("SSE 推送流已建立，开始连接即对账")
+        }
+
+        override fun onEvent(event: StreamEvent) {
+            // 事件处理放异步线程，不阻塞 transport 的读流线程（取数据-应用本身可能含 IO）。
+            adapter.runAsync { dispatchStreamEvent(gen, event) }
+        }
+
+        override fun onClosed(error: Throwable?) {
+            onStreamClosed(gen, error)
         }
     }
 }

@@ -13,6 +13,9 @@ import top.wcpe.beacon.agent.core.transport.HttpRequest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
 import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
+import top.wcpe.beacon.agent.core.transport.StreamListener
+import top.wcpe.beacon.agent.core.transport.StreamRequest
+import top.wcpe.beacon.agent.core.transport.StreamTransport
 
 /**
  * 收口 agent REST 语义调用：register / heartbeat / pollEffective / report / discover，
@@ -25,9 +28,43 @@ class BeaconApiClient(
     private val transport: HttpTransport,
     private val codec: JsonCodec,
     private val settings: AgentSettings,
+    // 流式传输（SSE 推送，FR-24）：可选；为 null 时退回三条长轮询（迁移期兼容，见 ADR-0015 决策 8）。
+    private val streamTransport: StreamTransport? = null,
 ) {
 
     private val base: String = settings.primaryEndpoint()
+
+    /** 当前是否具备 SSE 推送能力（注入了 streamTransport）。 */
+    fun streamingEnabled(): Boolean = streamTransport != null
+
+    /**
+     * 打开 server→agent 单条 SSE 推送流：GET /beacon/v1/agent/stream（FR-24）。
+     *
+     * URL 携带各通道当前 md5 供控制面"连接即对账"补发落下的增量；同步阻塞直到流结束。
+     * 仅在异步线程调用（绝不上 MC 主线程）；未注入 streamTransport 时直接回调 onClosed。
+     */
+    fun openStream(identity: AgentIdentity, reported: ReportedChannelMd5, listener: StreamListener) {
+        val st = streamTransport
+        if (st == null) {
+            listener.onClosed(IllegalStateException("未注入 streamTransport"))
+            return
+        }
+        val url = buildString {
+            append(base)
+            append("/beacon/v1/agent/stream")
+            append("?namespace=").append(urlEncode(identity.namespace))
+            append("&serverId=").append(urlEncode(identity.serverId))
+            append("&configMd5=").append(urlEncode(reported.config))
+            append("&fileMd5=").append(urlEncode(reported.file))
+            append("&overrideMd5=").append(urlEncode(reported.override))
+        }
+        // 读超时给保活留充足余量：取长轮询挂起上限的数倍，避免空闲被误判断流。
+        val readTimeout = settings.pollTimeoutMs * 3 + settings.requestTimeoutMs
+        st.open(
+            StreamRequest(url = url, headers = headers(withBody = false), readTimeoutMs = readTimeout),
+            listener,
+        )
+    }
 
     /** agent 侧公共请求头：内容类型 + 防误连 token。 */
     private fun headers(withBody: Boolean): Map<String, String> {

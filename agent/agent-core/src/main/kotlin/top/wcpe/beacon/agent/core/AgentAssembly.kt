@@ -19,6 +19,7 @@ import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
 import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
+import top.wcpe.beacon.agent.core.transport.StreamTransport
 import java.io.File
 
 /**
@@ -48,8 +49,11 @@ object AgentAssembly {
         codec: JsonCodec,
         store: EffectiveConfigStore,
         effectiveConfigView: EffectiveConfigView,
+        // 流式传输（SSE 推送，FR-24）：壳层注入 OkHttpStreamTransport 即启用单条流取代三条长轮询；
+        // 为 null 时退回长轮询（迁移期兼容，见 ADR-0015 决策 8）。
+        streamTransport: StreamTransport? = null,
     ): AssembledAgent {
-        val apiClient = BeaconApiClient(transport, codec, settings)
+        val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
         val snapshotStore: SnapshotStore? = if (settings.snapshotEnabled) {
             SnapshotStore(File(adapter.dataFolder(), settings.snapshotFileName), codec)

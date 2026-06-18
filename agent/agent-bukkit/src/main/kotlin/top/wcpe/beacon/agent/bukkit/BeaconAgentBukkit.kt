@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.bukkit
 
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
+import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
@@ -94,6 +95,8 @@ object BeaconAgentBukkit : Plugin() {
             codec = KotlinxJsonCodec(),
             store = store,
             effectiveConfigView = view,
+            // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
+            streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
         )
         lifecycle = assembled.lifecycle
 
