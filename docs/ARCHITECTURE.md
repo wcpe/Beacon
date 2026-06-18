@@ -29,6 +29,7 @@ internal/
   config/      Beacon 自身配置（yaml + env 覆盖）
   server/      router / 中间件（中文日志、recover、traceId、agent token、管理面登录令牌）
   auth/        管理面鉴权叶子包：凭据校验 + 无状态 HMAC 签名令牌签发/校验 + 操作者上下文（见 ADR-0009）
+  secret/      敏感配置加解密叶子包：AES-256-GCM 原语，密钥由调用方从 env 注入（见 ADR-0018）
   render/      统一响应体与错误体写出 + traceId 上下文（handler 与 server 共用的叶子包）
   apperr/      带业务码与 HTTP 状态的领域错误（叶子包，供各层共用，避免反向依赖）
   embedweb/    服务内嵌前端 + SPA 回退处理器（内嵌指令 //go:embed all:web/dist 置于根包 embed.go，因 Go embed 不能跨上级目录）
@@ -70,7 +71,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result` |
 | `instance` | 注册元数据镜像 | **MVP 不建**，运行态以内存为准，仅注册写一条 audit |
 
-`config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。
+`config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`；`sensitive`（为真则 `content` 加密落库，at-rest，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。`content_md5` 始终基于**明文**（敏感项解密后再算），`config_revision` 同步带 `sensitive` 并对敏感快照同样加密。
 
 `file_object` 关键字段：`(namespace_code, group_code, path, scope_level, scope_target)` 唯一定位覆盖链中的一格（唯一键含 `path`）；`content`（整文件文本，落 `TEXT` 经 GORM size 抽象不绑方言）+ `content_md5` 冗余在行上；`current_revision`、`version`、`enabled`。同 `config_item` 的 scope 维度，但解析为**整文件覆盖**（取覆盖链上拥有该 `path` 的最高层那份，见 §5.1）。
 
@@ -83,6 +84,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 - **运维侧 `/metrics`**：Prometheus 文本格式运行指标（注册数/健康分布/配置发布与推送累计），与 agent 端点同属内网信任面、不挂管理台鉴权（FR-30，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)）。
 - 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
+- **敏感配置 at-rest 加密**（FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）：标记 `sensitive` 的配置项 `content` 以 AES-256-GCM（标准库）加密落库（`config_item`/`config_revision` 的 `content` 列存 `enc:v1:` 前缀的 base64 密文），加解密只在 `internal/repository` 两个配置仓库的写/读边界发生——**service 层始终只见明文**，md5 / scope 合并 / 发布前 schema 校验零改。密钥仅从 env `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取，绝不入库 / 不入仓 / 不打日志；库中已有敏感项却无密钥 → 控制面 fail-fast 拒绝启动。解密后下发明文到 agent（数据面内网可信不变，agent 不持密钥）。是 FR-26 经 Beacon 下发 Redis 密码的前置。
 
 ## 5. 有效配置解析（scope 覆盖链）
 

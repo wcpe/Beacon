@@ -169,7 +169,7 @@ data: {}
 |---|---|
 | `GET /admin/v1/configs?namespace=&group=&dataId=&scopeLevel=` | 列出配置项 |
 | `GET /admin/v1/configs/{id}` | 取当前内容 + 元数据 |
-| `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + comment（operator 由认证态派生） |
+| `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + comment + 可选 `sensitive`（默认 false；true 则 content 加密入库，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）（operator 由认证态派生） |
 | `PUT /admin/v1/configs/{id}` | 发布新版本：content + comment → version+1，返回新 `version`/`md5`（operator 由认证态派生） |
 | `DELETE /admin/v1/configs/{id}` | 软删（该层从合并链脱落，触发唤醒；operator 由认证态派生） |
 | `GET /admin/v1/configs/{id}/revisions` | 历史版本列表 |
@@ -197,6 +197,8 @@ data: {}
 - `sources`：每个叶子键的最终来源覆盖层（`global`/`group`/`zone`/`server`），`path` 为嵌套键路径（properties 扁平键即单段、可能含 `.`）。
 - `deletions`：被某层写 `null` 减量删除、且最终确实不存在的键。
 - 来源由服务端权威计算（平行纯函数，不改 agent 合并热路径），前端直接用，避免前后端两份合并实现漂移。
+
+**敏感配置 at-rest 加密（FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）**：新建配置项传 `sensitive: true` 时，其 `content` 以 AES-256-GCM 加密落库（DB 列存 `enc:v1:` 前缀的 base64 密文），密钥仅从环境变量 `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取。控制面在**读取详情 / 历史版本 / 有效配置解析与下发**时自动解密——agent 拿到的是**明文**（数据面内网可信不变，agent 不持密钥）。配置项视图回吐 `sensitive` 布尔标记，但**永不回吐密钥或密文**。库中已有敏感项却未配置密钥 → 控制面 **fail-fast 拒绝启动**。md5 / 有效配置解析始终基于解密后明文，与非敏感项行为一致。
 
 错误：配置不存在 `404 CONFIG_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 CONFIG_CONFLICT`；内容超长（> 256KB）`422 CONTENT_TOO_LARGE`；发布内容解析失败 `422 CONTENT_INVALID`；发布内容结构/类型/必填项校验不通过（顶层非键值映射、含空键等）`422 CONTENT_SCHEMA_INVALID`；覆盖层/目标键不合法 `400 INVALID_SCOPE`；同一 dataId 跨层格式不一致 `422 FORMAT_INCONSISTENT`。
 

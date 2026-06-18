@@ -21,6 +21,7 @@
 | [0015](0015-sse-server-push-transport.md) | agent↔控制面 server→agent 推送合并为单条 SSE 流（取代 ADR-0006） | 已接受 |
 | [0016](0016-agent-cross-server-messaging-middleware.md) | agent 内置跨服消息中间件：基于 Redis 的通用通信层 | 已接受 |
 | [0017](0017-traffic-scheduling-decision-vs-execution.md) | 流量调度：控制面给决策 / 数据面做执行，drain 落 DB、canary 划范围外 | 已接受 |
+| [0018](0018-config-encryption-at-rest.md) | 敏感配置 at-rest 加密：AES-256-GCM、密钥走 env、密文落 TEXT 可移植 | 已接受 |
 | [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受 |
 | [0020](0020-prometheus-metrics-observability.md) | 控制面用标准 Prometheus client 暴露运行指标（/metrics） | 已接受 |
 
