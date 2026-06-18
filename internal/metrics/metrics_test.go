@@ -53,6 +53,10 @@ func TestInstancesGaugeReflectsRegistry(t *testing.T) {
 	if !containsSample(body, `beacon_instances_status{status="online"} 1`) {
 		t.Fatalf("状态分布 gauge 应为 online=1，实际：\n%s", body)
 	}
+	// degraded 须有 0 基线序列（无 degraded 实例时也输出，避免曲线断点）
+	if !containsSample(body, `beacon_instances_status{status="degraded"} 0`) {
+		t.Fatalf("状态分布 gauge 应含 degraded=0 基线，实际：\n%s", body)
+	}
 }
 
 // TestCountersIncrement 配置发布与推送计数器自增后应在 /metrics 反映。

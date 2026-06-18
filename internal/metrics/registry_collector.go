@@ -25,7 +25,7 @@ func newRegistryCollector(rt *runtime.Registry) *registryCollector {
 		),
 		statusVa: prometheus.NewDesc(
 			"beacon_instances_status",
-			"当前实例健康状态分布（online/lost/offline 各计数）",
+			"当前实例健康状态分布（online/degraded/lost/offline 各计数）",
 			[]string{"status"}, nil,
 		),
 	}
@@ -42,11 +42,12 @@ func (c *registryCollector) Collect(ch chan<- prometheus.Metric) {
 	insts := c.rt.List(runtime.Filter{})
 	// 注册数：按 (namespace, role) 聚合
 	byNsRole := map[[2]string]int{}
-	// 状态分布：三态均输出（含 0），便于监控侧看到完整曲线
+	// 状态分布：四态均输出（含 0），便于监控侧看到完整曲线
 	byStatus := map[string]int{
-		runtime.StatusOnline:  0,
-		runtime.StatusLost:    0,
-		runtime.StatusOffline: 0,
+		runtime.StatusOnline:   0,
+		runtime.StatusDegraded: 0,
+		runtime.StatusLost:     0,
+		runtime.StatusOffline:  0,
 	}
 	for _, i := range insts {
 		byNsRole[[2]string{i.Namespace, i.Role}]++

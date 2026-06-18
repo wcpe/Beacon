@@ -16,7 +16,7 @@
 - 控制面 HTTP 暴露 `GET /metrics`（Prometheus 文本格式），用标准 prometheus client（`prometheus/client_golang`）。
 - 指标覆盖：
   - 注册实例数（按 namespace、role 维度）。
-  - 健康状态分布（online/lost/offline 各计数）。
+  - 健康状态分布（online/degraded/lost/offline 各计数）。
   - 配置发布累计次数。
   - 推送（长轮询唤醒）累计次数。
 - 注册/健康类为 gauge，发布时从内存注册表实时采集（pull 模型，不在写路径埋点）。
