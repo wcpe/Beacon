@@ -13,6 +13,8 @@ type Config struct {
 	Auth AuthConfig `yaml:"auth"`
 	// 注册健康相关参数
 	Health HealthConfig `yaml:"health"`
+	// 健康告警相关参数（站内信 + webhook，FR-28）
+	Alert AlertConfig `yaml:"alert"`
 	// 长轮询相关参数
 	Longpoll LongpollConfig `yaml:"longpoll"`
 	// 日志配置
@@ -42,12 +44,30 @@ type LongpollConfig struct {
 type HealthConfig struct {
 	// 下发给 agent 的心跳周期（秒）
 	HeartbeatIntervalSec int `yaml:"heartbeat-interval-sec"`
-	// 超过多少秒未收到心跳即判失联（online→lost）
+	// 超过多少秒未收到心跳即判亚健康（online→degraded）；须小于 ttl-sec（FR-28）
+	DegradedAfterSec int `yaml:"degraded-after-sec"`
+	// 超过多少秒未收到心跳即判失联（degraded→lost）
 	TTLSec int `yaml:"ttl-sec"`
 	// lost 后多久转 offline（秒）
 	OfflineGraceSec int `yaml:"offline-grace-sec"`
 	// 后台健康扫描周期（秒）
 	ScanIntervalSec int `yaml:"scan-interval-sec"`
+}
+
+// AlertConfig 是健康告警配置（告警通道可扩展，第一版站内信 + webhook，见 ADR-0019）。
+type AlertConfig struct {
+	// 站内信保留的最近告警条数（进程内环形缓存，重启清零）
+	InboxCapacity int `yaml:"inbox-capacity"`
+	// webhook 告警通道配置
+	Webhook WebhookConfig `yaml:"webhook"`
+}
+
+// WebhookConfig 是 webhook 告警通道配置。
+type WebhookConfig struct {
+	// 告警 POST 目标 URL；为空则不启用 webhook 通道
+	URL string `yaml:"url"`
+	// 单次 webhook 请求超时（毫秒）
+	TimeoutMs int `yaml:"timeout-ms"`
 }
 
 // DatabaseConfig 是数据库连接与连接池配置。
@@ -89,9 +109,14 @@ func Default() Config {
 		},
 		Health: HealthConfig{
 			HeartbeatIntervalSec: 10,
+			DegradedAfterSec:     15,
 			TTLSec:               30,
 			OfflineGraceSec:      120,
 			ScanIntervalSec:      5,
+		},
+		Alert: AlertConfig{
+			InboxCapacity: 200,
+			Webhook:       WebhookConfig{URL: "", TimeoutMs: 3000},
 		},
 		Longpoll: LongpollConfig{MaxHoldMs: 30000},
 		Log:      LogConfig{Level: "INFO"},

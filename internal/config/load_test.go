@@ -88,3 +88,31 @@ func TestValidateRejectsUnknownLogLevel(t *testing.T) {
 		t.Fatal("未知日志级别应导致校验失败，却通过了")
 	}
 }
+
+// TestDefaultHealthThresholdsValid 默认健康阈值满足 degraded<ttl<offline 序关系（FR-28）。
+func TestDefaultHealthThresholdsValid(t *testing.T) {
+	setAuthEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("默认配置应通过校验，却报错: %v", err)
+	}
+	h := cfg.Health
+	if !(h.DegradedAfterSec < h.TTLSec && h.TTLSec < h.OfflineGraceSec) {
+		t.Fatalf("默认阈值序关系不满足：degraded=%d ttl=%d offline=%d", h.DegradedAfterSec, h.TTLSec, h.OfflineGraceSec)
+	}
+	if cfg.Alert.InboxCapacity <= 0 {
+		t.Fatalf("默认站内信容量应为正，实际 %d", cfg.Alert.InboxCapacity)
+	}
+}
+
+// TestValidateRejectsBadHealthThresholdOrder 阈值序关系错误（degraded>=ttl）应被拒（FR-28）。
+func TestValidateRejectsBadHealthThresholdOrder(t *testing.T) {
+	setAuthEnv(t)
+	cfg := Default()
+	cfg.Auth.Password = "p"
+	cfg.Auth.Secret = "s"
+	cfg.Health.DegradedAfterSec = 40 // 大于 ttl(30)，非法
+	if err := cfg.validate(); err == nil {
+		t.Fatal("degraded-after-sec 不小于 ttl-sec 应导致校验失败，却通过了")
+	}
+}

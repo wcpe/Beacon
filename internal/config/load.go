@@ -85,5 +85,11 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("配置校验失败: 未知日志级别 %q（应为 ERROR/WARN/INFO/DEBUG）", c.Log.Level)
 	}
+	// 健康阈值须满足 degraded < ttl < offline，否则状态机分档失效（FR-28）
+	h := c.Health
+	if !(h.DegradedAfterSec < h.TTLSec && h.TTLSec < h.OfflineGraceSec) {
+		return fmt.Errorf("配置校验失败: 健康阈值须满足 degraded-after-sec(%d) < ttl-sec(%d) < offline-grace-sec(%d)",
+			h.DegradedAfterSec, h.TTLSec, h.OfflineGraceSec)
+	}
 	return nil
 }
