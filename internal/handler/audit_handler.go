@@ -41,6 +41,7 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	size, _ := strconv.Atoi(q.Get("size"))
 	items, total, err := h.svc.List(repository.AuditFilter{
 		Namespace:  q.Get("namespace"),
+		Operator:   q.Get("operator"),
 		Action:     q.Get("action"),
 		TargetType: q.Get("targetType"),
 		TargetRef:  q.Get("targetRef"),

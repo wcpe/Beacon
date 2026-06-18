@@ -11,6 +11,7 @@ import (
 // AuditFilter 是审计查询的过滤与分页条件（零值字段不过滤；时间零值不设界）。
 type AuditFilter struct {
 	Namespace  string
+	Operator   string
 	Action     string
 	TargetType string
 	TargetRef  string
@@ -45,6 +46,9 @@ func (r *AuditLogRepository) List(f AuditFilter) ([]model.AuditLog, int64, error
 	q := r.db.Model(&model.AuditLog{})
 	if f.Namespace != "" {
 		q = q.Where("namespace_code = ?", f.Namespace)
+	}
+	if f.Operator != "" {
+		q = q.Where("operator = ?", f.Operator)
 	}
 	if f.Action != "" {
 		q = q.Where("action = ?", f.Action)

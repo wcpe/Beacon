@@ -50,6 +50,14 @@ func TestAuditList(t *testing.T) {
 	if _, pt, _ := audit.List(repository.AuditFilter{Action: model.ActionConfigPublish}); pt != 1 {
 		t.Fatalf("config.publish 审计应 1 条，实际 %d", pt)
 	}
+	// 按 operator 过滤（FR-30 新增维度）：bob 仅发布 1 次
+	if _, ot, _ := audit.List(repository.AuditFilter{Operator: "bob"}); ot != 1 {
+		t.Fatalf("operator=bob 审计应 1 条，实际 %d", ot)
+	}
+	// operator 与 action 叠加：bob 的 config.publish 1 条
+	if _, bt, _ := audit.List(repository.AuditFilter{Operator: "bob", Action: model.ActionConfigPublish}); bt != 1 {
+		t.Fatalf("operator=bob & config.publish 应 1 条，实际 %d", bt)
+	}
 	// 按 targetType 过滤
 	if _, zt, _ := audit.List(repository.AuditFilter{TargetType: model.TargetTypeZone}); zt != 1 {
 		t.Fatalf("zone 类型审计应 1 条，实际 %d", zt)
