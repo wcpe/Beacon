@@ -191,6 +191,40 @@ export function diffConfig(id: number, from: number, to: number): Promise<DiffVi
   return request<DiffView>(`/configs/${id}/diff${qs({ from, to })}`)
 }
 
+// ===== 配置有效预览（FR-22）=====
+
+// 有效配置预览参数
+export interface EffectiveConfigParams {
+  namespace: string
+  serverId?: string
+  group?: string
+  zone?: string
+}
+
+// 单条有效配置项
+export interface EffectiveConfigItem {
+  dataId: string
+  format: string
+  content: string
+  md5: string
+  sources: Array<{ path: string[]; scope: string }>
+}
+
+// 有效配置预览返回体
+export interface EffectiveConfigView {
+  namespace: string
+  serverId?: string
+  group?: string
+  zone?: string
+  md5: string
+  items: EffectiveConfigItem[]
+  deletions: Array<{ path: string[]; scope: string }>
+}
+
+export function effectiveConfig(params: EffectiveConfigParams): Promise<EffectiveConfigView> {
+  return request<EffectiveConfigView>(`/configs/effective${qs(params)}`)
+}
+
 // ===== 实例与健康 =====
 
 // 实例列表过滤条件

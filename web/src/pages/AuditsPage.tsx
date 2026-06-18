@@ -4,7 +4,27 @@ import { useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { listAudits } from '../api/client'
 import type { AuditFilter } from '../api/client'
+import type { AuditView } from '../api/types'
 import { formatTime } from '../api/format'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20
@@ -27,6 +47,8 @@ export default function AuditsPage() {
   const [to, setTo] = useState('')
   // 已生效的查询条件
   const [filter, setFilter] = useState<AuditFilter>({ page: 1, size: PAGE_SIZE })
+  // 详情 Dialog 选中的审计条目（null 表示关闭）
+  const [selectedAudit, setSelectedAudit] = useState<AuditView | null>(null)
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ['audits', filter],
@@ -57,100 +79,208 @@ export default function AuditsPage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
-    <div className="page">
-      <h1>审计日志</h1>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">审计日志</h1>
+      </div>
 
-      <section className="panel">
-        <form className="form-grid" onSubmit={onSearch}>
-          <label>
-            环境
-            <input value={namespace} onChange={(e) => setNamespace(e.target.value)} />
-          </label>
-          <label>
-            动作
-            <input value={action} onChange={(e) => setAction(e.target.value)} placeholder="如 config.publish" />
-          </label>
-          <label>
-            对象类型
-            <input value={targetType} onChange={(e) => setTargetType(e.target.value)} placeholder="config / zone / ..." />
-          </label>
-          <label>
-            对象定位
-            <input value={targetRef} onChange={(e) => setTargetRef(e.target.value)} />
-          </label>
-          <label>
-            起始时间
-            <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
-          </label>
-          <label>
-            截止时间
-            <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
-          </label>
-          <div className="form-actions">
-            <button type="submit">查询</button>
-          </div>
-        </form>
-      </section>
-
-      <section className="panel">
-        {isError && <p className="error-text">加载失败：{(error as Error).message}</p>}
-        {isLoading ? (
-          <p>加载中…</p>
-        ) : (
-          <>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>环境</th>
-                  <th>操作人</th>
-                  <th>动作</th>
-                  <th>对象类型</th>
-                  <th>对象定位</th>
-                  <th>结果</th>
-                  <th>来源 IP</th>
-                  <th>详情</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data && data.items.length > 0 ? (
-                  data.items.map((a, idx) => (
-                    <tr key={`${a.createdAt}-${idx}`}>
-                      <td>{formatTime(a.createdAt)}</td>
-                      <td>{a.namespace || '-'}</td>
-                      <td>{a.operator}</td>
-                      <td>{a.action}</td>
-                      <td>{a.targetType}</td>
-                      <td className="mono">{a.targetRef}</td>
-                      <td>{a.result === 'fail' ? <span className="badge badge-lost">fail</span> : 'ok'}</td>
-                      <td>{a.clientIp || '-'}</td>
-                      <td className="mono detail-cell">{a.detail || '-'}</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={9} className="empty">
-                      无审计记录
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            <div className="pager">
-              <button type="button" disabled={page <= 1 || isFetching} onClick={() => goPage(page - 1)}>
-                上一页
-              </button>
-              <span>
-                第 {page} / {totalPages} 页（共 {total} 条）
-              </span>
-              <button type="button" disabled={page >= totalPages || isFetching} onClick={() => goPage(page + 1)}>
-                下一页
-              </button>
+      <Card>
+        <CardContent>
+          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="a-namespace">环境</Label>
+              <Input id="a-namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
             </div>
-          </>
-        )}
-      </section>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-action">动作</Label>
+              <Input
+                id="a-action"
+                value={action}
+                onChange={(e) => setAction(e.target.value)}
+                placeholder="如 config.publish"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-targettype">对象类型</Label>
+              <Input
+                id="a-targettype"
+                value={targetType}
+                onChange={(e) => setTargetType(e.target.value)}
+                placeholder="config / zone / ..."
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-targetref">对象定位</Label>
+              <Input id="a-targetref" value={targetRef} onChange={(e) => setTargetRef(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-from">起始时间</Label>
+              <Input
+                id="a-from"
+                type="datetime-local"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-to">截止时间</Label>
+              <Input id="a-to" type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            <Button type="submit">查询</Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {isError && (
+        <p className="text-sm text-destructive">加载失败：{(error as Error).message}</p>
+      )}
+
+      <Card>
+        <CardContent>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">加载中…</p>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>时间</TableHead>
+                    <TableHead>环境</TableHead>
+                    <TableHead>操作人</TableHead>
+                    <TableHead>动作</TableHead>
+                    <TableHead>对象类型</TableHead>
+                    <TableHead>对象定位</TableHead>
+                    <TableHead>结果</TableHead>
+                    <TableHead>来源 IP</TableHead>
+                    <TableHead>详情</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data && data.items.length > 0 ? (
+                    data.items.map((a, idx) => (
+                      <TableRow key={`${a.createdAt}-${idx}`}>
+                        <TableCell>{formatTime(a.createdAt)}</TableCell>
+                        <TableCell>{a.namespace || '-'}</TableCell>
+                        <TableCell>{a.operator}</TableCell>
+                        <TableCell>{a.action}</TableCell>
+                        <TableCell>{a.targetType}</TableCell>
+                        <TableCell className="font-mono">{a.targetRef}</TableCell>
+                        <TableCell>
+                          {a.result === 'fail' ? (
+                            <Badge variant="destructive">fail</Badge>
+                          ) : (
+                            'ok'
+                          )}
+                        </TableCell>
+                        <TableCell>{a.clientIp || '-'}</TableCell>
+                        <TableCell>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedAudit(a)}
+                          >
+                            查看
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center text-muted-foreground">
+                        无审计记录
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+
+              <div className="mt-4 flex items-center justify-center gap-4 text-sm">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1 || isFetching}
+                  onClick={() => goPage(page - 1)}
+                >
+                  上一页
+                </Button>
+                <span className="text-muted-foreground">
+                  第 {page} / {totalPages} 页（共 {total} 条）
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages || isFetching}
+                  onClick={() => goPage(page + 1)}
+                >
+                  下一页
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 审计详情 Dialog：展示完整 detail 与上下文字段 */}
+      <Dialog open={selectedAudit !== null} onOpenChange={(open) => !open && setSelectedAudit(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>审计详情</DialogTitle>
+          </DialogHeader>
+          {selectedAudit && (
+            <div className="space-y-4 text-sm">
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
+                <div>
+                  <dt className="text-muted-foreground">时间</dt>
+                  <dd>{formatTime(selectedAudit.createdAt)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">环境</dt>
+                  <dd>{selectedAudit.namespace || '-'}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">操作人</dt>
+                  <dd>{selectedAudit.operator}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">动作</dt>
+                  <dd>{selectedAudit.action}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">对象类型</dt>
+                  <dd>{selectedAudit.targetType}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">对象定位</dt>
+                  <dd className="font-mono break-all">{selectedAudit.targetRef}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">结果</dt>
+                  <dd>
+                    {selectedAudit.result === 'fail' ? (
+                      <Badge variant="destructive">fail</Badge>
+                    ) : (
+                      'ok'
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">来源 IP</dt>
+                  <dd>{selectedAudit.clientIp || '-'}</dd>
+                </div>
+              </dl>
+              <div className="space-y-1.5">
+                <div className="text-muted-foreground">详情</div>
+                <pre className="max-h-80 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs whitespace-pre-wrap break-all">
+                  {selectedAudit.detail || '-'}
+                </pre>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

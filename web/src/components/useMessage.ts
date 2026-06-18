@@ -1,21 +1,16 @@
-// 写操作反馈的公共 hook，避免各页面重复实现。
+// 写操作反馈：统一走 sonner toast（成功/失败）。
+// 保留 useMessage / showSuccess / showError 调用形态，各页无需感知底层从消息条换成了 toast。
 
-import { useCallback, useState } from 'react'
-import type { Message } from './MessageBar'
+import { toast } from 'sonner'
 
 export interface MessageApi {
-  message: Message | null
   showSuccess: (text: string) => void
   showError: (text: string) => void
-  clear: () => void
 }
 
 export function useMessage(): MessageApi {
-  const [message, setMessage] = useState<Message | null>(null)
-
-  const showSuccess = useCallback((text: string) => setMessage({ kind: 'success', text }), [])
-  const showError = useCallback((text: string) => setMessage({ kind: 'error', text }), [])
-  const clear = useCallback(() => setMessage(null), [])
-
-  return { message, showSuccess, showError, clear }
+  return {
+    showSuccess: (text: string) => toast.success(text),
+    showError: (text: string) => toast.error(text),
+  }
 }

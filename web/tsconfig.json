@@ -14,6 +14,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* 路径别名：@ 指向 src（shadcn-ui 组件按 @/ 引用） */
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"] },
+
     /* 静态检查 */
     "strict": true,
     "noUnusedLocals": true,

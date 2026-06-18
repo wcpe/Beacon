@@ -1,44 +1,157 @@
-// 带行号槽的纯文本编辑器：复用 textarea + 等宽字体 + CSS 行号列。
-// 不引 CodeMirror/Monaco（依赖管理需确认，本批不引），行号随内容行数生成、与文本框同步滚动。
+/**
+ * Monaco 代码编辑器组件
+ *
+ * 支持两种模式：
+ * - edit: Monaco Editor（编辑配置内容）
+ * - diff: Monaco DiffEditor（对比两个版本差异）
+ *
+ * 特性：
+ * - yaml/json/properties 语法高亮
+ * - Ctrl+S 保存快捷键
+ * - 自动缩进、括号匹配、代码折叠
+ * - 行号、自动换行、查找替换
+ * - 亮色主题
+ */
 
-import { useRef } from 'react'
+import { useRef, useCallback } from 'react'
+import Editor, { DiffEditor, type OnMount } from '@monaco-editor/react'
+import type { editor } from 'monaco-editor'
+
+// ---- 类型 ----
+
+interface CodeEditorProps {
+  value?: string
+  original?: string
+  modified?: string
+  language?: string
+  onChange?: (value: string) => void
+  onMount?: () => void
+}
+
+// ---- 语言映射 ----
+
+function mapLanguage(format: string): string {
+  switch (format) {
+    case 'yaml': return 'yaml'
+    case 'json': return 'json'
+    default: return 'plaintext'
+  }
+}
+
+// ---- 主组件 ----
 
 export default function CodeEditor({
-  value,
+  value = '',
+  original = '',
+  modified = '',
+  language = 'yaml',
   onChange,
-  rows = 16,
-  placeholder,
-}: {
-  value: string
-  onChange: (v: string) => void
-  rows?: number
-  placeholder?: string
-}) {
-  const gutterRef = useRef<HTMLDivElement>(null)
+  onMount,
+}: CodeEditorProps) {
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
 
-  // 行号文本：按内容行数生成 1..n（空内容也至少一行）
-  const lineCount = value.length === 0 ? 1 : value.split('\n').length
-  const gutter = Array.from({ length: lineCount }, (_, i) => i + 1).join('\n')
+  const handleEditorMount: OnMount = useCallback((ed) => {
+    editorRef.current = ed
+    ed.onKeyDown((e) => {
+      if ((e.ctrlKey || e.metaKey) && e.keyCode === 49) {
+        e.preventDefault()
+        window.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 's', code: 'KeyS', keyCode: 49, ctrlKey: true, bubbles: true,
+        }))
+      }
+    })
+    onMount?.()
+  }, [onMount])
 
-  // 文本框滚动时同步行号槽的纵向偏移
-  function onScroll(e: React.UIEvent<HTMLTextAreaElement>) {
-    if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop
+  const handleDiffMount = useCallback(() => { onMount?.() }, [onMount])
+
+  const monacoLang = mapLanguage(language)
+
+  // 编辑模式配置
+  const editOptions = {
+    fontSize: 13,
+    fontFamily: 'var(--font-mono)',
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    tabSize: 2,
+    padding: { top: 8 },
+    scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
+    smoothScrolling: true,
+    cursorBlinking: 'smooth',
+    cursorSmoothCaretAnimation: 'explicit',
+    renderLineHighlight: 'all',
+    lineNumbers: 'on',
+    lineNumbersMinChars: 3,
+    glyphMargin: true,
+    folding: true,
+    foldingStrategy: 'indentation',
+    bracketPairColorization: { enabled: true },
+    guides: { bracketPairs: true, indentation: true },
+    wordWrap: 'on',
+    wrappingIndent: 'indent',
+    autoIndent: 'full',
+    formatOnPaste: true,
+    formatOnType: true,
+    suggestOnTriggerCharacters: true,
+    acceptSuggestionOnCommitCharacter: true,
+    snippetSuggestions: 'inline',
+    tabCompletion: 'on',
+    wordBasedSuggestions: 'off' as const,
+    parameterHints: { enabled: true, cycle: true },
+    hover: { enabled: true },
+    links: true,
+    mouseWheelZoom: true,
+    find: {
+      addExtraSpaceOnTop: true,
+      autoFindInSelection: 'multiline',
+      seedSearchStringFromSelection: 'always',
+    },
+  }
+
+  // Diff 模式配置
+  const diffOptions = {
+    ...editOptions,
+    readOnly: false,
+    renderSideBySide: true,
+    renderOverviewRuler: true,
+    overviewRulerBorder: false,
+    lineDecorationsWidth: 8,
+    glyphMargin: false,
+    folding: false,
+  }
+
+  if (original || modified) {
+    return (
+      <DiffEditor
+        original={original}
+        modified={modified || value}
+        language={monacoLang}
+        theme="vs"
+        options={diffOptions as any}
+        onMount={handleDiffMount}
+        loading={<EditorLoading />}
+      />
+    )
   }
 
   return (
-    <div className="code-editor">
-      <div className="code-editor-gutter" ref={gutterRef} aria-hidden="true">
-        {gutter}
-      </div>
-      <textarea
-        className="code-editor-textarea"
-        value={value}
-        rows={rows}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={onScroll}
-        spellCheck={false}
-      />
+    <Editor
+      value={value}
+      language={monacoLang}
+      theme="vs"
+      onChange={(v) => onChange?.(v ?? '')}
+      onMount={handleEditorMount}
+      options={editOptions as any}
+      loading={<EditorLoading />}
+    />
+  )
+}
+
+function EditorLoading() {
+  return (
+    <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
+      加载编辑器…
     </div>
   )
 }

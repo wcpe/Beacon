@@ -6,8 +6,11 @@ import { useMutation } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/client'
 import { setAuth, useAuth } from '../state/auth'
-import MessageBar from '../components/MessageBar'
 import { useMessage } from '../components/useMessage'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 // 路由守卫重定向时塞进 location.state 的来访信息
 interface FromState {
@@ -50,27 +53,38 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="login-shell">
-      <form className="login-card" onSubmit={onSubmit}>
-        <div className="login-brand">Beacon 管理台</div>
-        <MessageBar message={msg.message} onClose={msg.clear} />
-        <label>
-          账号
-          <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
-        </label>
-        <label>
-          口令
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-        </label>
-        <button type="submit" disabled={loginMut.isPending}>
-          {loginMut.isPending ? '登录中…' : '登录'}
-        </button>
-      </form>
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle className="text-center text-lg">Beacon 管理台</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="l-username">账号</Label>
+              <Input
+                id="l-username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="l-password">口令</Label>
+              <Input
+                id="l-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={loginMut.isPending}>
+              {loginMut.isPending ? '登录中…' : '登录'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

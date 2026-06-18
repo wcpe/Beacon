@@ -1,12 +1,21 @@
 import { defineConfig } from 'vite'
+import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // Beacon 管理台前端构建配置。
 // 产物输出到 dist/，由控制面 `go:embed all:dist` 内嵌进单二进制。
 export default defineConfig({
-  plugins: [react()],
+  // react：JSX 转换；tailwindcss：Tailwind v4 的 Vite 插件（构建期产出静态 CSS）
+  plugins: [react(), tailwindcss()],
   // 资源根路径：与控制面同端口同根挂载
   base: '/',
+  // 路径别名：@ 指向 src（shadcn-ui 组件按 @/ 引用）
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   build: {
     // 构建产物目录，对应 .gitignore 的 /web/dist/
     outDir: 'dist',
