@@ -54,6 +54,24 @@ public final class BeaconAccess {
         return agent == null ? Optional.empty() : Optional.of(agent.identity());
     }
 
+    /**
+     * 有界等待 agent 首次注册完成后取身份；agent 不在场、或等待超时仍未就绪时为空。
+     *
+     * <p>供下游（如 CoreLib）在自身启动阶段「优先取 Beacon 身份、超时降级本地」用：
+     * 在场且就绪→返回含权威 zone 的身份；不在场或超时→返回空，由下游回退本地配置 + 告警。
+     * 调用线程会被阻塞至多 {@code timeoutMillis} 毫秒，请勿在对延迟敏感的线程滥用。</p>
+     */
+    public Optional<AgentIdentity> awaitIdentity(long timeoutMillis) {
+        BeaconAgent agent = peek();
+        if (agent == null) {
+            return Optional.empty();
+        }
+        if (!agent.awaitRegistered(timeoutMillis)) {
+            return Optional.empty();
+        }
+        return Optional.of(agent.identity());
+    }
+
     /** 取某 dataId 的合并后原始文本；agent 不在场或无此项时为空。 */
     public Optional<String> rawConfig(String dataId) {
         BeaconAgent agent = peek();

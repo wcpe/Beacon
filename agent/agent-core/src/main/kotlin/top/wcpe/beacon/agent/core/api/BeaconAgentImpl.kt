@@ -39,5 +39,7 @@ class BeaconAgentImpl(
 
     override fun connected(): Boolean = lifecycle.isConnected()
 
+    override fun awaitRegistered(timeoutMillis: Long): Boolean = lifecycle.awaitFirstRegister(timeoutMillis)
+
     override fun effectiveMd5(): Optional<String> = Optional.ofNullable(store.currentMd5())
 }

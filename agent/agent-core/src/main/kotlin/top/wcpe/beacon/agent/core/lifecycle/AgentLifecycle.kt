@@ -16,6 +16,8 @@ import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -71,6 +73,9 @@ class AgentLifecycle(
      */
     private val registerGen = AtomicReference(0)
 
+    /** 首次注册成功放行闩：供下游有界等待身份就绪（zone 已回填）后再定身份。 */
+    private val firstRegisterLatch = CountDownLatch(1)
+
     /** 心跳周期（毫秒）：注册成功前用兜底值，成功后用下发值。 */
     @Volatile
     private var heartbeatIntervalMs: Long = settings.heartbeatFallbackMs
@@ -85,6 +90,21 @@ class AgentLifecycle(
 
     /** 当前状态（便于壳层 / 测试观察）。 */
     fun currentState(): AgentState = state.get()
+
+    /**
+     * 有界等待首次注册成功；已就绪立即返回 true，超时返回 false。
+     * timeoutMillis <= 0 时不阻塞，只查当前是否已就绪。
+     */
+    fun awaitFirstRegister(timeoutMillis: Long): Boolean {
+        if (timeoutMillis <= 0L) return firstRegisterLatch.count == 0L
+        return try {
+            firstRegisterLatch.await(timeoutMillis, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            // 等待被中断：恢复中断标志，返回当前就绪状态（不把中断当成就绪）。
+            Thread.currentThread().interrupt()
+            firstRegisterLatch.count == 0L
+        }
+    }
 
     /**
      * 当前可观测状态快照（供壳层 status 命令渲染）。core 不持有平台类型（守 ADR-0005）。
@@ -249,6 +269,8 @@ class AgentLifecycle(
         startOverridePollLoop()
         // 循环已启，本次注册收尾，释放单飞门。
         registering.set(false)
+        // 首次注册成功放行就绪等待者（countDown 幂等，后续注册无副作用）。
+        firstRegisterLatch.countDown()
     }
 
     /** 进降级态并退避后重试注册（保留快照、不阻断玩家）。 */

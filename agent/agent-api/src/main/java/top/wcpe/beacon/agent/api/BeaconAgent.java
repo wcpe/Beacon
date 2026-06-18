@@ -23,4 +23,14 @@ public interface BeaconAgent {
 
     /** 当前有效配置整体 md5；尚无有效配置时为空。可用于业务侧判断是否已收敛。 */
     Optional<String> effectiveMd5();
+
+    /**
+     * 有界等待 agent 首次注册成功（控制面权威应答返回、zone 已按响应回填）。
+     *
+     * <p>阻塞当前线程至多 {@code timeoutMillis} 毫秒；已就绪则立即返回。等待判据是「首次注册成功」
+     * 而非「zone 非空」——未指派 zone 是合法终态。{@code timeoutMillis <= 0} 表示不阻塞、只查当前是否已就绪。</p>
+     *
+     * @return true=已就绪（注册成功过）；false=超时仍未就绪（如控制面不可用）
+     */
+    boolean awaitRegistered(long timeoutMillis);
 }
