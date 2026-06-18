@@ -41,6 +41,9 @@ const (
 	ActionOverrideSetPublish  = "override-set.publish"
 	ActionOverrideSetRollback = "override-set.rollback"
 	ActionOverrideSetDelete   = "override-set.delete"
+	// 流量调度（FR-10，drain 排空 / 维护标记，见 ADR-0017）
+	ActionSchedulingDrain   = "scheduling.drain"
+	ActionSchedulingUndrain = "scheduling.undrain"
 )
 
 // 审计对象类型。

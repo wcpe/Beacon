@@ -81,4 +81,6 @@ var (
 	ErrInstanceNotFound = New(http.StatusNotFound, "INSTANCE_NOT_FOUND", "实例不存在")
 	// ErrAssignmentNotFound zone 指派不存在。
 	ErrAssignmentNotFound = New(http.StatusNotFound, "ASSIGNMENT_NOT_FOUND", "zone 指派不存在")
+	// ErrDrainNotFound 取消 drain 时该标记不存在（FR-10）。
+	ErrDrainNotFound = New(http.StatusNotFound, "DRAIN_NOT_FOUND", "drain 标记不存在")
 )

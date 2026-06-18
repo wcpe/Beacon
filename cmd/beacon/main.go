@@ -128,6 +128,10 @@ func run() error {
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
 
+	// 流量调度（FR-10）：drain 标记落 DB + 落位建议（query-only），控制面只给决策不执行玩家连接（ADR-0017）
+	drainRepo := repository.NewServerDrainRepository(db)
+	schedulingService := service.NewSchedulingService(db, drainRepo, auditRepo, registry)
+
 	// 长轮询：配置与文件各持独立 Hub（唤醒集合分开，互不触发无谓重算）+ 有效解析 + 事务后唤醒
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
@@ -153,6 +157,7 @@ func run() error {
 	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
+	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
 	alertHandler := handler.NewAlertHandler(inbox)
 	authHandler := handler.NewAuthHandler(authn)
@@ -164,8 +169,8 @@ func run() error {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
-		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
-		Alert: alertHandler, Auth: authHandler, Web: embedweb.Handler(dist),
+		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
+		Audit: auditHandler, Alert: alertHandler, Auth: authHandler, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 
 	srv := &http.Server{

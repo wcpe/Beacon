@@ -19,6 +19,7 @@ type Handlers struct {
 	Stream      *handler.StreamHandler
 	Instance    *handler.InstanceHandler
 	Zone        *handler.ZoneHandler
+	Scheduling  *handler.SchedulingHandler
 	Audit       *handler.AuditHandler
 	Alert       *handler.AlertHandler
 	Auth        *handler.AuthHandler
@@ -103,6 +104,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Put("/zones/assignments", h.Zone.Assign)
 		r.Delete("/zones/assignments", h.Zone.Unassign)
 		r.Get("/zones", h.Zone.Summary)
+
+		// 流量调度（FR-10）：落位建议（query-only）+ drain 标记，控制面只给决策不执行玩家连接（ADR-0017）
+		r.Get("/scheduling/placement", h.Scheduling.Placement)
+		r.Get("/scheduling/drains", h.Scheduling.ListDrains)
+		r.Put("/scheduling/drains", h.Scheduling.Drain)
+		r.Delete("/scheduling/drains", h.Scheduling.Undrain)
 
 		// 审计
 		r.Get("/audits", h.Audit.List)
