@@ -20,6 +20,7 @@ type Handlers struct {
 	Instance    *handler.InstanceHandler
 	Zone        *handler.ZoneHandler
 	Audit       *handler.AuditHandler
+	Alert       *handler.AlertHandler
 	Auth        *handler.AuthHandler
 	Web         http.Handler
 }
@@ -93,6 +94,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Get("/instances", h.Instance.List)
 		r.Get("/instances/{serverId}", h.Instance.Get)
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
+
+		// 健康告警站内信（FR-28）
+		r.Get("/alerts", h.Alert.List)
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)

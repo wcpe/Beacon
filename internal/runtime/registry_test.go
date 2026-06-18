@@ -6,9 +6,10 @@ import (
 )
 
 var (
-	t0           = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	ttl          = 30 * time.Second
-	offlineGrace = 120 * time.Second
+	t0            = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	degradedAfter = 15 * time.Second
+	ttl           = 30 * time.Second
+	offlineGrace  = 120 * time.Second
 )
 
 func sample(ns, serverID, addr string) *Instance {
@@ -68,33 +69,54 @@ func TestSameAddressReconnectIdempotent(t *testing.T) {
 	}
 }
 
-// TestHealthTTLTransitions online→lost→offline，offline 保留不删。
-func TestHealthTTLTransitions(t *testing.T) {
+// TestHealthTransitions online→degraded→lost→offline 全程流转，offline 保留不删（FR-28）。
+func TestHealthTransitions(t *testing.T) {
 	r := NewRegistry()
 	_, _ = r.Register(sample("prod", "lobby-1", "10.0.0.1:25565"), ttl, t0)
 
-	// 未超时：保持 online
-	if changed := r.SweepExpired(t0.Add(ttl), ttl, offlineGrace); len(changed) != 0 {
-		t.Fatalf("未超 TTL 不应变更，实际 %d", len(changed))
+	// 未超 degradedAfter：保持 online
+	if changed := r.SweepExpired(t0.Add(degradedAfter), degradedAfter, ttl, offlineGrace); len(changed) != 0 {
+		t.Fatalf("未超 degradedAfter 不应变更，实际 %d", len(changed))
 	}
-	// 超 TTL：online→lost
-	r.SweepExpired(t0.Add(ttl+time.Second), ttl, offlineGrace)
+	// 超 degradedAfter 未超 TTL：online→degraded
+	changed := r.SweepExpired(t0.Add(degradedAfter+time.Second), degradedAfter, ttl, offlineGrace)
+	if len(changed) != 1 || changed[0].Status != StatusDegraded {
+		t.Fatalf("超 degradedAfter 应转 degraded，实际 %+v", changed)
+	}
+	if r.Get("prod", "lobby-1").Status != StatusDegraded {
+		t.Fatalf("应处于 degraded")
+	}
+	// 超 TTL：degraded→lost
+	r.SweepExpired(t0.Add(ttl+time.Second), degradedAfter, ttl, offlineGrace)
 	if r.Get("prod", "lobby-1").Status != StatusLost {
 		t.Fatalf("超 TTL 应转 lost")
 	}
 	// 超 offlineGrace：lost→offline
-	r.SweepExpired(t0.Add(offlineGrace+time.Second), ttl, offlineGrace)
+	r.SweepExpired(t0.Add(offlineGrace+time.Second), degradedAfter, ttl, offlineGrace)
 	off := r.Get("prod", "lobby-1")
 	if off == nil || off.Status != StatusOffline {
 		t.Fatalf("超 offlineGrace 应转 offline 且保留，实际 %+v", off)
 	}
 }
 
-// TestHeartbeatRecoversFromLost 收到心跳即回 online。
+// TestSweepReturnsPrevStatus SweepExpired 变更快照带旧状态，供告警判定"从哪到哪"（FR-28）。
+func TestSweepReturnsPrevStatus(t *testing.T) {
+	r := NewRegistry()
+	_, _ = r.Register(sample("prod", "lobby-1", "10.0.0.1:25565"), ttl, t0)
+	changed := r.SweepExpired(t0.Add(degradedAfter+time.Second), degradedAfter, ttl, offlineGrace)
+	if len(changed) != 1 {
+		t.Fatalf("应有 1 条变更，实际 %d", len(changed))
+	}
+	if changed[0].PrevStatus != StatusOnline || changed[0].Status != StatusDegraded {
+		t.Fatalf("变更应为 online→degraded，实际 %s→%s", changed[0].PrevStatus, changed[0].Status)
+	}
+}
+
+// TestHeartbeatRecoversFromLost 收到心跳即回 online（任意异常态恢复）。
 func TestHeartbeatRecoversFromLost(t *testing.T) {
 	r := NewRegistry()
 	_, _ = r.Register(sample("prod", "lobby-1", "10.0.0.1:25565"), ttl, t0)
-	r.SweepExpired(t0.Add(ttl+time.Second), ttl, offlineGrace) // → lost
+	r.SweepExpired(t0.Add(ttl+time.Second), degradedAfter, ttl, offlineGrace) // → lost
 	if !r.Heartbeat("prod", "lobby-1", t0.Add(40*time.Second)) {
 		t.Fatal("心跳应成功")
 	}

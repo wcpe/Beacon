@@ -8,11 +8,12 @@ import (
 	"time"
 )
 
-// 健康状态。
+// 健康状态（按心跳陈旧度递进，degraded 介于 online 与 lost 之间，FR-28）。
 const (
-	StatusOnline  = "online"
-	StatusLost    = "lost"
-	StatusOffline = "offline"
+	StatusOnline   = "online"
+	StatusDegraded = "degraded" // 亚健康：心跳已变陈旧但尚未达 TTL
+	StatusLost     = "lost"
+	StatusOffline  = "offline"
 )
 
 // ErrDuplicateServerID 表示同 (namespace, serverId) 已有仍新鲜的另一 address 在线实例。
@@ -32,7 +33,8 @@ type Instance struct {
 	Capacity      int
 	Weight        int
 	Metadata      map[string]string
-	Status        string // online / lost / offline
+	Status        string // online / degraded / lost / offline
+	PrevStatus    string // SweepExpired 变更前的旧状态（仅变更快照填，供告警判定来源；不参与展示）
 	LastHeartbeat time.Time
 	AppliedMD5    string  // agent 已 apply 的有效配置 md5（仅展示）
 	PlayerCount   int     // 仅展示，不参与决策
@@ -199,28 +201,40 @@ func (r *Registry) ClearAssignment(ns, serverID string) {
 	inst.Assigned = false
 }
 
-// SweepExpired 按 TTL 推进健康状态机（仅降级，不删除；offline 保留）。
-// 返回状态发生变更的实例快照供日志。
-func (r *Registry) SweepExpired(now time.Time, ttl, offlineGrace time.Duration) []*Instance {
+// SweepExpired 按心跳陈旧度推进健康状态机 online→degraded→lost→offline（仅降级，不删除；offline 保留）。
+// 阈值须满足 degradedAfter < ttl < offlineGrace；从严到宽分档判定。
+// 返回状态发生变更的实例快照（含 PrevStatus）供日志与告警判定（FR-28）。
+func (r *Registry) SweepExpired(now time.Time, degradedAfter, ttl, offlineGrace time.Duration) []*Instance {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var changed []*Instance
 	for _, nsMap := range r.items {
 		for _, inst := range nsMap {
-			next := inst.Status
-			switch age := now.Sub(inst.LastHeartbeat); {
-			case age > offlineGrace:
-				next = StatusOffline
-			case age > ttl:
-				next = StatusLost
-			}
+			next := healthByAge(now.Sub(inst.LastHeartbeat), degradedAfter, ttl, offlineGrace, inst.Status)
 			if next != inst.Status {
+				prev := inst.Status
 				inst.Status = next
-				changed = append(changed, inst.clone())
+				snap := inst.clone()
+				snap.PrevStatus = prev
+				changed = append(changed, snap)
 			}
 		}
 	}
 	return changed
+}
+
+// healthByAge 按心跳年龄分档返回应处状态（纯函数）；未达 degradedAfter 维持原状态（含 online）。
+func healthByAge(age, degradedAfter, ttl, offlineGrace time.Duration, current string) string {
+	switch {
+	case age > offlineGrace:
+		return StatusOffline
+	case age > ttl:
+		return StatusLost
+	case age > degradedAfter:
+		return StatusDegraded
+	default:
+		return current
+	}
 }
 
 // lookup 取内部指针（调用方须持锁）。

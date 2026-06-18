@@ -21,6 +21,7 @@ import (
 	"beacon/internal/pkg/log"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
+	"beacon/internal/runtime/alert"
 	"beacon/internal/runtime/longpoll"
 	"beacon/internal/server"
 	"beacon/internal/service"
@@ -108,10 +109,21 @@ func run() error {
 	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
 	registry := runtime.NewRegistry()
 	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
+	degradedAfter := time.Duration(cfg.Health.DegradedAfterSec) * time.Second
 	ttl := time.Duration(cfg.Health.TTLSec) * time.Second
 	offlineGrace := time.Duration(cfg.Health.OfflineGraceSec) * time.Second
 	scanInterval := time.Duration(cfg.Health.ScanIntervalSec) * time.Second
-	healthScanner := runtime.NewHealthScanner(registry, ttl, offlineGrace, scanInterval)
+
+	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 仅在配置 url 非空时挂载
+	inbox := alert.NewInboxAlerter(cfg.Alert.InboxCapacity)
+	alertChannels := []alert.Alerter{inbox}
+	if cfg.Alert.Webhook.URL != "" {
+		alertChannels = append(alertChannels,
+			alert.NewWebhookAlerter(cfg.Alert.Webhook.URL, time.Duration(cfg.Alert.Webhook.TimeoutMs)*time.Millisecond))
+		slog.Info("健康告警 webhook 通道已启用", "url", cfg.Alert.Webhook.URL)
+	}
+	healthScanner := runtime.NewHealthScanner(
+		registry, degradedAfter, ttl, offlineGrace, scanInterval, alert.NewDispatcher(alertChannels...))
 
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
@@ -142,6 +154,7 @@ func run() error {
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
+	alertHandler := handler.NewAlertHandler(inbox)
 	authHandler := handler.NewAuthHandler(authn)
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
@@ -152,7 +165,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
-		Auth: authHandler, Web: embedweb.Handler(dist),
+		Alert: alertHandler, Auth: authHandler, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 
 	srv := &http.Server{
