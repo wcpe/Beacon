@@ -37,8 +37,27 @@ func main() {
 // run 完成配置加载、依赖装配与服务启动，返回首个致命错误。
 func run() error {
 	var cfgPath string
-	flag.StringVar(&cfgPath, "config", "config.yaml", "配置文件路径")
+	flag.StringVar(&cfgPath, "config", "config.yml", "配置文件路径")
 	flag.Parse()
+
+	// 首启脚手架：把配置模板释放到当前目录（已存在则跳过，绝不覆盖用户文件，FR-25）
+	if released, err := config.EnsureFile(cfgPath, beacon.ConfigExampleYAML); err != nil {
+		return err
+	} else if released {
+		slog.Info("首次启动：已释放配置模板", "文件", cfgPath)
+	}
+
+	// 首启生成可直接运行的 .env（随机强鉴权凭据），开箱即跑、不再 fail-fast（FR-25）
+	if generated, err := config.EnsureBootstrapEnv(".env"); err != nil {
+		return err
+	} else if generated {
+		slog.Warn("首次启动：已生成 .env（含随机管理员口令与密钥，sqlite 可直接运行），请打开 .env 查看 BEACON_ADMIN_PASSWORD 后登录管理台", "文件", ".env")
+	}
+
+	// 从当前目录 .env 加载环境变量（仅填补未设置项，真实环境变量优先，FR-25）
+	if err := config.LoadDotEnv(".env"); err != nil {
+		return err
+	}
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

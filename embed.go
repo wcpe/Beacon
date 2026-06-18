@@ -8,3 +8,8 @@ import "embed"
 //
 //go:embed all:web/dist
 var WebDist embed.FS
+
+// ConfigExampleYAML 内嵌控制面配置模板，供首次启动释放为 config.yml（FR-25）。
+//
+//go:embed config.example.yml
+var ConfigExampleYAML []byte

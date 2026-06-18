@@ -75,10 +75,10 @@ func (c Config) validate() error {
 		return fmt.Errorf("配置校验失败: 管理面操作者用户名 auth.username 不能为空")
 	}
 	if strings.TrimSpace(c.Auth.Password) == "" {
-		return fmt.Errorf("配置校验失败: 管理面操作者口令不能为空（经 env BEACON_ADMIN_PASSWORD 注入）")
+		return fmt.Errorf("配置校验失败: 管理面操作者口令不能为空（经环境变量或当前目录 .env 文件的 BEACON_ADMIN_PASSWORD 注入）")
 	}
 	if strings.TrimSpace(c.Auth.Secret) == "" {
-		return fmt.Errorf("配置校验失败: 令牌签名密钥不能为空（经 env BEACON_AUTH_SECRET 注入）")
+		return fmt.Errorf("配置校验失败: 令牌签名密钥不能为空（经环境变量或当前目录 .env 文件的 BEACON_AUTH_SECRET 注入）")
 	}
 	switch strings.ToUpper(c.Log.Level) {
 	case "ERROR", "WARN", "INFO", "DEBUG":
