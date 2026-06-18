@@ -23,6 +23,7 @@ type Handlers struct {
 	Audit       *handler.AuditHandler
 	Alert       *handler.AlertHandler
 	Auth        *handler.AuthHandler
+	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web         http.Handler
 }
 
@@ -48,6 +49,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Post("/report", h.Agent.Report)
 		r.Get("/discovery", h.Agent.Discover)
 	})
+
+	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
+	if h.Metrics != nil {
+		r.Method(http.MethodGet, "/metrics", h.Metrics)
+	}
 
 	// 管理台登录：签发令牌，自身不挂令牌中间件
 	r.Post("/admin/v1/auth/login", h.Auth.Login)

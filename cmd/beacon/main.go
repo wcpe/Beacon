@@ -18,6 +18,7 @@ import (
 	"beacon/internal/config"
 	"beacon/internal/embedweb"
 	"beacon/internal/handler"
+	"beacon/internal/metrics"
 	"beacon/internal/pkg/log"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
@@ -125,6 +126,9 @@ func run() error {
 	healthScanner := runtime.NewHealthScanner(
 		registry, degradedAfter, ttl, offlineGrace, scanInterval, alert.NewDispatcher(alertChannels...))
 
+	// 可观测性指标（注册/健康 gauge 抓取时读内存注册表；发布/推送 counter 由事件处自增，见 ADR-0020）
+	metricsSet := metrics.New(registry)
+
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
 
@@ -142,7 +146,9 @@ func run() error {
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
 	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
+	notifier.SetMetrics(metricsSet)
 	configService.SetNotifier(notifier)
+	configService.SetMetrics(metricsSet)
 	fileService.SetNotifier(notifier)
 	overrideSetService.SetNotifier(notifier)
 	zoneService.SetNotifier(notifier)
@@ -170,7 +176,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Auth: authHandler, Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Auth: authHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 
 	srv := &http.Server{

@@ -31,6 +31,11 @@ type CreateConfigParams struct {
 	ClientIP    string
 }
 
+// PublishRecorder 是配置发布计数的窄接口（由 metrics 实现，可选注入；未注入即不计数）。
+type PublishRecorder interface {
+	IncConfigPublish()
+}
+
 // ConfigService 编排配置中心：CRUD/发布/回滚/历史/diff，事务内 item+revision+audit 原子完成。
 type ConfigService struct {
 	db         *gorm.DB
@@ -38,6 +43,7 @@ type ConfigService struct {
 	revRepo    *repository.ConfigRevisionRepository
 	auditRepo  *repository.AuditLogRepository
 	notifier   *ChangeNotifier // 可选，事务提交后唤醒受影响长轮询
+	metrics    PublishRecorder // 可选，发布计数（见 ADR-0020）
 }
 
 // NewConfigService 构造服务。
@@ -48,6 +54,18 @@ func NewConfigService(db *gorm.DB, configRepo *repository.ConfigItemRepository, 
 // SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
 func (s *ConfigService) SetNotifier(n *ChangeNotifier) {
 	s.notifier = n
+}
+
+// SetMetrics 注入发布计数器（启动时装配；未注入则不计数）。
+func (s *ConfigService) SetMetrics(m PublishRecorder) {
+	s.metrics = m
+}
+
+// recordPublish 在发布/回滚/首次发布成功后累加发布计数（注入了才计）。
+func (s *ConfigService) recordPublish() {
+	if s.metrics != nil {
+		s.metrics.IncConfigPublish()
+	}
 }
 
 // notify 在事务提交成功后唤醒该配置项 scope 下受影响的长轮询。
@@ -125,6 +143,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 		return nil, err
 	}
 	slog.Info("新建配置项", "namespace", p.Namespace, "group", group, "dataId", p.DataID, "scope", p.ScopeLevel)
+	s.recordPublish()
 	s.notify(item)
 	return item, nil
 }
@@ -159,6 +178,7 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 		return nil, err
 	}
 	slog.Info("发布配置", "id", id, "version", newVersion)
+	s.recordPublish()
 	s.notify(item)
 	return item, nil
 }
@@ -197,6 +217,7 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 		return nil, err
 	}
 	slog.Info("回滚配置", "id", id, "toVersion", toVersion, "newVersion", newVersion)
+	s.recordPublish()
 	s.notify(item)
 	return item, nil
 }

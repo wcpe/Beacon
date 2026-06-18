@@ -13,6 +13,7 @@ import (
 
 	"beacon/internal/auth"
 	"beacon/internal/handler"
+	"beacon/internal/metrics"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
 	"beacon/internal/runtime/longpoll"
@@ -57,7 +58,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
+	metricsSet := metrics.New(registry)
+	notifier.SetMetrics(metricsSet)
 	cfgSvc.SetNotifier(notifier)
+	cfgSvc.SetMetrics(metricsSet)
 	fileSvc.SetNotifier(notifier)
 	zoneSvc.SetNotifier(notifier)
 	// SSE 推送流（FR-24）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
@@ -76,6 +80,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Zone:      handler.NewZoneHandler(zoneSvc),
 		Audit:     handler.NewAuditHandler(service.NewAuditService(auditRepo)),
 		Auth:      handler.NewAuthHandler(authn),
+		Metrics:   metricsSet.Handler(),
 		Web:       http.HandlerFunc(http.NotFound),
 	}, agentToken, authn)
 	ts := httptest.NewServer(router)
@@ -248,6 +253,72 @@ func TestAuditClientIPRecorded(t *testing.T) {
 		if got, _ := first["clientIp"].(string); got != wantIP {
 			t.Fatalf("%s 审计 clientIp 应为 %q，实际 %q（来源 IP 未写入）", action, wantIP, got)
 		}
+	}
+}
+
+// TestMetricsEndpoint 验证 /metrics 免鉴权可抓取，且配置发布后发布/推送计数前进（FR-30）。
+func TestMetricsEndpoint(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// 发布一次配置，触发发布计数与推送计数
+	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/configs", map[string]any{
+		"namespace": "prod", "group": "__GLOBAL__", "dataId": "metrics-probe.yml",
+		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n", "operator": "alice",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("建配置应 201，实际 %d", code)
+	}
+
+	// /metrics 不带令牌也应 200（内网信任面）
+	resp, err := http.Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("抓取 /metrics 失败: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics 应 200，实际 %d", resp.StatusCode)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	body := string(raw)
+	for _, name := range []string{"beacon_config_publish_total", "beacon_push_notify_total", "beacon_instances_status"} {
+		if !bytes.Contains(raw, []byte(name)) {
+			t.Fatalf("/metrics 应含指标 %s，实际：\n%s", name, body)
+		}
+	}
+}
+
+// TestAuditOperatorFilter 验证审计查询新增的 operator 过滤维度（FR-30）经 HTTP 生效。
+func TestAuditOperatorFilter(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// alice 建一条、bob 发布一条 → 各产生一条审计（操作者以登录身份为准，见 ADR-0009）。
+	// 鉴权将写操作 operator 统一为登录用户 admin，故此处按 admin 验证 operator 过滤生效与隔离。
+	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/configs", map[string]any{
+		"namespace": "prod", "group": "__GLOBAL__", "dataId": "op-filter.yml",
+		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n", "operator": "alice",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("建配置应 201，实际 %d", code)
+	}
+
+	// operator=admin（登录身份）应能查到刚才的审计
+	code, hit := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&operator="+testAuthUser, nil)
+	if code != http.StatusOK {
+		t.Fatalf("查 operator 审计应 200，实际 %d", code)
+	}
+	if total, _ := hit["total"].(float64); total < 1 {
+		t.Fatalf("operator=%s 审计应 >=1，实际 %v", testAuthUser, hit["total"])
+	}
+
+	// operator=不存在者 应查不到
+	code, miss := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&operator=nobody-x", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查不存在 operator 应 200，实际 %d", code)
+	}
+	if total, _ := miss["total"].(float64); total != 0 {
+		t.Fatalf("operator=nobody-x 审计应 0，实际 %v", miss["total"])
 	}
 }
 

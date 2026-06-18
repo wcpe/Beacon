@@ -9,6 +9,11 @@ import (
 	"beacon/internal/runtime/longpoll"
 )
 
+// PushRecorder 是推送计数的窄接口（由 metrics 实现，可选注入；未注入即不计数）。
+type PushRecorder interface {
+	IncPushNotify()
+}
+
 // ChangeNotifier 在配置/文件/指派变更（事务提交后）算最小受影响 serverId 集合并唤醒其 waiter。
 // 受影响集合：global→该 ns 全部；group→该 group（查内存）；zone→反查 DB 指派；server/改派→单 serverId。
 // 配置（通道A）与文件（通道B）各持一个独立 Hub，发布只唤醒对应通道的 waiter，互不触发无谓重算（见 ADR-0010）。
@@ -17,6 +22,7 @@ type ChangeNotifier struct {
 	fileHub    *longpoll.Hub // 文件长轮询唤醒集合（独立）
 	registry   *runtime.Registry
 	assignRepo *repository.ZoneAssignmentRepository
+	metrics    PushRecorder // 可选，推送计数（见 ADR-0020）
 }
 
 // NewChangeNotifier 构造唤醒器（hub 为配置通道、fileHub 为文件通道，二者独立）。
@@ -24,18 +30,33 @@ func NewChangeNotifier(hub, fileHub *longpoll.Hub, registry *runtime.Registry, a
 	return &ChangeNotifier{hub: hub, fileHub: fileHub, registry: registry, assignRepo: assignRepo}
 }
 
+// SetMetrics 注入推送计数器（启动时装配；未注入则不计数）。
+func (n *ChangeNotifier) SetMetrics(m PushRecorder) {
+	n.metrics = m
+}
+
+// recordPush 在每次唤醒触发时累加推送计数（注入了才计）。
+func (n *ChangeNotifier) recordPush() {
+	if n.metrics != nil {
+		n.metrics.IncPushNotify()
+	}
+}
+
 // NotifyConfigChange 按变更配置项的 scope 唤醒受影响实例（仅配置通道）。
 func (n *ChangeNotifier) NotifyConfigChange(ns, scopeLevel, group, scopeTarget string) {
+	n.recordPush()
 	n.notifyScope(n.hub, ns, scopeLevel, group, scopeTarget)
 }
 
 // NotifyFileChange 按变更文件对象的 scope 唤醒受影响实例（仅文件通道）。
 func (n *ChangeNotifier) NotifyFileChange(ns, scopeLevel, group, scopeTarget string) {
+	n.recordPush()
 	n.notifyScope(n.fileHub, ns, scopeLevel, group, scopeTarget)
 }
 
 // NotifyServer 唤醒单个 serverId（zone 改派/取消时其解析归属变化，配置与文件两通道都受影响）。
 func (n *ChangeNotifier) NotifyServer(ns, serverID string) {
+	n.recordPush()
 	n.hub.Notify(ns, []string{serverID})
 	n.fileHub.Notify(ns, []string{serverID})
 }
