@@ -52,6 +52,8 @@ type HealthConfig struct {
 
 // DatabaseConfig 是数据库连接与连接池配置。
 type DatabaseConfig struct {
+	// 数据库驱动：mysql 或 sqlite；默认 sqlite（本地开发零依赖）
+	Driver string `yaml:"driver"`
 	// GORM DSN；切 Postgres 时只改 driver 与此串，业务代码零改
 	DSN string `yaml:"dsn"`
 	// 连接池最大打开连接数
@@ -74,9 +76,10 @@ func Default() Config {
 		HTTPAddr:   ":8848",
 		AgentToken: "change-me",
 		Database: DatabaseConfig{
-			DSN:                "root:beacon@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=true&loc=UTC",
-			MaxOpenConns:       20,
-			MaxIdleConns:       10,
+			Driver:             "sqlite",
+			DSN:                "beacon.db",
+			MaxOpenConns:       1,
+			MaxIdleConns:       1,
 			ConnMaxLifetimeSec: 1800,
 		},
 		Auth: AuthConfig{

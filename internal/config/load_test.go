@@ -19,8 +19,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.HTTPAddr != ":8848" {
 		t.Errorf("默认监听地址应为 :8848，实际 %q", cfg.HTTPAddr)
 	}
-	if cfg.Database.MaxOpenConns != 20 {
-		t.Errorf("默认最大连接数应为 20，实际 %d", cfg.Database.MaxOpenConns)
+	if cfg.Database.MaxOpenConns != 1 {
+		t.Errorf("默认最大连接数应为 1（SQLite 模式），实际 %d", cfg.Database.MaxOpenConns)
 	}
 }
 

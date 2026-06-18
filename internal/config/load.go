@@ -43,6 +43,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("BEACON_BOOTSTRAP_TOKEN"); v != "" {
 		cfg.AgentToken = v
 	}
+	if v := os.Getenv("BEACON_DB_DRIVER"); v != "" {
+		cfg.Database.Driver = v
+	}
 	if v := os.Getenv("BEACON_DB_DSN"); v != "" {
 		cfg.Database.DSN = v
 	}

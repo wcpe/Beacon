@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"beacon/internal/config"
@@ -15,7 +16,11 @@ import (
 // Open 按配置建立 GORM 连接、设置连接池并对表结构做 AutoMigrate。
 // 连接或 Ping 失败时返回错误，由上层 fail-fast 退出（控制面无库不可启动）。
 func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	db, err := gorm.Open(mysql.Open(cfg.DSN), &gorm.Config{
+	dialector, err := newDialector(cfg)
+	if err != nil {
+		return nil, err
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{
 		Logger: newGormLogger(),
 		// 把方言专有的约束冲突错误翻译为可移植的 gorm.ErrDuplicatedKey 等
 		TranslateError: true,
@@ -58,5 +63,17 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 func Close(db *gorm.DB) {
 	if sqlDB, err := db.DB(); err == nil {
 		_ = sqlDB.Close()
+	}
+}
+
+// newDialector 根据配置中的 driver 字段返回对应的 GORM Dialector。
+func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
+	switch cfg.Driver {
+	case "mysql":
+		return mysql.Open(cfg.DSN), nil
+	case "sqlite":
+		return sqlite.Open(cfg.DSN), nil
+	default:
+		return nil, fmt.Errorf("不支持的数据库驱动 %q（支持 mysql / sqlite）", cfg.Driver)
 	}
 }
