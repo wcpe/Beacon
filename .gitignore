@@ -7,6 +7,8 @@ Thumbs.db
 
 # 过程性文档与临时文件（不入库，遵 .claude/rules/git-commit）
 /.tmp/
+.narrafork/
+package-lock.json
 
 # 环境与密钥（不入库）
 .env
