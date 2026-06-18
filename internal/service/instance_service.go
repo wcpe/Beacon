@@ -140,10 +140,18 @@ func (s *InstanceService) Offline(ns, serverID, operator, clientIP string) error
 	return nil
 }
 
-// Discover 服务发现：只返回在线实例。
+// Discover 服务发现：返回可用实例（online + degraded）。degraded 为心跳陈旧但尚未失联、大概率仍在服务，
+// 保留在发现结果（及由其派生的 BungeeCord 代理目录）中，直到 lost/offline 才摘除，避免亚健康实例被过早剔除。
 func (s *InstanceService) Discover(f runtime.Filter) []*runtime.Instance {
-	f.Status = runtime.StatusOnline
-	return s.registry.List(f)
+	f.Status = "" // 不走单值 Status 过滤，下方按“可用”集合（online+degraded）筛
+	all := s.registry.List(f)
+	out := make([]*runtime.Instance, 0, len(all))
+	for _, i := range all {
+		if i.Status == runtime.StatusOnline || i.Status == runtime.StatusDegraded {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // audit 记一条实例审计（best-effort：注册的真源是内存，审计写库失败仅告警，不阻断 agent）。
