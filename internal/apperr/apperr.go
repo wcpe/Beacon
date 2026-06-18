@@ -42,6 +42,8 @@ var (
 	ErrContentTooLarge = New(http.StatusUnprocessableEntity, "CONTENT_TOO_LARGE", "配置内容超出大小上限")
 	// ErrContentInvalid 内容按声明格式解析失败。
 	ErrContentInvalid = New(http.StatusUnprocessableEntity, "CONTENT_INVALID", "配置内容解析失败")
+	// ErrContentSchemaInvalid 内容结构 / 类型 / 必填项校验不通过（FR-27，发布前拦截坏配置）。
+	ErrContentSchemaInvalid = New(http.StatusUnprocessableEntity, "CONTENT_SCHEMA_INVALID", "配置结构或类型校验不通过")
 	// ErrFormatInconsistent 同一 dataId 跨层格式不一致。
 	ErrFormatInconsistent = New(http.StatusUnprocessableEntity, "FORMAT_INCONSISTENT", "同一 dataId 跨层格式不一致")
 

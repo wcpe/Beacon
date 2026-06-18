@@ -313,6 +313,10 @@ func validateContent(format, content string) error {
 	if _, err := merge.Parse(format, content); err != nil {
 		return apperr.ErrContentInvalid
 	}
+	// 发布前结构 / 类型 / 必填项校验（FR-27）：拦下能解析但非法的坏配置。
+	if err := merge.ValidateSchema(format, content); err != nil {
+		return apperr.ErrContentSchemaInvalid
+	}
 	return nil
 }
 
