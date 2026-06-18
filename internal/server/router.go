@@ -16,6 +16,7 @@ type Handlers struct {
 	File        *handler.FileHandler
 	OverrideSet *handler.OverrideSetHandler
 	Agent       *handler.AgentHandler
+	Stream      *handler.StreamHandler
 	Instance    *handler.InstanceHandler
 	Zone        *handler.ZoneHandler
 	Audit       *handler.AuditHandler
@@ -35,6 +36,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Post("/register", h.Agent.Register)
 		r.Post("/heartbeat", h.Agent.Heartbeat)
 		r.Get("/config/effective", h.Agent.Effective)
+		// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询，只发变更通知 + 连接即对账
+		r.Get("/stream", h.Stream.Stream)
 		r.Get("/files/manifest", h.File.Manifest)
 		r.Get("/files/content", h.File.Content)
 		// 三方插件文件覆盖兼容（FR-15）：投递适用覆盖集（目标根 + 受限重载命令 + 成员清单）与成员内容

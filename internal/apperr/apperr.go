@@ -73,6 +73,8 @@ var (
 	ErrDuplicateServerID = New(http.StatusConflict, "DUPLICATE_SERVER_ID", "serverId 冲突：已有不同地址实例在线")
 	// ErrNotRegistered 心跳/上报时实例未注册。
 	ErrNotRegistered = New(http.StatusNotFound, "NOT_REGISTERED", "实例未注册")
+	// ErrStreamingUnsupported 当前 ResponseWriter 不支持流式刷写（无 http.Flusher），无法承载 SSE 推送。
+	ErrStreamingUnsupported = New(http.StatusInternalServerError, "STREAMING_UNSUPPORTED", "服务端不支持流式推送")
 	// ErrInstanceNotFound 实例不存在。
 	ErrInstanceNotFound = New(http.StatusNotFound, "INSTANCE_NOT_FOUND", "实例不存在")
 	// ErrAssignmentNotFound zone 指派不存在。

@@ -132,7 +132,12 @@ func run() error {
 	zoneService.SetNotifier(notifier)
 	maxHold := time.Duration(cfg.Longpoll.MaxHoldMs) * time.Millisecond
 
+	// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询，复用同源唤醒集合 + 连接即对账。
+	// 保活间隔取长轮询挂起上限（无变更时按此节奏发注释行心跳，穿透反代空闲超时）。
+	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, hub, fileHub, maxHold)
+
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
+	streamHandler := handler.NewStreamHandler(instanceService, streamService)
 	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	zoneHandler := handler.NewZoneHandler(zoneService)
@@ -146,7 +151,7 @@ func run() error {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
-		Agent: agentHandler, Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
+		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Audit: auditHandler,
 		Auth: authHandler, Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 

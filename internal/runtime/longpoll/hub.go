@@ -17,6 +17,12 @@ type Waiter struct {
 	notify chan struct{}
 }
 
+// NotifyChan 返回只读的唤醒信号通道，供 SSE 推送在 select 中直接多路等待
+// （长轮询用 Wait 单次等待，SSE 直播用本通道在循环里持续监听，二者共用同一缓冲信号）。
+func (w *Waiter) NotifyChan() <-chan struct{} {
+	return w.notify
+}
+
 // Wait 在「被唤醒」「超时」「客户端断连」之间多路等待。
 // 返回 true 表示被唤醒（调用方应重算比对），false 表示超时或断连。
 func (w *Waiter) Wait(ctx context.Context, timeout time.Duration) bool {
