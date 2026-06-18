@@ -56,6 +56,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		// 配置中心
 		r.Get("/configs", h.Config.List)
 		r.Post("/configs", h.Config.Create)
+		// 有效配置只读预览（FR-22）：chi 静态路由优先于 {id} 通配（与注册顺序无关），此处置前仅为可读性
+		r.Get("/configs/effective", h.Config.Effective)
 		r.Get("/configs/{id}", h.Config.Get)
 		r.Put("/configs/{id}", h.Config.Publish)
 		r.Delete("/configs/{id}", h.Config.Delete)

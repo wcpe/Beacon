@@ -208,3 +208,67 @@ func TestEffectiveFourLayer(t *testing.T) {
 		t.Fatalf("未指派 server 应只含 global 层：got=%v", pg)
 	}
 }
+
+// TestResolveWithProvenance 集成验证：admin 有效预览的合并结果与 Resolve 一致，且逐键来源/减量正确（FR-22）。
+func TestResolveWithProvenance(t *testing.T) {
+	cfg, eff, db := newStack(t)
+	if err := db.Create(&model.ZoneAssignment{
+		NamespaceCode: "prod", ServerID: "lobby-1", GroupCode: "area1", ZoneCode: "zoneA",
+	}).Error; err != nil {
+		t.Fatalf("建指派失败: %v", err)
+	}
+	mk := func(group, scope, target, content string) {
+		if _, err := cfg.Create(service.CreateConfigParams{
+			Namespace: "prod", Group: group, DataID: "mysql.yml",
+			ScopeLevel: scope, ScopeTarget: target, Format: merge.FormatYAML,
+			Content: content, Operator: "alice",
+		}); err != nil {
+			t.Fatalf("建 %s 层失败: %v", scope, err)
+		}
+	}
+	// global 基线 + server 层增量（改 port、加 add）+ 减量（drop: null）
+	mk(model.GlobalGroupCode, model.ScopeGlobal, "", "host: g\nport: 1\ndrop: 9\n")
+	mk("area1", model.ScopeServer, "lobby-1", "port: 2\nadd: x\ndrop: null\n")
+
+	prov, err := eff.ResolveWithProvenance("prod", "lobby-1", "", "")
+	if err != nil {
+		t.Fatalf("provenance 解析失败: %v", err)
+	}
+	if len(prov.Items) != 1 {
+		t.Fatalf("应有 1 个 dataId，实际 %d", len(prov.Items))
+	}
+	it := prov.Items[0]
+
+	// 合并内容 / md5 与 Resolve 一致（service 级无漂移）
+	base, err := eff.Resolve("prod", "lobby-1", "")
+	if err != nil {
+		t.Fatalf("Resolve 失败: %v", err)
+	}
+	if it.Content != base.Items[0].Content || it.MD5 != base.Items[0].MD5 || prov.MD5 != base.MD5 {
+		t.Fatalf("provenance 合并结果与 Resolve 不一致：内容/ md5 漂移")
+	}
+
+	scopeOf := func(list []merge.KeyProvenance, path ...string) (string, bool) {
+		for _, p := range list {
+			if reflect.DeepEqual(p.Path, path) {
+				return p.Scope, true
+			}
+		}
+		return "", false
+	}
+	if s, _ := scopeOf(it.Sources, "host"); s != model.ScopeGlobal {
+		t.Fatalf("host 来源应为 global，实际 %q", s)
+	}
+	if s, _ := scopeOf(it.Sources, "port"); s != model.ScopeServer {
+		t.Fatalf("port 来源应为 server，实际 %q", s)
+	}
+	if s, _ := scopeOf(it.Sources, "add"); s != model.ScopeServer {
+		t.Fatalf("add 来源应为 server，实际 %q", s)
+	}
+	if _, ok := scopeOf(it.Sources, "drop"); ok {
+		t.Fatal("被减量的 drop 不应出现在 sources")
+	}
+	if s, ok := scopeOf(it.Deletions, "drop"); !ok || s != model.ScopeServer {
+		t.Fatalf("drop 应在 deletions 且来源 server，实际 ok=%v scope=%q", ok, s)
+	}
+}

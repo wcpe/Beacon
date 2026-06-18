@@ -10,6 +10,7 @@ import (
 
 	"beacon/internal/apperr"
 	"beacon/internal/auth"
+	"beacon/internal/merge"
 	"beacon/internal/render"
 	"beacon/internal/repository"
 	"beacon/internal/service"
@@ -17,12 +18,13 @@ import (
 
 // ConfigHandler 处理配置中心相关的 admin 请求。
 type ConfigHandler struct {
-	svc *service.ConfigService
+	svc    *service.ConfigService
+	effSvc *service.EffectiveService
 }
 
-// NewConfigHandler 构造处理器。
-func NewConfigHandler(svc *service.ConfigService) *ConfigHandler {
-	return &ConfigHandler{svc: svc}
+// NewConfigHandler 构造处理器。effSvc 供 admin 只读有效配置预览（FR-22）。
+func NewConfigHandler(svc *service.ConfigService, effSvc *service.EffectiveService) *ConfigHandler {
+	return &ConfigHandler{svc: svc, effSvc: effSvc}
 }
 
 // configView 是配置项对外视图（content 仅详情返回）。
@@ -256,6 +258,62 @@ func (h *ConfigHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		"fromVersion": from, "toVersion": to,
 		"fromContent": fromContent, "toContent": toContent,
 	})
+}
+
+// keyProvenanceView 是某叶子键的来源层视图（path 为嵌套键路径）。
+type keyProvenanceView struct {
+	Path  []string `json:"path"`
+	Scope string   `json:"scope"`
+}
+
+// effectiveConfigItemView 是有效配置中某 dataId 的合并结果 + 逐键来源。
+type effectiveConfigItemView struct {
+	DataID    string              `json:"dataId"`
+	Format    string              `json:"format"`
+	MD5       string              `json:"md5"`
+	Content   string              `json:"content"`
+	Sources   []keyProvenanceView `json:"sources"`
+	Deletions []keyProvenanceView `json:"deletions"`
+}
+
+// Effective 处理 GET /admin/v1/configs/effective?namespace=&serverId=&group=&zone=。
+// 只读预览某目标合并后的有效配置（逐键来源 + 被减量删除的键），与 agent 下发等价，
+// 但不挂长轮询、不强制注册，可预览未注册/假定指派的目标（FR-22，见 ADR-0013）。
+func (h *ConfigHandler) Effective(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns := q.Get("namespace")
+	serverID := q.Get("serverId")
+	group := q.Get("group")
+	// 至少需要 namespace + (serverId 或 group) 才能定位覆盖链目标
+	if ns == "" || (serverID == "" && group == "") {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	eff, err := h.effSvc.ResolveWithProvenance(ns, serverID, group, q.Get("zone"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	items := make([]effectiveConfigItemView, 0, len(eff.Items))
+	for _, it := range eff.Items {
+		items = append(items, effectiveConfigItemView{
+			DataID: it.DataID, Format: it.Format, MD5: it.MD5, Content: it.Content,
+			Sources: toProvViews(it.Sources), Deletions: toProvViews(it.Deletions),
+		})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"namespace": eff.Namespace, "serverId": eff.ServerID,
+		"group": eff.Group, "zone": eff.Zone, "md5": eff.MD5, "items": items,
+	})
+}
+
+// toProvViews 把 service 层的逐键来源转为对外视图。
+func toProvViews(ps []merge.KeyProvenance) []keyProvenanceView {
+	out := make([]keyProvenanceView, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, keyProvenanceView{Path: p.Path, Scope: p.Scope})
+	}
+	return out
 }
 
 // parseID 解析路径参数 {id}。

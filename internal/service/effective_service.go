@@ -146,3 +146,81 @@ func mergeBucket(layers []model.ConfigItem) (string, string, error) {
 	}
 	return merged, format, nil
 }
+
+// ProvenancedItem 是某 dataId 的有效配置 + 逐键来源（admin 只读预览用）。
+type ProvenancedItem struct {
+	DataID    string
+	Format    string
+	MD5       string
+	Content   string
+	Sources   []merge.KeyProvenance // 每个叶子键的最终来源层
+	Deletions []merge.KeyProvenance // 被减量（写 null）删除且最终确实不存在的键
+}
+
+// ProvenancedEffective 是某目标的 admin 只读有效配置预览结果（含逐键来源）。
+type ProvenancedEffective struct {
+	Namespace string
+	ServerID  string
+	Group     string
+	Zone      string
+	MD5       string
+	Items     []ProvenancedItem
+}
+
+// ResolveWithProvenance 解析某目标的有效配置并附逐键来源（admin 只读预览，见 ADR-0013）。
+// serverID 非空时优先按 zone_assignment 解出 (group,zone)；未指派则用传入的 groupHint/zoneHint。
+// 对同一解析出的 (group,zone)，合并内容与 md5 与 Resolve 一致（provenance 经平行纯函数计算，不改 agent 热路径）。
+func (s *EffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHint string) (ProvenancedEffective, error) {
+	group, zone := groupHint, zoneHint
+	if serverID != "" {
+		assign, err := s.assignRepo.FindByServer(ns, serverID)
+		if err != nil {
+			return ProvenancedEffective{}, err
+		}
+		if assign != nil {
+			group, zone = assign.GroupCode, assign.ZoneCode
+		}
+	}
+
+	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)
+	if err != nil {
+		return ProvenancedEffective{}, err
+	}
+
+	buckets := map[string][]model.ConfigItem{}
+	for _, c := range candidates {
+		buckets[c.DataID] = append(buckets[c.DataID], c)
+	}
+
+	items := make([]ProvenancedItem, 0, len(buckets))
+	dataIDToMD5 := make(map[string]string, len(buckets))
+	for dataID, layers := range buckets {
+		sort.SliceStable(layers, func(i, j int) bool {
+			return scopePriority(layers[i].ScopeLevel) < scopePriority(layers[j].ScopeLevel)
+		})
+		provLayers := make([]merge.ProvLayer, len(layers))
+		for i, l := range layers {
+			provLayers[i] = merge.ProvLayer{Scope: l.ScopeLevel, Content: l.Content}
+		}
+		format := layers[len(layers)-1].Format // 跨层格式一致，取任一
+		content, sources, deletions, err := merge.MergeDataIDWithProvenance(format, provLayers)
+		if err != nil {
+			return ProvenancedEffective{}, err
+		}
+		if content == "" {
+			continue // 全空，不贡献
+		}
+		sum := merge.MD5Hex(content)
+		items = append(items, ProvenancedItem{
+			DataID: dataID, Format: format, MD5: sum, Content: content,
+			Sources: sources, Deletions: deletions,
+		})
+		dataIDToMD5[dataID] = sum
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].DataID < items[j].DataID })
+
+	return ProvenancedEffective{
+		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
+		MD5: merge.OverallMD5(dataIDToMD5), Items: items,
+	}, nil
+}

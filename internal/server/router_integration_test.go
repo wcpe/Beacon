@@ -66,7 +66,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler,
-		Config:    handler.NewConfigHandler(cfgSvc),
+		Config:    handler.NewConfigHandler(cfgSvc, effSvc),
 		File:      handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
 		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
 		Instance:  handler.NewInstanceHandler(instSvc),
