@@ -74,7 +74,6 @@ func run() error {
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
-	configHandler := handler.NewConfigHandler(configService)
 
 	// 文件树托管（通道B）：file_object/file_revision 仓库 + 服务
 	fileRepo := repository.NewFileObjectRepository(db)
@@ -102,6 +101,8 @@ func run() error {
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, hub)
+	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）
+	configHandler := handler.NewConfigHandler(configService, effectiveService)
 	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
 	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)

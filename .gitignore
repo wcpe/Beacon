@@ -26,3 +26,7 @@ Thumbs.db
 /agent/.gradle/
 /agent/**/build/
 /agent/**/.gradle/
+
+
+/config.yaml
+/beacon.db
