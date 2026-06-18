@@ -141,6 +141,7 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 - **健康告警**（FR-28，[ADR-0019](adr/0019-health-alert-channel-abstraction.md)）：实例**进入异常态**（degraded/lost/offline）时主动告警，恢复 online 不告警。告警出口抽象为 `Alerter` 接口，`Dispatcher` 扇出到多个通道并**逐通道兜错**（某通道失败仅 WARN、不阻断扫描），第一版实现**站内信**（`InboxAlerter`，进程内环形缓存、独立锁不嵌套、管理台经 `GET /admin/v1/instances`… 同前缀的 `/admin/v1/alerts` 只读）与 **webhook**（`WebhookAlerter`，HTTP POST 告警 JSON，IO 在扫描循环里、不持注册表锁）；新增通道只实现 `Alerter` 接入。告警不落库（健康事件的派生，与"注册/健康真源在内存"一致，重启清零）。
 - **发现**：按标签（zone/group/role/status）过滤在线实例。agent 侧走 `/beacon/v1/agent/discovery`（归 agent 前缀 + token，P0 修正），管理台用 `/admin/v1/instances`。
 - **Proxy 目录注入（服务发现延伸出口）**：BeaconAgentProxy 注册成功后周期调用 `discovery` 同步同 namespace 下 `role=bukkit` 且在线的实例，以 `serverId` 作为 Bungee `ServerInfo` 名称、以 agent 上报 `address` 作为连接地址，自动创建/更新**仅由 Beacon 管理**的服务器条目；若同名条目已由手工 Bungee 配置存在，则 WARN 并跳过、不覆盖手工配置。控制面只提供发现事实，不操作玩家连接，不引入持久化任务队列；控制面失联时按本地已注入目录继续（fail-static）。
+- **流量调度（FR-10，落位均衡 / drain，[ADR-0017](adr/0017-traffic-scheduling-decision-vs-execution.md)）**：控制面**只给调度决策（query-only），不执行玩家连接**。`SchedulingService` 提供两件事：① **落位建议**——给定 `(namespace, group?, zone)`，读内存注册表（在线实例）+ DB drain 集合，经无副作用纯函数 `RankPlacement` 仅纳入 `online` 且未 drain 的实例、按 `weight` 降序 → `capacity` 降序 → `serverId` 升序确定性排序，返回候选事实（serverId/address/weight/capacity）供数据面据此落位；**不读** agent 上报的 `playerCount`/`tps`（二者仅展示、不参与决策），活跃负载精排归数据面。② **drain（排空 / 维护标记）**——运维决策，须跨控制面重启存活、要审计，故落 DB `server_drain` 表（与 `zone_assignment` 同源类别、同软删模式），事务内写表 + 审计原子完成，读落位时叠加剔除候选。注册/健康仍以进程内存为真源，drain 不改变有效配置 / 文件树归属、不触发长轮询唤醒。**canary 引流不做**（范围外，见 ADR-0017）。
 
 ## 8. agent（数据面接入）
 
