@@ -1,7 +1,8 @@
 # 下游 SDK 接入指南（agent-api / agent-kit）
 
 > 面向**业务插件开发者**：如何让 Bukkit/Bungee 上的业务插件接入 Beacon agent，读有效配置、查服务发现。
-> 身份（serverId/zoneId）与数据库/ORM 仍走 **CoreLib**，本 SDK 只负责「读已合并配置 + 查发现」，两者不重叠。
+> **普通业务插件**：身份（serverId/zoneId）与数据库/ORM 走 **CoreLib**（经 `CoreLibApi`），本 SDK 只负责「读已合并配置 + 查发现」，两者不重叠。
+> **注**：CoreLib 自身的 serverId/zone 来源已反转为「优先取自 Beacon agent、不在场或就绪超时降级本地」（见 [ADR-0014](adr/0014-downstream-identity-source-direction.md)），它用下方 `awaitIdentity` 取身份；这不影响普通业务插件继续从 CoreLib 拿身份。
 
 ## 1. SDK 组成（两个工件）
 
@@ -79,7 +80,7 @@ object MyEconomyPlugin : Plugin() {
     // 查发现务必在异步线程（同步 HTTP）
     fun sameZonePeers(): List<String> {
         if (!beacon.isBeaconPresent()) return emptyList()
-        val zone = corelibZoneId() // ← zone 来自 CoreLib，不来自 SDK
+        val zone = corelibZoneId() // ← 业务插件的 zone 经 CoreLib 取（CoreLib 自身来源见 ADR-0014）
         return beacon.instancesInZone(corelibGroupId(), zone).map { it.serverId() }
     }
 }
@@ -91,7 +92,8 @@ object MyEconomyPlugin : Plugin() {
 | 方法 | 说明 |
 |---|---|
 | `isBeaconPresent()` | agent 是否在场（**回退判据**，只看 `isAvailable()`） |
-| `identity()` | 当前身份（薄转发）；不在场为空 |
+| `identity()` | 当前身份（薄转发）；不在场为空（**不阻塞**，zone 可能尚未回填） |
+| `awaitIdentity(timeoutMillis)` | 有界等待首次注册完成（zone 已回填）后取身份；不在场或超时为空。会阻塞调用线程至多 timeoutMillis。CoreLib 以极大超时持续等待至取得确定身份（ADR-0014）；普通业务插件不需要 |
 | `rawConfig(dataId)` / `configFormat` / `configMd5` | 单项有效配置文本/格式/md5；不在场或无项为空 |
 | `dataIds()` / `effectiveMd5()` | 全部 dataId / 整体 md5 |
 | `subscribeConfig(listener)` | 订阅变更，返回 `BeaconSubscription`（`pump()` 补注册、`close()` 注销） |
@@ -104,6 +106,6 @@ object MyEconomyPlugin : Plugin() {
 ## 6. 关键纪律（踩坑红线）
 
 1. **回退判据只看 `isBeaconPresent()`（= `isAvailable()`），绝不看 `connected()`**：控制面短暂不可用时 agent 仍以本地快照 fail-static、配置仍可读；误用 `connected()` 会把「在场但暂未连上」误判为不可用而回退本地，造成 split-brain。
-2. **身份/zone/ORM 走 CoreLib**：`BeaconAccess.identity()` 仅薄转发，SDK 不重复 CoreLib 的身份与数据访问职责。
+2. **业务插件的身份/zone/ORM 走 CoreLib**：普通业务插件经 `CoreLibApi` 取 serverId/zone，不把本 SDK 的 `identity()` 当身份真源；`BeaconAccess.identity()` 仅薄转发，SDK 不重复 CoreLib 的数据访问职责。**例外（CoreLib 自身）**：CoreLib 的 serverId/zone 来源已反转为优先取自 Beacon agent（[ADR-0014](adr/0014-downstream-identity-source-direction.md)）——agent 在场则用 `awaitIdentity` 持续等待至注册就绪、**必须取得确切 serverId + zone**（zone 未指派则打 ERROR 并中止启动，不兜底、不超时降级）；仅 agent **不在场**（`isBeaconPresent()`=false，须先用平台 API 探测插件在场再碰 SDK 类防 `NoClassDefFoundError`）才降级本地 + WARN。
 3. **发现是同步 HTTP**：务必在异步线程调用；变更回调在 agent 异步线程触发，重活自行切线程。
 4. **本地文件回退由下游决定**：agent 不在场时便捷方法返回空，要不要读本地默认、怎么读由下游自理（kit 只用 `isBeaconPresent()` 告知是否在场）。

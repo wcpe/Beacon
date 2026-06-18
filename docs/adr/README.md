@@ -15,6 +15,7 @@
 | [0009](0009-control-plane-auth-pulled-forward.md) | 管理面鉴权从 P2 前移 | 已接受 |
 | [0010](0010-file-tree-hosting-blob-channel.md) | 文件树托管 blob 通道（通道B），区别于配置深合并 | 已接受 |
 | [0011](0011-third-party-file-override-and-restricted-reload-command.md) | 三方插件文件覆盖与受限重载命令的安全边界 | 已接受 |
+| [0014](0014-downstream-identity-source-direction.md) | 下游身份来源方向：优先取自 Beacon agent，本地降级 | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

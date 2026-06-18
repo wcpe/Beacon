@@ -149,6 +149,27 @@
 | `GET /admin/v1/configs/{id}/revisions/{version}` | 取某历史版本内容 |
 | `POST /admin/v1/configs/{id}/rollback` | 回滚：`{ toVersion, comment }`（= 读旧版内容作新版发布；operator 由认证态派生） |
 | `GET /admin/v1/configs/{id}/diff?from=&to=` | 返回两版本文本供前端 diff |
+| `GET /admin/v1/configs/effective?namespace=&serverId=&group=&zone=` | 只读预览某目标合并后的有效配置 + 逐键来源（FR-22，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)） |
+
+`GET /admin/v1/configs/effective`：只读预览某目标按覆盖链合并后的有效配置，与 agent 端 `/beacon/v1/agent/config/effective` 同源、内容与 `md5` 一致，但**不挂长轮询、不强制注册**，可预览未注册/假定指派的目标。参数：`namespace` 必填；`serverId` 与 `group` 至少给一个（给 `serverId` 时按 `zone_assignment` 解出 group/zone，未指派则用传入的 `group`/`zone`）。返回：
+
+```json
+{
+  "namespace": "prod", "serverId": "srv-031", "group": "cn-east", "zone": "z3",
+  "md5": "ab12cd34...",
+  "items": [
+    {
+      "dataId": "config.yml", "format": "yaml", "md5": "...", "content": "已合并的有效配置文本",
+      "sources": [ { "path": ["server","max-players"], "scope": "global" }, { "path": ["view-distance"], "scope": "server" } ],
+      "deletions": [ { "path": ["whitelist"], "scope": "server" } ]
+    }
+  ]
+}
+```
+
+- `sources`：每个叶子键的最终来源覆盖层（`global`/`group`/`zone`/`server`），`path` 为嵌套键路径（properties 扁平键即单段、可能含 `.`）。
+- `deletions`：被某层写 `null` 减量删除、且最终确实不存在的键。
+- 来源由服务端权威计算（平行纯函数，不改 agent 合并热路径），前端直接用，避免前后端两份合并实现漂移。
 
 错误：配置不存在 `404 CONFIG_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 CONFIG_CONFLICT`；内容超长（> 256KB）`422 CONTENT_TOO_LARGE`；发布内容解析失败 `422 CONTENT_INVALID`；覆盖层/目标键不合法 `400 INVALID_SCOPE`；同一 dataId 跨层格式不一致 `422 FORMAT_INCONSISTENT`。
 

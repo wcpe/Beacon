@@ -66,6 +66,9 @@
 | FR-18 | 管理台前端增强：文件树浏览/任意文本编辑/文件级版本·diff·回滚/登录身份/发布前只读 dry-run 预览 | P2 | 已交付@v0.2.0 |
 | FR-19 | SDK 与 agent-api 文档：发布坐标/版本对齐矩阵/接入示例/API 参考（见 [docs/SDK.md](SDK.md)） | P2 | 已交付@v0.2.0 |
 | FR-20 | 配置加密（自 FR-11 拆分） | P3 | 计划 |
+| FR-21 | 管理台 UI 重构：全量 shadcn-ui 默认样式 + 详情改模态/独立详情页（增强 FR-6/FR-18，纯 UI 不改业务行为，见 [ADR-0012](adr/0012-web-shadcn-ui-design-system.md) 与 [docs/specs/web-shadcn-ui-overhaul.md](specs/web-shadcn-ui-overhaul.md)） | P2 | 已交付@v0.3.0 |
+| FR-22 | 配置有效预览 + 配置页双视图：admin 只读 `GET /configs/effective`（含逐键来源 provenance）+ 服务器视角/文件覆盖矩阵双视图，把"100 台共用基线 + 增量/减量"做成一等公民（增强 FR-1/FR-6，落在既有 scope 覆盖链上，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 与 [docs/specs/config-effective-preview.md](specs/config-effective-preview.md)） | P2 | 已交付@v0.3.0 |
+| FR-23 | 配置中心 VS Code 风格编辑器：Monaco 编辑器（语法高亮、自动缩进、代码折叠、Diff 对比）+ 资源管理器树形结构（配置文件 + 实例/分组）+ 历史修订面板（可折叠，点击联动 Diff）+ 保存按钮 + Ctrl+S 快捷键（增强 FR-6/FR-18/FR-21，配置中心页面改为单页面固定布局，编辑器区域使用 Monaco `@monaco-editor/react`） | P2 | 已交付@v0.3.0 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 

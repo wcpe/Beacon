@@ -41,7 +41,7 @@ internal/
   model/       GORM 实体 + enums
   store/       db.go(GORM 连接 + AutoMigrate) logger.go
   pkg/log/     中文分级日志
-web/           React(Vite+TS)，dist/ 被内嵌
+web/           React(Vite+TS) + shadcn-ui（Tailwind v4，默认 neutral 主题，组件源码入库 src/components/ui/）+ Monaco 编辑器（`@monaco-editor/react`，配置中心页面使用 VS Code 风格布局：左侧资源管理器树 + 右侧 Monaco 编辑器 + 底部历史修订面板），dist/ 被内嵌（设计系统见 ADR-0012；配置中心为单页面固定布局 `h-screen overflow-hidden`，详情用独立路由页/Sheet/Dialog，不内联展开）
 agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
                  agent-api（纯 Java8 只读契约，业务插件 compileOnly）/ agent-core（平台无关核心，零具体库依赖：
                  transport·codec 接口 + BeaconApiClient + 生命周期 + 快照 + applier + 退避）/
@@ -94,6 +94,8 @@ agent 只给 `(namespace, serverId)`，服务端按 `zone_assignment` 解析出 
 
 agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
+**admin 有效预览（FR-22，[ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)）**：`GET /admin/v1/configs/effective` 复用同一解析，额外给出**逐键来源层 provenance**（每个叶子键最终来自 global/group/zone/server 的哪层、哪些键被 `null` 减量删除），供管理台「服务器视角 / 文件覆盖矩阵」展示"这台最终生效什么、每个值来自哪层"。provenance 经 `merge` 包的**平行纯函数** `MergeDataIDWithProvenance` 计算，**不改 `DeepMerge`/`MergeDataID` 这条 agent 热路径**，并以"合并结果与 `MergeDataID` 逐一致"的交叉测试防双实现漂移。只读、不挂长轮询、不强制注册。
+
 ### 5.1 有效文件树解析（通道B，scope 整文件覆盖）
 
 文件树托管（通道B，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）与配置中心平行但语义不同——文件按相对 `path` 整文件覆盖，**绝不深合并**：
@@ -145,6 +147,6 @@ docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+
 
 ## 10. 关键裁决与不做项
 
-**关键裁决**：自研而非用 Nacos · Go + 内嵌 React 单二进制 · MVP 去 Redis（REST 长轮询）· zone 由控制面 DB 权威指派 · agent 传输/序列化抽象层 · 长轮询"唤醒即重算"。每条的背景与理由见 [adr/](adr/)。
+**关键裁决**：自研而非用 Nacos · Go + 内嵌 React 单二进制 · MVP 去 Redis（REST 长轮询）· zone 由控制面 DB 权威指派 · agent 传输/序列化抽象层 · 长轮询"唤醒即重算" · 管理台设计系统用 shadcn-ui + Tailwind（ADR-0012）。每条的背景与理由见 [adr/](adr/)。
 
 **第一期不做（P2/P3）**：配置灰度/Beta、流量调度（落位均衡/canary 引流/drain）、版本发布编排（蓝绿/滚动换 jar）、虚拟合区运行时玩家通道、鉴权/加密、控制面 HA、Redis。当前不预留空壳，到时按域新增包。

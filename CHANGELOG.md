@@ -2,7 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布版本
+## 0.3.0（2026-06-18）
+
+### 新增
+- 配置有效预览端点（FR-22，见 [ADR-0013](docs/adr/0013-admin-effective-config-preview-and-provenance.md)）：新增只读 `GET /admin/v1/configs/effective?namespace=&serverId=（可选 &group=&zone=）`，预览某目标按 scope 覆盖链合并后的有效配置，与 agent 端 `/beacon/v1/agent/config/effective` 同源、内容与 md5 一致，但不挂长轮询、不强制注册（可预览未注册/假定指派目标）。额外返回**逐键来源层 provenance**（每个叶子键最终来自 global/group/zone/server 哪层 + 被 `null` 减量删除的键），供管理台「服务器视角/文件覆盖矩阵」表达"100 台共用基线 + 某几台增量/减量"。provenance 经新增的 `merge.MergeDataIDWithProvenance` 平行纯函数计算，**不改 `DeepMerge`/`MergeDataID` 这条 agent 合并热路径**，并以"合并结果与 `MergeDataID` 逐一致"的交叉测试守护防双实现漂移；穷举单测覆盖增量来源/减量删除/嵌套/list 整替/删后重加/properties 含点键。落在既有覆盖链上，不引入灰度/流量调度等 P2/P3。
+- 配置中心 VS Code 风格编辑器（FR-23，增强 FR-6/FR-18/FR-21）：配置中心页面改为 VS Code 风格——左侧资源管理器树形结构（配置文件 + 实例/分组两级选择器，点击过滤文件树）+ 右侧 Monaco 编辑器（yaml/json/properties 语法高亮、自动缩进、代码折叠、括号匹配、Ctrl+Z 撤销、Ctrl+S 保存）+ 底部历史修订面板（可折叠，点击条目联动 Diff 模式）+ 新增"生效预览"Tab（调用 `GET /admin/v1/configs/effective` 展示合并后配置 + 逐键来源 provenance + 被删除键）+ 保存按钮与 Ctrl+S 全局快捷键；页面整体固定（`h-screen overflow-hidden`），仅编辑器内容可滚动；移除旧文件树托管页和文件覆盖集页（路由重定向到 `/configs`）；新增 Monaco 依赖（`monaco-editor` + `@monaco-editor/react`）和 `gorm.io/driver/sqlite`（后端 SQLite 开发模式支持）
+- 后端 SQLite 开发模式支持（见 [ADR-0012](docs/adr/0012-web-shadcn-ui-design-system.md) 相关）：`config.Database` 增加 `Driver` 字段（`mysql`/`sqlite`，默认 `sqlite`），`store/db.go` 根据 driver 选择 GORM Dialector，新增 `BEACON_DB_DRIVER` 环境变量；默认连接池改为 MaxOpenConns=1（SQLite 单连接）
+- Mock API 层补齐（`web/src/api/mock/`）：新增 `data.ts`（8 条配置 + 5 个实例 + 3 个 zone 汇总 + 历史/diff 数据）、`handlers.ts`（10 个 API 端点 mock 路由）、`index.ts`（fetch 拦截器，开发模式自动启用）；补齐所有接口 mock（configs CRUD + revisions + diff + effective + instances + zones + files + override-sets + audits + namespaces + auth/login）
+- 下游身份就绪等待 SDK 能力 + 身份来源方向反转（见 [ADR-0014](docs/adr/0014-downstream-identity-source-direction.md)）：`agent-api` 的 `BeaconAgent` 新增 `awaitRegistered(timeoutMillis)`（有界等待首次注册成功、zone 已按控制面应答回填——等待判据是「首次注册成功」而非「zone 非空」，未指派 zone 是合法终态；已就绪立即返回 true，超时返回 false，`<=0` 只查当前是否就绪），`agent-core` 以 `CountDownLatch` 在首次 `onRegisterSuccess` 放行实现；`agent-kit` 的 `BeaconAccess` 新增 `awaitIdentity(timeoutMillis)`（在场且就绪→含权威 zone 的身份，不在场或超时→空）。供下游（CoreLib）在启动阶段「优先取 Beacon 的 serverId/zone」用：agent 在场则持续等待至取得确定身份（zone 未指派则中止启动、不兜底），仅 agent 不在场才降级本地 config + 告警（ADR-0014）。据此修订 `docs/SDK.md`「身份走 CoreLib」纪律——普通业务插件身份仍经 CoreLib，仅 CoreLib 自身来源反转（**不推翻** [ADR-0004](docs/adr/0004-zone-authority-control-plane.md) 的 agent 自管身份与控制面 zone 权威）。新增 lifecycle 就绪等待并发单测（就绪前 false / 就绪后 true / 多线程并发等待），`agent-core` build 全绿。
+
+### 变更
+- 管理台前端全量改用 shadcn-ui 默认样式（FR-21，增强 FR-6/FR-18，见 [ADR-0012](docs/adr/0012-web-shadcn-ui-design-system.md)）：引入 Tailwind v4 + shadcn-ui（默认 neutral 主题、组件源码入库 `web/src/components/ui/`），统一替换原手写 CSS 的列表/表单/按钮/徽标/对话框；"查看详情"由原列表下方内联展开改为——配置中心 / 文件树托管走**独立路由详情页 + Tabs**（概览/发布/历史/对比，`/configs/:id`、`/files/:id` 仍可深链），文件覆盖集走 **Sheet 抽屉 + 发布 AlertDialog 二次确认**（取代原勾选门控），实例与健康 / 审计日志走 **Dialog**（实例可看完整 metadata、审计可看完整 detail），zone 分配 / 环境管理的表单收进 Dialog；操作反馈由消息条改为 sonner toast，确认操作由 `window.confirm` 改为 AlertDialog。纯 UI/交互改造，所有 API 调用、查询/分页/轮询/长轮询逻辑与行为零回归。
 
 ### 修复
 - 三方覆盖 / 文件树镜像落盘目录重复 `plugins`（FR-14/FR-15）：TabooLib `getDataFolder()` 在真机返回相对路径（`plugins/<本插件>`）时，`PlatformAdapter.pluginsBaseFolder()` 取到相对 `File("plugins")`、其 `parentFile` 为 null，下游 `serverRoot` 回退成 `plugins` 本身，致 agent 把覆盖 / 文件树文件落到 `plugins/plugins/<目标>` 而非 `plugins/<目标>`——三方插件目录覆盖与文件树镜像在真机实际未落到正确目录（路径限定仍生效、文件仍在 `plugins/` 内，属落错位置非逃逸）。修复：`pluginsBaseFolder()` 先 `absoluteFile` 再取父级，使服务器根稳定解析；并在 `AgentAssembly` 增 fail-closed 守卫——解析出的 plugins 基目录名非 `plugins` 时关闭文件树与覆盖落盘（宁可不落、不落错）。本缺陷由 FR-15 命令执行真机 E2E 暴露。
