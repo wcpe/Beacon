@@ -19,7 +19,7 @@
 ### 非目标（Non-Goals，第一期不做）
 - 配置灰度/Beta、流量调度（落位均衡/canary 引流/drain）。
 - 版本发布编排（蓝绿/滚动重启换 jar）。
-- 虚拟合区的运行时玩家数据通道（跨服看人/传送/共享经济由业务插件自实现）。
+- 虚拟合区的**游戏功能**（跨服看人/传送/共享经济/匹配/对战/排行等）由业务插件自实现；Beacon agent 仅在 FR-26 下提供**通用消息传输管道**供其复用，**不实现这些游戏功能本身**（见 [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md)）。
 - 鉴权/配置加密、控制面 HA（多节点）。
 - 进程内代码热替换（"热更"指配置热更，不是替换 jar 中的代码）。
 
@@ -65,11 +65,17 @@
 | FR-17 | agent 运维命令：本地 reload/reconnect/resync 等基础控制；远程下发依赖鉴权（FR-11） | P2 | 已交付@v0.2.0 |
 | FR-18 | 管理台前端增强：文件树浏览/任意文本编辑/文件级版本·diff·回滚/登录身份/发布前只读 dry-run 预览 | P2 | 已交付@v0.2.0 |
 | FR-19 | SDK 与 agent-api 文档：发布坐标/版本对齐矩阵/接入示例/API 参考（见 [docs/SDK.md](SDK.md)） | P2 | 已交付@v0.2.0 |
-| FR-20 | 配置加密（自 FR-11 拆分） | P3 | 计划 |
+| FR-20 | 配置加密（自 FR-11 拆分）；**提前为 FR-26 前置**——FR-26 经 Beacon 下发 Redis 密码需先有配置加密 | P3 | 计划 |
 | FR-21 | 管理台 UI 重构：全量 shadcn-ui 默认样式 + 详情改模态/独立详情页（增强 FR-6/FR-18，纯 UI 不改业务行为，见 [ADR-0012](adr/0012-web-shadcn-ui-design-system.md) 与 [docs/specs/web-shadcn-ui-overhaul.md](specs/web-shadcn-ui-overhaul.md)） | P2 | 已交付@v0.3.0 |
 | FR-22 | 配置有效预览 + 配置页双视图：admin 只读 `GET /configs/effective`（含逐键来源 provenance）+ 服务器视角/文件覆盖矩阵双视图，把"100 台共用基线 + 增量/减量"做成一等公民（增强 FR-1/FR-6，落在既有 scope 覆盖链上，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 与 [docs/specs/config-effective-preview.md](specs/config-effective-preview.md)） | P2 | 已交付@v0.3.0 |
 | FR-23 | 配置中心 VS Code 风格编辑器：Monaco 编辑器（语法高亮、自动缩进、代码折叠、Diff 对比）+ 资源管理器树形结构（配置文件 + 实例/分组）+ 历史修订面板（可折叠，点击联动 Diff）+ 保存按钮 + Ctrl+S 快捷键（增强 FR-6/FR-18/FR-21，配置中心页面改为单页面固定布局，编辑器区域使用 Monaco `@monaco-editor/react`） | P2 | 已交付@v0.3.0 |
+| FR-24 | agent↔控制面传输合并：把 配置/文件树/覆盖集 三条 server→agent 长轮询合并为**单条 SSE 推送流**（只发变更通知，agent 用现有端点取内容）；**连接即对账**（agent 上报各通道 md5 → 控制面补发落下的增量 → 再转直播），不丢更新；**心跳与 blob 取数据仍走 HTTP**，**健康判活独立于流活性**；fail-static 不变。作为**统一 server→agent 推送地基**，远程运维命令与 FR-29 拓扑 watch 复用此流（取代 [ADR-0006](adr/0006-rest-long-poll-push.md)、扩展 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)，见 [ADR-0015](adr/0015-sse-server-push-transport.md) 与 [docs/specs/sse-server-push-transport.md](specs/sse-server-push-transport.md)） | P2 | 开发中 |
 | FR-25 | 控制面首启脚手架 + .env 加载：单二进制首次启动自动释放配置模板（`config.yml`，默认 sqlite 可直接跑）、**自动生成 `.env`（0600）并直接启动**（开箱即跑、不再 fail-fast；管理员口令/签名密钥随机，agent 共享令牌用固定默认 `beacon-bootstrap-token` 与 agent 样例开箱匹配），并从 `.env` 加载环境变量（真实 env 优先），降低单节点部署门槛。鉴权仍强制：口令/密钥强随机 + env 注入、不入库、不弱化 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)；不用固定弱默认口令（见 [docs/specs/control-plane-bootstrap-scaffold.md](specs/control-plane-bootstrap-scaffold.md)） | P1 | 开发中 |
+| FR-26 | agent 内置跨服消息中间件：基于 Redis 的服务器间通用通信层——定向发送 / 请求-响应（RPC）/ 主题发布订阅 / 按玩家所在服寻址；可靠送达走 Redis Streams（消费组离线补偿），可丢事件走 pub/sub；作为 **agent 内独立可开关模块**，复用 agent 身份与 Beacon 地址簿，与配置同步/心跳**故障域隔离**；Redis 连接配置由 Beacon 下发、密码依赖 FR-20 加密先行。仅提供**通用传输**，匹配/实时对战/存储/排行榜等**业务功能不在本 FR 范围**（属③层业务插件，见 [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md) 与 [docs/specs/cross-server-messaging-middleware.md](specs/cross-server-messaging-middleware.md)） | P3 | 开发中 |
+| FR-27 | 配置发布前 schema/类型校验：发布前对配置做结构与类型校验（格式、类型、必填项），不通过则拒绝发布并给出明确错误，阻止下发坏配置导致目标服异常（增强 FR-1/FR-3） | P2 | 计划 |
+| FR-28 | 健康分级 + 失联告警：在 online/lost/offline 之外引入 degraded（亚健康）判定，并在实例失联/状态异常时主动告警；告警通道做成可扩展抽象（接口），第一版实现站内信 + webhook 两种，后续新通道只需实现接口即可接入（增强 FR-5，阈值可配） | P2 | 计划 |
+| FR-29 | 发现接口过滤 + watch 订阅：discovery / agent-api SDK 支持按 role/zone/tag 过滤查询，并支持订阅拓扑变更（实例上线/下线/改派）即时通知（增强 FR-4/FR-16，复用 FR-24 的 SSE server→agent 推送流） | P2 | 计划 |
+| FR-30 | 可观测性：导出 Prometheus 运行指标（注册/健康/配置/推送流等）+ 审计查询 API（按操作者/对象/时间检索）（增强 FR-7） | P2 | 计划 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 
