@@ -102,6 +102,17 @@ class AgentLifecycleAwaitRegisterTest {
     }
 
     @Test
+    fun `注册成功后触发监听器`() {
+        val lifecycle = newLifecycle()
+        val called = CountDownLatch(1)
+        lifecycle.onRegistered { called.countDown() }
+
+        lifecycle.bootstrapWithSnapshotThenConnect()
+
+        assertTrue(called.await(2, TimeUnit.SECONDS), "注册成功后应触发监听器")
+    }
+
+    @Test
     fun `多线程并发等待在注册成功后全部返回 true`() {
         // 注册先挂住，开多个等待线程阻塞在闩上，再放行注册让其同时被唤醒。
         val entered = CountDownLatch(1)

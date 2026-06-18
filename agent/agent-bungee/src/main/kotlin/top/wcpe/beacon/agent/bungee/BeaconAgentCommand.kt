@@ -16,6 +16,7 @@ object BeaconAgentCommand {
 
     /** 注册根命令；在壳层装配完成、确有 lifecycle 后调用。 */
     fun register(lifecycle: AgentLifecycle, adapter: PlatformAdapter) {
+        val usageLines = OpsCommandText.USAGE_LINES
         command("beacon", permission = "beacon.admin") {
             literal("status") {
                 execute<ProxyCommandSender> { sender, _, _ ->
@@ -44,7 +45,7 @@ object BeaconAgentCommand {
             }
             // 无子命令：打印用法。
             execute<ProxyCommandSender> { sender, _, _ ->
-                OpsCommandText.USAGE_LINES.forEach { sender.sendMessage(it) }
+                usageLines.forEach { sender.sendMessage(it) }
             }
         }
     }

@@ -27,6 +27,7 @@ import java.io.File
 class AssembledAgent(
     val lifecycle: AgentLifecycle,
     val beaconAgent: BeaconAgent,
+    val apiClient: BeaconApiClient,
 )
 
 /**
@@ -121,6 +122,6 @@ object AgentAssembly {
         val discoveryView = DiscoveryView(apiClient)
         val beaconAgent = BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView)
 
-        return AssembledAgent(lifecycle, beaconAgent)
+        return AssembledAgent(lifecycle, beaconAgent, apiClient)
     }
 }

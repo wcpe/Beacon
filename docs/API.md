@@ -70,7 +70,7 @@
 请求：`{ "namespace", "serverId", "appliedMd5", "playerCount", "tps" }`（`playerCount/tps` **仅展示，不参与任何决策**）。响应：`{ "ok": true }`。
 
 ### 5. 服务发现 `GET /beacon/v1/agent/discovery`
-查询：`?namespace=&group=&zone=&role=`。返回按标签过滤的**在线**实例列表（归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。
+查询：`?namespace=&group=&zone=&role=`。返回按标签过滤的**在线**实例列表（归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。BeaconAgentProxy 用它周期同步同 namespace 下 `role=bukkit` 的在线子服，按 `serverId` 注入 Bungee `ServerInfo` 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖；FR-4 延伸出口）。
 
 ### 6. 长轮询拉文件清单 `GET /beacon/v1/agent/files/manifest`（通道B）
 查询参数：`?namespace=&serverId=&md5=<当前fileTreeMd5>&timeoutMs=30000`（首拉 `md5` 传空）。

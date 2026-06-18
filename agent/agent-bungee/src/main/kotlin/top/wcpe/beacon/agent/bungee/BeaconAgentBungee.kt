@@ -3,10 +3,12 @@ package top.wcpe.beacon.agent.bungee
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
+import top.wcpe.beacon.agent.api.DiscoveryQuery
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import taboolib.common.LifeCycle
 import taboolib.common.env.RuntimeDependencies
@@ -16,6 +18,7 @@ import taboolib.common.platform.Plugin
 import taboolib.common.platform.function.severe
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * BungeeCord 代理侧 Beacon agent 插件主类（object + @Awake，不继承 Plugin 基类外的内容）。
@@ -65,6 +68,9 @@ object BeaconAgentBungee : Plugin() {
     /** 当前生命周期；null 表示因身份缺失未启动。 */
     private var lifecycle: AgentLifecycle? = null
 
+    /** Proxy 服务器目录同步循环开关；disable 时关闭，避免卸载后继续调度。 */
+    private val directorySyncRunning = AtomicBoolean(false)
+
     @Awake(LifeCycle.ENABLE)
     fun enable() {
         val reader = TabooLibConfigReader(config)
@@ -103,13 +109,44 @@ object BeaconAgentBungee : Plugin() {
         // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
         BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
+        val directorySyncer = ProxyServerDirectorySyncer(
+            directory = BungeeServerDirectory(),
+            warn = { adapter.warn(it) },
+        ) {
+            assembled.beaconAgent.discovery().query(
+                DiscoveryQuery.builder()
+                    .namespace(identity.namespace)
+                    .role("bukkit")
+                    .build(),
+            )
+        }
+        directorySyncRunning.set(true)
+        assembled.lifecycle.onRegistered {
+            adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer) }
+        }
+
         // 先点亮快照再异步接入，不阻塞主线程。
         assembled.lifecycle.bootstrapWithSnapshotThenConnect()
     }
 
+    private fun syncDirectoryLoop(adapter: BungeePlatformAdapter, syncer: ProxyServerDirectorySyncer) {
+        if (!directorySyncRunning.get()) return
+        try {
+            syncer.syncOnce()
+        } catch (e: Exception) {
+            adapter.warn("同步 Beacon 子服目录失败：${e.message}")
+        }
+        adapter.runAsyncDelayed(DIRECTORY_SYNC_INTERVAL_MS) {
+            syncDirectoryLoop(adapter, syncer)
+        }
+    }
+
     @Awake(LifeCycle.DISABLE)
     fun disable() {
+        directorySyncRunning.set(false)
         lifecycle?.shutdown()
         BeaconAgentProvider.unregister()
     }
+
+    private const val DIRECTORY_SYNC_INTERVAL_MS = 10_000L
 }

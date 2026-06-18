@@ -16,6 +16,7 @@ import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -76,6 +77,9 @@ class AgentLifecycle(
     /** 首次注册成功放行闩：供下游有界等待身份就绪（zone 已回填）后再定身份。 */
     private val firstRegisterLatch = CountDownLatch(1)
 
+    /** 注册成功监听器：供平台壳启动依赖控制面身份的子系统。 */
+    private val registeredListeners = CopyOnWriteArrayList<() -> Unit>()
+
     /** 心跳周期（毫秒）：注册成功前用兜底值，成功后用下发值。 */
     @Volatile
     private var heartbeatIntervalMs: Long = settings.heartbeatFallbackMs
@@ -104,6 +108,11 @@ class AgentLifecycle(
             Thread.currentThread().interrupt()
             firstRegisterLatch.count == 0L
         }
+    }
+
+    /** 注册成功回调；每次 register 成功都会触发。 */
+    fun onRegistered(listener: () -> Unit) {
+        registeredListeners.add(listener)
     }
 
     /**
@@ -271,6 +280,13 @@ class AgentLifecycle(
         registering.set(false)
         // 首次注册成功放行就绪等待者（countDown 幂等，后续注册无副作用）。
         firstRegisterLatch.countDown()
+        registeredListeners.forEach { listener ->
+            try {
+                listener()
+            } catch (e: Exception) {
+                adapter.warn("注册成功监听器执行失败：${e.message}")
+            }
+        }
     }
 
     /** 进降级态并退避后重试注册（保留快照、不阻断玩家）。 */

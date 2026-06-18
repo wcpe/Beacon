@@ -308,6 +308,11 @@ class BeaconAccessTest {
             return Optional.ofNullable(effectiveMd5);
         }
 
+        @Override
+        public boolean awaitRegistered(long timeoutMillis) {
+            return connected;
+        }
+
         /** 触发一次底层有效配置变更。 */
         void fireChange(Set<String> changed, String md5) {
             effectiveMd5 = md5;

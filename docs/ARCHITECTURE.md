@@ -126,6 +126,7 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 - **重复 serverId 守卫**：按 `lastHeartbeat` 新鲜度判定 —— 旧条目超心跳周期未续约视为僵尸，允许新 address 顶替并告警；仍新鲜的不同 address 才拒绝（409）。避免故障换机被误杀（P0 修正）。
 - **健康**：单后台 goroutine 定期扫描，按 TTL 推进 `online → lost → offline`；收到心跳即回 online。offline 条目保留不移除（管理台可见历史），手动下线才移除。
 - **发现**：按标签（zone/group/role/status）过滤在线实例。agent 侧走 `/beacon/v1/agent/discovery`（归 agent 前缀 + token，P0 修正），管理台用 `/admin/v1/instances`。
+- **Proxy 目录注入（服务发现延伸出口）**：BeaconAgentProxy 注册成功后周期调用 `discovery` 同步同 namespace 下 `role=bukkit` 且在线的实例，以 `serverId` 作为 Bungee `ServerInfo` 名称、以 agent 上报 `address` 作为连接地址，自动创建/更新**仅由 Beacon 管理**的服务器条目；若同名条目已由手工 Bungee 配置存在，则 WARN 并跳过、不覆盖手工配置。控制面只提供发现事实，不操作玩家连接，不引入持久化任务队列；控制面失联时按本地已注入目录继续（fail-static）。
 
 ## 8. agent（数据面接入）
 
@@ -145,8 +146,10 @@ zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane
 
 docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+ `mysql`（mysql healthcheck + beacon `depends_on: service_healthy` + 命名卷持久化）。多阶段 Dockerfile：node 构建前端 dist → `go build` 内嵌（`//go:embed all:dist`）→ alpine 极小镜像、非 root、`CGO_ENABLED=0` 静态链接。前端以相对路径 `/admin/v1` 同源访问（无 CORS）；非 API、非静态文件的路径回退 `index.html`（SPA history）。敏感项（DB 密码、token）走 env，不入库。
 
+**配置加载（`internal/config`，FR-25）**：生效优先级 真实环境变量 > 当前目录 `.env` > `config.yml`（`-config` 指定）> 内置默认。`cmd/beacon` 启动时先把内置模板 `config.yml`（默认 sqlite，零依赖可跑，经根包 `//go:embed` 内嵌）释放到当前目录、并在无 `.env` 时**生成 `.env`（0600）**（管理员口令与签名密钥用 `crypto/rand` 随机、口令写入 `.env` 不入日志；agent 共享令牌用固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界，与 agent 样例开箱匹配），二者**已存在则跳过、不覆盖**；再读 `.env`（仅注入未设置的键、真实 env 优先），最后 `BEACON_*` 覆盖并校验。`.env` 用手写最小解析、不引第三方库。鉴权仍强制（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）——由 fail-fast 改为首启自助生成**强随机**凭据（非固定弱默认），使单二进制开箱即跑。
+
 ## 10. 关键裁决与不做项
 
 **关键裁决**：自研而非用 Nacos · Go + 内嵌 React 单二进制 · MVP 去 Redis（REST 长轮询）· zone 由控制面 DB 权威指派 · agent 传输/序列化抽象层 · 长轮询"唤醒即重算" · 管理台设计系统用 shadcn-ui + Tailwind（ADR-0012）。每条的背景与理由见 [adr/](adr/)。
 
-**第一期不做（P2/P3）**：配置灰度/Beta、流量调度（落位均衡/canary 引流/drain）、版本发布编排（蓝绿/滚动换 jar）、虚拟合区运行时玩家通道、鉴权/加密、控制面 HA、Redis。当前不预留空壳，到时按域新增包。
+**第一期不做（P2/P3）**：配置灰度/Beta、流量调度（落位均衡/canary 引流/drain）、版本发布编排（蓝绿/滚动换 jar）、完整虚拟合区运行时玩家通道、跨服传送/看人/共享经济等运行时玩家数据通道、鉴权/加密、控制面 HA、Redis。玩家状态同步、跨服数据通道与控制面 HA 均按后续 P3 能力处理。

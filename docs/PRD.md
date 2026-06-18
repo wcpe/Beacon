@@ -49,7 +49,7 @@
 | FR-1 | 配置中心：namespace(环境)/group(大区)/dataId + scope 覆盖链（全局←大区←zone←单服）合并下发 | P1 | 已交付@v0.1.0 |
 | FR-2 | 动态热更：配置变更长轮询推送，agent 不重启 apply | P1 | 已交付@v0.1.0 |
 | FR-3 | 配置版本 + 一键回滚（含 diff、历史） | P1 | 已交付@v0.1.0 |
-| FR-4 | 服务注册/发现 + 元数据标签（role/version/capacity/weight/自定义） | P1 | 已交付@v0.1.0 |
+| FR-4 | 服务注册/发现 + 元数据标签（role/version/capacity/weight/自定义）。延伸出口：BeaconAgentProxy 可周期同步 discovery 结果，把同 namespace 在线 role=bukkit 子服按 serverId 注入 BungeeCord ServerInfo 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖） | P1 | 已交付@v0.1.0 |
 | FR-5 | 健康检查：心跳 + TTL 判活（online/lost/offline） | P1 | 已交付@v0.1.0 |
 | FR-6 | React 管理台：配置/实例/zone 分配/审计/namespace | P1 | 已交付@v0.1.0 |
 | FR-7 | 轻量审计：谁/何时/对什么/做了什么 | P1 | 已交付@v0.1.0 |
@@ -58,7 +58,7 @@
 | FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 | 计划 |
 | FR-11 | 管理面鉴权：操作者认证 + 写操作授权 + 操作者入审计（命令执行/前端登录前置，自 P2 前移，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)） | P2 | 已交付@v0.2.0 |
 | FR-12 | 版本发布编排（蓝绿/滚动） | P3 | 计划 |
-| FR-13 | 虚拟合区运行时通道 / 控制面 HA | P3 | 计划 |
+| FR-13 | 完整虚拟合区运行时通道 / 控制面 HA | P3 | 计划 |
 | FR-14 | 文件树托管（通道B）：整文件 blob、scope 整文件覆盖（不深合并）、manifest 增量同步、管理台在线改+热推；agent 镜像落盘到插件真实 dataFolder，复用既有 File 加载器/热重载/本地回退（见 [ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） | P2 | 已交付@v0.2.0 |
 | FR-15 | 三方插件文件覆盖兼容：基于通道B 的备份+整文件覆盖 + 受限重载命令，兼容无法改源码的三方插件；命令执行依赖鉴权（FR-11） | P2 | 已交付@v0.2.0 |
 | FR-16 | 下游 SDK 接入包：发布 agent-api（+ 接入 kit），下游软依赖、agent 不可用按 isAvailable 回退本地文件 | P2 | 已交付@v0.2.0 |
@@ -69,6 +69,7 @@
 | FR-21 | 管理台 UI 重构：全量 shadcn-ui 默认样式 + 详情改模态/独立详情页（增强 FR-6/FR-18，纯 UI 不改业务行为，见 [ADR-0012](adr/0012-web-shadcn-ui-design-system.md) 与 [docs/specs/web-shadcn-ui-overhaul.md](specs/web-shadcn-ui-overhaul.md)） | P2 | 已交付@v0.3.0 |
 | FR-22 | 配置有效预览 + 配置页双视图：admin 只读 `GET /configs/effective`（含逐键来源 provenance）+ 服务器视角/文件覆盖矩阵双视图，把"100 台共用基线 + 增量/减量"做成一等公民（增强 FR-1/FR-6，落在既有 scope 覆盖链上，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 与 [docs/specs/config-effective-preview.md](specs/config-effective-preview.md)） | P2 | 已交付@v0.3.0 |
 | FR-23 | 配置中心 VS Code 风格编辑器：Monaco 编辑器（语法高亮、自动缩进、代码折叠、Diff 对比）+ 资源管理器树形结构（配置文件 + 实例/分组）+ 历史修订面板（可折叠，点击联动 Diff）+ 保存按钮 + Ctrl+S 快捷键（增强 FR-6/FR-18/FR-21，配置中心页面改为单页面固定布局，编辑器区域使用 Monaco `@monaco-editor/react`） | P2 | 已交付@v0.3.0 |
+| FR-25 | 控制面首启脚手架 + .env 加载：单二进制首次启动自动释放配置模板（`config.yml`，默认 sqlite 可直接跑）、**自动生成 `.env`（0600）并直接启动**（开箱即跑、不再 fail-fast；管理员口令/签名密钥随机，agent 共享令牌用固定默认 `beacon-bootstrap-token` 与 agent 样例开箱匹配），并从 `.env` 加载环境变量（真实 env 优先），降低单节点部署门槛。鉴权仍强制：口令/密钥强随机 + env 注入、不入库、不弱化 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)；不用固定弱默认口令（见 [docs/specs/control-plane-bootstrap-scaffold.md](specs/control-plane-bootstrap-scaffold.md)） | P1 | 开发中 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 
