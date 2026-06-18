@@ -24,6 +24,13 @@
 - 日志：beacon 容器内中文分级日志（ERROR/WARN/INFO/DEBUG）。
 - 重点关注：实例失联告警、重复 serverId 告警、配置漂移告警。
 
+### 3.1 SSE 推送流经反向代理 / Docker（FR-24，[ADR-0015](adr/0015-sse-server-push-transport.md)）
+agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→agent 推送。若在 beacon 前放反向代理（nginx 等），须保证流不被缓冲、不被空闲超时切断：
+- **关闭响应缓冲**：beacon 已对该响应输出 `X-Accel-Buffering: no`（nginx 据此关 proxy buffering）；其它代理请按等价方式关闭对 `text/event-stream` 的缓冲。nginx 还需 `proxy_http_version 1.1;` + `proxy_set_header Connection "";`。
+- **调长读超时**：把代理对 agent stream 路径的读超时（nginx `proxy_read_timeout`）调到显著大于 beacon 的保活间隔（默认取长轮询挂起上限），避免空闲被误判断流。beacon 无变更时按间隔发 SSE 注释行（`: ping`）保活。
+- **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，无新增端口；SSE 走与 API 同一端口（默认 8848）。
+- **断流不影响判活**：健康 online/lost/offline 仍由独立心跳 + TTL 决定，SSE 抖动断流不会误判失联；agent 流断按本地快照继续、自动退避重连并对账（fail-static）。
+
 ## 4. MySQL 备份与恢复（关键）
 > MySQL 是**配置权威库**——丢了等于全集群配置全没。务必定期备份。
 - 备份：`docker exec beacon-mysql mysqldump -u root -p<密码> beacon > beacon-$(date +%F).sql`

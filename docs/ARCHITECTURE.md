@@ -36,6 +36,7 @@ internal/
   service/     事务、规则校验、触发长轮询唤醒、写审计
   repository/  各表纯 GORM CRUD
   runtime/     registry.go(内存注册) health.go(TTL扫描) longpoll/hub.go(waiter 注册 + 唤醒)
+  sse/         event.go(SSE 事件编码纯函数，server→agent 推送 FR-24，与 merge 平级)
   merge/       merge.go(深合并) codec.go(yaml/json/properties) digest.go(md5)
   filetree/    resolve.go(通道B 整文件覆盖 + manifest + fileTreeMd5，纯函数，与 merge 平级)
   model/       GORM 实体 + enums
@@ -76,7 +77,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
-- **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`config/effective`（长轮询）、`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递）、`report`、`discovery`。
+- **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`stream`（FR-24 单条 SSE 推送流，合并三通道变更通知 + 连接即对账）、`config/effective`/`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递；后三组退化为 SSE 通知后的"按 md5 取内容"端点）、`report`、`discovery`。
 - **admin 侧 `/admin/v1/*`**：登录（`auth/login`）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计、namespace。
 - 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
@@ -120,6 +121,17 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 文件树托管（通道B）复用同一 `longpoll.Hub` 实现，但**另起一个独立 Hub 实例**：agent 走 `GET .../files/manifest` 带 `fileTreeMd5` 长轮询，文件发布只唤醒文件 Hub 的 waiter、配置发布只唤醒配置 Hub 的 waiter（唤醒集合独立）；唯 zone 改派同时影响两通道归属，故同时唤醒两 Hub。被唤醒返回的是 `manifest`（path→md5，不含内容），agent 再据差异逐个 `GET .../files/content` 取整文件。
 
+### 6.1 单条 SSE 推送流（FR-24，[ADR-0015](adr/0015-sse-server-push-transport.md)，取代 [ADR-0006](adr/0006-rest-long-poll-push.md)）
+
+把 配置/文件树/覆盖集 三条 server→agent 长轮询**合并为一条 SSE 推送流** `GET .../stream`（每 agent 往外连接由 ~4 降到 ~2：1 条 SSE + 心跳）：
+
+- **流只发"变更通知"、不搬数据**：事件是轻量 JSON（`config-changed`/`file-changed`/`override-changed` + 新 md5），agent 收到后**用现有 `config/effective`、`files/manifest`、`override-sets` 端点取内容并应用**（取数据-应用逻辑不变，改的只是"如何得知有变更"）。blob/文件内容仍走 HTTP GET，不进流。
+- **连接即对账，绝不丢更新**：agent 建流时上报各通道当前 md5（`configMd5`/`fileMd5`/`overrideMd5`），控制面 `StreamService` **先注册两 Hub 的 waiter（先注册后算，消除注册前发布丢唤醒窗口）→ 比对上报 md5 与当前 md5、对落后通道立即补发 `*-changed`（补齐断线期间落下的增量）→ 发 `ready` → 转直播**。直播阶段复用上面的"最小受影响 serverId 集合"唤醒（`cfgWaiter`/`fileWaiter` 的 `NotifyChan()` 在 `select` 中多路等待），被唤醒即重算比对、真变才发通知。这替代了长轮询天然自愈（每轮带 md5 比对）的能力。
+- **健康判活独立于流活性**：online/lost/offline（§7）仍由独立心跳 + TTL 判定，**不**用"SSE 断开"判失联（抖动断流但服务器健在 → 误杀）。两者解耦。
+- **fail-static 不破**：流断 → agent 按本地快照继续、玩家无感，带退避重连、重连即对账。
+- **传输抽象（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md) / 不变量 #5）**：core 新增 `StreamTransport`/`StreamEvent` 端口与纯逻辑 `SseFrameParser`（按空行分帧、注释行心跳忽略），SSE 客户端实现 `OkHttpStreamTransport`（纯 HTTP 读流、无 netty/无重型件）只在适配器。控制面 SSE 事件编码为纯函数 `internal/sse`，保活发 SSE 注释行（`: ping`），响应头带 `X-Accel-Buffering: no` 关反代缓冲。
+- **迁移期兼容**：注入 `streamTransport` 时 agent 以单条 SSE 流取代三条长轮询循环；未注入则退回三条长轮询（[ADR-0015](adr/0015-sse-server-push-transport.md) 决策 8）。远程命令、[FR-29](PRD.md) watch 作为消费者复用本流（各自独立 FR）。
+
 ## 7. 服务注册 / 发现 / 健康
 
 - **注册**：agent 只报 serverId + 元数据标签（`role/version/capacity/weight` + 自定义 metadata，**capacity/weight 为一等字段，metadata 仅 `map<string,string>`**，无 canary —— 对应 P0 修正）。Beacon 按 `zone_assignment` 解析回填 group/zone 写入内存注册表。
@@ -132,7 +144,7 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 `agent-core` 依赖**抽象接口**而非具体库（见 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）：`HttpTransport`（默认 OkHttp 适配器，可换）+ `JsonCodec`（默认 kotlinx.serialization 适配器，可换），由 `BeaconApiClient` 收口五个 REST 语义调用。
 
-生命周期：读 bootstrap（控制面地址 + serverId + env/group 提示 + token + 超时）→ 注册 → 心跳循环 → 长轮询循环 → **先写本地快照** → TabooLib reload apply（异步线程，**不阻塞 MC 主线程**）→ `report` 回报 → 断连指数退避重连。控制面不可用时用本地快照继续（接入方业务插件须自带内置默认以防首启无快照）。对同服业务插件暴露 **Java 8 只读 API**（读有效配置 + 查发现/拓扑）。
+生命周期：读 bootstrap（控制面地址 + serverId + env/group 提示 + token + 超时）→ 注册 → 心跳循环 + **单条 SSE 推送流循环**（FR-24，注入 `streamTransport` 时取代配置/文件树/覆盖集三条长轮询循环；未注入则退回三条长轮询）→ 收到 `*-changed` 事件即取内容 → **先写本地快照** → TabooLib reload apply（异步线程，**不阻塞 MC 主线程**）→ `report` 回报 → 流断指数退避重连、重连即对账。控制面不可用时用本地快照继续（接入方业务插件须自带内置默认以防首启无快照）。对同服业务插件暴露 **Java 8 只读 API**（读有效配置 + 查发现/拓扑）。SSE 流细节见 §6.1。
 
 zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane.md)），agent 不声明 zone，从注册/拉取响应得到自己的归属；换区只改 `zone_assignment` 一行，agent 零改动。
 

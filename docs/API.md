@@ -49,7 +49,34 @@
 响应：`{ "ok": true, "ttlSec": 30, "configDirty": false }`
 - 刷新内存 `lastHeartbeat=now`、状态 `online`；`configDirty` 为可选优化提示位，**P1 恒 `false`**（变更感知由长轮询负责，agent 不依赖它；提示位归档 P2）。未注册 → `404 NOT_REGISTERED`。
 
-### 3. 长轮询拉有效配置 `GET /beacon/v1/agent/config/effective`
+### 2.5 单条推送流 `GET /beacon/v1/agent/stream`（SSE，FR-24）
+
+server→agent 单向推送流，**合并配置/文件树/覆盖集三条长轮询为一条**（见 [ADR-0015](adr/0015-sse-server-push-transport.md)，取代 [ADR-0006](adr/0006-rest-long-poll-push.md)）。`Content-Type: text/event-stream`，连接 held-open。
+
+查询参数：`?namespace=&serverId=&configMd5=<本地配置md5>&fileMd5=<本地fileTreeMd5>&overrideMd5=<本地overrideMd5>`（无该通道内容时传空串）。未注册 → `404 NOT_REGISTERED`。
+
+行为：
+- **连接即对账**：建连时按上报的各通道 md5 与服务端当前 md5 比对，对**落后通道**立即补发 `*-changed` 事件（补齐断线期间落下的增量），再发一条 `ready` 标记，随后转入直播。
+- **直播**：配置/文件/覆盖集发布后，按 scope 算最小受影响 serverId 集合（复用长轮询唤醒集合），仅向受影响连接推 `*-changed`；未受影响连接不推。
+- **只发变更通知、不搬数据**：事件载荷仅含新 md5，agent 收到后**用现有 HTTP 端点（§3/§6/§8）取内容并应用**。
+- **保活**：无变更时按间隔发 SSE 注释行（`: ping`）维持连接、穿透反代空闲超时；agent 解析时跳过。
+
+事件帧（SSE 标准：`event:` 行 + `data:` 行 + 空行）：
+```
+event: config-changed
+data: {"md5":"ab12...ef"}
+
+event: ready
+data: {}
+```
+事件类型：`config-changed` / `file-changed` / `override-changed`（各携带对应通道新 md5）、`ready`（首轮对账完成）。预留 `command-pending` / `topology-changed` 供后续 server→agent 特性（远程命令、[FR-29](PRD.md) watch）复用本流。
+
+> **健康判活与流活性解耦**：online/lost/offline（[FR-5](PRD.md)）仍由独立心跳 + TTL 判定，**不**用「SSE 断开」判失联。流断时 agent 按本地快照继续（fail-static），带退避重连、重连即对账。
+> **反代/Docker**：经 nginx 等反代须关闭响应缓冲（响应头已带 `X-Accel-Buffering: no`）、调长读超时，见 [OPERATIONS](OPERATIONS.md)。
+
+### 3. 拉有效配置 `GET /beacon/v1/agent/config/effective`
+> 自 FR-24 起变更感知由 §2.5 SSE 流负责；本端点退化为「按 md5 取内容」：md5 不同立即 200、相同挂起到超时 304。SSE 收到 `config-changed` 后 agent 调本端点取内容。长轮询挂起语义保留（迁移期兼容，未注入流传输时仍可单独续杯）。
+
 查询参数：`?namespace=&serverId=&md5=<当前md5>&timeoutMs=30000`（首拉 `md5` 传空/0）。
 返回时机三选一：① 当前 md5 ≠ 请求 md5 → 立即 200；② 挂起期间被唤醒且重算后变化 → 200；③ 到超时无变化 → `304`（空体），agent 即续杯。
 200 响应：

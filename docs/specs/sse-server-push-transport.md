@@ -44,12 +44,12 @@
 
 ## 4. 任务拆分（待细化）
 
-- [ ] PRD FR-24 登记；ADR-0015 落库 + ADR-0006 标取代；本 spec 落 docs/specs。（本次文档已做）
-- [ ] 控制面：SSE 端点 + per-conn 注册/扇出 + 连接握手对账 + 复用受影响集合唤醒。
-- [ ] agent-core：`StreamTransport` 抽象 + SSE 监听循环替换三条长轮询 + 重连对账。
-- [ ] 适配器：SSE 客户端实现（纯 HTTP 读流）。
-- [ ] 测试：单元（对账算增量、事件分发）；集成（真控制面：变更即收到通知并应用、断线重连补增量不丢更新）；故障（流断 fail-static、健康判活不受流活性影响）。
-- [ ] 实现期同步文档：ARCHITECTURE / API（SSE 端点、原长轮询端点去向）/ OPERATIONS（反代关 buffering、Docker）。
+- [x] PRD FR-24 登记；ADR-0015 落库 + ADR-0006 标取代；本 spec 落 docs/specs。
+- [x] 控制面：SSE 端点（`GET /beacon/v1/agent/stream`，`internal/handler/stream_handler.go`）+ per-conn 注册（两 Hub waiter）+ 连接握手对账（`StreamService.Run`/`DiffEvents`，`internal/service/stream_service.go`）+ 复用受影响集合唤醒（`NotifyChan()`）+ 事件编码纯函数（`internal/sse`）。
+- [x] agent-core：`StreamTransport`/`StreamEvent` 抽象（`transport/StreamTransport.kt`）+ `SseFrameParser`/`StreamEvents`（`stream/`）+ `AgentLifecycle` SSE 监听循环（注入 streamTransport 时取代三条长轮询）+ 重连对账。
+- [x] 适配器：SSE 客户端实现 `OkHttpStreamTransport`（纯 HTTP 读流，`agent-adapters`）；双端壳注入。
+- [x] 测试：单元（`DiffEvents` 对账算增量、`SseFrameParser` 分帧、`ChangedPayload` 取 md5、`AgentLifecycleStream` 事件分发/启用流取代长轮询/流断重连）；sqlite-backed `StreamService.Run`（连接即对账 + 直播热推 + 只发受影响，免 MySQL 跑通）；SSE 集成测试 `-tags=integration`（需 MySQL）。
+- [x] 实现期同步文档：ARCHITECTURE §6.1 / API §2.5（SSE 端点 + 原长轮询端点退化说明）/ OPERATIONS §3.1（反代关 buffering、调长读超时、Docker）/ CHANGELOG 未发布段。
 
 ## 5. 验收标准
 
