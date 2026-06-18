@@ -1,0 +1,117 @@
+# Beacon 持续集成轻量门禁。
+# 触发：向 main 的 PR、推送到 main。只跑 PR/push 必过的快速检查
+# （控制面构建 + 单测、Go 静态检查、agent 单测、前端构建）。
+# 重型 E2E（需 JDK21 + 下载 Paper/Waterfall，约 12 分钟）不在此处，见 e2e.yml。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支新推送自动取消旧的在跑流水线，省 CI 资源。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 控制面（Go）：构建 + 单元测试。
+  # sqlite 经 go-sqlite3 需 CGO，ubuntu-latest 自带 gcc，故显式开 CGO。
+  go:
+    name: 控制面构建与单测
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          # 版本取自仓库根 go.mod 的 go 指令，避免漂移
+          go-version-file: go.mod
+          cache: true
+      - name: 构建全部包
+        run: go build ./...
+      - name: 运行单元测试
+        # 不带 integration/e2e 标记，只跑纯逻辑单测（集成/E2E 各有独立入口）
+        run: go test ./...
+
+  # Go 静态检查：golangci-lint（配置见根 .golangci.yml）+ gofmt/goimports 格式校验。
+  lint:
+    name: Go 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          # 版本固定，避免不同机器规则不一致
+          version: v1.64.8
+      - name: gofmt 格式校验
+        # gofmt -l 列出未格式化文件；有输出即判失败
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt 格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: goimports 导入分组校验
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          unsorted=$("$(go env GOPATH)/bin/goimports" -l .)
+          if [ -n "$unsorted" ]; then
+            echo "以下文件未通过 goimports 导入排序："
+            echo "$unsorted"
+            exit 1
+          fi
+
+  # 数据面 agent（Kotlin/TabooLib）：JDK21 + Gradle wrapper 跑全模块单测。
+  agent:
+    name: agent 单测
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 JDK21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: 准备 Gradle（含依赖缓存）
+        uses: gradle/actions/setup-gradle@v4
+      - name: 运行 agent 单测
+        # Linux 用 wrapper；-p 指定 agent 子工程根
+        run: ./agent/gradlew -p agent test
+
+  # 前端（React/Vite/TS）：pnpm 安装依赖 + 构建。
+  web:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          # 版本对齐 web/package.json 的 packageManager 字段
+          version: "10.32.1"
+      - name: 安装 Node（启用 pnpm store 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 安装依赖
+        # lockfile 已入库，用 frozen 保证可复现
+        run: pnpm install --frozen-lockfile
+      - name: 构建
+        # 对应 package.json 的 build 脚本：tsc -b && vite build
+        run: pnpm build

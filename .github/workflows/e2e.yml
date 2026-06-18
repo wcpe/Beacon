@@ -1,0 +1,64 @@
+# Beacon 跨平台端到端验收（headless）。
+# 重型：需 JDK21 + 联网首跑下载 Paper/Waterfall（约 12 分钟），故不进 PR 必跑门禁，
+# 仅手动触发或每日定时跑。E2E 默认 sqlite，无需 docker/MySQL。
+# 入口为纯 Go：go test -tags=e2e ./test/e2e/{directory,override}。
+name: E2E
+
+on:
+  # 手动触发，可在界面填入口令/密钥（不填则运行时随机生成）
+  workflow_dispatch:
+    inputs:
+      admin-pass:
+        description: 管理员口令（留空则运行时随机生成）
+        required: false
+        default: ""
+      auth-secret:
+        description: 令牌签名密钥（留空则运行时随机生成）
+        required: false
+        default: ""
+  # 每日定时跑一次（UTC 18:00）
+  schedule:
+    - cron: "0 18 * * *"
+
+jobs:
+  e2e:
+    name: 跨平台 E2E（sqlite）
+    runs-on: ubuntu-latest
+    # 下载服务端 + 跑双相位较慢，留足超时
+    timeout-minutes: 60
+    env:
+      # sqlite 经 go-sqlite3 需 CGO
+      CGO_ENABLED: "1"
+      # E2E 默认 sqlite，无需 docker/MySQL
+      E2E_DB_DRIVER: sqlite
+      # 敏感项：优先取 workflow_dispatch 输入，否则取 secrets，二者皆空则下一步随机生成。
+      # 绝不在文件里硬编码真实密钥。
+      E2E_ADMIN_PASS: ${{ github.event.inputs.admin-pass || secrets.E2E_ADMIN_PASS }}
+      E2E_AUTH_SECRET: ${{ github.event.inputs.auth-secret || secrets.E2E_AUTH_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 安装 JDK21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: 补齐缺省口令/密钥
+        # 输入与 secrets 皆空时运行时随机生成，保证 E2E 必填 env 始终就位且不外泄
+        run: |
+          if [ -z "$E2E_ADMIN_PASS" ]; then
+            echo "E2E_ADMIN_PASS=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          fi
+          if [ -z "$E2E_AUTH_SECRET" ]; then
+            echo "E2E_AUTH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          fi
+      - name: 目录注入 E2E（FR-4，默认 sqlite、无需 docker）
+        run: go test -tags=e2e -timeout=30m ./test/e2e/directory
+      - name: 三方覆盖 E2E（FR-15，默认 sqlite）
+        # 与目录用例相互独立；目录失败也照跑，便于一次拿全两条相位结论
+        if: always()
+        run: go test -tags=e2e -timeout=30m ./test/e2e/override

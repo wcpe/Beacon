@@ -19,6 +19,9 @@ dependencies {
     // 仅编译期依赖对外只读 API（模拟真实业务插件；运行期由 BeaconAgentProxy 提供）。
     compileOnly(project(":agent-api"))
     compileOnly(kotlin("stdlib"))
+    // BungeeCord 平台 API（net.md_5.bungee.*）：FR-4 目录探针需读 ProxyServer 服务器目录与命令注册状态；
+    // TabooLib install(platform-bungee) 未把它加到编译类路径，显式 compileOnly 引入（运行期由代理提供）。
+    compileOnly("net.md-5:bungeecord-api:1.20-R0.2@jar")
 }
 
 taboolib {

@@ -11,7 +11,7 @@
 ### 1.1 测试分层（怎么分、在哪跑）
 - **单元**：纯逻辑（尤其 `merge` 合并、`digest`）—— Go `testing` / Kotlin 测试，不连外部依赖，最快最多。
 - **集成**：控制面 + 真实 MySQL（测试库 / 容器）跑配置发布/解析/长轮询；agent 对接 mock 或真实 beacon。集成用例带 `//go:build integration` 标记与单测隔离：`go test ./...` **不含**集成（`internal/service` / `internal/server` 显示 no test files 属正常），`go test -tags=integration ./...` + `BEACON_TEST_DSN` 才跑（运行方式见 `docs/OPERATIONS.md` §8）——避免集成被静默 skip 误判为"全绿"。
-- **E2E**：compose 起 beacon+mysql + 真实 agent，跑两条关键时序（首次接入、发布热更，见 ARCHITECTURE 时序与 PRD §6）。
+- **E2E**：跨平台纯 Go 入口 `go test -tags=e2e -timeout=30m ./test/e2e/{directory,override}`（默认 sqlite、无需 docker，可选 mysql），自管控制面 + 真实 agent，跑关键时序（首次接入、发布热更、目录注入、三方覆盖，见 ARCHITECTURE 时序与 PRD §6）；CI 见 `.github/workflows/e2e.yml`，运行细节见 `docs/OPERATIONS.md` §7。
 - **何时跑**：单元 / 集成随每次改动与 CI；E2E 在发版前（`sdd-release-version` / `sdd-hotfix`）至少跑一遍。
 
 ## 2. 必测的高风险区

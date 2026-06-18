@@ -7,6 +7,13 @@
 - `docker compose up -d`；待 mysql healthcheck 通过后 beacon 自动建表（GORM AutoMigrate）+ 预置 namespace（prod/test）。
 - 管理台与 API 同端口（默认 8848）。
 
+### 1.1 单二进制免容器首启（FR-25）
+直接跑 `beacon` 二进制时**首次启动自动脚手架、开箱即跑**：在当前目录释放 `config.yml`（默认 sqlite、零依赖可跑），并在无 `.env` 时**自动生成 `.env`（0600）**（`BEACON_ADMIN_PASSWORD` / `BEACON_AUTH_SECRET` 随机；`BEACON_BOOTSTRAP_TOKEN` 用固定默认 `beacon-bootstrap-token`——仅防误连、与 agent 样例开箱匹配），随即直接启动（sqlite 落 `beacon.db`），无需手工 `export` 或填值（二者已存在则不覆盖）。上手：
+- 运行 `beacon` → 直接起服（控制台 WARN 提示已生成 `.env`）。
+- 打开当前目录 `.env`，取 `BEACON_ADMIN_PASSWORD` 登录管理台（`http://本机IP:8848`，用户名 `admin`）；按需改 `config.yml`（切 mysql 改 `database` 段）或改 `.env` 里的口令后重启。
+- **接 agent**：agent 的 `bootstrap-token` 用固定默认 `beacon-bootstrap-token` 即与控制面开箱匹配（仅防误连）；若改了控制面 `.env` 的 `BEACON_BOOTSTRAP_TOKEN`，各 agent 也要同步改。
+- 管理员口令 / 签名密钥强随机、不入库（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)，非固定弱默认口令）；生产 MySQL 仍走上面的 compose 路径。
+
 ## 2. 升级
 - **升级前先备份 MySQL**（见 §4）。
 - 控制面：拉新镜像 → `docker compose up -d beacon`（mysql 数据卷不动）。AutoMigrate 只增不删；删列 / 改类型等复杂变更它不处理，需要时再引入迁移工具并另立 ADR。
@@ -49,21 +56,29 @@
 
 校验「三方插件文件覆盖 + 受限重载命令」整链与 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md) 安全不变量在真机成立。验收插件 `BeaconE2E` 兼作被覆盖目标：种原文件 `managed.yml`、注册受限重载命令 `beacone2ereload`、轮询观测文件变更与命令收到（记到 `e2e-override-observations.log`）。
 
-前置：本机有 Go / JDK21 / Docker；起一次性 MySQL（避让本机已占端口，例 host 33306）：
+入口为纯 Go 测试、**真跨平台**（Windows/Linux/macOS 一致），由测试自管控制面 + 真 Paper 生命周期，逐相位收口、无悬挂进程；CI 亦可跑（见 `.github/workflows/e2e.yml`）。
 
-```powershell
-docker run -d --name beacon-e2e-mysql -e MYSQL_ROOT_PASSWORD=beacon -e MYSQL_DATABASE=beacon -p 33306:3306 mysql:8.0
-go build -o .tmp/beacon-e2e.exe ./cmd/beacon
-```
+前置：本机有 Go / JDK21 + 联网（首跑下载 Paper，约 12 分钟）。**默认 sqlite、无需 docker/MySQL**；如需切 MySQL，另起一次性库并经 `E2E_DB_DRIVER=mysql` + `E2E_DB_DSN` 指向它。
 
-一键编排（Windows，全程自管控制面 + 真 Paper 生命周期，逐相位收口）：
+必填环境变量：
+
+- `E2E_ADMIN_PASS`：管理员口令。
+- `E2E_AUTH_SECRET`：令牌签名密钥。
+
+可选环境变量：
+
+- `E2E_DB_DRIVER`：数据库驱动，`sqlite`（默认）或 `mysql`。
+- `E2E_DB_DSN`：`E2E_DB_DRIVER=mysql` 时必填，指向测试 MySQL。
+- `E2E_BEACON_URL`：控制面地址，默认 `http://localhost:8848`。
+
+运行（PowerShell；Bash 把赋值换成 `export` 即可，命令同）：
 
 ```powershell
 $env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
-pwsh ./test/e2e/override/run-override-e2e.ps1 -MysqlPort 33306 -McPort 25566
+go test -tags=e2e -timeout=30m ./test/e2e/override
 ```
 
-脚本依次跑四相位（任一 FAIL 即退出码非 0）：
+测试依次跑四相位（任一 FAIL 即测试失败）：
 
 - **inert（空白名单）**：覆盖集发布后文件被覆盖为新内容、但受限重载命令**一条不派发**（ADR-0011 默认 inert）。
 - **filetree（FR-14）**：发布一个文件树文件 → agent 镜像落盘到插件真实数据目录 → 验收插件读到镜像内容。
@@ -72,7 +87,25 @@ pwsh ./test/e2e/override/run-override-e2e.ps1 -MysqlPort 33306 -McPort 25566
 
 > 前端（FR-18）管理台可在控制面起着时人工 / 浏览器自检：`http://localhost:8848` 登录（admin + `BEACON_ADMIN_PASSWORD`）→「文件树托管」看托管文件 →「文件覆盖集」详情看**发布前 dry-run 只读预览**（将覆盖哪些文件 / 执行什么命令 + 二次确认勾选门控发布）。
 
-成员挂载当前无 admin API，驱动经数据层写 `file_object`（`override_set_id>0`）造成员——属已知缺口的临时绕过（见 CHANGELOG 已知项）。Linux 下可照脚本步骤手工等价执行（`go run -tags=e2e ./test/e2e/override -phase=<inert|ordering|failstatic>`，配 `E2E_DB_DSN`/`E2E_RUN_DIR`/`E2E_ADMIN_PASS` 等环境变量）。
+成员挂载当前无 admin API，驱动经数据层写 `file_object`（`override_set_id>0`）造成员——属已知缺口的临时绕过（见 CHANGELOG 已知项）。
+
+### 7.2 Proxy 目录注入真机 E2E（FR-4 服务发现延伸出口）
+
+校验「在线 `role=bukkit` 子服按 `serverId` 注入 Bungee 目录」在真机成立。控制面用 **SQLite 开发模式**（无需 Docker/MySQL）。`agent-e2e-bungee` 的 `DirectoryE2EProbe` 周期把 Bungee `ServerInfo` 目录与 `beacon` 命令注册状态覆写到 `plugins/BeaconE2EProxy/e2e-directory-latest.txt`，供 Go 驱动断言。
+
+入口为纯 Go 测试、**真跨平台**，由测试自管控制面 + 真 Paper 子服 + 真 Waterfall 代理生命周期，逐相位收口；最适合 CI（见 `.github/workflows/e2e.yml`）。
+
+前置：本机有 Go / JDK21 + 联网（首跑下载 Paper/Waterfall）。**默认 sqlite、无需 docker/MySQL**。必填 `E2E_ADMIN_PASS` / `E2E_AUTH_SECRET`；可选 `E2E_DB_DRIVER`（默认 `sqlite`）、`E2E_DB_DSN`（driver=mysql 时）、`E2E_BEACON_URL`（默认 `http://localhost:8848`）。运行（PowerShell；Bash 把赋值换成 `export` 即可）：
+
+```powershell
+$env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
+go test -tags=e2e -timeout=30m ./test/e2e/directory
+```
+
+测试依次跑两相位（任一 FAIL 即测试失败）：
+
+- **directory**：在线 `role=bukkit` 子服按 `serverId` 注入 Bungee 目录（地址含子服端口）、手工服务器（Waterfall 默认 `lobby`）保留不被覆盖、`beacon` 命令已注册。
+- **failstatic**：杀控制面后已注入目录与手工服**不被清空**（fail-static）。
 
 ## 8. 测试运行方式（单元 / 集成）
 
@@ -83,4 +116,4 @@ pwsh ./test/e2e/override/run-override-e2e.ps1 -MysqlPort 33306 -McPort 25566
   go test -tags=integration ./... -count=1
   ```
   `internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。
-- **CI / 发版前**：两条都跑（`go test ./...` 与 `go test -tags=integration ./...`），E2E 另见 §7。务必确认集成是 PASS 而非 SKIP。
+- **CI / 发版前**：两条都跑（`go test ./...` 与 `go test -tags=integration ./...`），E2E 另见 §7（跨平台 `go test -tags=e2e`，CI 见 `.github/workflows/e2e.yml`）。务必确认集成是 PASS 而非 SKIP。
