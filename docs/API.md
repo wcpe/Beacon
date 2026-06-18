@@ -251,8 +251,15 @@ data: {}
 ### 审计与环境
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/audits?namespace=&action=&targetType=&targetRef=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items` |
+| `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30） |
 | `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建 |
+
+### 运维指标
+| 端点 | 说明 |
+|---|---|
+| `GET /metrics` | Prometheus 文本格式运行指标，免管理台鉴权（内网信任面，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)） |
+
+暴露指标：`beacon_instances_registered{namespace,role}`（注册实例数，gauge）、`beacon_instances_status{status}`（健康状态分布 online/lost/offline，gauge）、`beacon_config_publish_total`（配置发布累计，counter）、`beacon_push_notify_total`（推送/长轮询唤醒累计，counter）。注册/健康为 pull 模型，抓取时读内存注册表实时计数。
 
 ---
 
