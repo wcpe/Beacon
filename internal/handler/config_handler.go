@@ -11,6 +11,7 @@ import (
 	"beacon/internal/apperr"
 	"beacon/internal/auth"
 	"beacon/internal/merge"
+	"beacon/internal/model"
 	"beacon/internal/render"
 	"beacon/internal/repository"
 	"beacon/internal/service"
@@ -39,6 +40,7 @@ type configView struct {
 	Version     int64     `json:"version"`
 	MD5         string    `json:"md5"`
 	Enabled     bool      `json:"enabled"`
+	Sensitive   bool      `json:"sensitive"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	Content     string    `json:"content,omitempty"`
 }
@@ -68,9 +70,8 @@ func (h *ConfigHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	views := make([]configView, 0, len(items))
-	for _, it := range items {
-		v := toView(it.ID, it.NamespaceCode, it.GroupCode, it.DataID, it.ScopeLevel, it.ScopeTarget, it.Format, it.Version, it.ContentMD5, it.Enabled, it.UpdatedAt)
-		views = append(views, v)
+	for i := range items {
+		views = append(views, toView(&items[i]))
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
@@ -87,7 +88,7 @@ func (h *ConfigHandler) Get(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	v := toView(it.ID, it.NamespaceCode, it.GroupCode, it.DataID, it.ScopeLevel, it.ScopeTarget, it.Format, it.Version, it.ContentMD5, it.Enabled, it.UpdatedAt)
+	v := toView(it)
 	v.Content = it.Content
 	render.WriteJSON(w, http.StatusOK, v)
 }
@@ -102,6 +103,8 @@ type configCreateRequest struct {
 	Format      string `json:"format"`
 	Content     string `json:"content"`
 	Comment     string `json:"comment"`
+	// 是否敏感项：为真则 content 加密入库（at-rest，FR-20）
+	Sensitive bool `json:"sensitive"`
 }
 
 // Create 处理 POST /admin/v1/configs。
@@ -115,12 +118,13 @@ func (h *ConfigHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Namespace: req.Namespace, Group: req.Group, DataID: req.DataID,
 		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget, Format: req.Format,
 		Content: req.Content, Operator: auth.Operator(r.Context()), Comment: req.Comment, ClientIP: clientIP(r),
+		Sensitive: req.Sensitive,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	v := toView(it.ID, it.NamespaceCode, it.GroupCode, it.DataID, it.ScopeLevel, it.ScopeTarget, it.Format, it.Version, it.ContentMD5, it.Enabled, it.UpdatedAt)
+	v := toView(it)
 	v.Content = it.Content
 	render.WriteJSON(w, http.StatusCreated, v)
 }
@@ -325,11 +329,12 @@ func parseID(r *http.Request) (uint, error) {
 	return uint(n), nil
 }
 
-// toView 组装配置项基础视图（不含 content）。
-func toView(id uint, ns, group, dataID, scopeLevel, scopeTarget, format string, version int64, md5 string, enabled bool, updatedAt time.Time) configView {
+// toView 组装配置项基础视图（不含 content；content 仅详情接口单独填）。
+func toView(it *model.ConfigItem) configView {
 	return configView{
-		ID: id, Namespace: ns, Group: group, DataID: dataID,
-		ScopeLevel: scopeLevel, ScopeTarget: scopeTarget, Format: format,
-		Version: version, MD5: md5, Enabled: enabled, UpdatedAt: updatedAt,
+		ID: it.ID, Namespace: it.NamespaceCode, Group: it.GroupCode, DataID: it.DataID,
+		ScopeLevel: it.ScopeLevel, ScopeTarget: it.ScopeTarget, Format: it.Format,
+		Version: it.Version, MD5: it.ContentMD5, Enabled: it.Enabled, Sensitive: it.Sensitive,
+		UpdatedAt: it.UpdatedAt,
 	}
 }

@@ -17,6 +17,8 @@ type ConfigRevision struct {
 	Content string `gorm:"column:content;size:262144;not null"`
 	// 内容 md5（小写 hex）
 	ContentMD5 string `gorm:"column:content_md5;size:32;not null"`
+	// 是否敏感项：与 config_item.sensitive 镜像，为真则该版本快照 content 加密入库（FR-20）
+	Sensitive bool `gorm:"column:sensitive;not null;default:false"`
 	// 回滚来源 revision id；正常发布为 NULL
 	SourceRevision *uint `gorm:"column:source_revision"`
 	// 发布说明

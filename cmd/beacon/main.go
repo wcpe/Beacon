@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"beacon/internal/runtime"
 	"beacon/internal/runtime/alert"
 	"beacon/internal/runtime/longpoll"
+	"beacon/internal/secret"
 	"beacon/internal/server"
 	"beacon/internal/service"
 	"beacon/internal/store"
@@ -90,11 +92,29 @@ func run() error {
 	}
 	nsHandler := handler.NewNamespaceHandler(nsService)
 
-	configRepo := repository.NewConfigItemRepository(db)
-	revRepo := repository.NewConfigRevisionRepository(db)
+	// 配置加密 cipher（FR-20）：密钥仅从 env 读，绝不入库 / 不入仓 / 不打日志。
+	// 空密钥得到"未启用"cipher；后续若库中已有敏感项则 fail-fast。
+	configCipher, err := secret.NewCipher(os.Getenv("BEACON_CONFIG_ENCRYPTION_KEY"))
+	if err != nil {
+		return err
+	}
+
+	configRepo := repository.NewConfigItemRepository(db, configCipher)
+	revRepo := repository.NewConfigRevisionRepository(db, configCipher)
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
+
+	// fail-fast：库中已存在敏感配置项却未配置加密密钥 → 拒绝启动，绝不以密文 / 乱码继续。
+	if !configCipher.IsEnabled() {
+		n, err := configRepo.CountSensitive()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("启动失败: 库中存在 %d 个敏感配置项，但未配置加密密钥 BEACON_CONFIG_ENCRYPTION_KEY（base64 的 32 字节），无法解密下发", n)
+		}
+	}
 
 	// 文件树托管（通道B）：file_object/file_revision 仓库 + 服务
 	fileRepo := repository.NewFileObjectRepository(db)

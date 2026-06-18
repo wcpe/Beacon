@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"beacon/internal/model"
+	"beacon/internal/secret"
 )
 
 // ConfigFilter 是配置项列表查询的可选过滤条件。
@@ -18,18 +19,53 @@ type ConfigFilter struct {
 }
 
 // ConfigItemRepository 提供 config_item 表的数据访问。
+// 持有 cipher 以在写入前加密、读出后解密敏感项 content（at-rest 边界，FR-20）；
+// service 层始终只见明文，md5/merge/schema 校验零改。
 type ConfigItemRepository struct {
-	db *gorm.DB
+	db     *gorm.DB
+	cipher *secret.Cipher
 }
 
-// NewConfigItemRepository 构造仓库。
-func NewConfigItemRepository(db *gorm.DB) *ConfigItemRepository {
-	return &ConfigItemRepository{db: db}
+// NewConfigItemRepository 构造仓库。cipher 负责敏感项的落库加密 / 读取解密。
+func NewConfigItemRepository(db *gorm.DB, cipher *secret.Cipher) *ConfigItemRepository {
+	return &ConfigItemRepository{db: db, cipher: cipher}
 }
 
 // WithTx 返回绑定到事务的仓库副本（供 service 在事务内复用）。
 func (r *ConfigItemRepository) WithTx(tx *gorm.DB) *ConfigItemRepository {
-	return &ConfigItemRepository{db: tx}
+	return &ConfigItemRepository{db: tx, cipher: r.cipher}
+}
+
+// encryptForStore 把敏感项的明文 content 加密为落库密文；非敏感项原样返回。
+func (r *ConfigItemRepository) encryptForStore(item *model.ConfigItem) (string, error) {
+	if !item.Sensitive {
+		return item.Content, nil
+	}
+	return r.cipher.Encrypt(item.Content)
+}
+
+// decryptOne 把单条读出的敏感项 content 从密文解密回明文（非敏感项不动）。
+// 兼容历史明文：未带密文前缀的内容视为明文，原样保留，便于"先建项后转敏感"的演进。
+func (r *ConfigItemRepository) decryptOne(item *model.ConfigItem) error {
+	if !item.Sensitive || !secret.IsEncrypted(item.Content) {
+		return nil
+	}
+	plain, err := r.cipher.Decrypt(item.Content)
+	if err != nil {
+		return err
+	}
+	item.Content = plain
+	return nil
+}
+
+// decryptInPlace 批量解密读出的敏感项 content。
+func (r *ConfigItemRepository) decryptInPlace(items []model.ConfigItem) error {
+	for i := range items {
+		if err := r.decryptOne(&items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // active 返回仅含未软删记录的查询（deleted_at = 哨兵）。
@@ -37,13 +73,29 @@ func (r *ConfigItemRepository) active() *gorm.DB {
 	return r.db.Where("deleted_at = ?", model.SoftDeleteSentinel)
 }
 
-// Create 插入一个配置项。
+// Create 插入一个配置项。敏感项落库前把 content 临时替换为密文，落库后恢复明文，
+// 使 GORM 钩子（如软删哨兵）正常写在 item 上、且调用方仍持明文。
 func (r *ConfigItemRepository) Create(item *model.ConfigItem) error {
+	stored, err := r.encryptForStore(item)
+	if err != nil {
+		return err
+	}
+	plain := item.Content
+	item.Content = stored
+	defer func() { item.Content = plain }()
 	return r.db.Create(item).Error
 }
 
 // Save 全量保存配置项（发布更新 content/md5/current_revision/version 等）。
+// 敏感项落库前临时替换为密文、落库后恢复明文，保持调用方 item 仍为明文。
 func (r *ConfigItemRepository) Save(item *model.ConfigItem) error {
+	stored, err := r.encryptForStore(item)
+	if err != nil {
+		return err
+	}
+	plain := item.Content
+	item.Content = stored
+	defer func() { item.Content = plain }()
 	return r.db.Save(item).Error
 }
 
@@ -55,6 +107,9 @@ func (r *ConfigItemRepository) FindByID(id uint) (*model.ConfigItem, error) {
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := r.decryptOne(&item); err != nil {
 		return nil, err
 	}
 	return &item, nil
@@ -71,6 +126,9 @@ func (r *ConfigItemRepository) FindByIdentity(ns, group, dataID, scopeLevel, sco
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := r.decryptOne(&item); err != nil {
 		return nil, err
 	}
 	return &item, nil
@@ -111,7 +169,17 @@ func (r *ConfigItemRepository) List(f ConfigFilter) ([]model.ConfigItem, error) 
 	if err := q.Order("namespace_code, group_code, data_id, scope_level, scope_target").Find(&items).Error; err != nil {
 		return nil, err
 	}
+	if err := r.decryptInPlace(items); err != nil {
+		return nil, err
+	}
 	return items, nil
+}
+
+// CountSensitive 统计库中未软删的敏感配置项数量（供启动 fail-fast 探测）。
+func (r *ConfigItemRepository) CountSensitive() (int64, error) {
+	var n int64
+	err := r.active().Model(&model.ConfigItem{}).Where("sensitive = ?", true).Count(&n).Error
+	return n, err
 }
 
 // SoftDelete 软删配置项：填真实删除时间并置 enabled=false。
@@ -138,6 +206,10 @@ func (r *ConfigItemRepository) FindEffectiveCandidates(ns, group, zone, serverID
 		Where(levelCond).
 		Find(&items).Error
 	if err != nil {
+		return nil, err
+	}
+	// 解密敏感项，保证有效配置合并与下发链路拿到明文
+	if err := r.decryptInPlace(items); err != nil {
 		return nil, err
 	}
 	return items, nil

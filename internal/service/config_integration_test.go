@@ -25,8 +25,8 @@ func testDB(t *testing.T) *gorm.DB {
 // newStack 装配配置与有效配置服务。
 func newStack(t *testing.T) (*service.ConfigService, *service.EffectiveService, *gorm.DB) {
 	db := testDB(t)
-	cr := repository.NewConfigItemRepository(db)
-	rr := repository.NewConfigRevisionRepository(db)
+	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
+	rr := repository.NewConfigRevisionRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, asg, nil), db

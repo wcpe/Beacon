@@ -19,7 +19,7 @@ import (
 // longpollStack 装配带唤醒的配置/zone 服务 + 有效配置长轮询服务（共享 hub 与 registry）。
 func longpollStack(t *testing.T) (*service.ConfigService, *service.ZoneService, *service.EffectiveService, *runtime.Registry) {
 	db := testDB(t)
-	cr := repository.NewConfigItemRepository(db)
+	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	reg := runtime.NewRegistry()
@@ -27,7 +27,7 @@ func longpollStack(t *testing.T) (*service.ConfigService, *service.ZoneService, 
 	fileHub := longpoll.NewHub()
 	eff := service.NewEffectiveService(cr, asg, hub)
 	notifier := service.NewChangeNotifier(hub, fileHub, reg, asg)
-	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db), ar)
+	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfg.SetNotifier(notifier)
 	zone := service.NewZoneService(db, asg, ar, reg)
 	zone.SetNotifier(notifier)

@@ -30,7 +30,7 @@ func newFileStack(t *testing.T) fileStack {
 	db := testDB(t)
 	fr := repository.NewFileObjectRepository(db)
 	frr := repository.NewFileRevisionRepository(db)
-	cr := repository.NewConfigItemRepository(db)
+	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	reg := runtime.NewRegistry()
@@ -41,7 +41,7 @@ func newFileStack(t *testing.T) fileStack {
 	notifier := service.NewChangeNotifier(hub, fileHub, reg, asg)
 	fileSvc := service.NewFileService(db, fr, frr, ar)
 	fileSvc.SetNotifier(notifier)
-	cfgSvc := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db), ar)
+	cfgSvc := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfgSvc.SetNotifier(notifier)
 	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg}
 }

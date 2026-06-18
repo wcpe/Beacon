@@ -33,6 +33,8 @@ type ConfigItem struct {
 	Version int64 `gorm:"column:version;not null;default:0"`
 	// 是否参与有效配置合并
 	Enabled bool `gorm:"column:enabled;not null;default:true"`
+	// 是否敏感项：为真则 content 加密入库（at-rest），读取/下发时在控制面解密（FR-20）
+	Sensitive bool `gorm:"column:sensitive;not null;default:false"`
 	// 创建时间（UTC）
 	CreatedAt time.Time
 	// 更新时间（UTC）

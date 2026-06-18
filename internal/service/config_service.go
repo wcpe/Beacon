@@ -29,6 +29,8 @@ type CreateConfigParams struct {
 	Operator    string
 	Comment     string
 	ClientIP    string
+	// 是否敏感项：为真则 content 加密入库（at-rest，FR-20）
+	Sensitive bool
 }
 
 // PublishRecorder 是配置发布计数的窄接口（由 metrics 实现，可选注入；未注入即不计数）。
@@ -119,7 +121,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 	item := &model.ConfigItem{
 		NamespaceCode: p.Namespace, GroupCode: group, DataID: p.DataID,
 		ScopeLevel: p.ScopeLevel, ScopeTarget: scopeTarget, Format: p.Format,
-		Content: p.Content, ContentMD5: md5, Version: 1, Enabled: true,
+		Content: p.Content, ContentMD5: md5, Version: 1, Enabled: true, Sensitive: p.Sensitive,
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.configRepo.WithTx(tx).Create(item); err != nil {
@@ -163,7 +165,7 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 	md5 := merge.MD5Hex(content)
 	newVersion := item.Version + 1
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, content, md5, nil, operator, comment)
+		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, content, md5, item.Sensitive, nil, operator, comment)
 		if err != nil {
 			return err
 		}
@@ -206,7 +208,7 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 	newVersion := item.Version + 1
 	src := target.ID
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, target.Content, target.ContentMD5, &src, operator, comment)
+		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, target.Content, target.ContentMD5, item.Sensitive, &src, operator, comment)
 		if err != nil {
 			return err
 		}
@@ -285,14 +287,14 @@ func (s *ConfigService) Diff(id uint, from, to int64) (string, string, error) {
 
 // appendRevision 以 item 当前内容追加一条版本快照。
 func (s *ConfigService) appendRevision(tx *gorm.DB, item *model.ConfigItem, version int64, source *uint, operator, comment string) (*model.ConfigRevision, error) {
-	return s.appendRevisionContent(tx, item.ID, item.Format, version, item.Content, item.ContentMD5, source, operator, comment)
+	return s.appendRevisionContent(tx, item.ID, item.Format, version, item.Content, item.ContentMD5, item.Sensitive, source, operator, comment)
 }
 
-// appendRevisionContent 追加一条指定内容的版本快照。
-func (s *ConfigService) appendRevisionContent(tx *gorm.DB, itemID uint, format string, version int64, content, md5 string, source *uint, operator, comment string) (*model.ConfigRevision, error) {
+// appendRevisionContent 追加一条指定内容的版本快照。sensitive 与所属 item 镜像，为真则该快照 content 加密落库。
+func (s *ConfigService) appendRevisionContent(tx *gorm.DB, itemID uint, format string, version int64, content, md5 string, sensitive bool, source *uint, operator, comment string) (*model.ConfigRevision, error) {
 	rev := &model.ConfigRevision{
 		ConfigItemID: itemID, Version: version, Format: format,
-		Content: content, ContentMD5: md5, SourceRevision: source,
+		Content: content, ContentMD5: md5, Sensitive: sensitive, SourceRevision: source,
 		Operator: operator, Comment: comment,
 	}
 	if err := s.revRepo.WithTx(tx).Create(rev); err != nil {

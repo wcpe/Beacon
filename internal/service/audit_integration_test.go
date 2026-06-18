@@ -15,10 +15,10 @@ import (
 // TestAuditList 集成验证：审计按 action/targetType 过滤、分页、时间倒序。
 func TestAuditList(t *testing.T) {
 	db := testDB(t)
-	cr := repository.NewConfigItemRepository(db)
+	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
-	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db), ar)
+	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
 	audit := service.NewAuditService(ar)
 

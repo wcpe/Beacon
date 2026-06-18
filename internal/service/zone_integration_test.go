@@ -15,10 +15,10 @@ import (
 // TestZoneReassignEffectiveRecompute 集成验证：改派后有效配置重算正确。
 func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	db := testDB(t)
-	cr := repository.NewConfigItemRepository(db)
+	cr := repository.NewConfigItemRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
-	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db), ar)
+	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	eff := service.NewEffectiveService(cr, asg, nil)
 	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
 

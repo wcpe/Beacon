@@ -30,7 +30,7 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	}
 	t.Cleanup(func() { store.Close(db) })
 
-	configRepo := repository.NewConfigItemRepository(db)
+	configRepo := repository.NewConfigItemRepository(db, noEncryptCipher())
 	fileRepo := repository.NewFileObjectRepository(db)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
@@ -44,7 +44,7 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, hub, fileHub, 0) // 关保活，测试不依赖心跳
 
-	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db), auditRepo)
+	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
 	cfgSvc.SetNotifier(service.NewChangeNotifier(hub, fileHub, reg, assignRepo))
 	return cfgSvc, streamSvc, reg
 }
