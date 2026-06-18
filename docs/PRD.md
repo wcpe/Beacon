@@ -55,7 +55,7 @@
 | FR-7 | 轻量审计：谁/何时/对什么/做了什么 | P1 | 已交付@v0.1.0 |
 | FR-8 | zone 指派：serverId→zone 权威分配 + 改派热推 | P1 | 已交付@v0.1.0 |
 | FR-9 | 配置灰度/Beta | P2 | 计划 |
-| FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 | 计划 |
+| FR-10 | 流量调度（落位均衡/canary 引流/drain） | P2 | 开发中 |
 | FR-11 | 管理面鉴权：操作者认证 + 写操作授权 + 操作者入审计（命令执行/前端登录前置，自 P2 前移，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)） | P2 | 已交付@v0.2.0 |
 | FR-12 | 版本发布编排（蓝绿/滚动） | P3 | 计划 |
 | FR-13 | 完整虚拟合区运行时通道 / 控制面 HA | P3 | 计划 |
@@ -72,10 +72,10 @@
 | FR-24 | agent↔控制面传输合并：把 配置/文件树/覆盖集 三条 server→agent 长轮询合并为**单条 SSE 推送流**（只发变更通知，agent 用现有端点取内容）；**连接即对账**（agent 上报各通道 md5 → 控制面补发落下的增量 → 再转直播），不丢更新；**心跳与 blob 取数据仍走 HTTP**，**健康判活独立于流活性**；fail-static 不变。作为**统一 server→agent 推送地基**，远程运维命令与 FR-29 拓扑 watch 复用此流（取代 [ADR-0006](adr/0006-rest-long-poll-push.md)、扩展 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)，见 [ADR-0015](adr/0015-sse-server-push-transport.md) 与 [docs/specs/sse-server-push-transport.md](specs/sse-server-push-transport.md)） | P2 | 开发中 |
 | FR-25 | 控制面首启脚手架 + .env 加载：单二进制首次启动自动释放配置模板（`config.yml`，默认 sqlite 可直接跑）、**自动生成 `.env`（0600）并直接启动**（开箱即跑、不再 fail-fast；管理员口令/签名密钥随机，agent 共享令牌用固定默认 `beacon-bootstrap-token` 与 agent 样例开箱匹配），并从 `.env` 加载环境变量（真实 env 优先），降低单节点部署门槛。鉴权仍强制：口令/密钥强随机 + env 注入、不入库、不弱化 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)；不用固定弱默认口令（见 [docs/specs/control-plane-bootstrap-scaffold.md](specs/control-plane-bootstrap-scaffold.md)） | P1 | 开发中 |
 | FR-26 | agent 内置跨服消息中间件：基于 Redis 的服务器间通用通信层——定向发送 / 请求-响应（RPC）/ 主题发布订阅 / 按玩家所在服寻址；可靠送达走 Redis Streams（消费组离线补偿），可丢事件走 pub/sub；作为 **agent 内独立可开关模块**，复用 agent 身份与 Beacon 地址簿，与配置同步/心跳**故障域隔离**；Redis 连接配置由 Beacon 下发、密码依赖 FR-20 加密先行。仅提供**通用传输**，匹配/实时对战/存储/排行榜等**业务功能不在本 FR 范围**（属③层业务插件，见 [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md) 与 [docs/specs/cross-server-messaging-middleware.md](specs/cross-server-messaging-middleware.md)） | P3 | 开发中 |
-| FR-27 | 配置发布前 schema/类型校验：发布前对配置做结构与类型校验（格式、类型、必填项），不通过则拒绝发布并给出明确错误，阻止下发坏配置导致目标服异常（增强 FR-1/FR-3） | P2 | 计划 |
-| FR-28 | 健康分级 + 失联告警：在 online/lost/offline 之外引入 degraded（亚健康）判定，并在实例失联/状态异常时主动告警；告警通道做成可扩展抽象（接口），第一版实现站内信 + webhook 两种，后续新通道只需实现接口即可接入（增强 FR-5，阈值可配） | P2 | 计划 |
+| FR-27 | 配置发布前 schema/类型校验：发布前对配置做结构与类型校验（格式、类型、必填项），不通过则拒绝发布并给出明确错误，阻止下发坏配置导致目标服异常（增强 FR-1/FR-3） | P2 | 开发中 |
+| FR-28 | 健康分级 + 失联告警：在 online/lost/offline 之外引入 degraded（亚健康）判定，并在实例失联/状态异常时主动告警；告警通道做成可扩展抽象（接口），第一版实现站内信 + webhook 两种，后续新通道只需实现接口即可接入（增强 FR-5，阈值可配） | P2 | 开发中 |
 | FR-29 | 发现接口过滤 + watch 订阅：discovery / agent-api SDK 支持按 role/zone/tag 过滤查询，并支持订阅拓扑变更（实例上线/下线/改派）即时通知（增强 FR-4/FR-16，复用 FR-24 的 SSE server→agent 推送流） | P2 | 计划 |
-| FR-30 | 可观测性：导出 Prometheus 运行指标（注册/健康/配置/推送流等）+ 审计查询 API（按操作者/对象/时间检索）（增强 FR-7） | P2 | 计划 |
+| FR-30 | 可观测性：导出 Prometheus 运行指标（注册/健康/配置/推送流等）+ 审计查询 API（按操作者/对象/时间检索）（增强 FR-7） | P2 | 开发中 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 
