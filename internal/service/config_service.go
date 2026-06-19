@@ -70,6 +70,15 @@ func (s *ConfigService) recordPublish() {
 	}
 }
 
+// mapDuplicateKey 把并发撞唯一键的 gorm.ErrDuplicatedKey 映射为 409 CONFLICT，
+// 其它错误原样返回（避免唯一键冲突透出 500）。
+func mapDuplicateKey(err error) error {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return apperr.ErrConfigConflict
+	}
+	return err
+}
+
 // notify 在事务提交成功后唤醒该配置项 scope 下受影响的长轮询。
 func (s *ConfigService) notify(item *model.ConfigItem) {
 	if s.notifier != nil {
@@ -139,10 +148,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 			fmt.Sprintf(`{"version":1,"md5":"%s"}`, md5), p.ClientIP)
 	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return nil, apperr.ErrConfigConflict
-		}
-		return nil, err
+		return nil, mapDuplicateKey(err)
 	}
 	slog.Info("新建配置项", "namespace", p.Namespace, "group", group, "dataId", p.DataID, "scope", p.ScopeLevel)
 	s.recordPublish()
@@ -177,7 +183,8 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP)
 	})
 	if err != nil {
-		return nil, err
+		// 并发对同一 item 发布同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
+		return nil, mapDuplicateKey(err)
 	}
 	slog.Info("发布配置", "id", id, "version", newVersion)
 	s.recordPublish()
@@ -220,7 +227,8 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"md5":"%s"}`, newVersion, toVersion, target.ContentMD5), clientIP)
 	})
 	if err != nil {
-		return nil, err
+		// 并发回滚与发布撞同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
+		return nil, mapDuplicateKey(err)
 	}
 	slog.Info("回滚配置", "id", id, "toVersion", toVersion, "newVersion", newVersion)
 	s.recordPublish()

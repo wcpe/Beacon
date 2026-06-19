@@ -5,6 +5,7 @@ package service_test
 import (
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 
 	"gorm.io/gorm"
@@ -145,6 +146,44 @@ func TestConfigValidation(t *testing.T) {
 	}
 	if _, err := cfg.Create(noTarget); !errors.Is(err, apperr.ErrInvalidScope) {
 		t.Errorf("zone 层缺 target 应返回 INVALID_SCOPE，实际 %v", err)
+	}
+}
+
+// TestPublishConcurrentConflict 集成验证：并发对同一 item 发布同一目标 version 撞 uk_revision_version，
+// 错误应映射为 409 CONFLICT，绝不透出原始 gorm.ErrDuplicatedKey（500）。
+func TestPublishConcurrentConflict(t *testing.T) {
+	cfg, _, _ := newStack(t)
+	item, err := cfg.Create(service.CreateConfigParams{
+		Namespace: "prod", Group: model.GlobalGroupCode, DataID: "c.yml",
+		ScopeLevel: model.ScopeGlobal, Format: merge.FormatYAML, Content: "x: 1\n", Operator: "alice",
+	})
+	if err != nil {
+		t.Fatalf("首建失败: %v", err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			// 各路读到同一 item.Version，算出同一 newVersion，提交时只有一路成功，其余撞 uk_revision_version
+			_, errs[idx] = cfg.Publish(item.ID, "x: 2\n", "bob", "并发发布", "")
+		}(i)
+	}
+	wg.Wait()
+
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			t.Fatalf("唯一键冲突透出了原始 gorm.ErrDuplicatedKey（应映射 409），实际 %v", err)
+		}
+		if !errors.Is(err, apperr.ErrConfigConflict) {
+			t.Fatalf("并发撞唯一键应得 CONFIG_CONFLICT，实际 %v", err)
+		}
 	}
 }
 
