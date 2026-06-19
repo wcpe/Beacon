@@ -10,6 +10,8 @@ import type { CreateFileParams, FileFilter } from '../api/client'
 import type { FileView } from '../api/types'
 import { formatTime } from '../api/format'
 import { useMessage } from '../components/useMessage'
+import AsyncSection from '@/components/AsyncSection'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,14 +19,6 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Select,
   SelectContent,
@@ -54,6 +48,20 @@ const EMPTY_FORM = {
 
 // Radix Select 不允许空串值，"全部"用哨兵值 all 表示，提交时转 undefined
 const ALL = 'all'
+
+// 平铺表格列定义（无副作用，模块级；行点击导航交给 onRowClick）
+const FLAT_COLUMNS: DataTableColumn<FileView>[] = [
+  { header: 'ID', cell: (f) => f.id },
+  { header: '环境', cell: (f) => f.namespace },
+  { header: '大区', cell: (f) => f.group },
+  { header: 'path', className: 'font-mono', cell: (f) => f.path },
+  { header: '覆盖层', cell: (f) => f.scopeLevel },
+  { header: '目标', cell: (f) => f.scopeTarget || '-' },
+  { header: '版本', cell: (f) => f.version },
+  { header: 'md5', className: 'font-mono', cell: (f) => f.md5.slice(0, 8) },
+  { header: '状态', cell: (f) => (f.enabled ? '启用' : '已删') },
+  { header: '更新时间', cell: (f) => formatTime(f.updatedAt) },
+]
 
 // 文件树节点：目录节点有 children，文件叶子节点带 file
 interface TreeNode {
@@ -291,54 +299,15 @@ export default function FilesPage() {
         <TabsContent value="flat">
           <Card>
             <CardContent>
-              {list.isLoading ? (
-                <p className="text-sm text-muted-foreground">加载中…</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>环境</TableHead>
-                      <TableHead>大区</TableHead>
-                      <TableHead>path</TableHead>
-                      <TableHead>覆盖层</TableHead>
-                      <TableHead>目标</TableHead>
-                      <TableHead>版本</TableHead>
-                      <TableHead>md5</TableHead>
-                      <TableHead>状态</TableHead>
-                      <TableHead>更新时间</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {list.data && list.data.length > 0 ? (
-                      list.data.map((f) => (
-                        <TableRow
-                          key={f.id}
-                          className="cursor-pointer"
-                          onClick={() => navigate(`/files/${f.id}`)}
-                        >
-                          <TableCell>{f.id}</TableCell>
-                          <TableCell>{f.namespace}</TableCell>
-                          <TableCell>{f.group}</TableCell>
-                          <TableCell className="font-mono">{f.path}</TableCell>
-                          <TableCell>{f.scopeLevel}</TableCell>
-                          <TableCell>{f.scopeTarget || '-'}</TableCell>
-                          <TableCell>{f.version}</TableCell>
-                          <TableCell className="font-mono">{f.md5.slice(0, 8)}</TableCell>
-                          <TableCell>{f.enabled ? '启用' : '已删'}</TableCell>
-                          <TableCell>{formatTime(f.updatedAt)}</TableCell>
-                        </TableRow>
-                      ))
-                    ) : (
-                      <TableRow>
-                        <TableCell colSpan={10} className="text-center text-muted-foreground">
-                          无托管文件
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              )}
+              <AsyncSection isLoading={list.isLoading}>
+                <DataTable
+                  columns={FLAT_COLUMNS}
+                  rows={list.data}
+                  rowKey={(f) => String(f.id)}
+                  emptyText="无托管文件"
+                  onRowClick={(f) => navigate(`/files/${f.id}`)}
+                />
+              </AsyncSection>
             </CardContent>
           </Card>
         </TabsContent>

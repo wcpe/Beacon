@@ -14,20 +14,15 @@ import {
   rollbackOverrideSet,
 } from '../api/client'
 import type { OverrideSetFilter } from '../api/client'
+import type { OverrideSetRevisionView, OverrideSetView } from '../api/types'
 import { formatTime } from '../api/format'
 import { useMessage } from '../components/useMessage'
+import AsyncSection from '@/components/AsyncSection'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Sheet,
   SheetContent,
@@ -45,6 +40,20 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+
+// 覆盖集列表列定义（无副作用，模块级；行点击导航交给 onRowClick）
+const LIST_COLUMNS: DataTableColumn<OverrideSetView>[] = [
+  { header: 'ID', cell: (o) => o.id },
+  { header: '名称', cell: (o) => o.name },
+  { header: '环境', cell: (o) => o.namespace },
+  { header: '大区', cell: (o) => o.group },
+  { header: '覆盖层', cell: (o) => o.scopeLevel },
+  { header: '目标目录', className: 'font-mono', cell: (o) => o.targetRoot },
+  { header: '重载命令', className: 'font-mono', cell: (o) => o.reloadCommand || '-' },
+  { header: '版本', cell: (o) => o.version },
+  { header: '状态', cell: (o) => (o.enabled ? '启用' : '已删') },
+  { header: '更新时间', cell: (o) => formatTime(o.updatedAt) },
+]
 
 export default function OverrideSetsPage() {
   const navigate = useNavigate()
@@ -86,60 +95,17 @@ export default function OverrideSetsPage() {
         </CardContent>
       </Card>
 
-      {list.isError && (
-        <p className="text-sm text-destructive">加载失败：{(list.error as Error).message}</p>
-      )}
-
       <Card>
         <CardContent>
-          {list.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>名称</TableHead>
-                  <TableHead>环境</TableHead>
-                  <TableHead>大区</TableHead>
-                  <TableHead>覆盖层</TableHead>
-                  <TableHead>目标目录</TableHead>
-                  <TableHead>重载命令</TableHead>
-                  <TableHead>版本</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>更新时间</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {list.data && list.data.length > 0 ? (
-                  list.data.map((o) => (
-                    <TableRow
-                      key={o.id}
-                      className="cursor-pointer"
-                      onClick={() => navigate(`/override-sets/${o.id}`)}
-                    >
-                      <TableCell>{o.id}</TableCell>
-                      <TableCell>{o.name}</TableCell>
-                      <TableCell>{o.namespace}</TableCell>
-                      <TableCell>{o.group}</TableCell>
-                      <TableCell>{o.scopeLevel}</TableCell>
-                      <TableCell className="font-mono">{o.targetRoot}</TableCell>
-                      <TableCell className="font-mono">{o.reloadCommand || '-'}</TableCell>
-                      <TableCell>{o.version}</TableCell>
-                      <TableCell>{o.enabled ? '启用' : '已删'}</TableCell>
-                      <TableCell>{formatTime(o.updatedAt)}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={10} className="text-center text-muted-foreground">
-                      无覆盖集
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+          <AsyncSection isLoading={list.isLoading} isError={list.isError} error={list.error}>
+            <DataTable
+              columns={LIST_COLUMNS}
+              rows={list.data}
+              rowKey={(o) => String(o.id)}
+              emptyText="无覆盖集"
+              onRowClick={(o) => navigate(`/override-sets/${o.id}`)}
+            />
+          </AsyncSection>
         </CardContent>
       </Card>
 
@@ -219,6 +185,40 @@ function OverrideSetDetail({ id }: { id: number }) {
     }
     setConfirmOpen(true)
   }
+
+  // 历史版本列定义（操作列闭包引用 rollbackMut，故在组件内定义）
+  const revisionColumns: DataTableColumn<OverrideSetRevisionView>[] = [
+    { header: '版本', cell: (rev) => rev.version },
+    { header: '目标目录', className: 'font-mono', cell: (rev) => rev.targetRoot },
+    { header: '重载命令', className: 'font-mono', cell: (rev) => rev.reloadCommand || '-' },
+    { header: '操作人', cell: (rev) => rev.operator },
+    { header: '备注', cell: (rev) => rev.comment || '-' },
+    { header: '创建时间', cell: (rev) => formatTime(rev.createdAt) },
+    {
+      header: '操作',
+      cell: (rev) => (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="outline" size="sm" disabled={rollbackMut.isPending}>
+              回滚到此
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认回滚覆盖集到版本 {rev.version}？</AlertDialogTitle>
+              <AlertDialogDescription>将作为新版本发布。</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={() => rollbackMut.mutate(rev.version)}>
+                确认回滚
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ),
+    },
+  ]
 
   return (
     <>
@@ -341,67 +341,18 @@ function OverrideSetDetail({ id }: { id: number }) {
         {/* 历史版本 + 回滚 AlertDialog */}
         <div className="space-y-2">
           <h3 className="text-sm font-medium">历史版本</h3>
-          {revisions.isError && (
-            <p className="text-sm text-destructive">加载失败：{(revisions.error as Error).message}</p>
-          )}
-          {revisions.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>版本</TableHead>
-                  <TableHead>目标目录</TableHead>
-                  <TableHead>重载命令</TableHead>
-                  <TableHead>操作人</TableHead>
-                  <TableHead>备注</TableHead>
-                  <TableHead>创建时间</TableHead>
-                  <TableHead>操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {revisions.data && revisions.data.length > 0 ? (
-                  revisions.data.map((rev) => (
-                    <TableRow key={rev.version}>
-                      <TableCell>{rev.version}</TableCell>
-                      <TableCell className="font-mono">{rev.targetRoot}</TableCell>
-                      <TableCell className="font-mono">{rev.reloadCommand || '-'}</TableCell>
-                      <TableCell>{rev.operator}</TableCell>
-                      <TableCell>{rev.comment || '-'}</TableCell>
-                      <TableCell>{formatTime(rev.createdAt)}</TableCell>
-                      <TableCell>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="outline" size="sm" disabled={rollbackMut.isPending}>
-                              回滚到此
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>确认回滚覆盖集到版本 {rev.version}？</AlertDialogTitle>
-                              <AlertDialogDescription>将作为新版本发布。</AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>取消</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => rollbackMut.mutate(rev.version)}>
-                                确认回滚
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
-                      无历史版本
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+          <AsyncSection
+            isLoading={revisions.isLoading}
+            isError={revisions.isError}
+            error={revisions.error}
+          >
+            <DataTable
+              columns={revisionColumns}
+              rows={revisions.data}
+              rowKey={(rev) => String(rev.version)}
+              emptyText="无历史版本"
+            />
+          </AsyncSection>
         </div>
       </div>
     </>

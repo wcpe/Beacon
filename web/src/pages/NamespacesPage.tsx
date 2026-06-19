@@ -3,19 +3,14 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createNamespace, listNamespaces } from '../api/client'
+import type { NamespaceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
+import AsyncSection from '@/components/AsyncSection'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -24,6 +19,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+
+// 环境列表列定义
+const COLUMNS: DataTableColumn<NamespaceView>[] = [
+  { header: '编码', cell: (ns) => ns.code },
+  { header: '名称', cell: (ns) => ns.name },
+]
 
 export default function NamespacesPage() {
   const qc = useQueryClient()
@@ -100,40 +101,16 @@ export default function NamespacesPage() {
         </Dialog>
       </div>
 
-      {isError && (
-        <p className="text-sm text-destructive">加载失败：{(error as Error).message}</p>
-      )}
-
       <Card>
         <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>编码</TableHead>
-                  <TableHead>名称</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data && data.length > 0 ? (
-                  data.map((ns) => (
-                    <TableRow key={ns.code}>
-                      <TableCell>{ns.code}</TableCell>
-                      <TableCell>{ns.name}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={2} className="text-center text-muted-foreground">
-                      暂无环境
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+            <DataTable
+              columns={COLUMNS}
+              rows={data}
+              rowKey={(ns) => ns.code}
+              emptyText="暂无环境"
+            />
+          </AsyncSection>
         </CardContent>
       </Card>
     </div>

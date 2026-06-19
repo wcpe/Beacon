@@ -9,20 +9,13 @@ import type { InstanceView } from '../api/types'
 import { formatTime } from '../api/format'
 import StatusBadge from '../components/StatusBadge'
 import { useMessage } from '../components/useMessage'
-import { cn } from '@/lib/utils'
+import AsyncSection from '@/components/AsyncSection'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Select,
   SelectContent,
@@ -107,6 +100,62 @@ export default function InstancesPage() {
     offlineMut.mutate(serverId)
   }
 
+  // 实例表列定义（操作列闭包引用 offlineMut / onConfirmOffline，故在组件内定义）
+  const columns: DataTableColumn<InstanceView>[] = [
+    { header: 'serverId', className: 'font-mono', cell: (i) => i.serverId },
+    { header: '环境', cell: (i) => i.namespace },
+    { header: '角色', cell: (i) => i.role },
+    { header: '大区', cell: (i) => i.group },
+    {
+      header: '小区',
+      cell: (i) =>
+        i.zone === null ? (
+          <Badge variant="outline" className="border-amber-500 text-amber-600">
+            未分配
+          </Badge>
+        ) : (
+          i.zone
+        ),
+    },
+    { header: '状态', cell: (i) => <StatusBadge status={i.status} /> },
+    { header: '地址', className: 'font-mono', cell: (i) => i.address },
+    { header: '版本', cell: (i) => i.version },
+    { header: '人数', cell: (i) => i.playerCount },
+    { header: 'TPS', cell: (i) => i.tps.toFixed(1) },
+    { header: '最近心跳', cell: (i) => formatTime(i.lastHeartbeat) },
+    {
+      header: '操作',
+      cell: (i) => (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={offlineMut.isPending}
+              onClick={(e) => e.stopPropagation()}
+            >
+              下线
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认下线实例 {i.serverId}？</AlertDialogTitle>
+              <AlertDialogDescription>
+                将把该实例标记为下线，下线接口需要过滤条件中指定的「环境」。
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction onClick={() => onConfirmOffline(i.serverId)}>
+                确认下线
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -164,101 +213,18 @@ export default function InstancesPage() {
         </CardContent>
       </Card>
 
-      {isError && (
-        <p className="text-sm text-destructive">加载失败：{(error as Error).message}</p>
-      )}
-
       <Card>
         <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>serverId</TableHead>
-                  <TableHead>环境</TableHead>
-                  <TableHead>角色</TableHead>
-                  <TableHead>大区</TableHead>
-                  <TableHead>小区</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>地址</TableHead>
-                  <TableHead>版本</TableHead>
-                  <TableHead>人数</TableHead>
-                  <TableHead>TPS</TableHead>
-                  <TableHead>最近心跳</TableHead>
-                  <TableHead>操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data && data.length > 0 ? (
-                  data.map((i) => (
-                    <TableRow
-                      key={`${i.namespace}/${i.serverId}`}
-                      className={cn('cursor-pointer', !i.assigned && 'bg-amber-50')}
-                      onClick={() => setSelectedInstance(i)}
-                    >
-                      <TableCell className="font-mono">{i.serverId}</TableCell>
-                      <TableCell>{i.namespace}</TableCell>
-                      <TableCell>{i.role}</TableCell>
-                      <TableCell>{i.group}</TableCell>
-                      <TableCell>
-                        {i.zone === null ? (
-                          <Badge variant="outline" className="border-amber-500 text-amber-600">
-                            未分配
-                          </Badge>
-                        ) : (
-                          i.zone
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={i.status} />
-                      </TableCell>
-                      <TableCell className="font-mono">{i.address}</TableCell>
-                      <TableCell>{i.version}</TableCell>
-                      <TableCell>{i.playerCount}</TableCell>
-                      <TableCell>{i.tps.toFixed(1)}</TableCell>
-                      <TableCell>{formatTime(i.lastHeartbeat)}</TableCell>
-                      <TableCell>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              disabled={offlineMut.isPending}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              下线
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>确认下线实例 {i.serverId}？</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                将把该实例标记为下线，下线接口需要过滤条件中指定的「环境」。
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>取消</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => onConfirmOffline(i.serverId)}>
-                                确认下线
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={12} className="text-center text-muted-foreground">
-                      无在册实例
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+            <DataTable
+              columns={columns}
+              rows={data}
+              rowKey={(i) => `${i.namespace}/${i.serverId}`}
+              emptyText="无在册实例"
+              onRowClick={(i) => setSelectedInstance(i)}
+              rowClassName={(i) => (!i.assigned ? 'bg-amber-50' : undefined)}
+            />
+          </AsyncSection>
         </CardContent>
       </Card>
 

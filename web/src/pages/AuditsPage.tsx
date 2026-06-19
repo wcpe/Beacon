@@ -6,19 +6,13 @@ import { listAudits } from '../api/client'
 import type { AuditFilter } from '../api/client'
 import type { AuditView } from '../api/types'
 import { formatTime } from '../api/format'
+import AsyncSection from '@/components/AsyncSection'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -78,6 +72,29 @@ export default function AuditsPage() {
   const page = filter.page ?? 1
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+  // 审计表列定义（详情列闭包引用 setSelectedAudit，故在组件内定义）
+  const columns: DataTableColumn<AuditView>[] = [
+    { header: '时间', cell: (a) => formatTime(a.createdAt) },
+    { header: '环境', cell: (a) => a.namespace || '-' },
+    { header: '操作人', cell: (a) => a.operator },
+    { header: '动作', cell: (a) => a.action },
+    { header: '对象类型', cell: (a) => a.targetType },
+    { header: '对象定位', className: 'font-mono', cell: (a) => a.targetRef },
+    {
+      header: '结果',
+      cell: (a) => (a.result === 'fail' ? <Badge variant="destructive">fail</Badge> : 'ok'),
+    },
+    { header: '来源 IP', cell: (a) => a.clientIp || '-' },
+    {
+      header: '详情',
+      cell: (a) => (
+        <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedAudit(a)}>
+          查看
+        </Button>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -131,95 +148,40 @@ export default function AuditsPage() {
         </CardContent>
       </Card>
 
-      {isError && (
-        <p className="text-sm text-destructive">加载失败：{(error as Error).message}</p>
-      )}
-
       <Card>
         <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>时间</TableHead>
-                    <TableHead>环境</TableHead>
-                    <TableHead>操作人</TableHead>
-                    <TableHead>动作</TableHead>
-                    <TableHead>对象类型</TableHead>
-                    <TableHead>对象定位</TableHead>
-                    <TableHead>结果</TableHead>
-                    <TableHead>来源 IP</TableHead>
-                    <TableHead>详情</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data && data.items.length > 0 ? (
-                    data.items.map((a, idx) => (
-                      <TableRow key={`${a.createdAt}-${idx}`}>
-                        <TableCell>{formatTime(a.createdAt)}</TableCell>
-                        <TableCell>{a.namespace || '-'}</TableCell>
-                        <TableCell>{a.operator}</TableCell>
-                        <TableCell>{a.action}</TableCell>
-                        <TableCell>{a.targetType}</TableCell>
-                        <TableCell className="font-mono">{a.targetRef}</TableCell>
-                        <TableCell>
-                          {a.result === 'fail' ? (
-                            <Badge variant="destructive">fail</Badge>
-                          ) : (
-                            'ok'
-                          )}
-                        </TableCell>
-                        <TableCell>{a.clientIp || '-'}</TableCell>
-                        <TableCell>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedAudit(a)}
-                          >
-                            查看
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground">
-                        无审计记录
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+            <DataTable
+              columns={columns}
+              rows={data?.items}
+              rowKey={(a, idx) => `${a.createdAt}-${idx}`}
+              emptyText="无审计记录"
+            />
 
-              <div className="mt-4 flex items-center justify-center gap-4 text-sm">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1 || isFetching}
-                  onClick={() => goPage(page - 1)}
-                >
-                  上一页
-                </Button>
-                <span className="text-muted-foreground">
-                  第 {page} / {totalPages} 页（共 {total} 条）
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages || isFetching}
-                  onClick={() => goPage(page + 1)}
-                >
-                  下一页
-                </Button>
-              </div>
-            </>
-          )}
+            <div className="mt-4 flex items-center justify-center gap-4 text-sm">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || isFetching}
+                onClick={() => goPage(page - 1)}
+              >
+                上一页
+              </Button>
+              <span className="text-muted-foreground">
+                第 {page} / {totalPages} 页（共 {total} 条）
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page >= totalPages || isFetching}
+                onClick={() => goPage(page + 1)}
+              >
+                下一页
+              </Button>
+            </div>
+          </AsyncSection>
         </CardContent>
       </Card>
 

@@ -9,20 +9,15 @@ import {
   zoneSummary,
 } from '../api/client'
 import type { AssignParams } from '../api/client'
+import type { AssignmentView, ZoneStatView } from '../api/types'
 import { formatTime } from '../api/format'
 import { useMessage } from '../components/useMessage'
+import AsyncSection from '@/components/AsyncSection'
+import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
@@ -52,6 +47,14 @@ interface ZoneFilter {
 
 // 新增/改派表单初值
 const EMPTY_FORM = { namespace: '', serverId: '', group: '', zone: '', note: '' }
+
+// zone 汇总列定义（无副作用，模块级）
+const SUMMARY_COLUMNS: DataTableColumn<ZoneStatView>[] = [
+  { header: '大区', cell: (s) => s.group },
+  { header: '小区', cell: (s) => s.zone },
+  { header: '服数', cell: (s) => s.serverCount },
+  { header: '在线数', cell: (s) => s.onlineCount },
+]
 
 export default function ZonesPage() {
   const qc = useQueryClient()
@@ -126,6 +129,42 @@ export default function ZonesPage() {
       note: form.note.trim(),
     })
   }
+
+  // 指派列表列定义（操作列闭包引用 unassignMut，故在组件内定义）
+  const assignmentColumns: DataTableColumn<AssignmentView>[] = [
+    { header: '环境', cell: (a) => a.namespace },
+    { header: 'serverId', className: 'font-mono', cell: (a) => a.serverId },
+    { header: '大区', cell: (a) => a.group },
+    { header: '小区', cell: (a) => a.zone },
+    { header: '备注', cell: (a) => a.note || '-' },
+    { header: '更新时间', cell: (a) => formatTime(a.updatedAt) },
+    {
+      header: '操作',
+      cell: (a) => (
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="destructive" size="sm" disabled={unassignMut.isPending}>
+              取消指派
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>确认取消 {a.serverId} 的 zone 指派？</AlertDialogTitle>
+              <AlertDialogDescription>取消后该实例将回到未分配状态。</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => unassignMut.mutate({ namespace: a.namespace, serverId: a.serverId })}
+              >
+                确认取消指派
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ),
+    },
+  ]
 
   return (
     <div className="space-y-6">
@@ -213,114 +252,32 @@ export default function ZonesPage() {
       <Card>
         <CardContent className="space-y-3">
           <h2 className="text-base font-medium">指派列表</h2>
-          {assignments.isError && (
-            <p className="text-sm text-destructive">加载失败：{(assignments.error as Error).message}</p>
-          )}
-          {assignments.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>环境</TableHead>
-                  <TableHead>serverId</TableHead>
-                  <TableHead>大区</TableHead>
-                  <TableHead>小区</TableHead>
-                  <TableHead>备注</TableHead>
-                  <TableHead>更新时间</TableHead>
-                  <TableHead>操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {assignments.data && assignments.data.length > 0 ? (
-                  assignments.data.map((a) => (
-                    <TableRow key={`${a.namespace}/${a.serverId}`}>
-                      <TableCell>{a.namespace}</TableCell>
-                      <TableCell className="font-mono">{a.serverId}</TableCell>
-                      <TableCell>{a.group}</TableCell>
-                      <TableCell>{a.zone}</TableCell>
-                      <TableCell>{a.note || '-'}</TableCell>
-                      <TableCell>{formatTime(a.updatedAt)}</TableCell>
-                      <TableCell>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="destructive" size="sm" disabled={unassignMut.isPending}>
-                              取消指派
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>确认取消 {a.serverId} 的 zone 指派？</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                取消后该实例将回到未分配状态。
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>取消</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() =>
-                                  unassignMut.mutate({ namespace: a.namespace, serverId: a.serverId })
-                                }
-                              >
-                                确认取消指派
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground">
-                      无指派记录
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+          <AsyncSection
+            isLoading={assignments.isLoading}
+            isError={assignments.isError}
+            error={assignments.error}
+          >
+            <DataTable
+              columns={assignmentColumns}
+              rows={assignments.data}
+              rowKey={(a) => `${a.namespace}/${a.serverId}`}
+              emptyText="无指派记录"
+            />
+          </AsyncSection>
         </CardContent>
       </Card>
 
       <Card>
         <CardContent className="space-y-3">
           <h2 className="text-base font-medium">zone 汇总</h2>
-          {summary.isError && (
-            <p className="text-sm text-destructive">加载失败：{(summary.error as Error).message}</p>
-          )}
-          {summary.isLoading ? (
-            <p className="text-sm text-muted-foreground">加载中…</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>大区</TableHead>
-                  <TableHead>小区</TableHead>
-                  <TableHead>服数</TableHead>
-                  <TableHead>在线数</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summary.data && summary.data.length > 0 ? (
-                  summary.data.map((s) => (
-                    <TableRow key={`${s.group}/${s.zone}`}>
-                      <TableCell>{s.group}</TableCell>
-                      <TableCell>{s.zone}</TableCell>
-                      <TableCell>{s.serverCount}</TableCell>
-                      <TableCell>{s.onlineCount}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground">
-                      无汇总数据
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
+          <AsyncSection isLoading={summary.isLoading} isError={summary.isError} error={summary.error}>
+            <DataTable
+              columns={SUMMARY_COLUMNS}
+              rows={summary.data}
+              rowKey={(s) => `${s.group}/${s.zone}`}
+              emptyText="无汇总数据"
+            />
+          </AsyncSection>
         </CardContent>
       </Card>
     </div>
