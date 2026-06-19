@@ -85,7 +85,8 @@ type ConfigGrayService struct {
 	configRepo *repository.ConfigItemRepository
 	grayRepo   *repository.ConfigGrayRepository
 	auditRepo  *repository.AuditLogRepository
-	notifier   ServerNotifier // 可选，事务提交后唤醒
+	notifier   ServerNotifier  // 可选，事务提交后唤醒
+	metrics    PublishRecorder // 可选，promote 走发布路径同样计入发布计数（FR-30，见 ADR-0020）
 }
 
 // NewConfigGrayService 构造服务。复用 configSvc 的发布路径与 configRepo 完成 promote。
@@ -96,6 +97,11 @@ func NewConfigGrayService(db *gorm.DB, configSvc *ConfigService, configRepo *rep
 // SetNotifier 注入唤醒器（启动时装配；未注入则不唤醒）。
 func (s *ConfigGrayService) SetNotifier(n ServerNotifier) {
 	s.notifier = n
+}
+
+// SetMetrics 注入发布计数器（启动时装配；未注入则不计数）。
+func (s *ConfigGrayService) SetMetrics(m PublishRecorder) {
+	s.metrics = m
 }
 
 // List 列出某环境内当前活跃灰度。
@@ -190,6 +196,10 @@ func (s *ConfigGrayService) Promote(itemID uint, operator, comment, clientIP str
 		return nil, err
 	}
 	slog.Info("晋升配置灰度为稳定版", "itemId", item.ID, "version", newVersion)
+	// 晋升走发布路径（生成新稳定版本），与普通发布同样计入发布计数（FR-30）
+	if s.metrics != nil {
+		s.metrics.IncConfigPublish()
+	}
 	// 晋升影响 item 整 scope（稳定版变了）+ 原 cohort 成员（灰度撤销）；按 scope + cohort 名单并集唤醒
 	s.notifyPromote(item, gray.Cohort)
 	return item, nil

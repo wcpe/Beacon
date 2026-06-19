@@ -176,6 +176,8 @@ func run() error {
 	configService.SetMetrics(metricsSet)
 	// 灰度发布 / promote / abort 提交后按受影响 serverId 唤醒（复用配置通道 Hub，FR-9）
 	configGrayService.SetNotifier(notifier)
+	// promote 走发布路径，同样计入 beacon_config_publish_total（FR-30）
+	configGrayService.SetMetrics(metricsSet)
 	fileService.SetNotifier(notifier)
 	overrideSetService.SetNotifier(notifier)
 	zoneService.SetNotifier(notifier)
