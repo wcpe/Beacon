@@ -53,7 +53,7 @@
 
 server→agent 单向推送流，**合并配置/文件树/覆盖集三条长轮询为一条**（见 [ADR-0015](adr/0015-sse-server-push-transport.md)，取代 [ADR-0006](adr/0006-rest-long-poll-push.md)）。`Content-Type: text/event-stream`，连接 held-open。
 
-查询参数：`?namespace=&serverId=&configMd5=<本地配置md5>&fileMd5=<本地fileTreeMd5>&overrideMd5=<本地overrideMd5>`（无该通道内容时传空串）。未注册 → `404 NOT_REGISTERED`。
+查询参数：`?namespace=&serverId=&configMd5=<本地配置md5>&fileMd5=<本地fileTreeMd5>&overrideMd5=<本地overrideMd5>&topologyMd5=<本地拓扑摘要>`（无该通道内容时传空串；agent 不本地维护拓扑摘要，`topologyMd5` 恒传空让控制面补一次，FR-29）。未注册 → `404 NOT_REGISTERED`。
 
 行为：
 - **连接即对账**：建连时按上报的各通道 md5 与服务端当前 md5 比对，对**落后通道**立即补发 `*-changed` 事件（补齐断线期间落下的增量），再发一条 `ready` 标记，随后转入直播。
@@ -69,7 +69,7 @@ data: {"md5":"ab12...ef"}
 event: ready
 data: {}
 ```
-事件类型：`config-changed` / `file-changed` / `override-changed`（各携带对应通道新 md5）、`ready`（首轮对账完成）。预留 `command-pending` / `topology-changed` 供后续 server→agent 特性（远程命令、[FR-29](PRD.md) watch）复用本流。
+事件类型：`config-changed` / `file-changed` / `override-changed`（各携带对应通道新 md5）、`topology-changed`（[FR-29](PRD.md)：namespace 内实例上线/下线/改派 zone 时推送，`data` 携带新拓扑摘要——**通知式、不含实例数据**，agent 收到后重查 §5 发现端点取最新拓扑）、`ready`（首轮对账完成）。预留 `command-pending` 供后续远程运维命令复用本流。
 
 > **健康判活与流活性解耦**：online/lost/offline（[FR-5](PRD.md)）仍由独立心跳 + TTL 判定，**不**用「SSE 断开」判失联。流断时 agent 按本地快照继续（fail-static），带退避重连、重连即对账。
 > **反代/Docker**：经 nginx 等反代须关闭响应缓冲（响应头已带 `X-Accel-Buffering: no`）、调长读超时，见 [OPERATIONS](OPERATIONS.md)。
@@ -97,7 +97,9 @@ data: {}
 请求：`{ "namespace", "serverId", "appliedMd5", "playerCount", "tps" }`（`playerCount/tps` **仅展示，不参与任何决策**）。响应：`{ "ok": true }`。
 
 ### 5. 服务发现 `GET /beacon/v1/agent/discovery`
-查询：`?namespace=&group=&zone=&role=`。返回按标签过滤的**在线**实例列表（归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。BeaconAgentProxy 用它周期同步同 namespace 下 `role=bukkit` 的在线子服，按 `serverId` 注入 Bungee `ServerInfo` 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖；FR-4 延伸出口）。
+查询：`?namespace=&group=&zone=&role=`，外加可选的自定义元数据过滤 `&tag.<key>=<value>`（可重复，多 tag 取交集；按实例 `metadata` 键值精确匹配，FR-29）。返回按条件过滤的**可用**实例列表（`online`+`degraded`，归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。BeaconAgentProxy 用它周期同步同 namespace 下 `role=bukkit` 的可用子服，按 `serverId` 注入 Bungee `ServerInfo` 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖；FR-4 延伸出口）。
+
+> **拓扑 watch（FR-29）**：要实时感知拓扑变化，不必轮询本端点——订阅 §2.5 SSE 流的 `topology-changed` 事件即可（实例上线/下线/改派时即时通知），收到后重查本端点取最新结果。SDK 经 `discovery().watch(listener)` 暴露（未启用推送流时句柄不可用、回退周期 `query`）。
 
 ### 6. 长轮询拉文件清单 `GET /beacon/v1/agent/files/manifest`（通道B）
 查询参数：`?namespace=&serverId=&md5=<当前fileTreeMd5>&timeoutMs=30000`（首拉 `md5` 传空）。
