@@ -1,20 +1,21 @@
 # Beacon 控制面自身配置样例（非"配置中心"业务配置）。由 internal/config 加载，环境变量覆盖优先。
-# 首次启动会自动释放为 config.yml；敏感项（口令、签名密钥）走 .env / 环境变量，不写入此文件。
+# 首次启动会自动释放为 config.yml 并就地填入随机强鉴权口令/密钥（开箱即跑、config.yml 即真源）；
+# 此入库样例文件的敏感项保持留空、不写入凭据。生效优先级：真实环境变量 > 当前目录 .env > config.yml。
 
 # API 与管理台 UI 的监听地址（二者同端口）
 http-addr: ":8848"
 
 # agent 端共享 token，仅防误连（非安全边界）。需与各 agent 的 bootstrap-token 一致；
-# 默认走 .env 的 BEACON_BOOTSTRAP_TOKEN（首启生成的固定默认值）覆盖本项
+# 默认固定值与 agent 样例开箱匹配，可直接改本项，或用环境变量 BEACON_BOOTSTRAP_TOKEN 覆盖
 agent-token: "beacon-bootstrap-token"
 
 # 管理面鉴权（FR-11，单操作者模型，见 docs/adr/0009）。口令与密钥为敏感项，走环境变量，勿写入此文件
 auth:
   # 管理台操作者用户名
   username: "admin"
-  # 管理台操作者口令；留空，经 env BEACON_ADMIN_PASSWORD 注入（缺省启动即失败）
+  # 管理台操作者口令；此样例留空，首启释放 config.yml 时自动填入随机强值（可改本项，或用 env BEACON_ADMIN_PASSWORD 覆盖）
   password: ""
-  # 登录令牌 HMAC 签名密钥；留空，经 env BEACON_AUTH_SECRET 注入（缺省启动即失败）
+  # 登录令牌 HMAC 签名密钥；此样例留空，首启释放 config.yml 时自动填入随机强值（可改本项，或用 env BEACON_AUTH_SECRET 覆盖）
   secret: ""
   # 登录令牌有效期（秒），默认 86400（一天）
   token-ttl-sec: 86400

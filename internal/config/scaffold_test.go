@@ -5,87 +5,66 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"beacon"
 )
 
-// TestEnsureFileReleasesWhenAbsent 验证目标不存在时释放内容并返回 true。
-func TestEnsureFileReleasesWhenAbsent(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "config.yml")
-	released, err := EnsureFile(p, []byte("hello: world\n"))
+// TestEnsureConfigFileReleasesWithRandomCredentials 验证首启释放 config.yml 时就地填入随机强凭据、
+// 不再自动生成 .env，且释放的 config.yml 可直接通过校验（开箱即跑、config.yml 即真源）。
+func TestEnsureConfigFileReleasesWithRandomCredentials(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yml")
+	released, err := EnsureConfigFile(p, beacon.ConfigExampleYAML)
+	if err != nil || !released {
+		t.Fatalf("config.yml 不存在时应释放并返回 true：released=%v err=%v", released, err)
+	}
+	// 首启不应自动生成 .env——否则 .env 会静默盖掉 config.yml（本次修复的根因）
+	if _, err := os.Stat(filepath.Join(dir, ".env")); !os.IsNotExist(err) {
+		t.Fatalf("首启不应自动生成 .env，却发现 .env（或检查出错）：err=%v", err)
+	}
+	// 释放的 config.yml 应能直接通过校验（口令/密钥已填随机强值），无需任何 env 注入
+	cfg, err := Load(p)
 	if err != nil {
-		t.Fatalf("释放应成功: %v", err)
+		t.Fatalf("释放的 config.yml 应开箱通过校验，却失败: %v", err)
 	}
-	if !released {
-		t.Fatal("文件不存在时应释放并返回 true")
+	if strings.TrimSpace(cfg.Auth.Password) == "" {
+		t.Fatal("释放的 config.yml 中 auth.password 应为非空随机值")
 	}
-	b, _ := os.ReadFile(p)
-	if string(b) != "hello: world\n" {
-		t.Fatalf("释放内容不对: %q", b)
+	if strings.TrimSpace(cfg.Auth.Secret) == "" {
+		t.Fatal("释放的 config.yml 中 auth.secret 应为非空随机值")
 	}
 }
 
-// TestEnsureFileSkipsWhenPresent 验证目标已存在时跳过、不覆盖、返回 false。
-func TestEnsureFileSkipsWhenPresent(t *testing.T) {
+// TestEnsureConfigFileSkipsWhenPresent 验证 config.yml 已存在时跳过、不覆盖、返回 false。
+func TestEnsureConfigFileSkipsWhenPresent(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.yml")
-	if err := os.WriteFile(p, []byte("original\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("http-addr: \":9999\"\n"), 0o600); err != nil {
 		t.Fatalf("预置文件失败: %v", err)
 	}
-	released, err := EnsureFile(p, []byte("new\n"))
+	released, err := EnsureConfigFile(p, beacon.ConfigExampleYAML)
 	if err != nil {
 		t.Fatalf("不应报错: %v", err)
 	}
 	if released {
-		t.Fatal("文件已存在时不应释放（应返回 false）")
+		t.Fatal("config.yml 已存在时不应释放（应返回 false）")
 	}
 	b, _ := os.ReadFile(p)
-	if string(b) != "original\n" {
+	if string(b) != "http-addr: \":9999\"\n" {
 		t.Fatalf("已存在文件不应被覆盖，实际 %q", b)
 	}
 }
 
-// envValue 取生成的 .env 文本里某键的值（到行尾），用于断言非空。
-func envValue(s, key string) string {
-	idx := strings.Index(s, key)
-	if idx < 0 {
-		return ""
+// TestInjectCredentialsFillsEmptyAuthFields 验证把模板里留空的 password/secret 就地替换为随机强值、不残留占位。
+func TestInjectCredentialsFillsEmptyAuthFields(t *testing.T) {
+	tmpl := []byte("auth:\n  password: \"\"\n  secret: \"\"\n")
+	out := string(injectCredentials(tmpl, "PWD123", "SECRET456"))
+	if !strings.Contains(out, `password: "PWD123"`) {
+		t.Fatalf("password 未被填入随机值: %q", out)
 	}
-	rest := s[idx+len(key):]
-	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
-		rest = rest[:nl]
+	if !strings.Contains(out, `secret: "SECRET456"`) {
+		t.Fatalf("secret 未被填入随机值: %q", out)
 	}
-	return strings.TrimSpace(rest)
-}
-
-// TestEnsureBootstrapEnvGeneratesRunnableEnv 验证首启生成的 .env 含非空随机鉴权凭据、可直接通过校验。
-func TestEnsureBootstrapEnvGeneratesRunnableEnv(t *testing.T) {
-	p := filepath.Join(t.TempDir(), ".env")
-	generated, err := EnsureBootstrapEnv(p)
-	if err != nil || !generated {
-		t.Fatalf(".env 不存在时应生成并返回 true：generated=%v err=%v", generated, err)
-	}
-	data, _ := os.ReadFile(p)
-	s := string(data)
-	for _, k := range []string{"BEACON_ADMIN_PASSWORD=", "BEACON_AUTH_SECRET=", "BEACON_BOOTSTRAP_TOKEN="} {
-		if envValue(s, k) == "" {
-			t.Fatalf("生成的 .env 中 %s 的值不应为空", k)
-		}
-	}
-}
-
-// TestEnsureBootstrapEnvSkipsWhenPresent 验证 .env 已存在时不再生成、不覆盖用户文件。
-func TestEnsureBootstrapEnvSkipsWhenPresent(t *testing.T) {
-	p := filepath.Join(t.TempDir(), ".env")
-	if err := os.WriteFile(p, []byte("BEACON_ADMIN_PASSWORD=mine\n"), 0o600); err != nil {
-		t.Fatalf("预置 .env 失败: %v", err)
-	}
-	generated, err := EnsureBootstrapEnv(p)
-	if err != nil {
-		t.Fatalf("不应报错: %v", err)
-	}
-	if generated {
-		t.Fatal(".env 已存在时不应再生成（应返回 false）")
-	}
-	b, _ := os.ReadFile(p)
-	if string(b) != "BEACON_ADMIN_PASSWORD=mine\n" {
-		t.Fatalf("已存在 .env 不应被覆盖，实际 %q", b)
+	if strings.Contains(out, `password: ""`) || strings.Contains(out, `secret: ""`) {
+		t.Fatalf("不应残留空凭据占位: %q", out)
 	}
 }

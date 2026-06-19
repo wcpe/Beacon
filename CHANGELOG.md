@@ -4,6 +4,8 @@
 
 ## 未发布
 
+### 修复
+- 首启 `.env` 自动生成覆盖 `config.yml`（FR-25）：原首启在释放 `config.yml` 之外还自动生成一份 `.env`，而该 `.env` 模板含 `BEACON_HTTP_ADDR` / `BEACON_BOOTSTRAP_TOKEN` / `BEACON_ADMIN_USERNAME` 等**与 `config.yml` 重叠的字段**；因生效优先级 `.env` > `config.yml`，运维改了 `config.yml` 的这些项重启却不生效，被 `.env` 静默盖掉。现**不再自动生成 `.env`**：首启释放 `config.yml` 时用 `crypto/rand` 把留空的 `auth.password` / `auth.secret` **就地填入随机强值**（文件权限 0600、口令不入日志），`config.yml` 即开箱真源、无固定弱默认口令、仍开箱即跑（不 fail-fast）。`.env` 加载机制保留：运维手动放置的 `.env` 与真实环境变量仍按 `真实 env > .env > config.yml` 覆盖。鉴权强度不变（[ADR-0009](docs/adr/0009-control-plane-auth-pulled-forward.md)）。
 ## 0.4.1（2026-06-19）
 
 ### 修复

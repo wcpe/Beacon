@@ -173,7 +173,7 @@ zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane
 
 docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+ `mysql`（mysql healthcheck + beacon `depends_on: service_healthy` + 命名卷持久化）。多阶段 Dockerfile：node 构建前端 dist → `go build` 内嵌（`//go:embed all:dist`）→ alpine 极小镜像、非 root、`CGO_ENABLED=0` 静态链接。前端以相对路径 `/admin/v1` 同源访问（无 CORS）；非 API、非静态文件的路径回退 `index.html`（SPA history）。敏感项（DB 密码、token）走 env，不入库。
 
-**配置加载（`internal/config`，FR-25）**：生效优先级 真实环境变量 > 当前目录 `.env` > `config.yml`（`-config` 指定）> 内置默认。`cmd/beacon` 启动时先把内置模板 `config.yml`（默认 sqlite，零依赖可跑，经根包 `//go:embed` 内嵌）释放到当前目录、并在无 `.env` 时**生成 `.env`（0600）**（管理员口令与签名密钥用 `crypto/rand` 随机、口令写入 `.env` 不入日志；agent 共享令牌用固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界，与 agent 样例开箱匹配），二者**已存在则跳过、不覆盖**；再读 `.env`（仅注入未设置的键、真实 env 优先），最后 `BEACON_*` 覆盖并校验。`.env` 用手写最小解析、不引第三方库。鉴权仍强制（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）——由 fail-fast 改为首启自助生成**强随机**凭据（非固定弱默认），使单二进制开箱即跑。
+**配置加载（`internal/config`，FR-25）**：生效优先级 真实环境变量 > 当前目录 `.env` > `config.yml`（`-config` 指定）> 内置默认。`cmd/beacon` 启动时把内置模板 `config.yml`（默认 sqlite，零依赖可跑，经根包 `//go:embed` 内嵌）释放到当前目录，**释放时把模板里留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值**（文件 0600、口令不入日志；agent 共享令牌用固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界，与 agent 样例开箱匹配），**已存在则跳过、不覆盖**；随后读当前目录 `.env`（仅注入未设置的键、真实 env 优先），最后 `BEACON_*` 覆盖并校验。**不自动生成 `.env`**——凭据落在 `config.yml`（即真源），避免自动生成的 `.env` 因优先级更高而静默盖掉用户对 `config.yml` 的修改；`.env` 仅当运维手动放置时生效，用手写最小解析、不引第三方库。鉴权仍强制（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）——由 fail-fast 改为首启自助生成 `config.yml` 内的**强随机**凭据（非固定弱默认），使单二进制开箱即跑。
 
 ## 10. 关键裁决与不做项
 

@@ -8,10 +8,11 @@
 - 管理台与 API 同端口（默认 8848）。
 
 ### 1.1 单二进制免容器首启（FR-25）
-直接跑 `beacon` 二进制时**首次启动自动脚手架、开箱即跑**：在当前目录释放 `config.yml`（默认 sqlite、零依赖可跑），并在无 `.env` 时**自动生成 `.env`（0600）**（`BEACON_ADMIN_PASSWORD` / `BEACON_AUTH_SECRET` 随机；`BEACON_BOOTSTRAP_TOKEN` 用固定默认 `beacon-bootstrap-token`——仅防误连、与 agent 样例开箱匹配），随即直接启动（sqlite 落 `beacon.db`），无需手工 `export` 或填值（二者已存在则不覆盖）。上手：
-- 运行 `beacon` → 直接起服（控制台 WARN 提示已生成 `.env`）。
-- 打开当前目录 `.env`，取 `BEACON_ADMIN_PASSWORD` 登录管理台（`http://本机IP:8848`，用户名 `admin`）；按需改 `config.yml`（切 mysql 改 `database` 段）或改 `.env` 里的口令后重启。
-- **接 agent**：agent 的 `bootstrap-token` 用固定默认 `beacon-bootstrap-token` 即与控制面开箱匹配（仅防误连）；若改了控制面 `.env` 的 `BEACON_BOOTSTRAP_TOKEN`，各 agent 也要同步改。
+直接跑 `beacon` 二进制时**首次启动自动脚手架、开箱即跑**：在当前目录释放 `config.yml`（默认 sqlite、零依赖可跑），**释放时把留空的 `auth.password` / `auth.secret` 就地填入随机强值（文件 0600）**，随即直接启动（sqlite 落 `beacon.db`），无需手工 `export` 或填值（`config.yml` 已存在则不覆盖）。**不再自动生成 `.env`**——凭据就在 `config.yml`，避免 `.env`（优先级更高）静默盖掉你对 `config.yml` 的改动。上手：
+- 运行 `beacon` → 直接起服（控制台 WARN 提示已释放 `config.yml`）。
+- 打开当前目录 `config.yml`，取 `auth.password` 登录管理台（`http://本机IP:8848`，用户名 `auth.username`，默认 `admin`）；按需改 `config.yml`（切 mysql 改 `database` 段、改口令 / 端口 / token 等）后重启即生效。
+- **接 agent**：agent 的 `bootstrap-token` 用固定默认 `beacon-bootstrap-token` 即与控制面开箱匹配（仅防误连）；若改了控制面 `config.yml` 的 `agent-token`，各 agent 也要同步改。
+- 如需经环境变量覆盖（如容器内、CI、临时改口令），真实环境变量与手动放置的 `.env` 仍生效，优先级 `真实 env > .env > config.yml`。
 - 管理员口令 / 签名密钥强随机、不入库（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)，非固定弱默认口令）；生产 MySQL 仍走上面的 compose 路径。
 
 ## 2. 升级
