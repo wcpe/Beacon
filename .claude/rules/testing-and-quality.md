@@ -3,13 +3,13 @@
 > 项目特定的测试与质量要求。通用反模式禁令（上帝类、长方法、复制粘贴、魔法值、吞异常、资源泄露、循环依赖、静态可变单例等）仍然适用。
 
 ## 1. 验证门（权威判据）
-- **每个变更必须过验证门才算完成**，判据以**入库真源**为准：① `docs/PRD.md` §6 验收标准对应项满足；② 本文 §2 高风险区相关测试通过；③ 受影响组件全部测试绿（控制面 `go test`、agent `gradle test`、前端 `build`）。
+- **每个变更必须过验证门才算完成**，判据以**入库真源**为准：① `docs/PRD.md` §6 验收标准对应项满足；② 本文 §2 高风险区相关测试通过；③ 受影响组件全部测试绿（控制面 `go test`、agent `gradle test`、前端 `build` + `pnpm test`）。
 - `.tmp/实施计划.md` 的里程碑勾选**仅作开发期辅助**，不入库、不作权威判据（clone 后可能不存在）。
 - **禁止**以注释、跳过、删除失败测试的方式让测试"通过"。
 - 改功能代码前先跑相关测试确保通过；新增 / 改业务逻辑同步加测试。
 
 ### 1.1 测试分层（怎么分、在哪跑）
-- **单元**：纯逻辑（尤其 `merge` 合并、`digest`）—— Go `testing` / Kotlin 测试，不连外部依赖，最快最多。
+- **单元**：纯逻辑（尤其 `merge` 合并、`digest`）—— Go `testing` / Kotlin 测试，不连外部依赖，最快最多；前端组件与纯逻辑用 vitest + React Testing Library（jsdom，`cd web && pnpm test`）。
 - **集成**：控制面 + 真实 MySQL（测试库 / 容器）跑配置发布/解析/长轮询；agent 对接 mock 或真实 beacon。集成用例带 `//go:build integration` 标记与单测隔离：`go test ./...` **不含**集成（`internal/service` / `internal/server` 显示 no test files 属正常），`go test -tags=integration ./...` + `BEACON_TEST_DSN` 才跑（运行方式见 `docs/OPERATIONS.md` §8）——避免集成被静默 skip 误判为"全绿"。
 - **E2E**：跨平台纯 Go 入口 `go test -tags=e2e -timeout=30m ./test/e2e/{directory,override}`（默认 sqlite、无需 docker，可选 mysql），自管控制面 + 真实 agent，跑关键时序（首次接入、发布热更、目录注入、三方覆盖，见 ARCHITECTURE 时序与 PRD §6）；CI 见 `.github/workflows/e2e.yml`，运行细节见 `docs/OPERATIONS.md` §7。
 - **何时跑**：单元 / 集成随每次改动与 CI；E2E 在发版前（`sdd-release-version` / `sdd-hotfix`）至少跑一遍。

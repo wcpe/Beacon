@@ -4,6 +4,13 @@
 
 ## 未发布
 
+### 新增
+- 前端单元测试栈（FR-18 管理台）：引入 vitest + @testing-library/react + jsdom，新增 `DataTable` / `AsyncSection` / `StatusBadge` 组件单测与 `ConfigsPage` 关键路径（打开标签 / 切换视图 / Diff / 保存）冒烟测试，作为前端重构的回归安全网。`pnpm test` 运行；测试文件经 `tsconfig` 排除出生产 `tsc -b`，不影响 `go:embed` 内嵌构建。运行方式见 [docs/OPERATIONS.md](docs/OPERATIONS.md) §8。
+
+### 变更
+- 管理台前端结构重构（纯结构，接口 / 列 / 交互 / 文案不变）：① 抽出 `DataTable`（列定义驱动表格 + 空态）与 `AsyncSection`（加载 / 错误三态）两个公共原语，环境 / 实例 / zone / 审计 / 文件 / 覆盖集六个列表页改用之，消除各页重复的表格骨架与状态分支；② 配置中心 `ConfigsPage` 从 779 行巨石组件拆为 `pages/configs/` 下编排层 + `useConfigTabs`（标签状态 hook）+ `ConfigTabBar` / `ConfigEditorPane` / `EffectivePreview` / `RevisionHistory` / `CreateConfigDialog` / `ConfigFileTree` / `TargetSelector` 等聚焦组件，并删除一直无人引用的死文件 `web/src/components/FileTree.tsx`。
+- 管理台列表页「加载失败」提示统一移入卡片内（原部分页显示在卡片上方），并消除「加载失败」与「暂无数据」同时出现的双显（文件树托管页因平铺 / 文件树双视图共享错误态，保持原位）。
+
 ### 修复
 - 首启 `.env` 自动生成覆盖 `config.yml`（FR-25）：原首启在释放 `config.yml` 之外还自动生成一份 `.env`，而该 `.env` 模板含 `BEACON_HTTP_ADDR` / `BEACON_BOOTSTRAP_TOKEN` / `BEACON_ADMIN_USERNAME` 等**与 `config.yml` 重叠的字段**；因生效优先级 `.env` > `config.yml`，运维改了 `config.yml` 的这些项重启却不生效，被 `.env` 静默盖掉。现**不再自动生成 `.env`**：首启释放 `config.yml` 时用 `crypto/rand` 把留空的 `auth.password` / `auth.secret` **就地填入随机强值**（文件权限 0600、口令不入日志），`config.yml` 即开箱真源、无固定弱默认口令、仍开箱即跑（不 fail-fast）。`.env` 加载机制保留：运维手动放置的 `.env` 与真实环境变量仍按 `真实 env > .env > config.yml` 覆盖。鉴权强度不变（[ADR-0009](docs/adr/0009-control-plane-auth-pulled-forward.md)）。
 - agent 默认 `bootstrap-token` 与控制面 `agent-token` 不一致致注册被拒：agent 两端（bukkit/bungee）默认令牌为 `beacon-bootstrap-2026`，而控制面模板 `config.example.yml` 与文档均为 `beacon-bootstrap-token`，开箱默认值对不上，agent 注册时 `X-Beacon-Token` 校验失败（401）。现把 agent 两端默认 `bootstrap-token` 对齐为 `beacon-bootstrap-token`，与控制面默认一致、开箱即连（该令牌仅防误连、非安全边界，[ADR-0009](docs/adr/0009-control-plane-auth-pulled-forward.md)）。
