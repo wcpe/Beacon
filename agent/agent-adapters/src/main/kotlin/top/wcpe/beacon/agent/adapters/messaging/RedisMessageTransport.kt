@@ -69,6 +69,9 @@ class RedisMessageTransport(
     @Volatile
     private var activePubSub: JedisPubSub? = null
 
+    /** 串行化「取信道快照 + 设 activePubSub」与「动态追加/对账订阅」，消除订阅激活窗口的漏订阅竞态、并避免并发写订阅连接。 */
+    private val pubSubLock = Any()
+
     override fun start() {
         if (!running.compareAndSet(false, true)) return
         pool = buildPool()
@@ -247,17 +250,19 @@ class RedisMessageTransport(
     }
 
     private fun addPubSubChannel(channel: String, onMessage: (String) -> Unit) {
-        pubSubHandlers[channel] = onMessage
-        val current = activePubSub
-        if (current != null && current.isSubscribed) {
-            // 已有订阅线程：动态追加新信道。
-            try {
-                current.subscribe(channel)
-            } catch (t: Throwable) {
-                warn("追加订阅信道异常：channel=$channel ${t.message}")
+        synchronized(pubSubLock) {
+            pubSubHandlers[channel] = onMessage
+            val current = activePubSub
+            if (current != null && current.isSubscribed) {
+                // 已有活跃订阅：动态追加（与对账/快照在同一把锁下串行，避免并发写订阅连接）。
+                try {
+                    current.subscribe(channel)
+                } catch (t: Throwable) {
+                    warn("追加订阅信道异常：channel=$channel ${t.message}")
+                }
             }
+            // 否则：订阅线程激活后由 onSubscribe 对账补订阅本信道（消除「快照后、激活前」漏订阅窗口）。
         }
-        // 否则订阅线程在 (re)subscribe 时会一并订阅 pubSubHandlers 里的全部信道。
     }
 
     private fun startPubSubLoop() {
@@ -269,7 +274,10 @@ class RedisMessageTransport(
 
     private fun pubSubLoop() {
         while (running.get()) {
+            // 本轮订阅的初始信道集合（快照），供 onSubscribe 对账判定「窗口内新增、未订阅」的信道。
+            var initialChannels: List<String> = emptyList()
             try {
+                val reconciled = AtomicBoolean(false)
                 val pubSub = object : JedisPubSub() {
                     override fun onMessage(channel: String, message: String) {
                         try {
@@ -278,17 +286,39 @@ class RedisMessageTransport(
                             warn("pub/sub 回调异常，已隔离：channel=$channel ${t.message}")
                         }
                     }
+
+                    override fun onSubscribe(channel: String, subscribedChannels: Int) {
+                        // 订阅已激活：对账一次，补订阅在「快照后、激活前」窗口内并发加入、未进初始集合的信道。
+                        if (!reconciled.compareAndSet(false, true)) return
+                        synchronized(pubSubLock) {
+                            if (!isSubscribed) return
+                            for (ch in pubSubHandlers.keys.toList()) {
+                                if (ch !in initialChannels) {
+                                    try {
+                                        subscribe(ch)
+                                    } catch (t: Throwable) {
+                                        warn("对账补订阅信道异常：channel=$ch ${t.message}")
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                activePubSub = pubSub
-                // 至少订阅本服回信通道；若已有主题登记则一并订阅。subscribe 阻塞直到 unsubscribe。
-                val channels = pubSubHandlers.keys.toList()
-                if (channels.isEmpty()) {
+                // 在同一把锁下原子地「设 activePubSub + 取信道快照」，与 addPubSubChannel 串行。
+                synchronized(pubSubLock) {
+                    initialChannels = pubSubHandlers.keys.toList()
+                    if (initialChannels.isNotEmpty()) {
+                        activePubSub = pubSub
+                    }
+                }
+                if (initialChannels.isEmpty()) {
                     // 尚无任何信道（回信通道在 subscribeReplyInbox 后才登记）：短暂等待再重试，避免空订阅报错。
                     sleepQuiet(200)
                     continue
                 }
+                // subscribe 阻塞直到 unsubscribe。
                 pool?.resource?.use { jedis ->
-                    jedis.subscribe(pubSub, *channels.toTypedArray())
+                    jedis.subscribe(pubSub, *initialChannels.toTypedArray())
                 }
             } catch (ie: InterruptedException) {
                 Thread.currentThread().interrupt()

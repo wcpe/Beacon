@@ -64,7 +64,7 @@
 - [x] beacon-proxy：玩家位置名册维护（进服/换服/退出事件 → Redis），重启重新扫描重建（`RedisPlayerRoster` + bungee 侧 `BungeePlayerRosterBootstrap`/`BungeeRosterListener`，换服误删保护 + enable 时全量重建）。
 - [x] agent-api：对③层暴露 send/call/publish/subscribe/sendToPlayer/on + isAvailable（`Messaging`/`IncomingMessage`/`MessageHandler`/`TopicHandler` 经 `BeaconAgent.messaging()`）。
 - [x] 单元测试：信封序列化往返、关联ID 配对、RPC 超时、迟到回信容错、四种模式闭环、可靠送达离线补投、降级与 close、玩家寻址解析与落空兜底、换服误删保护、信道命名与下发配置解析、门面/模块装配——双端 build 与受影响模块测试全绿。
-- [ ] **集成（真 Redis）**：离线补消费、定向、RPC、主题、按玩家寻址；故障（杀 Redis 不连累配置/玩家）。**待集成/真机验**（本环境无 Redis）。
+- [ ] **集成（真 Redis）**：离线补消费、定向、RPC、主题、按玩家寻址；故障（杀 Redis 不连累配置/玩家）。**待集成/真机验**（本环境无 Redis）。重点回归用例（review 指出）：① 并发 subscribe 不漏订阅（pub/sub 激活窗口对账，已修复待真机验）；② crash-after-deliver-before-ack 重启后从 PEL 补消费（消费组 `id=0` 重放或 XAUTOCLAIM）；③ 玩家退出后名册项确被清理；④ 杀 Redis 故障域隔离不连累配置同步与玩家进服。
 - [ ] **Docker**：compose 加 Redis；验证容器网络下 address 可达。**待集成验**。
 
 ## 5. 验收标准
