@@ -29,6 +29,7 @@ import (
 	"beacon/internal/server"
 	"beacon/internal/service"
 	"beacon/internal/store"
+	"beacon/internal/version"
 )
 
 func main() {
@@ -64,7 +65,7 @@ func run() error {
 	}
 
 	log.Setup(cfg.Log.Level)
-	slog.Info("Beacon 控制面启动中", "监听地址", cfg.HTTPAddr)
+	slog.Info("Beacon 控制面启动中", "版本", version.Version, "监听地址", cfg.HTTPAddr)
 
 	// 管理面鉴权：单操作者认证器（凭据/密钥走配置，env 注入）
 	authn, err := auth.New(cfg.Auth.Username, cfg.Auth.Password, cfg.Auth.Secret,
