@@ -16,6 +16,9 @@ const (
 	EventFileChanged = "file-changed"
 	// EventOverrideChanged 三方覆盖集（FR-15）适用集合变更通知。
 	EventOverrideChanged = "override-changed"
+	// EventTopologyChanged 拓扑变更通知（FR-29）：namespace 内实例上线/下线/改派 zone 时推送，
+	// data 携带新拓扑摘要（通知式，不含实例数据）；agent 收到后重查发现端点取最新拓扑。
+	EventTopologyChanged = "topology-changed"
 	// EventReady 首轮对账完成标记：agent 收到即知"落下的增量已补发完、转入直播"。
 	EventReady = "ready"
 	// EventPing 保活心跳：编码为 SSE 注释行，agent 收到不触发任何取数据，仅维持连接/穿透反代空闲超时。

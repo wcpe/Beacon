@@ -57,6 +57,7 @@ class BeaconApiClient(
             append("&configMd5=").append(urlEncode(reported.config))
             append("&fileMd5=").append(urlEncode(reported.file))
             append("&overrideMd5=").append(urlEncode(reported.override))
+            append("&topologyMd5=").append(urlEncode(reported.topology))
         }
         // 读超时给保活留充足余量：取长轮询挂起上限的数倍，避免空闲被误判断流。
         val readTimeout = settings.pollTimeoutMs * 3 + settings.requestTimeoutMs
@@ -194,14 +195,25 @@ class BeaconApiClient(
     /**
      * 服务发现：GET /beacon/v1/agent/discovery。同步调用，请在异步线程使用。
      *
-     * 传 null 的过滤维度不拼入查询；返回在线实例的泛型树列表（由调用方映射为 API 值对象）。
+     * 传 null 的过滤维度不拼入查询；tags 以 tag.<key>=<value> 形式拼入（多 tag 取交集，FR-29）。
+     * 返回可用实例（online+degraded）的泛型树列表（由调用方映射为 API 值对象）。
      */
-    fun discover(namespace: String?, group: String?, zone: String?, role: String?): List<Map<String, Any?>> {
+    fun discover(
+        namespace: String?,
+        group: String?,
+        zone: String?,
+        role: String?,
+        tags: Map<String, String> = emptyMap(),
+    ): List<Map<String, Any?>> {
         val params = StringBuilder()
         appendParam(params, "namespace", namespace)
         appendParam(params, "group", group)
         appendParam(params, "zone", zone)
         appendParam(params, "role", role)
+        // 自定义元数据过滤：每个键拼为 tag.<key>=<value>，控制面按 metadata 键值匹配。
+        for ((k, v) in tags) {
+            appendParam(params, "tag.$k", v)
+        }
         val url = "$base/beacon/v1/agent/discovery" + if (params.isEmpty()) "" else "?$params"
 
         val resp = exec(

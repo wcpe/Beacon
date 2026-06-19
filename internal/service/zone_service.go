@@ -41,10 +41,11 @@ func (s *ZoneService) SetNotifier(n *ChangeNotifier) {
 	s.notifier = n
 }
 
-// notifyServer 唤醒单个 serverId 的长轮询。
+// notifyServer 唤醒单个 serverId 的长轮询，并唤醒该 namespace 的拓扑 watch（改派改变拓扑 zone 归属，FR-29）。
 func (s *ZoneService) notifyServer(ns, serverID string) {
 	if s.notifier != nil {
 		s.notifier.NotifyServer(ns, serverID)
+		s.notifier.NotifyTopologyChange(ns)
 	}
 }
 

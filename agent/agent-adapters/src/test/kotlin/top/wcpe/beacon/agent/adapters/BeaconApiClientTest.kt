@@ -147,4 +147,27 @@ class BeaconApiClientTest {
         assertEquals(1, list.size)
         assertEquals("lobby-1", list[0]["serverId"])
     }
+
+    @Test
+    fun `discover tags 拼为 tag dot key 查询参数`() {
+        val transport = FakeHttpTransport().enqueue(HttpResponse(200, """{"instances":[]}"""))
+        client(transport).discover(
+            namespace = "prod",
+            group = null,
+            zone = null,
+            role = "bukkit",
+            tags = linkedMapOf("region" to "cn-east", "tier" to "premium"),
+        )
+        val url = transport.captured.single().url
+        assertTrue(url.contains("role=bukkit"), "应含 role 过滤")
+        assertTrue(url.contains("tag.region=cn-east"), "应把 tag 拼为 tag.region=cn-east，实际 $url")
+        assertTrue(url.contains("tag.tier=premium"), "应把 tag 拼为 tag.tier=premium，实际 $url")
+    }
+
+    @Test
+    fun `discover 无 tags 时 url 不含 tag 参数`() {
+        val transport = FakeHttpTransport().enqueue(HttpResponse(200, """{"instances":[]}"""))
+        client(transport).discover("prod", null, null, null)
+        assertTrue(!transport.captured.single().url.contains("tag."), "无 tag 不应拼 tag 参数")
+    }
 }

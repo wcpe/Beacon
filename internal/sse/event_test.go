@@ -39,6 +39,7 @@ func TestEncodeAllChannels(t *testing.T) {
 		EventConfigChanged:   "config-changed",
 		EventFileChanged:     "file-changed",
 		EventOverrideChanged: "override-changed",
+		EventTopologyChanged: "topology-changed",
 	}
 	for typ, want := range cases {
 		out := Encode(Event{Type: typ, MD5: "m"})

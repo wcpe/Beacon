@@ -18,7 +18,8 @@ import (
 )
 
 // streamSqliteStack 用内存 sqlite 装配 SSE 推送编排所需的全套依赖（无需 MySQL，CGO sqlite 即可）。
-func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamService, *runtime.Registry) {
+// 返回配置服务、推送编排器、注册表与拓扑唤醒器（拓扑 watch 测试用 notifier.NotifyTopologyChange 触发）。
+func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamService, *runtime.Registry, *service.ChangeNotifier) {
 	t.Helper()
 	// 每个测试一个独立内存库（cache=shared 让多连接共享同一内存库）。
 	db, err := store.Open(config.DatabaseConfig{
@@ -38,15 +39,17 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	reg := runtime.NewRegistry()
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
+	topologyHub := longpoll.NewHub()
 
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, hub)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, hub, fileHub, 0) // 关保活，测试不依赖心跳
+	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, reg, hub, fileHub, topologyHub, 0) // 关保活，测试不依赖心跳
 
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, reg, assignRepo)
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
-	cfgSvc.SetNotifier(service.NewChangeNotifier(hub, fileHub, reg, assignRepo))
-	return cfgSvc, streamSvc, reg
+	cfgSvc.SetNotifier(notifier)
+	return cfgSvc, streamSvc, reg, notifier
 }
 
 // recordingSink 记录收到的事件，供测试断言（线程安全）。
@@ -99,7 +102,7 @@ func createGlobalConfig(t *testing.T, cfg *service.ConfigService, content string
 
 // TestStreamRunReconcileThenReady 连接即对账：上报空 md5、库里有配置 → 先补发 config-changed，再发 ready。
 func TestStreamRunReconcileThenReady(t *testing.T) {
-	cfg, stream, _ := streamSqliteStack(t)
+	cfg, stream, _, _ := streamSqliteStack(t)
 	createGlobalConfig(t, cfg, "k: 1\n")
 
 	sink := newRecordingSink()
@@ -117,7 +120,7 @@ func TestStreamRunReconcileThenReady(t *testing.T) {
 
 // TestStreamRunLivePushOnPublish 转直播后发布 → 经唤醒重算推 config-changed（不丢更新）。
 func TestStreamRunLivePushOnPublish(t *testing.T) {
-	cfg, stream, _ := streamSqliteStack(t)
+	cfg, stream, _, _ := streamSqliteStack(t)
 	id := createGlobalConfig(t, cfg, "k: 1\n")
 
 	// 先用空 md5 的探针流取当前配置 md5（首个 config-changed 即携带它），再据此模拟"agent 已对齐"。

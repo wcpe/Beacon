@@ -42,6 +42,8 @@ class AgentLifecycle(
     private val snapshotStore: SnapshotStore?,
     private val fileTreeApplier: FileTreeApplier? = null,
     private val overrideApplier: OverrideSyncApplier? = null,
+    // 拓扑变更回调（FR-29）：收到 topology-changed 事件时触发，业务侧据此重查发现端点；为 null 不回调。
+    private val topologyListener: (() -> Unit)? = null,
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -547,10 +549,12 @@ class AgentLifecycle(
     private fun streamConnect(gen: Int) {
         if (!running.get() || gen != streamGen.get()) return
         // 上报各通道本地当前 md5（空串=本地无该通道内容，控制面补全量）。
+        // 拓扑通道 agent 不本地维护摘要，恒上报空串，让控制面在连接即对账时补一次 topology-changed（FR-29）。
         val reported = ReportedChannelMd5(
             config = store.currentMd5() ?: "",
             file = fileTreeApplier?.currentFileTreeMd5() ?: "",
             override = overrideApplier?.currentOverrideMd5() ?: "",
+            topology = "",
         )
         apiClient.openStream(identity, reported, StreamLoopListener(gen))
     }
@@ -563,6 +567,7 @@ class AgentLifecycle(
             StreamEventTypes.CONFIG_CHANGED -> fetchAndApplyConfigOnce()
             StreamEventTypes.FILE_CHANGED -> fetchAndApplyFileTreeOnce()
             StreamEventTypes.OVERRIDE_CHANGED -> fetchAndApplyOverrideOnce()
+            StreamEventTypes.TOPOLOGY_CHANGED -> fireTopologyChanged()
             else -> adapter.warn("收到未知 SSE 事件类型：${event.type}（忽略）")
         }
     }
@@ -634,6 +639,19 @@ class AgentLifecycle(
             }
 
             is OverridePollResult.Failed -> adapter.warn("SSE 取覆盖集失败（${result.reason}），保留本地覆盖不动，待下次事件/重连")
+        }
+    }
+
+    /**
+     * topology-changed（FR-29）：控制面只发"拓扑变了"通知、不搬实例数据，故此处不取数据，
+     * 仅回调拓扑监听器，由业务侧自行重查发现端点取最新拓扑。
+     */
+    private fun fireTopologyChanged() {
+        val listener = topologyListener ?: return
+        try {
+            listener()
+        } catch (e: Exception) {
+            adapter.warn("拓扑监听器回调执行失败：${e.message}")
         }
     }
 

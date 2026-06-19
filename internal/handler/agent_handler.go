@@ -3,7 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"beacon/internal/apperr"
@@ -11,6 +13,9 @@ import (
 	"beacon/internal/runtime"
 	"beacon/internal/service"
 )
+
+// tagParamPrefix 是发现端点自定义元数据过滤查询参数前缀（tag.<key>=<value>，FR-29）。
+const tagParamPrefix = "tag."
 
 // AgentHandler 处理 agent 侧请求（register / heartbeat / config.effective / report / discovery）。
 type AgentHandler struct {
@@ -113,13 +118,35 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// Discover 处理 GET /beacon/v1/agent/discovery（仅返回在线实例）。
+// Discover 处理 GET /beacon/v1/agent/discovery（仅返回可用实例：online+degraded）。
+// 支持按 role/zone/group 与自定义元数据 tag 过滤；tag 以重复查询参数 tag.<key>=<value> 传入（多 tag 取交集，FR-29）。
 func (h *AgentHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	insts := h.svc.Discover(runtime.Filter{
 		Namespace: q.Get("namespace"), Group: q.Get("group"), Zone: q.Get("zone"), Role: q.Get("role"),
+		Tags: parseTagParams(q),
 	})
 	render.WriteJSON(w, http.StatusOK, map[string]any{"instances": toInstanceViews(insts)})
+}
+
+// parseTagParams 从查询串解析 tag.<key>=<value> 形式的自定义元数据过滤条件；无 tag 返回 nil（不过滤）。
+func parseTagParams(q url.Values) map[string]string {
+	var tags map[string]string
+	for key, vals := range q {
+		if !strings.HasPrefix(key, tagParamPrefix) || len(vals) == 0 {
+			continue
+		}
+		name := key[len(tagParamPrefix):]
+		if name == "" {
+			continue
+		}
+		if tags == nil {
+			tags = make(map[string]string)
+		}
+		// 同名 tag 取最后一个值（与标准查询参数取值一致）。
+		tags[name] = vals[len(vals)-1]
+	}
+	return tags
 }
 
 // effectiveItemView 是有效配置中单个 dataId 的视图。

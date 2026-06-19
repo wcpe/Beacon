@@ -49,3 +49,23 @@ func TestDiffEventsEmptyReportedFirstConnect(t *testing.T) {
 		t.Fatalf("首连空 md5 且服务端有内容应补发 3 条，实际 %v", got)
 	}
 }
+
+// TestDiffEventsTopologyBehind 仅拓扑摘要落后 → 只补发 topology-changed，携带当前摘要（FR-29）。
+func TestDiffEventsTopologyBehind(t *testing.T) {
+	reported := ChannelMD5{Config: "c", File: "f", Override: "o", Topology: "t0"}
+	current := ChannelMD5{Config: "c", File: "f", Override: "o", Topology: "t1"}
+	got := DiffEvents(reported, current)
+	if len(got) != 1 || got[0].Type != sse.EventTopologyChanged || got[0].MD5 != "t1" {
+		t.Fatalf("仅拓扑落后应只补发 topology-changed(t1)，实际 %v", got)
+	}
+}
+
+// TestDiffEventsTopologyUnchangedNoPush 拓扑摘要一致 → 不补发 topology-changed（未变更不推，FR-29）。
+func TestDiffEventsTopologyUnchangedNoPush(t *testing.T) {
+	same := ChannelMD5{Config: "c", File: "f", Override: "o", Topology: "t"}
+	for _, e := range DiffEvents(same, same) {
+		if e.Type == sse.EventTopologyChanged {
+			t.Fatalf("拓扑摘要一致不应补发 topology-changed，实际 %v", e)
+		}
+	}
+}

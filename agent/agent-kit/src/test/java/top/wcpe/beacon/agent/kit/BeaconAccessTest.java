@@ -11,6 +11,7 @@ import top.wcpe.beacon.agent.api.DiscoveryQuery;
 import top.wcpe.beacon.agent.api.EffectiveConfig;
 import top.wcpe.beacon.agent.api.ListenerHandle;
 import top.wcpe.beacon.agent.api.ServiceInstance;
+import top.wcpe.beacon.agent.api.TopologyListener;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -385,6 +386,13 @@ class BeaconAccessTest {
         @Override
         public List<ServiceInstance> instancesInGroup(String group) {
             return new ArrayList<>(groupResult);
+        }
+
+        @Override
+        public ListenerHandle watch(TopologyListener listener) {
+            // 假实现：不触发回调，返回 no-op 句柄。
+            return () -> {
+            };
         }
     }
 }

@@ -52,6 +52,7 @@ func (h *StreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 		Config:   q.Get("configMd5"),
 		File:     q.Get("fileMd5"),
 		Override: q.Get("overrideMd5"),
+		Topology: q.Get("topologyMd5"),
 	}
 	sink := &flushSink{w: w, flusher: flusher}
 	// 同步阻塞直到客户端断连（r.Context 取消）/服务关停/写出失败；连接级失败不再向已劫持的流写错误体。

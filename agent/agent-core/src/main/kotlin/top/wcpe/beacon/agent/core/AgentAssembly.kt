@@ -4,6 +4,7 @@ import top.wcpe.beacon.agent.api.BeaconAgent
 import top.wcpe.beacon.agent.core.api.BeaconAgentImpl
 import top.wcpe.beacon.agent.core.api.DiscoveryView
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.api.TopologyWatchHub
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
@@ -111,6 +112,9 @@ object AgentAssembly {
             null
         }
 
+        // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
+        val topologyWatchHub = TopologyWatchHub()
+
         val lifecycle = AgentLifecycle(
             identity = identity,
             settings = settings,
@@ -121,9 +125,11 @@ object AgentAssembly {
             snapshotStore = snapshotStore,
             fileTreeApplier = fileTreeApplier,
             overrideApplier = overrideApplier,
+            // 拓扑变更事件 → 扇出到 watch 监听器（业务侧据此重查发现端点）。
+            topologyListener = { topologyWatchHub.fireTopologyChanged() },
         )
 
-        val discoveryView = DiscoveryView(apiClient)
+        val discoveryView = DiscoveryView(apiClient, topologyWatchHub)
         val beaconAgent = BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView)
 
         return AssembledAgent(lifecycle, beaconAgent, apiClient)

@@ -42,6 +42,7 @@ type InstanceService struct {
 	auditRepo         *repository.AuditLogRepository
 	heartbeatInterval time.Duration
 	ttl               time.Duration
+	notifier          *ChangeNotifier // 可选，注册/下线后唤醒拓扑 watch（FR-29）
 }
 
 // NewInstanceService 构造服务。
@@ -49,6 +50,18 @@ func NewInstanceService(registry *runtime.Registry, assignRepo *repository.ZoneA
 	return &InstanceService{
 		registry: registry, assignRepo: assignRepo, auditRepo: auditRepo,
 		heartbeatInterval: heartbeatInterval, ttl: ttl,
+	}
+}
+
+// SetNotifier 注入拓扑唤醒器（启动时装配；未注入则不唤醒拓扑 watch）。
+func (s *InstanceService) SetNotifier(n *ChangeNotifier) {
+	s.notifier = n
+}
+
+// notifyTopology 唤醒该 namespace 的拓扑 watch（注入了才唤醒）。
+func (s *InstanceService) notifyTopology(ns string) {
+	if s.notifier != nil {
+		s.notifier.NotifyTopologyChange(ns)
 	}
 }
 
@@ -81,6 +94,8 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 		return nil, err
 	}
 	s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultOK, p.ClientIP)
+	// 实例进入/刷新可用集合 → 唤醒拓扑 watch（同址重连摘要不变，由 StreamService 去重不推）。
+	s.notifyTopology(p.Namespace)
 	slog.Info("实例注册", "namespace", p.Namespace, "serverId", p.ServerID,
 		"group", saved.ResolvedGroup, "zone", saved.ResolvedZone, "assigned", assigned)
 	return &RegisterResult{
@@ -136,6 +151,8 @@ func (s *InstanceService) Offline(ns, serverID, operator, clientIP string) error
 		return apperr.ErrInstanceNotFound
 	}
 	s.audit(ns, model.ActionInstanceOffline, serverID, operator, model.ResultOK, clientIP)
+	// 实例离开可用集合 → 唤醒拓扑 watch。
+	s.notifyTopology(ns)
 	slog.Info("手动下线实例", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
 }

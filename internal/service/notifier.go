@@ -18,16 +18,17 @@ type PushRecorder interface {
 // 受影响集合：global→该 ns 全部；group→该 group（查内存）；zone→反查 DB 指派；server/改派→单 serverId。
 // 配置（通道A）与文件（通道B）各持一个独立 Hub，发布只唤醒对应通道的 waiter，互不触发无谓重算（见 ADR-0010）。
 type ChangeNotifier struct {
-	hub        *longpoll.Hub // 配置长轮询唤醒集合
-	fileHub    *longpoll.Hub // 文件长轮询唤醒集合（独立）
-	registry   *runtime.Registry
-	assignRepo *repository.ZoneAssignmentRepository
-	metrics    PushRecorder // 可选，推送计数（见 ADR-0020）
+	hub         *longpoll.Hub // 配置长轮询唤醒集合
+	fileHub     *longpoll.Hub // 文件长轮询唤醒集合（独立）
+	topologyHub *longpoll.Hub // 拓扑 watch 唤醒集合（namespace 级，FR-29）
+	registry    *runtime.Registry
+	assignRepo  *repository.ZoneAssignmentRepository
+	metrics     PushRecorder // 可选，推送计数（见 ADR-0020）
 }
 
-// NewChangeNotifier 构造唤醒器（hub 为配置通道、fileHub 为文件通道，二者独立）。
-func NewChangeNotifier(hub, fileHub *longpoll.Hub, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository) *ChangeNotifier {
-	return &ChangeNotifier{hub: hub, fileHub: fileHub, registry: registry, assignRepo: assignRepo}
+// NewChangeNotifier 构造唤醒器（hub 为配置通道、fileHub 为文件通道、topologyHub 为拓扑通道，三者独立）。
+func NewChangeNotifier(hub, fileHub, topologyHub *longpoll.Hub, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository) *ChangeNotifier {
+	return &ChangeNotifier{hub: hub, fileHub: fileHub, topologyHub: topologyHub, registry: registry, assignRepo: assignRepo}
 }
 
 // SetMetrics 注入推送计数器（启动时装配；未注入则不计数）。
@@ -59,6 +60,13 @@ func (n *ChangeNotifier) NotifyServer(ns, serverID string) {
 	n.recordPush()
 	n.hub.Notify(ns, []string{serverID})
 	n.fileHub.Notify(ns, []string{serverID})
+}
+
+// NotifyTopologyChange 唤醒该 namespace 全部拓扑 watch waiter（FR-29）。
+// 实例上线/下线/改派 zone 时由变更点调用；被唤醒方重算拓扑摘要、真变才推 topology-changed。
+func (n *ChangeNotifier) NotifyTopologyChange(ns string) {
+	n.recordPush()
+	n.topologyHub.NotifyNamespace(ns)
 }
 
 // notifyScope 按 scope 算最小受影响集合并唤醒指定 Hub 的 waiter。

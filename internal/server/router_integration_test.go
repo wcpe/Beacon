@@ -48,6 +48,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	registry := runtime.NewRegistry()
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
+	topologyHub := longpoll.NewHub()
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(repository.NewNamespaceRepository(db)))
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
@@ -57,15 +58,16 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
 	cfgSvc.SetNotifier(notifier)
 	cfgSvc.SetMetrics(metricsSet)
 	fileSvc.SetNotifier(notifier)
 	zoneSvc.SetNotifier(notifier)
-	// SSE 推送流（FR-24）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
-	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, hub, fileHub, 30*time.Second)
+	instSvc.SetNotifier(notifier)
+	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
+	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, 30*time.Second)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)

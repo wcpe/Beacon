@@ -61,6 +61,8 @@ type Filter struct {
 	Zone      string
 	Role      string
 	Status    string
+	// Tags 是自定义元数据（metadata）键值过滤：实例 Metadata 须含全部 k=v 才命中（多 tag 取交集）；空/nil 不过滤。
+	Tags map[string]string
 }
 
 // Registry 是实例注册表（内存真源），两级 map + RWMutex。
@@ -259,6 +261,12 @@ func matches(i *Instance, f Filter) bool {
 	}
 	if f.Status != "" && f.Status != i.Status {
 		return false
+	}
+	// tag 全匹配：每个要求的 k=v 都须在实例元数据中存在且相等（缺键即排除）。
+	for k, v := range f.Tags {
+		if i.Metadata[k] != v {
+			return false
+		}
 	}
 	return true
 }

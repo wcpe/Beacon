@@ -159,24 +159,29 @@ func run() error {
 	// 长轮询：配置与文件各持独立 Hub（唤醒集合分开，互不触发无谓重算）+ 有效解析 + 事务后唤醒
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
+	// 拓扑 watch（FR-29）：namespace 级唤醒 Hub，与配置/文件独立；实例上线/下线/改派时唤醒订阅方
+	topologyHub := longpoll.NewHub()
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, hub)
 	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）
 	configHandler := handler.NewConfigHandler(configService, effectiveService)
 	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
 	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, registry, assignRepo)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
 	notifier.SetMetrics(metricsSet)
 	configService.SetNotifier(notifier)
 	configService.SetMetrics(metricsSet)
 	fileService.SetNotifier(notifier)
 	overrideSetService.SetNotifier(notifier)
 	zoneService.SetNotifier(notifier)
+	// 实例注册/下线唤醒拓扑 watch；健康扫描转 lost/offline 也唤醒（FR-29）
+	instanceService.SetNotifier(notifier)
+	healthScanner.SetTopologyNotifier(notifier)
 	maxHold := time.Duration(cfg.Longpoll.MaxHoldMs) * time.Millisecond
 
-	// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询，复用同源唤醒集合 + 连接即对账。
+	// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询 + 拓扑 watch（FR-29），复用同源唤醒集合 + 连接即对账。
 	// 保活间隔取长轮询挂起上限（无变更时按此节奏发注释行心跳，穿透反代空闲超时）。
-	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, hub, fileHub, maxHold)
+	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, registry, hub, fileHub, topologyHub, maxHold)
 
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)

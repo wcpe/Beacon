@@ -30,14 +30,17 @@ data class HeartbeatResult(
 )
 
 /**
- * 打开 SSE 流时上报的各通道当前 md5（供控制面"连接即对账"，FR-24）。
+ * 打开 SSE 流时上报的各通道当前 md5（供控制面"连接即对账"，FR-24/FR-29）。
  *
- * 三通道与原长轮询一一对应；空串表示本地尚无该通道内容（首连 / 未启用），控制面据此补发全量。
+ * 配置/文件/覆盖三通道与原长轮询一一对应；topology 为本地已知拓扑摘要（FR-29，首连为空让控制面补一次）。
+ * 空串表示本地尚无该通道内容（首连 / 未启用），控制面据此补发全量。
  */
 data class ReportedChannelMd5(
     val config: String,
     val file: String,
     val override: String,
+    // 拓扑摘要（FR-29）：agent 不本地维护拓扑，首连恒为空让控制面补发一次 topology-changed。
+    val topology: String = "",
 )
 
 /** 长轮询有效配置的结果。 */

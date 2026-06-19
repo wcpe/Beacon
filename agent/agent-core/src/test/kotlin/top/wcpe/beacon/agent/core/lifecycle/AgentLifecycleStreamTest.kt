@@ -59,12 +59,15 @@ class AgentLifecycleStreamTest {
         override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
     )
 
-    private fun newLifecycle(): AgentLifecycle {
+    private fun newLifecycle(onTopologyChanged: (() -> Unit)? = null): AgentLifecycle {
         val codec = CannedJsonCodec()
         // 注入 streamTransport → 启用 SSE 流，取代三条长轮询。
         val apiClient = BeaconApiClient(backend, codec, settings(), stream)
         val applier = ConfigApplier(store, null, adapter)
-        return AgentLifecycle(identity(), settings(), adapter, apiClient, store, applier, null)
+        return AgentLifecycle(
+            identity(), settings(), adapter, apiClient, store, applier, null,
+            topologyListener = onTopologyChanged,
+        )
     }
 
     @AfterTest
@@ -112,6 +115,31 @@ class AgentLifecycleStreamTest {
         waitUntil(2000) { store.currentMd5() == "md5-v1" }
         assertTrue(store.currentMd5() == "md5-v1", "config-changed 应触发取配置并 apply 到新 md5")
         assertTrue(backend.pollCalls.get() >= 1, "config-changed 应触发一次 config/effective 取数据")
+    }
+
+    @Test
+    fun `topology-changed 事件触发拓扑监听器回调`() {
+        val fired = java.util.concurrent.atomic.AtomicInteger(0)
+        val lifecycle = newLifecycle(onTopologyChanged = { fired.incrementAndGet() })
+        lifecycle.bootstrapWithSnapshotThenConnect()
+        waitUntil(2000) { stream.openCalls.get() >= 1 }
+
+        // 直播阶段推一条 topology-changed → 应回调拓扑监听器（业务侧据此重查发现端点）。
+        stream.pushEvent(StreamEventTypes.TOPOLOGY_CHANGED, "{\"md5\":\"topo-v1\"}")
+        waitUntil(2000) { fired.get() >= 1 }
+        assertTrue(fired.get() >= 1, "topology-changed 应触发拓扑监听器回调")
+        // 拓扑事件不应触发取配置（控制面不在事件里搬实例数据）。
+        assertTrue(backend.pollCalls.get() == 0, "拓扑事件不应触发 config/effective 取数据")
+    }
+
+    @Test
+    fun `连接即对账 open URL 携带空拓扑摘要`() {
+        val lifecycle = newLifecycle()
+        lifecycle.bootstrapWithSnapshotThenConnect()
+        waitUntil(2000) { stream.lastRequest.get() != null }
+        val url = stream.lastRequest.get()!!.url
+        // agent 不本地维护拓扑，首连上报空拓扑摘要让控制面补一次 topology-changed。
+        assertTrue(url.contains("topologyMd5="), "open URL 应携带 topologyMd5 参数，实际 $url")
     }
 
     @Test
