@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.4.1（2026-06-19）
+
 ### 修复
 - 配置发布前 schema 校验（FR-27）：YAML 非字符串顶层键（如 `1: a`、`2024-01-01: x`、`true: y`）原误判为"顶层必须是键值映射，不能是标量或列表"——消息事实错误（它本就是 map），现识别 yaml.v3 解析出的 `map[any]any` 并返回准确语义错误 `CONTENT_SCHEMA_INVALID`（配置键必须是字符串），仍属拒绝（merge 全链路只处理字符串键）。同时空键判定改用 `strings.TrimSpace`，覆盖全 Unicode 空白（原自实现仅识别 4 种空白）。
 - 配置发布 / 回滚并发撞唯一键（`uk_revision_version`，并发发布同一目标版本）原透出 `gorm.ErrDuplicatedKey` 致 500，现映射为 409 `CONFIG_CONFLICT`（FR-9）。
