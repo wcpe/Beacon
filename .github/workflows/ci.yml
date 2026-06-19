@@ -89,13 +89,10 @@ jobs:
         # Linux 用 wrapper；-p 指定 agent 子工程根
         run: ./agent/gradlew -p agent test
 
-  # 前端（React/Vite/TS）：pnpm 安装依赖 + 构建。
+  # 前端（React/Vite/TS）：经 Makefile 的 web 目标安装依赖 + 构建（构建逻辑与本地一键打包同源）。
   web:
     name: 前端构建
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - name: 安装 pnpm
@@ -109,9 +106,49 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - name: 安装依赖
-        # lockfile 已入库，用 frozen 保证可复现
-        run: pnpm install --frozen-lockfile
-      - name: 构建
-        # 对应 package.json 的 build 脚本：tsc -b && vite build
-        run: pnpm build
+      - name: 构建前端（make web）
+        # 构建逻辑单一来源于 Makefile：cd web && pnpm install --frozen-lockfile && pnpm build
+        # ubuntu runner 自带 make；从仓库根调用（make web 内部自行 cd web）
+        run: make web
+
+  # 一键打包验证 + 产物上传：经 Makefile 完整构建控制面（原生二进制，内嵌前端 + 版本注入）+ 双端 agent jar，
+  # 与本地 make package、release.yml 同一构建路径（Makefile 单一来源）。产物上传供 PR/push 后下载验证（临时）。
+  package:
+    name: 一键打包（make package）
+    runs-on: ubuntu-latest
+    env:
+      # 控制面 sqlite 经 go-sqlite3 需 CGO；ubuntu 自带 gcc
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 安装 JDK21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: 准备 Gradle（含依赖缓存）
+        uses: gradle/actions/setup-gradle@v4
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - name: 安装 Node（启用 pnpm store 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 一键打包
+        run: make package
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-package
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
