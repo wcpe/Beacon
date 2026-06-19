@@ -13,6 +13,7 @@ import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import top.wcpe.beacon.agent.core.override.CommandWhitelist
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -30,6 +31,8 @@ class AssembledAgent(
     val lifecycle: AgentLifecycle,
     val beaconAgent: BeaconAgent,
     val apiClient: BeaconApiClient,
+    // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging；壳层在消息模块启动成功后 set 活跃门面。
+    val messagingHolder: MessagingHolder,
 )
 
 /**
@@ -130,8 +133,10 @@ object AgentAssembly {
         )
 
         val discoveryView = DiscoveryView(apiClient, topologyWatchHub)
-        val beaconAgent = BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView)
+        // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging，壳层在消息模块就绪后注入活跃门面。
+        val messagingHolder = MessagingHolder()
+        val beaconAgent = BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder)
 
-        return AssembledAgent(lifecycle, beaconAgent, apiClient)
+        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder)
     }
 }

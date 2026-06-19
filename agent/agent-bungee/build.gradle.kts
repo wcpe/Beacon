@@ -43,6 +43,8 @@ dependencies {
     // BungeeCord 平台 API（net.md_5.bungee.*）：TabooLib install(BungeeCord) 未把它加到编译类路径，显式 compileOnly 引入；
     // 仅编译期可见，运行期由 BungeeCord 代理本身提供（@jar 只取主 jar、不拉传递依赖）。
     compileOnly("net.md-5:bungeecord-api:1.20-R0.2@jar")
+    // Redis 客户端（FR-26）：proxy 维护玩家名册需引用 JedisPool。仅编译期可见，运行期 @RuntimeDependencies 下载。
+    compileOnly("redis.clients:jedis:4.2.3")
 }
 
 taboolib {
@@ -66,6 +68,10 @@ taboolib {
     relocate("okhttp3", "${project.group}.lib.okhttp3")
     relocate("okio", "${project.group}.lib.okio")
     relocate("kotlinx.serialization", "${project.group}.lib.kotlinx.serialization")
+    // FR-26：把 agent 字节码里对 Jedis 及其传递依赖的引用重写到隔离命名空间，与运行期下载 relocate 目标一致。
+    relocate("redis.clients.jedis", "${project.group}.lib.redis.clients.jedis")
+    relocate("org.apache.commons.pool2", "${project.group}.lib.org.apache.commons.pool2")
+    relocate("com.google.gson", "${project.group}.lib.com.google.gson")
 }
 
 // 产出 jar 基础名固定为 BeaconAgentProxy，并把 shadowed 配置内的库与模块打进 jar，

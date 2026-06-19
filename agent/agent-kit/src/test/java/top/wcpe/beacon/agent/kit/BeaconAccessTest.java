@@ -10,8 +10,13 @@ import top.wcpe.beacon.agent.api.Discovery;
 import top.wcpe.beacon.agent.api.DiscoveryQuery;
 import top.wcpe.beacon.agent.api.EffectiveConfig;
 import top.wcpe.beacon.agent.api.ListenerHandle;
+import top.wcpe.beacon.agent.api.MessageHandler;
+import top.wcpe.beacon.agent.api.Messaging;
 import top.wcpe.beacon.agent.api.ServiceInstance;
+import top.wcpe.beacon.agent.api.TopicHandler;
 import top.wcpe.beacon.agent.api.TopologyListener;
+
+import java.util.concurrent.CompletableFuture;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -278,6 +283,44 @@ class BeaconAccessTest {
 
     /** 假 BeaconAgent 门面，驱动 kit 的便捷层与订阅桥。 */
     private static final class FakeAgent implements BeaconAgent {
+        /** 假消息门面：始终不可用（本测试不覆盖 FR-26 行为，仅满足接口实现）。 */
+        private static final Messaging FAKE_MESSAGING = new Messaging() {
+            @Override
+            public boolean isAvailable() {
+                return false;
+            }
+
+            @Override
+            public void send(String targetServerId, String type, Object payload) {
+            }
+
+            @Override
+            public CompletableFuture<Object> call(String targetServerId, String type, Object payload) {
+                return new CompletableFuture<>();
+            }
+
+            @Override
+            public void publish(String topic, Object payload) {
+            }
+
+            @Override
+            public ListenerHandle subscribe(String topic, TopicHandler handler) {
+                return () -> {
+                };
+            }
+
+            @Override
+            public boolean sendToPlayer(String playerName, String type, Object payload) {
+                return false;
+            }
+
+            @Override
+            public ListenerHandle on(String type, MessageHandler handler) {
+                return () -> {
+                };
+            }
+        };
+
         final Map<String, String> config = new LinkedHashMap<>();
         final FakeDiscovery discovery = new FakeDiscovery();
         final FakeEffectiveConfig effectiveConfig = new FakeEffectiveConfig(this);
@@ -297,6 +340,11 @@ class BeaconAccessTest {
         @Override
         public Discovery discovery() {
             return discovery;
+        }
+
+        @Override
+        public Messaging messaging() {
+            return FAKE_MESSAGING;
         }
 
         @Override

@@ -4,9 +4,11 @@ import top.wcpe.beacon.agent.api.AgentIdentity as ApiIdentity
 import top.wcpe.beacon.agent.api.BeaconAgent
 import top.wcpe.beacon.agent.api.Discovery
 import top.wcpe.beacon.agent.api.EffectiveConfig
+import top.wcpe.beacon.agent.api.Messaging
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import java.util.Optional
 
 /**
@@ -20,6 +22,7 @@ class BeaconAgentImpl(
     private val lifecycle: AgentLifecycle,
     private val effectiveConfig: EffectiveConfig,
     private val discovery: Discovery,
+    private val messagingHolder: MessagingHolder,
 ) : BeaconAgent {
 
     override fun identity(): ApiIdentity {
@@ -36,6 +39,9 @@ class BeaconAgentImpl(
     override fun config(): EffectiveConfig = effectiveConfig
 
     override fun discovery(): Discovery = discovery
+
+    // 始终返回当前生效门面（未启用时为 DisabledMessaging，isAvailable=false）。
+    override fun messaging(): Messaging = messagingHolder.get()
 
     override fun connected(): Boolean = lifecycle.isConnected()
 

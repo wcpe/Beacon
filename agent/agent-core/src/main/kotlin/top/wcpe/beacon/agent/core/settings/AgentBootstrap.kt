@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.settings
 
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.messaging.MessagingSettings
 
 /**
  * 从 ConfigReader 构造 AgentSettings + AgentIdentity（config.yml → core 类型）。
@@ -35,6 +36,13 @@ object AgentBootstrap {
                 // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
                 commandWhitelist = reader.stringList("override.command-whitelist").toSet(),
                 backupDirName = reader.string("override.backup-dir-name", "override-backup"),
+            ),
+            messaging = MessagingSettings(
+                // 跨服消息模块默认关（ADR-0016 决策 6）；Redis 连接由控制面下发，不在本地。
+                enabled = reader.boolean("messaging.enabled", false),
+                rpcTimeoutMs = reader.long("messaging.rpc-timeout-ms", 5000),
+                streamMaxLen = reader.long("messaging.stream-max-len", 10000),
+                consumerName = reader.string("messaging.consumer-name", "default"),
             ),
         )
     }

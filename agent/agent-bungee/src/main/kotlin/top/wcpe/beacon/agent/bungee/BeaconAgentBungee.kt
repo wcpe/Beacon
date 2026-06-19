@@ -59,6 +59,25 @@ import java.util.concurrent.atomic.AtomicBoolean
         relocate = ["!kotlinx.serialization", "!top.wcpe.beacon.agent.lib.kotlinx.serialization", "!kotlin", "!kotlin1922"],
         transitive = false,
     ),
+    // Redis 客户端（FR-26）：proxy 侧维护玩家位置名册 + 可参与消息。运行期下载、relocate、不打包、不经 CoreLib。
+    RuntimeDependency(
+        "!redis.clients:jedis:4.2.3",
+        test = "!top.wcpe.beacon.agent.lib.redis.clients.jedis.Jedis",
+        relocate = ["!redis.clients.jedis", "!top.wcpe.beacon.agent.lib.redis.clients.jedis"],
+        transitive = false,
+    ),
+    RuntimeDependency(
+        "!org.apache.commons:commons-pool2:2.11.1",
+        test = "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2.ObjectPool",
+        relocate = ["!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2"],
+        transitive = false,
+    ),
+    RuntimeDependency(
+        "!com.google.code.gson:gson:2.10.1",
+        test = "!top.wcpe.beacon.agent.lib.com.google.gson.Gson",
+        relocate = ["!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson"],
+        transitive = false,
+    ),
 )
 object BeaconAgentBungee : Plugin() {
 
@@ -71,6 +90,9 @@ object BeaconAgentBungee : Plugin() {
 
     /** Proxy 服务器目录同步循环开关；disable 时关闭，避免卸载后继续调度。 */
     private val directorySyncRunning = AtomicBoolean(false)
+
+    /** 玩家位置名册引导（FR-26）；null 表示未装配。 */
+    private var rosterBootstrap: BungeePlayerRosterBootstrap? = null
 
     @Awake(LifeCycle.ENABLE)
     fun enable() {
@@ -128,8 +150,22 @@ object BeaconAgentBungee : Plugin() {
             adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer) }
         }
 
+        // 玩家位置名册引导（FR-26）：据下发 Redis 配置维护「玩家→所在子服」，供子服按玩家寻址解析。
+        val roster = BungeePlayerRosterBootstrap(
+            settings = settings,
+            store = store,
+            codec = KotlinxJsonCodec(),
+            adapter = adapter,
+        )
+        rosterBootstrap = roster
+        BungeeRosterListener.bootstrap = roster
+        // 配置变更后据下发 Redis 配置重建名册引导。
+        view.onChange { _, _ -> roster.sync() }
+
         // 先点亮快照再异步接入，不阻塞主线程。
         assembled.lifecycle.bootstrapWithSnapshotThenConnect()
+        // 快照可能已含 Redis 配置：立即尝试一次（缺失则空闲，待配置下发再起）。
+        roster.sync()
     }
 
     private fun syncDirectoryLoop(adapter: BungeePlatformAdapter, syncer: ProxyServerDirectorySyncer) {
@@ -147,6 +183,8 @@ object BeaconAgentBungee : Plugin() {
     @Awake(LifeCycle.DISABLE)
     fun disable() {
         directorySyncRunning.set(false)
+        BungeeRosterListener.bootstrap = null
+        rosterBootstrap?.stop()
         lifecycle?.shutdown()
         BeaconAgentProvider.unregister()
     }

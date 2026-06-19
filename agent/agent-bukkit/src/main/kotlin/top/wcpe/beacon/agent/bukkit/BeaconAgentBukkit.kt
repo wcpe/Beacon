@@ -56,6 +56,26 @@ import taboolib.module.configuration.Configuration
         relocate = ["!kotlinx.serialization", "!top.wcpe.beacon.agent.lib.kotlinx.serialization", "!kotlin", "!kotlin1922"],
         transitive = false,
     ),
+    // Redis 客户端（FR-26 跨服消息中间件）：运行期下载、relocate 到隔离命名空间、不打包、不经 CoreLib。
+    // Jedis 是纯 Java 库，传递依赖（commons-pool2 / gson / slf4j）手动列全（transitive=false）。
+    RuntimeDependency(
+        "!redis.clients:jedis:4.2.3",
+        test = "!top.wcpe.beacon.agent.lib.redis.clients.jedis.Jedis",
+        relocate = ["!redis.clients.jedis", "!top.wcpe.beacon.agent.lib.redis.clients.jedis"],
+        transitive = false,
+    ),
+    RuntimeDependency(
+        "!org.apache.commons:commons-pool2:2.11.1",
+        test = "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2.ObjectPool",
+        relocate = ["!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2"],
+        transitive = false,
+    ),
+    RuntimeDependency(
+        "!com.google.code.gson:gson:2.10.1",
+        test = "!top.wcpe.beacon.agent.lib.com.google.gson.Gson",
+        relocate = ["!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson"],
+        transitive = false,
+    ),
 )
 object BeaconAgentBukkit : Plugin() {
 
@@ -65,6 +85,9 @@ object BeaconAgentBukkit : Plugin() {
 
     /** 当前生命周期；null 表示因身份缺失未启动。 */
     private var lifecycle: AgentLifecycle? = null
+
+    /** 跨服消息模块引导（FR-26）；null 表示未装配（身份缺失等）。 */
+    private var messagingBootstrap: BukkitMessagingBootstrap? = null
 
     @Awake(LifeCycle.ENABLE)
     fun enable() {
@@ -106,12 +129,28 @@ object BeaconAgentBukkit : Plugin() {
         // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
         BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
+        // 跨服消息模块引导（FR-26）：据下发的 Redis 配置启停 / 重连。
+        val bootstrap = BukkitMessagingBootstrap(
+            identity = identity,
+            settings = settings,
+            store = store,
+            codec = KotlinxJsonCodec(),
+            holder = assembled.messagingHolder,
+            adapter = adapter,
+        )
+        messagingBootstrap = bootstrap
+        // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
+        view.onChange { _, _ -> bootstrap.sync() }
+
         // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
         assembled.lifecycle.bootstrapWithSnapshotThenConnect()
+        // 快照可能已含 Redis 配置：立即尝试一次（缺失则保持降级，待配置下发再起）。
+        bootstrap.sync()
     }
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
+        messagingBootstrap?.stop()
         lifecycle?.shutdown()
         BeaconAgentProvider.unregister()
     }

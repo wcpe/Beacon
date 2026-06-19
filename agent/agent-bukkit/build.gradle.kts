@@ -70,6 +70,11 @@ taboolib {
     relocate("okhttp3", "${project.group}.lib.okhttp3")
     relocate("okio", "${project.group}.lib.okio")
     relocate("kotlinx.serialization", "${project.group}.lib.kotlinx.serialization")
+    // FR-26 跨服消息中间件：把 agent 字节码里对 Jedis 及其传递依赖的引用重写到隔离命名空间，
+    // 与运行期 @RuntimeDependencies 下载时的 relocate 目标一致，使下载的库与 agent 互相可见。
+    relocate("redis.clients.jedis", "${project.group}.lib.redis.clients.jedis")
+    relocate("org.apache.commons.pool2", "${project.group}.lib.org.apache.commons.pool2")
+    relocate("com.google.gson", "${project.group}.lib.com.google.gson")
 }
 
 // 产出 jar 基础名固定为 BeaconAgent，并把 shadowed 配置内的库与模块打进 jar，

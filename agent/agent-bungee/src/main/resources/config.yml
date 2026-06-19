@@ -70,3 +70,15 @@ override:
   command-whitelist: []
   # 覆盖前备份区的目录名（落在 agent 数据目录下，与镜像目标分离），用于回滚还原被改/删的原文件。
   backup-dir-name: "override-backup"
+
+# 跨服消息中间件（FR-26 / ADR-0016）的本地行为参数。proxy 侧据此维护玩家位置名册。
+# 注意：Redis 连接（host/port/db/password）不在这里——由 Beacon 配置中心下发（密码不入本地 yaml）。
+messaging:
+  # 是否启用跨服消息模块（含 proxy 维护玩家名册）。默认关。
+  enabled: false
+  # RPC（请求-响应）默认超时（毫秒）。
+  rpc-timeout-ms: 5000
+  # 每条收件流的近似 MAXLEN 上限（条）：旧消息自动淘汰，防止 Redis 内存无限增长。
+  stream-max-len: 10000
+  # 消费组内本消费者名（同服多进程场景区分；单进程留空即用默认）。
+  consumer-name: "default"

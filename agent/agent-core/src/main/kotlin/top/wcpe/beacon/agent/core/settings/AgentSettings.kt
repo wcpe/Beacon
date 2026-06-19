@@ -1,5 +1,7 @@
 package top.wcpe.beacon.agent.core.settings
 
+import top.wcpe.beacon.agent.core.messaging.MessagingSettings
+
 /**
  * agent 运行参数（由壳层读 config.yml 构造）。不含身份（身份见 AgentIdentity）。
  *
@@ -13,6 +15,7 @@ package top.wcpe.beacon.agent.core.settings
  * @param snapshotFileName   快照文件名（落数据目录）
  * @param fileTree           文件树托管（通道B）同步参数
  * @param override           三方插件文件覆盖兼容（FR-15）本地参数（含本地命令白名单）
+ * @param messaging          跨服消息中间件（FR-26）本地行为参数（Redis 连接由控制面下发，不在此）
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -25,6 +28,13 @@ data class AgentSettings(
     val snapshotFileName: String,
     val fileTree: FileTreeSettings,
     val override: OverrideSettings,
+    // 默认关闭的消息参数：让既有测试与不关心消息的调用方无需显式构造（FR-26 增量字段）。
+    val messaging: MessagingSettings = MessagingSettings(
+        enabled = false,
+        rpcTimeoutMs = 5000,
+        streamMaxLen = 10000,
+        consumerName = "default",
+    ),
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')
