@@ -56,15 +56,16 @@
 - Redis 挂：`send` 失败/`call` 超时/订阅暂停并自动重连；配置同步与玩家游玩不受影响。
 - 目标服离线：可靠消息留存待其上线补消费；RPC 直接超时。
 
-## 4. 任务拆分（待审定后细化，暂不勾选）
+## 4. 任务拆分（进度）
 
-- [ ] PRD FR-26 登记 + Non-Goals 澄清；ADR-0016 落库；本 spec 落 docs/specs。
-- [ ] agent-core：`MessageTransport` 抽象 + 消息信封（type/version/correlationId/replyTo）+ 路由分发 + RPC Future/超时。
-- [ ] 适配器：Redis（Streams 消费组 + pub/sub + 回信通道）实现，连接管理与重连。
-- [ ] beacon-proxy：玩家位置名册维护（进服/换服/退出事件 → Redis），重启重新扫描重建。
-- [ ] agent-api：对③层暴露 send/call/publish/subscribe/sendToPlayer/on + isAvailable。
-- [ ] 测试：单元（关联ID配对、超时、幂等、信封序列化）；集成（真 Redis：离线补消费、定向、RPC、主题、按玩家寻址）；故障（杀 Redis 不连累配置/玩家）。
-- [ ] Docker：compose 加 Redis；验证容器网络下 address 可达。
+- [x] PRD FR-26 登记 + Non-Goals 澄清；ADR-0016 落库；本 spec 落 docs/specs。
+- [x] agent-core：`MessageTransport` 抽象 + 消息信封（type/version/correlationId/replyTo）+ 路由分发 + RPC Future/超时（`agent-core/.../messaging/`：`Message`/`MessageTransport`/`MessageBus`/`PlayerLocator`/`MessagingModule`/`MessagingView`/`MessagingHolder`/`DisabledMessaging`）。
+- [x] 适配器：Redis（Streams 消费组 + pub/sub + 回信通道）实现，连接管理与重连（`agent-adapters/.../messaging/`：`RedisMessageTransport`/`RedisChannels`/`RedisConnection`/`JedisPoolFactory`/`RedisPlayerRoster`）。Jedis 经 `@RuntimeDependencies` 运行期下载、relocate。
+- [x] beacon-proxy：玩家位置名册维护（进服/换服/退出事件 → Redis），重启重新扫描重建（`RedisPlayerRoster` + bungee 侧 `BungeePlayerRosterBootstrap`/`BungeeRosterListener`，换服误删保护 + enable 时全量重建）。
+- [x] agent-api：对③层暴露 send/call/publish/subscribe/sendToPlayer/on + isAvailable（`Messaging`/`IncomingMessage`/`MessageHandler`/`TopicHandler` 经 `BeaconAgent.messaging()`）。
+- [x] 单元测试：信封序列化往返、关联ID 配对、RPC 超时、迟到回信容错、四种模式闭环、可靠送达离线补投、降级与 close、玩家寻址解析与落空兜底、换服误删保护、信道命名与下发配置解析、门面/模块装配——双端 build 与受影响模块测试全绿。
+- [ ] **集成（真 Redis）**：离线补消费、定向、RPC、主题、按玩家寻址；故障（杀 Redis 不连累配置/玩家）。**待集成/真机验**（本环境无 Redis）。
+- [ ] **Docker**：compose 加 Redis；验证容器网络下 address 可达。**待集成验**。
 
 ## 5. 验收标准
 
