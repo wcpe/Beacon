@@ -7,7 +7,8 @@ beacon:
   endpoints:
     - "http://127.0.0.1:8848"
   # 最低限度区分用的共享令牌，置于请求头 X-Beacon-Token。非安全边界，仅防误连。
-  bootstrap-token: "beacon-bootstrap-2026"
+  # 必须与控制面 config.yml 的 agent-token 一致（默认同为 beacon-bootstrap-token，开箱即匹配）。
+  bootstrap-token: "beacon-bootstrap-token"
 
 identity:
   # 环境（namespace）：prod / test，必须与控制面 namespace 一致。
