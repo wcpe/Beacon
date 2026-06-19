@@ -80,6 +80,15 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Flush 透传到底层 Flusher，支持 SSE 等流式响应（FR-24 单条推送流）。
+// 否则本包装器内嵌的是 http.ResponseWriter 接口、不含 Flush，会遮蔽底层 Flusher，
+// 致 StreamHandler 的 w.(http.Flusher) 断言失败、SSE 端点在访问日志中间件后返回 500。
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // accessLog 输出中文访问日志。
 func accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
