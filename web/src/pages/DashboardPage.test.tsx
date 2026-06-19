@@ -7,10 +7,19 @@ import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
-// 用轻量桩替身 TrendChart：暴露标题、点数与指标，规避 recharts 在 jsdom 下的尺寸/动画依赖
+// 用轻量桩替身 TrendChart：暴露标题、点数、指标与该指标各点取值，规避 recharts 在 jsdom 下的尺寸/动画依赖。
+// data-values 序列化所选指标各点的值（null 序列化为 "null"），供断言喂图前已把 CPU 哨兵置 null。
 vi.mock('./dashboard/TrendChart', () => ({
-  default: (props: { title: string; metric: string; points: unknown[] }) => (
-    <div data-testid="trend-chart" data-metric={props.metric}>
+  default: (props: {
+    title: string
+    metric: string
+    points: Array<Record<string, number | null | string>>
+  }) => (
+    <div
+      data-testid="trend-chart"
+      data-metric={props.metric}
+      data-values={JSON.stringify(props.points.map((p) => p[props.metric]))}
+    >
       {props.title}（{props.points.length} 点）
     </div>
   ),
@@ -98,6 +107,24 @@ describe('DashboardPage', () => {
     expect(screen.getAllByText(/（2 点）/).length).toBe(4)
   })
 
+  it('CPU 趋势图把无样本哨兵（avgCpuLoad=-1）置 null，不污染折线', async () => {
+    // 注入含哨兵 -1 的趋势：第二点无 CPU 样本，喂图前应被置为 null（断线）而非画到 -100%。
+    vi.mocked(metricsTrend).mockResolvedValue({
+      points: [
+        { ...TREND.points[0], avgCpuLoad: 0.3 },
+        { ...TREND.points[1], avgCpuLoad: -1 },
+      ],
+    })
+    renderPage(<DashboardPage />)
+    const charts = await screen.findAllByTestId('trend-chart')
+    const cpuChart = charts.find((c) => c.getAttribute('data-metric') === 'avgCpuLoad')
+    expect(cpuChart).toBeDefined()
+    const values = JSON.parse(cpuChart!.getAttribute('data-values') ?? '[]')
+    // 有效点保留原值，哨兵 -1 被置 null；图中绝不出现 -1。
+    expect(values).toEqual([0.3, null])
+    expect(values).not.toContain(-1)
+  })
+
   it('切换时间窗触发趋势重查（默认 1h → 24h）', async () => {
     renderPage(<DashboardPage />)
     await screen.findByText('历史趋势')
@@ -134,9 +161,25 @@ describe('DashboardPage', () => {
   })
 
   it('不渲染任何玩家名单 / 身份字段（边界守护）', async () => {
+    // 负向测试：故意往明细行塞名单类字段（playerNames / players），断言其值不被渲染到 DOM。
+    // 唯一哨兵串便于断言；后端实际不返回这些字段，此处构造越界数据验证前端守护。
+    const SENTINEL_A = '玩家甲-名单哨兵-A7F3'
+    const SENTINEL_B = '玩家乙-名单哨兵-B2E9'
+    const summaryWithRoster = {
+      ...SUMMARY,
+      servers: [
+        { serverId: 'lobby-1', playerCount: 42, playerNames: [SENTINEL_A] },
+        { serverId: 'pvp-2', playerCount: 8, players: [SENTINEL_B] },
+      ],
+    } as unknown as MetricsSummary
+    vi.mocked(metricsSummary).mockResolvedValue(summaryWithRoster)
+
     const { container } = renderPage(<DashboardPage />)
     await screen.findByText('lobby-1')
-    // 看板只展示聚合数字，不得出现名单类文案
+    // 塞入的名单字段值绝不应出现在 DOM 中（明细表只渲染 serverId 与 playerCount）。
+    expect(container.textContent).not.toContain(SENTINEL_A)
+    expect(container.textContent).not.toContain(SENTINEL_B)
+    // 保留原断言：名册类文案同样不得出现。
     for (const banned of ['玩家名单', '玩家列表', 'roster', 'playerNames']) {
       expect(container.textContent).not.toContain(banned)
     }

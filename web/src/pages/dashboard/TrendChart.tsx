@@ -10,16 +10,19 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import type { TrendPoint } from '../../api/client'
 
 // 单图所选指标：从趋势点取数值的字段
 type MetricKey = 'totalPlayers' | 'avgTps' | 'avgMemUsed' | 'avgCpuLoad'
 
+// 图点：在趋势点基础上允许指标值为 null（CPU 无样本哨兵置 null，recharts 据此断线而非画到 -1）。
+// TrendPoint（全为 number）可直接赋值给本类型（number ⊆ number | null）。
+type ChartPoint = { sampledAt: string } & { [K in MetricKey]?: number | null }
+
 interface TrendChartProps {
   // 标题（图上方文案）
   title: string
-  // 时间序列点（升序）
-  points: TrendPoint[]
+  // 时间序列点（升序）；指标值允许为 null（断线，不参与 Y 轴尺度）
+  points: ReadonlyArray<ChartPoint>
   // 取哪个指标画线
   metric: MetricKey
   // 折线颜色（CSS 颜色值）

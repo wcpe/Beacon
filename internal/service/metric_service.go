@@ -18,6 +18,11 @@ const (
 // trendTargetBuckets 是趋势降采样的目标点数上界：按窗长 / 此值定桶大小，避免点数过多压垮出图。
 const trendTargetBuckets = 120
 
+// maxCustomWindow 是自定义 from/to 时间窗的跨度上限（7 天）：超限拒绝，避免超大区间把
+// metric_sample 全量 Find 入内存再降采样（撞「大批量禁一次性全加载」）。与默认保留期（168h=7d）对齐——
+// 早于保留期的样本已被滚动清理，查更长区间本就读不到数据。
+const maxCustomWindow = 7 * 24 * time.Hour
+
 // presetWindows 把预设窗口名映射到时间跨度。
 var presetWindows = map[string]time.Duration{
 	windowLastHour:   time.Hour,
@@ -80,6 +85,10 @@ func (s *MetricService) Trend(q TrendQuery) ([]TrendPoint, error) {
 func (s *MetricService) resolveWindow(q TrendQuery) (time.Time, time.Time, error) {
 	if !q.From.IsZero() || !q.To.IsZero() {
 		if q.From.IsZero() || q.To.IsZero() || q.To.Before(q.From) {
+			return time.Time{}, time.Time{}, apperr.ErrInvalidParam
+		}
+		// 跨度上限守卫：超大区间会一次性全量加载样本，拒绝之（见 maxCustomWindow）。
+		if q.To.Sub(q.From) > maxCustomWindow {
 			return time.Time{}, time.Time{}, apperr.ErrInvalidParam
 		}
 		return q.From, q.To, nil

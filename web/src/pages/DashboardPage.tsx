@@ -57,6 +57,12 @@ export default function DashboardPage() {
 
   const isFetching = summaryQuery.isFetching || trendQuery.isFetching
   const points = trendQuery.data?.points ?? []
+  // CPU 折线专用点：把无样本哨兵（avgCpuLoad < 0，约定 -1）置为 null，
+  // recharts 据此断线，避免 -1 被当数据点画成 -100% 污染 Y 轴尺度。
+  const cpuPoints = points.map((p) => ({
+    ...p,
+    avgCpuLoad: p.avgCpuLoad < 0 ? null : p.avgCpuLoad,
+  }))
 
   // 每服明细列：仅 serverId 与在线人数（不含名单）
   const serverColumns: DataTableColumn<ServerRow>[] = [
@@ -141,7 +147,7 @@ export default function DashboardPage() {
               />
               <TrendChart
                 title="平均 CPU 负载"
-                points={points}
+                points={cpuPoints}
                 metric="avgCpuLoad"
                 color="#dc2626"
                 formatValue={(v) => (v < 0 ? '不可用' : `${(v * 100).toFixed(0)}%`)}
