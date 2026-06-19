@@ -44,7 +44,7 @@ func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
 
 	cfg.DBName = target
 	db, err := store.Open(config.DatabaseConfig{
-		DSN: cfg.FormatDSN(), MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetimeSec: 300,
+		Driver: "mysql", DSN: cfg.FormatDSN(), MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetimeSec: 300,
 	})
 	if err != nil {
 		t.Fatalf("连接测试库失败: %v", err)
