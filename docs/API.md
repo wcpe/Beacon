@@ -179,6 +179,12 @@ data: {}
 | `POST /admin/v1/configs/{id}/rollback` | 回滚：`{ toVersion, comment }`（= 读旧版内容作新版发布；operator 由认证态派生） |
 | `GET /admin/v1/configs/{id}/diff?from=&to=` | 返回两版本文本供前端 diff |
 | `GET /admin/v1/configs/effective?namespace=&serverId=&group=&zone=` | 只读预览某目标合并后的有效配置 + 逐键来源（FR-22，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)） |
+| `POST /admin/v1/configs/{id}/gray` | 发布灰度：`{ content, cohort: [serverId...], comment }` → cohort 内 server 解析到灰度内容、名单外仍解析稳定版（FR-9，见 [ADR-0021](adr/0021-config-gray-cohort-version-selection.md)；operator 由认证态派生） |
+| `POST /admin/v1/configs/{id}/gray/promote` | 晋升灰度为全量稳定版：`{ comment }` → 灰度内容作为新版本发布（version+1）并清空灰度，返回新 `version`/`md5`（operator 由认证态派生） |
+| `DELETE /admin/v1/configs/{id}/gray?comment=` | 中止灰度：丢弃灰度，cohort 成员回到稳定版本，稳定指针不动（operator 由认证态派生） |
+| `GET /admin/v1/configs/gray?namespace=` | 列出某环境当前活跃灰度（`configItemId`/`md5`/`cohort`/`sensitive` 等，不回吐 content） |
+
+**配置灰度 / Beta（FR-9，见 [ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）**：灰度作用在"某 dataId 用哪个版本内容"的**版本选择**层，与 scope 覆盖链正交叠加（不新增覆盖层）。发布灰度需给 `content` + **非空** `cohort`（显式 serverId 名单，去重 / 去空白）；灰度内容同样过发布前 schema 校验（FR-27），灰度项 `sensitive` 与所属配置项镜像（敏感则灰度 content 加密落库，FR-20）。cohort 内 `serverId` 解析到灰度内容，**名单外解析结果与无灰度时逐字节相同**。`promote` 把灰度内容晋升为全量稳定版（走既有发布路径、进版本历史、可回滚）；`abort` 丢弃灰度。两操作提交后只唤醒受影响 `serverId`（发布 / abort 唤醒 cohort、promote 唤醒该配置项 scope ∪ cohort）。一个配置项**至多一个活跃灰度**（重复发布即覆盖）。错误：无活跃灰度时 promote/abort 返 `404 GRAY_NOT_FOUND`；空 cohort 返 `400 EMPTY_COHORT`；灰度内容非法同发布（`422 CONTENT_INVALID` / `422 CONTENT_SCHEMA_INVALID`）。
 
 `GET /admin/v1/configs/effective`：只读预览某目标按覆盖链合并后的有效配置，与 agent 端 `/beacon/v1/agent/config/effective` 同源、内容与 `md5` 一致，但**不挂长轮询、不强制注册**，可预览未注册/假定指派的目标。参数：`namespace` 必填；`serverId` 与 `group` 至少给一个（给 `serverId` 时按 `zone_assignment` 解出 group/zone，未指派则用传入的 `group`/`zone`）。返回：
 

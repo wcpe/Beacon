@@ -24,6 +24,7 @@
 | [0018](0018-config-encryption-at-rest.md) | 敏感配置 at-rest 加密：AES-256-GCM、密钥走 env、密文落 TEXT 可移植 | 已接受 |
 | [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受 |
 | [0020](0020-prometheus-metrics-observability.md) | 控制面用标准 Prometheus client 暴露运行指标（/metrics） | 已接受 |
+| [0021](0021-config-gray-cohort-version-selection.md) | 配置灰度：按显式 serverId 名单（cohort）在版本选择层叠加，promote/abort 收口 | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

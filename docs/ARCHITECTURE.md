@@ -63,6 +63,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `namespace` | 环境隔离（prod/test） | `code` 唯一 |
 | `config_item` | 配置项标识 + scope 维度 + 当前版本指针 | 见下 |
 | `config_revision` | 每次发布的不可变快照（append-only） | 回滚 = 读旧版内容作新版发布，`source_revision` 记来源 |
+| `config_gray` | 配置灰度 / Beta（FR-9）：某 `config_item` 的临时灰度版本 + cohort 名单 | 一个 item 至多一个未软删灰度；promote 把内容并入 `config_revision` 后软删、abort 直接软删（[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)） |
 | `file_object` | 文件树托管（通道B）整文件 blob + scope 维度 + 当前版本指针 | 见下；与 `config_item` 平行但**整文件覆盖、不深合并**（[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） |
 | `file_revision` | 文件每次发布的不可变快照（append-only） | 与 `config_revision` 同款回滚思路 |
 | `file_override_set` | 三方插件文件覆盖集（FR-15）：目标插件目录 + 成员文件 + 一条受限重载命令 | scope 维度同 `file_object`；命令执行已接入运行期、随 agent 本地白名单生效（见 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md) 与 §8） |
@@ -74,6 +75,8 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 `config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`；`sensitive`（为真则 `content` 加密落库，at-rest，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。`content_md5` 始终基于**明文**（敏感项解密后再算），`config_revision` 同步带 `sensitive` 并对敏感快照同样加密。
 
 `file_object` 关键字段：`(namespace_code, group_code, path, scope_level, scope_target)` 唯一定位覆盖链中的一格（唯一键含 `path`）；`content`（整文件文本，落 `TEXT` 经 GORM size 抽象不绑方言）+ `content_md5` 冗余在行上；`current_revision`、`version`、`enabled`。同 `config_item` 的 scope 维度，但解析为**整文件覆盖**（取覆盖链上拥有该 `path` 的最高层那份，见 §5.1）。
+
+`config_gray` 关键字段：`config_item_id`（关联所属配置项，进唯一键 + 软删哨兵 → 一个 item 至多一个未软删灰度）；`namespace_code`（供按 ns 批量取活跃灰度，避免 N+1）；`content` + `content_md5`（灰度内容，敏感项与所属 item 镜像加密，md5 按明文算）；`cohort`（目标 serverId 名单，**JSON 数组文本落 `TEXT`**，可移植可读）；`format`/`sensitive`/`operator`/`comment`。灰度作用在"版本选择"层而非新增覆盖层（见 §5、[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）。
 
 **软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。`file_object` 同款哨兵软删。
 
@@ -101,6 +104,8 @@ agent 只给 `(namespace, serverId)`，服务端按 `zone_assignment` 解析出 
 agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 **admin 有效预览（FR-22，[ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)）**：`GET /admin/v1/configs/effective` 复用同一解析，额外给出**逐键来源层 provenance**（每个叶子键最终来自 global/group/zone/server 的哪层、哪些键被 `null` 减量删除），供管理台「服务器视角 / 文件覆盖矩阵」展示"这台最终生效什么、每个值来自哪层"。provenance 经 `merge` 包的**平行纯函数** `MergeDataIDWithProvenance` 计算，**不改 `DeepMerge`/`MergeDataID` 这条 agent 热路径**，并以"合并结果与 `MergeDataID` 逐一致"的交叉测试防双实现漂移。只读、不挂长轮询、不强制注册。
+
+**配置灰度叠加（FR-9，[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）**：灰度作用在"某 dataId 用哪个版本的内容"这一**版本选择**层，与 scope 覆盖链**正交叠加**——不新增覆盖层、不改 `merge` 纯函数。解析时拉完四层候选后，按 `namespace + 候选项集合`**一次性**取活跃灰度（`config_gray`，Map 命中、**无 N+1**），对"该 config_item 存在灰度且当前 `serverId` 在其 cohort 名单内"的候选项，把参与合并的 `content` 临时替换为灰度内容；其余层、合并算法、md5 计算全不变——**名单外 `serverId` 的解析结果与无灰度时逐字节相同**。admin 预览与 agent 热路径共用同一叠加逻辑，保证 cohort 内预览与下发一致。操作侧：`promote` 把灰度内容作为新稳定版本发布（version+1，走既有发布路径，过 FR-27 校验 / FR-20 加密）并软删灰度；`abort` 直接软删灰度。两者事务内写表 + 审计原子完成，**提交后按受影响 `serverId` 唤醒**（发布 / abort 唤醒 cohort 名单、promote 唤醒 item scope ∪ cohort 名单），复用既有长轮询 / SSE 唤醒集合，绝不全量盲唤醒。
 
 ### 5.1 有效文件树解析（通道B，scope 整文件覆盖）
 
