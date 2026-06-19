@@ -124,6 +124,12 @@ go test -tags=e2e -timeout=30m ./test/e2e/directory
   export BEACON_TEST_DSN='root:<密码>@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=true&loc=UTC'
   go test -tags=integration ./... -count=1
   ```
-  `internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。
-- **CI / 发版前**：两条都跑（`go test ./...` 与 `go test -tags=integration ./...`），E2E 另见 §7（跨平台 `go test -tags=e2e`，CI 见 `.github/workflows/e2e.yml`）。务必确认集成是 PASS 而非 SKIP。
+  `internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。FR-32 的 `metric_sample` 仓库与 `/admin/v1/metrics/*` 端点集成亦在此 `-tags=integration` 套内。
+- **agent 侧集成测试**（需真实 Redis）：agent-adapters 对真实 Redis 的集成用例（含 FR-31 名册 `HGETALL` 全表读）默认连 `localhost:16379` 无密码，连不上即 `assumeTrue` 跳过。先起 Redis、再跑：
+  ```bash
+  # 默认 16379，可经 BEACON_REDIS_TEST_HOST / BEACON_REDIS_TEST_PORT / BEACON_REDIS_TEST_PASSWORD 覆盖
+  cd agent && ./gradlew :agent-adapters:cleanTest :agent-adapters:test --tests '*RedisMessageTransportIntegrationTest'
+  ```
+  绿不等于真跑——须确认 `agent/agent-adapters/build/test-results/test` 报告里该类 `skipped=0`（跳过即 Redis 没连上）。
+- **CI / 发版前**：单测 + MySQL 集成 + agent Redis 集成都跑，E2E 另见 §7（跨平台 `go test -tags=e2e`，CI 见 `.github/workflows/e2e.yml`）。务必确认集成是 PASS 而非 SKIP。
 - **前端单元测试**（vitest + React Testing Library，jsdom 环境、无外部依赖、不连后端）：`cd web && pnpm test`（监听模式 `pnpm test:watch`）。测试文件经 `tsconfig` 排除出生产 `tsc -b`，与 `make web` 的 `go:embed` 构建解耦。
