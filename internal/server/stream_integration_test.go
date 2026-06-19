@@ -83,6 +83,28 @@ func nextEvent(t *testing.T, events <-chan sseEvent, timeout time.Duration) sseE
 	}
 }
 
+// waitForType 排掉中间事件直到取到指定类型。对账阶段按 DiffEvents 顺序补发多个 *-changed
+// （含空文件/拓扑通道首连的一次补发，与长轮询"首连取一次"一致），测试只关心是否到达某事件、
+// 容忍其间其它通道补发；排到目标即返回，使后续"无事件"窗口判定干净。超时失败。
+func waitForType(t *testing.T, events <-chan sseEvent, typ string, timeout time.Duration) sseEvent {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case e, ok := <-events:
+			if !ok {
+				t.Fatalf("SSE 流已关闭，未等到 %q", typ)
+			}
+			if e.typ == typ {
+				return e
+			}
+		case <-deadline:
+			t.Fatalf("等待 SSE 事件 %q 超时", typ)
+			return sseEvent{}
+		}
+	}
+}
+
 // registerAgent 注册一个 agent 实例（SSE 流要求先注册）。
 func registerAgent(t *testing.T, baseURL, serverID, group string) {
 	t.Helper()
@@ -135,11 +157,8 @@ func TestStreamConnectReconcile(t *testing.T) {
 	if !strings.Contains(first.data, "md5") {
 		t.Fatalf("config-changed 应携带新 md5，实际 %q", first.data)
 	}
-	// 对账补发完应发 ready。
-	ready := nextEvent(t, events, 3*time.Second)
-	if ready.typ != "ready" {
-		t.Fatalf("对账后应发 ready，实际 %q", ready.typ)
-	}
+	// 对账补发完应发 ready（其间还会有空文件/拓扑通道的首连补发，容忍）。
+	waitForType(t, events, "ready", 3*time.Second)
 }
 
 // TestStreamLivePushOnPublish 转直播后发布配置 → 受影响 agent 经 SSE 收到 config-changed。
@@ -161,8 +180,8 @@ func TestStreamLivePushOnPublish(t *testing.T) {
 	// agent 已对齐：先开一条流读到当前 config md5，再以该 md5 重开（对账无补发、直接 ready）。
 	// 简化：第一条流直接拿对账补发事件里的 md5。
 	probe, probeCancel := openStream(t, ts.URL, "namespace=prod&serverId=lobby-1")
-	cfgEvent := nextEvent(t, probe, 3*time.Second) // config-changed
-	_ = nextEvent(t, probe, 3*time.Second)         // ready
+	cfgEvent := waitForType(t, probe, "config-changed", 3*time.Second)
+	waitForType(t, probe, "ready", 3*time.Second)
 	probeCancel()
 	curMD5 := extractMD5(cfgEvent.data)
 	if curMD5 == "" {
@@ -172,10 +191,8 @@ func TestStreamLivePushOnPublish(t *testing.T) {
 	// 用已对齐 md5 重开流：对账无补发，直接 ready，随后转直播。
 	events, cancel := openStream(t, ts.URL, "namespace=prod&serverId=lobby-1&configMd5="+curMD5)
 	defer cancel()
-	ready := nextEvent(t, events, 3*time.Second)
-	if ready.typ != "ready" {
-		t.Fatalf("已对齐应直接 ready（无补发），实际先收到 %q", ready.typ)
-	}
+	// 已对齐 config；文件/拓扑通道首连仍补发一次，排到 ready 即可。
+	waitForType(t, events, "ready", 3*time.Second)
 
 	// 直播阶段发布新内容 → 应近实时收到 config-changed。
 	if code, _ := doJSON(t, http.MethodPut, ts.URL+"/admin/v1/configs/"+itoa(id), map[string]any{
@@ -183,10 +200,7 @@ func TestStreamLivePushOnPublish(t *testing.T) {
 	}); code != http.StatusOK {
 		t.Fatalf("发布应 200，实际 %d", code)
 	}
-	live := nextEvent(t, events, 3*time.Second)
-	if live.typ != "config-changed" {
-		t.Fatalf("直播阶段发布应推 config-changed，实际 %q", live.typ)
-	}
+	live := waitForType(t, events, "config-changed", 3*time.Second)
 	if extractMD5(live.data) == curMD5 {
 		t.Fatalf("直播事件应携带变更后的新 md5，实际仍为旧 md5 %q", curMD5)
 	}
@@ -211,16 +225,15 @@ func TestStreamOnlyAffected(t *testing.T) {
 
 	// s1 先对齐 area1 当前 md5（拿对账补发的 config md5 后重开）。
 	probe, probeCancel := openStream(t, ts.URL, "namespace=prod&serverId=s1")
-	cfgEvent := nextEvent(t, probe, 3*time.Second)
-	_ = nextEvent(t, probe, 3*time.Second) // ready
+	cfgEvent := waitForType(t, probe, "config-changed", 3*time.Second)
+	waitForType(t, probe, "ready", 3*time.Second)
 	probeCancel()
 	curMD5 := extractMD5(cfgEvent.data)
 
 	events, cancel := openStream(t, ts.URL, "namespace=prod&serverId=s1&configMd5="+curMD5)
 	defer cancel()
-	if r := nextEvent(t, events, 3*time.Second); r.typ != "ready" {
-		t.Fatalf("已对齐应直接 ready，实际 %q", r.typ)
-	}
+	// 已对齐 config；排掉文件/拓扑首连补发直到 ready，使后续“无事件”窗口判定干净。
+	waitForType(t, events, "ready", 3*time.Second)
 
 	// 改 area2 组配置（s1 在 area1，不受影响）：取 area2 配置 id 并发布。
 	code, list := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/configs?namespace=prod&group=area2", nil)
