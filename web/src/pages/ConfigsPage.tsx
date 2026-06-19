@@ -107,6 +107,8 @@ export default function ConfigsPage() {
     onSuccess: (r) => {
       msg.showSuccess(`已保存版本 ${r.version}`)
       qc.invalidateQueries({ queryKey: ['configs'] })
+      // 同时失效当前配置的历史修订，保存后历史面板即时刷新出新版本
+      qc.invalidateQueries({ queryKey: ['config-revisions'] })
     },
     onError: (e: Error) => msg.showError(e.message),
   })
