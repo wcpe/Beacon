@@ -56,6 +56,15 @@ alert:
     # 单次 webhook 请求超时（毫秒）
     timeout-ms: 3000
 
+# 负载指标看板：按间隔对在线实例采样落库形成历史趋势，并按保留期清理过期样本（FR-32，见 docs/adr/0023）
+metric:
+  # 是否启用采样器；false 时不采样、不清理（实时聚合端点 /metrics/summary 仍可用）
+  enabled: true
+  # 采样间隔（秒）：每隔多少秒对在线实例采一次样落库。越短样本越密、表增长越快，建议 15~30
+  sample-interval-sec: 30
+  # 保留期（小时）：早于 now 减本值的样本被滚动删除，控制表体量。默认 168（即 7 天）
+  retention-hours: 168
+
 longpoll:
   # 服务端长轮询挂起上限（毫秒）；实际取 min(客户端 timeoutMs, 此值)
   max-hold-ms: 30000

@@ -83,6 +83,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Instance:  handler.NewInstanceHandler(instSvc),
 		Zone:      handler.NewZoneHandler(zoneSvc),
 		Audit:     handler.NewAuditHandler(service.NewAuditService(auditRepo)),
+		Metric:    handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:      handler.NewAuthHandler(authn),
 		Metrics:   metricsSet.Handler(),
 		Web:       http.HandlerFunc(http.NotFound),

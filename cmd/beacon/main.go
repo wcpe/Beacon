@@ -151,6 +151,15 @@ func run() error {
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
 
+	// 负载指标看板（FR-32，ADR-0023）：metric_sample 仓库 + 服务（聚合实时读注册表、趋势查库降采样）
+	metricRepo := repository.NewMetricSampleRepository(db)
+	metricService := service.NewMetricService(registry, metricRepo)
+	metricHandler := handler.NewMetricHandler(metricService)
+	// 采样器：按间隔对在线实例采样落库 + 按保留期清理（enabled=false 时不启）
+	metricSampler := service.NewMetricSampler(registry, metricRepo,
+		time.Duration(cfg.Metric.SampleIntervalSec)*time.Second,
+		time.Duration(cfg.Metric.RetentionHours)*time.Hour)
+
 	// 流量调度（FR-10）：drain 标记落 DB + 落位建议（query-only），控制面只给决策不执行玩家连接（ADR-0017）
 	drainRepo := repository.NewServerDrainRepository(db)
 	schedulingService := service.NewSchedulingService(db, drainRepo, auditRepo, registry)
@@ -204,7 +213,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Auth: authHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, Auth: authHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 
 	srv := &http.Server{
@@ -218,6 +227,13 @@ func run() error {
 
 	// 启动后台健康扫描（随关停信号取消退出）
 	go healthScanner.Run(ctx)
+
+	// 启动后台指标采样器（FR-32）：按间隔采样落库 + 保留期清理；配置关闭则不启
+	if cfg.Metric.Enabled {
+		go metricSampler.Run(ctx)
+	} else {
+		slog.Info("指标采样已禁用（metric.enabled=false），仅实时聚合端点可用")
+	}
 
 	errCh := make(chan error, 1)
 	go func() {

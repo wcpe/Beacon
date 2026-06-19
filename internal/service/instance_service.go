@@ -113,9 +113,9 @@ func (s *InstanceService) Heartbeat(ns, serverID string) (int, error) {
 	return int(s.ttl.Seconds()), nil
 }
 
-// Report 写入 agent 上报指标；未注册返回 NOT_REGISTERED。
-func (s *InstanceService) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64) error {
-	if !s.registry.Report(ns, serverID, appliedMD5, playerCount, tps) {
+// Report 写入 agent 上报指标（人数 / TPS / 内存 / CPU，仅展示）；未注册返回 NOT_REGISTERED。
+func (s *InstanceService) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64, memUsed, memMax int64, cpuLoad float64) error {
+	if !s.registry.Report(ns, serverID, appliedMD5, playerCount, tps, memUsed, memMax, cpuLoad) {
 		return apperr.ErrNotRegistered
 	}
 	return nil

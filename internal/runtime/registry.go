@@ -39,6 +39,9 @@ type Instance struct {
 	AppliedMD5    string  // agent 已 apply 的有效配置 md5（仅展示）
 	PlayerCount   int     // 仅展示，不参与决策
 	TPS           float64 // 仅展示，不参与决策
+	MemUsed       int64   // JVM 已用堆字节；与 PlayerCount/TPS 同列健康事实，仅展示不参与决策（FR-32）
+	MemMax        int64   // JVM 最大堆字节；仅展示不参与决策（FR-32）
+	CpuLoad       float64 // 进程 CPU 负载[0,1]，-1.0=不可用（近似值）；仅展示不参与决策（FR-32）
 	RegisteredAt  time.Time
 }
 
@@ -119,8 +122,9 @@ func (r *Registry) Heartbeat(ns, serverID string, now time.Time) bool {
 	return true
 }
 
-// Report 写入 agent 上报的运行指标（仅展示）；未注册返回 false。
-func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64) bool {
+// Report 写入 agent 上报的运行指标（人数 / TPS / 内存 / CPU，均仅展示不参与决策）；未注册返回 false。
+// cpuLoad 取值 [0,1]，-1.0 表示不可用（由展示层判定），控制面不做归一化。
+func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64, memUsed, memMax int64, cpuLoad float64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst := r.lookup(ns, serverID)
@@ -130,6 +134,9 @@ func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps 
 	inst.AppliedMD5 = appliedMD5
 	inst.PlayerCount = playerCount
 	inst.TPS = tps
+	inst.MemUsed = memUsed
+	inst.MemMax = memMax
+	inst.CpuLoad = cpuLoad
 	return true
 }
 

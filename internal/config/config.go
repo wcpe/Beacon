@@ -15,6 +15,8 @@ type Config struct {
 	Health HealthConfig `yaml:"health"`
 	// 健康告警相关参数（站内信 + webhook，FR-28）
 	Alert AlertConfig `yaml:"alert"`
+	// 负载指标采样相关参数（采样落库 + 保留期清理，FR-32）
+	Metric MetricConfig `yaml:"metric"`
 	// 长轮询相关参数
 	Longpoll LongpollConfig `yaml:"longpoll"`
 	// 日志配置
@@ -70,6 +72,17 @@ type WebhookConfig struct {
 	TimeoutMs int `yaml:"timeout-ms"`
 }
 
+// MetricConfig 是负载指标采样配置（FR-32，见 ADR-0023）。
+// 控制面按间隔对在线实例采样落 metric_sample 形成历史趋势，并按保留期滚动清理过期样本。
+type MetricConfig struct {
+	// 是否启用采样器；false 时不采样、不清理（仅实时聚合端点仍可用）
+	Enabled bool `yaml:"enabled"`
+	// 采样间隔（秒）：每隔多少秒对在线实例采一次样落库；启用时须为正
+	SampleIntervalSec int `yaml:"sample-interval-sec"`
+	// 保留期（小时）：早于 now-本值的样本被滚动清理，控制表体量；启用时须为正
+	RetentionHours int `yaml:"retention-hours"`
+}
+
 // DatabaseConfig 是数据库连接与连接池配置。
 type DatabaseConfig struct {
 	// 数据库驱动：mysql 或 sqlite；默认 sqlite（本地开发零依赖）
@@ -117,6 +130,11 @@ func Default() Config {
 		Alert: AlertConfig{
 			InboxCapacity: 200,
 			Webhook:       WebhookConfig{URL: "", TimeoutMs: 3000},
+		},
+		Metric: MetricConfig{
+			Enabled:           true,
+			SampleIntervalSec: 30,  // 默认 30s 采样，约 50 服规模下单表 + 保留期清理足够
+			RetentionHours:    168, // 默认保留 7 天（168h）
 		},
 		Longpoll: LongpollConfig{MaxHoldMs: 30000},
 		Log:      LogConfig{Level: "INFO"},

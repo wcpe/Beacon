@@ -116,3 +116,77 @@ func TestValidateRejectsBadHealthThresholdOrder(t *testing.T) {
 		t.Fatal("degraded-after-sec 不小于 ttl-sec 应导致校验失败，却通过了")
 	}
 }
+
+// TestDefaultMetricConfig 验证指标采样默认值：开启、间隔 30s、保留 168h（7d）。
+func TestDefaultMetricConfig(t *testing.T) {
+	setAuthEnv(t)
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("默认配置应通过校验，却报错: %v", err)
+	}
+	m := cfg.Metric
+	if !m.Enabled {
+		t.Fatalf("指标采样默认应开启，实际 %v", m.Enabled)
+	}
+	if m.SampleIntervalSec != 30 {
+		t.Fatalf("默认采样间隔应为 30s，实际 %d", m.SampleIntervalSec)
+	}
+	if m.RetentionHours != 168 {
+		t.Fatalf("默认保留期应为 168h（7d），实际 %d", m.RetentionHours)
+	}
+}
+
+// TestMetricEnvOverride 验证指标采样配置走环境变量覆盖。
+func TestMetricEnvOverride(t *testing.T) {
+	setAuthEnv(t)
+	t.Setenv("BEACON_METRIC_ENABLED", "false")
+	t.Setenv("BEACON_METRIC_SAMPLE_INTERVAL_SEC", "15")
+	t.Setenv("BEACON_METRIC_RETENTION_HOURS", "24")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("加载配置应成功，却报错: %v", err)
+	}
+	if cfg.Metric.Enabled {
+		t.Fatalf("环境变量未关闭采样，实际 enabled=%v", cfg.Metric.Enabled)
+	}
+	if cfg.Metric.SampleIntervalSec != 15 {
+		t.Fatalf("环境变量未覆盖采样间隔，实际 %d", cfg.Metric.SampleIntervalSec)
+	}
+	if cfg.Metric.RetentionHours != 24 {
+		t.Fatalf("环境变量未覆盖保留期，实际 %d", cfg.Metric.RetentionHours)
+	}
+}
+
+// TestValidateRejectsBadMetricConfig 启用采样时，非正的采样间隔或保留期应被拒。
+func TestValidateRejectsBadMetricConfig(t *testing.T) {
+	setAuthEnv(t)
+	base := Default()
+	base.Auth.Password = "p"
+	base.Auth.Secret = "s"
+
+	cfg := base
+	cfg.Metric.SampleIntervalSec = 0
+	if err := cfg.validate(); err == nil {
+		t.Fatal("启用采样时间隔<=0 应导致校验失败，却通过了")
+	}
+
+	cfg = base
+	cfg.Metric.RetentionHours = 0
+	if err := cfg.validate(); err == nil {
+		t.Fatal("启用采样时保留期<=0 应导致校验失败，却通过了")
+	}
+}
+
+// TestMetricDisabledSkipsValidation 关闭采样时，非正间隔/保留期不触发校验失败（不启用不约束）。
+func TestMetricDisabledSkipsValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Auth.Password = "p"
+	cfg.Auth.Secret = "s"
+	cfg.Metric.Enabled = false
+	cfg.Metric.SampleIntervalSec = 0
+	cfg.Metric.RetentionHours = 0
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("关闭采样时不应校验采样参数，却报错: %v", err)
+	}
+}

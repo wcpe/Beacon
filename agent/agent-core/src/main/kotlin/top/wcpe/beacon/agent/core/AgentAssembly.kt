@@ -15,6 +15,8 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
+import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
+import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
 import top.wcpe.beacon.agent.core.override.CommandWhitelist
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -59,6 +61,9 @@ object AgentAssembly {
         // 流式传输（SSE 推送，FR-24）：壳层注入 OkHttpStreamTransport 即启用单条流取代三条长轮询；
         // 为 null 时退回长轮询（迁移期兼容，见 ADR-0015 决策 8）。
         streamTransport: StreamTransport? = null,
+        // 运行指标供给（FR-32）：壳层注入平台采集实现（人数 / TPS + JVM 内存 / CPU）以上报真值；
+        // 默认零指标（未注入时向后兼容旧行为）。
+        metricsProvider: RuntimeMetricsProvider = { RuntimeMetrics.ZERO },
     ): AssembledAgent {
         val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
@@ -133,6 +138,8 @@ object AgentAssembly {
             overrideApplier = overrideApplier,
             // 拓扑变更事件 → 扇出到 watch 监听器（业务侧据此重查发现端点）。
             topologyListener = { topologyWatchHub.fireTopologyChanged() },
+            // 运行指标供给（FR-32）：上报时取当前一帧负载指标。
+            metricsProvider = metricsProvider,
         )
 
         // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；

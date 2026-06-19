@@ -171,14 +171,32 @@ class BeaconApiClient(
         }
     }
 
-    /** 上报状态：POST /beacon/v1/agent/report。playerCount/tps 仅展示。 */
-    fun report(identity: AgentIdentity, appliedMd5: String, playerCount: Int, tps: Double): Boolean {
+    /**
+     * 上报状态：POST /beacon/v1/agent/report。
+     *
+     * playerCount / tps / memUsed / memMax / cpuLoad 均为「负载数字（健康事实）」，仅供控制面看板展示、
+     * 不参与调度决策（FR-32 / ADR-0023）。新增 memUsed/memMax/cpuLoad 三键为附加字段，
+     * 旧控制面忽略即可，向后兼容。cpuLoad 取不到时上报 -1.0（不可用），由控制面判定。
+     */
+    fun report(
+        identity: AgentIdentity,
+        appliedMd5: String,
+        playerCount: Int,
+        tps: Double,
+        memUsed: Long,
+        memMax: Long,
+        cpuLoad: Double,
+    ): Boolean {
         val body = mapOf(
             "namespace" to identity.namespace,
             "serverId" to identity.serverId,
             "appliedMd5" to appliedMd5,
             "playerCount" to playerCount,
             "tps" to tps,
+            // 新增：JVM 已用 / 最大堆字节与进程 CPU 负载（键名固定供控制面对齐）。
+            "memUsed" to memUsed,
+            "memMax" to memMax,
+            "cpuLoad" to cpuLoad,
         )
         val resp = exec(
             HttpRequest(

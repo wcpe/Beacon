@@ -77,6 +77,7 @@
 | FR-29 | 发现接口过滤 + watch 订阅：discovery / agent-api SDK 支持按 role/zone/tag 过滤查询，并支持订阅拓扑变更（实例上线/下线/改派）即时通知（增强 FR-4/FR-16，复用 FR-24 的 SSE server→agent 推送流） | P2 | 已交付@v0.4.0 |
 | FR-30 | 可观测性：导出 Prometheus 运行指标（注册/健康/配置/推送流等）+ 审计查询 API（按操作者/对象/时间检索）（增强 FR-7） | P2 | 已交付@v0.4.0 |
 | FR-31 | agent-api 玩家位置名册只读查询：在 Discovery 门面暴露 roster()（全量 namespace 名册 玩家名→serverId）与 rosterInZone(group, zone)（zone 过滤后名册），把已躺在 agent 侧 Redis（FR-26 名册 beacon:player-loc）的「谁在哪个服」**事实**只读暴露给③层业务插件（如跨服看人），供总览/人数/Tab 补全；zone 归属权威来自控制面 DB（zone 集 ∩ 名册），名册不臆造 zone；Redis 不可用/名册空优雅降级返空；控制面零改动、不连 Redis、不持有名册。仅暴露**名册事实**，「看人」业务（聚合/分组/展示/补全/传送）仍属业务插件（扩展 [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md) 决策 5，见 [ADR-0022](adr/0022-agent-roster-read-api.md) 与 [docs/specs/agent-roster-read-api.md](specs/agent-roster-read-api.md)） | P3 | 开发中 |
+| FR-32 | 控制面可观测看板：补齐 agent 内存（JVM heap）/ CPU（OperatingSystemMXBean 近似值）采集并让人数/TPS 上报真值（现壳层恒报 0），控制面 Instance 加内存/CPU 字段（仅展示不参与决策），时序样本落 MySQL `metric_sample` 表（按间隔采在线实例、带保留期滚动清理），新增聚合（总玩家数/每服人数/平均 TPS·内存·CPU）与历史趋势端点，管理台新增 Dashboard 页与趋势图。**只展示负载指标（健康事实），不展示玩家名单/身份（看人归③层业务插件 Lodestone）**；与 [ADR-0020](adr/0020-prometheus-metrics-observability.md) 的 `/metrics`（外部抓取）并存不冲突（本看板为 Beacon 内自带可视化）。增强 FR-5/FR-7，见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) 与 [docs/specs/control-plane-observability-dashboard.md](specs/control-plane-observability-dashboard.md) | P2 | 开发中 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 

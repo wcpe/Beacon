@@ -95,13 +95,36 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "ttlSec": ttlSec, "configDirty": false})
 }
 
-// reportRequest 是状态上报请求体（playerCount/tps 仅展示）。
+// cpuLoadUnavailable 是 cpuLoad 缺失时的缺省哨兵（不可用，与 agent 约定一致，FR-32 / ADR-0023）。
+const cpuLoadUnavailable = -1.0
+
+// reportRequest 是状态上报请求体（人数 / TPS / 内存 / CPU 均仅展示，不参与决策，FR-32）。
+// CpuLoad 用指针区分「旧 agent 缺键」与「显式上报 0」：缺键时由 applyDefaults 缺省为 -1.0（不可用）。
 type reportRequest struct {
-	Namespace   string  `json:"namespace"`
-	ServerID    string  `json:"serverId"`
-	AppliedMD5  string  `json:"appliedMd5"`
-	PlayerCount int     `json:"playerCount"`
-	TPS         float64 `json:"tps"`
+	Namespace   string   `json:"namespace"`
+	ServerID    string   `json:"serverId"`
+	AppliedMD5  string   `json:"appliedMd5"`
+	PlayerCount int      `json:"playerCount"`
+	TPS         float64  `json:"tps"`
+	MemUsed     int64    `json:"memUsed"` // 旧 agent 缺键 → 解析为 0（向后兼容）
+	MemMax      int64    `json:"memMax"`  // 旧 agent 缺键 → 解析为 0（向后兼容）
+	CpuLoad     *float64 `json:"cpuLoad"` // 旧 agent 缺键 → applyDefaults 后缺省 -1.0（不可用）
+}
+
+// applyDefaults 为旧 agent 缺失的 cpuLoad 填入不可用哨兵 -1.0（内存键缺失天然为 0，无需处理）。
+func (req *reportRequest) applyDefaults() {
+	if req.CpuLoad == nil {
+		v := cpuLoadUnavailable
+		req.CpuLoad = &v
+	}
+}
+
+// CPULoad 返回归一化后的 CPU 负载（applyDefaults 后始终非空）。
+func (req *reportRequest) CPULoad() float64 {
+	if req.CpuLoad == nil {
+		return cpuLoadUnavailable
+	}
+	return *req.CpuLoad
 }
 
 // Report 处理 POST /beacon/v1/agent/report。
@@ -111,7 +134,8 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.Report(req.Namespace, req.ServerID, req.AppliedMD5, req.PlayerCount, req.TPS); err != nil {
+	req.applyDefaults()
+	if err := h.svc.Report(req.Namespace, req.ServerID, req.AppliedMD5, req.PlayerCount, req.TPS, req.MemUsed, req.MemMax, req.CPULoad()); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

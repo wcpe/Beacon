@@ -44,7 +44,7 @@ internal/
   model/       GORM 实体 + enums
   store/       db.go(GORM 连接 + AutoMigrate) logger.go
   pkg/log/     中文分级日志
-web/           React(Vite+TS) + shadcn-ui（Tailwind v4，默认 neutral 主题，组件源码入库 src/components/ui/）+ Monaco 编辑器（`@monaco-editor/react`，配置中心页面使用 VS Code 风格布局：左侧资源管理器树 + 右侧 Monaco 编辑器 + 底部历史修订面板），dist/ 被内嵌（设计系统见 ADR-0012；配置中心为单页面固定布局 `h-screen overflow-hidden`，详情用独立路由页/Sheet/Dialog，不内联展开）
+web/           React(Vite+TS) + shadcn-ui（Tailwind v4，默认 neutral 主题，组件源码入库 src/components/ui/）+ Monaco 编辑器（`@monaco-editor/react`，配置中心页面使用 VS Code 风格布局：左侧资源管理器树 + 右侧 Monaco 编辑器 + 底部历史修订面板），dist/ 被内嵌（设计系统见 ADR-0012；配置中心为单页面固定布局 `h-screen overflow-hidden`，详情用独立路由页/Sheet/Dialog，不内联展开）；新增 Dashboard 页（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）：总览卡片（总玩家数 / 平均 TPS·内存·CPU）+ 每服明细 + 趋势图（近 1h / 6h / 24h），复用既有 React / shadcn 栈
 agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
                  agent-api（纯 Java8 只读契约，业务插件 compileOnly）/ agent-core（平台无关核心，零具体库依赖：
                  transport·codec 接口 + BeaconApiClient + 生命周期 + 快照 + applier + 退避）/
@@ -71,6 +71,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `zone_assignment` | serverId → (group, zone) 权威指派 | `(namespace, server_id)` 唯一，换区改这一行 |
 | `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result` |
 | `instance` | 注册元数据镜像 | **MVP 不建**，运行态以内存为准，仅注册写一条 audit |
+| `metric_sample` | 指标时序样本（FR-32）：按间隔采在线实例的负载快照 | 时序表，与配置/版本/审计等事实表并列、真源属 DB；带保留期滚动清理，见 §7.1 与 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) |
 
 `config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`；`sensitive`（为真则 `content` 加密落库，at-rest，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）；`gray_version`（灰度发布乐观锁版本，发布前以其做 CAS 串行化同一 item 的并发灰度发布、从源头消除「先软删后建」在 `uk_gray_item` 上的死锁，FR-9，内部令牌不外泄）。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。`content_md5` 始终基于**明文**（敏感项解密后再算），`config_revision` 同步带 `sensitive` 并对敏感快照同样加密。
 
@@ -78,12 +79,14 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 `config_gray` 关键字段：`config_item_id`（关联所属配置项，进唯一键 + 软删哨兵 → 一个 item 至多一个未软删灰度）；`namespace_code`（供按 ns 批量取活跃灰度，避免 N+1）；`content` + `content_md5`（灰度内容，敏感项与所属 item 镜像加密，md5 按明文算）；`cohort`（目标 serverId 名单，**JSON 数组文本落 `TEXT`**，可移植可读）；`format`/`sensitive`/`operator`/`comment`。灰度作用在"版本选择"层而非新增覆盖层（见 §5、[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）。
 
+`metric_sample` 关键字段：`id`、`namespace`、`server_id`、`sampled_at`（采样时刻 UTC）、`player_count`、`tps`、`mem_used`、`mem_max`、`cpu_load`。**全部基础类型**（计数 / 浮点 / 时间），枚举如有落 `VARCHAR` + 应用层校验，**禁 JSON/ENUM 列与方言专有 SQL**、经 GORM 抽象（守 DB 可移植，可切 Postgres）。它是**时序样本表**（与 §7.1 采样器配套），与配置 / 版本 / 审计等事实表并列、真源属 DB；趋势端点（§4）按时间窗 + 聚合粒度查询本表，保留期到期样本被滚动清理（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）。
+
 **软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。`file_object` 同款哨兵软删。
 
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
 - **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`stream`（FR-24 单条 SSE 推送流，合并三通道变更通知 + 连接即对账）、`config/effective`/`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递；后三组退化为 SSE 通知后的"按 md5 取内容"端点）、`report`、`discovery`。
-- **admin 侧 `/admin/v1/*`**：登录（`auth/login`）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace。
+- **admin 侧 `/admin/v1/*`**：登录（`auth/login`）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace、指标看板（`metrics/summary` 聚合快照 + `metrics/trend` 历史趋势，FR-32）。
 - **运维侧 `/metrics`**：Prometheus 文本格式运行指标（注册数/健康分布/配置发布与推送累计），与 agent 端点同属内网信任面、不挂管理台鉴权（FR-30，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)）。
 - 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
@@ -152,6 +155,12 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 - **发现**：按标签（zone/group/role/status + 自定义元数据 `tag.<key>`，多 tag 取交集，FR-29）过滤实例；agent 侧 `discovery` 返回**可用集合**（`online`+`degraded`），管理台 `/admin/v1/instances` 可按 status 任意过滤。agent 侧走 `/beacon/v1/agent/discovery`（归 agent 前缀 + token，P0 修正）。要实时感知拓扑变化订阅 §6.1 SSE 流的 `topology-changed` 事件（SDK `discovery().watch(listener)`），不必轮询。
 - **Proxy 目录注入（服务发现延伸出口）**：BeaconAgentProxy 注册成功后周期调用 `discovery` 同步同 namespace 下 `role=bukkit` 且在线的实例，以 `serverId` 作为 Bungee `ServerInfo` 名称、以 agent 上报 `address` 作为连接地址，自动创建/更新**仅由 Beacon 管理**的服务器条目；若同名条目已由手工 Bungee 配置存在，则 WARN 并跳过、不覆盖手工配置。控制面只提供发现事实，不操作玩家连接，不引入持久化任务队列；控制面失联时按本地已注入目录继续（fail-static）。
 - **流量调度（FR-10，落位均衡 / drain，[ADR-0017](adr/0017-traffic-scheduling-decision-vs-execution.md)）**：控制面**只给调度决策（query-only），不执行玩家连接**。`SchedulingService` 提供两件事：① **落位建议**——给定 `(namespace, group?, zone)`，读内存注册表（在线实例）+ DB drain 集合，经无副作用纯函数 `RankPlacement` 仅纳入 `online` 且未 drain 的实例、按 `weight` 降序 → `capacity` 降序 → `serverId` 升序确定性排序，返回候选事实（serverId/address/weight/capacity）供数据面据此落位；**不读** agent 上报的 `playerCount`/`tps`（二者仅展示、不参与决策），活跃负载精排归数据面。② **drain（排空 / 维护标记）**——运维决策，须跨控制面重启存活、要审计，故落 DB `server_drain` 表（与 `zone_assignment` 同源类别、同软删模式），事务内写表 + 审计原子完成，读落位时叠加剔除候选。注册/健康仍以进程内存为真源，drain 不改变有效配置 / 文件树归属、不触发长轮询唤醒。**canary 引流不做**（范围外，见 ADR-0017）。
+- **指标聚合（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）**：`runtime.Instance` 在 `playerCount`/`tps` 之外新增**内存 / CPU** 字段（agent 上报，**与 playerCount/tps 同列健康事实、仅展示不参与决策**，report handler 解析缺省按 0 处理向后兼容旧 agent）。聚合端点（§4）**从内存注册表实时计算**当前快照统计——全集群总玩家数、每服人数、平均 / 分服 TPS·内存·CPU，与发现 / 健康同走读内存真源、不落库、写路径零侵入。
+
+### 7.1 指标采样器（FR-32，时序落 MySQL）
+
+为支撑历史趋势（注册/健康只有"此刻"，见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md)），控制面起一个**指标采样器**：按固定间隔（可配，如 15~30s）取**在线**实例的负载快照（playerCount/tps/内存/CPU）批量写 `metric_sample` 表，**DB IO 在运行态三锁之外**（守锁外 IO 约定）；并按**保留期**（可配，如 24h / 7d）滚动清理过期样本，使表体量受上界约束、不无界增长。采样为派生健康事实落库，**不引 TSDB / Redis**（本规模 MySQL 单表 + 保留期清理足够，守简单优先与 DB 可移植）。
+- **与 `/metrics` 的关系（FR-30 vs FR-32）**：`/metrics`（[ADR-0020](adr/0020-prometheus-metrics-observability.md)）供**外部**监控系统（Prometheus/Grafana）pull 抓取、不持久化；本看板的采样 + 趋势是 **Beacon 内自带**的可视化与历史（采样持久化到 MySQL、管理台直接看图）。二者面向不同消费者，**并存不冲突、互不取代**。
 
 ## 8. agent（数据面接入）
 

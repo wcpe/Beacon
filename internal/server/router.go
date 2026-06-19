@@ -22,6 +22,7 @@ type Handlers struct {
 	Scheduling  *handler.SchedulingHandler
 	Audit       *handler.AuditHandler
 	Alert       *handler.AlertHandler
+	Metric      *handler.MetricHandler
 	Auth        *handler.AuthHandler
 	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web         http.Handler
@@ -125,6 +126,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 
 		// 审计
 		r.Get("/audits", h.Audit.List)
+
+		// 负载指标看板（FR-32，见 ADR-0023）：当前快照聚合 + 历史趋势；仅负载数字、不含名单
+		if h.Metric != nil {
+			r.Get("/metrics/summary", h.Metric.Summary)
+			r.Get("/metrics/trend", h.Metric.Trend)
+		}
 	})
 
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）

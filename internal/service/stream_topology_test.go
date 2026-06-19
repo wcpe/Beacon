@@ -85,7 +85,7 @@ func TestStreamRunNoPushWhenTopologyUnchanged(t *testing.T) {
 	sink.waitFor(t, 2*time.Second, func(e sse.Event) bool { return e.Type == sse.EventReady })
 
 	// 仅改运行指标（不入拓扑摘要）后唤醒拓扑 → 重算摘要不变 → 不应再推 topology-changed。
-	reg.Report("prod", "lobby-1", "md5x", 42, 19.9)
+	reg.Report("prod", "lobby-1", "md5x", 42, 19.9, 128<<20, 512<<20, 0.35)
 	notifier.NotifyTopologyChange("prod")
 	// 给直播循环重算的时间窗口；窗口内不应出现 topology-changed。
 	if gotUnexpected(sink, 300*time.Millisecond, func(e sse.Event) bool { return e.Type == sse.EventTopologyChanged }) {

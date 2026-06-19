@@ -13,6 +13,8 @@ import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
+import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
@@ -44,6 +46,9 @@ class AgentLifecycle(
     private val overrideApplier: OverrideSyncApplier? = null,
     // 拓扑变更回调（FR-29）：收到 topology-changed 事件时触发，业务侧据此重查发现端点；为 null 不回调。
     private val topologyListener: (() -> Unit)? = null,
+    // 运行指标供给（FR-32）：上报时取当前一帧负载指标（人数 / TPS / 内存 / CPU）；
+    // 默认零指标（向后兼容旧行为）；壳层注入平台采集实现以上报真值。
+    private val metricsProvider: RuntimeMetricsProvider = { RuntimeMetrics.ZERO },
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -412,10 +417,30 @@ class AgentLifecycle(
     }
 
     private fun reportApplied(appliedMd5: String) {
-        // 上报失败仅告警，不影响主流程（playerCount/tps 由壳层若有则注入，这里 MVP 报 0）。
-        val ok = apiClient.report(identity, appliedMd5, playerCount = 0, tps = 0.0)
+        // 上报失败仅告警，不影响主流程。指标取当前一帧（人数 / TPS / 内存 / CPU），由壳层注入的供给采集；
+        // 未注入时为零指标（向后兼容）。本调用在 async 上报线程内，指标采集为廉价 MXBean / Runtime 读取，不阻塞主线程。
+        val metrics = currentMetrics()
+        val ok = apiClient.report(
+            identity,
+            appliedMd5,
+            playerCount = metrics.playerCount,
+            tps = metrics.tps,
+            memUsed = metrics.memUsed,
+            memMax = metrics.memMax,
+            cpuLoad = metrics.cpuLoad,
+        )
         if (!ok) {
             adapter.warn("上报 applied 状态失败（不影响有效配置生效）")
+        }
+    }
+
+    /** 取当前一帧运行指标；供给抛异常时回退零指标，绝不让上报因采集失败而中断。 */
+    private fun currentMetrics(): RuntimeMetrics {
+        return try {
+            metricsProvider()
+        } catch (e: Exception) {
+            adapter.warn("采集运行指标失败，本次按零指标上报：${e.message}")
+            RuntimeMetrics.ZERO
         }
     }
 

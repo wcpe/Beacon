@@ -120,6 +120,8 @@ object BeaconAgentBukkit : Plugin() {
             effectiveConfigView = view,
             // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
             streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+            // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
+            metricsProvider = { BukkitMetricsCollector.sample() },
         )
         lifecycle = assembled.lifecycle
 
