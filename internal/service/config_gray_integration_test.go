@@ -4,6 +4,7 @@ package service_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"gorm.io/gorm"
@@ -218,6 +219,57 @@ func TestGrayWakeOnlyCohort(t *testing.T) {
 	}
 	if notified(w2) {
 		t.Fatalf("名单外 s2 的 waiter 不应被唤醒")
+	}
+}
+
+// TestGrayPublishConcurrentLastWins：并发对同一 item 发布灰度（重发即覆盖语义）。
+// 灰度发布以 config_item.gray_version 乐观锁 CAS 串行化「先软删后建」段，从源头消除
+// uk_gray_item 上的死锁——各路重读重试后都应成功、无错误透出，且恰留一条活跃灰度
+//（uk_gray_item 保证无重复无残留）。
+func TestGrayPublishConcurrentLastWins(t *testing.T) {
+	cfg, gray, _, _, _ := grayStack(t)
+	item := mkGlobalItem(t, cfg, "app.yml", "v: stable\n")
+
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			_, errs[idx] = gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "并发灰度", "")
+		}(i)
+	}
+	wg.Wait()
+
+	// 重发即覆盖：瞬时冲突由重试吸收，各路并发发布最终都成功（无错误透出）
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("并发发布第 %d 路应成功（重试后后写覆盖），实际 %v", i, err)
+		}
+	}
+	// 并发结束后恰有一条该 item 的活跃灰度（后写覆盖，uk_gray_item 保证无重复无残留）
+	active, err := gray.List(item.NamespaceCode)
+	if err != nil {
+		t.Fatalf("查询活跃灰度失败: %v", err)
+	}
+	count := 0
+	for _, g := range active {
+		if g.ConfigItemID == item.ID {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("重发即覆盖后应恰有一条活跃灰度，实际 %d", count)
+	}
+	// 每路成功发布恰做一次 CAS +1（失败 CAS 不自增）：并发后 gray_version 应等于成功次数 n，
+	// 证明乐观锁真把并发串行化、无丢失更新。
+	final, err := cfg.Get(item.ID)
+	if err != nil {
+		t.Fatalf("查询 item 失败: %v", err)
+	}
+	if final.GrayVersion != int64(n) {
+		t.Fatalf("gray_version 应等于成功发布次数 %d（每路恰一次 CAS+1），实际 %d", n, final.GrayVersion)
 	}
 }
 

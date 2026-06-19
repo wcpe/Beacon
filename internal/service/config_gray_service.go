@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -15,6 +16,13 @@ import (
 	"beacon/internal/model"
 	"beacon/internal/repository"
 )
+
+// errGrayVersionConflict 是灰度发布乐观锁 CAS 未命中的内部哨兵：触发事务回滚 + 重读重试，不外泄。
+var errGrayVersionConflict = errors.New("灰度发布乐观锁版本冲突，需重试")
+
+// maxGrayPublishRetries 是灰度发布乐观锁 CAS 的最大重试次数。
+// 并发 N 路时每轮至少一路 CAS 命中并提交，故 N-1 次内必成功；取 16 足够覆盖现实管理员竞态。
+const maxGrayPublishRetries = 16
 
 // encodeCohort 把 serverId 名单规整（去空白 / 去空串 / 去重 / 字典序）后序列化为 JSON 文本。
 // 名单为空（全空白 / nil）视为非法（无意义灰度），返回 ErrEmptyCohort。
@@ -112,6 +120,10 @@ func (s *ConfigGrayService) List(ns string) ([]model.ConfigGray, error) {
 // Publish 对某 config_item 发布一条灰度（指定灰度内容 + cohort 名单）。
 // 内容过既有发布前校验（格式 / 大小 / 可解析 / FR-27 schema）；sensitive 与所属 item 镜像。
 // 同一 item 已有活跃灰度则先软删旧的再建新的（保持至多一个活跃灰度的唯一约束）。
+//
+// 重发即覆盖语义：并发对同一 item 发布灰度时，以 config_item.gray_version 为基准做乐观锁 CAS——
+// 抢到的那路才进「先软删后建」段，未抢到的重读版本重试。CAS 在 item 行上串行化（单行锁、无环），
+// 从源头消除「先软删后建」在 uk_gray_item 上的死锁；各路重试后最终都成功、恰留一条活跃灰度。
 func (s *ConfigGrayService) Publish(itemID uint, content string, cohort []string, operator, comment, clientIP string) (*model.ConfigGray, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
@@ -128,29 +140,61 @@ func (s *ConfigGrayService) Publish(itemID uint, content string, cohort []string
 		return nil, err
 	}
 	md5 := merge.MD5Hex(content)
-	now := time.Now().UTC()
-	gray := &model.ConfigGray{
-		ConfigItemID: item.ID, NamespaceCode: item.NamespaceCode, Format: item.Format,
-		Content: content, ContentMD5: md5, Cohort: encodedCohort, Sensitive: item.Sensitive,
-		Comment: comment, Operator: operator,
-	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		// 先软删同 item 旧活跃灰度，保持唯一键不冲突（重发即覆盖）
-		if _, e := s.grayRepo.WithTx(tx).SoftDelete(item.ID, now); e != nil {
-			return e
+
+	var gray *model.ConfigGray
+	for attempt := 0; attempt <= maxGrayPublishRetries; attempt++ {
+		// 每次尝试重读最新 gray_version 作为 CAS 基准
+		cur, e := s.configRepo.FindByID(item.ID)
+		if e != nil {
+			return nil, e
 		}
-		if e := s.grayRepo.WithTx(tx).Create(gray); e != nil {
-			return e
+		if cur == nil {
+			return nil, apperr.ErrConfigNotFound
 		}
-		return s.writeGrayAudit(tx, item, operator, model.ActionConfigGrayPublish,
-			fmt.Sprintf(`{"md5":"%s","cohortSize":%d}`, md5, len(decodeMembers(encodedCohort))), clientIP)
-	})
-	if err != nil {
-		return nil, err
+		expected := cur.GrayVersion
+
+		e = s.db.Transaction(func(tx *gorm.DB) error {
+			ok, te := s.configRepo.WithTx(tx).BumpGrayVersion(item.ID, expected)
+			if te != nil {
+				return te
+			}
+			if !ok {
+				// 版本被并发灰度发布改动，回滚后重读重试
+				return errGrayVersionConflict
+			}
+			// CAS 已串行化本段：先软删同 item 旧活跃灰度，再建新的（重发即覆盖）
+			now := time.Now().UTC()
+			g := &model.ConfigGray{
+				ConfigItemID: item.ID, NamespaceCode: item.NamespaceCode, Format: item.Format,
+				Content: content, ContentMD5: md5, Cohort: encodedCohort, Sensitive: item.Sensitive,
+				Comment: comment, Operator: operator,
+			}
+			if _, te := s.grayRepo.WithTx(tx).SoftDelete(item.ID, now); te != nil {
+				return te
+			}
+			if te := s.grayRepo.WithTx(tx).Create(g); te != nil {
+				return te
+			}
+			if te := s.writeGrayAudit(tx, item, operator, model.ActionConfigGrayPublish,
+				fmt.Sprintf(`{"md5":"%s","cohortSize":%d}`, md5, len(decodeMembers(encodedCohort))), clientIP); te != nil {
+				return te
+			}
+			gray = g
+			return nil
+		})
+		if e == nil {
+			slog.Info("发布配置灰度", "itemId", item.ID, "dataId", item.DataID, "cohortSize", len(decodeMembers(encodedCohort)))
+			s.notifyServers(item.NamespaceCode, encodedCohort)
+			return gray, nil
+		}
+		if !errors.Is(e, errGrayVersionConflict) {
+			return nil, e
+		}
+		// CAS 未命中：item 行锁已让重试天然错峰，无需额外退避，直接重读重试
+		slog.Debug("灰度发布乐观锁版本冲突，重读重试", "itemId", item.ID, "第几次重试", attempt+1)
 	}
-	slog.Info("发布配置灰度", "itemId", item.ID, "dataId", item.DataID, "cohortSize", len(decodeMembers(encodedCohort)))
-	s.notifyServers(item.NamespaceCode, encodedCohort)
-	return gray, nil
+	slog.Warn("灰度发布乐观锁重试耗尽，放弃", "itemId", item.ID, "重试上限", maxGrayPublishRetries)
+	return nil, errGrayVersionConflict
 }
 
 // Promote 把某 item 的活跃灰度晋升为全量稳定版（version+1）并软删灰度。

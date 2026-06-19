@@ -31,6 +31,9 @@ type ConfigItem struct {
 	CurrentRevision uint `gorm:"column:current_revision;not null;default:0"`
 	// 单调递增发布序号（每发布 +1，回滚也 +1）
 	Version int64 `gorm:"column:version;not null;default:0"`
+	// 灰度发布乐观锁版本：每次灰度发布前 CAS +1，串行化同一 item 的并发灰度发布、
+	// 从源头消除「先软删后建」在 uk_gray_item 上的死锁（FR-9）。内部序列化令牌、不外泄。
+	GrayVersion int64 `gorm:"column:gray_version;not null;default:0" json:"-"`
 	// 是否参与有效配置合并
 	Enabled bool `gorm:"column:enabled;not null;default:true"`
 	// 是否敏感项：为真则 content 加密入库（at-rest），读取/下发时在控制面解密（FR-20）

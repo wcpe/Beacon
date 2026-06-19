@@ -189,6 +189,19 @@ func (r *ConfigItemRepository) SoftDelete(id uint, deletedAt time.Time) error {
 		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false}).Error
 }
 
+// BumpGrayVersion 以乐观锁方式自增 gray_version：仅当当前值等于 expected 且项未软删时 +1。
+// 返回是否命中（false=版本已被并发灰度发布改动，调用方应重读重试）。
+// 作为并发灰度发布的 CAS 串行点，从源头消除「先软删后建」在 uk_gray_item 上的死锁（FR-9）。
+func (r *ConfigItemRepository) BumpGrayVersion(id uint, expected int64) (bool, error) {
+	res := r.db.Model(&model.ConfigItem{}).
+		Where("id = ? AND gray_version = ? AND deleted_at = ?", id, expected, model.SoftDeleteSentinel).
+		Update("gray_version", expected+1)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // FindEffectiveCandidates 拉取某 agent 身份的四层候选配置（已 enabled 且未软删）。
 // 一条查询拉全 global/group/zone/server 四层，由上层按 dataId 分桶合并。
 func (r *ConfigItemRepository) FindEffectiveCandidates(ns, group, zone, serverID string) ([]model.ConfigItem, error) {
