@@ -19,6 +19,9 @@ package-lock.json
 *.exe
 *.out
 
+# 打包产物（make package / release 输出，不入库）
+/dist/
+
 # 前端 React / Vite
 /web/node_modules/
 /web/dist/
