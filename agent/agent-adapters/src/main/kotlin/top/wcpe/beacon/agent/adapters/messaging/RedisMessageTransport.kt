@@ -8,6 +8,7 @@ import redis.clients.jedis.params.XReadGroupParams
 import top.wcpe.beacon.agent.core.messaging.MessageTransport
 import top.wcpe.beacon.agent.core.messaging.MessagingSettings
 import top.wcpe.beacon.agent.core.messaging.PlayerLocator
+import top.wcpe.beacon.agent.core.messaging.RosterDirectory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -167,6 +168,23 @@ class RedisMessageTransport(
             } catch (t: Throwable) {
                 warn("读玩家名册异常：player=$playerName ${t.message}")
                 null
+            }
+        }
+    }
+
+    /**
+     * 暴露基于本传输 Redis 连接的玩家位置名册全表读（FR-31 / ADR-0022），供 DiscoveryView 只读名册查询用。
+     *
+     * 走 HGETALL beacon:player-loc，复用本传输的 Redis 连接 / 线程（不另起连接）；
+     * 异常 / 名册空 → 返回空 Map（优雅降级，绝不抛、绝不阻塞调用方）。HGETALL 须在异步线程调用（守不变量 #5）。
+     */
+    fun rosterDirectory(): RosterDirectory = object : RosterDirectory {
+        override fun snapshot(): Map<String, String> {
+            return try {
+                withResource { jedis -> jedis.hgetAll(RedisChannels.PLAYER_LOCATION_HASH) } ?: emptyMap()
+            } catch (t: Throwable) {
+                warn("读玩家名册全表异常，降级返空：${t.message}")
+                emptyMap()
             }
         }
     }

@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- agent-api Discovery 门面新增玩家位置名册只读查询 roster() / rosterInZone(group, zone)，把 agent 侧 Redis 名册（谁在哪个服）只读暴露给业务插件，供跨服看人/人数/补全；控制面零改动、不连 Redis（FR-31，扩展 ADR-0016，见 ADR-0022）。
 - 前端单元测试栈（FR-18 管理台）：引入 vitest + @testing-library/react + jsdom，新增 `DataTable` / `AsyncSection` / `StatusBadge` 组件单测与 `ConfigsPage` 关键路径（打开标签 / 切换视图 / Diff / 保存）冒烟测试，作为前端重构的回归安全网。`pnpm test` 运行；测试文件经 `tsconfig` 排除出生产 `tsc -b`，不影响 `go:embed` 内嵌构建。运行方式见 [docs/OPERATIONS.md](docs/OPERATIONS.md) §8。
 
 ### 变更

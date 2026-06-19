@@ -155,6 +155,8 @@ object BeaconAgentBungee : Plugin() {
             settings = settings,
             store = store,
             codec = KotlinxJsonCodec(),
+            // 名册只读端口持有者（FR-31）：名册就绪后注入全表读，点亮 proxy 侧 Discovery.roster()/rosterInZone()。
+            rosterHolder = assembled.rosterDirectoryHolder,
             adapter = adapter,
         )
         rosterBootstrap = roster

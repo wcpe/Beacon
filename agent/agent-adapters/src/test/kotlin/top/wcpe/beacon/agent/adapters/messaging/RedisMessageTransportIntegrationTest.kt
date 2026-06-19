@@ -281,6 +281,42 @@ class RedisMessageTransportIntegrationTest {
     }
 
     @Test
+    fun `名册全表读 HGETALL 返回 proxy 写入的全部条目 删后不再含`() {
+        // FR-31 / ADR-0022：rosterDirectory().snapshot() 走 HGETALL beacon:player-loc，全表读名册。
+        val idA = "$runTag-rosterA"
+        val idB = "$runTag-rosterB"
+        val p1 = "$runTag-Steve"
+        val p2 = "$runTag-Alex"
+        usedPlayers.add(p1)
+        usedPlayers.add(p2)
+        val transA = newTransport(idA)
+        transA.start()
+        waitConnected(newBus(idA, transA))
+
+        val rosterPool: JedisPool = JedisPoolFactory.create(connection())
+        try {
+            val roster = RedisPlayerRoster(rosterPool)
+            // proxy 写名册：p1 在 A、p2 在 B。
+            roster.onPlayerLocated(p1, idA)
+            roster.onPlayerLocated(p2, idB)
+
+            val directory = transA.rosterDirectory()
+            val snapshot = directory.snapshot()
+            // 全表读应至少含本次写入的两条（同库可能有他例残留，故只断言包含关系）。
+            assertEquals(idA, snapshot[p1], "名册全表读应含 p1→A")
+            assertEquals(idB, snapshot[p2], "名册全表读应含 p2→B")
+
+            // 删除 p1 后再读：不应再含 p1，p2 仍在。
+            roster.onPlayerQuit(p1, idA)
+            val after = transA.rosterDirectory().snapshot()
+            assertFalse(after.containsKey(p1), "删除后全表读不应再含 p1")
+            assertEquals(idB, after[p2], "p2 仍应在名册中")
+        } finally {
+            rosterPool.close()
+        }
+    }
+
+    @Test
     fun `pub sub 激活窗口并发订阅多主题 逐一发布全收到不漏`() {
         // 回归：onSubscribe 对账修复——在传输层「快照后、激活前」窗口并发追加多个主题，
         // 验证激活后对账补订阅、逐一 publish 全部收到不漏（漏订阅竞态曾导致部分主题收不到）。

@@ -5,6 +5,8 @@ import top.wcpe.beacon.agent.adapters.messaging.JedisPoolFactory
 import top.wcpe.beacon.agent.adapters.messaging.RedisConnection
 import top.wcpe.beacon.agent.adapters.messaging.RedisPlayerRoster
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.messaging.RosterDirectory
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.transport.JsonCodec
@@ -19,15 +21,17 @@ import net.md_5.bungee.api.ProxyServer
  *
  * 注意：真正的 Redis 读写与 Bungee 事件联动需真机验证（本地无 Redis / 无代理）。
  *
- * @param settings 本地运行参数（messaging.enabled 与请求超时）
- * @param store    有效配置存储（读 Redis 下发配置）
- * @param codec    json 解码（解析下发配置树）
- * @param adapter  平台适配（日志、异步调度）
+ * @param settings     本地运行参数（messaging.enabled 与请求超时）
+ * @param store        有效配置存储（读 Redis 下发配置）
+ * @param codec        json 解码（解析下发配置树）
+ * @param rosterHolder 玩家位置名册只读端口持有者（FR-31）：名册就绪后注入全表读、停止时复位
+ * @param adapter      平台适配（日志、异步调度）
  */
 class BungeePlayerRosterBootstrap(
     private val settings: AgentSettings,
     private val store: EffectiveConfigStore,
     private val codec: JsonCodec,
+    private val rosterHolder: RosterDirectoryHolder,
     private val adapter: PlatformAdapter,
 ) {
 
@@ -55,6 +59,10 @@ class BungeePlayerRosterBootstrap(
                 pool = newPool
                 roster = newRoster
                 lastConnection = connection
+                // 名册就绪：注入全表读，点亮 proxy 侧 Discovery 的只读名册查询（FR-31）。
+                rosterHolder.set(object : RosterDirectory {
+                    override fun snapshot(): Map<String, String> = newRoster.snapshot()
+                })
                 adapter.info("玩家位置名册已就绪并按当前在线玩家重建")
             } catch (t: Throwable) {
                 adapter.error("玩家位置名册初始化失败，proxy 仍正常运行（按玩家寻址不可用）", t)
@@ -74,6 +82,8 @@ class BungeePlayerRosterBootstrap(
 
     /** 停止：关连接池。 */
     fun stop() {
+        // 名册下线：复位为空名册，roster()/rosterInZone() 优雅降级返空（FR-31）。
+        rosterHolder.reset()
         closePool()
         roster = null
         lastConnection = null

@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.core.api
 import top.wcpe.beacon.agent.api.DiscoveryQuery
 import top.wcpe.beacon.agent.api.TopologyListener
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
@@ -64,7 +65,7 @@ class DiscoveryViewTest {
     fun `query 透传 tags 到 discover 拼 tag 参数`() {
         val transport = CapturingTransport()
         val apiClient = BeaconApiClient(transport, FixedCodec(), settings(), NoopStreamTransport())
-        val view = DiscoveryView(apiClient, TopologyWatchHub())
+        val view = DiscoveryView(apiClient, TopologyWatchHub(), RosterDirectoryHolder())
 
         view.query(
             DiscoveryQuery.builder().namespace("prod").role("bukkit")
@@ -78,7 +79,7 @@ class DiscoveryViewTest {
     fun `watch 注入流时回调 hub 注销后不再回调`() {
         val hub = TopologyWatchHub()
         val apiClient = BeaconApiClient(CapturingTransport(), FixedCodec(), settings(), NoopStreamTransport())
-        val view = DiscoveryView(apiClient, hub)
+        val view = DiscoveryView(apiClient, hub, RosterDirectoryHolder())
 
         val fired = AtomicInteger(0)
         val handle = view.watch(TopologyListener { fired.incrementAndGet() })
@@ -96,7 +97,7 @@ class DiscoveryViewTest {
         val hub = TopologyWatchHub()
         // 不注入 streamTransport → 无推送流能力（回退态）。
         val apiClient = BeaconApiClient(CapturingTransport(), FixedCodec(), settings())
-        val view = DiscoveryView(apiClient, hub)
+        val view = DiscoveryView(apiClient, hub, RosterDirectoryHolder())
 
         val fired = AtomicInteger(0)
         val handle = view.watch(TopologyListener { fired.incrementAndGet() })

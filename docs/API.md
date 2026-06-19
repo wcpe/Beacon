@@ -101,6 +101,8 @@ data: {}
 
 > **拓扑 watch（FR-29）**：要实时感知拓扑变化，不必轮询本端点——订阅 §2.5 SSE 流的 `topology-changed` 事件即可（实例上线/下线/改派时即时通知），收到后重查本端点取最新结果。SDK 经 `discovery().watch(listener)` 暴露（未启用推送流时句柄不可用、回退周期 `query`）。
 
+> **玩家位置名册只读查询（FR-31，仅 SDK 门面，无新增 HTTP 端点）**：业务插件经 `discovery().roster()` 取当前 namespace 全量名册 `Map<玩家名, serverId>`，`discovery().rosterInZone(group, zone)` 取某 zone 过滤后名册（zone 集 ∩ 名册，zone 权威来自控制面发现结果）。数据源为 FR-26 的 agent 侧 Redis 名册（`beacon:player-loc`），**控制面不参与、无名册端点**；Redis 不可用 / 模块未开 / 名册空时返回空 Map。仅暴露名册事实，「看人」业务归③层业务插件（见 [ADR-0022](adr/0022-agent-roster-read-api.md)）。
+
 ### 6. 长轮询拉文件清单 `GET /beacon/v1/agent/files/manifest`（通道B）
 查询参数：`?namespace=&serverId=&md5=<当前fileTreeMd5>&timeoutMs=30000`（首拉 `md5` 传空）。
 返回时机同 §3：① 当前 `fileTreeMd5` ≠ 请求 md5 → 立即 200；② 挂起期间被唤醒且重算后变化 → 200；③ 到超时无变化 → `304`（空体）。**与配置长轮询唤醒集合独立**（见 ADR-0010）。

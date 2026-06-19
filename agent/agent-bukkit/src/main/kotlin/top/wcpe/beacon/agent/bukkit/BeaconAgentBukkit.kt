@@ -136,6 +136,8 @@ object BeaconAgentBukkit : Plugin() {
             store = store,
             codec = KotlinxJsonCodec(),
             holder = assembled.messagingHolder,
+            // 名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读，点亮 Discovery.roster()/rosterInZone()。
+            rosterHolder = assembled.rosterDirectoryHolder,
             adapter = adapter,
         )
         messagingBootstrap = bootstrap

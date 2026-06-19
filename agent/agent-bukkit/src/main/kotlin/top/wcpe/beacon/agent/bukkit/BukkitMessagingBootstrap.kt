@@ -6,6 +6,7 @@ import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import top.wcpe.beacon.agent.core.messaging.MessagingModule
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.transport.JsonCodec
@@ -24,8 +25,9 @@ import top.wcpe.beacon.agent.core.transport.JsonCodec
  * @param settings 本地运行参数（含消息开关与超时、请求超时供连接超时复用）
  * @param store    有效配置存储（读 Redis 下发配置）
  * @param codec    信封编解码
- * @param holder   对外门面持有者
- * @param adapter  平台适配（日志、延迟调度供 RPC 超时）
+ * @param holder        对外门面持有者
+ * @param rosterHolder  玩家位置名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读、停止时复位
+ * @param adapter       平台适配（日志、延迟调度供 RPC 超时）
  */
 class BukkitMessagingBootstrap(
     private val identity: AgentIdentity,
@@ -33,6 +35,7 @@ class BukkitMessagingBootstrap(
     private val store: EffectiveConfigStore,
     private val codec: JsonCodec,
     private val holder: MessagingHolder,
+    private val rosterHolder: RosterDirectoryHolder,
     private val adapter: PlatformAdapter,
 ) {
 
@@ -92,12 +95,16 @@ class BukkitMessagingBootstrap(
             if (newModule.start()) {
                 module = newModule
                 lastConnection = connection
+                // 模块启动成功：注入名册全表读（复用本传输 Redis 连接），点亮 Discovery 的只读名册查询（FR-31）。
+                rosterHolder.set(transport.rosterDirectory())
             }
         }
     }
 
     /** 停止消息模块（DISABLE 调用）。 */
     fun stop() {
+        // 名册随消息模块下线：复位为空名册，roster()/rosterInZone() 优雅降级返空（FR-31）。
+        rosterHolder.reset()
         module?.stop()
         module = null
         lastConnection = null

@@ -14,6 +14,7 @@ import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.override.CommandWhitelist
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -33,6 +34,8 @@ class AssembledAgent(
     val apiClient: BeaconApiClient,
     // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging；壳层在消息模块启动成功后 set 活跃门面。
     val messagingHolder: MessagingHolder,
+    // 玩家位置名册只读端口持有者（FR-31）：默认空名册；壳层在消息模块启动成功后 set 活跃实现、停止时 reset。
+    val rosterDirectoryHolder: RosterDirectoryHolder,
 )
 
 /**
@@ -132,11 +135,14 @@ object AgentAssembly {
             topologyListener = { topologyWatchHub.fireTopologyChanged() },
         )
 
-        val discoveryView = DiscoveryView(apiClient, topologyWatchHub)
+        // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；
+        // 壳层在消息模块就绪后注入 Redis 实现。
+        val rosterDirectoryHolder = RosterDirectoryHolder(warn = adapter::warn)
+        val discoveryView = DiscoveryView(apiClient, topologyWatchHub, rosterDirectoryHolder)
         // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging，壳层在消息模块就绪后注入活跃门面。
         val messagingHolder = MessagingHolder()
         val beaconAgent = BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder)
 
-        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder)
+        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder)
     }
 }

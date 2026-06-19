@@ -68,6 +68,21 @@ class RedisPlayerRoster(
         }
     }
 
+    /**
+     * 全量读名册快照（HGETALL beacon:player-loc，FR-31 / ADR-0022）：玩家名 → 所在子服 serverId。
+     *
+     * 供 proxy 侧 Discovery 的只读名册查询用（与子服侧 [RedisMessageTransport.rosterDirectory] 同语义）。
+     * 异常 / 名册空 → 返回空 Map（优雅降级，绝不抛）。须在异步线程调用（HGETALL 是 IO）。
+     */
+    fun snapshot(): Map<String, String> {
+        return try {
+            pool.resource.use { jedis -> jedis.hgetAll(RedisChannels.PLAYER_LOCATION_HASH) } ?: emptyMap()
+        } catch (t: Throwable) {
+            warn("读玩家名册全表异常，降级返空：${t.message}")
+            emptyMap()
+        }
+    }
+
     companion object {
 
         /**
