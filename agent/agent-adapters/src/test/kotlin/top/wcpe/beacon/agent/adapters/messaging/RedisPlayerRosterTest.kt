@@ -22,4 +22,16 @@ class RedisPlayerRosterTest {
     fun `名册无此玩家时不删`() {
         assertFalse(RedisPlayerRoster.shouldDeleteOnQuit(currentServerId = null, fromServerId = "lobby-1"))
     }
+
+    @Test
+    fun `空来源服退出应删名册项`() {
+        // 玩家整体断开时 player.server 为空 → fromServerId=""，应无条件删，否则名册项永不删、泄漏。
+        assertTrue(RedisPlayerRoster.shouldDeleteOnQuit(currentServerId = "lobby-1", fromServerId = ""))
+    }
+
+    @Test
+    fun `空来源服且名册无项时删（无害空删）`() {
+        // 无对应名册项时返回 true 仅触发对缺失 field 的 hdel（Redis 无操作），语义不冲突。
+        assertTrue(RedisPlayerRoster.shouldDeleteOnQuit(currentServerId = null, fromServerId = ""))
+    }
 }

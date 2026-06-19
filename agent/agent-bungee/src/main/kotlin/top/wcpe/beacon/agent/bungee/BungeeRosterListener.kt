@@ -32,7 +32,8 @@ object BungeeRosterListener {
     fun onPlayerDisconnect(event: PlayerDisconnectEvent) {
         val player = event.player ?: return
         val playerName = player.name ?: return
-        // 退出时玩家当前所在服（若仍可读）即其最后所在服；读不到则用空串（roster 据名册当前值判定是否删）。
+        // 退出时玩家当前所在服（若仍可读）即其最后所在服；整体断开时读不到则为空串，
+        // roster 对空来源服无条件删（已离线、无换服误删风险），非空才按名册当前值比对判定。
         val serverName = player.server?.info?.name ?: ""
         bootstrap?.onPlayerQuit(playerName, serverName)
     }

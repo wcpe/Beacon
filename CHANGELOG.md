@@ -8,6 +8,7 @@
 - 配置发布前 schema 校验（FR-27）：YAML 非字符串顶层键（如 `1: a`、`2024-01-01: x`、`true: y`）原误判为"顶层必须是键值映射，不能是标量或列表"——消息事实错误（它本就是 map），现识别 yaml.v3 解析出的 `map[any]any` 并返回准确语义错误 `CONTENT_SCHEMA_INVALID`（配置键必须是字符串），仍属拒绝（merge 全链路只处理字符串键）。同时空键判定改用 `strings.TrimSpace`，覆盖全 Unicode 空白（原自实现仅识别 4 种空白）。
 - 配置发布 / 回滚并发撞唯一键（`uk_revision_version`，并发发布同一目标版本）原透出 `gorm.ErrDuplicatedKey` 致 500，现映射为 409 `CONFIG_CONFLICT`（FR-9）。
 - 灰度 promote 走发布路径却未自增 `beacon_config_publish_total`（指标偏低，FR-30）：`ConfigGrayService` 注入 `PublishRecorder`（同 `ConfigService.SetMetrics` 模式，可选注入），promote 成功后计入发布计数。
+- 跨服消息玩家名册退出泄漏（FR-26）：玩家整体断开时 Bungee `player.server` 为空 → 退出来源服为空串 → `shouldDeleteOnQuit` 对空串恒为 false → 名册项永不删、Redis `beacon:player-loc` 泄漏。现来源服为空时无条件删该玩家名册项（玩家已离线、无换服误删风险），非空仍按名册当前值比对（换服误删保护不变）。
 
 ## 0.4.0（2026-06-19）
 

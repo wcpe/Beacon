@@ -71,13 +71,20 @@ class RedisPlayerRoster(
     companion object {
 
         /**
-         * 退出是否应删除名册项（纯逻辑，便于单测）：仅当名册当前所在服与退出服一致才删。
+         * 退出是否应删除名册项（纯逻辑，便于单测）。
+         *
+         * - 来源服为空：玩家已从 proxy 整体断开（换服时 player.server 仍可读、不会为空），
+         *   此时无换服误删风险，无条件删除该玩家名册项（否则名册项永不删、泄漏）。
+         * - 来源服非空：仅当名册当前所在服与退出服一致才删（防换服旧服退出晚到误删新位置）。
          *
          * @param currentServerId 名册中该玩家当前所在服（可空 = 名册无此玩家）
-         * @param fromServerId    本次退出事件来源服
-         * @return true=应删除；false=换服误删保护 / 名册无项，跳过
+         * @param fromServerId    本次退出事件来源服（空 = 玩家整体断开、来源不可读）
+         * @return true=应删除；false=换服误删保护，跳过
          */
         fun shouldDeleteOnQuit(currentServerId: String?, fromServerId: String): Boolean {
+            if (fromServerId.isEmpty()) {
+                return true
+            }
             return currentServerId != null && currentServerId == fromServerId
         }
     }
