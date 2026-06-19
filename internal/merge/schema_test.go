@@ -87,6 +87,24 @@ func TestValidateSchemaRejectsEmptyKey(t *testing.T) {
 	}
 }
 
+// TestValidateSchemaRejectsNonStringKey 顶层非字符串键（yaml `1: a`）被拦，且给准确语义错误（它本是 map）。
+func TestValidateSchemaRejectsNonStringKey(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"整数键", "1: a\n"},
+		{"日期键", "2024-01-01: x\n"},
+		{"布尔键", "true: y\n"},
+	}
+	for _, c := range cases {
+		err := ValidateSchema(FormatYAML, c.content)
+		if !errors.Is(err, ErrSchemaNonStringKey) {
+			t.Errorf("%s 应返回 ErrSchemaNonStringKey，实际 %v", c.name, err)
+		}
+	}
+}
+
 // TestValidateSchemaNestedListValueOk 键值文档里嵌套列表 / 标量值合法（只约束根与键，不约束值类型）。
 func TestValidateSchemaNestedListValueOk(t *testing.T) {
 	content := "servers:\n  - one\n  - two\nport: 8080\n"
