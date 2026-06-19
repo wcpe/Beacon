@@ -75,23 +75,20 @@ export default function EffectivePreview({
                     ))}
                   </div>
                 )}
+                {item.deletions.length > 0 && (
+                  <div className="bg-red-50/50 border-t border-red-100">
+                    <div className="px-2 py-1 text-[0.65rem] font-medium text-red-600">
+                      被删除的键（{item.deletions.length} 条）
+                    </div>
+                    {item.deletions.map((del, idx) => (
+                      <div key={idx} className="px-2 py-0.5 text-[0.65rem] text-red-500 font-mono">
+                        {del.path.join('.')} ({del.scope})
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
-            {data.deletions.length > 0 && (
-              <div className="rounded border border-red-200 overflow-hidden">
-                <div className="px-2 py-1 bg-red-50 text-xs font-medium text-red-600">
-                  被删除的键（{data.deletions.length} 条）
-                </div>
-                {data.deletions.map((del, idx) => (
-                  <div
-                    key={idx}
-                    className="px-2 py-0.5 text-xs text-red-500 font-mono border-t border-red-100"
-                  >
-                    {del.path.join('.')} ({del.scope})
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </ScrollArea>
       ) : (

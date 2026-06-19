@@ -201,16 +201,17 @@ export interface EffectiveConfigParams {
   zone?: string
 }
 
-// 单条有效配置项
+// 单条有效配置项（来源链路与被删除的键均按 dataId 维度，对齐后端 effectiveConfigItemView）
 export interface EffectiveConfigItem {
   dataId: string
   format: string
   content: string
   md5: string
   sources: Array<{ path: string[]; scope: string }>
+  deletions: Array<{ path: string[]; scope: string }>
 }
 
-// 有效配置预览返回体
+// 有效配置预览返回体（deletions 在各 item 内，无顶层字段）
 export interface EffectiveConfigView {
   namespace: string
   serverId?: string
@@ -218,7 +219,6 @@ export interface EffectiveConfigView {
   zone?: string
   md5: string
   items: EffectiveConfigItem[]
-  deletions: Array<{ path: string[]; scope: string }>
 }
 
 export function effectiveConfig(params: EffectiveConfigParams): Promise<EffectiveConfigView> {
