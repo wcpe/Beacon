@@ -62,6 +62,16 @@ func (n *ChangeNotifier) NotifyServer(ns, serverID string) {
 	n.fileHub.Notify(ns, []string{serverID})
 }
 
+// NotifyServers 按 serverId 名单唤醒配置通道（灰度发布 / abort 仅影响 cohort 成员，FR-9）。
+// 名单为空则不唤醒（无受影响 server）。只动配置通道，不触发文件通道无谓重算。
+func (n *ChangeNotifier) NotifyServers(ns string, serverIDs []string) {
+	if len(serverIDs) == 0 {
+		return
+	}
+	n.recordPush()
+	n.hub.Notify(ns, serverIDs)
+}
+
 // NotifyTopologyChange 唤醒该 namespace 全部拓扑 watch waiter（FR-29）。
 // 实例上线/下线/改派 zone 时由变更点调用；被唤醒方重算拓扑摘要、真变才推 topology-changed。
 func (n *ChangeNotifier) NotifyTopologyChange(ns string) {

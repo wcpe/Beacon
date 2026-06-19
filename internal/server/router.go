@@ -69,6 +69,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Post("/configs", h.Config.Create)
 		// 有效配置只读预览（FR-22）：chi 静态路由优先于 {id} 通配（与注册顺序无关），此处置前仅为可读性
 		r.Get("/configs/effective", h.Config.Effective)
+		// 配置灰度 / Beta 列活跃灰度（FR-9，静态路由，与 effective 同理优先于 {id}）
+		r.Get("/configs/gray", h.Config.ListGray)
 		r.Get("/configs/{id}", h.Config.Get)
 		r.Put("/configs/{id}", h.Config.Publish)
 		r.Delete("/configs/{id}", h.Config.Delete)
@@ -76,6 +78,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Get("/configs/{id}/revisions/{version}", h.Config.GetRevision)
 		r.Post("/configs/{id}/rollback", h.Config.Rollback)
 		r.Get("/configs/{id}/diff", h.Config.Diff)
+		// 配置灰度 / Beta（FR-9）：发布灰度 / 晋升 / 中止（见 ADR-0021）
+		r.Post("/configs/{id}/gray", h.Config.PublishGray)
+		r.Post("/configs/{id}/gray/promote", h.Config.PromoteGray)
+		r.Delete("/configs/{id}/gray", h.Config.AbortGray)
 
 		// 文件树托管（通道B）
 		r.Get("/files", h.File.List)

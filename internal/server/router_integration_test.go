@@ -54,7 +54,9 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	instSvc := service.NewInstanceService(registry, assignRepo, auditRepo, 10*time.Second, 30*time.Second)
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
-	effSvc := service.NewEffectiveService(configRepo, assignRepo, hub)
+	grayRepo := repository.NewConfigGrayRepository(db, noEncryptCipher())
+	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, hub)
+	graySvc := service.NewConfigGrayService(db, cfgSvc, configRepo, grayRepo, auditRepo)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
@@ -74,7 +76,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler,
-		Config:    handler.NewConfigHandler(cfgSvc, effSvc),
+		Config:    handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
 		File:      handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
 		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
 		Stream:    handler.NewStreamHandler(instSvc, streamSvc),

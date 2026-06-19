@@ -46,6 +46,10 @@ var (
 	ErrContentSchemaInvalid = New(http.StatusUnprocessableEntity, "CONTENT_SCHEMA_INVALID", "配置结构或类型校验不通过")
 	// ErrFormatInconsistent 同一 dataId 跨层格式不一致。
 	ErrFormatInconsistent = New(http.StatusUnprocessableEntity, "FORMAT_INCONSISTENT", "同一 dataId 跨层格式不一致")
+	// ErrGrayNotFound 灰度不存在（promote/abort 时无活跃灰度，FR-9）。
+	ErrGrayNotFound = New(http.StatusNotFound, "GRAY_NOT_FOUND", "灰度不存在")
+	// ErrEmptyCohort 灰度 cohort 名单为空（无意义灰度，FR-9）。
+	ErrEmptyCohort = New(http.StatusBadRequest, "EMPTY_COHORT", "灰度 cohort 名单为空")
 
 	// ErrFileNotFound 文件对象不存在（通道B）。
 	ErrFileNotFound = New(http.StatusNotFound, "FILE_NOT_FOUND", "文件对象不存在")

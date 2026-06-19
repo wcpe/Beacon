@@ -19,13 +19,14 @@ import (
 
 // ConfigHandler 处理配置中心相关的 admin 请求。
 type ConfigHandler struct {
-	svc    *service.ConfigService
-	effSvc *service.EffectiveService
+	svc     *service.ConfigService
+	effSvc  *service.EffectiveService
+	graySvc *service.ConfigGrayService
 }
 
-// NewConfigHandler 构造处理器。effSvc 供 admin 只读有效配置预览（FR-22）。
-func NewConfigHandler(svc *service.ConfigService, effSvc *service.EffectiveService) *ConfigHandler {
-	return &ConfigHandler{svc: svc, effSvc: effSvc}
+// NewConfigHandler 构造处理器。effSvc 供 admin 只读有效配置预览（FR-22）；graySvc 供配置灰度（FR-9）。
+func NewConfigHandler(svc *service.ConfigService, effSvc *service.EffectiveService, graySvc *service.ConfigGrayService) *ConfigHandler {
+	return &ConfigHandler{svc: svc, effSvc: effSvc, graySvc: graySvc}
 }
 
 // configView 是配置项对外视图（content 仅详情返回）。
@@ -309,6 +310,100 @@ func (h *ConfigHandler) Effective(w http.ResponseWriter, r *http.Request) {
 		"namespace": eff.Namespace, "serverId": eff.ServerID,
 		"group": eff.Group, "zone": eff.Zone, "md5": eff.MD5, "items": items,
 	})
+}
+
+// grayView 是灰度对外视图（content 仅列表 / 发布响应携带，cohort 为 serverId 名单）。
+type grayView struct {
+	ConfigItemID uint     `json:"configItemId"`
+	Namespace    string   `json:"namespace"`
+	Format       string   `json:"format"`
+	MD5          string   `json:"md5"`
+	Cohort       []string `json:"cohort"`
+	Sensitive    bool     `json:"sensitive"`
+	Operator     string   `json:"operator"`
+	Comment      string   `json:"comment"`
+}
+
+// toGrayView 组装灰度视图（cohort 文本反解析为名单）。
+func toGrayView(g *model.ConfigGray) grayView {
+	return grayView{
+		ConfigItemID: g.ConfigItemID, Namespace: g.NamespaceCode, Format: g.Format,
+		MD5: g.ContentMD5, Cohort: service.DecodeCohortList(g.Cohort), Sensitive: g.Sensitive,
+		Operator: g.Operator, Comment: g.Comment,
+	}
+}
+
+// grayPublishRequest 是灰度发布请求体（operator 由认证态派生，不接收手填）。
+type grayPublishRequest struct {
+	Content string   `json:"content"`
+	Cohort  []string `json:"cohort"`
+	Comment string   `json:"comment"`
+}
+
+// PublishGray 处理 POST /admin/v1/configs/{id}/gray：对某 config_item 发布灰度（FR-9）。
+func (h *ConfigHandler) PublishGray(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req grayPublishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	g, err := h.graySvc.Publish(id, req.Content, req.Cohort, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusCreated, toGrayView(g))
+}
+
+// PromoteGray 处理 POST /admin/v1/configs/{id}/gray/promote：灰度晋升为稳定版（FR-9）。
+func (h *ConfigHandler) PromoteGray(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req publishRequest // 仅取 comment（content 来自灰度）
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	it, err := h.graySvc.Promote(id, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"version": it.Version, "md5": it.ContentMD5})
+}
+
+// AbortGray 处理 DELETE /admin/v1/configs/{id}/gray：中止（丢弃）灰度（FR-9）。
+func (h *ConfigHandler) AbortGray(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if err := h.graySvc.Abort(id, auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r)); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ListGray 处理 GET /admin/v1/configs/gray?namespace=：列某环境活跃灰度（FR-9）。
+func (h *ConfigHandler) ListGray(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	grays, err := h.graySvc.List(ns)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	views := make([]grayView, 0, len(grays))
+	for i := range grays {
+		views = append(views, toGrayView(&grays[i]))
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
 
 // toProvViews 把 service 层的逐键来源转为对外视图。

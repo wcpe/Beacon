@@ -33,12 +33,15 @@ type Effective struct {
 type EffectiveService struct {
 	configRepo *repository.ConfigItemRepository
 	assignRepo *repository.ZoneAssignmentRepository
+	grayRepo   *repository.ConfigGrayRepository // 可选，灰度叠加（FR-9）；nil 即无灰度行为
 	hub        *longpoll.Hub
 }
 
 // NewEffectiveService 构造服务。hub 仅长轮询用，纯解析场景可传 nil。
-func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository, hub *longpoll.Hub) *EffectiveService {
-	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo, hub: hub}
+// grayRepo 可选：注入则在版本选择层叠加灰度（cohort 内 serverId 换灰度内容，FR-9，见 ADR-0021）；
+// 传 nil 则解析行为与无灰度时完全一致（向后兼容）。
+func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository, grayRepo *repository.ConfigGrayRepository, hub *longpoll.Hub) *EffectiveService {
+	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo, grayRepo: grayRepo, hub: hub}
 }
 
 // Resolve 解析某 (namespace, serverId) 的有效配置：
@@ -80,10 +83,48 @@ func (s *EffectiveService) WaitEffective(ctx context.Context, ns, serverID, grou
 	}
 }
 
-// resolveLayers 拉四层候选、按 dataId 分桶深合并、算单 md5 与整体 md5。
+// applyGrayOverlay 在版本选择层叠加灰度（FR-9，见 ADR-0021）：
+// 按 ns + 候选项集合一次性取活跃灰度（无 N+1），对"存在灰度且 serverID 在 cohort 内"的候选项，
+// 把参与合并的 content 替换为灰度 content。其余层、合并算法、md5 计算全不变——
+// 名单外 serverID 解析结果与无灰度时逐字节相同。grayRepo 未注入则直接返回（无灰度行为）。
+func (s *EffectiveService) applyGrayOverlay(ns, serverID string, candidates []model.ConfigItem) error {
+	if s.grayRepo == nil || len(candidates) == 0 {
+		return nil
+	}
+	itemIDs := make([]uint, 0, len(candidates))
+	for i := range candidates {
+		itemIDs = append(itemIDs, candidates[i].ID)
+	}
+	grays, err := s.grayRepo.ListActiveByItemIDs(ns, itemIDs)
+	if err != nil {
+		return err
+	}
+	if len(grays) == 0 {
+		return nil
+	}
+	for i := range candidates {
+		gray, ok := grays[candidates[i].ID]
+		if !ok {
+			continue
+		}
+		cohort, err := decodeCohort(gray.Cohort)
+		if err != nil {
+			return err
+		}
+		if cohort[serverID] {
+			candidates[i].Content = gray.Content
+		}
+	}
+	return nil
+}
+
+// resolveLayers 拉四层候选、叠加灰度、按 dataId 分桶深合并、算单 md5 与整体 md5。
 func (s *EffectiveService) resolveLayers(ns, serverID, group, zone string) (Effective, error) {
 	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)
 	if err != nil {
+		return Effective{}, err
+	}
+	if err := s.applyGrayOverlay(ns, serverID, candidates); err != nil {
 		return Effective{}, err
 	}
 
@@ -184,6 +225,10 @@ func (s *EffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHi
 
 	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)
 	if err != nil {
+		return ProvenancedEffective{}, err
+	}
+	// admin 预览与 agent 热路径共用同一灰度叠加逻辑，保证 cohort 内预览结果与下发一致
+	if err := s.applyGrayOverlay(ns, serverID, candidates); err != nil {
 		return ProvenancedEffective{}, err
 	}
 

@@ -19,7 +19,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
-	eff := service.NewEffectiveService(cr, asg, nil)
+	eff := service.NewEffectiveService(cr, asg, nil, nil)
 	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
 
 	create := func(group, scope, target, content string) {

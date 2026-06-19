@@ -41,7 +41,7 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
 
-	effSvc := service.NewEffectiveService(configRepo, assignRepo, hub)
+	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, hub)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, reg, hub, fileHub, topologyHub, 0) // 关保活，测试不依赖心跳
