@@ -1,8 +1,5 @@
 package top.wcpe.beacon.agent.core.stream
 
-import top.wcpe.beacon.agent.core.client.JsonTree
-import top.wcpe.beacon.agent.core.transport.JsonCodec
-
 /**
  * server→agent SSE 推送的事件类型常量（与控制面 internal/sse 一一对应，见 ADR-0015）。
  *
@@ -24,20 +21,4 @@ object StreamEventTypes {
 
     /** 首轮对账完成标记：agent 收到即知"断线期间落下的增量已补发完、转入直播"。 */
     const val READY = "ready"
-}
-
-/**
- * *-changed 事件载荷解析：从 data 行 JSON（{"md5":"x"}）取新 md5。
- *
- * 经 JsonCodec 解码为泛型树（core 不碰 @Serializable，守 ADR-0005）；缺字段返回空串。
- */
-object ChangedPayload {
-
-    /** 从事件 data 文本解析新 md5；解析失败或缺字段返回空串（调用方按"强制重拉"兜底）。 */
-    fun md5Of(codec: JsonCodec, data: String): String {
-        if (data.isBlank()) return ""
-        val tree = runCatching { codec.decode(data) }.getOrNull() ?: return ""
-        val obj = JsonTree.asObject(tree)
-        return JsonTree.strOr(obj, "md5", "")
-    }
 }

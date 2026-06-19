@@ -559,7 +559,12 @@ class AgentLifecycle(
         apiClient.openStream(identity, reported, StreamLoopListener(gen))
     }
 
-    /** SSE 事件分发：按事件类型触发对应通道的强制重取-应用（复用现有 HTTP 端点逻辑，见 ADR-0015 决策 2）。 */
+    /**
+     * SSE 事件分发：按事件类型触发对应通道的强制重取-应用（复用现有 HTTP 端点逻辑，见 ADR-0015 决策 2）。
+     *
+     * 事件 data 行携带的 md5 仅作"有变更"通知、agent 不消费它——*-changed 一律忽略 event.data，
+     * 改用本地已应用的 md5 走现有端点重拉（端点比对 md5，真变才返 200），故此处不解析载荷。
+     */
     private fun dispatchStreamEvent(gen: Int, event: StreamEvent) {
         if (!running.get() || gen != streamGen.get()) return
         when (event.type) {
