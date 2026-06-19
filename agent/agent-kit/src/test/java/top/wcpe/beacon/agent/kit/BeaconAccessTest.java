@@ -442,5 +442,17 @@ class BeaconAccessTest {
             return () -> {
             };
         }
+
+        @Override
+        public java.util.Map<String, String> roster() {
+            // 假实现：返回空名册。
+            return java.util.Collections.emptyMap();
+        }
+
+        @Override
+        public java.util.Map<String, String> rosterInZone(String group, String zone) {
+            // 假实现：返回空名册。
+            return java.util.Collections.emptyMap();
+        }
     }
 }

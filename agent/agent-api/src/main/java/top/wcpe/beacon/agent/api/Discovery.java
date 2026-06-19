@@ -34,7 +34,9 @@ public interface Discovery {
     ListenerHandle watch(TopologyListener listener);
 
     /**
-     * 全量玩家位置名册（FR-31）：返回当前 namespace 内 玩家名 → 所在 serverId 的只读快照。
+     * 全量玩家位置名册（FR-31）：返回 玩家名 → 所在 serverId 的只读快照。
+     * 名册取自单一全局 Redis hash（{@code beacon:player-loc}），不按 namespace 分区，
+     * 单 BC 前提下即全量名册（见 ADR-0022）。
      *
      * <p>数据源是已躺在 agent 侧 Redis 的名册（由 BC 上的 beacon-proxy 维护，见 ADR-0022），
      * 供业务插件做总览 / 人数统计 / Tab 补全等只读消费。<b>名册最终一致</b>：换服瞬间可能短暂错位，
