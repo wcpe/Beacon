@@ -6,6 +6,7 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import RequireAuth from './components/RequireAuth'
 import LoginPage from './pages/LoginPage'
+import DashboardPage from './pages/DashboardPage'
 import ConfigsPage from './pages/ConfigsPage'
 import InstancesPage from './pages/InstancesPage'
 import ZonesPage from './pages/ZonesPage'
@@ -29,6 +30,8 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           {/* 默认进入配置中心（单页面：列表 + 详情 + Diff + 历史） */}
           <Route index element={<Navigate to="/configs" replace />} />
+          {/* 可观测看板（FR-32）：总览卡片 + 趋势图 + 每服明细 */}
+          <Route path="dashboard" element={<DashboardPage />} />
           <Route path="configs" element={<ConfigsPage />} />
           {/* 旧链接 /configs/:id 重定向到单页面 */}
           <Route path="configs/:id" element={<Navigate to="/configs" replace />} />

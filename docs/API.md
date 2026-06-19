@@ -267,35 +267,35 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/metrics/summary?namespace=` | 当前快照聚合统计（从内存注册表实时计算，不读库） |
-| `GET /admin/v1/metrics/trend?namespace=&serverId=&metric=&from=&to=&step=` | 历史时序趋势（查 `metric_sample` 表）。`serverId`/`metric` 可选过滤，`from`/`to` 为时间窗（或预设窗口），`step` 为聚合粒度 |
+| `GET /admin/v1/metrics/trend?namespace=&serverId=&window=&from=&to=` | 历史时序趋势（查 `metric_sample` 表）。`serverId` 可选过滤；`window` 取预设窗口 `1h`/`6h`/`24h`，或用 `from`/`to`（RFC3339）自定义时间窗；聚合粒度由服务端按窗长自动降采样（约 120 点），无需传步长 |
 
-`GET /admin/v1/metrics/summary`：返回全集群总玩家数、每服人数列表、平均 TPS·内存·CPU（含分服明细），数据源为内存注册表（与发现 / 健康同源、实时计算）。返回：
+`GET /admin/v1/metrics/summary`：返回全集群总玩家数、在线服务器数、每服在线人数列表（仅 `serverId` + `playerCount`）、全集群平均 TPS·内存·CPU，数据源为内存注册表（与发现 / 健康同源、实时计算）。内存为**字节**（`int64`）；`avgCpuLoad` 为 [0,1]，`-1` 表示无可用 CPU 样本，`cpuSampleCount` 为参与平均的可用样本数。返回：
 ```json
 {
-  "namespace": "prod",
   "totalPlayers": 312,
-  "avgTps": 19.6,
-  "avgMemUsedMb": 1840,
-  "avgCpuLoad": 0.42,
+  "onlineServers": 6,
   "servers": [
-    { "serverId": "lobby-1", "playerCount": 84, "tps": 19.9, "memUsedMb": 1520, "memMaxMb": 4096, "cpuLoad": 0.31 },
-    { "serverId": "pvp-2",   "playerCount": 56, "tps": 18.7, "memUsedMb": 2160, "memMaxMb": 4096, "cpuLoad": 0.58 }
-  ]
+    { "serverId": "lobby-1", "playerCount": 84 },
+    { "serverId": "pvp-2",   "playerCount": 56 }
+  ],
+  "avgTps": 19.6,
+  "avgMemUsed": 1929379840,
+  "avgMemMax": 4294967296,
+  "avgCpuLoad": 0.42,
+  "cpuSampleCount": 6
 }
 ```
 
-`GET /admin/v1/metrics/trend`：按时间窗 + 聚合粒度查询 `metric_sample`，返回**时间序列点**（`sampledAt` + 各指标值），用于 Dashboard 趋势图（近 1h / 6h / 24h）。**仅聚合数字，不含玩家名单 / 身份**。返回：
+`GET /admin/v1/metrics/trend`：按时间窗查询 `metric_sample`，服务端按窗长自动降采样，返回**时间序列点**（`sampledAt` + 各指标聚合值），用于 Dashboard 趋势图（近 1h / 6h / 24h）。内存为**字节**，`avgCpuLoad` 为 [0,1]（`-1` 表示该点无可用 CPU 样本）。**仅聚合数字，不含玩家名单 / 身份**。返回：
 ```json
 {
-  "namespace": "prod", "serverId": "lobby-1",
-  "step": "5m",
   "points": [
-    { "sampledAt": "2026-06-20T08:00:00Z", "playerCount": 80, "tps": 19.8, "memUsedMb": 1500, "cpuLoad": 0.30 },
-    { "sampledAt": "2026-06-20T08:05:00Z", "playerCount": 84, "tps": 19.9, "memUsedMb": 1520, "cpuLoad": 0.31 }
+    { "sampledAt": "2026-06-20T08:00:00Z", "totalPlayers": 80, "avgTps": 19.8, "avgMemUsed": 1572864000, "avgMemMax": 4294967296, "avgCpuLoad": 0.30 },
+    { "sampledAt": "2026-06-20T08:05:00Z", "totalPlayers": 84, "avgTps": 19.9, "avgMemUsed": 1593835520, "avgMemMax": 4294967296, "avgCpuLoad": 0.31 }
   ]
 }
 ```
-- 不传 `serverId` 时返回该 `namespace` 的聚合趋势（按 `step` 粒度汇总在线实例）；传 `serverId` 时返回单服趋势。
+- 不传 `serverId` 时返回该 `namespace` 的聚合趋势（服务端按窗长自动降采样汇总在线实例）；传 `serverId` 时返回单服趋势。
 - 保留期外的样本已被采样器滚动清理，超出保留期的时间窗只返回现存样本（见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) 与 ARCHITECTURE §7.1）。
 - 错误：参数缺失 / 时间窗非法 `400 INVALID_PARAM`。
 

@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 
 // 导航项定义（路径 + 中文名）
 const NAV_ITEMS: Array<{ to: string; label: string }> = [
+  { to: '/dashboard', label: '可观测看板' },
   { to: '/configs', label: '配置中心' },
   { to: '/instances', label: '实例与健康' },
   { to: '/zones', label: 'zone 分配' },

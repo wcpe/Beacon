@@ -246,6 +246,61 @@ export function offlineInstance(serverId: string, namespace: string): Promise<vo
   })
 }
 
+// ===== 指标看板（FR-32，见 docs/API.md 指标看板小节）=====
+// 只返回负载数字（健康事实），绝不含玩家名单 / 身份。
+
+// 每服人数明细（仅计数，不含名单）
+export interface ServerPlayers {
+  serverId: string
+  playerCount: number
+}
+
+// 当前快照聚合视图（与后端 summaryView 对齐）
+// avgMemUsed / avgMemMax 单位为字节；avgCpuLoad < 0（约定 -1）表示无可用 CPU 样本。
+export interface MetricsSummary {
+  totalPlayers: number
+  onlineServers: number
+  servers: ServerPlayers[]
+  avgTps: number
+  avgMemUsed: number
+  avgMemMax: number
+  avgCpuLoad: number
+  cpuSampleCount: number
+}
+
+export function metricsSummary(namespace?: string): Promise<MetricsSummary> {
+  return request<MetricsSummary>(`/metrics/summary${qs({ namespace })}`)
+}
+
+// 趋势时间窗（预设窗口）
+export type TrendWindow = '1h' | '6h' | '24h'
+
+// 趋势查询参数（namespace 可选；不传 serverId 返回 namespace 聚合趋势）
+export interface TrendParams {
+  namespace?: string
+  serverId?: string
+  window: TrendWindow
+}
+
+// 趋势时间序列点（与后端 trendPointView 对齐，avgMemUsed / avgMemMax 单位为字节）
+export interface TrendPoint {
+  sampledAt: string
+  totalPlayers: number
+  avgTps: number
+  avgMemUsed: number
+  avgMemMax: number
+  avgCpuLoad: number
+}
+
+// 趋势返回体（仅 points，无玩家名单）
+export interface MetricsTrend {
+  points: TrendPoint[]
+}
+
+export function metricsTrend(params: TrendParams): Promise<MetricsTrend> {
+  return request<MetricsTrend>(`/metrics/trend${qs(params)}`)
+}
+
 // ===== zone 分配 =====
 
 export function listAssignments(
