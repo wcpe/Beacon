@@ -60,6 +60,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
+	ovrSetSvc := service.NewOverrideSetService(db, overrideSetRepo, repository.NewFileOverrideSetRevisionRepository(db), fileRepo, auditRepo)
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
@@ -68,6 +69,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	fileSvc.SetNotifier(notifier)
 	zoneSvc.SetNotifier(notifier)
 	instSvc.SetNotifier(notifier)
+	ovrSetSvc.SetNotifier(notifier)
 	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
 	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, 30*time.Second)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
@@ -75,18 +77,19 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler,
-		Config:    handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
-		File:      handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
-		Agent:     handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
-		Stream:    handler.NewStreamHandler(instSvc, streamSvc),
-		Instance:  handler.NewInstanceHandler(instSvc),
-		Zone:      handler.NewZoneHandler(zoneSvc),
-		Audit:     handler.NewAuditHandler(service.NewAuditService(auditRepo)),
-		Metric:    handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
-		Auth:      handler.NewAuthHandler(authn),
-		Metrics:   metricsSet.Handler(),
-		Web:       http.HandlerFunc(http.NotFound),
+		Namespace:   nsHandler,
+		Config:      handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
+		File:        handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
+		OverrideSet: handler.NewOverrideSetHandler(ovrSetSvc),
+		Agent:       handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
+		Stream:      handler.NewStreamHandler(instSvc, streamSvc),
+		Instance:    handler.NewInstanceHandler(instSvc),
+		Zone:        handler.NewZoneHandler(zoneSvc),
+		Audit:       handler.NewAuditHandler(service.NewAuditService(auditRepo)),
+		Metric:      handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
+		Auth:        handler.NewAuthHandler(authn),
+		Metrics:     metricsSet.Handler(),
+		Web:         http.HandlerFunc(http.NotFound),
 	}, agentToken, authn)
 	ts := httptest.NewServer(router)
 	adminToken = loginForToken(t, ts.URL)
