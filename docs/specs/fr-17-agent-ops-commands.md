@@ -19,7 +19,7 @@
   - `snapshot()`：把当前可观测状态（state/connected/md5/心跳周期/endpoint）打包给壳层 status 用。
 
 不做（范围外）：
-- `resync`（强制重同步文件树）依赖通道B（FR-14，未合）：仅以"文件树子系统未启用"占位提示存在，**不写任何空壳数据结构**。
+- `resync`（强制重同步文件树）首版仅占位（依赖通道B FR-14，未合时回"文件树子系统未启用"）；待 FR-14 落地后补实际接线（见 §3「resync 接通」）。
 - `offline`/`online`：与健康 TTL 同形会造成可观测盲区且语义冲突，本轮**先不做**，避免镀金。
 - 远程下发命令（依赖 FR-11 鉴权）。
 
@@ -43,7 +43,11 @@
 
 - 用 TabooLib `command("beacon") { ... }` DSL 运行期注册（权限 `beacon.admin`）。
 - 命令体经 `adapter.runAsync { ... }` 落异步线程执行 core 控制方法，**不在 MC 主线程做阻塞动作**（守 ADR-0005 与不阻塞主线程不变量）；回显文案中文。
-- `resync` 子命令仅回"文件树子系统未启用（依赖 FR-14）"。
+
+### resync 接通（FR-14 落地后补）
+
+- `forceSyncFileTreeNow()`：以 `fileTreeMd5=null` 异步执行一次 `pollFileManifest`，200 则经 `FileTreeApplier.apply` 幂等差分落盘（与 `forcePollNow` 同形：旁路长轮询 304、不接管主循环、不改其代标识）；文件树子系统未启用（`fileTreeApplier` 为 null）时返回 false。
+- `resync` 子命令调用 `forceSyncFileTreeNow()`：已触发回"已触发文件树重新同步"，未启用回"文件树子系统未启用（请开启 `file-tree.enabled`）"。
 
 ## 4. 任务拆分
 - [ ] core：`LifecycleSnapshot` + `reconnectNow` + `forcePollNow` + register 单飞门 + registerGen

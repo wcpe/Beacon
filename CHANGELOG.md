@@ -13,6 +13,7 @@
 ### 修复
 - 指标看板历史趋势空环境查询报「参数错误」（FR-32）：趋势端点原强制 `namespace` 必填，管理台留空环境（聚合全部）时被后端拒为 `400 INVALID_PARAM`，历史趋势图报错。现 `namespace` 改为可选——为空时聚合全部环境的样本（与 summary 行为一致），repository 趋势查询 `namespace` 为空则不加该过滤。
 - 指标看板平均 TPS / 平均 CPU 被 BC（bungee）拉低（FR-32）：聚合原对所有在线实例一视同仁，bungee 作纯代理 tps 恒为 0，计入分母致平均 TPS·CPU 失真偏低。现这两个平均**仅统计 `role=bukkit`**（总玩家数 / 在线服数 / 平均内存仍计全部）；`metric_sample` 新增 `role` 列（VARCHAR，零方言），采样器从注册表 `Instance.Role` 落库，趋势降采样据此排除 bungee。
+- agent `/beacon resync` 命令空转（FR-17）：原 resync 子命令无视文件树托管是否启用，一律回占位文案「文件树子系统未启用」且不触发任何同步——文件树托管（FR-14）落地后该命令始终失效。现 `AgentLifecycle` 新增 `forceSyncFileTreeNow()`（与 `forcePollNow` 同形：以空 `fileTreeMd5` 旁路文件树长轮询 304、强制立刻重拉一次清单并由 `FileTreeApplier` 幂等差分落盘，不接管长轮询主循环、不阻塞 MC 主线程），双端壳 `/beacon resync` 改为调用之：文件树子系统启用时回「已触发文件树重新同步」并真正落盘，未启用时回提示开启 `file-tree.enabled`。
 
 ## 0.5.0（2026-06-20）
 

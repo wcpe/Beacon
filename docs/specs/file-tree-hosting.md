@@ -38,4 +38,4 @@
 
 ## 6. 风险 / 待定
 - agent 侧（Kotlin）文件同步器与原子落盘（含父目录 fsync）已落地，`:agent-core:test` 与双端 `build` 通过。
-- `resync` 运维命令（FR-17）强制重同步文件树的实际接线尚未做，仍为占位提示；真机 MC 端到端文件热更验证待 E2E 阶段补。
+- `resync` 运维命令（FR-17）强制重同步文件树的实际接线已补：`AgentLifecycle.forceSyncFileTreeNow` 旁路文件树长轮询 304、以空 `fileTreeMd5` 强拉一次清单并由 `FileTreeApplier` 幂等落盘，双端壳 `/beacon resync` 接通（仅在 `file-tree.enabled` 时生效）。真机 MC 端到端文件热更验证待 E2E 阶段补。
