@@ -53,9 +53,11 @@ const (
 	treeContent  = "tree: mirrored-C\n"
 )
 
+// 控制面地址：默认 http://localhost:8848，可经 E2E_BEACON_URL 覆盖（本地避端口争用）。
+var beaconURL = harness.BeaconURL()
+
 // 服务端编排相关常量（与 runServer gradle 任务的约定一致）。
 const (
-	beaconURL    = "http://localhost:8848"
 	adminUser    = "admin"
 	serverID     = "e2e-bukkit-1"
 	mcPort       = "25566"
@@ -191,7 +193,7 @@ func TestOverrideE2E(t *testing.T) {
 // startPaper 起 Paper（whitelist 非空则注入本地命令白名单，空则保持默认空 = inert）。
 func startPaper(t *testing.T, repoRoot, whitelist string) *harness.GradleProc {
 	t.Helper()
-	props := []string{"-Pe2eMcPort=" + mcPort}
+	props := []string{"-Pe2eMcPort=" + mcPort, harness.BeaconEndpointProp()}
 	if whitelist != "" {
 		props = append(props, "-Pe2eCommandWhitelist="+whitelist)
 	}

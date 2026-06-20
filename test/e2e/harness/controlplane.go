@@ -50,7 +50,10 @@ func StartControlPlane(cfg ControlPlaneConfig) (*ControlPlane, error) {
 	errLog := filepath.Join(tmpDir, prefix+".err.log")
 
 	// 以当前环境为基底叠加控制面所需变量（保留 PATH 等）。
+	// BEACON_HTTP_ADDR 由 BaseURL 推出，使控制面 bind 端口与测试连接地址一致，
+	// 消除依赖默认 8848 与仓库根 .env 的干扰；置于 ExtraEnv 之前，仍允许 ExtraEnv 覆盖。
 	env := append(os.Environ(),
+		"BEACON_HTTP_ADDR="+HTTPAddrFromURL(cfg.BaseURL),
 		"BEACON_DB_DRIVER="+cfg.DBDriver,
 		"BEACON_DB_DSN="+cfg.DBDSN,
 		"BEACON_ADMIN_PASSWORD="+cfg.AdminPassword,

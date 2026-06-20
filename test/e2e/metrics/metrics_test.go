@@ -37,9 +37,11 @@ import (
 	"beacon/test/e2e/harness"
 )
 
+// 控制面地址：默认 http://localhost:8848，可经 E2E_BEACON_URL 覆盖（本地避端口争用）。
+var beaconURL = harness.BeaconURL()
+
 // 服务端编排相关常量（与 runServer gradle 任务的约定一致）。
 const (
-	beaconURL    = "http://localhost:8848"
 	adminUser    = "admin"
 	serverID     = "e2e-bukkit-1"
 	mcPort       = "25566"
@@ -100,7 +102,7 @@ func TestMetricsE2E(t *testing.T) {
 	defer cp.Stop()
 
 	t.Log("== 起 Paper 子服（" + mcPort + "）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{"-Pe2eMcPort=" + mcPort}, logPrefixMC)
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{"-Pe2eMcPort=" + mcPort, harness.BeaconEndpointProp()}, logPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
