@@ -11,6 +11,9 @@
 ### 变更
 - agent E2E 服务端/代理的下载与启动改用 jpenilla run-task（run-paper / run-waterfall 2.3.1，兼容当前 Gradle 8.5）：移除两处手写的 `PrepareMinecraftServerEnvTask` 下载 + `JavaExec` 启动任务，改由 run-paper 的 `runServer`（Paper）与自定义命名的 `RunWaterfall` 任务 `runBungee`（Waterfall）负责下载与运行；MC 版本经 `minecraftVersion` / `waterfallVersion` 指定（取代硬编码直链），可经 `-Pe2ePaperVersion` / `-Pe2eWaterfallVersion` 覆盖。任务名（`runServer` / `runBungee`）与 Go E2E 驱动入口不变。
 
+### 变更
+- 管理台新建/复制配置流程改善（FR-40，增强 FR-1/FR-22）：新建配置对话框的环境/大区/小区/实例选项改为从 API 动态获取（环境取 `listNamespaces`、大区与小区由 zone 汇总与实例列表派生、实例取 `listInstances`），去掉原硬编码示例（prod、__GLOBAL__/server-a/server-b 等）；覆盖目标随覆盖层联动——`global` 隐藏覆盖目标，`group`/`zone`/`server` 切换为对应动态下拉，减少手填出错；配置编辑器新增「复制到实例」动作，把当前配置复制为某实例的 server 层覆盖（预填源内容、覆盖层定为 server、目标待选），进入编辑改 diff 后发布，复用既有创建/发布 API，优先级由既有覆盖链（实例>分组>全局）保证。仅前端改动，无后端新增端点。
+
 ### 修复
 - 指标看板历史趋势空环境查询报「参数错误」（FR-32）：趋势端点原强制 `namespace` 必填，管理台留空环境（聚合全部）时被后端拒为 `400 INVALID_PARAM`，历史趋势图报错。现 `namespace` 改为可选——为空时聚合全部环境的样本（与 summary 行为一致），repository 趋势查询 `namespace` 为空则不加该过滤。
 - 指标看板平均 TPS / 平均 CPU 被 BC（bungee）拉低（FR-32）：聚合原对所有在线实例一视同仁，bungee 作纯代理 tps 恒为 0，计入分母致平均 TPS·CPU 失真偏低。现这两个平均**仅统计 `role=bukkit`**（总玩家数 / 在线服数 / 平均内存仍计全部）；`metric_sample` 新增 `role` 列（VARCHAR，零方言），采样器从注册表 `Instance.Role` 落库，趋势降采样据此排除 bungee。

@@ -2,7 +2,7 @@
 // 覆盖「渲染文件树 → 点击打开标签 → 切 Diff 视图 → 保存」核心交互。
 // Monaco 编辑器与 api/client 均被 mock，保证用例在 jsdom 下稳定可跑。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
@@ -23,6 +23,8 @@ vi.mock('../components/CodeEditor', () => ({
 vi.mock('../api/client', () => ({
   listConfigs: vi.fn(),
   listInstances: vi.fn(),
+  listNamespaces: vi.fn(),
+  zoneSummary: vi.fn(),
   getConfig: vi.fn(),
   listRevisions: vi.fn(),
   diffConfig: vi.fn(),
@@ -35,6 +37,8 @@ import ConfigsPage from './ConfigsPage'
 import {
   listConfigs,
   listInstances,
+  listNamespaces,
+  zoneSummary,
   getConfig,
   listRevisions,
   diffConfig,
@@ -65,6 +69,8 @@ function renderPage(ui: ReactElement) {
 beforeEach(() => {
   vi.mocked(listConfigs).mockResolvedValue([CONFIG])
   vi.mocked(listInstances).mockResolvedValue([])
+  vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
+  vi.mocked(zoneSummary).mockResolvedValue([])
   vi.mocked(getConfig).mockResolvedValue({ ...CONFIG, content: 'k: v\n' })
   vi.mocked(listRevisions).mockResolvedValue([
     { version: 3, md5: 'abc', operator: 'a', comment: '', sourceRevision: null, createdAt: '2026-01-01T00:00:00Z' },
@@ -106,5 +112,18 @@ describe('ConfigsPage', () => {
     await waitFor(() =>
       expect(vi.mocked(publishConfig)).toHaveBeenCalledWith(1, expect.any(String), '管理台保存'),
     )
+  })
+
+  it('「复制到实例」唤起新建对话框并预填源内容与 server 覆盖层', async () => {
+    renderPage(<ConfigsPage />)
+    await userEvent.click(await screen.findByText('app.yml'))
+    // 打开标签后出现「复制到实例」动作
+    await userEvent.click(await screen.findByRole('button', { name: '复制到实例' }))
+    // 对话框唤起：覆盖层预填为 server、初始内容来自源配置
+    const dialog = await screen.findByRole('dialog')
+    expect((within(dialog).getByLabelText('覆盖层') as HTMLSelectElement).value).toBe('server')
+    expect((within(dialog).getByLabelText('初始内容') as HTMLInputElement).value).toContain('k: v')
+    // server 层下出现覆盖目标下拉（实例选择）
+    expect(within(dialog).getByLabelText('覆盖目标')).toBeInTheDocument()
   })
 })

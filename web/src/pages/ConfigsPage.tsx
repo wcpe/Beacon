@@ -25,9 +25,12 @@ import {
   getConfig,
   listConfigs,
   listInstances,
+  listNamespaces,
   listRevisions,
   publishConfig,
+  zoneSummary,
 } from '../api/client'
+import type { CreateConfigParams } from '../api/client'
 import { useMessage } from '../components/useMessage'
 import { Badge } from '@/components/ui/badge'
 import { useConfigTabs } from './configs/useConfigTabs'
@@ -36,7 +39,7 @@ import TargetSelector from './configs/TargetSelector'
 import CreateConfigDialog from './configs/CreateConfigDialog'
 import ConfigTabBar from './configs/ConfigTabBar'
 import ConfigEditorPane from './configs/ConfigEditorPane'
-import type { TreeNode } from './configs/types'
+import type { OpenTab, TreeNode } from './configs/types'
 
 export default function ConfigsPage() {
   const qc = useQueryClient()
@@ -50,8 +53,54 @@ export default function ConfigsPage() {
 
   // 配置列表
   const list = useQuery({ queryKey: ['configs'], queryFn: () => listConfigs({}) })
-  // 实例列表（左侧目标选择器 + 生效预览目标下拉）
+  // 实例列表（左侧目标选择器 + 生效预览目标下拉 + 新建对话框 server 层目标）
   const instancesQuery = useQuery({ queryKey: ['instances-all'], queryFn: () => listInstances({}) })
+  // 环境列表（新建对话框环境下拉，去硬编码）
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
+  // zone 汇总（新建对话框大区 / 小区下拉来源）
+  const zonesQuery = useQuery({ queryKey: ['zones-summary'], queryFn: () => zoneSummary() })
+
+  // 新建对话框：开合与预填初值（「复制到实例」复用同一对话框，预填后唤起）
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createInitial, setCreateInitial] = useState<CreateConfigParams | undefined>()
+
+  // 新建对话框动态选项：环境 / 大区 / 小区 / 实例（均由既有 list 端点派生，无硬编码）
+  const namespaceCodes = useMemo(
+    () => (namespacesQuery.data ?? []).map((n) => n.code),
+    [namespacesQuery.data],
+  )
+  // 大区候选：zone 汇总与实例列表去重并集（兼容无 zone 指派但已注册的大区）
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const z of zonesQuery.data ?? []) if (z.group) set.add(z.group)
+    for (const i of instancesQuery.data ?? []) if (i.group) set.add(i.group)
+    return Array.from(set).sort()
+  }, [zonesQuery.data, instancesQuery.data])
+  // 小区候选：zone 汇总与实例列表去重并集
+  const zoneOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const z of zonesQuery.data ?? []) if (z.zone) set.add(z.zone)
+    for (const i of instancesQuery.data ?? []) if (i.zone) set.add(i.zone)
+    return Array.from(set).sort()
+  }, [zonesQuery.data, instancesQuery.data])
+
+  // 「复制到实例」：以源配置为底，预填为 server 层覆盖（目标待选），保留源内容供改 diff。
+  const copyToInstance = useCallback(
+    (tab: OpenTab) => {
+      setCreateInitial({
+        namespace: tab.namespace,
+        group: tab.group,
+        dataId: tab.dataId,
+        scopeLevel: 'server',
+        scopeTarget: '',
+        format: tab.format,
+        content: tab.content,
+        comment: '',
+      })
+      setCreateOpen(true)
+    },
+    [],
+  )
 
   const activeTab = tabs.activeTab
 
@@ -197,7 +246,19 @@ export default function ConfigsPage() {
           <Badge variant="outline" className="text-xs">
             {list.data?.length ?? 0} 条配置
           </Badge>
-          <CreateConfigDialog />
+          <CreateConfigDialog
+            namespaces={namespaceCodes}
+            groups={groupOptions}
+            zones={zoneOptions}
+            instances={instancesQuery.data ?? []}
+            open={createOpen}
+            onOpenChange={(o) => {
+              setCreateOpen(o)
+              // 关闭即清预填，下次点「新建配置」从空白起（避免残留上次复制的内容）
+              if (!o) setCreateInitial(undefined)
+            }}
+            initial={createInitial}
+          />
         </div>
       </div>
 
@@ -258,6 +319,7 @@ export default function ConfigsPage() {
               onActivateEffective={() => tabs.activateEffective(activeTab)}
               editor={{ onChange: (content) => tabs.setTabContent(activeTab.configId, content) }}
               save={{ onSave: saveCurrentTab, saving: saveMut.isPending }}
+              onCopyToInstance={() => copyToInstance(activeTab)}
               diff={{
                 versionNumbers,
                 selected: activeDiff,

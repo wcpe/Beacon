@@ -20,6 +20,8 @@ interface ConfigEditorPaneProps {
   editor: { onChange: (content: string) => void }
   // 保存
   save: { onSave: () => void; saving: boolean }
+  // 复制到实例：以当前配置为底新建一条 server 层覆盖（预填源内容，进入编辑改 diff）
+  onCopyToInstance: () => void
   // Diff 视图：可选版本、当前选择、切换、对比数据
   diff: {
     versionNumbers: number[]
@@ -52,6 +54,7 @@ export default function ConfigEditorPane({
   onActivateEffective,
   editor,
   save,
+  onCopyToInstance,
   diff,
   effective,
   history,
@@ -117,6 +120,14 @@ export default function ConfigEditorPane({
               </select>
             </div>
           )}
+          <Button
+            variant="outline"
+            size="xs"
+            className="h-7 px-3 text-xs"
+            onClick={onCopyToInstance}
+          >
+            复制到实例
+          </Button>
           <Button
             size="xs"
             className="h-7 px-3 text-xs bg-primary hover:bg-primary/80 text-primary-foreground"
