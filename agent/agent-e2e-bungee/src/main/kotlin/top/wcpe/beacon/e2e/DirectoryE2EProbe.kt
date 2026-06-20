@@ -1,9 +1,6 @@
 package top.wcpe.beacon.e2e
 
 import net.md_5.bungee.api.ProxyServer
-import taboolib.common.LifeCycle
-import taboolib.common.platform.Awake
-import taboolib.common.platform.Plugin
 import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.info
 import taboolib.common.platform.function.submit
@@ -20,7 +17,7 @@ import java.io.File
  *
  * 只读快照目录与命令注册状态，不发起任何传送动作。
  */
-object DirectoryE2EProbe : Plugin() {
+object DirectoryE2EProbe {
 
     /** 快照文件名：外部驱动据此断言当前目录状态。 */
     private const val SNAPSHOT_FILE = "e2e-directory-latest.txt"
@@ -28,8 +25,14 @@ object DirectoryE2EProbe : Plugin() {
     /** 轮询周期（tick，20 tick/秒）：约每 2 秒快照一次。 */
     private const val POLL_INTERVAL_TICKS = 40L
 
-    @Awake(LifeCycle.ENABLE)
-    fun enable() {
+    /**
+     * 由主插件 BeaconE2EBungee 在 ENABLE 时显式启动。
+     *
+     * 本探针不再各自作为 TabooLib Plugin：一个 TabooLib 插件只能有一个 Plugin 实例，
+     * 多一个会在 PlatformFactory 注入时抛 IllegalStateException「Plugin instance already set」、
+     * 整个插件加载失败。与 Bukkit 侧 OverrideE2EProbe / FileTreeE2EProbe 同款——普通 object + 主插件 start()。
+     */
+    fun start() {
         info("Beacon E2E（代理）目录探针已启用，快照文件=${File(getDataFolder(), SNAPSHOT_FILE).absolutePath}")
         startSnapshot()
     }

@@ -49,6 +49,11 @@ object BeaconE2EBungee : Plugin() {
         info("Beacon E2E（代理）验收插件已启用，观测 dataId=$WATCH_DATA_ID，标记文件=${markFile.absolutePath}")
         registerChangeListener(markFile)
         startPolling(markFile)
+
+        // 启动子服目录注入探针（与 Bukkit 侧同款：探针为普通 object、由本主插件显式启动，
+        // 不再各自作为 TabooLib Plugin，避免「一插件多 Plugin 实例」致 PlatformFactory 注入抛
+        // IllegalStateException「Plugin instance already set」、整个插件加载失败）。
+        DirectoryE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)
