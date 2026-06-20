@@ -212,6 +212,7 @@ func run() error {
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)
 	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, maxHold)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
+	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
@@ -225,7 +226,7 @@ func run() error {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
-		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
+		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 

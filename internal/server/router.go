@@ -18,6 +18,7 @@ type Handlers struct {
 	Agent       *handler.AgentHandler
 	Stream      *handler.StreamHandler
 	Instance    *handler.InstanceHandler
+	Topology    *handler.TopologyHandler
 	Zone        *handler.ZoneHandler
 	Scheduling  *handler.SchedulingHandler
 	Audit       *handler.AuditHandler
@@ -113,6 +114,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		r.Get("/instances", h.Instance.List)
 		r.Get("/instances/{serverId}", h.Instance.Get)
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
+
+		// 集群拓扑（FR-37）：bc→bukkit 真实连线 + 大区/zone 分组，读内存注册表快照
+		r.Get("/topology", h.Topology.Topology)
 
 		// 健康告警站内信（FR-28）
 		r.Get("/alerts", h.Alert.List)
