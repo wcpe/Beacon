@@ -304,6 +304,29 @@ data: {}
 - 保留期外的样本已被采样器滚动清理，超出保留期的时间窗只返回现存样本（见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) 与 ARCHITECTURE §7.1）。
 - 错误：时间窗非法 `400 INVALID_PARAM`。
 
+### 控制面自身状态（FR-33）
+
+控制面**进程自身**的健康快照，供管理台顶部页眉实时展示——区别于上面「指标看板（FR-32）」的 agent 网络聚合指标（那是被管服的负载，这里是 Beacon 自己的健康）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/system/status` | 控制面自身状态：版本 / 运行时长 / DB 连通 / 在线实例数 / 采样器状态 + Go 运行时资源 |
+
+`GET /admin/v1/system/status`：实时采集一次。`startedAt` 为进程启动时间（UTC），`uptimeSeconds` 为运行时长（秒）；`db.connected` 经底层连接池 `Ping` 探测，断开时 `db.connected=false` 且带 `db.error`（端点仍返回 `200`，以反映状态而非报错）；`onlineInstances` 取自内存注册表的在线实例数；`samplerEnabled` 为负载指标采样器（FR-32）是否启用；`runtime` 为 Go 运行时资源，`heapAlloc`/`heapSys` 为**字节**。进程 CPU% 暂无 dep-free 跨平台采集办法，`cpuAvailable=false` 表示不可用（`cpuPercent` 此时无意义、恒 `0`）。返回：
+```json
+{
+  "version": "v0.5.0",
+  "startedAt": "2026-06-20T08:00:00Z",
+  "uptimeSeconds": 12345,
+  "db": { "connected": true },
+  "onlineInstances": 6,
+  "samplerEnabled": true,
+  "runtime": { "goroutines": 42, "heapAlloc": 134217728, "heapSys": 268435456 },
+  "cpuAvailable": false,
+  "cpuPercent": 0
+}
+```
+
 ### 审计与环境
 | 端点 | 说明 |
 |---|---|

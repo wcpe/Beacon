@@ -86,7 +86,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
 - **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`stream`（FR-24 单条 SSE 推送流，合并三通道变更通知 + 连接即对账）、`config/effective`/`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递；后三组退化为 SSE 通知后的"按 md5 取内容"端点）、`report`、`discovery`。
-- **admin 侧 `/admin/v1/*`**：登录 / 登出（`auth/login` / `auth/logout`，各记一条 `auth.login` / `auth.logout` 审计；登出仅留审计痕迹，令牌无状态不可吊销）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace（建环境记 `namespace.create` 审计）、指标看板（`metrics/summary` 聚合快照 + `metrics/trend` 历史趋势，FR-32）。
+- **admin 侧 `/admin/v1/*`**：登录 / 登出（`auth/login` / `auth/logout`，各记一条 `auth.login` / `auth.logout` 审计；登出仅留审计痕迹，令牌无状态不可吊销）、配置 CRUD/发布/回滚/diff/历史、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace（建环境记 `namespace.create` 审计）、指标看板（`metrics/summary` 聚合快照 + `metrics/trend` 历史趋势，FR-32）、控制面自身状态（`system/status`：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源，供页眉展示，区别于 FR-32 的 agent 网络聚合，FR-33）。
 - **运维侧 `/metrics`**：Prometheus 文本格式运行指标（注册数/健康分布/配置发布与推送累计），与 agent 端点同属内网信任面、不挂管理台鉴权（FR-30，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)）。
 - 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
