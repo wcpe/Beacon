@@ -123,6 +123,36 @@ export interface LoginResult {
   operator: string
 }
 
+// ===== 控制面自身状态（FR-33）=====
+
+// 数据库连通性（error 仅断开时带）
+export interface DbStatusView {
+  connected: boolean
+  error?: string
+}
+
+// Go 运行时资源（heapAlloc / heapSys 单位为字节，由前端格式化）
+export interface RuntimeStatsView {
+  goroutines: number
+  heapAlloc: number
+  heapSys: number
+}
+
+// 控制面自身状态视图（对齐 internal/handler/system_handler.go systemStatusView）
+// 区别于 FR-32 的 agent 网络聚合指标——这里是控制面进程本身的健康。
+export interface SystemStatusView {
+  version: string
+  startedAt: string
+  uptimeSeconds: number
+  db: DbStatusView
+  onlineInstances: number
+  samplerEnabled: boolean
+  runtime: RuntimeStatsView
+  // cpuAvailable=false 表示进程 CPU% 不可用（未引入额外依赖）；为 true 时 cpuPercent 才有意义
+  cpuAvailable: boolean
+  cpuPercent: number
+}
+
 // ===== 文件树托管（通道B，FR-14）=====
 
 // 文件对象视图（content 仅详情接口返回，列表不含；对齐 internal/handler/file_handler.go fileView）

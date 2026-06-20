@@ -5,6 +5,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
 import { Button } from '@/components/ui/button'
+import SystemHeader from '@/components/SystemHeader'
 import { cn } from '@/lib/utils'
 
 // 导航项定义（路径 + 中文名）
@@ -33,38 +34,42 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
-        <div className="border-b px-5 py-4 text-base font-semibold">Beacon 管理台</div>
-        <nav className="flex flex-1 flex-col gap-1 p-3">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                cn(
-                  'rounded-md px-3 py-2 text-sm transition-colors',
-                  isActive
-                    ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-                )
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="border-t p-4">
-          <div className="text-xs text-muted-foreground">当前操作人</div>
-          <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
-          <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
-            登出
-          </Button>
-        </div>
-      </aside>
-      <main className="min-w-0 flex-1 overflow-hidden p-6">
-        <Outlet />
-      </main>
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      {/* 顶部页眉：控制面自身状态（FR-33），横跨 sidebar + 内容区之上 */}
+      <SystemHeader />
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
+          <div className="border-b px-5 py-4 text-base font-semibold">Beacon 管理台</div>
+          <nav className="flex flex-1 flex-col gap-1 p-3">
+            {NAV_ITEMS.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  cn(
+                    'rounded-md px-3 py-2 text-sm transition-colors',
+                    isActive
+                      ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                      : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+                  )
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="border-t p-4">
+            <div className="text-xs text-muted-foreground">当前操作人</div>
+            <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
+            <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
+              登出
+            </Button>
+          </div>
+        </aside>
+        <main className="min-w-0 flex-1 overflow-hidden p-6">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

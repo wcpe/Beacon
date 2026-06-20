@@ -17,6 +17,7 @@ import type {
   OverrideSetView,
   PublishResult,
   RevisionView,
+  SystemStatusView,
   ZoneStatView,
 } from './types'
 import { clearAuth, currentToken } from '../state/auth'
@@ -305,6 +306,14 @@ export interface MetricsTrend {
 
 export function metricsTrend(params: TrendParams): Promise<MetricsTrend> {
   return request<MetricsTrend>(`/metrics/trend${qs(params)}`)
+}
+
+// ===== 控制面自身状态（FR-33，见 docs/API.md 控制面自身状态小节）=====
+// 控制面进程本身的健康（版本 / 运行时长 / DB 连通 / 在线实例数 / 采样器状态 + Go 运行时资源），
+// 区别于 FR-32 的 agent 网络聚合指标。
+
+export function systemStatus(): Promise<SystemStatusView> {
+  return request<SystemStatusView>('/system/status')
 }
 
 // ===== zone 分配 =====
