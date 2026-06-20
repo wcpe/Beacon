@@ -42,7 +42,7 @@ type systemStatusView struct {
 	OnlineInstances int              `json:"onlineInstances"`
 	SamplerEnabled  bool             `json:"samplerEnabled"`
 	Runtime         runtimeStatsView `json:"runtime"`
-	// CPUAvailable=false 表示进程 CPU% 不可用（未引入额外依赖，见 FR-33）；为 true 时 CPUPercent 才有意义。
+	// CPUAvailable=false 表示进程 CPU% 采集失败、不可用；为 true 时 CPUPercent（[0,100]）才有意义。
 	CPUAvailable bool    `json:"cpuAvailable"`
 	CPUPercent   float64 `json:"cpuPercent"`
 }
@@ -63,6 +63,6 @@ func (h *SystemHandler) Status(w http.ResponseWriter, _ *http.Request) {
 			HeapSys:    st.Runtime.HeapSys,
 		},
 		CPUAvailable: st.CPUAvailable,
-		CPUPercent:   0, // 不可用时恒 0；CPUAvailable=false 时前端展示「不可用」
+		CPUPercent:   st.CPUPercent, // 不可用时 service 已置 0；CPUAvailable=false 时前端展示「不可用」
 	})
 }

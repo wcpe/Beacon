@@ -312,7 +312,7 @@ data: {}
 |---|---|
 | `GET /admin/v1/system/status` | 控制面自身状态：版本 / 运行时长 / DB 连通 / 在线实例数 / 采样器状态 + Go 运行时资源 |
 
-`GET /admin/v1/system/status`：实时采集一次。`startedAt` 为进程启动时间（UTC），`uptimeSeconds` 为运行时长（秒）；`db.connected` 经底层连接池 `Ping` 探测，断开时 `db.connected=false` 且带 `db.error`（端点仍返回 `200`，以反映状态而非报错）；`onlineInstances` 取自内存注册表的在线实例数；`samplerEnabled` 为负载指标采样器（FR-32）是否启用；`runtime` 为 Go 运行时资源，`heapAlloc`/`heapSys` 为**字节**。进程 CPU% 暂无 dep-free 跨平台采集办法，`cpuAvailable=false` 表示不可用（`cpuPercent` 此时无意义、恒 `0`）。返回：
+`GET /admin/v1/system/status`：实时采集一次。`startedAt` 为进程启动时间（UTC），`uptimeSeconds` 为运行时长（秒）；`db.connected` 经底层连接池 `Ping` 探测，断开时 `db.connected=false` 且带 `db.error`（端点仍返回 `200`，以反映状态而非报错）；`onlineInstances` 取自内存注册表的在线实例数；`samplerEnabled` 为负载指标采样器（FR-32）是否启用；`runtime` 为 Go 运行时资源，`heapAlloc`/`heapSys` 为**字节**。进程 CPU% 经 [gopsutil](https://github.com/shirou/gopsutil) 采集本进程占用：`cpuAvailable=true` 时 `cpuPercent` 为自上次采集以来的占比（[0,100]，钳顶后保留 1 位小数；该占比不按核心数归一，多核满载会先到 100 再被钳）；采集失败时优雅降级为 `cpuAvailable=false`（`cpuPercent` 此时无意义、恒 `0`）。返回：
 ```json
 {
   "version": "v0.5.0",
@@ -322,8 +322,8 @@ data: {}
   "onlineInstances": 6,
   "samplerEnabled": true,
   "runtime": { "goroutines": 42, "heapAlloc": 134217728, "heapSys": 268435456 },
-  "cpuAvailable": false,
-  "cpuPercent": 0
+  "cpuAvailable": true,
+  "cpuPercent": 23.4
 }
 ```
 

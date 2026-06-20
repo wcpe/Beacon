@@ -148,7 +148,7 @@ export interface SystemStatusView {
   onlineInstances: number
   samplerEnabled: boolean
   runtime: RuntimeStatsView
-  // cpuAvailable=false 表示进程 CPU% 不可用（未引入额外依赖）；为 true 时 cpuPercent 才有意义
+  // cpuAvailable=false 表示进程 CPU% 采集失败、不可用；为 true 时 cpuPercent（[0,100]）才有意义
   cpuAvailable: boolean
   cpuPercent: number
 }

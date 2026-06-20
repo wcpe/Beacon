@@ -168,7 +168,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("获取底层连接池失败: %w", err)
 	}
-	systemService := service.NewSystemService(version.Version, startedAt, sqlDB, registry, cfg.Metric.Enabled)
+	// 进程 CPU% 采样器（gopsutil）：构造时预热一次基线，端点每次取自上次调用以来的占比。
+	cpuSampler := service.NewGopsutilCPUSampler()
+	systemService := service.NewSystemService(version.Version, startedAt, sqlDB, registry, cfg.Metric.Enabled, cpuSampler)
 	systemHandler := handler.NewSystemHandler(systemService)
 
 	// 流量调度（FR-10）：drain 标记落 DB + 落位建议（query-only），控制面只给决策不执行玩家连接（ADR-0017）

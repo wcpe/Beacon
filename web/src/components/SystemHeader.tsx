@@ -1,6 +1,7 @@
 // 控制面自身状态页眉（FR-33）：横跨 sidebar + 内容区之上，展示控制面进程本身的健康。
 // 区别于可观测看板（FR-32）的 agent 网络聚合指标——这里是版本 / 运行时长 / DB 连通 /
-// 在线实例数 / 采样器状态 + Go 运行时资源（goroutine / 堆内存；CPU 暂不可用）。
+// 在线实例数 / 采样器状态 + Go 运行时资源（goroutine / 堆内存）+ 进程 CPU%（gopsutil 采集，
+// 采集失败时降级为「不可用」）。
 
 import { useQuery } from '@tanstack/react-query'
 import { systemStatus } from '@/api/client'
@@ -63,7 +64,7 @@ export default function SystemHeader() {
         {data ? `${formatBytes(data.runtime.heapAlloc)} / ${formatBytes(data.runtime.heapSys)}` : '-'}
       </StatItem>
 
-      <StatItem label="进程 CPU">{data?.cpuAvailable ? `${data.cpuPercent.toFixed(0)}%` : '不可用'}</StatItem>
+      <StatItem label="进程 CPU">{data?.cpuAvailable ? `${data.cpuPercent.toFixed(1)}%` : '不可用'}</StatItem>
     </header>
   )
 }

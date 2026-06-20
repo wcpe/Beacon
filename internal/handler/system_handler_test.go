@@ -17,6 +17,14 @@ type pingFunc func() error
 
 func (f pingFunc) Ping() error { return f() }
 
+// cpuStub 是 cpuSampler 的测试替身：按预置值返回进程 CPU 占比与可用性。
+type cpuStub struct {
+	percent   float64
+	available bool
+}
+
+func (c cpuStub) Percent() (float64, bool) { return c.percent, c.available }
+
 // TestSystemStatusHandlerConnected 验证端点返回 200 且 DB 连通、字段就位。
 func TestSystemStatusHandlerConnected(t *testing.T) {
 	reg := runtime.NewRegistry()
@@ -25,7 +33,8 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 		t.Fatalf("注册实例失败: %v", err)
 	}
 	start := time.Now().Add(-2 * time.Minute)
-	svc := service.NewSystemService("v0.5.0", start, pingFunc(func() error { return nil }), reg, true)
+	svc := service.NewSystemService("v0.5.0", start, pingFunc(func() error { return nil }), reg, true,
+		cpuStub{percent: 12.3, available: true})
 	h := NewSystemHandler(svc)
 
 	rec := httptest.NewRecorder()
@@ -53,8 +62,11 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 	if !body.SamplerEnabled {
 		t.Fatal("采样器应标记为启用")
 	}
-	if body.CPUAvailable {
-		t.Fatal("CPU 当前应为不可用占位")
+	if !body.CPUAvailable {
+		t.Fatal("注入可用采样器时 CPUAvailable 应为 true")
+	}
+	if body.CPUPercent != 12.3 {
+		t.Fatalf("CPUPercent 应透传采样值 12.3，实际 %v", body.CPUPercent)
 	}
 	if body.Runtime.Goroutines <= 0 {
 		t.Fatalf("goroutine 数应为正，实际 %d", body.Runtime.Goroutines)
@@ -64,7 +76,7 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 // TestSystemStatusHandlerDBDown 验证 DB 断开时端点仍返回 200，但 db.connected=false 并带错误说明。
 func TestSystemStatusHandlerDBDown(t *testing.T) {
 	svc := service.NewSystemService("v1", time.Now(), pingFunc(func() error { return errors.New("库已停") }),
-		runtime.NewRegistry(), false)
+		runtime.NewRegistry(), false, cpuStub{available: false})
 	h := NewSystemHandler(svc)
 
 	rec := httptest.NewRecorder()

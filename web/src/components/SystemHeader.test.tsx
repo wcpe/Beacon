@@ -1,5 +1,5 @@
 // SystemHeader 单测（FR-33）：
-// 覆盖「连通态渲染各字段 → DB 断开反映为已断开 → 拉取失败反映为不可达 → CPU 不可用展示 → 采样器停用」。
+// 覆盖「连通态渲染各字段（含真实 CPU%）→ DB 断开反映为已断开 → 拉取失败反映为不可达 → CPU 不可用降级展示 → 采样器停用」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -14,7 +14,7 @@ import SystemHeader from './SystemHeader'
 import { systemStatus } from '@/api/client'
 import type { SystemStatusView } from '@/api/types'
 
-// 健康样例：DB 连通、采样器启用、CPU 不可用（当前占位）
+// 健康样例：DB 连通、采样器启用、CPU 可用且占比 23.4%
 const STATUS: SystemStatusView = {
   version: 'v0.6.0',
   startedAt: '2026-06-20T08:00:00Z',
@@ -27,8 +27,8 @@ const STATUS: SystemStatusView = {
     heapAlloc: 134217728, // 128 MB
     heapSys: 268435456, // 256 MB
   },
-  cpuAvailable: false,
-  cpuPercent: 0,
+  cpuAvailable: true,
+  cpuPercent: 23.4,
 }
 
 function renderHeader(ui: ReactElement) {
@@ -41,7 +41,7 @@ beforeEach(() => {
 })
 
 describe('SystemHeader', () => {
-  it('连通态渲染版本 / 运行时长 / 在线实例 / 采样器 / goroutine / 堆 / CPU 占位', async () => {
+  it('连通态渲染版本 / 运行时长 / 在线实例 / 采样器 / goroutine / 堆 / 真实 CPU%', async () => {
     renderHeader(<SystemHeader />)
     expect(await screen.findByText('v0.6.0')).toBeInTheDocument()
     expect(screen.getByText('控制面状态')).toBeInTheDocument()
@@ -57,8 +57,14 @@ describe('SystemHeader', () => {
     expect(screen.getByText('42')).toBeInTheDocument()
     // Go 堆按字节格式化（used / sys）
     expect(screen.getByText('128 MB / 256 MB')).toBeInTheDocument()
-    // CPU 当前不可用（占位）
-    expect(screen.getByText('不可用')).toBeInTheDocument()
+    // 进程 CPU% 取真实采样值（保留 1 位小数）
+    expect(screen.getByText('23.4%')).toBeInTheDocument()
+  })
+
+  it('CPU 不可用时降级展示「不可用」', async () => {
+    vi.mocked(systemStatus).mockResolvedValue({ ...STATUS, cpuAvailable: false, cpuPercent: 0 })
+    renderHeader(<SystemHeader />)
+    expect(await screen.findByText('不可用')).toBeInTheDocument()
   })
 
   it('DB 断开时反映为「已断开」', async () => {
