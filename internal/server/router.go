@@ -23,6 +23,7 @@ type Handlers struct {
 	Audit       *handler.AuditHandler
 	Alert       *handler.AlertHandler
 	Metric      *handler.MetricHandler
+	System      *handler.SystemHandler
 	Auth        *handler.AuthHandler
 	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web         http.Handler
@@ -134,6 +135,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 			r.Get("/metrics/summary", h.Metric.Summary)
 			r.Get("/metrics/trend", h.Metric.Trend)
 		}
+
+		// 控制面自身状态页眉（FR-33）：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源
+		r.Get("/system/status", h.System.Status)
 	})
 
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）

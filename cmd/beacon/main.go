@@ -41,6 +41,9 @@ func main() {
 
 // run 完成配置加载、依赖装配与服务启动，返回首个致命错误。
 func run() error {
+	// 进程启动时间：供控制面自身状态页眉计算运行时长（FR-33）。在 run 入口记录，尽量贴近真实启动点。
+	startedAt := time.Now().UTC()
+
 	var cfgPath string
 	flag.StringVar(&cfgPath, "config", "config.yml", "配置文件路径")
 	flag.Parse()
@@ -160,6 +163,14 @@ func run() error {
 		time.Duration(cfg.Metric.SampleIntervalSec)*time.Second,
 		time.Duration(cfg.Metric.RetentionHours)*time.Hour)
 
+	// 控制面自身状态页眉（FR-33）：DB 连通经底层连接池 Ping（不经 GORM 业务路径），在线实例数读内存注册表。
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("获取底层连接池失败: %w", err)
+	}
+	systemService := service.NewSystemService(version.Version, startedAt, sqlDB, registry, cfg.Metric.Enabled)
+	systemHandler := handler.NewSystemHandler(systemService)
+
 	// 流量调度（FR-10）：drain 标记落 DB + 落位建议（query-only），控制面只给决策不执行玩家连接（ADR-0017）
 	drainRepo := repository.NewServerDrainRepository(db)
 	schedulingService := service.NewSchedulingService(db, drainRepo, auditRepo, registry)
@@ -213,7 +224,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, Auth: authHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn)
 
 	srv := &http.Server{
