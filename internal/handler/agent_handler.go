@@ -115,6 +115,35 @@ type reportRequest struct {
 	// Backends 是 bc 上报的当前后端子服 serverId 集合（FR-36）。用指针区分「缺键」与「显式空集」：
 	// nil=旧 agent/bukkit 不报（保留原集合不动）；非空指针=bc 显式上报（含空集，即清空）。
 	Backends *[]string `json:"backends,omitempty"`
+	// Proxy 是 bc 专属负载指标（FR-34）。用指针区分「缺键」与「上报」：
+	// nil=旧 agent/bukkit 不报（不刷新 Proxy 字段）；非 nil=bc 上报（刷新）。
+	Proxy *proxyReport `json:"proxy,omitempty"`
+}
+
+// proxyReport 是 report 请求体中的 BC 专属指标子对象（FR-34，仅 bc 填）。
+// 全部基础数值；缺省字段解析为 0（JSON 数值缺键），backendAvgLatencyMs 缺键解析为 0 不影响展示判定。
+type proxyReport struct {
+	OnlineConnections   int     `json:"onlineConnections"`
+	ThreadCount         int     `json:"threadCount"`
+	UptimeMs            int64   `json:"uptimeMs"`
+	BackendUp           int     `json:"backendUp"`
+	BackendTotal        int     `json:"backendTotal"`
+	BackendAvgLatencyMs float64 `json:"backendAvgLatencyMs"`
+}
+
+// toRuntime 把请求体 proxy 子对象映射为运行态 BC 指标；nil 接收者返回 nil（缺键不刷新）。
+func (p *proxyReport) toRuntime() *runtime.ProxyMetrics {
+	if p == nil {
+		return nil
+	}
+	return &runtime.ProxyMetrics{
+		OnlineConnections:   p.OnlineConnections,
+		ThreadCount:         p.ThreadCount,
+		UptimeMs:            p.UptimeMs,
+		BackendUp:           p.BackendUp,
+		BackendTotal:        p.BackendTotal,
+		BackendAvgLatencyMs: p.BackendAvgLatencyMs,
+	}
 }
 
 // applyDefaults 为旧 agent 缺失的 cpuLoad 填入不可用哨兵 -1.0（内存键缺失天然为 0，无需处理）。
@@ -144,7 +173,7 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Report(service.ReportParams{
 		Namespace: req.Namespace, ServerID: req.ServerID, AppliedMD5: req.AppliedMD5,
 		PlayerCount: req.PlayerCount, TPS: req.TPS, MemUsed: req.MemUsed, MemMax: req.MemMax,
-		CPULoad: req.CPULoad(), Backends: req.Backends,
+		CPULoad: req.CPULoad(), Backends: req.Backends, Proxy: req.Proxy.toRuntime(),
 	}); err != nil {
 		render.WriteError(w, r, err)
 		return

@@ -69,6 +69,63 @@ func TestMetricSummaryStructure(t *testing.T) {
 	assertNoRosterFields(t, body)
 }
 
+// TestMetricSummaryBCDimension 注册 bc 代理并上报 proxy 指标后，聚合端点 bc 子对象反映 BC 维度（FR-34），
+// 且不含玩家名单字段。
+func TestMetricSummaryBCDimension(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// 注册一台 bukkit 子服与一台 bc 代理。
+	for _, s := range []map[string]any{
+		{"namespace": "prod", "serverId": "bc-bk1", "role": "bukkit", "address": "10.0.1.1:25565"},
+		{"namespace": "prod", "serverId": "bc-px1", "role": "bungee", "address": "10.0.1.9:25577"},
+	} {
+		if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/register", s); code != http.StatusOK {
+			t.Fatalf("注册 %v 应 200，实际 %d", s["serverId"], code)
+		}
+	}
+	// bukkit 上报（无 proxy 段）。
+	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
+		"namespace": "prod", "serverId": "bc-bk1", "playerCount": 20, "tps": 19.9, "cpuLoad": 0.3,
+	}); code != http.StatusOK {
+		t.Fatalf("上报 bc-bk1 应 200，实际 %d", code)
+	}
+	// bc 上报含 proxy 子对象。
+	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/report", map[string]any{
+		"namespace": "prod", "serverId": "bc-px1", "playerCount": 35, "tps": 0,
+		"proxy": map[string]any{
+			"onlineConnections": 35, "threadCount": 48, "uptimeMs": 600000,
+			"backendUp": 1, "backendTotal": 1, "backendAvgLatencyMs": 9.0,
+		},
+	}); code != http.StatusOK {
+		t.Fatalf("上报 bc-px1 应 200，实际 %d", code)
+	}
+
+	code, body := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/metrics/summary?namespace=prod", nil)
+	if code != http.StatusOK {
+		t.Fatalf("聚合端点应 200，实际 %d：%v", code, body)
+	}
+	bc, ok := body["bc"].(map[string]any)
+	if !ok {
+		t.Fatalf("聚合响应应含 bc 子对象，实际 %v", body)
+	}
+	if pc, _ := bc["proxyCount"].(float64); pc != 1 {
+		t.Fatalf("bc 代理数应为 1，实际 %v", bc["proxyCount"])
+	}
+	if conn, _ := bc["totalConnections"].(float64); conn != 35 {
+		t.Fatalf("bc 连接合计应为 35，实际 %v", bc["totalConnections"])
+	}
+	if up, _ := bc["backendUp"].(float64); up != 1 {
+		t.Fatalf("bc 可达后端应为 1，实际 %v", bc["backendUp"])
+	}
+	if lat, _ := bc["avgBackendLatencyMs"].(float64); lat < 8.9 || lat > 9.1 {
+		t.Fatalf("bc 平均延迟应约 9.0，实际 %v", bc["avgBackendLatencyMs"])
+	}
+	// 边界守护：bc 子对象与顶层都不得含玩家名单 / 身份字段。
+	assertNoRosterFields(t, body)
+	assertNoRosterFields(t, bc)
+}
+
 // TestMetricTrendStructure 趋势端点返回时间序列点，按时间窗查询，且不含玩家名单字段。
 func TestMetricTrendStructure(t *testing.T) {
 	ts := newTestServer(t)

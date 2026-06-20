@@ -34,8 +34,8 @@ func TestSampleOnceSnapshotToBatch(t *testing.T) {
 	now := time.Now().UTC()
 	mustRegister(t, reg, "prod", "lobby-1", "10.0.0.1:25565", now)
 	mustRegister(t, reg, "prod", "lobby-2", "10.0.0.2:25565", now)
-	reg.Report("prod", "lobby-1", "m", 42, 19.9, 128, 512, 0.3)
-	reg.Report("prod", "lobby-2", "m", 7, 20.0, 64, 256, -1.0)
+	reg.Report("prod", "lobby-1", "m", 42, 19.9, 128, 512, 0.3, nil)
+	reg.Report("prod", "lobby-2", "m", 7, 20.0, 64, 256, -1.0, nil)
 
 	sink := &fakeMetricSink{}
 	sampler := NewMetricSampler(reg, sink, time.Second, time.Hour)

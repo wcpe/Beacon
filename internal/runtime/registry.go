@@ -19,6 +19,20 @@ const (
 // ErrDuplicateServerID 表示同 (namespace, serverId) 已有仍新鲜的另一 address 在线实例。
 var ErrDuplicateServerID = errors.New("重复 serverId：已有仍新鲜的不同地址实例在线")
 
+// CPULoadUnavailable 是 CPU / 延迟不可用哨兵（与 agent 约定一致：取不到为 -1.0）。
+const CPULoadUnavailable = -1.0
+
+// ProxyMetrics 是 bc（bungee 代理）专属负载指标（FR-34，仅展示不参与决策；bukkit 恒为零值）。
+// 仅含负载计数事实（连接 / 线程 / 运行时长 / 后端可达性·延迟），不含玩家名单 / 身份（看人归③层，越界）。
+type ProxyMetrics struct {
+	OnlineConnections   int     // 代理在线连接数
+	ThreadCount         int     // JVM 活动线程数
+	UptimeMs            int64   // JVM 运行毫秒数
+	BackendUp           int     // 可达后端子服数
+	BackendTotal        int     // 配置的后端子服总数
+	BackendAvgLatencyMs float64 // 到可达后端的平均 ping 延迟（毫秒），-1.0=无可达后端（不可用）
+}
+
 // Instance 是实例运行态条目（内存真源；标签即发现过滤维度，无 canary）。
 type Instance struct {
 	Namespace     string
@@ -42,6 +56,9 @@ type Instance struct {
 	MemUsed       int64   // JVM 已用堆字节；与 PlayerCount/TPS 同列健康事实，仅展示不参与决策（FR-32）
 	MemMax        int64   // JVM 最大堆字节；仅展示不参与决策（FR-32）
 	CpuLoad       float64 // 进程 CPU 负载[0,1]，-1.0=不可用（近似值）；仅展示不参与决策（FR-32）
+	// Proxy 是该实例（仅 bungee 代理）专属负载指标，由 bc agent 上报、控制面只存的事实（FR-34）。
+	// 仅 bc 填、bukkit 恒空（零值）；与上面负载字段同列，仅展示不参与决策。
+	Proxy ProxyMetrics
 	// Backends 是该实例（仅 bungee 代理）当前代理的后端子服 serverId 集合，由 agent 上报、控制面只存的事实（FR-36）。
 	// 仅 bc 填、bukkit 恒空；供拓扑 bc→bukkit 连线消费（FR-37）。随注册/上报刷新，仅内存、不落 DB。
 	Backends     []string
@@ -131,7 +148,8 @@ func (r *Registry) Heartbeat(ns, serverID string, now time.Time) bool {
 
 // Report 写入 agent 上报的运行指标（人数 / TPS / 内存 / CPU，均仅展示不参与决策）；未注册返回 false。
 // cpuLoad 取值 [0,1]，-1.0 表示不可用（由展示层判定），控制面不做归一化。
-func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64, memUsed, memMax int64, cpuLoad float64) bool {
+// proxy 为 bc 专属指标（FR-34）：非 nil 时刷新 Proxy 字段（仅 bc 上报）；nil 时不动（bukkit / 旧 agent 缺键，向后兼容）。
+func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64, memUsed, memMax int64, cpuLoad float64, proxy *ProxyMetrics) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	inst := r.lookup(ns, serverID)
@@ -144,6 +162,9 @@ func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps 
 	inst.MemUsed = memUsed
 	inst.MemMax = memMax
 	inst.CpuLoad = cpuLoad
+	if proxy != nil {
+		inst.Proxy = *proxy
+	}
 	return true
 }
 

@@ -337,3 +337,70 @@ func TestDownsampleZeroBucketFallback(t *testing.T) {
 		t.Fatalf("桶大小<=0 应每条独立成点，实际 %d", len(pts))
 	}
 }
+
+// bcInst 构造一个在线 bungee 实例样本（填 BC 专属 Proxy 字段，供 BC 维度聚合单测）。
+func bcInst(serverID string, conn, threads, backendUp, backendTotal int, latency float64) *runtime.Instance {
+	return &runtime.Instance{
+		Namespace: "prod", ServerID: serverID, Role: roleBungee, Status: runtime.StatusOnline,
+		PlayerCount: conn,
+		Proxy: runtime.ProxyMetrics{
+			OnlineConnections: conn, ThreadCount: threads,
+			BackendUp: backendUp, BackendTotal: backendTotal, BackendAvgLatencyMs: latency,
+		},
+	}
+}
+
+// TestSummarizeBCDimension 验证 BC 维度聚合：只统计 bungee，连接 / 后端求和、线程取均值、延迟剔除 -1.0。
+func TestSummarizeBCDimension(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bk-a", roleBukkit, 30, 20.0, 100, 1000, 0.4), // bukkit 不进 BC 维度
+		bcInst("bc-1", 100, 64, 3, 4, 10.0),
+		bcInst("bc-2", 50, 32, 2, 2, 30.0),
+	}
+	sum := Summarize(insts)
+	bc := sum.BC
+	if bc.ProxyCount != 2 {
+		t.Fatalf("BC 代理数应为 2（仅 bungee），实际 %d", bc.ProxyCount)
+	}
+	if bc.TotalConnections != 150 {
+		t.Fatalf("BC 连接合计应为 150，实际 %d", bc.TotalConnections)
+	}
+	// 平均线程：(64+32)/2=48。
+	if !floatEq(bc.AvgThreadCount, 48.0) {
+		t.Fatalf("BC 平均线程应为 48，实际 %v", bc.AvgThreadCount)
+	}
+	if bc.BackendUp != 5 || bc.BackendTotal != 6 {
+		t.Fatalf("BC 后端可达性合计应为 5/6，实际 %d/%d", bc.BackendUp, bc.BackendTotal)
+	}
+	// 平均延迟：(10+30)/2=20。
+	if !floatEq(bc.AvgBackendLatencyMs, 20.0) {
+		t.Fatalf("BC 平均延迟应为 20.0，实际 %v", bc.AvgBackendLatencyMs)
+	}
+}
+
+// TestSummarizeBCExcludesUnavailableLatency 验证后端延迟 -1.0（无可达后端）被剔除出平均。
+func TestSummarizeBCExcludesUnavailableLatency(t *testing.T) {
+	insts := []*runtime.Instance{
+		bcInst("bc-1", 10, 16, 0, 2, -1.0), // 无可达后端，延迟不可用，剔除
+		bcInst("bc-2", 20, 24, 2, 2, 12.0),
+	}
+	sum := Summarize(insts)
+	// 平均延迟只对可用样本（bc-2=12）求 → 12.0。
+	if !floatEq(sum.BC.AvgBackendLatencyMs, 12.0) {
+		t.Fatalf("BC 平均延迟应剔除 -1.0 后为 12.0，实际 %v", sum.BC.AvgBackendLatencyMs)
+	}
+}
+
+// TestSummarizeBCNoBungee 无 bungee 实例时 BC 维度为零值、平均延迟为不可用哨兵。
+func TestSummarizeBCNoBungee(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bk-a", roleBukkit, 30, 20.0, 100, 1000, 0.4),
+	}
+	sum := Summarize(insts)
+	if sum.BC.ProxyCount != 0 || sum.BC.TotalConnections != 0 {
+		t.Fatalf("无 bungee 时 BC 维度应为零值，实际 %+v", sum.BC)
+	}
+	if sum.BC.AvgBackendLatencyMs != latencyUnavailable {
+		t.Fatalf("无 bungee 时 BC 平均延迟应为不可用哨兵 -1.0，实际 %v", sum.BC.AvgBackendLatencyMs)
+	}
+}

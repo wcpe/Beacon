@@ -129,12 +129,14 @@ type ReportParams struct {
 	// Backends 用指针区分「缺键」与「显式空集」：nil=旧 agent/bukkit 未报（保留原集合不动）；
 	// 非空指针=bc 显式上报（含空集即清空）。仅 bc 填，向后兼容。
 	Backends *[]string
+	// Proxy 是 bc 专属负载指标（FR-34）：nil=bukkit/旧 agent 缺键（不刷新）；非 nil=bc 上报（刷新）。
+	Proxy *runtime.ProxyMetrics
 }
 
 // Report 写入 agent 上报指标（人数 / TPS / 内存 / CPU，仅展示）；bc 附报的后端集合随上报刷新（FR-36）。
 // 未注册返回 NOT_REGISTERED。
 func (s *InstanceService) Report(p ReportParams) error {
-	if !s.registry.Report(p.Namespace, p.ServerID, p.AppliedMD5, p.PlayerCount, p.TPS, p.MemUsed, p.MemMax, p.CPULoad) {
+	if !s.registry.Report(p.Namespace, p.ServerID, p.AppliedMD5, p.PlayerCount, p.TPS, p.MemUsed, p.MemMax, p.CPULoad, p.Proxy) {
 		return apperr.ErrNotRegistered
 	}
 	// 仅当 bc 显式上报 backends（指针非空）时刷新；旧 agent/bukkit 缺键不动原集合。

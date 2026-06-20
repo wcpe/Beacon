@@ -26,6 +26,16 @@ type serverPlayersView struct {
 	PlayerCount int    `json:"playerCount"`
 }
 
+// bcSummaryView 是 bc（bungee 代理）维度聚合对外视图（FR-34，仅负载数字，不含名单）。
+type bcSummaryView struct {
+	ProxyCount          int     `json:"proxyCount"`          // 在线 bc 代理数
+	TotalConnections    int     `json:"totalConnections"`    // bc 在线连接数合计
+	AvgThreadCount      float64 `json:"avgThreadCount"`      // bc 平均 JVM 线程数
+	BackendUp           int     `json:"backendUp"`           // bc 可达后端数合计
+	BackendTotal        int     `json:"backendTotal"`        // bc 配置后端总数合计
+	AvgBackendLatencyMs float64 `json:"avgBackendLatencyMs"` // bc 平均后端延迟（-1.0=无可用样本）
+}
+
 // summaryView 是当前快照聚合对外视图。
 type summaryView struct {
 	TotalPlayers   int                 `json:"totalPlayers"`
@@ -36,6 +46,7 @@ type summaryView struct {
 	AvgMemMax      int64               `json:"avgMemMax"`
 	AvgCPULoad     float64             `json:"avgCpuLoad"`     // -1.0 表示无可用 CPU 样本
 	CPUSampleCount int                 `json:"cpuSampleCount"` // 参与 CPU 平均的可用样本数
+	BC             bcSummaryView       `json:"bc"`             // bc 代理维度聚合（FR-34）
 }
 
 // trendPointView 是趋势时间序列点对外视图。
@@ -60,6 +71,11 @@ func (h *MetricHandler) Summary(w http.ResponseWriter, r *http.Request) {
 		TotalPlayers: sum.TotalPlayers, OnlineServers: sum.OnlineServers, Servers: servers,
 		AvgTPS: sum.AvgTPS, AvgMemUsed: sum.AvgMemUsed, AvgMemMax: sum.AvgMemMax,
 		AvgCPULoad: sum.AvgCPULoad, CPUSampleCount: sum.CPUSampleCount,
+		BC: bcSummaryView{
+			ProxyCount: sum.BC.ProxyCount, TotalConnections: sum.BC.TotalConnections,
+			AvgThreadCount: sum.BC.AvgThreadCount, BackendUp: sum.BC.BackendUp,
+			BackendTotal: sum.BC.BackendTotal, AvgBackendLatencyMs: sum.BC.AvgBackendLatencyMs,
+		},
 	})
 }
 

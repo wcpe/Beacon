@@ -22,22 +22,37 @@ const (
 // countsInAvg 判定某角色是否计入平均 TPS·CPU：仅 bukkit 计入，bungee 排除。
 func countsInAvg(role string) bool { return role == roleBukkit }
 
+// latencyUnavailable 是后端平均延迟不可用哨兵（与 agent / registry 约定一致：无可达后端为 -1.0）。
+const latencyUnavailable = -1.0
+
 // ServerPlayers 是每服人数明细（聚合端点用，仅负载数字，不含名单）。
 type ServerPlayers struct {
 	ServerID    string
 	PlayerCount int
 }
 
+// BCSummary 是 bc（bungee 代理）维度的当前快照聚合（FR-34，仅对 role=bungee 在线实例统计）。
+// 仅负载计数事实（代理数 / 连接 / 线程 / 后端可达性·延迟），不含玩家名单 / 身份。
+type BCSummary struct {
+	ProxyCount          int     // 在线 bc 代理数
+	TotalConnections    int     // 全部 bc 在线连接数合计
+	AvgThreadCount      float64 // bc 平均 JVM 线程数
+	BackendUp           int     // 全部 bc 可达后端数合计
+	BackendTotal        int     // 全部 bc 配置后端总数合计
+	AvgBackendLatencyMs float64 // bc 平均后端延迟（剔除 -1.0 不可用样本；无可用样本时为 -1.0）
+}
+
 // Summary 是当前快照聚合结果（实时从内存注册表算，仅展示负载事实，FR-32）。
 type Summary struct {
-	TotalPlayers  int             // 全集群总在线人数
-	OnlineServers int             // 在线子服数
-	Servers       []ServerPlayers // 每服人数明细（按 serverId 升序，确定性）
-	AvgTPS        float64         // 平均 TPS
-	AvgMemUsed    int64           // 平均 JVM 已用堆字节
-	AvgMemMax     int64           // 平均 JVM 最大堆字节
-	AvgCPULoad    float64         // 平均 CPU 负载（剔除 -1.0 不可用样本；无可用样本时为 -1.0）
-	CPUSampleCount int            // 参与 CPU 平均的可用样本数（cpuLoad>=0）
+	TotalPlayers   int             // 全集群总在线人数
+	OnlineServers  int             // 在线子服数
+	Servers        []ServerPlayers // 每服人数明细（按 serverId 升序，确定性）
+	AvgTPS         float64         // 平均 TPS
+	AvgMemUsed     int64           // 平均 JVM 已用堆字节
+	AvgMemMax      int64           // 平均 JVM 最大堆字节
+	AvgCPULoad     float64         // 平均 CPU 负载（剔除 -1.0 不可用样本；无可用样本时为 -1.0）
+	CPUSampleCount int             // 参与 CPU 平均的可用样本数（cpuLoad>=0）
+	BC             BCSummary       // bc（bungee 代理）专属维度聚合（FR-34，仅 role=bungee 实例统计）
 }
 
 // Summarize 对一组在线实例做当前快照聚合（纯函数，可穷举单测）：
@@ -74,9 +89,47 @@ func Summarize(insts []*runtime.Instance) Summary {
 	s.AvgMemMax = sumMemMax / int64(len(insts))
 	s.CPUSampleCount = cpuCount
 	s.AvgCPULoad = avgCPU(sumCPU, cpuCount)
+	s.BC = summarizeBC(insts)
 
 	sort.Slice(s.Servers, func(i, j int) bool { return s.Servers[i].ServerID < s.Servers[j].ServerID })
 	return s
+}
+
+// summarizeBC 对一组在线实例做 bc（bungee 代理）维度聚合（纯函数，FR-34）：
+// 只统计 role=bungee 实例，连接 / 后端可达性求和、线程取均值；平均延迟剔除 -1.0 不可用样本。
+// 无 bc 实例时返回零值且平均延迟为不可用哨兵 -1.0。
+func summarizeBC(insts []*runtime.Instance) BCSummary {
+	bc := BCSummary{AvgBackendLatencyMs: latencyUnavailable}
+	var sumThreads, sumLatency float64
+	latencyCount := 0 // 计入平均延迟的可用样本数（latency>=0）
+	for _, in := range insts {
+		if in.Role != roleBungee {
+			continue
+		}
+		bc.ProxyCount++
+		bc.TotalConnections += in.Proxy.OnlineConnections
+		bc.BackendUp += in.Proxy.BackendUp
+		bc.BackendTotal += in.Proxy.BackendTotal
+		sumThreads += float64(in.Proxy.ThreadCount)
+		if in.Proxy.BackendAvgLatencyMs >= 0 { // 剔除 -1.0 不可用样本
+			sumLatency += in.Proxy.BackendAvgLatencyMs
+			latencyCount++
+		}
+	}
+	if bc.ProxyCount == 0 {
+		return bc // 无 bc 实例：零值 + 延迟不可用
+	}
+	bc.AvgThreadCount = sumThreads / float64(bc.ProxyCount)
+	bc.AvgBackendLatencyMs = avgLatency(sumLatency, latencyCount)
+	return bc
+}
+
+// avgLatency 计算后端延迟均值：可用样本数为 0 时回退不可用哨兵 -1.0。
+func avgLatency(sum float64, count int) float64 {
+	if count == 0 {
+		return latencyUnavailable
+	}
+	return sum / float64(count)
 }
 
 // TrendPoint 是一个降采样后的时间序列点（趋势端点用，仅聚合数字，FR-32）。
