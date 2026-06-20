@@ -4,10 +4,14 @@
 
 ## 未发布
 
+## 0.5.0（2026-06-20）
+
 ### 新增
 - agent-api Discovery 门面新增玩家位置名册只读查询 roster() / rosterInZone(group, zone)，把 agent 侧 Redis 名册（谁在哪个服）只读暴露给业务插件，供跨服看人/人数/补全；控制面零改动、不连 Redis（FR-31，扩展 ADR-0016，见 ADR-0022）。
 - 新增控制面可观测看板：补齐 agent 内存/CPU 采集与人数/TPS 真值上报，时序落 MySQL `metric_sample`（按间隔采样 + 保留期清理），新增指标聚合与历史趋势端点，管理台新增 Dashboard 页与趋势图；图表库引入前端运行期依赖 `recharts`（FR-32，见 ADR-0023）。
 - 前端单元测试栈（FR-18 管理台）：引入 vitest + @testing-library/react + jsdom，新增 `DataTable` / `AsyncSection` / `StatusBadge` 组件单测与 `ConfigsPage` 关键路径（打开标签 / 切换视图 / Diff / 保存）冒烟测试，作为前端重构的回归安全网。`pnpm test` 运行；测试文件经 `tsconfig` 排除出生产 `tsc -b`，不影响 `go:embed` 内嵌构建。运行方式见 [docs/OPERATIONS.md](docs/OPERATIONS.md) §8。
+- 控制面版本注入与启动日志暴露：版本号唯一源为仓库根 `VERSION`，经 `-ldflags -X` 注入控制面、运行时与启动日志可见，三组件（控制面 + 双 agent）版本恒一致（[ADR-0007](docs/adr/0007-versioning-and-release-channels.md)）。
+- 工程化：新增 `Makefile` 一键打包（控制面单二进制内嵌前端 + 双 agent jar），CI 门禁（PR 跑控制面 `go build`/`go test` + golangci-lint/gofmt + agent 单测 + 前端构建）与 tag 触发的多平台原生 Release 工作流。
 
 ### 变更
 - 管理台前端结构重构（纯结构，接口 / 列 / 交互 / 文案不变）：① 抽出 `DataTable`（列定义驱动表格 + 空态）与 `AsyncSection`（加载 / 错误三态）两个公共原语，环境 / 实例 / zone / 审计 / 文件 / 覆盖集六个列表页改用之，消除各页重复的表格骨架与状态分支；② 配置中心 `ConfigsPage` 从 779 行巨石组件拆为 `pages/configs/` 下编排层 + `useConfigTabs`（标签状态 hook）+ `ConfigTabBar` / `ConfigEditorPane` / `EffectivePreview` / `RevisionHistory` / `CreateConfigDialog` / `ConfigFileTree` / `TargetSelector` 等聚焦组件，并删除一直无人引用的死文件 `web/src/components/FileTree.tsx`。
