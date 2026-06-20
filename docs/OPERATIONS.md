@@ -116,6 +116,17 @@ go test -tags=e2e -timeout=30m ./test/e2e/directory
 - **directory**：在线 `role=bukkit` 子服按 `serverId` 注入 Bungee 目录（地址含子服端口）、手工服务器（Waterfall 默认 `lobby`）保留不被覆盖、`beacon` 命令已注册。
 - **failstatic**：杀控制面后已注入目录与手工服**不被清空**（fail-static）。
 
+### 7.3 FR-32 可观测看板真机 E2E（指标上报 → 采样落库 → 端点返真值）
+
+纯 Go e2e，自起控制面（SQLite，经 `BEACON_METRIC_SAMPLE_INTERVAL_SEC` 调小采样间隔）+ 真 Paper + BeaconAgent，验证「agent 上报真 JVM 负载 → 采样器落 `metric_sample` → `/admin/v1/metrics/summary` 与 `/trend` 返真值 → 边界无玩家名单」（[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）。
+
+```powershell
+$env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
+go test -tags=e2e -timeout=30m ./test/e2e/metrics
+```
+
+依次断言四相位（任一 FAIL 即失败）：summary 含目标子服且 `avgMemMax>0`（真 JVM 堆）；trend 时间序列非空且字段为真值；persist 经 GORM 直读 `metric_sample` 已落样本；boundary 响应不含玩家名单 / 身份字段。
+
 ## 8. 测试运行方式（单元 / 集成）
 
 - **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`internal/service` / `internal/server` 显示 `no test files` 属正常（其用例全为集成）。

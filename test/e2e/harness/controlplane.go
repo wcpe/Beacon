@@ -23,6 +23,9 @@ type ControlPlaneConfig struct {
 	AuthSecret     string // 令牌签名密钥
 	BootstrapToken string // agent 共享令牌（X-Beacon-Token）
 	LogPrefix      string // 日志文件名前缀，如 beacon-override，区分多套运行目录
+	// 额外环境变量（可选）：在固定注入项之上叠加，用于按 e2e 需要覆盖控制面行为，
+	// 如 metrics 用例设 BEACON_METRIC_SAMPLE_INTERVAL_SEC 调小采样间隔。默认 nil 不影响既有调用。
+	ExtraEnv map[string]string
 }
 
 // ControlPlane 持有控制面子进程与日志句柄，提供启动就绪等待与整树停止。
@@ -55,6 +58,10 @@ func StartControlPlane(cfg ControlPlaneConfig) (*ControlPlane, error) {
 		"BEACON_BOOTSTRAP_TOKEN="+cfg.BootstrapToken,
 		"BEACON_LOG_LEVEL=INFO",
 	)
+	// 叠加可选额外环境变量（置于固定项之后，后写覆盖前写，使 e2e 能按需覆盖控制面行为）。
+	for k, v := range cfg.ExtraEnv {
+		env = append(env, k+"="+v)
+	}
 
 	cmd, outFile, errFile, err := spawn(cfg.RepoRoot, cfg.BinPath, nil, env, outLog, errLog)
 	if err != nil {
