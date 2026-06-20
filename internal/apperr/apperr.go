@@ -57,6 +57,8 @@ var (
 	ErrFileConflict = New(http.StatusConflict, "FILE_CONFLICT", "同标识文件对象已存在")
 	// ErrInvalidPath 文件相对 path 不合法（通道B）。
 	ErrInvalidPath = New(http.StatusBadRequest, "INVALID_PATH", "文件路径不合法")
+	// ErrTooManyFiles 单次导入文件数超出上限（FR-38）。
+	ErrTooManyFiles = New(http.StatusUnprocessableEntity, "TOO_MANY_FILES", "单次导入文件数超出上限")
 
 	// ErrOverrideSetNotFound 覆盖集不存在（FR-15）。
 	ErrOverrideSetNotFound = New(http.StatusNotFound, "OVERRIDE_SET_NOT_FOUND", "覆盖集不存在")

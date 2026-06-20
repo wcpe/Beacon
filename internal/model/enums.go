@@ -40,6 +40,8 @@ const (
 	ActionFilePublish       = "file.publish"
 	ActionFileRollback      = "file.rollback"
 	ActionFileDelete        = "file.delete"
+	// 配置导入（FR-38，通道B 之上批量上传整文件到组，一次导入记一条审计）
+	ActionFileImport = "file.import"
 	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
 	ActionOverrideSetCreate   = "override-set.create"
 	ActionOverrideSetPublish  = "override-set.publish"

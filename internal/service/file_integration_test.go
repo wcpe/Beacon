@@ -18,11 +18,13 @@ import (
 
 // fileStack 聚合文件通道与配置通道服务，便于验证两通道唤醒集合独立。
 type fileStack struct {
-	files   *service.FileService
-	fileEff *service.FileEffectiveService
-	cfg     *service.ConfigService
-	cfgEff  *service.EffectiveService
-	reg     *runtime.Registry
+	files     *service.FileService
+	fileEff   *service.FileEffectiveService
+	cfg       *service.ConfigService
+	cfgEff    *service.EffectiveService
+	reg       *runtime.Registry
+	fileRepo  *repository.FileObjectRepository
+	auditRepo *repository.AuditLogRepository
 }
 
 // newFileStack 装配文件 + 配置服务（共享 registry，但 hub 与 fileHub 独立）。
@@ -44,7 +46,7 @@ func newFileStack(t *testing.T) fileStack {
 	fileSvc.SetNotifier(notifier)
 	cfgSvc := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfgSvc.SetNotifier(notifier)
-	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg}
+	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg, fileRepo: fr, auditRepo: ar}
 }
 
 // registerS1 把 s1 注册进内存（供 group 反查唤醒）。
@@ -92,6 +94,112 @@ func TestFileLifecycle(t *testing.T) {
 	}
 	if _, err := s.files.Get(obj.ID); err != apperr.ErrFileNotFound {
 		t.Fatalf("软删后应 FILE_NOT_FOUND，实际 %v", err)
+	}
+}
+
+// TestFileImportCreatesGroupObjects 集成验证 FR-38 导入：N 个文件落为组级 file_object，
+// 出现在组内实例 manifest；二次导入同 path → version+1；产生一条 file.import 审计。
+func TestFileImportCreatesGroupObjects(t *testing.T) {
+	s := newFileStack(t)
+
+	res, err := s.files.Import(service.ImportFilesParams{
+		Namespace: "prod", Group: "bw",
+		Files: []service.ImportFile{
+			{Path: "plugins/Demo/config.yml", Content: "a: 1\n"},
+			{Path: "plugins/Demo/lang/zh.yml", Content: "hello\n"},
+		},
+		Operator: "alice", Comment: "首次导入", ClientIP: "203.0.113.9",
+	})
+	if err != nil {
+		t.Fatalf("导入失败: %v", err)
+	}
+	if res.Created != 2 || res.Updated != 0 {
+		t.Fatalf("首次导入应建 2 改 0，实际 created=%d updated=%d", res.Created, res.Updated)
+	}
+
+	// 组内实例解析 manifest 应含这两份组级文件
+	tree, err := s.fileEff.Resolve("prod", "s1", "bw")
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if len(tree.Files) != 2 {
+		t.Fatalf("manifest 应含 2 个文件，实际 %+v", tree.Files)
+	}
+
+	// 二次导入：一个改内容（version+1）、一个新增
+	res2, err := s.files.Import(service.ImportFilesParams{
+		Namespace: "prod", Group: "bw",
+		Files: []service.ImportFile{
+			{Path: "plugins/Demo/config.yml", Content: "a: 2\n"},
+			{Path: "plugins/Demo/new.yml", Content: "x\n"},
+		},
+		Operator: "bob",
+	})
+	if err != nil {
+		t.Fatalf("二次导入失败: %v", err)
+	}
+	if res2.Created != 1 || res2.Updated != 1 {
+		t.Fatalf("二次导入应建 1 改 1，实际 created=%d updated=%d", res2.Created, res2.Updated)
+	}
+	obj, err := s.fileRepo.FindByIdentity("prod", "bw", "plugins/Demo/config.yml", model.ScopeGroup, "")
+	if err != nil || obj == nil {
+		t.Fatalf("应能查到组级 config.yml，err=%v obj=%v", err, obj)
+	}
+	if obj.Version != 2 || obj.Content != "a: 2\n" {
+		t.Fatalf("config.yml 应 version=2 内容更新，实际 version=%d content=%q", obj.Version, obj.Content)
+	}
+
+	// 应有 file.import 审计（两次导入各一条）
+	audits, total, err := s.auditRepo.List(repository.AuditFilter{Namespace: "prod", Action: model.ActionFileImport, Page: 1, Size: 50})
+	if err != nil {
+		t.Fatalf("查导入审计失败: %v", err)
+	}
+	if total != 2 || len(audits) != 2 {
+		t.Fatalf("应有 2 条 file.import 审计，实际 total=%d len=%d", total, len(audits))
+	}
+}
+
+// TestFileImportRejectsBadInput 集成验证导入早校验：路径穿越 / 非法组 / 单文件超限被拒，且不落任何东西。
+func TestFileImportRejectsBadInput(t *testing.T) {
+	s := newFileStack(t)
+
+	// 路径穿越
+	if _, err := s.files.Import(service.ImportFilesParams{
+		Namespace: "prod", Group: "bw", Operator: "a",
+		Files: []service.ImportFile{{Path: "../escape.yml", Content: "x\n"}},
+	}); err != apperr.ErrInvalidPath {
+		t.Fatalf("穿越路径应 INVALID_PATH，实际 %v", err)
+	}
+	// 绝对路径
+	if _, err := s.files.Import(service.ImportFilesParams{
+		Namespace: "prod", Group: "bw", Operator: "a",
+		Files: []service.ImportFile{{Path: "/etc/passwd", Content: "x\n"}},
+	}); err != apperr.ErrInvalidPath {
+		t.Fatalf("绝对路径应 INVALID_PATH，实际 %v", err)
+	}
+	// 非法目标组（global 组不可作为导入目标）
+	if _, err := s.files.Import(service.ImportFilesParams{
+		Namespace: "prod", Group: model.GlobalGroupCode, Operator: "a",
+		Files: []service.ImportFile{{Path: "a.yml", Content: "x\n"}},
+	}); err != apperr.ErrInvalidScope {
+		t.Fatalf("global 组导入应 INVALID_SCOPE，实际 %v", err)
+	}
+	// 单文件超限
+	big := make([]byte, service.MaxFileContentBytes+1)
+	if _, err := s.files.Import(service.ImportFilesParams{
+		Namespace: "prod", Group: "bw", Operator: "a",
+		Files: []service.ImportFile{{Path: "big.bin", Content: string(big)}},
+	}); err != apperr.ErrContentTooLarge {
+		t.Fatalf("超大文件应 CONTENT_TOO_LARGE，实际 %v", err)
+	}
+
+	// 任一不合法即整次拒绝：库中不应有任何组级文件
+	objs, err := s.files.List(repository.FileFilter{Namespace: "prod", Group: "bw"})
+	if err != nil {
+		t.Fatalf("列文件失败: %v", err)
+	}
+	if len(objs) != 0 {
+		t.Fatalf("被拒导入不应落任何文件，实际 %d", len(objs))
 	}
 }
 

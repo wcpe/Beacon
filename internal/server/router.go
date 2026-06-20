@@ -90,6 +90,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 		// 文件树托管（通道B）
 		r.Get("/files", h.File.List)
 		r.Post("/files", h.File.Create)
+		// 配置导入（FR-38）：把一份目录批量上传到某组（multipart，静态路由置于 {id} 前以免被通配吞掉）
+		r.Post("/files/import", h.File.Import)
 		r.Get("/files/{id}", h.File.Get)
 		r.Put("/files/{id}", h.File.Publish)
 		r.Delete("/files/{id}", h.File.Delete)

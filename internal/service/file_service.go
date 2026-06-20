@@ -32,6 +32,30 @@ type CreateFileParams struct {
 	ClientIP    string
 }
 
+// ImportFile 是导入的单个文件（相对 path + 整文件内容）。
+type ImportFile struct {
+	Path    string
+	Content string
+}
+
+// ImportFilesParams 是把一份目录批量导入到某组（scope=group）的入参（FR-38）。
+type ImportFilesParams struct {
+	Namespace string
+	Group     string
+	Files     []ImportFile
+	Operator  string
+	Comment   string
+	ClientIP  string
+}
+
+// ImportResult 概述一次导入的落地结果。
+type ImportResult struct {
+	// 新建的文件对象数（首版）
+	Created int
+	// 发布新版本的文件对象数（已存在同 path）
+	Updated int
+}
+
 // FileService 编排文件树托管（通道B）：CRUD/发布/回滚/历史，事务内 object+revision+audit 原子完成。
 // 文件按 path 整文件覆盖，不做格式解析/键级合并（与 ConfigService 的本质区别，见 ADR-0010）。
 type FileService struct {
@@ -130,6 +154,86 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 	slog.Info("新建托管文件", "namespace", p.Namespace, "group", group, "path", cleanPath, "scope", p.ScopeLevel)
 	s.notify(obj)
 	return obj, nil
+}
+
+// Import 把一份目录批量导入到某组（scope=group）：对每个文件按相对 path「存在则发布新版本、不存在则首发」，
+// 复用通道B 整文件覆盖语义。全部文件在同一事务内原子完成 + 一条 file.import 审计，提交成功后唤醒该组一次（FR-38）。
+func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
+	if p.Namespace == "" || p.Operator == "" || len(p.Files) == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	// 目标只支持组层（scope=group），归一并校验组合法
+	group, _, err := normalizeScope(model.ScopeGroup, p.Group, "")
+	if err != nil {
+		return nil, err
+	}
+	// 先逐个归一 path 与校验内容（任一不合法即整次拒绝，不落任何东西）
+	cleaned := make([]ImportFile, len(p.Files))
+	for i, f := range p.Files {
+		cleanPath, err := normalizePath(f.Path)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateFileContent(f.Content); err != nil {
+			return nil, err
+		}
+		cleaned[i] = ImportFile{Path: cleanPath, Content: f.Content}
+	}
+
+	result := &ImportResult{}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		fileRepo := s.fileRepo.WithTx(tx)
+		for _, f := range cleaned {
+			existing, err := fileRepo.FindByIdentity(p.Namespace, group, f.Path, model.ScopeGroup, "")
+			if err != nil {
+				return err
+			}
+			md5 := filetree.ContentMD5(f.Content)
+			if existing == nil {
+				// 首版：新建对象 + revision 1，回填 current_revision
+				obj := &model.FileObject{
+					NamespaceCode: p.Namespace, GroupCode: group, Path: f.Path,
+					ScopeLevel: model.ScopeGroup, ScopeTarget: "",
+					Content: f.Content, ContentMD5: md5, Version: 1, Enabled: true,
+				}
+				if err := fileRepo.Create(obj); err != nil {
+					return err
+				}
+				rev, err := s.appendRevision(tx, obj.ID, 1, f.Content, md5, nil, p.Operator, p.Comment)
+				if err != nil {
+					return err
+				}
+				obj.CurrentRevision = rev.ID
+				if err := fileRepo.Save(obj); err != nil {
+					return err
+				}
+				result.Created++
+				continue
+			}
+			// 已存在：发布新版本（version+1），整文件覆盖
+			newVersion := existing.Version + 1
+			rev, err := s.appendRevision(tx, existing.ID, newVersion, f.Content, md5, nil, p.Operator, p.Comment)
+			if err != nil {
+				return err
+			}
+			existing.Content, existing.ContentMD5, existing.Version, existing.CurrentRevision = f.Content, md5, newVersion, rev.ID
+			if err := fileRepo.Save(existing); err != nil {
+				return err
+			}
+			result.Updated++
+		}
+		return s.writeImportAudit(tx, p.Namespace, group, p.Operator,
+			fmt.Sprintf(`{"files":%d,"created":%d,"updated":%d}`, len(cleaned), result.Created, result.Updated), p.ClientIP)
+	})
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("导入托管文件到组", "namespace", p.Namespace, "group", group, "files", len(cleaned), "created", result.Created, "updated", result.Updated)
+	// 整组 scope 唤醒一次（组层变更触发组内实例文件长轮询重算）
+	if s.notifier != nil {
+		s.notifier.NotifyFileChange(p.Namespace, model.ScopeGroup, group, "")
+	}
+	return result, nil
 }
 
 // Publish 发布文件新版本（version+1）。
@@ -269,6 +373,20 @@ func (s *FileService) writeAudit(tx *gorm.DB, obj *model.FileObject, operator, a
 		Action:        action,
 		TargetType:    model.TargetTypeFile,
 		TargetRef:     fmt.Sprintf("%s/%s/%s@%s:%s", obj.NamespaceCode, obj.GroupCode, obj.Path, obj.ScopeLevel, obj.ScopeTarget),
+		Detail:        detail,
+		Result:        model.ResultOK,
+		ClientIP:      clientIP,
+	})
+}
+
+// writeImportAudit 在事务内写一条导入审计（FR-38）。目标为组（非单文件），target_ref 指向组层。
+func (s *FileService) writeImportAudit(tx *gorm.DB, ns, group, operator, detail, clientIP string) error {
+	return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		NamespaceCode: ns,
+		Operator:      operator,
+		Action:        model.ActionFileImport,
+		TargetType:    model.TargetTypeFile,
+		TargetRef:     fmt.Sprintf("%s/%s@%s:", ns, group, model.ScopeGroup),
 		Detail:        detail,
 		Result:        model.ResultOK,
 		ClientIP:      clientIP,

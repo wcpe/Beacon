@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"time"
@@ -233,6 +235,95 @@ func (h *FileHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"version": o.Version, "md5": o.ContentMD5})
+}
+
+// 导入（FR-38，multipart 上传）多文件聚合上限。单文件大小上限复用 service.MaxFileContentBytes。
+const (
+	// 单次导入的最大文件数（防一次塞入海量文件拖垮事务）
+	maxImportFiles = 2000
+	// 单次导入的最大总字节（所有文件内容累加；防内存与库表膨胀）
+	maxImportTotalBytes = 64 * 1024 * 1024
+	// multipart 解析驻留内存上限（超出落临时文件，由标准库管理）
+	importParseMemoryBytes = 16 * 1024 * 1024
+)
+
+// Import 处理 POST /admin/v1/files/import（FR-38）：把一份目录批量上传到某组（scope=group）。
+// 表单：namespace、group 文本字段 + 多个 files 部件；各文件相对 path 取自与 files 等长的 paths 文本字段（按提交顺序对齐）。
+// handler 只解析 multipart 并做数量 / 总量早校验，交 service 在事务内原子落地（path 安全与单文件大小由 service 校验）。
+func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(importParseMemoryBytes); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	defer func() { _ = r.MultipartForm.RemoveAll() }()
+
+	ns := r.FormValue("namespace")
+	group := r.FormValue("group")
+	comment := r.FormValue("comment")
+	fileHeaders := r.MultipartForm.File["files"]
+	paths := r.MultipartForm.Value["paths"]
+	if ns == "" || group == "" || len(fileHeaders) == 0 {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	// paths 必须与 files 等长且一一对应（防错位导致内容落到错误 path）
+	if len(paths) != len(fileHeaders) {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if len(fileHeaders) > maxImportFiles {
+		render.WriteError(w, r, apperr.ErrTooManyFiles)
+		return
+	}
+
+	files := make([]service.ImportFile, 0, len(fileHeaders))
+	var total int64
+	for i, fh := range fileHeaders {
+		content, err := readMultipartFile(fh)
+		if err != nil {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+		total += int64(len(content))
+		if total > maxImportTotalBytes {
+			render.WriteError(w, r, apperr.ErrContentTooLarge)
+			return
+		}
+		files = append(files, service.ImportFile{Path: paths[i], Content: content})
+	}
+
+	res, err := h.svc.Import(service.ImportFilesParams{
+		Namespace: ns, Group: group, Files: files,
+		Operator: auth.Operator(r.Context()), Comment: comment, ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"files": len(files), "created": res.Created, "updated": res.Updated,
+	})
+}
+
+// readMultipartFile 读取单个上传文件部件的整文件内容；超单文件上限即拒（防超大文件入库）。
+func readMultipartFile(fh *multipart.FileHeader) (string, error) {
+	if fh.Size > service.MaxFileContentBytes {
+		return "", apperr.ErrContentTooLarge
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	// 限读到上限 +1 字节，借此兜住 Size 头不可信时的超限
+	data, err := io.ReadAll(io.LimitReader(f, service.MaxFileContentBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > service.MaxFileContentBytes {
+		return "", apperr.ErrContentTooLarge
+	}
+	return string(data), nil
 }
 
 // manifestEntryView 是 manifest 中单个文件的 path→md5 条目（不含内容）。
