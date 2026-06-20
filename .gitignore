@@ -24,7 +24,9 @@ package-lock.json
 
 # 前端 React / Vite
 /web/node_modules/
-/web/dist/
+# 忽略 dist 内构建产物，但保留占位 .gitkeep（供后端 go:embed all:web/dist 在未构建前端时仍可编译）
+# 注意：须忽略目录内容（/web/dist/*）而非目录本身，否则父目录被排除会使下面的 .gitkeep 例外失效
+/web/dist/*
 !/web/dist/.gitkeep
 
 # Kotlin / Gradle agent
