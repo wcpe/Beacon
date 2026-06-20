@@ -53,7 +53,7 @@ tasks.jar {
 // ---------------------------------------------------------------------------
 // runBungee：由 run-waterfall 自动下载 Waterfall + 部署插件 + 启动代理（M6 端到端编排入口，代理侧）。
 // 用 run-waterfall 的 RunWaterfall 任务类型自定义命名为 runBungee（与 Go E2E 驱动约定一致）；
-// 下载与启动交给 run-task，这里只做 Beacon 侧编排：投放数据面插件 jar、生成 agent config.yml / env.properties。
+// 下载与启动交给 run-task，这里只做 Beacon 侧编排：投放数据面插件 jar、经环境变量注入 agent 接入信息（FR-33）。
 // ---------------------------------------------------------------------------
 
 // 运行根目录（落 .tmp，不入库）。
@@ -62,6 +62,8 @@ val runDir = rootProject.projectDir.resolve("../.tmp/e2e-run/bungee")
 val waterfallVer = (project.findProperty("e2eWaterfallVersion") as String?) ?: "1.20"
 // 控制面地址默认指向 http://localhost:8848，可经 -Pe2eBeaconEndpoint 覆盖。
 val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
+// 共享令牌（X-Beacon-Token，须与控制面 agent-token 一致）；经 -Pe2eBootstrapToken 覆盖。
+val bootstrapToken = (project.findProperty("e2eBootstrapToken") as String?) ?: "beacon-bootstrap-2026"
 // 本机唯一身份，环境内唯一；经 -Pe2eServerId 覆盖。
 val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bungee-1"
 // 环境（须与控制面 namespace 一致）；经 -Pe2eNamespace 覆盖。
@@ -96,17 +98,17 @@ val runBungee by tasks.registering(RunWaterfall::class) {
     // 内存上限适中，避免占满宿主；file.encoding 由 run-task 统一设为 UTF-8。
     jvmArgs("-Xms256M", "-Xmx768M")
 
-    // 启动前置：生成 agent config.yml 与 TabooLib 仓库覆盖 env.properties（代理无需 EULA）。
+    // FR-33：经环境变量注入 agent 接入信息（取代写 config.yml）。agent 的 EnvOverridingConfigReader
+    // 以 BEACON_AGENT_<点分路径大写> 覆盖出厂 config.yml；其余字段走出厂默认。代理对外端口固定 25577。
+    environment("BEACON_AGENT_BEACON_ENDPOINTS", beaconEndpoint)
+    environment("BEACON_AGENT_BEACON_BOOTSTRAP_TOKEN", bootstrapToken)
+    environment("BEACON_AGENT_IDENTITY_NAMESPACE", namespace)
+    environment("BEACON_AGENT_IDENTITY_SERVER_ID", serverId)
+    environment("BEACON_AGENT_IDENTITY_ADDRESS", "127.0.0.1:25577")
+
+    // 启动前置：写 TabooLib 仓库覆盖 env.properties（代理无需 EULA；agent 配置改由上面的环境变量注入）。
     doFirst {
         runDir.mkdirs()
-        // 放置 agent 的 config.yml 到其数据目录（plugins/BeaconAgentProxy/）。
-        val agentDataDir = runDir.resolve("plugins/BeaconAgentProxy")
-        agentDataDir.mkdirs()
-        agentDataDir.resolve("config.yml").writeText(
-            agentConfigYaml(beaconEndpoint, serverId, namespace),
-            Charsets.UTF_8,
-        )
-
         // TabooLib 运行期仓库覆盖（避开已下线的 sacredcraft.cn）。
         runDir.resolve("env.properties").writeText(
             """
@@ -118,60 +120,6 @@ val runBungee by tasks.registering(RunWaterfall::class) {
         )
 
         logger.lifecycle("E2E 代理运行目录：${runDir.absolutePath}")
-        logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace")
+        logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace（agent 配置经 BEACON_AGENT_* 注入）")
     }
 }
-
-/** 生成 E2E 用 agent config.yml；无 zone、无 canary，仅最小接入信息。代理端口默认 25577。 */
-fun agentConfigYaml(endpoint: String, serverId: String, namespace: String): String = """
-    # Beacon agent E2E 运行配置（由 runBungee 任务生成，仅供端到端验收）。
-    beacon:
-      # 控制面地址：指向本地起的 Beacon（默认 8848）。
-      endpoints:
-        - "$endpoint"
-      # 共享令牌，需与控制面 agent-token 一致。
-      bootstrap-token: "beacon-bootstrap-2026"
-
-    identity:
-      # 环境：必须与控制面 namespace 一致。
-      namespace: "$namespace"
-      # 本机唯一身份，环境内唯一。
-      server-id: "$serverId"
-      # 大区提示：尚未指派 zone 时作兜底 group。
-      group-hint: "area1"
-      # 对外可达地址 ip:port（代理默认 25577）。
-      address: "127.0.0.1:25577"
-      # 业务版本标签。
-      version: "1.0.0"
-      # 容量（发现过滤维度）。
-      capacity: 1000
-      # 权重（发现过滤维度）。
-      weight: 100
-      # 自定义注册元数据。
-      metadata:
-        region: "cn-east"
-
-    timing:
-      # 长轮询客户端期望挂起上限（毫秒）。
-      poll-timeout-ms: 30000
-      # 普通请求连接与读超时（毫秒）。
-      request-timeout-ms: 5000
-      # 心跳周期兜底值（毫秒）。
-      heartbeat-fallback-ms: 10000
-
-    backoff:
-      # 指数退避初始等待（毫秒）。
-      initial-ms: 1000
-      # 指数退避等待上限（毫秒）。
-      max-ms: 30000
-      # 每次退避的倍率。
-      multiplier: 2.0
-      # 退避抖动比例（±）。
-      jitter-ratio: 0.2
-
-    snapshot:
-      # 启用本地快照 fail-static。
-      enabled: true
-      # 快照文件名。
-      file-name: "effective-config.snapshot.json"
-""".trimIndent() + "\n"

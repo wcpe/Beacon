@@ -56,7 +56,7 @@ tasks.jar {
 // ---------------------------------------------------------------------------
 // runServer：由 run-paper 自动下载 Paper + 部署插件 + 启动服务端（M6 端到端编排入口）。
 // 下载与启动交给 run-paper 的 runServer 任务，这里只做 Beacon 侧编排：投放数据面插件 jar、
-// 生成 agent config.yml / TabooLib env.properties / Paper eula.txt。
+// 经环境变量注入 agent 接入信息（FR-33）、写 TabooLib env.properties 与 Paper eula.txt。
 // ---------------------------------------------------------------------------
 
 // 运行根目录（落 .tmp，不入库）。
@@ -65,11 +65,13 @@ val runDir = rootProject.projectDir.resolve("../.tmp/e2e-run/bukkit")
 val paperVer = (project.findProperty("e2ePaperVersion") as String?) ?: "1.20.4"
 // MC 监听端口：默认 25566，避让本机可能被其它 MC 服占用的 25565；经 -Pe2eMcPort 覆盖。
 val mcPort = (project.findProperty("e2eMcPort") as String?) ?: "25566"
-// agent 本地受限命令白名单（逗号分隔首 token，注入 config.yml override.command-whitelist）；
+// agent 本地受限命令白名单（逗号分隔首 token，注入 BEACON_AGENT_OVERRIDE_COMMAND_WHITELIST）；
 // 默认空 = 命令派发能力关闭（ADR-0011 默认 inert）；经 -Pe2eCommandWhitelist 覆盖，如 "beacone2ereload"。
 val commandWhitelist = (project.findProperty("e2eCommandWhitelist") as String?) ?: ""
 // 控制面地址默认指向 http://localhost:8848，可经 -Pe2eBeaconEndpoint 覆盖。
 val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
+// 共享令牌（X-Beacon-Token，须与控制面 agent-token 一致）；经 -Pe2eBootstrapToken 覆盖。
+val bootstrapToken = (project.findProperty("e2eBootstrapToken") as String?) ?: "beacon-bootstrap-2026"
 // 本机唯一身份，环境内唯一；经 -Pe2eServerId 覆盖。
 val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bukkit-1"
 // 环境（须与控制面 namespace 一致）；经 -Pe2eNamespace 覆盖。
@@ -116,19 +118,23 @@ tasks.named<RunServer>("runServer") {
     // 指定监听端口（--nogui 由 run-paper 对 MC>=1.15 自动追加）。
     args("--port", mcPort)
 
-    // 启动前置：写 Paper EULA、生成 agent config.yml 与 TabooLib 仓库覆盖 env.properties。
+    // FR-33：经环境变量注入 agent 接入信息（取代写 config.yml）。agent 的 EnvOverridingConfigReader
+    // 以 BEACON_AGENT_<点分路径大写> 覆盖出厂 config.yml；其余字段走出厂默认。
+    environment("BEACON_AGENT_BEACON_ENDPOINTS", beaconEndpoint)
+    environment("BEACON_AGENT_BEACON_BOOTSTRAP_TOKEN", bootstrapToken)
+    environment("BEACON_AGENT_IDENTITY_NAMESPACE", namespace)
+    environment("BEACON_AGENT_IDENTITY_SERVER_ID", serverId)
+    environment("BEACON_AGENT_IDENTITY_ADDRESS", "127.0.0.1:$mcPort")
+    // 受限命令白名单（FR-15）：逗号分隔；空则不注入（出厂默认空 = 命令派发关闭）。
+    if (commandWhitelist.isNotEmpty()) {
+        environment("BEACON_AGENT_OVERRIDE_COMMAND_WHITELIST", commandWhitelist)
+    }
+
+    // 启动前置：写 Paper EULA 与 TabooLib 仓库覆盖 env.properties（agent 配置改由上面的环境变量注入）。
     doFirst {
         runDir.mkdirs()
         // Paper 需同意 EULA 方可启动（run-task 不代写，这里显式写入）。
         runDir.resolve("eula.txt").writeText("eula=true\n", Charsets.UTF_8)
-
-        // 放置 agent 的 config.yml 到其数据目录（plugins/BeaconAgent/）。
-        val agentDataDir = runDir.resolve("plugins/BeaconAgent")
-        agentDataDir.mkdirs()
-        agentDataDir.resolve("config.yml").writeText(
-            agentConfigYaml(beaconEndpoint, serverId, namespace, mcPort, commandWhitelist),
-            Charsets.UTF_8,
-        )
 
         // 写入 TabooLib 运行期仓库覆盖 env.properties（置于工作目录，覆盖 jar 内 env）。
         // 两个插件（BeaconAgent / BeaconE2E）共用，一处生效。
@@ -143,73 +149,6 @@ tasks.named<RunServer>("runServer") {
         )
 
         logger.lifecycle("E2E 运行目录：${runDir.absolutePath}")
-        logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace")
+        logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace（agent 配置经 BEACON_AGENT_* 注入）")
     }
-}
-
-/** 生成 E2E 用 agent config.yml；无 zone、无 canary，仅最小接入信息 + FR-15 覆盖命令白名单。 */
-fun agentConfigYaml(endpoint: String, serverId: String, namespace: String, mcPort: String, commandWhitelist: String): String {
-    // 逗号分隔的白名单首 token → YAML 列表；空则渲染为内联空列表 []（命令派发能力关闭）。
-    val items = commandWhitelist.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    val whitelistYaml = if (items.isEmpty()) " []" else items.joinToString("") { "\n        - \"$it\"" }
-    return """
-    # Beacon agent E2E 运行配置（由 runServer 任务生成，仅供端到端验收）。
-    beacon:
-      # 控制面地址：指向本地起的 Beacon（默认 8848，与产品默认端口一致）。
-      endpoints:
-        - "$endpoint"
-      # 共享令牌，置于请求头 X-Beacon-Token，需与控制面 agent-token 一致。
-      bootstrap-token: "beacon-bootstrap-2026"
-
-    identity:
-      # 环境：必须与控制面 namespace 一致。
-      namespace: "$namespace"
-      # 本机唯一身份，环境内唯一。
-      server-id: "$serverId"
-      # 大区提示：尚未指派 zone 时作兜底 group。
-      group-hint: "area1"
-      # 对外可达地址 ip:port（与 --port 一致，仅作注册元数据）。
-      address: "127.0.0.1:$mcPort"
-      # 业务版本标签。
-      version: "1.0.0"
-      # 容量（发现过滤维度）。
-      capacity: 200
-      # 权重（发现过滤维度）。
-      weight: 100
-      # 自定义注册元数据。
-      metadata:
-        region: "cn-east"
-
-    timing:
-      # 长轮询客户端期望挂起上限（毫秒）。
-      poll-timeout-ms: 30000
-      # 普通请求连接与读超时（毫秒）。
-      request-timeout-ms: 5000
-      # 心跳周期兜底值（毫秒）。
-      heartbeat-fallback-ms: 10000
-
-    backoff:
-      # 指数退避初始等待（毫秒）。
-      initial-ms: 1000
-      # 指数退避等待上限（毫秒）。
-      max-ms: 30000
-      # 每次退避的倍率。
-      multiplier: 2.0
-      # 退避抖动比例（±）。
-      jitter-ratio: 0.2
-
-    snapshot:
-      # 启用本地快照 fail-static。
-      enabled: true
-      # 快照文件名。
-      file-name: "effective-config.snapshot.json"
-
-    file-tree:
-      # 启用文件树/覆盖通道（通道B）：FR-15 覆盖集长轮询循环依赖它开启（默认即 true，这里显式声明）。
-      enabled: true
-
-    override:
-      # 受限重载命令首 token 本地白名单（逗号分隔注入；默认空=命令派发能力关闭，见 ADR-0011 决策 3）。
-      command-whitelist:$whitelistYaml
-""".trimIndent() + "\n"
 }

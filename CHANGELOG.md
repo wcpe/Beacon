@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- agent 配置环境变量覆盖（FR-33）：agent（数据面）配置读取新增一层环境变量覆盖（env 优先于 config.yml），变量名约定 BEACON_AGENT_ + 点分路径大写、点与连字符转下划线（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID），覆盖全部标量与列表配置项（identity.metadata 动态键 map 暂不支持）。core 新增 `EnvOverridingConfigReader` 装饰器（env 以函数注入、不依赖具体环境读取、守 TabooLib-free），双端壳接线；E2E 改以 env 注入 agent 接入信息、删除手写 config.yml 生成。支持容器化用环境变量注入接入信息（见 [docs/specs/agent-config-env-override.md](docs/specs/agent-config-env-override.md)）。
+
 ### 变更
 - agent E2E 服务端/代理的下载与启动改用 jpenilla run-task（run-paper / run-waterfall 2.3.1，兼容当前 Gradle 8.5）：移除两处手写的 `PrepareMinecraftServerEnvTask` 下载 + `JavaExec` 启动任务，改由 run-paper 的 `runServer`（Paper）与自定义命名的 `RunWaterfall` 任务 `runBungee`（Waterfall）负责下载与运行；MC 版本经 `minecraftVersion` / `waterfallVersion` 指定（取代硬编码直链），可经 `-Pe2ePaperVersion` / `-Pe2eWaterfallVersion` 覆盖。任务名（`runServer` / `runBungee`）与 Go E2E 驱动入口不变。
 

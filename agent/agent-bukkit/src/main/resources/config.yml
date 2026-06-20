@@ -1,6 +1,8 @@
 # Beacon agent 本地引导配置（Bukkit 子服）。由插件 ENABLE 阶段加载。
 # 本文件是 agent 的「出生证」，仅含连接控制面与本机身份的最小信息。
 # 注意：zone（小区）不在这里配置——zone 由 Beacon 控制面权威指派。
+# 环境变量覆盖（FR-33）：每个标量 / 列表项都可被 BEACON_AGENT_<点分路径大写、点与连字符转下划线> 覆盖，
+# env 优先于本文件（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID）；动态键 metadata 仅本文件。
 
 beacon:
   # 控制面地址列表（Go 后端 API 与 UI 同端口）。MVP 取首个；多个用于后续容灾轮询。

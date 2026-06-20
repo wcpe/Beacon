@@ -11,6 +11,7 @@ import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
+import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import taboolib.common.LifeCycle
 import taboolib.common.env.RuntimeDependencies
 import taboolib.common.env.RuntimeDependency
@@ -96,7 +97,8 @@ object BeaconAgentBungee : Plugin() {
 
     @Awake(LifeCycle.ENABLE)
     fun enable() {
-        val reader = TabooLibConfigReader(config)
+        // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
+        val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
         val settings = AgentBootstrap.readSettings(reader)
         // 角色按壳固定为 bungee。
         val identity = AgentBootstrap.readIdentity(reader, role = "bungee")
