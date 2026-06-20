@@ -29,6 +29,7 @@
   "metadata": { "region": "cn-east" }
 }
 ```
+- `backends`（可选，`string[]`）：**仅 bc（`role=bungee`）上报**本代理当前代理的后端子服 serverId 集合，控制面存为只读事实供拓扑 bc→bukkit 连线消费（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）。bukkit / 旧 agent 不发即缺键，向后兼容；只存内存、随注册/上报刷新、不落 DB。
 响应：
 ```json
 {
@@ -94,7 +95,8 @@ data: {}
 - `items` 为**已按覆盖链合并后的有效配置文本**，agent 直接使用。zone 未分配时只含 global/group 合并结果。未注册 → `404 NOT_REGISTERED`。
 
 ### 4. 上报状态 `POST /beacon/v1/agent/report`
-请求：`{ "namespace", "serverId", "appliedMd5", "playerCount", "tps" }`（`playerCount/tps` **仅展示，不参与任何决策**）。响应：`{ "ok": true }`。
+请求：`{ "namespace", "serverId", "appliedMd5", "playerCount", "tps", "memUsed", "memMax", "cpuLoad" }`（负载数字 **仅展示，不参与任何决策**；`memUsed/memMax/cpuLoad` 为附加字段，旧 agent 缺键 → 内存缺省 0、`cpuLoad` 缺省 -1.0 不可用，FR-32）。响应：`{ "ok": true }`。
+- `backends`（可选，`string[]`）：**仅 bc 上报**本代理当前代理的后端子服 serverId 集合，随上报刷新控制面内存事实（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）。**缺键与显式空集语义不同**：bukkit / 旧 agent 缺键 → 控制面保留原集合不动；bc 显式上报（含空集即清空）才刷新。向后兼容。
 
 ### 5. 服务发现 `GET /beacon/v1/agent/discovery`
 查询：`?namespace=&group=&zone=&role=`，外加可选的自定义元数据过滤 `&tag.<key>=<value>`（可重复，多 tag 取交集；按实例 `metadata` 键值精确匹配，FR-29）。返回按条件过滤的**可用**实例列表（`online`+`degraded`，归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。BeaconAgentProxy 用它周期同步同 namespace 下 `role=bukkit` 的可用子服，按 `serverId` 注入 Bungee `ServerInfo` 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖；FR-4 延伸出口）。
@@ -230,8 +232,8 @@ data: {}
 ### 实例与健康
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline` |
-| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情 |
+| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36） |
+| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 手动下线（移除内存条目；operator 由认证态派生） |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 

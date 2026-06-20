@@ -149,6 +149,7 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 ## 7. 服务注册 / 发现 / 健康
 
 - **注册**：agent 只报 serverId + 元数据标签（`role/version/capacity/weight` + 自定义 metadata，**capacity/weight 为一等字段，metadata 仅 `map<string,string>`**，无 canary —— 对应 P0 修正）。Beacon 按 `zone_assignment` 解析回填 group/zone 写入内存注册表。
+- **bc 后端归属事实**（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）：`runtime.Instance` 增 `backends []string` 字段——**仅 bc（bungee）非空**，存其当前代理的后端子服 serverId 集合（取自 agent 侧 `ProxyServerDirectory`，含 Beacon 注入 + 手工子服）。agent 经 register / report 附加可选 `backends` 上报（仅 bc 填、bukkit 恒空、旧 agent 缺键向后兼容；report 用「缺键不动 / 显式才刷新」区分），控制面**只存内存事实、随注册/上报刷新、不落 DB**（与注册/健康真源同源），经 `Registry` 锁内深拷贝更新、不涉 DB IO。实例视图（§实例与健康）输出 `backends` 供拓扑 bc→bukkit 连线消费（FR-37）。控制面只展示该事实、不据它做任何调度 / 连接决策（守「只存事实」边界）。
 - **重复 serverId 守卫**：按 `lastHeartbeat` 新鲜度判定 —— 旧条目超心跳周期未续约视为僵尸，允许新 address 顶替并告警；仍新鲜的不同 address 才拒绝（409）。避免故障换机被误杀（P0 修正）。
 - **健康**：单后台 goroutine 定期扫描，按心跳陈旧度推进 `online → degraded → lost → offline`（阈值 `degraded-after-sec < ttl-sec < offline-grace-sec` 可配，FR-28）；收到心跳即从任意异常态回 online。offline 条目保留不移除（管理台可见历史），手动下线才移除。
 - **健康告警**（FR-28，[ADR-0019](adr/0019-health-alert-channel-abstraction.md)）：实例**进入异常态**（degraded/lost/offline）时主动告警，恢复 online 不告警。告警出口抽象为 `Alerter` 接口，`Dispatcher` 扇出到多个通道并**逐通道兜错**（某通道失败仅 WARN、不阻断扫描），第一版实现**站内信**（`InboxAlerter`，进程内环形缓存、独立锁不嵌套、管理台经 `GET /admin/v1/instances`… 同前缀的 `/admin/v1/alerts` 只读）与 **webhook**（`WebhookAlerter`，HTTP POST 告警 JSON，IO 在扫描循环里、不持注册表锁）；新增通道只实现 `Alerter` 接入。告警不落库（健康事件的派生，与"注册/健康真源在内存"一致，重启清零）。

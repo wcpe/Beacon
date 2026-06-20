@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- bc 后端归属事实上报：bc（bungee）agent 将其当前代理的后端子服 serverId 集合（取自 `ProxyServerDirectory`）经 register / report 附加可选 `backends` 字段上报，控制面存为实例只读内存事实（仅 bc 填、bukkit 恒空、旧 agent 缺键向后兼容），实例视图输出 `backends` 供集群拓扑 bc→bukkit 连线消费；只存事实不落 DB、不据它做调度决策（FR-36，见 ADR-0024）。
 - agent 配置环境变量覆盖（FR-41）：agent（数据面）配置读取新增一层环境变量覆盖（env 优先于 config.yml），变量名约定 BEACON_AGENT_ + 点分路径大写、点与连字符转下划线（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID），覆盖全部标量与列表配置项（identity.metadata 动态键 map 暂不支持）。core 新增 `EnvOverridingConfigReader` 装饰器（env 以函数注入、不依赖具体环境读取、守 TabooLib-free），双端壳接线；E2E 改以 env 注入 agent 接入信息、删除手写 config.yml 生成。支持容器化用环境变量注入接入信息（见 [docs/specs/agent-config-env-override.md](docs/specs/agent-config-env-override.md)）。
 
 ### 变更
