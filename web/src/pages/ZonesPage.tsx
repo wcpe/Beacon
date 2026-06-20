@@ -1,16 +1,28 @@
-// zone 分配页：指派列表 + 新增/改派（Dialog）+ 取消指派 + zone 维度汇总。
+// zone 分配页（看板式归派，FR-35）：
+// 左侧未指派 server 卡片池 + 右侧按大区(group)分组的 zone 容器（放置桶）。
+// 拖卡进某 zone = 指派、跨桶拖 = 改派、拖回未指派 = 取消指派；复用既有 API、后端零改动（增强 FR-8）。
+// 保留「新增 zone / 指派」表单入口（用于建空 zone 的首次指派）+ zone 维度汇总。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   assignZone,
   listAssignments,
+  listInstances,
   unassignZone,
   zoneSummary,
 } from '../api/client'
 import type { AssignParams } from '../api/client'
-import type { AssignmentView, ZoneStatView } from '../api/types'
-import { formatTime } from '../api/format'
+import type { InstanceView, ZoneStatView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
@@ -27,16 +39,17 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+  buildKanbanModel,
+  noteForServer,
+  type ZoneBucket,
+} from './zones/kanbanModel'
+import {
+  encodeZoneDroppableId,
+  resolveDragAction,
+  UNASSIGNED_DROPPABLE_ID,
+} from './zones/dragAction'
+import ServerCard from './zones/ServerCard'
+import DropBucket from './zones/DropBucket'
 
 // 指派/汇总共用的过滤条件
 interface ZoneFilter {
@@ -45,7 +58,7 @@ interface ZoneFilter {
   zone?: string
 }
 
-// 新增/改派表单初值
+// 新增 zone / 指派表单初值
 const EMPTY_FORM = { namespace: '', serverId: '', group: '', zone: '', note: '' }
 
 // zone 汇总列定义（无副作用，模块级）
@@ -66,9 +79,20 @@ export default function ZonesPage() {
   const [fZone, setFZone] = useState('')
   const [filter, setFilter] = useState<ZoneFilter>({})
 
-  // 新增/改派表单与 Dialog 开关
+  // 新增 zone / 指派表单与 Dialog 开关
   const [form, setForm] = useState(EMPTY_FORM)
   const [assignOpen, setAssignOpen] = useState(false)
+
+  // 拖拽中卡片对应实例（用于 DragOverlay 叠层预览；null 表示未拖动）
+  const [dragging, setDragging] = useState<InstanceView | null>(null)
+
+  // 指针拖拽前需移动 5px 才激活，避免与卡片点击/误触冲突
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  const instances = useQuery({
+    queryKey: ['instances', 'zone-kanban', filter],
+    queryFn: () => listInstances({ namespace: filter.namespace, group: filter.group, zone: filter.zone }),
+  })
 
   const assignments = useQuery({
     queryKey: ['assignments', filter],
@@ -102,9 +126,16 @@ export default function ZonesPage() {
   })
 
   function invalidate() {
+    qc.invalidateQueries({ queryKey: ['instances'] })
     qc.invalidateQueries({ queryKey: ['assignments'] })
     qc.invalidateQueries({ queryKey: ['zone-summary'] })
   }
+
+  // 由三个查询结果派生看板模型（纯函数，结果稳定排序）
+  const model = useMemo(
+    () => buildKanbanModel(instances.data ?? [], summary.data ?? []),
+    [instances.data, summary.data],
+  )
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -130,41 +161,25 @@ export default function ZonesPage() {
     })
   }
 
-  // 指派列表列定义（操作列闭包引用 unassignMut，故在组件内定义）
-  const assignmentColumns: DataTableColumn<AssignmentView>[] = [
-    { header: '环境', cell: (a) => a.namespace },
-    { header: 'serverId', className: 'font-mono', cell: (a) => a.serverId },
-    { header: '大区', cell: (a) => a.group },
-    { header: '小区', cell: (a) => a.zone },
-    { header: '备注', cell: (a) => a.note || '-' },
-    { header: '更新时间', cell: (a) => formatTime(a.updatedAt) },
-    {
-      header: '操作',
-      cell: (a) => (
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <Button variant="destructive" size="sm" disabled={unassignMut.isPending}>
-              取消指派
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>确认取消 {a.serverId} 的 zone 指派？</AlertDialogTitle>
-              <AlertDialogDescription>取消后该实例将回到未分配状态。</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => unassignMut.mutate({ namespace: a.namespace, serverId: a.serverId })}
-              >
-                确认取消指派
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ),
-    },
-  ]
+  function onDragStart(e: DragStartEvent) {
+    const inst = e.active.data.current?.instance as InstanceView | undefined
+    setDragging(inst ?? null)
+  }
+
+  // 拖拽结束：按落点解析为指派/改派/取消指派，再调既有 API（逻辑见 dragAction.resolveDragAction）
+  function onDragEnd(e: DragEndEvent) {
+    const inst = e.active.data.current?.instance as InstanceView | undefined
+    setDragging(null)
+    if (!inst) return
+    const action = resolveDragAction(inst, e.over ? String(e.over.id) : null)
+    if (action.kind === 'assign') {
+      // 改派沿用现有备注，避免拖拽清空运维填写的备注
+      const note = noteForServer(assignments.data ?? [], inst.namespace, inst.serverId)
+      assignMut.mutate({ ...action.params, note })
+    } else if (action.kind === 'unassign') {
+      unassignMut.mutate({ namespace: action.namespace, serverId: action.serverId })
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -172,12 +187,15 @@ export default function ZonesPage() {
         <h1 className="text-xl font-semibold">zone 分配</h1>
         <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
           <DialogTrigger asChild>
-            <Button>新增 / 改派</Button>
+            <Button>新增 zone / 指派</Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>新增 / 改派</DialogTitle>
+              <DialogTitle>新增 zone / 指派</DialogTitle>
             </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              指派首个 server 即创建该 zone；已有 zone 也可直接拖拽卡片归派。
+            </p>
             <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="a-namespace">环境</Label>
@@ -251,18 +269,64 @@ export default function ZonesPage() {
 
       <Card>
         <CardContent className="space-y-3">
-          <h2 className="text-base font-medium">指派列表</h2>
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-base font-medium">归派看板</h2>
+            <p className="text-sm text-muted-foreground">
+              拖卡到 zone = 指派 / 改派；拖回未指派池 = 取消指派
+            </p>
+          </div>
           <AsyncSection
-            isLoading={assignments.isLoading}
-            isError={assignments.isError}
-            error={assignments.error}
+            isLoading={instances.isLoading || summary.isLoading}
+            isError={instances.isError || summary.isError}
+            error={instances.error ?? summary.error}
           >
-            <DataTable
-              columns={assignmentColumns}
-              rows={assignments.data}
-              rowKey={(a) => `${a.namespace}/${a.serverId}`}
-              emptyText="无指派记录"
-            />
+            <DndContext
+              sensors={sensors}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+            >
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
+                {/* 左侧未指派池 */}
+                <DropBucket
+                  id={UNASSIGNED_DROPPABLE_ID}
+                  title="未指派"
+                  meta={`${model.unassigned.length} 台`}
+                >
+                  {model.unassigned.length === 0 ? (
+                    <p className="px-0.5 py-2 text-xs text-muted-foreground">无未指派实例</p>
+                  ) : (
+                    model.unassigned.map((i) => (
+                      <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
+                    ))
+                  )}
+                </DropBucket>
+
+                {/* 右侧按大区分组的 zone 桶 */}
+                <div className="space-y-4">
+                  {model.groups.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      暂无 zone，请用「新增 zone / 指派」创建第一个 zone。
+                    </p>
+                  ) : (
+                    model.groups.map((col) => (
+                      <div key={col.group} className="space-y-2">
+                        <div className="text-sm font-semibold">大区 {col.group}</div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                          {col.zones.map((bucket) => (
+                            <ZoneDropBucket key={`${bucket.group}/${bucket.zone}`} bucket={bucket} />
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* 拖拽叠层：跟随指针的卡片预览 */}
+              <DragOverlay>
+                {dragging ? <ServerCard instance={dragging} /> : null}
+              </DragOverlay>
+            </DndContext>
           </AsyncSection>
         </CardContent>
       </Card>
@@ -281,5 +345,24 @@ export default function ZonesPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+// 单个 zone 放置桶：标题为小区名 + 实例数，内含其卡片
+function ZoneDropBucket({ bucket }: { bucket: ZoneBucket }) {
+  return (
+    <DropBucket
+      id={encodeZoneDroppableId(bucket.group, bucket.zone)}
+      title={bucket.zone}
+      meta={`${bucket.instances.length} 台`}
+    >
+      {bucket.instances.length === 0 ? (
+        <p className="px-0.5 py-2 text-xs text-muted-foreground">拖卡到此指派</p>
+      ) : (
+        bucket.instances.map((i) => (
+          <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
+        ))
+      )}
+    </DropBucket>
   )
 }
