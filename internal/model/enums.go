@@ -21,6 +21,22 @@ func IsValidScopeLevel(level string) bool {
 	}
 }
 
+// 管理面角色（落 VARCHAR + 应用层校验，不绑方言；FR-42，见 ADR-0026）。
+const (
+	RoleFull     = "full"     // 读写：等同现操作者，可访问全部 admin 端点
+	RoleReadonly = "readonly" // 只读：仅可访问读端点（GET），任何写端点一律 403
+)
+
+// IsValidRole 校验角色取值。
+func IsValidRole(role string) bool {
+	switch role {
+	case RoleFull, RoleReadonly:
+		return true
+	default:
+		return false
+	}
+}
+
 // 审计动作（动词点分命名）。
 const (
 	ActionConfigCreate   = "config.create"
@@ -55,6 +71,10 @@ const (
 	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"
+	// 管理面 API 密钥（FR-42，运行时创建/吊销/重置，明文不入审计 detail，见 ADR-0026）
+	ActionApiKeyCreate = "apikey.create"
+	ActionApiKeyRevoke = "apikey.revoke"
+	ActionApiKeyReset  = "apikey.reset"
 )
 
 // 审计对象类型。
@@ -67,6 +87,8 @@ const (
 	TargetTypeNamespace   = "namespace"
 	// 认证会话（登录 / 登出）的审计对象类型
 	TargetTypeAuth = "auth"
+	// 管理面 API 密钥的审计对象类型
+	TargetTypeApiKey = "apikey"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

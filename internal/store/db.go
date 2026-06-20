@@ -56,6 +56,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.ServerDrain{},
 		&model.AuditLog{},
 		&model.MetricSample{},
+		&model.ApiKey{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}

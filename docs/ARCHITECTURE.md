@@ -28,7 +28,8 @@ cmd/beacon/main.go                 # 装配 + 启动
 internal/
   config/      Beacon 自身配置（yaml + env 覆盖）
   server/      router / 中间件（中文日志、recover、traceId、agent token、管理面登录令牌）
-  auth/        管理面鉴权叶子包：凭据校验 + 无状态 HMAC 签名令牌签发/校验 + 操作者上下文（见 ADR-0009）
+  auth/        管理面鉴权叶子包：凭据校验 + 无状态 HMAC 签名令牌签发/校验 + 操作者/角色上下文（见 ADR-0009、ADR-0026）
+  apikey/      API 密钥叶子包：明文生成（bk_ 前缀 + 随机串）+ SHA-256 哈希纯函数（仅 stdlib，FR-42，见 ADR-0026）
   secret/      敏感配置加解密叶子包：AES-256-GCM 原语，密钥由调用方从 env 注入（见 ADR-0018）
   render/      统一响应体与错误体写出 + traceId 上下文（handler 与 server 共用的叶子包）
   apperr/      带业务码与 HTTP 状态的领域错误（叶子包，供各层共用，避免反向依赖）
@@ -72,6 +73,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result` |
 | `instance` | 注册元数据镜像 | **MVP 不建**，运行态以内存为准，仅注册写一条 audit |
 | `metric_sample` | 指标时序样本（FR-32）：按间隔采在线实例的负载快照 | 时序表，与配置/版本/审计等事实表并列、真源属 DB；带保留期滚动清理，见 §7.1 与 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) |
+| `api_key` | 管理面 API 密钥（FR-42）：运行时签发给外部服务的访问凭据 | 见下；**只存哈希**、软删即吊销、角色 `VARCHAR`，真源属 DB（[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)） |
 
 `config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`；`sensitive`（为真则 `content` 加密落库，at-rest，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）；`gray_version`（灰度发布乐观锁版本，发布前以其做 CAS 串行化同一 item 的并发灰度发布、从源头消除「先软删后建」在 `uk_gray_item` 上的死锁，FR-9，内部令牌不外泄）。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。`content_md5` 始终基于**明文**（敏感项解密后再算），`config_revision` 同步带 `sensitive` 并对敏感快照同样加密。
 
@@ -81,15 +83,18 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 `metric_sample` 关键字段：`id`、`namespace`、`server_id`、`role`（`bukkit`/`bungee`，落 `VARCHAR`）、`sampled_at`（采样时刻 UTC）、`player_count`、`tps`、`mem_used`、`mem_max`、`cpu_load`，以及 **bc（bungee 代理）专属可空列**（FR-34，[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)）：`proxy_conn`（代理连接数 INT）、`thread_count`（JVM 线程数 INT）、`uptime_ms`（运行时长 BIGINT）、`backend_up`/`backend_total`（后端可达/总数 INT）、`backend_avg_latency_ms`（后端平均延迟浮点，`-1`=不可用）。**全部基础类型**（计数 / 浮点 / 时间），枚举如 `role` 落 `VARCHAR` + 应用层校验，**禁 JSON/ENUM 列与方言专有 SQL**、经 GORM 抽象（守 DB 可移植，可切 Postgres）；BC 列 `NOT NULL DEFAULT`，AutoMigrate 加列对既有行兼容、bukkit 行恒为默认值。它是**时序样本表**（与 §7.1 采样器配套），与配置 / 版本 / 审计等事实表并列、真源属 DB；趋势端点（§4）按时间窗 + 聚合粒度查询本表，保留期到期样本被滚动清理（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）。趋势降采样与 summary 的**平均 TPS / 平均 CPU 仅统计 `role=bukkit`**（bungee 作纯代理 tps 恒为 0，不进这两个平均的分母）；总玩家数 / 平均内存仍计全部样本；summary 的 `bc` 维度聚合**仅统计 `role=bungee`**（代理数 / 连接 / 线程 / 后端可达性·延迟），与 bukkit 聚合分流互不影响（FR-34）。网络吞吐入/出字节本期不采（BungeeCord 无干净 Netty 注入点，标待定，见 ADR-0025）。
 
+`api_key` 关键字段（FR-42，[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）：`id`、`name`（人类可读标签）、`key_hash`（明文的 **SHA-256** 十六进制摘要，64 hex，进唯一键 + 软删哨兵；**库内只存哈希、绝不存明文**）、`key_prefix`（非机密前缀片段如 `bk_AbC123`，仅供列表识别）、`role`（`full`/`readonly`，落 `VARCHAR` + 应用层校验）、`expires_at`（可空，NULL = 永不过期）、`last_used_at`（可空，认证成功时节流更新，至多每分钟一次）、`deleted_at`（软删哨兵，**吊销 = 软删**，沿用 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。明文 = `bk_` + 256-bit 随机串，仅创建 / 重置时一次性返回、**不可二次读取**（丢失只能 `reset` 轮换）；明文不入库 / 日志 / 审计 detail。**全部基础类型**、无 `ENUM/SET/JSON` 列与方言专有 SQL（可切 Postgres）。
+
 **软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。`file_object` 同款哨兵软删。
 
 ## 4. REST 接口（概览，详见 [API.md](API.md)）
 
 - **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`stream`（FR-24 单条 SSE 推送流，合并三通道变更通知 + 连接即对账）、`config/effective`/`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递；后三组退化为 SSE 通知后的"按 md5 取内容"端点）、`report`、`discovery`。
-- **admin 侧 `/admin/v1/*`**：登录 / 登出（`auth/login` / `auth/logout`，各记一条 `auth.login` / `auth.logout` 审计；登出仅留审计痕迹，令牌无状态不可吊销）、配置 CRUD/发布/回滚/diff/历史、文件树托管 CRUD/发布/回滚/历史 + **配置导入**（`files/import`：`multipart` 把一份目录批量上传到某组，复用通道B 整文件覆盖，多文件事务内原子落地 + 一条 `file.import` 审计，FR-38）、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace（建环境记 `namespace.create` 审计）、指标看板（`metrics/summary` 聚合快照 + `metrics/trend` 历史趋势，FR-32）、控制面自身状态（`system/status`：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源，供页眉展示，区别于 FR-32 的 agent 网络聚合，FR-33）。
+- **admin 侧 `/admin/v1/*`**：登录 / 登出（`auth/login` / `auth/logout`，各记一条 `auth.login` / `auth.logout` 审计；登出仅留审计痕迹，令牌无状态不可吊销）、配置 CRUD/发布/回滚/diff/历史、文件树托管 CRUD/发布/回滚/历史 + **配置导入**（`files/import`：`multipart` 把一份目录批量上传到某组，复用通道B 整文件覆盖，多文件事务内原子落地 + 一条 `file.import` 审计，FR-38）、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace（建环境记 `namespace.create` 审计）、指标看板（`metrics/summary` 聚合快照 + `metrics/trend` 历史趋势，FR-32）、控制面自身状态（`system/status`：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源，供页眉展示，区别于 FR-32 的 agent 网络聚合，FR-33）、API 密钥（`api-keys` 创建/列出/吊销/重置，FR-42）。
 - **运维侧 `/metrics`**：Prometheus 文本格式运行指标（注册数/健康分布/配置发布与推送累计），与 agent 端点同属内网信任面、不挂管理台鉴权（FR-30，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)）。
 - 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
+- **只读角色 + 运行时 API 密钥**（FR-42，[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）：在登录令牌之外，鉴权中间件再认两类 API 密钥凭据——独立头 `X-Beacon-Api-Key: <bk_...>` 或 `Authorization: Bearer <bk_...>`（以 `bk_` 前缀与登录令牌区分）。密钥**真源在库**（`api_key` 表，只存 SHA-256 哈希），中间件经 `ApiKeyVerifier` 接口查库比对哈希、校验未吊销未过期、解析角色注入 context；登录令牌恒为 `full` 角色。随后一道 `readonlyWriteGuard` 中间件**统一裁决只读拒写**：`readonly` 角色访问写方法（POST/PUT/PATCH/DELETE）一律 403 FORBIDDEN、GET 放行，handler 不碰角色判断。密钥经认证身份记 `operator=apikey:<名称>` 入审计；创建/吊销/重置写 `audit_log`（明文不入 detail）。密钥 CRUD 端点本身也在守卫内（readonly 不能管密钥）。`internal/auth` 仍是 stdlib 叶子，DB 校验在 `service`（守分层与简单优先，不引会话存储）。
 - **敏感配置 at-rest 加密**（FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）：标记 `sensitive` 的配置项 `content` 以 AES-256-GCM（标准库）加密落库（`config_item`/`config_revision` 的 `content` 列存 `enc:v1:` 前缀的 base64 密文），加解密只在 `internal/repository` 两个配置仓库的写/读边界发生——**service 层始终只见明文**，md5 / scope 合并 / 发布前 schema 校验零改。密钥仅从 env `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取，绝不入库 / 不入仓 / 不打日志；库中已有敏感项却无密钥 → 控制面 fail-fast 拒绝启动。解密后下发明文到 agent（数据面内网可信不变，agent 不持密钥）。是 FR-26 经 Beacon 下发 Redis 密码的前置。
 
 ## 5. 有效配置解析（scope 覆盖链）

@@ -90,6 +90,35 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     return json(result)
   }
 
+  // 管理面 API 密钥（FR-42）
+  if (p === '/admin/v1/api-keys' && method === 'GET') {
+    return json({ items: mockApiKeys.map(stripSecret) })
+  }
+  if (p === '/admin/v1/api-keys' && method === 'POST') {
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    const created = newMockApiKey(body.name ?? 'mock-key', body.role ?? 'readonly', body.expiresAt ?? null)
+    mockApiKeys.unshift(created)
+    return json(created, 201)
+  }
+  const apiKeyResetMatch = p.match(/^\/admin\/v1\/api-keys\/(\d+)\/reset$/)
+  if (apiKeyResetMatch && method === 'POST') {
+    const id = Number(apiKeyResetMatch[1])
+    const k = mockApiKeys.find((x) => x.id === id)
+    if (!k || k.status === 'revoked') return notFound(`密钥 #${id}`)
+    k.key = 'bk_' + Math.random().toString(36).slice(2, 14)
+    k.keyPrefix = k.key.slice(0, 9)
+    k.lastUsedAt = null
+    return json(k)
+  }
+  const apiKeyMatch = p.match(/^\/admin\/v1\/api-keys\/(\d+)$/)
+  if (apiKeyMatch && method === 'DELETE') {
+    const id = Number(apiKeyMatch[1])
+    const k = mockApiKeys.find((x) => x.id === id)
+    if (!k || k.status === 'revoked') return notFound(`密钥 #${id}`)
+    k.status = 'revoked'
+    return json({ ok: true })
+  }
+
   // 文件树托管
   if (p === '/admin/v1/files' && method === 'GET') {
     return json({ items: getMockFileList(qs as unknown as { namespace?: string; group?: string; path?: string }) })
@@ -333,6 +362,47 @@ interface MockStoreEntry {
 }
 
 const mockStore: MockStoreEntry[] = mockConfigs.map((c) => ({ ...c }))
+
+// ---- API 密钥 mock（内存级别，FR-42）----
+
+import type { ApiKeyCreated } from '../types'
+
+let apiKeySeq = 1
+const mockApiKeys: ApiKeyCreated[] = [
+  {
+    id: apiKeySeq++,
+    name: '业务管理后端',
+    role: 'readonly',
+    keyPrefix: 'bk_demo01',
+    status: 'active',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    expiresAt: null,
+    lastUsedAt: new Date(Date.now() - 3600000).toISOString(),
+    key: '',
+  },
+]
+
+// 列表 / 元数据剥离明文 key（后端绝不返回明文）
+function stripSecret(k: ApiKeyCreated): Omit<ApiKeyCreated, 'key'> {
+  const { key: _key, ...rest } = k
+  return rest
+}
+
+// 生成一把新 mock 密钥（明文仅此返回）
+function newMockApiKey(name: string, role: string, expiresAt: string | null): ApiKeyCreated {
+  const key = 'bk_' + Math.random().toString(36).slice(2, 14)
+  return {
+    id: apiKeySeq++,
+    name,
+    role,
+    keyPrefix: key.slice(0, 9),
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    lastUsedAt: null,
+    key,
+  }
+}
 
 // ---- 实例/分组路由 ----
 

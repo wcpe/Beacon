@@ -3,6 +3,8 @@
 // 所有端点严格对齐 docs/API.md 与 internal/handler/*.go，非 2xx 时解析统一错误体并抛出。
 
 import type {
+  ApiKeyCreated,
+  ApiKeyView,
   AssignmentView,
   AuditPage,
   ConfigView,
@@ -393,6 +395,37 @@ export interface AuditFilter {
 
 export function listAudits(filter: AuditFilter): Promise<AuditPage> {
   return request<AuditPage>(`/audits${qs(filter)}`)
+}
+
+// ===== 管理面 API 密钥（FR-42，见 docs/API.md 管理面 API 密钥小节）=====
+// 列表 / 元数据绝不含明文；明文仅创建 / 重置时一次性返回。operator 由认证态派生。
+
+export function listApiKeys(): Promise<ApiKeyView[]> {
+  return request<ItemsResponse<ApiKeyView>>('/api-keys').then((r) => r.items)
+}
+
+// 创建密钥参数：名称 + 角色 + 可选过期时刻（RFC3339；为空表示永不过期）
+export interface CreateApiKeyParams {
+  name: string
+  role: string
+  expiresAt?: string
+}
+
+export function createApiKey(params: CreateApiKeyParams): Promise<ApiKeyCreated> {
+  return request<ApiKeyCreated>('/api-keys', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+// 吊销密钥（软删，不可逆；旧明文立即失效）
+export function revokeApiKey(id: number): Promise<void> {
+  return request<void>(`/api-keys/${id}`, { method: 'DELETE' })
+}
+
+// 重置密钥：轮换明文，旧明文立即失效，返回的新明文仅此一次可见
+export function resetApiKey(id: number): Promise<ApiKeyCreated> {
+  return request<ApiKeyCreated>(`/api-keys/${id}/reset`, { method: 'POST' })
 }
 
 // ===== 文件树托管（通道B，FR-14）=====

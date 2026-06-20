@@ -16,6 +16,7 @@ const NAV_ITEMS: Array<{ to: string; label: string }> = [
   { to: '/topology', label: '集群拓扑' },
   { to: '/zones', label: 'zone 分配' },
   { to: '/audits', label: '审计日志' },
+  { to: '/api-keys', label: '密钥管理' },
   { to: '/namespaces', label: '环境管理' },
 ]
 

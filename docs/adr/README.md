@@ -29,6 +29,7 @@
 | [0023](0023-control-plane-observability-dashboard.md) | 控制面自带可观测看板（指标 + 历史趋势），时序落 MySQL metric_sample | 已接受 |
 | [0024](0024-bc-backend-membership-as-fact.md) | bc 上报自身后端归属作为控制面只读事实（仅内存、随注册/心跳更新） | 已接受 |
 | [0025](0025-bc-proxy-metrics-and-netty-traffic.md) | bc 代理专属负载指标采集集合与角色分流展示（扩展 ADR-0023；Netty 吞吐无干净注入点本期不采、不留占位） | 已接受 |
+| [0026](0026-runtime-api-keys-and-readonly-role.md) | 运行时 API 密钥 + 管理面只读角色（落库只存哈希，扩展 ADR-0009） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

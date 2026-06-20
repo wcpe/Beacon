@@ -188,6 +188,31 @@ export interface SystemStatusView {
   cpuPercent: number
 }
 
+// ===== 管理面 API 密钥（FR-42，只读角色 + 运行时密钥，见 ADR-0026）=====
+
+// 密钥角色：full（读写）/ readonly（只读）
+export type ApiKeyRole = 'full' | 'readonly'
+
+// 密钥状态：active（生效）/ expired（已过期）/ revoked（已吊销）
+export type ApiKeyStatus = 'active' | 'expired' | 'revoked'
+
+// 密钥视图（列表 / 元数据）：**绝不含明文与哈希**，仅非机密前缀片段供识别
+export interface ApiKeyView {
+  id: number
+  name: string
+  role: string
+  keyPrefix: string
+  status: string
+  createdAt: string
+  expiresAt: string | null
+  lastUsedAt: string | null
+}
+
+// 创建 / 重置返回体：在元数据之外**一次性**附带明文 key（之后不可再得，丢失只能重置）
+export interface ApiKeyCreated extends ApiKeyView {
+  key: string
+}
+
 // ===== 文件树托管（通道B，FR-14）=====
 
 // 文件对象视图（content 仅详情接口返回，列表不含；对齐 internal/handler/file_handler.go fileView）

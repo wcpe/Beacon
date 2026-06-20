@@ -12,6 +12,7 @@ import InstancesPage from './pages/InstancesPage'
 import TopologyPage from './pages/TopologyPage'
 import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
+import ApiKeysPage from './pages/ApiKeysPage'
 import NamespacesPage from './pages/NamespacesPage'
 import { setOnUnauthorized } from './api/client'
 
@@ -46,6 +47,8 @@ export default function App() {
           <Route path="topology" element={<TopologyPage />} />
           <Route path="zones" element={<ZonesPage />} />
           <Route path="audits" element={<AuditsPage />} />
+          {/* 密钥管理（FR-42）：只读角色 + 运行时 API 密钥创建/吊销/重置 */}
+          <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="namespaces" element={<NamespacesPage />} />
           {/* 未知路径回到配置中心 */}
           <Route path="*" element={<Navigate to="/configs" replace />} />

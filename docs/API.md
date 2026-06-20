@@ -5,8 +5,8 @@
 ## 通用约定
 
 - 统一错误体：`{ "code": "<业务码>", "message": "<中文说明>", "traceId": "<可选>" }`。
-- HTTP 状态：400 参数错 / 401 缺 token 或登录令牌 / 404 不存在 / 409 冲突 / 422 校验失败 / 500 内部错；**304 仅用于长轮询无变更超时**。
-- 鉴权：admin 端需登录令牌（见下「管理面鉴权」，自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）；agent 端用共享 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
+- HTTP 状态：400 参数错 / 401 缺 token 或登录令牌 / **403 已认证但无权（只读密钥写）** / 404 不存在 / 409 冲突 / 422 校验失败 / 500 内部错；**304 仅用于长轮询无变更超时**。
+- 鉴权：admin 端需登录令牌**或 API 密钥**（见下「管理面鉴权」，自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)、[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）；agent 端用共享 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - 时间统一 UTC；内容指纹 `md5` 为小写 hex。
 
 ---
@@ -172,6 +172,25 @@ data: {}
 - **操作者身份以认证态为准**：所有写操作（新建/发布/回滚/软删/改派/取消指派/手动下线/建环境）的 `operator` 由登录令牌派生写入 `audit_log`，**忽略请求体/查询里手填的 operator**（手填值不再生效）。
 - 登录 / 登出审计的 `detail` 仅记操作者，**严禁含口令 / 令牌等敏感数据**。
 - 令牌有效期由配置 `auth.token-ttl-sec` 决定（默认 86400 秒）；过期需重新登录。
+- 登录操作者恒为 `full`（读写）角色。
+
+### 管理面 API 密钥与只读角色（FR-42，见 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）
+
+> 在登录令牌之外，`/admin/v1/*` 还接受 **API 密钥**，供外部服务（如业务管理后端）接入。两级角色：`full`（读写，等同操作者）/ `readonly`（只读）。
+
+- **密钥认证头**（二选一）：独立头 `X-Beacon-Api-Key: <bk_...>`，或 `Authorization: Bearer <bk_...>`（密钥以 `bk_` 前缀与登录令牌区分）。缺失 / 错误 / 已吊销 / 已过期 → `401 ADMIN_UNAUTHORIZED`。
+- **只读拒写（统一中间件裁决）**：`readonly` 角色访问任何写方法端点（POST/PUT/PATCH/DELETE）→ `403 FORBIDDEN`；读方法（GET）放行。`full` 角色不受限。
+- **密钥只存哈希、明文一次性**：明文 = `bk_` + 随机串，**仅创建 / 重置响应一次性返回**，之后不可二次读取（丢失只能重置轮换）；列表 / 详情绝不含明文与哈希。
+- **审计**：密钥发起的写操作 `operator` 记为 `apikey:<名称>`；密钥创建 / 吊销 / 重置写 `audit_log`（动作 `apikey.create` / `apikey.revoke` / `apikey.reset`，对象类型 `apikey`，**detail 不含明文 / 哈希**），复用审计页按 `action` / `targetType` 过滤可查。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/api-keys` | 列出全部密钥（含已吊销，显示状态）：`{ items: [{ id, name, role, keyPrefix, status, createdAt, expiresAt, lastUsedAt }] }`，**无明文 / 哈希**。`status ∈ {active, expired, revoked}` |
+| `POST /admin/v1/api-keys` | 创建：`{ name, role: "full"\|"readonly", expiresAt?: RFC3339 }` → `201`，响应含**一次性明文** `key` + 元数据。`role` 非法 / `name` 空 / `expiresAt` 已过 → `400 INVALID_PARAM`（operator 由认证态派生） |
+| `DELETE /admin/v1/api-keys/{id}` | 吊销（软删，不可逆）→ `{ ok: true }`；不存在 / 已吊销 → `404 API_KEY_NOT_FOUND` |
+| `POST /admin/v1/api-keys/{id}/reset` | 重置（轮换明文，旧明文立即失效）→ 响应含**一次性新明文** `key`；不存在 / 已吊销 → `404 API_KEY_NOT_FOUND` |
+
+> 密钥管理端点本身受只读拒写约束：`readonly` 密钥对创建 / 吊销 / 重置一律 `403`（只读不能管密钥）。范围外（不做）：细粒度 / 字段级权限、按端点 scope、自动轮换、速率限制、多租户。
 
 ### 配置管理
 | 端点 | 说明 |

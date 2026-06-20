@@ -26,13 +26,14 @@ type Handlers struct {
 	Metric      *handler.MetricHandler
 	System      *handler.SystemHandler
 	Auth        *handler.AuthHandler
+	ApiKey      *handler.ApiKeyHandler
 	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web         http.Handler
 }
 
-// NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂令牌中间件）+ 内嵌前端（SPA 回退）。
-// 中间件自外向内：recover → traceId → 访问日志。
-func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Handler {
+// NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写中间件）+ 内嵌前端（SPA 回退）。
+// 中间件自外向内：recover → traceId → 访问日志。admin 组内：鉴权（登录令牌 / API 密钥）→ 只读拒写裁决。
+func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys ApiKeyVerifier) http.Handler {
 	r := chi.NewRouter()
 	r.Use(recoverMiddleware, traceMiddleware, accessLog)
 
@@ -61,9 +62,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 	// 管理台登录：签发令牌，自身不挂令牌中间件
 	r.Post("/admin/v1/auth/login", h.Auth.Login)
 
-	// admin 侧：除登录外一律校验登录令牌
+	// admin 侧：除登录外一律校验身份（登录令牌 / API 密钥），再经只读拒写裁决
 	r.Route("/admin/v1", func(r chi.Router) {
-		r.Use(adminAuthMiddleware(authn))
+		r.Use(adminAuthMiddleware(authn, apiKeys))
+		r.Use(readonlyWriteGuard)
 		// 登出：仅记审计（令牌无状态、服务端无会话可吊销），故挂在鉴权中间件内以取认证身份
 		r.Post("/auth/logout", h.Auth.Logout)
 		r.Get("/namespaces", h.Namespace.List)
@@ -135,6 +137,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 
 		// 审计
 		r.Get("/audits", h.Audit.List)
+
+		// 管理面 API 密钥（FR-42，见 ADR-0026）：只读角色 + 运行时创建/吊销/重置
+		// 创建/吊销/重置为写方法，readonly 角色经 readonlyWriteGuard 一律 403
+		r.Get("/api-keys", h.ApiKey.List)
+		r.Post("/api-keys", h.ApiKey.Create)
+		r.Delete("/api-keys/{id}", h.ApiKey.Revoke)
+		r.Post("/api-keys/{id}/reset", h.ApiKey.Reset)
 
 		// 负载指标看板（FR-32，见 ADR-0023）：当前快照聚合 + 历史趋势；仅负载数字、不含名单
 		if h.Metric != nil {

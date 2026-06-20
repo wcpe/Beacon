@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 管理面只读角色 + 运行时 API 密钥 + 密钥操作审计（FR-42）：引入 full（读写）/ readonly（只读）两级角色，外部服务可用一把**只读**密钥调 `/admin/v1/*` 读取拓扑/实例/zone 等事实、对任何写端点一律 403（"只读拒写"由鉴权中间件 `readonlyWriteGuard` 统一裁决，handler 不碰角色）。新增 `api_key` 表（GORM 可移植、**只存 SHA-256 哈希**、软删即吊销）、`internal/apikey` 叶子包（明文 `bk_` 前缀生成 + 哈希纯函数）、`/admin/v1/api-keys` 端点（创建/列出/吊销/重置）与管理台"密钥管理"页；密钥经独立头 `X-Beacon-Api-Key` 或 `Authorization: Bearer <bk_...>` 认证。明文仅创建/重置时一次性返回、**不可二次读取**（丢失只能重置轮换）；创建/吊销/重置写入既有 `audit_log`（operator=apikey:<名称>，明文不入 detail），复用审计页过滤可查。补充 [ADR-0009](docs/adr/0009-control-plane-auth-pulled-forward.md)（运行时密钥落库属新决策），不引 Redis/会话存储/鉴权框架（见 [ADR-0026](docs/adr/0026-runtime-api-keys-and-readonly-role.md) 与 [docs/specs/admin-readonly-role-and-api-keys.md](docs/specs/admin-readonly-role-and-api-keys.md)）。
+
 ## 0.6.0（2026-06-21）
 
 ### 新增

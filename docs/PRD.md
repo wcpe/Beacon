@@ -87,6 +87,7 @@
 | FR-39 | 配置导入（在线实例反向抓取）：经 server→agent 命令下发让目标 agent 读取本地 plugins 目录并回传 ingest 入库为组/实例级覆盖；含命令通道与 ingest 安全校验、操作入审计。依赖 FR-38 + server→agent 命令通道（需新 ADR：反向取文件通道与安全面） | P2 | 计划 |
 | FR-40 | 新建/复制配置流程改善：新建配置选项动态化（namespace/group/zone/server 从 API 取、去硬编码）+ scope↔target 联动 + 「复制某配置到指定实例 server 层覆盖并改 diff」快捷路径（实例级覆盖能力已存在，优先级 实例>分组>全局）（增强 FR-1/FR-22） | P2 | 已交付@v0.6.0 |
 | FR-41 | agent 配置环境变量覆盖：给 agent（数据面）配置读取加一层环境变量覆盖（env 优先于 config.yml），变量名约定 BEACON_AGENT_ + 点分路径大写、句点与连字符转下划线（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID），覆盖全部标量与列表项（identity.metadata 动态键 map 本版不做）；支持容器化用环境变量注入接入信息，并让 E2E 以 env 注入取代手写 config.yml。增强 agent 配置加载，控制面零改动、core 仍 TabooLib-free（见 [docs/specs/agent-config-env-override.md](specs/agent-config-env-override.md)） | P2 | 已交付@v0.6.0 |
+| FR-42 | 管理面只读角色 + 运行时 API 密钥 + 密钥操作审计：引入 full（读写，等同操作者）/ readonly（只读）两级角色，让外部服务（业务管理后端）用一把**只读**密钥调 `/admin/v1/*` 读取拓扑/实例/zone 等事实、对任何写端点一律 403（"只读拒写"由鉴权中间件统一裁决，handler 不散落角色判断）；管理台新增"密钥管理"页可运行时创建（名称+角色+可选过期）/列出/吊销/重置密钥，密钥经独立请求头 `X-Beacon-Api-Key` 或 `Authorization: Bearer` 认证。密钥**落库只存 SHA-256 哈希**，明文仅创建/重置时返回一次、**不可二次读取**（丢失只能重置轮换）；创建/吊销/重置写入既有 `audit_log`（明文不入 detail），管理台复用审计页过滤可查。增强 FR-11，落库属新决策（补充 ADR-0009），不做细粒度/字段级权限·按端点 scope·自动轮换·速率限制·多租户（见 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md) 与 [docs/specs/admin-readonly-role-and-api-keys.md](specs/admin-readonly-role-and-api-keys.md)） | P2 | 开发中 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 
@@ -97,7 +98,7 @@
 - **可移植**：DB 经 GORM，禁 MySQL 专有特性，可切 Postgres。
 - **简单优先**：不引入 Redis/MQ/DI 框架等重型件。
 - **可维护**：中文注释/日志/提交；分级日志（ERROR/WARN/INFO/DEBUG）。
-- **安全**：敏感项（DB 密码、token）走 env 不入库；管理面鉴权前移本批（见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)），数据面内网可信不变，配置加密仍属后期（FR-20）。
+- **安全**：敏感项（DB 密码、token）走 env 不入库；管理面鉴权前移本批（见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)），数据面内网可信不变，配置加密仍属后期（FR-20）。运行时 API 密钥（FR-42）落库**只存哈希**、明文一次性返回不可二次读取（见 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）；只读角色对外部服务"只读拒写"。
 
 ## 6. 验收标准（P1）
 
