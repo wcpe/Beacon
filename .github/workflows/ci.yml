@@ -1,14 +1,14 @@
 # Beacon 持续集成轻量门禁。
-# 触发：向 main 的 PR、推送到 main。只跑 PR/push 必过的快速检查
+# 触发：向 master 的 PR、推送到 master。只跑 PR/push 必过的快速检查
 # （控制面构建 + 单测、Go 静态检查、agent 单测、前端构建）。
 # 重型 E2E（需 JDK21 + 下载 Paper/Waterfall，约 12 分钟）不在此处，见 e2e.yml。
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 # 同一分支新推送自动取消旧的在跑流水线，省 CI 资源。
 concurrency:
