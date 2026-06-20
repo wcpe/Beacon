@@ -35,12 +35,15 @@ func (r *MetricSampleRepository) InsertBatch(samples []model.MetricSample) error
 	return r.db.CreateInBatches(samples, metricInsertBatchSize).Error
 }
 
-// Query 按 [from, to] 闭区间时间窗查询某 namespace 的样本，按 sampledAt 升序返回（便于出图）。
-// serverID 为空时返回该 namespace 全部子服样本；非空时只返回该子服。
+// Query 按 [from, to] 闭区间时间窗查询样本，按 sampledAt 升序返回（便于出图）。
+// namespace 为空时跨全部环境查询；非空时限定该环境。
+// serverID 为空时返回全部子服样本；非空时只返回该子服。
 func (r *MetricSampleRepository) Query(namespace, serverID string, from, to time.Time) ([]model.MetricSample, error) {
 	q := r.db.Model(&model.MetricSample{}).
-		Where("namespace = ?", namespace).
 		Where("sampled_at >= ? AND sampled_at <= ?", from, to)
+	if namespace != "" {
+		q = q.Where("namespace = ?", namespace)
+	}
 	if serverID != "" {
 		q = q.Where("server_id = ?", serverID)
 	}

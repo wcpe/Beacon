@@ -113,6 +113,24 @@ func TestQueryByServerFilter(t *testing.T) {
 	}
 }
 
+// TestQueryEmptyNamespaceAcrossEnvironments 验证 X1：namespace 为空时跨全部环境查询；非空时仅限该环境。
+func TestQueryEmptyNamespaceAcrossEnvironments(t *testing.T) {
+	r := NewMetricSampleRepository(newMetricTestDB(t))
+	at := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	seedMetric(t, r, "prod", "p-1", at)
+	seedMetric(t, r, "test", "t-1", at)
+
+	from, to := at.Add(-time.Minute), at.Add(time.Minute)
+	// 空 namespace：跨环境返回全部。
+	if got, _ := r.Query("", "", from, to); len(got) != 2 {
+		t.Fatalf("空 namespace 应跨环境返回全部 2 条，实际 %d", len(got))
+	}
+	// 非空 namespace：仅限该环境。
+	if got, _ := r.Query("prod", "", from, to); len(got) != 1 || got[0].Namespace != "prod" {
+		t.Fatalf("namespace=prod 应只返回该环境样本，实际 %v", got)
+	}
+}
+
 // TestDeleteBefore 验证保留期清理：删除早于 cutoff 的样本，cutoff 当刻及之后保留。
 func TestDeleteBefore(t *testing.T) {
 	r := NewMetricSampleRepository(newMetricTestDB(t))

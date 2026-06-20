@@ -32,7 +32,7 @@ var presetWindows = map[string]time.Duration{
 
 // TrendQuery 是趋势查询入参（FR-32）。
 type TrendQuery struct {
-	Namespace string
+	Namespace string        // 可选，空则聚合全部环境
 	ServerID  string        // 可选，空则聚合该 namespace 全部子服
 	Window    string        // 预设窗口名（1h/6h/24h）；与 From/To 二选一，优先 From/To
 	From      time.Time     // 可选自定义窗起（与 To 配对）
@@ -61,11 +61,8 @@ func (s *MetricService) Summary(namespace string) Summary {
 }
 
 // Trend 按时间窗 + 可选 serverId 查询 metric_sample，降采样为时间序列点。
-// 校验：namespace 必填；窗口要么给合法预设，要么给 from<=to 的自定义区间。
+// namespace 可选：为空时聚合全部环境（管理台总览）；窗口要么给合法预设，要么给 from<=to 的自定义区间。
 func (s *MetricService) Trend(q TrendQuery) ([]TrendPoint, error) {
-	if q.Namespace == "" {
-		return nil, apperr.ErrInvalidParam
-	}
 	from, to, err := s.resolveWindow(q)
 	if err != nil {
 		return nil, err
