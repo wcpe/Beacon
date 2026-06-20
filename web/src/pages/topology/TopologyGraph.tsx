@@ -3,8 +3,15 @@
 // 抽成独立组件便于页面测试以轻量桩替身规避 ECharts 在 jsdom 下的 canvas 依赖（同 DashboardPage/TrendChart 套路）。
 
 import { useEffect, useRef } from 'react'
-import * as echarts from 'echarts'
+import * as echarts from 'echarts/core'
+import { GraphChart } from 'echarts/charts'
+import { TooltipComponent, LegendComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { EChartsOption, ECharts } from 'echarts'
 import type { TopologyView } from '@/api/types'
+
+// 按需注册 ECharts 模块（graph 图 + tooltip/legend + canvas 渲染器），避免全量 barrel 进主 chunk
+echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer])
 
 // 角色配色与符号：bc（bungee）方块、bukkit 圆形，色相区分。
 const ROLE_STYLE: Record<string, { symbol: string; color: string; label: string }> = {
@@ -29,7 +36,7 @@ function roleLabel(role: string): string {
 }
 
 // 把拓扑数据转为 ECharts graph option（纯函数，便于推理）。
-function toOption(data: TopologyView): echarts.EChartsOption {
+function toOption(data: TopologyView): EChartsOption {
   // 按角色分类（图例可按角色筛选）
   const roles = Array.from(new Set(data.nodes.map((n) => n.role)))
   const categories = roles.map((r) => ({ name: roleLabel(r) }))
@@ -86,7 +93,7 @@ function toOption(data: TopologyView): echarts.EChartsOption {
 
 export default function TopologyGraph({ data }: { data: TopologyView }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const chartRef = useRef<echarts.ECharts | null>(null)
+  const chartRef = useRef<ECharts | null>(null)
 
   // 初始化图实例并随容器尺寸自适应（仅一次）。
   useEffect(() => {
