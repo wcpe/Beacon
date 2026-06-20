@@ -109,6 +109,15 @@ val runBungee by tasks.registering(RunWaterfall::class) {
     // 启动前置：写 TabooLib 仓库覆盖 env.properties（代理无需 EULA；agent 配置改由上面的环境变量注入）。
     doFirst {
         runDir.mkdirs()
+        // 清理 plugins/ 里历史遗留的 Beacon 插件 jar（含 run-waterfall 改名前的旧产物 BeaconAgentProxy.jar
+        // / BeaconE2EProxy.jar）：run-waterfall 仅把当前构建产物复制进来、不会替换/删除同名旧 jar，
+        // 若残留旧版本（无 EnvOverridingConfigReader 等）与新 jar 同时存在，Waterfall 会同时加载两个
+        // 同名插件并取旧者，致 agent 无视环境变量、连不上控制面（FR-41）。每次启动清一遍杜绝。
+        // 仓库自产 jar 仅 BeaconAgent{Proxy} / BeaconE2E{Proxy} 四个（各 build.gradle.kts 中固化 archiveBaseName）；
+        // 前缀匹配安全——若后续新增 Beacon* 前缀的自产 jar 须复核此处过滤。
+        runDir.resolve("plugins").listFiles()
+            ?.filter { it.isFile && it.name.startsWith("Beacon") && it.name.endsWith(".jar") }
+            ?.forEach { it.delete() }
         // TabooLib 运行期仓库覆盖（避开已下线的 sacredcraft.cn）。
         runDir.resolve("env.properties").writeText(
             """

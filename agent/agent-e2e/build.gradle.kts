@@ -133,6 +133,14 @@ tasks.named<RunServer>("runServer") {
     // 启动前置：写 Paper EULA 与 TabooLib 仓库覆盖 env.properties（agent 配置改由上面的环境变量注入）。
     doFirst {
         runDir.mkdirs()
+        // 清理 plugins/ 里历史遗留的 Beacon 插件 jar（含 run-paper 改名前的旧产物 BeaconAgent.jar / BeaconE2E.jar）：
+        // 即便 Paper 主要经 --add-plugin 加载新 jar，旧 jar 留在 plugins/ 会触发 Paper 的"Ambiguous plugin name"
+        // 错误日志、且在某些加载顺序下被优先选中。每次启动清一遍杜绝，与 run-waterfall 侧保持一致。
+        // 仓库自产 jar 仅 BeaconAgent{Proxy} / BeaconE2E{Proxy} 四个（各 build.gradle.kts 中固化 archiveBaseName）；
+        // 前缀匹配安全——若后续新增 Beacon* 前缀的自产 jar 须复核此处过滤。
+        runDir.resolve("plugins").listFiles()
+            ?.filter { it.isFile && it.name.startsWith("Beacon") && it.name.endsWith(".jar") }
+            ?.forEach { it.delete() }
         // Paper 需同意 EULA 方可启动（run-task 不代写，这里显式写入）。
         runDir.resolve("eula.txt").writeText("eula=true\n", Charsets.UTF_8)
 
