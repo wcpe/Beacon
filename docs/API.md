@@ -97,6 +97,7 @@ data: {}
 ### 4. 上报状态 `POST /beacon/v1/agent/report`
 请求：`{ "namespace", "serverId", "appliedMd5", "playerCount", "tps", "memUsed", "memMax", "cpuLoad" }`（负载数字 **仅展示，不参与任何决策**；`memUsed/memMax/cpuLoad` 为附加字段，旧 agent 缺键 → 内存缺省 0、`cpuLoad` 缺省 -1.0 不可用，FR-32）。响应：`{ "ok": true }`。
 - `backends`（可选，`string[]`）：**仅 bc 上报**本代理当前代理的后端子服 serverId 集合，随上报刷新控制面内存事实（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）。**缺键与显式空集语义不同**：bukkit / 旧 agent 缺键 → 控制面保留原集合不动；bc 显式上报（含空集即清空）才刷新。向后兼容。
+- `proxy`（可选，对象）：**仅 bc（`role=bungee`）上报**的代理专属负载指标（FR-34，[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)），仅展示不参与决策。子对象字段：`onlineConnections`（代理在线连接数）、`threadCount`（JVM 线程数）、`uptimeMs`（JVM 运行毫秒数）、`backendUp`/`backendTotal`（后端子服可达/总数）、`backendAvgLatencyMs`（到可达后端的平均 ping 延迟毫秒，`-1` 表示无可达后端不可用）。**缺键不刷新**：bukkit / 旧 agent 不发即缺键，控制面保留实例原 BC 字段不动；bc 上报才刷新。向后兼容。网络吞吐入/出字节本期不采（BungeeCord 无干净 Netty 注入点，见 ADR-0025）。
 
 ### 5. 服务发现 `GET /beacon/v1/agent/discovery`
 查询：`?namespace=&group=&zone=&role=`，外加可选的自定义元数据过滤 `&tag.<key>=<value>`（可重复，多 tag 取交集；按实例 `metadata` 键值精确匹配，FR-29）。返回按条件过滤的**可用**实例列表（`online`+`degraded`，归 agent 前缀 + agent token）。无匹配返回 `{ "instances": [] }`。BeaconAgentProxy 用它周期同步同 namespace 下 `role=bukkit` 的可用子服，按 `serverId` 注入 Bungee `ServerInfo` 目录（仅管理 Beacon 创建的条目，同名手工配置不覆盖；FR-4 延伸出口）。
@@ -273,7 +274,7 @@ data: {}
 | `GET /admin/v1/metrics/summary?namespace=` | 当前快照聚合统计（从内存注册表实时计算，不读库）。`namespace` 可选，空=聚合全部环境 |
 | `GET /admin/v1/metrics/trend?namespace=&serverId=&window=&from=&to=` | 历史时序趋势（查 `metric_sample` 表）。`namespace` 可选，空=聚合全部环境；`serverId` 可选过滤；`window` 取预设窗口 `1h`/`6h`/`24h`，或用 `from`/`to`（RFC3339）自定义时间窗；聚合粒度由服务端按窗长自动降采样（约 120 点），无需传步长 |
 
-`GET /admin/v1/metrics/summary`：返回全集群总玩家数、在线服务器数、每服在线人数列表（仅 `serverId` + `playerCount`）、全集群平均 TPS·内存·CPU，数据源为内存注册表（与发现 / 健康同源、实时计算）。内存为**字节**（`int64`）；`avgCpuLoad` 为 [0,1]，`-1` 表示无可用 CPU 样本，`cpuSampleCount` 为参与平均的可用样本数。**平均 TPS 与平均 CPU 仅统计 `role=bukkit` 子服**（bungee 作纯代理 tps 恒为 0，计入会拉低平均失真）；总玩家数 / 在线服数 / 平均内存仍计全部在线实例。返回：
+`GET /admin/v1/metrics/summary`：返回全集群总玩家数、在线服务器数、每服在线人数列表（仅 `serverId` + `playerCount`）、全集群平均 TPS·内存·CPU，数据源为内存注册表（与发现 / 健康同源、实时计算）。内存为**字节**（`int64`）；`avgCpuLoad` 为 [0,1]，`-1` 表示无可用 CPU 样本，`cpuSampleCount` 为参与平均的可用样本数。**平均 TPS 与平均 CPU 仅统计 `role=bukkit` 子服**（bungee 作纯代理 tps 恒为 0，计入会拉低平均失真）；总玩家数 / 在线服数 / 平均内存仍计全部在线实例。`bc` 子对象为 **bc（bungee 代理）维度聚合（仅 `role=bungee` 实例统计，FR-34，[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)）**：`proxyCount`（在线 bc 代理数）、`totalConnections`（bc 连接合计）、`avgThreadCount`（bc 平均 JVM 线程数）、`backendUp`/`backendTotal`（bc 可达/总后端合计）、`avgBackendLatencyMs`（bc 平均后端延迟毫秒，`-1` 表示无可用样本）；无 bc 实例时各计数为 0、平均延迟为 `-1`。**仅负载数字，不含玩家名单 / 身份**。返回：
 ```json
 {
   "totalPlayers": 312,
@@ -286,7 +287,15 @@ data: {}
   "avgMemUsed": 1929379840,
   "avgMemMax": 4294967296,
   "avgCpuLoad": 0.42,
-  "cpuSampleCount": 6
+  "cpuSampleCount": 6,
+  "bc": {
+    "proxyCount": 2,
+    "totalConnections": 312,
+    "avgThreadCount": 56,
+    "backendUp": 6,
+    "backendTotal": 6,
+    "avgBackendLatencyMs": 9.0
+  }
 }
 ```
 

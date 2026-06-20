@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- BC 代理专属指标与角色分流展示（FR-34，扩展 [ADR-0023](docs/adr/0023-control-plane-observability-dashboard.md)，见 [ADR-0025](docs/adr/0025-bc-proxy-metrics-and-netty-traffic.md)）：bc（bungee）agent 新增采集代理专属负载指标——在线连接数、JVM 线程数、运行时长、后端子服可达性（up/total）+ 到各后端平均 ping 延迟（`ServerInfo.ping` 异步探活，在 agent async 上报线程内有界等待汇总、绝不碰 MC 主线程），经 report 新增可选 `proxy` 子对象上报（仅 bc 填、bukkit/旧 agent 缺键向后兼容）。控制面 `runtime.Instance` 加 BC 字段（仅展示不参与决策），`metric_sample` 加 6 个可空列（`proxy_conn`/`thread_count`/`uptime_ms`/`backend_up`/`backend_total`/`backend_avg_latency_ms`，全基础类型 + `NOT NULL DEFAULT`、零方言、AutoMigrate 加列对既有行兼容、可切 Postgres），采样器一并落库；`GET /admin/v1/metrics/summary` 新增 `bc` 子对象（仅 `role=bungee` 聚合：代理数/连接/平均线程/后端可达性/平均延迟），既有 bukkit 聚合零改动无回归。管理台 Dashboard 新增「BC 代理」面板按角色分流展示上述 BC 指标，bukkit 视图不受影响。**网络吞吐入/出字节本期不采**——BungeeCord 公开 API 无干净 Netty pipeline 注入点（吞吐计数只能切进非公开实现 jar `PipelineUtils`），不做脆弱反射 hack、不引 BungeeCord 实现 jar、不留占位列/字段，标「待真机/待定」（详见 ADR-0025）。只采负载计数事实、不采玩家名单/身份（守看人边界 ADR-0022）。
 - bc 后端归属事实上报：bc（bungee）agent 将其当前代理的后端子服 serverId 集合（取自 `ProxyServerDirectory`）经 register / report 附加可选 `backends` 字段上报，控制面存为实例只读内存事实（仅 bc 填、bukkit 恒空、旧 agent 缺键向后兼容），实例视图输出 `backends` 供集群拓扑 bc→bukkit 连线消费；只存事实不落 DB、不据它做调度决策（FR-36，见 ADR-0024）。
 - 补齐 web 写操作审计（FR-7/FR-30）：新建环境（`namespace.create`）与管理面登录 / 登出（`auth.login` / `auth.logout`）此前未埋审计，现各产一条审计行——环境写入与审计同事务原子完成，operator 取登录认证身份，审计 `detail` 仅记必要字段、严禁含口令 / 令牌。新增登出端点 `POST /admin/v1/auth/logout`（令牌无状态不可吊销，登出仅留审计痕迹），管理台登出按钮先记审计再清本地登录态。
 - 审计查询管理台新增「操作人」过滤输入（后端 `GET /admin/v1/audits` 的 `operator` 参数早已支持，FR-30），可按操作者检索审计。
