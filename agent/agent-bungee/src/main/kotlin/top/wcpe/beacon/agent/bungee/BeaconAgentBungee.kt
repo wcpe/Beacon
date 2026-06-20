@@ -103,6 +103,9 @@ object BeaconAgentBungee : Plugin() {
     /** 玩家位置名册引导（FR-26）；null 表示未装配。 */
     private var rosterBootstrap: BungeePlayerRosterBootstrap? = null
 
+    /** 跨服消息模块引导（FR-26）；null 表示未装配。 */
+    private var messagingBootstrap: BungeeMessagingBootstrap? = null
+
     @Awake(LifeCycle.ENABLE)
     fun enable() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
@@ -182,10 +185,25 @@ object BeaconAgentBungee : Plugin() {
         // 配置变更后据下发 Redis 配置重建名册引导。
         view.onChange { _, _ -> roster.sync() }
 
+        // 跨服消息模块引导（FR-26）：据下发 Redis 配置启动代理的消息收发（消费收件流 + on 分发 + publish/subscribe），
+        // 使代理成为消息对等参与方（跨服编排控制层需接收业务消息并发布广播等）。与名册引导各持独立连接、互不影响。
+        val messaging = BungeeMessagingBootstrap(
+            identity = identity,
+            settings = settings,
+            store = store,
+            codec = KotlinxJsonCodec(),
+            holder = assembled.messagingHolder,
+            adapter = adapter,
+        )
+        messagingBootstrap = messaging
+        // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
+        view.onChange { _, _ -> messaging.sync() }
+
         // 先点亮快照再异步接入，不阻塞主线程。
         assembled.lifecycle.bootstrapWithSnapshotThenConnect()
         // 快照可能已含 Redis 配置：立即尝试一次（缺失则空闲，待配置下发再起）。
         roster.sync()
+        messaging.sync()
     }
 
     private fun syncDirectoryLoop(adapter: BungeePlatformAdapter, syncer: ProxyServerDirectorySyncer) {
@@ -204,6 +222,7 @@ object BeaconAgentBungee : Plugin() {
     fun disable() {
         directorySyncRunning.set(false)
         BungeeRosterListener.bootstrap = null
+        messagingBootstrap?.stop()
         rosterBootstrap?.stop()
         lifecycle?.shutdown()
         BeaconAgentProvider.unregister()
