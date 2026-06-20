@@ -4,6 +4,7 @@ import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
@@ -110,6 +111,55 @@ class AgentLifecycleMetricsTest {
         assertEquals(0L, body["memMax"])
         // 默认指标 cpuLoad 为不可用哨兵 -1.0。
         assertEquals(RuntimeMetrics.CPU_UNAVAILABLE, body["cpuLoad"])
+    }
+
+    @Test
+    fun `bc 上报时附注入的 BC 专属指标 proxy 段`() {
+        backend.pollStatus = 200
+        val codec = MetricsCapturingCodec()
+        val apiClient = BeaconApiClient(backend, codec, settings())
+        val applier = ConfigApplier(store, null, adapter)
+        val proxy = ProxyMetrics(
+            onlineConnections = 99,
+            threadCount = 50,
+            uptimeMs = 12345L,
+            backendUp = 2,
+            backendTotal = 3,
+            backendAvgLatencyMs = 8.0,
+        )
+        val lifecycle = AgentLifecycle(
+            identity(), settings(), adapter, apiClient, store, applier, null,
+            proxyMetricsProvider = { proxy },
+        )
+
+        lifecycle.bootstrapWithSnapshotThenConnect()
+        waitUntil(3000) { codec.lastReport.get() != null }
+
+        val body = codec.lastReport.get() ?: error("应至少有一次 report 报文被捕获")
+        @Suppress("UNCHECKED_CAST")
+        val proxyBody = body["proxy"] as? Map<String, Any?> ?: error("bc 上报应含 proxy 子对象")
+        assertEquals(99, proxyBody["onlineConnections"])
+        assertEquals(50, proxyBody["threadCount"])
+        assertEquals(12345L, proxyBody["uptimeMs"])
+        assertEquals(2, proxyBody["backendUp"])
+        assertEquals(3, proxyBody["backendTotal"])
+        assertEquals(8.0, proxyBody["backendAvgLatencyMs"])
+    }
+
+    @Test
+    fun `未注入 BC 指标供给时不附 proxy 段向后兼容`() {
+        backend.pollStatus = 200
+        val codec = MetricsCapturingCodec()
+        val apiClient = BeaconApiClient(backend, codec, settings())
+        val applier = ConfigApplier(store, null, adapter)
+        // 不传 proxyMetricsProvider（bukkit / 旧行为）。
+        val lifecycle = AgentLifecycle(identity(), settings(), adapter, apiClient, store, applier, null)
+
+        lifecycle.bootstrapWithSnapshotThenConnect()
+        waitUntil(3000) { codec.lastReport.get() != null }
+
+        val body = codec.lastReport.get() ?: error("应至少有一次 report 报文被捕获")
+        assertTrue(!body.containsKey("proxy"), "bukkit / 旧行为不应附 proxy 子对象")
     }
 
     @Test

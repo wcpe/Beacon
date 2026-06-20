@@ -13,6 +13,8 @@ import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
+import top.wcpe.beacon.agent.core.metrics.ProxyMetricsProvider
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
@@ -52,6 +54,9 @@ class AgentLifecycle(
     // 后端归属供给（FR-36）：注册/上报时取本机（仅 bc 代理）当前代理的后端子服 serverId 集合；
     // 默认空集（bukkit / 旧行为，不上报 backends）；bungee 壳层注入 ProxyServerDirectory 读取。
     private val backendsProvider: () -> List<String> = { emptyList() },
+    // BC 专属指标供给（FR-34）：上报时取本机（仅 bc 代理）当前一帧代理负载指标（连接 / 线程 / 运行时长 / 后端可达性·延迟）；
+    // 默认 null（bukkit / 旧行为，不上报 proxy 段）；bungee 壳层注入平台采集实现。
+    private val proxyMetricsProvider: ProxyMetricsProvider = { null },
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -460,6 +465,7 @@ class AgentLifecycle(
             memMax = metrics.memMax,
             cpuLoad = metrics.cpuLoad,
             backends = currentBackends(),
+            proxy = currentProxyMetrics(),
         )
         if (!ok) {
             adapter.warn("上报 applied 状态失败（不影响有效配置生效）")
@@ -483,6 +489,16 @@ class AgentLifecycle(
         } catch (e: Exception) {
             adapter.warn("采集后端归属集合失败，本次按空集上报：${e.message}")
             emptyList()
+        }
+    }
+
+    /** 取当前 BC 专属指标（FR-34）；供给抛异常时回退 null（本次不上报 proxy 段），绝不让上报因采集失败而中断。 */
+    private fun currentProxyMetrics(): ProxyMetrics? {
+        return try {
+            proxyMetricsProvider()
+        } catch (e: Exception) {
+            adapter.warn("采集 BC 专属指标失败，本次不上报 proxy 段：${e.message}")
+            null
         }
     }
 

@@ -36,6 +36,32 @@ object JvmRuntimeMetrics {
     }
 
     /**
+     * 当前 JVM 活动线程数（FR-34，BC 专属指标之一）：`ThreadMXBean.getThreadCount`。
+     *
+     * 廉价 MXBean 读，无阻塞 IO；异常回退 0（不让采集失败影响上报）。
+     */
+    fun threadCount(): Int {
+        return try {
+            ManagementFactory.getThreadMXBean().threadCount
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /**
+     * 当前 JVM 运行毫秒数（FR-34，BC 专属指标之一）：`RuntimeMXBean.getUptime`。
+     *
+     * 廉价 MXBean 读，无阻塞 IO；异常 / 负值回退 0。
+     */
+    fun uptimeMs(): Long {
+        return try {
+            ManagementFactory.getRuntimeMXBean().uptime.coerceAtLeast(0L)
+        } catch (e: Exception) {
+            0L
+        }
+    }
+
+    /**
      * 归一化平台上报的 TPS 采样值（壳层可单测的纯逻辑）。
      *
      * 入参为平台读到的近 1 分钟 TPS（Paper `getTPS()[0]`）；null（接口不存在 / Spigot 取不到）或

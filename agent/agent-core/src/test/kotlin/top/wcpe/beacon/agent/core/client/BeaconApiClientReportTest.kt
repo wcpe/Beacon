@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.client
 
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
@@ -129,6 +130,58 @@ class BeaconApiClientReportTest {
             setOf("namespace", "serverId", "appliedMd5", "playerCount", "tps", "memUsed", "memMax", "cpuLoad"),
             body.keys,
             "report 报文键集合必须与契约一致",
+        )
+    }
+
+    @Test
+    fun `report 不带 proxy 时无 proxy 键（向后兼容）`() {
+        val codec = CapturingCodec()
+        val client = BeaconApiClient(OkReportTransport(), codec, settings())
+
+        // 默认 proxy = null（bukkit / 旧行为）。
+        client.report(identity(), "md5", 1, 20.0, 10L, 20L, 0.5)
+
+        val body = lastBody(codec)
+        assertTrue(!body.containsKey("proxy"), "bukkit / 旧行为不应拼入 proxy 子对象")
+    }
+
+    @Test
+    fun `report 带 proxy 时附 BC 指标子对象`() {
+        val codec = CapturingCodec()
+        val client = BeaconApiClient(OkReportTransport(), codec, settings())
+
+        client.report(
+            identity(),
+            appliedMd5 = "md5",
+            playerCount = 0,
+            tps = 0.0,
+            memUsed = 1L,
+            memMax = 2L,
+            cpuLoad = 0.3,
+            proxy = ProxyMetrics(
+                onlineConnections = 128,
+                threadCount = 64,
+                uptimeMs = 3_600_000L,
+                backendUp = 3,
+                backendTotal = 4,
+                backendAvgLatencyMs = 12.5,
+            ),
+        )
+
+        val body = lastBody(codec)
+        @Suppress("UNCHECKED_CAST")
+        val proxy = body["proxy"] as Map<String, Any?>
+        // BC 子对象键名固定，供控制面 Go 侧对齐。
+        assertEquals(128, proxy["onlineConnections"])
+        assertEquals(64, proxy["threadCount"])
+        assertEquals(3_600_000L, proxy["uptimeMs"])
+        assertEquals(3, proxy["backendUp"])
+        assertEquals(4, proxy["backendTotal"])
+        assertEquals(12.5, proxy["backendAvgLatencyMs"])
+        assertEquals(
+            setOf("onlineConnections", "threadCount", "uptimeMs", "backendUp", "backendTotal", "backendAvgLatencyMs"),
+            proxy.keys,
+            "proxy 子对象键集合必须与契约一致",
         )
     }
 }

@@ -15,6 +15,7 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
+import top.wcpe.beacon.agent.core.metrics.ProxyMetricsProvider
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
 import top.wcpe.beacon.agent.core.override.CommandWhitelist
@@ -67,6 +68,9 @@ object AgentAssembly {
         // 后端归属供给（FR-36）：bungee 壳层注入 ProxyServerDirectory 读取「当前代理的后端 serverId 集合」；
         // 默认空集（bukkit / 未注入时不上报 backends，向后兼容）。
         backendsProvider: () -> List<String> = { emptyList() },
+        // BC 专属指标供给（FR-34）：bungee 壳层注入平台采集实现（连接 / 线程 / 运行时长 / 后端可达性·延迟）；
+        // 默认 null（bukkit / 未注入时不上报 proxy 段，向后兼容）。
+        proxyMetricsProvider: ProxyMetricsProvider = { null },
     ): AssembledAgent {
         val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
@@ -145,6 +149,8 @@ object AgentAssembly {
             metricsProvider = metricsProvider,
             // 后端归属供给（FR-36）：注册/上报时取当前代理的后端 serverId 集合。
             backendsProvider = backendsProvider,
+            // BC 专属指标供给（FR-34）：上报时取当前一帧代理负载指标（仅 bc 注入）。
+            proxyMetricsProvider = proxyMetricsProvider,
         )
 
         // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；

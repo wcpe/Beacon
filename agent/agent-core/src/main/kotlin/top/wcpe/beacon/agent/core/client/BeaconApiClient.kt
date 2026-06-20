@@ -6,6 +6,7 @@ import top.wcpe.beacon.agent.core.filetree.FileContent
 import top.wcpe.beacon.agent.core.filetree.FileManifest
 import top.wcpe.beacon.agent.core.filetree.FileManifestEntry
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.override.OverrideManifest
 import top.wcpe.beacon.agent.core.override.OverrideSetEntry
 import top.wcpe.beacon.agent.core.settings.AgentSettings
@@ -187,6 +188,9 @@ class BeaconApiClient(
      *
      * backends 为本机（仅 bc 代理）当前代理的后端子服 serverId 集合（FR-36 事实），随上报刷新；
      * 仅当非空时才拼入报文（bukkit / 旧控制面下为空、不拼，向后兼容）。
+     *
+     * proxy 为 bc 专属负载指标（连接 / 线程 / 运行时长 / 后端可达性·延迟，FR-34）；仅 bc 壳注入，
+     * 仅当非 null 时才拼入 `proxy` 子对象（bukkit / 旧控制面下为 null、不拼，向后兼容）。
      */
     fun report(
         identity: AgentIdentity,
@@ -197,6 +201,7 @@ class BeaconApiClient(
         memMax: Long,
         cpuLoad: Double,
         backends: List<String> = emptyList(),
+        proxy: ProxyMetrics? = null,
     ): Boolean {
         val body = buildMap {
             put("namespace", identity.namespace)
@@ -210,6 +215,8 @@ class BeaconApiClient(
             put("cpuLoad", cpuLoad)
             // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
             if (backends.isNotEmpty()) put("backends", backends)
+            // bc 专属负载指标：仅 bc 壳注入时附加 proxy 子对象，旧控制面忽略即可（FR-34）。
+            if (proxy != null) put("proxy", proxyBody(proxy))
         }
         val resp = exec(
             HttpRequest(
@@ -480,6 +487,16 @@ class BeaconApiClient(
             sets = sets,
         )
     }
+
+    /** 把 BC 专属指标拼成 report 报文的 `proxy` 子对象（键名固定供控制面对齐，FR-34）。 */
+    private fun proxyBody(proxy: ProxyMetrics): Map<String, Any?> = mapOf(
+        "onlineConnections" to proxy.onlineConnections,
+        "threadCount" to proxy.threadCount,
+        "uptimeMs" to proxy.uptimeMs,
+        "backendUp" to proxy.backendUp,
+        "backendTotal" to proxy.backendTotal,
+        "backendAvgLatencyMs" to proxy.backendAvgLatencyMs,
+    )
 
     private fun appendParam(sb: StringBuilder, key: String, value: String?) {
         if (value.isNullOrEmpty()) return

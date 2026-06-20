@@ -133,6 +133,8 @@ object BeaconAgentBungee : Plugin() {
             metricsProvider = { BungeeMetricsCollector.sample() },
             // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。
             backendsProvider = { serverDirectory.backendServerIds().toList() },
+            // BC 专属指标供给（FR-34）：上报时采代理连接数 / 线程 / 运行时长 / 后端可达性·延迟（仅 bc 填）。
+            proxyMetricsProvider = { BungeeProxyMetricsCollector.sample() },
         )
         lifecycle = assembled.lifecycle
 
