@@ -14,6 +14,9 @@ type MetricSample struct {
 	Namespace string `gorm:"column:namespace;size:64;not null;index:idx_metric_window,priority:1"`
 	// 子服标识；按 serverId 可选过滤分服趋势
 	ServerID string `gorm:"column:server_id;size:128;not null;index:idx_metric_window,priority:2"`
+	// 实例角色（bukkit / bungee）；VARCHAR 落库 + 应用层校验（守 DB 可移植）。
+	// 趋势降采样据此排除 bungee 出平均 TPS·CPU（bungee tps=0 不拉低平均），人数仍计全部。
+	Role string `gorm:"column:role;size:16;not null;default:''"`
 	// 采样时刻（UTC）；时间窗查询主维度，置于复合索引末位
 	SampledAt time.Time `gorm:"column:sampled_at;not null;index:idx_metric_window,priority:3"`
 	// 在线人数（仅展示，不参与决策）

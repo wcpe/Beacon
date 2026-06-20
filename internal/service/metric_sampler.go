@@ -59,7 +59,7 @@ func (s *MetricSampler) sampleOnce(at time.Time) int {
 	samples := make([]model.MetricSample, 0, len(insts))
 	for _, in := range insts {
 		samples = append(samples, model.MetricSample{
-			Namespace: in.Namespace, ServerID: in.ServerID, SampledAt: at,
+			Namespace: in.Namespace, ServerID: in.ServerID, Role: in.Role, SampledAt: at,
 			PlayerCount: in.PlayerCount, TPS: in.TPS,
 			MemUsed: in.MemUsed, MemMax: in.MemMax, CpuLoad: in.CpuLoad,
 		})

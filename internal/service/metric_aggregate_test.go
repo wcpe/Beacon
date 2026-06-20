@@ -12,10 +12,15 @@ import (
 // floatEq 浮点近似相等比较（聚合均值有舍入，留小容差）。
 func floatEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-// onlineInst 构造一个在线实例样本（仅填聚合关心的负载字段）。
+// onlineInst 构造一个在线 bukkit 实例样本（仅填聚合关心的负载字段）。
 func onlineInst(serverID string, players int, tps float64, memUsed, memMax int64, cpu float64) *runtime.Instance {
+	return onlineInstWithRole(serverID, roleBukkit, players, tps, memUsed, memMax, cpu)
+}
+
+// onlineInstWithRole 构造一个指定角色的在线实例样本（验证 bungee 不计入平均 TPS/CPU）。
+func onlineInstWithRole(serverID, role string, players int, tps float64, memUsed, memMax int64, cpu float64) *runtime.Instance {
 	return &runtime.Instance{
-		Namespace: "prod", ServerID: serverID, Role: "bukkit", Status: runtime.StatusOnline,
+		Namespace: "prod", ServerID: serverID, Role: role, Status: runtime.StatusOnline,
 		PlayerCount: players, TPS: tps, MemUsed: memUsed, MemMax: memMax, CpuLoad: cpu,
 	}
 }
@@ -60,6 +65,73 @@ func TestSummarizeAverages(t *testing.T) {
 	}
 	if sum.CPUSampleCount != 2 {
 		t.Fatalf("CPU 可用样本数应为 2，实际 %d", sum.CPUSampleCount)
+	}
+}
+
+// TestSummarizeAvgOnlyBukkitMixed 混合 bukkit/bungee：平均 TPS/CPU 只统计 bukkit，
+// 总人数/在线服数仍计全部（bungee 不进 TPS·CPU 分母，避免 bungee tps=0 拉低平均）。
+func TestSummarizeAvgOnlyBukkitMixed(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bk-a", roleBukkit, 30, 20.0, 100, 1000, 0.4),
+		onlineInstWithRole("bk-b", roleBukkit, 10, 18.0, 300, 1000, 0.6),
+		// bungee：tps=0、cpu=0.9，应整体被排除出平均 TPS/CPU，但人数计入总数。
+		onlineInstWithRole("bc-1", roleBungee, 5, 0.0, 200, 2000, 0.9),
+	}
+	sum := Summarize(insts)
+	// 总人数计全部：30+10+5=45；在线服数计全部：3。
+	if sum.TotalPlayers != 45 {
+		t.Fatalf("总人数应计全部=45，实际 %d", sum.TotalPlayers)
+	}
+	if sum.OnlineServers != 3 {
+		t.Fatalf("在线服数应计全部=3，实际 %d", sum.OnlineServers)
+	}
+	// 平均 TPS 只对两个 bukkit：(20+18)/2=19，不含 bungee 的 0。
+	if !floatEq(sum.AvgTPS, 19.0) {
+		t.Fatalf("平均 TPS 应仅含 bukkit=19.0，实际 %v", sum.AvgTPS)
+	}
+	// 平均 CPU 只对两个 bukkit：(0.4+0.6)/2=0.5，不含 bungee 的 0.9。
+	if !floatEq(sum.AvgCPULoad, 0.5) {
+		t.Fatalf("平均 CPU 应仅含 bukkit=0.5，实际 %v", sum.AvgCPULoad)
+	}
+	if sum.CPUSampleCount != 2 {
+		t.Fatalf("CPU 可用样本数应仅含 bukkit=2，实际 %d", sum.CPUSampleCount)
+	}
+}
+
+// TestSummarizeAvgAllBungee 全 bungee：无 bukkit 参与平均 → 平均 TPS=0、CPU 为不可用哨兵；
+// 但总人数/在线服数仍按全部统计。
+func TestSummarizeAvgAllBungee(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bc-1", roleBungee, 5, 0.0, 200, 2000, 0.9),
+		onlineInstWithRole("bc-2", roleBungee, 7, 0.0, 100, 2000, 0.8),
+	}
+	sum := Summarize(insts)
+	if sum.TotalPlayers != 12 || sum.OnlineServers != 2 {
+		t.Fatalf("总人数/在线服数应计全部 bungee：players=%d servers=%d", sum.TotalPlayers, sum.OnlineServers)
+	}
+	if sum.AvgTPS != 0 {
+		t.Fatalf("无 bukkit 时平均 TPS 应为 0，实际 %v", sum.AvgTPS)
+	}
+	if sum.CPUSampleCount != 0 {
+		t.Fatalf("无 bukkit 时 CPU 可用样本数应为 0，实际 %d", sum.CPUSampleCount)
+	}
+	if sum.AvgCPULoad != cpuLoadUnavailable {
+		t.Fatalf("无 bukkit 时平均 CPU 应为不可用哨兵 -1.0，实际 %v", sum.AvgCPULoad)
+	}
+}
+
+// TestSummarizeAvgAllBukkit 全 bukkit：平均 TPS/CPU 对全部实例求（与角色过滤前行为一致）。
+func TestSummarizeAvgAllBukkit(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bk-a", roleBukkit, 10, 20.0, 100, 1000, 0.2),
+		onlineInstWithRole("bk-b", roleBukkit, 10, 18.0, 300, 1000, 0.6),
+	}
+	sum := Summarize(insts)
+	if !floatEq(sum.AvgTPS, 19.0) {
+		t.Fatalf("全 bukkit 平均 TPS 应为 19.0，实际 %v", sum.AvgTPS)
+	}
+	if !floatEq(sum.AvgCPULoad, 0.4) || sum.CPUSampleCount != 2 {
+		t.Fatalf("全 bukkit 平均 CPU 应为 0.4 / 计数 2，实际 %v / %d", sum.AvgCPULoad, sum.CPUSampleCount)
 	}
 }
 
@@ -109,10 +181,15 @@ func TestSummarizeEmpty(t *testing.T) {
 	}
 }
 
-// sampleAt 构造一条样本（聚合降采样只看 sampledAt 与各负载值）。
+// sampleAt 构造一条 bukkit 样本（聚合降采样只看 sampledAt 与各负载值）。
 func sampleAt(serverID string, at time.Time, players int, tps float64, memUsed, memMax int64, cpu float64) model.MetricSample {
+	return sampleAtWithRole(serverID, roleBukkit, at, players, tps, memUsed, memMax, cpu)
+}
+
+// sampleAtWithRole 构造一条指定角色的样本（验证 bungee 不计入桶内平均 TPS/CPU）。
+func sampleAtWithRole(serverID, role string, at time.Time, players int, tps float64, memUsed, memMax int64, cpu float64) model.MetricSample {
 	return model.MetricSample{
-		Namespace: "prod", ServerID: serverID, SampledAt: at,
+		Namespace: "prod", ServerID: serverID, Role: role, SampledAt: at,
 		PlayerCount: players, TPS: tps, MemUsed: memUsed, MemMax: memMax, CpuLoad: cpu,
 	}
 }
@@ -153,6 +230,58 @@ func TestDownsampleBucketsByTime(t *testing.T) {
 	// 桶时间对齐到桶起点。
 	if !b0.SampledAt.Equal(base) {
 		t.Fatalf("第 0 桶时间应对齐到 %v，实际 %v", base, b0.SampledAt)
+	}
+}
+
+// TestDownsampleAvgOnlyBukkitMixed 桶内混合 bukkit/bungee：平均 TPS/CPU 只统计 bukkit，
+// 人数仍按全部求和（bungee tps=0 不拉低桶内平均）。
+func TestDownsampleAvgOnlyBukkitMixed(t *testing.T) {
+	base := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	samples := []model.MetricSample{
+		sampleAtWithRole("bk-a", roleBukkit, base.Add(1*time.Second), 30, 20.0, 100, 1000, 0.4),
+		sampleAtWithRole("bk-b", roleBukkit, base.Add(2*time.Second), 10, 18.0, 300, 1000, 0.6),
+		// bungee：tps=0、cpu=0.9，整体排除出平均 TPS/CPU；人数计入。
+		sampleAtWithRole("bc-1", roleBungee, base.Add(3*time.Second), 5, 0.0, 200, 2000, 0.9),
+	}
+	pts := Downsample(samples, time.Minute)
+	if len(pts) != 1 {
+		t.Fatalf("应聚合为 1 个桶，实际 %d", len(pts))
+	}
+	p := pts[0]
+	// 人数计全部：30+10+5=45。
+	if p.TotalPlayers != 45 {
+		t.Fatalf("桶内总人数应计全部=45，实际 %d", p.TotalPlayers)
+	}
+	// 平均 TPS 只对两个 bukkit：(20+18)/2=19。
+	if !floatEq(p.AvgTPS, 19.0) {
+		t.Fatalf("桶内平均 TPS 应仅含 bukkit=19.0，实际 %v", p.AvgTPS)
+	}
+	// 平均 CPU 只对两个 bukkit：(0.4+0.6)/2=0.5。
+	if !floatEq(p.AvgCPULoad, 0.5) {
+		t.Fatalf("桶内平均 CPU 应仅含 bukkit=0.5，实际 %v", p.AvgCPULoad)
+	}
+}
+
+// TestDownsampleAvgAllBungee 桶内全 bungee：平均 TPS=0、CPU 为不可用哨兵；人数仍求和。
+func TestDownsampleAvgAllBungee(t *testing.T) {
+	base := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	samples := []model.MetricSample{
+		sampleAtWithRole("bc-1", roleBungee, base.Add(1*time.Second), 5, 0.0, 200, 2000, 0.9),
+		sampleAtWithRole("bc-2", roleBungee, base.Add(2*time.Second), 7, 0.0, 100, 2000, 0.8),
+	}
+	pts := Downsample(samples, time.Minute)
+	if len(pts) != 1 {
+		t.Fatalf("应聚合为 1 个桶，实际 %d", len(pts))
+	}
+	p := pts[0]
+	if p.TotalPlayers != 12 {
+		t.Fatalf("桶内总人数应计全部 bungee=12，实际 %d", p.TotalPlayers)
+	}
+	if p.AvgTPS != 0 {
+		t.Fatalf("桶内无 bukkit 时平均 TPS 应为 0，实际 %v", p.AvgTPS)
+	}
+	if p.AvgCPULoad != cpuLoadUnavailable {
+		t.Fatalf("桶内无 bukkit 时平均 CPU 应为不可用哨兵 -1.0，实际 %v", p.AvgCPULoad)
 	}
 }
 

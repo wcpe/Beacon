@@ -66,6 +66,10 @@ func TestSampleOnceSnapshotToBatch(t *testing.T) {
 	if s1.PlayerCount != 42 || s1.TPS != 19.9 || s1.MemUsed != 128 || s1.MemMax != 512 || s1.CpuLoad != 0.3 {
 		t.Fatalf("lobby-1 样本字段错误：%+v", s1)
 	}
+	// 角色从 registry 落库（趋势降采样据此排除 bungee 出平均 TPS·CPU）。
+	if s1.Role != "bukkit" {
+		t.Fatalf("lobby-1 样本角色应从 registry 落库为 bukkit，实际 %v", s1.Role)
+	}
 	if byServer["lobby-2"].CpuLoad != -1.0 {
 		t.Fatalf("lobby-2 不可用 CPU 哨兵应原样落样本，实际 %v", byServer["lobby-2"].CpuLoad)
 	}
