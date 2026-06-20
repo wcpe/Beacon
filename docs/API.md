@@ -266,10 +266,10 @@ data: {}
 
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/metrics/summary?namespace=` | 当前快照聚合统计（从内存注册表实时计算，不读库） |
-| `GET /admin/v1/metrics/trend?namespace=&serverId=&window=&from=&to=` | 历史时序趋势（查 `metric_sample` 表）。`serverId` 可选过滤；`window` 取预设窗口 `1h`/`6h`/`24h`，或用 `from`/`to`（RFC3339）自定义时间窗；聚合粒度由服务端按窗长自动降采样（约 120 点），无需传步长 |
+| `GET /admin/v1/metrics/summary?namespace=` | 当前快照聚合统计（从内存注册表实时计算，不读库）。`namespace` 可选，空=聚合全部环境 |
+| `GET /admin/v1/metrics/trend?namespace=&serverId=&window=&from=&to=` | 历史时序趋势（查 `metric_sample` 表）。`namespace` 可选，空=聚合全部环境；`serverId` 可选过滤；`window` 取预设窗口 `1h`/`6h`/`24h`，或用 `from`/`to`（RFC3339）自定义时间窗；聚合粒度由服务端按窗长自动降采样（约 120 点），无需传步长 |
 
-`GET /admin/v1/metrics/summary`：返回全集群总玩家数、在线服务器数、每服在线人数列表（仅 `serverId` + `playerCount`）、全集群平均 TPS·内存·CPU，数据源为内存注册表（与发现 / 健康同源、实时计算）。内存为**字节**（`int64`）；`avgCpuLoad` 为 [0,1]，`-1` 表示无可用 CPU 样本，`cpuSampleCount` 为参与平均的可用样本数。返回：
+`GET /admin/v1/metrics/summary`：返回全集群总玩家数、在线服务器数、每服在线人数列表（仅 `serverId` + `playerCount`）、全集群平均 TPS·内存·CPU，数据源为内存注册表（与发现 / 健康同源、实时计算）。内存为**字节**（`int64`）；`avgCpuLoad` 为 [0,1]，`-1` 表示无可用 CPU 样本，`cpuSampleCount` 为参与平均的可用样本数。**平均 TPS 与平均 CPU 仅统计 `role=bukkit` 子服**（bungee 作纯代理 tps 恒为 0，计入会拉低平均失真）；总玩家数 / 在线服数 / 平均内存仍计全部在线实例。返回：
 ```json
 {
   "totalPlayers": 312,
@@ -295,9 +295,10 @@ data: {}
   ]
 }
 ```
-- 不传 `serverId` 时返回该 `namespace` 的聚合趋势（服务端按窗长自动降采样汇总在线实例）；传 `serverId` 时返回单服趋势。
+- 不传 `namespace` 时聚合**全部环境**的趋势；不传 `serverId` 时返回该范围的聚合趋势（服务端按窗长自动降采样汇总在线实例）；传 `serverId` 时返回单服趋势。
+- 各点的**平均 TPS / 平均 CPU 仅统计 `role=bukkit`**（与 summary 一致，bungee 不进这两个平均的分母）；总玩家数 / 平均内存仍按全部样本聚合。
 - 保留期外的样本已被采样器滚动清理，超出保留期的时间窗只返回现存样本（见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) 与 ARCHITECTURE §7.1）。
-- 错误：参数缺失 / 时间窗非法 `400 INVALID_PARAM`。
+- 错误：时间窗非法 `400 INVALID_PARAM`。
 
 ### 审计与环境
 | 端点 | 说明 |

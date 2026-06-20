@@ -5,10 +5,14 @@
 ## 未发布
 
 ### 新增
-- agent 配置环境变量覆盖（FR-33）：agent（数据面）配置读取新增一层环境变量覆盖（env 优先于 config.yml），变量名约定 BEACON_AGENT_ + 点分路径大写、点与连字符转下划线（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID），覆盖全部标量与列表配置项（identity.metadata 动态键 map 暂不支持）。core 新增 `EnvOverridingConfigReader` 装饰器（env 以函数注入、不依赖具体环境读取、守 TabooLib-free），双端壳接线；E2E 改以 env 注入 agent 接入信息、删除手写 config.yml 生成。支持容器化用环境变量注入接入信息（见 [docs/specs/agent-config-env-override.md](docs/specs/agent-config-env-override.md)）。
+- agent 配置环境变量覆盖（FR-41）：agent（数据面）配置读取新增一层环境变量覆盖（env 优先于 config.yml），变量名约定 BEACON_AGENT_ + 点分路径大写、点与连字符转下划线（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID），覆盖全部标量与列表配置项（identity.metadata 动态键 map 暂不支持）。core 新增 `EnvOverridingConfigReader` 装饰器（env 以函数注入、不依赖具体环境读取、守 TabooLib-free），双端壳接线；E2E 改以 env 注入 agent 接入信息、删除手写 config.yml 生成。支持容器化用环境变量注入接入信息（见 [docs/specs/agent-config-env-override.md](docs/specs/agent-config-env-override.md)）。
 
 ### 变更
 - agent E2E 服务端/代理的下载与启动改用 jpenilla run-task（run-paper / run-waterfall 2.3.1，兼容当前 Gradle 8.5）：移除两处手写的 `PrepareMinecraftServerEnvTask` 下载 + `JavaExec` 启动任务，改由 run-paper 的 `runServer`（Paper）与自定义命名的 `RunWaterfall` 任务 `runBungee`（Waterfall）负责下载与运行；MC 版本经 `minecraftVersion` / `waterfallVersion` 指定（取代硬编码直链），可经 `-Pe2ePaperVersion` / `-Pe2eWaterfallVersion` 覆盖。任务名（`runServer` / `runBungee`）与 Go E2E 驱动入口不变。
+
+### 修复
+- 指标看板历史趋势空环境查询报「参数错误」（FR-32）：趋势端点原强制 `namespace` 必填，管理台留空环境（聚合全部）时被后端拒为 `400 INVALID_PARAM`，历史趋势图报错。现 `namespace` 改为可选——为空时聚合全部环境的样本（与 summary 行为一致），repository 趋势查询 `namespace` 为空则不加该过滤。
+- 指标看板平均 TPS / 平均 CPU 被 BC（bungee）拉低（FR-32）：聚合原对所有在线实例一视同仁，bungee 作纯代理 tps 恒为 0，计入分母致平均 TPS·CPU 失真偏低。现这两个平均**仅统计 `role=bukkit`**（总玩家数 / 在线服数 / 平均内存仍计全部）；`metric_sample` 新增 `role` 列（VARCHAR，零方言），采样器从注册表 `Instance.Role` 落库，趋势降采样据此排除 bungee。
 
 ## 0.5.0（2026-06-20）
 

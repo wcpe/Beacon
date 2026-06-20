@@ -79,7 +79,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 `config_gray` 关键字段：`config_item_id`（关联所属配置项，进唯一键 + 软删哨兵 → 一个 item 至多一个未软删灰度）；`namespace_code`（供按 ns 批量取活跃灰度，避免 N+1）；`content` + `content_md5`（灰度内容，敏感项与所属 item 镜像加密，md5 按明文算）；`cohort`（目标 serverId 名单，**JSON 数组文本落 `TEXT`**，可移植可读）；`format`/`sensitive`/`operator`/`comment`。灰度作用在"版本选择"层而非新增覆盖层（见 §5、[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）。
 
-`metric_sample` 关键字段：`id`、`namespace`、`server_id`、`sampled_at`（采样时刻 UTC）、`player_count`、`tps`、`mem_used`、`mem_max`、`cpu_load`。**全部基础类型**（计数 / 浮点 / 时间），枚举如有落 `VARCHAR` + 应用层校验，**禁 JSON/ENUM 列与方言专有 SQL**、经 GORM 抽象（守 DB 可移植，可切 Postgres）。它是**时序样本表**（与 §7.1 采样器配套），与配置 / 版本 / 审计等事实表并列、真源属 DB；趋势端点（§4）按时间窗 + 聚合粒度查询本表，保留期到期样本被滚动清理（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）。
+`metric_sample` 关键字段：`id`、`namespace`、`server_id`、`role`（`bukkit`/`bungee`，落 `VARCHAR`）、`sampled_at`（采样时刻 UTC）、`player_count`、`tps`、`mem_used`、`mem_max`、`cpu_load`。**全部基础类型**（计数 / 浮点 / 时间），枚举如 `role` 落 `VARCHAR` + 应用层校验，**禁 JSON/ENUM 列与方言专有 SQL**、经 GORM 抽象（守 DB 可移植，可切 Postgres）。它是**时序样本表**（与 §7.1 采样器配套），与配置 / 版本 / 审计等事实表并列、真源属 DB；趋势端点（§4）按时间窗 + 聚合粒度查询本表，保留期到期样本被滚动清理（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）。趋势降采样与 summary 的**平均 TPS / 平均 CPU 仅统计 `role=bukkit`**（bungee 作纯代理 tps 恒为 0，不进这两个平均的分母）；总玩家数 / 平均内存仍计全部样本。
 
 **软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。`file_object` 同款哨兵软删。
 
@@ -159,7 +159,7 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 ### 7.1 指标采样器（FR-32，时序落 MySQL）
 
-为支撑历史趋势（注册/健康只有"此刻"，见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md)），控制面起一个**指标采样器**：按固定间隔（可配，如 15~30s）取**在线**实例的负载快照（playerCount/tps/内存/CPU）批量写 `metric_sample` 表，**DB IO 在运行态三锁之外**（守锁外 IO 约定）；并按**保留期**（可配，如 24h / 7d）滚动清理过期样本，使表体量受上界约束、不无界增长。采样为派生健康事实落库，**不引 TSDB / Redis**（本规模 MySQL 单表 + 保留期清理足够，守简单优先与 DB 可移植）。
+为支撑历史趋势（注册/健康只有"此刻"，见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md)），控制面起一个**指标采样器**：按固定间隔（可配，如 15~30s）取**在线**实例的负载快照（role/playerCount/tps/内存/CPU）批量写 `metric_sample` 表（`role` 取自注册表 `Instance.Role`，供趋势降采样区分 bukkit/bungee），**DB IO 在运行态三锁之外**（守锁外 IO 约定）；并按**保留期**（可配，如 24h / 7d）滚动清理过期样本，使表体量受上界约束、不无界增长。采样为派生健康事实落库，**不引 TSDB / Redis**（本规模 MySQL 单表 + 保留期清理足够，守简单优先与 DB 可移植）。
 - **与 `/metrics` 的关系（FR-30 vs FR-32）**：`/metrics`（[ADR-0020](adr/0020-prometheus-metrics-observability.md)）供**外部**监控系统（Prometheus/Grafana）pull 抓取、不持久化；本看板的采样 + 趋势是 **Beacon 内自带**的可视化与历史（采样持久化到 MySQL、管理台直接看图）。二者面向不同消费者，**并存不冲突、互不取代**。
 
 ## 8. agent（数据面接入）
