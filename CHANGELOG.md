@@ -13,6 +13,7 @@
 
 ### 变更
 - 管理台新建/复制配置流程改善（FR-40，增强 FR-1/FR-22）：新建配置对话框的环境/大区/小区/实例选项改为从 API 动态获取（环境取 `listNamespaces`、大区与小区由 zone 汇总与实例列表派生、实例取 `listInstances`），去掉原硬编码示例（prod、__GLOBAL__/server-a/server-b 等）；覆盖目标随覆盖层联动——`global` 隐藏覆盖目标，`group`/`zone`/`server` 切换为对应动态下拉，减少手填出错；配置编辑器新增「复制到实例」动作，把当前配置复制为某实例的 server 层覆盖（预填源内容、覆盖层定为 server、目标待选），进入编辑改 diff 后发布，复用既有创建/发布 API，优先级由既有覆盖链（实例>分组>全局）保证。仅前端改动，无后端新增端点。
+- zone 分配页改为看板式归派（FR-35，纯 UI 增强 FR-8）：左侧未指派 server 卡片池 + 右侧按大区分桶的 zone 容器，拖卡到 zone 即指派、跨桶拖拽即改派、拖回未指派池即取消指派；卡片显示 serverId + 角色徽标（子服/BC）+ 在线状态点。复用既有 `PUT/DELETE /zones/assignments`，后端零改动；引入前端拖放库 `@dnd-kit`，onDragEnd 落点解析抽为可单测纯函数。
 
 ### 修复
 - 指标看板历史趋势空环境查询报「参数错误」（FR-32）：趋势端点原强制 `namespace` 必填，管理台留空环境（聚合全部）时被后端拒为 `400 INVALID_PARAM`，历史趋势图报错。现 `namespace` 改为可选——为空时聚合全部环境的样本（与 summary 行为一致），repository 趋势查询 `namespace` 为空则不加该过滤。
