@@ -37,6 +37,7 @@ import { useConfigTabs } from './configs/useConfigTabs'
 import ConfigFileTree from './configs/ConfigFileTree'
 import TargetSelector from './configs/TargetSelector'
 import CreateConfigDialog from './configs/CreateConfigDialog'
+import ImportFilesDialog from './configs/ImportFilesDialog'
 import ConfigTabBar from './configs/ConfigTabBar'
 import ConfigEditorPane from './configs/ConfigEditorPane'
 import type { OpenTab, TreeNode } from './configs/types'
@@ -246,6 +247,8 @@ export default function ConfigsPage() {
           <Badge variant="outline" className="text-xs">
             {list.data?.length ?? 0} 条配置
           </Badge>
+          {/* 导入到组（FR-38）：把一份目录批量上传到某组的文件树（通道B 整文件覆盖） */}
+          <ImportFilesDialog namespaces={namespaceCodes} groups={groupOptions} />
           <CreateConfigDialog
             namespaces={namespaceCodes}
             groups={groupOptions}

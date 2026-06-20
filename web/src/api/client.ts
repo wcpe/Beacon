@@ -459,6 +459,56 @@ export function rollbackFile(
   })
 }
 
+// ===== 配置导入（上传通道，FR-38）=====
+
+// 单个待导入文件（相对 path + 浏览器 File 对象）
+export interface ImportFileEntry {
+  path: string
+  file: File
+}
+
+// 导入结果（与后端 import 端点响应对齐）
+export interface ImportResult {
+  files: number
+  created: number
+  updated: number
+}
+
+// 把一份目录批量上传到某组（scope=group，整文件覆盖语义）。
+// 走 multipart/form-data：不手动设 Content-Type（由浏览器带 boundary）；files 与 paths 按顺序一一对应。
+// 单独实现而非复用 request()，因后者会对有 body 的请求强加 application/json。
+export async function importFiles(
+  namespace: string,
+  group: string,
+  entries: ImportFileEntry[],
+  comment = '',
+): Promise<ImportResult> {
+  const form = new FormData()
+  form.append('namespace', namespace)
+  form.append('group', group)
+  if (comment) form.append('comment', comment)
+  for (const e of entries) {
+    form.append('paths', e.path)
+    form.append('files', e.file, e.path)
+  }
+  const token = currentToken()
+  const resp = await fetch(`${BASE}/files/import`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: form,
+  })
+  if (resp.status === 401) {
+    clearAuth()
+    if (unauthorizedHandler) unauthorizedHandler()
+    throw await toError(resp)
+  }
+  if (!resp.ok) throw await toError(resp)
+  return (await resp.json()) as ImportResult
+}
+
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====
 // 写操作 operator 以登录令牌身份为准（后端忽略请求手填），故不在请求体送 operator。
 
