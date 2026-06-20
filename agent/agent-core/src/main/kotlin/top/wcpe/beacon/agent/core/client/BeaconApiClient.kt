@@ -35,6 +35,20 @@ class BeaconApiClient(
 
     private val base: String = settings.primaryEndpoint()
 
+    /**
+     * 上一次 [exec] 因连接级异常被吞掉的具体原因（类名 + 消息），per-thread。
+     *
+     * 仅作诊断用：当 [exec] 返回 null 时由 **同一线程内** 的调用方读取以构造 Failed.reason，
+     * 让外层日志能看清是 ConnectException / SocketTimeoutException 还是其他——而非笼统的"连接失败"。
+     *
+     * 并发模型：BeaconApiClient 是单例，被 AgentLifecycle 的 5 条独立异步循环共用
+     * （register / heartbeat / pollEffective / pollFileManifest / pollOverride），它们彼此并发。
+     * 若用共享 @Volatile 字段，一条循环的"成功后置 null"会抹掉另一条循环刚记下的失败原因，
+     * 致 caller 拿到 null 兜底回笼统文案；或一条循环的失败覆盖另一条的失败。
+     * 改用 [ThreadLocal] 后，reason 仅在抛异常的线程内可见，写读必落同一线程，根除跨循环串台。
+     */
+    private val lastConnectFailure: ThreadLocal<String?> = ThreadLocal()
+
     /** 当前是否具备 SSE 推送能力（注入了 streamTransport）。 */
     fun streamingEnabled(): Boolean = streamTransport != null
 
@@ -106,7 +120,7 @@ class BeaconApiClient(
                 body = codec.encode(body),
                 readTimeoutMs = settings.requestTimeoutMs,
             ),
-        ) ?: return RegisterOutcome.Failed("连接失败")
+        ) ?: return RegisterOutcome.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> RegisterOutcome.Success(parseRegister(resp.body))
@@ -131,7 +145,7 @@ class BeaconApiClient(
                 body = codec.encode(body),
                 readTimeoutMs = settings.requestTimeoutMs,
             ),
-        ) ?: return HeartbeatOutcome.Failed("连接失败")
+        ) ?: return HeartbeatOutcome.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> {
@@ -169,7 +183,7 @@ class BeaconApiClient(
                 body = null,
                 readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
             ),
-        ) ?: return PollResult.Failed("连接失败")
+        ) ?: return PollResult.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> PollResult.Changed(parseEffective(resp.body))
@@ -295,7 +309,7 @@ class BeaconApiClient(
                 body = null,
                 readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
             ),
-        ) ?: return FileManifestPollResult.Failed("连接失败")
+        ) ?: return FileManifestPollResult.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> FileManifestPollResult.Changed(parseManifest(resp.body))
@@ -362,7 +376,7 @@ class BeaconApiClient(
                 body = null,
                 readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
             ),
-        ) ?: return OverridePollResult.Failed("连接失败")
+        ) ?: return OverridePollResult.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> OverridePollResult.Changed(parseOverrideManifest(resp.body))
@@ -406,15 +420,26 @@ class BeaconApiClient(
         )
     }
 
-    /** 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。 */
+    /**
+     * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
+     *
+     * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
+     * 把它带进 Failed.reason，避免诊断完全黑盒（在此处不再额外打日志，由上层一处统一 WARN）。
+     */
     private fun exec(request: HttpRequest): HttpResponse? {
         return try {
-            transport.execute(request)
+            val resp = transport.execute(request)
+            // 成功路径清理本线程的 reason，避免后续无关请求误把陈旧失败带回诊断（仍只影响本线程，不跨循环）。
+            lastConnectFailure.set(null)
+            resp
         } catch (e: Exception) {
-            // 连接级失败：返回 null 让上层进入 DEGRADED + 退避，不在此处刷屏。
+            lastConnectFailure.set("${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
             null
         }
     }
+
+    /** 取上一次连接失败的具体原因（本线程内）；从未失败则回退到笼统文案。 */
+    private fun connectFailReason(): String = lastConnectFailure.get() ?: "连接失败"
 
     private fun parseRegister(jsonBody: String): RegisterResult {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
