@@ -14,7 +14,7 @@
 
 **范围内：**
 - agent-api `Discovery` 门面新增两只读方法：
-  - `roster()`：返回全量名册 `Map<玩家名, serverId>`（单一全局名册，不按 namespace 分区，单 BC 前提下即全量）。
+  - `roster()`：返回全量名册 `Map<玩家名, serverId>`（单一全局名册，不按 namespace 分区，单 BC 前提下即全量；与 [ADR-0022](../adr/0022-agent-roster-read-api.md) 决策 1 表述的"当前 namespace 全量"在单 BC 单 namespace 前提下等义）。
   - `rosterInZone(group, zone)`：返回某 zone 过滤后的名册 `Map<玩家名, serverId>`。
 - agent-core 新增只读端口 `RosterDirectory`（全表读名册），`DiscoveryView` 组合「控制面权威 zone→serverId 集」∩「名册」实现 zone 过滤。
 - agent-adapters Redis 实现：`HGETALL beacon:player-loc`，复用 messaging 模块既有 Redis 连接 / 线程，不另起连接。
