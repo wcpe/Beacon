@@ -59,10 +59,19 @@ import taboolib.module.configuration.Configuration
     ),
     // Redis 客户端（FR-26 跨服消息中间件）：运行期下载、relocate 到隔离命名空间、不打包、不经 CoreLib。
     // Jedis 是纯 Java 库，传递依赖（commons-pool2 / gson / slf4j）手动列全（transitive=false）。
+    // 关键：TabooLib 的 relocate 按依赖各自的 jar 生效，故 jedis 这条必须把它内部引用、且被本工程同样 relocate 的
+    // 传递依赖（commons-pool2 / gson）一并声明 relocate，否则下载并重定位后的 jedis 仍引用原始包名
+    // org.apache.commons.pool2.* / com.google.gson.*，而类路径只有重定位副本（lib.*）→ 运行期
+    // NoClassDefFoundError（如 JedisPoolConfig 继承 org.apache.commons.pool2.impl.GenericObjectPoolConfig）。
+    // slf4j 不在此列：由平台（Paper/Bungee）提供，保持原始包名解析，不重定位。
     RuntimeDependency(
         "!redis.clients:jedis:4.2.3",
         test = "!top.wcpe.beacon.agent.lib.redis.clients.jedis.Jedis",
-        relocate = ["!redis.clients.jedis", "!top.wcpe.beacon.agent.lib.redis.clients.jedis"],
+        relocate = [
+            "!redis.clients.jedis", "!top.wcpe.beacon.agent.lib.redis.clients.jedis",
+            "!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2",
+            "!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson",
+        ],
         transitive = false,
     ),
     RuntimeDependency(
