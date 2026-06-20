@@ -42,10 +42,13 @@ type Instance struct {
 	MemUsed       int64   // JVM 已用堆字节；与 PlayerCount/TPS 同列健康事实，仅展示不参与决策（FR-32）
 	MemMax        int64   // JVM 最大堆字节；仅展示不参与决策（FR-32）
 	CpuLoad       float64 // 进程 CPU 负载[0,1]，-1.0=不可用（近似值）；仅展示不参与决策（FR-32）
-	RegisteredAt  time.Time
+	// Backends 是该实例（仅 bungee 代理）当前代理的后端子服 serverId 集合，由 agent 上报、控制面只存的事实（FR-36）。
+	// 仅 bc 填、bukkit 恒空；供拓扑 bc→bukkit 连线消费（FR-37）。随注册/上报刷新，仅内存、不落 DB。
+	Backends     []string
+	RegisteredAt time.Time
 }
 
-// clone 返回深拷贝（含 Metadata map），供读路径在锁外安全使用。
+// clone 返回深拷贝（含 Metadata map 与 Backends 切片），供读路径在锁外安全使用。
 func (i *Instance) clone() *Instance {
 	c := *i
 	if i.Metadata != nil {
@@ -53,6 +56,10 @@ func (i *Instance) clone() *Instance {
 		for k, v := range i.Metadata {
 			c.Metadata[k] = v
 		}
+	}
+	if i.Backends != nil {
+		c.Backends = make([]string, len(i.Backends))
+		copy(c.Backends, i.Backends)
 	}
 	return &c
 }
@@ -137,6 +144,25 @@ func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps 
 	inst.MemUsed = memUsed
 	inst.MemMax = memMax
 	inst.CpuLoad = cpuLoad
+	return true
+}
+
+// SetBackends 刷新该 bc 实例当前代理的后端子服 serverId 集合（FR-36 事实，仅内存、不涉 DB IO）；未注册返回 false。
+// 传 nil/空切片表示当前无后端（清空）；写入前深拷贝，与调用方入参隔离。
+func (r *Registry) SetBackends(ns, serverID string, backends []string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	inst := r.lookup(ns, serverID)
+	if inst == nil {
+		return false
+	}
+	if len(backends) == 0 {
+		inst.Backends = nil
+		return true
+	}
+	cp := make([]string, len(backends))
+	copy(cp, backends)
+	inst.Backends = cp
 	return true
 }
 

@@ -41,7 +41,9 @@ type instanceView struct {
 	AppliedMD5    string            `json:"appliedMd5"`
 	PlayerCount   int               `json:"playerCount"`
 	TPS           float64           `json:"tps"`
-	RegisteredAt  time.Time         `json:"registeredAt"`
+	// Backends 是 bc（bungee）当前代理的后端子服 serverId 集合（仅 bc 非空、bukkit 恒空，FR-36）；供拓扑连线消费（FR-37）。
+	Backends     []string  `json:"backends"`
+	RegisteredAt time.Time `json:"registeredAt"`
 }
 
 func toInstanceView(i *runtime.Instance) instanceView {
@@ -50,7 +52,7 @@ func toInstanceView(i *runtime.Instance) instanceView {
 		Zone: nilIfEmpty(i.ResolvedZone), Assigned: i.Assigned, Address: i.Address, Version: i.Version,
 		Status: i.Status, Capacity: i.Capacity, Weight: i.Weight, Metadata: i.Metadata,
 		LastHeartbeat: i.LastHeartbeat, AppliedMD5: i.AppliedMD5, PlayerCount: i.PlayerCount,
-		TPS: i.TPS, RegisteredAt: i.RegisteredAt,
+		TPS: i.TPS, Backends: i.Backends, RegisteredAt: i.RegisteredAt,
 	}
 }
 

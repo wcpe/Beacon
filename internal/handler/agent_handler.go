@@ -40,6 +40,8 @@ type registerRequest struct {
 	Capacity  int               `json:"capacity"`
 	Weight    int               `json:"weight"`
 	Metadata  map[string]string `json:"metadata"`
+	// Backends 是 bc 上报的当前后端子服 serverId 集合（可选，仅 bc 填、旧 agent/bukkit 缺键 → nil，向后兼容，FR-36）。
+	Backends []string `json:"backends,omitempty"`
 }
 
 // registerResponse 是注册响应（未分配时 resolvedZone 为 null）。
@@ -61,7 +63,8 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.svc.Register(service.RegisterParams{
 		Namespace: req.Namespace, ServerID: req.ServerID, Role: req.Role, GroupHint: req.GroupHint,
-		Address: req.Address, Version: req.Version, Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata, ClientIP: clientIP(r),
+		Address: req.Address, Version: req.Version, Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata,
+		Backends: req.Backends, ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -109,6 +112,9 @@ type reportRequest struct {
 	MemUsed     int64    `json:"memUsed"` // 旧 agent 缺键 → 解析为 0（向后兼容）
 	MemMax      int64    `json:"memMax"`  // 旧 agent 缺键 → 解析为 0（向后兼容）
 	CpuLoad     *float64 `json:"cpuLoad"` // 旧 agent 缺键 → applyDefaults 后缺省 -1.0（不可用）
+	// Backends 是 bc 上报的当前后端子服 serverId 集合（FR-36）。用指针区分「缺键」与「显式空集」：
+	// nil=旧 agent/bukkit 不报（保留原集合不动）；非空指针=bc 显式上报（含空集，即清空）。
+	Backends *[]string `json:"backends,omitempty"`
 }
 
 // applyDefaults 为旧 agent 缺失的 cpuLoad 填入不可用哨兵 -1.0（内存键缺失天然为 0，无需处理）。
@@ -135,7 +141,11 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.applyDefaults()
-	if err := h.svc.Report(req.Namespace, req.ServerID, req.AppliedMD5, req.PlayerCount, req.TPS, req.MemUsed, req.MemMax, req.CPULoad()); err != nil {
+	if err := h.svc.Report(service.ReportParams{
+		Namespace: req.Namespace, ServerID: req.ServerID, AppliedMD5: req.AppliedMD5,
+		PlayerCount: req.PlayerCount, TPS: req.TPS, MemUsed: req.MemUsed, MemMax: req.MemMax,
+		CPULoad: req.CPULoad(), Backends: req.Backends,
+	}); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

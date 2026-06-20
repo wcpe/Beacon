@@ -22,7 +22,9 @@ type RegisterParams struct {
 	Capacity  int
 	Weight    int
 	Metadata  map[string]string
-	ClientIP  string
+	// Backends 是 bc 上报的当前后端子服 serverId 集合（仅 bc 填，FR-36 事实）；透传写入内存注册表。
+	Backends []string
+	ClientIP string
 }
 
 // RegisterResult 是注册结果（含解析回填的归属与下发的心跳参数）。
@@ -83,6 +85,7 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 		Namespace: p.Namespace, ServerID: p.ServerID, Role: p.Role, GroupHint: p.GroupHint,
 		ResolvedGroup: group, ResolvedZone: zone, Assigned: assigned,
 		Address: p.Address, Version: p.Version, Capacity: p.Capacity, Weight: p.Weight, Metadata: p.Metadata,
+		Backends: p.Backends,
 	}
 	saved, err := s.registry.Register(inst, s.ttl, time.Now().UTC())
 	if err != nil {
@@ -113,10 +116,30 @@ func (s *InstanceService) Heartbeat(ns, serverID string) (int, error) {
 	return int(s.ttl.Seconds()), nil
 }
 
-// Report 写入 agent 上报指标（人数 / TPS / 内存 / CPU，仅展示）；未注册返回 NOT_REGISTERED。
-func (s *InstanceService) Report(ns, serverID, appliedMD5 string, playerCount int, tps float64, memUsed, memMax int64, cpuLoad float64) error {
-	if !s.registry.Report(ns, serverID, appliedMD5, playerCount, tps, memUsed, memMax, cpuLoad) {
+// ReportParams 是状态上报入参（人数 / TPS / 内存 / CPU 仅展示；Backends 为 bc 后端归属事实，FR-36）。
+type ReportParams struct {
+	Namespace   string
+	ServerID    string
+	AppliedMD5  string
+	PlayerCount int
+	TPS         float64
+	MemUsed     int64
+	MemMax      int64
+	CPULoad     float64
+	// Backends 用指针区分「缺键」与「显式空集」：nil=旧 agent/bukkit 未报（保留原集合不动）；
+	// 非空指针=bc 显式上报（含空集即清空）。仅 bc 填，向后兼容。
+	Backends *[]string
+}
+
+// Report 写入 agent 上报指标（人数 / TPS / 内存 / CPU，仅展示）；bc 附报的后端集合随上报刷新（FR-36）。
+// 未注册返回 NOT_REGISTERED。
+func (s *InstanceService) Report(p ReportParams) error {
+	if !s.registry.Report(p.Namespace, p.ServerID, p.AppliedMD5, p.PlayerCount, p.TPS, p.MemUsed, p.MemMax, p.CPULoad) {
 		return apperr.ErrNotRegistered
+	}
+	// 仅当 bc 显式上报 backends（指针非空）时刷新；旧 agent/bukkit 缺键不动原集合。
+	if p.Backends != nil {
+		s.registry.SetBackends(p.Namespace, p.ServerID, *p.Backends)
 	}
 	return nil
 }
