@@ -1,12 +1,14 @@
 // agent-e2e：M6 端到端验收用的 TabooLib Bukkit 插件，产出 BeaconE2E.jar。
 // 作为「业务插件」compileOnly 依赖 agent-api，经只读 API 读取约定 dataId 并把观测写标记文件。
-// 另注册 runServer 任务：用 TabooLib 的 PrepareMinecraftServerEnvTask 自动下载 Paper、写 EULA，
-// 再把 BeaconAgent.jar 与本插件 jar 放进 plugins 目录后启动服务端，供整条 E2E 编排驱动。
-import io.izzel.taboolib.gradle.PrepareMinecraftServerEnvTask
+// 用 jpenilla run-task 的 run-paper 插件提供的 runServer 任务自动下载并运行 Paper，
+// 再把 BeaconAgent.jar 与本插件 jar 作为插件加载（Paper -add-plugin）后启动服务端，供整条 E2E 编排驱动。
+import xyz.jpenilla.runpaper.task.RunServer
 
 plugins {
     kotlin("jvm")
     id("io.izzel.taboolib")
+    // run-paper：提供 runServer 任务，自动下载并运行 Paper 服务端（取代手写下载/启动任务）。
+    id("xyz.jpenilla.run-paper")
 }
 
 // 单独的 group：TabooLib 按 project.group 推导 relocate 根包，本模块需与 BeaconAgent（top.wcpe.beacon.agent）
@@ -52,76 +54,84 @@ tasks.jar {
 }
 
 // ---------------------------------------------------------------------------
-// runServer：自动下载 Paper + 部署插件 + 启动服务端（M6 端到端编排入口）。
+// runServer：由 run-paper 自动下载 Paper + 部署插件 + 启动服务端（M6 端到端编排入口）。
+// 下载与启动交给 run-paper 的 runServer 任务，这里只做 Beacon 侧编排：投放数据面插件 jar、
+// 生成 agent config.yml / TabooLib env.properties / Paper eula.txt。
 // ---------------------------------------------------------------------------
 
 // 运行根目录（落 .tmp，不入库）。
 val runDir = rootProject.projectDir.resolve("../.tmp/e2e-run/bukkit")
-// 服务端 jar 文件名。
-val serverJarName = "paper.jar"
-// Paper 1.20.4 指定构建的直链（Java 21 可运行）。可经 -Pe2ePaperUrl 覆盖。
-val paperUrl = (project.findProperty("e2ePaperUrl") as String?)
-    ?: "https://api.papermc.io/v2/projects/paper/versions/1.20.4/builds/499/downloads/paper-1.20.4-499.jar"
+// Paper 版本（Java 21 可运行）。可经 -Pe2ePaperVersion 覆盖（run-paper 解析最新构建，取代旧的 -Pe2ePaperUrl 直链）。
+val paperVer = (project.findProperty("e2ePaperVersion") as String?) ?: "1.20.4"
+// MC 监听端口：默认 25566，避让本机可能被其它 MC 服占用的 25565；经 -Pe2eMcPort 覆盖。
+val mcPort = (project.findProperty("e2eMcPort") as String?) ?: "25566"
+// agent 本地受限命令白名单（逗号分隔首 token，注入 config.yml override.command-whitelist）；
+// 默认空 = 命令派发能力关闭（ADR-0011 默认 inert）；经 -Pe2eCommandWhitelist 覆盖，如 "beacone2ereload"。
+val commandWhitelist = (project.findProperty("e2eCommandWhitelist") as String?) ?: ""
+// 控制面地址默认指向 http://localhost:8848，可经 -Pe2eBeaconEndpoint 覆盖。
+val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
+// 本机唯一身份，环境内唯一；经 -Pe2eServerId 覆盖。
+val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bukkit-1"
+// 环境（须与控制面 namespace 一致）；经 -Pe2eNamespace 覆盖。
+val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
+// TabooLib 6.2.3 的 repo-reflex 默认指向已下线的 sacredcraft.cn:8081，统一改指可达仓库；经 -Pe2eTabooRepo 覆盖。
+val tabooRepo = (project.findProperty("e2eTabooRepo") as String?) ?: "https://repo.tabooproject.org/repository/releases"
+// -Pe2eDebug 打开 TabooLib 调试输出，排查插件生命周期问题。
+val e2eDebug = project.hasProperty("e2eDebug")
+// 本模块版本（jar 名用，源自仓库根 VERSION）。
+val beaconVer = project.version.toString()
+// 数据面 agent（BeaconAgent）最终 jar：agent-bukkit 的 TabooLib 重定位产物。
+val agentJar = project(":agent-bukkit").layout.buildDirectory.file("libs/BeaconAgent-$beaconVer.jar")
+// 本验收插件最终 jar：TabooLib 重定位产物。
+val e2eJar = layout.buildDirectory.file("libs/BeaconE2E-$beaconVer.jar")
 
-// 下载 Paper 并写 EULA：复用 TabooLib 内置任务，自动处理 eula.txt。
-val prepareE2EServer by tasks.registering(PrepareMinecraftServerEnvTask::class) {
-    group = "beacon-e2e"
-    description = "下载 Paper 服务端并写入 EULA"
-    jarUrl.set(paperUrl)
-    jarName.set(serverJarName)
-    serverDirectory.set(runDir)
-    agreeEula.set(true)
+// 关闭 run-paper 的「自动探测插件 jar」：默认会取标准 jar 任务产物，而 TabooLib 需要重定位后的 jar，
+// 统一改由下方 pluginJars 显式投放（含数据面 agent jar）。
+runPaper {
+    disablePluginJarDetection()
 }
 
-// 把 BeaconAgent.jar、本插件 jar 拷进 plugins，并放置 agent 的 config.yml，再启动服务端。
-val runServer by tasks.registering(JavaExec::class) {
+// 配置 run-paper 默认的 runServer 任务（任务名 runServer 与 Go E2E 驱动约定一致，不改名）。
+tasks.named<RunServer>("runServer") {
     group = "beacon-e2e"
-    description = "部署 BeaconAgent + E2E 插件到 Paper 并启动（端到端验收）"
+    description = "由 run-paper 下载并启动 Paper，部署 BeaconAgent + E2E 插件（端到端验收）"
 
-    // 依赖：先备好服务端环境；再构建 agent 与本插件的最终（已 relocate）jar。
-    dependsOn(prepareE2EServer)
+    // 指定 MC 版本，run-paper 解析最新构建并下载（取代硬编码直链）。
+    minecraftVersion(paperVer)
+    // 运行目录（落 .tmp）。
+    runDirectory(runDir)
+
+    // 先构建数据面 agent 与本插件的最终（已 relocate）jar，再启动。
     dependsOn(":agent-bukkit:build")
     dependsOn("build")
 
-    // MC 监听端口：默认 25566，避让本机可能被其它 MC 服占用的 25565；经 -Pe2eMcPort 覆盖。
-    val mcPort = (project.findProperty("e2eMcPort") as String?) ?: "25566"
-    // agent 本地受限命令白名单（逗号分隔首 token，注入 config.yml override.command-whitelist）；
-    // 默认空 = 命令派发能力关闭（ADR-0011 默认 inert）；经 -Pe2eCommandWhitelist 覆盖，如 "beacone2ereload"。
-    val commandWhitelist = (project.findProperty("e2eCommandWhitelist") as String?) ?: ""
+    // 显式投放重定位后的插件 jar（Paper >= 1.16.5 经 -add-plugin 加载，不入 plugins 目录）。
+    pluginJars(e2eJar, agentJar)
 
+    // 内存上限适中，避免占满宿主；file.encoding 由 run-task 统一设为 UTF-8。
+    jvmArgs("-Xms512M", "-Xmx1536M")
+    if (e2eDebug) {
+        systemProperty("taboolib.debug", true)
+    }
+    // 指定监听端口（--nogui 由 run-paper 对 MC>=1.15 自动追加）。
+    args("--port", mcPort)
+
+    // 启动前置：写 Paper EULA、生成 agent config.yml 与 TabooLib 仓库覆盖 env.properties。
     doFirst {
-        val pluginsDir = runDir.resolve("plugins")
-        pluginsDir.mkdirs()
+        runDir.mkdirs()
+        // Paper 需同意 EULA 方可启动（run-task 不代写，这里显式写入）。
+        runDir.resolve("eula.txt").writeText("eula=true\n", Charsets.UTF_8)
 
-        // 拷贝 BeaconAgent 数据面插件（agent-bukkit 的最终 jar）。
-        val agentJar = project(":agent-bukkit").layout.buildDirectory
-            .file("libs/BeaconAgent-${project.version}.jar").get().asFile
-        require(agentJar.exists()) { "未找到 BeaconAgent jar：${agentJar.absolutePath}" }
-        agentJar.copyTo(pluginsDir.resolve("BeaconAgent.jar"), overwrite = true)
-
-        // 拷贝本验收插件的最终 jar。
-        val e2eJar = layout.buildDirectory.file("libs/BeaconE2E-${project.version}.jar").get().asFile
-        require(e2eJar.exists()) { "未找到 BeaconE2E jar：${e2eJar.absolutePath}" }
-        e2eJar.copyTo(pluginsDir.resolve("BeaconE2E.jar"), overwrite = true)
-
-        // 放置 agent 的 config.yml（serverId / namespace / beacon.endpoints 等）到其数据目录。
-        // 控制面地址默认指向 http://localhost:8848，可经 -Pe2eBeaconEndpoint 覆盖。
-        val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
-        val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bukkit-1"
-        val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
-        val agentDataDir = pluginsDir.resolve("BeaconAgent")
+        // 放置 agent 的 config.yml 到其数据目录（plugins/BeaconAgent/）。
+        val agentDataDir = runDir.resolve("plugins/BeaconAgent")
         agentDataDir.mkdirs()
         agentDataDir.resolve("config.yml").writeText(
             agentConfigYaml(beaconEndpoint, serverId, namespace, mcPort, commandWhitelist),
             Charsets.UTF_8,
         )
 
-        // 写入 TabooLib 运行期仓库覆盖文件 env.properties（置于服务端工作目录，覆盖 jar 内 env）。
-        // TabooLib 6.2.3 的 repo-reflex 默认指向已下线的 sacredcraft.cn:8081，会导致首次加载下载
-        // reflex/analyser 超时而插件无法启用；这里统一改指可达的 repo.tabooproject.org。
-        // 该文件被两个插件（BeaconAgent / BeaconE2E）共用，一处生效。
-        val tabooRepo = (project.findProperty("e2eTabooRepo") as String?)
-            ?: "https://repo.tabooproject.org/repository/releases"
+        // 写入 TabooLib 运行期仓库覆盖 env.properties（置于工作目录，覆盖 jar 内 env）。
+        // 两个插件（BeaconAgent / BeaconE2E）共用，一处生效。
         runDir.resolve("env.properties").writeText(
             """
             # 由 runServer 任务生成：覆盖 TabooLib 运行期库下载仓库（避开已下线的 sacredcraft.cn）。
@@ -135,22 +145,6 @@ val runServer by tasks.registering(JavaExec::class) {
         logger.lifecycle("E2E 运行目录：${runDir.absolutePath}")
         logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace")
     }
-
-    // 在服务端目录内以下载好的 Paper jar 启动；-nogui 无界面，控制台读 stdin。
-    workingDir = runDir
-    classpath = files(runDir.resolve(serverJarName))
-    // 内存上限适中，避免占满宿主；jvm 参数固定，结果可复现。
-    // 运行期库仓库覆盖改由工作目录的 env.properties 承担（见 doFirst），此处不再传 -D 覆盖。
-    // 传 -Pe2eDebug 可打开 TabooLib 调试输出，排查插件生命周期问题。
-    val baseJvm = mutableListOf("-Xms512M", "-Xmx1536M", "-Dfile.encoding=UTF-8")
-    if (project.hasProperty("e2eDebug")) {
-        baseJvm += "-Dtaboolib.debug=true"
-    }
-    jvmArgs = baseJvm
-    // -nogui 无界面；--port 指定监听端口（默认 25566，避让 25565）。
-    args = listOf("--nogui", "--port", mcPort)
-    // 透传控制台 IO，便于在前台看日志并向服务端发 stop。
-    standardInput = System.`in`
 }
 
 /** 生成 E2E 用 agent config.yml；无 zone、无 canary，仅最小接入信息 + FR-15 覆盖命令白名单。 */

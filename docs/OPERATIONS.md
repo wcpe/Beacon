@@ -53,12 +53,12 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **控制面短暂不可用时不要重启子服**：agent 会按本地快照 fail-static 继续，控制面恢复后自动重连。
 
 ## 7. 端到端验收（agent 真机接入联调）
-用 `agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」，全程由 gradle（TabooLib runServer）自动下载并运行服务端，无需手工准备 MC 服。
+用 `agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」，全程由 gradle（jpenilla run-task 的 run-paper/run-waterfall 插件）自动下载并运行服务端，无需手工准备 MC 服。
 
 - 先起控制面：`docker compose up -d`（或本地 `go run ./cmd/beacon`），确保 `GET /admin/v1/namespaces` 可达。
 - 经 REST/管理台建一条全局配置（如 dataId `beacon-e2e.yml`）。
-- Bukkit 端：`cd agent && ./gradlew :agent-e2e:runServer` —— 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
-- Bungee 端：`./gradlew :agent-e2e-bungee:runBungee` —— 自动下载 Waterfall，加载 BeaconAgentProxy 与验收插件。
+- Bukkit 端：`cd agent && ./gradlew :agent-e2e:runServer` —— run-paper 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
+- Bungee 端：`./gradlew :agent-e2e-bungee:runBungee` —— run-waterfall 自动下载 Waterfall，加载 BeaconAgentProxy 与验收插件。
 - 验证：`GET /admin/v1/instances` 看 serverId online；改配置发布后看验收插件数据目录的 `e2e-observations.log` 是否出现新值（业务插件经 agent Java 只读 API 读到热更）；`GET /admin/v1/audits` 查发布记录。
 
 ### 7.1 FR-15 三方覆盖 + 受限重载命令真机 E2E（RCE 面，启用命令白名单前必跑）

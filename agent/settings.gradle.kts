@@ -13,6 +13,12 @@ pluginManagement {
         kotlin("jvm") version "1.9.22"
         kotlin("plugin.serialization") version "1.9.22"
         id("io.izzel.taboolib") version "2.0.37"
+        // jpenilla run-task：为 e2e 模块提供 runServer(Paper)/runWaterfall(Waterfall) 自动下载并运行
+        // MC 服务端/代理的任务，取代手写的 PrepareMinecraftServerEnvTask 下载 + JavaExec 启动。
+        // 锁定 2.3.1：run-task 3.0.x 起在发布元数据声明 plugin-api-version=8.14.3、要求 Gradle ≥ 8.14.3，
+        // 而本构建用 Gradle 8.5；2.3.1 是最后一个不带该门槛、兼容 8.5 的版本（run-paper/run-waterfall API 与 3.0.x 一致）。
+        id("xyz.jpenilla.run-paper") version "2.3.1"
+        id("xyz.jpenilla.run-waterfall") version "2.3.1"
     }
 }
 

@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 变更
+- agent E2E 服务端/代理的下载与启动改用 jpenilla run-task（run-paper / run-waterfall 2.3.1，兼容当前 Gradle 8.5）：移除两处手写的 `PrepareMinecraftServerEnvTask` 下载 + `JavaExec` 启动任务，改由 run-paper 的 `runServer`（Paper）与自定义命名的 `RunWaterfall` 任务 `runBungee`（Waterfall）负责下载与运行；MC 版本经 `minecraftVersion` / `waterfallVersion` 指定（取代硬编码直链），可经 `-Pe2ePaperVersion` / `-Pe2eWaterfallVersion` 覆盖。任务名（`runServer` / `runBungee`）与 Go E2E 驱动入口不变。
+
 ## 0.5.0（2026-06-20）
 
 ### 新增

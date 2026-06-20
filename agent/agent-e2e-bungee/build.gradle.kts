@@ -1,12 +1,14 @@
 // agent-e2e-bungee：M6 端到端验收用的 TabooLib BungeeCord 插件，产出 BeaconE2EProxy.jar。
 // 作为「业务插件」compileOnly 依赖 agent-api，经只读 API 读取约定 dataId 并把观测写标记文件。
-// 另注册 runBungee 任务：用 TabooLib 的 PrepareMinecraftServerEnvTask 自动下载 Waterfall、写 EULA（代理无害），
-// 再把 BeaconAgentProxy.jar 与本插件 jar 放进 plugins 目录后启动代理。
-import io.izzel.taboolib.gradle.PrepareMinecraftServerEnvTask
+// 用 jpenilla run-task 的 run-waterfall 任务类型自定义命名为 runBungee：自动下载并运行 Waterfall，
+// 再把 BeaconAgentProxy.jar 与本插件 jar 投入 plugins 目录后启动代理（代理无需 EULA）。
+import xyz.jpenilla.runwaterfall.task.RunWaterfall
 
 plugins {
     kotlin("jvm")
     id("io.izzel.taboolib")
+    // run-waterfall：提供 RunWaterfall 任务类型，自动下载并运行 Waterfall 代理（取代手写下载/启动任务）。
+    id("xyz.jpenilla.run-waterfall")
 }
 
 // 单独的 group：与 BeaconAgentProxy（top.wcpe.beacon.agent）区分 relocate 根包，避免同代理冲突。
@@ -49,55 +51,56 @@ tasks.jar {
 }
 
 // ---------------------------------------------------------------------------
-// runBungee：自动下载 Waterfall + 部署插件 + 启动代理（M6 端到端编排入口，代理侧）。
+// runBungee：由 run-waterfall 自动下载 Waterfall + 部署插件 + 启动代理（M6 端到端编排入口，代理侧）。
+// 用 run-waterfall 的 RunWaterfall 任务类型自定义命名为 runBungee（与 Go E2E 驱动约定一致）；
+// 下载与启动交给 run-task，这里只做 Beacon 侧编排：投放数据面插件 jar、生成 agent config.yml / env.properties。
 // ---------------------------------------------------------------------------
 
 // 运行根目录（落 .tmp，不入库）。
 val runDir = rootProject.projectDir.resolve("../.tmp/e2e-run/bungee")
-// 代理 jar 文件名。
-val proxyJarName = "waterfall.jar"
-// Waterfall 1.20 指定构建直链（Java 21 可运行，PaperMC API 直链无重定位）。可经 -Pe2eWaterfallUrl 覆盖。
-val waterfallUrl = (project.findProperty("e2eWaterfallUrl") as String?)
-    ?: "https://api.papermc.io/v2/projects/waterfall/versions/1.20/builds/578/downloads/waterfall-1.20-578.jar"
+// Waterfall 版本（Java 21 可运行）。可经 -Pe2eWaterfallVersion 覆盖（run-waterfall 解析最新构建，取代旧的 -Pe2eWaterfallUrl 直链）。
+val waterfallVer = (project.findProperty("e2eWaterfallVersion") as String?) ?: "1.20"
+// 控制面地址默认指向 http://localhost:8848，可经 -Pe2eBeaconEndpoint 覆盖。
+val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
+// 本机唯一身份，环境内唯一；经 -Pe2eServerId 覆盖。
+val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bungee-1"
+// 环境（须与控制面 namespace 一致）；经 -Pe2eNamespace 覆盖。
+val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
+// TabooLib 6.2.3 的 repo-reflex 默认指向已下线的 sacredcraft.cn:8081，统一改指可达仓库；经 -Pe2eTabooRepo 覆盖。
+val tabooRepo = (project.findProperty("e2eTabooRepo") as String?) ?: "https://repo.tabooproject.org/repository/releases"
+// 本模块版本（jar 名用，源自仓库根 VERSION）。
+val beaconVer = project.version.toString()
+// 数据面 agent（BeaconAgentProxy）最终 jar：agent-bungee 的 TabooLib 重定位产物。
+val agentJar = project(":agent-bungee").layout.buildDirectory.file("libs/BeaconAgentProxy-$beaconVer.jar")
+// 本验收插件最终 jar：TabooLib 重定位产物。
+val e2eJar = layout.buildDirectory.file("libs/BeaconE2EProxy-$beaconVer.jar")
 
-// 下载 Waterfall（写 EULA 对代理无害，复用 TabooLib 内置任务）。
-val prepareE2EProxy by tasks.registering(PrepareMinecraftServerEnvTask::class) {
+// 自定义命名的 RunWaterfall 任务（run-waterfall 的自动探测只作用于其默认 runWaterfall 任务，
+// 故这里需显式 pluginJars 投放重定位后的 jar；run-waterfall 会把它们复制进 plugins/ 加载）。
+val runBungee by tasks.registering(RunWaterfall::class) {
     group = "beacon-e2e"
-    description = "下载 Waterfall 代理 jar"
-    jarUrl.set(waterfallUrl)
-    jarName.set(proxyJarName)
-    serverDirectory.set(runDir)
-    agreeEula.set(true)
-}
+    description = "由 run-waterfall 下载并启动 Waterfall，部署 BeaconAgentProxy + E2E 代理插件（端到端验收，代理侧）"
 
-val runBungee by tasks.registering(JavaExec::class) {
-    group = "beacon-e2e"
-    description = "部署 BeaconAgentProxy + E2E 代理插件到 Waterfall 并启动（端到端验收，代理侧）"
+    // 指定 Waterfall 版本，run-waterfall 解析最新构建并下载（取代硬编码直链）。
+    waterfallVersion(waterfallVer)
+    // 运行目录（落 .tmp）。
+    runDirectory(runDir)
 
-    dependsOn(prepareE2EProxy)
+    // 先构建数据面 agent 与本插件的最终（已 relocate）jar，再启动。
     dependsOn(":agent-bungee:build")
     dependsOn("build")
 
+    // 显式投放重定位后的插件 jar（run-waterfall 复制进 plugins/）。
+    pluginJars(e2eJar, agentJar)
+
+    // 内存上限适中，避免占满宿主；file.encoding 由 run-task 统一设为 UTF-8。
+    jvmArgs("-Xms256M", "-Xmx768M")
+
+    // 启动前置：生成 agent config.yml 与 TabooLib 仓库覆盖 env.properties（代理无需 EULA）。
     doFirst {
-        val pluginsDir = runDir.resolve("plugins")
-        pluginsDir.mkdirs()
-
-        // 拷贝 BeaconAgentProxy 数据面插件（agent-bungee 的最终 jar）。
-        val agentJar = project(":agent-bungee").layout.buildDirectory
-            .file("libs/BeaconAgentProxy-${project.version}.jar").get().asFile
-        require(agentJar.exists()) { "未找到 BeaconAgentProxy jar：${agentJar.absolutePath}" }
-        agentJar.copyTo(pluginsDir.resolve("BeaconAgentProxy.jar"), overwrite = true)
-
-        // 拷贝本验收插件的最终 jar。
-        val e2eJar = layout.buildDirectory.file("libs/BeaconE2EProxy-${project.version}.jar").get().asFile
-        require(e2eJar.exists()) { "未找到 BeaconE2EProxy jar：${e2eJar.absolutePath}" }
-        e2eJar.copyTo(pluginsDir.resolve("BeaconE2EProxy.jar"), overwrite = true)
-
-        // 放置 agent 的 config.yml 到其数据目录（serverId 用 proxy 专属，namespace 与控制面一致）。
-        val beaconEndpoint = (project.findProperty("e2eBeaconEndpoint") as String?) ?: "http://localhost:8848"
-        val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bungee-1"
-        val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
-        val agentDataDir = pluginsDir.resolve("BeaconAgentProxy")
+        runDir.mkdirs()
+        // 放置 agent 的 config.yml 到其数据目录（plugins/BeaconAgentProxy/）。
+        val agentDataDir = runDir.resolve("plugins/BeaconAgentProxy")
         agentDataDir.mkdirs()
         agentDataDir.resolve("config.yml").writeText(
             agentConfigYaml(beaconEndpoint, serverId, namespace),
@@ -105,8 +108,6 @@ val runBungee by tasks.registering(JavaExec::class) {
         )
 
         // TabooLib 运行期仓库覆盖（避开已下线的 sacredcraft.cn）。
-        val tabooRepo = (project.findProperty("e2eTabooRepo") as String?)
-            ?: "https://repo.tabooproject.org/repository/releases"
         runDir.resolve("env.properties").writeText(
             """
             repo-central=https://maven.aliyun.com/repository/central
@@ -119,12 +120,6 @@ val runBungee by tasks.registering(JavaExec::class) {
         logger.lifecycle("E2E 代理运行目录：${runDir.absolutePath}")
         logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace")
     }
-
-    workingDir = runDir
-    classpath = files(runDir.resolve(proxyJarName))
-    jvmArgs = listOf("-Xms256M", "-Xmx768M", "-Dfile.encoding=UTF-8")
-    // Waterfall/BungeeCord 无 nogui 参数，直接启动；控制台读 stdin。
-    standardInput = System.`in`
 }
 
 /** 生成 E2E 用 agent config.yml；无 zone、无 canary，仅最小接入信息。代理端口默认 25577。 */
