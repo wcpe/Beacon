@@ -39,7 +39,9 @@ object BeaconAgentCommand {
             }
             literal("resync") {
                 execute<ProxyCommandSender> { sender, _, _ ->
-                    sender.sendMessage(OpsCommandText.RESYNC_UNAVAILABLE)
+                    // forceSyncFileTreeNow 内部即转异步，仅返回是否已触发，不阻塞主线程。
+                    val triggered = lifecycle.forceSyncFileTreeNow()
+                    sender.sendMessage(OpsCommandText.resyncReply(triggered))
                 }
             }
             // 无子命令：打印用法。

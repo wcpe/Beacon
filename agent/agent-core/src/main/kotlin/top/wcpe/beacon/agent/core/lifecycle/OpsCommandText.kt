@@ -24,8 +24,18 @@ object OpsCommandText {
     /** reconnect 命令触发回显。 */
     const val RECONNECT_TRIGGERED: String = "已触发重新接入控制面（reconnect），保留当前有效配置"
 
-    /** resync 占位：文件树子系统未启用（依赖 FR-14，本期不做）。 */
-    const val RESYNC_UNAVAILABLE: String = "文件树子系统未启用，resync 暂不可用（依赖文件树托管能力）"
+    /** resync 命令触发回显（动作本身异步执行，日志由 lifecycle 打）。 */
+    const val RESYNC_TRIGGERED: String = "已触发文件树重新同步（resync），稍后在控制台日志查看结果"
+
+    /** resync 在文件树子系统未启用时的回显（config.yml 未开 file-tree.enabled）。 */
+    const val RESYNC_DISABLED: String = "文件树子系统未启用，resync 不可用（请在 config.yml 开启 file-tree.enabled）"
+
+    /**
+     * 按文件树子系统是否已触发选取 resync 回显文案。
+     *
+     * @param triggered AgentLifecycle.forceSyncFileTreeNow 的返回：true=已触发同步，false=子系统未启用
+     */
+    fun resyncReply(triggered: Boolean): String = if (triggered) RESYNC_TRIGGERED else RESYNC_DISABLED
 
     /** 根命令无子命令时的用法提示。 */
     val USAGE_LINES: List<String> = listOf(
@@ -33,6 +43,6 @@ object OpsCommandText {
         "  status    查看 agent 接入与有效配置状态",
         "  reload    强制立刻重拉有效配置并 apply（不等长轮询超时）",
         "  reconnect 打断退避、重置并重新接入控制面",
-        "  resync    强制重同步文件树（暂未启用）",
+        "  resync    强制立刻重同步文件树（需开启 file-tree.enabled）",
     )
 }

@@ -197,6 +197,34 @@ class AgentLifecycle(
     }
 
     /**
+     * 立即重同步文件树（运维 resync）：以 fileTreeMd5=null 强制一次清单拉取并由 applier 幂等应用，
+     * 旁路文件树长轮询 304，不等超时。
+     *
+     * 复用 FileTreeApplier 的 fileTreeMd5 幂等守卫：清单未变则只触发一次无害读取、不重复落盘。
+     * 独立一发，不接管文件树长轮询主循环、不改其代标识。
+     *
+     * @return true 表示文件树子系统已启用、已触发同步；false 表示未启用（fileTreeApplier 为 null），未触发。
+     */
+    fun forceSyncFileTreeNow(): Boolean {
+        if (!running.get()) return false
+        val applierLocal = fileTreeApplier ?: return false
+        adapter.info("收到 resync：强制立刻重拉文件清单并同步落盘")
+        adapter.runAsync {
+            when (val result = apiClient.pollFileManifest(identity, currentMd5 = null, timeoutMs = settings.requestTimeoutMs)) {
+                is FileManifestPollResult.Changed -> applierLocal.apply(result.manifest)
+                is FileManifestPollResult.NotModified -> adapter.info("resync 完成：文件树无变更")
+                is FileManifestPollResult.NotRegistered -> {
+                    adapter.warn("resync 时返回未注册，触发重新接入")
+                    triggerReregister()
+                }
+
+                is FileManifestPollResult.Failed -> adapter.warn("resync 强制重拉文件清单失败（${result.reason}），保留本地镜像不动")
+            }
+        }
+        return true
+    }
+
+    /**
      * 启动：读快照→有则先 apply 点亮有效配置→再异步注册→成功后启心跳 + 长轮询。
      * 全程不阻塞调用线程（壳层在 ENABLE 调用，内部即转异步）。
      */
