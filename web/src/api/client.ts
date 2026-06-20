@@ -102,6 +102,12 @@ export function login(username: string, password: string): Promise<LoginResult> 
   })
 }
 
+// 登出：仅记一条审计（令牌无状态、服务端无会话可吊销），返回 204。
+// 本端点需令牌（取认证身份入审计），故走带令牌的 request。
+export function logout(): Promise<void> {
+  return request<void>('/auth/logout', { method: 'POST' })
+}
+
 // ===== 环境（namespace）=====
 
 export function listNamespaces(): Promise<NamespaceView[]> {
@@ -345,6 +351,8 @@ export function zoneSummary(namespace?: string, group?: string): Promise<ZoneSta
 // 审计查询过滤与分页条件
 export interface AuditFilter {
   namespace?: string
+  // 操作人过滤（后端 GET /admin/v1/audits 的 operator 参数，FR-30）
+  operator?: string
   action?: string
   targetType?: string
   targetRef?: string

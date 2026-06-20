@@ -34,6 +34,7 @@ function toIso(local: string): string | undefined {
 export default function AuditsPage() {
   // 过滤表单的草稿值（点「查询」时才生效）
   const [namespace, setNamespace] = useState('')
+  const [operator, setOperator] = useState('')
   const [action, setAction] = useState('')
   const [targetType, setTargetType] = useState('')
   const [targetRef, setTargetRef] = useState('')
@@ -54,6 +55,7 @@ export default function AuditsPage() {
     e.preventDefault()
     setFilter({
       namespace: namespace.trim() || undefined,
+      operator: operator.trim() || undefined,
       action: action.trim() || undefined,
       targetType: targetType.trim() || undefined,
       targetRef: targetRef.trim() || undefined,
@@ -107,6 +109,15 @@ export default function AuditsPage() {
             <div className="space-y-1.5">
               <Label htmlFor="a-namespace">环境</Label>
               <Input id="a-namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-operator">操作人</Label>
+              <Input
+                id="a-operator"
+                value={operator}
+                onChange={(e) => setOperator(e.target.value)}
+                placeholder="如 admin"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="a-action">动作</Label>

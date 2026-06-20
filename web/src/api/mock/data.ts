@@ -219,7 +219,7 @@ export const mockNamespaces: NamespaceView[] = [
 
 // ---- 审计 ----
 
-export function getMockAudits(filter?: { namespace?: string; action?: string; targetType?: string; page?: number; size?: number }): AuditPage {
+export function getMockAudits(filter?: { namespace?: string; operator?: string; action?: string; targetType?: string; page?: number; size?: number }): AuditPage {
   const all: AuditView[] = [
     { namespace: 'prod', operator: 'admin', action: 'publish', targetType: 'config', targetRef: 'game_config.yml', detail: '发布版本 v3', result: 'success', clientIp: '127.0.0.1', createdAt: ago(3600) },
     { namespace: 'prod', operator: 'developer', action: 'create', targetType: 'config', targetRef: 'db.properties', detail: '新建配置', result: 'success', clientIp: '127.0.0.1', createdAt: ago(7200) },
@@ -229,6 +229,7 @@ export function getMockAudits(filter?: { namespace?: string; action?: string; ta
   ]
   let items = all
   if (filter?.namespace) items = items.filter(a => a.namespace === filter.namespace)
+  if (filter?.operator) items = items.filter(a => a.operator === filter.operator)
   if (filter?.action) items = items.filter(a => a.action === filter.action)
   return { total: items.length, items }
 }

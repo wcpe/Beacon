@@ -3,6 +3,7 @@
 
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { clearAuth, useAuth } from '@/state/auth'
+import { logout } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -20,7 +21,13 @@ export default function Layout() {
   const { operator } = useAuth()
   const navigate = useNavigate()
 
-  function onLogout() {
+  async function onLogout() {
+    // 先请求后端记一条登出审计（需当前令牌）；无论成败都清本地登录态并跳登录——登出绝不被阻断。
+    try {
+      await logout()
+    } catch {
+      // 令牌已过期等场景审计失败，忽略：登出是本地动作，不依赖后端成功
+    }
     clearAuth()
     navigate('/login', { replace: true })
   }

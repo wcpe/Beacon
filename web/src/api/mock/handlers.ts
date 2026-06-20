@@ -64,6 +64,10 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     const result: LoginResult = { token: 'mock-token-' + Date.now(), operator: body.username }
     return json(result)
   }
+  if (p === '/admin/v1/auth/logout' && method === 'POST') {
+    // 登出仅记审计，后端返回 204；mock 直接回空体
+    return new Response(null, { status: 204 })
+  }
 
   // 实例列表 GET
   if (p === '/admin/v1/instances' && method === 'GET') {
@@ -82,7 +86,7 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
 
   // 审计
   if (p === '/admin/v1/audits' && method === 'GET') {
-    const result = getMockAudits(qs as unknown as { namespace?: string; action?: string })
+    const result = getMockAudits(qs as unknown as { namespace?: string; operator?: string; action?: string })
     return json(result)
   }
 
