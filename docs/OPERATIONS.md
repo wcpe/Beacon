@@ -55,6 +55,11 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 ## 7. 端到端验收（agent 真机接入联调）
 用 `agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」，全程由 gradle（jpenilla run-task 的 run-paper/run-waterfall 插件）自动下载并运行服务端，无需手工准备 MC 服。
 
+> **本地前置（工具链）**：下面的手动联调与 §7.1–7.3 的 Go E2E 都需在本机构建控制面二进制并经 gradle 起真机服务端，跑前先就位：
+> - **JDK21**：跑 gradle 与 MC 服务端（Paper 1.20.4 / Waterfall 1.20 需 Java 17+）。Windows 上若 `JAVA_HOME` 路径含 `!` 等特殊字符，`gradlew.bat` 可能回退到 PATH 上的旧 JDK；E2E 经 harness 调 `./agent/gradlew` 继承环境，跑前把 `JAVA_HOME` 显式指向干净路径的 JDK21。
+> - **C 编译器（CGO）**：控制面默认 sqlite 驱动为 `mattn/go-sqlite3`（CGO），需 `CGO_ENABLED=1` 且 PATH 上有 gcc/clang，否则 `go build ./cmd/beacon` 编不出（即便走 `E2E_DB_DRIVER=mysql` 也一样——编译期已静态 import sqlite 驱动）。
+> - **已构建前端**：控制面 `go:embed web/dist`，跑前先 `make web`（或 `cd web && pnpm build`），否则报 `pattern all:web/dist: no matching files found`。
+
 - 先起控制面：`docker compose up -d`（或本地 `go run ./cmd/beacon`），确保 `GET /admin/v1/namespaces` 可达。
 - 经 REST/管理台建一条全局配置（如 dataId `beacon-e2e.yml`）。
 - Bukkit 端：`cd agent && ./gradlew :agent-e2e:runServer` —— run-paper 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
