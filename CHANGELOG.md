@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.6.0（2026-06-21）
+
 ### 新增
 - BC 代理专属指标与角色分流展示（FR-34，扩展 [ADR-0023](docs/adr/0023-control-plane-observability-dashboard.md)，见 [ADR-0025](docs/adr/0025-bc-proxy-metrics-and-netty-traffic.md)）：bc（bungee）agent 新增采集代理专属负载指标——在线连接数、JVM 线程数、运行时长、后端子服可达性（up/total）+ 到各后端平均 ping 延迟（`ServerInfo.ping` 异步探活，在 agent async 上报线程内有界等待汇总、绝不碰 MC 主线程），经 report 新增可选 `proxy` 子对象上报（仅 bc 填、bukkit/旧 agent 缺键向后兼容）。控制面 `runtime.Instance` 加 BC 字段（仅展示不参与决策），`metric_sample` 加 6 个可空列（`proxy_conn`/`thread_count`/`uptime_ms`/`backend_up`/`backend_total`/`backend_avg_latency_ms`，全基础类型 + `NOT NULL DEFAULT`、零方言、AutoMigrate 加列对既有行兼容、可切 Postgres），采样器一并落库；`GET /admin/v1/metrics/summary` 新增 `bc` 子对象（仅 `role=bungee` 聚合：代理数/连接/平均线程/后端可达性/平均延迟），既有 bukkit 聚合零改动无回归。管理台 Dashboard 新增「BC 代理」面板按角色分流展示上述 BC 指标，bukkit 视图不受影响。**网络吞吐入/出字节本期不采**——BungeeCord 公开 API 无干净 Netty pipeline 注入点（吞吐计数只能切进非公开实现 jar `PipelineUtils`），不做脆弱反射 hack、不引 BungeeCord 实现 jar、不留占位列/字段，标「待真机/待定」（详见 ADR-0025）。只采负载计数事实、不采玩家名单/身份（守看人边界 ADR-0022）。
 - bc 后端归属事实上报：bc（bungee）agent 将其当前代理的后端子服 serverId 集合（取自 `ProxyServerDirectory`）经 register / report 附加可选 `backends` 字段上报，控制面存为实例只读内存事实（仅 bc 填、bukkit 恒空、旧 agent 缺键向后兼容），实例视图输出 `backends` 供集群拓扑 bc→bukkit 连线消费；只存事实不落 DB、不据它做调度决策（FR-36，见 ADR-0024）。
@@ -18,6 +20,7 @@
 - agent E2E 服务端/代理的下载与启动改用 jpenilla run-task（run-paper / run-waterfall 2.3.1，兼容当前 Gradle 8.5）：移除两处手写的 `PrepareMinecraftServerEnvTask` 下载 + `JavaExec` 启动任务，改由 run-paper 的 `runServer`（Paper）与自定义命名的 `RunWaterfall` 任务 `runBungee`（Waterfall）负责下载与运行；MC 版本经 `minecraftVersion` / `waterfallVersion` 指定（取代硬编码直链），可经 `-Pe2ePaperVersion` / `-Pe2eWaterfallVersion` 覆盖。任务名（`runServer` / `runBungee`）与 Go E2E 驱动入口不变。
 - 管理台新建/复制配置流程改善（FR-40，增强 FR-1/FR-22）：新建配置对话框的环境/大区/小区/实例选项改为从 API 动态获取（环境取 `listNamespaces`、大区与小区由 zone 汇总与实例列表派生、实例取 `listInstances`），去掉原硬编码示例（prod、__GLOBAL__/server-a/server-b 等）；覆盖目标随覆盖层联动——`global` 隐藏覆盖目标，`group`/`zone`/`server` 切换为对应动态下拉，减少手填出错；配置编辑器新增「复制到实例」动作，把当前配置复制为某实例的 server 层覆盖（预填源内容、覆盖层定为 server、目标待选），进入编辑改 diff 后发布，复用既有创建/发布 API，优先级由既有覆盖链（实例>分组>全局）保证。仅前端改动，无后端新增端点。
 - zone 分配页改为看板式归派（FR-35，纯 UI 增强 FR-8）：左侧未指派 server 卡片池 + 右侧按大区分桶的 zone 容器，拖卡到 zone 即指派、跨桶拖拽即改派、拖回未指派池即取消指派；卡片显示 serverId + 角色徽标（子服/BC）+ 在线状态点。复用既有 `PUT/DELETE /zones/assignments`，后端零改动；引入前端拖放库 `@dnd-kit`，onDragEnd 落点解析抽为可单测纯函数。
+- agent `BeaconApiClient` 暴露连接失败原因：原 `exec()` 把连接级异常一律吞为 null，`AgentLifecycle` 只能拿到笼统「连接失败」四字日志，stale 旧 jar / DNS / TLS 等真因被诊断黑盒。现 catch 时把「类名: 消息」记入 ThreadLocal（per-thread 隔离，根除 5 条循环并发串台），5 处 `Failed("连接失败")` 改读 `connectFailReason()`；外行为不变（重试节奏、返回类型同），仅日志/Failed.reason 文案更具体。
 
 ### 修复
 - 代理（bungee）侧跨服消息只起了玩家位置名册、未起完整消息模块，致代理无法收发业务消息（FR-26，首次真机暴露）：`BeaconAgentBungee` 仅装配 `BungeePlayerRosterBootstrap`（维护 `beacon:player-loc` 供子服按玩家寻址），未像子服那样起 `MessagingModule`——故代理不消费自身收件流 `beacon:msg:{proxyId}`、不分发 `on(type)` 处理器、`messaging().isAvailable()` 恒 false（真机实测：代理收件流堆积 6 条、无消费组）。这让所有依赖「代理接收消息」的下游能力失效：跨服踢出 / 跨服广播 fan-out / 跨服切服 / 跨服传送编排——子服把 `send(proxyId, …)` 投到代理收件流后无人消费。修复：新增 `BungeeMessagingBootstrap`（镜像 `BukkitMessagingBootstrap`）在代理启动完整消息模块（消费收件流 + `on` 分发 + RPC 回信 + 主题 `publish`/`subscribe`），接进 `BeaconAgentBungee` 的 enable / 配置变更重连 / disable；与玩家名册引导各持独立 Redis 连接、互不影响、与配置同步故障域隔离，启动失败仅降级。经真机集群（双 Paper 子服 + Waterfall 代理 + 真 Redis + mineflayer bot）验证：代理消息模块干净启动、收件流被消费，跨服踢出 / 广播 / 切服 / 坐标传送 / 传送后 kether 的玩家流程端到端全通。

@@ -33,7 +33,7 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 		t.Fatalf("注册实例失败: %v", err)
 	}
 	start := time.Now().Add(-2 * time.Minute)
-	svc := service.NewSystemService("v0.5.0", start, pingFunc(func() error { return nil }), reg, true,
+	svc := service.NewSystemService("v0.6.0", start, pingFunc(func() error { return nil }), reg, true,
 		cpuStub{percent: 12.3, available: true})
 	h := NewSystemHandler(svc)
 
@@ -47,7 +47,7 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应体解析失败: %v", err)
 	}
-	if body.Version != "v0.5.0" {
+	if body.Version != "v0.6.0" {
 		t.Fatalf("版本应为 v0.5.0，实际 %q", body.Version)
 	}
 	if !body.DB.Connected {
