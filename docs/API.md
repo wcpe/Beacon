@@ -163,11 +163,13 @@ data: {}
 
 | 端点 | 说明 |
 |---|---|
-| `POST /admin/v1/auth/login` | 登录：`{ username, password }` → `{ token, operator }`。**本端点自身不需令牌。** |
+| `POST /admin/v1/auth/login` | 登录：`{ username, password }` → `{ token, operator }`，并记一条 `auth.login` 审计。**本端点自身不需令牌。** |
+| `POST /admin/v1/auth/logout` | 登出：仅记一条 `auth.logout` 审计 → `204`。令牌为无状态 HMAC、服务端无会话可吊销，前端清本地令牌即登出；本端点需令牌（取认证身份入审计）。 |
 
 - 除登录外，`/admin/v1/*` 一律需请求头 `Authorization: Bearer <token>`。缺失或非 `Bearer ` 前缀 → `401 ADMIN_UNAUTHORIZED`；令牌签名不符 / 结构非法 / 过期 → 同样 `401 ADMIN_UNAUTHORIZED`。
 - 登录凭据错误 → `401 BAD_CREDENTIALS`。
-- **操作者身份以认证态为准**：所有写操作（新建/发布/回滚/软删/改派/取消指派/手动下线）的 `operator` 由登录令牌派生写入 `audit_log`，**忽略请求体/查询里手填的 operator**（手填值不再生效）。
+- **操作者身份以认证态为准**：所有写操作（新建/发布/回滚/软删/改派/取消指派/手动下线/建环境）的 `operator` 由登录令牌派生写入 `audit_log`，**忽略请求体/查询里手填的 operator**（手填值不再生效）。
+- 登录 / 登出审计的 `detail` 仅记操作者，**严禁含口令 / 令牌等敏感数据**。
 - 令牌有效期由配置 `auth.token-ttl-sec` 决定（默认 86400 秒）；过期需重新登录。
 
 ### 配置管理
@@ -306,7 +308,7 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30） |
-| `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建 |
+| `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建（建环境记一条 `namespace.create` 审计，operator 由认证态派生） |
 
 ### 运维指标
 | 端点 | 说明 |
