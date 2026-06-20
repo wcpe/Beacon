@@ -243,6 +243,36 @@ data: {}
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
+### 集群拓扑（FR-37）
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/topology?namespace=` | 读内存注册表快照，返回该 namespace 的集群拓扑（bc→bukkit 真实连线）。`namespace` 必填，缺失返 `400 INVALID_PARAM` |
+
+仅纳入**可用集合**（`online`+`degraded`，与发现 / 拓扑摘要同口径）。返回体：
+
+```json
+{
+  "namespace": "prod",
+  "nodes": [
+    { "serverId": "bc-1", "role": "bungee", "group": "area1", "zone": null, "status": "online", "address": "10.0.0.1:25577" },
+    { "serverId": "lobby-1", "role": "bukkit", "group": "area1", "zone": "z1", "status": "online", "address": "10.0.0.2:25565" }
+  ],
+  "edges": [
+    { "source": "bc-1", "target": "lobby-1" }
+  ],
+  "groups": [
+    { "group": "area1", "zone": null, "members": ["bc-1"] },
+    { "group": "area1", "zone": "z1", "members": ["lobby-1"] }
+  ]
+}
+```
+
+- `nodes`：各在线实例（`serverId`/`role`/`group`/`zone`/`status`/`address`；未分配 zone 时 `zone=null`）。
+- `edges`：bc→bukkit 连线，由 bc 的 `backends` 事实（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）生成；**只连当前在册可用的后端**，已离线后端不画悬挂边。
+- `groups`：按 `(group, zone)` 聚合的 serverId 分组，供前端分簇展示。
+- 各列表按 serverId / (group,zone) 字典序稳定排序；空拓扑返回空数组（非 null）。
+- 控制面**只展示该事实、不据它做任何调度 / 连接决策**（守「只存事实」边界）；只读、不落 DB、不挂长轮询。前端 `/topology` 页轮询刷新（要实时可订阅 agent 侧 SSE 流 `topology-changed`，FR-29）。
+
 ### zone 分配
 | 端点 | 说明 |
 |---|---|

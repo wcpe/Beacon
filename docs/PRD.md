@@ -82,7 +82,7 @@
 | FR-34 | BC 代理专属指标与角色分流展示：BC 采集连接数/线程/运行时长/后端子服可达性·延迟/每后端人数 + 网络吞吐（agent 侧 Netty GlobalTrafficShapingHandler 只计数不限流、在 IO 线程不碰 MC 主线程）；report 扩字段、`metric_sample` 加列、Dashboard 新增 BC 面板与按角色分离视图；平均 TPS·CPU 仅统计 bukkit（依赖 metric_sample 角色化修复）。增强 FR-32，扩展 [ADR-0023](adr/0023-control-plane-observability-dashboard.md)（见 [ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md) 与 [docs/specs/bc-proxy-metrics.md](specs/bc-proxy-metrics.md)） | P2 | 开发中 |
 | FR-35 | zone 看板式归派管理台：未指派池 + 按大区分桶的 zone 容器 + 拖拽指派/改派（@dnd-kit），复用既有 `PUT/DELETE /zones/assignments`，后端零改动（纯 UI 增强 FR-8） | P2 | 开发中 |
 | FR-36 | bc 后端归属事实上报：bc agent 将其 `ProxyServerDirectory` 的后端 serverId 集合经 register/report 附加字段上报（仅 bc 填、向后兼容），控制面存为 Instance 事实供拓扑连线；agent 上报自身事实、不改控制面"只存事实"边界（[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)） | P2 | 开发中 |
-| FR-37 | 集群拓扑可视化：新增 `GET /admin/v1/topology`（节点+边）与独立 `/topology` 页（ECharts graph，真实 bc→bukkit 连线、区分角色、按大区/zone 聚合，复用拓扑 watch 实时刷新）；实例与健康仅加角色列/徽标。依赖 FR-36（增强 FR-4/FR-29） | P2 | 计划 |
+| FR-37 | 集群拓扑可视化：新增 `GET /admin/v1/topology`（节点+边）与独立 `/topology` 页（ECharts graph，真实 bc→bukkit 连线、区分角色、按大区/zone 聚合，复用拓扑 watch 实时刷新）；实例与健康仅加角色列/徽标。依赖 FR-36（增强 FR-4/FR-29） | P2 | 开发中 |
 | FR-38 | 配置导入（上传通道）：管理台上传一份 plugins 目录到指定「组」的文件树（复用 FR-14 通道B 整文件托管）实现全局复用；操作入审计（沿用 [ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） | P2 | 开发中 |
 | FR-39 | 配置导入（在线实例反向抓取）：经 server→agent 命令下发让目标 agent 读取本地 plugins 目录并回传 ingest 入库为组/实例级覆盖；含命令通道与 ingest 安全校验、操作入审计。依赖 FR-38 + server→agent 命令通道（需新 ADR：反向取文件通道与安全面） | P2 | 计划 |
 | FR-40 | 新建/复制配置流程改善：新建配置选项动态化（namespace/group/zone/server 从 API 取、去硬编码）+ scope↔target 联动 + 「复制某配置到指定实例 server 层覆盖并改 diff」快捷路径（实例级覆盖能力已存在，优先级 实例>分组>全局）（增强 FR-1/FR-22） | P2 | 开发中 |
