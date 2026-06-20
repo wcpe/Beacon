@@ -117,6 +117,8 @@ object BeaconAgentBungee : Plugin() {
         val store = EffectiveConfigStore()
         val view = EffectiveConfigView(store)
         val adapter = BungeePlatformAdapter(view)
+        // 单一代理目录实例：同时供目录同步（注入子服）与后端归属上报（读当前后端集合，FR-36）。
+        val serverDirectory = BungeeServerDirectory()
         val assembled = AgentAssembly.assemble(
             identity = identity,
             settings = settings,
@@ -129,6 +131,8 @@ object BeaconAgentBungee : Plugin() {
             streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
             // 运行指标供给（FR-32）：上报时采代理在线人数 + JVM 内存 / CPU 真值（代理无 TPS，恒 0）。
             metricsProvider = { BungeeMetricsCollector.sample() },
+            // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。
+            backendsProvider = { serverDirectory.backendServerIds().toList() },
         )
         lifecycle = assembled.lifecycle
 
@@ -139,7 +143,7 @@ object BeaconAgentBungee : Plugin() {
         BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
         val directorySyncer = ProxyServerDirectorySyncer(
-            directory = BungeeServerDirectory(),
+            directory = serverDirectory,
             warn = { adapter.warn(it) },
         ) {
             assembled.beaconAgent.discovery().query(

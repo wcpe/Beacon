@@ -49,6 +49,9 @@ class AgentLifecycle(
     // 运行指标供给（FR-32）：上报时取当前一帧负载指标（人数 / TPS / 内存 / CPU）；
     // 默认零指标（向后兼容旧行为）；壳层注入平台采集实现以上报真值。
     private val metricsProvider: RuntimeMetricsProvider = { RuntimeMetrics.ZERO },
+    // 后端归属供给（FR-36）：注册/上报时取本机（仅 bc 代理）当前代理的后端子服 serverId 集合；
+    // 默认空集（bukkit / 旧行为，不上报 backends）；bungee 壳层注入 ProxyServerDirectory 读取。
+    private val backendsProvider: () -> List<String> = { emptyList() },
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -287,7 +290,7 @@ class AgentLifecycle(
 
     private fun doRegister() {
         state.set(AgentState.REGISTERING)
-        when (val outcome = apiClient.register(identity)) {
+        when (val outcome = apiClient.register(identity, currentBackends())) {
             is RegisterOutcome.Success -> onRegisterSuccess(outcome.result)
             is RegisterOutcome.DuplicateServerId -> {
                 adapter.error("注册被拒：重复的 serverId（${identity.serverId}），请检查部署是否冲突", null)
@@ -456,6 +459,7 @@ class AgentLifecycle(
             memUsed = metrics.memUsed,
             memMax = metrics.memMax,
             cpuLoad = metrics.cpuLoad,
+            backends = currentBackends(),
         )
         if (!ok) {
             adapter.warn("上报 applied 状态失败（不影响有效配置生效）")
@@ -469,6 +473,16 @@ class AgentLifecycle(
         } catch (e: Exception) {
             adapter.warn("采集运行指标失败，本次按零指标上报：${e.message}")
             RuntimeMetrics.ZERO
+        }
+    }
+
+    /** 取当前后端归属集合（FR-36）；供给抛异常时回退空集，绝不让注册/上报因采集失败而中断。 */
+    private fun currentBackends(): List<String> {
+        return try {
+            backendsProvider()
+        } catch (e: Exception) {
+            adapter.warn("采集后端归属集合失败，本次按空集上报：${e.message}")
+            emptyList()
         }
     }
 

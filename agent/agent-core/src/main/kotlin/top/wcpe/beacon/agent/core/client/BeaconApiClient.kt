@@ -77,19 +77,26 @@ class BeaconApiClient(
         return h
     }
 
-    /** 注册：POST /beacon/v1/agent/register。 */
-    fun register(identity: AgentIdentity): RegisterOutcome {
-        val body = mapOf(
-            "namespace" to identity.namespace,
-            "serverId" to identity.serverId,
-            "role" to identity.role,
-            "groupHint" to identity.groupHint,
-            "address" to identity.address,
-            "version" to identity.version,
-            "capacity" to identity.capacity,
-            "weight" to identity.weight,
-            "metadata" to identity.metadata,
-        )
+    /**
+     * 注册：POST /beacon/v1/agent/register。
+     *
+     * backends 为本机（仅 bc 代理）当前代理的后端子服 serverId 集合（FR-36 事实，非身份），
+     * 由调用方按帧传入；仅当非空时才拼入报文（bukkit / 旧控制面下为空、不拼，向后兼容）。
+     */
+    fun register(identity: AgentIdentity, backends: List<String> = emptyList()): RegisterOutcome {
+        val body = buildMap {
+            put("namespace", identity.namespace)
+            put("serverId", identity.serverId)
+            put("role", identity.role)
+            put("groupHint", identity.groupHint)
+            put("address", identity.address)
+            put("version", identity.version)
+            put("capacity", identity.capacity)
+            put("weight", identity.weight)
+            put("metadata", identity.metadata)
+            // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
+            if (backends.isNotEmpty()) put("backends", backends)
+        }
         val resp = exec(
             HttpRequest(
                 method = "POST",
@@ -177,6 +184,9 @@ class BeaconApiClient(
      * playerCount / tps / memUsed / memMax / cpuLoad 均为「负载数字（健康事实）」，仅供控制面看板展示、
      * 不参与调度决策（FR-32 / ADR-0023）。新增 memUsed/memMax/cpuLoad 三键为附加字段，
      * 旧控制面忽略即可，向后兼容。cpuLoad 取不到时上报 -1.0（不可用），由控制面判定。
+     *
+     * backends 为本机（仅 bc 代理）当前代理的后端子服 serverId 集合（FR-36 事实），随上报刷新；
+     * 仅当非空时才拼入报文（bukkit / 旧控制面下为空、不拼，向后兼容）。
      */
     fun report(
         identity: AgentIdentity,
@@ -186,18 +196,21 @@ class BeaconApiClient(
         memUsed: Long,
         memMax: Long,
         cpuLoad: Double,
+        backends: List<String> = emptyList(),
     ): Boolean {
-        val body = mapOf(
-            "namespace" to identity.namespace,
-            "serverId" to identity.serverId,
-            "appliedMd5" to appliedMd5,
-            "playerCount" to playerCount,
-            "tps" to tps,
+        val body = buildMap {
+            put("namespace", identity.namespace)
+            put("serverId", identity.serverId)
+            put("appliedMd5", appliedMd5)
+            put("playerCount", playerCount)
+            put("tps", tps)
             // 新增：JVM 已用 / 最大堆字节与进程 CPU 负载（键名固定供控制面对齐）。
-            "memUsed" to memUsed,
-            "memMax" to memMax,
-            "cpuLoad" to cpuLoad,
-        )
+            put("memUsed", memUsed)
+            put("memMax", memMax)
+            put("cpuLoad", cpuLoad)
+            // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
+            if (backends.isNotEmpty()) put("backends", backends)
+        }
         val resp = exec(
             HttpRequest(
                 method = "POST",

@@ -64,6 +64,9 @@ object AgentAssembly {
         // 运行指标供给（FR-32）：壳层注入平台采集实现（人数 / TPS + JVM 内存 / CPU）以上报真值；
         // 默认零指标（未注入时向后兼容旧行为）。
         metricsProvider: RuntimeMetricsProvider = { RuntimeMetrics.ZERO },
+        // 后端归属供给（FR-36）：bungee 壳层注入 ProxyServerDirectory 读取「当前代理的后端 serverId 集合」；
+        // 默认空集（bukkit / 未注入时不上报 backends，向后兼容）。
+        backendsProvider: () -> List<String> = { emptyList() },
     ): AssembledAgent {
         val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
@@ -140,6 +143,8 @@ object AgentAssembly {
             topologyListener = { topologyWatchHub.fireTopologyChanged() },
             // 运行指标供给（FR-32）：上报时取当前一帧负载指标。
             metricsProvider = metricsProvider,
+            // 后端归属供给（FR-36）：注册/上报时取当前代理的后端 serverId 集合。
+            backendsProvider = backendsProvider,
         )
 
         // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；

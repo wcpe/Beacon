@@ -91,5 +91,8 @@ class ProxyServerDirectorySyncerTest {
             managed.remove(serverId)
             addresses.remove(serverId)
         }
+
+        // 后端集合（FR-36）：本测桩取手工 + 受管并集，对齐真实代理「目录全部 keys」语义。
+        override fun backendServerIds(): Set<String> = (manual + managed).toSet()
     }
 }

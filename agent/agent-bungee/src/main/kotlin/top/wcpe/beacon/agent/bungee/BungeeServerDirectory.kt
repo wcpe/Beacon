@@ -34,6 +34,15 @@ class BungeeServerDirectory : ProxyServerDirectory {
         ProxyServer.getInstance().servers.remove(serverId)
     }
 
+    /**
+     * 当前代理已知的全部后端子服 serverId 集合（FR-36）：取 BungeeCord 服务器目录 keys，
+     * 含 Beacon 注入与手工配置的子服——即本代理「实际能转发到」的后端事实，供拓扑连线消费。
+     * 返回防御性副本，避免外部修改代理目录视图。
+     */
+    override fun backendServerIds(): Set<String> {
+        return ProxyServer.getInstance().servers.keys.toSet()
+    }
+
     private fun parseAddress(raw: String): InetSocketAddress? {
         val idx = raw.lastIndexOf(':')
         if (idx <= 0 || idx == raw.length - 1) return null
