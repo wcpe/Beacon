@@ -63,6 +63,40 @@ func TestInsertBatchAndRoundTrip(t *testing.T) {
 	}
 }
 
+// TestInsertBatchBCColumnsRoundTrip 验证 BC 专属可空列经 GORM 抽象往返无损（FR-34，DB 可移植）。
+func TestInsertBatchBCColumnsRoundTrip(t *testing.T) {
+	r := NewMetricSampleRepository(newMetricTestDB(t))
+	at := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	samples := []model.MetricSample{
+		// bc 行：BC 字段有真值。
+		{Namespace: "prod", ServerID: "bc-1", Role: "bungee", SampledAt: at, PlayerCount: 50,
+			ProxyConn: 128, ThreadCount: 64, UptimeMs: 3600000, BackendUp: 3, BackendTotal: 4, BackendAvgLatencyMs: 12.5},
+		// bukkit 行：BC 字段恒为默认 0（采样器照写不特判）。
+		{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit", SampledAt: at, PlayerCount: 7, TPS: 20.0},
+	}
+	if err := r.InsertBatch(samples); err != nil {
+		t.Fatalf("批量插入失败: %v", err)
+	}
+
+	got, err := r.Query("prod", "", at.Add(-time.Minute), at.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	byServer := map[string]model.MetricSample{}
+	for _, s := range got {
+		byServer[s.ServerID] = s
+	}
+	bc := byServer["bc-1"]
+	if bc.ProxyConn != 128 || bc.ThreadCount != 64 || bc.UptimeMs != 3600000 ||
+		bc.BackendUp != 3 || bc.BackendTotal != 4 || bc.BackendAvgLatencyMs != 12.5 {
+		t.Fatalf("bc-1 BC 列往返错误：%+v", bc)
+	}
+	// bukkit 行的 BC 列应为默认 0（既有行兼容语义）。
+	if bk := byServer["lobby-1"]; bk.ProxyConn != 0 || bk.ThreadCount != 0 || bk.BackendTotal != 0 {
+		t.Fatalf("bukkit 行 BC 列应为默认 0，实际 %+v", bk)
+	}
+}
+
 // TestInsertBatchEmptyNoop 空批不触发写入也不报错（采样无在线实例时的安全路径）。
 func TestInsertBatchEmptyNoop(t *testing.T) {
 	r := NewMetricSampleRepository(newMetricTestDB(t))
