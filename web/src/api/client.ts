@@ -262,6 +262,17 @@ export interface ServerPlayers {
   playerCount: number
 }
 
+// bc（bungee 代理）维度聚合（与后端 bcSummaryView 对齐，FR-34）。仅负载数字，不含名单。
+// avgBackendLatencyMs < 0（约定 -1）表示无可用后端延迟样本。
+export interface BCSummary {
+  proxyCount: number
+  totalConnections: number
+  avgThreadCount: number
+  backendUp: number
+  backendTotal: number
+  avgBackendLatencyMs: number
+}
+
 // 当前快照聚合视图（与后端 summaryView 对齐）
 // avgMemUsed / avgMemMax 单位为字节；avgCpuLoad < 0（约定 -1）表示无可用 CPU 样本。
 export interface MetricsSummary {
@@ -273,6 +284,8 @@ export interface MetricsSummary {
   avgMemMax: number
   avgCpuLoad: number
   cpuSampleCount: number
+  // bc 代理维度聚合（FR-34）；无 bc 实例时各计数为 0、平均延迟为 -1。
+  bc: BCSummary
 }
 
 export function metricsSummary(namespace?: string): Promise<MetricsSummary> {

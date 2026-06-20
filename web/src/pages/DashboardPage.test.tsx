@@ -48,6 +48,14 @@ const SUMMARY: MetricsSummary = {
   avgMemMax: 536870912, // 512 MB
   avgCpuLoad: 0.4,
   cpuSampleCount: 1,
+  bc: {
+    proxyCount: 2,
+    totalConnections: 150,
+    avgThreadCount: 48,
+    backendUp: 3,
+    backendTotal: 4,
+    avgBackendLatencyMs: 12,
+  },
 }
 
 // 趋势样例：两个时间序列点
@@ -158,6 +166,43 @@ describe('DashboardPage', () => {
     expect(await screen.findByText('lobby-1')).toBeInTheDocument()
     expect(screen.getByText('pvp-2')).toBeInTheDocument()
     expect(screen.getByText('每服明细')).toBeInTheDocument()
+  })
+
+  it('渲染 BC 代理面板（代理数 / 连接 / 线程 / 后端可达性 / 延迟）', async () => {
+    renderPage(<DashboardPage />)
+    expect(await screen.findByText('BC 代理')).toBeInTheDocument()
+    expect(screen.getByText('在线 BC 代理数')).toBeInTheDocument()
+    expect(screen.getByText('代理总连接数')).toBeInTheDocument()
+    expect(screen.getByText('平均线程数')).toBeInTheDocument()
+    expect(screen.getByText('后端可达性')).toBeInTheDocument()
+    expect(screen.getByText('平均后端延迟')).toBeInTheDocument()
+    // 连接总数与后端可达率按数据渲染
+    expect(screen.getByText('150')).toBeInTheDocument()
+    expect(screen.getByText('3 / 4')).toBeInTheDocument()
+    expect(screen.getByText('75% 可达')).toBeInTheDocument()
+    expect(screen.getByText('12 ms')).toBeInTheDocument()
+  })
+
+  it('BC 平均延迟 < 0 时展示「不可用」', async () => {
+    vi.mocked(metricsSummary).mockResolvedValue({
+      ...SUMMARY,
+      bc: { ...SUMMARY.bc, avgBackendLatencyMs: -1 },
+    })
+    renderPage(<DashboardPage />)
+    await screen.findByText('BC 代理')
+    expect(screen.getByText('不可用')).toBeInTheDocument()
+    expect(screen.getByText('无可达后端样本')).toBeInTheDocument()
+  })
+
+  it('BC 无后端时后端可达性展示「无后端」', async () => {
+    vi.mocked(metricsSummary).mockResolvedValue({
+      ...SUMMARY,
+      bc: { ...SUMMARY.bc, backendUp: 0, backendTotal: 0, avgBackendLatencyMs: -1 },
+    })
+    renderPage(<DashboardPage />)
+    await screen.findByText('BC 代理')
+    expect(screen.getByText('无后端')).toBeInTheDocument()
+    expect(screen.getByText('该代理未配置后端')).toBeInTheDocument()
   })
 
   it('不渲染任何玩家名单 / 身份字段（边界守护）', async () => {

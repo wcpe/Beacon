@@ -8,6 +8,7 @@ import { metricsSummary, metricsTrend } from '../api/client'
 import type { TrendWindow } from '../api/client'
 import { formatBytes } from '../api/format'
 import SummaryCards from './dashboard/SummaryCards'
+import BCPanel from './dashboard/BCPanel'
 import TrendChart from './dashboard/TrendChart'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
@@ -102,6 +103,20 @@ export default function DashboardPage() {
       >
         {summaryQuery.data && <SummaryCards summary={summaryQuery.data} />}
       </AsyncSection>
+
+      {/* BC 代理面板（FR-34）：按角色分流展示 bc 专属指标，bukkit 视图不受影响 */}
+      <Card>
+        <CardContent className="space-y-3">
+          <div className="text-base font-medium">BC 代理</div>
+          <AsyncSection
+            isLoading={summaryQuery.isLoading}
+            isError={summaryQuery.isError}
+            error={summaryQuery.error}
+          >
+            {summaryQuery.data && <BCPanel bc={summaryQuery.data.bc} />}
+          </AsyncSection>
+        </CardContent>
+      </Card>
 
       {/* 趋势图：时间窗切换 + 四指标折线 */}
       <Card>
