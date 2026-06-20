@@ -16,6 +16,7 @@ import (
 	"beacon/internal/metrics"
 	"beacon/internal/repository"
 	"beacon/internal/runtime"
+	"beacon/internal/runtime/alert"
 	"beacon/internal/runtime/longpoll"
 	"beacon/internal/server"
 	"beacon/internal/service"
@@ -31,6 +32,9 @@ const (
 
 // adminToken 缓存登录后获得的管理台令牌，供 doJSON 自动携带（admin 端已挂鉴权中间件）。
 var adminToken string
+
+// testAlertInbox 暴露当前测试服的站内信通道，供告警端点测试直接投递一条告警再经 HTTP 读回。
+var testAlertInbox *alert.InboxAlerter
 
 // newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
 func newTestServer(t *testing.T) *httptest.Server {
@@ -61,6 +65,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	ovrSetSvc := service.NewOverrideSetService(db, overrideSetRepo, repository.NewFileOverrideSetRevisionRepository(db), fileRepo, auditRepo)
+	schedSvc := service.NewSchedulingService(db, repository.NewServerDrainRepository(db), auditRepo, registry)
+	testAlertInbox = alert.NewInboxAlerter(16)
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
@@ -85,7 +91,9 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Stream:      handler.NewStreamHandler(instSvc, streamSvc),
 		Instance:    handler.NewInstanceHandler(instSvc),
 		Zone:        handler.NewZoneHandler(zoneSvc),
+		Scheduling:  handler.NewSchedulingHandler(schedSvc),
 		Audit:       handler.NewAuditHandler(service.NewAuditService(auditRepo)),
+		Alert:       handler.NewAlertHandler(testAlertInbox),
 		Metric:      handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:        handler.NewAuthHandler(authn),
 		Metrics:     metricsSet.Handler(),
