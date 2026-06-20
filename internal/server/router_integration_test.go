@@ -53,7 +53,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
-	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(repository.NewNamespaceRepository(db)))
+	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(db, repository.NewNamespaceRepository(db), auditRepo))
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	instSvc := service.NewInstanceService(registry, assignRepo, auditRepo, 10*time.Second, 30*time.Second)
@@ -95,7 +95,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Audit:       handler.NewAuditHandler(service.NewAuditService(auditRepo)),
 		Alert:       handler.NewAlertHandler(testAlertInbox),
 		Metric:      handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
-		Auth:        handler.NewAuthHandler(authn),
+		Auth:        handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		Metrics:     metricsSet.Handler(),
 		Web:         http.HandlerFunc(http.NotFound),
 	}, agentToken, authn)

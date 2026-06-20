@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"beacon/internal/apperr"
+	"beacon/internal/auth"
 	"beacon/internal/render"
 	"beacon/internal/service"
 )
@@ -53,7 +54,7 @@ func (h *NamespaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	ns, err := h.svc.Create(req.Code, req.Name)
+	ns, err := h.svc.Create(req.Code, req.Name, auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

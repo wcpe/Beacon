@@ -19,6 +19,11 @@ func NewNamespaceRepository(db *gorm.DB) *NamespaceRepository {
 	return &NamespaceRepository{db: db}
 }
 
+// WithTx 返回绑定到事务的仓库副本。
+func (r *NamespaceRepository) WithTx(tx *gorm.DB) *NamespaceRepository {
+	return &NamespaceRepository{db: tx}
+}
+
 // List 返回全部环境（按 code 升序）。
 func (r *NamespaceRepository) List() ([]model.Namespace, error) {
 	var items []model.Namespace

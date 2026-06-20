@@ -81,8 +81,9 @@ func run() error {
 	defer store.Close(db)
 
 	// 装配：repository → service → handler（手工注入，不引 DI 框架）
+	auditRepo := repository.NewAuditLogRepository(db)
 	nsRepo := repository.NewNamespaceRepository(db)
-	nsService := service.NewNamespaceService(nsRepo)
+	nsService := service.NewNamespaceService(db, nsRepo, auditRepo)
 	if err := nsService.SeedDefaults(); err != nil {
 		return err
 	}
@@ -98,7 +99,6 @@ func run() error {
 	configRepo := repository.NewConfigItemRepository(db, configCipher)
 	revRepo := repository.NewConfigRevisionRepository(db, configCipher)
 	grayRepo := repository.NewConfigGrayRepository(db, configCipher)
-	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	// 配置灰度 / Beta（FR-9）：复用 configService 发布路径完成 promote，敏感灰度走同一加密边界
@@ -203,7 +203,7 @@ func run() error {
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
 	alertHandler := handler.NewAlertHandler(inbox)
-	authHandler := handler.NewAuthHandler(authn)
+	authHandler := handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo))
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")

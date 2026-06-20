@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +97,72 @@ func TestLoginThenAuthorized(t *testing.T) {
 	code, _ = doRaw(t, http.MethodGet, ts.URL+"/admin/v1/namespaces", token, nil)
 	if code != http.StatusOK {
 		t.Fatalf("携带有效令牌读端点应 200，实际 %d", code)
+	}
+}
+
+// TestLoginAudited 守护 FR-7/FR-30：登录成功必产一条 auth.login 审计，
+// operator 为登录用户、detail 严禁含口令 / 令牌。
+func TestLoginAudited(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// newTestServer 已登录一次；再显式登录一次以确保有可查审计。
+	code, body := doRaw(t, http.MethodPost, ts.URL+"/admin/v1/auth/login", "", map[string]any{
+		"username": testAuthUser, "password": testAuthPass,
+	})
+	if code != http.StatusOK {
+		t.Fatalf("登录应 200，实际 %d：%v", code, body)
+	}
+
+	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?action=auth.login", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查 auth.login 审计应 200，实际 %d", code)
+	}
+	items, _ := audits["items"].([]any)
+	if len(items) == 0 {
+		t.Fatal("应有 auth.login 审计，实际无")
+	}
+	first, _ := items[0].(map[string]any)
+	if op, _ := first["operator"].(string); op != testAuthUser {
+		t.Fatalf("auth.login 审计 operator 应为 %q，实际 %q", testAuthUser, op)
+	}
+	assertAuditNoSecret(t, first)
+}
+
+// TestLogoutAudited 守护 FR-7/FR-30：登出端点产一条 auth.logout 审计（operator 为认证身份）。
+func TestLogoutAudited(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// 登出（携带 newTestServer 登录所得令牌）。
+	code, _ := doRaw(t, http.MethodPost, ts.URL+"/admin/v1/auth/logout", adminToken, nil)
+	if code != http.StatusNoContent {
+		t.Fatalf("登出应 204，实际 %d", code)
+	}
+
+	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?action=auth.logout", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查 auth.logout 审计应 200，实际 %d", code)
+	}
+	items, _ := audits["items"].([]any)
+	if len(items) == 0 {
+		t.Fatal("应有 auth.logout 审计，实际无")
+	}
+	first, _ := items[0].(map[string]any)
+	if op, _ := first["operator"].(string); op != testAuthUser {
+		t.Fatalf("auth.logout 审计 operator 应为认证身份 %q，实际 %q", testAuthUser, op)
+	}
+	assertAuditNoSecret(t, first)
+}
+
+// assertAuditNoSecret 断言审计 detail 不泄露口令 / 令牌（FR-11 安全底线）。
+func assertAuditNoSecret(t *testing.T, audit map[string]any) {
+	t.Helper()
+	detail, _ := audit["detail"].(string)
+	for _, secret := range []string{testAuthPass, "password", "token"} {
+		if strings.Contains(detail, secret) {
+			t.Fatalf("审计 detail 不得含敏感字样 %q，实际 detail=%q", secret, detail)
+		}
 	}
 }
 

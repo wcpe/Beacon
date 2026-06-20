@@ -3,6 +3,9 @@ package service
 
 import (
 	"log/slog"
+	"strconv"
+
+	"gorm.io/gorm"
 
 	"beacon/internal/apperr"
 	"beacon/internal/model"
@@ -11,12 +14,14 @@ import (
 
 // NamespaceService 编排环境（namespace）相关的业务逻辑。
 type NamespaceService struct {
-	repo *repository.NamespaceRepository
+	db        *gorm.DB
+	repo      *repository.NamespaceRepository
+	auditRepo *repository.AuditLogRepository
 }
 
 // NewNamespaceService 构造服务。
-func NewNamespaceService(repo *repository.NamespaceRepository) *NamespaceService {
-	return &NamespaceService{repo: repo}
+func NewNamespaceService(db *gorm.DB, repo *repository.NamespaceRepository, auditRepo *repository.AuditLogRepository) *NamespaceService {
+	return &NamespaceService{db: db, repo: repo, auditRepo: auditRepo}
 }
 
 // List 返回全部环境。
@@ -25,7 +30,8 @@ func (s *NamespaceService) List() ([]model.Namespace, error) {
 }
 
 // Create 新建环境；编码为空返回参数错误，同名返回冲突。
-func (s *NamespaceService) Create(code, name string) (*model.Namespace, error) {
+// 环境写入与审计在同一事务内原子完成（FR-7/FR-30）。
+func (s *NamespaceService) Create(code, name, operator, clientIP string) (*model.Namespace, error) {
 	if code == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -37,10 +43,24 @@ func (s *NamespaceService) Create(code, name string) (*model.Namespace, error) {
 		return nil, apperr.ErrNamespaceConflict
 	}
 	ns := &model.Namespace{Code: code, Name: name}
-	if err := s.repo.Create(ns); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.WithTx(tx).Create(ns); err != nil {
+			return err
+		}
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			NamespaceCode: ns.Code,
+			Operator:      operator,
+			Action:        model.ActionNamespaceCreate,
+			TargetType:    model.TargetTypeNamespace,
+			TargetRef:     ns.Code,
+			Detail:        `{"name":` + strconv.Quote(name) + `}`,
+			Result:        model.ResultOK,
+			ClientIP:      clientIP,
+		})
+	}); err != nil {
 		return nil, err
 	}
-	slog.Info("新建环境", "code", code, "name", name)
+	slog.Info("新建环境", "code", code, "name", name, "operator", operator)
 	return ns, nil
 }
 

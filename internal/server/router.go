@@ -62,6 +62,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator) http.Ha
 	// admin 侧：除登录外一律校验登录令牌
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Use(adminAuthMiddleware(authn))
+		// 登出：仅记审计（令牌无状态、服务端无会话可吊销），故挂在鉴权中间件内以取认证身份
+		r.Post("/auth/logout", h.Auth.Logout)
 		r.Get("/namespaces", h.Namespace.List)
 		r.Post("/namespaces", h.Namespace.Create)
 

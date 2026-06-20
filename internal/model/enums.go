@@ -48,6 +48,11 @@ const (
 	// 流量调度（FR-10，drain 排空 / 维护标记，见 ADR-0017）
 	ActionSchedulingDrain   = "scheduling.drain"
 	ActionSchedulingUndrain = "scheduling.undrain"
+	// 环境（namespace）写操作（FR-7/FR-30）
+	ActionNamespaceCreate = "namespace.create"
+	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
+	ActionAuthLogin  = "auth.login"
+	ActionAuthLogout = "auth.logout"
 )
 
 // 审计对象类型。
@@ -57,6 +62,9 @@ const (
 	TargetTypeZone        = "zone"
 	TargetTypeFile        = "file"
 	TargetTypeOverrideSet = "override-set"
+	TargetTypeNamespace   = "namespace"
+	// 认证会话（登录 / 登出）的审计对象类型
+	TargetTypeAuth = "auth"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
