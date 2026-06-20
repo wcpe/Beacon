@@ -18,6 +18,7 @@ import type {
   PublishResult,
   RevisionView,
   SystemStatusView,
+  TopologyView,
   ZoneStatView,
 } from './types'
 import { clearAuth, currentToken } from '../state/auth'
@@ -251,6 +252,12 @@ export function offlineInstance(serverId: string, namespace: string): Promise<vo
   return request<void>(`/instances/${encodeURIComponent(serverId)}/offline${qs({ namespace })}`, {
     method: 'POST',
   })
+}
+
+// ===== 集群拓扑（FR-37）=====
+// 读控制面内存注册表快照：节点（在线实例）+ bc→bukkit 真实连线 + 大区/zone 分组。namespace 必填。
+export function getTopology(namespace: string): Promise<TopologyView> {
+  return request<TopologyView>(`/topology${qs({ namespace })}`)
 }
 
 // ===== 指标看板（FR-32，见 docs/API.md 指标看板小节）=====

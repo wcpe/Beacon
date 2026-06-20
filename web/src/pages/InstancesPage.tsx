@@ -8,6 +8,7 @@ import type { InstanceFilter } from '../api/client'
 import type { InstanceView } from '../api/types'
 import { formatTime } from '../api/format'
 import StatusBadge from '../components/StatusBadge'
+import RoleBadge from '../components/RoleBadge'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
@@ -104,7 +105,7 @@ export default function InstancesPage() {
   const columns: DataTableColumn<InstanceView>[] = [
     { header: 'serverId', className: 'font-mono', cell: (i) => i.serverId },
     { header: '环境', cell: (i) => i.namespace },
-    { header: '角色', cell: (i) => i.role },
+    { header: '角色', cell: (i) => <RoleBadge role={i.role} /> },
     { header: '大区', cell: (i) => i.group },
     {
       header: '小区',
@@ -242,7 +243,9 @@ export default function InstancesPage() {
                 <dt className="text-muted-foreground">环境</dt>
                 <dd>{selectedInstance.namespace}</dd>
                 <dt className="text-muted-foreground">角色</dt>
-                <dd>{selectedInstance.role}</dd>
+                <dd>
+                  <RoleBadge role={selectedInstance.role} />
+                </dd>
                 <dt className="text-muted-foreground">大区</dt>
                 <dd>{selectedInstance.group}</dd>
                 <dt className="text-muted-foreground">小区</dt>

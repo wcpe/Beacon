@@ -69,7 +69,42 @@ export interface InstanceView {
   appliedMd5: string
   playerCount: number
   tps: number
+  // bc（bungee）当前代理的后端子服 serverId 集合（仅 bc 非空、bukkit 恒空，FR-36）；供拓扑连线消费
+  backends: string[]
   registeredAt: string
+}
+
+// ===== 集群拓扑（FR-37）=====
+
+// 拓扑节点（一个在线实例；zone 未分配时为 null）
+export interface TopologyNode {
+  serverId: string
+  role: string
+  group: string
+  zone: string | null
+  status: string
+  address: string
+}
+
+// bc→bukkit 连线（source/target 均为 serverId）
+export interface TopologyEdge {
+  source: string
+  target: string
+}
+
+// 大区 / zone 分组（zone 未分配时为 null）
+export interface TopologyGroup {
+  group: string
+  zone: string | null
+  members: string[]
+}
+
+// 拓扑快照返回体（对齐 internal/handler/topology_handler.go topologyView）
+export interface TopologyView {
+  namespace: string
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+  groups: TopologyGroup[]
 }
 
 // zone 指派视图

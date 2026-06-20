@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import ConfigsPage from './pages/ConfigsPage'
 import InstancesPage from './pages/InstancesPage'
+import TopologyPage from './pages/TopologyPage'
 import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
 import NamespacesPage from './pages/NamespacesPage'
@@ -41,6 +42,8 @@ export default function App() {
           <Route path="override-sets" element={<Navigate to="/configs" replace />} />
           <Route path="override-sets/:id" element={<Navigate to="/configs" replace />} />
           <Route path="instances" element={<InstancesPage />} />
+          {/* 集群拓扑可视化（FR-37）：bc→bukkit 真实连线图 */}
+          <Route path="topology" element={<TopologyPage />} />
           <Route path="zones" element={<ZonesPage />} />
           <Route path="audits" element={<AuditsPage />} />
           <Route path="namespaces" element={<NamespacesPage />} />
