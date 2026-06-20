@@ -1,7 +1,7 @@
 package service
 
 import (
-	"strconv"
+	"encoding/json"
 
 	"beacon/internal/model"
 	"beacon/internal/repository"
@@ -31,12 +31,13 @@ func (s *AuthAuditService) RecordLogout(operator, clientIP string) error {
 
 // record 追加一条认证会话审计（namespace 留空——认证为全局操作）。
 func (s *AuthAuditService) record(operator, action, clientIP string) error {
+	detail, _ := json.Marshal(map[string]string{"operator": operator})
 	return s.auditRepo.Create(&model.AuditLog{
 		Operator:   operator,
 		Action:     action,
 		TargetType: model.TargetTypeAuth,
 		TargetRef:  operator,
-		Detail:     `{"operator":` + strconv.Quote(operator) + `}`,
+		Detail:     string(detail),
 		Result:     model.ResultOK,
 		ClientIP:   clientIP,
 	})

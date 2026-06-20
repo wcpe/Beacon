@@ -2,8 +2,8 @@
 package service
 
 import (
+	"encoding/json"
 	"log/slog"
-	"strconv"
 
 	"gorm.io/gorm"
 
@@ -43,6 +43,7 @@ func (s *NamespaceService) Create(code, name, operator, clientIP string) (*model
 		return nil, apperr.ErrNamespaceConflict
 	}
 	ns := &model.Namespace{Code: code, Name: name}
+	detail, _ := json.Marshal(map[string]string{"name": name})
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.repo.WithTx(tx).Create(ns); err != nil {
 			return err
@@ -53,7 +54,7 @@ func (s *NamespaceService) Create(code, name, operator, clientIP string) (*model
 			Action:        model.ActionNamespaceCreate,
 			TargetType:    model.TargetTypeNamespace,
 			TargetRef:     ns.Code,
-			Detail:        `{"name":` + strconv.Quote(name) + `}`,
+			Detail:        string(detail),
 			Result:        model.ResultOK,
 			ClientIP:      clientIP,
 		})
