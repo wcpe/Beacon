@@ -261,7 +261,7 @@ data: {}
 | `GET /admin/v1/files/{id}/revisions/{version}` | 取某历史版本内容 |
 | `POST /admin/v1/files/{id}/rollback` | 回滚：`{ toVersion, comment }`（operator 由认证态派生） |
 
-错误：文件不存在 `404 FILE_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 FILE_CONFLICT`；路径不合法（空 / 绝对路径 / 含 `..` 穿越 / 含反斜杠 / **顶段为 agent 自身 plugin 数据目录**：`BeaconAgent` 或 `BeaconAgentProxy`，杜绝运维误把 `BeaconAgent/config.yml` 之类 agent 自管文件经文件树或导入塞进有效树后覆写 agent 自身身份/快照）`400 INVALID_PATH`；内容超长（> 1MB）`422 CONTENT_TOO_LARGE`；覆盖层/目标键不合法 `400 INVALID_SCOPE`。导入（`/files/import`）另有：缺 `namespace`/`group`/文件，或 `paths` 与 `files` 数量不一致 `400 INVALID_PARAM`；目标组非法（如填全局组）`400 INVALID_SCOPE`；单次文件数超上限 `422 TOO_MANY_FILES`；单文件或累计总字节超上限 `422 CONTENT_TOO_LARGE`。
+错误：文件不存在 `404 FILE_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 FILE_CONFLICT`；路径不合法（空 / 绝对路径 / 含 `..` 穿越 / 含反斜杠）`400 INVALID_PATH`（agent 自身目录 `BeaconAgent` / `BeaconAgentProxy` 顶段**不再拦截**、可托管，自我保护由 agent observe-only 兜底，见 [ADR-0028](adr/0028-allow-hosting-agent-self-dir.md)）；内容超长（> 1MB）`422 CONTENT_TOO_LARGE`；覆盖层/目标键不合法 `400 INVALID_SCOPE`。导入（`/files/import`）另有：缺 `namespace`/`group`/文件，或 `paths` 与 `files` 数量不一致 `400 INVALID_PARAM`；目标组非法（如填全局组）`400 INVALID_SCOPE`；单次文件数超上限 `422 TOO_MANY_FILES`；单文件或累计总字节超上限 `422 CONTENT_TOO_LARGE`。
 
 ### 实例与健康
 | 端点 | 说明 |

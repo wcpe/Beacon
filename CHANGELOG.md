@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 修复
+- 配置导入·上传 / 反向抓取含 agent 自身目录被整批拒绝（FR-38 / FR-39 归真，方案 D，见 [ADR-0028](docs/adr/0028-allow-hosting-agent-self-dir.md)）：真机 E2E 暴露——agent 反向抓取读盘必然带上自己的 `plugins/BeaconAgent/`（含 `config.yml` / 快照等），这些被 ingest 上传后命中控制面 `normalizePath` 的保留目录闸（commit `e7a0517` 引入），而 `FileService.Import` 是"任一不合法即整批拒绝"→ 整个 ingest `400 INVALID_PATH`、命令转 `failed`、零文件落库，**反向抓取对任何装了 agent 的在线服 100% 失效**；上传一份含自身目录的真实 `plugins/` 同样整批被拒。修复：**放开控制面 `normalizePath` 对 `BeaconAgent` / `BeaconAgentProxy` 顶段的拦截**（FR-41 env 注入已使 `config.yml` 非身份真源、托管自身目录无身份污染），自我保护下沉到 agent 侧唯一一道 observe-only 闸——`FileTreeApplier` 对自身目录顶段只观测不写回（不取 / 不写 / 不删，但写入 applied 清单视为已收敛避免 churn，commit `dcbbd94` 已在）；穿越 / 绝对 / 反斜杠 / 空仍硬拒（落盘逃逸边界不退化）。一处后端改动同修 FR-38 + FR-39，无需改 agent / 前端、无需重打 jar（详见 [docs/specs/file-tree-hosting.md](docs/specs/file-tree-hosting.md) §3.1）。
+
 ## 0.7.0（2026-06-22）
 
 ### 新增

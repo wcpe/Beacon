@@ -20,13 +20,13 @@
 - 分层：`repository.FileObjectRepository` / `FileRevisionRepository` → `service.FileService`（事务内 object+revision+audit 原子）+ `service.FileEffectiveService`（解析 + 长轮询）→ `handler.FileHandler`（admin）/ agent 端点。
 - 长轮询：复用 `longpoll.Hub`，新增独立 Hub 实例供文件通道，避免与配置唤醒集合互相触发；`ChangeNotifier` 增 `NotifyFileChange`。
 
-### 3.1 受保护路径（防 agent 自我污染）
-通道B 的镜像落盘根 = `plugins/`，且 FR-38 导入端点接受任意合法相对 `path`。若运维误把 `BeaconAgent/config.yml`（或 bungee 的 `BeaconAgentProxy/*`、`effective-config.snapshot.json` 等）放进上传/导入目录，下游 agent 会按相对路径覆写自身 dataFolder，污染身份/快照——而 FR-41 env 注入身份的设计前提是"agent 配置不被自己管"。两道闸闭环：
+### 3.1 受保护路径（防 agent 自我污染，方案 D：单闸 observe-only）
+通道B 的镜像落盘根 = `plugins/`，且 FR-38 导入 / FR-39 反向抓取接受任意合法相对 `path`。agent 反向抓取读盘必然带上自己的 `plugins/BeaconAgent/`（含 `config.yml` / `effective-config.snapshot.json` 等），若 agent 按相对路径把它覆写回自身 dataFolder 会污染身份/快照。**自我保护由 agent 侧单闸 observe-only 兜底，控制面不拦截自身目录**（[ADR-0028](../adr/0028-allow-hosting-agent-self-dir.md)）：
 
-- **控制面侧（入库前）**：`service.normalizePath` 把顶段为 `BeaconAgent` / `BeaconAgentProxy` 的 path 直接拒为 `INVALID_PATH`（FR-14 文件树发布与 FR-38 导入共用）。严格顶段相等，`BeaconAgentX/foo` 不命中。
-- **agent 侧（落盘前）**：`FileTreeApplier` 接受壳层注入的 `protectedSegments`（bukkit 注入 `BeaconAgent`、bungee 注入 `BeaconAgentProxy`，core 不硬编码），顶段命中即跳过该 path——不取内容、不写、不删，并打 WARN。即使旧版控制面、旁路导入或其他人为渠道把保护路径放进有效树，agent 仍自我兜底（守 ADR-0010 决策5 fail-static）。
+- **控制面侧（入库前）**：`service.normalizePath` **不再拦截** `BeaconAgent` / `BeaconAgentProxy` 顶段——自身目录可被托管/导入/反向抓取为事实（FR-41 env 注入已使 `config.yml` 非身份真源，无身份污染）。仅穿越（`..`）/ 绝对 / 反斜杠 / 空仍硬拒（落盘逃逸边界不退化）。此前那道控制面闸（commit `e7a0517`）会把含自身目录的整批 ingest 拒为 `INVALID_PATH` → FR-38/FR-39 对装了 agent 的在线服 100% 失效，故放开。
+- **agent 侧（落盘前，唯一自我保护闸）**：`FileTreeApplier` 接受壳层注入的 `protectedSegments`（bukkit 注入 `BeaconAgent`、bungee 注入 `BeaconAgentProxy`，core 不硬编码），顶段命中即 **observe-only**——不取内容、不写、不删，但仍写入 applied 清单、整轮视为已收敛（避免每轮重试 churn），并打 WARN。即"自身目录可被控制面托管为事实，但 agent 永不让它覆写自己的运行目录"（守 ADR-0010 决策5 fail-static）。严格顶段相等，`BeaconAgentX/foo` 不命中。
 
-两道闸独立生效，任一一道即可阻断；与 FR-41 env 注入身份相辅相成（env 兜身份事实跟机器走、保护路径兜本地 dataFolder 不被外部接管）。
+与 FR-41 env 注入身份相辅相成（env 兜身份事实跟机器走、observe-only 兜本地 dataFolder 不被外部接管）。
 
 ## 4. 任务拆分
 - [x] 数据模型 file_object / file_revision + AutoMigrate

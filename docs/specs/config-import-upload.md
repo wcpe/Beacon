@@ -1,6 +1,6 @@
 # 功能规格：配置导入（上传通道）
 
-> 状态：开发中　·　关联 PRD：FR-38　·　分支：feature/fr-38-import-upload
+> 状态：已交付@v0.6.0（v0.6.0 后回归：上传含 agent 自身目录被整批拒 → 方案 D 归真修复，见 [ADR-0028](../adr/0028-allow-hosting-agent-self-dir.md)）　·　关联 PRD：FR-38　·　分支：feature/fr-38-import-upload
 
 ## 1. 背景与目标
 FR-14 文件树托管（通道B）已提供整文件 blob 托管：`file_object` / `file_revision` + `FileService`（按相对 `path` 整文件覆盖、scope 覆盖链、manifest 增量同步）。但运维要把一份本地 `plugins` 目录批量托管时，只能在管理台逐个文件新建/发布，效率低。本功能让运维把一份目录从管理台一次性上传，落到指定「组（group）」的文件树，实现全局复用。属第二期（P2）。沿用 [ADR-0010](../adr/0010-file-tree-hosting-blob-channel.md)，无需新 ADR。

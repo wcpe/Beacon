@@ -180,6 +180,40 @@ func TestReceiveIngestServerScope(t *testing.T) {
 	}
 }
 
+// TestReceiveIngestAllowsAgentSelfDir 方案 D（FR-39 归真）回归：反向抓取回传含 agent 自身目录
+// （BeaconAgent/*）的文本配置时，控制面不再整批拒绝，正常 ingest 落库为组级覆盖。
+// 此前 normalizePath 命中 reservedAgentSelfDirs → ErrInvalidPath → 整次 ingest 400、命令 failed，
+// 对任何装了 agent 的在线服反向抓取 100% 失效（agent 读盘必带自身 plugins/BeaconAgent/）。
+func TestReceiveIngestAllowsAgentSelfDir(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newCommandSvc(db)
+	cmdRepo := repository.NewAgentCommandRepository(db)
+
+	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	cmd, _ := svc.FetchPending("prod", "lobby-1")
+	if _, err := svc.ReceiveIngest(cmd.ID, []ImportFile{
+		{Path: "BeaconAgent/config.yml", Content: "endpoints: x\n"},
+		{Path: "LuckPerms/config.yml", Content: "a: 1\n"},
+	}, ""); err != nil {
+		t.Fatalf("含 agent 自身目录的 ingest 应成功（方案 D 放开），实际 %v", err)
+	}
+
+	fileRepo := repository.NewFileObjectRepository(db)
+	self, _ := fileRepo.FindByIdentity("prod", "area1", "BeaconAgent/config.yml", model.ScopeGroup, "")
+	if self == nil || self.Content != "endpoints: x\n" {
+		t.Fatalf("自身目录文件应落组级覆盖，实际 %+v", self)
+	}
+	other, _ := fileRepo.FindByIdentity("prod", "area1", "LuckPerms/config.yml", model.ScopeGroup, "")
+	if other == nil {
+		t.Fatal("同批合法文件也应落库")
+	}
+
+	got, _ := cmdRepo.FindByID(cmd.ID)
+	if got.Status != model.CommandStatusDone {
+		t.Fatalf("ingest 成功命令应转 done，实际 %s", got.Status)
+	}
+}
+
 // TestValidateIngestFiles 直测再校验：空 / 超数 / jar / 超总量 / 合法。
 func TestValidateIngestFiles(t *testing.T) {
 	if validateIngestFiles(nil) != apperr.ErrInvalidParam {
