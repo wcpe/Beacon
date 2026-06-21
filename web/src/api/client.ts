@@ -267,9 +267,10 @@ export function getTopology(namespace: string): Promise<TopologyView> {
 // ===== 指标看板（FR-32，见 docs/API.md 指标看板小节）=====
 // 只返回负载数字（健康事实），绝不含玩家名单 / 身份。
 
-// 每服人数明细（仅计数，不含名单）
+// 每服人数明细（仅计数，不含名单）。role 供前端按角色分组明细（FR-43）。
 export interface ServerPlayers {
   serverId: string
+  role: string
   playerCount: number
 }
 

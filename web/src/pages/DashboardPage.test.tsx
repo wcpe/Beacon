@@ -1,5 +1,6 @@
-// DashboardPage 单测（FR-32）：
-// 覆盖「总览卡片渲染 → 趋势图按指标渲染 → 时间窗切换重查 → CPU 不可用展示 → 每服明细 → 无玩家名单」。
+// DashboardPage 单测（FR-32 / FR-34 / FR-43）：
+// 覆盖「子服/BC 两大区块拆分 → 总览卡片渲染 → 趋势图按指标渲染 → 时间窗切换重查 → CPU 不可用展示
+// → 每服明细按角色分组 → BC 面板 → 无玩家名单」。
 // recharts 较重且依赖容器尺寸，故把 TrendChart 替身为轻量桩，断言图按指标渲染、点数正确。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -40,8 +41,9 @@ const SUMMARY: MetricsSummary = {
   totalPlayers: 50,
   onlineServers: 2,
   servers: [
-    { serverId: 'lobby-1', playerCount: 42 },
-    { serverId: 'pvp-2', playerCount: 8 },
+    { serverId: 'lobby-1', role: 'bukkit', playerCount: 42 },
+    { serverId: 'pvp-2', role: 'bukkit', playerCount: 8 },
+    { serverId: 'proxy-1', role: 'bungee', playerCount: 99 },
   ],
   avgTps: 19.9,
   avgMemUsed: 134217728, // 128 MB
@@ -161,11 +163,23 @@ describe('DashboardPage', () => {
     expect(screen.getByText('无可用 CPU 样本')).toBeInTheDocument()
   })
 
-  it('每服明细按 serverId → 在线人数渲染', async () => {
+  it('整体拆「子服(bukkit)」与「BC 代理」两大区块', async () => {
     renderPage(<DashboardPage />)
+    // 两大区块标题各为一个二级标题（h2），互相分离
+    expect(await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'BC 代理' })).toBeInTheDocument()
+    // 子服区有总览卡片 + 子服明细；BC 区有 BC 面板 + BC 明细
+    expect(screen.getByText('子服明细')).toBeInTheDocument()
+    expect(screen.getByText('BC 明细')).toBeInTheDocument()
+  })
+
+  it('每服明细按角色分组：bukkit 进子服明细，bungee 进 BC 明细', async () => {
+    renderPage(<DashboardPage />)
+    // bukkit 子服落子服明细
     expect(await screen.findByText('lobby-1')).toBeInTheDocument()
     expect(screen.getByText('pvp-2')).toBeInTheDocument()
-    expect(screen.getByText('每服明细')).toBeInTheDocument()
+    // bungee 代理落 BC 明细（不混进子服明细）
+    expect(screen.getByText('proxy-1')).toBeInTheDocument()
   })
 
   it('渲染 BC 代理面板（代理数 / 连接 / 线程 / 后端可达性 / 延迟）', async () => {
@@ -213,8 +227,8 @@ describe('DashboardPage', () => {
     const summaryWithRoster = {
       ...SUMMARY,
       servers: [
-        { serverId: 'lobby-1', playerCount: 42, playerNames: [SENTINEL_A] },
-        { serverId: 'pvp-2', playerCount: 8, players: [SENTINEL_B] },
+        { serverId: 'lobby-1', role: 'bukkit', playerCount: 42, playerNames: [SENTINEL_A] },
+        { serverId: 'pvp-2', role: 'bukkit', playerCount: 8, players: [SENTINEL_B] },
       ],
     } as unknown as MetricsSummary
     vi.mocked(metricsSummary).mockResolvedValue(summaryWithRoster)

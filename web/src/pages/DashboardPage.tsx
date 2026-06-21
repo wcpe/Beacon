@@ -1,11 +1,14 @@
-// 可观测看板页（FR-32，见 docs/specs/control-plane-observability-dashboard.md）：
-// 总览卡片（总人数 / 在线服务器 / 平均 TPS / 内存 / CPU）+ 趋势图（人数 / TPS / 内存 / CPU）+ 每服明细。
+// 可观测看板页（FR-32 / FR-34 / FR-43，见 docs/specs/dashboard-role-split.md）：
+// 整体拆「子服(bukkit)」与「BC 代理」两大区块——
+//   子服区：总览卡片（总人数 / 在线服务器 / 平均 TPS / 内存 / CPU，平均口径仅算 bukkit）+ 趋势图 + 子服明细；
+//   BC 区：BCPanel（bc 维度聚合）+ bc 明细。
+// 每服明细按 role 分组（bukkit / bungee 各一表）。
 // 边界：只展示负载数字（健康事实），绝不展示任何玩家名单 / 身份（后端也不返回）。
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { metricsSummary, metricsTrend } from '../api/client'
-import type { TrendWindow } from '../api/client'
+import type { ServerPlayers, TrendWindow } from '../api/client'
 import { formatBytes } from '../api/format'
 import SummaryCards from './dashboard/SummaryCards'
 import BCPanel from './dashboard/BCPanel'
@@ -28,11 +31,12 @@ const WINDOWS: Array<{ value: TrendWindow; label: string }> = [
   { value: '24h', label: '近 24 小时' },
 ]
 
-// 每服人数明细行
-interface ServerRow {
-  serverId: string
-  playerCount: number
-}
+// 角色编码（与后端 metric_aggregate role 约定一致）：
+// bungee 进 BC 区，其余（含 bukkit 与未知角色）兜底进子服区，避免新角色漏展示。
+const ROLE_BUNGEE = 'bungee'
+
+// 每服人数明细行（含角色，供按角色分组）
+type ServerRow = ServerPlayers
 
 export default function DashboardPage() {
   // 环境过滤：输入框为待提交值，namespace 为已生效查询值（空表示聚合全部环境）
@@ -65,10 +69,20 @@ export default function DashboardPage() {
     avgCpuLoad: p.avgCpuLoad < 0 ? null : p.avgCpuLoad,
   }))
 
-  // 每服明细列：仅 serverId 与在线人数（不含名单）
+  // 每服明细按角色分组：bukkit 一组、bungee 一组（其它角色归到子服明细兜底）。
+  const allServers = summaryQuery.data?.servers ?? []
+  const bukkitServers = allServers.filter((s) => s.role !== ROLE_BUNGEE)
+  const bcServers = allServers.filter((s) => s.role === ROLE_BUNGEE)
+
+  // 子服明细列：serverId 与在线人数（不含名单）
   const serverColumns: DataTableColumn<ServerRow>[] = [
     { header: 'serverId', className: 'font-mono', cell: (r) => r.serverId },
     { header: '在线人数', cell: (r) => r.playerCount },
+  ]
+  // bc 明细列：serverId 与在线连接数（bc 的 playerCount 即代理在线连接）
+  const bcServerColumns: DataTableColumn<ServerRow>[] = [
+    { header: 'serverId', className: 'font-mono', cell: (r) => r.serverId },
+    { header: '在线连接', cell: (r) => r.playerCount },
   ]
 
   return (
@@ -95,101 +109,127 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* 总览卡片：当前快照聚合 */}
-      <AsyncSection
-        isLoading={summaryQuery.isLoading}
-        isError={summaryQuery.isError}
-        error={summaryQuery.error}
-      >
-        {summaryQuery.data && <SummaryCards summary={summaryQuery.data} />}
-      </AsyncSection>
+      {/* ===== 区块一：子服（bukkit）===== */}
+      {/* 总览卡片 / 趋势 / 子服明细的平均口径均仅算 bukkit，与 BC 区分离 */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">子服（bukkit）</h2>
 
-      {/* BC 代理面板（FR-34）：按角色分流展示 bc 专属指标，bukkit 视图不受影响 */}
-      <Card>
-        <CardContent className="space-y-3">
-          <div className="text-base font-medium">BC 代理</div>
-          <AsyncSection
-            isLoading={summaryQuery.isLoading}
-            isError={summaryQuery.isError}
-            error={summaryQuery.error}
-          >
-            {summaryQuery.data && <BCPanel bc={summaryQuery.data.bc} />}
-          </AsyncSection>
-        </CardContent>
-      </Card>
+        {/* 总览卡片：当前快照聚合（平均 TPS·内存·CPU 仅算 bukkit） */}
+        <AsyncSection
+          isLoading={summaryQuery.isLoading}
+          isError={summaryQuery.isError}
+          error={summaryQuery.error}
+        >
+          {summaryQuery.data && <SummaryCards summary={summaryQuery.data} />}
+        </AsyncSection>
 
-      {/* 趋势图：时间窗切换 + 四指标折线 */}
-      <Card>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-base font-medium">历史趋势</div>
-            <Tabs value={window} onValueChange={(v) => setWindow(v as TrendWindow)}>
-              <TabsList>
-                {WINDOWS.map((w) => (
-                  <TabsTrigger key={w.value} value={w.value}>
-                    {w.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          </div>
-          <AsyncSection
-            isLoading={trendQuery.isLoading}
-            isError={trendQuery.isError}
-            error={trendQuery.error}
-          >
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <TrendChart
-                title="在线玩家数"
-                points={points}
-                metric="totalPlayers"
-                color="#2563eb"
-                formatValue={(v) => String(Math.round(v))}
-              />
-              <TrendChart
-                title="平均 TPS"
-                points={points}
-                metric="avgTps"
-                color="#16a34a"
-                formatValue={(v) => v.toFixed(1)}
-              />
-              <TrendChart
-                title="平均内存"
-                points={points}
-                metric="avgMemUsed"
-                color="#d97706"
-                formatValue={(v) => formatBytes(v)}
-              />
-              <TrendChart
-                title="平均 CPU 负载"
-                points={cpuPoints}
-                metric="avgCpuLoad"
-                color="#dc2626"
-                formatValue={(v) => (v < 0 ? '不可用' : `${(v * 100).toFixed(0)}%`)}
-              />
+        {/* 趋势图：时间窗切换 + 四指标折线（仅 bukkit 口径） */}
+        <Card>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-base font-medium">历史趋势</div>
+              <Tabs value={window} onValueChange={(v) => setWindow(v as TrendWindow)}>
+                <TabsList>
+                  {WINDOWS.map((w) => (
+                    <TabsTrigger key={w.value} value={w.value}>
+                      {w.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
             </div>
-          </AsyncSection>
-        </CardContent>
-      </Card>
+            <AsyncSection
+              isLoading={trendQuery.isLoading}
+              isError={trendQuery.isError}
+              error={trendQuery.error}
+            >
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <TrendChart
+                  title="在线玩家数"
+                  points={points}
+                  metric="totalPlayers"
+                  color="#2563eb"
+                  formatValue={(v) => String(Math.round(v))}
+                />
+                <TrendChart
+                  title="平均 TPS"
+                  points={points}
+                  metric="avgTps"
+                  color="#16a34a"
+                  formatValue={(v) => v.toFixed(1)}
+                />
+                <TrendChart
+                  title="平均内存"
+                  points={points}
+                  metric="avgMemUsed"
+                  color="#d97706"
+                  formatValue={(v) => formatBytes(v)}
+                />
+                <TrendChart
+                  title="平均 CPU 负载"
+                  points={cpuPoints}
+                  metric="avgCpuLoad"
+                  color="#dc2626"
+                  formatValue={(v) => (v < 0 ? '不可用' : `${(v * 100).toFixed(0)}%`)}
+                />
+              </div>
+            </AsyncSection>
+          </CardContent>
+        </Card>
 
-      {/* 每服明细：serverId → 在线人数 */}
-      <Card>
-        <CardContent className="space-y-3">
-          <div className="text-base font-medium">每服明细</div>
-          <AsyncSection
-            isLoading={summaryQuery.isLoading}
-            isError={summaryQuery.isError}
-            error={summaryQuery.error}
-          >
-            <DataTable
-              columns={serverColumns}
-              rows={summaryQuery.data?.servers}
-              rowKey={(r) => r.serverId}
-              emptyText="无在线实例"
-            />
-          </AsyncSection>
-        </CardContent>
-      </Card>
+        {/* 子服明细：serverId → 在线人数（仅 bukkit 角色） */}
+        <Card>
+          <CardContent className="space-y-3">
+            <div className="text-base font-medium">子服明细</div>
+            <AsyncSection
+              isLoading={summaryQuery.isLoading}
+              isError={summaryQuery.isError}
+              error={summaryQuery.error}
+            >
+              <DataTable
+                columns={serverColumns}
+                rows={bukkitServers}
+                rowKey={(r) => r.serverId}
+                emptyText="无在线子服"
+              />
+            </AsyncSection>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* ===== 区块二：BC 代理（bungee）===== */}
+      {/* bc 维度聚合 + bc 明细，与子服区完全分离 */}
+      <section className="space-y-4">
+        <h2 className="text-lg font-semibold">BC 代理</h2>
+
+        {/* BC 维度聚合卡片（FR-34）：仅 role=bungee 聚合 */}
+        <AsyncSection
+          isLoading={summaryQuery.isLoading}
+          isError={summaryQuery.isError}
+          error={summaryQuery.error}
+        >
+          {summaryQuery.data && <BCPanel bc={summaryQuery.data.bc} />}
+        </AsyncSection>
+
+        {/* BC 明细：serverId → 在线连接（仅 bungee 角色） */}
+        <Card>
+          <CardContent className="space-y-3">
+            <div className="text-base font-medium">BC 明细</div>
+            <AsyncSection
+              isLoading={summaryQuery.isLoading}
+              isError={summaryQuery.isError}
+              error={summaryQuery.error}
+            >
+              <DataTable
+                columns={bcServerColumns}
+                rows={bcServers}
+                rowKey={(r) => r.serverId}
+                emptyText="无在线 BC 代理"
+              />
+            </AsyncSection>
+          </CardContent>
+        </Card>
+      </section>
     </div>
   )
 }
