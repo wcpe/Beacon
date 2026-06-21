@@ -118,12 +118,17 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 
 **配置灰度叠加（FR-9，[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）**：灰度作用在"某 dataId 用哪个版本的内容"这一**版本选择**层，与 scope 覆盖链**正交叠加**——不新增覆盖层、不改 `merge` 纯函数。解析时拉完四层候选后，按 `namespace + 候选项集合`**一次性**取活跃灰度（`config_gray`，Map 命中、**无 N+1**），对"该 config_item 存在灰度且当前 `serverId` 在其 cohort 名单内"的候选项，把参与合并的 `content` 临时替换为灰度内容；其余层、合并算法、md5 计算全不变——**名单外 `serverId` 的解析结果与无灰度时逐字节相同**。admin 预览与 agent 热路径共用同一叠加逻辑，保证 cohort 内预览与下发一致。操作侧：`promote` 把灰度内容作为新稳定版本发布（version+1，走既有发布路径，过 FR-27 校验 / FR-20 加密）并软删灰度；`abort` 直接软删灰度。两者事务内写表 + 审计原子完成，**提交后按受影响 `serverId` 唤醒**（发布 / abort 唤醒 cohort 名单、promote 唤醒 item scope ∪ cohort 名单），复用既有长轮询 / SSE 唤醒集合，绝不全量盲唤醒。
 
-### 5.1 有效文件树解析（通道B，scope 整文件覆盖）
+### 5.1 有效文件树解析（通道B：结构化深合并 + 整文件兜底，FR-44）
 
-文件树托管（通道B，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）与配置中心平行但语义不同——文件按相对 `path` 整文件覆盖，**绝不深合并**：
+文件树托管（通道B，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）与配置中心平行，按 `path` 后缀**分流**解析（[ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 取代 ADR-0010 决策1「绝不深合并」）：
 
-- 同 `(namespace, serverId)` 解析路径，拉 global/group/zone/server 四层候选文件；**按 `path` 分桶，每个 path 取覆盖链上层级最高的那一份整文件**（优先级同上）。
-- 服务端算出 `manifest`（path→md5）+ 独立的 `fileTreeMd5`；`fileTreeMd5 = md5(concat(path + ":" + 单文件md5))`，把 `path` 名纳入哈希防集合碰撞（沿用 ADR-0008 思路）。
+- 同 `(namespace, serverId)` 解析路径，拉 global/group/zone/server 四层候选文件，**按 `path` 分桶**；每个 path：
+  - **结构化文件**（`.yml`/`.yaml`/`.json`/`.properties`）跨四层**按键深合并**（**复用 `internal/merge`**：标量覆盖 / map 深合并 / list 整替 / 高层 `null` 删键 / 固定键序，与通道A 同一套语义与 md5 幂等）。
+  - **非结构化文件**（其余后缀）取覆盖链**层级最高的那一整份**（整文件覆盖，绝不深合并）。
+  - **按文件豁免**：`file_object.WholeFileOverride=true` 的文件即便结构化也走整文件覆盖（保注释、不重渲染）；合并模式由 winner 层标记 + 后缀决定，与遍历顺序无关。
+  - **坏内容降级**：某层结构化内容解析失败 → 该 path 回退整文件取 winner（`Resolve` 仍纯函数、一坏不拖垮整树，ADR-0029 决策5）。
+  - 控制面渲染合并后整文件，`EffectiveFile.MD5 = md5(合并后整文件)`；agent 镜像落盘逻辑零改（哑镜像、原子写、fail-static）。
+- 服务端算出 `manifest`（path→md5，md5 为合并后整文件的指纹）+ 独立的 `fileTreeMd5`；`fileTreeMd5 = md5(concat(path + ":" + 单文件md5))`，把 `path` 名纳入哈希防集合碰撞（沿用 ADR-0008 思路）。
 - `fileTreeMd5` 与有效配置 md5 **相互独立**，各自长轮询唤醒集合分开（见 §6），互不触发无谓重算。
 - agent 比对本地已落盘 manifest，仅取/删变更文件，镜像落盘到插件真实 dataFolder（原子写，见 §8）。
 - 解析逻辑落 `internal/filetree` 纯函数包（与 `merge` 平级、无副作用），便于穷举单测。

@@ -13,7 +13,7 @@
 | [0007](0007-versioning-and-release-channels.md) | 版本来源与发布渠道（VERSION + 稳定/快照） | 已接受 |
 | [0008](0008-config-soft-delete-and-effective-md5.md) | 配置软删唯一性与有效配置 md5 取舍 | 已接受 |
 | [0009](0009-control-plane-auth-pulled-forward.md) | 管理面鉴权从 P2 前移 | 已接受 |
-| [0010](0010-file-tree-hosting-blob-channel.md) | 文件树托管 blob 通道（通道B），区别于配置深合并 | 已接受 |
+| [0010](0010-file-tree-hosting-blob-channel.md) | 文件树托管 blob 通道（通道B），区别于配置深合并 | 已接受（决策1 被 [0029](0029-file-tree-structured-deep-merge.md) 取代） |
 | [0011](0011-third-party-file-override-and-restricted-reload-command.md) | 三方插件文件覆盖与受限重载命令的安全边界 | 已接受 |
 | [0012](0012-web-shadcn-ui-design-system.md) | 管理台引入 shadcn-ui + Tailwind 作为设计系统 | 已接受 |
 | [0013](0013-admin-effective-config-preview-and-provenance.md) | admin 有效配置只读预览 + 逐键来源 provenance | 已接受 |
@@ -32,6 +32,7 @@
 | [0026](0026-runtime-api-keys-and-readonly-role.md) | 运行时 API 密钥 + 管理面只读角色（落库只存哈希，扩展 ADR-0009） | 已接受 |
 | [0027](0027-reverse-fetch-channel-and-security.md) | 在线实例反向抓取的命令通道（复用 SSE）与安全边界（限 plugins/ 内、排除 jar、上限、双校验、鉴权审计） | 已接受 |
 | [0028](0028-allow-hosting-agent-self-dir.md) | 放开控制面对 agent 自身目录的托管拦截，自我保护下沉到 agent observe-only（FR-38/FR-39 归真） | 已接受 |
+| [0029](0029-file-tree-structured-deep-merge.md) | 文件树结构化文件跨层深合并、可按文件豁免（取代 ADR-0010 决策1） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

@@ -103,6 +103,8 @@ type fileCreateRequest struct {
 	ScopeTarget string `json:"scopeTarget"`
 	Content     string `json:"content"`
 	Comment     string `json:"comment"`
+	// 整文件覆盖豁免（FR-44）：true 则该结构化文件强制整文件覆盖、不深合并。缺省 false。
+	WholeFileOverride bool `json:"wholeFileOverride"`
 }
 
 // Create 处理 POST /admin/v1/files。
@@ -116,6 +118,7 @@ func (h *FileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Namespace: req.Namespace, Group: req.Group, Path: req.Path,
 		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget,
 		Content: req.Content, Operator: auth.Operator(r.Context()), Comment: req.Comment, ClientIP: clientIP(r),
+		WholeFileOverride: req.WholeFileOverride,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

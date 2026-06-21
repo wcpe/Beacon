@@ -35,7 +35,9 @@ type CreateFileParams struct {
 	Content     string
 	Operator    string
 	Comment     string
-	ClientIP    string
+	// 整文件覆盖豁免（FR-44）：true 则该结构化文件强制整文件覆盖、不深合并（保注释）。缺省 false。
+	WholeFileOverride bool
+	ClientIP          string
 }
 
 // ImportFile 是导入的单个文件（相对 path + 整文件内容）。
@@ -139,6 +141,7 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 		NamespaceCode: p.Namespace, GroupCode: group, Path: cleanPath,
 		ScopeLevel: p.ScopeLevel, ScopeTarget: scopeTarget,
 		Content: p.Content, ContentMD5: md5, Version: 1, Enabled: true,
+		WholeFileOverride: p.WholeFileOverride,
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.fileRepo.WithTx(tx).Create(obj); err != nil {

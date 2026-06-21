@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 文件树结构化深合并 + 按文件整文件豁免（FR-44，[ADR-0029](docs/adr/0029-file-tree-structured-deep-merge.md) 取代 ADR-0010 决策1，见 [docs/specs/file-tree-deep-merge.md](docs/specs/file-tree-deep-merge.md)）：通道B 文件树此前对每个 path 整文件覆盖，无法表达「一份基线 + 各层小增量」。现结构化文件（`.yml`/`.yaml`/`.json`/`.properties`）跨 global/大区/小区/单服 四层**按键深合并**（复用 `internal/merge`：标量覆盖 / map 深合并 / list 整替 / 高层 `null` 删键 / 固定键序与 md5，与配置中心同一套语义与幂等），把通道A 的深合并能力带给「无法接入 agent API」的第三方插件——控制面渲染合并后整文件、agent 镜像落盘逻辑零改、第三方插件照旧从磁盘读到合并结果并热重载。非结构化文件（脚本 / lang 等）维持整文件覆盖；`file_object` 新增 `whole_file_override` 标记（API `POST /admin/v1/files` 可传 `wholeFileOverride`），置真则结构化文件也强制整文件覆盖（保注释、不被重渲染打乱）。某层结构化内容解析失败时该 path 回退整文件取最高层（一坏文件不拖垮整树）。manifest 的单文件 md5 改为**合并后整文件**的指纹。⚠️**向后不兼容**：默认深合并会改变既有整文件托管中结构化文件的生效结果（裸标量 / 非 map 顶层 yml 会被 parse+reserialize 规整、注释丢失），现网升级前须复核既有结构化托管文件、对不宜合并者标 `wholeFileOverride`。
+
 ### 变更
 - zone 指派表单改 API 拉取下拉并加校验（增强 FR-40）：`ZonesPage` 的「新增 zone / 指派」对话框此前环境 / serverId / 大区 / 小区全是手填文本框，易填错且无约束。现改为从系统拉取的下拉选择（环境来自 `listNamespaces`、大区 / 小区取 zone 汇总与实例列表并集、serverId 来自实例列表且仅列 bukkit 子服——与后端校验一致排除 BC 代理）；提交前校验必填项缺选与非法值（取值须落在 API 候选内），备注仍为自由文本。仅改输入方式，指派业务行为不变。
 - 控制面状态页眉（FR-33）由横跨顶部的全宽页眉收进右侧主内容区顶部（侧边栏顶部保留「Beacon 管理台」品牌标题），纯 UI 重定位，指标内容与数据源不变。

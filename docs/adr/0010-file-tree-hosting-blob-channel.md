@@ -1,6 +1,8 @@
 # ADR-0010：文件树托管 blob 通道（通道B），区别于配置深合并
 
-**状态**：已接受
+**状态**：已接受（**决策1 已被 [ADR-0029](0029-file-tree-structured-deep-merge.md) 取代**）
+
+> **决策1（整文件覆盖、绝不深合并）已被 [ADR-0029](0029-file-tree-structured-deep-merge.md) 取代**：结构化文件（yml/json/properties）改为跨层深合并、可按文件豁免整文件；非结构化文件仍整文件覆盖。本 ADR 决策 2（增量同步）/3（MySQL TEXT 存储）/4（镜像落盘）/5（fail-static）继续有效，不受影响。下方决策1 正文按 ADR 不可变原则保留原貌。
 
 ## 背景
 

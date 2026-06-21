@@ -1,13 +1,16 @@
-// Package filetree 实现文件树托管（通道B）的纯解析逻辑：scope 整文件覆盖、manifest 与 fileTreeMd5。
-// 全为无副作用纯函数，便于穷举单测；与配置中心 merge 包语义不同——文件按 path 整文件覆盖，绝不深合并（见 ADR-0010）。
+// Package filetree 实现文件树托管（通道B）的纯解析逻辑：结构化文件跨层深合并 / 非结构化整文件覆盖、manifest 与 fileTreeMd5。
+// 全为无副作用纯函数，便于穷举单测。结构化文件（yml/json/properties）复用 merge 包按键深合并，
+// 非结构化或标豁免的文件取覆盖链最高层整文件覆盖（见 ADR-0029，取代 ADR-0010 决策1）。
 package filetree
 
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"path"
 	"sort"
 	"strings"
 
+	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 )
 
@@ -35,27 +38,72 @@ func scopePriority(level string) int {
 }
 
 // Resolve 把某 agent 身份的四层候选文件按覆盖链解析为有效文件树：
-// 按 path 分桶，每个 path 取覆盖链上**层级最高**的那一份（整文件覆盖，不深合并）；
+// 按 path 分桶；结构化文件（yml/json/properties）跨层按键深合并（复用 merge 包），
+// 非结构化或标 WholeFileOverride 的文件取覆盖链**层级最高**那一整份（整文件覆盖）。
 // 同层同 path 不应出现（唯一键保证），若出现以最后一个为准。
-// 结果按 path 字典序稳定排序，保证下游 manifest 与 md5 幂等。
+// 结果按 path 字典序稳定排序，保证下游 manifest 与 md5 幂等（见 ADR-0029）。
 func Resolve(candidates []model.FileObject) []EffectiveFile {
-	winner := make(map[string]model.FileObject, len(candidates))
+	groups := make(map[string][]model.FileObject)
 	for _, c := range candidates {
-		p := scopePriority(c.ScopeLevel)
-		if p < 0 {
+		if scopePriority(c.ScopeLevel) < 0 {
 			continue // 非法层不参与
 		}
-		if cur, ok := winner[c.Path]; !ok || p >= scopePriority(cur.ScopeLevel) {
-			winner[c.Path] = c
-		}
+		groups[c.Path] = append(groups[c.Path], c)
 	}
 
-	files := make([]EffectiveFile, 0, len(winner))
-	for _, w := range winner {
-		files = append(files, EffectiveFile{Path: w.Path, MD5: w.ContentMD5, Content: w.Content})
+	files := make([]EffectiveFile, 0, len(groups))
+	for p, layers := range groups {
+		files = append(files, resolveOne(p, layers))
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files
+}
+
+// resolveOne 解析单个 path 的有效文件：结构化深合并 / 整文件覆盖兜底（含豁免与坏内容降级）。
+func resolveOne(p string, layers []model.FileObject) EffectiveFile {
+	// winner = 覆盖链层级最高那份（同层后者胜，沿用旧语义）；整文件模式取它，深合并坏内容也回退它。
+	winner := layers[0]
+	for _, c := range layers[1:] {
+		if scopePriority(c.ScopeLevel) >= scopePriority(winner.ScopeLevel) {
+			winner = c
+		}
+	}
+	wholeFile := EffectiveFile{Path: p, MD5: winner.ContentMD5, Content: winner.Content}
+
+	format, structured := formatFromPath(p)
+	if !structured || winner.WholeFileOverride {
+		return wholeFile // 非结构化 或 标豁免 → 整文件覆盖
+	}
+
+	// 结构化深合并：按层级低→高取内容，复用 merge 按键合并。
+	sorted := make([]model.FileObject, len(layers))
+	copy(sorted, layers)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return scopePriority(sorted[i].ScopeLevel) < scopePriority(sorted[j].ScopeLevel)
+	})
+	contents := make([]string, 0, len(sorted))
+	for _, c := range sorted {
+		contents = append(contents, c.Content)
+	}
+	merged, err := merge.MergeDataID(format, contents)
+	if err != nil {
+		return wholeFile // 坏结构化内容 → 回退整文件取 winner（ADR-0029 决策5）
+	}
+	return EffectiveFile{Path: p, MD5: md5Hex(merged), Content: merged}
+}
+
+// formatFromPath 按文件后缀判定结构化格式；非结构化返回 ("", false)。
+func formatFromPath(p string) (string, bool) {
+	switch strings.ToLower(path.Ext(p)) {
+	case ".yml", ".yaml":
+		return merge.FormatYAML, true
+	case ".json":
+		return merge.FormatJSON, true
+	case ".properties":
+		return merge.FormatProperties, true
+	default:
+		return "", false
+	}
 }
 
 // Manifest 由有效文件树算出 path→md5 清单（agent 比对增量同步用）。
