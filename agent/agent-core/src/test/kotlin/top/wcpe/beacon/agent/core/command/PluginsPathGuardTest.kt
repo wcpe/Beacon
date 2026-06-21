@@ -55,11 +55,20 @@ class PluginsPathGuardTest {
 
     @Test
     fun `段尾点或空格拒绝`() {
-        // Windows 落盘剥离段尾点 / 空格，借此绕过判定。
-        assertFalse(PluginsPathGuard.isSafe("config.yml."))
-        assertFalse(PluginsPathGuard.isSafe("sub /x.yml"))
-        assertFalse(PluginsPathGuard.isSafe("name .yml"))
-        assertFalse(PluginsPathGuard.isSafe("nested/x.jar."))
+        // Windows 落盘剥离「段尾」的点 / 空格，借此绕过判定——故只拒段尾、不拒段内
+        //（"my config.yml" 等含内部空格属合法文件名，不应拒）。下列四例覆盖 末段/非末段 × 尾点/尾空格。
+        assertFalse(PluginsPathGuard.isSafe("config.yml.")) // 末段尾点
+        assertFalse(PluginsPathGuard.isSafe("sub /x.yml")) // 非末段尾空格
+        assertFalse(PluginsPathGuard.isSafe("name.yml ")) // 末段尾空格
+        assertFalse(PluginsPathGuard.isSafe("nested/x.jar.")) // 非末段尾点
+    }
+
+    @Test
+    fun `段内空格属合法文件名放行`() {
+        // 段「内部」空格（非段尾）不被任何平台剥离，属合法文件名，不应误拒。
+        assertTrue(PluginsPathGuard.isSafe("my config.yml"))
+        assertTrue(PluginsPathGuard.isSafe("name .yml"))
+        assertTrue(PluginsPathGuard.isSafe("plugin/data file.json"))
     }
 
     @Test

@@ -95,7 +95,7 @@ class PluginsTreeFilterTest {
             "c:foo.yml" to b("a: 1"),
             "CON" to b("a: 1"),
             "con.yml" to b("a: 1"),
-            "trail .yml" to b("a: 1"),
+            "trail.yml " to b("a: 1"), // 段尾空格（Windows 落盘剥离）→ 不安全，剔除
             "ok.yml" to b("a: 1"),
         )
         val files = accepted(PluginsTreeFilter.filter(tree))
