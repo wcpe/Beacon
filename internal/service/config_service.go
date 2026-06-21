@@ -237,7 +237,7 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 }
 
 // Delete 软删配置项（该层从合并链脱落）。
-func (s *ConfigService) Delete(id uint, operator, comment, clientIP string) error {
+func (s *ConfigService) Delete(id uint, operator, _, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}

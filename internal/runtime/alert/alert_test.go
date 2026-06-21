@@ -62,7 +62,7 @@ func TestDispatcherTolerateChannelError(t *testing.T) {
 }
 
 // TestDispatcherEmpty 无通道时分发不报错。
-func TestDispatcherEmpty(t *testing.T) {
+func TestDispatcherEmpty(_ *testing.T) {
 	d := NewDispatcher()
 	d.Dispatch(context.Background(), sampleAlert()) // 不应 panic
 }

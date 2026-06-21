@@ -134,7 +134,7 @@ func serializeProperties(data any) (string, error) {
 	for _, k := range keys {
 		b.WriteString(k)
 		b.WriteString("=")
-		b.WriteString(fmt.Sprint(m[k]))
+		fmt.Fprint(&b, m[k])
 		b.WriteString("\n")
 	}
 	return b.String(), nil

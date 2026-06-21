@@ -61,7 +61,7 @@ func (s *MetricSampler) sampleOnce(at time.Time) int {
 		samples = append(samples, model.MetricSample{
 			Namespace: in.Namespace, ServerID: in.ServerID, Role: in.Role, SampledAt: at,
 			PlayerCount: in.PlayerCount, TPS: in.TPS,
-			MemUsed: in.MemUsed, MemMax: in.MemMax, CpuLoad: in.CpuLoad,
+			MemUsed: in.MemUsed, MemMax: in.MemMax, CPULoad: in.CPULoad,
 			// bc 专属指标（FR-34）：bukkit 实例 Proxy 为零值，照写不特判（聚合按 role 区分）。
 			ProxyConn: in.Proxy.OnlineConnections, ThreadCount: in.Proxy.ThreadCount, UptimeMs: in.Proxy.UptimeMs,
 			BackendUp: in.Proxy.BackendUp, BackendTotal: in.Proxy.BackendTotal,

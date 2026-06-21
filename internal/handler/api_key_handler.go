@@ -12,15 +12,15 @@ import (
 	"beacon/internal/service"
 )
 
-// ApiKeyHandler 处理管理面 API 密钥的 CRUD（FR-42，见 ADR-0026）。
+// APIKeyHandler 处理管理面 API 密钥的 CRUD（FR-42，见 ADR-0026）。
 // 只读拒写由鉴权中间件统一裁决，本处理器不碰角色判断。
-type ApiKeyHandler struct {
-	svc *service.ApiKeyService
+type APIKeyHandler struct {
+	svc *service.APIKeyService
 }
 
-// NewApiKeyHandler 构造处理器。
-func NewApiKeyHandler(svc *service.ApiKeyService) *ApiKeyHandler {
-	return &ApiKeyHandler{svc: svc}
+// NewAPIKeyHandler 构造处理器。
+func NewAPIKeyHandler(svc *service.APIKeyService) *APIKeyHandler {
+	return &APIKeyHandler{svc: svc}
 }
 
 // apiKeyView 是密钥对外视图（列表 / 元数据）：**绝不含明文与哈希**。
@@ -41,8 +41,8 @@ type apiKeyCreatedView struct {
 	Key string `json:"key"`
 }
 
-// toApiKeyView 把模型转为对外视图（派生 status，剥离明文 / 哈希）。
-func toApiKeyView(k *model.ApiKey) apiKeyView {
+// toAPIKeyView 把模型转为对外视图（派生 status，剥离明文 / 哈希）。
+func toAPIKeyView(k *model.APIKey) apiKeyView {
 	return apiKeyView{
 		ID: k.ID, Name: k.Name, Role: k.Role, KeyPrefix: k.KeyPrefix,
 		Status: apiKeyStatus(k), CreatedAt: k.CreatedAt,
@@ -51,7 +51,7 @@ func toApiKeyView(k *model.ApiKey) apiKeyView {
 }
 
 // apiKeyStatus 派生密钥状态：已吊销（软删）> 已过期 > 生效。
-func apiKeyStatus(k *model.ApiKey) string {
+func apiKeyStatus(k *model.APIKey) string {
 	if model.IsDeleted(k.DeletedAt) {
 		return "revoked"
 	}
@@ -62,7 +62,7 @@ func apiKeyStatus(k *model.ApiKey) string {
 }
 
 // List 处理 GET /admin/v1/api-keys：列出全部密钥（含已吊销，显示状态）。
-func (h *ApiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 	keys, err := h.svc.List()
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -70,13 +70,13 @@ func (h *ApiKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]apiKeyView, 0, len(keys))
 	for i := range keys {
-		views = append(views, toApiKeyView(&keys[i]))
+		views = append(views, toAPIKeyView(&keys[i]))
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
 
-// createApiKeyRequest 是创建密钥的请求体（operator 由认证态派生，忽略手填）。
-type createApiKeyRequest struct {
+// createAPIKeyRequest 是创建密钥的请求体（operator 由认证态派生，忽略手填）。
+type createAPIKeyRequest struct {
 	Name string `json:"name"`
 	Role string `json:"role"`
 	// 可选过期时刻（RFC3339）；为空表示永不过期
@@ -84,8 +84,8 @@ type createApiKeyRequest struct {
 }
 
 // Create 处理 POST /admin/v1/api-keys：创建密钥，明文仅此响应一次返回。
-func (h *ApiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var req createApiKeyRequest
+func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
+	var req createAPIKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
@@ -100,11 +100,11 @@ func (h *ApiKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusCreated, apiKeyCreatedView{apiKeyView: toApiKeyView(key), Key: plaintext})
+	render.WriteJSON(w, http.StatusCreated, apiKeyCreatedView{apiKeyView: toAPIKeyView(key), Key: plaintext})
 }
 
 // Revoke 处理 DELETE /admin/v1/api-keys/{id}：吊销密钥（软删）。
-func (h *ApiKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
+func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -118,7 +118,7 @@ func (h *ApiKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // Reset 处理 POST /admin/v1/api-keys/{id}/reset：重置（轮换）密钥明文，旧明文立即失效。
-func (h *ApiKeyHandler) Reset(w http.ResponseWriter, r *http.Request) {
+func (h *APIKeyHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -129,7 +129,7 @@ func (h *ApiKeyHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, apiKeyCreatedView{apiKeyView: toApiKeyView(key), Key: plaintext})
+	render.WriteJSON(w, http.StatusOK, apiKeyCreatedView{apiKeyView: toAPIKeyView(key), Key: plaintext})
 }
 
 // parseOptionalRFC3339 解析可选的 RFC3339 时间：空串→(nil,true)；合法→(*t,true)；非法→(nil,false)。

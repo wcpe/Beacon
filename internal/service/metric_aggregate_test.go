@@ -21,7 +21,7 @@ func onlineInst(serverID string, players int, tps float64, memUsed, memMax int64
 func onlineInstWithRole(serverID, role string, players int, tps float64, memUsed, memMax int64, cpu float64) *runtime.Instance {
 	return &runtime.Instance{
 		Namespace: "prod", ServerID: serverID, Role: role, Status: runtime.StatusOnline,
-		PlayerCount: players, TPS: tps, MemUsed: memUsed, MemMax: memMax, CpuLoad: cpu,
+		PlayerCount: players, TPS: tps, MemUsed: memUsed, MemMax: memMax, CPULoad: cpu,
 	}
 }
 
@@ -190,7 +190,7 @@ func sampleAt(serverID string, at time.Time, players int, tps float64, memUsed, 
 func sampleAtWithRole(serverID, role string, at time.Time, players int, tps float64, memUsed, memMax int64, cpu float64) model.MetricSample {
 	return model.MetricSample{
 		Namespace: "prod", ServerID: serverID, Role: role, SampledAt: at,
-		PlayerCount: players, TPS: tps, MemUsed: memUsed, MemMax: memMax, CpuLoad: cpu,
+		PlayerCount: players, TPS: tps, MemUsed: memUsed, MemMax: memMax, CPULoad: cpu,
 	}
 }
 

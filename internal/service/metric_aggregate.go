@@ -78,8 +78,8 @@ func Summarize(insts []*runtime.Instance) Summary {
 		}
 		sumTPS += in.TPS
 		tpsCount++
-		if in.CpuLoad >= 0 { // 剔除 -1.0 不可用样本
-			sumCPU += in.CpuLoad
+		if in.CPULoad >= 0 { // 剔除 -1.0 不可用样本
+			sumCPU += in.CPULoad
 			cpuCount++
 		}
 	}
@@ -181,8 +181,8 @@ func Downsample(samples []model.MetricSample, bucket time.Duration) []TrendPoint
 		}
 		a.sumTPS += samples[i].TPS
 		a.tpsCount++
-		if samples[i].CpuLoad >= 0 {
-			a.sumCPU += samples[i].CpuLoad
+		if samples[i].CPULoad >= 0 {
+			a.sumCPU += samples[i].CPULoad
 			a.cpuCount++
 		}
 	}

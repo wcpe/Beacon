@@ -102,7 +102,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 const cpuLoadUnavailable = -1.0
 
 // reportRequest 是状态上报请求体（人数 / TPS / 内存 / CPU 均仅展示，不参与决策，FR-32）。
-// CpuLoad 用指针区分「旧 agent 缺键」与「显式上报 0」：缺键时由 applyDefaults 缺省为 -1.0（不可用）。
+// CPULoad 用指针区分「旧 agent 缺键」与「显式上报 0」：缺键时由 applyDefaults 缺省为 -1.0（不可用）。
 type reportRequest struct {
 	Namespace   string   `json:"namespace"`
 	ServerID    string   `json:"serverId"`
@@ -111,7 +111,7 @@ type reportRequest struct {
 	TPS         float64  `json:"tps"`
 	MemUsed     int64    `json:"memUsed"` // 旧 agent 缺键 → 解析为 0（向后兼容）
 	MemMax      int64    `json:"memMax"`  // 旧 agent 缺键 → 解析为 0（向后兼容）
-	CpuLoad     *float64 `json:"cpuLoad"` // 旧 agent 缺键 → applyDefaults 后缺省 -1.0（不可用）
+	CPULoad     *float64 `json:"cpuLoad"` // 旧 agent 缺键 → applyDefaults 后缺省 -1.0（不可用）
 	// Backends 是 bc 上报的当前后端子服 serverId 集合（FR-36）。用指针区分「缺键」与「显式空集」：
 	// nil=旧 agent/bukkit 不报（保留原集合不动）；非空指针=bc 显式上报（含空集，即清空）。
 	Backends *[]string `json:"backends,omitempty"`
@@ -148,18 +148,18 @@ func (p *proxyReport) toRuntime() *runtime.ProxyMetrics {
 
 // applyDefaults 为旧 agent 缺失的 cpuLoad 填入不可用哨兵 -1.0（内存键缺失天然为 0，无需处理）。
 func (req *reportRequest) applyDefaults() {
-	if req.CpuLoad == nil {
+	if req.CPULoad == nil {
 		v := cpuLoadUnavailable
-		req.CpuLoad = &v
+		req.CPULoad = &v
 	}
 }
 
-// CPULoad 返回归一化后的 CPU 负载（applyDefaults 后始终非空）。
-func (req *reportRequest) CPULoad() float64 {
-	if req.CpuLoad == nil {
+// cpuLoadOrUnavailable 返回归一化后的 CPU 负载（applyDefaults 后始终非空）。
+func (req *reportRequest) cpuLoadOrUnavailable() float64 {
+	if req.CPULoad == nil {
 		return cpuLoadUnavailable
 	}
-	return *req.CpuLoad
+	return *req.CPULoad
 }
 
 // Report 处理 POST /beacon/v1/agent/report。
@@ -173,7 +173,7 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Report(service.ReportParams{
 		Namespace: req.Namespace, ServerID: req.ServerID, AppliedMD5: req.AppliedMD5,
 		PlayerCount: req.PlayerCount, TPS: req.TPS, MemUsed: req.MemUsed, MemMax: req.MemMax,
-		CPULoad: req.CPULoad(), Backends: req.Backends, Proxy: req.Proxy.toRuntime(),
+		CPULoad: req.cpuLoadOrUnavailable(), Backends: req.Backends, Proxy: req.Proxy.toRuntime(),
 	}); err != nil {
 		render.WriteError(w, r, err)
 		return

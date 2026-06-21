@@ -72,9 +72,9 @@ const (
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"
 	// 管理面 API 密钥（FR-42，运行时创建/吊销/重置，明文不入审计 detail，见 ADR-0026）
-	ActionApiKeyCreate = "apikey.create"
-	ActionApiKeyRevoke = "apikey.revoke"
-	ActionApiKeyReset  = "apikey.reset"
+	ActionAPIKeyCreate = "apikey.create"
+	ActionAPIKeyRevoke = "apikey.revoke"
+	ActionAPIKeyReset  = "apikey.reset"
 )
 
 // 审计对象类型。
@@ -88,7 +88,7 @@ const (
 	// 认证会话（登录 / 登出）的审计对象类型
 	TargetTypeAuth = "auth"
 	// 管理面 API 密钥的审计对象类型
-	TargetTypeApiKey = "apikey"
+	TargetTypeAPIKey = "apikey"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

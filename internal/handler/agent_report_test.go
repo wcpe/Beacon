@@ -23,8 +23,8 @@ func TestReportRequestParseNewKeys(t *testing.T) {
 	if req.MemUsed != 134217728 || req.MemMax != 536870912 {
 		t.Fatalf("内存解析错误：memUsed=%d memMax=%d", req.MemUsed, req.MemMax)
 	}
-	if req.CPULoad() != 0.35 {
-		t.Fatalf("CPU 解析错误：%v", req.CPULoad())
+	if req.cpuLoadOrUnavailable() != 0.35 {
+		t.Fatalf("CPU 解析错误：%v", req.cpuLoadOrUnavailable())
 	}
 }
 
@@ -40,8 +40,8 @@ func TestReportRequestBackwardCompatMissingKeys(t *testing.T) {
 	if req.MemUsed != 0 || req.MemMax != 0 {
 		t.Fatalf("缺内存键应缺省为 0，实际 memUsed=%d memMax=%d", req.MemUsed, req.MemMax)
 	}
-	if req.CPULoad() != cpuLoadUnavailableSentinel {
-		t.Fatalf("缺 cpuLoad 键应缺省为 -1.0（不可用），实际 %v", req.CPULoad())
+	if req.cpuLoadOrUnavailable() != cpuLoadUnavailableSentinel {
+		t.Fatalf("缺 cpuLoad 键应缺省为 -1.0（不可用），实际 %v", req.cpuLoadOrUnavailable())
 	}
 }
 
@@ -53,8 +53,8 @@ func TestReportRequestExplicitCPUZeroPreserved(t *testing.T) {
 		t.Fatalf("解析失败: %v", err)
 	}
 	req.applyDefaults()
-	if req.CPULoad() != 0 {
-		t.Fatalf("显式 cpuLoad=0 应保留为 0（非空闲哨兵），实际 %v", req.CPULoad())
+	if req.cpuLoadOrUnavailable() != 0 {
+		t.Fatalf("显式 cpuLoad=0 应保留为 0（非空闲哨兵），实际 %v", req.cpuLoadOrUnavailable())
 	}
 }
 

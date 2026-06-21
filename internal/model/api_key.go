@@ -6,10 +6,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// ApiKey 是运行时签发给外部服务的管理面访问密钥（FR-42，见 ADR-0026）。
+// APIKey 是运行时签发给外部服务的管理面访问密钥（FR-42，见 ADR-0026）。
 // 要运行时创建/吊销/重置 → 必须持久化落库；**只存明文的 SHA-256 哈希，绝不存明文**。
 // 吊销沿用 SoftDeleteSentinel 软删模式（与 server_drain 同源类别）。
-type ApiKey struct {
+type APIKey struct {
 	// 自增主键
 	ID uint `gorm:"primaryKey;autoIncrement"`
 	// 人类可读名称（标签），创建时必填，用于列表识别与审计定位
@@ -33,10 +33,10 @@ type ApiKey struct {
 }
 
 // TableName 固定表名为 api_key。
-func (ApiKey) TableName() string { return "api_key" }
+func (APIKey) TableName() string { return "api_key" }
 
 // BeforeCreate 在插入前为未删记录写入软删哨兵值。
-func (k *ApiKey) BeforeCreate(*gorm.DB) error {
+func (k *APIKey) BeforeCreate(*gorm.DB) error {
 	if k.DeletedAt.IsZero() {
 		k.DeletedAt = SoftDeleteSentinel
 	}

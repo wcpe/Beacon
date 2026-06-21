@@ -66,7 +66,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	ovrSetSvc := service.NewOverrideSetService(db, overrideSetRepo, repository.NewFileOverrideSetRevisionRepository(db), fileRepo, auditRepo)
 	schedSvc := service.NewSchedulingService(db, repository.NewServerDrainRepository(db), auditRepo, registry)
-	apiKeySvc := service.NewApiKeyService(db, repository.NewApiKeyRepository(db), auditRepo)
+	apiKeySvc := service.NewAPIKeyService(db, repository.NewAPIKeyRepository(db), auditRepo)
 	testAlertInbox = alert.NewInboxAlerter(16)
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
@@ -97,7 +97,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Alert:       handler.NewAlertHandler(testAlertInbox),
 		Metric:      handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:        handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
-		ApiKey:      handler.NewApiKeyHandler(apiKeySvc),
+		APIKey:      handler.NewAPIKeyHandler(apiKeySvc),
 		Metrics:     metricsSet.Handler(),
 		Web:         http.HandlerFunc(http.NotFound),
 	}, agentToken, authn, apiKeySvc)

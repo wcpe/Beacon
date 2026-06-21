@@ -30,8 +30,8 @@ func TestReportWritesLoadMetrics(t *testing.T) {
 	if got.MemUsed != 128<<20 || got.MemMax != 512<<20 {
 		t.Fatalf("内存字段写入错误：memUsed=%d memMax=%d", got.MemUsed, got.MemMax)
 	}
-	if got.CpuLoad != 0.35 {
-		t.Fatalf("CPU 负载写入错误：%v", got.CpuLoad)
+	if got.CPULoad != 0.35 {
+		t.Fatalf("CPU 负载写入错误：%v", got.CPULoad)
 	}
 }
 
@@ -45,7 +45,7 @@ func TestReportCPUUnavailableSentinel(t *testing.T) {
 		t.Fatalf("注册失败: %v", err)
 	}
 	reg.Report("prod", "lobby-1", "", 0, 20.0, 0, 0, -1.0, nil)
-	if got := reg.Get("prod", "lobby-1"); got == nil || got.CpuLoad != -1.0 {
+	if got := reg.Get("prod", "lobby-1"); got == nil || got.CPULoad != -1.0 {
 		t.Fatalf("CPU 不可用哨兵 -1.0 应原样写入，实际 %v", got)
 	}
 }

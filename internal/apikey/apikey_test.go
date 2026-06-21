@@ -39,7 +39,7 @@ func TestHashStableAndMatches(t *testing.T) {
 	if Hash(plaintext) != hash {
 		t.Fatal("Hash(明文) 应与 Generate 返回的摘要一致")
 	}
-	if Hash(plaintext) != Hash(plaintext) {
+	if got := Hash(plaintext); got != Hash(plaintext) {
 		t.Fatal("同一明文的 Hash 应幂等")
 	}
 	if Hash("bk_other") == hash {

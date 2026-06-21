@@ -250,7 +250,7 @@ func (s *ConfigGrayService) Promote(itemID uint, operator, comment, clientIP str
 }
 
 // Abort 丢弃某 item 的活跃灰度（软删）；cohort 成员回到稳定版本，稳定指针不动。
-func (s *ConfigGrayService) Abort(itemID uint, operator, comment, clientIP string) error {
+func (s *ConfigGrayService) Abort(itemID uint, operator, _, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}

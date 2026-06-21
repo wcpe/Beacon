@@ -77,8 +77,8 @@ var (
 	ErrAdminUnauthorized = New(http.StatusUnauthorized, "ADMIN_UNAUTHORIZED", "缺少或非法的登录令牌")
 	// ErrForbidden 已认证但无权执行该操作（只读密钥访问写端点，FR-42，见 ADR-0026）。
 	ErrForbidden = New(http.StatusForbidden, "FORBIDDEN", "只读密钥无权执行写操作")
-	// ErrApiKeyNotFound API 密钥不存在（吊销 / 重置目标不存在或已吊销，FR-42）。
-	ErrApiKeyNotFound = New(http.StatusNotFound, "API_KEY_NOT_FOUND", "API 密钥不存在")
+	// ErrAPIKeyNotFound API 密钥不存在（吊销 / 重置目标不存在或已吊销，FR-42）。
+	ErrAPIKeyNotFound = New(http.StatusNotFound, "API_KEY_NOT_FOUND", "API 密钥不存在")
 	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。
 	ErrIdentityRequired = New(http.StatusBadRequest, "IDENTITY_REQUIRED", "缺少必要的身份标识")
 	// ErrDuplicateServerID 同 serverId 已有仍新鲜的不同地址实例在线。

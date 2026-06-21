@@ -129,7 +129,7 @@ func TestValidateReloadCommand_RejectInjection(t *testing.T) {
 		"reload\nplay evil",      // 换行
 		"reload\rplay evil",      // 回车
 		"reload `whoami`",        // 反引号
-		"reloadevil",       // 控制字符（响铃）
+		"reload\aevil",       // 控制字符（响铃）
 		"reload	play",           // 制表符（控制字符）
 		"reload &",               // 后台符
 	}

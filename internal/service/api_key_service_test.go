@@ -16,8 +16,8 @@ import (
 	"beacon/internal/repository"
 )
 
-// newApiKeyTestService 用内存 sqlite 装配 ApiKeyService（不依赖 MySQL/DSN），迁移 api_key + audit_log。
-func newApiKeyTestService(t *testing.T) (*ApiKeyService, *repository.ApiKeyRepository, *gorm.DB) {
+// newAPIKeyTestService 用内存 sqlite 装配 APIKeyService（不依赖 MySQL/DSN），迁移 api_key + audit_log。
+func newAPIKeyTestService(t *testing.T) (*APIKeyService, *repository.APIKeyRepository, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -25,7 +25,7 @@ func newApiKeyTestService(t *testing.T) (*ApiKeyService, *repository.ApiKeyRepos
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ApiKey{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.APIKey{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	// 关闭连接，避免泄漏 cache=shared 共享内存库连接，使其在测试结束后销毁、不串扰同包其它测试
@@ -40,14 +40,14 @@ func newApiKeyTestService(t *testing.T) (*ApiKeyService, *repository.ApiKeyRepos
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
 	}
-	repo := repository.NewApiKeyRepository(db)
-	svc := NewApiKeyService(db, repo, repository.NewAuditLogRepository(db))
+	repo := repository.NewAPIKeyRepository(db)
+	svc := NewAPIKeyService(db, repo, repository.NewAuditLogRepository(db))
 	return svc, repo, db
 }
 
-// TestApiKeyCreateVerify 创建返回明文一次，库内只存哈希（非明文），Verify 通过并给出角色身份。
-func TestApiKeyCreateVerify(t *testing.T) {
-	svc, repo, _ := newApiKeyTestService(t)
+// TestAPIKeyCreateVerify 创建返回明文一次，库内只存哈希（非明文），Verify 通过并给出角色身份。
+func TestAPIKeyCreateVerify(t *testing.T) {
+	svc, repo, _ := newAPIKeyTestService(t)
 	plaintext, key, err := svc.Create("ci-backend", model.RoleReadonly, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
@@ -81,13 +81,13 @@ func TestApiKeyCreateVerify(t *testing.T) {
 	}
 }
 
-// TestApiKeyVerifyRejectsExpired 过期密钥 Verify 失败（→401）。
-func TestApiKeyVerifyRejectsExpired(t *testing.T) {
-	svc, repo, _ := newApiKeyTestService(t)
+// TestAPIKeyVerifyRejectsExpired 过期密钥 Verify 失败（→401）。
+func TestAPIKeyVerifyRejectsExpired(t *testing.T) {
+	svc, repo, _ := newAPIKeyTestService(t)
 	// 直接插入一把过期密钥（绕过 Create 的"过期须在未来"校验）
 	plaintext, hash, prefix, _ := apikey.Generate()
 	past := time.Now().UTC().Add(-time.Hour)
-	if err := repo.Create(&model.ApiKey{
+	if err := repo.Create(&model.APIKey{
 		Name: "stale", KeyHash: hash, KeyPrefix: prefix, Role: model.RoleFull, ExpiresAt: &past,
 	}); err != nil {
 		t.Fatalf("插入过期密钥失败: %v", err)
@@ -97,9 +97,9 @@ func TestApiKeyVerifyRejectsExpired(t *testing.T) {
 	}
 }
 
-// TestApiKeyVerifyRejectsRevoked 吊销后 Verify 失败（→401）。
-func TestApiKeyVerifyRejectsRevoked(t *testing.T) {
-	svc, _, _ := newApiKeyTestService(t)
+// TestAPIKeyVerifyRejectsRevoked 吊销后 Verify 失败（→401）。
+func TestAPIKeyVerifyRejectsRevoked(t *testing.T) {
+	svc, _, _ := newAPIKeyTestService(t)
 	plaintext, key, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
@@ -111,14 +111,14 @@ func TestApiKeyVerifyRejectsRevoked(t *testing.T) {
 		t.Fatalf("吊销密钥应 ErrAdminUnauthorized，实际 %v", err)
 	}
 	// 二次吊销不存在 → API_KEY_NOT_FOUND
-	if err := svc.Revoke(key.ID, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrApiKeyNotFound) {
-		t.Fatalf("吊销已吊销密钥应 ErrApiKeyNotFound，实际 %v", err)
+	if err := svc.Revoke(key.ID, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrAPIKeyNotFound) {
+		t.Fatalf("吊销已吊销密钥应 ErrAPIKeyNotFound，实际 %v", err)
 	}
 }
 
-// TestApiKeyResetRotates 重置后旧明文失效、新明文生效（密钥只能重置、不能二次读取）。
-func TestApiKeyResetRotates(t *testing.T) {
-	svc, _, _ := newApiKeyTestService(t)
+// TestAPIKeyResetRotates 重置后旧明文失效、新明文生效（密钥只能重置、不能二次读取）。
+func TestAPIKeyResetRotates(t *testing.T) {
+	svc, _, _ := newAPIKeyTestService(t)
 	old, key, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
@@ -138,14 +138,14 @@ func TestApiKeyResetRotates(t *testing.T) {
 	}
 	// 重置已吊销 / 不存在的密钥 → API_KEY_NOT_FOUND
 	_ = svc.Revoke(key.ID, "admin", "127.0.0.1")
-	if _, _, err := svc.Reset(key.ID, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrApiKeyNotFound) {
-		t.Fatalf("重置已吊销密钥应 ErrApiKeyNotFound，实际 %v", err)
+	if _, _, err := svc.Reset(key.ID, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrAPIKeyNotFound) {
+		t.Fatalf("重置已吊销密钥应 ErrAPIKeyNotFound，实际 %v", err)
 	}
 }
 
-// TestApiKeyCreateRejectsBadInput 名称空 / 角色非法 / 过期时刻已过 一律 INVALID_PARAM。
-func TestApiKeyCreateRejectsBadInput(t *testing.T) {
-	svc, _, _ := newApiKeyTestService(t)
+// TestAPIKeyCreateRejectsBadInput 名称空 / 角色非法 / 过期时刻已过 一律 INVALID_PARAM。
+func TestAPIKeyCreateRejectsBadInput(t *testing.T) {
+	svc, _, _ := newAPIKeyTestService(t)
 	past := time.Now().UTC().Add(-time.Minute)
 	cases := []struct {
 		name, role string
@@ -162,9 +162,9 @@ func TestApiKeyCreateRejectsBadInput(t *testing.T) {
 	}
 }
 
-// TestApiKeyAuditHasNoSecret 创建/吊销/重置审计落库，且 detail 绝不含明文 / 哈希。
-func TestApiKeyAuditHasNoSecret(t *testing.T) {
-	svc, _, db := newApiKeyTestService(t)
+// TestAPIKeyAuditHasNoSecret 创建/吊销/重置审计落库，且 detail 绝不含明文 / 哈希。
+func TestAPIKeyAuditHasNoSecret(t *testing.T) {
+	svc, _, db := newAPIKeyTestService(t)
 	plaintext, key, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
@@ -176,7 +176,7 @@ func TestApiKeyAuditHasNoSecret(t *testing.T) {
 		t.Fatalf("吊销失败: %v", err)
 	}
 	var audits []model.AuditLog
-	if err := db.Where("target_type = ?", model.TargetTypeApiKey).Find(&audits).Error; err != nil {
+	if err := db.Where("target_type = ?", model.TargetTypeAPIKey).Find(&audits).Error; err != nil {
 		t.Fatalf("查审计失败: %v", err)
 	}
 	if len(audits) != 3 {

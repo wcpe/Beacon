@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// doApiKey 用 API 密钥（X-Beacon-Api-Key 头或 Authorization: Bearer）发起请求。
-func doApiKey(t *testing.T, method, url, key string, viaBearer bool, body any) (int, map[string]any) {
+// doAPIKey 用 API 密钥（X-Beacon-Api-Key 头或 Authorization: Bearer）发起请求。
+func doAPIKey(t *testing.T, method, url, key string, viaBearer bool, body any) (int, map[string]any) {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -56,17 +56,17 @@ func createKey(t *testing.T, baseURL, name, role string) (string, int) {
 	return plaintext, int(idF)
 }
 
-// TestApiKeyReadonlyAllowsReadDeniesWrite 只读密钥可读、写一律 403（统一中间件裁决）。
-func TestApiKeyReadonlyAllowsReadDeniesWrite(t *testing.T) {
+// TestAPIKeyReadonlyAllowsReadDeniesWrite 只读密钥可读、写一律 403（统一中间件裁决）。
+func TestAPIKeyReadonlyAllowsReadDeniesWrite(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	roKey, roID := createKey(t, ts.URL, "ext-readonly", "readonly")
 
 	// 读端点放行（两种请求头都认）
-	if code, _ := doApiKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", roKey, false, nil); code != http.StatusOK {
+	if code, _ := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", roKey, false, nil); code != http.StatusOK {
 		t.Fatalf("只读密钥（X-Beacon-Api-Key）读实例应 200，实际 %d", code)
 	}
-	if code, _ := doApiKey(t, http.MethodGet, ts.URL+"/admin/v1/zones?namespace=prod", roKey, true, nil); code != http.StatusOK {
+	if code, _ := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/zones?namespace=prod", roKey, true, nil); code != http.StatusOK {
 		t.Fatalf("只读密钥（Bearer）读 zone 应 200，实际 %d", code)
 	}
 
@@ -83,21 +83,21 @@ func TestApiKeyReadonlyAllowsReadDeniesWrite(t *testing.T) {
 		{http.MethodDelete, "/admin/v1/api-keys/" + itoa(roID), nil},
 	}
 	for _, wcase := range writes {
-		code, body := doApiKey(t, wcase.method, ts.URL+wcase.path, roKey, false, wcase.body)
+		code, body := doAPIKey(t, wcase.method, ts.URL+wcase.path, roKey, false, wcase.body)
 		if code != http.StatusForbidden || body["code"] != "FORBIDDEN" {
 			t.Fatalf("只读密钥 %s %s 应 403 FORBIDDEN，实际 %d：%v", wcase.method, wcase.path, code, body)
 		}
 	}
 }
 
-// TestApiKeyFullCanWriteAndAuditsPrincipal full 密钥可写，写审计 operator 为 apikey:<名称>。
-func TestApiKeyFullCanWriteAndAuditsPrincipal(t *testing.T) {
+// TestAPIKeyFullCanWriteAndAuditsPrincipal full 密钥可写，写审计 operator 为 apikey:<名称>。
+func TestAPIKeyFullCanWriteAndAuditsPrincipal(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	fullKey, _ := createKey(t, ts.URL, "ext-full", "full")
 
 	// full 密钥写配置 → 201
-	code, created := doApiKey(t, http.MethodPost, ts.URL+"/admin/v1/configs", fullKey, true, map[string]any{
+	code, created := doAPIKey(t, http.MethodPost, ts.URL+"/admin/v1/configs", fullKey, true, map[string]any{
 		"namespace": "prod", "group": "__GLOBAL__", "dataId": "fullkey.yml",
 		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n",
 	})
@@ -120,8 +120,8 @@ func TestApiKeyFullCanWriteAndAuditsPrincipal(t *testing.T) {
 	}
 }
 
-// TestApiKeyCreateAuditAndListNoSecret 创建审计 operator 为登录身份；列表不泄露明文/哈希。
-func TestApiKeyCreateAuditAndListNoSecret(t *testing.T) {
+// TestAPIKeyCreateAuditAndListNoSecret 创建审计 operator 为登录身份；列表不泄露明文/哈希。
+func TestAPIKeyCreateAuditAndListNoSecret(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	_, _ = createKey(t, ts.URL, "audited-key", "readonly")
@@ -164,8 +164,8 @@ func TestApiKeyCreateAuditAndListNoSecret(t *testing.T) {
 	}
 }
 
-// TestApiKeyRevokeThenUnauthorized 吊销后该密钥访问一律 401；重置后旧明文 401、新明文可用。
-func TestApiKeyRevokeThenUnauthorized(t *testing.T) {
+// TestAPIKeyRevokeThenUnauthorized 吊销后该密钥访问一律 401；重置后旧明文 401、新明文可用。
+func TestAPIKeyRevokeThenUnauthorized(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
@@ -174,7 +174,7 @@ func TestApiKeyRevokeThenUnauthorized(t *testing.T) {
 	if code, _ := doJSON(t, http.MethodDelete, ts.URL+"/admin/v1/api-keys/"+itoa(revID), nil); code != http.StatusOK {
 		t.Fatalf("吊销密钥应 200，实际 %d", code)
 	}
-	if code, body := doApiKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", revKey, false, nil); code != http.StatusUnauthorized || body["code"] != "ADMIN_UNAUTHORIZED" {
+	if code, body := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", revKey, false, nil); code != http.StatusUnauthorized || body["code"] != "ADMIN_UNAUTHORIZED" {
 		t.Fatalf("吊销后访问应 401 ADMIN_UNAUTHORIZED，实际 %d：%v", code, body)
 	}
 
@@ -188,19 +188,19 @@ func TestApiKeyRevokeThenUnauthorized(t *testing.T) {
 	if newKey == "" || newKey == resetKey {
 		t.Fatal("重置应返回新明文且不同于旧明文")
 	}
-	if code, _ := doApiKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", resetKey, false, nil); code != http.StatusUnauthorized {
+	if code, _ := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", resetKey, false, nil); code != http.StatusUnauthorized {
 		t.Fatalf("重置后旧明文应 401，实际 %d", code)
 	}
-	if code, _ := doApiKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", newKey, false, nil); code != http.StatusOK {
+	if code, _ := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", newKey, false, nil); code != http.StatusOK {
 		t.Fatalf("重置后新明文应 200，实际 %d", code)
 	}
 }
 
-// TestApiKeyUnknownRejected 未知 / 伪造密钥一律 401。
-func TestApiKeyUnknownRejected(t *testing.T) {
+// TestAPIKeyUnknownRejected 未知 / 伪造密钥一律 401。
+func TestAPIKeyUnknownRejected(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	if code, body := doApiKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", "bk_forged-nonexistent", false, nil); code != http.StatusUnauthorized || body["code"] != "ADMIN_UNAUTHORIZED" {
+	if code, body := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", "bk_forged-nonexistent", false, nil); code != http.StatusUnauthorized || body["code"] != "ADMIN_UNAUTHORIZED" {
 		t.Fatalf("未知密钥应 401 ADMIN_UNAUTHORIZED，实际 %d：%v", code, body)
 	}
 }

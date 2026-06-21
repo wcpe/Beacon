@@ -104,7 +104,7 @@ func (c Config) validate() error {
 	}
 	// 健康阈值须满足 degraded < ttl < offline，否则状态机分档失效（FR-28）
 	h := c.Health
-	if !(h.DegradedAfterSec < h.TTLSec && h.TTLSec < h.OfflineGraceSec) {
+	if h.DegradedAfterSec >= h.TTLSec || h.TTLSec >= h.OfflineGraceSec {
 		return fmt.Errorf("配置校验失败: 健康阈值须满足 degraded-after-sec(%d) < ttl-sec(%d) < offline-grace-sec(%d)",
 			h.DegradedAfterSec, h.TTLSec, h.OfflineGraceSec)
 	}

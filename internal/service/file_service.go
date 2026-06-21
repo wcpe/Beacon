@@ -309,7 +309,7 @@ func (s *FileService) Rollback(id uint, toVersion int64, operator, comment, clie
 }
 
 // Delete 软删文件对象（该层从覆盖链脱落，下游 agent 据 manifest 比对会删该 path 的镜像）。
-func (s *FileService) Delete(id uint, operator, comment, clientIP string) error {
+func (s *FileService) Delete(id uint, operator, _, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}

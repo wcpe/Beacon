@@ -242,7 +242,7 @@ func (s *OverrideSetService) Rollback(id uint, toVersion int64, operator, commen
 }
 
 // Delete 软删覆盖集。
-func (s *OverrideSetService) Delete(id uint, operator, comment, clientIP string) error {
+func (s *OverrideSetService) Delete(id uint, operator, _, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}

@@ -22,8 +22,8 @@ func (c *capturingAlerter) Notify(_ context.Context, a alert.Alert) error {
 
 // TestScannerAlertsOnAbnormalTransitions 进入 degraded/lost/offline 触发告警，恢复 online 不触发（FR-28）。
 func TestScannerAlertsOnAbnormalTransitions(t *testing.T) {
-	cap := &capturingAlerter{}
-	s := NewHealthScanner(NewRegistry(), degradedAfter, ttl, offlineGrace, time.Second, alert.NewDispatcher(cap))
+	capturer := &capturingAlerter{}
+	s := NewHealthScanner(NewRegistry(), degradedAfter, ttl, offlineGrace, time.Second, alert.NewDispatcher(capturer))
 
 	changed := []*Instance{
 		{Namespace: "prod", ServerID: "a", Address: "1.1.1.1:1", PrevStatus: StatusOnline, Status: StatusDegraded},
@@ -33,10 +33,10 @@ func TestScannerAlertsOnAbnormalTransitions(t *testing.T) {
 	}
 	s.dispatchAlerts(context.Background(), changed)
 
-	if len(cap.got) != 3 {
-		t.Fatalf("3 个异常转移应各告警 1 次（恢复不告警），实际 %d", len(cap.got))
+	if len(capturer.got) != 3 {
+		t.Fatalf("3 个异常转移应各告警 1 次（恢复不告警），实际 %d", len(capturer.got))
 	}
-	for _, a := range cap.got {
+	for _, a := range capturer.got {
 		if a.Status == StatusOnline {
 			t.Fatalf("恢复 online 不应告警，却收到 %+v", a)
 		}

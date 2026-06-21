@@ -55,7 +55,7 @@ type Instance struct {
 	TPS           float64 // 仅展示，不参与决策
 	MemUsed       int64   // JVM 已用堆字节；与 PlayerCount/TPS 同列健康事实，仅展示不参与决策（FR-32）
 	MemMax        int64   // JVM 最大堆字节；仅展示不参与决策（FR-32）
-	CpuLoad       float64 // 进程 CPU 负载[0,1]，-1.0=不可用（近似值）；仅展示不参与决策（FR-32）
+	CPULoad       float64 // 进程 CPU 负载[0,1]，-1.0=不可用（近似值）；仅展示不参与决策（FR-32）
 	// Proxy 是该实例（仅 bungee 代理）专属负载指标，由 bc agent 上报、控制面只存的事实（FR-34）。
 	// 仅 bc 填、bukkit 恒空（零值）；与上面负载字段同列，仅展示不参与决策。
 	Proxy ProxyMetrics
@@ -161,7 +161,7 @@ func (r *Registry) Report(ns, serverID, appliedMD5 string, playerCount int, tps 
 	inst.TPS = tps
 	inst.MemUsed = memUsed
 	inst.MemMax = memMax
-	inst.CpuLoad = cpuLoad
+	inst.CPULoad = cpuLoad
 	if proxy != nil {
 		inst.Proxy = *proxy
 	}

@@ -97,7 +97,7 @@ func TestDefaultHealthThresholdsValid(t *testing.T) {
 		t.Fatalf("默认配置应通过校验，却报错: %v", err)
 	}
 	h := cfg.Health
-	if !(h.DegradedAfterSec < h.TTLSec && h.TTLSec < h.OfflineGraceSec) {
+	if h.DegradedAfterSec >= h.TTLSec || h.TTLSec >= h.OfflineGraceSec {
 		t.Fatalf("默认阈值序关系不满足：degraded=%d ttl=%d offline=%d", h.DegradedAfterSec, h.TTLSec, h.OfflineGraceSec)
 	}
 	if cfg.Alert.InboxCapacity <= 0 {

@@ -11,8 +11,8 @@ import (
 	"beacon/internal/model"
 )
 
-// newApiKeyTestDB 打开内存 sqlite 并迁移 api_key，供仓库单测（不依赖 MySQL/DSN）。
-func newApiKeyTestDB(t *testing.T) *gorm.DB {
+// newAPIKeyTestDB 打开内存 sqlite 并迁移 api_key，供仓库单测（不依赖 MySQL/DSN）。
+func newAPIKeyTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -20,7 +20,7 @@ func newApiKeyTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ApiKey{}); err != nil {
+	if err := db.AutoMigrate(&model.APIKey{}); err != nil {
 		t.Fatalf("迁移 api_key 失败: %v", err)
 	}
 	if err := db.Exec("DELETE FROM api_key").Error; err != nil {
@@ -29,10 +29,10 @@ func newApiKeyTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-// TestApiKeyCreateAndFindByHash 建后可按摘要查到，且填了软删哨兵。
-func TestApiKeyCreateAndFindByHash(t *testing.T) {
-	repo := NewApiKeyRepository(newApiKeyTestDB(t))
-	if err := repo.Create(&model.ApiKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleReadonly}); err != nil {
+// TestAPIKeyCreateAndFindByHash 建后可按摘要查到，且填了软删哨兵。
+func TestAPIKeyCreateAndFindByHash(t *testing.T) {
+	repo := NewAPIKeyRepository(newAPIKeyTestDB(t))
+	if err := repo.Create(&model.APIKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleReadonly}); err != nil {
 		t.Fatalf("建密钥失败: %v", err)
 	}
 	got, err := repo.FindActiveByHash("h1")
@@ -51,10 +51,10 @@ func TestApiKeyCreateAndFindByHash(t *testing.T) {
 	}
 }
 
-// TestApiKeyRevokeHidesFromHashLookup 吊销（软删）后按摘要查不到，但仍在 List 中可见。
-func TestApiKeyRevokeHidesFromHashLookup(t *testing.T) {
-	repo := NewApiKeyRepository(newApiKeyTestDB(t))
-	k := &model.ApiKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleFull}
+// TestAPIKeyRevokeHidesFromHashLookup 吊销（软删）后按摘要查不到，但仍在 List 中可见。
+func TestAPIKeyRevokeHidesFromHashLookup(t *testing.T) {
+	repo := NewAPIKeyRepository(newAPIKeyTestDB(t))
+	k := &model.APIKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleFull}
 	if err := repo.Create(k); err != nil {
 		t.Fatalf("建密钥失败: %v", err)
 	}
@@ -80,11 +80,11 @@ func TestApiKeyRevokeHidesFromHashLookup(t *testing.T) {
 	}
 }
 
-// TestApiKeyRotateSecret 重置换新摘要、清空最近使用，旧摘要立即失效。
-func TestApiKeyRotateSecret(t *testing.T) {
-	repo := NewApiKeyRepository(newApiKeyTestDB(t))
+// TestAPIKeyRotateSecret 重置换新摘要、清空最近使用，旧摘要立即失效。
+func TestAPIKeyRotateSecret(t *testing.T) {
+	repo := NewAPIKeyRepository(newAPIKeyTestDB(t))
 	now := time.Now().UTC()
-	k := &model.ApiKey{Name: "ci", KeyHash: "old", KeyPrefix: "bk_old", Role: model.RoleFull, LastUsedAt: &now}
+	k := &model.APIKey{Name: "ci", KeyHash: "old", KeyPrefix: "bk_old", Role: model.RoleFull, LastUsedAt: &now}
 	if err := repo.Create(k); err != nil {
 		t.Fatalf("建密钥失败: %v", err)
 	}
@@ -106,10 +106,10 @@ func TestApiKeyRotateSecret(t *testing.T) {
 	}
 }
 
-// TestApiKeyTouchLastUsed 更新最近使用时刻。
-func TestApiKeyTouchLastUsed(t *testing.T) {
-	repo := NewApiKeyRepository(newApiKeyTestDB(t))
-	k := &model.ApiKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleReadonly}
+// TestAPIKeyTouchLastUsed 更新最近使用时刻。
+func TestAPIKeyTouchLastUsed(t *testing.T) {
+	repo := NewAPIKeyRepository(newAPIKeyTestDB(t))
+	k := &model.APIKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleReadonly}
 	if err := repo.Create(k); err != nil {
 		t.Fatalf("建密钥失败: %v", err)
 	}
@@ -123,10 +123,10 @@ func TestApiKeyTouchLastUsed(t *testing.T) {
 	}
 }
 
-// TestApiKeyFindActiveByID 按主键查未吊销密钥；吊销后查不到。
-func TestApiKeyFindActiveByID(t *testing.T) {
-	repo := NewApiKeyRepository(newApiKeyTestDB(t))
-	k := &model.ApiKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleFull}
+// TestAPIKeyFindActiveByID 按主键查未吊销密钥；吊销后查不到。
+func TestAPIKeyFindActiveByID(t *testing.T) {
+	repo := NewAPIKeyRepository(newAPIKeyTestDB(t))
+	k := &model.APIKey{Name: "ci", KeyHash: "h1", KeyPrefix: "bk_aaa", Role: model.RoleFull}
 	if err := repo.Create(k); err != nil {
 		t.Fatalf("建密钥失败: %v", err)
 	}

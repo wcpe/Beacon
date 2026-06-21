@@ -26,14 +26,14 @@ type Handlers struct {
 	Metric      *handler.MetricHandler
 	System      *handler.SystemHandler
 	Auth        *handler.AuthHandler
-	ApiKey      *handler.ApiKeyHandler
+	APIKey      *handler.APIKeyHandler
 	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web         http.Handler
 }
 
 // NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写中间件）+ 内嵌前端（SPA 回退）。
 // 中间件自外向内：recover → traceId → 访问日志。admin 组内：鉴权（登录令牌 / API 密钥）→ 只读拒写裁决。
-func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys ApiKeyVerifier) http.Handler {
+func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys APIKeyVerifier) http.Handler {
 	r := chi.NewRouter()
 	r.Use(recoverMiddleware, traceMiddleware, accessLog)
 
@@ -140,10 +140,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 管理面 API 密钥（FR-42，见 ADR-0026）：只读角色 + 运行时创建/吊销/重置
 		// 创建/吊销/重置为写方法，readonly 角色经 readonlyWriteGuard 一律 403
-		r.Get("/api-keys", h.ApiKey.List)
-		r.Post("/api-keys", h.ApiKey.Create)
-		r.Delete("/api-keys/{id}", h.ApiKey.Revoke)
-		r.Post("/api-keys/{id}/reset", h.ApiKey.Reset)
+		r.Get("/api-keys", h.APIKey.List)
+		r.Post("/api-keys", h.APIKey.Create)
+		r.Delete("/api-keys/{id}", h.APIKey.Revoke)
+		r.Post("/api-keys/{id}/reset", h.APIKey.Reset)
 
 		// 负载指标看板（FR-32，见 ADR-0023）：当前快照聚合 + 历史趋势；仅负载数字、不含名单
 		if h.Metric != nil {

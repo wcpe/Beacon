@@ -221,9 +221,9 @@ func run() error {
 
 	// 管理面 API 密钥（FR-42，见 ADR-0026）：运行时创建/吊销/重置 + 只读角色，落库只存哈希。
 	// apiKeyService 同时作为 API 密钥校验器注入鉴权中间件（真源在库、查库比对哈希、不引会话存储）。
-	apiKeyRepo := repository.NewApiKeyRepository(db)
-	apiKeyService := service.NewApiKeyService(db, apiKeyRepo, auditRepo)
-	apiKeyHandler := handler.NewApiKeyHandler(apiKeyService)
+	apiKeyRepo := repository.NewAPIKeyRepository(db)
+	apiKeyService := service.NewAPIKeyService(db, apiKeyRepo, auditRepo)
+	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
@@ -233,7 +233,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, ApiKey: apiKeyHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService)
 
 	srv := &http.Server{

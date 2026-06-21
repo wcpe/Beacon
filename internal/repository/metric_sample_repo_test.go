@@ -35,8 +35,8 @@ func TestInsertBatchAndRoundTrip(t *testing.T) {
 	r := NewMetricSampleRepository(newMetricTestDB(t))
 	at := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	samples := []model.MetricSample{
-		{Namespace: "prod", ServerID: "lobby-1", SampledAt: at, PlayerCount: 42, TPS: 19.9, MemUsed: 128 << 20, MemMax: 512 << 20, CpuLoad: 0.35},
-		{Namespace: "prod", ServerID: "lobby-2", SampledAt: at, PlayerCount: 7, TPS: 20.0, MemUsed: 64 << 20, MemMax: 256 << 20, CpuLoad: -1.0},
+		{Namespace: "prod", ServerID: "lobby-1", SampledAt: at, PlayerCount: 42, TPS: 19.9, MemUsed: 128 << 20, MemMax: 512 << 20, CPULoad: 0.35},
+		{Namespace: "prod", ServerID: "lobby-2", SampledAt: at, PlayerCount: 7, TPS: 20.0, MemUsed: 64 << 20, MemMax: 256 << 20, CPULoad: -1.0},
 	}
 	if err := r.InsertBatch(samples); err != nil {
 		t.Fatalf("批量插入失败: %v", err)
@@ -55,11 +55,11 @@ func TestInsertBatchAndRoundTrip(t *testing.T) {
 		byServer[s.ServerID] = s
 	}
 	s1 := byServer["lobby-1"]
-	if s1.PlayerCount != 42 || s1.TPS != 19.9 || s1.MemUsed != 128<<20 || s1.MemMax != 512<<20 || s1.CpuLoad != 0.35 {
+	if s1.PlayerCount != 42 || s1.TPS != 19.9 || s1.MemUsed != 128<<20 || s1.MemMax != 512<<20 || s1.CPULoad != 0.35 {
 		t.Fatalf("lobby-1 字段往返错误：%+v", s1)
 	}
-	if byServer["lobby-2"].CpuLoad != -1.0 {
-		t.Fatalf("CPU 不可用哨兵 -1.0 应往返无损，实际 %v", byServer["lobby-2"].CpuLoad)
+	if byServer["lobby-2"].CPULoad != -1.0 {
+		t.Fatalf("CPU 不可用哨兵 -1.0 应往返无损，实际 %v", byServer["lobby-2"].CPULoad)
 	}
 }
 
@@ -191,7 +191,7 @@ func TestDeleteBefore(t *testing.T) {
 func seedMetric(t *testing.T, r *MetricSampleRepository, ns, serverID string, at time.Time) {
 	t.Helper()
 	if err := r.InsertBatch([]model.MetricSample{
-		{Namespace: ns, ServerID: serverID, SampledAt: at, PlayerCount: 10, TPS: 20.0, MemUsed: 1 << 20, MemMax: 2 << 20, CpuLoad: 0.1},
+		{Namespace: ns, ServerID: serverID, SampledAt: at, PlayerCount: 10, TPS: 20.0, MemUsed: 1 << 20, MemMax: 2 << 20, CPULoad: 0.1},
 	}); err != nil {
 		t.Fatalf("写样本失败: %v", err)
 	}

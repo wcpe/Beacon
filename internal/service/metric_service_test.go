@@ -59,8 +59,8 @@ func TestTrendEmptyNamespaceAggregatesAllEnvironments(t *testing.T) {
 	at := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	// 两个环境各一条同一时刻的样本，落同一桶。
 	seed := []model.MetricSample{
-		{Namespace: "prod", ServerID: "p-1", Role: roleBukkit, SampledAt: at, PlayerCount: 30, TPS: 20.0, MemUsed: 100, MemMax: 1000, CpuLoad: 0.4},
-		{Namespace: "test", ServerID: "t-1", Role: roleBukkit, SampledAt: at, PlayerCount: 12, TPS: 18.0, MemUsed: 300, MemMax: 1000, CpuLoad: 0.6},
+		{Namespace: "prod", ServerID: "p-1", Role: roleBukkit, SampledAt: at, PlayerCount: 30, TPS: 20.0, MemUsed: 100, MemMax: 1000, CPULoad: 0.4},
+		{Namespace: "test", ServerID: "t-1", Role: roleBukkit, SampledAt: at, PlayerCount: 12, TPS: 18.0, MemUsed: 300, MemMax: 1000, CPULoad: 0.6},
 	}
 	if err := db.Create(&seed).Error; err != nil {
 		t.Fatalf("播种样本失败: %v", err)
@@ -90,8 +90,8 @@ func TestTrendNamespaceFiltersWhenProvided(t *testing.T) {
 	svc, db := newTrendTestServiceWithDB(t)
 	at := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	seed := []model.MetricSample{
-		{Namespace: "prod", ServerID: "p-1", Role: roleBukkit, SampledAt: at, PlayerCount: 30, TPS: 20.0, MemUsed: 100, MemMax: 1000, CpuLoad: 0.4},
-		{Namespace: "test", ServerID: "t-1", Role: roleBukkit, SampledAt: at, PlayerCount: 12, TPS: 18.0, MemUsed: 300, MemMax: 1000, CpuLoad: 0.6},
+		{Namespace: "prod", ServerID: "p-1", Role: roleBukkit, SampledAt: at, PlayerCount: 30, TPS: 20.0, MemUsed: 100, MemMax: 1000, CPULoad: 0.4},
+		{Namespace: "test", ServerID: "t-1", Role: roleBukkit, SampledAt: at, PlayerCount: 12, TPS: 18.0, MemUsed: 300, MemMax: 1000, CPULoad: 0.6},
 	}
 	if err := db.Create(&seed).Error; err != nil {
 		t.Fatalf("播种样本失败: %v", err)

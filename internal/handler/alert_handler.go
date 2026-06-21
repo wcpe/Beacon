@@ -34,7 +34,7 @@ type alertView struct {
 }
 
 // List 处理 GET /admin/v1/alerts：返回站内信最近告警（最新在前）。
-func (h *AlertHandler) List(w http.ResponseWriter, r *http.Request) {
+func (h *AlertHandler) List(w http.ResponseWriter, _ *http.Request) {
 	items := h.reader.List()
 	views := make([]alertView, 0, len(items))
 	for _, a := range items {

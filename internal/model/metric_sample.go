@@ -28,7 +28,7 @@ type MetricSample struct {
 	// JVM 最大堆字节（仅展示，不参与决策）
 	MemMax int64 `gorm:"column:mem_max;not null;default:0"`
 	// 进程 CPU 负载[0,1]，-1.0=不可用（近似值，仅展示，不参与决策）
-	CpuLoad float64 `gorm:"column:cpu_load;not null;default:0"`
+	CPULoad float64 `gorm:"column:cpu_load;not null;default:0"`
 	// 以下为 bc（bungee 代理）专属负载指标（FR-34）：仅 bc 行有真值，bukkit 行恒为默认 0。
 	// AutoMigrate 加列对既有行用 NOT NULL DEFAULT 兼容；全部基础数值，零方言、可移植（可切 Postgres）。
 	// 代理在线连接数（与 player_count 区分：bc 的 player_count 即在线人数，proxy_conn 为连接维度）

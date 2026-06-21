@@ -92,7 +92,7 @@ func TestOverrideMD5Idempotent(t *testing.T) {
 	base := []EffectiveOverrideSet{
 		{Name: "AllinCore", TargetRoot: "plugins/AllinCore", ReloadCommand: "allin reload", MemberPaths: []string{"a.yml", "b.yml"}},
 	}
-	if OverrideMD5(base) != OverrideMD5(base) {
+	if got := OverrideMD5(base); got != OverrideMD5(base) {
 		t.Fatal("同输入 md5 应幂等")
 	}
 	// 命令变更应改 md5。

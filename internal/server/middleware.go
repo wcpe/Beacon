@@ -22,9 +22,9 @@ const bearerPrefix = "Bearer "
 // apiKeyHeader 是 API 密钥的独立请求头（与 Authorization: Bearer <bk_...> 二选一，FR-42）。
 const apiKeyHeader = "X-Beacon-Api-Key"
 
-// ApiKeyVerifier 校验明文 API 密钥并返回认证身份与角色（由 service 实现，中间件依赖此接口）。
+// APIKeyVerifier 校验明文 API 密钥并返回认证身份与角色（由 service 实现，中间件依赖此接口）。
 // 失败返回错误：ErrAdminUnauthorized（缺失 / 错误 / 过期 / 吊销）→401，DB 故障 → 500。
-type ApiKeyVerifier interface {
+type APIKeyVerifier interface {
 	Verify(rawKey string) (principal string, role string, err error)
 }
 
@@ -46,12 +46,12 @@ func agentTokenMiddleware(token string) func(http.Handler) http.Handler {
 // 支持两类凭据：① 登录令牌（Authorization: Bearer <HMAC 令牌>，角色恒为 full）；
 // ② API 密钥（X-Beacon-Api-Key: <bk_...> 或 Authorization: Bearer <bk_...>，角色随其落库记录）。
 // 通过则注入认证身份（写操作审计取用）与角色（只读拒写裁决取用）；缺/错凭据一律 401。
-func adminAuthMiddleware(authn *auth.Authenticator, apiKeys ApiKeyVerifier) func(http.Handler) http.Handler {
+func adminAuthMiddleware(authn *auth.Authenticator, apiKeys APIKeyVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// ① 独立密钥头优先
 			if raw := strings.TrimSpace(r.Header.Get(apiKeyHeader)); raw != "" {
-				authenticateApiKey(w, r, next, apiKeys, raw)
+				authenticateAPIKey(w, r, next, apiKeys, raw)
 				return
 			}
 			// ② Authorization: Bearer <凭据>
@@ -63,7 +63,7 @@ func adminAuthMiddleware(authn *auth.Authenticator, apiKeys ApiKeyVerifier) func
 			credential := strings.TrimSpace(strings.TrimPrefix(header, bearerPrefix))
 			// bk_ 前缀的按 API 密钥校验，否则按登录令牌校验（两类形态不相交）
 			if apikey.HasPrefix(credential) {
-				authenticateApiKey(w, r, next, apiKeys, credential)
+				authenticateAPIKey(w, r, next, apiKeys, credential)
 				return
 			}
 			operator, err := authn.Verify(credential)
@@ -79,8 +79,8 @@ func adminAuthMiddleware(authn *auth.Authenticator, apiKeys ApiKeyVerifier) func
 	}
 }
 
-// authenticateApiKey 校验 API 密钥并注入身份 + 角色；失败按 Verify 返回的错误响应（401/500）。
-func authenticateApiKey(w http.ResponseWriter, r *http.Request, next http.Handler, apiKeys ApiKeyVerifier, raw string) {
+// authenticateAPIKey 校验 API 密钥并注入身份 + 角色；失败按 Verify 返回的错误响应（401/500）。
+func authenticateAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, apiKeys APIKeyVerifier, raw string) {
 	principal, role, err := apiKeys.Verify(raw)
 	if err != nil {
 		slog.Warn("管理台 API 密钥校验失败", "路径", r.URL.Path, "原因", err, "traceId", render.TraceID(r.Context()))
