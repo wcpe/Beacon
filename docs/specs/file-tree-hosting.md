@@ -20,6 +20,14 @@
 - 分层：`repository.FileObjectRepository` / `FileRevisionRepository` → `service.FileService`（事务内 object+revision+audit 原子）+ `service.FileEffectiveService`（解析 + 长轮询）→ `handler.FileHandler`（admin）/ agent 端点。
 - 长轮询：复用 `longpoll.Hub`，新增独立 Hub 实例供文件通道，避免与配置唤醒集合互相触发；`ChangeNotifier` 增 `NotifyFileChange`。
 
+### 3.1 受保护路径（防 agent 自我污染）
+通道B 的镜像落盘根 = `plugins/`，且 FR-38 导入端点接受任意合法相对 `path`。若运维误把 `BeaconAgent/config.yml`（或 bungee 的 `BeaconAgentProxy/*`、`effective-config.snapshot.json` 等）放进上传/导入目录，下游 agent 会按相对路径覆写自身 dataFolder，污染身份/快照——而 FR-41 env 注入身份的设计前提是"agent 配置不被自己管"。两道闸闭环：
+
+- **控制面侧（入库前）**：`service.normalizePath` 把顶段为 `BeaconAgent` / `BeaconAgentProxy` 的 path 直接拒为 `INVALID_PATH`（FR-14 文件树发布与 FR-38 导入共用）。严格顶段相等，`BeaconAgentX/foo` 不命中。
+- **agent 侧（落盘前）**：`FileTreeApplier` 接受壳层注入的 `protectedSegments`（bukkit 注入 `BeaconAgent`、bungee 注入 `BeaconAgentProxy`，core 不硬编码），顶段命中即跳过该 path——不取内容、不写、不删，并打 WARN。即使旧版控制面、旁路导入或其他人为渠道把保护路径放进有效树，agent 仍自我兜底（守 ADR-0010 决策5 fail-static）。
+
+两道闸独立生效，任一一道即可阻断；与 FR-41 env 注入身份相辅相成（env 兜身份事实跟机器走、保护路径兜本地 dataFolder 不被外部接管）。
+
 ## 4. 任务拆分
 - [x] 数据模型 file_object / file_revision + AutoMigrate
 - [x] filetree 解析包（scope 整文件覆盖 + manifest + fileTreeMd5）+ 穷举单测
