@@ -418,7 +418,17 @@ func validateFileContent(content string) error {
 	return nil
 }
 
-// normalizePath 规整并校验文件相对 path：非空、清理冗余、禁止绝对路径与向上穿越（防 agent 落盘逃逸到 dataFolder 之外）。
+// reservedAgentSelfDirs 是 agent 自身 plugin 数据目录顶段名集合：BeaconAgent（bukkit 壳）/ BeaconAgentProxy（bungee 壳）。
+// 文件树发布与 FR-38 导入入库前在 normalizePath 拦截 —— 一旦运维误把 plugins/BeaconAgent/config.yml 之类
+// agent 自管文件塞进有效树，agent 长轮询 manifest 后会按相对路径覆写到 plugins/BeaconAgent/，污染身份 / 快照。
+// 控制面这道闸把这类 path 挡在入库前，agent 侧 FileTreeApplier 还有第二道闸（守 ADR-0010 决策5 fail-static）。
+var reservedAgentSelfDirs = map[string]struct{}{
+	"BeaconAgent":      {},
+	"BeaconAgentProxy": {},
+}
+
+// normalizePath 规整并校验文件相对 path：非空、清理冗余、禁止绝对路径与向上穿越（防 agent 落盘逃逸到 dataFolder 之外）；
+// 并拒绝 agent 自身 plugin 数据目录的顶段（BeaconAgent / BeaconAgentProxy），防自我污染。
 func normalizePath(p string) (string, error) {
 	if p == "" {
 		return "", apperr.ErrInvalidPath
@@ -428,6 +438,11 @@ func normalizePath(p string) (string, error) {
 	}
 	clean := path.Clean(p)
 	if clean == "." || strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", apperr.ErrInvalidPath
+	}
+	// 顶段严格匹配 agent 自身 plugin 数据目录即拒（BeaconAgentX 这种非精确顶段不命中）。
+	top, _, _ := strings.Cut(clean, "/")
+	if _, hit := reservedAgentSelfDirs[top]; hit {
 		return "", apperr.ErrInvalidPath
 	}
 	return clean, nil
