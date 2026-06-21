@@ -2,6 +2,7 @@
 // 左侧未指派 server 卡片池 + 右侧按大区(group)分组的 zone 容器（放置桶）。
 // 拖卡进某 zone = 指派、跨桶拖 = 改派、拖回未指派 = 取消指派；复用既有 API、后端零改动（增强 FR-8）。
 // 保留「新增 zone / 指派」表单入口（用于建空 zone 的首次指派）+ zone 维度汇总。
+// 指派表单的环境 / serverId / 大区 / 小区改为从 API 拉取的下拉（serverId 仅列 bukkit 子服）并加非法值校验（增强 FR-40）；备注仍为自由文本。
 
 import { useMemo, useState } from 'react'
 import {
@@ -18,6 +19,7 @@ import {
   assignZone,
   listAssignments,
   listInstances,
+  listNamespaces,
   unassignZone,
   zoneSummary,
 } from '../api/client'
@@ -104,6 +106,44 @@ export default function ZonesPage() {
     queryFn: () => zoneSummary(filter.namespace, filter.group),
   })
 
+  // 指派表单下拉的选项来源（FR-40 增强）：环境 / 实例 / zone 汇总均不随搜索过滤，
+  // 全量拉取以免表单候选被看板过滤条件意外收窄。
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
+  const allInstances = useQuery({
+    queryKey: ['instances', 'zone-form-options'],
+    queryFn: () => listInstances({}),
+  })
+  const allSummary = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
+
+  // 环境候选：来自 listNamespaces
+  const namespaceOptions = useMemo(
+    () => (namespacesQuery.data ?? []).map((n) => n.code),
+    [namespacesQuery.data],
+  )
+  // 大区候选：zone 汇总与实例列表去重并集（兼容无 zone 指派但已注册的大区）
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const z of allSummary.data ?? []) if (z.group) set.add(z.group)
+    for (const i of allInstances.data ?? []) if (i.group) set.add(i.group)
+    return Array.from(set).sort()
+  }, [allSummary.data, allInstances.data])
+  // 小区候选：zone 汇总与实例列表去重并集
+  const zoneOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const z of allSummary.data ?? []) if (z.zone) set.add(z.zone)
+    for (const i of allInstances.data ?? []) if (i.zone) set.add(i.zone)
+    return Array.from(set).sort()
+  }, [allSummary.data, allInstances.data])
+  // serverId 候选：仅 bukkit 子服（BC 代理不可被指派进 zone，与后端校验一致，FR-8/FR-35）
+  const serverOptions = useMemo(
+    () =>
+      (allInstances.data ?? [])
+        .filter((i) => i.role === 'bukkit')
+        .map((i) => i.serverId)
+        .sort(),
+    [allInstances.data],
+  )
+
   const assignMut = useMutation({
     mutationFn: (params: AssignParams) => assignZone(params),
     onSuccess: (a) => {
@@ -148,15 +188,25 @@ export default function ZonesPage() {
 
   function onAssign(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.namespace.trim() || !form.serverId.trim() || !form.group.trim() || !form.zone.trim()) {
+    if (!form.namespace || !form.serverId || !form.group || !form.zone) {
       msg.showError('环境、serverId、大区、小区均为必填')
       return
     }
+    // 非法值拦截：所选项须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）
+    if (
+      !namespaceOptions.includes(form.namespace) ||
+      !serverOptions.includes(form.serverId) ||
+      !groupOptions.includes(form.group) ||
+      !zoneOptions.includes(form.zone)
+    ) {
+      msg.showError('环境、serverId、大区、小区取值非法，请从下拉中选择')
+      return
+    }
     assignMut.mutate({
-      namespace: form.namespace.trim(),
-      serverId: form.serverId.trim(),
-      group: form.group.trim(),
-      zone: form.zone.trim(),
+      namespace: form.namespace,
+      serverId: form.serverId,
+      group: form.group,
+      zone: form.zone,
       note: form.note.trim(),
     })
   }
@@ -199,35 +249,68 @@ export default function ZonesPage() {
             <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="a-namespace">环境</Label>
-                <Input
+                <select
                   id="a-namespace"
+                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
                   value={form.namespace}
                   onChange={(e) => setForm({ ...form, namespace: e.target.value })}
-                />
+                >
+                  <option value="">请选择</option>
+                  {namespaceOptions.map((ns) => (
+                    <option key={ns} value={ns}>
+                      {ns}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="a-serverid">serverId</Label>
-                <Input
+                {/* 仅列 bukkit 子服：BC 代理不可被指派进 zone（与后端校验一致，FR-8/FR-35） */}
+                <select
                   id="a-serverid"
+                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
                   value={form.serverId}
                   onChange={(e) => setForm({ ...form, serverId: e.target.value })}
-                />
+                >
+                  <option value="">请选择</option>
+                  {serverOptions.map((sid) => (
+                    <option key={sid} value={sid}>
+                      {sid}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="a-group">大区</Label>
-                <Input
+                <select
                   id="a-group"
+                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
                   value={form.group}
                   onChange={(e) => setForm({ ...form, group: e.target.value })}
-                />
+                >
+                  <option value="">请选择</option>
+                  {groupOptions.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="a-zone">小区</Label>
-                <Input
+                <select
                   id="a-zone"
+                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
                   value={form.zone}
                   onChange={(e) => setForm({ ...form, zone: e.target.value })}
-                />
+                >
+                  <option value="">请选择</option>
+                  {zoneOptions.map((z) => (
+                    <option key={z} value={z}>
+                      {z}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="col-span-2 space-y-1.5">
                 <Label htmlFor="a-note">备注</Label>

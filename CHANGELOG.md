@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 变更
+- zone 指派表单改 API 拉取下拉并加校验（增强 FR-40）：`ZonesPage` 的「新增 zone / 指派」对话框此前环境 / serverId / 大区 / 小区全是手填文本框，易填错且无约束。现改为从系统拉取的下拉选择（环境来自 `listNamespaces`、大区 / 小区取 zone 汇总与实例列表并集、serverId 来自实例列表且仅列 bukkit 子服——与后端校验一致排除 BC 代理）；提交前校验必填项缺选与非法值（取值须落在 API 候选内），备注仍为自由文本。仅改输入方式，指派业务行为不变。
+
 ### 修复
 - 配置导入·上传 / 反向抓取含 agent 自身目录被整批拒绝（FR-38 / FR-39 归真，方案 D，见 [ADR-0028](docs/adr/0028-allow-hosting-agent-self-dir.md)）：真机 E2E 暴露——agent 反向抓取读盘必然带上自己的 `plugins/BeaconAgent/`（含 `config.yml` / 快照等），这些被 ingest 上传后命中控制面 `normalizePath` 的保留目录闸（commit `e7a0517` 引入），而 `FileService.Import` 是"任一不合法即整批拒绝"→ 整个 ingest `400 INVALID_PATH`、命令转 `failed`、零文件落库，**反向抓取对任何装了 agent 的在线服 100% 失效**；上传一份含自身目录的真实 `plugins/` 同样整批被拒。修复：**放开控制面 `normalizePath` 对 `BeaconAgent` / `BeaconAgentProxy` 顶段的拦截**（FR-41 env 注入已使 `config.yml` 非身份真源、托管自身目录无身份污染），自我保护下沉到 agent 侧唯一一道 observe-only 闸——`FileTreeApplier` 对自身目录顶段只观测不写回（不取 / 不写 / 不删，但写入 applied 清单视为已收敛避免 churn，commit `dcbbd94` 已在）；穿越 / 绝对 / 反斜杠 / 空仍硬拒（落盘逃逸边界不退化）。一处后端改动同修 FR-38 + FR-39，无需改 agent / 前端、无需重打 jar（详见 [docs/specs/file-tree-hosting.md](docs/specs/file-tree-hosting.md) §3.1）。
 - zone 分配排除 BC 代理（FR-8/FR-35）：zone 是给 bukkit 子服的、BC 代理（role=bungee）不该有 zone，此前前后端零角色过滤、BC 可被误指派进 zone。现前端 zone 看板 `buildKanbanModel` 构建未指派池与 zone 桶时排除 `role==='bungee'`（BC 既不进未指派池、也不可拖入 zone 桶）；后端 `ZoneService.Assign` 做纵深防御——取注册表实例，确为 bungee 即拒为 `400 ZONE_NOT_ASSIGNABLE_TO_BC`（离线无角色事实可凭则沿用既有逻辑），bukkit 子服照常放行。
