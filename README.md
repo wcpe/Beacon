@@ -4,7 +4,7 @@
 
 Beacon 是一个独立的后端控制面：用 **Go** 提供 API、内嵌 **React** 管理台，以 **docker-compose** 单节点部署；Minecraft 的 BungeeCord 代理与 Bukkit 子服各跑一个轻量 **Kotlin/TabooLib agent** 接入。它为整个集群提供**集中配置（动态热更、版本回滚）、服务注册/发现、健康检查**，并以"配置 + 拓扑"的形式支撑分小区、虚拟大区与合区。
 
-> **当前状态**：已发布 **v0.2.0**。第一期（MVP）能力全部交付并验收——配置中心（scope 覆盖链 + 动态热更 + 版本/回滚）、服务注册/发现、健康检查、zone 指派、React 管理台、审计、双端 agent（Kotlin/TabooLib）均已落地，集成测试与真机 E2E 通过。此外已**前移交付**部分 P2 能力：管理面鉴权（FR-11）、文件树托管（FR-14）、三方插件文件覆盖 + 受限重载命令（FR-15）、agent 本地运维命令（FR-17）、下游接入 SDK（FR-16/19）与管理台增强（FR-18）。当前迭代：管理台 shadcn-ui 设计系统改造（FR-21）开发中。详见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+> **当前状态**：已发布 **v0.7.0**。第一期（MVP）能力全部交付并验收——配置中心（scope 覆盖链 + 动态热更 + 版本/回滚）、服务注册/发现、健康检查、zone 指派、React 管理台、审计、双端 agent（Kotlin/TabooLib）均已落地。此外已交付大量 P2 治理能力：管理面鉴权与运行时只读 API 密钥（FR-11/FR-42）、敏感配置 at-rest 加密（FR-20）、文件树托管与配置导入（正向上传 + 在线实例反向抓取，FR-14/FR-38/FR-39）、可观测看板与健康告警（FR-28/FR-30/FR-32/FR-33）、流量调度决策（FR-10）、跨服消息中间件（FR-26）、配置灰度（FR-9）、集群拓扑可视化（FR-37）等。详见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 为什么是独立服务而非代理插件
 
@@ -85,8 +85,8 @@ docker compose up -d      # 起 beacon + mysql；mysql 就绪后自动建表(Aut
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:0.2.0") // 只读契约
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.2.0") // 便捷门面（推荐）
+    compileOnly("top.wcpe.beacon:beacon-agent-api:0.7.0") // 只读契约
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.7.0") // 便捷门面（推荐）
 }
 ```
 
