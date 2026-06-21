@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // TestMetricsExposeRegisteredCollectors 验证 /metrics 暴露四类核心指标且可抓取。

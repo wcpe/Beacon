@@ -5,10 +5,10 @@ import (
 	"sort"
 	"time"
 
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
 )
 
 // EffectiveItem 是某 dataId 按覆盖链合并后的有效配置。

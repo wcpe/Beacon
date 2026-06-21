@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/sse"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/sse"
 )
 
 // ChannelMD5 是某 agent 各 server→agent 推送通道的当前指纹快照。

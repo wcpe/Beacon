@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // OverrideSetFilter 是覆盖集列表查询的可选过滤条件。

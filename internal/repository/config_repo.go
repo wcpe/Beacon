@@ -6,8 +6,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
-	"beacon/internal/secret"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/secret"
 )
 
 // ConfigFilter 是配置项列表查询的可选过滤条件。

@@ -7,8 +7,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // newAuditTestDB 打开内存 sqlite 并迁移审计相关表（无需 MySQL DSN，单测快路）。

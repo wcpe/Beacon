@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/apperr"
 )
 
 // reqWithIDParam 构造带 chi 路径参数 {id} 的请求，供 parseID 单测。

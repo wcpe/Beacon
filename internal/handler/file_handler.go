@@ -10,11 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/render"
-	"beacon/internal/repository"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // FileHandler 处理文件树托管（通道B）的 admin 请求与 agent 同步请求，含三方覆盖集（FR-15）的 agent 投递。

@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // FileFilter 是文件对象列表查询的可选过滤条件。

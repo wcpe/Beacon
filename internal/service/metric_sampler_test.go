@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/model"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // fakeMetricSink 是 metricSink 的测试替身：记录批量插入与清理调用，验证采样器调用时序与参数。

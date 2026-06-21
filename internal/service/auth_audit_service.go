@@ -3,8 +3,8 @@ package service
 import (
 	"encoding/json"
 
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // AuthAuditService 记录管理面登录 / 登出审计（FR-7/FR-30）。

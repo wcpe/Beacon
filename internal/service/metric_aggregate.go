@@ -4,8 +4,8 @@ import (
 	"sort"
 	"time"
 
-	"beacon/internal/model"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // cpuLoadUnavailable 是 CPU 不可用哨兵（与 agent / registry 约定一致：取不到为 -1.0）。

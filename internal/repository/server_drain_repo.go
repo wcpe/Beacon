@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // ServerDrainRepository 提供 server_drain 表的数据访问（FR-10，见 ADR-0017）。

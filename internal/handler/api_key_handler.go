@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/model"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // APIKeyHandler 处理管理面 API 密钥的 CRUD（FR-42，见 ADR-0026）。

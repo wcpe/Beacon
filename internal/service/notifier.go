@@ -3,10 +3,10 @@ package service
 import (
 	"log/slog"
 
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
 )
 
 // PushRecorder 是推送计数的窄接口（由 metrics 实现，可选注入；未注入即不计数）。

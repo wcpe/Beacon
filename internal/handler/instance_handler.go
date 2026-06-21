@@ -6,11 +6,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/render"
-	"beacon/internal/runtime"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // InstanceHandler 处理实例与健康相关的 admin 请求（读内存注册表）。

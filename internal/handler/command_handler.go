@@ -7,11 +7,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/model"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // CommandHandler 处理 server→agent 命令（FR-39，见 ADR-0027）：

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // schedStack 装配调度服务与共享注册表（drain 落 DB、落位读内存 + DB）。

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime/alert"
+	"github.com/wcpe/Beacon/internal/runtime/alert"
 )
 
 // TestAlertListRESTFlow 健康告警站内信 REST 集成（FR-28）：初始空；向通道投递一条后经 HTTP 读回（最新在前）。

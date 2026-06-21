@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/render"
-	"beacon/internal/repository"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // OverrideSetHandler 处理三方插件文件覆盖兼容（FR-15）的 admin 请求：

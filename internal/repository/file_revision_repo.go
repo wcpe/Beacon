@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // FileRevisionRepository 提供 file_revision 表的数据访问（append-only）。

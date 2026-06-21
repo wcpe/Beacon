@@ -8,9 +8,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // newCommandSvcTestDB 打开内存 sqlite 并迁移命令 + 文件树 + 审计表（不依赖 MySQL/DSN）。

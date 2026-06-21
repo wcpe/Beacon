@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/model"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // floatEq 浮点近似相等比较（聚合均值有舍入，留小容差）。

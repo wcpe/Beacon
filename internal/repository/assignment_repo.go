@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // ZoneAssignmentRepository 提供 zone_assignment 表的数据访问。

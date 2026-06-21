@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // inst 构造一个在线实例样本（落位排序只看 status/weight/capacity/serverId）。

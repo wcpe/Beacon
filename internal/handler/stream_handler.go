@@ -3,10 +3,10 @@ package handler
 import (
 	"net/http"
 
-	"beacon/internal/apperr"
-	"beacon/internal/render"
-	"beacon/internal/service"
-	"beacon/internal/sse"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/sse"
 )
 
 // StreamHandler 处理 agent 单条 SSE 推送流（取代配置/文件树/覆盖集三条长轮询，见 ADR-0015）。

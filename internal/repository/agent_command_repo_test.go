@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // newCommandTestDB 打开内存 sqlite 并迁移 agent_command，供仓库单测（不依赖 MySQL/DSN）。

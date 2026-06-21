@@ -3,7 +3,7 @@ package service
 import (
 	"sort"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // TopologyService 组装集群拓扑事实（读内存注册表快照，不落 DB、不引重型件）。

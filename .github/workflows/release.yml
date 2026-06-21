@@ -85,7 +85,7 @@ jobs:
         run: |
           ver="$(cat VERSION)"
           out="beacon-${ver}-${{ matrix.target }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "-s -w -X beacon/internal/version.Version=${ver}" -o "${out}" ./cmd/beacon
+          go build -trimpath -ldflags "-s -w -X github.com/wcpe/Beacon/internal/version.Version=${ver}" -o "${out}" ./cmd/beacon
           echo "已构建 ${out}"
       - name: 上传二进制
         uses: actions/upload-artifact@v4

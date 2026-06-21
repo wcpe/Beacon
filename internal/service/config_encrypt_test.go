@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"beacon/internal/config"
-	"beacon/internal/merge"
-	"beacon/internal/repository"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/secret"
-	"beacon/internal/service"
-	"beacon/internal/store"
+	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/secret"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/store"
 )
 
 // enabledCipher 构造一把启用的测试 cipher（仅测试用）。

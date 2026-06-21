@@ -7,10 +7,10 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apikey"
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/apikey"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // lastUsedThrottle 是"最近使用"落库的节流窗口：同一密钥至多每此间隔写一次，

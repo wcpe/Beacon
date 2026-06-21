@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/merge"
 )
 
 // scopeOf 在 provenance 列表里按键路径查来源 scope。

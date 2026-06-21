@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // Metrics 持控制面全部运行指标与其独立注册表。

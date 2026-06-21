@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/render"
-	"beacon/internal/runtime"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // tagParamPrefix 是发现端点自定义元数据过滤查询参数前缀（tag.<key>=<value>，FR-29）。

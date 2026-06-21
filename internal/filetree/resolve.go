@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // EffectiveFile 是某 path 按覆盖链解析后的有效文件。

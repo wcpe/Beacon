@@ -8,7 +8,7 @@
 # 版本号（唯一来源，ADR-0007）
 VERSION := $(shell cat VERSION)
 # 控制面版本注入点（go 包路径）
-VERSION_PKG := beacon/internal/version
+VERSION_PKG := github.com/wcpe/Beacon/internal/version
 # 链接参数：注入版本 + 裁剪符号表/调试信息（更小的发布二进制）
 GO_LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(VERSION)
 # 控制面入口

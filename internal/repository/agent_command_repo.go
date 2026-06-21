@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // AgentCommandRepository 提供 agent_command 表的数据访问（FR-39，见 ADR-0027）。

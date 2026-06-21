@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"beacon/internal/apikey"
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/model"
-	"beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/apikey"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/render"
 )
 
 // bearerPrefix 是 Authorization 头的 Bearer 方案前缀。

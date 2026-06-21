@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // longpollStack 装配带唤醒的配置/zone 服务 + 有效配置长轮询服务（共享 hub 与 registry）。

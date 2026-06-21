@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // NamespaceHandler 处理环境相关的 admin 请求。

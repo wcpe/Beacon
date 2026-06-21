@@ -8,10 +8,10 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apperr"
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // MaxContentBytes 是单条配置内容大小上限（256KB）。

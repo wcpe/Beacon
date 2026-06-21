@@ -9,10 +9,10 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apperr"
-	"beacon/internal/filetree"
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // CreateOverrideSetParams 是新建覆盖集（首次发布）的入参（FR-15）。

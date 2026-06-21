@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"beacon/internal/model"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // metricSink 是采样器对持久化的窄依赖（由 repository.MetricSampleRepository 实现）：

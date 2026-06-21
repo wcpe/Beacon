@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // newOverrideStack 装配覆盖集服务（FR-15）+ 文件仓库（用于成员关联与 dry-run）。

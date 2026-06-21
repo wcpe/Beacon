@@ -10,7 +10,7 @@ import (
 
 	"github.com/shirou/gopsutil/v4/process"
 
-	rt "beacon/internal/runtime"
+	rt "github.com/wcpe/Beacon/internal/runtime"
 )
 
 // dbPinger 是系统状态对数据库连通性的窄依赖：仅需一次 Ping。

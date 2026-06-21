@@ -3,7 +3,7 @@ package metrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // registryCollector 在抓取时读取内存注册表快照，即时导出注册数与健康状态分布。

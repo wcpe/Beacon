@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/auth"
-	"beacon/internal/handler"
-	"beacon/internal/metrics"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/alert"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/server"
-	"beacon/internal/service"
-	"beacon/internal/testsupport"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/handler"
+	"github.com/wcpe/Beacon/internal/metrics"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/alert"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/server"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/testsupport"
 )
 
 // 集成测试用固定鉴权凭据（仅测试，非生产值）。

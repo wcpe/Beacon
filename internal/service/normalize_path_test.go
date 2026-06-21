@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/apperr"
 )
 
 // TestNormalizePathRejectsReservedAgentSelfDirs 锁定：控制面 normalizePath 把"agent 自身 plugin 目录"

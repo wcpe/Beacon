@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // OverrideMember 覆盖集成员的解析视图：相对目标根的 path + 内容指纹。

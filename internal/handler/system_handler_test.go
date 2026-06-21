@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // pingFunc 是 dbPinger 的函数式测试替身（service 包内 dbPinger 为非导出接口，handler 测试经其构造函数注入）。

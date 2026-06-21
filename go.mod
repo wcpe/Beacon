@@ -1,4 +1,4 @@
-module beacon
+module github.com/wcpe/Beacon
 
 go 1.26.2
 

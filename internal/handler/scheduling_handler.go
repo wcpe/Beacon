@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // SchedulingHandler 处理流量调度 admin 请求（FR-10）：落位建议（query-only）+ drain 标记。

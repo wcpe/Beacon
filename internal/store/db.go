@@ -9,8 +9,8 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	"beacon/internal/config"
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // Open 按配置建立 GORM 连接、设置连接池并对表结构做 AutoMigrate。

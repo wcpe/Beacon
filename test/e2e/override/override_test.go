@@ -34,9 +34,9 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/test/e2e/harness"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/test/e2e/harness"
 )
 
 // 覆盖集与成员的约定常量（须与 BeaconE2E 验收插件 OverrideE2EProbe 的约定一致）。

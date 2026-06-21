@@ -6,8 +6,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
-	"beacon/internal/secret"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/secret"
 )
 
 // ConfigGrayRepository 提供 config_gray 表的数据访问（FR-9，见 ADR-0021）。

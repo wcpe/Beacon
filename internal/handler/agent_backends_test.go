@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // TestRegisterRequestParsesBackends 验证注册请求体解析 bc 上报的后端 serverId 集合（FR-36）。

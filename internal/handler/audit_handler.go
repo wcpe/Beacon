@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"beacon/internal/render"
-	"beacon/internal/repository"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // AuditHandler 处理审计查询。

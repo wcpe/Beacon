@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"beacon/internal/filetree"
-	"beacon/internal/repository"
-	"beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
 )
 
 // FileTree 是某 agent 身份的有效文件树解析结果（整文件覆盖后的 manifest + 独立 fileTreeMd5）。

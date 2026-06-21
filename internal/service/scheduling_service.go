@@ -8,10 +8,10 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // PlacementCandidate 是落位候选（控制面只给基于权威事实的建议，玩家连接由数据面执行，见 ADR-0017）。

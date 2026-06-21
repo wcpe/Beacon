@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // newMetricTestDB 打开内存 sqlite 并迁移 metric_sample，供时间窗查询 / 保留期清理单测（不依赖 MySQL/DSN）。

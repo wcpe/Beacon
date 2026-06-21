@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // TestDiscoverIncludesDegradedExcludesLost 验证服务发现包含 online + degraded（亚健康仍可用），

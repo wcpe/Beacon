@@ -3,9 +3,9 @@ package handler
 import (
 	"net/http"
 
-	"beacon/internal/apperr"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // TopologyHandler 处理集群拓扑 admin 请求（FR-37）：读内存注册表快照，

@@ -5,11 +5,11 @@ package service_test
 import (
 	"testing"
 
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // TestZoneReassignEffectiveRecompute 集成验证：改派后有效配置重算正确。

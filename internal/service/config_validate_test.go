@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"beacon/internal/apperr"
-	"beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/merge"
 )
 
 // TestValidateContentSchema 校验发布前内容校验：合法通过 / 各类非法被拦且错误码正确。

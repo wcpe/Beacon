@@ -1,8 +1,8 @@
 package service
 
 import (
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // 审计分页默认与上限。

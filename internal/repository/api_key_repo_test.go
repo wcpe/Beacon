@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // newAPIKeyTestDB 打开内存 sqlite 并迁移 api_key，供仓库单测（不依赖 MySQL/DSN）。

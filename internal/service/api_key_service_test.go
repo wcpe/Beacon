@@ -10,10 +10,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/apikey"
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/apikey"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // newAPIKeyTestService 用内存 sqlite 装配 APIKeyService（不依赖 MySQL/DSN），迁移 api_key + audit_log。

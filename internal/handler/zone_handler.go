@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/model"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // ZoneHandler 处理 zone 指派 CRUD 与汇总。

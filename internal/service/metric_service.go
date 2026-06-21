@@ -3,9 +3,9 @@ package service
 import (
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // 预设趋势时间窗（FR-32）：管理台按近 1h / 6h / 24h 出图。

@@ -9,13 +9,13 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apperr"
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // grayStack 装配灰度集成测试栈：配置 / 灰度 / 有效配置（含灰度叠加）三件套 + 唤醒器。

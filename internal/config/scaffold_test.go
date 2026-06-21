@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"beacon"
+	beacon "github.com/wcpe/Beacon"
 )
 
 // TestEnsureConfigFileReleasesWithRandomCredentials 验证首启释放 config.yml 时就地填入随机强凭据、

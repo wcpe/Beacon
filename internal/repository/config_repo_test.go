@@ -3,7 +3,7 @@ package repository
 import (
 	"testing"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // BumpGrayVersion 乐观锁：基准版本匹配才 +1 并命中；基准过期则不命中、版本不变（供调用方重读重试）。

@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/filetree"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // fileStack 聚合文件通道与配置通道服务，便于验证两通道唤醒集合独立。

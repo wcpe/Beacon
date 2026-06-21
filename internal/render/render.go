@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/apperr"
 )
 
 // ctxKey 是本包私有的 context key 类型，避免键碰撞。

@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // newAuditTestDB 打开内存 sqlite 并迁移 audit_log，供过滤/分页单测（不依赖 MySQL/DSN）。

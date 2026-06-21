@@ -9,9 +9,9 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 )
 
 // reverseFetchComment 是反向抓取 ingest 落盘的版本 / 审计注释。

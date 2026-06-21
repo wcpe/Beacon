@@ -9,10 +9,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // newTrendTestService 构造一个背靠内存 sqlite 的 MetricService，供趋势时间窗校验单测（不依赖 MySQL/DSN）。

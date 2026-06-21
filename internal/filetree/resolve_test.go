@@ -3,7 +3,7 @@ package filetree
 import (
 	"testing"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // fo 构造一个测试用 FileObject（仅填解析关注的字段）。

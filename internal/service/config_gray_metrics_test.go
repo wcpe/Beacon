@@ -3,12 +3,12 @@ package service_test
 import (
 	"testing"
 
-	"beacon/internal/config"
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/service"
-	"beacon/internal/store"
+	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/store"
 )
 
 // fakePublishRecorder 记录发布计数自增次数，用于断言 promote 是否计入。

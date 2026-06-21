@@ -10,12 +10,12 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/apperr"
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/service"
-	"beacon/internal/testsupport"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/testsupport"
 )
 
 // testDB 连接 service 包独立测试库并清表；未设 BEACON_TEST_DSN 则跳过。

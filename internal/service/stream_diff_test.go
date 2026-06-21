@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"beacon/internal/sse"
+	"github.com/wcpe/Beacon/internal/sse"
 )
 
 // TestDiffEventsAllMatch 三通道 md5 全一致 → 无补发事件（无变更）。

@@ -8,8 +8,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"beacon/internal/model"
-	"beacon/internal/secret"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/secret"
 )
 
 // newConfigTestDB 打开独立内存 sqlite 并迁移 config_item，供 at-rest 加密边界单测。

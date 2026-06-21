@@ -10,8 +10,8 @@ import (
 	gomysql "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 
-	"beacon/internal/config"
-	"beacon/internal/store"
+	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/store"
 )
 
 // 集成测试涉及的可清空表（按外键无关顺序）。

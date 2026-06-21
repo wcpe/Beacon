@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/merge"
 )
 
 // TopologyDigest 计算一组实例的拓扑摘要（纯函数，供拓扑 watch"真变才推"去重）。

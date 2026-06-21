@@ -5,8 +5,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"beacon/internal/auth"
-	"beacon/internal/handler"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/handler"
 )
 
 // Handlers 汇集各 HTTP 处理器，供路由装配（避免过长的位置参数）。

@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // AuthHandler 处理管理台登录 / 登出（凭据 → 令牌；登出仅记审计）。

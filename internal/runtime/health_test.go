@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime/alert"
+	"github.com/wcpe/Beacon/internal/runtime/alert"
 )
 
 // capturingAlerter 收集分发到的告警，供断言触发判定。

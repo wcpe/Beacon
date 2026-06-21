@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/config"
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
-	"beacon/internal/runtime/longpoll"
-	"beacon/internal/service"
-	"beacon/internal/sse"
-	"beacon/internal/store"
+	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/sse"
+	"github.com/wcpe/Beacon/internal/store"
 )
 
 // streamSqliteStack 用内存 sqlite 装配 SSE 推送编排所需的全套依赖（无需 MySQL，CGO sqlite 即可）。

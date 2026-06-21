@@ -4,7 +4,7 @@ import (
 	"path"
 	"strings"
 
-	"beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/apperr"
 )
 
 // pluginsPrefix 是覆盖集目标根必须落在的固定前缀（限定 plugins/<plugin>/ 内，见 ADR-0011 决策 4）。

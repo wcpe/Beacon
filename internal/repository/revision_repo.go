@@ -5,8 +5,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
-	"beacon/internal/secret"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/secret"
 )
 
 // ConfigRevisionRepository 提供 config_revision 表的数据访问（append-only）。

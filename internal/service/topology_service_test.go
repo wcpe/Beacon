@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // reg 注册一个实例到给定注册表（测试辅助）。

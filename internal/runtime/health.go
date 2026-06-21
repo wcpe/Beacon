@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"beacon/internal/runtime/alert"
+	"github.com/wcpe/Beacon/internal/runtime/alert"
 )
 
 // TopologyNotifier 是拓扑变更唤醒的窄回调（由 service.ChangeNotifier 实现，可选注入）。

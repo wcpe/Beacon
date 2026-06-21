@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime"
 )
 
 // RegisterParams 是实例注册入参（capacity/weight 顶层、metadata 自定义、无 canary）。

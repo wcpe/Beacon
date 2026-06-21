@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // SystemHandler 处理控制面自身状态 admin 请求（FR-33）：

@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // AuditFilter 是审计查询的过滤与分页条件（零值字段不过滤；时间零值不设界）。

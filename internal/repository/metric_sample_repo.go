@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // metricInsertBatchSize 是批量插入的分批大小（避免单条 SQL 参数过多触达驱动上限）。

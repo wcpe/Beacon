@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime"
-	"beacon/internal/service"
-	"beacon/internal/sse"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/sse"
 )
 
 // TestStreamRunReconcileTopologyOnConnect 连接即对账：上报空拓扑摘要、注册表已有可用实例 → 先补发 topology-changed。

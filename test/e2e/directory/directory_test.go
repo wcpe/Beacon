@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"beacon/test/e2e/harness"
+	"github.com/wcpe/Beacon/test/e2e/harness"
 )
 
 // 控制面地址：默认 http://localhost:8848，可经 E2E_BEACON_URL 覆盖（本地避端口争用）。

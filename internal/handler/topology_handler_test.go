@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"beacon/internal/runtime"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/runtime"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // regTopoInstance 注册一个实例到注册表（拓扑 handler 测试辅助）。

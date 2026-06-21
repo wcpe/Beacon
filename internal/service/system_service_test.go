@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	rt "beacon/internal/runtime"
+	rt "github.com/wcpe/Beacon/internal/runtime"
 )
 
 // fakePinger 是 dbPinger 测试替身：按 err 决定 Ping 成败。

@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"beacon/internal/filetree"
-	"beacon/internal/model"
-	"beacon/internal/repository"
-	"beacon/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/runtime/longpoll"
 )
 
 // EffectiveOverride 是某 agent 身份适用的覆盖集集合（按覆盖链解析后 + 独立 overrideMd5）。

@@ -6,7 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/model"
 )
 
 // APIKeyRepository 提供 api_key 表的数据访问（FR-42，见 ADR-0026）。

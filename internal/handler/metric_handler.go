@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"beacon/internal/apperr"
-	"beacon/internal/render"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // MetricHandler 处理负载指标 admin 请求（FR-32，见 ADR-0023）：

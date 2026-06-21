@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"beacon/internal/render"
-	"beacon/internal/runtime/alert"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/runtime/alert"
 )
 
 // AlertReader 是站内信告警只读来源（由站内信通道实现），便于解耦与测试。

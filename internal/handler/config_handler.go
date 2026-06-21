@@ -8,13 +8,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"beacon/internal/apperr"
-	"beacon/internal/auth"
-	"beacon/internal/merge"
-	"beacon/internal/model"
-	"beacon/internal/render"
-	"beacon/internal/repository"
-	"beacon/internal/service"
+	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/merge"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/render"
+	"github.com/wcpe/Beacon/internal/repository"
+	"github.com/wcpe/Beacon/internal/service"
 )
 
 // ConfigHandler 处理配置中心相关的 admin 请求。
