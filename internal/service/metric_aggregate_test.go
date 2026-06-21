@@ -96,6 +96,60 @@ func TestSummarizeAvgOnlyBukkitMixed(t *testing.T) {
 	if sum.CPUSampleCount != 2 {
 		t.Fatalf("CPU 可用样本数应仅含 bukkit=2，实际 %d", sum.CPUSampleCount)
 	}
+	// 平均内存只对两个 bukkit（FR-43）：used=(100+300)/2=200、max=(1000+1000)/2=1000，
+	// 不含 bungee 的 used=200/max=2000（÷2 而非 ÷3）。
+	if sum.AvgMemUsed != 200 || sum.AvgMemMax != 1000 {
+		t.Fatalf("平均内存应仅含 bukkit：used=200/max=1000，实际 used=%d/max=%d", sum.AvgMemUsed, sum.AvgMemMax)
+	}
+}
+
+// TestSummarizeAvgMemOnlyBukkitNotInflatedByBC 用大内存 bungee 验证：bc 内存不进子服内存均值分子 / 分母。
+// 两个 bukkit used=100/100、max=1000/1000；一个 bungee used=900000/max=900000（极大）。
+// 仅 bukkit 口径：used=100、max=1000，完全不被 bc 拉高。
+func TestSummarizeAvgMemOnlyBukkitNotInflatedByBC(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bk-a", roleBukkit, 1, 20.0, 100, 1000, 0.3),
+		onlineInstWithRole("bk-b", roleBukkit, 1, 20.0, 100, 1000, 0.3),
+		onlineInstWithRole("bc-1", roleBungee, 1, 0.0, 900000, 900000, 0.5),
+	}
+	sum := Summarize(insts)
+	if sum.AvgMemUsed != 100 {
+		t.Fatalf("平均已用堆应仅含 bukkit=100、不被 bc 拉高，实际 %d", sum.AvgMemUsed)
+	}
+	if sum.AvgMemMax != 1000 {
+		t.Fatalf("平均最大堆应仅含 bukkit=1000、不被 bc 拉高，实际 %d", sum.AvgMemMax)
+	}
+}
+
+// TestSummarizeAvgMemNoBukkit 全 bungee（无 bukkit）：内存均值口径分母为 0 → 内存均值为 0（与 avgTps 一致）。
+func TestSummarizeAvgMemNoBukkit(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bc-1", roleBungee, 5, 0.0, 200, 2000, 0.9),
+		onlineInstWithRole("bc-2", roleBungee, 7, 0.0, 100, 2000, 0.8),
+	}
+	sum := Summarize(insts)
+	if sum.AvgMemUsed != 0 || sum.AvgMemMax != 0 {
+		t.Fatalf("无 bukkit 时内存均值应为 0，实际 used=%d/max=%d", sum.AvgMemUsed, sum.AvgMemMax)
+	}
+}
+
+// TestSummarizeServersCarryRole 验证每服明细带 role 字段（供前端按角色分组，FR-43）。
+func TestSummarizeServersCarryRole(t *testing.T) {
+	insts := []*runtime.Instance{
+		onlineInstWithRole("bk-a", roleBukkit, 10, 20.0, 100, 1000, 0.3),
+		onlineInstWithRole("bc-1", roleBungee, 5, 0.0, 200, 2000, 0.5),
+	}
+	sum := Summarize(insts)
+	roleByServer := map[string]string{}
+	for _, s := range sum.Servers {
+		roleByServer[s.ServerID] = s.Role
+	}
+	if roleByServer["bk-a"] != roleBukkit {
+		t.Fatalf("bk-a 的 role 应为 bukkit，实际 %q", roleByServer["bk-a"])
+	}
+	if roleByServer["bc-1"] != roleBungee {
+		t.Fatalf("bc-1 的 role 应为 bungee，实际 %q", roleByServer["bc-1"])
+	}
 }
 
 // TestSummarizeAvgAllBungee 全 bungee：无 bukkit 参与平均 → 平均 TPS=0、CPU 为不可用哨兵；
@@ -259,6 +313,27 @@ func TestDownsampleAvgOnlyBukkitMixed(t *testing.T) {
 	// 平均 CPU 只对两个 bukkit：(0.4+0.6)/2=0.5。
 	if !floatEq(p.AvgCPULoad, 0.5) {
 		t.Fatalf("桶内平均 CPU 应仅含 bukkit=0.5，实际 %v", p.AvgCPULoad)
+	}
+	// 桶内平均内存只对两个 bukkit（FR-43）：used=(100+300)/2=200、max=(1000+1000)/2=1000，
+	// 不含 bungee 的 used=200/max=2000（÷2 而非 ÷3）。
+	if p.AvgMemUsed != 200 || p.AvgMemMax != 1000 {
+		t.Fatalf("桶内平均内存应仅含 bukkit：used=200/max=1000，实际 used=%d/max=%d", p.AvgMemUsed, p.AvgMemMax)
+	}
+}
+
+// TestDownsampleAvgMemNoBukkit 桶内全 bungee：内存均值分母为 0 → 桶内内存均值为 0（与 avgTps 一致）。
+func TestDownsampleAvgMemNoBukkit(t *testing.T) {
+	base := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
+	samples := []model.MetricSample{
+		sampleAtWithRole("bc-1", roleBungee, base.Add(1*time.Second), 5, 0.0, 200, 2000, 0.9),
+		sampleAtWithRole("bc-2", roleBungee, base.Add(2*time.Second), 7, 0.0, 100, 2000, 0.8),
+	}
+	pts := Downsample(samples, time.Minute)
+	if len(pts) != 1 {
+		t.Fatalf("应聚合为 1 个桶，实际 %d", len(pts))
+	}
+	if pts[0].AvgMemUsed != 0 || pts[0].AvgMemMax != 0 {
+		t.Fatalf("桶内无 bukkit 时内存均值应为 0，实际 used=%d/max=%d", pts[0].AvgMemUsed, pts[0].AvgMemMax)
 	}
 }
 

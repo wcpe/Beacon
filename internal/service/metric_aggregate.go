@@ -28,6 +28,7 @@ const latencyUnavailable = -1.0
 // ServerPlayers 是每服人数明细（聚合端点用，仅负载数字，不含名单）。
 type ServerPlayers struct {
 	ServerID    string
+	Role        string // 实例角色（bukkit / bungee），供前端按角色分组明细（FR-43）
 	PlayerCount int
 }
 
@@ -66,27 +67,29 @@ func Summarize(insts []*runtime.Instance) Summary {
 
 	var sumTPS, sumCPU float64
 	var sumMemUsed, sumMemMax int64
-	tpsCount := 0 // 计入平均 TPS 的 bukkit 数（bungee 不进分母）
+	// bukkit 计数：平均 TPS·内存共用同一分母（bungee 不进分母，与平均口径一致，FR-43）。
+	bukkitCount := 0
 	cpuCount := 0 // 计入平均 CPU 的 bukkit 且可用样本数
 	for _, in := range insts {
 		s.TotalPlayers += in.PlayerCount
-		s.Servers = append(s.Servers, ServerPlayers{ServerID: in.ServerID, PlayerCount: in.PlayerCount})
-		sumMemUsed += in.MemUsed
-		sumMemMax += in.MemMax
-		if !countsInAvg(in.Role) { // bungee 不计入平均 TPS·CPU
+		s.Servers = append(s.Servers, ServerPlayers{ServerID: in.ServerID, Role: in.Role, PlayerCount: in.PlayerCount})
+		if !countsInAvg(in.Role) { // bungee 不计入平均 TPS·内存·CPU
 			continue
 		}
 		sumTPS += in.TPS
-		tpsCount++
+		// 内存均值仅算 bukkit（与平均 TPS·CPU 同口径，避免 bc 堆字节混入子服内存均值，FR-43）。
+		sumMemUsed += in.MemUsed
+		sumMemMax += in.MemMax
+		bukkitCount++
 		if in.CPULoad >= 0 { // 剔除 -1.0 不可用样本
 			sumCPU += in.CPULoad
 			cpuCount++
 		}
 	}
 	s.OnlineServers = len(insts)
-	s.AvgTPS = avgFloat(sumTPS, tpsCount)
-	s.AvgMemUsed = sumMemUsed / int64(len(insts))
-	s.AvgMemMax = sumMemMax / int64(len(insts))
+	s.AvgTPS = avgFloat(sumTPS, bukkitCount)
+	s.AvgMemUsed = avgInt64(sumMemUsed, bukkitCount)
+	s.AvgMemMax = avgInt64(sumMemMax, bukkitCount)
 	s.CPUSampleCount = cpuCount
 	s.AvgCPULoad = avgCPU(sumCPU, cpuCount)
 	s.BC = summarizeBC(insts)
@@ -158,9 +161,9 @@ func Downsample(samples []model.MetricSample, bucket time.Duration) []TrendPoint
 		sumMemUsed int64
 		sumMemMax  int64
 		sumCPU     float64
-		count      int // 桶内全部样本数（人数 / 内存平均的分母）
-		tpsCount   int // 计入平均 TPS 的 bukkit 样本数（bungee 不进分母）
-		cpuCount   int // 计入平均 CPU 的 bukkit 且可用样本数
+		// 桶内 bukkit 样本数：平均 TPS·内存共用同一分母（bungee 不进分母，FR-43）。
+		bukkitCount int
+		cpuCount    int // 计入平均 CPU 的 bukkit 且可用样本数
 	}
 	buckets := make(map[int64]*acc)
 	order := make([]int64, 0)
@@ -173,14 +176,14 @@ func Downsample(samples []model.MetricSample, bucket time.Duration) []TrendPoint
 			order = append(order, key)
 		}
 		a.players += samples[i].PlayerCount
-		a.sumMemUsed += samples[i].MemUsed
-		a.sumMemMax += samples[i].MemMax
-		a.count++
-		if !countsInAvg(samples[i].Role) { // bungee 不计入平均 TPS·CPU
+		if !countsInAvg(samples[i].Role) { // bungee 不计入平均 TPS·内存·CPU
 			continue
 		}
 		a.sumTPS += samples[i].TPS
-		a.tpsCount++
+		// 内存均值仅算 bukkit（与 Summarize 同口径，避免 bc 堆字节混入桶内内存均值，FR-43）。
+		a.sumMemUsed += samples[i].MemUsed
+		a.sumMemMax += samples[i].MemMax
+		a.bukkitCount++
 		if samples[i].CPULoad >= 0 {
 			a.sumCPU += samples[i].CPULoad
 			a.cpuCount++
@@ -191,13 +194,12 @@ func Downsample(samples []model.MetricSample, bucket time.Duration) []TrendPoint
 	pts := make([]TrendPoint, 0, len(order))
 	for _, key := range order {
 		a := buckets[key]
-		n := int64(a.count)
 		pts = append(pts, TrendPoint{
 			SampledAt:    a.at,
 			TotalPlayers: a.players,
-			AvgTPS:       avgFloat(a.sumTPS, a.tpsCount),
-			AvgMemUsed:   a.sumMemUsed / n,
-			AvgMemMax:    a.sumMemMax / n,
+			AvgTPS:       avgFloat(a.sumTPS, a.bukkitCount),
+			AvgMemUsed:   avgInt64(a.sumMemUsed, a.bukkitCount),
+			AvgMemMax:    avgInt64(a.sumMemMax, a.bukkitCount),
 			AvgCPULoad:   avgCPU(a.sumCPU, a.cpuCount),
 		})
 	}
@@ -222,6 +224,14 @@ func avgFloat(sum float64, count int) float64 {
 		return 0
 	}
 	return sum / float64(count)
+}
+
+// avgInt64 计算整型均值：分母为 0 时返回 0（无 bukkit 参与平均内存时取 0，与 avgFloat 同口径，防除零）。
+func avgInt64(sum int64, count int) int64 {
+	if count == 0 {
+		return 0
+	}
+	return sum / int64(count)
 }
 
 // avgCPU 计算 CPU 均值：可用样本数为 0 时回退为不可用哨兵 -1.0。

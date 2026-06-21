@@ -23,6 +23,7 @@ func NewMetricHandler(svc *service.MetricService) *MetricHandler {
 // serverPlayersView 是每服人数明细对外视图（仅计数，不含名单）。
 type serverPlayersView struct {
 	ServerID    string `json:"serverId"`
+	Role        string `json:"role"` // 实例角色（bukkit / bungee），供前端按角色分组明细（FR-43）
 	PlayerCount int    `json:"playerCount"`
 }
 
@@ -65,7 +66,7 @@ func (h *MetricHandler) Summary(w http.ResponseWriter, r *http.Request) {
 	sum := h.svc.Summary(r.URL.Query().Get("namespace"))
 	servers := make([]serverPlayersView, 0, len(sum.Servers))
 	for _, s := range sum.Servers {
-		servers = append(servers, serverPlayersView{ServerID: s.ServerID, PlayerCount: s.PlayerCount})
+		servers = append(servers, serverPlayersView{ServerID: s.ServerID, Role: s.Role, PlayerCount: s.PlayerCount})
 	}
 	render.WriteJSON(w, http.StatusOK, summaryView{
 		TotalPlayers: sum.TotalPlayers, OnlineServers: sum.OnlineServers, Servers: servers,
