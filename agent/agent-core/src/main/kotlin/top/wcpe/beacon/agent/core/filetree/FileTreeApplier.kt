@@ -13,16 +13,24 @@ import top.wcpe.beacon.agent.core.platform.PlatformAdapter
  *   保留既有镜像不动，下一轮重试。绝不臆测删文件。
  * - 路径非法的条目跳过（告警），不阻断其余安全条目落盘。
  *
- * @param mirrorWriter 原子落盘器（目标根内）
- * @param appliedStore 本地已落盘清单读写
- * @param adapter      平台适配（仅日志）
- * @param fetchContent 取单个 path 整文件内容；返回 null 表示取不到（触发 fail-static 放弃本轮）
+ * 自我保护（与 FR-41 env 注入身份相辅相成）：
+ * - 顶段命中 [protectedSegments]（壳层注入的 agent 自身 plugin 名集合，如 `BeaconAgent` / `BeaconAgentProxy`）
+ *   的 path 视为"agent 自管"，applier 既不取内容也不落盘也不删除，并打 WARN 便于运维核对。
+ *   防止运维误把 `BeaconAgent/config.yml` 之类经 FR-14 文件树或 FR-38 导入塞进有效树后，agent 覆写自身。
+ *   空集合（默认）= 未启用保护，回到旧语义，保留兼容。
+ *
+ * @param mirrorWriter      原子落盘器（目标根内）
+ * @param appliedStore      本地已落盘清单读写
+ * @param adapter           平台适配（仅日志）
+ * @param fetchContent      取单个 path 整文件内容；返回 null 表示取不到（触发 fail-static 放弃本轮）
+ * @param protectedSegments agent 自身 dataFolder 顶段名（如 `BeaconAgent`）；命中顶段的 path 一律跳过
  */
 class FileTreeApplier(
     private val mirrorWriter: FileMirrorWriter,
     private val appliedStore: AppliedFileManifestStore,
     private val adapter: PlatformAdapter,
     private val fetchContent: (path: String) -> FileContent?,
+    private val protectedSegments: Set<String> = emptySet(),
 ) {
 
     /**
@@ -58,6 +66,11 @@ class FileTreeApplier(
                 adapter.warn("跳过非法文件路径（绝对/穿越/反斜杠），不落盘：$path")
                 continue
             }
+            if (RelativePathGuard.isReservedSelfPath(path, protectedSegments)) {
+                // 自我保护：path 顶段命中 agent 自身 dataFolder，跳过——不取、不写。
+                adapter.warn("跳过 agent 自身 dataFolder 路径，不落盘：$path（受保护集合：$protectedSegments）")
+                continue
+            }
             val content = fetchContent(path)
             if (content == null) {
                 adapter.warn("取文件内容失败（path=$path），本轮文件树同步放弃，保留既有镜像不动")
@@ -83,6 +96,11 @@ class FileTreeApplier(
         for (path in plan.toDelete) {
             if (!RelativePathGuard.isSafe(path)) {
                 adapter.warn("跳过非法删除路径：$path")
+                continue
+            }
+            if (RelativePathGuard.isReservedSelfPath(path, protectedSegments)) {
+                // 自我保护：受保护顶段永远不删（避免曾被旧版臆测落盘后又被本版主动清理）。
+                adapter.warn("跳过 agent 自身 dataFolder 删除：$path（受保护集合：$protectedSegments）")
                 continue
             }
             try {

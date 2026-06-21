@@ -146,6 +146,9 @@ object BeaconAgentBungee : Plugin() {
             backendsProvider = { serverDirectory.backendServerIds().toList() },
             // BC 专属指标供给（FR-34）：上报时采代理连接数 / 线程 / 运行时长 / 后端可达性·延迟（仅 bc 填）。
             proxyMetricsProvider = { BungeeProxyMetricsCollector.sample() },
+            // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+            // plugins/BeaconAgentProxy/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+            selfPluginDirNames = setOf("BeaconAgentProxy"),
         )
         lifecycle = assembled.lifecycle
 

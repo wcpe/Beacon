@@ -133,6 +133,9 @@ object BeaconAgentBukkit : Plugin() {
             streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
             // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
             metricsProvider = { BukkitMetricsCollector.sample() },
+            // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+            // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+            selfPluginDirNames = setOf("BeaconAgent"),
         )
         lifecycle = assembled.lifecycle
 

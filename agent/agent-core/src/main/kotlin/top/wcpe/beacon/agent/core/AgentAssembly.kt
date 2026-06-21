@@ -72,6 +72,10 @@ object AgentAssembly {
         // BC 专属指标供给（FR-34）：bungee 壳层注入平台采集实现（连接 / 线程 / 运行时长 / 后端可达性·延迟）；
         // 默认 null（bukkit / 未注入时不上报 proxy 段，向后兼容）。
         proxyMetricsProvider: ProxyMetricsProvider = { null },
+        // agent 自身 dataFolder 顶段名集合（如 `BeaconAgent` / `BeaconAgentProxy`）：壳层注入自身 plugin 名，
+        // 文件树 applier 据此跳过命中顶段的 path，防止运维误把 agent 自管文件经 FR-14/FR-38 塞进有效树后污染自身。
+        // 默认空集（未注入时回到旧语义，向后兼容），core 不硬编码任何 plugin 名（守 ADR-0005）。
+        selfPluginDirNames: Set<String> = emptySet(),
     ): AssembledAgent {
         val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
@@ -112,6 +116,7 @@ object AgentAssembly {
                 ),
                 adapter = adapter,
                 fetchContent = { path -> apiClient.fetchFileContent(identity, path) },
+                protectedSegments = selfPluginDirNames,
             )
         } else {
             null
