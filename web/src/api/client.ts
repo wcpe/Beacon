@@ -3,6 +3,7 @@
 // 所有端点严格对齐 docs/API.md 与 internal/handler/*.go，非 2xx 时解析统一错误体并抛出。
 
 import type {
+  AgentCommandView,
   ApiKeyCreated,
   ApiKeyView,
   AssignmentView,
@@ -18,6 +19,7 @@ import type {
   OverrideSetRevisionView,
   OverrideSetView,
   PublishResult,
+  ReverseFetchScope,
   RevisionView,
   SystemStatusView,
   TopologyView,
@@ -547,6 +549,36 @@ export async function importFiles(
   }
   if (!resp.ok) throw await toError(resp)
   return (await resp.json()) as ImportResult
+}
+
+// ===== 配置导入·在线实例反向抓取（FR-39）=====
+
+// 反向抓取触发参数：目标层 + 目标组；server 层另需目标 serverId。
+// operator 由登录令牌身份决定（后端取认证身份），故不在请求体送 operator。
+export interface ReverseFetchParams {
+  // 目标层：group（落组级覆盖）/ server（落实例级覆盖）
+  scope: ReverseFetchScope
+  // 入库到哪个组的文件树
+  group: string
+  // 仅 server 层需要：覆盖落到哪个 serverId（组层留空）
+  target?: string
+}
+
+// 触发对某在线实例的反向抓取：命令该 agent 读其真实 plugins/ 文本配置回传并 ingest。
+// namespace 走查询参数（与 offlineInstance 等实例端点一致，实例列表跨 namespace、须随源实例带上）。
+// 写操作需 full 角色（readonly → 403）；返回创建的 pending 命令，结果经命令状态 / 审计 / 文件树体现。
+export function triggerReverseFetch(
+  serverId: string,
+  namespace: string,
+  params: ReverseFetchParams,
+): Promise<AgentCommandView> {
+  return request<AgentCommandView>(
+    `/instances/${encodeURIComponent(serverId)}/reverse-fetch${qs({ namespace })}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+  )
 }
 
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====

@@ -182,13 +182,15 @@ func run() error {
 	fileHub := longpoll.NewHub()
 	// 拓扑 watch（FR-29）：namespace 级唤醒 Hub，与配置/文件独立；实例上线/下线/改派时唤醒订阅方
 	topologyHub := longpoll.NewHub()
+	// 命令待办（FR-39）：serverId 级唤醒 Hub，与上面三通道独立；建反向抓取命令时唤醒目标 agent 的 SSE 流
+	commandHub := longpoll.NewHub()
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, hub)
 	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）
 	configHandler := handler.NewConfigHandler(configService, effectiveService, configGrayService)
 	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
 	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
 	notifier.SetMetrics(metricsSet)
 	configService.SetNotifier(notifier)
 	configService.SetMetrics(metricsSet)
@@ -206,7 +208,7 @@ func run() error {
 
 	// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询 + 拓扑 watch（FR-29），复用同源唤醒集合 + 连接即对账。
 	// 保活间隔取长轮询挂起上限（无变更时按此节奏发注释行心跳，穿透反代空闲超时）。
-	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, registry, hub, fileHub, topologyHub, maxHold)
+	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, registry, hub, fileHub, topologyHub, commandHub, maxHold)
 
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)
@@ -225,6 +227,13 @@ func run() error {
 	apiKeyService := service.NewAPIKeyService(db, apiKeyRepo, auditRepo)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 
+	// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：命令仓库 + 服务（建命令 / 拉取 / ingest 复用 FileService.Import）+ 处理器。
+	// 建命令提交后经 notifier 唤醒目标 agent 的 SSE 流发 command-pending。
+	commandRepo := repository.NewAgentCommandRepository(db)
+	commandService := service.NewAgentCommandService(db, commandRepo, fileService, auditRepo)
+	commandService.SetNotifier(notifier)
+	commandHandler := handler.NewCommandHandler(commandService, instanceService)
+
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
 	if err != nil {
@@ -233,7 +242,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService)
 
 	srv := &http.Server{

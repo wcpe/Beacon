@@ -27,6 +27,7 @@ type Handlers struct {
 	System      *handler.SystemHandler
 	Auth        *handler.AuthHandler
 	APIKey      *handler.APIKeyHandler
+	Command     *handler.CommandHandler
 	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web         http.Handler
 }
@@ -52,6 +53,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/override-sets/content", h.File.OverrideContent)
 		r.Post("/report", h.Agent.Report)
 		r.Get("/discovery", h.Agent.Discover)
+		// 反向抓取命令（FR-39，见 ADR-0027）：拉本机待办命令 + 回传 plugins 文件集 ingest
+		r.Get("/commands", h.Command.Pending)
+		r.Post("/files/ingest", h.Command.Ingest)
 	})
 
 	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
@@ -116,6 +120,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/instances", h.Instance.List)
 		r.Get("/instances/{serverId}", h.Instance.Get)
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
+		// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：触发对该实例抓取 plugins 入库（写操作，readonly 403）
+		r.Post("/instances/{serverId}/reverse-fetch", h.Command.ReverseFetch)
 
 		// 集群拓扑（FR-37）：bc→bukkit 真实连线 + 大区/zone 分组，读内存注册表快照
 		r.Get("/topology", h.Topology.Topology)

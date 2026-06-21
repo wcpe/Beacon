@@ -49,7 +49,7 @@ func newOverrideDeliveryStack(t *testing.T) overrideDeliveryStack {
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
 	ovrEff := service.NewOverrideEffectiveService(setRepo, fileRepo, assignRepo, fileHub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, reg, assignRepo)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, assignRepo)
 	setSvc := service.NewOverrideSetService(db, setRepo, revRepo, fileRepo, auditRepo)
 	setSvc.SetNotifier(notifier)
 	// 文件服务共享同一 notifier：编辑成员文件内容（成员是 override_set_id>0 的 FileObject）走通道B 发布路径，

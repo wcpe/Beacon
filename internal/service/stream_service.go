@@ -32,6 +32,7 @@ type StreamService struct {
 	configHub   *longpoll.Hub
 	fileHub     *longpoll.Hub
 	topologyHub *longpoll.Hub
+	commandHub  *longpoll.Hub
 	pingEvery   time.Duration
 }
 
@@ -44,12 +45,12 @@ func NewStreamService(
 	fileEffSvc *FileEffectiveService,
 	ovrEffSvc *OverrideEffectiveService,
 	registry *runtime.Registry,
-	configHub, fileHub, topologyHub *longpoll.Hub,
+	configHub, fileHub, topologyHub, commandHub *longpoll.Hub,
 	pingEvery time.Duration,
 ) *StreamService {
 	return &StreamService{
 		effSvc: effSvc, fileEffSvc: fileEffSvc, ovrEffSvc: ovrEffSvc, registry: registry,
-		configHub: configHub, fileHub: fileHub, topologyHub: topologyHub, pingEvery: pingEvery,
+		configHub: configHub, fileHub: fileHub, topologyHub: topologyHub, commandHub: commandHub, pingEvery: pingEvery,
 	}
 }
 
@@ -124,6 +125,8 @@ func (s *StreamService) Run(ctx context.Context, ns, serverID, groupHint string,
 	defer s.fileHub.Deregister(fileWaiter)
 	topologyWaiter := s.topologyHub.Register(ns, serverID)
 	defer s.topologyHub.Deregister(topologyWaiter)
+	commandWaiter := s.commandHub.Register(ns, serverID)
+	defer s.commandHub.Deregister(commandWaiter)
 
 	// 已发往 agent 的各通道 md5：对账与直播都据此判"真变才发"，避免重复通知。
 	sent := reported
@@ -150,6 +153,11 @@ func (s *StreamService) Run(ctx context.Context, ns, serverID, groupHint string,
 			}
 		case <-topologyWaiter.NotifyChan():
 			if err := s.reconcileAndSend(ns, serverID, groupHint, &sent, sink); err != nil {
+				return err
+			}
+		case <-commandWaiter.NotifyChan():
+			// 命令待办：发通知（不含载荷），agent 收到拉 /commands 取详情执行（FR-39，见 ADR-0027）。
+			if err := sink.Send(sse.Event{Type: sse.EventCommandPending}); err != nil {
 				return err
 			}
 		case <-pingTimer(s.pingEvery):

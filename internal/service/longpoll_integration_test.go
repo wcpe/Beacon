@@ -27,7 +27,7 @@ func longpollStack(t *testing.T) (*service.ConfigService, *service.ZoneService, 
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
 	eff := service.NewEffectiveService(cr, asg, nil, hub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, reg, asg)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, asg)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfg.SetNotifier(notifier)
 	zone := service.NewZoneService(db, asg, ar, reg)

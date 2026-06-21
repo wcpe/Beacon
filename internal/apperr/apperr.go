@@ -59,6 +59,8 @@ var (
 	ErrInvalidPath = New(http.StatusBadRequest, "INVALID_PATH", "文件路径不合法")
 	// ErrTooManyFiles 单次导入文件数超出上限（FR-38）。
 	ErrTooManyFiles = New(http.StatusUnprocessableEntity, "TOO_MANY_FILES", "单次导入文件数超出上限")
+	// ErrCommandNotFound agent 命令不存在或已不可回传（过期 / 已完成 / 状态不符，FR-39）。
+	ErrCommandNotFound = New(http.StatusNotFound, "COMMAND_NOT_FOUND", "命令不存在或已失效")
 
 	// ErrOverrideSetNotFound 覆盖集不存在（FR-15）。
 	ErrOverrideSetNotFound = New(http.StatusNotFound, "OVERRIDE_SET_NOT_FOUND", "覆盖集不存在")

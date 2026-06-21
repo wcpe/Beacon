@@ -35,6 +35,14 @@ internal object JsonTree {
         }
     }
 
+    /** 读长整数字段；数值类型统一转 Long（保全 id 等大整数范围），缺失给默认值。 */
+    fun longOr(obj: Map<String, Any?>, key: String, default: Long): Long {
+        return when (val v = obj[key]) {
+            is Number -> v.toLong()
+            else -> default
+        }
+    }
+
     /** 读布尔字段，缺失给默认值。 */
     fun boolOr(obj: Map<String, Any?>, key: String, default: Boolean): Boolean {
         return obj[key] as? Boolean ?: default

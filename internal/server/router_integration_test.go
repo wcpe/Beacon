@@ -68,7 +68,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	schedSvc := service.NewSchedulingService(db, repository.NewServerDrainRepository(db), auditRepo, registry)
 	apiKeySvc := service.NewAPIKeyService(db, repository.NewAPIKeyRepository(db), auditRepo)
 	testAlertInbox = alert.NewInboxAlerter(16)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, registry, assignRepo)
+	commandHub := longpoll.NewHub()
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
 	cfgSvc.SetNotifier(notifier)
@@ -78,7 +79,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	instSvc.SetNotifier(notifier)
 	ovrSetSvc.SetNotifier(notifier)
 	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
-	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, 30*time.Second)
+	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, commandHub, 30*time.Second)
+	// 反向抓取命令通道（FR-39）：命令仓库 + 服务（复用 fileSvc.Import 落组/实例覆盖）+ 处理器（校验目标在线）。
+	commandService := service.NewAgentCommandService(db, repository.NewAgentCommandRepository(db), fileSvc, auditRepo)
+	commandService.SetNotifier(notifier)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
@@ -98,6 +102,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Metric:      handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:        handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:      handler.NewAPIKeyHandler(apiKeySvc),
+		Command:     handler.NewCommandHandler(commandService, instSvc),
 		Metrics:     metricsSet.Handler(),
 		Web:         http.HandlerFunc(http.NotFound),
 	}, agentToken, authn, apiKeySvc)

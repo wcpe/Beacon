@@ -38,6 +38,7 @@ import ConfigFileTree from './configs/ConfigFileTree'
 import TargetSelector from './configs/TargetSelector'
 import CreateConfigDialog from './configs/CreateConfigDialog'
 import ImportFilesDialog from './configs/ImportFilesDialog'
+import ReverseFetchDialog from './configs/ReverseFetchDialog'
 import ConfigTabBar from './configs/ConfigTabBar'
 import ConfigEditorPane from './configs/ConfigEditorPane'
 import type { OpenTab, TreeNode } from './configs/types'
@@ -249,6 +250,8 @@ export default function ConfigsPage() {
           </Badge>
           {/* 导入到组（FR-38）：把一份目录批量上传到某组的文件树（通道B 整文件覆盖） */}
           <ImportFilesDialog namespaces={namespaceCodes} groups={groupOptions} />
+          {/* 反向抓取（FR-39）：从某在线实例读其真实 plugins 反向 ingest 为组 / 实例级覆盖 */}
+          <ReverseFetchDialog instances={instancesQuery.data ?? []} groups={groupOptions} />
           <CreateConfigDialog
             namespaces={namespaceCodes}
             groups={groupOptions}

@@ -19,6 +19,9 @@ const (
 	// EventTopologyChanged 拓扑变更通知（FR-29）：namespace 内实例上线/下线/改派 zone 时推送，
 	// data 携带新拓扑摘要（通知式，不含实例数据）；agent 收到后重查发现端点取最新拓扑。
 	EventTopologyChanged = "topology-changed"
+	// EventCommandPending server→agent 命令待办通知（FR-39，见 ADR-0027）：本 agent 有待办命令，
+	// 收到后拉 GET /commands 取详情并执行（通知式，不含载荷）。
+	EventCommandPending = "command-pending"
 	// EventReady 首轮对账完成标记：agent 收到即知"落下的增量已补发完、转入直播"。
 	EventReady = "ready"
 	// EventPing 保活心跳：编码为 SSE 注释行，agent 收到不触发任何取数据，仅维持连接/穿透反代空闲超时。
@@ -58,7 +61,7 @@ func Encode(e Event) string {
 
 // encodeData 生成 data 行的 JSON 文本：ready 为最小占位对象，其余携带新 md5。
 func encodeData(e Event) string {
-	if e.Type == EventReady {
+	if e.Type == EventReady || e.Type == EventCommandPending {
 		return "{}"
 	}
 	// 单层对象不会编码失败，忽略 err 安全。

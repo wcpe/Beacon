@@ -40,13 +40,15 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
+	// 命令待办唤醒（FR-39）：流与唤醒器须共用同一 commandHub，notifier.NotifyCommand 才能驱动流发 command-pending。
+	commandHub := longpoll.NewHub()
 
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, hub)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, reg, hub, fileHub, topologyHub, 0) // 关保活，测试不依赖心跳
+	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, reg, hub, fileHub, topologyHub, commandHub, 0) // 关保活，测试不依赖心跳
 
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, reg, assignRepo)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, reg, assignRepo)
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
 	cfgSvc.SetNotifier(notifier)
 	return cfgSvc, streamSvc, reg, notifier
@@ -140,6 +142,24 @@ func TestStreamRunLivePushOnPublish(t *testing.T) {
 	evt := sink.waitFor(t, 2*time.Second, func(e sse.Event) bool { return e.Type == sse.EventConfigChanged })
 	if evt.MD5 == cur {
 		t.Fatalf("直播事件应携带变更后的新 md5，实际仍为旧值 %q", cur)
+	}
+}
+
+// TestStreamRunCommandPendingEmit 命令待办唤醒（FR-39）：转直播后 NotifyCommand → 流近实时发 command-pending（无 data）。
+func TestStreamRunCommandPendingEmit(t *testing.T) {
+	_, stream, _, notifier := streamSqliteStack(t)
+
+	sink := newRecordingSink()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = stream.Run(ctx, "prod", "s1", "", service.ChannelMD5{}, sink) }()
+	// 先 ready 进入直播，再触发命令待办唤醒。
+	sink.waitFor(t, 2*time.Second, func(e sse.Event) bool { return e.Type == sse.EventReady })
+
+	notifier.NotifyCommand("prod", "s1")
+	evt := sink.waitFor(t, 2*time.Second, func(e sse.Event) bool { return e.Type == sse.EventCommandPending })
+	if evt.Type != sse.EventCommandPending {
+		t.Fatalf("应收到 command-pending 事件，实际 %q", evt.Type)
 	}
 }
 

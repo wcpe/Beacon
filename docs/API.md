@@ -70,7 +70,7 @@ data: {"md5":"ab12...ef"}
 event: ready
 data: {}
 ```
-事件类型：`config-changed` / `file-changed` / `override-changed`（各携带对应通道新 md5）、`topology-changed`（[FR-29](PRD.md)：namespace 内实例上线/下线/改派 zone 时推送，`data` 携带新拓扑摘要——**通知式、不含实例数据**，agent 收到后重查 §5 发现端点取最新拓扑）、`ready`（首轮对账完成）。预留 `command-pending` 供后续远程运维命令复用本流。
+事件类型：`config-changed` / `file-changed` / `override-changed`（各携带对应通道新 md5）、`topology-changed`（[FR-29](PRD.md)：namespace 内实例上线/下线/改派 zone 时推送，`data` 携带新拓扑摘要——**通知式、不含实例数据**，agent 收到后重查 §5 发现端点取最新拓扑）、`ready`（首轮对账完成）、`command-pending`（[FR-39](PRD.md) 反向抓取：控制面给某 serverId 建了待办命令时推送，**通知式、不含命令数据**，agent 收到后经 §10 拉命令详情执行，见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)）。
 
 > **健康判活与流活性解耦**：online/lost/offline（[FR-5](PRD.md)）仍由独立心跳 + TTL 判定，**不**用「SSE 断开」判失联。流断时 agent 按本地快照继续（fail-static），带退避重连、重连即对账。
 > **反代/Docker**：经 nginx 等反代须关闭响应缓冲（响应头已带 `X-Accel-Buffering: no`）、调长读超时，见 [OPERATIONS](OPERATIONS.md)。
@@ -153,6 +153,17 @@ data: {}
 { "set": "AllinCore", "path": "config.yml", "md5": "9f...c1", "content": "...整文件文本..." }
 ```
 - agent 据 §8 清单逐个取成员内容，经 `OverrideApplier`（备份 → 路径安全 → 原子覆盖 → 受管标记）落到该集 `targetRoot`，全量成功且命中本地白名单才派发 `reloadCommand`。该 `set` 不适用本 server / 该成员不存在 → `404 FILE_NOT_FOUND`。未注册 → `404 NOT_REGISTERED`。
+
+### 10. 拉待办命令 `GET /beacon/v1/agent/commands`（FR-39 反向抓取）
+查询：`?namespace=&serverId=`。返回该 agent 最早一条待办命令并即时 CAS 标记为已取（`pending → fetched`，避免并发重复取）；**无待办返回 `204 No Content`**。命令体：
+```json
+{ "id": 1287, "type": "ingest-plugins", "payload": { "scope": "group", "group": "area1", "target": "" } }
+```
+- agent 收到 §2.5 SSE `command-pending` 事件、或连接 `ready` 后即拉一次（覆盖断连期间入队的命令）。`type=ingest-plugins`：agent 读其真实 `plugins/` 目录的文本配置（**限死 plugins 内、排除 jar/二进制、单文件/总量/数量上限**），经 §11 回传。`payload.scope ∈ {group, server}`：`group` 落组级覆盖（只用 `group`）、`server` 落实例级覆盖（`group` + `target`=目标 serverId）。见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)。
+
+### 11. 回传反向抓取文件集 `POST /beacon/v1/agent/files/ingest`（FR-39）
+请求体：`{ "commandId": 1287, "files": [ { "path": "plugin-a/config.yml", "content": "...整文件文本..." } ] }`。控制面**入库前再校验**（双保险：数量/总量上限、排除 `.jar`、相对 path 安全），通过则复用 FR-38 通道B `Import` 落为目标层文件树覆盖（事务内 + `file.import` 审计），命令转 `done`；校验/落库失败转 `failed`。返回 `{ "created": 2, "updated": 1 }`。
+- 命令须存在且处 `fetched`（未拉取/已完成/失败/过期均 `404 COMMAND_NOT_FOUND`）。含 `.jar` 或越界 path → `400 INVALID_PATH`；超数量 → `422 TOO_MANY_FILES`；超总量 → `422 CONTENT_TOO_LARGE`；空文件集 → `400 INVALID_PARAM`（命令一并转 `failed`，不留半截）。
 
 ---
 
@@ -258,6 +269,7 @@ data: {}
 | `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36） |
 | `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 手动下线（移除内存条目；operator 由认证态派生） |
+| `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | 从该**在线实例**反向抓取其真实 `plugins/` 文本配置 ingest 入库为组/实例级文件树覆盖（FR-39，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 建 `pending` 命令 + `file.reverse-fetch` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 §2.5 / agent §10、§11）。返回 `202` + 命令视图 `{id,namespace,serverId,type,status,createdAt,updatedAt}`，结果经命令状态/审计/文件树体现（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)） |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。

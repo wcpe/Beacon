@@ -19,6 +19,12 @@ import (
 // MaxFileContentBytes 是单个托管文件内容大小上限（1MB）。
 const MaxFileContentBytes = 1024 * 1024
 
+// MaxImportFiles 是单次导入 / ingest 的文件数上限（FR-38 正向上传与 FR-39 反向抓取复用）。
+const MaxImportFiles = 2000
+
+// MaxImportTotalBytes 是单次导入 / ingest 的聚合字节上限（64MB，FR-38 / FR-39 复用）。
+const MaxImportTotalBytes = 64 * 1024 * 1024
+
 // CreateFileParams 是新建文件对象（首次发布）的入参。
 type CreateFileParams struct {
 	Namespace   string
@@ -38,14 +44,18 @@ type ImportFile struct {
 	Content string
 }
 
-// ImportFilesParams 是把一份目录批量导入到某组（scope=group）的入参（FR-38）。
+// ImportFilesParams 是把一份目录批量导入到某覆盖层的入参（FR-38 正向 / FR-39 反向）。
 type ImportFilesParams struct {
 	Namespace string
 	Group     string
-	Files     []ImportFile
-	Operator  string
-	Comment   string
-	ClientIP  string
+	// ScopeLevel 覆盖层：空 = group（FR-38 正向导入默认）；FR-39 反向抓取可指定 group / server。
+	ScopeLevel string
+	// ScopeTarget server 层目标 serverId（仅 ScopeLevel=server 时必填；group 层留空）。
+	ScopeTarget string
+	Files       []ImportFile
+	Operator    string
+	Comment     string
+	ClientIP    string
 }
 
 // ImportResult 概述一次导入的落地结果。
@@ -156,14 +166,19 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 	return obj, nil
 }
 
-// Import 把一份目录批量导入到某组（scope=group）：对每个文件按相对 path「存在则发布新版本、不存在则首发」，
-// 复用通道B 整文件覆盖语义。全部文件在同一事务内原子完成 + 一条 file.import 审计，提交成功后唤醒该组一次（FR-38）。
+// Import 把一份目录批量导入到指定覆盖层：对每个文件按相对 path「存在则发布新版本、不存在则首发」，
+// 复用通道B 整文件覆盖语义。全部文件在同一事务内原子完成 + 一条 file.import 审计，提交成功后按 scope 唤醒一次。
+// ScopeLevel 空则默认 group（FR-38 正向导入兼容）；FR-39 反向抓取可落 group / server 层。
 func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 	if p.Namespace == "" || p.Operator == "" || len(p.Files) == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
-	// 目标只支持组层（scope=group），归一并校验组合法
-	group, _, err := normalizeScope(model.ScopeGroup, p.Group, "")
+	// 覆盖层：空默认 group（FR-38 兼容）；归一并校验（server 层需 group + 目标 serverId）
+	scopeLevel := p.ScopeLevel
+	if scopeLevel == "" {
+		scopeLevel = model.ScopeGroup
+	}
+	group, scopeTarget, err := normalizeScope(scopeLevel, p.Group, p.ScopeTarget)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +199,7 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		fileRepo := s.fileRepo.WithTx(tx)
 		for _, f := range cleaned {
-			existing, err := fileRepo.FindByIdentity(p.Namespace, group, f.Path, model.ScopeGroup, "")
+			existing, err := fileRepo.FindByIdentity(p.Namespace, group, f.Path, scopeLevel, scopeTarget)
 			if err != nil {
 				return err
 			}
@@ -193,7 +208,7 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 				// 首版：新建对象 + revision 1，回填 current_revision
 				obj := &model.FileObject{
 					NamespaceCode: p.Namespace, GroupCode: group, Path: f.Path,
-					ScopeLevel: model.ScopeGroup, ScopeTarget: "",
+					ScopeLevel: scopeLevel, ScopeTarget: scopeTarget,
 					Content: f.Content, ContentMD5: md5, Version: 1, Enabled: true,
 				}
 				if err := fileRepo.Create(obj); err != nil {
@@ -223,15 +238,17 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 			result.Updated++
 		}
 		return s.writeImportAudit(tx, p.Namespace, group, p.Operator,
-			fmt.Sprintf(`{"files":%d,"created":%d,"updated":%d}`, len(cleaned), result.Created, result.Updated), p.ClientIP)
+			fmt.Sprintf(`{"scope":%q,"target":%q,"files":%d,"created":%d,"updated":%d}`,
+				scopeLevel, scopeTarget, len(cleaned), result.Created, result.Updated), p.ClientIP)
 	})
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("导入托管文件到组", "namespace", p.Namespace, "group", group, "files", len(cleaned), "created", result.Created, "updated", result.Updated)
-	// 整组 scope 唤醒一次（组层变更触发组内实例文件长轮询重算）
+	slog.Info("导入托管文件", "namespace", p.Namespace, "scope", scopeLevel, "group", group, "target", scopeTarget,
+		"files", len(cleaned), "created", result.Created, "updated", result.Updated)
+	// 按覆盖层 scope 唤醒一次（组 / 单服层变更触发对应实例文件长轮询重算）
 	if s.notifier != nil {
-		s.notifier.NotifyFileChange(p.Namespace, model.ScopeGroup, group, "")
+		s.notifier.NotifyFileChange(p.Namespace, scopeLevel, group, scopeTarget)
 	}
 	return result, nil
 }

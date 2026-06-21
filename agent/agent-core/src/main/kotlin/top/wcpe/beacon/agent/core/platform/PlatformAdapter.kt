@@ -36,6 +36,18 @@ interface PlatformAdapter {
      */
     fun pluginsBaseFolder(): File = dataFolder().absoluteFile.parentFile ?: dataFolder().absoluteFile
 
+    /**
+     * 读取真实 plugins 目录整棵子树为「相对路径（正斜杠） → 原始字节」映射（反向抓取，FR-39，见 ADR-0027）。
+     *
+     * 只读、不写盘；**仅在 async 线程调用**（读盘是阻塞 IO，绝不上 MC 主线程）。
+     * 读取根 = [pluginsBaseFolder]（agent dataFolder 的父目录）；FS 级安全（Path 容纳 + 符号链接逃逸判定）
+     * 由实现负责（限死真实 plugins 根内，不随符号链接逃逸）。返回原始字节，文本/二进制判别与上限校验
+     * 交 core 纯函数 [top.wcpe.beacon.agent.core.command.PluginsTreeFilter] 统一处理。
+     *
+     * 默认空实现：未实现读盘的平台 / 测试桩返回空映射（反向抓取能力不上线）。壳层各自实现平台 IO。
+     */
+    fun readPluginsTree(): Map<String, ByteArray> = emptyMap()
+
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(changed: Set<String>, newMd5: String)
 

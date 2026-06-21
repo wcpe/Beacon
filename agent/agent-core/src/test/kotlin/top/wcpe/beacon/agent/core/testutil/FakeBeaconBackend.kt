@@ -22,6 +22,13 @@ class FakeBeaconBackend : HttpTransport {
     val pollCalls = AtomicInteger(0)
     val reportCalls = AtomicInteger(0)
 
+    /** 反向抓取拉命令端点累计调用次数（FR-39，断言 command-pending / READY 触发）。 */
+    val commandsCalls = AtomicInteger(0)
+
+    /** 拉命令响应码（默认 204 无待办；置 200 走拉命令成功路径）。 */
+    @Volatile
+    var commandsStatus: Int = 204
+
     /** 任意时刻正在执行 register 的并发数与历史峰值（单飞要求峰值=1）。 */
     val inFlightRegister = AtomicInteger(0)
     val maxConcurrentRegister = AtomicInteger(0)
@@ -70,6 +77,11 @@ class FakeBeaconBackend : HttpTransport {
                 HttpResponse(200, "")
             }
 
+            url.contains("/agent/commands") -> {
+                commandsCalls.incrementAndGet()
+                if (commandsStatus == 200) HttpResponse(200, BODY_COMMAND) else HttpResponse(commandsStatus, "")
+            }
+
             else -> HttpResponse(404, "")
         }
     }
@@ -101,6 +113,7 @@ class FakeBeaconBackend : HttpTransport {
         const val BODY_REGISTER = "register-ok"
         const val BODY_HEARTBEAT = "heartbeat-ok"
         const val BODY_EFFECTIVE = "effective-v1"
+        const val BODY_COMMAND = "command-ingest"
     }
 }
 
@@ -123,6 +136,12 @@ class CannedJsonCodec : JsonCodec {
         )
 
         FakeBeaconBackend.BODY_HEARTBEAT -> mapOf("ttlSec" to 30, "configDirty" to false)
+
+        FakeBeaconBackend.BODY_COMMAND -> mapOf(
+            "id" to 1,
+            "type" to "ingest-plugins",
+            "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
+        )
 
         FakeBeaconBackend.BODY_EFFECTIVE -> mapOf(
             "namespace" to "prod",

@@ -237,15 +237,10 @@ func (h *FileHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"version": o.Version, "md5": o.ContentMD5})
 }
 
-// 导入（FR-38，multipart 上传）多文件聚合上限。单文件大小上限复用 service.MaxFileContentBytes。
-const (
-	// 单次导入的最大文件数（防一次塞入海量文件拖垮事务）
-	maxImportFiles = 2000
-	// 单次导入的最大总字节（所有文件内容累加；防内存与库表膨胀）
-	maxImportTotalBytes = 64 * 1024 * 1024
-	// multipart 解析驻留内存上限（超出落临时文件，由标准库管理）
-	importParseMemoryBytes = 16 * 1024 * 1024
-)
+// multipart 解析驻留内存上限（超出落临时文件，由标准库管理）。
+// 单次导入的文件数 / 总字节上限复用 service.MaxImportFiles / service.MaxImportTotalBytes，
+// 单文件大小复用 service.MaxFileContentBytes（与 FR-39 反向抓取同一套上限）。
+const importParseMemoryBytes = 16 * 1024 * 1024
 
 // Import 处理 POST /admin/v1/files/import（FR-38）：把一份目录批量上传到某组（scope=group）。
 // 表单：namespace、group 文本字段 + 多个 files 部件；各文件相对 path 取自与 files 等长的 paths 文本字段（按提交顺序对齐）。
@@ -271,7 +266,7 @@ func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if len(fileHeaders) > maxImportFiles {
+	if len(fileHeaders) > service.MaxImportFiles {
 		render.WriteError(w, r, apperr.ErrTooManyFiles)
 		return
 	}
@@ -285,7 +280,7 @@ func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		total += int64(len(content))
-		if total > maxImportTotalBytes {
+		if total > service.MaxImportTotalBytes {
 			render.WriteError(w, r, apperr.ErrContentTooLarge)
 			return
 		}

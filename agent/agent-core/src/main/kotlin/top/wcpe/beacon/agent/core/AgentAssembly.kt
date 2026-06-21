@@ -6,6 +6,7 @@ import top.wcpe.beacon.agent.core.api.DiscoveryView
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.api.TopologyWatchHub
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.command.ReverseFetchExecutor
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.AppliedFileManifestStore
@@ -130,6 +131,14 @@ object AgentAssembly {
             null
         }
 
+        // 反向抓取执行器（FR-39，见 ADR-0027）：仅在 plugins 基目录有效时装配（与文件树同一 fail-closed 守卫，
+        // 避免从错误目录读盘上传）。读盘委托 adapter.readPluginsTree（壳层实现 FS 级路径安全）。
+        val reverseFetchExecutor: ReverseFetchExecutor? = if (pluginsBaseValid) {
+            ReverseFetchExecutor(identity, apiClient, adapter)
+        } else {
+            null
+        }
+
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
         val topologyWatchHub = TopologyWatchHub()
 
@@ -151,6 +160,8 @@ object AgentAssembly {
             backendsProvider = backendsProvider,
             // BC 专属指标供给（FR-34）：上报时取当前一帧代理负载指标（仅 bc 注入）。
             proxyMetricsProvider = proxyMetricsProvider,
+            // 反向抓取执行器（FR-39）：收到 SSE command-pending / READY 时触发拉命令→读 plugins→回传。
+            reverseFetchExecutor = reverseFetchExecutor,
         )
 
         // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；

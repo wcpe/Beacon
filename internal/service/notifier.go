@@ -21,14 +21,15 @@ type ChangeNotifier struct {
 	hub         *longpoll.Hub // 配置长轮询唤醒集合
 	fileHub     *longpoll.Hub // 文件长轮询唤醒集合（独立）
 	topologyHub *longpoll.Hub // 拓扑 watch 唤醒集合（namespace 级，FR-29）
+	commandHub  *longpoll.Hub // 命令待办唤醒集合（serverId 级，FR-39）
 	registry    *runtime.Registry
 	assignRepo  *repository.ZoneAssignmentRepository
 	metrics     PushRecorder // 可选，推送计数（见 ADR-0020）
 }
 
-// NewChangeNotifier 构造唤醒器（hub 为配置通道、fileHub 为文件通道、topologyHub 为拓扑通道，三者独立）。
-func NewChangeNotifier(hub, fileHub, topologyHub *longpoll.Hub, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository) *ChangeNotifier {
-	return &ChangeNotifier{hub: hub, fileHub: fileHub, topologyHub: topologyHub, registry: registry, assignRepo: assignRepo}
+// NewChangeNotifier 构造唤醒器（hub 配置、fileHub 文件、topologyHub 拓扑、commandHub 命令待办，互相独立）。
+func NewChangeNotifier(hub, fileHub, topologyHub, commandHub *longpoll.Hub, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository) *ChangeNotifier {
+	return &ChangeNotifier{hub: hub, fileHub: fileHub, topologyHub: topologyHub, commandHub: commandHub, registry: registry, assignRepo: assignRepo}
 }
 
 // SetMetrics 注入推送计数器（启动时装配；未注入则不计数）。
@@ -77,6 +78,14 @@ func (n *ChangeNotifier) NotifyServers(ns string, serverIDs []string) {
 func (n *ChangeNotifier) NotifyTopologyChange(ns string) {
 	n.recordPush()
 	n.topologyHub.NotifyNamespace(ns)
+}
+
+// NotifyCommand 唤醒某 serverId 的命令待办 waiter（FR-39，见 ADR-0027）：建命令提交后调用，
+// 该 agent 的 SSE 流被唤醒即发 command-pending，agent 拉 /commands 执行。
+// agent 离线则无 waiter（信号自然丢弃），命令留待其重连时主动拉取或超时清理。
+func (n *ChangeNotifier) NotifyCommand(ns, serverID string) {
+	n.recordPush()
+	n.commandHub.Notify(ns, []string{serverID})
 }
 
 // notifyScope 按 scope 算最小受影响集合并唤醒指定 Hub 的 waiter。

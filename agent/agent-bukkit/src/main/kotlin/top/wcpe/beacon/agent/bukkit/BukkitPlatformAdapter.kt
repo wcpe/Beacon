@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.bukkit
 
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.command.PluginsTreeReader
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import taboolib.common.platform.function.console
 import taboolib.common.platform.function.getDataFolder
@@ -35,6 +36,13 @@ class BukkitPlatformAdapter(
     }
 
     override fun dataFolder(): File = getDataFolder()
+
+    override fun readPluginsTree(): Map<String, ByteArray> {
+        // 反向抓取（FR-39）：读真实 plugins 根（dataFolder 的父目录）整棵子树为相对路径→原始字节。
+        // 委托 core 的 PluginsTreeReader 做 FS 级路径安全（Path 容纳 + 符号链接逃逸判定）；
+        // 由 lifecycle 在 async 线程触发（绝不上主线程），文本/二进制判别与上限交 core 纯函数。
+        return PluginsTreeReader.read(pluginsBaseFolder())
+    }
 
     override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
         // MVP：经 API 监听器派发（业务插件通过 EffectiveConfig.onChange 订阅）。

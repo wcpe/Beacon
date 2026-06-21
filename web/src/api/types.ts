@@ -241,6 +241,27 @@ export interface FileRevisionView {
   content?: string
 }
 
+// ===== 配置导入·在线实例反向抓取（FR-39）=====
+
+// 反向抓取目标层：group（组级覆盖）/ server（实例级覆盖）
+export type ReverseFetchScope = 'group' | 'server'
+
+// 反向抓取命令状态（命令生命周期，真源落库；对齐 model.AgentCommand）
+// pending（已建待拉）/ fetched（agent 已拉取）/ done（ingest 完成）/ failed（失败）/ expired（超时）
+export type AgentCommandStatus = 'pending' | 'fetched' | 'done' | 'failed' | 'expired'
+
+// 反向抓取命令视图（POST /admin/v1/instances/{serverId}/reverse-fetch 返回的已创建命令）
+// 触发即返回 pending 命令，后续状态经命令查询 / 审计 / 文件树体现，不在触发响应里同步等待结果。
+export interface AgentCommandView {
+  id: number
+  namespace: string
+  serverId: string
+  type: string
+  status: string
+  createdAt: string
+  updatedAt: string
+}
+
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====
 
 // 覆盖集视图（对齐 internal/handler/override_set_handler.go overrideSetView）

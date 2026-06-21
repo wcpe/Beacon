@@ -172,6 +172,33 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     return new Response(null, { status: 204 })
   }
 
+  // 反向抓取触发（FR-39）：命令某在线实例读 plugins 回传并 ingest，返回创建的 pending 命令
+  const reverseFetchMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/reverse-fetch$/)
+  if (reverseFetchMatch && method === 'POST') {
+    const serverId = decodeURIComponent(reverseFetchMatch[1])
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    if (!body.group) {
+      return json({ code: 'INVALID_PARAMS', message: '目标组为必填' }, 400)
+    }
+    if (body.scope === 'server' && !body.target) {
+      return json({ code: 'INVALID_PARAMS', message: 'server 层需指定目标实例' }, 400)
+    }
+    // namespace 由源实例的 ?namespace= 带上（与真实端点一致），回退到该实例的归属。
+    const ns = new URL(path, 'http://localhost').searchParams.get('namespace')
+    const inst = mockInstances.find((i) => i.serverId === serverId)
+    const command = {
+      id: Date.now(),
+      namespace: ns ?? inst?.namespace ?? 'prod',
+      serverId,
+      type: 'ingest-plugins',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    // 真实端点建命令后返回 202 Accepted（命令异步执行），mock 对齐。
+    return json(command, 202)
+  }
+
   // 文件发布/回滚/删除（简化返回）
   if (fileDetailMatch && method === 'PUT') {
     return json({ version: 2, md5: 'mock-md5' })

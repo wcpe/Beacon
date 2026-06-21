@@ -37,6 +37,20 @@ func IsValidRole(role string) bool {
 	}
 }
 
+// agent 命令类型（FR-39，落 VARCHAR + 应用层校验；本期仅反向抓取 plugins，见 ADR-0027）。
+const (
+	CommandTypeIngestPlugins = "ingest-plugins"
+)
+
+// agent 命令生命周期状态（FR-39）。
+const (
+	CommandStatusPending = "pending" // 已建、待目标 agent 拉取
+	CommandStatusFetched = "fetched" // 已被 agent 拉取、执行中
+	CommandStatusDone    = "done"    // 回传并 ingest 成功
+	CommandStatusFailed  = "failed"  // 执行 / 回传 / 入库失败
+	CommandStatusExpired = "expired" // 超时未完成（agent 离线等）
+)
+
 // 审计动作（动词点分命名）。
 const (
 	ActionConfigCreate   = "config.create"
@@ -58,6 +72,8 @@ const (
 	ActionFileDelete        = "file.delete"
 	// 配置导入（FR-38，通道B 之上批量上传整文件到组，一次导入记一条审计）
 	ActionFileImport = "file.import"
+	// 在线实例反向抓取触发（FR-39，见 ADR-0027；ingest 落盘复用上面的 file.import 审计）
+	ActionFileReverseFetch = "file.reverse-fetch"
 	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
 	ActionOverrideSetCreate   = "override-set.create"
 	ActionOverrideSetPublish  = "override-set.publish"
@@ -89,6 +105,8 @@ const (
 	TargetTypeAuth = "auth"
 	// 管理面 API 密钥的审计对象类型
 	TargetTypeAPIKey = "apikey"
+	// agent 命令（FR-39 反向抓取）的审计对象类型
+	TargetTypeCommand = "command"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

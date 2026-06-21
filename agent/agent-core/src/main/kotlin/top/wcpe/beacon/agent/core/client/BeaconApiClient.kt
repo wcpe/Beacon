@@ -1,5 +1,8 @@
 package top.wcpe.beacon.agent.core.client
 
+import top.wcpe.beacon.agent.core.command.AgentCommand
+import top.wcpe.beacon.agent.core.command.IngestCommandPayload
+import top.wcpe.beacon.agent.core.command.IngestFile
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.filetree.FileContent
@@ -421,6 +424,59 @@ class BeaconApiClient(
     }
 
     /**
+     * 拉取本 agent 一条待办命令：GET /beacon/v1/agent/commands（FR-39，见 ADR-0027）。同步调用，请在异步线程使用。
+     *
+     * 收到 SSE command-pending 事件 / SSE READY 后调用。
+     * 200 返回命令（控制面已 CAS 迁移 fetched）；204 无待办返回 null；其它状态（404 未注册 / 连接失败）一律返回 null
+     * （命令流为 best-effort：拉不到本轮静默放弃，下次事件 / 重连再拉，不影响配置主流程）。
+     */
+    fun fetchPendingCommand(identity: AgentIdentity): AgentCommand? {
+        val url = buildString {
+            append(base)
+            append("/beacon/v1/agent/commands")
+            append("?namespace=").append(urlEncode(identity.namespace))
+            append("&serverId=").append(urlEncode(identity.serverId))
+        }
+        val resp = exec(
+            HttpRequest(
+                method = "GET",
+                url = url,
+                headers = headers(withBody = false),
+                body = null,
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return null
+        return when (resp.statusCode) {
+            200 -> parsePendingCommand(resp.body)
+            204 -> null // 无待办命令
+            else -> null // 404 未注册 / 其它：本轮放弃（best-effort）
+        }
+    }
+
+    /**
+     * 回传反向抓取结果：POST /beacon/v1/agent/files/ingest（FR-39，见 ADR-0027）。同步调用，请在异步线程使用。
+     *
+     * 携带命令 id + 文件集（path→content 文本）。控制面入库前同口径再校验（双保险）后复用 FileService.Import 落覆盖。
+     * 200 视作成功；其它（命令态不符 / 校验失败 / 连接失败）返回 false（命令在控制面侧标 failed，agent 侧不重传）。
+     */
+    fun uploadIngest(commandId: Long, files: List<IngestFile>): Boolean {
+        val body = mapOf(
+            "commandId" to commandId,
+            "files" to files.map { mapOf("path" to it.path, "content" to it.content) },
+        )
+        val resp = exec(
+            HttpRequest(
+                method = "POST",
+                url = "$base/beacon/v1/agent/files/ingest",
+                headers = headers(withBody = true),
+                body = codec.encode(body),
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
@@ -510,6 +566,25 @@ class BeaconApiClient(
             serverId = JsonTree.strOr(obj, "serverId", ""),
             overrideMd5 = JsonTree.strOr(obj, "overrideMd5", ""),
             sets = sets,
+        )
+    }
+
+    /**
+     * 解析待办命令响应（FR-39）：`{"id":<n>,"type":"ingest-plugins","payload":{"scope","group","target"}}`。
+     *
+     * payload 缺失字段按空串兜底；agent 不据 payload 做抓取决策（落盘层由控制面 ingest 决定），仅供日志可读 + 原样回传 id。
+     */
+    private fun parsePendingCommand(jsonBody: String): AgentCommand {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        val payloadObj = JsonTree.asObject(obj["payload"])
+        return AgentCommand(
+            id = JsonTree.longOr(obj, "id", 0L),
+            type = JsonTree.strOr(obj, "type", ""),
+            payload = IngestCommandPayload(
+                scope = JsonTree.strOr(payloadObj, "scope", ""),
+                group = JsonTree.strOr(payloadObj, "group", ""),
+                target = JsonTree.strOr(payloadObj, "target", ""),
+            ),
         )
     }
 

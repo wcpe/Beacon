@@ -19,6 +19,12 @@ object StreamEventTypes {
     /** 拓扑变更（FR-29）：namespace 内实例上线/下线/改派；agent 据此回调拓扑监听器，业务侧重查发现端点。 */
     const val TOPOLOGY_CHANGED = "topology-changed"
 
+    /**
+     * 命令待办（FR-39，见 ADR-0027）：本 agent 有待办命令（无 data）。
+     * agent 收到即在 async 线程拉 /agent/commands 取命令详情并执行（本期唯一消费者 ingest-plugins）。
+     */
+    const val COMMAND_PENDING = "command-pending"
+
     /** 首轮对账完成标记：agent 收到即知"断线期间落下的增量已补发完、转入直播"。 */
     const val READY = "ready"
 }

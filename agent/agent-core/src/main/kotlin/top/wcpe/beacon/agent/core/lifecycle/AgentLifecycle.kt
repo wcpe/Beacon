@@ -9,6 +9,7 @@ import top.wcpe.beacon.agent.core.client.PollResult
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegisterResult
 import top.wcpe.beacon.agent.core.client.ReportedChannelMd5
+import top.wcpe.beacon.agent.core.command.ReverseFetchExecutor
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
@@ -57,6 +58,9 @@ class AgentLifecycle(
     // BC 专属指标供给（FR-34）：上报时取本机（仅 bc 代理）当前一帧代理负载指标（连接 / 线程 / 运行时长 / 后端可达性·延迟）；
     // 默认 null（bukkit / 旧行为，不上报 proxy 段）；bungee 壳层注入平台采集实现。
     private val proxyMetricsProvider: ProxyMetricsProvider = { null },
+    // 反向抓取执行器（FR-39，见 ADR-0027）：收到 SSE command-pending 事件 / READY 对账时触发「拉命令→读 plugins→回传」；
+    // 为 null 时不处理命令（向后兼容：未装配执行器的部署不开放反向抓取）。
+    private val reverseFetchExecutor: ReverseFetchExecutor? = null,
 ) {
 
     private val state = AtomicReference(AgentState.BOOTSTRAP)
@@ -651,13 +655,30 @@ class AgentLifecycle(
     private fun dispatchStreamEvent(gen: Int, event: StreamEvent) {
         if (!running.get() || gen != streamGen.get()) return
         when (event.type) {
-            StreamEventTypes.READY -> adapter.info("SSE 连接即对账完成，转入直播推送")
+            StreamEventTypes.READY -> {
+                adapter.info("SSE 连接即对账完成，转入直播推送")
+                // 兜住断连期间排进来的命令：READY 后主动拉一次待办命令（与 command-pending 事件单飞去重）。
+                triggerReverseFetch()
+            }
+
             StreamEventTypes.CONFIG_CHANGED -> fetchAndApplyConfigOnce()
             StreamEventTypes.FILE_CHANGED -> fetchAndApplyFileTreeOnce()
             StreamEventTypes.OVERRIDE_CHANGED -> fetchAndApplyOverrideOnce()
             StreamEventTypes.TOPOLOGY_CHANGED -> fireTopologyChanged()
+            StreamEventTypes.COMMAND_PENDING -> triggerReverseFetch()
             else -> adapter.warn("收到未知 SSE 事件类型：${event.type}（忽略）")
         }
+    }
+
+    /**
+     * 触发反向抓取（FR-39）：在 async 适配器线程拉待办命令并执行（读 plugins → 回传），绝不上 MC 主线程。
+     *
+     * 未装配执行器（reverseFetchExecutor 为 null）则 no-op。executor 内部单飞去重：command-pending 与 READY
+     * 并发触发只会跑一条抓取流。独立一发到 async 线程，不阻塞 SSE 事件分发。
+     */
+    private fun triggerReverseFetch() {
+        val executor = reverseFetchExecutor ?: return
+        adapter.runAsync { executor.trigger() }
     }
 
     /** 流结束处理：进 DEGRADED（连接级降级）、保留本地快照，退避后重连（重连即再次对账）。 */

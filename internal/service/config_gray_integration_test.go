@@ -33,7 +33,7 @@ func grayStack(t *testing.T) (*service.ConfigService, *service.ConfigGrayService
 	cfg := service.NewConfigService(db, cr, rr, ar)
 	gray := service.NewConfigGrayService(db, cfg, cr, gr, ar)
 	eff := service.NewEffectiveService(cr, asg, gr, hub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topoHub, runtime.NewRegistry(), asg)
+	notifier := service.NewChangeNotifier(hub, fileHub, topoHub, longpoll.NewHub(), runtime.NewRegistry(), asg)
 	cfg.SetNotifier(notifier)
 	gray.SetNotifier(notifier)
 	return cfg, gray, eff, hub, db

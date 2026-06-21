@@ -41,7 +41,7 @@ func newFileStack(t *testing.T) fileStack {
 	topologyHub := longpoll.NewHub()
 	fileEff := service.NewFileEffectiveService(fr, asg, fileHub)
 	cfgEff := service.NewEffectiveService(cr, asg, nil, hub)
-	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, reg, asg)
+	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, asg)
 	fileSvc := service.NewFileService(db, fr, frr, ar)
 	fileSvc.SetNotifier(notifier)
 	cfgSvc := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
