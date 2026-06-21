@@ -36,38 +36,38 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      {/* 顶部页眉：控制面自身状态（FR-33），横跨 sidebar + 内容区之上 */}
-      <SystemHeader />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
-          <div className="border-b px-5 py-4 text-base font-semibold">Beacon 管理台</div>
-          <nav className="flex flex-1 flex-col gap-1 p-3">
-            {NAV_ITEMS.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  cn(
-                    'rounded-md px-3 py-2 text-sm transition-colors',
-                    isActive
-                      ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-                      : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
-                  )
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-          <div className="border-t p-4">
-            <div className="text-xs text-muted-foreground">当前操作人</div>
-            <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
-            <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
-              登出
-            </Button>
-          </div>
-        </aside>
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
+        <div className="border-b px-5 py-4 text-base font-semibold">Beacon 管理台</div>
+        <nav className="flex flex-1 flex-col gap-1 p-3">
+          {NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  'rounded-md px-3 py-2 text-sm transition-colors',
+                  isActive
+                    ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+                )
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="border-t p-4">
+          <div className="text-xs text-muted-foreground">当前操作人</div>
+          <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
+          <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
+            登出
+          </Button>
+        </div>
+      </aside>
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上 */}
+        <SystemHeader />
         <main className="min-w-0 flex-1 overflow-hidden p-6">
           <Outlet />
         </main>
