@@ -81,6 +81,27 @@ describe('buildKanbanModel', () => {
     const m = buildKanbanModel([inst({ serverId: 'weird', assigned: true, zone: null })], SUMMARY)
     expect(m.unassigned.map((i) => i.serverId)).toEqual(['weird'])
   })
+
+  it('BC 代理（bungee）不进未指派池（FR-8/FR-35）', () => {
+    const m = buildKanbanModel(
+      [
+        inst({ serverId: 'bc-1', role: 'bungee', assigned: false }),
+        inst({ serverId: 'free-1', role: 'bukkit', assigned: false }),
+      ],
+      SUMMARY,
+    )
+    expect(m.unassigned.map((i) => i.serverId)).toEqual(['free-1'])
+  })
+
+  it('BC 代理（bungee）即便已指派也不进 zone 桶（FR-8/FR-35）', () => {
+    const m = buildKanbanModel(
+      [inst({ serverId: 'bc-1', role: 'bungee', assigned: true, group: 'gA', zone: 'z1' })],
+      SUMMARY,
+    )
+    const allCardIds = m.groups.flatMap((g) => g.zones.flatMap((z) => z.instances.map((i) => i.serverId)))
+    expect(allCardIds).not.toContain('bc-1')
+    expect(m.unassigned.map((i) => i.serverId)).not.toContain('bc-1')
+  })
 })
 
 describe('noteForServer', () => {

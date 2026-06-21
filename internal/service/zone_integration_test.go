@@ -3,8 +3,11 @@
 package service_test
 
 import (
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -63,5 +66,36 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	}
 	if md5A == md5B {
 		t.Fatal("改派后整体 md5 应变化")
+	}
+}
+
+// TestAssignRejectsBungeeAllowsBukkit 全路径验证 zone 指派的角色守卫（FR-8/FR-35）：
+// 注册表中的 bukkit 子服放行（成功落库），bungee 代理拒绝（返回 ErrZoneNotAssignableToBC）。
+func TestAssignRejectsBungeeAllowsBukkit(t *testing.T) {
+	db := testDB(t)
+	ar := repository.NewAuditLogRepository(db)
+	asg := repository.NewZoneAssignmentRepository(db)
+	reg := runtime.NewRegistry()
+	zone := service.NewZoneService(db, asg, ar, reg)
+
+	now := time.Now().UTC()
+	register := func(serverID, role, addr string) {
+		if _, err := reg.Register(&runtime.Instance{
+			Namespace: "prod", ServerID: serverID, Role: role, Address: addr,
+		}, 30*time.Second, now); err != nil {
+			t.Fatalf("注册 %s 失败: %v", serverID, err)
+		}
+	}
+	register("lobby-1", "bukkit", "10.0.0.1:25565")
+	register("bc-1", "bungee", "10.0.0.9:25577")
+
+	// bukkit 放行：指派成功
+	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+		t.Fatalf("bukkit 子服指派应成功，实际 %v", err)
+	}
+
+	// bungee 拒绝：返回 ErrZoneNotAssignableToBC
+	if _, err := zone.Assign("prod", "bc-1", "area1", "zoneA", "admin", "", ""); !errors.Is(err, apperr.ErrZoneNotAssignableToBC) {
+		t.Fatalf("bungee 代理指派应返回 ErrZoneNotAssignableToBC，实际 %v", err)
 	}
 }

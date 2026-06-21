@@ -1,6 +1,7 @@
 // zone 看板数据派生（无副作用纯函数）：把 listInstances / listAssignments / zoneSummary
 // 三个既有查询结果归并成看板视图——未指派卡片池 + 按大区(group)分组的 zone 桶（含其卡片）。
 // 复用既有 API、后端零改动（FR-35）。
+// BC 代理（role=bungee）被排除：zone 仅供 bukkit 子服归派，BC 不进未指派池、不可拖入 zone 桶（FR-8/FR-35）。
 
 import type { AssignmentView, InstanceView, ZoneStatView } from '../../api/types'
 
@@ -45,6 +46,10 @@ export function buildKanbanModel(
 
   const unassigned: InstanceView[] = []
   for (const inst of instances) {
+    // BC 代理（role=bungee）不参与 zone 归派：zone 是给 bukkit 子服的，BC 既不进未指派池、也不进 zone 桶（FR-8/FR-35）。
+    if (inst.role === 'bungee') {
+      continue
+    }
     if (!inst.assigned || inst.zone === null) {
       unassigned.push(inst)
       continue

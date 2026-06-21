@@ -93,6 +93,8 @@ var (
 	ErrInstanceNotFound = New(http.StatusNotFound, "INSTANCE_NOT_FOUND", "实例不存在")
 	// ErrAssignmentNotFound zone 指派不存在。
 	ErrAssignmentNotFound = New(http.StatusNotFound, "ASSIGNMENT_NOT_FOUND", "zone 指派不存在")
+	// ErrZoneNotAssignableToBC zone 仅供 bukkit 子服归派，不可分配给 BC 代理实例（FR-8/FR-35）。
+	ErrZoneNotAssignableToBC = New(http.StatusBadRequest, "ZONE_NOT_ASSIGNABLE_TO_BC", "zone 不可分配给 BC 代理实例")
 	// ErrDrainNotFound 取消 drain 时该标记不存在（FR-10）。
 	ErrDrainNotFound = New(http.StatusNotFound, "DRAIN_NOT_FOUND", "drain 标记不存在")
 )

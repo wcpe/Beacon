@@ -54,6 +54,11 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP
 	if ns == "" || serverID == "" || group == "" || zone == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
+	// 纵深防御：zone 仅供 bukkit 子服归派，BC 代理（role=bungee）不该有 zone（FR-8/FR-35）。
+	// 仅当实例在注册表且确为 bungee 时拒绝；离线实例无角色事实可凭，沿用既有指派逻辑。
+	if inst := s.registry.Get(ns, serverID); inst != nil && inst.Role == roleBungee {
+		return nil, apperr.ErrZoneNotAssignableToBC
+	}
 	prev, err := s.assignRepo.FindByServer(ns, serverID)
 	if err != nil {
 		return nil, err
