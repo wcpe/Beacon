@@ -94,7 +94,10 @@ class AgentLifecycleAwaitRegisterTest {
         val lifecycle = newLifecycle()
         // 注册不阻塞，立即成功。
         lifecycle.bootstrapWithSnapshotThenConnect()
-        waitUntil(2000) { lifecycle.currentState() == AgentState.RUNNING }
+        // 等放行闩就绪（被测的就绪信号本身），不以 state==RUNNING 作代理：
+        // state 在 onRegisterSuccess 中先于 firstRegisterLatch.countDown() 置位，
+        // 用它作代理会在闩放行前误判就绪，造成 CI 偶发竞态。
+        waitUntil(2000) { lifecycle.awaitFirstRegister(0) }
 
         // 已就绪：只读查询与有界等待都立即返回 true。
         assertTrue(lifecycle.awaitFirstRegister(0), "注册成功后只读查询应为 true")
