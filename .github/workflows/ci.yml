@@ -49,10 +49,10 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          # 版本固定，避免不同机器规则不一致
-          version: v1.64.8
+          # 版本固定，避免不同机器规则不一致；golangci-lint v2 需 action v7+（配置见 .golangci.yml version: "2"）
+          version: v2.12.2
       - name: gofmt 格式校验
         # gofmt -l 列出未格式化文件；有输出即判失败
         run: |

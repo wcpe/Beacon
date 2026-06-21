@@ -1,23 +1,49 @@
-# Beacon 控制面 Go 静态检查配置（golangci-lint）。
+# Beacon 控制面 Go 静态检查配置（golangci-lint v2）。
 # CI 门禁：未过不允许合并。规则见 .claude/rules/static-analysis.md。
-run:
-  timeout: 5m
+# v2 默认已启用 standard 集（errcheck / govet / ineffassign / staticcheck / unused，
+# 其中原 gosimple 规则已并入 staticcheck），故下方 enable 只补充额外 linter。
+version: "2"
 
 linters:
+  # 在 v2 standard 默认集之外额外启用的 linter
   enable:
-    - govet          # 官方可疑构造检查
-    - staticcheck    # 综合静态分析
-    - errcheck       # 未处理的 error
-    - ineffassign    # 无效赋值
-    - unused         # 未使用的代码
-    - revive         # 风格与最佳实践
-    - gosimple       # 可简化写法
-    - gofmt          # 格式
-    - goimports      # import 分组与排序
-    - misspell       # 拼写
     - bodyclose      # http response body 是否关闭（防资源泄露）
+    - misspell       # 拼写
+    - revive         # 风格与最佳实践
     - sqlclosecheck  # rows/stmt 是否关闭
+  # 排除规则：沿用 v2 迁移默认（生成文件宽松匹配 + 若干预置误报豁免）
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # exported-stutter 豁免：merge.MergeDataID / MergeDataIDWithProvenance / filetree.FileTreeMD5 等
+      # 命名由 ADR-0013 锁定（明写「MergeDataID 一字不改」），不为消除 stutter 改名；仅豁免 stutter 子检查，revive 其余规则保留
+      - linters:
+          - revive
+        text: that stutters
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 
 issues:
+  # 单个 linter 报告条数不设上限（0 = 不限），全部暴露不折叠
   max-issues-per-linter: 0
+  # 相同问题不折叠（0 = 不限）
   max-same-issues: 0
+
+# v2 把格式化器独立为 formatters，不再放在 linters.enable 下
+formatters:
+  enable:
+    - gofmt          # 格式
+    - goimports      # import 分组与排序
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
