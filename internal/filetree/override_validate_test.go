@@ -20,23 +20,23 @@ func TestValidateTargetRoot_Valid(t *testing.T) {
 // TestValidateTargetRoot_Reject 非法目标根目录一律拒绝：穿越 / 绝对 / 盘符 / UNC / 非 plugins 前缀。
 func TestValidateTargetRoot_Reject(t *testing.T) {
 	cases := []string{
-		"",                       // 空
-		"AllinCore",              // 不在 plugins/ 下
-		"plugins",                // 仅 plugins 根，未限定到具体插件
-		"plugins/",               // 同上
-		"plugins/..",             // 穿越回到根
-		"plugins/../etc",         // 穿越
+		"",                        // 空
+		"AllinCore",               // 不在 plugins/ 下
+		"plugins",                 // 仅 plugins 根，未限定到具体插件
+		"plugins/",                // 同上
+		"plugins/..",              // 穿越回到根
+		"plugins/../etc",          // 穿越
 		"plugins/AllinCore/../..", // 穿越逃出 plugins
-		"../plugins/AllinCore",   // 开头穿越
-		"/plugins/AllinCore",     // 绝对路径
-		"C:/plugins/AllinCore",   // Windows 盘符
-		"C:plugins",              // Windows 盘符相对
-		`plugins\AllinCore`,      // 反斜杠
-		`\\host\share\plugins`,   // UNC
-		"plugins/CON",            // Windows 保留设备名
-		"plugins/aux",            // 保留设备名（小写）
-		"plugins/lpt1",           // 保留设备名
-		"plugins/Allin:Core",     // 含冒号（ADS / 盘符）
+		"../plugins/AllinCore",    // 开头穿越
+		"/plugins/AllinCore",      // 绝对路径
+		"C:/plugins/AllinCore",    // Windows 盘符
+		"C:plugins",               // Windows 盘符相对
+		`plugins\AllinCore`,       // 反斜杠
+		`\\host\share\plugins`,    // UNC
+		"plugins/CON",             // Windows 保留设备名
+		"plugins/aux",             // 保留设备名（小写）
+		"plugins/lpt1",            // 保留设备名
+		"plugins/Allin:Core",      // 含冒号（ADS / 盘符）
 	}
 	for _, c := range cases {
 		if _, err := ValidateTargetRoot(c); err == nil {
@@ -55,14 +55,14 @@ func TestValidateMemberPath_WithinRoot(t *testing.T) {
 		}
 	}
 	invalid := []string{
-		"",                  // 空
-		"../escape.yml",     // 穿越逃出目标根
+		"",                   // 空
+		"../escape.yml",      // 穿越逃出目标根
 		"a/../../escape.yml", // 穿越逃出
-		"/etc/passwd",       // 绝对
-		`a\b.yml`,           // 反斜杠
-		"C:/x.yml",          // 盘符
-		"sub/CON",           // 保留设备名段
-		"a:b.yml",           // 冒号
+		"/etc/passwd",        // 绝对
+		`a\b.yml`,            // 反斜杠
+		"C:/x.yml",           // 盘符
+		"sub/CON",            // 保留设备名段
+		"a:b.yml",            // 冒号
 	}
 	for _, p := range invalid {
 		if err := ValidateMemberPath(root, p); err == nil {
@@ -86,11 +86,11 @@ func TestValidateMemberPath_RejectJar(t *testing.T) {
 func TestValidateMemberPath_RejectTrailingDotSpace(t *testing.T) {
 	root := "plugins/AllinCore"
 	cases := []string{
-		"AllinCore.jar.",   // 尾点绕过 .jar
-		"nested/x.jar.",    // 子目录尾点绕过 .jar
-		"sub /x.yml",       // 非末段尾空格
-		"con /x.yml",       // 尾空格绕过保留名
-		"plain.yml.",       // 尾点
+		"AllinCore.jar.", // 尾点绕过 .jar
+		"nested/x.jar.",  // 子目录尾点绕过 .jar
+		"sub /x.yml",     // 非末段尾空格
+		"con /x.yml",     // 尾空格绕过保留名
+		"plain.yml.",     // 尾点
 	}
 	for _, p := range cases {
 		if err := ValidateMemberPath(root, p); err == nil {
@@ -117,21 +117,21 @@ func TestValidateReloadCommand_Allow(t *testing.T) {
 // TestValidateReloadCommand_RejectInjection 命令注入字符一律拒绝（ADR-0011 决策 3）。
 func TestValidateReloadCommand_RejectInjection(t *testing.T) {
 	cases := []string{
-		"",                       // 空
-		"   ",                    // 全空白
-		"reload; rm -rf /",       // 分号
-		"reload && evil",         // 与
-		"reload || evil",         // 或
-		"reload | cat",           // 管道
-		"reload > out",           // 重定向
-		"reload < in",            // 重定向
-		"reload $HOME",           // 变量展开
-		"reload\nplay evil",      // 换行
-		"reload\rplay evil",      // 回车
-		"reload `whoami`",        // 反引号
-		"reload\aevil",       // 控制字符（响铃）
-		"reload	play",           // 制表符（控制字符）
-		"reload &",               // 后台符
+		"",                  // 空
+		"   ",               // 全空白
+		"reload; rm -rf /",  // 分号
+		"reload && evil",    // 与
+		"reload || evil",    // 或
+		"reload | cat",      // 管道
+		"reload > out",      // 重定向
+		"reload < in",       // 重定向
+		"reload $HOME",      // 变量展开
+		"reload\nplay evil", // 换行
+		"reload\rplay evil", // 回车
+		"reload `whoami`",   // 反引号
+		"reload\aevil",      // 控制字符（响铃）
+		"reload	play",       // 制表符（控制字符）
+		"reload &",          // 后台符
 	}
 	for _, c := range cases {
 		if _, err := ValidateReloadCommand(c); err == nil {

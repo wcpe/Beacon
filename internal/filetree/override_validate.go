@@ -48,6 +48,7 @@ func ValidateTargetRoot(root string) (string, error) {
 // ValidateMemberPath 校验覆盖集成员文件相对 path：
 //   - 同 normalizePath 的相对安全口径（非空 / 无反斜杠 / 无穿越 / 非绝对）；
 //   - 额外禁冒号、禁段为 Windows 保留设备名、禁 .jar 后缀（防越界进 P3 发布编排）。
+//
 // path 以目标根为基准的相对路径，落盘逃逸由 agent RelativePathGuard 最终把关。
 func ValidateMemberPath(_, p string) error {
 	if p == "" {

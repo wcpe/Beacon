@@ -225,7 +225,7 @@ func TestGrayWakeOnlyCohort(t *testing.T) {
 // TestGrayPublishConcurrentLastWins：并发对同一 item 发布灰度（重发即覆盖语义）。
 // 灰度发布以 config_item.gray_version 乐观锁 CAS 串行化「先软删后建」段，从源头消除
 // uk_gray_item 上的死锁——各路重读重试后都应成功、无错误透出，且恰留一条活跃灰度
-//（uk_gray_item 保证无重复无残留）。
+// （uk_gray_item 保证无重复无残留）。
 func TestGrayPublishConcurrentLastWins(t *testing.T) {
 	cfg, gray, _, _, _ := grayStack(t)
 	item := mkGlobalItem(t, cfg, "app.yml", "v: stable\n")
