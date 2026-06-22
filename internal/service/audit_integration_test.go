@@ -19,7 +19,7 @@ func TestAuditList(t *testing.T) {
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
-	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
+	zone := service.NewZoneService(db, asg, nil, ar, runtime.NewRegistry())
 	audit := service.NewAuditService(ar)
 
 	// 产生若干审计：建（config.create）→ 发布（config.publish）→ 指派（zone.assign）

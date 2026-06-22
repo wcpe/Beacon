@@ -30,7 +30,7 @@ func longpollStack(t *testing.T) (*service.ConfigService, *service.ZoneService, 
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, longpoll.NewHub(), reg, asg)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfg.SetNotifier(notifier)
-	zone := service.NewZoneService(db, asg, ar, reg)
+	zone := service.NewZoneService(db, asg, nil, ar, reg)
 	zone.SetNotifier(notifier)
 	return cfg, zone, eff, reg
 }

@@ -5,7 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
 	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/model"
+	"github.com/wcpe/Beacon/internal/repository"
 	"github.com/wcpe/Beacon/internal/runtime"
 )
 
@@ -19,10 +25,130 @@ func TestAssignRejectsBungee(t *testing.T) {
 		t.Fatalf("注册 bc 实例失败: %v", err)
 	}
 	// db/repo 传 nil：bungee 守卫先于事务与仓库访问返回，不会触达。
-	svc := NewZoneService(nil, nil, nil, reg)
+	svc := NewZoneService(nil, nil, nil, nil, reg)
 
 	_, err := svc.Assign("prod", "bc-1", "area1", "zoneA", "admin", "", "10.0.0.1")
 	if !errors.Is(err, apperr.ErrZoneNotAssignableToBC) {
 		t.Fatalf("对 bungee 实例应返回 ErrZoneNotAssignableToBC，实际 %v", err)
+	}
+}
+
+// newDefaultEntrySvcDB 打开内存 sqlite 并迁移默认入口相关表（不依赖 MySQL/DSN）。
+func newDefaultEntrySvcDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("打开内存 sqlite 失败: %v", err)
+	}
+	if err := db.AutoMigrate(&model.ZoneAssignment{}, &model.ZoneDefaultEntry{}, &model.AuditLog{}); err != nil {
+		t.Fatalf("迁移默认入口相关表失败: %v", err)
+	}
+	for _, tbl := range []string{"zone_assignment", "zone_default_entry", "audit_log"} {
+		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
+			t.Fatalf("清表 %s 失败: %v", tbl, err)
+		}
+	}
+	return db
+}
+
+// newDefaultEntrySvc 装配仅依赖默认入口路径的 ZoneService（registry 空，不走指派的 bungee 守卫）。
+func newDefaultEntrySvc(t *testing.T, db *gorm.DB) *ZoneService {
+	return NewZoneService(db,
+		repository.NewZoneAssignmentRepository(db),
+		repository.NewZoneDefaultEntryRepository(db),
+		repository.NewAuditLogRepository(db),
+		runtime.NewRegistry())
+}
+
+// TestSetDefaultEntryRequiresAssignedServer 验证：默认入口 serverId 必须已指派到该 (group, zone)，否则拒绝。
+func TestSetDefaultEntryRequiresAssignedServer(t *testing.T) {
+	db := newDefaultEntrySvcDB(t)
+	svc := newDefaultEntrySvc(t, db)
+
+	// 未指派任何服 → set 被拒
+	if _, err := svc.SetDefaultEntry("prod", "area1", "zoneA", "lobby-1", "admin", "1.1.1.1"); !errors.Is(err, apperr.ErrDefaultEntryServerNotInZone) {
+		t.Fatalf("未指派的 serverId 设默认入口应被拒，实际 %v", err)
+	}
+
+	// 指派 lobby-1 到 area1/zoneA
+	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+		t.Fatalf("指派失败: %v", err)
+	}
+	// 指派到正确 zone → set 成功
+	e, err := svc.SetDefaultEntry("prod", "area1", "zoneA", "lobby-1", "admin", "1.1.1.1")
+	if err != nil || e == nil || e.DefaultServerID != "lobby-1" {
+		t.Fatalf("已指派 serverId 设默认入口应成功，实际 e=%+v err=%v", e, err)
+	}
+
+	// 指派在 zoneA，但试图设为 zoneB 的默认入口 → 拒（serverId 不属该 zone）
+	if _, err := svc.SetDefaultEntry("prod", "area1", "zoneB", "lobby-1", "admin", "1.1.1.1"); !errors.Is(err, apperr.ErrDefaultEntryServerNotInZone) {
+		t.Fatalf("serverId 不属目标 zone 应被拒，实际 %v", err)
+	}
+
+	// 审计：set 成功落 zone.set-default-entry
+	var actions []string
+	if err := db.Model(&model.AuditLog{}).Where("action = ?", model.ActionZoneSetDefaultEntry).Pluck("action", &actions).Error; err != nil {
+		t.Fatalf("查审计失败: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("应有 1 条 set-default-entry 审计，实际 %d", len(actions))
+	}
+}
+
+// TestClearDefaultEntry 验证清除：命中清除并落审计、未设时返回 DEFAULT_ENTRY_NOT_FOUND。
+func TestClearDefaultEntry(t *testing.T) {
+	db := newDefaultEntrySvcDB(t)
+	svc := newDefaultEntrySvc(t, db)
+
+	// 未设 → 清除返回 NOT_FOUND
+	if err := svc.ClearDefaultEntry("prod", "area1", "zoneA", "admin", ""); !errors.Is(err, apperr.ErrDefaultEntryNotFound) {
+		t.Fatalf("未设默认入口清除应返回 DEFAULT_ENTRY_NOT_FOUND，实际 %v", err)
+	}
+
+	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+		t.Fatalf("指派失败: %v", err)
+	}
+	if _, err := svc.SetDefaultEntry("prod", "area1", "zoneA", "lobby-1", "admin", ""); err != nil {
+		t.Fatalf("set 失败: %v", err)
+	}
+	// 清除命中
+	if err := svc.ClearDefaultEntry("prod", "area1", "zoneA", "admin", ""); err != nil {
+		t.Fatalf("清除已设默认入口应成功，实际 %v", err)
+	}
+	// 解析集合应为空
+	set, err := svc.DefaultEntryServerIDs("prod")
+	if err != nil {
+		t.Fatalf("解析默认入口集合失败: %v", err)
+	}
+	if len(set) != 0 {
+		t.Fatalf("清除后默认入口集合应为空，实际 %v", set)
+	}
+}
+
+// TestDefaultEntryServerIDs 验证解析集合：命中的 serverId 进集合，nil 仓库返回空集。
+func TestDefaultEntryServerIDs(t *testing.T) {
+	db := newDefaultEntrySvcDB(t)
+	svc := newDefaultEntrySvc(t, db)
+
+	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+		t.Fatalf("指派失败: %v", err)
+	}
+	if _, err := svc.SetDefaultEntry("prod", "area1", "zoneA", "lobby-1", "admin", ""); err != nil {
+		t.Fatalf("set 失败: %v", err)
+	}
+	set, err := svc.DefaultEntryServerIDs("prod")
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if !set["lobby-1"] || len(set) != 1 {
+		t.Fatalf("默认入口集合应仅含 lobby-1，实际 %v", set)
+	}
+
+	// defaultEntryRepo 为 nil → 空集（默认入口能力关闭，向后兼容）
+	svcNoRepo := NewZoneService(db, repository.NewZoneAssignmentRepository(db), nil, repository.NewAuditLogRepository(db), runtime.NewRegistry())
+	if s2, err := svcNoRepo.DefaultEntryServerIDs("prod"); err != nil || len(s2) != 0 {
+		t.Fatalf("nil 仓库应返回空集，实际 s=%v err=%v", s2, err)
 	}
 }

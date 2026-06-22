@@ -105,6 +105,8 @@ func run() error {
 	revRepo := repository.NewConfigRevisionRepository(db, configCipher)
 	grayRepo := repository.NewConfigGrayRepository(db, configCipher)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
+	// 小区默认入口（FR-48）：每 zone 唯一指定默认入口 serverId，供 BC 设默认/fallback 服
+	defaultEntryRepo := repository.NewZoneDefaultEntryRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	// 配置灰度 / Beta（FR-9）：复用 configService 发布路径完成 promote，敏感灰度走同一加密边界
 	configGrayService := service.NewConfigGrayService(db, configService, configRepo, grayRepo, auditRepo)
@@ -154,7 +156,9 @@ func run() error {
 	metricsSet := metrics.New(registry)
 
 	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
-	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
+	zoneService := service.NewZoneService(db, assignRepo, defaultEntryRepo, auditRepo, registry)
+	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：解析器由 zoneService 提供（handler 不碰仓库）
+	instanceService.SetDefaultEntryResolver(zoneService.DefaultEntryServerIDs)
 
 	// 负载指标看板（FR-32，ADR-0023）：metric_sample 仓库 + 服务（聚合实时读注册表、趋势查库降采样）
 	metricRepo := repository.NewMetricSampleRepository(db)

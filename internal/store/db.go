@@ -53,6 +53,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.FileOverrideSet{},
 		&model.FileOverrideSetRevision{},
 		&model.ZoneAssignment{},
+		&model.ZoneDefaultEntry{},
 		&model.ServerDrain{},
 		&model.AuditLog{},
 		&model.MetricSample{},

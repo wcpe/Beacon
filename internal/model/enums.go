@@ -66,6 +66,9 @@ const (
 	ActionZoneAssign        = "zone.assign"
 	ActionZoneMove          = "zone.move"
 	ActionZoneUnassign      = "zone.unassign"
+	// 小区默认入口（FR-48，每 zone 唯一指定默认入口 serverId，供 BC 设默认/fallback 服）
+	ActionZoneSetDefaultEntry   = "zone.set-default-entry"
+	ActionZoneClearDefaultEntry = "zone.clear-default-entry"
 	ActionFileCreate        = "file.create"
 	ActionFilePublish       = "file.publish"
 	ActionFileRollback      = "file.rollback"

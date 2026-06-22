@@ -63,12 +63,35 @@ func TestInstanceViewOutputsBackends(t *testing.T) {
 	view := toInstanceView(&runtime.Instance{
 		Namespace: "prod", ServerID: "bc-1", Role: "bungee",
 		Backends: []string{"lobby-1", "lobby-2"},
-	})
+	}, nil)
 	out, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
 	}
 	if !strings.Contains(string(out), `"backends":["lobby-1","lobby-2"]`) {
 		t.Fatalf("实例视图应输出 backends，实际 %s", out)
+	}
+}
+
+// TestInstanceViewMarksZoneDefaultEntry 验证实例视图按默认入口集合标 zoneDefaultEntry（FR-48）。
+func TestInstanceViewMarksZoneDefaultEntry(t *testing.T) {
+	defaults := map[string]bool{"lobby-1": true}
+	// 命中默认入口集合的 bukkit → true
+	hit := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, defaults)
+	if !hit.ZoneDefaultEntry {
+		t.Fatalf("命中默认入口集合的实例应标 zoneDefaultEntry=true")
+	}
+	// 未命中 → false
+	miss := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-2", Role: "bukkit"}, defaults)
+	if miss.ZoneDefaultEntry {
+		t.Fatalf("未命中默认入口集合的实例应标 zoneDefaultEntry=false")
+	}
+	// JSON 字段存在
+	out, err := json.Marshal(hit)
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	if !strings.Contains(string(out), `"zoneDefaultEntry":true`) {
+		t.Fatalf("实例视图应输出 zoneDefaultEntry，实际 %s", out)
 	}
 }

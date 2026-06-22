@@ -42,24 +42,27 @@ type instanceView struct {
 	PlayerCount   int               `json:"playerCount"`
 	TPS           float64           `json:"tps"`
 	// Backends 是 bc（bungee）当前代理的后端子服 serverId 集合（仅 bc 非空、bukkit 恒空，FR-36）；供拓扑连线消费（FR-37）。
-	Backends     []string  `json:"backends"`
-	RegisteredAt time.Time `json:"registeredAt"`
+	Backends []string `json:"backends"`
+	// ZoneDefaultEntry 标记该 bukkit 子服是否被指定为其小区的默认入口（FR-48）；BC agent 据此设 BungeeCord 默认/fallback 服。
+	ZoneDefaultEntry bool      `json:"zoneDefaultEntry"`
+	RegisteredAt     time.Time `json:"registeredAt"`
 }
 
-func toInstanceView(i *runtime.Instance) instanceView {
+// toInstanceView 渲染单实例视图；defaultEntries 为该环境的默认入口 serverId 集合（命中即标 zoneDefaultEntry，FR-48）。
+func toInstanceView(i *runtime.Instance, defaultEntries map[string]bool) instanceView {
 	return instanceView{
 		Namespace: i.Namespace, ServerID: i.ServerID, Role: i.Role, Group: i.ResolvedGroup,
 		Zone: nilIfEmpty(i.ResolvedZone), Assigned: i.Assigned, Address: i.Address, Version: i.Version,
 		Status: i.Status, Capacity: i.Capacity, Weight: i.Weight, Metadata: i.Metadata,
 		LastHeartbeat: i.LastHeartbeat, AppliedMD5: i.AppliedMD5, PlayerCount: i.PlayerCount,
-		TPS: i.TPS, Backends: i.Backends, RegisteredAt: i.RegisteredAt,
+		TPS: i.TPS, Backends: i.Backends, ZoneDefaultEntry: defaultEntries[i.ServerID], RegisteredAt: i.RegisteredAt,
 	}
 }
 
-func toInstanceViews(insts []*runtime.Instance) []instanceView {
+func toInstanceViews(insts []*runtime.Instance, defaultEntries map[string]bool) []instanceView {
 	views := make([]instanceView, 0, len(insts))
 	for _, i := range insts {
-		views = append(views, toInstanceView(i))
+		views = append(views, toInstanceView(i, defaultEntries))
 	}
 	return views
 }
@@ -67,11 +70,12 @@ func toInstanceViews(insts []*runtime.Instance) []instanceView {
 // List 处理 GET /admin/v1/instances。
 func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	ns := q.Get("namespace")
 	insts := h.svc.List(runtime.Filter{
-		Namespace: q.Get("namespace"), Group: q.Get("group"), Zone: q.Get("zone"),
+		Namespace: ns, Group: q.Get("group"), Zone: q.Get("zone"),
 		Role: q.Get("role"), Status: q.Get("status"),
 	})
-	render.WriteJSON(w, http.StatusOK, map[string]any{"items": toInstanceViews(insts)})
+	render.WriteJSON(w, http.StatusOK, map[string]any{"items": toInstanceViews(insts, h.svc.DefaultEntrySet(ns))})
 }
 
 // Get 处理 GET /admin/v1/instances/{serverId}?namespace=。
@@ -87,7 +91,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, toInstanceView(inst))
+	render.WriteJSON(w, http.StatusOK, toInstanceView(inst, h.svc.DefaultEntrySet(ns)))
 }
 
 // Offline 处理 POST /admin/v1/instances/{serverId}/offline?namespace=。

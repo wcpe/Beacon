@@ -135,6 +135,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/zones/assignments", h.Zone.ListAssignments)
 		r.Put("/zones/assignments", h.Zone.Assign)
 		r.Delete("/zones/assignments", h.Zone.Unassign)
+		// 小区默认入口（FR-48）：每 zone 唯一默认入口 serverId，供 BC 设 BungeeCord 默认/fallback 服
+		r.Get("/zones/default-entry", h.Zone.ListDefaultEntries)
+		r.Put("/zones/default-entry", h.Zone.SetDefaultEntry)
+		r.Delete("/zones/default-entry", h.Zone.ClearDefaultEntry)
 		r.Get("/zones", h.Zone.Summary)
 
 		// 流量调度（FR-10）：落位建议（query-only）+ drain 标记，控制面只给决策不执行玩家连接（ADR-0017）

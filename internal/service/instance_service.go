@@ -37,14 +37,19 @@ type RegisterResult struct {
 	TTLSec               int
 }
 
+// DefaultEntryResolver 解析某环境下被指定为「小区默认入口」的 serverId 集合（FR-48）。
+// 由 ZoneService 注入（避免 InstanceService / handler 直接碰默认入口仓库，守分层单向）。
+type DefaultEntryResolver func(ns string) (map[string]bool, error)
+
 // InstanceService 编排实例注册/心跳/上报/下线/发现（操作内存注册表 + 解析归属 + 审计）。
 type InstanceService struct {
-	registry          *runtime.Registry
-	assignRepo        *repository.ZoneAssignmentRepository
-	auditRepo         *repository.AuditLogRepository
-	heartbeatInterval time.Duration
-	ttl               time.Duration
-	notifier          *ChangeNotifier // 可选，注册/下线后唤醒拓扑 watch（FR-29）
+	registry             *runtime.Registry
+	assignRepo           *repository.ZoneAssignmentRepository
+	auditRepo            *repository.AuditLogRepository
+	heartbeatInterval    time.Duration
+	ttl                  time.Duration
+	notifier             *ChangeNotifier      // 可选，注册/下线后唤醒拓扑 watch（FR-29）
+	defaultEntryResolver DefaultEntryResolver // 可选，发现/实例视图标 zoneDefaultEntry（FR-48）；nil 时恒空集
 }
 
 // NewInstanceService 构造服务。
@@ -58,6 +63,25 @@ func NewInstanceService(registry *runtime.Registry, assignRepo *repository.ZoneA
 // SetNotifier 注入拓扑唤醒器（启动时装配；未注入则不唤醒拓扑 watch）。
 func (s *InstanceService) SetNotifier(n *ChangeNotifier) {
 	s.notifier = n
+}
+
+// SetDefaultEntryResolver 注入小区默认入口解析器（启动时装配；未注入则默认入口标志恒为 false，FR-48）。
+func (s *InstanceService) SetDefaultEntryResolver(r DefaultEntryResolver) {
+	s.defaultEntryResolver = r
+}
+
+// DefaultEntrySet 返回某环境下被指定为小区默认入口的 serverId 集合（FR-48）。
+// 供 handler 渲染实例/发现视图标 zoneDefaultEntry；未注入解析器或解析出错时返回空集（不阻断发现）。
+func (s *InstanceService) DefaultEntrySet(ns string) map[string]bool {
+	if s.defaultEntryResolver == nil {
+		return map[string]bool{}
+	}
+	set, err := s.defaultEntryResolver(ns)
+	if err != nil {
+		slog.Warn("解析小区默认入口集合失败，本次发现不标默认入口", "namespace", ns, "错误", err)
+		return map[string]bool{}
+	}
+	return set
 }
 
 // notifyTopology 唤醒该 namespace 的拓扑 watch（注入了才唤醒）。

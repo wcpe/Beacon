@@ -23,7 +23,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	eff := service.NewEffectiveService(cr, asg, nil, nil)
-	zone := service.NewZoneService(db, asg, ar, runtime.NewRegistry())
+	zone := service.NewZoneService(db, asg, repository.NewZoneDefaultEntryRepository(db), ar, runtime.NewRegistry())
 
 	create := func(group, scope, target, content string) {
 		if _, err := cfg.Create(service.CreateConfigParams{
@@ -76,7 +76,7 @@ func TestAssignRejectsBungeeAllowsBukkit(t *testing.T) {
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	reg := runtime.NewRegistry()
-	zone := service.NewZoneService(db, asg, ar, reg)
+	zone := service.NewZoneService(db, asg, repository.NewZoneDefaultEntryRepository(db), ar, reg)
 
 	now := time.Now().UTC()
 	register := func(serverID, role, addr string) {

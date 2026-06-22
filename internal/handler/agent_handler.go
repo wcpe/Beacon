@@ -185,11 +185,12 @@ func (h *AgentHandler) Report(w http.ResponseWriter, r *http.Request) {
 // 支持按 role/zone/group 与自定义元数据 tag 过滤；tag 以重复查询参数 tag.<key>=<value> 传入（多 tag 取交集，FR-29）。
 func (h *AgentHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	ns := q.Get("namespace")
 	insts := h.svc.Discover(runtime.Filter{
-		Namespace: q.Get("namespace"), Group: q.Get("group"), Zone: q.Get("zone"), Role: q.Get("role"),
+		Namespace: ns, Group: q.Get("group"), Zone: q.Get("zone"), Role: q.Get("role"),
 		Tags: parseTagParams(q),
 	})
-	render.WriteJSON(w, http.StatusOK, map[string]any{"instances": toInstanceViews(insts)})
+	render.WriteJSON(w, http.StatusOK, map[string]any{"instances": toInstanceViews(insts, h.svc.DefaultEntrySet(ns))})
 }
 
 // parseTagParams 从查询串解析 tag.<key>=<value> 形式的自定义元数据过滤条件；无 tag 返回 nil（不过滤）。
