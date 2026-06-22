@@ -3,6 +3,7 @@
 // 只读密钥仅供外部服务读 /admin/v1/*；管理台使用者恒为登录操作者（full），故本页不按角色裁剪。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createApiKey, listApiKeys, resetApiKey, revokeApiKey } from '../api/client'
 import type { ApiKeyCreated, ApiKeyView } from '../api/types'
@@ -51,12 +52,7 @@ const STATUS_COLOR: Record<string, string> = {
   revoked: 'bg-muted text-muted-foreground',
 }
 
-// 状态中文文案
-const STATUS_LABEL: Record<string, string> = {
-  active: '生效',
-  expired: '已过期',
-  revoked: '已吊销',
-}
+// 状态文案经 i18n（apikeys.statusActive/Expired/Revoked）映射
 
 // 把 datetime-local 本地值转成后端可识别的 ISO（UTC）字符串；空值返回 undefined
 function toIso(local: string): string | undefined {
@@ -67,6 +63,10 @@ function toIso(local: string): string | undefined {
 }
 
 export default function ApiKeysPage() {
+  const { t } = useTranslation()
+  // 密钥状态英文枚举 → 中文（i18n 映射，未知回退原文）
+  const statusLabel = (status: string) =>
+    t(`apikeys.status${status.charAt(0).toUpperCase()}${status.slice(1)}`, { defaultValue: status })
   const qc = useQueryClient()
   const msg = useMessage()
 
@@ -108,7 +108,7 @@ export default function ApiKeysPage() {
   const revokeMut = useMutation({
     mutationFn: (id: number) => revokeApiKey(id),
     onSuccess: (_data, id) => {
-      msg.showSuccess(`已吊销密钥 #${id}`)
+      msg.showSuccess(t('apikeys.msgRevoked', { id }))
       qc.invalidateQueries({ queryKey: ['api-keys'] })
     },
     onError: (e: Error) => msg.showError(e.message),
@@ -117,7 +117,7 @@ export default function ApiKeysPage() {
   function onCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) {
-      msg.showError('密钥名称为必填')
+      msg.showError(t('apikeys.nameRequired'))
       return
     }
     createMut.mutate()
@@ -127,38 +127,38 @@ export default function ApiKeysPage() {
   async function copyKey(key: string) {
     try {
       await navigator.clipboard.writeText(key)
-      msg.showSuccess('已复制到剪贴板')
+      msg.showSuccess(t('common.copiedToClipboard'))
     } catch {
-      msg.showError('复制失败，请手动选中复制')
+      msg.showError(t('common.copyFailed'))
     }
   }
 
   // 密钥表列定义（操作列闭包引用 mutation，故在组件内定义）
   const columns: DataTableColumn<ApiKeyView>[] = [
-    { header: '名称', cell: (k) => k.name },
+    { header: t('apikeys.colName'), cell: (k) => k.name },
     {
-      header: '角色',
+      header: t('apikeys.colRole'),
       cell: (k) =>
         k.role === 'full' ? (
-          <Badge>full（读写）</Badge>
+          <Badge>{t('apikeys.roleFull')}</Badge>
         ) : (
-          <Badge variant="outline">readonly（只读）</Badge>
+          <Badge variant="outline">{t('apikeys.roleReadonly')}</Badge>
         ),
     },
-    { header: '前缀', className: 'font-mono', cell: (k) => k.keyPrefix },
+    { header: t('apikeys.colPrefix'), className: 'font-mono', cell: (k) => k.keyPrefix },
     {
-      header: '状态',
+      header: t('apikeys.colStatus'),
       cell: (k) => (
         <Badge className={cn('border-transparent', STATUS_COLOR[k.status])}>
-          {STATUS_LABEL[k.status] ?? k.status}
+          {statusLabel(k.status)}
         </Badge>
       ),
     },
-    { header: '创建时间', cell: (k) => formatTime(k.createdAt) },
-    { header: '最近使用', cell: (k) => formatTime(k.lastUsedAt) },
-    { header: '过期时间', cell: (k) => (k.expiresAt ? formatTime(k.expiresAt) : '永不') },
+    { header: t('apikeys.colCreatedAt'), cell: (k) => formatTime(k.createdAt) },
+    { header: t('apikeys.colLastUsed'), cell: (k) => formatTime(k.lastUsedAt) },
+    { header: t('apikeys.colExpiresAt'), cell: (k) => (k.expiresAt ? formatTime(k.expiresAt) : t('apikeys.expiresNever')) },
     {
-      header: '操作',
+      header: t('apikeys.colActions'),
       cell: (k) =>
         k.status === 'revoked' ? (
           <span className="text-sm text-muted-foreground">—</span>
@@ -168,19 +168,19 @@ export default function ApiKeysPage() {
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" size="sm" disabled={resetMut.isPending}>
-                  重置
+                  {t('apikeys.resetBtn')}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>重置密钥「{k.name}」？</AlertDialogTitle>
+                  <AlertDialogTitle>{t('apikeys.resetConfirmTitle', { name: k.name })}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    将生成一把新明文，<strong>旧明文立即失效</strong>，使用旧明文的外部服务需更新为新值。密钥不能二次读取，请在重置后立即保存新明文。
+                    {t('apikeys.resetConfirmDescBefore')}<strong>{t('apikeys.resetConfirmStrong')}</strong>{t('apikeys.resetConfirmDescAfter')}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => resetMut.mutate(k.id)}>确认重置</AlertDialogAction>
+                  <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => resetMut.mutate(k.id)}>{t('apikeys.resetConfirmAction')}</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -188,19 +188,19 @@ export default function ApiKeysPage() {
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="destructive" size="sm" disabled={revokeMut.isPending}>
-                  吊销
+                  {t('apikeys.revokeBtn')}
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>吊销密钥「{k.name}」？</AlertDialogTitle>
+                  <AlertDialogTitle>{t('apikeys.revokeConfirmTitle', { name: k.name })}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    吊销后该密钥<strong>立即失效且不可恢复</strong>，使用它的外部服务将无法再访问。如需继续访问请另建新密钥。
+                    {t('apikeys.revokeConfirmDescBefore')}<strong>{t('apikeys.revokeConfirmStrong')}</strong>{t('apikeys.revokeConfirmDescAfter')}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => revokeMut.mutate(k.id)}>确认吊销</AlertDialogAction>
+                  <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => revokeMut.mutate(k.id)}>{t('apikeys.revokeConfirmAction')}</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
@@ -212,42 +212,42 @@ export default function ApiKeysPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">密钥管理</h1>
+        <h1 className="text-xl font-semibold">{t('apikeys.title')}</h1>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
-            <Button>新建密钥</Button>
+            <Button>{t('apikeys.createBtn')}</Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>新建 API 密钥</DialogTitle>
+              <DialogTitle>{t('apikeys.createTitle')}</DialogTitle>
               <DialogDescription>
-                供外部服务调 /admin/v1/* 使用。只读密钥仅可读、不可写。明文仅创建后展示一次。
+                {t('apikeys.createDesc')}
               </DialogDescription>
             </DialogHeader>
             <form id="create-api-key" onSubmit={onCreate} className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="k-name">名称</Label>
+                <Label htmlFor="k-name">{t('apikeys.colName')}</Label>
                 <Input
                   id="k-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="如 业务管理后端"
+                  placeholder={t('apikeys.namePlaceholder')}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>角色</Label>
+                <Label>{t('common.role')}</Label>
                 <Select value={role} onValueChange={setRole}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="readonly">readonly（只读，仅可读端点）</SelectItem>
-                    <SelectItem value="full">full（读写，等同操作者）</SelectItem>
+                    <SelectItem value="readonly">{t('apikeys.roleReadonlyOpt')}</SelectItem>
+                    <SelectItem value="full">{t('apikeys.roleFullOpt')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="k-expires">过期时间（可选，留空永不过期）</Label>
+                <Label htmlFor="k-expires">{t('apikeys.expiresLabel')}</Label>
                 <Input
                   id="k-expires"
                   type="datetime-local"
@@ -258,7 +258,7 @@ export default function ApiKeysPage() {
             </form>
             <DialogFooter>
               <Button type="submit" form="create-api-key" disabled={createMut.isPending}>
-                创建
+                {t('apikeys.createSubmit')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -272,7 +272,7 @@ export default function ApiKeysPage() {
               columns={columns}
               rows={data}
               rowKey={(k) => String(k.id)}
-              emptyText="暂无密钥"
+              emptyText={t('apikeys.empty')}
             />
           </AsyncSection>
         </CardContent>
@@ -282,36 +282,36 @@ export default function ApiKeysPage() {
       <Dialog open={revealed !== null} onOpenChange={(open) => !open && setRevealed(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>密钥已生成：请立即保存</DialogTitle>
+            <DialogTitle>{t('apikeys.revealTitle')}</DialogTitle>
             <DialogDescription className="text-destructive">
-              这是该密钥明文唯一一次展示，关闭后无法再查看。如遗失只能重置（轮换）后获取新明文。
+              {t('apikeys.revealDesc')}
             </DialogDescription>
           </DialogHeader>
           {revealed && (
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <Label>密钥名称</Label>
+                <Label>{t('apikeys.revealName')}</Label>
                 <div className="text-sm">{revealed.name}</div>
               </div>
               <div className="space-y-1.5">
-                <Label>明文密钥</Label>
+                <Label>{t('apikeys.revealKey')}</Label>
                 <pre className="overflow-auto rounded-md border bg-muted p-3 font-mono text-sm break-all whitespace-pre-wrap">
                   {revealed.key}
                 </pre>
               </div>
               <p className="text-xs text-muted-foreground">
-                经请求头 <code className="font-mono">X-Beacon-Api-Key</code> 或{' '}
-                <code className="font-mono">Authorization: Bearer &lt;明文&gt;</code> 携带使用。
+                {t('apikeys.revealUsageBefore')}<code className="font-mono">X-Beacon-Api-Key</code>{t('apikeys.revealUsageOr')}
+                <code className="font-mono">Authorization: Bearer &lt;明文&gt;</code>{t('apikeys.revealUsageAfter')}
               </p>
             </div>
           )}
           <DialogFooter>
             {revealed && (
               <Button variant="outline" onClick={() => copyKey(revealed.key)}>
-                复制明文
+                {t('apikeys.copyBtn')}
               </Button>
             )}
-            <Button onClick={() => setRevealed(null)}>我已保存</Button>
+            <Button onClick={() => setRevealed(null)}>{t('apikeys.savedBtn')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

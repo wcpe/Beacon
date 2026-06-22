@@ -2,6 +2,7 @@
 // online/lost/offline 三色区分；未分配 zone 的行高亮；点行看只读详情；支持主动下线（按行直接下线，不再强制先筛环境，FR-49）。
 
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   listInstances,
@@ -56,6 +57,7 @@ const REFETCH_MS = 5000
 const ALL = 'all'
 
 export default function InstancesPage() {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
 
@@ -115,7 +117,7 @@ export default function InstancesPage() {
     mutationFn: ({ serverId, namespace: ns }: { serverId: string; namespace: string }) =>
       offlineInstance(serverId, ns),
     onSuccess: (_data, { serverId }) => {
-      msg.showSuccess(`已下线实例 ${serverId}`)
+      msg.showSuccess(t('instances.msgOffline', { serverId }))
       qc.invalidateQueries({ queryKey: ['instances'] })
       qc.invalidateQueries({ queryKey: ['offline-instances'] })
     },
@@ -127,7 +129,7 @@ export default function InstancesPage() {
     mutationFn: ({ serverId, namespace: ns }: { serverId: string; namespace: string }) =>
       onlineInstance(serverId, ns),
     onSuccess: (_data, { serverId }) => {
-      msg.showSuccess(`已取消下线 ${serverId}`)
+      msg.showSuccess(t('instances.msgCancelOffline', { serverId }))
       qc.invalidateQueries({ queryKey: ['instances'] })
       qc.invalidateQueries({ queryKey: ['offline-instances'] })
     },
@@ -148,28 +150,28 @@ export default function InstancesPage() {
   // 实例表列定义（操作列闭包引用 offlineMut / onConfirmOffline，故在组件内定义）
   const columns: DataTableColumn<InstanceView>[] = [
     { header: 'serverId', className: 'font-mono', cell: (i) => i.serverId },
-    { header: '环境', cell: (i) => i.namespace },
-    { header: '角色', cell: (i) => <RoleBadge role={i.role} /> },
-    { header: '大区', cell: (i) => i.group },
+    { header: t('instances.colNamespace'), cell: (i) => i.namespace },
+    { header: t('instances.colRole'), cell: (i) => <RoleBadge role={i.role} /> },
+    { header: t('instances.colGroup'), cell: (i) => i.group },
     {
-      header: '小区',
+      header: t('instances.colZone'),
       cell: (i) =>
         i.zone === null ? (
           <Badge variant="outline" className="border-amber-500 text-amber-600">
-            未分配
+            {t('instances.unassignedBadge')}
           </Badge>
         ) : (
           i.zone
         ),
     },
-    { header: '状态', cell: (i) => <StatusBadge status={i.status} /> },
-    { header: '地址', className: 'font-mono', cell: (i) => i.address },
-    { header: '版本', cell: (i) => i.version },
-    { header: '人数', cell: (i) => i.playerCount },
-    { header: 'TPS', cell: (i) => i.tps.toFixed(1) },
-    { header: '最近心跳', cell: (i) => formatTime(i.lastHeartbeat) },
+    { header: t('instances.colStatus'), cell: (i) => <StatusBadge status={i.status} /> },
+    { header: t('instances.colAddress'), className: 'font-mono', cell: (i) => i.address },
+    { header: t('instances.colVersion'), cell: (i) => i.version },
+    { header: t('instances.colPlayerCount'), cell: (i) => i.playerCount },
+    { header: t('instances.colTps'), cell: (i) => i.tps.toFixed(1) },
+    { header: t('instances.colLastHeartbeat'), cell: (i) => formatTime(i.lastHeartbeat) },
     {
-      header: '操作',
+      header: t('instances.colActions'),
       cell: (i) => (
         <AlertDialog>
           <AlertDialogTrigger asChild>
@@ -179,22 +181,22 @@ export default function InstancesPage() {
               disabled={offlineMut.isPending}
               onClick={(e) => e.stopPropagation()}
             >
-              下线
+              {t('instances.offlineBtn')}
             </Button>
           </AlertDialogTrigger>
           <AlertDialogContent onClick={(e) => e.stopPropagation()}>
             <AlertDialogHeader>
-              <AlertDialogTitle>确认下线实例 {i.serverId}？</AlertDialogTitle>
+              <AlertDialogTitle>{t('instances.offlineConfirmTitle', { serverId: i.serverId })}</AlertDialogTitle>
               <AlertDialogDescription>
-                将把该实例标记为下线（环境 {i.namespace}）：移出可用集并拒绝其重新接入，直到取消下线。
+                {t('instances.offlineConfirmDesc', { namespace: i.namespace })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>取消</AlertDialogCancel>
+              <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={() => offlineMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
               >
-                确认下线
+                {t('instances.offlineConfirmAction')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -206,19 +208,19 @@ export default function InstancesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">实例与健康</h1>
-        {isFetching && <span className="text-sm text-muted-foreground">（刷新中…）</span>}
+        <h1 className="text-xl font-semibold">{t('instances.title')}</h1>
+        {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
       </div>
 
       <Card>
         <CardContent className="space-y-3">
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="f-namespace">环境</Label>
+              <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
               {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
               <Combobox
                 id="f-namespace"
-                aria-label="环境"
+                aria-label={t('common.namespace')}
                 className="w-40"
                 value={namespace}
                 onChange={setNamespace}
@@ -227,10 +229,10 @@ export default function InstancesPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="f-group">大区</Label>
+              <Label htmlFor="f-group">{t('common.group')}</Label>
               <Combobox
                 id="f-group"
-                aria-label="大区"
+                aria-label={t('common.group')}
                 className="w-40"
                 value={group}
                 onChange={setGroup}
@@ -239,10 +241,10 @@ export default function InstancesPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="f-zone">小区</Label>
+              <Label htmlFor="f-zone">{t('common.zone')}</Label>
               <Combobox
                 id="f-zone"
-                aria-label="小区"
+                aria-label={t('common.zone')}
                 className="w-40"
                 value={zone}
                 onChange={setZone}
@@ -251,36 +253,36 @@ export default function InstancesPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>角色</Label>
+              <Label>{t('common.role')}</Label>
               <Select value={role} onValueChange={setRole}>
                 <SelectTrigger className="w-36">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>全部</SelectItem>
+                  <SelectItem value={ALL}>{t('instances.filterAll')}</SelectItem>
                   <SelectItem value="bukkit">bukkit</SelectItem>
                   <SelectItem value="bungee">bungee</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>状态</Label>
+              <Label>{t('common.status')}</Label>
               <Select value={status} onValueChange={setStatus}>
                 <SelectTrigger className="w-36">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={ALL}>全部</SelectItem>
+                  <SelectItem value={ALL}>{t('instances.filterAll')}</SelectItem>
                   <SelectItem value="online">online</SelectItem>
                   <SelectItem value="lost">lost</SelectItem>
                   <SelectItem value="offline">offline</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <Button type="submit">查询</Button>
+            <Button type="submit">{t('common.query')}</Button>
           </form>
           <p className="text-sm text-muted-foreground">
-            提示：主动下线按行直接操作（环境取自该行）。未分配小区的实例以黄色高亮，点击行查看详情。
+            {t('instances.tip')}
           </p>
         </CardContent>
       </Card>
@@ -292,7 +294,7 @@ export default function InstancesPage() {
               columns={columns}
               rows={data}
               rowKey={(i) => `${i.namespace}/${i.serverId}`}
-              emptyText="无在册实例"
+              emptyText={t('instances.empty')}
               onRowClick={(i) => setSelectedInstance(i)}
               rowClassName={(i) => (!i.assigned ? 'bg-amber-50' : undefined)}
             />
@@ -304,14 +306,14 @@ export default function InstancesPage() {
       {offlineMarkers && offlineMarkers.length > 0 && (
         <Card>
           <CardContent className="space-y-3">
-            <h2 className="text-base font-semibold">已主动下线（拒绝接入）</h2>
+            <h2 className="text-base font-semibold">{t('instances.offlineSectionTitle')}</h2>
             <DataTable
               columns={[
                 { header: 'serverId', className: 'font-mono', cell: (o) => o.serverId },
-                { header: '环境', cell: (o) => o.namespace },
-                { header: '原因', cell: (o) => o.reason || '-' },
+                { header: t('instances.colNamespace'), cell: (o) => o.namespace },
+                { header: t('instances.offlineColReason'), cell: (o) => o.reason || '-' },
                 {
-                  header: '操作',
+                  header: t('instances.offlineColActions'),
                   cell: (o) => (
                     <Button
                       variant="outline"
@@ -319,14 +321,14 @@ export default function InstancesPage() {
                       disabled={onlineMut.isPending}
                       onClick={() => onlineMut.mutate({ serverId: o.serverId, namespace: o.namespace })}
                     >
-                      取消下线
+                      {t('instances.cancelOfflineBtn')}
                     </Button>
                   ),
                 },
               ]}
               rows={offlineMarkers}
               rowKey={(o) => `${o.namespace}/${o.serverId}`}
-              emptyText="无下线标记"
+              emptyText={t('instances.offlineEmpty')}
             />
           </CardContent>
         </Card>
@@ -336,44 +338,44 @@ export default function InstancesPage() {
       <Dialog open={selectedInstance !== null} onOpenChange={(open) => !open && setSelectedInstance(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>实例详情</DialogTitle>
+            <DialogTitle>{t('instances.detailTitle')}</DialogTitle>
           </DialogHeader>
           {selectedInstance && (
             <div className="space-y-4">
               <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
                 <dt className="text-muted-foreground">serverId</dt>
                 <dd className="font-mono">{selectedInstance.serverId}</dd>
-                <dt className="text-muted-foreground">环境</dt>
+                <dt className="text-muted-foreground">{t('instances.colNamespace')}</dt>
                 <dd>{selectedInstance.namespace}</dd>
-                <dt className="text-muted-foreground">角色</dt>
+                <dt className="text-muted-foreground">{t('instances.colRole')}</dt>
                 <dd>
                   <RoleBadge role={selectedInstance.role} />
                 </dd>
-                <dt className="text-muted-foreground">大区</dt>
+                <dt className="text-muted-foreground">{t('instances.colGroup')}</dt>
                 <dd>{selectedInstance.group}</dd>
-                <dt className="text-muted-foreground">小区</dt>
-                <dd>{selectedInstance.zone === null ? '未分配' : selectedInstance.zone}</dd>
-                <dt className="text-muted-foreground">状态</dt>
+                <dt className="text-muted-foreground">{t('instances.colZone')}</dt>
+                <dd>{selectedInstance.zone === null ? t('common.unassigned') : selectedInstance.zone}</dd>
+                <dt className="text-muted-foreground">{t('instances.colStatus')}</dt>
                 <dd>
                   <StatusBadge status={selectedInstance.status} />
                 </dd>
-                <dt className="text-muted-foreground">地址</dt>
+                <dt className="text-muted-foreground">{t('instances.colAddress')}</dt>
                 <dd className="font-mono">{selectedInstance.address}</dd>
-                <dt className="text-muted-foreground">版本</dt>
+                <dt className="text-muted-foreground">{t('instances.colVersion')}</dt>
                 <dd>{selectedInstance.version}</dd>
-                <dt className="text-muted-foreground">容量</dt>
+                <dt className="text-muted-foreground">{t('instances.detailCapacity')}</dt>
                 <dd>{selectedInstance.capacity}</dd>
-                <dt className="text-muted-foreground">权重</dt>
+                <dt className="text-muted-foreground">{t('instances.detailWeight')}</dt>
                 <dd>{selectedInstance.weight}</dd>
-                <dt className="text-muted-foreground">人数</dt>
+                <dt className="text-muted-foreground">{t('instances.colPlayerCount')}</dt>
                 <dd>{selectedInstance.playerCount}</dd>
-                <dt className="text-muted-foreground">TPS</dt>
+                <dt className="text-muted-foreground">{t('instances.colTps')}</dt>
                 <dd>{selectedInstance.tps.toFixed(1)}</dd>
-                <dt className="text-muted-foreground">已应用 md5</dt>
+                <dt className="text-muted-foreground">{t('instances.detailAppliedMd5')}</dt>
                 <dd className="font-mono break-all">{selectedInstance.appliedMd5 || '-'}</dd>
-                <dt className="text-muted-foreground">最近心跳</dt>
+                <dt className="text-muted-foreground">{t('instances.colLastHeartbeat')}</dt>
                 <dd>{formatTime(selectedInstance.lastHeartbeat)}</dd>
-                <dt className="text-muted-foreground">注册时间</dt>
+                <dt className="text-muted-foreground">{t('instances.detailRegisteredAt')}</dt>
                 <dd>{formatTime(selectedInstance.registeredAt)}</dd>
               </dl>
               <div>
@@ -388,7 +390,7 @@ export default function InstancesPage() {
                     ))}
                   </dl>
                 ) : (
-                  <p className="text-sm text-muted-foreground">无 metadata</p>
+                  <p className="text-sm text-muted-foreground">{t('instances.noMetadata')}</p>
                 )}
               </div>
             </div>
