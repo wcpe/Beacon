@@ -12,6 +12,7 @@ import (
 
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
 )
@@ -125,7 +126,7 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateFileContent(p.Content); err != nil {
+	if err := validateFileContent(cleanPath, p.Content); err != nil {
 		return nil, err
 	}
 	existing, err := s.fileRepo.FindByIdentity(p.Namespace, group, cleanPath, p.ScopeLevel, scopeTarget)
@@ -192,7 +193,7 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := validateFileContent(f.Content); err != nil {
+		if err := validateFileContent(cleanPath, f.Content); err != nil {
 			return nil, err
 		}
 		cleaned[i] = ImportFile{Path: cleanPath, Content: f.Content}
@@ -265,7 +266,7 @@ func (s *FileService) Publish(id uint, content, operator, comment, clientIP stri
 	if err != nil {
 		return nil, err
 	}
-	if err := validateFileContent(content); err != nil {
+	if err := validateFileContent(obj.Path, content); err != nil {
 		return nil, err
 	}
 	md5 := filetree.ContentMD5(content)
@@ -413,10 +414,18 @@ func (s *FileService) writeImportAudit(tx *gorm.DB, ns, group, operator, detail,
 	})
 }
 
-// validateFileContent 校验文件内容不超限（整文件 blob 不做格式解析）。
-func validateFileContent(content string) error {
+// validateFileContent 校验文件内容：不超限 + 结构化文件解析校验。
+// 结构化文件（yml/json/properties）发布前做 merge.Parse 解析校验，拒绝坏语法入库——
+// 否则运行期深合并解析失败会静默回退整文件、深合并对该 path 永久失效（与通道A 发布校验对齐，FR-44）。
+// 只校验「能解析」，不强制顶层为 map（文件树可托管顶层 list/scalar，与通道A 的 schema 校验有别）。
+func validateFileContent(filePath, content string) error {
 	if len(content) > MaxFileContentBytes {
 		return apperr.ErrContentTooLarge
+	}
+	if format, ok := filetree.FormatFromPath(filePath); ok {
+		if _, err := merge.Parse(format, content); err != nil {
+			return apperr.ErrContentSchemaInvalid
+		}
 	}
 	return nil
 }

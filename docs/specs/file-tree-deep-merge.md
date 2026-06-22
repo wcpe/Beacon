@@ -28,17 +28,17 @@
 
 **单一改造点**：`internal/filetree` 的纯解析函数 `Resolve`。`files/manifest` 与 `files/content` 两端点都经 `FileEffectiveService.Resolve → filetree.Resolve` 取 `tree.Files`（[file_handler.go](../../internal/handler/file_handler.go) Content 复用同一结果），故只改 `Resolve` 一处，两端点同时生效。
 
-- **格式探测**：新增纯函数 `formatFromPath(path) (format string, structured bool)`，按后缀映射到 `merge.FormatYAML/JSON/Properties`；未知后缀 `structured=false`。
+- **格式探测**：导出纯函数 `FormatFromPath(path) (format string, structured bool)`，按后缀映射到 `merge.FormatYAML/JSON/Properties`；未知后缀 `structured=false`。发布期校验复用同一函数。
 - **Resolve 改造**：候选按 `path` 分组；每个 `path`：
-  1. 求该 path 覆盖链上**层级最高**的候选（winner，沿用现逻辑）。
-  2. **判定合并模式**：`whole-file` 当 (后缀非结构化) 或 (winner.WholeFileOverride=true)；否则 `deep-merge`。
-  3. `whole-file` → 取 winner.Content（现行为）；`deep-merge` → 按 scope 优先级**低→高**取各层 Content，调 `merge.MergeDataID(format, layeredLowToHigh)` 得合并整文件。
+  1. 求该 path 覆盖链上**层级最高**的候选（winner）+ 扫描各层是否**任一标 `WholeFileOverride`**（path 级豁免）。
+  2. **判定合并模式**——满足任一即 `whole-file`（取 winner 整文件、字节原样、不 parse/reserialize）：① **单层贡献**（`len(layers)==1`，无需合并、杜绝有损往返）；② 后缀非结构化；③ 任一层标豁免。否则 `deep-merge`。
+  3. `deep-merge`（≥2 层结构化且未豁免）→ 按 scope 优先级**低→高**取各层 Content，调 `merge.MergeDataID(format, layeredLowToHigh)` 得合并整文件。
   4. `EffectiveFile.MD5 = md5(有效内容)`（合并模式重算、整文件模式即 winner 内容 md5）。
 - **数据模型**：`model.FileObject` 增 `WholeFileOverride bool`（列 `whole_file_override`，`NOT NULL DEFAULT false`，基础类型、零方言、可切 Postgres）。AutoMigrate 加列，既有行默认 false。
-- **写路径**：`FileService.Create` / `Import`（及发布）透传 `WholeFileOverride`；admin `POST /admin/v1/files`（及 import）新增可选布尔字段 `wholeFileOverride`（缺省 false）。
-- **依赖流向**：`filetree` 包 import `internal/merge`（两者皆无副作用纯函数、merge 不反向依赖 filetree，无环；架构上同为"与 merge 平级的纯逻辑包"）。
+- **写路径 + 发布校验**：`FileService.Create` / `Import` 透传 `WholeFileOverride`；admin `POST /admin/v1/files` 新增可选布尔字段 `wholeFileOverride`（缺省 false）、文件视图（List/Get）回显该字段。`validateFileContent(path, content)` 对结构化文件做 `merge.Parse` 解析校验，坏语法返 `CONTENT_SCHEMA_INVALID`（Create/Import/Publish 三写路径共用，与通道A 发布校验对齐）。
+- **依赖流向**：`filetree` 包 import `internal/merge`（两者皆无副作用纯函数、merge 不反向依赖 filetree，无环）；`service` 复用 `filetree.FormatFromPath` + `merge.Parse` 做发布校验。
 
-**判定规则的确定性**：合并模式由 winner 层的 `WholeFileOverride` + 后缀决定，二者皆与遍历顺序无关；深合并复用 `merge` 的固定键序序列化 → 相同候选恒得相同 md5（长轮询比对依赖此幂等，与通道A 同源保证）。
+**判定规则的确定性**：合并模式由 层数 + 任一层 `WholeFileOverride` + 后缀决定，三者皆与遍历顺序无关；深合并复用 `merge` 的固定键序序列化 → 相同候选恒得相同 md5（长轮询比对依赖此幂等，与通道A 同源保证）。
 
 ## 4. 任务拆分
 
@@ -53,7 +53,9 @@
 
 - 同 path 的 `app.yml`：global 基线 `{a:1,b:{x:1}}` + 小区增量 `{b:{y:2}}` + 单服 `{a:null,c:3}` → 某服拉到 `{b:{x:1,y:2},c:3}`（标量覆盖、map 深合并、`null` 删 a 键）。
 - list 整体替换：高层 list 整替低层 list（不拼接）。
-- 标 `wholeFileOverride=true` 的结构化文件仍整文件覆盖、内容逐字节等于 winner 原文（注释不丢）。
+- **单层短路**：单层结构化文件（含前导零 `007` / 版本 `1.10` / 日期 / 纯注释 / JSON 大整数）**字节原样透传**，逐字节等于原文、md5 = 原文 md5（杜绝有损往返）。
+- **path 级豁免**：任一层标 `wholeFileOverride=true` 即整 path 整文件覆盖、取最高层原文（即便 winner 未标）；逐字节不丢。
+- **发布校验**：结构化文件坏语法在 Create/Publish/Import 即被拒 `CONTENT_SCHEMA_INVALID`；非结构化文件不做解析校验。
 - 非结构化文件（`.allin`/`.js`）整文件覆盖（取最高层）。
 - manifest 单文件 md5 = 合并后整文件 md5；相同候选两次解析 md5 一致（幂等、不误唤醒长轮询）。
 - 穷举单测覆盖上述 + 混合层 + 空层不贡献 + 坏结构化内容的处理。
@@ -62,6 +64,6 @@
 
 ## 6. 风险 / 待定
 
-- **向后兼容（已知、已与用户确认）**：默认深合并会**改变既有整文件托管中结构化文件的生效结果**（此前整文件覆盖，现按键合并；裸标量 / 非 map 顶层的 yml 会被 parse+reserialize 规整）。现网升级前需复核既有托管的结构化文件，必要时对不宜合并者标 `wholeFileOverride`。
-- **注释 / 键序丢失**：结构化深合并必然重渲染，注释与原键序不保留——靠 `wholeFileOverride` 逃生口规避，本期不引保注释 yaml 库。
-- **坏结构化内容（已定，见 [ADR-0029](../adr/0029-file-tree-structured-deep-merge.md) 决策5）**：某层 yml/json 解析失败时，**该 path 回退为整文件取 winner**，不抛错中断整树解析（`Resolve` 保持纯函数、确定性，一坏文件不拖垮整棵树，合 fail-static 精神），补单测覆盖。文件树发布前的结构化校验（类比 FR-27）本期不强加。
+- **多层结构化值归一化（已知、已与用户确认；发版前 review 收窄）**：**单层**结构化文件已由单层短路字节透传、不受影响；**多层**结构化文件按键合并必经 parse→reserialize，不仅丢注释 / 原键序，还**归一化值**（`007`→`7`、`2026-06-22`→时间戳、`1.10`→`1.1`、JSON 大整数精度丢失）。多层结构化文件升级后生效结果可能变；不能容忍值归一者须在某层标 `wholeFileOverride`（= 放弃该 path 合并）。现网升级前复核**多层**结构化托管文件。不引保注释 / 保类型的 yaml 库（本期）。
+- **升级 churn**：`EffectiveFile.MD5` 语义由「原始内容 md5」改为「合并后内容 md5」，控制面升级后多层结构化文件 manifest md5 变化，agent 首轮一次性重取重写盘（叠加 `FileTreeApplier` 整轮 fail-static，大文件树升级窗口需关注）。单层文件 md5 不变（透传），不在 churn 范围。
+- **坏结构化内容（已定，见 [ADR-0029](../adr/0029-file-tree-structured-deep-merge.md) 决策5/6）**：发布期 `merge.Parse` 校验已拒坏语法入库（决策6）；运行期某层仍解析失败时 **该 path 回退为整文件取 winner**，不抛错中断整树解析（`Resolve` 保持纯函数、确定性，一坏文件不拖垮整棵树），回退为兜底而非常态。

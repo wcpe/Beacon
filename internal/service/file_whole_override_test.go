@@ -3,6 +3,7 @@ package service
 import (
 	"testing"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/filetree"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -49,5 +50,47 @@ func TestCreatePersistsWholeFileOverride(t *testing.T) {
 	files := filetree.Resolve(candidates)
 	if len(files) != 1 || files[0].Content != winner {
 		t.Fatalf("豁免文件应整文件取单服原文（含注释），实际 %+v", files)
+	}
+}
+
+// TestFileStructuredContentValidatedOnPublish FR-44 发布校验：结构化文件（yml/json）坏语法在
+// Create/Publish 时即被拒（ErrContentSchemaInvalid），不入库——否则运行期深合并解析失败会静默回退、
+// 深合并对该 path 永久失效。非结构化文件不做解析校验。
+func TestFileStructuredContentValidatedOnPublish(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	fileRepo := repository.NewFileObjectRepository(db)
+	svc := NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), repository.NewAuditLogRepository(db))
+
+	// 坏 yaml → 拒
+	if _, err := svc.Create(CreateFileParams{
+		Namespace: "prod", Group: "area1", Path: "Demo/bad.yml",
+		ScopeLevel: model.ScopeGlobal, Content: "a: [unterminated\n", Operator: "alice",
+	}); err != apperr.ErrContentSchemaInvalid {
+		t.Fatalf("坏 yaml 应被拒为 CONTENT_SCHEMA_INVALID，实际 %v", err)
+	}
+	// 坏 json → 拒
+	if _, err := svc.Create(CreateFileParams{
+		Namespace: "prod", Group: "area1", Path: "Demo/bad.json",
+		ScopeLevel: model.ScopeGlobal, Content: "{not json", Operator: "alice",
+	}); err != apperr.ErrContentSchemaInvalid {
+		t.Fatalf("坏 json 应被拒，实际 %v", err)
+	}
+	// 非结构化（.txt）任意内容 → 放行（不做解析校验）
+	if _, err := svc.Create(CreateFileParams{
+		Namespace: "prod", Group: "area1", Path: "Demo/notes.txt",
+		ScopeLevel: model.ScopeGlobal, Content: "a: [unterminated\n", Operator: "alice",
+	}); err != nil {
+		t.Fatalf("非结构化文件不应做解析校验，实际 %v", err)
+	}
+	// 好 yaml → 放行，且 Publish 坏内容被拒
+	obj, err := svc.Create(CreateFileParams{
+		Namespace: "prod", Group: "area1", Path: "Demo/ok.yml",
+		ScopeLevel: model.ScopeGlobal, Content: "a: 1\n", Operator: "alice",
+	})
+	if err != nil {
+		t.Fatalf("好 yaml 应放行，实际 %v", err)
+	}
+	if _, err := svc.Publish(obj.ID, "b: [bad\n", "alice", "", ""); err != apperr.ErrContentSchemaInvalid {
+		t.Fatalf("Publish 坏 yaml 应被拒，实际 %v", err)
 	}
 }

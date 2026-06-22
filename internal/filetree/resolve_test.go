@@ -265,6 +265,48 @@ func TestResolveMixedStructuredAndNonStructured(t *testing.T) {
 	}
 }
 
+// TestResolveSingleStructuredPassthrough 单层结构化文件字节原样透传（不 parse/reserialize，杜绝有损往返）：
+// 前导零 / 版本号 / 日期 / 纯注释等若被深合并重渲染会被篡改（007→7、1.10→1.1、日期→时间戳、注释→空）。
+func TestResolveSingleStructuredPassthrough(t *testing.T) {
+	for _, raw := range []string{
+		"zip: 007\n",
+		"version: 1.10\n",
+		"release: 2026-06-22\n",
+		"# 仅注释\n# do not touch\n",
+		"id: 123456789012345678\n",
+	} {
+		files := Resolve([]model.FileObject{fo("a.yml", model.ScopeGlobal, raw)})
+		if len(files) != 1 || files[0].Content != raw {
+			t.Errorf("单层结构化文件应字节原样透传，输入 %q 实际 %q", raw, files[0].Content)
+		}
+		if files[0].MD5 != md5Hex(raw) {
+			t.Errorf("单层透传 md5 应为原始内容 md5，输入 %q", raw)
+		}
+	}
+}
+
+// TestResolveSingleStructuredJSONPassthrough 单层 json 同样原样透传（防大整数精度丢失 …678→…680）。
+func TestResolveSingleStructuredJSONPassthrough(t *testing.T) {
+	raw := "{\"id\":123456789012345678}\n"
+	files := Resolve([]model.FileObject{fo("a.json", model.ScopeServer, raw)})
+	if len(files) != 1 || files[0].Content != raw {
+		t.Fatalf("单层 json 应原样透传，实际 %q", files[0].Content)
+	}
+}
+
+// TestResolvePathLevelWholeFileOptOut 豁免是 path 级：任一层标 WholeFileOverride 即整文件覆盖，
+// 即便 winner（最高层）未标也不深合并（取最高层整文件）。
+func TestResolvePathLevelWholeFileOptOut(t *testing.T) {
+	// global 标豁免且带一个独有键 extra；若误深合并，extra 会泄进结果。整文件覆盖应只取 winner（server）。
+	files := Resolve([]model.FileObject{
+		foWhole("a.yml", model.ScopeGlobal, "extra: 1\nport: 0\n"),
+		fo("a.yml", model.ScopeServer, "port: 25565\n"), // winner 未标豁免
+	})
+	if len(files) != 1 || files[0].Content != "port: 25565\n" {
+		t.Fatalf("任一层标豁免即整文件取最高层（不深合并、不漏 extra），实际 %q", files[0].Content)
+	}
+}
+
 // ---- manifest / fileTreeMd5（与解析下游，行为不变）----
 
 // TestManifestPathToMD5 manifest = path→md5 映射。

@@ -33,17 +33,19 @@ func NewFileHandler(svc *service.FileService, effSvc *service.FileEffectiveServi
 
 // fileView 是文件对象对外视图（content 仅详情返回）。
 type fileView struct {
-	ID          uint      `json:"id"`
-	Namespace   string    `json:"namespace"`
-	Group       string    `json:"group"`
-	Path        string    `json:"path"`
-	ScopeLevel  string    `json:"scopeLevel"`
-	ScopeTarget string    `json:"scopeTarget"`
-	Version     int64     `json:"version"`
-	MD5         string    `json:"md5"`
-	Enabled     bool      `json:"enabled"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	Content     string    `json:"content,omitempty"`
+	ID          uint   `json:"id"`
+	Namespace   string `json:"namespace"`
+	Group       string `json:"group"`
+	Path        string `json:"path"`
+	ScopeLevel  string `json:"scopeLevel"`
+	ScopeTarget string `json:"scopeTarget"`
+	Version     int64  `json:"version"`
+	MD5         string `json:"md5"`
+	Enabled     bool   `json:"enabled"`
+	// 整文件覆盖豁免（FR-44）：true 则该结构化文件强制整文件覆盖、不深合并。
+	WholeFileOverride bool      `json:"wholeFileOverride"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+	Content           string    `json:"content,omitempty"`
 }
 
 // fileRevisionView 是文件历史版本对外视图。
@@ -72,7 +74,7 @@ func (h *FileHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]fileView, 0, len(objs))
 	for _, o := range objs {
-		views = append(views, toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt))
+		views = append(views, toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt, o.WholeFileOverride))
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
 }
@@ -89,7 +91,7 @@ func (h *FileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	v := toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt)
+	v := toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt, o.WholeFileOverride)
 	v.Content = o.Content
 	render.WriteJSON(w, http.StatusOK, v)
 }
@@ -124,7 +126,7 @@ func (h *FileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	v := toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt)
+	v := toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt, o.WholeFileOverride)
 	v.Content = o.Content
 	render.WriteJSON(w, http.StatusCreated, v)
 }
@@ -488,10 +490,11 @@ func (h *FileHandler) OverrideContent(w http.ResponseWriter, r *http.Request) {
 }
 
 // toFileView 组装文件对象基础视图（不含 content）。
-func toFileView(id uint, ns, group, path, scopeLevel, scopeTarget string, version int64, md5 string, enabled bool, updatedAt time.Time) fileView {
+func toFileView(id uint, ns, group, path, scopeLevel, scopeTarget string, version int64, md5 string, enabled bool, updatedAt time.Time, wholeFileOverride bool) fileView {
 	return fileView{
 		ID: id, Namespace: ns, Group: group, Path: path,
 		ScopeLevel: scopeLevel, ScopeTarget: scopeTarget,
 		Version: version, MD5: md5, Enabled: enabled, UpdatedAt: updatedAt,
+		WholeFileOverride: wholeFileOverride,
 	}
 }

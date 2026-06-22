@@ -123,10 +123,10 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 文件树托管（通道B，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）与配置中心平行，按 `path` 后缀**分流**解析（[ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 取代 ADR-0010 决策1「绝不深合并」）：
 
 - 同 `(namespace, serverId)` 解析路径，拉 global/group/zone/server 四层候选文件，**按 `path` 分桶**；每个 path：
-  - **结构化文件**（`.yml`/`.yaml`/`.json`/`.properties`）跨四层**按键深合并**（**复用 `internal/merge`**：标量覆盖 / map 深合并 / list 整替 / 高层 `null` 删键 / 固定键序，与通道A 同一套语义与 md5 幂等）。
+  - **结构化文件**（`.yml`/`.yaml`/`.json`/`.properties`）**有 ≥2 层贡献时**跨四层**按键深合并**（**复用 `internal/merge`**：标量覆盖 / map 深合并 / list 整替 / 高层 `null` 删键 / 固定键序，与通道A 同一套语义与 md5 幂等）；**单层贡献则字节原样透传**（不 parse/reserialize，杜绝 `007`→`7`/日期转时间戳/版本号/JSON 大整数等有损往返）。
   - **非结构化文件**（其余后缀）取覆盖链**层级最高的那一整份**（整文件覆盖，绝不深合并）。
-  - **按文件豁免**：`file_object.WholeFileOverride=true` 的文件即便结构化也走整文件覆盖（保注释、不重渲染）；合并模式由 winner 层标记 + 后缀决定，与遍历顺序无关。
-  - **坏内容降级**：某层结构化内容解析失败 → 该 path 回退整文件取 winner（`Resolve` 仍纯函数、一坏不拖垮整树，ADR-0029 决策5）。
+  - **按文件豁免（path 级）**：**任一层** `WholeFileOverride=true` 即整 path 走整文件覆盖（取最高层、保注释、不重渲染），不由 winner 单层独断；合并模式由 层数 + 任一层标记 + 后缀决定，与遍历顺序无关。
+  - **坏内容防线**：结构化文件发布期 `merge.Parse` 校验拒坏语法入库（ADR-0029 决策6）；运行期某层仍解析失败 → 该 path 回退整文件取 winner（`Resolve` 纯函数、一坏不拖垮整树，决策5 兜底）。
   - 控制面渲染合并后整文件，`EffectiveFile.MD5 = md5(合并后整文件)`；agent 镜像落盘逻辑零改（哑镜像、原子写、fail-static）。
 - 服务端算出 `manifest`（path→md5，md5 为合并后整文件的指纹）+ 独立的 `fileTreeMd5`；`fileTreeMd5 = md5(concat(path + ":" + 单文件md5))`，把 `path` 名纳入哈希防集合碰撞（沿用 ADR-0008 思路）。
 - `fileTreeMd5` 与有效配置 md5 **相互独立**，各自长轮询唤醒集合分开（见 §6），互不触发无谓重算。

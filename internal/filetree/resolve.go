@@ -63,16 +63,23 @@ func Resolve(candidates []model.FileObject) []EffectiveFile {
 func resolveOne(p string, layers []model.FileObject) EffectiveFile {
 	// winner = 覆盖链层级最高那份（同层后者胜，沿用旧语义）；整文件模式取它，深合并坏内容也回退它。
 	winner := layers[0]
+	anyWholeFile := winner.WholeFileOverride
 	for _, c := range layers[1:] {
 		if scopePriority(c.ScopeLevel) >= scopePriority(winner.ScopeLevel) {
 			winner = c
 		}
+		if c.WholeFileOverride {
+			anyWholeFile = true // 豁免是 path 级：任一层标即整文件覆盖
+		}
 	}
 	wholeFile := EffectiveFile{Path: p, MD5: winner.ContentMD5, Content: winner.Content}
 
-	format, structured := formatFromPath(p)
-	if !structured || winner.WholeFileOverride {
-		return wholeFile // 非结构化 或 标豁免 → 整文件覆盖
+	// 整文件覆盖（字节原样取最高层，不 parse/reserialize）的三种情形：
+	//   ① 单层贡献——无需合并，原样透传杜绝有损往返（007→7、1.10→1.1、日期→时间戳、纯注释→空、JSON 大整数精度丢失）；
+	//   ② 非结构化后缀；③ 任一层标 WholeFileOverride 豁免（path 级）。
+	format, structured := FormatFromPath(p)
+	if len(layers) == 1 || !structured || anyWholeFile {
+		return wholeFile
 	}
 
 	// 结构化深合并：按层级低→高取内容，复用 merge 按键合并。
@@ -92,8 +99,9 @@ func resolveOne(p string, layers []model.FileObject) EffectiveFile {
 	return EffectiveFile{Path: p, MD5: md5Hex(merged), Content: merged}
 }
 
-// formatFromPath 按文件后缀判定结构化格式；非结构化返回 ("", false)。
-func formatFromPath(p string) (string, bool) {
+// FormatFromPath 按文件后缀判定结构化格式（yaml/json/properties）；非结构化返回 ("", false)。
+// 导出供发布期校验复用（与解析同口径判定哪些文件按结构化处理）。
+func FormatFromPath(p string) (string, bool) {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".yml", ".yaml":
 		return merge.FormatYAML, true
