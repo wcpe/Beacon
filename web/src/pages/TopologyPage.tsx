@@ -4,6 +4,7 @@
 // 环境改为下拉（候选来自 listNamespaces）并默认选第一个环境直接出图（增强 FR-51）。
 
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { getTopology, listNamespaces } from '../api/client'
 import TopologyGraph from './topology/TopologyGraph'
@@ -16,6 +17,7 @@ import { Card, CardContent } from '@/components/ui/card'
 const REFETCH_MS = 5000
 
 export default function TopologyPage() {
+  const { t } = useTranslation()
   // 已生效的环境查询值（端点必填，空则不查询）
   const [namespace, setNamespace] = useState('')
 
@@ -43,25 +45,25 @@ export default function TopologyPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">集群拓扑</h1>
-        {isFetching && <span className="text-sm text-muted-foreground">（刷新中…）</span>}
+        <h1 className="text-xl font-semibold">{t('topology.title')}</h1>
+        {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
       </div>
 
       <Card>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="t-namespace">环境</Label>
+              <Label htmlFor="t-namespace">{t('common.namespace')}</Label>
               {/* 环境改为严格下拉（候选来自 listNamespaces），选中即出图（FR-51） */}
               <Combobox
                 id="t-namespace"
-                aria-label="环境"
+                aria-label={t('common.namespace')}
                 className="w-48"
                 value={namespace}
                 onChange={setNamespace}
                 options={namespaceOptions}
                 allowCustom={false}
-                placeholder="选择环境"
+                placeholder={t('topology.nsPlaceholder')}
               />
             </div>
           </div>
@@ -69,13 +71,13 @@ export default function TopologyPage() {
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="inline-block h-3 w-3 rounded-sm bg-[#7c3aed]" />
-              BC 代理（{bcCount}）
+              {t('topology.legendBc', { count: bcCount })}
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block h-3 w-3 rounded-full bg-[#2563eb]" />
-              子服（{subCount}）
+              {t('topology.legendSub', { count: subCount })}
             </span>
-            <span>连线 = bc→其后端子服（FR-36 事实）；描边色 = 在线状态（绿 online / 橙 degraded）</span>
+            <span>{t('topology.legendEdge')}</span>
           </div>
         </CardContent>
       </Card>
@@ -84,13 +86,13 @@ export default function TopologyPage() {
         <CardContent>
           {namespace === '' ? (
             <p className="py-12 text-center text-sm text-muted-foreground">
-              {namespacesQuery.isLoading ? '加载环境中…' : '暂无可选环境，请先在「环境」页创建。'}
+              {namespacesQuery.isLoading ? t('topology.loadingNs') : t('topology.noNamespace')}
             </p>
           ) : (
             <AsyncSection isLoading={isLoading} isError={isError} error={error}>
               {data &&
                 (data.nodes.length === 0 ? (
-                  <p className="py-12 text-center text-sm text-muted-foreground">该环境暂无在线实例。</p>
+                  <p className="py-12 text-center text-sm text-muted-foreground">{t('topology.noNodes')}</p>
                 ) : (
                   <TopologyGraph data={data} />
                 ))}

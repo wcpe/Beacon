@@ -3,6 +3,8 @@
 // 抽成独立组件便于页面测试以轻量桩替身规避 ECharts 在 jsdom 下的 canvas 依赖（同 DashboardPage/TrendChart 套路）。
 
 import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent } from 'echarts/components'
@@ -13,10 +15,10 @@ import type { TopologyView } from '@/api/types'
 // 按需注册 ECharts 模块（graph 图 + tooltip/legend + canvas 渲染器），避免全量 barrel 进主 chunk
 echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer])
 
-// 角色配色与符号：bc（bungee）方块、bukkit 圆形，色相区分。
-const ROLE_STYLE: Record<string, { symbol: string; color: string; label: string }> = {
-  bungee: { symbol: 'rect', color: '#7c3aed', label: 'BC 代理' },
-  bukkit: { symbol: 'circle', color: '#2563eb', label: '子服' },
+// 角色配色与符号：bc（bungee）方块、bukkit 圆形，色相区分。显示名经 i18n（topology.roleBungee/Bukkit）。
+const ROLE_STYLE: Record<string, { symbol: string; color: string; labelKey: string }> = {
+  bungee: { symbol: 'rect', color: '#7c3aed', labelKey: 'topology.roleBungee' },
+  bukkit: { symbol: 'circle', color: '#2563eb', labelKey: 'topology.roleBukkit' },
 }
 
 // 在线状态描边色：online 绿、degraded 琥珀（可用集合仅这两态）。
@@ -26,20 +28,21 @@ const STATUS_BORDER: Record<string, string> = {
 }
 
 // 把 (group,zone) 拼成分簇标签（zone 为空显示「未分配」）。
-function clusterLabel(group: string, zone: string | null): string {
-  return `${group || '未分组'} / ${zone ?? '未分配'}`
+function clusterLabel(t: TFunction, group: string, zone: string | null): string {
+  return `${group || t('topology.clusterNoGroup')} / ${zone ?? t('topology.clusterNoZone')}`
 }
 
 // 角色显示名（未知角色回退为原值）。
-function roleLabel(role: string): string {
-  return ROLE_STYLE[role]?.label ?? role
+function roleLabel(t: TFunction, role: string): string {
+  const key = ROLE_STYLE[role]?.labelKey
+  return key ? t(key) : role
 }
 
-// 把拓扑数据转为 ECharts graph option（纯函数，便于推理）。
-function toOption(data: TopologyView): EChartsOption {
+// 把拓扑数据转为 ECharts graph option（纯函数，便于推理）。t 注入用于角色 / 分簇文案 i18n。
+function toOption(t: TFunction, data: TopologyView): EChartsOption {
   // 按角色分类（图例可按角色筛选）
   const roles = Array.from(new Set(data.nodes.map((n) => n.role)))
-  const categories = roles.map((r) => ({ name: roleLabel(r) }))
+  const categories = roles.map((r) => ({ name: roleLabel(t, r) }))
   const roleIndex = new Map(roles.map((r, i) => [r, i]))
 
   const nodes = data.nodes.map((n) => {
@@ -56,7 +59,7 @@ function toOption(data: TopologyView): EChartsOption {
         borderWidth: 3,
       },
       // tooltip 展示完整事实（角色/大区/zone/状态/地址）
-      value: `${roleLabel(n.role)} · ${clusterLabel(n.group, n.zone)} · ${n.status} · ${n.address}`,
+      value: `${roleLabel(t, n.role)} · ${clusterLabel(t, n.group, n.zone)} · ${n.status} · ${n.address}`,
     }
   })
 
@@ -92,6 +95,7 @@ function toOption(data: TopologyView): EChartsOption {
 }
 
 export default function TopologyGraph({ data }: { data: TopologyView }) {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<ECharts | null>(null)
 
@@ -111,8 +115,8 @@ export default function TopologyGraph({ data }: { data: TopologyView }) {
 
   // 数据变化时增量更新 option（notMerge=false 保留用户拖拽/缩放视角）。
   useEffect(() => {
-    chartRef.current?.setOption(toOption(data))
-  }, [data])
+    chartRef.current?.setOption(toOption(t, data))
+  }, [t, data])
 
   return <div ref={containerRef} className="h-[600px] w-full" />
 }
