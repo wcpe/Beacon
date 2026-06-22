@@ -97,6 +97,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 文件树托管（通道B）
 		r.Get("/files", h.File.List)
 		r.Post("/files", h.File.Create)
+		// 有效文件树只读预览（FR-45）：逐文件合并结果 + 逐键来源，静态路由置于 {id} 前以免被通配吞掉
+		r.Get("/files/effective", h.File.Effective)
 		// 配置导入（FR-38）：把一份目录批量上传到某组（multipart，静态路由置于 {id} 前以免被通配吞掉）
 		r.Post("/files/import", h.File.Import)
 		r.Get("/files/{id}", h.File.Get)

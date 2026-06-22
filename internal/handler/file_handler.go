@@ -326,6 +326,52 @@ func readMultipartFile(fh *multipart.FileHeader) (string, error) {
 	return string(data), nil
 }
 
+// effectiveFileView 是有效文件树中某文件的合并结果 + 逐文件/逐键来源（admin 只读预览，FR-45）。
+type effectiveFileView struct {
+	Path string `json:"path"`
+	MD5  string `json:"md5"`
+	// 合并后整文件内容（结构化深合并结果 / 整文件覆盖取 winner）
+	Content string `json:"content"`
+	// 是否整文件覆盖模式（非结构化 / 标 wholeFileOverride 豁免 / 坏内容回退）
+	WholeFile bool `json:"wholeFile"`
+	// 逐叶子键来源（结构化文件按键；整文件模式为单条空路径 = winner 层）
+	Sources []keyProvenanceView `json:"sources"`
+	// 被某层 null 减量删除且最终不存在的键（整文件模式恒空）
+	Deletions []keyProvenanceView `json:"deletions"`
+}
+
+// Effective 处理 GET /admin/v1/files/effective?namespace=&serverId=&group=&zone=。
+// 只读预览某目标合并后的有效文件树（逐文件合并结果 + 结构化文件逐键来源 / 整文件来源层 + 是否豁免整文件），
+// 与 agent 经 files/content 拿到的逐一致，但不挂长轮询、不强制注册（FR-45，沿用 FR-22/ADR-0013 模式）。
+func (h *FileHandler) Effective(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns := q.Get("namespace")
+	serverID := q.Get("serverId")
+	group := q.Get("group")
+	// 至少需要 namespace + (serverId 或 group) 才能定位覆盖链目标
+	if ns == "" || (serverID == "" && group == "") {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	tree, err := h.effSvc.ResolveWithProvenance(ns, serverID, group, q.Get("zone"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	files := make([]effectiveFileView, 0, len(tree.Files))
+	for _, f := range tree.Files {
+		files = append(files, effectiveFileView{
+			Path: f.Path, MD5: f.MD5, Content: f.Content, WholeFile: f.WholeFile,
+			Sources: toProvViews(f.Sources), Deletions: toProvViews(f.Deletions),
+		})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"namespace": tree.Namespace, "serverId": tree.ServerID,
+		"group": tree.Group, "zone": nilIfEmpty(tree.Zone),
+		"fileTreeMd5": tree.FileTreeMD5, "files": files,
+	})
+}
+
 // manifestEntryView 是 manifest 中单个文件的 path→md5 条目（不含内容）。
 type manifestEntryView struct {
 	Path string `json:"path"`

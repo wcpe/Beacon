@@ -133,6 +133,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 - agent 比对本地已落盘 manifest，仅取/删变更文件，镜像落盘到插件真实 dataFolder（原子写，见 §8）。
 - 解析逻辑落 `internal/filetree` 纯函数包（与 `merge` 平级、无副作用），便于穷举单测。
 
+**admin 有效文件树只读预览 + 逐文件/逐键来源（FR-45，沿用 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式）**：admin 侧新增只读端点 `GET /admin/v1/files/effective`（形参对齐通道A 的 `configs/effective`），预览某 `(namespace, serverId)` 合并后的有效文件树——逐文件给出合并 `content`/`md5` + **来源**：结构化非豁免文件按 `merge.MergeDataIDWithProvenance` 产出**逐叶子键最终来源层**（global/大区/小区/单服）与被高层 `null` 减量删除且最终不存在的键；非结构化/豁免/坏内容文件标 `wholeFile=true`、来源为**单条空路径 = winner 层**。provenance 走 `filetree.ResolveWithProvenance` **平行纯函数**（与 `Resolve` 同一套 per-path 分桶 + winner + 分流判定），**绝不改 `Resolve`/`merge` 这条 agent 下发热路径**；以「每个 path 的 `content`/`md5` 对任意候选集恒等于 `Resolve`」交叉测试钉死、防双实现漂移。端点**不挂长轮询、不强制注册**（同 FR-22 克制），作为后续 FR-46 审核台 diff「期望合并值」一侧的数据源。
+
 ## 6. 动态热更：REST 长轮询（"唤醒即重算比对"）
 
 无 Redis/MQ，纯进程内通知：

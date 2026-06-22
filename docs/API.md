@@ -252,6 +252,7 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/files?namespace=&group=&path=&scopeLevel=` | 列出文件对象 |
+| `GET /admin/v1/files/effective?namespace=&serverId=&group=&zone=` | 只读预览某目标合并后的有效文件树 + 逐文件/逐键来源（FR-45，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式扩展到 [ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 文件树合并） |
 | `GET /admin/v1/files/{id}` | 取当前整文件内容 + 元数据（含 `wholeFileOverride`，FR-44；List/Get 视图均回显） |
 | `POST /admin/v1/files` | 新建（首次发布）：`{ namespace, group, path, scopeLevel, scopeTarget, content, comment, wholeFileOverride? }`（`wholeFileOverride` 可选布尔，缺省 false；置真则该结构化文件强制整文件覆盖、不深合并，FR-44；operator 由认证态派生） |
 | `POST /admin/v1/files/import` | 配置导入（FR-38，`multipart/form-data`）：把一份目录批量上传到某组（`scope=group`）。字段 `namespace`、`group`、可选 `comment` + 多个 `files` 文件部件 + 与之等长一一对应的 `paths` 相对路径字段。每个文件按相对 path「存在则发布新版本、不存在则首发」（整文件覆盖语义），多文件在同一事务内原子落地，提交后唤醒文件长轮询，并记一条 `file.import` 审计。返回 `{ files, created, updated }`（operator 由认证态派生） |
@@ -262,6 +263,34 @@ data: {}
 | `POST /admin/v1/files/{id}/rollback` | 回滚：`{ toVersion, comment }`（operator 由认证态派生） |
 
 错误：文件不存在 `404 FILE_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 FILE_CONFLICT`；路径不合法（空 / 绝对路径 / 含 `..` 穿越 / 含反斜杠）`400 INVALID_PATH`（agent 自身目录 `BeaconAgent` / `BeaconAgentProxy` 顶段**不再拦截**、可托管，自我保护由 agent observe-only 兜底，见 [ADR-0028](adr/0028-allow-hosting-agent-self-dir.md)）；内容超长（> 1MB）`422 CONTENT_TOO_LARGE`；**结构化文件（yml/json）语法错误 `422 CONTENT_SCHEMA_INVALID`**（FR-44，Create/Publish/Import 发布前 `merge.Parse` 解析校验，拒坏内容入库）；覆盖层/目标键不合法 `400 INVALID_SCOPE`。导入（`/files/import`）另有：缺 `namespace`/`group`/文件，或 `paths` 与 `files` 数量不一致 `400 INVALID_PARAM`；目标组非法（如填全局组）`400 INVALID_SCOPE`；单次文件数超上限 `422 TOO_MANY_FILES`；单文件或累计总字节超上限 `422 CONTENT_TOO_LARGE`。
+
+`GET /admin/v1/files/effective`（FR-45，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式 + [ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 文件树合并）：只读预览某目标按覆盖链解析后的有效文件树，逐文件给出合并结果 + 来源，与 agent 经 `files/content` 拿到的逐一致，但**不挂长轮询、不强制注册**，可预览未注册/假定指派的目标。参数同 `configs/effective`：`namespace` 必填；`serverId` 与 `group` 至少给一个（给 `serverId` 时按 `zone_assignment` 解出 group/zone，未指派则用传入的 `group`/`zone`）。返回：
+
+```json
+{
+  "namespace": "prod", "serverId": "srv-031", "group": "cn-east", "zone": "z3",
+  "fileTreeMd5": "ab12cd34...",
+  "files": [
+    {
+      "path": "plugins/Demo/config.yml", "md5": "...", "content": "已合并的有效整文件文本",
+      "wholeFile": false,
+      "sources": [ { "path": ["server","max-players"], "scope": "global" }, { "path": ["view-distance"], "scope": "server" } ],
+      "deletions": [ { "path": ["whitelist"], "scope": "server" } ]
+    },
+    {
+      "path": "plugins/Demo/start.allin", "md5": "...", "content": "整文件取最高层的原文",
+      "wholeFile": true,
+      "sources": [ { "path": [], "scope": "server" } ],
+      "deletions": []
+    }
+  ]
+}
+```
+
+- `wholeFile`：`true` 表示该文件走整文件覆盖（非结构化后缀 / 标 `wholeFileOverride` 豁免 / 结构化内容解析失败回退），`content` 为覆盖链最高层那一整份；`false` 表示结构化按键深合并。
+- `sources`：结构化文件为每个叶子键的最终来源覆盖层（`global`/`group`/`zone`/`server`，`path` 为嵌套键路径，properties 扁平键即单段、可能含 `.`）；整文件模式为**单条空路径**来源（`path: []`），即整文件来自的 winner 层。
+- `deletions`：被某层写 `null` 减量删除、且最终确实不存在的键（整文件模式恒为空）。
+- 来源由服务端权威计算：`filetree.ResolveWithProvenance` 平行纯函数与 `Resolve`（下发口径）共用同一 per-path 分流判定、复用 `merge.MergeDataIDWithProvenance`，**不改 agent 下发热路径**；以「每个 `path` 的 `content`/`md5` 恒等于 `Resolve`」交叉测试防双实现漂移。
 
 ### 实例与健康
 | 端点 | 说明 |

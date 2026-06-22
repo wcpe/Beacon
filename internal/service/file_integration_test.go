@@ -24,6 +24,7 @@ type fileStack struct {
 	cfgEff    *service.EffectiveService
 	reg       *runtime.Registry
 	fileRepo  *repository.FileObjectRepository
+	assign    *repository.ZoneAssignmentRepository
 	auditRepo *repository.AuditLogRepository
 }
 
@@ -46,7 +47,7 @@ func newFileStack(t *testing.T) fileStack {
 	fileSvc.SetNotifier(notifier)
 	cfgSvc := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
 	cfgSvc.SetNotifier(notifier)
-	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg, fileRepo: fr, auditRepo: ar}
+	return fileStack{files: fileSvc, fileEff: fileEff, cfg: cfgSvc, cfgEff: cfgEff, reg: reg, fileRepo: fr, assign: asg, auditRepo: ar}
 }
 
 // registerS1 把 s1 注册进内存（供 group 反查唤醒）。

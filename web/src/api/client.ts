@@ -237,6 +237,41 @@ export function effectiveConfig(params: EffectiveConfigParams): Promise<Effectiv
   return request<EffectiveConfigView>(`/configs/effective${qs(params)}`)
 }
 
+// ===== 文件树有效预览（FR-45）=====
+
+// 有效文件树预览参数（与 configs/effective 同形参）
+export interface EffectiveFileParams {
+  namespace: string
+  serverId?: string
+  group?: string
+  zone?: string
+}
+
+// 单个有效文件（结构化文件按键来源；整文件模式 wholeFile=true、sources 为单条空路径=winner 层）
+// 对齐后端 internal/handler/file_handler.go effectiveFileView
+export interface EffectiveFileItem {
+  path: string
+  md5: string
+  content: string
+  wholeFile: boolean
+  sources: Array<{ path: string[]; scope: string }>
+  deletions: Array<{ path: string[]; scope: string }>
+}
+
+// 有效文件树预览返回体（每文件含合并结果 + 逐键/整文件来源）
+export interface EffectiveFileTreeView {
+  namespace: string
+  serverId?: string
+  group?: string
+  zone?: string | null
+  fileTreeMd5: string
+  files: EffectiveFileItem[]
+}
+
+export function effectiveFiles(params: EffectiveFileParams): Promise<EffectiveFileTreeView> {
+  return request<EffectiveFileTreeView>(`/files/effective${qs(params)}`)
+}
+
 // ===== 实例与健康 =====
 
 // 实例列表过滤条件

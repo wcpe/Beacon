@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/repository"
 	"github.com/wcpe/Beacon/internal/runtime/longpoll"
 )
@@ -87,6 +88,64 @@ func (s *FileEffectiveService) resolveLayers(ns, serverID, group, zone string) (
 	return FileTree{
 		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
 		FileTreeMD5: filetree.FileTreeMD5(filetree.Manifest(files)),
+		Files:       files,
+	}, nil
+}
+
+// EffectiveFileWithProvenance 是某文件的有效内容 + 逐文件/逐键来源（admin 只读预览用，FR-45）。
+type EffectiveFileWithProvenance struct {
+	Path      string
+	MD5       string
+	Content   string
+	WholeFile bool                  // 是否整文件覆盖模式（非结构化 / 豁免 / 坏内容回退）
+	Sources   []merge.KeyProvenance // 逐叶子键来源（整文件模式为单条空路径 = winner 层）
+	Deletions []merge.KeyProvenance // 被减量删除且最终不存在的键（整文件模式恒空）
+}
+
+// ProvenancedFileTree 是某目标的 admin 只读有效文件树预览结果（含逐文件/逐键来源）。
+type ProvenancedFileTree struct {
+	Namespace   string
+	ServerID    string
+	Group       string
+	Zone        string
+	FileTreeMD5 string
+	Files       []EffectiveFileWithProvenance
+}
+
+// ResolveWithProvenance 解析某目标的有效文件树并附逐文件/逐键来源（admin 只读预览，见 ADR-0013 模式扩展到 ADR-0029 文件树，FR-45）。
+// serverID 非空时优先按 zone_assignment 解出 (group,zone)；未指派则用传入的 groupHint/zoneHint。
+// 不挂长轮询、不强制注册（同 FR-22 的克制）；对同一解析出的 (group,zone)，每个 path 的合并内容/ md5 与 Resolve 一致
+// （provenance 经 filetree 平行纯函数计算，不改 agent 下发热路径 Resolve）。
+func (s *FileEffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHint string) (ProvenancedFileTree, error) {
+	group, zone := groupHint, zoneHint
+	if serverID != "" {
+		assign, err := s.assignRepo.FindByServer(ns, serverID)
+		if err != nil {
+			return ProvenancedFileTree{}, err
+		}
+		if assign != nil {
+			group, zone = assign.GroupCode, assign.ZoneCode
+		}
+	}
+
+	candidates, err := s.fileRepo.FindEffectiveCandidates(ns, group, zone, serverID)
+	if err != nil {
+		return ProvenancedFileTree{}, err
+	}
+	resolved := filetree.ResolveWithProvenance(candidates)
+
+	files := make([]EffectiveFileWithProvenance, 0, len(resolved))
+	pathToMD5 := make(map[string]string, len(resolved))
+	for _, f := range resolved {
+		files = append(files, EffectiveFileWithProvenance{
+			Path: f.Path, MD5: f.MD5, Content: f.Content, WholeFile: f.WholeFile,
+			Sources: f.Sources, Deletions: f.Deletions,
+		})
+		pathToMD5[f.Path] = f.MD5
+	}
+	return ProvenancedFileTree{
+		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
+		FileTreeMD5: filetree.FileTreeMD5(pathToMD5),
 		Files:       files,
 	}, nil
 }
