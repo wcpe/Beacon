@@ -24,10 +24,9 @@ import {
   zoneSummary,
 } from '../api/client'
 import type { AssignParams } from '../api/client'
-import type { InstanceView, ZoneStatView } from '../api/types'
+import type { InstanceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -46,6 +45,7 @@ import {
   noteForServer,
   type ZoneBucket,
 } from './zones/kanbanModel'
+import { buildSummaryTree } from './zones/summaryTree'
 import {
   encodeZoneDroppableId,
   resolveDragAction,
@@ -53,6 +53,7 @@ import {
 } from './zones/dragAction'
 import ServerCard from './zones/ServerCard'
 import DropBucket from './zones/DropBucket'
+import ZoneSummaryTree from './zones/ZoneSummaryTree'
 
 // 指派/汇总共用的过滤条件
 interface ZoneFilter {
@@ -63,14 +64,6 @@ interface ZoneFilter {
 
 // 新增 zone / 指派表单初值
 const EMPTY_FORM = { namespace: '', serverId: '', group: '', zone: '', note: '' }
-
-// zone 汇总列定义（无副作用，模块级）
-const SUMMARY_COLUMNS: DataTableColumn<ZoneStatView>[] = [
-  { header: '大区', cell: (s) => s.group },
-  { header: '小区', cell: (s) => s.zone },
-  { header: '服数', cell: (s) => s.serverCount },
-  { header: '在线数', cell: (s) => s.onlineCount },
-]
 
 export default function ZonesPage() {
   const qc = useQueryClient()
@@ -176,6 +169,12 @@ export default function ZonesPage() {
   const model = useMemo(
     () => buildKanbanModel(instances.data ?? [], summary.data ?? []),
     [instances.data, summary.data],
+  )
+
+  // 由 summary + 看板模型派生汇总树（大区→小区→子服；计数取自 summary，与原表口径一致，FR-55）
+  const summaryTreeModel = useMemo(
+    () => buildSummaryTree(summary.data ?? [], model),
+    [summary.data, model],
   )
 
   function onSearch(e: React.FormEvent) {
@@ -336,6 +335,20 @@ export default function ZonesPage() {
         </CardContent>
       </Card>
 
+      {/* zone 汇总树（大区→小区→子服）：上移至看板之上，替代原底部扁平表格（FR-55） */}
+      <Card>
+        <CardContent className="space-y-3">
+          <h2 className="text-base font-medium">zone 汇总</h2>
+          <AsyncSection
+            isLoading={summary.isLoading || instances.isLoading}
+            isError={summary.isError || instances.isError}
+            error={summary.error ?? instances.error}
+          >
+            <ZoneSummaryTree tree={summaryTreeModel} />
+          </AsyncSection>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardContent className="space-y-3">
           <div className="flex items-baseline justify-between">
@@ -396,20 +409,6 @@ export default function ZonesPage() {
                 {dragging ? <ServerCard instance={dragging} /> : null}
               </DragOverlay>
             </DndContext>
-          </AsyncSection>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardContent className="space-y-3">
-          <h2 className="text-base font-medium">zone 汇总</h2>
-          <AsyncSection isLoading={summary.isLoading} isError={summary.isError} error={summary.error}>
-            <DataTable
-              columns={SUMMARY_COLUMNS}
-              rows={summary.data}
-              rowKey={(s) => `${s.group}/${s.zone}`}
-              emptyText="无汇总数据"
-            />
           </AsyncSection>
         </CardContent>
       </Card>
