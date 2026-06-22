@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.9.0（2026-06-23）
+
 ### 变更
 - 文件树结构化深合并改无损（FR-57，增强 FR-44，[ADR-0034](docs/adr/0034-file-tree-lossless-merge.md) 取代 ADR-0029「值归一化可接受」一条，见 [docs/specs/file-tree-lossless-merge.md](docs/specs/file-tree-lossless-merge.md)）：通道B 多层结构化文件（`.yml`/`.yaml`/`.json`/`.properties`）的按键深合并此前复用配置中心 `merge.MergeDataID`，会 parse→reserialize **归一化叶子标量值并丢注释**（`007`→`7`、`1.10`→`1.1`、`2026-06-22`→时间戳、JSON 大整数失精度 `…678`→`…680`）——而通道B 托管的是第三方插件**死认文本**的磁盘配置，归一化是 bug。现改为**无损深合并**：`internal/merge` 新增 `MergeDataIDLossless`/`MergeDataIDLosslessWithProvenance`（**YAML 走 `yaml.v3` 的 `yaml.Node` 节点级递归合并、保叶子原文 token 与 Tag/Style 及头/行/脚注释；JSON 走 `json.Decoder`+`UseNumber()` 保大整数/浮点精度；properties 行式保 key 前置注释与原值文本**，不引新依赖），`internal/filetree` 的深合并分支（`Resolve` 与 `ResolveWithProvenance` 两处）改调无损版。**合并语义完全不变**（标量覆盖 / map 深合并 / list 整替 / 高层 `null` 删键 / 确定性键序与 md5 幂等，由「无损渲染再 parse 与 `MergeDataID` 类型模型逻辑相等」交叉测试钉死），**单层短路字节透传 / `wholeFileOverride` 豁免 / 坏内容回退整文件**三条不变（另：含锚点 / 别名 / `<<` 合并键的 YAML 走整文件回退最高层、不深合并，避免节点级合并产出悬空别名坏文件；properties 无删键、值 `null` 当普通字符串保留，均与有损语义对齐），`ResolveWithProvenance` 每文件 `content`/`md5` 仍与 `Resolve` 逐一致（FR-45 交叉测试守护）。**配置中心（通道A）维持 `MergeDataID` 有损不动**（类型化存储归一化可接受，且改它会让全集群配置首轮 md5 变→全量重拉，代价不可接受）。⚠️**升级 churn（一次性）**：多层结构化文件的合并后 md5 由有损渲染改为**无损渲染**（比 FR-44 又变一次），控制面升级后 agent 首轮一次性重取重写盘（内容更正确）；**单层文件 md5 不变**（仍字节透传）。
 
