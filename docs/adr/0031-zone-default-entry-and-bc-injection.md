@@ -32,12 +32,14 @@ BungeeCord 的「默认/fallback 服」不是某个 `ServerInfo` 的属性，而
 
 因此本决策**不**违反 ADR-0004（它约束的是「子服的 zone 归属不由 agent 声明」，而非「代理不能配置自己服务哪个 zone」）。
 
-### 4. fail-static 兜底：home-zone 未配 / 该 zone 暂无默认入口 / 默认入口暂不在线 → 取首个已注入在线 bukkit 作默认服
-保证「至少能进」是 P0 的硬要求。BC agent 选默认服的优先级（纯逻辑、可单测）：
-1. home-zone 已配 且 发现结果里有 `zoneDefaultEntry=true` 且命中 home-(group,zone) 的在线 bukkit → 选它；
-2. 否则取本代理本轮已注入的**第一个在线 bukkit**（确定性顺序）；
-3. 一个都没有 → 不设默认服（不抛、等下一轮）。
-默认入口指向的服掉线后不在发现集合（只返回 online+degraded），下一轮 sync 自动改兜底，不长期卡死不可达默认服。
+### 4. 未配 / 无命中 / 默认入口不在线 → 不设任何默认服 + 一条 WARN，绝不静默落任意服
+BC **只**把「该 home-zone 在 Beacon 显式配置的默认入口 serverId」设为 BungeeCord 默认服。BC agent 选默认服的纯逻辑（可单测）：
+1. home-zone 已配（`proxy.home-group` + `proxy.home-zone` 均非空）且 发现结果里有 `zoneDefaultEntry=true`、命中 home-(group,zone)、且在线的 bukkit → 选它；
+2. 否则（home-zone 未配 / 该 zone 在 Beacon 未设默认入口 / 默认入口当前不在线或未注入）→ **不设任何默认服**，并打一条带 group/zone 上下文的中文 WARN（去重、不每轮刷屏，明确告知运维去 Beacon 配默认入口）。
+
+**不回退到任意在线 bukkit**：原方案在选不出时兜底「取首个在线 bukkit」，但这会把玩家**静默**落到一台非大厅服、跳过大厅，造成风险（玩家被丢到错误服而无任何信号）。改为不设默认服后，玩家遇到的是 BungeeCord 原生「无默认服」拒绝——这是「没配」的**明确信号**，运维据 WARN 去 Beacon 配置即可，玩家**绝不被丢到错误服**。WARN 在既有 directory sync async 循环里打（经 `ProxyServerDirectory` 注入的日志门面），不在 MC 主线程阻塞。
+
+默认入口指向的服掉线后不在发现集合（只返回 online+degraded），下一轮 sync 选不出 → 回到「不设 + WARN」，不长期卡死在不可达默认服、也不静默改落别的服。
 
 ### 5. agent 设默认服 = 把 serverId 置于每个监听器 `server-priority` 列表首位（幂等、去重、非反射）
 BungeeCord 公开 API `ProxyServer.getInstance().getConfig().getListeners()` → `ListenerInfo.getServerPriority()` 返回可变 `List<String>`（其内容即 BungeeCord 自身 join 落点解析读取的列表）。agent 把默认服 serverId 去重后置列表首位即把它变成默认/fallback——**用公开 API、不碰非公开实现 jar、不反射**（与 [ADR-0025](0025-bc-proxy-metrics-and-netty-traffic.md) 拒绝脆弱反射一脉相承）。设默认服与注入子服 `ServerInfo` 配套（serverId 必须已在 `servers` 中才有效）。每次设默认服打 INFO 中文日志可观测。
@@ -48,13 +50,14 @@ BungeeCord 公开 API `ProxyServer.getInstance().getConfig().getListeners()` →
 - **默认入口是事实不是逻辑**：「这个 zone 的默认落点是哪台服」是运维指定的拓扑分配陈述，和 zone 归属同类，落 DB 权威不越「只存事实」边界；控制面不据它做任何玩家连接决策（连接是 BungeeCord 自己按 priority 做的）。
 - **复用既有发现通道**：默认入口标志搭既有 discovery / instances 视图下发，不新增 agent 端点、不新增推送通道；BC 既有 directory sync async 循环顺带设默认服，零额外线程、不上主线程。
 - **home-zone 配置而非 DB 指派**：BC 无 zone 归属（FR-8/FR-35），强行给 BC 建一张「BC→zone」表既越 zone 禁 BC 边界、又把代理路由意图混进集群拓扑权威；用 BC 自身数据面配置最简、最贴合 BungeeCord 既有配置模型。
-- **兜底先行**：即便 home-zone / 默认入口都没配，兜底首个在线 bukkit 直接修住 P0，默认入口是「指定稳定落点」的增强而非「能不能进」的前提。
+- **宁可不设也不静默落错**：默认入口是「玩家落到哪台大厅」的运维显式决策。选不出时回退到任意在线 bukkit 看似「修住 P0」，实则把玩家**静默**送进非大厅服、跳过大厅，是更隐蔽的事故（玩家与运维都收不到信号）。改为不设默认服 + WARN：玩家遇 BungeeCord 原生「无默认服」拒绝（明确信号），运维据 WARN 去配，落点始终由运维显式决定、绝不漂移到错误服。
 
 ## 后果
 - 新增表 `zone_default_entry`（DB 真源，与 `zone_assignment` 同类、可移植）；`AutoMigrate` 加表。
 - discovery / instances 实例视图新增 `zoneDefaultEntry` 字段（bukkit 命中 zone 默认入口为 true，其余 false；bungee 恒 false）；向后兼容（旧 agent 忽略未知字段）。
 - `agent-api` `ServiceInstance` 加 `zoneDefaultEntry` 字段（缺键解析 false，向后兼容）。
-- BC agent `config.yml` 新增 `proxy.home-group` / `proxy.home-zone`（默认空 = 走兜底）。
+- BC agent `config.yml` 新增 `proxy.home-group` / `proxy.home-zone`（默认空 = 未配 → 不设默认服 + WARN）。
+- 未配 / 无命中 / 默认入口不在线时 BC **不设默认服**，玩家加入会遇 BungeeCord 原生「无默认服」拒绝——这是「没配」的预期信号（不是回退故障），需运维据 WARN 在 Beacon 为该小区配默认入口后自愈。
 - BC agent 会修改运行期监听器 `server-priority` 列表（仅置首位、幂等去重，不删运维原有条目），属预期的运行期行为；agent 卸载不还原列表（下次启动 BungeeCord 重读 config.yml 自然复位）。
 - 单层假设：本 ADR 不处理嵌套 BC（BC→BC→bukkit），由 [FR-56](../PRD.md) 后续扩展。
 
@@ -63,4 +66,5 @@ BungeeCord 公开 API `ProxyServer.getInstance().getConfig().getListeners()` →
 - **默认入口落 `runtime.Instance` 内存事实、随注册下发**：默认入口是 DB 权威的运维分配、非注册态派生事实，落内存要额外同步逻辑且与真源切分相悖（[ADR-0024](0024-bc-backend-membership-as-fact.md) 同款理由）。落选（渲染时读 DB 标记即可）。
 - **控制面直接算「每台 BC 该用哪个默认服」并下发给具体 BC**：要求控制面知道每台 BC 服务哪个 zone（即 BC→zone 归属），回到被否的备选 1，且让控制面替代理做路由决策、越「只存事实」边界。落选。
 - **agent 用反射改 BungeeCord 内部默认服字段**：`server-priority` 公开可变、无需反射；反射脆弱、跨版本易碎（[ADR-0025](0025-bc-proxy-metrics-and-netty-traffic.md) 已立此原则）。落选。
-- **不做默认入口、只兜底首个在线 bukkit**：能修 P0 但落点随发现顺序漂移、运维不可控（重启 / 扩容后默认服可能跳到别的服）。落选（默认入口给运维稳定可指定的落点，兜底仅作 fail-static）。
+- **不做默认入口、只取首个在线 bukkit 作默认服**：落点随发现顺序漂移、运维不可控（重启 / 扩容后默认服可能跳到别的服），更严重的是会把玩家**静默**落到非大厅服、跳过大厅。落选（默认入口给运维稳定可指定的落点；选不出时宁可不设 + WARN，绝不静默落错）。
+- **选不出时兜底取首个在线 bukkit（fail-static）**：曾作为本 FR 初版方案，被否。「至少能进」不等于「进对地方」——把玩家丢进随机非大厅服比直接拒绝更隐蔽、更难排查，且违背「默认入口=运维显式决策」的初衷。落选（改为不设 + 一条去重 WARN，让运维收到明确信号去配）。

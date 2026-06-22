@@ -355,7 +355,7 @@ data: {}
 
 校验：`defaultServerId` 必须是当前已指派到该 `(group, zone)` 的 serverId，否则 `400 DEFAULT_ENTRY_SERVER_NOT_IN_ZONE`；清除时该小区无默认入口返回 `404 DEFAULT_ENTRY_NOT_FOUND`。写端点 readonly 角色经 `readonlyWriteGuard` 一律 403。审计动作 `zone.set-default-entry` / `zone.clear-default-entry`。
 
-下发：发现（`GET /beacon/v1/agent/discovery`）与实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）的每个 bukkit 实例新增布尔字段 `zoneDefaultEntry`（被指定为其小区默认入口为 true，其余 false；bungee 恒 false；旧 agent 忽略未知字段，向后兼容）。BC agent 用自身 `config.yml` 的 `proxy.home-group` / `proxy.home-zone`（数据面路由配置，非 zone 归属声明）挑出命中 home-zone 的默认入口设默认服；未配或暂无命中时兜底取首个在线 bukkit。
+下发：发现（`GET /beacon/v1/agent/discovery`）与实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）的每个 bukkit 实例新增布尔字段 `zoneDefaultEntry`（被指定为其小区默认入口为 true，其余 false；bungee 恒 false；旧 agent 忽略未知字段，向后兼容）。BC agent 用自身 `config.yml` 的 `proxy.home-group` / `proxy.home-zone`（数据面路由配置，非 zone 归属声明）挑出命中 home-zone 的在线默认入口设默认服；未配 / 该 zone 未设默认入口 / 默认入口不在线时**不设任何默认服 + 打一条 WARN**，绝不回退到任意在线 bukkit（避免静默把玩家落到非大厅服）。
 
 ### 流量调度（FR-10）
 
