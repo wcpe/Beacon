@@ -13,6 +13,7 @@ const NAV_ITEMS: Array<{ to: string; label: string }> = [
   { to: '/dashboard', label: '可观测看板' },
   { to: '/configs', label: '配置中心' },
   { to: '/file-preview', label: '文件树预览' },
+  { to: '/imprint', label: '拓印审核台' },
   { to: '/instances', label: '实例与健康' },
   { to: '/topology', label: '集群拓扑' },
   { to: '/zones', label: 'zone 分配' },

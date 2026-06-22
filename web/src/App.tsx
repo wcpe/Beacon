@@ -9,6 +9,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import ConfigsPage from './pages/ConfigsPage'
 import FilePreviewPage from './pages/FilePreviewPage'
+import ImprintPage from './pages/ImprintPage'
 import InstancesPage from './pages/InstancesPage'
 import TopologyPage from './pages/TopologyPage'
 import ZonesPage from './pages/ZonesPage'
@@ -40,6 +41,8 @@ export default function App() {
           <Route path="configs/:id" element={<Navigate to="/configs" replace />} />
           {/* 文件树有效预览（FR-45）：只读预览某服合并后文件树 + 逐键来源 */}
           <Route path="file-preview" element={<FilePreviewPage />} />
+          {/* 拓印审核台（FR-46）：选在线服+文件 → diff → 单人自审 → 同步 */}
+          <Route path="imprint" element={<ImprintPage />} />
           {/* 文件树托管 / 覆盖集已下线，重定向到配置中心 */}
           <Route path="files" element={<Navigate to="/configs" replace />} />
           <Route path="files/:id" element={<Navigate to="/configs" replace />} />

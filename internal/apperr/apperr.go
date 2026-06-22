@@ -61,6 +61,10 @@ var (
 	ErrTooManyFiles = New(http.StatusUnprocessableEntity, "TOO_MANY_FILES", "单次导入文件数超出上限")
 	// ErrCommandNotFound agent 命令不存在或已不可回传（过期 / 已完成 / 状态不符，FR-39）。
 	ErrCommandNotFound = New(http.StatusNotFound, "COMMAND_NOT_FOUND", "命令不存在或已失效")
+	// ErrImprintNotReady 拓印命令非 ready 态，不可 diff / confirm（FR-46）。
+	ErrImprintNotReady = New(http.StatusConflict, "IMPRINT_NOT_READY", "拓印命令未就绪")
+	// ErrImprintReviewMismatch 拓印确认自审 md5 与已抓取内容不符（强制看过 diff，FR-46）。
+	ErrImprintReviewMismatch = New(http.StatusPreconditionFailed, "IMPRINT_REVIEW_MISMATCH", "拓印自审内容已变更，请重新查看 diff")
 
 	// ErrOverrideSetNotFound 覆盖集不存在（FR-15）。
 	ErrOverrideSetNotFound = New(http.StatusNotFound, "OVERRIDE_SET_NOT_FOUND", "覆盖集不存在")
@@ -89,6 +93,8 @@ var (
 	ErrNotRegistered = New(http.StatusNotFound, "NOT_REGISTERED", "实例未注册")
 	// ErrStreamingUnsupported 当前 ResponseWriter 不支持流式刷写（无 http.Flusher），无法承载 SSE 推送。
 	ErrStreamingUnsupported = New(http.StatusInternalServerError, "STREAMING_UNSUPPORTED", "服务端不支持流式推送")
+	// ErrInternal 服务端内部错误（依赖未装配等编程/装配错误的兜底）。
+	ErrInternal = New(http.StatusInternalServerError, "INTERNAL", "服务端内部错误")
 	// ErrInstanceNotFound 实例不存在。
 	ErrInstanceNotFound = New(http.StatusNotFound, "INSTANCE_NOT_FOUND", "实例不存在")
 	// ErrAssignmentNotFound zone 指派不存在。

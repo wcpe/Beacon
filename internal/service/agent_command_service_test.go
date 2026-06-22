@@ -13,7 +13,8 @@ import (
 	"github.com/wcpe/Beacon/internal/repository"
 )
 
-// newCommandSvcTestDB 打开内存 sqlite 并迁移命令 + 文件树 + 审计表（不依赖 MySQL/DSN）。
+// newCommandSvcTestDB 打开内存 sqlite 并迁移命令 + 文件树 + zone 指派 + 审计表（不依赖 MySQL/DSN）。
+// zone_assignment 供 FR-46 拓印 diff 经 FileEffectiveService 解期望合并值用（按拓印源 server 的 zone 归属解析）。
 func newCommandSvcTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
@@ -22,7 +23,7 @@ func newCommandSvcTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.AgentCommand{}, &model.FileObject{}, &model.FileRevision{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentCommand{}, &model.FileObject{}, &model.FileRevision{}, &model.ZoneAssignment{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -30,7 +31,7 @@ func newCommandSvcTestDB(t *testing.T) *gorm.DB {
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"agent_command", "file_object", "file_revision", "audit_log"} {
+	for _, tbl := range []string{"agent_command", "file_object", "file_revision", "zone_assignment", "audit_log"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}

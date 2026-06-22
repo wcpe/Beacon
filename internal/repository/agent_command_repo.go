@@ -73,12 +73,41 @@ func (r *AgentCommandRepository) UpdateStatus(id uint, expect, next, result stri
 	return res.RowsAffected > 0, nil
 }
 
-// ExpireStale 把创建早于 before、仍处 pending/fetched 的命令标 expired（超时清理）；返回受影响条数。
+// UpdateImprintReady 把命令从 fetched CAS 迁移 ready 并转存拓印内容（FR-46）：仅当当前 status=fetched 才迁移。
+// content 即目标文件磁盘原文（瞬态，待确认 / 失败 / 过期清空）。返回是否命中（前态不符 / 不存在则 false）。
+func (r *AgentCommandRepository) UpdateImprintReady(id uint, content string) (bool, error) {
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
+		Updates(map[string]any{"status": model.CommandStatusReady, "imprint_content": content})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// UpdateStatusClearImprint 按期望前态做状态迁移并清空拓印瞬态内容（FR-46 确认落库后）：仅当 status=expect 才迁移。
+// result 为结果摘要（无敏感内容），空则不动该列。返回是否命中。
+func (r *AgentCommandRepository) UpdateStatusClearImprint(id uint, expect, next, result string) (bool, error) {
+	updates := map[string]any{"status": next, "imprint_content": ""}
+	if result != "" {
+		updates["result_detail"] = result
+	}
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("id = ? AND status = ?", id, expect).
+		Updates(updates)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// ExpireStale 把创建早于 before、仍处 pending/fetched/ready 的命令标 expired（超时清理）；返回受影响条数。
+// ready（FR-46 拓印已抓取未确认）一并过期并清空瞬态拓印内容，避免未确认的磁盘原文长期滞留。
 func (r *AgentCommandRepository) ExpireStale(before time.Time) (int64, error) {
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("status IN ? AND created_at < ?",
-			[]string{model.CommandStatusPending, model.CommandStatusFetched}, before).
-		Update("status", model.CommandStatusExpired)
+			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}, before).
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": ""})
 	if res.Error != nil {
 		return 0, res.Error
 	}

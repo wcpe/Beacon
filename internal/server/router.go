@@ -128,6 +128,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Delete("/instances/{serverId}/offline", h.Instance.Online)
 		// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：触发对该实例抓取 plugins 入库（写操作，readonly 403）
 		r.Post("/instances/{serverId}/reverse-fetch", h.Command.ReverseFetch)
+		// 按需拓印回写（FR-46）：触发拓印某文件（写）→ diff 本地实际值⟷期望合并值（读）→ 单人自审确认落库（写，readonly 403）
+		r.Post("/instances/{serverId}/imprint", h.Command.Imprint)
+		r.Get("/imprints/{commandId}", h.Command.ImprintStatus)
+		r.Get("/imprints/{commandId}/diff", h.Command.ImprintDiff)
+		r.Post("/imprints/{commandId}/confirm", h.Command.ConfirmImprint)
 
 		// 集群拓扑（FR-37）：bc→bukkit 真实连线 + 大区/zone 分组，读内存注册表快照
 		r.Get("/topology", h.Topology.Topology)

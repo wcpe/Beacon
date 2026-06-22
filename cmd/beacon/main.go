@@ -240,6 +240,8 @@ func run() error {
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileService, auditRepo)
 	commandService.SetNotifier(notifier)
+	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
+	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
 
 	// git 单向导出镜像（FR-47，见 ADR-0030）：发布 / 回滚 / 改派提交后异步 best-effort 把源层导出 commit。

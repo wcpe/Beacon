@@ -12,6 +12,9 @@ import type {
   DiffView,
   FileRevisionView,
   FileView,
+  ImprintConfirmView,
+  ImprintDiffView,
+  ImprintScope,
   InstanceView,
   LoginResult,
   NamespaceView,
@@ -636,6 +639,64 @@ export function triggerReverseFetch(
       body: JSON.stringify(params),
     },
   )
+}
+
+// ===== 按需拓印回写 + 审核台（FR-46）=====
+
+// 触发对某在线实例某文件的按需拓印：命令该 agent 读其真实 plugins/ 树回传，
+// 控制面取该 path 的磁盘当前内容转存待审（不落库），返回创建的 pending 命令。
+// namespace 走查询参数（同 triggerReverseFetch）；写操作需 full 角色（readonly → 403）。
+export function triggerImprint(
+  serverId: string,
+  namespace: string,
+  params: { path: string },
+): Promise<AgentCommandView> {
+  return request<AgentCommandView>(
+    `/instances/${encodeURIComponent(serverId)}/imprint${qs({ namespace })}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+// 拉拓印命令状态（供前端轮询至 ready）：仅命令状态，不含瞬态磁盘内容。
+export function imprintStatus(commandId: number): Promise<AgentCommandView> {
+  return request<AgentCommandView>(`/imprints/${commandId}`)
+}
+
+// 拓印 diff 查询参数：并入层选择（解期望合并值的视角）。
+export interface ImprintDiffParams {
+  scope: ImprintScope
+  group?: string
+  zone?: string
+  target?: string
+}
+
+// 拉拓印 diff：命令须 ready；返回本地实际值 ⟷ 按并入层视角解出的期望合并值（含逐键来源）。
+export function imprintDiff(commandId: number, params: ImprintDiffParams): Promise<ImprintDiffView> {
+  return request<ImprintDiffView>(`/imprints/${commandId}/diff${qs(params)}`)
+}
+
+// 拓印确认落库参数：并入层 + 目标键 + 自审 md5（须等于 diff 返回的 actualMd5）。
+export interface ConfirmImprintParams {
+  scope: ImprintScope
+  group?: string
+  zone?: string
+  target?: string
+  reviewedMd5: string
+}
+
+// 确认拓印落库：单人自审门（reviewedMd5 不匹配 → 412）；通过后落该层文件覆盖、命令转 done。
+// 写操作需 full 角色（readonly → 403）。
+export function confirmImprint(
+  commandId: number,
+  params: ConfirmImprintParams,
+): Promise<ImprintConfirmView> {
+  return request<ImprintConfirmView>(`/imprints/${commandId}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
 }
 
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====

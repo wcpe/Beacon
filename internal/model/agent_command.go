@@ -20,6 +20,10 @@ type AgentCommand struct {
 	Status string `gorm:"column:status;size:16;not null;index:idx_agent_command_lookup,priority:3"`
 	// 结果摘要（失败原因 / 入库文件数等）；**绝不含敏感文件内容**
 	ResultDetail string `gorm:"column:result_detail;type:text"`
+	// 拓印转存内容（FR-46，瞬态）：mode=imprint 回传后转存的**单个目标文件磁盘原文**，仅供审核 diff 与确认落库；
+	// 确认 / 失败 / 过期后即清空。与 ResultDetail（结果摘要、绝不含内容）分立——这是受控瞬态审核暂存，
+	// 持有一个文件、生命周期到确认即止，比 FR-39 永久落整棵树暴露更少；不入审计 detail、不导出 git。
+	ImprintContent string `gorm:"column:imprint_content;type:text"`
 	// 触发操作者（admin 认证身份，非手填）
 	Operator string `gorm:"column:operator;size:128;not null"`
 	// 创建时间（UTC）

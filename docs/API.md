@@ -306,6 +306,22 @@ data: {}
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
+### 按需拓印回写（FR-46）
+
+把 FR-39 反向抓取升级为「diff + 单人自审 + 同步」审核台：拓印某在线服某文件的**磁盘当前内容**（事实），与**期望合并值**（FR-45 解析）做 diff，admin 选并入层 + 过单人自审门后落为该层文件覆盖。复用 FR-39 命令通道与 agent 既有能力（**agent 零改动**，仍读整棵 `plugins/` 树回传，落库 vs 转存待审由载荷 `mode` 区分），沿用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)/[ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)/[ADR-0029](adr/0029-file-tree-structured-deep-merge.md)，未引入新 ADR。
+
+| 端点 | 说明 |
+|---|---|
+| `POST /admin/v1/instances/{serverId}/imprint?namespace=` | 触发对该**在线实例**某文件的按需拓印（写操作 readonly→403）。body `{path}`（目标文件相对 `plugins/` 的 path）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 建 `mode=imprint` 的 `pending` 命令 + `file.imprint-fetch` 审计 → 经 SSE `command-pending` 唤醒该 agent。agent 仍拉 `ingest-plugins`、读整棵 `plugins/` 树回传 `/files/ingest`；控制面收到 `mode=imprint` 回传时**不 ingest 落库**，而是同口径再校验后从回传树取该 `path` 的磁盘原文**转存命令瞬态列**、命令转 `ready`（指定 path 不在回传树中→命令 `failed`）。返回 `202` + 命令视图 `{id,namespace,serverId,type,status,createdAt,updatedAt}` |
+| `GET /admin/v1/imprints/{commandId}` | 取拓印命令状态视图（供前端轮询至 `ready`）；仅命令状态、不含瞬态磁盘内容。命令非 imprint 模式或不存在→`404 COMMAND_NOT_FOUND` |
+| `GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=&target=` | 取拓印 diff：命令须 `ready`（否则 `409 IMPRINT_NOT_READY`）。返回 `{path, actualContent, actualMd5, expectedContent, expectedMd5, expectedWholeFile, expectedSources, expectedDeletions, differs}`——`actual*` 为拓印源磁盘当前内容（命令转存）+ md5（确认时回带作自审凭据）；`expected*` 为按所选并入层视角（`scope`/`group`/`zone`/`target`）解出的该 path 覆盖链合并值 + 逐键/整文件来源（复用 FR-45 `ResolveWithProvenance`，期望侧无该文件时 `expectedContent` 为空、`differs=true`）。`scope=global` 不带 group hint，`scope=zone` 带 `group`+`zone`，`scope=server` 带 `group`+`target`=目标 serverId |
+| `POST /admin/v1/imprints/{commandId}/confirm` | 确认拓印落库（写操作 readonly→403）。body `{scope,group,zone,target,reviewedMd5}`。**单人自审门**：`reviewedMd5` 须等于命令转存内容 md5（看过 diff 才拿得到该值；盲确认→`412 IMPRINT_REVIEW_MISMATCH`，不落库、命令仍 `ready` 可重确认）。命令须 `ready`（否则 `409 IMPRINT_NOT_READY`）。通过后复用 `FileService.Create`（该层 path 首次）/`Publish`（已存在则发新版本）落为**该层整文件覆盖**（事务由 FileService 内部保证）、写 `file.imprint` 审计、命令转 `done` 并清空瞬态内容 → 走通道B 既有长轮询 / SSE 正常下发（控制面零新增下发路径）。返回 `200` + `{fileId,scopeLevel,group,target,version,md5}` |
+
+- 审计：触发记 `file.imprint-fetch`、确认落库记 `file.imprint`（operator / 目标层 / path / md5，**detail 均不含文件内容**，沿 ADR-0027 决策7）。
+- 边界：不做全自动 / 后台双向同步（改动必经控制面人确认）；不引入多人审批 / 变更请求实体（单人自审门即可）；不抓运行时数据文件（沿 FR-39 限 `plugins/` + 排除 `.jar`/二进制 + 上限 + 双校验）。瞬态拓印内容确认 / 失败 / 过期即清。
+
+错误：命令不存在或非 imprint 模式 `404 COMMAND_NOT_FOUND`；命令未就绪 `409 IMPRINT_NOT_READY`；自审 md5 不符 `412 IMPRINT_REVIEW_MISMATCH`；目标不在线 `404 INSTANCE_NOT_FOUND`。
+
 ### 集群拓扑（FR-37）
 | 端点 | 说明 |
 |---|---|

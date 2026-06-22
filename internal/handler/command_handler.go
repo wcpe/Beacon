@@ -3,12 +3,14 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/render"
 	"github.com/wcpe/Beacon/internal/service"
@@ -83,6 +85,135 @@ func (h *CommandHandler) ReverseFetch(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
 }
 
+// imprintRequest 是 admin 触发按需拓印的请求体（FR-46）：仅需目标文件相对 path；
+// namespace 走查询参数（与 /instances/{serverId} 其他端点一致），落层在确认时再选。
+type imprintRequest struct {
+	Path string `json:"path"`
+}
+
+// Imprint 处理 POST /admin/v1/instances/{serverId}/imprint?namespace=（FR-46）：
+// 先校验目标在线（离线 agent 收不到命令），再建 mode=imprint 的 pending 命令 + 唤醒 agent + 审计。
+// agent 仍读整棵 plugins 树回传，控制面收到后取该 path 转存待审（不落库）。返回已创建命令（202）。
+func (h *CommandHandler) Imprint(w http.ResponseWriter, r *http.Request) {
+	serverID := chi.URLParam(r, "serverId")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	var req imprintRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	// 校验目标在线：不在注册表即 INSTANCE_NOT_FOUND，不建命令。
+	if _, err := h.instSvc.Get(ns, serverID); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	cmd, err := h.svc.RequestImprint(ns, serverID, req.Path, auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
+}
+
+// ImprintStatus 处理 GET /admin/v1/imprints/{commandId}（FR-46）：返回拓印命令状态视图（供前端轮询至 ready）。
+// 仅命令状态，不含瞬态磁盘内容；命令非 imprint 模式或不存在 → 404。
+func (h *CommandHandler) ImprintStatus(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "commandId")
+	if !ok {
+		return
+	}
+	cmd, err := h.svc.GetImprintCommand(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, toCommandView(cmd))
+}
+
+// imprintDiffView 是拓印 diff 对外视图（FR-46）：本地实际值 ⟷ 期望合并值 + 逐键来源 + 是否有差异。
+type imprintDiffView struct {
+	Path              string                `json:"path"`
+	ActualContent     string                `json:"actualContent"`
+	ActualMD5         string                `json:"actualMd5"`
+	ExpectedContent   string                `json:"expectedContent"`
+	ExpectedMD5       string                `json:"expectedMd5"`
+	ExpectedWholeFile bool                  `json:"expectedWholeFile"`
+	ExpectedSources   []merge.KeyProvenance `json:"expectedSources"`
+	ExpectedDeletions []merge.KeyProvenance `json:"expectedDeletions"`
+	Differs           bool                  `json:"differs"`
+}
+
+// ImprintDiff 处理 GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=&target=（FR-46）：
+// 命令须 ready 且 imprint 模式；返回本地实际内容（命令转存）与按并入层视角解出的期望合并值（复用 FR-45）。
+func (h *CommandHandler) ImprintDiff(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "commandId")
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	res, err := h.svc.ImprintDiff(id, q.Get("scope"), q.Get("group"), q.Get("zone"), q.Get("target"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, imprintDiffView{
+		Path:          res.Path,
+		ActualContent: res.ActualContent, ActualMD5: res.ActualMD5,
+		ExpectedContent: res.ExpectedContent, ExpectedMD5: res.ExpectedMD5,
+		ExpectedWholeFile: res.ExpectedWholeFile,
+		ExpectedSources:   res.ExpectedSources, ExpectedDeletions: res.ExpectedDeletions,
+		Differs: res.Differs,
+	})
+}
+
+// confirmImprintRequest 是拓印确认落库请求体（FR-46）：并入层 + 目标键 + 自审 md5。
+type confirmImprintRequest struct {
+	Scope       string `json:"scope"`
+	Group       string `json:"group"`
+	Zone        string `json:"zone"`
+	Target      string `json:"target"`
+	ReviewedMD5 string `json:"reviewedMd5"`
+}
+
+// imprintConfirmView 是拓印确认落库结果视图（落到哪层 / 版本 / md5）。
+type imprintConfirmView struct {
+	FileID     uint   `json:"fileId"`
+	ScopeLevel string `json:"scopeLevel"`
+	Group      string `json:"group"`
+	Target     string `json:"target"`
+	Version    int64  `json:"version"`
+	MD5        string `json:"md5"`
+}
+
+// ConfirmImprint 处理 POST /admin/v1/imprints/{commandId}/confirm（FR-46）：
+// 命令须 ready 且 imprint 模式；单人自审门——reviewedMd5 须等于命令转存内容 md5（看过 diff），否则 412。
+// 通过后复用 FileService.Create/Publish 落该层覆盖，命令转 done、清空瞬态。返回落库结果（200）。
+func (h *CommandHandler) ConfirmImprint(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "commandId")
+	if !ok {
+		return
+	}
+	var req confirmImprintRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	res, err := h.svc.ConfirmImprint(id, req.Scope, req.Group, req.Zone, req.Target, req.ReviewedMD5,
+		auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, imprintConfirmView{
+		FileID: res.FileID, ScopeLevel: res.ScopeLevel, Group: res.Group,
+		Target: res.Target, Version: res.Version, MD5: res.MD5,
+	})
+}
+
 // agentCommandResponse 是 agent 拉待办命令的响应（含执行参考载荷；ingest 落点由控制面 ReceiveIngest 据库内载荷定）。
 type agentCommandResponse struct {
 	ID      uint              `json:"id"`
@@ -143,4 +274,15 @@ func (h *CommandHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"created": res.Created, "updated": res.Updated})
+}
+
+// parseUintParam 解析指定名的无符号整型路由参数；非法即写 INVALID_PARAM 并返回 ok=false。
+// 与 parseID（仅 {id}）平行——拓印端点用 {commandId} 以免与文件 {id} 路由相撞。
+func parseUintParam(w http.ResponseWriter, r *http.Request, name string) (uint, bool) {
+	n, err := strconv.ParseUint(chi.URLParam(r, name), 10, 64)
+	if err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return 0, false
+	}
+	return uint(n), true
 }

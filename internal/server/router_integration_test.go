@@ -85,6 +85,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// 反向抓取命令通道（FR-39）：命令仓库 + 服务（复用 fileSvc.Import 落组/实例覆盖）+ 处理器（校验目标在线）。
 	commandService := service.NewAgentCommandService(db, repository.NewAgentCommandRepository(db), fileSvc, auditRepo)
 	commandService.SetNotifier(notifier)
+	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
+	commandService.SetFileEffectiveService(fileEffSvc)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)

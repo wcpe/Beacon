@@ -18,11 +18,16 @@ import (
 const reverseFetchComment = "在线实例反向抓取"
 
 // ingestPayload 是 ingest-plugins 命令的载荷（落 agent_command.payload JSON）。
-// 落 group 或 server 覆盖层：group 层只需 Group；server 层需 Group + Target（目标 serverId）。
+// FR-39 落库：落 group 或 server 覆盖层（group 层只需 Group；server 层需 Group + Target）。
+// FR-46 拓印：Mode=imprint + Path（目标文件相对 path）；回传后取该 path 转存待审，不落库（落层由确认时再选）。
 type ingestPayload struct {
-	Scope  string `json:"scope"`
-	Group  string `json:"group"`
+	Scope  string `json:"scope,omitempty"`
+	Group  string `json:"group,omitempty"`
 	Target string `json:"target,omitempty"`
+	// 模式（FR-46）：空 / land = 直接落库（FR-39）；imprint = 拓印转存待审。
+	Mode string `json:"mode,omitempty"`
+	// 拓印目标文件相对 path（FR-46，仅 imprint 模式）。
+	Path string `json:"path,omitempty"`
 }
 
 // CommandNotifier 是命令待办唤醒的窄接口（由 ChangeNotifier 实现，可选注入；
@@ -41,6 +46,8 @@ type AgentCommandService struct {
 	fileSvc   *FileService
 	auditRepo *repository.AuditLogRepository
 	notifier  CommandNotifier
+	// 拓印 diff 解期望合并值用（FR-46，可选注入；未注入则 ImprintDiff/ConfirmImprint 不可用）。
+	effSvc *FileEffectiveService
 }
 
 // NewAgentCommandService 构造服务。
@@ -50,6 +57,9 @@ func NewAgentCommandService(db *gorm.DB, repo *repository.AgentCommandRepository
 
 // SetNotifier 注入命令待办唤醒器（启动时装配；未注入则建命令后不主动唤醒）。
 func (s *AgentCommandService) SetNotifier(n CommandNotifier) { s.notifier = n }
+
+// SetFileEffectiveService 注入有效文件树解析器（FR-46 拓印 diff 取期望合并值；启动时装配）。
+func (s *AgentCommandService) SetFileEffectiveService(eff *FileEffectiveService) { s.effSvc = eff }
 
 // RequestReverseFetch 由 admin 触发对某在线实例的反向抓取：事务内建 pending 命令 + file.reverse-fetch 审计。
 // 在线校验与 SSE 唤醒在 handler/server 层。返回命令（含 id 供 agent 回传引用）。
@@ -133,7 +143,16 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 		return nil, verr
 	}
 	var payload ingestPayload
-	if json.Unmarshal([]byte(cmd.Payload), &payload) != nil || payload.Group == "" {
+	if json.Unmarshal([]byte(cmd.Payload), &payload) != nil {
+		s.markFailed(cmd.ID, "载荷不合法")
+		return nil, apperr.ErrInvalidParam
+	}
+	// FR-46 拓印模式：不落库，从回传集取目标 path 转存命令待审（CAS fetched→ready）。
+	if payload.Mode == model.IngestModeImprint {
+		return nil, s.transferImprint(cmd, payload.Path, files)
+	}
+	// FR-39 落库模式：需 group。
+	if payload.Group == "" {
 		s.markFailed(cmd.ID, "载荷不合法")
 		return nil, apperr.ErrInvalidParam
 	}

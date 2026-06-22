@@ -199,6 +199,80 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     return json(command, 202)
   }
 
+  // 按需拓印触发（FR-46）：命令某在线实例读 plugins 回传、控制面取目标文件转存待审，返回 pending 命令。
+  // mock 直接返回 ready 态命令（省去 agent 回传往返），便于审核台在 dev 下走通 diff/confirm。
+  const imprintMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/imprint$/)
+  if (imprintMatch && method === 'POST') {
+    const serverId = decodeURIComponent(imprintMatch[1])
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    if (!body.path) {
+      return json({ code: 'INVALID_PARAM', message: '目标文件 path 为必填' }, 400)
+    }
+    const ns = new URL(path, 'http://localhost').searchParams.get('namespace')
+    const inst = mockInstances.find((i) => i.serverId === serverId)
+    return json(
+      {
+        id: Date.now(),
+        namespace: ns ?? inst?.namespace ?? 'prod',
+        serverId,
+        type: 'ingest-plugins',
+        // mock 直接 ready：真实链路为 pending→agent 回传→ready，前端审核台以轮询到 ready 为准
+        status: 'ready',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      202,
+    )
+  }
+
+  // 拓印命令状态轮询（FR-46）：mock 直接回 ready（dev 下省去 agent 回传等待）。
+  const imprintStatusMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)$/)
+  if (imprintStatusMatch && method === 'GET') {
+    return json({
+      id: Number(imprintStatusMatch[1]),
+      namespace: 'prod',
+      serverId: 'lobby-1',
+      type: 'ingest-plugins',
+      status: 'ready',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+  }
+
+  // 拓印 diff（FR-46）：返回本地实际值 ⟷ 期望合并值（mock 构造一处差异 + 逐键来源徽标）。
+  const imprintDiffMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)\/diff$/)
+  if (imprintDiffMatch && method === 'GET') {
+    return json({
+      path: 'AllinCore/config.yml',
+      actualContent: 'enabled: true\nmax-players: 200\nmotd: 本机实际值\n',
+      actualMd5: 'aaaaaaaa1111',
+      expectedContent: 'enabled: true\nmax-players: 100\nmotd: 期望合并值\n',
+      expectedMd5: 'bbbbbbbb2222',
+      expectedWholeFile: false,
+      expectedSources: [
+        { path: ['enabled'], scope: 'global' },
+        { path: ['max-players'], scope: 'group' },
+        { path: ['motd'], scope: 'zone' },
+      ],
+      expectedDeletions: [],
+      differs: true,
+    })
+  }
+
+  // 拓印确认落库（FR-46）：mock 简化为成功落 server 层首版。
+  const imprintConfirmMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)\/confirm$/)
+  if (imprintConfirmMatch && method === 'POST') {
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    return json({
+      fileId: 1,
+      scopeLevel: body.scope ?? 'server',
+      group: body.group ?? '',
+      target: body.target ?? '',
+      version: 1,
+      md5: body.reviewedMd5 ?? 'aaaaaaaa1111',
+    })
+  }
+
   // 文件发布/回滚/删除（简化返回）
   if (fileDetailMatch && method === 'PUT') {
     return json({ version: 2, md5: 'mock-md5' })

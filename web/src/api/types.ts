@@ -246,9 +246,9 @@ export interface FileRevisionView {
 // 反向抓取目标层：group（组级覆盖）/ server（实例级覆盖）
 export type ReverseFetchScope = 'group' | 'server'
 
-// 反向抓取命令状态（命令生命周期，真源落库；对齐 model.AgentCommand）
-// pending（已建待拉）/ fetched（agent 已拉取）/ done（ingest 完成）/ failed（失败）/ expired（超时）
-export type AgentCommandStatus = 'pending' | 'fetched' | 'done' | 'failed' | 'expired'
+// 反向抓取 / 拓印命令状态（命令生命周期，真源落库；对齐 model.AgentCommand）
+// pending（已建待拉）/ fetched（agent 已拉取）/ ready（FR-46 拓印已抓取待确认）/ done（完成）/ failed（失败）/ expired（超时）
+export type AgentCommandStatus = 'pending' | 'fetched' | 'ready' | 'done' | 'failed' | 'expired'
 
 // 反向抓取命令视图（POST /admin/v1/instances/{serverId}/reverse-fetch 返回的已创建命令）
 // 触发即返回 pending 命令，后续状态经命令查询 / 审计 / 文件树体现，不在触发响应里同步等待结果。
@@ -260,6 +260,41 @@ export interface AgentCommandView {
   status: string
   createdAt: string
   updatedAt: string
+}
+
+// ===== 按需拓印回写 + 审核台（FR-46）=====
+
+// 拓印并入层：与文件覆盖四层一致（global/group/zone/server）。
+export type ImprintScope = 'global' | 'group' | 'zone' | 'server'
+
+// 拓印 diff 视图（GET /admin/v1/imprints/{commandId}/diff，对齐 handler.imprintDiffView）：
+// 本地实际值（agent 回传、命令转存的磁盘原文）⟷ 期望合并值（按并入层视角解出的覆盖链合并结果，复用 FR-45）。
+export interface ImprintDiffView {
+  path: string
+  // 本地实际值：拓印源磁盘当前内容 + md5（md5 确认时回带作自审凭据）
+  actualContent: string
+  actualMd5: string
+  // 期望合并值：覆盖链合并结果 + md5（期望侧无该文件时为空串）
+  expectedContent: string
+  expectedMd5: string
+  // 期望合并值是否整文件覆盖模式（结构化深合并为 false）
+  expectedWholeFile: boolean
+  // 期望合并值逐键 / 整文件来源（复用 FR-45 provenance，来源徽标）
+  expectedSources: Array<{ path: string[]; scope: string }>
+  // 期望侧被减量删除的键（结构化）
+  expectedDeletions: Array<{ path: string[]; scope: string }>
+  // 本地实际值与期望合并值是否有差异
+  differs: boolean
+}
+
+// 拓印确认落库结果视图（POST /admin/v1/imprints/{commandId}/confirm，对齐 handler.imprintConfirmView）。
+export interface ImprintConfirmView {
+  fileId: number
+  scopeLevel: string
+  group: string
+  target: string
+  version: number
+  md5: string
 }
 
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====
