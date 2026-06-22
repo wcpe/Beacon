@@ -63,4 +63,14 @@ describe('Layout 页眉重定位', () => {
     expect(mainEl).not.toBeNull()
     expect(headerEl?.parentElement).toBe(mainEl?.parentElement)
   })
+
+  it('主内容区纵向可滚动（不裁剪超高内容，回归「滚动锁死」）', () => {
+    renderLayout()
+    // <main> 须为 overflow-y-auto 而非 overflow-hidden：
+    // 普通堆叠页内容超过视口高度时应可滚动看全，不被裁在左上角。
+    const mainEl = document.querySelector('main')
+    expect(mainEl).not.toBeNull()
+    expect(mainEl?.classList.contains('overflow-y-auto')).toBe(true)
+    expect(mainEl?.classList.contains('overflow-hidden')).toBe(false)
+  })
 })

@@ -70,7 +70,9 @@ export default function Layout() {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上 */}
         <SystemHeader />
-        <main className="min-w-0 flex-1 overflow-hidden p-6">
+        {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
+            自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条 */}
+        <main className="min-w-0 flex-1 overflow-y-auto p-6">
           <Outlet />
         </main>
       </div>
