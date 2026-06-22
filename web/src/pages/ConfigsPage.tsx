@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
@@ -44,6 +45,7 @@ import ConfigEditorPane from './configs/ConfigEditorPane'
 import type { OpenTab, TreeNode } from './configs/types'
 
 export default function ConfigsPage() {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
   const tabs = useConfigTabs()
@@ -156,7 +158,7 @@ export default function ConfigsPage() {
     mutationFn: (params: { id: number; content: string; comment: string }) =>
       publishConfig(params.id, params.content, params.comment),
     onSuccess: (r) => {
-      msg.showSuccess(`已保存版本 ${r.version}`)
+      msg.showSuccess(t('configs.msgSaved', { version: r.version }))
       qc.invalidateQueries({ queryKey: ['configs'] })
       // 同时失效当前配置的历史修订，保存后历史面板即时刷新出新版本
       qc.invalidateQueries({ queryKey: ['config-revisions'] })
@@ -167,8 +169,8 @@ export default function ConfigsPage() {
   // 保存当前标签
   const saveCurrentTab = useCallback(() => {
     if (!activeTab) return
-    saveMut.mutate({ id: activeTab.configId, content: activeTab.content, comment: '管理台保存' })
-  }, [activeTab, saveMut])
+    saveMut.mutate({ id: activeTab.configId, content: activeTab.content, comment: t('configs.saveComment') })
+  }, [activeTab, saveMut, t])
 
   // Ctrl+S 全局快捷键
   useEffect(() => {
@@ -243,10 +245,10 @@ export default function ConfigsPage() {
     <div className="flex flex-col h-full overflow-hidden gap-2">
       {/* ===== 顶部工具栏 ===== */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">配置中心</h1>
+        <h1 className="text-xl font-semibold">{t('configs.title')}</h1>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-xs">
-            {list.data?.length ?? 0} 条配置
+            {t('configs.countBadge', { count: list.data?.length ?? 0 })}
           </Badge>
           {/* 导入到组（FR-38）：把一份目录批量上传到某组的文件树（通道B 整文件覆盖） */}
           <ImportFilesDialog namespaces={namespaceCodes} groups={groupOptions} />
@@ -275,13 +277,13 @@ export default function ConfigsPage() {
           {/* 上半：配置文件树 */}
           <div className="flex-1 flex flex-col min-h-0 border-b border-border">
             <div className="flex-shrink-0 px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border bg-muted/30 flex items-center justify-between">
-              <span>配置文件</span>
+              <span>{t('configs.treeHeader')}</span>
               {selectedTarget && (
                 <button
                   className="text-blue-500 hover:text-blue-600 text-[0.65rem]"
                   onClick={() => setSelectedTarget(null)}
                 >
-                  清除
+                  {t('configs.clearTarget')}
                 </button>
               )}
             </div>
@@ -351,8 +353,8 @@ export default function ConfigsPage() {
           ) : (
             <div className="flex-1 flex items-center justify-center rounded-lg border border-border bg-card">
               <div className="text-center text-muted-foreground">
-                <p className="text-sm">从左侧选择配置文件</p>
-                <p className="mt-1 text-xs">点击资源管理器中的文件打开编辑器</p>
+                <p className="text-sm">{t('configs.emptyHintLine1')}</p>
+                <p className="mt-1 text-xs">{t('configs.emptyHintLine2')}</p>
               </div>
             </div>
           )}

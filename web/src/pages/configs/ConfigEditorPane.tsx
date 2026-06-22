@@ -1,5 +1,6 @@
 // 编辑器内容区：视图切换工具栏（编辑 / Diff / 生效预览）+ 对应内容 + 底部历史修订面板。
 
+import { useTranslation } from 'react-i18next'
 import CodeEditor from '../../components/CodeEditor'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -59,6 +60,7 @@ export default function ConfigEditorPane({
   effective,
   history,
 }: ConfigEditorPaneProps) {
+  const { t } = useTranslation()
   return (
     <div className="flex-1 flex flex-col min-h-0 rounded-lg border border-border overflow-hidden bg-background">
       {/* 视图切换 + 保存按钮 */}
@@ -70,7 +72,7 @@ export default function ConfigEditorPane({
             className={cn('h-7 px-3 text-xs')}
             onClick={() => onSetView('edit')}
           >
-            编辑
+            {t('configs.viewEdit')}
           </Button>
           <Button
             variant={view === 'diff' ? 'default' : 'ghost'}
@@ -78,7 +80,7 @@ export default function ConfigEditorPane({
             className={cn('h-7 px-3 text-xs')}
             onClick={() => onSetView('diff')}
           >
-            Diff
+            {t('configs.viewDiff')}
           </Button>
           <Button
             variant={view === 'effective' ? 'default' : 'ghost'}
@@ -86,7 +88,7 @@ export default function ConfigEditorPane({
             className={cn('h-7 px-3 text-xs')}
             onClick={onActivateEffective}
           >
-            生效预览
+            {t('configs.viewEffective')}
           </Button>
         </div>
 
@@ -98,7 +100,7 @@ export default function ConfigEditorPane({
                 value={diff.selected.from}
                 onChange={(e) => diff.onChange({ ...diff.selected, from: e.target.value })}
               >
-                <option value="">旧版本</option>
+                <option value="">{t('configs.diffFromPlaceholder')}</option>
                 {diff.versionNumbers.map((v) => (
                   <option key={v} value={v}>
                     v{v}
@@ -111,7 +113,7 @@ export default function ConfigEditorPane({
                 value={diff.selected.to}
                 onChange={(e) => diff.onChange({ ...diff.selected, to: e.target.value })}
               >
-                <option value="">新版本</option>
+                <option value="">{t('configs.diffToPlaceholder')}</option>
                 {diff.versionNumbers.map((v) => (
                   <option key={v} value={v}>
                     v{v}
@@ -126,7 +128,7 @@ export default function ConfigEditorPane({
             className="h-7 px-3 text-xs"
             onClick={onCopyToInstance}
           >
-            复制到实例
+            {t('configs.copyToInstance')}
           </Button>
           <Button
             size="xs"
@@ -134,7 +136,7 @@ export default function ConfigEditorPane({
             onClick={save.onSave}
             disabled={save.saving}
           >
-            {save.saving ? '保存中…' : '💾 保存'}
+            {save.saving ? t('configs.saving') : t('configs.saveBtn')}
           </Button>
         </div>
       </div>

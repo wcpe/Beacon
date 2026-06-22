@@ -1,6 +1,7 @@
 // 实例 / 分组树形选择器：按 group > zone > servers 组织，选中后用于过滤左侧配置树。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
@@ -14,6 +15,7 @@ export default function TargetSelector({
   selectedTarget: { type: 'server' | 'group'; value: string } | null
   onSelectTarget: (t: { type: 'server' | 'group'; value: string } | null) => void
 }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['__root__']))
 
   const toggle = (key: string) => {
@@ -30,7 +32,7 @@ export default function TargetSelector({
   for (const inst of instances) {
     if (!groupMap.has(inst.group)) groupMap.set(inst.group, { zones: new Map() })
     const g = groupMap.get(inst.group)!
-    const zoneName = inst.zone ?? '(未分组)'
+    const zoneName = inst.zone ?? t('configs.targetNoZone')
     if (!g.zones.has(zoneName)) g.zones.set(zoneName, [])
     g.zones.get(zoneName)!.push({ serverId: inst.serverId, status: inst.status })
   }
@@ -41,7 +43,7 @@ export default function TargetSelector({
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-muted-foreground border-b border-border bg-muted/30">
-        实例 / 分组
+        {t('configs.targetSelectorHeader')}
       </div>
       <ScrollArea className="flex-1 py-1">
         {/* 全部 */}
@@ -55,7 +57,7 @@ export default function TargetSelector({
           )}
           onClick={() => onSelectTarget(null)}
         >
-          <span className="truncate">全部实例</span>
+          <span className="truncate">{t('configs.targetAll')}</span>
           <span className="text-[0.6rem] text-muted-foreground/60">({instances.length})</span>
         </button>
 

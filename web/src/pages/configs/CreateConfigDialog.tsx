@@ -4,6 +4,7 @@
 // 支持外部 open 受控与 initial 预填（「复制到实例」快捷路径复用本对话框）。
 
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createConfig } from '../../api/client'
 import type { CreateConfigParams } from '../../api/client'
@@ -70,6 +71,7 @@ export default function CreateConfigDialog({
   // 预填初值（「复制到实例」时注入源内容与 server 覆盖目标）
   initial?: CreateConfigParams
 }) {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
   const [form, setForm] = useState<CreateConfigParams>(() => initial ?? emptyForm(namespaces))
@@ -83,7 +85,7 @@ export default function CreateConfigDialog({
   const createMut = useMutation({
     mutationFn: (params: CreateConfigParams) => createConfig(params),
     onSuccess: (c) => {
-      msg.showSuccess(`已新建配置 #${c.id}`)
+      msg.showSuccess(t('configs.msgCreated', { id: c.id }))
       onOpenChange(false)
       qc.invalidateQueries({ queryKey: ['configs'] })
     },
@@ -93,11 +95,11 @@ export default function CreateConfigDialog({
   function onCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!form.dataId.trim()) {
-      msg.showError('dataId 为必填')
+      msg.showError(t('configs.dataIdRequired'))
       return
     }
     if (form.scopeLevel !== 'global' && !form.scopeTarget.trim()) {
-      msg.showError('覆盖目标为必填')
+      msg.showError(t('configs.scopeTargetRequired'))
       return
     }
     createMut.mutate(form)
@@ -121,19 +123,19 @@ export default function CreateConfigDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button size="sm">新建配置</Button>
+        <Button size="sm">{t('configs.createBtn')}</Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>新建配置</DialogTitle>
+          <DialogTitle>{t('configs.createTitle')}</DialogTitle>
         </DialogHeader>
         <form id="create-config" onSubmit={onCreate} className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="cc-namespace">环境</Label>
+            <Label htmlFor="cc-namespace">{t('common.namespace')}</Label>
             {/* 环境严格选：须为已存在 namespace（FR-51） */}
             <Combobox
               id="cc-namespace"
-              aria-label="环境"
+              aria-label={t('common.namespace')}
               value={form.namespace}
               onChange={(v) => setForm({ ...form, namespace: v })}
               options={namespaces}
@@ -141,16 +143,16 @@ export default function CreateConfigDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="cc-group">大区</Label>
+            <Label htmlFor="cc-group">{t('common.group')}</Label>
             {/* 大区可编辑：可为尚未注册的新大区授权配置（FR-51）；留空表示 __GLOBAL__ */}
             <Combobox
               id="cc-group"
-              aria-label="大区"
+              aria-label={t('common.group')}
               value={form.group}
               onChange={(v) => setForm({ ...form, group: v })}
               options={groups}
               allowCustom
-              placeholder="__GLOBAL__"
+              placeholder={t('configs.fieldGroupPlaceholder')}
             />
           </div>
           <div className="space-y-1.5">
@@ -162,7 +164,7 @@ export default function CreateConfigDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="cc-scopeLevel">覆盖层</Label>
+            <Label htmlFor="cc-scopeLevel">{t('configs.fieldScopeLevel')}</Label>
             <select
               id="cc-scopeLevel"
               className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
@@ -180,20 +182,20 @@ export default function CreateConfigDialog({
               server 层目标须为已存在实例（严格选）；group/zone 目标可为新维度（可编辑，FR-51）。 */}
           {form.scopeLevel !== 'global' && (
             <div className="space-y-1.5">
-              <Label htmlFor="cc-scopeTarget">覆盖目标</Label>
+              <Label htmlFor="cc-scopeTarget">{t('configs.fieldScopeTarget')}</Label>
               <Combobox
                 id="cc-scopeTarget"
-                aria-label="覆盖目标"
+                aria-label={t('configs.fieldScopeTarget')}
                 value={form.scopeTarget}
                 onChange={(v) => setForm({ ...form, scopeTarget: v })}
                 options={targetOptions}
                 allowCustom={form.scopeLevel !== 'server'}
-                placeholder="请选择"
+                placeholder={t('common.pleaseSelect')}
               />
             </div>
           )}
           <div className="space-y-1.5">
-            <Label htmlFor="cc-format">格式</Label>
+            <Label htmlFor="cc-format">{t('configs.fieldFormat')}</Label>
             <select
               id="cc-format"
               className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
@@ -208,18 +210,18 @@ export default function CreateConfigDialog({
             </select>
           </div>
           <div className="col-span-2 space-y-1.5">
-            <Label htmlFor="cc-content">初始内容</Label>
+            <Label htmlFor="cc-content">{t('configs.fieldContent')}</Label>
             <Input
               id="cc-content"
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
-              placeholder="可选"
+              placeholder={t('configs.fieldContentPlaceholder')}
             />
           </div>
         </form>
         <DialogFooter>
           <Button type="submit" form="create-config" disabled={createMut.isPending}>
-            创建
+            {t('configs.createSubmit')}
           </Button>
         </DialogFooter>
       </DialogContent>

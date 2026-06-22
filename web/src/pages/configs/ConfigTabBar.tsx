@@ -1,5 +1,6 @@
 // 编辑器标签栏：展示已打开的配置标签，支持点击切换、关闭与右键菜单（关闭当前/其他/全部）。
 
+import { useTranslation } from 'react-i18next'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,10 +32,11 @@ export default function ConfigTabBar({
   onContextMenu: (configId: number) => void
   onContextAction: (action: TabContextAction) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex-shrink-0 flex rounded-lg border border-border overflow-hidden bg-card h-9">
       {openTabs.length === 0 ? (
-        <div className="px-4 py-2 text-sm text-muted-foreground">从左侧选择配置文件</div>
+        <div className="px-4 py-2 text-sm text-muted-foreground">{t('configs.tabEmpty')}</div>
       ) : (
         openTabs.map((tab) => {
           const isActive = String(tab.configId) === activeTabKey
@@ -72,11 +74,11 @@ export default function ConfigTabBar({
               </DropdownMenuTrigger>
               {contextTabId === tab.configId && showTabMenu && (
                 <DropdownMenuContent align="start" className="w-40" sideOffset={4}>
-                  <DropdownMenuItem onClick={() => onContextAction('close')}>关闭当前标签</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onContextAction('close')}>{t('configs.tabCloseCurrent')}</DropdownMenuItem>
                   <DropdownMenuItem onClick={() => onContextAction('closeOthers')}>
-                    关闭其他标签
+                    {t('configs.tabCloseOthers')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onContextAction('closeAll')}>关闭所有标签</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onContextAction('closeAll')}>{t('configs.tabCloseAll')}</DropdownMenuItem>
                 </DropdownMenuContent>
               )}
             </DropdownMenu>

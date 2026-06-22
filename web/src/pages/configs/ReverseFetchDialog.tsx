@@ -3,6 +3,7 @@
 // 触发即创建 pending 命令并返回，后续结果经命令状态 / 审计 / 文件树体现；本对话框只负责触发与提示。
 
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { triggerReverseFetch } from '../../api/client'
 import type { ReverseFetchScope } from '../../api/types'
@@ -29,6 +30,7 @@ export default function ReverseFetchDialog({
   // 大区列表（由 zone 汇总 / 实例派生），作为入库目标组候选
   groups: string[]
 }) {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
   const [open, setOpen] = useState(false)
@@ -76,7 +78,7 @@ export default function ReverseFetchDialog({
         target: scope === 'server' ? target : undefined,
       }),
     onSuccess: () => {
-      msg.showSuccess(`已触发反向抓取（命令已下发，结果经审计与文件树体现）`)
+      msg.showSuccess(t('configs.msgReverseFetch'))
       setOpen(false)
       // 失效文件相关缓存：ingest 完成后文件树会变更
       qc.invalidateQueries({ queryKey: ['files'] })
@@ -87,15 +89,15 @@ export default function ReverseFetchDialog({
   function onTrigger(e: React.FormEvent) {
     e.preventDefault()
     if (!serverId) {
-      msg.showError('请选择在线实例作为抓取源')
+      msg.showError(t('configs.rfSourceRequired'))
       return
     }
     if (!group) {
-      msg.showError('目标组为必填')
+      msg.showError(t('configs.rfGroupRequired'))
       return
     }
     if (scope === 'server' && !target) {
-      msg.showError('实例层需指定目标实例')
+      msg.showError(t('configs.rfTargetRequired'))
       return
     }
     fetchMut.mutate()
@@ -105,78 +107,77 @@ export default function ReverseFetchDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline">
-          反向抓取
+          {t('configs.reverseFetchBtn')}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>从在线实例反向抓取</DialogTitle>
+          <DialogTitle>{t('configs.reverseFetchTitle')}</DialogTitle>
         </DialogHeader>
         <form id="reverse-fetch" onSubmit={onTrigger} className="grid grid-cols-2 gap-3">
           <div className="col-span-2 space-y-1.5">
-            <Label htmlFor="rf-source">抓取源（在线实例）</Label>
+            <Label htmlFor="rf-source">{t('configs.rfSourceLabel')}</Label>
             {/* 抓取源严格选：须为已存在在线实例（FR-51） */}
             <Combobox
               id="rf-source"
-              aria-label="抓取源（在线实例）"
+              aria-label={t('configs.rfSourceLabel')}
               value={serverId}
               onChange={setServerId}
               options={sourceOptions}
               allowCustom={false}
-              placeholder="请选择"
+              placeholder={t('common.pleaseSelect')}
             />
             {onlineInstances.length === 0 && (
-              <p className="text-xs text-muted-foreground">当前无在线实例可抓取</p>
+              <p className="text-xs text-muted-foreground">{t('configs.rfNoOnline')}</p>
             )}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="rf-scope">目标层</Label>
+            <Label htmlFor="rf-scope">{t('configs.rfScopeLabel')}</Label>
             <select
               id="rf-scope"
               className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
               value={scope}
               onChange={(e) => setScope(e.target.value as ReverseFetchScope)}
             >
-              <option value="group">组级</option>
-              <option value="server">实例级</option>
+              <option value="group">{t('configs.rfScopeGroup')}</option>
+              <option value="server">{t('configs.rfScopeServer')}</option>
             </select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="rf-group">目标组</Label>
+            <Label htmlFor="rf-group">{t('configs.rfGroupLabel')}</Label>
             {/* 目标组可编辑：可入库到尚未存在的新组（FR-51） */}
             <Combobox
               id="rf-group"
-              aria-label="目标组"
+              aria-label={t('configs.rfGroupLabel')}
               value={group}
               onChange={setGroup}
               options={groups}
               allowCustom
-              placeholder="请选择"
+              placeholder={t('common.pleaseSelect')}
             />
           </div>
           {scope === 'server' && (
             <div className="col-span-2 space-y-1.5">
-              <Label htmlFor="rf-target">目标实例</Label>
+              <Label htmlFor="rf-target">{t('configs.rfTargetLabel')}</Label>
               {/* 目标实例严格选：覆盖须落到已存在实例（FR-51） */}
               <Combobox
                 id="rf-target"
-                aria-label="目标实例"
+                aria-label={t('configs.rfTargetLabel')}
                 value={target}
                 onChange={setTarget}
                 options={targetOptions}
                 allowCustom={false}
-                placeholder="请选择"
+                placeholder={t('common.pleaseSelect')}
               />
             </div>
           )}
           <p className="col-span-2 text-xs text-muted-foreground">
-            将读取该实例真实 plugins/ 的文本配置并入库为所选层覆盖；不含 .jar 与二进制，受单文件 /
-            总量 / 文件数上限约束。
+            {t('configs.rfDesc')}
           </p>
         </form>
         <DialogFooter>
           <Button type="submit" form="reverse-fetch" disabled={fetchMut.isPending}>
-            {fetchMut.isPending ? '触发中…' : '触发抓取'}
+            {fetchMut.isPending ? t('configs.rfTriggering') : t('configs.rfSubmit')}
           </Button>
         </DialogFooter>
       </DialogContent>

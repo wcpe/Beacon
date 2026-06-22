@@ -1,5 +1,6 @@
 // 底部历史修订面板：可折叠，点击条目跳转到对应版本的 Diff 视图。
 
+import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
@@ -19,6 +20,7 @@ export default function RevisionHistory({
   onToggleCollapse: () => void
   onSelectRevision: (rev: RevisionView) => void
 }) {
+  const { t } = useTranslation()
   if (revisions.length === 0) return null
   return (
     <div className="flex-shrink-0 border-t border-border">
@@ -29,7 +31,7 @@ export default function RevisionHistory({
       >
         <span className="flex items-center gap-1">
           {collapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          历史修订（共 {revisions.length} 条，点击条目查看 Diff）
+          {t('configs.revisionHeader', { count: revisions.length })}
         </span>
       </button>
       {!collapsed && (

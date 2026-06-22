@@ -3,6 +3,7 @@
 // 整文件覆盖语义复用通道B（FR-14）：同 path 已存在则发布新版本，否则首发。
 
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { importFiles } from '../../api/client'
 import type { ImportFileEntry } from '../../api/client'
@@ -43,6 +44,7 @@ export default function ImportFilesDialog({
   // 大区列表（由 zone 汇总 / 实例派生）
   groups: string[]
 }) {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
   const [open, setOpen] = useState(false)
@@ -62,7 +64,7 @@ export default function ImportFilesDialog({
   const importMut = useMutation({
     mutationFn: () => importFiles(namespace, group, entries),
     onSuccess: (r) => {
-      msg.showSuccess(`已导入 ${r.files} 个文件（新建 ${r.created}、更新 ${r.updated}）`)
+      msg.showSuccess(t('configs.msgImported', { files: r.files, created: r.created, updated: r.updated }))
       setOpen(false)
       // 失效文件相关缓存，刷新文件树
       qc.invalidateQueries({ queryKey: ['files'] })
@@ -73,15 +75,15 @@ export default function ImportFilesDialog({
   function onImport(e: React.FormEvent) {
     e.preventDefault()
     if (!namespace) {
-      msg.showError('环境为必填')
+      msg.showError(t('configs.importNsRequired'))
       return
     }
     if (!group) {
-      msg.showError('目标组为必填')
+      msg.showError(t('configs.importGroupRequired'))
       return
     }
     if (entries.length === 0) {
-      msg.showError('请先选择目录或文件')
+      msg.showError(t('configs.importFilesRequired'))
       return
     }
     importMut.mutate()
@@ -91,20 +93,20 @@ export default function ImportFilesDialog({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm" variant="outline">
-          导入到组
+          {t('configs.importBtn')}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>导入到组</DialogTitle>
+          <DialogTitle>{t('configs.importTitle')}</DialogTitle>
         </DialogHeader>
         <form id="import-files" onSubmit={onImport} className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="imp-namespace">环境</Label>
+            <Label htmlFor="imp-namespace">{t('common.namespace')}</Label>
             {/* 环境严格选：须为已存在 namespace（FR-51） */}
             <Combobox
               id="imp-namespace"
-              aria-label="环境"
+              aria-label={t('common.namespace')}
               value={namespace}
               onChange={setNamespace}
               options={namespaces}
@@ -112,20 +114,20 @@ export default function ImportFilesDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="imp-group">目标组</Label>
+            <Label htmlFor="imp-group">{t('configs.importGroupLabel')}</Label>
             {/* 目标组可编辑：可导入到尚未存在的新组（FR-51） */}
             <Combobox
               id="imp-group"
-              aria-label="目标组"
+              aria-label={t('configs.importGroupLabel')}
               value={group}
               onChange={setGroup}
               options={groups}
               allowCustom
-              placeholder="请选择"
+              placeholder={t('common.pleaseSelect')}
             />
           </div>
           <div className="col-span-2 space-y-1.5">
-            <Label htmlFor="imp-dir">选择目录</Label>
+            <Label htmlFor="imp-dir">{t('configs.importDirLabel')}</Label>
             <input
               id="imp-dir"
               type="file"
@@ -135,7 +137,7 @@ export default function ImportFilesDialog({
             />
           </div>
           <div className="col-span-2 space-y-1.5">
-            <Label htmlFor="imp-files">或选择多个文件</Label>
+            <Label htmlFor="imp-files">{t('configs.importFilesLabel')}</Label>
             <input
               id="imp-files"
               type="file"
@@ -145,12 +147,12 @@ export default function ImportFilesDialog({
             />
           </div>
           {entries.length > 0 && (
-            <p className="col-span-2 text-xs text-muted-foreground">已选 {entries.length} 个文件</p>
+            <p className="col-span-2 text-xs text-muted-foreground">{t('configs.importSelected', { count: entries.length })}</p>
           )}
         </form>
         <DialogFooter>
           <Button type="submit" form="import-files" disabled={importMut.isPending}>
-            {importMut.isPending ? '导入中…' : '导入'}
+            {importMut.isPending ? t('configs.importing') : t('configs.importSubmit')}
           </Button>
         </DialogFooter>
       </DialogContent>
