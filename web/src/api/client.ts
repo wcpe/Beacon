@@ -130,6 +130,19 @@ export function createNamespace(code: string, name: string): Promise<NamespaceVi
   })
 }
 
+// 改环境显示名（code 不可变，仅改 name；FR-53）。
+export function updateNamespace(code: string, name: string): Promise<NamespaceView> {
+  return request<NamespaceView>(`/namespaces/${encodeURIComponent(code)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
+}
+
+// 删环境（FR-53）：后端带删除守卫，环境下有实例 / zone / 配置时返 409，错误中文 message 直接提示。
+export function deleteNamespace(code: string): Promise<void> {
+  return request<void>(`/namespaces/${encodeURIComponent(code)}`, { method: 'DELETE' })
+}
+
 // ===== 配置中心 =====
 
 // 配置列表过滤条件
