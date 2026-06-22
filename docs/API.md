@@ -264,7 +264,7 @@ data: {}
 
 错误：文件不存在 `404 FILE_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 FILE_CONFLICT`；路径不合法（空 / 绝对路径 / 含 `..` 穿越 / 含反斜杠）`400 INVALID_PATH`（agent 自身目录 `BeaconAgent` / `BeaconAgentProxy` 顶段**不再拦截**、可托管，自我保护由 agent observe-only 兜底，见 [ADR-0028](adr/0028-allow-hosting-agent-self-dir.md)）；内容超长（> 1MB）`422 CONTENT_TOO_LARGE`；**结构化文件（yml/json）语法错误 `422 CONTENT_SCHEMA_INVALID`**（FR-44，Create/Publish/Import 发布前 `merge.Parse` 解析校验，拒坏内容入库）；覆盖层/目标键不合法 `400 INVALID_SCOPE`。导入（`/files/import`）另有：缺 `namespace`/`group`/文件，或 `paths` 与 `files` 数量不一致 `400 INVALID_PARAM`；目标组非法（如填全局组）`400 INVALID_SCOPE`；单次文件数超上限 `422 TOO_MANY_FILES`；单文件或累计总字节超上限 `422 CONTENT_TOO_LARGE`。
 
-`GET /admin/v1/files/effective`（FR-45，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式 + [ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 文件树合并）：只读预览某目标按覆盖链解析后的有效文件树，逐文件给出合并结果 + 来源，与 agent 经 `files/content` 拿到的逐一致，但**不挂长轮询、不强制注册**，可预览未注册/假定指派的目标。参数同 `configs/effective`：`namespace` 必填；`serverId` 与 `group` 至少给一个（给 `serverId` 时按 `zone_assignment` 解出 group/zone，未指派则用传入的 `group`/`zone`）。返回：
+`GET /admin/v1/files/effective`（FR-45，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式 + [ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 文件树合并）：只读预览某目标按覆盖链解析后的有效文件树，逐文件给出合并结果 + 来源，与 agent 经 `files/content` 拿到的逐一致，但**不挂长轮询、不强制注册**，可预览未注册/假定指派的目标。参数同 `configs/effective`：`namespace` 必填；`serverId` 与 `group` 至少给一个（给 `serverId` 时按 `zone_assignment` 解出 group/zone，未指派则用传入的 `group`/`zone`）。响应 `zone` 在未指派时为 JSON `null`（文件树族端点 manifest/content/override/effective 的既有约定；配置族 `configs/effective` 对应字段为空串 `""`，两族沿各自既有约定不互改、消费方按 `string | null` 容忍）。返回：
 
 ```json
 {

@@ -1,6 +1,6 @@
 # 功能规格：git 单向导出镜像（备份 / 灾备 / 外部可见）
 
-> 状态：开发中　·　关联 PRD：FR-47　·　分支：feature/fr-47-git-export
+> 状态：已交付（落 master `c4c87b9`，待发版标版本）　·　关联 PRD：FR-47　·　分支：feature/fr-47-git-export
 
 ## 1. 背景与目标
 
@@ -15,7 +15,7 @@
   - **触发时机**：挂在既有发布 / 回滚 / 改派的 DB 事务**提交成功之后**，与 `ChangeNotifier` 长轮询唤醒**并列、互不阻塞**——导出在独立 goroutine 跑，主流程不等它。
   - **best-effort 不阻断**：git 任一步失败（仓库损坏 / 远程不可达 / 鉴权失败）只记 `WARN` 日志，**绝不回滚发布、绝不阻断主流程、绝不影响 agent 下发**。
   - **commit message 带审计**：每次导出 commit 的 message 含操作者 / 动作（config.publish 等）/ 受影响对象 / 版本，便于 `git log` 追溯"这次 commit 对应哪次发布"。
-  - **本地裸仓 + 可选远程**：导出到一个本地仓（路径走配置），远程 URL / 凭据**走配置 / env、不入库**（[rule #14](../../.claude/rules/config-files.md)），配置了才推、没配只本地 commit。
+  - **本地仓（非裸仓，含工作树）+ 可选远程**：导出到一个本地 git 仓（路径走配置；快照是文件工作树，故 `PlainInit` 用非裸仓），远程 URL / 凭据**走配置 / env、不入库**（[rule #14](../../.claude/rules/config-files.md)），配置了才推、没配只本地 commit。
   - **敏感不泄密**：
     - 配置项 FR-20 标 `sensitive` 的，导出其 **`enc:v1:` 密文**（与库内 at-rest 一致），密钥不入 git，明文绝不落 git。
     - 文件树新增 **path 级敏感标记 / 排除导出**：防"反向抓取（FR-39）来的第三方插件 `database.yml` 里的明文 DB 密码"被导出到 git。标记的文件从 git 导出中**整体排除**（git 里看不到该文件），库内仍保留。
