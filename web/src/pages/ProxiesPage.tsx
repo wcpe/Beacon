@@ -52,10 +52,11 @@ export default function ProxiesPage() {
     refetchInterval: REFETCH_MS,
   })
 
-  // zone → 默认入口 serverId 映射（仅本环境）
+  // (group, zone) → 默认入口 serverId 映射（仅本环境）：默认入口唯一键是 (namespace, group, zone)，
+  // 同名 zone 码在不同大区下是不同小区，故须用 group+zone 复合键，否则后写覆盖先写致大区间串值
   const entryByZone = new Map<string, string>()
   for (const e of entries.data ?? []) {
-    entryByZone.set(e.zone, e.defaultServerId)
+    entryByZone.set(`${e.group}/${e.zone}`, e.defaultServerId)
   }
 
   function onSearch(e: React.FormEvent) {
@@ -108,7 +109,7 @@ export default function ProxiesPage() {
                     <ProxyCard
                       key={`${p.namespace}/${p.serverId}`}
                       proxy={p}
-                      defaultEntry={p.zone ? entryByZone.get(p.zone) : undefined}
+                      defaultEntry={p.zone ? entryByZone.get(`${p.group}/${p.zone}`) : undefined}
                     />
                   ))}
                 </div>

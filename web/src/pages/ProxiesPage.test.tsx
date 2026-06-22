@@ -135,6 +135,27 @@ describe('ProxiesPage', () => {
     expect(scoped.getAllByText('无后端')).toHaveLength(2)
   })
 
+  it('同环境下不同大区的同名 zone 各自显示正确默认入口（按 group+zone 复合键，不串）', async () => {
+    // 两台 BC 分属不同大区但 zone 码同为 z1：area1/z1 与 area2/z1 是两个不同小区
+    vi.mocked(listInstances).mockResolvedValue([
+      bc({ serverId: 'bc-area1', group: 'area1', zone: 'z1' }),
+      bc({ serverId: 'bc-area2', group: 'area2', zone: 'z1' }),
+    ])
+    // 默认入口按 (namespace, group, zone) 唯一：同名 zone 在两大区指向不同 serverId
+    vi.mocked(listDefaultEntries).mockResolvedValue([
+      { namespace: 'prod', group: 'area1', zone: 'z1', defaultServerId: 'entry-area1', updatedAt: '' },
+      { namespace: 'prod', group: 'area2', zone: 'z1', defaultServerId: 'entry-area2', updatedAt: '' },
+    ])
+    renderPage(<ProxiesPage />)
+    await userEvent.type(screen.getByLabelText('环境'), 'prod')
+    await userEvent.click(screen.getByRole('button', { name: '查询' }))
+    const card1 = await screen.findByTestId('proxy-card-bc-area1')
+    const card2 = await screen.findByTestId('proxy-card-bc-area2')
+    // 各大区卡片只显示自己大区同名 zone 的默认入口，不被另一大区覆盖
+    expect(within(card1).getByTestId('proxy-default-entry')).toHaveTextContent('entry-area1')
+    expect(within(card2).getByTestId('proxy-default-entry')).toHaveTextContent('entry-area2')
+  })
+
   it('无 BC 实例时展示空态提示', async () => {
     vi.mocked(listInstances).mockResolvedValue([])
     renderPage(<ProxiesPage />)
