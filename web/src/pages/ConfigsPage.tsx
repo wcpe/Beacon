@@ -240,7 +240,7 @@ export default function ConfigsPage() {
   const versionNumbers = (revisions.data ?? []).map((r) => r.version)
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden gap-2">
+    <div className="flex flex-col h-full overflow-hidden gap-2">
       {/* ===== 顶部工具栏 ===== */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">配置中心</h1>
