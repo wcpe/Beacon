@@ -96,11 +96,11 @@
 | FR-48 | 小区默认入口 + BC 默认服注入：beacon 新增 zone 级「默认入口」配置（每小区唯一，指向一个在线 bukkit serverId），经发现/下发让该 zone 下所有 BC agent 把默认入口注入为 BungeeCord 默认/fallback 服（修复「动态注入子服但无默认服→玩家加入报 Could not connect to a default or fallback server」），一 zone 可多 BC 共享同一入口；agent 注入 bukkit 地址时打 INFO 日志可观测。默认入口归属由控制面 DB 权威（扩展 FR-4 注入链路与 FR-8/[ADR-0004](adr/0004-zone-authority-control-plane.md) zone 权威），见 [ADR-0031](adr/0031-zone-default-entry-and-bc-injection.md) | P2 | 开发中 |
 | FR-49 | 实例主动下线态：管理台主动「下线」某实例落 DB 拒绝状态 → agent 注册/心跳被拒（区别于自然 lost/offline）→ agent 进入「下线态」停止重连不刷日志，取消下线后可重新接入；下线操作 UI 不再强制先筛环境（按行直接下线）。显式扩展 FR-17 当初「不做 offline/online」的范围边界（避免与健康 TTL 语义混淆），见 [ADR-0032](adr/0032-instance-active-offline-state.md)（下线拒绝状态机与存储，另见 [docs/specs/instance-active-offline-state.md](specs/instance-active-offline-state.md)） | P2 | 开发中 |
 | FR-50 | 前端 i18n 框架接入 + 全站文案 key 化：引入 react-i18next + 翻译文件（先 zh-CN 全量、框架就绪后可加 en），审计动作由英文枚举（config.publish 等）经 i18n key 映射显示中文，「zone 分配→区分配」等硬编码中文文案与状态/角色 label 一并 key 化（增强 FR-6/FR-7/FR-21），需写新 ADR（引入前端 i18n 框架） | P2 | 计划 |
-| FR-51 | 维度输入统一可编辑下拉（combobox）：环境/大区/小区/serverId 输入统一为「下拉+可编辑」组件（候选从 API 取；筛选框/新建表单允许列表外新值，纯选择处严格选），覆盖实例与健康/审计筛选、各表单；集群拓扑环境选择改下拉并默认选第一个环境出图（增强 FR-6/FR-37/FR-40） | P2 | 计划 |
-| FR-52 | 代理服管理页：新建独立管理页集中透明展示所有 BC 代理运行态——状态 + 底层参数（连接数/线程/运行时长/后端可达性·延迟[FR-34]、后端子服清单[FR-36]、默认入口[FR-48]、所属 zone），让运维完整了解 BC 服状态（增强 FR-6，依赖 FR-34/FR-36/FR-48） | P2 | 计划 |
-| FR-53 | 环境（namespace）增删改查补全：补 Update（显示名 name 随时可改）与 Delete（守卫：该环境下有已注册实例 / 已指派 zone / 已有配置则禁删并明确提示），前端新增环境管理页（列表/新建/改名/删除），操作入审计（namespace.update/delete）（增强 FR-6） | P2 | 计划 |
+| FR-51 | 维度输入统一可编辑下拉（combobox）：环境/大区/小区/serverId 输入统一为「下拉+可编辑」组件（候选从 API 取；筛选框/新建表单允许列表外新值，纯选择处严格选），覆盖实例与健康/审计筛选、各表单；集群拓扑环境选择改下拉并默认选第一个环境出图（增强 FR-6/FR-37/FR-40） | P2 | 开发中 |
+| FR-52 | 代理服管理页：新建独立管理页集中透明展示所有 BC 代理运行态——状态 + 底层参数（连接数/线程/运行时长/后端可达性·延迟[FR-34]、后端子服清单[FR-36]、默认入口[FR-48]、所属 zone），让运维完整了解 BC 服状态（增强 FR-6，依赖 FR-34/FR-36/FR-48） | P2 | 开发中 |
+| FR-53 | 环境（namespace）增删改查补全：补 Update（显示名 name 随时可改）与 Delete（守卫：该环境下有已注册实例 / 已指派 zone / 已有配置则禁删并明确提示），前端新增环境管理页（列表/新建/改名/删除），操作入审计（namespace.update/delete）（增强 FR-6） | P2 | 开发中 |
 | FR-54 | beacon 主命令帮助完善：参考 taboolib 命令规范补 help 子命令与各子命令用法说明、无参/错参友好提示（当前仅无参打印 USAGE_LINES），完善 agent 运维命令可发现性（增强 FR-17） | P2 | 开发中 |
-| FR-55 | 归派看板汇总树形化：zone 归派管理台的汇总区由底部扁平表格（大区/小区/服数/在线数）改为页面上方的树形节点图（大区→小区→子服层级），提升集群归属可读性（增强 FR-35） | P2 | 计划 |
+| FR-55 | 归派看板汇总树形化：zone 归派管理台的汇总区由底部扁平表格（大区/小区/服数/在线数）改为页面上方的树形节点图（大区→小区→子服层级），提升集群归属可读性（增强 FR-35） | P2 | 开发中 |
 | FR-56 | 嵌套 BC 多层代理（BC→BC→bukkit）：支持父 BC 把子 BC 也注入为后端、拓扑与分派/默认入口在多层代理下正确呈现（扩展 FR-48/FR-37/FR-36 的单层假设），需写新 ADR；本批不做、仅登记后续 | P3 | 计划 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
