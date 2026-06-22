@@ -17,33 +17,33 @@ export default function SummaryCards({ summary }: SummaryCardsProps) {
   const cpuText = cpuAvailable ? `${(summary.avgCpuLoad * 100).toFixed(0)}%` : '不可用'
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <StatCard
         label="总在线玩家数"
         value={summary.totalPlayers}
-        icon={<Users className="size-5" />}
+        icon={<Users className="size-4" />}
       />
       <StatCard
         label="在线服务器数"
         value={summary.onlineServers}
-        icon={<Server className="size-5" />}
+        icon={<Server className="size-4" />}
       />
       <StatCard
         label="平均 TPS"
         value={summary.avgTps.toFixed(1)}
-        icon={<Activity className="size-5" />}
+        icon={<Activity className="size-4" />}
       />
       <StatCard
         label="平均内存"
         value={formatBytes(summary.avgMemUsed)}
         hint={`最大 ${formatBytes(summary.avgMemMax)}`}
-        icon={<MemoryStick className="size-5" />}
+        icon={<MemoryStick className="size-4" />}
       />
       <StatCard
         label="平均 CPU 负载"
         value={cpuText}
         hint={cpuAvailable ? `${summary.cpuSampleCount} 个有效样本` : '无可用 CPU 样本'}
-        icon={<Cpu className="size-5" />}
+        icon={<Cpu className="size-4" />}
       />
     </div>
   )

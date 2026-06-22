@@ -27,33 +27,33 @@ export default function BCPanel({ bc }: BCPanelProps) {
       : '该代理未配置后端'
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
       <StatCard
         label="在线 BC 代理数"
         value={bc.proxyCount}
-        icon={<Server className="size-5" />}
+        icon={<Server className="size-4" />}
       />
       <StatCard
         label="代理总连接数"
         value={bc.totalConnections}
-        icon={<Plug className="size-5" />}
+        icon={<Plug className="size-4" />}
       />
       <StatCard
         label="平均线程数"
         value={bc.avgThreadCount.toFixed(0)}
-        icon={<Cpu className="size-5" />}
+        icon={<Cpu className="size-4" />}
       />
       <StatCard
         label="后端可达性"
         value={reachText}
         hint={reachHint}
-        icon={<Network className="size-5" />}
+        icon={<Network className="size-4" />}
       />
       <StatCard
         label="平均后端延迟"
         value={latencyText}
         hint={latencyAvailable ? '到可达后端的 ping RTT' : '无可达后端样本'}
-        icon={<Timer className="size-5" />}
+        icon={<Timer className="size-4" />}
       />
     </div>
   )

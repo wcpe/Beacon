@@ -15,13 +15,14 @@ interface StatCardProps {
 }
 
 export default function StatCard({ label, value, hint, icon }: StatCardProps) {
+  // size="sm" 收紧卡片内外边距（--card-spacing 4→3）；数值字号降一档、间距收紧，使 KPI 卡片更紧凑。
   return (
-    <Card>
-      <CardContent className="flex items-start gap-3">
+    <Card size="sm">
+      <CardContent className="flex items-start gap-2.5">
         <div className="mt-0.5 text-muted-foreground">{icon}</div>
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">{label}</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums">{value}</div>
+          <div className="mt-0.5 text-xl font-semibold tabular-nums">{value}</div>
           {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
         </div>
       </CardContent>
