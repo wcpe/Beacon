@@ -18,7 +18,7 @@ func TestImprintFullChain(t *testing.T) {
 
 	// 预置组级该文件 {a:1}，使期望合并值非空（拓印源盘上是 {a:99}，构造真实 diff）
 	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/files?namespace=prod", map[string]any{
-		"group": "area1", "path": "plugin-a/config.yml", "scopeLevel": "group", "content": "a: 1\n",
+		"namespace": "prod", "group": "area1", "path": "plugin-a/config.yml", "scopeLevel": "group", "content": "a: 1\n",
 	})
 	if code != http.StatusCreated {
 		t.Fatalf("预置组级文件应 201，实际 %d", code)
