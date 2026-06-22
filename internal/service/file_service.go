@@ -12,6 +12,7 @@ import (
 
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/filetree"
+	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -38,6 +39,8 @@ type CreateFileParams struct {
 	Comment     string
 	// 整文件覆盖豁免（FR-44）：true 则该结构化文件强制整文件覆盖、不深合并（保注释）。缺省 false。
 	WholeFileOverride bool
+	// git 导出敏感排除（FR-47）：true 则该文件不导出到 git 镜像（库内保留、下发不变）。缺省 false。
+	SensitiveExcluded bool
 	ClientIP          string
 }
 
@@ -77,6 +80,7 @@ type FileService struct {
 	revRepo   *repository.FileRevisionRepository
 	auditRepo *repository.AuditLogRepository
 	notifier  *ChangeNotifier // 可选，事务提交后唤醒受影响的文件长轮询
+	exporter  GitExporter     // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
 }
 
 // NewFileService 构造服务。
@@ -94,6 +98,29 @@ func (s *FileService) notify(obj *model.FileObject) {
 	if s.notifier != nil {
 		s.notifier.NotifyFileChange(obj.NamespaceCode, obj.ScopeLevel, obj.GroupCode, obj.ScopeTarget)
 	}
+}
+
+// SetGitExporter 注入 git 导出触发器（启动时装配；未注入则不导出，FR-47）。
+func (s *FileService) SetGitExporter(e GitExporter) {
+	s.exporter = e
+}
+
+// exportGit 在事务提交成功后触发 git 单向导出（best-effort 非阻塞；与 notify 并列、互不阻塞，FR-47）。
+func (s *FileService) exportGit(obj *model.FileObject, action, operator string) {
+	if s.exporter == nil {
+		return
+	}
+	s.exporter.ExportAsync(gitexport.ExportMeta{
+		Operator: operator,
+		Action:   action,
+		Target:   fileTargetRef(obj),
+		Version:  obj.Version,
+	})
+}
+
+// fileTargetRef 渲染文件对象的可读对象引用（与审计 TargetRef 同格式），供 commit message 追溯。
+func fileTargetRef(obj *model.FileObject) string {
+	return fmt.Sprintf("%s/%s/%s@%s:%s", obj.NamespaceCode, obj.GroupCode, obj.Path, obj.ScopeLevel, obj.ScopeTarget)
 }
 
 // List 列出文件对象。
@@ -142,7 +169,7 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 		NamespaceCode: p.Namespace, GroupCode: group, Path: cleanPath,
 		ScopeLevel: p.ScopeLevel, ScopeTarget: scopeTarget,
 		Content: p.Content, ContentMD5: md5, Version: 1, Enabled: true,
-		WholeFileOverride: p.WholeFileOverride,
+		WholeFileOverride: p.WholeFileOverride, SensitiveExcluded: p.SensitiveExcluded,
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.fileRepo.WithTx(tx).Create(obj); err != nil {
@@ -167,6 +194,7 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 	}
 	slog.Info("新建托管文件", "namespace", p.Namespace, "group", group, "path", cleanPath, "scope", p.ScopeLevel)
 	s.notify(obj)
+	s.exportGit(obj, model.ActionFileCreate, p.Operator)
 	return obj, nil
 }
 
@@ -254,6 +282,14 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 	if s.notifier != nil {
 		s.notifier.NotifyFileChange(p.Namespace, scopeLevel, group, scopeTarget)
 	}
+	// 导入触发一次 git 全量导出（target 指向目标层；导出本就全量、不按单文件，FR-47）
+	if s.exporter != nil {
+		s.exporter.ExportAsync(gitexport.ExportMeta{
+			Operator: p.Operator,
+			Action:   model.ActionFileImport,
+			Target:   fmt.Sprintf("%s/%s@%s:%s", p.Namespace, group, scopeLevel, scopeTarget),
+		})
+	}
 	return result, nil
 }
 
@@ -288,6 +324,7 @@ func (s *FileService) Publish(id uint, content, operator, comment, clientIP stri
 	}
 	slog.Info("发布托管文件", "id", id, "version", newVersion)
 	s.notify(obj)
+	s.exportGit(obj, model.ActionFilePublish, operator)
 	return obj, nil
 }
 
@@ -326,6 +363,7 @@ func (s *FileService) Rollback(id uint, toVersion int64, operator, comment, clie
 	}
 	slog.Info("回滚托管文件", "id", id, "toVersion", toVersion, "newVersion", newVersion)
 	s.notify(obj)
+	s.exportGit(obj, model.ActionFileRollback, operator)
 	return obj, nil
 }
 
@@ -350,6 +388,7 @@ func (s *FileService) Delete(id uint, operator, _, clientIP string) error {
 	}
 	slog.Info("软删托管文件", "id", id)
 	s.notify(obj)
+	s.exportGit(obj, model.ActionFileDelete, operator)
 	return nil
 }
 

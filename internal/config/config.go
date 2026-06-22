@@ -19,8 +19,30 @@ type Config struct {
 	Metric MetricConfig `yaml:"metric"`
 	// 长轮询相关参数
 	Longpoll LongpollConfig `yaml:"longpoll"`
+	// git 单向导出镜像（备份 / 灾备 / 外部可见，FR-47）
+	GitExport GitExportConfig `yaml:"git-export"`
 	// 日志配置
 	Log LogConfig `yaml:"log"`
+}
+
+// GitExportConfig 是 git 单向导出镜像配置（FR-47，见 ADR-0030）。
+// 发布 / 回滚事务提交后异步 best-effort 把配置 / 文件树源层导出 commit 到本地裸仓、可选推送远程；
+// git 仓是单向派生镜像、不作第二真源，失败仅告警不阻断发布。远程凭据走 env、不写入库 yaml。
+type GitExportConfig struct {
+	// 是否启用导出；false 时完全不导出（默认 false，属可选增强）
+	Enabled bool `yaml:"enabled"`
+	// 本地 git 仓路径（导出 commit 落此目录；相对路径相对进程工作目录）
+	RepoPath string `yaml:"repo-path"`
+	// 可选远程推送地址（GitHub/Gitea，空则只本地 commit 不推送）
+	RemoteURL string `yaml:"remote-url"`
+	// 远程推送分支
+	RemoteBranch string `yaml:"remote-branch"`
+	// commit 作者名（仅 git 提交身份元数据，非鉴权）
+	AuthorName string `yaml:"author-name"`
+	// commit 作者邮箱（仅 git 提交身份元数据，非鉴权）
+	AuthorEmail string `yaml:"author-email"`
+	// 远程推送凭据（token / 密码）：敏感项，仅从 env BEACON_GIT_EXPORT_REMOTE_TOKEN 注入，禁写入库 yaml
+	RemoteToken string `yaml:"-"`
 }
 
 // AuthConfig 是管理面鉴权配置（单操作者模型，非 RBAC）。
@@ -137,6 +159,15 @@ func Default() Config {
 			RetentionHours:    168, // 默认保留 7 天（168h）
 		},
 		Longpoll: LongpollConfig{MaxHoldMs: 30000},
-		Log:      LogConfig{Level: "INFO"},
+		GitExport: GitExportConfig{
+			// 默认关闭：属可选增强，开启需运维显式配置仓路径 / 远程
+			Enabled:      false,
+			RepoPath:     "beacon-config-export",
+			RemoteURL:    "",
+			RemoteBranch: "main",
+			AuthorName:   "beacon",
+			AuthorEmail:  "beacon@local",
+		},
+		Log: LogConfig{Level: "INFO"},
 	}
 }

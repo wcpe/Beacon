@@ -19,6 +19,7 @@ import (
 	"github.com/wcpe/Beacon/internal/auth"
 	"github.com/wcpe/Beacon/internal/config"
 	"github.com/wcpe/Beacon/internal/embedweb"
+	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/handler"
 	"github.com/wcpe/Beacon/internal/metrics"
 	"github.com/wcpe/Beacon/internal/pkg/log"
@@ -235,6 +236,21 @@ func run() error {
 	commandService.SetNotifier(notifier)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
 
+	// git 单向导出镜像（FR-47，见 ADR-0030）：发布 / 回滚 / 改派提交后异步 best-effort 把源层导出 commit。
+	// 仅 enabled 时装配并接线触发器；git 仓是单向派生镜像、失败仅 WARN 不阻断发布。
+	// gitRepo 端口：未启用 NopGitRepo、启用用 go-git 实现的 GoGitRepo（见 newGitRepo / ADR-0030 决策5）。
+	exportSourceRepo := repository.NewExportSourceRepository(db)
+	gitExportService := service.NewGitExportService(exportSourceRepo, newGitRepo(cfg.GitExport))
+	if cfg.GitExport.Enabled {
+		configService.SetGitExporter(gitExportService)
+		fileService.SetGitExporter(gitExportService)
+		zoneService.SetGitExporter(gitExportService)
+		slog.Info("git 单向导出镜像已启用", "仓路径", cfg.GitExport.RepoPath,
+			"远程", gitRemoteForLog(cfg.GitExport.RemoteURL))
+	} else {
+		slog.Info("git 单向导出镜像未启用（git-export.enabled=false）")
+	}
+
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
 	if err != nil {
@@ -265,6 +281,11 @@ func run() error {
 		slog.Info("指标采样已禁用（metric.enabled=false），仅实时聚合端点可用")
 	}
 
+	// 启动 git 导出 worker（FR-47）：单 worker 串行消费导出信号，随关停信号退出；未启用时也起（空转无害、无信号即不动）
+	if cfg.GitExport.Enabled {
+		go gitExportService.Run(ctx.Done())
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("HTTP 服务已就绪", "地址", cfg.HTTPAddr)
@@ -283,4 +304,29 @@ func run() error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// newGitRepo 按导出配置构造 git 写入端口实现（FR-47，见 ADR-0030 决策5）。
+// 未启用即 NopGitRepo（no-op）；启用则用 go-git（纯 Go、契合单二进制 alpine）实现的 GoGitRepo。
+// 具体 git 库只在 gitexport.GoGitRepo 适配器里 import，纯逻辑 / 触发链路不依赖之（端口隔离）。
+func newGitRepo(cfg config.GitExportConfig) gitexport.GitRepo {
+	if !cfg.Enabled {
+		return gitexport.NopGitRepo{}
+	}
+	return gitexport.NewGoGitRepo(gitexport.GoGitRepoConfig{
+		RepoPath:     cfg.RepoPath,
+		RemoteURL:    cfg.RemoteURL,
+		RemoteBranch: cfg.RemoteBranch,
+		AuthorName:   cfg.AuthorName,
+		AuthorEmail:  cfg.AuthorEmail,
+		RemoteToken:  cfg.RemoteToken,
+	})
+}
+
+// gitRemoteForLog 把远程地址脱敏后用于日志（空则显示「仅本地」，绝不打印可能内嵌的凭据）。
+func gitRemoteForLog(remoteURL string) string {
+	if remoteURL == "" {
+		return "仅本地"
+	}
+	return remoteURL
 }

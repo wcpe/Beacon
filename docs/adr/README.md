@@ -33,6 +33,7 @@
 | [0027](0027-reverse-fetch-channel-and-security.md) | 在线实例反向抓取的命令通道（复用 SSE）与安全边界（限 plugins/ 内、排除 jar、上限、双校验、鉴权审计） | 已接受 |
 | [0028](0028-allow-hosting-agent-self-dir.md) | 放开控制面对 agent 自身目录的托管拦截，自我保护下沉到 agent observe-only（FR-38/FR-39 归真） | 已接受 |
 | [0029](0029-file-tree-structured-deep-merge.md) | 文件树结构化文件跨层深合并、可按文件豁免（取代 ADR-0010 决策1） | 已接受 |
+| [0030](0030-git-export-mirror.md) | git 单向导出镜像（派生备份 / 灾备 / 外部可见，不作第二真源；推荐 go-git） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

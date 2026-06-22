@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -46,6 +47,7 @@ type ConfigService struct {
 	auditRepo  *repository.AuditLogRepository
 	notifier   *ChangeNotifier // 可选，事务提交后唤醒受影响长轮询
 	metrics    PublishRecorder // 可选，发布计数（见 ADR-0020）
+	exporter   GitExporter     // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
 }
 
 // NewConfigService 构造服务。
@@ -68,6 +70,30 @@ func (s *ConfigService) recordPublish() {
 	if s.metrics != nil {
 		s.metrics.IncConfigPublish()
 	}
+}
+
+// SetGitExporter 注入 git 导出触发器（启动时装配；未注入则不导出，FR-47）。
+func (s *ConfigService) SetGitExporter(e GitExporter) {
+	s.exporter = e
+}
+
+// exportGit 在事务提交成功后触发 git 单向导出（best-effort 非阻塞；与 notify 并列、互不阻塞）。
+// 仅注入了导出器才触发；ExportAsync 内部立即返回，git IO 在导出 worker goroutine 跑（FR-47）。
+func (s *ConfigService) exportGit(item *model.ConfigItem, action, operator string) {
+	if s.exporter == nil {
+		return
+	}
+	s.exporter.ExportAsync(gitexport.ExportMeta{
+		Operator: operator,
+		Action:   action,
+		Target:   configTargetRef(item),
+		Version:  item.Version,
+	})
+}
+
+// configTargetRef 渲染配置项的可读对象引用（与审计 TargetRef 同格式），供 commit message 追溯。
+func configTargetRef(item *model.ConfigItem) string {
+	return fmt.Sprintf("%s/%s/%s@%s:%s", item.NamespaceCode, item.GroupCode, item.DataID, item.ScopeLevel, item.ScopeTarget)
 }
 
 // mapDuplicateKey 把并发撞唯一键的 gorm.ErrDuplicatedKey 映射为 409 CONFLICT，
@@ -153,6 +179,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 	slog.Info("新建配置项", "namespace", p.Namespace, "group", group, "dataId", p.DataID, "scope", p.ScopeLevel)
 	s.recordPublish()
 	s.notify(item)
+	s.exportGit(item, model.ActionConfigCreate, p.Operator)
 	return item, nil
 }
 
@@ -189,6 +216,7 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 	slog.Info("发布配置", "id", id, "version", newVersion)
 	s.recordPublish()
 	s.notify(item)
+	s.exportGit(item, model.ActionConfigPublish, operator)
 	return item, nil
 }
 
@@ -233,6 +261,7 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 	slog.Info("回滚配置", "id", id, "toVersion", toVersion, "newVersion", newVersion)
 	s.recordPublish()
 	s.notify(item)
+	s.exportGit(item, model.ActionConfigRollback, operator)
 	return item, nil
 }
 
@@ -257,6 +286,7 @@ func (s *ConfigService) Delete(id uint, operator, _, clientIP string) error {
 	}
 	slog.Info("软删配置项", "id", id)
 	s.notify(item)
+	s.exportGit(item, model.ActionConfigDelete, operator)
 	return nil
 }
 

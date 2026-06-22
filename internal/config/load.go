@@ -78,6 +78,25 @@ func applyEnv(cfg *Config) {
 			cfg.Metric.RetentionHours = n
 		}
 	}
+	// git 单向导出（FR-47）：开关布尔显式解析，仓路径 / 远程地址 / 分支字符串覆盖；
+	// 远程凭据为敏感项，仅从 env 注入、不入库 yaml（rule #14）
+	if v := os.Getenv("BEACON_GIT_EXPORT_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.GitExport.Enabled = b
+		}
+	}
+	if v := os.Getenv("BEACON_GIT_EXPORT_REPO_PATH"); v != "" {
+		cfg.GitExport.RepoPath = v
+	}
+	if v := os.Getenv("BEACON_GIT_EXPORT_REMOTE_URL"); v != "" {
+		cfg.GitExport.RemoteURL = v
+	}
+	if v := os.Getenv("BEACON_GIT_EXPORT_REMOTE_BRANCH"); v != "" {
+		cfg.GitExport.RemoteBranch = v
+	}
+	if v := os.Getenv("BEACON_GIT_EXPORT_REMOTE_TOKEN"); v != "" {
+		cfg.GitExport.RemoteToken = v
+	}
 }
 
 // validate 校验关键项，缺失即 fail-fast（中文报错）。

@@ -42,6 +42,7 @@ internal/
   metrics/     Prometheus 指标：独立 registry + 注册/健康 gauge collector(抓取时读内存注册表) + 发布/推送 counter + /metrics handler(见 ADR-0020)
   merge/       merge.go(深合并) codec.go(yaml/json/properties) digest.go(md5)
   filetree/    resolve.go(通道B 整文件覆盖 + manifest + fileTreeMd5，纯函数，与 merge 平级)
+  gitexport/   snapshot.go(源层→快照 + 目录布局 + 敏感排除) commit.go(commit message) repo.go(GitRepo 端口 + NopGitRepo)——git 单向导出纯逻辑，与 merge 平级(见 ADR-0030)
   model/       GORM 实体 + enums
   store/       db.go(GORM 连接 + AutoMigrate) logger.go
   pkg/log/     中文分级日志
@@ -78,7 +79,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 
 `config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`；`sensitive`（为真则 `content` 加密落库，at-rest，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）；`gray_version`（灰度发布乐观锁版本，发布前以其做 CAS 串行化同一 item 的并发灰度发布、从源头消除「先软删后建」在 `uk_gray_item` 上的死锁，FR-9，内部令牌不外泄）。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。`content_md5` 始终基于**明文**（敏感项解密后再算），`config_revision` 同步带 `sensitive` 并对敏感快照同样加密。
 
-`file_object` 关键字段：`(namespace_code, group_code, path, scope_level, scope_target)` 唯一定位覆盖链中的一格（唯一键含 `path`）；`content`（整文件文本，落 `TEXT` 经 GORM size 抽象不绑方言）+ `content_md5` 冗余在行上；`current_revision`、`version`、`enabled`。同 `config_item` 的 scope 维度，但解析为**整文件覆盖**（取覆盖链上拥有该 `path` 的最高层那份，见 §5.1）。
+`file_object` 关键字段：`(namespace_code, group_code, path, scope_level, scope_target)` 唯一定位覆盖链中的一格（唯一键含 `path`）；`content`（整文件文本，落 `TEXT` 经 GORM size 抽象不绑方言）+ `content_md5` 冗余在行上；`current_revision`、`version`、`enabled`。同 `config_item` 的 scope 维度，但解析为**整文件覆盖**（取覆盖链上拥有该 `path` 的最高层那份，见 §5.1）。`sensitive_excluded`（为真则该文件**不导出到 git 镜像**——库内保留、下发不变、仅 git 排除，防反向抓取来的第三方插件明文密码落 git，FR-47，见 [ADR-0030](adr/0030-git-export-mirror.md)；基础布尔、零方言、AutoMigrate 加列、既有行默认 false）。
 
 `config_gray` 关键字段：`config_item_id`（关联所属配置项，进唯一键 + 软删哨兵 → 一个 item 至多一个未软删灰度）；`namespace_code`（供按 ns 批量取活跃灰度，避免 N+1）；`content` + `content_md5`（灰度内容，敏感项与所属 item 镜像加密，md5 按明文算）；`cohort`（目标 serverId 名单，**JSON 数组文本落 `TEXT`**，可移植可读）；`format`/`sensitive`/`operator`/`comment`。灰度作用在"版本选择"层而非新增覆盖层（见 §5、[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）。
 
@@ -160,6 +161,16 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 - **传输抽象（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md) / 不变量 #5）**：core 新增 `StreamTransport`/`StreamEvent` 端口与纯逻辑 `SseFrameParser`（按空行分帧、注释行心跳忽略），SSE 客户端实现 `OkHttpStreamTransport`（纯 HTTP 读流、无 netty/无重型件）只在适配器。控制面 SSE 事件编码为纯函数 `internal/sse`，保活发 SSE 注释行（`: ping`），响应头带 `X-Accel-Buffering: no` 关反代缓冲。
 - **迁移期兼容**：注入 `streamTransport` 时 agent 以单条 SSE 流取代三条长轮询循环；未注入则退回三条长轮询（[ADR-0015](adr/0015-sse-server-push-transport.md) 决策 8）。远程命令、[FR-29](PRD.md) 拓扑 watch 作为消费者复用本流（各自独立 FR）。
 - **拓扑 watch（FR-29）接入本流**：新增 `topology-changed` 事件类型与一个 namespace 级唤醒 Hub（`topologyHub`，与配置/文件 Hub 同构、独立锁）。`StreamService` 在每条流上额外注册一个拓扑 waiter 并维护 namespace **拓扑摘要**（`runtime.TopologyDigest`：对"可用集合"按 `serverId|role|group|zone|status|address` 排序后取 md5，运行指标如 playerCount/tps 不入摘要）；实例上线/下线（注册 / 手动下线 / 健康转 lost·offline）/ 改派 zone 四处变更点经 `ChangeNotifier.NotifyTopologyChange(ns)` 唤醒该 namespace 全部拓扑 waiter，被唤醒即重算摘要、**真变才推**（摘要未变不推）。事件 `data` 仅携新摘要、不搬实例数据——agent 收到 `topology-changed` 后重查 `discovery` 端点取最新拓扑（守控制面/数据面边界：控制面只发"拓扑事实变更通知"）。
+
+### 6.2 git 单向导出镜像（FR-47，[ADR-0030](adr/0030-git-export-mirror.md)）
+
+把配置 / 文件树的**源层**（global / 大区 / 小区 / 单服 各层原始内容，**非合并后的有效配置**）按目录结构**单向导出**成一个 git 仓——备份 / 灾备 / 外部可见、可 `git log` 翻历史。**git 仓是单向派生镜像、绝不作第二真源**：数据只从 MySQL 单向流向 git，永不回灌、不参与 agent 下发或有效配置解析（守[不变量 #3 真源切分](../.claude/rules/architecture-invariants.md)）。
+
+- **触发时机（提交后、与唤醒并列）**：`ConfigService` / `FileService` / `ZoneService` 的写路径在 DB 事务**提交成功后**、与 `ChangeNotifier` 长轮询唤醒**并列**调 `GitExporter.ExportAsync(meta)`——可选注入（`SetGitExporter`，未注入即 no-op，与 `SetNotifier` 同构），二者各自独立、互不阻塞。
+- **异步 best-effort 非阻塞**：`ExportAsync` 只投递信号立即返回（绝不在发布请求线程做 git IO，守[性能约束](../.claude/rules/architecture-invariants.md)）；`service.GitExportService` 以**单 worker goroutine 串行**消费信号（git 工作区单写资源，信号 channel 缓冲 1、满即丢——每次导出全量快照、丢信号不丢数据），读全量源层 → `gitexport.BuildSnapshot` 组装快照 → `GitRepo.Commit`。任一步失败**仅 WARN，绝不回滚发布、绝不阻断主流程、绝不影响下发**（与 [ADR-0019](adr/0019-health-alert-channel-abstraction.md) 告警逐通道兜错同精神）。
+- **源层读取不解密、保密文**：`repository.ExportSourceRepository` 直读 `config_item` / `file_object` 原始行（只读、与发布事务无关、唯一新增 DB 读路径），**不经配置仓库的解密**——敏感配置项库内 `content` 即 `enc:v1:` 密文，原样导出正是 FR-47 所需（解密反泄明文，[ADR-0018](adr/0018-config-encryption-at-rest.md)）；密钥不入 git。
+- **敏感处理**：配置项 FR-20 标 `sensitive` 的导**密文**；文件树新增 `file_object.sensitive_excluded` path 级标记，置真则该文件**整体不导出**到 git（防反向抓取来的第三方插件明文密码落 git）。远程推送**凭据走 env**（`BEACON_GIT_EXPORT_REMOTE_TOKEN`）、不入库 yaml。
+- **纯逻辑与 git 实现解耦**：`internal/gitexport` 为无副作用纯逻辑包（`SourceLayer` / `Snapshot` / `BuildPath` 目录布局 / `BuildSnapshot` 敏感排除 / `BuildCommitMessage`，与 `merge`/`filetree` 平级、可穷举单测）；真正读写 git 仓经 `GitRepo` 端口接口隔离（与 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md) 让 core 依赖 `HttpTransport` 端口同构），实现**推荐 go-git**（纯 Go、契合单二进制 alpine、免装 git；备选 git CLI 需改 Dockerfile）。未启用导出用 `NopGitRepo` 空实现。灾备恢复 = 手动 / 脚本化重导入（保持单向、不引入入站同步 / 自动 restore）。
 
 ## 7. 服务注册 / 发现 / 健康
 

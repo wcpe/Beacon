@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
 	"github.com/wcpe/Beacon/internal/runtime"
@@ -29,6 +30,7 @@ type ZoneService struct {
 	auditRepo  *repository.AuditLogRepository
 	registry   *runtime.Registry
 	notifier   *ChangeNotifier // 可选，改派/取消后唤醒该 serverId 的长轮询
+	exporter   GitExporter     // 可选，改派/取消后触发 git 单向导出（FR-47，best-effort 非阻塞）
 }
 
 // NewZoneService 构造服务。
@@ -47,6 +49,25 @@ func (s *ZoneService) notifyServer(ns, serverID string) {
 		s.notifier.NotifyServer(ns, serverID)
 		s.notifier.NotifyTopologyChange(ns)
 	}
+}
+
+// SetGitExporter 注入 git 导出触发器（启动时装配；未注入则不导出，FR-47）。
+func (s *ZoneService) SetGitExporter(e GitExporter) {
+	s.exporter = e
+}
+
+// exportGit 在改派/取消事务提交后触发 git 单向导出（best-effort 非阻塞，FR-47）。
+// 改派只改 zone_assignment（不导出该表），源层内容不变、commit 通常为空 diff；
+// 仍触发以与「提交后导出」时机一致，空 diff 由 git 实现自然跳过、无副作用。
+func (s *ZoneService) exportGit(ns, serverID, action, operator string) {
+	if s.exporter == nil {
+		return
+	}
+	s.exporter.ExportAsync(gitexport.ExportMeta{
+		Operator: operator,
+		Action:   action,
+		Target:   ns + "/" + serverID,
+	})
 }
 
 // Assign 新增或改派 serverId→(group, zone)，事务内 upsert + 审计原子完成。
@@ -86,6 +107,7 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP
 	}
 	s.registry.UpdateAssignment(ns, serverID, group, zone)
 	s.notifyServer(ns, serverID)
+	s.exportGit(ns, serverID, action, operator)
 	slog.Info("zone 指派", "namespace", ns, "serverId", serverID, "group", group, "zone", zone, "action", action)
 	return a, nil
 }
@@ -114,6 +136,7 @@ func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
 	}
 	s.registry.ClearAssignment(ns, serverID)
 	s.notifyServer(ns, serverID)
+	s.exportGit(ns, serverID, model.ActionZoneUnassign, operator)
 	slog.Info("取消 zone 指派", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
 }

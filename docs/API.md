@@ -254,7 +254,7 @@ data: {}
 | `GET /admin/v1/files?namespace=&group=&path=&scopeLevel=` | 列出文件对象 |
 | `GET /admin/v1/files/effective?namespace=&serverId=&group=&zone=` | 只读预览某目标合并后的有效文件树 + 逐文件/逐键来源（FR-45，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式扩展到 [ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 文件树合并） |
 | `GET /admin/v1/files/{id}` | 取当前整文件内容 + 元数据（含 `wholeFileOverride`，FR-44；List/Get 视图均回显） |
-| `POST /admin/v1/files` | 新建（首次发布）：`{ namespace, group, path, scopeLevel, scopeTarget, content, comment, wholeFileOverride? }`（`wholeFileOverride` 可选布尔，缺省 false；置真则该结构化文件强制整文件覆盖、不深合并，FR-44；operator 由认证态派生） |
+| `POST /admin/v1/files` | 新建（首次发布）：`{ namespace, group, path, scopeLevel, scopeTarget, content, comment, wholeFileOverride?, sensitiveExcluded? }`（`wholeFileOverride` 可选布尔，缺省 false；置真则该结构化文件强制整文件覆盖、不深合并，FR-44。`sensitiveExcluded` 可选布尔，缺省 false；置真则该文件不导出到 git 镜像——库内保留、下发不变、仅 git 排除，防第三方插件明文密码落 git，FR-47/[ADR-0030](adr/0030-git-export-mirror.md)。operator 由认证态派生） |
 | `POST /admin/v1/files/import` | 配置导入（FR-38，`multipart/form-data`）：把一份目录批量上传到某组（`scope=group`）。字段 `namespace`、`group`、可选 `comment` + 多个 `files` 文件部件 + 与之等长一一对应的 `paths` 相对路径字段。每个文件按相对 path「存在则发布新版本、不存在则首发」（整文件覆盖语义），多文件在同一事务内原子落地，提交后唤醒文件长轮询，并记一条 `file.import` 审计。返回 `{ files, created, updated }`（operator 由认证态派生） |
 | `PUT /admin/v1/files/{id}` | 发布新版本：`{ content, comment }` → version+1，返回新 `version`/`md5`（operator 由认证态派生） |
 | `DELETE /admin/v1/files/{id}` | 软删（该层从覆盖链脱落，触发文件唤醒；下游 agent 据 manifest 删该 path 镜像；operator 由认证态派生） |
