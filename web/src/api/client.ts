@@ -287,9 +287,30 @@ export function listInstances(filter: InstanceFilter): Promise<InstanceView[]> {
   return request<ItemsResponse<InstanceView>>(`/instances${qs(filter)}`).then((r) => r.items)
 }
 
-export function offlineInstance(serverId: string, namespace: string): Promise<void> {
+// 主动下线标记（FR-49）：已下线实例不在注册表列表出现，前端据此展示「已下线（可取消）」。
+export interface OfflineMarker {
+  namespace: string
+  serverId: string
+  reason: string
+}
+
+// 列出当前主动下线标记（FR-49）。namespace 可选过滤。
+export function listOfflineInstances(namespace?: string): Promise<OfflineMarker[]> {
+  return request<ItemsResponse<OfflineMarker>>(`/instances/offline${qs({ namespace })}`).then((r) => r.items)
+}
+
+// 主动下线某实例（FR-49）：落 DB 拒绝态 + 移出可用集。namespace 取自该行实例（不再强制先筛环境）。
+export function offlineInstance(serverId: string, namespace: string, reason?: string): Promise<void> {
   return request<void>(`/instances/${encodeURIComponent(serverId)}/offline${qs({ namespace })}`, {
     method: 'POST',
+    body: JSON.stringify({ reason: reason ?? '' }),
+  })
+}
+
+// 取消主动下线某实例（FR-49）：清除 DB 拒绝态，使其可重新接入。
+export function onlineInstance(serverId: string, namespace: string): Promise<void> {
+  return request<void>(`/instances/${encodeURIComponent(serverId)}/offline${qs({ namespace })}`, {
+    method: 'DELETE',
   })
 }
 

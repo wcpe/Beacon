@@ -1,9 +1,14 @@
 // 实例与健康页：按 namespace/group/zone/role/status 过滤，5 秒轮询健康。
-// online/lost/offline 三色区分；未分配 zone 的行高亮；点行看只读详情；支持手动下线。
+// online/lost/offline 三色区分；未分配 zone 的行高亮；点行看只读详情；支持主动下线（按行直接下线，不再强制先筛环境，FR-49）。
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { listInstances, offlineInstance } from '../api/client'
+import {
+  listInstances,
+  listOfflineInstances,
+  offlineInstance,
+  onlineInstance,
+} from '../api/client'
 import type { InstanceFilter } from '../api/client'
 import type { InstanceView } from '../api/types'
 import { formatTime } from '../api/format'
@@ -68,15 +73,33 @@ export default function InstancesPage() {
     refetchInterval: REFETCH_MS,
   })
 
+  // 主动下线标记（FR-49）：已下线实例不在注册表列表出现，单列展示并提供「取消下线」。
+  const { data: offlineMarkers } = useQuery({
+    queryKey: ['offline-instances', filter.namespace],
+    queryFn: () => listOfflineInstances(filter.namespace),
+    refetchInterval: REFETCH_MS,
+  })
+
+  // 主动下线：namespace 取自该行实例，不再强制先在过滤条件中选环境（FR-49）。
   const offlineMut = useMutation({
-    mutationFn: (serverId: string) => {
-      const ns = filter.namespace
-      if (!ns) throw new Error('下线需要先在过滤条件中指定环境')
-      return offlineInstance(serverId, ns)
-    },
-    onSuccess: (_data, serverId) => {
+    mutationFn: ({ serverId, namespace: ns }: { serverId: string; namespace: string }) =>
+      offlineInstance(serverId, ns),
+    onSuccess: (_data, { serverId }) => {
       msg.showSuccess(`已下线实例 ${serverId}`)
       qc.invalidateQueries({ queryKey: ['instances'] })
+      qc.invalidateQueries({ queryKey: ['offline-instances'] })
+    },
+    onError: (e: Error) => msg.showError(e.message),
+  })
+
+  // 取消主动下线：清除拒绝态，使实例可重新接入（FR-49）。
+  const onlineMut = useMutation({
+    mutationFn: ({ serverId, namespace: ns }: { serverId: string; namespace: string }) =>
+      onlineInstance(serverId, ns),
+    onSuccess: (_data, { serverId }) => {
+      msg.showSuccess(`已取消下线 ${serverId}`)
+      qc.invalidateQueries({ queryKey: ['instances'] })
+      qc.invalidateQueries({ queryKey: ['offline-instances'] })
     },
     onError: (e: Error) => msg.showError(e.message),
   })
@@ -90,15 +113,6 @@ export default function InstancesPage() {
       role: role === ALL ? undefined : role,
       status: status === ALL ? undefined : status,
     })
-  }
-
-  // 二次确认通过后执行下线：先校验环境（下线接口需要 namespace），再触发 mutation
-  function onConfirmOffline(serverId: string) {
-    if (!filter.namespace) {
-      msg.showError('请先在过滤条件中指定环境（下线接口需要 namespace）')
-      return
-    }
-    offlineMut.mutate(serverId)
   }
 
   // 实例表列定义（操作列闭包引用 offlineMut / onConfirmOffline，故在组件内定义）
@@ -142,12 +156,14 @@ export default function InstancesPage() {
             <AlertDialogHeader>
               <AlertDialogTitle>确认下线实例 {i.serverId}？</AlertDialogTitle>
               <AlertDialogDescription>
-                将把该实例标记为下线，下线接口需要过滤条件中指定的「环境」。
+                将把该实例标记为下线（环境 {i.namespace}）：移出可用集并拒绝其重新接入，直到取消下线。
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>取消</AlertDialogCancel>
-              <AlertDialogAction onClick={() => onConfirmOffline(i.serverId)}>
+              <AlertDialogAction
+                onClick={() => offlineMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+              >
                 确认下线
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -209,7 +225,7 @@ export default function InstancesPage() {
             <Button type="submit">查询</Button>
           </form>
           <p className="text-sm text-muted-foreground">
-            提示：手动下线需在上方过滤条件中指定「环境」。未分配小区的实例以黄色高亮，点击行查看详情。
+            提示：主动下线按行直接操作（环境取自该行）。未分配小区的实例以黄色高亮，点击行查看详情。
           </p>
         </CardContent>
       </Card>
@@ -228,6 +244,38 @@ export default function InstancesPage() {
           </AsyncSection>
         </CardContent>
       </Card>
+
+      {/* 已主动下线标记（FR-49）：已下线实例不在上表（已移出可用集），单列展示并支持取消下线 */}
+      {offlineMarkers && offlineMarkers.length > 0 && (
+        <Card>
+          <CardContent className="space-y-3">
+            <h2 className="text-base font-semibold">已主动下线（拒绝接入）</h2>
+            <DataTable
+              columns={[
+                { header: 'serverId', className: 'font-mono', cell: (o) => o.serverId },
+                { header: '环境', cell: (o) => o.namespace },
+                { header: '原因', cell: (o) => o.reason || '-' },
+                {
+                  header: '操作',
+                  cell: (o) => (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={onlineMut.isPending}
+                      onClick={() => onlineMut.mutate({ serverId: o.serverId, namespace: o.namespace })}
+                    >
+                      取消下线
+                    </Button>
+                  ),
+                },
+              ]}
+              rows={offlineMarkers}
+              rowKey={(o) => `${o.namespace}/${o.serverId}`}
+              emptyText="无下线标记"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* 只读实例详情 Dialog：展示列表未呈现的完整信息（metadata 等），不发新请求 */}
       <Dialog open={selectedInstance !== null} onOpenChange={(open) => !open && setSelectedInstance(null)}>
