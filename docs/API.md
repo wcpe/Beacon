@@ -43,6 +43,7 @@
 ```
 - `resolvedZone` 未分配时为 `null`，`assigned=false`（实例仍可注册运行，有效配置只含 global/group 层，管理台高亮待指派）。
 - **重复 serverId 守卫**：同 `(namespace, serverId)` 已有**仍新鲜**（`lastHeartbeat` 在心跳周期内）的另一 address 在线实例 → `409 DUPLICATE_SERVER_ID` + 写 fail 审计。旧条目已超期视为僵尸 → 允许新 address 顶替并告警（故障换机不被误杀）。同 address 重连幂等覆盖。
+- **主动下线拒绝（FR-49）**：注册前查 `server_offline`，命中 → `403 INSTANCE_OFFLINE_REJECTED` + 写 fail 审计（区别于 `409` 重复 / `404` 未注册）。agent 据此进入 `OFFLINE` 态、停止猛重连、不刷日志，取消下线后经降频探测恢复（见 agent §生命周期）。**心跳不查库**：下线在线实例时同步移出内存，其心跳 `404 NOT_REGISTERED` → 重注册 → 在此被拒。
 - 身份缺失（serverId/namespace 空）→ `400 IDENTITY_REQUIRED`。
 
 ### 2. 心跳 `POST /beacon/v1/agent/heartbeat`
@@ -297,7 +298,9 @@ data: {}
 |---|---|
 | `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36） |
 | `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`） |
-| `POST /admin/v1/instances/{serverId}/offline?namespace=` | 手动下线（移除内存条目；operator 由认证态派生） |
+| `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
+| `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
+| `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |
 | `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | 从该**在线实例**反向抓取其真实 `plugins/` 文本配置 ingest 入库为组/实例级文件树覆盖（FR-39，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 建 `pending` 命令 + `file.reverse-fetch` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 §2.5 / agent §10、§11）。返回 `202` + 命令视图 `{id,namespace,serverId,type,status,createdAt,updatedAt}`，结果经命令状态/审计/文件树体现（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)） |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 
