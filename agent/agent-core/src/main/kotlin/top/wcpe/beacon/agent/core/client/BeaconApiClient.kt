@@ -128,6 +128,8 @@ class BeaconApiClient(
         return when (resp.statusCode) {
             200 -> RegisterOutcome.Success(parseRegister(resp.body))
             409 -> RegisterOutcome.DuplicateServerId
+            // 403：实例被控制面主动下线，拒绝接入（FR-49），区别于 409 重复 / 404 未注册。
+            403 -> RegisterOutcome.OfflineRejected
             401 -> RegisterOutcome.Unauthorized
             400 -> RegisterOutcome.IdentityRequired
             else -> RegisterOutcome.Failed("非预期状态码 ${resp.statusCode}")

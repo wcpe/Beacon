@@ -306,6 +306,8 @@ class AgentLifecycle(
                 degradeAndRetryRegister()
             }
 
+            is RegisterOutcome.OfflineRejected -> enterOfflineAndProbe()
+
             is RegisterOutcome.Unauthorized -> {
                 adapter.error("注册被拒：X-Beacon-Token 缺失或错误", null)
                 degradeAndRetryRegister()
@@ -364,6 +366,26 @@ class AgentLifecycle(
         if (!running.get()) return
         val delay = registerBackoff.nextDelayMs()
         adapter.runAsyncDelayed(delay) { beginRegister(gen) }
+    }
+
+    /**
+     * 被控制面主动下线（FR-49）：进 OFFLINE 态，停止退避猛打，改按大间隔降频探测重注册。
+     *
+     * 与 DEGRADED（控制面不可用）严格区分：日志只在**首次进入 OFFLINE** 时 WARN 一次、
+     * 后续降频探测仍被拒不再打日志，不刷屏；保留快照、不阻断玩家（fail-static 不变）。
+     * 取消下线后下一次降频探测即注册成功、回 RUNNING（运维亦可经 reconnect 立即拉起）。
+     */
+    private fun enterOfflineAndProbe() {
+        // 首次进入 OFFLINE 才 WARN 一次；后续重复被拒静默（仅安排下一次降频探测），避免刷屏。
+        val firstEntry = state.getAndSet(AgentState.OFFLINE) != AgentState.OFFLINE
+        if (firstEntry) {
+            adapter.warn("注册被拒：本实例已被控制面主动下线（${identity.serverId}）；停止重连，按降频探测等待取消下线")
+        }
+        // 记下本次注册所属代，释放单飞门，再按大间隔安排一次降频探测（fire 时按此代校验，过期则作废）。
+        val gen = registerGen.get()
+        registering.set(false)
+        if (!running.get()) return
+        adapter.runAsyncDelayed(settings.offlineProbeIntervalMs) { beginRegister(gen) }
     }
 
     // ---- 心跳循环 ----

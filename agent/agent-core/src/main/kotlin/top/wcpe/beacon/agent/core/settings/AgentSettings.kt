@@ -15,6 +15,8 @@ import top.wcpe.beacon.agent.core.messaging.MessagingSettings
  * @param snapshotFileName   快照文件名（落数据目录）
  * @param fileTree           文件树托管（通道B）同步参数
  * @param override           三方插件文件覆盖兼容（FR-15）本地参数（含本地命令白名单）
+ * @param offlineProbeIntervalMs 被主动下线（FR-49）后降频探测重注册的间隔（毫秒），远大于退避上限以"不刷屏"；
+ *                           取消下线后下一次探测即可恢复（运维亦可经 reconnect 立即拉起）
  * @param messaging          跨服消息中间件（FR-26）本地行为参数（Redis 连接由控制面下发，不在此）
  * @param proxy              BC 代理本地路由参数（FR-48 home-zone）；bukkit 不用，默认空
  */
@@ -29,6 +31,8 @@ data class AgentSettings(
     val snapshotFileName: String,
     val fileTree: FileTreeSettings,
     val override: OverrideSettings,
+    // 被主动下线后降频探测间隔（FR-49）；默认 5 分钟，足够大以不刷屏，又能在取消下线后较快自动恢复。
+    val offlineProbeIntervalMs: Long = 300_000,
     // 默认关闭的消息参数：让既有测试与不关心消息的调用方无需显式构造（FR-26 增量字段）。
     val messaging: MessagingSettings = MessagingSettings(
         enabled = false,

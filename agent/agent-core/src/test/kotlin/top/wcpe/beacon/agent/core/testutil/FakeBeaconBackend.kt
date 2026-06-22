@@ -41,6 +41,10 @@ class FakeBeaconBackend : HttpTransport {
     @Volatile
     var releaseRegister: CountDownLatch? = null
 
+    /** 注册响应码（默认 200；置 403 模拟被主动下线拒绝，FR-49）。 */
+    @Volatile
+    var registerStatus: Int = 200
+
     /** 心跳响应码（默认 200；置 404 触发重注册路径）。 */
     @Volatile
     var heartbeatStatus: Int = 200
@@ -93,7 +97,8 @@ class FakeBeaconBackend : HttpTransport {
         try {
             registerEntered?.countDown()
             releaseRegister?.await()
-            return HttpResponse(200, BODY_REGISTER)
+            // 非 200（如 403 被主动下线）直接返回该码、不带成功体（FR-49）。
+            return if (registerStatus == 200) HttpResponse(200, BODY_REGISTER) else HttpResponse(registerStatus, "")
         } finally {
             inFlightRegister.decrementAndGet()
         }

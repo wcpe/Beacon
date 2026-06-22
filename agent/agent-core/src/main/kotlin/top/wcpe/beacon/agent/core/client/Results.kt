@@ -100,6 +100,9 @@ sealed class RegisterOutcome {
     /** 409：重复 serverId。 */
     object DuplicateServerId : RegisterOutcome()
 
+    /** 403：实例已被控制面主动下线，拒绝接入（FR-49，区别于 404 未注册 / 409 重复）。 */
+    object OfflineRejected : RegisterOutcome()
+
     /** 401：token 缺失/错误。 */
     object Unauthorized : RegisterOutcome()
 
