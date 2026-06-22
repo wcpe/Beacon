@@ -194,12 +194,22 @@ export function getNextVersion(id: number): number {
 
 // ---- 实例视图 ----
 
+// bukkit 实例的 proxy 指标恒为零值（仅 bc 非零，FR-34）
+const ZERO_PROXY: InstanceView['proxy'] = {
+  onlineConnections: 0,
+  threadCount: 0,
+  uptimeMs: 0,
+  backendUp: 0,
+  backendTotal: 0,
+  backendAvgLatencyMs: -1,
+}
+
 export const mockInstances: InstanceView[] = [
-  { namespace: 'prod', serverId: 'server-01', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.0.1:25565', version: '1.20.4', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(5), appliedMd5: 'abc12345', playerCount: 42, tps: 19.8, backends: [], registeredAt: ago(86400) },
-  { namespace: 'prod', serverId: 'server-02', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.0.2:25565', version: '1.20.4', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(10), appliedMd5: 'abc12345', playerCount: 38, tps: 19.5, backends: [], registeredAt: ago(86400) },
-  { namespace: 'prod', serverId: 'server-03', role: 'bungee', group: 'server-b', zone: 'zone-02', assigned: true, address: '10.0.0.3:25565', version: '1.20.4', status: 'lost', capacity: 200, weight: 2, metadata: {}, lastHeartbeat: ago(60), appliedMd5: 'def67890', playerCount: 0, tps: 0, backends: ['server-01', 'server-04'], registeredAt: ago(172800) },
-  { namespace: 'prod', serverId: 'server-04', role: 'bukkit', group: 'server-b', zone: 'zone-02', assigned: true, address: '10.0.0.4:25565', version: '1.20.4', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(3), appliedMd5: 'abc12345', playerCount: 55, tps: 19.2, backends: [], registeredAt: ago(43200) },
-  { namespace: 'test', serverId: 'test-01', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.1.1:25565', version: '1.20.4', status: 'online', capacity: 50, weight: 1, metadata: {}, lastHeartbeat: ago(8), appliedMd5: 'abc12345', playerCount: 5, tps: 20.0, backends: [], registeredAt: ago(86400) },
+  { namespace: 'prod', serverId: 'server-01', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.0.1:25565', version: '1.20.4', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(5), appliedMd5: 'abc12345', playerCount: 42, tps: 19.8, backends: [], zoneDefaultEntry: true, proxy: ZERO_PROXY, registeredAt: ago(86400) },
+  { namespace: 'prod', serverId: 'server-02', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.0.2:25565', version: '1.20.4', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(10), appliedMd5: 'abc12345', playerCount: 38, tps: 19.5, backends: [], zoneDefaultEntry: false, proxy: ZERO_PROXY, registeredAt: ago(86400) },
+  { namespace: 'prod', serverId: 'server-03', role: 'bungee', group: 'server-b', zone: 'zone-02', assigned: true, address: '10.0.0.3:25565', version: '1.20.4', status: 'lost', capacity: 200, weight: 2, metadata: {}, lastHeartbeat: ago(60), appliedMd5: 'def67890', playerCount: 0, tps: 0, backends: ['server-01', 'server-04'], zoneDefaultEntry: false, proxy: { onlineConnections: 128, threadCount: 36, uptimeMs: 7_200_000, backendUp: 1, backendTotal: 2, backendAvgLatencyMs: 18 }, registeredAt: ago(172800) },
+  { namespace: 'prod', serverId: 'server-04', role: 'bukkit', group: 'server-b', zone: 'zone-02', assigned: true, address: '10.0.0.4:25565', version: '1.20.4', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(3), appliedMd5: 'abc12345', playerCount: 55, tps: 19.2, backends: [], zoneDefaultEntry: false, proxy: ZERO_PROXY, registeredAt: ago(43200) },
+  { namespace: 'test', serverId: 'test-01', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.1.1:25565', version: '1.20.4', status: 'online', capacity: 50, weight: 1, metadata: {}, lastHeartbeat: ago(8), appliedMd5: 'abc12345', playerCount: 5, tps: 20.0, backends: [], zoneDefaultEntry: false, proxy: ZERO_PROXY, registeredAt: ago(86400) },
 ]
 
 // ---- 分组/Zone 视图 ----

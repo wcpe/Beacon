@@ -38,6 +38,15 @@ function inst(serverId: string, group: string, status: string): InstanceView {
     playerCount: 0,
     tps: 0,
     backends: [],
+    zoneDefaultEntry: false,
+    proxy: {
+      onlineConnections: 0,
+      threadCount: 0,
+      uptimeMs: 0,
+      backendUp: 0,
+      backendTotal: 0,
+      backendAvgLatencyMs: -1,
+    },
     registeredAt: '',
   }
 }

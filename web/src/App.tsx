@@ -12,6 +12,7 @@ import FilePreviewPage from './pages/FilePreviewPage'
 import ImprintPage from './pages/ImprintPage'
 import InstancesPage from './pages/InstancesPage'
 import TopologyPage from './pages/TopologyPage'
+import ProxiesPage from './pages/ProxiesPage'
 import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
 import ApiKeysPage from './pages/ApiKeysPage'
@@ -56,6 +57,8 @@ export default function App() {
           {/* 密钥管理（FR-42）：只读角色 + 运行时 API 密钥创建/吊销/重置 */}
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="namespaces" element={<NamespacesPage />} />
+          {/* 代理服管理页（FR-52）：集中展示某环境全部 BC 代理运行态 + 底层参数 */}
+          <Route path="proxies" element={<ProxiesPage />} />
           {/* 未知路径回到配置中心 */}
           <Route path="*" element={<Navigate to="/configs" replace />} />
         </Route>

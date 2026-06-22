@@ -20,6 +20,7 @@ const NAV_ITEMS: Array<{ to: string; label: string }> = [
   { to: '/audits', label: '审计日志' },
   { to: '/api-keys', label: '密钥管理' },
   { to: '/namespaces', label: '环境管理' },
+  { to: '/proxies', label: '代理服管理' },
 ]
 
 export default function Layout() {

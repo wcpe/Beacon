@@ -9,6 +9,7 @@ import type {
   AssignmentView,
   AuditPage,
   ConfigView,
+  DefaultEntryView,
   DiffView,
   FileRevisionView,
   FileView,
@@ -450,6 +451,14 @@ export function unassignZone(namespace: string, serverId: string): Promise<void>
 
 export function zoneSummary(namespace?: string, group?: string): Promise<ZoneStatView[]> {
   return request<ItemsResponse<ZoneStatView>>(`/zones${qs({ namespace, group })}`).then((r) => r.items)
+}
+
+// ===== 小区默认入口（FR-48）=====
+// 只读列出某环境（可选某大区）各小区的默认入口 serverId；供代理服管理页按 BC 所属小区展示默认入口（FR-52）。
+export function listDefaultEntries(namespace?: string, group?: string): Promise<DefaultEntryView[]> {
+  return request<ItemsResponse<DefaultEntryView>>(`/zones/default-entry${qs({ namespace, group })}`).then(
+    (r) => r.items,
+  )
 }
 
 // ===== 审计 =====

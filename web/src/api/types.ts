@@ -51,6 +51,17 @@ export interface PublishResult {
   md5: string
 }
 
+// bc（bungee 代理）专属负载指标视图（FR-34，仅展示不参与决策；bukkit 恒为零值）
+// backendAvgLatencyMs < 0（约定 -1）表示无可达后端样本（不可用）
+export interface ProxyMetricsView {
+  onlineConnections: number
+  threadCount: number
+  uptimeMs: number
+  backendUp: number
+  backendTotal: number
+  backendAvgLatencyMs: number
+}
+
 // 实例视图（未分配 zone 时 zone 为 null）
 export interface InstanceView {
   namespace: string
@@ -71,6 +82,10 @@ export interface InstanceView {
   tps: number
   // bc（bungee）当前代理的后端子服 serverId 集合（仅 bc 非空、bukkit 恒空，FR-36）；供拓扑连线消费
   backends: string[]
+  // 该 bukkit 子服是否被指定为其小区默认入口（FR-48；bungee 恒 false）
+  zoneDefaultEntry: boolean
+  // bc 专属负载指标（FR-34，仅 bc 非零、bukkit 恒零）；供代理服管理页逐台展示底层参数（FR-52）
+  proxy: ProxyMetricsView
   registeredAt: string
 }
 
@@ -114,6 +129,15 @@ export interface AssignmentView {
   group: string
   zone: string
   note: string
+  updatedAt: string
+}
+
+// 小区默认入口视图（FR-48）：每小区唯一指定一个在线 bukkit serverId 作 BC 默认/fallback 服
+export interface DefaultEntryView {
+  namespace: string
+  group: string
+  zone: string
+  defaultServerId: string
   updatedAt: string
 }
 
