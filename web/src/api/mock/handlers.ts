@@ -24,6 +24,11 @@ import {
   getMockOverrideSetRevisions,
   getMockDryRun,
   getMockAssignments,
+  getMockMetricsSummary,
+  getMockTrend,
+  getMockSystemStatus,
+  buildMockTopology,
+  getMockDefaultEntries,
 } from './data'
 import type { ConfigView, LoginResult, PublishResult, RevisionView } from '../types'
 
@@ -79,9 +84,74 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     return handleZones(p, qs)
   }
 
+  // 小区默认入口 GET（FR-48）：供代理服管理页按 BC 所属 group+zone 索引默认入口（FR-52）
+  if (p === '/admin/v1/zones/default-entry' && method === 'GET') {
+    return json({ items: getMockDefaultEntries(qs) })
+  }
+
+  // 可观测看板·当前快照聚合 GET（FR-32 / FR-34）
+  if (p === '/admin/v1/metrics/summary' && method === 'GET') {
+    return json(getMockMetricsSummary(qs.namespace))
+  }
+
+  // 可观测看板·历史趋势 GET（FR-32）
+  if (p === '/admin/v1/metrics/trend' && method === 'GET') {
+    return json(getMockTrend(qs.namespace, qs.window ?? '1h'))
+  }
+
+  // 控制面自身状态 GET（FR-33）：页眉状态条消费
+  if (p === '/admin/v1/system/status' && method === 'GET') {
+    return json(getMockSystemStatus())
+  }
+
+  // 集群拓扑 GET（FR-37）：namespace 必填（与后端一致，缺失返 400）
+  if (p === '/admin/v1/topology' && method === 'GET') {
+    if (!qs.namespace) {
+      return json({ code: 'INVALID_PARAMS', message: 'namespace 为必填' }, 400)
+    }
+    return json(buildMockTopology(qs.namespace))
+  }
+
   // 环境
   if (p === '/admin/v1/namespaces' && method === 'GET') {
     return json({ items: mockNamespaces })
+  }
+
+  // 新建环境（FR-7）：编码必填、重复编码返 409（与后端一致）
+  if (p === '/admin/v1/namespaces' && method === 'POST') {
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    if (!body.code) {
+      return json({ code: 'INVALID_PARAMS', message: '环境编码为必填' }, 400)
+    }
+    if (mockNamespaces.some((n) => n.code === body.code)) {
+      return json({ code: 'CONFLICT', message: `环境 ${body.code} 已存在` }, 409)
+    }
+    const ns = { code: body.code, name: body.name ?? '' }
+    mockNamespaces.push(ns)
+    return json(ns, 201)
+  }
+
+  // 环境改名 / 删除（FR-53）
+  const namespaceMatch = p.match(/^\/admin\/v1\/namespaces\/([^/]+)$/)
+  if (namespaceMatch && method === 'PUT') {
+    const code = decodeURIComponent(namespaceMatch[1])
+    const ns = mockNamespaces.find((n) => n.code === code)
+    if (!ns) return notFound(`环境 ${code}`)
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    // code 不可变，仅改显示名
+    ns.name = body.name ?? ns.name
+    return json({ code: ns.code, name: ns.name })
+  }
+  if (namespaceMatch && method === 'DELETE') {
+    const code = decodeURIComponent(namespaceMatch[1])
+    const idx = mockNamespaces.findIndex((n) => n.code === code)
+    if (idx === -1) return notFound(`环境 ${code}`)
+    // prod / test 内置环境含在用数据，演示删除守卫（与后端 409 一致）
+    if (code === 'prod' || code === 'test') {
+      return json({ code: 'CONFLICT', message: `环境 ${code} 下仍有实例 / zone / 配置，禁止删除` }, 409)
+    }
+    mockNamespaces.splice(idx, 1)
+    return new Response(null, { status: 204 })
   }
 
   // 审计
@@ -513,6 +583,7 @@ function handleInstances(p: string, qs: Record<string, string>): Response {
     if (qs.namespace) items = items.filter((i) => i.namespace === qs.namespace)
     if (qs.group) items = items.filter((i) => i.group === qs.group)
     if (qs.zone) items = items.filter((i) => i.zone === qs.zone)
+    if (qs.role) items = items.filter((i) => i.role === qs.role)
     if (qs.status) items = items.filter((i) => i.status === qs.status)
     return json({ items })
   }
