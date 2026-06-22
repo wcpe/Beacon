@@ -30,7 +30,8 @@ class ProxyServerDirectorySyncerTest {
         syncer.syncOnce()
 
         assertTrue(!directory.managed.contains("lobby-1"))
-        assertTrue(warnings.single().contains("lobby-1"))
+        // 跳过同名手工服务器会告警；本测未配 home-zone 故另有一条「不设默认服」WARN，这里只校验前者。
+        assertTrue(warnings.any { it.contains("lobby-1") })
     }
 
     @Test
@@ -65,7 +66,13 @@ class ProxyServerDirectorySyncerTest {
     @Test
     fun `syncOnce 据 home-zone 命中默认入口设默认服`() {
         val directory = FakeDirectory()
-        val syncer = ProxyServerDirectorySyncer(directory, homeGroup = "area1", homeZone = "zoneA") {
+        val warnings = mutableListOf<String>()
+        val syncer = ProxyServerDirectorySyncer(
+            directory,
+            homeGroup = "area1",
+            homeZone = "zoneA",
+            warn = warnings::add,
+        ) {
             listOf(
                 instance("lobby-1", "10.0.0.7:25565", defaultEntry = false),
                 instance("lobby-2", "10.0.0.8:25565", defaultEntry = true),
@@ -74,14 +81,16 @@ class ProxyServerDirectorySyncerTest {
 
         syncer.syncOnce()
 
-        // 命中 home-zone 的默认入口 lobby-2 被设为默认服
+        // 命中 home-zone 的默认入口 lobby-2 被设为默认服，不告警
         assertEquals("lobby-2", directory.capturedDefault)
+        assertTrue(warnings.isEmpty())
     }
 
     @Test
-    fun `syncOnce 未配 home-zone 时兜底首个在线 bukkit 为默认服`() {
+    fun `syncOnce 未配 home-zone 时不设默认服并告警`() {
         val directory = FakeDirectory()
-        val syncer = ProxyServerDirectorySyncer(directory) {
+        val warnings = mutableListOf<String>()
+        val syncer = ProxyServerDirectorySyncer(directory, warn = warnings::add) {
             listOf(
                 instance("lobby-1", "10.0.0.7:25565", defaultEntry = false),
                 instance("lobby-2", "10.0.0.8:25565", defaultEntry = true),
@@ -90,26 +99,74 @@ class ProxyServerDirectorySyncerTest {
 
         syncer.syncOnce()
 
-        assertEquals("lobby-1", directory.capturedDefault)
+        // 未配 home-zone：绝不回退到任意在线 bukkit，不设默认服 + 打一条 WARN
+        assertNull(directory.capturedDefault)
+        assertEquals(0, directory.setDefaultCalls)
+        assertTrue(warnings.single().contains("未配"))
     }
 
     @Test
-    fun `syncOnce 无在线 bukkit 时不设默认服`() {
+    fun `syncOnce 配了 home-zone 但该 zone 无默认入口时不设默认服并告警`() {
         val directory = FakeDirectory()
-        val syncer = ProxyServerDirectorySyncer(directory) {
-            listOf(instance("lost-1", "10.0.0.9:25565", status = "lost"))
+        val warnings = mutableListOf<String>()
+        val syncer = ProxyServerDirectorySyncer(
+            directory,
+            homeGroup = "area1",
+            homeZone = "zoneA",
+            warn = warnings::add,
+        ) {
+            // 在线 bukkit 命中 home-zone 但均未被标默认入口
+            listOf(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
         }
 
         syncer.syncOnce()
 
         assertNull(directory.capturedDefault)
+        assertEquals(0, directory.setDefaultCalls)
+        assertTrue(warnings.single().contains("area1/zoneA"))
+    }
+
+    @Test
+    fun `syncOnce 默认入口离线时不设默认服并告警`() {
+        val directory = FakeDirectory()
+        val warnings = mutableListOf<String>()
+        val syncer = ProxyServerDirectorySyncer(
+            directory,
+            homeGroup = "area1",
+            homeZone = "zoneA",
+            warn = warnings::add,
+        ) {
+            listOf(instance("lobby-1", "10.0.0.7:25565", status = "lost", defaultEntry = true))
+        }
+
+        syncer.syncOnce()
+
+        // 默认入口虽配但当前 lost（不在线）：不设默认服 + 告警
+        assertNull(directory.capturedDefault)
+        assertTrue(warnings.single().contains("area1/zoneA"))
+    }
+
+    @Test
+    fun `syncOnce 选不出默认服时多轮只告警一次`() {
+        val directory = FakeDirectory()
+        val warnings = mutableListOf<String>()
+        val syncer = ProxyServerDirectorySyncer(directory, warn = warnings::add) {
+            listOf(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
+        }
+
+        syncer.syncOnce()
+        syncer.syncOnce()
+        syncer.syncOnce()
+
+        // 连续选不出默认服：WARN 去重、不每轮刷屏
+        assertEquals(1, warnings.size)
     }
 
     @Test
     fun `syncOnce 默认服不变时不重复设置`() {
         val directory = FakeDirectory()
-        val syncer = ProxyServerDirectorySyncer(directory) {
-            listOf(instance("lobby-1", "10.0.0.7:25565"))
+        val syncer = ProxyServerDirectorySyncer(directory, homeGroup = "area1", homeZone = "zoneA") {
+            listOf(instance("lobby-1", "10.0.0.7:25565", defaultEntry = true))
         }
 
         syncer.syncOnce()

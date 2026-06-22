@@ -160,7 +160,7 @@ object BeaconAgentBungee : Plugin() {
 
         val directorySyncer = ProxyServerDirectorySyncer(
             directory = serverDirectory,
-            // BC 服务的 home-zone（FR-48）：据此选小区默认入口；未配则默认服走兜底首个在线子服。
+            // BC 服务的 home-zone（FR-48）：据此选小区默认入口；未配 / 无命中则不设默认服并告警，不静默落任意服。
             homeGroup = settings.proxy.homeGroup,
             homeZone = settings.proxy.homeZone,
             warn = { adapter.warn(it) },

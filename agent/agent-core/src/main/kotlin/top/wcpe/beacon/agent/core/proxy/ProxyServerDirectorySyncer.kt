@@ -6,9 +6,9 @@ import top.wcpe.beacon.agent.api.ServiceInstance
  * 同步 Beacon discovery 的 Bukkit 子服到 Proxy 服务器目录，并据小区默认入口设 BungeeCord 默认/fallback 服（FR-48）。
  *
  * @param directory  代理服务器目录（注入 / 移除子服 + 设默认服）
- * @param homeGroup  本代理服务的大区（空串=未配，默认服走兜底，FR-48）
+ * @param homeGroup  本代理服务的大区（空串=未配，则不设默认服 + 告警，FR-48）
  * @param homeZone   本代理服务的小区（空串=未配）
- * @param warn       WARN 日志
+ * @param warn       WARN 日志（默认入口未配 / 无命中 / 不在线时告警，FR-48）
  * @param info       INFO 日志（注入子服 + 设默认服可观测，FR-48）
  * @param discover   拉取本 namespace 的发现结果（在线 bukkit + 默认入口标志）
  */
@@ -23,6 +23,8 @@ class ProxyServerDirectorySyncer(
     private val seenManaged: MutableSet<String> = linkedSetOf()
     // 上一轮已设的默认服 serverId，去重避免每轮重复打 INFO 日志 / 重复写 priority。
     private var lastDefaultServer: String? = null
+    // 是否已为「选不出默认入口」打过 WARN，去重避免每轮（默认 10s）刷屏；选出默认服后复位。
+    private var warnedNoDefault: Boolean = false
 
     fun syncOnce() {
         val discovered = discover()
@@ -47,22 +49,33 @@ class ProxyServerDirectorySyncer(
     }
 
     /**
-     * 据小区默认入口（命中 home-zone）或兜底（首个在线 bukkit）选默认服并设进代理（FR-48）。
-     * 选不出（无在线 bukkit）则不动作，等下一轮；选出的默认服与上轮相同则跳过（去重，不重复设 / 不刷屏）。
+     * 只据 home-zone 在 Beacon 显式配置的默认入口设默认服（FR-48）。
+     * 选不出（未配 home-zone / 该 zone 未设默认入口 / 默认入口当前不在线）→ **不设任何默认服** + 打一条 WARN
+     * （去重，不每轮刷屏），玩家此时遇 BungeeCord 原生「无默认服」——这是「没配」的明确信号，绝不被静默落到非大厅服。
+     * 选出的默认服与上轮相同则跳过（去重，不重复设 / 不刷屏）。
      */
     private fun applyDefaultServer(discovered: List<ServiceInstance>) {
         val target = DefaultEntrySelector.select(discovered, homeGroup, homeZone)
         if (target == null) {
-            // 无可用在线 bukkit：保留上轮默认服不动（避免误清），等下一轮有服再设。
+            if (!warnedNoDefault) {
+                val zoneCtx = if (homeGroup.isBlank() || homeZone.isBlank()) {
+                    "本代理未配 proxy.home-group / proxy.home-zone"
+                } else {
+                    "home-zone=$homeGroup/$homeZone 的默认入口未在 Beacon 配置或当前不在线"
+                }
+                warn("未设 BungeeCord 默认/fallback 服：$zoneCtx，请在 Beacon 为该小区配置默认入口（否则玩家加入将报无默认服）")
+                warnedNoDefault = true
+            }
             return
         }
+        // 选出了默认入口：复位告警去重位，下次再选不出时重新告警。
+        warnedNoDefault = false
         if (target == lastDefaultServer) {
             return
         }
         directory.setDefaultServer(target)
         lastDefaultServer = target
-        val via = if (homeGroup.isNotBlank() && homeZone.isNotBlank()) "home-zone=$homeGroup/$homeZone" else "兜底首个在线子服"
-        info("设置 BungeeCord 默认/fallback 服为 $target（$via）")
+        info("设置 BungeeCord 默认/fallback 服为 $target（home-zone=$homeGroup/$homeZone）")
     }
 
     private companion object {
