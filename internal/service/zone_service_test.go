@@ -55,6 +55,7 @@ func newDefaultEntrySvcDB(t *testing.T) *gorm.DB {
 
 // newDefaultEntrySvc 装配仅依赖默认入口路径的 ZoneService（registry 空，不走指派的 bungee 守卫）。
 func newDefaultEntrySvc(t *testing.T, db *gorm.DB) *ZoneService {
+	t.Helper()
 	return NewZoneService(db,
 		repository.NewZoneAssignmentRepository(db),
 		repository.NewZoneDefaultEntryRepository(db),

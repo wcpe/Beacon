@@ -73,16 +73,16 @@ const (
 	ActionInstanceOffline   = "instance.offline"
 	// 取消主动下线（FR-49，清除 server_offline 拒绝态使实例可重新接入）
 	ActionInstanceOnline = "instance.online"
-	ActionZoneAssign        = "zone.assign"
-	ActionZoneMove          = "zone.move"
-	ActionZoneUnassign      = "zone.unassign"
+	ActionZoneAssign     = "zone.assign"
+	ActionZoneMove       = "zone.move"
+	ActionZoneUnassign   = "zone.unassign"
 	// 小区默认入口（FR-48，每 zone 唯一指定默认入口 serverId，供 BC 设默认/fallback 服）
 	ActionZoneSetDefaultEntry   = "zone.set-default-entry"
 	ActionZoneClearDefaultEntry = "zone.clear-default-entry"
-	ActionFileCreate        = "file.create"
-	ActionFilePublish       = "file.publish"
-	ActionFileRollback      = "file.rollback"
-	ActionFileDelete        = "file.delete"
+	ActionFileCreate            = "file.create"
+	ActionFilePublish           = "file.publish"
+	ActionFileRollback          = "file.rollback"
+	ActionFileDelete            = "file.delete"
 	// 配置导入（FR-38，通道B 之上批量上传整文件到组，一次导入记一条审计）
 	ActionFileImport = "file.import"
 	// 在线实例反向抓取触发（FR-39，见 ADR-0027；ingest 落盘复用上面的 file.import 审计）
