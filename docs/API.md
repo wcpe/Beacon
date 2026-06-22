@@ -343,6 +343,20 @@ data: {}
 
 错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。
 
+#### 小区默认入口（FR-48）
+
+每个小区 `(group, zone)` 唯一指定一个「默认入口」serverId（指向已指派该 zone 的在线 bukkit），经发现下发给该 zone 下的 BC agent 设为 BungeeCord 默认/fallback 服（修复「动态注入子服但无默认服 → 玩家加入报 Could not connect to a default or fallback server」）。默认入口归属由控制面 DB 权威（[ADR-0031](adr/0031-zone-default-entry-and-bc-injection.md)）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/zones/default-entry?namespace=&group=` | 列出小区默认入口：`{ items: [{ namespace, group, zone, defaultServerId, updatedAt }] }` |
+| `PUT /admin/v1/zones/default-entry` | 设置/覆盖：`{ namespace, group, zone, defaultServerId }`（operator 由认证态派生）；提交后唤醒拓扑 watch |
+| `DELETE /admin/v1/zones/default-entry?namespace=&group=&zone=` | 清除该小区默认入口（operator 由认证态派生） |
+
+校验：`defaultServerId` 必须是当前已指派到该 `(group, zone)` 的 serverId，否则 `400 DEFAULT_ENTRY_SERVER_NOT_IN_ZONE`；清除时该小区无默认入口返回 `404 DEFAULT_ENTRY_NOT_FOUND`。写端点 readonly 角色经 `readonlyWriteGuard` 一律 403。审计动作 `zone.set-default-entry` / `zone.clear-default-entry`。
+
+下发：发现（`GET /beacon/v1/agent/discovery`）与实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）的每个 bukkit 实例新增布尔字段 `zoneDefaultEntry`（被指定为其小区默认入口为 true，其余 false；bungee 恒 false；旧 agent 忽略未知字段，向后兼容）。BC agent 用自身 `config.yml` 的 `proxy.home-group` / `proxy.home-zone`（数据面路由配置，非 zone 归属声明）挑出命中 home-zone 的默认入口设默认服；未配或暂无命中时兜底取首个在线 bukkit。
+
 ### 流量调度（FR-10）
 
 控制面**只给调度决策（query-only），不执行玩家连接**：落位建议是基于权威事实（在线状态 / 容量 / 权重）的推荐，drain 是排空 / 维护标记；真正把玩家送到目标服由数据面执行（见 [ADR-0017](adr/0017-traffic-scheduling-decision-vs-execution.md)）。本期只做落位均衡 + drain，**不做 canary 引流**。

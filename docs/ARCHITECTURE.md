@@ -71,6 +71,7 @@ agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
 | `file_override_set` | 三方插件文件覆盖集（FR-15）：目标插件目录 + 成员文件 + 一条受限重载命令 | scope 维度同 `file_object`；命令执行已接入运行期、随 agent 本地白名单生效（见 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md) 与 §8） |
 | `file_override_set_revision` | 覆盖集每次发布的不可变快照（append-only） | 同款回滚思路 |
 | `zone_assignment` | serverId → (group, zone) 权威指派 | `(namespace, server_id)` 唯一，换区改这一行 |
+| `zone_default_entry` | 小区默认入口：(group, zone) → 默认 serverId（FR-48） | `(namespace, group, zone)` 唯一，指向已指派该 zone 的在线 bukkit；供 BC 设默认/fallback 服 |
 | `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result` |
 | `instance` | 注册元数据镜像 | **MVP 不建**，运行态以内存为准，仅注册写一条 audit |
 | `metric_sample` | 指标时序样本（FR-32）：按间隔采在线实例的负载快照 | 时序表，与配置/版本/审计等事实表并列、真源属 DB；带保留期滚动清理，见 §7.1 与 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) |
@@ -199,6 +200,8 @@ agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
 **本地配置 env 覆盖（FR-33，见 [docs/specs/agent-config-env-override.md](specs/agent-config-env-override.md)）**：bootstrap 配置经 `EnvOverridingConfigReader` 装饰 `ConfigReader`——每个标量 / 列表项可被 `BEACON_AGENT_<点分路径大写、点与连字符转下划线>` 环境变量覆盖（env 优先于 `config.yml`，如 `identity.server-id` → `BEACON_AGENT_IDENTITY_SERVER_ID`），与控制面 env 覆盖（§9）对齐、便于容器化注入；`identity.metadata` 动态键 map 仅本地文件。core 仍不依赖具体环境读取（env 以函数注入），守 TabooLib-free。
 
 zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane.md)），agent 不声明 zone，从注册/拉取响应得到自己的归属；换区只改 `zone_assignment` 一行，agent 零改动。
+
+**小区默认入口 + BC 默认服注入（FR-48，[ADR-0031](adr/0031-zone-default-entry-and-bc-injection.md)）**：每个小区 `(group, zone)` 在 `zone_default_entry` 表唯一指定一个默认入口 serverId（DB 权威，应用层校验须为已指派该 zone 的子服）。该事实不进注册态内存，而在发现 / 实例视图**渲染时**由 `ZoneService.DefaultEntryServerIDs` 读 DB、给命中的 bukkit 实例标 `zoneDefaultEntry`（`InstanceService` 经注入的解析器回调获取，handler 不碰仓库，守分层）。BC agent 既有「同步子服目录」async 循环（`ProxyServerDirectorySyncer`）注入子服 `ServerInfo` 后，按纯逻辑 `DefaultEntrySelector` 选默认服——**优先**本代理 `config.yml` 配的 `home-zone`（数据面路由配置，声明「本代理服务哪个小区」，非 zone 归属，不违反 ADR-0004）命中的默认入口，**兜底**取首个在线 bukkit（fail-static、修住「玩家进不去」P0）——再经 `ProxyServerDirectory.setDefaultServer` 把它置于每个 BungeeCord 监听器 `server-priority` 列表首位（公开 API、幂等去重、不反射）。多台 BC 配同一 home-zone = 共享同一默认入口。注入子服与设默认服打 INFO 中文日志。
 
 **文件树同步（通道B，FR-14，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）**：注册成功后，agent 在配置长轮询循环之外**并行**启一条文件树长轮询循环（各自 `gen` / 退避，唤醒集合独立）。每轮带本地已落盘清单（`AppliedFileManifestStore`，落 agent 数据目录的 `fileTreeMd5`）发 `GET .../files/manifest`：200 拿到新 `manifest`（path→md5，不含内容）→ `FileSyncer` 纯差分算增/改/删 → 仅对增/改 `GET .../files/content` 取整文件 → `FileMirrorWriter` **原子写**镜像到插件 `plugins` 基目录（临时文件 → `FileChannel.force` 含父目录 fsync → `ATOMIC_MOVE`，补 `SnapshotStore` 未做 fsync 的缺口），删除目标已无的 path，**全部落盘成功后才写已落盘清单**（先文件后清单，崩溃可恢复）；304 续杯；连接失败退避。落盘相对 path 经 `RelativePathGuard` 校验，拒绝绝对/`..`穿越/反斜杠逃逸目标根。**fail-static 比配置更保守**：任一变更文件取内容失败（控制面不可用）即**整轮放弃**——不删任何既有文件、不写清单，下一轮重试，绝不臆测；首启无目标态时同样不动任何已落盘文件。全程经 `adapter.runAsync` 不上 MC 主线程；HTTP/JSON 仅在适配器、core 依 `HttpTransport`/`JsonCodec` 接口（[ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）。
 
