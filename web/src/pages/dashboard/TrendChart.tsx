@@ -1,6 +1,7 @@
 // 趋势折线图（recharts）：把一组时间序列点按某个指标渲染成单条折线。
 // 只画聚合数字（人数 / TPS / 内存 / CPU），不涉及任何玩家名单 / 身份。
 
+import { useTranslation } from 'react-i18next'
 import {
   CartesianGrid,
   Line,
@@ -39,12 +40,13 @@ function shortTime(iso: string): string {
 }
 
 export default function TrendChart({ title, points, metric, color, formatValue }: TrendChartProps) {
+  const { t } = useTranslation()
   return (
     <div className="space-y-2">
       <div className="text-sm font-medium">{title}</div>
       {points.length === 0 ? (
         <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-          所选时间窗内暂无样本
+          {t('dashboard.trendNoSample')}
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={192}>

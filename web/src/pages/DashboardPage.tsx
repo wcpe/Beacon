@@ -6,6 +6,7 @@
 // 边界：只展示负载数字（健康事实），绝不展示任何玩家名单 / 身份（后端也不返回）。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { metricsSummary, metricsTrend } from '../api/client'
 import type { ServerPlayers, TrendWindow } from '../api/client'
@@ -24,11 +25,11 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 // 总览快照刷新周期（毫秒）：与实例健康页一致，短周期反映当前负载
 const SUMMARY_REFETCH_MS = 5000
 
-// 可选时间窗（预设窗口）
-const WINDOWS: Array<{ value: TrendWindow; label: string }> = [
-  { value: '1h', label: '近 1 小时' },
-  { value: '6h', label: '近 6 小时' },
-  { value: '24h', label: '近 24 小时' },
+// 可选时间窗（预设窗口）：label 经 i18n key 在渲染时解析
+const WINDOWS: Array<{ value: TrendWindow; labelKey: string }> = [
+  { value: '1h', labelKey: 'dashboard.win1h' },
+  { value: '6h', labelKey: 'dashboard.win6h' },
+  { value: '24h', labelKey: 'dashboard.win24h' },
 ]
 
 // 角色编码（与后端 metric_aggregate role 约定一致）：
@@ -39,6 +40,7 @@ const ROLE_BUNGEE = 'bungee'
 type ServerRow = ServerPlayers
 
 export default function DashboardPage() {
+  const { t } = useTranslation()
   // 环境过滤：输入框为待提交值，namespace 为已生效查询值（空表示聚合全部环境）
   const [nsInput, setNsInput] = useState('')
   const [namespace, setNamespace] = useState('')
@@ -76,35 +78,35 @@ export default function DashboardPage() {
 
   // 子服明细列：serverId 与在线人数（不含名单）
   const serverColumns: DataTableColumn<ServerRow>[] = [
-    { header: 'serverId', className: 'font-mono', cell: (r) => r.serverId },
-    { header: '在线人数', cell: (r) => r.playerCount },
+    { header: t('dashboard.colServerId'), className: 'font-mono', cell: (r) => r.serverId },
+    { header: t('dashboard.colPlayerCount'), cell: (r) => r.playerCount },
   ]
   // bc 明细列：serverId 与在线连接数（bc 的 playerCount 即代理在线连接）
   const bcServerColumns: DataTableColumn<ServerRow>[] = [
-    { header: 'serverId', className: 'font-mono', cell: (r) => r.serverId },
-    { header: '在线连接', cell: (r) => r.playerCount },
+    { header: t('dashboard.colServerId'), className: 'font-mono', cell: (r) => r.serverId },
+    { header: t('dashboard.colConnections'), cell: (r) => r.playerCount },
   ]
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">可观测看板</h1>
-        {isFetching && <span className="text-sm text-muted-foreground">（刷新中…）</span>}
+        <h1 className="text-xl font-semibold">{t('dashboard.title')}</h1>
+        {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
       </div>
 
       <Card>
         <CardContent>
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="d-namespace">环境</Label>
+              <Label htmlFor="d-namespace">{t('common.namespace')}</Label>
               <Input
                 id="d-namespace"
-                placeholder="留空聚合全部环境"
+                placeholder={t('dashboard.nsPlaceholder')}
                 value={nsInput}
                 onChange={(e) => setNsInput(e.target.value)}
               />
             </div>
-            <Button type="submit">查询</Button>
+            <Button type="submit">{t('common.query')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -112,7 +114,7 @@ export default function DashboardPage() {
       {/* ===== 区块一：子服（bukkit）===== */}
       {/* 总览卡片 / 趋势 / 子服明细的平均口径均仅算 bukkit，与 BC 区分离 */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">子服（bukkit）</h2>
+        <h2 className="text-lg font-semibold">{t('dashboard.sectionBukkit')}</h2>
 
         {/* 总览卡片：当前快照聚合（平均 TPS·内存·CPU 仅算 bukkit） */}
         <AsyncSection
@@ -127,12 +129,12 @@ export default function DashboardPage() {
         <Card>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-base font-medium">历史趋势</div>
+              <div className="text-base font-medium">{t('dashboard.trendTitle')}</div>
               <Tabs value={window} onValueChange={(v) => setWindow(v as TrendWindow)}>
                 <TabsList>
                   {WINDOWS.map((w) => (
                     <TabsTrigger key={w.value} value={w.value}>
-                      {w.label}
+                      {t(w.labelKey)}
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -145,32 +147,32 @@ export default function DashboardPage() {
             >
               <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                 <TrendChart
-                  title="在线玩家数"
+                  title={t('dashboard.chartPlayers')}
                   points={points}
                   metric="totalPlayers"
                   color="#2563eb"
                   formatValue={(v) => String(Math.round(v))}
                 />
                 <TrendChart
-                  title="平均 TPS"
+                  title={t('dashboard.chartAvgTps')}
                   points={points}
                   metric="avgTps"
                   color="#16a34a"
                   formatValue={(v) => v.toFixed(1)}
                 />
                 <TrendChart
-                  title="平均内存"
+                  title={t('dashboard.chartAvgMem')}
                   points={points}
                   metric="avgMemUsed"
                   color="#d97706"
                   formatValue={(v) => formatBytes(v)}
                 />
                 <TrendChart
-                  title="平均 CPU 负载"
+                  title={t('dashboard.chartAvgCpu')}
                   points={cpuPoints}
                   metric="avgCpuLoad"
                   color="#dc2626"
-                  formatValue={(v) => (v < 0 ? '不可用' : `${(v * 100).toFixed(0)}%`)}
+                  formatValue={(v) => (v < 0 ? t('dashboard.cpuUnavailable') : `${(v * 100).toFixed(0)}%`)}
                 />
               </div>
             </AsyncSection>
@@ -180,7 +182,7 @@ export default function DashboardPage() {
         {/* 子服明细：serverId → 在线人数（仅 bukkit 角色） */}
         <Card>
           <CardContent className="space-y-3">
-            <div className="text-base font-medium">子服明细</div>
+            <div className="text-base font-medium">{t('dashboard.serverDetail')}</div>
             <AsyncSection
               isLoading={summaryQuery.isLoading}
               isError={summaryQuery.isError}
@@ -190,7 +192,7 @@ export default function DashboardPage() {
                 columns={serverColumns}
                 rows={bukkitServers}
                 rowKey={(r) => r.serverId}
-                emptyText="无在线子服"
+                emptyText={t('dashboard.bukkitEmpty')}
               />
             </AsyncSection>
           </CardContent>
@@ -200,7 +202,7 @@ export default function DashboardPage() {
       {/* ===== 区块二：BC 代理（bungee）===== */}
       {/* bc 维度聚合 + bc 明细，与子服区完全分离 */}
       <section className="space-y-4">
-        <h2 className="text-lg font-semibold">BC 代理</h2>
+        <h2 className="text-lg font-semibold">{t('dashboard.sectionBc')}</h2>
 
         {/* BC 维度聚合卡片（FR-34）：仅 role=bungee 聚合 */}
         <AsyncSection
@@ -214,7 +216,7 @@ export default function DashboardPage() {
         {/* BC 明细：serverId → 在线连接（仅 bungee 角色） */}
         <Card>
           <CardContent className="space-y-3">
-            <div className="text-base font-medium">BC 明细</div>
+            <div className="text-base font-medium">{t('dashboard.bcDetail')}</div>
             <AsyncSection
               isLoading={summaryQuery.isLoading}
               isError={summaryQuery.isError}
@@ -224,7 +226,7 @@ export default function DashboardPage() {
                 columns={bcServerColumns}
                 rows={bcServers}
                 rowKey={(r) => r.serverId}
-                emptyText="无在线 BC 代理"
+                emptyText={t('dashboard.bcEmpty')}
               />
             </AsyncSection>
           </CardContent>
