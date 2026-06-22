@@ -8,10 +8,12 @@ import type { ReactElement } from 'react'
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
   listAudits: vi.fn(),
+  // FR-51：环境筛选下拉的候选来源
+  listNamespaces: vi.fn(),
 }))
 
 import AuditsPage from './AuditsPage'
-import { listAudits } from '../api/client'
+import { listAudits, listNamespaces } from '../api/client'
 
 const EMPTY_PAGE = { total: 0, items: [] }
 
@@ -22,6 +24,7 @@ function renderPage(ui: ReactElement) {
 
 beforeEach(() => {
   vi.mocked(listAudits).mockResolvedValue(EMPTY_PAGE)
+  vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
 })
 
 describe('AuditsPage 操作人过滤', () => {

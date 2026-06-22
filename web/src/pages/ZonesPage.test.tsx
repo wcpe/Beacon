@@ -110,13 +110,27 @@ async function openDialog() {
   return dialog
 }
 
-describe('ZonesPage 指派表单（FR-40）', () => {
+// FR-51：维度输入改为 combobox（严格选）。展开某维度下拉，返回其下拉候选容器。
+// combobox 下拉由 Popover 渲染到 body（Portal），故在 screen 层查 listbox，不在 dialog 子树内。
+async function openCombobox(dialog: HTMLElement, label: string) {
+  await userEvent.click(within(dialog).getByLabelText(label))
+  const listbox = await screen.findByRole('listbox')
+  return listbox
+}
+
+// 在某维度 combobox 中点选指定候选值。
+async function pick(dialog: HTMLElement, label: string, value: string) {
+  const listbox = await openCombobox(dialog, label)
+  await userEvent.click(within(listbox).getByText(value))
+}
+
+describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
   it('环境下拉来自 listNamespaces', async () => {
     renderPage(<ZonesPage />)
     const dialog = await openDialog()
-    const nsSelect = within(dialog).getByLabelText('环境') as HTMLSelectElement
-    await waitFor(() => {
-      const opts = within(nsSelect).getAllByRole('option').map((o) => o.textContent)
+    await waitFor(async () => {
+      const listbox = await openCombobox(dialog, '环境')
+      const opts = within(listbox).getAllByRole('option').map((o) => o.textContent)
       expect(opts).toContain('prod')
       expect(opts).toContain('test')
     })
@@ -125,9 +139,9 @@ describe('ZonesPage 指派表单（FR-40）', () => {
   it('serverId 下拉仅列 bukkit 子服，排除 BC 代理（bungee）', async () => {
     renderPage(<ZonesPage />)
     const dialog = await openDialog()
-    const sidSelect = within(dialog).getByLabelText('serverId') as HTMLSelectElement
-    await waitFor(() => {
-      const opts = within(sidSelect).getAllByRole('option').map((o) => o.textContent)
+    await waitFor(async () => {
+      const listbox = await openCombobox(dialog, 'serverId')
+      const opts = within(listbox).getAllByRole('option').map((o) => o.textContent)
       expect(opts).toContain('lobby-1')
       expect(opts).not.toContain('bc-1')
     })
@@ -136,13 +150,15 @@ describe('ZonesPage 指派表单（FR-40）', () => {
   it('大区 / 小区下拉来自 zone 汇总与实例并集', async () => {
     renderPage(<ZonesPage />)
     const dialog = await openDialog()
-    const groupSelect = within(dialog).getByLabelText('大区') as HTMLSelectElement
-    const zoneSelect = within(dialog).getByLabelText('小区') as HTMLSelectElement
-    await waitFor(() => {
-      const gopts = within(groupSelect).getAllByRole('option').map((o) => o.textContent)
+    await waitFor(async () => {
+      const glist = await openCombobox(dialog, '大区')
+      const gopts = within(glist).getAllByRole('option').map((o) => o.textContent)
       expect(gopts).toContain('gA')
       expect(gopts).toContain('gB')
-      const zopts = within(zoneSelect).getAllByRole('option').map((o) => o.textContent)
+    })
+    await waitFor(async () => {
+      const zlist = await openCombobox(dialog, '小区')
+      const zopts = within(zlist).getAllByRole('option').map((o) => o.textContent)
       expect(zopts).toContain('z1')
       expect(zopts).toContain('z2')
     })
@@ -152,7 +168,7 @@ describe('ZonesPage 指派表单（FR-40）', () => {
     renderPage(<ZonesPage />)
     const dialog = await openDialog()
     // 仅选环境，其余留空
-    await userEvent.selectOptions(within(dialog).getByLabelText('环境'), 'prod')
+    await pick(dialog, '环境', 'prod')
     await userEvent.click(within(dialog).getByRole('button', { name: '指派' }))
     expect(showError).toHaveBeenCalled()
     expect(vi.mocked(assignZone)).not.toHaveBeenCalled()
@@ -162,15 +178,14 @@ describe('ZonesPage 指派表单（FR-40）', () => {
     renderPage(<ZonesPage />)
     const dialog = await openDialog()
     // 等候选项就绪后逐项选择
-    await waitFor(() =>
-      expect(
-        within(within(dialog).getByLabelText('serverId')).queryByText('lobby-1'),
-      ).toBeInTheDocument(),
-    )
-    await userEvent.selectOptions(within(dialog).getByLabelText('环境'), 'prod')
-    await userEvent.selectOptions(within(dialog).getByLabelText('serverId'), 'lobby-1')
-    await userEvent.selectOptions(within(dialog).getByLabelText('大区'), 'gA')
-    await userEvent.selectOptions(within(dialog).getByLabelText('小区'), 'z1')
+    await waitFor(async () => {
+      const listbox = await openCombobox(dialog, 'serverId')
+      expect(within(listbox).queryByText('lobby-1')).toBeInTheDocument()
+    })
+    await pick(dialog, '环境', 'prod')
+    await pick(dialog, 'serverId', 'lobby-1')
+    await pick(dialog, '大区', 'gA')
+    await pick(dialog, '小区', 'z1')
     await userEvent.click(within(dialog).getByRole('button', { name: '指派' }))
     await waitFor(() =>
       expect(vi.mocked(assignZone)).toHaveBeenCalledWith(

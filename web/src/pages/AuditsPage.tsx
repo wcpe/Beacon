@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { listAudits } from '../api/client'
+import { listAudits, listNamespaces } from '../api/client'
 import type { AuditFilter } from '../api/client'
 import type { AuditView } from '../api/types'
 import { formatTime } from '../api/format'
@@ -10,6 +10,7 @@ import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -50,6 +51,10 @@ export default function AuditsPage() {
     queryFn: () => listAudits(filter),
     placeholderData: keepPreviousData,
   })
+
+  // 环境筛选下拉的候选来源（FR-51）：来自 listNamespaces，筛选框允许键入候选外的值（可编辑）
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
+  const namespaceOptions = (namespacesQuery.data ?? []).map((n) => n.code)
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -108,7 +113,16 @@ export default function AuditsPage() {
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="a-namespace">环境</Label>
-              <Input id="a-namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+              {/* 筛选框：可编辑下拉，候选来自 listNamespaces 但允许键入列表外值（FR-51） */}
+              <Combobox
+                id="a-namespace"
+                aria-label="环境"
+                className="w-40"
+                value={namespace}
+                onChange={setNamespace}
+                options={namespaceOptions}
+                allowCustom
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="a-operator">操作人</Label>

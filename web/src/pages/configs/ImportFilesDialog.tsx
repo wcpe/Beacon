@@ -9,6 +9,7 @@ import type { ImportFileEntry } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -100,34 +101,28 @@ export default function ImportFilesDialog({
         <form id="import-files" onSubmit={onImport} className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="imp-namespace">环境</Label>
-            <select
+            {/* 环境严格选：须为已存在 namespace（FR-51） */}
+            <Combobox
               id="imp-namespace"
-              className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+              aria-label="环境"
               value={namespace}
-              onChange={(e) => setNamespace(e.target.value)}
-            >
-              {namespaces.map((ns) => (
-                <option key={ns} value={ns}>
-                  {ns}
-                </option>
-              ))}
-            </select>
+              onChange={setNamespace}
+              options={namespaces}
+              allowCustom={false}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="imp-group">目标组</Label>
-            <select
+            {/* 目标组可编辑：可导入到尚未存在的新组（FR-51） */}
+            <Combobox
               id="imp-group"
-              className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+              aria-label="目标组"
               value={group}
-              onChange={(e) => setGroup(e.target.value)}
-            >
-              <option value="">请选择</option>
-              {groups.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
+              onChange={setGroup}
+              options={groups}
+              allowCustom
+              placeholder="请选择"
+            />
           </div>
           <div className="col-span-2 space-y-1.5">
             <Label htmlFor="imp-dir">选择目录</Label>

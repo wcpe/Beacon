@@ -10,6 +10,7 @@ import type { InstanceView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -62,6 +63,10 @@ export default function ReverseFetchDialog({
     [onlineInstances, serverId],
   )
 
+  // 抓取源 serverId 候选（仅在线实例）；目标实例 serverId 候选（全部实例）——均为严格选（须为已存在实例，FR-51）。
+  const sourceOptions = useMemo(() => onlineInstances.map((i) => i.serverId), [onlineInstances])
+  const targetOptions = useMemo(() => instances.map((i) => i.serverId), [instances])
+
   const fetchMut = useMutation({
     mutationFn: () =>
       triggerReverseFetch(serverId, sourceNamespace, {
@@ -110,19 +115,16 @@ export default function ReverseFetchDialog({
         <form id="reverse-fetch" onSubmit={onTrigger} className="grid grid-cols-2 gap-3">
           <div className="col-span-2 space-y-1.5">
             <Label htmlFor="rf-source">抓取源（在线实例）</Label>
-            <select
+            {/* 抓取源严格选：须为已存在在线实例（FR-51） */}
+            <Combobox
               id="rf-source"
-              className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+              aria-label="抓取源（在线实例）"
               value={serverId}
-              onChange={(e) => setServerId(e.target.value)}
-            >
-              <option value="">请选择</option>
-              {onlineInstances.map((i) => (
-                <option key={i.serverId} value={i.serverId}>
-                  {i.serverId}（{i.group}）
-                </option>
-              ))}
-            </select>
+              onChange={setServerId}
+              options={sourceOptions}
+              allowCustom={false}
+              placeholder="请选择"
+            />
             {onlineInstances.length === 0 && (
               <p className="text-xs text-muted-foreground">当前无在线实例可抓取</p>
             )}
@@ -141,36 +143,30 @@ export default function ReverseFetchDialog({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="rf-group">目标组</Label>
-            <select
+            {/* 目标组可编辑：可入库到尚未存在的新组（FR-51） */}
+            <Combobox
               id="rf-group"
-              className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+              aria-label="目标组"
               value={group}
-              onChange={(e) => setGroup(e.target.value)}
-            >
-              <option value="">请选择</option>
-              {groups.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
+              onChange={setGroup}
+              options={groups}
+              allowCustom
+              placeholder="请选择"
+            />
           </div>
           {scope === 'server' && (
             <div className="col-span-2 space-y-1.5">
               <Label htmlFor="rf-target">目标实例</Label>
-              <select
+              {/* 目标实例严格选：覆盖须落到已存在实例（FR-51） */}
+              <Combobox
                 id="rf-target"
-                className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+                aria-label="目标实例"
                 value={target}
-                onChange={(e) => setTarget(e.target.value)}
-              >
-                <option value="">请选择</option>
-                {instances.map((i) => (
-                  <option key={i.serverId} value={i.serverId}>
-                    {i.serverId}（{i.group}）
-                  </option>
-                ))}
-              </select>
+                onChange={setTarget}
+                options={targetOptions}
+                allowCustom={false}
+                placeholder="请选择"
+              />
             </div>
           )}
           <p className="col-span-2 text-xs text-muted-foreground">

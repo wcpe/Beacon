@@ -3,7 +3,7 @@
 // 切到实例层后未选目标实例时校验拦截、不发请求；离线实例不出现在抓取源候选里。
 // api/client 被 mock，保证用例在 jsdom 下稳定可跑。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
@@ -86,8 +86,9 @@ describe('ReverseFetchDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: '反向抓取' }))
     await screen.findByRole('dialog')
 
-    // 源默认取首个在线实例 server-01；选目标组
-    await userEvent.selectOptions(screen.getByLabelText('目标组'), 'server-a')
+    // 源默认取首个在线实例 server-01；选目标组（FR-51：combobox 展开点选，下拉渲染到 body）
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('server-a'))
 
     // 触发（默认组级，无需选目标实例）
     await userEvent.click(screen.getByRole('button', { name: '触发抓取' }))
@@ -107,8 +108,9 @@ describe('ReverseFetchDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: '反向抓取' }))
     await screen.findByRole('dialog')
 
-    await userEvent.selectOptions(screen.getByLabelText('目标组'), 'server-a')
-    // 切到实例层但不选目标实例
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('server-a'))
+    // 切到实例层但不选目标实例（目标层为枚举，仍是原生 select）
     await userEvent.selectOptions(screen.getByLabelText('目标层'), 'server')
 
     await userEvent.click(screen.getByRole('button', { name: '触发抓取' }))
@@ -121,8 +123,10 @@ describe('ReverseFetchDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: '反向抓取' }))
     await screen.findByRole('dialog')
 
-    const source = screen.getByLabelText('抓取源（在线实例）') as HTMLSelectElement
-    const values = Array.from(source.options).map((o) => o.value)
+    // FR-51：抓取源改为 combobox，展开后断言候选仅含在线实例
+    await userEvent.click(screen.getByLabelText('抓取源（在线实例）'))
+    const listbox = await screen.findByRole('listbox')
+    const values = within(listbox).getAllByRole('option').map((o) => o.textContent)
     expect(values).toContain('server-01')
     expect(values).not.toContain('server-09')
   })

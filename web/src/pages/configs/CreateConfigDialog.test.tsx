@@ -52,25 +52,32 @@ const baseProps = {
   instances: INSTANCES,
 }
 
+// FR-51：维度输入改为 combobox。展开某维度下拉，返回其下拉候选容器（Popover 渲染到 body）。
+async function openCombobox(label: string) {
+  await userEvent.click(screen.getByLabelText(label))
+  return screen.findByRole('listbox')
+}
+
 describe('CreateConfigDialog', () => {
   it('环境/大区下拉来自传入数据，无硬编码示例', async () => {
     renderDialog(<CreateConfigDialog {...baseProps} open onOpenChange={() => {}} />)
-    const nsSelect = screen.getByLabelText('环境') as HTMLSelectElement
-    const nsOptions = within(nsSelect).getAllByRole('option').map((o) => o.textContent)
+    const nsList = await openCombobox('环境')
+    const nsOptions = within(nsList).getAllByRole('option').map((o) => o.textContent)
     expect(nsOptions).toEqual(NAMESPACES)
     // 旧硬编码大区示例不应再出现
-    expect(screen.queryByRole('option', { name: 'server-a' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: 'server-b' })).not.toBeInTheDocument()
+    expect(within(nsList).queryByText('server-a')).not.toBeInTheDocument()
+    expect(within(nsList).queryByText('server-b')).not.toBeInTheDocument()
   })
 
   it('scopeLevel=global 时隐藏覆盖目标，切到 server 出现实例下拉', async () => {
     renderDialog(<CreateConfigDialog {...baseProps} open onOpenChange={() => {}} />)
     // 默认 global：无覆盖目标控件
     expect(screen.queryByLabelText('覆盖目标')).not.toBeInTheDocument()
-    // 切到 server
+    // 切到 server（覆盖层仍为原生 select，枚举非维度）
     await userEvent.selectOptions(screen.getByLabelText('覆盖层'), 'server')
-    const targetSelect = (await screen.findByLabelText('覆盖目标')) as HTMLSelectElement
-    const opts = within(targetSelect).getAllByRole('option').map((o) => o.textContent)
+    await screen.findByLabelText('覆盖目标')
+    const list = await openCombobox('覆盖目标')
+    const opts = within(list).getAllByRole('option').map((o) => o.textContent)
     expect(opts).toContain('srv-1')
     expect(opts).toContain('srv-2')
   })
@@ -78,8 +85,9 @@ describe('CreateConfigDialog', () => {
   it('scopeLevel=group 时覆盖目标为大区下拉', async () => {
     renderDialog(<CreateConfigDialog {...baseProps} open onOpenChange={() => {}} />)
     await userEvent.selectOptions(screen.getByLabelText('覆盖层'), 'group')
-    const targetSelect = (await screen.findByLabelText('覆盖目标')) as HTMLSelectElement
-    const opts = within(targetSelect).getAllByRole('option').map((o) => o.textContent)
+    await screen.findByLabelText('覆盖目标')
+    const list = await openCombobox('覆盖目标')
+    const opts = within(list).getAllByRole('option').map((o) => o.textContent)
     expect(opts).toContain('gA')
     expect(opts).toContain('gB')
   })

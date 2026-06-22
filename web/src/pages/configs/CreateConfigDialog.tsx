@@ -11,6 +11,7 @@ import { useMessage } from '../../components/useMessage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -129,34 +130,28 @@ export default function CreateConfigDialog({
         <form id="create-config" onSubmit={onCreate} className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="cc-namespace">环境</Label>
-            <select
+            {/* 环境严格选：须为已存在 namespace（FR-51） */}
+            <Combobox
               id="cc-namespace"
-              className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+              aria-label="环境"
               value={form.namespace}
-              onChange={(e) => setForm({ ...form, namespace: e.target.value })}
-            >
-              {namespaces.map((ns) => (
-                <option key={ns} value={ns}>
-                  {ns}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setForm({ ...form, namespace: v })}
+              options={namespaces}
+              allowCustom={false}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cc-group">大区</Label>
-            <select
+            {/* 大区可编辑：可为尚未注册的新大区授权配置（FR-51）；留空表示 __GLOBAL__ */}
+            <Combobox
               id="cc-group"
-              className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+              aria-label="大区"
               value={form.group}
-              onChange={(e) => setForm({ ...form, group: e.target.value })}
-            >
-              <option value="">__GLOBAL__</option>
-              {groups.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setForm({ ...form, group: v })}
+              options={groups}
+              allowCustom
+              placeholder="__GLOBAL__"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cc-dataId">dataId</Label>
@@ -181,23 +176,20 @@ export default function CreateConfigDialog({
               ))}
             </select>
           </div>
-          {/* 覆盖目标随覆盖层联动：global 不显示（全局无目标），其余为对应下拉 */}
+          {/* 覆盖目标随覆盖层联动：global 不显示（全局无目标），其余为对应下拉。
+              server 层目标须为已存在实例（严格选）；group/zone 目标可为新维度（可编辑，FR-51）。 */}
           {form.scopeLevel !== 'global' && (
             <div className="space-y-1.5">
               <Label htmlFor="cc-scopeTarget">覆盖目标</Label>
-              <select
+              <Combobox
                 id="cc-scopeTarget"
-                className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+                aria-label="覆盖目标"
                 value={form.scopeTarget}
-                onChange={(e) => setForm({ ...form, scopeTarget: e.target.value })}
-              >
-                <option value="">请选择</option>
-                {targetOptions.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => setForm({ ...form, scopeTarget: v })}
+                options={targetOptions}
+                allowCustom={form.scopeLevel !== 'server'}
+                placeholder="请选择"
+              />
             </div>
           )}
           <div className="space-y-1.5">

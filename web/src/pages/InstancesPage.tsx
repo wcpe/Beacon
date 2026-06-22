@@ -1,13 +1,15 @@
 // 实例与健康页：按 namespace/group/zone/role/status 过滤，5 秒轮询健康。
 // online/lost/offline 三色区分；未分配 zone 的行高亮；点行看只读详情；支持主动下线（按行直接下线，不再强制先筛环境，FR-49）。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   listInstances,
+  listNamespaces,
   listOfflineInstances,
   offlineInstance,
   onlineInstance,
+  zoneSummary,
 } from '../api/client'
 import type { InstanceFilter } from '../api/client'
 import type { InstanceView } from '../api/types'
@@ -19,9 +21,9 @@ import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Select,
   SelectContent,
@@ -79,6 +81,34 @@ export default function InstancesPage() {
     queryFn: () => listOfflineInstances(filter.namespace),
     refetchInterval: REFETCH_MS,
   })
+
+  // 筛选维度下拉的候选来源（FR-51）：环境来自 listNamespaces，大区 / 小区由 zone 汇总与全量实例派生。
+  // 候选不随当前过滤收窄（全量拉取），且筛选框允许键入候选外的值（可编辑）。
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
+  const allInstancesQuery = useQuery({
+    queryKey: ['instances', 'filter-options'],
+    queryFn: () => listInstances({}),
+  })
+  const zoneSummaryQuery = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
+
+  const namespaceOptions = useMemo(
+    () => (namespacesQuery.data ?? []).map((n) => n.code),
+    [namespacesQuery.data],
+  )
+  // 大区候选：zone 汇总与实例列表去重并集（兼容无 zone 指派但已注册的大区）
+  const groupOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const z of zoneSummaryQuery.data ?? []) if (z.group) set.add(z.group)
+    for (const i of allInstancesQuery.data ?? []) if (i.group) set.add(i.group)
+    return Array.from(set).sort()
+  }, [zoneSummaryQuery.data, allInstancesQuery.data])
+  // 小区候选：zone 汇总与实例列表去重并集
+  const zoneOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const z of zoneSummaryQuery.data ?? []) if (z.zone) set.add(z.zone)
+    for (const i of allInstancesQuery.data ?? []) if (i.zone) set.add(i.zone)
+    return Array.from(set).sort()
+  }, [zoneSummaryQuery.data, allInstancesQuery.data])
 
   // 主动下线：namespace 取自该行实例，不再强制先在过滤条件中选环境（FR-49）。
   const offlineMut = useMutation({
@@ -185,15 +215,40 @@ export default function InstancesPage() {
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="f-namespace">环境</Label>
-              <Input id="f-namespace" value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+              {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
+              <Combobox
+                id="f-namespace"
+                aria-label="环境"
+                className="w-40"
+                value={namespace}
+                onChange={setNamespace}
+                options={namespaceOptions}
+                allowCustom
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="f-group">大区</Label>
-              <Input id="f-group" value={group} onChange={(e) => setGroup(e.target.value)} />
+              <Combobox
+                id="f-group"
+                aria-label="大区"
+                className="w-40"
+                value={group}
+                onChange={setGroup}
+                options={groupOptions}
+                allowCustom
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="f-zone">小区</Label>
-              <Input id="f-zone" value={zone} onChange={(e) => setZone(e.target.value)} />
+              <Combobox
+                id="f-zone"
+                aria-label="小区"
+                className="w-40"
+                value={zone}
+                onChange={setZone}
+                options={zoneOptions}
+                allowCustom
+              />
             </div>
             <div className="space-y-1.5">
               <Label>角色</Label>

@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -249,68 +250,53 @@ export default function ZonesPage() {
             <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="a-namespace">环境</Label>
-                <select
+                {/* 严格选：指派目标须为已存在维度（不接受列表外值，FR-51 增强 FR-40） */}
+                <Combobox
                   id="a-namespace"
-                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+                  aria-label="环境"
                   value={form.namespace}
-                  onChange={(e) => setForm({ ...form, namespace: e.target.value })}
-                >
-                  <option value="">请选择</option>
-                  {namespaceOptions.map((ns) => (
-                    <option key={ns} value={ns}>
-                      {ns}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, namespace: v })}
+                  options={namespaceOptions}
+                  allowCustom={false}
+                  placeholder="请选择"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="a-serverid">serverId</Label>
                 {/* 仅列 bukkit 子服：BC 代理不可被指派进 zone（与后端校验一致，FR-8/FR-35） */}
-                <select
+                <Combobox
                   id="a-serverid"
-                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+                  aria-label="serverId"
                   value={form.serverId}
-                  onChange={(e) => setForm({ ...form, serverId: e.target.value })}
-                >
-                  <option value="">请选择</option>
-                  {serverOptions.map((sid) => (
-                    <option key={sid} value={sid}>
-                      {sid}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, serverId: v })}
+                  options={serverOptions}
+                  allowCustom={false}
+                  placeholder="请选择"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="a-group">大区</Label>
-                <select
+                <Combobox
                   id="a-group"
-                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+                  aria-label="大区"
                   value={form.group}
-                  onChange={(e) => setForm({ ...form, group: e.target.value })}
-                >
-                  <option value="">请选择</option>
-                  {groupOptions.map((g) => (
-                    <option key={g} value={g}>
-                      {g}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, group: v })}
+                  options={groupOptions}
+                  allowCustom={false}
+                  placeholder="请选择"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="a-zone">小区</Label>
-                <select
+                <Combobox
                   id="a-zone"
-                  className="h-8 w-full rounded border border-input bg-background px-2 text-sm"
+                  aria-label="小区"
                   value={form.zone}
-                  onChange={(e) => setForm({ ...form, zone: e.target.value })}
-                >
-                  <option value="">请选择</option>
-                  {zoneOptions.map((z) => (
-                    <option key={z} value={z}>
-                      {z}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setForm({ ...form, zone: v })}
+                  options={zoneOptions}
+                  allowCustom={false}
+                  placeholder="请选择"
+                />
               </div>
               <div className="col-span-2 space-y-1.5">
                 <Label htmlFor="a-note">备注</Label>

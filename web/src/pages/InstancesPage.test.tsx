@@ -19,10 +19,14 @@ vi.mock('../api/client', () => ({
   listOfflineInstances: vi.fn(),
   offlineInstance: vi.fn(),
   onlineInstance: vi.fn(),
+  // FR-51：筛选框维度下拉的候选来源（环境 / zone 汇总）
+  listNamespaces: vi.fn(),
+  zoneSummary: vi.fn(),
 }))
 
 import InstancesPage from './InstancesPage'
 import { listInstances, listOfflineInstances, offlineInstance, onlineInstance } from '../api/client'
+import { listNamespaces, zoneSummary } from '../api/client'
 
 function inst(overrides: Partial<InstanceView>): InstanceView {
   return {
@@ -68,6 +72,8 @@ describe('InstancesPage 主动下线（FR-49）', () => {
     vi.mocked(listOfflineInstances).mockResolvedValue([])
     vi.mocked(offlineInstance).mockResolvedValue(undefined)
     vi.mocked(onlineInstance).mockResolvedValue(undefined)
+    vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
+    vi.mocked(zoneSummary).mockResolvedValue([])
   })
 
   it('未选环境也能按行下线，namespace 取自该行', async () => {

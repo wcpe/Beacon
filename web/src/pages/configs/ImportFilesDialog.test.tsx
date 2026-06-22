@@ -2,7 +2,7 @@
 // 打开对话框 → 选目标组 → 选文件 → 点导入 → 以正确入参调用 importFiles。
 // api/client 被 mock，保证用例在 jsdom 下稳定可跑。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
@@ -38,8 +38,9 @@ describe('ImportFilesDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
     const dialog = await screen.findByRole('dialog')
 
-    // 选目标组
-    await userEvent.selectOptions(screen.getByLabelText('目标组'), 'bw')
+    // 选目标组（FR-51：combobox，展开后点选候选；下拉渲染到 body）
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
 
     // 选两个文件（多文件输入）
     const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement

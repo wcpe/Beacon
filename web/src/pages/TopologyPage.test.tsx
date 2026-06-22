@@ -22,10 +22,11 @@ vi.mock('./topology/TopologyGraph', () => ({
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
   getTopology: vi.fn(),
+  listNamespaces: vi.fn(),
 }))
 
 import TopologyPage from './TopologyPage'
-import { getTopology } from '../api/client'
+import { getTopology, listNamespaces } from '../api/client'
 import type { TopologyView } from '../api/types'
 
 // 拓扑样例：1 个 bc + 2 个 bukkit，两条 bc→bukkit 边，两个 zone 分组
@@ -54,27 +55,32 @@ function renderPage(ui: ReactElement) {
 beforeEach(() => {
   vi.mocked(getTopology).mockReset()
   vi.mocked(getTopology).mockResolvedValue(TOPO)
+  vi.mocked(listNamespaces).mockReset()
+  vi.mocked(listNamespaces).mockResolvedValue([
+    { code: 'prod', name: '生产' },
+    { code: 'test', name: '测试' },
+  ])
 })
 
 describe('TopologyPage', () => {
-  it('未选环境时不发请求并展示提示', () => {
+  it('环境候选就绪后默认选第一个环境并自动出图（FR-51）', async () => {
     renderPage(<TopologyPage />)
-    expect(screen.getByText(/请先在上方输入环境并查询/)).toBeInTheDocument()
-    expect(vi.mocked(getTopology)).not.toHaveBeenCalled()
+    // 无需手动选环境，候选就绪后按首个环境（prod）拉取拓扑
+    await waitFor(() => expect(vi.mocked(getTopology)).toHaveBeenCalledWith('prod'))
+    expect(await screen.findByTestId('topology-graph')).toBeInTheDocument()
   })
 
-  it('查询某环境后按该环境拉取拓扑并渲染图', async () => {
+  it('切换到另一环境后按该环境拉取拓扑并渲染图', async () => {
     renderPage(<TopologyPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
-    await waitFor(() => expect(vi.mocked(getTopology)).toHaveBeenCalledWith('prod'))
+    await screen.findByTestId('topology-graph')
+    await userEvent.click(screen.getByLabelText('环境'))
+    await userEvent.click(screen.getByRole('option', { name: 'test' }))
+    await waitFor(() => expect(vi.mocked(getTopology)).toHaveBeenCalledWith('test'))
     expect(await screen.findByTestId('topology-graph')).toBeInTheDocument()
   })
 
   it('喂图数据含真实节点、bc→bukkit 边与大区/zone 分组', async () => {
     renderPage(<TopologyPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     const graph = await screen.findByTestId('topology-graph')
     // 节点 serverId 透传
     expect(JSON.parse(graph.getAttribute('data-nodes') ?? '[]')).toEqual(['bc-1', 'lobby-1', 'pvp-1'])
@@ -92,8 +98,6 @@ describe('TopologyPage', () => {
 
   it('图例显示 BC / 子服计数', async () => {
     renderPage(<TopologyPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     await screen.findByTestId('topology-graph')
     // 1 个 bc、2 个 bukkit
     expect(screen.getByText(/BC 代理（1）/)).toBeInTheDocument()
@@ -103,9 +107,14 @@ describe('TopologyPage', () => {
   it('空拓扑（无在线实例）展示提示而非图', async () => {
     vi.mocked(getTopology).mockResolvedValue({ namespace: 'prod', nodes: [], edges: [], groups: [] })
     renderPage(<TopologyPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     expect(await screen.findByText('该环境暂无在线实例。')).toBeInTheDocument()
     expect(screen.queryByTestId('topology-graph')).not.toBeInTheDocument()
+  })
+
+  it('无任何环境候选时展示提示且不发请求', async () => {
+    vi.mocked(listNamespaces).mockResolvedValue([])
+    renderPage(<TopologyPage />)
+    expect(await screen.findByText(/暂无可选环境/)).toBeInTheDocument()
+    expect(vi.mocked(getTopology)).not.toHaveBeenCalled()
   })
 })
