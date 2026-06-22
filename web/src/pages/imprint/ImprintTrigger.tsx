@@ -3,6 +3,7 @@
 // 仅在线实例可作拓印源（离线 agent 收不到命令）。
 
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
 
 import { triggerImprint } from '../../api/client'
@@ -20,6 +21,7 @@ export default function ImprintTrigger({
   // 触发成功回调：把新建命令交上层开始轮询
   onTriggered: (cmd: AgentCommandView) => void
 }) {
+  const { t } = useTranslation()
   const msg = useMessage()
   // 拓印源：选中的在线实例 serverId
   const [serverId, setServerId] = useState('')
@@ -47,7 +49,7 @@ export default function ImprintTrigger({
   const triggerMut = useMutation({
     mutationFn: () => triggerImprint(serverId, sourceNamespace, { path: path.trim() }),
     onSuccess: (cmd) => {
-      msg.showSuccess('已触发拓印，等待该实例回传磁盘内容…')
+      msg.showSuccess(t('imprint.msgTriggered'))
       onTriggered(cmd)
     },
     onError: (e: Error) => msg.showError(e.message),
@@ -56,11 +58,11 @@ export default function ImprintTrigger({
   function onTrigger(e: React.FormEvent) {
     e.preventDefault()
     if (!serverId) {
-      msg.showError('请选择在线实例作为拓印源')
+      msg.showError(t('imprint.sourceRequired'))
       return
     }
     if (!path.trim()) {
-      msg.showError('目标文件 path 为必填')
+      msg.showError(t('imprint.pathRequired'))
       return
     }
     triggerMut.mutate()
@@ -73,7 +75,7 @@ export default function ImprintTrigger({
     >
       <div className="space-y-1.5">
         <Label htmlFor="imp-source" className="text-xs">
-          拓印源（在线实例）
+          {t('imprint.sourceLabel')}
         </Label>
         <select
           id="imp-source"
@@ -81,7 +83,7 @@ export default function ImprintTrigger({
           value={serverId}
           onChange={(e) => setServerId(e.target.value)}
         >
-          <option value="">请选择</option>
+          <option value="">{t('common.pleaseSelect')}</option>
           {onlineInstances.map((i) => (
             <option key={i.serverId} value={i.serverId}>
               {i.serverId}（{i.group}）
@@ -91,21 +93,21 @@ export default function ImprintTrigger({
       </div>
       <div className="flex-1 min-w-[16rem] space-y-1.5">
         <Label htmlFor="imp-path" className="text-xs">
-          目标文件 path（相对 plugins/）
+          {t('imprint.pathLabel')}
         </Label>
         <input
           id="imp-path"
           className="h-8 w-full rounded border border-input bg-background px-2 text-sm font-mono"
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder="如 AllinCore/config.yml"
+          placeholder={t('imprint.pathPlaceholder')}
         />
       </div>
       <Button type="submit" disabled={triggerMut.isPending || onlineInstances.length === 0}>
-        {triggerMut.isPending ? '触发中…' : '拓印此文件'}
+        {triggerMut.isPending ? t('imprint.triggering') : t('imprint.triggerBtn')}
       </Button>
       {onlineInstances.length === 0 && (
-        <p className="w-full text-xs text-muted-foreground">当前无在线实例可拓印</p>
+        <p className="w-full text-xs text-muted-foreground">{t('imprint.noOnline')}</p>
       )}
     </form>
   )

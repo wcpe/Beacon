@@ -301,7 +301,7 @@ export default function ApiKeysPage() {
               </div>
               <p className="text-xs text-muted-foreground">
                 {t('apikeys.revealUsageBefore')}<code className="font-mono">X-Beacon-Api-Key</code>{t('apikeys.revealUsageOr')}
-                <code className="font-mono">Authorization: Bearer &lt;明文&gt;</code>{t('apikeys.revealUsageAfter')}
+                <code className="font-mono">{t('apikeys.revealUsageBearer')}</code>{t('apikeys.revealUsageAfter')}
               </p>
             </div>
           )}

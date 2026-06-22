@@ -2,6 +2,7 @@
 // 只读展示组件（数据由页面传入），作为 FR-46 审核台 diff「期望合并值」一侧的数据源。
 // 复用 FR-22 配置有效预览（EffectivePreview）的展示模式。
 
+import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { EffectiveFileTreeView } from '../../api/client'
@@ -20,11 +21,12 @@ export default function FileEffectivePreview({
   isLoading: boolean
   data: EffectiveFileTreeView | null | undefined
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* 预览目标选择 */}
       <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-border bg-muted/20">
-        <span className="text-xs text-muted-foreground">预览目标：</span>
+        <span className="text-xs text-muted-foreground">{t('filePreview.targetLabel')}</span>
         <select
           className="h-7 rounded border border-input bg-background px-2 text-xs"
           value={target.serverId ?? target.group ?? ''}
@@ -38,7 +40,7 @@ export default function FileEffectivePreview({
             }
           }}
         >
-          <option value="">选择服务器</option>
+          <option value="">{t('filePreview.selectPlaceholder')}</option>
           {instances.map((inst) => (
             <option key={inst.serverId} value={inst.serverId}>
               {inst.serverId} ({inst.group}/{inst.zone})
@@ -53,11 +55,11 @@ export default function FileEffectivePreview({
       </div>
       {/* 预览内容 */}
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">加载中…</div>
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">{t('filePreview.loading')}</div>
       ) : data ? (
         data.files.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-            该目标无有效文件
+            {t('filePreview.noFiles')}
           </div>
         ) : (
           <ScrollArea className="flex-1">
@@ -69,11 +71,11 @@ export default function FileEffectivePreview({
                     <span className="flex items-center gap-1 shrink-0">
                       {file.wholeFile ? (
                         <Badge variant="secondary" className="text-[0.6rem]">
-                          整文件
+                          {t('filePreview.wholeFile')}
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="text-[0.6rem]">
-                          深合并
+                          {t('filePreview.deepMerge')}
                         </Badge>
                       )}
                       <span className="text-muted-foreground font-mono">md5: {file.md5.slice(0, 8)}</span>
@@ -85,7 +87,7 @@ export default function FileEffectivePreview({
                   {file.sources.length > 0 && (
                     <div className="px-2 py-1 bg-muted/10 border-t border-border">
                       <span className="text-[0.65rem] text-muted-foreground">
-                        {file.wholeFile ? '整文件来自：' : '来源：'}
+                        {file.wholeFile ? t('filePreview.sourceWholeFile') : t('filePreview.sourceMerge')}
                       </span>
                       {file.sources.map((src, idx) => (
                         <span key={idx} className="ml-1 text-[0.65rem] text-blue-600">
@@ -97,7 +99,7 @@ export default function FileEffectivePreview({
                   {file.deletions.length > 0 && (
                     <div className="bg-red-50/50 border-t border-red-100">
                       <div className="px-2 py-1 text-[0.65rem] font-medium text-red-600">
-                        被删除的键（{file.deletions.length} 条）
+                        {t('filePreview.deletedTitle', { count: file.deletions.length })}
                       </div>
                       {file.deletions.map((del, idx) => (
                         <div key={idx} className="px-2 py-0.5 text-[0.65rem] text-red-500 font-mono">
@@ -113,7 +115,7 @@ export default function FileEffectivePreview({
         )
       ) : (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-          选择服务器查看有效文件树
+          {t('filePreview.empty')}
         </div>
       )}
     </div>

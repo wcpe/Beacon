@@ -3,6 +3,7 @@
 // 自审门由 reviewedMd5 实现：确认必带 diff 拉到的 actualMd5，盲确认拿不到正确 md5 → 后端 412 拒。
 
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { confirmImprint, imprintDiff } from '../../api/client'
@@ -15,11 +16,12 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 
 // 并入层选项：四层覆盖（global 不需目标键，group 需大区，zone/server 需大区 + 目标键）。
-const SCOPE_OPTIONS: Array<{ value: ImprintScope; label: string }> = [
-  { value: 'server', label: '子服层' },
-  { value: 'zone', label: '小区层' },
-  { value: 'group', label: '大区层' },
-  { value: 'global', label: '全局层' },
+// label 经 i18n key 在渲染时解析。
+const SCOPE_OPTIONS: Array<{ value: ImprintScope; labelKey: string }> = [
+  { value: 'server', labelKey: 'imprint.scopeServer' },
+  { value: 'zone', labelKey: 'imprint.scopeZone' },
+  { value: 'group', labelKey: 'imprint.scopeGroup' },
+  { value: 'global', labelKey: 'imprint.scopeGlobal' },
 ]
 
 export default function ImprintDiffPanel({
@@ -43,6 +45,7 @@ export default function ImprintDiffPanel({
   // 确认落库成功回调（清理上层状态）
   onConfirmed: () => void
 }) {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
   // 并入层选择（缺省落回拓印源子服层）
@@ -93,7 +96,7 @@ export default function ImprintDiffPanel({
         reviewedMd5: diff?.actualMd5 ?? '',
       }),
     onSuccess: (res) => {
-      msg.showSuccess(`已确认同步：落 ${res.scopeLevel} 层（version ${res.version}）`)
+      msg.showSuccess(t('imprint.msgConfirmed', { scope: res.scopeLevel, version: res.version }))
       // 失效文件相关缓存：落库后文件树会变更
       qc.invalidateQueries({ queryKey: ['files'] })
       qc.invalidateQueries({ queryKey: ['file-effective'] })
@@ -112,15 +115,15 @@ export default function ImprintDiffPanel({
 
   function onConfirm() {
     if (!diff) {
-      msg.showError('diff 尚未就绪')
+      msg.showError(t('imprint.errDiffNotReady'))
       return
     }
     if (!reviewed) {
-      msg.showError('请先勾选「我已审阅本 diff」')
+      msg.showError(t('imprint.errReviewFirst'))
       return
     }
     if (!targetReady) {
-      msg.showError('请补全并入层的目标键')
+      msg.showError(t('imprint.errTargetIncomplete'))
       return
     }
     confirmMut.mutate()
@@ -132,7 +135,7 @@ export default function ImprintDiffPanel({
       <div className="flex flex-wrap items-end gap-3 px-3 py-2 border-b border-border bg-muted/20">
         <div className="space-y-1">
           <Label htmlFor="imp-scope" className="text-xs">
-            并入层
+            {t('imprint.scopeLabel')}
           </Label>
           <select
             id="imp-scope"
@@ -142,7 +145,7 @@ export default function ImprintDiffPanel({
           >
             {SCOPE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
-                {o.label}
+                {t(o.labelKey)}
               </option>
             ))}
           </select>
@@ -150,7 +153,7 @@ export default function ImprintDiffPanel({
         {scope !== 'global' && (
           <div className="space-y-1">
             <Label htmlFor="imp-group" className="text-xs">
-              大区
+              {t('common.group')}
             </Label>
             <select
               id="imp-group"
@@ -158,7 +161,7 @@ export default function ImprintDiffPanel({
               value={group}
               onChange={(e) => setGroup(e.target.value)}
             >
-              <option value="">请选择</option>
+              <option value="">{t('common.pleaseSelect')}</option>
               {groups.map((g) => (
                 <option key={g} value={g}>
                   {g}
@@ -170,7 +173,7 @@ export default function ImprintDiffPanel({
         {scope === 'zone' && (
           <div className="space-y-1">
             <Label htmlFor="imp-zone" className="text-xs">
-              小区编码
+              {t('imprint.zoneCodeLabel')}
             </Label>
             <input
               id="imp-zone"
@@ -181,14 +184,14 @@ export default function ImprintDiffPanel({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') setZone(zoneInput)
               }}
-              placeholder="zone 编码（回车 / 失焦生效）"
+              placeholder={t('imprint.zoneCodePlaceholder')}
             />
           </div>
         )}
         {scope === 'server' && (
           <div className="space-y-1">
             <Label htmlFor="imp-target" className="text-xs">
-              目标子服
+              {t('imprint.targetServerLabel')}
             </Label>
             <select
               id="imp-target"
@@ -196,7 +199,7 @@ export default function ImprintDiffPanel({
               value={target}
               onChange={(e) => setTarget(e.target.value)}
             >
-              <option value="">请选择</option>
+              <option value="">{t('common.pleaseSelect')}</option>
               {instances.map((i) => (
                 <option key={i.serverId} value={i.serverId}>
                   {i.serverId}（{i.group}）
@@ -209,11 +212,11 @@ export default function ImprintDiffPanel({
           {diff &&
             (diff.differs ? (
               <Badge variant="destructive" className="text-xs">
-                有差异
+                {t('imprint.differs')}
               </Badge>
             ) : (
               <Badge variant="secondary" className="text-xs">
-                无差异
+                {t('imprint.noDiff')}
               </Badge>
             ))}
           {/* 显式审阅闸（G）：勾选才放行确认；diff 加载 / 重解析中禁用 */}
@@ -224,14 +227,14 @@ export default function ImprintDiffPanel({
               disabled={!diff || diffQuery.isFetching}
               onChange={(e) => setReviewed(e.target.checked)}
             />
-            我已审阅本 diff
+            {t('imprint.reviewedCheckbox')}
           </label>
           <Button
             size="sm"
             onClick={onConfirm}
             disabled={confirmMut.isPending || !diff || !reviewed || diffQuery.isFetching}
           >
-            {confirmMut.isPending ? '同步中…' : '确认同步'}
+            {confirmMut.isPending ? t('imprint.syncing') : t('imprint.confirmBtn')}
           </Button>
         </div>
       </div>
@@ -239,7 +242,7 @@ export default function ImprintDiffPanel({
       {/* diff 主体：左期望合并值、右本地实际值 */}
       {diffQuery.isLoading ? (
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-          解析 diff 中…
+          {t('imprint.diffParsing')}
         </div>
       ) : diffQuery.isError ? (
         <div className="flex-1 flex items-center justify-center text-sm text-destructive">
@@ -250,8 +253,10 @@ export default function ImprintDiffPanel({
           <div className="flex items-center gap-3 px-3 py-1 text-xs text-muted-foreground border-b border-border">
             <span className="font-mono break-all">{diff.path}</span>
             <span>
-              左：期望合并值（{diff.expectedMd5.slice(0, 8) || '空'}）· 右：本地实际值（将入库，
-              {diff.actualMd5.slice(0, 8)}）
+              {t('imprint.diffMeta', {
+                expected: diff.expectedMd5.slice(0, 8) || t('imprint.expectedEmpty'),
+                actual: diff.actualMd5.slice(0, 8),
+              })}
             </span>
           </div>
           <div className="flex-1 min-h-0 border-b border-border">
@@ -265,7 +270,7 @@ export default function ImprintDiffPanel({
           {diff.expectedSources.length > 0 && (
             <div className="px-3 py-1.5 bg-muted/10 text-[0.7rem]">
               <span className="text-muted-foreground">
-                {diff.expectedWholeFile ? '期望整文件来自：' : '期望合并值来源：'}
+                {diff.expectedWholeFile ? t('imprint.sourceWholeFile') : t('imprint.sourceMerge')}
               </span>
               {diff.expectedSources.map((src, idx) => (
                 <span key={idx} className="ml-1.5 text-blue-600">
@@ -277,7 +282,7 @@ export default function ImprintDiffPanel({
           {/* 期望侧被减量删除的键（null 删键，I）：后端已给 expectedDeletions，需渲染让人看到将删哪些键 */}
           {diff.expectedDeletions.length > 0 && (
             <div className="px-3 py-1.5 bg-muted/10 text-[0.7rem]">
-              <span className="text-muted-foreground">期望侧被删除的键：</span>
+              <span className="text-muted-foreground">{t('imprint.deletionsLabel')}</span>
               {diff.expectedDeletions.map((src, idx) => (
                 <span key={idx} className="ml-1.5 text-red-600 line-through">
                   {src.path.length > 0 ? `${src.path.join('.')} (${src.scope})` : src.scope}

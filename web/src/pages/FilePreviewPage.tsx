@@ -2,6 +2,7 @@
 // 作为后续 FR-46 审核台 diff「期望合并值」一侧的数据源；不含写/编辑（写路径仍在通道B 既有端点）。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 
 import { effectiveFiles, listInstances } from '../api/client'
@@ -9,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import FileEffectivePreview from './filepreview/FileEffectivePreview'
 
 export default function FilePreviewPage() {
+  const { t } = useTranslation()
   // 预览目标（实例 serverId）；按 zone_assignment 解出大区/小区四层覆盖
   const [target, setTarget] = useState<{ serverId?: string; group?: string }>({})
 
@@ -30,9 +32,9 @@ export default function FilePreviewPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden gap-2">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">文件树有效预览</h1>
+        <h1 className="text-xl font-semibold">{t('filePreview.title')}</h1>
         <Badge variant="outline" className="text-xs">
-          只读 · 通道B 合并结果
+          {t('filePreview.badge')}
         </Badge>
       </div>
       <div className="flex flex-1 min-h-0 rounded-lg border border-border bg-card overflow-hidden">

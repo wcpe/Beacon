@@ -45,3 +45,33 @@ describe('AuditsPage 操作人过滤', () => {
     )
   })
 })
+
+// FR-50：审计 action 英文枚举经 i18n 映射成中文展示；未知枚举回退原文。
+describe('AuditsPage 审计动作 i18n 映射', () => {
+  // 一条已知动作 + 一条未知动作的审计样例
+  const auditRow = (action: string) => ({
+    createdAt: '2026-01-01T00:00:00Z',
+    namespace: 'prod',
+    operator: 'admin',
+    action,
+    targetType: 'config',
+    targetRef: 'app.yml',
+    result: 'ok' as const,
+    clientIp: '127.0.0.1',
+    detail: '',
+  })
+
+  it('已知动作 config.publish 显示中文「发布配置」', async () => {
+    vi.mocked(listAudits).mockResolvedValue({ total: 1, items: [auditRow('config.publish')] })
+    renderPage(<AuditsPage />)
+    expect(await screen.findByText('发布配置')).toBeInTheDocument()
+    // 不出现裸枚举
+    expect(screen.queryByText('config.publish')).not.toBeInTheDocument()
+  })
+
+  it('未知动作回退展示原文英文枚举', async () => {
+    vi.mocked(listAudits).mockResolvedValue({ total: 1, items: [auditRow('custom.unknown-action')] })
+    renderPage(<AuditsPage />)
+    expect(await screen.findByText('custom.unknown-action')).toBeInTheDocument()
+  })
+})

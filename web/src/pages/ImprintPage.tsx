@@ -4,6 +4,7 @@
 // 确认才落为某层文件覆盖、走通道B 既有下发。
 
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 
 import { imprintStatus, listInstances, zoneSummary } from '../api/client'
@@ -13,6 +14,7 @@ import ImprintTrigger from './imprint/ImprintTrigger'
 import ImprintDiffPanel from './imprint/ImprintDiffPanel'
 
 export default function ImprintPage() {
+  const { t } = useTranslation()
   // 当前待审拓印命令（触发后赋值，轮询其状态至 ready）
   const [command, setCommand] = useState<AgentCommandView | null>(null)
 
@@ -52,9 +54,9 @@ export default function ImprintPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden gap-2">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">拓印审核台</h1>
+        <h1 className="text-xl font-semibold">{t('imprint.title')}</h1>
         <Badge variant="outline" className="text-xs">
-          diff · 单人自审 · 同步
+          {t('imprint.badge')}
         </Badge>
       </div>
 
@@ -66,7 +68,7 @@ export default function ImprintPage() {
       {/* 命令态提示 / diff 面板 */}
       {!command ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
-          选在线实例 + 文件触发拓印后，在此查看 diff 并确认同步
+          {t('imprint.emptyHint')}
         </div>
       ) : status === 'ready' ? (
         <div className="flex flex-1 min-h-0 rounded-lg border border-border bg-card overflow-hidden">
@@ -82,15 +84,15 @@ export default function ImprintPage() {
         </div>
       ) : status === 'done' ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-border text-sm text-muted-foreground">
-          拓印已确认同步（命令完成）
+          {t('imprint.done')}
         </div>
       ) : status === 'failed' || status === 'expired' ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-border text-sm text-destructive">
-          拓印命令{status === 'failed' ? '失败' : '已过期'}（目标文件可能不存在或实例离线），请重新触发
+          {status === 'failed' ? t('imprint.failed') : t('imprint.expired')}
         </div>
       ) : (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-border text-sm text-muted-foreground">
-          等待实例 {command.serverId} 回传磁盘内容…（命令状态：{status}）
+          {t('imprint.waiting', { serverId: command.serverId, status })}
         </div>
       )}
     </div>

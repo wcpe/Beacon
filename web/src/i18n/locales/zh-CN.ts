@@ -377,6 +377,8 @@ export const zhCN = {
     revealKey: '明文密钥',
     revealUsageBefore: '经请求头 ',
     revealUsageOr: ' 或 ',
+    // 授权头示例中的明文占位（保留原文「Bearer <明文>」）
+    revealUsageBearer: 'Authorization: Bearer <明文>',
     revealUsageAfter: ' 携带使用。',
     copyBtn: '复制明文',
     savedBtn: '我已保存',
