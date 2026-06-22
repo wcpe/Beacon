@@ -37,6 +37,7 @@ func newNamespaceTestDB(t *testing.T) *gorm.DB {
 	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(
 		&model.Namespace{}, &model.AuditLog{}, &model.ZoneAssignment{}, &model.ConfigItem{},
+		&model.FileObject{}, &model.FileOverrideSet{},
 	); err != nil {
 		t.Fatalf("迁移表结构失败: %v", err)
 	}
@@ -51,6 +52,8 @@ func newNamespaceService(db *gorm.DB, counter instanceCounter) *NamespaceService
 		repository.NewNamespaceRepository(db),
 		repository.NewZoneAssignmentRepository(db),
 		repository.NewConfigItemRepository(db, nil),
+		repository.NewFileObjectRepository(db),
+		repository.NewFileOverrideSetRepository(db),
 		counter,
 		repository.NewAuditLogRepository(db),
 	)
@@ -210,6 +213,57 @@ func TestNamespaceDeleteBlockedByConfigs(t *testing.T) {
 	err := svc.Delete("prod", "alice", "10.0.0.6")
 	if !errors.Is(err, apperr.ErrNamespaceHasConfigs) {
 		t.Fatalf("有配置应返回 ErrNamespaceHasConfigs，实际 %v", err)
+	}
+	assertNamespaceKept(t, db, "prod")
+	if n := auditCount(t, db, model.ActionNamespaceDelete); n != 0 {
+		t.Fatalf("拒删不应留 delete 审计，实际 %d", n)
+	}
+}
+
+// TestNamespaceDeleteBlockedByFiles 守卫④：该环境下有未软删文件树（通道B）则禁删（专门错误），不留审计、不删行。
+func TestNamespaceDeleteBlockedByFiles(t *testing.T) {
+	db := newNamespaceTestDB(t)
+	svc := newNamespaceService(db, emptyCounter())
+	seedNamespace(t, svc, "prod", "生产")
+	if err := repository.NewFileObjectRepository(db).Create(&model.FileObject{
+		NamespaceCode: "prod",
+		GroupCode:     model.GlobalGroupCode,
+		Path:          "ui/main.allin",
+		ScopeLevel:    model.ScopeGlobal,
+		Content:       "x",
+		ContentMD5:    "x",
+	}); err != nil {
+		t.Fatalf("预置文件对象失败: %v", err)
+	}
+
+	err := svc.Delete("prod", "alice", "10.0.0.7")
+	if !errors.Is(err, apperr.ErrNamespaceHasFiles) {
+		t.Fatalf("有文件树应返回 ErrNamespaceHasFiles，实际 %v", err)
+	}
+	assertNamespaceKept(t, db, "prod")
+	if n := auditCount(t, db, model.ActionNamespaceDelete); n != 0 {
+		t.Fatalf("拒删不应留 delete 审计，实际 %d", n)
+	}
+}
+
+// TestNamespaceDeleteBlockedByOverrideSets 守卫⑤：该环境下有未软删覆盖集（FR-15）则禁删（专门错误），不留审计、不删行。
+func TestNamespaceDeleteBlockedByOverrideSets(t *testing.T) {
+	db := newNamespaceTestDB(t)
+	svc := newNamespaceService(db, emptyCounter())
+	seedNamespace(t, svc, "prod", "生产")
+	if err := repository.NewFileOverrideSetRepository(db).Create(&model.FileOverrideSet{
+		NamespaceCode: "prod",
+		GroupCode:     model.GlobalGroupCode,
+		Name:          "AllinCore",
+		ScopeLevel:    model.ScopeGlobal,
+		TargetRoot:    "plugins/AllinCore",
+	}); err != nil {
+		t.Fatalf("预置覆盖集失败: %v", err)
+	}
+
+	err := svc.Delete("prod", "alice", "10.0.0.8")
+	if !errors.Is(err, apperr.ErrNamespaceHasOverrideSets) {
+		t.Fatalf("有覆盖集应返回 ErrNamespaceHasOverrideSets，实际 %v", err)
 	}
 	assertNamespaceKept(t, db, "prod")
 	if n := auditCount(t, db, model.ActionNamespaceDelete); n != 0 {

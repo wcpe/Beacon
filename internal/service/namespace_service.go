@@ -21,30 +21,36 @@ type instanceCounter interface {
 
 // NamespaceService 编排环境（namespace）相关的业务逻辑。
 type NamespaceService struct {
-	db         *gorm.DB
-	repo       *repository.NamespaceRepository
-	assignRepo *repository.ZoneAssignmentRepository
-	configRepo *repository.ConfigItemRepository
-	instances  instanceCounter
-	auditRepo  *repository.AuditLogRepository
+	db           *gorm.DB
+	repo         *repository.NamespaceRepository
+	assignRepo   *repository.ZoneAssignmentRepository
+	configRepo   *repository.ConfigItemRepository
+	fileRepo     *repository.FileObjectRepository
+	overrideRepo *repository.FileOverrideSetRepository
+	instances    instanceCounter
+	auditRepo    *repository.AuditLogRepository
 }
 
-// NewNamespaceService 构造服务。assignRepo/configRepo/instances 供删除守卫查在用数据。
+// NewNamespaceService 构造服务。assignRepo/configRepo/fileRepo/overrideRepo/instances 供删除守卫查在用数据。
 func NewNamespaceService(
 	db *gorm.DB,
 	repo *repository.NamespaceRepository,
 	assignRepo *repository.ZoneAssignmentRepository,
 	configRepo *repository.ConfigItemRepository,
+	fileRepo *repository.FileObjectRepository,
+	overrideRepo *repository.FileOverrideSetRepository,
 	instances instanceCounter,
 	auditRepo *repository.AuditLogRepository,
 ) *NamespaceService {
 	return &NamespaceService{
-		db:         db,
-		repo:       repo,
-		assignRepo: assignRepo,
-		configRepo: configRepo,
-		instances:  instances,
-		auditRepo:  auditRepo,
+		db:           db,
+		repo:         repo,
+		assignRepo:   assignRepo,
+		configRepo:   configRepo,
+		fileRepo:     fileRepo,
+		overrideRepo: overrideRepo,
+		instances:    instances,
+		auditRepo:    auditRepo,
 	}
 }
 
@@ -123,8 +129,8 @@ func (s *NamespaceService) Update(code, name, operator, clientIP string) (*model
 }
 
 // Delete 删除环境（硬删）；环境不存在返回 NOT_FOUND。
-// 删除守卫：该环境下有已注册实例 / 已指派 zone / 已有配置则禁删，分别返回对应业务错误且不删不审计（FR-53）。
-// 守卫全过则硬删与审计在同一事务内原子完成。
+// 删除守卫：该环境下有已注册实例 / 已指派 zone / 已有配置 / 文件树 / 覆盖集则禁删，
+// 分别返回对应业务错误且不删不审计（FR-53）。守卫全过则硬删与审计在同一事务内原子完成。
 func (s *NamespaceService) Delete(code, operator, clientIP string) error {
 	exist, err := s.repo.FindByCode(code)
 	if err != nil {
@@ -156,7 +162,9 @@ func (s *NamespaceService) Delete(code, operator, clientIP string) error {
 	return nil
 }
 
-// guardDeletable 检查环境是否仍有在用数据：依次查实例 / zone 指派 / 配置，命中即返对应业务错误。
+// guardDeletable 检查环境是否仍有在用数据：依次查实例 / zone 指派 / 配置 / 文件树 / 覆盖集，命中即返对应业务错误。
+// 文件树（通道B）与覆盖集（FR-15）同属 namespace 维度的「配置数据」，未清空即硬删会留下孤儿行，
+// 之后同 code 重建环境会令其静默重新归属并下发，故一并纳入守卫（FR-53）。
 func (s *NamespaceService) guardDeletable(code string) error {
 	if s.instances.CountByNamespace(code) > 0 {
 		return apperr.ErrNamespaceHasInstances
@@ -174,6 +182,20 @@ func (s *NamespaceService) guardDeletable(code string) error {
 	}
 	if configs > 0 {
 		return apperr.ErrNamespaceHasConfigs
+	}
+	files, err := s.fileRepo.CountByNamespace(code)
+	if err != nil {
+		return err
+	}
+	if files > 0 {
+		return apperr.ErrNamespaceHasFiles
+	}
+	overrideSets, err := s.overrideRepo.CountByNamespace(code)
+	if err != nil {
+		return err
+	}
+	if overrideSets > 0 {
+		return apperr.ErrNamespaceHasOverrideSets
 	}
 	return nil
 }

@@ -107,6 +107,13 @@ func (r *FileObjectRepository) ListByOverrideSet(setID uint) ([]model.FileObject
 	return objs, nil
 }
 
+// CountByNamespace 统计某环境下未软删的文件对象数（供环境删除守卫，FR-53）。
+func (r *FileObjectRepository) CountByNamespace(ns string) (int64, error) {
+	var n int64
+	err := r.active().Model(&model.FileObject{}).Where("namespace_code = ?", ns).Count(&n).Error
+	return n, err
+}
+
 // SoftDelete 软删文件对象：填真实删除时间并置 enabled=false。
 func (r *FileObjectRepository) SoftDelete(id uint, deletedAt time.Time) error {
 	return r.db.Model(&model.FileObject{}).

@@ -12,11 +12,13 @@
 ## 2. 需求（要什么）
 
 - **Update**：环境显示名 `name` 随时可改（`code` 为不可变身份键，不改）。
-- **Delete 守卫**：该环境下满足以下任一前置条件即**禁删并明确提示**（三类区分给清晰错误码）：
+- **Delete 守卫**：该环境下满足以下任一前置条件即**禁删并明确提示**（各类区分给清晰错误码）：
   1. 有**已注册实例**（内存注册表中该 namespace 下有实例条目）→ `NAMESPACE_HAS_INSTANCES`
   2. 有**已指派 zone**（`zone_assignment` 该 namespace 下有未软删指派）→ `NAMESPACE_HAS_ASSIGNMENTS`
   3. 有**已有配置**（`config_item` 该 namespace 下有未软删配置项）→ `NAMESPACE_HAS_CONFIGS`
-- **可删放行**：三类前置条件均不满足 → 硬删该环境行，记 `namespace.delete` 审计。
+  4. 有**文件树**（`file_object` 该 namespace 下有未软删文件，通道B）→ `NAMESPACE_HAS_FILES`
+  5. 有**覆盖集**（`file_override_set` 该 namespace 下有未软删覆盖集，FR-15）→ `NAMESPACE_HAS_OVERRIDE_SETS`
+- **可删放行**：以上前置条件均不满足 → 硬删该环境行，记 `namespace.delete` 审计。
 - 操作入审计：新增审计动作 `namespace.update` / `namespace.delete`，沿用既有 `audit_log`，
   operator 由认证态派生、`targetType=namespace`、`targetRef=code`，detail 不含敏感数据。
 - 前端：在既有「环境管理」页（`/namespaces`）上扩展改名 / 删除 + 完整管理 UI（列表 / 新建 / 改名 / 删除）。
@@ -35,17 +37,20 @@
 ### 控制面（分层 router→handler→service→repository）
 - `internal/model/enums.go`：新增 `ActionNamespaceUpdate = "namespace.update"`、`ActionNamespaceDelete = "namespace.delete"`。
 - `internal/apperr/apperr.go`：新增 `ErrNamespaceNotFound`（404）、`ErrNamespaceHasInstances` /
-  `ErrNamespaceHasAssignments` / `ErrNamespaceHasConfigs`（均 409 Conflict，三类删除守卫拒因）。
+  `ErrNamespaceHasAssignments` / `ErrNamespaceHasConfigs` / `ErrNamespaceHasFiles` /
+  `ErrNamespaceHasOverrideSets`（均 409 Conflict，各类删除守卫拒因）。
 - `internal/repository/namespace_repo.go`：新增 `UpdateName`（按 code 改 name）、`DeleteByCode`（硬删）。
 - `internal/repository/assignment_repo.go`：新增 `CountByNamespace`（数该 namespace 未软删指派）。
 - `internal/repository/config_repo.go`：新增 `CountByNamespace`（数该 namespace 未软删配置项）。
+- `internal/repository/file_repo.go` / `override_set_repo.go`：各新增 `CountByNamespace`
+  （数该 namespace 未软删文件树 / 覆盖集，复用既有 `active()` 软删过滤）。
 - `internal/runtime/registry.go`：新增 `CountByNamespace`（数该 namespace 内存实例条目数）。
 - `internal/service/namespace_service.go`：`NamespaceService` 注入装配所需依赖
-  （namespace repo、assignment repo、config repo、注册表计数器、审计 repo）。
+  （namespace repo、assignment repo、config repo、file repo、override-set repo、注册表计数器、审计 repo）。
   - `Update(code, name, operator, clientIP)`：环境不存在 → `ErrNamespaceNotFound`；
     事务内改名 + 写 `namespace.update` 审计原子完成。
   - `Delete(code, operator, clientIP)`：环境不存在 → `ErrNamespaceNotFound`；
-    依次查三类守卫（实例 / zone / 配置），命中即返对应 409 错误、**不删不审计**；
+    依次查守卫（实例 / zone / 配置 / 文件树 / 覆盖集），命中即返对应 409 错误、**不删不审计**；
     全过则事务内硬删 + 写 `namespace.delete` 审计。
   - 注册表计数经服务内最小接口 `instanceCounter` 注入（不直依赖 `*runtime.Registry` 具体类型，便于单测）。
 - `internal/handler/namespace_handler.go`：新增 `Update`（`PUT /admin/v1/namespaces/{code}`）、
@@ -80,7 +85,9 @@
 - 不破坏既有 namespace 列表 / 新建行为与序列化格式（`{code, name}` 不变）。
 
 ## 6. 风险 / 待定
-- **删除守卫范围**：PRD 明列「实例 / zone / 配置」三类。`file_object`（通道B 文件树）与 `file_override_set`
-  （FR-15 覆盖集）同为 namespace 维度数据，本期**未纳入**守卫（严格对齐 PRD 三类、不扩范围）。
-  若需「环境删除前必须清空一切 namespace 维度数据」，应另立需求扩守卫——此处按 PRD 字面实现并标注。
+- **删除守卫范围**：守卫已含**文件树（`file_object`，通道B）与覆盖集（`file_override_set`，FR-15）**，
+  故删除前需先清空一切 namespace 维度配置数据（实例 / zone / 配置 / 文件树 / 覆盖集），命中各返专门 409。
+  此为忠于 PRD FR-53「已有配置则禁删」意图的完整化——文件树 / 覆盖集同属该环境的「配置数据」，
+  且 `file_repo` 等纯按 `namespace_code` 字符串定位：若漏守卫硬删环境行，会留下孤儿文件 / 覆盖集，
+  运维以同 code 重建环境后这些孤儿会静默重新归属并经 manifest/effective 下发，属潜在错误下发，故必须纳入守卫。
 - 硬删 vs 软删：见 §3，按 namespace 表既有设计硬删。若未来需要 namespace 软删 / 回收站，再行评估。

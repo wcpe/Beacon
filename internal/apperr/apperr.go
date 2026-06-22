@@ -37,6 +37,10 @@ var (
 	ErrNamespaceHasAssignments = New(http.StatusConflict, "NAMESPACE_HAS_ASSIGNMENTS", "环境下仍有已指派的 zone，请先取消指派后再删除")
 	// ErrNamespaceHasConfigs 环境下仍有配置项，禁删（FR-53 删除守卫③）。
 	ErrNamespaceHasConfigs = New(http.StatusConflict, "NAMESPACE_HAS_CONFIGS", "环境下仍有配置，请先删除配置后再删除")
+	// ErrNamespaceHasFiles 环境下仍有文件树（通道B），禁删（FR-53 删除守卫④）。
+	ErrNamespaceHasFiles = New(http.StatusConflict, "NAMESPACE_HAS_FILES", "环境下仍有文件树，请先删除文件后再删除")
+	// ErrNamespaceHasOverrideSets 环境下仍有覆盖集（FR-15），禁删（FR-53 删除守卫⑤）。
+	ErrNamespaceHasOverrideSets = New(http.StatusConflict, "NAMESPACE_HAS_OVERRIDE_SETS", "环境下仍有覆盖集，请先删除覆盖集后再删除")
 
 	// ErrInvalidScope 覆盖层或其目标键不合法。
 	ErrInvalidScope = New(http.StatusBadRequest, "INVALID_SCOPE", "覆盖层或目标键不合法")

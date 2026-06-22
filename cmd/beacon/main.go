@@ -135,8 +135,8 @@ func run() error {
 	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
 	registry := runtime.NewRegistry()
 
-	// 环境服务（FR-53）：registry / assignRepo / configRepo 就绪后构造，供删除守卫查在用数据
-	nsService := service.NewNamespaceService(db, nsRepo, assignRepo, configRepo, registry, auditRepo)
+	// 环境服务（FR-53）：registry / assignRepo / configRepo / fileRepo / overrideSetRepo 就绪后构造，供删除守卫查在用数据
+	nsService := service.NewNamespaceService(db, nsRepo, assignRepo, configRepo, fileRepo, overrideSetRepo, registry, auditRepo)
 	if err := nsService.SeedDefaults(); err != nil {
 		return err
 	}
