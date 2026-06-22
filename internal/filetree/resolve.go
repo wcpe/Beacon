@@ -82,7 +82,7 @@ func resolveOne(p string, layers []model.FileObject) EffectiveFile {
 		return wholeFile
 	}
 
-	// 结构化深合并：按层级低→高取内容，复用 merge 按键合并。
+	// 结构化深合并：按层级低→高取内容，复用 merge 无损按键合并（保叶子原文 token 与注释，见 ADR-0034）。
 	sorted := make([]model.FileObject, len(layers))
 	copy(sorted, layers)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -92,7 +92,7 @@ func resolveOne(p string, layers []model.FileObject) EffectiveFile {
 	for _, c := range sorted {
 		contents = append(contents, c.Content)
 	}
-	merged, err := merge.MergeDataID(format, contents)
+	merged, err := merge.MergeDataIDLossless(format, contents)
 	if err != nil {
 		return wholeFile // 坏结构化内容 → 回退整文件取 winner（ADR-0029 决策5）
 	}

@@ -61,7 +61,7 @@ func resolveOneWithProvenance(p string, layers []model.FileObject) EffectiveFile
 		return whole
 	}
 
-	// 结构化深合并：按层级低→高组 ProvLayer，复用 merge 逐键来源。
+	// 结构化深合并：按层级低→高组 ProvLayer，复用 merge 无损逐键来源（content 无损渲染、来源同有损语义，见 ADR-0034）。
 	sorted := make([]model.FileObject, len(layers))
 	copy(sorted, layers)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -71,7 +71,7 @@ func resolveOneWithProvenance(p string, layers []model.FileObject) EffectiveFile
 	for _, c := range sorted {
 		provLayers = append(provLayers, merge.ProvLayer{Scope: c.ScopeLevel, Content: c.Content})
 	}
-	content, sources, deletions, err := merge.MergeDataIDWithProvenance(format, provLayers)
+	content, sources, deletions, err := merge.MergeDataIDLosslessWithProvenance(format, provLayers)
 	if err != nil {
 		return whole // 坏结构化内容 → 回退整文件取 winner（ADR-0029 决策5）
 	}
