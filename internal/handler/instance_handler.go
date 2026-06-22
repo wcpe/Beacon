@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -94,7 +95,13 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, toInstanceView(inst, h.svc.DefaultEntrySet(ns)))
 }
 
-// Offline 处理 POST /admin/v1/instances/{serverId}/offline?namespace=。
+// offlineRequest 是主动下线请求体（reason 可选自由文本，FR-49）。
+type offlineRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Offline 处理 POST /admin/v1/instances/{serverId}/offline?namespace=（主动下线：落 DB 拒绝态 + 移出内存，FR-49）。
+// reason 经请求体可选传入（空体也允许）。
 func (h *InstanceHandler) Offline(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	ns := q.Get("namespace")
@@ -103,7 +110,50 @@ func (h *InstanceHandler) Offline(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.Offline(ns, serverID, auth.Operator(r.Context()), clientIP(r)); err != nil {
+	// reason 可选：空请求体不视为错误（按钮直点无备注亦可下线）。
+	var req offlineRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	if err := h.svc.Offline(ns, serverID, req.Reason, auth.Operator(r.Context()), clientIP(r)); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// offlineMarkerView 是主动下线标记对外视图（FR-49）。
+type offlineMarkerView struct {
+	Namespace string `json:"namespace"`
+	ServerID  string `json:"serverId"`
+	Reason    string `json:"reason"`
+}
+
+// ListOffline 处理 GET /admin/v1/instances/offline?namespace=（列出当前主动下线标记，FR-49）。
+// 已下线实例不在注册表（List）出现，前端据此展示「已下线（可取消）」。
+func (h *InstanceHandler) ListOffline(w http.ResponseWriter, r *http.Request) {
+	offs, err := h.svc.ListOffline(r.URL.Query().Get("namespace"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	views := make([]offlineMarkerView, 0, len(offs))
+	for _, o := range offs {
+		views = append(views, offlineMarkerView{Namespace: o.NamespaceCode, ServerID: o.ServerID, Reason: o.Reason})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+// Online 处理 DELETE /admin/v1/instances/{serverId}/offline?namespace=（取消主动下线：清除拒绝态，FR-49）。
+func (h *InstanceHandler) Online(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns := q.Get("namespace")
+	serverID := chi.URLParam(r, "serverId")
+	if ns == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if err := h.svc.Online(ns, serverID, auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

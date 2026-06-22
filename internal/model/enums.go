@@ -63,6 +63,8 @@ const (
 	ActionConfigGrayAbort   = "config.gray-abort"
 	ActionInstanceRegister  = "instance.register"
 	ActionInstanceOffline   = "instance.offline"
+	// 取消主动下线（FR-49，清除 server_offline 拒绝态使实例可重新接入）
+	ActionInstanceOnline = "instance.online"
 	ActionZoneAssign        = "zone.assign"
 	ActionZoneMove          = "zone.move"
 	ActionZoneUnassign      = "zone.unassign"

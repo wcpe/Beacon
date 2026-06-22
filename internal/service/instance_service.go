@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -42,9 +44,12 @@ type RegisterResult struct {
 type DefaultEntryResolver func(ns string) (map[string]bool, error)
 
 // InstanceService 编排实例注册/心跳/上报/下线/发现（操作内存注册表 + 解析归属 + 审计）。
+// 主动下线拒绝态（FR-49）落 DB（offlineRepo），与内存注册/健康真源解耦：注册前查拒绝表、下线/取消下线在事务内写库。
 type InstanceService struct {
+	db                   *gorm.DB
 	registry             *runtime.Registry
 	assignRepo           *repository.ZoneAssignmentRepository
+	offlineRepo          *repository.ServerOfflineRepository
 	auditRepo            *repository.AuditLogRepository
 	heartbeatInterval    time.Duration
 	ttl                  time.Duration
@@ -53,9 +58,9 @@ type InstanceService struct {
 }
 
 // NewInstanceService 构造服务。
-func NewInstanceService(registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository, auditRepo *repository.AuditLogRepository, heartbeatInterval, ttl time.Duration) *InstanceService {
+func NewInstanceService(db *gorm.DB, registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository, offlineRepo *repository.ServerOfflineRepository, auditRepo *repository.AuditLogRepository, heartbeatInterval, ttl time.Duration) *InstanceService {
 	return &InstanceService{
-		registry: registry, assignRepo: assignRepo, auditRepo: auditRepo,
+		db: db, registry: registry, assignRepo: assignRepo, offlineRepo: offlineRepo, auditRepo: auditRepo,
 		heartbeatInterval: heartbeatInterval, ttl: ttl,
 	}
 }
@@ -95,6 +100,17 @@ func (s *InstanceService) notifyTopology(ns string) {
 func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	if p.Namespace == "" || p.ServerID == "" {
 		return nil, apperr.ErrIdentityRequired
+	}
+	// 主动下线拒绝态（FR-49）：注册前查拒绝表，命中则拒绝接入（专门错误码，区别于自然 lost/offline 与重复 serverId）。
+	// 仅在低频的注册路径查库（心跳热路径不查），下线收敛靠"移出内存→心跳 404→重注册被拒"。
+	off, err := s.offlineRepo.FindByServer(p.Namespace, p.ServerID)
+	if err != nil {
+		return nil, err
+	}
+	if off != nil {
+		slog.Warn("实例已被主动下线，拒绝注册接入", "namespace", p.Namespace, "serverId", p.ServerID, "address", p.Address)
+		s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultFail, p.ClientIP)
+		return nil, apperr.ErrInstanceOfflineRejected
 	}
 	group, zone, assigned := p.GroupHint, "", false
 	assign, err := s.assignRepo.FindByServer(p.Namespace, p.ServerID)
@@ -194,16 +210,61 @@ func (s *InstanceService) RequireRegistered(ns, serverID string) (string, error)
 	return inst.GroupHint, nil
 }
 
-// Offline 手动下线（移除内存条目）；不存在返回 INSTANCE_NOT_FOUND。
-func (s *InstanceService) Offline(ns, serverID, operator, clientIP string) error {
-	if !s.registry.Offline(ns, serverID) {
-		return apperr.ErrInstanceNotFound
+// Offline 主动下线（FR-49）：事务内落 DB 拒绝态 + 审计 instance.offline，提交后移出内存可用集并唤醒拓扑 watch。
+// 持久态使控制面重启仍生效、agent 重注册被拒。允许对不在内存的实例预先下线（移除内存仅是"是否在册"的副作用，不作前置条件）。
+func (s *InstanceService) Offline(ns, serverID, reason, operator, clientIP string) error {
+	if ns == "" || serverID == "" {
+		return apperr.ErrInvalidParam
 	}
-	s.audit(ns, model.ActionInstanceOffline, serverID, operator, model.ResultOK, clientIP)
-	// 实例离开可用集合 → 唤醒拓扑 watch。
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if _, e := s.offlineRepo.WithTx(tx).Upsert(ns, serverID, reason); e != nil {
+			return e
+		}
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			NamespaceCode: ns, Operator: operator, Action: model.ActionInstanceOffline,
+			TargetType: model.TargetTypeInstance, TargetRef: ns + "/" + serverID, Result: model.ResultOK, ClientIP: clientIP,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	// 事务提交成功后：移出内存可用集（其下一跳心跳将 404 → 重注册被拒）→ 唤醒拓扑 watch。
+	s.registry.Offline(ns, serverID)
 	s.notifyTopology(ns)
-	slog.Info("手动下线实例", "namespace", ns, "serverId", serverID, "operator", operator)
+	slog.Info("主动下线实例", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
+}
+
+// Online 取消主动下线（FR-49）：事务内软删拒绝态 + 审计 instance.online；不存在拒绝态返回 OFFLINE_NOT_FOUND。
+// 清除后不主动复活实例（等 agent 降频探测重连或运维 reconnect）。
+func (s *InstanceService) Online(ns, serverID, operator, clientIP string) error {
+	if ns == "" || serverID == "" {
+		return apperr.ErrInvalidParam
+	}
+	now := time.Now().UTC()
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		deleted, e := s.offlineRepo.WithTx(tx).SoftDelete(ns, serverID, now)
+		if e != nil {
+			return e
+		}
+		if !deleted {
+			return apperr.ErrOfflineNotFound
+		}
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			NamespaceCode: ns, Operator: operator, Action: model.ActionInstanceOnline,
+			TargetType: model.TargetTypeInstance, TargetRef: ns + "/" + serverID, Result: model.ResultOK, ClientIP: clientIP,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("取消主动下线", "namespace", ns, "serverId", serverID, "operator", operator)
+	return nil
+}
+
+// ListOffline 列出某环境内当前主动下线标记（FR-49）。
+func (s *InstanceService) ListOffline(ns string) ([]model.ServerOffline, error) {
+	return s.offlineRepo.ListActive(ns)
 }
 
 // Discover 服务发现：返回可用实例（online + degraded）。degraded 为心跳陈旧但尚未失联、大概率仍在服务，

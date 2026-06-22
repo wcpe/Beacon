@@ -101,4 +101,8 @@ var (
 	ErrDefaultEntryNotFound = New(http.StatusNotFound, "DEFAULT_ENTRY_NOT_FOUND", "该小区未设默认入口")
 	// ErrDrainNotFound 取消 drain 时该标记不存在（FR-10）。
 	ErrDrainNotFound = New(http.StatusNotFound, "DRAIN_NOT_FOUND", "drain 标记不存在")
+	// ErrInstanceOfflineRejected 实例已被主动下线，拒绝其注册接入（FR-49，区别于 NOT_REGISTERED / DUPLICATE_SERVER_ID）。
+	ErrInstanceOfflineRejected = New(http.StatusForbidden, "INSTANCE_OFFLINE_REJECTED", "实例已被主动下线，禁止接入")
+	// ErrOfflineNotFound 取消下线时该下线标记不存在（FR-49）。
+	ErrOfflineNotFound = New(http.StatusNotFound, "OFFLINE_NOT_FOUND", "下线标记不存在")
 )

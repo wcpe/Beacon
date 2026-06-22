@@ -57,7 +57,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(db, repository.NewNamespaceRepository(db), auditRepo))
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
-	instSvc := service.NewInstanceService(registry, assignRepo, auditRepo, 10*time.Second, 30*time.Second)
+	instSvc := service.NewInstanceService(db, registry, assignRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
 	zoneSvc := service.NewZoneService(db, assignRepo, defaultEntryRepo, auditRepo, registry)
 	instSvc.SetDefaultEntryResolver(zoneSvc.DefaultEntryServerIDs)
 	grayRepo := repository.NewConfigGrayRepository(db, noEncryptCipher())

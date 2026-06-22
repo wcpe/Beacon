@@ -16,8 +16,8 @@ func TestDiscoverIncludesDegradedExcludesLost(t *testing.T) {
 		offlineGrace  = 120 * time.Second
 	)
 	reg := runtime.NewRegistry()
-	// 注册/健康真源是内存，Discover 只读 registry，发现路径不触达 DB 仓库，故传 nil。
-	svc := NewInstanceService(reg, nil, nil, 10*time.Second, ttl)
+	// 注册/健康真源是内存，Discover 只读 registry，发现路径不触达 DB 与仓库，故传 nil。
+	svc := NewInstanceService(nil, reg, nil, nil, nil, 10*time.Second, ttl)
 
 	t0 := time.Now().UTC()
 	mk := func(id string) *runtime.Instance {

@@ -55,6 +55,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.ZoneAssignment{},
 		&model.ZoneDefaultEntry{},
 		&model.ServerDrain{},
+		&model.ServerOffline{},
 		&model.AuditLog{},
 		&model.MetricSample{},
 		&model.APIKey{},

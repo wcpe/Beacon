@@ -120,8 +120,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 实例与健康
 		r.Get("/instances", h.Instance.List)
+		// 主动下线标记列表（FR-49）：静态路由置于 {serverId} 前以免被通配吞掉
+		r.Get("/instances/offline", h.Instance.ListOffline)
 		r.Get("/instances/{serverId}", h.Instance.Get)
+		// 主动下线（FR-49）：落 DB 拒绝态 + 移出可用集；DELETE 取消下线。二者为写方法，readonly 密钥经 readonlyWriteGuard 403
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
+		r.Delete("/instances/{serverId}/offline", h.Instance.Online)
 		// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：触发对该实例抓取 plugins 入库（写操作，readonly 403）
 		r.Post("/instances/{serverId}/reverse-fetch", h.Command.ReverseFetch)
 

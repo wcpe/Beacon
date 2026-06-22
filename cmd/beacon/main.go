@@ -107,6 +107,8 @@ func run() error {
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 	// 小区默认入口（FR-48）：每 zone 唯一指定默认入口 serverId，供 BC 设默认/fallback 服
 	defaultEntryRepo := repository.NewZoneDefaultEntryRepository(db)
+	// 主动下线拒绝态（FR-49）：server_offline 仓库，供注册前查拒绝表与下线/取消下线落库
+	offlineRepo := repository.NewServerOfflineRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	// 配置灰度 / Beta（FR-9）：复用 configService 发布路径完成 promote，敏感灰度走同一加密边界
 	configGrayService := service.NewConfigGrayService(db, configService, configRepo, grayRepo, auditRepo)
@@ -155,7 +157,7 @@ func run() error {
 	// 可观测性指标（注册/健康 gauge 抓取时读内存注册表；发布/推送 counter 由事件处自增，见 ADR-0020）
 	metricsSet := metrics.New(registry)
 
-	instanceService := service.NewInstanceService(registry, assignRepo, auditRepo, heartbeatInterval, ttl)
+	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, defaultEntryRepo, auditRepo, registry)
 	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：解析器由 zoneService 提供（handler 不碰仓库）
 	instanceService.SetDefaultEntryResolver(zoneService.DefaultEntryServerIDs)
