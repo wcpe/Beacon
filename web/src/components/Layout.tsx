@@ -2,28 +2,30 @@
 // 操作者身份由登录令牌决定（FR-11），写操作 operator 以认证身份为准，无需手填。
 
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import SystemHeader from '@/components/SystemHeader'
 import { cn } from '@/lib/utils'
 
-// 导航项定义（路径 + 中文名）
-const NAV_ITEMS: Array<{ to: string; label: string }> = [
-  { to: '/dashboard', label: '可观测看板' },
-  { to: '/configs', label: '配置中心' },
-  { to: '/file-preview', label: '文件树预览' },
-  { to: '/imprint', label: '拓印审核台' },
-  { to: '/instances', label: '实例与健康' },
-  { to: '/topology', label: '集群拓扑' },
-  { to: '/zones', label: 'zone 分配' },
-  { to: '/audits', label: '审计日志' },
-  { to: '/api-keys', label: '密钥管理' },
-  { to: '/namespaces', label: '环境管理' },
-  { to: '/proxies', label: '代理服管理' },
+// 导航项定义（路径 + i18n key）
+const NAV_ITEMS: Array<{ to: string; labelKey: string }> = [
+  { to: '/dashboard', labelKey: 'nav.dashboard' },
+  { to: '/configs', labelKey: 'nav.configs' },
+  { to: '/file-preview', labelKey: 'nav.filePreview' },
+  { to: '/imprint', labelKey: 'nav.imprint' },
+  { to: '/instances', labelKey: 'nav.instances' },
+  { to: '/topology', labelKey: 'nav.topology' },
+  { to: '/zones', labelKey: 'nav.zones' },
+  { to: '/audits', labelKey: 'nav.audits' },
+  { to: '/api-keys', labelKey: 'nav.apiKeys' },
+  { to: '/namespaces', labelKey: 'nav.namespaces' },
+  { to: '/proxies', labelKey: 'nav.proxies' },
 ]
 
 export default function Layout() {
+  const { t } = useTranslation()
   const { operator } = useAuth()
   const navigate = useNavigate()
 
@@ -41,7 +43,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
-        <div className="border-b px-5 py-4 text-base font-semibold">Beacon 管理台</div>
+        <div className="border-b px-5 py-4 text-base font-semibold">{t('app.brand')}</div>
         <nav className="flex flex-1 flex-col gap-1 p-3">
           {NAV_ITEMS.map((item) => (
             <NavLink
@@ -56,15 +58,15 @@ export default function Layout() {
                 )
               }
             >
-              {item.label}
+              {t(item.labelKey)}
             </NavLink>
           ))}
         </nav>
         <div className="border-t p-4">
-          <div className="text-xs text-muted-foreground">当前操作人</div>
+          <div className="text-xs text-muted-foreground">{t('layout.currentOperator')}</div>
           <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
           <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
-            登出
+            {t('layout.logout')}
           </Button>
         </div>
       </aside>

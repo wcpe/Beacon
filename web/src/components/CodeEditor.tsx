@@ -14,6 +14,7 @@
  */
 
 import { useRef, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import Editor, { DiffEditor, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 
@@ -149,9 +150,10 @@ export default function CodeEditor({
 }
 
 function EditorLoading() {
+  const { t } = useTranslation()
   return (
     <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
-      加载编辑器…
+      {t('editor.loading')}
     </div>
   )
 }

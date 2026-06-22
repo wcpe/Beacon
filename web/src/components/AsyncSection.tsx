@@ -2,6 +2,7 @@
 // 空态由内容本身负责（如 DataTable 的空行），本组件只管 loading 与 error。
 
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 
 interface AsyncSectionProps {
   // 是否加载中
@@ -10,7 +11,7 @@ interface AsyncSectionProps {
   isError?: boolean
   // 错误对象（取 message 展示）
   error?: unknown
-  // 加载中文案（默认「加载中…」）
+  // 加载中文案（默认取 i18n common.loading）
   loadingText?: ReactNode
   // 加载成功后的内容
   children: ReactNode
@@ -20,15 +21,16 @@ export default function AsyncSection({
   isLoading,
   isError,
   error,
-  loadingText = '加载中…',
+  loadingText,
   children,
 }: AsyncSectionProps) {
+  const { t } = useTranslation()
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">{loadingText}</p>
+    return <p className="text-sm text-muted-foreground">{loadingText ?? t('common.loading')}</p>
   }
   if (isError) {
-    const message = error instanceof Error ? error.message : String(error ?? '未知错误')
-    return <p className="text-sm text-destructive">加载失败：{message}</p>
+    const message = error instanceof Error ? error.message : String(error ?? t('common.unknownError'))
+    return <p className="text-sm text-destructive">{t('common.loadFailed', { message })}</p>
   }
   return <>{children}</>
 }

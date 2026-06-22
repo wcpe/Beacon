@@ -4,6 +4,7 @@
 // 采集失败时降级为「不可用」）。
 
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
@@ -22,6 +23,7 @@ function StatItem({ label, children }: { label: string; children: React.ReactNod
 }
 
 export default function SystemHeader() {
+  const { t } = useTranslation()
   const { data, isError } = useQuery({
     queryKey: ['system-status'],
     queryFn: systemStatus,
@@ -34,37 +36,43 @@ export default function SystemHeader() {
   return (
     <header className="flex shrink-0 flex-wrap items-center gap-x-8 gap-y-3 border-b bg-background px-6 py-2.5">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold">控制面状态</span>
+        <span className="text-sm font-semibold">{t('systemHeader.title')}</span>
         <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
           {data?.version ?? '-'}
         </span>
       </div>
 
-      <StatItem label="数据库">
+      <StatItem label={t('systemHeader.database')}>
         <span className="inline-flex items-center gap-1.5">
           <span
             aria-hidden
             className={cn('inline-block h-2 w-2 rounded-full', dbConnected ? 'bg-green-600' : 'bg-red-600')}
           />
-          {isError ? '不可达' : dbConnected ? '已连接' : '已断开'}
+          {isError
+            ? t('systemHeader.unreachable')
+            : dbConnected
+              ? t('systemHeader.connected')
+              : t('systemHeader.disconnected')}
         </span>
       </StatItem>
 
-      <StatItem label="运行时长">{formatDuration(data?.uptimeSeconds)}</StatItem>
+      <StatItem label={t('systemHeader.uptime')}>{formatDuration(data?.uptimeSeconds)}</StatItem>
 
-      <StatItem label="在线实例">{data?.onlineInstances ?? '-'}</StatItem>
+      <StatItem label={t('systemHeader.onlineInstances')}>{data?.onlineInstances ?? '-'}</StatItem>
 
-      <StatItem label="采样器">
-        {data ? (data.samplerEnabled ? '已启用' : '已停用') : '-'}
+      <StatItem label={t('systemHeader.sampler')}>
+        {data ? (data.samplerEnabled ? t('systemHeader.samplerEnabled') : t('systemHeader.samplerDisabled')) : '-'}
       </StatItem>
 
-      <StatItem label="Goroutine">{data?.runtime.goroutines ?? '-'}</StatItem>
+      <StatItem label={t('systemHeader.goroutine')}>{data?.runtime.goroutines ?? '-'}</StatItem>
 
-      <StatItem label="Go 堆">
+      <StatItem label={t('systemHeader.goHeap')}>
         {data ? `${formatBytes(data.runtime.heapAlloc)} / ${formatBytes(data.runtime.heapSys)}` : '-'}
       </StatItem>
 
-      <StatItem label="进程 CPU">{data?.cpuAvailable ? `${data.cpuPercent.toFixed(1)}%` : '不可用'}</StatItem>
+      <StatItem label={t('systemHeader.processCpu')}>
+        {data?.cpuAvailable ? `${data.cpuPercent.toFixed(1)}%` : t('systemHeader.unavailable')}
+      </StatItem>
     </header>
   )
 }

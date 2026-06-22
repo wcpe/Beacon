@@ -2,6 +2,7 @@
 // 仅做表格呈现（含空态行），加载/错误三态交给外层 AsyncSection，职责单一便于测试。
 
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Table,
   TableBody,
@@ -31,7 +32,7 @@ interface DataTableProps<T> {
   rows: T[] | undefined
   // 行唯一键（提供索引以兜底无天然唯一键的数据）
   rowKey: (row: T, index: number) => string
-  // 空态文案（默认「暂无数据」）
+  // 空态文案（默认取 i18n common.emptyData）
   emptyText?: ReactNode
   // 行点击回调（提供时行显示手型光标）
   onRowClick?: (row: T) => void
@@ -43,10 +44,11 @@ export default function DataTable<T>({
   columns,
   rows,
   rowKey,
-  emptyText = '暂无数据',
+  emptyText,
   onRowClick,
   rowClassName,
 }: DataTableProps<T>) {
+  const { t } = useTranslation()
   const list = rows ?? []
   return (
     <Table>
@@ -77,7 +79,7 @@ export default function DataTable<T>({
         ) : (
           <TableRow>
             <TableCell colSpan={columns.length} className="text-center text-muted-foreground">
-              {emptyText}
+              {emptyText ?? t('common.emptyData')}
             </TableCell>
           </TableRow>
         )}

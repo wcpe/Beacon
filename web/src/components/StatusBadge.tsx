@@ -1,5 +1,6 @@
 // 健康状态徽标：online 绿 / lost 琥珀 / offline 灰，基于 shadcn Badge。
 
+import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { InstanceStatus } from '@/api/types'
@@ -12,6 +13,8 @@ const COLOR_MAP: Record<InstanceStatus, string> = {
 }
 
 export default function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation()
   const color = COLOR_MAP[status as InstanceStatus]
-  return <Badge className={cn('border-transparent', color)}>{status}</Badge>
+  // 状态 label 经 i18n 映射（zh-CN 保留英文原值，未知状态回退原值），渲染文本不变
+  return <Badge className={cn('border-transparent', color)}>{t(`status.${status}`, { defaultValue: status })}</Badge>
 }
