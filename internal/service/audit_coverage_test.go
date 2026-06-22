@@ -33,7 +33,7 @@ func newAuditTestDB(t *testing.T) *gorm.DB {
 // operator / clientIP 落库，detail 仅记环境名、不含敏感数据。
 func TestNamespaceCreateWritesAudit(t *testing.T) {
 	db := newAuditTestDB(t)
-	svc := NewNamespaceService(db, repository.NewNamespaceRepository(db), repository.NewAuditLogRepository(db))
+	svc := newNamespaceService(db, emptyCounter())
 
 	ns, err := svc.Create("staging", "预发布", "alice", "203.0.113.1")
 	if err != nil {
@@ -74,7 +74,7 @@ func TestNamespaceCreateWritesAudit(t *testing.T) {
 // TestNamespaceCreateConflictNoAudit 边界：重复 code 冲突时不应留下审计（事务未提交业务写、也无审计）。
 func TestNamespaceCreateConflictNoAudit(t *testing.T) {
 	db := newAuditTestDB(t)
-	svc := NewNamespaceService(db, repository.NewNamespaceRepository(db), repository.NewAuditLogRepository(db))
+	svc := newNamespaceService(db, emptyCounter())
 
 	if _, err := svc.Create("dup", "环境", "alice", "10.0.0.1"); err != nil {
 		t.Fatalf("首次建环境应成功，实际 %v", err)

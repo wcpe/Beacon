@@ -231,6 +231,13 @@ func (r *Registry) List(f Filter) []*Instance {
 	return out
 }
 
+// CountByNamespace 返回某环境下当前内存中的实例条目数（供环境删除守卫，FR-53）。
+func (r *Registry) CountByNamespace(ns string) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.items[ns])
+}
+
 // UpdateAssignment 改派后刷新内存实例的解析归属（实例不在线则无操作）。
 func (r *Registry) UpdateAssignment(ns, serverID, group, zone string) {
 	r.mu.Lock()

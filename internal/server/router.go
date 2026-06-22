@@ -74,6 +74,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/auth/logout", h.Auth.Logout)
 		r.Get("/namespaces", h.Namespace.List)
 		r.Post("/namespaces", h.Namespace.Create)
+		// 环境改名 / 删除（FR-53）：写方法，readonly 角色经 readonlyWriteGuard 403；删除带在用数据守卫
+		r.Put("/namespaces/{code}", h.Namespace.Update)
+		r.Delete("/namespaces/{code}", h.Namespace.Delete)
 
 		// 配置中心
 		r.Get("/configs", h.Config.List)

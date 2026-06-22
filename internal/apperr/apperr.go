@@ -29,6 +29,14 @@ var (
 	ErrInvalidParam = New(http.StatusBadRequest, "INVALID_PARAM", "参数错误")
 	// ErrNamespaceConflict 同名环境已存在。
 	ErrNamespaceConflict = New(http.StatusConflict, "NAMESPACE_CONFLICT", "同名环境已存在")
+	// ErrNamespaceNotFound 环境不存在（改名 / 删除目标缺失，FR-53）。
+	ErrNamespaceNotFound = New(http.StatusNotFound, "NAMESPACE_NOT_FOUND", "环境不存在")
+	// ErrNamespaceHasInstances 环境下仍有已注册实例，禁删（FR-53 删除守卫①）。
+	ErrNamespaceHasInstances = New(http.StatusConflict, "NAMESPACE_HAS_INSTANCES", "环境下仍有已注册实例，请先下线后再删除")
+	// ErrNamespaceHasAssignments 环境下仍有已指派 zone，禁删（FR-53 删除守卫②）。
+	ErrNamespaceHasAssignments = New(http.StatusConflict, "NAMESPACE_HAS_ASSIGNMENTS", "环境下仍有已指派的 zone，请先取消指派后再删除")
+	// ErrNamespaceHasConfigs 环境下仍有配置项，禁删（FR-53 删除守卫③）。
+	ErrNamespaceHasConfigs = New(http.StatusConflict, "NAMESPACE_HAS_CONFIGS", "环境下仍有配置，请先删除配置后再删除")
 
 	// ErrInvalidScope 覆盖层或其目标键不合法。
 	ErrInvalidScope = New(http.StatusBadRequest, "INVALID_SCOPE", "覆盖层或目标键不合法")

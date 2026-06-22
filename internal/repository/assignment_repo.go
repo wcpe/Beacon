@@ -77,6 +77,15 @@ func (r *ZoneAssignmentRepository) List(ns, group, zone string) ([]model.ZoneAss
 	return list, nil
 }
 
+// CountByNamespace 统计某环境下未软删的 zone 指派数（供环境删除守卫，FR-53）。
+func (r *ZoneAssignmentRepository) CountByNamespace(ns string) (int64, error) {
+	var n int64
+	err := r.db.Model(&model.ZoneAssignment{}).
+		Where("namespace_code = ? AND deleted_at = ?", ns, model.SoftDeleteSentinel).
+		Count(&n).Error
+	return n, err
+}
+
 // SoftDelete 软删某 serverId 的归属；返回是否命中。
 func (r *ZoneAssignmentRepository) SoftDelete(ns, serverID string, deletedAt time.Time) (bool, error) {
 	res := r.db.Model(&model.ZoneAssignment{}).

@@ -59,3 +59,22 @@ func (r *NamespaceRepository) FindByCode(code string) (*model.Namespace, error) 
 func (r *NamespaceRepository) Create(ns *model.Namespace) error {
 	return r.db.Create(ns).Error
 }
+
+// UpdateName 按 code 更新环境显示名；返回命中行数（0 表示该 code 不存在）。
+func (r *NamespaceRepository) UpdateName(code, name string) (int64, error) {
+	res := r.db.Model(&model.Namespace{}).Where("code = ?", code).Update("name", name)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// DeleteByCode 按 code 硬删环境；返回命中行数（0 表示该 code 不存在）。
+// namespace 表无软删需求（删除仅在环境内已无在用数据时放行），故直接硬删（见 docs/specs/namespace-crud.md §3）。
+func (r *NamespaceRepository) DeleteByCode(code string) (int64, error) {
+	res := r.db.Where("code = ?", code).Delete(&model.Namespace{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}

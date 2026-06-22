@@ -99,8 +99,10 @@ const (
 	// 流量调度（FR-10，drain 排空 / 维护标记，见 ADR-0017）
 	ActionSchedulingDrain   = "scheduling.drain"
 	ActionSchedulingUndrain = "scheduling.undrain"
-	// 环境（namespace）写操作（FR-7/FR-30）
+	// 环境（namespace）写操作（FR-7/FR-30；改名 / 删除补全见 FR-53）
 	ActionNamespaceCreate = "namespace.create"
+	ActionNamespaceUpdate = "namespace.update"
+	ActionNamespaceDelete = "namespace.delete"
 	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"

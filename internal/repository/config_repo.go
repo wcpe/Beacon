@@ -182,6 +182,13 @@ func (r *ConfigItemRepository) CountSensitive() (int64, error) {
 	return n, err
 }
 
+// CountByNamespace 统计某环境下未软删的配置项数（供环境删除守卫，FR-53）。
+func (r *ConfigItemRepository) CountByNamespace(ns string) (int64, error) {
+	var n int64
+	err := r.active().Model(&model.ConfigItem{}).Where("namespace_code = ?", ns).Count(&n).Error
+	return n, err
+}
+
 // SoftDelete 软删配置项：填真实删除时间并置 enabled=false。
 func (r *ConfigItemRepository) SoftDelete(id uint, deletedAt time.Time) error {
 	return r.db.Model(&model.ConfigItem{}).

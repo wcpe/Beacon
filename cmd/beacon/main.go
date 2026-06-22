@@ -88,11 +88,8 @@ func run() error {
 	// 装配：repository → service → handler（手工注入，不引 DI 框架）
 	auditRepo := repository.NewAuditLogRepository(db)
 	nsRepo := repository.NewNamespaceRepository(db)
-	nsService := service.NewNamespaceService(db, nsRepo, auditRepo)
-	if err := nsService.SeedDefaults(); err != nil {
-		return err
-	}
-	nsHandler := handler.NewNamespaceHandler(nsService)
+	// 环境服务（含改名 / 删除守卫，FR-53）依赖注册表 / zone 指派 / 配置仓库查在用数据，
+	// 故其构造延后到 registry、assignRepo、configRepo 就绪之后（见下方）。
 
 	// 配置加密 cipher（FR-20）：密钥仅从 env 读，绝不入库 / 不入仓 / 不打日志。
 	// 空密钥得到"未启用"cipher；后续若库中已有敏感项则 fail-fast。
@@ -137,6 +134,14 @@ func run() error {
 
 	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
 	registry := runtime.NewRegistry()
+
+	// 环境服务（FR-53）：registry / assignRepo / configRepo 就绪后构造，供删除守卫查在用数据
+	nsService := service.NewNamespaceService(db, nsRepo, assignRepo, configRepo, registry, auditRepo)
+	if err := nsService.SeedDefaults(); err != nil {
+		return err
+	}
+	nsHandler := handler.NewNamespaceHandler(nsService)
+
 	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
 	degradedAfter := time.Duration(cfg.Health.DegradedAfterSec) * time.Second
 	ttl := time.Duration(cfg.Health.TTLSec) * time.Second
