@@ -37,8 +37,10 @@
   - ScalarNode：保留 override 节点（`Value` 即原文 token，`Tag`/`Style` 不动）→ 不归一化。
   - SequenceNode：整替（取 override 整个序列节点）。
   - 序列化：`yaml.Encoder` + `SetIndent(2)` 对 `*yaml.Node` emit（确定性、保 token 与注释）。空/纯注释/纯空白文档 = 零 Kind 节点，按"不贡献"处理。
+  - **顶层整层为 `!!null`（单行 `null` / `~`）按"不贡献"处理、保留低层**（对齐有损 `Parse("null")=nil`；区别于 map 内某键值为 null 的删键，那个仍删）。
+  - **含锚点 / 别名 / `<<` 合并键的 YAML 不深合并、整文件回退最高层贡献层**：节点级合并无法安全保留锚点定义与别名引用（手写 `<<` 展开 + 别名内联易产出悬空 `*x` / `!!merge` 等**不可解析的坏文件**）；合并前递归检测任一贡献层是否含 `AliasNode`/锚点/`<<`，命中即整文件取最高层 winner（复用「坏内容回退」同一语义）。罕见场景、确定性优先、绝不产坏文件。
 - **JSON**：`json.Decoder` + `UseNumber()` 解析（数字成 `json.Number` 不失精度），合并语义同上，`json.Marshal` 序列化（map key 自动排序 = 确定性、`json.Number` 按原文 emit）。
-- **properties**：行式模型，保留每个 key 的前置注释行（`#`/`!`）与原值文本；按 key 合并（override 替值、`null` 删键）、键字典序输出、注释随键。
+- **properties**：行式模型，保留每个 key 的前置注释行（`#`/`!`）与原值文本；按 key 合并（override 替值）、键字典序输出、注释随键。**值 `null` 当普通字符串原样保留、无删键能力**——与有损 `MergeDataID`（`"null"` 是字符串、`DeepMerge` 永不删）一致，不凭空发明删键语义（否则会静默吞掉合法值 `flag=null` 并使 provenance 与 content 错位）。
 
 **filetree 接线**：`resolve.go` 深合并分支 `merge.MergeDataID` → `merge.MergeDataIDLossless`；`provenance.go` 深合并分支 `merge.MergeDataIDWithProvenance` → `merge.MergeDataIDLosslessWithProvenance`。其余分支（单层短路 / 豁免 / 坏内容回退）一字不动。
 
@@ -63,7 +65,9 @@
 - **确定性键序 / md5 幂等**：相同候选两次合并内容与 md5 一致。
 - **单层短路 + 豁免不变**：单层字节透传、任一层豁免整文件覆盖，逐字节不丢。
 - **provenance 与 Resolve 交叉一致**：`ResolveWithProvenance` 每 path 的 `content`/`md5` 恒等于 `Resolve`。
-- **无损 vs MergeDataID 语义相等交叉**：无损渲染再 parse 成类型模型与 `MergeDataID` 的类型模型逻辑相等（值相等、忽略文本表示差异）——钉死"无损只改表示、不改语义"。
+- **无损 vs MergeDataID 语义相等交叉**：无损渲染再 parse 成类型模型与 `MergeDataID` 的类型模型逻辑相等（值相等、忽略文本表示差异）——钉死"无损只改表示、不改语义"。覆盖含 properties 值 `null`、YAML 顶层 `null` 等易分歧用例。
+- **YAML 锚点 / 别名 / 合并键安全回退**：含 `&`/`*`/`<<` 的多层 yml 不深合并、整文件取最高层贡献层，输出可被重新解析（绝不产悬空别名坏文件）。
+- **properties 值 `null` 当字符串**：`a=null` 多层合并后保留 `a=null`（与有损一致、不删键、不吞合法值）。
 - 受影响组件测试全绿（`go test ./...`，含 `-tags=integration`/`-tags=e2e` 不破坏编译）。
 - **真机**：第三方插件目录托管含前导零 / 注释的多层 yml，agent 落盘为保真合并结果（属发版前 E2E 门，主控会后跑）。
 

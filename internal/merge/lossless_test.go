@@ -251,6 +251,12 @@ func TestLosslessVsLossySemanticEquivalence(t *testing.T) {
 		{"yaml list 整替", FormatYAML, []string{"items:\n  - a\n  - b\n", "items:\n  - c\n"}},
 		{"json 深合并", FormatJSON, []string{`{"a":1,"b":{"x":1}}`, `{"b":{"y":2}}`}},
 		{"properties 覆盖", FormatProperties, []string{"k1=1\nk2=2\n", "k2=9\nk3=3\n"}},
+		// F2：properties 值为 "null" 在有损里是字符串值（永不删键），无损须对齐——不得凭空删 a。
+		{"properties null 当字符串保留", FormatProperties, []string{"a=null\nb=2\n", "c=3\n"}},
+		{"properties null 不删低层键", FormatProperties, []string{"a=1\nb=2\n", "a=null\n"}},
+		// F3：顶层整层为 null 在有损里 Parse 得 nil（不贡献），无损须对齐——保留低层 a。
+		{"yaml 顶层 null 不贡献", FormatYAML, []string{"a: 1\n", "null"}},
+		{"yaml 顶层 null 居中层", FormatYAML, []string{"a: 1\n", "null", "b: 2\n"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -305,24 +311,151 @@ func TestLosslessProvenanceContentMatchesLossless(t *testing.T) {
 
 // TestLosslessProvenanceSourcesEqualLossy 无损 provenance 的 sources/deletions 须与有损版逐一致（来源是语义、与表示无关）。
 func TestLosslessProvenanceSourcesEqualLossy(t *testing.T) {
-	layers := []ProvLayer{
-		{Scope: "global", Content: "a: 1\nb:\n  x: 1\n"},
-		{Scope: "zone", Content: "b:\n  y: 2\n"},
-		{Scope: "server", Content: "a: null\nc: 3\n"},
+	cases := []struct {
+		name   string
+		format string
+		layers []ProvLayer
+	}{
+		{"yaml null 删键", FormatYAML, []ProvLayer{
+			{Scope: "global", Content: "a: 1\nb:\n  x: 1\n"},
+			{Scope: "zone", Content: "b:\n  y: 2\n"},
+			{Scope: "server", Content: "a: null\nc: 3\n"},
+		}},
+		// F2：properties "null" 是字符串值（不删键），sources 须含 a，与有损逐一致（防 content 有 a 而 sources 无 a 的错位）。
+		{"properties null 当字符串", FormatProperties, []ProvLayer{
+			{Scope: "global", Content: "a=null\nb=2\n"},
+			{Scope: "server", Content: "c=3\n"},
+		}},
 	}
-	_, lossySources, lossyDels, err := MergeDataIDWithProvenance(FormatYAML, layers)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, lossySources, lossyDels, err := MergeDataIDWithProvenance(c.format, c.layers)
+			if err != nil {
+				t.Fatalf("有损 provenance 失败: %v", err)
+			}
+			_, llSources, llDels, err := MergeDataIDLosslessWithProvenance(c.format, c.layers)
+			if err != nil {
+				t.Fatalf("无损 provenance 失败: %v", err)
+			}
+			if !reflect.DeepEqual(lossySources, llSources) {
+				t.Errorf("无损 sources 与有损不一致：\n lossy=%v\nlossless=%v", lossySources, llSources)
+			}
+			if !reflect.DeepEqual(lossyDels, llDels) {
+				t.Errorf("无损 deletions 与有损不一致：\n lossy=%v\nlossless=%v", lossyDels, llDels)
+			}
+		})
+	}
+}
+
+// ---- F1：YAML 锚点 / 别名 / 合并键安全回退（绝不产出不可解析的坏文件）----
+
+// TestLosslessYAMLAnchorMergeKeyFallsBackToWinner 含 map 锚点 + `<<` 合并键的多层输入
+// 不做深合并，整文件回退到最高层贡献层（winner）原文：①输出能被重新解析；②等于 winner 原文。
+func TestLosslessYAMLAnchorMergeKeyFallsBackToWinner(t *testing.T) {
+	global := "base: &b\n    x: 1\nchild:\n    <<: *b\n    y: 2\n"
+	server := "extra: 9\n"
+	out, err := MergeDataIDLossless(FormatYAML, []string{global, server})
 	if err != nil {
-		t.Fatalf("有损 provenance 失败: %v", err)
+		t.Fatalf("无损合并失败: %v", err)
 	}
-	_, llSources, llDels, err := MergeDataIDLosslessWithProvenance(FormatYAML, layers)
+	// ① 输出必须能被重新解析（不得含悬空别名 / !!merge）。
+	if _, perr := Parse(FormatYAML, out); perr != nil {
+		t.Errorf("含锚点 / 合并键的回退输出应可解析，实际报错 %v；输出：\n%s", perr, out)
+	}
+	// ② 等于 winner（最高层贡献层）整文件原文（回退语义）。
+	if out != server {
+		t.Errorf("应整文件回退到 winner 原文：\ngot=%q\nwant=%q", out, server)
+	}
+}
+
+// TestLosslessYAMLAliasInLowerLayerFallback 锚点 / 别名只出现在低层时同样回退到 winner（高层）。
+func TestLosslessYAMLAliasInLowerLayerFallback(t *testing.T) {
+	low := "defs: &d\n  k: 1\nuse: *d\n"
+	high := "plain: 7\n"
+	out, err := MergeDataIDLossless(FormatYAML, []string{low, high})
 	if err != nil {
-		t.Fatalf("无损 provenance 失败: %v", err)
+		t.Fatalf("无损合并失败: %v", err)
 	}
-	if !reflect.DeepEqual(lossySources, llSources) {
-		t.Errorf("无损 sources 与有损不一致：\n lossy=%v\nlossless=%v", lossySources, llSources)
+	if _, perr := Parse(FormatYAML, out); perr != nil {
+		t.Errorf("含别名的回退输出应可解析，实际报错 %v；输出：\n%s", perr, out)
 	}
-	if !reflect.DeepEqual(lossyDels, llDels) {
-		t.Errorf("无损 deletions 与有损不一致：\n lossy=%v\nlossless=%v", lossyDels, llDels)
+	if out != high {
+		t.Errorf("应整文件回退到 winner（高层）原文：\ngot=%q\nwant=%q", out, high)
+	}
+}
+
+// TestLosslessYAMLNoAnchorStillDeepMerges 不含锚点 / 别名 / 合并键的普通多层仍走深合并（回退不误伤正常路径）。
+func TestLosslessYAMLNoAnchorStillDeepMerges(t *testing.T) {
+	out, err := MergeDataIDLossless(FormatYAML, []string{"a:\n  x: 1\n", "a:\n  y: 2\n"})
+	if err != nil {
+		t.Fatalf("无损合并失败: %v", err)
+	}
+	parsed, _ := Parse(FormatYAML, out)
+	want := map[string]any{"a": map[string]any{"x": 1, "y": 2}}
+	if !reflect.DeepEqual(parsed, want) {
+		t.Errorf("无锚点普通多层应正常深合并：got=%v want=%v", parsed, want)
+	}
+}
+
+// ---- F3：YAML 顶层标量 null 不贡献（不抹低层）----
+
+// TestLosslessYAMLTopLevelNullDoesNotContribute 顶层整层为 null 的层不贡献，保留低层（对齐有损 Parse("null")=nil）。
+func TestLosslessYAMLTopLevelNullDoesNotContribute(t *testing.T) {
+	out, err := MergeDataIDLossless(FormatYAML, []string{"a: 1\n", "null"})
+	if err != nil {
+		t.Fatalf("无损合并失败: %v", err)
+	}
+	parsed, _ := Parse(FormatYAML, out)
+	if !reflect.DeepEqual(parsed, map[string]any{"a": 1}) {
+		t.Errorf("顶层 null 层应不贡献、保留低层：got=%v", parsed)
+	}
+}
+
+// TestLosslessYAMLMapValueNullStillDeletes map 内某键值为 null 仍是删键（别被 F3 顶层修复误伤）。
+func TestLosslessYAMLMapValueNullStillDeletes(t *testing.T) {
+	out, err := MergeDataIDLossless(FormatYAML, []string{"host: a\nport: 25565\n", "port: null\n"})
+	if err != nil {
+		t.Fatalf("无损合并失败: %v", err)
+	}
+	parsed, _ := Parse(FormatYAML, out)
+	if !reflect.DeepEqual(parsed, map[string]any{"host": "a"}) {
+		t.Errorf("map 内键值为 null 应删键、保留其余：got=%v", parsed)
+	}
+}
+
+// ---- F4：嵌套被合并 map 的区块注释保留 ----
+
+// TestLosslessYAMLNestedMergedMapCommentPreserved 两层都贡献同一子 map、低层子 map 带头注释 → 合并后注释保留。
+func TestLosslessYAMLNestedMergedMapCommentPreserved(t *testing.T) {
+	low := "service:\n  # 端口区块\n  ports:\n    a: 1\n"
+	high := "service:\n  ports:\n    b: 2\n"
+	out, err := MergeDataIDLossless(FormatYAML, []string{low, high})
+	if err != nil {
+		t.Fatalf("无损合并失败: %v", err)
+	}
+	if !strings.Contains(out, "# 端口区块") {
+		t.Errorf("被深合并触碰的中间层 map 区块注释应保留，实际输出：\n%s", out)
+	}
+	// 注释保留同时合并语义正确（两键都在）。
+	parsed, _ := Parse(FormatYAML, out)
+	want := map[string]any{"service": map[string]any{"ports": map[string]any{"a": 1, "b": 2}}}
+	if !reflect.DeepEqual(parsed, want) {
+		t.Errorf("嵌套 map 深合并语义错误：got=%v want=%v", parsed, want)
+	}
+}
+
+// ---- F5：removeStr 不原地改传入切片底层数组 ----
+
+// TestRemoveStrDoesNotMutateInput removeStr 返回新切片，不破坏原切片内容（连删多键仍正确）。
+func TestRemoveStrDoesNotMutateInput(t *testing.T) {
+	keys := []string{"a", "b", "c", "d"}
+	got := removeStr(keys, "b")
+	if !reflect.DeepEqual(got, []string{"a", "c", "d"}) {
+		t.Errorf("removeStr 结果错误：got=%v", got)
+	}
+	// 原切片不应被改动（原地 append 会把 "c" 前移、污染底层数组）。
+	if !reflect.DeepEqual(keys, []string{"a", "b", "c", "d"}) {
+		t.Errorf("removeStr 不应原地修改传入切片底层数组：keys=%v", keys)
 	}
 }
 

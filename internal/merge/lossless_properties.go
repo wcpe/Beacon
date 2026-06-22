@@ -12,15 +12,12 @@ type propEntry struct {
 }
 
 // mergePropertiesLossless 行式无损深合并多层 properties：
-// 按 key 覆盖（override 替值）、高层值为 null 删键、键字典序输出、前置注释随键保留。
+// 按 key 覆盖（override 替值）、键字典序输出、前置注释随键保留。
+// properties 无删键能力：值 "null" 是普通字符串值、原样保留，与有损 MergeDataID 一致（见 ADR-0034）。
 func mergePropertiesLossless(layers []string) (string, error) {
 	merged := map[string]propEntry{}
 	for _, content := range layers {
 		for k, e := range parsePropertiesEntries(content) {
-			if e.value == propNullMarker {
-				delete(merged, k) // 高层显式 null = 删键
-				continue
-			}
 			// 高层覆盖值；若高层未带前置注释，沿用低层已有注释（避免覆盖值时丢说明）。
 			if len(e.comments) == 0 {
 				if prev, ok := merged[k]; ok {
@@ -52,11 +49,6 @@ func mergePropertiesLossless(layers []string) (string, error) {
 	}
 	return b.String(), nil
 }
-
-// propNullMarker 是 properties 表达「删键」的高层值（与 yaml/json 的显式 null 对齐）。
-// properties 值为字符串 "null" 时视作删键（与 MergeDataID 走 map[string]any 经 DeepMerge 的 null 语义无法直接对应，
-// 故 properties 删键沿用「值字面量为 null」约定；与有损版语义相等性由交叉测试保证）。
-const propNullMarker = "null"
 
 // parsePropertiesEntries 解析单层 properties 为「key → 原值 + 前置注释」的有序无关映射。
 // 收集紧贴 key 上方的连续注释行（# / !）作为该 key 的前置注释；空行打断注释归属。

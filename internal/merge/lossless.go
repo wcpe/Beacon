@@ -36,15 +36,25 @@ func MergeDataIDLossless(format string, layeredLowToHigh []string) (string, erro
 // ---- YAML：yaml.Node 节点级无损深合并 ----
 
 // mergeYAMLLossless 用 yaml.Node 递归深合并多层 yaml，保叶子原文 token 与注释。
+//
+// 安全回退：若任一贡献层含锚点 / 别名 / `<<` 合并键，则不深合并（手写展开易产出悬空别名 / !!merge
+// 等不可解析的坏文件），整文件回退到最高层贡献层（winner）原文（复用「坏内容回退取最高层」同一语义，
+// 见 ADR-0034）。这是罕见场景，确定性优先、绝不产坏文件。
 func mergeYAMLLossless(layers []string) (string, error) {
 	var merged *yaml.Node // 内容根节点（MappingNode/ScalarNode/SequenceNode），不含 DocumentNode 包裹
+	winner := ""          // 最高层贡献层原文（用于锚点 / 别名 / 合并键回退）
+	hasAnchorOrAlias := false
 	for _, content := range layers {
 		node, err := parseYAMLContentNode(content)
 		if err != nil {
 			return "", err
 		}
 		if node == nil {
-			continue // 空 / 纯注释 / 纯空白层不贡献
+			continue // 空 / 纯注释 / 纯空白 / 顶层 null 层不贡献
+		}
+		winner = content // 低→高遍历，最后一个贡献层即最高层 winner
+		if nodeHasAnchorAliasOrMergeKey(node) {
+			hasAnchorOrAlias = true
 		}
 		if merged == nil {
 			merged = node
@@ -55,8 +65,37 @@ func mergeYAMLLossless(layers []string) (string, error) {
 	if merged == nil {
 		return "", nil
 	}
+	if hasAnchorOrAlias {
+		// 回退整文件取 winner 原文（其本身是合法单层、可被重新解析）。
+		return winner, nil
+	}
 	// 即便只有单层贡献（未走合并），也递归规整键序，保证 md5 幂等与确定性输出。
 	return marshalYAMLNode(canonicalizeYAMLNode(merged))
+}
+
+// nodeHasAnchorAliasOrMergeKey 递归检测节点树是否含锚点（Anchor != ""）/ 别名（AliasNode）/ `<<` 合并键。
+// 命中任一即返回 true，供 mergeYAMLLossless 决定是否回退整文件（避免产出不可解析的坏文件）。
+func nodeHasAnchorAliasOrMergeKey(n *yaml.Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.Kind == yaml.AliasNode || n.Anchor != "" {
+		return true
+	}
+	// MappingNode 的键若为 `<<`（合并键，Tag !!merge 或值为 "<<"）也命中。
+	if n.Kind == yaml.MappingNode {
+		for _, kv := range mappingPairs(n) {
+			if kv.key.Tag == "!!merge" || kv.key.Value == "<<" {
+				return true
+			}
+		}
+	}
+	for _, c := range n.Content {
+		if nodeHasAnchorAliasOrMergeKey(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalizeYAMLNode 递归把 MappingNode 的 key/value 对按 key 字典序重排（注释随节点搬），
@@ -99,7 +138,13 @@ func parseYAMLContentNode(content string) (*yaml.Node, error) {
 	if doc.Kind == 0 || len(doc.Content) == 0 {
 		return nil, nil
 	}
-	return doc.Content[0], nil
+	root := doc.Content[0]
+	// 顶层整层为 null（!!null，如 "null" / "~"）视作不贡献，保留低层——对齐有损 Parse("null")=nil。
+	// 注意：这是顶层整层为 null；map 内某键值为 null 是删键（在 mergeYAMLMapping 处理），不在此误伤。
+	if isNullNode(root) {
+		return nil, nil
+	}
+	return root, nil
 }
 
 // mergeYAMLNode 节点级深合并：双方都是 MappingNode → 按 key 合并；否则 override 整替。
@@ -140,8 +185,9 @@ func mergeYAMLMapping(base, override *yaml.Node) *yaml.Node {
 			continue
 		}
 		if existing, ok := merged[kv.key.Value]; ok {
-			// 同 key：递归深合并（其内部决定深合并还是整替），key 节点沿用 override 的（注释随高层）。
-			add(kv.key, mergeYAMLNode(existing.val, kv.val))
+			// 同 key：递归深合并（其内部决定深合并还是整替）。key 节点用 override 的（注释随高层），
+			// 但 override key 无注释时回退低层 key 的注释——否则被深合并触碰的子 map 的键上区块注释会丢失。
+			add(mergeKeyNodeComments(kv.key, existing.key), mergeYAMLNode(existing.val, kv.val))
 		} else {
 			add(kv.key, kv.val)
 		}
@@ -149,12 +195,47 @@ func mergeYAMLMapping(base, override *yaml.Node) *yaml.Node {
 
 	// 确定性键序：按 key 字典序输出（注释随 key/value 节点搬）。
 	sort.Strings(keys)
-	out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	// 合并后的 MappingNode 继承注释与 Style：优先取 override（高层），其字段为空则回退 base，
+	// 否则被深合并触碰的中间层 map 的区块注释会丢失（与 canonicalizeYAMLNode 的保注释处理一致）。
+	out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: pickStyle(override.Style, base.Style),
+		HeadComment: pickStr(override.HeadComment, base.HeadComment),
+		LineComment: pickStr(override.LineComment, base.LineComment),
+		FootComment: pickStr(override.FootComment, base.FootComment)}
 	for _, k := range keys {
 		p := merged[k]
 		out.Content = append(out.Content, p.key, p.val)
 	}
 	return out
+}
+
+// pickStr 优先返回 hi（高层），为空则返回 lo（低层），用于合并节点的注释字段继承。
+func pickStr(hi, lo string) string {
+	if hi != "" {
+		return hi
+	}
+	return lo
+}
+
+// pickStyle 优先返回 hi（高层）样式，为 0（未设）则返回 lo（低层）。
+func pickStyle(hi, lo yaml.Style) yaml.Style {
+	if hi != 0 {
+		return hi
+	}
+	return lo
+}
+
+// mergeKeyNodeComments 同 key 在多层都出现时，key 节点用高层 hi，但其任一注释字段为空则回退低层 lo 的注释。
+// 避免被深合并触碰的子 map 的「键上区块注释」（挂在 key 节点上）随低层 key 节点一起被丢弃。
+// 返回 hi 的浅拷贝（不改原节点），仅补注释字段。
+func mergeKeyNodeComments(hi, lo *yaml.Node) *yaml.Node {
+	if lo == nil || (hi.HeadComment != "" && hi.LineComment != "" && hi.FootComment != "") {
+		return hi
+	}
+	out := *hi // 浅拷贝：值/Tag/Style 不变，仅补注释
+	out.HeadComment = pickStr(hi.HeadComment, lo.HeadComment)
+	out.LineComment = pickStr(hi.LineComment, lo.LineComment)
+	out.FootComment = pickStr(hi.FootComment, lo.FootComment)
+	return &out
 }
 
 // yamlPair 是 MappingNode 的一个 key/value 对。
@@ -177,11 +258,15 @@ func isNullNode(n *yaml.Node) bool {
 	return n.Kind == yaml.ScalarNode && n.Tag == "!!null"
 }
 
-// removeStr 从切片中删除首个等于 s 的元素（保序）。
+// removeStr 返回删除首个等于 s 的元素后的新切片（保序）。
+// 分配新切片、不原地修改传入切片底层数组（避免污染调用方持有的同一底层数组）。
 func removeStr(ss []string, s string) []string {
 	for i, v := range ss {
 		if v == s {
-			return append(ss[:i], ss[i+1:]...)
+			out := make([]string, 0, len(ss)-1)
+			out = append(out, ss[:i]...)
+			out = append(out, ss[i+1:]...)
+			return out
 		}
 	}
 	return ss
