@@ -5,6 +5,7 @@
 // 指派表单的环境 / serverId / 大区 / 小区改为从 API 拉取的下拉（serverId 仅列 bukkit 子服）并加非法值校验（增强 FR-40）；备注仍为自由文本。
 
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   DndContext,
   DragOverlay,
@@ -66,6 +67,7 @@ interface ZoneFilter {
 const EMPTY_FORM = { namespace: '', serverId: '', group: '', zone: '', note: '' }
 
 export default function ZonesPage() {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
 
@@ -141,7 +143,7 @@ export default function ZonesPage() {
   const assignMut = useMutation({
     mutationFn: (params: AssignParams) => assignZone(params),
     onSuccess: (a) => {
-      msg.showSuccess(`已指派 ${a.serverId} → ${a.zone}`)
+      msg.showSuccess(t('zones.msgAssigned', { serverId: a.serverId, zone: a.zone }))
       setForm(EMPTY_FORM)
       setAssignOpen(false)
       invalidate()
@@ -153,7 +155,7 @@ export default function ZonesPage() {
     mutationFn: (vars: { namespace: string; serverId: string }) =>
       unassignZone(vars.namespace, vars.serverId),
     onSuccess: (_d, vars) => {
-      msg.showSuccess(`已取消 ${vars.serverId} 的指派`)
+      msg.showSuccess(t('zones.msgUnassigned', { serverId: vars.serverId }))
       invalidate()
     },
     onError: (e: Error) => msg.showError(e.message),
@@ -189,7 +191,7 @@ export default function ZonesPage() {
   function onAssign(e: React.FormEvent) {
     e.preventDefault()
     if (!form.namespace || !form.serverId || !form.group || !form.zone) {
-      msg.showError('环境、serverId、大区、小区均为必填')
+      msg.showError(t('zones.requiredFields'))
       return
     }
     // 非法值拦截：所选项须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）
@@ -199,7 +201,7 @@ export default function ZonesPage() {
       !groupOptions.includes(form.group) ||
       !zoneOptions.includes(form.zone)
     ) {
-      msg.showError('环境、serverId、大区、小区取值非法，请从下拉中选择')
+      msg.showError(t('zones.invalidValues'))
       return
     }
     assignMut.mutate({
@@ -234,30 +236,30 @@ export default function ZonesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">zone 分配</h1>
+        <h1 className="text-xl font-semibold">{t('zones.title')}</h1>
         <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
           <DialogTrigger asChild>
-            <Button>新增 zone / 指派</Button>
+            <Button>{t('zones.addAssign')}</Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>新增 zone / 指派</DialogTitle>
+              <DialogTitle>{t('zones.addAssign')}</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">
-              指派首个 server 即创建该 zone；已有 zone 也可直接拖拽卡片归派。
+              {t('zones.assignDialogDesc')}
             </p>
             <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <Label htmlFor="a-namespace">环境</Label>
+                <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
                 {/* 严格选：指派目标须为已存在维度（不接受列表外值，FR-51 增强 FR-40） */}
                 <Combobox
                   id="a-namespace"
-                  aria-label="环境"
+                  aria-label={t('common.namespace')}
                   value={form.namespace}
                   onChange={(v) => setForm({ ...form, namespace: v })}
                   options={namespaceOptions}
                   allowCustom={false}
-                  placeholder="请选择"
+                  placeholder={t('common.pleaseSelect')}
                 />
               </div>
               <div className="space-y-1.5">
@@ -270,35 +272,35 @@ export default function ZonesPage() {
                   onChange={(v) => setForm({ ...form, serverId: v })}
                   options={serverOptions}
                   allowCustom={false}
-                  placeholder="请选择"
+                  placeholder={t('common.pleaseSelect')}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="a-group">大区</Label>
+                <Label htmlFor="a-group">{t('common.group')}</Label>
                 <Combobox
                   id="a-group"
-                  aria-label="大区"
+                  aria-label={t('common.group')}
                   value={form.group}
                   onChange={(v) => setForm({ ...form, group: v })}
                   options={groupOptions}
                   allowCustom={false}
-                  placeholder="请选择"
+                  placeholder={t('common.pleaseSelect')}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="a-zone">小区</Label>
+                <Label htmlFor="a-zone">{t('common.zone')}</Label>
                 <Combobox
                   id="a-zone"
-                  aria-label="小区"
+                  aria-label={t('common.zone')}
                   value={form.zone}
                   onChange={(v) => setForm({ ...form, zone: v })}
                   options={zoneOptions}
                   allowCustom={false}
-                  placeholder="请选择"
+                  placeholder={t('common.pleaseSelect')}
                 />
               </div>
               <div className="col-span-2 space-y-1.5">
-                <Label htmlFor="a-note">备注</Label>
+                <Label htmlFor="a-note">{t('zones.formNote')}</Label>
                 <Input
                   id="a-note"
                   value={form.note}
@@ -308,7 +310,7 @@ export default function ZonesPage() {
             </form>
             <DialogFooter>
               <Button type="submit" form="assign-zone" disabled={assignMut.isPending}>
-                指派
+                {t('zones.assignBtn')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -319,18 +321,18 @@ export default function ZonesPage() {
         <CardContent>
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="f-namespace">环境</Label>
+              <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
               <Input id="f-namespace" value={fNamespace} onChange={(e) => setFNamespace(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="f-group">大区</Label>
+              <Label htmlFor="f-group">{t('common.group')}</Label>
               <Input id="f-group" value={fGroup} onChange={(e) => setFGroup(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="f-zone">小区</Label>
+              <Label htmlFor="f-zone">{t('common.zone')}</Label>
               <Input id="f-zone" value={fZone} onChange={(e) => setFZone(e.target.value)} />
             </div>
-            <Button type="submit">查询</Button>
+            <Button type="submit">{t('common.query')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -338,7 +340,7 @@ export default function ZonesPage() {
       {/* zone 汇总树（大区→小区→子服）：上移至看板之上，替代原底部扁平表格（FR-55） */}
       <Card>
         <CardContent className="space-y-3">
-          <h2 className="text-base font-medium">zone 汇总</h2>
+          <h2 className="text-base font-medium">{t('zones.summaryTitle')}</h2>
           <AsyncSection
             isLoading={summary.isLoading || instances.isLoading}
             isError={summary.isError || instances.isError}
@@ -352,9 +354,9 @@ export default function ZonesPage() {
       <Card>
         <CardContent className="space-y-3">
           <div className="flex items-baseline justify-between">
-            <h2 className="text-base font-medium">归派看板</h2>
+            <h2 className="text-base font-medium">{t('zones.kanbanTitle')}</h2>
             <p className="text-sm text-muted-foreground">
-              拖卡到 zone = 指派 / 改派；拖回未指派池 = 取消指派
+              {t('zones.kanbanHint')}
             </p>
           </div>
           <AsyncSection
@@ -371,11 +373,11 @@ export default function ZonesPage() {
                 {/* 左侧未指派池 */}
                 <DropBucket
                   id={UNASSIGNED_DROPPABLE_ID}
-                  title="未指派"
-                  meta={`${model.unassigned.length} 台`}
+                  title={t('zones.unassignedTitle')}
+                  meta={t('zones.unitServers', { count: model.unassigned.length })}
                 >
                   {model.unassigned.length === 0 ? (
-                    <p className="px-0.5 py-2 text-xs text-muted-foreground">无未指派实例</p>
+                    <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.noUnassigned')}</p>
                   ) : (
                     model.unassigned.map((i) => (
                       <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
@@ -387,12 +389,12 @@ export default function ZonesPage() {
                 <div className="space-y-4">
                   {model.groups.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      暂无 zone，请用「新增 zone / 指派」创建第一个 zone。
+                      {t('zones.noZones')}
                     </p>
                   ) : (
                     model.groups.map((col) => (
                       <div key={col.group} className="space-y-2">
-                        <div className="text-sm font-semibold">大区 {col.group}</div>
+                        <div className="text-sm font-semibold">{t('zones.groupLabel', { group: col.group })}</div>
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                           {col.zones.map((bucket) => (
                             <ZoneDropBucket key={`${bucket.group}/${bucket.zone}`} bucket={bucket} />
@@ -418,14 +420,15 @@ export default function ZonesPage() {
 
 // 单个 zone 放置桶：标题为小区名 + 实例数，内含其卡片
 function ZoneDropBucket({ bucket }: { bucket: ZoneBucket }) {
+  const { t } = useTranslation()
   return (
     <DropBucket
       id={encodeZoneDroppableId(bucket.group, bucket.zone)}
       title={bucket.zone}
-      meta={`${bucket.instances.length} 台`}
+      meta={t('zones.unitServers', { count: bucket.instances.length })}
     >
       {bucket.instances.length === 0 ? (
-        <p className="px-0.5 py-2 text-xs text-muted-foreground">拖卡到此指派</p>
+        <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.dropHere')}</p>
       ) : (
         bucket.instances.map((i) => (
           <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />

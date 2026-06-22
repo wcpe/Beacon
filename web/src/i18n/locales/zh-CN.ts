@@ -56,6 +56,8 @@ export const zhCN = {
     emptyData: '暂无数据',
     pleaseSelect: '请选择',
     unassigned: '未分配',
+    // 在线状态点的无障碍标签（如「状态 online」），保留状态英文原值
+    statusAria: '状态 {{status}}',
     prevPage: '上一页',
     nextPage: '下一页',
     pageInfo: '第 {{page}} / {{total}} 页（共 {{count}} 条）',
