@@ -1,5 +1,5 @@
 // 环境管理页：列出环境（namespace）+ 新建 / 改名 / 删除（FR-53）。
-// 删除带后端守卫——环境下有实例 / zone / 配置时返 409，错误中文 message 直接提示。
+// 删除带后端守卫——环境下有实例 / zone / 配置 / 文件树 / 覆盖集时返 409，错误中文 message 直接提示。
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -119,7 +119,7 @@ export default function NamespacesPage() {
           <Button variant="outline" size="sm" onClick={() => openRename(ns)}>
             改名
           </Button>
-          {/* 删除：二次确认；后端守卫有在用数据时返 409，错误中文提示 */}
+          {/* 删除：二次确认；后端守卫有在用数据（实例 / zone / 配置 / 文件树 / 覆盖集）时返 409，错误中文提示 */}
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" size="sm" disabled={deleteMut.isPending}>
@@ -130,7 +130,8 @@ export default function NamespacesPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>删除环境「{ns.name}」（{ns.code}）？</AlertDialogTitle>
                 <AlertDialogDescription>
-                  删除后不可恢复。若该环境下仍有<strong>已注册实例 / 已指派 zone / 配置</strong>，
+                  删除后不可恢复。若该环境下仍有
+                  <strong>已注册实例 / 已指派 zone / 配置 / 文件树 / 覆盖集</strong>，
                   将被禁止删除并提示原因——请先清理后再删。
                 </AlertDialogDescription>
               </AlertDialogHeader>
