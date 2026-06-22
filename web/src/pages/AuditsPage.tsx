@@ -1,6 +1,7 @@
 // 审计日志页：按 namespace/action/targetType/targetRef/时间范围过滤，分页展示（时间倒序）。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { listAudits, listNamespaces } from '../api/client'
 import type { AuditFilter } from '../api/client'
@@ -33,6 +34,9 @@ function toIso(local: string): string | undefined {
 }
 
 export default function AuditsPage() {
+  const { t } = useTranslation()
+  // 审计 action 英文枚举 → 中文显示（i18n 映射；未知枚举回退原文，后端仍返英文枚举）
+  const actionLabel = (action: string) => t(`audit.action.${action}`, { defaultValue: action })
   // 过滤表单的草稿值（点「查询」时才生效）
   const [namespace, setNamespace] = useState('')
   const [operator, setOperator] = useState('')
@@ -81,22 +85,22 @@ export default function AuditsPage() {
 
   // 审计表列定义（详情列闭包引用 setSelectedAudit，故在组件内定义）
   const columns: DataTableColumn<AuditView>[] = [
-    { header: '时间', cell: (a) => formatTime(a.createdAt) },
-    { header: '环境', cell: (a) => a.namespace || '-' },
-    { header: '操作人', cell: (a) => a.operator },
-    { header: '动作', cell: (a) => a.action },
-    { header: '对象类型', cell: (a) => a.targetType },
-    { header: '对象定位', className: 'font-mono', cell: (a) => a.targetRef },
+    { header: t('audit.colTime'), cell: (a) => formatTime(a.createdAt) },
+    { header: t('audit.colNamespace'), cell: (a) => a.namespace || '-' },
+    { header: t('audit.colOperator'), cell: (a) => a.operator },
+    { header: t('audit.colAction'), cell: (a) => actionLabel(a.action) },
+    { header: t('audit.colTargetType'), cell: (a) => a.targetType },
+    { header: t('audit.colTargetRef'), className: 'font-mono', cell: (a) => a.targetRef },
     {
-      header: '结果',
+      header: t('audit.colResult'),
       cell: (a) => (a.result === 'fail' ? <Badge variant="destructive">fail</Badge> : 'ok'),
     },
-    { header: '来源 IP', cell: (a) => a.clientIp || '-' },
+    { header: t('audit.colClientIp'), cell: (a) => a.clientIp || '-' },
     {
-      header: '详情',
+      header: t('audit.colDetail'),
       cell: (a) => (
         <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedAudit(a)}>
-          查看
+          {t('common.view')}
         </Button>
       ),
     },
@@ -105,18 +109,18 @@ export default function AuditsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">审计日志</h1>
+        <h1 className="text-xl font-semibold">{t('audit.title')}</h1>
       </div>
 
       <Card>
         <CardContent>
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="a-namespace">环境</Label>
+              <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
               {/* 筛选框：可编辑下拉，候选来自 listNamespaces 但允许键入列表外值（FR-51） */}
               <Combobox
                 id="a-namespace"
-                aria-label="环境"
+                aria-label={t('common.namespace')}
                 className="w-40"
                 value={namespace}
                 onChange={setNamespace}
@@ -125,38 +129,38 @@ export default function AuditsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="a-operator">操作人</Label>
+              <Label htmlFor="a-operator">{t('common.operator')}</Label>
               <Input
                 id="a-operator"
                 value={operator}
                 onChange={(e) => setOperator(e.target.value)}
-                placeholder="如 admin"
+                placeholder={t('audit.operatorPlaceholder')}
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="a-action">动作</Label>
+              <Label htmlFor="a-action">{t('audit.colAction')}</Label>
               <Input
                 id="a-action"
                 value={action}
                 onChange={(e) => setAction(e.target.value)}
-                placeholder="如 config.publish"
+                placeholder={t('audit.actionPlaceholder')}
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="a-targettype">对象类型</Label>
+              <Label htmlFor="a-targettype">{t('audit.colTargetType')}</Label>
               <Input
                 id="a-targettype"
                 value={targetType}
                 onChange={(e) => setTargetType(e.target.value)}
-                placeholder="config / zone / ..."
+                placeholder={t('audit.targetTypePlaceholder')}
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="a-targetref">对象定位</Label>
+              <Label htmlFor="a-targetref">{t('audit.colTargetRef')}</Label>
               <Input id="a-targetref" value={targetRef} onChange={(e) => setTargetRef(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="a-from">起始时间</Label>
+              <Label htmlFor="a-from">{t('audit.fromTime')}</Label>
               <Input
                 id="a-from"
                 type="datetime-local"
@@ -165,10 +169,10 @@ export default function AuditsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="a-to">截止时间</Label>
+              <Label htmlFor="a-to">{t('audit.toTime')}</Label>
               <Input id="a-to" type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
             </div>
-            <Button type="submit">查询</Button>
+            <Button type="submit">{t('common.query')}</Button>
           </form>
         </CardContent>
       </Card>
@@ -180,7 +184,7 @@ export default function AuditsPage() {
               columns={columns}
               rows={data?.items}
               rowKey={(a, idx) => `${a.createdAt}-${idx}`}
-              emptyText="无审计记录"
+              emptyText={t('audit.empty')}
             />
 
             <div className="mt-4 flex items-center justify-center gap-4 text-sm">
@@ -191,10 +195,10 @@ export default function AuditsPage() {
                 disabled={page <= 1 || isFetching}
                 onClick={() => goPage(page - 1)}
               >
-                上一页
+                {t('common.prevPage')}
               </Button>
               <span className="text-muted-foreground">
-                第 {page} / {totalPages} 页（共 {total} 条）
+                {t('common.pageInfo', { page, total: totalPages, count: total })}
               </span>
               <Button
                 type="button"
@@ -203,7 +207,7 @@ export default function AuditsPage() {
                 disabled={page >= totalPages || isFetching}
                 onClick={() => goPage(page + 1)}
               >
-                下一页
+                {t('common.nextPage')}
               </Button>
             </div>
           </AsyncSection>
@@ -214,37 +218,37 @@ export default function AuditsPage() {
       <Dialog open={selectedAudit !== null} onOpenChange={(open) => !open && setSelectedAudit(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>审计详情</DialogTitle>
+            <DialogTitle>{t('audit.detailTitle')}</DialogTitle>
           </DialogHeader>
           {selectedAudit && (
             <div className="space-y-4 text-sm">
               <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
                 <div>
-                  <dt className="text-muted-foreground">时间</dt>
+                  <dt className="text-muted-foreground">{t('audit.colTime')}</dt>
                   <dd>{formatTime(selectedAudit.createdAt)}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">环境</dt>
+                  <dt className="text-muted-foreground">{t('audit.colNamespace')}</dt>
                   <dd>{selectedAudit.namespace || '-'}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">操作人</dt>
+                  <dt className="text-muted-foreground">{t('audit.colOperator')}</dt>
                   <dd>{selectedAudit.operator}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">动作</dt>
-                  <dd>{selectedAudit.action}</dd>
+                  <dt className="text-muted-foreground">{t('audit.colAction')}</dt>
+                  <dd>{actionLabel(selectedAudit.action)}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">对象类型</dt>
+                  <dt className="text-muted-foreground">{t('audit.colTargetType')}</dt>
                   <dd>{selectedAudit.targetType}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">对象定位</dt>
+                  <dt className="text-muted-foreground">{t('audit.colTargetRef')}</dt>
                   <dd className="font-mono break-all">{selectedAudit.targetRef}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">结果</dt>
+                  <dt className="text-muted-foreground">{t('audit.colResult')}</dt>
                   <dd>
                     {selectedAudit.result === 'fail' ? (
                       <Badge variant="destructive">fail</Badge>
@@ -254,12 +258,12 @@ export default function AuditsPage() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">来源 IP</dt>
+                  <dt className="text-muted-foreground">{t('audit.colClientIp')}</dt>
                   <dd>{selectedAudit.clientIp || '-'}</dd>
                 </div>
               </dl>
               <div className="space-y-1.5">
-                <div className="text-muted-foreground">详情</div>
+                <div className="text-muted-foreground">{t('audit.detailField')}</div>
                 <pre className="max-h-80 overflow-auto rounded-md border bg-muted p-3 font-mono text-xs whitespace-pre-wrap break-all">
                   {selectedAudit.detail || '-'}
                 </pre>

@@ -2,6 +2,7 @@
 // 删除带后端守卫——环境下有实例 / zone / 配置 / 文件树 / 覆盖集时返 409，错误中文 message 直接提示。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   createNamespace,
@@ -38,6 +39,7 @@ import {
 } from '@/components/ui/alert-dialog'
 
 export default function NamespacesPage() {
+  const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
   const [code, setCode] = useState('')
@@ -56,7 +58,7 @@ export default function NamespacesPage() {
   const createMut = useMutation({
     mutationFn: () => createNamespace(code.trim(), name.trim()),
     onSuccess: (ns) => {
-      msg.showSuccess(`已新建环境 ${ns.code}`)
+      msg.showSuccess(t('namespaces.msgCreated', { code: ns.code }))
       setCode('')
       setName('')
       setCreateOpen(false)
@@ -68,7 +70,7 @@ export default function NamespacesPage() {
   const renameMut = useMutation({
     mutationFn: (vars: { code: string; name: string }) => updateNamespace(vars.code, vars.name),
     onSuccess: (ns) => {
-      msg.showSuccess(`已更新环境 ${ns.code} 的名称`)
+      msg.showSuccess(t('namespaces.msgRenamed', { code: ns.code }))
       setRenaming(null)
       qc.invalidateQueries({ queryKey: ['namespaces'] })
     },
@@ -78,7 +80,7 @@ export default function NamespacesPage() {
   const deleteMut = useMutation({
     mutationFn: (c: string) => deleteNamespace(c),
     onSuccess: (_data, c) => {
-      msg.showSuccess(`已删除环境 ${c}`)
+      msg.showSuccess(t('namespaces.msgDeleted', { code: c }))
       qc.invalidateQueries({ queryKey: ['namespaces'] })
     },
     onError: (e: Error) => msg.showError(e.message),
@@ -87,7 +89,7 @@ export default function NamespacesPage() {
   function onCreate(e: React.FormEvent) {
     e.preventDefault()
     if (!code.trim() || !name.trim()) {
-      msg.showError('环境编码与名称均为必填')
+      msg.showError(t('namespaces.requiredFields'))
       return
     }
     createMut.mutate()
@@ -102,7 +104,7 @@ export default function NamespacesPage() {
     e.preventDefault()
     if (!renaming) return
     if (!renameName.trim()) {
-      msg.showError('环境名称为必填')
+      msg.showError(t('namespaces.nameRequired'))
       return
     }
     renameMut.mutate({ code: renaming.code, name: renameName.trim() })
@@ -110,34 +112,34 @@ export default function NamespacesPage() {
 
   // 环境表列定义（操作列闭包引用 mutation / 状态，故在组件内定义）
   const columns: DataTableColumn<NamespaceView>[] = [
-    { header: '编码', className: 'font-mono', cell: (ns) => ns.code },
-    { header: '名称', cell: (ns) => ns.name },
+    { header: t('namespaces.colCode'), className: 'font-mono', cell: (ns) => ns.code },
+    { header: t('namespaces.colName'), cell: (ns) => ns.name },
     {
-      header: '操作',
+      header: t('namespaces.colActions'),
       cell: (ns) => (
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => openRename(ns)}>
-            改名
+            {t('namespaces.renameBtn')}
           </Button>
           {/* 删除：二次确认；后端守卫有在用数据（实例 / zone / 配置 / 文件树 / 覆盖集）时返 409，错误中文提示 */}
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" size="sm" disabled={deleteMut.isPending}>
-                删除
+                {t('namespaces.deleteBtn')}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>删除环境「{ns.name}」（{ns.code}）？</AlertDialogTitle>
+                <AlertDialogTitle>{t('namespaces.deleteConfirmTitle', { name: ns.name, code: ns.code })}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  删除后不可恢复。若该环境下仍有
-                  <strong>已注册实例 / 已指派 zone / 配置 / 文件树 / 覆盖集</strong>，
-                  将被禁止删除并提示原因——请先清理后再删。
+                  {t('namespaces.deleteConfirmDesc1')}
+                  <strong>{t('namespaces.deleteConfirmStrong')}</strong>
+                  {t('namespaces.deleteConfirmDesc2')}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>取消</AlertDialogCancel>
-                <AlertDialogAction onClick={() => deleteMut.mutate(ns.code)}>确认删除</AlertDialogAction>
+                <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                <AlertDialogAction onClick={() => deleteMut.mutate(ns.code)}>{t('namespaces.deleteConfirmAction')}</AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
@@ -149,38 +151,38 @@ export default function NamespacesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">环境管理</h1>
+        <h1 className="text-xl font-semibold">{t('namespaces.title')}</h1>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
-            <Button>新建环境</Button>
+            <Button>{t('namespaces.createBtn')}</Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>新建环境</DialogTitle>
+              <DialogTitle>{t('namespaces.createTitle')}</DialogTitle>
             </DialogHeader>
             <form id="create-namespace" onSubmit={onCreate} className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="n-code">编码</Label>
+                <Label htmlFor="n-code">{t('namespaces.colCode')}</Label>
                 <Input
                   id="n-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  placeholder="如 prod"
+                  placeholder={t('namespaces.codePlaceholder')}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="n-name">名称</Label>
+                <Label htmlFor="n-name">{t('namespaces.colName')}</Label>
                 <Input
                   id="n-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="如 生产环境"
+                  placeholder={t('namespaces.namePlaceholder')}
                 />
               </div>
             </form>
             <DialogFooter>
               <Button type="submit" form="create-namespace" disabled={createMut.isPending}>
-                新建
+                {t('namespaces.createSubmit')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -194,7 +196,7 @@ export default function NamespacesPage() {
               columns={columns}
               rows={data}
               rowKey={(ns) => ns.code}
-              emptyText="暂无环境"
+              emptyText={t('namespaces.empty')}
             />
           </AsyncSection>
         </CardContent>
@@ -204,28 +206,28 @@ export default function NamespacesPage() {
       <Dialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>改环境名称</DialogTitle>
+            <DialogTitle>{t('namespaces.renameTitle')}</DialogTitle>
           </DialogHeader>
           {renaming && (
             <form id="rename-namespace" onSubmit={onRename} className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="rn-code">编码</Label>
+                <Label htmlFor="rn-code">{t('namespaces.colCode')}</Label>
                 <Input id="rn-code" value={renaming.code} disabled className="font-mono" />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rn-name">名称</Label>
+                <Label htmlFor="rn-name">{t('namespaces.colName')}</Label>
                 <Input
                   id="rn-name"
                   value={renameName}
                   onChange={(e) => setRenameName(e.target.value)}
-                  placeholder="如 生产环境"
+                  placeholder={t('namespaces.namePlaceholder')}
                 />
               </div>
             </form>
           )}
           <DialogFooter>
             <Button type="submit" form="rename-namespace" disabled={renameMut.isPending}>
-              保存
+              {t('namespaces.renameSubmit')}
             </Button>
           </DialogFooter>
         </DialogContent>

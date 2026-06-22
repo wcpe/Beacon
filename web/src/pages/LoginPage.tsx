@@ -2,6 +2,7 @@
 // 登录成功后跳回来访页（被 401 拦截或路由守卫重定向时带的 from），默认回配置中心。
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/client'
@@ -18,6 +19,7 @@ interface FromState {
 }
 
 export default function LoginPage() {
+  const { t } = useTranslation()
   const msg = useMessage()
   const navigate = useNavigate()
   const location = useLocation()
@@ -46,7 +48,7 @@ export default function LoginPage() {
   function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!username.trim() || !password) {
-      msg.showError('请填写账号与口令')
+      msg.showError(t('login.missingCredentials'))
       return
     }
     loginMut.mutate()
@@ -56,12 +58,12 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-center text-lg">Beacon 管理台</CardTitle>
+          <CardTitle className="text-center text-lg">{t('login.title')}</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="l-username">账号</Label>
+              <Label htmlFor="l-username">{t('login.username')}</Label>
               <Input
                 id="l-username"
                 value={username}
@@ -70,7 +72,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="l-password">口令</Label>
+              <Label htmlFor="l-password">{t('login.password')}</Label>
               <Input
                 id="l-password"
                 type="password"
@@ -80,7 +82,7 @@ export default function LoginPage() {
               />
             </div>
             <Button type="submit" className="w-full" disabled={loginMut.isPending}>
-              {loginMut.isPending ? '登录中…' : '登录'}
+              {loginMut.isPending ? t('login.submitting') : t('login.submit')}
             </Button>
           </form>
         </CardContent>
