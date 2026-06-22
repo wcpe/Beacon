@@ -45,8 +45,33 @@ type instanceView struct {
 	// Backends 是 bc（bungee）当前代理的后端子服 serverId 集合（仅 bc 非空、bukkit 恒空，FR-36）；供拓扑连线消费（FR-37）。
 	Backends []string `json:"backends"`
 	// ZoneDefaultEntry 标记该 bukkit 子服是否被指定为其小区的默认入口（FR-48）；BC agent 据此设 BungeeCord 默认/fallback 服。
-	ZoneDefaultEntry bool      `json:"zoneDefaultEntry"`
-	RegisteredAt     time.Time `json:"registeredAt"`
+	ZoneDefaultEntry bool `json:"zoneDefaultEntry"`
+	// Proxy 是 bc（bungee 代理）专属负载指标（FR-34，仅 bc 非零、bukkit 恒零）；供代理服管理页逐台展示底层参数（FR-52）。
+	// 这是控制面已持有的内存事实补暴露在逐实例视图上（此前仅在 metrics/summary 聚合暴露），加法且向后兼容。
+	Proxy        proxyMetricsView `json:"proxy"`
+	RegisteredAt time.Time        `json:"registeredAt"`
+}
+
+// proxyMetricsView 是 bc 专属负载指标对外视图（FR-34，仅展示不参与决策；bukkit 恒为零值）。
+type proxyMetricsView struct {
+	OnlineConnections   int     `json:"onlineConnections"`   // 代理在线连接数
+	ThreadCount         int     `json:"threadCount"`         // JVM 活动线程数
+	UptimeMs            int64   `json:"uptimeMs"`            // JVM 运行毫秒数
+	BackendUp           int     `json:"backendUp"`           // 可达后端子服数
+	BackendTotal        int     `json:"backendTotal"`        // 配置的后端子服总数
+	BackendAvgLatencyMs float64 `json:"backendAvgLatencyMs"` // 到可达后端的平均 ping 延迟（毫秒），-1=无可达后端（不可用）
+}
+
+// toProxyMetricsView 把运行态 BC 指标映射为对外视图（bukkit 传零值时各字段恒为 0）。
+func toProxyMetricsView(p runtime.ProxyMetrics) proxyMetricsView {
+	return proxyMetricsView{
+		OnlineConnections:   p.OnlineConnections,
+		ThreadCount:         p.ThreadCount,
+		UptimeMs:            p.UptimeMs,
+		BackendUp:           p.BackendUp,
+		BackendTotal:        p.BackendTotal,
+		BackendAvgLatencyMs: p.BackendAvgLatencyMs,
+	}
 }
 
 // toInstanceView 渲染单实例视图；defaultEntries 为该环境的默认入口 serverId 集合（命中即标 zoneDefaultEntry，FR-48）。
@@ -56,7 +81,8 @@ func toInstanceView(i *runtime.Instance, defaultEntries map[string]bool) instanc
 		Zone: nilIfEmpty(i.ResolvedZone), Assigned: i.Assigned, Address: i.Address, Version: i.Version,
 		Status: i.Status, Capacity: i.Capacity, Weight: i.Weight, Metadata: i.Metadata,
 		LastHeartbeat: i.LastHeartbeat, AppliedMD5: i.AppliedMD5, PlayerCount: i.PlayerCount,
-		TPS: i.TPS, Backends: i.Backends, ZoneDefaultEntry: defaultEntries[i.ServerID], RegisteredAt: i.RegisteredAt,
+		TPS: i.TPS, Backends: i.Backends, ZoneDefaultEntry: defaultEntries[i.ServerID],
+		Proxy: toProxyMetricsView(i.Proxy), RegisteredAt: i.RegisteredAt,
 	}
 }
 

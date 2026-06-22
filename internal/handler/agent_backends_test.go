@@ -73,6 +73,38 @@ func TestInstanceViewOutputsBackends(t *testing.T) {
 	}
 }
 
+// TestInstanceViewOutputsProxyMetrics 验证 bc 实例视图输出 proxy 专属指标（连接/线程/运行时长/后端可达·延迟，FR-34/FR-52）。
+func TestInstanceViewOutputsProxyMetrics(t *testing.T) {
+	view := toInstanceView(&runtime.Instance{
+		Namespace: "prod", ServerID: "bc-1", Role: "bungee",
+		Proxy: runtime.ProxyMetrics{
+			OnlineConnections: 312, ThreadCount: 48, UptimeMs: 3_600_000,
+			BackendUp: 3, BackendTotal: 4, BackendAvgLatencyMs: 12.5,
+		},
+	}, nil)
+	out, err := json.Marshal(view)
+	if err != nil {
+		t.Fatalf("序列化失败: %v", err)
+	}
+	for _, want := range []string{
+		`"onlineConnections":312`, `"threadCount":48`, `"uptimeMs":3600000`,
+		`"backendUp":3`, `"backendTotal":4`, `"backendAvgLatencyMs":12.5`,
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("实例视图 proxy 应含 %s，实际 %s", want, out)
+		}
+	}
+}
+
+// TestInstanceViewBukkitProxyZero 验证 bukkit 实例视图 proxy 各字段恒为零值（仅 bc 非零）。
+func TestInstanceViewBukkitProxyZero(t *testing.T) {
+	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil)
+	if view.Proxy.OnlineConnections != 0 || view.Proxy.ThreadCount != 0 || view.Proxy.UptimeMs != 0 ||
+		view.Proxy.BackendUp != 0 || view.Proxy.BackendTotal != 0 || view.Proxy.BackendAvgLatencyMs != 0 {
+		t.Fatalf("bukkit 实例 proxy 应恒为零值，实际 %+v", view.Proxy)
+	}
+}
+
 // TestInstanceViewMarksZoneDefaultEntry 验证实例视图按默认入口集合标 zoneDefaultEntry（FR-48）。
 func TestInstanceViewMarksZoneDefaultEntry(t *testing.T) {
 	defaults := map[string]bool{"lobby-1": true}
