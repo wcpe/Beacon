@@ -46,9 +46,9 @@ FR-46 把 FR-39 升级为**可控审核台**：admin 选一台在线服 + 一个
 - `RequestImprint(ns, serverID, path, operator, clientIP)`：事务内建 `pending` 命令（载荷 `mode=imprint` + `path`）+ `file.imprint-fetch` 审计（target=命令，detail 含 path）；提交后 `NotifyCommand` 唤醒该 agent SSE。与 `RequestReverseFetch` 平行、复用同一仓库 / 唤醒器。`path` 须非空且经 `normalizePath` 合法。
 - `ReceiveIngest`（既有，扩展分流）：解析载荷后按 `payload.Mode` 分流——
   - 非 `imprint`（FR-39）：维持原样，`Import` 落库 + `done`。
-  - `imprint`（FR-46）：`validateIngestFiles` 同口径再校验通过后，从回传集找 `payload.Path` 的内容——找到则转存命令 `imprint_content` + CAS `fetched → ready`（不落 `file_object`、不记 `file.import` 审计）；找不到则 `failed`（磁盘无此文件）。
-- `ImprintDiff(commandID, scope, group, zone, target)`：命令须 `ready` 且 `mode=imprint`；调 `FileEffectiveService.ResolveWithProvenance` 解出**期望合并值**（按 scope 解出的目标视角取 `payload.Path` 那个文件的合并 `content`/md5/来源），与命令转存的**本地实际内容**组装为 diff 结果。`FileEffectiveService` 经构造注入（service 间依赖，不经 handler）。
-- `ConfirmImprint(commandID, scope, group, zone, target, reviewedMd5, operator, clientIP)`：命令须 `ready` 且 `mode=imprint`；**自审门**——`reviewedMd5` 须等于命令转存内容 md5，否则 `ErrImprintReviewMismatch`（412）。通过后复用 `FileService.Create`（该层 path 不存在）或 `Publish`（已存在）落该层覆盖（事务由 FileService 内部保证），写 `file.imprint` 审计；再 CAS `ready → done` 并清空 `imprint_content`。落库即触发 FileService 既有 notify / git 导出。
+  - `imprint`（FR-46）：**不套** FR-39 的整批数量 / 总量闸（那为整批落库设、会误伤大插件目录下的单文件拓印）；从回传集找 `payload.Path` 的内容——找到则由 `transferImprint` 对目标单文件兜底（排除 `.jar`、限单文件大小）后转存命令 `imprint_content` + CAS `fetched → ready`（不落 `file_object`、不记 `file.import` 审计）；找不到则 `failed`（磁盘无此文件）。
+- `ImprintDiff(commandID, scope, group, zone)`：命令须 `ready` 且 `mode=imprint`；调 `FileEffectiveService.ResolveWithProvenance` 解出**期望合并值**（恒为拓印源服有效视角，取 `payload.Path` 那个文件的合并 `content`/md5/来源），与命令转存的**本地实际内容**组装为 diff 结果。不取 `target`：期望视角由源服身份决定、与确认落库的目标键无关。`FileEffectiveService` 经构造注入（service 间依赖，不经 handler）。
+- `ConfirmImprint(commandID, scope, group, zone, target, reviewedMd5, operator, clientIP)`：命令须 `ready` 且 `mode=imprint`；**自审门**——`reviewedMd5` 须等于命令转存内容 md5，否则 `ErrImprintReviewMismatch`（412）。`scope=server` 时 `target` 须等于命令源服 serverId（只能落回源服自身，挡跨服 / 跨 ns 悬空覆盖）。过门后**先 CAS `ready → done` 认领并清空 `imprint_content`**（赢者独占、挡并发双确认），再复用 `FileService.Create`（该层 path 不存在）或 `Publish`（已存在）落该层覆盖（事务由 FileService 内部保证），最后写 `file.imprint` 审计。落库即触发 FileService 既有 notify / git 导出。
 
 > 自审门的「强制看过 diff」由 `reviewedMd5` 实现：diff 端点返回本地实际内容 md5，confirm 必须回带同一 md5。不调 diff 端点、盲构造 confirm 拿不到正确 md5 → 412 拒。**单人即可**（无第二人、无审批状态机）。
 
@@ -56,7 +56,7 @@ FR-46 把 FR-39 升级为**可控审核台**：admin 选一台在线服 + 一个
 
 - `CommandHandler` 注入 `FileEffectiveService`，新增：
   - `Imprint`（`POST /admin/v1/instances/{serverId}/imprint?namespace=`，body `{path}`）：校验目标在线 → `RequestImprint` → 202 + 命令视图。写操作，readonly 经 `readonlyWriteGuard` 403。
-  - `ImprintDiff`（`GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=&target=`）：返回 diff 视图（本地实际值 + 期望合并值 + 逐键来源 + 是否有差异）。
+  - `ImprintDiff`（`GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=`）：返回 diff 视图（本地实际值 + 期望合并值 + 逐键来源 + 是否有差异）。
   - `ConfirmImprint`（`POST /admin/v1/imprints/{commandId}/confirm`，body `{scope, group, zone, target, reviewedMd5}`）：自审 + 落库 → 200 + 落库结果（层 / version / md5）。写操作，readonly 403。
 - 路由（`server/router.go` admin 组）：`r.Post("/instances/{serverId}/imprint", ...)`（紧邻 reverse-fetch）；`r.Get("/imprints/{commandId}/diff", ...)` + `r.Post("/imprints/{commandId}/confirm", ...)`。
 - `apperr`：新增 `ErrImprintReviewMismatch`（412 `IMPRINT_REVIEW_MISMATCH`，自审 md5 不匹配）、`ErrImprintNotReady`（409 `IMPRINT_NOT_READY`，命令非 ready 态不可 diff/confirm）。

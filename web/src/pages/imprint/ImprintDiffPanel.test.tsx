@@ -100,7 +100,8 @@ describe('ImprintDiffPanel', () => {
     await screen.findByTestId('diff-editor')
     await screen.findByText('有差异')
 
-    // 默认子服层 → 确认同步
+    // 默认子服层 → 勾审阅闸（G）→ 确认同步
+    await userEvent.click(screen.getByRole('checkbox'))
     await userEvent.click(screen.getByRole('button', { name: '确认同步' }))
 
     await waitFor(() => {
@@ -128,8 +129,11 @@ describe('ImprintDiffPanel', () => {
     )
     await screen.findByTestId('diff-editor')
 
-    // 并入层切为大区层
+    // 并入层切为大区层 → 切层后审阅闸复位、需重新勾选（G）→ 确认同步
     await userEvent.selectOptions(screen.getByLabelText('并入层'), 'group')
+    const ack = await screen.findByRole('checkbox')
+    await waitFor(() => expect(ack).not.toBeDisabled())
+    await userEvent.click(ack)
     await userEvent.click(screen.getByRole('button', { name: '确认同步' }))
 
     await waitFor(() => {
@@ -157,5 +161,75 @@ describe('ImprintDiffPanel', () => {
     await screen.findByTestId('diff-editor')
     // 期望合并值来源：a (group)
     expect(await screen.findByText('a (group)')).toBeInTheDocument()
+  })
+
+  it('未勾「我已审阅」时确认按钮禁用，勾后启用（自审门加固 G）', async () => {
+    renderPanel(
+      <ImprintDiffPanel
+        commandId={13}
+        serverId="lobby-1"
+        sourceGroup="area1"
+        groups={['area1']}
+        instances={[inst('lobby-1', 'area1')]}
+        onConfirmed={() => {}}
+      />,
+    )
+    await screen.findByTestId('diff-editor')
+    // diff 已就绪但未审阅 → 确认禁用、未调 confirmImprint
+    expect(screen.getByRole('button', { name: '确认同步' })).toBeDisabled()
+    expect(vi.mocked(confirmImprint)).not.toHaveBeenCalled()
+    // 勾选审阅闸 → 启用
+    await userEvent.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: '确认同步' })).toBeEnabled()
+  })
+
+  it('zone 自由输入不每键触发 diff，回车才解析（防抖 H）', async () => {
+    renderPanel(
+      <ImprintDiffPanel
+        commandId={15}
+        serverId="lobby-1"
+        sourceGroup="area1"
+        groups={['area1']}
+        instances={[inst('lobby-1', 'area1')]}
+        onConfirmed={() => {}}
+      />,
+    )
+    await screen.findByTestId('diff-editor')
+    // 切到小区层（会触发一次按新视角的解析），记基线调用数
+    await userEvent.selectOptions(screen.getByLabelText('并入层'), 'zone')
+    await waitFor(() => expect(vi.mocked(imprintDiff)).toHaveBeenCalled())
+    const baseline = vi.mocked(imprintDiff).mock.calls.length
+    // 逐键输入 zone 编码：不提交、不应新增 imprintDiff 调用
+    const zoneInput = screen.getByLabelText('小区编码')
+    await userEvent.type(zoneInput, 'zoneA')
+    expect(vi.mocked(imprintDiff).mock.calls.length).toBe(baseline)
+    // 回车提交 → 才按 zone=zoneA 解析一次
+    await userEvent.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(vi.mocked(imprintDiff)).toHaveBeenLastCalledWith(
+        15,
+        expect.objectContaining({ scope: 'zone', zone: 'zoneA' }),
+      ),
+    )
+  })
+
+  it('渲染期望侧被减量删除的键（expectedDeletions I）', async () => {
+    vi.mocked(imprintDiff).mockResolvedValue({
+      ...DIFF,
+      expectedDeletions: [{ path: ['old', 'k'], scope: 'zone' }],
+    })
+    renderPanel(
+      <ImprintDiffPanel
+        commandId={17}
+        serverId="lobby-1"
+        sourceGroup="area1"
+        groups={['area1']}
+        instances={[inst('lobby-1', 'area1')]}
+        onConfirmed={() => {}}
+      />,
+    )
+    await screen.findByTestId('diff-editor')
+    expect(await screen.findByText('期望侧被删除的键：')).toBeInTheDocument()
+    expect(screen.getByText('old.k (zone)')).toBeInTheDocument()
   })
 })

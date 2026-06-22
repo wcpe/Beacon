@@ -147,15 +147,16 @@ type imprintDiffView struct {
 	Differs           bool                  `json:"differs"`
 }
 
-// ImprintDiff 处理 GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=&target=（FR-46）：
+// ImprintDiff 处理 GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=（FR-46）：
 // 命令须 ready 且 imprint 模式；返回本地实际内容（命令转存）与按并入层视角解出的期望合并值（复用 FR-45）。
+// 不取 target：期望恒为拓印源服有效视角，与确认落库的目标键无关（见 service.ImprintDiff）。
 func (h *CommandHandler) ImprintDiff(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "commandId")
 	if !ok {
 		return
 	}
 	q := r.URL.Query()
-	res, err := h.svc.ImprintDiff(id, q.Get("scope"), q.Get("group"), q.Get("zone"), q.Get("target"))
+	res, err := h.svc.ImprintDiff(id, q.Get("scope"), q.Get("group"), q.Get("zone"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -271,6 +272,11 @@ func (h *CommandHandler) Ingest(w http.ResponseWriter, r *http.Request) {
 	res, err := h.svc.ReceiveIngest(req.CommandID, files, clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
+		return
+	}
+	// FR-46 拓印模式：转存待审、不落库，ReceiveIngest 返回 (nil, nil)——无 created/updated，回 ok 即可（不可读 nil.Created）。
+	if res == nil {
+		render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"created": res.Created, "updated": res.Updated})

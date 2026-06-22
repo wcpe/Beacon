@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -16,6 +17,10 @@ import (
 
 // imprintComment 是拓印确认落库的版本 / 审计注释（FR-46）。
 const imprintComment = "按需拓印回写"
+
+// confirmImprintBeforeClaimHook 是测试注入钩子：在「过自审门、归一并入层后、CAS 认领前」触发，
+// 用于确定性复现并发双确认窗口（生产恒为 nil、零开销）。见 TestConfirmImprintClaimBeforeLand。
+var confirmImprintBeforeClaimHook func()
 
 // ImprintDiffResult 是拓印 diff 结果：本地实际值（命令转存的磁盘原文）⟷ 期望合并值（FR-45 解析）。
 type ImprintDiffResult struct {
@@ -107,6 +112,15 @@ func (s *AgentCommandService) transferImprint(cmd *model.AgentCommand, targetPat
 		s.markFailed(cmd.ID, "目标文件不在回传集（磁盘上不存在）")
 		return apperr.ErrFileNotFound
 	}
+	// 拓印只取单文件、跳过了 FR-39 整批闸，故在此对目标单文件兜底：排除 jar（沿 ADR-0011）、限单文件大小。
+	if strings.HasSuffix(strings.ToLower(clean), ".jar") {
+		s.markFailed(cmd.ID, "拓印目标不能是 jar")
+		return apperr.ErrInvalidPath
+	}
+	if len(content) > MaxFileContentBytes {
+		s.markFailed(cmd.ID, "拓印目标文件超单文件大小上限")
+		return apperr.ErrContentTooLarge
+	}
 	ok, err := s.repo.UpdateImprintReady(cmd.ID, content)
 	if err != nil {
 		return err
@@ -119,10 +133,12 @@ func (s *AgentCommandService) transferImprint(cmd *model.AgentCommand, targetPat
 }
 
 // ImprintDiff 取拓印 diff（FR-46）：命令须 ready 且 imprint 模式；本地实际值 = 命令转存内容，
-// 期望合并值经 FileEffectiveService 解出该 path 的覆盖链合并结果（复用 FR-45）。
-// 期望视角 = 拓印源 server：已指派 zone 则按 zone_assignment 解 (group,zone)；未指派则以 admin 选定的
-// 并入层 group/zone 作 hint 兜底（拓印源常尚未指派，需 admin 选的 group 才能解出大区/小区层）。
-func (s *AgentCommandService) ImprintDiff(commandID uint, scope, group, zone, _ string) (*ImprintDiffResult, error) {
+// 期望合并值经 FileEffectiveService.ResolveWithProvenance 解出该 path 的覆盖链合并结果（复用 FR-45）。
+// 期望恒为「拓印源 server 的有效文件树视角」：源服已指派 zone 时按其 zone_assignment 解 (group,zone)、
+// 忽略入参 hint；未指派时以 admin 选定的并入层 group/zone 作兜底 hint（拓印源常尚未指派，需 admin 选的层
+// 才能解出大区/小区层）。并入层 scope/group/zone 只决定「确认落库去向」，不改变期望视角恒为源服这一事实。
+// 不取 target 形参：期望视角由源服身份（命令）+ hint 决定，与确认落库的目标键无关。
+func (s *AgentCommandService) ImprintDiff(commandID uint, scope, group, zone string) (*ImprintDiffResult, error) {
 	cmd, payload, err := s.requireReadyImprint(commandID)
 	if err != nil {
 		return nil, err
@@ -130,7 +146,8 @@ func (s *AgentCommandService) ImprintDiff(commandID uint, scope, group, zone, _ 
 	if s.effSvc == nil {
 		return nil, apperr.ErrInternal
 	}
-	// global 层并入不带 group hint（global 文件不挂在具体大区上）；其余层用 admin 选定 group/zone 作兜底 hint。
+	// 并入 global 层时不取 group/zone 兜底 hint（global 不挂在具体大区/小区下）；其余层用 admin 选定 group/zone 作兜底。
+	// 注意：hint 仅对「未指派 zone 的源服」生效——已指派源服一律按其 zone_assignment 解、hint 被忽略（期望恒为源服视角）。
 	groupHint, zoneHint := group, zone
 	if scope == model.ScopeGlobal {
 		groupHint, zoneHint = "", ""
@@ -158,9 +175,9 @@ func (s *AgentCommandService) ImprintDiff(commandID uint, scope, group, zone, _ 
 }
 
 // ConfirmImprint 确认拓印落库（FR-46）：命令须 ready 且 imprint 模式；**单人自审门**——
-// reviewedMd5 须等于命令转存内容 md5（强制看过 diff），否则 412。通过后复用 FileService.Create
-// （该层 path 不存在）/ Publish（已存在）落该层覆盖（FileService 内部事务 + file 审计 + 下发唤醒），
-// 再写 file.imprint 审计、CAS ready→done 并清空瞬态内容。
+// reviewedMd5 须等于命令转存内容 md5（强制看过 diff），否则 412。过门后先 CAS ready→done 认领并清空瞬态
+// （赢者独占、挡并发双确认），再复用 FileService.Create（该层 path 不存在）/ Publish（已存在）落该层覆盖
+// （FileService 内部事务 + file 审计 + 下发唤醒），最后写 file.imprint 审计。
 func (s *AgentCommandService) ConfirmImprint(commandID uint, scope, group, zone, target, reviewedMd5, operator, clientIP string) (*ImprintConfirmResult, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
@@ -182,13 +199,37 @@ func (s *AgentCommandService) ConfirmImprint(commandID uint, scope, group, zone,
 	if serr != nil {
 		return nil, serr
 	}
+	// L：拓印 diff 按「源服有效视角」审，server 层只能落回源服自身——目标为他服（含跨 ns 悬空目标）一律拒，
+	// 挡借确认把某服配置落到本 ns 其它服 / 越权目标。源服 serverId 必属命令 ns，以此天然限定在本 ns。
+	if scope == model.ScopeServer && normTarget != cmd.ServerID {
+		return nil, apperr.ErrInvalidScope
+	}
 
-	obj, ferr := s.landImprint(cmd.NamespaceCode, payload.Path, scope, group, scopeTarget, cmd.ImprintContent, operator, clientIP)
+	// B（CAS 前置认领）：先把命令 ready→done 并清空瞬态——赢者独占落库，挡并发双确认重复落库 / 重复下发。
+	// 瞬态内容此刻仍在内存 cmd，捕获到局部变量供落库（DB 列被本次更新清空）。
+	content := cmd.ImprintContent
+	if confirmImprintBeforeClaimHook != nil {
+		confirmImprintBeforeClaimHook()
+	}
+	claimed, cerr := s.repo.UpdateStatusClearImprint(cmd.ID, model.CommandStatusReady, model.CommandStatusDone,
+		fmt.Sprintf(`{"scope":%q}`, scope))
+	if cerr != nil {
+		return nil, cerr
+	}
+	if !claimed {
+		return nil, apperr.ErrImprintNotReady // 被并发认领（已 done/expired），本次让出、不重复落库
+	}
+
+	// 已认领，落库（FileService 内部事务 + file 审计 + 下发唤醒）。F：传归一后的 target，
+	// 避免 conflict 回退按未归一 target 查不中而误 404（group/global 的多余 target 归一为空）。
+	obj, ferr := s.landImprint(cmd.NamespaceCode, payload.Path, scope, group, normTarget, content, operator, clientIP)
 	if ferr != nil {
+		// 已认领但落库失败：命令已 done、瞬态已清，不回滚（重做请重新触发拓印）；记 ERROR 供排查。
+		slog.Error("拓印已认领但落库失败（命令已 done、瞬态已清，需重新触发拓印）", "commandId", cmd.ID, "原因", ferr)
 		return nil, ferr
 	}
 
-	// 落库成功后写 file.imprint 审计（detail 不含文件内容）+ 命令转 done、清空瞬态。
+	// 落库成功后写 file.imprint 审计（detail 不含文件内容）。
 	if e := s.auditRepo.Create(&model.AuditLog{
 		NamespaceCode: cmd.NamespaceCode, Operator: operator, Action: model.ActionFileImprint,
 		TargetType: model.TargetTypeFile,
@@ -197,10 +238,6 @@ func (s *AgentCommandService) ConfirmImprint(commandID uint, scope, group, zone,
 		Result:     model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		slog.Warn("拓印确认审计写入失败（已落库）", "commandId", cmd.ID, "原因", e)
-	}
-	if _, e := s.repo.UpdateStatusClearImprint(cmd.ID, model.CommandStatusReady, model.CommandStatusDone,
-		fmt.Sprintf(`{"scope":%q,"version":%d}`, scope, obj.Version)); e != nil {
-		slog.Warn("拓印确认后命令转 done 失败（已落库）", "commandId", cmd.ID, "原因", e)
 	}
 	slog.Info("拓印确认落库", "commandId", cmd.ID, "scope", scope, "group", normGroup,
 		"target", normTarget, "path", payload.Path, "version", obj.Version)
@@ -212,6 +249,8 @@ func (s *AgentCommandService) ConfirmImprint(commandID uint, scope, group, zone,
 
 // landImprint 把拓印内容落为指定层文件覆盖：该层 path 不存在则 Create（首版）、已存在则 Publish（新版本）。
 // 复用 FileService 既有事务 + file 审计 + 下发唤醒；ns 来自命令（拓印源实例环境）。
+// scopeTarget 须为归一后的目标键（normalizeScope 产物）——group/global 恒为空，否则 conflict 回退会按
+// 未归一 target 查不中而误 404（见 ConfirmImprint 调用处 F 修正）。
 func (s *AgentCommandService) landImprint(ns, filePath, scope, group, scopeTarget, content, operator, clientIP string) (*model.FileObject, error) {
 	obj, cerr := s.fileSvc.Create(CreateFileParams{
 		Namespace: ns, Group: group, Path: filePath,

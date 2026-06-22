@@ -75,9 +75,14 @@ export default function ImprintPage() {
             serverId={command.serverId}
             sourceGroup={sourceGroup}
             groups={groupOptions}
-            instances={instancesQuery.data ?? []}
+            // L：目标子服选择器仅限拓印源所属 namespace 的实例，避免跨 ns 选到悬空目标
+            instances={(instancesQuery.data ?? []).filter((i) => i.namespace === command.namespace)}
             onConfirmed={() => setCommand(null)}
           />
+        </div>
+      ) : status === 'done' ? (
+        <div className="flex flex-1 items-center justify-center rounded-lg border border-border text-sm text-muted-foreground">
+          拓印已确认同步（命令完成）
         </div>
       ) : status === 'failed' || status === 'expired' ? (
         <div className="flex flex-1 items-center justify-center rounded-lg border border-border text-sm text-destructive">

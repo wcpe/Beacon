@@ -138,20 +138,22 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 	if cmd.Status != model.CommandStatusFetched {
 		return nil, apperr.ErrCommandNotFound // 已完成 / 失败 / 过期 / 未拉取，均不可回传
 	}
-	if verr := validateIngestFiles(files); verr != nil {
-		s.markFailed(cmd.ID, verr.Error())
-		return nil, verr
-	}
 	var payload ingestPayload
 	if json.Unmarshal([]byte(cmd.Payload), &payload) != nil {
 		s.markFailed(cmd.ID, "载荷不合法")
 		return nil, apperr.ErrInvalidParam
 	}
-	// FR-46 拓印模式：不落库，从回传集取目标 path 转存命令待审（CAS fetched→ready）。
+	// FR-46 拓印模式：agent 回传整棵 plugins 树、但只取目标单文件转存待审（CAS fetched→ready），不落库。
+	// 不套 FR-39 的整批数量 / 总量闸（那是为整批落库设的，会误伤大插件目录下的单文件拓印）；
+	// jar 排除与目标单文件大小由 transferImprint 兜底。返回 (nil, nil) 表示转存成功（无落库结果）。
 	if payload.Mode == model.IngestModeImprint {
 		return nil, s.transferImprint(cmd, payload.Path, files)
 	}
-	// FR-39 落库模式：需 group。
+	// FR-39 落库模式：整批入库前再校验（双保险）+ 需 group。
+	if verr := validateIngestFiles(files); verr != nil {
+		s.markFailed(cmd.ID, verr.Error())
+		return nil, verr
+	}
 	if payload.Group == "" {
 		s.markFailed(cmd.ID, "载荷不合法")
 		return nil, apperr.ErrInvalidParam

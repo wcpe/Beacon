@@ -1,7 +1,9 @@
 package service
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -121,12 +123,12 @@ func TestImprintDiff(t *testing.T) {
 	_, _ = svc.FetchPending("prod", "lobby-1")
 
 	// 未 ready（仍 fetched）→ 拒 diff
-	if _, err := svc.ImprintDiff(cmd.ID, model.ScopeServer, "area1", "", "lobby-1"); err != apperr.ErrImprintNotReady {
+	if _, err := svc.ImprintDiff(cmd.ID, model.ScopeServer, "area1", ""); err != apperr.ErrImprintNotReady {
 		t.Fatalf("非 ready 应 ErrImprintNotReady，实际 %v", err)
 	}
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 
-	diff, err := svc.ImprintDiff(cmd.ID, model.ScopeServer, "area1", "", "lobby-1")
+	diff, err := svc.ImprintDiff(cmd.ID, model.ScopeServer, "area1", "")
 	if err != nil {
 		t.Fatalf("diff 应成功: %v", err)
 	}
@@ -213,5 +215,112 @@ func TestConfirmImprintPublishesWhenExists(t *testing.T) {
 	obj, _ := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "AllinCore/config.yml", model.ScopeGroup, "")
 	if obj == nil || obj.Content != "a: 2\n" || obj.Version != 2 {
 		t.Fatalf("组层应被发布为新版本 a:2，实际 %+v", obj)
+	}
+}
+
+// TestConfirmImprintClaimBeforeLand 回归 review 🟡B：并发双确认下「认领与落库非原子」会重复落库。
+// 用 confirmImprintBeforeClaimHook 确定性复现窗口——外层确认读到 ready、过自审门后、CAS 认领前，
+// 让一个「并发」确认完整跑完（认领 + 落库）；CAS 前置须保证外层认领落空 → ErrImprintNotReady、不二次落库。
+func TestConfirmImprintClaimBeforeLand(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newImprintSvc(db)
+	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	_, _ = svc.FetchPending("prod", "lobby-1")
+	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	md5 := filetree.ContentMD5("a: 99\n")
+
+	confirmImprintBeforeClaimHook = func() {
+		confirmImprintBeforeClaimHook = nil // 内层确认不再重入 hook
+		if _, e := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "bob", ""); e != nil {
+			t.Errorf("内层并发确认应成功: %v", e)
+		}
+	}
+	t.Cleanup(func() { confirmImprintBeforeClaimHook = nil })
+
+	// 外层确认：hook 内已被并发认领 + 落库，外层 CAS 落空 → ErrImprintNotReady。
+	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); !errors.Is(err, apperr.ErrImprintNotReady) {
+		t.Fatalf("外层确认应因已被认领得 ErrImprintNotReady，实际 %v", err)
+	}
+	// 只落一个版本、只记一条 file.imprint 审计（修复前外层会二次发布出 v2 + 第二条审计）。
+	obj, _ := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "AllinCore/config.yml", model.ScopeServer, "lobby-1")
+	if obj == nil || obj.Version != 1 || obj.Content != "a: 99\n" {
+		t.Fatalf("应只落一个版本 v1，实际 %+v", obj)
+	}
+	if n := countAudit(t, db, model.ActionFileImprint); n != 1 {
+		t.Fatalf("应只记一条 file.imprint 审计，实际 %d", n)
+	}
+}
+
+// TestConfirmImprintGroupIgnoresStrayTarget 回归 review 🟢F：group 层确认即便直连 API 传了多余 target，
+// 落库 / conflict 回退也按归一后的空 target 定位（normalizeScope 对 group 忽略 target），不因 raw target 查不中而误 404。
+func TestConfirmImprintGroupIgnoresStrayTarget(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newImprintSvc(db)
+	seedGroupFile(t, db, "prod", "area1", "AllinCore/config.yml", "a: 1\n") // 组层已存在 → 走 conflict 回退
+	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	_, _ = svc.FetchPending("prod", "lobby-1")
+	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
+	md5 := filetree.ContentMD5("a: 2\n")
+
+	// 直连 API 传多余 target="stray"；group 层应忽略它、按空 target 命中既有组层文件并发新版本。
+	res, err := svc.ConfirmImprint(cmd.ID, model.ScopeGroup, "area1", "", "stray", md5, "alice", "")
+	if err != nil {
+		t.Fatalf("group 层确认不应因多余 target 误 404，实际 %v", err)
+	}
+	if res.Target != "" || res.Version != 2 {
+		t.Fatalf("应忽略多余 target（落空 target）并发版本 2，实际 %+v", res)
+	}
+}
+
+// TestConfirmImprintServerTargetMustBeSource 回归 review 🟢L：server 层确认只能落回拓印源服自身，
+// 目标为他服（含跨 ns 悬空目标）一律 ErrInvalidScope，不落库、命令仍 ready 可重确认。
+func TestConfirmImprintServerTargetMustBeSource(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newImprintSvc(db)
+	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	_, _ = svc.FetchPending("prod", "lobby-1")
+	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	md5 := filetree.ContentMD5("a: 99\n")
+
+	// server 层但 target 指向他服 → 拒
+	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "other-server", md5, "alice", ""); !errors.Is(err, apperr.ErrInvalidScope) {
+		t.Fatalf("server 层目标非源服应 ErrInvalidScope，实际 %v", err)
+	}
+	if obj, _ := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "AllinCore/config.yml", model.ScopeServer, "other-server"); obj != nil {
+		t.Fatal("越权目标不应落库")
+	}
+	if c, _ := repository.NewAgentCommandRepository(db).FindByID(cmd.ID); c.Status != model.CommandStatusReady {
+		t.Fatalf("拒绝后命令应仍 ready，实际 %s", c.Status)
+	}
+	// 落回源服自身 → 放行
+	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); err != nil {
+		t.Fatalf("落回源服自身应成功，实际 %v", err)
+	}
+}
+
+// TestCommandSweeperExpiresStaleReadyAndClearsContent 回归 review 🟡C：后台清理器把创建超期、仍 ready
+// （拓印已抓取未确认）的命令标 expired 并清空 imprint_content 明文，避免放弃的拓印瞬态长期滞留。
+func TestCommandSweeperExpiresStaleReadyAndClearsContent(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newImprintSvc(db)
+	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	_, _ = svc.FetchPending("prod", "lobby-1")
+	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
+	// 前置：ready 且有瞬态明文
+	if c, _ := repository.NewAgentCommandRepository(db).FindByID(cmd.ID); c.Status != model.CommandStatusReady || c.ImprintContent == "" {
+		t.Fatalf("前置应为 ready 且有瞬态内容，实际 status=%s content=%q", c.Status, c.ImprintContent)
+	}
+	// 回拨 created_at 到陈旧阈值之前（-48h 远超任何时区偏移，避免本地时钟与 sweepOnce 的 UTC cutoff 错位）
+	if err := db.Model(&model.AgentCommand{}).Where("id = ?", cmd.ID).Update("created_at", time.Now().Add(-48*time.Hour)).Error; err != nil {
+		t.Fatalf("回拨 created_at 失败: %v", err)
+	}
+	// 跑一轮清理（直接调 sweepOnce，不依赖定时器）
+	NewCommandSweeper(svc).sweepOnce(time.Now().UTC())
+	c, _ := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if c.Status != model.CommandStatusExpired {
+		t.Fatalf("陈旧 ready 命令应转 expired，实际 %s", c.Status)
+	}
+	if c.ImprintContent != "" {
+		t.Fatalf("过期后瞬态明文应清空，实际 %q", c.ImprintContent)
 	}
 }

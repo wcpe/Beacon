@@ -48,8 +48,12 @@ export default function ImprintDiffPanel({
   // 并入层选择（缺省落回拓印源子服层）
   const [scope, setScope] = useState<ImprintScope>('server')
   const [group, setGroup] = useState(sourceGroup)
+  // zone 提交值（喂入 diff 查询）与输入值分离：自由文本不每键触发全量解析，失焦 / 回车才提交（H 防抖）
   const [zone, setZone] = useState('')
+  const [zoneInput, setZoneInput] = useState('')
   const [target, setTarget] = useState(serverId)
+  // 显式审阅闸（G）：勾「我已审阅」才放行确认，避免 diff 一到就盲点；并入层 / 期望值变更后需重新审阅
+  const [reviewed, setReviewed] = useState(false)
 
   // 源信息变化时同步缺省（切换待审命令时复位）
   useEffect(() => {
@@ -57,7 +61,13 @@ export default function ImprintDiffPanel({
     setTarget(serverId)
     setScope('server')
     setZone('')
+    setZoneInput('')
   }, [sourceGroup, serverId, commandId])
+
+  // 并入层 / 目标（即期望合并值视角）变更 → 复位审阅闸，强制重新审阅再确认（G）
+  useEffect(() => {
+    setReviewed(false)
+  }, [scope, group, zone, target, commandId])
 
   // diff 随并入层视角实时解析（期望合并值按所选 group/zone 解出）
   const diffQuery = useQuery({
@@ -103,6 +113,10 @@ export default function ImprintDiffPanel({
   function onConfirm() {
     if (!diff) {
       msg.showError('diff 尚未就绪')
+      return
+    }
+    if (!reviewed) {
+      msg.showError('请先勾选「我已审阅本 diff」')
       return
     }
     if (!targetReady) {
@@ -161,9 +175,13 @@ export default function ImprintDiffPanel({
             <input
               id="imp-zone"
               className="h-8 w-32 rounded border border-input bg-background px-2 text-sm"
-              value={zone}
-              onChange={(e) => setZone(e.target.value)}
-              placeholder="zone 编码"
+              value={zoneInput}
+              onChange={(e) => setZoneInput(e.target.value)}
+              onBlur={() => setZone(zoneInput)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setZone(zoneInput)
+              }}
+              placeholder="zone 编码（回车 / 失焦生效）"
             />
           </div>
         )}
@@ -198,7 +216,21 @@ export default function ImprintDiffPanel({
                 无差异
               </Badge>
             ))}
-          <Button size="sm" onClick={onConfirm} disabled={confirmMut.isPending || !diff}>
+          {/* 显式审阅闸（G）：勾选才放行确认；diff 加载 / 重解析中禁用 */}
+          <label className="flex items-center gap-1 text-xs text-muted-foreground select-none">
+            <input
+              type="checkbox"
+              checked={reviewed}
+              disabled={!diff || diffQuery.isFetching}
+              onChange={(e) => setReviewed(e.target.checked)}
+            />
+            我已审阅本 diff
+          </label>
+          <Button
+            size="sm"
+            onClick={onConfirm}
+            disabled={confirmMut.isPending || !diff || !reviewed || diffQuery.isFetching}
+          >
             {confirmMut.isPending ? '同步中…' : '确认同步'}
           </Button>
         </div>
@@ -237,6 +269,17 @@ export default function ImprintDiffPanel({
               </span>
               {diff.expectedSources.map((src, idx) => (
                 <span key={idx} className="ml-1.5 text-blue-600">
+                  {src.path.length > 0 ? `${src.path.join('.')} (${src.scope})` : src.scope}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* 期望侧被减量删除的键（null 删键，I）：后端已给 expectedDeletions，需渲染让人看到将删哪些键 */}
+          {diff.expectedDeletions.length > 0 && (
+            <div className="px-3 py-1.5 bg-muted/10 text-[0.7rem]">
+              <span className="text-muted-foreground">期望侧被删除的键：</span>
+              {diff.expectedDeletions.map((src, idx) => (
+                <span key={idx} className="ml-1.5 text-red-600 line-through">
                   {src.path.length > 0 ? `${src.path.join('.')} (${src.scope})` : src.scope}
                 </span>
               ))}

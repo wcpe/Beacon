@@ -243,6 +243,8 @@ func run() error {
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
+	// 陈旧命令后台清理（FR-39/FR-46）：周期把创建超期仍未终结的命令标 expired 并清空拓印瞬态明文，避免放弃的 ready 命令明文滞留。
+	commandSweeper := service.NewCommandSweeper(commandService)
 
 	// git 单向导出镜像（FR-47，见 ADR-0030）：发布 / 回滚 / 改派提交后异步 best-effort 把源层导出 commit。
 	// 仅 enabled 时装配并接线触发器；git 仓是单向派生镜像、失败仅 WARN 不阻断发布。
@@ -293,6 +295,9 @@ func run() error {
 	if cfg.GitExport.Enabled {
 		go gitExportService.Run(ctx.Done())
 	}
+
+	// 启动陈旧命令清理器（FR-39/FR-46）：常驻 hygiene，随关停信号退出
+	go commandSweeper.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {
