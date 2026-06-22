@@ -76,6 +76,27 @@ class DiscoveryViewTest {
     }
 
     @Test
+    fun `query 解析 zoneDefaultEntry 标志`() {
+        // codec 返回一条标了 zoneDefaultEntry 的 bukkit 实例与一条未标的。
+        val codec = object : JsonCodec {
+            override fun encode(value: Any?): String = "{}"
+            override fun decode(json: String): Any? = mapOf(
+                "instances" to listOf(
+                    mapOf("serverId" to "lobby-1", "role" to "bukkit", "status" to "online", "zoneDefaultEntry" to true),
+                    mapOf("serverId" to "lobby-2", "role" to "bukkit", "status" to "online"),
+                ),
+            )
+        }
+        val apiClient = BeaconApiClient(CapturingTransport(), codec, settings(), NoopStreamTransport())
+        val view = DiscoveryView(apiClient, TopologyWatchHub(), RosterDirectoryHolder())
+
+        val instances = view.query(DiscoveryQuery.builder().namespace("prod").build())
+        assertEquals(2, instances.size)
+        assertTrue(instances[0].zoneDefaultEntry(), "标了 zoneDefaultEntry 的实例应解析为 true")
+        assertTrue(!instances[1].zoneDefaultEntry(), "未标的实例应解析为 false（向后兼容）")
+    }
+
+    @Test
     fun `watch 注入流时回调 hub 注销后不再回调`() {
         val hub = TopologyWatchHub()
         val apiClient = BeaconApiClient(CapturingTransport(), FixedCodec(), settings(), NoopStreamTransport())

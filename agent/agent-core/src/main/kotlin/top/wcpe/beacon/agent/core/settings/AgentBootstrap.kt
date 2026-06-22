@@ -44,6 +44,11 @@ object AgentBootstrap {
                 streamMaxLen = reader.long("messaging.stream-max-len", 10000),
                 consumerName = reader.string("messaging.consumer-name", "default"),
             ),
+            proxy = ProxySettings(
+                // BC 代理服务的大区 / 小区（FR-48）；默认空 = 未配，默认服走兜底首个在线子服。bukkit 不读此项。
+                homeGroup = reader.string("proxy.home-group", ""),
+                homeZone = reader.string("proxy.home-zone", ""),
+            ),
         )
     }
 

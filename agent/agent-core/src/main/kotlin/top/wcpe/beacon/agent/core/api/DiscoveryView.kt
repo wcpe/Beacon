@@ -92,6 +92,8 @@ class DiscoveryView(
             JsonTree.intOr(obj, "playerCount", 0),
             JsonTree.intOr(obj, "capacity", 0),
             JsonTree.intOr(obj, "weight", 0),
+            // 小区默认入口标志（FR-48）：旧控制面缺键解析为 false，向后兼容。
+            JsonTree.boolOr(obj, "zoneDefaultEntry", false),
         )
     }
 }

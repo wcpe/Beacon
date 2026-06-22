@@ -85,3 +85,12 @@ messaging:
   stream-max-len: 10000
   # 消费组内本消费者名（同服多进程场景区分；单进程留空即用默认）。
   consumer-name: "default"
+
+# BC 代理路由参数（FR-48）。声明「本代理服务哪个小区的玩家」，据此挑该小区的默认入口子服
+# 设为 BungeeCord 默认/fallback 服（玩家加入的落点）。这是本代理的路由意图，不是 zone 归属声明
+# （zone 归属仍由控制面权威，BC 不进 zone 指派）。多台 BC 配同一 home-zone 即共享同一默认入口。
+proxy:
+  # 本代理服务的大区编码。留空表示未配——此时默认服兜底取第一个在线 bukkit 子服（保证玩家至少能进）。
+  home-group: ""
+  # 本代理服务的小区（zone）编码。留空表示未配（同上走兜底）。home-group 与 home-zone 须同时配才生效。
+  home-zone: ""

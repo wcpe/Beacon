@@ -17,9 +17,16 @@ public final class ServiceInstance {
     private final int playerCount;
     private final int capacity;
     private final int weight;
+    private final boolean zoneDefaultEntry;
 
     public ServiceInstance(String serverId, String role, String group, String zone, String address,
                            String version, String status, int playerCount, int capacity, int weight) {
+        this(serverId, role, group, zone, address, version, status, playerCount, capacity, weight, false);
+    }
+
+    public ServiceInstance(String serverId, String role, String group, String zone, String address,
+                           String version, String status, int playerCount, int capacity, int weight,
+                           boolean zoneDefaultEntry) {
         this.serverId = serverId;
         this.role = role;
         this.group = group;
@@ -30,6 +37,7 @@ public final class ServiceInstance {
         this.playerCount = playerCount;
         this.capacity = capacity;
         this.weight = weight;
+        this.zoneDefaultEntry = zoneDefaultEntry;
     }
 
     public String serverId() {
@@ -72,5 +80,15 @@ public final class ServiceInstance {
 
     public int weight() {
         return weight;
+    }
+
+    /**
+     * 该子服是否被指定为其小区（zone）的默认入口（FR-48）。
+     *
+     * <p>仅 {@code role=bukkit} 子服可能为 true；BC 代理 agent 据此把它设为 BungeeCord 默认/fallback 服。
+     * 旧控制面不返回该字段时解析为 false（向后兼容）。</p>
+     */
+    public boolean zoneDefaultEntry() {
+        return zoneDefaultEntry;
     }
 }

@@ -16,6 +16,7 @@ import top.wcpe.beacon.agent.core.messaging.MessagingSettings
  * @param fileTree           文件树托管（通道B）同步参数
  * @param override           三方插件文件覆盖兼容（FR-15）本地参数（含本地命令白名单）
  * @param messaging          跨服消息中间件（FR-26）本地行为参数（Redis 连接由控制面下发，不在此）
+ * @param proxy              BC 代理本地路由参数（FR-48 home-zone）；bukkit 不用，默认空
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -35,10 +36,24 @@ data class AgentSettings(
         streamMaxLen = 10000,
         consumerName = "default",
     ),
+    // BC 代理路由参数（FR-48）：默认空（未配 → 默认服走兜底首个在线子服）；让既有测试 / bukkit 无需显式构造。
+    val proxy: ProxySettings = ProxySettings(homeGroup = "", homeZone = ""),
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')
 }
+
+/**
+ * BC 代理本地路由参数（FR-48）。它是数据面路由配置（「本代理服务哪个小区的玩家」），
+ * 不是 serverId→zone 的权威归属声明（不违反 ADR-0004 / zone 禁 BC）。
+ *
+ * @param homeGroup BC 服务的大区（空串=未配，默认服走兜底首个在线子服）
+ * @param homeZone  BC 服务的小区（空串=未配）
+ */
+data class ProxySettings(
+    val homeGroup: String,
+    val homeZone: String,
+)
 
 /**
  * 文件树托管（通道B）同步参数。
