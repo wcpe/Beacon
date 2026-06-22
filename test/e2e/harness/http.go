@@ -82,6 +82,27 @@ func OfflineInstance(baseURL, token, namespace, serverID string) error {
 	return nil
 }
 
+// CancelOfflineInstance 经 admin API 取消某实例的主动下线标记（DELETE /admin/v1/instances/{serverId}/offline）。
+// 用途：FR-49 后「下线」是粘性拒绝态——强制下线清掉陈旧 online 后须随即取消，否则后续全新注册会被 403 拒、永不 online。
+func CancelOfflineInstance(baseURL, token, namespace, serverID string) error {
+	url := strings.TrimRight(baseURL, "/") + "/admin/v1/instances/" + serverID + "/offline?namespace=" + namespace
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("构造取消下线请求失败：%w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("取消下线请求失败：%w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("取消下线失败：HTTP %d %s", resp.StatusCode, string(raw))
+	}
+	return nil
+}
+
 // tryAdminGet 发一个带 Bearer 的 admin GET，仅在 200 且能解析时返回 true（用于轮询，不报错）。
 func tryAdminGet(url, token string, out any) bool {
 	req, err := http.NewRequest(http.MethodGet, url, nil)

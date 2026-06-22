@@ -160,10 +160,17 @@ func TestOverrideE2E(t *testing.T) {
 	// WaitInstanceOnline 看到残留 online 而提前返回，使 ordering 时钟在 Paper2 全新注册前空跑
 	// （Paper2 经 gradle --no-daemon 重建较慢，且 CoreLib.onEnable 在主线程等首次注册才放行 BeaconE2E，
 	// 故必须等到 Paper2 的全新注册，而非残留 online）。
+	// FR-49 后「下线」是粘性拒绝态：下线只为清掉陈旧 online 条目，须随即「取消下线」清掉拒绝表，
+	// 否则 Paper2 的全新注册会被 403 INSTANCE_OFFLINE_REJECTED 拒、永不 online（取消下线不影响"等新注册"）。
 	if tok, err := harness.Login(beaconURL, adminUser, adminPass); err != nil {
 		t.Logf("ordering 前登录失败、跳过强制下线（继续）：%v", err)
-	} else if err := harness.OfflineInstance(beaconURL, tok, namespace, serverID); err != nil {
-		t.Logf("ordering 前强制下线失败（继续）：%v", err)
+	} else {
+		if err := harness.OfflineInstance(beaconURL, tok, namespace, serverID); err != nil {
+			t.Logf("ordering 前强制下线失败（继续）：%v", err)
+		}
+		if err := harness.CancelOfflineInstance(beaconURL, tok, namespace, serverID); err != nil {
+			t.Logf("ordering 前取消下线失败（继续）：%v", err)
+		}
 	}
 
 	t.Log("== 相位 ordering（放行白名单：次序 + 回滚不重放）==")
