@@ -36,6 +36,7 @@
 | [0030](0030-git-export-mirror.md) | git 单向导出镜像（派生备份 / 灾备 / 外部可见，不作第二真源；推荐 go-git） | 已接受 |
 | [0031](0031-zone-default-entry-and-bc-injection.md) | 小区默认入口（DB 权威）+ BC 注入 BungeeCord 默认/fallback 服（home-zone 为数据面路由配置，不违反 ADR-0004） | 已接受 |
 | [0032](0032-instance-active-offline-state.md) | 实例主动下线态：落 DB 拒绝接入，区别于 drain 与健康 TTL（显式扩展 ADR-0017 范围） | 已接受 |
+| [0033](0033-web-i18n-framework.md) | 管理台引入 react-i18next 国际化框架：zh-CN 先行、全站文案 key 化、审计 action 经 i18n 映射、等值迁移 | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

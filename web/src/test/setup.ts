@@ -5,6 +5,8 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
+// i18n 初始化（FR-50，见 ADR-0033）：测试环境同步初始化，保证 t() 同步返回 zh-CN 文案、不出裸 key
+import '../i18n'
 
 afterEach(() => {
   cleanup()

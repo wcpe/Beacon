@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { Toaster } from '@/components/ui/sonner'
+// i18n 初始化（FR-50，见 ADR-0033）：import 即同步完成初始化，须在渲染前先执行
+import i18n from './i18n'
 import './index.css'
 
 // 开发模式下启用 mock API（无需后端即可验证前端交互）
@@ -20,7 +22,7 @@ const queryClient = new QueryClient()
 // Toaster 置于 Router 内、与 App 同级，登录页与受保护页均可弹出操作反馈。
 const rootEl = document.getElementById('root')
 if (!rootEl) {
-  throw new Error('找不到根节点 #root，无法挂载管理台')
+  throw new Error(i18n.t('app.rootMissing'))
 }
 
 createRoot(rootEl).render(
