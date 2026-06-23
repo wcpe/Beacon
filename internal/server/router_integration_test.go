@@ -92,7 +92,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo)
 	reverseFetchTaskSvc.SetNotifier(notifier)
 	commandService.SetSubmitIngestReceiver(reverseFetchTaskSvc)
-	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskSvc, instSvc)
+	// 反向抓取持久忽略规则（FR-59）：规则服务供任务详情标 ignoredByRule + CRUD 处理器。
+	reverseFetchRuleSvc := service.NewReverseFetchIgnoreRuleService(db, repository.NewReverseFetchIgnoreRuleRepository(db), auditRepo)
+	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskSvc, instSvc, reverseFetchRuleSvc)
+	reverseFetchRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchRuleSvc)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
@@ -114,6 +117,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
 		Command:          handler.NewCommandHandler(commandService, instSvc),
 		ReverseFetchTask: reverseFetchTaskHandler,
+		ReverseFetchRule: reverseFetchRuleHandler,
 		Metrics:          metricsSet.Handler(),
 		Web:              http.HandlerFunc(http.NotFound),
 	}, agentToken, authn, apiKeySvc, auditRepo)

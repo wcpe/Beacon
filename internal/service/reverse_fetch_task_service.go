@@ -236,7 +236,8 @@ func (s *ReverseFetchTaskService) Submit(taskID uint, selectedPaths []string, co
 }
 
 // ReceiveSubmitIngest 接收 agent 回传的选定集内容（mode=submit）：命令须属某 fetching 任务 →
-// 任务→ingesting → 复用 FileService.Import 落库（scope/group/target 来自任务）→ 任务→done、命令→done、审计。
+// 逐文件查目标是否已有版本（FindByIdentity）：**无冲突**沿原路 ingesting → Import 落库 → done；
+// **有冲突**（FR-59）暂存全部回传内容到 submit_content + 记冲突 path 集 → 任务进 conflict-review（不落库）。
 func (s *ReverseFetchTaskService) ReceiveSubmitIngest(commandID uint, files []ImportFile, clientIP string) (*ImportResult, error) {
 	cmd, task, err := s.requireTaskForCommand(commandID, model.IngestModeSubmit, model.ReverseFetchTaskFetching)
 	if err != nil {
@@ -247,7 +248,18 @@ func (s *ReverseFetchTaskService) ReceiveSubmitIngest(commandID uint, files []Im
 		s.failTask(task, cmd, verr.Error())
 		return nil, verr
 	}
-	// 任务 fetching→ingesting（落库中）。
+
+	// FR-59 冲突检测：逐文件查目标层是否已有版本，有则进冲突审核分路（暂存不落库）。
+	conflicts, cerr := s.detectConflicts(task, files)
+	if cerr != nil {
+		s.failTask(task, cmd, cerr.Error())
+		return nil, cerr
+	}
+	if len(conflicts) > 0 {
+		return nil, s.enterConflictReview(task, cmd, files, conflicts)
+	}
+
+	// 无冲突：沿 FR-58 原路 fetching→ingesting（落库中）。
 	if ok, e := s.taskRepo.UpdateStatus(task.ID, model.ReverseFetchTaskFetching, model.ReverseFetchTaskIngesting); e != nil {
 		return nil, e
 	} else if !ok {
@@ -409,6 +421,13 @@ func (s *ReverseFetchTaskService) failTaskFrom(task *model.ReverseFetchTask, exp
 	if _, e := s.cmdRepo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusFailed,
 		fmt.Sprintf(`{"error":%q}`, reason)); e != nil {
 		slog.Warn("标记命令失败态出错", "commandId", cmd.ID, "原因", e)
+	}
+}
+
+// failTaskOnly 把任务从指定前态终结为 failed 并清瞬态（不涉命令，用于 resolve 落库失败：命令早已 done）。
+func (s *ReverseFetchTaskService) failTaskOnly(taskID uint, expect, reason string) {
+	if _, e := s.taskRepo.MarkTerminal(taskID, expect, model.ReverseFetchTaskFailed, reason, true, time.Now().UTC()); e != nil {
+		slog.Warn("标记反向抓取任务失败态出错", "taskId", taskID, "原因", e)
 	}
 }
 

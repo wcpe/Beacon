@@ -29,6 +29,7 @@ type Handlers struct {
 	APIKey           *handler.APIKeyHandler
 	Command          *handler.CommandHandler
 	ReverseFetchTask *handler.ReverseFetchTaskHandler
+	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
 	Metrics          http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web              http.Handler
 }
@@ -142,6 +143,14 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/reverse-fetch/tasks/{id}", h.ReverseFetchTask.GetTask)
 		r.Post("/reverse-fetch/tasks/{id}/submit", h.ReverseFetchTask.SubmitTask)
 		r.Post("/reverse-fetch/tasks/{id}/cancel", h.ReverseFetchTask.CancelTask)
+		// 冲突 diff 审核（FR-59）：冲突清单 / 逐文件 diff（读）+ resolve 落库（写，readonly 403）
+		r.Get("/reverse-fetch/tasks/{id}/conflicts", h.ReverseFetchTask.ListConflicts)
+		r.Get("/reverse-fetch/tasks/{id}/conflicts/diff", h.ReverseFetchTask.ConflictDiff)
+		r.Post("/reverse-fetch/tasks/{id}/resolve", h.ReverseFetchTask.Resolve)
+		// 持久忽略规则（FR-59）：列规则（读）+ 建 / 删（写，readonly 403）
+		r.Get("/reverse-fetch/ignore-rules", h.ReverseFetchRule.List)
+		r.Post("/reverse-fetch/ignore-rules", h.ReverseFetchRule.Create)
+		r.Delete("/reverse-fetch/ignore-rules/{id}", h.ReverseFetchRule.Delete)
 		// 按需拓印回写（FR-46）：触发拓印某文件（写）→ diff 本地实际值⟷期望合并值（读）→ 单人自审确认落库（写，readonly 403）
 		r.Post("/instances/{serverId}/imprint", h.Command.Imprint)
 		r.Get("/imprints/{commandId}", h.Command.ImprintStatus)

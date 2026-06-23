@@ -125,6 +125,29 @@ func (r *ReverseFetchTaskRepository) SaveSelected(id uint, selectedPaths string,
 	return res.RowsAffected > 0, nil
 }
 
+// EnterConflictReview 把任务从 fetching CAS 迁移 conflict-review 并暂存 submit 回传内容（FR-59）：
+// 仅当当前 status=fetching 才迁移。submitContent 为暂存内容信封 JSON（瞬态，resolve / 取消 / 过期后清空）。
+// note 记冲突摘要（无文件内容）。返回是否命中（前态不符 / 不存在则 false）。
+func (r *ReverseFetchTaskRepository) EnterConflictReview(id uint, submitContent, note string) (bool, error) {
+	res := r.db.Model(&model.ReverseFetchTask{}).
+		Where("id = ? AND status = ?", id, model.ReverseFetchTaskFetching).
+		Updates(map[string]any{
+			"status":         model.ReverseFetchTaskConflictReview,
+			"submit_content": submitContent,
+			"note":           note,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// ClaimConflictReview 把任务从 conflict-review CAS 迁移 ingesting（resolve 认领，防并发双 resolve）：
+// 仅当当前 status=conflict-review 才迁移。返回是否命中（被并发认领 / 前态不符则 false）。
+func (r *ReverseFetchTaskRepository) ClaimConflictReview(id uint) (bool, error) {
+	return r.UpdateStatus(id, model.ReverseFetchTaskConflictReview, model.ReverseFetchTaskIngesting)
+}
+
 // SetScanCommandID 回填 scan 命令 id（建任务事务内，命令 Create 后 id 已回填）。
 func (r *ReverseFetchTaskRepository) SetScanCommandID(id, scanCommandID uint) error {
 	return r.db.Model(&model.ReverseFetchTask{}).
@@ -132,15 +155,17 @@ func (r *ReverseFetchTaskRepository) SetScanCommandID(id, scanCommandID uint) er
 }
 
 // MarkTerminal 把任务从期望前态 CAS 迁移到终态并置 active 哨兵为真实时间（解除互斥占位）。
-// note 为结果 / 失败原因摘要（无敏感内容），空则不动该列。clearManifest=true 时一并清空清单瞬态（过期 / 取消）。
+// note 为结果 / 失败原因摘要（无敏感内容），空则不动该列。clearTransient=true 时一并清空清单与冲突暂存瞬态
+// （过期 / 取消 / 失败），避免大树清单 TEXT 与冲突内容长期滞留。
 // 返回是否命中（前态不符 / 已被并发终结则 false）。
-func (r *ReverseFetchTaskRepository) MarkTerminal(id uint, expect, terminal, note string, clearManifest bool, now time.Time) (bool, error) {
+func (r *ReverseFetchTaskRepository) MarkTerminal(id uint, expect, terminal, note string, clearTransient bool, now time.Time) (bool, error) {
 	updates := map[string]any{"status": terminal, "active_at": now}
 	if note != "" {
 		updates["note"] = note
 	}
-	if clearManifest {
+	if clearTransient {
 		updates["manifest"] = ""
+		updates["submit_content"] = ""
 	}
 	res := r.db.Model(&model.ReverseFetchTask{}).
 		Where("id = ? AND status = ?", id, expect).
@@ -157,12 +182,14 @@ func (r *ReverseFetchTaskRepository) ExpireStale(before, now time.Time) (int64, 
 	res := r.db.Model(&model.ReverseFetchTask{}).
 		Where("status IN ? AND created_at < ?", []string{
 			model.ReverseFetchTaskScanning, model.ReverseFetchTaskPendingReview,
-			model.ReverseFetchTaskFetching, model.ReverseFetchTaskIngesting,
+			model.ReverseFetchTaskFetching, model.ReverseFetchTaskConflictReview,
+			model.ReverseFetchTaskIngesting,
 		}, before).
 		Updates(map[string]any{
-			"status":    model.ReverseFetchTaskExpired,
-			"manifest":  "",
-			"active_at": now,
+			"status":         model.ReverseFetchTaskExpired,
+			"manifest":       "",
+			"submit_content": "",
+			"active_at":      now,
 		})
 	if res.Error != nil {
 		return 0, res.Error

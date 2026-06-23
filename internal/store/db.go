@@ -61,6 +61,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.APIKey{},
 		&model.AgentCommand{},
 		&model.ReverseFetchTask{},
+		&model.ReverseFetchIgnoreRule{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}

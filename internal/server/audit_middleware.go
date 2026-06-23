@@ -61,6 +61,10 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 反向抓取受管任务·提交选定 / 取消（FR-58：file.reverse-fetch-submit / cancel，各在事务内或服务内自记专项审计）
 	"POST /admin/v1/reverse-fetch/tasks/{id}/submit": {},
 	"POST /admin/v1/reverse-fetch/tasks/{id}/cancel": {},
+	// 反向抓取冲突审核 resolve + 持久忽略规则建 / 删（FR-59：file.reverse-fetch-ingest / ignore-rule-add / -remove，服务内自记专项审计）
+	"POST /admin/v1/reverse-fetch/tasks/{id}/resolve":  {},
+	"POST /admin/v1/reverse-fetch/ignore-rules":        {},
+	"DELETE /admin/v1/reverse-fetch/ignore-rules/{id}": {},
 	// zone 分配与默认入口（zone.assign / unassign / set-default-entry / clear-default-entry）
 	"PUT /admin/v1/zones/assignments":      {},
 	"DELETE /admin/v1/zones/assignments":   {},

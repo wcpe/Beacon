@@ -54,14 +54,15 @@ const (
 // 反向抓取受管任务生命周期状态（FR-58，落 VARCHAR + 应用层校验，见 ADR-0037）。
 // 非终态（scanning/pending-review/fetching/ingesting）受单实例互斥约束；旁出 failed/cancelled/expired 为终态。
 const (
-	ReverseFetchTaskScanning      = "scanning"       // 已下发 scan 命令、待 agent 回清单
-	ReverseFetchTaskPendingReview = "pending-review" // 清单已到、待人工审核选定
-	ReverseFetchTaskFetching      = "fetching"       // 已下发 submit 命令、待 agent 回选定内容
-	ReverseFetchTaskIngesting     = "ingesting"      // 选定内容已到、落库中
-	ReverseFetchTaskDone          = "done"           // 选定集 ingest 落库成功（终态）
-	ReverseFetchTaskFailed        = "failed"         // 任一阶段失败（终态）
-	ReverseFetchTaskCancelled     = "cancelled"      // 人工取消（终态）
-	ReverseFetchTaskExpired       = "expired"        // 超时未完成，清单瞬态已清空（终态）
+	ReverseFetchTaskScanning       = "scanning"        // 已下发 scan 命令、待 agent 回清单
+	ReverseFetchTaskPendingReview  = "pending-review"  // 清单已到、待人工审核选定
+	ReverseFetchTaskFetching       = "fetching"        // 已下发 submit 命令、待 agent 回选定内容
+	ReverseFetchTaskConflictReview = "conflict-review" // 选定内容已到但与目标已有版本冲突、暂存待人工 diff 确认（FR-59）
+	ReverseFetchTaskIngesting      = "ingesting"       // 选定内容已到、落库中
+	ReverseFetchTaskDone           = "done"            // 选定集 ingest 落库成功（终态）
+	ReverseFetchTaskFailed         = "failed"          // 任一阶段失败（终态）
+	ReverseFetchTaskCancelled      = "cancelled"       // 人工取消（终态）
+	ReverseFetchTaskExpired        = "expired"         // 超时未完成，清单瞬态已清空（终态）
 )
 
 // IsReverseFetchTaskTerminal 判断任务状态是否为终态（终态不受互斥约束、不可再迁移）。
@@ -120,6 +121,9 @@ const (
 	ActionFileReverseFetchIngest = "file.reverse-fetch-ingest"
 	// 反向抓取受管任务·取消（FR-58）：人工取消非终态任务
 	ActionFileReverseFetchCancel = "file.reverse-fetch-cancel"
+	// 反向抓取持久忽略规则·新增 / 删除（FR-59）：登记 / 撤销下次扫描该排除的文件 / 目录
+	ActionReverseFetchIgnoreRuleAdd    = "reverse-fetch.ignore-rule-add"
+	ActionReverseFetchIgnoreRuleRemove = "reverse-fetch.ignore-rule-remove"
 	// 按需拓印触发（FR-46）：命令在线实例回传某文件磁盘内容、转存待审（不落库）
 	ActionFileImprintFetch = "file.imprint-fetch"
 	// 按需拓印确认落库（FR-46）：单人自审通过后落为某层文件覆盖（detail 不含文件内容）
@@ -161,6 +165,8 @@ const (
 	TargetTypeCommand = "command"
 	// 反向抓取受管任务（FR-58）的审计对象类型
 	TargetTypeReverseFetchTask = "reverse-fetch-task"
+	// 反向抓取持久忽略规则（FR-59）的审计对象类型
+	TargetTypeReverseFetchIgnoreRule = "reverse-fetch-ignore-rule"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

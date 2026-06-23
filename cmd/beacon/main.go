@@ -256,7 +256,11 @@ func run() error {
 	reverseFetchTaskService.SetNotifier(notifier)
 	// agent 复用同一 /files/ingest 端点回传 submit 选定内容，控制面据命令 mode=submit 转交受管任务编排落库。
 	commandService.SetSubmitIngestReceiver(reverseFetchTaskService)
-	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskService, instanceService)
+	// 反向抓取持久忽略规则（FR-59）：规则仓库 + 服务（建 / 列 / 删 + 审计），供扫描清单标 ignoredByRule。
+	reverseFetchIgnoreRuleRepo := repository.NewReverseFetchIgnoreRuleRepository(db)
+	reverseFetchIgnoreRuleService := service.NewReverseFetchIgnoreRuleService(db, reverseFetchIgnoreRuleRepo, auditRepo)
+	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskService, instanceService, reverseFetchIgnoreRuleService)
+	reverseFetchIgnoreRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchIgnoreRuleService)
 
 	// 陈旧命令后台清理（FR-39/FR-46）：周期把创建超期仍未终结的命令标 expired 并清空拓印瞬态明文，避免放弃的 ready 命令明文滞留。
 	commandSweeper := service.NewCommandSweeper(commandService)
@@ -286,7 +290,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, ReverseFetchTask: reverseFetchTaskHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

@@ -36,6 +36,10 @@ type ReverseFetchTask struct {
 	Manifest string `gorm:"column:manifest;type:text"`
 	// 提交时选定 path 的 JSON 数组（TEXT）
 	SelectedPaths string `gorm:"column:selected_paths;type:text"`
+	// 冲突审核暂存内容 JSON（TEXT，瞬态，FR-59）：conflict-review 期暂存 submit 回传的全部选定内容
+	// （{path→content}），供逐文件 diff 与 resolve 落库；resolve 完成 / 取消 / 过期后清空（同 imprint_content 范式）。
+	// 与扫描清单的 manifest（元信息、无内容）分立——这是冲突审核期的内容暂存，生命周期到 resolve 即止。
+	SubmitContent string `gorm:"column:submit_content;type:text"`
 	// 清单总文件数（进度用）
 	TotalFiles int `gorm:"column:total_files"`
 	// 选定文件数

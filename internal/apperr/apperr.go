@@ -86,6 +86,10 @@ var (
 	ErrReverseFetchTaskState = New(http.StatusConflict, "REVERSE_FETCH_TASK_STATE", "反向抓取任务状态不允许该操作")
 	// ErrOverThresholdNotConfirmed 选定集含超单文件阈值的文件但未显式确认（只拒该文件，不拒整批，FR-58）。
 	ErrOverThresholdNotConfirmed = New(http.StatusBadRequest, "OVER_THRESHOLD_NOT_CONFIRMED", "选定集含超阈值文件，须显式确认才能纳入")
+	// ErrReverseFetchReviewMismatch 冲突审核确认覆盖时自审 md5 与抓取内容不符（强制看过 diff，盲确认拒，FR-59）。
+	ErrReverseFetchReviewMismatch = New(http.StatusPreconditionFailed, "REVERSE_FETCH_REVIEW_MISMATCH", "冲突审核自审内容已变更，请重新查看 diff")
+	// ErrReverseFetchConflictNotFound 请求的冲突 path 不在本任务冲突集内（diff / resolve 目标缺失，FR-59）。
+	ErrReverseFetchConflictNotFound = New(http.StatusNotFound, "REVERSE_FETCH_CONFLICT_NOT_FOUND", "冲突文件不存在")
 
 	// ErrOverrideSetNotFound 覆盖集不存在（FR-15）。
 	ErrOverrideSetNotFound = New(http.StatusNotFound, "OVERRIDE_SET_NOT_FOUND", "覆盖集不存在")
