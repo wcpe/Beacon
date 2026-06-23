@@ -10,10 +10,13 @@ import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
 import top.wcpe.beacon.agent.core.settings.OverrideSettings
+import top.wcpe.beacon.agent.core.testutil.CannedJsonCodec
 import top.wcpe.beacon.agent.core.testutil.FakeBeaconBackend
 import top.wcpe.beacon.agent.core.testutil.MetricsCapturingCodec
 import top.wcpe.beacon.agent.core.testutil.ThreadPoolPlatformAdapter
+import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -163,6 +166,42 @@ class AgentLifecycleMetricsTest {
     }
 
     @Test
+    fun `配置稳态304下周期循环仍持续上报真实指标`() {
+        // 复现并守护根因修复：report 此前仅由长轮询 200（配置变更）触发，稳态恒 304 → reportApplied 永不执行，
+        // 控制面注册表里 TPS/内存/CPU/Proxy 恒为零值。现新增独立的周期性指标上报循环，应在配置不变（304）时
+        // 仍按心跳周期把注入的真实指标持续发进 report。修复前本用例必失败（reportCalls 恒 0）。
+        backend.pollStatus = 304
+        // 注册回包心跳周期改 1s，缩短周期上报间隔，便于在测试窗口内断言「多次上报」。
+        val codec = FastHeartbeatCapturingCodec()
+        val apiClient = BeaconApiClient(backend, codec, settings())
+        val applier = ConfigApplier(store, null, adapter)
+        val fixed = RuntimeMetrics(
+            playerCount = 5,
+            tps = 20.0,
+            memUsed = 111L,
+            memMax = 222L,
+            cpuLoad = 0.3,
+        )
+        val lifecycle = AgentLifecycle(
+            identity(), settings(), adapter, apiClient, store, applier, null,
+            metricsProvider = { fixed },
+        )
+
+        lifecycle.bootstrapWithSnapshotThenConnect()
+        // 首跳即发 + 每 1s 续杯；3.5s 内应 ≥2 次 report，且全部由周期循环驱动（长轮询恒 304 绝不触发 report）。
+        waitUntil(3500) { backend.reportCalls.get() >= 2 }
+
+        assertTrue(
+            backend.reportCalls.get() >= 2,
+            "稳态 304 下周期循环应按心跳周期持续上报指标（实际 ${backend.reportCalls.get()} 次）",
+        )
+        val body = codec.lastReport.get() ?: error("稳态 304 下应有 report 报文（由周期循环上报）")
+        assertEquals(5, body["playerCount"], "周期上报应携带注入的真实在线人数")
+        assertEquals(20.0, body["tps"], "周期上报应携带注入的真实 TPS")
+        assertEquals(111L, body["memUsed"])
+    }
+
+    @Test
     fun `每次上报重新取指标供给`() {
         backend.pollStatus = 200
         val codec = MetricsCapturingCodec()
@@ -188,5 +227,35 @@ class AgentLifecycleMetricsTest {
             if (cond()) return
             Thread.sleep(10)
         }
+    }
+}
+
+/**
+ * 测试用 codec：解析复用 [CannedJsonCodec]，但把注册回包的心跳周期改为 1s——
+ * 使 [AgentLifecycle] 的周期性指标上报循环在短测试窗口内多次续杯；同时捕获最近一次 report 报文体供断言。
+ */
+private class FastHeartbeatCapturingCodec : JsonCodec {
+
+    private val canned = CannedJsonCodec()
+
+    /** 最近一次 report 报文体（Map）；null 表示尚未发生 report。 */
+    val lastReport = AtomicReference<Map<String, Any?>?>(null)
+
+    @Suppress("UNCHECKED_CAST")
+    override fun encode(value: Any?): String {
+        if (value is Map<*, *> && value.containsKey("appliedMd5")) {
+            lastReport.set(value as Map<String, Any?>)
+        }
+        return canned.encode(value)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    override fun decode(json: String): Any? {
+        val base = canned.decode(json)
+        // 仅把注册回包的心跳周期改 1s（其余字段照旧），其它端点解析不动。
+        if (json == FakeBeaconBackend.BODY_REGISTER && base is Map<*, *>) {
+            return (base as Map<String, Any?>).toMutableMap().apply { put("heartbeatIntervalSec", 1) }
+        }
+        return base
     }
 }

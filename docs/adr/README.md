@@ -28,7 +28,7 @@
 | [0022](0022-agent-roster-read-api.md) | agent-api 暴露玩家位置名册只读查询（扩展 ADR-0016 决策 5） | 已接受 |
 | [0023](0023-control-plane-observability-dashboard.md) | 控制面自带可观测看板（指标 + 历史趋势），时序落 MySQL metric_sample | 已接受 |
 | [0024](0024-bc-backend-membership-as-fact.md) | bc 上报自身后端归属作为控制面只读事实（仅内存、随注册/心跳更新） | 已接受 |
-| [0025](0025-bc-proxy-metrics-and-netty-traffic.md) | bc 代理专属负载指标采集集合与角色分流展示（扩展 ADR-0023；Netty 吞吐无干净注入点本期不采、不留占位） | 已接受 |
+| [0025](0025-bc-proxy-metrics-and-netty-traffic.md) | bc 代理专属负载指标采集集合与角色分流展示（扩展 ADR-0023；Netty 吞吐无干净注入点本期不采、不留占位） | 已接受（后端可达性探测机制被 [0035](0035-backend-reachability-tcp-connect.md) 修订） |
 | [0026](0026-runtime-api-keys-and-readonly-role.md) | 运行时 API 密钥 + 管理面只读角色（落库只存哈希，扩展 ADR-0009） | 已接受 |
 | [0027](0027-reverse-fetch-channel-and-security.md) | 在线实例反向抓取的命令通道（复用 SSE）与安全边界（限 plugins/ 内、排除 jar、上限、双校验、鉴权审计） | 已接受 |
 | [0028](0028-allow-hosting-agent-self-dir.md) | 放开控制面对 agent 自身目录的托管拦截，自我保护下沉到 agent observe-only（FR-38/FR-39 归真） | 已接受 |
@@ -38,6 +38,7 @@
 | [0032](0032-instance-active-offline-state.md) | 实例主动下线态：落 DB 拒绝接入，区别于 drain 与健康 TTL（显式扩展 ADR-0017 范围） | 已接受 |
 | [0033](0033-web-i18n-framework.md) | 管理台引入 react-i18next 国际化框架：zh-CN 先行、全站文案 key 化、审计 action 经 i18n 映射、等值迁移 | 已接受 |
 | [0034](0034-file-tree-lossless-merge.md) | 文件树通道改无损深合并（保标量原文 / 精度 / 注释），配置中心维持有损（取代 ADR-0029「值归一化可接受」一条） | 已接受 |
+| [0035](0035-backend-reachability-tcp-connect.md) | bc 后端可达性探测由 MC status-ping 改 TCP 连接（修订 ADR-0025 决策1/3 的探测机制，更稳健、对不应答 status 的代理后端不误判） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

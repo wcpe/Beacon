@@ -73,6 +73,12 @@ class AgentLifecycle(
     private val pollGen = AtomicReference(0)
 
     /**
+     * 周期性指标上报循环（FR-32 / FR-34）的「代」标识：与心跳同周期但独立，重启循环时递增、旧循环自然退出。
+     * 此循环把负载指标的上报与「配置是否变更」解耦——稳态配置不变（长轮询恒 304）时仍持续把真值刷进注册表。
+     */
+    private val metricsReportGen = AtomicReference(0)
+
+    /**
      * 文件树长轮询（通道B）的「代」标识：与配置长轮询并行、各自 gen，重启循环时递增。
      * 唤醒集合与配置独立（fileTreeMd5 ≠ 配置 md5，见 ADR-0010）。
      */
@@ -336,6 +342,8 @@ class AgentLifecycle(
                 "心跳周期=${result.heartbeatIntervalSec}s",
         )
         startHeartbeatLoop()
+        // 周期性把负载指标刷进控制面注册表（FR-32 / FR-34）：与配置变更解耦，稳态 304 时仍持续上报真值。
+        startMetricsReportLoop()
         // 注入了 streamTransport（FR-24）：以单条 SSE 推送流取代三条长轮询；否则退回三条长轮询（迁移期兼容）。
         if (apiClient.streamingEnabled()) {
             startStreamLoop()
@@ -417,6 +425,39 @@ class AgentLifecycle(
                 scheduleHeartbeat(gen, heartbeatIntervalMs)
             }
         }
+    }
+
+    // ---- 周期性指标上报循环（FR-32 / FR-34） ----
+
+    /**
+     * 启动周期性指标上报循环：把负载指标（人数 / TPS / 内存 / CPU / BC 专属）的上报与「配置是否变更」解耦。
+     *
+     * 根因修复：此前 reportApplied 仅在长轮询 / SSE 返回 200（配置 md5 变更）时触发，稳态配置不变恒 304 →
+     * 采集供给从不被调用 → 控制面注册表指标恒为零值 → 看板与趋势全 0。现按心跳周期持续上报，让注册表常新。
+     * 首跳立即发（注册 / 重连后尽快点亮看板真值），其后每 heartbeatIntervalMs 续杯；全程异步、不阻塞主线程、
+     * 采集 / 上报失败均已在内部回退（fail-static 不变）。
+     */
+    private fun startMetricsReportLoop() {
+        val gen = metricsReportGen.get() + 1
+        metricsReportGen.set(gen)
+        scheduleMetricsReport(gen, 0)
+    }
+
+    private fun scheduleMetricsReport(gen: Int, delayMs: Long) {
+        if (!running.get()) return
+        if (delayMs <= 0) {
+            adapter.runAsync { metricsReportTick(gen) }
+        } else {
+            adapter.runAsyncDelayed(delayMs) { metricsReportTick(gen) }
+        }
+    }
+
+    private fun metricsReportTick(gen: Int) {
+        // 代标识不符（已重启循环或已 shutdown）→ 当前跳作废。
+        if (!running.get() || gen != metricsReportGen.get()) return
+        // 以本地当前已应用的有效配置 md5 上报（稳态即上次应用值，准确而非陈旧；尚无配置时为空串，控制面按空处理）。
+        reportApplied(store.currentMd5() ?: "")
+        scheduleMetricsReport(gen, heartbeatIntervalMs)
     }
 
     // ---- 长轮询循环 ----

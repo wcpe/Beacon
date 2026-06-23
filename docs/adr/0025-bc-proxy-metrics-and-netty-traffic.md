@@ -1,6 +1,6 @@
 # ADR-0025：bc 代理专属负载指标采集集合与角色分流展示（扩展 ADR-0023）
 
-**状态**：已接受
+**状态**：已接受（后端可达性探测机制于 [ADR-0035](0035-backend-reachability-tcp-connect.md) 修订：MC status-ping → TCP 连接；本 ADR 其余决策不变）
 
 ## 背景
 
