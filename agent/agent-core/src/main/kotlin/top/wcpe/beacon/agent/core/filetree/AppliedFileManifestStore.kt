@@ -5,9 +5,6 @@ import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.nio.file.StandardOpenOption
 
 /**
  * 本地「已落盘文件清单」（applied-file-manifest）的原子读写，存 agent 数据目录。
@@ -15,7 +12,7 @@ import java.nio.file.StandardOpenOption
  * 内容 {fileTreeMd5, savedAt, entries:[{path,md5}]}。它是「本地镜像已是哪一版」的真源：
  * agent 据它与控制面 manifest 比对增量同步、长轮询续杯比对 fileTreeMd5。
  *
- * 原子写：临时文件 → `FileChannel.force` → `ATOMIC_MOVE`（补 fsync，见 ADR-0010 决策4）。
+ * 原子写委托 [AtomicFileWriter]：唯一临时文件 → `FileChannel.force` → 重命名覆盖 + 父目录 fsync（见 ADR-0010 决策4）。
  * 「先文件后清单」持久化序：先把变更文件落盘并 fsync，再写本清单——崩溃恢复后清单只反映已落盘的部分。
  *
  * @param file  清单落点（dataFolder/<fileName>）
@@ -37,33 +34,8 @@ class AppliedFileManifestStore(
             linkedMapOf<String, Any?>("path" to e.path, "md5" to e.md5)
         }
         val json = codec.encode(tree)
-
-        val parent = file.parentFile
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs()
-        }
-        val tmp = File(parent, file.name + ".tmp")
-        val bytes = json.toByteArray(StandardCharsets.UTF_8)
-        Files.newByteChannel(
-            tmp.toPath(),
-            StandardOpenOption.CREATE,
-            StandardOpenOption.WRITE,
-            StandardOpenOption.TRUNCATE_EXISTING,
-        ).use { channel ->
-            val buffer = java.nio.ByteBuffer.wrap(bytes)
-            while (buffer.hasRemaining()) {
-                channel.write(buffer)
-            }
-            if (channel is java.nio.channels.FileChannel) {
-                channel.force(true)
-            }
-        }
-        Files.move(
-            tmp.toPath(),
-            file.toPath(),
-            StandardCopyOption.REPLACE_EXISTING,
-            StandardCopyOption.ATOMIC_MOVE,
-        )
+        // 原子写委托 AtomicFileWriter（唯一 tmp + 重命名回退/重试 + 父目录 fsync），消除 Windows 并发竞争。
+        AtomicFileWriter.write(file, json.toByteArray(StandardCharsets.UTF_8))
     }
 
     /**

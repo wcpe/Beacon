@@ -3,6 +3,8 @@ package top.wcpe.beacon.agent.core.filetree
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -41,9 +43,50 @@ class FileMirrorWriterTest {
     @Test
     fun `原子重命名不残留临时文件`() {
         writer.write("a.yml", "v1")
-        // 临时文件应已被原子重命名消费，目录下不残留 .beacon-tmp。
-        val residue = File(root, "a.yml.beacon-tmp")
-        assertFalse(residue.exists(), "临时文件应在 ATOMIC_MOVE 后消失")
+        // 临时文件应已被原子重命名消费，目录下不残留任何 a.yml.beacon-tmp* 临时文件。
+        val residue = root.listFiles()
+            ?.filter { it.name.startsWith("a.yml") && it.name != "a.yml" }
+            ?: emptyList()
+        assertTrue(residue.isEmpty(), "临时文件应在重命名后消失，实际残留：${residue.map { it.name }}")
+    }
+
+    @Test
+    fun `并发写同一文件不抛异常且无 tmp 残留`() {
+        // 复现 Windows 真机偶发：多线程抢同一临时文件，一方 move 走后另一方 move 找不到源 → NoSuchFileException。
+        // 旧实现（共享固定 .beacon-tmp 名）此处必抛；唯一 tmp + 重命名回退/重试后应全程无异常、无残留。
+        val threads = 6
+        val iterations = 60
+        val errors = CopyOnWriteArrayList<Throwable>()
+        val start = CountDownLatch(1)
+        val workers = (0 until threads).map { t ->
+            Thread {
+                start.await()
+                repeat(iterations) { i ->
+                    try {
+                        writer.write("shared.yml", "t$t-i$i")
+                    } catch (e: Throwable) {
+                        errors += e
+                    }
+                }
+            }
+        }
+        workers.forEach { it.start() }
+        start.countDown()
+        workers.forEach { it.join() }
+
+        assertTrue(
+            errors.isEmpty(),
+            "并发原子写不应抛异常，实际：${errors.map { it.javaClass.simpleName + ":" + it.message }}",
+        )
+        // 最终文件存在且为某次完整写入值（非半截损坏）。
+        val target = File(root, "shared.yml")
+        assertTrue(target.exists())
+        assertTrue(target.readText(StandardCharsets.UTF_8).matches(Regex("t\\d+-i\\d+")))
+        // 不残留任何临时文件。
+        val residue = root.listFiles()
+            ?.filter { it.name.startsWith("shared.yml") && it.name != "shared.yml" }
+            ?: emptyList()
+        assertTrue(residue.isEmpty(), "不应残留临时文件，实际：${residue.map { it.name }}")
     }
 
     @Test

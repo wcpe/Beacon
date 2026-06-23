@@ -38,12 +38,21 @@ class FileTreeApplier(
      */
     fun currentFileTreeMd5(): String? = appliedStore.read()?.fileTreeMd5
 
+    /** 串行化 apply：长轮询循环 / SSE file-changed / 运维 resync 可并发触发，加锁避免抢同一临时文件与清单读改写竞争。 */
+    private val applyLock = Any()
+
     /**
      * 应用一份目标清单。
      *
-     * @return true 表示已收敛（无变更或已落盘并更新清单）；false 表示因取内容失败放弃本轮（保留既有，下次重试）。
+     * 并发安全：多路触发经 [applyLock] 串行执行；落盘原子写由 [AtomicFileWriter] 保证（唯一 tmp + 重命名回退/重试）。
+     *
+     * @return true 表示已收敛（无变更或已落盘并更新清单）；false 表示因取内容失败 / 清单写入失败放弃本轮（保留既有，下次重试）。
      */
-    fun apply(manifest: FileManifest): Boolean {
+    fun apply(manifest: FileManifest): Boolean = synchronized(applyLock) {
+        applyInternal(manifest)
+    }
+
+    private fun applyInternal(manifest: FileManifest): Boolean {
         val applied = appliedStore.read()
         // fileTreeMd5 守卫：与已落盘那一版相同则跳过（幂等），避免无谓比对与落盘。
         if (applied != null && applied.fileTreeMd5 == manifest.fileTreeMd5) {
@@ -55,8 +64,7 @@ class FileTreeApplier(
         val plan = FileSyncer.diff(appliedMap, targetMap)
         if (plan.isEmpty()) {
             // md5 变了但差分为空（极少见，如仅 group/zone 元数据变）：仅刷新清单记录新 md5。
-            appliedStore.write(manifest.fileTreeMd5, manifest.entries)
-            return true
+            return persistManifest(manifest)
         }
 
         // 先取齐所有需写入的内容；任一取不到即放弃整轮（fail-static：不动既有文件）。
@@ -110,12 +118,23 @@ class FileTreeApplier(
             }
         }
 
-        // 全部落盘成功后才写清单（先文件后清单）。
-        appliedStore.write(manifest.fileTreeMd5, manifest.entries)
+        // 全部落盘成功后才写清单（先文件后清单）。清单写入失败 fail-static：保留既有、下次重试，不抛到调度器。
+        if (!persistManifest(manifest)) return false
         adapter.info(
             "文件树已同步：新增=${plan.toAdd.size}，更新=${plan.toUpdate.size}，删除=${plan.toDelete.size}，" +
                 "fileTreeMd5=${manifest.fileTreeMd5}",
         )
         return true
+    }
+
+    /** 写已落盘清单：失败不抛（fail-static），返回 false 让本轮放弃、下次重试。 */
+    private fun persistManifest(manifest: FileManifest): Boolean {
+        return try {
+            appliedStore.write(manifest.fileTreeMd5, manifest.entries)
+            true
+        } catch (e: Exception) {
+            adapter.error("已落盘清单写入失败，本轮放弃（保留既有镜像不动，下次重试）", e)
+            false
+        }
     }
 }

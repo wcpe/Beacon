@@ -3,16 +3,16 @@ package top.wcpe.beacon.agent.core.snapshot
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.client.JsonTree
+import top.wcpe.beacon.agent.core.filetree.AtomicFileWriter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
 import java.nio.charset.StandardCharsets
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 /**
  * 本地快照 fail-static 读写：{namespace,serverId,group,zone,md5,savedAt,items:[...]}（无 version）。
  *
- * 原子写：先写 *.tmp 再 rename 覆盖，避免半截文件。用 JsonCodec 编解码。
+ * 原子写委托 [AtomicFileWriter]：唯一临时文件 → `FileChannel.force` → 重命名覆盖 + 父目录 fsync，
+ * 避免半截文件并消除 Windows 并发竞争（同时补齐 ADR-0010 决策4 所记快照落盘未 fsync 的缺口）。用 JsonCodec 编解码。
  *
  * @param file  快照落点（dataFolder/<fileName>）
  * @param codec JSON 编解码
@@ -42,20 +42,7 @@ class SnapshotStore(
             )
         }
         val json = codec.encode(tree)
-
-        val parent = file.parentFile
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs()
-        }
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.writeText(json, StandardCharsets.UTF_8)
-        // 原子重命名覆盖目标。
-        Files.move(
-            tmp.toPath(),
-            file.toPath(),
-            StandardCopyOption.REPLACE_EXISTING,
-            StandardCopyOption.ATOMIC_MOVE,
-        )
+        AtomicFileWriter.write(file, json.toByteArray(StandardCharsets.UTF_8))
     }
 
     /** 读快照；文件不存在或解析失败返回 null（fail-static 容忍）。 */

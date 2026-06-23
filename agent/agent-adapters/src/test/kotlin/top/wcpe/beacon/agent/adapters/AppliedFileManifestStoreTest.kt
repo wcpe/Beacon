@@ -7,7 +7,6 @@ import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -48,8 +47,10 @@ class AppliedFileManifestStoreTest {
     @Test
     fun `写入采用原子替换不残留 tmp`() {
         store().write("m", emptyList())
-        val tmp = File(dir, "applied.json.tmp")
-        assertFalse(tmp.exists(), "tmp 文件应在原子重命名后消失")
+        val residue = dir.listFiles()
+            ?.filter { it.name.startsWith("applied.json") && it.name != "applied.json" }
+            ?: emptyList()
+        assertTrue(residue.isEmpty(), "tmp 文件应在重命名后消失，实际残留：${residue.map { it.name }}")
         assertTrue(File(dir, "applied.json").exists())
     }
 }

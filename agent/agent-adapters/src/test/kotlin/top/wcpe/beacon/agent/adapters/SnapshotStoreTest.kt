@@ -66,7 +66,9 @@ class SnapshotStoreTest {
     fun `写入采用原子替换不残留 tmp`() {
         val store = store()
         store.write(EffectiveResult("prod", "s", "g", "z", "m", emptyList()))
-        val tmp = File(dir, "snap.json.tmp")
-        assertTrue(!tmp.exists(), "tmp 文件应在原子重命名后消失")
+        val residue = dir.listFiles()
+            ?.filter { it.name.startsWith("snap.json") && it.name != "snap.json" }
+            ?: emptyList()
+        assertTrue(residue.isEmpty(), "tmp 文件应在重命名后消失，实际残留：${residue.map { it.name }}")
     }
 }
