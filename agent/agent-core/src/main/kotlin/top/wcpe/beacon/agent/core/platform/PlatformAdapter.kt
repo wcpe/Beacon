@@ -48,6 +48,18 @@ interface PlatformAdapter {
      */
     fun readPluginsTree(): Map<String, ByteArray> = emptyMap()
 
+    /**
+     * 扫描真实 plugins 目录树的**元信息**为「相对路径（正斜杠） → 文件字节大小」映射（反向抓取 scan 阶段，FR-58，见 ADR-0037）。
+     *
+     * 与 [readPluginsTree] 的根本区别：**只 `stat` 取大小、绝不读取文件内容、绝不因任何文件超大而失败**——
+     * 治根超限运行时垃圾击穿（让其在清单里被看见、由人决定纳入/排除）。只读、不写盘；**仅在 async 线程调用**。
+     * FS 级安全（Path 容纳 + 符号链接逃逸判定）由实现负责，size 的 overThreshold 红标由 core 纯函数
+     * [top.wcpe.beacon.agent.core.command.PluginsTreeFilter.scan] 据 size 判定。
+     *
+     * 默认空实现：未实现的平台 / 测试桩返回空映射（scan 能力不上线）。壳层各自实现平台 IO。
+     */
+    fun readPluginsTreeMetadata(): Map<String, Long> = emptyMap()
+
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(changed: Set<String>, newMd5: String)
 

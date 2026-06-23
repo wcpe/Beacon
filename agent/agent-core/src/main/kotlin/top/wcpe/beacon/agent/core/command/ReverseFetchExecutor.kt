@@ -51,7 +51,9 @@ class ReverseFetchExecutor(
     }
 
     /**
-     * 拉一条命令并执行。
+     * 拉一条命令并执行。按 payload.mode 两段式分路（FR-58，见 ADR-0037）：
+     * - scan：只读元信息清单 → uploadScan（永不失败）；
+     * - submit / 空（旧整树兼容）：读内容 → uploadIngest。
      *
      * @return true 表示本轮确实取到一条命令（已处理 / 已忽略未知类型，应继续排空）；false 表示无待办命令（停止排空）。
      */
@@ -63,23 +65,69 @@ class ReverseFetchExecutor(
             return true
         }
         adapter.info(
-            "执行反向抓取命令：id=${command.id}，scope=${command.payload.scope}，" +
+            "执行反向抓取命令：id=${command.id}，mode=${command.payload.mode.ifEmpty { "-" }}，scope=${command.payload.scope}，" +
                 "group=${command.payload.group}，target=${command.payload.target.ifEmpty { "-" }}",
         )
 
+        when (command.payload.mode) {
+            IngestCommandPayload.MODE_SCAN -> runScan(command)
+            // submit 与旧空 mode 都走读内容回传：submit 限定选定子集，空 mode 维持旧整树行为（向后兼容）。
+            else -> runSubmit(command)
+        }
+        return true // 本命令已处理，继续排空下一条
+    }
+
+    /**
+     * scan 阶段（FR-58）：只 stat 取元信息清单 → uploadScan，**永不因超限失败**（超阈值文件以红标列出）。
+     *
+     * 读元信息失败（本地 IO 异常）放弃本命令、不回传（命令交控制面超时清理为 expired，绝不误标 done）。
+     */
+    private fun runScan(command: AgentCommand) {
+        // 只 stat 取大小（壳层在此实现 FS 级路径安全 + 符号链接逃逸判定，不读内容）。失败 / 桩未实现得空映射。
+        val metadata = try {
+            adapter.readPluginsTreeMetadata()
+        } catch (e: Exception) {
+            adapter.error("扫描 plugins 目录元信息失败，放弃本次扫描：id=${command.id}", e)
+            return
+        }
+        // 纯函数过滤 + 标注：排除不安全路径 / jar，超阈值仅红标，永不失败。
+        val files = PluginsTreeFilter.scan(metadata)
+        val ok = apiClient.uploadScan(command.id, files)
+        if (ok) {
+            val over = files.count { it.overThreshold }
+            adapter.info("反向抓取扫描回传成功：id=${command.id}，清单文件=${files.size}，超阈值=$over")
+        } else {
+            adapter.warn("反向抓取扫描回传失败（命令态不符 / 控制面校验拒 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    /**
+     * submit 阶段（FR-58）/ 旧整树兼容：读内容回传 ingest。
+     *
+     * submit（selectedPaths 非空）限定只回传选定子集；空 mode 且无 selectedPaths → 维持旧整树读内容回传（向后兼容）。
+     * 读盘失败放弃本命令、不回传（命令交控制面超时清理为 expired，绝不误标 done）。
+     */
+    private fun runSubmit(command: AgentCommand) {
         // 读真实 plugins 树（壳层在此实现 FS 级路径安全 + 符号链接逃逸判定）。读盘失败 / 桩未实现得空映射。
         val tree = try {
             adapter.readPluginsTree()
         } catch (e: Exception) {
-            // 读盘失败属本地异常：放弃本命令、不回传（命令交由控制面超时清理为 expired，绝不误标 done）；仍继续排空其余命令。
             adapter.error("读 plugins 目录失败，放弃本次反向抓取：id=${command.id}", e)
-            return true
+            return
         }
 
-        // 过滤 + 上限校验（纯函数）：排除剔除项后判上限，任一超限整体失败、不部分上传。
-        when (val outcome = PluginsTreeFilter.filter(tree)) {
+        val selected = command.payload.selectedPaths
+        // submit（有选定集）：限定只回传选定子集，超阈值由控制面已确认门控，仅文件数/总字节兜底。
+        // 旧整树兼容（mode 空且无选定集）：沿用 filter（含单文件超限整批失败口径），不改旧 agent 行为。
+        val outcome = if (selected.isNotEmpty()) {
+            PluginsTreeFilter.submitFilter(tree, selected)
+        } else {
+            PluginsTreeFilter.filter(tree)
+        }
+
+        when (outcome) {
             is FilterOutcome.Rejected -> {
-                adapter.warn("反向抓取超限，整体失败、不上传：id=${command.id}，原因=${outcome.reason}")
+                adapter.warn("反向抓取回传超限，整体失败、不上传：id=${command.id}，原因=${outcome.reason}")
                 // 不上传：命令由控制面超时清理为 expired（不构造空回传，免误标 done）。
             }
 
@@ -92,7 +140,6 @@ class ReverseFetchExecutor(
                 }
             }
         }
-        return true // 本命令已处理，继续排空下一条
     }
 
     companion object {

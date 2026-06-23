@@ -45,6 +45,12 @@ class BungeePlatformAdapter(
         return PluginsTreeReader.read(pluginsBaseFolder())
     }
 
+    override fun readPluginsTreeMetadata(): Map<String, Long> {
+        // 反向抓取 scan 阶段（FR-58）：只 stat 取真实 plugins 树各文件大小（不读内容、永不失败）。
+        // 委托 core 的 PluginsTreeReader.readMetadata 做同样的 FS 级路径安全；由 lifecycle 在 async 线程触发（不阻塞）。
+        return PluginsTreeReader.readMetadata(pluginsBaseFolder())
+    }
+
     override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
         // MVP：经 API 监听器派发（业务插件通过 EffectiveConfig.onChange 订阅）。
         effectiveConfigView.fireChanged(changed, newMd5)

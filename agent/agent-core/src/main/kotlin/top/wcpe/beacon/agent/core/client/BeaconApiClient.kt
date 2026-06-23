@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.core.client
 import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.command.IngestCommandPayload
 import top.wcpe.beacon.agent.core.command.IngestFile
+import top.wcpe.beacon.agent.core.command.ScanFile
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.filetree.FileContent
@@ -479,6 +480,36 @@ class BeaconApiClient(
     }
 
     /**
+     * 回传反向抓取 scan 清单：POST /beacon/v1/agent/files/scan（FR-58，见 ADR-0037）。同步调用，请在异步线程使用。
+     *
+     * 携带命令 id + 元信息清单（path/size/isText/overThreshold，**无 content**）。控制面存入任务 manifest、计数、转 pending-review。
+     * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（命令在控制面侧标 failed，agent 侧不重传）。
+     */
+    fun uploadScan(commandId: Long, files: List<ScanFile>): Boolean {
+        val body = mapOf(
+            "commandId" to commandId,
+            "files" to files.map {
+                mapOf(
+                    "path" to it.path,
+                    "size" to it.size,
+                    "isText" to it.isText,
+                    "overThreshold" to it.overThreshold,
+                )
+            },
+        )
+        val resp = exec(
+            HttpRequest(
+                method = "POST",
+                url = "$base/beacon/v1/agent/files/scan",
+                headers = headers(withBody = true),
+                body = codec.encode(body),
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
@@ -572,9 +603,11 @@ class BeaconApiClient(
     }
 
     /**
-     * 解析待办命令响应（FR-39）：`{"id":<n>,"type":"ingest-plugins","payload":{"scope","group","target"}}`。
+     * 解析待办命令响应（FR-39 / FR-58）：
+     * `{"id":<n>,"type":"ingest-plugins","payload":{"scope","group","target","mode","selectedPaths":[...]}}`。
      *
-     * payload 缺失字段按空串兜底；agent 不据 payload 做抓取决策（落盘层由控制面 ingest 决定），仅供日志可读 + 原样回传 id。
+     * payload 缺失字段按空兜底；`mode` 区分 scan / submit（缺失=旧整树行为，向后兼容），`selectedPaths` 仅 submit 用。
+     * agent 据 mode/selectedPaths 决定两段式分路（见 ReverseFetchExecutor）；scope/group/target 仍仅供日志可读 + 回传 id。
      */
     private fun parsePendingCommand(jsonBody: String): AgentCommand {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
@@ -586,6 +619,8 @@ class BeaconApiClient(
                 scope = JsonTree.strOr(payloadObj, "scope", ""),
                 group = JsonTree.strOr(payloadObj, "group", ""),
                 target = JsonTree.strOr(payloadObj, "target", ""),
+                mode = JsonTree.strOr(payloadObj, "mode", ""),
+                selectedPaths = JsonTree.asList(payloadObj["selectedPaths"]).map { JsonTree.asString(it) },
             ),
         )
     }

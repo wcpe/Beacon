@@ -80,6 +80,49 @@ object PluginsTreeReader {
     }
 
     /**
+     * scan 模式（FR-58，见 ADR-0037）：只 `stat` 取每个文件的字节大小为「相对路径（正斜杠） → size」映射，**不读内容**。
+     *
+     * 与 [read] 同样的 FS 级安全（root 真实路径容纳 + 符号链接逃逸剔除 + 跳目录/非普通项 + 按名跳 `.jar`），
+     * 但**绝不读取任何文件字节、绝不因任何文件超大而失败**——超大运行时垃圾仅作为清单里 size 很大的一项被列出
+     * （overThreshold 标注由 core 纯函数 [PluginsTreeFilter.scan] 据 size 判定）。无文件数早停（清单可大、永不失败）。
+     *
+     * root 不存在 / 非目录返回空映射。单个文件 `stat` 失败（权限等）跳过该文件、不中断整体（best-effort）。
+     *
+     * @param root 真实 plugins 根目录（壳层传入：agent dataFolder 的父目录）
+     */
+    fun readMetadata(root: File): Map<String, Long> {
+        if (!root.isDirectory) return emptyMap()
+        // 以 root 的真实路径（解析符号链接）为容纳基准；取不到（异常）则放弃整次读取（宁可不抓也不越界）。
+        val rootReal: Path = try {
+            root.toPath().toRealPath()
+        } catch (e: IOException) {
+            return emptyMap()
+        }
+
+        val result = LinkedHashMap<String, Long>()
+        walk(root) { file ->
+            // 只收普通文件（跳目录 / 目录符号链接 / 非普通项）。
+            if (!file.isFile) return@walk
+            // 按名跳 jar（最大二进制来源，本就排除）：scan 连其大小都不必列入（PluginsTreeFilter 仍会按后缀再排除一次）。
+            if (file.name.lowercase().endsWith(".jar")) return@walk
+            // FS 级符号链接逃逸判定：候选真实路径必须仍在 root 真实路径之内。
+            val fileReal: Path = try {
+                file.toPath().toRealPath()
+            } catch (e: IOException) {
+                return@walk // 解析失败（坏链接等）→ 跳过，不列入
+            }
+            if (!fileReal.startsWith(rootReal)) return@walk // 逃逸 root（符号链接指向外部）→ 剔除
+
+            // 相对路径用 root 真实路径相对 file 真实路径，统一正斜杠（跨平台一致，供控制面再校验）。
+            val relative = rootReal.relativize(fileReal).joinToString("/") { it.toString() }
+            if (relative.isEmpty()) return@walk
+            // 只 stat 取大小，绝不读内容；length() 失败（被删/权限）回 0，仍列入（清单宁可多列不漏）。
+            result[relative] = file.length()
+        }
+        return result
+    }
+
+    /**
      * 深度优先遍历 root 下所有项，对每个**文件系统项**回调 [onFile]（含目录，由回调自行判类型）。
      *
      * 不跟随目录符号链接下降（[LinkOption.NOFOLLOW_LINKS] 判定目录性），避免符号链接环导致无限递归；

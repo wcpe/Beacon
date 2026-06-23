@@ -38,10 +38,19 @@ class ReverseFetchExecutorTest {
 
         val ingestCalls = AtomicInteger(0)
         val lastIngestBody = AtomicReference<String?>(null)
+        val scanCalls = AtomicInteger(0)
+        val lastScanBody = AtomicReference<String?>(null)
 
         override fun execute(request: HttpRequest): HttpResponse = when {
             request.url.contains("/agent/commands") -> {
                 if (served.getAndIncrement() < pendingCount) HttpResponse(200, pendingBody) else HttpResponse(204, "")
+            }
+
+            // scan 端点须在 ingest 之前判定：URL 含 /agent/files/scan（不与 /ingest 混淆）。
+            request.url.contains("/agent/files/scan") -> {
+                scanCalls.incrementAndGet()
+                lastScanBody.set(request.body)
+                HttpResponse(200, "")
             }
 
             request.url.contains("/agent/files/ingest") -> {
@@ -71,13 +80,29 @@ class ReverseFetchExecutorTest {
                 "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
             )
 
+            CMD_SCAN -> mapOf(
+                "id" to 9,
+                "type" to "ingest-plugins",
+                "payload" to mapOf("scope" to "group", "group" to "area1", "target" to "", "mode" to "scan"),
+            )
+
+            CMD_SUBMIT -> mapOf(
+                "id" to 10,
+                "type" to "ingest-plugins",
+                "payload" to mapOf(
+                    "scope" to "group", "group" to "area1", "target" to "", "mode" to "submit",
+                    "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
+                ),
+            )
+
             else -> emptyMap<String, Any?>()
         }
     }
 
-    /** 读盘可编排的平台桩：readPluginsTree 返回预置树并计数；同步执行 runAsync。 */
+    /** 读盘可编排的平台桩：readPluginsTree / readPluginsTreeMetadata 返回预置数据并计数；同步执行 runAsync。 */
     private class StubAdapter(private val tree: Map<String, ByteArray>) : PlatformAdapter {
         val readCalls = AtomicInteger(0)
+        val metadataCalls = AtomicInteger(0)
 
         override fun runAsync(task: () -> Unit) = task()
         override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
@@ -86,6 +111,12 @@ class ReverseFetchExecutorTest {
         override fun readPluginsTree(): Map<String, ByteArray> {
             readCalls.incrementAndGet()
             return tree
+        }
+
+        override fun readPluginsTreeMetadata(): Map<String, Long> {
+            metadataCalls.incrementAndGet()
+            // 元信息桩：由预置树字节数派生大小（scan 只关心大小，不读内容）。
+            return tree.mapValues { it.value.size.toLong() }
         }
 
         override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
@@ -187,8 +218,55 @@ class ReverseFetchExecutorTest {
         assertTrue(!body.contains("plugin.jar") && !body.contains("bin.dat"), "剔除项不应进回传：$body")
     }
 
+    @Test
+    fun `scan 模式只读元信息走 scan 端点不走 ingest`() {
+        // 含超 1MB 文件的树：scan 不应失败、列出全部（治根）。
+        val big = ByteArray((PluginIngestLimits.MAX_FILE_BYTES + 1).toInt()) { 'a'.code.toByte() }
+        val transport = FakeTransport(pendingBody = CMD_SCAN)
+        val adapter = StubAdapter(
+            mapOf(
+                "config.yml" to b("k: v"),
+                "metrics.jsonl" to big, // 超阈值
+                "plugin.jar" to b("MZ"), // 剔除
+            ),
+        )
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.metadataCalls.get(), "scan 应只 stat 元信息一次")
+        assertEquals(0, adapter.readCalls.get(), "scan 绝不读内容")
+        assertEquals(1, transport.scanCalls.get(), "应走 /agent/files/scan 一次")
+        assertEquals(0, transport.ingestCalls.get(), "scan 不走 ingest")
+        val body = transport.lastScanBody.get()!!
+        assertTrue(body.contains("commandId=9"), "scan 报文应携命令 id：$body")
+        assertTrue(body.contains("config.yml") && body.contains("metrics.jsonl"), "超阈值文件应列出（不失败）：$body")
+        assertTrue(body.contains("overThreshold=true"), "超阈值应红标：$body")
+        assertTrue(!body.contains("plugin.jar"), "jar 不应进清单")
+    }
+
+    @Test
+    fun `submit 模式只回传选定子集`() {
+        val transport = FakeTransport(pendingBody = CMD_SUBMIT) // selectedPaths = [config.yml, lang/zh.yml]
+        val adapter = StubAdapter(
+            mapOf(
+                "config.yml" to b("k: v"),
+                "lang/zh.yml" to b("hi: 你好"),
+                "secret.yml" to b("token: x"), // 未选定 → 不回传
+            ),
+        )
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.readCalls.get(), "submit 应读内容一次")
+        assertEquals(1, transport.ingestCalls.get(), "submit 走 ingest 一次")
+        assertEquals(0, transport.scanCalls.get(), "submit 不走 scan")
+        val body = transport.lastIngestBody.get()!!
+        assertTrue(body.contains("config.yml") && body.contains("lang/zh.yml"), "选定文件应回传：$body")
+        assertTrue(!body.contains("secret.yml"), "未选定不应回传：$body")
+    }
+
     companion object {
         private const val CMD_INGEST = "cmd-ingest"
         private const val CMD_UNKNOWN = "cmd-unknown"
+        private const val CMD_SCAN = "cmd-scan"
+        private const val CMD_SUBMIT = "cmd-submit"
     }
 }

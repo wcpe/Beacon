@@ -114,6 +114,55 @@ class PluginsTreeReaderTest {
         assertTrue(tree.values.any { text(it) == "k: v" }, "指向 root 内的链接应可读")
     }
 
+    // ---- readMetadata（scan 阶段，FR-58，见 ADR-0037）：只 stat 取大小、永不失败 ----
+
+    @Test
+    fun `readMetadata 取相对路径与大小`() {
+        write("config.yml", "k: v") // 4 字节
+        write("lang/zh_CN.yml", "hello: 你好")
+        val meta = PluginsTreeReader.readMetadata(root)
+        assertEquals(setOf("config.yml", "lang/zh_CN.yml"), meta.keys)
+        assertEquals(4L, meta["config.yml"], "config.yml 应为 4 字节")
+        assertTrue(meta.keys.none { it.contains('\\') }, "相对路径不应含反斜杠")
+    }
+
+    @Test
+    fun `readMetadata 含超大文件不失败列出真实大小`() {
+        // 核心：scan 对超 1MB 文件只 stat 取真实大小、绝不截断 / 读内容 / 失败（治根超限击穿）。
+        val bigLen = (PluginIngestLimits.MAX_FILE_BYTES + 4096).toInt()
+        write("huge.jsonl", "a".repeat(bigLen))
+        write("config.yml", "k: v")
+        val meta = PluginsTreeReader.readMetadata(root)
+        assertEquals(setOf("huge.jsonl", "config.yml"), meta.keys, "超大文件应列出、不失败")
+        assertEquals(bigLen.toLong(), meta["huge.jsonl"], "应为真实大小（非截断的 上限+1）")
+    }
+
+    @Test
+    fun `readMetadata 按名跳过 jar`() {
+        write("config.yml", "k: v")
+        write("SomePlugin.jar", "MZ-binary-bulk")
+        val meta = PluginsTreeReader.readMetadata(root)
+        assertEquals(setOf("config.yml"), meta.keys, "jar 应跳过")
+    }
+
+    @Test
+    fun `readMetadata 空目录与非目录读出空映射`() {
+        assertTrue(PluginsTreeReader.readMetadata(root).isEmpty())
+        assertTrue(PluginsTreeReader.readMetadata(File(root, "no-such-dir")).isEmpty())
+    }
+
+    @Test
+    fun `readMetadata 符号链接逃逸到 root 外被剔除`() {
+        File(outside, "secret.txt").apply { writeText("TOP SECRET") }
+        write("normal.yml", "k: v")
+        val link = File(root, "leak.txt").toPath()
+        if (!trySymlink(link, File(outside, "secret.txt").toPath())) return // 环境不支持 → 跳过
+
+        val meta = PluginsTreeReader.readMetadata(root)
+        assertTrue(meta.containsKey("normal.yml"), "root 内普通文件应保留")
+        assertFalse(meta.containsKey("leak.txt"), "逃逸 root 的符号链接应被剔除")
+    }
+
     /** 尝试创建符号链接；环境不支持（无权限 / FS 不支持）返回 false 供调用方跳过。 */
     private fun trySymlink(link: java.nio.file.Path, target: java.nio.file.Path): Boolean {
         return try {

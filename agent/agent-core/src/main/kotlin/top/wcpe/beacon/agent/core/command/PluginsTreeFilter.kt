@@ -61,8 +61,89 @@ object PluginsTreeFilter {
         return FilterOutcome.Accepted(kept)
     }
 
+    /**
+     * scan 模式（FR-58，见 ADR-0037）：只对**元信息**（path→size）做安全过滤 + 标注，**永不失败**。
+     *
+     * 与 [filter] 的根本区别：不读内容、不判上限失败——超阈值文件以 `overThreshold=true` 列出而非整批拒绝。
+     * 过滤口径与 [filter] 一致（不安全路径 / `.jar` 静默剔除）；isText 仅按路径名启发判定，二进制扩展名标 false
+     * （scan 不读字节，无法靠 UTF-8 解码精判；真正的内容文本判定在 submit 读内容时由 [submitFilter] 兜底）。
+     *
+     * @param metadata 相对路径（正斜杠分隔） → 文件字节大小（由壳层只 `stat` 取得，不含内容）
+     * @return 安全过滤后的元信息清单（按路径升序稳定排序；超阈值项 overThreshold=true 仍列出）
+     */
+    fun scan(metadata: Map<String, Long>): List<ScanFile> {
+        val result = ArrayList<ScanFile>(metadata.size)
+        for ((path, size) in metadata.toSortedMap()) {
+            // 排除项：路径不安全 / jar 静默剔除（与 filter 同口径）；scan 不读内容，故不在此判二进制 NUL。
+            if (!PluginsPathGuard.isSafe(path)) continue
+            if (isJar(path)) continue
+            result.add(
+                ScanFile(
+                    path = path,
+                    size = size,
+                    isText = looksTextByName(path),
+                    // 超单文件阈值：仅红标，绝不因此失败（治根：超限运行时垃圾在清单里被看见、由人决定纳入/排除）。
+                    overThreshold = size > PluginIngestLimits.MAX_FILE_BYTES,
+                ),
+            )
+        }
+        return result
+    }
+
+    /**
+     * submit 模式（FR-58，见 ADR-0037）：按选定 path **子集**读内容过滤回传。
+     *
+     * 复用既有读内容 + 安全过滤口径（[filter]），但**只处理选定集内的 path**（不在选定集的整树文件一律不回传）。
+     * 安全边界一条不松（不安全路径 / jar / 二进制仍剔除）；选定集里的超阈值文件由控制面侧"须确认"门控，
+     * agent 只忠实回传选定——故 submit **不再判单文件超限失败**，仅文件数 / 总字节作兜底（防异常巨大提交）。
+     *
+     * @param tree          整棵 plugins 树（相对路径 → 原始字节，由壳层读盘得来）
+     * @param selectedPaths 控制面选定回传的相对 path 子集
+     * @return [FilterOutcome.Accepted]（选定集内的待 ingest 文本文件，按路径升序）或 [FilterOutcome.Rejected]（兜底超限）
+     */
+    fun submitFilter(tree: Map<String, ByteArray>, selectedPaths: Collection<String>): FilterOutcome {
+        val selected = selectedPaths.toHashSet()
+        val kept = ArrayList<IngestFile>(selected.size)
+        var totalBytes = 0L
+
+        for ((path, bytes) in tree.toSortedMap()) {
+            // 只回传选定集内的 path：不在选定集的整树文件直接跳过（submit 的本质——只抓选定）。
+            if (path !in selected) continue
+            // 安全过滤口径不变（不安全路径 / jar / 二进制剔除）。
+            if (!PluginsPathGuard.isSafe(path)) continue
+            if (isJar(path)) continue
+            val text = decodeUtf8OrNull(bytes) ?: continue // 非合法 UTF-8 → 二进制，剔除
+
+            kept.add(IngestFile(path = path, content = text))
+            totalBytes += bytes.size.toLong()
+        }
+
+        // 文件数 / 总字节仅作 submit 兜底（防一次提交异常巨大）；单文件超限不再整批失败（选定集已由控制面确认）。
+        if (kept.size > PluginIngestLimits.MAX_FILES) {
+            return FilterOutcome.Rejected("提交文本文件数 ${kept.size} 超 ${PluginIngestLimits.MAX_FILES} 上限")
+        }
+        if (totalBytes > PluginIngestLimits.MAX_TOTAL_BYTES) {
+            return FilterOutcome.Rejected("提交聚合字节 $totalBytes 超 ${PluginIngestLimits.MAX_TOTAL_BYTES} 上限")
+        }
+        return FilterOutcome.Accepted(kept)
+    }
+
     /** 是否 `.jar` 后缀（不区分大小写）。 */
     private fun isJar(path: String): Boolean = path.lowercase().endsWith(".jar")
+
+    /**
+     * 按文件名后缀启发判定是否疑似文本（scan 不读字节，只能靠名）。
+     *
+     * 命中常见二进制扩展名（图片 / 压缩 / 库 / 序列化数据等）判 false；其余一律 true（保守倾向文本，
+     * 由 submit 读内容时再精判，scan 阶段宁可多标一个文本也不漏标该被人看见的配置）。
+     */
+    private fun looksTextByName(path: String): Boolean {
+        val lower = path.lowercase()
+        val dot = lower.lastIndexOf('.')
+        if (dot < 0) return true // 无扩展名（如 README）保守按文本
+        val ext = lower.substring(dot + 1)
+        return ext !in BINARY_EXTENSIONS
+    }
 
     /**
      * 严格按 UTF-8 解码字节；含 NUL 字节或非合法 UTF-8 视作二进制返回 null。
@@ -83,12 +164,44 @@ object PluginsTreeFilter {
             null // 非合法 UTF-8 → 判为二进制
         }
     }
+
+    /**
+     * scan 模式按名启发判二进制的常见扩展名集合（不含点，小写）。
+     *
+     * 仅作 scan 阶段的"疑似二进制"提示（isText=false 供前端弱化展示），不是安全边界——
+     * 真正拦二进制内容的是 submit 读字节时的 UTF-8 解码 + NUL 判定（[decodeUtf8OrNull]）。
+     */
+    private val BINARY_EXTENSIONS: Set<String> = setOf(
+        // 归档 / 库
+        "jar", "zip", "gz", "tar", "rar", "7z", "war",
+        // 图片
+        "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp",
+        // 序列化 / 数据库 / 区块数据
+        "dat", "db", "mca", "mcr", "nbt", "bin", "ser",
+        // 字体 / 音视频 / 可执行
+        "ttf", "otf", "wav", "ogg", "mp3", "class", "so", "dll", "exe",
+    )
 }
 
 /** 待 ingest 的单个文本文件（相对路径 + 文本内容）。 */
 data class IngestFile(
     val path: String,
     val content: String,
+)
+
+/**
+ * scan 模式回传的单个文件元信息（FR-58，见 ADR-0037）：只含元数据、**不含内容**。
+ *
+ * @param path          相对路径（正斜杠分隔）
+ * @param size          文件字节大小（壳层只 `stat` 取得）
+ * @param isText        是否疑似文本（scan 按名启发判定，submit 读内容时精判）
+ * @param overThreshold 是否超单文件阈值（仅红标，不致失败）
+ */
+data class ScanFile(
+    val path: String,
+    val size: Long,
+    val isText: Boolean,
+    val overThreshold: Boolean,
 )
 
 /** [PluginsTreeFilter.filter] 的结果。 */
