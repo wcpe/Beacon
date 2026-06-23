@@ -220,3 +220,51 @@ var errFakeAudit = errFake("模拟审计落库失败")
 type errFake string
 
 func (e errFake) Error() string { return string(e) }
+
+// TestAuditCoveredRoutesMatchRegisteredWriteRoutes 守护 FR-72 兜底语义不漂移：coveredWriteRoutes
+// 必须与真实路由器内 /admin/v1 鉴权组下注册的写路由「逐一相等」。
+// 方向①缺失 → 新写端点未登记会被兜底中间件与其专项审计「双记」；方向②多余 → 陈旧条目。
+// 二者任一不符即静默漂移（gap-filling 的核心风险，git 不会替你报警），本测试把它挡在 go test。
+func TestAuditCoveredRoutesMatchRegisteredWriteRoutes(t *testing.T) {
+	// 仅用于「枚举路由」的真实路由器：指针处理器留 nil（注册只取方法值、不调用，安全）；
+	// Web 须非 nil（NotFound 调 h.Web.ServeHTTP，nil 接口会 panic）；Metrics/Metric 经 nil 守卫跳过；
+	// authn/apiKeys/audit 仅被中间件闭包捕获、构造期不解引用，故传 nil 安全。
+	h := Handlers{Web: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}
+	routes, ok := NewRouter(h, "", nil, nil, nil).(chi.Routes)
+	if !ok {
+		t.Fatal("NewRouter 返回值应实现 chi.Routes")
+	}
+
+	// 登录在 /admin/v1 鉴权组之外注册（router.go）、有独立 AuthAuditService、不经兜底中间件，从对账排除。
+	const loginRoute = "POST /admin/v1/auth/login"
+
+	registered := map[string]struct{}{}
+	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if !isWriteMethod(method) || !strings.HasPrefix(route, adminAPIPrefix) {
+			return nil
+		}
+		if key := method + " " + route; key != loginRoute {
+			registered[key] = struct{}{}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("遍历路由失败: %v", err)
+	}
+	if len(registered) == 0 {
+		t.Fatal("未枚举到任何 /admin/v1 写路由，路由器构造或遍历异常")
+	}
+
+	// 方向①：每条注册的组内写路由都必须在覆盖集合（否则被兜底审计与专项审计双记）。
+	for key := range registered {
+		if _, covered := coveredWriteRoutes[key]; !covered {
+			t.Errorf("写路由 %q 已注册但不在 coveredWriteRoutes —— 会与其专项审计双记；"+
+				"该端点若确无专项审计、有意交由兜底，应在 coveredWriteRoutes 注释说明并在此显式放行", key)
+		}
+	}
+	// 方向②：覆盖集合每条都必须对应真实注册的写路由（否则是陈旧条目，pattern 写错或路由已删）。
+	for key := range coveredWriteRoutes {
+		if _, exists := registered[key]; !exists {
+			t.Errorf("coveredWriteRoutes 含陈旧条目 %q —— 对应路由未注册或 pattern 不符", key)
+		}
+	}
+}

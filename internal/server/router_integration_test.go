@@ -349,6 +349,33 @@ func TestAuditOperatorFilter(t *testing.T) {
 	}
 }
 
+// TestAuditMiddlewareCoveredNoDoubleLog 经真实路由 + DB 审计仓库 end-to-end 守护 FR-72：
+// 已被专项审计覆盖的写端点（config.create）只落「一条」专项审计、兜底中间件不重复补记。
+// 若有人误把该路由移出 coveredWriteRoutes，兜底中间件会再补记一条同 action 的空 detail 审计 → 本测试失败。
+func TestAuditMiddlewareCoveredNoDoubleLog(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// config.create 在覆盖集合内：建一条配置，触发 service 层专项审计。
+	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/configs", map[string]any{
+		"namespace": "prod", "group": "__GLOBAL__", "dataId": "audit-nodup.yml",
+		"scopeLevel": "global", "format": "yaml", "content": "k: 1\n", "operator": "alice",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("建配置应 201，实际 %d", code)
+	}
+
+	// 查 config.create 审计：应恰好 1 条（专项审计），兜底中间件未对已覆盖端点重复补记。
+	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=config.create", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查审计应 200，实际 %d", code)
+	}
+	items, _ := audits["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("config.create 应恰好 1 条审计（专项、无兜底双记），实际 %d 条", len(items))
+	}
+}
+
 // itoa 是不引入额外依赖的小工具。
 func itoa(n int) string {
 	if n == 0 {

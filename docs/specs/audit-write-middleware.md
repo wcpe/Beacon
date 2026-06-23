@@ -49,6 +49,8 @@
 - [x] `internal/server/audit_middleware.go`：兜底中间件 + 覆盖集合 + action/target 推导纯函数 + clientIP
 - [x] `internal/server/router.go`：在 `/admin/v1` 组 `readonlyWriteGuard` 之后挂载
 - [x] `internal/server/audit_middleware_test.go`：未覆盖写端点补记 / 已覆盖端点不双记 / GET 不记 / 失败 result=fail / detail 无 body
+- [x] `internal/server/audit_middleware_test.go`：**覆盖集合漂移守护** `TestAuditCoveredRoutesMatchRegisteredWriteRoutes`——枚举真实路由器 `/admin/v1` 组内写路由，与覆盖集合**逐一对账**（缺失=会双记、多余=陈旧），不连库、随 `go test` 常跑
+- [x] `internal/server/router_integration_test.go`：`TestAuditMiddlewareCoveredNoDoubleLog`——经真实路由 + DB 审计仓库 end-to-end 验已覆盖端点（config.create）**只落一条专项审计、无兜底双记**（integration tag）
 - [x] 文档同步：API.md（/admin/v1 写操作统一审计兜底说明）、本规格
 
 ## 5. 验收标准
@@ -63,6 +65,6 @@
 
 ## 6. 风险 / 待定
 
-- 覆盖集合是手维清单：新增**自带专项审计**的写端点须同步加入集合，否则会被兜底重复记一条（弱重复、不致命）；反之新增**无专项审计**的端点会被自动兜底，符合预期。
+- 覆盖集合是手维清单：新增**自带专项审计**的写端点须同步加入集合，否则会被兜底重复记一条（弱重复、不致命）；反之新增**无专项审计**的端点会被自动兜底，符合预期。**此维护约定已由 `TestAuditCoveredRoutesMatchRegisteredWriteRoutes` 漂移守护自动钉死**：覆盖集合与真实注册的 `/admin/v1` 写路由一旦不一致（漏登记或陈旧）即 `go test` 失败，无需靠人自觉。
 - 当前所有既有写端点均已带专项审计，故中间件落地后对存量端点**零新增审计**；其价值在于对未来新端点的结构性兜底。
 - 兜底审计 detail 一律为空（纯元数据），不区分端点；如需更细的 detail 由对应端点补专项审计承载，不在兜底职责内。
