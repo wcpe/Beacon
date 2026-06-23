@@ -572,6 +572,28 @@ export const zhCN = {
     sourceMerge: '来源：',
     deletedTitle: '被删除的键（{{count}} 条）',
     empty: '选择服务器查看有效文件树',
+    // ===== FR-68 全量预览（含未追踪）=====
+    // 模式切换
+    modeEffective: '有效树预览',
+    modeFull: '全量预览（含未追踪）',
+    // 全量预览源选择与触发
+    fullSourceLabel: '扫描源（在线服务器）：',
+    fullSourceRequired: '请先选择在线扫描源',
+    fullTriggerBtn: '全量预览（含未追踪）',
+    fullScanning: '扫描中…',
+    fullScanningHint: '正在扫描 {{serverId}} 的 plugins/ 磁盘文件…',
+    fullFailed: '扫描失败（实例可能离线或 agent 无响应），请重试',
+    fullNoFiles: '该服务器 plugins/ 下无文件',
+    fullNoOnline: '暂无在线 bukkit 服务器可作扫描源',
+    fullEmpty: '选在线服务器后点「全量预览」，扫描其 plugins/ 全量文件并区分追踪 / 未追踪',
+    fullCount: '全量 {{count}} 个文件',
+    // 追踪态徽标
+    trackedBadge: '追踪',
+    untrackedBadge: '未追踪',
+    // 追踪文件合并查看 / 未追踪纳管入口
+    fullViewMerge: '查看合并',
+    fullCollapse: '收起',
+    fullToReverseFetch: '→ 去反向抓取纳管',
   },
 
   // ===== 拓印审核台页 =====

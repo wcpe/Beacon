@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { EffectiveFileTreeView } from '../../api/client'
 import type { InstanceView } from '../../api/types'
+import FileMergeCard from './FileMergeCard'
 
 export default function FileEffectivePreview({
   instances,
@@ -65,50 +66,7 @@ export default function FileEffectivePreview({
           <ScrollArea className="flex-1">
             <div className="p-3 space-y-3">
               {data.files.map((file) => (
-                <div key={file.path} className="rounded border border-border overflow-hidden">
-                  <div className="px-2 py-1 bg-muted/30 text-xs font-medium flex items-center justify-between gap-2">
-                    <span className="font-mono break-all">{file.path}</span>
-                    <span className="flex items-center gap-1 shrink-0">
-                      {file.wholeFile ? (
-                        <Badge variant="secondary" className="text-[0.6rem]">
-                          {t('filePreview.wholeFile')}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[0.6rem]">
-                          {t('filePreview.deepMerge')}
-                        </Badge>
-                      )}
-                      <span className="text-muted-foreground font-mono">md5: {file.md5.slice(0, 8)}</span>
-                    </span>
-                  </div>
-                  <pre className="p-2 text-xs font-mono whitespace-pre-wrap bg-background border-t border-border max-h-[200px] overflow-y-auto">
-                    {file.content}
-                  </pre>
-                  {file.sources.length > 0 && (
-                    <div className="px-2 py-1 bg-muted/10 border-t border-border">
-                      <span className="text-[0.65rem] text-muted-foreground">
-                        {file.wholeFile ? t('filePreview.sourceWholeFile') : t('filePreview.sourceMerge')}
-                      </span>
-                      {file.sources.map((src, idx) => (
-                        <span key={idx} className="ml-1 text-[0.65rem] text-blue-600">
-                          {src.path.length > 0 ? `${src.path.join('.')} (${src.scope})` : src.scope}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  {file.deletions.length > 0 && (
-                    <div className="bg-red-50/50 border-t border-red-100">
-                      <div className="px-2 py-1 text-[0.65rem] font-medium text-red-600">
-                        {t('filePreview.deletedTitle', { count: file.deletions.length })}
-                      </div>
-                      {file.deletions.map((del, idx) => (
-                        <div key={idx} className="px-2 py-0.5 text-[0.65rem] text-red-500 font-mono">
-                          {del.path.join('.')} ({del.scope})
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <FileMergeCard key={file.path} file={file} />
               ))}
             </div>
           </ScrollArea>
