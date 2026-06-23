@@ -105,10 +105,15 @@ describe('ConfigsPage', () => {
     expect(screen.getByText('新版本')).toBeInTheDocument()
   })
 
-  it('点击保存调用 publishConfig', async () => {
+  it('点击保存先弹确认对话框，确认才调用 publishConfig（FR-67）', async () => {
     renderPage(<ConfigsPage />)
     await userEvent.click(await screen.findByText('app.yml'))
+    // 点保存：先弹保存确认对话框，尚未发布
     await userEvent.click(await screen.findByRole('button', { name: /保存/ }))
+    expect(await screen.findByText('保存确认')).toBeInTheDocument()
+    expect(vi.mocked(publishConfig)).not.toHaveBeenCalled()
+    // 确认保存 → 才以当前编辑态内容 + 备注调 publishConfig
+    await userEvent.click(screen.getByRole('button', { name: '确认保存' }))
     await waitFor(() =>
       expect(vi.mocked(publishConfig)).toHaveBeenCalledWith(1, expect.any(String), '管理台保存'),
     )

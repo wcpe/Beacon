@@ -19,6 +19,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import ImportPreviewModal from './ImportPreviewModal'
 
 // webkitdirectory 属性非标准 DOM 类型，单独声明以便在 input 上使用而不触发 TS 报错。
 type DirInputProps = React.InputHTMLAttributes<HTMLInputElement> & {
@@ -51,6 +52,8 @@ export default function ImportFilesDialog({
   const [namespace, setNamespace] = useState('')
   const [group, setGroup] = useState('')
   const [entries, setEntries] = useState<ImportFileEntry[]>([])
+  // 预览审批模态开合（FR-66）：选完文件先预览，审阅确认才真正导入。
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   // 打开时重置选择：环境缺省取列表首项，组与文件清空待选。
   useEffect(() => {
@@ -58,6 +61,7 @@ export default function ImportFilesDialog({
       setNamespace(namespaces[0]?.value ?? '')
       setGroup('')
       setEntries([])
+      setPreviewOpen(false)
     }
   }, [open, namespaces])
 
@@ -65,6 +69,7 @@ export default function ImportFilesDialog({
     mutationFn: () => importFiles(namespace, group, entries),
     onSuccess: (r) => {
       msg.showSuccess(t('configs.msgImported', { files: r.files, created: r.created, updated: r.updated }))
+      setPreviewOpen(false)
       setOpen(false)
       // 失效文件相关缓存，刷新文件树
       qc.invalidateQueries({ queryKey: ['files'] })
@@ -72,7 +77,8 @@ export default function ImportFilesDialog({
     onError: (e: Error) => msg.showError(e.message),
   })
 
-  function onImport(e: React.FormEvent) {
+  // 点「预览」：先校验目标齐备与已选文件，再打开预览审批模态（不直接导入）。
+  function onPreview(e: React.FormEvent) {
     e.preventDefault()
     if (!namespace) {
       msg.showError(t('configs.importNsRequired'))
@@ -86,7 +92,7 @@ export default function ImportFilesDialog({
       msg.showError(t('configs.importFilesRequired'))
       return
     }
-    importMut.mutate()
+    setPreviewOpen(true)
   }
 
   return (
@@ -100,7 +106,7 @@ export default function ImportFilesDialog({
         <DialogHeader>
           <DialogTitle>{t('configs.importTitle')}</DialogTitle>
         </DialogHeader>
-        <form id="import-files" onSubmit={onImport} className="grid grid-cols-2 gap-3">
+        <form id="import-files" onSubmit={onPreview} className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label htmlFor="imp-namespace">{t('common.namespace')}</Label>
             {/* 环境严格选：须为已存在 namespace（FR-51） */}
@@ -151,11 +157,23 @@ export default function ImportFilesDialog({
           )}
         </form>
         <DialogFooter>
+          {/* 「预览」改为先打开审批模态，模态内「确认导入」才真正调 importFiles（FR-66） */}
           <Button type="submit" form="import-files" disabled={importMut.isPending}>
-            {importMut.isPending ? t('configs.importing') : t('configs.importSubmit')}
+            {t('configs.importPreviewBtn')}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* 上传预览审批模态：审阅确认才真正导入；取消不入库（FR-66） */}
+      <ImportPreviewModal
+        open={previewOpen}
+        entries={entries}
+        namespace={namespace}
+        group={group}
+        pending={importMut.isPending}
+        onConfirm={() => importMut.mutate()}
+        onCancel={() => setPreviewOpen(false)}
+      />
     </Dialog>
   )
 }

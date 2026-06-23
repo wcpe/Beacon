@@ -43,6 +43,7 @@ import ImportFilesDialog from './configs/ImportFilesDialog'
 import ReverseFetchDialog from './configs/ReverseFetchDialog'
 import ConfigTabBar from './configs/ConfigTabBar'
 import ConfigEditorPane from './configs/ConfigEditorPane'
+import ConfigSaveConfirmDialog from './configs/ConfigSaveConfirmDialog'
 import type { OpenTab, TreeNode } from './configs/types'
 
 export default function ConfigsPage() {
@@ -68,6 +69,10 @@ export default function ConfigsPage() {
   // 新建对话框：开合与预填初值（「复制到实例」复用同一对话框，预填后唤起）
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitial, setCreateInitial] = useState<CreateConfigParams | undefined>()
+
+  // 保存确认对话框（FR-67）：保存前先看 diff + 填备注，确认才发布。
+  const [saveConfirmOpen, setSaveConfirmOpen] = useState(false)
+  const [saveComment, setSaveComment] = useState('')
 
   // 新建对话框动态选项：环境 / 大区 / 小区 / 实例（均由既有 list 端点派生，无硬编码）
   // 环境候选显示「编码 · 名称」，真实值仍是 code（FR-70）
@@ -161,6 +166,7 @@ export default function ConfigsPage() {
       publishConfig(params.id, params.content, params.comment),
     onSuccess: (r) => {
       msg.showSuccess(t('configs.msgSaved', { version: r.version }))
+      setSaveConfirmOpen(false)
       qc.invalidateQueries({ queryKey: ['configs'] })
       // 同时失效当前配置的历史修订，保存后历史面板即时刷新出新版本
       qc.invalidateQueries({ queryKey: ['config-revisions'] })
@@ -168,23 +174,30 @@ export default function ConfigsPage() {
     onError: (e: Error) => msg.showError(e.message),
   })
 
-  // 保存当前标签
-  const saveCurrentTab = useCallback(() => {
+  // 点保存：不直接发布，先打开保存确认对话框（看 diff + 填备注）（FR-67）
+  const requestSave = useCallback(() => {
     if (!activeTab) return
-    saveMut.mutate({ id: activeTab.configId, content: activeTab.content, comment: t('configs.saveComment') })
-  }, [activeTab, saveMut, t])
+    setSaveComment(t('configs.saveComment'))
+    setSaveConfirmOpen(true)
+  }, [activeTab, t])
 
-  // Ctrl+S 全局快捷键
+  // 确认保存：对话框内确认才真正发布当前编辑态内容
+  const confirmSave = useCallback(() => {
+    if (!activeTab) return
+    saveMut.mutate({ id: activeTab.configId, content: activeTab.content, comment: saveComment })
+  }, [activeTab, saveMut, saveComment])
+
+  // Ctrl+S 全局快捷键：唤起保存确认对话框（确认才发布）
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
-        saveCurrentTab()
+        requestSave()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [saveCurrentTab])
+  }, [requestSave])
 
   // 从配置列表构建文件树（受 selectedTarget 过滤）
   const treeData = useMemo(() => {
@@ -328,7 +341,7 @@ export default function ConfigsPage() {
               onSetView={(m) => tabs.setViewMode(activeTab.configId, m)}
               onActivateEffective={() => tabs.activateEffective(activeTab)}
               editor={{ onChange: (content) => tabs.setTabContent(activeTab.configId, content) }}
-              save={{ onSave: saveCurrentTab, saving: saveMut.isPending }}
+              save={{ onSave: requestSave, saving: saveMut.isPending }}
               onCopyToInstance={() => copyToInstance(activeTab)}
               diff={{
                 versionNumbers,
@@ -359,6 +372,24 @@ export default function ConfigsPage() {
                 <p className="mt-1 text-xs">{t('configs.emptyHintLine2')}</p>
               </div>
             </div>
+          )}
+
+          {/* 保存确认对话框（FR-67）：diff（上一保存版本 ⟷ 当前编辑态）+ 备注，确认才发布 */}
+          {activeTab && (
+            <ConfigSaveConfirmDialog
+              open={saveConfirmOpen}
+              namespace={activeTab.namespace}
+              group={activeTab.group}
+              dataId={activeTab.dataId}
+              format={activeTab.format}
+              originalContent={detail.data?.content ?? ''}
+              currentContent={activeTab.content}
+              comment={saveComment}
+              pending={saveMut.isPending}
+              onCommentChange={setSaveComment}
+              onConfirm={confirmSave}
+              onCancel={() => setSaveConfirmOpen(false)}
+            />
           )}
         </div>
       </div>

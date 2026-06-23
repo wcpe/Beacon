@@ -1,5 +1,5 @@
-// ImportFilesDialog 关键路径测试（FR-38）：
-// 打开对话框 → 选目标组 → 选文件 → 点导入 → 以正确入参调用 importFiles。
+// ImportFilesDialog 关键路径测试（FR-38 + FR-66 预览审批）：
+// 打开对话框 → 选目标组 → 选文件 → 点预览 → 预览模态出现 → 勾审阅 → 确认导入 → 以正确入参调用 importFiles。
 // api/client 被 mock，保证用例在 jsdom 下稳定可跑。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
@@ -34,7 +34,7 @@ beforeEach(() => {
 const NS_OPTS = [{ value: 'prod', label: 'prod · 生产' }]
 
 describe('ImportFilesDialog', () => {
-  it('选组与文件后点导入，以正确入参调用 importFiles', async () => {
+  it('选组与文件后点预览，审阅确认才以正确入参调用 importFiles', async () => {
     renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
 
     // 打开对话框
@@ -52,8 +52,16 @@ describe('ImportFilesDialog', () => {
     await userEvent.upload(fileInput, [f1, f2])
     expect(await screen.findByText('已选 2 个文件')).toBeInTheDocument()
 
-    // 点导入
-    await userEvent.click(screen.getByRole('button', { name: '导入' }))
+    // 点预览：先弹审批模态、列出待传清单，尚未调 importFiles（FR-66）
+    await userEvent.click(screen.getByRole('button', { name: '预览' }))
+    expect(await screen.findByText('上传预览审批')).toBeInTheDocument()
+    expect(screen.getByText('config.yml')).toBeInTheDocument()
+    expect(screen.getByText('zh.yml')).toBeInTheDocument()
+    expect(vi.mocked(importFiles)).not.toHaveBeenCalled()
+
+    // 勾「我已审阅」→ 确认导入 → 才以正确入参调用 importFiles
+    await userEvent.click(screen.getByLabelText('我已审阅全部待传内容'))
+    await userEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
     await waitFor(() => {
       expect(vi.mocked(importFiles)).toHaveBeenCalledWith(
@@ -67,7 +75,72 @@ describe('ImportFilesDialog', () => {
     })
   })
 
-  it('未选目标组时不调用 importFiles', async () => {
+  it('未勾审阅时点确认导入不调用 importFiles（审阅闸）', async () => {
+    renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
+    await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
+    const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
+    await userEvent.upload(fileInput, [new File(['x\n'], 'a.yml', { type: 'text/yaml' })])
+
+    await userEvent.click(screen.getByRole('button', { name: '预览' }))
+    await screen.findByText('上传预览审批')
+    // 未勾审阅 → 确认按钮禁用，不发请求
+    expect(screen.getByRole('button', { name: '确认导入' })).toBeDisabled()
+    expect(vi.mocked(importFiles)).not.toHaveBeenCalled()
+  })
+
+  it('预览取消不入库（不调用 importFiles）', async () => {
+    renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
+    await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
+    const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
+    await userEvent.upload(fileInput, [new File(['x\n'], 'a.yml', { type: 'text/yaml' })])
+
+    await userEvent.click(screen.getByRole('button', { name: '预览' }))
+    await screen.findByText('上传预览审批')
+    await userEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(vi.mocked(importFiles)).not.toHaveBeenCalled()
+  })
+
+  it('文本文件预览读出并展示内容（FileReader）', async () => {
+    renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
+    await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
+    const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
+    await userEvent.upload(fileInput, [new File(['port: 25565\n'], 'cfg.yml', { type: 'text/yaml' })])
+
+    await userEvent.click(screen.getByRole('button', { name: '预览' }))
+    await screen.findByText('上传预览审批')
+    // 首个文件默认选中 → 异步读出文本内容并渲染
+    expect(await screen.findByText('port: 25565')).toBeInTheDocument()
+  })
+
+  it('二进制文件标记为二进制 Badge（不读内容）', async () => {
+    renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
+    await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(screen.getByLabelText('目标组'))
+    await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
+    const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
+    // .bin 无文本后缀、application/octet-stream → 判二进制
+    const bin = new File([new Uint8Array([0, 1, 2, 3])], 'data.bin', { type: 'application/octet-stream' })
+    await userEvent.upload(fileInput, [bin])
+
+    await userEvent.click(screen.getByRole('button', { name: '预览' }))
+    await screen.findByText('上传预览审批')
+    // 选中二进制文件 → 列出二进制 Badge 且内容区提示不预览
+    await userEvent.click(screen.getByRole('button', { name: 'data.bin' }))
+    expect(screen.getByText('二进制')).toBeInTheDocument()
+    expect(screen.getByText('二进制文件不预览内容')).toBeInTheDocument()
+  })
+
+  it('未选目标组时不打开预览、不调用 importFiles', async () => {
     renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
     await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
     const dialog = await screen.findByRole('dialog')
@@ -75,8 +148,9 @@ describe('ImportFilesDialog', () => {
     const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
     await userEvent.upload(fileInput, [new File(['x\n'], 'a.yml')])
 
-    await userEvent.click(screen.getByRole('button', { name: '导入' }))
-    // 组为空：校验拦截，不发请求
+    await userEvent.click(screen.getByRole('button', { name: '预览' }))
+    // 组为空：校验拦截，不开预览、不发请求
+    expect(screen.queryByText('上传预览审批')).not.toBeInTheDocument()
     expect(vi.mocked(importFiles)).not.toHaveBeenCalled()
   })
 })
