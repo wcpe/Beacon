@@ -30,10 +30,12 @@ vi.mock('./dashboard/TrendChart', () => ({
 vi.mock('../api/client', () => ({
   metricsSummary: vi.fn(),
   metricsTrend: vi.fn(),
+  // FR-51：环境筛选框下拉候选来源
+  listNamespaces: vi.fn(),
 }))
 
 import DashboardPage from './DashboardPage'
-import { metricsSummary, metricsTrend } from '../api/client'
+import { metricsSummary, metricsTrend, listNamespaces } from '../api/client'
 import type { MetricsSummary, MetricsTrend } from '../api/client'
 
 // 当前快照样例：含一个有效 CPU 平均与两服明细
@@ -90,6 +92,7 @@ function renderPage(ui: ReactElement) {
 beforeEach(() => {
   vi.mocked(metricsSummary).mockResolvedValue(SUMMARY)
   vi.mocked(metricsTrend).mockResolvedValue(TREND)
+  vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
 })
 
 describe('DashboardPage', () => {

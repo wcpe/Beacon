@@ -1,6 +1,6 @@
 // ProxiesPage 单测（FR-52，代理服管理页）：
-// 覆盖「未选环境不发请求/出提示 → 查询后按 role=bungee 拉 BC 实例 + 拉默认入口 →
-// 逐台展示状态/zone/连接数/线程/运行时长/后端可达·延迟/后端清单/所属小区默认入口 →
+// 覆盖「进页默认聚合全部环境拉 BC（不再要求先输入环境）→ 按环境筛选后按 role=bungee 重新拉取 +
+// 拉默认入口 → 逐台展示状态/zone/连接数/线程/运行时长/后端可达·延迟/后端清单/所属小区默认入口 →
 // 后端延迟 -1 显示『不可用』/无后端显示『无后端』 → 无 BC 空态」。
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -13,10 +13,12 @@ import type { ReactElement } from 'react'
 vi.mock('../api/client', () => ({
   listInstances: vi.fn(),
   listDefaultEntries: vi.fn(),
+  // FR-51：环境筛选框下拉候选来源
+  listNamespaces: vi.fn(),
 }))
 
 import ProxiesPage from './ProxiesPage'
-import { listInstances, listDefaultEntries } from '../api/client'
+import { listInstances, listDefaultEntries, listNamespaces } from '../api/client'
 import type { InstanceView, DefaultEntryView } from '../api/types'
 
 // 构造一台 BC（bungee）实例：默认填齐必填字段，overrides 覆盖关注项
@@ -70,32 +72,39 @@ function renderPage(ui: ReactElement) {
 beforeEach(() => {
   vi.mocked(listInstances).mockReset()
   vi.mocked(listDefaultEntries).mockReset()
+  vi.mocked(listNamespaces).mockReset()
   vi.mocked(listInstances).mockResolvedValue([bc({})])
   vi.mocked(listDefaultEntries).mockResolvedValue([ENTRY])
+  vi.mocked(listNamespaces).mockResolvedValue([
+    { code: 'prod', name: '生产' },
+    { code: 'test', name: '测试' },
+  ])
 })
 
 describe('ProxiesPage', () => {
-  it('未选环境时不发请求并展示提示', () => {
+  it('进页默认聚合全部环境拉取 BC（namespace 留空，无需先输入）', async () => {
     renderPage(<ProxiesPage />)
-    expect(screen.getByText(/请先在上方输入环境并查询/)).toBeInTheDocument()
-    expect(vi.mocked(listInstances)).not.toHaveBeenCalled()
-    expect(vi.mocked(listDefaultEntries)).not.toHaveBeenCalled()
+    // 进页即按 role=bungee 拉取，namespace 留空（聚合全部环境）
+    await waitFor(() =>
+      expect(vi.mocked(listInstances)).toHaveBeenCalledWith({ namespace: undefined, role: 'bungee' }),
+    )
+    expect(vi.mocked(listDefaultEntries)).toHaveBeenCalledWith(undefined)
+    // 默认即展示出 BC 卡片，不再有「请先输入环境」提示
+    expect(await screen.findByTestId('proxy-card-bc-1')).toBeInTheDocument()
   })
 
-  it('查询某环境后按 role=bungee 拉取 BC 实例与该环境默认入口', async () => {
+  it('按环境筛选后以该 namespace 重新拉取 BC 实例与默认入口', async () => {
     renderPage(<ProxiesPage />)
+    // 环境筛选为可编辑 combobox：键入即生效，无需点查询按钮
     await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     await waitFor(() =>
       expect(vi.mocked(listInstances)).toHaveBeenCalledWith({ namespace: 'prod', role: 'bungee' }),
     )
-    expect(vi.mocked(listDefaultEntries)).toHaveBeenCalledWith('prod')
+    await waitFor(() => expect(vi.mocked(listDefaultEntries)).toHaveBeenCalledWith('prod'))
   })
 
   it('逐台展示底层参数与后端清单、所属小区默认入口', async () => {
     renderPage(<ProxiesPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     const card = await screen.findByTestId('proxy-card-bc-1')
     const scoped = within(card)
     // 连接数 / 线程 / 后端可达性
@@ -126,8 +135,6 @@ describe('ProxiesPage', () => {
       }),
     ])
     renderPage(<ProxiesPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     const card = await screen.findByTestId('proxy-card-bc-1')
     const scoped = within(card)
     expect(scoped.getByText('不可用')).toBeInTheDocument()
@@ -147,8 +154,6 @@ describe('ProxiesPage', () => {
       { namespace: 'prod', group: 'area2', zone: 'z1', defaultServerId: 'entry-area2', updatedAt: '' },
     ])
     renderPage(<ProxiesPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
     const card1 = await screen.findByTestId('proxy-card-bc-area1')
     const card2 = await screen.findByTestId('proxy-card-bc-area2')
     // 各大区卡片只显示自己大区同名 zone 的默认入口，不被另一大区覆盖
@@ -159,8 +164,6 @@ describe('ProxiesPage', () => {
   it('无 BC 实例时展示空态提示', async () => {
     vi.mocked(listInstances).mockResolvedValue([])
     renderPage(<ProxiesPage />)
-    await userEvent.type(screen.getByLabelText('环境'), 'prod')
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
-    expect(await screen.findByText('该环境暂无在线 BC 代理。')).toBeInTheDocument()
+    expect(await screen.findByText('暂无在线 BC 代理。')).toBeInTheDocument()
   })
 })

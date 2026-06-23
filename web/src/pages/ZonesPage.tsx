@@ -322,15 +322,40 @@ export default function ZonesPage() {
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
-              <Input id="f-namespace" value={fNamespace} onChange={(e) => setFNamespace(e.target.value)} />
+              {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
+              <Combobox
+                id="f-namespace"
+                aria-label={t('common.namespace')}
+                className="w-40"
+                value={fNamespace}
+                onChange={setFNamespace}
+                options={namespaceOptions}
+                allowCustom
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="f-group">{t('common.group')}</Label>
-              <Input id="f-group" value={fGroup} onChange={(e) => setFGroup(e.target.value)} />
+              <Combobox
+                id="f-group"
+                aria-label={t('common.group')}
+                className="w-40"
+                value={fGroup}
+                onChange={setFGroup}
+                options={groupOptions}
+                allowCustom
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="f-zone">{t('common.zone')}</Label>
-              <Input id="f-zone" value={fZone} onChange={(e) => setFZone(e.target.value)} />
+              <Combobox
+                id="f-zone"
+                aria-label={t('common.zone')}
+                className="w-40"
+                value={fZone}
+                onChange={setFZone}
+                options={zoneOptions}
+                allowCustom
+              />
             </div>
             <Button type="submit">{t('common.query')}</Button>
           </form>

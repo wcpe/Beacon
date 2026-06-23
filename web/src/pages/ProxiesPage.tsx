@@ -1,24 +1,23 @@
-// 代理服管理页（FR-52，独立页）：集中、透明展示某环境下所有 BC（bungee 代理）运行态——
+// 代理服管理页（FR-52，独立页）：集中、透明展示 BC（bungee 代理）运行态——
 // 状态 + 底层参数（连接数 / 线程 / 运行时长 / 后端可达性·延迟，FR-34）、后端子服清单（FR-36）、
 // 所属小区默认入口（FR-48）、所属 zone。只读呈现既有事实，不做任何写操作 / 调度。
-// 实例端点按 role=bungee 过滤要求 namespace，故先选环境再出页；React Query 轮询刷新（与拓扑/实例页一致）。
+// 进页默认聚合全部环境的 BC，可按环境（namespace）下拉筛选（FR-51）；React Query 轮询刷新（与拓扑/实例页一致）。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { useQuery } from '@tanstack/react-query'
 import { Cpu, DoorOpen, Network, Plug, Server, Timer } from 'lucide-react'
-import { listDefaultEntries, listInstances } from '../api/client'
+import { listDefaultEntries, listInstances, listNamespaces } from '../api/client'
 import type { InstanceView } from '../api/types'
 import { formatDuration } from '../api/format'
 import StatCard from './dashboard/StatCard'
 import StatusBadge from '../components/StatusBadge'
 import AsyncSection from '@/components/AsyncSection'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { Combobox } from '@/components/ui/combobox'
 
 // 轮询周期（毫秒），与实例与健康页 / 拓扑页一致
 const REFETCH_MS = 5000
@@ -35,23 +34,28 @@ function latencyText(t: TFunction, ms: number): string {
 
 export default function ProxiesPage() {
   const { t } = useTranslation()
-  // 输入框为待提交值，namespace 为已生效查询值（实例 role 过滤需 namespace，空则不查询）
-  const [nsInput, setNsInput] = useState('')
+  // 环境过滤（可编辑下拉，FR-51）：空表示聚合全部环境，进页默认即展示全部 BC。
   const [namespace, setNamespace] = useState('')
 
-  // 只拉 bc（bungee）实例：含状态 / zone / 后端清单 / proxy 底层参数（FR-34/36）
+  // 环境下拉候选来自 listNamespaces；筛选框允许键入候选外的值（可编辑）。
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
+  const namespaceOptions = useMemo(
+    () => (namespacesQuery.data ?? []).map((n) => n.code),
+    [namespacesQuery.data],
+  )
+
+  // 只拉 bc（bungee）实例：含状态 / zone / 后端清单 / proxy 底层参数（FR-34/36）。
+  // 空 namespace 聚合全部环境，与看板「留空聚合全部环境」口径一致。
   const proxies = useQuery({
     queryKey: ['proxies', namespace],
-    queryFn: () => listInstances({ namespace, role: 'bungee' }),
-    enabled: namespace !== '',
+    queryFn: () => listInstances({ namespace: namespace || undefined, role: 'bungee' }),
     refetchInterval: REFETCH_MS,
   })
 
-  // 该环境各小区默认入口（FR-48）：按 BC 所属 zone 索引出其默认入口 serverId
+  // 各小区默认入口（FR-48）：按 BC 所属 (group, zone) 索引出其默认入口 serverId
   const entries = useQuery({
     queryKey: ['default-entries', namespace],
-    queryFn: () => listDefaultEntries(namespace),
-    enabled: namespace !== '',
+    queryFn: () => listDefaultEntries(namespace || undefined),
     refetchInterval: REFETCH_MS,
   })
 
@@ -60,11 +64,6 @@ export default function ProxiesPage() {
   const entryByZone = new Map<string, string>()
   for (const e of entries.data ?? []) {
     entryByZone.set(`${e.group}/${e.zone}`, e.defaultServerId)
-  }
-
-  function onSearch(e: React.FormEvent) {
-    e.preventDefault()
-    setNamespace(nsInput.trim())
   }
 
   const list = proxies.data ?? []
@@ -78,18 +77,22 @@ export default function ProxiesPage() {
 
       <Card>
         <CardContent className="space-y-3">
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="p-namespace">{t('common.namespace')}</Label>
-              <Input
+              {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境 */}
+              <Combobox
                 id="p-namespace"
+                aria-label={t('common.namespace')}
+                className="w-40"
                 placeholder={t('proxies.nsPlaceholder')}
-                value={nsInput}
-                onChange={(e) => setNsInput(e.target.value)}
+                value={namespace}
+                onChange={setNamespace}
+                options={namespaceOptions}
+                allowCustom
               />
             </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
+          </div>
           <p className="text-sm text-muted-foreground">
             {t('proxies.desc')}
           </p>
@@ -98,27 +101,21 @@ export default function ProxiesPage() {
 
       <Card>
         <CardContent>
-          {namespace === '' ? (
-            <p className="py-12 text-center text-sm text-muted-foreground">
-              {t('proxies.noNamespace')}
-            </p>
-          ) : (
-            <AsyncSection isLoading={proxies.isLoading} isError={proxies.isError} error={proxies.error}>
-              {list.length === 0 ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">{t('proxies.noProxies')}</p>
-              ) : (
-                <div className="space-y-4">
-                  {list.map((p) => (
-                    <ProxyCard
-                      key={`${p.namespace}/${p.serverId}`}
-                      proxy={p}
-                      defaultEntry={p.zone ? entryByZone.get(`${p.group}/${p.zone}`) : undefined}
-                    />
-                  ))}
-                </div>
-              )}
-            </AsyncSection>
-          )}
+          <AsyncSection isLoading={proxies.isLoading} isError={proxies.isError} error={proxies.error}>
+            {list.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">{t('proxies.noProxies')}</p>
+            ) : (
+              <div className="space-y-4">
+                {list.map((p) => (
+                  <ProxyCard
+                    key={`${p.namespace}/${p.serverId}`}
+                    proxy={p}
+                    defaultEntry={p.zone ? entryByZone.get(`${p.group}/${p.zone}`) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </AsyncSection>
         </CardContent>
       </Card>
     </div>

@@ -392,10 +392,9 @@ export const zhCN = {
   // ===== 代理服管理页 =====
   proxies: {
     title: '代理服管理',
-    nsPlaceholder: '如 prod / test',
-    desc: '只读呈现该环境全部 BC（bungee 代理）运行态：状态 + 连接数 / 线程 / 运行时长 / 后端可达性·延迟、后端子服清单、所属小区默认入口。',
-    noNamespace: '请先在上方输入环境并查询，以查看该环境的 BC 代理运行态。',
-    noProxies: '该环境暂无在线 BC 代理。',
+    nsPlaceholder: '留空聚合全部环境',
+    desc: '只读呈现 BC（bungee 代理）运行态：状态 + 连接数 / 线程 / 运行时长 / 后端可达性·延迟、后端子服清单、所属小区默认入口。默认展示全部环境，可按环境筛选。',
+    noProxies: '暂无在线 BC 代理。',
     groupLabel: '大区 {{group}}',
     zoneUnassigned: '小区未分配',
     zoneLabel: '小区 {{zone}}',

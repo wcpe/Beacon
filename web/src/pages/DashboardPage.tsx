@@ -5,10 +5,10 @@
 // 每服明细按 role 分组（bukkit / bungee 各一表）。
 // 边界：只展示负载数字（健康事实），绝不展示任何玩家名单 / 身份（后端也不返回）。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { metricsSummary, metricsTrend } from '../api/client'
+import { listNamespaces, metricsSummary, metricsTrend } from '../api/client'
 import type { ServerPlayers, TrendWindow } from '../api/client'
 import { formatBytes } from '../api/format'
 import SummaryCards from './dashboard/SummaryCards'
@@ -16,10 +16,9 @@ import BCPanel from './dashboard/BCPanel'
 import TrendChart from './dashboard/TrendChart'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { Combobox } from '@/components/ui/combobox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 // 总览快照刷新周期（毫秒）：与实例健康页一致，短周期反映当前负载
@@ -41,10 +40,16 @@ type ServerRow = ServerPlayers
 
 export default function DashboardPage() {
   const { t } = useTranslation()
-  // 环境过滤：输入框为待提交值，namespace 为已生效查询值（空表示聚合全部环境）
-  const [nsInput, setNsInput] = useState('')
+  // 环境过滤（可编辑下拉，FR-51）：空表示聚合全部环境，进页默认即聚合全部。
   const [namespace, setNamespace] = useState('')
   const [window, setWindow] = useState<TrendWindow>('1h')
+
+  // 环境下拉候选来自 listNamespaces；筛选框允许键入候选外的值（可编辑）。
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
+  const namespaceOptions = useMemo(
+    () => (namespacesQuery.data ?? []).map((n) => n.code),
+    [namespacesQuery.data],
+  )
 
   const summaryQuery = useQuery({
     queryKey: ['metrics-summary', namespace],
@@ -56,11 +61,6 @@ export default function DashboardPage() {
     queryKey: ['metrics-trend', namespace, window],
     queryFn: () => metricsTrend({ namespace: namespace || undefined, window }),
   })
-
-  function onSearch(e: React.FormEvent) {
-    e.preventDefault()
-    setNamespace(nsInput.trim())
-  }
 
   const isFetching = summaryQuery.isFetching || trendQuery.isFetching
   const points = trendQuery.data?.points ?? []
@@ -96,18 +96,22 @@ export default function DashboardPage() {
 
       <Card>
         <CardContent>
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="d-namespace">{t('common.namespace')}</Label>
-              <Input
+              {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境 */}
+              <Combobox
                 id="d-namespace"
+                aria-label={t('common.namespace')}
+                className="w-40"
                 placeholder={t('dashboard.nsPlaceholder')}
-                value={nsInput}
-                onChange={(e) => setNsInput(e.target.value)}
+                value={namespace}
+                onChange={setNamespace}
+                options={namespaceOptions}
+                allowCustom
               />
             </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
+          </div>
         </CardContent>
       </Card>
 

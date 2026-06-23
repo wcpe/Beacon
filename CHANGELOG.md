@@ -11,6 +11,7 @@
 
 ### 变更
 - BC 后端可达性探测由 MC status-ping 改 TCP 连接（FR-34，[ADR-0035](docs/adr/0035-backend-reachability-tcp-connect.md) 修订 ADR-0025 决策1/3 的探测机制，见 [docs/specs/bc-proxy-metrics.md](docs/specs/bc-proxy-metrics.md)）：真机暴露——在线、玩家可正常连入的代理后端常因开启转发（bungeecord / 现代 proxy forwarding）而**不应答** MC server-list-ping（外部裸 status-ping 实测 TCP 握手成功但 status 请求 recv 超时），致 `ServerInfo.ping` 对可达后端**恒判不可达**（看板「后端可达性」恒 0/N，加大 ping 超时无效——后端根本不应答而非慢）。改为对代理目录里每个后端的 socket 地址并发发起一次带超时的 **TCP 连接探测**——端口可连即可达（RTT 取连接耗时）、连接被拒 / 超时即不可达；下沉为 core 平台无关纯 JDK `TcpBackendProbe`（与聚合纯函数 `BackendReachability` 同包、含真实 socket 单测），bungee 壳 `BungeeProxyMetricsCollector` 仅取各后端 `socketAddress` 委托、在守护线程池并发**不碰 MC 主线程**。可达性 / 延迟语义、上报契约、`metric_sample` 落库列、前端展示**零改动**（仅换探测实现）。另加 `[BC可达性]` 去重 WARN：探测异常 / 空目录时变化才打一条便于运维定位（不刷屏）。
+- 管理台各页筛选统一为可编辑下拉框 + 进入即默认拉全部（增强 FR-51，纯前端）：实例与健康 / 代理服 / zone / 看板等页的环境 / 大区 / 小区筛选此前为裸文本框且需手动输入才出数据。现统一为带下拉箭头指示、候选来自系统（namespaces / instances / zone 汇总）的可编辑 `Combobox`，进入页面即以「全部」（留空聚合全部环境）默认拉取数据、不再要求先输入；候选复用既有 list 端点，无后端改动。
 
 ## 0.9.0（2026-06-23）
 

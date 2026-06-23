@@ -7,6 +7,7 @@
 
 import * as React from 'react'
 import { Popover as PopoverPrimitive } from 'radix-ui'
+import { ChevronDownIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import { Input } from '@/components/ui/input'
@@ -77,7 +78,9 @@ export function Combobox({
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       {/* Anchor 用 DOM 元素承接 ref（Input 非 forwardRef），并把宽度透传给下拉内容 */}
-      <PopoverPrimitive.Anchor className={cn('block', className)}>
+      <PopoverPrimitive.Anchor className={cn('relative block', className)}>
+        {/* 右内侧补一个 chevron，让控件一眼可辨为下拉（与 select 触发器视觉一致）；
+            pointer-events-none 不挡输入，输入框右侧加 padding 避免文本压住箭头 */}
         <Input
           id={id}
           aria-label={ariaLabel}
@@ -87,7 +90,9 @@ export function Combobox({
           onChange={(e) => handleInput(e.target.value)}
           onClick={() => setOpen(true)}
           autoComplete="off"
+          className="pr-8"
         />
+        <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 opacity-50" />
       </PopoverPrimitive.Anchor>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
