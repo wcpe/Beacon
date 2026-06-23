@@ -11,6 +11,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.util.UUID
+import java.util.concurrent.ThreadLocalRandom
 
 /**
  * 跨平台原子落盘原语：写唯一临时文件 → `force`（数据落盘）→ 重命名覆盖 → 尽力 fsync 父目录。
@@ -20,19 +21,21 @@ import java.util.UUID
  *   找不到源而抛 `NoSuchFileException`（本次 E2E 在 Windows 上暴露的根因）。
  * - **原子移动回退**：优先 `ATOMIC_MOVE`+`REPLACE_EXISTING`；平台 / 文件系统不支持原子移动
  *   （`AtomicMoveNotSupportedException`）时回退为非原子 `REPLACE_EXISTING` 覆盖（仍先写 tmp，崩溃窗口极小）。
- * - **瞬时占用有限重试**：杀软 / 索引器短暂持有目标（Windows 常见）致 `FileSystemException` 时小退避重试，
- *   仍失败才抛给上层（由上层 fail-static 处理、不抛未捕获异常到调度器）。
+ * - **瞬时占用 / 并发覆盖抖动重试**：杀软 / 索引器短暂持有目标，或多线程并发覆盖同一目标时 Windows
+ *   `MoveFileEx(REPLACE_EXISTING)` 触发共享冲突（`AccessDeniedException`，属 `FileSystemException`），
+ *   以**抖动退避**有限重试——抖动打散并发线程的重试对齐，避免反复撞同一目标锁窗口；仍失败才抛给上层
+ *   （由上层 fail-static 处理、不抛未捕获异常到调度器）。
  * - **失败清理 tmp**：异常时尽力删除临时文件，绝不残留半截 tmp。
  *
  * 纯 java.nio 实现、无可变全局状态（[object] 仅承载无副作用静态逻辑），可在 core 复用。
  */
 object AtomicFileWriter {
 
-    /** 重命名最大尝试次数（含首次），覆盖 Windows 杀软 / 索引器短暂占用窗口。 */
-    private const val MAX_MOVE_ATTEMPTS = 5
+    /** 重命名最大尝试次数（含首次），覆盖 Windows 杀软 / 索引器占用与多线程并发覆盖同一目标的争用窗口。 */
+    private const val MAX_MOVE_ATTEMPTS = 10
 
-    /** 重试基础退避毫秒（按尝试次数线性递增）。 */
-    private const val RETRY_BACKOFF_MS = 20L
+    /** 重试退避基数毫秒：实际退避 = 基数×尝试次数 + [0,基数×尝试次数] 随机抖动（打散并发重试对齐）。 */
+    private const val RETRY_BACKOFF_MS = 15L
 
     /** 临时文件名中缀（便于运维识别与清理）。 */
     private const val TMP_INFIX = ".beacon-tmp."
@@ -106,9 +109,11 @@ object AtomicFileWriter {
                 moveOnce(source, target)
                 return
             } catch (e: FileSystemException) {
-                // 瞬时占用（杀软 / 索引器持有目标）：有限重试，仍失败则抛给上层。
+                // 瞬时占用（杀软 / 索引器持有目标）或并发覆盖共享冲突（AccessDeniedException）：有限重试，仍失败则抛给上层。
                 if (attempt >= MAX_MOVE_ATTEMPTS) throw e
-                sleepQuietly(RETRY_BACKOFF_MS * attempt)
+                // 抖动退避：线性退避叠加随机抖动，打散并发线程的重试对齐，避免反复在同一瞬间撞目标锁窗口。
+                val backoff = RETRY_BACKOFF_MS * attempt
+                sleepQuietly(backoff + ThreadLocalRandom.current().nextLong(backoff + 1))
             }
         }
     }
