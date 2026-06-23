@@ -1,12 +1,10 @@
-// 放置桶：zone 容器与未指派池共用。拖卡悬停时高亮，作为 @dnd-kit 的 droppable 区域。
+// 容器：zone 桶与未指派池共用的视觉容器（标题 + 计数 + 卡片列表）。
+// FR-71 移除 @dnd-kit useDroppable（取消拖拽归派），仅保留视觉布局。
 
 import type { ReactNode } from 'react'
-import { useDroppable } from '@dnd-kit/core'
 import { cn } from '@/lib/utils'
 
 interface DropBucketProps {
-  // droppable id：未指派池为固定值，zone 桶为 encodeZoneDroppableId 编码值
-  id: string
   // 桶标题（如「未指派」或小区名）
   title: ReactNode
   // 右侧计数等附加信息
@@ -14,15 +12,11 @@ interface DropBucketProps {
   children: ReactNode
 }
 
-export default function DropBucket({ id, title, meta, children }: DropBucketProps) {
-  const { setNodeRef, isOver } = useDroppable({ id })
-
+export default function DropBucket({ title, meta, children }: DropBucketProps) {
   return (
     <div
-      ref={setNodeRef}
       className={cn(
-        'flex min-h-24 flex-col gap-2 rounded-md border border-dashed p-2 transition-colors',
-        isOver ? 'border-primary bg-primary/5' : 'border-border',
+        'flex min-h-24 flex-col gap-2 rounded-md border border-dashed border-border p-2',
       )}
     >
       <div className="flex items-center justify-between px-0.5">

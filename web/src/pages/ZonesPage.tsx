@@ -1,22 +1,15 @@
-// zone 分配页（看板式归派，FR-35）：
-// 左侧未指派 server 卡片池 + 右侧按大区(group)分组的 zone 容器（放置桶）。
-// 拖卡进某 zone = 指派、跨桶拖 = 改派、拖回未指派 = 取消指派；复用既有 API、后端零改动（增强 FR-8）。
-// 保留「新增 zone / 指派」表单入口（用于建空 zone 的首次指派）+ zone 维度汇总。
-// 指派表单的环境 / serverId / 大区 / 小区改为从 API 拉取的下拉（serverId 仅列 bukkit 子服）并加非法值校验（增强 FR-40）；备注仍为自由文本。
+// 区分配页（看板式归派，FR-35 + 安全化 FR-71）：
+// 左侧未指派 server 卡片池 + 右侧按大区(group)分组的 zone 容器。
+// FR-71 取消「拖拽即改」：看板默认只读，须显式「解锁改派」后逐卡走「改派」对话框（手输 serverId 复述）/「取消指派」二次确认；
+// 安全由后端排空门兜底（在线非空服改区返 409 ZONE_SERVER_ONLINE_NONEMPTY），前端摩擦只防误触（ADR-0036）。
+// 保留「新增 区 / 指派」表单入口（用于建空区的首次指派）+ 区维度汇总。
+// 指派表单的环境 / serverId / 大区 / 小区为从 API 拉取的下拉（serverId 仅列 bukkit 子服）并加非法值校验（增强 FR-40/FR-51）；备注仍为自由文本。
 
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ApiClientError,
   assignZone,
   listAssignments,
   listInstances,
@@ -30,10 +23,22 @@ import type { InstanceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import {
   Dialog,
   DialogContent,
@@ -48,13 +53,9 @@ import {
   type ZoneBucket,
 } from './zones/kanbanModel'
 import { buildSummaryTree } from './zones/summaryTree'
-import {
-  encodeZoneDroppableId,
-  resolveDragAction,
-  UNASSIGNED_DROPPABLE_ID,
-} from './zones/dragAction'
 import ServerCard from './zones/ServerCard'
 import DropBucket from './zones/DropBucket'
+import ReassignDialog from './zones/ReassignDialog'
 import ZoneSummaryTree from './zones/ZoneSummaryTree'
 
 // 指派/汇总共用的过滤条件
@@ -66,6 +67,9 @@ interface ZoneFilter {
 
 // 新增 zone / 指派表单初值
 const EMPTY_FORM = { namespace: '', serverId: '', group: '', zone: '', note: '' }
+
+// 排空门错误码（与后端 apperr.ErrZoneServerOnlineNonempty 一致，FR-71/ADR-0036）
+const ERR_ZONE_SERVER_ONLINE_NONEMPTY = 'ZONE_SERVER_ONLINE_NONEMPTY'
 
 export default function ZonesPage() {
   const { t } = useTranslation()
@@ -82,11 +86,10 @@ export default function ZonesPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [assignOpen, setAssignOpen] = useState(false)
 
-  // 拖拽中卡片对应实例（用于 DragOverlay 叠层预览；null 表示未拖动）
-  const [dragging, setDragging] = useState<InstanceView | null>(null)
-
-  // 指针拖拽前需移动 5px 才激活，避免与卡片点击/误触冲突
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  // 看板默认只读（FR-71）：解锁后才出逐卡改派 / 取消指派入口
+  const [unlocked, setUnlocked] = useState(false)
+  // 当前正在改派的实例（null 表示改派对话框关闭）
+  const [reassignTarget, setReassignTarget] = useState<InstanceView | null>(null)
 
   const instances = useQuery({
     queryKey: ['instances', 'zone-kanban', filter],
@@ -145,15 +148,25 @@ export default function ZonesPage() {
     [allInstances.data],
   )
 
+  // 区分排空门 409 与一般错误：在线非空服改区被硬拒时给「先排空」专属中文提示（FR-71/ADR-0036）
+  function reportError(e: unknown) {
+    if (e instanceof ApiClientError && e.code === ERR_ZONE_SERVER_ONLINE_NONEMPTY) {
+      msg.showError(t('zones.drainGateHint'))
+      return
+    }
+    msg.showError(e instanceof Error ? e.message : t('common.unknownError'))
+  }
+
   const assignMut = useMutation({
     mutationFn: (params: AssignParams) => assignZone(params),
     onSuccess: (a) => {
       msg.showSuccess(t('zones.msgAssigned', { serverId: a.serverId, zone: a.zone }))
       setForm(EMPTY_FORM)
       setAssignOpen(false)
+      setReassignTarget(null)
       invalidate()
     },
-    onError: (e: Error) => msg.showError(e.message),
+    onError: reportError,
   })
 
   const unassignMut = useMutation({
@@ -163,7 +176,7 @@ export default function ZonesPage() {
       msg.showSuccess(t('zones.msgUnassigned', { serverId: vars.serverId }))
       invalidate()
     },
-    onError: (e: Error) => msg.showError(e.message),
+    onError: reportError,
   })
 
   function invalidate() {
@@ -216,26 +229,6 @@ export default function ZonesPage() {
       zone: form.zone,
       note: form.note.trim(),
     })
-  }
-
-  function onDragStart(e: DragStartEvent) {
-    const inst = e.active.data.current?.instance as InstanceView | undefined
-    setDragging(inst ?? null)
-  }
-
-  // 拖拽结束：按落点解析为指派/改派/取消指派，再调既有 API（逻辑见 dragAction.resolveDragAction）
-  function onDragEnd(e: DragEndEvent) {
-    const inst = e.active.data.current?.instance as InstanceView | undefined
-    setDragging(null)
-    if (!inst) return
-    const action = resolveDragAction(inst, e.over ? String(e.over.id) : null)
-    if (action.kind === 'assign') {
-      // 改派沿用现有备注，避免拖拽清空运维填写的备注
-      const note = noteForServer(assignments.data ?? [], inst.namespace, inst.serverId)
-      assignMut.mutate({ ...action.params, note })
-    } else if (action.kind === 'unassign') {
-      unassignMut.mutate({ namespace: action.namespace, serverId: action.serverId })
-    }
   }
 
   return (
@@ -383,77 +376,113 @@ export default function ZonesPage() {
 
       <Card>
         <CardContent className="space-y-3">
-          <div className="flex items-baseline justify-between">
+          <div className="flex items-baseline justify-between gap-3">
             <h2 className="text-base font-medium">{t('zones.kanbanTitle')}</h2>
-            <p className="text-sm text-muted-foreground">
-              {t('zones.kanbanHint')}
-            </p>
+            <div className="flex items-center gap-4">
+              <p className="text-sm text-muted-foreground">
+                {t('zones.kanbanHint')}
+              </p>
+              {/* 解锁改派开关（FR-71）：默认只读，解锁后逐卡才出改派 / 取消入口 */}
+              <Label
+                htmlFor="unlock-reassign"
+                className="flex items-center gap-2 text-sm text-muted-foreground"
+              >
+                <Checkbox
+                  id="unlock-reassign"
+                  aria-label={t('zones.unlockLabel')}
+                  checked={unlocked}
+                  onCheckedChange={(v) => setUnlocked(v === true)}
+                />
+                {t('zones.unlockLabel')}
+              </Label>
+            </div>
           </div>
           <AsyncSection
             isLoading={instances.isLoading || summary.isLoading}
             isError={instances.isError || summary.isError}
             error={instances.error ?? summary.error}
           >
-            <DndContext
-              sensors={sensors}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-            >
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
-                {/* 左侧未指派池 */}
-                <DropBucket
-                  id={UNASSIGNED_DROPPABLE_ID}
-                  title={t('zones.unassignedTitle')}
-                  meta={t('zones.unitServers', { count: model.unassigned.length })}
-                >
-                  {model.unassigned.length === 0 ? (
-                    <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.noUnassigned')}</p>
-                  ) : (
-                    model.unassigned.map((i) => (
-                      <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
-                    ))
-                  )}
-                </DropBucket>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
+              {/* 左侧未指派池 */}
+              <DropBucket
+                title={t('zones.unassignedTitle')}
+                meta={t('zones.unitServers', { count: model.unassigned.length })}
+              >
+                {model.unassigned.length === 0 ? (
+                  <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.noUnassigned')}</p>
+                ) : (
+                  model.unassigned.map((i) => (
+                    <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
+                  ))
+                )}
+              </DropBucket>
 
-                {/* 右侧按大区分组的 zone 桶 */}
-                <div className="space-y-4">
-                  {model.groups.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      {t('zones.noZones')}
-                    </p>
-                  ) : (
-                    model.groups.map((col) => (
-                      <div key={col.group} className="space-y-2">
-                        <div className="text-sm font-semibold">{t('zones.groupLabel', { group: col.group })}</div>
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                          {col.zones.map((bucket) => (
-                            <ZoneDropBucket key={`${bucket.group}/${bucket.zone}`} bucket={bucket} />
-                          ))}
-                        </div>
+              {/* 右侧按大区分组的 zone 桶 */}
+              <div className="space-y-4">
+                {model.groups.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {t('zones.noZones')}
+                  </p>
+                ) : (
+                  model.groups.map((col) => (
+                    <div key={col.group} className="space-y-2">
+                      <div className="text-sm font-semibold">{t('zones.groupLabel', { group: col.group })}</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {col.zones.map((bucket) => (
+                          <ZoneBucketView
+                            key={`${bucket.group}/${bucket.zone}`}
+                            bucket={bucket}
+                            unlocked={unlocked}
+                            onReassign={setReassignTarget}
+                            onUnassign={(ns, sid) => unassignMut.mutate({ namespace: ns, serverId: sid })}
+                          />
+                        ))}
                       </div>
-                    ))
-                  )}
-                </div>
+                    </div>
+                  ))
+                )}
               </div>
-
-              {/* 拖拽叠层：跟随指针的卡片预览 */}
-              <DragOverlay>
-                {dragging ? <ServerCard instance={dragging} /> : null}
-              </DragOverlay>
-            </DndContext>
+            </div>
           </AsyncSection>
         </CardContent>
       </Card>
+
+      {/* 改派对话框（FR-71）：手输 serverId 复述确认；提交调既有 assignZone */}
+      <ReassignDialog
+        open={reassignTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) setReassignTarget(null)
+        }}
+        instance={reassignTarget}
+        currentNote={
+          reassignTarget
+            ? noteForServer(assignments.data ?? [], reassignTarget.namespace, reassignTarget.serverId)
+            : ''
+        }
+        groupOptions={groupOptions}
+        zoneOptions={zoneOptions}
+        pending={assignMut.isPending}
+        onConfirm={(params) => assignMut.mutate(params)}
+      />
     </div>
   )
 }
 
-// 单个 zone 放置桶：标题为小区名 + 实例数，内含其卡片
-function ZoneDropBucket({ bucket }: { bucket: ZoneBucket }) {
+// 单个 zone 桶视图：标题为小区名 + 实例数，内含其卡片；解锁后逐卡注入改派 / 取消指派入口（FR-71）。
+function ZoneBucketView({
+  bucket,
+  unlocked,
+  onReassign,
+  onUnassign,
+}: {
+  bucket: ZoneBucket
+  unlocked: boolean
+  onReassign: (instance: InstanceView) => void
+  onUnassign: (namespace: string, serverId: string) => void
+}) {
   const { t } = useTranslation()
   return (
     <DropBucket
-      id={encodeZoneDroppableId(bucket.group, bucket.zone)}
       title={bucket.zone}
       meta={t('zones.unitServers', { count: bucket.instances.length })}
     >
@@ -461,7 +490,43 @@ function ZoneDropBucket({ bucket }: { bucket: ZoneBucket }) {
         <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.dropHere')}</p>
       ) : (
         bucket.instances.map((i) => (
-          <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
+          <ServerCard
+            key={`${i.namespace}/${i.serverId}`}
+            instance={i}
+            actions={
+              unlocked ? (
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="sm" onClick={() => onReassign(i)}>
+                    {t('zones.reassignBtn')}
+                  </Button>
+                  {/* 取消指派：显式二次确认后才调 unassignZone（FR-71） */}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="sm">
+                        {t('zones.unassignBtn')}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          {t('zones.unassignConfirmTitle', { serverId: i.serverId })}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {t('zones.unassignConfirmDesc')}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => onUnassign(i.namespace, i.serverId)}>
+                          {t('zones.unassignConfirmAction')}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              ) : undefined
+            }
+          />
         ))
       )}
     </DropBucket>

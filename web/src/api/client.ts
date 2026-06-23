@@ -49,21 +49,36 @@ interface ApiError {
   traceId?: string
 }
 
+// 携带业务码的客户端错误：在 Error.message（中文说明，既有调用方按此提示）之外保留后端业务码，
+// 供调用方按 code 分支处理（如 FR-71 排空门 409 的 ZONE_SERVER_ONLINE_NONEMPTY 专属提示）。
+export class ApiClientError extends Error {
+  // 后端业务码（如 ZONE_SERVER_ONLINE_NONEMPTY）；后端未回 code 时为空串
+  readonly code: string
+
+  constructor(message: string, code: string) {
+    super(message)
+    this.name = 'ApiClientError'
+    this.code = code
+  }
+}
+
 // 列表类响应统一包装为 { items: [...] }
 interface ItemsResponse<T> {
   items: T[]
 }
 
-// 解析非 2xx 响应：优先取后端中文 message，回退到状态码
-async function toError(resp: Response): Promise<Error> {
+// 解析非 2xx 响应：优先取后端中文 message，回退到状态码；同时保留业务 code 供按码分支处理。
+async function toError(resp: Response): Promise<ApiClientError> {
   let detail = `HTTP ${resp.status}`
+  let code = ''
   try {
     const err = (await resp.json()) as ApiError
     if (err.message) detail = err.message
+    if (err.code) code = err.code
   } catch {
     // 响应体非 JSON，保留状态码作为提示
   }
-  return new Error(detail)
+  return new ApiClientError(detail, code)
 }
 
 // 发起请求并解析 JSON；非 2xx 时抛出携带中文说明的错误。
