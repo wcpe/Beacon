@@ -20,6 +20,7 @@ const NAV_ITEMS: Array<{ to: string; labelKey: string }> = [
   { to: '/topology', labelKey: 'nav.topology' },
   { to: '/zones', labelKey: 'nav.zones' },
   { to: '/audits', labelKey: 'nav.audits' },
+  { to: '/service-analysis', labelKey: 'nav.serviceAnalysis' },
   { to: '/api-keys', labelKey: 'nav.apiKeys' },
   { to: '/namespaces', labelKey: 'nav.namespaces' },
   { to: '/settings', labelKey: 'nav.settings' },

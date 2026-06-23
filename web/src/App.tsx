@@ -15,6 +15,7 @@ import ServersPage from './pages/ServersPage'
 import TopologyPage from './pages/TopologyPage'
 import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
+import ServiceAnalysisPage from './pages/ServiceAnalysisPage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import NamespacesPage from './pages/NamespacesPage'
 import SettingsPage from './pages/SettingsPage'
@@ -61,6 +62,8 @@ export default function App() {
           <Route path="topology" element={<TopologyPage />} />
           <Route path="zones" element={<ZonesPage />} />
           <Route path="audits" element={<AuditsPage />} />
+          {/* 服务分析页（FR-73）：按时间窗 + 环境聚合运维操作审计（KPI + 动作分布 + 每日趋势） */}
+          <Route path="service-analysis" element={<ServiceAnalysisPage />} />
           {/* 密钥管理（FR-42）：只读角色 + 运行时 API 密钥创建/吊销/重置 */}
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="namespaces" element={<NamespacesPage />} />

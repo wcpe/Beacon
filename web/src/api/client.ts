@@ -7,6 +7,7 @@ import type {
   ApiKeyCreated,
   ApiKeyView,
   AssignmentView,
+  AuditAnalytics,
   AuditPage,
   ConfigView,
   ConflictDiffView,
@@ -530,6 +531,21 @@ export interface AuditFilter {
 
 export function listAudits(filter: AuditFilter): Promise<AuditPage> {
   return request<AuditPage>(`/audits${qs(filter)}`)
+}
+
+// ===== 服务分析 / 平台用量看板（FR-73）=====
+
+// 服务分析聚合查询参数：namespace 可空（聚合全部环境）；from/to 为 RFC3339 时间窗。
+export interface AuditAnalyticsParams {
+  namespace?: string
+  from?: string
+  to?: string
+}
+
+// 取时间窗内审计活动聚合（总数 / 成功 / 失败 + 按动作分布 + 每日趋势）。
+// 窗口上限 92 天（超出后端 400）；与 FR-32 负载看板数据源 / 刷新节奏独立。
+export function getAuditAnalytics(params: AuditAnalyticsParams): Promise<AuditAnalytics> {
+  return request<AuditAnalytics>(`/audits/analytics${qs(params)}`)
 }
 
 // ===== 管理面 API 密钥（FR-42，见 docs/API.md 管理面 API 密钥小节）=====

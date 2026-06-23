@@ -21,6 +21,7 @@ export const zhCN = {
     topology: '集群拓扑',
     zones: '区分配',
     audits: '审计日志',
+    serviceAnalysis: '服务分析',
     apiKeys: '密钥管理',
     namespaces: '环境管理',
     settings: '运维设置',
@@ -176,6 +177,31 @@ export const zhCN = {
       'apikey.revoke': '吊销密钥',
       'apikey.reset': '重置密钥',
     },
+  },
+
+  // ===== 服务分析 / 平台用量看板页（FR-73）=====
+  serviceAnalysis: {
+    title: '服务分析',
+    // 与 FR-32 负载看板区分的副标题：本页聚合运维操作审计，非运行时负载。
+    subtitle: '按时间窗与环境聚合运维操作审计（操作数 / 成功率 / 趋势），区别于负载看板。',
+    nsPlaceholder: '留空聚合全部环境',
+    // 环境筛选「一键清空」按钮的无障碍标签：清回空值即聚合全部环境。
+    clearFilter: '清空环境筛选',
+    // 时间窗 Tabs
+    win7d: '近 7 天',
+    win30d: '近 30 天',
+    // KPI 卡片
+    cardTotal: '总操作数',
+    cardOk: '成功数',
+    cardFail: '失败数',
+    cardSuccessRate: '成功率',
+    // 区块标题
+    byActionTitle: '按动作分布',
+    byDayTitle: '每日趋势',
+    // 排行条目辅助说明
+    actionCountHint: '{{count}} 次',
+    // 趋势 / 排行的空数据态
+    empty: '所选时间窗内暂无审计活动',
   },
 
   // ===== 服务器页（FR-65，实例与健康 + 代理服管理合并）=====

@@ -451,6 +451,32 @@ export interface IgnoreRuleView {
 // 忽略规则类型：exact（单文件精确匹配）/ prefix（目录前缀匹配）。
 export type IgnoreRuleType = 'exact' | 'prefix'
 
+// ===== 服务分析 / 平台用量看板（FR-73）=====
+
+// 按动作分布单条（降序按 count，action 为审计枚举原值、前端 i18n 映射中文）。
+export interface AuditActionCount {
+  action: string
+  count: number
+}
+
+// 每日趋势单条（升序按 date，date 为 UTC 日 YYYY-MM-DD）。
+export interface AuditDayCount {
+  date: string
+  count: number
+}
+
+// 服务分析聚合视图（对齐 docs/specs/service-analysis.md §3.2 契约）：
+// 时间窗内审计活动的总数 / 成功 / 失败 + 按动作分布 + 每日趋势。
+export interface AuditAnalytics {
+  from: string
+  to: string
+  total: number
+  okCount: number
+  failCount: number
+  byAction: AuditActionCount[]
+  byDay: AuditDayCount[]
+}
+
 // ===== 运维设置（FR-62，消费 FR-61 设置端点）=====
 
 // 设置项值类型（对齐后端 GET /admin/v1/settings 的 valueType）。
