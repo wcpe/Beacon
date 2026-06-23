@@ -216,10 +216,13 @@ func (h *CommandHandler) ConfirmImprint(w http.ResponseWriter, r *http.Request) 
 }
 
 // agentCommandResponse 是 agent 拉待办命令的响应（含执行参考载荷；ingest 落点由控制面 ReceiveIngest 据库内载荷定）。
+// Payload 用 json.RawMessage 把库内 payload 原文逐字透传——不可再经 map[string]string 反序列化，
+// 否则 FR-58 submit 命令的 selectedPaths（JSON 数组）无法塞进 string 值、unmarshal 报错被吞、数组字段被静默丢弃，
+// 致 agent 收不到选定集而回退「整树读内容」走老的超限整批失败口径（FR-58 真机暴露的缺陷）。
 type agentCommandResponse struct {
-	ID      uint              `json:"id"`
-	Type    string            `json:"type"`
-	Payload map[string]string `json:"payload"`
+	ID      uint            `json:"id"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 // Pending 处理 GET /beacon/v1/agent/commands（FR-39）：返回该 agent 最早 pending 命令并 CAS 标 fetched；无则 204。
@@ -240,9 +243,12 @@ func (h *CommandHandler) Pending(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	var payload map[string]string
-	_ = json.Unmarshal([]byte(cmd.Payload), &payload)
-	render.WriteJSON(w, http.StatusOK, agentCommandResponse{ID: cmd.ID, Type: cmd.Type, Payload: payload})
+	// 库内 payload 原文逐字透传（mode / selectedPaths 等一律不丢）；空载荷兜底为空对象保证响应仍是合法 JSON。
+	payload := cmd.Payload
+	if payload == "" {
+		payload = "{}"
+	}
+	render.WriteJSON(w, http.StatusOK, agentCommandResponse{ID: cmd.ID, Type: cmd.Type, Payload: json.RawMessage(payload)})
 }
 
 // ingestRequestFile 是回传文件集的单项。

@@ -105,6 +105,12 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	if payload2["mode"] != "submit" {
 		t.Fatalf("submit 命令 payload 应含 mode=submit，实际 %v", payload2)
 	}
+	// 守护 FR-58 真机暴露的缺陷：agent 命令响应必须把 selectedPaths（JSON 数组）原文透传，
+	// 不可经 map[string]string 反序列化致数组字段被静默丢弃——否则 agent 收不到选定集、回退整树读内容走超限整批失败。
+	selPaths := asSlice(payload2["selectedPaths"])
+	if len(selPaths) != 1 || selPaths[0] != "plugin-a/config.yml" {
+		t.Fatalf("submit 命令 payload 应含 selectedPaths=[plugin-a/config.yml]（数组原文透传），实际 %v", payload2["selectedPaths"])
+	}
 
 	// agent 回选定内容（复用 /files/ingest）→ 200，仅选定落库
 	code, ing := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
