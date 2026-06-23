@@ -222,6 +222,22 @@ describe('DashboardPage', () => {
     expect(screen.getByText('该代理未配置后端')).toBeInTheDocument()
   })
 
+  // FR-63：环境筛选选某环境后可一键清回「全部聚合」（空值）。
+  it('选环境后可一键清回全部聚合（清空按钮置空 namespace）', async () => {
+    renderPage(<DashboardPage />)
+    const ns = await screen.findByLabelText('环境')
+    // 选中环境 prod（候选显示「编码 · 名称」，FR-70）
+    await userEvent.click(ns)
+    await userEvent.click(await screen.findByRole('option', { name: 'prod · 生产' }))
+    // 选中后按 prod 查询
+    await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith('prod'))
+    // 一键清空：点清空按钮，namespace 回空 → 按聚合全部（undefined）重查
+    await userEvent.click(screen.getByLabelText('清空环境筛选'))
+    await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith(undefined))
+    // 输入框已清空回显
+    expect(screen.getByLabelText('环境')).toHaveValue('')
+  })
+
   it('不渲染任何玩家名单 / 身份字段（边界守护）', async () => {
     // 负向测试：故意往明细行塞名单类字段（playerNames / players），断言其值不被渲染到 DOM。
     // 唯一哨兵串便于断言；后端实际不返回这些字段，此处构造越界数据验证前端守护。

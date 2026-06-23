@@ -100,7 +100,8 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="d-namespace">{t('common.namespace')}</Label>
-              {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境 */}
+              {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境。
+                  clearable：选某环境后可一键清回空值（聚合全部，FR-63） */}
               <Combobox
                 id="d-namespace"
                 aria-label={t('common.namespace')}
@@ -110,6 +111,8 @@ export default function DashboardPage() {
                 onChange={setNamespace}
                 options={nsOptions}
                 allowCustom
+                clearable
+                clearLabel={t('dashboard.clearFilter')}
               />
             </div>
           </div>

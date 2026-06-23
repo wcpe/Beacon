@@ -218,6 +218,8 @@ export const zhCN = {
   dashboard: {
     title: '可观测看板',
     nsPlaceholder: '留空聚合全部环境',
+    // 环境筛选「一键清空」按钮的无障碍标签：清回空值即聚合全部环境（FR-63）
+    clearFilter: '清空环境筛选',
     win1h: '近 1 小时',
     win6h: '近 6 小时',
     win24h: '近 24 小时',
