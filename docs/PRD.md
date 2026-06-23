@@ -116,7 +116,7 @@
 | FR-68 | 文件树预览全量 + 追踪态（增强 FR-45）：预览改为「当前服务器 plugins 下所有文件」并区分 追踪(Beacon 管)/未追踪；与 FR-58 共用 agent 扫描能力 | P2 | 计划 |
 | FR-69 | 拓印审核台 关键字搜索 + 性能 + 使用提示（增强 FR-46）：以关键字即时搜文件替代手输路径，大树不卡，加上手提示 | P2 | 计划 |
 | FR-70 | 环境名称启用 + 筛选显示编码+名称（fix + 增强 FR-6/FR-53/FR-51）：环境管理「名称」未用上 → 启用；各筛选/下拉同时展示 编码 + 名称（不只编码） | P2 | 计划 |
-| FR-71 | 区分配安全化（增强 FR-8/FR-35）：「zone 分配」更名「区分配」(zone→区)；取消拖拽即改 → 显式改派 + 手输 serverId 确认（空服也拦防误操作）；后端纵深 在线非空硬拒/同值 no-op/改派入审计；可选解锁编辑。需写新 ADR 扩展 [ADR-0004](adr/0004-zone-authority-control-plane.md)（改派安全前置/排空门） | P2 | 计划 |
+| FR-71 | 区分配安全化（增强 FR-8/FR-35，[ADR-0036](adr/0036-zone-reassign-safety-drain-gate.md) 扩展 [ADR-0004](adr/0004-zone-authority-control-plane.md)，见 [docs/specs/zone-reassign-safety.md](specs/zone-reassign-safety.md)）：「zone 分配」更名「区分配」(zone→区，仅 i18n 展示)；前端取消拖拽即改 → 看板默认只读 + 解锁改派 + 显式改派 + 手输 serverId 复述确认（空服也拦防误触）；后端排空门纵深：**在线非空（online 且 playerCount>0）的服「改派/取消指派/首次指派」凡改变其区归属解析一律 409 `ZONE_SERVER_ONLINE_NONEMPTY`（须先 drain/等排空）**、同值 no-op（不落库不审计）、真正变更入审计 | P2 | 计划 |
 | FR-72 | 全量审计覆盖（增强 FR-7）：写操作审计中间件兜底（拦 /admin/v1 所有 POST/PUT/DELETE 记 操作者+动作+目标，敏感内容不入 detail）+ 既有专项审计保留 | P2 | 计划 |
 | FR-73 | 服务分析 / 平台用量看板（feat，依赖 FR-72）：新「服务分析」页，从 audit_log 聚合 Beacon 平台运维活动（发布/修改/回滚/校验失败、反向抓取、区改派、文件树变更、登录、密钥、告警…）计数 + 趋势，KPI 卡片 + 图表；与 FR-32(MC负载)/FR-30(Prometheus) 区分 | P2 | 计划 |
 
