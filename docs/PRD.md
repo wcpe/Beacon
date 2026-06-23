@@ -111,8 +111,8 @@
 | FR-63 | 可观测看板环境筛选可清空（fix）：选环境后无法清回「全部聚合」，修为可一键清回（可并入 FR-64） | P2 | 计划 |
 | FR-64 | 可观测看板瘦身为「集群粗览」（增强 FR-32/FR-43，见 [docs/specs/monitoring-restructure.md](specs/monitoring-restructure.md)）：紧凑、一屏不深滚，定位粗略系统运行总览（在线实例分角色/总人数/集群均值/健康分布 + 关键趋势缩略），删逐服明细表移交 FR-65。纯前端 | P2 | 计划 |
 | FR-65 | 服务器详情页 = 代理服管理 + 实例与健康合并（增强 FR-52 + FR-5/FR-33/FR-49，见 [docs/specs/monitoring-restructure.md](specs/monitoring-restructure.md)）：「实例与健康」+「代理服管理」合并为统一「服务器」页（`/servers`），列全部服务器(bukkit+bungee) 状态 + 角色 + 深指标(bukkit TPS/人数/容量；bungee 连接/线程/运行时长/后端可达性) + 健康 + 下线/drain/区改派(复用 FR-71 ReassignDialog) 操作，单服详情 Sheet 含双类深指标 + 关系(后端清单/默认入口)；旧 /instances /proxies 重定向。纯前端(复用 FR-52 已齐的逐服深指标) | P2 | 计划 |
-| FR-66 | 上传文件夹/文件 预览 + 审批后提交（增强 FR-38）：上传（文件夹/多文件）先预览模态展示待传内容，审批确认后才入库（防误传） | P2 | 计划 |
-| FR-67 | 配置修改审批式（增强 FR-1/FR-3/FR-18）：在页编辑配置加确认步（轻量），批量/上传走预览审批（重，并入 FR-66） | P2 | 计划 |
+| FR-66 | 上传文件夹/文件 预览 + 审批后提交（增强 FR-38，见 [docs/specs/config-change-approval.md](specs/config-change-approval.md)）：上传（文件夹/多文件）先预览模态展示待传内容（全量列 path/大小/二进制/超大标记 + 文本内容预览，前端 FileReader 读），审批确认后才入库（防误传）。纯前端 | P2 | 计划 |
+| FR-67 | 配置修改审批式（增强 FR-1/FR-3/FR-18，见 [docs/specs/config-change-approval.md](specs/config-change-approval.md)）：单文件在页编辑配置加轻量确认步（保存前弹确认对话框看 diff[编辑态⟷上一已保存版本]+备注，确认才发布），批量/上传走预览审批（重，并入 FR-66）。纯前端 | P2 | 计划 |
 | FR-68 | 文件树预览全量 + 追踪态（增强 FR-45）：预览改为「当前服务器 plugins 下所有文件」并区分 追踪(Beacon 管)/未追踪；与 FR-58 共用 agent 扫描能力 | P2 | 计划 |
 | FR-69 | 拓印审核台 关键字搜索 + 性能 + 使用提示（增强 FR-46）：以关键字即时搜文件替代手输路径，大树不卡，加上手提示 | P2 | 计划 |
 | FR-70 | 环境名称启用 + 筛选显示编码+名称（fix + 增强 FR-6/FR-53/FR-51）：环境管理「名称」未用上 → 启用；各筛选/下拉同时展示 编码 + 名称（不只编码） | P2 | 计划 |
