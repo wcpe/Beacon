@@ -410,7 +410,13 @@ func (h *ConfigHandler) ListGray(w http.ResponseWriter, r *http.Request) {
 func toProvViews(ps []merge.KeyProvenance) []keyProvenanceView {
 	out := make([]keyProvenanceView, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, keyProvenanceView{Path: p.Path, Scope: p.Scope})
+		// path 为 nil（整文件来源无键路径）时归一为空数组：契约声明 path 为 string[]，
+		// 序列化成 null 会让前端 `src.path.length` 抛 TypeError 致文件树预览整页白屏。
+		path := p.Path
+		if path == nil {
+			path = []string{}
+		}
+		out = append(out, keyProvenanceView{Path: path, Scope: p.Scope})
 	}
 	return out
 }

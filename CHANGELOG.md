@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 修复
+- 文件树有效预览页选服后整页白屏（修复 FR-45）：整文件来源（wholeFile，无键路径）的逐键来源 `path` 经 `toProvViews` 直传 nil 切片，序列化为 JSON `null`；而前端契约声明 `path` 为 `string[]`，`FileEffectivePreview` 的 `src.path.length` 对 `null` 抛 `TypeError` 致 React 整页白屏（真机选服即触发；前端单测此前用 `path:[]` 模拟数据，未覆盖后端真实下发的 `null`，故验证门漏掉）。控制面 `toProvViews` 把 nil path 归一为 `[]`（配置有效预览 FR-22 与文件树预览 FR-45 共用此转换，`sources` 与 `deletions` 的 path 一并受益）；补 `toProvViews` 序列化单测守护 `path` 恒为 `[]` 非 `null`。
+
 ## 0.9.1（2026-06-23）
 
 ### 修复
