@@ -113,6 +113,8 @@ var (
 	ErrAssignmentNotFound = New(http.StatusNotFound, "ASSIGNMENT_NOT_FOUND", "zone 指派不存在")
 	// ErrZoneNotAssignableToBC zone 仅供 bukkit 子服归派，不可分配给 BC 代理实例（FR-8/FR-35）。
 	ErrZoneNotAssignableToBC = New(http.StatusBadRequest, "ZONE_NOT_ASSIGNABLE_TO_BC", "zone 不可分配给 BC 代理实例")
+	// ErrZoneServerOnlineNonempty 服务器在线且有玩家，禁止变更其区归属（排空门硬闸，FR-71/ADR-0036）。
+	ErrZoneServerOnlineNonempty = New(http.StatusConflict, "ZONE_SERVER_ONLINE_NONEMPTY", "服务器在线且有玩家，禁止变更其区归属；请先排空（drain 或等玩家离开）后再操作")
 	// ErrDefaultEntryServerNotInZone 默认入口指向的 serverId 未指派到该 (group, zone)（FR-48）。
 	ErrDefaultEntryServerNotInZone = New(http.StatusBadRequest, "DEFAULT_ENTRY_SERVER_NOT_IN_ZONE", "默认入口子服未指派到该小区")
 	// ErrDefaultEntryNotFound 清除默认入口时该小区无默认入口（FR-48）。

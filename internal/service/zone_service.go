@@ -92,6 +92,15 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP
 	if err != nil {
 		return nil, err
 	}
+	// 同值 no-op：现有指派与目标 (group, zone) 完全相同 → 直接返回现有记录，
+	// 不入事务、不审计、不唤醒。先于排空门：同值即"什么都没变"，在线非空也放行（FR-71/ADR-0036 决策 2）。
+	if prev != nil && prev.GroupCode == group && prev.ZoneCode == zone {
+		return prev, nil
+	}
+	// 排空门：本次为真正的变更（首次指派或改到不同区），若目标服在线且在场有玩家 → 硬拒（FR-71/ADR-0036 决策 1）。
+	if s.isOnlineNonempty(ns, serverID) {
+		return nil, apperr.ErrZoneServerOnlineNonempty
+	}
 	action := model.ActionZoneAssign
 	if prev != nil {
 		action = model.ActionZoneMove
@@ -125,8 +134,18 @@ func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
 	if ns == "" || serverID == "" || operator == "" {
 		return apperr.ErrInvalidParam
 	}
+	// 排空门：取消指派会把该服归属退回 global 兜底（改变其解析 (group, zone)），
+	// 仅当确有现有指派、且目标服在线在场有玩家时硬拒（FR-71/ADR-0036 决策 1）。
+	// 无现有指派的取消由事务内软删返回 ASSIGNMENT_NOT_FOUND，与排空门无关。
+	prev, err := s.assignRepo.FindByServer(ns, serverID)
+	if err != nil {
+		return err
+	}
+	if prev != nil && s.isOnlineNonempty(ns, serverID) {
+		return apperr.ErrZoneServerOnlineNonempty
+	}
 	now := time.Now().UTC()
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	err = s.db.Transaction(func(tx *gorm.DB) error {
 		deleted, e := s.assignRepo.WithTx(tx).SoftDelete(ns, serverID, now)
 		if e != nil {
 			return e
@@ -147,6 +166,14 @@ func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
 	s.exportGit(ns, serverID, model.ActionZoneUnassign, operator)
 	slog.Info("取消 zone 指派", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
+}
+
+// isOnlineNonempty 判定目标服是否「在线且在场有玩家」（排空门判据，FR-71/ADR-0036）。
+// 无副作用：只读内存注册表；实例不存在（离线）或非 online 状态或玩家数为 0 → false。
+// degraded/lost/offline 不视为在线，不拦（失联/失败服改区不扰动健康游戏，见 spec §6）。
+func (s *ZoneService) isOnlineNonempty(ns, serverID string) bool {
+	inst := s.registry.Get(ns, serverID)
+	return inst != nil && inst.Status == runtime.StatusOnline && inst.PlayerCount > 0
 }
 
 // ListAssignments 列出指派。

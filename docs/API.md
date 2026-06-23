@@ -361,7 +361,7 @@ data: {}
 | `DELETE /admin/v1/zones/assignments?namespace=&serverId=` | 取消指派（软删），触发唤醒（operator 由认证态派生） |
 | `GET /admin/v1/zones?namespace=&group=` | zone 维度汇总（每 zone 服数/在线数） |
 
-错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。
+错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。**排空门**：目标服在注册表 `online` 且 `playerCount>0`，而本次（首次指派 / 改到不同区 / 取消指派）会改变其区归属解析时，`PUT` 与 `DELETE` 一律返回 `409 ZONE_SERVER_ONLINE_NONEMPTY`（不落库 / 不审计 / 不唤醒），须先排空（drain 或等玩家离开）后再操作；指派到与现有完全相同的 `(group, zone)` 为同值 no-op，幂等返回现有记录、不落库不审计（先于排空门）。详见 ADR-0036。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。
 
 #### 小区默认入口（FR-48）
 
