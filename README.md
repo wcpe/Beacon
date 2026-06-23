@@ -82,8 +82,8 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:0.9.1") // 只读契约
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.9.1") // 便捷门面（推荐）
+    compileOnly("top.wcpe.beacon:beacon-agent-api:0.10.0") // 只读契约
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.10.0") // 便捷门面（推荐）
 }
 ```
 
