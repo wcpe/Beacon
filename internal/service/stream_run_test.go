@@ -46,7 +46,12 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, hub)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
-	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, reg, hub, fileHub, topologyHub, commandHub, 0) // 关保活，测试不依赖心跳
+	// 设置服务（FR-61）：保活间隔取 longpoll.max-hold-ms（默认 30s），测试短时完成不触发心跳、不依赖保活。
+	settingsSvc, err := service.NewSettingsService(db, repository.NewSettingRepository(db), auditRepo)
+	if err != nil {
+		t.Fatalf("装配设置服务失败: %v", err)
+	}
+	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, reg, hub, fileHub, topologyHub, commandHub, settingsSvc)
 
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, reg, assignRepo)
 	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)

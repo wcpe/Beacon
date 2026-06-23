@@ -87,6 +87,19 @@ func run() error {
 
 	// 装配：repository → service → handler（手工注入，不引 DI 框架）
 	auditRepo := repository.NewAuditLogRepository(db)
+
+	// 运维设置 store（FR-61，见 ADR-0038）：热改项真源由 config.yml 移到 DB store。
+	// 启动载入全量缓存 + 首启种子（store 缺该 key 才用 config.yml 值填），之后 store 为热改项真源。
+	// 须在各热改消费者（健康扫描 / 采样 / 长轮询 / 告警 / 反向抓取）装配前就绪并注入。
+	settingsService, err := service.NewSettingsService(db, repository.NewSettingRepository(db), auditRepo)
+	if err != nil {
+		return err
+	}
+	if err := settingsService.SeedFromConfig(cfg); err != nil {
+		return err
+	}
+	settingsHandler := handler.NewSettingsHandler(settingsService)
+
 	nsRepo := repository.NewNamespaceRepository(db)
 	// 环境服务（含改名 / 删除守卫，FR-53）依赖注册表 / zone 指派 / 配置仓库查在用数据，
 	// 故其构造延后到 registry、assignRepo、configRepo 就绪之后（见下方）。
@@ -142,22 +155,17 @@ func run() error {
 	}
 	nsHandler := handler.NewNamespaceHandler(nsService)
 
+	// 心跳周期仍为启动期固定项（agent 注册时一次性下发，非热改白名单内）；
+	// ttl 供实例服务做注册期重复守卫，取设置 store 当前值（FR-61 健康阈值已移入 store）。
 	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
-	degradedAfter := time.Duration(cfg.Health.DegradedAfterSec) * time.Second
-	ttl := time.Duration(cfg.Health.TTLSec) * time.Second
-	offlineGrace := time.Duration(cfg.Health.OfflineGraceSec) * time.Second
-	scanInterval := time.Duration(cfg.Health.ScanIntervalSec) * time.Second
+	ttl := time.Duration(settingsService.GetInt(service.SettingHealthTTLSec)) * time.Second
 
-	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 仅在配置 url 非空时挂载
+	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 通道恒挂载、靠设置 store 的 url 空与否动态启停（FR-61）。
 	inbox := alert.NewInboxAlerter(cfg.Alert.InboxCapacity)
-	alertChannels := []alert.Alerter{inbox}
-	if cfg.Alert.Webhook.URL != "" {
-		alertChannels = append(alertChannels,
-			alert.NewWebhookAlerter(cfg.Alert.Webhook.URL, time.Duration(cfg.Alert.Webhook.TimeoutMs)*time.Millisecond))
-		slog.Info("健康告警 webhook 通道已启用", "url", cfg.Alert.Webhook.URL)
-	}
+	alertChannels := []alert.Alerter{inbox, alert.NewWebhookAlerter(settingsService)}
+	// 健康阈值 / 扫描周期由健康扫描器每轮从设置 store 读、热生效（FR-61）。
 	healthScanner := runtime.NewHealthScanner(
-		registry, degradedAfter, ttl, offlineGrace, scanInterval, alert.NewDispatcher(alertChannels...))
+		registry, settingsService, alert.NewDispatcher(alertChannels...))
 
 	// 可观测性指标（注册/健康 gauge 抓取时读内存注册表；发布/推送 counter 由事件处自增，见 ADR-0020）
 	metricsSet := metrics.New(registry)
@@ -171,10 +179,9 @@ func run() error {
 	metricRepo := repository.NewMetricSampleRepository(db)
 	metricService := service.NewMetricService(registry, metricRepo)
 	metricHandler := handler.NewMetricHandler(metricService)
-	// 采样器：按间隔对在线实例采样落库 + 按保留期清理（enabled=false 时不启）
-	metricSampler := service.NewMetricSampler(registry, metricRepo,
-		time.Duration(cfg.Metric.SampleIntervalSec)*time.Second,
-		time.Duration(cfg.Metric.RetentionHours)*time.Hour)
+	// 采样器：按间隔对在线实例采样落库 + 按保留期清理（开关 / 间隔 / 保留期从设置 store 读、热生效，FR-61）。
+	// 恒启动常驻：每轮读 metric.enabled，false 则跳过本轮采样 / 清理（不再启动期一次性决定起不起）。
+	metricSampler := service.NewMetricSampler(registry, metricRepo, settingsService)
 
 	// 控制面自身状态页眉（FR-33）：DB 连通经底层连接池 Ping（不经 GORM 业务路径），在线实例数读内存注册表。
 	sqlDB, err := db.DB()
@@ -183,7 +190,9 @@ func run() error {
 	}
 	// 进程 CPU% 采样器（gopsutil）：构造时预热一次基线，端点每次取自上次调用以来的占比。
 	cpuSampler := service.NewGopsutilCPUSampler()
-	systemService := service.NewSystemService(version.Version, startedAt, sqlDB, registry, cfg.Metric.Enabled, cpuSampler)
+	// 采样器启用状态从设置 store 读、热生效（FR-61）：metric.enabled 改了页眉即反映新值。
+	systemService := service.NewSystemService(version.Version, startedAt, sqlDB, registry,
+		func() bool { return settingsService.GetBool(service.SettingMetricEnabled) }, cpuSampler)
 	systemHandler := handler.NewSystemHandler(systemService)
 
 	// 流量调度（FR-10）：drain 标记落 DB + 落位建议（query-only），控制面只给决策不执行玩家连接（ADR-0017）
@@ -217,15 +226,15 @@ func run() error {
 	// 实例注册/下线唤醒拓扑 watch；健康扫描转 lost/offline 也唤醒（FR-29）
 	instanceService.SetNotifier(notifier)
 	healthScanner.SetTopologyNotifier(notifier)
-	maxHold := time.Duration(cfg.Longpoll.MaxHoldMs) * time.Millisecond
 
 	// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询 + 拓扑 watch（FR-29），复用同源唤醒集合 + 连接即对账。
-	// 保活间隔取长轮询挂起上限（无变更时按此节奏发注释行心跳，穿透反代空闲超时）。
-	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, registry, hub, fileHub, topologyHub, commandHub, maxHold)
+	// 保活间隔取长轮询挂起上限（longpoll.max-hold-ms）：从设置 store 读、热生效（FR-61）。
+	streamService := service.NewStreamService(effectiveService, fileEffectiveService, overrideEffectiveService, registry, hub, fileHub, topologyHub, commandHub, settingsService)
 
-	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, maxHold)
+	// agent / file 长轮询挂起点的挂起上限从设置 store 读、热生效（FR-61）。
+	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, settingsService)
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)
-	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, maxHold)
+	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, settingsService)
 	instanceHandler := handler.NewInstanceHandler(instanceService)
 	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
 	zoneHandler := handler.NewZoneHandler(zoneService)
@@ -252,7 +261,8 @@ func run() error {
 	// 反向抓取受管任务（FR-58，见 ADR-0037）：任务仓库 + 服务（建任务 + 单实例互斥、scan 回传存清单、
 	// submit 编排、ingest 复用 FileService.Import 落库、取消、过期）+ 处理器。任务是真源、命令是其执行手段。
 	reverseFetchTaskRepo := repository.NewReverseFetchTaskRepository(db)
-	reverseFetchTaskService := service.NewReverseFetchTaskService(db, reverseFetchTaskRepo, commandRepo, fileService, auditRepo)
+	// 反向抓取单文件上限从设置 store 读、热生效（FR-61）：ReceiveScan 用该上限 + agent size 重算 overThreshold。
+	reverseFetchTaskService := service.NewReverseFetchTaskService(db, reverseFetchTaskRepo, commandRepo, fileService, auditRepo, settingsService)
 	reverseFetchTaskService.SetNotifier(notifier)
 	// agent 复用同一 /files/ingest 端点回传 submit 选定内容，控制面据命令 mode=submit 转交受管任务编排落库。
 	commandService.SetSubmitIngestReceiver(reverseFetchTaskService)
@@ -290,7 +300,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
@@ -305,12 +315,9 @@ func run() error {
 	// 启动后台健康扫描（随关停信号取消退出）
 	go healthScanner.Run(ctx)
 
-	// 启动后台指标采样器（FR-32）：按间隔采样落库 + 保留期清理；配置关闭则不启
-	if cfg.Metric.Enabled {
-		go metricSampler.Run(ctx)
-	} else {
-		slog.Info("指标采样已禁用（metric.enabled=false），仅实时聚合端点可用")
-	}
+	// 启动后台指标采样器（FR-32）：恒常驻，每轮从设置 store 读 metric.enabled 决定本轮是否采样 / 清理（FR-61）。
+	// 不再启动期一次性决定起不起——运维改 metric.enabled 即热生效停 / 起采样，免重启。
+	go metricSampler.Run(ctx)
 
 	// 启动 git 导出 worker（FR-47）：单 worker 串行消费导出信号，随关停信号退出；未启用时也起（空转无害、无信号即不动）
 	if cfg.GitExport.Enabled {

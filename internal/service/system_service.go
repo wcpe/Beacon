@@ -97,14 +97,15 @@ type SystemService struct {
 	startedAt      time.Time
 	pinger         dbPinger
 	registry       *rt.Registry
-	samplerEnabled bool
+	samplerEnabled func() bool // 采样器是否启用：从设置 store 读、热生效（FR-61），反映 metric.enabled 当前值
 	cpu            cpuSampler
 	now            func() time.Time // 便于测试注入时钟；默认 UTC now
 }
 
 // NewSystemService 构造服务。startedAt 由调用方在进程启动处记录并传入（统一为 UTC）。
+// samplerEnabled 为读取采样器启用状态的回调（FR-61：从设置 store 读 metric.enabled，热生效；nil 视为禁用）。
 // cpu 为进程 CPU% 采样器（生产由 NewGopsutilCPUSampler 提供并已预热，测试以替身注入）。
-func NewSystemService(version string, startedAt time.Time, pinger dbPinger, registry *rt.Registry, samplerEnabled bool, cpu cpuSampler) *SystemService {
+func NewSystemService(version string, startedAt time.Time, pinger dbPinger, registry *rt.Registry, samplerEnabled func() bool, cpu cpuSampler) *SystemService {
 	return &SystemService{
 		version:        version,
 		startedAt:      startedAt.UTC(),
@@ -148,7 +149,7 @@ func (s *SystemService) Status() SystemStatus {
 		UptimeSeconds:   int64(now.Sub(s.startedAt).Seconds()),
 		DB:              dbStatus,
 		OnlineInstances: len(s.registry.List(rt.Filter{Status: rt.StatusOnline})),
-		SamplerEnabled:  s.samplerEnabled,
+		SamplerEnabled:  s.samplerEnabled != nil && s.samplerEnabled(),
 		Runtime: RuntimeStats{
 			Goroutines: runtime.NumGoroutine(),
 			HeapAlloc:  ms.HeapAlloc,

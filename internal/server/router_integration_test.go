@@ -80,8 +80,13 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	zoneSvc.SetNotifier(notifier)
 	instSvc.SetNotifier(notifier)
 	ovrSetSvc.SetNotifier(notifier)
+	// 运维设置 store（FR-61）：长轮询 max-hold 等热改项的真源；测试用默认值。
+	settingsSvc, err := service.NewSettingsService(db, repository.NewSettingRepository(db), auditRepo)
+	if err != nil {
+		t.Fatalf("构造设置 service 失败: %v", err)
+	}
 	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
-	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, commandHub, 30*time.Second)
+	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, commandHub, settingsSvc)
 	// 反向抓取命令通道（FR-39）：命令仓库 + 服务（复用 fileSvc.Import 落组/实例覆盖）+ 处理器（校验目标在线）。
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileSvc, auditRepo)
@@ -89,7 +94,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
 	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。
-	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo)
+	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo, settingsSvc)
 	reverseFetchTaskSvc.SetNotifier(notifier)
 	commandService.SetSubmitIngestReceiver(reverseFetchTaskSvc)
 	// 反向抓取持久忽略规则（FR-59）：规则服务供任务详情标 ignoredByRule + CRUD 处理器。
@@ -103,9 +108,9 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
 		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
-		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
+		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
-		Agent:            handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
+		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),
 		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
 		Instance:         handler.NewInstanceHandler(instSvc),
 		Zone:             handler.NewZoneHandler(zoneSvc),
@@ -118,6 +123,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Command:          handler.NewCommandHandler(commandService, instSvc),
 		ReverseFetchTask: reverseFetchTaskHandler,
 		ReverseFetchRule: reverseFetchRuleHandler,
+		Settings:         handler.NewSettingsHandler(settingsSvc),
 		Metrics:          metricsSet.Handler(),
 		Web:              http.HandlerFunc(http.NotFound),
 	}, agentToken, authn, apiKeySvc, auditRepo)

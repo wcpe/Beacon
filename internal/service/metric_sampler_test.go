@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestSampleOnceSnapshotToBatch(t *testing.T) {
 	reg.Report("prod", "lobby-2", "m", 7, 20.0, 64, 256, -1.0, nil)
 
 	sink := &fakeMetricSink{}
-	sampler := NewMetricSampler(reg, sink, time.Second, time.Hour)
+	sampler := NewMetricSampler(reg, sink, settingsWith(t, nil))
 
 	at := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
 	n := sampler.sampleOnce(at)
@@ -79,7 +80,7 @@ func TestSampleOnceSnapshotToBatch(t *testing.T) {
 func TestSampleOnceEmptyNoInsert(t *testing.T) {
 	reg := runtime.NewRegistry()
 	sink := &fakeMetricSink{}
-	sampler := NewMetricSampler(reg, sink, time.Second, time.Hour)
+	sampler := NewMetricSampler(reg, sink, settingsWith(t, nil))
 	if n := sampler.sampleOnce(time.Now().UTC()); n != 0 {
 		t.Fatalf("无在线实例应采样 0，实际 %d", n)
 	}
@@ -107,7 +108,7 @@ func TestSampleOnceExcludesNonOnline(t *testing.T) {
 	reg.SweepExpired(t1, degradedAfter, ttl, offlineGrace)
 
 	sink := &fakeMetricSink{}
-	sampler := NewMetricSampler(reg, sink, time.Second, time.Hour)
+	sampler := NewMetricSampler(reg, sink, settingsWith(t, nil))
 	n := sampler.sampleOnce(t1)
 	if n != 1 {
 		t.Fatalf("仅在线实例应被采样（lost 排除），实际采样 %d", n)
@@ -122,16 +123,63 @@ func TestRetentionDeletesBeforeCutoff(t *testing.T) {
 	reg := runtime.NewRegistry()
 	sink := &fakeMetricSink{deleteReturn: 5}
 	retention := 24 * time.Hour
-	sampler := NewMetricSampler(reg, sink, time.Second, retention)
+	sampler := NewMetricSampler(reg, sink, settingsWith(t, nil))
 
 	now := time.Date(2026, 6, 20, 10, 0, 0, 0, time.UTC)
-	sampler.cleanupOnce(now)
+	sampler.cleanupOnce(now, retention)
 	if len(sink.deleteCutoffs) != 1 {
 		t.Fatalf("应触发 1 次清理，实际 %d", len(sink.deleteCutoffs))
 	}
 	wantCutoff := now.Add(-retention)
 	if !sink.deleteCutoffs[0].Equal(wantCutoff) {
 		t.Fatalf("清理 cutoff 应为 now-保留期=%v，实际 %v", wantCutoff, sink.deleteCutoffs[0])
+	}
+}
+
+// TestRunSkipsSamplingWhenDisabled 守护 FR-61：metric.enabled=false 时 Run 每轮跳过采样 / 清理（不重启停采样）。
+// 采样间隔 1s（ticker 最小粒度），enabled=false，跑 ~1.5s 至少一轮，sink 不应有任何写入。
+func TestRunSkipsSamplingWhenDisabled(t *testing.T) {
+	reg := runtime.NewRegistry()
+	mustRegister(t, reg, "prod", "lobby-1", "10.0.0.1:25565", time.Now().UTC())
+	sink := &fakeMetricSink{}
+	// metric.enabled=false、间隔 1s、保留期 1h。
+	settings := settingsWith(t, map[string]string{
+		SettingMetricEnabled:           "false",
+		SettingMetricSampleIntervalSec: "1",
+		SettingMetricRetentionHours:    "1",
+	})
+	sampler := NewMetricSampler(reg, sink, settings)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	sampler.Run(ctx)
+
+	if len(sink.insertedBatches) != 0 {
+		t.Fatalf("enabled=false 时不应采样落库，实际写入 %d 次", len(sink.insertedBatches))
+	}
+	if len(sink.deleteCutoffs) != 0 {
+		t.Fatalf("enabled=false 时不应清理，实际清理 %d 次", len(sink.deleteCutoffs))
+	}
+}
+
+// TestRunSamplesWhenEnabled 守护 FR-61：metric.enabled=true 时 Run 按间隔采样落库（与 disabled 对照）。
+func TestRunSamplesWhenEnabled(t *testing.T) {
+	reg := runtime.NewRegistry()
+	mustRegister(t, reg, "prod", "lobby-1", "10.0.0.1:25565", time.Now().UTC())
+	sink := &fakeMetricSink{}
+	settings := settingsWith(t, map[string]string{
+		SettingMetricEnabled:           "true",
+		SettingMetricSampleIntervalSec: "1",
+		SettingMetricRetentionHours:    "1",
+	})
+	sampler := NewMetricSampler(reg, sink, settings)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	sampler.Run(ctx)
+
+	if len(sink.insertedBatches) == 0 {
+		t.Fatal("enabled=true 时应至少采样落库 1 次，实际 0 次")
 	}
 }
 

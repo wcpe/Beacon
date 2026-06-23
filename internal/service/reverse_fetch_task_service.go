@@ -43,13 +43,15 @@ type ReverseFetchTaskService struct {
 	cmdRepo   *repository.AgentCommandRepository
 	fileSvc   *FileService
 	auditRepo *repository.AuditLogRepository
+	settings  *SettingsService // 单文件上限从设置 store 读、热生效（FR-61）
 	notifier  CommandNotifier
 }
 
-// NewReverseFetchTaskService 构造服务。
+// NewReverseFetchTaskService 构造服务（settings 提供热改的反向抓取单文件上限）。
 func NewReverseFetchTaskService(db *gorm.DB, taskRepo *repository.ReverseFetchTaskRepository,
-	cmdRepo *repository.AgentCommandRepository, fileSvc *FileService, auditRepo *repository.AuditLogRepository) *ReverseFetchTaskService {
-	return &ReverseFetchTaskService{db: db, taskRepo: taskRepo, cmdRepo: cmdRepo, fileSvc: fileSvc, auditRepo: auditRepo}
+	cmdRepo *repository.AgentCommandRepository, fileSvc *FileService, auditRepo *repository.AuditLogRepository,
+	settings *SettingsService) *ReverseFetchTaskService {
+	return &ReverseFetchTaskService{db: db, taskRepo: taskRepo, cmdRepo: cmdRepo, fileSvc: fileSvc, auditRepo: auditRepo, settings: settings}
 }
 
 // SetNotifier 注入命令待办唤醒器（启动时装配；未注入则建命令后不主动唤醒）。
@@ -132,14 +134,22 @@ func (s *ReverseFetchTaskService) ReceiveScan(commandID uint, files []ScanFile, 
 		return err
 	}
 
+	// 单文件上限从设置 store 读、热生效（FR-61）：用该上限 + agent 上报 size 重算 overThreshold，
+	// 不信 agent 自报的 overThreshold 标记（防 agent 按旧/错阈值标记）。
+	maxFileBytes := int64(s.settings.GetInt(SettingReverseFetchMaxFileBytes))
 	var totalBytes int64
 	overThreshold := 0
+	recomputed := make([]ScanFile, 0, len(files))
 	for _, f := range files {
 		totalBytes += f.Size
-		if f.OverThreshold {
+		over := f.Size > maxFileBytes
+		if over {
 			overThreshold++
 		}
+		f.OverThreshold = over // 以控制面按设置重算的标记覆盖 agent 自报值
+		recomputed = append(recomputed, f)
 	}
+	files = recomputed
 	manifest := scanManifest{TotalFiles: len(files), TotalBytes: totalBytes, Skipped: 0, Files: files}
 	manifestJSON, merr := json.Marshal(manifest)
 	if merr != nil {

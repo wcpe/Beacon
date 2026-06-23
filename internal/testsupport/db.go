@@ -15,7 +15,7 @@ import (
 )
 
 // 集成测试涉及的可清空表（按外键无关顺序）。
-var resetTables = []string{"config_gray", "config_revision", "config_item", "file_revision", "file_object", "file_override_set_revision", "file_override_set", "zone_assignment", "server_drain", "server_offline", "audit_log", "metric_sample", "api_key", "namespace"}
+var resetTables = []string{"config_gray", "config_revision", "config_item", "file_revision", "file_object", "file_override_set_revision", "file_override_set", "zone_assignment", "server_drain", "server_offline", "audit_log", "metric_sample", "api_key", "setting", "namespace"}
 
 // OpenTestDB 为某测试包打开独立数据库（beacon_<suffix>），迁移并清表。
 // 未设 BEACON_TEST_DSN 则跳过该测试。

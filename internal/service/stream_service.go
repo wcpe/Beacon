@@ -33,25 +33,30 @@ type StreamService struct {
 	fileHub     *longpoll.Hub
 	topologyHub *longpoll.Hub
 	commandHub  *longpoll.Hub
-	pingEvery   time.Duration
+	settings    *SettingsService // 保活间隔取长轮询挂起上限，从设置 store 读、热生效（FR-61）
 }
 
 // NewStreamService 构造推送编排器。
 // configHub 唤醒配置通道、fileHub 唤醒文件/覆盖通道、topologyHub 唤醒拓扑通道（与对应长轮询/变更点同源，互不触发无谓重算）。
 // registry 供拓扑通道（FR-29）读 namespace 可用实例算拓扑摘要。
-// pingEvery 为无变更时的保活间隔（避免反代按读空闲断流；<=0 关闭保活）。
+// settings 提供保活间隔（取长轮询挂起上限 longpoll.max-hold-ms，热生效；<=0 关闭保活）。
 func NewStreamService(
 	effSvc *EffectiveService,
 	fileEffSvc *FileEffectiveService,
 	ovrEffSvc *OverrideEffectiveService,
 	registry *runtime.Registry,
 	configHub, fileHub, topologyHub, commandHub *longpoll.Hub,
-	pingEvery time.Duration,
+	settings *SettingsService,
 ) *StreamService {
 	return &StreamService{
 		effSvc: effSvc, fileEffSvc: fileEffSvc, ovrEffSvc: ovrEffSvc, registry: registry,
-		configHub: configHub, fileHub: fileHub, topologyHub: topologyHub, commandHub: commandHub, pingEvery: pingEvery,
+		configHub: configHub, fileHub: fileHub, topologyHub: topologyHub, commandHub: commandHub, settings: settings,
 	}
+}
+
+// pingEvery 取当前保活间隔（长轮询挂起上限，从设置 store 读、热生效）。
+func (s *StreamService) pingEvery() time.Duration {
+	return time.Duration(s.settings.GetInt(SettingLongpollMaxHoldMs)) * time.Millisecond
 }
 
 // EventSink 是 SSE 写出口：handler 实现它把事件写到 http.ResponseWriter 并 flush。
@@ -160,7 +165,7 @@ func (s *StreamService) Run(ctx context.Context, ns, serverID, groupHint string,
 			if err := sink.Send(sse.Event{Type: sse.EventCommandPending}); err != nil {
 				return err
 			}
-		case <-pingTimer(s.pingEvery):
+		case <-pingTimer(s.pingEvery()):
 			// 保活：发一条 SSE 注释行（: 开头），不触发 agent 任何取数据；写失败即客户端断连。
 			if err := sink.Send(sse.Event{Type: sse.EventPing}); err != nil {
 				return err

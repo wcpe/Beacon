@@ -147,6 +147,8 @@ const (
 	ActionAPIKeyCreate = "apikey.create"
 	ActionAPIKeyRevoke = "apikey.revoke"
 	ActionAPIKeyReset  = "apikey.reset"
+	// 运维设置更新（FR-61，热改项真源由 config.yml 移到 DB store，detail 仅记 key + 新值、绝不含密钥，见 ADR-0038）
+	ActionSettingsUpdate = "settings.update"
 )
 
 // 审计对象类型。
@@ -167,6 +169,8 @@ const (
 	TargetTypeReverseFetchTask = "reverse-fetch-task"
 	// 反向抓取持久忽略规则（FR-59）的审计对象类型
 	TargetTypeReverseFetchIgnoreRule = "reverse-fetch-ignore-rule"
+	// 运维设置（FR-61）的审计对象类型
+	TargetTypeSettings = "settings"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

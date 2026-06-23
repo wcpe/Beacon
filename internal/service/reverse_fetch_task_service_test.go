@@ -15,17 +15,25 @@ import (
 )
 
 // newRFTaskTestDB 打开内存 sqlite 并迁移受管任务 + 命令 + 文件树 + 审计表（不依赖 MySQL/DSN）。
+// 用 t.Name() 作每测试**独立**内存库（cache=shared 让本测试内多连接共享同一私有库）——
+// 不接入全局 file::memory: 共享缓存，避免跨测试共用一个内存库导致事务在 shared-cache 写锁上死锁。
 func newRFTaskTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+	dsn := "file:rftask_" + t.Name() + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger:         logger.Default.LogMode(logger.Silent),
 		TranslateError: true,
 	})
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
+	// 把连接池钉到单连接：sqlite shared-cache 下并发写多连接会触发 "table is locked"，
+	// 串行化连接使并发 resolve 的 CAS 走"一个先提交、另一个查到已迁移→STATE"的确定路径（根因修，勿在测试容忍）。
+	if sqlDB, e := db.DB(); e == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if err := db.AutoMigrate(&model.ReverseFetchTask{}, &model.AgentCommand{},
-		&model.FileObject{}, &model.FileRevision{}, &model.AuditLog{}); err != nil {
+		&model.FileObject{}, &model.FileRevision{}, &model.AuditLog{}, &model.Setting{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -33,7 +41,7 @@ func newRFTaskTestDB(t *testing.T) *gorm.DB {
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"reverse_fetch_task", "agent_command", "file_object", "file_revision", "audit_log"} {
+	for _, tbl := range []string{"reverse_fetch_task", "agent_command", "file_object", "file_revision", "audit_log", "setting"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
@@ -46,7 +54,12 @@ func newRFTaskSvc(db *gorm.DB) *ReverseFetchTaskService {
 	cmdRepo := repository.NewAgentCommandRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
 	fileSvc := NewFileService(db, repository.NewFileObjectRepository(db), repository.NewFileRevisionRepository(db), auditRepo)
-	svc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo)
+	// 设置服务（FR-61）：空 store，缓存空→读走白名单默认（reverse-fetch.max-file-bytes 默认 1MB）。
+	settingsSvc, err := NewSettingsService(db, repository.NewSettingRepository(db), auditRepo)
+	if err != nil {
+		panic(err)
+	}
+	svc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo, settingsSvc)
 	// submit 回传由命令服务据 mode 转交受管任务（与生产装配一致）。
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(svc)
@@ -361,7 +374,11 @@ func TestReceiveIngestDispatchesSubmitMode(t *testing.T) {
 	cmdRepo := repository.NewAgentCommandRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
 	fileSvc := NewFileService(db, repository.NewFileObjectRepository(db), repository.NewFileRevisionRepository(db), auditRepo)
-	taskSvc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo)
+	settingsSvc, err := NewSettingsService(db, repository.NewSettingRepository(db), auditRepo)
+	if err != nil {
+		t.Fatalf("装配设置服务失败: %v", err)
+	}
+	taskSvc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo, settingsSvc)
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(taskSvc)
 

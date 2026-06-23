@@ -30,6 +30,7 @@ type Handlers struct {
 	Command          *handler.CommandHandler
 	ReverseFetchTask *handler.ReverseFetchTaskHandler
 	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
+	Settings         *handler.SettingsHandler
 	Metrics          http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web              http.Handler
 }
@@ -197,6 +198,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 控制面自身状态页眉（FR-33）：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源
 		r.Get("/system/status", h.System.Status)
+
+		// 运维设置 store（FR-61，见 ADR-0038）：列全部热改项（读）+ 改单项（写，readonly 403，入审计）。
+		// 与其它写端点一致无条件注册（handler 仅请求期解引用），PUT 已登记 FR-72 覆盖集。
+		r.Get("/settings", h.Settings.List)
+		r.Put("/settings/{key}", h.Settings.Update)
 	})
 
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）

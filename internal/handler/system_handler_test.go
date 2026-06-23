@@ -33,7 +33,7 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 		t.Fatalf("注册实例失败: %v", err)
 	}
 	start := time.Now().Add(-2 * time.Minute)
-	svc := service.NewSystemService("v0.6.0", start, pingFunc(func() error { return nil }), reg, true,
+	svc := service.NewSystemService("v0.6.0", start, pingFunc(func() error { return nil }), reg, func() bool { return true },
 		cpuStub{percent: 12.3, available: true})
 	h := NewSystemHandler(svc)
 
@@ -76,7 +76,7 @@ func TestSystemStatusHandlerConnected(t *testing.T) {
 // TestSystemStatusHandlerDBDown 验证 DB 断开时端点仍返回 200，但 db.connected=false 并带错误说明。
 func TestSystemStatusHandlerDBDown(t *testing.T) {
 	svc := service.NewSystemService("v1", time.Now(), pingFunc(func() error { return errors.New("库已停") }),
-		runtime.NewRegistry(), false, cpuStub{available: false})
+		runtime.NewRegistry(), func() bool { return false }, cpuStub{available: false})
 	h := NewSystemHandler(svc)
 
 	rec := httptest.NewRecorder()

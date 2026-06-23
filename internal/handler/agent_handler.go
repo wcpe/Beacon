@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/render"
@@ -19,14 +17,14 @@ const tagParamPrefix = "tag."
 
 // AgentHandler 处理 agent 侧请求（register / heartbeat / config.effective / report / discovery）。
 type AgentHandler struct {
-	svc     *service.InstanceService
-	effSvc  *service.EffectiveService
-	maxHold time.Duration
+	svc      *service.InstanceService
+	effSvc   *service.EffectiveService
+	settings longpollSettings // 长轮询挂起上限从设置 store 读，热生效（FR-61）
 }
 
 // NewAgentHandler 构造处理器。
-func NewAgentHandler(svc *service.InstanceService, effSvc *service.EffectiveService, maxHold time.Duration) *AgentHandler {
-	return &AgentHandler{svc: svc, effSvc: effSvc, maxHold: maxHold}
+func NewAgentHandler(svc *service.InstanceService, effSvc *service.EffectiveService, settings longpollSettings) *AgentHandler {
+	return &AgentHandler{svc: svc, effSvc: effSvc, settings: settings}
 }
 
 // registerRequest 是注册请求体（capacity/weight 顶层、metadata 自定义、无 canary）。
@@ -235,14 +233,7 @@ func (h *AgentHandler) Effective(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
 		return
 	}
-	timeout := h.maxHold
-	if ms := q.Get("timeoutMs"); ms != "" {
-		if v, e := strconv.Atoi(ms); e == nil && v > 0 {
-			if d := time.Duration(v) * time.Millisecond; d < timeout {
-				timeout = d // 取 min(客户端 timeoutMs, 服务端上限)
-			}
-		}
-	}
+	timeout := resolveHoldTimeout(h.settings, q.Get("timeoutMs"))
 	eff, changed, err := h.effSvc.WaitEffective(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
 	if err != nil {
 		render.WriteError(w, r, err)

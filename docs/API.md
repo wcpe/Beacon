@@ -508,6 +508,16 @@ data: {}
 }
 ```
 
+### 运维设置（FR-61，见 [ADR-0038](adr/0038-ops-settings-store-hot-reload.md)）
+热改项真源由 `config.yml` 移到 DB 设置 store；改设置即热生效、免重启。**启动 / 安全项绝不出现在此 API**（`http-addr` / `database.*` / `auth.*` / `agent-token` / `git-export.*` 仍以文件 + env 为真源）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/settings` | 列全部热改项当前值 + 类型 + 默认 + 说明：`{ items: [{ key, value, valueType, default, desc, isStartup }] }`。`valueType ∈ {int,bool,string}`；`isStartup` 恒 `false`（白名单内皆热改项）。读对 full / readonly 都开 |
+| `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>" }` → `{ ok: true }`。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。每次改入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**——它们本就不在 store） |
+
+热改 key 白名单（12 项）：`health.degraded-after-sec` / `health.ttl-sec` / `health.offline-grace-sec` / `health.scan-interval-sec`、`metric.enabled` / `metric.sample-interval-sec` / `metric.retention-hours`、`longpoll.max-hold-ms`、`alert.webhook-url` / `alert.webhook-timeout-ms`、`log.level`（枚举 `ERROR|WARN|INFO|DEBUG`）、`reverse-fetch.max-file-bytes`（反向抓取单文件上限，默认 1MB；控制面据此 + agent 上报 size 重算 `overThreshold`，不信 agent 标记）。`config.yml` 对这些项仅作**首启种子**：store 缺该 key 时才用文件值填，已 seed 后改文件不影响运行值。
+
 ### 审计与环境
 | 端点 | 说明 |
 |---|---|

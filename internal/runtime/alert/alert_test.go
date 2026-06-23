@@ -120,7 +120,7 @@ func TestWebhookPostsJSON(t *testing.T) {
 	})
 	defer srv.Close()
 
-	wh := NewWebhookAlerter(srv.URL, 2*time.Second)
+	wh := NewWebhookAlerter(&fakeWebhookSettings{url: srv.URL, timeoutMs: 2000})
 	if err := wh.Notify(context.Background(), sampleAlert()); err != nil {
 		t.Fatalf("webhook 投递失败: %v", err)
 	}
@@ -131,4 +131,39 @@ func TestWebhookPostsJSON(t *testing.T) {
 	if len(gotBody) == 0 || !containsAll(string(gotBody), "lobby-1", "degraded", "online") {
 		t.Fatalf("告警 JSON 内容不完整: %s", string(gotBody))
 	}
+}
+
+// TestWebhookSkipsWhenURLEmpty 设置 store 的 webhook url 为空时跳过投递（动态停用，FR-61）：不报错、不发请求。
+func TestWebhookSkipsWhenURLEmpty(t *testing.T) {
+	hit := false
+	srv := newTestServer(func(string, []byte) { hit = true })
+	defer srv.Close()
+
+	wh := NewWebhookAlerter(&fakeWebhookSettings{url: "", timeoutMs: 2000})
+	if err := wh.Notify(context.Background(), sampleAlert()); err != nil {
+		t.Fatalf("url 空应跳过且不报错，实际 %v", err)
+	}
+	if hit {
+		t.Fatal("url 空不应发出任何 HTTP 请求")
+	}
+}
+
+// fakeWebhookSettings 是 WebhookSettings 的测试替身：以固定 url / timeout 驱动 webhook 通道（FR-61）。
+type fakeWebhookSettings struct {
+	url       string
+	timeoutMs int
+}
+
+func (f *fakeWebhookSettings) GetString(key string) string {
+	if key == keyAlertWebhookURL {
+		return f.url
+	}
+	return ""
+}
+
+func (f *fakeWebhookSettings) GetInt(key string) int {
+	if key == keyAlertWebhookTimeoutMs {
+		return f.timeoutMs
+	}
+	return 0
 }

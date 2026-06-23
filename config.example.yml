@@ -1,6 +1,12 @@
 # Beacon 控制面自身配置样例（非"配置中心"业务配置）。由 internal/config 加载，环境变量覆盖优先。
 # 首次启动会自动释放为 config.yml 并就地填入随机强鉴权口令/密钥（开箱即跑、config.yml 即真源）；
 # 此入库样例文件的敏感项保持留空、不写入凭据。生效优先级：真实环境变量 > 当前目录 .env > config.yml。
+#
+# 【热改项降为首启种子】（FR-61，见 docs/adr/0038）：health.* / metric.* / longpoll.max-hold-ms /
+# alert.webhook.* / log.level 这些运维调参项的真源已从本文件移到 DB 设置 store。本文件对它们仅作
+# "出厂默认 / 首启种子"——只在 store 还没该项时（首次启动）生效；store 一旦 seed，改本文件这些项不再
+# 影响运行值，要改请走管理台设置页 / 设置 API（PUT /admin/v1/settings/{key}），改完即热生效、免重启。
+# 启动 / 安全项（http-addr / database.* / auth.* / agent-token / git-export.*）仍以本文件 + env 为真源、改后须重启。
 
 # API 与管理台 UI 的监听地址（二者同端口）
 http-addr: ":8848"
@@ -33,42 +39,48 @@ database:
   # 单个连接最大存活秒数
   conn-max-lifetime-sec: 1800
 
+# 注：本段 degraded-after-sec / ttl-sec / offline-grace-sec / scan-interval-sec 为热改项（首启种子，FR-61），
+# 改后需在设置页 / 设置 API 修改才热生效；heartbeat-interval-sec 是启动项（注册时一次性下发）、改后须重启。
 health:
-  # 下发给 agent 的心跳周期（秒）
+  # 下发给 agent 的心跳周期（秒）。启动项：改后须重启
   heartbeat-interval-sec: 10
-  # 超过多少秒未收到心跳即判亚健康（online→degraded）；须小于 ttl-sec
+  # 超过多少秒未收到心跳即判亚健康（online→degraded）；须小于 ttl-sec。热改项首启种子
   degraded-after-sec: 15
-  # 超过多少秒未收到心跳即判失联（degraded→lost）
+  # 超过多少秒未收到心跳即判失联（degraded→lost）。热改项首启种子
   ttl-sec: 30
-  # lost 后多久转 offline（秒）
+  # lost 后多久转 offline（秒）。热改项首启种子
   offline-grace-sec: 120
-  # 后台健康扫描周期（秒）
+  # 后台健康扫描周期（秒）。热改项首启种子
   scan-interval-sec: 5
 
 # 健康告警：实例进入 degraded/lost/offline 时主动告警，通道可扩展（站内信 + webhook，见 docs/adr/0019）
+# 注：webhook.url / webhook.timeout-ms 为热改项（首启种子，FR-61），改后走设置页 / 设置 API 即热生效、免重启；
+# inbox-capacity 是启动项（环形缓存容量，进程内固定）、改后须重启。
 alert:
-  # 站内信保留的最近告警条数（进程内环形缓存，控制面重启清零）
+  # 站内信保留的最近告警条数（进程内环形缓存，控制面重启清零）。启动项：改后须重启
   inbox-capacity: 200
   # webhook 告警通道
   webhook:
-    # 告警 POST 目标 URL；留空则不启用 webhook 通道（仅站内信）
+    # 告警 POST 目标 URL；留空则不启用 webhook 通道（仅站内信）。热改项首启种子
     url: ""
-    # 单次 webhook 请求超时（毫秒）
+    # 单次 webhook 请求超时（毫秒）。热改项首启种子
     timeout-ms: 3000
 
 # 负载指标看板：按间隔对在线实例采样落库形成历史趋势，并按保留期清理过期样本（FR-32，见 docs/adr/0023）
+# 注：本段 enabled / sample-interval-sec / retention-hours 全为热改项（首启种子，FR-61），改后走设置页 /
+# 设置 API 即热生效——enabled=false 即停采样、间隔改了下一轮即按新周期，免重启。
 metric:
-  # 是否启用采样器；false 时不采样、不清理（实时聚合端点 /metrics/summary 仍可用）
+  # 是否启用采样器；false 时不采样、不清理（实时聚合端点 /metrics/summary 仍可用）。热改项首启种子
   enabled: true
-  # 采样间隔（秒）：每隔多少秒对在线实例采一次样落库。越短样本越密、表增长越快，建议 15~30
+  # 采样间隔（秒）：每隔多少秒对在线实例采一次样落库。越短样本越密、表增长越快，建议 15~30。热改项首启种子
   sample-interval-sec: 30
-  # 保留期（小时）：早于 now 减本值的样本被滚动删除，控制表体量。默认 168（即 7 天）
+  # 保留期（小时）：早于 now 减本值的样本被滚动删除，控制表体量。默认 168（即 7 天）。热改项首启种子
   retention-hours: 168
 
 longpoll:
-  # 服务端长轮询挂起上限（毫秒）；实际取 min(客户端 timeoutMs, 此值)
+  # 服务端长轮询挂起上限（毫秒）；实际取 min(客户端 timeoutMs, 此值)。热改项首启种子（FR-61），改后走设置 API 即热生效
   max-hold-ms: 30000
 
 log:
-  # 日志级别：ERROR / WARN / INFO / DEBUG
+  # 日志级别：ERROR / WARN / INFO / DEBUG。热改项首启种子（FR-61），改后走设置 API 即原子热生效、免重启
   level: "INFO"

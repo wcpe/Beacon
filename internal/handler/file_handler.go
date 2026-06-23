@@ -19,16 +19,16 @@ import (
 
 // FileHandler 处理文件树托管（通道B）的 admin 请求与 agent 同步请求，含三方覆盖集（FR-15）的 agent 投递。
 type FileHandler struct {
-	svc     *service.FileService
-	effSvc  *service.FileEffectiveService
-	ovrSvc  *service.OverrideEffectiveService
-	insSvc  *service.InstanceService
-	maxHold time.Duration
+	svc      *service.FileService
+	effSvc   *service.FileEffectiveService
+	ovrSvc   *service.OverrideEffectiveService
+	insSvc   *service.InstanceService
+	settings longpollSettings // 长轮询挂起上限从设置 store 读，热生效（FR-61）
 }
 
 // NewFileHandler 构造处理器。
-func NewFileHandler(svc *service.FileService, effSvc *service.FileEffectiveService, ovrSvc *service.OverrideEffectiveService, insSvc *service.InstanceService, maxHold time.Duration) *FileHandler {
-	return &FileHandler{svc: svc, effSvc: effSvc, ovrSvc: ovrSvc, insSvc: insSvc, maxHold: maxHold}
+func NewFileHandler(svc *service.FileService, effSvc *service.FileEffectiveService, ovrSvc *service.OverrideEffectiveService, insSvc *service.InstanceService, settings longpollSettings) *FileHandler {
+	return &FileHandler{svc: svc, effSvc: effSvc, ovrSvc: ovrSvc, insSvc: insSvc, settings: settings}
 }
 
 // fileView 是文件对象对外视图（content 仅详情返回）。
@@ -394,14 +394,7 @@ func (h *FileHandler) Manifest(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
 		return
 	}
-	timeout := h.maxHold
-	if ms := q.Get("timeoutMs"); ms != "" {
-		if v, e := strconv.Atoi(ms); e == nil && v > 0 {
-			if d := time.Duration(v) * time.Millisecond; d < timeout {
-				timeout = d // 取 min(客户端 timeoutMs, 服务端上限)
-			}
-		}
-	}
+	timeout := resolveHoldTimeout(h.settings, q.Get("timeoutMs"))
 	tree, changed, err := h.effSvc.WaitFileTree(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -479,14 +472,7 @@ func (h *FileHandler) OverrideManifest(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err) // 未注册 → 404 NOT_REGISTERED
 		return
 	}
-	timeout := h.maxHold
-	if ms := q.Get("timeoutMs"); ms != "" {
-		if v, e := strconv.Atoi(ms); e == nil && v > 0 {
-			if d := time.Duration(v) * time.Millisecond; d < timeout {
-				timeout = d // 取 min(客户端 timeoutMs, 服务端上限)
-			}
-		}
-	}
+	timeout := resolveHoldTimeout(h.settings, q.Get("timeoutMs"))
 	eff, changed, err := h.ovrSvc.WaitOverride(r.Context(), ns, serverID, groupHint, agentMD5, timeout)
 	if err != nil {
 		render.WriteError(w, r, err)

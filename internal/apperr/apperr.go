@@ -138,4 +138,9 @@ var (
 	ErrInstanceOfflineRejected = New(http.StatusForbidden, "INSTANCE_OFFLINE_REJECTED", "实例已被主动下线，禁止接入")
 	// ErrOfflineNotFound 取消下线时该下线标记不存在（FR-49）。
 	ErrOfflineNotFound = New(http.StatusNotFound, "OFFLINE_NOT_FOUND", "下线标记不存在")
+
+	// ErrSettingKeyNotAllowed 设置 key 不在热改白名单内（写非白名单 / 启动 / 安全项一律拒，FR-61，见 ADR-0038）。
+	ErrSettingKeyNotAllowed = New(http.StatusBadRequest, "SETTING_KEY_NOT_ALLOWED", "设置项不存在或不可热改")
+	// ErrSettingValueInvalid 设置值非法（类型 / 范围 / 枚举校验不通过，FR-61）。
+	ErrSettingValueInvalid = New(http.StatusBadRequest, "SETTING_VALUE_INVALID", "设置值不合法")
 )
