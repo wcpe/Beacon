@@ -526,6 +526,15 @@ export const zhCN = {
     sourceLabel: '拓印源（在线实例）',
     pathLabel: '目标文件 path（相对 plugins/）',
     pathPlaceholder: '如 AllinCore/config.yml',
+    // FR-69：关键字搜文件 + 使用提示
+    // 候选下拉占位（提示既可搜也可手输）
+    pathSearchPlaceholder: '输入关键字搜文件，或直接手输 path',
+    // 候选加载中
+    pathLoading: '加载候选文件…',
+    // 该源已知文件清单为空时的提示（仍可手输）
+    pathNoCandidate: '该实例暂无已知文件，可直接手输 path',
+    // 使用提示文案（上手说明）：搜索 + 兜底手输
+    usageHint: '提示：可输入关键字即时搜该实例已知文件并点选；未被追踪的文件直接手输完整 path 即可拓印。',
     triggerBtn: '拓印此文件',
     triggering: '触发中…',
     noOnline: '当前无在线实例可拓印',
