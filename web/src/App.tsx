@@ -11,9 +11,8 @@ import ConfigsPage from './pages/ConfigsPage'
 import FilePreviewPage from './pages/FilePreviewPage'
 import ImprintPage from './pages/ImprintPage'
 import ReverseFetchTaskPage from './pages/reverse-fetch/ReverseFetchTaskPage'
-import InstancesPage from './pages/InstancesPage'
+import ServersPage from './pages/ServersPage'
 import TopologyPage from './pages/TopologyPage'
-import ProxiesPage from './pages/ProxiesPage'
 import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
 import ApiKeysPage from './pages/ApiKeysPage'
@@ -53,7 +52,11 @@ export default function App() {
           <Route path="files/:id" element={<Navigate to="/configs" replace />} />
           <Route path="override-sets" element={<Navigate to="/configs" replace />} />
           <Route path="override-sets/:id" element={<Navigate to="/configs" replace />} />
-          <Route path="instances" element={<InstancesPage />} />
+          {/* 服务器页（FR-65）：实例与健康 + 代理服管理合并，列全部 bukkit+bungee + 深指标 + 下线/drain/改派 */}
+          <Route path="servers" element={<ServersPage />} />
+          {/* 旧 /instances、/proxies 重定向到统一服务器页（FR-65） */}
+          <Route path="instances" element={<Navigate to="/servers" replace />} />
+          <Route path="proxies" element={<Navigate to="/servers" replace />} />
           {/* 集群拓扑可视化（FR-37）：bc→bukkit 真实连线图 */}
           <Route path="topology" element={<TopologyPage />} />
           <Route path="zones" element={<ZonesPage />} />
@@ -61,8 +64,6 @@ export default function App() {
           {/* 密钥管理（FR-42）：只读角色 + 运行时 API 密钥创建/吊销/重置 */}
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="namespaces" element={<NamespacesPage />} />
-          {/* 代理服管理页（FR-52）：集中展示某环境全部 BC 代理运行态 + 底层参数 */}
-          <Route path="proxies" element={<ProxiesPage />} />
           {/* 运维设置页（FR-62）：分组展示热改项 + 逐项编辑保存 + 热生效回显 */}
           <Route path="settings" element={<SettingsPage />} />
           {/* 未知路径回到配置中心 */}

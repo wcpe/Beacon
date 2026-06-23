@@ -1,27 +1,28 @@
-// 可观测看板页（FR-32 / FR-34 / FR-43，见 docs/specs/dashboard-role-split.md）：
-// 整体拆「子服(bukkit)」与「BC 代理」两大区块——
-//   子服区：总览卡片（总人数 / 在线服务器 / 平均 TPS / 内存 / CPU，平均口径仅算 bukkit）+ 趋势图 + 子服明细；
-//   BC 区：BCPanel（bc 维度聚合）+ bc 明细。
-// 每服明细按 role 分组（bukkit / bungee 各一表）。
+// 可观测看板页（FR-32 / FR-34 / FR-43 + 瘦身 FR-64）：集群粗览，一屏不深滚。
+// 保留 KPI 总览卡片（5 卡，平均口径仅算 bukkit）+ BC 维度 5 卡 + 关键趋势（4 折线）；
+// 加「在线分角色摘要」行（按 metricsSummary.servers 的 role 计数 + onlineServers）+「健康分布」（listInstances 按 status 前端计数）。
+// 逐服明细表已移交服务器页（/servers）。环境筛选 + 一键清空（FR-63）保留。
 // 边界：只展示负载数字（健康事实），绝不展示任何玩家名单 / 身份（后端也不返回）。
 
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { listNamespaces, metricsSummary, metricsTrend } from '../api/client'
-import type { ServerPlayers, TrendWindow } from '../api/client'
+import { Activity, HeartPulse, Server } from 'lucide-react'
+import { listInstances, listNamespaces, metricsSummary, metricsTrend } from '../api/client'
+import type { TrendWindow } from '../api/client'
 import { formatBytes, namespaceOptions } from '../api/format'
 import SummaryCards from './dashboard/SummaryCards'
 import BCPanel from './dashboard/BCPanel'
 import TrendChart from './dashboard/TrendChart'
+import StatCard from './dashboard/StatCard'
 import AsyncSection from '@/components/AsyncSection'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-// 总览快照刷新周期（毫秒）：与实例健康页一致，短周期反映当前负载
+// 总览快照刷新周期（毫秒）：与服务器页一致，短周期反映当前负载
 const SUMMARY_REFETCH_MS = 5000
 
 // 可选时间窗（预设窗口）：label 经 i18n key 在渲染时解析
@@ -31,12 +32,8 @@ const WINDOWS: Array<{ value: TrendWindow; labelKey: string }> = [
   { value: '24h', labelKey: 'dashboard.win24h' },
 ]
 
-// 角色编码（与后端 metric_aggregate role 约定一致）：
-// bungee 进 BC 区，其余（含 bukkit 与未知角色）兜底进子服区，避免新角色漏展示。
+// 角色编码（与后端 metric_aggregate role 约定一致）：bungee 进 BC 计数，其余进子服计数。
 const ROLE_BUNGEE = 'bungee'
-
-// 每服人数明细行（含角色，供按角色分组）
-type ServerRow = ServerPlayers
 
 export default function DashboardPage() {
   const { t } = useTranslation()
@@ -47,10 +44,7 @@ export default function DashboardPage() {
   // 环境下拉候选来自 listNamespaces；筛选框允许键入候选外的值（可编辑）。
   // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
   const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = useMemo(
-    () => namespaceOptions(namespacesQuery.data),
-    [namespacesQuery.data],
-  )
+  const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
 
   const summaryQuery = useQuery({
     queryKey: ['metrics-summary', namespace],
@@ -63,6 +57,13 @@ export default function DashboardPage() {
     queryFn: () => metricsTrend({ namespace: namespace || undefined, window }),
   })
 
+  // 健康分布（FR-64）：在册实例按 status 前端计数（online/lost/offline）。
+  const instancesQuery = useQuery({
+    queryKey: ['instances', 'dashboard-health', namespace],
+    queryFn: () => listInstances({ namespace: namespace || undefined }),
+    refetchInterval: SUMMARY_REFETCH_MS,
+  })
+
   const isFetching = summaryQuery.isFetching || trendQuery.isFetching
   const points = trendQuery.data?.points ?? []
   // CPU 折线专用点：把无样本哨兵（avgCpuLoad < 0，约定 -1）置为 null，
@@ -72,24 +73,20 @@ export default function DashboardPage() {
     avgCpuLoad: p.avgCpuLoad < 0 ? null : p.avgCpuLoad,
   }))
 
-  // 每服明细按角色分组：bukkit 一组、bungee 一组（其它角色归到子服明细兜底）。
+  // 在线分角色计数（FR-64）：按 metricsSummary.servers 的 role 分桶（bungee 进 BC，其余进子服）。
   const allServers = summaryQuery.data?.servers ?? []
-  const bukkitServers = allServers.filter((s) => s.role !== ROLE_BUNGEE)
-  const bcServers = allServers.filter((s) => s.role === ROLE_BUNGEE)
+  const bukkitCount = allServers.filter((s) => s.role !== ROLE_BUNGEE).length
+  const bungeeCount = allServers.filter((s) => s.role === ROLE_BUNGEE).length
+  const onlineServers = summaryQuery.data?.onlineServers ?? 0
 
-  // 子服明细列：serverId 与在线人数（不含名单）
-  const serverColumns: DataTableColumn<ServerRow>[] = [
-    { header: t('dashboard.colServerId'), className: 'font-mono', cell: (r) => r.serverId },
-    { header: t('dashboard.colPlayerCount'), cell: (r) => r.playerCount },
-  ]
-  // bc 明细列：serverId 与在线连接数（bc 的 playerCount 即代理在线连接）
-  const bcServerColumns: DataTableColumn<ServerRow>[] = [
-    { header: t('dashboard.colServerId'), className: 'font-mono', cell: (r) => r.serverId },
-    { header: t('dashboard.colConnections'), cell: (r) => r.playerCount },
-  ]
+  // 健康分布计数（FR-64）：在册实例按 status 计数。
+  const instances = instancesQuery.data ?? []
+  const healthOnline = instances.filter((i) => i.status === 'online').length
+  const healthLost = instances.filter((i) => i.status === 'lost').length
+  const healthOffline = instances.filter((i) => i.status === 'offline').length
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold">{t('dashboard.title')}</h1>
         {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
@@ -119,9 +116,30 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* ===== 区块一：子服（bukkit）===== */}
-      {/* 总览卡片 / 趋势 / 子服明细的平均口径均仅算 bukkit，与 BC 区分离 */}
-      <section className="space-y-4">
+      {/* 在线分角色摘要 + 健康分布（FR-64）：粗况一行卡片，替代逐服明细表 */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <StatCard
+          label={t('dashboard.roleSummaryTitle')}
+          value={t('dashboard.roleSummaryBukkit', { count: bukkitCount })}
+          hint={t('dashboard.roleSummaryBungee', { count: bungeeCount })}
+          icon={<Server className="size-4" />}
+        />
+        <StatCard
+          label={t('dashboard.onlineServersTitle')}
+          value={onlineServers}
+          hint={t('dashboard.roleSummaryOnline', { count: bukkitCount + bungeeCount })}
+          icon={<Activity className="size-4" />}
+        />
+        <StatCard
+          label={t('dashboard.healthTitle')}
+          value={t('dashboard.healthOnline', { count: healthOnline })}
+          hint={`${t('dashboard.healthLost', { count: healthLost })} · ${t('dashboard.healthOffline', { count: healthOffline })}`}
+          icon={<HeartPulse className="size-4" />}
+        />
+      </div>
+
+      {/* ===== 子服（bukkit）粗览 ===== */}
+      <section className="space-y-3">
         <h2 className="text-lg font-semibold">{t('dashboard.sectionBukkit')}</h2>
 
         {/* 总览卡片：当前快照聚合（平均 TPS·内存·CPU 仅算 bukkit） */}
@@ -135,7 +153,7 @@ export default function DashboardPage() {
 
         {/* 趋势图：时间窗切换 + 四指标折线（仅 bukkit 口径） */}
         <Card>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-base font-medium">{t('dashboard.trendTitle')}</div>
               <Tabs value={window} onValueChange={(v) => setWindow(v as TrendWindow)}>
@@ -153,7 +171,7 @@ export default function DashboardPage() {
               isError={trendQuery.isError}
               error={trendQuery.error}
             >
-              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <TrendChart
                   title={t('dashboard.chartPlayers')}
                   points={points}
@@ -186,32 +204,11 @@ export default function DashboardPage() {
             </AsyncSection>
           </CardContent>
         </Card>
-
-        {/* 子服明细：serverId → 在线人数（仅 bukkit 角色） */}
-        <Card>
-          <CardContent className="space-y-3">
-            <div className="text-base font-medium">{t('dashboard.serverDetail')}</div>
-            <AsyncSection
-              isLoading={summaryQuery.isLoading}
-              isError={summaryQuery.isError}
-              error={summaryQuery.error}
-            >
-              <DataTable
-                columns={serverColumns}
-                rows={bukkitServers}
-                rowKey={(r) => r.serverId}
-                emptyText={t('dashboard.bukkitEmpty')}
-              />
-            </AsyncSection>
-          </CardContent>
-        </Card>
       </section>
 
-      {/* ===== 区块二：BC 代理（bungee）===== */}
-      {/* bc 维度聚合 + bc 明细，与子服区完全分离 */}
-      <section className="space-y-4">
+      {/* ===== BC 代理（bungee）粗览 ===== */}
+      <section className="space-y-3">
         <h2 className="text-lg font-semibold">{t('dashboard.sectionBc')}</h2>
-
         {/* BC 维度聚合卡片（FR-34）：仅 role=bungee 聚合 */}
         <AsyncSection
           isLoading={summaryQuery.isLoading}
@@ -220,26 +217,17 @@ export default function DashboardPage() {
         >
           {summaryQuery.data && <BCPanel bc={summaryQuery.data.bc} />}
         </AsyncSection>
-
-        {/* BC 明细：serverId → 在线连接（仅 bungee 角色） */}
-        <Card>
-          <CardContent className="space-y-3">
-            <div className="text-base font-medium">{t('dashboard.bcDetail')}</div>
-            <AsyncSection
-              isLoading={summaryQuery.isLoading}
-              isError={summaryQuery.isError}
-              error={summaryQuery.error}
-            >
-              <DataTable
-                columns={bcServerColumns}
-                rows={bcServers}
-                rowKey={(r) => r.serverId}
-                emptyText={t('dashboard.bcEmpty')}
-              />
-            </AsyncSection>
-          </CardContent>
-        </Card>
       </section>
+
+      {/* 底部导航链接（FR-64）：逐服深数据 / 拓扑入口 */}
+      <div className="flex flex-wrap gap-4 text-sm">
+        <Link to="/servers" className="text-primary hover:underline">
+          {t('dashboard.linkServers')}
+        </Link>
+        <Link to="/topology" className="text-primary hover:underline">
+          {t('dashboard.linkTopology')}
+        </Link>
+      </div>
     </div>
   )
 }

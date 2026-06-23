@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
@@ -32,11 +33,48 @@ vi.mock('../api/client', () => ({
   metricsTrend: vi.fn(),
   // FR-51：环境筛选框下拉候选来源
   listNamespaces: vi.fn(),
+  // FR-64：健康分布按 status 前端计数
+  listInstances: vi.fn(),
 }))
 
 import DashboardPage from './DashboardPage'
-import { metricsSummary, metricsTrend, listNamespaces } from '../api/client'
+import { metricsSummary, metricsTrend, listNamespaces, listInstances } from '../api/client'
 import type { MetricsSummary, MetricsTrend } from '../api/client'
+import type { InstanceView } from '../api/types'
+
+// 健康分布样例：在册实例按 status 计数（2 online / 1 lost）
+function inst(overrides: Partial<InstanceView>): InstanceView {
+  return {
+    namespace: 'prod',
+    serverId: 'lobby-1',
+    role: 'bukkit',
+    group: 'area1',
+    zone: 'z1',
+    assigned: true,
+    address: '10.0.0.1:25565',
+    version: '1.0',
+    status: 'online',
+    capacity: 0,
+    weight: 0,
+    metadata: {},
+    lastHeartbeat: '',
+    appliedMd5: '',
+    playerCount: 0,
+    tps: 0,
+    backends: [],
+    zoneDefaultEntry: false,
+    proxy: {
+      onlineConnections: 0,
+      threadCount: 0,
+      uptimeMs: 0,
+      backendUp: 0,
+      backendTotal: 0,
+      backendAvgLatencyMs: -1,
+    },
+    registeredAt: '',
+    ...overrides,
+  }
+}
 
 // 当前快照样例：含一个有效 CPU 平均与两服明细
 const SUMMARY: MetricsSummary = {
@@ -86,13 +124,22 @@ const TREND: MetricsTrend = {
 
 function renderPage(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
 beforeEach(() => {
   vi.mocked(metricsSummary).mockResolvedValue(SUMMARY)
   vi.mocked(metricsTrend).mockResolvedValue(TREND)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
+  vi.mocked(listInstances).mockResolvedValue([
+    inst({ serverId: 'lobby-1', status: 'online' }),
+    inst({ serverId: 'pvp-2', status: 'online' }),
+    inst({ serverId: 'lost-1', status: 'lost' }),
+  ])
 })
 
 describe('DashboardPage', () => {
@@ -171,18 +218,46 @@ describe('DashboardPage', () => {
     // 两大区块标题各为一个二级标题（h2），互相分离
     expect(await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: 'BC 代理' })).toBeInTheDocument()
-    // 子服区有总览卡片 + 子服明细；BC 区有 BC 面板 + BC 明细
-    expect(screen.getByText('子服明细')).toBeInTheDocument()
-    expect(screen.getByText('BC 明细')).toBeInTheDocument()
   })
 
-  it('每服明细按角色分组：bukkit 进子服明细，bungee 进 BC 明细', async () => {
+  // FR-64 瘦身：看板移除两张逐实例明细表，逐服深数据移交服务器页。
+  it('瘦身后不再渲染逐实例明细表（无子服明细 / BC 明细，无逐服 serverId）', async () => {
     renderPage(<DashboardPage />)
-    // bukkit 子服落子服明细
-    expect(await screen.findByText('lobby-1')).toBeInTheDocument()
-    expect(screen.getByText('pvp-2')).toBeInTheDocument()
-    // bungee 代理落 BC 明细（不混进子服明细）
-    expect(screen.getByText('proxy-1')).toBeInTheDocument()
+    await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' })
+    // 不再有明细表标题
+    expect(screen.queryByText('子服明细')).not.toBeInTheDocument()
+    expect(screen.queryByText('BC 明细')).not.toBeInTheDocument()
+    // metricsSummary.servers 的逐服 serverId 不再单行展示（明细已移交 /servers）
+    expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
+    expect(screen.queryByText('pvp-2')).not.toBeInTheDocument()
+    expect(screen.queryByText('proxy-1')).not.toBeInTheDocument()
+  })
+
+  // FR-64：加在线分角色摘要（子服 N / BC 代理 M）。
+  it('渲染在线分角色摘要（子服 / BC 代理计数）', async () => {
+    renderPage(<DashboardPage />)
+    // SUMMARY.servers：2 个 bukkit + 1 个 bungee
+    expect(await screen.findByText('子服 2')).toBeInTheDocument()
+    expect(screen.getByText('BC 代理 1')).toBeInTheDocument()
+  })
+
+  // FR-64：加健康分布（listInstances 按 status 前端计数）。
+  it('渲染健康分布（按 status 前端计数 online/lost/offline）', async () => {
+    renderPage(<DashboardPage />)
+    // listInstances mock：2 online / 1 lost / 0 offline
+    expect(await screen.findByText('健康分布')).toBeInTheDocument()
+    expect(screen.getByText('online 2')).toBeInTheDocument()
+    expect(screen.getByText(/lost 1/)).toBeInTheDocument()
+    expect(screen.getByText(/offline 0/)).toBeInTheDocument()
+  })
+
+  // FR-64：底部「服务器详情 → /servers · 拓扑 → /topology」链接。
+  it('底部含服务器详情与拓扑导航链接', async () => {
+    renderPage(<DashboardPage />)
+    const serversLink = await screen.findByText('服务器详情 → /servers')
+    expect(serversLink.closest('a')).toHaveAttribute('href', '/servers')
+    const topoLink = screen.getByText('拓扑 → /topology')
+    expect(topoLink.closest('a')).toHaveAttribute('href', '/topology')
   })
 
   it('渲染 BC 代理面板（代理数 / 连接 / 线程 / 后端可达性 / 延迟）', async () => {
@@ -239,8 +314,8 @@ describe('DashboardPage', () => {
   })
 
   it('不渲染任何玩家名单 / 身份字段（边界守护）', async () => {
-    // 负向测试：故意往明细行塞名单类字段（playerNames / players），断言其值不被渲染到 DOM。
-    // 唯一哨兵串便于断言；后端实际不返回这些字段，此处构造越界数据验证前端守护。
+    // 负向测试：故意往 servers 行塞名单类字段（playerNames / players），断言其值不被渲染到 DOM。
+    // 瘦身后看板不再逐服展开（只按 role 计数），名单更无从泄露；此处构造越界数据验证前端守护。
     const SENTINEL_A = '玩家甲-名单哨兵-A7F3'
     const SENTINEL_B = '玩家乙-名单哨兵-B2E9'
     const summaryWithRoster = {
@@ -253,8 +328,9 @@ describe('DashboardPage', () => {
     vi.mocked(metricsSummary).mockResolvedValue(summaryWithRoster)
 
     const { container } = renderPage(<DashboardPage />)
-    await screen.findByText('lobby-1')
-    // 塞入的名单字段值绝不应出现在 DOM 中（明细表只渲染 serverId 与 playerCount）。
+    // 锚定瘦身后仍渲染的分角色摘要（2 个 bukkit），确保页面已就绪后再断言名单未泄露。
+    await screen.findByText('子服 2')
+    // 塞入的名单字段值绝不应出现在 DOM 中。
     expect(container.textContent).not.toContain(SENTINEL_A)
     expect(container.textContent).not.toContain(SENTINEL_B)
     // 保留原断言：名册类文案同样不得出现。

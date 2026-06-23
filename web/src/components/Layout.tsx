@@ -16,13 +16,12 @@ const NAV_ITEMS: Array<{ to: string; labelKey: string }> = [
   { to: '/file-preview', labelKey: 'nav.filePreview' },
   { to: '/imprint', labelKey: 'nav.imprint' },
   { to: '/reverse-fetch', labelKey: 'nav.reverseFetchTask' },
-  { to: '/instances', labelKey: 'nav.instances' },
+  { to: '/servers', labelKey: 'nav.servers' },
   { to: '/topology', labelKey: 'nav.topology' },
   { to: '/zones', labelKey: 'nav.zones' },
   { to: '/audits', labelKey: 'nav.audits' },
   { to: '/api-keys', labelKey: 'nav.apiKeys' },
   { to: '/namespaces', labelKey: 'nav.namespaces' },
-  { to: '/proxies', labelKey: 'nav.proxies' },
   { to: '/settings', labelKey: 'nav.settings' },
 ]
 

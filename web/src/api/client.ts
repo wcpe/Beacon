@@ -353,6 +353,35 @@ export function onlineInstance(serverId: string, namespace: string): Promise<voi
   })
 }
 
+// 流量调度·排空标记（FR-10，服务器页 drain/undrain 操作；对齐 internal/handler/scheduling_handler.go）。
+// drain 仅是落位决策标记（候选排序时降权/剔除），不执行玩家连接（架构红线，见 ADR-0017）。
+
+// 单条 drain 标记视图（对齐 handler.drainView）。
+export interface DrainMarker {
+  namespace: string
+  serverId: string
+  reason: string
+}
+
+// 列当前 drain 标记（GET /scheduling/drains?namespace=）：后端响应 { items: [] }，取 items。
+export function listDrains(namespace?: string): Promise<DrainMarker[]> {
+  return request<ItemsResponse<DrainMarker>>(`/scheduling/drains${qs({ namespace })}`).then((r) => r.items)
+}
+
+// 标记某实例排空（PUT /scheduling/drains）：namespace/serverId 走请求体（与后端 drainRequest 一致）。
+// 写操作需 full 角色（readonly → 403）。
+export function drainInstance(serverId: string, namespace: string, reason?: string): Promise<DrainMarker> {
+  return request<DrainMarker>('/scheduling/drains', {
+    method: 'PUT',
+    body: JSON.stringify({ namespace, serverId, reason: reason ?? '' }),
+  })
+}
+
+// 取消某实例排空（DELETE /scheduling/drains?namespace=&serverId=）：namespace/serverId 走查询参数。
+export function undrainInstance(serverId: string, namespace: string): Promise<void> {
+  return request<void>(`/scheduling/drains${qs({ namespace, serverId })}`, { method: 'DELETE' })
+}
+
 // ===== 集群拓扑（FR-37）=====
 // 读控制面内存注册表快照：节点（在线实例）+ bc→bukkit 真实连线 + 大区/zone 分组。namespace 必填。
 export function getTopology(namespace: string): Promise<TopologyView> {
