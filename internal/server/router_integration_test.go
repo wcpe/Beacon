@@ -109,7 +109,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Command:     handler.NewCommandHandler(commandService, instSvc),
 		Metrics:     metricsSet.Handler(),
 		Web:         http.HandlerFunc(http.NotFound),
-	}, agentToken, authn, apiKeySvc)
+	}, agentToken, authn, apiKeySvc, auditRepo)
 	ts := httptest.NewServer(router)
 	adminToken = loginForToken(t, ts.URL)
 	return ts

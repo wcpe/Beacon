@@ -32,9 +32,9 @@ type Handlers struct {
 	Web         http.Handler
 }
 
-// NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写中间件）+ 内嵌前端（SPA 回退）。
-// 中间件自外向内：recover → traceId → 访问日志。admin 组内：鉴权（登录令牌 / API 密钥）→ 只读拒写裁决。
-func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys APIKeyVerifier) http.Handler {
+// NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写 + 写审计兜底）+ 内嵌前端（SPA 回退）。
+// 中间件自外向内：recover → traceId → 访问日志。admin 组内：鉴权（登录令牌 / API 密钥）→ 只读拒写裁决 → 写操作审计兜底（FR-72）。
+func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys APIKeyVerifier, audit auditCreator) http.Handler {
 	r := chi.NewRouter()
 	r.Use(recoverMiddleware, traceMiddleware, accessLog)
 
@@ -70,6 +70,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	r.Route("/admin/v1", func(r chi.Router) {
 		r.Use(adminAuthMiddleware(authn, apiKeys))
 		r.Use(readonlyWriteGuard)
+		// 写操作审计兜底（FR-72，增强 FR-7）：挂在鉴权 + 只读拒写之后（context 已有 operator、被拒写请求不进入兜底）。
+		// 对尚无专项审计的写端点补记一条，命中覆盖集合的端点跳过避免双记；detail 不含请求体，落库失败只 WARN 不阻断。
+		r.Use(auditWriteMiddleware(audit))
 		// 登出：仅记审计（令牌无状态、服务端无会话可吊销），故挂在鉴权中间件内以取认证身份
 		r.Post("/auth/logout", h.Auth.Logout)
 		r.Get("/namespaces", h.Namespace.List)

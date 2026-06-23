@@ -275,7 +275,7 @@ func run() error {
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
-	}, cfg.AgentToken, authn, apiKeyService)
+	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
