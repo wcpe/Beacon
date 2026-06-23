@@ -8,6 +8,16 @@ import { cleanup } from '@testing-library/react'
 // i18n 初始化（FR-50，见 ADR-0033）：测试环境同步初始化，保证 t() 同步返回 zh-CN 文案、不出裸 key
 import '../i18n'
 
+// jsdom 不实现 ResizeObserver：radix ScrollArea 等组件在内容溢出时会用到它，缺失会在渲染时抛错。
+// 提供最小空实现垫片，使依赖滚动条的组件测试可正常渲染（不影响断言）。
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
+
 afterEach(() => {
   cleanup()
 })

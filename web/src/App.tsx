@@ -10,6 +10,7 @@ import DashboardPage from './pages/DashboardPage'
 import ConfigsPage from './pages/ConfigsPage'
 import FilePreviewPage from './pages/FilePreviewPage'
 import ImprintPage from './pages/ImprintPage'
+import ReverseFetchTaskPage from './pages/reverse-fetch/ReverseFetchTaskPage'
 import InstancesPage from './pages/InstancesPage'
 import TopologyPage from './pages/TopologyPage'
 import ProxiesPage from './pages/ProxiesPage'
@@ -44,6 +45,8 @@ export default function App() {
           <Route path="file-preview" element={<FilePreviewPage />} />
           {/* 拓印审核台（FR-46）：选在线服+文件 → diff → 单人自审 → 同步 */}
           <Route path="imprint" element={<ImprintPage />} />
+          {/* 反向抓取审核台 + 任务台（FR-60）：建扫描任务 → 审核清单 → 提交 → 冲突 diff → resolve */}
+          <Route path="reverse-fetch" element={<ReverseFetchTaskPage />} />
           {/* 文件树托管 / 覆盖集已下线，重定向到配置中心 */}
           <Route path="files" element={<Navigate to="/configs" replace />} />
           <Route path="files/:id" element={<Navigate to="/configs" replace />} />

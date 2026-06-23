@@ -9,10 +9,13 @@ import type {
   AssignmentView,
   AuditPage,
   ConfigView,
+  ConflictDiffView,
   DefaultEntryView,
   DiffView,
   FileRevisionView,
   FileView,
+  IgnoreRuleType,
+  IgnoreRuleView,
   ImprintConfirmView,
   ImprintDiffView,
   ImprintScope,
@@ -23,7 +26,10 @@ import type {
   OverrideSetRevisionView,
   OverrideSetView,
   PublishResult,
+  ResolveDecision,
+  ResolveResult,
   ReverseFetchScope,
+  ReverseFetchTaskView,
   RevisionView,
   SystemStatusView,
   TopologyView,
@@ -789,4 +795,133 @@ export function rollbackOverrideSet(
 
 export function dryRunOverrideSet(id: number): Promise<OverrideSetDryRunView> {
   return request<OverrideSetDryRunView>(`/override-sets/${id}/dry-run`)
+}
+
+// ===== 反向抓取受管任务 + 审核台 + 冲突 diff（FR-58/59/60）=====
+
+// 建扫描任务参数：目标层 + 目标组；server 层另需目标 serverId。
+// operator 由登录令牌身份决定（后端取认证身份），故不在请求体送 operator。
+export interface CreateScanTaskParams {
+  // 目标层：group（落组级覆盖）/ server（落实例级覆盖）
+  scope: ReverseFetchScope
+  // 入库到哪个组的文件树
+  group: string
+  // 仅 server 层需要：覆盖落到哪个 serverId（组层留空）
+  target?: string
+}
+
+// 建扫描任务（FR-58）：命令在线源 agent 扫描其 plugins/ 树回传清单（两段式第一段）。
+// namespace 走查询参数（实例列表跨 namespace、须随源实例带上）；写操作需 full 角色（readonly → 403）。
+export function createScanTask(
+  serverId: string,
+  namespace: string,
+  params: CreateScanTaskParams,
+): Promise<ReverseFetchTaskView> {
+  return request<ReverseFetchTaskView>(
+    `/instances/${encodeURIComponent(serverId)}/reverse-fetch${qs({ namespace })}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(params),
+    },
+  )
+}
+
+// 任务历史列表过滤条件（任务台筛选）
+export interface ReverseFetchTaskFilter {
+  namespace?: string
+  serverId?: string
+  status?: string
+}
+
+// 列任务历史（FR-58）：后端响应 { items: [] }，取 items。
+export function listReverseFetchTasks(
+  filter: ReverseFetchTaskFilter,
+): Promise<ReverseFetchTaskView[]> {
+  return request<ItemsResponse<ReverseFetchTaskView>>(`/reverse-fetch/tasks${qs(filter)}`).then(
+    (r) => r.items,
+  )
+}
+
+// 取单任务详情（含清单 / 计数 / ignoredByRule 标记；供轮询与审核台）。
+export function getReverseFetchTask(id: number): Promise<ReverseFetchTaskView> {
+  return request<ReverseFetchTaskView>(`/reverse-fetch/tasks/${id}`)
+}
+
+// 提交选定集（FR-58）：任务须 pending-review；选定 path 数组 + 是否确认纳入超阈值文件。
+// 选定集含超阈值文件时须 confirmOverThreshold=true，否则后端 400。写操作需 full 角色。
+export function submitReverseFetchTask(
+  id: number,
+  body: { selectedPaths: string[]; confirmOverThreshold: boolean },
+): Promise<ReverseFetchTaskView> {
+  return request<ReverseFetchTaskView>(`/reverse-fetch/tasks/${id}/submit`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+// 取消任务（FR-58）：非终态 → cancelled。
+export function cancelReverseFetchTask(id: number): Promise<ReverseFetchTaskView> {
+  return request<ReverseFetchTaskView>(`/reverse-fetch/tasks/${id}/cancel`, { method: 'POST' })
+}
+
+// 列冲突 path（FR-59）：任务须 conflict-review。
+export function listConflicts(id: number): Promise<string[]> {
+  return request<{ conflicts: string[] }>(`/reverse-fetch/tasks/${id}/conflicts`).then(
+    (r) => r.conflicts,
+  )
+}
+
+// 取单冲突文件 diff（FR-59）：抓取值 ⟷ 目标已有版本（供前端逐文件审）。
+export function conflictDiff(id: number, path: string): Promise<ConflictDiffView> {
+  return request<ConflictDiffView>(`/reverse-fetch/tasks/${id}/conflicts/diff${qs({ path })}`)
+}
+
+// 冲突审核落库（FR-59）：逐冲突文件 overwrite（须自审 reviewedMd5）/ keep；写操作需 full 角色。
+export function resolveConflicts(
+  id: number,
+  decisions: ResolveDecision[],
+): Promise<ResolveResult> {
+  return request<ResolveResult>(`/reverse-fetch/tasks/${id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ decisions }),
+  })
+}
+
+// 持久忽略规则列表过滤条件
+export interface IgnoreRuleFilter {
+  namespace: string
+  scope?: string
+  group?: string
+  target?: string
+}
+
+// 列活跃忽略规则（FR-59）。
+export function listIgnoreRules(filter: IgnoreRuleFilter): Promise<IgnoreRuleView[]> {
+  return request<ItemsResponse<IgnoreRuleView>>(
+    `/reverse-fetch/ignore-rules${qs(filter)}`,
+  ).then((r) => r.items)
+}
+
+// 建忽略规则参数（FR-59）：ruleType 取值 exact（单文件）/ prefix（目录前缀）。
+export interface CreateIgnoreRuleParams {
+  namespace: string
+  scope: ReverseFetchScope
+  group: string
+  target?: string
+  ruleType: IgnoreRuleType
+  pattern: string
+  comment?: string
+}
+
+// 建一条持久忽略规则（FR-59）；写操作需 full 角色。
+export function createIgnoreRule(params: CreateIgnoreRuleParams): Promise<IgnoreRuleView> {
+  return request<IgnoreRuleView>('/reverse-fetch/ignore-rules', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+// 删一条持久忽略规则（FR-59，软删）；写操作需 full 角色。
+export function deleteIgnoreRule(id: number): Promise<void> {
+  return request<void>(`/reverse-fetch/ignore-rules/${id}`, { method: 'DELETE' })
 }

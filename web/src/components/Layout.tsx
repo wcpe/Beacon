@@ -15,6 +15,7 @@ const NAV_ITEMS: Array<{ to: string; labelKey: string }> = [
   { to: '/configs', labelKey: 'nav.configs' },
   { to: '/file-preview', labelKey: 'nav.filePreview' },
   { to: '/imprint', labelKey: 'nav.imprint' },
+  { to: '/reverse-fetch', labelKey: 'nav.reverseFetchTask' },
   { to: '/instances', labelKey: 'nav.instances' },
   { to: '/topology', labelKey: 'nav.topology' },
   { to: '/zones', labelKey: 'nav.zones' },

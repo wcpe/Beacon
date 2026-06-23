@@ -357,3 +357,96 @@ export interface OverrideSetDryRunView {
   commandFirstToken: string
   memberPaths: string[]
 }
+
+// ===== 反向抓取受管任务 + 审核台 + 冲突 diff（FR-58/59/60）=====
+
+// 反向抓取受管任务状态机（对齐 internal/model/enums.go）：
+// scanning（下发 scan 待 agent 回清单）/ pending-review（清单已到待审核选定）/
+// fetching（已提交选定待 agent 回内容）/ conflict-review（选定内容与目标已有版本冲突待人工 diff）/
+// ingesting（落库中）/ done / failed / cancelled / expired（终态）。
+export type ReverseFetchTaskStatus =
+  | 'scanning'
+  | 'pending-review'
+  | 'fetching'
+  | 'conflict-review'
+  | 'ingesting'
+  | 'done'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+
+// 任务目标层：group（落组级覆盖）/ server（落实例级覆盖）。复用 FR-39 的 ReverseFetchScope。
+
+// 扫描清单单文件视图（无内容，对齐 handler.reverseFetchScanFileView）。
+// overThreshold=true 表示超大小阈值（须人工勾确认才纳入）；ignoredByRule=true 表示命中活跃持久忽略规则（默认排除）。
+export interface ReverseFetchScanFileView {
+  path: string
+  size: number
+  isText: boolean
+  overThreshold: boolean
+  ignoredByRule: boolean
+}
+
+// 反向抓取受管任务视图（对齐 handler.reverseFetchTaskView）。
+// 清单与选定经后端 best-effort 解析后展开为 files / selectedPaths 数组。
+export interface ReverseFetchTaskView {
+  id: number
+  namespace: string
+  serverId: string
+  scope: string
+  group: string
+  target: string
+  status: string
+  scanCommandId: number
+  submitCommandId: number
+  totalFiles: number
+  selectedCount: number
+  overThresholdCount: number
+  skippedCount: number
+  files: ReverseFetchScanFileView[]
+  selectedPaths: string[]
+  operator: string
+  note: string
+  createdAt: string
+  updatedAt: string
+}
+
+// 单个冲突文件 diff 视图（对齐 handler.conflictDiffView）：抓取值 ⟷ 目标已有版本。
+export interface ConflictDiffView {
+  path: string
+  fetchedContent: string
+  fetchedMd5: string
+  existingContent: string
+  existingMd5: string
+  version: number
+}
+
+// 单个冲突文件处置：overwrite（取抓取值，须带自审 reviewedMd5=fetchedMd5）/ keep（保留已有）。
+export interface ResolveDecision {
+  path: string
+  action: 'overwrite' | 'keep'
+  reviewedMd5?: string
+}
+
+// 冲突审核落库结果（对齐 handler.Resolve 响应）。
+export interface ResolveResult {
+  created: number
+  updated: number
+}
+
+// 持久忽略规则视图（对齐 handler.ignoreRuleView）。ruleType 取值 exact（单文件精确）/ prefix（目录前缀）。
+export interface IgnoreRuleView {
+  id: number
+  namespace: string
+  scope: string
+  group: string
+  target: string
+  ruleType: string
+  pattern: string
+  comment: string
+  operator: string
+  createdAt: string
+}
+
+// 忽略规则类型：exact（单文件精确匹配）/ prefix（目录前缀匹配）。
+export type IgnoreRuleType = 'exact' | 'prefix'
