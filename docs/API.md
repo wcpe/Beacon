@@ -522,6 +522,7 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30） |
+| `GET /admin/v1/audits/analytics?namespace=&from=&to=` | 窗口内审计活动聚合（FR-73）：`namespace` 可空（全部环境）；`from`/`to` 为 RFC3339，缺省 `to`=当前、`from`=`to`-30 天，**窗口上限 92 天**（超出 `400 INVALID_PARAM`）。返回 `{from, to, total, okCount, failCount, byAction:[{action,count}]按 count 降序, byDay:[{date:"YYYY-MM-DD",count}]按 UTC 日升序}`；空窗口各数组为 `[]`。日聚合在 Go 侧做（不用方言日期函数，保 Postgres 可移植） |
 | `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建（建环境记一条 `namespace.create` 审计，operator 由认证态派生） |
 | `PUT /admin/v1/namespaces/{code}` | 改环境显示名（请求体 `{ "name": "新显示名" }`，`code` 不可变；记 `namespace.update` 审计；环境不存在 `404 NAMESPACE_NOT_FOUND`；写方法 readonly→403，FR-53） |
 | `DELETE /admin/v1/namespaces/{code}` | 删环境（硬删，成功 `204`；删除守卫：环境下有已注册实例→`409 NAMESPACE_HAS_INSTANCES`、有已指派 zone→`409 NAMESPACE_HAS_ASSIGNMENTS`、有配置→`409 NAMESPACE_HAS_CONFIGS`、有文件树→`409 NAMESPACE_HAS_FILES`、有覆盖集→`409 NAMESPACE_HAS_OVERRIDE_SETS`，命中即禁删不审计；可删时记 `namespace.delete` 审计；环境不存在 `404 NAMESPACE_NOT_FOUND`；写方法 readonly→403，FR-53） |

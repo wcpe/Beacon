@@ -182,6 +182,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 审计
 		r.Get("/audits", h.Audit.List)
+		// 审计活动聚合（FR-73）：窗口内计数 / 成功率 / 按动作分布 / 每日趋势；静态路由置于 /audits 之后
+		r.Get("/audits/analytics", h.Audit.Analytics)
 
 		// 管理面 API 密钥（FR-42，见 ADR-0026）：只读角色 + 运行时创建/吊销/重置
 		// 创建/吊销/重置为写方法，readonly 角色经 readonlyWriteGuard 一律 403

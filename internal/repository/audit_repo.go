@@ -21,6 +21,13 @@ type AuditFilter struct {
 	Size       int
 }
 
+// AuditAnalyticsRow 是审计聚合用的窗口内投影行（仅取聚合所需三列，FR-73）。
+type AuditAnalyticsRow struct {
+	CreatedAt time.Time
+	Result    string
+	Action    string
+}
+
 // AuditLogRepository 提供 audit_log 表的数据访问（append-only）。
 type AuditLogRepository struct {
 	db *gorm.DB
@@ -77,4 +84,26 @@ func (r *AuditLogRepository) List(f AuditFilter) ([]model.AuditLog, int64, error
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+// ScanForAnalytics 取窗口内审计的聚合投影行（仅 created_at/result/action 三列、按时间升序）。
+// 只复用 Namespace/From/To 过滤，日分桶与计数交由 service 在 Go 侧做（禁方言日期函数，保可移植）。
+func (r *AuditLogRepository) ScanForAnalytics(f AuditFilter) ([]AuditAnalyticsRow, error) {
+	q := r.db.Model(&model.AuditLog{})
+	if f.Namespace != "" {
+		q = q.Where("namespace_code = ?", f.Namespace)
+	}
+	if !f.From.IsZero() {
+		q = q.Where("created_at >= ?", f.From)
+	}
+	if !f.To.IsZero() {
+		q = q.Where("created_at <= ?", f.To)
+	}
+	var rows []AuditAnalyticsRow
+	if err := q.Select("created_at", "result", "action").
+		Order("created_at asc").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

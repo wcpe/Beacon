@@ -65,6 +65,57 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"total": total, "items": views})
 }
 
+// auditActionCountView 是按动作分布的对外元素（§3.2 契约）。
+type auditActionCountView struct {
+	Action string `json:"action"`
+	Count  int    `json:"count"`
+}
+
+// auditDayCountView 是每日趋势的对外元素（§3.2 契约）。
+type auditDayCountView struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+// auditAnalyticsView 是审计聚合的对外视图（§3.2 契约，小驼峰）。
+type auditAnalyticsView struct {
+	From      time.Time              `json:"from"`
+	To        time.Time              `json:"to"`
+	Total     int                    `json:"total"`
+	OKCount   int                    `json:"okCount"`
+	FailCount int                    `json:"failCount"`
+	ByAction  []auditActionCountView `json:"byAction"`
+	ByDay     []auditDayCountView    `json:"byDay"`
+}
+
+// Analytics 处理 GET /admin/v1/audits/analytics（窗口内审计活动聚合，FR-73）。
+// 仅解析 namespace/from/to，缺省与 92 天上限校验在 service 层（超限返 400）。
+func (h *AuditHandler) Analytics(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	res, err := h.svc.Analytics(repository.AuditFilter{
+		Namespace: q.Get("namespace"),
+		From:      parseRFC3339(q.Get("from")),
+		To:        parseRFC3339(q.Get("to")),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	byAction := make([]auditActionCountView, 0, len(res.ByAction))
+	for _, a := range res.ByAction {
+		byAction = append(byAction, auditActionCountView{Action: a.Action, Count: a.Count})
+	}
+	byDay := make([]auditDayCountView, 0, len(res.ByDay))
+	for _, d := range res.ByDay {
+		byDay = append(byDay, auditDayCountView{Date: d.Date, Count: d.Count})
+	}
+	render.WriteJSON(w, http.StatusOK, auditAnalyticsView{
+		From: res.From, To: res.To, Total: res.Total,
+		OKCount: res.OKCount, FailCount: res.FailCount,
+		ByAction: byAction, ByDay: byDay,
+	})
+}
+
 // parseRFC3339 解析 RFC3339 时间；空或非法返回零值（不设界）。
 func parseRFC3339(s string) time.Time {
 	if s == "" {
