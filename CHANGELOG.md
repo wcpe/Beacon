@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.9.1（2026-06-23）
+
 ### 修复
 - agent 文件树原子落盘在 Windows 上并发竞争致间歇异常（增强 FR-14 / FR-57，agent 侧，控制面不涉）：真机 E2E（Paper 1.20.1 + BeaconAgent 0.9.0）暴露——文件树落盘的「写临时文件 + 改名」原子写在 Windows 上间歇抛 `NoSuchFileException`（如 `file-tree.applied.json.tmp -> file-tree.applied.json`）异常栈、首次落盘可能失败（下个同步周期才自愈）。根因：`AppliedFileManifestStore` / `FileMirrorWriter` / `SnapshotStore` 三处各自用**固定临时文件名**（`*.tmp` / `*.beacon-tmp`）做原子写，而 `FileTreeApplier.apply` 可由文件树长轮询循环 / SSE `file-changed` / 运维 `resync` 三路并发触发——两轮落盘抢同一临时文件，一方 `Files.move` 走后另一方 `move` 找不到源即抛；且原子写未对 `ATOMIC_MOVE` 不支持 / 目标被杀软·索引器短暂占用做兜底，异常还直接逃逸到 Bukkit 调度器。修复：抽出统一原子写原语 `AtomicFileWriter`（**唯一 UUID 临时文件名**杜绝并发抢占、`ATOMIC_MOVE` 不支持时回退非原子 `REPLACE_EXISTING`、瞬时 `FileSystemException` 与多线程并发覆盖同一目标的 `AccessDeniedException`（Windows `MoveFileEx` 共享冲突）走**抖动退避**有限重试（抖动打散并发线程的重试对齐、避免反复撞同一目标锁窗口）、失败清理临时文件不残留、父目录 best-effort fsync），三处落盘器统一改走该原语（顺带补齐 [ADR-0010](docs/adr/0010-file-tree-hosting-blob-channel.md) 决策4 所记 `SnapshotStore` 落盘未 fsync 的缺口）；`FileTreeApplier.apply` 加锁**串行化**消除清单读改写竞态，末尾清单写入失败按 fail-static 兜住（保留既有镜像、下轮重试，不抛未捕获异常到调度器）。新增并发落盘单测（`FileMirrorWriterTest` / `FileTreeApplierConcurrencyTest`，旧实现下稳定复现、修复后 5 次重跑全绿）把此前仅真机暴露的竞态下沉为自动化回归。
 - 看板「子服(bukkit)」区块「在线服务器数」错含 BC 代理（修复 FR-43）：`GET /admin/v1/metrics/summary` 的 `onlineServers` 此前取全部在线实例数，致子服区块显示的「在线服务器数」把 bungee 代理一并计入（如 1 子服 + 1 代理显示 2）。改为仅计 `role=bukkit` 子服（与该区块语义及平均 TPS·内存·CPU 口径一致；代理数另由 `bc.proxyCount` 表达），`API.md` 同步口径说明。
