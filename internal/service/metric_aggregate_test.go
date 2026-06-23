@@ -68,22 +68,22 @@ func TestSummarizeAverages(t *testing.T) {
 	}
 }
 
-// TestSummarizeAvgOnlyBukkitMixed 混合 bukkit/bungee：平均 TPS/CPU 只统计 bukkit，
-// 总人数/在线服数仍计全部（bungee 不进 TPS·CPU 分母，避免 bungee tps=0 拉低平均）。
+// TestSummarizeAvgOnlyBukkitMixed 混合 bukkit/bungee：平均 TPS/CPU 只统计 bukkit；
+// 总人数计全部，但「在线服务器数」仅计 bukkit 子服（与子服区块语义一致，bungee 另由 BC.proxyCount 表达，FR-43）。
 func TestSummarizeAvgOnlyBukkitMixed(t *testing.T) {
 	insts := []*runtime.Instance{
 		onlineInstWithRole("bk-a", roleBukkit, 30, 20.0, 100, 1000, 0.4),
 		onlineInstWithRole("bk-b", roleBukkit, 10, 18.0, 300, 1000, 0.6),
-		// bungee：tps=0、cpu=0.9，应整体被排除出平均 TPS/CPU，但人数计入总数。
+		// bungee：tps=0、cpu=0.9，应整体被排除出平均 TPS/CPU 及在线服数，但人数计入总数。
 		onlineInstWithRole("bc-1", roleBungee, 5, 0.0, 200, 2000, 0.9),
 	}
 	sum := Summarize(insts)
-	// 总人数计全部：30+10+5=45；在线服数计全部：3。
+	// 总人数计全部：30+10+5=45；在线服数仅计 bukkit：2（bungee 不计入）。
 	if sum.TotalPlayers != 45 {
 		t.Fatalf("总人数应计全部=45，实际 %d", sum.TotalPlayers)
 	}
-	if sum.OnlineServers != 3 {
-		t.Fatalf("在线服数应计全部=3，实际 %d", sum.OnlineServers)
+	if sum.OnlineServers != 2 {
+		t.Fatalf("在线服数应仅计 bukkit=2，实际 %d", sum.OnlineServers)
 	}
 	// 平均 TPS 只对两个 bukkit：(20+18)/2=19，不含 bungee 的 0。
 	if !floatEq(sum.AvgTPS, 19.0) {
@@ -153,15 +153,15 @@ func TestSummarizeServersCarryRole(t *testing.T) {
 }
 
 // TestSummarizeAvgAllBungee 全 bungee：无 bukkit 参与平均 → 平均 TPS=0、CPU 为不可用哨兵；
-// 但总人数/在线服数仍按全部统计。
+// 总人数仍按全部统计，但「在线服务器数」仅计 bukkit（此处无 bukkit 故为 0，FR-43）。
 func TestSummarizeAvgAllBungee(t *testing.T) {
 	insts := []*runtime.Instance{
 		onlineInstWithRole("bc-1", roleBungee, 5, 0.0, 200, 2000, 0.9),
 		onlineInstWithRole("bc-2", roleBungee, 7, 0.0, 100, 2000, 0.8),
 	}
 	sum := Summarize(insts)
-	if sum.TotalPlayers != 12 || sum.OnlineServers != 2 {
-		t.Fatalf("总人数/在线服数应计全部 bungee：players=%d servers=%d", sum.TotalPlayers, sum.OnlineServers)
+	if sum.TotalPlayers != 12 || sum.OnlineServers != 0 {
+		t.Fatalf("总人数应计全部 bungee=12、在线服数仅计 bukkit=0：players=%d servers=%d", sum.TotalPlayers, sum.OnlineServers)
 	}
 	if sum.AvgTPS != 0 {
 		t.Fatalf("无 bukkit 时平均 TPS 应为 0，实际 %v", sum.AvgTPS)

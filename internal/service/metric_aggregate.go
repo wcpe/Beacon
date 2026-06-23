@@ -86,7 +86,9 @@ func Summarize(insts []*runtime.Instance) Summary {
 			cpuCount++
 		}
 	}
-	s.OnlineServers = len(insts)
+	// 「在线服务器数」只算 bukkit 子服（与平均 TPS·内存·CPU 同口径，bungee 不计入；
+	// 子服区块标题即 bukkit，含 bungee 会名不符实，FR-43）。代理数另由 BC.proxyCount 表达。
+	s.OnlineServers = bukkitCount
 	s.AvgTPS = avgFloat(sumTPS, bukkitCount)
 	s.AvgMemUsed = avgInt64(sumMemUsed, bukkitCount)
 	s.AvgMemMax = avgInt64(sumMemMax, bukkitCount)
