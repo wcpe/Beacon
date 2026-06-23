@@ -155,16 +155,28 @@ data: {}
 ```
 - agent 据 §8 清单逐个取成员内容，经 `OverrideApplier`（备份 → 路径安全 → 原子覆盖 → 受管标记）落到该集 `targetRoot`，全量成功且命中本地白名单才派发 `reloadCommand`。该 `set` 不适用本 server / 该成员不存在 → `404 FILE_NOT_FOUND`。未注册 → `404 NOT_REGISTERED`。
 
-### 10. 拉待办命令 `GET /beacon/v1/agent/commands`（FR-39 反向抓取）
+### 10. 拉待办命令 `GET /beacon/v1/agent/commands`（FR-39 反向抓取 / FR-46 拓印 / FR-58 受管任务两段式）
 查询：`?namespace=&serverId=`。返回该 agent 最早一条待办命令并即时 CAS 标记为已取（`pending → fetched`，避免并发重复取）；**无待办返回 `204 No Content`**。命令体：
 ```json
-{ "id": 1287, "type": "ingest-plugins", "payload": { "scope": "group", "group": "area1", "target": "" } }
+{ "id": 1287, "type": "ingest-plugins", "payload": { "mode": "scan", "scope": "group", "group": "area1", "target": "" } }
 ```
-- agent 收到 §2.5 SSE `command-pending` 事件、或连接 `ready` 后即拉一次（覆盖断连期间入队的命令）。`type=ingest-plugins`：agent 读其真实 `plugins/` 目录的文本配置（**限死 plugins 内、排除 jar/二进制、单文件/总量/数量上限**），经 §11 回传。`payload.scope ∈ {group, server}`：`group` 落组级覆盖（只用 `group`）、`server` 落实例级覆盖（`group` + `target`=目标 serverId）。见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)。
+- agent 收到 §2.5 SSE `command-pending` 事件、或连接 `ready` 后即拉一次（覆盖断连期间入队的命令）。`type=ingest-plugins` 始终读其真实 `plugins/` 目录（**限死 plugins 内、排除 jar/二进制、相对 path 安全**），落库 vs 行为由 `payload.mode` 区分：
+  - `mode` 缺省 / `land`：FR-39 一次性整批读内容回传，经 §11 落库。
+  - `mode=imprint`：FR-46 按需拓印，回传整树后取 `payload.path` 单文件转存待审（不落库）。
+  - `mode=scan`（**FR-58**）：受管任务两段式·扫描——**只 `stat` 取元信息**（path/size/UTF-8 文本判定/是否超单文件阈值），**绝不读内容、绝不因任何文件超限而失败**，经 §12 回传清单。
+  - `mode=submit`（**FR-58**）：受管任务两段式·提交——**仅读取并回传 `payload.selectedPaths` 子集内容**（不再整树），经 §11 回传落库。
+- `payload.scope ∈ {group, server}`：`group` 落组级覆盖（只用 `group`）、`server` 落实例级覆盖（`group` + `target`=目标 serverId）。见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) / [ADR-0037](adr/0037-reverse-fetch-managed-task.md)。
 
-### 11. 回传反向抓取文件集 `POST /beacon/v1/agent/files/ingest`（FR-39）
-请求体：`{ "commandId": 1287, "files": [ { "path": "plugin-a/config.yml", "content": "...整文件文本..." } ] }`。控制面**入库前再校验**（双保险：数量/总量上限、排除 `.jar`、相对 path 安全），通过则复用 FR-38 通道B `Import` 落为目标层文件树覆盖（事务内 + `file.import` 审计），命令转 `done`；校验/落库失败转 `failed`。返回 `{ "created": 2, "updated": 1 }`。
-- 命令须存在且处 `fetched`（未拉取/已完成/失败/过期均 `404 COMMAND_NOT_FOUND`）。含 `.jar` 或越界 path → `400 INVALID_PATH`；超数量 → `422 TOO_MANY_FILES`；超总量 → `422 CONTENT_TOO_LARGE`；空文件集 → `400 INVALID_PARAM`（命令一并转 `failed`，不留半截）。
+### 11. 回传文件集 `POST /beacon/v1/agent/files/ingest`（FR-39 落库 / FR-46 拓印 / FR-58 submit）
+请求体：`{ "commandId": 1287, "files": [ { "path": "plugin-a/config.yml", "content": "...整文件文本..." } ] }`。控制面据命令 `mode` 分路：
+- `land` / 缺省（FR-39）：**入库前再校验**（双保险：数量/总量上限、排除 `.jar`、相对 path 安全），通过则复用 FR-38 通道B `Import` 落目标层文件树覆盖（事务内 + `file.import` 审计），命令转 `done`。返回 `{ "created": 2, "updated": 1 }`。
+- `imprint`（FR-46）：取目标 path 单文件转存待审，命令转 `ready`，不落库。
+- `submit`（**FR-58**）：转交受管任务编排——任务 `fetching → ingesting`，仅落选定集（同样双保险校验：数量/总量上限、排除 `.jar`），复用 `Import` 落库（`file.reverse-fetch-ingest` 审计），任务转 `done`、命令转 `done`。
+- 命令须存在且处 `fetched`（未拉取/已完成/失败/过期均 `404 COMMAND_NOT_FOUND`）。含 `.jar` 或越界 path → `400 INVALID_PATH`；超数量 → `422 TOO_MANY_FILES`；超总量 → `422 CONTENT_TOO_LARGE`；空文件集 → `400 INVALID_PARAM`（命令/任务一并转 `failed`，不留半截）。
+
+### 12. 回传扫描清单 `POST /beacon/v1/agent/files/scan`（FR-58 受管任务·扫描）
+请求体（**无 content**）：`{ "commandId": 1290, "files": [ { "path": "AllinCore/config.yml", "size": 1234, "isText": true, "overThreshold": false }, ... ] }`。agent 已排除 `.jar`/二进制/不安全路径；**超单文件阈值的文件 `overThreshold:true` 仍列出（红标，不剔除）**。控制面把清单 + 计数（总数/超阈值数）存入任务 `manifest`、任务转 `pending-review`、扫描命令转 `done`。**scan 永不失败**（不受单文件/总量/数量上限约束）。
+- 命令须存在且处 `fetched`、`mode=scan`，且其所属任务处 `scanning`（否则 `404 COMMAND_NOT_FOUND` / `409 REVERSE_FETCH_TASK_STATE`）。返回 `{ "ok": true }`。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md)。
 
 ---
 
@@ -302,10 +314,29 @@ data: {}
 | `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
 | `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |
-| `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | 从该**在线实例**反向抓取其真实 `plugins/` 文本配置 ingest 入库为组/实例级文件树覆盖（FR-39，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 建 `pending` 命令 + `file.reverse-fetch` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 §2.5 / agent §10、§11）。返回 `202` + 命令视图 `{id,namespace,serverId,type,status,createdAt,updatedAt}`，结果经命令状态/审计/文件树体现（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)） |
+| `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | **建反向抓取受管任务并下发扫描命令**（FR-58 重定义，取代 FR-39 一次性 ingest，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单实例互斥**（该实例已有非终态任务→`409 REVERSE_FETCH_TASK_ACTIVE`，detail 含活跃 taskId+status）→ 事务内建任务（`scanning`）+ 下发 `mode=scan` 命令 + `file.reverse-fetch-scan` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 agent §10、§12）。返回 `202` + 任务视图（见下方 FR-58 任务字段）。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md) |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
+
+### 反向抓取受管任务（FR-58，见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md)）
+
+把 FR-39「一次性整批抓取、超限整批失败」升级为**受管任务 + 两段式（先扫清单、再抓选定）**：状态机 `scanning → pending-review → fetching → ingesting → done`，旁出 `failed`/`cancelled`/`expired`。scan 只列元信息清单（**永不失败**），人工审核选定后只抓选定集；超单文件阈值的运行时垃圾在清单里红标可见而非拖垮整批。每 `(namespace, serverId)` 同时**至多一个非终态任务**（互斥）。任务是真源、`agent_command` 是其执行手段（两次下发 scan/submit 命令）。
+
+**任务视图字段**：`{ id, namespace, serverId, scope, group, target, status, scanCommandId, submitCommandId, totalFiles, selectedCount, overThresholdCount, skippedCount, files: [{path,size,isText,overThreshold}], selectedPaths: [string], operator, note, createdAt, updatedAt }`（`files` 为扫描清单展开、`pending-review` 起非空；`selectedPaths` 提交后非空）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/reverse-fetch/tasks?namespace=&serverId=&status=` | 任务历史列表（最新在前，供任务台）：`{ items: [任务视图] }`。三个过滤参数均可选 |
+| `GET /admin/v1/reverse-fetch/tasks/{id}` | 任务详情（状态 / 清单 / 计数 / 命令引用，供进度轮询与审核台）。不存在→`404 REVERSE_FETCH_TASK_NOT_FOUND` |
+| `POST /admin/v1/reverse-fetch/tasks/{id}/submit` | 提交选定集（写操作 readonly→403）。body `{selectedPaths: [string], confirmOverThreshold?: bool}`。任务须 `pending-review`（否则 `409 REVERSE_FETCH_TASK_STATE`）；选定 path 须在扫描清单内（否则 `400 INVALID_PARAM`）；含超单文件阈值文件但未带 `confirmOverThreshold:true`→`400 OVER_THRESHOLD_NOT_CONFIRMED`（**只拒该文件、不拒整批**，可去掉它或加确认后重提）；文件数超上限→`422 TOO_MANY_FILES`。通过则下发 `mode=submit`+`selectedPaths` 命令、任务转 `fetching`、记 `file.reverse-fetch-submit` 审计、唤醒 agent。返回 `202` + 任务视图。agent 仅回选定内容（agent §11，落库记 `file.reverse-fetch-ingest`、任务转 `done`） |
+| `POST /admin/v1/reverse-fetch/tasks/{id}/cancel` | 取消（写操作 readonly→403）：非终态任务转 `cancelled`、清空清单瞬态、记 `file.reverse-fetch-cancel` 审计、解除互斥占位。终态再取消→`409 REVERSE_FETCH_TASK_STATE`。返回 `200` + 任务视图 |
+
+- 生命周期：任务可查 / 可取消 / **会过期**（创建超期仍非终态由后台清理器转 `expired` 并清空清单瞬态、解除互斥）。
+- 审计（detail 均不含文件内容，沿 ADR-0027 决策7）：建任务 `file.reverse-fetch-scan`、提交 `file.reverse-fetch-submit`、入库 `file.reverse-fetch-ingest`、取消 `file.reverse-fetch-cancel`。
+- 边界：本期 submit 选定集由 API 直接给（前端审核台交互挑选属 FR-60）；忽略规则 / 目标已有版本 diff 冲突属 FR-59；ADR-0027 安全边界（限 `plugins/`、排除 `.jar`/二进制、path 安全、full 角色 + 审计）一条不松。
+
+错误：任务不存在 `404 REVERSE_FETCH_TASK_NOT_FOUND`；状态不符 `409 REVERSE_FETCH_TASK_STATE`；活跃互斥 `409 REVERSE_FETCH_TASK_ACTIVE`；超阈值未确认 `400 OVER_THRESHOLD_NOT_CONFIRMED`；目标不在线 `404 INSTANCE_NOT_FOUND`。
 
 ### 按需拓印回写（FR-46）
 

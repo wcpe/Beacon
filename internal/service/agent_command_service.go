@@ -20,20 +20,29 @@ const reverseFetchComment = "在线实例反向抓取"
 // ingestPayload 是 ingest-plugins 命令的载荷（落 agent_command.payload JSON）。
 // FR-39 落库：落 group 或 server 覆盖层（group 层只需 Group；server 层需 Group + Target）。
 // FR-46 拓印：Mode=imprint + Path（目标文件相对 path）；回传后取该 path 转存待审，不落库（落层由确认时再选）。
+// FR-58 两段式：Mode=scan（agent 只列元信息清单）/ submit（agent 仅读 SelectedPaths 子集内容回传）。
 type ingestPayload struct {
 	Scope  string `json:"scope,omitempty"`
 	Group  string `json:"group,omitempty"`
 	Target string `json:"target,omitempty"`
-	// 模式（FR-46）：空 / land = 直接落库（FR-39）；imprint = 拓印转存待审。
+	// 模式（FR-46 / FR-58）：空 / land = 直接落库（FR-39）；imprint = 拓印转存待审；scan / submit = 受管任务两段式。
 	Mode string `json:"mode,omitempty"`
 	// 拓印目标文件相对 path（FR-46，仅 imprint 模式）。
 	Path string `json:"path,omitempty"`
+	// 提交选定 path 子集（FR-58，仅 submit 模式）：agent 仅读取并回传这些 path 的内容。
+	SelectedPaths []string `json:"selectedPaths,omitempty"`
 }
 
 // CommandNotifier 是命令待办唤醒的窄接口（由 ChangeNotifier 实现，可选注入；
 // 未注入即建命令后不主动唤醒，命令留待 agent 重连时拉取或超时清理）。
 type CommandNotifier interface {
 	NotifyCommand(ns, serverID string)
+}
+
+// submitIngestReceiver 是受管任务 submit 回传的窄接口（由 ReverseFetchTaskService 实现，可选注入）。
+// agent 复用同一 /files/ingest 端点回传 submit 选定内容，控制面据命令 mode=submit 转交受管任务编排落库。
+type submitIngestReceiver interface {
+	ReceiveSubmitIngest(commandID uint, files []ImportFile, clientIP string) (*ImportResult, error)
 }
 
 // AgentCommandService 编排 server→agent 命令（FR-39，见 ADR-0027）。
@@ -48,6 +57,8 @@ type AgentCommandService struct {
 	notifier  CommandNotifier
 	// 拓印 diff 解期望合并值用（FR-46，可选注入；未注入则 ImprintDiff/ConfirmImprint 不可用）。
 	effSvc *FileEffectiveService
+	// 受管任务 submit 回传转交（FR-58，可选注入；未注入则 submit 命令回传按未知 mode 拒）。
+	submitReceiver submitIngestReceiver
 }
 
 // NewAgentCommandService 构造服务。
@@ -60,6 +71,9 @@ func (s *AgentCommandService) SetNotifier(n CommandNotifier) { s.notifier = n }
 
 // SetFileEffectiveService 注入有效文件树解析器（FR-46 拓印 diff 取期望合并值；启动时装配）。
 func (s *AgentCommandService) SetFileEffectiveService(eff *FileEffectiveService) { s.effSvc = eff }
+
+// SetSubmitIngestReceiver 注入受管任务 submit 回传转交器（FR-58；启动时装配）。
+func (s *AgentCommandService) SetSubmitIngestReceiver(r submitIngestReceiver) { s.submitReceiver = r }
 
 // RequestReverseFetch 由 admin 触发对某在线实例的反向抓取：事务内建 pending 命令 + file.reverse-fetch 审计。
 // 在线校验与 SSE 唤醒在 handler/server 层。返回命令（含 id 供 agent 回传引用）。
@@ -148,6 +162,13 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 	// jar 排除与目标单文件大小由 transferImprint 兜底。返回 (nil, nil) 表示转存成功（无落库结果）。
 	if payload.Mode == model.IngestModeImprint {
 		return nil, s.transferImprint(cmd, payload.Path, files)
+	}
+	// FR-58 受管任务 submit 模式：转交受管任务编排（按 task 的 scope/group/target 落库、迁移任务状态）。
+	if payload.Mode == model.IngestModeSubmit {
+		if s.submitReceiver == nil {
+			return nil, apperr.ErrInternal // 未装配（编程 / 装配错误）
+		}
+		return s.submitReceiver.ReceiveSubmitIngest(commandID, files, clientIP)
 	}
 	// FR-39 落库模式：整批入库前再校验（双保险）+ 需 group。
 	if verr := validateIngestFiles(files); verr != nil {

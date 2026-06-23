@@ -78,6 +78,15 @@ var (
 	// ErrImprintReviewMismatch 拓印确认自审 md5 与已抓取内容不符（强制看过 diff，FR-46）。
 	ErrImprintReviewMismatch = New(http.StatusPreconditionFailed, "IMPRINT_REVIEW_MISMATCH", "拓印自审内容已变更，请重新查看 diff")
 
+	// ErrReverseFetchTaskNotFound 反向抓取受管任务不存在（FR-58）。
+	ErrReverseFetchTaskNotFound = New(http.StatusNotFound, "REVERSE_FETCH_TASK_NOT_FOUND", "反向抓取任务不存在")
+	// ErrReverseFetchTaskActive 该实例已有活跃（非终态）反向抓取任务，单实例互斥拒新建（FR-58，见 ADR-0037）。
+	ErrReverseFetchTaskActive = New(http.StatusConflict, "REVERSE_FETCH_TASK_ACTIVE", "该实例已有活跃反向抓取任务，请先完成或取消")
+	// ErrReverseFetchTaskState 反向抓取任务状态不符（当前态不允许该操作 / 已被并发终结，FR-58）。
+	ErrReverseFetchTaskState = New(http.StatusConflict, "REVERSE_FETCH_TASK_STATE", "反向抓取任务状态不允许该操作")
+	// ErrOverThresholdNotConfirmed 选定集含超单文件阈值的文件但未显式确认（只拒该文件，不拒整批，FR-58）。
+	ErrOverThresholdNotConfirmed = New(http.StatusBadRequest, "OVER_THRESHOLD_NOT_CONFIRMED", "选定集含超阈值文件，须显式确认才能纳入")
+
 	// ErrOverrideSetNotFound 覆盖集不存在（FR-15）。
 	ErrOverrideSetNotFound = New(http.StatusNotFound, "OVERRIDE_SET_NOT_FOUND", "覆盖集不存在")
 	// ErrOverrideSetConflict 同标识覆盖集已存在（FR-15）。

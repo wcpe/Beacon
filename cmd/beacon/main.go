@@ -248,8 +248,20 @@ func run() error {
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
+
+	// 反向抓取受管任务（FR-58，见 ADR-0037）：任务仓库 + 服务（建任务 + 单实例互斥、scan 回传存清单、
+	// submit 编排、ingest 复用 FileService.Import 落库、取消、过期）+ 处理器。任务是真源、命令是其执行手段。
+	reverseFetchTaskRepo := repository.NewReverseFetchTaskRepository(db)
+	reverseFetchTaskService := service.NewReverseFetchTaskService(db, reverseFetchTaskRepo, commandRepo, fileService, auditRepo)
+	reverseFetchTaskService.SetNotifier(notifier)
+	// agent 复用同一 /files/ingest 端点回传 submit 选定内容，控制面据命令 mode=submit 转交受管任务编排落库。
+	commandService.SetSubmitIngestReceiver(reverseFetchTaskService)
+	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskService, instanceService)
+
 	// 陈旧命令后台清理（FR-39/FR-46）：周期把创建超期仍未终结的命令标 expired 并清空拓印瞬态明文，避免放弃的 ready 命令明文滞留。
 	commandSweeper := service.NewCommandSweeper(commandService)
+	// 陈旧受管任务后台清理（FR-58）：周期把创建超期仍未终结的任务标 expired 并清空清单瞬态，避免大树清单 TEXT 长期滞留。
+	reverseFetchTaskSweeper := service.NewReverseFetchTaskSweeper(reverseFetchTaskService)
 
 	// git 单向导出镜像（FR-47，见 ADR-0030）：发布 / 回滚 / 改派提交后异步 best-effort 把源层导出 commit。
 	// 仅 enabled 时装配并接线触发器；git 仓是单向派生镜像、失败仅 WARN 不阻断发布。
@@ -274,7 +286,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, ReverseFetchTask: reverseFetchTaskHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
@@ -303,6 +315,9 @@ func run() error {
 
 	// 启动陈旧命令清理器（FR-39/FR-46）：常驻 hygiene，随关停信号退出
 	go commandSweeper.Run(ctx)
+
+	// 启动陈旧受管任务清理器（FR-58）：常驻 hygiene，把超期未终结任务标 expired 并清空清单瞬态，随关停信号退出
+	go reverseFetchTaskSweeper.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

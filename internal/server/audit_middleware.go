@@ -52,12 +52,15 @@ var coveredWriteRoutes = map[string]struct{}{
 	"PUT /admin/v1/override-sets/{id}":           {},
 	"DELETE /admin/v1/override-sets/{id}":        {},
 	"POST /admin/v1/override-sets/{id}/rollback": {},
-	// 实例下线 / 反向抓取 / 拓印（instance.offline / online，file.reverse-fetch / imprint-fetch / imprint）
+	// 实例下线 / 反向抓取 / 拓印（instance.offline / online，file.reverse-fetch-scan / imprint-fetch / imprint）
 	"POST /admin/v1/instances/{serverId}/offline":       {},
 	"DELETE /admin/v1/instances/{serverId}/offline":     {},
 	"POST /admin/v1/instances/{serverId}/reverse-fetch": {},
 	"POST /admin/v1/instances/{serverId}/imprint":       {},
 	"POST /admin/v1/imprints/{commandId}/confirm":       {},
+	// 反向抓取受管任务·提交选定 / 取消（FR-58：file.reverse-fetch-submit / cancel，各在事务内或服务内自记专项审计）
+	"POST /admin/v1/reverse-fetch/tasks/{id}/submit": {},
+	"POST /admin/v1/reverse-fetch/tasks/{id}/cancel": {},
 	// zone 分配与默认入口（zone.assign / unassign / set-default-entry / clear-default-entry）
 	"PUT /admin/v1/zones/assignments":      {},
 	"DELETE /admin/v1/zones/assignments":   {},

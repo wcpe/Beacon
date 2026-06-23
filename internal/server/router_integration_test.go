@@ -83,32 +83,39 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
 	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, commandHub, 30*time.Second)
 	// 反向抓取命令通道（FR-39）：命令仓库 + 服务（复用 fileSvc.Import 落组/实例覆盖）+ 处理器（校验目标在线）。
-	commandService := service.NewAgentCommandService(db, repository.NewAgentCommandRepository(db), fileSvc, auditRepo)
+	commandRepo := repository.NewAgentCommandRepository(db)
+	commandService := service.NewAgentCommandService(db, commandRepo, fileSvc, auditRepo)
 	commandService.SetNotifier(notifier)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
+	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。
+	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo)
+	reverseFetchTaskSvc.SetNotifier(notifier)
+	commandService.SetSubmitIngestReceiver(reverseFetchTaskSvc)
+	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskSvc, instSvc)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace:   nsHandler,
-		Config:      handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
-		File:        handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
-		OverrideSet: handler.NewOverrideSetHandler(ovrSetSvc),
-		Agent:       handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
-		Stream:      handler.NewStreamHandler(instSvc, streamSvc),
-		Instance:    handler.NewInstanceHandler(instSvc),
-		Zone:        handler.NewZoneHandler(zoneSvc),
-		Scheduling:  handler.NewSchedulingHandler(schedSvc),
-		Audit:       handler.NewAuditHandler(service.NewAuditService(auditRepo)),
-		Alert:       handler.NewAlertHandler(testAlertInbox),
-		Metric:      handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
-		Auth:        handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
-		APIKey:      handler.NewAPIKeyHandler(apiKeySvc),
-		Command:     handler.NewCommandHandler(commandService, instSvc),
-		Metrics:     metricsSet.Handler(),
-		Web:         http.HandlerFunc(http.NotFound),
+		Namespace:        nsHandler,
+		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
+		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, 30*time.Second),
+		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
+		Agent:            handler.NewAgentHandler(instSvc, effSvc, 30*time.Second),
+		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
+		Instance:         handler.NewInstanceHandler(instSvc),
+		Zone:             handler.NewZoneHandler(zoneSvc),
+		Scheduling:       handler.NewSchedulingHandler(schedSvc),
+		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo)),
+		Alert:            handler.NewAlertHandler(testAlertInbox),
+		Metric:           handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
+		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
+		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
+		Command:          handler.NewCommandHandler(commandService, instSvc),
+		ReverseFetchTask: reverseFetchTaskHandler,
+		Metrics:          metricsSet.Handler(),
+		Web:              http.HandlerFunc(http.NotFound),
 	}, agentToken, authn, apiKeySvc, auditRepo)
 	ts := httptest.NewServer(router)
 	adminToken = loginForToken(t, ts.URL)

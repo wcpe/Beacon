@@ -11,25 +11,26 @@ import (
 
 // Handlers 汇集各 HTTP 处理器，供路由装配（避免过长的位置参数）。
 type Handlers struct {
-	Namespace   *handler.NamespaceHandler
-	Config      *handler.ConfigHandler
-	File        *handler.FileHandler
-	OverrideSet *handler.OverrideSetHandler
-	Agent       *handler.AgentHandler
-	Stream      *handler.StreamHandler
-	Instance    *handler.InstanceHandler
-	Topology    *handler.TopologyHandler
-	Zone        *handler.ZoneHandler
-	Scheduling  *handler.SchedulingHandler
-	Audit       *handler.AuditHandler
-	Alert       *handler.AlertHandler
-	Metric      *handler.MetricHandler
-	System      *handler.SystemHandler
-	Auth        *handler.AuthHandler
-	APIKey      *handler.APIKeyHandler
-	Command     *handler.CommandHandler
-	Metrics     http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
-	Web         http.Handler
+	Namespace        *handler.NamespaceHandler
+	Config           *handler.ConfigHandler
+	File             *handler.FileHandler
+	OverrideSet      *handler.OverrideSetHandler
+	Agent            *handler.AgentHandler
+	Stream           *handler.StreamHandler
+	Instance         *handler.InstanceHandler
+	Topology         *handler.TopologyHandler
+	Zone             *handler.ZoneHandler
+	Scheduling       *handler.SchedulingHandler
+	Audit            *handler.AuditHandler
+	Alert            *handler.AlertHandler
+	Metric           *handler.MetricHandler
+	System           *handler.SystemHandler
+	Auth             *handler.AuthHandler
+	APIKey           *handler.APIKeyHandler
+	Command          *handler.CommandHandler
+	ReverseFetchTask *handler.ReverseFetchTaskHandler
+	Metrics          http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
+	Web              http.Handler
 }
 
 // NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写 + 写审计兜底）+ 内嵌前端（SPA 回退）。
@@ -56,6 +57,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 反向抓取命令（FR-39，见 ADR-0027）：拉本机待办命令 + 回传 plugins 文件集 ingest
 		r.Get("/commands", h.Command.Pending)
 		r.Post("/files/ingest", h.Command.Ingest)
+		// 反向抓取受管任务·扫描回传（FR-58，见 ADR-0037）：回传只含元信息的扫描清单（无内容、永不失败）
+		r.Post("/files/scan", h.ReverseFetchTask.Scan)
 	})
 
 	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
@@ -132,8 +135,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 主动下线（FR-49）：落 DB 拒绝态 + 移出可用集；DELETE 取消下线。二者为写方法，readonly 密钥经 readonlyWriteGuard 403
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
 		r.Delete("/instances/{serverId}/offline", h.Instance.Online)
-		// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：触发对该实例抓取 plugins 入库（写操作，readonly 403）
-		r.Post("/instances/{serverId}/reverse-fetch", h.Command.ReverseFetch)
+		// 在线实例反向抓取·受管任务（FR-58，重定义旧一次性端点，见 ADR-0037）：建扫描任务 + 下发 scan 命令（写，readonly 403）
+		r.Post("/instances/{serverId}/reverse-fetch", h.ReverseFetchTask.CreateScanTask)
+		// 受管任务台 / 审核台（FR-58）：查 / 列任务（读）+ 提交选定集 / 取消（写，readonly 403）
+		r.Get("/reverse-fetch/tasks", h.ReverseFetchTask.ListTasks)
+		r.Get("/reverse-fetch/tasks/{id}", h.ReverseFetchTask.GetTask)
+		r.Post("/reverse-fetch/tasks/{id}/submit", h.ReverseFetchTask.SubmitTask)
+		r.Post("/reverse-fetch/tasks/{id}/cancel", h.ReverseFetchTask.CancelTask)
 		// 按需拓印回写（FR-46）：触发拓印某文件（写）→ diff 本地实际值⟷期望合并值（读）→ 单人自审确认落库（写，readonly 403）
 		r.Post("/instances/{serverId}/imprint", h.Command.Imprint)
 		r.Get("/imprints/{commandId}", h.Command.ImprintStatus)

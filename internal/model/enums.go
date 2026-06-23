@@ -43,11 +43,36 @@ const (
 	CommandTypeIngestPlugins = "ingest-plugins"
 )
 
-// agent 命令载荷 mode（FR-46）：区分 FR-39 直接落库与 FR-46 拓印转存待审。
+// agent 命令载荷 mode（FR-46 / FR-58）：区分 FR-39 直接落库、FR-46 拓印转存待审、FR-58 两段式扫描 / 提交。
 const (
 	IngestModeLand    = "land"    // 直接 ingest 落库（FR-39，空值同义，向后兼容）
 	IngestModeImprint = "imprint" // 拓印转存待审，不落库、待单人自审确认（FR-46）
+	IngestModeScan    = "scan"    // 受管任务两段式·扫描：agent 只列元信息清单、不读内容、永不失败（FR-58）
+	IngestModeSubmit  = "submit"  // 受管任务两段式·提交：agent 仅读选定 path 子集内容回传（FR-58）
 )
+
+// 反向抓取受管任务生命周期状态（FR-58，落 VARCHAR + 应用层校验，见 ADR-0037）。
+// 非终态（scanning/pending-review/fetching/ingesting）受单实例互斥约束；旁出 failed/cancelled/expired 为终态。
+const (
+	ReverseFetchTaskScanning      = "scanning"       // 已下发 scan 命令、待 agent 回清单
+	ReverseFetchTaskPendingReview = "pending-review" // 清单已到、待人工审核选定
+	ReverseFetchTaskFetching      = "fetching"       // 已下发 submit 命令、待 agent 回选定内容
+	ReverseFetchTaskIngesting     = "ingesting"      // 选定内容已到、落库中
+	ReverseFetchTaskDone          = "done"           // 选定集 ingest 落库成功（终态）
+	ReverseFetchTaskFailed        = "failed"         // 任一阶段失败（终态）
+	ReverseFetchTaskCancelled     = "cancelled"      // 人工取消（终态）
+	ReverseFetchTaskExpired       = "expired"        // 超时未完成，清单瞬态已清空（终态）
+)
+
+// IsReverseFetchTaskTerminal 判断任务状态是否为终态（终态不受互斥约束、不可再迁移）。
+func IsReverseFetchTaskTerminal(status string) bool {
+	switch status {
+	case ReverseFetchTaskDone, ReverseFetchTaskFailed, ReverseFetchTaskCancelled, ReverseFetchTaskExpired:
+		return true
+	default:
+		return false
+	}
+}
 
 // agent 命令生命周期状态（FR-39 / FR-46）。
 const (
@@ -87,6 +112,14 @@ const (
 	ActionFileImport = "file.import"
 	// 在线实例反向抓取触发（FR-39，见 ADR-0027；ingest 落盘复用上面的 file.import 审计）
 	ActionFileReverseFetch = "file.reverse-fetch"
+	// 反向抓取受管任务·扫描（FR-58）：建任务并下发 scan 命令，令在线实例只回元信息清单（见 ADR-0037）
+	ActionFileReverseFetchScan = "file.reverse-fetch-scan"
+	// 反向抓取受管任务·提交（FR-58）：审核选定后下发 submit 命令，令实例仅回选定 path 内容
+	ActionFileReverseFetchSubmit = "file.reverse-fetch-submit"
+	// 反向抓取受管任务·入库（FR-58）：选定内容到、复用 FileService.Import 落库（detail 不含文件内容）
+	ActionFileReverseFetchIngest = "file.reverse-fetch-ingest"
+	// 反向抓取受管任务·取消（FR-58）：人工取消非终态任务
+	ActionFileReverseFetchCancel = "file.reverse-fetch-cancel"
 	// 按需拓印触发（FR-46）：命令在线实例回传某文件磁盘内容、转存待审（不落库）
 	ActionFileImprintFetch = "file.imprint-fetch"
 	// 按需拓印确认落库（FR-46）：单人自审通过后落为某层文件覆盖（detail 不含文件内容）
@@ -126,6 +159,8 @@ const (
 	TargetTypeAPIKey = "apikey"
 	// agent 命令（FR-39 反向抓取）的审计对象类型
 	TargetTypeCommand = "command"
+	// 反向抓取受管任务（FR-58）的审计对象类型
+	TargetTypeReverseFetchTask = "reverse-fetch-task"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
