@@ -450,3 +450,23 @@ export interface IgnoreRuleView {
 
 // 忽略规则类型：exact（单文件精确匹配）/ prefix（目录前缀匹配）。
 export type IgnoreRuleType = 'exact' | 'prefix'
+
+// ===== 运维设置（FR-62，消费 FR-61 设置端点）=====
+
+// 设置项值类型（对齐后端 GET /admin/v1/settings 的 valueType）。
+export type SettingValueType = 'int' | 'bool' | 'string'
+
+// 单条运维设置项视图（对齐 GET /admin/v1/settings 的 items 元素）。
+// 白名单皆热改项，isStartup 恒 false；启动 / 安全项不进白名单、此处不可见。
+export interface SettingView {
+  key: string
+  // 当前生效值（字符串形态；按 valueType 解释展示与编辑）
+  value: string
+  valueType: SettingValueType
+  // 默认值（字符串形态）
+  default: string
+  // 中文说明
+  desc: string
+  // 是否启动项（白名单皆热改项，恒 false）
+  isStartup: boolean
+}

@@ -23,6 +23,7 @@ const NAV_ITEMS: Array<{ to: string; labelKey: string }> = [
   { to: '/api-keys', labelKey: 'nav.apiKeys' },
   { to: '/namespaces', labelKey: 'nav.namespaces' },
   { to: '/proxies', labelKey: 'nav.proxies' },
+  { to: '/settings', labelKey: 'nav.settings' },
 ]
 
 export default function Layout() {

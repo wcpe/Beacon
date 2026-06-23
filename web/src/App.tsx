@@ -18,6 +18,7 @@ import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import NamespacesPage from './pages/NamespacesPage'
+import SettingsPage from './pages/SettingsPage'
 import { setOnUnauthorized } from './api/client'
 
 export default function App() {
@@ -62,6 +63,8 @@ export default function App() {
           <Route path="namespaces" element={<NamespacesPage />} />
           {/* 代理服管理页（FR-52）：集中展示某环境全部 BC 代理运行态 + 底层参数 */}
           <Route path="proxies" element={<ProxiesPage />} />
+          {/* 运维设置页（FR-62）：分组展示热改项 + 逐项编辑保存 + 热生效回显 */}
+          <Route path="settings" element={<SettingsPage />} />
           {/* 未知路径回到配置中心 */}
           <Route path="*" element={<Navigate to="/configs" replace />} />
         </Route>

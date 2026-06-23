@@ -31,6 +31,7 @@ import type {
   ReverseFetchScope,
   ReverseFetchTaskView,
   RevisionView,
+  SettingView,
   SystemStatusView,
   TopologyView,
   ZoneStatView,
@@ -924,4 +925,20 @@ export function createIgnoreRule(params: CreateIgnoreRuleParams): Promise<Ignore
 // 删一条持久忽略规则（FR-59，软删）；写操作需 full 角色。
 export function deleteIgnoreRule(id: number): Promise<void> {
   return request<void>(`/reverse-fetch/ignore-rules/${id}`, { method: 'DELETE' })
+}
+
+// ===== 运维设置（FR-62，消费 FR-61 设置端点）=====
+
+// 列热改设置项（FR-61）：后端响应 { items: [] }，取 items。白名单皆热改项，启动 / 安全项不在其中。
+export function listSettings(): Promise<SettingView[]> {
+  return request<ItemsResponse<SettingView>>('/settings').then((r) => r.items)
+}
+
+// 改单个设置项（FR-61）：值统一以字符串送（后端按白名单 valueType 解析校验）。
+// 非法值 / 白名单外 key → 400（标准错误体），由调用方按中文 message 提示；写操作需 full 角色。
+export function updateSetting(key: string, value: string): Promise<void> {
+  return request<void>(`/settings/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ value }),
+  })
 }

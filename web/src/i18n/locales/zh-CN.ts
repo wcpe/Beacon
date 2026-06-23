@@ -24,6 +24,7 @@ export const zhCN = {
     apiKeys: '密钥管理',
     namespaces: '环境管理',
     proxies: '代理服管理',
+    settings: '运维设置',
   },
 
   // ===== 跨页复用 =====
@@ -712,5 +713,32 @@ export const zhCN = {
     cancelledHint: '任务已取消',
     expiredHint: '任务已过期（清单瞬态已清空），请重新建任务',
     emptyHint: '建扫描任务或在任务历史中选一个任务以查看详情',
+  },
+
+  // ===== 运维设置页（FR-62，消费 FR-61 设置端点）=====
+  settings: {
+    title: '运维设置',
+    // 按 key 前缀分组的中文组标题
+    groupHealth: '健康检查',
+    groupMetric: '指标',
+    groupLongpoll: '长轮询',
+    groupAlert: '告警',
+    groupLog: '日志',
+    groupReverseFetch: '反向抓取',
+    // 未知前缀组的兜底标题（用前缀本身作标题）
+    groupOther: '{{prefix}}',
+    // 每项默认值提示（行内小字）
+    defaultHint: '默认：{{value}}',
+    saveBtn: '保存',
+    saving: '保存中…',
+    // 保存成功提示：强调热生效
+    msgSaved: '已保存，热生效',
+    // bool 控件开 / 关文案
+    boolOn: '已开启',
+    boolOff: '已关闭',
+    empty: '暂无可调设置项',
+    // 启动 / 安全项在 config.yml 的说明（页顶提示）
+    configYmlNotice:
+      '启动 / 安全项（http-addr、database、auth 口令 / 密钥、agent-token、git-export）在 config.yml 配置，此处不可改、登录后不可见。',
   },
 } as const
