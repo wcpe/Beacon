@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { getTopology, listNamespaces } from '../api/client'
+import { namespaceOptions } from '../api/format'
 import TopologyGraph from './topology/TopologyGraph'
 import AsyncSection from '@/components/AsyncSection'
 import { Combobox } from '@/components/ui/combobox'
@@ -21,16 +22,17 @@ export default function TopologyPage() {
   // 已生效的环境查询值（端点必填，空则不查询）
   const [namespace, setNamespace] = useState('')
 
-  // 环境候选：来自 listNamespaces，作为下拉候选并供默认选首项
+  // 环境候选：来自 listNamespaces。下拉显示「编码 · 名称」（FR-70），默认选首项用 code（FR-51）。
   const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const namespaceOptions = (namespacesQuery.data ?? []).map((n) => n.code)
+  const nsOptions = namespaceOptions(namespacesQuery.data)
+  const namespaceCodes = (namespacesQuery.data ?? []).map((n) => n.code)
 
   // 候选就绪且未选环境时默认选第一个，直接出图（无需手动选，FR-51）
   useEffect(() => {
-    if (namespace === '' && namespaceOptions.length > 0) {
-      setNamespace(namespaceOptions[0])
+    if (namespace === '' && namespaceCodes.length > 0) {
+      setNamespace(namespaceCodes[0])
     }
-  }, [namespace, namespaceOptions])
+  }, [namespace, namespaceCodes])
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ['topology', namespace],
@@ -61,7 +63,7 @@ export default function TopologyPage() {
                 className="w-48"
                 value={namespace}
                 onChange={setNamespace}
-                options={namespaceOptions}
+                options={nsOptions}
                 allowCustom={false}
                 placeholder={t('topology.nsPlaceholder')}
               />

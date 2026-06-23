@@ -30,9 +30,12 @@ beforeEach(() => {
   vi.mocked(importFiles).mockResolvedValue({ files: 2, created: 2, updated: 0 })
 })
 
+// 环境候选改为「值/显示分离」（FR-70）：value=code、label=「编码 · 名称」
+const NS_OPTS = [{ value: 'prod', label: 'prod · 生产' }]
+
 describe('ImportFilesDialog', () => {
   it('选组与文件后点导入，以正确入参调用 importFiles', async () => {
-    renderDialog(<ImportFilesDialog namespaces={['prod']} groups={['bw']} />)
+    renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
 
     // 打开对话框
     await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
@@ -65,7 +68,7 @@ describe('ImportFilesDialog', () => {
   })
 
   it('未选目标组时不调用 importFiles', async () => {
-    renderDialog(<ImportFilesDialog namespaces={['prod']} groups={['bw']} />)
+    renderDialog(<ImportFilesDialog namespaces={NS_OPTS} groups={['bw']} />)
     await userEvent.click(screen.getByRole('button', { name: '导入到组' }))
     const dialog = await screen.findByRole('dialog')
 

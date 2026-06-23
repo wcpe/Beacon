@@ -16,7 +16,11 @@ import CreateConfigDialog from './CreateConfigDialog'
 import { createConfig } from '../../api/client'
 
 // 动态数据源：环境 / 大区 / 小区 / 实例（替代旧硬编码示例）
-const NAMESPACES = ['prod', 'test']
+// 环境候选「值/显示分离」（FR-70）：value=code、label=「编码 · 名称」
+const NAMESPACES = [
+  { value: 'prod', label: 'prod · 生产' },
+  { value: 'test', label: 'test · 测试' },
+]
 const GROUPS = ['gA', 'gB']
 const ZONES = ['z1', 'z2']
 const INSTANCES = [
@@ -63,7 +67,8 @@ describe('CreateConfigDialog', () => {
     renderDialog(<CreateConfigDialog {...baseProps} open onOpenChange={() => {}} />)
     const nsList = await openCombobox('环境')
     const nsOptions = within(nsList).getAllByRole('option').map((o) => o.textContent)
-    expect(nsOptions).toEqual(NAMESPACES)
+    // 候选显示「编码 · 名称」（FR-70）
+    expect(nsOptions).toEqual(NAMESPACES.map((n) => n.label))
     // 旧硬编码大区示例不应再出现
     expect(within(nsList).queryByText('server-a')).not.toBeInTheDocument()
     expect(within(nsList).queryByText('server-b')).not.toBeInTheDocument()

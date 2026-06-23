@@ -74,7 +74,8 @@ describe('TopologyPage', () => {
     renderPage(<TopologyPage />)
     await screen.findByTestId('topology-graph')
     await userEvent.click(screen.getByLabelText('环境'))
-    await userEvent.click(screen.getByRole('option', { name: 'test' }))
+    // 候选显示「编码 · 名称」（FR-70），但选中后按 code 拉取
+    await userEvent.click(screen.getByRole('option', { name: 'test · 测试' }))
     await waitFor(() => expect(vi.mocked(getTopology)).toHaveBeenCalledWith('test'))
     expect(await screen.findByTestId('topology-graph')).toBeInTheDocument()
   })

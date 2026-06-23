@@ -12,7 +12,7 @@ import { useMessage } from '../../components/useMessage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -27,10 +27,10 @@ const SCOPE_LEVELS = ['global', 'group', 'zone', 'server'] as const
 // 格式选项
 const FORMATS = ['yaml', 'properties', 'json'] as const
 
-// 按动态数据生成新建表单初值（环境缺省取列表首项，无则空）
-function emptyForm(namespaces: string[]): CreateConfigParams {
+// 按动态数据生成新建表单初值（环境缺省取列表首项的 code，无则空）
+function emptyForm(namespaces: ComboboxOption[]): CreateConfigParams {
   return {
-    namespace: namespaces[0] ?? '',
+    namespace: namespaces[0]?.value ?? '',
     group: '',
     dataId: '',
     scopeLevel: 'global',
@@ -57,8 +57,8 @@ export default function CreateConfigDialog({
   onOpenChange,
   initial,
 }: {
-  // 环境列表（来自 listNamespaces）
-  namespaces: string[]
+  // 环境候选（来自 listNamespaces）：value=code，label=「编码 · 名称」（FR-70）
+  namespaces: ComboboxOption[]
   // 大区列表（由 zone 汇总 / 实例派生）
   groups: string[]
   // 小区列表（由 zone 汇总 / 实例派生）

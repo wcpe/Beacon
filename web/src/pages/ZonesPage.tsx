@@ -25,6 +25,7 @@ import {
   zoneSummary,
 } from '../api/client'
 import type { AssignParams } from '../api/client'
+import { namespaceOptions } from '../api/format'
 import type { InstanceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
@@ -111,8 +112,12 @@ export default function ZonesPage() {
   })
   const allSummary = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
 
-  // 环境候选：来自 listNamespaces
-  const namespaceOptions = useMemo(
+  // 环境候选：来自 listNamespaces。下拉显示「编码 · 名称」（FR-70）；校验仍用纯 code 集合。
+  const nsOptions = useMemo(
+    () => namespaceOptions(namespacesQuery.data),
+    [namespacesQuery.data],
+  )
+  const namespaceCodes = useMemo(
     () => (namespacesQuery.data ?? []).map((n) => n.code),
     [namespacesQuery.data],
   )
@@ -196,7 +201,7 @@ export default function ZonesPage() {
     }
     // 非法值拦截：所选项须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）
     if (
-      !namespaceOptions.includes(form.namespace) ||
+      !namespaceCodes.includes(form.namespace) ||
       !serverOptions.includes(form.serverId) ||
       !groupOptions.includes(form.group) ||
       !zoneOptions.includes(form.zone)
@@ -257,7 +262,7 @@ export default function ZonesPage() {
                   aria-label={t('common.namespace')}
                   value={form.namespace}
                   onChange={(v) => setForm({ ...form, namespace: v })}
-                  options={namespaceOptions}
+                  options={nsOptions}
                   allowCustom={false}
                   placeholder={t('common.pleaseSelect')}
                 />
@@ -329,7 +334,7 @@ export default function ZonesPage() {
                 className="w-40"
                 value={fNamespace}
                 onChange={setFNamespace}
-                options={namespaceOptions}
+                options={nsOptions}
                 allowCustom
               />
             </div>

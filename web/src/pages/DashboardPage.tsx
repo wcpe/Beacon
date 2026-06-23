@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { listNamespaces, metricsSummary, metricsTrend } from '../api/client'
 import type { ServerPlayers, TrendWindow } from '../api/client'
-import { formatBytes } from '../api/format'
+import { formatBytes, namespaceOptions } from '../api/format'
 import SummaryCards from './dashboard/SummaryCards'
 import BCPanel from './dashboard/BCPanel'
 import TrendChart from './dashboard/TrendChart'
@@ -45,9 +45,10 @@ export default function DashboardPage() {
   const [window, setWindow] = useState<TrendWindow>('1h')
 
   // 环境下拉候选来自 listNamespaces；筛选框允许键入候选外的值（可编辑）。
+  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
   const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const namespaceOptions = useMemo(
-    () => (namespacesQuery.data ?? []).map((n) => n.code),
+  const nsOptions = useMemo(
+    () => namespaceOptions(namespacesQuery.data),
     [namespacesQuery.data],
   )
 
@@ -107,7 +108,7 @@ export default function DashboardPage() {
                 placeholder={t('dashboard.nsPlaceholder')}
                 value={namespace}
                 onChange={setNamespace}
-                options={namespaceOptions}
+                options={nsOptions}
                 allowCustom
               />
             </div>

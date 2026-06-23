@@ -44,6 +44,23 @@ describe('AuditsPage 操作人过滤', () => {
       ),
     )
   })
+
+  // FR-70：环境下拉显示「编码 · 名称」，但选中并查询时提交的过滤值仍是 code。
+  it('环境下拉显示「编码 · 名称」而过滤值仍为 code', async () => {
+    renderPage(<AuditsPage />)
+    const ns = await screen.findByLabelText('环境')
+    await userEvent.click(ns)
+    // 候选展示编码 · 名称
+    const opt = await screen.findByRole('option', { name: 'prod · 生产' })
+    await userEvent.click(opt)
+    await userEvent.click(screen.getByRole('button', { name: '查询' }))
+    // 提交给后端的 namespace 仍是纯 code，不含 name
+    await waitFor(() =>
+      expect(vi.mocked(listAudits)).toHaveBeenCalledWith(
+        expect.objectContaining({ namespace: 'prod' }),
+      ),
+    )
+  })
 })
 
 // FR-50：审计 action 英文枚举经 i18n 映射成中文展示；未知枚举回退原文。

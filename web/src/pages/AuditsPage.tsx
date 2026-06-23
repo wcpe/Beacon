@@ -6,7 +6,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { listAudits, listNamespaces } from '../api/client'
 import type { AuditFilter } from '../api/client'
 import type { AuditView } from '../api/types'
-import { formatTime } from '../api/format'
+import { formatTime, namespaceOptions } from '../api/format'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
@@ -57,8 +57,9 @@ export default function AuditsPage() {
   })
 
   // 环境筛选下拉的候选来源（FR-51）：来自 listNamespaces，筛选框允许键入候选外的值（可编辑）
+  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）
   const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const namespaceOptions = (namespacesQuery.data ?? []).map((n) => n.code)
+  const nsOptions = namespaceOptions(namespacesQuery.data)
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
@@ -124,7 +125,7 @@ export default function AuditsPage() {
                 className="w-40"
                 value={namespace}
                 onChange={setNamespace}
-                options={namespaceOptions}
+                options={nsOptions}
                 allowCustom
               />
             </div>

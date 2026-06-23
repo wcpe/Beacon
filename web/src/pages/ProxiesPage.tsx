@@ -10,7 +10,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Cpu, DoorOpen, Network, Plug, Server, Timer } from 'lucide-react'
 import { listDefaultEntries, listInstances, listNamespaces } from '../api/client'
 import type { InstanceView } from '../api/types'
-import { formatDuration } from '../api/format'
+import { formatDuration, namespaceOptions } from '../api/format'
 import StatCard from './dashboard/StatCard'
 import StatusBadge from '../components/StatusBadge'
 import AsyncSection from '@/components/AsyncSection'
@@ -38,9 +38,10 @@ export default function ProxiesPage() {
   const [namespace, setNamespace] = useState('')
 
   // 环境下拉候选来自 listNamespaces；筛选框允许键入候选外的值（可编辑）。
+  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
   const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const namespaceOptions = useMemo(
-    () => (namespacesQuery.data ?? []).map((n) => n.code),
+  const nsOptions = useMemo(
+    () => namespaceOptions(namespacesQuery.data),
     [namespacesQuery.data],
   )
 
@@ -88,7 +89,7 @@ export default function ProxiesPage() {
                 placeholder={t('proxies.nsPlaceholder')}
                 value={namespace}
                 onChange={setNamespace}
-                options={namespaceOptions}
+                options={nsOptions}
                 allowCustom
               />
             </div>

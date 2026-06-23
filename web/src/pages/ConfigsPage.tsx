@@ -32,6 +32,7 @@ import {
   zoneSummary,
 } from '../api/client'
 import type { CreateConfigParams } from '../api/client'
+import { namespaceOptions } from '../api/format'
 import { useMessage } from '../components/useMessage'
 import { Badge } from '@/components/ui/badge'
 import { useConfigTabs } from './configs/useConfigTabs'
@@ -69,8 +70,9 @@ export default function ConfigsPage() {
   const [createInitial, setCreateInitial] = useState<CreateConfigParams | undefined>()
 
   // 新建对话框动态选项：环境 / 大区 / 小区 / 实例（均由既有 list 端点派生，无硬编码）
-  const namespaceCodes = useMemo(
-    () => (namespacesQuery.data ?? []).map((n) => n.code),
+  // 环境候选显示「编码 · 名称」，真实值仍是 code（FR-70）
+  const nsOptions = useMemo(
+    () => namespaceOptions(namespacesQuery.data),
     [namespacesQuery.data],
   )
   // 大区候选：zone 汇总与实例列表去重并集（兼容无 zone 指派但已注册的大区）
@@ -251,11 +253,11 @@ export default function ConfigsPage() {
             {t('configs.countBadge', { count: list.data?.length ?? 0 })}
           </Badge>
           {/* 导入到组（FR-38）：把一份目录批量上传到某组的文件树（通道B 整文件覆盖） */}
-          <ImportFilesDialog namespaces={namespaceCodes} groups={groupOptions} />
+          <ImportFilesDialog namespaces={nsOptions} groups={groupOptions} />
           {/* 反向抓取（FR-39）：从某在线实例读其真实 plugins 反向 ingest 为组 / 实例级覆盖 */}
           <ReverseFetchDialog instances={instancesQuery.data ?? []} groups={groupOptions} />
           <CreateConfigDialog
-            namespaces={namespaceCodes}
+            namespaces={nsOptions}
             groups={groupOptions}
             zones={zoneOptions}
             instances={instancesQuery.data ?? []}

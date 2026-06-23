@@ -14,7 +14,7 @@ import {
 } from '../api/client'
 import type { InstanceFilter } from '../api/client'
 import type { InstanceView } from '../api/types'
-import { formatTime } from '../api/format'
+import { formatTime, namespaceOptions } from '../api/format'
 import StatusBadge from '../components/StatusBadge'
 import RoleBadge from '../components/RoleBadge'
 import { useMessage } from '../components/useMessage'
@@ -93,8 +93,9 @@ export default function InstancesPage() {
   })
   const zoneSummaryQuery = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
 
-  const namespaceOptions = useMemo(
-    () => (namespacesQuery.data ?? []).map((n) => n.code),
+  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）
+  const nsOptions = useMemo(
+    () => namespaceOptions(namespacesQuery.data),
     [namespacesQuery.data],
   )
   // 大区候选：zone 汇总与实例列表去重并集（兼容无 zone 指派但已注册的大区）
@@ -224,7 +225,7 @@ export default function InstancesPage() {
                 className="w-40"
                 value={namespace}
                 onChange={setNamespace}
-                options={namespaceOptions}
+                options={nsOptions}
                 allowCustom
               />
             </div>

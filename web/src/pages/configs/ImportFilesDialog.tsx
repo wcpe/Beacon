@@ -10,7 +10,7 @@ import type { ImportFileEntry } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
+import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import {
   Dialog,
   DialogContent,
@@ -39,8 +39,8 @@ export default function ImportFilesDialog({
   namespaces,
   groups,
 }: {
-  // 环境列表（来自 listNamespaces）
-  namespaces: string[]
+  // 环境候选（来自 listNamespaces）：value=code，label=「编码 · 名称」（FR-70）
+  namespaces: ComboboxOption[]
   // 大区列表（由 zone 汇总 / 实例派生）
   groups: string[]
 }) {
@@ -55,7 +55,7 @@ export default function ImportFilesDialog({
   // 打开时重置选择：环境缺省取列表首项，组与文件清空待选。
   useEffect(() => {
     if (open) {
-      setNamespace(namespaces[0] ?? '')
+      setNamespace(namespaces[0]?.value ?? '')
       setGroup('')
       setEntries([])
     }

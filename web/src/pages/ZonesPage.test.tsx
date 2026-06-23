@@ -131,8 +131,9 @@ describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
     await waitFor(async () => {
       const listbox = await openCombobox(dialog, '环境')
       const opts = within(listbox).getAllByRole('option').map((o) => o.textContent)
-      expect(opts).toContain('prod')
-      expect(opts).toContain('test')
+      // 环境候选显示「编码 · 名称」（FR-70）
+      expect(opts).toContain('prod · 生产')
+      expect(opts).toContain('test · 测试')
     })
   })
 
@@ -167,8 +168,8 @@ describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
   it('缺选必填项被拦下、不调 assignZone', async () => {
     renderPage(<ZonesPage />)
     const dialog = await openDialog()
-    // 仅选环境，其余留空
-    await pick(dialog, '环境', 'prod')
+    // 仅选环境，其余留空（环境候选显示「编码 · 名称」，FR-70）
+    await pick(dialog, '环境', 'prod · 生产')
     await userEvent.click(within(dialog).getByRole('button', { name: '指派' }))
     expect(showError).toHaveBeenCalled()
     expect(vi.mocked(assignZone)).not.toHaveBeenCalled()
@@ -182,7 +183,7 @@ describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
       const listbox = await openCombobox(dialog, 'serverId')
       expect(within(listbox).queryByText('lobby-1')).toBeInTheDocument()
     })
-    await pick(dialog, '环境', 'prod')
+    await pick(dialog, '环境', 'prod · 生产')
     await pick(dialog, 'serverId', 'lobby-1')
     await pick(dialog, '大区', 'gA')
     await pick(dialog, '小区', 'z1')
