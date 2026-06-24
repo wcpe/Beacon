@@ -69,6 +69,26 @@ func (r *ConfigRevisionRepository) ListByItem(itemID uint) ([]model.ConfigRevisi
 	return revs, nil
 }
 
+// ListByItemIDs 一次性按一组 config_item.id 拉取其全部历史版本（供 per-server 变更时间线聚合，避免逐项查库的 N+1，FR-80）。
+// 按 created_at 倒序、同刻按 config_item_id、version 兜底排序，使结果稳定可预期。空集合直接返回空切片（不发查询）。
+func (r *ConfigRevisionRepository) ListByItemIDs(itemIDs []uint) ([]model.ConfigRevision, error) {
+	if len(itemIDs) == 0 {
+		return []model.ConfigRevision{}, nil
+	}
+	var revs []model.ConfigRevision
+	if err := r.db.Where("config_item_id IN ?", itemIDs).
+		Order("created_at desc, config_item_id desc, version desc").
+		Find(&revs).Error; err != nil {
+		return nil, err
+	}
+	for i := range revs {
+		if err := r.decryptOne(&revs[i]); err != nil {
+			return nil, err
+		}
+	}
+	return revs, nil
+}
+
 // FindByItemAndVersion 取某配置项的指定版本；不存在返回 (nil, nil)。
 func (r *ConfigRevisionRepository) FindByItemAndVersion(itemID uint, version int64) (*model.ConfigRevision, error) {
 	var rev model.ConfigRevision

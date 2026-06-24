@@ -22,7 +22,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
 	cfg := service.NewConfigService(db, cr, repository.NewConfigRevisionRepository(db, noEncryptCipher()), ar)
-	eff := service.NewEffectiveService(cr, asg, nil, nil)
+	eff := service.NewEffectiveService(cr, asg, nil, nil, nil)
 	zone := service.NewZoneService(db, asg, repository.NewZoneDefaultEntryRepository(db), ar, runtime.NewRegistry())
 
 	create := func(group, scope, target, content string) {

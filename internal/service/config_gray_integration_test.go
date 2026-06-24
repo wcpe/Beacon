@@ -32,7 +32,7 @@ func grayStack(t *testing.T) (*service.ConfigService, *service.ConfigGrayService
 	topoHub := longpoll.NewHub()
 	cfg := service.NewConfigService(db, cr, rr, ar)
 	gray := service.NewConfigGrayService(db, cfg, cr, gr, ar)
-	eff := service.NewEffectiveService(cr, asg, gr, hub)
+	eff := service.NewEffectiveService(cr, asg, gr, nil, hub)
 	notifier := service.NewChangeNotifier(hub, fileHub, topoHub, longpoll.NewHub(), runtime.NewRegistry(), asg)
 	cfg.SetNotifier(notifier)
 	gray.SetNotifier(notifier)

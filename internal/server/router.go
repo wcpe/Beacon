@@ -140,6 +140,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 主动下线标记列表（FR-49）：静态路由置于 {serverId} 前以免被通配吞掉
 		r.Get("/instances/offline", h.Instance.ListOffline)
 		r.Get("/instances/{serverId}", h.Instance.Get)
+		// per-server 有效配置变更时间线（FR-80）：该服覆盖链各 config 项发布历史按时间倒序，只读
+		r.Get("/instances/{serverId}/config-timeline", h.Instance.ConfigTimeline)
 		// 主动下线（FR-49）：落 DB 拒绝态 + 移出可用集；DELETE 取消下线。二者为写方法，readonly 密钥经 readonlyWriteGuard 403
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
 		r.Delete("/instances/{serverId}/offline", h.Instance.Online)

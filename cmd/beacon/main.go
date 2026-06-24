@@ -206,7 +206,8 @@ func run() error {
 	topologyHub := longpoll.NewHub()
 	// 命令待办（FR-39）：serverId 级唤醒 Hub，与上面三通道独立；建反向抓取命令时唤醒目标 agent 的 SSE 流
 	commandHub := longpoll.NewHub()
-	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, hub)
+	// revRepo 注入供 per-server 有效配置变更时间线聚合该服覆盖链各 config 项的发布历史（FR-80）
+	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
 	impactService := service.NewImpactService(registry, assignRepo)
 	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）+ 影响面预览（FR-79）
@@ -237,8 +238,9 @@ func run() error {
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, settingsService)
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)
 	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, settingsService)
-	// 实例视图渲染健康原因（FR-81）须读当前健康阈值（设置 store 热改项 FR-61），故注入 settingsService。
-	instanceHandler := handler.NewInstanceHandler(instanceService, settingsService)
+	// 实例视图渲染健康原因（FR-81）须读当前健康阈值（设置 store 热改项 FR-61），故注入 settingsService；
+	// effectiveService 供 per-server 有效配置变更时间线端点（FR-80）。
+	instanceHandler := handler.NewInstanceHandler(instanceService, settingsService, effectiveService)
 	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)

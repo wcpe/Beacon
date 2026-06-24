@@ -28,16 +28,23 @@ type healthThresholds interface {
 	GetInt(key string) int
 }
 
-// InstanceHandler 处理实例与健康相关的 admin 请求（读内存注册表）。
-type InstanceHandler struct {
-	svc    *service.InstanceService
-	health healthThresholds // 渲染健康原因文案读当前阈值（FR-81）
-	now    func() time.Time // 算心跳陈旧度的当前时刻（注入便于测试；默认 UTC 墙钟）
+// configTimelineResolver 是实例处理器对「有效配置变更时间线」的窄依赖（由 service.EffectiveService 实现，FR-80）。
+type configTimelineResolver interface {
+	ConfigTimeline(ns, serverID, groupHint string) (service.ConfigTimeline, error)
 }
 
-// NewInstanceHandler 构造处理器（health 提供健康阈值热读，供渲染 lastHeartbeatAgeSec / healthReason，FR-81）。
-func NewInstanceHandler(svc *service.InstanceService, health healthThresholds) *InstanceHandler {
-	return &InstanceHandler{svc: svc, health: health, now: func() time.Time { return time.Now().UTC() }}
+// InstanceHandler 处理实例与健康相关的 admin 请求（读内存注册表）。
+type InstanceHandler struct {
+	svc      *service.InstanceService
+	health   healthThresholds       // 渲染健康原因文案读当前阈值（FR-81）
+	timeline configTimelineResolver // 解析 per-server 有效配置变更时间线（FR-80）
+	now      func() time.Time       // 算心跳陈旧度的当前时刻（注入便于测试；默认 UTC 墙钟）
+}
+
+// NewInstanceHandler 构造处理器（health 提供健康阈值热读，供渲染 lastHeartbeatAgeSec / healthReason，FR-81；
+// timeline 解析某服覆盖链涉及 config 项的发布历史，供 config-timeline 端点，FR-80）。
+func NewInstanceHandler(svc *service.InstanceService, health healthThresholds, timeline configTimelineResolver) *InstanceHandler {
+	return &InstanceHandler{svc: svc, health: health, timeline: timeline, now: func() time.Time { return time.Now().UTC() }}
 }
 
 // instanceView 是实例对外视图（未分配时 zone 为 null）。
@@ -236,4 +243,44 @@ func (h *InstanceHandler) Online(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// timelineEntryView 是某服覆盖链上一次配置发布的对外视图（不含 content，FR-80）。
+type timelineEntryView struct {
+	ConfigItemID uint      `json:"configItemId"`
+	DataID       string    `json:"dataId"`
+	ScopeLevel   string    `json:"scopeLevel"`
+	ScopeTarget  string    `json:"scopeTarget"`
+	Version      int64     `json:"version"`
+	MD5          string    `json:"md5"`
+	Operator     string    `json:"operator"`
+	Comment      string    `json:"comment"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+// ConfigTimeline 处理 GET /admin/v1/instances/{serverId}/config-timeline?namespace=&group=（FR-80）。
+// 只读返回某子服当前覆盖链涉及的全部 config 项的发布历史（含首发 / 发布 / 回滚），按时间倒序，供服务器详情「变更历史」展示。
+func (h *InstanceHandler) ConfigTimeline(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns := q.Get("namespace")
+	serverID := chi.URLParam(r, "serverId")
+	if ns == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	tl, err := h.timeline.ConfigTimeline(ns, serverID, q.Get("group"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	items := make([]timelineEntryView, 0, len(tl.Entries))
+	for _, e := range tl.Entries {
+		items = append(items, timelineEntryView{
+			ConfigItemID: e.ConfigItemID, DataID: e.DataID, ScopeLevel: e.ScopeLevel, ScopeTarget: e.ScopeTarget,
+			Version: e.Version, MD5: e.MD5, Operator: e.Operator, Comment: e.Comment, CreatedAt: e.CreatedAt,
+		})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"namespace": tl.Namespace, "serverId": tl.ServerID, "group": tl.Group, "zone": tl.Zone, "items": items,
+	})
 }

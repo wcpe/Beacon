@@ -47,7 +47,7 @@ func encryptSqliteStack(t *testing.T) (*service.ConfigService, *service.Effectiv
 	assignRepo := repository.NewZoneAssignmentRepository(db)
 
 	cfgSvc := service.NewConfigService(db, configRepo, revRepo, auditRepo)
-	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, longpoll.NewHub())
+	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, nil, longpoll.NewHub())
 	return cfgSvc, effSvc
 }
 

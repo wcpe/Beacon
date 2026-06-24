@@ -316,6 +316,7 @@ data: {}
 |---|---|
 | `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36）与 `proxy`（对象，bc 专属负载指标 `onlineConnections`/`threadCount`/`uptimeMs`/`backendUp`/`backendTotal`/`backendAvgLatencyMs`，仅 bc 非零、bukkit 恒零——把控制面已采的 BC 事实补暴露在逐实例视图，供代理服管理页逐台展示底层参数，FR-34/FR-52；`backendAvgLatencyMs<0` 表示无可达后端不可用）。另含 `lastHeartbeatAgeSec`（`int`，距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（`string`，触发当前状态的原因文案，如 `35s 未心跳 > ttl 30s`；`online` 时空串；阈值取当前生效健康阈值与扫描判定同源，纯内存派生不落 DB，FR-81） |
 | `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`/`proxy`/`lastHeartbeatAgeSec`/`healthReason`） |
+| `GET /admin/v1/instances/{serverId}/config-timeline?namespace=&group=` | per-server 有效配置变更时间线（FR-80）：返回该子服**当前**覆盖链涉及的全部 config 项的发布历史（含首发 / 发布 / 回滚），按时间倒序。`namespace` 必填（缺失返 `400 INVALID_PARAM`）；`group` 可选 groupHint（未指派时定位 group 层）。返回 `{ namespace, serverId, group, zone, items: [{ configItemId, dataId, scopeLevel, scopeTarget, version, md5, operator, comment, createdAt }] }`，只读、不含 content、不落 DB |
 | `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
 | `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |
@@ -323,6 +324,8 @@ data: {}
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
+
+`GET /admin/v1/instances/{serverId}/config-timeline`（FR-80）：服务器详情「变更历史」用，回答「这台服的有效配置何时因哪次发布变过」。覆盖链解析与有效配置 `Resolve` 同口径——按 `zone_assignment`（DB 权威，见 [ADR-0004](adr/0004-zone-authority-control-plane.md)）解出 `(group, zone)`、未指派回退 `groupHint`/空；取该链四层（global/group/zone/server）候选 config 项后，一次按 itemID 集合拉全部 `config_revision`（避免 N+1），每条标注其所属项的 `scopeLevel`/`scopeTarget`，按 `createdAt` 倒序汇总。只给元信息不含 content（要看内容走 `GET /configs/{id}/revisions/{version}` 或 diff）。覆盖链按**当前**归属解析、不回溯历史区段；当前不分页。
 
 ### 反向抓取受管任务（FR-58 / FR-59，见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md)）
 

@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/merge"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -33,15 +34,17 @@ type Effective struct {
 type EffectiveService struct {
 	configRepo *repository.ConfigItemRepository
 	assignRepo *repository.ZoneAssignmentRepository
-	grayRepo   *repository.ConfigGrayRepository // 可选，灰度叠加（FR-9）；nil 即无灰度行为
+	grayRepo   *repository.ConfigGrayRepository     // 可选，灰度叠加（FR-9）；nil 即无灰度行为
+	revRepo    *repository.ConfigRevisionRepository // 可选，per-server 变更时间线聚合历史版本（FR-80）；纯解析/长轮询路径可传 nil
 	hub        *longpoll.Hub
 }
 
 // NewEffectiveService 构造服务。hub 仅长轮询用，纯解析场景可传 nil。
 // grayRepo 可选：注入则在版本选择层叠加灰度（cohort 内 serverId 换灰度内容，FR-9，见 ADR-0021）；
 // 传 nil 则解析行为与无灰度时完全一致（向后兼容）。
-func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository, grayRepo *repository.ConfigGrayRepository, hub *longpoll.Hub) *EffectiveService {
-	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo, grayRepo: grayRepo, hub: hub}
+// revRepo 可选：注入则支持 per-server 变更时间线（FR-80）；agent 热路径不需要、可传 nil。
+func NewEffectiveService(configRepo *repository.ConfigItemRepository, assignRepo *repository.ZoneAssignmentRepository, grayRepo *repository.ConfigGrayRepository, revRepo *repository.ConfigRevisionRepository, hub *longpoll.Hub) *EffectiveService {
+	return &EffectiveService{configRepo: configRepo, assignRepo: assignRepo, grayRepo: grayRepo, revRepo: revRepo, hub: hub}
 }
 
 // Resolve 解析某 (namespace, serverId) 的有效配置：
@@ -267,5 +270,87 @@ func (s *EffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHi
 	return ProvenancedEffective{
 		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
 		MD5: merge.OverallMD5(dataIDToMD5), Items: items,
+	}, nil
+}
+
+// TimelineEntry 是某子服覆盖链上一次配置发布（含首发 / 发布 / 回滚）的元信息（不含内容，FR-80）。
+type TimelineEntry struct {
+	ConfigItemID uint
+	DataID       string
+	ScopeLevel   string
+	ScopeTarget  string
+	Version      int64
+	MD5          string
+	Operator     string
+	Comment      string
+	CreatedAt    time.Time
+}
+
+// ConfigTimeline 是某子服「有效配置变更时间线」的解析结果（按时间倒序的发布记录，FR-80）。
+type ConfigTimeline struct {
+	Namespace string
+	ServerID  string
+	Group     string
+	Zone      string
+	Entries   []TimelineEntry
+}
+
+// ConfigTimeline 解析某 (namespace, serverId) 当前覆盖链涉及的全部 config 项的发布历史，按时间倒序汇总（FR-80）。
+// 覆盖链解析与有效配置 Resolve 同口径：按 zone_assignment（DB 权威，ADR-0004）解出 (group, zone)，未指派回退 groupHint / 空。
+// 取该链四层候选 config 项后，一次按 itemID 集合拉全部 config_revision（避免 N+1），每条标注其所属项的 scope 元信息。
+// 仅给元信息不含 content（要看内容走既有版本历史 / diff）。revRepo 未注入时返回错误（装配缺漏，不静默吞）。
+func (s *EffectiveService) ConfigTimeline(ns, serverID, groupHint string) (ConfigTimeline, error) {
+	if s.revRepo == nil {
+		return ConfigTimeline{}, apperr.ErrInternal
+	}
+	group, zone := groupHint, ""
+	assign, err := s.assignRepo.FindByServer(ns, serverID)
+	if err != nil {
+		return ConfigTimeline{}, err
+	}
+	if assign != nil {
+		group, zone = assign.GroupCode, assign.ZoneCode
+	}
+
+	candidates, err := s.configRepo.FindEffectiveCandidates(ns, group, zone, serverID)
+	if err != nil {
+		return ConfigTimeline{}, err
+	}
+	// 建 itemID → scope 元信息映射，并收集 itemID 集合一次性拉历史（无 N+1）。
+	type scopeMeta struct {
+		dataID, scopeLevel, scopeTarget string
+	}
+	metaByItem := make(map[uint]scopeMeta, len(candidates))
+	itemIDs := make([]uint, 0, len(candidates))
+	for i := range candidates {
+		c := &candidates[i]
+		metaByItem[c.ID] = scopeMeta{dataID: c.DataID, scopeLevel: c.ScopeLevel, scopeTarget: c.ScopeTarget}
+		itemIDs = append(itemIDs, c.ID)
+	}
+
+	revs, err := s.revRepo.ListByItemIDs(itemIDs)
+	if err != nil {
+		return ConfigTimeline{}, err
+	}
+	// revs 已由仓库按 created_at desc 排序；逐条关联其 config 项的 scope 元信息组装条目。
+	entries := make([]TimelineEntry, 0, len(revs))
+	for i := range revs {
+		rev := &revs[i]
+		meta := metaByItem[rev.ConfigItemID] // 必命中：revs 由 itemIDs 派生
+		entries = append(entries, TimelineEntry{
+			ConfigItemID: rev.ConfigItemID,
+			DataID:       meta.dataID,
+			ScopeLevel:   meta.scopeLevel,
+			ScopeTarget:  meta.scopeTarget,
+			Version:      rev.Version,
+			MD5:          rev.ContentMD5,
+			Operator:     rev.Operator,
+			Comment:      rev.Comment,
+			CreatedAt:    rev.CreatedAt,
+		})
+	}
+
+	return ConfigTimeline{
+		Namespace: ns, ServerID: serverID, Group: group, Zone: zone, Entries: entries,
 	}, nil
 }

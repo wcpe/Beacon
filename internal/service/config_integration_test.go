@@ -30,7 +30,7 @@ func newStack(t *testing.T) (*service.ConfigService, *service.EffectiveService, 
 	rr := repository.NewConfigRevisionRepository(db, noEncryptCipher())
 	ar := repository.NewAuditLogRepository(db)
 	asg := repository.NewZoneAssignmentRepository(db)
-	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, asg, nil, nil), db
+	return service.NewConfigService(db, cr, rr, ar), service.NewEffectiveService(cr, asg, nil, rr, nil), db
 }
 
 // TestConfigLifecycle 集成验证：建→发布→历史→回滚→diff→软删。

@@ -43,7 +43,7 @@ func streamSqliteStack(t *testing.T) (*service.ConfigService, *service.StreamSer
 	// 命令待办唤醒（FR-39）：流与唤醒器须共用同一 commandHub，notifier.NotifyCommand 才能驱动流发 command-pending。
 	commandHub := longpoll.NewHub()
 
-	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, hub)
+	effSvc := service.NewEffectiveService(configRepo, assignRepo, nil, nil, hub)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	// 设置服务（FR-61）：保活间隔取 longpoll.max-hold-ms（默认 30s），测试短时完成不触发心跳、不依赖保活。

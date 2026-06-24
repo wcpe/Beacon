@@ -55,13 +55,14 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(db, repository.NewNamespaceRepository(db), assignRepo, configRepo, fileRepo, repository.NewFileOverrideSetRepository(db), registry, auditRepo))
-	cfgSvc := service.NewConfigService(db, configRepo, repository.NewConfigRevisionRepository(db, noEncryptCipher()), auditRepo)
+	revRepo := repository.NewConfigRevisionRepository(db, noEncryptCipher())
+	cfgSvc := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	instSvc := service.NewInstanceService(db, registry, assignRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
 	zoneSvc := service.NewZoneService(db, assignRepo, defaultEntryRepo, auditRepo, registry)
 	instSvc.SetDefaultEntryResolver(zoneSvc.DefaultEntryServerIDs)
 	grayRepo := repository.NewConfigGrayRepository(db, noEncryptCipher())
-	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, hub)
+	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	graySvc := service.NewConfigGrayService(db, cfgSvc, configRepo, grayRepo, auditRepo)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
@@ -112,7 +113,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
 		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),
 		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
-		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc),
+		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc, effSvc),
 		Zone:             handler.NewZoneHandler(zoneSvc),
 		Scheduling:       handler.NewSchedulingHandler(schedSvc),
 		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo)),

@@ -125,7 +125,7 @@
 | FR-77 | 运维设置页恢复默认 + 批量保存（增强 FR-62）：每项「恢复默认」、页脚「保存全部变更(N)」+ 改动摘要 | P2 | 已交付@v0.11.0 |
 | FR-78 | 控制面连接状态指示 + 自动重连（feat，纯前端复用现有轮询派生连通态，见 [docs/specs/connection-status-indicator.md](specs/connection-status-indicator.md)）：轮询断显横幅「连接中断·重连中」+ 小灯转红、恢复自动重连并失效查询刷新，治控制面重部时 UI 静默掉线（管理台无浏览器 SSE，连通态由 system-status 轮询的成功/失败派生） | P2 | 已交付@v0.11.0 |
 | FR-79 | 配置/文件发布影响面预览（增强 FR-22，见 [docs/specs/publish-impact-preview.md](specs/publish-impact-preview.md)）：发布确认显「将影响 N 台在线服:[serverId…]」，后端按 zone_assignment + 注册表算受影响集 | P2 | 开发中 |
-| FR-80 | per-server 有效配置变更时间线（feat）：服务器详情「变更历史」列有效配置变更（版本/时间/触发发布），看「何时因哪次发布变过」 | P2 | 计划 |
+| FR-80 | per-server 有效配置变更时间线（feat，见 [docs/specs/server-config-timeline.md](specs/server-config-timeline.md)）：服务器详情「变更历史」列有效配置变更（版本/时间/触发发布），看「何时因哪次发布变过」 | P2 | 开发中 |
 | FR-81 | 健康流转原因展示（增强健康，见 [docs/specs/health-status-reason.md](specs/health-status-reason.md)）：lost/degraded 状态带 lastHeartbeatAge + 触发阈值，悬浮显「Ns 未心跳 > ttl Ns」 | P2 | 开发中 |
 | FR-82 | 控制面自观测页（feat）：自指标端点 + 新「控制面健康」页显 DB 延迟/longpoll 挂起/注册表规模/命令队列深度，与 MC 负载看板区分、只读 | P2 | 计划 |
 | FR-83 | 全局搜索 + 命令面板（feat）：Cmd-K 聚合搜 config/file/server/audit 并跳转/执行常用操作，纯键盘可达 | P2 | 计划 |
