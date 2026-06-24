@@ -621,7 +621,8 @@ export async function exportAudits(filter: AuditFilter, format: AuditExportForma
   a.href = url
   a.download = filenameFromDisposition(resp.headers.get('Content-Disposition')) ?? `audit-export-${Date.now()}.${format}`
   a.click()
-  URL.revokeObjectURL(url)
+  // 延后释放更稳：避免极少数浏览器在 click 触发下载前就回收 url
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
 // ===== 告警历史 / 事件信息流（FR-89，见 docs/API.md 告警事件小节）=====

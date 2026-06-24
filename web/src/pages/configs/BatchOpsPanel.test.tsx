@@ -13,13 +13,15 @@ vi.mock('../../api/client', () => ({
   getConfig: vi.fn(),
 }))
 
-// mock 全局消息提示，避免 toast 依赖
+// 稳定的消息提示替身：跨渲染共享，供用例断言成功 / 失败提示
+const showSuccess = vi.fn()
+const showError = vi.fn()
 vi.mock('../../components/useMessage', () => ({
-  useMessage: () => ({ showSuccess: vi.fn(), showError: vi.fn() }),
+  useMessage: () => ({ showSuccess, showError }),
 }))
 
 import BatchOpsPanel from './BatchOpsPanel'
-import { batchConfigs } from '../../api/client'
+import { batchConfigs, getConfig } from '../../api/client'
 import type { ConfigView } from '../../api/types'
 
 function renderPanel(ui: ReactElement) {
@@ -60,6 +62,10 @@ const CONFIGS: ConfigView[] = [
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(batchConfigs).mockResolvedValue({ action: 'disable', count: 1 })
+  // jsdom 不实现 Blob URL 与 a.click()，导出用例打桩
+  URL.createObjectURL = vi.fn(() => 'blob:mock')
+  URL.revokeObjectURL = vi.fn()
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 })
 
 describe('BatchOpsPanel', () => {
@@ -108,5 +114,44 @@ describe('BatchOpsPanel', () => {
     await waitFor(() => {
       expect(vi.mocked(batchConfigs)).toHaveBeenCalledWith('disable', [1, 2])
     })
+  })
+
+  it('部分选中时表头全选框为 indeterminate 半选态', async () => {
+    renderPanel(<BatchOpsPanel configs={CONFIGS} />)
+    // 仅勾一条 → 未全选
+    await userEvent.click(screen.getByLabelText('a.yml'))
+    // radix Checkbox 半选时 aria-checked="mixed"
+    expect(screen.getByLabelText('全选')).toHaveAttribute('aria-checked', 'mixed')
+  })
+
+  it('导出部分失败：仍下载成功子集并提示 N 项失败', async () => {
+    // 第一条成功、第二条失败
+    vi.mocked(getConfig).mockImplementation((id: number) =>
+      id === 1 ? Promise.resolve(CONFIGS[0]) : Promise.reject(new Error('拉取失败')),
+    )
+    renderPanel(<BatchOpsPanel configs={CONFIGS} />)
+    await userEvent.click(screen.getByLabelText('全选'))
+    await userEvent.click(screen.getByRole('button', { name: '导出' }))
+
+    await waitFor(() => {
+      // 成功子集触发下载
+      expect(URL.createObjectURL).toHaveBeenCalledTimes(1)
+      // 成功提示按成功项计数
+      expect(showSuccess).toHaveBeenCalledWith('已导出 1 项配置')
+      // 失败计数提示
+      expect(showError).toHaveBeenCalledWith('1 项导出失败')
+    })
+  })
+
+  it('导出全部失败：不下载并报错', async () => {
+    vi.mocked(getConfig).mockRejectedValue(new Error('拉取失败'))
+    renderPanel(<BatchOpsPanel configs={CONFIGS} />)
+    await userEvent.click(screen.getByLabelText('全选'))
+    await userEvent.click(screen.getByRole('button', { name: '导出' }))
+
+    await waitFor(() => {
+      expect(showError).toHaveBeenCalledWith('拉取失败')
+    })
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
   })
 })

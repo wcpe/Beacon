@@ -840,6 +840,8 @@ export const zhCN = {
     batchMsgDisabled: '已禁用 {{count}} 项配置',
     batchMsgEnabled: '已启用 {{count}} 项配置',
     batchMsgExported: '已导出 {{count}} 项配置',
+    // 部分 / 全部导出失败时的计数提示
+    batchMsgExportFailed: '{{count}} 项导出失败',
   },
 
   // ===== 文件树预览页 =====

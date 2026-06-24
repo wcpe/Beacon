@@ -84,22 +84,34 @@ export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
     if (hasSelection) setConfirmDeleteOpen(true)
   }, [hasSelection])
 
-  // 导出：逐项拉内容打包成 JSON，Blob 下载（best-effort，无新依赖）
+  // 导出：逐项拉内容打包成 JSON，Blob 下载（best-effort，无新依赖）。
+  // 用 allSettled 容部分失败：成功子集照常打包下载，失败项计数提示；全失败才不下载并报错。
   const exportSelected = useCallback(async () => {
     if (!hasSelection || exporting) return
     setExporting(true)
     try {
-      const items = await Promise.all(selectedIds.map((id) => getConfig(id)))
+      const results = await Promise.allSettled(selectedIds.map((id) => getConfig(id)))
+      const items = results
+        .filter((r): r is PromiseFulfilledResult<ConfigView> => r.status === 'fulfilled')
+        .map((r) => r.value)
+      const failed = results.length - items.length
+      // 全失败：不下载，按首个失败原因报错
+      if (items.length === 0) {
+        const first = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined
+        msg.showError((first?.reason as Error)?.message ?? t('configs.batchMsgExportFailed', { count: failed }))
+        return
+      }
       const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       a.download = `configs-export-${Date.now()}.json`
       a.click()
-      URL.revokeObjectURL(url)
+      // 延后释放更稳：避免极少数浏览器在 click 触发下载前就回收 url
+      setTimeout(() => URL.revokeObjectURL(url), 0)
       msg.showSuccess(t('configs.batchMsgExported', { count: items.length }))
-    } catch (e) {
-      msg.showError((e as Error).message)
+      // 部分失败：补一条计数提示
+      if (failed > 0) msg.showError(t('configs.batchMsgExportFailed', { count: failed }))
     } finally {
       setExporting(false)
     }
@@ -158,7 +170,7 @@ export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
           <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border text-xs font-medium text-muted-foreground sticky top-0 bg-card">
             <Checkbox
               aria-label={t('configs.batchSelectAll')}
-              checked={allSelected}
+              checked={allSelected ? true : hasSelection ? 'indeterminate' : false}
               onCheckedChange={toggleAll}
             />
             <span className="flex-1">dataId</span>
