@@ -25,6 +25,7 @@ type Handlers struct {
 	Alert            *handler.AlertHandler
 	Metric           *handler.MetricHandler
 	System           *handler.SystemHandler
+	Observability    *handler.ObservabilityHandler
 	Auth             *handler.AuthHandler
 	APIKey           *handler.APIKeyHandler
 	Command          *handler.CommandHandler
@@ -210,6 +211,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 控制面自身状态页眉（FR-33）：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源
 		r.Get("/system/status", h.System.Status)
+
+		// 控制面自观测页（FR-82）：DB 连接池/长轮询挂起/注册表规模/命令队列深度，只读、控制面进程内部运行态
+		r.Get("/system/observability", h.Observability.Observability)
 
 		// 运维设置 store（FR-61，见 ADR-0038）：列全部热改项（读）+ 改单项（写，readonly 403，入审计）。
 		// 与其它写端点一致无条件注册（handler 仅请求期解引用），PUT 已登记 FR-72 覆盖集。

@@ -516,6 +516,25 @@ data: {}
 }
 ```
 
+### 控制面自观测（FR-82）
+
+控制面**进程内部运行态**的只读自观测——补 FR-33 页眉条之外的内部指标，供「控制面健康」页（`/system`）展示。区别于上面 FR-33 页眉（版本 / 运行时长等）与「指标看板（FR-32）」的 agent 网络负载：这里看的是 Beacon 自己卡不卡（连接池有没有耗尽、长轮询挂了多少、命令队列堆没堆）。**只读、不参与决策、不落 DB。**
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/system/observability` | 控制面内部运行态快照：DB 连接池统计 / 长轮询挂起 / 注册表规模（按健康状态）/ 命令队列深度（按状态） |
+
+`GET /admin/v1/system/observability`：实时采集一次。`dbPool` 取自 `sql.DBStats`（database/sql 通用、**非方言**）——`maxOpenConnections`（连接池上限，`0` 表示无限）、`openConnections`（已建 = 使用中 + 空闲）、`inUse`、`idle`、`waitCount`（累计等待连接次数，进程起算）、`waitDurationMs`（累计等待总时长毫秒，进程起算）；`longpoll` 为配置 / 文件 / 拓扑 / 命令四条长轮询通道当前挂起 waiter 数 + `total` 合计（读各 Hub 内存计数）；`registryByStatus` 为内存注册表按健康状态计数（`online`/`degraded`/`lost`/`offline`，**无某状态则该键缺省、不返回 0**），`registryTotal` 为实例总数；`commandByStatus` 为 `agent_command` 表按状态计数（一次 GROUP BY，`pending`/`fetched`/`ready`/`done`/`failed`/`expired`，缺省键不返回；DB 不可用时降级为空对象、不阻断其余指标）。返回：
+```json
+{
+  "dbPool": { "maxOpenConnections": 20, "openConnections": 5, "inUse": 2, "idle": 3, "waitCount": 0, "waitDurationMs": 0 },
+  "longpoll": { "config": 3, "file": 1, "topology": 0, "command": 2, "total": 6 },
+  "registryByStatus": { "online": 6, "degraded": 1 },
+  "registryTotal": 7,
+  "commandByStatus": { "pending": 1, "done": 4 }
+}
+```
+
 ### 运维设置（FR-61，见 [ADR-0038](adr/0038-ops-settings-store-hot-reload.md)）
 热改项真源由 `config.yml` 移到 DB 设置 store；改设置即热生效、免重启。**启动 / 安全项绝不出现在此 API**（`http-addr` / `database.*` / `auth.*` / `agent-token` / `git-export.*` 仍以文件 + env 为真源）。
 

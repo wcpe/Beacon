@@ -101,6 +101,27 @@ func (r *AgentCommandRepository) UpdateStatusClearImprint(id uint, expect, next,
 	return res.RowsAffected > 0, nil
 }
 
+// CountByStatus 按状态分组统计命令条数（跨全部目标汇总，仅观测，FR-82）。
+// 一条 GROUP BY 查询（可移植 GORM、无方言）；无某状态则该键缺省（不返回 0 键）。
+func (r *AgentCommandRepository) CountByStatus() (map[string]int, error) {
+	var rows []struct {
+		Status string
+		Cnt    int
+	}
+	err := r.db.Model(&model.AgentCommand{}).
+		Select("status, count(*) as cnt").
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.Status] = row.Cnt
+	}
+	return counts, nil
+}
+
 // ExpireStale 把创建早于 before、仍处 pending/fetched/ready 的命令标 expired（超时清理）；返回受影响条数。
 // ready（FR-46 拓印已抓取未确认）一并过期并清空瞬态拓印内容，避免未确认的磁盘原文长期滞留。
 func (r *AgentCommandRepository) ExpireStale(before time.Time) (int64, error) {

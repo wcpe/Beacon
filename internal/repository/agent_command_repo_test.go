@@ -155,3 +155,35 @@ func TestCommandExpireStale(t *testing.T) {
 		t.Fatalf("新鲜 pending 不应被标 expired，实际 %s", gotFresh.Status)
 	}
 }
+
+// TestCommandCountByStatus 按状态分组计数：跨目标汇总、无某状态则该键缺省（FR-82 自观测命令队列深度）。
+func TestCommandCountByStatus(t *testing.T) {
+	repo := NewAgentCommandRepository(newCommandTestDB(t))
+	// 两条 pending（跨目标）+ 一条 fetched + 一条 done。
+	_ = repo.Create(mkPending("prod", "a"))
+	_ = repo.Create(mkPending("prod", "b"))
+	fetched := mkPending("prod", "c")
+	fetched.Status = model.CommandStatusFetched
+	_ = repo.Create(fetched)
+	done := mkPending("prod", "d")
+	done.Status = model.CommandStatusDone
+	_ = repo.Create(done)
+
+	counts, err := repo.CountByStatus()
+	if err != nil {
+		t.Fatalf("CountByStatus 失败: %v", err)
+	}
+	if counts[model.CommandStatusPending] != 2 {
+		t.Fatalf("pending 应为 2，实际 %d（全量 %+v）", counts[model.CommandStatusPending], counts)
+	}
+	if counts[model.CommandStatusFetched] != 1 {
+		t.Fatalf("fetched 应为 1，实际 %d（全量 %+v）", counts[model.CommandStatusFetched], counts)
+	}
+	if counts[model.CommandStatusDone] != 1 {
+		t.Fatalf("done 应为 1，实际 %d（全量 %+v）", counts[model.CommandStatusDone], counts)
+	}
+	// 无 ready 条目时该键缺省（不返回 0 键）。
+	if _, ok := counts[model.CommandStatusReady]; ok {
+		t.Fatalf("无 ready 条目时不应返回该键，实际 %+v", counts)
+	}
+}

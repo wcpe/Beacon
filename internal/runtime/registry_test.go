@@ -191,3 +191,48 @@ func TestUpdateAndClearAssignment(t *testing.T) {
 		t.Fatalf("取消指派应回退到 groupHint：%+v", g)
 	}
 }
+
+// TestStatusCounts 验证按状态计数：跨环境汇总、未出现状态键缺省（不返回 0 键）、与注册表条目一致（FR-82）。
+func TestStatusCounts(t *testing.T) {
+	r := NewRegistry()
+	// 五个实例全注册于 t0（心跳 t0、状态 online）。
+	_, _ = r.Register(sample("prod", "lobby-1", "10.0.0.1:1"), ttl, t0)
+	_, _ = r.Register(sample("prod", "lobby-2", "10.0.0.2:1"), ttl, t0)
+	_, _ = r.Register(sample("dev", "lobby-3", "10.0.0.3:1"), ttl, t0)
+	_, _ = r.Register(sample("prod", "lobby-4", "10.0.0.4:1"), ttl, t0)
+	_, _ = r.Register(sample("prod", "lobby-5", "10.0.0.5:1"), ttl, t0)
+
+	// 评估时刻 now=t0+50s。各实例按各自心跳年龄分档（degradedAfter=15s < ttl=30s < offlineGrace=120s）：
+	now := t0.Add(50 * time.Second)
+	// lobby-1/2/3 续心跳到 now（年龄 0）→ 保持 online（跨 prod/dev 两环境验汇总）。
+	r.Heartbeat("prod", "lobby-1", now)
+	r.Heartbeat("prod", "lobby-2", now)
+	r.Heartbeat("dev", "lobby-3", now)
+	// lobby-4 续心跳到 now-20s（年龄 20s，介于 degradedAfter 与 ttl）→ degraded。
+	r.Heartbeat("prod", "lobby-4", now.Add(-20*time.Second))
+	// lobby-5 不续心跳，年龄 50s（> ttl，< offlineGrace）→ lost。
+	r.SweepExpired(now, degradedAfter, ttl, offlineGrace)
+
+	counts := r.StatusCounts()
+	if counts[StatusOnline] != 3 {
+		t.Fatalf("online 应为 3，实际 %d（全量 %+v）", counts[StatusOnline], counts)
+	}
+	if counts[StatusDegraded] != 1 {
+		t.Fatalf("degraded 应为 1，实际 %d（全量 %+v）", counts[StatusDegraded], counts)
+	}
+	if counts[StatusLost] != 1 {
+		t.Fatalf("lost 应为 1，实际 %d（全量 %+v）", counts[StatusLost], counts)
+	}
+	// 未出现的状态键不返回（offline 无条目则缺省，不返回 0 键）。
+	if _, ok := counts[StatusOffline]; ok {
+		t.Fatalf("无 offline 条目时不应返回该键，实际 %+v", counts)
+	}
+}
+
+// TestStatusCountsEmpty 空注册表返回空 map（不 panic）。
+func TestStatusCountsEmpty(t *testing.T) {
+	r := NewRegistry()
+	if c := r.StatusCounts(); len(c) != 0 {
+		t.Fatalf("空注册表应返回空计数，实际 %+v", c)
+	}
+}

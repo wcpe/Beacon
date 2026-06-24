@@ -127,7 +127,7 @@
 | FR-79 | 配置/文件发布影响面预览（增强 FR-22，见 [docs/specs/publish-impact-preview.md](specs/publish-impact-preview.md)）：发布确认显「将影响 N 台在线服:[serverId…]」，后端按 zone_assignment + 注册表算受影响集 | P2 | 开发中 |
 | FR-80 | per-server 有效配置变更时间线（feat，见 [docs/specs/server-config-timeline.md](specs/server-config-timeline.md)）：服务器详情「变更历史」列有效配置变更（版本/时间/触发发布），看「何时因哪次发布变过」 | P2 | 开发中 |
 | FR-81 | 健康流转原因展示（增强健康，见 [docs/specs/health-status-reason.md](specs/health-status-reason.md)）：lost/degraded 状态带 lastHeartbeatAge + 触发阈值，悬浮显「Ns 未心跳 > ttl Ns」 | P2 | 开发中 |
-| FR-82 | 控制面自观测页（feat）：自指标端点 + 新「控制面健康」页显 DB 延迟/longpoll 挂起/注册表规模/命令队列深度，与 MC 负载看板区分、只读 | P2 | 计划 |
+| FR-82 | 控制面自观测页（feat，见 [docs/specs/control-plane-self-observability.md](specs/control-plane-self-observability.md)）：自指标端点 + 新「控制面健康」页显 DB 连接池/longpoll 挂起/注册表规模/命令队列深度，与 MC 负载看板区分、只读 | P2 | 开发中 |
 | FR-83 | 全局搜索 + 命令面板（feat）：Cmd-K 聚合搜 config/file/server/audit 并跳转/执行常用操作，纯键盘可达 | P2 | 计划 |
 | FR-84 | 审计全文检索 + 导出（增强 FR-7）：审计按 detail 关键字检索 + `GET /admin/v1/audits/export` 出 CSV/JSON 流（复用过滤，可移植 GORM） | P2 | 开发中 |
 | FR-85 | 新服接入引导向导（feat，见 [docs/specs/server-onboarding-wizard.md](specs/server-onboarding-wizard.md)）：「添加服务器」向导填 ns/serverId/角色/大区→生成 agent config.yml + env 片段供复制、校验 serverId 不重复、可预建 zone 指派 | P2 | 开发中 |

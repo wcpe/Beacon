@@ -239,6 +239,20 @@ func (r *Registry) CountByNamespace(ns string) int {
 	return len(r.items[ns])
 }
 
+// StatusCounts 返回当前内存注册表按健康状态的计数（跨全部环境汇总，仅观测，FR-82）。
+// 持读锁一次遍历、锁内取计数（不深拷贝、不做 DB IO）；无某状态条目则该键缺省（不返回 0 键）。
+func (r *Registry) StatusCounts() map[string]int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	counts := make(map[string]int)
+	for _, nsMap := range r.items {
+		for _, inst := range nsMap {
+			counts[inst.Status]++
+		}
+	}
+	return counts
+}
+
 // UpdateAssignment 改派后刷新内存实例的解析归属（实例不在线则无操作）。
 func (r *Registry) UpdateAssignment(ns, serverID, group, zone string) {
 	r.mu.Lock()
