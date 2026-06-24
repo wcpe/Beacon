@@ -27,6 +27,7 @@ import {
   getMockMetricsSummary,
   getMockTrend,
   getMockSystemStatus,
+  getMockObservability,
   buildMockTopology,
   getMockDefaultEntries,
 } from './data'
@@ -102,6 +103,11 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
   // 控制面自身状态 GET（FR-33）：页眉状态条消费
   if (p === '/admin/v1/system/status' && method === 'GET') {
     return json(getMockSystemStatus())
+  }
+
+  // 控制面自观测 GET（FR-82）：控制面健康页消费
+  if (p === '/admin/v1/system/observability' && method === 'GET') {
+    return json(getMockObservability())
   }
 
   // 集群拓扑 GET（FR-37）：namespace 必填（与后端一致，缺失返 400）

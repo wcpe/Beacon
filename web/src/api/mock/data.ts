@@ -8,7 +8,7 @@
 import type {
   AuditView, AuditPage, ConfigView, DefaultEntryView, DiffView, FileRevisionView, FileView,
   InstanceView, NamespaceView, OverrideSetDryRunView, OverrideSetRevisionView,
-  OverrideSetView, RevisionView, SystemStatusView, TopologyEdge, TopologyGroup,
+  ObservabilityView, OverrideSetView, RevisionView, SystemStatusView, TopologyEdge, TopologyGroup,
   TopologyNode, TopologyView, ZoneStatView, AssignmentView,
 } from '../types'
 import type { BCSummary, MetricsSummary, MetricsTrend, ServerPlayers, TrendPoint } from '../client'
@@ -422,6 +422,23 @@ export function getMockSystemStatus(): SystemStatusView {
     runtime: { goroutines: 48, heapAlloc: 32 * 1024 * 1024, heapSys: 64 * 1024 * 1024 },
     cpuAvailable: true,
     cpuPercent: 12.5,
+  }
+}
+
+// ---- 控制面自观测（FR-82）----
+
+// 控制面进程内部运行态快照（dev mock 固定值）：注册表规模随 mock 实例派生，其余给典型值。
+export function getMockObservability(): ObservabilityView {
+  const registryByStatus: Record<string, number> = {}
+  for (const i of mockInstances) {
+    registryByStatus[i.status] = (registryByStatus[i.status] ?? 0) + 1
+  }
+  return {
+    dbPool: { maxOpenConnections: 20, openConnections: 5, inUse: 2, idle: 3, waitCount: 0, waitDurationMs: 0 },
+    longpoll: { config: 3, file: 1, topology: 0, command: 2, total: 6 },
+    registryByStatus,
+    registryTotal: mockInstances.length,
+    commandByStatus: { pending: 1, fetched: 0, done: 4 },
   }
 }
 

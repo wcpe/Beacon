@@ -25,6 +25,7 @@ const NAV_ITEMS: Array<{ to: string; labelKey: string }> = [
   { to: '/api-keys', labelKey: 'nav.apiKeys' },
   { to: '/namespaces', labelKey: 'nav.namespaces' },
   { to: '/settings', labelKey: 'nav.settings' },
+  { to: '/system', labelKey: 'nav.systemObservability' },
 ]
 
 export default function Layout() {

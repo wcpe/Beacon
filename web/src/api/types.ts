@@ -254,6 +254,39 @@ export interface SystemStatusView {
   cpuPercent: number
 }
 
+// ===== 控制面自观测（FR-82）=====
+
+// 数据库连接池统计（取自 sql.DBStats，非方言；累计字段为进程起算累计值）
+export interface DbPoolView {
+  maxOpenConnections: number
+  openConnections: number
+  inUse: number
+  idle: number
+  waitCount: number
+  waitDurationMs: number
+}
+
+// 长轮询四通道当前挂起 waiter 数（config/file/topology/command + 合计）
+export interface LongpollView {
+  config: number
+  file: number
+  topology: number
+  command: number
+  total: number
+}
+
+// 控制面自观测快照视图（对齐 internal/handler/observability_handler.go observabilityView）
+// 控制面进程内部运行态——区别于 FR-33 页眉条与 FR-32 agent 网络负载，只读。
+export interface ObservabilityView {
+  dbPool: DbPoolView
+  longpoll: LongpollView
+  // 注册表按健康状态计数（online/degraded/lost/offline，无某状态则该键缺省）
+  registryByStatus: Record<string, number>
+  registryTotal: number
+  // 命令队列按状态计数（pending/fetched/ready/...，无某状态则该键缺省）
+  commandByStatus: Record<string, number>
+}
+
 // ===== 管理面 API 密钥（FR-42，只读角色 + 运行时密钥，见 ADR-0026）=====
 
 // 密钥角色：full（读写）/ readonly（只读）

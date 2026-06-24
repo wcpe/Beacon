@@ -19,6 +19,7 @@ import ServiceAnalysisPage from './pages/ServiceAnalysisPage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import NamespacesPage from './pages/NamespacesPage'
 import SettingsPage from './pages/SettingsPage'
+import SystemObservabilityPage from './pages/SystemObservabilityPage'
 import { setOnUnauthorized } from './api/client'
 
 export default function App() {
@@ -69,6 +70,8 @@ export default function App() {
           <Route path="namespaces" element={<NamespacesPage />} />
           {/* 运维设置页（FR-62）：分组展示热改项 + 逐项编辑保存 + 热生效回显 */}
           <Route path="settings" element={<SettingsPage />} />
+          {/* 控制面健康页（FR-82）：控制面自身内部运行态只读自观测（DB 连接池 / 长轮询挂起 / 注册表规模 / 命令队列深度） */}
+          <Route path="system" element={<SystemObservabilityPage />} />
           {/* 未知路径回到配置中心 */}
           <Route path="*" element={<Navigate to="/configs" replace />} />
         </Route>

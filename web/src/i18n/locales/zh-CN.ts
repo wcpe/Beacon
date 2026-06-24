@@ -25,6 +25,7 @@ export const zhCN = {
     apiKeys: '密钥管理',
     namespaces: '环境管理',
     settings: '运维设置',
+    systemObservability: '控制面健康',
   },
 
   // ===== 跨页复用 =====
@@ -133,6 +134,54 @@ export const zhCN = {
     connecting: '正在连接控制面…',
     // 断开横幅文案：控制面重部时提示已掉线并在自动重连
     banner: '控制面连接中断，正在重连…',
+  },
+
+  // ===== 控制面健康页（FR-82）：控制面进程自身内部运行态只读自观测 =====
+  observability: {
+    title: '控制面健康',
+    // 点明本页边界：看 Beacon 自己，区别于 agent 网络负载（看板）与平台运维活动（服务分析）
+    subtitle: '控制面进程自身的内部运行态（只读）——区别于可观测看板的 agent 网络负载与服务分析的平台运维活动。',
+    none: '无',
+    // 注册表健康状态文案（与服务器页同口径）
+    status: {
+      online: '在线',
+      degraded: '亚健康',
+      lost: '失联',
+      offline: '离线',
+    },
+    // 命令队列状态文案（与 agent_command 状态机一致）
+    command: {
+      pending: '待拉取',
+      fetched: '执行中',
+      ready: '待审',
+      done: '已完成',
+      failed: '失败',
+      expired: '已过期',
+    },
+    // 数据库连接池
+    dbPoolTitle: '数据库连接池',
+    dbOpen: '已建连接',
+    dbMax: '上限 {{max}}',
+    dbInUseIdle: '使用中 / 空闲',
+    dbInUseIdleHint: '当前使用中与空闲连接数',
+    dbWait: '累计等待次数',
+    dbWaitHint: '累计等待时长 {{ms}} ms',
+    // 长轮询挂起
+    longpollTitle: '长轮询挂起',
+    longpollTotal: '挂起合计',
+    longpollTotalHint: '四通道当前挂起的 waiter 总数',
+    longpollByChannel: '配置 / 文件 / 拓扑 / 命令',
+    longpollByChannelHint: '各通道当前挂起 waiter 数',
+    // 注册表规模
+    registryTitle: '注册表规模',
+    registryTotal: '实例总数',
+    registryTotalHint: '内存注册表当前实例条目数',
+    registryByStatus: '按健康状态',
+    // 命令队列深度
+    commandTitle: '命令队列深度',
+    commandPending: '待拉取',
+    commandPendingHint: '待目标 agent 拉取的命令数',
+    commandByStatus: '按状态',
   },
 
   // ===== 布局（Layout）=====

@@ -36,6 +36,7 @@ import type {
   RevisionView,
   SettingView,
   SystemStatusView,
+  ObservabilityView,
   TopologyView,
   ZoneStatView,
 } from './types'
@@ -514,6 +515,14 @@ export function metricsTrend(params: TrendParams): Promise<MetricsTrend> {
 
 export function systemStatus(): Promise<SystemStatusView> {
   return request<SystemStatusView>('/system/status')
+}
+
+// ===== 控制面自观测（FR-82，见 docs/API.md 控制面自观测小节）=====
+// 控制面进程内部运行态（DB 连接池 / 长轮询挂起 / 注册表规模 / 命令队列深度），
+// 区别于 FR-33 页眉条与 FR-32 agent 网络负载，只读。
+
+export function systemObservability(): Promise<ObservabilityView> {
+  return request<ObservabilityView>('/system/observability')
 }
 
 // ===== zone 分配 =====
