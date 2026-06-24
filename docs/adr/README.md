@@ -39,6 +39,7 @@
 | [0033](0033-web-i18n-framework.md) | 管理台引入 react-i18next 国际化框架：zh-CN 先行、全站文案 key 化、审计 action 经 i18n 映射、等值迁移 | 已接受 |
 | [0034](0034-file-tree-lossless-merge.md) | 文件树通道改无损深合并（保标量原文 / 精度 / 注释），配置中心维持有损（取代 ADR-0029「值归一化可接受」一条） | 已接受 |
 | [0035](0035-backend-reachability-tcp-connect.md) | bc 后端可达性探测由 MC status-ping 改 TCP 连接（修订 ADR-0025 决策1/3 的探测机制，更稳健、对不应答 status 的代理后端不误判） | 已接受 |
+| [0039](0039-agent-self-reported-version.md) | agent 注册时自报构建版本（壳层经 TabooLib pluginVersion 注入），控制面只读暴露 InstanceView、管理台展示 + 集群版本不一致黄标 | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
