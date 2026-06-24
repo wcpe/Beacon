@@ -292,6 +292,17 @@ export const zhCN = {
     detailAppliedMd5: '已应用 md5',
     detailRegisteredAt: '注册时间',
     noMetadata: '无 metadata',
+    // 变更历史时间线（ServerDetailSheet · FR-80）
+    timelineSection: '变更历史',
+    timelineHint: '该服覆盖链涉及的配置项发布记录（按时间倒序）',
+    timelineLoading: '加载变更历史…',
+    timelineError: '加载变更历史失败',
+    timelineEmpty: '该服覆盖链暂无配置变更记录',
+    timelineVersion: 'v{{version}}',
+    timelineScopeGlobal: '全局层',
+    timelineScopeGroup: '大区层',
+    timelineScopeZone: '小区层',
+    timelineScopeServer: '子服层',
     // BC 代理深指标卡片标签（复用代理服管理页文案）
     cardConnections: '在线连接数',
     cardThreads: 'JVM 线程数',

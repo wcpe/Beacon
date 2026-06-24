@@ -9,6 +9,7 @@ import type {
   AssignmentView,
   AuditAnalytics,
   AuditPage,
+  ConfigTimelineView,
   ConfigView,
   ConflictDiffView,
   DefaultEntryView,
@@ -359,6 +360,21 @@ export interface InstanceFilter {
 
 export function listInstances(filter: InstanceFilter): Promise<InstanceView[]> {
   return request<ItemsResponse<InstanceView>>(`/instances${qs(filter)}`).then((r) => r.items)
+}
+
+// per-server 有效配置变更时间线（FR-80）：某子服覆盖链涉及 config 项的发布历史，按时间倒序
+export interface ConfigTimelineParams {
+  serverId: string
+  namespace: string
+  // 可选 groupHint：未指派时定位 group 层
+  group?: string
+}
+
+export function serverConfigTimeline(params: ConfigTimelineParams): Promise<ConfigTimelineView> {
+  const { serverId, ...query } = params
+  return request<ConfigTimelineView>(
+    `/instances/${encodeURIComponent(serverId)}/config-timeline${qs(query)}`,
+  )
 }
 
 // 主动下线标记（FR-49）：已下线实例不在注册表列表出现，前端据此展示「已下线（可取消）」。

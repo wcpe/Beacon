@@ -1,11 +1,13 @@
 // 单服详情 Sheet（FR-65）：点服务器页某行从右侧滑出，按 role 分区展示深指标 + 关系。
 // bukkit：人数 / TPS / 容量 / 权重 / 已应用 md5 / 注册时间 / metadata；
 // bungee：连接数 / 线程 / 运行时长 / 后端可达性·延迟 + 后端子服清单 + 所属小区默认入口（复用代理服管理页渲染范式 FR-52）。
-// 纯只读呈现既有事实，不发新请求（数据来自列表行 InstanceView 与父页已拉的默认入口映射）。
+// 指标区纯只读呈现列表行 InstanceView 既有事实；变更历史区（FR-80）打开时按 serverId 拉有效配置变更时间线。
 
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import type { InstanceView } from '../../api/types'
+import { useQuery } from '@tanstack/react-query'
+import type { ConfigTimelineEntry, InstanceView } from '../../api/types'
+import { serverConfigTimeline } from '../../api/client'
 import { formatDuration, formatTime } from '../../api/format'
 import StatusBadge from '../../components/StatusBadge'
 import RoleBadge from '../../components/RoleBadge'
@@ -19,6 +21,20 @@ import {
 
 // bungee 角色编码（与后端 role 约定一致）
 const ROLE_BUNGEE = 'bungee'
+
+// 覆盖层 scopeLevel → i18n key（集中映射，消灭散落 if）
+const SCOPE_LABEL_KEY: Record<string, string> = {
+  global: 'servers.timelineScopeGlobal',
+  group: 'servers.timelineScopeGroup',
+  zone: 'servers.timelineScopeZone',
+  server: 'servers.timelineScopeServer',
+}
+
+// scopeLabel 渲染某条目的覆盖层文案（未知层回退原始 scopeLevel）
+function scopeLabel(t: TFunction, scopeLevel: string): string {
+  const key = SCOPE_LABEL_KEY[scopeLevel]
+  return key ? t(key) : scopeLevel
+}
 
 // 后端可达性文案：有配置后端时显示 up/total，无后端显示「无后端」
 function reachText(t: TFunction, up: number, total: number): string {
@@ -45,6 +61,56 @@ function Field({ label, children, mono }: { label: string; children: React.React
       <dt className="text-muted-foreground">{label}</dt>
       <dd className={mono ? 'font-mono break-all' : undefined}>{children}</dd>
     </>
+  )
+}
+
+// TimelineSection 变更历史区（FR-80）：列该服覆盖链涉及 config 项的发布记录（按时间倒序）。
+// Sheet 打开（instance 非空）时才拉，关闭即随 queryKey 失活；三态：加载 / 失败 / 空 / 列表。
+function TimelineSection({ instance }: { instance: InstanceView }) {
+  const { t } = useTranslation()
+  const query = useQuery({
+    queryKey: ['server-config-timeline', instance.namespace, instance.serverId, instance.group],
+    queryFn: () =>
+      serverConfigTimeline({
+        serverId: instance.serverId,
+        namespace: instance.namespace,
+        group: instance.group,
+      }),
+  })
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">{t('servers.timelineSection')}</h3>
+        <p className="text-xs text-muted-foreground">{t('servers.timelineHint')}</p>
+      </div>
+      {query.isLoading ? (
+        <p className="text-sm text-muted-foreground">{t('servers.timelineLoading')}</p>
+      ) : query.isError ? (
+        <p className="text-sm text-destructive">{t('servers.timelineError')}</p>
+      ) : query.data && query.data.items.length > 0 ? (
+        <ol className="space-y-2">
+          {query.data.items.map((e: ConfigTimelineEntry) => (
+            <li
+              key={`${e.configItemId}-${e.version}`}
+              className="rounded-md border border-border p-2.5 text-sm"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono break-all">{e.dataId}</span>
+                <Badge variant="outline">{scopeLabel(t, e.scopeLevel)}</Badge>
+                <Badge variant="secondary">{t('servers.timelineVersion', { version: e.version })}</Badge>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <span>{formatTime(e.createdAt)}</span>
+                <span>{e.operator}</span>
+              </div>
+              {e.comment && <p className="mt-1 text-xs break-all">{e.comment}</p>}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="text-sm text-muted-foreground">{t('servers.timelineEmpty')}</p>
+      )}
+    </section>
   )
 }
 
@@ -158,6 +224,9 @@ export default function ServerDetailSheet({ instance, onOpenChange, defaultEntry
                 <p className="text-sm text-muted-foreground">{t('servers.noMetadata')}</p>
               )}
             </div>
+
+            {/* 变更历史时间线（FR-80） */}
+            <TimelineSection instance={instance} />
           </>
         )}
       </SheetContent>

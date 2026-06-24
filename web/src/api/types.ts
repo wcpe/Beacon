@@ -105,6 +105,32 @@ export interface ImpactView {
   total: number
 }
 
+// per-server 有效配置变更时间线条目（FR-80）：该服覆盖链上某 config 项的一次发布（含首发 / 发布 / 回滚）
+export interface ConfigTimelineEntry {
+  // 所属 config 项 id（同项多版本共享）
+  configItemId: number
+  dataId: string
+  // 该项所在覆盖层：global / group / zone / server
+  scopeLevel: string
+  // 该层目标键（global/group 为空串；zone=zone编码；server=serverId）
+  scopeTarget: string
+  version: number
+  md5: string
+  operator: string
+  comment: string
+  // 发布时间（UTC ISO 串）
+  createdAt: string
+}
+
+// per-server 有效配置变更时间线视图（FR-80）：某子服覆盖链涉及 config 项的发布历史，按时间倒序
+export interface ConfigTimelineView {
+  namespace: string
+  serverId: string
+  group: string
+  zone: string
+  items: ConfigTimelineEntry[]
+}
+
 // ===== 集群拓扑（FR-37）=====
 
 // 拓扑节点（一个在线实例；zone 未分配时为 null）
