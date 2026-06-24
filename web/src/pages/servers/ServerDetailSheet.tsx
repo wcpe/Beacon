@@ -3,7 +3,7 @@
 // bungee：连接数 / 线程 / 运行时长 / 后端可达性·延迟 + 后端子服清单 + 所属小区默认入口（复用代理服管理页渲染范式 FR-52）。
 // 指标区纯只读呈现列表行 InstanceView 既有事实；变更历史区（FR-80）打开时按 serverId 拉有效配置变更时间线。
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { useMutation, useQuery } from '@tanstack/react-query'
@@ -56,6 +56,8 @@ interface ServerDetailSheetProps {
   defaultEntry?: string
   // 该实例 agent 版本是否与本环境多数不一致（FR-86）：由父页按多数版本算好传入，详情区打黄标
   agentVersionMismatch?: boolean
+  // 打开时是否自动触发取日志并聚焦日志区（FR-91「查看日志」入口直达；默认 false 仅展示详情）
+  focusLogs?: boolean
 }
 
 // 单行键值对（定义列表行）
@@ -127,7 +129,7 @@ function logLineClass(level: string): string {
 
 // LogsSection agent 日志区（FR-88，见 ADR-0040）：点按钮触发取日志（命令-回传）→ 轮询命令状态至 done/failed/expired
 // → 展示该 agent 自身最近日志（脱敏后）。仅 agent 自身日志、不读任意文件；轮询仅在有进行中命令时启用。
-function LogsSection({ instance }: { instance: InstanceView }) {
+function LogsSection({ instance, autoFetch = false }: { instance: InstanceView; autoFetch?: boolean }) {
   const { t } = useTranslation()
   // 已触发的命令 id（点过按钮后才开始轮询；null 表示尚未触发本次）
   const [commandId, setCommandId] = useState<number | null>(null)
@@ -147,6 +149,16 @@ function LogsSection({ instance }: { instance: InstanceView }) {
     mutationFn: () => requestAgentLogs(instance.serverId, instance.namespace),
     onSuccess: (cmd) => setCommandId(cmd.commandId),
   })
+
+  // 「查看日志」入口（FR-91）：打开即自动触发一次取日志，免再点按钮。仅在尚未触发本次时自动发，避免重复刷命令。
+  // mutate 引用稳定，故依赖仅 autoFetch；本实例本次会话只自动触发一次。
+  const autoTriggered = triggerMut.isPending || commandId !== null
+  useEffect(() => {
+    if (autoFetch && !autoTriggered) {
+      triggerMut.mutate()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFetch])
 
   const status = query.data?.status
   const inProgress = triggerMut.isPending || status === 'pending' || status === 'fetched'
@@ -191,6 +203,7 @@ export default function ServerDetailSheet({
   onOpenChange,
   defaultEntry,
   agentVersionMismatch = false,
+  focusLogs = false,
 }: ServerDetailSheetProps) {
   const { t } = useTranslation()
   const isBungee = instance?.role === ROLE_BUNGEE
@@ -322,8 +335,13 @@ export default function ServerDetailSheet({
             {/* 变更历史时间线（FR-80） */}
             <TimelineSection instance={instance} />
 
-            {/* agent 日志（FR-88，见 ADR-0040） */}
-            <LogsSection instance={instance} />
+            {/* agent 日志（FR-88，见 ADR-0040）；key 绑实例使切换服务器时重置取日志状态。
+                focusLogs（FR-91「查看日志」入口）打开即自动触发一次取日志。 */}
+            <LogsSection
+              key={`${instance.namespace}/${instance.serverId}`}
+              instance={instance}
+              autoFetch={focusLogs}
+            />
           </>
         )}
       </SheetContent>

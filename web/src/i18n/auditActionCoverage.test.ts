@@ -45,6 +45,7 @@ const AUDIT_ACTIONS = [
   'instance.register',
   'instance.offline',
   'instance.online',
+  'instance.resync',
   'zone.assign',
   'zone.move',
   'zone.unassign',

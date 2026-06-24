@@ -20,6 +20,7 @@ import {
   listOfflineInstances,
   offlineInstance,
   onlineInstance,
+  triggerResync,
   undrainInstance,
   zoneSummary,
 } from '../api/client'
@@ -57,8 +58,14 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import ReassignDialog from './zones/ReassignDialog'
 import ServerDetailSheet from './servers/ServerDetailSheet'
 import AddServerWizard from './servers/AddServerWizard'
@@ -125,6 +132,10 @@ export default function ServersPage() {
 
   // 详情 Sheet 选中的实例（null 表示关闭）
   const [detailInstance, setDetailInstance] = useState<InstanceView | null>(null)
+  // 详情 Sheet 打开时是否自动触发取日志（「查看日志」入口置 true，「agent 详情」入口置 false）
+  const [detailFocusLogs, setDetailFocusLogs] = useState(false)
+  // 待确认下线的实例（null 表示确认弹窗关闭）：从行操作下拉菜单外层受控触发，避免菜单关闭吞掉弹窗
+  const [offlineTarget, setOfflineTarget] = useState<InstanceView | null>(null)
   // 当前正在改派的实例（null 表示改派对话框关闭）
   const [reassignTarget, setReassignTarget] = useState<InstanceView | null>(null)
   // 新服接入引导向导开关（FR-85）
@@ -263,6 +274,20 @@ export default function ServersPage() {
     onError: (e: Error) => msg.showError(e.message),
   })
 
+  // 强制重同步（FR-91）：下发 resync-config 命令，令该 agent 重拉有效配置/文件树/覆盖集并 apply。
+  const resyncMut = useMutation({
+    mutationFn: ({ serverId, namespace: ns }: { serverId: string; namespace: string }) =>
+      triggerResync(serverId, ns),
+    onSuccess: (_d, { serverId }) => msg.showSuccess(t('servers.msgResyncTriggered', { serverId })),
+    onError: (e: Error) => msg.showError(e.message),
+  })
+
+  // 打开详情 Sheet（focusLogs 为 true 时自动触发取日志，供「查看日志」入口直达）。
+  function openDetail(i: InstanceView, focusLogs: boolean) {
+    setDetailFocusLogs(focusLogs)
+    setDetailInstance(i)
+  }
+
   // 区改派（FR-71）：复用 ReassignDialog 提交的完整入参调既有 assignZone。
   const assignMut = useMutation({
     mutationFn: (params: AssignParams) => assignZone(params),
@@ -334,60 +359,62 @@ export default function ServersPage() {
       header: t('servers.colActions'),
       cell: (i) => {
         const drained = drainedSet.has(`${i.namespace}/${i.serverId}`)
-        // 操作列各按钮 stopPropagation：避免触发行点击（打开详情 Sheet）。
+        // 操作列 stopPropagation：避免触发行点击（打开详情 Sheet）。
         const stop = (e: React.MouseEvent) => e.stopPropagation()
+        // 整合为单个「⋯」下拉菜单：含查看类（agent 详情 / 查看日志）+ 运维类（重同步 / drain / 改派 / 下线）。
+        // 下线确认弹窗提到菜单外层受控触发（offlineTarget），避免菜单关闭吞掉 AlertDialog。
         return (
-          <div className="flex items-center gap-1" onClick={stop}>
-            {/* 下线（FR-49）：二次确认后调 offlineInstance */}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm" disabled={offlineMut.isPending}>
-                  {t('servers.offlineBtn')}
+          <div onClick={stop}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" aria-label={t('servers.actionsMenu')}>
+                  ⋯
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent onClick={stop}>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t('servers.offlineConfirmTitle', { serverId: i.serverId })}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t('servers.offlineConfirmDesc', { namespace: i.namespace })}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => offlineMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onClick={() => openDetail(i, false)}>
+                  {t('servers.actionAgentDetail')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openDetail(i, true)}>
+                  {t('servers.actionViewLogs')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={resyncMut.isPending}
+                  onClick={() => resyncMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+                >
+                  {t('servers.actionResync')}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                {/* drain / undrain（FR-10）：按当前排空态切换 */}
+                {drained ? (
+                  <DropdownMenuItem
+                    onClick={() => undrainMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
                   >
-                    {t('servers.offlineConfirmAction')}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            {/* drain / undrain（FR-10）：按当前排空态切换 */}
-            {drained ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={undrainMut.isPending}
-                onClick={() => undrainMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
-              >
-                {t('servers.undrainBtn')}
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={drainMut.isPending}
-                onClick={() => drainMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
-              >
-                {t('servers.drainBtn')}
-              </Button>
-            )}
-            {/* 区改派（FR-71）：仅 bukkit 子服可指派进 zone（BC 代理不可，与后端校验一致 FR-8/FR-35） */}
-            {i.role !== ROLE_BUNGEE && (
-              <Button variant="ghost" size="sm" onClick={() => setReassignTarget(i)}>
-                {t('servers.reassignBtn')}
-              </Button>
-            )}
+                    {t('servers.undrainBtn')}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={() => drainMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+                  >
+                    {t('servers.drainBtn')}
+                  </DropdownMenuItem>
+                )}
+                {/* 区改派（FR-71）：仅 bukkit 子服可指派进 zone（BC 代理不可，与后端校验一致 FR-8/FR-35） */}
+                {i.role !== ROLE_BUNGEE && (
+                  <DropdownMenuItem onClick={() => setReassignTarget(i)}>
+                    {t('servers.reassignBtn')}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                {/* 下线（FR-49）：受控弹窗在菜单外层二次确认（FR-76），绝不丢确认 */}
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => setOfflineTarget(i)}
+                >
+                  {t('servers.offlineBtn')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )
       },
@@ -486,7 +513,7 @@ export default function ServersPage() {
               rows={data}
               rowKey={(i) => `${i.namespace}/${i.serverId}`}
               emptyText={t('servers.empty')}
-              onRowClick={(i) => setDetailInstance(i)}
+              onRowClick={(i) => openDetail(i, false)}
               rowClassName={(i) => (!i.assigned ? 'bg-amber-50' : undefined)}
             />
           </AsyncSection>
@@ -525,9 +552,37 @@ export default function ServersPage() {
         </Card>
       )}
 
+      {/* 下线二次确认（FR-49/FR-76）：从行操作菜单外层受控触发，避免菜单关闭吞掉弹窗，绝不丢确认 */}
+      <AlertDialog open={offlineTarget !== null} onOpenChange={(o) => !o && setOfflineTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {offlineTarget && t('servers.offlineConfirmTitle', { serverId: offlineTarget.serverId })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {offlineTarget && t('servers.offlineConfirmDesc', { namespace: offlineTarget.namespace })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (offlineTarget) {
+                  offlineMut.mutate({ serverId: offlineTarget.serverId, namespace: offlineTarget.namespace })
+                }
+                setOfflineTarget(null)
+              }}
+            >
+              {t('servers.offlineConfirmAction')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* 单服详情 Sheet：点行从右侧滑出，按 role 分区展示深指标 + 关系，不发新请求 */}
       <ServerDetailSheet
         instance={detailInstance}
+        focusLogs={detailFocusLogs}
         onOpenChange={(open) => !open && setDetailInstance(null)}
         defaultEntry={
           detailInstance && detailInstance.zone

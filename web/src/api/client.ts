@@ -934,6 +934,17 @@ export function getAgentLogs(
   )
 }
 
+// ===== 强制重同步（FR-91）=====
+
+// 触发某在线实例强制重同步：建 pending resync-config 命令并唤醒 agent，令其重拉有效配置/文件树/覆盖集并 apply。
+// namespace 走查询参数；写操作需 full 角色（readonly → 403）；返回命令 id（端点返回命令视图，取其 id）。
+export function triggerResync(serverId: string, namespace: string): Promise<{ commandId: number }> {
+  return request<AgentCommandView>(
+    `/instances/${encodeURIComponent(serverId)}/resync${qs({ namespace })}`,
+    { method: 'POST' },
+  ).then((cmd) => ({ commandId: cmd.id }))
+}
+
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====
 // 写操作 operator 以登录令牌身份为准（后端忽略请求手填），故不在请求体送 operator。
 

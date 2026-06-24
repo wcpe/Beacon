@@ -22,6 +22,7 @@ vi.mock('../api/client', () => ({
   listDrains: vi.fn(),
   drainInstance: vi.fn(),
   undrainInstance: vi.fn(),
+  triggerResync: vi.fn(),
   assignZone: vi.fn(),
   listAssignments: vi.fn(),
   listDefaultEntries: vi.fn(),
@@ -38,6 +39,7 @@ import {
   listDrains,
   drainInstance,
   undrainInstance,
+  triggerResync,
   assignZone,
   listAssignments,
   listDefaultEntries,
@@ -114,6 +116,7 @@ beforeEach(() => {
   vi.mocked(listDrains).mockResolvedValue([])
   vi.mocked(drainInstance).mockResolvedValue({ namespace: 'prod', serverId: 'lobby-1', reason: '' })
   vi.mocked(undrainInstance).mockResolvedValue(undefined)
+  vi.mocked(triggerResync).mockResolvedValue({ commandId: 1 })
   vi.mocked(assignZone).mockResolvedValue({
     namespace: 'prod',
     serverId: 'lobby-1',
@@ -159,44 +162,71 @@ describe('ServersPage（FR-65 服务器页）', () => {
     expect(within(row).getByText('未分配')).toBeInTheDocument()
   })
 
-  it('按行下线：二次确认后调 offlineInstance（namespace 取自该行）', async () => {
+  it('按行下线：菜单内点下线 → 二次确认后调 offlineInstance（namespace 取自该行）', async () => {
     vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
     const user = userEvent.setup()
     renderPage(<ServersPage />)
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: '下线' }))
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '下线' }))
+    // 确认弹窗在菜单外层受控触发，绝不丢二次确认
     await user.click(await screen.findByRole('button', { name: '确认下线' }))
     await waitFor(() => expect(offlineInstance).toHaveBeenCalledWith('lobby-1', 'prod'))
     expect(showError).not.toHaveBeenCalled()
   })
 
-  it('按行排空：点 drain 调 drainInstance（携带该行 serverId 与 namespace）', async () => {
+  it('按行排空：菜单内点 drain 调 drainInstance（携带该行 serverId 与 namespace）', async () => {
     vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
     const user = userEvent.setup()
     renderPage(<ServersPage />)
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: '排空' }))
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '排空' }))
     await waitFor(() => expect(drainInstance).toHaveBeenCalledWith('lobby-1', 'prod'))
   })
 
-  it('已排空实例显示「取消排空」并调 undrainInstance', async () => {
+  it('已排空实例菜单内显示「取消排空」并调 undrainInstance', async () => {
     vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
     vi.mocked(listDrains).mockResolvedValue([{ namespace: 'prod', serverId: 'lobby-1', reason: '维护' }])
     const user = userEvent.setup()
     renderPage(<ServersPage />)
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
-    await user.click(await screen.findByRole('button', { name: '取消排空' }))
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '取消排空' }))
     await waitFor(() => expect(undrainInstance).toHaveBeenCalledWith('lobby-1', 'prod'))
   })
 
-  it('点「改派」打开改派对话框（ReassignDialog）', async () => {
+  it('菜单内点「改派」打开改派对话框（ReassignDialog）', async () => {
     vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1' })])
     const user = userEvent.setup()
     renderPage(<ServersPage />)
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
-    await user.click(screen.getByRole('button', { name: '改派' }))
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '改派' }))
     // ReassignDialog 标题含被改派 serverId
     expect(await screen.findByText('改派 lobby-1')).toBeInTheDocument()
+  })
+
+  it('行操作菜单含三新项（agent 详情 / 查看日志 / 强制重同步）', async () => {
+    vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1' })])
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+    await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    expect(await screen.findByRole('menuitem', { name: 'agent 详情' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: '查看日志' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: '强制重同步' })).toBeInTheDocument()
+  })
+
+  it('菜单内点「强制重同步」调 triggerResync 并提示成功', async () => {
+    vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+    await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '强制重同步' }))
+    await waitFor(() => expect(triggerResync).toHaveBeenCalledWith('lobby-1', 'prod'))
+    await waitFor(() => expect(showSuccess).toHaveBeenCalled())
   })
 
   it('已主动下线区可取消下线，携带其 serverId 与 namespace', async () => {
