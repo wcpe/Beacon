@@ -10,6 +10,7 @@ import top.wcpe.beacon.agent.core.filetree.FileContent
 import top.wcpe.beacon.agent.core.filetree.FileManifest
 import top.wcpe.beacon.agent.core.filetree.FileManifestEntry
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.log.LogLine
 import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.override.OverrideManifest
 import top.wcpe.beacon.agent.core.override.OverrideSetEntry
@@ -527,6 +528,30 @@ class BeaconApiClient(
             HttpRequest(
                 method = "POST",
                 url = "$base/beacon/v1/agent/files/error",
+                headers = headers(withBody = true),
+                body = codec.encode(body),
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
+     * 回传 agent 自身日志快照：POST /beacon/v1/agent/logs（FR-88，见 ADR-0040）。同步调用，请在异步线程使用。
+     *
+     * 携带命令 id + 日志行集（级别 + 已脱敏文本）。日志在 agent 侧落环形缓冲那一刻即脱敏，本方法只忠实回传缓冲快照。
+     * 控制面把日志行存为命令瞬态（取完即弃、不入真源、不进审计 detail）后 CAS done。
+     * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（命令在控制面侧标 failed / 超时清理，agent 侧不重传）。
+     */
+    fun uploadLogs(commandId: Long, lines: List<LogLine>): Boolean {
+        val body = mapOf(
+            "commandId" to commandId,
+            "lines" to lines.map { mapOf("level" to it.level, "text" to it.text) },
+        )
+        val resp = exec(
+            HttpRequest(
+                method = "POST",
+                url = "$base/beacon/v1/agent/logs",
                 headers = headers(withBody = true),
                 body = codec.encode(body),
                 readTimeoutMs = settings.requestTimeoutMs,

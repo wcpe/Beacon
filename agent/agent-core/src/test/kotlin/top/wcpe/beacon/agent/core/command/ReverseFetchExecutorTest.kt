@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.command
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.log.AgentLogBuffer
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
@@ -42,10 +43,19 @@ class ReverseFetchExecutorTest {
         val lastScanBody = AtomicReference<String?>(null)
         val errorCalls = AtomicInteger(0)
         val lastErrorBody = AtomicReference<String?>(null)
+        val logsCalls = AtomicInteger(0)
+        val lastLogsBody = AtomicReference<String?>(null)
 
         override fun execute(request: HttpRequest): HttpResponse = when {
             request.url.contains("/agent/commands") -> {
                 if (served.getAndIncrement() < pendingCount) HttpResponse(200, pendingBody) else HttpResponse(204, "")
+            }
+
+            // 取日志回传端点（FR-88）：URL 含 /agent/logs（须在通用分支前判定）。
+            request.url.contains("/agent/logs") -> {
+                logsCalls.incrementAndGet()
+                lastLogsBody.set(request.body)
+                HttpResponse(200, "")
             }
 
             // error 端点须在 scan/ingest 之前判定：URL 含 /agent/files/error（FR-87，不与 scan/ingest 混淆）。
@@ -102,6 +112,12 @@ class ReverseFetchExecutorTest {
                     "scope" to "group", "group" to "area1", "target" to "", "mode" to "submit",
                     "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
                 ),
+            )
+
+            CMD_TAIL_LOGS -> mapOf(
+                "id" to 11,
+                "type" to "tail-logs",
+                "payload" to emptyMap<String, Any?>(),
             )
 
             else -> emptyMap<String, Any?>()
@@ -165,6 +181,12 @@ class ReverseFetchExecutorTest {
     private fun executor(transport: FakeTransport, adapter: StubAdapter): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter)
+    }
+
+    /** 带日志缓冲的执行器（FR-88 取日志路径用）。 */
+    private fun executor(transport: FakeTransport, adapter: StubAdapter, buffer: AgentLogBuffer): ReverseFetchExecutor {
+        val client = BeaconApiClient(transport, FakeCodec(), settings())
+        return ReverseFetchExecutor(identity(), client, adapter, buffer)
     }
 
     @Test
@@ -321,10 +343,41 @@ class ReverseFetchExecutorTest {
         assertEquals(0, transport.ingestCalls.get(), "读失败不应回传内容")
     }
 
+    @Test
+    fun `取日志命令读缓冲快照回传到 logs 端点不读盘`() {
+        // FR-88：tail-logs 命令 → 读自身日志环形缓冲快照回传，绝不读 plugins 树。
+        val transport = FakeTransport(pendingBody = CMD_TAIL_LOGS)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        val buffer = AgentLogBuffer(capacity = 50)
+        buffer.append("INFO", "已应用有效配置 md5=abc")
+        buffer.append("WARN", "心跳一次失败")
+        executor(transport, adapter, buffer).trigger()
+
+        assertEquals(0, adapter.readCalls.get(), "取日志绝不读 plugins 内容")
+        assertEquals(0, adapter.metadataCalls.get(), "取日志绝不 stat plugins 元信息")
+        assertEquals(0, transport.ingestCalls.get(), "取日志不走 ingest")
+        assertEquals(1, transport.logsCalls.get(), "应走 /agent/logs 一次")
+        val body = transport.lastLogsBody.get()!!
+        assertTrue(body.contains("commandId=11"), "日志回传应携命令 id：$body")
+        assertTrue(body.contains("已应用有效配置") && body.contains("心跳一次失败"), "应回传缓冲行：$body")
+    }
+
+    @Test
+    fun `未注入日志缓冲时取日志命令忽略不回传`() {
+        // 向后兼容：未启用日志缓冲（executor 无 buffer）→ tail-logs 按未知能力忽略、不回传。
+        val transport = FakeTransport(pendingBody = CMD_TAIL_LOGS)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        executor(transport, adapter).trigger() // 无 buffer 重载
+
+        assertEquals(0, transport.logsCalls.get(), "未启用缓冲不应回传日志")
+        assertEquals(0, adapter.readCalls.get(), "不应读盘")
+    }
+
     companion object {
         private const val CMD_INGEST = "cmd-ingest"
         private const val CMD_UNKNOWN = "cmd-unknown"
         private const val CMD_SCAN = "cmd-scan"
         private const val CMD_SUBMIT = "cmd-submit"
+        private const val CMD_TAIL_LOGS = "cmd-tail-logs"
     }
 }

@@ -14,6 +14,8 @@ import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.log.AgentLogBuffer
+import top.wcpe.beacon.agent.core.log.BufferingPlatformAdapter
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.metrics.ProxyMetricsProvider
@@ -55,7 +57,7 @@ object AgentAssembly {
     fun assemble(
         identity: AgentIdentity,
         settings: AgentSettings,
-        adapter: PlatformAdapter,
+        rawAdapter: PlatformAdapter,
         transport: HttpTransport,
         codec: JsonCodec,
         store: EffectiveConfigStore,
@@ -77,6 +79,11 @@ object AgentAssembly {
         // 默认空集（未注入时回到旧语义，向后兼容），core 不硬编码任何 plugin 名（守 ADR-0005）。
         selfPluginDirNames: Set<String> = emptySet(),
     ): AssembledAgent {
+        // agent 自身日志环形缓冲（FR-88，见 ADR-0040）：包裹壳层 adapter，使所有经 core 的日志旁路进缓冲（落缓冲即脱敏），
+        // 供 tail-logs 命令读快照回传。绝不读任何磁盘日志文件。壳层日志实现零改动。
+        val logBuffer = AgentLogBuffer(capacity = LOG_BUFFER_CAPACITY)
+        val adapter: PlatformAdapter = BufferingPlatformAdapter(rawAdapter, logBuffer)
+
         val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
         val snapshotStore: SnapshotStore? = if (settings.snapshotEnabled) {
@@ -138,11 +145,13 @@ object AgentAssembly {
 
         // 反向抓取执行器（FR-39，见 ADR-0027）：仅在 plugins 基目录有效时装配（与文件树同一 fail-closed 守卫，
         // 避免从错误目录读盘上传）。读盘委托 adapter.readPluginsTree（壳层实现 FS 级路径安全）。
-        val reverseFetchExecutor: ReverseFetchExecutor? = if (pluginsBaseValid) {
-            ReverseFetchExecutor(identity, apiClient, adapter)
-        } else {
-            null
-        }
+        // 取日志（FR-88）不依赖 plugins 基目录有效性（只读内存缓冲、不读盘）；故执行器始终装配以响应 tail-logs。
+        // 反向抓取（读盘）仍受 pluginsBaseValid fail-closed 守卫：基目录无效时禁读盘上传（避免从错误目录读），
+        // 由 reverseFetchEnabled 关闭该路径——tail-logs 不受影响。反向抓取与取日志复用同一命令通路与单飞排空。
+        val reverseFetchExecutor = ReverseFetchExecutor(
+            identity, apiClient, adapter, logBuffer,
+            reverseFetchEnabled = pluginsBaseValid,
+        )
 
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
         val topologyWatchHub = TopologyWatchHub()
@@ -179,4 +188,7 @@ object AgentAssembly {
 
         return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder)
     }
+
+    /** agent 自身日志环形缓冲容量（FR-88，见 ADR-0040）：最近 N 行，够排障、内存可忽略；有界不溢出。 */
+    private const val LOG_BUFFER_CAPACITY = 300
 }

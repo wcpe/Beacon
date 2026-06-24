@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.command
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.log.AgentLogBuffer
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -17,14 +18,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * **不主动、不常驻**（ADR-0027 决策 8）：仅被触发时拉一次命令、有命令才读一次盘上传，无命令立即返回。
  * **单飞**：command-pending 与 READY 可能并发触发，[running] 门保证任意时刻只跑一条抓取流，避免重复读盘上传。
  *
+ * 取日志命令（FR-88，见 ADR-0040）复用同一命令通路与单飞排空：tail-logs 命令拉到后读
+ * [logBuffer] 自身日志环形缓冲快照（已脱敏）回传，**绝不读任何磁盘日志文件**。
+ *
  * @param identity  本 agent 身份（拉命令 / 回传携带 namespace + serverId）
- * @param apiClient REST 客户端（拉命令 / 回传 ingest）
+ * @param apiClient REST 客户端（拉命令 / 回传 ingest / 回传日志）
  * @param adapter   平台适配（读真实 plugins 树 + 日志）
+ * @param logBuffer          agent 自身日志环形缓冲（FR-88，可选；为 null 时不响应 tail-logs，按未知类型忽略）
+ * @param reverseFetchEnabled 是否启用反向抓取读盘路径（plugins 基目录有效时 true；无效时 fail-closed 关闭，
+ *                            收到 ingest-plugins 命令仅记 warn、不读盘——但 tail-logs 不受此守卫影响）
  */
 class ReverseFetchExecutor(
     private val identity: AgentIdentity,
     private val apiClient: BeaconApiClient,
     private val adapter: PlatformAdapter,
+    private val logBuffer: AgentLogBuffer? = null,
+    private val reverseFetchEnabled: Boolean = true,
 ) {
 
     /** 单飞门：任意时刻只允许一条抓取流在跑（command-pending 与 READY 并发触发时去重）。 */
@@ -59,9 +68,19 @@ class ReverseFetchExecutor(
      */
     private fun runOnce(): Boolean {
         val command = apiClient.fetchPendingCommand(identity) ?: return false // 无待办，停止排空
+        // 取日志命令（FR-88）：读自身日志环形缓冲快照回传，不读任何磁盘文件。
+        if (command.type == AgentCommand.TYPE_TAIL_LOGS) {
+            runTailLogs(command)
+            return true
+        }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
-            // 本期只接 ingest-plugins；未知类型不处理（不预埋多命令空壳，守 scope-discipline）。命令已被控制面 CAS fetched、不会重现，继续排空。
+            // 只接 ingest-plugins / tail-logs；未知类型不处理（不预埋多命令空壳，守 scope-discipline）。命令已被控制面 CAS fetched、不会重现，继续排空。
             adapter.warn("收到未知命令类型（忽略）：id=${command.id}，type=${command.type}")
+            return true
+        }
+        // 反向抓取读盘路径 fail-closed 守卫：plugins 基目录无效时不读盘上传（避免从错误目录读），仅记 warn 放弃本命令。
+        if (!reverseFetchEnabled) {
+            adapter.warn("plugins 基目录无效，反向抓取读盘已关闭（忽略命令）：id=${command.id}")
             return true
         }
         adapter.info(
@@ -146,6 +165,27 @@ class ReverseFetchExecutor(
                     adapter.warn("反向抓取回传失败（命令态不符 / 控制面校验拒 / 连接失败）：id=${command.id}")
                 }
             }
+        }
+    }
+
+    /**
+     * 取日志阶段（FR-88，见 ADR-0040）：读 agent 自身日志环形缓冲快照（已脱敏）回传 uploadLogs。
+     *
+     * **绝不读任何磁盘日志文件**——只取内存环形缓冲的当前快照（有界、落缓冲即脱敏）。
+     * 未注入 logBuffer（旧装配 / 测试桩）则按未知能力忽略：记 warn、不回传（控制面超时清理）。
+     */
+    private fun runTailLogs(command: AgentCommand) {
+        val buffer = logBuffer
+        if (buffer == null) {
+            adapter.warn("收到取日志命令但未启用日志缓冲（忽略）：id=${command.id}")
+            return
+        }
+        val lines = buffer.snapshot()
+        val ok = apiClient.uploadLogs(command.id, lines)
+        if (ok) {
+            adapter.info("agent 日志回传成功：id=${command.id}，行数=${lines.size}")
+        } else {
+            adapter.warn("agent 日志回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 

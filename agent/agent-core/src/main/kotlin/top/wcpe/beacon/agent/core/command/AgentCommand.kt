@@ -17,8 +17,11 @@ data class AgentCommand(
     val payload: IngestCommandPayload,
 ) {
     companion object {
-        /** 本期唯一命令类型：抓取 plugins 文本配置回传 ingest。 */
+        /** 反向抓取命令类型：抓取 plugins 文本配置回传 ingest（FR-39，见 ADR-0027）。 */
         const val TYPE_INGEST_PLUGINS = "ingest-plugins"
+
+        /** 取日志命令类型：读 agent 自身日志环形缓冲快照回传（FR-88，见 ADR-0040）。 */
+        const val TYPE_TAIL_LOGS = "tail-logs"
     }
 }
 
