@@ -56,8 +56,10 @@ object AgentBootstrap {
      * 从配置读取 AgentIdentity。
      *
      * @param role 壳层按平台固定传入（bukkit / bungee），覆盖配置中的 role。
+     * @param agentVersion agent 自身构建版本（FR-86，见 ADR-0039）：壳层经 TabooLib pluginVersion 注入、
+     *                     非从 config.yml 读（构建版本非运维可配）；默认空兼容旧调用点。
      */
-    fun readIdentity(reader: ConfigReader, role: String): AgentIdentity {
+    fun readIdentity(reader: ConfigReader, role: String, agentVersion: String = ""): AgentIdentity {
         val metadata = LinkedHashMap<String, String>()
         for (key in reader.keys("identity.metadata")) {
             metadata[key] = reader.string("identity.metadata.$key", "")
@@ -72,6 +74,7 @@ object AgentBootstrap {
             capacity = reader.int("identity.capacity", 0),
             weight = reader.int("identity.weight", 0),
             metadata = metadata,
+            agentVersion = agentVersion,
         )
     }
 }

@@ -113,6 +113,8 @@ class BeaconApiClient(
             put("capacity", identity.capacity)
             put("weight", identity.weight)
             put("metadata", identity.metadata)
+            // agent 自身构建版本：仅非空时附加，旧控制面 / 旧 agent 缺键即可（FR-86，见 ADR-0039）。
+            if (identity.agentVersion.isNotBlank()) put("agentVersion", identity.agentVersion)
             // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
             if (backends.isNotEmpty()) put("backends", backends)
         }

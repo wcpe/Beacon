@@ -15,6 +15,7 @@ import taboolib.common.env.RuntimeDependencies
 import taboolib.common.env.RuntimeDependency
 import taboolib.common.platform.Awake
 import taboolib.common.platform.Plugin
+import taboolib.common.platform.function.pluginVersion
 import taboolib.common.platform.function.severe
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
@@ -104,8 +105,8 @@ object BeaconAgentBukkit : Plugin() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
         val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
         val settings = AgentBootstrap.readSettings(reader)
-        // 角色按壳固定为 bukkit。
-        val identity = AgentBootstrap.readIdentity(reader, role = "bukkit")
+        // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
+        val identity = AgentBootstrap.readIdentity(reader, role = "bukkit", agentVersion = pluginVersion)
 
         // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
         if (!identity.isValid()) {
