@@ -11,6 +11,7 @@
 - 配置 / 文件批量操作（FR-74，增强 FR-38/FR-1，见 [docs/specs/config-file-bulk-ops.md](docs/specs/config-file-bulk-ops.md)）：治「逐个删」低效——配置中心列表加多选 + 批量操作栏（删除 / 禁用 / 启用 / 导出），空选禁用按钮、批量删除前轻量二次确认（FR-74 自带、不依赖 FR-76），导出为前端逐项拉选中内容打包 JSON 后 Blob 下载（best-effort、无新依赖）。后端新增批量端点 `POST /admin/v1/configs/batch`、`POST /admin/v1/files/batch`（`{action: delete|disable|enable, ids}`），把一组配置项 / 文件对象的删除 / 禁用（enabled=false）/ 启用（enabled=true）在**一个事务**内原子完成、每项各记一条领域审计（`config.disable/enable`、`file.disable/enable` 等），任一 id 不存在则整批回滚、提交后逐项唤醒长轮询；空 ids / 非法 action 400。分层不破（handler 不碰 GORM），MySQL 集成验批量事务可移植。
 
 ### 修复
+- 补全审计动作中文映射并加 i18n 漂移守护测试（修复 FR-7/FR-73）：审计日志页 / 服务分析页的「动作」列对部分 `action` 枚举显原始英文 key——FR-74 新增的 `config/file.disable/enable`、以及历史遗留的 `override-set.*`、`reverse-fetch.ignore-rule-*`、`settings.update` 共 11 个 action 缺中文映射。补全 11 条；新增前端守护测试 `auditActionCoverage.test.ts`：以镜像 `internal/model/enums.go` 的 action 清单逐一断言每个 action 都有非空 `audit.action` 中文映射（并查无清单外多余 key），思路同后端 `coveredWriteRoutes` 漂移守护，从此「加了审计动作忘配中文」会被测试挡下。
 - 控制面 GORM 时间戳统一 UTC（修复 FR-73 服务分析默认窗口漏掉最近活动）：GORM 默认 `NowFunc` 用 `time.Now()`（本地时区），在非 UTC 时区机器上 `autoCreateTime` 把 `audit_log.created_at` 等写成带本地偏移的时间（如 +08:00），而注册/健康等内存侧时间一律 UTC、FR-73 服务分析按 UTC 时间窗过滤审计——本地时间戳在 sqlite 字符串比较下被当成「未来若干小时」，使默认「近 30 天」窗口把最近约「时区偏移」小时内的活动错误排除（+08:00 真机默认视图丢最近约 8 小时）。`store.Open` 的 `gorm.Config` 设 `NowFunc` 恒返回 UTC，全表自动时间戳统一 UTC、与系统其余部分一致；补 store 层回归测试（强制本地时区 +08:00 建记录、断言 `CreatedAt` 为 UTC）。真机多服集群验收时暴露。
 
 ## 0.10.0（2026-06-24）
