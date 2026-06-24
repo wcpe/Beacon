@@ -322,6 +322,12 @@ export const zhCN = {
     colStatus: '状态',
     colAddress: '地址',
     colVersion: '版本',
+    // agent 自身构建版本列（FR-86）
+    colAgentVersion: 'agent 版本',
+    // agent 未上报版本（旧 agent）
+    agentVersionUnknown: '未知',
+    // 同环境内 agent 版本与多数不一致的黄标悬浮提示
+    agentVersionMismatch: 'agent 版本与本环境多数不一致，请检查是否漏装/未升级',
     // 角色相关列：bukkit 显人数 / bungee 显在线连接
     colLoad: '人数 / 连接',
     // 角色相关列：bukkit 显 TPS / bungee 显后端可达

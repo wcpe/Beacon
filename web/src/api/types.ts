@@ -72,6 +72,8 @@ export interface InstanceView {
   assigned: boolean
   address: string
   version: string
+  // agent 自身构建版本（FR-86，见 ADR-0039）：agent 注册自报、旧 agent 为空串；仅展示
+  agentVersion: string
   status: string
   capacity: number
   weight: number

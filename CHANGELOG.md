@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- agent 版本/构建可见性（FR-86，增强 FR-34/FR-52，全栈含 agent，见 [ADR-0039](docs/adr/0039-agent-self-reported-version.md) 与 [docs/specs/agent-version-visibility.md](docs/specs/agent-version-visibility.md)）：治「装了过期 agent jar 却在 UI 不可见」的运维盲区。agent 注册时**自报自身构建版本**——注册 payload 新增可选 `agentVersion`（agent-core `AgentIdentity` 加字段，壳层 bukkit/bungee 经 TabooLib `pluginVersion` 注入，core 不碰平台/具体库守 [ADR-0005](docs/adr/0005-agent-transport-codec-abstraction.md)；与业务 `version` 语义不同，仅非空时拼键、旧 agent 缺键向后兼容）；控制面注册端点解析后存入内存注册表 `Instance.AgentVersion`、`InstanceView` 暴露 `agentVersion`（旧 agent 为空串），只读、不落 DB、不参与决策。管理台服务器页新增「agent 版本」列与单服详情字段，并按**环境（namespace）** 聚合多数版本、对版本与多数不同的实例打**黄标**提示运维去对齐（多数版本判定为纯前端展示派生 `lib/agentVersionConsistency.ts`，穷举单测；空版本显「未知」不打标）。双端 agent jar 需重建重部署才显真实版本——未升级者显「未知」正是本需求要暴露的信号。
+
 ## 0.12.0（2026-06-24）
 
 ### 新增

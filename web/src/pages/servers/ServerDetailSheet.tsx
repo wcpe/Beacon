@@ -52,6 +52,8 @@ interface ServerDetailSheetProps {
   onOpenChange: (open: boolean) => void
   // 该实例所属小区默认入口 serverId（仅 bungee 用，FR-48；未设/未分配 zone 时 undefined）
   defaultEntry?: string
+  // 该实例 agent 版本是否与本环境多数不一致（FR-86）：由父页按多数版本算好传入，详情区打黄标
+  agentVersionMismatch?: boolean
 }
 
 // 单行键值对（定义列表行）
@@ -114,7 +116,12 @@ function TimelineSection({ instance }: { instance: InstanceView }) {
   )
 }
 
-export default function ServerDetailSheet({ instance, onOpenChange, defaultEntry }: ServerDetailSheetProps) {
+export default function ServerDetailSheet({
+  instance,
+  onOpenChange,
+  defaultEntry,
+  agentVersionMismatch = false,
+}: ServerDetailSheetProps) {
   const { t } = useTranslation()
   const isBungee = instance?.role === ROLE_BUNGEE
   return (
@@ -141,6 +148,23 @@ export default function ServerDetailSheet({ instance, onOpenChange, defaultEntry
                 {instance.address}
               </Field>
               <Field label={t('servers.colVersion')}>{instance.version}</Field>
+              <Field label={t('servers.colAgentVersion')}>
+                {instance.agentVersion ? (
+                  agentVersionMismatch ? (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500 font-mono text-amber-600"
+                      title={t('servers.agentVersionMismatch')}
+                    >
+                      {instance.agentVersion}
+                    </Badge>
+                  ) : (
+                    <span className="font-mono">{instance.agentVersion}</span>
+                  )
+                ) : (
+                  <span className="text-muted-foreground">{t('servers.agentVersionUnknown')}</span>
+                )}
+              </Field>
               <Field label={t('servers.colLastHeartbeat')}>{formatTime(instance.lastHeartbeat)}</Field>
               <Field label={t('servers.detailRegisteredAt')}>{formatTime(instance.registeredAt)}</Field>
             </dl>

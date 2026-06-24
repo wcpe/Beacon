@@ -26,6 +26,11 @@ import {
 import type { AssignParams, InstanceFilter } from '../api/client'
 import type { InstanceView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
+import {
+  buildMajorityVersions,
+  isAgentVersionMismatch,
+  type MajorityVersionByNamespace,
+} from '@/lib/agentVersionConsistency'
 import StatusBadge from '../components/StatusBadge'
 import RoleBadge from '../components/RoleBadge'
 import { useMessage } from '../components/useMessage'
@@ -84,6 +89,26 @@ function rateCell(t: TFunction, i: InstanceView): string {
       : t('servers.noBackend')
   }
   return i.tps.toFixed(1)
+}
+
+// agent 版本单元格（FR-86）：显 agentVersion（空显「未知」）；与本环境多数版本不一致时打黄标 + 悬浮提示。
+function agentVersionCell(t: TFunction, i: InstanceView, majority: MajorityVersionByNamespace) {
+  if (!i.agentVersion) {
+    return <span className="text-muted-foreground">{t('servers.agentVersionUnknown')}</span>
+  }
+  const mismatch = isAgentVersionMismatch(i, majority)
+  if (mismatch) {
+    return (
+      <Badge
+        variant="outline"
+        className="border-amber-500 font-mono text-amber-600"
+        title={t('servers.agentVersionMismatch')}
+      >
+        {i.agentVersion}
+      </Badge>
+    )
+  }
+  return <span className="font-mono">{i.agentVersion}</span>
 }
 
 export default function ServersPage() {
@@ -163,6 +188,9 @@ export default function ServersPage() {
     for (const i of allInstancesQuery.data ?? []) if (i.zone) set.add(i.zone)
     return Array.from(set).sort()
   }, [zoneSummaryQuery.data, allInstancesQuery.data])
+
+  // 各环境 agent 多数版本（FR-86）：按当前列出实例聚合，供逐行判定版本是否不一致打黄标。
+  const majorityVersions = useMemo(() => buildMajorityVersions(data ?? []), [data])
 
   // 当前排空集合（namespace/serverId 复合键）：跨 namespace 列实例，须复合键避免同名 serverId 误判。
   const drainedSet = useMemo(() => {
@@ -285,6 +313,7 @@ export default function ServersPage() {
     { header: t('servers.colStatus'), cell: (i) => <StatusBadge status={i.status} reason={i.healthReason} /> },
     { header: t('servers.colAddress'), className: 'font-mono', cell: (i) => i.address },
     { header: t('servers.colVersion'), cell: (i) => i.version },
+    { header: t('servers.colAgentVersion'), cell: (i) => agentVersionCell(t, i, majorityVersions) },
     // 角色相关：bukkit 人数 / bungee 连接
     { header: t('servers.colLoad'), cell: (i) => loadCell(i) },
     // 角色相关：bukkit TPS / bungee 后端可达
@@ -504,6 +533,9 @@ export default function ServersPage() {
           detailInstance && detailInstance.zone
             ? entryByZone.get(`${detailInstance.namespace}/${detailInstance.group}/${detailInstance.zone}`)
             : undefined
+        }
+        agentVersionMismatch={
+          detailInstance ? isAgentVersionMismatch(detailInstance, majorityVersions) : false
         }
       />
 
