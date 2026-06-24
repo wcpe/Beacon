@@ -124,13 +124,13 @@
 | FR-76 | 破坏性写操作统一二次确认（增强 FR-67）：抽通用确认框 + 影响摘要（脱链哪层/影响哪些服）覆盖删 config/file、清小区默认入口等删除/清除入口 | P2 | 已交付@v0.11.0 |
 | FR-77 | 运维设置页恢复默认 + 批量保存（增强 FR-62）：每项「恢复默认」、页脚「保存全部变更(N)」+ 改动摘要 | P2 | 已交付@v0.11.0 |
 | FR-78 | 控制面连接状态指示 + 自动重连（feat，纯前端复用现有轮询派生连通态，见 [docs/specs/connection-status-indicator.md](specs/connection-status-indicator.md)）：轮询断显横幅「连接中断·重连中」+ 小灯转红、恢复自动重连并失效查询刷新，治控制面重部时 UI 静默掉线（管理台无浏览器 SSE，连通态由 system-status 轮询的成功/失败派生） | P2 | 已交付@v0.11.0 |
-| FR-79 | 配置/文件发布影响面预览（增强 FR-22，见 [docs/specs/publish-impact-preview.md](specs/publish-impact-preview.md)）：发布确认显「将影响 N 台在线服:[serverId…]」，后端按 zone_assignment + 注册表算受影响集 | P2 | 开发中 |
-| FR-80 | per-server 有效配置变更时间线（feat，见 [docs/specs/server-config-timeline.md](specs/server-config-timeline.md)）：服务器详情「变更历史」列有效配置变更（版本/时间/触发发布），看「何时因哪次发布变过」 | P2 | 开发中 |
-| FR-81 | 健康流转原因展示（增强健康，见 [docs/specs/health-status-reason.md](specs/health-status-reason.md)）：lost/degraded 状态带 lastHeartbeatAge + 触发阈值，悬浮显「Ns 未心跳 > ttl Ns」 | P2 | 开发中 |
-| FR-82 | 控制面自观测页（feat，见 [docs/specs/control-plane-self-observability.md](specs/control-plane-self-observability.md)）：自指标端点 + 新「控制面健康」页显 DB 连接池/longpoll 挂起/注册表规模/命令队列深度，与 MC 负载看板区分、只读 | P2 | 开发中 |
-| FR-83 | 全局搜索 + 命令面板（feat，见 [docs/specs/command-palette.md](specs/command-palette.md)）：Cmd-K 聚合搜 config/file/server/audit 并跳转/执行常用操作，纯键盘可达 | P2 | 开发中 |
-| FR-84 | 审计全文检索 + 导出（增强 FR-7）：审计按 detail 关键字检索 + `GET /admin/v1/audits/export` 出 CSV/JSON 流（复用过滤，可移植 GORM） | P2 | 开发中 |
-| FR-85 | 新服接入引导向导（feat，见 [docs/specs/server-onboarding-wizard.md](specs/server-onboarding-wizard.md)）：「添加服务器」向导填 ns/serverId/角色/大区→生成 agent config.yml + env 片段供复制、校验 serverId 不重复、可预建 zone 指派 | P2 | 开发中 |
+| FR-79 | 配置/文件发布影响面预览（增强 FR-22，见 [docs/specs/publish-impact-preview.md](specs/publish-impact-preview.md)）：发布确认显「将影响 N 台在线服:[serverId…]」，后端按 zone_assignment + 注册表算受影响集 | P2 | 已交付@v0.12.0 |
+| FR-80 | per-server 有效配置变更时间线（feat，见 [docs/specs/server-config-timeline.md](specs/server-config-timeline.md)）：服务器详情「变更历史」列有效配置变更（版本/时间/触发发布），看「何时因哪次发布变过」 | P2 | 已交付@v0.12.0 |
+| FR-81 | 健康流转原因展示（增强健康，见 [docs/specs/health-status-reason.md](specs/health-status-reason.md)）：lost/degraded 状态带 lastHeartbeatAge + 触发阈值，悬浮显「Ns 未心跳 > ttl Ns」 | P2 | 已交付@v0.12.0 |
+| FR-82 | 控制面自观测页（feat，见 [docs/specs/control-plane-self-observability.md](specs/control-plane-self-observability.md)）：自指标端点 + 新「控制面健康」页显 DB 连接池/longpoll 挂起/注册表规模/命令队列深度，与 MC 负载看板区分、只读 | P2 | 已交付@v0.12.0 |
+| FR-83 | 全局搜索 + 命令面板（feat，见 [docs/specs/command-palette.md](specs/command-palette.md)）：Cmd-K 聚合搜 config/file/server/audit 并跳转/执行常用操作，纯键盘可达 | P2 | 已交付@v0.12.0 |
+| FR-84 | 审计全文检索 + 导出（增强 FR-7）：审计按 detail 关键字检索 + `GET /admin/v1/audits/export` 出 CSV/JSON 流（复用过滤，可移植 GORM） | P2 | 已交付@v0.12.0 |
+| FR-85 | 新服接入引导向导（feat，见 [docs/specs/server-onboarding-wizard.md](specs/server-onboarding-wizard.md)）：「添加服务器」向导填 ns/serverId/角色/大区→生成 agent config.yml + env 片段供复制、校验 serverId 不重复、可预建 zone 指派 | P2 | 已交付@v0.12.0 |
 | FR-86 | agent 版本/构建可见性（增强 FR-34/FR-52，依赖新 ADR，双端 jar）：agent 注册自报版本/build，InstanceView + 服务器页显示、集群内版本不一致黄标，治 agent 跑哪个构建运维不可见的盲区 | P2 | 计划 |
 | FR-87 | 反向抓取受管任务进度/错误回传（增强 FR-58/FR-60，扩展 ADR-0037 spec，改 agent）：任务显 elapsed + 卡死阈值警示、agent 端错误回传进 task.lastError 展示 | P2 | 计划 |
 | FR-88 | 在线日志/诊断查看器（feat，依赖新 ADR·安全边界，双端 jar）：agent 只读日志端点（限本机/脱敏/限速）+ 服务器详情「查看 agent 日志」拉最近 N 行，排障免上机 | P2 | 计划 |

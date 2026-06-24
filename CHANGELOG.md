@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.12.0（2026-06-24）
+
 ### 新增
 - 健康流转原因展示（FR-81，增强健康，见 [docs/specs/health-status-reason.md](docs/specs/health-status-reason.md)）：实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）新增 `lastHeartbeatAgeSec`（距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（触发当前状态的原因文案，如「35s 未心跳 > ttl 30s」；degraded/lost/offline 各显对应阈值、online 空串；阈值取当前生效健康阈值，与健康扫描判定同源，纯内存派生不落 DB）；管理台服务器页 / 看板 / 单服详情的状态徽标在原因非空时以悬浮提示展示，让运维一眼看懂「为何是这个状态」。原因文案纯函数 `runtime.HealthReason` 与状态机 `healthByAge` 同组阈值口径一致。
 - 配置发布影响面预览（FR-79，增强 FR-22，见 [docs/specs/publish-impact-preview.md](docs/specs/publish-impact-preview.md)）：发布确认对话框新增「将影响 N 台在线服：serverId…」一行，治运维点保存时看不到本次改动会落到哪些在线子服、易误发到比预期更大范围的问题。后端新增只读端点 `GET /admin/v1/configs/impact?namespace=&scopeLevel=&group=&scopeTarget=`，按 `zone_assignment`（DB 权威归属，[ADR-0004](docs/adr/0004-zone-authority-control-plane.md)）解出该 scope 覆盖的子服集合、与内存注册表**可用集合**（online+degraded，与发现 / 拓扑 / 长轮询同口径，degraded 仍会收到变更）求交，返回 `{ namespace, scopeLevel, group, scopeTarget, affected: [serverId...], total }`（serverId 字典序）。覆盖语义与有效配置覆盖链对称（global 全量 / group 按大区 / zone 按大区+小区 / server 按 serverId，未指派回退 groupHint），与 agent 端 `Resolve` 同口径；一次拉全环境归属避免 N+1，纯读不落 DB、不参与发布决策。分层不破（handler 不碰 GORM / 注册表内部结构），可移植 GORM（仅复用既有归属查询、无方言）；前端对话框打开时拉端点、加载 / 0 台 / N 台三态纯展示、不阻断发布。
