@@ -37,10 +37,12 @@ func IsValidRole(role string) bool {
 	}
 }
 
-// agent 命令类型（FR-39，落 VARCHAR + 应用层校验；本期仅反向抓取 plugins，见 ADR-0027）。
-// FR-46 拓印复用同一类型（agent 零改动、仍读整棵 plugins 树回传），落库 vs 转存待审由载荷 mode 区分。
+// agent 命令类型（落 VARCHAR + 应用层校验，见 ADR-0027 / ADR-0040）。
+// FR-46 拓印复用 ingest-plugins 类型（agent 零改动、仍读整棵 plugins 树回传），落库 vs 转存待审由载荷 mode 区分。
 const (
 	CommandTypeIngestPlugins = "ingest-plugins"
+	// CommandTypeTailLogs 取日志：令 agent 读自身日志环形缓冲快照回传（FR-88，见 ADR-0040；不读任意磁盘文件）。
+	CommandTypeTailLogs = "tail-logs"
 )
 
 // agent 命令载荷 mode（FR-46 / FR-58）：区分 FR-39 直接落库、FR-46 拓印转存待审、FR-58 两段式扫描 / 提交。
@@ -136,6 +138,8 @@ const (
 	ActionFileImprintFetch = "file.imprint-fetch"
 	// 按需拓印确认落库（FR-46）：单人自审通过后落为某层文件覆盖（detail 不含文件内容）
 	ActionFileImprint = "file.imprint"
+	// 取 agent 日志（FR-88，见 ADR-0040）：admin 触发命令在线实例回传自身脱敏日志（detail 仅 commandId/serverId，不含日志内容）
+	ActionInstanceTailLogs = "instance.tail-logs"
 	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
 	ActionOverrideSetCreate   = "override-set.create"
 	ActionOverrideSetPublish  = "override-set.publish"

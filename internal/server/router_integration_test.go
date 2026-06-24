@@ -102,6 +102,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	reverseFetchRuleSvc := service.NewReverseFetchIgnoreRuleService(db, repository.NewReverseFetchIgnoreRuleRepository(db), auditRepo)
 	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskSvc, instSvc, reverseFetchRuleSvc)
 	reverseFetchRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchRuleSvc)
+	// 取 agent 日志（FR-88）：复用同一命令仓库，编排 tail-logs 命令-回传周期 + 处理器。
+	agentLogSvc := service.NewAgentLogService(db, commandRepo, auditRepo)
+	agentLogSvc.SetNotifier(notifier)
+	agentLogHandler := handler.NewAgentLogHandler(agentLogSvc, instSvc)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
@@ -122,6 +126,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
 		Command:          handler.NewCommandHandler(commandService, instSvc),
+		AgentLog:         agentLogHandler,
 		ReverseFetchTask: reverseFetchTaskHandler,
 		ReverseFetchRule: reverseFetchRuleHandler,
 		Settings:         handler.NewSettingsHandler(settingsSvc),

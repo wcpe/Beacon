@@ -156,7 +156,7 @@ data: {}
 ```
 - agent 据 §8 清单逐个取成员内容，经 `OverrideApplier`（备份 → 路径安全 → 原子覆盖 → 受管标记）落到该集 `targetRoot`，全量成功且命中本地白名单才派发 `reloadCommand`。该 `set` 不适用本 server / 该成员不存在 → `404 FILE_NOT_FOUND`。未注册 → `404 NOT_REGISTERED`。
 
-### 10. 拉待办命令 `GET /beacon/v1/agent/commands`（FR-39 反向抓取 / FR-46 拓印 / FR-58 受管任务两段式）
+### 10. 拉待办命令 `GET /beacon/v1/agent/commands`（FR-39 反向抓取 / FR-46 拓印 / FR-58 受管任务两段式 / FR-88 取日志）
 查询：`?namespace=&serverId=`。返回该 agent 最早一条待办命令并即时 CAS 标记为已取（`pending → fetched`，避免并发重复取）；**无待办返回 `204 No Content`**。命令体：
 ```json
 { "id": 1287, "type": "ingest-plugins", "payload": { "mode": "scan", "scope": "group", "group": "area1", "target": "" } }
@@ -167,6 +167,7 @@ data: {}
   - `mode=scan`（**FR-58**）：受管任务两段式·扫描——**只 `stat` 取元信息**（path/size/UTF-8 文本判定/是否超单文件阈值），**绝不读内容、绝不因任何文件超限而失败**，经 §12 回传清单。
   - `mode=submit`（**FR-58**）：受管任务两段式·提交——**仅读取并回传 `payload.selectedPaths` 子集内容**（不再整树），经 §11 回传落库。
 - `payload.scope ∈ {group, server}`：`group` 落组级覆盖（只用 `group`）、`server` 落实例级覆盖（`group` + `target`=目标 serverId）。见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) / [ADR-0037](adr/0037-reverse-fetch-managed-task.md)。
+- `type=tail-logs`（**FR-88**，见 [ADR-0040](adr/0040-agent-readonly-log-tail.md)）：取日志命令（payload 空对象）。agent **读自身日志内存环形缓冲快照**（已脱敏、有界、**绝不读任何磁盘文件**）经 §14 回传，不触碰 plugins 树。
 
 ### 11. 回传文件集 `POST /beacon/v1/agent/files/ingest`（FR-39 落库 / FR-46 拓印 / FR-58 submit）
 请求体：`{ "commandId": 1287, "files": [ { "path": "plugin-a/config.yml", "content": "...整文件文本..." } ] }`。控制面据命令 `mode` 分路：
@@ -182,6 +183,10 @@ data: {}
 ### 13. 回传执行错误 `POST /beacon/v1/agent/files/error`（FR-87 受管任务·错误回传）
 请求体：`{ "commandId": 1290, "reason": "读 plugins 目录失败：IOException: permission denied" }`（无文件内容）。agent 执行 scan/submit **读盘失败**（IO 错 / 异常）时回传，使任务不再静默卡在非终态等过期清理。控制面据 `commandId` 反查所属任务（scan 命令→`scan_command_id`/任务 `scanning`、submit 命令→`submit_command_id`/任务 `fetching`），把任务转 `failed`、写 `last_error`、扫描 / 提交命令转 `failed`、记 `file.reverse-fetch-error` 审计（detail 不含文件内容）。
 - 命令须存在且处 `fetched`、`mode ∈ {scan, submit}`，且其所属任务处对应非终态（否则 `404 COMMAND_NOT_FOUND` / `409 REVERSE_FETCH_TASK_STATE`，幂等：重复回传 / 终态任务不二次终结、不误终结无关任务）。回传 best-effort 不重试。返回 `{ "ok": true }`。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md) 与 [docs/specs/reverse-fetch-task-progress.md](specs/reverse-fetch-task-progress.md)。
+
+### 14. 回传 agent 自身日志 `POST /beacon/v1/agent/logs`（FR-88 取日志）
+请求体：`{ "commandId": 1330, "lines": [{ "level": "INFO", "text": "已应用有效配置 md5=abc" }, { "level": "WARN", "text": "bootstrap-token=***" }] }`。agent 收到 §10 的 `type=tail-logs` 命令后，读自身日志内存环形缓冲快照（**已在 agent 侧落缓冲那一刻脱敏**、行数由缓冲容量天然有界、**绝不读任何磁盘日志文件**）回传。控制面把日志行存为该命令的**瞬态**（`log_content`，取一次后过期清理清空，不落持久真源、不进审计 detail、不导出）并 CAS `fetched → done`。
+- 命令须存在且处 `fetched`、`type=tail-logs`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面。返回 `{ "ok": true }`。见 [ADR-0040](adr/0040-agent-readonly-log-tail.md) 与 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)。
 
 ---
 
@@ -326,6 +331,8 @@ data: {}
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
 | `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |
 | `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | **建反向抓取受管任务并下发扫描命令**（FR-58 重定义，取代 FR-39 一次性 ingest，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单实例互斥**（该实例已有非终态任务→`409 REVERSE_FETCH_TASK_ACTIVE`，detail 含活跃 taskId+status）→ 事务内建任务（`scanning`）+ 下发 `mode=scan` 命令 + `file.reverse-fetch-scan` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 agent §10、§12）。返回 `202` + 任务视图（见下方 FR-58 任务字段）。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md) |
+| `POST /admin/v1/instances/{serverId}/logs?namespace=` | **触发取该 agent 自身脱敏日志**（FR-88，写操作 readonly→403，见 [ADR-0040](adr/0040-agent-readonly-log-tail.md)）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单活跃限速**（该实例已有进行中取日志命令→`409 AGENT_LOG_ACTIVE`）→ 事务内建 `tail-logs` 命令（`pending`）+ `instance.tail-logs` 审计（detail 不含日志内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§14）。返回 `202` + `{ commandId, status, lines: [] }` |
+| `GET /admin/v1/instances/{serverId}/logs?namespace=` | 查询该实例最近一次取日志结果（FR-88，供前端轮询）：`done` 则返回 `{ commandId, status, lines: [{ level, text }] }`（日志已脱敏）；进行中（`pending`/`fetched`）/ 失败（`failed`/`expired`）时 `lines` 为空；**从无取日志命令→`204 No Content`**。日志为瞬态、取一次后随命令过期清空 |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。

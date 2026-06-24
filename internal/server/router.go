@@ -29,6 +29,7 @@ type Handlers struct {
 	Auth             *handler.AuthHandler
 	APIKey           *handler.APIKeyHandler
 	Command          *handler.CommandHandler
+	AgentLog         *handler.AgentLogHandler
 	ReverseFetchTask *handler.ReverseFetchTaskHandler
 	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
 	Settings         *handler.SettingsHandler
@@ -64,6 +65,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/files/scan", h.ReverseFetchTask.Scan)
 		// 反向抓取受管任务·错误回传（FR-87）：agent 执行 scan/submit 读盘失败回传错误，任务转 failed 记 lastError
 		r.Post("/files/error", h.ReverseFetchTask.ReportError)
+		// 取 agent 日志回传（FR-88，见 ADR-0040）：agent 回传自身脱敏日志环形缓冲快照，转存命令瞬态
+		r.Post("/logs", h.AgentLog.Receive)
 	})
 
 	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
@@ -148,6 +151,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 主动下线（FR-49）：落 DB 拒绝态 + 移出可用集；DELETE 取消下线。二者为写方法，readonly 密钥经 readonlyWriteGuard 403
 		r.Post("/instances/{serverId}/offline", h.Instance.Offline)
 		r.Delete("/instances/{serverId}/offline", h.Instance.Online)
+		// 取 agent 日志（FR-88，见 ADR-0040）：触发取自身脱敏日志（写，readonly 403）+ 查询最近一次结果（读）
+		r.Post("/instances/{serverId}/logs", h.AgentLog.Request)
+		r.Get("/instances/{serverId}/logs", h.AgentLog.Get)
 		// 在线实例反向抓取·受管任务（FR-58，重定义旧一次性端点，见 ADR-0037）：建扫描任务 + 下发 scan 命令（写，readonly 403）
 		r.Post("/instances/{serverId}/reverse-fetch", h.ReverseFetchTask.CreateScanTask)
 		// 受管任务台 / 审核台（FR-58）：查 / 列任务（读）+ 提交选定集 / 取消（写，readonly 403）

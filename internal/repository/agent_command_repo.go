@@ -101,6 +101,42 @@ func (r *AgentCommandRepository) UpdateStatusClearImprint(id uint, expect, next,
 	return res.RowsAffected > 0, nil
 }
 
+// FindLatestByType 取某目标实例某类型的最新一条命令（按 id 倒序，FR-88 取日志查询用）；无则 (nil, nil)。
+func (r *AgentCommandRepository) FindLatestByType(ns, serverID, cmdType string) (*model.AgentCommand, error) {
+	var c model.AgentCommand
+	err := r.db.Where("namespace = ? AND server_id = ? AND type = ?", ns, serverID, cmdType).
+		Order("id desc").First(&c).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// CountActiveByType 统计某目标实例某类型处「进行中」（pending/fetched）的命令条数（FR-88 单活跃限速用）。
+func (r *AgentCommandRepository) CountActiveByType(ns, serverID, cmdType string) (int64, error) {
+	var n int64
+	err := r.db.Model(&model.AgentCommand{}).
+		Where("namespace = ? AND server_id = ? AND type = ? AND status IN ?",
+			ns, serverID, cmdType, []string{model.CommandStatusPending, model.CommandStatusFetched}).
+		Count(&n).Error
+	return n, err
+}
+
+// UpdateStatusWithLogContent 把命令从 fetched CAS 迁移 done 并存取日志回传内容（FR-88）：仅当当前 status=fetched 才迁移。
+// content 即 agent 回传的脱敏日志行 JSON（瞬态，取一次后由过期清理清空）。返回是否命中（前态不符 / 不存在则 false）。
+func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content string) (bool, error) {
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
+		Updates(map[string]any{"status": model.CommandStatusDone, "log_content": content})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // CountByStatus 按状态分组统计命令条数（跨全部目标汇总，仅观测，FR-82）。
 // 一条 GROUP BY 查询（可移植 GORM、无方言）；无某状态则该键缺省（不返回 0 键）。
 func (r *AgentCommandRepository) CountByStatus() (map[string]int, error) {
@@ -124,11 +160,12 @@ func (r *AgentCommandRepository) CountByStatus() (map[string]int, error) {
 
 // ExpireStale 把创建早于 before、仍处 pending/fetched/ready 的命令标 expired（超时清理）；返回受影响条数。
 // ready（FR-46 拓印已抓取未确认）一并过期并清空瞬态拓印内容，避免未确认的磁盘原文长期滞留。
+// 同时清空 log_content（FR-88 取日志瞬态）：过期命令的回传日志一并抹除，避免瞬态长期滞留。
 func (r *AgentCommandRepository) ExpireStale(before time.Time) (int64, error) {
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("status IN ? AND created_at < ?",
 			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}, before).
-		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": ""})
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": ""})
 	if res.Error != nil {
 		return 0, res.Error
 	}

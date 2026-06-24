@@ -263,6 +263,12 @@ func run() error {
 	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
 
+	// 取 agent 日志（FR-88，见 ADR-0040）：编排取自身脱敏日志的命令-回传周期（触发 + 单活跃限速 + 回传转存瞬态 + 查询）。
+	// 复用同一 agent_command 通路（tail-logs 类型），命令提交后经 notifier 唤醒目标 agent。
+	agentLogService := service.NewAgentLogService(db, commandRepo, auditRepo)
+	agentLogService.SetNotifier(notifier)
+	agentLogHandler := handler.NewAgentLogHandler(agentLogService, instanceService)
+
 	// 控制面自观测页（FR-82）：聚合控制面进程内部运行态——DB 连接池（与 FR-33 同一 sqlDB）、
 	// 长轮询四通道挂起数（配置 / 文件 / 拓扑 / 命令 Hub）、注册表规模（按健康状态）、命令队列深度（按状态）。
 	// 只读、不参与决策；区别于 FR-33 页眉条与 FR-32 agent 网络负载。
@@ -311,7 +317,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

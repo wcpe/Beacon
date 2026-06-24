@@ -24,6 +24,9 @@ type AgentCommand struct {
 	// 确认 / 失败 / 过期后即清空。与 ResultDetail（结果摘要、绝不含内容）分立——这是受控瞬态审核暂存，
 	// 持有一个文件、生命周期到确认即止，比 FR-39 永久落整棵树暴露更少；不入审计 detail、不导出 git。
 	ImprintContent string `gorm:"column:imprint_content;type:text"`
+	// 取日志回传内容（FR-88，瞬态，见 ADR-0040）：type=tail-logs 回传的 agent 自身日志行集（JSON 文本，已脱敏）。
+	// 与 ImprintContent 平行——受控瞬态：done 后供 admin 取一次、命令过期即清空；不入审计 detail、不导出 git、不落持久真源。
+	LogContent string `gorm:"column:log_content;type:text"`
 	// 触发操作者（admin 认证身份，非手填）
 	Operator string `gorm:"column:operator;size:128;not null"`
 	// 创建时间（UTC）
@@ -38,7 +41,7 @@ func (AgentCommand) TableName() string { return "agent_command" }
 // IsValidCommandType 校验命令类型取值。
 func IsValidCommandType(t string) bool {
 	switch t {
-	case CommandTypeIngestPlugins:
+	case CommandTypeIngestPlugins, CommandTypeTailLogs:
 		return true
 	default:
 		return false

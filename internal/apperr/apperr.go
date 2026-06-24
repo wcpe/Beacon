@@ -77,6 +77,8 @@ var (
 	ErrImprintNotReady = New(http.StatusConflict, "IMPRINT_NOT_READY", "拓印命令未就绪")
 	// ErrImprintReviewMismatch 拓印确认自审 md5 与已抓取内容不符（强制看过 diff，FR-46）。
 	ErrImprintReviewMismatch = New(http.StatusPreconditionFailed, "IMPRINT_REVIEW_MISMATCH", "拓印自审内容已变更，请重新查看 diff")
+	// ErrAgentLogActive 该实例已有进行中的取日志命令，限速拒新建（FR-88，见 ADR-0040）。
+	ErrAgentLogActive = New(http.StatusConflict, "AGENT_LOG_ACTIVE", "该实例已有进行中的取日志请求，请稍候")
 
 	// ErrReverseFetchTaskNotFound 反向抓取受管任务不存在（FR-58）。
 	ErrReverseFetchTaskNotFound = New(http.StatusNotFound, "REVERSE_FETCH_TASK_NOT_FOUND", "反向抓取任务不存在")
