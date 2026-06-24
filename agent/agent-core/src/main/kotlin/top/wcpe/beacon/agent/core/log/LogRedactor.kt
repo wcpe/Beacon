@@ -18,8 +18,9 @@ object LogRedactor {
     /**
      * 敏感键名（小写、不含分隔符）。命中「键 + (= 或 :) + 值」即把值掩码。
      *
-     * 用 `\b` 词边界 + 可选连字符（如 bootstrap-token / x-beacon-token）匹配，避免把 `mytoken` 之类
-     * 子串里的 token 也算上（仍命中 `x-beacon-token` 这类带前缀的整词）。
+     * 不加 `\b` 词边界：键名作子串命中亦掩码（如 `mytoken=val` 会命中尾部 `token=val` 而掩码）。
+     * 这是有意为之——脱敏宁严勿松，过度掩码（多掩了一个本不敏感的值）无害，漏掩才会泄露。
+     * 带连字符的整键（如 bootstrap-token / x-beacon-token）照常整体命中。
      */
     private val SENSITIVE_KEYS = listOf(
         "bootstrap-token",
@@ -42,7 +43,7 @@ object LogRedactor {
      */
     private val keyValuePattern: Regex = run {
         val keys = SENSITIVE_KEYS.joinToString("|") { Regex.escape(it) }
-        // 键（词边界保护）+ 空白* + 分隔符(=|:) + 空白* + 可选 Bearer 前缀 + 值（连续非空白）
+        // 键（无词边界，子串命中亦掩码、宁严勿松）+ 空白* + 分隔符(=|:) + 空白* + 可选 Bearer 前缀 + 值（连续非空白）
         Regex(
             "(?i)((?:$keys)\\s*[:=]\\s*(?:Bearer\\s+)?)(\\S+)",
         )

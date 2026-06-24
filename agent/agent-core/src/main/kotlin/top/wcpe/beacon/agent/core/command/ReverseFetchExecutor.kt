@@ -86,7 +86,7 @@ class ReverseFetchExecutor(
             return true
         }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
-            // 只接 ingest-plugins / tail-logs；未知类型不处理（不预埋多命令空壳，守 scope-discipline）。命令已被控制面 CAS fetched、不会重现，继续排空。
+            // 只接 ingest-plugins / tail-logs / resync-config；未知类型不处理（不预埋多命令空壳，守 scope-discipline）。命令已被控制面 CAS fetched、不会重现，继续排空。
             adapter.warn("收到未知命令类型（忽略）：id=${command.id}，type=${command.type}")
             return true
         }

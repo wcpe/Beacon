@@ -5,10 +5,12 @@ package top.wcpe.beacon.agent.core.command
  *
  * 对应 `GET /beacon/v1/agent/commands` 的 200 响应 JSON：
  * `{"id":<n>,"type":"ingest-plugins","payload":{"scope":"group|server","group":"<g>","target":"<t>"}}`。
- * 本期唯一类型 ingest-plugins：令 agent 读真实 plugins 目录文本配置回传。
+ * 现支持三类类型：ingest-plugins（读真实 plugins 目录文本配置回传，FR-39）、
+ * tail-logs（读 agent 自身日志环形缓冲快照回传，FR-88）、
+ * resync-config（重拉控制面权威的有效配置/文件树/覆盖集并 apply，FR-91）。
  *
- * @param id      命令 id（回传 ingest 时带回引用）
- * @param type    命令类型（本期仅 ingest-plugins）
+ * @param id      命令 id（回传结果时带回引用）
+ * @param type    命令类型（ingest-plugins / tail-logs / resync-config）
  * @param payload 载荷（scope / group / target，见 [IngestCommandPayload]）
  */
 data class AgentCommand(
