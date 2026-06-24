@@ -21,9 +21,11 @@ type RegisterParams struct {
 	GroupHint string
 	Address   string
 	Version   string
-	Capacity  int
-	Weight    int
-	Metadata  map[string]string
+	// AgentVersion 是 agent 自身构建版本（FR-86，见 ADR-0039）：agent 注册自报，透传写入内存注册表；旧 agent 缺键则空。
+	AgentVersion string
+	Capacity     int
+	Weight       int
+	Metadata     map[string]string
 	// Backends 是 bc 上报的当前后端子服 serverId 集合（仅 bc 填，FR-36 事实）；透传写入内存注册表。
 	Backends []string
 	ClientIP string
@@ -124,7 +126,8 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	inst := &runtime.Instance{
 		Namespace: p.Namespace, ServerID: p.ServerID, Role: p.Role, GroupHint: p.GroupHint,
 		ResolvedGroup: group, ResolvedZone: zone, Assigned: assigned,
-		Address: p.Address, Version: p.Version, Capacity: p.Capacity, Weight: p.Weight, Metadata: p.Metadata,
+		Address: p.Address, Version: p.Version, AgentVersion: p.AgentVersion,
+		Capacity: p.Capacity, Weight: p.Weight, Metadata: p.Metadata,
 		Backends: p.Backends,
 	}
 	saved, err := s.registry.Register(inst, s.ttl, time.Now().UTC())

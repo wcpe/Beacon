@@ -30,6 +30,7 @@
 }
 ```
 - `backends`（可选，`string[]`）：**仅 bc（`role=bungee`）上报**本代理当前代理的后端子服 serverId 集合，控制面存为只读事实供拓扑 bc→bukkit 连线消费（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）。bukkit / 旧 agent 不发即缺键，向后兼容；只存内存、随注册/上报刷新、不落 DB。
+- `agentVersion`（可选，`string`）：**agent 自身构建版本**（FR-86，[ADR-0039](adr/0039-agent-self-reported-version.md)），agent 注册时自报（取自其插件 manifest，非运维手填的业务 `version`），控制面存为只读事实供管理台逐台展示 + 集群版本不一致黄标。旧 agent 不发即缺键 → 控制面存空串，向后兼容；只存内存、随注册刷新、不落 DB、不参与任何决策。
 响应：
 ```json
 {
@@ -314,8 +315,8 @@ data: {}
 ### 实例与健康
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36）与 `proxy`（对象，bc 专属负载指标 `onlineConnections`/`threadCount`/`uptimeMs`/`backendUp`/`backendTotal`/`backendAvgLatencyMs`，仅 bc 非零、bukkit 恒零——把控制面已采的 BC 事实补暴露在逐实例视图，供代理服管理页逐台展示底层参数，FR-34/FR-52；`backendAvgLatencyMs<0` 表示无可达后端不可用）。另含 `lastHeartbeatAgeSec`（`int`，距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（`string`，触发当前状态的原因文案，如 `35s 未心跳 > ttl 30s`；`online` 时空串；阈值取当前生效健康阈值与扫描判定同源，纯内存派生不落 DB，FR-81） |
-| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`/`proxy`/`lastHeartbeatAgeSec`/`healthReason`） |
+| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36）与 `proxy`（对象，bc 专属负载指标 `onlineConnections`/`threadCount`/`uptimeMs`/`backendUp`/`backendTotal`/`backendAvgLatencyMs`，仅 bc 非零、bukkit 恒零——把控制面已采的 BC 事实补暴露在逐实例视图，供代理服管理页逐台展示底层参数，FR-34/FR-52；`backendAvgLatencyMs<0` 表示无可达后端不可用）。另含 `lastHeartbeatAgeSec`（`int`，距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（`string`，触发当前状态的原因文案，如 `35s 未心跳 > ttl 30s`；`online` 时空串；阈值取当前生效健康阈值与扫描判定同源，纯内存派生不落 DB，FR-81）。另含 `agentVersion`（`string`，agent 自身构建版本，agent 注册自报、旧 agent 为空串；仅展示，与业务 `version` 语义不同，FR-86，[ADR-0039](adr/0039-agent-self-reported-version.md)；管理台据此逐台展示并对同环境内版本不一致者打黄标） |
+| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`/`proxy`/`lastHeartbeatAgeSec`/`healthReason`/`agentVersion`） |
 | `GET /admin/v1/instances/{serverId}/config-timeline?namespace=&group=` | per-server 有效配置变更时间线（FR-80）：返回该子服**当前**覆盖链涉及的全部 config 项的发布历史（含首发 / 发布 / 回滚），按时间倒序。`namespace` 必填（缺失返 `400 INVALID_PARAM`）；`group` 可选 groupHint（未指派时定位 group 层）。返回 `{ namespace, serverId, group, zone, items: [{ configItemId, dataId, scopeLevel, scopeTarget, version, md5, operator, comment, createdAt }] }`，只读、不含 content、不落 DB |
 | `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |

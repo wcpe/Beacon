@@ -39,6 +39,8 @@ type registerRequest struct {
 	Capacity  int               `json:"capacity"`
 	Weight    int               `json:"weight"`
 	Metadata  map[string]string `json:"metadata"`
+	// AgentVersion 是 agent 自身构建版本（可选，FR-86，见 ADR-0039）：agent 注册自报、旧 agent 缺键 → 空串，向后兼容。
+	AgentVersion string `json:"agentVersion"`
 	// Backends 是 bc 上报的当前后端子服 serverId 集合（可选，仅 bc 填、旧 agent/bukkit 缺键 → nil，向后兼容，FR-36）。
 	Backends []string `json:"backends,omitempty"`
 }
@@ -62,7 +64,8 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.svc.Register(service.RegisterParams{
 		Namespace: req.Namespace, ServerID: req.ServerID, Role: req.Role, GroupHint: req.GroupHint,
-		Address: req.Address, Version: req.Version, Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata,
+		Address: req.Address, Version: req.Version, AgentVersion: req.AgentVersion,
+		Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata,
 		Backends: req.Backends, ClientIP: clientIP(r),
 	})
 	if err != nil {

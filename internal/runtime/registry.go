@@ -45,6 +45,9 @@ type Instance struct {
 	Assigned      bool   // 是否已在 zone_assignment 有归属
 	Address       string // ip:port
 	Version       string
+	// AgentVersion 是 agent 自身构建版本（FR-86，见 ADR-0039）：agent 注册时自报，仅展示不参与决策；
+	// 旧 agent 不报则空。与 Version（业务版本）语义不同，仅内存、随注册刷新、不落 DB。
+	AgentVersion  string
 	Capacity      int
 	Weight        int
 	Metadata      map[string]string

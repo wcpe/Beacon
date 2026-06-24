@@ -49,14 +49,16 @@ func NewInstanceHandler(svc *service.InstanceService, health healthThresholds, t
 
 // instanceView 是实例对外视图（未分配时 zone 为 null）。
 type instanceView struct {
-	Namespace     string            `json:"namespace"`
-	ServerID      string            `json:"serverId"`
-	Role          string            `json:"role"`
-	Group         string            `json:"group"`
-	Zone          *string           `json:"zone"`
-	Assigned      bool              `json:"assigned"`
-	Address       string            `json:"address"`
-	Version       string            `json:"version"`
+	Namespace string  `json:"namespace"`
+	ServerID  string  `json:"serverId"`
+	Role      string  `json:"role"`
+	Group     string  `json:"group"`
+	Zone      *string `json:"zone"`
+	Assigned  bool    `json:"assigned"`
+	Address   string  `json:"address"`
+	Version   string  `json:"version"`
+	// AgentVersion 是 agent 自身构建版本（FR-86，见 ADR-0039）：agent 注册自报、旧 agent 为空串；仅展示。
+	AgentVersion  string            `json:"agentVersion"`
 	Status        string            `json:"status"`
 	Capacity      int               `json:"capacity"`
 	Weight        int               `json:"weight"`
@@ -130,7 +132,8 @@ func toInstanceView(i *runtime.Instance, defaultEntries map[string]bool, hc heal
 	return instanceView{
 		Namespace: i.Namespace, ServerID: i.ServerID, Role: i.Role, Group: i.ResolvedGroup,
 		Zone: nilIfEmpty(i.ResolvedZone), Assigned: i.Assigned, Address: i.Address, Version: i.Version,
-		Status: i.Status, Capacity: i.Capacity, Weight: i.Weight, Metadata: i.Metadata,
+		AgentVersion: i.AgentVersion,
+		Status:       i.Status, Capacity: i.Capacity, Weight: i.Weight, Metadata: i.Metadata,
 		LastHeartbeat:       i.LastHeartbeat,
 		LastHeartbeatAgeSec: int(age.Seconds()),
 		HealthReason:        runtime.HealthReason(age, hc.degradedAfter, hc.ttl, hc.offlineGrace, i.Status),
