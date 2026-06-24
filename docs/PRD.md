@@ -119,6 +119,25 @@
 | FR-71 | 区分配安全化（增强 FR-8/FR-35，[ADR-0036](adr/0036-zone-reassign-safety-drain-gate.md) 扩展 [ADR-0004](adr/0004-zone-authority-control-plane.md)，见 [docs/specs/zone-reassign-safety.md](specs/zone-reassign-safety.md)）：「zone 分配」更名「区分配」(zone→区，仅 i18n 展示)；前端取消拖拽即改 → 看板默认只读 + 解锁改派 + 显式改派 + 手输 serverId 复述确认（空服也拦防误触）；后端排空门纵深：**在线非空（online 且 playerCount>0）的服「改派/取消指派/首次指派」凡改变其区归属解析一律 409 `ZONE_SERVER_ONLINE_NONEMPTY`（须先 drain/等排空）**、同值 no-op（不落库不审计）、真正变更入审计 | P2 | 已交付@v0.10.0 |
 | FR-72 | 全量审计覆盖（增强 FR-7）：写操作审计中间件兜底（拦 /admin/v1 所有 POST/PUT/DELETE 记 操作者+动作+目标，敏感内容不入 detail）+ 既有专项审计保留 | P2 | 已交付@v0.10.0 |
 | FR-73 | 服务分析 / 平台用量看板（feat，依赖 FR-72，见 [docs/specs/service-analysis.md](specs/service-analysis.md)）：新「服务分析」页，后端加审计聚合端点（`GET /audits/analytics`，按时间窗 + 环境聚合，可移植 GORM 投影 + Go 侧日分桶、禁方言日期函数），从 audit_log 聚合 Beacon 平台运维活动（发布/修改/回滚/校验失败、反向抓取、区改派、文件树变更、登录、密钥、告警…）计数 + 成功率 + 每日趋势，KPI 卡片 + 图表；与 FR-32(MC负载)/FR-30(Prometheus) 区分 | P2 | 已交付@v0.10.0 |
+| FR-74 | 配置/文件批量操作（增强 FR-38/FR-1）：列表多选 + 批量删除/禁用/导出（一事务），治「逐个删」低效；空选禁用、批量删走统一确认 | P2 | 计划 |
+| FR-75 | 配置编辑器格式校验（增强 FR-1/FR-3）：Monaco 客户端 YAML/JSON lint，发布前行内标错、解析失败禁用发布，防发坏格式到 agent 才暴露 | P2 | 计划 |
+| FR-76 | 破坏性写操作统一二次确认（增强 FR-67）：抽通用确认框 + 影响摘要（脱链哪层/影响哪些服）覆盖删 config/file、清小区默认入口等删除/清除入口 | P2 | 计划 |
+| FR-77 | 运维设置页恢复默认 + 批量保存（增强 FR-62）：每项「恢复默认」、页脚「保存全部变更(N)」+ 改动摘要 | P2 | 计划 |
+| FR-78 | 控制面连接状态指示 + 自动重连（feat，前端用现有 SSE）：SSE 断显横幅「连接中断·重连中」、恢复自动刷新，治控制面重部时 UI 静默掉线 | P2 | 计划 |
+| FR-79 | 配置/文件发布影响面预览（增强 FR-22）：发布确认显「将影响 N 台在线服:[serverId…]」，后端按 zone_assignment + 注册表算受影响集 | P2 | 计划 |
+| FR-80 | per-server 有效配置变更时间线（feat）：服务器详情「变更历史」列有效配置变更（版本/时间/触发发布），看「何时因哪次发布变过」 | P2 | 计划 |
+| FR-81 | 健康流转原因展示（增强健康）：lost/degraded 状态带 lastHeartbeatAge + 触发阈值，悬浮显「Ns 未心跳 > ttl Ns」 | P2 | 计划 |
+| FR-82 | 控制面自观测页（feat）：自指标端点 + 新「控制面健康」页显 DB 延迟/longpoll 挂起/注册表规模/命令队列深度，与 MC 负载看板区分、只读 | P2 | 计划 |
+| FR-83 | 全局搜索 + 命令面板（feat）：Cmd-K 聚合搜 config/file/server/audit 并跳转/执行常用操作，纯键盘可达 | P2 | 计划 |
+| FR-84 | 审计全文检索 + 导出（增强 FR-7）：审计按 detail 关键字检索 + `GET /admin/v1/audits/export` 出 CSV/JSON 流（复用过滤，可移植 GORM） | P2 | 计划 |
+| FR-85 | 新服接入引导向导（feat）：「添加服务器」向导填 ns/serverId/角色/大区→生成 agent config.yml + env 片段供复制、校验 serverId 不重复、可预建 zone 指派 | P2 | 计划 |
+| FR-86 | agent 版本/构建可见性（增强 FR-34/FR-52，依赖新 ADR，双端 jar）：agent 注册自报版本/build，InstanceView + 服务器页显示、集群内版本不一致黄标，治 agent 跑哪个构建运维不可见的盲区 | P2 | 计划 |
+| FR-87 | 反向抓取受管任务进度/错误回传（增强 FR-58/FR-60，扩展 ADR-0037 spec，改 agent）：任务显 elapsed + 卡死阈值警示、agent 端错误回传进 task.lastError 展示 | P2 | 计划 |
+| FR-88 | 在线日志/诊断查看器（feat，依赖新 ADR·安全边界，双端 jar）：agent 只读日志端点（限本机/脱敏/限速）+ 服务器详情「查看 agent 日志」拉最近 N 行，排障免上机 | P2 | 计划 |
+| FR-89 | 告警历史 / 事件信息流（feat，依赖新 ADR·新实体）：健康流转/发布失败/后端不可达落 alert_event 表 + 新「事件」页时间线展示 | P2 | 计划 |
+| FR-90 | admin API token 管理（feat，依赖新 ADR·鉴权面）：签发/吊销/到期 admin API token（区别 agent apikey）供脚本调 admin API + 关键操作「复制为 curl」 | P2 | 计划 |
+| FR-91 | 服务器行快捷操作（增强 FR-65，依赖 FR-86+FR-88）：行菜单加 agent 详情/查看日志/强制重同步（触发该 agent 重拉有效配置） | P2 | 计划 |
+| FR-92 | 暗色模式 / NOC 大屏只读 / 紧凑密度（feat）：暗色主题切换、只读「大屏」看板路由、表格密度开关，持久化偏好 | P3 | 计划 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。
 
