@@ -15,7 +15,7 @@
  *   并经 onValidate 上抛错误供上层禁用发布
  */
 
-import { useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import Editor, { DiffEditor, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
@@ -61,16 +61,34 @@ export default function CodeEditor({
   // 是否为 diff 模式（只读对比，不做格式校验）
   const isDiff = !!(original || modified)
 
-  // 编辑模式下对当前内容做客户端格式校验；diff 模式恒视为合法（不校验）
-  const lintError = isDiff ? null : lintContent(language, value)
+  // 去抖后的内容：编辑器内容即时显示，校验延迟 250ms 触发，避免大 YAML 每击键同步全量解析阻塞主线程。
+  const [debouncedValue, setDebouncedValue] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), 250)
+    return () => clearTimeout(timer)
+  }, [value])
 
-  // 校验结果变化时上抛给上层（供禁用发布）；按行号 + 信息比较避免重复回调
+  // 校验中：内容已变但去抖未落定，保守视为「待校验」，此窗口禁止保存（不让非法内容漏过）。
+  const pending = !isDiff && value !== debouncedValue
+
+  // 对去抖后的内容做客户端格式校验（useMemo 避免每次 render 重复全量解析）；diff 模式恒视为合法（不校验）。
+  const lintError = useMemo(
+    () => (isDiff ? null : lintContent(language, debouncedValue)),
+    [isDiff, language, debouncedValue],
+  )
+
+  // 上抛给上层（供禁用发布）：校验中以哨兵错误占位（保守不放行），落定后回真实结果。
+  const validateError: LintError | null = pending
+    ? { line: 0, message: t('editor.lintValidating') }
+    : lintError
+
+  // 校验结果变化时上抛；按行号 + 信息比较避免重复回调
   useEffect(() => {
     if (isDiff) return
-    onValidate?.(lintError)
+    onValidate?.(validateError)
     // 仅在错误标识变化时回调（line+message 唯一标识一条错误）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDiff, lintError?.line, lintError?.message])
+  }, [isDiff, validateError?.line, validateError?.message])
 
   const handleEditorMount: OnMount = useCallback((ed) => {
     editorRef.current = ed

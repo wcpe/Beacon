@@ -133,6 +133,8 @@ export const zhCN = {
     // 客户端格式校验（FR-75）：解析失败时编辑器旁的行内错误条
     lintErrorTitle: '格式错误，无法发布',
     lintErrorLine: '第 {{line}} 行：{{message}}',
+    // 去抖校验未落定期间的占位（保守禁用保存，不在错误条展示）
+    lintValidating: '正在校验内容…',
     // 保存按钮在格式非法时禁用的悬浮提示
     saveDisabledByLint: '内容存在格式错误，请先修正后再保存',
   },
