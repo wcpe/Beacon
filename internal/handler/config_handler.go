@@ -19,14 +19,16 @@ import (
 
 // ConfigHandler 处理配置中心相关的 admin 请求。
 type ConfigHandler struct {
-	svc     *service.ConfigService
-	effSvc  *service.EffectiveService
-	graySvc *service.ConfigGrayService
+	svc       *service.ConfigService
+	effSvc    *service.EffectiveService
+	graySvc   *service.ConfigGrayService
+	impactSvc *service.ImpactService
 }
 
-// NewConfigHandler 构造处理器。effSvc 供 admin 只读有效配置预览（FR-22）；graySvc 供配置灰度（FR-9）。
-func NewConfigHandler(svc *service.ConfigService, effSvc *service.EffectiveService, graySvc *service.ConfigGrayService) *ConfigHandler {
-	return &ConfigHandler{svc: svc, effSvc: effSvc, graySvc: graySvc}
+// NewConfigHandler 构造处理器。effSvc 供 admin 只读有效配置预览（FR-22）；graySvc 供配置灰度（FR-9）；
+// impactSvc 供发布前影响面预览（FR-79）。
+func NewConfigHandler(svc *service.ConfigService, effSvc *service.EffectiveService, graySvc *service.ConfigGrayService, impactSvc *service.ImpactService) *ConfigHandler {
+	return &ConfigHandler{svc: svc, effSvc: effSvc, graySvc: graySvc, impactSvc: impactSvc}
 }
 
 // configView 是配置项对外视图（content 仅详情返回）。
@@ -333,6 +335,47 @@ func (h *ConfigHandler) Effective(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{
 		"namespace": eff.Namespace, "serverId": eff.ServerID,
 		"group": eff.Group, "zone": eff.Zone, "md5": eff.MD5, "items": items,
+	})
+}
+
+// Impact 处理 GET /admin/v1/configs/impact?namespace=&scopeLevel=&group=&scopeTarget=。
+// 只读预览某条 scope 的发布影响面：返回此刻会收到本次变更的在线子服集合（FR-79，见 ADR-0004 zone 权威）。
+func (h *ConfigHandler) Impact(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	ns := q.Get("namespace")
+	scopeLevel := q.Get("scopeLevel")
+	group := q.Get("group")
+	scopeTarget := q.Get("scopeTarget")
+	// 必填校验：namespace + 合法 scopeLevel；zone/server 还需对应定位参数（group+target / target）非空。
+	if ns == "" || !model.IsValidScopeLevel(scopeLevel) {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	switch scopeLevel {
+	case model.ScopeGroup:
+		if group == "" {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+	case model.ScopeZone:
+		if group == "" || scopeTarget == "" {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+	case model.ScopeServer:
+		if scopeTarget == "" {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+	}
+	imp, err := h.impactSvc.Resolve(ns, scopeLevel, group, scopeTarget)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"namespace": ns, "scopeLevel": scopeLevel, "group": group, "scopeTarget": scopeTarget,
+		"affected": imp.Affected, "total": imp.Total,
 	})
 }
 

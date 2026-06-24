@@ -107,7 +107,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	}
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
-		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc),
+		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo)),
 		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
 		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),

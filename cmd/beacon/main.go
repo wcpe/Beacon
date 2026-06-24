@@ -207,8 +207,10 @@ func run() error {
 	// 命令待办（FR-39）：serverId 级唤醒 Hub，与上面三通道独立；建反向抓取命令时唤醒目标 agent 的 SSE 流
 	commandHub := longpoll.NewHub()
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, hub)
-	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）
-	configHandler := handler.NewConfigHandler(configService, effectiveService, configGrayService)
+	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
+	impactService := service.NewImpactService(registry, assignRepo)
+	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）+ 影响面预览（FR-79）
+	configHandler := handler.NewConfigHandler(configService, effectiveService, configGrayService, impactService)
 	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	// 三方覆盖集投递（FR-15）：复用 fileHub 唤醒集合（同属通道B），解析适用覆盖集 + 成员内容
 	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)

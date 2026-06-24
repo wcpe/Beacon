@@ -231,6 +231,7 @@ data: {}
 | `POST /admin/v1/configs/{id}/rollback` | 回滚：`{ toVersion, comment }`（= 读旧版内容作新版发布；operator 由认证态派生） |
 | `GET /admin/v1/configs/{id}/diff?from=&to=` | 返回两版本文本供前端 diff |
 | `GET /admin/v1/configs/effective?namespace=&serverId=&group=&zone=` | 只读预览某目标合并后的有效配置 + 逐键来源（FR-22，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)） |
+| `GET /admin/v1/configs/impact?namespace=&scopeLevel=&group=&scopeTarget=` | 只读预览某条 scope 的发布影响面（FR-79）：按 `zone_assignment` + 注册表算此刻会收到本次变更的在线子服集合，返回 `{ namespace, scopeLevel, group, scopeTarget, affected: [serverId...], total }` |
 | `POST /admin/v1/configs/{id}/gray` | 发布灰度：`{ content, cohort: [serverId...], comment }` → cohort 内 server 解析到灰度内容、名单外仍解析稳定版（FR-9，见 [ADR-0021](adr/0021-config-gray-cohort-version-selection.md)；operator 由认证态派生） |
 | `POST /admin/v1/configs/{id}/gray/promote` | 晋升灰度为全量稳定版：`{ comment }` → 灰度内容作为新版本发布（version+1）并清空灰度，返回新 `version`/`md5`（operator 由认证态派生） |
 | `DELETE /admin/v1/configs/{id}/gray?comment=` | 中止灰度：丢弃灰度，cohort 成员回到稳定版本，稳定指针不动（operator 由认证态派生） |
@@ -257,6 +258,8 @@ data: {}
 - `sources`：每个叶子键的最终来源覆盖层（`global`/`group`/`zone`/`server`），`path` 为嵌套键路径（properties 扁平键即单段、可能含 `.`）。
 - `deletions`：被某层写 `null` 减量删除、且最终确实不存在的键。
 - 来源由服务端权威计算（平行纯函数，不改 agent 合并热路径），前端直接用，避免前后端两份合并实现漂移。
+
+`GET /admin/v1/configs/impact`（FR-79）：发布前只读预览某条配置 scope 此刻会落到哪些**在线**子服，供发布确认展示「将影响 N 台在线服」。归属真源 = `zone_assignment`（DB 权威，见 [ADR-0004](adr/0004-zone-authority-control-plane.md)）；在线真源 = 内存注册表**可用集合**（`online`+`degraded`，与发现 / 拓扑同口径，degraded 仍会收到变更）。覆盖语义与有效配置覆盖链对称：`global` 覆盖该环境全部可用实例；`group` 覆盖解析大区 == `group` 的子服；`zone` 覆盖大区 == `group` 且小区 == `scopeTarget` 的子服；`server` 覆盖 `serverId == scopeTarget` 的那一台（在线才计入）。未指派的实例按 `groupHint` 回退（zone 为空），与 agent 端 `Resolve` 同口径。参数：`namespace` 必填、`scopeLevel` 必填且须为 `global`/`group`/`zone`/`server`；`group` 层需 `group`、`zone` 层需 `group`+`scopeTarget`、`server` 层需 `scopeTarget`，缺失返 `400 INVALID_PARAM`。`affected` 按 serverId 字典序、`total = len(affected)`，纯读、不落 DB、不参与发布决策。
 
 **敏感配置 at-rest 加密（FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）**：新建配置项传 `sensitive: true` 时，其 `content` 以 AES-256-GCM 加密落库（DB 列存 `enc:v1:` 前缀的 base64 密文），密钥仅从环境变量 `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取。控制面在**读取详情 / 历史版本 / 有效配置解析与下发**时自动解密——agent 拿到的是**明文**（数据面内网可信不变，agent 不持密钥）。配置项视图回吐 `sensitive` 布尔标记，但**永不回吐密钥或密文**。库中已有敏感项却未配置密钥 → 控制面 **fail-fast 拒绝启动**。md5 / 有效配置解析始终基于解密后明文，与非敏感项行为一致。
 

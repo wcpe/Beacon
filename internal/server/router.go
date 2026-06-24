@@ -93,6 +93,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/configs/effective", h.Config.Effective)
 		// 配置灰度 / Beta 列活跃灰度（FR-9，静态路由，与 effective 同理优先于 {id}）
 		r.Get("/configs/gray", h.Config.ListGray)
+		// 发布影响面预览（FR-79）：按 scope + zone_assignment + 注册表算受影响在线子服集合（静态路由置于 {id} 前）
+		r.Get("/configs/impact", h.Config.Impact)
 		// 批量删除 / 禁用 / 启用（FR-74，一事务原子）：静态路由置于 {id} 前以免被通配吞掉
 		r.Post("/configs/batch", h.Config.Batch)
 		r.Get("/configs/{id}", h.Config.Get)
