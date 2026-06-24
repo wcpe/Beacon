@@ -5,8 +5,10 @@ import { useEffect } from 'react'
 import { Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import RequireAuth from './components/RequireAuth'
+import WallboardLayout from './components/WallboardLayout'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
+import WallboardPage from './pages/WallboardPage'
 import ConfigsPage from './pages/ConfigsPage'
 import FilePreviewPage from './pages/FilePreviewPage'
 import ImprintPage from './pages/ImprintPage'
@@ -42,6 +44,10 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       {/* 受保护区：未登录跳登录 */}
       <Route element={<RequireAuth />}>
+        {/* NOC 大屏只读看板（FR-92）：无侧栏极简布局，纯只读不含任何操作入口 */}
+        <Route path="/wallboard" element={<WallboardLayout />}>
+          <Route index element={<WallboardPage />} />
+        </Route>
         <Route path="/" element={<Layout />}>
           {/* 默认进入配置中心（单页面：列表 + 详情 + Diff + 历史） */}
           <Route index element={<Navigate to="/configs" replace />} />
