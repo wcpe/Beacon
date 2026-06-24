@@ -1,5 +1,5 @@
 // configLint 纯函数单测（FR-75）：客户端配置格式校验。
-// 覆盖 JSON（JSON.parse）与 YAML（轻量结构校验：禁 Tab 缩进 / 引号 / 括号 / key 结构），
+// 覆盖 JSON（JSON.parse）与 YAML（js-yaml 完整解析），
 // 以及空内容放行、properties/plaintext 不校验。
 import { describe, it, expect } from 'vitest'
 import { lintContent } from './configLint'
