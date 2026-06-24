@@ -125,7 +125,8 @@ object BeaconAgentBukkit : Plugin() {
         val assembled = AgentAssembly.assemble(
             identity = identity,
             settings = settings,
-            adapter = adapter,
+            // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
+            rawAdapter = adapter,
             transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
             codec = KotlinxJsonCodec(),
             store = store,
