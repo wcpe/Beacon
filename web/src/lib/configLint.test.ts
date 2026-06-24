@@ -42,7 +42,8 @@ describe('lintContent - YAML', () => {
   it('引号未闭合的 YAML 报错', () => {
     const err = lintContent('yaml', "name: 'beacon\n")
     expect(err).not.toBeNull()
-    expect(err!.line).toBe(1)
+    // js-yaml 单引号标量跨行至 EOF 才发现未闭合，mark 指向流末（第 2 行）
+    expect(err!.line).toBe(2)
   })
 
   it('括号未闭合的 YAML 报错', () => {
@@ -61,7 +62,8 @@ describe('lintContent - YAML', () => {
   it('缺冒号的映射行报错', () => {
     const err = lintContent('yaml', 'a: 1\nthis is not valid\n')
     expect(err).not.toBeNull()
-    expect(err!.line).toBe(2)
+    // js-yaml 在解析到流末才确定无法构成有效映射，mark 指向第 3 行
+    expect(err!.line).toBe(3)
   })
 })
 

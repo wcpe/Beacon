@@ -6,10 +6,10 @@
 // 与控制面 FR-27 服务端 schema 校验互补：FR-27 是发布路径的权威闸，
 // 本模块是前置的即时反馈（前端可被绕过，不替代服务端校验）。
 //
-// YAML 校验说明：当前前端未引入 js-yaml 等 YAML 解析库（见 .claude 规则 15，
-// 加依赖须先确认），故 YAML 采用「轻量结构校验」——只逮明显坏格式
-// （禁 Tab 缩进 / 引号未闭合 / 流式括号未闭合 / 基本 key: 结构缺失），
-// 不做完整 YAML 1.2 语义解析。漏判由 FR-27 服务端兜底。
+// YAML 校验用 js-yaml 做完整 YAML 1.2 解析（锚点 / 别名 / 多文档 / 深层流式集合皆覆盖）；
+// JSON 用内置 JSON.parse。解析失败时尽力把错误位置映射到行号。
+
+import { load as loadYaml, YAMLException } from 'js-yaml'
 
 // 单条格式错误：定位行号（从 1 起）+ 中文信息
 export interface LintError {
@@ -64,103 +64,19 @@ function jsonErrorLine(content: string, message: string): number {
   return 1
 }
 
-// ---- YAML：轻量结构校验 ----
+// ---- YAML：用 js-yaml 完整解析 ----
 
 function lintYaml(content: string): LintError | null {
-  const lines = content.split('\n')
-
-  // 跨行累计的引号 / 括号状态：用于检测整篇未闭合
-  let openQuote: '' | "'" | '"' = ''
-  let quoteStartLine = 0
-  let bracketDepth = 0
-  let bracketStartLine = 0
-
-  for (let i = 0; i < lines.length; i++) {
-    const lineNo = i + 1
-    const raw = lines[i]
-
-    // 续行（处于未闭合引号 / 括号中）只更新配对状态，不做结构校验
-    const inContinuation = openQuote !== '' || bracketDepth > 0
-
-    if (!inContinuation) {
-      // 1) 缩进禁用 Tab（YAML 规范：缩进只能用空格）
-      const indent = raw.match(/^[ \t]*/)![0]
-      if (indent.includes('\t')) {
-        return { line: lineNo, message: 'YAML 缩进不能使用 Tab，请改用空格' }
-      }
-
-      const trimmed = raw.trim()
-      // 空行 / 注释 / 文档标记跳过
-      if (trimmed === '' || trimmed.startsWith('#') || trimmed === '---' || trimmed === '...') {
-        continue
-      }
-
-      // 2) 映射行须含 `key:` 结构（数组项 `- ` 与块标量续行除外）
-      if (!isStructurallyValidYamlLine(trimmed)) {
-        return { line: lineNo, message: '缺少有效的「键: 值」结构或数组项' }
-      }
+  try {
+    // 配置文件通常单文档，load 已覆盖单文档全部语法错误且更快。
+    loadYaml(content)
+    return null
+  } catch (e) {
+    if (e instanceof YAMLException) {
+      // js-yaml 的 mark.line 从 0 起，换算为从 1 起的行号；mark 缺失归到第 1 行。
+      const line = (e.mark?.line ?? 0) + 1
+      return { line, message: e.reason || e.message }
     }
-
-    // 3) 逐字符更新引号 / 括号配对（跨行累计）
-    const scan = scanQuotesAndBrackets(raw, openQuote, bracketDepth)
-    if (openQuote === '' && scan.openQuote !== '') quoteStartLine = lineNo
-    if (bracketDepth === 0 && scan.bracketDepth > 0) bracketStartLine = lineNo
-    openQuote = scan.openQuote
-    bracketDepth = scan.bracketDepth
-    if (scan.bracketDepth < 0) {
-      return { line: lineNo, message: '出现多余的右括号' }
-    }
+    return { line: 1, message: e instanceof Error ? e.message : String(e) }
   }
-
-  // 文档结束仍有未闭合引号 / 括号
-  if (openQuote !== '') {
-    return { line: quoteStartLine, message: `引号 ${openQuote} 未闭合` }
-  }
-  if (bracketDepth > 0) {
-    return { line: bracketStartLine, message: '括号未闭合' }
-  }
-  return null
-}
-
-// 判断一个去首尾空白的 YAML 行结构是否合法（保守：只逮明显非法）。
-function isStructurallyValidYamlLine(trimmed: string): boolean {
-  // 数组项：`- ...` 或单独 `-`
-  if (trimmed === '-' || trimmed.startsWith('- ')) return true
-  // 流式集合整行（如 `[1, 2]` / `{a: 1}`）允许
-  if (/^[[{]/.test(trimmed)) return true
-  // 映射键：行内须出现冒号分隔（`key:` 或 `key: value`）
-  if (/^[^:]+:(\s.*|)$/.test(trimmed)) return true
-  // 「- key: value」形式（数组项里的映射）
-  if (/^-\s+[^:]+:/.test(trimmed)) return true
-  return false
-}
-
-// 逐字符扫描一行，更新跨行引号 / 括号状态。
-// 注释（不在引号内的 #）截断后续扫描。
-function scanQuotesAndBrackets(
-  line: string,
-  openQuote: '' | "'" | '"',
-  bracketDepth: number,
-): { openQuote: '' | "'" | '"'; bracketDepth: number } {
-  let q = openQuote
-  let depth = bracketDepth
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (q !== '') {
-      // 引号内：遇到同种引号即闭合
-      if (ch === q) q = ''
-      continue
-    }
-    // 不在引号内
-    if (ch === '#') break // 行内注释，忽略其后
-    if (ch === "'" || ch === '"') {
-      q = ch
-    } else if (ch === '[' || ch === '{' || ch === '(') {
-      depth++
-    } else if (ch === ']' || ch === '}' || ch === ')') {
-      depth--
-      if (depth < 0) return { openQuote: q, bracketDepth: depth }
-    }
-  }
-  return { openQuote: q, bracketDepth: depth }
 }
