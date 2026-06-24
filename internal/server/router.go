@@ -62,6 +62,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/files/ingest", h.Command.Ingest)
 		// 反向抓取受管任务·扫描回传（FR-58，见 ADR-0037）：回传只含元信息的扫描清单（无内容、永不失败）
 		r.Post("/files/scan", h.ReverseFetchTask.Scan)
+		// 反向抓取受管任务·错误回传（FR-87）：agent 执行 scan/submit 读盘失败回传错误，任务转 failed 记 lastError
+		r.Post("/files/error", h.ReverseFetchTask.ReportError)
 	})
 
 	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）

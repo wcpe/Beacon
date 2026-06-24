@@ -111,6 +111,32 @@ func TestRFTaskStateMachineCAS(t *testing.T) {
 	}
 }
 
+// TestRFTaskMarkFailedWithError 错误回传终结（FR-87）：scanning CAS 转 failed、写 last_error、清瞬态、解除互斥占位。
+func TestRFTaskMarkFailedWithError(t *testing.T) {
+	db := newRFTaskRepoTestDB(t)
+	repo := NewReverseFetchTaskRepository(db)
+	task := mkScanning("prod", "s1")
+	task.Manifest = `{"files":[{"path":"a"}]}`
+	_ = repo.Create(task)
+
+	ok, err := repo.MarkFailedWithError(task.ID, model.ReverseFetchTaskScanning, "读盘失败：permission denied", time.Now().UTC())
+	if err != nil || !ok {
+		t.Fatalf("MarkFailedWithError 应命中: ok=%v err=%v", ok, err)
+	}
+	got, _ := repo.GetByID(task.ID)
+	if got.Status != model.ReverseFetchTaskFailed || got.LastError == "" || got.Manifest != "" {
+		t.Fatalf("应 failed + 记 last_error + 清单清空，实际 %+v", got)
+	}
+	// 互斥占位解除：同实例可再建活跃任务（active 哨兵已置真实时间）
+	if e := repo.Create(mkScanning("prod", "s1")); e != nil {
+		t.Fatalf("失败终结后同实例应可再建: %v", e)
+	}
+	// 错误前态不命中（已 failed）
+	if ok, _ := repo.MarkFailedWithError(task.ID, model.ReverseFetchTaskScanning, "x", time.Now().UTC()); ok {
+		t.Fatal("非 scanning 态不应命中")
+	}
+}
+
 // TestRFTaskExpireStaleRepo 仅过期陈旧非终态任务、清空清单、置 active 时间。
 func TestRFTaskExpireStaleRepo(t *testing.T) {
 	db := newRFTaskRepoTestDB(t)

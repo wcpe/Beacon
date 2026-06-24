@@ -50,8 +50,11 @@ type ReverseFetchTask struct {
 	SkippedCount int `gorm:"column:skipped_count"`
 	// 触发操作者（admin 认证身份，非手填）
 	Operator string `gorm:"column:operator;size:128;not null"`
-	// 备注 / 失败原因摘要（无敏感文件内容）
+	// 备注 / 结果摘要（无敏感文件内容）：如取消原因、done 计数；与 LastError（失败明细）分立
 	Note string `gorm:"column:note;size:512"`
+	// 失败原因明细（FR-87，无敏感文件内容）：agent 回传 scan/submit 读盘错误或控制面入库失败时写入；
+	// 与 Note（结果 / 取消摘要）分立——专记失败错因，供任务台 failed 任务展示。
+	LastError string `gorm:"column:last_error;size:512"`
 	// 创建时间（UTC）
 	CreatedAt time.Time
 	// 更新时间（UTC）；每次状态迁移刷新

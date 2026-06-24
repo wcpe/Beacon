@@ -313,6 +313,80 @@ func (s *ReverseFetchTaskService) ReceiveSubmitIngest(commandID uint, files []Im
 	return result, nil
 }
 
+// reverseFetchErrorMaxLen 是回传失败原因落库前的截断上限（对齐 last_error 列 VARCHAR(512)，留余量防超列宽）。
+const reverseFetchErrorMaxLen = 480
+
+// ReceiveError 接收 agent 回传的 scan/submit 执行错误（FR-87）：据命令反查所属任务（scan→scanning / submit→fetching），
+// 把任务 CAS 转 failed、写 lastError、命令转 failed、记审计 file.reverse-fetch-error。
+// 命令须存在且 fetched、mode 为 scan 或 submit；任务须处对应非终态（否则 404/409，幂等：重复回传不二次终结）。
+func (s *ReverseFetchTaskService) ReceiveError(commandID uint, reason, clientIP string) error {
+	cmd, err := s.cmdRepo.FindByID(commandID)
+	if err != nil {
+		return err
+	}
+	if cmd == nil || cmd.Type != model.CommandTypeIngestPlugins || cmd.Status != model.CommandStatusFetched {
+		return apperr.ErrCommandNotFound
+	}
+	var payload ingestPayload
+	if json.Unmarshal([]byte(cmd.Payload), &payload) != nil {
+		return apperr.ErrCommandNotFound
+	}
+	// 据命令 mode 定其所属任务的预期非终态：scan→scanning、submit→fetching；其它 mode 不接错误回传。
+	expectStatus := ""
+	switch payload.Mode {
+	case model.IngestModeScan:
+		expectStatus = model.ReverseFetchTaskScanning
+	case model.IngestModeSubmit:
+		expectStatus = model.ReverseFetchTaskFetching
+	default:
+		return apperr.ErrCommandNotFound
+	}
+	task, err := s.findTaskByCommand(commandID, payload.Mode)
+	if err != nil {
+		return err
+	}
+	if task == nil || task.Status != expectStatus {
+		return apperr.ErrReverseFetchTaskState // 任务不存在 / 已被并发终结，幂等拒（不误终结无关任务）
+	}
+
+	lastErr := sanitizeReverseFetchError(reason)
+	ok, err := s.taskRepo.MarkFailedWithError(task.ID, expectStatus, lastErr, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperr.ErrReverseFetchTaskState // 被并发迁移
+	}
+	if _, e := s.cmdRepo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusFailed,
+		fmt.Sprintf(`{"taskId":%d,"error":%q}`, task.ID, lastErr)); e != nil {
+		slog.Warn("命令置 failed 失败（任务已记错误）", "commandId", cmd.ID, "原因", e)
+	}
+	if e := s.auditRepo.Create(&model.AuditLog{
+		NamespaceCode: task.NamespaceCode,
+		Operator:      cmd.Operator, Action: model.ActionFileReverseFetchError,
+		TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
+		Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"mode":%q}`, task.ID, cmd.ID, payload.Mode),
+		Result: model.ResultFail, ClientIP: clientIP,
+	}); e != nil {
+		slog.Warn("反向抓取错误回传审计写入失败（任务已记错误）", "taskId", task.ID, "原因", e)
+	}
+	slog.Warn("反向抓取受管任务因 agent 回传错误转失败", "taskId", task.ID, "commandId", cmd.ID,
+		"mode", payload.Mode, "lastError", lastErr)
+	return nil
+}
+
+// sanitizeReverseFetchError 归一回传错误文本：空则给默认文案、超长截断（防超 last_error 列宽）。
+func sanitizeReverseFetchError(reason string) string {
+	r := strings.TrimSpace(reason)
+	if r == "" {
+		return "agent 执行失败（未提供原因）"
+	}
+	if len(r) > reverseFetchErrorMaxLen {
+		return r[:reverseFetchErrorMaxLen]
+	}
+	return r
+}
+
 // Cancel 人工取消非终态任务 → cancelled（清空清单瞬态 + 审计）。终态任务 → ErrReverseFetchTaskState。
 func (s *ReverseFetchTaskService) Cancel(taskID uint, operator, clientIP string) (*model.ReverseFetchTask, error) {
 	if operator == "" {

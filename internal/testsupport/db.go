@@ -15,7 +15,9 @@ import (
 )
 
 // 集成测试涉及的可清空表（按外键无关顺序）。
-var resetTables = []string{"config_gray", "config_revision", "config_item", "file_revision", "file_object", "file_override_set_revision", "file_override_set", "zone_assignment", "server_drain", "server_offline", "audit_log", "metric_sample", "api_key", "setting", "namespace"}
+// 含反向抓取受管任务 / agent 命令（FR-58/FR-87）：二表带单实例互斥唯一键，跨测试不清会让活跃任务残留、
+// 后续同实例建任务误中 409，故必须随每测试清表。
+var resetTables = []string{"config_gray", "config_revision", "config_item", "file_revision", "file_object", "file_override_set_revision", "file_override_set", "reverse_fetch_task", "agent_command", "zone_assignment", "server_drain", "server_offline", "audit_log", "metric_sample", "api_key", "setting", "namespace"}
 
 // OpenTestDB 为某测试包打开独立数据库（beacon_<suffix>），迁移并清表。
 // 未设 BEACON_TEST_DSN 则跳过该测试。

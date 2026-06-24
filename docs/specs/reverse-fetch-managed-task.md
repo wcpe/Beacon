@@ -94,3 +94,14 @@
 - manifest TEXT 大树可能数 MB：过期及时清空；本期不分页（FR-60 前端按需）。
 - submit 选定集 ingest 仍复用 `FileService.Import` 整批事务——选定集应是小配置集，超阈值/总量兜底防异常。
 - FR-58 本期 submit 选定由 API 直接给；真正的人工审核挑选交互在 FR-60。
+
+## 7. 扩展：任务进度 + 错误回传（FR-87，spec 级扩展，不改 ADR-0037 正文）
+
+> ADR-0037 不可变；本节是其 spec 级补充（同 FR-59 conflict-review 在 [reverse-fetch-review.md](reverse-fetch-review.md) 叠加的范式），**不新增状态机状态、不改 scan/submit 两段式契约**，详见 [reverse-fetch-task-progress.md](reverse-fetch-task-progress.md)。
+
+治真机暴露的可观测盲区：任务卡在 `scanning`/`fetching` 不动、UI 无进度 / 无超时 / 无错误，只能翻磁盘日志才定位。
+
+- **进度·已用时长**：任务视图新增派生 `elapsedSec`（控制面渲染时刻距 `updatedAt` 的秒数，负值归零，不落库），表达「当前态已停留多久」。前端任务台据此显已用时长；非终态停留超前端阈值常量 → 标「疑似 agent 未响应」（纯展示，不改后端状态、不替代后台过期清理）。
+- **错误回传**：agent 执行 scan/submit **读盘失败时主动回传错误**（此前只 agent 本地 `error` 日志后静默放弃）——新端点 `POST /beacon/v1/agent/files/error`（`{commandId, reason}`，agentToken 信任面）。控制面据 commandId 反查所属任务（scan→`scan_command_id`/`scanning`、submit→`submit_command_id`/`fetching`），CAS 转既有终态 `failed`、命令转 `failed`、写新字段 `last_error`、清瞬态、解除互斥、记审计 `file.reverse-fetch-error`。命令 / 任务态不符按 `404`/`409` 拒（不误终结无关任务）。回传 best-effort 不重试：不通仍交既有过期清理器兜底。
+- **新字段 `last_error`**（`reverse_fetch_task` 加 `VARCHAR` 列）：专记失败原因明细（agent 回传或控制面入库失败），与既有 `note`（结果 / 取消摘要）分立；任务视图同时暴露二者。无敏感文件内容（沿决策 8 / ADR-0027 决策 7）。
+- **agent 约束不破**：回传仍 async、不碰 MC 主线程；`uploadError` 经 `BeaconApiClient` 适配器层，core 不硬绑 HTTP/JSON（ADR-0005）；observe-only 写回守卫不变。

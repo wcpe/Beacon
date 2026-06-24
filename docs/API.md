@@ -179,6 +179,10 @@ data: {}
 请求体（**无 content**）：`{ "commandId": 1290, "files": [ { "path": "AllinCore/config.yml", "size": 1234, "isText": true, "overThreshold": false }, ... ] }`。agent 已排除 `.jar`/二进制/不安全路径；**超单文件阈值的文件 `overThreshold:true` 仍列出（红标，不剔除）**。控制面把清单 + 计数（总数/超阈值数）存入任务 `manifest`、任务转 `pending-review`、扫描命令转 `done`。**scan 永不失败**（不受单文件/总量/数量上限约束）。
 - 命令须存在且处 `fetched`、`mode=scan`，且其所属任务处 `scanning`（否则 `404 COMMAND_NOT_FOUND` / `409 REVERSE_FETCH_TASK_STATE`）。返回 `{ "ok": true }`。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md)。
 
+### 13. 回传执行错误 `POST /beacon/v1/agent/files/error`（FR-87 受管任务·错误回传）
+请求体：`{ "commandId": 1290, "reason": "读 plugins 目录失败：IOException: permission denied" }`（无文件内容）。agent 执行 scan/submit **读盘失败**（IO 错 / 异常）时回传，使任务不再静默卡在非终态等过期清理。控制面据 `commandId` 反查所属任务（scan 命令→`scan_command_id`/任务 `scanning`、submit 命令→`submit_command_id`/任务 `fetching`），把任务转 `failed`、写 `last_error`、扫描 / 提交命令转 `failed`、记 `file.reverse-fetch-error` 审计（detail 不含文件内容）。
+- 命令须存在且处 `fetched`、`mode ∈ {scan, submit}`，且其所属任务处对应非终态（否则 `404 COMMAND_NOT_FOUND` / `409 REVERSE_FETCH_TASK_STATE`，幂等：重复回传 / 终态任务不二次终结、不误终结无关任务）。回传 best-effort 不重试。返回 `{ "ok": true }`。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md) 与 [docs/specs/reverse-fetch-task-progress.md](specs/reverse-fetch-task-progress.md)。
+
 ---
 
 ## 二、admin / UI 侧 `/admin/v1/*`
@@ -332,7 +336,7 @@ data: {}
 
 把 FR-39「一次性整批抓取、超限整批失败」升级为**受管任务 + 两段式（先扫清单、再抓选定）**：状态机 `scanning → pending-review → fetching → ingesting → done`，旁出 `failed`/`cancelled`/`expired`；**FR-59 加 `conflict-review` 态**（介于 `fetching` 与 `ingesting`：选定内容与目标已有版本冲突时暂存待人工 diff 确认）。scan 只列元信息清单（**永不失败**），人工审核选定后只抓选定集；超单文件阈值的运行时垃圾在清单里红标可见而非拖垮整批。每 `(namespace, serverId)` 同时**至多一个非终态任务**（互斥，`conflict-review` 仍占活跃）。任务是真源、`agent_command` 是其执行手段（两次下发 scan/submit 命令）。
 
-**任务视图字段**：`{ id, namespace, serverId, scope, group, target, status, scanCommandId, submitCommandId, totalFiles, selectedCount, overThresholdCount, skippedCount, files: [{path,size,isText,overThreshold,ignoredByRule}], selectedPaths: [string], operator, note, createdAt, updatedAt }`（`files` 为扫描清单展开、`pending-review` 起非空；`ignoredByRule` 仅 `GET tasks/{id}` 详情即时算——命中当前任务作用域活跃忽略规则的文件为 `true`，纯展示标记不改 manifest 存储，FR-59；`selectedPaths` 提交后非空）。
+**任务视图字段**：`{ id, namespace, serverId, scope, group, target, status, scanCommandId, submitCommandId, totalFiles, selectedCount, overThresholdCount, skippedCount, files: [{path,size,isText,overThreshold,ignoredByRule}], selectedPaths: [string], operator, note, lastError, createdAt, updatedAt, elapsedSec }`（`files` 为扫描清单展开、`pending-review` 起非空；`ignoredByRule` 仅 `GET tasks/{id}` 详情即时算——命中当前任务作用域活跃忽略规则的文件为 `true`，纯展示标记不改 manifest 存储，FR-59；`selectedPaths` 提交后非空；**`lastError`**（FR-87）失败原因明细——agent 回传 scan/submit 错误或控制面入库失败时非空、供 `failed` 任务展示，与 `note`（结果 / 取消摘要）分立；**`elapsedSec`**（FR-87）控制面渲染时刻 UTC 距 `updatedAt`〔最近一次状态迁移〕的秒数〔≥0〕——表达「当前态已停留多久」，供任务台显时长 + 非终态超阈值前端标「疑似 agent 未响应」，纯派生不落库）。
 
 | 端点 | 说明 |
 |---|---|
@@ -345,7 +349,7 @@ data: {}
 | `POST /admin/v1/reverse-fetch/tasks/{id}/resolve` | 冲突审核落库（**FR-59**，写操作 readonly→403）。body `{decisions: [{path, action: "overwrite"\|"keep", reviewedMd5?}]}`：冲突集每项须恰有一个决定；`overwrite` 须带 `reviewedMd5`=该文件抓取 md5（**自审门**，盲确认 / 漂移→`412 REVERSE_FETCH_REVIEW_MISMATCH`），`keep` 保留已有跳过。CAS 认领 `conflict-review → ingesting`（防并发双 resolve，被并发认领→`409 REVERSE_FETCH_TASK_STATE`）→ 复用 `Import` 落库非冲突集 + 确认覆盖集 → 任务转 `done`、清空暂存瞬态、记 `file.reverse-fetch-ingest` 审计。返回 `200` + `{ created, updated }` |
 
 - 生命周期：任务可查 / 可取消 / **会过期**（创建超期仍非终态——含 `conflict-review`——由后台清理器转 `expired` 并清空清单 / 暂存瞬态、解除互斥）。
-- 审计（detail 均不含文件内容，沿 ADR-0027 决策7）：建任务 `file.reverse-fetch-scan`、提交 `file.reverse-fetch-submit`、入库 `file.reverse-fetch-ingest`（直落与冲突审核 resolve 共用）、取消 `file.reverse-fetch-cancel`。
+- 审计（detail 均不含文件内容，沿 ADR-0027 决策7）：建任务 `file.reverse-fetch-scan`、提交 `file.reverse-fetch-submit`、入库 `file.reverse-fetch-ingest`（直落与冲突审核 resolve 共用）、取消 `file.reverse-fetch-cancel`、错误回传 `file.reverse-fetch-error`（FR-87，agent 回传执行错误致任务 `failed`）。
 - 边界：本期 submit 选定集 / 冲突决定由 API 直接给（前端审核台交互挑选 / diff 面板属 FR-60）；ADR-0027 安全边界（限 `plugins/`、排除 `.jar`/二进制、path 安全、full 角色 + 审计）一条不松。
 
 错误：任务不存在 `404 REVERSE_FETCH_TASK_NOT_FOUND`；状态不符 `409 REVERSE_FETCH_TASK_STATE`；活跃互斥 `409 REVERSE_FETCH_TASK_ACTIVE`；超阈值未确认 `400 OVER_THRESHOLD_NOT_CONFIRMED`；冲突文件缺失 `404 REVERSE_FETCH_CONFLICT_NOT_FOUND`；冲突自审不符 `412 REVERSE_FETCH_REVIEW_MISMATCH`；目标不在线 `404 INSTANCE_NOT_FOUND`。

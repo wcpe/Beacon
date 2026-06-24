@@ -176,6 +176,25 @@ func (r *ReverseFetchTaskRepository) MarkTerminal(id uint, expect, terminal, not
 	return res.RowsAffected > 0, nil
 }
 
+// MarkFailedWithError 把任务从期望前态 CAS 迁移到 failed、写失败明细 last_error、清空瞬态并解除互斥占位（FR-87）。
+// 与 MarkTerminal 平行：MarkTerminal 写 note（结果 / 取消摘要），本方法专写 last_error（失败错因）。
+// 返回是否命中（前态不符 / 已被并发终结则 false）。
+func (r *ReverseFetchTaskRepository) MarkFailedWithError(id uint, expect, lastError string, now time.Time) (bool, error) {
+	res := r.db.Model(&model.ReverseFetchTask{}).
+		Where("id = ? AND status = ?", id, expect).
+		Updates(map[string]any{
+			"status":         model.ReverseFetchTaskFailed,
+			"active_at":      now,
+			"last_error":     lastError,
+			"manifest":       "",
+			"submit_content": "",
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // ExpireStale 把创建早于 before、仍处非终态的任务标 expired、清空清单瞬态并置 active 哨兵为 now（解除互斥）。
 // 返回受影响条数。GORM 不支持跨行用列值赋 active_at，故统一用 now（陈旧任务批量终结，时间足够区分历史并存）。
 func (r *ReverseFetchTaskRepository) ExpireStale(before, now time.Time) (int64, error) {

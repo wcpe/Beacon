@@ -417,3 +417,77 @@ func TestSubmitIngestRejectsJar(t *testing.T) {
 		t.Fatalf("入库校验失败任务应 failed，实际 %s", failed.Status)
 	}
 }
+
+// TestReceiveErrorScanFailsTask agent 回传 scan 读盘错误（FR-87）→ scanning 任务转 failed、记 lastError、命令 failed、审计、互斥解除。
+func TestReceiveErrorScanFailsTask(t *testing.T) {
+	db := newRFTaskTestDB(t)
+	svc := newRFTaskSvc(db)
+	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	fetchCmd(t, db, task.ScanCommandID)
+
+	if err := svc.ReceiveError(task.ScanCommandID, "扫描 plugins 目录元信息失败：permission denied", ""); err != nil {
+		t.Fatalf("scan 错误回传应成功: %v", err)
+	}
+	got, _ := svc.Get(task.ID)
+	if got.Status != model.ReverseFetchTaskFailed {
+		t.Fatalf("scan 出错任务应 failed，实际 %s", got.Status)
+	}
+	if got.LastError == "" {
+		t.Fatal("failed 任务应记 lastError")
+	}
+	// 命令转 failed
+	cmd, _ := repository.NewAgentCommandRepository(db).FindByID(task.ScanCommandID)
+	if cmd == nil || cmd.Status != model.CommandStatusFailed {
+		t.Fatalf("scan 命令应 failed，实际 %+v", cmd)
+	}
+	if rfCountAudit(t, db, model.ActionFileReverseFetchError) != 1 {
+		t.Fatal("应记一条 file.reverse-fetch-error 审计")
+	}
+	// 互斥解除：同实例可再建
+	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+		t.Fatalf("失败终结后同实例应可再建，实际 %v", err)
+	}
+}
+
+// TestReceiveErrorSubmitFailsTask agent 回传 submit 读盘错误（FR-87）→ fetching 任务转 failed、记 lastError。
+func TestReceiveErrorSubmitFailsTask(t *testing.T) {
+	db := newRFTaskTestDB(t)
+	svc := newRFTaskSvc(db)
+	task := scanToPendingReview(t, db, svc, []ScanFile{{Path: "A/config.yml", Size: 1, IsText: true}})
+	got, _ := svc.Submit(task.ID, []string{"A/config.yml"}, false, "alice", "")
+	fetchCmd(t, db, got.SubmitCommandID)
+
+	if err := svc.ReceiveError(got.SubmitCommandID, "读 plugins 目录失败：IO error", ""); err != nil {
+		t.Fatalf("submit 错误回传应成功: %v", err)
+	}
+	failed, _ := svc.Get(task.ID)
+	if failed.Status != model.ReverseFetchTaskFailed || failed.LastError == "" {
+		t.Fatalf("submit 出错任务应 failed 且记 lastError，实际 status=%s lastError=%q", failed.Status, failed.LastError)
+	}
+}
+
+// TestReceiveErrorRejectsMismatch 错误回传幂等守卫（FR-87）：命令不存在 / 任务态不符 → 拒，不误终结。
+func TestReceiveErrorRejectsMismatch(t *testing.T) {
+	db := newRFTaskTestDB(t)
+	svc := newRFTaskSvc(db)
+
+	// 命令不存在 → COMMAND_NOT_FOUND
+	if err := svc.ReceiveError(99999, "x", ""); err != apperr.ErrCommandNotFound {
+		t.Fatalf("不存在命令应 COMMAND_NOT_FOUND，实际 %v", err)
+	}
+
+	// scan 命令未被拉取（仍 pending、非 fetched）→ COMMAND_NOT_FOUND
+	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	if err := svc.ReceiveError(task.ScanCommandID, "x", ""); err != apperr.ErrCommandNotFound {
+		t.Fatalf("未拉取命令回传应 COMMAND_NOT_FOUND，实际 %v", err)
+	}
+
+	// 任务已被取消（终态）后再回传错误 → 命令已 fetched 但任务非 scanning → STATE
+	fetchCmd(t, db, task.ScanCommandID)
+	if _, err := svc.Cancel(task.ID, "alice", ""); err != nil {
+		t.Fatalf("取消应成功: %v", err)
+	}
+	if err := svc.ReceiveError(task.ScanCommandID, "x", ""); err != apperr.ErrReverseFetchTaskState {
+		t.Fatalf("终态任务回传错误应 REVERSE_FETCH_TASK_STATE，实际 %v", err)
+	}
+}

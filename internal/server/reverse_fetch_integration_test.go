@@ -233,3 +233,96 @@ func TestReverseFetchSubmitIngestRejectsJar(t *testing.T) {
 		t.Fatalf("jar 被拒后 area2 应无文件，实际 %v", files["items"])
 	}
 }
+
+// TestReverseFetchScanErrorReport agent scan 读盘失败回传错误（FR-87）：
+// 建任务(scanning) → agent 拉 scan 命令 → agent 回传 /files/error → 任务 failed + lastError 落库、命令 failed、审计；
+// 任务视图含 elapsedSec（≥0）；任务终结后互斥解除可再建。
+func TestReverseFetchScanErrorReport(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	registerOnline(t, ts.URL, "prod", "src-e", "area3")
+
+	code0, task := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-e/reverse-fetch?namespace=prod", map[string]any{
+		"scope": "group", "group": "area3",
+	})
+	if code0 != http.StatusAccepted {
+		t.Fatalf("建任务应 202，实际 %d：%v", code0, task)
+	}
+	taskID := int(task["id"].(float64))
+	scanCmdID := int(task["scanCommandId"].(float64))
+	// 视图含 elapsedSec 字段（派生、≥0）
+	if _, ok := task["elapsedSec"]; !ok {
+		t.Fatalf("任务视图应含 elapsedSec，实际 %v", task)
+	}
+
+	// agent 拉 scan 命令（迁 fetched）
+	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-e", nil); code != http.StatusOK {
+		t.Fatalf("拉 scan 命令应 200，实际 %d", code)
+	}
+
+	// agent 回传执行错误 → 200
+	code, errResp := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
+		"commandId": scanCmdID,
+		"reason":    "扫描 plugins 目录元信息失败：IOException: permission denied",
+	})
+	if code != http.StatusOK {
+		t.Fatalf("回传错误应 200，实际 %d：%v", code, errResp)
+	}
+
+	// 任务转 failed 且 lastError 落库可查
+	code, detail := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID), nil)
+	if code != http.StatusOK || detail["status"] != "failed" {
+		t.Fatalf("回传错误后任务应 failed，实际 %d：%v", code, detail)
+	}
+	if le, _ := detail["lastError"].(string); le == "" {
+		t.Fatalf("failed 任务应记 lastError，实际 %v", detail["lastError"])
+	}
+	if ev, ok := detail["elapsedSec"].(float64); !ok || ev < 0 {
+		t.Fatalf("任务视图 elapsedSec 应为 ≥0 数字，实际 %v", detail["elapsedSec"])
+	}
+
+	// 记一条 file.reverse-fetch-error 审计
+	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=file.reverse-fetch-error", nil)
+	if code != http.StatusOK || len(asSlice(audits["items"])) == 0 {
+		t.Fatalf("应有 file.reverse-fetch-error 审计，实际 %d：%v", code, audits["items"])
+	}
+
+	// 互斥解除：同实例可再建任务
+	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-e/reverse-fetch?namespace=prod", map[string]any{
+		"scope": "group", "group": "area3",
+	}); code != http.StatusAccepted {
+		t.Fatalf("失败终结后同实例应可再建，实际 %d", code)
+	}
+}
+
+// TestReverseFetchErrorRejectsMismatch 错误回传幂等守卫（FR-87）：命令不存在 → 404；终态任务回传 → 409。
+func TestReverseFetchErrorRejectsMismatch(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	registerOnline(t, ts.URL, "prod", "src-em", "area4")
+
+	// 命令不存在 → 404 COMMAND_NOT_FOUND
+	code, body := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
+		"commandId": 999999, "reason": "x",
+	})
+	if code != http.StatusNotFound || body["code"] != "COMMAND_NOT_FOUND" {
+		t.Fatalf("不存在命令应 404 COMMAND_NOT_FOUND，实际 %d：%v", code, body)
+	}
+
+	// 建任务 → 拉 scan 命令 → 取消任务（终态）后再回传错误 → 409 STATE
+	_, task := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-em/reverse-fetch?namespace=prod", map[string]any{
+		"scope": "group", "group": "area4",
+	})
+	taskID := int(task["id"].(float64))
+	scanCmdID := int(task["scanCommandId"].(float64))
+	doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-em", nil)
+	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/cancel", nil); code != http.StatusOK {
+		t.Fatalf("取消应 200，实际 %d", code)
+	}
+	code, body2 := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/error", map[string]any{
+		"commandId": scanCmdID, "reason": "x",
+	})
+	if code != http.StatusConflict || body2["code"] != "REVERSE_FETCH_TASK_STATE" {
+		t.Fatalf("终态任务回传错误应 409 REVERSE_FETCH_TASK_STATE，实际 %d：%v", code, body2)
+	}
+}

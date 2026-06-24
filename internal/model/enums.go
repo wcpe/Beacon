@@ -127,6 +127,8 @@ const (
 	ActionFileReverseFetchIngest = "file.reverse-fetch-ingest"
 	// 反向抓取受管任务·取消（FR-58）：人工取消非终态任务
 	ActionFileReverseFetchCancel = "file.reverse-fetch-cancel"
+	// 反向抓取受管任务·错误回传（FR-87）：agent 执行 scan/submit 读盘失败回传错误，任务转 failed 记 lastError（detail 不含文件内容）
+	ActionFileReverseFetchError = "file.reverse-fetch-error"
 	// 反向抓取持久忽略规则·新增 / 删除（FR-59）：登记 / 撤销下次扫描该排除的文件 / 目录
 	ActionReverseFetchIgnoreRuleAdd    = "reverse-fetch.ignore-rule-add"
 	ActionReverseFetchIgnoreRuleRemove = "reverse-fetch.ignore-rule-remove"

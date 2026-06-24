@@ -58,8 +58,13 @@ type reverseFetchTaskView struct {
 	SelectedPaths      []string                   `json:"selectedPaths"`
 	Operator           string                     `json:"operator"`
 	Note               string                     `json:"note"`
-	CreatedAt          string                     `json:"createdAt"`
-	UpdatedAt          string                     `json:"updatedAt"`
+	// 失败原因明细（FR-87）：agent 回传 scan/submit 错误或控制面入库失败时非空，供 failed 任务展示
+	LastError string `json:"lastError"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+	// 已用时长（FR-87）：控制面渲染时刻 UTC 距 updatedAt（最近一次状态迁移）的秒数，负值归零；
+	// 表达「当前态已停留多久」，供任务台显时长 + 非终态超阈值卡死警示。纯派生、不落库。
+	ElapsedSec int64 `json:"elapsedSec"`
 }
 
 // manifestFilesEnvelope 仅解出 manifest TEXT 中的 files 数组（视图按需展开清单元信息）。
@@ -75,10 +80,12 @@ func toReverseFetchTaskView(t *model.ReverseFetchTask) reverseFetchTaskView {
 		TotalFiles: t.TotalFiles, SelectedCount: t.SelectedCount,
 		OverThresholdCount: t.OverThresholdCount, SkippedCount: t.SkippedCount,
 		Files: []reverseFetchScanFileView{}, SelectedPaths: []string{},
-		Operator:  t.Operator,
-		Note:      t.Note,
-		CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: t.UpdatedAt.UTC().Format(time.RFC3339),
+		Operator:   t.Operator,
+		Note:       t.Note,
+		LastError:  t.LastError,
+		CreatedAt:  t.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:  t.UpdatedAt.UTC().Format(time.RFC3339),
+		ElapsedSec: elapsedSec(t.UpdatedAt),
 	}
 	// 清单 / 选定为 TEXT JSON，best-effort 解析展开；解析失败留空（不致整页失败）。
 	if t.Manifest != "" {
@@ -94,6 +101,15 @@ func toReverseFetchTaskView(t *model.ReverseFetchTask) reverseFetchTaskView {
 		}
 	}
 	return v
+}
+
+// elapsedSec 算任务已用时长（FR-87）：渲染时刻 UTC 距 updatedAt 的整秒，负值（时钟漂移）归零。
+func elapsedSec(updatedAt time.Time) int64 {
+	d := time.Now().UTC().Sub(updatedAt.UTC())
+	if d < 0 {
+		return 0
+	}
+	return int64(d / time.Second)
 }
 
 // createScanTaskRequest 是 admin 建扫描任务请求体（scope=group 只需 group；scope=server 需 group + target）。
@@ -329,6 +345,27 @@ func (h *ReverseFetchTaskHandler) Scan(w http.ResponseWriter, r *http.Request) {
 		files[i] = service.ScanFile{Path: f.Path, Size: f.Size, IsText: f.IsText, OverThreshold: f.OverThreshold}
 	}
 	if err := h.svc.ReceiveScan(req.CommandID, files, clientIP(r)); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// errorReportRequest 是 agent 回传 scan/submit 执行错误的请求体（FR-87 线路契约）。
+type errorReportRequest struct {
+	CommandID uint   `json:"commandId"`
+	Reason    string `json:"reason"`
+}
+
+// ReportError 处理 POST /beacon/v1/agent/files/error（FR-87，agentToken 中间件下）：接收 agent 回传的
+// scan/submit 执行错误 → 控制面据命令反查任务，转 failed、记 lastError、命令转 failed、记审计。
+func (h *ReverseFetchTaskHandler) ReportError(w http.ResponseWriter, r *http.Request) {
+	var req errorReportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if err := h.svc.ReceiveError(req.CommandID, req.Reason, clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
