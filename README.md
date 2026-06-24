@@ -2,7 +2,7 @@
 
 > 面向 Minecraft 服务器集群的自研控制面 —— 配置中心 · 服务发现 · 健康检查（"MC 版 Nacos"）。
 
-[![version](https://img.shields.io/badge/version-v0.12.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-v0.13.0-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
@@ -82,8 +82,8 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:0.12.0") // 只读契约
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.12.0") // 便捷门面（推荐）
+    compileOnly("top.wcpe.beacon:beacon-agent-api:0.13.0") // 只读契约
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.13.0") // 便捷门面（推荐）
 }
 ```
 

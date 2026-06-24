@@ -131,11 +131,11 @@
 | FR-83 | 全局搜索 + 命令面板（feat，见 [docs/specs/command-palette.md](specs/command-palette.md)）：Cmd-K 聚合搜 config/file/server/audit 并跳转/执行常用操作，纯键盘可达 | P2 | 已交付@v0.12.0 |
 | FR-84 | 审计全文检索 + 导出（增强 FR-7）：审计按 detail 关键字检索 + `GET /admin/v1/audits/export` 出 CSV/JSON 流（复用过滤，可移植 GORM） | P2 | 已交付@v0.12.0 |
 | FR-85 | 新服接入引导向导（feat，见 [docs/specs/server-onboarding-wizard.md](specs/server-onboarding-wizard.md)）：「添加服务器」向导填 ns/serverId/角色/大区→生成 agent config.yml + env 片段供复制、校验 serverId 不重复、可预建 zone 指派 | P2 | 已交付@v0.12.0 |
-| FR-86 | agent 版本/构建可见性（增强 FR-34/FR-52，[ADR-0039](adr/0039-agent-self-reported-version.md)，双端 jar，见 [docs/specs/agent-version-visibility.md](specs/agent-version-visibility.md)）：agent 注册自报版本/build，InstanceView + 服务器页显示、集群内版本不一致黄标，治 agent 跑哪个构建运维不可见的盲区 | P2 | 开发中 |
-| FR-87 | 反向抓取受管任务进度/错误回传（增强 FR-58/FR-60，扩展 ADR-0037 spec，改 agent，见 [docs/specs/reverse-fetch-task-progress.md](specs/reverse-fetch-task-progress.md)）：任务显 elapsed + 卡死阈值警示、agent 端错误回传进 task.lastError 展示 | P2 | 开发中 |
-| FR-88 | 在线日志/诊断查看器（feat，[ADR-0040](adr/0040-agent-readonly-log-tail.md)·安全边界，双端 jar，见 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)）：agent 自身日志内存环形缓冲（落缓冲脱敏/有界）+ 命令-回传取日志 + 服务器详情「查看 agent 日志」拉最近 N 行，排障免上机 | P2 | 开发中 |
-| FR-89 | 告警历史 / 事件信息流（feat，[ADR-0041](adr/0041-alert-event-persistence.md)·新实体，见 [docs/specs/alert-event-feed.md](specs/alert-event-feed.md)）：健康流转/发布失败/后端不可达落 alert_event 表 + 新「事件」页时间线展示 | P2 | 开发中 |
-| FR-90 | admin API token 管理（feat，见 [ADR-0042](adr/0042-admin-api-token.md)）：脚本化 admin API token 复用 FR-42 运行时 API 密钥（`bk_` 前缀，库存哈希、可吊销/到期、full/readonly 角色、调 `/admin/v1`，区别 agent 共享 `X-Beacon-Token`），FR-90 增量为管理台一次性明文弹窗的「复制为 curl」自动化辅助（带认证头的可粘贴样例命令）；不新增并行凭据、不做 OAuth/SSO/细粒度 ACL/多租户（见 [docs/specs/admin-api-token.md](specs/admin-api-token.md)） | P2 | 开发中 |
+| FR-86 | agent 版本/构建可见性（增强 FR-34/FR-52，[ADR-0039](adr/0039-agent-self-reported-version.md)，双端 jar，见 [docs/specs/agent-version-visibility.md](specs/agent-version-visibility.md)）：agent 注册自报版本/build，InstanceView + 服务器页显示、集群内版本不一致黄标，治 agent 跑哪个构建运维不可见的盲区 | P2 | 已交付@v0.13.0 |
+| FR-87 | 反向抓取受管任务进度/错误回传（增强 FR-58/FR-60，扩展 ADR-0037 spec，改 agent，见 [docs/specs/reverse-fetch-task-progress.md](specs/reverse-fetch-task-progress.md)）：任务显 elapsed + 卡死阈值警示、agent 端错误回传进 task.lastError 展示 | P2 | 已交付@v0.13.0 |
+| FR-88 | 在线日志/诊断查看器（feat，[ADR-0040](adr/0040-agent-readonly-log-tail.md)·安全边界，双端 jar，见 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)）：agent 自身日志内存环形缓冲（落缓冲脱敏/有界）+ 命令-回传取日志 + 服务器详情「查看 agent 日志」拉最近 N 行，排障免上机 | P2 | 已交付@v0.13.0 |
+| FR-89 | 告警历史 / 事件信息流（feat，[ADR-0041](adr/0041-alert-event-persistence.md)·新实体，见 [docs/specs/alert-event-feed.md](specs/alert-event-feed.md)）：健康流转/发布失败/后端不可达落 alert_event 表 + 新「事件」页时间线展示 | P2 | 已交付@v0.13.0 |
+| FR-90 | admin API token 管理（feat，见 [ADR-0042](adr/0042-admin-api-token.md)）：脚本化 admin API token 复用 FR-42 运行时 API 密钥（`bk_` 前缀，库存哈希、可吊销/到期、full/readonly 角色、调 `/admin/v1`，区别 agent 共享 `X-Beacon-Token`），FR-90 增量为管理台一次性明文弹窗的「复制为 curl」自动化辅助（带认证头的可粘贴样例命令）；不新增并行凭据、不做 OAuth/SSO/细粒度 ACL/多租户（见 [docs/specs/admin-api-token.md](specs/admin-api-token.md)） | P2 | 已交付@v0.13.0 |
 | FR-91 | 服务器行快捷操作（增强 FR-65，依赖 FR-86+FR-88）：行菜单加 agent 详情/查看日志/强制重同步（触发该 agent 重拉有效配置） | P2 | 计划 |
 | FR-92 | 暗色模式 / NOC 大屏只读 / 紧凑密度（feat）：暗色主题切换、只读「大屏」看板路由、表格密度开关，持久化偏好 | P3 | 计划 |
 
