@@ -43,6 +43,8 @@ const (
 	CommandTypeIngestPlugins = "ingest-plugins"
 	// CommandTypeTailLogs 取日志：令 agent 读自身日志环形缓冲快照回传（FR-88，见 ADR-0040；不读任意磁盘文件）。
 	CommandTypeTailLogs = "tail-logs"
+	// CommandTypeResyncConfig 强制重同步：令 agent 重新拉取控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、不新增 ADR）。
+	CommandTypeResyncConfig = "resync-config"
 )
 
 // agent 命令载荷 mode（FR-46 / FR-58）：区分 FR-39 直接落库、FR-46 拓印转存待审、FR-58 两段式扫描 / 提交。
@@ -140,6 +142,8 @@ const (
 	ActionFileImprint = "file.imprint"
 	// 取 agent 日志（FR-88，见 ADR-0040）：admin 触发命令在线实例回传自身脱敏日志（detail 仅 commandId/serverId，不含日志内容）
 	ActionInstanceTailLogs = "instance.tail-logs"
+	// 强制重同步（FR-91）：admin 触发命令在线实例重拉有效配置/文件树/覆盖集（detail 仅 commandId/serverId，无内容）
+	ActionInstanceResync = "instance.resync"
 	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
 	ActionOverrideSetCreate   = "override-set.create"
 	ActionOverrideSetPublish  = "override-set.publish"

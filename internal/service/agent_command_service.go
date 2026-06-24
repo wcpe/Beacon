@@ -119,6 +119,70 @@ func (s *AgentCommandService) RequestReverseFetch(ns, serverID, scope, group, ta
 	return cmd, nil
 }
 
+// RequestResync 由 admin 触发对某在线实例的强制重同步（FR-91）：事务内建 pending resync-config 命令 + instance.resync 审计。
+// 语义为「重拉控制面权威的有效配置/文件树/覆盖集并 apply」，无业务载荷（空 JSON），复用命令队列既有模式（见 ADR-0027）。
+// 在线校验与 SSE 唤醒在 handler/server 层（与取日志一致）。返回命令（含 id 供 agent 回传结果引用）。
+func (s *AgentCommandService) RequestResync(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+	if ns == "" || serverID == "" || operator == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	cmd := &model.AgentCommand{
+		NamespaceCode: ns, ServerID: serverID,
+		Type: model.CommandTypeResyncConfig, Payload: "{}",
+		Status: model.CommandStatusPending, Operator: operator,
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if e := s.repo.WithTx(tx).Create(cmd); e != nil {
+			return e
+		}
+		// Create 后 cmd.ID 已回填，可入审计 detail（无敏感内容）。
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			NamespaceCode: ns,
+			Operator:      operator, Action: model.ActionInstanceResync,
+			TargetType: model.TargetTypeInstance, TargetRef: serverID,
+			Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
+			Result: model.ResultOK, ClientIP: clientIP,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	// 提交成功后唤醒该 agent 的 SSE 流发 command-pending（agent 离线则无 waiter、留待重连拉取或超时）。
+	if s.notifier != nil {
+		s.notifier.NotifyCommand(ns, serverID)
+	}
+	slog.Info("触发在线实例强制重同步", "namespace", ns, "serverId", serverID, "commandId", cmd.ID, "operator", operator)
+	return cmd, nil
+}
+
+// ReceiveResyncResult 接收 agent 回传的强制重同步执行结果（FR-91）：命令须存在、type=resync-config 且处 fetched。
+// ok=true 则 CAS done；否则 CAS failed 并记原因摘要（无敏感内容）。重同步无内容回传，仅推进命令生命周期。
+func (s *AgentCommandService) ReceiveResyncResult(commandID uint, ok bool, reason string) error {
+	cmd, err := s.repo.FindByID(commandID)
+	if err != nil {
+		return err
+	}
+	if cmd == nil || cmd.Type != model.CommandTypeResyncConfig {
+		return apperr.ErrCommandNotFound
+	}
+	if cmd.Status != model.CommandStatusFetched {
+		return apperr.ErrCommandNotFound // 已完成 / 失败 / 过期 / 未拉取，均不可回传
+	}
+	if ok {
+		hit, e := s.repo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusDone, "")
+		if e != nil {
+			return e
+		}
+		if !hit {
+			return apperr.ErrCommandNotFound // 被并发终结（前态不符）
+		}
+		slog.Info("收到强制重同步完成回传", "commandId", cmd.ID)
+		return nil
+	}
+	s.markFailed(cmd.ID, reason)
+	return nil
+}
+
 // FetchPending 取某 agent 最早一条 pending 命令并 CAS 迁移 fetched（供 agent 拉取）。
 // 无 pending 或被并发取走返回 (nil, nil)。
 func (s *AgentCommandService) FetchPending(ns, serverID string) (*model.AgentCommand, error) {

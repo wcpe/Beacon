@@ -215,6 +215,82 @@ func TestReceiveIngestAllowsAgentSelfDir(t *testing.T) {
 	}
 }
 
+// TestRequestResync 触发即建 pending resync-config 命令并记一条 instance.resync 审计（target=实例）。
+func TestRequestResync(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newCommandSvc(db)
+	cmd, err := svc.RequestResync("prod", "lobby-1", "alice", "10.0.0.1")
+	if err != nil {
+		t.Fatalf("触发重同步失败: %v", err)
+	}
+	if cmd.ID == 0 || cmd.Status != model.CommandStatusPending || cmd.Type != model.CommandTypeResyncConfig {
+		t.Fatalf("命令应为 pending/resync-config，实际 %+v", cmd)
+	}
+	if cmd.Payload != "{}" {
+		t.Fatalf("重同步命令无业务载荷，应为空 JSON，实际 %q", cmd.Payload)
+	}
+	if countAudit(t, db, model.ActionInstanceResync) != 1 {
+		t.Fatal("应记一条 instance.resync 审计")
+	}
+	// 缺参一律拒
+	if _, err := svc.RequestResync("prod", "", "alice", ""); err == nil {
+		t.Fatal("缺 serverId 应拒")
+	}
+	if _, err := svc.RequestResync("prod", "lobby-1", "", ""); err == nil {
+		t.Fatal("缺 operator 应拒")
+	}
+}
+
+// TestReceiveResyncResultHappy 拉取后回传 ok=true → 命令 done。
+func TestReceiveResyncResultHappy(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newCommandSvc(db)
+	cmdRepo := repository.NewAgentCommandRepository(db)
+	_, _ = svc.RequestResync("prod", "lobby-1", "alice", "")
+	cmd, _ := svc.FetchPending("prod", "lobby-1")
+
+	if err := svc.ReceiveResyncResult(cmd.ID, true, ""); err != nil {
+		t.Fatalf("回传成功应推进命令: %v", err)
+	}
+	got, _ := cmdRepo.FindByID(cmd.ID)
+	if got.Status != model.CommandStatusDone {
+		t.Fatalf("ok=true 命令应转 done，实际 %s", got.Status)
+	}
+}
+
+// TestReceiveResyncResultFailedAndGuards ok=false 转 failed；存在性/状态/类型守卫。
+func TestReceiveResyncResultFailedAndGuards(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	svc := newCommandSvc(db)
+	cmdRepo := repository.NewAgentCommandRepository(db)
+
+	// 不存在的命令 → COMMAND_NOT_FOUND
+	if err := svc.ReceiveResyncResult(99999, true, ""); err != apperr.ErrCommandNotFound {
+		t.Fatalf("不存在命令应 ErrCommandNotFound，实际 %v", err)
+	}
+	// pending（未拉取）状态回传 → 不可回传
+	_, _ = svc.RequestResync("prod", "lobby-1", "alice", "")
+	pend, _ := cmdRepo.FindOldestPending("prod", "lobby-1")
+	if err := svc.ReceiveResyncResult(pend.ID, true, ""); err != apperr.ErrCommandNotFound {
+		t.Fatalf("pending 状态回传应被拒，实际 %v", err)
+	}
+	// 非 resync-config 类型命令（ingest-plugins）回传 → 类型不符拒
+	_, _ = svc.RequestReverseFetch("prod", "other-1", model.ScopeGroup, "area1", "", "alice", "")
+	ingestCmd, _ := svc.FetchPending("prod", "other-1")
+	if err := svc.ReceiveResyncResult(ingestCmd.ID, true, ""); err != apperr.ErrCommandNotFound {
+		t.Fatalf("非 resync-config 类型回传应被拒，实际 %v", err)
+	}
+	// 拉取后回传 ok=false → 命令转 failed
+	cmd, _ := svc.FetchPending("prod", "lobby-1")
+	if err := svc.ReceiveResyncResult(cmd.ID, false, "重拉失败"); err != nil {
+		t.Fatalf("失败回传不应返回错误（仅推进命令）: %v", err)
+	}
+	got, _ := cmdRepo.FindByID(cmd.ID)
+	if got.Status != model.CommandStatusFailed {
+		t.Fatalf("ok=false 命令应转 failed，实际 %s", got.Status)
+	}
+}
+
 // TestValidateIngestFiles 直测再校验：空 / 超数 / jar / 超总量 / 合法。
 func TestValidateIngestFiles(t *testing.T) {
 	if validateIngestFiles(nil) != apperr.ErrInvalidParam {

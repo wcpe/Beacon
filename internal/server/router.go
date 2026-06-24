@@ -62,6 +62,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 反向抓取命令（FR-39，见 ADR-0027）：拉本机待办命令 + 回传 plugins 文件集 ingest
 		r.Get("/commands", h.Command.Pending)
 		r.Post("/files/ingest", h.Command.Ingest)
+		// 强制重同步命令结果回传（FR-91）：resync-config 命令无内容回传，仅推进命令 done / failed
+		r.Post("/commands/result", h.Command.ReportResult)
 		// 反向抓取受管任务·扫描回传（FR-58，见 ADR-0037）：回传只含元信息的扫描清单（无内容、永不失败）
 		r.Post("/files/scan", h.ReverseFetchTask.Scan)
 		// 反向抓取受管任务·错误回传（FR-87）：agent 执行 scan/submit 读盘失败回传错误，任务转 failed 记 lastError
@@ -155,6 +157,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 取 agent 日志（FR-88，见 ADR-0040）：触发取自身脱敏日志（写，readonly 403）+ 查询最近一次结果（读）
 		r.Post("/instances/{serverId}/logs", h.AgentLog.Request)
 		r.Get("/instances/{serverId}/logs", h.AgentLog.Get)
+		// 强制重同步（FR-91）：触发该实例重拉有效配置/文件树/覆盖集（写，readonly 403）
+		r.Post("/instances/{serverId}/resync", h.Command.Resync)
 		// 在线实例反向抓取·受管任务（FR-58，重定义旧一次性端点，见 ADR-0037）：建扫描任务 + 下发 scan 命令（写，readonly 403）
 		r.Post("/instances/{serverId}/reverse-fetch", h.ReverseFetchTask.CreateScanTask)
 		// 受管任务台 / 审核台（FR-58）：查 / 列任务（读）+ 提交选定集 / 取消（写，readonly 403）

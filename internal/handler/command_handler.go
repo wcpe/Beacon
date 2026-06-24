@@ -85,6 +85,51 @@ func (h *CommandHandler) ReverseFetch(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
 }
 
+// Resync 处理 POST /admin/v1/instances/{serverId}/resync?namespace=（FR-91）：
+// 先校验目标在线（不在注册表即 INSTANCE_NOT_FOUND，不建命令），再建 pending resync-config 命令 + 唤醒该 agent + 审计。
+// 返回已创建命令（202）；agent 拉取后重拉有效配置/文件树/覆盖集并回传结果。
+func (h *CommandHandler) Resync(w http.ResponseWriter, r *http.Request) {
+	serverID := chi.URLParam(r, "serverId")
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	// 校验目标在线：不在注册表即 INSTANCE_NOT_FOUND，不建命令。
+	if _, err := h.instSvc.Get(ns, serverID); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	cmd, err := h.svc.RequestResync(ns, serverID, auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
+}
+
+// commandResultRequest 是 agent 回传命令执行结果的请求体（FR-91 resync-config）：ok 表示成功，失败时 reason 携原因。
+type commandResultRequest struct {
+	CommandID uint   `json:"commandId"`
+	OK        bool   `json:"ok"`
+	Reason    string `json:"reason"`
+}
+
+// ReportResult 处理 POST /beacon/v1/agent/commands/result（FR-91）：接收 agent 回传的 resync-config 命令执行结果，
+// CAS 推进命令 done / failed。与其它 agent 端点同属 agentToken 防误连信任面；无内容回传，仅推进命令生命周期。
+func (h *CommandHandler) ReportResult(w http.ResponseWriter, r *http.Request) {
+	var req commandResultRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if err := h.svc.ReceiveResyncResult(req.CommandID, req.OK, req.Reason); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // imprintRequest 是 admin 触发按需拓印的请求体（FR-46）：仅需目标文件相对 path；
 // namespace 走查询参数（与 /instances/{serverId} 其他端点一致），落层在确认时再选。
 type imprintRequest struct {
