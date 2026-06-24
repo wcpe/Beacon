@@ -3,10 +3,11 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { listAudits, listNamespaces } from '../api/client'
-import type { AuditFilter } from '../api/client'
+import { exportAudits, listAudits, listNamespaces } from '../api/client'
+import type { AuditExportFormat, AuditFilter } from '../api/client'
 import type { AuditView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
+import { useMessage } from '@/components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
@@ -35,6 +36,7 @@ function toIso(local: string): string | undefined {
 
 export default function AuditsPage() {
   const { t } = useTranslation()
+  const msg = useMessage()
   // 审计 action 英文枚举 → 中文显示（i18n 映射；未知枚举回退原文，后端仍返英文枚举）
   const actionLabel = (action: string) => t(`audit.action.${action}`, { defaultValue: action })
   // 过滤表单的草稿值（点「查询」时才生效）
@@ -43,12 +45,15 @@ export default function AuditsPage() {
   const [action, setAction] = useState('')
   const [targetType, setTargetType] = useState('')
   const [targetRef, setTargetRef] = useState('')
+  const [detailKeyword, setDetailKeyword] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   // 已生效的查询条件
   const [filter, setFilter] = useState<AuditFilter>({ page: 1, size: PAGE_SIZE })
   // 详情 Dialog 选中的审计条目（null 表示关闭）
   const [selectedAudit, setSelectedAudit] = useState<AuditView | null>(null)
+  // 导出中标记（防重复点击；csv/json 各算一次）
+  const [exporting, setExporting] = useState(false)
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ['audits', filter],
@@ -69,6 +74,7 @@ export default function AuditsPage() {
       action: action.trim() || undefined,
       targetType: targetType.trim() || undefined,
       targetRef: targetRef.trim() || undefined,
+      detailKeyword: detailKeyword.trim() || undefined,
       from: toIso(from),
       to: toIso(to),
       page: 1,
@@ -78,6 +84,19 @@ export default function AuditsPage() {
 
   function goPage(page: number) {
     setFilter((f) => ({ ...f, page }))
+  }
+
+  // 导出当前已生效过滤条件下的全量审计（不分页，FR-84）；后端流式输出 CSV/JSON。
+  async function onExport(format: AuditExportFormat) {
+    if (exporting) return
+    setExporting(true)
+    try {
+      await exportAudits(filter, format)
+    } catch (e) {
+      msg.showError(`${t('audit.exportFailed')}：${(e as Error).message}`)
+    } finally {
+      setExporting(false)
+    }
   }
 
   const total = data?.total ?? 0
@@ -111,6 +130,15 @@ export default function AuditsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{t('audit.title')}</h1>
+        {/* 导出按钮：按当前已生效过滤条件全量下载（FR-84） */}
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('csv')}>
+            {t('audit.exportCsv')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('json')}>
+            {t('audit.exportJson')}
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -159,6 +187,15 @@ export default function AuditsPage() {
             <div className="space-y-1.5">
               <Label htmlFor="a-targetref">{t('audit.colTargetRef')}</Label>
               <Input id="a-targetref" value={targetRef} onChange={(e) => setTargetRef(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-detailkw">{t('audit.detailKeyword')}</Label>
+              <Input
+                id="a-detailkw"
+                value={detailKeyword}
+                onChange={(e) => setDetailKeyword(e.target.value)}
+                placeholder={t('audit.detailKeywordPlaceholder')}
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="a-from">{t('audit.fromTime')}</Label>

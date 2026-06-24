@@ -156,11 +156,17 @@ export const zhCN = {
     operatorPlaceholder: '如 admin',
     actionPlaceholder: '如 config.publish',
     targetTypePlaceholder: 'config / zone / ...',
+    detailKeyword: '详情关键字',
+    detailKeywordPlaceholder: '在详情中检索子串',
     fromTime: '起始时间',
     toTime: '截止时间',
     empty: '无审计记录',
     detailTitle: '审计详情',
     detailField: '详情',
+    // 导出（FR-84）：按当前过滤条件全量流式下载
+    exportCsv: '导出 CSV',
+    exportJson: '导出 JSON',
+    exportFailed: '导出失败',
     // 审计 action 英文枚举 → 中文映射（后端不改、仍返英文枚举；未知枚举经 defaultValue 回退原文）
     action: {
       'config.create': '新建配置',

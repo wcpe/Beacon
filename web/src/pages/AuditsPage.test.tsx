@@ -10,10 +10,12 @@ vi.mock('../api/client', () => ({
   listAudits: vi.fn(),
   // FR-51：环境筛选下拉的候选来源
   listNamespaces: vi.fn(),
+  // FR-84：导出审计
+  exportAudits: vi.fn(),
 }))
 
 import AuditsPage from './AuditsPage'
-import { listAudits, listNamespaces } from '../api/client'
+import { listAudits, listNamespaces, exportAudits } from '../api/client'
 
 const EMPTY_PAGE = { total: 0, items: [] }
 
@@ -25,6 +27,7 @@ function renderPage(ui: ReactElement) {
 beforeEach(() => {
   vi.mocked(listAudits).mockResolvedValue(EMPTY_PAGE)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
+  vi.mocked(exportAudits).mockResolvedValue(undefined)
 })
 
 describe('AuditsPage 操作人过滤', () => {
@@ -59,6 +62,44 @@ describe('AuditsPage 操作人过滤', () => {
       expect(vi.mocked(listAudits)).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: 'prod' }),
       ),
+    )
+  })
+})
+
+// FR-84：detail 关键字检索 + 导出。
+describe('AuditsPage detail 关键字检索与导出', () => {
+  it('输入 detail 关键字并查询时把 detailKeyword 透传给 listAudits', async () => {
+    renderPage(<AuditsPage />)
+    const input = await screen.findByLabelText('详情关键字')
+    await userEvent.type(input, 'mysql')
+    await userEvent.click(screen.getByRole('button', { name: '查询' }))
+    await waitFor(() =>
+      expect(vi.mocked(listAudits)).toHaveBeenCalledWith(
+        expect.objectContaining({ detailKeyword: 'mysql' }),
+      ),
+    )
+  })
+
+  it('点导出 CSV 时按当前过滤调 exportAudits(csv)', async () => {
+    renderPage(<AuditsPage />)
+    // 先设一个 detail 关键字并查询，使其进入已生效过滤
+    await userEvent.type(await screen.findByLabelText('详情关键字'), 'redis')
+    await userEvent.click(screen.getByRole('button', { name: '查询' }))
+    await userEvent.click(screen.getByRole('button', { name: '导出 CSV' }))
+    await waitFor(() =>
+      expect(vi.mocked(exportAudits)).toHaveBeenCalledWith(
+        expect.objectContaining({ detailKeyword: 'redis' }),
+        'csv',
+      ),
+    )
+  })
+
+  it('点导出 JSON 时调 exportAudits(json)', async () => {
+    renderPage(<AuditsPage />)
+    await screen.findByRole('button', { name: '导出 JSON' })
+    await userEvent.click(screen.getByRole('button', { name: '导出 JSON' }))
+    await waitFor(() =>
+      expect(vi.mocked(exportAudits)).toHaveBeenCalledWith(expect.anything(), 'json'),
     )
   })
 })

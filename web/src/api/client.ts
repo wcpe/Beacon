@@ -557,6 +557,8 @@ export interface AuditFilter {
   action?: string
   targetType?: string
   targetRef?: string
+  // detail 列子串关键字检索（后端 GET /admin/v1/audits 的 detailKeyword 参数，FR-84）
+  detailKeyword?: string
   from?: string
   to?: string
   page?: number
@@ -565,6 +567,41 @@ export interface AuditFilter {
 
 export function listAudits(filter: AuditFilter): Promise<AuditPage> {
   return request<AuditPage>(`/audits${qs(filter)}`)
+}
+
+// 审计导出格式（FR-84）
+export type AuditExportFormat = 'csv' | 'json'
+
+// 导出审计（FR-84）：复用 listAudits 同过滤（剔除分页），按 format 流式下载全量命中。
+// 端点回非 JSON 的附件流，故不走 request（其按 JSON 解析）；用 fetch 带令牌取 Blob 后触发浏览器下载。
+// 文件名优先取响应 Content-Disposition，回退本地生成；遇 401 与 request 同口径清登录态并跳登录。
+export async function exportAudits(filter: AuditFilter, format: AuditExportFormat): Promise<void> {
+  // 导出全量、不分页：剔除 page/size 再拼参数
+  const { page: _page, size: _size, ...rest } = filter
+  const token = currentToken()
+  const resp = await fetch(`${BASE}/audits/export${qs({ ...rest, format })}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (resp.status === 401) {
+    clearAuth()
+    if (unauthorizedHandler) unauthorizedHandler()
+    throw await toError(resp)
+  }
+  if (!resp.ok) throw await toError(resp)
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filenameFromDisposition(resp.headers.get('Content-Disposition')) ?? `audit-export-${Date.now()}.${format}`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// 从 Content-Disposition 头解析附件文件名（filename="..."）；缺失则返回 undefined。
+function filenameFromDisposition(header: string | null): string | undefined {
+  if (!header) return undefined
+  const m = /filename="?([^"]+)"?/.exec(header)
+  return m?.[1]
 }
 
 // ===== 服务分析 / 平台用量看板（FR-73）=====

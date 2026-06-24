@@ -526,7 +526,8 @@ data: {}
 ### 审计与环境
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30） |
+| `GET /admin/v1/audits?namespace=&operator=&action=&targetType=&targetRef=&detailKeyword=&from=&to=&page=&size=` | 分页审计（时间倒序），返回 `total` + `items`；`operator` 按操作者过滤（FR-30）；`detailKeyword` 对 `detail` 列做子串 LIKE 检索（与其它过滤 AND 叠加，`%`/`_` 已转义当字面字符，可移植 GORM 不用方言函数，FR-84） |
+| `GET /admin/v1/audits/export?<同 audits 过滤>&format=csv\|json` | 审计导出（FR-84，增强 FR-7）：复用 `GET /audits` 全部过滤（含 `detailKeyword`，**不分页、全量导出**），`format` 缺省 `csv`；按时间倒序**流式**输出（控制面按游标分批边查边写、不一次性载入内存）。`csv`→`Content-Type: text/csv` 首行表头（id,namespace,operator,action,targetType,targetRef,detail,result,clientIp,createdAt）+ 命中行；`json`→`Content-Type: application/json` 命中记录数组（小驼峰字段，同 audits items）；均带 `Content-Disposition: attachment`（文件名含 UTC 时间戳）。`format` 非 csv/json → `400 INVALID_PARAM`（写出响应头前拒绝） |
 | `GET /admin/v1/audits/analytics?namespace=&from=&to=` | 窗口内审计活动聚合（FR-73）：`namespace` 可空（全部环境）；`from`/`to` 为 RFC3339，缺省 `to`=当前、`from`=`to`-30 天，**窗口上限 92 天**（超出 `400 INVALID_PARAM`）。返回 `{from, to, total, okCount, failCount, byAction:[{action,count}]按 count 降序, byDay:[{date:"YYYY-MM-DD",count}]按 UTC 日升序}`；空窗口各数组为 `[]`。日聚合在 Go 侧做（不用方言日期函数，保 Postgres 可移植） |
 | `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建（建环境记一条 `namespace.create` 审计，operator 由认证态派生） |
 | `PUT /admin/v1/namespaces/{code}` | 改环境显示名（请求体 `{ "name": "新显示名" }`，`code` 不可变；记 `namespace.update` 审计；环境不存在 `404 NAMESPACE_NOT_FOUND`；写方法 readonly→403，FR-53） |
