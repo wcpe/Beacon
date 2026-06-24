@@ -23,6 +23,7 @@ type Handlers struct {
 	Scheduling       *handler.SchedulingHandler
 	Audit            *handler.AuditHandler
 	Alert            *handler.AlertHandler
+	AlertEvent       *handler.AlertEventHandler
 	Metric           *handler.MetricHandler
 	System           *handler.SystemHandler
 	Observability    *handler.ObservabilityHandler
@@ -180,6 +181,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 健康告警站内信（FR-28）
 		r.Get("/alerts", h.Alert.List)
+		// 告警历史 / 事件信息流（FR-89，见 ADR-0041）：持久化的告警事件按类型/级别/环境/时间过滤分页查询
+		r.Get("/alert-events", h.AlertEvent.List)
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)

@@ -60,6 +60,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.ServerDrain{},
 		&model.ServerOffline{},
 		&model.AuditLog{},
+		&model.AlertEvent{},
 		&model.MetricSample{},
 		&model.APIKey{},
 		&model.AgentCommand{},

@@ -22,7 +22,7 @@
 | [0016](0016-agent-cross-server-messaging-middleware.md) | agent 内置跨服消息中间件：基于 Redis 的通用通信层 | 已接受 |
 | [0017](0017-traffic-scheduling-decision-vs-execution.md) | 流量调度：控制面给决策 / 数据面做执行，drain 落 DB、canary 划范围外 | 已接受 |
 | [0018](0018-config-encryption-at-rest.md) | 敏感配置 at-rest 加密：AES-256-GCM、密钥走 env、密文落 TEXT 可移植 | 已接受 |
-| [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受 |
+| [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受（**「告警不落库」一条被 [0041](0041-alert-event-persistence.md) 取代**） |
 | [0020](0020-prometheus-metrics-observability.md) | 控制面用标准 Prometheus client 暴露运行指标（/metrics） | 已接受 |
 | [0021](0021-config-gray-cohort-version-selection.md) | 配置灰度：按显式 serverId 名单（cohort）在版本选择层叠加，promote/abort 收口 | 已接受 |
 | [0022](0022-agent-roster-read-api.md) | agent-api 暴露玩家位置名册只读查询（扩展 ADR-0016 决策 5） | 已接受 |
@@ -44,6 +44,7 @@
 | [0038](0038-ops-settings-store-hot-reload.md) | 运维设置 store + 热生效：热改项真源由 config.yml 移到 DB | 已接受 |
 | [0039](0039-agent-self-reported-version.md) | agent 注册时自报构建版本（壳层经 TabooLib pluginVersion 注入），控制面只读暴露 InstanceView、管理台展示 + 集群版本不一致黄标 | 已接受 |
 | [0040](0040-agent-readonly-log-tail.md) | agent 只读日志回传：自身日志内存环形缓冲 + 命令-回传 + 落缓冲脱敏（不读任意文件、行数有界、限速、agentToken 信任面） | 已接受 |
+| [0041](0041-alert-event-persistence.md) | 告警事件持久化实体 alert_event（留痕 + UI 信息流，作 PersistAlerter 通道接入扇出，取代 ADR-0019「告警不落库」结论） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

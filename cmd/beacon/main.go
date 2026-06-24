@@ -160,9 +160,12 @@ func run() error {
 	heartbeatInterval := time.Duration(cfg.Health.HeartbeatIntervalSec) * time.Second
 	ttl := time.Duration(settingsService.GetInt(service.SettingHealthTTLSec)) * time.Second
 
-	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 通道恒挂载、靠设置 store 的 url 空与否动态启停（FR-61）。
+	// 告警事件留痕（FR-89，ADR-0041）：把每条告警额外落 alert_event 供管理台「事件」页历史信息流。
+	alertEventService := service.NewAlertEventService(repository.NewAlertEventRepository(db))
+	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 通道恒挂载、靠设置 store 的 url 空与否动态启停（FR-61）；
+	// persist 通道把告警额外留痕（FR-89，落库失败仅 WARN、不阻断扫描，见 Dispatcher 兜错）。
 	inbox := alert.NewInboxAlerter(cfg.Alert.InboxCapacity)
-	alertChannels := []alert.Alerter{inbox, alert.NewWebhookAlerter(settingsService)}
+	alertChannels := []alert.Alerter{inbox, alert.NewWebhookAlerter(settingsService), alert.NewPersistAlerter(alertEventService)}
 	// 健康阈值 / 扫描周期由健康扫描器每轮从设置 store 读、热生效（FR-61）。
 	healthScanner := runtime.NewHealthScanner(
 		registry, settingsService, alert.NewDispatcher(alertChannels...))
@@ -246,6 +249,7 @@ func run() error {
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
 	alertHandler := handler.NewAlertHandler(inbox)
+	alertEventHandler := handler.NewAlertEventHandler(alertEventService)
 	authHandler := handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo))
 
 	// 管理面 API 密钥（FR-42，见 ADR-0026）：运行时创建/吊销/重置 + 只读角色，落库只存哈希。
@@ -317,7 +321,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

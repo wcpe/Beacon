@@ -194,3 +194,19 @@ const (
 	ResultOK   = "ok"
 	ResultFail = "fail"
 )
+
+// 告警事件类型（FR-89，落 VARCHAR + 应用层校验，见 ADR-0041）。
+// 当前唯一真实触发点为健康流转；publish-fail / backend-unreachable 预置为枚举取值，
+// 供将来在对应发生处接入告警扇出时复用，本期不凭空制造这两类触发（守范围纪律）。
+const (
+	AlertEventTypeHealthTransition   = "health-transition"   // 实例健康状态异常转移（degraded/lost/offline）
+	AlertEventTypePublishFail        = "publish-fail"        // 配置/文件发布失败（预留枚举，当前无触发点）
+	AlertEventTypeBackendUnreachable = "backend-unreachable" // 后端不可达（预留枚举，当前无触发点）
+)
+
+// 告警事件严重级别（FR-89，落 VARCHAR + 应用层校验，见 ADR-0041）。
+const (
+	AlertLevelInfo     = "info"
+	AlertLevelWarning  = "warning"
+	AlertLevelCritical = "critical"
+)

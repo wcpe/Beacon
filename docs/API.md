@@ -334,6 +334,7 @@ data: {}
 | `POST /admin/v1/instances/{serverId}/logs?namespace=` | **触发取该 agent 自身脱敏日志**（FR-88，写操作 readonly→403，见 [ADR-0040](adr/0040-agent-readonly-log-tail.md)）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单活跃限速**（该实例已有进行中取日志命令→`409 AGENT_LOG_ACTIVE`）→ 事务内建 `tail-logs` 命令（`pending`）+ `instance.tail-logs` 审计（detail 不含日志内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§14）。返回 `202` + `{ commandId, status, lines: [] }` |
 | `GET /admin/v1/instances/{serverId}/logs?namespace=` | 查询该实例最近一次取日志结果（FR-88，供前端轮询）：`done` 则返回 `{ commandId, status, lines: [{ level, text }] }`（日志已脱敏）；进行中（`pending`/`fetched`）/ 失败（`failed`/`expired`）时 `lines` 为空；**从无取日志命令→`204 No Content`**。日志为瞬态、取一次后随命令过期清空 |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
+| `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt }]`。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
