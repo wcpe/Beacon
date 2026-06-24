@@ -45,8 +45,17 @@ class ReverseFetchExecutorTest {
         val lastErrorBody = AtomicReference<String?>(null)
         val logsCalls = AtomicInteger(0)
         val lastLogsBody = AtomicReference<String?>(null)
+        val resultCalls = AtomicInteger(0)
+        val lastResultBody = AtomicReference<String?>(null)
 
         override fun execute(request: HttpRequest): HttpResponse = when {
+            // 命令结果回传端点（FR-91）：URL 含 /agent/commands/result（须在通用 /agent/commands 前判定）。
+            request.url.contains("/agent/commands/result") -> {
+                resultCalls.incrementAndGet()
+                lastResultBody.set(request.body)
+                HttpResponse(200, "")
+            }
+
             request.url.contains("/agent/commands") -> {
                 if (served.getAndIncrement() < pendingCount) HttpResponse(200, pendingBody) else HttpResponse(204, "")
             }
@@ -120,6 +129,12 @@ class ReverseFetchExecutorTest {
                 "payload" to emptyMap<String, Any?>(),
             )
 
+            CMD_RESYNC -> mapOf(
+                "id" to 12,
+                "type" to "resync-config",
+                "payload" to emptyMap<String, Any?>(),
+            )
+
             else -> emptyMap<String, Any?>()
         }
     }
@@ -187,6 +202,12 @@ class ReverseFetchExecutorTest {
     private fun executor(transport: FakeTransport, adapter: StubAdapter, buffer: AgentLogBuffer): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter, buffer)
+    }
+
+    /** 带强制重同步回调的执行器（FR-91 重同步路径用）。 */
+    private fun executor(transport: FakeTransport, adapter: StubAdapter, onResync: () -> Unit): ReverseFetchExecutor {
+        val client = BeaconApiClient(transport, FakeCodec(), settings())
+        return ReverseFetchExecutor(identity(), client, adapter, onResyncConfig = onResync)
     }
 
     @Test
@@ -373,11 +394,54 @@ class ReverseFetchExecutorTest {
         assertEquals(0, adapter.readCalls.get(), "不应读盘")
     }
 
+    @Test
+    fun `重同步命令调回调并回传 done 不读盘`() {
+        // FR-91：resync-config 命令 → 调重同步回调 → 经命令结果端点回传 done，绝不读 plugins 树。
+        val transport = FakeTransport(pendingBody = CMD_RESYNC)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        val resyncCalls = AtomicInteger(0)
+        executor(transport, adapter) { resyncCalls.incrementAndGet() }.trigger()
+
+        assertEquals(1, resyncCalls.get(), "应调重同步回调一次")
+        assertEquals(0, adapter.readCalls.get(), "重同步绝不读 plugins 内容")
+        assertEquals(0, adapter.metadataCalls.get(), "重同步绝不 stat plugins 元信息")
+        assertEquals(0, transport.ingestCalls.get(), "重同步不走 ingest")
+        assertEquals(1, transport.resultCalls.get(), "应走 /agent/commands/result 一次")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("commandId=12"), "结果回传应携命令 id：$body")
+        assertTrue(body.contains("ok=true"), "成功应回传 ok=true：$body")
+    }
+
+    @Test
+    fun `重同步回调抛异常回传 failed`() {
+        // FR-91：回调抛异常 → 回传 ok=false（控制面据此 CAS failed）。
+        val transport = FakeTransport(pendingBody = CMD_RESYNC)
+        val adapter = StubAdapter(emptyMap())
+        executor(transport, adapter) { throw IllegalStateException("boom") }.trigger()
+
+        assertEquals(1, transport.resultCalls.get(), "失败也应回传结果一次")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("commandId=12"), "结果回传应携命令 id：$body")
+        assertTrue(body.contains("ok=false"), "失败应回传 ok=false：$body")
+    }
+
+    @Test
+    fun `未注入重同步回调时重同步命令忽略不回传`() {
+        // 向后兼容：未注入回调（executor 无 onResyncConfig）→ resync-config 按未知能力忽略、不回传。
+        val transport = FakeTransport(pendingBody = CMD_RESYNC)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        executor(transport, adapter).trigger() // 无回调重载
+
+        assertEquals(0, transport.resultCalls.get(), "未注入回调不应回传结果")
+        assertEquals(0, adapter.readCalls.get(), "不应读盘")
+    }
+
     companion object {
         private const val CMD_INGEST = "cmd-ingest"
         private const val CMD_UNKNOWN = "cmd-unknown"
         private const val CMD_SCAN = "cmd-scan"
         private const val CMD_SUBMIT = "cmd-submit"
         private const val CMD_TAIL_LOGS = "cmd-tail-logs"
+        private const val CMD_RESYNC = "cmd-resync"
     }
 }

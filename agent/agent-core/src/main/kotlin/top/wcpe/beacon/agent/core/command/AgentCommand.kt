@@ -22,6 +22,9 @@ data class AgentCommand(
 
         /** 取日志命令类型：读 agent 自身日志环形缓冲快照回传（FR-88，见 ADR-0040）。 */
         const val TYPE_TAIL_LOGS = "tail-logs"
+
+        /** 强制重同步命令类型：重拉控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、无业务载荷）。 */
+        const val TYPE_RESYNC_CONFIG = "resync-config"
     }
 }
 

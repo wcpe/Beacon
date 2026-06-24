@@ -243,6 +243,24 @@ class AgentLifecycle(
     }
 
     /**
+     * 立即强制重同步（FR-91）：重拉控制面权威的有效配置/文件树/覆盖集并 apply。
+     *
+     * 复用现有三条「以本地 md5 拉一次 → 幂等 apply」路径（与 SSE *-changed 事件同形）：
+     * applier 的 md5 幂等守卫兜底——已是最新则只触发一次无害读取、不重复广播 / 落盘（合法 no-op）。
+     * 未启用文件树 / 覆盖集子系统的路径自身已内部短路（applier 为 null 直接返回），无需在此判空。
+     *
+     * **须在 async 线程调用**（内部 HTTP / 文件 IO 均阻塞）：由命令执行器在 async 线程触发，
+     * 故此处不再额外起线程、也绝不上 MC 主线程。
+     */
+    fun forceResyncNow() {
+        if (!running.get()) return
+        adapter.info("执行强制重同步：重拉有效配置/文件树/覆盖集")
+        fetchAndApplyConfigOnce()
+        fetchAndApplyFileTreeOnce()
+        fetchAndApplyOverrideOnce()
+    }
+
+    /**
      * 启动：读快照→有则先 apply 点亮有效配置→再异步注册→成功后启心跳 + 长轮询。
      * 全程不阻塞调用线程（壳层在 ENABLE 调用，内部即转异步）。
      */

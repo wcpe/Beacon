@@ -30,6 +30,7 @@ import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import top.wcpe.beacon.agent.core.transport.StreamTransport
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 装配产物：把 lifecycle 与对外门面交回壳层。
@@ -143,13 +144,18 @@ object AgentAssembly {
             null
         }
 
+        // 强制重同步回调（FR-91）的延迟持有者：executor 先于 lifecycle 构造，回调命令期才触发，
+        // 故用可变引用打破构造顺序——lifecycle 建好后回填，命令到达时再解引用调用。
+        val lifecycleRef = AtomicReference<AgentLifecycle?>(null)
+
         // 反向抓取执行器（FR-39，见 ADR-0027）：仅在 plugins 基目录有效时装配（与文件树同一 fail-closed 守卫，
         // 避免从错误目录读盘上传）。读盘委托 adapter.readPluginsTree（壳层实现 FS 级路径安全）。
-        // 取日志（FR-88）不依赖 plugins 基目录有效性（只读内存缓冲、不读盘）；故执行器始终装配以响应 tail-logs。
+        // 取日志（FR-88）/ 强制重同步（FR-91）不依赖 plugins 基目录有效性（不读盘）；故执行器始终装配以响应这两类命令。
         // 反向抓取（读盘）仍受 pluginsBaseValid fail-closed 守卫：基目录无效时禁读盘上传（避免从错误目录读），
-        // 由 reverseFetchEnabled 关闭该路径——tail-logs 不受影响。反向抓取与取日志复用同一命令通路与单飞排空。
+        // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config 不受影响。三类命令复用同一命令通路与单飞排空。
         val reverseFetchExecutor = ReverseFetchExecutor(
             identity, apiClient, adapter, logBuffer,
+            onResyncConfig = { lifecycleRef.get()?.forceResyncNow() },
             reverseFetchEnabled = pluginsBaseValid,
         )
 
@@ -177,6 +183,8 @@ object AgentAssembly {
             // 反向抓取执行器（FR-39）：收到 SSE command-pending / READY 时触发拉命令→读 plugins→回传。
             reverseFetchExecutor = reverseFetchExecutor,
         )
+        // 回填强制重同步回调持有者（FR-91）：lifecycle 已建好，命令期 onResyncConfig 经此解引用调用 forceResyncNow。
+        lifecycleRef.set(lifecycle)
 
         // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；
         // 壳层在消息模块就绪后注入 Redis 实现。

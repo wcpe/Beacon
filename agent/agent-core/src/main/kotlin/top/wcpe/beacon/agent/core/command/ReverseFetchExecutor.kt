@@ -21,18 +21,24 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 取日志命令（FR-88，见 ADR-0040）复用同一命令通路与单飞排空：tail-logs 命令拉到后读
  * [logBuffer] 自身日志环形缓冲快照（已脱敏）回传，**绝不读任何磁盘日志文件**。
  *
+ * 强制重同步命令（FR-91）同样复用此通路：resync-config 命令拉到后调 [onResyncConfig] 回调
+ * （重拉有效配置/文件树/覆盖集并 apply），再经命令结果端点回传 done/failed，**不读 plugins 树**。
+ *
  * @param identity  本 agent 身份（拉命令 / 回传携带 namespace + serverId）
- * @param apiClient REST 客户端（拉命令 / 回传 ingest / 回传日志）
+ * @param apiClient REST 客户端（拉命令 / 回传 ingest / 回传日志 / 回传命令结果）
  * @param adapter   平台适配（读真实 plugins 树 + 日志）
  * @param logBuffer          agent 自身日志环形缓冲（FR-88，可选；为 null 时不响应 tail-logs，按未知类型忽略）
+ * @param onResyncConfig     强制重同步回调（FR-91，可选；为 null 时不响应 resync-config，按未知类型忽略）。
+ *                           延迟调用、命令期才触发——故由装配方以 lambda 闭包注入（打破与 lifecycle 的构造顺序）。
  * @param reverseFetchEnabled 是否启用反向抓取读盘路径（plugins 基目录有效时 true；无效时 fail-closed 关闭，
- *                            收到 ingest-plugins 命令仅记 warn、不读盘——但 tail-logs 不受此守卫影响）
+ *                            收到 ingest-plugins 命令仅记 warn、不读盘——但 tail-logs / resync-config 不受此守卫影响）
  */
 class ReverseFetchExecutor(
     private val identity: AgentIdentity,
     private val apiClient: BeaconApiClient,
     private val adapter: PlatformAdapter,
     private val logBuffer: AgentLogBuffer? = null,
+    private val onResyncConfig: (() -> Unit)? = null,
     private val reverseFetchEnabled: Boolean = true,
 ) {
 
@@ -71,6 +77,11 @@ class ReverseFetchExecutor(
         // 取日志命令（FR-88）：读自身日志环形缓冲快照回传，不读任何磁盘文件。
         if (command.type == AgentCommand.TYPE_TAIL_LOGS) {
             runTailLogs(command)
+            return true
+        }
+        // 强制重同步命令（FR-91）：调重同步回调重拉有效配置/文件树/覆盖集，回传命令结果，不读 plugins 树。
+        if (command.type == AgentCommand.TYPE_RESYNC_CONFIG) {
+            runResync(command)
             return true
         }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
@@ -186,6 +197,35 @@ class ReverseFetchExecutor(
             adapter.info("agent 日志回传成功：id=${command.id}，行数=${lines.size}")
         } else {
             adapter.warn("agent 日志回传失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    /**
+     * 强制重同步阶段（FR-91）：调 [onResyncConfig] 回调重拉控制面权威的有效配置/文件树/覆盖集并 apply，
+     * 再经命令结果端点回传 done。**绝不读 plugins 树**（重同步语义是重拉权威配置、非反向抓盘）。
+     *
+     * 回调内部各 applier 的 md5 幂等守卫兜底：已是最新则无害 no-op。回调抛异常 → 回传 failed（带原因摘要）。
+     * 未注入回调（旧装配 / 测试桩）则按未知能力忽略：记 warn、不回传（控制面超时清理）。
+     */
+    private fun runResync(command: AgentCommand) {
+        val callback = onResyncConfig
+        if (callback == null) {
+            adapter.warn("收到强制重同步命令但未启用重同步回调（忽略）：id=${command.id}")
+            return
+        }
+        try {
+            callback()
+        } catch (e: Exception) {
+            adapter.error("强制重同步执行失败：id=${command.id}", e)
+            val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
+            if (!ok) adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+            return
+        }
+        val ok = apiClient.uploadCommandResult(command.id, ok = true, reason = "")
+        if (ok) {
+            adapter.info("强制重同步完成并回传：id=${command.id}")
+        } else {
+            adapter.warn("强制重同步完成结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 

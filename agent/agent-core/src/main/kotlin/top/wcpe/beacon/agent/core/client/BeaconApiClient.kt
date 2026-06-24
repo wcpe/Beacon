@@ -561,6 +561,30 @@ class BeaconApiClient(
     }
 
     /**
+     * 回传命令执行结果：POST /beacon/v1/agent/commands/result（FR-91）。同步调用，请在异步线程使用。
+     *
+     * 用于强制重同步（resync-config）这类无内容回传、仅需推进命令生命周期的命令：携命令 id + ok（成功）+ 失败原因。
+     * 控制面据此 CAS 命令 done / failed。200 视作成功；其它（命令态不符 / 连接失败）返回 false（控制面侧超时清理兜底，agent 不重传）。
+     */
+    fun uploadCommandResult(commandId: Long, ok: Boolean, reason: String): Boolean {
+        val body = mapOf(
+            "commandId" to commandId,
+            "ok" to ok,
+            "reason" to reason,
+        )
+        val resp = exec(
+            HttpRequest(
+                method = "POST",
+                url = "$base/beacon/v1/agent/commands/result",
+                headers = headers(withBody = true),
+                body = codec.encode(body),
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
