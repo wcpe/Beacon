@@ -2,7 +2,7 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布
+## 0.14.0（2026-06-25）
 
 ### 新增
 - 暗色模式 / NOC 大屏只读 / 紧凑密度（FR-92，feat，纯前端，无新 ADR / 无新依赖，见 [docs/specs/theme-wallboard-density.md](docs/specs/theme-wallboard-density.md)）：给管理台补三项纯前端呈现选项并**持久化偏好**。新增偏好 store `web/src/state/preferences.ts`（镜像 `state/auth.ts` 的 `useSyncExternalStore` + 监听者广播，`localStorage` 键 `beacon.preferences` 存 `{theme, density}`，读写 try/catch 兜隐私模式、非法值逐字段回落默认；**不引入 `next-themes` 避免双真源**），作为主题 / 密度的单一真源。**① 暗色主题**：页眉太阳 / 月亮按钮浅 ↔ 暗一键切换，复用 `index.css` 既有 `.dark` 变量；`main.tsx` 渲染前同步按持久化值给 `documentElement` 打 `.dark` 类避免首屏闪烁，`App.tsx` 订阅 store 运行期同步。**② 紧凑密度**：页眉密度开关（舒适 ↔ 紧凑），`DataTable` 直接读偏好——紧凑档收紧表头高度（`h-8`）与单元格内边距（`py-1`），所有走统一表格的列表页自动响应。**③ NOC 大屏只读看板**：新路由 `/wallboard`（极简无侧栏 `WallboardLayout` 承载 `WallboardPage`，页眉仅含退出大屏 + 主题切换），复用可观测看板的只读 `metricsSummary` / `listInstances` 与 `SummaryCards` / `BCPanel` / `StatCard` 组件，大字号大间距全屏呈现，**纯只读、不含任何下线 / drain / 改派 / 编辑 / 筛选入口**，零新增后端端点。页眉 `HeaderControls`（主题 / 密度切换 + 大屏入口，挂进 `SystemHeader`）复用既有 `lucide-react` 图标、未引入新图标 / 主题依赖。新增 `preferences.*` / `wallboard.*` 中文文案（仅 zh-CN）。
