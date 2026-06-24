@@ -119,7 +119,7 @@
 | FR-71 | 区分配安全化（增强 FR-8/FR-35，[ADR-0036](adr/0036-zone-reassign-safety-drain-gate.md) 扩展 [ADR-0004](adr/0004-zone-authority-control-plane.md)，见 [docs/specs/zone-reassign-safety.md](specs/zone-reassign-safety.md)）：「zone 分配」更名「区分配」(zone→区，仅 i18n 展示)；前端取消拖拽即改 → 看板默认只读 + 解锁改派 + 显式改派 + 手输 serverId 复述确认（空服也拦防误触）；后端排空门纵深：**在线非空（online 且 playerCount>0）的服「改派/取消指派/首次指派」凡改变其区归属解析一律 409 `ZONE_SERVER_ONLINE_NONEMPTY`（须先 drain/等排空）**、同值 no-op（不落库不审计）、真正变更入审计 | P2 | 已交付@v0.10.0 |
 | FR-72 | 全量审计覆盖（增强 FR-7）：写操作审计中间件兜底（拦 /admin/v1 所有 POST/PUT/DELETE 记 操作者+动作+目标，敏感内容不入 detail）+ 既有专项审计保留 | P2 | 已交付@v0.10.0 |
 | FR-73 | 服务分析 / 平台用量看板（feat，依赖 FR-72，见 [docs/specs/service-analysis.md](specs/service-analysis.md)）：新「服务分析」页，后端加审计聚合端点（`GET /audits/analytics`，按时间窗 + 环境聚合，可移植 GORM 投影 + Go 侧日分桶、禁方言日期函数），从 audit_log 聚合 Beacon 平台运维活动（发布/修改/回滚/校验失败、反向抓取、区改派、文件树变更、登录、密钥、告警…）计数 + 成功率 + 每日趋势，KPI 卡片 + 图表；与 FR-32(MC负载)/FR-30(Prometheus) 区分 | P2 | 已交付@v0.10.0 |
-| FR-74 | 配置/文件批量操作（增强 FR-38/FR-1）：列表多选 + 批量删除/禁用/导出（一事务），治「逐个删」低效；空选禁用、批量删走统一确认 | P2 | 计划 |
+| FR-74 | 配置/文件批量操作（增强 FR-38/FR-1）：列表多选 + 批量删除/禁用/导出（一事务），治「逐个删」低效；空选禁用、批量删走统一确认 | P2 | 开发中 |
 | FR-75 | 配置编辑器格式校验（增强 FR-1/FR-3）：Monaco 客户端 YAML/JSON lint，发布前行内标错、解析失败禁用发布，防发坏格式到 agent 才暴露 | P2 | 开发中 |
 | FR-76 | 破坏性写操作统一二次确认（增强 FR-67）：抽通用确认框 + 影响摘要（脱链哪层/影响哪些服）覆盖删 config/file、清小区默认入口等删除/清除入口 | P2 | 开发中 |
 | FR-77 | 运维设置页恢复默认 + 批量保存（增强 FR-62）：每项「恢复默认」、页脚「保存全部变更(N)」+ 改动摘要 | P2 | 开发中 |

@@ -93,6 +93,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/configs/effective", h.Config.Effective)
 		// 配置灰度 / Beta 列活跃灰度（FR-9，静态路由，与 effective 同理优先于 {id}）
 		r.Get("/configs/gray", h.Config.ListGray)
+		// 批量删除 / 禁用 / 启用（FR-74，一事务原子）：静态路由置于 {id} 前以免被通配吞掉
+		r.Post("/configs/batch", h.Config.Batch)
 		r.Get("/configs/{id}", h.Config.Get)
 		r.Put("/configs/{id}", h.Config.Publish)
 		r.Delete("/configs/{id}", h.Config.Delete)
@@ -112,6 +114,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/files/effective", h.File.Effective)
 		// 配置导入（FR-38）：把一份目录批量上传到某组（multipart，静态路由置于 {id} 前以免被通配吞掉）
 		r.Post("/files/import", h.File.Import)
+		// 批量删除 / 禁用 / 启用（FR-74，一事务原子）：静态路由置于 {id} 前以免被通配吞掉
+		r.Post("/files/batch", h.File.Batch)
 		r.Get("/files/{id}", h.File.Get)
 		r.Put("/files/{id}", h.File.Publish)
 		r.Delete("/files/{id}", h.File.Delete)

@@ -91,6 +91,9 @@ const (
 	ActionConfigPublish  = "config.publish"
 	ActionConfigRollback = "config.rollback"
 	ActionConfigDelete   = "config.delete"
+	// 批量禁用 / 启用（FR-74）：批量置 enabled，单事务内逐项各记一条
+	ActionConfigDisable = "config.disable"
+	ActionConfigEnable  = "config.enable"
 	// 配置灰度 / Beta（FR-9，cohort 名单按版本选择层叠加，见 ADR-0021）
 	ActionConfigGrayPublish = "config.gray-publish"
 	ActionConfigGrayPromote = "config.gray-promote"
@@ -109,6 +112,9 @@ const (
 	ActionFilePublish           = "file.publish"
 	ActionFileRollback          = "file.rollback"
 	ActionFileDelete            = "file.delete"
+	// 批量禁用 / 启用（FR-74）：批量置 enabled，单事务内逐项各记一条
+	ActionFileDisable = "file.disable"
+	ActionFileEnable  = "file.enable"
 	// 配置导入（FR-38，通道B 之上批量上传整文件到组，一次导入记一条审计）
 	ActionFileImport = "file.import"
 	// 在线实例反向抓取触发（FR-39，见 ADR-0027；ingest 落盘复用上面的 file.import 审计）

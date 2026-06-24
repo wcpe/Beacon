@@ -290,6 +290,64 @@ func (s *ConfigService) Delete(id uint, operator, _, clientIP string) error {
 	return nil
 }
 
+// BatchDelete 在一个事务内批量软删一组配置项（FR-74）：逐项软删 + 各记一条 config.delete 审计，
+// 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒长轮询并触发 git 导出。
+func (s *ConfigService) BatchDelete(ids []uint, operator, clientIP string) error {
+	return s.batchMutate(ids, operator, clientIP, model.ActionConfigDelete, `{"deleted":true}`,
+		func(tx *gorm.DB, id uint) error {
+			return s.configRepo.WithTx(tx).SoftDelete(id, time.Now().UTC())
+		})
+}
+
+// BatchSetEnabled 在一个事务内批量置一组配置项的启用态（FR-74）：逐项置 enabled + 各记一条
+// config.disable / config.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
+func (s *ConfigService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
+	action := model.ActionConfigEnable
+	if !enabled {
+		action = model.ActionConfigDisable
+	}
+	return s.batchMutate(ids, operator, clientIP, action, fmt.Sprintf(`{"enabled":%t}`, enabled),
+		func(tx *gorm.DB, id uint) error {
+			return s.configRepo.WithTx(tx).SetEnabled(id, enabled)
+		})
+}
+
+// batchMutate 是批量软删 / 置启用态的共用骨架：先逐项取出（不存在即 404），再在单事务内
+// 对每项执行 mutate + 写一条审计，提交后逐项唤醒长轮询与触发 git 导出。
+func (s *ConfigService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
+	if operator == "" || len(ids) == 0 {
+		return apperr.ErrInvalidParam
+	}
+	items := make([]*model.ConfigItem, 0, len(ids))
+	for _, id := range ids {
+		item, err := s.Get(id)
+		if err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range items {
+			if err := mutate(tx, item.ID); err != nil {
+				return err
+			}
+			if err := s.writeAudit(tx, item, operator, action, detail, clientIP); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("批量操作配置项", "动作", action, "数量", len(items))
+	for _, item := range items {
+		s.notify(item)
+		s.exportGit(item, action, operator)
+	}
+	return nil
+}
+
 // ListRevisions 列出某配置项的历史版本。
 func (s *ConfigService) ListRevisions(id uint) ([]model.ConfigRevision, error) {
 	if _, err := s.Get(id); err != nil {

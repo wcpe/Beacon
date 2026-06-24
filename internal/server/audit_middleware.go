@@ -33,7 +33,7 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/namespaces":          {},
 	"PUT /admin/v1/namespaces/{code}":    {},
 	"DELETE /admin/v1/namespaces/{code}": {},
-	// 配置中心（config.create / publish / delete / rollback / gray-*）
+	// 配置中心（config.create / publish / delete / rollback / gray-* / batch delete|disable|enable）
 	"POST /admin/v1/configs":                   {},
 	"PUT /admin/v1/configs/{id}":               {},
 	"DELETE /admin/v1/configs/{id}":            {},
@@ -41,12 +41,16 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/configs/{id}/gray":         {},
 	"POST /admin/v1/configs/{id}/gray/promote": {},
 	"DELETE /admin/v1/configs/{id}/gray":       {},
-	// 文件树托管（file.create / import / publish / delete / rollback）
+	// 批量删除 / 禁用 / 启用（FR-74：service 在事务内逐项自记专项审计）
+	"POST /admin/v1/configs/batch": {},
+	// 文件树托管（file.create / import / publish / delete / rollback / batch delete|disable|enable）
 	"POST /admin/v1/files":               {},
 	"POST /admin/v1/files/import":        {},
 	"PUT /admin/v1/files/{id}":           {},
 	"DELETE /admin/v1/files/{id}":        {},
 	"POST /admin/v1/files/{id}/rollback": {},
+	// 批量删除 / 禁用 / 启用（FR-74：service 在事务内逐项自记专项审计）
+	"POST /admin/v1/files/batch": {},
 	// 三方覆盖集（override-set.create / publish / delete / rollback）
 	"POST /admin/v1/override-sets":               {},
 	"PUT /admin/v1/override-sets/{id}":           {},

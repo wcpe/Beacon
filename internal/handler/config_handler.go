@@ -170,6 +170,30 @@ func (h *ConfigHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// Batch 处理 POST /admin/v1/configs/batch（FR-74）：把一组配置项的删除 / 禁用 / 启用在一个事务内原子完成。
+// body {action: "delete"|"disable"|"enable", ids: [int]}；非法 action / 空 ids → 400；每项各记一条审计。
+func (h *ConfigHandler) Batch(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeBatchRequest(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	operator, clientIP := auth.Operator(r.Context()), clientIP(r)
+	switch req.Action {
+	case batchActionDelete:
+		err = h.svc.BatchDelete(req.IDs, operator, clientIP)
+	case batchActionDisable:
+		err = h.svc.BatchSetEnabled(req.IDs, false, operator, clientIP)
+	case batchActionEnable:
+		err = h.svc.BatchSetEnabled(req.IDs, true, operator, clientIP)
+	}
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"action": req.Action, "count": len(req.IDs)})
+}
+
 // ListRevisions 处理 GET /admin/v1/configs/{id}/revisions。
 func (h *ConfigHandler) ListRevisions(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r)

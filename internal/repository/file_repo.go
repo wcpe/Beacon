@@ -121,6 +121,13 @@ func (r *FileObjectRepository) SoftDelete(id uint, deletedAt time.Time) error {
 		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false}).Error
 }
 
+// SetEnabled 置未软删文件对象的启用态（批量禁用 / 启用复用，FR-74）。
+func (r *FileObjectRepository) SetEnabled(id uint, enabled bool) error {
+	return r.db.Model(&model.FileObject{}).
+		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
+		Update("enabled", enabled).Error
+}
+
 // FindEffectiveCandidates 拉取某 agent 身份的四层候选文件（已 enabled 且未软删）。
 // 一条查询拉全 global/group/zone/server 四层，由上层按 path 解析整文件覆盖。
 //

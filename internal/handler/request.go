@@ -1,12 +1,45 @@
 package handler
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wcpe/Beacon/internal/apperr"
 )
+
+// 批量操作动作（FR-74）：配置项 / 文件对象批量端点共用。
+const (
+	batchActionDelete  = "delete"
+	batchActionDisable = "disable"
+	batchActionEnable  = "enable"
+)
+
+// batchRequest 是批量端点的统一请求体（FR-74）：动作 + 目标 id 集合。
+type batchRequest struct {
+	Action string `json:"action"`
+	IDs    []uint `json:"ids"`
+}
+
+// decodeBatchRequest 解析并校验批量请求体：非法 JSON / 非法 action / 空 ids 一律 INVALID_PARAM（400）。
+func decodeBatchRequest(r *http.Request) (batchRequest, error) {
+	var req batchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return batchRequest{}, apperr.ErrInvalidParam
+	}
+	switch req.Action {
+	case batchActionDelete, batchActionDisable, batchActionEnable:
+	default:
+		return batchRequest{}, apperr.ErrInvalidParam
+	}
+	if len(req.IDs) == 0 {
+		return batchRequest{}, apperr.ErrInvalidParam
+	}
+	return req, nil
+}
 
 // longpollSettingMaxHoldMs 是长轮询挂起上限设置 key（与 service.SettingsService 同字面值，FR-61）。
 const longpollSettingMaxHoldMs = "longpoll.max-hold-ms"

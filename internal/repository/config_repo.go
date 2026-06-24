@@ -196,6 +196,13 @@ func (r *ConfigItemRepository) SoftDelete(id uint, deletedAt time.Time) error {
 		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false}).Error
 }
 
+// SetEnabled 置未软删配置项的启用态（批量禁用 / 启用复用，FR-74）。
+func (r *ConfigItemRepository) SetEnabled(id uint, enabled bool) error {
+	return r.db.Model(&model.ConfigItem{}).
+		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
+		Update("enabled", enabled).Error
+}
+
 // BumpGrayVersion 以乐观锁方式自增 gray_version：仅当当前值等于 expected 且项未软删时 +1。
 // 返回是否命中（false=版本已被并发灰度发布改动，调用方应重读重试）。
 // 作为并发灰度发布的 CAS 串行点，从源头消除「先软删后建」在 uk_gray_item 上的死锁（FR-9）。

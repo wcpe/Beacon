@@ -392,6 +392,64 @@ func (s *FileService) Delete(id uint, operator, _, clientIP string) error {
 	return nil
 }
 
+// BatchDelete 在一个事务内批量软删一组文件对象（FR-74）：逐项软删 + 各记一条 file.delete 审计，
+// 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒文件长轮询并触发 git 导出。
+func (s *FileService) BatchDelete(ids []uint, operator, clientIP string) error {
+	return s.batchMutate(ids, operator, clientIP, model.ActionFileDelete, `{"deleted":true}`,
+		func(tx *gorm.DB, id uint) error {
+			return s.fileRepo.WithTx(tx).SoftDelete(id, time.Now().UTC())
+		})
+}
+
+// BatchSetEnabled 在一个事务内批量置一组文件对象的启用态（FR-74）：逐项置 enabled + 各记一条
+// file.disable / file.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
+func (s *FileService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
+	action := model.ActionFileEnable
+	if !enabled {
+		action = model.ActionFileDisable
+	}
+	return s.batchMutate(ids, operator, clientIP, action, fmt.Sprintf(`{"enabled":%t}`, enabled),
+		func(tx *gorm.DB, id uint) error {
+			return s.fileRepo.WithTx(tx).SetEnabled(id, enabled)
+		})
+}
+
+// batchMutate 是批量软删 / 置启用态的共用骨架：先逐项取出（不存在即 404），再在单事务内
+// 对每项执行 mutate + 写一条审计，提交后逐项唤醒文件长轮询与触发 git 导出。
+func (s *FileService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
+	if operator == "" || len(ids) == 0 {
+		return apperr.ErrInvalidParam
+	}
+	objs := make([]*model.FileObject, 0, len(ids))
+	for _, id := range ids {
+		obj, err := s.Get(id)
+		if err != nil {
+			return err
+		}
+		objs = append(objs, obj)
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		for _, obj := range objs {
+			if err := mutate(tx, obj.ID); err != nil {
+				return err
+			}
+			if err := s.writeAudit(tx, obj, operator, action, detail, clientIP); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("批量操作托管文件", "动作", action, "数量", len(objs))
+	for _, obj := range objs {
+		s.notify(obj)
+		s.exportGit(obj, action, operator)
+	}
+	return nil
+}
+
 // ListRevisions 列出某文件对象的历史版本。
 func (s *FileService) ListRevisions(id uint) ([]model.FileRevision, error) {
 	if _, err := s.Get(id); err != nil {
