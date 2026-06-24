@@ -33,17 +33,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
 
 // 状态徽标配色：active 绿 / expired 琥珀 / revoked 灰
 const STATUS_COLOR: Record<string, string> = {
@@ -77,6 +67,9 @@ export default function ApiKeysPage() {
   const [createOpen, setCreateOpen] = useState(false)
   // 一次性明文展示：非 null 时弹出（创建或重置后）
   const [revealed, setRevealed] = useState<ApiKeyCreated | null>(null)
+  // 吊销 / 重置统一二次确认选中的密钥（null 表示关闭，FR-76）
+  const [revoking, setRevoking] = useState<ApiKeyView | null>(null)
+  const [resetting, setResetting] = useState<ApiKeyView | null>(null)
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['api-keys'],
@@ -99,6 +92,7 @@ export default function ApiKeysPage() {
   const resetMut = useMutation({
     mutationFn: (id: number) => resetApiKey(id),
     onSuccess: (created) => {
+      setResetting(null)
       setRevealed(created)
       qc.invalidateQueries({ queryKey: ['api-keys'] })
     },
@@ -109,6 +103,7 @@ export default function ApiKeysPage() {
     mutationFn: (id: number) => revokeApiKey(id),
     onSuccess: (_data, id) => {
       msg.showSuccess(t('apikeys.msgRevoked', { id }))
+      setRevoking(null)
       qc.invalidateQueries({ queryKey: ['api-keys'] })
     },
     onError: (e: Error) => msg.showError(e.message),
@@ -164,46 +159,24 @@ export default function ApiKeysPage() {
           <span className="text-sm text-muted-foreground">—</span>
         ) : (
           <div className="flex gap-2">
-            {/* 重置：轮换明文，旧明文立即失效 */}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" size="sm" disabled={resetMut.isPending}>
-                  {t('apikeys.resetBtn')}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t('apikeys.resetConfirmTitle', { name: k.name })}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t('apikeys.resetConfirmDescBefore')}<strong>{t('apikeys.resetConfirmStrong')}</strong>{t('apikeys.resetConfirmDescAfter')}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => resetMut.mutate(k.id)}>{t('apikeys.resetConfirmAction')}</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            {/* 吊销：软删，不可逆 */}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm" disabled={revokeMut.isPending}>
-                  {t('apikeys.revokeBtn')}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t('apikeys.revokeConfirmTitle', { name: k.name })}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t('apikeys.revokeConfirmDescBefore')}<strong>{t('apikeys.revokeConfirmStrong')}</strong>{t('apikeys.revokeConfirmDescAfter')}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => revokeMut.mutate(k.id)}>{t('apikeys.revokeConfirmAction')}</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            {/* 重置：轮换明文，旧明文立即失效——开统一二次确认（FR-76） */}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={resetMut.isPending}
+              onClick={() => setResetting(k)}
+            >
+              {t('apikeys.resetBtn')}
+            </Button>
+            {/* 吊销：软删，不可逆——开统一二次确认 + 手输密钥名复述高摩擦档（FR-76） */}
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={revokeMut.isPending}
+              onClick={() => setRevoking(k)}
+            >
+              {t('apikeys.revokeBtn')}
+            </Button>
           </div>
         ),
     },
@@ -315,6 +288,31 @@ export default function ApiKeysPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 重置密钥统一二次确认（FR-76）：带影响摘要，确认才轮换明文 */}
+      <DestructiveConfirmDialog
+        open={resetting !== null}
+        onOpenChange={(o) => !o && setResetting(null)}
+        title={resetting ? t('apikeys.resetConfirmTitle', { name: resetting.name }) : ''}
+        description={t('apikeys.resetConfirmDescFlat')}
+        impacts={[t('apikeys.resetImpactInvalidate'), t('apikeys.resetImpactExternal')]}
+        confirmLabel={t('apikeys.resetConfirmAction')}
+        pending={resetMut.isPending}
+        onConfirm={() => resetting && resetMut.mutate(resetting.id)}
+      />
+
+      {/* 吊销密钥统一二次确认（FR-76）：带影响摘要 + 手输密钥名复述高摩擦档，确认才软删 */}
+      <DestructiveConfirmDialog
+        open={revoking !== null}
+        onOpenChange={(o) => !o && setRevoking(null)}
+        title={revoking ? t('apikeys.revokeConfirmTitle', { name: revoking.name }) : ''}
+        description={t('apikeys.revokeConfirmDescFlat')}
+        impacts={[t('apikeys.revokeImpactInvalidate'), t('apikeys.revokeImpactExternal')]}
+        confirmLabel={t('apikeys.revokeConfirmAction')}
+        confirmPhrase={revoking?.name}
+        pending={revokeMut.isPending}
+        onConfirm={() => revoking && revokeMut.mutate(revoking.id)}
+      />
     </div>
   )
 }

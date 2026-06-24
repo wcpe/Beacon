@@ -65,6 +65,9 @@ export const zhCN = {
     pageInfo: '第 {{page}} / {{total}} 页（共 {{count}} 条）',
     copiedToClipboard: '已复制到剪贴板',
     copyFailed: '复制失败，请手动选中复制',
+    // 破坏性二次确认高摩擦档（FR-76）：提示手输指定短语复述以放行
+    destructiveTypeLabel: '请手输「{{phrase}}」以确认',
+    destructiveTypeAria: '输入确认',
   },
 
   // ===== 健康状态 label（保留英文原值，等值迁移）=====
@@ -419,9 +422,10 @@ export const zhCN = {
     renameBtn: '改名',
     deleteBtn: '删除',
     deleteConfirmTitle: '删除环境「{{name}}」（{{code}}）？',
-    deleteConfirmDesc1: '删除后不可恢复。若该环境下仍有',
-    deleteConfirmStrong: '已注册实例 / 已指派 zone / 配置 / 文件树 / 覆盖集',
-    deleteConfirmDesc2: '，将被禁止删除并提示原因——请先清理后再删。',
+    // 统一二次确认（FR-76）的扁平描述与影响摘要
+    deleteConfirmDescFlat: '删除后不可恢复；若该环境下仍有在用数据将被后端守卫拒绝删除。',
+    deleteImpactData: '脱链该环境下全部配置 / 文件树 / 覆盖集',
+    deleteImpactServers: '影响该环境下已注册子服与已指派 zone',
     deleteConfirmAction: '确认删除',
     codePlaceholder: '如 prod',
     namePlaceholder: '如 生产环境',
@@ -455,17 +459,17 @@ export const zhCN = {
     expiresNever: '永不',
     resetBtn: '重置',
     resetConfirmTitle: '重置密钥「{{name}}」？',
-    // 描述按 before/strong/after 三段拼，保留原文加粗（旧明文立即失效）
-    resetConfirmDescBefore: '将生成一把新明文，',
-    resetConfirmStrong: '旧明文立即失效',
-    resetConfirmDescAfter: '，使用旧明文的外部服务需更新为新值。密钥不能二次读取，请在重置后立即保存新明文。',
+    // 统一二次确认（FR-76）的扁平描述与影响摘要
+    resetConfirmDescFlat: '将生成一把新明文，旧明文立即失效；密钥不能二次读取，请在重置后立即保存新明文。',
+    resetImpactInvalidate: '旧明文立即失效',
+    resetImpactExternal: '使用旧明文的外部服务需更新为新值',
     resetConfirmAction: '确认重置',
     revokeBtn: '吊销',
     revokeConfirmTitle: '吊销密钥「{{name}}」？',
-    // 描述按 before/strong/after 三段拼，保留原文加粗（立即失效且不可恢复）
-    revokeConfirmDescBefore: '吊销后该密钥',
-    revokeConfirmStrong: '立即失效且不可恢复',
-    revokeConfirmDescAfter: '，使用它的外部服务将无法再访问。如需继续访问请另建新密钥。',
+    // 统一二次确认（FR-76）的扁平描述与影响摘要；吊销带手输密钥名复述高摩擦档
+    revokeConfirmDescFlat: '吊销后该密钥立即失效且不可恢复。如需继续访问请另建新密钥。',
+    revokeImpactInvalidate: '该密钥立即失效且不可恢复',
+    revokeImpactExternal: '使用它的外部服务将无法再访问',
     revokeConfirmAction: '确认吊销',
     namePlaceholder: '如 业务管理后端',
     roleReadonlyOpt: 'readonly（只读，仅可读端点）',

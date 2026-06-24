@@ -26,17 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
 
 export default function NamespacesPage() {
   const { t } = useTranslation()
@@ -49,6 +39,8 @@ export default function NamespacesPage() {
   // 改名 Dialog 选中的环境（null 表示关闭）；renameName 为草稿显示名
   const [renaming, setRenaming] = useState<NamespaceView | null>(null)
   const [renameName, setRenameName] = useState('')
+  // 删除确认选中的环境（null 表示关闭，FR-76 统一二次确认）
+  const [deleting, setDeleting] = useState<NamespaceView | null>(null)
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['namespaces'],
@@ -81,6 +73,7 @@ export default function NamespacesPage() {
     mutationFn: (c: string) => deleteNamespace(c),
     onSuccess: (_data, c) => {
       msg.showSuccess(t('namespaces.msgDeleted', { code: c }))
+      setDeleting(null)
       qc.invalidateQueries({ queryKey: ['namespaces'] })
     },
     onError: (e: Error) => msg.showError(e.message),
@@ -121,28 +114,15 @@ export default function NamespacesPage() {
           <Button variant="outline" size="sm" onClick={() => openRename(ns)}>
             {t('namespaces.renameBtn')}
           </Button>
-          {/* 删除：二次确认；后端守卫有在用数据（实例 / zone / 配置 / 文件树 / 覆盖集）时返 409，错误中文提示 */}
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm" disabled={deleteMut.isPending}>
-                {t('namespaces.deleteBtn')}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>{t('namespaces.deleteConfirmTitle', { name: ns.name, code: ns.code })}</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {t('namespaces.deleteConfirmDesc1')}
-                  <strong>{t('namespaces.deleteConfirmStrong')}</strong>
-                  {t('namespaces.deleteConfirmDesc2')}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                <AlertDialogAction onClick={() => deleteMut.mutate(ns.code)}>{t('namespaces.deleteConfirmAction')}</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          {/* 删除：开统一二次确认（FR-76）；后端守卫有在用数据（实例 / zone / 配置 / 文件树 / 覆盖集）时返 409，错误中文提示 */}
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={deleteMut.isPending}
+            onClick={() => setDeleting(ns)}
+          >
+            {t('namespaces.deleteBtn')}
+          </Button>
         </div>
       ),
     },
@@ -232,6 +212,22 @@ export default function NamespacesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 删除环境统一二次确认（FR-76）：带影响摘要（脱链哪层 / 影响哪些服），确认才删 */}
+      <DestructiveConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(o) => !o && setDeleting(null)}
+        title={
+          deleting
+            ? t('namespaces.deleteConfirmTitle', { name: deleting.name, code: deleting.code })
+            : ''
+        }
+        description={t('namespaces.deleteConfirmDescFlat')}
+        impacts={[t('namespaces.deleteImpactData'), t('namespaces.deleteImpactServers')]}
+        confirmLabel={t('namespaces.deleteConfirmAction')}
+        pending={deleteMut.isPending}
+        onConfirm={() => deleting && deleteMut.mutate(deleting.code)}
+      />
     </div>
   )
 }
