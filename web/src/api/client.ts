@@ -4,6 +4,7 @@
 
 import type {
   AgentCommandView,
+  AgentLogView,
   ApiKeyCreated,
   ApiKeyView,
   AssignmentView,
@@ -890,6 +891,26 @@ export function confirmImprint(
     method: 'POST',
     body: JSON.stringify(params),
   })
+}
+
+// ===== 在线日志/诊断查看器（FR-88，见 ADR-0040）=====
+
+// 触发取某在线实例的自身脱敏日志：建 pending tail-logs 命令并唤醒 agent，返回命令视图（202）。
+// namespace 走查询参数；写操作需 full 角色（readonly → 403）；该实例已有进行中取日志命令 → 409 AGENT_LOG_ACTIVE。
+export function requestAgentLogs(serverId: string, namespace: string): Promise<AgentLogView> {
+  return request<AgentLogView>(`/instances/${encodeURIComponent(serverId)}/logs${qs({ namespace })}`, {
+    method: 'POST',
+  })
+}
+
+// 查询某实例最近一次取日志结果：done 则附脱敏日志行；从无取日志命令 → 204（返回 undefined，调用方按需处理）。
+export function getAgentLogs(
+  serverId: string,
+  namespace: string,
+): Promise<AgentLogView | undefined> {
+  return request<AgentLogView | undefined>(
+    `/instances/${encodeURIComponent(serverId)}/logs${qs({ namespace })}`,
+  )
 }
 
 // ===== 三方文件覆盖兼容（override-set，FR-15）=====

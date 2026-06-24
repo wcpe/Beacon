@@ -363,6 +363,22 @@ export interface AgentCommandView {
   updatedAt: string
 }
 
+// ===== 在线日志/诊断查看器（FR-88，见 ADR-0040）=====
+
+// agent 自身日志的一行（级别 + 已脱敏文本；脱敏在 agent 侧落环形缓冲那一刻完成）。
+export interface AgentLogLine {
+  level: string
+  text: string
+}
+
+// 取 agent 日志视图（POST/GET /admin/v1/instances/{serverId}/logs）：
+// 命令 id + 状态 + 若 done 则附脱敏日志行（进行中 / 失败时 lines 为空）。
+export interface AgentLogView {
+  commandId: number
+  status: AgentCommandStatus
+  lines: AgentLogLine[]
+}
+
 // ===== 按需拓印回写 + 审核台（FR-46）=====
 
 // 拓印并入层：与文件覆盖四层一致（global/group/zone/server）。

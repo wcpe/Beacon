@@ -377,6 +377,16 @@ export const zhCN = {
     timelineScopeGroup: '大区层',
     timelineScopeZone: '小区层',
     timelineScopeServer: '子服层',
+    // 在线日志/诊断查看器（ServerDetailSheet · FR-88，见 ADR-0040）
+    logsSection: 'agent 日志',
+    logsHint: '拉取该 agent 自身最近日志（已脱敏，仅 agent 自身、不读任意文件）',
+    logsFetch: '查看 agent 日志',
+    logsRefresh: '重新拉取',
+    logsPending: '已下发取日志命令，等待 agent 回传…',
+    logsError: '取日志失败',
+    logsEmpty: '暂无日志（agent 近期未输出，或未回传）',
+    logsActive: '已有进行中的取日志请求，请稍候',
+    logsFailedStatus: 'agent 未回传日志（已失败 / 超时）',
     // BC 代理深指标卡片标签（复用代理服管理页文案）
     cardConnections: '在线连接数',
     cardThreads: 'JVM 线程数',
