@@ -28,6 +28,24 @@ export const zhCN = {
     systemObservability: '控制面健康',
   },
 
+  // ===== 全局命令面板（FR-83）=====
+  commandPalette: {
+    // 浮层无障碍标题（视觉隐藏）
+    title: '命令面板',
+    // 页眉搜索入口按钮文案 + 快捷键提示
+    trigger: '搜索…',
+    shortcutHint: 'Ctrl K',
+    // 输入框占位
+    placeholder: '搜索页面 / 配置 / 服务器 / 审计动作…',
+    // 无命中空态
+    empty: '无匹配结果',
+    // 分组标题
+    groupNavigation: '导航',
+    groupConfig: '配置 / 文件',
+    groupServer: '服务器',
+    groupAudit: '审计动作',
+  },
+
   // ===== 跨页复用 =====
   common: {
     query: '查询',
