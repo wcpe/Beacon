@@ -88,6 +88,11 @@ export const zhCN = {
   // ===== 编辑器组件 =====
   editor: {
     loading: '加载编辑器…',
+    // 客户端格式校验（FR-75）：解析失败时编辑器旁的行内错误条
+    lintErrorTitle: '格式错误，无法发布',
+    lintErrorLine: '第 {{line}} 行：{{message}}',
+    // 保存按钮在格式非法时禁用的悬浮提示
+    saveDisabledByLint: '内容存在格式错误，请先修正后再保存',
   },
 
   // ===== 登录页 =====

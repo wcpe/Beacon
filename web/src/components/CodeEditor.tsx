@@ -11,12 +11,15 @@
  * - 自动缩进、括号匹配、代码折叠
  * - 行号、自动换行、查找替换
  * - 亮色主题
+ * - 客户端格式校验（FR-75）：编辑模式下解析失败时编辑器旁显示行内错误条，
+ *   并经 onValidate 上抛错误供上层禁用发布
  */
 
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import Editor, { DiffEditor, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
+import { lintContent, type LintError } from '@/lib/configLint'
 
 // ---- 类型 ----
 
@@ -27,6 +30,8 @@ interface CodeEditorProps {
   language?: string
   onChange?: (value: string) => void
   onMount?: () => void
+  // 客户端格式校验结果回调（FR-75）：合法上抛 null，非法上抛首个错误。仅编辑模式触发。
+  onValidate?: (error: LintError | null) => void
 }
 
 // ---- 语言映射 ----
@@ -48,8 +53,24 @@ export default function CodeEditor({
   language = 'yaml',
   onChange,
   onMount,
+  onValidate,
 }: CodeEditorProps) {
+  const { t } = useTranslation()
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
+
+  // 是否为 diff 模式（只读对比，不做格式校验）
+  const isDiff = !!(original || modified)
+
+  // 编辑模式下对当前内容做客户端格式校验；diff 模式恒视为合法（不校验）
+  const lintError = isDiff ? null : lintContent(language, value)
+
+  // 校验结果变化时上抛给上层（供禁用发布）；按行号 + 信息比较避免重复回调
+  useEffect(() => {
+    if (isDiff) return
+    onValidate?.(lintError)
+    // 仅在错误标识变化时回调（line+message 唯一标识一条错误）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDiff, lintError?.line, lintError?.message])
 
   const handleEditorMount: OnMount = useCallback((ed) => {
     editorRef.current = ed
@@ -122,7 +143,7 @@ export default function CodeEditor({
     folding: false,
   }
 
-  if (original || modified) {
+  if (isDiff) {
     return (
       <DiffEditor
         original={original}
@@ -137,15 +158,31 @@ export default function CodeEditor({
   }
 
   return (
-    <Editor
-      value={value}
-      language={monacoLang}
-      theme="vs"
-      onChange={(v) => onChange?.(v ?? '')}
-      onMount={handleEditorMount}
-      options={editOptions as any}
-      loading={<EditorLoading />}
-    />
+    <div className="flex h-full flex-col">
+      <div className="min-h-0 flex-1">
+        <Editor
+          value={value}
+          language={monacoLang}
+          theme="vs"
+          onChange={(v) => onChange?.(v ?? '')}
+          onMount={handleEditorMount}
+          options={editOptions as any}
+          loading={<EditorLoading />}
+        />
+      </div>
+      {/* 客户端格式校验错误条（FR-75）：解析失败时就近标错，含行号 + 信息 */}
+      {lintError && (
+        <div
+          className="flex-shrink-0 border-t border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs text-destructive"
+          role="alert"
+        >
+          <span className="font-medium">{t('editor.lintErrorTitle')}</span>
+          <span className="ml-2">
+            {t('editor.lintErrorLine', { line: lintError.line, message: lintError.message })}
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
 

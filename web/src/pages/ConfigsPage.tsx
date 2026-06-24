@@ -35,6 +35,7 @@ import type { CreateConfigParams } from '../api/client'
 import { namespaceOptions } from '../api/format'
 import { useMessage } from '../components/useMessage'
 import { Badge } from '@/components/ui/badge'
+import type { LintError } from '@/lib/configLint'
 import { useConfigTabs } from './configs/useConfigTabs'
 import ConfigFileTree from './configs/ConfigFileTree'
 import TargetSelector from './configs/TargetSelector'
@@ -73,6 +74,9 @@ export default function ConfigsPage() {
   // 保存确认对话框（FR-67）：保存前先看 diff + 填备注，确认才发布。
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false)
   const [saveComment, setSaveComment] = useState('')
+
+  // 当前编辑态的客户端格式校验错误（FR-75）：非法则禁用保存 / 拦发布。
+  const [lintError, setLintError] = useState<LintError | null>(null)
 
   // 新建对话框动态选项：环境 / 大区 / 小区 / 实例（均由既有 list 端点派生，无硬编码）
   // 环境候选显示「编码 · 名称」，真实值仍是 code（FR-70）
@@ -114,6 +118,11 @@ export default function ConfigsPage() {
   )
 
   const activeTab = tabs.activeTab
+
+  // 切换活跃标签时清空格式校验态：新标签的编辑器挂载后会重新上抛真实结果
+  useEffect(() => {
+    setLintError(null)
+  }, [activeTab?.configId])
 
   // 当前活跃标签的配置详情
   const detail = useQuery({
@@ -174,12 +183,17 @@ export default function ConfigsPage() {
     onError: (e: Error) => msg.showError(e.message),
   })
 
-  // 点保存：不直接发布，先打开保存确认对话框（看 diff + 填备注）（FR-67）
+  // 点保存：不直接发布，先打开保存确认对话框（看 diff + 填备注）（FR-67）。
+  // 客户端格式校验失败（FR-75）时拦在发布前：不弹对话框、提示先修正。
   const requestSave = useCallback(() => {
     if (!activeTab) return
+    if (lintError) {
+      msg.showError(t('editor.saveDisabledByLint'))
+      return
+    }
     setSaveComment(t('configs.saveComment'))
     setSaveConfirmOpen(true)
-  }, [activeTab, t])
+  }, [activeTab, lintError, msg, t])
 
   // 确认保存：对话框内确认才真正发布当前编辑态内容
   const confirmSave = useCallback(() => {
@@ -340,8 +354,11 @@ export default function ConfigsPage() {
               view={tabs.activeView}
               onSetView={(m) => tabs.setViewMode(activeTab.configId, m)}
               onActivateEffective={() => tabs.activateEffective(activeTab)}
-              editor={{ onChange: (content) => tabs.setTabContent(activeTab.configId, content) }}
-              save={{ onSave: requestSave, saving: saveMut.isPending }}
+              editor={{
+                onChange: (content) => tabs.setTabContent(activeTab.configId, content),
+                onValidate: setLintError,
+              }}
+              save={{ onSave: requestSave, saving: saveMut.isPending, lintInvalid: !!lintError }}
               onCopyToInstance={() => copyToInstance(activeTab)}
               diff={{
                 versionNumbers,

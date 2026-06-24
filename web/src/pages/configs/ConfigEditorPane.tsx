@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { DiffView, InstanceView, RevisionView } from '../../api/types'
 import type { EffectiveConfigView } from '../../api/client'
+import type { LintError } from '@/lib/configLint'
 import type { OpenTab, ViewMode } from './types'
 import EffectivePreview from './EffectivePreview'
 import RevisionHistory from './RevisionHistory'
@@ -17,10 +18,10 @@ interface ConfigEditorPaneProps {
   onSetView: (mode: ViewMode) => void
   // 切换到生效预览（同时设定默认预览目标）
   onActivateEffective: () => void
-  // 编辑态内容变更
-  editor: { onChange: (content: string) => void }
-  // 保存
-  save: { onSave: () => void; saving: boolean }
+  // 编辑态内容变更 + 客户端格式校验结果回调（FR-75）
+  editor: { onChange: (content: string) => void; onValidate: (error: LintError | null) => void }
+  // 保存：lintInvalid 为 true（格式校验失败）时禁用保存按钮
+  save: { onSave: () => void; saving: boolean; lintInvalid: boolean }
   // 复制到实例：以当前配置为底新建一条 server 层覆盖（预填源内容，进入编辑改 diff）
   onCopyToInstance: () => void
   // Diff 视图：可选版本、当前选择、切换、对比数据
@@ -134,7 +135,8 @@ export default function ConfigEditorPane({
             size="xs"
             className="h-7 px-3 text-xs bg-primary hover:bg-primary/80 text-primary-foreground"
             onClick={save.onSave}
-            disabled={save.saving}
+            disabled={save.saving || save.lintInvalid}
+            title={save.lintInvalid ? t('editor.saveDisabledByLint') : undefined}
           >
             {save.saving ? t('configs.saving') : t('configs.saveBtn')}
           </Button>
@@ -144,7 +146,12 @@ export default function ConfigEditorPane({
       {/* 内容区：编辑 / 生效预览 / Diff */}
       <div className="flex-1 min-h-0">
         {view === 'edit' ? (
-          <CodeEditor value={tab.content} language={tab.format} onChange={editor.onChange} />
+          <CodeEditor
+            value={tab.content}
+            language={tab.format}
+            onChange={editor.onChange}
+            onValidate={editor.onValidate}
+          />
         ) : view === 'effective' ? (
           <EffectivePreview
             instances={effective.instances}
