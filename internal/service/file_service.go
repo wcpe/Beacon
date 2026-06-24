@@ -414,26 +414,28 @@ func (s *FileService) BatchSetEnabled(ids []uint, enabled bool, operator, client
 		})
 }
 
-// batchMutate 是批量软删 / 置启用态的共用骨架：先逐项取出（不存在即 404），再在单事务内
+// batchMutate 是批量软删 / 置启用态的共用骨架：去重后一次性批量取出（任一不存在即 404），再在单事务内
 // 对每项执行 mutate + 写一条审计，提交后逐项唤醒文件长轮询与触发 git 导出。
+// 双保险：预取批量存在性挡明显不存在；事务内 mutate 的 RowsAffected 校验挡预取后被并发软删（防幽灵审计）。
 func (s *FileService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
 	if operator == "" || len(ids) == 0 {
 		return apperr.ErrInvalidParam
 	}
-	objs := make([]*model.FileObject, 0, len(ids))
-	for _, id := range ids {
-		obj, err := s.Get(id)
-		if err != nil {
-			return err
-		}
-		objs = append(objs, obj)
+	uniqueIDs := dedupIDs(ids)
+	objs, err := s.fileRepo.FindByIDs(uniqueIDs)
+	if err != nil {
+		return err
 	}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		for _, obj := range objs {
-			if err := mutate(tx, obj.ID); err != nil {
+	// 取回数量 < 去重后 id 数 → 含不存在 id，整批 404
+	if len(objs) < len(uniqueIDs) {
+		return apperr.ErrFileNotFound
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		for i := range objs {
+			if err := mutate(tx, objs[i].ID); err != nil {
 				return err
 			}
-			if err := s.writeAudit(tx, obj, operator, action, detail, clientIP); err != nil {
+			if err := s.writeAudit(tx, &objs[i], operator, action, detail, clientIP); err != nil {
 				return err
 			}
 		}
@@ -443,9 +445,9 @@ func (s *FileService) batchMutate(ids []uint, operator, clientIP, action, detail
 		return err
 	}
 	slog.Info("批量操作托管文件", "动作", action, "数量", len(objs))
-	for _, obj := range objs {
-		s.notify(obj)
-		s.exportGit(obj, action, operator)
+	for i := range objs {
+		s.notify(&objs[i])
+		s.exportGit(&objs[i], action, operator)
 	}
 	return nil
 }

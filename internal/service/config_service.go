@@ -312,26 +312,42 @@ func (s *ConfigService) BatchSetEnabled(ids []uint, enabled bool, operator, clie
 		})
 }
 
-// batchMutate 是批量软删 / 置启用态的共用骨架：先逐项取出（不存在即 404），再在单事务内
+// dedupIDs 去重保序返回 id 集合：批量端点据去重后数量判存在性，避免重复 id 绕过 404 校验。
+func dedupIDs(ids []uint) []uint {
+	seen := make(map[uint]struct{}, len(ids))
+	out := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// batchMutate 是批量软删 / 置启用态的共用骨架：去重后一次性批量取出（任一不存在即 404），再在单事务内
 // 对每项执行 mutate + 写一条审计，提交后逐项唤醒长轮询与触发 git 导出。
+// 双保险：预取批量存在性挡明显不存在；事务内 mutate 的 RowsAffected 校验挡预取后被并发软删（防幽灵审计）。
 func (s *ConfigService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
 	if operator == "" || len(ids) == 0 {
 		return apperr.ErrInvalidParam
 	}
-	items := make([]*model.ConfigItem, 0, len(ids))
-	for _, id := range ids {
-		item, err := s.Get(id)
-		if err != nil {
-			return err
-		}
-		items = append(items, item)
+	uniqueIDs := dedupIDs(ids)
+	items, err := s.configRepo.FindByIDs(uniqueIDs)
+	if err != nil {
+		return err
 	}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		for _, item := range items {
-			if err := mutate(tx, item.ID); err != nil {
+	// 取回数量 < 去重后 id 数 → 含不存在 id，整批 404
+	if len(items) < len(uniqueIDs) {
+		return apperr.ErrConfigNotFound
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		for i := range items {
+			if err := mutate(tx, items[i].ID); err != nil {
 				return err
 			}
-			if err := s.writeAudit(tx, item, operator, action, detail, clientIP); err != nil {
+			if err := s.writeAudit(tx, &items[i], operator, action, detail, clientIP); err != nil {
 				return err
 			}
 		}
@@ -341,9 +357,9 @@ func (s *ConfigService) batchMutate(ids []uint, operator, clientIP, action, deta
 		return err
 	}
 	slog.Info("批量操作配置项", "动作", action, "数量", len(items))
-	for _, item := range items {
-		s.notify(item)
-		s.exportGit(item, action, operator)
+	for i := range items {
+		s.notify(&items[i])
+		s.exportGit(&items[i], action, operator)
 	}
 	return nil
 }

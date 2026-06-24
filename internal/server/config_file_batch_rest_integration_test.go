@@ -5,6 +5,8 @@ package server_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/wcpe/Beacon/internal/handler"
 )
 
 // createBatchConfig 建一个配置项并返回其 id（供批量用例铺底）。
@@ -114,6 +116,15 @@ func TestConfigBatchInvalidRequests(t *testing.T) {
 	code, _ = doJSON(t, http.MethodPost, url, map[string]any{"action": "frobnicate", "ids": []int{1}})
 	if code != http.StatusBadRequest {
 		t.Fatalf("非法 action 应 400，实际 %d", code)
+	}
+	// ids 超 MaxBatchIDs 上限 → 400（护栏，FR-74）
+	tooMany := make([]int, handler.MaxBatchIDs+1)
+	for i := range tooMany {
+		tooMany[i] = i + 1
+	}
+	code, _ = doJSON(t, http.MethodPost, url, map[string]any{"action": "delete", "ids": tooMany})
+	if code != http.StatusBadRequest {
+		t.Fatalf("ids 超上限应 400，实际 %d", code)
 	}
 }
 

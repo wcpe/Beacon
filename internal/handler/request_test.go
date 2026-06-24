@@ -1,10 +1,15 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/wcpe/Beacon/internal/apperr"
 )
 
 // fakeLongpollSettings 是 longpollSettings 测试替身：以固定 max-hold-ms 驱动挂起上限解析（FR-61）。
@@ -17,6 +22,36 @@ func (f fakeLongpollSettings) GetInt(key string) int {
 		return f.maxHoldMs
 	}
 	return 0
+}
+
+// batchReq 用给定 body 构造一个批量端点请求（供 decodeBatchRequest 校验用例）。
+func batchReq(t *testing.T, body any) *http.Request {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("序列化请求体失败：%v", err)
+	}
+	return httptest.NewRequest(http.MethodPost, "/batch", bytes.NewReader(raw))
+}
+
+// TestDecodeBatchRequestIDsLimit 验证 FR-74：ids 数量上限 MaxBatchIDs，超限 → INVALID_PARAM（400）。
+func TestDecodeBatchRequestIDsLimit(t *testing.T) {
+	// 恰好上限 → 通过
+	atLimit := make([]uint, MaxBatchIDs)
+	for i := range atLimit {
+		atLimit[i] = uint(i + 1)
+	}
+	if _, err := decodeBatchRequest(batchReq(t, map[string]any{"action": "delete", "ids": atLimit})); err != nil {
+		t.Fatalf("ids 恰为上限 %d 应通过，实际 %v", MaxBatchIDs, err)
+	}
+	// 超上限一个 → 400
+	overLimit := make([]uint, MaxBatchIDs+1)
+	for i := range overLimit {
+		overLimit[i] = uint(i + 1)
+	}
+	if _, err := decodeBatchRequest(batchReq(t, map[string]any{"action": "delete", "ids": overLimit})); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("ids 超上限应返回 ErrInvalidParam，实际 %v", err)
+	}
 }
 
 // TestResolveHoldTimeout 长轮询挂起时长 = min(客户端 timeoutMs, 设置 store 的服务端上限)（FR-61）。

@@ -18,13 +18,17 @@ const (
 	batchActionEnable  = "enable"
 )
 
+// MaxBatchIDs 是单次批量端点 ids 数量上限（FR-74）：超限即 400，护栏防异常巨大提交。
+// 与 service.MaxImportFiles=2000 同口径（批量删除 / 置态与多文件导入同量级）。
+const MaxBatchIDs = 2000
+
 // batchRequest 是批量端点的统一请求体（FR-74）：动作 + 目标 id 集合。
 type batchRequest struct {
 	Action string `json:"action"`
 	IDs    []uint `json:"ids"`
 }
 
-// decodeBatchRequest 解析并校验批量请求体：非法 JSON / 非法 action / 空 ids 一律 INVALID_PARAM（400）。
+// decodeBatchRequest 解析并校验批量请求体：非法 JSON / 非法 action / 空 ids / 超 MaxBatchIDs 一律 INVALID_PARAM（400）。
 func decodeBatchRequest(r *http.Request) (batchRequest, error) {
 	var req batchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -35,7 +39,7 @@ func decodeBatchRequest(r *http.Request) (batchRequest, error) {
 	default:
 		return batchRequest{}, apperr.ErrInvalidParam
 	}
-	if len(req.IDs) == 0 {
+	if len(req.IDs) == 0 || len(req.IDs) > MaxBatchIDs {
 		return batchRequest{}, apperr.ErrInvalidParam
 	}
 	return req, nil

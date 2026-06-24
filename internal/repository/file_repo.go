@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/model"
 )
 
@@ -58,6 +59,19 @@ func (r *FileObjectRepository) FindByID(id uint) (*model.FileObject, error) {
 		return nil, err
 	}
 	return &obj, nil
+}
+
+// FindByIDs 一次性按主键集合取未软删项（WHERE id IN (?)，占位符无方言、可移植）。
+// 供批量端点替代逐项 FindByID 消除 N+1；返回数量可能少于入参（含不存在 id），由上层据此判 404。
+func (r *FileObjectRepository) FindByIDs(ids []uint) ([]model.FileObject, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var objs []model.FileObject
+	if err := r.active().Where("id IN ?", ids).Find(&objs).Error; err != nil {
+		return nil, err
+	}
+	return objs, nil
 }
 
 // FindByIdentity 按标识五元组查找未软删项；不存在返回 (nil, nil)。
@@ -115,17 +129,34 @@ func (r *FileObjectRepository) CountByNamespace(ns string) (int64, error) {
 }
 
 // SoftDelete 软删文件对象：填真实删除时间并置 enabled=false。
+// 校验 RowsAffected：0 命中（项已被并发软删）即返回 not-found，由批量调用方据此回滚，
+// 杜绝预取通过、事务内目标已消失却照常写「幽灵审计」（TOCTOU，FR-74）。
 func (r *FileObjectRepository) SoftDelete(id uint, deletedAt time.Time) error {
-	return r.db.Model(&model.FileObject{}).
+	res := r.db.Model(&model.FileObject{}).
 		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
-		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false}).Error
+		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrFileNotFound
+	}
+	return nil
 }
 
 // SetEnabled 置未软删文件对象的启用态（批量禁用 / 启用复用，FR-74）。
+// 同 SoftDelete：0 命中返回 not-found，挡并发软删后的幽灵审计。
 func (r *FileObjectRepository) SetEnabled(id uint, enabled bool) error {
-	return r.db.Model(&model.FileObject{}).
+	res := r.db.Model(&model.FileObject{}).
 		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
-		Update("enabled", enabled).Error
+		Update("enabled", enabled)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrFileNotFound
+	}
+	return nil
 }
 
 // FindEffectiveCandidates 拉取某 agent 身份的四层候选文件（已 enabled 且未软删）。

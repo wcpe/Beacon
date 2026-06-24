@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/secret"
 )
@@ -115,6 +116,22 @@ func (r *ConfigItemRepository) FindByID(id uint) (*model.ConfigItem, error) {
 	return &item, nil
 }
 
+// FindByIDs 一次性按主键集合取未软删项（WHERE id IN (?)，占位符无方言、可移植）。
+// 供批量端点替代逐项 FindByID 消除 N+1；返回数量可能少于入参（含不存在 id），由上层据此判 404。
+func (r *ConfigItemRepository) FindByIDs(ids []uint) ([]model.ConfigItem, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var items []model.ConfigItem
+	if err := r.active().Where("id IN ?", ids).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	if err := r.decryptInPlace(items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // FindByIdentity 按标识五元组查找未软删项；不存在返回 (nil, nil)。
 func (r *ConfigItemRepository) FindByIdentity(ns, group, dataID, scopeLevel, scopeTarget string) (*model.ConfigItem, error) {
 	var item model.ConfigItem
@@ -190,17 +207,34 @@ func (r *ConfigItemRepository) CountByNamespace(ns string) (int64, error) {
 }
 
 // SoftDelete 软删配置项：填真实删除时间并置 enabled=false。
+// 校验 RowsAffected：0 命中（项已被并发软删）即返回 not-found，由批量调用方据此回滚，
+// 杜绝预取通过、事务内目标已消失却照常写「幽灵审计」（TOCTOU，FR-74）。
 func (r *ConfigItemRepository) SoftDelete(id uint, deletedAt time.Time) error {
-	return r.db.Model(&model.ConfigItem{}).
+	res := r.db.Model(&model.ConfigItem{}).
 		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
-		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false}).Error
+		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrConfigNotFound
+	}
+	return nil
 }
 
 // SetEnabled 置未软删配置项的启用态（批量禁用 / 启用复用，FR-74）。
+// 同 SoftDelete：0 命中返回 not-found，挡并发软删后的幽灵审计。
 func (r *ConfigItemRepository) SetEnabled(id uint, enabled bool) error {
-	return r.db.Model(&model.ConfigItem{}).
+	res := r.db.Model(&model.ConfigItem{}).
 		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
-		Update("enabled", enabled).Error
+		Update("enabled", enabled)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrConfigNotFound
+	}
+	return nil
 }
 
 // BumpGrayVersion 以乐观锁方式自增 gray_version：仅当当前值等于 expected 且项未软删时 +1。

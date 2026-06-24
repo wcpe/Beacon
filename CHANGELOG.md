@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 修复
+- 批量端点加 ids 上限并修批量软删 / 置态的并发幽灵审计（修复 FR-74）：`POST /admin/v1/{configs,files}/batch` 的 `ids` 此前无数量上限，现加护栏 `MaxBatchIDs=2000`（与单次导入 `MaxImportFiles` 同口径），超限 `400 INVALID_PARAM`；批量内部此前逐项 `Get`（N+1），现去重后**一次** `WHERE id IN (?)` 批量预取（占位符无方言、可移植），预取数 < 去重 id 数即整批 `404`。同时修 TOCTOU 幽灵审计：repo `SoftDelete` / `SetEnabled`（config + file 两边）此前忽略 `RowsAffected`、命中 0 行仍返 nil——并发场景下预取通过但事务内目标已被另一请求软删时，会写一条「实际未发生」的审计且不回滚；现校验 `RowsAffected`、0 命中返 not-found，由 `batchMutate` 触发整批回滚（不提交、不写任何审计）。预取批量存在性 + 事务内 `RowsAffected` 双保险。末轮评审控制面 follow-up。
 - 补 `instance.tail-logs` 审计动作中文映射 + 漂移守护清单（修复 FR-88 / #15）：FR-88「查看 agent 日志」每次会落一条 `instance.tail-logs` 审计，但 `web/src/i18n/locales/zh-CN.ts` 的 `audit.action` 缺该映射、且 #15 漂移守护清单（`auditActionCoverage.test.ts` 手工镜像 `enums.go`）也漏镜像该枚举——守护测试因此全绿却放行，审计日志页（FR-7）/ 服务分析页（FR-73）「动作」列对该动作显原始英文 `instance.tail-logs`。补中文映射「查看 agent 日志」并把 `instance.tail-logs` 纳入守护清单（守护用例 51→52）。运维体验优化程序末轮总评（前端 reviewer）发现；守护清单为手工镜像、仍存同类漂移风险，自动派生留作后续改进。
 
 ## 0.14.0（2026-06-25）
