@@ -1,7 +1,7 @@
 // Layout 布局单测（FR-33 页眉重定位）：
 // 锁定「品牌标题在侧边栏 → 控制面状态条收进右侧主内容列顶部（侧边栏之外、内容之上）」的结构关系。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SystemStatusView } from '@/api/types'
@@ -72,5 +72,23 @@ describe('Layout 页眉重定位', () => {
     expect(mainEl).not.toBeNull()
     expect(mainEl?.classList.contains('overflow-y-auto')).toBe(true)
     expect(mainEl?.classList.contains('overflow-hidden')).toBe(false)
+  })
+})
+
+describe('Layout 连接状态指示（FR-78）', () => {
+  it('连通时不弹断开横幅', async () => {
+    vi.mocked(systemStatus).mockResolvedValue(STATUS)
+    renderLayout()
+    // 等心跳查询成功后，确认无断开横幅
+    await screen.findByText('控制面状态')
+    await waitFor(() =>
+      expect(screen.queryByText('控制面连接中断，正在重连…')).not.toBeInTheDocument(),
+    )
+  })
+
+  it('心跳查询失败时弹「控制面连接中断，正在重连…」断开横幅', async () => {
+    vi.mocked(systemStatus).mockRejectedValue(new Error('网络断开'))
+    renderLayout()
+    expect(await screen.findByText('控制面连接中断，正在重连…')).toBeInTheDocument()
   })
 })

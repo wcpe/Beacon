@@ -115,6 +115,18 @@ export const zhCN = {
     unavailable: '不可用',
   },
 
+  // ===== 控制面连接状态指示（FR-78）=====
+  connection: {
+    // 已连接（小灯悬浮提示）
+    online: '控制面已连接',
+    // 连接中断（小灯悬浮提示）
+    offline: '控制面连接中断',
+    // 连接中 / 首次握手（小灯悬浮提示）
+    connecting: '正在连接控制面…',
+    // 断开横幅文案：控制面重部时提示已掉线并在自动重连
+    banner: '控制面连接中断，正在重连…',
+  },
+
   // ===== 布局（Layout）=====
   layout: {
     currentOperator: '当前操作人',

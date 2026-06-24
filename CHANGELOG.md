@@ -6,6 +6,7 @@
 
 ### 新增
 - 运维设置页恢复默认 + 批量保存（FR-77，增强 FR-62，纯前端，见 [docs/specs/settings-page-enhance.md](docs/specs/settings-page-enhance.md)）：FR-62 运维设置页此前只能逐项编辑、逐项保存。现叠加两处批量体验——① 每项加「恢复默认」按钮（把该项编辑值一键置回其默认值，草稿已在默认值时禁用，仅改本地草稿、仍走保存落库）；② 页脚「保存全部变更（N）」把所有「已改未存」项一次性逐个 PUT（前端循环复用 FR-61 既有 `PUT /admin/v1/settings/{key}`，单项失败不阻断其余，完成后刷新列表回显热生效值并出「成功 M / 失败 K」汇总提示）；③ 顶部与页脚「改动摘要」逐脏项列出「key：旧值 → 新值」。草稿集中上提至页顶统一持有（列表刷新后仅同步非脏项、保留正在编辑的脏草稿）。**纯前端**，未加后端端点 / 未引入批量原子接口、未改 API 契约（部分成功是预期语义）。
+- 控制面连接状态指示 + 自动重连（FR-78，feat，纯前端，见 [docs/specs/connection-status-indicator.md](docs/specs/connection-status-indicator.md)）：管理台全局加连接状态小灯（页眉品牌旁，绿=已连接 / 红=已断开 / 灰=连接中），控制面轮询请求失败时主内容列顶部弹横幅「控制面连接中断，正在重连…」、恢复后横幅自动消失并触发一次全量 `invalidateQueries` 刷新各页数据，治控制面重部（重启 beacon-cp）时 UI 静默掉线、须手动刷新才发现的问题。**连通态由既有 `system-status` 轮询查询的成功 / 失败派生**（管理台无面向浏览器的 SSE，唯一 SSE 是 agent↔控制面、不面向浏览器；新 `useConnectionStatus` hook 复用 `SystemHeader` 的 5s 心跳轮询、不另起传输通道 / 后端端点）。纯前端、未改后端 / 契约 / 依赖。
 
 ### 修复
 - 控制面 GORM 时间戳统一 UTC（修复 FR-73 服务分析默认窗口漏掉最近活动）：GORM 默认 `NowFunc` 用 `time.Now()`（本地时区），在非 UTC 时区机器上 `autoCreateTime` 把 `audit_log.created_at` 等写成带本地偏移的时间（如 +08:00），而注册/健康等内存侧时间一律 UTC、FR-73 服务分析按 UTC 时间窗过滤审计——本地时间戳在 sqlite 字符串比较下被当成「未来若干小时」，使默认「近 30 天」窗口把最近约「时区偏移」小时内的活动错误排除（+08:00 真机默认视图丢最近约 8 小时）。`store.Open` 的 `gorm.Config` 设 `NowFunc` 恒返回 UTC，全表自动时间戳统一 UTC、与系统其余部分一致；补 store 层回归测试（强制本地时区 +08:00 建记录、断言 `CreatedAt` 为 UTC）。真机多服集群验收时暴露。

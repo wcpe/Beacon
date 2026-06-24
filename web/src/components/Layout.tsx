@@ -7,6 +7,7 @@ import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import SystemHeader from '@/components/SystemHeader'
+import { useConnectionStatus } from '@/hooks/useConnectionStatus'
 import { cn } from '@/lib/utils'
 
 // 导航项定义（路径 + i18n key）
@@ -30,6 +31,8 @@ export default function Layout() {
   const { t } = useTranslation()
   const { operator } = useAuth()
   const navigate = useNavigate()
+  // 控制面连接状态（FR-78）：断开时弹横幅、小灯转红；恢复时自动重连并刷新数据。
+  const { status: connectionStatus } = useConnectionStatus()
 
   async function onLogout() {
     // 先请求后端记一条登出审计（需当前令牌）；无论成败都清本地登录态并跳登录——登出绝不被阻断。
@@ -45,7 +48,22 @@ export default function Layout() {
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
-        <div className="border-b px-5 py-4 text-base font-semibold">{t('app.brand')}</div>
+        <div className="flex items-center gap-2 border-b px-5 py-4 text-base font-semibold">
+          {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
+          <span
+            aria-label={t(`connection.${connectionStatus}`)}
+            title={t(`connection.${connectionStatus}`)}
+            className={cn(
+              'inline-block h-2 w-2 shrink-0 rounded-full',
+              connectionStatus === 'online'
+                ? 'bg-green-600'
+                : connectionStatus === 'offline'
+                  ? 'bg-red-600'
+                  : 'bg-muted-foreground',
+            )}
+          />
+          <span>{t('app.brand')}</span>
+        </div>
         <nav className="flex flex-1 flex-col gap-1 p-3">
           {NAV_ITEMS.map((item) => (
             <NavLink
@@ -73,6 +91,16 @@ export default function Layout() {
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* 控制面连接中断横幅（FR-78）：仅断开时显示，恢复后自动消失；治控制面重部时 UI 静默掉线 */}
+        {connectionStatus === 'offline' && (
+          <div
+            role="alert"
+            className="flex shrink-0 items-center gap-2 border-b border-red-600/40 bg-red-600/10 px-6 py-2 text-sm font-medium text-red-700 dark:text-red-400"
+          >
+            <span aria-hidden className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-600" />
+            {t('connection.banner')}
+          </div>
+        )}
         {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上 */}
         <SystemHeader />
         {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
