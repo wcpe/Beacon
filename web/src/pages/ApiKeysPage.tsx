@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createApiKey, listApiKeys, resetApiKey, revokeApiKey } from '../api/client'
 import type { ApiKeyCreated, ApiKeyView } from '../api/types'
 import { formatTime } from '../api/format'
+import { apiBaseFromLocation, buildApiKeyCurl } from '@/lib/curlCommand'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
@@ -118,10 +119,10 @@ export default function ApiKeysPage() {
     createMut.mutate()
   }
 
-  // 复制明文到剪贴板
-  async function copyKey(key: string) {
+  // 复制文本到剪贴板（明文 / curl 命令共用）
+  async function copyText(text: string) {
     try {
-      await navigator.clipboard.writeText(key)
+      await navigator.clipboard.writeText(text)
       msg.showSuccess(t('common.copiedToClipboard'))
     } catch {
       msg.showError(t('common.copyFailed'))
@@ -280,8 +281,19 @@ export default function ApiKeysPage() {
           )}
           <DialogFooter>
             {revealed && (
-              <Button variant="outline" onClick={() => copyKey(revealed.key)}>
+              <Button variant="outline" onClick={() => copyText(revealed.key)}>
                 {t('apikeys.copyBtn')}
+              </Button>
+            )}
+            {revealed && (
+              // 复制为 curl（FR-90，见 ADR-0042）：拼带认证头、指向只读样例端点的可粘贴命令
+              <Button
+                variant="outline"
+                onClick={() =>
+                  copyText(buildApiKeyCurl(revealed.key, { base: apiBaseFromLocation() }))
+                }
+              >
+                {t('apikeys.copyCurlBtn')}
               </Button>
             )}
             <Button onClick={() => setRevealed(null)}>{t('apikeys.savedBtn')}</Button>

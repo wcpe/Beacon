@@ -227,6 +227,8 @@ data: {}
 
 > 密钥管理端点本身受只读拒写约束：`readonly` 密钥对创建 / 吊销 / 重置一律 `403`（只读不能管密钥）。范围外（不做）：细粒度 / 字段级权限、按端点 scope、自动轮换、速率限制、多租户。
 
+> **脚本化 admin API token（FR-90，见 [ADR-0042](adr/0042-admin-api-token.md)）**：上述 `bk_` API 密钥**即**供脚本 / curl 调 `/admin/v1` 的「admin API token」——库存哈希、可吊销 / 到期、`full`/`readonly` 角色，区别于 agent 数据面共享 `X-Beacon-Token`（仅防误连）。FR-90 **无新增端点**，仅在管理台一次性明文展示弹窗增「复制为 curl」自动化辅助：复制一条带 `X-Beacon-Api-Key` 头、指向只读样例端点 `GET /admin/v1/system/status` 的可粘贴命令，便于运维上手 API 自动化。
+
 ### 配置管理
 | 端点 | 说明 |
 |---|---|

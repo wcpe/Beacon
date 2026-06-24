@@ -663,6 +663,8 @@ export const zhCN = {
     revealUsageBearer: 'Authorization: Bearer <明文>',
     revealUsageAfter: ' 携带使用。',
     copyBtn: '复制明文',
+    // 复制为 curl（FR-90，见 ADR-0042）：复制带认证头、指向只读样例端点的可粘贴命令
+    copyCurlBtn: '复制为 curl',
     savedBtn: '我已保存',
     nameRequired: '密钥名称为必填',
     statusActive: '生效',
