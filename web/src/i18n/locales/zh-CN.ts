@@ -21,6 +21,7 @@ export const zhCN = {
     topology: '集群拓扑',
     zones: '区分配',
     audits: '审计日志',
+    alertEvents: '事件',
     serviceAnalysis: '服务分析',
     apiKeys: '密钥管理',
     namespaces: '环境管理',
@@ -285,6 +286,41 @@ export const zhCN = {
       'apikey.create': '创建密钥',
       'apikey.revoke': '吊销密钥',
       'apikey.reset': '重置密钥',
+    },
+  },
+
+  // ===== 告警历史 / 事件信息流页（FR-89，见 ADR-0041）=====
+  alertEvent: {
+    title: '事件信息流',
+    // 与审计日志（人的操作）区分的副标题：本页是系统健康事件留痕
+    subtitle: '系统健康事件历史留痕（如实例状态异常转移），区别于记录人工操作的审计日志。',
+    colTime: '时间',
+    colType: '类型',
+    colLevel: '级别',
+    colNamespace: '环境',
+    colServerId: '实例',
+    colMessage: '摘要',
+    colDetail: '详情',
+    levelLabel: '级别',
+    typeLabel: '类型',
+    allLevels: '全部级别',
+    allTypes: '全部类型',
+    fromTime: '起始时间',
+    toTime: '截止时间',
+    empty: '无告警事件',
+    detailTitle: '事件详情',
+    detailField: '详情',
+    // 事件类型英文枚举 → 中文（未知经 defaultValue 回退原文）
+    type: {
+      'health-transition': '健康流转',
+      'publish-fail': '发布失败',
+      'backend-unreachable': '后端不可达',
+    },
+    // 级别英文枚举 → 中文
+    level: {
+      info: '信息',
+      warning: '警告',
+      critical: '严重',
     },
   },
 

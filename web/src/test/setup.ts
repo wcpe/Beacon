@@ -18,6 +18,23 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   }
 }
 
+// jsdom 不实现 PointerCapture 与 scrollIntoView：radix Select 打开下拉时会调用它们，缺失会抛错。
+// 提供最小空实现垫片，使含 Select 下拉交互的组件测试可正常打开 / 选择（不影响断言）。
+if (typeof Element !== 'undefined') {
+  if (!Element.prototype.hasPointerCapture) {
+    Element.prototype.hasPointerCapture = () => false
+  }
+  if (!Element.prototype.setPointerCapture) {
+    Element.prototype.setPointerCapture = () => {}
+  }
+  if (!Element.prototype.releasePointerCapture) {
+    Element.prototype.releasePointerCapture = () => {}
+  }
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {}
+  }
+}
+
 afterEach(() => {
   cleanup()
 })

@@ -10,6 +10,7 @@ import type {
   AssignmentView,
   AuditAnalytics,
   AuditPage,
+  AlertEventPage,
   ConfigTimelineView,
   ConfigView,
   ConflictDiffView,
@@ -621,6 +622,26 @@ export async function exportAudits(filter: AuditFilter, format: AuditExportForma
   a.download = filenameFromDisposition(resp.headers.get('Content-Disposition')) ?? `audit-export-${Date.now()}.${format}`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// ===== 告警历史 / 事件信息流（FR-89，见 docs/API.md 告警事件小节）=====
+
+// 告警事件查询过滤与分页条件（零值字段后端不过滤）
+export interface AlertEventFilter {
+  // 事件类型（health-transition 等）
+  type?: string
+  // 严重级别（info / warning / critical）
+  level?: string
+  namespace?: string
+  // RFC3339 时间窗
+  from?: string
+  to?: string
+  page?: number
+  size?: number
+}
+
+export function listAlertEvents(filter: AlertEventFilter): Promise<AlertEventPage> {
+  return request<AlertEventPage>(`/alert-events${qs(filter)}`)
 }
 
 // 从 Content-Disposition 头解析附件文件名（filename="..."）；缺失则返回 undefined。

@@ -212,6 +212,24 @@ export interface AuditPage {
   items: AuditView[]
 }
 
+// 告警事件视图（FR-89，对齐 docs/API.md 与 model.AlertEvent 字段）
+export interface AlertEventView {
+  id: number
+  type: string
+  level: string
+  serverId: string
+  namespace: string
+  message: string
+  detail: string
+  createdAt: string
+}
+
+// 告警事件分页返回体
+export interface AlertEventPage {
+  total: number
+  items: AlertEventView[]
+}
+
 // 环境视图
 export interface NamespaceView {
   code: string
