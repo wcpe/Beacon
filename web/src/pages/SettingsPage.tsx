@@ -2,7 +2,7 @@
 // 分组展示热改项 + 逐项编辑 + 逐项保存 + 热生效回显；启动 / 安全项在 config.yml（此处不可见不可改）。
 // 数据真源在后端白名单（GET /admin/v1/settings）；本页只按 valueType 选编辑控件、保存后刷新该列表。
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listSettings, updateSetting } from '../api/client'
@@ -57,10 +57,63 @@ function groupByPrefix(items: SettingView[]): Array<{ prefix: string; items: Set
 
 export default function SettingsPage() {
   const { t } = useTranslation()
+  const qc = useQueryClient()
+  const msg = useMessage()
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['settings'],
     queryFn: listSettings,
   })
+
+  // 草稿值集中持有于顶层（key → 字符串草稿），让页脚批量保存 / 改动摘要能看见全部草稿。
+  // 草稿统一以字符串持有（bool 用 'true' / 'false'），与提交 / 比对口径一致。
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  // 批量保存进行态（禁用全部交互入口）。
+  const [savingAll, setSavingAll] = useState(false)
+
+  // 列表加载 / 刷新后，把「未被本地改动」的项草稿同步到最新当前值；保留仍在编辑的脏项草稿不被覆盖。
+  useEffect(() => {
+    if (!data) return
+    setDrafts((prev) => {
+      const next: Record<string, string> = {}
+      for (const it of data) {
+        const cur = prev[it.key]
+        // 仍是脏草稿（与上一次当前值不同）则保留；否则跟随最新当前值。
+        next[it.key] = cur !== undefined && cur !== it.value ? cur : it.value
+      }
+      return next
+    })
+  }, [data])
+
+  const setDraft = (key: string, value: string) =>
+    setDrafts((prev) => ({ ...prev, [key]: value }))
+
+  const items = data ?? []
+  const draftOf = (item: SettingView) => drafts[item.key] ?? item.value
+  // 脏项 = 草稿 ≠ 当前生效值。
+  const dirtyItems = items.filter((it) => draftOf(it) !== it.value)
+
+  // 批量保存：逐个 PUT 复用 updateSetting，单项失败计数不抛、不影响其余项；完成后刷新列表并出汇总提示。
+  const saveAll = async () => {
+    if (dirtyItems.length === 0 || savingAll) return
+    setSavingAll(true)
+    let ok = 0
+    let fail = 0
+    for (const it of dirtyItems) {
+      try {
+        await updateSetting(it.key, draftOf(it))
+        ok++
+      } catch {
+        fail++
+      }
+    }
+    setSavingAll(false)
+    qc.invalidateQueries({ queryKey: ['settings'] })
+    if (fail === 0) {
+      msg.showSuccess(t('settings.msgBatchSaved', { ok }))
+    } else {
+      msg.showError(t('settings.msgBatchPartial', { ok, fail }))
+    }
+  }
 
   const groups = data ? groupByPrefix(data) : []
 
@@ -77,6 +130,11 @@ export default function SettingsPage() {
           <p className="text-sm text-muted-foreground">{t('settings.empty')}</p>
         ) : (
           <div className="space-y-6">
+            {/* 顶部改动摘要（仅有脏项时显示） */}
+            {dirtyItems.length > 0 && (
+              <ChangeSummary items={dirtyItems} draftOf={draftOf} testId="change-summary-top" />
+            )}
+
             {groups.map((g) => (
               <Card key={g.prefix}>
                 <CardHeader>
@@ -90,11 +148,32 @@ export default function SettingsPage() {
                 </CardHeader>
                 <CardContent className="divide-y">
                   {g.items.map((item) => (
-                    <SettingRow key={item.key} item={item} />
+                    <SettingRow
+                      key={item.key}
+                      item={item}
+                      draft={draftOf(item)}
+                      onChange={(v) => setDraft(item.key, v)}
+                      batchSaving={savingAll}
+                    />
                   ))}
                 </CardContent>
               </Card>
             ))}
+
+            {/* 页脚：改动摘要 + 批量保存 */}
+            <div className="space-y-3 border-t pt-4">
+              {dirtyItems.length > 0 && (
+                <ChangeSummary items={dirtyItems} draftOf={draftOf} testId="change-summary" />
+              )}
+              <Button
+                disabled={dirtyItems.length === 0 || savingAll}
+                onClick={saveAll}
+              >
+                {savingAll
+                  ? t('settings.savingAll')
+                  : t('settings.saveAll', { count: dirtyItems.length })}
+              </Button>
+            </div>
           </div>
         )}
       </AsyncSection>
@@ -102,13 +181,50 @@ export default function SettingsPage() {
   )
 }
 
-// 单条设置项一行：desc 标签 + key + 默认值提示 + 按 valueType 的编辑控件 + 保存按钮（值未变禁用）。
-function SettingRow({ item }: { item: SettingView }) {
+// 改动摘要：逐脏项列出「key：旧值 → 新值」。testId 区分顶部 / 页脚两处实例。
+function ChangeSummary({
+  items,
+  draftOf,
+  testId,
+}: {
+  items: SettingView[]
+  draftOf: (item: SettingView) => string
+  testId: string
+}) {
+  const { t } = useTranslation()
+  return (
+    <div
+      data-testid={testId}
+      className="rounded-md border bg-muted/40 p-3 text-xs"
+    >
+      <div className="mb-1 font-medium">{t('settings.changeSummaryTitle')}</div>
+      <ul className="space-y-0.5 font-mono text-muted-foreground">
+        {items.map((it) => (
+          <li key={it.key}>
+            {t('settings.changeSummaryLine', { key: it.key, from: it.value, to: draftOf(it) })}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// 单条设置项一行：desc 标签 + key + 默认值提示 + 按 valueType 的编辑控件 + 恢复默认 + 保存按钮（值未变禁用）。
+// 受控：草稿由顶层 SettingsPage 集中持有，便于页脚批量保存 / 改动摘要统观全部脏项。
+function SettingRow({
+  item,
+  draft,
+  onChange,
+  batchSaving,
+}: {
+  item: SettingView
+  draft: string
+  onChange: (value: string) => void
+  batchSaving: boolean
+}) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const msg = useMessage()
-  // 草稿值统一以字符串持有（bool 用 'true' / 'false'），与提交 / 比对口径一致。
-  const [draft, setDraft] = useState(item.value)
 
   const saveMut = useMutation({
     mutationFn: (value: string) => updateSetting(item.key, value),
@@ -120,8 +236,11 @@ function SettingRow({ item }: { item: SettingView }) {
     onError: (e: Error) => msg.showError(e.message),
   })
 
-  // 值未变（或保存中）禁用保存
+  // 值未变（或保存中 / 批量保存中）禁用保存
   const dirty = draft !== item.value
+  // 草稿已等于默认值时无可恢复改动，禁用「恢复默认」
+  const atDefault = draft === item.default
+  const busy = saveMut.isPending || batchSaving
 
   return (
     <div data-setting-row className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
@@ -133,10 +252,18 @@ function SettingRow({ item }: { item: SettingView }) {
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <SettingControl item={item} draft={draft} onChange={setDraft} />
+        <SettingControl item={item} draft={draft} onChange={onChange} />
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={atDefault || busy}
+          onClick={() => onChange(item.default)}
+        >
+          {t('settings.resetDefault')}
+        </Button>
         <Button
           size="sm"
-          disabled={!dirty || saveMut.isPending}
+          disabled={!dirty || busy}
           onClick={() => saveMut.mutate(draft)}
         >
           {saveMut.isPending ? t('settings.saving') : t('settings.saveBtn')}

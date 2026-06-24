@@ -820,6 +820,17 @@ export const zhCN = {
     defaultHint: '默认：{{value}}',
     saveBtn: '保存',
     saving: '保存中…',
+    // 单项「恢复默认」：把该项编辑值置回默认值（FR-77）
+    resetDefault: '恢复默认',
+    // 页脚批量保存按钮：N 为待保存的脏项数（FR-77）
+    saveAll: '保存全部变更（{{count}}）',
+    savingAll: '保存中…',
+    // 改动摘要块标题与每行「key：旧值 → 新值」（FR-77）
+    changeSummaryTitle: '改动摘要',
+    changeSummaryLine: '{{key}}：{{from}} → {{to}}',
+    // 批量保存全成功 / 部分失败的汇总提示（FR-77）
+    msgBatchSaved: '已保存 {{ok}} 项，热生效',
+    msgBatchPartial: '已保存 {{ok}} 项，失败 {{fail}} 项',
     // 保存成功提示：强调热生效
     msgSaved: '已保存，热生效',
     // bool 控件开 / 关文案
