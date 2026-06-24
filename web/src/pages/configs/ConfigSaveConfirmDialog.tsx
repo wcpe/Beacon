@@ -4,7 +4,9 @@
 
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQuery } from '@tanstack/react-query'
 
+import { impactPreview } from '../../api/client'
 import CodeEditor from '../../components/CodeEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +24,8 @@ export default function ConfigSaveConfirmDialog({
   namespace,
   group,
   dataId,
+  scopeLevel,
+  scopeTarget,
   format,
   originalContent,
   currentContent,
@@ -37,6 +41,9 @@ export default function ConfigSaveConfirmDialog({
   namespace: string
   group: string
   dataId: string
+  // 该配置的覆盖层与目标（用于算发布影响面，FR-79）
+  scopeLevel: string
+  scopeTarget: string
   // diff 语言（按格式高亮）
   format: string
   // 上一已保存版本内容（diff 左侧）
@@ -65,6 +72,13 @@ export default function ConfigSaveConfirmDialog({
   // 当前内容与上一版本是否一致（无变化时给提示，diff 仍展示）。
   const unchanged = originalContent === currentContent
 
+  // 发布影响面（FR-79）：对话框打开时按该配置 scope 拉受影响在线子服集合，纯展示、不阻断发布。
+  const impactQuery = useQuery({
+    queryKey: ['config-impact', namespace, scopeLevel, group, scopeTarget],
+    queryFn: () => impactPreview({ namespace, scopeLevel, group, scopeTarget }),
+    enabled: open && !!namespace && !!scopeLevel,
+  })
+
   function handleConfirm() {
     onCommentChange(localComment)
     onConfirm()
@@ -84,6 +98,21 @@ export default function ConfigSaveConfirmDialog({
           </div>
           <div>
             {unchanged ? t('configs.saveConfirmNoChange') : t('configs.saveConfirmDiffHint')}
+          </div>
+          {/* 发布影响面（FR-79）：加载中 / 0 台 / N 台三态，纯展示 */}
+          <div data-testid="save-confirm-impact">
+            {impactQuery.isLoading
+              ? t('configs.saveConfirmImpactLoading')
+              : impactQuery.isError
+                ? t('configs.saveConfirmImpactError')
+                : impactQuery.data && impactQuery.data.total > 0
+                  ? t('configs.saveConfirmImpactSummary', {
+                      count: impactQuery.data.total,
+                      servers: impactQuery.data.affected.join('、'),
+                    })
+                  : impactQuery.data
+                    ? t('configs.saveConfirmImpactNone')
+                    : null}
           </div>
         </div>
 

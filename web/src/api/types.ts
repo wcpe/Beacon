@@ -93,6 +93,18 @@ export interface InstanceView {
   registeredAt: string
 }
 
+// 发布影响面预览视图（FR-79）：某条 scope 此刻会落到的在线子服集合
+export interface ImpactView {
+  namespace: string
+  scopeLevel: string
+  group: string
+  scopeTarget: string
+  // 受影响的在线子服 serverId（字典序）
+  affected: string[]
+  // = affected 长度
+  total: number
+}
+
 // ===== 集群拓扑（FR-37）=====
 
 // 拓扑节点（一个在线实例；zone 未分配时为 null）

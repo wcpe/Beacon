@@ -412,6 +412,8 @@ export default function ConfigsPage() {
               namespace={activeTab.namespace}
               group={activeTab.group}
               dataId={activeTab.dataId}
+              scopeLevel={activeTab.scopeLevel}
+              scopeTarget={activeTab.scopeTarget}
               format={activeTab.format}
               originalContent={detail.data?.content ?? ''}
               currentContent={activeTab.content}

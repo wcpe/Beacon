@@ -20,6 +20,7 @@ import type {
   ImprintConfirmView,
   ImprintDiffView,
   ImprintScope,
+  ImpactView,
   InstanceView,
   LoginResult,
   NamespaceView,
@@ -294,6 +295,20 @@ export interface EffectiveConfigView {
 
 export function effectiveConfig(params: EffectiveConfigParams): Promise<EffectiveConfigView> {
   return request<EffectiveConfigView>(`/configs/effective${qs(params)}`)
+}
+
+// ===== 配置发布影响面预览（FR-79）=====
+
+// 影响面预览参数（按某条 scope 算受影响的在线子服）
+export interface ImpactParams {
+  namespace: string
+  scopeLevel: string
+  group?: string
+  scopeTarget?: string
+}
+
+export function impactPreview(params: ImpactParams): Promise<ImpactView> {
+  return request<ImpactView>(`/configs/impact${qs(params)}`)
 }
 
 // ===== 文件树有效预览（FR-45）=====

@@ -571,6 +571,11 @@ export const zhCN = {
     saveConfirmCommentPlaceholder: '可选，记录本次改动原因',
     saveConfirmSubmit: '确认保存',
     saveConfirmCancel: '取消',
+    // 发布影响面预览（FR-79）
+    saveConfirmImpactLoading: '正在计算影响面…',
+    saveConfirmImpactNone: '当前无在线子服会受本次发布影响',
+    saveConfirmImpactSummary: '将影响 {{count}} 台在线服：{{servers}}',
+    saveConfirmImpactError: '影响面计算失败（不影响发布）',
     // 历史修订（RevisionHistory）
     revisionHeader: '历史修订（共 {{count}} 条，点击条目查看 Diff）',
     // 生效预览（EffectivePreview）
