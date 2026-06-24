@@ -40,10 +40,19 @@ class ReverseFetchExecutorTest {
         val lastIngestBody = AtomicReference<String?>(null)
         val scanCalls = AtomicInteger(0)
         val lastScanBody = AtomicReference<String?>(null)
+        val errorCalls = AtomicInteger(0)
+        val lastErrorBody = AtomicReference<String?>(null)
 
         override fun execute(request: HttpRequest): HttpResponse = when {
             request.url.contains("/agent/commands") -> {
                 if (served.getAndIncrement() < pendingCount) HttpResponse(200, pendingBody) else HttpResponse(204, "")
+            }
+
+            // error 端点须在 scan/ingest 之前判定：URL 含 /agent/files/error（FR-87，不与 scan/ingest 混淆）。
+            request.url.contains("/agent/files/error") -> {
+                errorCalls.incrementAndGet()
+                lastErrorBody.set(request.body)
+                HttpResponse(200, "")
             }
 
             // scan 端点须在 ingest 之前判定：URL 含 /agent/files/scan（不与 /ingest 混淆）。
@@ -99,8 +108,14 @@ class ReverseFetchExecutorTest {
         }
     }
 
-    /** 读盘可编排的平台桩：readPluginsTree / readPluginsTreeMetadata 返回预置数据并计数；同步执行 runAsync。 */
-    private class StubAdapter(private val tree: Map<String, ByteArray>) : PlatformAdapter {
+    /**
+     * 读盘可编排的平台桩：readPluginsTree / readPluginsTreeMetadata 返回预置数据并计数；同步执行 runAsync。
+     * failRead=true 时两读盘方法均抛 IOException，模拟 plugins 目录读不了（FR-87 错误回传场景）。
+     */
+    private class StubAdapter(
+        private val tree: Map<String, ByteArray>,
+        private val failRead: Boolean = false,
+    ) : PlatformAdapter {
         val readCalls = AtomicInteger(0)
         val metadataCalls = AtomicInteger(0)
 
@@ -110,11 +125,13 @@ class ReverseFetchExecutorTest {
         override fun dataFolder(): File = File(System.getProperty("java.io.tmpdir"))
         override fun readPluginsTree(): Map<String, ByteArray> {
             readCalls.incrementAndGet()
+            if (failRead) throw java.io.IOException("permission denied")
             return tree
         }
 
         override fun readPluginsTreeMetadata(): Map<String, Long> {
             metadataCalls.incrementAndGet()
+            if (failRead) throw java.io.IOException("permission denied")
             // 元信息桩：由预置树字节数派生大小（scan 只关心大小，不读内容）。
             return tree.mapValues { it.value.size.toLong() }
         }
@@ -261,6 +278,47 @@ class ReverseFetchExecutorTest {
         val body = transport.lastIngestBody.get()!!
         assertTrue(body.contains("config.yml") && body.contains("lang/zh.yml"), "选定文件应回传：$body")
         assertTrue(!body.contains("secret.yml"), "未选定不应回传：$body")
+    }
+
+    @Test
+    fun `scan 读盘失败回传错误到 error 端点`() {
+        // FR-87：scan 读元信息失败 → 回传 /agent/files/error，令控制面任务转 failed 记 lastError（不静默卡 scanning）。
+        val transport = FakeTransport(pendingBody = CMD_SCAN)
+        val adapter = StubAdapter(emptyMap(), failRead = true)
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.metadataCalls.get(), "scan 应尝试读元信息一次")
+        assertEquals(0, transport.scanCalls.get(), "读失败不应回传清单")
+        assertEquals(0, transport.ingestCalls.get(), "scan 不走 ingest")
+        assertEquals(1, transport.errorCalls.get(), "读失败应回传错误一次")
+        val body = transport.lastErrorBody.get()!!
+        assertTrue(body.contains("commandId=9"), "错误回传应携命令 id：$body")
+        assertTrue(body.contains("reason="), "错误回传应携 reason：$body")
+    }
+
+    @Test
+    fun `submit 读盘失败回传错误到 error 端点`() {
+        // FR-87：submit 读内容失败 → 回传 /agent/files/error（其所属任务处 fetching）。
+        val transport = FakeTransport(pendingBody = CMD_SUBMIT)
+        val adapter = StubAdapter(emptyMap(), failRead = true)
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.readCalls.get(), "submit 应尝试读内容一次")
+        assertEquals(0, transport.ingestCalls.get(), "读失败不应回传内容")
+        assertEquals(1, transport.errorCalls.get(), "读失败应回传错误一次")
+        val body = transport.lastErrorBody.get()!!
+        assertTrue(body.contains("commandId=10"), "错误回传应携命令 id：$body")
+    }
+
+    @Test
+    fun `旧整树读盘失败不回传错误`() {
+        // 向后兼容：旧整树命令（无 mode、非受管任务）读盘失败不回传错误（无对应任务，沿旧静默放弃语义）。
+        val transport = FakeTransport(pendingBody = CMD_INGEST)
+        val adapter = StubAdapter(emptyMap(), failRead = true)
+        executor(transport, adapter).trigger()
+
+        assertEquals(0, transport.errorCalls.get(), "旧整树读盘失败不应回传错误")
+        assertEquals(0, transport.ingestCalls.get(), "读失败不应回传内容")
     }
 
     companion object {

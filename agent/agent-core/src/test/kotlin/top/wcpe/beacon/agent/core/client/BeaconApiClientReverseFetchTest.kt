@@ -42,10 +42,15 @@ class BeaconApiClientReverseFetchTest {
         @Volatile
         var scanStatus: Int = 200
 
+        @Volatile
+        var errorStatus: Int = 200
+
         override fun execute(request: HttpRequest): HttpResponse {
             lastRequest.set(request)
             return when {
                 request.url.contains("/agent/commands") -> HttpResponse(commandsStatus, commandsBody)
+                // error 端点须在 scan/ingest 之前判定（URL 含 /error，不与 scan/ingest 混淆，FR-87）。
+                request.url.contains("/agent/files/error") -> HttpResponse(errorStatus, "")
                 // scan 端点须在 ingest 之前判定（URL 含 /scan，不与 /ingest 混淆）。
                 request.url.contains("/agent/files/scan") -> HttpResponse(scanStatus, "")
                 request.url.contains("/agent/files/ingest") -> HttpResponse(ingestStatus, "")
@@ -267,6 +272,34 @@ class BeaconApiClientReverseFetchTest {
         val client = BeaconApiClient(transport, CmdCodec(), settings())
         val ok = client.uploadScan(7L, listOf(ScanFile("a.yml", 1L, isText = true, overThreshold = false)))
         assertFalse(ok, "非 200 应返回 false")
+    }
+
+    // ---- 错误回传契约（FR-87） ----
+
+    @Test
+    fun `uploadError 报文为 commandId 与 reason`() {
+        val transport = ScriptTransport().apply { errorStatus = 200 }
+        val codec = CmdCodec()
+        val client = BeaconApiClient(transport, codec, settings())
+
+        val ok = client.uploadError(43L, "扫描 plugins 目录元信息失败：IOException: permission denied")
+        assertTrue(ok, "200 应返回 true")
+        // 命中 error 端点（POST /agent/files/error）。
+        assertTrue(transport.lastRequest.get()!!.url.contains("/agent/files/error"))
+
+        @Suppress("UNCHECKED_CAST")
+        val body = codec.lastEncoded.get() as Map<String, Any?>
+        assertEquals(43L, body["commandId"])
+        assertEquals("扫描 plugins 目录元信息失败：IOException: permission denied", body["reason"])
+        // 报文键集合精确（与控制面 /error 契约对齐）。
+        assertEquals(setOf("commandId", "reason"), body.keys)
+    }
+
+    @Test
+    fun `uploadError 非 200 返回 false`() {
+        val transport = ScriptTransport().apply { errorStatus = 409 }
+        val client = BeaconApiClient(transport, CmdCodec(), settings())
+        assertFalse(client.uploadError(7L, "x"), "非 200（命令态不符 / 连接失败）应返回 false")
     }
 
     companion object {

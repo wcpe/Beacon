@@ -512,6 +512,30 @@ class BeaconApiClient(
     }
 
     /**
+     * 回传反向抓取执行错误：POST /beacon/v1/agent/files/error（FR-87）。同步调用，请在异步线程使用。
+     *
+     * agent 执行 scan/submit 读盘失败（IO 错 / 异常）时调用，把错误明细带给控制面，使任务转 failed 并记 lastError，
+     * 不再让任务静默卡在非终态等过期清理。携命令 id + 原因文本。
+     * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（best-effort、不重试——回传不通仍交控制面超时清理为 expired）。
+     */
+    fun uploadError(commandId: Long, reason: String): Boolean {
+        val body = mapOf(
+            "commandId" to commandId,
+            "reason" to reason,
+        )
+        val resp = exec(
+            HttpRequest(
+                method = "POST",
+                url = "$base/beacon/v1/agent/files/error",
+                headers = headers(withBody = true),
+                body = codec.encode(body),
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]

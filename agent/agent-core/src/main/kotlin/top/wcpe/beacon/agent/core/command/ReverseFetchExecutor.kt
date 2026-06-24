@@ -80,7 +80,8 @@ class ReverseFetchExecutor(
     /**
      * scan 阶段（FR-58）：只 stat 取元信息清单 → uploadScan，**永不因超限失败**（超阈值文件以红标列出）。
      *
-     * 读元信息失败（本地 IO 异常）放弃本命令、不回传（命令交控制面超时清理为 expired，绝不误标 done）。
+     * 读元信息失败（本地 IO 异常）→ 回传错误到控制面（FR-87），令任务转 failed 记 lastError，
+     * 不再让任务静默卡在 scanning 等过期清理；随后放弃本命令、不回传清单（绝不误标 done）。
      */
     private fun runScan(command: AgentCommand) {
         // 只 stat 取大小（壳层在此实现 FS 级路径安全 + 符号链接逃逸判定，不读内容）。失败 / 桩未实现得空映射。
@@ -88,6 +89,7 @@ class ReverseFetchExecutor(
             adapter.readPluginsTreeMetadata()
         } catch (e: Exception) {
             adapter.error("扫描 plugins 目录元信息失败，放弃本次扫描：id=${command.id}", e)
+            reportError(command, "扫描 plugins 目录元信息失败：${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
             return
         }
         // 纯函数过滤 + 标注：排除不安全路径 / jar，超阈值仅红标，永不失败。
@@ -105,7 +107,8 @@ class ReverseFetchExecutor(
      * submit 阶段（FR-58）/ 旧整树兼容：读内容回传 ingest。
      *
      * submit（selectedPaths 非空）限定只回传选定子集；空 mode 且无 selectedPaths → 维持旧整树读内容回传（向后兼容）。
-     * 读盘失败放弃本命令、不回传（命令交控制面超时清理为 expired，绝不误标 done）。
+     * 读盘失败 → submit 模式下回传错误到控制面（FR-87），令任务转 failed 记 lastError；随后放弃本命令、不回传内容
+     * （绝不误标 done）。旧整树兼容（无 mode、非受管任务）下回传虽无对应任务，控制面按命令态不符拒、无副作用。
      */
     private fun runSubmit(command: AgentCommand) {
         // 读真实 plugins 树（壳层在此实现 FS 级路径安全 + 符号链接逃逸判定）。读盘失败 / 桩未实现得空映射。
@@ -113,6 +116,10 @@ class ReverseFetchExecutor(
             adapter.readPluginsTree()
         } catch (e: Exception) {
             adapter.error("读 plugins 目录失败，放弃本次反向抓取：id=${command.id}", e)
+            // 仅 submit 模式回传错误（其所属任务处 fetching）；旧整树兼容无受管任务，回传也只会被控制面按命令态拒。
+            if (command.payload.mode == IngestCommandPayload.MODE_SUBMIT) {
+                reportError(command, "读 plugins 目录失败：${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
+            }
             return
         }
 
@@ -139,6 +146,18 @@ class ReverseFetchExecutor(
                     adapter.warn("反向抓取回传失败（命令态不符 / 控制面校验拒 / 连接失败）：id=${command.id}")
                 }
             }
+        }
+    }
+
+    /**
+     * 回传一条执行错误到控制面（FR-87）：best-effort，回传失败仅记 warn、不重试（交控制面超时清理兜底）。
+     */
+    private fun reportError(command: AgentCommand, reason: String) {
+        val ok = apiClient.uploadError(command.id, reason)
+        if (ok) {
+            adapter.info("已回传反向抓取执行错误：id=${command.id}")
+        } else {
+            adapter.warn("回传反向抓取执行错误失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 
