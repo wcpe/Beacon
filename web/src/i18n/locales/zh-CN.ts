@@ -271,6 +271,7 @@ export const zhCN = {
       'instance.register': '实例注册',
       'instance.offline': '实例下线',
       'instance.online': '取消实例下线',
+      'instance.tail-logs': '查看 agent 日志',
       'instance.resync': '强制重同步',
       'zone.assign': '指派区',
       'zone.move': '改派区',

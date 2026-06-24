@@ -2,6 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 修复
+- 补 `instance.tail-logs` 审计动作中文映射 + 漂移守护清单（修复 FR-88 / #15）：FR-88「查看 agent 日志」每次会落一条 `instance.tail-logs` 审计，但 `web/src/i18n/locales/zh-CN.ts` 的 `audit.action` 缺该映射、且 #15 漂移守护清单（`auditActionCoverage.test.ts` 手工镜像 `enums.go`）也漏镜像该枚举——守护测试因此全绿却放行，审计日志页（FR-7）/ 服务分析页（FR-73）「动作」列对该动作显原始英文 `instance.tail-logs`。补中文映射「查看 agent 日志」并把 `instance.tail-logs` 纳入守护清单（守护用例 51→52）。运维体验优化程序末轮总评（前端 reviewer）发现；守护清单为手工镜像、仍存同类漂移风险，自动派生留作后续改进。
+
 ## 0.14.0（2026-06-25）
 
 ### 新增
