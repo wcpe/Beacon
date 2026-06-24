@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @param logBuffer          agent 自身日志环形缓冲（FR-88，可选；为 null 时不响应 tail-logs，按未知类型忽略）
  * @param onResyncConfig     强制重同步回调（FR-91，可选；为 null 时不响应 resync-config，按未知类型忽略）。
  *                           延迟调用、命令期才触发——故由装配方以 lambda 闭包注入（打破与 lifecycle 的构造顺序）。
+ *                           返回 true=已执行三条重拉；false=因 agent 未运行/正在停机跳过（runResync 据此回传 failed，不误报 done）。
  * @param reverseFetchEnabled 是否启用反向抓取读盘路径（plugins 基目录有效时 true；无效时 fail-closed 关闭，
  *                            收到 ingest-plugins 命令仅记 warn、不读盘——但 tail-logs / resync-config 不受此守卫影响）
  */
@@ -38,7 +39,7 @@ class ReverseFetchExecutor(
     private val apiClient: BeaconApiClient,
     private val adapter: PlatformAdapter,
     private val logBuffer: AgentLogBuffer? = null,
-    private val onResyncConfig: (() -> Unit)? = null,
+    private val onResyncConfig: (() -> Boolean)? = null,
     private val reverseFetchEnabled: Boolean = true,
 ) {
 
@@ -205,6 +206,7 @@ class ReverseFetchExecutor(
      * 再经命令结果端点回传 done。**绝不读 plugins 树**（重同步语义是重拉权威配置、非反向抓盘）。
      *
      * 回调内部各 applier 的 md5 幂等守卫兜底：已是最新则无害 no-op。回调抛异常 → 回传 failed（带原因摘要）。
+     * 回调返回 false（agent 未运行 / 正在停机的极窄窗口跳过了重拉）→ 回传 failed（比误报 done 诚实，控制面 CAS 转 failed）。
      * 未注入回调（旧装配 / 测试桩）则按未知能力忽略：记 warn、不回传（控制面超时清理）。
      */
     private fun runResync(command: AgentCommand) {
@@ -213,12 +215,19 @@ class ReverseFetchExecutor(
             adapter.warn("收到强制重同步命令但未启用重同步回调（忽略）：id=${command.id}")
             return
         }
-        try {
+        val executed = try {
             callback()
         } catch (e: Exception) {
             adapter.error("强制重同步执行失败：id=${command.id}", e)
             val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
             if (!ok) adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+            return
+        }
+        // 回调跳过（agent 未运行 / 正在停机）→ 回传 failed，不误报 done（真实未执行重拉）。
+        if (!executed) {
+            adapter.warn("强制重同步被跳过（agent 未运行/正在停机）：id=${command.id}")
+            val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "agent 未运行/正在停机，跳过强制重同步")
+            if (!ok) adapter.warn("强制重同步跳过结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
             return
         }
         val ok = apiClient.uploadCommandResult(command.id, ok = true, reason = "")

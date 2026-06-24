@@ -251,13 +251,16 @@ class AgentLifecycle(
      *
      * **须在 async 线程调用**（内部 HTTP / 文件 IO 均阻塞）：由命令执行器在 async 线程触发，
      * 故此处不再额外起线程、也绝不上 MC 主线程。
+     *
+     * @return true=已执行三条重拉；false=因未运行/正在停机跳过（调用方据此回传 failed，不误报 done）
      */
-    fun forceResyncNow() {
-        if (!running.get()) return
+    fun forceResyncNow(): Boolean {
+        if (!running.get()) return false
         adapter.info("执行强制重同步：重拉有效配置/文件树/覆盖集")
         fetchAndApplyConfigOnce()
         fetchAndApplyFileTreeOnce()
         fetchAndApplyOverrideOnce()
+        return true
     }
 
     /**

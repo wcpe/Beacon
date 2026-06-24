@@ -155,7 +155,7 @@ object AgentAssembly {
         // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config 不受影响。三类命令复用同一命令通路与单飞排空。
         val reverseFetchExecutor = ReverseFetchExecutor(
             identity, apiClient, adapter, logBuffer,
-            onResyncConfig = { lifecycleRef.get()?.forceResyncNow() },
+            onResyncConfig = { lifecycleRef.get()?.forceResyncNow() ?: false },
             reverseFetchEnabled = pluginsBaseValid,
         )
 

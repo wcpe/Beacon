@@ -204,8 +204,8 @@ class ReverseFetchExecutorTest {
         return ReverseFetchExecutor(identity(), client, adapter, buffer)
     }
 
-    /** 带强制重同步回调的执行器（FR-91 重同步路径用）。 */
-    private fun executor(transport: FakeTransport, adapter: StubAdapter, onResync: () -> Unit): ReverseFetchExecutor {
+    /** 带强制重同步回调的执行器（FR-91 重同步路径用；回调返回 true=已执行、false=因未运行跳过）。 */
+    private fun executor(transport: FakeTransport, adapter: StubAdapter, onResync: () -> Boolean): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter, onResyncConfig = onResync)
     }
@@ -400,7 +400,7 @@ class ReverseFetchExecutorTest {
         val transport = FakeTransport(pendingBody = CMD_RESYNC)
         val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
         val resyncCalls = AtomicInteger(0)
-        executor(transport, adapter) { resyncCalls.incrementAndGet() }.trigger()
+        executor(transport, adapter) { resyncCalls.incrementAndGet(); true }.trigger()
 
         assertEquals(1, resyncCalls.get(), "应调重同步回调一次")
         assertEquals(0, adapter.readCalls.get(), "重同步绝不读 plugins 内容")
@@ -423,6 +423,21 @@ class ReverseFetchExecutorTest {
         val body = transport.lastResultBody.get()!!
         assertTrue(body.contains("commandId=12"), "结果回传应携命令 id：$body")
         assertTrue(body.contains("ok=false"), "失败应回传 ok=false：$body")
+    }
+
+    @Test
+    fun `重同步回调返回 false（未运行跳过）回传 failed`() {
+        // FR-91 followup：停机窗口（forceResyncNow 因 !running 返回 false / lifecycle 持有者为 null）→
+        // 回调返回 false，runResync 必须回传 ok=false，不误报 done（真实未执行重拉）。
+        val transport = FakeTransport(pendingBody = CMD_RESYNC)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        executor(transport, adapter) { false }.trigger() // 模拟未运行/停机：回调返回 false
+
+        assertEquals(0, adapter.readCalls.get(), "重同步绝不读 plugins 内容")
+        assertEquals(1, transport.resultCalls.get(), "跳过也应回传结果一次")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("commandId=12"), "结果回传应携命令 id：$body")
+        assertTrue(body.contains("ok=false"), "跳过应回传 ok=false（不误报 done）：$body")
     }
 
     @Test
