@@ -267,6 +267,7 @@ export const zhCN = {
       'file.reverse-fetch-submit': '反向抓取·提交',
       'file.reverse-fetch-ingest': '反向抓取·落库',
       'file.reverse-fetch-cancel': '反向抓取·取消',
+      'file.reverse-fetch-error': '反向抓取·错误回传',
       'reverse-fetch.ignore-rule-add': '新增反向抓取忽略规则',
       'reverse-fetch.ignore-rule-remove': '删除反向抓取忽略规则',
       'override-set.create': '新建覆盖集',
@@ -893,6 +894,12 @@ export const zhCN = {
     emptyTasks: '暂无任务，先建一个扫描任务',
     progressFiles: '{{selected}}/{{total}} 选定',
     msgCancelled: '已取消任务 #{{id}}',
+    // 进度·已用时长与卡死警示（FR-87）
+    colElapsed: '已用时长',
+    elapsedValue: '已用 {{elapsed}}',
+    stuckBadge: '疑似 agent 未响应',
+    stuckTooltip: '该任务停留超 {{sec}} 秒未推进，可能 agent 未响应或已掉线；可取消后重建或检查该实例 agent。',
+    lastErrorLabel: '失败原因',
     // 状态文案（status.* 直引枚举值）
     statusScanning: '扫描中',
     statusPendingReview: '待审核',

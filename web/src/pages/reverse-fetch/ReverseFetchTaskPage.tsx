@@ -163,13 +163,22 @@ function TaskDetail({
   } else {
     const hintKey = READONLY_HINT_KEY[task.status]
     body = (
-      <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-        <TaskStatusBadge status={task.status} />
-        <span>
-          {hintKey
-            ? t(hintKey)
-            : t('reverseFetchTask.waiting', { serverId: task.serverId, status: task.status })}
-        </span>
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <TaskStatusBadge status={task.status} />
+          <span>
+            {hintKey
+              ? t(hintKey)
+              : t('reverseFetchTask.waiting', { serverId: task.serverId, status: task.status })}
+          </span>
+        </div>
+        {/* 失败原因明细（FR-87）：failed 任务回传的 agent 错误，让运维免翻磁盘日志即可定位 */}
+        {task.status === 'failed' && task.lastError && (
+          <div className="max-w-2xl rounded border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            <span className="font-medium">{t('reverseFetchTask.lastErrorLabel')}：</span>
+            <span className="break-all">{task.lastError}</span>
+          </div>
+        )}
       </div>
     )
   }

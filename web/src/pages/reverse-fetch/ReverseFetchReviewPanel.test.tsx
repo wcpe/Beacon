@@ -54,8 +54,10 @@ function task(files: ReverseFetchScanFileView[]): ReverseFetchTaskView {
     selectedPaths: [],
     operator: 'admin',
     note: '',
+    lastError: '',
     createdAt: '',
     updatedAt: '',
+    elapsedSec: 0,
   }
 }
 

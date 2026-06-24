@@ -75,8 +75,10 @@ const taskStub: ReverseFetchTaskView = {
   selectedPaths: [],
   operator: 'admin',
   note: '',
+  lastError: '',
   createdAt: '',
   updatedAt: '',
+  elapsedSec: 0,
 }
 
 function renderTrigger(ui: ReactElement) {

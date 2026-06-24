@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { cancelReverseFetchTask } from '../../api/client'
 import type { ReverseFetchTaskView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
+import { STUCK_THRESHOLD_SEC, formatElapsed, isTaskStuck } from '@/lib/reverseFetchProgress'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -94,6 +95,7 @@ export default function ReverseFetchTaskList({
             <TableHead>{t('reverseFetchTask.colScope')}</TableHead>
             <TableHead>{t('reverseFetchTask.colStatus')}</TableHead>
             <TableHead>{t('reverseFetchTask.colProgress')}</TableHead>
+            <TableHead>{t('reverseFetchTask.colElapsed')}</TableHead>
             <TableHead>{t('reverseFetchTask.colCreatedAt')}</TableHead>
             <TableHead className="text-right">{t('reverseFetchTask.colActions')}</TableHead>
           </TableRow>
@@ -113,13 +115,35 @@ export default function ReverseFetchTaskList({
                   : `${t('reverseFetchTask.scopeGroup')} · ${task.group}`}
               </TableCell>
               <TableCell>
-                <TaskStatusBadge status={task.status} />
+                <div className="flex flex-col gap-1">
+                  <TaskStatusBadge status={task.status} />
+                  {isTaskStuck(task.status, task.elapsedSec) && (
+                    <Badge
+                      variant="destructive"
+                      className="text-[10px] w-fit"
+                      title={t('reverseFetchTask.stuckTooltip', { sec: STUCK_THRESHOLD_SEC })}
+                    >
+                      {t('reverseFetchTask.stuckBadge')}
+                    </Badge>
+                  )}
+                  {task.status === 'failed' && task.lastError && (
+                    <span
+                      className="text-[10px] text-destructive max-w-[16rem] truncate"
+                      title={task.lastError}
+                    >
+                      {t('reverseFetchTask.lastErrorLabel')}：{task.lastError}
+                    </span>
+                  )}
+                </div>
               </TableCell>
               <TableCell className="font-mono text-xs">
                 {t('reverseFetchTask.progressFiles', {
                   selected: task.selectedCount,
                   total: task.totalFiles,
                 })}
+              </TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {t('reverseFetchTask.elapsedValue', { elapsed: formatElapsed(task.elapsedSec) })}
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">{task.createdAt}</TableCell>
               <TableCell className="text-right">

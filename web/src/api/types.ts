@@ -484,8 +484,12 @@ export interface ReverseFetchTaskView {
   selectedPaths: string[]
   operator: string
   note: string
+  // 失败原因明细（FR-87）：agent 回传 scan/submit 错误或控制面入库失败时非空，供 failed 任务展示
+  lastError: string
   createdAt: string
   updatedAt: string
+  // 已用时长（FR-87）：控制面渲染时刻距 updatedAt 的秒数（≥0），供时长展示 + 非终态卡死警示
+  elapsedSec: number
 }
 
 // 单个冲突文件 diff 视图（对齐 handler.conflictDiffView）：抓取值 ⟷ 目标已有版本。

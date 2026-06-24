@@ -33,6 +33,7 @@ const AUDIT_ACTIONS = [
   'file.reverse-fetch-submit',
   'file.reverse-fetch-ingest',
   'file.reverse-fetch-cancel',
+  'file.reverse-fetch-error',
   // reverse-fetch.* / override-set.*
   'reverse-fetch.ignore-rule-add',
   'reverse-fetch.ignore-rule-remove',
