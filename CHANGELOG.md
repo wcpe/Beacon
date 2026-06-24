@@ -6,6 +6,7 @@
 
 ### 新增
 - 健康流转原因展示（FR-81，增强健康，见 [docs/specs/health-status-reason.md](docs/specs/health-status-reason.md)）：实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）新增 `lastHeartbeatAgeSec`（距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（触发当前状态的原因文案，如「35s 未心跳 > ttl 30s」；degraded/lost/offline 各显对应阈值、online 空串；阈值取当前生效健康阈值，与健康扫描判定同源，纯内存派生不落 DB）；管理台服务器页 / 看板 / 单服详情的状态徽标在原因非空时以悬浮提示展示，让运维一眼看懂「为何是这个状态」。原因文案纯函数 `runtime.HealthReason` 与状态机 `healthByAge` 同组阈值口径一致。
+- 新服接入引导向导（FR-85，feat，纯前端，见 [docs/specs/server-onboarding-wizard.md](docs/specs/server-onboarding-wizard.md)）：服务器页加「添加服务器」分步向导——① 填环境 / serverId / 角色（bukkit·bungee）/ 大区 / 地址，进入下一步前按目标环境拉 `listInstances` 校验 serverId 不重复（撞名拦截并提示，早期反馈、真源唯一性仍由控制面注册把关）；② 按所填值生成可一键复制的 **agent `config.yml` identity 段**（含中文注释、显式不含 zone）+ **run 脚本 env 片段**（`BEACON_AGENT_IDENTITY_NAMESPACE/SERVER_ID/GROUP_HINT/ADDRESS`，FR-41 覆盖、优先于本地 yaml）；③ 可选预建 zone 指派（仅 bukkit，复用既有 `PUT /admin/v1/zones/assignments`，使新服上线即归属正确小区、不经「未分配」中间态；BC 代理不进 zone 指派、不展示该入口，与后端校验一致）。片段拼接为纯函数 `lib/agentOnboarding.ts`。**纯前端**、复用既有端点（查重 `listInstances`、指派 `assignZone`、环境下拉 `listNamespaces`），未新增后端 / 未改契约 / 未引入依赖。
 
 ### 修复
 - 破坏性确认框复述比对忽略首尾空白（修复 FR-76）：高摩擦档手输复述用严格 `===` 比对，当 `confirmPhrase` 取的名称（如 API 密钥名）带前后空格时，用户照抄可见正文（无空格）也无法启用确认，导致吊销 / 删除被卡死。改为两侧 `trim()` 后比对（仍区分大小写以保留摩擦强度）；补该场景回归用例。v0.11.0 代码评审发现。

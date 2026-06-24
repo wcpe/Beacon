@@ -56,6 +56,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import ReassignDialog from './zones/ReassignDialog'
 import ServerDetailSheet from './servers/ServerDetailSheet'
+import AddServerWizard from './servers/AddServerWizard'
 
 // 健康轮询周期（毫秒）
 const REFETCH_MS = 5000
@@ -101,6 +102,8 @@ export default function ServersPage() {
   const [detailInstance, setDetailInstance] = useState<InstanceView | null>(null)
   // 当前正在改派的实例（null 表示改派对话框关闭）
   const [reassignTarget, setReassignTarget] = useState<InstanceView | null>(null)
+  // 新服接入引导向导开关（FR-85）
+  const [wizardOpen, setWizardOpen] = useState(false)
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ['instances', filter],
@@ -367,6 +370,10 @@ export default function ServersPage() {
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-semibold">{t('servers.title')}</h1>
         {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
+        {/* 新服接入引导向导入口（FR-85） */}
+        <Button className="ml-auto" onClick={() => setWizardOpen(true)}>
+          {t('servers.wizardOpenBtn')}
+        </Button>
       </div>
 
       <Card>
@@ -512,6 +519,15 @@ export default function ServersPage() {
         zoneOptions={zoneOptions}
         pending={assignMut.isPending}
         onConfirm={(params) => assignMut.mutate(params)}
+      />
+
+      {/* 新服接入引导向导（FR-85）：填身份生成 agent 接入片段，可选预建 zone 指派 */}
+      <AddServerWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        namespace={filter.namespace ?? ''}
+        nsOptions={nsOptions}
+        groupOptions={groupOptions}
       />
     </div>
   )
