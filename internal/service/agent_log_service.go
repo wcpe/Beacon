@@ -30,7 +30,7 @@ type AgentLogResult struct {
 //
 // admin 触发 → 建 pending tail-logs 命令 + 单活跃限速 + 审计（detail 不含日志内容）+ 唤醒 agent；
 // agent 拉命令 → 读自身日志环形缓冲快照（已脱敏）→ 回传；控制面把日志行存为命令瞬态（done）；
-// admin 查询 → 取最近一条 tail-logs 命令状态，done 则解出脱敏日志行（取一次、过期即清空）。
+// admin 查询 → 取最近一条 tail-logs 命令状态，done 则解出脱敏日志行（只读不清，done 后可重复读；未终结命令超时由清理器过期即清空瞬态）。
 //
 // 严守 ADR-0040 边界：只承载 agent **自身**日志、行数由 agent 缓冲天然有界、瞬态不入持久真源 / 不进审计 detail。
 type AgentLogService struct {
@@ -123,6 +123,7 @@ func (s *AgentLogService) ReceiveLogs(commandID uint, lines []AgentLogLine, clie
 
 // GetLatest 取某实例最近一条 tail-logs 命令的状态 + 日志（FR-88，供 admin 查询）。
 // 无任何取日志命令返回 (nil, nil)；done 则解出脱敏日志行，其余状态 lines 为空（前端据 status 显示进行中 / 失败）。
+// 只读不清：done 命令的瞬态日志可重复读，不在读时抹除；未终结命令的瞬态由清理器超时过期时清空。
 func (s *AgentLogService) GetLatest(ns, serverID string) (*AgentLogResult, error) {
 	if ns == "" || serverID == "" {
 		return nil, apperr.ErrInvalidParam
