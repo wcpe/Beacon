@@ -24,6 +24,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		Logger: newGormLogger(),
 		// 把方言专有的约束冲突错误翻译为可移植的 gorm.ErrDuplicatedKey 等
 		TranslateError: true,
+		// 全表自动时间戳（CreatedAt/UpdatedAt）统一用 UTC：与注册/健康等内存侧时间一致，
+		// 否则非 UTC 时区机器上时间戳带本地偏移，会让 FR-73 服务分析按 UTC 窗口漏掉最近活动。
+		NowFunc: func() time.Time { return time.Now().UTC() },
 	})
 	if err != nil {
 		return nil, fmt.Errorf("连接数据库失败: %w", err)
