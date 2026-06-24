@@ -769,14 +769,6 @@ export function rollbackFile(
   })
 }
 
-// 批量操作一组文件对象（FR-74）：一事务原子完成；空 ids / 非法 action 后端 400；写操作需 full 角色。
-export function batchFiles(action: BatchAction, ids: number[]): Promise<BatchResult> {
-  return request<BatchResult>('/files/batch', {
-    method: 'POST',
-    body: JSON.stringify({ action, ids }),
-  })
-}
-
 // ===== 配置导入（上传通道，FR-38）=====
 
 // 单个待导入文件（相对 path + 浏览器 File 对象）
