@@ -188,6 +188,10 @@ data: {}
 请求体：`{ "commandId": 1330, "lines": [{ "level": "INFO", "text": "已应用有效配置 md5=abc" }, { "level": "WARN", "text": "bootstrap-token=***" }] }`。agent 收到 §10 的 `type=tail-logs` 命令后，读自身日志内存环形缓冲快照（**已在 agent 侧落缓冲那一刻脱敏**、行数由缓冲容量天然有界、**绝不读任何磁盘日志文件**）回传。控制面把日志行存为该命令的**瞬态**（`log_content`，取一次后过期清理清空，不落持久真源、不进审计 detail、不导出）并 CAS `fetched → done`。
 - 命令须存在且处 `fetched`、`type=tail-logs`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面。返回 `{ "ok": true }`。见 [ADR-0040](adr/0040-agent-readonly-log-tail.md) 与 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)。
 
+### 15. 回传命令执行结果 `POST /beacon/v1/agent/commands/result`（FR-91 强制重同步）
+请求体：`{ "commandId": 1450, "ok": true, "reason": "" }`。agent 收到 §10 的 `type=resync-config` 命令后，重拉控制面权威的有效配置/文件树/覆盖集并 apply（各 applier md5 幂等守卫兜底，已是最新则合法 no-op、**不读 plugins 树**），再回传执行结果。控制面据此 CAS `fetched → done`（`ok=true`）或 `fetched → failed`（`ok=false`，`reason` 为原因摘要、无敏感内容）。
+- 命令须存在且处 `fetched`、`type=resync-config`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面；无内容回传、仅推进命令生命周期。返回 `{ "ok": true }`。复用命令队列（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)），不新增 ADR；见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md)。
+
 ---
 
 ## 二、admin / UI 侧 `/admin/v1/*`
@@ -335,6 +339,7 @@ data: {}
 | `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | **建反向抓取受管任务并下发扫描命令**（FR-58 重定义，取代 FR-39 一次性 ingest，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单实例互斥**（该实例已有非终态任务→`409 REVERSE_FETCH_TASK_ACTIVE`，detail 含活跃 taskId+status）→ 事务内建任务（`scanning`）+ 下发 `mode=scan` 命令 + `file.reverse-fetch-scan` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 agent §10、§12）。返回 `202` + 任务视图（见下方 FR-58 任务字段）。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md) |
 | `POST /admin/v1/instances/{serverId}/logs?namespace=` | **触发取该 agent 自身脱敏日志**（FR-88，写操作 readonly→403，见 [ADR-0040](adr/0040-agent-readonly-log-tail.md)）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单活跃限速**（该实例已有进行中取日志命令→`409 AGENT_LOG_ACTIVE`）→ 事务内建 `tail-logs` 命令（`pending`）+ `instance.tail-logs` 审计（detail 不含日志内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§14）。返回 `202` + `{ commandId, status, lines: [] }` |
 | `GET /admin/v1/instances/{serverId}/logs?namespace=` | 查询该实例最近一次取日志结果（FR-88，供前端轮询）：`done` 则返回 `{ commandId, status, lines: [{ level, text }] }`（日志已脱敏）；进行中（`pending`/`fetched`）/ 失败（`failed`/`expired`）时 `lines` 为空；**从无取日志命令→`204 No Content`**。日志为瞬态、取一次后随命令过期清空 |
+| `POST /admin/v1/instances/{serverId}/resync?namespace=` | **触发该 agent 强制重同步**（FR-91，写操作 readonly→403，复用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) 命令队列、不新增 ADR）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `resync-config` 命令（`pending`，空载荷）+ `instance.resync` 审计（detail 仅 commandId/serverId、无内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§15）。agent 重拉有效配置/文件树/覆盖集并 apply（幂等，已是最新则 no-op），回传命令结果。返回 `202` + 命令视图。见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md) |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 | `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt }]`。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
 

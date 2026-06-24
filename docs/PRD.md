@@ -136,7 +136,7 @@
 | FR-88 | 在线日志/诊断查看器（feat，[ADR-0040](adr/0040-agent-readonly-log-tail.md)·安全边界，双端 jar，见 [docs/specs/agent-log-viewer.md](specs/agent-log-viewer.md)）：agent 自身日志内存环形缓冲（落缓冲脱敏/有界）+ 命令-回传取日志 + 服务器详情「查看 agent 日志」拉最近 N 行，排障免上机 | P2 | 已交付@v0.13.0 |
 | FR-89 | 告警历史 / 事件信息流（feat，[ADR-0041](adr/0041-alert-event-persistence.md)·新实体，见 [docs/specs/alert-event-feed.md](specs/alert-event-feed.md)）：健康流转/发布失败/后端不可达落 alert_event 表 + 新「事件」页时间线展示 | P2 | 已交付@v0.13.0 |
 | FR-90 | admin API token 管理（feat，见 [ADR-0042](adr/0042-admin-api-token.md)）：脚本化 admin API token 复用 FR-42 运行时 API 密钥（`bk_` 前缀，库存哈希、可吊销/到期、full/readonly 角色、调 `/admin/v1`，区别 agent 共享 `X-Beacon-Token`），FR-90 增量为管理台一次性明文弹窗的「复制为 curl」自动化辅助（带认证头的可粘贴样例命令）；不新增并行凭据、不做 OAuth/SSO/细粒度 ACL/多租户（见 [docs/specs/admin-api-token.md](specs/admin-api-token.md)） | P2 | 已交付@v0.13.0 |
-| FR-91 | 服务器行快捷操作（增强 FR-65，依赖 FR-86+FR-88）：行菜单加 agent 详情/查看日志/强制重同步（触发该 agent 重拉有效配置） | P2 | 计划 |
+| FR-91 | 服务器行快捷操作（增强 FR-65，依赖 FR-86+FR-88，见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md)）：行操作收进单个「⋯」下拉菜单 + 加 agent 详情/查看日志/强制重同步（resync-config 命令令该 agent 重拉有效配置/文件树/覆盖集，复用 ADR-0027 命令队列） | P2 | 计划 |
 | FR-92 | 暗色模式 / NOC 大屏只读 / 紧凑密度（feat）：暗色主题切换、只读「大屏」看板路由、表格密度开关，持久化偏好 | P3 | 计划 |
 
 > **P1 范围说明（提示位归档 P2）**：心跳响应的 `configDirty` 优化提示位**不在 P1 实现、恒返 `false`**——变更感知由 FR-2 长轮询负责，agent 不依赖该位；作为 P2 优化（API 细节见 `docs/API.md` §2）。

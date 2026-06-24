@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 服务器行快捷操作 + 强制重同步（FR-91，增强 FR-65，全栈含 agent，复用 [ADR-0027](docs/adr/0027-reverse-fetch-channel-and-security.md) 命令队列、未引入新 ADR，见 [docs/specs/server-row-quick-actions.md](docs/specs/server-row-quick-actions.md)）：服务器页行操作收进单个「⋯」下拉菜单（保留下线 FR-76 二次确认 / drain·undrain / 改派），并补三入口——**agent 详情**（打开服务器详情 Sheet）、**查看日志**（打开详情 Sheet 并直达其日志区、复用 FR-88）、**强制重同步**。强制重同步令在线 agent 立即重拉控制面权威的有效配置/文件树/覆盖集并 apply（免等长轮询、免上机），是 `agent_command` 命令队列既有模式的**第三个命令类型**（`resync-config`，与 `ingest-plugins`/`tail-logs` 并列、空载荷、无内容回传）。**控制面**：`AgentCommandService.RequestResync` 事务内建 pending 命令 + `instance.resync` 审计（detail 仅 commandId/serverId）+ 唤醒 agent；新端点 `POST /beacon/v1/agent/commands/result` 收 agent 回传、`ReceiveResyncResult` CAS `fetched→done`（成功）/`failed`（失败）；admin 触发端点 `POST /admin/v1/instances/{serverId}/resync`（写 readonly→403，专项审计纳入 coveredWriteRoutes）。**agent-core**：`AgentLifecycle.forceResyncNow()` 依次复用既有 `fetchAndApply{Config,FileTree,Override}Once` 三条「以本地 md5 拉一次 → applier 幂等 apply」路径（已是最新则合法 no-op、**不读 plugins 树**、不做绕过幂等守卫的 force-apply）；`ReverseFetchExecutor` 加 `resync-config` 分支调注入回调并经 `uploadCommandResult` 回传；装配以延迟持有者打破 executor 先于 lifecycle 的构造顺序。**前端**：`triggerResync` + ServersPage 下拉菜单（下线确认弹窗提到菜单外层受控触发以保二次确认）+ ServerDetailSheet `focusLogs` 入口直达日志区。**改 agent-core → 双端 jar 重建重部**。
+
 ## 0.13.0（2026-06-25）
 
 ### 新增
