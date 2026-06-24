@@ -243,6 +243,25 @@ export function diffConfig(id: number, from: number, to: number): Promise<DiffVi
   return request<DiffView>(`/configs/${id}/diff${qs({ from, to })}`)
 }
 
+// ===== 配置 / 文件批量操作（FR-74）=====
+
+// 批量操作动作：delete（软删）/ disable（置 enabled=false）/ enable（置 enabled=true）。
+export type BatchAction = 'delete' | 'disable' | 'enable'
+
+// 批量端点返回体（与后端 {action, count} 对齐）
+export interface BatchResult {
+  action: BatchAction
+  count: number
+}
+
+// 批量操作一组配置项（FR-74）：一事务原子完成；空 ids / 非法 action 后端 400；写操作需 full 角色。
+export function batchConfigs(action: BatchAction, ids: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/configs/batch', {
+    method: 'POST',
+    body: JSON.stringify({ action, ids }),
+  })
+}
+
 // ===== 配置有效预览（FR-22）=====
 
 // 有效配置预览参数
@@ -647,6 +666,14 @@ export function rollbackFile(
   return request<PublishResult>(`/files/${id}/rollback`, {
     method: 'POST',
     body: JSON.stringify({ toVersion, comment }),
+  })
+}
+
+// 批量操作一组文件对象（FR-74）：一事务原子完成；空 ids / 非法 action 后端 400；写操作需 full 角色。
+export function batchFiles(action: BatchAction, ids: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/files/batch', {
+    method: 'POST',
+    body: JSON.stringify({ action, ids }),
   })
 }
 

@@ -45,6 +45,7 @@ import ReverseFetchDialog from './configs/ReverseFetchDialog'
 import ConfigTabBar from './configs/ConfigTabBar'
 import ConfigEditorPane from './configs/ConfigEditorPane'
 import ConfigSaveConfirmDialog from './configs/ConfigSaveConfirmDialog'
+import BatchOpsPanel from './configs/BatchOpsPanel'
 import type { OpenTab, TreeNode } from './configs/types'
 
 export default function ConfigsPage() {
@@ -250,6 +251,19 @@ export default function ConfigsPage() {
     return nodes
   }, [list.data, selectedTarget])
 
+  // 批量操作面板数据源（FR-74）：与文件树同口径按 selectedTarget 过滤的扁平配置列表
+  const batchConfigsList = useMemo(() => {
+    let items = list.data ?? []
+    if (selectedTarget) {
+      if (selectedTarget.type === 'server') {
+        items = items.filter((c) => c.scopeTarget === selectedTarget.value)
+      } else if (selectedTarget.type === 'group') {
+        items = items.filter((c) => c.group === selectedTarget.value)
+      }
+    }
+    return items
+  }, [list.data, selectedTarget])
+
   // 点击资源管理器节点 → 打开标签
   const handleFileSelect = useCallback(
     (node: TreeNode) => {
@@ -410,6 +424,9 @@ export default function ConfigsPage() {
           )}
         </div>
       </div>
+
+      {/* ===== 批量操作区（FR-74）：多选 + 删除/禁用/启用/导出，独立于上方编辑器 ===== */}
+      <BatchOpsPanel configs={batchConfigsList} />
     </div>
   )
 }

@@ -83,14 +83,16 @@ beforeEach(() => {
 describe('ConfigsPage', () => {
   it('从配置列表渲染文件树（环境/大区/dataId）', async () => {
     renderPage(<ConfigsPage />)
-    expect(await screen.findByText('app.yml')).toBeInTheDocument()
+    // dataId 在文件树与批量操作列表各出现一次（FR-74），此处只断言存在故用 getAllByText
+    expect((await screen.findAllByText('app.yml')).length).toBeGreaterThan(0)
     expect(screen.getByText('prod')).toBeInTheDocument()
     expect(screen.getByText('gA')).toBeInTheDocument()
   })
 
   it('点击文件打开标签并展示编辑器', async () => {
     renderPage(<ConfigsPage />)
-    await userEvent.click(await screen.findByText('app.yml'))
+    // 点文件树里的 dataId 叶子（按钮）打开标签，与批量列表行区分（FR-74）
+    await userEvent.click(await screen.findByRole('button', { name: 'app.yml' }))
     // 编辑器替身渲染，且保存按钮出现（仅活跃标签时存在）
     expect(await screen.findByTestId('code-editor')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /保存/ })).toBeInTheDocument()
@@ -98,7 +100,7 @@ describe('ConfigsPage', () => {
 
   it('切到 Diff 视图后出现版本选择器', async () => {
     renderPage(<ConfigsPage />)
-    await userEvent.click(await screen.findByText('app.yml'))
+    await userEvent.click(await screen.findByRole('button', { name: 'app.yml' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Diff' }))
     // 版本选择器（旧/新版本）在有 ≥2 个版本时出现
     expect(await screen.findByText('旧版本')).toBeInTheDocument()
@@ -107,7 +109,7 @@ describe('ConfigsPage', () => {
 
   it('点击保存先弹确认对话框，确认才调用 publishConfig（FR-67）', async () => {
     renderPage(<ConfigsPage />)
-    await userEvent.click(await screen.findByText('app.yml'))
+    await userEvent.click(await screen.findByRole('button', { name: 'app.yml' }))
     // 点保存：先弹保存确认对话框，尚未发布
     await userEvent.click(await screen.findByRole('button', { name: /保存/ }))
     expect(await screen.findByText('保存确认')).toBeInTheDocument()
@@ -121,7 +123,7 @@ describe('ConfigsPage', () => {
 
   it('「复制到实例」唤起新建对话框并预填源内容与 server 覆盖层', async () => {
     renderPage(<ConfigsPage />)
-    await userEvent.click(await screen.findByText('app.yml'))
+    await userEvent.click(await screen.findByRole('button', { name: 'app.yml' }))
     // 打开标签后出现「复制到实例」动作
     await userEvent.click(await screen.findByRole('button', { name: '复制到实例' }))
     // 对话框唤起：覆盖层预填为 server、初始内容来自源配置
