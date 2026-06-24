@@ -104,6 +104,30 @@ describe('DestructiveConfirmDialog 破坏性二次确认（FR-76）', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 
+  it('复述比对忽略首尾空白：phrase 带尾空格时照抄正文也能确认（不卡死）', async () => {
+    render(
+      <DestructiveConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title="t"
+        description="d"
+        confirmLabel="确认吊销"
+        confirmPhrase="Prod Key "
+        onConfirm={vi.fn()}
+      />,
+    )
+    const alert = await screen.findByRole('alertdialog')
+    const confirmBtn = within(alert).getByRole('button', { name: '确认吊销' })
+    const input = within(alert).getByLabelText('输入确认')
+    // 用户照抄可见名称（无尾空格）：trim 后相符 → 启用
+    await userEvent.type(input, 'Prod Key')
+    expect(confirmBtn).toBeEnabled()
+    // 仍区分大小写：大小写不符 → 禁用
+    await userEvent.clear(input)
+    await userEvent.type(input, 'prod key')
+    expect(confirmBtn).toBeDisabled()
+  })
+
   it('pending 时确认按钮禁用', async () => {
     render(
       <DestructiveConfirmDialog

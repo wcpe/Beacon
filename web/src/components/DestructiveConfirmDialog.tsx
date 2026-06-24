@@ -59,8 +59,9 @@ export default function DestructiveConfirmDialog({
     if (open) setTyped('')
   }, [open])
 
-  // 高摩擦档须手输与 confirmPhrase 严格相符；无 confirmPhrase 时该闸恒通过
-  const phraseMatches = !confirmPhrase || typed === confirmPhrase
+  // 高摩擦档须手输与 confirmPhrase 相符（首尾空白不计，避免名称带尾空格时照抄也无法确认而卡死）；
+  // 仍区分大小写以保留摩擦强度。无 confirmPhrase 时该闸恒通过。
+  const phraseMatches = !confirmPhrase || typed.trim() === confirmPhrase.trim()
   const canConfirm = phraseMatches && !pending
 
   return (
