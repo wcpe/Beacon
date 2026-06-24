@@ -8,6 +8,9 @@ import (
 	"github.com/wcpe/Beacon/internal/runtime"
 )
 
+// zeroHealthCtx 是不关心健康原因的渲染上下文（这些用例只断言 backends/proxy/默认入口）。
+var zeroHealthCtx = healthRenderCtx{}
+
 // TestRegisterRequestParsesBackends 验证注册请求体解析 bc 上报的后端 serverId 集合（FR-36）。
 func TestRegisterRequestParsesBackends(t *testing.T) {
 	body := `{"namespace":"prod","serverId":"bc-1","role":"bungee","backends":["lobby-1","lobby-2"]}`
@@ -63,7 +66,7 @@ func TestInstanceViewOutputsBackends(t *testing.T) {
 	view := toInstanceView(&runtime.Instance{
 		Namespace: "prod", ServerID: "bc-1", Role: "bungee",
 		Backends: []string{"lobby-1", "lobby-2"},
-	}, nil)
+	}, nil, zeroHealthCtx)
 	out, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
@@ -81,7 +84,7 @@ func TestInstanceViewOutputsProxyMetrics(t *testing.T) {
 			OnlineConnections: 312, ThreadCount: 48, UptimeMs: 3_600_000,
 			BackendUp: 3, BackendTotal: 4, BackendAvgLatencyMs: 12.5,
 		},
-	}, nil)
+	}, nil, zeroHealthCtx)
 	out, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
@@ -98,7 +101,7 @@ func TestInstanceViewOutputsProxyMetrics(t *testing.T) {
 
 // TestInstanceViewBukkitProxyZero 验证 bukkit 实例视图 proxy 各字段恒为零值（仅 bc 非零）。
 func TestInstanceViewBukkitProxyZero(t *testing.T) {
-	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil)
+	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil, zeroHealthCtx)
 	if view.Proxy.OnlineConnections != 0 || view.Proxy.ThreadCount != 0 || view.Proxy.UptimeMs != 0 ||
 		view.Proxy.BackendUp != 0 || view.Proxy.BackendTotal != 0 || view.Proxy.BackendAvgLatencyMs != 0 {
 		t.Fatalf("bukkit 实例 proxy 应恒为零值，实际 %+v", view.Proxy)
@@ -109,12 +112,12 @@ func TestInstanceViewBukkitProxyZero(t *testing.T) {
 func TestInstanceViewMarksZoneDefaultEntry(t *testing.T) {
 	defaults := map[string]bool{"lobby-1": true}
 	// 命中默认入口集合的 bukkit → true
-	hit := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, defaults)
+	hit := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, defaults, zeroHealthCtx)
 	if !hit.ZoneDefaultEntry {
 		t.Fatalf("命中默认入口集合的实例应标 zoneDefaultEntry=true")
 	}
 	// 未命中 → false
-	miss := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-2", Role: "bukkit"}, defaults)
+	miss := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-2", Role: "bukkit"}, defaults, zeroHealthCtx)
 	if miss.ZoneDefaultEntry {
 		t.Fatalf("未命中默认入口集合的实例应标 zoneDefaultEntry=false")
 	}

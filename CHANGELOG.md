@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 健康流转原因展示（FR-81，增强健康，见 [docs/specs/health-status-reason.md](docs/specs/health-status-reason.md)）：实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）新增 `lastHeartbeatAgeSec`（距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（触发当前状态的原因文案，如「35s 未心跳 > ttl 30s」；degraded/lost/offline 各显对应阈值、online 空串；阈值取当前生效健康阈值，与健康扫描判定同源，纯内存派生不落 DB）；管理台服务器页 / 看板 / 单服详情的状态徽标在原因非空时以悬浮提示展示，让运维一眼看懂「为何是这个状态」。原因文案纯函数 `runtime.HealthReason` 与状态机 `healthByAge` 同组阈值口径一致。
+
 ### 修复
 - 破坏性确认框复述比对忽略首尾空白（修复 FR-76）：高摩擦档手输复述用严格 `===` 比对，当 `confirmPhrase` 取的名称（如 API 密钥名）带前后空格时，用户照抄可见正文（无空格）也无法启用确认，导致吊销 / 删除被卡死。改为两侧 `trim()` 后比对（仍区分大小写以保留摩擦强度）；补该场景回归用例。v0.11.0 代码评审发现。
 

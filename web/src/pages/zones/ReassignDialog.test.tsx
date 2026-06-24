@@ -22,6 +22,8 @@ function inst(overrides: Partial<InstanceView>): InstanceView {
     weight: 0,
     metadata: {},
     lastHeartbeat: '',
+    lastHeartbeatAgeSec: 0,
+    healthReason: '',
     appliedMd5: '',
     playerCount: 0,
     tps: 0,

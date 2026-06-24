@@ -235,7 +235,8 @@ func run() error {
 	agentHandler := handler.NewAgentHandler(instanceService, effectiveService, settingsService)
 	streamHandler := handler.NewStreamHandler(instanceService, streamService)
 	fileHandler := handler.NewFileHandler(fileService, fileEffectiveService, overrideEffectiveService, instanceService, settingsService)
-	instanceHandler := handler.NewInstanceHandler(instanceService)
+	// 实例视图渲染健康原因（FR-81）须读当前健康阈值（设置 store 热改项 FR-61），故注入 settingsService。
+	instanceHandler := handler.NewInstanceHandler(instanceService, settingsService)
 	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)

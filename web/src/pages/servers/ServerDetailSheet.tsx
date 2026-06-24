@@ -60,7 +60,7 @@ export default function ServerDetailSheet({ instance, onOpenChange, defaultEntry
               <SheetTitle className="flex flex-wrap items-center gap-2">
                 <span className="font-mono">{instance.serverId}</span>
                 <RoleBadge role={instance.role} />
-                <StatusBadge status={instance.status} />
+                <StatusBadge status={instance.status} reason={instance.healthReason} />
               </SheetTitle>
             </SheetHeader>
 

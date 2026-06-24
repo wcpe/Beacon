@@ -77,6 +77,10 @@ export interface InstanceView {
   weight: number
   metadata: Record<string, string>
   lastHeartbeat: string
+  // 距上次心跳的秒数（控制面渲染时刻算，负值归零；仅展示，FR-81）
+  lastHeartbeatAgeSec: number
+  // 触发当前状态的原因文案（如「35s 未心跳 > ttl 30s」；online 时空串，FR-81）
+  healthReason: string
   appliedMd5: string
   playerCount: number
   tps: number

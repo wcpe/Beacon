@@ -23,4 +23,15 @@ describe('StatusBadge', () => {
     render(<StatusBadge status="offline" />)
     expect(screen.getByText('offline')).toHaveClass('bg-muted')
   })
+
+  // FR-81：传入 reason 时以原生 title 悬浮提示展示原因
+  it('reason 非空时设 title 悬浮提示', () => {
+    render(<StatusBadge status="lost" reason="35s 未心跳 > ttl 30s" />)
+    expect(screen.getByText('lost')).toHaveAttribute('title', '35s 未心跳 > ttl 30s')
+  })
+
+  it('reason 为空时不设 title', () => {
+    render(<StatusBadge status="online" reason="" />)
+    expect(screen.getByText('online')).not.toHaveAttribute('title')
+  })
 })

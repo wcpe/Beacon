@@ -112,7 +112,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
 		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),
 		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
-		Instance:         handler.NewInstanceHandler(instSvc),
+		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc),
 		Zone:             handler.NewZoneHandler(zoneSvc),
 		Scheduling:       handler.NewSchedulingHandler(schedSvc),
 		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo)),

@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -284,6 +285,22 @@ func (r *Registry) SweepExpired(now time.Time, degradedAfter, ttl, offlineGrace 
 		}
 	}
 	return changed
+}
+
+// HealthReason 返回触发当前状态的原因文案（纯函数，FR-81）：按状态选对应阈值，统一「Ns 未心跳 > <阈值名> Ns」范式。
+// age 取整到秒呈现；online / 未知状态返回空串（仅展示，不参与决策，与 healthByAge 同组阈值口径一致）。
+func HealthReason(age, degradedAfter, ttl, offlineGrace time.Duration, status string) string {
+	ageSec := int(age.Seconds())
+	switch status {
+	case StatusDegraded:
+		return fmt.Sprintf("%ds 未心跳 > degraded-after %ds", ageSec, int(degradedAfter.Seconds()))
+	case StatusLost:
+		return fmt.Sprintf("%ds 未心跳 > ttl %ds", ageSec, int(ttl.Seconds()))
+	case StatusOffline:
+		return fmt.Sprintf("%ds 未心跳 > offline-grace %ds", ageSec, int(offlineGrace.Seconds()))
+	default:
+		return ""
+	}
 }
 
 // healthByAge 按心跳年龄分档返回应处状态（纯函数）；未达 degradedAfter 维持原状态（含 online）。

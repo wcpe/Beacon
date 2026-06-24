@@ -279,7 +279,7 @@ export default function ServersPage() {
           i.zone
         ),
     },
-    { header: t('servers.colStatus'), cell: (i) => <StatusBadge status={i.status} /> },
+    { header: t('servers.colStatus'), cell: (i) => <StatusBadge status={i.status} reason={i.healthReason} /> },
     { header: t('servers.colAddress'), className: 'font-mono', cell: (i) => i.address },
     { header: t('servers.colVersion'), cell: (i) => i.version },
     // 角色相关：bukkit 人数 / bungee 连接

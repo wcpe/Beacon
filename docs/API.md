@@ -311,8 +311,8 @@ data: {}
 ### 实例与健康
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36）与 `proxy`（对象，bc 专属负载指标 `onlineConnections`/`threadCount`/`uptimeMs`/`backendUp`/`backendTotal`/`backendAvgLatencyMs`，仅 bc 非零、bukkit 恒零——把控制面已采的 BC 事实补暴露在逐实例视图，供代理服管理页逐台展示底层参数，FR-34/FR-52；`backendAvgLatencyMs<0` 表示无可达后端不可用） |
-| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends` 与 `proxy`） |
+| `GET /admin/v1/instances?namespace=&group=&zone=&role=&status=` | 按标签过滤（读内存注册表）；`status` 可取 `online`/`degraded`/`lost`/`offline`。实例视图含 `backends`（`string[]`，仅 bc 非空——本代理当前代理的后端子服 serverId 集合，bukkit 恒空；供拓扑连线消费，FR-36）与 `proxy`（对象，bc 专属负载指标 `onlineConnections`/`threadCount`/`uptimeMs`/`backendUp`/`backendTotal`/`backendAvgLatencyMs`，仅 bc 非零、bukkit 恒零——把控制面已采的 BC 事实补暴露在逐实例视图，供代理服管理页逐台展示底层参数，FR-34/FR-52；`backendAvgLatencyMs<0` 表示无可达后端不可用）。另含 `lastHeartbeatAgeSec`（`int`，距上次心跳秒数，按控制面渲染时刻 UTC 算、负值归零）与 `healthReason`（`string`，触发当前状态的原因文案，如 `35s 未心跳 > ttl 30s`；`online` 时空串；阈值取当前生效健康阈值与扫描判定同源，纯内存派生不落 DB，FR-81） |
+| `GET /admin/v1/instances/{serverId}?namespace=` | 单实例详情（同含 `backends`/`proxy`/`lastHeartbeatAgeSec`/`healthReason`） |
 | `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
 | `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |

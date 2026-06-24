@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/render"
@@ -188,7 +189,9 @@ func (h *AgentHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		Namespace: ns, Group: q.Get("group"), Zone: q.Get("zone"), Role: q.Get("role"),
 		Tags: parseTagParams(q),
 	})
-	render.WriteJSON(w, http.StatusOK, map[string]any{"instances": toInstanceViews(insts, h.svc.DefaultEntrySet(ns))})
+	// 健康原因渲染上下文（FR-81）：复用 settings 读当前阈值（与健康扫描同源），now 取 UTC 墙钟。
+	hc := newHealthRenderCtx(time.Now().UTC(), h.settings)
+	render.WriteJSON(w, http.StatusOK, map[string]any{"instances": toInstanceViews(insts, h.svc.DefaultEntrySet(ns), hc)})
 }
 
 // parseTagParams 从查询串解析 tag.<key>=<value> 形式的自定义元数据过滤条件；无 tag 返回 nil（不过滤）。

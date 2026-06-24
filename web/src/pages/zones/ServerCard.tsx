@@ -38,6 +38,8 @@ export default function ServerCard({
     >
       <span
         aria-label={t('common.statusAria', { status: instance.status })}
+        // FR-81：健康原因非空时悬浮显「Ns 未心跳 > 阈值 Ns」
+        title={instance.healthReason || undefined}
         className={cn('size-2 shrink-0 rounded-full', DOT_COLOR[instance.status] ?? 'bg-muted-foreground')}
       />
       <span className="font-mono">{instance.serverId}</span>

@@ -60,6 +60,8 @@ function inst(overrides: Partial<InstanceView>): InstanceView {
     weight: 10,
     metadata: {},
     lastHeartbeat: '2026-06-20T08:00:00Z',
+    lastHeartbeatAgeSec: 5,
+    healthReason: '',
     appliedMd5: 'abc123',
     playerCount: 42,
     tps: 19.9,
