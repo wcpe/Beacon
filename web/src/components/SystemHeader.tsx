@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
+import HeaderControls from '@/components/HeaderControls'
 
 // 自身状态刷新周期（毫秒）：短周期以实时反映控制面健康（含 DB 断开）
 const STATUS_REFETCH_MS = 5000
@@ -73,6 +74,9 @@ export default function SystemHeader() {
       <StatItem label={t('systemHeader.processCpu')}>
         {data?.cpuAvailable ? `${data.cpuPercent.toFixed(1)}%` : t('systemHeader.unavailable')}
       </StatItem>
+
+      {/* 页眉界面偏好控件（FR-92）：主题 / 密度切换 + 大屏入口，右对齐 */}
+      <HeaderControls />
     </header>
   )
 }

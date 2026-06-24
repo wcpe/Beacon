@@ -2,6 +2,7 @@
 // 覆盖「连通态渲染各字段（含真实 CPU%）→ DB 断开反映为已断开 → 拉取失败反映为不可达 → CPU 不可用降级展示 → 采样器停用」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
@@ -33,7 +34,12 @@ const STATUS: SystemStatusView = {
 
 function renderHeader(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  // HeaderControls（FR-92）含 <Link>，需 Router 上下文
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  )
 }
 
 beforeEach(() => {

@@ -22,9 +22,15 @@ import NamespacesPage from './pages/NamespacesPage'
 import SettingsPage from './pages/SettingsPage'
 import SystemObservabilityPage from './pages/SystemObservabilityPage'
 import { setOnUnauthorized } from './api/client'
+import { applyThemeToDocument, usePreferences } from './state/preferences'
 
 export default function App() {
   const navigate = useNavigate()
+  // 主题偏好（FR-92）：订阅偏好 store，运行期切换时同步 .dark 类（首屏已在 main.tsx 同步应用过）。
+  const { theme } = usePreferences()
+  useEffect(() => {
+    applyThemeToDocument(theme)
+  }, [theme])
   // 注册 401 全局处理：令牌失效时跳登录（client 已先清登录态）
   useEffect(() => {
     setOnUnauthorized(() => navigate('/login', { replace: true }))

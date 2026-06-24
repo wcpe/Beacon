@@ -6,7 +6,11 @@ import App from './App'
 import { Toaster } from '@/components/ui/sonner'
 // i18n 初始化（FR-50，见 ADR-0033）：import 即同步完成初始化，须在渲染前先执行
 import i18n from './i18n'
+import { applyThemeToDocument, currentPreferences } from './state/preferences'
 import './index.css'
+
+// 暗色主题首屏同步生效（FR-92）：渲染前按持久化偏好打 .dark 类，避免浅→暗闪烁。
+applyThemeToDocument(currentPreferences().theme)
 
 // 开发模式下启用 mock API（无需后端即可验证前端交互）
 // 通过 VITE_USE_MOCK 环境变量控制，默认为 true（开发模式）

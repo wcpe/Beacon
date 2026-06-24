@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { usePreferences } from '@/state/preferences'
 
 // 单列定义
 export interface DataTableColumn<T> {
@@ -49,13 +50,19 @@ export default function DataTable<T>({
   rowClassName,
 }: DataTableProps<T>) {
   const { t } = useTranslation()
+  // 表格密度（FR-92）：紧凑档收紧表头高度与单元格内边距，所有用 DataTable 的页面自动响应。
+  const { density } = usePreferences()
+  const compact = density === 'compact'
+  // 紧凑档覆盖底层 table.tsx 默认（表头 h-10、单元格 p-2）；舒适档不加类沿用默认。
+  const headDensity = compact ? 'h-8' : undefined
+  const cellDensity = compact ? 'py-1' : undefined
   const list = rows ?? []
   return (
     <Table>
       <TableHeader>
         <TableRow>
           {columns.map((col, i) => (
-            <TableHead key={i} className={col.headClassName}>
+            <TableHead key={i} className={cn(headDensity, col.headClassName)}>
               {col.header}
             </TableHead>
           ))}
@@ -70,7 +77,7 @@ export default function DataTable<T>({
               onClick={onRowClick ? () => onRowClick(row) : undefined}
             >
               {columns.map((col, i) => (
-                <TableCell key={i} className={col.className}>
+                <TableCell key={i} className={cn(cellDensity, col.className)}>
                   {col.cell(row)}
                 </TableCell>
               ))}
