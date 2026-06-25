@@ -242,6 +242,8 @@ docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+
 
 **进程模型（launcher 监督，FR-96，[ADR-0045](adr/0045-builtin-launcher-supervisor.md)）**：发布新增独立第二二进制 `beacon-launcher[.exe]`（`cmd/beacon-launcher`，与主二进制同仓、同 `-ldflags` 注入版本）作常驻监督进程，使控制面无需外部 systemd / docker 即自动重启。launcher **极薄**（仅标准库 `os/exec` + `os`、不连 DB、不碰业务、无第三方依赖）：以子进程方式启动同目录 `beacon[.exe]`（透传 `-config` 等参数与环境变量、继承 stdout/stderr），按**退出码协议**（`internal/exitcode`，主进程与 launcher 共享常量）决策——`0` 正常退出则跟随退出、`1` 及信号退出（`128+signum`）按固定间隔重启 + 连续失败上限、`70` 请求更新重启则用主进程落位的 pending 新二进制原子换后重启（Windows 旧 exe rename 让位 → pending 就位 → 删旧；Linux rename 覆盖；换失败保留旧二进制回退重启）。端口**先退后起**（主进程 graceful shutdown 释放端口 → 退出 → launcher 重启新进程重新监听同端口），亚秒窗口由 agent fail-static 兜。**裸跑 `beacon` 仍完全可用**，只是退化为无自动重启 / 无自更新（需手动重启）；launcher 是可选监督外壳、非运行前提。本期 launcher **不自更新**（实际更新核心在 FR-97）。
 
+**在线更新核心（FR-97，[ADR-0044](adr/0044-control-plane-online-self-update.md)）**：主进程侧 `internal/update` 按渠道（stable/rc 作入参）查 wcpe/Beacon GitHub Release → 选本平台资产 `beacon-<ver>-<os>-<arch>[.exe]`（5 平台）下载到临时文件（超时 + 大小上限 + 失败清理）→ 下载 `SHA256SUMS.txt` 比对实算 SHA256 → 校验通过即原子 `rename` 落位 launcher 约定 pending 路径（同卷）→ 经进程内信号触发优雅关停并以退出码 `70` 交还 launcher 换二进制重启。任何阶段失败保留旧二进制、进程不退、状态 `failed`。更新进度为进程内瞬态（不建表），仅审计落库（`system.update-*` action）；出站经 `internal/httpx` 工厂（带代理 + 超时，FR-98）。HTTP 触发入口（检查 / 状态 / 应用端点）属 FR-99。
+
 ## 10. 关键裁决与不做项
 
 **关键裁决**：自研而非用 Nacos · Go + 内嵌 React 单二进制 · MVP 去 Redis（REST 长轮询）· zone 由控制面 DB 权威指派 · agent 传输/序列化抽象层 · 长轮询"唤醒即重算" · 管理台设计系统用 shadcn-ui + Tailwind（ADR-0012）。每条的背景与理由见 [adr/](adr/)。

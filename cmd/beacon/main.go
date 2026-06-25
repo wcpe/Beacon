@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	goruntime "runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/wcpe/Beacon/internal/exitcode"
 	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/handler"
+	"github.com/wcpe/Beacon/internal/httpx"
 	"github.com/wcpe/Beacon/internal/metrics"
 	"github.com/wcpe/Beacon/internal/pkg/log"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -32,12 +36,13 @@ import (
 	"github.com/wcpe/Beacon/internal/server"
 	"github.com/wcpe/Beacon/internal/service"
 	"github.com/wcpe/Beacon/internal/store"
+	"github.com/wcpe/Beacon/internal/update"
 	"github.com/wcpe/Beacon/internal/version"
 )
 
 // errRequestUpdateRestart 是「请求 launcher 换二进制后重启」的出口哨兵（FR-96 退出码协议出口，见 ADR-0045）。
-// 实际触发更新（落位 pending 并返回本哨兵）在 FR-97 实现；本期仅把这条退出出口与退出码常量准备好，
-// 使 run 一旦返回它，main 即以 exitcode.RequestUpdateRestart 退出、由 launcher 据约定换二进制重启。
+// FR-97（见 ADR-0044）已接通：更新服务落位 pending 成功后经 updateRestartCh 触发 run 优雅关停并返回本哨兵，
+// main 据 errors.Is 以 exitcode.RequestUpdateRestart（70）退出，由 launcher 据约定换二进制重启。
 var errRequestUpdateRestart = errors.New("请求更新重启")
 
 func main() {
@@ -328,6 +333,24 @@ func run() error {
 		slog.Info("git 单向导出镜像未启用（git-export.enabled=false）")
 	}
 
+	// 控制面在线更新核心（FR-97，见 ADR-0044）：按渠道查 Release → 下载 → SHA256 → 落位 pending → 以退出码 70 交还 launcher。
+	// updateRestartCh 是「更新就绪请求重启」的进程内信号：更新服务落位 pending 成功后关闭它，
+	// run 的 select 据此返回 errRequestUpdateRestart，main 既有 errors.Is 映射到退出码 70（FR-96 已备出口）。
+	// 出站经 internal/httpx 工厂（带代理 + 超时，FR-98）；代理地址由触发端点（FR-99）从设置 store 读后传入。
+	updateRestartCh := make(chan struct{})
+	updateService := update.NewService(update.Config{
+		CurrentVersion: version.Version,
+		PendingPath:    resolvePendingPath(),
+		NewHTTPClient:  httpx.NewClient,
+		// 仅关一次：sync.Once 保证多次触发不重复关闭 channel（panic 防护）。
+		RequestRestart: sync.OnceFunc(func() { close(updateRestartCh) }),
+		Audit:          auditRepo,
+	})
+	// HTTP 触发入口（检查 / 状态 / 应用端点）在 FR-99 接入；本批仅装配服务并接通退出出口。
+	// 启动期读一次进度态确认服务已就绪（idle），并作对 updateService 的真实引用（非占位）。
+	slog.Info("控制面在线更新核心已就绪（HTTP 触发待 FR-99）",
+		"初始阶段", string(updateService.Snapshot().Phase), "pending 路径", resolvePendingPath())
+
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
 	dist, err := fs.Sub(beacon.WebDist, "web/dist")
 	if err != nil {
@@ -381,9 +404,34 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
+	case <-updateRestartCh:
+		// 更新已落位 pending，请求换二进制重启（FR-97，见 ADR-0044）：优雅关停释放端口后返回哨兵，
+		// main 据 errors.Is 以退出码 70 退出，交还 launcher 做原子换二进制 + 重启（FR-96/ADR-0045）。
+		slog.Info("更新已就绪，优雅关停后以约定退出码交还 launcher 换二进制重启")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return errRequestUpdateRestart
 	case err := <-errCh:
 		return err
 	}
+}
+
+// resolvePendingPath 推导 launcher 约定的 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]）。
+// 与 cmd/beacon-launcher 的 resolvePaths 同约定（ADR-0045），更新服务据此原子落位、launcher 据此换二进制。
+// 解析自身路径失败时回退到工作目录相对名（极少见；落位时若不可写会在更新阶段失败、不影响正常运行）。
+func resolvePendingPath() string {
+	suffix := ""
+	if goruntime.GOOS == "windows" {
+		suffix = ".exe"
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return "beacon.new" + suffix
+	}
+	return filepath.Join(filepath.Dir(self), "beacon.new"+suffix)
 }
 
 // newGitRepo 按导出配置构造 git 写入端口实现（FR-47，见 ADR-0030 决策5）。

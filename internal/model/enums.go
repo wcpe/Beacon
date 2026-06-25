@@ -165,6 +165,12 @@ const (
 	ActionAPIKeyReset  = "apikey.reset"
 	// 运维设置更新（FR-61，热改项真源由 config.yml 移到 DB store，detail 仅记 key + 新值、绝不含密钥，见 ADR-0038）
 	ActionSettingsUpdate = "settings.update"
+	// 控制面在线更新·检查（FR-97，见 ADR-0044）：按渠道查 Release 比对当前版本，detail 含渠道 / 目标版本 / 有无可用更新
+	ActionSystemUpdateCheck = "system.update-check"
+	// 控制面在线更新·应用（FR-97）：下载 + 校验 + 落位 pending 成功，请求 launcher 换二进制重启，detail 含目标版本
+	ActionSystemUpdateApply = "system.update-apply"
+	// 控制面在线更新·失败（FR-97）：任一阶段失败保留旧二进制不退，detail 含目标版本 / 失败原因（不含敏感）
+	ActionSystemUpdateFailed = "system.update-failed"
 )
 
 // 审计对象类型。
@@ -187,6 +193,8 @@ const (
 	TargetTypeReverseFetchIgnoreRule = "reverse-fetch-ignore-rule"
 	// 运维设置（FR-61）的审计对象类型
 	TargetTypeSettings = "settings"
+	// 控制面在线更新（FR-97）的审计对象类型：目标是控制面自身二进制，见 ADR-0044
+	TargetTypeSystem = "system"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

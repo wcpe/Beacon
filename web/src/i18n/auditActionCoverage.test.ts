@@ -64,6 +64,10 @@ const AUDIT_ACTIONS = [
   'apikey.revoke',
   'apikey.reset',
   'settings.update',
+  // system.* （控制面在线更新，FR-97）
+  'system.update-check',
+  'system.update-apply',
+  'system.update-failed',
 ] as const
 
 describe('审计 action i18n 映射完整性守护（FR-7 / FR-73 漂移守护）', () => {
