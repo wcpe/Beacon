@@ -38,6 +38,8 @@ import type {
   RevisionView,
   SettingView,
   SystemStatusView,
+  UpdateCheckView,
+  UpdateProgressView,
   ObservabilityView,
   TopologyView,
   ZoneStatView,
@@ -525,6 +527,25 @@ export function systemStatus(): Promise<SystemStatusView> {
 
 export function systemObservability(): Promise<ObservabilityView> {
   return request<ObservabilityView>('/system/observability')
+}
+
+// ===== 控制面在线更新（FR-99，FR-100 前端消费）=====
+// 检查 / 读进度 / 触发应用更新；更新执行机制（下载 / 校验 / 换二进制 / 重启）由 FR-97/96 实现，本处仅对接端点。
+
+// 检查有无可用更新（只读，恒 200）：服务端按渠道查 GitHub 最新 release 与当前版本比对、带服务端缓存。
+// force=true 绕服务端缓存强制刷新（仍 GET，仅刷缓存不改业务）；GitHub 不可达时回 status=check-failed（不抛错）。
+export function checkUpdate(force = false): Promise<UpdateCheckView> {
+  return request<UpdateCheckView>(`/system/update-check${force ? '?force=true' : ''}`)
+}
+
+// 读更新进度内存态（只读、不查库、不打 GitHub）：供触发应用后轮询展示阶段 / 进度。
+export function updateProgress(): Promise<UpdateProgressView> {
+  return request<UpdateProgressView>('/system/update')
+}
+
+// 触发应用更新（写，readonly→403）：202 受理后控制面短暂重启换二进制；本处仅触发，进度经 updateProgress 轮询。
+export function triggerUpdate(): Promise<{ accepted: boolean }> {
+  return request<{ accepted: boolean }>('/system/update', { method: 'POST' })
 }
 
 // ===== zone 分配 =====

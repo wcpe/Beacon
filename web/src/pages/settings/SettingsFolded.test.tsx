@@ -18,6 +18,8 @@ vi.mock('../../components/useMessage', () => ({
 // SystemConfigBlock 的网络代理 / 更新设置子 tab 走 listSettings（FR-101），一并 mock（本测试不激活那两 tab，置空即可）。
 vi.mock('../../api/client', () => ({
   systemObservability: vi.fn(),
+  // FR-100：VersionInfoTab 内嵌 UpdateModal，其 useConnectionStatus 复用 systemStatus 心跳
+  systemStatus: vi.fn().mockResolvedValue({}),
   listSettings: vi.fn().mockResolvedValue([]),
   updateSetting: vi.fn(),
   listApiKeys: vi.fn(),
@@ -28,6 +30,22 @@ vi.mock('../../api/client', () => ({
   createNamespace: vi.fn(),
   updateNamespace: vi.fn(),
   deleteNamespace: vi.fn(),
+  // FR-100：SystemInfoBlock「版本与更新」子 tab（VersionInfoTab）经 useUpdateCheck 用到
+  checkUpdate: vi.fn().mockResolvedValue({
+    status: 'ok',
+    currentVersion: 'v0.10.0',
+    channel: 'stable',
+    hasUpdate: false,
+    isDevBuild: false,
+    latestVersion: '',
+    releaseNotes: '',
+    releaseUrl: '',
+    publishedAt: '',
+    checkedAt: '',
+    cacheExpiresAt: '',
+  }),
+  updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
+  triggerUpdate: vi.fn(),
 }))
 
 import SystemInfoBlock from './SystemInfoBlock'
@@ -37,6 +55,7 @@ import {
   listSettings,
   listApiKeys,
   listNamespaces,
+  checkUpdate,
 } from '../../api/client'
 
 // jsdom 垫片：StatCard / Tabs 可能用到 scrollIntoView
@@ -132,6 +151,20 @@ beforeEach(() => {
   vi.mocked(listSettings).mockResolvedValue([])
   vi.mocked(listApiKeys).mockResolvedValue(KEYS)
   vi.mocked(listNamespaces).mockResolvedValue(NS)
+  // FR-100：clearAllMocks 清掉 checkUpdate 默认返回，重置为「无可用更新」
+  vi.mocked(checkUpdate).mockResolvedValue({
+    status: 'ok',
+    currentVersion: 'v0.10.0',
+    channel: 'stable',
+    hasUpdate: false,
+    isDevBuild: false,
+    latestVersion: '',
+    releaseNotes: '',
+    releaseUrl: '',
+    publishedAt: '',
+    checkedAt: '',
+    cacheExpiresAt: '',
+  })
 })
 
 describe('旧路由重定向到设置子 tab 深链（FR-95）', () => {
@@ -194,8 +227,8 @@ describe('切走折叠了控制面健康页的子 tab 停轮询（FR-95）', () 
     // 切到「版本与更新」子 tab：Radix Tabs 默认卸载非激活 content → 控制面健康页卸载、轮询停
     const versionTab = screen.getByRole('tab', { name: '版本与更新' })
     await userEvent.click(versionTab)
-    // 占位文案出现，证明已切走
-    expect(await screen.findByText(/版本与更新信息即将在此呈现/)).toBeInTheDocument()
+    // 版本与更新内容出现（FR-100：当前版本可见），证明已切走
+    expect(await screen.findByText('v0.10.0')).toBeInTheDocument()
     // 控制面健康页已卸载，其四组指标不再在文档中
     await waitFor(() => expect(screen.queryByText('数据库连接池')).toBeNull())
 

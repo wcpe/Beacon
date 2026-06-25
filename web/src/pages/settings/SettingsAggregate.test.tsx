@@ -21,6 +21,24 @@ vi.mock('../../api/client', async () => {
     ApiClientError: actual.ApiClientError,
     listSettings: vi.fn(),
     updateSetting: vi.fn(),
+    // FR-100：VersionInfoTab 内嵌 UpdateModal，其 useConnectionStatus 复用 systemStatus 心跳
+    systemStatus: vi.fn().mockResolvedValue({}),
+    // FR-100：系统信息块「版本与更新」子 tab（VersionInfoTab）经 useUpdateCheck 用到
+    checkUpdate: vi.fn().mockResolvedValue({
+      status: 'ok',
+      currentVersion: 'v0.10.0',
+      channel: 'stable',
+      hasUpdate: false,
+      isDevBuild: false,
+      latestVersion: '',
+      releaseNotes: '',
+      releaseUrl: '',
+      publishedAt: '',
+      checkedAt: '',
+      cacheExpiresAt: '',
+    }),
+    updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
+    triggerUpdate: vi.fn(),
   }
 })
 
@@ -28,7 +46,7 @@ import SettingsPage from '../SettingsPage'
 import OpsSettingsBlock from './OpsSettingsBlock'
 import SystemInfoBlock from './SystemInfoBlock'
 import SystemConfigBlock from './SystemConfigBlock'
-import { listSettings, updateSetting } from '../../api/client'
+import { listSettings, updateSetting, checkUpdate } from '../../api/client'
 
 // jsdom 垫片：radix Select 打开需要指针捕获 / scrollIntoView
 if (!HTMLElement.prototype.hasPointerCapture) {
@@ -68,6 +86,20 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(listSettings).mockResolvedValue(SETTINGS)
   vi.mocked(updateSetting).mockResolvedValue(undefined)
+  // FR-100：clearAllMocks 清掉了 checkUpdate 的默认返回，重置为「无可用更新」
+  vi.mocked(checkUpdate).mockResolvedValue({
+    status: 'ok',
+    currentVersion: 'v0.10.0',
+    channel: 'stable',
+    hasUpdate: false,
+    isDevBuild: false,
+    latestVersion: '',
+    releaseNotes: '',
+    releaseUrl: '',
+    publishedAt: '',
+    checkedAt: '',
+    cacheExpiresAt: '',
+  })
 })
 
 describe('设置聚合页三块顶层 tab（FR-94）', () => {
@@ -84,9 +116,11 @@ describe('设置聚合页三块顶层 tab（FR-94）', () => {
     expect(await screen.findByText(/config\.yml/)).toBeInTheDocument()
   })
 
-  it('深链 /settings/system-info 直达系统信息块（版本与更新占位文案可见）', async () => {
+  it('深链 /settings/system-info 直达系统信息块（版本与更新内容可见，FR-100）', async () => {
     renderAt('/settings/system-info')
-    expect(await screen.findByText(/版本与更新信息即将在此呈现/)).toBeInTheDocument()
+    // 版本与更新子 tab 接入 FR-99 检查：展示当前版本与更新状态
+    expect(await screen.findByText('v0.10.0')).toBeInTheDocument()
+    expect(await screen.findByText('已是最新版本')).toBeInTheDocument()
   })
 
   it('深链 /settings/system-config 直达系统设置块（网络代理子 tab 兜底占位可见，mock 无 update.* 项）', async () => {

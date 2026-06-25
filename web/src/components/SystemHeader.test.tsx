@@ -7,13 +7,38 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
 // mock 后端调用，由各用例注入数据
-vi.mock('@/api/client', () => ({
-  systemStatus: vi.fn(),
-}))
+vi.mock('@/api/client', async () => {
+  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client')
+  return {
+    ApiClientError: actual.ApiClientError,
+    systemStatus: vi.fn(),
+    // FR-100 更新检查链路（useUpdateCheck）：默认无更新；红点用例各自注入
+    checkUpdate: vi.fn(),
+    listSettings: vi.fn().mockResolvedValue([]),
+    // UpdateModal 进度轮询默认仅在触发后启用，这里防御性置空
+    updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
+    triggerUpdate: vi.fn(),
+  }
+})
 
 import SystemHeader from './SystemHeader'
-import { systemStatus } from '@/api/client'
-import type { SystemStatusView } from '@/api/types'
+import { systemStatus, checkUpdate } from '@/api/client'
+import type { SystemStatusView, UpdateCheckView } from '@/api/types'
+
+// 更新检查样例：有可用更新
+const UPDATE_HAS: UpdateCheckView = {
+  status: 'ok',
+  currentVersion: 'v0.6.0',
+  channel: 'stable',
+  hasUpdate: true,
+  isDevBuild: false,
+  latestVersion: 'v0.7.0',
+  releaseNotes: '变更',
+  releaseUrl: 'https://github.com/wcpe/Beacon/releases/tag/v0.7.0',
+  publishedAt: '2026-06-20T08:00:00Z',
+  checkedAt: '2026-06-25T10:00:00Z',
+  cacheExpiresAt: '2026-06-25T16:00:00Z',
+}
 
 // 健康样例：DB 连通、采样器启用、CPU 可用且占比 23.4%
 const STATUS: SystemStatusView = {
@@ -44,6 +69,8 @@ function renderHeader(ui: ReactElement) {
 
 beforeEach(() => {
   vi.mocked(systemStatus).mockResolvedValue(STATUS)
+  // 默认无可用更新（无红点）；红点用例各自覆盖
+  vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, hasUpdate: false, latestVersion: '' })
 })
 
 describe('SystemHeader', () => {
@@ -93,5 +120,36 @@ describe('SystemHeader', () => {
     vi.mocked(systemStatus).mockResolvedValue({ ...STATUS, samplerEnabled: false })
     renderHeader(<SystemHeader />)
     expect(await screen.findByText('已停用')).toBeInTheDocument()
+  })
+})
+
+// 版本徽章红点（FR-100）：hasUpdate 各分支显隐
+describe('SystemHeader 更新红点（FR-100）', () => {
+  it('hasUpdate=true 时版本徽章叠红点', async () => {
+    vi.mocked(checkUpdate).mockResolvedValue(UPDATE_HAS)
+    renderHeader(<SystemHeader />)
+    expect(await screen.findByRole('status', { name: '有可用更新' })).toBeInTheDocument()
+  })
+
+  it('hasUpdate=false 时无红点', async () => {
+    vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, hasUpdate: false, latestVersion: '' })
+    renderHeader(<SystemHeader />)
+    // 版本徽章按钮先到位，确保更新检查已结算
+    expect(await screen.findByRole('button', { name: /点击查看更新/ })).toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: '有可用更新' })).toBeNull()
+  })
+
+  it('check-failed 时不叠红点', async () => {
+    vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, status: 'check-failed', hasUpdate: false })
+    renderHeader(<SystemHeader />)
+    expect(await screen.findByRole('button', { name: /点击查看更新/ })).toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: '有可用更新' })).toBeNull()
+  })
+
+  it('dev 构建时不叠红点（即使后端误回 hasUpdate=true 也不提示）', async () => {
+    vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, isDevBuild: true, currentVersion: 'dev' })
+    renderHeader(<SystemHeader />)
+    expect(await screen.findByRole('button', { name: /点击查看更新/ })).toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: '有可用更新' })).toBeNull()
   })
 })

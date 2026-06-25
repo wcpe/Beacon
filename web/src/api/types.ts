@@ -274,6 +274,60 @@ export interface SystemStatusView {
   cpuPercent: number
 }
 
+// ===== 控制面在线更新（FR-99，FR-100 前端消费）=====
+
+// 更新检查结果状态：ok（成功比对）/ check-failed（GitHub 不可达 / 限流 / 解析失败，仍 200 不阻断页面）
+export type UpdateCheckStatus = 'ok' | 'check-failed'
+
+// 更新检查视图（对齐 GET /admin/v1/system/update-check）。
+// check-failed / isDevBuild 时 hasUpdate 恒 false（前端据此不叠红点）；
+// releaseNotes 为 release 正文原文，前端须安全渲染（纯文本，不注入 HTML）。
+export interface UpdateCheckView {
+  status: UpdateCheckStatus
+  // 当前运行版本（dev 构建为 'dev'）
+  currentVersion: string
+  // 更新渠道（stable / rc）
+  channel: string
+  // 有可用更新（仅 status=ok 且非 dev 构建时可能为 true）
+  hasUpdate: boolean
+  // 直接 go run 未打包的开发构建：不提示更新
+  isDevBuild: boolean
+  // 可用版本（无更新 / check-failed 时为空串）
+  latestVersion: string
+  // release 正文原文（前端安全渲染为纯文本）
+  releaseNotes: string
+  // release 页外链
+  releaseUrl: string
+  // 发布时间（RFC3339 UTC；check-failed 时可能为空）
+  publishedAt: string
+  // 本次检查时刻（RFC3339 UTC）
+  checkedAt: string
+  // 服务端缓存过期时刻（RFC3339 UTC）
+  cacheExpiresAt: string
+}
+
+// 更新进度阶段（对齐 GET /admin/v1/system/update 的 phase）：
+// idle（未开始）/ checking / downloading（percent 有意义）/ verifying / staging / ready-restart（已落位待重启）/ failed
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'downloading'
+  | 'verifying'
+  | 'staging'
+  | 'ready-restart'
+  | 'failed'
+
+// 更新进度视图（进程内瞬态，对齐 GET /admin/v1/system/update）。
+export interface UpdateProgressView {
+  phase: UpdatePhase
+  // 仅 downloading 阶段有意义（[0,100]）
+  percent: number
+  // 目标版本（无进行中更新时可能为空串）
+  targetVersion: string
+  // 仅 failed 非空
+  error: string
+}
+
 // ===== 控制面自观测（FR-82）=====
 
 // 数据库连接池统计（取自 sql.DBStats，非方言；累计字段为进程起算累计值）

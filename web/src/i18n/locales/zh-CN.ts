@@ -176,6 +176,57 @@ export const zhCN = {
     goHeap: 'Go 堆',
     processCpu: '进程 CPU',
     unavailable: '不可用',
+    // 版本徽章（FR-100）：可点击打开更新模态框；有可用更新时叠红点
+    versionBadgeAria: '版本 {{version}}，点击查看更新',
+    // 红点的无障碍标签（仅 hasUpdate 时渲染）
+    updateAvailableDot: '有可用更新',
+  },
+
+  // ===== 在线更新模态框（FR-100，消费 FR-99 端点）=====
+  updateModal: {
+    // 标题
+    title: '控制面在线更新',
+    // 当前版本 / 可用版本 / 渠道 / 发布时间 字段标签
+    currentVersion: '当前版本',
+    latestVersion: '可用版本',
+    channel: '更新渠道',
+    publishedAt: '发布时间',
+    // release 日志区标题
+    releaseNotes: '更新日志',
+    releaseNotesEmpty: '本次发布无更新日志',
+    // 「查看 release 页」外链
+    releaseLink: '查看 release 页',
+    // 状态提示行
+    checking: '正在检查更新…',
+    hasUpdate: '发现新版本 {{version}}，可在线更新',
+    upToDate: '已是最新版本',
+    // GitHub 不可达 / 限流 / 解析失败（status=check-failed）
+    checkFailed: '检查更新失败（GitHub 不可达或限流），稍后重试',
+    // dev 构建（直接 go run 未打包）：不提示更新
+    devBuild: '开发构建（dev），不检查更新',
+    // 「立即检查」按钮（调 ?force=true 绕服务端缓存）
+    checkNow: '立即检查',
+    // 「立即更新」按钮
+    updateNow: '立即更新',
+    // 二次确认（复用 FR-76 破坏性确认范式）
+    confirmTitle: '确认在线更新到 {{version}}？',
+    confirmDesc: '应用更新会下载新二进制并触发控制面短暂重启，期间管理台不可用。',
+    confirmImpactRestart: '控制面将短暂重启、期间管理台不可用',
+    confirmImpactAgent: 'agent 按本地快照继续运行，玩家不受影响',
+    confirmImpactIrreversible: '重启后回显新版本；如需回退须手动换二进制',
+    confirmAction: '确认更新',
+    // 进度阶段文案（对齐 UpdatePhase）
+    phaseChecking: '检查中…',
+    phaseDownloading: '下载中…（{{percent}}%）',
+    phaseVerifying: '校验中…',
+    phaseStaging: '落位中…',
+    phaseReadyRestart: '已落位，正在重启控制面…',
+    phaseFailed: '更新失败',
+    // 重启 / 重连提示（复用 FR-78 连接指示）
+    restarting: '控制面正在重启，等待重连…',
+    reconnected: '已重连，当前版本 {{version}}',
+    // 触发更新失败（POST 非 202，如 403 / 500）
+    triggerFailed: '触发更新失败',
   },
 
   // ===== 控制面连接状态指示（FR-78）=====
@@ -1097,7 +1148,6 @@ export const zhCN = {
     tabApiKeys: 'API 密钥',
     tabNamespaces: '环境管理',
     // 空壳子 tab 占位文案（内容由后续 FR 填）
-    placeholderVersion: '版本与更新信息即将在此呈现（待 FR-100/99 接入）。',
     placeholderHealth: '控制面健康自观测即将并入此处（待 FR-95 接入）。',
     // 网络代理 / 更新设置已由 FR-101 填实；以下文案仅作后端暂无对应设置项时的兜底占位
     placeholderProxy: '暂无网络代理设置项。',

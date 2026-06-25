@@ -8,10 +8,27 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SystemStatusView } from '@/api/types'
 import { currentPreferences, setNavExpandedGroups } from '@/state/preferences'
 
-// mock 后端调用：SystemHeader 经 react-query 拉取自身状态
+// mock 后端调用：SystemHeader 经 react-query 拉取自身状态 + FR-100 更新检查链路
 vi.mock('@/api/client', () => ({
   systemStatus: vi.fn(),
   logout: vi.fn(),
+  // FR-100：SystemHeader 的 useUpdateCheck 用到；默认无可用更新（无红点），不影响既有断言
+  checkUpdate: vi.fn().mockResolvedValue({
+    status: 'ok',
+    currentVersion: 'v0.7.0',
+    channel: 'stable',
+    hasUpdate: false,
+    isDevBuild: false,
+    latestVersion: '',
+    releaseNotes: '',
+    releaseUrl: '',
+    publishedAt: '',
+    checkedAt: '',
+    cacheExpiresAt: '',
+  }),
+  listSettings: vi.fn().mockResolvedValue([]),
+  updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
+  triggerUpdate: vi.fn(),
 }))
 
 import Layout from './Layout'
