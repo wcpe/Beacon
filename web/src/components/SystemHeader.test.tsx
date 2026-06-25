@@ -1,5 +1,6 @@
-// SystemHeader 单测（FR-33）：
-// 覆盖「连通态渲染各字段（含真实 CPU%）→ DB 断开反映为已断开 → 拉取失败反映为不可达 → CPU 不可用降级展示 → 采样器停用」。
+// SystemHeader 单测（FR-33，精简版）：
+// 覆盖「连通态药丸 + 运行/在线合并 → DB 断开反映为已断开 → 拉取失败反映为不可达 →
+// 不再渲染采样器/goroutine/堆/CPU（已迁控制面健康页）→ 首次加载显骨架」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -80,30 +81,25 @@ beforeEach(() => {
 })
 
 describe('SystemHeader', () => {
-  it('连通态渲染版本 / 运行时长 / 在线实例 / 采样器 / goroutine / 堆 / 真实 CPU%', async () => {
+  it('连通态渲染版本 + 已连接药丸 + 运行/在线合并行', async () => {
     renderHeader(<SystemHeader />)
     expect(await screen.findByText('v0.6.0')).toBeInTheDocument()
     expect(screen.getByText('控制面状态')).toBeInTheDocument()
-    // DB 连通
+    // DB 连通药丸
     expect(screen.getByText('已连接')).toBeInTheDocument()
-    // 运行时长取最高两个量级
-    expect(screen.getByText('3 小时 25 分')).toBeInTheDocument()
-    // 在线实例数
-    expect(screen.getByText('7')).toBeInTheDocument()
-    // 采样器启用
-    expect(screen.getByText('已启用')).toBeInTheDocument()
-    // goroutine 数
-    expect(screen.getByText('42')).toBeInTheDocument()
-    // Go 堆按字节格式化（used / sys）
-    expect(screen.getByText('128 MB / 256 MB')).toBeInTheDocument()
-    // 进程 CPU% 取真实采样值（保留 1 位小数）
-    expect(screen.getByText('23.4%')).toBeInTheDocument()
+    // 运行/在线合并为一行：运行 X · 在线 N
+    expect(screen.getByText('运行 3 小时 25 分 · 在线 7')).toBeInTheDocument()
   })
 
-  it('CPU 不可用时降级展示「不可用」', async () => {
-    vi.mocked(systemStatus).mockResolvedValue({ ...STATUS, cpuAvailable: false, cpuPercent: 0 })
+  it('不再渲染采样器 / goroutine / Go 堆 / 进程 CPU%（已迁控制面健康页）', async () => {
     renderHeader(<SystemHeader />)
-    expect(await screen.findByText('不可用')).toBeInTheDocument()
+    // 等连通态结算
+    await screen.findByText('已连接')
+    // 采样器「已启用」、goroutine 数、堆、CPU% 均不在精简页眉
+    expect(screen.queryByText('已启用')).toBeNull()
+    expect(screen.queryByText('42')).toBeNull()
+    expect(screen.queryByText('128 MB / 256 MB')).toBeNull()
+    expect(screen.queryByText('23.4%')).toBeNull()
   })
 
   it('DB 断开时反映为「已断开」', async () => {
@@ -122,10 +118,14 @@ describe('SystemHeader', () => {
     expect(await screen.findByText('不可达')).toBeInTheDocument()
   })
 
-  it('采样器停用时展示「已停用」', async () => {
-    vi.mocked(systemStatus).mockResolvedValue({ ...STATUS, samplerEnabled: false })
-    renderHeader(<SystemHeader />)
-    expect(await screen.findByText('已停用')).toBeInTheDocument()
+  it('首次加载时连接态 / 运行行显骨架（不闪 -）', async () => {
+    // 让 systemStatus 永不结算，停留在 isLoading
+    vi.mocked(systemStatus).mockReturnValue(new Promise(() => {}))
+    const { container } = renderHeader(<SystemHeader />)
+    // 骨架灰条用 animate-pulse；不应直接渲染连接态文案或 '-'
+    expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+    expect(screen.queryByText('已连接')).toBeNull()
+    expect(screen.queryByText('已断开')).toBeNull()
   })
 })
 

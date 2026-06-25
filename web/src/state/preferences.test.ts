@@ -14,12 +14,11 @@ afterEach(() => {
 })
 
 describe('偏好 store 默认与持久化', () => {
-  it('无持久化时回退默认（浅色 + 舒适 + 无手动展开组）', async () => {
+  it('无持久化时回退默认（浅色 + 舒适）', async () => {
     const { currentPreferences } = await import('./preferences')
     expect(currentPreferences()).toEqual({
       theme: 'light',
       density: 'comfortable',
-      navExpandedGroups: [],
     })
   })
 
@@ -29,7 +28,7 @@ describe('偏好 store 默认与持久化', () => {
     m.setDensity('compact')
     // 已写入 localStorage
     expect(localStorage.getItem('beacon.preferences')).toBe(
-      JSON.stringify({ theme: 'dark', density: 'compact', navExpandedGroups: [] }),
+      JSON.stringify({ theme: 'dark', density: 'compact' }),
     )
     // 重新加载模块：从 localStorage 恢复快照
     vi.resetModules()
@@ -37,7 +36,6 @@ describe('偏好 store 默认与持久化', () => {
     expect(reloaded.currentPreferences()).toEqual({
       theme: 'dark',
       density: 'compact',
-      navExpandedGroups: [],
     })
   })
 
@@ -47,44 +45,7 @@ describe('偏好 store 默认与持久化', () => {
     expect(currentPreferences()).toEqual({
       theme: 'light',
       density: 'comfortable',
-      navExpandedGroups: [],
     })
-  })
-})
-
-describe('偏好 store navExpandedGroups（FR-93）', () => {
-  it('setNavExpandedGroups 写入合法组 id 并可重载后恢复', async () => {
-    const m = await import('./preferences')
-    m.setNavExpandedGroups(['cluster', 'observability'])
-    expect(m.currentPreferences().navExpandedGroups).toEqual(['cluster', 'observability'])
-    vi.resetModules()
-    const reloaded = await import('./preferences')
-    expect(reloaded.currentPreferences().navExpandedGroups).toEqual(['cluster', 'observability'])
-  })
-
-  it('未知组 id / 非字符串被剔除、重复去重', async () => {
-    const m = await import('./preferences')
-    // 'bogus' 非合法组、123 非字符串、'cluster' 重复
-    m.setNavExpandedGroups(['cluster', 'bogus', 123 as unknown as string, 'cluster'])
-    expect(m.currentPreferences().navExpandedGroups).toEqual(['cluster'])
-  })
-
-  it('持久化的 navExpandedGroups 非数组时回落空数组', async () => {
-    localStorage.setItem(
-      'beacon.preferences',
-      JSON.stringify({ theme: 'dark', density: 'compact', navExpandedGroups: 'oops' }),
-    )
-    const { currentPreferences } = await import('./preferences')
-    expect(currentPreferences().navExpandedGroups).toEqual([])
-  })
-
-  it('持久化的 navExpandedGroups 含未知组时剔除非法值', async () => {
-    localStorage.setItem(
-      'beacon.preferences',
-      JSON.stringify({ navExpandedGroups: ['system', 'nope', 'overview'] }),
-    )
-    const { currentPreferences } = await import('./preferences')
-    expect(currentPreferences().navExpandedGroups).toEqual(['system', 'overview'])
   })
 })
 

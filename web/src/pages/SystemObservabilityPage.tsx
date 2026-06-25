@@ -6,7 +6,8 @@
 
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { systemObservability } from '@/api/client'
+import { systemObservability, systemStatus } from '@/api/client'
+import { formatBytes, formatDuration } from '@/api/format'
 import AsyncSection from '@/components/AsyncSection'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
@@ -39,6 +40,13 @@ export default function SystemObservabilityPage() {
     refetchInterval: OBS_REFETCH_MS,
   })
 
+  // 进程运行时卡数据：复用 FR-33 页眉同一 ['system-status'] 缓存（页眉精简后这些指标迁来此处）。
+  const { data: status } = useQuery({
+    queryKey: ['system-status'],
+    queryFn: systemStatus,
+    refetchInterval: OBS_REFETCH_MS,
+  })
+
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -52,6 +60,54 @@ export default function SystemObservabilityPage() {
       <AsyncSection isLoading={isLoading} isError={isError} error={error}>
         {data && (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {/* ===== 进程运行时：版本 / 运行时长 / 采样器 / Go 运行时资源 / 进程 CPU（由 FR-33 页眉精简迁入） ===== */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t('observability.runtimeTitle')}</CardTitle>
+              </CardHeader>
+              <CardContent className="divide-y py-0">
+                <MetricRow
+                  label={t('observability.runtimeVersion')}
+                  value={status?.version ?? '-'}
+                  hint={t('observability.runtimeVersionHint')}
+                />
+                <MetricRow
+                  label={t('observability.runtimeUptime')}
+                  value={formatDuration(status?.uptimeSeconds)}
+                  hint={t('observability.runtimeUptimeHint')}
+                />
+                <MetricRow
+                  label={t('observability.runtimeSampler')}
+                  value={
+                    status
+                      ? status.samplerEnabled
+                        ? t('systemHeader.samplerEnabled')
+                        : t('systemHeader.samplerDisabled')
+                      : '-'
+                  }
+                  hint={t('observability.runtimeSamplerHint')}
+                />
+                <MetricRow
+                  label={t('observability.runtimeGoroutine')}
+                  value={status?.runtime.goroutines ?? '-'}
+                  hint={t('observability.runtimeGoroutineHint')}
+                />
+                <MetricRow
+                  label={t('observability.runtimeHeap')}
+                  value={
+                    status ? `${formatBytes(status.runtime.heapAlloc)} / ${formatBytes(status.runtime.heapSys)}` : '-'
+                  }
+                  hint={t('observability.runtimeHeapHint')}
+                />
+                <MetricRow
+                  label={t('observability.runtimeCpu')}
+                  // cpuAvailable=false 表示采集失败，降级为「不可用」（gopsutil 容器内常见）
+                  value={status ? (status.cpuAvailable ? `${status.cpuPercent.toFixed(1)}%` : t('systemHeader.unavailable')) : '-'}
+                  hint={t('observability.runtimeCpuHint')}
+                />
+              </CardContent>
+            </Card>
+
             {/* ===== 数据库连接池：逐项明细 ===== */}
             <Card>
               <CardHeader>

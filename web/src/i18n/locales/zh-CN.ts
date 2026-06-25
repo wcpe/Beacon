@@ -162,7 +162,8 @@ export const zhCN = {
     missingCredentials: '请填写账号与口令',
   },
 
-  // ===== 控制面状态条（SystemHeader）=====
+  // ===== 控制面状态条（SystemHeader，精简版）=====
+  // 仅保留连接态药丸 + 版本徽章 + 运行/在线；采样器/goroutine/堆/CPU 文案迁至控制面健康页「进程运行时」卡复用。
   systemHeader: {
     title: '控制面状态',
     database: '数据库',
@@ -171,6 +172,9 @@ export const zhCN = {
     disconnected: '已断开',
     uptime: '运行时长',
     onlineInstances: '在线实例',
+    // 精简页眉「运行/在线」合并标签与值（紧凑一行：运行 X · 在线 N）
+    runtime: '运行 / 在线',
+    runtimeValue: '运行 {{uptime}} · 在线 {{online}}',
     sampler: '采样器',
     samplerEnabled: '已启用',
     samplerDisabled: '已停用',
@@ -319,6 +323,20 @@ export const zhCN = {
     // 命令队列深度：按状态逐项
     commandTitle: '命令队列深度',
     commandPendingHint: '待目标 agent 拉取的命令数',
+    // 进程运行时卡（由 FR-33 页眉精简迁入）：控制面进程自身的版本 / 运行时长 / 采样器 / Go 运行时资源 / 进程 CPU
+    runtimeTitle: '进程运行时',
+    runtimeVersion: '版本',
+    runtimeVersionHint: '控制面当前运行的构建版本',
+    runtimeUptime: '运行时长',
+    runtimeUptimeHint: '控制面进程自启动以来的运行时间',
+    runtimeSampler: '采样器',
+    runtimeSamplerHint: 'agent 网络指标采样器是否启用',
+    runtimeGoroutine: 'Goroutine',
+    runtimeGoroutineHint: '当前存活的 goroutine 数',
+    runtimeHeap: 'Go 堆',
+    runtimeHeapHint: '堆已分配 / 向系统申请（heapAlloc / heapSys）',
+    runtimeCpu: '进程 CPU',
+    runtimeCpuHint: '本进程 CPU 占用（采集失败时显「不可用」）',
   },
 
   // ===== 布局（Layout）=====

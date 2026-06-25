@@ -10,11 +10,13 @@ import type { ReactElement } from 'react'
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
   systemObservability: vi.fn(),
+  // 进程运行时卡（由 FR-33 页眉精简迁入）：复用 ['system-status'] query
+  systemStatus: vi.fn(),
 }))
 
 import SystemObservabilityPage from './SystemObservabilityPage'
-import { systemObservability } from '../api/client'
-import type { ObservabilityView } from '../api/types'
+import { systemObservability, systemStatus } from '../api/client'
+import type { ObservabilityView, SystemStatusView } from '../api/types'
 
 // 各计数取互不相同的值，避免 getByText 因重复文本歧义抛错。
 const OBS: ObservabilityView = {
@@ -23,6 +25,23 @@ const OBS: ObservabilityView = {
   registryByStatus: { online: 41, degraded: 14, lost: 23 },
   registryTotal: 78,
   commandByStatus: { pending: 51, fetched: 17, done: 91 },
+}
+
+// 进程运行时卡样例（version/goroutine/heap/cpu/sampler 取与其它卡互不相同的值，避免文本歧义）。
+const STATUS: SystemStatusView = {
+  version: 'v0.9.9',
+  startedAt: '2026-06-20T08:00:00Z',
+  uptimeSeconds: 7 * 3600 + 7 * 60, // 7 小时 7 分
+  db: { connected: true },
+  onlineInstances: 3,
+  samplerEnabled: true,
+  runtime: {
+    goroutines: 137,
+    heapAlloc: 67108864, // 64 MB
+    heapSys: 134217728, // 128 MB
+  },
+  cpuAvailable: true,
+  cpuPercent: 8.6,
 }
 
 function renderPage(ui: ReactElement) {
@@ -40,16 +59,44 @@ function sectionOf(title: string): HTMLElement {
 
 beforeEach(() => {
   vi.mocked(systemObservability).mockResolvedValue(OBS)
+  vi.mocked(systemStatus).mockResolvedValue(STATUS)
 })
 
 describe('SystemObservabilityPage（FR-82）', () => {
-  it('渲染页标题与四组分区标题', async () => {
+  it('渲染页标题与各分区标题（含进程运行时卡）', async () => {
     renderPage(<SystemObservabilityPage />)
     expect(await screen.findByRole('heading', { name: '控制面健康' })).toBeInTheDocument()
+    expect(screen.getByText('进程运行时')).toBeInTheDocument()
     expect(screen.getByText('数据库连接池')).toBeInTheDocument()
     expect(screen.getByText('长轮询挂起')).toBeInTheDocument()
     expect(screen.getByText('注册表规模')).toBeInTheDocument()
     expect(screen.getByText('命令队列深度')).toBeInTheDocument()
+  })
+
+  it('进程运行时卡逐项明细就位（版本 / 运行时长 / 采样器 / goroutine / 堆 / CPU%）', async () => {
+    renderPage(<SystemObservabilityPage />)
+    await screen.findByText('进程运行时')
+    const card = sectionOf('进程运行时')
+    // 版本
+    expect(within(card).getByText('v0.9.9')).toBeInTheDocument()
+    // 运行时长（最高两个量级）
+    expect(within(card).getByText('7 小时 7 分')).toBeInTheDocument()
+    // 采样器启用
+    expect(within(card).getByText('已启用')).toBeInTheDocument()
+    // goroutine 数
+    expect(within(card).getByText('137')).toBeInTheDocument()
+    // Go 堆（used / sys）
+    expect(within(card).getByText('64 MB / 128 MB')).toBeInTheDocument()
+    // 进程 CPU%（保留 1 位小数）
+    expect(within(card).getByText('8.6%')).toBeInTheDocument()
+  })
+
+  it('进程运行时卡 CPU 不可用时降级显「不可用」', async () => {
+    vi.mocked(systemStatus).mockResolvedValue({ ...STATUS, cpuAvailable: false, cpuPercent: 0 })
+    renderPage(<SystemObservabilityPage />)
+    await screen.findByText('进程运行时')
+    const card = sectionOf('进程运行时')
+    expect(within(card).getByText('不可用')).toBeInTheDocument()
   })
 
   it('DB 连接池逐项明细就位（已建 / 上限 / 使用中 / 空闲 / 累计等待 / 等待时长）', async () => {

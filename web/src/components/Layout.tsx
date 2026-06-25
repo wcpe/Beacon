@@ -2,8 +2,7 @@
 // 操作者身份由登录令牌决定（FR-11），写操作 operator 以认证身份为准，无需手填。
 
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronRightIcon } from 'lucide-react'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
@@ -11,34 +10,17 @@ import { Button } from '@/components/ui/button'
 import SystemHeader from '@/components/SystemHeader'
 import CommandPalette from '@/components/CommandPalette'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
-import { usePreferences, setNavExpandedGroups } from '@/state/preferences'
-import { NAV_GROUPS, isGroupActive, type NavGroup } from '@/lib/navModel'
+import { NAV_GROUPS } from '@/lib/navModel'
 import { cn } from '@/lib/utils'
 
 export default function Layout() {
   const { t } = useTranslation()
   const { operator } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
-  // 侧栏导航手风琴（FR-93）：命中路由组始终展开，叠加用户手动展开的偏好组。
-  const { navExpandedGroups } = usePreferences()
   // 控制面连接状态（FR-78）：断开时弹横幅、小灯转红；恢复时自动重连并刷新数据。
   const { status: connectionStatus } = useConnectionStatus()
   // 全局命令面板开合（FR-83）：Ctrl/Cmd+K 唤起、页眉搜索入口同开同一面板。
   const [paletteOpen, setPaletteOpen] = useState(false)
-
-  // 某组是否展开：命中当前路由（自动展开）或用户在偏好里手动展开。
-  function groupOpen(group: NavGroup): boolean {
-    return isGroupActive(group, location.pathname) || navExpandedGroups.includes(group.id)
-  }
-
-  // 用户切换某组展开态：写偏好（命中路由组即便折叠偏好也仍自动展开，符合「命中即展开」语义）。
-  function toggleGroup(group: NavGroup, open: boolean): void {
-    const set = new Set(navExpandedGroups)
-    if (open) set.add(group.id)
-    else set.delete(group.id)
-    setNavExpandedGroups([...set])
-  }
 
   // 全局 Ctrl/Cmd+K 监听：任意页面（含输入框聚焦时）皆可唤起，面板为模态覆盖；
   // 与配置页 Ctrl+S 保存（FR-75）不同键、不冲突。
@@ -96,25 +78,18 @@ export default function Layout() {
             </kbd>
           </button>
         </div>
-        {/* 侧栏 5 组手风琴（FR-93）：用原生 details/summary，不引第三方 accordion。
-            命中路由的组自动展开，用户手动展开 / 折叠态持久化到偏好。 */}
-        <nav className="flex flex-1 flex-col gap-1 p-3">
+        {/* 侧栏 5 组分组常驻（FR-93，方案 A）：分区标题（不可点、不折叠）+ 其下叶子常驻显示，
+            每个叶子 = lucide 图标 + 文案；不再用 details/summary 折叠，无展开态偏好。 */}
+        <nav className="flex flex-1 flex-col gap-3 p-3">
           {NAV_GROUPS.map((group) => (
-            <details
-              key={group.id}
-              open={groupOpen(group)}
-              onToggle={(e) => toggleGroup(group, (e.currentTarget as HTMLDetailsElement).open)}
-            >
-              {/* 分组标题：与子项排版层级协调——同字号体系，分组用更弱的颜色 + 字重做层级区分，不用 uppercase 拉开观感落差 */}
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold text-sidebar-foreground/50 select-none hover:text-sidebar-accent-foreground [&::-webkit-details-marker]:hidden">
-                <ChevronRightIcon
-                  aria-hidden
-                  className="size-3.5 shrink-0 transition-transform [details[open]>summary>&]:rotate-90"
-                />
-                <span>{t(group.labelKey)}</span>
-              </summary>
-              <div className="mt-0.5 mb-1 flex flex-col gap-0.5 pl-2">
-                {group.leaves.map((leaf) => (
+            <div key={group.id} className="flex flex-col gap-0.5">
+              {/* 分区标题：小号弱色、无 chevron、不可点击、不折叠，仅作分组层级标识 */}
+              <div className="px-3 pb-1 text-xs font-semibold text-muted-foreground select-none">
+                {t(group.labelKey)}
+              </div>
+              {group.leaves.map((leaf) => {
+                const Icon = leaf.icon
+                return (
                   <NavLink
                     key={leaf.to}
                     to={leaf.to}
@@ -122,18 +97,19 @@ export default function Layout() {
                     end
                     className={({ isActive }) =>
                       cn(
-                        'rounded-md px-3 py-1.5 text-sm transition-colors',
+                        'flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors',
                         isActive
                           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
-                          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+                          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
                       )
                     }
                   >
-                    {t(leaf.labelKey)}
+                    <Icon aria-hidden className="size-4 shrink-0" />
+                    <span>{t(leaf.labelKey)}</span>
                   </NavLink>
-                ))}
-              </div>
-            </details>
+                )
+              })}
+            </div>
           ))}
         </nav>
         <div className="border-t p-4">
