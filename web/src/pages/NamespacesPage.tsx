@@ -130,8 +130,8 @@ export default function NamespacesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('namespaces.title')}</h1>
+      {/* 折叠进设置子 tab 后页标题由子 tab 标签承担（FR-95），此处仅留新建入口右对齐 */}
+      <div className="flex items-center justify-end">
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>{t('namespaces.createBtn')}</Button>

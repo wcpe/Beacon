@@ -28,11 +28,11 @@ export default function SystemObservabilityPage() {
 
   return (
     <div className="space-y-4">
+      {/* 折叠进设置子 tab 后页标题由子 tab 标签承担（FR-95），此处仅留副标题 + 刷新指示 */}
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">{t('observability.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('observability.subtitle')}</p>
         {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
       </div>
-      <p className="text-sm text-muted-foreground">{t('observability.subtitle')}</p>
 
       <AsyncSection isLoading={isLoading} isError={isError} error={error}>
         {data && (

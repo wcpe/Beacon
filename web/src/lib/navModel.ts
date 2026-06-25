@@ -57,7 +57,14 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     id: 'system',
     labelKey: 'nav.groupSystem',
-    leaves: [{ to: '/settings', labelKey: 'nav.settings' }],
+    leaves: [
+      { to: '/settings', labelKey: 'nav.settings' },
+      // FR-95 折叠后的三页深链：保留命令面板可搜（密钥 / 环境 / 控制面健康）+ 侧栏可达；
+      // 真实路由由设置子 tab 承载（带 search param 直达子 tab）。
+      { to: '/settings/system-config?tab=api-keys', labelKey: 'nav.apiKeys' },
+      { to: '/settings/system-config?tab=namespaces', labelKey: 'nav.namespaces' },
+      { to: '/settings/system-info?tab=health', labelKey: 'nav.systemObservability' },
+    ],
   },
 ]
 
