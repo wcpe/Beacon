@@ -19,6 +19,7 @@
 - **升级前先备份 MySQL**（见 §4）。
 - 控制面：拉新镜像 → `docker compose up -d beacon`（mysql 数据卷不动）。AutoMigrate 只增不删；删列 / 改类型等复杂变更它不处理，需要时再引入迁移工具并另立 ADR。
 - agent：替换 jar 重启子服。控制面与 agent 应同次发布、版本号一致（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。
+- **发布产物平台覆盖（FR-102）**：每个正式 tag 由 CI 在原生 runner 上 CGO=1 构建（非交叉编译，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 个平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每个平台同时产出主二进制 `beacon-<ver>-<target>[.exe]` 与 launcher 监督进程 `beacon-launcher-<ver>-<target>[.exe]`，并由 `SHA256SUMS.txt` 一并校验。双端 agent jar 与平台无关、各发布只构建一次。
 
 ### 2.1 内置 launcher 监督进程（FR-96，[ADR-0045](adr/0045-builtin-launcher-supervisor.md)）
 发布产物含独立第二二进制 `beacon-launcher[.exe]`（与主二进制 `beacon[.exe]` 同目录、同版本）。**裸跑单二进制时**，可改为跑 `beacon-launcher` 代替直接跑 `beacon`，使控制面无需外部 systemd / docker 即**崩溃自动重启**：
@@ -26,7 +27,7 @@
 - 主进程正常退出（如 `Ctrl+C` 优雅关停）→ launcher 随之退出、不重启。崩溃 / 被信号杀死 → launcher 按**固定间隔 3 秒**重启，连续失败超 **5 次**即停并打 ERROR（避免疯狂重启，需人工排查）。
 - **端口先退后起**：在线更新（后续 FR-97）或重启时，主进程先优雅关停释放端口、退出，launcher 再拉起新进程重新监听同端口——其间有**亚秒级**端口不可用窗口；agent 在此期间按本地快照继续（fail-static），玩家进服不受影响。
 - **直接跑 `beacon`（不经 launcher）仍完全可用**，只是退化为「无自动重启」，崩溃后需手动重启；用不用 launcher 取决于是否需要免外部监督的自愈。
-- **容器形态**：Docker 镜像后续（FR-102）会把 ENTRYPOINT 切到 launcher 统一两形态；容器内更新临时（镜像不可变），生产升级仍以**重拉镜像**为准（见 §2 上文）。
+- **容器形态（FR-102 已落地）**：Docker 镜像 `ENTRYPOINT` 已切到 `beacon-launcher`，与裸跑统一为「launcher 监督主进程」两形态；镜像构建阶段同时产出 `beacon` 与 `beacon-launcher` 并同放 `/usr/local/bin`（launcher 按 `os.Executable()` 同目录定位 `beacon`）。**容器内在线更新（后续 FR-97）换二进制仅临时有效**——镜像不可变，容器一旦重建即丢更新；**容器形态的生产升级一律以重拉镜像为准**（拉新镜像 → `docker compose up -d beacon`，见 §2 上文），不要依赖容器内自更新。
 - 本期 launcher **不自更新**（不查 Release / 不下载），仅做「监督 + 重启 + 换二进制」机制；自动检查与下载更新的能力在后续版本（FR-97）提供。
 
 ## 3. 健康与观测

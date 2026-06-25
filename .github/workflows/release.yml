@@ -50,9 +50,11 @@ jobs:
           path: web/dist/
           if-no-files-found: error
 
-  # 各平台原生构建控制面单二进制（CGO=1，sqlite 可用）。go:embed 复用上一步的 web/dist。
+  # 各平台原生构建控制面二进制 beacon 与 launcher 监督进程 beacon-launcher（FR-96/ADR-0045）。
+  # 二者均 CGO=1 原生构建（sqlite 可用）；beacon go:embed 复用上一步的 web/dist，launcher 极薄不内嵌前端。
   # 直接 go build（非 make build）：矩阵需原生 CGO + 复用预构建前端，且 windows runner 无 make；
-  # 链接参数与 Makefile build 目标一致（-trimpath + 注入 version.Version）。
+  # 链接参数与 Makefile build/launcher 目标一致（-trimpath + 注入 version.Version）。
+  # 5 平台原生矩阵（含 linux-arm64 用 GitHub 原生 arm64 runner，仍非交叉编译）；明确不含 windows-arm64。
   binaries:
     name: 控制面 ${{ matrix.target }}
     needs: web
@@ -61,10 +63,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,  target: linux-amd64,   ext: "" }
-          - { os: windows-latest, target: windows-amd64, ext: ".exe" }
-          - { os: macos-13,       target: darwin-amd64,  ext: "" }
-          - { os: macos-14,       target: darwin-arm64,  ext: "" }
+          - { os: ubuntu-latest,    target: linux-amd64,   ext: "" }
+          - { os: ubuntu-24.04-arm, target: linux-arm64,   ext: "" }
+          - { os: windows-latest,   target: windows-amd64, ext: ".exe" }
+          - { os: macos-13,         target: darwin-amd64,  ext: "" }
+          - { os: macos-14,         target: darwin-arm64,  ext: "" }
     env:
       # 各平台 runner 自带原生 C 工具链（gcc/clang/mingw），sqlite 经 CGO 可用
       CGO_ENABLED: "1"
@@ -80,13 +83,17 @@ jobs:
         with:
           name: web-dist
           path: web/dist
-      - name: 原生构建控制面二进制
+      - name: 原生构建控制面与 launcher 二进制
         shell: bash
         run: |
           ver="$(cat VERSION)"
+          ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${ver}"
           out="beacon-${ver}-${{ matrix.target }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "-s -w -X github.com/wcpe/Beacon/internal/version.Version=${ver}" -o "${out}" ./cmd/beacon
+          go build -trimpath -ldflags "${ldflags}" -o "${out}" ./cmd/beacon
           echo "已构建 ${out}"
+          launcher_out="beacon-launcher-${ver}-${{ matrix.target }}${{ matrix.ext }}"
+          go build -trimpath -ldflags "${ldflags}" -o "${launcher_out}" ./cmd/beacon-launcher
+          echo "已构建 ${launcher_out}"
       - name: 上传二进制
         uses: actions/upload-artifact@v4
         with:

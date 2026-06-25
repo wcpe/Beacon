@@ -236,7 +236,9 @@ zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane
 
 ## 9. 部署
 
-docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+ `mysql`（mysql healthcheck + beacon `depends_on: service_healthy` + 命名卷持久化）。多阶段 Dockerfile：node 构建前端 dist → `go build` 内嵌（`//go:embed all:dist`）→ alpine 极小镜像、非 root、`CGO_ENABLED=0` 静态链接。前端以相对路径 `/admin/v1` 同源访问（无 CORS）；非 API、非静态文件的路径回退 `index.html`（SPA history）。敏感项（DB 密码、token）走 env，不入库。
+docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+ `mysql`（mysql healthcheck + beacon `depends_on: service_healthy` + 命名卷持久化）。多阶段 Dockerfile：node 构建前端 dist → `go build` 内嵌（`//go:embed all:dist`）→ alpine 极小镜像、非 root、`CGO_ENABLED=0` 静态链接。构建阶段同时产出 `beacon` 与 launcher 监督进程 `beacon-launcher`（同放 `/usr/local/bin`），镜像 **`ENTRYPOINT` 切到 `beacon-launcher`**（与裸跑统一为「launcher 监督主进程」两形态，FR-102）；容器内在线更新换二进制临时有效，镜像不可变故生产升级以重拉镜像为准。前端以相对路径 `/admin/v1` 同源访问（无 CORS）；非 API、非静态文件的路径回退 `index.html`（SPA history）。敏感项（DB 密码、token）走 env，不入库。
+
+**发布产物与平台矩阵（FR-102，[ADR-0007](adr/0007-versioning-and-release-channels.md) 原生矩阵）**：正式 tag 由 CI 在原生 runner 上 CGO=1 构建（**非交叉编译**，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner `ubuntu-24.04-arm`）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每平台同时产出主二进制 `beacon-<ver>-<target>[.exe]` 与 launcher `beacon-launcher-<ver>-<target>[.exe]`，统一 `SHA256SUMS.txt` 校验；双端 agent jar 与平台无关、各发布只构建一次。本地 `make package` 则按当前单平台产出 `beacon` + `beacon-launcher` + 双端 jar。
 
 **配置加载（`internal/config`，FR-25）**：生效优先级 真实环境变量 > 当前目录 `.env` > `config.yml`（`-config` 指定）> 内置默认。`cmd/beacon` 启动时把内置模板 `config.yml`（默认 sqlite，零依赖可跑，经根包 `//go:embed` 内嵌）释放到当前目录，**释放时把模板里留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值**（文件 0600、口令不入日志；agent 共享令牌用固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界，与 agent 样例开箱匹配），**已存在则跳过、不覆盖**；随后读当前目录 `.env`（仅注入未设置的键、真实 env 优先），最后 `BEACON_*` 覆盖并校验。**不自动生成 `.env`**——凭据落在 `config.yml`（即真源），避免自动生成的 `.env` 因优先级更高而静默盖掉用户对 `config.yml` 的修改；`.env` 仅当运维手动放置时生效，用手写最小解析、不引第三方库。鉴权仍强制（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）——由 fail-fast 改为首启自助生成 `config.yml` 内的**强随机**凭据（非固定弱默认），使单二进制开箱即跑。
 
