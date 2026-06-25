@@ -114,16 +114,22 @@ func assetName(version string) (string, bool) {
 // 记一条 system.update-check 审计（detail 含渠道 / 当前 / 最新 / 有无更新，不含敏感）。
 func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, operator, clientIP string) (CheckResult, error) {
 	s.progress.setPhase(PhaseChecking, "")
+	// check-failed 也回显当前版本（本地恒已知），使前端模态框「当前版本」始终有值（FR-99 修复）。
+	failRes := CheckResult{
+		Channel:        ch,
+		CurrentVersion: s.currentVersion,
+		IsDevBuild:     strings.TrimSpace(s.currentVersion) == devVersion,
+	}
 	client, err := s.newHTTPClient(proxyURL, downloadTimeout)
 	if err != nil {
 		s.progress.fail(fmt.Sprintf("构造出站客户端失败: %v", err))
-		return CheckResult{}, err
+		return failRes, err
 	}
 	rc := newReleaseClient(client, s.apiBase, s.repo)
 	rel, err := rc.latestForChannel(ctx, ch)
 	if err != nil {
 		s.progress.fail(fmt.Sprintf("查 release 失败: %v", err))
-		return CheckResult{}, err
+		return failRes, err
 	}
 	hasUpdate, cmpErr := IsNewer(s.currentVersion, rel.TagName)
 	if cmpErr != nil {

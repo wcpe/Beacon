@@ -108,6 +108,7 @@ func (s *UpdateService) Check(ctx context.Context, force bool, operator, clientI
 		view = UpdateCheckView{
 			Status:         updateCheckStatusFailed,
 			CurrentVersion: s.currentVersionFor(res),
+			IsDevBuild:     res.IsDevBuild,
 			Channel:        channel,
 			CheckedAt:      now.Format(time.RFC3339),
 			CacheExpiresAt: expiresAt.Format(time.RFC3339),
@@ -152,7 +153,7 @@ func (s *UpdateService) cacheTTL() time.Duration {
 	return time.Duration(s.settings.GetInt(SettingUpdateCheckIntervalHours)) * time.Hour
 }
 
-// currentVersionFor 在 check-failed 时尽量回显当前版本：核心已填则用之（部分失败前已知），否则留空。
+// currentVersionFor 在 check-failed 时回显当前版本：核心在失败路径也填了 CurrentVersion（本地恒已知），故直接用之。
 func (s *UpdateService) currentVersionFor(res update.CheckResult) string {
 	return res.CurrentVersion
 }

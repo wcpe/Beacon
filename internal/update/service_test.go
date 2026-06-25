@@ -268,6 +268,28 @@ func TestCheckForUpdateReportsNewer(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdateCarriesCurrentVersionOnError check-failed（查 release 失败）时仍回显当前版本。
+// 修复前失败路径返回空 CheckResult，致前端更新模态框「当前版本」空白（真机暴露）。
+func TestCheckForUpdateCarriesCurrentVersionOnError(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError) // 模拟 GitHub 不可达 / 限流
+	})
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err == nil {
+		t.Fatal("releases 500 应返回错误（check-failed）")
+	}
+	if res.CurrentVersion != "1.0.0" {
+		t.Fatalf("check-failed 时应回显当前版本 1.0.0，实际 %q", res.CurrentVersion)
+	}
+}
+
 // TestCheckForUpdatePopulatesPublishedAt 检查结果回填 release 发布时间（FR-99 端点透传）。
 func TestCheckForUpdatePopulatesPublishedAt(t *testing.T) {
 	const tag = "v2.0.0"
