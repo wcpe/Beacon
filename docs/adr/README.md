@@ -46,7 +46,9 @@
 | [0040](0040-agent-readonly-log-tail.md) | agent 只读日志回传：自身日志内存环形缓冲 + 命令-回传 + 落缓冲脱敏（不读任意文件、行数有界、限速、agentToken 信任面） | 已接受 |
 | [0041](0041-alert-event-persistence.md) | 告警事件持久化实体 alert_event（留痕 + UI 信息流，作 PersistAlerter 通道接入扇出，取代 ADR-0019「告警不落库」结论） | 已接受 |
 | [0042](0042-admin-api-token.md) | 脚本化 admin API token 复用 FR-42 运行时 API 密钥，仅补「复制为 curl」自动化辅助（扩展 ADR-0026，不新增并行凭据） | 已接受 |
+| [0043](0043-admin-nav-grouping-and-settings-aggregation.md) | 管理台导航分组 + 设置区聚合 IA：侧栏 5 组可折叠手风琴 + 设置三块顶层 tab/子 tab + 嵌套子路由 search param 深链 + 旧路由前端重定向 | 已接受 |
 | [0045](0045-builtin-launcher-supervisor.md) | 内置 launcher 监督进程：独立第二二进制 + 退出码协议（0/1/70）+ 跨平台换二进制（Win rename 让位 / Unix rename 覆盖）+ 端口先退后起 + 裸跑兜底，本期 launcher 不自更新 | 已接受 |
+| [0047](0047-update-outbound-proxy-and-secret-redaction.md) | 控制面更新出站代理 + httpx 客户端工厂收口 + 含凭据设置项脱敏（扩展 ADR-0038；仅更新出站不动 webhook，不照搬 ADR-0005 抽象） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
