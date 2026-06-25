@@ -22,6 +22,9 @@ import ServiceAnalysisPage from './pages/ServiceAnalysisPage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import NamespacesPage from './pages/NamespacesPage'
 import SettingsPage from './pages/SettingsPage'
+import OpsSettingsBlock from './pages/settings/OpsSettingsBlock'
+import SystemInfoBlock from './pages/settings/SystemInfoBlock'
+import SystemConfigBlock from './pages/settings/SystemConfigBlock'
 import SystemObservabilityPage from './pages/SystemObservabilityPage'
 import { setOnUnauthorized } from './api/client'
 import { applyThemeToDocument, usePreferences } from './state/preferences'
@@ -83,8 +86,17 @@ export default function App() {
           {/* 密钥管理（FR-42）：只读角色 + 运行时 API 密钥创建/吊销/重置 */}
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="namespaces" element={<NamespacesPage />} />
-          {/* 运维设置页（FR-62）：分组展示热改项 + 逐项编辑保存 + 热生效回显 */}
-          <Route path="settings" element={<SettingsPage />} />
+          {/* 设置聚合页骨架（FR-94，见 ADR-0043）：三块顶层 tab + 块内子 tab。
+              顶层三块用嵌套子路由，/settings 重定向到运维设置块；块内子 tab 用 search param。 */}
+          <Route path="settings" element={<SettingsPage />}>
+            <Route index element={<Navigate to="/settings/ops" replace />} />
+            {/* 运维设置块（FR-62/FR-77）：6 域子 tab + 跨子 tab 统一草稿 / 批量保存 / 恢复默认 */}
+            <Route path="ops" element={<OpsSettingsBlock />} />
+            {/* 系统信息块（FR-94 骨架）：版本与更新 / 控制面健康 空壳子 tab */}
+            <Route path="system-info" element={<SystemInfoBlock />} />
+            {/* 系统设置块（FR-94 骨架）：网络代理 / 更新设置 / API 密钥 / 环境管理 空壳子 tab */}
+            <Route path="system-config" element={<SystemConfigBlock />} />
+          </Route>
           {/* 控制面健康页（FR-82）：控制面自身内部运行态只读自观测（DB 连接池 / 长轮询挂起 / 注册表规模 / 命令队列深度） */}
           <Route path="system" element={<SystemObservabilityPage />} />
           {/* 未知路径回到配置中心 */}

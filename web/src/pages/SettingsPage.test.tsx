@@ -1,14 +1,16 @@
-// SettingsPage 单测（FR-62 运维设置页）：
+// 运维设置块单测（FR-62/FR-77，FR-94 改子 tab 呈现后仍保留集中草稿）：
 // 锁定行为——
-// ① 列表按 key 前缀分组渲染（含 desc / key / 默认值 / 当前值）；
+// ① 6 域改子 tab 呈现（默认健康检查 tab，切 tab 见对应组项）；
 // ② 改 int 项保存以 updateSetting(key, "新值") 正确入参调用（值序列化为字符串）；
 // ③ log.level 用下拉，改值保存以新枚举调用 updateSetting；
 // ④ 后端 400 时把后端 message 经 toast 展示；
 // ⑤ 值未变时保存按钮禁用；
-// ⑥ 启动 / 安全项在 config.yml 的提示文案可见。
+// ⑥ 启动 / 安全项在 config.yml 的提示文案可见；
+// ⑦【FR-94 硬约束】跨子 tab 改两项时统一批量保存仍统观全部脏项（dirtyItems=2）。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 import type { SettingView } from '../api/types'
@@ -30,7 +32,7 @@ vi.mock('../api/client', async () => {
   }
 })
 
-import SettingsPage from './SettingsPage'
+import OpsSettingsBlock from './settings/OpsSettingsBlock'
 import { ApiClientError, listSettings, updateSetting } from '../api/client'
 
 // jsdom 未实现指针捕获 / scrollIntoView：radix Select（log.level 下拉）打开时会调用它们，缺失会抛错。
@@ -82,7 +84,16 @@ const SETTINGS: SettingView[] = [
 
 function renderPage(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={['/settings/ops']}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+// 切到某子 tab（按 tab 标题点击 tab 触发器）。
+async function switchTab(label: string): Promise<void> {
+  await userEvent.click(await screen.findByRole('tab', { name: label }))
 }
 
 beforeEach(() => {
@@ -91,25 +102,47 @@ beforeEach(() => {
   vi.mocked(updateSetting).mockResolvedValue(undefined)
 })
 
-// 定位某设置项所在的行容器（按 key 文本上溯到行）
+// key 前缀 → 所在子 tab 标题（FR-94 子 tab 呈现：定位某项前先切到其所属 tab）。
+const PREFIX_TAB: Record<string, string> = {
+  health: '健康检查',
+  metric: '指标',
+  longpoll: '长轮询',
+  alert: '告警',
+  log: '日志',
+  'reverse-fetch': '反向抓取',
+}
+
+// 定位某设置项所在的行容器：先切到该 key 所属子 tab，再按 key 文本上溯到行。
 async function findRow(key: string): Promise<HTMLElement> {
+  const prefix = key.includes('.') ? key.slice(0, key.indexOf('.')) : key
+  const tabLabel = PREFIX_TAB[prefix]
+  if (tabLabel) await switchTab(tabLabel)
   const keyNode = await screen.findByText(key)
   const row = keyNode.closest('[data-setting-row]')
   if (!row) throw new Error(`找不到设置项行：${key}`)
   return row as HTMLElement
 }
 
-describe('SettingsPage 列表与分组渲染（FR-62）', () => {
-  it('按 key 前缀分组渲染（健康检查 / 指标 / 日志 / 反向抓取组标题可见）', async () => {
-    renderPage(<SettingsPage />)
-    expect(await screen.findByRole('heading', { name: '健康检查' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '指标' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '日志' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '反向抓取' })).toBeInTheDocument()
+describe('SettingsPage 子 tab 呈现（FR-62 + FR-94）', () => {
+  it('6 域改子 tab 呈现（健康检查 / 指标 / 日志 / 反向抓取等 tab 触发器可见）', async () => {
+    renderPage(<OpsSettingsBlock />)
+    expect(await screen.findByRole('tab', { name: '健康检查' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '指标' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '日志' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '反向抓取' })).toBeInTheDocument()
+  })
+
+  it('默认激活健康检查 tab；切到指标 tab 见指标项', async () => {
+    renderPage(<OpsSettingsBlock />)
+    // 默认 tab 见 health 项
+    expect(await screen.findByText('health.ttl-sec')).toBeInTheDocument()
+    // 切到指标 tab 见 metric 项
+    await switchTab('指标')
+    expect(await screen.findByText('metric.enabled')).toBeInTheDocument()
   })
 
   it('每项展示 desc / key / 默认值 / 当前值', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('health.ttl-sec')
     // desc 标签
     expect(within(row).getByText('超过多少秒未收到心跳即判失联')).toBeInTheDocument()
@@ -122,14 +155,14 @@ describe('SettingsPage 列表与分组渲染（FR-62）', () => {
   })
 
   it('启动 / 安全项在 config.yml 的提示文案可见', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     expect(await screen.findByText(/config\.yml/)).toBeInTheDocument()
   })
 })
 
 describe('SettingsPage 逐项保存（FR-62）', () => {
   it('改 int 项后保存以 updateSetting(key, "新值") 调用', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('health.ttl-sec')
     const input = within(row).getByRole('spinbutton')
     await userEvent.clear(input)
@@ -142,7 +175,7 @@ describe('SettingsPage 逐项保存（FR-62）', () => {
   })
 
   it('改 log.level 下拉后保存以新枚举调用 updateSetting', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('log.level')
     // log.level 用下拉（combobox），选 DEBUG
     await userEvent.click(within(row).getByRole('combobox'))
@@ -155,7 +188,7 @@ describe('SettingsPage 逐项保存（FR-62）', () => {
   })
 
   it('值未变时保存按钮禁用', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('health.ttl-sec')
     expect(within(row).getByRole('button', { name: '保存' })).toBeDisabled()
   })
@@ -164,7 +197,7 @@ describe('SettingsPage 逐项保存（FR-62）', () => {
     vi.mocked(updateSetting).mockRejectedValue(
       new ApiClientError('非法值：必须为正整数', 'INVALID_VALUE'),
     )
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('health.ttl-sec')
     const input = within(row).getByRole('spinbutton')
     await userEvent.clear(input)
@@ -178,7 +211,7 @@ describe('SettingsPage 逐项保存（FR-62）', () => {
 
 describe('SettingsPage 恢复默认（FR-77）', () => {
   it('改值后点「恢复默认」把编辑控件置回该项默认值', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('health.ttl-sec')
     const input = within(row).getByRole('spinbutton')
     // 当前 30 / 默认 30，先改成 99 再恢复
@@ -190,7 +223,7 @@ describe('SettingsPage 恢复默认（FR-77）', () => {
   })
 
   it('草稿值等于当前生效值时「恢复默认」禁用', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('health.ttl-sec')
     // 初始草稿 = 当前值 30，无可恢复改动
     expect(within(row).getByRole('button', { name: '恢复默认' })).toBeDisabled()
@@ -201,7 +234,7 @@ describe('SettingsPage 恢复默认（FR-77）', () => {
     vi.mocked(listSettings).mockResolvedValue([
       { key: 'log.level', value: 'INFO', valueType: 'string', default: 'WARN', desc: '日志级别', isStartup: false },
     ])
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const row = await findRow('log.level')
     // 当前 INFO ≠ 默认 WARN，恢复默认可用
     const resetBtn = within(row).getByRole('button', { name: '恢复默认' })
@@ -215,14 +248,14 @@ describe('SettingsPage 恢复默认（FR-77）', () => {
 
 describe('SettingsPage 批量保存 + 改动摘要（FR-77）', () => {
   it('无改动时「保存全部变更」禁用且不显示改动摘要', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     await screen.findByText('health.ttl-sec')
     expect(screen.getByRole('button', { name: /保存全部变更/ })).toBeDisabled()
     expect(screen.queryByText(/改动摘要/)).not.toBeInTheDocument()
   })
 
   it('改两项后「保存全部变更（2）」对两项各调一次 updateSetting 并出汇总成功提示', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     // 改 health.ttl-sec 30→45
     const r1 = await findRow('health.ttl-sec')
     const i1 = within(r1).getByRole('spinbutton')
@@ -253,7 +286,7 @@ describe('SettingsPage 批量保存 + 改动摘要（FR-77）', () => {
         ? Promise.reject(new ApiClientError('非法值：必须为正整数', 'INVALID_VALUE'))
         : Promise.resolve(undefined),
     )
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const r1 = await findRow('health.ttl-sec')
     const i1 = within(r1).getByRole('spinbutton')
     await userEvent.clear(i1)
@@ -274,7 +307,7 @@ describe('SettingsPage 批量保存 + 改动摘要（FR-77）', () => {
   })
 
   it('改动摘要列出每个脏项的「旧值 → 新值」', async () => {
-    renderPage(<SettingsPage />)
+    renderPage(<OpsSettingsBlock />)
     const r1 = await findRow('health.ttl-sec')
     const i1 = within(r1).getByRole('spinbutton')
     await userEvent.clear(i1)

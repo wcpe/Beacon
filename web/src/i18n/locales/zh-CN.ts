@@ -1077,6 +1077,31 @@ export const zhCN = {
     emptyHint: '建扫描任务或在任务历史中选一个任务以查看详情',
   },
 
+  // ===== 设置聚合页骨架（FR-94，见 ADR-0043）=====
+  settingsAggregate: {
+    // 聚合页顶层标题（侧栏「系统」组入口）
+    title: '系统',
+    // 三块顶层 tab 标题
+    blockOps: '运维设置',
+    blockSystemInfo: '系统信息',
+    blockSystemConfig: '系统设置',
+    // 系统信息块的子 tab 标题
+    tabVersion: '版本与更新',
+    tabHealth: '控制面健康',
+    // 系统设置块的子 tab 标题
+    tabProxy: '网络代理',
+    tabUpdate: '更新设置',
+    tabApiKeys: 'API 密钥',
+    tabNamespaces: '环境管理',
+    // 空壳子 tab 占位文案（内容由后续 FR 填）
+    placeholderVersion: '版本与更新信息即将在此呈现（待 FR-100/99 接入）。',
+    placeholderHealth: '控制面健康自观测即将并入此处（待 FR-95 接入）。',
+    placeholderProxy: '网络代理设置即将在此提供（待 FR-101 接入）。',
+    placeholderUpdate: '更新渠道与周期设置即将在此提供（待 FR-101 接入）。',
+    placeholderApiKeys: 'API 密钥管理即将并入此处（待 FR-95 接入）。',
+    placeholderNamespaces: '环境管理即将并入此处（待 FR-95 接入）。',
+  },
+
   // ===== 运维设置页（FR-62，消费 FR-61 设置端点）=====
   settings: {
     title: '运维设置',
