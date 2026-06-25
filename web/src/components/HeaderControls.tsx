@@ -1,24 +1,19 @@
-// 页眉界面偏好控件（FR-92）：暗色主题切换 + 表格密度切换 + 大屏入口。
+// 页眉界面偏好控件（FR-92）：暗色主题切换 + 大屏入口。
 // 偏好读写走 state/preferences 单一真源；本组件只负责呈现与触发，不持有状态。
 
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Moon, Sun, Rows3, Rows4, Monitor } from 'lucide-react'
+import { Moon, Sun, Monitor } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { setDensity, setTheme, usePreferences } from '@/state/preferences'
+import { setTheme, usePreferences } from '@/state/preferences'
 
 export default function HeaderControls() {
   const { t } = useTranslation()
-  const { theme, density } = usePreferences()
+  const { theme } = usePreferences()
 
   // 主题切换：浅 ↔ 暗反转
   function toggleTheme() {
     setTheme(theme === 'dark' ? 'light' : 'dark')
-  }
-
-  // 密度切换：舒适 ↔ 紧凑反转
-  function toggleDensity() {
-    setDensity(density === 'compact' ? 'comfortable' : 'compact')
   }
 
   return (
@@ -32,24 +27,6 @@ export default function HeaderControls() {
         onClick={toggleTheme}
       >
         {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-      </Button>
-      {/* 密度切换：紧凑时显示舒适图标（点击回舒适），舒适时显示紧凑图标（点击进紧凑） */}
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={
-          density === 'compact'
-            ? t('preferences.densityToComfortable')
-            : t('preferences.densityToCompact')
-        }
-        title={
-          density === 'compact'
-            ? t('preferences.densityToComfortable')
-            : t('preferences.densityToCompact')
-        }
-        onClick={toggleDensity}
-      >
-        {density === 'compact' ? <Rows3 className="size-4" /> : <Rows4 className="size-4" />}
       </Button>
       {/* 大屏入口（FR-92）：进入 NOC 只读看板 */}
       <Button asChild variant="ghost" size="icon" title={t('preferences.wallboardEnter')}>

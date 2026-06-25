@@ -1,4 +1,4 @@
-// 偏好 store 单测（FR-92）：localStorage 持久化与恢复、setter 广播、隐私模式写失败不崩、
+// 偏好 store 单测（FR-92）：localStorage 持久化与恢复、主题 setter 广播、隐私模式写失败不崩、
 // applyThemeToDocument 打 / 去 .dark 类。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
@@ -14,37 +14,31 @@ afterEach(() => {
 })
 
 describe('偏好 store 默认与持久化', () => {
-  it('无持久化时回退默认（浅色 + 舒适）', async () => {
+  it('无持久化时回退默认（浅色）', async () => {
     const { currentPreferences } = await import('./preferences')
     expect(currentPreferences()).toEqual({
       theme: 'light',
-      density: 'comfortable',
     })
   })
 
-  it('setTheme/setDensity 写入 localStorage 并可在重载后恢复', async () => {
+  it('setTheme 写入 localStorage 并可在重载后恢复', async () => {
     const m = await import('./preferences')
     m.setTheme('dark')
-    m.setDensity('compact')
     // 已写入 localStorage
-    expect(localStorage.getItem('beacon.preferences')).toBe(
-      JSON.stringify({ theme: 'dark', density: 'compact' }),
-    )
+    expect(localStorage.getItem('beacon.preferences')).toBe(JSON.stringify({ theme: 'dark' }))
     // 重新加载模块：从 localStorage 恢复快照
     vi.resetModules()
     const reloaded = await import('./preferences')
     expect(reloaded.currentPreferences()).toEqual({
       theme: 'dark',
-      density: 'compact',
     })
   })
 
   it('非法持久化值回落默认', async () => {
-    localStorage.setItem('beacon.preferences', JSON.stringify({ theme: 'x', density: 'y' }))
+    localStorage.setItem('beacon.preferences', JSON.stringify({ theme: 'x' }))
     const { currentPreferences } = await import('./preferences')
     expect(currentPreferences()).toEqual({
       theme: 'light',
-      density: 'comfortable',
     })
   })
 })
@@ -54,10 +48,6 @@ describe('偏好 store 订阅广播', () => {
     const m = await import('./preferences')
     // usePreferences 内部用 subscribe；这里直接验证 setter 改变快照
     m.setTheme('dark')
-    expect(m.currentPreferences().theme).toBe('dark')
-    m.setDensity('compact')
-    expect(m.currentPreferences().density).toBe('compact')
-    // 改一项不影响另一项
     expect(m.currentPreferences().theme).toBe('dark')
   })
 })

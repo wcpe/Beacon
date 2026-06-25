@@ -48,8 +48,15 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground overflow-y-auto">
-        <div className="flex items-center gap-2 border-b px-5 py-4 text-base font-semibold">
+      {/* 侧栏整列撑满视口高度并裁剪溢出：顶部品牌 / 底部操作区冻结，仅中间导航滚动。 */}
+      <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
+        {/* 顶部品牌区（冻结，不随导航滚动）：整块可点跳可观测看板（/dashboard），保留连接状态小灯（FR-78） */}
+        <button
+          type="button"
+          onClick={() => navigate('/dashboard')}
+          aria-label={t('layout.brandToDashboard')}
+          className="flex shrink-0 items-center gap-2 border-b px-5 py-4 text-left text-base font-semibold transition-colors hover:bg-sidebar-accent/40"
+        >
           {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
           <span
             aria-label={t(`connection.${connectionStatus}`)}
@@ -64,23 +71,11 @@ export default function Layout() {
             )}
           />
           <span>{t('app.brand')}</span>
-        </div>
-        {/* 全局搜索入口（FR-83）：点开命令面板，与 Ctrl/Cmd+K 同一浮层 */}
-        <div className="px-3 pt-3">
-          <button
-            type="button"
-            onClick={() => setPaletteOpen(true)}
-            className="flex w-full items-center gap-2 rounded-md border bg-sidebar-accent/40 px-3 py-1.5 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
-          >
-            <span className="truncate">{t('commandPalette.trigger')}</span>
-            <kbd className="ml-auto rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-              {t('commandPalette.shortcutHint')}
-            </kbd>
-          </button>
-        </div>
+        </button>
         {/* 侧栏 5 组分组常驻（FR-93，方案 A）：分区标题（不可点、不折叠）+ 其下叶子常驻显示，
-            每个叶子 = lucide 图标 + 文案；不再用 details/summary 折叠，无展开态偏好。 */}
-        <nav className="flex flex-1 flex-col gap-3 p-3">
+            每个叶子 = lucide 图标 + 文案；不再用 details/summary 折叠，无展开态偏好。
+            中间导航为侧栏唯一可滚区（flex-1 overflow-y-auto），顶/底冻结。 */}
+        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
           {NAV_GROUPS.map((group) => (
             <div key={group.id} className="flex flex-col gap-0.5">
               {/* 分区标题：小号弱色、无 chevron、不可点击、不折叠，仅作分组层级标识 */}
@@ -112,7 +107,8 @@ export default function Layout() {
             </div>
           ))}
         </nav>
-        <div className="border-t p-4">
+        {/* 底部「当前操作人 + 登出」（冻结，不随导航滚动） */}
+        <div className="shrink-0 border-t p-4">
           <div className="text-xs text-muted-foreground">{t('layout.currentOperator')}</div>
           <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
           <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
@@ -131,8 +127,9 @@ export default function Layout() {
             {t('connection.banner')}
           </div>
         )}
-        {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上 */}
-        <SystemHeader />
+        {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上。
+            搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
+        <SystemHeader onOpenSearch={() => setPaletteOpen(true)} />
         {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
             自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条 */}
         <main className="min-w-0 flex-1 overflow-y-auto p-6">

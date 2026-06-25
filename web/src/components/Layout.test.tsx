@@ -1,7 +1,9 @@
-// Layout 布局单测（FR-33 页眉重定位）：
-// 锁定「品牌标题在侧边栏 → 控制面状态条收进右侧主内容列顶部（侧边栏之外、内容之上）」的结构关系。
+// Layout 布局单测（FR-33 页眉重定位 + 侧栏结构修复）：
+// 锁定「品牌标题在侧边栏 → 控制面状态条收进右侧主内容列顶部（侧边栏之外、内容之上）」的结构关系，
+// 并锁定「侧栏顶/底冻结、仅中间导航可滚 + 品牌整块可点跳可观测看板 + 搜索块已从侧栏移除」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SystemStatusView } from '@/api/types'
@@ -26,6 +28,13 @@ vi.mock('@/api/client', () => ({
   }),
   listSettings: vi.fn().mockResolvedValue([]),
 }))
+
+// 监听跳转：品牌区点击应跳可观测看板（/dashboard）
+const navigateSpy = vi.fn()
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return { ...actual, useNavigate: () => navigateSpy }
+})
 
 import Layout from './Layout'
 import { systemStatus } from '@/api/client'
@@ -56,6 +65,7 @@ function renderLayout(initialPath = '/') {
 
 beforeEach(() => {
   localStorage.clear()
+  navigateSpy.mockReset()
   vi.mocked(systemStatus).mockResolvedValue(STATUS)
 })
 
@@ -88,6 +98,69 @@ describe('Layout 页眉重定位', () => {
     expect(mainEl).not.toBeNull()
     expect(mainEl?.classList.contains('overflow-y-auto')).toBe(true)
     expect(mainEl?.classList.contains('overflow-hidden')).toBe(false)
+  })
+})
+
+describe('Layout 侧栏结构（冻结顶/底，仅中间导航可滚）', () => {
+  it('aside 为 flex 纵列且裁剪溢出（自身不滚动）', () => {
+    renderLayout()
+    const aside = document.querySelector('aside')
+    expect(aside).not.toBeNull()
+    expect(aside?.classList.contains('flex')).toBe(true)
+    expect(aside?.classList.contains('flex-col')).toBe(true)
+    expect(aside?.classList.contains('overflow-hidden')).toBe(true)
+    // 整条侧栏不再自身滚动（回归「整列都滚」）
+    expect(aside?.classList.contains('overflow-y-auto')).toBe(false)
+  })
+
+  it('中间导航 nav 为唯一可滚区（flex-1 overflow-y-auto）', () => {
+    renderLayout()
+    const nav = document.querySelector('aside nav')
+    expect(nav).not.toBeNull()
+    expect(nav?.classList.contains('flex-1')).toBe(true)
+    expect(nav?.classList.contains('overflow-y-auto')).toBe(true)
+  })
+
+  it('顶部品牌区与底部操作区冻结（shrink-0，不随导航滚动）', () => {
+    renderLayout()
+    // 品牌区：含品牌文案的可点块冻结
+    const brand = screen.getByText('Beacon 管理台').closest('button')
+    expect(brand).not.toBeNull()
+    expect(brand?.classList.contains('shrink-0')).toBe(true)
+    // 底部「当前操作人 + 登出」容器冻结：「当前操作人」标签的父容器即冻结块
+    const footer = screen.getByText('当前操作人').parentElement
+    expect(footer).not.toBeNull()
+    expect(footer?.classList.contains('shrink-0')).toBe(true)
+    expect(footer?.classList.contains('border-t')).toBe(true)
+  })
+})
+
+describe('Layout 品牌区可点跳可观测看板', () => {
+  it('品牌区为可点 button 且保留连接状态小灯（FR-78）', () => {
+    renderLayout()
+    const brand = screen.getByRole('button', { name: '前往可观测看板' })
+    // 连接状态小灯仍在品牌块内：小圆点为带 connection.* 无障碍标签的 rounded-full span
+    const dot = brand.querySelector('span.rounded-full[aria-label^="控制面"], span.rounded-full[aria-label^="正在连接"]')
+    expect(dot).not.toBeNull()
+  })
+
+  it('点击品牌区跳转 /dashboard（可观测看板）', async () => {
+    renderLayout('/servers')
+    await userEvent.click(screen.getByRole('button', { name: '前往可观测看板' }))
+    expect(navigateSpy).toHaveBeenCalledWith('/dashboard')
+  })
+})
+
+describe('Layout 搜索入口已从侧栏移除（FR-83）', () => {
+  it('侧栏内不再渲染搜索触发块', () => {
+    renderLayout()
+    const aside = document.querySelector('aside')
+    expect(aside).not.toBeNull()
+    // 侧栏内不应再出现「搜索…」触发块（已移至右上角页眉）
+    const triggers = screen.getAllByText('搜索…')
+    for (const el of triggers) {
+      expect(aside?.contains(el)).toBe(false)
+    }
   })
 })
 

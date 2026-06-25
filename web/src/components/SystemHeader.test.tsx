@@ -2,7 +2,7 @@
 // 覆盖「连通态药丸 + 运行/在线合并 → DB 断开反映为已断开 → 拉取失败反映为不可达 →
 // 不再渲染采样器/goroutine/堆/CPU（已迁控制面健康页）→ 首次加载显骨架」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -126,6 +126,24 @@ describe('SystemHeader', () => {
     expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
     expect(screen.queryByText('已连接')).toBeNull()
     expect(screen.queryByText('已断开')).toBeNull()
+  })
+})
+
+// 右上角搜索入口（FR-83）：由侧栏移至页眉，点击调 onOpenSearch 打开命令面板
+describe('SystemHeader 搜索入口（FR-83）', () => {
+  it('渲染右上角搜索触发（含「搜索…」与 Ctrl K 提示）', async () => {
+    renderHeader(<SystemHeader onOpenSearch={() => {}} />)
+    const trigger = await screen.findByRole('button', { name: '搜索…' })
+    expect(trigger).toBeInTheDocument()
+    // 快捷键提示与图标并存
+    expect(within(trigger).getByText('Ctrl K')).toBeInTheDocument()
+  })
+
+  it('点击搜索触发调用 onOpenSearch', async () => {
+    const onOpenSearch = vi.fn()
+    renderHeader(<SystemHeader onOpenSearch={onOpenSearch} />)
+    await userEvent.click(await screen.findByRole('button', { name: '搜索…' }))
+    expect(onOpenSearch).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -1,6 +1,6 @@
-// 全局「界面偏好」：暗色主题 + 表格紧凑密度（FR-92）。
+// 全局「界面偏好」：暗色主题（FR-92）。
 // 偏好是纯前端展示选项，与登录态无关，故落 localStorage（跨会话持久化）。
-// 镜像 state/auth.ts 的订阅者模式（useSyncExternalStore + 集合广播），作为主题/密度的单一真源。
+// 镜像 state/auth.ts 的订阅者模式（useSyncExternalStore + 集合广播），作为主题的单一真源。
 // 不引入 next-themes，避免与本 store 形成双真源。
 
 import { useSyncExternalStore } from 'react'
@@ -10,19 +10,15 @@ const PREFERENCES_KEY = 'beacon.preferences'
 
 // 主题：浅色 / 暗色
 export type Theme = 'light' | 'dark'
-// 表格密度：舒适（默认）/ 紧凑（更小行高与内边距）
-export type Density = 'comfortable' | 'compact'
 
 // 界面偏好快照
 export interface Preferences {
   theme: Theme
-  density: Density
 }
 
-// 默认偏好：浅色 + 舒适。
+// 默认偏好：浅色。
 const DEFAULT_PREFERENCES: Preferences = {
   theme: 'light',
-  density: 'comfortable',
 }
 
 // 订阅者集合：偏好变化时通知所有使用方重渲染
@@ -40,7 +36,6 @@ function readFromStorage(): Preferences {
     // 逐字段校验，非法值回落默认（应用层枚举校验，不信任外部存储）
     return {
       theme: parsed.theme === 'dark' ? 'dark' : 'light',
-      density: parsed.density === 'compact' ? 'compact' : 'comfortable',
     }
   } catch {
     return DEFAULT_PREFERENCES
@@ -72,11 +67,6 @@ function getSnapshot(): Preferences {
 // 设置主题（浅 / 暗）
 export function setTheme(theme: Theme): void {
   persist({ ...snapshot, theme })
-}
-
-// 设置表格密度（舒适 / 紧凑）
-export function setDensity(density: Density): void {
-  persist({ ...snapshot, density })
 }
 
 // 取当前偏好（非 React 上下文可直接调用，如首屏同步应用主题）

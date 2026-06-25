@@ -60,16 +60,12 @@ export const zhCN = {
     groupAudit: '审计动作',
   },
 
-  // ===== 界面偏好（FR-92）：暗色主题 + 表格密度 + 大屏入口 =====
+  // ===== 界面偏好（FR-92）：暗色主题 + 大屏入口 =====
   preferences: {
     // 主题切换按钮无障碍标签：当前暗色时点击回浅色
     themeToLight: '切换到浅色主题',
     // 主题切换按钮无障碍标签：当前浅色时点击进暗色
     themeToDark: '切换到暗色主题',
-    // 密度切换按钮无障碍标签：当前紧凑时点击回舒适
-    densityToComfortable: '切换到舒适密度',
-    // 密度切换按钮无障碍标签：当前舒适时点击进紧凑
-    densityToCompact: '切换到紧凑密度',
     // 大屏入口按钮无障碍标签
     wallboardEnter: '进入大屏',
   },
@@ -343,6 +339,8 @@ export const zhCN = {
   layout: {
     currentOperator: '当前操作人',
     logout: '登出',
+    // 侧栏品牌区无障碍标签：整块可点跳可观测看板
+    brandToDashboard: '前往可观测看板',
   },
 
   // ===== 审计日志页 =====

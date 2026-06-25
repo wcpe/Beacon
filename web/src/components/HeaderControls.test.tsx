@@ -1,16 +1,15 @@
-// HeaderControls 单测（FR-92）：主题切换、密度切换持久化、大屏入口链接。
+// HeaderControls 单测（FR-92）：主题切换、大屏入口链接。
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import HeaderControls from './HeaderControls'
-import { currentPreferences, setDensity, setTheme } from '@/state/preferences'
+import { currentPreferences, setTheme } from '@/state/preferences'
 
 // 每个用例前复位为默认偏好（store 为模块单例）
 beforeEach(() => {
   localStorage.clear()
   setTheme('light')
-  setDensity('comfortable')
 })
 
 function renderControls() {
@@ -33,14 +32,6 @@ describe('HeaderControls 主题切换', () => {
     renderControls()
     await userEvent.click(screen.getByRole('button', { name: '切换到浅色主题' }))
     expect(currentPreferences().theme).toBe('light')
-  })
-})
-
-describe('HeaderControls 密度切换', () => {
-  it('舒适时点击切到紧凑并持久化', async () => {
-    renderControls()
-    await userEvent.click(screen.getByRole('button', { name: '切换到紧凑密度' }))
-    expect(currentPreferences().density).toBe('compact')
   })
 })
 

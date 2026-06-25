@@ -5,11 +5,18 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { Search } from 'lucide-react'
 import { systemStatus } from '@/api/client'
 import { formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
 import HeaderControls from '@/components/HeaderControls'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
+
+// 页眉属性：打开全局命令面板（FR-83，搜索入口由侧栏移至此页眉右上角）。
+interface SystemHeaderProps {
+  // 点击搜索触发回调：开合态由 Layout 持有，本组件只触发不持有。
+  onOpenSearch?: () => void
+}
 
 // 自身状态刷新周期（毫秒）：短周期以实时反映控制面健康（含 DB 断开）
 const STATUS_REFETCH_MS = 5000
@@ -29,7 +36,7 @@ function Skeleton({ className }: { className?: string }) {
   return <span className={cn('inline-block h-4 animate-pulse rounded bg-muted', className)} />
 }
 
-export default function SystemHeader() {
+export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { data, isError, isLoading } = useQuery({
@@ -112,8 +119,24 @@ export default function SystemHeader() {
         )}
       </StatItem>
 
-      {/* 页眉界面偏好控件（FR-92）：主题 / 密度切换 + 大屏入口，右对齐 */}
-      <HeaderControls />
+      {/* 右上角操作组（右对齐）：搜索入口 + 界面偏好控件 */}
+      <div className="ml-auto flex items-center gap-1">
+        {/* 全局搜索入口（FR-83）：由侧栏移至此，点开命令面板浮层，与 Ctrl/Cmd+K 同一浮层 */}
+        <button
+          type="button"
+          onClick={onOpenSearch}
+          aria-label={t('commandPalette.trigger')}
+          className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          <Search aria-hidden className="size-4 shrink-0" />
+          <span>{t('commandPalette.trigger')}</span>
+          <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {t('commandPalette.shortcutHint')}
+          </kbd>
+        </button>
+        {/* 页眉界面偏好控件（FR-92）：主题切换 + 大屏入口 */}
+        <HeaderControls />
+      </div>
     </header>
   )
 }
