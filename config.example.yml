@@ -85,10 +85,16 @@ log:
   # 日志级别：ERROR / WARN / INFO / DEBUG。热改项首启种子（FR-61），改后走设置 API 即原子热生效、免重启
   level: "INFO"
 
-# 控制面在线更新（FR-98 起）。当前仅含更新出站代理。
-# 注：proxy-url 为热改项（首启种子，FR-61），改后走设置页 / 设置 API 即热生效、免重启。
+# 控制面在线更新（FR-98 起）。含更新出站代理与渠道 / 自动检查设置。
+# 注：以下各项均为热改项（首启种子，FR-61），改后走设置页 / 设置 API 即热生效、免重启。
 update:
   # 更新出站代理地址（http://host:port 或 https://...，可含 user:pass）；留空=直连。
   # 仅作用于控制面更新检查 / 下载出站，不影响告警 webhook（webhook 维持直连）。
   # 含凭据时管理台回显 / 审计 / 日志均脱敏，store 落原值仅供运行。热改项首启种子
   proxy-url: ""
+  # 更新渠道：stable（正式版）/ rc（预发布版）。决定查 Release 取哪条线。默认 stable
+  channel: "stable"
+  # 是否启用自动检查更新；false 时不后台轮询、仅手动检查。默认开启
+  auto-check-enabled: true
+  # 自动检查更新周期（小时）：每隔多少小时查一次有无新版本。下界 1、上界 168，默认 6
+  check-interval-hours: 6

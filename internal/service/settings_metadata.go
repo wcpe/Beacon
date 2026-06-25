@@ -24,7 +24,15 @@ const (
 	SettingLogLevel                 = "log.level"
 	SettingReverseFetchMaxFileBytes = "reverse-fetch.max-file-bytes"
 	SettingUpdateProxyURL           = "update.proxy-url"
+	SettingUpdateChannel            = "update.channel"
+	SettingUpdateAutoCheckEnabled   = "update.auto-check-enabled"
+	SettingUpdateCheckIntervalHours = "update.check-interval-hours"
 )
+
+// updateChannels 是 update.channel 的合法枚举集（stable=正式版线、rc=预发布版线，FR-101）。
+var updateChannels = map[string]struct{}{
+	"stable": {}, "rc": {},
+}
 
 // proxyURLValid 校验 update.proxy-url：空串=直连合法；非空须为 http/https 且 host:port 合法（FR-98，见 ADR-0047）。
 // 复用 httpx.ParseProxyURL 与出站工厂同口径，确保「能存进 store 的代理一定能构造客户端」。
@@ -128,6 +136,23 @@ var settingsWhitelist = map[string]settingMeta{
 		desc:              "更新出站代理地址（http://host:port 或 https://...，可含 user:pass）；留空=直连。仅作用于控制面更新检查/下载出站，不影响 webhook",
 		enumOK:            proxyURLValid, // 空串=直连合法；非空校验 http/https + host:port（FR-98，见 ADR-0047）
 		defaultFromConfig: func(c config.Config) string { return c.Update.ProxyURL },
+	},
+	SettingUpdateChannel: {
+		valueType: model.SettingValueTypeString, desc: "更新渠道：stable（正式版）/ rc（预发布版）",
+		enumOK: func(v string) bool {
+			_, ok := updateChannels[v]
+			return ok
+		},
+		defaultFromConfig: func(c config.Config) string { return c.Update.Channel },
+	},
+	SettingUpdateAutoCheckEnabled: {
+		valueType: model.SettingValueTypeBool, desc: "是否启用自动检查更新；false 时不后台轮询、仅手动检查",
+		defaultFromConfig: func(c config.Config) string { return strconv.FormatBool(c.Update.AutoCheckEnabled) },
+	},
+	SettingUpdateCheckIntervalHours: {
+		valueType: model.SettingValueTypeInt, desc: "自动检查更新周期（小时）：每隔多少小时查一次有无新版本",
+		min: 1, max: 168,
+		defaultFromConfig: func(c config.Config) string { return strconv.Itoa(c.Update.CheckIntervalHours) },
 	},
 }
 

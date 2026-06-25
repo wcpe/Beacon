@@ -75,8 +75,8 @@ func TestSettingsListReturnsHotKeys(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析响应失败: %v", err)
 	}
-	if len(resp.Items) != 13 {
-		t.Fatalf("应列出 13 个热改项，实际 %d", len(resp.Items))
+	if len(resp.Items) != 16 {
+		t.Fatalf("应列出 16 个热改项，实际 %d", len(resp.Items))
 	}
 }
 

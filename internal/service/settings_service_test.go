@@ -26,12 +26,16 @@ func TestUpdateValidatesValue(t *testing.T) {
 	bad := []struct {
 		key, value string
 	}{
-		{SettingHealthTTLSec, "abc"},           // int 解析失败
-		{SettingHealthTTLSec, "0"},             // 低于下界
-		{SettingHealthTTLSec, "999999999"},     // 高于上界
-		{SettingMetricEnabled, "yesno"},        // bool 解析失败
-		{SettingLogLevel, "TRACE"},             // 枚举外
-		{SettingReverseFetchMaxFileBytes, "0"}, // 低于下界（1KB）
+		{SettingHealthTTLSec, "abc"},             // int 解析失败
+		{SettingHealthTTLSec, "0"},               // 低于下界
+		{SettingHealthTTLSec, "999999999"},       // 高于上界
+		{SettingMetricEnabled, "yesno"},          // bool 解析失败
+		{SettingLogLevel, "TRACE"},               // 枚举外
+		{SettingReverseFetchMaxFileBytes, "0"},   // 低于下界（1KB）
+		{SettingUpdateChannel, "beta"},           // 渠道枚举外（仅 stable/rc）
+		{SettingUpdateAutoCheckEnabled, "on"},    // bool 解析失败
+		{SettingUpdateCheckIntervalHours, "0"},   // 低于下界（1）
+		{SettingUpdateCheckIntervalHours, "169"}, // 高于上界（168）
 	}
 	for _, c := range bad {
 		if err := svc.Update(c.key, c.value, "admin", "127.0.0.1"); err != apperr.ErrSettingValueInvalid {
@@ -42,7 +46,11 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingHealthTTLSec, "45"},
 		{SettingMetricEnabled, "false"},
 		{SettingLogLevel, "DEBUG"},
-		{SettingAlertWebhookURL, ""}, // URL 允许空（动态停用 webhook）
+		{SettingAlertWebhookURL, ""},             // URL 允许空（动态停用 webhook）
+		{SettingUpdateChannel, "rc"},             // 渠道枚举内
+		{SettingUpdateAutoCheckEnabled, "false"}, // bool 合法
+		{SettingUpdateCheckIntervalHours, "1"},   // 下界
+		{SettingUpdateCheckIntervalHours, "168"}, // 上界
 	}
 	for _, c := range good {
 		if err := svc.Update(c.key, c.value, "admin", "127.0.0.1"); err != nil {
@@ -129,9 +137,9 @@ func TestListCoversAllHotKeys(t *testing.T) {
 	if len(views) != len(settingsWhitelist) {
 		t.Fatalf("List 应覆盖全部 %d 个热改项，实际 %d", len(settingsWhitelist), len(views))
 	}
-	// 13 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url。
-	if len(views) != 13 {
-		t.Fatalf("热改白名单应为 13 项，实际 %d", len(views))
+	// 16 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url + FR-101 新增 update 渠道/自动检查/检查周期 3 项。
+	if len(views) != 16 {
+		t.Fatalf("热改白名单应为 16 项，实际 %d", len(views))
 	}
 	for _, v := range views {
 		if v.IsStartup {
@@ -139,6 +147,38 @@ func TestListCoversAllHotKeys(t *testing.T) {
 		}
 		if v.Desc == "" || v.ValueType == "" {
 			t.Fatalf("热改项 %s 应带类型与说明", v.Key)
+		}
+	}
+}
+
+// TestUpdateSettingsDefaults FR-101 三个更新设置项默认值正确（空 store 取白名单默认）：
+// channel=stable、auto-check-enabled=true、check-interval-hours=6。
+func TestUpdateSettingsDefaults(t *testing.T) {
+	svc, _ := newTestSettingsService(t)
+	if got := svc.GetString(SettingUpdateChannel); got != "stable" {
+		t.Fatalf("update.channel 默认应为 stable，实际 %q", got)
+	}
+	if got := svc.GetBool(SettingUpdateAutoCheckEnabled); !got {
+		t.Fatal("update.auto-check-enabled 默认应为 true")
+	}
+	if got := svc.GetInt(SettingUpdateCheckIntervalHours); got != 6 {
+		t.Fatalf("update.check-interval-hours 默认应为 6，实际 %d", got)
+	}
+	// List 中也应见这三项，且带类型与说明。
+	wantKeys := map[string]bool{
+		SettingUpdateChannel: false, SettingUpdateAutoCheckEnabled: false, SettingUpdateCheckIntervalHours: false,
+	}
+	for _, v := range svc.List() {
+		if _, ok := wantKeys[v.Key]; ok {
+			wantKeys[v.Key] = true
+			if v.Desc == "" || v.ValueType == "" {
+				t.Fatalf("更新设置项 %s 应带类型与说明", v.Key)
+			}
+		}
+	}
+	for k, seen := range wantKeys {
+		if !seen {
+			t.Fatalf("List 应包含更新设置项 %s", k)
 		}
 	}
 }

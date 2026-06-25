@@ -27,12 +27,18 @@ type Config struct {
 	Log LogConfig `yaml:"log"`
 }
 
-// UpdateConfig 是控制面在线更新配置（FR-98，见 ADR-0047）。
-// 当前仅含更新出站代理：proxy-url 是热改项（首启种子 + DB store 真源），config.yml 仅作出厂默认。
+// UpdateConfig 是控制面在线更新配置（FR-98 起，见 ADR-0047）。
+// 全部字段均为热改项（首启种子 + DB store 真源），config.yml 仅作出厂默认。
 type UpdateConfig struct {
 	// 更新出站代理地址（http://host:port 或 https://...，可含 user:pass）；留空=直连。
 	// 仅作用于更新检查 / 下载出站，不影响 webhook（FR-98）。热改项首启种子，运行真源在设置 store。
 	ProxyURL string `yaml:"proxy-url"`
+	// 更新渠道：stable（正式版）/ rc（预发布版）。决定查 Release 取哪条线（FR-101，被 FR-99 消费）。
+	Channel string `yaml:"channel"`
+	// 是否启用自动检查更新（FR-101）；false 时不后台轮询、仅手动检查。
+	AutoCheckEnabled bool `yaml:"auto-check-enabled"`
+	// 自动检查更新周期（小时）：每隔多少小时查一次有无新版本（FR-101，下界 1 上界 168）。
+	CheckIntervalHours int `yaml:"check-interval-hours"`
 }
 
 // GitExportConfig 是 git 单向导出镜像配置（FR-47，见 ADR-0030）。
@@ -178,7 +184,8 @@ func Default() Config {
 			AuthorName:   "beacon",
 			AuthorEmail:  "beacon@local",
 		},
-		Update: UpdateConfig{ProxyURL: ""}, // 默认空=直连（FR-98）
+		// 更新：默认空代理=直连（FR-98）；默认 stable 渠道、开自动检查、6 小时一查（FR-101）
+		Update: UpdateConfig{ProxyURL: "", Channel: "stable", AutoCheckEnabled: true, CheckIntervalHours: 6},
 		Log:    LogConfig{Level: "INFO"},
 	}
 }

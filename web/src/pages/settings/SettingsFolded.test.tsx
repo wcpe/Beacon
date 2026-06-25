@@ -15,8 +15,11 @@ vi.mock('../../components/useMessage', () => ({
 }))
 
 // 折叠进子 tab 的三页各自的后端调用都 mock（由用例注入数据）。
+// SystemConfigBlock 的网络代理 / 更新设置子 tab 走 listSettings（FR-101），一并 mock（本测试不激活那两 tab，置空即可）。
 vi.mock('../../api/client', () => ({
   systemObservability: vi.fn(),
+  listSettings: vi.fn().mockResolvedValue([]),
+  updateSetting: vi.fn(),
   listApiKeys: vi.fn(),
   createApiKey: vi.fn(),
   resetApiKey: vi.fn(),
@@ -31,6 +34,7 @@ import SystemInfoBlock from './SystemInfoBlock'
 import SystemConfigBlock from './SystemConfigBlock'
 import {
   systemObservability,
+  listSettings,
   listApiKeys,
   listNamespaces,
 } from '../../api/client'
@@ -125,6 +129,7 @@ function renderBlock(node: React.ReactNode, path: string) {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(systemObservability).mockResolvedValue(OBS)
+  vi.mocked(listSettings).mockResolvedValue([])
   vi.mocked(listApiKeys).mockResolvedValue(KEYS)
   vi.mocked(listNamespaces).mockResolvedValue(NS)
 })

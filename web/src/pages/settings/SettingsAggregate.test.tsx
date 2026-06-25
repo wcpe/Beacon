@@ -89,9 +89,9 @@ describe('设置聚合页三块顶层 tab（FR-94）', () => {
     expect(await screen.findByText(/版本与更新信息即将在此呈现/)).toBeInTheDocument()
   })
 
-  it('深链 /settings/system-config 直达系统设置块（网络代理占位文案可见）', async () => {
+  it('深链 /settings/system-config 直达系统设置块（网络代理子 tab 兜底占位可见，mock 无 update.* 项）', async () => {
     renderAt('/settings/system-config')
-    expect(await screen.findByText(/网络代理设置即将在此提供/)).toBeInTheDocument()
+    expect(await screen.findByText(/暂无网络代理设置项/)).toBeInTheDocument()
   })
 })
 

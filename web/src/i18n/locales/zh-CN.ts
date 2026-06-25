@@ -1096,8 +1096,9 @@ export const zhCN = {
     // 空壳子 tab 占位文案（内容由后续 FR 填）
     placeholderVersion: '版本与更新信息即将在此呈现（待 FR-100/99 接入）。',
     placeholderHealth: '控制面健康自观测即将并入此处（待 FR-95 接入）。',
-    placeholderProxy: '网络代理设置即将在此提供（待 FR-101 接入）。',
-    placeholderUpdate: '更新渠道与周期设置即将在此提供（待 FR-101 接入）。',
+    // 网络代理 / 更新设置已由 FR-101 填实；以下文案仅作后端暂无对应设置项时的兜底占位
+    placeholderProxy: '暂无网络代理设置项。',
+    placeholderUpdate: '暂无更新渠道 / 周期设置项。',
     placeholderApiKeys: 'API 密钥管理即将并入此处（待 FR-95 接入）。',
     placeholderNamespaces: '环境管理即将并入此处（待 FR-95 接入）。',
   },
