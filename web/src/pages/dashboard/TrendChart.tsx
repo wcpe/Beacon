@@ -1,6 +1,8 @@
 // 趋势折线图（recharts）：把一组时间序列点按某个指标渲染成单条折线。
+// 图上方带 lucide 图标标题，hover tooltip 显示该时间点数值（用户要看「某时间点的状态」）。
 // 只画聚合数字（人数 / TPS / 内存 / CPU），不涉及任何玩家名单 / 身份。
 
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CartesianGrid,
@@ -22,6 +24,8 @@ type ChartPoint = { sampledAt: string } & { [K in MetricKey]?: number | null }
 interface TrendChartProps {
   // 标题（图上方文案）
   title: string
+  // 标题前图标（lucide，可选）
+  icon?: ReactNode
   // 时间序列点（升序）；指标值允许为 null（断线，不参与 Y 轴尺度）
   points: ReadonlyArray<ChartPoint>
   // 取哪个指标画线
@@ -39,11 +43,19 @@ function shortTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function TrendChart({ title, points, metric, color, formatValue }: TrendChartProps) {
+export default function TrendChart({ title, icon, points, metric, color, formatValue }: TrendChartProps) {
   const { t } = useTranslation()
   return (
     <div className="space-y-2">
-      <div className="text-sm font-medium">{title}</div>
+      {/* 图标标题：lucide 图标 + 指标名，便于一眼分辨是哪条趋势 */}
+      <div className="flex items-center gap-1.5 text-sm font-medium">
+        {icon && (
+          <span aria-hidden className="text-muted-foreground">
+            {icon}
+          </span>
+        )}
+        {title}
+      </div>
       {points.length === 0 ? (
         <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
           {t('dashboard.trendNoSample')}
@@ -59,9 +71,17 @@ export default function TrendChart({ title, points, metric, color, formatValue }
               minTickGap={24}
             />
             <YAxis tickFormatter={formatValue} tick={{ fontSize: 11 }} width={56} />
+            {/* hover tooltip：显示该时间点的「时:分」与该指标格式化数值（满足「看某时间点状态」诉求） */}
             <Tooltip
               labelFormatter={(v) => shortTime(String(v))}
               formatter={(value) => [formatValue(Number(value)), title]}
+              contentStyle={{
+                background: 'var(--popover)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--popover-foreground)',
+                fontSize: 12,
+              }}
             />
             <Line
               type="monotone"

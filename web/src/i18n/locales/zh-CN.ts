@@ -136,6 +136,16 @@ export const zhCN = {
     bungeeShort: 'BC',
   },
 
+  // ===== 服务器状态墙瓷砖（StatusTile）：单台关键指标标签 =====
+  statusTile: {
+    // 子服关键指标：TPS · 在线人数
+    tps: 'TPS',
+    players: '人数',
+    // BC 代理关键指标：连接数 · 后端可达（up/total）
+    connections: '连接',
+    backend: '后端',
+  },
+
   // ===== 编辑器组件 =====
   editor: {
     loading: '加载编辑器…',
@@ -274,6 +284,18 @@ export const zhCN = {
     title: '控制面健康',
     // 点明本页边界：看 Beacon 自己，区别于 agent 网络负载（看板）与平台运维活动（服务分析）
     subtitle: '控制面进程自身的内部运行态（只读）——区别于可观测看板的 agent 网络负载与服务分析的平台运维活动。',
+    // 仪表环总览行（重构）：四子系统吃紧一眼看，按阈值变色
+    gaugeRowTitle: '子系统总览',
+    gaugeDbPool: '连接池',
+    gaugeLongpoll: '长轮询',
+    gaugeCommand: '命令队列',
+    gaugeRegistry: '注册表',
+    // 连接池无上限（maxOpenConnections=0）时环下副说明
+    gaugeNoLimit: '无上限',
+    // 命令队列失败 / 过期计数告警副说明
+    gaugeCmdFailed: '{{count}} 失败/过期',
+    // 注册表失联 / 离线计数告警副说明
+    gaugeRegLost: '{{count}} 失联/离线',
     // 注册表健康状态文案（与服务器页同口径）
     status: {
       online: '在线',
@@ -622,18 +644,24 @@ export const zhCN = {
     sectionBukkit: '子服（bukkit）',
     sectionBc: 'BC 代理',
     trendTitle: '历史趋势',
-    // 在线分角色摘要行（FR-64）：由 metricsSummary.servers 按 role 计数
-    roleSummaryTitle: '在线分角色',
-    roleSummaryBukkit: '子服 {{count}}',
-    roleSummaryBungee: 'BC 代理 {{count}}',
-    roleSummaryOnline: '共 {{count}} 台在线',
-    // 在线服务器数卡片标题（FR-64 摘要行，与 SummaryCards 的 cardOnlineServers 区分避免重复文本）
-    onlineServersTitle: '在线服务器',
-    // 健康分布（FR-64）：由 listInstances 按 status 前端计数
-    healthTitle: '健康分布',
+    // 服务器状态墙（状态墙 + 分角色面板重构）：每台在册实例一块瓷砖
+    statusWallTitle: '服务器状态墙',
+    statusWallEmpty: '该环境暂无在册实例',
+    // 集群状态总览条：健康三态计数文案（带占比段名 + 计数 chip）
+    healthOnlineLabel: '在线',
+    healthDegradedLabel: '亚健康',
+    healthLostLabel: '失联',
+    healthOfflineLabel: '离线',
+    // 健康分布（FR-64）：由 listInstances 按 status 前端计数（chip 文案保留英文状态值 + 计数）
     healthOnline: 'online {{count}}',
+    healthDegraded: 'degraded {{count}}',
     healthLost: 'lost {{count}}',
     healthOffline: 'offline {{count}}',
+    // 分角色面板内嵌迷你趋势的小标题
+    sparklinePlayers: '在线玩家趋势',
+    sparklineTps: '平均 TPS 趋势',
+    sparklineMem: '平均内存趋势',
+    sparklineCpu: '平均 CPU 趋势',
     // 底部导航链接（FR-64）
     linkServers: '服务器详情 → /servers',
     linkTopology: '拓扑 → /topology',

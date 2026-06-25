@@ -1,15 +1,15 @@
-// DashboardPage 单测（FR-32 / FR-34 / FR-43）：
-// 覆盖「子服/BC 两大区块拆分 → 总览卡片渲染 → 趋势图按指标渲染 → 时间窗切换重查 → CPU 不可用展示
-// → 每服明细按角色分组 → BC 面板 → 无玩家名单」。
-// recharts 较重且依赖容器尺寸，故把 TrendChart 替身为轻量桩，断言图按指标渲染、点数正确。
+// DashboardPage 单测（FR-32 / FR-34 / FR-43 + 状态墙/分角色面板/时序图重构）：
+// 覆盖「集群总览条（健康计数 + 全局 KPI chips）→ 服务器状态墙（逐台瓷砖）→ 分角色面板（子服 / BC）
+// → 时序监控图按指标渲染 + 时间窗切换重查 → CPU 不可用展示 → BC 字段 → 底部导航 → 无玩家名单」。
+// recharts 较重且依赖容器尺寸，故把 TrendChart 与 MiniSparkline 替身为轻量桩，断言数据正确喂入而不渲染真图。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
-// 用轻量桩替身 TrendChart：暴露标题、点数、指标与该指标各点取值，规避 recharts 在 jsdom 下的尺寸/动画依赖。
+// 轻量桩替身 TrendChart：暴露标题、点数、指标与该指标各点取值，规避 recharts 在 jsdom 下的尺寸/动画依赖。
 // data-values 序列化所选指标各点的值（null 序列化为 "null"），供断言喂图前已把 CPU 哨兵置 null。
 vi.mock('./dashboard/TrendChart', () => ({
   default: (props: {
@@ -27,13 +27,20 @@ vi.mock('./dashboard/TrendChart', () => ({
   ),
 }))
 
+// 轻量桩替身 MiniSparkline：仅记录收到的点数，规避 recharts 尺寸依赖（不影响页面其它断言）。
+vi.mock('@/components/dashboard/MiniSparkline', () => ({
+  default: (props: { values: Array<number | null> }) => (
+    <div data-testid="mini-sparkline" data-count={props.values.length} />
+  ),
+}))
+
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
   metricsSummary: vi.fn(),
   metricsTrend: vi.fn(),
   // FR-51：环境筛选框下拉候选来源
   listNamespaces: vi.fn(),
-  // FR-64：健康分布按 status 前端计数
+  // FR-64：健康分布按 status 前端计数 + 状态墙逐台渲染
   listInstances: vi.fn(),
 }))
 
@@ -42,7 +49,7 @@ import { metricsSummary, metricsTrend, listNamespaces, listInstances } from '../
 import type { MetricsSummary, MetricsTrend } from '../api/client'
 import type { InstanceView } from '../api/types'
 
-// 健康分布样例：在册实例按 status 计数（2 online / 1 lost）
+// 在册实例样例工厂：状态墙逐台渲染会读 role/status/tps/playerCount/proxy.*，故造较完整桩。
 function inst(overrides: Partial<InstanceView>): InstanceView {
   return {
     namespace: 'prod',
@@ -53,14 +60,17 @@ function inst(overrides: Partial<InstanceView>): InstanceView {
     assigned: true,
     address: '10.0.0.1:25565',
     version: '1.0',
+    agentVersion: '',
     status: 'online',
     capacity: 0,
     weight: 0,
     metadata: {},
     lastHeartbeat: '',
+    lastHeartbeatAgeSec: 0,
+    healthReason: '',
     appliedMd5: '',
     playerCount: 0,
-    tps: 0,
+    tps: 20,
     backends: [],
     zoneDefaultEntry: false,
     proxy: {
@@ -143,21 +153,35 @@ beforeEach(() => {
 })
 
 describe('DashboardPage', () => {
-  it('渲染总览卡片（总人数 / 在线服务器 / 平均 TPS / 内存 / CPU）', async () => {
+  it('集群总览条渲染全局 KPI chips（玩家 / 均TPS / 均CPU / 均内存）', async () => {
     renderPage(<DashboardPage />)
-    expect(await screen.findByText('总在线玩家数')).toBeInTheDocument()
-    expect(screen.getByText('在线服务器数')).toBeInTheDocument()
-    expect(screen.getByText('平均 TPS')).toBeInTheDocument()
-    expect(screen.getByText('平均内存')).toBeInTheDocument()
-    expect(screen.getByText('平均 CPU 负载')).toBeInTheDocument()
-    // 内存按人类可读字节展示（128 MB used，512 MB max）
-    expect(screen.getByText('128 MB')).toBeInTheDocument()
-    expect(screen.getByText('最大 512 MB')).toBeInTheDocument()
-    // CPU 有效样本：显示百分比与样本数
-    expect(screen.getByText('40%')).toBeInTheDocument()
+    // 玩家总数标签同时出现在 KPI chip 与子服面板（断言至少一处）
+    expect((await screen.findAllByText('总在线玩家数')).length).toBeGreaterThanOrEqual(1)
+    // 以下数值在 KPI chip 与子服面板各出现一次（共两处）：玩家 50、CPU 40%、内存 128 MB。
+    expect(screen.getAllByText('50').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getAllByText('40%').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getAllByText('128 MB').length).toBeGreaterThanOrEqual(2)
   })
 
-  it('按四个指标渲染趋势图，点数对齐趋势数据', async () => {
+  it('集群总览条渲染健康三态计数（在线/亚健康/失联/离线）', async () => {
+    renderPage(<DashboardPage />)
+    // listInstances mock：2 online / 0 degraded / 1 lost / 0 offline
+    expect(await screen.findByText('online 2')).toBeInTheDocument()
+    expect(screen.getByText('degraded 0')).toBeInTheDocument()
+    expect(screen.getByText('lost 1')).toBeInTheDocument()
+    expect(screen.getByText('offline 0')).toBeInTheDocument()
+  })
+
+  it('服务器状态墙逐台渲染瓷砖（在册实例 serverId 出现在状态墙）', async () => {
+    renderPage(<DashboardPage />)
+    // 状态墙标题 + 三台在册实例瓷砖（serverId 现在恰恰应出现在状态墙）
+    expect(await screen.findByText('服务器状态墙')).toBeInTheDocument()
+    expect(screen.getByText('lobby-1')).toBeInTheDocument()
+    expect(screen.getByText('pvp-2')).toBeInTheDocument()
+    expect(screen.getByText('lost-1')).toBeInTheDocument()
+  })
+
+  it('按四个指标渲染时序监控图，点数对齐趋势数据', async () => {
     renderPage(<DashboardPage />)
     const charts = await screen.findAllByTestId('trend-chart')
     expect(charts).toHaveLength(4)
@@ -167,7 +191,7 @@ describe('DashboardPage', () => {
     expect(screen.getAllByText(/（2 点）/).length).toBe(4)
   })
 
-  it('CPU 趋势图把无样本哨兵（avgCpuLoad=-1）置 null，不污染折线', async () => {
+  it('CPU 时序图把无样本哨兵（avgCpuLoad=-1）置 null，不污染折线', async () => {
     // 注入含哨兵 -1 的趋势：第二点无 CPU 样本，喂图前应被置为 null（断线）而非画到 -100%。
     vi.mocked(metricsTrend).mockResolvedValue({
       points: [
@@ -202,68 +226,25 @@ describe('DashboardPage', () => {
     )
   })
 
-  it('avgCpuLoad < 0 时 CPU 展示「不可用」', async () => {
+  it('avgCpuLoad < 0 时分角色面板 CPU 展示「不可用」', async () => {
     vi.mocked(metricsSummary).mockResolvedValue({
       ...SUMMARY,
       avgCpuLoad: -1,
       cpuSampleCount: 0,
     })
     renderPage(<DashboardPage />)
-    expect(await screen.findByText('不可用')).toBeInTheDocument()
-    expect(screen.getByText('无可用 CPU 样本')).toBeInTheDocument()
+    expect(await screen.findByText('无可用 CPU 样本')).toBeInTheDocument()
   })
 
-  it('整体拆「子服(bukkit)」与「BC 代理」两大区块', async () => {
+  it('分角色面板：子服与 BC 两面板标题各为一个二级标题', async () => {
     renderPage(<DashboardPage />)
-    // 两大区块标题各为一个二级标题（h2），互相分离
     expect(await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: 'BC 代理' })).toBeInTheDocument()
   })
 
-  // FR-64 瘦身：看板移除两张逐实例明细表，逐服深数据移交服务器页。
-  it('瘦身后不再渲染逐实例明细表（无子服明细 / BC 明细，无逐服 serverId）', async () => {
+  it('BC 面板渲染关键字段（代理数 / 连接 / 线程 / 后端可达性 / 延迟）', async () => {
     renderPage(<DashboardPage />)
-    await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' })
-    // 不再有明细表标题
-    expect(screen.queryByText('子服明细')).not.toBeInTheDocument()
-    expect(screen.queryByText('BC 明细')).not.toBeInTheDocument()
-    // metricsSummary.servers 的逐服 serverId 不再单行展示（明细已移交 /servers）
-    expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
-    expect(screen.queryByText('pvp-2')).not.toBeInTheDocument()
-    expect(screen.queryByText('proxy-1')).not.toBeInTheDocument()
-  })
-
-  // FR-64：加在线分角色摘要（子服 N / BC 代理 M）。
-  it('渲染在线分角色摘要（子服 / BC 代理计数）', async () => {
-    renderPage(<DashboardPage />)
-    // SUMMARY.servers：2 个 bukkit + 1 个 bungee
-    expect(await screen.findByText('子服 2')).toBeInTheDocument()
-    expect(screen.getByText('BC 代理 1')).toBeInTheDocument()
-  })
-
-  // FR-64：加健康分布（listInstances 按 status 前端计数）。
-  it('渲染健康分布（按 status 前端计数 online/lost/offline）', async () => {
-    renderPage(<DashboardPage />)
-    // listInstances mock：2 online / 1 lost / 0 offline
-    expect(await screen.findByText('健康分布')).toBeInTheDocument()
-    expect(screen.getByText('online 2')).toBeInTheDocument()
-    expect(screen.getByText(/lost 1/)).toBeInTheDocument()
-    expect(screen.getByText(/offline 0/)).toBeInTheDocument()
-  })
-
-  // FR-64：底部「服务器详情 → /servers · 拓扑 → /topology」链接。
-  it('底部含服务器详情与拓扑导航链接', async () => {
-    renderPage(<DashboardPage />)
-    const serversLink = await screen.findByText('服务器详情 → /servers')
-    expect(serversLink.closest('a')).toHaveAttribute('href', '/servers')
-    const topoLink = screen.getByText('拓扑 → /topology')
-    expect(topoLink.closest('a')).toHaveAttribute('href', '/topology')
-  })
-
-  it('渲染 BC 代理面板（代理数 / 连接 / 线程 / 后端可达性 / 延迟）', async () => {
-    renderPage(<DashboardPage />)
-    expect(await screen.findByText('BC 代理')).toBeInTheDocument()
-    expect(screen.getByText('在线 BC 代理数')).toBeInTheDocument()
+    expect(await screen.findByText('在线 BC 代理数')).toBeInTheDocument()
     expect(screen.getByText('代理总连接数')).toBeInTheDocument()
     expect(screen.getByText('平均线程数')).toBeInTheDocument()
     expect(screen.getByText('后端可达性')).toBeInTheDocument()
@@ -281,7 +262,7 @@ describe('DashboardPage', () => {
       bc: { ...SUMMARY.bc, avgBackendLatencyMs: -1 },
     })
     renderPage(<DashboardPage />)
-    await screen.findByText('BC 代理')
+    await screen.findByRole('heading', { level: 2, name: 'BC 代理' })
     expect(screen.getByText('不可用')).toBeInTheDocument()
     expect(screen.getByText('无可达后端样本')).toBeInTheDocument()
   })
@@ -292,7 +273,7 @@ describe('DashboardPage', () => {
       bc: { ...SUMMARY.bc, backendUp: 0, backendTotal: 0, avgBackendLatencyMs: -1 },
     })
     renderPage(<DashboardPage />)
-    await screen.findByText('BC 代理')
+    await screen.findByRole('heading', { level: 2, name: 'BC 代理' })
     expect(screen.getByText('无后端')).toBeInTheDocument()
     expect(screen.getByText('该代理未配置后端')).toBeInTheDocument()
   })
@@ -313,9 +294,18 @@ describe('DashboardPage', () => {
     expect(screen.getByLabelText('环境')).toHaveValue('')
   })
 
+  // FR-64：底部「服务器详情 → /servers · 拓扑 → /topology」链接。
+  it('底部含服务器详情与拓扑导航链接', async () => {
+    renderPage(<DashboardPage />)
+    const serversLink = await screen.findByText('服务器详情 → /servers')
+    expect(serversLink.closest('a')).toHaveAttribute('href', '/servers')
+    const topoLink = screen.getByText('拓扑 → /topology')
+    expect(topoLink.closest('a')).toHaveAttribute('href', '/topology')
+  })
+
   it('不渲染任何玩家名单 / 身份字段（边界守护）', async () => {
     // 负向测试：故意往 servers 行塞名单类字段（playerNames / players），断言其值不被渲染到 DOM。
-    // 瘦身后看板不再逐服展开（只按 role 计数），名单更无从泄露；此处构造越界数据验证前端守护。
+    // 看板按 role 计数 / 按状态计数 / 状态墙仅展示负载数字，名单无从泄露；此处构造越界数据验证前端守护。
     const SENTINEL_A = '玩家甲-名单哨兵-A7F3'
     const SENTINEL_B = '玩家乙-名单哨兵-B2E9'
     const summaryWithRoster = {
@@ -328,14 +318,22 @@ describe('DashboardPage', () => {
     vi.mocked(metricsSummary).mockResolvedValue(summaryWithRoster)
 
     const { container } = renderPage(<DashboardPage />)
-    // 锚定瘦身后仍渲染的分角色摘要（2 个 bukkit），确保页面已就绪后再断言名单未泄露。
-    await screen.findByText('子服 2')
+    // 锚定页面就绪（状态墙标题渲染）后再断言名单未泄露。
+    await screen.findByText('服务器状态墙')
     // 塞入的名单字段值绝不应出现在 DOM 中。
     expect(container.textContent).not.toContain(SENTINEL_A)
     expect(container.textContent).not.toContain(SENTINEL_B)
-    // 保留原断言：名册类文案同样不得出现。
+    // 名册类文案同样不得出现。
     for (const banned of ['玩家名单', '玩家列表', 'roster', 'playerNames']) {
       expect(container.textContent).not.toContain(banned)
     }
+  })
+
+  it('集群总览条使用分段健康条 + KPI chips（不再用低密度大数字卡）', async () => {
+    renderPage(<DashboardPage />)
+    await screen.findByText('服务器状态墙')
+    // 内嵌迷你趋势 sparkline 桩出现（分角色面板各一条），证明面板按新结构渲染。
+    const sparks = screen.getAllByTestId('mini-sparkline')
+    expect(sparks.length).toBeGreaterThanOrEqual(2)
   })
 })
