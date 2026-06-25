@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/httpx"
 	"github.com/wcpe/Beacon/internal/model"
 )
 
@@ -22,7 +23,18 @@ const (
 	SettingAlertWebhookTimeoutMs    = "alert.webhook-timeout-ms"
 	SettingLogLevel                 = "log.level"
 	SettingReverseFetchMaxFileBytes = "reverse-fetch.max-file-bytes"
+	SettingUpdateProxyURL           = "update.proxy-url"
 )
+
+// proxyURLValid 校验 update.proxy-url：空串=直连合法；非空须为 http/https 且 host:port 合法（FR-98，见 ADR-0047）。
+// 复用 httpx.ParseProxyURL 与出站工厂同口径，确保「能存进 store 的代理一定能构造客户端」。
+func proxyURLValid(v string) bool {
+	if v == "" {
+		return true
+	}
+	_, err := httpx.ParseProxyURL(v)
+	return err == nil
+}
 
 // logLevels 是 log.level 的合法枚举集（与 internal/pkg/log 同口径）。
 var logLevels = map[string]struct{}{
@@ -111,6 +123,24 @@ var settingsWhitelist = map[string]settingMeta{
 		min: 1024, max: 1073741824, // 1KB ~ 1GB
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(MaxFileContentBytes) },
 	},
+	SettingUpdateProxyURL: {
+		valueType:         model.SettingValueTypeString,
+		desc:              "更新出站代理地址（http://host:port 或 https://...，可含 user:pass）；留空=直连。仅作用于控制面更新检查/下载出站，不影响 webhook",
+		enumOK:            proxyURLValid, // 空串=直连合法；非空校验 http/https + host:port（FR-98，见 ADR-0047）
+		defaultFromConfig: func(c config.Config) string { return c.Update.ProxyURL },
+	},
+}
+
+// secretSettingKeys 标记「值含凭据、对外须脱敏」的设置 key（FR-98，见 ADR-0047）。
+// 这些 key 的 value 落库存原值供运行，但审计 detail / 日志 / 前端回显一律走 httpx.RedactURLCredentials 脱敏。
+var secretSettingKeys = map[string]struct{}{
+	SettingUpdateProxyURL: {},
+}
+
+// isSecretSettingKey 判断某 key 是否为含凭据项（对外须脱敏）。
+func isSecretSettingKey(key string) bool {
+	_, ok := secretSettingKeys[key]
+	return ok
 }
 
 // settingMetaFor 取某 key 的白名单元数据；不在白名单返回 (zero, false)。

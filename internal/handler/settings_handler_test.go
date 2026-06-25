@@ -75,8 +75,28 @@ func TestSettingsListReturnsHotKeys(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("解析响应失败: %v", err)
 	}
-	if len(resp.Items) != 12 {
-		t.Fatalf("应列出 12 个热改项，实际 %d", len(resp.Items))
+	if len(resp.Items) != 13 {
+		t.Fatalf("应列出 13 个热改项，实际 %d", len(resp.Items))
+	}
+}
+
+// TestSettingsListRedactsProxyCredentials GET /settings 对含凭据的 update.proxy-url 回显脱敏，不泄露明文口令（FR-98）。
+func TestSettingsListRedactsProxyCredentials(t *testing.T) {
+	h, _ := newSettingsHandler(t)
+	// 先经 PUT 落库一个含凭据代理。
+	put := httptest.NewRecorder()
+	h.Update(put, reqWithKeyParam(service.SettingUpdateProxyURL, `{"value":"http://user:hunter2@proxy:8080"}`))
+	if put.Code != http.StatusOK {
+		t.Fatalf("更新 proxy-url 应 200，实际 %d（body=%s）", put.Code, put.Body.String())
+	}
+	// GET 回显必须脱敏。
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/settings", nil))
+	if strings.Contains(rec.Body.String(), "hunter2") {
+		t.Fatalf("GET /settings 响应不应含明文口令，实际 body=%s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "http://***:***@proxy:8080") {
+		t.Fatalf("GET /settings 应回显脱敏代理值，实际 body=%s", rec.Body.String())
 	}
 }
 

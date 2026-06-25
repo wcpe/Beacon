@@ -122,15 +122,16 @@ func TestSeedFromConfigOnlyFillsMissing(t *testing.T) {
 	}
 }
 
-// TestListCoversAllHotKeys List 列出全部 12 个热改项，isStartup 恒 false、带默认 + 说明。
+// TestListCoversAllHotKeys List 列出全部热改项，isStartup 恒 false、带默认 + 说明。
 func TestListCoversAllHotKeys(t *testing.T) {
 	svc, _ := newTestSettingsService(t)
 	views := svc.List()
 	if len(views) != len(settingsWhitelist) {
 		t.Fatalf("List 应覆盖全部 %d 个热改项，实际 %d", len(settingsWhitelist), len(views))
 	}
-	if len(views) != 12 {
-		t.Fatalf("热改白名单应为 12 项（spec §2），实际 %d", len(views))
+	// 13 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url。
+	if len(views) != 13 {
+		t.Fatalf("热改白名单应为 13 项，实际 %d", len(views))
 	}
 	for _, v := range views {
 		if v.IsStartup {

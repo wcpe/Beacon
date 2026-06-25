@@ -2,6 +2,11 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 新增
+- 控制面更新出站代理 + 客户端工厂 + proxy-url 设置项 + 凭据脱敏（FR-98，feat，控制面，见 [ADR-0047](docs/adr/0047-update-outbound-proxy-and-secret-redaction.md)，扩展 [ADR-0038](docs/adr/0038-ops-settings-store-hot-reload.md)）：为后续控制面在线自更新（FR-97/FR-99）的公网出站铺底。**① 出站客户端工厂**：新增极薄包 `internal/httpx`，把「构造带代理 + 超时的 `*http.Client`」收口到单一小工厂 `NewClient(proxyURL, timeout)`——非空代理→`http.Transport{Proxy: http.ProxyURL(parsed)}`、空→直连；**只支持 http/https 正向代理**（标准库原生，不引 socks5 / 不引新依赖 / 不读 `*_PROXY` 环境变量，YAGNI），**明确不照搬 ADR-0005 的 agent transport 接口抽象**（那是 agent 防库冲突的约束，控制面用标准库即足）。**② 热改设置项 `update.proxy-url`**：设置 store 白名单（FR-61）新增该 string 项（归「网络代理」语义），值为代理地址（`http(s)://host:port`，可含 `user:pass`），**空=直连**；应用层校验 scheme∈{http,https} + host:port（与工厂 `ParseProxyURL` 同口径），`config.yml` 增首启 seed 默认空。**③ 作用域硬约束**：代理**仅作用于「更新相关出站」**，**不改 `internal/runtime/alert/webhook.go` 既有裸连行为**（向后兼容）；本批无更新消费者（FR-97 后续批），故只交付工厂 + store 项 + 脱敏 + 单测，不 wire 不存在的 updater、不动 webhook。**④ 凭据脱敏（最高风险）**：`update.proxy-url` 是 store 首个含凭据项，打破 ADR-0038「白名单不含密钥故 value 可明文记」前提——新增 Go URL 凭据脱敏纯函数 `httpx.RedactURLCredentials`（精确掩 userinfo 段，`http://user:pass@h`→`http://***:***@h`、仅用户名→`http://***@h`、无凭据不误掩、空串返空、解析失败宁严勿松整体掩 `***`，穷举单测），并在**审计 detail / slog 日志 / 前端回显**三处全脱敏、**落库存原值仅供运行**；前端「未改密码」语义=提交脱敏占位则后端保留原值不覆盖。**经代理真连 GitHub 的真机维度待 FR-97 接入后验。**
+
 ## 0.14.1（2026-06-25）
 
 ### 修复

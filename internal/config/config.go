@@ -21,8 +21,18 @@ type Config struct {
 	Longpoll LongpollConfig `yaml:"longpoll"`
 	// git 单向导出镜像（备份 / 灾备 / 外部可见，FR-47）
 	GitExport GitExportConfig `yaml:"git-export"`
+	// 控制面在线更新相关参数（FR-98 起，含出站代理）
+	Update UpdateConfig `yaml:"update"`
 	// 日志配置
 	Log LogConfig `yaml:"log"`
+}
+
+// UpdateConfig 是控制面在线更新配置（FR-98，见 ADR-0047）。
+// 当前仅含更新出站代理：proxy-url 是热改项（首启种子 + DB store 真源），config.yml 仅作出厂默认。
+type UpdateConfig struct {
+	// 更新出站代理地址（http://host:port 或 https://...，可含 user:pass）；留空=直连。
+	// 仅作用于更新检查 / 下载出站，不影响 webhook（FR-98）。热改项首启种子，运行真源在设置 store。
+	ProxyURL string `yaml:"proxy-url"`
 }
 
 // GitExportConfig 是 git 单向导出镜像配置（FR-47，见 ADR-0030）。
@@ -168,6 +178,7 @@ func Default() Config {
 			AuthorName:   "beacon",
 			AuthorEmail:  "beacon@local",
 		},
-		Log: LogConfig{Level: "INFO"},
+		Update: UpdateConfig{ProxyURL: ""}, // 默认空=直连（FR-98）
+		Log:    LogConfig{Level: "INFO"},
 	}
 }

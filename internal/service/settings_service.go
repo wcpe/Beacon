@@ -11,6 +11,7 @@ import (
 
 	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/config"
+	"github.com/wcpe/Beacon/internal/httpx"
 	"github.com/wcpe/Beacon/internal/model"
 	"github.com/wcpe/Beacon/internal/pkg/log"
 	"github.com/wcpe/Beacon/internal/repository"
@@ -115,6 +116,14 @@ func (s *SettingsService) Update(key, value, operator, clientIP string) error {
 	if !ok {
 		return apperr.ErrSettingKeyNotAllowed
 	}
+	// 含凭据项「未改密码」语义（FR-98，见 ADR-0047）：前端回显的是脱敏值，若用户原样提交脱敏占位
+	// （等于当前值的脱敏形态），视为「未改」——保留 store 原值不覆盖、不入审计，避免把脱敏占位写成真值。
+	if isSecretSettingKey(key) {
+		current, _ := s.cachedOrDefault(key)
+		if value == httpx.RedactURLCredentials(current) && value != current {
+			return nil
+		}
+	}
 	if err := validateSettingValue(meta, value); err != nil {
 		return err
 	}
@@ -195,6 +204,10 @@ func (s *SettingsService) List() []SettingView {
 	for _, key := range keys {
 		meta := settingsWhitelist[key]
 		value, _ := s.cachedOrDefault(key)
+		// 含凭据项回前端时脱敏（FR-98，见 ADR-0047）：落库存原值供运行，对外只回显脱敏值。
+		if isSecretSettingKey(key) {
+			value = httpx.RedactURLCredentials(value)
+		}
 		views = append(views, SettingView{
 			Key: key, Value: value, ValueType: meta.valueType,
 			Default: meta.defaultFromConfig(config.Default()), Desc: meta.desc, IsStartup: false,
@@ -229,8 +242,13 @@ func validateSettingValue(meta settingMeta, value string) error {
 }
 
 // settingAuditDetail 组装设置更新审计 detail（json 文本）：仅 key + 新值。
-// 白名单不含任何密钥 / 口令（auth.* / agent-token / git-export token 绝不进 store），故 value 直记安全。
+// 多数 key 白名单不含密钥（auth.* / agent-token / git-export token 绝不进 store），value 直记安全；
+// 但含凭据项（如 update.proxy-url，FR-98 见 ADR-0047）的 value 可能含 user:pass，须脱敏后再记。
 func settingAuditDetail(key, value string) string {
-	raw, _ := json.Marshal(map[string]string{"key": key, "value": value})
+	recorded := value
+	if isSecretSettingKey(key) {
+		recorded = httpx.RedactURLCredentials(value)
+	}
+	raw, _ := json.Marshal(map[string]string{"key": key, "value": recorded})
 	return string(raw)
 }
