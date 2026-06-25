@@ -20,9 +20,10 @@ import AuditsPage from './pages/AuditsPage'
 import AlertEventsPage from './pages/AlertEventsPage'
 import ServiceAnalysisPage from './pages/ServiceAnalysisPage'
 import SettingsPage from './pages/SettingsPage'
-import OpsSettingsBlock from './pages/settings/OpsSettingsBlock'
-import SystemInfoBlock from './pages/settings/SystemInfoBlock'
-import SystemConfigBlock from './pages/settings/SystemConfigBlock'
+import VersionUpdatePage from './pages/VersionUpdatePage'
+import SystemObservabilityPage from './pages/SystemObservabilityPage'
+import ApiKeysPage from './pages/ApiKeysPage'
+import NamespacesPage from './pages/NamespacesPage'
 import { setOnUnauthorized } from './api/client'
 import { applyThemeToDocument, usePreferences } from './state/preferences'
 
@@ -80,22 +81,17 @@ export default function App() {
           <Route path="alert-events" element={<AlertEventsPage />} />
           {/* 服务分析页（FR-73）：按时间窗 + 环境聚合运维操作审计（KPI + 动作分布 + 每日趋势） */}
           <Route path="service-analysis" element={<ServiceAnalysisPage />} />
-          {/* 旧 /api-keys、/namespaces 折叠进设置子 tab（FR-95），重定向到对应深链 */}
-          <Route path="api-keys" element={<Navigate to="/settings/system-config?tab=api-keys" replace />} />
-          <Route path="namespaces" element={<Navigate to="/settings/system-config?tab=namespaces" replace />} />
-          {/* 设置聚合页（FR-94 骨架 + FR-95 折叠，见 ADR-0043）：三块顶层 tab + 块内子 tab。
-              顶层三块用嵌套子路由，/settings 重定向到运维设置块；块内子 tab 用 search param。 */}
-          <Route path="settings" element={<SettingsPage />}>
-            <Route index element={<Navigate to="/settings/ops" replace />} />
-            {/* 运维设置块（FR-62/FR-77）：6 域子 tab + 跨子 tab 统一草稿 / 批量保存 / 恢复默认 */}
-            <Route path="ops" element={<OpsSettingsBlock />} />
-            {/* 系统信息块（FR-94/FR-95）：版本与更新（占位）/ 控制面健康（折叠 FR-82）子 tab */}
-            <Route path="system-info" element={<SystemInfoBlock />} />
-            {/* 系统设置块（FR-94/FR-95/FR-101）：网络代理 / 更新设置 / API 密钥（折叠）/ 环境管理（折叠）子 tab */}
-            <Route path="system-config" element={<SystemConfigBlock />} />
-          </Route>
-          {/* 旧 /system 控制面健康页折叠进设置子 tab（FR-95），重定向到对应深链 */}
-          <Route path="system" element={<Navigate to="/settings/system-info?tab=health" replace />} />
+          {/* 系统区 5 个扁平独立页（ADR-0048 取代 ADR-0043 的设置聚合 / 折叠 / 二级子 tab）：各自独立路由、互不折叠。 */}
+          {/* 密钥管理（FR-42）：恢复独立页 */}
+          <Route path="api-keys" element={<ApiKeysPage />} />
+          {/* 环境管理（FR-53）：恢复独立页 */}
+          <Route path="namespaces" element={<NamespacesPage />} />
+          {/* 运维设置单页（FR-62/FR-77）：6 域分区 + 逐项编辑 / 恢复默认 + 批量保存（更新相关项移至版本与更新页） */}
+          <Route path="settings" element={<SettingsPage />} />
+          {/* 版本与更新独立页（FR-100，合并版本 / 渠道 / 检查 / 更新 / 代理 / 更新设置） */}
+          <Route path="system/version" element={<VersionUpdatePage />} />
+          {/* 控制面健康（FR-82）：恢复独立页 */}
+          <Route path="system" element={<SystemObservabilityPage />} />
           {/* 未知路径回到配置中心 */}
           <Route path="*" element={<Navigate to="/configs" replace />} />
         </Route>

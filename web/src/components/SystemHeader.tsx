@@ -3,14 +3,13 @@
 // 在线实例数 / 采样器状态 + Go 运行时资源（goroutine / 堆内存）+ 进程 CPU%（gopsutil 采集，
 // 采集失败时降级为「不可用」）。
 
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
 import HeaderControls from '@/components/HeaderControls'
-import UpdateModal from '@/components/UpdateModal'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 
 // 自身状态刷新周期（毫秒）：短周期以实时反映控制面健康（含 DB 断开）
@@ -28,15 +27,15 @@ function StatItem({ label, children }: { label: string; children: React.ReactNod
 
 export default function SystemHeader() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { data, isError } = useQuery({
     queryKey: ['system-status'],
     queryFn: systemStatus,
     refetchInterval: STATUS_REFETCH_MS,
   })
 
-  // 更新检查（FR-100）：独立低频 query（非 5s 健康轮询），驱动版本徽章红点与更新模态框。
+  // 更新检查（FR-100）：独立低频 query（非 5s 健康轮询），仅驱动版本徽章红点；点击跳「版本与更新」页（ADR-0048，不再弹模态框）。
   const update = useUpdateCheck()
-  const [updateModalOpen, setUpdateModalOpen] = useState(false)
 
   // 拉取失败（含网络断开）也视作不健康：DB 点显示红、其余字段占位
   const dbConnected = !isError && (data?.db.connected ?? false)
@@ -49,11 +48,11 @@ export default function SystemHeader() {
     <header className="flex shrink-0 flex-wrap items-center gap-x-8 gap-y-3 border-b bg-background px-6 py-2.5">
       <div className="flex items-center gap-2">
         <span className="text-sm font-semibold">{t('systemHeader.title')}</span>
-        {/* 版本徽章：可点击打开更新模态框；有可用更新时叠红点（FR-100） */}
+        {/* 版本徽章：点击跳「版本与更新」页（ADR-0048）；有可用更新时叠红点（FR-100） */}
         <button
           type="button"
           aria-label={t('systemHeader.versionBadgeAria', { version })}
-          onClick={() => setUpdateModalOpen(true)}
+          onClick={() => navigate('/system/version')}
           className="relative rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           {version}
@@ -101,16 +100,6 @@ export default function SystemHeader() {
 
       {/* 页眉界面偏好控件（FR-92）：主题 / 密度切换 + 大屏入口，右对齐 */}
       <HeaderControls />
-
-      {/* 在线更新模态框（FR-100）：点击版本徽章 / 红点打开 */}
-      <UpdateModal
-        open={updateModalOpen}
-        onOpenChange={setUpdateModalOpen}
-        data={update.data}
-        isLoading={update.isLoading}
-        isError={update.isError}
-        onRefresh={update.refresh}
-      />
     </header>
   )
 }

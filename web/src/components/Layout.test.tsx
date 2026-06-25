@@ -27,8 +27,6 @@ vi.mock('@/api/client', () => ({
     cacheExpiresAt: '',
   }),
   listSettings: vi.fn().mockResolvedValue([]),
-  updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
-  triggerUpdate: vi.fn(),
 }))
 
 import Layout from './Layout'

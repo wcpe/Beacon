@@ -37,6 +37,8 @@ export const zhCN = {
     apiKeys: '密钥管理',
     namespaces: '环境管理',
     settings: '运维设置',
+    // 版本与更新独立页（ADR-0048）
+    versionUpdate: '版本与更新',
     systemObservability: '控制面健康',
   },
 
@@ -229,6 +231,32 @@ export const zhCN = {
     triggerFailed: '触发更新失败',
   },
 
+  // ===== 版本与更新独立页（FR-100，ADR-0048 由设置子 tab 拍平为独立页）=====
+  versionUpdate: {
+    // 页标题 + 副标题
+    title: '版本与更新',
+    subtitle: '查看当前版本、切换更新渠道、检查并在线更新控制面，以及配置出站代理与自动检查策略。',
+    // 分区标题
+    sectionVersion: '版本信息',
+    sectionProxy: '网络代理',
+    sectionPrefs: '更新设置',
+    // 渠道选择说明：stable 稳定版 / rc 预发布候选版，切换后自动重新检查
+    channelHint: 'stable 稳定版 / rc 预发布候选版；切换后将按新渠道重新检查更新。',
+    // 切渠道成功提示
+    channelSwitched: '已切换更新渠道，正在按新渠道重新检查…',
+    // 网络代理表单
+    proxyLabel: '出站代理地址',
+    proxyPlaceholder: '如 http://127.0.0.1:7890（留空 = 直连）',
+    proxyHint: '为控制面连接 GitHub 检查 / 下载更新而配置的 http(s) 代理；留空表示直连。含口令的代理回显时会脱敏，未修改则不会覆盖原值。',
+    // 更新设置
+    autoCheckLabel: '自动检查更新',
+    intervalLabel: '自动检查周期（小时）',
+    intervalHint: '取值范围 1–168 小时；关闭自动检查后此项不生效。',
+    // 后端暂无对应设置项时的兜底占位
+    proxyEmpty: '暂无网络代理设置项。',
+    prefsEmpty: '暂无自动检查 / 周期设置项。',
+  },
+
   // ===== 控制面连接状态指示（FR-78）=====
   connection: {
     // 已连接（小灯悬浮提示）
@@ -246,7 +274,6 @@ export const zhCN = {
     title: '控制面健康',
     // 点明本页边界：看 Beacon 自己，区别于 agent 网络负载（看板）与平台运维活动（服务分析）
     subtitle: '控制面进程自身的内部运行态（只读）——区别于可观测看板的 agent 网络负载与服务分析的平台运维活动。',
-    none: '无',
     // 注册表健康状态文案（与服务器页同口径）
     status: {
       online: '在线',
@@ -263,30 +290,35 @@ export const zhCN = {
       failed: '失败',
       expired: '已过期',
     },
-    // 数据库连接池
+    // 数据库连接池：逐项明细
     dbPoolTitle: '数据库连接池',
     dbOpen: '已建连接',
-    dbMax: '上限 {{max}}',
-    dbInUseIdle: '使用中 / 空闲',
-    dbInUseIdleHint: '当前使用中与空闲连接数',
+    dbOpenHint: '当前已建立的连接数',
+    dbMaxLabel: '连接上限',
+    dbMaxHint: '允许的最大打开连接数（∞ 表示无限）',
+    dbInUse: '使用中',
+    dbInUseHint: '正在被使用的连接数',
+    dbIdle: '空闲',
+    dbIdleHint: '建立但当前空闲的连接数',
     dbWait: '累计等待次数',
-    dbWaitHint: '累计等待时长 {{ms}} ms',
-    // 长轮询挂起
+    dbWaitCountHint: '因连接池满而排队等待的累计次数（进程起算）',
+    dbWaitDuration: '累计等待时长',
+    dbWaitDurationHint: '排队等待连接的累计耗时（进程起算）',
+    // 长轮询挂起：四通道逐项明细
     longpollTitle: '长轮询挂起',
     longpollTotal: '挂起合计',
     longpollTotalHint: '四通道当前挂起的 waiter 总数',
-    longpollByChannel: '配置 / 文件 / 拓扑 / 命令',
-    longpollByChannelHint: '各通道当前挂起 waiter 数',
-    // 注册表规模
+    longpollConfig: '配置通道',
+    longpollFile: '文件通道',
+    longpollTopology: '拓扑通道',
+    longpollCommand: '命令通道',
+    // 注册表规模：总数 + 按健康状态逐项
     registryTitle: '注册表规模',
     registryTotal: '实例总数',
     registryTotalHint: '内存注册表当前实例条目数',
-    registryByStatus: '按健康状态',
-    // 命令队列深度
+    // 命令队列深度：按状态逐项
     commandTitle: '命令队列深度',
-    commandPending: '待拉取',
     commandPendingHint: '待目标 agent 拉取的命令数',
-    commandByStatus: '按状态',
   },
 
   // ===== 布局（Layout）=====
@@ -1129,31 +1161,6 @@ export const zhCN = {
     cancelledHint: '任务已取消',
     expiredHint: '任务已过期（清单瞬态已清空），请重新建任务',
     emptyHint: '建扫描任务或在任务历史中选一个任务以查看详情',
-  },
-
-  // ===== 设置聚合页骨架（FR-94，见 ADR-0043）=====
-  settingsAggregate: {
-    // 聚合页顶层标题（侧栏「系统」组入口）
-    title: '系统',
-    // 三块顶层 tab 标题
-    blockOps: '运维设置',
-    blockSystemInfo: '系统信息',
-    blockSystemConfig: '系统设置',
-    // 系统信息块的子 tab 标题
-    tabVersion: '版本与更新',
-    tabHealth: '控制面健康',
-    // 系统设置块的子 tab 标题
-    tabProxy: '网络代理',
-    tabUpdate: '更新设置',
-    tabApiKeys: 'API 密钥',
-    tabNamespaces: '环境管理',
-    // 空壳子 tab 占位文案（内容由后续 FR 填）
-    placeholderHealth: '控制面健康自观测即将并入此处（待 FR-95 接入）。',
-    // 网络代理 / 更新设置已由 FR-101 填实；以下文案仅作后端暂无对应设置项时的兜底占位
-    placeholderProxy: '暂无网络代理设置项。',
-    placeholderUpdate: '暂无更新渠道 / 周期设置项。',
-    placeholderApiKeys: 'API 密钥管理即将并入此处（待 FR-95 接入）。',
-    placeholderNamespaces: '环境管理即将并入此处（待 FR-95 接入）。',
   },
 
   // ===== 运维设置页（FR-62，消费 FR-61 设置端点）=====

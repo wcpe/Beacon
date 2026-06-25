@@ -1,6 +1,5 @@
-// 设置逐项编辑共享原语（FR-62/FR-77 抽取，供 OpsSettingsBlock 与 SystemConfigBlock 复用，FR-101）：
-// 集中草稿 + dirty 计算 + 批量保存的 useSettingsDraft，与逐项编辑行 SettingRow / 控件 SettingControl /
-// 改动摘要 ChangeSummary。把原 OpsSettingsBlock 内私有实现上提为单一真源，消除跨块复制（避免复制粘贴反模式）。
+// 设置逐项编辑共享原语（FR-62/FR-77）：集中草稿 + dirty 计算 + 批量保存的 useSettingsDraft，
+// 与逐项编辑行 SettingRow / 控件 SettingControl / 改动摘要 ChangeSummary。供运维设置单页（SettingsPage）复用。
 
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -21,8 +20,6 @@ import {
 
 // log.level 的合法枚举（硬编码，后端白名单同此集合）。
 const LOG_LEVELS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const
-// update.channel 的合法枚举（与后端 updateChannels 同口径，FR-101）。
-const UPDATE_CHANNELS = ['stable', 'rc'] as const
 
 // 取 key 的前缀段（第一个 `.` 前）——按域分桶用。
 export function prefixOf(key: string): string {
@@ -205,7 +202,7 @@ export function SettingRow({
   )
 }
 
-// 按 valueType 渲染编辑控件：log.level / update.channel 特例下拉；bool 开关（复选）；int 数字输入；string 文本输入。
+// 按 valueType 渲染编辑控件：log.level 特例下拉；bool 开关（复选）；int 数字输入；string 文本输入。
 export function SettingControl({
   item,
   draft,
@@ -221,13 +218,6 @@ export function SettingControl({
   if (item.key === 'log.level') {
     return (
       <EnumSelect options={LOG_LEVELS} draft={draft} onChange={onChange} width="w-32" />
-    )
-  }
-
-  // update.channel 特例：固定枚举下拉（stable/rc，FR-101）
-  if (item.key === 'update.channel') {
-    return (
-      <EnumSelect options={UPDATE_CHANNELS} draft={draft} onChange={onChange} width="w-32" />
     )
   }
 
@@ -257,7 +247,7 @@ export function SettingControl({
     )
   }
 
-  // string（log.level / update.channel 以外）：普通文本输入
+  // string（log.level 以外）：普通文本输入
   return (
     <Input
       type="text"
@@ -268,7 +258,7 @@ export function SettingControl({
   )
 }
 
-// 固定枚举下拉（log.level / update.channel 共用，消除两处下拉复制）。
+// 固定枚举下拉（log.level 用）。
 function EnumSelect({
   options,
   draft,

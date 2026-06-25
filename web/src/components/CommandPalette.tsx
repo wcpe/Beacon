@@ -169,7 +169,8 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
               }}
               placeholder={t('commandPalette.placeholder')}
               aria-label={t('commandPalette.placeholder')}
-              className="h-7 border-0 px-0 ring-0 focus-visible:border-0 focus-visible:ring-0"
+              // 嵌在借框搜索栏内：去边框 / 去聚焦环 / 去暗色背景块（修复暗色下输入框残留圆角底框的「卡」样式 bug）
+              className="h-7 border-0 bg-transparent px-0 shadow-none ring-0 focus-visible:border-0 focus-visible:ring-0 dark:bg-transparent"
             />
           </div>
 

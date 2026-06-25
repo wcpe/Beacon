@@ -2,6 +2,7 @@
 // 覆盖「连通态渲染各字段（含真实 CPU%）→ DB 断开反映为已断开 → 拉取失败反映为不可达 → CPU 不可用降级展示 → 采样器停用」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
@@ -15,10 +16,14 @@ vi.mock('@/api/client', async () => {
     // FR-100 更新检查链路（useUpdateCheck）：默认无更新；红点用例各自注入
     checkUpdate: vi.fn(),
     listSettings: vi.fn().mockResolvedValue([]),
-    // UpdateModal 进度轮询默认仅在触发后启用，这里防御性置空
-    updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
-    triggerUpdate: vi.fn(),
   }
+})
+
+// 监听跳转：版本徽章点击跳「版本与更新」页（ADR-0048，不再弹模态框）
+const navigateSpy = vi.fn()
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
+  return { ...actual, useNavigate: () => navigateSpy }
 })
 
 import SystemHeader from './SystemHeader'
@@ -68,6 +73,7 @@ function renderHeader(ui: ReactElement) {
 }
 
 beforeEach(() => {
+  navigateSpy.mockReset()
   vi.mocked(systemStatus).mockResolvedValue(STATUS)
   // 默认无可用更新（无红点）；红点用例各自覆盖
   vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, hasUpdate: false, latestVersion: '' })
@@ -151,5 +157,12 @@ describe('SystemHeader 更新红点（FR-100）', () => {
     renderHeader(<SystemHeader />)
     expect(await screen.findByRole('button', { name: /点击查看更新/ })).toBeInTheDocument()
     expect(screen.queryByRole('status', { name: '有可用更新' })).toBeNull()
+  })
+
+  it('点击版本徽章跳转到版本与更新页（ADR-0048，不再弹模态框）', async () => {
+    renderHeader(<SystemHeader />)
+    const badge = await screen.findByRole('button', { name: /点击查看更新/ })
+    await userEvent.click(badge)
+    expect(navigateSpy).toHaveBeenCalledWith('/system/version')
   })
 })

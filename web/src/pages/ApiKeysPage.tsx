@@ -185,8 +185,9 @@ export default function ApiKeysPage() {
 
   return (
     <div className="space-y-6">
-      {/* 折叠进设置子 tab 后页标题由子 tab 标签承担（FR-95），此处仅留新建入口右对齐 */}
-      <div className="flex items-center justify-end">
+      {/* 独立页页眉（ADR-0048 拍平回独立路由）：页标题 + 右对齐新建入口 */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">{t('apikeys.title')}</h1>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogTrigger asChild>
             <Button>{t('apikeys.createBtn')}</Button>

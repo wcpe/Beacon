@@ -105,7 +105,8 @@ export default function Layout() {
               open={groupOpen(group)}
               onToggle={(e) => toggleGroup(group, (e.currentTarget as HTMLDetailsElement).open)}
             >
-              <summary className="flex cursor-pointer list-none items-center gap-1 rounded-md px-3 py-2 text-xs font-medium tracking-wide text-sidebar-foreground/60 uppercase select-none hover:text-sidebar-accent-foreground [&::-webkit-details-marker]:hidden">
+              {/* 分组标题：与子项排版层级协调——同字号体系，分组用更弱的颜色 + 字重做层级区分，不用 uppercase 拉开观感落差 */}
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold text-sidebar-foreground/50 select-none hover:text-sidebar-accent-foreground [&::-webkit-details-marker]:hidden">
                 <ChevronRightIcon
                   aria-hidden
                   className="size-3.5 shrink-0 transition-transform [details[open]>summary>&]:rotate-90"
@@ -117,9 +118,11 @@ export default function Layout() {
                   <NavLink
                     key={leaf.to}
                     to={leaf.to}
+                    // 拍平为独立页后逐一精确高亮（ADR-0048）：end 杜绝 /system 前缀误命中 /system/version 等同组兄弟
+                    end
                     className={({ isActive }) =>
                       cn(
-                        'rounded-md px-3 py-2 text-sm transition-colors',
+                        'rounded-md px-3 py-1.5 text-sm transition-colors',
                         isActive
                           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
                           : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
