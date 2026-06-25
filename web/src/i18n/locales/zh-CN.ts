@@ -109,6 +109,8 @@ export const zhCN = {
     emptyData: '暂无数据',
     pleaseSelect: '请选择',
     unassigned: '未分配',
+    // 可编辑下拉（Combobox）无候选命中时的空态提示
+    noMatchOption: '无匹配候选',
     // 在线状态点的无障碍标签（如「状态 online」），保留状态英文原值
     statusAria: '状态 {{status}}',
     prevPage: '上一页',

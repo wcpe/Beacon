@@ -37,6 +37,7 @@ import HealthBar, { type HealthSegment } from '@/components/dashboard/HealthBar'
 import MiniSparkline from '@/components/dashboard/MiniSparkline'
 import { ratioLevel } from '@/components/dashboard/health'
 import AsyncSection from '@/components/AsyncSection'
+import { TileGridSkeleton, CardGridSkeleton } from '@/components/skeletons'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
@@ -220,6 +221,7 @@ export default function DashboardPage() {
           isLoading={instancesQuery.isLoading}
           isError={instancesQuery.isError}
           error={instancesQuery.error}
+          skeleton={<TileGridSkeleton />}
         >
           {instances.length === 0 ? (
             <Card>
@@ -236,7 +238,12 @@ export default function DashboardPage() {
       </section>
 
       {/* ③ 分角色面板：子服 / BC 各一面板（图标头 + 紧凑 IconStat 组 + 内嵌迷你趋势） */}
-      <AsyncSection isLoading={summaryQuery.isLoading} isError={summaryQuery.isError} error={summaryQuery.error}>
+      <AsyncSection
+        isLoading={summaryQuery.isLoading}
+        isError={summaryQuery.isError}
+        error={summaryQuery.error}
+        skeleton={<CardGridSkeleton count={2} heightClass="h-56" gridClass="grid grid-cols-1 gap-3 xl:grid-cols-2" />}
+      >
         {summary && (
           <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
             {/* 子服（bukkit）面板：玩家 / 服务器数 / 均TPS / 均内存 / 均CPU + 玩家迷你趋势 */}

@@ -2,7 +2,7 @@
 // 操作者身份由登录令牌决定（FR-11），写操作 operator 以认证身份为准，无需手填。
 
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
@@ -17,6 +17,8 @@ export default function Layout() {
   const { t } = useTranslation()
   const { operator } = useAuth()
   const navigate = useNavigate()
+  // 路由路径用作内容淡入的 key：切页时重挂载触发 animate-in fade-in，过渡不生硬（复用 tw-animate-css，无新依赖）
+  const location = useLocation()
   // 控制面连接状态（FR-78）：断开时弹横幅、小灯转红；恢复时自动重连并刷新数据。
   const { status: connectionStatus } = useConnectionStatus()
   // 全局命令面板开合（FR-83）：Ctrl/Cmd+K 唤起、页眉搜索入口同开同一面板。
@@ -75,7 +77,7 @@ export default function Layout() {
         {/* 侧栏 5 组分组常驻（FR-93，方案 A）：分区标题（不可点、不折叠）+ 其下叶子常驻显示，
             每个叶子 = lucide 图标 + 文案；不再用 details/summary 折叠，无展开态偏好。
             中间导航为侧栏唯一可滚区（flex-1 overflow-y-auto），顶/底冻结。 */}
-        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
+        <nav className="scrollbar-hide flex flex-1 flex-col gap-3 overflow-y-auto p-3">
           {NAV_GROUPS.map((group) => (
             <div key={group.id} className="flex flex-col gap-0.5">
               {/* 分区标题：小号弱色、无 chevron、不可点击、不折叠，仅作分组层级标识 */}
@@ -132,8 +134,11 @@ export default function Layout() {
         <SystemHeader onOpenSearch={() => setPaletteOpen(true)} />
         {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
             自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条 */}
-        <main className="min-w-0 flex-1 overflow-y-auto p-6">
-          <Outlet />
+        <main className="scrollbar-hide min-w-0 flex-1 overflow-y-auto p-6">
+          {/* 按路由 key 重挂载并淡入：克制的内容淡入，让路由切换不生硬（tw-animate-css 的 animate-in fade-in） */}
+          <div key={location.pathname} className="animate-in fade-in duration-200">
+            <Outlet />
+          </div>
         </main>
       </div>
       {/* 全局命令面板（FR-83）：受 Layout 持有的开合态控制，Ctrl/Cmd+K 或页眉入口唤起 */}

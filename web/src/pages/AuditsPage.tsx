@@ -9,6 +9,7 @@ import type { AuditView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
 import { useMessage } from '@/components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
+import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -217,7 +218,12 @@ export default function AuditsPage() {
 
       <Card>
         <CardContent>
-          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+          <AsyncSection
+            isLoading={isLoading}
+            isError={isError}
+            error={error}
+            skeleton={<TableSkeleton columns={columns.length} />}
+          >
             <DataTable
               columns={columns}
               rows={data?.items}

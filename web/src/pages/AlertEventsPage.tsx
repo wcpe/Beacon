@@ -9,6 +9,7 @@ import type { AlertEventFilter } from '../api/client'
 import type { AlertEventView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
 import AsyncSection from '@/components/AsyncSection'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Combobox } from '@/components/ui/combobox'
@@ -176,7 +177,26 @@ export default function AlertEventsPage() {
 
       <Card>
         <CardContent>
-          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+          <AsyncSection
+            isLoading={isLoading}
+            isError={isError}
+            error={error}
+            skeleton={
+              // 时间线骨架：若干条事件行占位，贴近真实信息流形状
+              <ol className="relative space-y-4 border-l pl-6">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <li key={i} className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-5 w-14 rounded-md" />
+                      <Skeleton className="h-4 w-48" />
+                      <Skeleton className="h-5 w-20 rounded-md" />
+                    </div>
+                    <Skeleton className="h-3 w-40" />
+                  </li>
+                ))}
+              </ol>
+            }
+          >
             {data && data.items.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">{t('alertEvent.empty')}</p>
             ) : (

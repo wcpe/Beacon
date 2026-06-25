@@ -11,8 +11,10 @@ interface AsyncSectionProps {
   isError?: boolean
   // 错误对象（取 message 展示）
   error?: unknown
-  // 加载中文案（默认取 i18n common.loading）
+  // 加载中文案（默认取 i18n common.loading）；仅在未提供 skeleton 时使用
   loadingText?: ReactNode
+  // 加载骨架（贴近真实内容形状）：提供时加载态渲染骨架而非纯文字，首屏不再空白/裸文字
+  skeleton?: ReactNode
   // 加载成功后的内容
   children: ReactNode
 }
@@ -22,10 +24,13 @@ export default function AsyncSection({
   isError,
   error,
   loadingText,
+  skeleton,
   children,
 }: AsyncSectionProps) {
   const { t } = useTranslation()
   if (isLoading) {
+    // 优先渲染骨架；无骨架时回退为纯文字提示（保持旧行为，向后兼容）
+    if (skeleton) return <>{skeleton}</>
     return <p className="text-sm text-muted-foreground">{loadingText ?? t('common.loading')}</p>
   }
   if (isError) {

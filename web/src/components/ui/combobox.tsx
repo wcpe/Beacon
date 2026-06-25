@@ -10,6 +10,7 @@
 // 基于既有 radix-ui umbrella 的 Popover + Input 自实现（项目无 command/popover 基元，避免新增依赖）。
 
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { ChevronDownIcon, XIcon } from 'lucide-react'
 
@@ -61,6 +62,7 @@ export function Combobox({
   clearable,
   clearLabel,
 }: ComboboxProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   // 键入草稿：严格模式下与 value 解耦（键入仅过滤，不立即上报）
   const [query, setQuery] = React.useState('')
@@ -161,7 +163,7 @@ export function Combobox({
         >
           <div role="listbox">
             {filtered.length === 0 ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">无匹配候选</div>
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">{t('common.noMatchOption')}</div>
             ) : (
               filtered.map((opt) => (
                 <div

@@ -137,3 +137,14 @@
     @apply font-sans;
     }
 }
+
+@layer utilities {
+  /* 隐藏滚动条但保留滚动功能：侧栏导航 / 主内容滚动区用，去掉视觉滚动条更清爽。 */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

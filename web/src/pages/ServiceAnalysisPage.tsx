@@ -14,6 +14,8 @@ import DayTrendChart from './service-analysis/DayTrendChart'
 import ActionRankChart from './service-analysis/ActionRankChart'
 import type { ActionRankItem } from './service-analysis/ActionRankChart'
 import AsyncSection from '@/components/AsyncSection'
+import { CardGridSkeleton } from '@/components/skeletons'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
@@ -127,6 +129,16 @@ export default function ServiceAnalysisPage() {
         isLoading={analyticsQuery.isLoading}
         isError={analyticsQuery.isError}
         error={analyticsQuery.error}
+        skeleton={
+          // KPI 卡 + 两图占位：贴近真实「4 卡 + 2 图」布局
+          <div className="space-y-4">
+            <CardGridSkeleton count={4} />
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <Skeleton className="h-64 w-full rounded-xl" />
+              <Skeleton className="h-64 w-full rounded-xl" />
+            </div>
+          </div>
+        }
       >
         {/* KPI 卡片：总数 / 成功 / 失败 / 成功率 */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">

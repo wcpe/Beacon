@@ -36,6 +36,7 @@ import StatusBadge from '../components/StatusBadge'
 import RoleBadge from '../components/RoleBadge'
 import { useMessage } from '../components/useMessage'
 import AsyncSection from '@/components/AsyncSection'
+import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -507,7 +508,12 @@ export default function ServersPage() {
 
       <Card>
         <CardContent>
-          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+          <AsyncSection
+            isLoading={isLoading}
+            isError={isError}
+            error={error}
+            skeleton={<TableSkeleton columns={columns.length} />}
+          >
             <DataTable
               columns={columns}
               rows={data}

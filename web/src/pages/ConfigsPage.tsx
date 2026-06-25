@@ -35,6 +35,8 @@ import type { CreateConfigParams } from '../api/client'
 import { namespaceOptions } from '../api/format'
 import { useMessage } from '../components/useMessage'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import type { LintError } from '@/lib/configLint'
 import { useConfigTabs } from './configs/useConfigTabs'
 import ConfigFileTree from './configs/ConfigFileTree'
@@ -322,20 +324,31 @@ export default function ConfigsPage() {
             <div className="flex-shrink-0 px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border bg-muted/30 flex items-center justify-between">
               <span>{t('configs.treeHeader')}</span>
               {selectedTarget && (
-                <button
-                  className="text-blue-500 hover:text-blue-600 text-[0.65rem]"
+                <Button
+                  variant="link"
+                  size="xs"
+                  className="h-auto p-0 text-[0.65rem]"
                   onClick={() => setSelectedTarget(null)}
                 >
                   {t('configs.clearTarget')}
-                </button>
+                </Button>
               )}
             </div>
             <div className="flex-1 overflow-y-auto py-1">
-              <ConfigFileTree
-                nodes={treeData}
-                selectedKey={tabs.selectedFile}
-                onSelect={handleFileSelect}
-              />
+              {list.isLoading ? (
+                // 文件树首屏骨架：若干层级条占位，替掉加载期的空白
+                <div className="space-y-2 px-3 py-1">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className={`h-4 ${i % 3 === 0 ? 'w-32' : 'w-24 ml-3'}`} />
+                  ))}
+                </div>
+              ) : (
+                <ConfigFileTree
+                  nodes={treeData}
+                  selectedKey={tabs.selectedFile}
+                  onSelect={handleFileSelect}
+                />
+              )}
             </div>
           </div>
 

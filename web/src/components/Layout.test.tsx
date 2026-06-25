@@ -133,6 +133,17 @@ describe('Layout 侧栏结构（冻结顶/底，仅中间导航可滚）', () =>
     expect(footer?.classList.contains('shrink-0')).toBe(true)
     expect(footer?.classList.contains('border-t')).toBe(true)
   })
+
+  it('侧栏导航与主内容滚动区隐藏滚动条（scrollbar-hide，保留可滚）', () => {
+    renderLayout()
+    const nav = document.querySelector('aside nav')
+    const mainEl = document.querySelector('main')
+    // 仍可滚（overflow-y-auto）但隐藏视觉滚动条（scrollbar-hide）
+    expect(nav?.classList.contains('scrollbar-hide')).toBe(true)
+    expect(nav?.classList.contains('overflow-y-auto')).toBe(true)
+    expect(mainEl?.classList.contains('scrollbar-hide')).toBe(true)
+    expect(mainEl?.classList.contains('overflow-y-auto')).toBe(true)
+  })
 })
 
 describe('Layout 品牌区可点跳可观测看板', () => {

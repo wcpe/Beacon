@@ -28,6 +28,8 @@ import {
 import { systemObservability, systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import AsyncSection from '@/components/AsyncSection'
+import { CardGridSkeleton } from '@/components/skeletons'
+import { Skeleton } from '@/components/ui/skeleton'
 import GaugeRing from '@/components/dashboard/GaugeRing'
 import { countLevel, levelText, ratioLevel, statusLevel, type HealthLevel } from '@/components/dashboard/health'
 import { cn } from '@/lib/utils'
@@ -131,7 +133,18 @@ export default function SystemObservabilityPage() {
         </div>
       </div>
 
-      <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+      <AsyncSection
+        isLoading={isLoading}
+        isError={isError}
+        error={error}
+        skeleton={
+          // 仪表环总览行 + 详细明细卡占位：贴近「1 总览卡 + 6 明细卡」布局
+          <div className="space-y-4">
+            <Skeleton className="h-32 w-full rounded-xl" />
+            <CardGridSkeleton count={6} heightClass="h-64" gridClass="grid grid-cols-1 gap-4 xl:grid-cols-2" />
+          </div>
+        }
+      >
         {data && (
           <div className="space-y-4">
             {/* ===== 仪表环总览行：四子系统吃紧一眼看（按阈值变色） ===== */}
