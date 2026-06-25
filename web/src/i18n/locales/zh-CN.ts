@@ -12,6 +12,17 @@ export const zhCN = {
 
   // ===== 导航（侧边栏）=====
   nav: {
+    // 侧栏 5 组手风琴的分组标题（FR-93）
+    // 概览组：可观测看板
+    groupOverview: '概览',
+    // 配置管理组：配置中心 / 文件树预览 / 拓印 / 反向抓取
+    groupConfig: '配置管理',
+    // 集群组：服务器 / 拓扑 / 区分配
+    groupCluster: '集群',
+    // 可观测组：服务分析 / 审计日志 / 事件
+    groupObservability: '可观测',
+    // 系统组：运维设置（后续 FR 并入更多系统页）
+    groupSystem: '系统',
     dashboard: '可观测看板',
     configs: '配置中心',
     filePreview: '文件树预览',

@@ -14,6 +14,7 @@ import { SearchIcon } from 'lucide-react'
 import { listConfigs, listFiles, listInstances } from '@/api/client'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { NAV_LEAVES } from '@/lib/navModel'
 import {
   buildItems,
   filterItems,
@@ -23,23 +24,8 @@ import {
   type NavSource,
 } from '@/lib/commandPalette'
 
-// 导航目标（路径 + i18n key）——与 Layout 侧栏同源的可跳转页集合。
-const NAV_TARGETS: Array<{ to: string; labelKey: string }> = [
-  { to: '/dashboard', labelKey: 'nav.dashboard' },
-  { to: '/configs', labelKey: 'nav.configs' },
-  { to: '/file-preview', labelKey: 'nav.filePreview' },
-  { to: '/imprint', labelKey: 'nav.imprint' },
-  { to: '/reverse-fetch', labelKey: 'nav.reverseFetchTask' },
-  { to: '/servers', labelKey: 'nav.servers' },
-  { to: '/topology', labelKey: 'nav.topology' },
-  { to: '/zones', labelKey: 'nav.zones' },
-  { to: '/audits', labelKey: 'nav.audits' },
-  { to: '/service-analysis', labelKey: 'nav.serviceAnalysis' },
-  { to: '/api-keys', labelKey: 'nav.apiKeys' },
-  { to: '/namespaces', labelKey: 'nav.namespaces' },
-  { to: '/settings', labelKey: 'nav.settings' },
-  { to: '/system', labelKey: 'nav.systemObservability' },
-]
+// 导航目标 = 侧栏导航单一真源（FR-93 navModel）的扁平叶子，避免与 Layout 各维护一份清单。
+const NAV_TARGETS = NAV_LEAVES
 
 // 审计动作快捷项：高频运维动作，跳审计页并带 action 过滤；动作名复用既有 audit.action.* 映射。
 const AUDIT_ACTION_KEYS = [

@@ -1,10 +1,12 @@
 // Layout 布局单测（FR-33 页眉重定位）：
 // 锁定「品牌标题在侧边栏 → 控制面状态条收进右侧主内容列顶部（侧边栏之外、内容之上）」的结构关系。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { SystemStatusView } from '@/api/types'
+import { currentPreferences, setNavExpandedGroups } from '@/state/preferences'
 
 // mock 后端调用：SystemHeader 经 react-query 拉取自身状态
 vi.mock('@/api/client', () => ({
@@ -28,11 +30,11 @@ const STATUS: SystemStatusView = {
   cpuPercent: 1.2,
 }
 
-function renderLayout() {
+function renderLayout(initialPath = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialPath]}>
         <Layout />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -40,8 +42,19 @@ function renderLayout() {
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  // 偏好 store 快照为模块级、跨用例不重置；显式清空手动展开组，避免用例间串台。
+  setNavExpandedGroups([])
   vi.mocked(systemStatus).mockResolvedValue(STATUS)
 })
+
+// 定位某分组的 details 容器（按组标题文本上溯到 details）
+function findGroup(label: string): HTMLDetailsElement {
+  const summary = screen.getByText(label)
+  const details = summary.closest('details')
+  if (!details) throw new Error(`找不到导航分组：${label}`)
+  return details as HTMLDetailsElement
+}
 
 describe('Layout 页眉重定位', () => {
   it('品牌标题渲染在侧边栏内', () => {
@@ -72,6 +85,44 @@ describe('Layout 页眉重定位', () => {
     expect(mainEl).not.toBeNull()
     expect(mainEl?.classList.contains('overflow-y-auto')).toBe(true)
     expect(mainEl?.classList.contains('overflow-hidden')).toBe(false)
+  })
+})
+
+describe('Layout 侧栏导航手风琴（FR-93）', () => {
+  it('渲染 5 组分组标题', () => {
+    renderLayout()
+    for (const label of ['概览', '配置管理', '集群', '可观测', '系统']) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+  })
+
+  it('命中当前路由的组自动展开（其余组折叠）', () => {
+    // 当前路由在 /servers → 集群组自动展开
+    renderLayout('/servers')
+    expect(findGroup('集群').open).toBe(true)
+    // 概览组未命中、且无手动展开偏好 → 折叠
+    expect(findGroup('概览').open).toBe(false)
+    // 展开组内可见其叶子（服务器）
+    const cluster = findGroup('集群')
+    expect(within(cluster).getByText('服务器')).toBeInTheDocument()
+  })
+
+  it('手动展开某组写入偏好 navExpandedGroups（持久化）', async () => {
+    const user = userEvent.setup()
+    renderLayout('/servers')
+    // 概览组初始折叠，点击其标题展开
+    const overview = findGroup('概览')
+    expect(overview.open).toBe(false)
+    await user.click(within(overview).getByText('概览'))
+    await waitFor(() => expect(currentPreferences().navExpandedGroups).toContain('overview'))
+  })
+
+  it('偏好里手动展开的组在非命中路由下也展开', () => {
+    // 预置偏好：手动展开「可观测」组
+    setNavExpandedGroups(['observability'])
+    renderLayout('/dashboard')
+    // 可观测组未命中路由，但因偏好手动展开仍打开
+    expect(findGroup('可观测').open).toBe(true)
   })
 })
 
