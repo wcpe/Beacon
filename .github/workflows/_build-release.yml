@@ -1,0 +1,179 @@
+# Beacon 可复用发布构建 workflow（FR-103 / ADR-0046）：被 release.yml（稳定）与 prerelease.yml（rc 预发布）
+# 经 workflow_call 调用，单点维护「web 构建 / 多平台原生矩阵 / 双端 jar / 汇总 SHA256 / 建 Release」。
+# 调用方传入 prerelease 标志与 release 标题前缀；本 workflow 不自带 on.push 触发，触发由两个薄壳负责。
+#
+# 为什么矩阵原生而非交叉编译：控制面 sqlite 经 go-sqlite3 需 CGO，交叉编译会自动关闭 CGO
+# 导致 sqlite 不可用（默认开箱即跑的库）。故各平台二进制在对应原生 runner 上以 CGO=1 构建。
+name: 可复用发布构建
+
+on:
+  workflow_call:
+    inputs:
+      prerelease:
+        # 是否标记为预发布（GitHub Release 的 prerelease 标志）：稳定渠道传 false、rc 渠道传 true
+        description: "是否预发布（rc）"
+        required: true
+        type: boolean
+
+permissions:
+  # 创建 Release 并上传附件需要写 contents
+  contents: write
+
+jobs:
+  # 前端构建一次，作为 artifact 供各平台二进制 go:embed 复用（免每个 runner 重复装 Node 构建）。
+  web:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 校验 tag 与 VERSION 一致
+        shell: bash
+        run: |
+          # tag 去 v 前缀后再剥可选的 -rc.<数字> 预发布后缀（严格只认 -rc.<数字>，拒任意后缀防绕过），
+          # 结果须等于根 VERSION（rc 期间 VERSION 已指向目标正式版）。正式版无后缀路径行为不变。
+          raw="${GITHUB_REF_NAME#v}"
+          base="$(echo "$raw" | sed -E 's/-rc\.[0-9]+$//')"
+          ver="$(cat VERSION)"
+          if [ "$base" != "$ver" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 去前缀剥 rc 后缀得 $base，与仓库 VERSION($ver) 不一致，拒绝发布"
+            exit 1
+          fi
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - name: 安装 Node（启用 pnpm store 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 构建前端（make web）
+        run: make web
+      - name: 上传前端产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist/
+          if-no-files-found: error
+
+  # 各平台原生构建控制面二进制 beacon 与 launcher 监督进程 beacon-launcher（FR-96/ADR-0045）。
+  # 二者均 CGO=1 原生构建（sqlite 可用）；beacon go:embed 复用上一步的 web/dist，launcher 极薄不内嵌前端。
+  # 直接 go build（非 make build）：矩阵需原生 CGO + 复用预构建前端，且 windows runner 无 make；
+  # 链接参数与 Makefile build/launcher 目标一致（-trimpath + 注入 version.Version）。
+  # 5 平台原生矩阵（含 linux-arm64 用 GitHub 原生 arm64 runner，仍非交叉编译）；明确不含 windows-arm64。
+  # 版本注入用 tag 去 v 后的完整串（含 -rc.N），故 rc 产物文件名与版本号自带 rc 标识。
+  binaries:
+    name: 控制面 ${{ matrix.target }}
+    needs: web
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,    target: linux-amd64,   ext: "" }
+          - { os: ubuntu-24.04-arm, target: linux-arm64,   ext: "" }
+          - { os: windows-latest,   target: windows-amd64, ext: ".exe" }
+          - { os: macos-13,         target: darwin-amd64,  ext: "" }
+          - { os: macos-14,         target: darwin-arm64,  ext: "" }
+    env:
+      # 各平台 runner 自带原生 C 工具链（gcc/clang/mingw），sqlite 经 CGO 可用
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 取回前端产物到 web/dist
+        uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+      - name: 原生构建控制面与 launcher 二进制
+        shell: bash
+        run: |
+          # 版本号取 tag 去 v 前缀的完整串（含 -rc.N），使 rc 产物版本自带 rc 标识、与正式版可区分
+          ver="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${ver}"
+          out="beacon-${ver}-${{ matrix.target }}${{ matrix.ext }}"
+          go build -trimpath -ldflags "${ldflags}" -o "${out}" ./cmd/beacon
+          echo "已构建 ${out}"
+          launcher_out="beacon-launcher-${ver}-${{ matrix.target }}${{ matrix.ext }}"
+          go build -trimpath -ldflags "${ldflags}" -o "${launcher_out}" ./cmd/beacon-launcher
+          echo "已构建 ${launcher_out}"
+      - name: 上传二进制
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-${{ matrix.target }}
+          path: beacon-*
+          if-no-files-found: error
+
+  # 双端 agent 插件 jar（JVM、平台无关，构建一次；gradle 读根 VERSION 注入版本）。
+  jars:
+    name: agent jar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 JDK21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: 准备 Gradle（含依赖缓存）
+        uses: gradle/actions/setup-gradle@v4
+      - name: 构建 agent jar（make agent）
+        run: make agent
+      - name: 上传 jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: beacon-agent-jars
+          path: |
+            dist/BeaconAgent-*.jar
+            dist/BeaconAgentProxy-*.jar
+          if-no-files-found: error
+
+  # 汇集全部产物、生成 SHA256 校验和、创建 GitHub Release。
+  # prerelease 标志由调用方经 inputs.prerelease 传入：稳定渠道 false、rc 渠道 true。
+  release:
+    name: 发布 GitHub Release
+    needs: [binaries, jars]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 汇集全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # 各 job 的 artifact 扁平合并到 artifacts/
+          merge-multiple: true
+      - name: 生成 SHA256 校验和
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          echo "==== 发布产物校验和 ===="
+          cat SHA256SUMS.txt
+      - name: 生成预发布说明头（仅 rc）
+        # 预发布在 generate_release_notes 自动生成之上，前置固定中文提示头；正式版不加（body 留空走自动）
+        if: ${{ inputs.prerelease }}
+        shell: bash
+        run: |
+          {
+            echo "⚠ 预发布版本（rc）：用于试用验证，可能不稳定，勿用于生产。"
+            echo ""
+          } > release-notes-header.md
+          echo "notes_header<<__EOF__" >> "$GITHUB_OUTPUT"
+          cat release-notes-header.md >> "$GITHUB_OUTPUT"
+          echo "__EOF__" >> "$GITHUB_OUTPUT"
+        id: notes
+      - name: 创建 Release 并上传产物
+        uses: softprops/action-gh-release@v2
+        with:
+          # tag 已存在（由本次 push 触发），自动据 tag 建 Release
+          files: artifacts/*
+          prerelease: ${{ inputs.prerelease }}
+          # rc 用固定中文头 + 自动生成 notes 追加在后；正式版 body 留空、纯自动生成
+          body: ${{ inputs.prerelease && steps.notes.outputs.notes_header || '' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

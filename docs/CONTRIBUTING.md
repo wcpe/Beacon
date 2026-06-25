@@ -80,9 +80,10 @@
 
 采用 GitHub Flow（适合小团队 + 持续发布）：
 
-- **`main`**：始终可发布、受保护；改动经 PR 合入（PR 模板含防漂移自检）。main 每次推送由 CI 发**快照**（`latest` 预发布，见 [ADR-0007](adr/0007-versioning-and-release-channels.md) 与 `sdd-publish-snapshot` 技能）。
+- **`main`**：始终可发布、受保护；改动经 PR 合入（PR 模板含防漂移自检）。main 推送本身**不再滚动发快照**（[ADR-0046](adr/0046-rc-prerelease-channel.md) 取代 [ADR-0007](adr/0007-versioning-and-release-channels.md) 的「快照=滚动 latest」一条）。
 - **`feature/*`、`fix/*`、`refactor/*`**：短生命周期分支，做完发 PR 回 main。
-- **稳定发布**：在 main 打 `vX.Y.Z` tag（`sdd-release-version` 技能），CI 据 tag 出正式 Release。
+- **稳定发布**：在 main 打无后缀 tag `vX.Y.Z`（`sdd-release-version` 技能），CI（`release.yml`）据 tag 出**正式 Release**（prerelease=false）。
+- **rc 预发布**：在 main 打 rc tag `vX.Y.Z-rc.N`（如 `v0.15.0-rc.1`），CI（`prerelease.yml`）据 tag 出**预发布 Release**（prerelease=true），供试用验证。rc 期间根 `VERSION` 已指向目标正式版（如 `0.15.0`），rc tag 带 `-rc.N` 后缀、正式发布时打无后缀 tag；CI 的 tag↔VERSION 校验会剥 `-rc.<数字>` 后缀再比对。两条 tag glob 互斥不重叠（[ADR-0046](adr/0046-rc-prerelease-channel.md)）。注意：全局技能 `sdd-publish-snapshot` 基于旧快照模型、与本 rc 模型冲突，其取舍待单独定，本仓库以 rc 流程为准。
 - **`hotfix/*`**：从出问题的发布 tag 切分支紧急修，出补丁版后**回流 main**（`sdd-hotfix` 技能）。
 - **回滚**优先 `git revert`，不重写已 push 历史（`sdd-rollback-change` 技能）。
 
@@ -124,8 +125,8 @@
 2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*`（§8）。
 3. **按技能走**：读相关 PRD / ARCHITECTURE / ADR → 测试先行 → 实现（守不变量、简单优先）→ 过验证门 → `doc-sync` 同步文档。
 4. **发 PR**：填防漂移自检模板 → 评审 → 合入 `main`。
-5. **main 自动出快照**（CI / `sdd-publish-snapshot`），可随时让人试用。
-6. **攒够一批 → 发版**（`sdd-release-version`：CHANGELOG 分段、定 SemVer、bump `VERSION`、打 `vX.Y.Z` → CI 出正式 Release）。
+5. **需要试用 → 打 rc tag 出预发布**（`vX.Y.Z-rc.N` → CI `prerelease.yml` 出预发布 Release，prerelease=true），让人试用验证；不再 main 推送滚动发快照（[ADR-0046](adr/0046-rc-prerelease-channel.md)）。
+6. **攒够一批 / rc 验过 → 发版**（`sdd-release-version`：CHANGELOG 分段、定 SemVer、bump `VERSION`、打**无后缀** tag `vX.Y.Z` → CI `release.yml` 出正式 Release）。
 7. **生产事故** → `sdd-hotfix` 旁路：从发布 tag 切分支最小修 → 出补丁版 → 回流 `main`。
 
 → 回到 1。
@@ -140,8 +141,8 @@
 | 撤掉某功能 / 回退 | `sdd-rollback-change` |
 | 升级第三方依赖 | `sdd-bump-dependencies` |
 | 纯文档工作（写 ADR / 改架构说明 / 修文档漂移 / 整理文档） | `sdd-update-docs` |
-| 出快照 / 给人试用 | `sdd-publish-snapshot` |
-| 正式发版 | `sdd-release-version` |
+| 出 rc 预发布 / 给人试用 | 打 rc tag `vX.Y.Z-rc.N`（[ADR-0046](adr/0046-rc-prerelease-channel.md)；全局 `sdd-publish-snapshot` 基于旧快照模型、与新 rc 模型冲突，待单独定，勿直接套用） |
+| 正式发版 | `sdd-release-version`（打无后缀 tag `vX.Y.Z`） |
 | 生产紧急修 | `sdd-hotfix` |
 | 外部 / 计划外提交进来（队友直推、CI、合并）需对齐文档 | `sdd-reconcile-external-commits` |
 
@@ -159,8 +160,8 @@
 | **rollback 回滚** | FR 状态回退 · 取代相关 ADR · `CHANGELOG` +1（移除） | 期数 |
 | **依赖升级** | 锁文件 · 有感知影响才记 `CHANGELOG` · 全测试绿 | PRD · 期数 · ADR |
 | **架构决策** | **ADR +1 条（或取代旧的，编号 = 现有最大 +1）** · 更新 `ARCHITECTURE` | 期数（除非顺带开新阶段） |
-| **发版 release** | **`VERSION` 改（按提交定 SemVer）** · `CHANGELOG` 未发布段 → `## X.Y.Z` · 交付的 FR 翻 `已交付@vX.Y.Z` · 打 tag | 期数 |
-| **发快照** | 构建发 `latest`（产物标 `-SNAPSHOT+<sha>`） | `VERSION` · `CHANGELOG` · 期数 |
+| **发版 release** | **`VERSION` 改（按提交定 SemVer）** · `CHANGELOG` 未发布段 → `## X.Y.Z` · 交付的 FR 翻 `已交付@vX.Y.Z` · 打**无后缀** tag `vX.Y.Z`（CI `release.yml`） | 期数 |
+| **出 rc 预发布** | 打 rc tag `vX.Y.Z-rc.N`（CI `prerelease.yml` 出 prerelease=true，[ADR-0046](adr/0046-rc-prerelease-channel.md)；rc 期间 `VERSION` 已指向目标正式版） | `VERSION`（rc 不改）· `CHANGELOG` · 期数 |
 | **开新大阶段（罕见）** | §7 加一行主题 + 启用新期号 `P4…` | —— 这是**唯一**动期数的时候 |
 
 **谁常动 / 谁不动**：

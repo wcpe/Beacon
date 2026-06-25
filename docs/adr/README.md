@@ -10,7 +10,7 @@
 | [0004](0004-zone-authority-control-plane.md) | zone 归属由控制面 DB 权威指派 | 已接受 |
 | [0005](0005-agent-transport-codec-abstraction.md) | agent 的 HTTP 客户端与 JSON 序列化走抽象层 | 已接受 |
 | [0006](0006-rest-long-poll-push.md) | 配置推送用 REST 长轮询 | 已被 [0015](0015-sse-server-push-transport.md) 取代 |
-| [0007](0007-versioning-and-release-channels.md) | 版本来源与发布渠道（VERSION + 稳定/快照） | 已接受 |
+| [0007](0007-versioning-and-release-channels.md) | 版本来源与发布渠道（VERSION + 稳定/快照） | 已接受（**「快照=滚动 latest」一条被 [0046](0046-rc-prerelease-channel.md) 取代**） |
 | [0008](0008-config-soft-delete-and-effective-md5.md) | 配置软删唯一性与有效配置 md5 取舍 | 已接受 |
 | [0009](0009-control-plane-auth-pulled-forward.md) | 管理面鉴权从 P2 前移 | 已接受 |
 | [0010](0010-file-tree-hosting-blob-channel.md) | 文件树托管 blob 通道（通道B），区别于配置深合并 | 已接受（决策1 被 [0029](0029-file-tree-structured-deep-merge.md) 取代） |
@@ -49,6 +49,7 @@
 | [0043](0043-admin-nav-grouping-and-settings-aggregation.md) | 管理台导航分组 + 设置区聚合 IA：侧栏 5 组可折叠手风琴 + 设置三块顶层 tab/子 tab + 嵌套子路由 search param 深链 + 旧路由前端重定向 | 已接受 |
 | [0044](0044-control-plane-online-self-update.md) | 控制面在线自更新核心：按渠道查 wcpe/Beacon Release → 下载本平台资产（超时/上限/失败清理）→ SHA256 校验 → 原子落位 pending → 以退出码 70 交还 launcher → 任何阶段失败保留旧版不退；进度内存态不建表、审计落库（渠道语义引 ADR-0046） | 已接受 |
 | [0045](0045-builtin-launcher-supervisor.md) | 内置 launcher 监督进程：独立第二二进制 + 退出码协议（0/1/70）+ 跨平台换二进制（Win rename 让位 / Unix rename 覆盖）+ 端口先退后起 + 裸跑兜底，本期 launcher 不自更新 | 已接受 |
+| [0046](0046-rc-prerelease-channel.md) | rc 预发布渠道：语义化 rc 号（vX.Y.Z-rc.N）+ prerelease=true + 渠道判定（最新非 prerelease=正式 / 最新 prerelease=rc）+ 不做 nightly/beta（取代 ADR-0007「快照=滚动 latest」一条；标注 sdd-publish-snapshot 技能与新模型冲突） | 已接受 |
 | [0047](0047-update-outbound-proxy-and-secret-redaction.md) | 控制面更新出站代理 + httpx 客户端工厂收口 + 含凭据设置项脱敏（扩展 ADR-0038；仅更新出站不动 webhook，不照搬 ADR-0005 抽象） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
