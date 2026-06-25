@@ -346,9 +346,11 @@ func run() error {
 		RequestRestart: sync.OnceFunc(func() { close(updateRestartCh) }),
 		Audit:          auditRepo,
 	})
-	// HTTP 触发入口（检查 / 状态 / 应用端点）在 FR-99 接入；本批仅装配服务并接通退出出口。
-	// 启动期读一次进度态确认服务已就绪（idle），并作对 updateService 的真实引用（非占位）。
-	slog.Info("控制面在线更新核心已就绪（HTTP 触发待 FR-99）",
+	// HTTP 触发面（FR-99，见 ADR-0044）：把更新核心接到 admin 端点——检查（只读、服务端缓存 + ?force 刷新）/
+	// 状态（读内存进度）/ 触发应用（写、readonly 403 + 审计）。渠道 / 代理 / 缓存 TTL 从设置 store 读、热生效（FR-101）。
+	updateAPIService := service.NewUpdateService(updateService, settingsService)
+	updateHandler := handler.NewUpdateHandler(updateAPIService)
+	slog.Info("控制面在线更新核心已就绪",
 		"初始阶段", string(updateService.Snapshot().Phase), "pending 路径", resolvePendingPath())
 
 	// 内嵌前端：去掉 web/dist 前缀后交给 SPA 处理器
@@ -359,7 +361,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

@@ -28,12 +28,13 @@ type ghAsset struct {
 
 // ghRelease 是 GitHub Release（仅取所需字段）。
 type ghRelease struct {
-	TagName    string    `json:"tag_name"`
-	Prerelease bool      `json:"prerelease"`
-	Draft      bool      `json:"draft"`
-	Body       string    `json:"body"`
-	HTMLURL    string    `json:"html_url"`
-	Assets     []ghAsset `json:"assets"`
+	TagName     string    `json:"tag_name"`
+	Prerelease  bool      `json:"prerelease"`
+	Draft       bool      `json:"draft"`
+	Body        string    `json:"body"`
+	HTMLURL     string    `json:"html_url"`
+	PublishedAt string    `json:"published_at"` // 发布时间（RFC3339 字符串，FR-99 端点透传，不参与比较）
+	Assets      []ghAsset `json:"assets"`
 }
 
 // releaseClient 查 GitHub Releases API。出站 client 由调用方经 internal/httpx 工厂构造（带代理 + 超时），

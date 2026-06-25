@@ -27,6 +27,7 @@ type Handlers struct {
 	Metric           *handler.MetricHandler
 	System           *handler.SystemHandler
 	Observability    *handler.ObservabilityHandler
+	Update           *handler.UpdateHandler
 	Auth             *handler.AuthHandler
 	APIKey           *handler.APIKeyHandler
 	Command          *handler.CommandHandler
@@ -229,6 +230,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 控制面自观测页（FR-82）：DB 连接池/长轮询挂起/注册表规模/命令队列深度，只读、控制面进程内部运行态
 		r.Get("/system/observability", h.Observability.Observability)
+
+		// 控制面在线更新（FR-99，见 ADR-0044）：检查（只读、服务端缓存 + ?force 刷新）/ 状态（读内存进度）/ 触发应用。
+		// POST 为写方法，readonly 经 readonlyWriteGuard 403，审计复用 system.update-apply（已登记 FR-72 覆盖集）。
+		// 与其它写端点一致无条件注册（handler 仅请求期解引用，构造期不调用）。
+		r.Get("/system/update-check", h.Update.Check)
+		r.Get("/system/update", h.Update.Status)
+		r.Post("/system/update", h.Update.Apply)
 
 		// 运维设置 store（FR-61，见 ADR-0038）：列全部热改项（读）+ 改单项（写，readonly 403，入审计）。
 		// 与其它写端点一致无条件注册（handler 仅请求期解引用），PUT 已登记 FR-72 覆盖集。

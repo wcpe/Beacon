@@ -555,6 +555,42 @@ data: {}
 }
 ```
 
+### 控制面在线更新（FR-99，见 [ADR-0044](adr/0044-control-plane-online-self-update.md)）
+
+把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`rc`）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。**一份端点契约真源（FR-100 前端消费）。**
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/system/update-check` | 检查有无可用更新（只读，full / readonly 皆可见） |
+| `GET /admin/v1/system/update` | 读更新进度内存态（只读、不查库、不打 GitHub） |
+| `POST /admin/v1/system/update` | 触发应用更新（写方法，readonly→`403`，入审计 `system.update-apply`/`system.update-failed`） |
+
+`GET /admin/v1/system/update-check`：按 store 当前渠道查 `wcpe/Beacon` 最新 release 与当前版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（FR-101），缓存未过期且渠道未变则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时仅回显 `currentVersion`/`channel`/时间字段，其余为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。返回：
+```json
+{
+  "status": "ok",
+  "currentVersion": "v0.10.0",
+  "channel": "stable",
+  "hasUpdate": true,
+  "isDevBuild": false,
+  "latestVersion": "v0.11.0",
+  "releaseNotes": "## 变更\n- ...",
+  "releaseUrl": "https://github.com/wcpe/Beacon/releases/tag/v0.11.0",
+  "publishedAt": "2026-06-20T08:00:00Z",
+  "checkedAt": "2026-06-25T10:00:00Z",
+  "cacheExpiresAt": "2026-06-25T16:00:00Z"
+}
+```
+`status ∈ {ok, check-failed}`。`releaseNotes` 为 release 正文原文（前端须安全渲染）；`publishedAt`/`checkedAt`/`cacheExpiresAt` 为 RFC3339（UTC）。
+
+`GET /admin/v1/system/update`：读更新核心进度快照（进程内瞬态、不落库）。返回：
+```json
+{ "phase": "downloading", "percent": 42, "targetVersion": "v0.11.0", "error": "" }
+```
+`phase ∈ {idle, checking, downloading, verifying, staging, ready-restart, failed}`；`percent` 仅下载阶段有意义；`error` 仅 `failed` 非空。
+
+`POST /admin/v1/system/update`（无请求体）：调更新核心执行「下载 → SHA256 校验 → 原子落位 pending → 请求重启」。落位成功回 `202 { "accepted": true }`，随后进程以退出码 `70` 退出交还 launcher 换二进制重启（FR-96）；任一阶段失败 → 保留旧二进制、进程不退，回 `500 INTERNAL`（失败原因记 `system.update-failed` 审计与日志，不含敏感）。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
+
 ### 运维设置（FR-61，见 [ADR-0038](adr/0038-ops-settings-store-hot-reload.md)）
 热改项真源由 `config.yml` 移到 DB 设置 store；改设置即热生效、免重启。**启动 / 安全项绝不出现在此 API**（`http-addr` / `database.*` / `auth.*` / `agent-token` / `git-export.*` 仍以文件 + env 为真源）。
 

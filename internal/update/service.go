@@ -39,9 +39,10 @@ type CheckResult struct {
 	CurrentVersion string  // 当前运行版本
 	LatestVersion  string  // 渠道最新 release 版本（tag）
 	HasUpdate      bool    // 是否有可用更新（远端严格高于当前）
+	IsDevBuild     bool    // 当前为 dev 构建（版本未知、不参与比较、不提示更新）
 	ReleaseNotes   string  // release 正文（FR-100 渲染）
 	ReleaseURL     string  // release 页面 URL
-	PublishedAt    string  // 预留：发布时间（本 FR 不取，FR-99 按需补）
+	PublishedAt    string  // 发布时间（RFC3339 字符串，原样透传，FR-99）
 }
 
 // Service 编排控制面在线更新（FR-97，见 ADR-0044）：查 Release → 下载 → SHA256 → 落位 pending → 请求重启。
@@ -134,8 +135,10 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 		CurrentVersion: s.currentVersion,
 		LatestVersion:  rel.TagName,
 		HasUpdate:      hasUpdate,
+		IsDevBuild:     strings.TrimSpace(s.currentVersion) == devVersion,
 		ReleaseNotes:   rel.Body,
 		ReleaseURL:     rel.HTMLURL,
+		PublishedAt:    rel.PublishedAt,
 	}
 	s.progress.setPhase(PhaseIdle, "")
 	s.writeAudit(model.ActionSystemUpdateCheck, rel.TagName, model.ResultOK,

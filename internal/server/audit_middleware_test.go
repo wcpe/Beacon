@@ -216,6 +216,14 @@ func TestAuditMiddlewareCreateFailureNotBlocking(t *testing.T) {
 // errFakeAudit 是测试用的假落库错误。
 var errFakeAudit = errFake("模拟审计落库失败")
 
+// TestUpdateApplyRouteCovered 守护 FR-99 边界：POST /admin/v1/system/update 在覆盖集合内，
+// 由更新核心自记 system.update-apply / system.update-failed 专项审计，兜底中间件不再补记（避免双记）。
+func TestUpdateApplyRouteCovered(t *testing.T) {
+	if _, ok := coveredWriteRoutes["POST /admin/v1/system/update"]; !ok {
+		t.Fatal("POST /admin/v1/system/update 应登记进 coveredWriteRoutes，避免与专项审计双记")
+	}
+}
+
 // errFake 是无外部依赖的简单错误类型。
 type errFake string
 

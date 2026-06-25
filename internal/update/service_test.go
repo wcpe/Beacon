@@ -268,6 +268,60 @@ func TestCheckForUpdateReportsNewer(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdatePopulatesPublishedAt 检查结果回填 release 发布时间（FR-99 端点透传）。
+func TestCheckForUpdatePopulatesPublishedAt(t *testing.T) {
+	const tag = "v2.0.0"
+	binName := currentAssetName(t, tag)
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
+		releases := []ghRelease{{
+			TagName:     tag,
+			Body:        "说明",
+			HTMLURL:     "https://example.invalid/r",
+			PublishedAt: "2026-06-20T08:00:00Z",
+			Assets:      []ghAsset{{Name: binName, URL: srv.URL + "/dl/bin"}},
+		}}
+		_ = json.NewEncoder(w).Encode(releases)
+	})
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if res.PublishedAt != "2026-06-20T08:00:00Z" {
+		t.Fatalf("应回填发布时间，实际 %q", res.PublishedAt)
+	}
+	if res.IsDevBuild {
+		t.Fatal("1.0.0 非 dev 构建，IsDevBuild 应为 false")
+	}
+}
+
+// TestCheckForUpdateDevBuildMarked dev 构建：标 IsDevBuild、不报有更新（不参与比较）。
+func TestCheckForUpdateDevBuildMarked(t *testing.T) {
+	const tag = "v2.0.0"
+	binName := currentAssetName(t, tag)
+	srv := newMockReleaseServer(t, tag, binName, "x", fmt.Sprintf("%s  %s\n", sha256hex("x"), binName))
+	svc := NewService(Config{
+		CurrentVersion: "dev", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if !res.IsDevBuild {
+		t.Fatal("dev 构建应标 IsDevBuild=true")
+	}
+	if res.HasUpdate {
+		t.Fatal("dev 构建不应报有更新")
+	}
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {
