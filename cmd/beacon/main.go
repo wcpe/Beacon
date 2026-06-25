@@ -19,6 +19,7 @@ import (
 	"github.com/wcpe/Beacon/internal/auth"
 	"github.com/wcpe/Beacon/internal/config"
 	"github.com/wcpe/Beacon/internal/embedweb"
+	"github.com/wcpe/Beacon/internal/exitcode"
 	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/handler"
 	"github.com/wcpe/Beacon/internal/metrics"
@@ -34,10 +35,24 @@ import (
 	"github.com/wcpe/Beacon/internal/version"
 )
 
+// errRequestUpdateRestart 是「请求 launcher 换二进制后重启」的出口哨兵（FR-96 退出码协议出口，见 ADR-0045）。
+// 实际触发更新（落位 pending 并返回本哨兵）在 FR-97 实现；本期仅把这条退出出口与退出码常量准备好，
+// 使 run 一旦返回它，main 即以 exitcode.RequestUpdateRestart 退出、由 launcher 据约定换二进制重启。
+var errRequestUpdateRestart = errors.New("请求更新重启")
+
 func main() {
-	if err := run(); err != nil {
+	// 退出码协议（FR-96，见 internal/exitcode 与 ADR-0045）：正常返回=0、请求更新重启=70、其余致命错误=崩溃码 1。
+	// launcher 据退出码决策不重启 / 换二进制后重启 / 崩溃重启。
+	err := run()
+	switch {
+	case err == nil:
+		os.Exit(exitcode.OK)
+	case errors.Is(err, errRequestUpdateRestart):
+		slog.Info("控制面请求更新重启，以约定退出码交还 launcher 换二进制", "退出码", exitcode.RequestUpdateRestart)
+		os.Exit(exitcode.RequestUpdateRestart)
+	default:
 		slog.Error("Beacon 启动失败", "错误", err)
-		os.Exit(1)
+		os.Exit(exitcode.Crash)
 	}
 }
 

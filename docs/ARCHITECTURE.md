@@ -240,6 +240,8 @@ docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+
 
 **配置加载（`internal/config`，FR-25）**：生效优先级 真实环境变量 > 当前目录 `.env` > `config.yml`（`-config` 指定）> 内置默认。`cmd/beacon` 启动时把内置模板 `config.yml`（默认 sqlite，零依赖可跑，经根包 `//go:embed` 内嵌）释放到当前目录，**释放时把模板里留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值**（文件 0600、口令不入日志；agent 共享令牌用固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界，与 agent 样例开箱匹配），**已存在则跳过、不覆盖**；随后读当前目录 `.env`（仅注入未设置的键、真实 env 优先），最后 `BEACON_*` 覆盖并校验。**不自动生成 `.env`**——凭据落在 `config.yml`（即真源），避免自动生成的 `.env` 因优先级更高而静默盖掉用户对 `config.yml` 的修改；`.env` 仅当运维手动放置时生效，用手写最小解析、不引第三方库。鉴权仍强制（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）——由 fail-fast 改为首启自助生成 `config.yml` 内的**强随机**凭据（非固定弱默认），使单二进制开箱即跑。
 
+**进程模型（launcher 监督，FR-96，[ADR-0045](adr/0045-builtin-launcher-supervisor.md)）**：发布新增独立第二二进制 `beacon-launcher[.exe]`（`cmd/beacon-launcher`，与主二进制同仓、同 `-ldflags` 注入版本）作常驻监督进程，使控制面无需外部 systemd / docker 即自动重启。launcher **极薄**（仅标准库 `os/exec` + `os`、不连 DB、不碰业务、无第三方依赖）：以子进程方式启动同目录 `beacon[.exe]`（透传 `-config` 等参数与环境变量、继承 stdout/stderr），按**退出码协议**（`internal/exitcode`，主进程与 launcher 共享常量）决策——`0` 正常退出则跟随退出、`1` 及信号退出（`128+signum`）按固定间隔重启 + 连续失败上限、`70` 请求更新重启则用主进程落位的 pending 新二进制原子换后重启（Windows 旧 exe rename 让位 → pending 就位 → 删旧；Linux rename 覆盖；换失败保留旧二进制回退重启）。端口**先退后起**（主进程 graceful shutdown 释放端口 → 退出 → launcher 重启新进程重新监听同端口），亚秒窗口由 agent fail-static 兜。**裸跑 `beacon` 仍完全可用**，只是退化为无自动重启 / 无自更新（需手动重启）；launcher 是可选监督外壳、非运行前提。本期 launcher **不自更新**（实际更新核心在 FR-97）。
+
 ## 10. 关键裁决与不做项
 
 **关键裁决**：自研而非用 Nacos · Go + 内嵌 React 单二进制 · MVP 去 Redis（REST 长轮询）· zone 由控制面 DB 权威指派 · agent 传输/序列化抽象层 · 长轮询"唤醒即重算" · 管理台设计系统用 shadcn-ui + Tailwind（ADR-0012）。每条的背景与理由见 [adr/](adr/)。
