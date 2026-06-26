@@ -27,6 +27,8 @@ vi.mock('@/api/client', () => ({
     cacheExpiresAt: '',
   }),
   listSettings: vi.fn().mockResolvedValue([]),
+  // 第二层页眉 PageHeader 在环境范围页（如 /servers）渲染 EnvSelector，其内部拉取环境列表（FR-105）
+  listNamespaces: vi.fn().mockResolvedValue([]),
 }))
 
 // 监听跳转：品牌区点击应跳可观测看板（/dashboard）
@@ -196,7 +198,8 @@ describe('Layout 侧栏导航分组常驻（FR-93 方案 A）', () => {
     // 当前在 /servers，概览组未命中，但其叶子「可观测看板」仍常驻可见（无折叠）
     renderLayout('/servers')
     expect(screen.getByText('可观测看板')).toBeInTheDocument()
-    expect(screen.getByText('服务器')).toBeInTheDocument()
+    // 「服务器」此时出现两处：侧栏导航叶子 + 第二层页眉的当前页标题（FR-105），故用 getAllByText 断言至少一处
+    expect(screen.getAllByText('服务器').length).toBeGreaterThan(0)
     // 不再使用 details/summary 折叠容器
     expect(document.querySelector('aside details')).toBeNull()
   })

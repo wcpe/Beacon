@@ -28,6 +28,7 @@ import {
 import { systemObservability, systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import AsyncSection from '@/components/AsyncSection'
+import { usePageHeader } from '@/components/PageHeader'
 import { CardGridSkeleton } from '@/components/skeletons'
 import { Skeleton } from '@/components/ui/skeleton'
 import GaugeRing from '@/components/dashboard/GaugeRing'
@@ -123,16 +124,15 @@ export default function SystemObservabilityPage() {
   const regDegraded = data?.registryByStatus.degraded ?? 0
   const regLevel: HealthLevel = data ? (regLost > 0 ? 'danger' : regDegraded > 0 ? 'warn' : 'ok') : 'muted'
 
+  // 页眉（FR-105）：标题 + 副标题，系统页非环境范围；刷新中提示并入副标题（短暂）
+  usePageHeader({
+    title: t('observability.title'),
+    subtitle: isFetching ? t('common.refreshing') : t('observability.subtitle'),
+    envScoped: false,
+  })
+
   return (
     <div className="space-y-4">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold">{t('observability.title')}</h1>
-        <div className="flex items-center gap-3">
-          <p className="text-sm text-muted-foreground">{t('observability.subtitle')}</p>
-          {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
-        </div>
-      </div>
-
       <AsyncSection
         isLoading={isLoading}
         isError={isError}

@@ -10,6 +10,7 @@ import type { ApiKeyCreated, ApiKeyView } from '../api/types'
 import { formatTime } from '../api/format'
 import { apiBaseFromLocation, buildApiKeyCurl } from '@/lib/curlCommand'
 import { useMessage } from '../components/useMessage'
+import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Badge } from '@/components/ui/badge'
@@ -183,63 +184,66 @@ export default function ApiKeysPage() {
     },
   ]
 
+  // 页眉（FR-105）：标题 + 新建密钥对话框整体移入主操作槽（createOpen 受控状态仍在本组件）
+  usePageHeader({
+    title: t('apikeys.title'),
+    envScoped: false,
+    actions: (
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogTrigger asChild>
+          <Button>{t('apikeys.createBtn')}</Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('apikeys.createTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('apikeys.createDesc')}
+            </DialogDescription>
+          </DialogHeader>
+          <form id="create-api-key" onSubmit={onCreate} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="k-name">{t('apikeys.colName')}</Label>
+              <Input
+                id="k-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('apikeys.namePlaceholder')}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t('common.role')}</Label>
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="readonly">{t('apikeys.roleReadonlyOpt')}</SelectItem>
+                  <SelectItem value="full">{t('apikeys.roleFullOpt')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="k-expires">{t('apikeys.expiresLabel')}</Label>
+              <Input
+                id="k-expires"
+                type="datetime-local"
+                value={expiresAt}
+                onChange={(e) => setExpiresAt(e.target.value)}
+              />
+            </div>
+          </form>
+          <DialogFooter>
+            <Button type="submit" form="create-api-key" disabled={createMut.isPending}>
+              {t('apikeys.createSubmit')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    ),
+  })
+
   return (
     <div className="space-y-6">
-      {/* 独立页页眉（ADR-0048 拍平回独立路由）：页标题 + 右对齐新建入口 */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('apikeys.title')}</h1>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>{t('apikeys.createBtn')}</Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>{t('apikeys.createTitle')}</DialogTitle>
-              <DialogDescription>
-                {t('apikeys.createDesc')}
-              </DialogDescription>
-            </DialogHeader>
-            <form id="create-api-key" onSubmit={onCreate} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="k-name">{t('apikeys.colName')}</Label>
-                <Input
-                  id="k-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={t('apikeys.namePlaceholder')}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>{t('common.role')}</Label>
-                <Select value={role} onValueChange={setRole}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="readonly">{t('apikeys.roleReadonlyOpt')}</SelectItem>
-                    <SelectItem value="full">{t('apikeys.roleFullOpt')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="k-expires">{t('apikeys.expiresLabel')}</Label>
-                <Input
-                  id="k-expires"
-                  type="datetime-local"
-                  value={expiresAt}
-                  onChange={(e) => setExpiresAt(e.target.value)}
-                />
-              </div>
-            </form>
-            <DialogFooter>
-              <Button type="submit" form="create-api-key" disabled={createMut.isPending}>
-                {t('apikeys.createSubmit')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-
       <Card>
         <CardContent>
           <AsyncSection isLoading={isLoading} isError={isError} error={error}>

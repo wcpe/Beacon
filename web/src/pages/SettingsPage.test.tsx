@@ -11,7 +11,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 import type { SettingView } from '../api/types'
@@ -91,11 +92,19 @@ const SETTINGS: SettingView[] = [
   },
 ]
 
+// 标题与「config.yml 提示」副标题已迁入第二层页眉 PageHeader（FR-105），故连同 PageHeader 在 /settings 路由下渲染。
 function renderPage(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/settings']}>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={['/settings']}>
+        <PageHeaderProvider>
+          <PageHeader />
+          <Routes>
+            <Route path="/settings" element={ui} />
+          </Routes>
+        </PageHeaderProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }

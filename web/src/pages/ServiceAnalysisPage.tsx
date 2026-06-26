@@ -14,6 +14,7 @@ import DayTrendChart from './service-analysis/DayTrendChart'
 import ActionRankChart from './service-analysis/ActionRankChart'
 import type { ActionRankItem } from './service-analysis/ActionRankChart'
 import AsyncSection from '@/components/AsyncSection'
+import { usePageHeader } from '@/components/PageHeader'
 import { CardGridSkeleton } from '@/components/skeletons'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Label } from '@/components/ui/label'
@@ -83,14 +84,15 @@ export default function ServiceAnalysisPage() {
 
   const isFetching = analyticsQuery.isFetching
 
+  // 页眉（FR-105）：标题 + 副标题，环境范围页；刷新中提示并入副标题（短暂）
+  usePageHeader({
+    title: t('serviceAnalysis.title'),
+    subtitle: isFetching ? t('common.refreshing') : t('serviceAnalysis.subtitle'),
+    envScoped: true,
+  })
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">{t('serviceAnalysis.title')}</h1>
-        {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
-      </div>
-      <p className="text-sm text-muted-foreground">{t('serviceAnalysis.subtitle')}</p>
-
       <Card>
         <CardContent>
           <div className="flex flex-wrap items-end justify-between gap-3">

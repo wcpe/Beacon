@@ -21,6 +21,7 @@ import type { AssignParams } from '../api/client'
 import { namespaceOptions } from '../api/format'
 import type { InstanceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
+import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -231,90 +232,94 @@ export default function ZonesPage() {
     })
   }
 
+  // 页眉（FR-105）：标题 + 新增 区 / 指派对话框整体移入主操作槽（assignOpen 受控状态仍在本组件）
+  usePageHeader({
+    title: t('zones.title'),
+    envScoped: true,
+    actions: (
+      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
+        <DialogTrigger asChild>
+          <Button>{t('zones.addAssign')}</Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('zones.addAssign')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {t('zones.assignDialogDesc')}
+          </p>
+          <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
+              {/* 严格选：指派目标须为已存在维度（不接受列表外值，FR-51 增强 FR-40） */}
+              <Combobox
+                id="a-namespace"
+                aria-label={t('common.namespace')}
+                value={form.namespace}
+                onChange={(v) => setForm({ ...form, namespace: v })}
+                options={nsOptions}
+                allowCustom={false}
+                placeholder={t('common.pleaseSelect')}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-serverid">serverId</Label>
+              {/* 仅列 bukkit 子服：BC 代理不可被指派进 zone（与后端校验一致，FR-8/FR-35） */}
+              <Combobox
+                id="a-serverid"
+                aria-label="serverId"
+                value={form.serverId}
+                onChange={(v) => setForm({ ...form, serverId: v })}
+                options={serverOptions}
+                allowCustom={false}
+                placeholder={t('common.pleaseSelect')}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-group">{t('common.group')}</Label>
+              <Combobox
+                id="a-group"
+                aria-label={t('common.group')}
+                value={form.group}
+                onChange={(v) => setForm({ ...form, group: v })}
+                options={groupOptions}
+                allowCustom={false}
+                placeholder={t('common.pleaseSelect')}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="a-zone">{t('common.zone')}</Label>
+              <Combobox
+                id="a-zone"
+                aria-label={t('common.zone')}
+                value={form.zone}
+                onChange={(v) => setForm({ ...form, zone: v })}
+                options={zoneOptions}
+                allowCustom={false}
+                placeholder={t('common.pleaseSelect')}
+              />
+            </div>
+            <div className="col-span-2 space-y-1.5">
+              <Label htmlFor="a-note">{t('zones.formNote')}</Label>
+              <Input
+                id="a-note"
+                value={form.note}
+                onChange={(e) => setForm({ ...form, note: e.target.value })}
+              />
+            </div>
+          </form>
+          <DialogFooter>
+            <Button type="submit" form="assign-zone" disabled={assignMut.isPending}>
+              {t('zones.assignBtn')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    ),
+  })
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('zones.title')}</h1>
-        <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
-          <DialogTrigger asChild>
-            <Button>{t('zones.addAssign')}</Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{t('zones.addAssign')}</DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              {t('zones.assignDialogDesc')}
-            </p>
-            <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
-                {/* 严格选：指派目标须为已存在维度（不接受列表外值，FR-51 增强 FR-40） */}
-                <Combobox
-                  id="a-namespace"
-                  aria-label={t('common.namespace')}
-                  value={form.namespace}
-                  onChange={(v) => setForm({ ...form, namespace: v })}
-                  options={nsOptions}
-                  allowCustom={false}
-                  placeholder={t('common.pleaseSelect')}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="a-serverid">serverId</Label>
-                {/* 仅列 bukkit 子服：BC 代理不可被指派进 zone（与后端校验一致，FR-8/FR-35） */}
-                <Combobox
-                  id="a-serverid"
-                  aria-label="serverId"
-                  value={form.serverId}
-                  onChange={(v) => setForm({ ...form, serverId: v })}
-                  options={serverOptions}
-                  allowCustom={false}
-                  placeholder={t('common.pleaseSelect')}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="a-group">{t('common.group')}</Label>
-                <Combobox
-                  id="a-group"
-                  aria-label={t('common.group')}
-                  value={form.group}
-                  onChange={(v) => setForm({ ...form, group: v })}
-                  options={groupOptions}
-                  allowCustom={false}
-                  placeholder={t('common.pleaseSelect')}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="a-zone">{t('common.zone')}</Label>
-                <Combobox
-                  id="a-zone"
-                  aria-label={t('common.zone')}
-                  value={form.zone}
-                  onChange={(v) => setForm({ ...form, zone: v })}
-                  options={zoneOptions}
-                  allowCustom={false}
-                  placeholder={t('common.pleaseSelect')}
-                />
-              </div>
-              <div className="col-span-2 space-y-1.5">
-                <Label htmlFor="a-note">{t('zones.formNote')}</Label>
-                <Input
-                  id="a-note"
-                  value={form.note}
-                  onChange={(e) => setForm({ ...form, note: e.target.value })}
-                />
-              </div>
-            </form>
-            <DialogFooter>
-              <Button type="submit" form="assign-zone" disabled={assignMut.isPending}>
-                {t('zones.assignBtn')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-
       <Card>
         <CardContent>
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">

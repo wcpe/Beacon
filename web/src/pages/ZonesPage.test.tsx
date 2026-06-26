@@ -6,11 +6,11 @@
 // ④ 页面文案显「区分配」（zone→区 i18n）；
 // ⑤ 指派表单：环境/serverId/大区/小区下拉来自 API、serverId 仅列 bukkit、缺选拦截、合法提交携值。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 import type { InstanceView } from '../api/types'
+import { renderWithPageHeader } from '../test/renderWithPageHeader'
 
 // mock 写操作反馈：spy showError/showSuccess，断言提示文案
 const showError = vi.fn()
@@ -84,9 +84,9 @@ const INSTANCES: InstanceView[] = [
   inst({ serverId: 'bc-1', role: 'bungee', group: 'gB', zone: null, assigned: false }),
 ]
 
+// 标题与「新增 区 / 指派」主操作已迁入第二层页眉 PageHeader（FR-105），故连同 PageHeader 在 /zones 路由下渲染。
 function renderPage(ui: ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return renderWithPageHeader(ui, { path: '/zones' })
 }
 
 beforeEach(() => {

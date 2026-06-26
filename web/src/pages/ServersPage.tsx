@@ -35,6 +35,7 @@ import {
 import StatusBadge from '../components/StatusBadge'
 import RoleBadge from '../components/RoleBadge'
 import { useMessage } from '../components/useMessage'
+import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
@@ -422,17 +423,17 @@ export default function ServersPage() {
     },
   ]
 
+  // 页眉（FR-105）：标题 + 刷新副标题，新服接入向导入口移入主操作槽（向导开关状态仍在本组件）
+  usePageHeader({
+    title: t('servers.title'),
+    envScoped: true,
+    subtitle: isFetching ? t('common.refreshing') : undefined,
+    // 新服接入引导向导入口（FR-85）；操作槽已右对齐，去掉原 ml-auto
+    actions: <Button onClick={() => setWizardOpen(true)}>{t('servers.wizardOpenBtn')}</Button>,
+  })
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">{t('servers.title')}</h1>
-        {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
-        {/* 新服接入引导向导入口（FR-85） */}
-        <Button className="ml-auto" onClick={() => setWizardOpen(true)}>
-          {t('servers.wizardOpenBtn')}
-        </Button>
-      </div>
-
       <Card>
         <CardContent className="space-y-3">
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">

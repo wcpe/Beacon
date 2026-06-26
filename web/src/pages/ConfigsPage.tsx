@@ -34,6 +34,7 @@ import {
 import type { CreateConfigParams } from '../api/client'
 import { namespaceOptions } from '../api/format'
 import { useMessage } from '../components/useMessage'
+import { usePageHeader } from '@/components/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -286,35 +287,40 @@ export default function ConfigsPage() {
 
   const versionNumbers = (revisions.data ?? []).map((r) => r.version)
 
+  // 页眉（FR-105）：标题 + 计数徽章移入计数槽，导入 / 反向抓取 / 新建配置移入主操作槽（受控逻辑仍在本组件）
+  usePageHeader({
+    title: t('configs.title'),
+    envScoped: true,
+    count: (
+      <Badge variant="outline" className="text-xs">
+        {t('configs.countBadge', { count: list.data?.length ?? 0 })}
+      </Badge>
+    ),
+    actions: (
+      <div className="flex items-center gap-2">
+        {/* 导入到组（FR-38）：把一份目录批量上传到某组的文件树（通道B 整文件覆盖） */}
+        <ImportFilesDialog namespaces={nsOptions} groups={groupOptions} />
+        {/* 反向抓取（FR-39）：从某在线实例读其真实 plugins 反向 ingest 为组 / 实例级覆盖 */}
+        <ReverseFetchDialog instances={instancesQuery.data ?? []} groups={groupOptions} />
+        <CreateConfigDialog
+          namespaces={nsOptions}
+          groups={groupOptions}
+          zones={zoneOptions}
+          instances={instancesQuery.data ?? []}
+          open={createOpen}
+          onOpenChange={(o) => {
+            setCreateOpen(o)
+            // 关闭即清预填，下次点「新建配置」从空白起（避免残留上次复制的内容）
+            if (!o) setCreateInitial(undefined)
+          }}
+          initial={createInitial}
+        />
+      </div>
+    ),
+  })
+
   return (
     <div className="flex flex-col h-full overflow-hidden gap-2">
-      {/* ===== 顶部工具栏 ===== */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('configs.title')}</h1>
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="text-xs">
-            {t('configs.countBadge', { count: list.data?.length ?? 0 })}
-          </Badge>
-          {/* 导入到组（FR-38）：把一份目录批量上传到某组的文件树（通道B 整文件覆盖） */}
-          <ImportFilesDialog namespaces={nsOptions} groups={groupOptions} />
-          {/* 反向抓取（FR-39）：从某在线实例读其真实 plugins 反向 ingest 为组 / 实例级覆盖 */}
-          <ReverseFetchDialog instances={instancesQuery.data ?? []} groups={groupOptions} />
-          <CreateConfigDialog
-            namespaces={nsOptions}
-            groups={groupOptions}
-            zones={zoneOptions}
-            instances={instancesQuery.data ?? []}
-            open={createOpen}
-            onOpenChange={(o) => {
-              setCreateOpen(o)
-              // 关闭即清预填，下次点「新建配置」从空白起（避免残留上次复制的内容）
-              if (!o) setCreateInitial(undefined)
-            }}
-            initial={createInitial}
-          />
-        </div>
-      </div>
-
       {/* ===== 主体 ===== */}
       <div className="flex flex-1 min-h-0 gap-2">
         {/* ===== 左侧面板（两段式） ===== */}

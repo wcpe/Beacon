@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
+import { usePageHeader } from '@/components/PageHeader'
 import { useMessage } from '@/components/useMessage'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
@@ -172,13 +173,15 @@ export default function VersionUpdatePage() {
     return t('updateModal.phaseStaging')
   }
 
+  // 页眉（FR-105）：标题 + 副标题，系统页非环境范围
+  usePageHeader({
+    title: t('versionUpdate.title'),
+    subtitle: t('versionUpdate.subtitle'),
+    envScoped: false,
+  })
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">{t('versionUpdate.title')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t('versionUpdate.subtitle')}</p>
-      </div>
-
       {/* ===== 版本信息 + 渠道选择 + 检查 / 更新 ===== */}
       <Card>
         <CardHeader>

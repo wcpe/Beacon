@@ -8,6 +8,7 @@ import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import SystemHeader from '@/components/SystemHeader'
+import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 import CommandPalette from '@/components/CommandPalette'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
 import { NAV_GROUPS } from '@/lib/navModel'
@@ -118,7 +119,9 @@ export default function Layout() {
           </Button>
         </div>
       </aside>
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      {/* 主内容列：PageHeaderProvider 包裹，使各页 usePageHeader 注入的第二层页眉配置对 PageHeader 生效（FR-105）。 */}
+      <PageHeaderProvider>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* 控制面连接中断横幅（FR-78）：仅断开时显示，恢复后自动消失；治控制面重部时 UI 静默掉线 */}
         {connectionStatus === 'offline' && (
           <div
@@ -132,6 +135,8 @@ export default function Layout() {
         {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上。
             搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
         <SystemHeader onOpenSearch={() => setPaletteOpen(true)} />
+        {/* 第二层「页面头带」PageHeader（FR-105）：紧随全局状态条之下，显当前页标题 + 环境槽（环境范围页）+ 主操作槽。 */}
+        <PageHeader />
         {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
             自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条。
             relative 必不可少：作为绝对定位后代（recharts 图表 / 状态瓷砖色条 / tooltip 等）的包含块，
@@ -142,7 +147,8 @@ export default function Layout() {
             <Outlet />
           </div>
         </main>
-      </div>
+        </div>
+      </PageHeaderProvider>
       {/* 全局命令面板（FR-83）：受 Layout 持有的开合态控制，Ctrl/Cmd+K 或页眉入口唤起 */}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>

@@ -13,6 +13,7 @@ import { getCommandAnalytics, listCommands, listNamespaces } from '../api/client
 import type { CommandFilter } from '../api/client'
 import type { CommandMetaView } from '../api/types'
 import { formatDuration, formatTime, namespaceOptions } from '../api/format'
+import { usePageHeader } from '@/components/PageHeader'
 import StatCard from './dashboard/StatCard'
 import CommandTrendChart from './command-observability/CommandTrendChart'
 import IconStat from '@/components/dashboard/IconStat'
@@ -203,14 +204,15 @@ export default function CommandObservabilityPage() {
     { header: t('commandObs.colOperator'), cell: (c) => c.operator || '-' },
   ]
 
+  // 第二层页眉：标题 + 刷新中副标题；本页为环境范围页
+  usePageHeader({
+    title: t('commandObs.title'),
+    subtitle: analyticsQuery.isFetching ? t('common.refreshing') : undefined,
+    envScoped: true,
+  })
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">{t('commandObs.title')}</h1>
-        {analyticsQuery.isFetching && (
-          <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>
-        )}
-      </div>
       <p className="text-sm text-muted-foreground">{t('commandObs.subtitle')}</p>
 
       {/* 环境 + 时间窗筛选条（作用于 KPI / 趋势 / 实时队列） */}

@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import { imprintStatus, listInstances, zoneSummary } from '../api/client'
 import type { AgentCommandView } from '../api/types'
-import { Badge } from '@/components/ui/badge'
+import { usePageHeader } from '@/components/PageHeader'
 import ImprintTrigger from './imprint/ImprintTrigger'
 import ImprintDiffPanel from './imprint/ImprintDiffPanel'
 
@@ -51,15 +51,15 @@ export default function ImprintPage() {
     [instancesQuery.data, command],
   )
 
+  // 第二层页眉：标题 + 计数徽章；本页为环境范围页
+  usePageHeader({
+    title: t('imprint.title'),
+    count: t('imprint.badge'),
+    envScoped: true,
+  })
+
   return (
     <div className="flex flex-col h-full overflow-hidden gap-2">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('imprint.title')}</h1>
-        <Badge variant="outline" className="text-xs">
-          {t('imprint.badge')}
-        </Badge>
-      </div>
-
       <ImprintTrigger
         instances={instancesQuery.data ?? []}
         onTriggered={(cmd) => setCommand(cmd)}

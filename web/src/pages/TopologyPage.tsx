@@ -10,6 +10,7 @@ import { getTopology, listNamespaces } from '../api/client'
 import { namespaceOptions } from '../api/format'
 import TopologyGraph from './topology/TopologyGraph'
 import AsyncSection from '@/components/AsyncSection'
+import { usePageHeader } from '@/components/PageHeader'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
@@ -44,13 +45,15 @@ export default function TopologyPage() {
   const bcCount = data?.nodes.filter((n) => n.role === 'bungee').length ?? 0
   const subCount = data?.nodes.filter((n) => n.role === 'bukkit').length ?? 0
 
+  // 第二层页眉：标题 + 刷新中副标题；本页为环境范围页
+  usePageHeader({
+    title: t('topology.title'),
+    subtitle: isFetching ? t('common.refreshing') : undefined,
+    envScoped: true,
+  })
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">{t('topology.title')}</h1>
-        {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
-      </div>
-
       <Card>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-end gap-3">

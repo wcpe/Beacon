@@ -12,6 +12,7 @@ import {
 } from '../api/client'
 import type { NamespaceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
+import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
@@ -128,48 +129,51 @@ export default function NamespacesPage() {
     },
   ]
 
+  // 页眉（FR-105）：标题 + 新建环境对话框整体移入主操作槽（createOpen 受控状态仍在本组件）
+  usePageHeader({
+    title: t('namespaces.title'),
+    envScoped: false,
+    actions: (
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogTrigger asChild>
+          <Button>{t('namespaces.createBtn')}</Button>
+        </DialogTrigger>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('namespaces.createTitle')}</DialogTitle>
+          </DialogHeader>
+          <form id="create-namespace" onSubmit={onCreate} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="n-code">{t('namespaces.colCode')}</Label>
+              <Input
+                id="n-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={t('namespaces.codePlaceholder')}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="n-name">{t('namespaces.colName')}</Label>
+              <Input
+                id="n-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={t('namespaces.namePlaceholder')}
+              />
+            </div>
+          </form>
+          <DialogFooter>
+            <Button type="submit" form="create-namespace" disabled={createMut.isPending}>
+              {t('namespaces.createSubmit')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    ),
+  })
+
   return (
     <div className="space-y-6">
-      {/* 独立页页眉（ADR-0048 拍平回独立路由）：页标题 + 右对齐新建入口 */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('namespaces.title')}</h1>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>{t('namespaces.createBtn')}</Button>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>{t('namespaces.createTitle')}</DialogTitle>
-            </DialogHeader>
-            <form id="create-namespace" onSubmit={onCreate} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="n-code">{t('namespaces.colCode')}</Label>
-                <Input
-                  id="n-code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder={t('namespaces.codePlaceholder')}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="n-name">{t('namespaces.colName')}</Label>
-                <Input
-                  id="n-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={t('namespaces.namePlaceholder')}
-                />
-              </div>
-            </form>
-            <DialogFooter>
-              <Button type="submit" form="create-namespace" disabled={createMut.isPending}>
-                {t('namespaces.createSubmit')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
-
       <Card>
         <CardContent>
           <AsyncSection isLoading={isLoading} isError={isError} error={error}>

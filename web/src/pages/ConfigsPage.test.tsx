@@ -2,10 +2,10 @@
 // 覆盖「渲染文件树 → 点击打开标签 → 切 Diff 视图 → 保存」核心交互。
 // Monaco 编辑器与 api/client 均被 mock，保证用例在 jsdom 下稳定可跑。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
+import { renderWithPageHeader } from '../test/renderWithPageHeader'
 
 // 用 textarea 替身渲染 Monaco：暴露 value/onChange，编辑态可输入、Diff 态只读。
 vi.mock('../components/CodeEditor', () => ({
@@ -61,9 +61,10 @@ const CONFIG = {
   content: 'k: v',
 }
 
+// 标题、计数徽章与导入/反向抓取/新建配置主操作（含 CreateConfigDialog）已迁入第二层页眉 PageHeader（FR-105），
+// 故连同 PageHeader 在 /configs 路由下渲染，「复制到实例」唤起的 CreateConfigDialog 方可出现。
 function renderPage(ui: ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return renderWithPageHeader(ui, { path: '/configs' })
 }
 
 beforeEach(() => {

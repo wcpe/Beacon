@@ -1,9 +1,9 @@
 // AuditsPage 过滤冒烟测试：验证「操作人」过滤输入存在，且点查询时把 operator 透传给 listAudits。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
+import { renderWithPageHeader } from '../test/renderWithPageHeader'
 
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
@@ -19,9 +19,9 @@ import { listAudits, listNamespaces, exportAudits } from '../api/client'
 
 const EMPTY_PAGE = { total: 0, items: [] }
 
+// 标题与导出主操作已迁入第二层页眉 PageHeader（FR-105），故连同 PageHeader 在 /audits 路由下渲染。
 function renderPage(ui: ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return renderWithPageHeader(ui, { path: '/audits' })
 }
 
 beforeEach(() => {

@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { SettingView } from '../api/types'
 import AsyncSection from '@/components/AsyncSection'
+import { usePageHeader } from '@/components/PageHeader'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
@@ -62,14 +63,15 @@ export default function SettingsPage() {
     return map
   }, [items])
 
+  // 页眉（FR-105）：标题 + 副标题（config.yml 说明），系统页非环境范围
+  usePageHeader({
+    title: t('settings.title'),
+    subtitle: t('settings.configYmlNotice'),
+    envScoped: false,
+  })
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="shrink-0 space-y-1">
-        <h1 className="text-xl font-semibold">{t('settings.title')}</h1>
-        {/* 启动 / 安全项在 config.yml 的说明：登录后不可见、此处不可改 */}
-        <p className="text-sm text-muted-foreground">{t('settings.configYmlNotice')}</p>
-      </div>
-
       <AsyncSection isLoading={isLoading} isError={isError} error={error}>
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('settings.empty')}</p>

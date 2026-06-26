@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 两层页眉框架 + 环境全局上下文（FR-105，管理台前端布局重设计批1 地基）：把原「全局状态条 + 各页自管 h1」统一为两层骨架——第一层 `SystemHeader` 全局状态条（连接 / 版本 / 运行）保持不变，新增第二层「页面头带」`web/src/components/PageHeader.tsx`（当前页标题 + 计数/副标题槽 + 环境槽 + 主操作槽，单一真源、`usePageHeader` 注入）；`namespace`(环境) 升为前端全局上下文 `web/src/state/environment.ts`（localStorage 持久化、跨页记住、刷新仍在、不调新后端端点），环境范围页页眉显 `EnvSelector`。全 17 个导航页接入、移除重复标题、主操作上提；`navModel` 加 `envScoped` 标记。不含列表页 A+E / 卡片降级 / 页内组织（FR-106/107/108）。
+
 ### 修复
 - 主内容区滚动逃逸为窗口级滚动（含图表页，命令观测最先暴露）：`web/src/components/Layout.tsx` 的 `<main>`（`overflow-y-auto` 滚动容器）为 `position: static`，其绝对定位后代（recharts 图表内部容器 / 状态瓷砖色条 / tooltip 等）锚定到**初始包含块（视口）**而非 `main`，撑大整个文档高度，导致滚动时**侧栏、页眉连同内容一起的整窗口滚动 + 窗口级滚动条**（浏览器实测文档溢出约 50px）。给 `<main>` 加 `relative` 使其成为这些后代的定位包含块，滚动重新被约束在 `main` 内（侧栏 / 页眉冻结）。全局生效，可观测看板等含图表页同受益；Layout 单测补 `main` 须含 `relative` 的结构护栏。
 - 健康状态标签中文化（可观测看板图例 / 状态墙瓷砖 / 状态徽标）：`web/src/i18n/locales/zh-CN.ts` 中两处状态标签 i18n **值本身写成英文**——`dashboard.healthOnline/Degraded/Lost/Offline`（看板「集群状态总览条」图例，显示 `online 0 / degraded 0 / lost 0 / offline 0`）与顶层 `status.{online,lost,offline}`（被 `StatusTile` / `StatusBadge` 消费，且**缺 `degraded` 键**导致状态墙瓷砖回退英文原值）。改为中文（在线 / 亚健康 / 失联 / 离线）并补全 `status.degraded`。原 DashboardPage / StatusBadge 单测曾断言英文文案、把缺陷固化，一并改为断言中文并新增 StatusTile 中文状态文案用例。

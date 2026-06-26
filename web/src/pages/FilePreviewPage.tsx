@@ -8,8 +8,8 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 
 import { effectiveFiles, listInstances } from '../api/client'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { usePageHeader } from '@/components/PageHeader'
 import FileEffectivePreview from './filepreview/FileEffectivePreview'
 import FileFullPreview from './filepreview/FileFullPreview'
 
@@ -38,14 +38,15 @@ export default function FilePreviewPage() {
     enabled: !!(target.serverId || target.group),
   })
 
+  // 第二层页眉：标题 + 计数徽章；本页为环境范围页
+  usePageHeader({
+    title: t('filePreview.title'),
+    count: t('filePreview.badge'),
+    envScoped: true,
+  })
+
   return (
     <div className="flex flex-col h-full overflow-hidden gap-2">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('filePreview.title')}</h1>
-        <Badge variant="outline" className="text-xs">
-          {t('filePreview.badge')}
-        </Badge>
-      </div>
       {/* 模式切换：有效树 / 全量含未追踪 */}
       <div className="flex items-center gap-1.5">
         <Button

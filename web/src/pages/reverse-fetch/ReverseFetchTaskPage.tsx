@@ -15,6 +15,7 @@ import {
 } from '../../api/client'
 import type { ReverseFetchScope, ReverseFetchTaskView } from '../../api/types'
 import { Badge } from '@/components/ui/badge'
+import { usePageHeader } from '@/components/PageHeader'
 import ReverseFetchTaskTrigger from './ReverseFetchTaskTrigger'
 import ReverseFetchTaskList, { TaskStatusBadge } from './ReverseFetchTaskList'
 import ReverseFetchReviewPanel from './ReverseFetchReviewPanel'
@@ -80,15 +81,15 @@ export default function ReverseFetchTaskPage() {
   })
   const task = taskQuery.data
 
+  // 第二层页眉：标题 + 计数徽章；本页为环境范围页
+  usePageHeader({
+    title: t('reverseFetchTask.title'),
+    count: t('reverseFetchTask.badge'),
+    envScoped: true,
+  })
+
   return (
     <div className="flex flex-col h-full overflow-hidden gap-3">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('reverseFetchTask.title')}</h1>
-        <Badge variant="outline" className="text-xs">
-          {t('reverseFetchTask.badge')}
-        </Badge>
-      </div>
-
       {/* 建扫描任务 */}
       <ReverseFetchTaskTrigger
         instances={instancesQuery.data ?? []}

@@ -31,6 +31,7 @@ import { listInstances, listNamespaces, metricsSummary, metricsTrend } from '../
 import type { TrendWindow } from '../api/client'
 import { formatBytes, namespaceOptions } from '../api/format'
 import TrendChart from './dashboard/TrendChart'
+import { usePageHeader } from '@/components/PageHeader'
 import IconStat from '@/components/dashboard/IconStat'
 import StatusTile from '@/components/dashboard/StatusTile'
 import HealthBar, { type HealthSegment } from '@/components/dashboard/HealthBar'
@@ -139,14 +140,18 @@ export default function DashboardPage() {
   const bcLatencyAvailable = (bc?.avgBackendLatencyMs ?? -1) >= 0
   const bcReachText = bc && bc.backendTotal > 0 ? `${bc.backendUp} / ${bc.backendTotal}` : t('dashboard.bcNoBackend')
 
+  // 页眉（FR-105）：标题 + 刷新副标题移入全局页头带。
+  // 注：本页内部环境筛选暂仍留页内（不迁全局环境槽），故 actions 留空、下方控件行原样保留。
+  usePageHeader({
+    title: t('dashboard.title'),
+    envScoped: true,
+    subtitle: isFetching ? t('common.refreshing') : undefined,
+  })
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold">{t('dashboard.title')}</h1>
-          {isFetching && <span className="text-sm text-muted-foreground">{t('common.refreshing')}</span>}
-        </div>
-        {/* 环境筛选：移到页眉右侧，紧凑不占整卡。可编辑下拉（FR-51）；留空聚合全部、可一键清空（FR-63）。 */}
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {/* 环境筛选：紧凑不占整卡。可编辑下拉（FR-51）；留空聚合全部、可一键清空（FR-63）。 */}
         <div className="flex items-center gap-2">
           <Label htmlFor="d-namespace" className="text-sm text-muted-foreground">
             {t('common.namespace')}

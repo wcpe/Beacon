@@ -8,6 +8,7 @@ import type { AuditExportFormat, AuditFilter } from '../api/client'
 import type { AuditView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
 import { useMessage } from '@/components/useMessage'
+import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
@@ -127,21 +128,25 @@ export default function AuditsPage() {
     },
   ]
 
+  // 页眉（FR-105）：标题 + 导出按钮组移入主操作槽（导出逻辑仍在本组件）
+  usePageHeader({
+    title: t('audit.title'),
+    envScoped: true,
+    // 导出按钮：按当前已生效过滤条件全量下载（FR-84）
+    actions: (
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('csv')}>
+          {t('audit.exportCsv')}
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('json')}>
+          {t('audit.exportJson')}
+        </Button>
+      </div>
+    ),
+  })
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('audit.title')}</h1>
-        {/* 导出按钮：按当前已生效过滤条件全量下载（FR-84） */}
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('csv')}>
-            {t('audit.exportCsv')}
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('json')}>
-            {t('audit.exportJson')}
-          </Button>
-        </div>
-      </div>
-
       <Card>
         <CardContent>
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">

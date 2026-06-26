@@ -8,10 +8,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 import type { SettingView, UpdateCheckView } from '@/api/types'
+import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 
 const showError = vi.fn()
 const showSuccess = vi.fn()
@@ -76,11 +77,19 @@ const UPDATE_HAS: UpdateCheckView = {
   publishedAt: '2026-06-25T08:00:00Z',
 }
 
+// 标题与副标题已迁入第二层页眉 PageHeader（FR-105），故连同 PageHeader 在 /system/version 路由下渲染。
 function renderPage(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={['/system/version']}>
+        <PageHeaderProvider>
+          <PageHeader />
+          <Routes>
+            <Route path="/system/version" element={ui} />
+          </Routes>
+        </PageHeaderProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }

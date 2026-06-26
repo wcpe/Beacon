@@ -44,6 +44,14 @@ export const zhCN = {
     systemObservability: '控制面健康',
   },
 
+  // ===== 两层页眉 / 全局环境上下文（FR-105）=====
+  pageHeader: {
+    // 环境选择器的「全部环境」选项（值为空串，表示聚合 / 未选）
+    allEnvironments: '全部环境',
+    // 全局环境选择器无障碍标签：用「全局环境」与各页内部「环境」筛选区分，避免同名歧义
+    envSelectorLabel: '全局环境',
+  },
+
   // ===== 全局命令面板（FR-83）=====
   commandPalette: {
     // 浮层无障碍标题（视觉隐藏）

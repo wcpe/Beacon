@@ -9,6 +9,7 @@ import type { AlertEventFilter } from '../api/client'
 import type { AlertEventView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
 import AsyncSection from '@/components/AsyncSection'
+import { usePageHeader } from '@/components/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -77,6 +78,13 @@ export default function AlertEventsPage() {
   // 详情 Dialog 选中条目（null 表示关闭）
   const [selected, setSelected] = useState<AlertEventView | null>(null)
 
+  // 页眉（FR-105）：标题 + 副标题，环境范围页
+  usePageHeader({
+    title: t('alertEvent.title'),
+    subtitle: t('alertEvent.subtitle'),
+    envScoped: true,
+  })
+
   const { data, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ['alert-events', filter],
     queryFn: () => listAlertEvents(filter),
@@ -110,11 +118,6 @@ export default function AlertEventsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">{t('alertEvent.title')}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{t('alertEvent.subtitle')}</p>
-      </div>
-
       <Card>
         <CardContent>
           <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">

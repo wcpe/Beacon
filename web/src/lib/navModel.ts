@@ -29,6 +29,8 @@ export interface NavLeaf {
   labelKey: string
   // 叶子前缀图标（lucide-react），由 Layout 以 size-4 渲染
   icon: LucideIcon
+  // 是否环境范围页（FR-105）：true 时第二层页眉右侧渲染环境选择器；页可经 usePageHeader 覆盖。
+  envScoped?: boolean
 }
 
 // 导航分组：组 id（稳定标识）+ 组标题 i18n 键 + 组内叶子。
@@ -47,35 +49,39 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     id: 'overview',
     labelKey: 'nav.groupOverview',
-    leaves: [{ to: '/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard }],
+    // 环境范围页（FR-105）：看板按环境聚合，标 envScoped 在第二层页眉渲染环境选择器。
+    leaves: [{ to: '/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, envScoped: true }],
   },
   {
     id: 'config',
     labelKey: 'nav.groupConfig',
+    // 配置管理 4 页均按环境组织，标 envScoped（FR-105）。
     leaves: [
-      { to: '/configs', labelKey: 'nav.configs', icon: SlidersHorizontal },
-      { to: '/file-preview', labelKey: 'nav.filePreview', icon: FolderTree },
-      { to: '/imprint', labelKey: 'nav.imprint', icon: Stamp },
-      { to: '/reverse-fetch', labelKey: 'nav.reverseFetchTask', icon: DownloadCloud },
+      { to: '/configs', labelKey: 'nav.configs', icon: SlidersHorizontal, envScoped: true },
+      { to: '/file-preview', labelKey: 'nav.filePreview', icon: FolderTree, envScoped: true },
+      { to: '/imprint', labelKey: 'nav.imprint', icon: Stamp, envScoped: true },
+      { to: '/reverse-fetch', labelKey: 'nav.reverseFetchTask', icon: DownloadCloud, envScoped: true },
     ],
   },
   {
     id: 'cluster',
     labelKey: 'nav.groupCluster',
+    // 集群 3 页均按环境组织，标 envScoped（FR-105）。
     leaves: [
-      { to: '/servers', labelKey: 'nav.servers', icon: Server },
-      { to: '/topology', labelKey: 'nav.topology', icon: Network },
-      { to: '/zones', labelKey: 'nav.zones', icon: MapPin },
+      { to: '/servers', labelKey: 'nav.servers', icon: Server, envScoped: true },
+      { to: '/topology', labelKey: 'nav.topology', icon: Network, envScoped: true },
+      { to: '/zones', labelKey: 'nav.zones', icon: MapPin, envScoped: true },
     ],
   },
   {
     id: 'observability',
     labelKey: 'nav.groupObservability',
+    // 可观测 4 页均按环境组织，标 envScoped（FR-105）。
     leaves: [
-      { to: '/service-analysis', labelKey: 'nav.serviceAnalysis', icon: ChartLine },
-      { to: '/commands', labelKey: 'nav.commandObservability', icon: Terminal },
-      { to: '/audits', labelKey: 'nav.audits', icon: ScrollText },
-      { to: '/alert-events', labelKey: 'nav.alertEvents', icon: Bell },
+      { to: '/service-analysis', labelKey: 'nav.serviceAnalysis', icon: ChartLine, envScoped: true },
+      { to: '/commands', labelKey: 'nav.commandObservability', icon: Terminal, envScoped: true },
+      { to: '/audits', labelKey: 'nav.audits', icon: ScrollText, envScoped: true },
+      { to: '/alert-events', labelKey: 'nav.alertEvents', icon: Bell, envScoped: true },
     ],
   },
   {

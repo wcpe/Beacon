@@ -3,9 +3,9 @@
 // → 长轮询四通道逐项 → 注册表总数 + 按状态逐项（含 0 计数状态）→ 命令队列按状态逐项
 // → maxOpenConnections=0 显无限 ∞」。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { screen, within } from '@testing-library/react'
 import type { ReactElement } from 'react'
+import { renderWithPageHeader } from '../test/renderWithPageHeader'
 
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
@@ -44,9 +44,9 @@ const STATUS: SystemStatusView = {
   cpuPercent: 8.6,
 }
 
+// 页标题已迁入第二层页眉 PageHeader（FR-105），故连同 PageHeader 在 /system 路由下渲染。
 function renderPage(ui: ReactElement) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return renderWithPageHeader(ui, { path: '/system' })
 }
 
 // 定位某分区卡片（按分区标题文本上溯到卡片容器）。
