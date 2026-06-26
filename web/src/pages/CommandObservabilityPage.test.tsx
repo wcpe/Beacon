@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
@@ -85,9 +86,23 @@ function routeListCommands(filter: { status?: string }): Promise<CommandPage> {
   return Promise.resolve({ total: 1, items: [HISTORY_DONE] })
 }
 
-function renderPage(ui: ReactElement) {
+// 页内视图（FR-108）由 URL ?view= 驱动，故连同 MemoryRouter 渲染；initialView 设初始视图。
+function renderPage(ui: ReactElement, initialView: 'live' | 'history' | 'analytics' = 'live') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[`/commands?view=${initialView}`]}>
+        <Routes>
+          <Route path="/commands" element={ui} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+// 切到某视图 tab（实时 / 历史 / 分析）。
+async function switchView(label: string): Promise<void> {
+  await userEvent.click(await screen.findByRole('tab', { name: label }))
 }
 
 beforeEach(() => {
@@ -97,8 +112,15 @@ beforeEach(() => {
 })
 
 describe('CommandObservabilityPage', () => {
-  it('渲染 KPI：总数 + 按状态计数', async () => {
+  it('默认实时视图（tab 高亮实时，列出实时队列）', async () => {
     renderPage(<CommandObservabilityPage />)
+    expect(await screen.findByRole('tab', { name: '实时', selected: true })).toBeInTheDocument()
+    // 实时视图列出队列命令
+    expect(await screen.findByText('101')).toBeInTheDocument()
+  })
+
+  it('渲染 KPI：总数 + 按状态计数（分析视图）', async () => {
+    renderPage(<CommandObservabilityPage />, 'analytics')
     expect(await screen.findByText('命令总数')).toBeInTheDocument()
     expect(screen.getByText('42')).toBeInTheDocument()
     // 按状态 IconStat 标签（中文）就位
@@ -109,7 +131,7 @@ describe('CommandObservabilityPage', () => {
   })
 
   it('实时队列只列 pending+fetched 逐条，含已等时长列', async () => {
-    renderPage(<CommandObservabilityPage />)
+    renderPage(<CommandObservabilityPage />, 'live')
     // 队列两条命令 ID 渲染
     expect(await screen.findByText('101')).toBeInTheDocument()
     expect(screen.getByText('102')).toBeInTheDocument()
@@ -123,15 +145,15 @@ describe('CommandObservabilityPage', () => {
     })
   })
 
-  it('命令量趋势点数与下发数喂入图表', async () => {
-    renderPage(<CommandObservabilityPage />)
+  it('命令量趋势点数与下发数喂入图表（分析视图）', async () => {
+    renderPage(<CommandObservabilityPage />, 'analytics')
     const trend = await screen.findByTestId('cmd-trend')
     expect(trend.getAttribute('data-count')).toBe('2')
     expect(JSON.parse(trend.getAttribute('data-issued') ?? '[]')).toEqual([5, 8])
   })
 
-  it('历史查询：选类型重查带 type 过滤', async () => {
-    renderPage(<CommandObservabilityPage />)
+  it('历史查询：选类型重查带 type 过滤（历史视图）', async () => {
+    renderPage(<CommandObservabilityPage />, 'history')
     // 等历史首查完成
     await screen.findByText('ingest 3 files')
     // 打开类型下拉选「取日志」
@@ -166,16 +188,34 @@ describe('CommandObservabilityPage', () => {
         ? Promise.resolve(emptyPage())
         : Promise.resolve({ total: 1, items: [HISTORY_DONE] }),
     )
-    renderPage(<CommandObservabilityPage />)
+    renderPage(<CommandObservabilityPage />, 'live')
     expect(await screen.findByText('当前无待拉取 / 执行中命令')).toBeInTheDocument()
   })
 
-  it('按服务器分布渲染 top 列表', async () => {
-    renderPage(<CommandObservabilityPage />)
-    // 区块标题与服务器项就位（lobby-2 在队列表与按服务器列表都出现，故 getAllByText）
+  it('按服务器分布渲染 top 列表（分析视图）', async () => {
+    renderPage(<CommandObservabilityPage />, 'analytics')
+    // 区块标题与服务器项就位
     expect(await screen.findByText('按服务器分布')).toBeInTheDocument()
     expect(screen.getAllByText('lobby-2').length).toBeGreaterThan(0)
     // lobby-2 计数 22 渲染（唯一）
     expect(screen.getByText('22')).toBeInTheDocument()
+  })
+
+  it('切视图 tab 不跳路由：实时→历史切换后展示历史区块', async () => {
+    renderPage(<CommandObservabilityPage />, 'live')
+    // 实时视图：队列在
+    expect(await screen.findByText('101')).toBeInTheDocument()
+    // 切到历史视图
+    await switchView('历史')
+    // 历史区块出现（历史查询表单 + 结果）
+    expect(await screen.findByText('ingest 3 files')).toBeInTheDocument()
+    // 实时队列已不在当前视图
+    expect(screen.queryByText('101')).toBeNull()
+  })
+
+  it('深链 ?view=history 直接进历史视图', async () => {
+    renderPage(<CommandObservabilityPage />, 'history')
+    expect(await screen.findByRole('tab', { name: '历史', selected: true })).toBeInTheDocument()
+    expect(await screen.findByText('ingest 3 files')).toBeInTheDocument()
   })
 })

@@ -29,10 +29,11 @@ import { systemObservability, systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
+import AnchorRailLayout, { AnchorSectionBlock, type AnchorSection } from '@/components/AnchorRailLayout'
 import { CardGridSkeleton } from '@/components/skeletons'
 import { Skeleton } from '@/components/ui/skeleton'
 import GaugeRing from '@/components/dashboard/GaugeRing'
-import { countLevel, levelText, ratioLevel, statusLevel, type HealthLevel } from '@/components/dashboard/health'
+import { countLevel, levelSolid, levelText, ratioLevel, statusLevel, type HealthLevel } from '@/components/dashboard/health'
 import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
@@ -59,6 +60,18 @@ const COMMAND_ICON: Record<(typeof COMMAND_ORDER)[number], React.ReactNode> = {
   done: <CircleCheck className="size-4" />,
   failed: <CircleX className="size-4" />,
   expired: <AlarmClock className="size-4" />,
+}
+
+// 锚点分区 id（FR-108）：与 rail 项一一对应，作为 scroll-spy 与平滑滚动目标。
+const SECTION_RUNTIME = 'runtime'
+const SECTION_DB = 'db'
+const SECTION_LONGPOLL = 'longpoll'
+const SECTION_REGISTRY = 'registry'
+const SECTION_COMMAND = 'command'
+
+// rail 项的状态色点：按分区健康等级取实心色圆点（一眼看哪个分区吃紧）。
+function RailDot({ level }: { level: HealthLevel }) {
+  return <span aria-hidden className={cn('size-2 rounded-full', levelSolid(level))} />
 }
 
 // 详细明细一行：图标 + 标签 + 值 + 说明（说明可选）。值用等宽数字便于纵向对齐；可按等级给值上色。
@@ -123,6 +136,17 @@ export default function SystemObservabilityPage() {
   const regLost = (data?.registryByStatus.lost ?? 0) + (data?.registryByStatus.offline ?? 0)
   const regDegraded = data?.registryByStatus.degraded ?? 0
   const regLevel: HealthLevel = data ? (regLost > 0 ? 'danger' : regDegraded > 0 ? 'warn' : 'ok') : 'muted'
+  // 进程运行时分区无聚合阈值，进程在跑即正常（数据缺失时中性）。
+  const runtimeLevel: HealthLevel = data ? 'ok' : 'muted'
+
+  // 锚点 rail 分区（FR-108）：5 分区带状态色点，与下方 AnchorSectionBlock 的 id 一一对应。
+  const railSections: AnchorSection[] = [
+    { id: SECTION_RUNTIME, label: t('observability.runtimeTitle'), dot: <RailDot level={runtimeLevel} /> },
+    { id: SECTION_DB, label: t('observability.dbPoolTitle'), dot: <RailDot level={dbLevel} /> },
+    { id: SECTION_LONGPOLL, label: t('observability.longpollTitle'), dot: <RailDot level={longpollLevel} /> },
+    { id: SECTION_REGISTRY, label: t('observability.registryTitle'), dot: <RailDot level={regLevel} /> },
+    { id: SECTION_COMMAND, label: t('observability.commandTitle'), dot: <RailDot level={cmdLevel} /> },
+  ]
 
   // 页眉（FR-105）：标题 + 副标题，系统页非环境范围；刷新中提示并入副标题（短暂）
   usePageHeader({
@@ -191,14 +215,11 @@ export default function SystemObservabilityPage() {
               </CardContent>
             </Card>
 
-            {/* ===== 详细明细卡（带图标 + 阈值上色） ===== */}
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {/* ===== 详细明细（FR-108）：左 sticky 锚点 rail + scroll-spy，明细卡降级为「分区标题 + 细线」密网格 ===== */}
+            <AnchorRailLayout sections={railSections} ariaLabel={t('observability.railAria')}>
               {/* 进程运行时：版本 / 运行时长 / 采样器 / Go 运行时资源 / 进程 CPU（由 FR-33 页眉精简迁入） */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">{t('observability.runtimeTitle')}</CardTitle>
-                </CardHeader>
-                <CardContent className="divide-y py-0">
+              <AnchorSectionBlock id={SECTION_RUNTIME} title={t('observability.runtimeTitle')}>
+                <div className="divide-y">
                   <MetricRow
                     icon={<Tag className="size-4" />}
                     label={t('observability.runtimeVersion')}
@@ -247,15 +268,12 @@ export default function SystemObservabilityPage() {
                     }
                     hint={t('observability.runtimeCpuHint')}
                   />
-                </CardContent>
-              </Card>
+                </div>
+              </AnchorSectionBlock>
 
               {/* 数据库连接池：逐项明细（等待次数 > 0 标注意） */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">{t('observability.dbPoolTitle')}</CardTitle>
-                </CardHeader>
-                <CardContent className="divide-y py-0">
+              <AnchorSectionBlock id={SECTION_DB} title={t('observability.dbPoolTitle')}>
+                <div className="divide-y">
                   <MetricRow
                     icon={<Plug className="size-4" />}
                     label={t('observability.dbOpen')}
@@ -296,15 +314,12 @@ export default function SystemObservabilityPage() {
                     hint={t('observability.dbWaitDurationHint')}
                     level={countLevel(data.dbPool.waitDurationMs)}
                   />
-                </CardContent>
-              </Card>
+                </div>
+              </AnchorSectionBlock>
 
               {/* 长轮询挂起：四通道逐项明细 */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">{t('observability.longpollTitle')}</CardTitle>
-                </CardHeader>
-                <CardContent className="divide-y py-0">
+              <AnchorSectionBlock id={SECTION_LONGPOLL} title={t('observability.longpollTitle')}>
+                <div className="divide-y">
                   <MetricRow
                     icon={<Hourglass className="size-4" />}
                     label={t('observability.longpollTotal')}
@@ -315,15 +330,12 @@ export default function SystemObservabilityPage() {
                   <MetricRow icon={<HardDrive className="size-4" />} label={t('observability.longpollFile')} value={data.longpoll.file} />
                   <MetricRow icon={<Layers className="size-4" />} label={t('observability.longpollTopology')} value={data.longpoll.topology} />
                   <MetricRow icon={<Send className="size-4" />} label={t('observability.longpollCommand')} value={data.longpoll.command} />
-                </CardContent>
-              </Card>
+                </div>
+              </AnchorSectionBlock>
 
               {/* 注册表规模：总数 + 按健康状态逐项（失联 / 离线 > 0 标危险） */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">{t('observability.registryTitle')}</CardTitle>
-                </CardHeader>
-                <CardContent className="divide-y py-0">
+              <AnchorSectionBlock id={SECTION_REGISTRY} title={t('observability.registryTitle')}>
+                <div className="divide-y">
                   <MetricRow
                     icon={<Layers className="size-4" />}
                     label={t('observability.registryTotal')}
@@ -344,15 +356,12 @@ export default function SystemObservabilityPage() {
                       />
                     )
                   })}
-                </CardContent>
-              </Card>
+                </div>
+              </AnchorSectionBlock>
 
               {/* 命令队列深度：按状态逐项明细（失败 / 过期 > 0 标危险） */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">{t('observability.commandTitle')}</CardTitle>
-                </CardHeader>
-                <CardContent className="divide-y py-0">
+              <AnchorSectionBlock id={SECTION_COMMAND} title={t('observability.commandTitle')}>
+                <div className="divide-y">
                   {COMMAND_ORDER.map((s) => {
                     const count = data.commandByStatus[s] ?? 0
                     // 失败 / 过期有计数标危险；其余正常（不刻意上色）。
@@ -369,9 +378,9 @@ export default function SystemObservabilityPage() {
                       />
                     )
                   })}
-                </CardContent>
-              </Card>
-            </div>
+                </div>
+              </AnchorSectionBlock>
+            </AnchorRailLayout>
           </div>
         )}
       </AsyncSection>

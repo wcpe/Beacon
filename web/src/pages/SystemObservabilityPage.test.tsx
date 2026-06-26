@@ -49,12 +49,12 @@ function renderPage(ui: ReactElement) {
   return renderWithPageHeader(ui, { path: '/system' })
 }
 
-// 定位某分区卡片（按分区标题文本上溯到卡片容器）。
+// 定位某分区（FR-108 卡片降级为 AnchorSectionBlock：分区标题为 h2，上溯到 <section> 容器）。
 function sectionOf(title: string): HTMLElement {
-  const heading = screen.getByText(title)
-  const card = heading.closest('[data-slot="card"]')
-  if (!card) throw new Error(`找不到分区卡片：${title}`)
-  return card as HTMLElement
+  const heading = screen.getByRole('heading', { name: title })
+  const section = heading.closest('section')
+  if (!section) throw new Error(`找不到分区：${title}`)
+  return section as HTMLElement
 }
 
 beforeEach(() => {
@@ -66,16 +66,19 @@ describe('SystemObservabilityPage（FR-82）', () => {
   it('渲染页标题与各分区标题（含进程运行时卡）', async () => {
     renderPage(<SystemObservabilityPage />)
     expect(await screen.findByRole('heading', { name: '控制面健康' })).toBeInTheDocument()
-    expect(screen.getByText('进程运行时')).toBeInTheDocument()
-    expect(screen.getByText('数据库连接池')).toBeInTheDocument()
-    expect(screen.getByText('长轮询挂起')).toBeInTheDocument()
-    expect(screen.getByText('注册表规模')).toBeInTheDocument()
-    expect(screen.getByText('命令队列深度')).toBeInTheDocument()
+    // 分区标题为 h2（rail 同名为按钮，故用 heading 角色精确定位）
+    expect(screen.getByRole('heading', { name: '进程运行时' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '数据库连接池' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '长轮询挂起' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '注册表规模' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '命令队列深度' })).toBeInTheDocument()
+    // 锚点 rail 就位（5 分区锚点导航）
+    expect(screen.getByRole('navigation', { name: '控制面健康分区导航' })).toBeInTheDocument()
   })
 
   it('进程运行时卡逐项明细就位（版本 / 运行时长 / 采样器 / goroutine / 堆 / CPU%）', async () => {
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('进程运行时')
+    await screen.findByRole('heading', { name: '进程运行时' })
     const card = sectionOf('进程运行时')
     // 版本
     expect(within(card).getByText('v0.9.9')).toBeInTheDocument()
@@ -94,14 +97,14 @@ describe('SystemObservabilityPage（FR-82）', () => {
   it('进程运行时卡 CPU 不可用时降级显「不可用」', async () => {
     vi.mocked(systemStatus).mockResolvedValue({ ...STATUS, cpuAvailable: false, cpuPercent: 0 })
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('进程运行时')
+    await screen.findByRole('heading', { name: '进程运行时' })
     const card = sectionOf('进程运行时')
     expect(within(card).getByText('不可用')).toBeInTheDocument()
   })
 
   it('DB 连接池逐项明细就位（已建 / 上限 / 使用中 / 空闲 / 累计等待 / 等待时长）', async () => {
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('数据库连接池')
+    await screen.findByRole('heading', { name: '数据库连接池' })
     const card = sectionOf('数据库连接池')
     expect(within(card).getByText('已建连接')).toBeInTheDocument()
     expect(within(card).getByText('5')).toBeInTheDocument()
@@ -118,7 +121,7 @@ describe('SystemObservabilityPage（FR-82）', () => {
 
   it('长轮询四通道逐项 + 合计', async () => {
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('长轮询挂起')
+    await screen.findByRole('heading', { name: '长轮询挂起' })
     const card = sectionOf('长轮询挂起')
     expect(within(card).getByText('挂起合计')).toBeInTheDocument()
     expect(within(card).getByText('66')).toBeInTheDocument()
@@ -133,7 +136,7 @@ describe('SystemObservabilityPage（FR-82）', () => {
 
   it('注册表规模：总数 + 按状态机顺序逐项（缺省状态显 0）', async () => {
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('注册表规模')
+    await screen.findByRole('heading', { name: '注册表规模' })
     const card = sectionOf('注册表规模')
     expect(within(card).getByText('实例总数')).toBeInTheDocument()
     expect(within(card).getByText('78')).toBeInTheDocument()
@@ -150,7 +153,7 @@ describe('SystemObservabilityPage（FR-82）', () => {
 
   it('命令队列：按状态机顺序逐项（缺省状态显 0）', async () => {
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('命令队列深度')
+    await screen.findByRole('heading', { name: '命令队列深度' })
     const card = sectionOf('命令队列深度')
     expect(within(card).getByText('待拉取')).toBeInTheDocument()
     expect(within(card).getByText('51')).toBeInTheDocument()
@@ -168,7 +171,7 @@ describe('SystemObservabilityPage（FR-82）', () => {
       dbPool: { ...OBS.dbPool, maxOpenConnections: 0 },
     })
     renderPage(<SystemObservabilityPage />)
-    await screen.findByText('数据库连接池')
+    await screen.findByRole('heading', { name: '数据库连接池' })
     const card = sectionOf('数据库连接池')
     expect(within(card).getByText('∞')).toBeInTheDocument()
   })

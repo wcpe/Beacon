@@ -260,6 +260,8 @@ export const zhCN = {
     // 页标题 + 副标题
     title: '版本与更新',
     subtitle: '查看当前版本、切换更新渠道、检查并在线更新控制面，以及配置出站代理与自动检查策略。',
+    // 锚点 rail 无障碍名称（FR-108）：版本与更新分区锚点导航
+    railAria: '版本与更新分区导航',
     // 分区标题
     sectionVersion: '版本信息',
     sectionProxy: '网络代理',
@@ -298,6 +300,8 @@ export const zhCN = {
     title: '控制面健康',
     // 点明本页边界：看 Beacon 自己，区别于 agent 网络负载（看板）与平台运维活动（服务分析）
     subtitle: '控制面进程自身的内部运行态（只读）——区别于可观测看板的 agent 网络负载与服务分析的平台运维活动。',
+    // 锚点 rail 无障碍名称（FR-108）：左侧分区锚点导航
+    railAria: '控制面健康分区导航',
     // 仪表环总览行（重构）：四子系统吃紧一眼看，按阈值变色
     gaugeRowTitle: '子系统总览',
     gaugeDbPool: '连接池',
@@ -537,6 +541,12 @@ export const zhCN = {
     title: '命令观测',
     // 与审计日志（人的操作）/ 服务分析（admin 操作聚合）区分的副标题：本页观测控制面↔agent 控制命令生命周期。
     subtitle: '观测控制面下发给 agent 的控制命令双向生命周期（下发 → 拉取 → 回执），区别于审计日志与服务分析。',
+    // 页内视图 segmented tab（FR-108）：实时 / 历史 / 分析三视图，默认实时，切换不跳路由
+    viewLive: '实时',
+    viewHistory: '历史',
+    viewAnalytics: '分析',
+    // 视图 tab 无障碍名称
+    viewTabsAria: '命令观测视图',
     // 时间窗 Tabs
     win7d: '近 7 天',
     win30d: '近 30 天',
@@ -1312,6 +1322,8 @@ export const zhCN = {
   // ===== 运维设置页（FR-62，消费 FR-61 设置端点）=====
   settings: {
     title: '运维设置',
+    // 锚点 rail 无障碍名称（FR-108）：6 域分区锚点导航
+    railAria: '运维设置分区导航',
     // 按 key 前缀分组的中文组标题
     groupHealth: '健康检查',
     groupMetric: '指标',

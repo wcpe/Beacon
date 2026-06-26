@@ -18,7 +18,6 @@ import { usePageHeader } from '@/components/PageHeader'
 import { CardGridSkeleton } from '@/components/skeletons'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -92,40 +91,37 @@ export default function ServiceAnalysisPage() {
   })
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent>
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="sa-namespace">{t('common.namespace')}</Label>
-              {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境。
-                  clearable：选某环境后可一键清回空值（聚合全部）。 */}
-              <Combobox
-                id="sa-namespace"
-                aria-label={t('common.namespace')}
-                className="w-40"
-                placeholder={t('serviceAnalysis.nsPlaceholder')}
-                value={namespace}
-                onChange={setNamespace}
-                options={nsOptions}
-                allowCustom
-                clearable
-                clearLabel={t('serviceAnalysis.clearFilter')}
-              />
-            </div>
-            {/* 时间窗 Tabs：切换即据当前时刻算 from/to 传 RFC3339 重查。 */}
-            <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
-              <TabsList>
-                {WINDOWS.map((w) => (
-                  <TabsTrigger key={w.value} value={w.value}>
-                    {t(w.labelKey)}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="space-y-6">
+      {/* 控件行（FR-108 卡片降级）：环境 + 时间窗去 Card 外壳，理顺为细线下分隔的工具栏。 */}
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="sa-namespace">{t('common.namespace')}</Label>
+          {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境。
+              clearable：选某环境后可一键清回空值（聚合全部）。 */}
+          <Combobox
+            id="sa-namespace"
+            aria-label={t('common.namespace')}
+            className="w-40"
+            placeholder={t('serviceAnalysis.nsPlaceholder')}
+            value={namespace}
+            onChange={setNamespace}
+            options={nsOptions}
+            allowCustom
+            clearable
+            clearLabel={t('serviceAnalysis.clearFilter')}
+          />
+        </div>
+        {/* 时间窗 Tabs：切换即据当前时刻算 from/to 传 RFC3339 重查。 */}
+        <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
+          <TabsList>
+            {WINDOWS.map((w) => (
+              <TabsTrigger key={w.value} value={w.value}>
+                {t(w.labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
 
       <AsyncSection
         isLoading={analyticsQuery.isLoading}
@@ -166,22 +162,19 @@ export default function ServiceAnalysisPage() {
           />
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {/* 图表区段（FR-108 卡片降级）：区段 Card→标题 + 细线 + 留白，去卡片外壳。 */}
+        <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
           {/* 按动作分布排行（降序柱状） */}
-          <Card>
-            <CardContent className="space-y-3">
-              <div className="text-base font-medium">{t('serviceAnalysis.byActionTitle')}</div>
-              <ActionRankChart items={rankItems} />
-            </CardContent>
-          </Card>
+          <section className="space-y-3">
+            <h2 className="border-b pb-1.5 text-base font-medium">{t('serviceAnalysis.byActionTitle')}</h2>
+            <ActionRankChart items={rankItems} />
+          </section>
 
           {/* 每日趋势折线 */}
-          <Card>
-            <CardContent className="space-y-3">
-              <div className="text-base font-medium">{t('serviceAnalysis.byDayTitle')}</div>
-              <DayTrendChart points={dayPoints} />
-            </CardContent>
-          </Card>
+          <section className="space-y-3">
+            <h2 className="border-b pb-1.5 text-base font-medium">{t('serviceAnalysis.byDayTitle')}</h2>
+            <DayTrendChart points={dayPoints} />
+          </section>
         </div>
       </AsyncSection>
     </div>

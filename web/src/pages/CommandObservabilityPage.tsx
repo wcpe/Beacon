@@ -6,6 +6,7 @@
 // 边界：与 FR-73 服务分析（聚合 admin 操作审计）/ 审计日志（人的操作流水）数据源 / 页面独立——本页是「命令在做什么」。
 
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Activity, CheckCircle2, Clock, ListChecks, Loader2, Server, Terminal, XCircle } from 'lucide-react'
@@ -49,6 +50,16 @@ const STATUS_OPTIONS = ['pending', 'fetched', 'ready', 'done', 'failed', 'expire
 // 实时队列过滤的状态集合（待拉取 + 执行中）
 const QUEUE_STATUSES = ['pending', 'fetched']
 
+// 页内视图（FR-108）：实时 / 历史 / 分析，默认实时；切换写 URL ?view= 以深链 / 刷新保持。
+type CommandView = 'live' | 'history' | 'analytics'
+const VIEWS: Array<{ value: CommandView; labelKey: string }> = [
+  { value: 'live', labelKey: 'commandObs.viewLive' },
+  { value: 'history', labelKey: 'commandObs.viewHistory' },
+  { value: 'analytics', labelKey: 'commandObs.viewAnalytics' },
+]
+const DEFAULT_VIEW: CommandView = 'live'
+const VIEW_VALUES = VIEWS.map((v) => v.value)
+
 // 时间窗预设（天数）：本地算 from/to 传 RFC3339；窗口上限 92 天内，故 7/30 天均合法。
 type AnalyticsWindow = '7d' | '30d'
 const WINDOWS: Array<{ value: AnalyticsWindow; days: number; labelKey: string }> = [
@@ -85,6 +96,21 @@ export default function CommandObservabilityPage() {
   // 命令类型 / 状态英文枚举 → 中文（未知经 defaultValue 回退原文，后端仍返英文枚举）
   const typeLabel = (type: string) => t(`commandObs.type.${type}`, { defaultValue: type })
   const statusLabel = (status: string) => t(`commandObs.status.${status}`, { defaultValue: status })
+
+  // 页内视图（FR-108）：来源于 URL ?view=（非法回落实时）；切换仅写 query，不跳路由、侧栏不变。
+  const [searchParams, setSearchParams] = useSearchParams()
+  const rawView = searchParams.get('view') ?? ''
+  const view: CommandView = (VIEW_VALUES as string[]).includes(rawView) ? (rawView as CommandView) : DEFAULT_VIEW
+  const onViewChange = (next: string) => {
+    setSearchParams(
+      (prev) => {
+        const sp = new URLSearchParams(prev)
+        sp.set('view', next)
+        return sp
+      },
+      { replace: true },
+    )
+  }
 
   // 环境过滤（可编辑下拉，FR-51）：空表示聚合全部环境；KPI / 趋势 / 实时队列 / 历史均受其影响。
   const [namespace, setNamespace] = useState('')
@@ -215,37 +241,50 @@ export default function CommandObservabilityPage() {
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t('commandObs.subtitle')}</p>
 
-      {/* 环境 + 时间窗筛选条（作用于 KPI / 趋势 / 实时队列） */}
-      <Card>
-        <CardContent>
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="co-namespace">{t('common.namespace')}</Label>
-              <Combobox
-                id="co-namespace"
-                aria-label={t('common.namespace')}
-                className="w-40"
-                placeholder={t('commandObs.nsPlaceholder')}
-                value={namespace}
-                onChange={setNamespace}
-                options={nsOptions}
-                allowCustom
-                clearable
-                clearLabel={t('commandObs.clearFilter')}
-              />
-            </div>
-            <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
-              <TabsList>
-                {WINDOWS.map((w) => (
-                  <TabsTrigger key={w.value} value={w.value}>
-                    {t(w.labelKey)}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          </div>
-        </CardContent>
-      </Card>
+      {/* 视图 segmented tab（FR-108）+ 环境筛选条：tab 切换不跳路由、写 ?view=；环境对三视图全局生效 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Tabs value={view} onValueChange={onViewChange}>
+          <TabsList aria-label={t('commandObs.viewTabsAria')}>
+            {VIEWS.map((v) => (
+              <TabsTrigger key={v.value} value={v.value}>
+                {t(v.labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="co-namespace" className="text-sm text-muted-foreground">
+            {t('common.namespace')}
+          </Label>
+          <Combobox
+            id="co-namespace"
+            aria-label={t('common.namespace')}
+            className="w-40"
+            placeholder={t('commandObs.nsPlaceholder')}
+            value={namespace}
+            onChange={setNamespace}
+            options={nsOptions}
+            allowCustom
+            clearable
+            clearLabel={t('commandObs.clearFilter')}
+          />
+        </div>
+      </div>
+
+      {/* ===== 分析视图：时间窗 + KPI + 趋势 + 按类型 / 服务器分布 ===== */}
+      {view === 'analytics' && (
+      <>
+      <div className="flex justify-end">
+        <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
+          <TabsList>
+            {WINDOWS.map((w) => (
+              <TabsTrigger key={w.value} value={w.value}>
+                {t(w.labelKey)}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
 
       {/* KPI 区：总数 + 按状态 IconStat 组 + 按类型 */}
       <AsyncSection
@@ -332,8 +371,11 @@ export default function CommandObservabilityPage() {
           </Card>
         </div>
       </AsyncSection>
+      </>
+      )}
 
-      {/* 实时队列（pending + fetched，自动刷新逐条） */}
+      {/* ===== 实时视图：实时队列（pending + fetched，自动刷新逐条） ===== */}
+      {view === 'live' && (
       <Card>
         <CardContent className="space-y-3">
           <div>
@@ -358,8 +400,10 @@ export default function CommandObservabilityPage() {
           </AsyncSection>
         </CardContent>
       </Card>
+      )}
 
-      {/* 历史查询（过滤 + 分页 + 结果摘要） */}
+      {/* ===== 历史视图：历史查询（过滤 + 分页 + 结果摘要） ===== */}
+      {view === 'history' && (
       <Card>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-2 text-base font-medium">
@@ -457,6 +501,7 @@ export default function CommandObservabilityPage() {
           </AsyncSection>
         </CardContent>
       </Card>
+      )}
     </div>
   )
 }

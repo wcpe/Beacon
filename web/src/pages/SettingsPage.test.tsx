@@ -109,32 +109,14 @@ function renderPage(ui: ReactElement) {
   )
 }
 
-// 切到某域 tab（按 tab 标题点击 tab 触发器）。
-async function switchTab(label: string): Promise<void> {
-  await userEvent.click(await screen.findByRole('tab', { name: label }))
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(listSettings).mockResolvedValue(SETTINGS)
   vi.mocked(updateSetting).mockResolvedValue(undefined)
 })
 
-// key 前缀 → 所在域 tab 标题。
-const PREFIX_TAB: Record<string, string> = {
-  health: '健康检查',
-  metric: '指标',
-  longpoll: '长轮询',
-  alert: '告警',
-  log: '日志',
-  'reverse-fetch': '反向抓取',
-}
-
-// 定位某设置项所在的行容器：先切到该 key 所属域 tab，再按 key 文本上溯到行。
+// 定位某设置项所在的行容器（FR-108 锚点 rail：各域全部渲染，按 key 文本直接上溯到行，无需切 tab）。
 async function findRow(key: string): Promise<HTMLElement> {
-  const prefix = key.includes('.') ? key.slice(0, key.indexOf('.')) : key
-  const tabLabel = PREFIX_TAB[prefix]
-  if (tabLabel) await switchTab(tabLabel)
   const keyNode = await screen.findByText(key)
   const row = keyNode.closest('[data-setting-row]')
   if (!row) throw new Error(`找不到设置项行：${key}`)
@@ -147,18 +129,20 @@ describe('SettingsPage 域 tab 呈现（FR-62，ADR-0048）', () => {
     expect(await screen.findByRole('heading', { name: '运维设置' })).toBeInTheDocument()
   })
 
-  it('6 域以一级 tab 呈现（健康检查 / 指标 / 日志 / 反向抓取等 tab 触发器可见）', async () => {
+  it('6 域以分区锚点 rail 呈现（有项的域：健康检查 / 指标 / 日志 / 反向抓取锚点可见）', async () => {
     renderPage(<SettingsPage />)
-    expect(await screen.findByRole('tab', { name: '健康检查' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '指标' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '日志' })).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '反向抓取' })).toBeInTheDocument()
+    // 锚点 rail 导航就位
+    expect(await screen.findByRole('navigation', { name: '运维设置分区导航' })).toBeInTheDocument()
+    // 各域锚点（rail 按钮）+ 分区标题（h2）可见
+    expect(screen.getByRole('button', { name: '健康检查' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '指标' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '日志' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '反向抓取' })).toBeInTheDocument()
   })
 
-  it('默认激活健康检查 tab；切到指标 tab 见指标项', async () => {
+  it('各域分区全部渲染：健康项与指标项同屏可见（无需切 tab）', async () => {
     renderPage(<SettingsPage />)
     expect(await screen.findByText('health.ttl-sec')).toBeInTheDocument()
-    await switchTab('指标')
     expect(await screen.findByText('metric.enabled')).toBeInTheDocument()
   })
 
@@ -176,11 +160,11 @@ describe('SettingsPage 域 tab 呈现（FR-62，ADR-0048）', () => {
     expect(await screen.findByText(/config\.yml/)).toBeInTheDocument()
   })
 
-  it('update.* 更新相关项不在本页任何域 tab 呈现（已挪到版本与更新页）', async () => {
+  it('update.* 更新相关项不在本页任何域分区呈现（已挪到版本与更新页）', async () => {
     renderPage(<SettingsPage />)
     await screen.findByText('health.ttl-sec')
-    // 无「更新」域 tab，也不在任何已渲染域中出现 update.channel
-    expect(screen.queryByRole('tab', { name: '更新设置' })).toBeNull()
+    // 无「更新」域锚点，也不在任何已渲染域中出现 update.channel
+    expect(screen.queryByRole('button', { name: '更新设置' })).toBeNull()
     expect(screen.queryByText('update.channel')).toBeNull()
   })
 })

@@ -10,7 +10,6 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { ExternalLink, RefreshCw, Download } from 'lucide-react'
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,6 +23,7 @@ import {
 } from '@/components/ui/select'
 import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
 import { usePageHeader } from '@/components/PageHeader'
+import AnchorRailLayout, { AnchorSectionBlock, type AnchorSection } from '@/components/AnchorRailLayout'
 import { useMessage } from '@/components/useMessage'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
@@ -44,6 +44,11 @@ const UPDATE_CHANNELS = ['stable', 'rc'] as const
 // 更新设置周期上下界（与后端白名单 [1,168] 一致）。
 const MIN_INTERVAL_HOURS = 1
 const MAX_INTERVAL_HOURS = 168
+
+// 锚点分区 id（FR-108）：版本信息 / 网络代理 / 更新设置，与 rail 项一一对应。
+const SECTION_VERSION = 'version'
+const SECTION_PROXY = 'proxy'
+const SECTION_PREFS = 'prefs'
 
 // 设置项 key（FR-98/FR-101）。
 const KEY_CHANNEL = 'update.channel'
@@ -173,21 +178,44 @@ export default function VersionUpdatePage() {
     return t('updateModal.phaseStaging')
   }
 
-  // 页眉（FR-105）：标题 + 副标题，系统页非环境范围
+  // 锚点 rail 分区（FR-108）：版本信息 / 网络代理 / 更新设置三分区。
+  const railSections: AnchorSection[] = [
+    { id: SECTION_VERSION, label: t('versionUpdate.sectionVersion') },
+    { id: SECTION_PROXY, label: t('versionUpdate.sectionProxy') },
+    { id: SECTION_PREFS, label: t('versionUpdate.sectionPrefs') },
+  ]
+
+  // 主操作（FR-108 上提第二层页眉）：立即检查 + 立即更新（有可用更新时）。
+  const headerActions = (
+    <>
+      <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
+        <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
+        {t('updateModal.checkNow')}
+      </Button>
+      {canUpdate && (
+        <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={applying}>
+          <Download />
+          {t('updateModal.updateNow')}
+        </Button>
+      )}
+    </>
+  )
+
+  // 页眉（FR-105/FR-108）：标题 + 副标题 + 主操作（立即检查 / 立即更新），系统页非环境范围
   usePageHeader({
     title: t('versionUpdate.title'),
     subtitle: t('versionUpdate.subtitle'),
+    actions: headerActions,
     envScoped: false,
   })
 
   return (
-    <div className="space-y-6">
-      {/* ===== 版本信息 + 渠道选择 + 检查 / 更新 ===== */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t('versionUpdate.sectionVersion')}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
+      {/* 左 sticky 锚点 rail + scroll-spy：三分区去卡片，标题 + 细线分隔 */}
+      <AnchorRailLayout sections={railSections} ariaLabel={t('versionUpdate.railAria')}>
+        {/* ===== 版本信息 + 渠道选择 + 状态 / release 日志 / 进度 ===== */}
+        <AnchorSectionBlock id={SECTION_VERSION} title={t('versionUpdate.sectionVersion')}>
+          <div className="space-y-4">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
             <dt className="text-muted-foreground">{t('updateModal.currentVersion')}</dt>
             <dd className="font-medium tabular-nums">{data?.currentVersion ?? '-'}</dd>
@@ -215,21 +243,11 @@ export default function VersionUpdatePage() {
             <span className="text-xs text-muted-foreground">{t('versionUpdate.channelHint')}</span>
           </div>
 
-          {/* 状态行 + 立即检查 / 立即更新 */}
+          {/* 状态行（立即检查 / 立即更新主操作已上提第二层页眉，FR-108） */}
           <div className="flex flex-wrap items-center gap-3">
             <span className={canUpdate ? 'text-sm font-medium text-foreground' : 'text-sm text-muted-foreground'}>
               {statusLine()}
             </span>
-            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
-              <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
-              {t('updateModal.checkNow')}
-            </Button>
-            {canUpdate && (
-              <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={applying}>
-                <Download />
-                {t('updateModal.updateNow')}
-              </Button>
-            )}
           </div>
 
           {/* 可用更新明细：版本 / 发布时间 / release 日志（安全渲染）/ 外链 */}
@@ -271,14 +289,19 @@ export default function VersionUpdatePage() {
               {progressLine()}
             </div>
           )}
-        </CardContent>
-      </Card>
+          </div>
+        </AnchorSectionBlock>
 
-      {/* ===== 网络代理 ===== */}
-      <ProxySection settings={settings} />
+        {/* ===== 网络代理 ===== */}
+        <AnchorSectionBlock id={SECTION_PROXY} title={t('versionUpdate.sectionProxy')}>
+          <ProxySection settings={settings} />
+        </AnchorSectionBlock>
 
-      {/* ===== 更新设置（自动检查开关 + 周期） ===== */}
-      <UpdatePrefsSection settings={settings} />
+        {/* ===== 更新设置（自动检查开关 + 周期） ===== */}
+        <AnchorSectionBlock id={SECTION_PREFS} title={t('versionUpdate.sectionPrefs')}>
+          <UpdatePrefsSection settings={settings} />
+        </AnchorSectionBlock>
+      </AnchorRailLayout>
 
       {/* 立即更新二次确认（复用 FR-76 破坏性确认范式） */}
       <DestructiveConfirmDialog
@@ -322,28 +345,15 @@ function ProxySection({ settings }: { settings: SettingView[] | undefined }) {
     onError: (e: Error) => showError(e.message),
   })
 
-  // 项缺失（后端未含该设置）：兜底占位。
+  // 项缺失（后端未含该设置）：兜底占位（标题由外层 AnchorSectionBlock 提供）。
   if (!item) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t('versionUpdate.sectionProxy')}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">{t('versionUpdate.proxyEmpty')}</p>
-        </CardContent>
-      </Card>
-    )
+    return <p className="text-sm text-muted-foreground">{t('versionUpdate.proxyEmpty')}</p>
   }
 
   const dirty = draft !== serverValue
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t('versionUpdate.sectionProxy')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <div className="space-y-3">
         <div className="space-y-1.5">
           <Label htmlFor="update-proxy-url">{t('versionUpdate.proxyLabel')}</Label>
           <Input
@@ -359,8 +369,7 @@ function ProxySection({ settings }: { settings: SettingView[] | undefined }) {
         <Button size="sm" disabled={!dirty || mut.isPending} onClick={() => mut.mutate(draft)}>
           {mut.isPending ? t('settings.saving') : t('settings.saveBtn')}
         </Button>
-      </CardContent>
-    </Card>
+    </div>
   )
 }
 
@@ -390,27 +399,14 @@ function UpdatePrefsSection({ settings }: { settings: SettingView[] | undefined 
   })
 
   if (!autoItem && !intervalItem) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t('versionUpdate.sectionPrefs')}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">{t('versionUpdate.prefsEmpty')}</p>
-        </CardContent>
-      </Card>
-    )
+    return <p className="text-sm text-muted-foreground">{t('versionUpdate.prefsEmpty')}</p>
   }
 
   const autoEnabled = autoItem?.value === 'true'
   const intervalDirty = intervalDraft !== intervalServer
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t('versionUpdate.sectionPrefs')}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="space-y-4">
         {autoItem && (
           <label className="flex items-center gap-2 text-sm">
             <Checkbox
@@ -450,7 +446,6 @@ function UpdatePrefsSection({ settings }: { settings: SettingView[] | undefined 
             <p className="text-xs text-muted-foreground">{t('versionUpdate.intervalHint')}</p>
           </div>
         )}
-      </CardContent>
-    </Card>
+    </div>
   )
 }

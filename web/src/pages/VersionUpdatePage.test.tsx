@@ -156,8 +156,8 @@ describe('VersionUpdatePage 网络代理（FR-98）', () => {
   it('编辑 proxy-url 并保存以 updateSetting 调用；未改时保存禁用', async () => {
     renderPage(<VersionUpdatePage />)
     const input = await screen.findByLabelText('出站代理地址')
-    // 网络代理分区的保存按钮（在该分区内定位）
-    const proxyCard = input.closest('[data-slot="card"]') as HTMLElement
+    // 网络代理分区的保存按钮（FR-108 卡片降级为 AnchorSectionBlock <section>，在该分区内定位）
+    const proxyCard = input.closest('section') as HTMLElement
     const saveBtn = within(proxyCard).getByRole('button', { name: '保存' })
     expect(saveBtn).toBeDisabled()
     await userEvent.type(input, 'http://127.0.0.1:7890')
@@ -184,7 +184,7 @@ describe('VersionUpdatePage 更新设置（FR-101）', () => {
     const input = await screen.findByLabelText('自动检查周期（小时）')
     await userEvent.clear(input)
     await userEvent.type(input, '12')
-    const prefsCard = input.closest('[data-slot="card"]') as HTMLElement
+    const prefsCard = input.closest('section') as HTMLElement
     await userEvent.click(within(prefsCard).getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.check-interval-hours', '12'),
