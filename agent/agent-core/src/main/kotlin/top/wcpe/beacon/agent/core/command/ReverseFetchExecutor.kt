@@ -24,6 +24,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 强制重同步命令（FR-91）同样复用此通路：resync-config 命令拉到后调 [onResyncConfig] 回调
  * （重拉有效配置/文件树/覆盖集并 apply），再经命令结果端点回传 done/failed，**不读 plugins 树**。
  *
+ * 只读文件浏览命令（FR-110，见 ADR-0049）也复用此通路：fs-browse 命令拉到后按 op 调
+ * [PlatformAdapter] 只读浏览原语（列目录 / 读子树 / 读单文件，根限定 + path traversal 校验由原语负责），
+ * 结果经浏览回传端点回传，**纯只读、不写盘**；原语拒读 / 异常 → 回 ok=false（fail-static、不崩）。
+ *
  * @param identity  本 agent 身份（拉命令 / 回传携带 namespace + serverId）
  * @param apiClient REST 客户端（拉命令 / 回传 ingest / 回传日志 / 回传命令结果）
  * @param adapter   平台适配（读真实 plugins 树 + 日志）
@@ -83,6 +87,11 @@ class ReverseFetchExecutor(
         // 强制重同步命令（FR-91）：调重同步回调重拉有效配置/文件树/覆盖集，回传命令结果，不读 plugins 树。
         if (command.type == AgentCommand.TYPE_RESYNC_CONFIG) {
             runResync(command)
+            return true
+        }
+        // 只读文件浏览命令（FR-110）：按 op 列目录 / 读子树 / 读单文件回传，纯只读、不写盘。
+        if (command.type == AgentCommand.TYPE_FS_BROWSE) {
+            runBrowse(command)
             return true
         }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
@@ -237,6 +246,92 @@ class ReverseFetchExecutor(
             adapter.warn("强制重同步完成结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
+
+    /**
+     * 只读文件浏览阶段（FR-110，见 ADR-0049 决策 9）：按 op 调 [PlatformAdapter] 只读浏览原语
+     * （列目录 / 读子树 / 读单文件，FS 级安全 + 根限定 + path traversal 校验由原语负责），结果回传
+     * /agent/files/browse-result。**纯只读、绝不写盘**；原语返回 null（越权 / 非目录 / 非文本 / 未启用浏览）
+     * → 回传 ok=false（控制面据此 CAS failed、admin 得 404）。读盘异常 → 同样回 ok=false（fail-static，不崩）。
+     *
+     * 未注入浏览能力（壳层 browse* 默认 null 实现）→ 原语恒 null → 回 ok=false，与未知命令的「忽略」等效：
+     * 控制面据此判目标不可读，不影响 agent 主流程。
+     */
+    private fun runBrowse(command: AgentCommand) {
+        val payload = command.payload
+        val result: Map<String, Any?>? = try {
+            when (payload.op) {
+                IngestCommandPayload.OP_LIST ->
+                    adapter.browseListDir(payload.path, payload.offset, payload.limit)?.let(::dirListingToMap)
+
+                IngestCommandPayload.OP_TREE ->
+                    adapter.browseReadTree(payload.path, payload.maxDepth)?.let(::treeNodeToMap)
+
+                IngestCommandPayload.OP_FILE ->
+                    adapter.browseReadFile(payload.path)?.let(::fileContentToMap)
+
+                else -> {
+                    // 未知 op：按不可读处理（控制面已校验 op，正常不会到此）。
+                    adapter.warn("收到未知文件浏览操作（忽略）：id=${command.id}，op=${payload.op}")
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            adapter.error("文件浏览读盘失败：id=${command.id}，op=${payload.op}，path=${payload.path}", e)
+            null
+        }
+
+        val ok = if (result != null) {
+            apiClient.uploadBrowseResult(identity, command.id, ok = true, result = result, reason = "")
+        } else {
+            // 原语拒读（越权 / 非目录 / 非文本 / 未启用）→ 回 ok=false（不携内容、仅原因摘要，无敏感）。
+            apiClient.uploadBrowseResult(identity, command.id, ok = false, result = null, reason = "目标不存在或不可读")
+        }
+        if (ok) {
+            adapter.info("文件浏览结果回传成功：id=${command.id}，op=${payload.op}，命中=${result != null}")
+        } else {
+            adapter.warn("文件浏览结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    /** 把列目录结果映射为可序列化 Map（FR-110；键名与控制面代理透传给前端的形状一致）。 */
+    private fun dirListingToMap(listing: top.wcpe.beacon.agent.core.browse.DirListing): Map<String, Any?> = mapOf(
+        "type" to "list",
+        "path" to listing.path,
+        "entries" to listing.entries.map(::browseEntryToMap),
+        "offset" to listing.offset,
+        "limit" to listing.limit,
+        "total" to listing.total,
+        "hasMore" to listing.hasMore,
+    )
+
+    /** 把子树节点递归映射为可序列化 Map（FR-110）。 */
+    private fun treeNodeToMap(node: top.wcpe.beacon.agent.core.browse.TreeNode): Map<String, Any?> = mapOf(
+        "type" to "tree",
+        "name" to node.name,
+        "relPath" to node.relPath,
+        "dir" to node.dir,
+        "size" to node.size,
+        "text" to node.text,
+        "children" to node.children.map(::treeNodeToMap),
+        "truncated" to node.truncated,
+    )
+
+    /** 把单文件内容映射为可序列化 Map（FR-110）。 */
+    private fun fileContentToMap(content: top.wcpe.beacon.agent.core.browse.FileContent): Map<String, Any?> = mapOf(
+        "type" to "file",
+        "path" to content.path,
+        "content" to content.content,
+        "truncated" to content.truncated,
+    )
+
+    /** 把列目录子项映射为可序列化 Map（FR-110）。 */
+    private fun browseEntryToMap(entry: top.wcpe.beacon.agent.core.browse.BrowseEntry): Map<String, Any?> = mapOf(
+        "name" to entry.name,
+        "relPath" to entry.relPath,
+        "dir" to entry.dir,
+        "size" to entry.size,
+        "text" to entry.text,
+    )
 
     /**
      * 回传一条执行错误到控制面（FR-87）：best-effort，回传失败仅记 warn、不重试（交控制面超时清理兜底）。

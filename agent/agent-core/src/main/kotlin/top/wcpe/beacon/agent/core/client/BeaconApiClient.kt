@@ -585,6 +585,41 @@ class BeaconApiClient(
     }
 
     /**
+     * 回传文件浏览结果：POST /beacon/v1/agent/files/browse-result（FR-110，见 ADR-0049）。同步调用，请在异步线程使用。
+     *
+     * 携命令 id + 身份（namespace/serverId）+ ok + 结果对象（[result]：列目录 / 子树 / 文件内容的结构化 Map）或失败原因。
+     * ok=true 时 [result] 非空、[reason] 空；ok=false（原语返回 null：越权 / 非目录 / 非文本）时 [result] 空、[reason] 携原因。
+     * 控制面据此把结果转存命令瞬态 + CAS done / failed，并唤醒等待中的 admin。
+     * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（best-effort、不重试——控制面超时清理兜底）。
+     */
+    fun uploadBrowseResult(
+        identity: AgentIdentity,
+        commandId: Long,
+        ok: Boolean,
+        result: Map<String, Any?>?,
+        reason: String,
+    ): Boolean {
+        val body = buildMap {
+            put("namespace", identity.namespace)
+            put("serverId", identity.serverId)
+            put("commandId", commandId)
+            put("ok", ok)
+            if (result != null) put("result", result)
+            if (reason.isNotEmpty()) put("reason", reason)
+        }
+        val resp = exec(
+            HttpRequest(
+                method = "POST",
+                url = "$base/beacon/v1/agent/files/browse-result",
+                headers = headers(withBody = true),
+                body = codec.encode(body),
+                readTimeoutMs = settings.requestTimeoutMs,
+            ),
+        ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
@@ -696,6 +731,12 @@ class BeaconApiClient(
                 target = JsonTree.strOr(payloadObj, "target", ""),
                 mode = JsonTree.strOr(payloadObj, "mode", ""),
                 selectedPaths = JsonTree.asList(payloadObj["selectedPaths"]).map { JsonTree.asString(it) },
+                // 文件浏览字段（FR-110，仅 fs-browse 命令携带；其它命令缺省为空，向后兼容）。
+                op = JsonTree.strOr(payloadObj, "op", ""),
+                path = JsonTree.strOr(payloadObj, "path", ""),
+                offset = JsonTree.intOr(payloadObj, "offset", 0),
+                limit = JsonTree.intOr(payloadObj, "limit", 0),
+                maxDepth = JsonTree.intOr(payloadObj, "maxDepth", 0),
             ),
         )
     }

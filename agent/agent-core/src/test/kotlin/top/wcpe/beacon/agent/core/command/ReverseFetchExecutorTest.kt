@@ -1,5 +1,9 @@
 package top.wcpe.beacon.agent.core.command
 
+import top.wcpe.beacon.agent.core.browse.BrowseEntry
+import top.wcpe.beacon.agent.core.browse.DirListing
+import top.wcpe.beacon.agent.core.browse.FileContent
+import top.wcpe.beacon.agent.core.browse.TreeNode
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.log.AgentLogBuffer
@@ -47,8 +51,16 @@ class ReverseFetchExecutorTest {
         val lastLogsBody = AtomicReference<String?>(null)
         val resultCalls = AtomicInteger(0)
         val lastResultBody = AtomicReference<String?>(null)
+        val browseCalls = AtomicInteger(0)
+        val lastBrowseBody = AtomicReference<String?>(null)
 
         override fun execute(request: HttpRequest): HttpResponse = when {
+            // 文件浏览结果回传端点（FR-110）：URL 含 /agent/files/browse-result（须在通用 /agent/files 前判定）。
+            request.url.contains("/agent/files/browse-result") -> {
+                browseCalls.incrementAndGet()
+                lastBrowseBody.set(request.body)
+                HttpResponse(200, "")
+            }
             // 命令结果回传端点（FR-91）：URL 含 /agent/commands/result（须在通用 /agent/commands 前判定）。
             request.url.contains("/agent/commands/result") -> {
                 resultCalls.incrementAndGet()
@@ -135,6 +147,24 @@ class ReverseFetchExecutorTest {
                 "payload" to emptyMap<String, Any?>(),
             )
 
+            CMD_BROWSE_LIST -> mapOf(
+                "id" to 13,
+                "type" to "fs-browse",
+                "payload" to mapOf("op" to "list", "path" to "AllinCore", "offset" to 0, "limit" to 100),
+            )
+
+            CMD_BROWSE_FILE -> mapOf(
+                "id" to 14,
+                "type" to "fs-browse",
+                "payload" to mapOf("op" to "file", "path" to "AllinCore/config.yml"),
+            )
+
+            CMD_BROWSE_DENIED -> mapOf(
+                "id" to 15,
+                "type" to "fs-browse",
+                "payload" to mapOf("op" to "file", "path" to "../etc/passwd"),
+            )
+
             else -> emptyMap<String, Any?>()
         }
     }
@@ -146,9 +176,13 @@ class ReverseFetchExecutorTest {
     private class StubAdapter(
         private val tree: Map<String, ByteArray>,
         private val failRead: Boolean = false,
+        // 是否开放浏览能力（FR-110）：false 模拟壳层未实现 browse*（默认 null 实现），原语恒 null。
+        private val browseEnabled: Boolean = true,
     ) : PlatformAdapter {
         val readCalls = AtomicInteger(0)
         val metadataCalls = AtomicInteger(0)
+        val browseListCalls = AtomicInteger(0)
+        val browseFileCalls = AtomicInteger(0)
 
         override fun runAsync(task: () -> Unit) = task()
         override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
@@ -165,6 +199,28 @@ class ReverseFetchExecutorTest {
             if (failRead) throw java.io.IOException("permission denied")
             // 元信息桩：由预置树字节数派生大小（scan 只关心大小，不读内容）。
             return tree.mapValues { it.value.size.toLong() }
+        }
+
+        // 浏览原语桩（FR-110）：browseEnabled=false 或路径含 .. → 返回 null（模拟未启用 / 越权拒读）。
+        override fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? {
+            browseListCalls.incrementAndGet()
+            if (!browseEnabled || relPath.contains("..")) return null
+            return DirListing(
+                path = relPath,
+                entries = listOf(BrowseEntry(name = "config.yml", relPath = "$relPath/config.yml", dir = false, size = 12, text = true)),
+                offset = offset, limit = if (limit > 0) limit else 100, total = 1, hasMore = false,
+            )
+        }
+
+        override fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? {
+            if (!browseEnabled || relPath.contains("..")) return null
+            return TreeNode(name = relPath, relPath = relPath, dir = true, size = 0, text = false, children = emptyList(), truncated = false)
+        }
+
+        override fun browseReadFile(relPath: String): FileContent? {
+            browseFileCalls.incrementAndGet()
+            if (!browseEnabled || relPath.contains("..")) return null
+            return FileContent(path = relPath, content = "k: v\n", truncated = false)
         }
 
         override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
@@ -451,6 +507,63 @@ class ReverseFetchExecutorTest {
         assertEquals(0, adapter.readCalls.get(), "不应读盘")
     }
 
+    @Test
+    fun `浏览列目录命令调原语回传结果到 browse-result 端点`() {
+        // FR-110：fs-browse op=list → 调 browseListDir → 回传结果，绝不读 plugins 树 / 不走 ingest。
+        val transport = FakeTransport(pendingBody = CMD_BROWSE_LIST)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.browseListCalls.get(), "应调列目录原语一次")
+        assertEquals(0, adapter.readCalls.get(), "浏览不读整棵 plugins 树")
+        assertEquals(0, transport.ingestCalls.get(), "浏览不走 ingest")
+        assertEquals(1, transport.browseCalls.get(), "应走 /agent/files/browse-result 一次")
+        val body = transport.lastBrowseBody.get()!!
+        assertTrue(body.contains("commandId=13"), "回传应携命令 id：$body")
+        assertTrue(body.contains("ok=true"), "命中应回 ok=true：$body")
+        assertTrue(body.contains("config.yml"), "回传应含列目录结果：$body")
+    }
+
+    @Test
+    fun `浏览读单文件命令调原语回传内容`() {
+        // FR-110：fs-browse op=file → 调 browseReadFile → 回传文件内容。
+        val transport = FakeTransport(pendingBody = CMD_BROWSE_FILE)
+        val adapter = StubAdapter(emptyMap())
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.browseFileCalls.get(), "应调读文件原语一次")
+        assertEquals(1, transport.browseCalls.get(), "应走 browse-result 一次")
+        val body = transport.lastBrowseBody.get()!!
+        assertTrue(body.contains("commandId=14"), "回传应携命令 id：$body")
+        assertTrue(body.contains("ok=true"), "命中应回 ok=true：$body")
+    }
+
+    @Test
+    fun `浏览越权路径原语返回 null 回传 ok=false`() {
+        // FR-110：path traversal（../）→ 原语返回 null → 回 ok=false（控制面 CAS failed、admin 得 404）。
+        val transport = FakeTransport(pendingBody = CMD_BROWSE_DENIED)
+        val adapter = StubAdapter(emptyMap())
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, transport.browseCalls.get(), "拒读也应回传一次（ok=false）")
+        val body = transport.lastBrowseBody.get()!!
+        assertTrue(body.contains("commandId=15"), "回传应携命令 id：$body")
+        assertTrue(body.contains("ok=false"), "拒读应回 ok=false：$body")
+        assertTrue(!body.contains("passwd"), "拒读不应回传任何内容：$body")
+    }
+
+    @Test
+    fun `未启用浏览能力时浏览命令回传 ok=false`() {
+        // FR-110 向后兼容：壳层未实现 browse*（默认 null）→ 原语恒 null → 回 ok=false，不崩、不影响主流程。
+        val transport = FakeTransport(pendingBody = CMD_BROWSE_LIST)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")), browseEnabled = false)
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, transport.browseCalls.get(), "未启用也应回传一次（ok=false）")
+        val body = transport.lastBrowseBody.get()!!
+        assertTrue(body.contains("ok=false"), "未启用浏览应回 ok=false：$body")
+    }
+
     companion object {
         private const val CMD_INGEST = "cmd-ingest"
         private const val CMD_UNKNOWN = "cmd-unknown"
@@ -458,5 +571,8 @@ class ReverseFetchExecutorTest {
         private const val CMD_SUBMIT = "cmd-submit"
         private const val CMD_TAIL_LOGS = "cmd-tail-logs"
         private const val CMD_RESYNC = "cmd-resync"
+        private const val CMD_BROWSE_LIST = "cmd-browse-list"
+        private const val CMD_BROWSE_FILE = "cmd-browse-file"
+        private const val CMD_BROWSE_DENIED = "cmd-browse-denied"
     }
 }

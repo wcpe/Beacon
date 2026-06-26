@@ -27,6 +27,9 @@ data class AgentCommand(
 
         /** 强制重同步命令类型：重拉控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、无业务载荷）。 */
         const val TYPE_RESYNC_CONFIG = "resync-config"
+
+        /** 只读文件浏览命令类型：列目录 / 读子树 / 读单文件回传（FR-110，见 ADR-0049；纯只读、不写盘）。 */
+        const val TYPE_FS_BROWSE = "fs-browse"
     }
 }
 
@@ -44,6 +47,11 @@ data class AgentCommand(
  * @param target        server 层目标 serverId（group 层为空）
  * @param mode          抓取模式（[MODE_SCAN] / [MODE_SUBMIT]；空串=旧整树行为，兼容 land/imprint 等既有 mode 维度）
  * @param selectedPaths submit 模式下选定回传的相对 path 子集（scan 模式 / 旧行为为空）
+ * @param op            文件浏览操作（FR-110，仅 fs-browse 命令用：[OP_LIST] / [OP_TREE] / [OP_FILE]；其它命令为空）
+ * @param path          文件浏览目标相对 path（FR-110，相对 plugins 根；list/tree 可空=列根）
+ * @param offset        文件浏览列目录分页偏移（FR-110，仅 op=list 用）
+ * @param limit         文件浏览列目录分页条数（FR-110，仅 op=list 用；0=由 core 收口到默认/上限）
+ * @param maxDepth      文件浏览读子树展开深度（FR-110，仅 op=tree 用）
  */
 data class IngestCommandPayload(
     val scope: String,
@@ -51,6 +59,11 @@ data class IngestCommandPayload(
     val target: String,
     val mode: String = "",
     val selectedPaths: List<String> = emptyList(),
+    val op: String = "",
+    val path: String = "",
+    val offset: Int = 0,
+    val limit: Int = 0,
+    val maxDepth: Int = 0,
 ) {
     companion object {
         /** 扫描模式：只列元信息清单（path/size/isText/overThreshold），不读内容、永不失败。 */
@@ -58,5 +71,14 @@ data class IngestCommandPayload(
 
         /** 提交模式：只读选定 path 子集的内容回传 ingest。 */
         const val MODE_SUBMIT = "submit"
+
+        /** 文件浏览·列目录（FR-110）：懒列某目录直接子项（分页）。 */
+        const val OP_LIST = "list"
+
+        /** 文件浏览·读子树（FR-110）：按需展开某子树（逐层有界）。 */
+        const val OP_TREE = "tree"
+
+        /** 文件浏览·读单文件（FR-110）：读单文本文件内容（受单文件上限）。 */
+        const val OP_FILE = "file"
     }
 }
