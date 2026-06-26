@@ -99,6 +99,15 @@ describe('Layout 页眉重定位', () => {
     expect(mainEl?.classList.contains('overflow-y-auto')).toBe(true)
     expect(mainEl?.classList.contains('overflow-hidden')).toBe(false)
   })
+
+  it('主内容区为定位包含块（relative，防绝对定位后代撑出窗口级滚动）', () => {
+    renderLayout()
+    // <main> 须 position: relative：作为 recharts 图表 / 状态瓷砖色条 / tooltip 等绝对定位后代的包含块。
+    // 缺失时这些后代锚定到视口、撑大文档高度，导致连同侧栏页眉一起的整窗口滚动（jsdom 无布局引擎，
+    // 仅能锁定该结构性类名作回归护栏，真实滚动行为由浏览器 / 真机验证）。
+    const mainEl = document.querySelector('main')
+    expect(mainEl?.classList.contains('relative')).toBe(true)
+  })
 })
 
 describe('Layout 侧栏结构（冻结顶/底，仅中间导航可滚）', () => {

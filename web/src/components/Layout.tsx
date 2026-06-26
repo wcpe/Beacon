@@ -133,8 +133,10 @@ export default function Layout() {
             搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
         <SystemHeader onOpenSearch={() => setPaletteOpen(true)} />
         {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
-            自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条 */}
-        <main className="scrollbar-hide min-w-0 flex-1 overflow-y-auto p-6">
+            自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条。
+            relative 必不可少：作为绝对定位后代（recharts 图表 / 状态瓷砖色条 / tooltip 等）的包含块，
+            否则这些后代锚定到初始包含块（视口）、撑大整个文档导致连同侧栏页眉一起的窗口级滚动。 */}
+        <main className="scrollbar-hide relative min-w-0 flex-1 overflow-y-auto p-6">
           {/* 按路由 key 重挂载并淡入：克制的内容淡入，让路由切换不生硬（tw-animate-css 的 animate-in fade-in） */}
           <div key={location.pathname} className="animate-in fade-in duration-200">
             <Outlet />
