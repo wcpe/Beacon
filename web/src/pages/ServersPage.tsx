@@ -39,10 +39,9 @@ import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
+import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
 import {
   Select,
@@ -100,24 +99,30 @@ function rateCell(t: TFunction, i: InstanceView): string {
   return i.tps.toFixed(1)
 }
 
-// agent 版本单元格（FR-86）：显 agentVersion（空显「未知」）；与本环境多数版本不一致时打黄标 + 悬浮提示。
-function agentVersionCell(t: TFunction, i: InstanceView, majority: MajorityVersionByNamespace) {
-  if (!i.agentVersion) {
-    return <span className="text-muted-foreground">{t('servers.agentVersionUnknown')}</span>
-  }
-  const mismatch = isAgentVersionMismatch(i, majority)
+// 版本/agent 合一单元格（FR-106，合并原版本列 + agent 版本列 FR-86）：
+// 显「子服版本 · agent 版本」，agent 版本空显「未知」弱色；与本环境多数 agent 版本不一致时整格黄框 + 悬浮提示。
+function versionAgentCell(t: TFunction, i: InstanceView, majority: MajorityVersionByNamespace) {
+  // agent 版本片段：空串回退「未知」
+  const agentText = i.agentVersion || t('servers.agentVersionUnknown')
+  const mismatch = i.agentVersion ? isAgentVersionMismatch(i, majority) : false
   if (mismatch) {
+    // 沿用 FR-86 黄框：版本不一致整格高亮 + 原因悬浮
     return (
       <Badge
         variant="outline"
         className="border-amber-500 font-mono text-amber-600"
         title={t('servers.agentVersionMismatch')}
       >
-        {i.agentVersion}
+        {i.version} · {agentText}
       </Badge>
     )
   }
-  return <span className="font-mono">{i.agentVersion}</span>
+  return (
+    <span className="font-mono">
+      {i.version} ·{' '}
+      {i.agentVersion ? agentText : <span className="text-muted-foreground">{agentText}</span>}
+    </span>
+  )
 }
 
 export default function ServersPage() {
@@ -220,6 +225,23 @@ export default function ServersPage() {
     }
     return map
   }, [defaultEntries])
+
+  // 顶部汇总条派生（FR-106）：全部从已拉数据派生，不发新请求。
+  // 总实例 / 在线 / 失联 / 排空（drains 数）/ 未分配（assigned=false）。
+  const summaryItems = useMemo<SummaryItem[]>(() => {
+    const list = data ?? []
+    const online = list.filter((i) => i.status === 'online').length
+    const lost = list.filter((i) => i.status === 'lost').length
+    const unassigned = list.filter((i) => !i.assigned).length
+    const drainCount = drains?.length ?? 0
+    return [
+      { label: t('servers.summaryTotal'), value: list.length },
+      { label: t('servers.summaryOnline'), value: online, tone: 'success' },
+      { label: t('servers.summaryLost'), value: lost, tone: lost > 0 ? 'danger' : 'default' },
+      { label: t('servers.summaryDrained'), value: drainCount, tone: drainCount > 0 ? 'warning' : 'default' },
+      { label: t('servers.summaryUnassigned'), value: unassigned, tone: unassigned > 0 ? 'warning' : 'default' },
+    ]
+  }, [data, drains, t])
 
   // 区分排空门 409 与一般错误：在线非空服改区被硬拒时给「先排空」专属中文提示（FR-71/ADR-0036）
   function reportError(e: unknown) {
@@ -339,8 +361,8 @@ export default function ServersPage() {
     },
     { header: t('servers.colStatus'), cell: (i) => <StatusBadge status={i.status} reason={i.healthReason} /> },
     { header: t('servers.colAddress'), className: 'font-mono', cell: (i) => i.address },
-    { header: t('servers.colVersion'), cell: (i) => i.version },
-    { header: t('servers.colAgentVersion'), cell: (i) => agentVersionCell(t, i, majorityVersions) },
+    // 版本/agent 合一列（FR-106）：原 colVersion + colAgentVersion 合并
+    { header: t('servers.colVersionAgent'), cell: (i) => versionAgentCell(t, i, majorityVersions) },
     // 角色相关：bukkit 人数 / bungee 连接
     { header: t('servers.colLoad'), cell: (i) => loadCell(i) },
     // 角色相关：bukkit TPS / bungee 后端可达
@@ -433,105 +455,94 @@ export default function ServersPage() {
   })
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardContent className="space-y-3">
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
-              {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
-              <Combobox
-                id="f-namespace"
-                aria-label={t('common.namespace')}
-                className="w-40"
-                value={namespace}
-                onChange={setNamespace}
-                options={nsOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="f-group">{t('common.group')}</Label>
-              <Combobox
-                id="f-group"
-                aria-label={t('common.group')}
-                className="w-40"
-                value={group}
-                onChange={setGroup}
-                options={groupOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="f-zone">{t('common.zone')}</Label>
-              <Combobox
-                id="f-zone"
-                aria-label={t('common.zone')}
-                className="w-40"
-                value={zone}
-                onChange={setZone}
-                options={zoneOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t('common.role')}</Label>
-              <Select value={role} onValueChange={setRole}>
-                <SelectTrigger className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('servers.filterAll')}</SelectItem>
-                  <SelectItem value="bukkit">bukkit</SelectItem>
-                  <SelectItem value="bungee">bungee</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t('common.status')}</Label>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('servers.filterAll')}</SelectItem>
-                  <SelectItem value="online">online</SelectItem>
-                  <SelectItem value="lost">lost</SelectItem>
-                  <SelectItem value="offline">offline</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
-          <p className="text-sm text-muted-foreground">{t('servers.tip')}</p>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      {/* 顶部汇总条（FR-106）：关键计数一排紧凑 metric */}
+      <SummaryStrip items={summaryItems} />
 
-      <Card>
-        <CardContent>
-          <AsyncSection
-            isLoading={isLoading}
-            isError={isError}
-            error={error}
-            skeleton={<TableSkeleton columns={columns.length} />}
-          >
-            <DataTable
-              columns={columns}
-              rows={data}
-              rowKey={(i) => `${i.namespace}/${i.serverId}`}
-              emptyText={t('servers.empty')}
-              onRowClick={(i) => openDetail(i, false)}
-              rowClassName={(i) => (!i.assigned ? 'bg-amber-50' : undefined)}
-            />
-          </AsyncSection>
-        </CardContent>
-      </Card>
+      {/* 内联吸顶工具栏（FR-106）：原筛选 Card 压成一行紧凑控件，保留全部筛选维度与「查询」 */}
+      <form
+        onSubmit={onSearch}
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
+      >
+        {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
+        <Combobox
+          id="f-namespace"
+          aria-label={t('common.namespace')}
+          className="w-36"
+          placeholder={t('common.namespace')}
+          value={namespace}
+          onChange={setNamespace}
+          options={nsOptions}
+          allowCustom
+        />
+        <Combobox
+          id="f-group"
+          aria-label={t('common.group')}
+          className="w-36"
+          placeholder={t('common.group')}
+          value={group}
+          onChange={setGroup}
+          options={groupOptions}
+          allowCustom
+        />
+        <Combobox
+          id="f-zone"
+          aria-label={t('common.zone')}
+          className="w-36"
+          placeholder={t('common.zone')}
+          value={zone}
+          onChange={setZone}
+          options={zoneOptions}
+          allowCustom
+        />
+        <Select value={role} onValueChange={setRole}>
+          <SelectTrigger className="w-32" aria-label={t('common.role')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>{t('servers.filterAll')}</SelectItem>
+            <SelectItem value="bukkit">bukkit</SelectItem>
+            <SelectItem value="bungee">bungee</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger className="w-32" aria-label={t('common.status')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>{t('servers.filterAll')}</SelectItem>
+            <SelectItem value="online">online</SelectItem>
+            <SelectItem value="lost">lost</SelectItem>
+            <SelectItem value="offline">offline</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button type="submit">{t('common.query')}</Button>
+      </form>
 
-      {/* 已主动下线标记（FR-49）：已下线实例不在上表（已移出可用集），单列展示并支持取消下线 */}
+      {/* 裸密表（FR-106）：去 Card 外壳，列多时横向滚动不挤压 */}
+      <AsyncSection
+        isLoading={isLoading}
+        isError={isError}
+        error={error}
+        skeleton={<TableSkeleton columns={columns.length} />}
+      >
+        <div className="overflow-x-auto">
+          <DataTable
+            columns={columns}
+            rows={data}
+            rowKey={(i) => `${i.namespace}/${i.serverId}`}
+            emptyText={t('servers.empty')}
+            onRowClick={(i) => openDetail(i, false)}
+            rowClassName={(i) => (!i.assigned ? 'bg-amber-50' : undefined)}
+          />
+        </div>
+      </AsyncSection>
+
+      {/* 已主动下线标记（FR-49）：已下线实例不在上表（已移出可用集），裸分区标题 + 表，支持取消下线 */}
       {offlineMarkers && offlineMarkers.length > 0 && (
-        <Card>
-          <CardContent className="space-y-3">
-            <h2 className="text-base font-semibold">{t('servers.offlineSectionTitle')}</h2>
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-muted-foreground">{t('servers.offlineSectionTitle')}</h2>
+          <div className="overflow-x-auto">
             <DataTable
               columns={[
                 { header: 'serverId', className: 'font-mono', cell: (o) => o.serverId },
@@ -555,8 +566,8 @@ export default function ServersPage() {
               rowKey={(o) => `${o.namespace}/${o.serverId}`}
               emptyText={t('servers.offlineEmpty')}
             />
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* 下线二次确认（FR-49/FR-76）：从行操作菜单外层受控触发，避免菜单关闭吞掉弹窗，绝不丢确认 */}

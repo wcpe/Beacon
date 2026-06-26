@@ -13,11 +13,11 @@ import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
+import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import {
   Select,
@@ -129,6 +129,26 @@ export default function ApiKeysPage() {
       msg.showError(t('common.copyFailed'))
     }
   }
+
+  // 顶部汇总条（FR-106）：总数 / 启用(active) / 即将过期（active 且 expiresAt 在 7 日内）；从已拉列表派生。
+  const keys = data ?? []
+  const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000
+  const now = Date.now()
+  const activeCount = keys.filter((k) => k.status === 'active').length
+  const expiringSoonCount = keys.filter((k) => {
+    if (k.status !== 'active' || !k.expiresAt) return false
+    const ts = new Date(k.expiresAt).getTime()
+    return !Number.isNaN(ts) && ts - now <= EXPIRING_SOON_MS && ts >= now
+  }).length
+  const summaryItems: SummaryItem[] = [
+    { label: t('apikeys.summaryTotal'), value: keys.length },
+    { label: t('apikeys.summaryActive'), value: activeCount, tone: 'success' },
+    {
+      label: t('apikeys.summaryExpiringSoon'),
+      value: expiringSoonCount,
+      tone: expiringSoonCount > 0 ? 'warning' : 'default',
+    },
+  ]
 
   // 密钥表列定义（操作列闭包引用 mutation，故在组件内定义）
   const columns: DataTableColumn<ApiKeyView>[] = [
@@ -243,19 +263,21 @@ export default function ApiKeysPage() {
   })
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardContent>
-          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
-            <DataTable
-              columns={columns}
-              rows={data}
-              rowKey={(k) => String(k.id)}
-              emptyText={t('apikeys.empty')}
-            />
-          </AsyncSection>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      {/* 顶部汇总条（FR-106）：总数 / 启用 / 即将过期 */}
+      <SummaryStrip items={summaryItems} />
+
+      {/* 裸密表（FR-106）：去 Card 外壳，列多时横向滚动 */}
+      <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+        <div className="overflow-x-auto">
+          <DataTable
+            columns={columns}
+            rows={data}
+            rowKey={(k) => String(k.id)}
+            emptyText={t('apikeys.empty')}
+          />
+        </div>
+      </AsyncSection>
 
       {/* 一次性明文展示 Dialog：创建 / 重置后弹出，关闭后无法再次查看 */}
       <Dialog open={revealed !== null} onOpenChange={(open) => !open && setRevealed(null)}>

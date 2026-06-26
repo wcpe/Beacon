@@ -400,6 +400,9 @@ export const zhCN = {
     empty: '无审计记录',
     detailTitle: '审计详情',
     detailField: '详情',
+    // 顶部汇总条（FR-106）
+    summaryPage: '本页',
+    summaryTotal: '总数',
     // 导出（FR-84）：按当前过滤条件全量流式下载
     exportCsv: '导出 CSV',
     exportJson: '导出 JSON',
@@ -482,6 +485,11 @@ export const zhCN = {
     fromTime: '起始时间',
     toTime: '截止时间',
     empty: '无告警事件',
+    // 顶部汇总条（FR-106）
+    summaryPage: '本页',
+    summaryCritical: '严重',
+    summaryWarning: '警告',
+    summaryInfo: '信息',
     detailTitle: '事件详情',
     detailField: '详情',
     // 事件类型英文枚举 → 中文（未知经 defaultValue 回退原文）
@@ -610,7 +618,15 @@ export const zhCN = {
     colDrain: '排空',
     colLastHeartbeat: '最近心跳',
     colActions: '操作',
+    // 版本/agent 合一列（FR-106）：「子服版本 · agent 版本」
+    colVersionAgent: '版本 · agent',
     filterAll: '全部',
+    // 顶部汇总条（FR-106）
+    summaryTotal: '总实例',
+    summaryOnline: '在线',
+    summaryLost: '失联',
+    summaryDrained: '排空',
+    summaryUnassigned: '未分配',
     // 排空态徽标（drain，FR-10）
     drainedBadge: '已排空',
     offlineBtn: '下线',
@@ -864,6 +880,8 @@ export const zhCN = {
     msgCreated: '已新建环境 {{code}}',
     msgRenamed: '已更新环境 {{code}} 的名称',
     msgDeleted: '已删除环境 {{code}}',
+    // 顶部汇总条（FR-106）
+    summaryTotal: '环境数',
   },
 
   // ===== 密钥管理页 =====
@@ -883,6 +901,10 @@ export const zhCN = {
     roleFull: 'full（读写）',
     roleReadonly: 'readonly（只读）',
     expiresNever: '永不',
+    // 顶部汇总条（FR-106）
+    summaryTotal: '总数',
+    summaryActive: '启用',
+    summaryExpiringSoon: '即将过期',
     resetBtn: '重置',
     resetConfirmTitle: '重置密钥「{{name}}」？',
     // 统一二次确认（FR-76）的扁平描述与影响摘要

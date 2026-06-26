@@ -15,10 +15,10 @@ import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
+import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -104,6 +104,11 @@ export default function NamespacesPage() {
     renameMut.mutate({ code: renaming.code, name: renameName.trim() })
   }
 
+  // 顶部汇总条（FR-106）：环境数（从已拉列表派生）。
+  const summaryItems: SummaryItem[] = [
+    { label: t('namespaces.summaryTotal'), value: data?.length ?? 0 },
+  ]
+
   // 环境表列定义（操作列闭包引用 mutation / 状态，故在组件内定义）
   const columns: DataTableColumn<NamespaceView>[] = [
     { header: t('namespaces.colCode'), className: 'font-mono', cell: (ns) => ns.code },
@@ -173,19 +178,21 @@ export default function NamespacesPage() {
   })
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardContent>
-          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
-            <DataTable
-              columns={columns}
-              rows={data}
-              rowKey={(ns) => ns.code}
-              emptyText={t('namespaces.empty')}
-            />
-          </AsyncSection>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      {/* 顶部汇总条（FR-106）：环境数 */}
+      <SummaryStrip items={summaryItems} />
+
+      {/* 裸密表（FR-106）：去 Card 外壳，列多时横向滚动 */}
+      <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+        <div className="overflow-x-auto">
+          <DataTable
+            columns={columns}
+            rows={data}
+            rowKey={(ns) => ns.code}
+            emptyText={t('namespaces.empty')}
+          />
+        </div>
+      </AsyncSection>
 
       {/* 改名 Dialog：仅改显示名，code 不可变（只读展示） */}
       <Dialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>

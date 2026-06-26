@@ -12,12 +12,11 @@ import { usePageHeader } from '@/components/PageHeader'
 import AsyncSection from '@/components/AsyncSection'
 import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
+import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Combobox } from '@/components/ui/combobox'
-import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -105,6 +104,12 @@ export default function AuditsPage() {
   const page = filter.page ?? 1
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+  // 顶部汇总条（FR-106）：本页条数 / 总数（端点返回 total）；不加新后端。
+  const summaryItems: SummaryItem[] = [
+    { label: t('audit.summaryPage'), value: data?.items.length ?? 0 },
+    { label: t('audit.summaryTotal'), value: total },
+  ]
+
   // 审计表列定义（详情列闭包引用 setSelectedAudit，故在组件内定义）
   const columns: DataTableColumn<AuditView>[] = [
     { header: t('audit.colTime'), cell: (a) => formatTime(a.createdAt) },
@@ -146,122 +151,125 @@ export default function AuditsPage() {
   })
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardContent>
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
-              {/* 筛选框：可编辑下拉，候选来自 listNamespaces 但允许键入列表外值（FR-51） */}
-              <Combobox
-                id="a-namespace"
-                aria-label={t('common.namespace')}
-                className="w-40"
-                value={namespace}
-                onChange={setNamespace}
-                options={nsOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-operator">{t('common.operator')}</Label>
-              <Input
-                id="a-operator"
-                value={operator}
-                onChange={(e) => setOperator(e.target.value)}
-                placeholder={t('audit.operatorPlaceholder')}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-action">{t('audit.colAction')}</Label>
-              <Input
-                id="a-action"
-                value={action}
-                onChange={(e) => setAction(e.target.value)}
-                placeholder={t('audit.actionPlaceholder')}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-targettype">{t('audit.colTargetType')}</Label>
-              <Input
-                id="a-targettype"
-                value={targetType}
-                onChange={(e) => setTargetType(e.target.value)}
-                placeholder={t('audit.targetTypePlaceholder')}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-targetref">{t('audit.colTargetRef')}</Label>
-              <Input id="a-targetref" value={targetRef} onChange={(e) => setTargetRef(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-detailkw">{t('audit.detailKeyword')}</Label>
-              <Input
-                id="a-detailkw"
-                value={detailKeyword}
-                onChange={(e) => setDetailKeyword(e.target.value)}
-                placeholder={t('audit.detailKeywordPlaceholder')}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-from">{t('audit.fromTime')}</Label>
-              <Input
-                id="a-from"
-                type="datetime-local"
-                value={from}
-                onChange={(e) => setFrom(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="a-to">{t('audit.toTime')}</Label>
-              <Input id="a-to" type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
-            </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      {/* 顶部汇总条（FR-106）：本页 / 总数 */}
+      <SummaryStrip items={summaryItems} />
 
-      <Card>
-        <CardContent>
-          <AsyncSection
-            isLoading={isLoading}
-            isError={isError}
-            error={error}
-            skeleton={<TableSkeleton columns={columns.length} />}
+      {/* 内联吸顶工具栏（FR-106）：原筛选 Card 压成一行紧凑控件，保留全部筛选维度与「查询」 */}
+      <form
+        onSubmit={onSearch}
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
+      >
+        {/* 筛选框：可编辑下拉，候选来自 listNamespaces 但允许键入列表外值（FR-51） */}
+        <Combobox
+          id="a-namespace"
+          aria-label={t('common.namespace')}
+          className="w-36"
+          placeholder={t('common.namespace')}
+          value={namespace}
+          onChange={setNamespace}
+          options={nsOptions}
+          allowCustom
+        />
+        <Input
+          id="a-operator"
+          aria-label={t('common.operator')}
+          className="w-36"
+          value={operator}
+          onChange={(e) => setOperator(e.target.value)}
+          placeholder={t('audit.operatorPlaceholder')}
+        />
+        <Input
+          id="a-action"
+          aria-label={t('audit.colAction')}
+          className="w-40"
+          value={action}
+          onChange={(e) => setAction(e.target.value)}
+          placeholder={t('audit.actionPlaceholder')}
+        />
+        <Input
+          id="a-targettype"
+          aria-label={t('audit.colTargetType')}
+          className="w-36"
+          value={targetType}
+          onChange={(e) => setTargetType(e.target.value)}
+          placeholder={t('audit.targetTypePlaceholder')}
+        />
+        <Input
+          id="a-targetref"
+          aria-label={t('audit.colTargetRef')}
+          className="w-36"
+          value={targetRef}
+          onChange={(e) => setTargetRef(e.target.value)}
+          placeholder={t('audit.colTargetRef')}
+        />
+        <Input
+          id="a-detailkw"
+          aria-label={t('audit.detailKeyword')}
+          className="w-44"
+          value={detailKeyword}
+          onChange={(e) => setDetailKeyword(e.target.value)}
+          placeholder={t('audit.detailKeywordPlaceholder')}
+        />
+        <Input
+          id="a-from"
+          aria-label={t('audit.fromTime')}
+          className="w-44"
+          type="datetime-local"
+          value={from}
+          onChange={(e) => setFrom(e.target.value)}
+        />
+        <Input
+          id="a-to"
+          aria-label={t('audit.toTime')}
+          className="w-44"
+          type="datetime-local"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+        />
+        <Button type="submit">{t('common.query')}</Button>
+      </form>
+
+      {/* 裸密表（FR-106）：去 Card 外壳，列多时横向滚动 */}
+      <AsyncSection
+        isLoading={isLoading}
+        isError={isError}
+        error={error}
+        skeleton={<TableSkeleton columns={columns.length} />}
+      >
+        <div className="overflow-x-auto">
+          <DataTable
+            columns={columns}
+            rows={data?.items}
+            rowKey={(a, idx) => `${a.createdAt}-${idx}`}
+            emptyText={t('audit.empty')}
+          />
+        </div>
+
+        <div className="mt-4 flex items-center justify-center gap-4 text-sm">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page <= 1 || isFetching}
+            onClick={() => goPage(page - 1)}
           >
-            <DataTable
-              columns={columns}
-              rows={data?.items}
-              rowKey={(a, idx) => `${a.createdAt}-${idx}`}
-              emptyText={t('audit.empty')}
-            />
-
-            <div className="mt-4 flex items-center justify-center gap-4 text-sm">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page <= 1 || isFetching}
-                onClick={() => goPage(page - 1)}
-              >
-                {t('common.prevPage')}
-              </Button>
-              <span className="text-muted-foreground">
-                {t('common.pageInfo', { page, total: totalPages, count: total })}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages || isFetching}
-                onClick={() => goPage(page + 1)}
-              >
-                {t('common.nextPage')}
-              </Button>
-            </div>
-          </AsyncSection>
-        </CardContent>
-      </Card>
+            {t('common.prevPage')}
+          </Button>
+          <span className="text-muted-foreground">
+            {t('common.pageInfo', { page, total: totalPages, count: total })}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages || isFetching}
+            onClick={() => goPage(page + 1)}
+          >
+            {t('common.nextPage')}
+          </Button>
+        </div>
+      </AsyncSection>
 
       {/* 审计详情 Dialog：展示完整 detail 与上下文字段 */}
       <Dialog open={selectedAudit !== null} onOpenChange={(open) => !open && setSelectedAudit(null)}>

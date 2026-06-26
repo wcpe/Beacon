@@ -10,13 +10,12 @@ import type { AlertEventView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
+import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Combobox } from '@/components/ui/combobox'
-import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
   SelectContent,
@@ -116,151 +115,172 @@ export default function AlertEventsPage() {
   const page = filter.page ?? 1
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+  // 顶部汇总条（FR-106）：本页条数 + 各级别计数（从已拉列表派生；无「未处理」字段故按级别给）。
+  const items = data?.items ?? []
+  const summaryItems: SummaryItem[] = [
+    { label: t('alertEvent.summaryPage'), value: items.length },
+    {
+      label: t('alertEvent.summaryCritical'),
+      value: items.filter((e) => e.level === 'critical').length,
+      tone: 'danger',
+    },
+    {
+      label: t('alertEvent.summaryWarning'),
+      value: items.filter((e) => e.level === 'warning').length,
+      tone: 'warning',
+    },
+    {
+      label: t('alertEvent.summaryInfo'),
+      value: items.filter((e) => e.level === 'info').length,
+      tone: 'muted',
+    },
+  ]
+
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardContent>
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="ae-type">{t('alertEvent.typeLabel')}</Label>
-              <Select value={type} onValueChange={setType}>
-                <SelectTrigger id="ae-type" className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('alertEvent.allTypes')}</SelectItem>
-                  {TYPE_OPTIONS.map((v) => (
-                    <SelectItem key={v} value={v}>
-                      {typeLabel(v)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ae-level">{t('alertEvent.levelLabel')}</Label>
-              <Select value={level} onValueChange={setLevel}>
-                <SelectTrigger id="ae-level" className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('alertEvent.allLevels')}</SelectItem>
-                  {LEVEL_OPTIONS.map((v) => (
-                    <SelectItem key={v} value={v}>
-                      {levelLabel(v)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ae-namespace">{t('common.namespace')}</Label>
-              <Combobox
-                id="ae-namespace"
-                aria-label={t('common.namespace')}
-                className="w-40"
-                value={namespace}
-                onChange={setNamespace}
-                options={nsOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ae-from">{t('alertEvent.fromTime')}</Label>
-              <Input id="ae-from" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ae-to">{t('alertEvent.toTime')}</Label>
-              <Input id="ae-to" type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
-            </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      {/* 顶部汇总条（FR-106）：本页 + 各级别计数 */}
+      <SummaryStrip items={summaryItems} />
 
-      <Card>
-        <CardContent>
-          <AsyncSection
-            isLoading={isLoading}
-            isError={isError}
-            error={error}
-            skeleton={
-              // 时间线骨架：若干条事件行占位，贴近真实信息流形状
-              <ol className="relative space-y-4 border-l pl-6">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <li key={i} className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Skeleton className="h-5 w-14 rounded-md" />
-                      <Skeleton className="h-4 w-48" />
-                      <Skeleton className="h-5 w-20 rounded-md" />
-                    </div>
-                    <Skeleton className="h-3 w-40" />
-                  </li>
-                ))}
-              </ol>
-            }
+      {/* 内联吸顶工具栏（FR-106）：原筛选 Card 压成一行紧凑控件，保留全部筛选维度与「查询」 */}
+      <form
+        onSubmit={onSearch}
+        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
+      >
+        <Select value={type} onValueChange={setType}>
+          <SelectTrigger id="ae-type" className="w-36" aria-label={t('alertEvent.typeLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>{t('alertEvent.allTypes')}</SelectItem>
+            {TYPE_OPTIONS.map((v) => (
+              <SelectItem key={v} value={v}>
+                {typeLabel(v)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={level} onValueChange={setLevel}>
+          <SelectTrigger id="ae-level" className="w-32" aria-label={t('alertEvent.levelLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL}>{t('alertEvent.allLevels')}</SelectItem>
+            {LEVEL_OPTIONS.map((v) => (
+              <SelectItem key={v} value={v}>
+                {levelLabel(v)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Combobox
+          id="ae-namespace"
+          aria-label={t('common.namespace')}
+          className="w-36"
+          placeholder={t('common.namespace')}
+          value={namespace}
+          onChange={setNamespace}
+          options={nsOptions}
+          allowCustom
+        />
+        <Input
+          id="ae-from"
+          aria-label={t('alertEvent.fromTime')}
+          className="w-44"
+          type="datetime-local"
+          value={from}
+          onChange={(e) => setFrom(e.target.value)}
+        />
+        <Input
+          id="ae-to"
+          aria-label={t('alertEvent.toTime')}
+          className="w-44"
+          type="datetime-local"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+        />
+        <Button type="submit">{t('common.query')}</Button>
+      </form>
+
+      {/* 裸信息流（FR-106）：去 Card 外壳，保留时间线渲染（信息流语义更贴） */}
+      <AsyncSection
+        isLoading={isLoading}
+        isError={isError}
+        error={error}
+        skeleton={
+          // 时间线骨架：若干条事件行占位，贴近真实信息流形状
+          <ol className="relative space-y-4 border-l pl-6">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <li key={i} className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-14 rounded-md" />
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-5 w-20 rounded-md" />
+                </div>
+                <Skeleton className="h-3 w-40" />
+              </li>
+            ))}
+          </ol>
+        }
+      >
+        {data && data.items.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">{t('alertEvent.empty')}</p>
+        ) : (
+          <ol className="relative space-y-4 border-l pl-6">
+            {data?.items.map((ev) => (
+              <li key={ev.id} className="relative">
+                {/* 时间线圆点（按级别着色） */}
+                <span
+                  aria-hidden
+                  className={`absolute -left-[1.6rem] top-1.5 inline-block h-2.5 w-2.5 rounded-full ${levelDotClass(ev.level)}`}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={levelVariant(ev.level)}>{levelLabel(ev.level)}</Badge>
+                  <span className="text-sm font-medium">{ev.message}</span>
+                  <Badge variant="outline">{typeLabel(ev.type)}</Badge>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                  <span>{formatTime(ev.createdAt)}</span>
+                  {ev.namespace && <span>{t('alertEvent.colNamespace')}: {ev.namespace}</span>}
+                  {ev.serverId && <span className="font-mono">{ev.serverId}</span>}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto px-1.5 py-0"
+                    onClick={() => setSelected(ev)}
+                  >
+                    {t('common.view')}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        <div className="mt-4 flex items-center justify-center gap-4 text-sm">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page <= 1 || isFetching}
+            onClick={() => goPage(page - 1)}
           >
-            {data && data.items.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">{t('alertEvent.empty')}</p>
-            ) : (
-              <ol className="relative space-y-4 border-l pl-6">
-                {data?.items.map((ev) => (
-                  <li key={ev.id} className="relative">
-                    {/* 时间线圆点（按级别着色） */}
-                    <span
-                      aria-hidden
-                      className={`absolute -left-[1.6rem] top-1.5 inline-block h-2.5 w-2.5 rounded-full ${levelDotClass(ev.level)}`}
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={levelVariant(ev.level)}>{levelLabel(ev.level)}</Badge>
-                      <span className="text-sm font-medium">{ev.message}</span>
-                      <Badge variant="outline">{typeLabel(ev.type)}</Badge>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                      <span>{formatTime(ev.createdAt)}</span>
-                      {ev.namespace && <span>{t('alertEvent.colNamespace')}: {ev.namespace}</span>}
-                      {ev.serverId && <span className="font-mono">{ev.serverId}</span>}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-auto px-1.5 py-0"
-                        onClick={() => setSelected(ev)}
-                      >
-                        {t('common.view')}
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-
-            <div className="mt-4 flex items-center justify-center gap-4 text-sm">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page <= 1 || isFetching}
-                onClick={() => goPage(page - 1)}
-              >
-                {t('common.prevPage')}
-              </Button>
-              <span className="text-muted-foreground">
-                {t('common.pageInfo', { page, total: totalPages, count: total })}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages || isFetching}
-                onClick={() => goPage(page + 1)}
-              >
-                {t('common.nextPage')}
-              </Button>
-            </div>
-          </AsyncSection>
-        </CardContent>
-      </Card>
+            {t('common.prevPage')}
+          </Button>
+          <span className="text-muted-foreground">
+            {t('common.pageInfo', { page, total: totalPages, count: total })}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages || isFetching}
+            onClick={() => goPage(page + 1)}
+          >
+            {t('common.nextPage')}
+          </Button>
+        </div>
+      </AsyncSection>
 
       {/* 事件详情 Dialog：完整字段 + detail 原文 */}
       <Dialog open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
