@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PageHeaderProvider } from '@/components/PageHeader'
 import type { ReactElement } from 'react'
@@ -107,6 +107,7 @@ const PUBLISH_IMPACT: PublishImpact = {
 }
 const FILE: WorkbenchFile = {
   key: 'plugins/spawn.yml',
+  fileId: 7,
   namespace: 'prod',
   group: 'main',
   dataId: 'spawn.yml',
@@ -139,15 +140,23 @@ function installDefaults() {
   vi.mocked(wb.usePublishImpact).mockReturnValue(q(PUBLISH_IMPACT))
 }
 
+// 暴露当前路径供断言双击导航到真详情路由（FR-112）
+function LocationProbe() {
+  const loc = useLocation()
+  return <div data-testid="location">{loc.pathname}</div>
+}
+
 function renderPage(ui: ReactElement = <ConfigWorkbenchPage />, path = '/configs') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <PageHeaderProvider>
+          <LocationProbe />
           <Routes>
             <Route path="/configs" element={ui} />
-            <Route path="/configs/:id" element={ui} />
+            {/* FR-112：真详情路由由 ConfigEditorPage 承载；此处仅占位以断言导航发生 */}
+            <Route path="/configs/:id" element={<div>编辑器路由</div>} />
           </Routes>
         </PageHeaderProvider>
       </MemoryRouter>
@@ -263,34 +272,26 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     expect(await screen.findByText('重命名「spawn.yml」？')).toBeInTheDocument()
   })
 
-  it('⑦ 双击受管文件 → 编辑器浮层（多标签 + 历史 + 保存确认 toast）', async () => {
+  it('⑦ 双击受管文件 → 导航到真详情编辑器路由 /configs/:id（FR-112）', async () => {
     renderPage()
     fireEvent.doubleClick(screen.getByText('spawn.yml'))
-    // 编辑器浮层：历史修订面板（dialog 内）+ 历史版本（v4 在树与历史都出现，scope 到 dialog）
+    // 双击进真详情子路由（key=plugins/spawn.yml，encodeURIComponent）
+    await waitFor(() =>
+      expect(screen.getByTestId('location').textContent).toBe('/configs/plugins%2Fspawn.yml'),
+    )
+  })
+
+  it('⑦b 右键「编辑」受管文件 → 页内编辑器浮层（历史 + 保存确认 toast）', async () => {
+    renderPage()
+    // 右键菜单的「编辑」走页内浮层（保留的快捷编辑入口，区别于双击进真路由）
+    fireEvent.contextMenu(screen.getByText('spawn.yml'))
+    await userEvent.click(await screen.findByText('编辑'))
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByText('历史修订')).toBeInTheDocument()
     expect(within(dialog).getByText('v4')).toBeInTheDocument()
     expect(within(dialog).getByText('当前')).toBeInTheDocument()
-    // 保存确认 toast
+    // 保存确认 toast（浮层仍为原型示意保存）
     await userEvent.click(within(dialog).getByRole('button', { name: '保存' }))
     expect(toastSuccess).toHaveBeenCalledWith('已保存（原型示意）')
-  })
-
-  it('⑦b 编辑器多标签：右键「编辑」第二个文件 → 两个标签都在，可切换', async () => {
-    renderPage()
-    fireEvent.doubleClick(screen.getByText('spawn.yml'))
-    const dialog = await screen.findByRole('dialog')
-    // 再开 motd.yml（受管树里那条，非浮层内）：右键 → 编辑。
-    // 浮层非模态，树 motd.yml 仍在 DOM；取不在 dialog 内的那个。
-    const treeMotd = screen.getAllByText('motd.yml').find((el) => !dialog.contains(el)) as HTMLElement
-    fireEvent.contextMenu(treeMotd)
-    await userEvent.click(await screen.findByText('编辑'))
-    // 浮层内两个标签都在：spawn.yml + motd.yml（活跃文件名在面包屑亦出现，故用 getAllByText）
-    await waitFor(() => {
-      expect(within(dialog).getAllByText('spawn.yml').length).toBeGreaterThanOrEqual(1)
-      expect(within(dialog).getAllByText('motd.yml').length).toBeGreaterThanOrEqual(1)
-    })
-    // 切到 spawn.yml 标签触发激活（取标签栏内的 spawn.yml，不报错即标签可切换）
-    await userEvent.click(within(dialog).getAllByText('spawn.yml')[0])
   })
 })

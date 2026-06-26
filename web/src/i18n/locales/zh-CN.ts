@@ -1224,6 +1224,20 @@ export const zhCN = {
       sbLanguage: '语言 {{lang}}',
       sbRevisions: '历史版本 {{count}} 份',
     },
+    // 配置文件真详情多标签编辑器（/configs/:id 真路由，FR-112）
+    editorRoute: {
+      save: '保存',
+      refresh: '刷新',
+      backToEdit: '返回编辑',
+      dirty: '未保存',
+      fileNotFound: '未找到该受管文件',
+      historyTitle: '历史修订',
+      historyCurrent: '当前',
+      language: '语言 {{lang}}',
+      revisions: '历史版本 {{count}} 份',
+      toastSaved: '已保存',
+      saveFailed: '保存失败',
+    },
     // 在页编辑确认对话框（ConfigSaveConfirmDialog，FR-67）
     saveConfirmTitle: '保存确认',
     saveConfirmConfig: '配置：{{namespace}} / {{group}} / {{dataId}}',

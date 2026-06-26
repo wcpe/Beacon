@@ -84,6 +84,8 @@ export interface ServerOption {
 export interface WorkbenchFile {
   // 受管文件 key（= /configs/:id 的 id）
   key: string
+  // 后端文件对象 id（真详情编辑器保存 / 回滚按此调既有文件 API，FR-112）
+  fileId: number
   // 面包屑用：环境 / 组 / 文件名
   namespace: string
   group: string

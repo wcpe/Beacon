@@ -74,3 +74,35 @@
 - **操作日志 / 撤回无真后端**：工作台「操作日志 + 逐条 / 批量撤回」（FR-114 原型）的真实可逆能力属 **FR-116（ADR-0051）**，本 FR 不做。`useOperationLog` 在本 FR 维持「读既有事实 + 本地态」，撤回为前端态，标 partial。
 - **同步状态交叉算**：左受管树各文件的「synced/drift/managed-only/server-gone」需与右侧实时浏览逐文件比对，懒列浏览下无法一次性算全；本 FR 以可得信息标注，完整比对依赖右面板已浏览的子树。标 partial。
 - **拖拽真写流程**：右→左抓取走反抓受管任务（多步状态机）、左→右下发走拓印自审门（多步 diff/confirm），原型期为本地入队 + 浮层示意。本 FR 重点是**读链路接真 + 浏览接真**；写流程的端到端真链路触发在真机维度验证，浮层数据接真任务 / diff。
+
+---
+
+## 7. FR-112：配置文件真详情多标签编辑器（增量）
+
+> 状态：开发中　·　关联 PRD：FR-112（增强 FR-23，依赖 FR-111，见 ADR-0050 决策 3）
+
+### 7.1 背景与目标
+
+FR-111 让工作台数据接真后端；双击文件此前仅在工作台页内开**悬浮覆盖编辑器**（`EditorOverlay`），`/configs/:id` 只是「同页内最大化恢复该文件」的深链。FR-112 按 ADR-0050 决策 3 把 `/configs/:id` 升级为**真子路由**——一个聚焦编辑单个受管文件的真详情页 `ConfigEditorPage`，保留多标签横切 + Monaco diff / 历史 + 保存确认（FR-67）+ 局部面包屑 / 返回，且**保存接既有配置更新 API 真落库**。
+
+### 7.2 设计（怎么做）
+
+纯前端改动，不改后端契约。
+
+- **路由**：`web/src/App.tsx` 把 `/configs/:id` 从渲染 `ConfigWorkbenchPage`（页内浮层恢复）改为渲染新页 `ConfigEditorPage`。`/configs` 仍为双面板工作台。
+- **进入方式**：工作台双击文件 → `navigate('/configs/<encodeURIComponent(key)>')` 进真详情页（替代原页内浮层）。工作台右键菜单「编辑 / diff / 回滚」仍保留页内浮层（轻量快捷编辑，非整页跳）。
+- **`ConfigEditorPage`**（`web/src/pages/ConfigEditorPage.tsx`）：
+  - 活跃文件 key = URL `:id` 解码；多标签随访问的 `:id` 累积（去重），切换标签 = 换 URL `:id`，关标签跳邻 / 回 `/configs`。
+  - 数据复用 `useWorkbenchFile`（FR-111 已接真 `getFile` + `listFileRevisions`）；`WorkbenchFile` 增 `fileId` 字段供保存按 id 调既有文件 API。
+  - 历史修订面板：点历史版本 → Monaco DiffEditor（左=选定历史版本内容，右=当前编辑态）；再点取消 diff 回编辑。
+  - **保存（FR-67）**：点保存 / Ctrl+S **不直接发布**，先弹既有 `ConfigSaveConfirmDialog`（看 diff + 填备注 + 影响面预览），确认才调既有 `publishFile(id, content, comment)`（`PUT /admin/v1/files/:id`）真发布新版本；成功清脏 + 失效查询重拉。
+  - 局部面包屑（注入页眉标题槽）：`配置中心 / 环境·组 / 文件名`，「配置中心」为返回 `/configs` 链接。
+- **dev mock**：`api/mock/handlers.ts` 补 `PUT /admin/v1/files/:id` 最小 handler（`saveMockFile` 写回内存 + 版本自增，返回 `PublishResult`）；mock 文件补 `content` 种子让 dev 编辑器非空。
+
+### 7.3 验收标准
+
+- `/configs/:id` 为真子路由（渲染 `ConfigEditorPage`，非工作台页内浮层）；双击工作台文件进该路由。
+- 多标签横切、Monaco diff / 历史、保存确认（FR-67）均不回归；保存接既有 `publishFile` 真落库（dev 经 mock PUT 可用）。
+- 局部面包屑 / 返回可用。
+- `cd web && pnpm test` 全绿（既有 `EditorOverlay` 测试不回归 + 新增 `ConfigEditorPage` 路由 / 保存确认测试）+ `pnpm build` 绿。
+- **真机维度**：真实控制面下编辑 → 保存确认 → 真落库 + 出新版本 + 历史可见。本会话无真机能力 → 标「待真机验」。

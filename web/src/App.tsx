@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import WallboardPage from './pages/WallboardPage'
 import ConfigWorkbenchPage from './pages/ConfigWorkbenchPage'
+import ConfigEditorPage from './pages/ConfigEditorPage'
 import FilePreviewPage from './pages/FilePreviewPage'
 import ImprintPage from './pages/ImprintPage'
 import ReverseFetchTaskPage from './pages/reverse-fetch/ReverseFetchTaskPage'
@@ -55,10 +56,11 @@ export default function App() {
           <Route index element={<Navigate to="/configs" replace />} />
           {/* 可观测看板（FR-32）：总览卡片 + 趋势图 + 每服明细 */}
           <Route path="dashboard" element={<DashboardPage />} />
-          {/* 配置中心双面板 Xftp 工作台（FR-111，原型）：左右双面板 + 同步队列 + 悬浮覆盖编辑器（FR-112）。
-              /configs/:id 为编辑器深链（同一工作台页内开浮层并最大化恢复该文件），不再整页跳。 */}
+          {/* 配置中心双面板 Xftp 工作台（FR-111）：左右双面板 + 同步队列。 */}
           <Route path="configs" element={<ConfigWorkbenchPage />} />
-          <Route path="configs/:id" element={<ConfigWorkbenchPage />} />
+          {/* 配置文件真详情多标签编辑器（FR-112，ADR-0050 决策 3）：双击文件进本聚焦编辑器真路由，
+              保留多标签 + Monaco diff / 历史 + 保存确认（FR-67）+ 局部面包屑 / 返回。 */}
+          <Route path="configs/:id" element={<ConfigEditorPage />} />
           {/* 文件树有效预览（FR-45）：只读预览某服合并后文件树 + 逐键来源 */}
           <Route path="file-preview" element={<FilePreviewPage />} />
           {/* 拓印审核台（FR-46）：选在线服+文件 → diff → 单人自审 → 同步 */}

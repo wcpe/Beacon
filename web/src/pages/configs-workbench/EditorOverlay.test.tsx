@@ -30,6 +30,7 @@ const mockedFile = vi.mocked(useWorkbenchFile)
 
 const FILE: WorkbenchFile = {
   key: 'plugins/Essentials/config.yml',
+  fileId: 42,
   namespace: 'prod',
   group: 'main',
   dataId: 'Essentials/config.yml',

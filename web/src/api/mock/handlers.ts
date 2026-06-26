@@ -19,6 +19,7 @@ import {
   getMockFileList,
   getMockFile,
   getMockFileRevisions,
+  saveMockFile,
   getMockOverrideSetList,
   getMockOverrideSet,
   getMockOverrideSetRevisions,
@@ -213,6 +214,16 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
   if (fileRevMatch && method === 'GET') {
     const id = Number(fileRevMatch[1])
     return json({ items: getMockFileRevisions(id) })
+  }
+
+  // 受管文件保存（发布新版本，FR-14/112）：真详情编辑器保存内容时调 PUT /files/:id。
+  // mock 把新内容写回该文件 + 版本号自增，返回 PublishResult，让 dev 下保存确认走通。
+  if (fileDetailMatch && method === 'PUT') {
+    const id = Number(fileDetailMatch[1])
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    const result = saveMockFile(id, body.content ?? '')
+    if (!result) return notFound(`文件 #${id}`)
+    return json(result)
   }
 
   // 覆盖集

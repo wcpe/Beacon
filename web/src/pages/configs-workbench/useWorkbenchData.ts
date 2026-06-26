@@ -254,6 +254,7 @@ async function loadWorkbenchFile(namespace: string, key: string): Promise<Workbe
   const [detail, revisions] = await Promise.all([getFile(match.id), listFileRevisions(match.id)])
   return {
     key,
+    fileId: match.id,
     namespace: detail.namespace,
     group: detail.group,
     dataId: detail.path,

@@ -17,7 +17,7 @@
  *  - 右键文件 / 文件夹 → 自定义菜单；Del=删除选中、F2=重命名（均拦截浏览器默认）。
  *  - 拖拽=快捷路径，触发同样的确认流。
  *  - 队列「待审核」项点开：抓取→ingest 审核清单（FR-58~60）、下发→拓印 diff 审核（FR-46）。
- *  - 双击文件 → 悬浮编辑器（沿用，基本不动）；/configs/:id 深链恢复。
+ *  - 双击文件 → 进真详情多标签编辑器路由 /configs/:id（FR-112）；右键「编辑/diff/回滚」仍走页内悬浮编辑器（轻量快捷）。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -204,15 +204,8 @@ export default function ConfigWorkbenchPage() {
     }
   }, [serverId, options.data])
 
-  // 深链 /configs/:id：进页或 id 变化时把该文件开进浮层
-  useEffect(() => {
-    if (!params.id) return
-    const key = decodeURIComponent(params.id)
-    const name = key.split('/').pop() ?? key
-    openFile(key, name)
-  }, [params.id, openFile])
-
-  const onDoubleClickFile = (node: PanelNode) => openFile(node.key, node.name)
+  // 双击工作台文件 → 进真详情多标签编辑器（FR-112，/configs/:id 真路由，不再开页内浮层）
+  const onDoubleClickFile = (node: PanelNode) => navigate(`/configs/${encodeURIComponent(node.key)}`)
 
   // 关闭整个浮层：清空标签 + 回 /configs（去掉深链 id）
   const closeOverlay = () => {

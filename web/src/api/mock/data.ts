@@ -250,9 +250,9 @@ export function getMockAudits(filter?: { namespace?: string; operator?: string; 
 // ---- 文件树托管 ----
 
 export const mockFiles: FileView[] = [
-  { id: 1, namespace: 'prod', group: '__GLOBAL__', path: 'plugins/game/config.yml', scopeLevel: 'global', scopeTarget: '', version: 3, md5: 'abc12345', enabled: true, updatedAt: ago(3600) },
-  { id: 2, namespace: 'prod', group: '__GLOBAL__', path: 'plugins/game/db.properties', scopeLevel: 'global', scopeTarget: '', version: 2, md5: 'def67890', enabled: true, updatedAt: ago(7200) },
-  { id: 3, namespace: 'prod', group: 'server-a', path: 'plugins/game/config.yml', scopeLevel: 'group', scopeTarget: '', version: 1, md5: 'aaa11111', enabled: true, updatedAt: ago(10800) },
+  { id: 1, namespace: 'prod', group: '__GLOBAL__', path: 'plugins/game/config.yml', scopeLevel: 'global', scopeTarget: '', version: 3, md5: 'abc12345', enabled: true, updatedAt: ago(3600), content: 'enabled: true\ncooldown: 30\n' },
+  { id: 2, namespace: 'prod', group: '__GLOBAL__', path: 'plugins/game/db.properties', scopeLevel: 'global', scopeTarget: '', version: 2, md5: 'def67890', enabled: true, updatedAt: ago(7200), content: 'url=jdbc:mysql://localhost/game\npool=10\n' },
+  { id: 3, namespace: 'prod', group: 'server-a', path: 'plugins/game/config.yml', scopeLevel: 'group', scopeTarget: '', version: 1, md5: 'aaa11111', enabled: true, updatedAt: ago(10800), content: 'enabled: true\ncooldown: 15\n' },
 ]
 
 export function getMockFileList(filter?: { namespace?: string; group?: string; path?: string; scopeLevel?: string }): FileView[] {
@@ -267,11 +267,24 @@ export function getMockFile(id: number): FileView | null {
   return mockFiles.find(f => f.id === id) ?? null
 }
 
-export function getMockFileRevisions(_id: number): FileRevisionView[] {
+export function getMockFileRevisions(id: number): FileRevisionView[] {
+  const file = mockFiles.find(f => f.id === id)
+  // 最新版本在前（编辑器历史面板首项标「当前」，diff 取该项内容）
   return [
-    { version: 1, md5: 'aaa11111', operator: 'admin', comment: '初始', sourceRevision: null, createdAt: ago(7200) },
-    { version: 2, md5: 'bbb22222', operator: 'developer', comment: '更新', sourceRevision: null, createdAt: ago(3600) },
+    { version: 2, md5: 'bbb22222', operator: 'developer', comment: '更新', sourceRevision: null, createdAt: ago(3600), content: file?.content ?? '' },
+    { version: 1, md5: 'aaa11111', operator: 'admin', comment: '初始', sourceRevision: null, createdAt: ago(7200), content: '' },
   ]
+}
+
+// 保存受管文件（发布新版本，FR-112）：把新内容写回内存 mockFiles + 版本号自增，返回发布结果。
+export function saveMockFile(id: number, content: string): { version: number; md5: string } | null {
+  const file = mockFiles.find(f => f.id === id)
+  if (!file) return null
+  file.content = content
+  file.version += 1
+  file.md5 = md5(content)
+  file.updatedAt = ago(0)
+  return { version: file.version, md5: file.md5 }
 }
 
 // ---- 覆盖集 ----
