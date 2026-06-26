@@ -8,12 +8,13 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { getTopology, listNamespaces } from '../api/client'
 import { namespaceOptions } from '../api/format'
+import { Filter, Network } from 'lucide-react'
 import TopologyGraph from './topology/TopologyGraph'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
+import SectionHeader from '@/components/SectionHeader'
 import { Combobox } from '@/components/ui/combobox'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
 
 // 拓扑轮询周期（毫秒），与实例与健康页一致
 const REFETCH_MS = 5000
@@ -54,57 +55,57 @@ export default function TopologyPage() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="t-namespace">{t('common.namespace')}</Label>
-              {/* 环境改为严格下拉（候选来自 listNamespaces），选中即出图（FR-51） */}
-              <Combobox
-                id="t-namespace"
-                aria-label={t('common.namespace')}
-                className="w-48"
-                value={namespace}
-                onChange={setNamespace}
-                options={nsOptions}
-                allowCustom={false}
-                placeholder={t('topology.nsPlaceholder')}
-              />
-            </div>
+      {/* 控件 + 图例段（FR-107 卡片降级）：区段标题 + 细线轻分隔，替代原控件 Card 外壳 */}
+      <section className="space-y-3">
+        <SectionHeader icon={<Filter className="size-4" />} title={t('common.filter')} />
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="t-namespace">{t('common.namespace')}</Label>
+            {/* 环境改为严格下拉（候选来自 listNamespaces），选中即出图（FR-51） */}
+            <Combobox
+              id="t-namespace"
+              aria-label={t('common.namespace')}
+              className="w-48"
+              value={namespace}
+              onChange={setNamespace}
+              options={nsOptions}
+              allowCustom={false}
+              placeholder={t('topology.nsPlaceholder')}
+            />
           </div>
-          {/* 图例 + 计数：与图内 legend 呼应，运维一眼看清 BC / 子服区分与边含义 */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-3 w-3 rounded-sm bg-[#7c3aed]" />
-              {t('topology.legendBc', { count: bcCount })}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-3 w-3 rounded-full bg-[#2563eb]" />
-              {t('topology.legendSub', { count: subCount })}
-            </span>
-            <span>{t('topology.legendEdge')}</span>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+        {/* 图例 + 计数：与图内 legend 呼应，运维一眼看清 BC / 子服区分与边含义 */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-sm bg-[#7c3aed]" />
+            {t('topology.legendBc', { count: bcCount })}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded-full bg-[#2563eb]" />
+            {t('topology.legendSub', { count: subCount })}
+          </span>
+          <span>{t('topology.legendEdge')}</span>
+        </div>
+      </section>
 
-      <Card>
-        <CardContent>
-          {namespace === '' ? (
-            <p className="py-12 text-center text-sm text-muted-foreground">
-              {namespacesQuery.isLoading ? t('topology.loadingNs') : t('topology.noNamespace')}
-            </p>
-          ) : (
-            <AsyncSection isLoading={isLoading} isError={isError} error={error}>
-              {data &&
-                (data.nodes.length === 0 ? (
-                  <p className="py-12 text-center text-sm text-muted-foreground">{t('topology.noNodes')}</p>
-                ) : (
-                  <TopologyGraph data={data} />
-                ))}
-            </AsyncSection>
-          )}
-        </CardContent>
-      </Card>
+      {/* 画布段（FR-107 卡片降级）：区段标题 + 细线轻分隔，TopologyGraph（ECharts，FR-37）数据 / 交互 / 轮询不动 */}
+      <section className="space-y-3">
+        <SectionHeader icon={<Network className="size-4" />} title={t('topology.title')} />
+        {namespace === '' ? (
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            {namespacesQuery.isLoading ? t('topology.loadingNs') : t('topology.noNamespace')}
+          </p>
+        ) : (
+          <AsyncSection isLoading={isLoading} isError={isError} error={error}>
+            {data &&
+              (data.nodes.length === 0 ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">{t('topology.noNodes')}</p>
+              ) : (
+                <TopologyGraph data={data} />
+              ))}
+          </AsyncSection>
+        )}
+      </section>
     </div>
   )
 }

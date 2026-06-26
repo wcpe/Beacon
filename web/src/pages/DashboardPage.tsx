@@ -32,6 +32,7 @@ import type { TrendWindow } from '../api/client'
 import { formatBytes, namespaceOptions } from '../api/format'
 import TrendChart from './dashboard/TrendChart'
 import { usePageHeader } from '@/components/PageHeader'
+import SectionHeader from '@/components/SectionHeader'
 import IconStat from '@/components/dashboard/IconStat'
 import StatusTile from '@/components/dashboard/StatusTile'
 import HealthBar, { type HealthSegment } from '@/components/dashboard/HealthBar'
@@ -40,7 +41,6 @@ import { ratioLevel } from '@/components/dashboard/health'
 import AsyncSection from '@/components/AsyncSection'
 import { TileGridSkeleton, CardGridSkeleton } from '@/components/skeletons'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
 import { Combobox } from '@/components/ui/combobox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
@@ -171,57 +171,59 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ① 集群状态总览条：分段健康条 + 在线/亚健康/失联/离线计数 + 全局 KPI chips */}
-      <Card>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <HealthBar segments={healthSegments} className="min-w-[10rem] flex-1" />
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-              <span className="flex items-center gap-1.5 text-green-700 dark:text-green-400">
-                <CircleCheck aria-hidden className="size-4" />
-                <span className="tabular-nums">{t('dashboard.healthOnline', { count: healthOnline })}</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                <TriangleAlert aria-hidden className="size-4" />
-                <span className="tabular-nums">{t('dashboard.healthDegraded', { count: healthDegraded })}</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
-                <CircleX aria-hidden className="size-4" />
-                <span className="tabular-nums">{t('dashboard.healthLost', { count: healthLost })}</span>
-              </span>
-              <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="tabular-nums">{t('dashboard.healthOffline', { count: healthOffline })}</span>
-              </span>
-            </div>
+      {/* ① 集群状态总览条（FR-107 卡片降级）：区段标题 + 轻分隔替代外层 Card；
+          内含分段健康条 + 在线/亚健康/失联/离线计数 + 全局 KPI chips */}
+      <section className="space-y-3">
+        <SectionHeader icon={<Gauge className="size-4" />} title={t('dashboard.overviewTitle')} />
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <HealthBar segments={healthSegments} className="min-w-[10rem] flex-1" />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            <span className="flex items-center gap-1.5 text-green-700 dark:text-green-400">
+              <CircleCheck aria-hidden className="size-4" />
+              <span className="tabular-nums">{t('dashboard.healthOnline', { count: healthOnline })}</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+              <TriangleAlert aria-hidden className="size-4" />
+              <span className="tabular-nums">{t('dashboard.healthDegraded', { count: healthDegraded })}</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
+              <CircleX aria-hidden className="size-4" />
+              <span className="tabular-nums">{t('dashboard.healthLost', { count: healthLost })}</span>
+            </span>
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <span className="tabular-nums">{t('dashboard.healthOffline', { count: healthOffline })}</span>
+            </span>
           </div>
-          {/* 全局 KPI chips：玩家 / 均TPS / 均CPU / 均内存（带图标，紧凑横排） */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <KpiChip
-              icon={<Users className="size-4" />}
-              value={summary?.totalPlayers ?? '-'}
-              label={t('dashboard.cardTotalPlayers')}
-            />
-            <KpiChip
-              icon={<Zap className="size-4" />}
-              value={summary ? summary.avgTps.toFixed(1) : '-'}
-              label={t('dashboard.cardAvgTps')}
-            />
-            <KpiChip icon={<Cpu className="size-4" />} value={summary ? cpuText : '-'} label={t('dashboard.cardAvgCpu')} />
-            <KpiChip
-              icon={<Database className="size-4" />}
-              value={summary ? formatBytes(summary.avgMemUsed) : '-'}
-              label={t('dashboard.cardAvgMem')}
-            />
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+        {/* 全局 KPI chips：玩家 / 均TPS / 均CPU / 均内存（带图标，紧凑横排） */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <KpiChip
+            icon={<Users className="size-4" />}
+            value={summary?.totalPlayers ?? '-'}
+            label={t('dashboard.cardTotalPlayers')}
+          />
+          <KpiChip
+            icon={<Zap className="size-4" />}
+            value={summary ? summary.avgTps.toFixed(1) : '-'}
+            label={t('dashboard.cardAvgTps')}
+          />
+          <KpiChip icon={<Cpu className="size-4" />} value={summary ? cpuText : '-'} label={t('dashboard.cardAvgCpu')} />
+          <KpiChip
+            icon={<Database className="size-4" />}
+            value={summary ? formatBytes(summary.avgMemUsed) : '-'}
+            label={t('dashboard.cardAvgMem')}
+          />
+        </div>
+      </section>
 
-      {/* ② 服务器状态墙：每台在线服务器一块瓷砖，健康色编码 + 角色图标 + 关键指标，一眼扫全集群健康 */}
-      <section className="space-y-2">
-        <h2 className="flex items-center gap-2 text-lg font-semibold">
-          <LayoutGrid aria-hidden className="size-5 text-muted-foreground" />
-          {t('dashboard.statusWallTitle')}
-        </h2>
+      {/* ② 服务器状态墙：每台在线服务器一块瓷砖，健康色编码 + 角色图标 + 关键指标，一眼扫全集群健康。
+          瓷砖（StatusTile）本身是可点磁贴、属保留 Card 的对象；外层不再裹区段 Card（FR-107）。 */}
+      <section className="space-y-3">
+        <SectionHeader
+          icon={<LayoutGrid className="size-5" />}
+          title={t('dashboard.statusWallTitle')}
+          size="lg"
+        />
         <AsyncSection
           isLoading={instancesQuery.isLoading}
           isError={instancesQuery.isError}
@@ -229,9 +231,7 @@ export default function DashboardPage() {
           skeleton={<TileGridSkeleton />}
         >
           {instances.length === 0 ? (
-            <Card>
-              <CardContent className="text-sm text-muted-foreground">{t('dashboard.statusWallEmpty')}</CardContent>
-            </Card>
+            <p className="text-sm text-muted-foreground">{t('dashboard.statusWallEmpty')}</p>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2.5">
               {instances.map((inst) => (
@@ -250,15 +250,12 @@ export default function DashboardPage() {
         skeleton={<CardGridSkeleton count={2} heightClass="h-56" gridClass="grid grid-cols-1 gap-3 xl:grid-cols-2" />}
       >
         {summary && (
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            {/* 子服（bukkit）面板：玩家 / 服务器数 / 均TPS / 均内存 / 均CPU + 玩家迷你趋势 */}
-            <Card>
-              <CardContent className="space-y-3">
-                <h2 className="flex items-center gap-2 text-base font-semibold">
-                  <Server aria-hidden className="size-4 text-muted-foreground" />
-                  {t('dashboard.sectionBukkit')}
-                </h2>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+            {/* 子服（bukkit）面板（FR-107 卡片降级）：区段标题 + 轻分隔替代面板 Card；
+                玩家 / 服务器数 / 均TPS / 均内存 / 均CPU + 玩家迷你趋势 */}
+            <section className="space-y-3">
+              <SectionHeader icon={<Server className="size-4" />} title={t('dashboard.sectionBukkit')} />
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
                   <IconStat
                     icon={<Users className="size-4" />}
                     label={t('dashboard.cardTotalPlayers')}
@@ -293,23 +290,19 @@ export default function DashboardPage() {
                     level={cpuAvailable ? ratioLevel(summary.avgCpuLoad) : undefined}
                   />
                 </div>
-                {/* 内嵌迷你趋势：在线玩家近况走向（复用趋势数据，靛蓝色 token） */}
-                <div className="space-y-1 border-t pt-2">
-                  <div className="text-[11px] text-muted-foreground">{t('dashboard.sparklinePlayers')}</div>
-                  <MiniSparkline values={playersSeries} color="var(--chart-1)" />
-                </div>
-              </CardContent>
-            </Card>
+              {/* 内嵌迷你趋势：在线玩家近况走向（复用趋势数据，靛蓝色 token） */}
+              <div className="space-y-1 border-t pt-2">
+                <div className="text-[11px] text-muted-foreground">{t('dashboard.sparklinePlayers')}</div>
+                <MiniSparkline values={playersSeries} color="var(--chart-1)" />
+              </div>
+            </section>
 
-            {/* BC 代理（bungee）面板：代理数 / 连接 / 线程 / 后端可达 / 延迟 + 连接迷你趋势 */}
-            <Card>
-              <CardContent className="space-y-3">
-                <h2 className="flex items-center gap-2 text-base font-semibold">
-                  <Router aria-hidden className="size-4 text-muted-foreground" />
-                  {t('dashboard.sectionBc')}
-                </h2>
-                {bc && (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
+            {/* BC 代理（bungee）面板（FR-107 卡片降级）：区段标题 + 轻分隔替代面板 Card；
+                代理数 / 连接 / 线程 / 后端可达 / 延迟 + 连接迷你趋势 */}
+            <section className="space-y-3">
+              <SectionHeader icon={<Router className="size-4" />} title={t('dashboard.sectionBc')} />
+              {bc && (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
                     <IconStat
                       icon={<Server className="size-4" />}
                       label={t('dashboard.bcProxyCount')}
@@ -348,25 +341,23 @@ export default function DashboardPage() {
                     />
                   </div>
                 )}
-                {/* 内嵌迷你趋势：均 TPS 近况走向（BC 无独立趋势序列，借集群 TPS 反映整体活跃） */}
-                <div className="space-y-1 border-t pt-2">
-                  <div className="text-[11px] text-muted-foreground">{t('dashboard.sparklineTps')}</div>
-                  <MiniSparkline values={tpsSeries} color="var(--chart-4)" />
-                </div>
-              </CardContent>
-            </Card>
+              {/* 内嵌迷你趋势：均 TPS 近况走向（BC 无独立趋势序列，借集群 TPS 反映整体活跃） */}
+              <div className="space-y-1 border-t pt-2">
+                <div className="text-[11px] text-muted-foreground">{t('dashboard.sparklineTps')}</div>
+                <MiniSparkline values={tpsSeries} color="var(--chart-4)" />
+              </div>
+            </section>
           </div>
         )}
       </AsyncSection>
 
-      {/* ④ 时序监控图：历史趋势（时间窗切换 + 四指标折线，图标标题 + hover tooltip 看某时间点数值） */}
-      <Card>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-base font-medium">
-              <Gauge aria-hidden className="size-4 text-muted-foreground" />
-              {t('dashboard.trendTitle')}
-            </div>
+      {/* ④ 时序监控图（FR-107 卡片降级）：区段标题（时间窗切换上提右槽）+ 轻分隔替代外层 Card；
+          历史趋势（四指标折线，图标标题 + hover tooltip 看某时间点数值） */}
+      <section className="space-y-3">
+        <SectionHeader
+          icon={<Activity className="size-4" />}
+          title={t('dashboard.trendTitle')}
+          actions={
             <Tabs value={window} onValueChange={(v) => setWindow(v as TrendWindow)}>
               <TabsList>
                 {WINDOWS.map((w) => (
@@ -376,8 +367,9 @@ export default function DashboardPage() {
                 ))}
               </TabsList>
             </Tabs>
-          </div>
-          <AsyncSection isLoading={trendQuery.isLoading} isError={trendQuery.isError} error={trendQuery.error}>
+          }
+        />
+        <AsyncSection isLoading={trendQuery.isLoading} isError={trendQuery.isError} error={trendQuery.error}>
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               <TrendChart
                 title={t('dashboard.chartPlayers')}
@@ -430,8 +422,7 @@ export default function DashboardPage() {
               </div>
             </div>
           </AsyncSection>
-        </CardContent>
-      </Card>
+      </section>
 
       {/* 底部导航链接（FR-64）：逐服深数据 / 拓扑入口 */}
       <div className="flex flex-wrap gap-4 text-sm">

@@ -8,6 +8,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Filter, LayoutGrid, ListTree } from 'lucide-react'
 import {
   ApiClientError,
   assignZone,
@@ -27,7 +28,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
+import SectionHeader from '@/components/SectionHeader'
 import { Combobox } from '@/components/ui/combobox'
 import {
   AlertDialog,
@@ -320,73 +321,73 @@ export default function ZonesPage() {
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardContent>
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
-              {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
-              <Combobox
-                id="f-namespace"
-                aria-label={t('common.namespace')}
-                className="w-40"
-                value={fNamespace}
-                onChange={setFNamespace}
-                options={nsOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="f-group">{t('common.group')}</Label>
-              <Combobox
-                id="f-group"
-                aria-label={t('common.group')}
-                className="w-40"
-                value={fGroup}
-                onChange={setFGroup}
-                options={groupOptions}
-                allowCustom
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="f-zone">{t('common.zone')}</Label>
-              <Combobox
-                id="f-zone"
-                aria-label={t('common.zone')}
-                className="w-40"
-                value={fZone}
-                onChange={setFZone}
-                options={zoneOptions}
-                allowCustom
-              />
-            </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
-        </CardContent>
-      </Card>
+      {/* 筛选条（FR-107 卡片降级）：区段标题 + 细线轻分隔，替代原筛选 Card 外壳 */}
+      <section className="space-y-3">
+        <SectionHeader icon={<Filter className="size-4" />} title={t('common.filter')} />
+        <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
+            {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
+            <Combobox
+              id="f-namespace"
+              aria-label={t('common.namespace')}
+              className="w-40"
+              value={fNamespace}
+              onChange={setFNamespace}
+              options={nsOptions}
+              allowCustom
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="f-group">{t('common.group')}</Label>
+            <Combobox
+              id="f-group"
+              aria-label={t('common.group')}
+              className="w-40"
+              value={fGroup}
+              onChange={setFGroup}
+              options={groupOptions}
+              allowCustom
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="f-zone">{t('common.zone')}</Label>
+            <Combobox
+              id="f-zone"
+              aria-label={t('common.zone')}
+              className="w-40"
+              value={fZone}
+              onChange={setFZone}
+              options={zoneOptions}
+              allowCustom
+            />
+          </div>
+          <Button type="submit">{t('common.query')}</Button>
+        </form>
+      </section>
 
-      {/* zone 汇总树（大区→小区→子服）：上移至看板之上，替代原底部扁平表格（FR-55） */}
-      <Card>
-        <CardContent className="space-y-3">
-          <h2 className="text-base font-medium">{t('zones.summaryTitle')}</h2>
-          <AsyncSection
-            isLoading={summary.isLoading || instances.isLoading}
-            isError={summary.isError || instances.isError}
-            error={summary.error ?? instances.error}
-          >
-            <ZoneSummaryTree tree={summaryTreeModel} />
-          </AsyncSection>
-        </CardContent>
-      </Card>
+      {/* zone 汇总树（大区→小区→子服）：上移至看板之上，替代原底部扁平表格（FR-55）。
+          FR-107：外层 Card 降级为区段标题 + 轻分隔，汇总树本身不动。 */}
+      <section className="space-y-3">
+        <SectionHeader icon={<ListTree className="size-4" />} title={t('zones.summaryTitle')} />
+        <AsyncSection
+          isLoading={summary.isLoading || instances.isLoading}
+          isError={summary.isError || instances.isError}
+          error={summary.error ?? instances.error}
+        >
+          <ZoneSummaryTree tree={summaryTreeModel} />
+        </AsyncSection>
+      </section>
 
-      <Card>
-        <CardContent className="space-y-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="text-base font-medium">{t('zones.kanbanTitle')}</h2>
-            <div className="flex items-center gap-4">
-              <p className="text-sm text-muted-foreground">
-                {t('zones.kanbanHint')}
-              </p>
+      {/* 归派看板（FR-35 + 安全化 FR-71）：FR-107 外层 Card 降级为区段标题 + 轻分隔；
+          解锁改派开关挪到区段标题右槽，看板未指派池 / 分组容器 / 磁贴密度保留。 */}
+      <section className="space-y-3">
+        <SectionHeader
+          icon={<LayoutGrid className="size-4" />}
+          title={t('zones.kanbanTitle')}
+          actions={
+            <>
+              <p className="text-sm text-muted-foreground">{t('zones.kanbanHint')}</p>
               {/* 解锁改派开关（FR-71）：默认只读，解锁后逐卡才出改派 / 取消入口 */}
               <Label
                 htmlFor="unlock-reassign"
@@ -400,14 +401,15 @@ export default function ZonesPage() {
                 />
                 {t('zones.unlockLabel')}
               </Label>
-            </div>
-          </div>
-          <AsyncSection
-            isLoading={instances.isLoading || summary.isLoading}
-            isError={instances.isError || summary.isError}
-            error={instances.error ?? summary.error}
-          >
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
+            </>
+          }
+        />
+        <AsyncSection
+          isLoading={instances.isLoading || summary.isLoading}
+          isError={instances.isError || summary.isError}
+          error={instances.error ?? summary.error}
+        >
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
               {/* 左侧未指派池 */}
               <DropBucket
                 title={t('zones.unassignedTitle')}
@@ -449,8 +451,7 @@ export default function ZonesPage() {
               </div>
             </div>
           </AsyncSection>
-        </CardContent>
-      </Card>
+      </section>
 
       {/* 改派对话框（FR-71）：手输 serverId 复述确认；提交调既有 assignZone */}
       <ReassignDialog

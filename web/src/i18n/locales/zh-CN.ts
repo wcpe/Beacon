@@ -91,6 +91,7 @@ export const zhCN = {
   // ===== 跨页复用 =====
   common: {
     query: '查询',
+    filter: '筛选',
     cancel: '取消',
     save: '保存',
     create: '创建',
@@ -737,6 +738,8 @@ export const zhCN = {
     sectionBukkit: '子服（bukkit）',
     sectionBc: 'BC 代理',
     trendTitle: '历史趋势',
+    // 集群状态总览条区段标题（FR-107 卡片降级：区段标题 + 轻分隔替代总览 Card 外壳）
+    overviewTitle: '集群状态总览',
     // 服务器状态墙（状态墙 + 分角色面板重构）：每台在册实例一块瓷砖
     statusWallTitle: '服务器状态墙',
     statusWallEmpty: '该环境暂无在册实例',
