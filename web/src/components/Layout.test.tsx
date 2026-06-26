@@ -40,6 +40,7 @@ vi.mock('react-router-dom', async () => {
 
 import Layout from './Layout'
 import { systemStatus } from '@/api/client'
+import { setSidebarCollapsed } from '@/state/ui'
 
 // 健康样例：仅供 SystemHeader 渲染，断言不依赖具体数值
 const STATUS: SystemStatusView = {
@@ -65,8 +66,14 @@ function renderLayout(initialPath = '/') {
   )
 }
 
+// 改进 1：侧栏默认折叠（w-14、仅图标）。state/ui 的内存快照在模块加载时一次性读取，
+// 故测试须经 setSidebarCollapsed 设置（同时更新内存快照 + localStorage），不能仅写 localStorage。
+// 多数既有断言基于展开态结构（w-56、操作人信息块等），渲染前置展开态；折叠态另起一组断言锁定。
+
 beforeEach(() => {
   localStorage.clear()
+  // 既有断言面向展开态：默认置展开，折叠态测试自行覆盖
+  setSidebarCollapsed(false)
   navigateSpy.mockReset()
   vi.mocked(systemStatus).mockResolvedValue(STATUS)
 })
@@ -145,11 +152,11 @@ describe('Layout 侧栏结构（冻结顶/底，仅中间导航可滚）', () =>
     const brand = screen.getByText('Beacon 管理台').closest('button')
     expect(brand).not.toBeNull()
     expect(brand?.classList.contains('shrink-0')).toBe(true)
-    // 底部「当前操作人 + 登出」容器冻结：「当前操作人」标签的父容器即冻结块
-    const footer = screen.getByText('当前操作人').parentElement
+    // 底部「折叠切换 + 当前操作人 + 登出」容器冻结：「当前操作人」标签所在的最近冻结块即底部容器
+    const footer = screen.getByText('当前操作人').closest('div.shrink-0.border-t')
     expect(footer).not.toBeNull()
-    expect(footer?.classList.contains('shrink-0')).toBe(true)
-    expect(footer?.classList.contains('border-t')).toBe(true)
+    expect((footer as HTMLElement).classList.contains('shrink-0')).toBe(true)
+    expect((footer as HTMLElement).classList.contains('border-t')).toBe(true)
   })
 
   it('侧栏导航与主内容滚动区隐藏滚动条（scrollbar-hide，保留可滚）', () => {
@@ -247,5 +254,50 @@ describe('Layout 连接状态指示（FR-78）', () => {
     vi.mocked(systemStatus).mockRejectedValue(new Error('网络断开'))
     renderLayout()
     expect(await screen.findByText('控制面连接中断，正在重连…')).toBeInTheDocument()
+  })
+})
+
+describe('Layout 侧栏可折叠图标条（改进 1）', () => {
+  it('默认折叠：侧栏 w-14、品牌区 w-14、隐藏品牌文案与操作人信息', () => {
+    // 折叠态渲染（覆盖 beforeEach 的展开预置）
+    setSidebarCollapsed(true)
+    renderLayout()
+    const aside = document.querySelector('aside')
+    expect(aside?.classList.contains('w-14')).toBe(true)
+    expect(aside?.classList.contains('w-56')).toBe(false)
+    // 品牌区窄化为 w-14、品牌文案不显
+    const brandBtn = screen.getByRole('button', { name: '前往可观测看板' })
+    expect(brandBtn.classList.contains('w-14')).toBe(true)
+    expect(screen.queryByText('Beacon 管理台')).not.toBeInTheDocument()
+    // 折叠态隐藏操作人信息块（仅留登出图标按钮）
+    expect(screen.queryByText('当前操作人')).not.toBeInTheDocument()
+  })
+
+  it('折叠态导航叶子仅图标（无文案）且带 title tooltip', () => {
+    setSidebarCollapsed(true)
+    renderLayout('/servers')
+    // 折叠态叶子不渲染文案：导航链接里不再有「服务器」文本节点（仅第二层页眉标题保留该文本）
+    const link = screen.getByRole('link', { name: /服务器/ })
+    expect(link.getAttribute('title')).toBe('服务器')
+    expect(link.querySelector('svg')?.classList.contains('size-4')).toBe(true)
+  })
+
+  it('折叠 / 展开切换按钮点击后切换侧栏宽度（持久化）', async () => {
+    setSidebarCollapsed(true)
+    renderLayout()
+    // 初始折叠
+    expect(document.querySelector('aside')?.classList.contains('w-14')).toBe(true)
+    // 点「展开侧栏」按钮 → 变 w-56
+    await userEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
+    expect(document.querySelector('aside')?.classList.contains('w-56')).toBe(true)
+    // 持久化到 localStorage
+    expect(localStorage.getItem('beacon.ui')).toContain('"sidebarCollapsed":false')
+  })
+
+  it('展开态显折叠切换按钮 + 完整操作人信息块', () => {
+    setSidebarCollapsed(false)
+    renderLayout()
+    expect(screen.getByRole('button', { name: '折叠侧栏' })).toBeInTheDocument()
+    expect(screen.getByText('当前操作人')).toBeInTheDocument()
   })
 })

@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { ChevronsLeft, ChevronsRight, LogOut } from 'lucide-react'
 import { clearAuth, useAuth } from '@/state/auth'
 import { logout } from '@/api/client'
 import { Button } from '@/components/ui/button'
@@ -12,6 +13,7 @@ import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 import CommandPalette from '@/components/CommandPalette'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
 import { NAV_GROUPS } from '@/lib/navModel'
+import { toggleSidebar, useUiState } from '@/state/ui'
 import { cn } from '@/lib/utils'
 
 export default function Layout() {
@@ -24,6 +26,9 @@ export default function Layout() {
   const { status: connectionStatus } = useConnectionStatus()
   // 全局命令面板开合（FR-83）：Ctrl/Cmd+K 唤起、页眉搜索入口同开同一面板。
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // 侧栏折叠态（改进 1：可折叠图标条）：折叠=窄图标条 w-14（仅图标+tooltip）、展开=图标+文案 w-56；
+  // 折叠态由 state/ui 持久化到 localStorage，品牌区与侧栏同宽联动。
+  const { sidebarCollapsed } = useUiState()
 
   // 全局 Ctrl/Cmd+K 监听：任意页面（含输入框聚焦时）皆可唤起，面板为模态覆盖；
   // 与配置页 Ctrl+S 保存（FR-75）不同键、不冲突。
@@ -54,12 +59,16 @@ export default function Layout() {
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       {/* 整宽顶栏（~40px）：左品牌区（宽 = 侧栏宽 w-56，右边框接侧栏竖线）+ 右控制面状态条（占满剩余宽度） */}
       <header className="flex h-10 shrink-0 items-stretch border-b bg-background">
-        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：整块可点跳可观测看板（/dashboard），保留连接状态小灯（FR-78） */}
+        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：整块可点跳可观测看板（/dashboard），保留连接状态小灯（FR-78）。
+            改进 1：宽度随侧栏折叠态联动（折叠 w-14 仅居中显小灯、展开 w-56 显小灯+品牌文案）。 */}
         <button
           type="button"
           onClick={() => navigate('/dashboard')}
           aria-label={t('layout.brandToDashboard')}
-          className="flex w-56 shrink-0 items-center gap-2 border-r px-5 text-left text-sm font-semibold transition-colors hover:bg-sidebar-accent/40"
+          className={cn(
+            'flex shrink-0 items-center gap-2 border-r text-left text-sm font-semibold transition-all hover:bg-sidebar-accent/40',
+            sidebarCollapsed ? 'w-14 justify-center px-0' : 'w-56 px-5',
+          )}
         >
           {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
           <span
@@ -74,7 +83,8 @@ export default function Layout() {
                   : 'bg-muted-foreground',
             )}
           />
-          <span>{t('app.brand')}</span>
+          {/* 折叠态隐藏品牌文案，仅留小灯作 logo 点 */}
+          {!sidebarCollapsed && <span>{t('app.brand')}</span>}
         </button>
         {/* 右侧控制面状态条（FR-33）：占满品牌区之外的剩余宽度；SystemHeader 只渲染内容，外壳由本顶栏统一。
             搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
@@ -84,18 +94,30 @@ export default function Layout() {
       </header>
       {/* 顶栏之下：侧栏（导航 + 操作人）| 右列（断线横幅 + 第二层 PageHeader + 主内容） */}
       <div className="flex min-h-0 flex-1">
-      {/* 侧栏整列撑满剩余高度并裁剪溢出：顶部品牌已上移顶栏，本侧栏顶部仅导航、底部操作区冻结，仅中间导航滚动。 */}
-      <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
+      {/* 侧栏整列撑满剩余高度并裁剪溢出：顶部品牌已上移顶栏，本侧栏顶部仅导航、底部操作区冻结，仅中间导航滚动。
+          改进 1：宽度随折叠态联动（折叠 w-14 仅图标条、展开 w-56 图标+文案），保持 FR-93/ADR-0048 扁平 IA（5 组叶子结构不变，仅折叠宽度不隐藏层级）。 */}
+      <aside
+        className={cn(
+          'flex shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground transition-all',
+          sidebarCollapsed ? 'w-14' : 'w-56',
+        )}
+      >
         {/* 侧栏 5 组分组常驻（FR-93，方案 A）：分区标题（不可点、不折叠）+ 其下叶子常驻显示，
             每个叶子 = lucide 图标 + 文案；不再用 details/summary 折叠，无展开态偏好。
-            中间导航为侧栏唯一可滚区（flex-1 overflow-y-auto），顶/底冻结。 */}
-        <nav className="scrollbar-hide flex flex-1 flex-col gap-3 overflow-y-auto p-3">
+            中间导航为侧栏唯一可滚区（flex-1 overflow-y-auto），顶/底冻结。
+            折叠态：隐藏文案与分区标题文字（标题降为细分隔线），每个图标 hover 经 title 显 tooltip。 */}
+        <nav className="scrollbar-hide flex flex-1 flex-col gap-3 overflow-y-auto p-2">
           {NAV_GROUPS.map((group) => (
             <div key={group.id} className="flex flex-col gap-0.5">
-              {/* 分区标题：小号弱色、无 chevron、不可点击、不折叠，仅作分组层级标识 */}
-              <div className="px-3 pb-1 text-xs font-semibold text-muted-foreground select-none">
-                {t(group.labelKey)}
-              </div>
+              {sidebarCollapsed ? (
+                // 折叠态：分区标题降为一条细分隔线（仅作分组层级标识、不显文字）
+                <div className="mx-2 mb-1 h-px bg-border/60 first:hidden" aria-hidden />
+              ) : (
+                // 分区标题：小号弱色、无 chevron、不可点击、不折叠，仅作分组层级标识
+                <div className="px-3 pb-1 text-xs font-semibold text-muted-foreground select-none">
+                  {t(group.labelKey)}
+                </div>
+              )}
               {group.leaves.map((leaf) => {
                 const Icon = leaf.icon
                 return (
@@ -104,9 +126,12 @@ export default function Layout() {
                     to={leaf.to}
                     // 拍平为独立页后逐一精确高亮（ADR-0048）：end 杜绝 /system 前缀误命中 /system/version 等同组兄弟
                     end
+                    // 折叠态：hover 经原生 title 显 tooltip（文案=该叶子名）
+                    title={sidebarCollapsed ? t(leaf.labelKey) : undefined}
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors',
+                        'flex items-center gap-2 rounded-md py-1.5 text-sm transition-colors',
+                        sidebarCollapsed ? 'justify-center px-0' : 'px-3',
                         isActive
                           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
                           : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
@@ -114,20 +139,54 @@ export default function Layout() {
                     }
                   >
                     <Icon aria-hidden className="size-4 shrink-0" />
-                    <span>{t(leaf.labelKey)}</span>
+                    {!sidebarCollapsed && <span>{t(leaf.labelKey)}</span>}
                   </NavLink>
                 )
               })}
             </div>
           ))}
         </nav>
-        {/* 底部「当前操作人 + 登出」（冻结，不随导航滚动） */}
-        <div className="shrink-0 border-t p-4">
-          <div className="text-xs text-muted-foreground">{t('layout.currentOperator')}</div>
-          <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
-          <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
-            {t('layout.logout')}
-          </Button>
+        {/* 底部「折叠切换 + 当前操作人 + 登出」（冻结，不随导航滚动）。
+            改进 1：折叠态仅留图标按钮（折叠切换 + 登出），展开态显完整操作人信息块。 */}
+        <div className="shrink-0 border-t p-2">
+          {/* 折叠 / 展开切换按钮：lucide chevrons，状态持久化 localStorage（state/ui） */}
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-label={t(sidebarCollapsed ? 'layout.sidebarExpand' : 'layout.sidebarCollapse')}
+            title={t(sidebarCollapsed ? 'layout.sidebarExpand' : 'layout.sidebarCollapse')}
+            className={cn(
+              'mb-2 flex items-center gap-2 rounded-md py-1.5 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
+              sidebarCollapsed ? 'w-full justify-center px-0' : 'w-full px-3',
+            )}
+          >
+            {sidebarCollapsed ? (
+              <ChevronsRight aria-hidden className="size-4 shrink-0" />
+            ) : (
+              <ChevronsLeft aria-hidden className="size-4 shrink-0" />
+            )}
+            {!sidebarCollapsed && <span>{t('layout.sidebarCollapse')}</span>}
+          </button>
+          {sidebarCollapsed ? (
+            // 折叠态：仅一枚登出图标按钮（操作人信息隐藏，hover tooltip 提示登出）
+            <button
+              type="button"
+              onClick={onLogout}
+              aria-label={t('layout.logout')}
+              title={`${operator || '-'} · ${t('layout.logout')}`}
+              className="flex w-full justify-center rounded-md py-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+            >
+              <LogOut aria-hidden className="size-4 shrink-0" />
+            </button>
+          ) : (
+            <div className="px-1">
+              <div className="text-xs text-muted-foreground">{t('layout.currentOperator')}</div>
+              <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
+              <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
+                {t('layout.logout')}
+              </Button>
+            </div>
+          )}
         </div>
       </aside>
       {/* 右列：PageHeaderProvider 包裹，使各页 usePageHeader 注入的第二层页眉配置对 PageHeader 生效（FR-105）。 */}

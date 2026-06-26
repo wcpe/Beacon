@@ -381,6 +381,9 @@ export const zhCN = {
     logout: '登出',
     // 侧栏品牌区无障碍标签：整块可点跳可观测看板
     brandToDashboard: '前往可观测看板',
+    // 侧栏折叠 / 展开切换按钮无障碍标签（改进 1：可折叠图标条）
+    sidebarCollapse: '折叠侧栏',
+    sidebarExpand: '展开侧栏',
   },
 
   // ===== 审计日志页 =====
