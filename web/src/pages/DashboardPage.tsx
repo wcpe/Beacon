@@ -4,7 +4,7 @@
 // 时间窗切换 + 四指标折线，图标标题 + hover tooltip 看某时间点数值）。环境筛选 + 一键清空（FR-63）保留。
 // 边界：只展示负载数字（健康事实），绝不展示任何玩家名单 / 身份（后端也不返回）。
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
@@ -27,11 +27,12 @@ import {
   Users,
   Zap,
 } from 'lucide-react'
-import { listInstances, listNamespaces, metricsSummary, metricsTrend } from '../api/client'
+import { listInstances, metricsSummary, metricsTrend } from '../api/client'
 import type { TrendWindow } from '../api/client'
-import { formatBytes, namespaceOptions } from '../api/format'
+import { formatBytes } from '../api/format'
 import TrendChart from './dashboard/TrendChart'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import SectionHeader from '@/components/SectionHeader'
 import IconStat from '@/components/dashboard/IconStat'
 import StatusTile from '@/components/dashboard/StatusTile'
@@ -40,8 +41,6 @@ import MiniSparkline from '@/components/dashboard/MiniSparkline'
 import { ratioLevel } from '@/components/dashboard/health'
 import AsyncSection from '@/components/AsyncSection'
 import { TileGridSkeleton, CardGridSkeleton } from '@/components/skeletons'
-import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 // 总览快照刷新周期（毫秒）：与服务器页一致，短周期反映当前负载
@@ -71,14 +70,10 @@ function KpiChip({ icon, value, label }: { icon: React.ReactNode; value: React.R
 
 export default function DashboardPage() {
   const { t } = useTranslation()
-  // 环境过滤（可编辑下拉，FR-51）：空表示聚合全部环境，进页默认即聚合全部。
-  const [namespace, setNamespace] = useState('')
+  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境（useEnvironment），不再页内自管 namespace 筛选。
+  // 空串＝全部环境（聚合），沿用既有「全部/不传」语义；切换全局环境驱动本页各查询重查（已纳入 queryKey）。
+  const namespace = useEnvironment()
   const [window, setWindow] = useState<TrendWindow>('1h')
-
-  // 环境下拉候选来自 listNamespaces；筛选框允许键入候选外的值（可编辑）。
-  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
 
   const summaryQuery = useQuery({
     queryKey: ['metrics-summary', namespace],
@@ -140,8 +135,7 @@ export default function DashboardPage() {
   const bcLatencyAvailable = (bc?.avgBackendLatencyMs ?? -1) >= 0
   const bcReachText = bc && bc.backendTotal > 0 ? `${bc.backendUp} / ${bc.backendTotal}` : t('dashboard.bcNoBackend')
 
-  // 页眉（FR-105）：标题 + 刷新副标题移入全局页头带。
-  // 注：本页内部环境筛选暂仍留页内（不迁全局环境槽），故 actions 留空、下方控件行原样保留。
+  // 页眉（FR-105 真机打磨）：标题 + 刷新副标题移入全局页头带；环境收口到页眉全局环境槽，页内不再渲染环境筛选。
   usePageHeader({
     title: t('dashboard.title'),
     envScoped: true,
@@ -150,27 +144,6 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {/* 环境筛选：紧凑不占整卡。可编辑下拉（FR-51）；留空聚合全部、可一键清空（FR-63）。 */}
-        <div className="flex items-center gap-2">
-          <Label htmlFor="d-namespace" className="text-sm text-muted-foreground">
-            {t('common.namespace')}
-          </Label>
-          <Combobox
-            id="d-namespace"
-            aria-label={t('common.namespace')}
-            className="w-44"
-            placeholder={t('dashboard.nsPlaceholder')}
-            value={namespace}
-            onChange={setNamespace}
-            options={nsOptions}
-            allowCustom
-            clearable
-            clearLabel={t('dashboard.clearFilter')}
-          />
-        </div>
-      </div>
-
       {/* ① 集群状态总览条（FR-107 卡片降级）：区段标题 + 轻分隔替代外层 Card；
           内含分段健康条 + 在线/亚健康/失联/离线计数 + 全局 KPI chips */}
       <section className="space-y-3">

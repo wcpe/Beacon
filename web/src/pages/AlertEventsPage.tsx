@@ -1,20 +1,20 @@
 // 告警事件信息流页（FR-89，见 ADR-0041）：系统健康事件历史留痕的时间线，
 // 按类型 / 级别 / 环境 / 时间范围过滤、分页（时间倒序）。区别于审计日志（人的操作）。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { listAlertEvents, listNamespaces } from '../api/client'
+import { listAlertEvents } from '../api/client'
 import type { AlertEventFilter } from '../api/client'
 import type { AlertEventView } from '../api/types'
-import { formatTime, namespaceOptions } from '../api/format'
+import { formatTime } from '../api/format'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Combobox } from '@/components/ui/combobox'
 import { Badge } from '@/components/ui/badge'
 import {
   Select,
@@ -66,13 +66,14 @@ export default function AlertEventsPage() {
   const typeLabel = (type: string) => t(`alertEvent.type.${type}`, { defaultValue: type })
   const levelLabel = (level: string) => t(`alertEvent.level.${level}`, { defaultValue: level })
 
+  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境，不再页内自管 namespace 筛选；其它筛选维度（类型/级别/时间窗）保留页内。
+  const namespace = useEnvironment()
   // 过滤表单草稿（点「查询」才生效）
-  const [namespace, setNamespace] = useState('')
   const [type, setType] = useState(ALL)
   const [level, setLevel] = useState(ALL)
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  // 已生效查询条件
+  // 已生效查询条件（不含 namespace；namespace 由全局环境合并）
   const [filter, setFilter] = useState<AlertEventFilter>({ page: 1, size: PAGE_SIZE })
   // 详情 Dialog 选中条目（null 表示关闭）
   const [selected, setSelected] = useState<AlertEventView | null>(null)
@@ -84,20 +85,22 @@ export default function AlertEventsPage() {
     envScoped: true,
   })
 
+  // 生效过滤 = 页内筛选 + 全局环境（空串＝全部环境）。全局环境变化即重算 → queryKey 含其 namespace → 自动重查。
+  const effectiveFilter = useMemo<AlertEventFilter>(
+    () => ({ ...filter, namespace: namespace || undefined }),
+    [filter, namespace],
+  )
+
   const { data, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: ['alert-events', filter],
-    queryFn: () => listAlertEvents(filter),
+    queryKey: ['alert-events', effectiveFilter],
+    queryFn: () => listAlertEvents(effectiveFilter),
     placeholderData: keepPreviousData,
   })
 
-  // 环境筛选下拉候选（FR-51）：来自 listNamespaces，允许键入候选外的值
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = namespaceOptions(namespacesQuery.data)
-
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
+    // namespace 不在页内筛选；由全局环境合并进 effectiveFilter。
     setFilter({
-      namespace: namespace.trim() || undefined,
       type: type === ALL ? undefined : type,
       level: level === ALL ? undefined : level,
       from: toIso(from),
@@ -172,16 +175,7 @@ export default function AlertEventsPage() {
             ))}
           </SelectContent>
         </Select>
-        <Combobox
-          id="ae-namespace"
-          aria-label={t('common.namespace')}
-          className="w-36"
-          placeholder={t('common.namespace')}
-          value={namespace}
-          onChange={setNamespace}
-          options={nsOptions}
-          allowCustom
-        />
+        {/* 环境收口（FR-105 真机打磨）：原页内环境筛选已移除，环境改读页眉全局环境槽。 */}
         <Input
           id="ae-from"
           aria-label={t('alertEvent.fromTime')}

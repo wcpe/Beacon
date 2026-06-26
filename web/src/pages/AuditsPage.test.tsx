@@ -16,6 +16,7 @@ vi.mock('../api/client', () => ({
 
 import AuditsPage from './AuditsPage'
 import { listAudits, listNamespaces, exportAudits } from '../api/client'
+import { setEnvironment } from '@/state/environment'
 
 const EMPTY_PAGE = { total: 0, items: [] }
 
@@ -25,6 +26,8 @@ function renderPage(ui: ReactElement) {
 }
 
 beforeEach(() => {
+  // 复位全局环境到「全部」，避免跨用例残留（FR-105 真机打磨：环境收口至页眉全局环境）
+  setEnvironment('')
   vi.mocked(listAudits).mockResolvedValue(EMPTY_PAGE)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
   vi.mocked(exportAudits).mockResolvedValue(undefined)
@@ -48,16 +51,16 @@ describe('AuditsPage 操作人过滤', () => {
     )
   })
 
-  // FR-70：环境下拉显示「编码 · 名称」，但选中并查询时提交的过滤值仍是 code。
-  it('环境下拉显示「编码 · 名称」而过滤值仍为 code', async () => {
+  // FR-105 真机打磨：环境收口至页眉全局环境槽（页内不再有环境筛选）。
+  // 选页眉全局环境后，列表查询应带该 namespace（候选显「编码 · 名称」，提交仍是 code，FR-70）。
+  it('选页眉全局环境后查询带该 namespace（值仍为 code）', async () => {
     renderPage(<AuditsPage />)
-    const ns = await screen.findByLabelText('环境')
+    // 全局环境选择器在第二层页眉，aria-label＝「全局环境」
+    const ns = await screen.findByLabelText('全局环境')
     await userEvent.click(ns)
-    // 候选展示编码 · 名称
     const opt = await screen.findByRole('option', { name: 'prod · 生产' })
     await userEvent.click(opt)
-    await userEvent.click(screen.getByRole('button', { name: '查询' }))
-    // 提交给后端的 namespace 仍是纯 code，不含 name
+    // 全局环境变化即驱动重查（无需点「查询」）：提交的 namespace 为纯 code
     await waitFor(() =>
       expect(vi.mocked(listAudits)).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: 'prod' }),

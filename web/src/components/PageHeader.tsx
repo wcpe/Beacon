@@ -100,9 +100,10 @@ export default function PageHeader() {
   const envScoped = config.envScoped ?? leaf?.envScoped ?? false
 
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b bg-background px-6 py-3">
+    // 第二层页面头带（FR-105 真机打磨：高度压低至 ~40px，py-3→py-2、标题降一档更紧凑）
+    <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-background px-6 py-2">
       {/* 左：标题 + 计数/副标题（小号弱色） */}
-      <h1 className="text-base font-semibold">{title}</h1>
+      <h1 className="text-sm font-semibold">{title}</h1>
       {config.count != null && <span className="text-sm text-muted-foreground">{config.count}</span>}
       {config.subtitle != null && <span className="text-sm text-muted-foreground">{config.subtitle}</span>}
       {/* 右：环境槽（仅环境范围页）+ 主操作槽 */}

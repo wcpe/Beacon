@@ -7,18 +7,16 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { Activity, CheckCircle2, Percent, XCircle } from 'lucide-react'
-import { getAuditAnalytics, listNamespaces } from '../api/client'
-import { namespaceOptions } from '../api/format'
+import { getAuditAnalytics } from '../api/client'
 import StatCard from './dashboard/StatCard'
 import DayTrendChart from './service-analysis/DayTrendChart'
 import ActionRankChart from './service-analysis/ActionRankChart'
 import type { ActionRankItem } from './service-analysis/ActionRankChart'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import { CardGridSkeleton } from '@/components/skeletons'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 // 时间窗预设（天数）：本地算 from/to 传 RFC3339；窗口上限 92 天内，故 7/30 天均合法。
@@ -46,13 +44,10 @@ export default function ServiceAnalysisPage() {
   // 审计 action 英文枚举 → 中文显示：复用 AuditsPage 同一份 i18n key（未知枚举回退原文）
   const actionLabel = (action: string) => t(`audit.action.${action}`, { defaultValue: action })
 
-  // 环境过滤（可编辑下拉，FR-51）：空表示聚合全部环境，进页默认即聚合全部。
-  const [namespace, setNamespace] = useState('')
+  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境，不再页内自管 namespace 筛选；时间窗保留页内。
+  // 空串＝全部环境（聚合）；切换全局环境驱动重查（已纳入 queryKey）。
+  const namespace = useEnvironment()
   const [window, setWindow] = useState<AnalyticsWindow>(DEFAULT_WINDOW)
-
-  // 环境下拉候选来自 listNamespaces；候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
 
   // 选中窗口对应的天数；切窗口或重渲染时据当前时刻算 from/to。
   const days = WINDOWS.find((w) => w.value === window)?.days ?? 30
@@ -92,25 +87,8 @@ export default function ServiceAnalysisPage() {
 
   return (
     <div className="space-y-6">
-      {/* 控件行（FR-108 卡片降级）：环境 + 时间窗去 Card 外壳，理顺为细线下分隔的工具栏。 */}
-      <div className="flex flex-wrap items-end justify-between gap-3 border-b pb-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="sa-namespace">{t('common.namespace')}</Label>
-          {/* 环境筛选：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51）；留空聚合全部环境。
-              clearable：选某环境后可一键清回空值（聚合全部）。 */}
-          <Combobox
-            id="sa-namespace"
-            aria-label={t('common.namespace')}
-            className="w-40"
-            placeholder={t('serviceAnalysis.nsPlaceholder')}
-            value={namespace}
-            onChange={setNamespace}
-            options={nsOptions}
-            allowCustom
-            clearable
-            clearLabel={t('serviceAnalysis.clearFilter')}
-          />
-        </div>
+      {/* 控件行（FR-108 卡片降级 + FR-105 真机打磨）：环境已收口至页眉全局环境槽，仅保留时间窗工具栏（右对齐）。 */}
+      <div className="flex flex-wrap items-end justify-end gap-3 border-b pb-4">
         {/* 时间窗 Tabs：切换即据当前时刻算 from/to 传 RFC3339 重查。 */}
         <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
           <TabsList>

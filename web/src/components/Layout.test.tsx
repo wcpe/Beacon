@@ -71,25 +71,32 @@ beforeEach(() => {
   vi.mocked(systemStatus).mockResolvedValue(STATUS)
 })
 
-describe('Layout 页眉重定位', () => {
-  it('品牌标题渲染在侧边栏内', () => {
+describe('Layout 顶栏化（FR-105 真机打磨：品牌上移整宽顶栏 + 状态条同栏）', () => {
+  it('品牌标题渲染在整宽顶栏内（已上移，不在侧边栏内）', () => {
     renderLayout()
     const brand = screen.getByText('Beacon 管理台')
-    // 品牌标题应位于侧边栏（aside）内
-    expect(brand.closest('aside')).not.toBeNull()
+    // 品牌已上移至顶栏：不再落在侧边栏（aside）内，而在顶栏 header 内、宽度对齐侧栏（w-56）
+    expect(brand.closest('aside')).toBeNull()
+    const brandBtn = brand.closest('button')
+    expect(brandBtn).not.toBeNull()
+    expect(brandBtn?.classList.contains('w-56')).toBe(true)
+    expect(brandBtn?.closest('header')).not.toBeNull()
   })
 
-  it('控制面状态条收进右侧主内容列顶部（不在侧边栏内、位于内容之上）', async () => {
+  it('控制面状态条与品牌区同处整宽顶栏（不在侧边栏内）', async () => {
     renderLayout()
     const stateLabel = await screen.findByText('控制面状态')
     // 状态条不应落在侧边栏内
     expect(stateLabel.closest('aside')).toBeNull()
-    // 状态条容器是 header，且与 <main> 同处一个 flex 列（共享同一父节点）
+    // 状态条与品牌区共处同一顶栏 header
     const headerEl = stateLabel.closest('header')
     expect(headerEl).not.toBeNull()
+    const brandBtn = screen.getByText('Beacon 管理台').closest('button')
+    expect(brandBtn?.closest('header')).toBe(headerEl)
+    // 顶栏 header 位于 <main> 之外（顶栏在侧栏 + 右列之上）
     const mainEl = document.querySelector('main')
     expect(mainEl).not.toBeNull()
-    expect(headerEl?.parentElement).toBe(mainEl?.parentElement)
+    expect(headerEl?.contains(mainEl as Node)).toBe(false)
   })
 
   it('主内容区纵向可滚动（不裁剪超高内容，回归「滚动锁死」）', () => {

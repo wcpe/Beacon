@@ -50,15 +50,16 @@ export default function Layout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      {/* 侧栏整列撑满视口高度并裁剪溢出：顶部品牌 / 底部操作区冻结，仅中间导航滚动。 */}
-      <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
-        {/* 顶部品牌区（冻结，不随导航滚动）：整块可点跳可观测看板（/dashboard），保留连接状态小灯（FR-78） */}
+    // 外层改纵向：最上是「贯穿整宽顶栏」（品牌区 | 控制面状态条），其下是 flex-1 的「侧栏 | 右列」（FR-105 真机打磨）。
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+      {/* 整宽顶栏（~40px）：左品牌区（宽 = 侧栏宽 w-56，右边框接侧栏竖线）+ 右控制面状态条（占满剩余宽度） */}
+      <header className="flex h-10 shrink-0 items-stretch border-b bg-background">
+        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：整块可点跳可观测看板（/dashboard），保留连接状态小灯（FR-78） */}
         <button
           type="button"
           onClick={() => navigate('/dashboard')}
           aria-label={t('layout.brandToDashboard')}
-          className="flex shrink-0 items-center gap-2 border-b px-5 py-4 text-left text-base font-semibold transition-colors hover:bg-sidebar-accent/40"
+          className="flex w-56 shrink-0 items-center gap-2 border-r px-5 text-left text-sm font-semibold transition-colors hover:bg-sidebar-accent/40"
         >
           {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
           <span
@@ -75,6 +76,16 @@ export default function Layout() {
           />
           <span>{t('app.brand')}</span>
         </button>
+        {/* 右侧控制面状态条（FR-33）：占满品牌区之外的剩余宽度；SystemHeader 只渲染内容，外壳由本顶栏统一。
+            搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
+        <div className="flex min-w-0 flex-1 items-center px-6">
+          <SystemHeader onOpenSearch={() => setPaletteOpen(true)} />
+        </div>
+      </header>
+      {/* 顶栏之下：侧栏（导航 + 操作人）| 右列（断线横幅 + 第二层 PageHeader + 主内容） */}
+      <div className="flex min-h-0 flex-1">
+      {/* 侧栏整列撑满剩余高度并裁剪溢出：顶部品牌已上移顶栏，本侧栏顶部仅导航、底部操作区冻结，仅中间导航滚动。 */}
+      <aside className="flex w-56 shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground">
         {/* 侧栏 5 组分组常驻（FR-93，方案 A）：分区标题（不可点、不折叠）+ 其下叶子常驻显示，
             每个叶子 = lucide 图标 + 文案；不再用 details/summary 折叠，无展开态偏好。
             中间导航为侧栏唯一可滚区（flex-1 overflow-y-auto），顶/底冻结。 */}
@@ -119,10 +130,11 @@ export default function Layout() {
           </Button>
         </div>
       </aside>
-      {/* 主内容列：PageHeaderProvider 包裹，使各页 usePageHeader 注入的第二层页眉配置对 PageHeader 生效（FR-105）。 */}
+      {/* 右列：PageHeaderProvider 包裹，使各页 usePageHeader 注入的第二层页眉配置对 PageHeader 生效（FR-105）。 */}
       <PageHeaderProvider>
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* 控制面连接中断横幅（FR-78）：仅断开时显示，恢复后自动消失；治控制面重部时 UI 静默掉线 */}
+        {/* 控制面连接中断横幅（FR-78）：仅断开时显示，恢复后自动消失；治控制面重部时 UI 静默掉线。
+            真机打磨后放右列内容区顶部（顶栏之下、第二层页眉之上），断线行为不回归。 */}
         {connectionStatus === 'offline' && (
           <div
             role="alert"
@@ -132,10 +144,8 @@ export default function Layout() {
             {t('connection.banner')}
           </div>
         )}
-        {/* 控制面自身状态条（FR-33）：收进右侧主内容列顶部，不再压在侧边栏之上。
-            搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
-        <SystemHeader onOpenSearch={() => setPaletteOpen(true)} />
-        {/* 第二层「页面头带」PageHeader（FR-105）：紧随全局状态条之下，显当前页标题 + 环境槽（环境范围页）+ 主操作槽。 */}
+        {/* 第二层「页面头带」PageHeader（FR-105）：显当前页标题 + 环境槽（环境范围页）+ 主操作槽；
+            第一层控制面状态条已上移至整宽顶栏（不再在此渲染）。 */}
         <PageHeader />
         {/* 主内容区纵向可滚动：普通堆叠页（看板/审计/实例等）内容超高时正常滚动；
             自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条。
@@ -149,6 +159,7 @@ export default function Layout() {
         </main>
         </div>
       </PageHeaderProvider>
+      </div>
       {/* 全局命令面板（FR-83）：受 Layout 持有的开合态控制，Ctrl/Cmd+K 或页眉入口唤起 */}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>

@@ -1,21 +1,21 @@
 // 审计日志页：按 namespace/action/targetType/targetRef/时间范围过滤，分页展示（时间倒序）。
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { exportAudits, listAudits, listNamespaces } from '../api/client'
+import { exportAudits, listAudits } from '../api/client'
 import type { AuditExportFormat, AuditFilter } from '../api/client'
 import type { AuditView } from '../api/types'
-import { formatTime, namespaceOptions } from '../api/format'
+import { formatTime } from '../api/format'
 import { useMessage } from '@/components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import AsyncSection from '@/components/AsyncSection'
 import { TableSkeleton } from '@/components/skeletons'
 import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Combobox } from '@/components/ui/combobox'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -40,8 +40,9 @@ export default function AuditsPage() {
   const msg = useMessage()
   // 审计 action 英文枚举 → 中文显示（i18n 映射；未知枚举回退原文，后端仍返英文枚举）
   const actionLabel = (action: string) => t(`audit.action.${action}`, { defaultValue: action })
+  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境，不再页内自管 namespace 筛选；其它筛选维度保留页内。
+  const namespace = useEnvironment()
   // 过滤表单的草稿值（点「查询」时才生效）
-  const [namespace, setNamespace] = useState('')
   const [operator, setOperator] = useState('')
   const [action, setAction] = useState('')
   const [targetType, setTargetType] = useState('')
@@ -49,28 +50,29 @@ export default function AuditsPage() {
   const [detailKeyword, setDetailKeyword] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  // 已生效的查询条件
+  // 已生效的查询条件（不含 namespace；namespace 由全局环境合并）
   const [filter, setFilter] = useState<AuditFilter>({ page: 1, size: PAGE_SIZE })
   // 详情 Dialog 选中的审计条目（null 表示关闭）
   const [selectedAudit, setSelectedAudit] = useState<AuditView | null>(null)
   // 导出中标记（防重复点击；csv/json 各算一次）
   const [exporting, setExporting] = useState(false)
 
+  // 生效过滤 = 页内筛选 + 全局环境（空串＝全部环境，沿用「不传」语义）。全局环境变化即重算 → queryKey 含其 namespace → 自动重查。
+  const effectiveFilter = useMemo<AuditFilter>(
+    () => ({ ...filter, namespace: namespace || undefined }),
+    [filter, namespace],
+  )
+
   const { data, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: ['audits', filter],
-    queryFn: () => listAudits(filter),
+    queryKey: ['audits', effectiveFilter],
+    queryFn: () => listAudits(effectiveFilter),
     placeholderData: keepPreviousData,
   })
 
-  // 环境筛选下拉的候选来源（FR-51）：来自 listNamespaces，筛选框允许键入候选外的值（可编辑）
-  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = namespaceOptions(namespacesQuery.data)
-
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
+    // namespace 不在页内筛选；由全局环境合并进 effectiveFilter。
     setFilter({
-      namespace: namespace.trim() || undefined,
       operator: operator.trim() || undefined,
       action: action.trim() || undefined,
       targetType: targetType.trim() || undefined,
@@ -92,7 +94,7 @@ export default function AuditsPage() {
     if (exporting) return
     setExporting(true)
     try {
-      await exportAudits(filter, format)
+      await exportAudits(effectiveFilter, format)
     } catch (e) {
       msg.showError(`${t('audit.exportFailed')}：${(e as Error).message}`)
     } finally {
@@ -160,17 +162,7 @@ export default function AuditsPage() {
         onSubmit={onSearch}
         className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
       >
-        {/* 筛选框：可编辑下拉，候选来自 listNamespaces 但允许键入列表外值（FR-51） */}
-        <Combobox
-          id="a-namespace"
-          aria-label={t('common.namespace')}
-          className="w-36"
-          placeholder={t('common.namespace')}
-          value={namespace}
-          onChange={setNamespace}
-          options={nsOptions}
-          allowCustom
-        />
+        {/* 环境收口（FR-105 真机打磨）：原页内环境筛选已移除，环境改读页眉全局环境槽。 */}
         <Input
           id="a-operator"
           aria-label={t('common.operator')}

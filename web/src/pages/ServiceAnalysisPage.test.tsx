@@ -39,6 +39,7 @@ vi.mock('../api/client', () => ({
 import ServiceAnalysisPage from './ServiceAnalysisPage'
 import { getAuditAnalytics, listNamespaces } from '../api/client'
 import type { AuditAnalytics } from '../api/types'
+import { setEnvironment } from '@/state/environment'
 
 // 聚合样例：128 总 / 119 成功 / 9 失败；按动作两条；每日趋势三点。
 const ANALYTICS: AuditAnalytics = {
@@ -64,6 +65,8 @@ function renderPage(ui: ReactElement) {
 }
 
 beforeEach(() => {
+  // 复位全局环境到「全部」，避免跨用例残留（FR-105 真机打磨：环境收口至页眉全局环境）
+  setEnvironment('')
   vi.mocked(getAuditAnalytics).mockResolvedValue(ANALYTICS)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
 })
@@ -129,19 +132,24 @@ describe('ServiceAnalysisPage', () => {
     })
   })
 
-  it('切环境带 namespace 重查；一键清空回聚合全部', async () => {
+  // FR-105 真机打磨：环境收口至页眉全局环境（页内不再有环境筛选）。
+  it('全局环境切换带 namespace 重查；切回全部聚合', async () => {
     renderPage(<ServiceAnalysisPage />)
-    const ns = await screen.findByLabelText('环境')
-    await userEvent.click(ns)
-    await userEvent.click(await screen.findByRole('option', { name: 'prod · 生产' }))
-    // 选中后带 namespace=prod 重查
+    // 进页默认聚合全部
+    await waitFor(() =>
+      expect(vi.mocked(getAuditAnalytics)).toHaveBeenCalledWith(
+        expect.objectContaining({ namespace: undefined }),
+      ),
+    )
+    // 切全局环境到 prod → 带 namespace=prod 重查
+    setEnvironment('prod')
     await waitFor(() =>
       expect(vi.mocked(getAuditAnalytics)).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: 'prod' }),
       ),
     )
-    // 一键清空：namespace 回 undefined（聚合全部）
-    await userEvent.click(screen.getByLabelText('清空环境筛选'))
+    // 切回「全部环境」（空串）→ namespace 回 undefined（聚合全部）
+    setEnvironment('')
     await waitFor(() =>
       expect(vi.mocked(getAuditAnalytics)).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: undefined }),

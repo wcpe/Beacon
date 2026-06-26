@@ -10,11 +10,12 @@ import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Activity, CheckCircle2, Clock, ListChecks, Loader2, Server, Terminal, XCircle } from 'lucide-react'
-import { getCommandAnalytics, listCommands, listNamespaces } from '../api/client'
+import { getCommandAnalytics, listCommands } from '../api/client'
 import type { CommandFilter } from '../api/client'
 import type { CommandMetaView } from '../api/types'
-import { formatDuration, formatTime, namespaceOptions } from '../api/format'
+import { formatDuration, formatTime } from '../api/format'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import StatCard from './dashboard/StatCard'
 import CommandTrendChart from './command-observability/CommandTrendChart'
 import IconStat from '@/components/dashboard/IconStat'
@@ -26,7 +27,6 @@ import DataTable, { type DataTableColumn } from '@/components/DataTable'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -112,8 +112,9 @@ export default function CommandObservabilityPage() {
     )
   }
 
-  // 环境过滤（可编辑下拉，FR-51）：空表示聚合全部环境；KPI / 趋势 / 实时队列 / 历史均受其影响。
-  const [namespace, setNamespace] = useState('')
+  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境，不再页内自管 namespace 筛选；
+  // 空串＝全部环境；KPI / 趋势 / 实时队列 / 历史均随全局环境（已纳入各 queryKey）重查。
+  const namespace = useEnvironment()
   const [window, setWindow] = useState<AnalyticsWindow>(DEFAULT_WINDOW)
 
   // 历史查询过滤草稿（点「查询」才生效）
@@ -124,10 +125,6 @@ export default function CommandObservabilityPage() {
   const [to, setTo] = useState('')
   // 历史查询已生效条件
   const [historyFilter, setHistoryFilter] = useState<CommandFilter>({ page: 1, size: PAGE_SIZE })
-
-  // 环境下拉候选来自 listNamespaces；候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
 
   const days = WINDOWS.find((w) => w.value === window)?.days ?? 30
   const range = useMemo(() => windowRange(days), [days])
@@ -241,8 +238,8 @@ export default function CommandObservabilityPage() {
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">{t('commandObs.subtitle')}</p>
 
-      {/* 视图 segmented tab（FR-108）+ 环境筛选条：tab 切换不跳路由、写 ?view=；环境对三视图全局生效 */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* 视图 segmented tab（FR-108）：tab 切换不跳路由、写 ?view=。环境已收口至页眉全局环境槽，对三视图全局生效（FR-105 真机打磨）。 */}
+      <div className="flex flex-wrap items-center gap-3">
         <Tabs value={view} onValueChange={onViewChange}>
           <TabsList aria-label={t('commandObs.viewTabsAria')}>
             {VIEWS.map((v) => (
@@ -252,23 +249,6 @@ export default function CommandObservabilityPage() {
             ))}
           </TabsList>
         </Tabs>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="co-namespace" className="text-sm text-muted-foreground">
-            {t('common.namespace')}
-          </Label>
-          <Combobox
-            id="co-namespace"
-            aria-label={t('common.namespace')}
-            className="w-40"
-            placeholder={t('commandObs.nsPlaceholder')}
-            value={namespace}
-            onChange={setNamespace}
-            options={nsOptions}
-            allowCustom
-            clearable
-            clearLabel={t('commandObs.clearFilter')}
-          />
-        </div>
       </div>
 
       {/* ===== 分析视图：时间窗 + KPI + 趋势 + 按类型 / 服务器分布 ===== */}

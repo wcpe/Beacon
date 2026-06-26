@@ -1,6 +1,7 @@
-// 控制面自身状态条（FR-33）：位于右侧主内容列顶部（侧边栏右侧），「一眼健康」精简版。
+// 控制面自身状态条（FR-33 / FR-105 真机打磨）：作为「贯穿整宽顶栏」的右侧区内容，占满品牌区之外的剩余宽度。
 // 只呈现连接态药丸 + 版本徽章 + 运行时长 / 在线实例三项核心信号；
 // 运行时资源明细（采样器 / goroutine / 堆 / 进程 CPU%）已迁至控制面健康页（FR-82）的「进程运行时」卡。
+// 注：本组件只渲染「状态条内容」，不再持有自己的 header 外壳（border-b / px / py 由顶栏容器统一），高度由顶栏压低（~40px）。
 
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -66,7 +67,8 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
   const showSkeleton = isLoading && !data && !isError
 
   return (
-    <header className="flex shrink-0 flex-wrap items-center gap-x-6 gap-y-3 border-b bg-background px-6 py-3">
+    // 只渲染状态条内容（不含 header 外壳）：由顶栏容器统一边框/内边距，高度压低后用更紧凑的纵向留白。
+    <div className="flex w-full flex-wrap items-center gap-x-6 gap-y-1.5">
       <div className="flex items-center gap-2">
         <span className="text-sm font-semibold">{t('systemHeader.title')}</span>
         {/* 版本徽章：点击跳「版本与更新」页（ADR-0048）；有可用更新时叠红点（FR-100） */}
@@ -137,6 +139,6 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
         {/* 页眉界面偏好控件（FR-92）：主题切换 + 大屏入口 */}
         <HeaderControls />
       </div>
-    </header>
+    </div>
   )
 }

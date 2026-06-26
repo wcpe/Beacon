@@ -23,6 +23,7 @@ import { namespaceOptions } from '../api/format'
 import type { InstanceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import AsyncSection from '@/components/AsyncSection'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -78,11 +79,19 @@ export default function ZonesPage() {
   const qc = useQueryClient()
   const msg = useMessage()
 
-  // 过滤草稿与生效值
-  const [fNamespace, setFNamespace] = useState('')
+  // 环境收口（FR-105 真机打磨）：看板/汇总的环境改读页眉全局环境，不再页内自管环境筛选；大区/小区筛选保留页内。
+  // 注：下方「新增 区 / 指派」表单的环境字段是写入项（非筛选），仍保留其下拉（候选见 nsOptions）。
+  const namespace = useEnvironment()
+  // 过滤草稿与生效值（不含 namespace；namespace 由全局环境合并）
   const [fGroup, setFGroup] = useState('')
   const [fZone, setFZone] = useState('')
   const [filter, setFilter] = useState<ZoneFilter>({})
+
+  // 生效过滤 = 页内大区/小区筛选 + 全局环境（空串＝全部环境）。全局环境变化即重算 → 各查询 queryKey 含其 namespace → 自动重查。
+  const effectiveFilter = useMemo<ZoneFilter>(
+    () => ({ ...filter, namespace: namespace || undefined }),
+    [filter, namespace],
+  )
 
   // 新增 zone / 指派表单与 Dialog 开关
   const [form, setForm] = useState(EMPTY_FORM)
@@ -94,18 +103,23 @@ export default function ZonesPage() {
   const [reassignTarget, setReassignTarget] = useState<InstanceView | null>(null)
 
   const instances = useQuery({
-    queryKey: ['instances', 'zone-kanban', filter],
-    queryFn: () => listInstances({ namespace: filter.namespace, group: filter.group, zone: filter.zone }),
+    queryKey: ['instances', 'zone-kanban', effectiveFilter],
+    queryFn: () =>
+      listInstances({
+        namespace: effectiveFilter.namespace,
+        group: effectiveFilter.group,
+        zone: effectiveFilter.zone,
+      }),
   })
 
   const assignments = useQuery({
-    queryKey: ['assignments', filter],
-    queryFn: () => listAssignments(filter.namespace, filter.group, filter.zone),
+    queryKey: ['assignments', effectiveFilter],
+    queryFn: () => listAssignments(effectiveFilter.namespace, effectiveFilter.group, effectiveFilter.zone),
   })
 
   const summary = useQuery({
-    queryKey: ['zone-summary', filter.namespace, filter.group],
-    queryFn: () => zoneSummary(filter.namespace, filter.group),
+    queryKey: ['zone-summary', effectiveFilter.namespace, effectiveFilter.group],
+    queryFn: () => zoneSummary(effectiveFilter.namespace, effectiveFilter.group),
   })
 
   // 指派表单下拉的选项来源（FR-40 增强）：环境 / 实例 / zone 汇总均不随搜索过滤，
@@ -201,8 +215,8 @@ export default function ZonesPage() {
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
+    // namespace 不在页内筛选；由全局环境合并进 effectiveFilter。
     setFilter({
-      namespace: fNamespace.trim() || undefined,
       group: fGroup.trim() || undefined,
       zone: fZone.trim() || undefined,
     })
@@ -325,19 +339,7 @@ export default function ZonesPage() {
       <section className="space-y-3">
         <SectionHeader icon={<Filter className="size-4" />} title={t('common.filter')} />
         <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="f-namespace">{t('common.namespace')}</Label>
-            {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
-            <Combobox
-              id="f-namespace"
-              aria-label={t('common.namespace')}
-              className="w-40"
-              value={fNamespace}
-              onChange={setFNamespace}
-              options={nsOptions}
-              allowCustom
-            />
-          </div>
+          {/* 环境收口（FR-105 真机打磨）：原页内环境筛选已移除，看板/汇总环境改读页眉全局环境槽。 */}
           <div className="space-y-1.5">
             <Label htmlFor="f-group">{t('common.group')}</Label>
             <Combobox

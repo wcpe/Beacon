@@ -27,6 +27,7 @@ import {
 import type { AssignParams, InstanceFilter } from '../api/client'
 import type { InstanceView } from '../api/types'
 import { formatTime, namespaceOptions } from '../api/format'
+import { useEnvironment } from '@/state/environment'
 import {
   buildMajorityVersions,
   isAgentVersionMismatch,
@@ -130,12 +131,21 @@ export default function ServersPage() {
   const qc = useQueryClient()
   const msg = useMessage()
 
-  const [namespace, setNamespace] = useState('')
+  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境，不再页内自管 namespace 筛选；其它筛选维度（大区/小区/角色/状态）保留页内。
+  const namespace = useEnvironment()
   const [group, setGroup] = useState('')
   const [zone, setZone] = useState('')
   const [role, setRole] = useState(ALL)
   const [status, setStatus] = useState(ALL)
+  // 页内非环境筛选的已生效条件（不含 namespace；namespace 由全局环境合并）
   const [filter, setFilter] = useState<InstanceFilter>({})
+
+  // 生效过滤 = 页内筛选 + 全局环境（空串＝全部环境，沿用「不传」语义）。
+  // 全局环境变化即重算 effectiveFilter → 各查询 queryKey 含其 namespace → 自动重查。
+  const effectiveFilter = useMemo<InstanceFilter>(
+    () => ({ ...filter, namespace: namespace || undefined }),
+    [filter, namespace],
+  )
 
   // 详情 Sheet 选中的实例（null 表示关闭）
   const [detailInstance, setDetailInstance] = useState<InstanceView | null>(null)
@@ -149,49 +159,49 @@ export default function ServersPage() {
   const [wizardOpen, setWizardOpen] = useState(false)
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
-    queryKey: ['instances', filter],
-    queryFn: () => listInstances(filter),
+    queryKey: ['instances', effectiveFilter],
+    queryFn: () => listInstances(effectiveFilter),
     refetchInterval: REFETCH_MS,
   })
 
   // 主动下线标记（FR-49）：已下线实例不在注册表列表出现，单列展示并提供「取消下线」。
   const { data: offlineMarkers } = useQuery({
-    queryKey: ['offline-instances', filter.namespace],
-    queryFn: () => listOfflineInstances(filter.namespace),
+    queryKey: ['offline-instances', effectiveFilter.namespace],
+    queryFn: () => listOfflineInstances(effectiveFilter.namespace),
     refetchInterval: REFETCH_MS,
   })
 
   // 排空标记（FR-10）：用于在表内标 drain 态并切换 drain/undrain 操作。
   const { data: drains } = useQuery({
-    queryKey: ['drains', filter.namespace],
-    queryFn: () => listDrains(filter.namespace),
+    queryKey: ['drains', effectiveFilter.namespace],
+    queryFn: () => listDrains(effectiveFilter.namespace),
     refetchInterval: REFETCH_MS,
   })
 
   // 各小区默认入口（FR-48）：供 bungee 详情展示所属小区默认入口；按 (namespace, group, zone) 复合键索引。
   const { data: defaultEntries } = useQuery({
-    queryKey: ['default-entries', filter.namespace],
-    queryFn: () => listDefaultEntries(filter.namespace),
+    queryKey: ['default-entries', effectiveFilter.namespace],
+    queryFn: () => listDefaultEntries(effectiveFilter.namespace),
     refetchInterval: REFETCH_MS,
   })
 
   // 现有指派（改派对话框沿用备注，避免改派清空运维填写的备注）。
   const { data: assignments } = useQuery({
-    queryKey: ['assignments', filter.namespace],
-    queryFn: () => listAssignments(filter.namespace),
+    queryKey: ['assignments', effectiveFilter.namespace],
+    queryFn: () => listAssignments(effectiveFilter.namespace),
   })
 
-  // 筛选维度下拉的候选来源（FR-51）：环境来自 listNamespaces，大区 / 小区由 zone 汇总与全量实例派生。
+  // 筛选维度下拉的候选来源（FR-51）：大区 / 小区由 zone 汇总与全量实例派生。
   // 候选不随当前过滤收窄（全量拉取），且筛选框允许键入候选外的值（可编辑）。
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
   const allInstancesQuery = useQuery({
     queryKey: ['instances', 'filter-options'],
     queryFn: () => listInstances({}),
   })
   const zoneSummaryQuery = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
-
-  // 候选显示「编码 · 名称」，真实值仍是 code（FR-70）
+  // 环境候选（仅供「新服接入向导」表单的环境下拉，非页内筛选）：候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
+  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
   const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
+
   // 大区候选：zone 汇总与实例列表去重并集（兼容无 zone 指派但已注册的大区）
   const groupOptions = useMemo(() => {
     const set = new Set<string>()
@@ -327,8 +337,8 @@ export default function ServersPage() {
 
   function onSearch(e: React.FormEvent) {
     e.preventDefault()
+    // namespace 不在页内筛选；由全局环境合并进 effectiveFilter。
     setFilter({
-      namespace: namespace.trim() || undefined,
       group: group.trim() || undefined,
       zone: zone.trim() || undefined,
       role: role === ALL ? undefined : role,
@@ -464,17 +474,7 @@ export default function ServersPage() {
         onSubmit={onSearch}
         className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
       >
-        {/* 筛选框：可编辑下拉，候选来自 API 但允许键入列表外值（FR-51） */}
-        <Combobox
-          id="f-namespace"
-          aria-label={t('common.namespace')}
-          className="w-36"
-          placeholder={t('common.namespace')}
-          value={namespace}
-          onChange={setNamespace}
-          options={nsOptions}
-          allowCustom
-        />
+        {/* 环境收口（FR-105 真机打磨）：原页内环境筛选已移除，环境改读页眉全局环境槽。 */}
         <Combobox
           id="f-group"
           aria-label={t('common.group')}
@@ -630,7 +630,7 @@ export default function ServersPage() {
       <AddServerWizard
         open={wizardOpen}
         onOpenChange={setWizardOpen}
-        namespace={filter.namespace ?? ''}
+        namespace={namespace}
         nsOptions={nsOptions}
         groupOptions={groupOptions}
       />

@@ -48,6 +48,7 @@ import DashboardPage from './DashboardPage'
 import { metricsSummary, metricsTrend, listNamespaces, listInstances } from '../api/client'
 import type { MetricsSummary, MetricsTrend } from '../api/client'
 import type { InstanceView } from '../api/types'
+import { setEnvironment } from '@/state/environment'
 
 // 在册实例样例工厂：状态墙逐台渲染会读 role/status/tps/playerCount/proxy.*，故造较完整桩。
 function inst(overrides: Partial<InstanceView>): InstanceView {
@@ -142,6 +143,8 @@ function renderPage(ui: ReactElement) {
 }
 
 beforeEach(() => {
+  // 复位全局环境到「全部」，避免跨用例残留（FR-105 真机打磨：环境收口至页眉全局环境）
+  setEnvironment('')
   vi.mocked(metricsSummary).mockResolvedValue(SUMMARY)
   vi.mocked(metricsTrend).mockResolvedValue(TREND)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
@@ -278,20 +281,18 @@ describe('DashboardPage', () => {
     expect(screen.getByText('该代理未配置后端')).toBeInTheDocument()
   })
 
-  // FR-63：环境筛选选某环境后可一键清回「全部聚合」（空值）。
-  it('选环境后可一键清回全部聚合（清空按钮置空 namespace）', async () => {
+  // FR-105 真机打磨：环境收口至页眉全局环境（页内不再有环境筛选 / 清空按钮）。
+  // 全局环境切到某环境按其聚合查询；切回「全部环境」（空串）按 undefined 聚合全部重查。
+  it('全局环境切换驱动看板按该环境 / 全部聚合重查', async () => {
     renderPage(<DashboardPage />)
-    const ns = await screen.findByLabelText('环境')
-    // 选中环境 prod（候选显示「编码 · 名称」，FR-70）
-    await userEvent.click(ns)
-    await userEvent.click(await screen.findByRole('option', { name: 'prod · 生产' }))
-    // 选中后按 prod 查询
-    await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith('prod'))
-    // 一键清空：点清空按钮，namespace 回空 → 按聚合全部（undefined）重查
-    await userEvent.click(screen.getByLabelText('清空环境筛选'))
+    // 进页默认聚合全部（undefined）
     await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith(undefined))
-    // 输入框已清空回显
-    expect(screen.getByLabelText('环境')).toHaveValue('')
+    // 切全局环境到 prod → 按 prod 查询
+    setEnvironment('prod')
+    await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith('prod'))
+    // 切回「全部环境」（空串）→ 按聚合全部（undefined）重查
+    setEnvironment('')
+    await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith(undefined))
   })
 
   // FR-64：底部「服务器详情 → /servers · 拓扑 → /topology」链接。

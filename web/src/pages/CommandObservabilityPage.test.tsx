@@ -30,6 +30,7 @@ vi.mock('../api/client', () => ({
 import CommandObservabilityPage from './CommandObservabilityPage'
 import { listCommands, getCommandAnalytics, listNamespaces } from '../api/client'
 import type { CommandAnalytics, CommandMetaView, CommandPage } from '../api/types'
+import { setEnvironment } from '@/state/environment'
 
 const ANALYTICS: CommandAnalytics = {
   from: '2026-05-25T00:00:00Z',
@@ -106,6 +107,8 @@ async function switchView(label: string): Promise<void> {
 }
 
 beforeEach(() => {
+  // 复位全局环境到「全部」，避免跨用例残留（FR-105 真机打磨：环境收口至页眉全局环境）
+  setEnvironment('')
   vi.mocked(getCommandAnalytics).mockResolvedValue(ANALYTICS)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
   vi.mocked(listCommands).mockImplementation((f) => routeListCommands(f))
@@ -169,11 +172,17 @@ describe('CommandObservabilityPage', () => {
     )
   })
 
-  it('切环境带 namespace 重查聚合', async () => {
+  // FR-105 真机打磨：环境收口至页眉全局环境（页内不再有环境筛选）。
+  it('全局环境切换带 namespace 重查聚合', async () => {
     renderPage(<CommandObservabilityPage />)
-    const ns = await screen.findByLabelText('环境')
-    await userEvent.click(ns)
-    await userEvent.click(await screen.findByRole('option', { name: 'prod · 生产' }))
+    // 进页默认聚合全部（undefined）
+    await waitFor(() =>
+      expect(vi.mocked(getCommandAnalytics)).toHaveBeenCalledWith(
+        expect.objectContaining({ namespace: undefined }),
+      ),
+    )
+    // 切全局环境到 prod → 带 namespace=prod 重查
+    setEnvironment('prod')
     await waitFor(() =>
       expect(vi.mocked(getCommandAnalytics)).toHaveBeenCalledWith(
         expect.objectContaining({ namespace: 'prod' }),

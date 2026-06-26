@@ -1,9 +1,9 @@
-// TopologyPage 单测（FR-37）：
-// 覆盖「未选环境时不查询/出提示 → 查询后渲染拓扑图 → 喂图数据含真实节点/bc→bukkit 边/分组 → 空拓扑提示 → 轮询配置」。
+// TopologyPage 单测（FR-37 + FR-105 真机打磨环境收口）：
+// 覆盖「全局环境为全部时不查询/出提示 → 全局环境选具体环境后渲染拓扑图 → 切环境重查 → 喂图数据含真实节点/bc→bukkit 边/分组 → 空拓扑提示」。
+// 环境改读页眉全局环境（不再页内自管下拉），故各用例用 setEnvironment 驱动。
 // ECharts 依赖 canvas，故把 TopologyGraph 替身为轻量桩，断言喂图数据正确而不实际渲染。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
@@ -22,12 +22,12 @@ vi.mock('./topology/TopologyGraph', () => ({
 // mock 后端调用，由各用例注入数据
 vi.mock('../api/client', () => ({
   getTopology: vi.fn(),
-  listNamespaces: vi.fn(),
 }))
 
 import TopologyPage from './TopologyPage'
-import { getTopology, listNamespaces } from '../api/client'
+import { getTopology } from '../api/client'
 import type { TopologyView } from '../api/types'
+import { setEnvironment } from '@/state/environment'
 
 // 拓扑样例：1 个 bc + 2 个 bukkit，两条 bc→bukkit 边，两个 zone 分组
 const TOPO: TopologyView = {
@@ -53,34 +53,39 @@ function renderPage(ui: ReactElement) {
 }
 
 beforeEach(() => {
+  // 复位全局环境到「全部」（空串），由各用例按需切到具体环境
+  setEnvironment('')
   vi.mocked(getTopology).mockReset()
   vi.mocked(getTopology).mockResolvedValue(TOPO)
-  vi.mocked(listNamespaces).mockReset()
-  vi.mocked(listNamespaces).mockResolvedValue([
-    { code: 'prod', name: '生产' },
-    { code: 'test', name: '测试' },
-  ])
 })
 
 describe('TopologyPage', () => {
-  it('环境候选就绪后默认选第一个环境并自动出图（FR-51）', async () => {
+  it('全局环境为「全部」时不查询、提示在页眉选具体环境', async () => {
     renderPage(<TopologyPage />)
-    // 无需手动选环境，候选就绪后按首个环境（prod）拉取拓扑
+    // 空全局环境（端点 namespace 必填）不发请求，并提示在页眉选具体环境
+    expect(await screen.findByText(/请在页眉右上角「全局环境」选择具体环境/)).toBeInTheDocument()
+    expect(vi.mocked(getTopology)).not.toHaveBeenCalled()
+  })
+
+  it('全局环境选具体环境后按其拉取拓扑并渲染图', async () => {
+    setEnvironment('prod')
+    renderPage(<TopologyPage />)
     await waitFor(() => expect(vi.mocked(getTopology)).toHaveBeenCalledWith('prod'))
     expect(await screen.findByTestId('topology-graph')).toBeInTheDocument()
   })
 
-  it('切换到另一环境后按该环境拉取拓扑并渲染图', async () => {
+  it('切换全局环境后按该环境重查拓扑并渲染图', async () => {
+    setEnvironment('prod')
     renderPage(<TopologyPage />)
     await screen.findByTestId('topology-graph')
-    await userEvent.click(screen.getByLabelText('环境'))
-    // 候选显示「编码 · 名称」（FR-70），但选中后按 code 拉取
-    await userEvent.click(screen.getByRole('option', { name: 'test · 测试' }))
+    // 全局环境切到 test → 按 test 重查
+    setEnvironment('test')
     await waitFor(() => expect(vi.mocked(getTopology)).toHaveBeenCalledWith('test'))
     expect(await screen.findByTestId('topology-graph')).toBeInTheDocument()
   })
 
   it('喂图数据含真实节点、bc→bukkit 边与大区/zone 分组', async () => {
+    setEnvironment('prod')
     renderPage(<TopologyPage />)
     const graph = await screen.findByTestId('topology-graph')
     // 节点 serverId 透传
@@ -98,6 +103,7 @@ describe('TopologyPage', () => {
   })
 
   it('图例显示 BC / 子服计数', async () => {
+    setEnvironment('prod')
     renderPage(<TopologyPage />)
     await screen.findByTestId('topology-graph')
     // 1 个 bc、2 个 bukkit
@@ -106,16 +112,10 @@ describe('TopologyPage', () => {
   })
 
   it('空拓扑（无在线实例）展示提示而非图', async () => {
+    setEnvironment('prod')
     vi.mocked(getTopology).mockResolvedValue({ namespace: 'prod', nodes: [], edges: [], groups: [] })
     renderPage(<TopologyPage />)
     expect(await screen.findByText('该环境暂无在线实例。')).toBeInTheDocument()
     expect(screen.queryByTestId('topology-graph')).not.toBeInTheDocument()
-  })
-
-  it('无任何环境候选时展示提示且不发请求', async () => {
-    vi.mocked(listNamespaces).mockResolvedValue([])
-    renderPage(<TopologyPage />)
-    expect(await screen.findByText(/暂无可选环境/)).toBeInTheDocument()
-    expect(vi.mocked(getTopology)).not.toHaveBeenCalled()
   })
 })

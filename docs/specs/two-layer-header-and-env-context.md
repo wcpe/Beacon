@@ -53,3 +53,25 @@
 ## 6. 风险 / 待定
 - 各页接入是机械但量大(17 页)：逐页移除 h1 + 接 usePageHeader，须确保既有主操作/功能不丢、布局不破。
 - env 全局 store 本 FR 仅落"页眉选择器 + 持久化 + 跨页保持"；各页内部筛选改读全局 env 留各自 FR，避免本 FR 膨胀。
+
+## 7. 真机打磨：顶栏化 + 高度收紧 + 环境收口
+
+> 真机反馈后的纯前端打磨，仍属 FR-105 范畴（不改 PRD）。
+
+### 7.1 第一层「贯穿整宽顶栏」+ 品牌上移
+- 布局从「侧栏(含品牌) | (第一层+第二层+内容)」改为「整宽顶栏(品牌区 | 控制面状态条) ┄ 侧栏 | (第二层+内容)」。
+- `Layout.tsx` 外层改 `flex-col`：最上是整宽 `header`（左品牌区宽 = 侧栏宽 `w-56`、右边框接侧栏竖线；右控制面状态条占满剩余宽度），其下 `flex-1 flex`（侧栏 `aside` | 右列）。
+- 品牌（可点跳 `/dashboard` + 连接小灯 FR-78）移入顶栏左侧区；侧栏 `aside` 去掉顶部品牌按钮，仅留导航滚动区 + 底部操作人/登出。
+- `SystemHeader` 改为"只渲染状态条内容"（去掉自身 `header` 外壳的 `border-b`/`px-6 py-3`，由顶栏容器统一）。
+- FR-78 断线横幅放右列内容区顶部（顶栏之下、第二层页眉之上），断线行为不回归。
+
+### 7.2 两层高度压低（~40px）
+- 顶栏 `h-10`；第二层 `PageHeader` `h-10`（`py-3→py-2`），标题降为 `text-sm` 更紧凑。
+
+### 7.3 内容区「环境」筛选去重 → 改读页眉全局环境
+- 页眉已有全局环境选择器（FR-105 `EnvSelector` + `state/environment.ts`）。下列 **8 页**移除页内「环境/namespace」筛选控件 + 其本地 namespace state，改用 `useEnvironment()` 全局值作查询 namespace（空串=全部环境，沿用各页既有「全部/不传」语义）；env 纳入各 react-query queryKey，全局环境变化即驱动该页重查。其它筛选（大区/小区/角色/状态/时间窗等）保留页内。
+  - `DashboardPage` `ServersPage` `AuditsPage` `AlertEventsPage` `ServiceAnalysisPage` `CommandObservabilityPage` `ZonesPage` `TopologyPage`。
+  - `ServersPage`/`AuditsPage`/`AlertEventsPage`/`ZonesPage`：页内非环境筛选保留为 `filter` state，查询时与全局环境合并为 `effectiveFilter`。
+  - `ZonesPage`：仅移除"看板/汇总"的环境**筛选**；"新增 区 / 指派"表单的环境字段是写入项（非筛选），保留其下拉。
+  - `TopologyPage`：端点 namespace 必填。全局环境为「全部环境」（空串）时无单一 namespace 可查，提示在页眉选具体环境；不再页内自管环境下拉与"默认选首个环境"。
+- 不动批2 页面（configs/file-preview/imprint/reverse-fetch）与非环境页（settings/system/version/system/api-keys/namespaces）。

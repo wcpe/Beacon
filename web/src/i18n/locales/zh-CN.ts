@@ -809,7 +809,8 @@ export const zhCN = {
     legendSub: '子服（{{count}}）',
     legendEdge: '连线 = bc→其后端子服（FR-36 事实）；描边色 = 在线状态（绿 online / 橙 degraded）',
     loadingNs: '加载环境中…',
-    noNamespace: '暂无可选环境，请先在「环境」页创建。',
+    // 全局环境为「全部环境」时端点无单一 namespace 可查：提示在页眉环境槽选具体环境出图（FR-105 真机打磨）
+    noNamespace: '拓扑需指定单个环境，请在页眉右上角「全局环境」选择具体环境。',
     noNodes: '该环境暂无在线实例。',
     // 拓扑图分簇 / 角色 label（TopologyGraph）
     roleBungee: 'BC 代理',

@@ -1,40 +1,26 @@
 // 集群拓扑页（FR-37，独立页）：读 GET /admin/v1/topology，用 ECharts graph 画
 // 真实 bc→bukkit 连线、按角色区分、按大区/zone 聚合分簇，节点带在线状态色；
-// React Query refetchInterval 轮询刷新（与实例页一致）。拓扑端点要求 namespace 必填，
-// 环境改为下拉（候选来自 listNamespaces）并默认选第一个环境直接出图（增强 FR-51）。
+// React Query refetchInterval 轮询刷新（与实例页一致）。拓扑端点要求 namespace 必填。
+// 环境收口（FR-105 真机打磨）：环境改读页眉全局环境，不再页内自管下拉；
+// 全局环境为「全部环境」（空串）时端点无单一 namespace 可查，提示在页眉选具体环境。
 
-import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { getTopology, listNamespaces } from '../api/client'
-import { namespaceOptions } from '../api/format'
-import { Filter, Network } from 'lucide-react'
+import { getTopology } from '../api/client'
+import { Network } from 'lucide-react'
 import TopologyGraph from './topology/TopologyGraph'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
+import { useEnvironment } from '@/state/environment'
 import SectionHeader from '@/components/SectionHeader'
-import { Combobox } from '@/components/ui/combobox'
-import { Label } from '@/components/ui/label'
 
 // 拓扑轮询周期（毫秒），与实例与健康页一致
 const REFETCH_MS = 5000
 
 export default function TopologyPage() {
   const { t } = useTranslation()
-  // 已生效的环境查询值（端点必填，空则不查询）
-  const [namespace, setNamespace] = useState('')
-
-  // 环境候选：来自 listNamespaces。下拉显示「编码 · 名称」（FR-70），默认选首项用 code（FR-51）。
-  const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
-  const nsOptions = namespaceOptions(namespacesQuery.data)
-  const namespaceCodes = (namespacesQuery.data ?? []).map((n) => n.code)
-
-  // 候选就绪且未选环境时默认选第一个，直接出图（无需手动选，FR-51）
-  useEffect(() => {
-    if (namespace === '' && namespaceCodes.length > 0) {
-      setNamespace(namespaceCodes[0])
-    }
-  }, [namespace, namespaceCodes])
+  // 环境查询值改读页眉全局环境（端点必填，空＝全部环境时不查询、提示选具体环境）
+  const namespace = useEnvironment()
 
   const { data, isLoading, isError, error, isFetching } = useQuery({
     queryKey: ['topology', namespace],
@@ -55,46 +41,25 @@ export default function TopologyPage() {
 
   return (
     <div className="space-y-6">
-      {/* 控件 + 图例段（FR-107 卡片降级）：区段标题 + 细线轻分隔，替代原控件 Card 外壳 */}
-      <section className="space-y-3">
-        <SectionHeader icon={<Filter className="size-4" />} title={t('common.filter')} />
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="t-namespace">{t('common.namespace')}</Label>
-            {/* 环境改为严格下拉（候选来自 listNamespaces），选中即出图（FR-51） */}
-            <Combobox
-              id="t-namespace"
-              aria-label={t('common.namespace')}
-              className="w-48"
-              value={namespace}
-              onChange={setNamespace}
-              options={nsOptions}
-              allowCustom={false}
-              placeholder={t('topology.nsPlaceholder')}
-            />
-          </div>
-        </div>
-        {/* 图例 + 计数：与图内 legend 呼应，运维一眼看清 BC / 子服区分与边含义 */}
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded-sm bg-[#7c3aed]" />
-            {t('topology.legendBc', { count: bcCount })}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-3 w-3 rounded-full bg-[#2563eb]" />
-            {t('topology.legendSub', { count: subCount })}
-          </span>
-          <span>{t('topology.legendEdge')}</span>
-        </div>
-      </section>
+      {/* 图例段（FR-107 卡片降级 + FR-105 真机打磨）：环境已收口至页眉全局环境槽，本段仅保留图例 + 计数。 */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-muted-foreground">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-sm bg-[#7c3aed]" />
+          {t('topology.legendBc', { count: bcCount })}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-full bg-[#2563eb]" />
+          {t('topology.legendSub', { count: subCount })}
+        </span>
+        <span>{t('topology.legendEdge')}</span>
+      </div>
 
       {/* 画布段（FR-107 卡片降级）：区段标题 + 细线轻分隔，TopologyGraph（ECharts，FR-37）数据 / 交互 / 轮询不动 */}
       <section className="space-y-3">
         <SectionHeader icon={<Network className="size-4" />} title={t('topology.title')} />
         {namespace === '' ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">
-            {namespacesQuery.isLoading ? t('topology.loadingNs') : t('topology.noNamespace')}
-          </p>
+          // 全局环境为「全部环境」时端点无单一 namespace 可查：提示在页眉选具体环境出图
+          <p className="py-12 text-center text-sm text-muted-foreground">{t('topology.noNamespace')}</p>
         ) : (
           <AsyncSection isLoading={isLoading} isError={isError} error={error}>
             {data &&
