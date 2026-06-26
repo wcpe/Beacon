@@ -34,6 +34,8 @@ export const zhCN = {
     audits: '审计日志',
     alertEvents: '事件',
     serviceAnalysis: '服务分析',
+    // 命令观测页（FR-104）：观测控制面↔agent 控制命令的双向生命周期
+    commandObservability: '命令观测',
     apiKeys: '密钥管理',
     namespaces: '环境管理',
     settings: '运维设置',
@@ -510,6 +512,70 @@ export const zhCN = {
     actionCountHint: '{{count}} 次',
     // 趋势 / 排行的空数据态
     empty: '所选时间窗内暂无审计活动',
+  },
+
+  // ===== 命令观测 / 审查页（FR-104，增强 FR-17/FR-82）=====
+  commandObs: {
+    title: '命令观测',
+    // 与审计日志（人的操作）/ 服务分析（admin 操作聚合）区分的副标题：本页观测控制面↔agent 控制命令生命周期。
+    subtitle: '观测控制面下发给 agent 的控制命令双向生命周期（下发 → 拉取 → 回执），区别于审计日志与服务分析。',
+    // 时间窗 Tabs
+    win7d: '近 7 天',
+    win30d: '近 30 天',
+    nsPlaceholder: '留空聚合全部环境',
+    clearFilter: '清空环境筛选',
+    // KPI 卡片
+    cardTotal: '命令总数',
+    // 实时队列区块
+    queueTitle: '实时队列',
+    // 实时队列副说明：仅列待拉取 + 执行中，自动刷新
+    queueSubtitle: '待拉取 + 执行中命令（自动刷新）',
+    queueEmpty: '当前无待拉取 / 执行中命令',
+    // 历史查询区块
+    historyTitle: '历史查询',
+    historyEmpty: '所选条件下暂无命令记录',
+    // 趋势区块
+    trendTitle: '命令量趋势',
+    trendEmpty: '所选时间窗内暂无命令活动',
+    // 按类型分布区块
+    byTypeTitle: '按类型分布',
+    // 按服务器分布区块（top-N）
+    byServerTitle: '按服务器分布',
+    byServerEmpty: '暂无数据',
+    // 表列
+    colCommandId: '命令 ID',
+    colServerId: '实例',
+    colType: '类型',
+    colStatus: '状态',
+    colAge: '已等时长',
+    colOperator: '操作人',
+    colCreatedAt: '创建时间',
+    colResultDetail: '结果摘要',
+    // 过滤表单
+    serverIdPlaceholder: '如 lobby-1',
+    typeAll: '全部类型',
+    statusAll: '全部状态',
+    fromTime: '起始时间',
+    toTime: '截止时间',
+    // 趋势三条折线图例
+    legendIssued: '下发',
+    legendDone: '完成',
+    legendFailed: '失败',
+    // 命令类型英文枚举 → 中文（未知经 defaultValue 回退原文）
+    type: {
+      'ingest-plugins': '反向抓取',
+      'tail-logs': '取日志',
+      'resync-config': '强制重同步',
+    },
+    // 命令状态英文枚举 → 中文（未知经 defaultValue 回退原文）
+    status: {
+      pending: '待拉取',
+      fetched: '执行中',
+      ready: '待确认',
+      done: '已完成',
+      failed: '失败',
+      expired: '已过期',
+    },
   },
 
   // ===== 服务器页（FR-65，实例与健康 + 代理服管理合并）=====

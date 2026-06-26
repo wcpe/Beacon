@@ -27,6 +27,7 @@ type Handlers struct {
 	Metric           *handler.MetricHandler
 	System           *handler.SystemHandler
 	Observability    *handler.ObservabilityHandler
+	CommandObserve   *handler.CommandObserveHandler
 	Update           *handler.UpdateHandler
 	Auth             *handler.AuthHandler
 	APIKey           *handler.APIKeyHandler
@@ -230,6 +231,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 		// 控制面自观测页（FR-82）：DB 连接池/长轮询挂起/注册表规模/命令队列深度，只读、控制面进程内部运行态
 		r.Get("/system/observability", h.Observability.Observability)
+
+		// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：观测控制面↔agent 控制命令的双向生命周期。
+		// 只读 GET（full/readonly 皆可见，无需 readonlyWriteGuard，但仍走鉴权链）：
+		// 列表（按 namespace/serverId/type/status/时间过滤 + 分页）+ 聚合（计数 + 趋势）。
+		r.Get("/commands", h.CommandObserve.List)
+		// 静态子路由置于 /commands 之后（无 {id} 通配冲突，此处仅为可读性分组）
+		r.Get("/commands/analytics", h.CommandObserve.Analytics)
 
 		// 控制面在线更新（FR-99，见 ADR-0044）：检查（只读、服务端缓存 + ?force 刷新）/ 状态（读内存进度）/ 触发应用。
 		// POST 为写方法，readonly 经 readonlyWriteGuard 403，审计复用 system.update-apply（已登记 FR-72 覆盖集）。

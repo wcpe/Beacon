@@ -11,6 +11,8 @@ import type {
   AuditAnalytics,
   AuditPage,
   AlertEventPage,
+  CommandAnalytics,
+  CommandPage,
   ConfigTimelineView,
   ConfigView,
   ConflictDiffView,
@@ -686,6 +688,42 @@ export interface AuditAnalyticsParams {
 // 窗口上限 92 天（超出后端 400）；与 FR-32 负载看板数据源 / 刷新节奏独立。
 export function getAuditAnalytics(params: AuditAnalyticsParams): Promise<AuditAnalytics> {
   return request<AuditAnalytics>(`/audits/analytics${qs(params)}`)
+}
+
+// ===== 命令观测 / 审查（FR-104，见 docs/API.md 命令观测小节）=====
+
+// 命令观测查询过滤与分页条件（零值字段后端不过滤）
+export interface CommandFilter {
+  namespace?: string
+  serverId?: string
+  // 命令类型（ingest-plugins / tail-logs / resync-config）；非法枚举后端 400
+  type?: string
+  // 命令状态（pending / fetched / ready / done / failed / expired）；非法枚举后端 400
+  status?: string
+  // RFC3339 时间窗
+  from?: string
+  to?: string
+  page?: number
+  size?: number
+}
+
+// 列命令元数据（创建时间倒序，分页）：实时队列复用此端点（status=pending|fetched 过滤）。
+// 返回仅元数据 + 结果摘要 + ageSeconds，绝不含瞬态敏感内容（控制面投影已排除）。
+export function listCommands(filter: CommandFilter): Promise<CommandPage> {
+  return request<CommandPage>(`/commands${qs(filter)}`)
+}
+
+// 命令观测聚合查询参数：namespace 可空（聚合全部环境）；from/to 为 RFC3339 时间窗。
+export interface CommandAnalyticsParams {
+  namespace?: string
+  from?: string
+  to?: string
+}
+
+// 取时间窗内命令活动聚合（总数 + 按状态 / 类型 / 服务器 top-N + 命令量每日趋势）。
+// 窗口上限 92 天（超出后端 400）。
+export function getCommandAnalytics(params: CommandAnalyticsParams): Promise<CommandAnalytics> {
+  return request<CommandAnalytics>(`/commands/analytics${qs(params)}`)
 }
 
 // ===== 管理面 API 密钥（FR-42，见 docs/API.md 管理面 API 密钥小节）=====

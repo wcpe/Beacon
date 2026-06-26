@@ -555,6 +555,19 @@ data: {}
 }
 ```
 
+### 命令观测 / 审查（FR-104，增强 FR-17/FR-82）
+
+观测控制面↔agent **控制命令**（`agent_command`：`ingest-plugins`（含反向抓取 / 拓印 / 受管任务）/ `tail-logs` / `resync-config`）的双向生命周期——下发 `pending` → agent 拉取 `fetched` → 回执 `done`/`failed`/`expired`（`ready` 为拓印待确认中间态）。供「命令观测」页（`/commands`）展示 KPI / 实时队列逐条 / 历史过滤查询 / 命令量趋势，吸收原「控制面健康逐条队列明细」诉求。**只读、不写不改命令**；区别于 FR-73 服务分析（聚合 admin 操作审计）与审计日志（人的操作流水）。**绝不返回瞬态 / 敏感内容字段**（`imprintContent` / `logContent` / `payload`），仅元数据 + 结果摘要（`resultDetail`，已是不含敏感的摘要）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/commands?namespace=&serverId=&type=&status=&from=&to=&page=&size=` | 分页命令元数据（创建时间倒序），返回 `total` + `items`。`type`/`status` 非法枚举→`400 INVALID_PARAM`；`from`/`to` 为 RFC3339。**实时队列**复用此端点（`status=pending` / `status=fetched` 各拉一次合并）。`size` 缺省 20、上限 200 |
+| `GET /admin/v1/commands/analytics?namespace=&from=&to=` | 窗口内命令活动聚合：`namespace` 可空（全部环境）；`from`/`to` 为 RFC3339，缺省 `to`=当前、`from`=`to`-30 天，**窗口上限 92 天**（超出 `400 INVALID_PARAM`）。日聚合在 Go 侧做（不用方言日期函数，保 Postgres 可移植，仿 FR-73） |
+
+列表 `items` 元素（小驼峰）：`commandId` / `namespace` / `serverId` / `type` / `status` / `resultDetail` / `operator` / `createdAt` / `updatedAt` / `ageSeconds`（= 当前 - `createdAt`，秒，供实时队列「已等时长」；前端也可按 `createdAt` 自算）。
+
+`GET /admin/v1/commands/analytics` 返回 `{from, to, total, byStatus:[{status,count}]按 count 降序, byType:[{type,count}]按 count 降序, byServer:[{serverId,count}]top-10 按 count 降序, byDay:[{date:"YYYY-MM-DD", issued, done, failed}]按 UTC 日升序}`；`byDay` 中 `issued`=该日下发（创建）数、`done`=终态完成数、`failed`=终态 `failed`+`expired` 数；空窗口各数组为 `[]`。
+
 ### 控制面在线更新（FR-99，见 [ADR-0044](adr/0044-control-plane-online-self-update.md)）
 
 把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`rc`）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。**一份端点契约真源（FR-100 前端消费）。**

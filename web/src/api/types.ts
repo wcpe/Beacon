@@ -646,6 +646,68 @@ export interface AuditAnalytics {
   byDay: AuditDayCount[]
 }
 
+// ===== 命令观测 / 审查（FR-104，消费 GET /admin/v1/commands[/analytics]）=====
+
+// 命令元数据视图（对齐 GET /admin/v1/commands 的 items 元素）：仅元数据 + 结果摘要 + 派生已等时长，
+// 绝不含 imprintContent / logContent / payload（控制面投影已排除瞬态敏感字段）。
+export interface CommandMetaView {
+  commandId: number
+  namespace: string
+  serverId: string
+  type: string
+  status: string
+  resultDetail: string
+  operator: string
+  createdAt: string
+  updatedAt: string
+  // 已等时长（秒）：服务端按 now - createdAt 派生（前端实时队列也可按 createdAt 自算）
+  ageSeconds: number
+}
+
+// 命令列表分页返回体
+export interface CommandPage {
+  total: number
+  items: CommandMetaView[]
+}
+
+// 按状态计数（byStatus 元素）
+export interface CommandStatusCount {
+  status: string
+  count: number
+}
+
+// 按类型计数（byType 元素）
+export interface CommandTypeCount {
+  type: string
+  count: number
+}
+
+// 按服务器计数（byServer 元素，top-N）
+export interface CommandServerCount {
+  serverId: string
+  count: number
+}
+
+// 命令量每日趋势单条（升序按 date，date 为 UTC 日 YYYY-MM-DD）：下发 / 完成 / 失败。
+export interface CommandDayCount {
+  date: string
+  issued: number
+  done: number
+  failed: number
+}
+
+// 命令活动聚合视图（对齐 docs/specs/command-observability.md §3 契约）：
+// 时间窗内命令的总数 + 按状态 / 类型 / 服务器(top-N) 分布 + 命令量每日趋势。
+export interface CommandAnalytics {
+  from: string
+  to: string
+  total: number
+  byStatus: CommandStatusCount[]
+  byType: CommandTypeCount[]
+  byServer: CommandServerCount[]
+  byDay: CommandDayCount[]
+}
+
 // ===== 运维设置（FR-62，消费 FR-61 设置端点）=====
 
 // 设置项值类型（对齐后端 GET /admin/v1/settings 的 valueType）。

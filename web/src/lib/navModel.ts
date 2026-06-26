@@ -20,6 +20,7 @@ import {
   Activity,
   KeyRound,
   Layers,
+  Terminal,
 } from 'lucide-react'
 
 // 单个导航叶子：路由 + i18n 文案键 + 语义图标。
@@ -72,6 +73,7 @@ export const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.groupObservability',
     leaves: [
       { to: '/service-analysis', labelKey: 'nav.serviceAnalysis', icon: ChartLine },
+      { to: '/commands', labelKey: 'nav.commandObservability', icon: Terminal },
       { to: '/audits', labelKey: 'nav.audits', icon: ScrollText },
       { to: '/alert-events', labelKey: 'nav.alertEvents', icon: Bell },
     ],

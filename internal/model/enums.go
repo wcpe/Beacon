@@ -89,6 +89,17 @@ const (
 	CommandStatusExpired = "expired" // 超时未完成（agent 离线等）
 )
 
+// IsValidCommandStatus 校验命令生命周期状态取值（FR-104 命令观测过滤校验用）。
+func IsValidCommandStatus(s string) bool {
+	switch s {
+	case CommandStatusPending, CommandStatusFetched, CommandStatusReady,
+		CommandStatusDone, CommandStatusFailed, CommandStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
 // 审计动作（动词点分命名）。
 const (
 	ActionConfigCreate   = "config.create"

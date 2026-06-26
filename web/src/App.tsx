@@ -19,6 +19,7 @@ import ZonesPage from './pages/ZonesPage'
 import AuditsPage from './pages/AuditsPage'
 import AlertEventsPage from './pages/AlertEventsPage'
 import ServiceAnalysisPage from './pages/ServiceAnalysisPage'
+import CommandObservabilityPage from './pages/CommandObservabilityPage'
 import SettingsPage from './pages/SettingsPage'
 import VersionUpdatePage from './pages/VersionUpdatePage'
 import SystemObservabilityPage from './pages/SystemObservabilityPage'
@@ -81,6 +82,8 @@ export default function App() {
           <Route path="alert-events" element={<AlertEventsPage />} />
           {/* 服务分析页（FR-73）：按时间窗 + 环境聚合运维操作审计（KPI + 动作分布 + 每日趋势） */}
           <Route path="service-analysis" element={<ServiceAnalysisPage />} />
+          {/* 命令观测页（FR-104）：观测控制面↔agent 控制命令双向生命周期（KPI + 实时队列 + 历史查询 + 趋势） */}
+          <Route path="commands" element={<CommandObservabilityPage />} />
           {/* 系统区 5 个扁平独立页（ADR-0048 取代 ADR-0043 的设置聚合 / 折叠 / 二级子 tab）：各自独立路由、互不折叠。 */}
           {/* 密钥管理（FR-42）：恢复独立页 */}
           <Route path="api-keys" element={<ApiKeysPage />} />
