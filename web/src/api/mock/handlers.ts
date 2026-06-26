@@ -31,6 +31,19 @@ import {
   buildMockTopology,
   getMockDefaultEntries,
 } from './data'
+import {
+  managedTree as wbManagedTree,
+  serverTree as wbServerTree,
+  syncQueue as wbSyncQueue,
+  scopeOptions as wbScopeOptions,
+  serverOptions as wbServerOptions,
+  workbenchFiles as wbFiles,
+  ingestScanList as wbIngestScan,
+  ingestIgnoreRules as wbIngestIgnoreRules,
+  effectivePreview as wbEffective,
+  resolvePublishImpact as wbResolvePublishImpact,
+  operationLog as wbOperationLog,
+} from './workbench'
 import type { ConfigView, LoginResult, PublishResult, RevisionView } from '../types'
 
 // ---- 辅助 ----
@@ -369,6 +382,51 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
   }
   if (fileRevMatch && method === 'POST') {
     return json({ version: 2, md5: 'mock-md5' })
+  }
+
+  // ===== 配置中心双面板工作台原型（FR-111 / FR-112）=====
+  // 受管配置树
+  if (p === '/admin/v1/workbench/managed-tree' && method === 'GET') {
+    return json({ items: wbManagedTree })
+  }
+  // 服务器实时 plugins 树
+  if (p === '/admin/v1/workbench/server-tree' && method === 'GET') {
+    return json({ items: wbServerTree })
+  }
+  // 同步队列（实时）
+  if (p === '/admin/v1/workbench/operation-log' && method === 'GET') {
+    return json({ items: wbOperationLog })
+  }
+  if (p === '/admin/v1/workbench/sync-queue' && method === 'GET') {
+    return json({ items: wbSyncQueue })
+  }
+  // scope / server 候选
+  if (p === '/admin/v1/workbench/options' && method === 'GET') {
+    return json({ scopes: wbScopeOptions, servers: wbServerOptions })
+  }
+  // 单个受管文件内容 + 历史修订（id 为文件 key，做 URL 编码）
+  const wbFileMatch = p.match(/^\/admin\/v1\/workbench\/files\/(.+)$/)
+  if (wbFileMatch && method === 'GET') {
+    const key = decodeURIComponent(wbFileMatch[1])
+    const file = wbFiles[key]
+    if (!file) return notFound(`受管文件 ${key}`)
+    return json(file)
+  }
+  // 反向抓取扫描清单（待审核 ingest 浮层）
+  if (p === '/admin/v1/workbench/ingest-scan' && method === 'GET') {
+    return json({ items: wbIngestScan, ignoreRules: wbIngestIgnoreRules })
+  }
+  // 生效预览（某实例合并后有效树 + 逐键来源）
+  const wbEffMatch = p.match(/^\/admin\/v1\/workbench\/effective\/(.+)$/)
+  if (wbEffMatch && method === 'GET') {
+    const sid = decodeURIComponent(wbEffMatch[1])
+    return json({ items: wbEffective[sid] ?? [] })
+  }
+  // 发布影响面（改进 1）：按选中文件 + 覆盖层解析受影响在线服清单 + 拓印差异台数
+  if (p === '/admin/v1/workbench/publish-impact' && method === 'POST') {
+    const body = init?.body ? JSON.parse(init.body as string) : {}
+    const names: string[] = Array.isArray(body.names) ? body.names : []
+    return json(wbResolvePublishImpact(names))
   }
 
   // 配置列表 GET

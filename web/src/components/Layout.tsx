@@ -152,8 +152,11 @@ export default function Layout() {
             relative 必不可少：作为绝对定位后代（recharts 图表 / 状态瓷砖色条 / tooltip 等）的包含块，
             否则这些后代锚定到初始包含块（视口）、撑大整个文档导致连同侧栏页眉一起的窗口级滚动。 */}
         <main className="scrollbar-hide relative min-w-0 flex-1 overflow-y-auto p-6">
-          {/* 按路由 key 重挂载并淡入：克制的内容淡入，让路由切换不生硬（tw-animate-css 的 animate-in fade-in） */}
-          <div key={location.pathname} className="animate-in fade-in duration-200">
+          {/* 按路由 key 重挂载并淡入：克制的内容淡入，让路由切换不生硬（tw-animate-css 的 animate-in fade-in）。
+              h-full 必不可少：给「自管满屏页」（配置工作台 / 拓印 / 文件预览，根用 h-full + overflow-hidden）
+              一个有定值高度的父级，其 h-full 才能解析；否则父级高度为 auto，满屏页塌成内容高、
+              内部面板拿不到固定高度，转而触发 main 的窗口级滚动。普通堆叠页内容超高时仍照常由 main 滚动。 */}
+          <div key={location.pathname} className="h-full animate-in fade-in duration-200">
             <Outlet />
           </div>
         </main>
