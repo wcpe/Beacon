@@ -163,13 +163,13 @@ describe('DashboardPage', () => {
     expect(screen.getAllByText('128 MB').length).toBeGreaterThanOrEqual(2)
   })
 
-  it('集群总览条渲染健康三态计数（在线/亚健康/失联/离线）', async () => {
+  it('集群总览条渲染健康三态计数（在线/亚健康/失联/离线，均为中文标签）', async () => {
     renderPage(<DashboardPage />)
-    // listInstances mock：2 online / 0 degraded / 1 lost / 0 offline
-    expect(await screen.findByText('online 2')).toBeInTheDocument()
-    expect(screen.getByText('degraded 0')).toBeInTheDocument()
-    expect(screen.getByText('lost 1')).toBeInTheDocument()
-    expect(screen.getByText('offline 0')).toBeInTheDocument()
+    // listInstances mock：2 online / 0 degraded / 1 lost / 0 offline；图例须用中文状态标签
+    expect(await screen.findByText('在线 2')).toBeInTheDocument()
+    expect(screen.getByText('亚健康 0')).toBeInTheDocument()
+    expect(screen.getByText('失联 1')).toBeInTheDocument()
+    expect(screen.getByText('离线 0')).toBeInTheDocument()
   })
 
   it('服务器状态墙逐台渲染瓷砖（在册实例 serverId 出现在状态墙）', async () => {

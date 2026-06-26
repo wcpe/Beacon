@@ -79,6 +79,14 @@ describe('StatusTile', () => {
     expect(container.querySelector('.bg-amber-500')).not.toBeNull()
   })
 
+  it('状态文案经 i18n 显中文（online→在线、degraded→亚健康）', () => {
+    const { rerender } = render(<StatusTile instance={inst({ status: 'online' })} />)
+    expect(screen.getByText('在线')).toBeInTheDocument()
+    // degraded 此前缺 i18n 键，会回退英文原值；补键后须显「亚健康」
+    rerender(<StatusTile instance={inst({ status: 'degraded' })} />)
+    expect(screen.getByText('亚健康')).toBeInTheDocument()
+  })
+
   it('数值字段缺省时按 0 兜底不崩溃（容错）', () => {
     // 故意造缺 tps/playerCount 的越界桩：应渲染 0 而非抛错。
     const broken = { serverId: 'srv-x', role: 'bukkit', status: 'online', proxy: {} } as unknown as InstanceView

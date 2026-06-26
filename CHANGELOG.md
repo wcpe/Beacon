@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 修复
+- 健康状态标签中文化（可观测看板图例 / 状态墙瓷砖 / 状态徽标）：`web/src/i18n/locales/zh-CN.ts` 中两处状态标签 i18n **值本身写成英文**——`dashboard.healthOnline/Degraded/Lost/Offline`（看板「集群状态总览条」图例，显示 `online 0 / degraded 0 / lost 0 / offline 0`）与顶层 `status.{online,lost,offline}`（被 `StatusTile` / `StatusBadge` 消费，且**缺 `degraded` 键**导致状态墙瓷砖回退英文原值）。改为中文（在线 / 亚健康 / 失联 / 离线）并补全 `status.degraded`。原 DashboardPage / StatusBadge 单测曾断言英文文案、把缺陷固化，一并改为断言中文并新增 StatusTile 中文状态文案用例。
+
 ## 0.15.0（2026-06-26）
 
 ### 新增

@@ -125,11 +125,12 @@ export const zhCN = {
     destructiveTypeAria: '输入确认',
   },
 
-  // ===== 健康状态 label（保留英文原值，等值迁移）=====
+  // ===== 健康状态 label（中文，与注册表健康状态机一致）=====
   status: {
-    online: 'online',
-    lost: 'lost',
-    offline: 'offline',
+    online: '在线',
+    degraded: '亚健康',
+    lost: '失联',
+    offline: '离线',
   },
 
   // ===== 角色 label =====
@@ -720,11 +721,11 @@ export const zhCN = {
     healthDegradedLabel: '亚健康',
     healthLostLabel: '失联',
     healthOfflineLabel: '离线',
-    // 健康分布（FR-64）：由 listInstances 按 status 前端计数（chip 文案保留英文状态值 + 计数）
-    healthOnline: 'online {{count}}',
-    healthDegraded: 'degraded {{count}}',
-    healthLost: 'lost {{count}}',
-    healthOffline: 'offline {{count}}',
+    // 健康分布（FR-64）：由 listInstances 按 status 前端计数（chip 文案用中文状态名 + 计数）
+    healthOnline: '在线 {{count}}',
+    healthDegraded: '亚健康 {{count}}',
+    healthLost: '失联 {{count}}',
+    healthOffline: '离线 {{count}}',
     // 分角色面板内嵌迷你趋势的小标题
     sparklinePlayers: '在线玩家趋势',
     sparklineTps: '平均 TPS 趋势',
