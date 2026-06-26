@@ -552,6 +552,48 @@ export interface ReverseFetchScanFileView {
   ignoredByRule: boolean
 }
 
+// ===== agent 只读文件浏览（FR-110，消费 GET /admin/v1/instances/{serverId}/browse）=====
+// 控制面把 agent 回传的浏览结果 JSON 原文透传给前端；前端按请求的 op 解析下列三种形状之一。
+
+// 浏览操作类型：list（懒列目录一层）/ tree（按需展开子树）/ file（读单文件内容）。
+export type BrowseOp = 'list' | 'tree' | 'file'
+
+// 目录项（list / tree 的 entries / children 元素）：名称 + 是否目录 + 大小 + 是否文本 + 是否超阈值。
+export interface BrowseEntry {
+  name: string
+  dir: boolean
+  size: number
+  isText: boolean
+  overThreshold: boolean
+  // 仅 tree 的目录节点有：下级子项（懒列 list 不带）
+  children?: BrowseEntry[]
+}
+
+// op=list 结果（懒列某目录一层 + 分页游标）。
+export interface BrowseListResult {
+  path: string
+  entries: BrowseEntry[]
+  offset: number
+  limit: number
+  total: number
+  hasMore: boolean
+}
+
+// op=tree 结果（按需展开子树，受 maxDepth + 节点上限约束）。
+export interface BrowseTreeResult {
+  path: string
+  dir: boolean
+  size: number
+  children: BrowseEntry[]
+}
+
+// op=file 结果（读单文件内容；truncated=true 表示超单文件上限被截断）。
+export interface BrowseFileResult {
+  path: string
+  content: string
+  truncated: boolean
+}
+
 // 反向抓取受管任务视图（对齐 handler.reverseFetchTaskView）。
 // 清单与选定经后端 best-effort 解析后展开为 files / selectedPaths 数组。
 export interface ReverseFetchTaskView {

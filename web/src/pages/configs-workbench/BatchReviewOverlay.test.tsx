@@ -10,7 +10,7 @@ vi.mock('@/components/CodeEditor', () => ({
 }))
 
 import BatchReviewOverlay from './BatchReviewOverlay'
-import type { SyncQueueRow } from '@/api/mock/workbench'
+import type { SyncQueueRow } from './types'
 
 const ROWS: SyncQueueRow[] = [
   { id: 'q4', name: 'motd.yml', direction: 'push', status: 'pending-imprint', scopeTarget: '实例 lobby-1', sourcePath: 'prod/motd.yml', targetPath: 'lobby-1:/motd.yml', time: '14:30' },

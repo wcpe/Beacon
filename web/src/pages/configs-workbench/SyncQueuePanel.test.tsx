@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { QueueList, isPendingReview, countPendingSelected } from './SyncQueuePanel'
-import type { SyncQueueRow } from '@/api/mock/workbench'
+import type { SyncQueueRow } from './types'
 
 const ROWS: SyncQueueRow[] = [
   { id: 'q1', name: 'config.yml', direction: 'fetch', status: 'done', scopeTarget: '组 main', sourcePath: 'a', targetPath: 'b', time: '14:32:10' },

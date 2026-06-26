@@ -8,7 +8,7 @@ import { Undo2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import type { OpAction, OpLogEntry } from '@/api/mock/workbench'
+import type { OpAction, OpLogEntry } from './types'
 
 // 列宽模板（表头与行共用）
 const COLS = {

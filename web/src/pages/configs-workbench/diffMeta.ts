@@ -11,7 +11,7 @@ import {
   Loader2,
   type LucideProps,
 } from 'lucide-react'
-import type { ServerMark, SyncStatus } from '@/api/mock/workbench'
+import type { ServerMark, SyncStatus } from './types'
 
 export interface DotMeta {
   // 行首状态图标（lucide 组件）

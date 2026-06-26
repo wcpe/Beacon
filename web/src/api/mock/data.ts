@@ -500,3 +500,60 @@ export function getMockDefaultEntries(filter?: { namespace?: string; group?: str
   if (filter?.group) items = items.filter((e) => e.group === filter.group)
   return items
 }
+
+// ---- agent 只读文件浏览（FR-110）----
+// dev 下右面板浏览的示意结果：模拟某在线服 plugins 根的真实目录树 / 单文件内容。
+// 形状与控制面透传 agent 的浏览结果一致（list / tree / file 三态，见 web/src/api/types.ts）。
+
+// 示意 plugins 根目录树（含未纳管文件 / 子目录，供右面板「实时浏览」展示）。
+const mockBrowseTree = {
+  path: '',
+  dir: true,
+  size: 4096,
+  children: [
+    {
+      name: 'Essentials', dir: true, size: 4096, isText: false, overThreshold: false,
+      children: [
+        { name: 'config.yml', dir: false, size: 12400, isText: true, overThreshold: false },
+        { name: 'kits.yml', dir: false, size: 3100, isText: true, overThreshold: false },
+        { name: 'userdata', dir: true, size: 4096, isText: false, overThreshold: false, children: [] },
+      ],
+    },
+    {
+      name: 'WorldGuard', dir: true, size: 4096, isText: false, overThreshold: false,
+      children: [
+        { name: 'config.yml', dir: false, size: 6000, isText: true, overThreshold: false },
+        { name: 'regions.yml', dir: false, size: 88000, isText: true, overThreshold: false },
+      ],
+    },
+    { name: 'spawn.yml', dir: false, size: 1800, isText: true, overThreshold: false },
+    { name: 'motd.yml', dir: false, size: 400, isText: true, overThreshold: false },
+    { name: 'bukkit.yml', dir: false, size: 2200, isText: true, overThreshold: false },
+    { name: 'server.properties', dir: false, size: 1100, isText: true, overThreshold: false },
+  ],
+}
+
+// 示意单文件内容（op=file）：按路径末段给一段文本，未命中给占位。
+const mockBrowseFiles: Record<string, string> = {
+  'spawn.yml': '# 出生点配置（服务器现状）\nspawns:\n  default: { world: world, x: 120.0, y: 64.0, z: -64.5 }\nrespawn-at-spawn: false\n',
+  'motd.yml': "# 服务器 MOTD（服务器现状）\nmotd: '&b欢迎'\nmax-players: 100\n",
+}
+
+// 按 op 返回浏览结果（list 取树根一层、tree 返回整棵示意树、file 返回单文件内容）。
+export function getMockBrowse(op: string, path: string): unknown {
+  if (op === 'file') {
+    const base = path.split('/').pop() ?? path
+    return {
+      path,
+      content: mockBrowseFiles[base] ?? `# ${path}（服务器现状·示意）\nkey: value\n`,
+      truncated: false,
+    }
+  }
+  if (op === 'list') {
+    // 懒列一层：定位到 path 对应目录节点，列其直接子项（仅示意根层）
+    const entries = mockBrowseTree.children.map(({ children: _children, ...rest }) => rest)
+    return { path, entries, offset: 0, limit: entries.length, total: entries.length, hasMore: false }
+  }
+  // 默认 tree：返回整棵示意子树
+  return mockBrowseTree
+}

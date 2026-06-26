@@ -11,6 +11,10 @@ import type {
   AuditAnalytics,
   AuditPage,
   AlertEventPage,
+  BrowseFileResult,
+  BrowseListResult,
+  BrowseOp,
+  BrowseTreeResult,
   CommandAnalytics,
   CommandPage,
   ConfigTimelineView,
@@ -905,6 +909,31 @@ export function triggerReverseFetch(
       method: 'POST',
       body: JSON.stringify(params),
     },
+  )
+}
+
+// ===== agent 只读文件浏览（FR-110，依赖 FR-109）=====
+
+// 浏览参数：op 必填（list/tree/file）；path 相对 plugins 根；list 分页 offset/limit；tree 展开 maxDepth。
+export interface BrowseParams {
+  op: BrowseOp
+  path?: string
+  offset?: number
+  limit?: number
+  maxDepth?: number
+}
+
+// 浏览某在线实例的真实 plugins（FR-110）：控制面经命令生命周期代理 agent 只读浏览、阻塞等回传后透传结果。
+// namespace 走查询参数（实例列表跨 namespace、须随源实例带上）；触发有写副作用（建命令 / 唤醒 / 审计），
+// 故需 full 角色（readonly → 403）；目标离线 / 越权 / 非目录 / 非文本 → 404；超时 → 504。
+// 结果形状随 op 而异（list / tree / file），由调用方按 op 取对应泛型。
+export function browse(
+  serverId: string,
+  namespace: string,
+  params: BrowseParams,
+): Promise<BrowseListResult | BrowseTreeResult | BrowseFileResult> {
+  return request<BrowseListResult | BrowseTreeResult | BrowseFileResult>(
+    `/instances/${encodeURIComponent(serverId)}/browse${qs({ namespace, ...params })}`,
   )
 }
 

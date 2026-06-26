@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { SCOPE_META } from './diffMeta'
 import { useEffectivePreview } from './useWorkbenchData'
-import type { EffectiveFile } from '@/api/mock/workbench'
+import type { EffectiveFile } from './types'
 
 // 单文件统计：定制键数 / 总键数
 function fileStats(f: EffectiveFile): { custom: number; total: number } {

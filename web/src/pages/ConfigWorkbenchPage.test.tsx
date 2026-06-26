@@ -51,7 +51,7 @@ import type {
   EffectiveFile,
   PublishImpact,
   WorkbenchFile,
-} from '@/api/mock/workbench'
+} from './configs-workbench/types'
 
 // ---- 受控 mock 数据 ----
 const MANAGED: ManagedNode[] = [

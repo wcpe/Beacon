@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import BottomDock from './BottomDock'
-import type { OpLogEntry, SyncQueueRow } from '@/api/mock/workbench'
+import type { OpLogEntry, SyncQueueRow } from './types'
 
 const QUEUE: SyncQueueRow[] = [
   { id: 'q1', name: 'config.yml', direction: 'fetch', status: 'done', scopeTarget: '组 main', sourcePath: 'a', targetPath: 'b', time: '14:32' },

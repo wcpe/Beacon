@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 
 import IngestReviewOverlay from './IngestReviewOverlay'
 import { useIngestScanList } from './useWorkbenchData'
-import type { IngestScanItem } from '@/api/mock/workbench'
+import type { IngestScanItem } from './types'
 
 vi.mock('./useWorkbenchData', () => ({
   useIngestScanList: vi.fn(),

@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/react'
 
 import EffectivePreviewView from './EffectivePreviewView'
 import { useEffectivePreview } from './useWorkbenchData'
-import type { EffectiveFile } from '@/api/mock/workbench'
+import type { EffectiveFile } from './types'
 
 vi.mock('./useWorkbenchData', () => ({
   useEffectivePreview: vi.fn(),

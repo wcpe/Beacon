@@ -6,7 +6,7 @@
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { SyncQueueRow } from '@/api/mock/workbench'
+import type { SyncQueueRow } from './types'
 
 // 列宽模板（表头与行共用，保证 Xftp 风对齐）
 const COLS = {

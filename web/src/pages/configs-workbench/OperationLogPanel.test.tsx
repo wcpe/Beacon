@@ -6,7 +6,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { OperationLogList, countUndoableSelected } from './OperationLogPanel'
-import type { OpLogEntry } from '@/api/mock/workbench'
+import type { OpLogEntry } from './types'
 
 const ENTRIES: OpLogEntry[] = [
   { id: 'e1', time: '14:33:01', action: 'push', operator: 'admin', files: ['spawn.yml'], target: '实例 lobby-1', detail: '下发 spawn.yml', undone: false },

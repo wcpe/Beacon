@@ -9,7 +9,7 @@ import { GitCompare, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import CodeEditor from '@/components/CodeEditor'
-import { imprintDiffs } from '@/api/mock/workbench'
+import { imprintDiffs } from './sampleData'
 
 export default function ImprintReviewOverlay({
   // 待审核的队列项名（含路径，如 motd.yml）；用末段匹配 mock diff

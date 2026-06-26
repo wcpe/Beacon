@@ -10,7 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import CodeEditor from '@/components/CodeEditor'
 import { cn } from '@/lib/utils'
-import { imprintDiffs, type SyncQueueRow } from '@/api/mock/workbench'
+import { imprintDiffs } from './sampleData'
+import type { SyncQueueRow } from './types'
 
 export default function BatchReviewOverlay({
   // 选中的待审队列行（ingest / imprint 混合）

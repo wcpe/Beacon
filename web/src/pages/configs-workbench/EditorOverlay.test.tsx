@@ -24,7 +24,7 @@ vi.mock('./useWorkbenchData', () => ({
 
 import EditorOverlay, { tabLabel } from './EditorOverlay'
 import { useWorkbenchFile } from './useWorkbenchData'
-import type { WorkbenchFile } from '@/api/mock/workbench'
+import type { WorkbenchFile } from './types'
 
 const mockedFile = vi.mocked(useWorkbenchFile)
 

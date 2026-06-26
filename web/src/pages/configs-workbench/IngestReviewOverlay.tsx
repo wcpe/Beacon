@@ -15,16 +15,19 @@ import { useIngestScanList } from './useWorkbenchData'
 export default function IngestReviewOverlay({
   // 待审核的队列项名（标题展示）
   queueName,
+  // 关联的反向抓取受管任务 id（FR-58~60）：取其扫描清单；原型期无任务时为空态
+  taskId,
   onConfirm,
   onCancel,
 }: {
   queueName: string
+  taskId?: number
   // 确认 ingest（传纳管文件数）
   onConfirm: (count: number) => void
   onCancel: () => void
 }) {
   const { t } = useTranslation()
-  const scan = useIngestScanList()
+  const scan = useIngestScanList(taskId)
   const items = scan.data?.items ?? []
   const ignoreRules = scan.data?.ignoreRules ?? []
 

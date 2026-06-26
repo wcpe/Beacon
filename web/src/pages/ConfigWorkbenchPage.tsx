@@ -58,7 +58,7 @@ import PublishPanel from './configs-workbench/PublishPanel'
 import BatchReviewOverlay from './configs-workbench/BatchReviewOverlay'
 import EffectivePreviewView from './configs-workbench/EffectivePreviewView'
 import { SCOPE_META, SERVER_MARK_META, SYNC_LEGEND_META, SYNC_META, type DotMeta } from './configs-workbench/diffMeta'
-import type { ManagedNode, OpAction, OpLogEntry, ServerNode, SyncQueueRow } from '@/api/mock/workbench'
+import type { ManagedNode, OpAction, OpLogEntry, ServerNode, SyncQueueRow } from './configs-workbench/types'
 
 // 覆盖层徽标图例
 const SCOPE_LEGEND = ['global', 'group', 'server'] as const
@@ -82,15 +82,18 @@ export default function ConfigWorkbenchPage() {
   const params = useParams()
 
   const { operator } = useAuth()
+
+  // scope / server chip 选择：scope 决定抓取 / 发布落的覆盖层；serverId 决定右面板浏览哪台在线服
+  const [scope, setScope] = useState('group:main')
+  const [serverId, setServerId] = useState('')
+
   const managed = useManagedTree()
-  const server = useServerTree()
+  // 右面板实时浏览选定在线服（FR-110）；未选服时不浏览
+  const server = useServerTree(serverId || undefined)
   const queue = useSyncQueue()
   const opLog = useOperationLog()
   const options = useWorkbenchOptions()
 
-  // scope / server chip 选择（原型仅切换显示，不联动过滤）
-  const [scope, setScope] = useState('group:main')
-  const [serverId, setServerId] = useState('lobby-1')
   // 受管面板视图：配置树 / 生效预览
   const [managedView, setManagedView] = useState<ManagedView>('tree')
 
@@ -193,6 +196,13 @@ export default function ConfigWorkbenchPage() {
     setTabs((prev) => (prev.some((p) => p.key === key) ? prev : [...prev, { key, name }]))
     setActiveKey(key)
   }, [])
+
+  // 默认选中首个在线服（右面板浏览目标）：options 加载完成且未选服时落到第一台
+  useEffect(() => {
+    if (!serverId && options.data?.servers?.length) {
+      setServerId(options.data.servers[0].serverId)
+    }
+  }, [serverId, options.data])
 
   // 深链 /configs/:id：进页或 id 变化时把该文件开进浮层
   useEffect(() => {

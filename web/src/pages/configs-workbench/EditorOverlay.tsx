@@ -37,7 +37,7 @@ import CodeEditor from '@/components/CodeEditor'
 
 import { useWorkbenchFile } from './useWorkbenchData'
 import { SCOPE_META } from './diffMeta'
-import type { WorkbenchFile } from '@/api/mock/workbench'
+import type { WorkbenchFile } from './types'
 
 // 已打开标签（原型：仅记录 key + 文件名；内容按活跃标签拉取）
 export interface EditorTab {

@@ -17,7 +17,7 @@ vi.mock('./useWorkbenchData', () => ({
 
 import PublishPanel from './PublishPanel'
 import { usePublishImpact } from './useWorkbenchData'
-import type { PublishImpact } from '@/api/mock/workbench'
+import type { PublishImpact } from './types'
 
 const mockedHook = vi.mocked(usePublishImpact)
 
