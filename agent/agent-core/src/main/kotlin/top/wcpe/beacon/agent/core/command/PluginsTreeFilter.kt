@@ -136,14 +136,9 @@ object PluginsTreeFilter {
      *
      * 命中常见二进制扩展名（图片 / 压缩 / 库 / 序列化数据等）判 false；其余一律 true（保守倾向文本，
      * 由 submit 读内容时再精判，scan 阶段宁可多标一个文本也不漏标该被人看见的配置）。
+     * 口径与浏览（FR-109）共用，集中在 [TextFileHeuristic]（避免二进制扩展名集合复制散落）。
      */
-    private fun looksTextByName(path: String): Boolean {
-        val lower = path.lowercase()
-        val dot = lower.lastIndexOf('.')
-        if (dot < 0) return true // 无扩展名（如 README）保守按文本
-        val ext = lower.substring(dot + 1)
-        return ext !in BINARY_EXTENSIONS
-    }
+    private fun looksTextByName(path: String): Boolean = TextFileHeuristic.looksTextByName(path)
 
     /**
      * 严格按 UTF-8 解码字节；含 NUL 字节或非合法 UTF-8 视作二进制返回 null。
@@ -164,23 +159,6 @@ object PluginsTreeFilter {
             null // 非合法 UTF-8 → 判为二进制
         }
     }
-
-    /**
-     * scan 模式按名启发判二进制的常见扩展名集合（不含点，小写）。
-     *
-     * 仅作 scan 阶段的"疑似二进制"提示（isText=false 供前端弱化展示），不是安全边界——
-     * 真正拦二进制内容的是 submit 读字节时的 UTF-8 解码 + NUL 判定（[decodeUtf8OrNull]）。
-     */
-    private val BINARY_EXTENSIONS: Set<String> = setOf(
-        // 归档 / 库
-        "jar", "zip", "gz", "tar", "rar", "7z", "war",
-        // 图片
-        "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp",
-        // 序列化 / 数据库 / 区块数据
-        "dat", "db", "mca", "mcr", "nbt", "bin", "ser",
-        // 字体 / 音视频 / 可执行
-        "ttf", "otf", "wav", "ogg", "mp3", "class", "so", "dll", "exe",
-    )
 }
 
 /** 待 ingest 的单个文本文件（相对路径 + 文本内容）。 */

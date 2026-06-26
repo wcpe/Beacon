@@ -1,5 +1,8 @@
 package top.wcpe.beacon.agent.core.platform
 
+import top.wcpe.beacon.agent.core.browse.DirListing
+import top.wcpe.beacon.agent.core.browse.FileContent
+import top.wcpe.beacon.agent.core.browse.TreeNode
 import java.io.File
 
 /**
@@ -59,6 +62,33 @@ interface PlatformAdapter {
      * 默认空实现：未实现的平台 / 测试桩返回空映射（scan 能力不上线）。壳层各自实现平台 IO。
      */
     fun readPluginsTreeMetadata(): Map<String, Long> = emptyMap()
+
+    /**
+     * 懒列 `plugins/` 根下 [relPath] 目录的直接子项，分页返回（只读浏览，FR-109，见 ADR-0049 原语①）。
+     *
+     * [relPath] 为空串表示列 `plugins/` 根。只读、不写盘；**仅在 async 线程调用**（读盘阻塞 IO，绝不上主线程）。
+     * 读取根 = [pluginsBaseFolder]；FS 级安全（Path 容纳 + 符号链接逃逸 + path traversal 校验）由实现委托 core
+     * [top.wcpe.beacon.agent.core.browse.FsBrowseReader] 负责。越权 / 目标非目录返回 null。
+     *
+     * 默认 null 实现：未实现浏览的平台 / 测试桩不开放浏览能力。壳层各自委托 core FS 边界。
+     */
+    fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? = null
+
+    /**
+     * 按需展开 `plugins/` 根下 [relPath] 起的子树，逐层有界（只读浏览，FR-109，见 ADR-0049 原语②）。
+     *
+     * 只读、async；受深度 / 节点上限约束（非整盘一次拉全）。读取根 = [pluginsBaseFolder]，安全口径同 [browseListDir]。
+     * 越权 / 目标非目录返回 null。默认 null 实现（桩不开放）。
+     */
+    fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? = null
+
+    /**
+     * 读 `plugins/` 根下 [relPath] 单文本文件内容（只读浏览，FR-109，见 ADR-0049 原语③）。
+     *
+     * 只读、async；受单文件上限约束（超限截断），排除 `.jar` / 二进制。读取根 = [pluginsBaseFolder]，安全口径同 [browseListDir]。
+     * 越权 / 非普通文件 / jar / 二进制返回 null。默认 null 实现（桩不开放）。
+     */
+    fun browseReadFile(relPath: String): FileContent? = null
 
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(changed: Set<String>, newMd5: String)
