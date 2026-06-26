@@ -32,6 +32,7 @@ type Handlers struct {
 	Auth             *handler.AuthHandler
 	APIKey           *handler.APIKeyHandler
 	Command          *handler.CommandHandler
+	Browse           *handler.BrowseHandler
 	AgentLog         *handler.AgentLogHandler
 	ReverseFetchTask *handler.ReverseFetchTaskHandler
 	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
@@ -72,6 +73,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/files/error", h.ReverseFetchTask.ReportError)
 		// 取 agent 日志回传（FR-88，见 ADR-0040）：agent 回传自身脱敏日志环形缓冲快照，转存命令瞬态
 		r.Post("/logs", h.AgentLog.Receive)
+		// 文件浏览结果回传（FR-110，见 ADR-0049）：agent 回传列目录 / 子树 / 文件内容，转存命令瞬态、唤醒等待的 admin
+		r.Post("/files/browse-result", h.Browse.BrowseResult)
 	})
 
 	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
@@ -161,6 +164,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/instances/{serverId}/logs", h.AgentLog.Get)
 		// 强制重同步（FR-91）：触发该实例重拉有效配置/文件树/覆盖集（写，readonly 403）
 		r.Post("/instances/{serverId}/resync", h.Command.Resync)
+		// 在线实例只读文件浏览（FR-110，见 ADR-0049 决策 9）：经命令生命周期代理列目录 / 读子树 / 读单文件。
+		// 方法是 GET 但有写副作用（建命令 / 唤醒 agent / 入审计），故显式挂 requireFullRole 挡 readonly（403）；
+		// 触发已在 service 内记 file.browse 专项审计（兜底审计中间件只覆盖写方法、GET 不进，无双记之虞）。
+		r.With(requireFullRole).Get("/instances/{serverId}/browse", h.Browse.Browse)
 		// 在线实例反向抓取·受管任务（FR-58，重定义旧一次性端点，见 ADR-0037）：建扫描任务 + 下发 scan 命令（写，readonly 403）
 		r.Post("/instances/{serverId}/reverse-fetch", h.ReverseFetchTask.CreateScanTask)
 		// 受管任务台 / 审核台（FR-58）：查 / 列任务（读）+ 提交选定集 / 取消（写，readonly 403）

@@ -229,6 +229,9 @@ func run() error {
 	topologyHub := longpoll.NewHub()
 	// 命令待办（FR-39）：serverId 级唤醒 Hub，与上面三通道独立；建反向抓取命令时唤醒目标 agent 的 SSE 流
 	commandHub := longpoll.NewHub()
+	// 文件浏览结果（FR-110）：serverId 级唤醒 Hub，与命令待办独立；agent 回传浏览结果时唤醒等待中的 admin 请求。
+	// 与 commandHub 分立——commandHub 唤醒 agent 拉命令，browseHub 唤醒 admin 取结果，二者信号不互相干扰。
+	browseHub := longpoll.NewHub()
 	// revRepo 注入供 per-server 有效配置变更时间线聚合该服覆盖链各 config 项的发布历史（FR-80）
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
@@ -286,6 +289,11 @@ func run() error {
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
+
+	// 只读文件浏览（FR-110，见 ADR-0049 决策 9）：复用同一 commandService（fs-browse 类型）经命令生命周期代理。
+	// 注入 browseHub 供 admin 请求注册结果 waiter、agent 回传后唤醒；命令提交后经 notifier 唤醒目标 agent。
+	commandService.SetBrowseResultHub(browseHub)
+	browseHandler := handler.NewBrowseHandler(commandService, instanceService)
 
 	// 取 agent 日志（FR-88，见 ADR-0040）：编排取自身脱敏日志的命令-回传周期（触发 + 单活跃限速 + 回传转存瞬态 + 查询）。
 	// 复用同一 agent_command 通路（tail-logs 类型），命令提交后经 notifier 唤醒目标 agent。
@@ -365,7 +373,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

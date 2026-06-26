@@ -103,6 +103,19 @@ func readonlyWriteGuard(next http.Handler) http.Handler {
 	})
 }
 
+// requireFullRole 守卫只允许 full 角色访问的端点：readonly 角色一律 403（FR-110，扩展 ADR-0026）。
+// 用于「方法是 GET 但触发写副作用」的端点（如文件浏览：GET 触发建命令 / 唤醒 agent / 入审计）——
+// readonlyWriteGuard 只拦写方法、放过 GET，故这类端点须显式挂本守卫。放在鉴权之后（角色已注入 context）。
+func requireFullRole(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth.Role(r.Context()) != model.RoleFull {
+			render.WriteError(w, r, apperr.ErrForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // isWriteMethod 判断 HTTP 方法是否为写操作（POST/PUT/PATCH/DELETE）；纯函数，便于单测。
 func isWriteMethod(method string) bool {
 	switch method {

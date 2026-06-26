@@ -27,6 +27,10 @@ type AgentCommand struct {
 	// 取日志回传内容（FR-88，瞬态，见 ADR-0040）：type=tail-logs 回传的 agent 自身日志行集（JSON 文本，已脱敏）。
 	// 与 ImprintContent 平行——受控瞬态：done 后供 admin 取一次、命令过期即清空；不入审计 detail、不导出 git、不落持久真源。
 	LogContent string `gorm:"column:log_content;type:text"`
+	// 文件浏览回传结果（FR-110，瞬态，见 ADR-0049）：type=fs-browse 回传的目录清单 / 子树 / 文件内容（JSON 文本）。
+	// 与 ImprintContent / LogContent 平行——受控瞬态：等待中的 admin 取一次即用、命令过期即清空；
+	// **绝不入审计 detail**（文件内容敏感）、不导出 git、不落持久真源。
+	BrowseResult string `gorm:"column:browse_result;type:text"`
 	// 触发操作者（admin 认证身份，非手填）
 	Operator string `gorm:"column:operator;size:128;not null"`
 	// 创建时间（UTC）
@@ -41,7 +45,7 @@ func (AgentCommand) TableName() string { return "agent_command" }
 // IsValidCommandType 校验命令类型取值。
 func IsValidCommandType(t string) bool {
 	switch t {
-	case CommandTypeIngestPlugins, CommandTypeTailLogs, CommandTypeResyncConfig:
+	case CommandTypeIngestPlugins, CommandTypeTailLogs, CommandTypeResyncConfig, CommandTypeFsBrowse:
 		return true
 	default:
 		return false

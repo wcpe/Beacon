@@ -45,7 +45,26 @@ const (
 	CommandTypeTailLogs = "tail-logs"
 	// CommandTypeResyncConfig 强制重同步：令 agent 重新拉取控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、不新增 ADR）。
 	CommandTypeResyncConfig = "resync-config"
+	// CommandTypeFsBrowse 只读文件浏览：令 agent 列目录 / 读子树 / 读单文件回传（FR-110，见 ADR-0049 决策 9；纯只读、不写盘）。
+	CommandTypeFsBrowse = "fs-browse"
 )
+
+// 文件浏览操作（FR-110，落 command payload 的 op 字段 + 应用层校验，见 ADR-0049）。
+const (
+	BrowseOpList = "list" // 懒列某目录的直接子项（分页）
+	BrowseOpTree = "tree" // 按需展开某子树（逐层有界）
+	BrowseOpFile = "file" // 读单文本文件内容（受单文件上限）
+)
+
+// IsValidBrowseOp 校验文件浏览操作取值（FR-110）。
+func IsValidBrowseOp(op string) bool {
+	switch op {
+	case BrowseOpList, BrowseOpTree, BrowseOpFile:
+		return true
+	default:
+		return false
+	}
+}
 
 // agent 命令载荷 mode（FR-46 / FR-58）：区分 FR-39 直接落库、FR-46 拓印转存待审、FR-58 两段式扫描 / 提交。
 const (
@@ -155,6 +174,8 @@ const (
 	ActionInstanceTailLogs = "instance.tail-logs"
 	// 强制重同步（FR-91）：admin 触发命令在线实例重拉有效配置/文件树/覆盖集（detail 仅 commandId/serverId，无内容）
 	ActionInstanceResync = "instance.resync"
+	// 文件浏览（FR-110，见 ADR-0049）：admin 触发命令在线实例列目录 / 读子树 / 读单文件（detail 仅 commandId/op/path，绝不含文件内容）
+	ActionFileBrowse = "file.browse"
 	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
 	ActionOverrideSetCreate   = "override-set.create"
 	ActionOverrideSetPublish  = "override-set.publish"

@@ -137,6 +137,19 @@ func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content str
 	return res.RowsAffected > 0, nil
 }
 
+// UpdateStatusWithBrowseResult 把命令从 fetched CAS 迁移 done 并转存浏览回传结果（FR-110）：仅当当前 status=fetched 才迁移。
+// result 即 agent 回传的浏览结果 JSON（瞬态：目录清单 / 子树 / 文件内容）；等待中的 admin 取一次即用、过期清理一并清空。
+// 返回是否命中（前态不符 / 不存在则 false）。
+func (r *AgentCommandRepository) UpdateStatusWithBrowseResult(id uint, result string) (bool, error) {
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
+		Updates(map[string]any{"status": model.CommandStatusDone, "browse_result": result})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
 // CountByStatus 按状态分组统计命令条数（跨全部目标汇总，仅观测，FR-82）。
 // 一条 GROUP BY 查询（可移植 GORM、无方言）；无某状态则该键缺省（不返回 0 键）。
 func (r *AgentCommandRepository) CountByStatus() (map[string]int, error) {
@@ -264,12 +277,12 @@ func (r *AgentCommandRepository) ScanForAnalytics(f CommandFilter) ([]CommandAna
 
 // ExpireStale 把创建早于 before、仍处 pending/fetched/ready 的命令标 expired（超时清理）；返回受影响条数。
 // ready（FR-46 拓印已抓取未确认）一并过期并清空瞬态拓印内容，避免未确认的磁盘原文长期滞留。
-// 同时清空 log_content（FR-88 取日志瞬态）：过期命令的回传日志一并抹除，避免瞬态长期滞留。
+// 同时清空 log_content（FR-88 取日志瞬态）与 browse_result（FR-110 浏览瞬态）：过期命令的回传内容一并抹除，避免瞬态长期滞留。
 func (r *AgentCommandRepository) ExpireStale(before time.Time) (int64, error) {
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("status IN ? AND created_at < ?",
 			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}, before).
-		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": ""})
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": ""})
 	if res.Error != nil {
 		return 0, res.Error
 	}

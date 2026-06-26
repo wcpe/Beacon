@@ -59,6 +59,8 @@ type AgentCommandService struct {
 	effSvc *FileEffectiveService
 	// 受管任务 submit 回传转交（FR-58，可选注入；未注入则 submit 命令回传按未知 mode 拒）。
 	submitReceiver submitIngestReceiver
+	// 文件浏览结果等待 Hub（FR-110，可选注入；未注入则 RequestBrowse 不可用）。
+	browseHub BrowseResultHub
 }
 
 // NewAgentCommandService 构造服务。

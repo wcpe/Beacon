@@ -79,6 +79,10 @@ var (
 	ErrImprintReviewMismatch = New(http.StatusPreconditionFailed, "IMPRINT_REVIEW_MISMATCH", "拓印自审内容已变更，请重新查看 diff")
 	// ErrAgentLogActive 该实例已有进行中的取日志命令，限速拒新建（FR-88，见 ADR-0040）。
 	ErrAgentLogActive = New(http.StatusConflict, "AGENT_LOG_ACTIVE", "该实例已有进行中的取日志请求，请稍候")
+	// ErrBrowseTimeout 文件浏览等待 agent 回传超时（agent 离线 / 未及时回传，FR-110，见 ADR-0049）。
+	ErrBrowseTimeout = New(http.StatusGatewayTimeout, "BROWSE_TIMEOUT", "目标实例未在限期内返回浏览结果")
+	// ErrBrowseTargetNotFound 文件浏览目标越权 / 非目录 / 非文本（agent 原语拒读，FR-110）。
+	ErrBrowseTargetNotFound = New(http.StatusNotFound, "BROWSE_TARGET_NOT_FOUND", "浏览目标不存在或不可读")
 
 	// ErrReverseFetchTaskNotFound 反向抓取受管任务不存在（FR-58）。
 	ErrReverseFetchTaskNotFound = New(http.StatusNotFound, "REVERSE_FETCH_TASK_NOT_FOUND", "反向抓取任务不存在")
