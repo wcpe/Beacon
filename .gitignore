@@ -40,3 +40,4 @@ package-lock.json
 
 # 首启运行时生成的控制面配置（embed 源为 config.example.yml），不入库
 /config.yml
+/.playwright-cli/
