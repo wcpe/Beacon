@@ -12,25 +12,35 @@ import (
 // devVersion 是未经打包构建（直接 go run）时的版本哨兵，视为未知、不参与更新比较 / 不提示更新。
 const devVersion = "dev"
 
-// semver 是解析后的最小语义版本（仅支持 vX.Y.Z 三段数字，FR-117/ADR-0052：去 rc 预发布段，按版本号判新）。
+// semver 是解析后的语义版本：X.Y.Z 基线 + 可选预发布标识（如 dev.<短sha>）。
+// 正式版 prerelease 为空；滚动预发布为 dev.<短sha>（FR-117/ADR-0055：每次 push sha 变、便于反复验证在线更新）。
 type semver struct {
 	major, minor, patch int
+	prerelease          string // '-' 后的预发布标识（如 "dev.715989a"）；空=正式版
 }
 
-// parseSemver 解析 vX.Y.Z 或 X.Y.Z（容忍可选前导 "v"）。
-// ADR-0052：渠道收敛为正式 / 预发布、按 X.Y.Z 判新，**不再支持任何预发布后缀**（含 -rc.N）；
-// 带后缀一律视为非法 → 解析失败，调用方据此当未知处理、不误判更新。
+// parseSemver 解析 X.Y.Z 或 X.Y.Z-<prerelease>（容忍可选前导 "v"）。
+// 支持滚动预发布的 -dev.<sha> 预发布段（ADR-0055，取代 ADR-0052「不支持任何后缀」）；不支持 build 元数据 '+'。
 func parseSemver(s string) (semver, error) {
 	raw := strings.TrimPrefix(strings.TrimSpace(s), "v")
 	if raw == "" {
 		return semver{}, fmt.Errorf("版本号为空")
 	}
-	// 任何 '-' 后缀（预发布 / build 元数据）均拒：滚动预发布与正式版都用纯 X.Y.Z。
-	if strings.ContainsAny(raw, "-+") {
-		return semver{}, fmt.Errorf("版本号不支持后缀，须为纯 X.Y.Z，实际 %q", s)
+	if strings.ContainsRune(raw, '+') {
+		return semver{}, fmt.Errorf("不支持 build 元数据 '+'，实际 %q", s)
+	}
+	// 拆出预发布段（首个 '-' 后）：X.Y.Z[-prerelease]。
+	core := raw
+	var pre string
+	if i := strings.IndexByte(raw, '-'); i >= 0 {
+		core = raw[:i]
+		pre = raw[i+1:]
+		if pre == "" {
+			return semver{}, fmt.Errorf("预发布段为空，实际 %q", s)
+		}
 	}
 
-	parts := strings.Split(raw, ".")
+	parts := strings.Split(core, ".")
 	if len(parts) != 3 {
 		return semver{}, fmt.Errorf("版本号须为 X.Y.Z 三段，实际 %q", s)
 	}
@@ -45,6 +55,7 @@ func parseSemver(s string) (semver, error) {
 	if v.patch, err = parseNonNegInt(parts[2]); err != nil {
 		return semver{}, fmt.Errorf("补丁版本号非法: %q", s)
 	}
+	v.prerelease = pre
 	return v, nil
 }
 
@@ -60,9 +71,8 @@ func parseNonNegInt(s string) (int, error) {
 	return n, nil
 }
 
-// compareSemver 比较两个版本：a<b 返回 -1，a==b 返回 0，a>b 返回 1。
-// 序：依次比主、次、补丁数字；三段全等即相等（同 X.Y.Z，ADR-0052 不判更新）。
-func compareSemver(a, b semver) int {
+// compareBase 比较两版本的 X.Y.Z 基线（不含预发布标识）：a<b 返回 -1、a==b 返回 0、a>b 返回 1。
+func compareBase(a, b semver) int {
 	if c := cmpInt(a.major, b.major); c != 0 {
 		return c
 	}
@@ -84,8 +94,10 @@ func cmpInt(a, b int) int {
 	}
 }
 
-// IsNewer 判断远端版本 remote 是否严格高于当前版本 current（据此决定是否提示更新）。
-// current 为 dev 哨兵或任一方解析失败 → 视为「无可用更新」（不提示、不误判），并返回解析错误供日志。
+// IsNewer 判断远端 remote 是否应提示为「有更新」相对当前 current（ADR-0055）。
+// current 为 dev 哨兵或任一方解析失败 → 无更新（不提示、不误判），并返回解析错误供日志。
+// 判定：先比 X.Y.Z 基线——远端基线高即更新、低即否；基线相同时**预发布标识不同即视为更新**，
+// 使滚动预发布每次 push（dev.<sha> 变）都能被检测到、便于反复验证在线更新（dev→正式也算更新）。
 func IsNewer(current, remote string) (bool, error) {
 	if strings.TrimSpace(current) == devVersion {
 		// dev 构建：版本未知，不参与比较、不提示更新。
@@ -99,5 +111,13 @@ func IsNewer(current, remote string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("远端版本解析失败: %w", err)
 	}
-	return compareSemver(rem, cur) > 0, nil
+	switch compareBase(rem, cur) {
+	case 1:
+		return true, nil
+	case -1:
+		return false, nil
+	default:
+		// 同 X.Y.Z 基线：预发布标识不同即更新（dev.<sha> 变可重复触发）。
+		return rem.prerelease != cur.prerelease, nil
+	}
 }

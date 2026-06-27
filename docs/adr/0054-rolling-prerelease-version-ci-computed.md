@@ -1,6 +1,6 @@
 # ADR-0054：滚动预发布版本号由 CI 自算（取代 ADR-0052 决策 2 的「版本取 VERSION」）
 
-**状态**：已接受（取代 [ADR-0052](0052-rolling-prerelease-channel.md) 决策 2 的版本号来源；ADR-0052 其余决策仍有效）
+**状态**：已接受（取代 [ADR-0052](0052-rolling-prerelease-channel.md) 决策 2；其「滚动预发布纯 X.Y.Z 无后缀」一条被 [ADR-0055](0055-rolling-prerelease-dev-sha-version.md) 取代为「基线后拼 -dev.<sha>」，基线由 CI 取最新正式 tag minor+1 仍有效）
 
 ## 背景
 

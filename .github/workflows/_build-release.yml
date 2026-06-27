@@ -74,8 +74,11 @@ jobs:
               major=0
               minor=0
             fi
-            ver="${major}.$((minor + 1)).0"
-            echo "滚动预发布版本号：最新正式 tag=[${latest}] → ver=[${ver}]"
+            # 带上 7 位 commit sha 作 -dev 预发布段（ADR-0055）：每次 push sha 变 → 版本号变 →
+            # in-app 同基线标识不同即判「有更新」，使滚动预发布可被反复检测、便于验证在线更新功能。
+            sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)"
+            ver="${major}.$((minor + 1)).0-dev.${sha}"
+            echo "滚动预发布版本号：最新正式 tag=[${latest}] + commit ${sha} → ver=[${ver}]"
             echo "version=${ver}" >> "$GITHUB_OUTPUT"
             echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
             echo "name=v${ver}" >> "$GITHUB_OUTPUT"

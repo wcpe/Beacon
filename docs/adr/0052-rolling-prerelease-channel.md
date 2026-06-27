@@ -1,6 +1,6 @@
 # ADR-0052：滚动预发布渠道 + 版本号判新（取代 ADR-0046 的 rc 模型）
 
-**状态**：已接受（决策 2「滚动预发布版本号取根 VERSION」被 [ADR-0054](0054-rolling-prerelease-version-ci-computed.md) 取代为 CI 自算 minor+1；决策 1/3/4/5/6/7 仍有效）
+**状态**：已接受（决策 2 被 [ADR-0054](0054-rolling-prerelease-version-ci-computed.md) 取代为 CI 自算 minor+1；决策 4/5「纯 X.Y.Z 判新 / 同号不提示」被 [ADR-0055](0055-rolling-prerelease-dev-sha-version.md) 取代为「基线比较 + 同基线 dev.sha 标识变即更新」；决策 1/3/6/7 仍有效）
 
 ## 背景
 
