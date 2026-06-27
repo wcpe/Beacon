@@ -4,7 +4,7 @@
 #
 # 两种模式（由 inputs.rolling 区分）：
 #   - 正式版（rolling=false，tag 触发）：版本取触发 tag 去 v 前缀；tag↔VERSION 严格校验；Release 据 tag 建、不移动 tag。
-#   - 滚动预发布（rolling=true，master push）：版本取根 VERSION；以移动 tag（rolling-tag）force-update 覆盖同一 Release。
+#   - 滚动预发布（rolling=true，master push）：版本 = 最新正式 release minor+1（CI 自算、与 VERSION 解耦，ADR-0054）；以移动 tag（rolling-tag）force-update 覆盖同一 Release。
 #
 # 为什么矩阵原生而非交叉编译：控制面 sqlite 经 go-sqlite3 需 CGO，交叉编译会自动关闭 CGO
 # 导致 sqlite 不可用（默认开箱即跑的库）。故各平台二进制在对应原生 runner 上以 CGO=1 构建。
@@ -19,7 +19,7 @@ on:
         required: true
         type: boolean
       rolling:
-        # 是否滚动模式（FR-117）：true=master push 滚动预发布（版本取根 VERSION、移动 tag 覆盖同一 Release）；
+        # 是否滚动模式（FR-117）：true=master push 滚动预发布（版本 = 最新正式 release minor+1、CI 自算、移动 tag 覆盖同一 Release，ADR-0054）；
         # false=正式版（tag 触发、版本取 tag、tag↔VERSION 严格校验）。缺省 false 兼容 release.yml。
         description: "是否滚动预发布（master push）"
         required: false
@@ -37,24 +37,57 @@ permissions:
   contents: write
 
 jobs:
+  # 版本号 / tag / Release 名单点计算（ADR-0054）：滚动预发布取最新正式 release minor+1（与 VERSION 解耦、
+  # 自动领先），正式版取触发 tag 去 v 并做 tag↔VERSION 严格校验。各构建 / 发布 job 共用本 job 输出保证全程一致。
+  meta:
+    name: 解析版本号
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
+      name: ${{ steps.calc.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 计算版本号 / tag / Release 名
+        id: calc
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROLLING: ${{ inputs.rolling }}
+          ROLLING_TAG: ${{ inputs.rolling-tag }}
+        run: |
+          if [ "$ROLLING" = "true" ]; then
+            # 滚动预发布：版本号 = 最新正式 release（releases/latest 天然排除 prerelease）的 minor+1、patch 归零，
+            # 与 VERSION 解耦、自动领先最新正式版（ADR-0054）。无正式 release 时回退基线 v0.0.0 → 0.1.0。
+            latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo v0.0.0)"
+            base="${latest#v}"
+            major="${base%%.*}"
+            rest="${base#*.}"
+            minor="${rest%%.*}"
+            ver="${major}.$((minor + 1)).0"
+            echo "version=${ver}" >> "$GITHUB_OUTPUT"
+            echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
+            echo "name=v${ver}" >> "$GITHUB_OUTPUT"
+            echo "滚动预发布版本号（最新正式 ${latest} → minor+1）：${ver}"
+          else
+            # 正式版：取触发 tag 去 v 前缀，并与根 VERSION 严格校验一致（ADR-0052 决策 3/6）。
+            base="${GITHUB_REF_NAME#v}"
+            ver="$(cat VERSION)"
+            if [ "$base" != "$ver" ]; then
+              echo "::error::tag ${GITHUB_REF_NAME} 去前缀得 ${base}，与仓库 VERSION(${ver}) 不一致，拒绝发布"
+              exit 1
+            fi
+            echo "version=${base}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
   # 前端构建一次，作为 artifact 供各平台二进制 go:embed 复用（免每个 runner 重复装 Node 构建）。
   web:
     name: 前端构建
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 校验 tag 与 VERSION 一致（仅正式版 tag 触发）
-        # 滚动预发布走 master push、版本直接取根 VERSION、不参与 tag↔VERSION 校验（ADR-0052 决策 6）。
-        if: ${{ !inputs.rolling }}
-        shell: bash
-        run: |
-          # 正式版无后缀 tag：去 v 前缀后须等于根 VERSION（两条 tag glob 已互斥，此处不再剥任何后缀）。
-          base="${GITHUB_REF_NAME#v}"
-          ver="$(cat VERSION)"
-          if [ "$base" != "$ver" ]; then
-            echo "::error::tag $GITHUB_REF_NAME 去前缀得 $base，与仓库 VERSION($ver) 不一致，拒绝发布"
-            exit 1
-          fi
       - name: 安装 pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -83,7 +116,7 @@ jobs:
   # 版本注入用 tag 去 v 后的完整串（含 -rc.N），故 rc 产物文件名与版本号自带 rc 标识。
   binaries:
     name: 控制面 ${{ matrix.target }}
-    needs: web
+    needs: [meta, web]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -111,16 +144,11 @@ jobs:
       - name: 原生构建控制面二进制
         shell: bash
         env:
-          ROLLING: ${{ inputs.rolling }}
+          # 版本号由 meta job 单点计算（滚动 = 最新正式 minor+1、正式 = tag，ADR-0054），各平台共用保证一致。
+          VER: ${{ needs.meta.outputs.version }}
         run: |
-          # 版本号：正式版取触发 tag 去 v 前缀；滚动预发布取根 VERSION（master push 无版本 tag，ADR-0052）。
-          if [ "$ROLLING" = "true" ]; then
-            ver="$(cat VERSION)"
-          else
-            ver="${GITHUB_REF_NAME#v}"
-          fi
-          ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${ver}"
-          out="beacon-${ver}-${{ matrix.target }}${{ matrix.ext }}"
+          ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${VER}"
+          out="beacon-${VER}-${{ matrix.target }}${{ matrix.ext }}"
           go build -trimpath -ldflags "${ldflags}" -o "${out}" ./cmd/beacon
           echo "已构建 ${out}"
       - name: 上传二进制
@@ -159,10 +187,10 @@ jobs:
   # 滚动模式（inputs.rolling=true）以移动 tag（rolling-tag）force-update 覆盖同一 Release，只留最新一份。
   release:
     name: 发布 GitHub Release
-    needs: [binaries, jars]
+    needs: [meta, binaries, jars]
     runs-on: ubuntu-latest
     steps:
-      - name: 检出仓库（读 VERSION 供滚动模式定版本号）
+      - name: 检出仓库（供读 CHANGELOG 提取 Release 正文）
         uses: actions/checkout@v4
       - name: 汇集发布产物（仅 beacon-* 二进制 / jar）
         uses: actions/download-artifact@v4
@@ -179,44 +207,49 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           echo "==== 发布产物校验和 ===="
           cat SHA256SUMS.txt
-      - name: 解析发布 tag 与版本号
-        # 正式版：tag=触发 tag（vX.Y.Z）、版本=去 v；滚动：tag=rolling-tag（移动）、版本=根 VERSION、Release 标题 v<VERSION>。
-        id: meta
+      - name: 从 CHANGELOG 提取本版更新日志作 Release 正文
+        # Bug 修复：原先用 generate_release_notes（GitHub 自动 commit 流水）、从不读 CHANGELOG。
+        # 改为正式版取「## X.Y.Z」段、滚动预发布取「## 未发布」段；预发布前置中文警示头。
+        # 提取为空则占位（极少见，CHANGELOG 应随发布定稿），保证 body 非空、可读。
+        id: notes
         shell: bash
         env:
           ROLLING: ${{ inputs.rolling }}
-          ROLLING_TAG: ${{ inputs.rolling-tag }}
+          VER: ${{ needs.meta.outputs.version }}
         run: |
           if [ "$ROLLING" = "true" ]; then
-            ver="$(cat VERSION)"
-            echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
-            echo "name=v${ver}" >> "$GITHUB_OUTPUT"
+            heading="未发布"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            heading="$VER"
           fi
-      - name: 生成预发布说明头（仅预发布）
-        # 预发布在 generate_release_notes 自动生成之上，前置固定中文提示头；正式版不加（body 留空走自动）
-        if: ${{ inputs.prerelease }}
-        shell: bash
-        run: |
+          # 转义版本号中的点，避免正则把 . 当任意字符；匹配「## <标题>」行（其后接空格 / 括号 / 行尾）到下一个「## 」前。
+          esc="$(printf '%s' "$heading" | sed 's/[.]/\\./g')"
+          section="$(awk -v h="$esc" '
+            $0 ~ "^## " h "($|[^0-9.])" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md)"
           {
-            echo "⚠ 滚动预发布版本：随 master 自动覆盖更新，用于试用验证 / 喂在线更新，可能不稳定，勿用于生产。"
-            echo ""
-          } > release-notes-header.md
-          echo "notes_header<<__EOF__" >> "$GITHUB_OUTPUT"
-          cat release-notes-header.md >> "$GITHUB_OUTPUT"
-          echo "__EOF__" >> "$GITHUB_OUTPUT"
-        id: notes
+            if [ "${{ inputs.prerelease }}" = "true" ]; then
+              echo "⚠ 滚动预发布版本：随 master 自动覆盖更新，用于试用验证 / 喂在线更新，可能不稳定，勿用于生产。"
+              echo ""
+            fi
+            if [ -n "$section" ]; then
+              echo "$section"
+            else
+              echo "_本版未在 CHANGELOG 找到对应段（heading: ${heading}）。_"
+            fi
+          } > release-body.md
+          echo "==== Release 正文 ===="
+          cat release-body.md
       - name: 创建 / 覆盖 Release 并上传产物
         uses: softprops/action-gh-release@v2
         with:
           # 正式版：tag 已由 push 提供；滚动：显式传移动 tag，action 会 force-update tag 并覆盖同一 Release
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: ${{ steps.meta.outputs.name }}
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.name }}
           files: artifacts/*
           prerelease: ${{ inputs.prerelease }}
-          # 预发布用固定中文头 + 自动生成 notes 追加在后；正式版 body 留空、纯自动生成
-          body: ${{ inputs.prerelease && steps.notes.outputs.notes_header || '' }}
-          generate_release_notes: true
+          # 正文取自 CHANGELOG 本版段（预发布含警示头）；不再用 generate_release_notes 的 commit 流水
+          body_path: release-body.md
           fail_on_unmatched_files: true

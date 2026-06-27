@@ -9,6 +9,7 @@
 - 控制面更新支持手动回滚到上一版本（FR-120，见 [ADR-0053](docs/adr/0053-single-binary-self-replace.md)）：新增 `POST /admin/v1/system/rollback`（无 `.old` 备份 → `409 NO_ROLLBACK_AVAILABLE`、readonly → 403、审计 `system.update-rollback`）+ 状态端点 `GET /system/update` 增 `rollbackAvailable` 字段；前端「版本与更新」页加「回滚到上一版本」按钮（仅有 `.old` 时显示）+ 二次确认 + 重连回显。回退复用 FR-119 的 `.old` 备份：主进程优雅关停 → rename 回退（当前 → `.failed`、`.old` → 运行路径）→ spawn 旧版重启。与 FR-119 自动回滚互补（自动=崩溃循环兜底，手动=主动退回）。真机回滚待验。
 
 ### 修复
+- CI 发布流程两个 bug（见 [ADR-0054](docs/adr/0054-rolling-prerelease-version-ci-computed.md)，改 `_build-release.yml`/`prerelease.yml`，关键文件经用户明确要求）：**① 滚动预发布版本号停留在已发布正式版号**——原取根 `VERSION`，而 `VERSION` 发布正式版后不递增，导致推 master 的滚动预发布与上一正式版同号、被 `prerelease.yml` 去重跳过 no-op、in-app「同号不提示」永远检测不到；改为 **CI 基于最新正式 release 自算 minor+1**（`releases/latest` → `X.(Y+1).0`、与 `VERSION` 解耦、自动领先），取代 ADR-0052 决策 2。**② Release 不读 CHANGELOG**——原用 `generate_release_notes`（GitHub commit 流水）从不读 `CHANGELOG.md`；改为从 CHANGELOG 提取本版段作 Release 正文（正式版 `## X.Y.Z`、滚动预发布 `## 未发布`），预发布保留警示头。版本号计算抽到单一 `meta` job、各构建/发布步骤共用保证一致。
 - 控制面在线更新下载进度百分比恒 0%（`internal/update`）：下载阶段 `downloadBinary` 用 `io.Copy(io.MultiWriter(tmp, hasher), …)` 落盘并算 SHA256，但**全程从不更新进度 `Percent`**，`reset` 归零后再无人写，前端「立即更新」下载阶段进度条始终显示 0% 直到跳下一阶段。给进度态加线程安全 `setPercent`，并在下载 `MultiWriter` 上挂一个旁路计数器 `progressWriter`（本身不落盘，按 已下字节 / `Content-Length` 实时更新百分比、超额封顶 100；`Content-Length` 未知时不更新、不误报）。补 `progressWriter` 单元用例与「下载完成后 `Percent`=100」回归用例。
 
 ## 0.17.0（2026-06-27）

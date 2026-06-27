@@ -1,7 +1,7 @@
 # Beacon 滚动预发布触发壳（FR-117，[ADR-0052](../../docs/adr/0052-rolling-prerelease-channel.md)）：
 # 推 master 时调用可复用 workflow _build-release.yml 做多平台原生构建 + 双端 jar + SHA256，
 # 并以移动 tag「prerelease」覆盖发布同一个滚动预发布 Release（prerelease=true、只留最新一份）。
-# 版本号取根 VERSION（资产名 beacon-<VERSION>-...、Release 标题 v<VERSION>）。
+# 版本号由 CI 自算 = 最新正式 release 的 minor+1（与 VERSION 解耦、自动领先最新正式版，ADR-0054）。
 # 本文件极薄、只管触发与传参；构建逻辑单点维护在 _build-release.yml。
 # 正式版走 release.yml（无后缀 tag 触发），与本滚动路径互不重叠。
 name: Prerelease

@@ -47,8 +47,8 @@
 渠道收敛为**正式版（stable）/ 滚动预发布（prerelease）两条**，预发布随 master 自动滚动刷新，便于试用最新并喂 in-app 在线更新使更新功能可测：
 
 - **正式版触发（不变）**：打**无后缀**正式 tag `vX.Y.Z`（如 `git tag v0.17.0 && git push origin v0.17.0`），CI 的 `release.yml` 触发、`prerelease=false`，行为同前；tag↔VERSION 严格校验（tag 去 `v` == 根 `VERSION`）。
-- **滚动预发布触发**：**推 master 即自动发布**。CI 的 `prerelease.yml` 由 master push 触发，调用同一套构建（5 平台原生矩阵单一主二进制 + 双端 jar + `SHA256SUMS.txt`），以**固定移动 tag `prerelease`** force-update **覆盖发布同一个** prerelease Release（`prerelease=true`，**只留最新一份、不堆 Release 列表**）；版本号取根 `VERSION`（资产名 `beacon-<VERSION>-...`、Release 标题 `v<VERSION>`），不参与 tag↔VERSION 校验。release notes 自动前置中文头「⚠ 滚动预发布版本：随 master 自动覆盖更新…勿用于生产」。
-- **渠道判定（按版本号）**：控制面在线自更新（FR-99/FR-100）的「正式（stable）」渠道按 GitHub API 最新**非 prerelease** release 判定，「预发布（prerelease）」渠道按最新 **prerelease** release 判定；**是否有更新按语义版本号 `X.Y.Z` 比较**——渠道版 > 当前运行版才提示，**同 `X.Y.Z` 滚动覆盖不提示**（你已在最新，重拉 / 重启即可），**跨号才提示**。滚动预发布的版本号取 Release 标题（`v<VERSION>`），因其 tag 为移动标签 `prerelease` 非语义版本。
+- **滚动预发布触发**：**推 master 即自动发布**。CI 的 `prerelease.yml` 由 master push 触发，调用同一套构建（5 平台原生矩阵单一主二进制 + 双端 jar + `SHA256SUMS.txt`），以**固定移动 tag `prerelease`** force-update **覆盖发布同一个** prerelease Release（`prerelease=true`，**只留最新一份、不堆 Release 列表**）；**版本号由 CI 自算 = 最新正式 release 的 minor+1**（patch 归零、与 `VERSION` 解耦、自动领先最新正式版，[ADR-0054](adr/0054-rolling-prerelease-version-ci-computed.md)；如最新正式 0.17.0 → 滚动预发布 0.18.0），不参与 tag↔VERSION 校验。release notes **从 `CHANGELOG.md` 的「## 未发布」段提取** + 前置中文警示头「⚠ 滚动预发布版本…勿用于生产」。
+- **渠道判定（按版本号）**：控制面在线自更新（FR-99/FR-100）的「正式（stable）」渠道按 GitHub API 最新**非 prerelease** release 判定，「预发布（prerelease）」渠道按最新 **prerelease** release 判定；**是否有更新按语义版本号 `X.Y.Z` 比较**——渠道版 > 当前运行版才提示，**同 `X.Y.Z` 滚动覆盖不提示**（你已在最新，重拉 / 重启即可），**跨号才提示**。滚动预发布的版本号取 Release 标题（CI 自算的 `v<X.(Y+1).0>`，[ADR-0054](adr/0054-rolling-prerelease-version-ci-computed.md)），因其 tag 为移动标签 `prerelease` 非语义版本。
 - **用途**：给运维 / 试用方装预发布产物先验，并让 in-app 更新 / 切渠道功能有真实 Release 可检可更可测；确认无误后打无后缀正式 tag 发版。
 - **回退**：预发布仅供试用、不进生产；发现问题直接弃用、修后随下次 master push 自动覆盖刷新即可，无需特殊回滚。生产升级一律以**正式 Release** 为准。
 - **注意**：全局技能 `sdd-publish-snapshot` 基于旧快照 / rc 模型，与本节滚动预发布模型方向趋同但仍属全局插件；本仓库预发布以本节流程（ADR-0052）为准。
