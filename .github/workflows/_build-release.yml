@@ -78,7 +78,8 @@ jobs:
   # 二者均 CGO=1 原生构建（sqlite 可用）；beacon go:embed 复用上一步的 web/dist，launcher 极薄不内嵌前端。
   # 直接 go build（非 make build）：矩阵需原生 CGO + 复用预构建前端，且 windows runner 无 make；
   # 链接参数与 Makefile build/launcher 目标一致（-trimpath + 注入 version.Version）。
-  # 5 平台原生矩阵（含 linux-arm64 用 GitHub 原生 arm64 runner，仍非交叉编译）；明确不含 windows-arm64。
+  # 4 平台原生矩阵（含 linux-arm64 用 GitHub 原生 arm64 runner，仍非交叉编译）；
+  # 不含 windows-arm64，也不含 darwin-amd64（无 Intel macOS runner，构建不起来已移除）。
   # 版本注入用 tag 去 v 后的完整串（含 -rc.N），故 rc 产物文件名与版本号自带 rc 标识。
   binaries:
     name: 控制面 ${{ matrix.target }}
@@ -91,7 +92,6 @@ jobs:
           - { os: ubuntu-latest,    target: linux-amd64,   ext: "" }
           - { os: ubuntu-24.04-arm, target: linux-arm64,   ext: "" }
           - { os: windows-latest,   target: windows-amd64, ext: ".exe" }
-          - { os: macos-13,         target: darwin-amd64,  ext: "" }
           - { os: macos-14,         target: darwin-arm64,  ext: "" }
     env:
       # 各平台 runner 自带原生 C 工具链（gcc/clang/mingw），sqlite 经 CGO 可用
