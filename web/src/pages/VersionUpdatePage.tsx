@@ -1,32 +1,30 @@
 // 版本与更新独立页（FR-100，消费 FR-99 端点；ADR-0048 由设置子 tab 拍平为独立页）：
-// 纵向分区合并「版本信息 / 渠道选择 / 检查更新（含 release 日志安全渲染）/ 立即更新（二次确认 + 进度 + 重连）/
-// 网络代理（脱敏回显）/ 更新设置（自动检查开关 + 周期）」。
+// 单张「应用更新」卡片承载版本信息 / 渠道分段控件（正式版 / 测试版）/ 检查更新 / 状态徽标 /
+// release 日志（markdown 安全渲染）/ 立即更新并重启（二次确认 + 进度 + 重连，FR-118）/ 回滚到上一版本（FR-120）；
+// 卡片下方「高级设置」折叠区承载网络代理（FR-98）与更新设置（自动检查 + 周期，FR-101）。
 // 复用 useUpdateCheck（低频检查）+ FR-99 端点（triggerUpdate/updateProgress）+ 设置 store（update.* 项经 listSettings/updateSetting）。
 //
-// 安全渲染：releaseNotes 作为文本子节点交 React 转义（whitespace-pre-wrap 保留换行），绝不用 dangerouslySetInnerHTML（防 XSS）。
+// 安全渲染：releaseNotes 经 MarkdownLite 解析为 React 元素（文本由 React 转义），绝不用 dangerouslySetInnerHTML（防 XSS）。
 
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, RefreshCw, Download, Undo2 } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, RefreshCw, Undo2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import MarkdownLite from '@/components/MarkdownLite'
 import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
 import { usePageHeader } from '@/components/PageHeader'
-import AnchorRailLayout, { AnchorSectionBlock, type AnchorSection } from '@/components/AnchorRailLayout'
 import { useMessage } from '@/components/useMessage'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
+import { cn } from '@/lib/utils'
 import {
   ApiClientError,
   listSettings,
@@ -45,11 +43,6 @@ const UPDATE_CHANNELS = ['stable', 'prerelease'] as const
 // 更新设置周期上下界（与后端白名单 [1,168] 一致）。
 const MIN_INTERVAL_HOURS = 1
 const MAX_INTERVAL_HOURS = 168
-
-// 锚点分区 id（FR-108）：版本信息 / 网络代理 / 更新设置，与 rail 项一一对应。
-const SECTION_VERSION = 'version'
-const SECTION_PROXY = 'proxy'
-const SECTION_PREFS = 'prefs'
 
 // 设置项 key（FR-98/FR-101）。
 const KEY_CHANNEL = 'update.channel'
@@ -101,6 +94,8 @@ export default function VersionUpdatePage() {
   // 回滚二次确认开合（FR-120）：与「立即更新」二次确认分开受控，复用同一 DestructiveConfirmDialog 范式。
   const [rollbackConfirmOpen, setRollbackConfirmOpen] = useState(false)
   const [applying, setApplying] = useState(false)
+  // 高级设置折叠开合（默认折叠）：放网络代理 + 更新设置两块。
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   // 进行中操作类别（FR-120）：update（立即更新）/ rollback（回滚），共用 applying / 进度轮询 / 重连裁决机制，
   // 仅最终裁决 toast 文案按类别分流，避免重复一套重连边沿追踪逻辑。
   const [opKind, setOpKind] = useState<'update' | 'rollback'>('update')
@@ -158,6 +153,8 @@ export default function VersionUpdatePage() {
   // 当前渠道：优先取设置项（可改），回退检查结果回显渠道。
   const channelSetting = findSetting(settings, KEY_CHANNEL)
   const currentChannel = channelSetting?.value ?? data?.channel ?? 'stable'
+  // 当前是否预发布渠道（决定是否显示「预发布」徽标）。
+  const isPrerelease = currentChannel === 'prerelease'
 
   // 改渠道：写 update.channel 设置（热生效），成功后刷新设置 + 重新检查更新（切渠道后比对新渠道 release），
   // 并回显重检结果（FR-118 ③）：发现更新 / 已最新 / 检查失败，而非只「正在重新检查」。
@@ -182,6 +179,12 @@ export default function VersionUpdatePage() {
     },
     onError: (e: Error) => showError(e.message),
   })
+
+  // 渠道分段控件切换：仅在与当前渠道不同时写设置（避免重复点同一段触发空切换）。
+  function handleChannelChange(value: string) {
+    if (value === currentChannel) return
+    channelMut.mutate(value)
+  }
 
   // 「立即检查」：强制刷新（?force=true）。
   async function handleRefresh() {
@@ -246,100 +249,104 @@ export default function VersionUpdatePage() {
     return t('updateModal.phaseStaging')
   }
 
-  // 锚点 rail 分区（FR-108）：版本信息 / 网络代理 / 更新设置三分区。
-  const railSections: AnchorSection[] = [
-    { id: SECTION_VERSION, label: t('versionUpdate.sectionVersion') },
-    { id: SECTION_PROXY, label: t('versionUpdate.sectionProxy') },
-    { id: SECTION_PREFS, label: t('versionUpdate.sectionPrefs') },
-  ]
+  // 状态徽标（卡片版本行旁）：有更新（warning 橙）/ 已最新（success 绿）；预发布渠道额外挂 accent 徽标。
+  // 仅在检查就绪（非 dev / 非检查失败）时显示明确状态徽标，否则只靠状态行文字回显。
+  function statusBadge() {
+    if (!data || update.isLoading || update.isError) return null
+    if (data.isDevBuild || data.status === 'check-failed') return null
+    return canUpdate ? (
+      <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+        {t('versionUpdate.badgeHasUpdate')}
+      </Badge>
+    ) : (
+      <Badge className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+        {t('versionUpdate.badgeUpToDate')}
+      </Badge>
+    )
+  }
 
-  // 页眉主操作（FR-118 ①）：「立即检查」已下移页面正文（紧挨版本/更新区），此处仅保留「立即更新」。
-  const headerActions = canUpdate ? (
-    <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={applying}>
-      <Download />
-      {t('updateModal.updateNow')}
-    </Button>
-  ) : undefined
-
-  // 页眉（FR-105/FR-108）：标题 + 副标题 + 主操作（立即更新），系统页非环境范围
+  // 页眉（FR-105/FR-108）：标题 + 副标题；主操作下移卡片底部，系统页非环境范围。
   usePageHeader({
     title: t('versionUpdate.title'),
     subtitle: t('versionUpdate.subtitle'),
-    actions: headerActions,
     envScoped: false,
   })
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      {/* 左 sticky 锚点 rail + scroll-spy：三分区去卡片，标题 + 细线分隔 */}
-      <AnchorRailLayout sections={railSections} ariaLabel={t('versionUpdate.railAria')}>
-        {/* ===== 版本信息 + 渠道选择 + 状态 / release 日志 / 进度 ===== */}
-        <AnchorSectionBlock id={SECTION_VERSION} title={t('versionUpdate.sectionVersion')}>
-          <div className="space-y-4">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-            <dt className="text-muted-foreground">{t('updateModal.currentVersion')}</dt>
-            <dd className="font-medium tabular-nums">{data?.currentVersion ?? '-'}</dd>
-          </dl>
-
-          {/* 渠道选择：用户可自由切 stable / rc（写设置热生效、切后重查） */}
-          <div className="flex flex-wrap items-center gap-3">
-            <Label className="text-sm text-muted-foreground">{t('updateModal.channel')}</Label>
-            <Select
-              value={currentChannel}
-              onValueChange={(v) => channelMut.mutate(v)}
-              disabled={channelMut.isPending || applying}
-            >
-              <SelectTrigger className="w-32" aria-label={t('updateModal.channel')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {UPDATE_CHANNELS.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="text-xs text-muted-foreground">{t('versionUpdate.channelHint')}</span>
-          </div>
-
-          {/* 状态行 +「立即检查」（FR-118 ①：由第二层页眉下移至此，紧挨版本/更新区）+「回滚到上一版本」（FR-120） */}
-          <div className="flex flex-wrap items-center gap-3">
-            <span className={canUpdate ? 'text-sm font-medium text-foreground' : 'text-sm text-muted-foreground'}>
-              {statusLine()}
-            </span>
-            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
-              <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
-              {t('updateModal.checkNow')}
-            </Button>
-            {/* 仅当存在可回退的上一版本（.old 备份）时显示回滚入口（FR-120） */}
-            {canRollback && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setRollbackConfirmOpen(true)}
-                disabled={applying}
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto pb-2">
+      {/* ===== 应用更新单卡片 ===== */}
+      <section>
+        <Card>
+          <CardHeader className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+            <CardTitle className="flex items-center gap-2">
+              <Download className="size-4" />
+              {t('versionUpdate.cardTitle')}
+            </CardTitle>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {/* 渠道分段控件（正式版 / 测试版）：映射 stable / prerelease */}
+              <Tabs
+                value={currentChannel}
+                onValueChange={handleChannelChange}
+                className="w-auto"
+                aria-label={t('versionUpdate.channelGroupAria')}
               >
-                <Undo2 />
-                {t('versionUpdate.rollback')}
+                <TabsList aria-label={t('versionUpdate.channelGroupAria')}>
+                  {UPDATE_CHANNELS.map((c) => (
+                    <TabsTrigger
+                      key={c}
+                      value={c}
+                      disabled={channelMut.isPending || applying}
+                    >
+                      {c === 'stable'
+                        ? t('versionUpdate.channelStable')
+                        : t('versionUpdate.channelPrerelease')}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              {/* 立即检查（强制刷新，绕服务端缓存） */}
+              <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
+                <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
+                {t('updateModal.checkNow')}
               </Button>
-            )}
-          </div>
+            </div>
+          </CardHeader>
 
-          {/* 可用更新明细：版本 / 发布时间 / release 日志（安全渲染）/ 外链 */}
-          {canUpdate && (
-            <div className="space-y-3">
+          <CardContent className="space-y-4">
+            {/* 版本行：当前 / 最新（mono）/ 发布时间 + 状态徽标 */}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {statusBadge()}
+                {isPrerelease && (
+                  <Badge className="bg-accent text-accent-foreground">
+                    {t('versionUpdate.badgePrerelease')}
+                  </Badge>
+                )}
+                <span className={canUpdate ? 'text-sm font-medium text-foreground' : 'text-sm text-muted-foreground'}>
+                  {statusLine()}
+                </span>
+              </div>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-                <dt className="text-muted-foreground">{t('updateModal.latestVersion')}</dt>
-                <dd className="font-medium tabular-nums">{data?.latestVersion}</dd>
-                <dt className="text-muted-foreground">{t('updateModal.publishedAt')}</dt>
-                <dd className="font-medium">{formatTime(data?.publishedAt)}</dd>
+                <dt className="text-muted-foreground">{t('updateModal.currentVersion')}</dt>
+                <dd className="font-mono font-medium tabular-nums">{data?.currentVersion ?? '-'}</dd>
+                {canUpdate && (
+                  <>
+                    <dt className="text-muted-foreground">{t('updateModal.latestVersion')}</dt>
+                    <dd className="font-mono font-medium tabular-nums">{data?.latestVersion}</dd>
+                    <dt className="text-muted-foreground">{t('updateModal.publishedAt')}</dt>
+                    <dd className="font-medium">{formatTime(data?.publishedAt)}</dd>
+                  </>
+                )}
               </dl>
+            </div>
+
+            {/* 更新日志区（markdown 安全渲染）：仅有可用更新时展示 */}
+            {canUpdate && (
               <div className="space-y-1.5">
                 <div className="text-sm font-medium">{t('updateModal.releaseNotes')}</div>
-                <div className="max-h-48 overflow-y-auto rounded-md bg-muted/50 px-3 py-2 text-sm">
+                <div className="max-h-[180px] overflow-y-auto rounded-md bg-muted/50 px-3 py-2 text-sm break-words">
                   {data?.releaseNotes ? (
-                    <pre className="font-sans whitespace-pre-wrap break-words">{data.releaseNotes}</pre>
+                    <MarkdownLite source={data.releaseNotes} />
                   ) : (
                     <span className="text-muted-foreground">{t('updateModal.releaseNotesEmpty')}</span>
                   )}
@@ -356,28 +363,60 @@ export default function VersionUpdatePage() {
                   </a>
                 )}
               </div>
+            )}
+
+            {/* 更新 / 回滚进度（触发应用后展示）：阶段 / 进度 / 重启重连 / 失败 */}
+            {applying && (
+              <div role="status" className="rounded-md border px-3 py-2 text-sm" data-failed={failed ? 'true' : 'false'}>
+                {progressLine()}
+              </div>
+            )}
+          </CardContent>
+
+          {/* 卡片底部主操作：立即更新并重启（有更新时可用）+ 回滚到上一版本（仅有 .old 备份时显示，FR-120） */}
+          <CardFooter className="gap-2">
+            <Button onClick={() => setConfirmOpen(true)} disabled={!canUpdate || applying}>
+              <Download />
+              {t('versionUpdate.applyAndRestart')}
+            </Button>
+            {canRollback && (
+              <Button variant="outline" onClick={() => setRollbackConfirmOpen(true)} disabled={applying}>
+                <Undo2 />
+                {t('versionUpdate.rollback')}
+              </Button>
+            )}
+          </CardFooter>
+        </Card>
+      </section>
+
+      {/* ===== 高级设置折叠区（默认折叠）：网络代理 + 更新设置 ===== */}
+      <section>
+        <Card size="sm">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between px-(--card-spacing) text-sm font-medium"
+            aria-expanded={advancedOpen}
+            onClick={() => setAdvancedOpen((v) => !v)}
+          >
+            <span>{t('versionUpdate.advancedSettings')}</span>
+            <ChevronDown className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')} />
+          </button>
+          {advancedOpen && (
+            <div className="space-y-6 px-(--card-spacing) pt-1">
+              {/* 网络代理（FR-98） */}
+              <div className="space-y-3">
+                <div className="text-sm font-medium">{t('versionUpdate.sectionProxy')}</div>
+                <ProxySection settings={settings} />
+              </div>
+              {/* 更新设置：自动检查开关 + 周期（FR-101） */}
+              <div className="space-y-3">
+                <div className="text-sm font-medium">{t('versionUpdate.sectionPrefs')}</div>
+                <UpdatePrefsSection settings={settings} />
+              </div>
             </div>
           )}
-
-          {/* 更新进度（触发应用后展示）：阶段 / 进度 / 重启重连 / 失败 */}
-          {applying && (
-            <div role="status" className="rounded-md border px-3 py-2 text-sm" data-failed={failed ? 'true' : 'false'}>
-              {progressLine()}
-            </div>
-          )}
-          </div>
-        </AnchorSectionBlock>
-
-        {/* ===== 网络代理 ===== */}
-        <AnchorSectionBlock id={SECTION_PROXY} title={t('versionUpdate.sectionProxy')}>
-          <ProxySection settings={settings} />
-        </AnchorSectionBlock>
-
-        {/* ===== 更新设置（自动检查开关 + 周期） ===== */}
-        <AnchorSectionBlock id={SECTION_PREFS} title={t('versionUpdate.sectionPrefs')}>
-          <UpdatePrefsSection settings={settings} />
-        </AnchorSectionBlock>
-      </AnchorRailLayout>
+        </Card>
+      </section>
 
       {/* 立即更新二次确认（复用 FR-76 破坏性确认范式） */}
       <DestructiveConfirmDialog
@@ -435,7 +474,7 @@ function ProxySection({ settings }: { settings: SettingView[] | undefined }) {
     onError: (e: Error) => showError(e.message),
   })
 
-  // 项缺失（后端未含该设置）：兜底占位（标题由外层 AnchorSectionBlock 提供）。
+  // 项缺失（后端未含该设置）：兜底占位。
   if (!item) {
     return <p className="text-sm text-muted-foreground">{t('versionUpdate.proxyEmpty')}</p>
   }
@@ -444,21 +483,21 @@ function ProxySection({ settings }: { settings: SettingView[] | undefined }) {
 
   return (
     <div className="space-y-3">
-        <div className="space-y-1.5">
-          <Label htmlFor="update-proxy-url">{t('versionUpdate.proxyLabel')}</Label>
-          <Input
-            id="update-proxy-url"
-            type="text"
-            className="max-w-md"
-            placeholder={t('versionUpdate.proxyPlaceholder')}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          <p className="text-xs text-muted-foreground">{t('versionUpdate.proxyHint')}</p>
-        </div>
-        <Button size="sm" disabled={!dirty || mut.isPending} onClick={() => mut.mutate(draft)}>
-          {mut.isPending ? t('settings.saving') : t('settings.saveBtn')}
-        </Button>
+      <div className="space-y-1.5">
+        <Label htmlFor="update-proxy-url">{t('versionUpdate.proxyLabel')}</Label>
+        <Input
+          id="update-proxy-url"
+          type="text"
+          className="max-w-md"
+          placeholder={t('versionUpdate.proxyPlaceholder')}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">{t('versionUpdate.proxyHint')}</p>
+      </div>
+      <Button size="sm" disabled={!dirty || mut.isPending} onClick={() => mut.mutate(draft)}>
+        {mut.isPending ? t('settings.saving') : t('settings.saveBtn')}
+      </Button>
     </div>
   )
 }
@@ -497,45 +536,45 @@ function UpdatePrefsSection({ settings }: { settings: SettingView[] | undefined 
 
   return (
     <div className="space-y-4">
-        {autoItem && (
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={autoEnabled}
-              disabled={saveMut.isPending}
-              onCheckedChange={(v) =>
-                saveMut.mutate({ key: KEY_AUTO_CHECK, value: v === true ? 'true' : 'false' })
-              }
+      {autoItem && (
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox
+            checked={autoEnabled}
+            disabled={saveMut.isPending}
+            onCheckedChange={(v) =>
+              saveMut.mutate({ key: KEY_AUTO_CHECK, value: v === true ? 'true' : 'false' })
+            }
+          />
+          <span>{t('versionUpdate.autoCheckLabel')}</span>
+          <span className="text-muted-foreground">
+            {autoEnabled ? t('settings.boolOn') : t('settings.boolOff')}
+          </span>
+        </label>
+      )}
+      {intervalItem && (
+        <div className="space-y-1.5">
+          <Label htmlFor="update-interval-hours">{t('versionUpdate.intervalLabel')}</Label>
+          <div className="flex items-center gap-3">
+            <Input
+              id="update-interval-hours"
+              type="number"
+              min={MIN_INTERVAL_HOURS}
+              max={MAX_INTERVAL_HOURS}
+              className="w-32"
+              value={intervalDraft}
+              onChange={(e) => setIntervalDraft(e.target.value)}
             />
-            <span>{t('versionUpdate.autoCheckLabel')}</span>
-            <span className="text-muted-foreground">
-              {autoEnabled ? t('settings.boolOn') : t('settings.boolOff')}
-            </span>
-          </label>
-        )}
-        {intervalItem && (
-          <div className="space-y-1.5">
-            <Label htmlFor="update-interval-hours">{t('versionUpdate.intervalLabel')}</Label>
-            <div className="flex items-center gap-3">
-              <Input
-                id="update-interval-hours"
-                type="number"
-                min={MIN_INTERVAL_HOURS}
-                max={MAX_INTERVAL_HOURS}
-                className="w-32"
-                value={intervalDraft}
-                onChange={(e) => setIntervalDraft(e.target.value)}
-              />
-              <Button
-                size="sm"
-                disabled={!intervalDirty || saveMut.isPending}
-                onClick={() => saveMut.mutate({ key: KEY_INTERVAL, value: intervalDraft })}
-              >
-                {saveMut.isPending ? t('settings.saving') : t('settings.saveBtn')}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">{t('versionUpdate.intervalHint')}</p>
+            <Button
+              size="sm"
+              disabled={!intervalDirty || saveMut.isPending}
+              onClick={() => saveMut.mutate({ key: KEY_INTERVAL, value: intervalDraft })}
+            >
+              {saveMut.isPending ? t('settings.saving') : t('settings.saveBtn')}
+            </Button>
           </div>
-        )}
+          <p className="text-xs text-muted-foreground">{t('versionUpdate.intervalHint')}</p>
+        </div>
+      )}
     </div>
   )
 }

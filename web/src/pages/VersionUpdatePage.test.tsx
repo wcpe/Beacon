@@ -1,10 +1,10 @@
 // 版本与更新独立页单测（FR-100，ADR-0048）：
 // 锁定行为——
-// ① 版本信息渲染当前版本 + 渠道选择（stable/prerelease 下拉）；切渠道写 update.channel 并触发强制重查；
-// ② 有更新时展示可用版本 / release 日志（纯文本安全渲染）+「立即更新」；点击二次确认后调 triggerUpdate；
+// ① 单卡片渲染当前版本 + 渠道分段控件（正式版/测试版）；切渠道写 update.channel 并触发强制重查；
+// ② 有更新时展示可用版本 / release 日志（markdown 安全渲染）+「立即更新并重启」；点击二次确认后调 triggerUpdate；
 // ③「立即检查」调 checkUpdate(force=true)；
-// ④ 网络代理表单编辑 update.proxy-url 并保存（未改禁用保存）；
-// ⑤ 更新设置：auto-check 开关即时保存、周期改值保存。
+// ④ 高级设置折叠区：网络代理表单编辑 update.proxy-url 并保存（未改禁用保存）；
+// ⑤ 高级设置折叠区：更新设置 auto-check 开关即时保存、周期改值保存。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -83,7 +83,7 @@ const UPDATE_HAS: UpdateCheckView = {
   ...UPDATE_NONE,
   hasUpdate: true,
   latestVersion: 'v0.11.0',
-  releaseNotes: '修复若干问题',
+  releaseNotes: '## 修复\n- 修复若干问题\n- 优化 **稳定性**',
   releaseUrl: 'https://github.com/wcpe/Beacon/releases/tag/v0.11.0',
   publishedAt: '2026-06-25T08:00:00Z',
 }
@@ -123,20 +123,20 @@ beforeEach(() => {
 })
 
 describe('VersionUpdatePage 版本信息 + 渠道（FR-100）', () => {
-  it('渲染页标题 / 当前版本 / 渠道下拉', async () => {
+  it('渲染页标题 / 应用更新卡片 / 当前版本 / 渠道分段控件', async () => {
     renderPage(<VersionUpdatePage />)
     expect(await screen.findByRole('heading', { name: '版本与更新' })).toBeInTheDocument()
+    // 单卡片标题
+    expect(await screen.findByText('应用更新')).toBeInTheDocument()
     expect(await screen.findByText('v0.10.0')).toBeInTheDocument()
-    // 渠道下拉可见
-    expect(await screen.findByLabelText('更新渠道')).toBeInTheDocument()
+    // 渠道分段控件：正式版 / 测试版 两个 tab 段
+    expect(await screen.findByRole('tab', { name: '正式版' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '测试版' })).toBeInTheDocument()
   })
 
-  it('切换渠道写 update.channel 并触发强制重查', async () => {
+  it('切换渠道（点测试版段）写 update.channel 并触发强制重查', async () => {
     renderPage(<VersionUpdatePage />)
-    const channelSelect = await screen.findByLabelText('更新渠道')
-    await userEvent.click(channelSelect)
-    const listbox = await screen.findByRole('listbox')
-    await userEvent.click(within(listbox).getByRole('option', { name: 'prerelease' }))
+    await userEvent.click(await screen.findByRole('tab', { name: '测试版' }))
     await waitFor(() => expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.channel', 'prerelease'))
     // 切渠道后强制重查（force=true）
     await waitFor(() => expect(vi.mocked(checkUpdate)).toHaveBeenCalledWith(true))
@@ -148,25 +148,35 @@ describe('VersionUpdatePage 版本信息 + 渠道（FR-100）', () => {
     await userEvent.click(btn)
     await waitFor(() => expect(vi.mocked(checkUpdate)).toHaveBeenCalledWith(true))
   })
+})
 
-  // FR-118 ①：「立即检查」在页面正文（紧挨版本/更新区），不在第二层页眉操作槽
-  it('「立即检查」按钮位于页面正文版本分区内（FR-118 ①）', async () => {
+// 状态徽标：有更新 / 已最新；预发布渠道额外挂「预发布」徽标
+describe('VersionUpdatePage 状态徽标', () => {
+  it('已最新时显示「已是最新」徽标', async () => {
     renderPage(<VersionUpdatePage />)
-    const btn = await screen.findByRole('button', { name: '立即检查' })
-    // 页眉 header 带为 <h1>「版本与更新」所在容器；按钮应落在版本信息 <section> 而非页眉
-    const section = btn.closest('section')
-    expect(section).not.toBeNull()
-    expect(within(section as HTMLElement).getByText('当前版本')).toBeInTheDocument()
+    expect(await screen.findByText('已是最新')).toBeInTheDocument()
+  })
+
+  it('有更新时显示「有可用更新」徽标', async () => {
+    vi.mocked(checkUpdate).mockResolvedValue(UPDATE_HAS)
+    renderPage(<VersionUpdatePage />)
+    expect(await screen.findByText('有可用更新')).toBeInTheDocument()
+  })
+
+  it('预发布渠道显示「预发布」徽标', async () => {
+    vi.mocked(listSettings).mockResolvedValue([
+      { key: 'update.channel', value: 'prerelease', valueType: 'string', default: 'stable', desc: '更新渠道', isStartup: false },
+      ...SETTINGS.slice(1),
+    ])
+    renderPage(<VersionUpdatePage />)
+    expect(await screen.findByText('预发布')).toBeInTheDocument()
   })
 })
 
 // FR-118 ③：切渠道后回显重检结果（发现更新 / 已最新 / 检查失败）
 describe('VersionUpdatePage 切渠道重检结果（FR-118 ③）', () => {
   async function switchChannel() {
-    const channelSelect = await screen.findByLabelText('更新渠道')
-    await userEvent.click(channelSelect)
-    const listbox = await screen.findByRole('listbox')
-    await userEvent.click(within(listbox).getByRole('option', { name: 'prerelease' }))
+    await userEvent.click(await screen.findByRole('tab', { name: '测试版' }))
   }
 
   it('重检发现更新 → 提示新版本', async () => {
@@ -203,16 +213,20 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
     vi.mocked(checkUpdate).mockResolvedValue(UPDATE_HAS)
   })
 
-  it('展示可用版本 + release 日志（纯文本）+「立即更新」', async () => {
+  it('展示可用版本 + release 日志（markdown 渲染）+「立即更新并重启」', async () => {
     renderPage(<VersionUpdatePage />)
     expect(await screen.findByText('v0.11.0')).toBeInTheDocument()
+    // markdown：## 标题渲染为标题、- 列表项渲染、**加粗**渲染为 <strong>
+    expect(screen.getByRole('heading', { name: '修复' })).toBeInTheDocument()
     expect(screen.getByText('修复若干问题')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '立即更新' })).toBeInTheDocument()
+    const strong = screen.getByText('稳定性')
+    expect(strong.tagName).toBe('STRONG')
+    expect(screen.getByRole('button', { name: '立即更新并重启' })).toBeInTheDocument()
   })
 
-  it('点「立即更新」二次确认后调 triggerUpdate', async () => {
+  it('点「立即更新并重启」二次确认后调 triggerUpdate', async () => {
     renderPage(<VersionUpdatePage />)
-    await userEvent.click(await screen.findByRole('button', { name: '立即更新' }))
+    await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
     // 二次确认对话框确认
     const confirm = await screen.findByRole('button', { name: '确认更新' })
     await userEvent.click(confirm)
@@ -226,9 +240,10 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
       percent: 0,
       targetVersion: 'v0.11.0',
       error: '下载校验失败',
+      rollbackAvailable: false,
     })
     renderPage(<VersionUpdatePage />)
-    await userEvent.click(await screen.findByRole('button', { name: '立即更新' }))
+    await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
     await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
     // 进度区先反映失败阶段（确认进度查询已启用并取到 failed）
     expect(await screen.findByText(/更新失败/)).toBeInTheDocument()
@@ -238,13 +253,26 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
   })
 })
 
-describe('VersionUpdatePage 网络代理（FR-98）', () => {
-  it('编辑 proxy-url 并保存以 updateSetting 调用；未改时保存禁用', async () => {
+// 高级设置折叠区默认折叠，编辑前须先展开。
+async function expandAdvanced() {
+  const toggle = await screen.findByRole('button', { name: '高级设置' })
+  await userEvent.click(toggle)
+}
+
+describe('VersionUpdatePage 高级设置-网络代理（FR-98）', () => {
+  it('默认折叠：未展开时网络代理表单不可见', async () => {
     renderPage(<VersionUpdatePage />)
+    expect(await screen.findByRole('button', { name: '高级设置' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('出站代理地址')).toBeNull()
+  })
+
+  it('展开后编辑 proxy-url 并保存以 updateSetting 调用；未改时保存禁用', async () => {
+    renderPage(<VersionUpdatePage />)
+    await expandAdvanced()
     const input = await screen.findByLabelText('出站代理地址')
-    // 网络代理分区的保存按钮（FR-108 卡片降级为 AnchorSectionBlock <section>，在该分区内定位）
-    const proxyCard = input.closest('section') as HTMLElement
-    const saveBtn = within(proxyCard).getByRole('button', { name: '保存' })
+    // 网络代理子块的保存按钮（在该块容器内定位，避开更新设置块的同名按钮）
+    const proxyBlock = input.closest('div.space-y-3') as HTMLElement
+    const saveBtn = within(proxyBlock).getByRole('button', { name: '保存' })
     expect(saveBtn).toBeDisabled()
     await userEvent.type(input, 'http://127.0.0.1:7890')
     expect(saveBtn).toBeEnabled()
@@ -255,9 +283,10 @@ describe('VersionUpdatePage 网络代理（FR-98）', () => {
   })
 })
 
-describe('VersionUpdatePage 更新设置（FR-101）', () => {
-  it('切自动检查开关即时保存 update.auto-check-enabled', async () => {
+describe('VersionUpdatePage 高级设置-更新设置（FR-101）', () => {
+  it('展开后切自动检查开关即时保存 update.auto-check-enabled', async () => {
     renderPage(<VersionUpdatePage />)
+    await expandAdvanced()
     const checkbox = await screen.findByRole('checkbox', { name: /自动检查更新/ })
     await userEvent.click(checkbox)
     await waitFor(() =>
@@ -265,13 +294,15 @@ describe('VersionUpdatePage 更新设置（FR-101）', () => {
     )
   })
 
-  it('改检查周期并保存 update.check-interval-hours', async () => {
+  it('展开后改检查周期并保存 update.check-interval-hours', async () => {
     renderPage(<VersionUpdatePage />)
+    await expandAdvanced()
     const input = await screen.findByLabelText('自动检查周期（小时）')
     await userEvent.clear(input)
     await userEvent.type(input, '12')
-    const prefsCard = input.closest('section') as HTMLElement
-    await userEvent.click(within(prefsCard).getByRole('button', { name: '保存' }))
+    // 周期输入与其保存按钮在同一 flex 行容器内，定位避开网络代理块的同名按钮
+    const intervalRow = input.closest('div.flex') as HTMLElement
+    await userEvent.click(within(intervalRow).getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.check-interval-hours', '12'),
     )

@@ -260,14 +260,23 @@ export const zhCN = {
     // 页标题 + 副标题
     title: '版本与更新',
     subtitle: '查看当前版本、切换更新渠道、检查并在线更新控制面，以及配置出站代理与自动检查策略。',
-    // 锚点 rail 无障碍名称（FR-108）：版本与更新分区锚点导航
-    railAria: '版本与更新分区导航',
-    // 分区标题
-    sectionVersion: '版本信息',
+    // 分区标题（高级设置折叠区内）
     sectionProxy: '网络代理',
     sectionPrefs: '更新设置',
-    // 渠道选择说明：stable 正式版 / prerelease 滚动预发布版，切换后自动重新检查
-    channelHint: 'stable 正式版 / prerelease 滚动预发布版；切换后将按新渠道重新检查更新。',
+    // 「应用更新」单卡片标题
+    cardTitle: '应用更新',
+    // 渠道分段控件中文标签（stable / prerelease 映射）+ 无障碍组名
+    channelStable: '正式版',
+    channelPrerelease: '测试版',
+    channelGroupAria: '更新渠道',
+    // 状态徽标：有可用更新 / 已是最新 / 预发布（仅测试版渠道显示）
+    badgeHasUpdate: '有可用更新',
+    badgeUpToDate: '已是最新',
+    badgePrerelease: '预发布',
+    // 「立即更新并重启」主操作按钮（卡片底部）
+    applyAndRestart: '立即更新并重启',
+    // 高级设置折叠区（默认折叠，放网络代理 + 更新设置）
+    advancedSettings: '高级设置',
     // 切渠道成功提示
     channelSwitched: '已切换更新渠道，正在按新渠道重新检查…',
     // 切渠道后重检结果回显（FR-118 ③）：发现更新 / 已最新 / 检查失败
