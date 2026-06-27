@@ -70,17 +70,30 @@ type ImportResult struct {
 	Created int
 	// 发布新版本的文件对象数（已存在同 path）
 	Updated int
+	// 新建对象的 id 列表（撤回子系统 FR-116 据此软删被该次 ingest 新建的受管项）
+	CreatedIDs []uint
+	// 被覆盖更新对象的 id + 覆盖前版本（撤回子系统 FR-116 据此把被覆盖项回滚到 ingest 前版本）
+	UpdatedItems []ImportUpdatedItem
+}
+
+// ImportUpdatedItem 是一次导入中被覆盖更新的单个文件对象的撤回快照（FR-116）。
+type ImportUpdatedItem struct {
+	// 文件对象 id
+	ID uint
+	// 覆盖前的版本号（撤回时回滚到此版本）
+	PreVersion int64
 }
 
 // FileService 编排文件树托管（通道B）：CRUD/发布/回滚/历史，事务内 object+revision+audit 原子完成。
 // 文件按 path 整文件覆盖，不做格式解析/键级合并（与 ConfigService 的本质区别，见 ADR-0010）。
 type FileService struct {
-	db        *gorm.DB
-	fileRepo  *repository.FileObjectRepository
-	revRepo   *repository.FileRevisionRepository
-	auditRepo *repository.AuditLogRepository
-	notifier  *ChangeNotifier // 可选，事务提交后唤醒受影响的文件长轮询
-	exporter  GitExporter     // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
+	db         *gorm.DB
+	fileRepo   *repository.FileObjectRepository
+	revRepo    *repository.FileRevisionRepository
+	auditRepo  *repository.AuditLogRepository
+	notifier   *ChangeNotifier    // 可选，事务提交后唤醒受影响的文件长轮询
+	exporter   GitExporter        // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
+	reversible ReversibleRecorder // 可选，下发时同事务记可逆账目（FR-116，未注入即不可撤回）
 }
 
 // NewFileService 构造服务。
@@ -103,6 +116,11 @@ func (s *FileService) notify(obj *model.FileObject) {
 // SetGitExporter 注入 git 导出触发器（启动时装配；未注入则不导出，FR-47）。
 func (s *FileService) SetGitExporter(e GitExporter) {
 	s.exporter = e
+}
+
+// SetReversibleRecorder 注入可逆账目记账器（启动时装配；未注入则下发不可撤回，FR-116）。
+func (s *FileService) SetReversibleRecorder(r ReversibleRecorder) {
+	s.reversible = r
 }
 
 // exportGit 在事务提交成功后触发 git 单向导出（best-effort 非阻塞；与 notify 并列、互不阻塞，FR-47）。
@@ -255,9 +273,12 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 					return err
 				}
 				result.Created++
+				result.CreatedIDs = append(result.CreatedIDs, obj.ID)
 				continue
 			}
 			// 已存在：发布新版本（version+1），整文件覆盖
+			// 先记覆盖前版本号供撤回（FR-116），再前移版本
+			preVersion := existing.Version
 			newVersion := existing.Version + 1
 			rev, err := s.appendRevision(tx, existing.ID, newVersion, f.Content, md5, nil, p.Operator, p.Comment)
 			if err != nil {
@@ -268,6 +289,7 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 				return err
 			}
 			result.Updated++
+			result.UpdatedItems = append(result.UpdatedItems, ImportUpdatedItem{ID: existing.ID, PreVersion: preVersion})
 		}
 		return s.writeImportAudit(tx, p.Namespace, group, p.Operator,
 			fmt.Sprintf(`{"scope":%q,"target":%q,"files":%d,"created":%d,"updated":%d}`,
@@ -306,6 +328,7 @@ func (s *FileService) Publish(id uint, content, operator, comment, clientIP stri
 		return nil, err
 	}
 	md5 := filetree.ContentMD5(content)
+	preVersion := obj.Version
 	newVersion := obj.Version + 1
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		rev, err := s.appendRevision(tx, obj.ID, newVersion, content, md5, nil, operator, comment)
@@ -316,8 +339,12 @@ func (s *FileService) Publish(id uint, content, operator, comment, clientIP stri
 		if err := s.fileRepo.WithTx(tx).Save(obj); err != nil {
 			return err
 		}
-		return s.writeAudit(tx, obj, operator, model.ActionFilePublish,
-			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP)
+		if err := s.writeAudit(tx, obj, operator, model.ActionFilePublish,
+			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP); err != nil {
+			return err
+		}
+		// 同事务记可逆账目（FR-116）：撤回 = 回滚到下发前版本 preVersion。首次发布（preVersion=0）无可回滚版本、不记账。
+		return s.recordReversible(tx, obj, preVersion, operator)
 	})
 	if err != nil {
 		return nil, err
@@ -365,6 +392,52 @@ func (s *FileService) Rollback(id uint, toVersion int64, operator, comment, clie
 	s.notify(obj)
 	s.exportGit(obj, model.ActionFileRollback, operator)
 	return obj, nil
+}
+
+// RollbackInTx 在给定事务内把文件对象回滚到目标版本（= 读该版本内容作为新版本发布，version+1），
+// 不写审计、不唤醒长轮询、不触发 git 导出——供撤回子系统（FR-116）在其自身事务内复用回滚核。返回回滚后的 obj。
+func (s *FileService) RollbackInTx(tx *gorm.DB, obj *model.FileObject, toVersion int64, operator, comment string) (*model.FileObject, error) {
+	target, err := s.revRepo.WithTx(tx).FindByObjectAndVersion(obj.ID, toVersion)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, apperr.ErrRevisionNotFound
+	}
+	newVersion := obj.Version + 1
+	src := target.ID
+	rev, err := s.appendRevision(tx, obj.ID, newVersion, target.Content, target.ContentMD5, &src, operator, comment)
+	if err != nil {
+		return nil, err
+	}
+	obj.Content, obj.ContentMD5, obj.Version, obj.CurrentRevision = target.Content, target.ContentMD5, newVersion, rev.ID
+	if err := s.fileRepo.WithTx(tx).Save(obj); err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+// SoftDeleteInTx 在给定事务内软删文件对象（该层从覆盖链脱落），不写审计 / 不唤醒——供撤回子系统（FR-116）
+// 撤销一次 ingest 时把被该次 ingest 新建的受管项软删。哨兵软删允许同标识后续重建（承 ADR-0008）。
+func (s *FileService) SoftDeleteInTx(tx *gorm.DB, id uint, now time.Time) error {
+	return s.fileRepo.WithTx(tx).SoftDelete(id, now)
+}
+
+// GetInTx 在给定事务内按 id 取未软删文件对象；不存在返回 FILE_NOT_FOUND（撤回子系统事务内取目标用，FR-116）。
+func (s *FileService) GetInTx(tx *gorm.DB, id uint) (*model.FileObject, error) {
+	obj, err := s.fileRepo.WithTx(tx).FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, apperr.ErrFileNotFound
+	}
+	return obj, nil
+}
+
+// Notify 在事务提交成功后唤醒该文件对象 scope 下受影响的文件长轮询（导出供撤回子系统提交后唤醒，FR-116）。
+func (s *FileService) Notify(obj *model.FileObject) {
+	s.notify(obj)
 }
 
 // Delete 软删文件对象（该层从覆盖链脱落，下游 agent 据 manifest 比对会删该 path 的镜像）。
@@ -483,6 +556,22 @@ func (s *FileService) appendRevision(tx *gorm.DB, objectID uint, version int64, 
 		return nil, err
 	}
 	return rev, nil
+}
+
+// recordReversible 在事务内记一条文件下发的可逆账目（FR-116，opType=push）：未注入记账器或无可回滚版本
+// （preVersion=0 即首次发布）则跳过。撤回 = 回滚到 preVersion；摘要无敏感内容。
+func (s *FileService) recordReversible(tx *gorm.DB, obj *model.FileObject, preVersion int64, operator string) error {
+	if s.reversible == nil || preVersion <= 0 {
+		return nil
+	}
+	return s.reversible.RecordPublishInTx(tx, RecordPublishParams{
+		Namespace: obj.NamespaceCode, OpType: model.ReversibleOpPush,
+		Scope: obj.ScopeLevel, ScopeTarget: obj.ScopeTarget,
+		ItemID: obj.ID, PreVersion: preVersion,
+		ForwardRef: fileTargetRef(obj),
+		Summary:    fmt.Sprintf("下发 %s @ %s", obj.Path, obj.ScopeLevel),
+		Operator:   operator,
+	})
 }
 
 // writeAudit 在事务内写一条文件审计。

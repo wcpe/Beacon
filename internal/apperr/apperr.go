@@ -149,4 +149,13 @@ var (
 	ErrSettingKeyNotAllowed = New(http.StatusBadRequest, "SETTING_KEY_NOT_ALLOWED", "设置项不存在或不可热改")
 	// ErrSettingValueInvalid 设置值非法（类型 / 范围 / 枚举校验不通过，FR-61）。
 	ErrSettingValueInvalid = New(http.StatusBadRequest, "SETTING_VALUE_INVALID", "设置值不合法")
+
+	// ErrReversibleOpNotFound 可逆操作账目不存在（撤回目标缺失，FR-116，见 ADR-0051）。
+	ErrReversibleOpNotFound = New(http.StatusNotFound, "REVERSIBLE_OP_NOT_FOUND", "可逆操作不存在")
+	// ErrReversibleOpExpired 可逆操作已超过可撤回时间窗，不可撤回（FR-116，ADR-0051 决策 8）。
+	ErrReversibleOpExpired = New(http.StatusConflict, "REVERSIBLE_OP_EXPIRED", "该操作已超过可撤回时限，不可撤回")
+	// ErrReversibleOpSuperseded 可逆操作已被后续操作覆盖，不可撤回（防脏撤回，FR-116，ADR-0051 决策 8）。
+	ErrReversibleOpSuperseded = New(http.StatusConflict, "REVERSIBLE_OP_SUPERSEDED", "该操作已被后续操作覆盖，不可撤回")
+	// ErrReversibleOpState 可逆操作状态不符 / 反向快照损坏，不可撤回（FR-116）。
+	ErrReversibleOpState = New(http.StatusConflict, "REVERSIBLE_OP_STATE", "可逆操作状态不允许撤回")
 )

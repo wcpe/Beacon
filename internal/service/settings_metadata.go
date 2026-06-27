@@ -27,6 +27,7 @@ const (
 	SettingUpdateChannel            = "update.channel"
 	SettingUpdateAutoCheckEnabled   = "update.auto-check-enabled"
 	SettingUpdateCheckIntervalHours = "update.check-interval-hours"
+	SettingUndoWindowHours          = "undo.window-hours"
 )
 
 // updateChannels 是 update.channel 的合法枚举集（stable=正式版线、rc=预发布版线，FR-101）。
@@ -153,6 +154,11 @@ var settingsWhitelist = map[string]settingMeta{
 		valueType: model.SettingValueTypeInt, desc: "自动检查更新周期（小时）：每隔多少小时查一次有无新版本",
 		min: 1, max: 168,
 		defaultFromConfig: func(c config.Config) string { return strconv.Itoa(c.Update.CheckIntervalHours) },
+	},
+	SettingUndoWindowHours: {
+		valueType: model.SettingValueTypeInt, desc: "配置操作可撤回时间窗（小时）：下发 / 发布 / 反向抓取超此时长不可撤回（FR-116）",
+		min: 1, max: 8760, // 1 小时 ~ 1 年
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(DefaultUndoWindowHours) },
 	},
 }
 

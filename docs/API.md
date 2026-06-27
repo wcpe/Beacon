@@ -387,6 +387,19 @@ data: {}
 
 - 作用域叠加：`scope=server` 任务的扫描清单同时受**该大区 group 层规则**与**本实例 server 层规则**约束；`scope=group` 任务仅受 group 层规则约束。
 
+### 配置操作级撤回（FR-116，见 [ADR-0051](adr/0051-config-operation-undo.md) 与 [docs/specs/config-operation-undo.md](specs/config-operation-undo.md)）
+
+把工作台「撤回 / 回滚 / 操作日志」落成真实后端能力：清单内三类大操作（下发 `push` / 发布 `publish` / 反向抓取 ingest `fetch`）落地时连同反向快照记一条**可逆操作账目**，撤回 = 读账目按反向指令在一个 DB 事务内把控制面配置 / 纳管真源改回操作前，并经既有长轮询按需重推。撤回是受审计的写操作，幂等 + 并发安全 + 过期 / 被覆盖双闸。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /admin/v1/reversible-operations?namespace=&opType=&status=&limit=` | 列可逆操作账目（最新在前，供工作台操作日志）：`{ items: [可逆操作视图] }`。四个过滤参数均可选（`opType ∈ {push,publish,fetch}`、`status ∈ {reversible,reversed,expired,superseded}`、`limit` 缺省服务端默认）。**只读 GET，full / readonly 皆可见**。视图字段（小驼峰）：`id`/`namespace`/`opType`/`scope`/`scopeTarget`/`status`/`summary`（无敏感人类可读摘要）/`operator`/`reversedBy`/`createdAt`/`reversible`（是否仍可撤回=`status==reversible`，前端据此置灰按钮）。**绝不返回 `inversePayload` 反向快照瞬态** |
+| `POST /admin/v1/reversible-operations/{id}/undo` | 撤回一条可逆操作（**写操作，full 角色，readonly→403**；**幂等**）。无请求体。`{id}` 非法 / 为 0→`400 INVALID_PARAM`；账目不存在→`404 REVERSIBLE_OP_NOT_FOUND`；已过期→`409 REVERSIBLE_OP_EXPIRED`；已被后续操作覆盖→`409 REVERSIBLE_OP_SUPERSEDED`；状态不允许撤回 / 反向快照损坏→`409 REVERSIBLE_OP_STATE`。**已撤回（`reversed`）重复撤回返回 `200` 幂等成功**（不再二次回滚）。撤回成功则单事务内回滚真源（undo publish/push=回滚到操作前版本指针；undo fetch=软删该次 ingest 新建的受管项 + 回滚被覆盖更新项到 ingest 前版本，不删磁盘文件）+ 写 `config.undo-push`/`-publish`/`-fetch` 审计（detail 仅记可逆操作 id / 类型 / scope，不含文件内容），**提交成功后**唤醒受影响长轮询按需重推。返回 `200` + 可逆操作视图（同上字段，`status=reversed`） |
+
+- **可撤回窗口**：`reversible` 账目创建超过 `undo.window-hours`（运维设置项，默认 24 小时，经设置 store 热改）后由后台清理器置 `expired`、清空反向快照瞬态，不可撤回。
+- **被覆盖**：同一被操作对象（`forward_ref`）上发生后续操作时，旧 `reversible` 账目置 `superseded`、不可撤回（撤回已被覆盖的旧操作会抹掉后续操作，属脏撤回，禁止）。
+- 审计 action：`config.undo-push` / `config.undo-publish` / `config.undo-fetch`，`targetType=reversible-op`、`targetRef`=可逆操作 id。
+
 ### 按需拓印回写（FR-46）
 
 把 FR-39 反向抓取升级为「diff + 单人自审 + 同步」审核台：拓印某在线服某文件的**磁盘当前内容**（事实），与**期望合并值**（FR-45 解析）做 diff，admin 选并入层 + 过单人自审门后落为该层文件覆盖。复用 FR-39 命令通道与 agent 既有能力（**agent 零改动**，仍读整棵 `plugins/` 树回传，落库 vs 转存待审由载荷 `mode` 区分），沿用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)/[ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)/[ADR-0029](adr/0029-file-tree-structured-deep-merge.md)，未引入新 ADR。

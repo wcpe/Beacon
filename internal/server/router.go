@@ -37,6 +37,7 @@ type Handlers struct {
 	ReverseFetchTask *handler.ReverseFetchTaskHandler
 	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
 	Settings         *handler.SettingsHandler
+	ReversibleOp     *handler.ReversibleOperationHandler
 	Metrics          http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
 	Web              http.Handler
 }
@@ -257,6 +258,14 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 与其它写端点一致无条件注册（handler 仅请求期解引用），PUT 已登记 FR-72 覆盖集。
 		r.Get("/settings", h.Settings.List)
 		r.Put("/settings/{key}", h.Settings.Update)
+
+		// 配置操作级撤回子系统（FR-116，见 ADR-0051）：列可逆操作账目（读，供工作台操作日志）+
+		// 撤回单条（写，幂等）。撤回有写副作用（回滚版本指针 / 软删受管项 + 唤醒重推 + 入审计），
+		// 故显式挂 requireFullRole 挡 readonly（403）；撤回已在 service 内记 config.undo-* 专项审计（兜底审计中间件只覆盖写方法，无双记）。
+		if h.ReversibleOp != nil {
+			r.Get("/reversible-operations", h.ReversibleOp.List)
+			r.With(requireFullRole).Post("/reversible-operations/{id}/undo", h.ReversibleOp.Undo)
+		}
 	})
 
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）

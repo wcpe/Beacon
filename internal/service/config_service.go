@@ -39,15 +39,22 @@ type PublishRecorder interface {
 	IncConfigPublish()
 }
 
+// ReversibleRecorder 是"在大操作事务内记一条可逆账目"的窄接口（由 ReversibleOperationService 实现，
+// 可选注入；未注入即不记账、该操作不可撤回，FR-116）。同事务记账保证操作与可逆账目原子（ADR-0051 决策 4）。
+type ReversibleRecorder interface {
+	RecordPublishInTx(tx *gorm.DB, p RecordPublishParams) error
+}
+
 // ConfigService 编排配置中心：CRUD/发布/回滚/历史/diff，事务内 item+revision+audit 原子完成。
 type ConfigService struct {
 	db         *gorm.DB
 	configRepo *repository.ConfigItemRepository
 	revRepo    *repository.ConfigRevisionRepository
 	auditRepo  *repository.AuditLogRepository
-	notifier   *ChangeNotifier // 可选，事务提交后唤醒受影响长轮询
-	metrics    PublishRecorder // 可选，发布计数（见 ADR-0020）
-	exporter   GitExporter     // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
+	notifier   *ChangeNotifier    // 可选，事务提交后唤醒受影响长轮询
+	metrics    PublishRecorder    // 可选，发布计数（见 ADR-0020）
+	exporter   GitExporter        // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
+	reversible ReversibleRecorder // 可选，发布时同事务记可逆账目（FR-116，未注入即不可撤回）
 }
 
 // NewConfigService 构造服务。
@@ -75,6 +82,11 @@ func (s *ConfigService) recordPublish() {
 // SetGitExporter 注入 git 导出触发器（启动时装配；未注入则不导出，FR-47）。
 func (s *ConfigService) SetGitExporter(e GitExporter) {
 	s.exporter = e
+}
+
+// SetReversibleRecorder 注入可逆账目记账器（启动时装配；未注入则发布不可撤回，FR-116）。
+func (s *ConfigService) SetReversibleRecorder(r ReversibleRecorder) {
+	s.reversible = r
 }
 
 // exportGit 在事务提交成功后触发 git 单向导出（best-effort 非阻塞；与 notify 并列、互不阻塞）。
@@ -196,6 +208,7 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 		return nil, err
 	}
 	md5 := merge.MD5Hex(content)
+	preVersion := item.Version
 	newVersion := item.Version + 1
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, content, md5, item.Sensitive, nil, operator, comment)
@@ -206,8 +219,12 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 		if err := s.configRepo.WithTx(tx).Save(item); err != nil {
 			return err
 		}
-		return s.writeAudit(tx, item, operator, model.ActionConfigPublish,
-			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP)
+		if err := s.writeAudit(tx, item, operator, model.ActionConfigPublish,
+			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP); err != nil {
+			return err
+		}
+		// 同事务记可逆账目（FR-116）：撤回 = 回滚到发布前版本 preVersion。首次发布（preVersion=0）无可回滚版本、不记账。
+		return s.recordReversible(tx, item, model.ReversibleOpPublish, preVersion, operator)
 	})
 	if err != nil {
 		// 并发对同一 item 发布同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
@@ -263,6 +280,51 @@ func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, cl
 	s.notify(item)
 	s.exportGit(item, model.ActionConfigRollback, operator)
 	return item, nil
+}
+
+// GetInTx 在给定事务内按 id 取配置项；不存在返回 CONFIG_NOT_FOUND（撤回子系统事务内取目标用，FR-116）。
+func (s *ConfigService) GetInTx(tx *gorm.DB, id uint) (*model.ConfigItem, error) {
+	item, err := s.configRepo.WithTx(tx).FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, apperr.ErrConfigNotFound
+	}
+	return item, nil
+}
+
+// RollbackInTx 在给定事务内把配置项回滚到目标版本（= 读该版本内容作为新版本发布，version+1），
+// 不写审计、不唤醒长轮询、不触发 git 导出——供撤回子系统（FR-116）在其自身事务内复用回滚核，
+// 由撤回服务统一写 config.undo-* 审计 + 提交后唤醒（避免嵌套事务、避免重复审计）。返回回滚后的 item。
+// 与 Rollback 共用同样的内容校验与 appendRevisionContent 原语，行为一致。
+func (s *ConfigService) RollbackInTx(tx *gorm.DB, item *model.ConfigItem, toVersion int64, operator, comment string) (*model.ConfigItem, error) {
+	target, err := s.revRepo.WithTx(tx).FindByItemAndVersion(item.ID, toVersion)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, apperr.ErrRevisionNotFound
+	}
+	if err := validateContent(item.Format, target.Content); err != nil {
+		return nil, err
+	}
+	newVersion := item.Version + 1
+	src := target.ID
+	rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, target.Content, target.ContentMD5, item.Sensitive, &src, operator, comment)
+	if err != nil {
+		return nil, err
+	}
+	item.Content, item.ContentMD5, item.Version, item.CurrentRevision = target.Content, target.ContentMD5, newVersion, rev.ID
+	if err := s.configRepo.WithTx(tx).Save(item); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// Notify 在事务提交成功后唤醒该配置项 scope 下受影响的长轮询（导出供撤回子系统提交后唤醒，FR-116）。
+func (s *ConfigService) Notify(item *model.ConfigItem) {
+	s.notify(item)
 }
 
 // Delete 软删配置项（该层从合并链脱落）。
@@ -413,6 +475,22 @@ func (s *ConfigService) appendRevisionContent(tx *gorm.DB, itemID uint, format s
 		return nil, err
 	}
 	return rev, nil
+}
+
+// recordReversible 在事务内记一条配置发布的可逆账目（FR-116）：未注入记账器或无可回滚版本（preVersion=0
+// 即首次发布）则跳过。撤回 = 回滚到 preVersion；摘要无敏感内容。
+func (s *ConfigService) recordReversible(tx *gorm.DB, item *model.ConfigItem, opType string, preVersion int64, operator string) error {
+	if s.reversible == nil || preVersion <= 0 {
+		return nil
+	}
+	return s.reversible.RecordPublishInTx(tx, RecordPublishParams{
+		Namespace: item.NamespaceCode, OpType: opType,
+		Scope: item.ScopeLevel, ScopeTarget: item.ScopeTarget,
+		ItemID: item.ID, PreVersion: preVersion,
+		ForwardRef: configTargetRef(item),
+		Summary:    fmt.Sprintf("发布 %s @ %s", item.DataID, item.ScopeLevel),
+		Operator:   operator,
+	})
 }
 
 // writeAudit 在事务内写一条配置审计。

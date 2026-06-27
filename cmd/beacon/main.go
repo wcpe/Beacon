@@ -325,10 +325,23 @@ func run() error {
 	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskService, instanceService, reverseFetchIgnoreRuleService)
 	reverseFetchIgnoreRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchIgnoreRuleService)
 
+	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
+	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。
+	// 提交成功后经 notifier 唤醒受影响长轮询（与正向发布同一唤醒机制）。
+	reversibleOpRepo := repository.NewReversibleOperationRepository(db)
+	reversibleOpService := service.NewReversibleOperationService(db, reversibleOpRepo, configService, fileService, auditRepo, settingsService)
+	reversibleOpService.SetNotifier(notifier)
+	configService.SetReversibleRecorder(reversibleOpService)
+	fileService.SetReversibleRecorder(reversibleOpService)
+	reverseFetchTaskService.SetReversibleRecorder(reversibleOpService)
+	reversibleOpHandler := handler.NewReversibleOperationHandler(reversibleOpService)
+
 	// 陈旧命令后台清理（FR-39/FR-46）：周期把创建超期仍未终结的命令标 expired 并清空拓印瞬态明文，避免放弃的 ready 命令明文滞留。
 	commandSweeper := service.NewCommandSweeper(commandService)
 	// 陈旧受管任务后台清理（FR-58）：周期把创建超期仍未终结的任务标 expired 并清空清单瞬态，避免大树清单 TEXT 长期滞留。
 	reverseFetchTaskSweeper := service.NewReverseFetchTaskSweeper(reverseFetchTaskService)
+	// 陈旧可逆账目后台清理（FR-116）：周期把创建超可撤回窗口仍 reversible 的账目标 expired 并清空反向快照瞬态。
+	reversibleOpSweeper := service.NewReversibleOperationSweeper(reversibleOpService)
 
 	// git 单向导出镜像（FR-47，见 ADR-0030）：发布 / 回滚 / 改派提交后异步 best-effort 把源层导出 commit。
 	// 仅 enabled 时装配并接线触发器；git 仓是单向派生镜像、失败仅 WARN 不阻断发布。
@@ -373,7 +386,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
@@ -402,6 +415,9 @@ func run() error {
 
 	// 启动陈旧受管任务清理器（FR-58）：常驻 hygiene，把超期未终结任务标 expired 并清空清单瞬态，随关停信号退出
 	go reverseFetchTaskSweeper.Run(ctx)
+
+	// 启动陈旧可逆账目清理器（FR-116）：常驻 hygiene，把超可撤回窗口仍 reversible 的账目标 expired 并清空反向快照瞬态，随关停信号退出
+	go reversibleOpSweeper.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -38,13 +38,20 @@ type scanManifest struct {
 // scan 回传存清单、submit 编排（校验选定 / 超阈值确认）、ingest 复用 FileService.Import 落库、取消、过期。
 // 任务是真源、agent_command 是其执行手段；命令通道（SSE 唤醒 + 落库 + CAS）复用既有原语。
 type ReverseFetchTaskService struct {
-	db        *gorm.DB
-	taskRepo  *repository.ReverseFetchTaskRepository
-	cmdRepo   *repository.AgentCommandRepository
-	fileSvc   *FileService
-	auditRepo *repository.AuditLogRepository
-	settings  *SettingsService // 单文件上限从设置 store 读、热生效（FR-61）
-	notifier  CommandNotifier
+	db         *gorm.DB
+	taskRepo   *repository.ReverseFetchTaskRepository
+	cmdRepo    *repository.AgentCommandRepository
+	fileSvc    *FileService
+	auditRepo  *repository.AuditLogRepository
+	settings   *SettingsService // 单文件上限从设置 store 读、热生效（FR-61）
+	notifier   CommandNotifier
+	reversible FetchReversibleRecorder // 可选，ingest 落库后记 fetch 可逆账目（FR-116，未注入即不可撤回）
+}
+
+// FetchReversibleRecorder 是"记一条 fetch 可逆账目"的窄接口（由 ReversibleOperationService 实现，可选注入；
+// 未注入即 ingest 不可撤回，FR-116）。fetch 反向快照在落库后才齐全，故 ingest 事务提交后补记（best-effort）。
+type FetchReversibleRecorder interface {
+	RecordFetch(p RecordFetchParams) error
 }
 
 // NewReverseFetchTaskService 构造服务（settings 提供热改的反向抓取单文件上限）。
@@ -56,6 +63,9 @@ func NewReverseFetchTaskService(db *gorm.DB, taskRepo *repository.ReverseFetchTa
 
 // SetNotifier 注入命令待办唤醒器（启动时装配；未注入则建命令后不主动唤醒）。
 func (s *ReverseFetchTaskService) SetNotifier(n CommandNotifier) { s.notifier = n }
+
+// SetReversibleRecorder 注入 fetch 可逆账目记账器（启动时装配；未注入则 ingest 不可撤回，FR-116）。
+func (s *ReverseFetchTaskService) SetReversibleRecorder(r FetchReversibleRecorder) { s.reversible = r }
 
 // CreateScanTask 由 admin 触发受管反向抓取：互斥查 → 事务内建任务(scanning) + 下发 scan 命令(pending) + 审计 →
 // 提交后唤醒目标 agent SSE。已有非终态任务 → ErrReverseFetchTaskActive(409)。返回任务（含 id）。
@@ -308,9 +318,28 @@ func (s *ReverseFetchTaskService) ReceiveSubmitIngest(commandID uint, files []Im
 	}); e != nil {
 		slog.Warn("反向抓取入库审计写入失败（已落库）", "taskId", task.ID, "原因", e)
 	}
+	s.recordFetchReversible(task, result, cmd.Operator)
 	slog.Info("反向抓取受管任务入库完成", "taskId", task.ID, "commandId", cmd.ID,
 		"files", len(files), "created", result.Created, "updated", result.Updated)
 	return result, nil
+}
+
+// recordFetchReversible 在 ingest 落库成功后补记一条 fetch 可逆账目（FR-116，best-effort）：
+// fetch 反向快照（被新建 / 被覆盖项 id + 覆盖前版本）在落库后才齐全，故事务后补记；
+// 落库失败仅 WARN 不阻断——账目缺失只致该次不可撤回，不损正向 ingest 结果。空 ingest（0 created/updated）不记账。
+func (s *ReverseFetchTaskService) recordFetchReversible(task *model.ReverseFetchTask, result *ImportResult, operator string) {
+	if s.reversible == nil || result == nil {
+		return
+	}
+	if err := s.reversible.RecordFetch(RecordFetchParams{
+		Namespace: task.NamespaceCode, Scope: task.Scope, ScopeTarget: task.ScopeTarget,
+		TaskID: task.ID, CreatedIDs: result.CreatedIDs, UpdatedItems: result.UpdatedItems,
+		ForwardRef: fmt.Sprintf("%d", task.ID),
+		Summary:    fmt.Sprintf("反向抓取入库 %s @ %s（新建 %d、覆盖 %d）", task.GroupCode, task.Scope, result.Created, result.Updated),
+		Operator:   operator,
+	}); err != nil {
+		slog.Warn("记反向抓取可逆账目失败（已落库，本次将不可撤回）", "taskId", task.ID, "原因", err)
+	}
 }
 
 // reverseFetchErrorMaxLen 是回传失败原因落库前的截断上限（对齐 last_error 列 VARCHAR(512)，留余量防超列宽）。

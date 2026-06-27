@@ -209,6 +209,7 @@ func (s *ReverseFetchTaskService) Resolve(taskID uint, decisions []ResolveDecisi
 	}); e != nil {
 		slog.Warn("冲突审核入库审计写入失败（已落库）", "taskId", task.ID, "原因", e)
 	}
+	s.recordFetchReversible(task, result, operator)
 	slog.Info("反向抓取受管任务冲突审核落库完成", "taskId", task.ID,
 		"overwrite", len(overwrite), "keep", len(env.Conflicts)-len(overwrite),
 		"created", result.Created, "updated", result.Updated, "operator", operator)
