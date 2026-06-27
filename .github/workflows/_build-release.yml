@@ -171,6 +171,7 @@ jobs:
   # 双端 agent 插件 jar（JVM、平台无关，构建一次；gradle 读根 VERSION 注入版本）。
   jars:
     name: agent jar
+    needs: [meta]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -182,7 +183,14 @@ jobs:
       - name: 准备 Gradle（含依赖缓存）
         uses: gradle/actions/setup-gradle@v4
       - name: 构建 agent jar（make agent）
-        run: make agent
+        env:
+          # agent jar 版本须与 beacon 一致（ADR-0007 三组件同版本）：滚动预发布版本号由 meta 单点计算
+          # （ADR-0054、非根 VERSION），故临时把 VERSION 覆盖为该版本号供 gradle 读（CI 内、不提交）。
+          # 正式版时 meta.version == 根 VERSION，覆盖为同值、无副作用。
+          VER: ${{ needs.meta.outputs.version }}
+        run: |
+          printf '%s\n' "$VER" > VERSION
+          make agent
       - name: 上传 jar
         uses: actions/upload-artifact@v4
         with:
@@ -252,6 +260,18 @@ jobs:
           } > release-body.md
           echo "==== Release 正文 ===="
           cat release-body.md
+      - name: 滚动模式先删旧预发布 Release + tag（清累积旧 assets、移 tag 到当前 commit）
+        # softprops/action-gh-release 只上传新 assets、不删 release 上已有的旧 assets，也不移动已存在的 tag——
+        # 多次滚动会累积多版本二进制（旧 0.1.0 / 0.17.0 / launcher）、tag 停在旧 commit。滚动模式发布前删旧
+        # release + tag，让下一步用同名 tag 在当前 commit 重建、只留本次产物（ADR-0052「只留最新一份」）。
+        if: ${{ inputs.rolling }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "${{ inputs.rolling-tag }}" --cleanup-tag --yes 2>/dev/null \
+            && echo "已删旧预发布 release + tag，将在当前 commit 重建" \
+            || echo "无旧预发布 release（首次），跳过"
       - name: 创建 / 覆盖 Release 并上传产物
         uses: softprops/action-gh-release@v2
         with:
