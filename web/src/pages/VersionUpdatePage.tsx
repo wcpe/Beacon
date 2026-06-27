@@ -35,7 +35,7 @@ import {
   updateProgress,
 } from '@/api/client'
 import { formatTime } from '@/api/format'
-import type { SettingView, UpdateProgressView } from '@/api/types'
+import type { SettingView, UpdateCheckView, UpdateProgressView } from '@/api/types'
 
 // 进度轮询周期（毫秒）：触发应用后短周期反映 phase/percent，直到重启断连。
 const PROGRESS_POLL_MS = 1500
@@ -100,6 +100,8 @@ export default function VersionUpdatePage() {
   const [applying, setApplying] = useState(false)
   const wentOfflineRef = useRef(false)
   const [reconnected, setReconnected] = useState(false)
+  // 最终裁决只播报一次（FR-118 ②）：成功重连 / 失败各自一次性 toast。
+  const verdictShownRef = useRef(false)
 
   // 触发应用后才轮询进度；未触发不打扰后端。
   const { data: progress } = useQuery({
@@ -119,18 +121,51 @@ export default function VersionUpdatePage() {
   const canUpdate = data?.status === 'ok' && data.hasUpdate && !data.isDevBuild
   const failed = progress?.phase === 'failed'
 
+  // 最终裁决 toast（FR-118 ②）：更新走完后明确成功 / 失败一次。
+  // 成功 = 重连成功边沿（已下载 / 换版 / 重启 / 重连完成）；失败 = 进度 phase=failed。
+  useEffect(() => {
+    if (!applying || verdictShownRef.current) return
+    if (reconnected) {
+      verdictShownRef.current = true
+      showSuccess(
+        t('updateModal.updateSucceeded', {
+          version: data?.latestVersion || data?.currentVersion || '',
+        }),
+      )
+    } else if (failed) {
+      verdictShownRef.current = true
+      showError(
+        t('updateModal.updateFailed', {
+          reason: progress?.error || t('updateModal.phaseFailed'),
+        }),
+      )
+    }
+  }, [applying, reconnected, failed, progress, data, showSuccess, showError, t])
+
   // 当前渠道：优先取设置项（可改），回退检查结果回显渠道。
   const channelSetting = findSetting(settings, KEY_CHANNEL)
   const currentChannel = channelSetting?.value ?? data?.channel ?? 'stable'
 
-  // 改渠道：写 update.channel 设置（热生效），成功后刷新设置 + 重新检查更新（切渠道后比对新渠道 release）。
+  // 改渠道：写 update.channel 设置（热生效），成功后刷新设置 + 重新检查更新（切渠道后比对新渠道 release），
+  // 并回显重检结果（FR-118 ③）：发现更新 / 已最新 / 检查失败，而非只「正在重新检查」。
   const channelMut = useMutation({
     mutationFn: (value: string) => updateSetting(KEY_CHANNEL, value),
-    onSuccess: async () => {
+    onSuccess: async (_res, channel) => {
       showSuccess(t('versionUpdate.channelSwitched'))
       qc.invalidateQueries({ queryKey: ['settings'] })
-      // 切渠道后强制重查（绕服务端缓存），使版本比对落到新渠道。
-      await update.refresh().catch(() => {})
+      // 切渠道后强制重查（绕服务端缓存），使版本比对落到新渠道，并据结果回显裁决。
+      try {
+        const result = (await update.refresh()) as UpdateCheckView | undefined
+        if (!result || result.status === 'check-failed') {
+          showError(t('versionUpdate.recheckFailed', { channel }))
+        } else if (result.hasUpdate && !result.isDevBuild) {
+          showSuccess(t('versionUpdate.recheckHasUpdate', { channel, version: result.latestVersion }))
+        } else {
+          showSuccess(t('versionUpdate.recheckUpToDate', { channel }))
+        }
+      } catch {
+        showError(t('versionUpdate.recheckFailed', { channel }))
+      }
     },
     onError: (e: Error) => showError(e.message),
   })
@@ -185,23 +220,15 @@ export default function VersionUpdatePage() {
     { id: SECTION_PREFS, label: t('versionUpdate.sectionPrefs') },
   ]
 
-  // 主操作（FR-108 上提第二层页眉）：立即检查 + 立即更新（有可用更新时）。
-  const headerActions = (
-    <>
-      <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
-        <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
-        {t('updateModal.checkNow')}
-      </Button>
-      {canUpdate && (
-        <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={applying}>
-          <Download />
-          {t('updateModal.updateNow')}
-        </Button>
-      )}
-    </>
-  )
+  // 页眉主操作（FR-118 ①）：「立即检查」已下移页面正文（紧挨版本/更新区），此处仅保留「立即更新」。
+  const headerActions = canUpdate ? (
+    <Button size="sm" onClick={() => setConfirmOpen(true)} disabled={applying}>
+      <Download />
+      {t('updateModal.updateNow')}
+    </Button>
+  ) : undefined
 
-  // 页眉（FR-105/FR-108）：标题 + 副标题 + 主操作（立即检查 / 立即更新），系统页非环境范围
+  // 页眉（FR-105/FR-108）：标题 + 副标题 + 主操作（立即更新），系统页非环境范围
   usePageHeader({
     title: t('versionUpdate.title'),
     subtitle: t('versionUpdate.subtitle'),
@@ -243,11 +270,15 @@ export default function VersionUpdatePage() {
             <span className="text-xs text-muted-foreground">{t('versionUpdate.channelHint')}</span>
           </div>
 
-          {/* 状态行（立即检查 / 立即更新主操作已上提第二层页眉，FR-108） */}
+          {/* 状态行 +「立即检查」（FR-118 ①：由第二层页眉下移至此，紧挨版本/更新区） */}
           <div className="flex flex-wrap items-center gap-3">
             <span className={canUpdate ? 'text-sm font-medium text-foreground' : 'text-sm text-muted-foreground'}>
               {statusLine()}
             </span>
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
+              <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
+              {t('updateModal.checkNow')}
+            </Button>
           </div>
 
           {/* 可用更新明细：版本 / 发布时间 / release 日志（安全渲染）/ 外链 */}

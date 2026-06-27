@@ -35,7 +35,7 @@ vi.mock('@/api/client', async () => {
 })
 
 import VersionUpdatePage from './VersionUpdatePage'
-import { listSettings, updateSetting, checkUpdate, triggerUpdate } from '@/api/client'
+import { listSettings, updateSetting, checkUpdate, triggerUpdate, updateProgress } from '@/api/client'
 
 // jsdom 垫片：radix Select 打开需要指针捕获 / scrollIntoView
 if (!HTMLElement.prototype.hasPointerCapture) {
@@ -128,6 +128,54 @@ describe('VersionUpdatePage 版本信息 + 渠道（FR-100）', () => {
     await userEvent.click(btn)
     await waitFor(() => expect(vi.mocked(checkUpdate)).toHaveBeenCalledWith(true))
   })
+
+  // FR-118 ①：「立即检查」在页面正文（紧挨版本/更新区），不在第二层页眉操作槽
+  it('「立即检查」按钮位于页面正文版本分区内（FR-118 ①）', async () => {
+    renderPage(<VersionUpdatePage />)
+    const btn = await screen.findByRole('button', { name: '立即检查' })
+    // 页眉 header 带为 <h1>「版本与更新」所在容器；按钮应落在版本信息 <section> 而非页眉
+    const section = btn.closest('section')
+    expect(section).not.toBeNull()
+    expect(within(section as HTMLElement).getByText('当前版本')).toBeInTheDocument()
+  })
+})
+
+// FR-118 ③：切渠道后回显重检结果（发现更新 / 已最新 / 检查失败）
+describe('VersionUpdatePage 切渠道重检结果（FR-118 ③）', () => {
+  async function switchChannel() {
+    const channelSelect = await screen.findByLabelText('更新渠道')
+    await userEvent.click(channelSelect)
+    const listbox = await screen.findByRole('listbox')
+    await userEvent.click(within(listbox).getByRole('option', { name: 'prerelease' }))
+  }
+
+  it('重检发现更新 → 提示新版本', async () => {
+    // 重检（force=true）返回有更新
+    vi.mocked(checkUpdate).mockResolvedValue(UPDATE_HAS)
+    renderPage(<VersionUpdatePage />)
+    await switchChannel()
+    await waitFor(() =>
+      expect(showSuccess).toHaveBeenCalledWith(expect.stringContaining('发现新版本 v0.11.0')),
+    )
+  })
+
+  it('重检未发现更新 → 提示已最新', async () => {
+    // 默认 UPDATE_NONE（无更新）
+    renderPage(<VersionUpdatePage />)
+    await switchChannel()
+    await waitFor(() =>
+      expect(showSuccess).toHaveBeenCalledWith(expect.stringContaining('当前已是最新版本')),
+    )
+  })
+
+  it('重检失败（check-failed）→ 提示检查失败', async () => {
+    vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_NONE, status: 'check-failed' })
+    renderPage(<VersionUpdatePage />)
+    await switchChannel()
+    await waitFor(() =>
+      expect(showError).toHaveBeenCalledWith(expect.stringContaining('检查更新失败')),
+    )
+  })
 })
 
 describe('VersionUpdatePage 有更新（FR-100）', () => {
@@ -149,6 +197,24 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
     const confirm = await screen.findByRole('button', { name: '确认更新' })
     await userEvent.click(confirm)
     await waitFor(() => expect(vi.mocked(triggerUpdate)).toHaveBeenCalled())
+  })
+
+  // FR-118 ②：更新走完给明确失败裁决（成功重连裁决依赖 offline→online 真链路，真机验）
+  it('更新进度 phase=failed 时给明确失败裁决 toast', async () => {
+    vi.mocked(updateProgress).mockResolvedValue({
+      phase: 'failed',
+      percent: 0,
+      targetVersion: 'v0.11.0',
+      error: '下载校验失败',
+    })
+    renderPage(<VersionUpdatePage />)
+    await userEvent.click(await screen.findByRole('button', { name: '立即更新' }))
+    await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
+    // 进度区先反映失败阶段（确认进度查询已启用并取到 failed）
+    expect(await screen.findByText(/更新失败/)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(showError).toHaveBeenCalledWith(expect.stringContaining('更新失败：下载校验失败')),
+    )
   })
 })
 

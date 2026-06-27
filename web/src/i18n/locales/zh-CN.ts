@@ -250,6 +250,9 @@ export const zhCN = {
     reconnected: '已重连，当前版本 {{version}}',
     // 触发更新失败（POST 非 202，如 403 / 500）
     triggerFailed: '触发更新失败',
+    // 立即更新最终裁决（FR-118 ②）：成功重连 / 失败原因
+    updateSucceeded: '已更新到 {{version}}，控制面已重连',
+    updateFailed: '更新失败：{{reason}}',
   },
 
   // ===== 版本与更新独立页（FR-100，ADR-0048 由设置子 tab 拍平为独立页）=====
@@ -267,6 +270,10 @@ export const zhCN = {
     channelHint: 'stable 正式版 / prerelease 滚动预发布版；切换后将按新渠道重新检查更新。',
     // 切渠道成功提示
     channelSwitched: '已切换更新渠道，正在按新渠道重新检查…',
+    // 切渠道后重检结果回显（FR-118 ③）：发现更新 / 已最新 / 检查失败
+    recheckHasUpdate: '已切到 {{channel}} 渠道，发现新版本 {{version}}',
+    recheckUpToDate: '已切到 {{channel}} 渠道，当前已是最新版本',
+    recheckFailed: '已切到 {{channel}} 渠道，但检查更新失败（GitHub 不可达或限流），稍后重试',
     // 网络代理表单
     proxyLabel: '出站代理地址',
     proxyPlaceholder: '如 http://127.0.0.1:7890（留空 = 直连）',
