@@ -47,7 +47,7 @@ func TestRequireFullRole(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			nextCalled := false
-			h := requireFullRole(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := requireFullRole(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				nextCalled = true
 				w.WriteHeader(http.StatusOK)
 			}))

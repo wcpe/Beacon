@@ -53,13 +53,6 @@ func (p *progressTracker) setPhase(phase Phase, targetVersion string) {
 	p.snap.Error = ""
 }
 
-// setPercent 更新下载百分比（仅下载阶段调用）。
-func (p *progressTracker) setPercent(percent int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.snap.Percent = percent
-}
-
 // fail 标记失败并记录原因（保留 targetVersion 便于观测「哪个版本更新失败」）。
 func (p *progressTracker) fail(reason string) {
 	p.mu.Lock()

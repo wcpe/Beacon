@@ -136,7 +136,7 @@ func (s *ReversibleOperationService) RecordFetch(p RecordFetchParams) error {
 	}
 	updated := make([]fetchUpdatedItem, 0, len(p.UpdatedItems))
 	for _, u := range p.UpdatedItems {
-		updated = append(updated, fetchUpdatedItem{ID: u.ID, PreVersion: u.PreVersion})
+		updated = append(updated, fetchUpdatedItem(u))
 	}
 	payload, err := json.Marshal(fetchPayload{TaskID: p.TaskID, Created: p.CreatedIDs, Updated: updated})
 	if err != nil {

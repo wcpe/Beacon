@@ -153,7 +153,7 @@ func (s *AgentCommandService) awaitBrowseResult(ctx context.Context, waiter *lon
 // ok=true 则把结果 JSON 转存命令瞬态（browse_result）并 CAS fetched→done；ok=false（agent 原语返回 null：
 // 越权 / 非目录 / 非文本）则 CAS fetched→failed 记原因摘要（无敏感内容）。无论成败，提交后唤醒等待中的
 // admin 结果 waiter 让其立即取结果（不必等到超时）。result 是受控瞬态——绝不入审计、不落持久真源。
-func (s *AgentCommandService) ReceiveBrowseResult(ns, serverID string, commandID uint, ok bool, result, reason string) error {
+func (s *AgentCommandService) ReceiveBrowseResult(_, _ string, commandID uint, ok bool, result, reason string) error {
 	cmd, err := s.repo.FindByID(commandID)
 	if err != nil {
 		return err

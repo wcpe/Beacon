@@ -43,7 +43,7 @@ func TestCommandListFilterAndProject(t *testing.T) {
 	}
 
 	// 倒序：创建时间倒序（id 越大越靠前）
-	if !(items[0].ID > items[1].ID && items[1].ID > items[2].ID) {
+	if items[0].ID <= items[1].ID || items[1].ID <= items[2].ID {
 		t.Fatalf("应按 createdAt/id 倒序: %+v", items)
 	}
 

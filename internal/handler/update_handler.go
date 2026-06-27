@@ -38,7 +38,7 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 }
 
 // Status 处理 GET /admin/v1/system/update：读更新进度内存态（不查库、不打 GitHub）。
-func (h *UpdateHandler) Status(w http.ResponseWriter, r *http.Request) {
+func (h *UpdateHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	p := h.svc.Status()
 	render.WriteJSON(w, http.StatusOK, progressView{
 		Phase:         string(p.Phase),

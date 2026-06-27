@@ -151,9 +151,9 @@ func TestImpactDegradedCountedLostExcluded(t *testing.T) {
 	svc, reg, _ := newImpactTestStack(t)
 	base := time.Now().UTC()
 	// 三台实例分别以不同的注册（=初始心跳）时刻注册，再统一在 now 扫描，制造不同心跳年龄分档。
-	reg.Register(&runtime.Instance{Namespace: "prod", ServerID: "online-1", Role: "bukkit", GroupHint: "g1", Address: "online-1:1"}, 30*time.Second, base)
-	reg.Register(&runtime.Instance{Namespace: "prod", ServerID: "degraded-1", Role: "bukkit", GroupHint: "g1", Address: "degraded-1:1"}, 30*time.Second, base.Add(-20*time.Second)) // age 20s → degraded（>10 <30）
-	reg.Register(&runtime.Instance{Namespace: "prod", ServerID: "lost-1", Role: "bukkit", GroupHint: "g1", Address: "lost-1:1"}, 30*time.Second, base.Add(-40*time.Second))         // age 40s → lost（>30 <60）
+	_, _ = reg.Register(&runtime.Instance{Namespace: "prod", ServerID: "online-1", Role: "bukkit", GroupHint: "g1", Address: "online-1:1"}, 30*time.Second, base)
+	_, _ = reg.Register(&runtime.Instance{Namespace: "prod", ServerID: "degraded-1", Role: "bukkit", GroupHint: "g1", Address: "degraded-1:1"}, 30*time.Second, base.Add(-20*time.Second)) // age 20s → degraded（>10 <30）
+	_, _ = reg.Register(&runtime.Instance{Namespace: "prod", ServerID: "lost-1", Role: "bukkit", GroupHint: "g1", Address: "lost-1:1"}, 30*time.Second, base.Add(-40*time.Second))         // age 40s → lost（>30 <60）
 
 	now := base
 	reg.SweepExpired(now, 10*time.Second, 30*time.Second, 60*time.Second)

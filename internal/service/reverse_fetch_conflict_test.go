@@ -284,9 +284,10 @@ func TestResolveConcurrentClaimOnce(t *testing.T) {
 			}, "alice", "")
 			mu.Lock()
 			defer mu.Unlock()
-			if err == nil {
+			switch err {
+			case nil:
 				okCount++
-			} else if err == apperr.ErrReverseFetchTaskState {
+			case apperr.ErrReverseFetchTaskState:
 				stateErrCount++
 			}
 		}()
