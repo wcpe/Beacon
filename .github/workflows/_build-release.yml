@@ -48,33 +48,34 @@ jobs:
       name: ${{ steps.calc.outputs.name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 取全部 tag 供滚动预发布算「最新正式版 tag」的 minor+1（ADR-0054）；默认浅克隆不含 tag。
+          fetch-depth: 0
       - name: 计算版本号 / tag / Release 名
         id: calc
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
           ROLLING: ${{ inputs.rolling }}
           ROLLING_TAG: ${{ inputs.rolling-tag }}
         run: |
           if [ "$ROLLING" = "true" ]; then
             # 滚动预发布：版本号 = 最新正式 release（releases/latest 天然排除 prerelease）的 minor+1、patch 归零，
             # 与 VERSION 解耦、自动领先最新正式版（ADR-0054）。无正式 release / 解析失败回退基线 0 → 0.1.0。
-            raw="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
-            # 取首行 + 仅保留数字 / 点 / v，剔除空白 / 引号 / 多行等任何杂质——
-            # 否则版本号带杂质会让 binaries 的 -ldflags 被空白拆词、链接器报「usage: link」构建失败。
-            latest="$(printf '%s\n' "$raw" | head -n1 | tr -dc '0-9.v')"
+            # 用 git tag（一定存在）而非 GitHub Release——本仓暂无「正式 Release」（releases/latest 返 404），
+            # 但正式语义 tag 一定有。取最新 vX.Y.Z：grep -v '-' 排除 -rc 等预发布段、sort -V 版本序、tail 取最高。
+            latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -vE '-' | sort -V | tail -n1)"
             base="${latest#v}"
             major="${base%%.*}"
             rest="${base#*.}"
             minor="${rest%%.*}"
-            # major/minor 必须为纯数字，否则解析异常 → 回退基线 0/0（得 0.1.0），不污染版本号。
+            # major/minor 必须为纯数字，否则（无正式 tag）回退基线 0/0（得 0.1.0），不污染版本号。
             if ! printf '%s' "${major}.${minor}" | grep -qE '^[0-9]+\.[0-9]+$'; then
-              echo "::warning::最新正式版解析异常（raw=[${raw}] latest=[${latest}]），回退基线 0"
+              echo "::warning::未找到正式版 tag（latest=[${latest}]），回退基线 0"
               major=0
               minor=0
             fi
             ver="${major}.$((minor + 1)).0"
-            echo "滚动预发布版本号：raw=[${raw}] latest=[${latest}] → ver=[${ver}]"
+            echo "滚动预发布版本号：最新正式 tag=[${latest}] → ver=[${ver}]"
             echo "version=${ver}" >> "$GITHUB_OUTPUT"
             echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
             echo "name=v${ver}" >> "$GITHUB_OUTPUT"
