@@ -41,6 +41,7 @@ import type {
   ResolveResult,
   ReverseFetchScope,
   ReverseFetchTaskView,
+  ReversibleOpView,
   RevisionView,
   SettingView,
   SystemStatusView,
@@ -1224,4 +1225,25 @@ export function updateSetting(key: string, value: string): Promise<void> {
     method: 'PUT',
     body: JSON.stringify({ value }),
   })
+}
+
+// ===== 配置操作级撤回（FR-116，见 ADR-0051 / docs/API.md 撤回小节）=====
+
+// 可逆操作列表过滤：namespace / opType / status 任一可空；limit 默认 100。
+export interface ReversibleOpFilter {
+  namespace?: string
+  opType?: string
+  status?: string
+  limit?: number
+}
+
+// 列可逆操作账目（FR-116）：后端响应 { items: [] }，取 items；最新在前。供工作台操作日志。
+export function listReversibleOperations(filter: ReversibleOpFilter): Promise<ReversibleOpView[]> {
+  return request<ItemsResponse<ReversibleOpView>>(`/reversible-operations${qs(filter)}`).then((r) => r.items)
+}
+
+// 撤回一条可逆操作（FR-116，幂等）：回滚配置 / 文件版本指针或撤销 ingest 纳管 + 按需重推。
+// 写操作需 full 角色（readonly→403）；过期 / 被覆盖 → 409；重复撤回返回幂等成功（status=reversed）。
+export function undoReversibleOperation(id: number): Promise<ReversibleOpView> {
+  return request<ReversibleOpView>(`/reversible-operations/${id}/undo`, { method: 'POST' })
 }

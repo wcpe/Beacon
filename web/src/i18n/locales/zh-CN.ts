@@ -1053,6 +1053,7 @@ export const zhCN = {
       // 撤回 / 回滚 toast
       toastUndoneOne: '已撤回：{{detail}}',
       toastUndoneBatch: '已撤回 {{count}} 项操作',
+      toastUndoFailed: '{{count}} 项撤回失败（可能已过期或被后续操作覆盖）',
       toastRolledBack: '已回滚「{{name}}」到历史版本（打开版本面板选择）',
       // 右键菜单
       ctxEdit: '编辑',

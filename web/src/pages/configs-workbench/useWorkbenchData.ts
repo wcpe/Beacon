@@ -16,6 +16,7 @@ import {
   listFiles,
   listInstances,
   listFileRevisions,
+  listReversibleOperations,
   type EffectiveFileItem,
 } from '@/api/client'
 import type {
@@ -25,6 +26,7 @@ import type {
   FileView,
   ImpactView,
   InstanceView,
+  ReversibleOpView,
 } from '@/api/types'
 import { useEnvironment } from '@/state/environment'
 import type {
@@ -197,14 +199,31 @@ function commandStatusToQueueStatus(
   return direction === 'fetch' ? 'pending-ingest' : 'running'
 }
 
-// ---- 操作日志（撤回 / 回滚源）----
-// 真撤回 / 操作日志可逆能力属 FR-116（ADR-0051），本 FR 未接真后端：此处返回空种子，
-// 运行期由页面叠加本地操作态（撤回为前端态，spec §6 partial）。接 FR-116 后改读可逆操作清单。
+// ---- 操作日志（撤回源）← listReversibleOperations（FR-116，见 ADR-0051）----
+// 读真实可逆操作账目（下发 / 发布 / 反向抓取）映射成操作日志条目：撤回为真后端能力，
+// id 即可逆账目 id（撤回端点据此撤回）；status=reversible 才可撤、已撤回置灰（undone）。
 export function useOperationLog() {
+  const namespace = useEnvironment()
   return useQuery({
-    queryKey: ['wb-operation-log'],
-    queryFn: () => Promise.resolve([] as import('./types').OpLogEntry[]),
+    queryKey: ['wb-operation-log', namespace],
+    queryFn: () => listReversibleOperations({ namespace, limit: 100 }).then((ops) => ops.map(reversibleOpToLogEntry)),
+    enabled: !!namespace,
   })
+}
+
+// 可逆操作账目 → 操作日志条目：opType 与 OpAction 的 fetch/push/publish 同名直映；
+// undone = 已撤回（status=reversed），其余非 reversible 状态（expired/superseded）亦不可再撤回故也置灰。
+function reversibleOpToLogEntry(op: ReversibleOpView): import('./types').OpLogEntry {
+  return {
+    id: String(op.id),
+    time: clockTime(op.createdAt),
+    action: op.opType,
+    operator: op.operator,
+    files: [op.summary],
+    target: op.scopeTarget ? `${op.scope} ${op.scopeTarget}` : op.scope,
+    detail: op.summary,
+    undone: !op.reversible,
+  }
 }
 
 // ---- scope / server 候选 ← listInstances（FR-3）----

@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   DndContext,
   DragOverlay,
@@ -44,6 +45,7 @@ import { useMessage } from '@/components/useMessage'
 import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
 import { cn } from '@/lib/utils'
 
+import { undoReversibleOperation } from '@/api/client'
 import { useManagedTree, useOperationLog, useServerTree, useSyncQueue, useWorkbenchOptions } from './configs-workbench/useWorkbenchData'
 import PanelTree, { flattenVisibleFiles, type ContextMenuPayload, type PanelNode } from './configs-workbench/PanelTree'
 import PanelToolbar, { type ToolbarAction } from './configs-workbench/PanelToolbar'
@@ -80,6 +82,8 @@ export default function ConfigWorkbenchPage() {
   const navigate = useNavigate()
   const msg = useMessage()
   const params = useParams()
+  // 撤回成功后失效操作日志查询，重拉真实可逆账目（FR-116）
+  const queryClient = useQueryClient()
 
   const { operator } = useAuth()
 
@@ -172,23 +176,46 @@ export default function ConfigWorkbenchPage() {
     [operator],
   )
 
-  // 撤回一批操作：移除其产生的队列行 + 标记已撤回 + toast（下发/发布的撤回即回滚到操作前）
+  // 撤回一批操作（FR-116，见 ADR-0051）：对真实可逆账目（数字 id）调撤回端点，后端回滚版本指针 /
+  // 软删受管项 + 按需重推；本地前端态条目（op-… id，拖拽 / 队列产生）仍走本地移除其产生的队列行。
+  // 撤回成功后失效操作日志查询重拉真实状态；逐条撤回幂等（后端 status 闸）。
   const undoOps = useCallback(
     (ids: string[]) => {
       const entries = logRows.filter((e) => ids.includes(e.id) && !e.undone)
       if (entries.length === 0) return
-      const rowIds = entries.flatMap((e) => e.queueRowIds ?? [])
-      if (rowIds.length > 0) setExtraQueue((prev) => prev.filter((r) => !rowIds.includes(r.id)))
-      setUndoneLogIds((prev) => {
-        const next = new Set(prev)
-        for (const e of entries) next.add(e.id)
-        return next
-      })
+      // 真实可逆账目（后端 id 为数字串）vs 本地前端态条目（op-… id）
+      const backendEntries = entries.filter((e) => /^\d+$/.test(e.id))
+      const localEntries = entries.filter((e) => !/^\d+$/.test(e.id))
+
+      // 本地条目：移除其产生的队列行 + 标记已撤回（前端态，无真后端账目）
+      const localRowIds = localEntries.flatMap((e) => e.queueRowIds ?? [])
+      if (localRowIds.length > 0) setExtraQueue((prev) => prev.filter((r) => !localRowIds.includes(r.id)))
+      if (localEntries.length > 0) {
+        setUndoneLogIds((prev) => {
+          const next = new Set(prev)
+          for (const e of localEntries) next.add(e.id)
+          return next
+        })
+      }
       setLogSel(new Set())
-      if (entries.length === 1) msg.showSuccess(t('configs.workbench.toastUndoneOne', { detail: entries[0].detail }))
-      else msg.showSuccess(t('configs.workbench.toastUndoneBatch', { count: entries.length }))
+
+      // 真实账目：逐条调撤回端点，全部完成后失效操作日志查询重拉
+      if (backendEntries.length > 0) {
+        void Promise.allSettled(backendEntries.map((e) => undoReversibleOperation(Number(e.id))))
+          .then((results) => {
+            const failed = results.filter((r) => r.status === 'rejected').length
+            void queryClient.invalidateQueries({ queryKey: ['wb-operation-log'] })
+            if (failed > 0) {
+              msg.showError(t('configs.workbench.toastUndoFailed', { count: failed }))
+            }
+          })
+      }
+
+      const total = entries.length
+      if (total === 1) msg.showSuccess(t('configs.workbench.toastUndoneOne', { detail: entries[0].detail }))
+      else msg.showSuccess(t('configs.workbench.toastUndoneBatch', { count: total }))
     },
-    [logRows, msg, t],
+    [logRows, msg, t, queryClient],
   )
 
   // 打开文件到浮层（去重）：双击工作台文件 / 深链恢复 / 右键编辑共用

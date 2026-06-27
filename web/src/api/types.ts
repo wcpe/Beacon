@@ -769,3 +769,29 @@ export interface SettingView {
   // 是否启动项（白名单皆热改项，恒 false）
   isStartup: boolean
 }
+
+// ===== 配置操作级撤回（FR-116，见 ADR-0051）=====
+
+// 可逆操作类型：下发 / 发布 / 反向抓取
+export type ReversibleOpType = 'push' | 'publish' | 'fetch'
+
+// 可逆操作状态：可撤回 / 已撤回 / 已过期 / 被覆盖
+export type ReversibleOpStatus = 'reversible' | 'reversed' | 'expired' | 'superseded'
+
+// 可逆操作账目视图（绝不含反向快照 inversePayload）：供工作台操作日志展示 + 撤回
+export interface ReversibleOpView {
+  id: number
+  namespace: string
+  opType: ReversibleOpType
+  scope: string
+  scopeTarget: string
+  status: ReversibleOpStatus
+  // 人类可读摘要（无敏感内容）
+  summary: string
+  operator: string
+  // 撤回人（已撤回回填）
+  reversedBy: string
+  createdAt: string
+  // 是否仍可撤回（status=reversible）
+  reversible: boolean
+}

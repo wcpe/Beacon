@@ -543,6 +543,29 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     return json(diff)
   }
 
+  // ---- 配置操作级撤回（FR-116）----
+  // 列可逆操作账目：mock 返回空清单（撤回真后端能力由控制面提供，原型 / 单测不构造可逆账目）。
+  if (p === '/admin/v1/reversible-operations' && method === 'GET') {
+    return json({ items: [] })
+  }
+  // 撤回一条可逆操作：mock 返回幂等成功的已撤回账目（前端 toast + 重拉清单）。
+  const undoMatch = p.match(/^\/admin\/v1\/reversible-operations\/(\d+)\/undo$/)
+  if (undoMatch && method === 'POST') {
+    return json({
+      id: Number(undoMatch[1]),
+      namespace: qs.namespace ?? '',
+      opType: 'publish',
+      scope: 'global',
+      scopeTarget: '',
+      status: 'reversed',
+      summary: '已撤回',
+      operator: 'admin',
+      reversedBy: 'admin',
+      createdAt: new Date().toISOString(),
+      reversible: false,
+    })
+  }
+
   // 兜底
   return json({ code: 'NOT_FOUND', message: `未注册的 mock 端点: ${method} ${p}` }, 404)
 }
