@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 修复
+- 控制面在线更新下载进度百分比恒 0%（`internal/update`）：下载阶段 `downloadBinary` 用 `io.Copy(io.MultiWriter(tmp, hasher), …)` 落盘并算 SHA256，但**全程从不更新进度 `Percent`**，`reset` 归零后再无人写，前端「立即更新」下载阶段进度条始终显示 0% 直到跳下一阶段。给进度态加线程安全 `setPercent`，并在下载 `MultiWriter` 上挂一个旁路计数器 `progressWriter`（本身不落盘，按 已下字节 / `Content-Length` 实时更新百分比、超额封顶 100；`Content-Length` 未知时不更新、不误报）。补 `progressWriter` 单元用例与「下载完成后 `Percent`=100」回归用例。
+
 ## 0.17.0（2026-06-27）
 
 ### 新增

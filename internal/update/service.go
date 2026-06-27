@@ -250,6 +250,27 @@ func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operato
 	return nil
 }
 
+// progressWriter 是挂在下载 MultiWriter 上的旁路计数器：本身不落盘，只按累计已下字节 / 总字节实时更新下载百分比。
+// total<=0（Content-Length 未知）时不更新（不误报跳变）。
+type progressWriter struct {
+	tracker    *progressTracker
+	total      int64
+	downloaded int64
+}
+
+// Write 累计已下字节并按比例更新百分比；恒返回 len(p)（旁路计数不丢字节，避免 io.Copy 误判 short write）。
+func (w *progressWriter) Write(p []byte) (int, error) {
+	w.downloaded += int64(len(p))
+	if w.total > 0 {
+		pct := int(w.downloaded * 100 / w.total)
+		if pct > 100 {
+			pct = 100
+		}
+		w.tracker.setPercent(pct)
+	}
+	return len(p), nil
+}
+
 // downloadBinary 下载二进制到运行目录旁的临时文件，边写边算 SHA256，受大小上限约束。
 // 返回临时文件路径与实算 hex SHA256；失败时已自清理临时文件并返回错误。
 func (s *Service) downloadBinary(ctx context.Context, client *http.Client, url string) (string, string, error) {
@@ -277,7 +298,13 @@ func (s *Service) downloadBinary(ctx context.Context, client *http.Client, url s
 	hasher := sha256.New()
 	// 限制读取上限 +1 字节：恰好读满上限+1 即判超限（防超大响应耗盘 / 内存）。
 	limited := io.LimitReader(resp.Body, maxBinaryBytes+1)
-	written, err := io.Copy(io.MultiWriter(tmp, hasher), limited)
+	// Content-Length 已知时挂旁路计数器，边下边更新下载百分比（修复 Percent 恒 0%）；未知则保持不更新。
+	total := resp.ContentLength
+	if total < 0 {
+		total = 0
+	}
+	pw := &progressWriter{tracker: s.progress, total: total}
+	written, err := io.Copy(io.MultiWriter(tmp, hasher, pw), limited)
 	closeErr := tmp.Close()
 	if err != nil {
 		_ = os.Remove(tmpPath)

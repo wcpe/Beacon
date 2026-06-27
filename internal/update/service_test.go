@@ -398,6 +398,60 @@ func TestCheckForUpdateSameVersionNoUpdate(t *testing.T) {
 	}
 }
 
+// TestApplyUpdateReportsDownloadPercent 下载阶段应实时更新进度百分比（复现并回归「Percent 恒 0%」缺陷）。
+// Content-Length 已知时，下载完成后百分比应达 100；修复前 downloadBinary 从不写 Percent，恒为 0。
+func TestApplyUpdateReportsDownloadPercent(t *testing.T) {
+	const tag = "v9.9.9"
+	binName := currentAssetName(t, tag)
+	const binContent = "新二进制内容用于进度百分比断言"
+	sums := fmt.Sprintf("%s  %s\n", sha256hex(binContent), binName)
+	srv := newMockReleaseServer(t, tag, binName, binContent, sums)
+
+	dir := t.TempDir()
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0", APIBase: srv.URL,
+		PendingPath:   filepath.Join(dir, "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+
+	if err := svc.ApplyUpdate(context.Background(), ChannelStable, "", "tester", ""); err != nil {
+		t.Fatalf("ApplyUpdate 应成功，实际 %v", err)
+	}
+	if pct := svc.Snapshot().Percent; pct != 100 {
+		t.Fatalf("下载完成后进度百分比应为 100，实际 %d（Percent 恒 0 即下载阶段未实时更新的缺陷）", pct)
+	}
+}
+
+// TestProgressWriterUpdatesPercent 旁路计数器：按累计字节实时更新百分比、未知总长不更新、超额封顶 100。
+func TestProgressWriterUpdatesPercent(t *testing.T) {
+	// total 已知：分批写入，百分比随累计递增。
+	tr := newProgressTracker()
+	pw := &progressWriter{tracker: tr, total: 100}
+	if _, err := pw.Write(make([]byte, 25)); err != nil {
+		t.Fatalf("Write 不应出错: %v", err)
+	}
+	if got := tr.Snapshot().Percent; got != 25 {
+		t.Fatalf("写 25/100 后百分比应为 25，实际 %d", got)
+	}
+	_, _ = pw.Write(make([]byte, 75))
+	if got := tr.Snapshot().Percent; got != 100 {
+		t.Fatalf("写满 100/100 后百分比应为 100，实际 %d", got)
+	}
+	// 超额写入（如 LimitReader 多读 1 字节）封顶 100。
+	_, _ = pw.Write(make([]byte, 50))
+	if got := tr.Snapshot().Percent; got != 100 {
+		t.Fatalf("超额写入应封顶 100，实际 %d", got)
+	}
+
+	// total 未知（0）：不更新百分比，保持 0（不误报）。
+	tr2 := newProgressTracker()
+	pw2 := &progressWriter{tracker: tr2, total: 0}
+	_, _ = pw2.Write(make([]byte, 1000))
+	if got := tr2.Snapshot().Percent; got != 0 {
+		t.Fatalf("total 未知时不应更新百分比，实际 %d", got)
+	}
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {
