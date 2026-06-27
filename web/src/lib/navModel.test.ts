@@ -20,6 +20,14 @@ describe('navModel 分组结构', () => {
     expect(tos).toContain('/settings')
   })
 
+  it('三页合一后（FR-113）配置组只剩工作台 + 文件树预览，无拓印 / 反向抓取叶子', () => {
+    const tos = NAV_LEAVES.map((l) => l.to)
+    expect(tos).not.toContain('/imprint')
+    expect(tos).not.toContain('/reverse-fetch')
+    const config = NAV_GROUPS.find((g) => g.id === 'config')!
+    expect(config.leaves.map((l) => l.to)).toEqual(['/configs', '/file-preview'])
+  })
+
   it('每个叶子都配了语义图标（方案 A）', () => {
     for (const leaf of NAV_LEAVES) {
       // lucide-react 图标是可渲染组件（forwardRef 对象或函数）

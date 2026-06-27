@@ -12,8 +12,6 @@ import WallboardPage from './pages/WallboardPage'
 import ConfigWorkbenchPage from './pages/ConfigWorkbenchPage'
 import ConfigEditorPage from './pages/ConfigEditorPage'
 import FilePreviewPage from './pages/FilePreviewPage'
-import ImprintPage from './pages/ImprintPage'
-import ReverseFetchTaskPage from './pages/reverse-fetch/ReverseFetchTaskPage'
 import ServersPage from './pages/ServersPage'
 import TopologyPage from './pages/TopologyPage'
 import ZonesPage from './pages/ZonesPage'
@@ -63,10 +61,10 @@ export default function App() {
           <Route path="configs/:id" element={<ConfigEditorPage />} />
           {/* 文件树有效预览（FR-45）：只读预览某服合并后文件树 + 逐键来源 */}
           <Route path="file-preview" element={<FilePreviewPage />} />
-          {/* 拓印审核台（FR-46）：选在线服+文件 → diff → 单人自审 → 同步 */}
-          <Route path="imprint" element={<ImprintPage />} />
-          {/* 反向抓取审核台 + 任务台（FR-60）：建扫描任务 → 审核清单 → 提交 → 冲突 diff → resolve */}
-          <Route path="reverse-fetch" element={<ReverseFetchTaskPage />} />
+          {/* 拓印 / 反向抓取三页合一（FR-113，ADR-0050 决策 4）：能力并入双面板工作台，
+              旧独立页退役，旧链重定向配置中心，避免死链。 */}
+          <Route path="imprint" element={<Navigate to="/configs" replace />} />
+          <Route path="reverse-fetch" element={<Navigate to="/configs" replace />} />
           {/* 文件树托管 / 覆盖集已下线，重定向到配置中心 */}
           <Route path="files" element={<Navigate to="/configs" replace />} />
           <Route path="files/:id" element={<Navigate to="/configs" replace />} />

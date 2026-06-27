@@ -182,11 +182,11 @@ describe('FileFullPreview', () => {
     expect(within(untracked).queryByRole('button', { name: /查看合并/ })).not.toBeInTheDocument()
   })
 
-  it('未追踪文件附「去反向抓取纳管」链接跳 /reverse-fetch', async () => {
+  it('未追踪文件附「去反向抓取纳管」链接跳工作台 /configs（FR-113 三页合一）', async () => {
     renderPreview(<FileFullPreview instances={[inst('lobby-1', 'prod', 'area1')]} />)
     await userEvent.click(screen.getByRole('button', { name: '全量预览（含未追踪）' }))
     const untracked = (await screen.findByText('ServerProbe/runtime.yml')).closest('li') as HTMLElement
     const link = within(untracked).getByRole('link', { name: /反向抓取/ })
-    expect(link).toHaveAttribute('href', '/reverse-fetch')
+    expect(link).toHaveAttribute('href', '/configs')
   })
 })

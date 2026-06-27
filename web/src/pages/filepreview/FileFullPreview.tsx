@@ -230,7 +230,7 @@ export default function FileFullPreview({ instances }: { instances: InstanceView
                       </Button>
                     ) : (
                       <Link
-                        to="/reverse-fetch"
+                        to="/configs"
                         className="text-[0.65rem] text-blue-600 underline-offset-2 hover:underline"
                       >
                         {t('filePreview.fullToReverseFetch')}
