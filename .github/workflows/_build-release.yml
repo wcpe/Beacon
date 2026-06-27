@@ -58,17 +58,26 @@ jobs:
         run: |
           if [ "$ROLLING" = "true" ]; then
             # 滚动预发布：版本号 = 最新正式 release（releases/latest 天然排除 prerelease）的 minor+1、patch 归零，
-            # 与 VERSION 解耦、自动领先最新正式版（ADR-0054）。无正式 release 时回退基线 v0.0.0 → 0.1.0。
-            latest="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || echo v0.0.0)"
+            # 与 VERSION 解耦、自动领先最新正式版（ADR-0054）。无正式 release / 解析失败回退基线 0 → 0.1.0。
+            raw="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            # 取首行 + 仅保留数字 / 点 / v，剔除空白 / 引号 / 多行等任何杂质——
+            # 否则版本号带杂质会让 binaries 的 -ldflags 被空白拆词、链接器报「usage: link」构建失败。
+            latest="$(printf '%s\n' "$raw" | head -n1 | tr -dc '0-9.v')"
             base="${latest#v}"
             major="${base%%.*}"
             rest="${base#*.}"
             minor="${rest%%.*}"
+            # major/minor 必须为纯数字，否则解析异常 → 回退基线 0/0（得 0.1.0），不污染版本号。
+            if ! printf '%s' "${major}.${minor}" | grep -qE '^[0-9]+\.[0-9]+$'; then
+              echo "::warning::最新正式版解析异常（raw=[${raw}] latest=[${latest}]），回退基线 0"
+              major=0
+              minor=0
+            fi
             ver="${major}.$((minor + 1)).0"
+            echo "滚动预发布版本号：raw=[${raw}] latest=[${latest}] → ver=[${ver}]"
             echo "version=${ver}" >> "$GITHUB_OUTPUT"
             echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
             echo "name=v${ver}" >> "$GITHUB_OUTPUT"
-            echo "滚动预发布版本号（最新正式 ${latest} → minor+1）：${ver}"
           else
             # 正式版：取触发 tag 去 v 前缀，并与根 VERSION 严格校验一致（ADR-0052 决策 3/6）。
             base="${GITHUB_REF_NAME#v}"
