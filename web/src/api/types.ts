@@ -286,7 +286,7 @@ export interface UpdateCheckView {
   status: UpdateCheckStatus
   // 当前运行版本（dev 构建为 'dev'）
   currentVersion: string
-  // 更新渠道（stable / rc）
+  // 更新渠道（stable / prerelease，ADR-0052）
   channel: string
   // 有可用更新（仅 status=ok 且非 dev 构建时可能为 true）
   hasUpdate: boolean

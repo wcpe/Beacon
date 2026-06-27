@@ -344,6 +344,60 @@ func TestCheckForUpdateDevBuildMarked(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdateRollingPrereleaseUsesNameVersion 滚动预发布渠道：tag=prerelease 非 semver，
+// 版本取 Release name（v<VERSION>）；跨号则报有更新（ADR-0052 滚动路径）。
+func TestCheckForUpdateRollingPrereleaseUsesNameVersion(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
+		releases := []ghRelease{{
+			TagName:    "prerelease", // 移动标签，非 semver
+			Name:       "v0.17.0",    // 版本号在 name
+			Prerelease: true,
+			Body:       "滚动预发布说明",
+			HTMLURL:    "https://example.invalid/pre",
+		}}
+		_ = json.NewEncoder(w).Encode(releases)
+	})
+	svc := NewService(Config{
+		CurrentVersion: "0.16.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelPrerelease, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if res.LatestVersion != "v0.17.0" {
+		t.Fatalf("滚动预发布最新版本应取自 name=v0.17.0，实际 %q", res.LatestVersion)
+	}
+	if !res.HasUpdate {
+		t.Fatal("0.16.0 → 0.17.0 跨号应报有更新")
+	}
+}
+
+// TestCheckForUpdateSameVersionNoUpdate 同 X.Y.Z 滚动覆盖不提示更新（ADR-0052 决策 5）。
+func TestCheckForUpdateSameVersionNoUpdate(t *testing.T) {
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
+		releases := []ghRelease{{TagName: "prerelease", Name: "v0.16.0", Prerelease: true}}
+		_ = json.NewEncoder(w).Encode(releases)
+	})
+	svc := NewService(Config{
+		CurrentVersion: "0.16.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	res, err := svc.CheckForUpdate(context.Background(), ChannelPrerelease, "", "tester", "")
+	if err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if res.HasUpdate {
+		t.Fatal("同号 0.16.0 不应报有更新")
+	}
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {

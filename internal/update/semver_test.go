@@ -2,7 +2,7 @@ package update
 
 import "testing"
 
-// TestCompareSemver 穷举主/次/补丁高低、相等、rc 预发布序、rc 与正式版边界。
+// TestCompareSemver 穷举主/次/补丁高低与相等（ADR-0052：按 X.Y.Z 三段数字判，不再有 rc 预发布段）。
 func TestCompareSemver(t *testing.T) {
 	cases := []struct {
 		a, b string
@@ -15,13 +15,6 @@ func TestCompareSemver(t *testing.T) {
 		{"2.0.0", "1.9.9", 1},  // 主版本高
 		{"1.0.1", "1.0.0", 1},  // 补丁高
 		{"1.0.0", "1.0.1", -1}, // 补丁低
-		// rc 预发布序：rc.N 间按数字
-		{"1.2.0-rc.1", "1.2.0-rc.2", -1},
-		{"1.2.0-rc.2", "1.2.0-rc.1", 1},
-		{"1.2.0-rc.1", "1.2.0-rc.1", 0},
-		// 同主次补丁：预发布 < 正式
-		{"1.2.0-rc.1", "1.2.0", -1},
-		{"1.2.0", "1.2.0-rc.9", 1},
 	}
 	for _, c := range cases {
 		a, err := parseSemver(c.a)
@@ -39,12 +32,13 @@ func TestCompareSemver(t *testing.T) {
 }
 
 // TestParseSemverRejectsInvalid 非法版本号一律拒绝，避免误判更新。
+// ADR-0052：去 rc 预发布段——任何带后缀（含 -rc.N）的版本号均非法。
 func TestParseSemverRejectsInvalid(t *testing.T) {
 	bad := []string{
 		"", "v", "1.2", "1.2.3.4", "1.2.x", "a.b.c",
-		"1.2.0-beta.1", // 仅支持 rc.N 预发布
-		"1.2.0-rc",     // 缺序号
-		"1.2.0-rc.x",   // 序号非数字
+		"1.2.0-beta.1", // 不再支持任何预发布段
+		"1.2.0-rc.1",   // rc 段已退场
+		"1.2.0-rc",     // 任何 - 后缀均拒
 		"-1.0.0",       // 负数
 	}
 	for _, s := range bad {
@@ -54,19 +48,18 @@ func TestParseSemverRejectsInvalid(t *testing.T) {
 	}
 }
 
-// TestIsNewer 覆盖高 / 低 / 相等 / rc 序 / dev 哨兵。
+// TestIsNewer 覆盖跨号高 / 低 / 同号不判 / dev 哨兵（ADR-0052 决策 4/5：同 X.Y.Z 不提示、跨号才提示）。
 func TestIsNewer(t *testing.T) {
 	cases := []struct {
 		current, remote string
 		wantNewer       bool
 		wantErr         bool
 	}{
-		{"1.0.0", "1.0.1", true, false},       // 远端更高
-		{"1.0.1", "1.0.0", false, false},      // 远端更低
-		{"1.0.0", "1.0.0", false, false},      // 相等不算更新
-		{"1.2.0-rc.1", "1.2.0", true, false},  // rc → 正式算更新
-		{"1.2.0", "1.2.0-rc.1", false, false}, // 正式 → rc 不算更新
-		{"1.2.0-rc.1", "1.2.0-rc.2", true, false},
+		{"1.0.0", "1.0.1", true, false},   // 远端跨号更高
+		{"0.16.0", "0.17.0", true, false}, // 跨次版本提示（ADR-0052 决策 5 示例）
+		{"1.0.1", "1.0.0", false, false},  // 远端更低
+		{"1.0.0", "1.0.0", false, false},  // 同号不算更新（滚动覆盖同 X.Y.Z 不提示）
+		{"0.17.0", "0.17.0", false, false},
 		{"dev", "1.0.0", false, false},    // dev 哨兵：不提示、不报错
 		{"1.0.0", "garbage", false, true}, // 远端非法：不提示 + 报错
 	}

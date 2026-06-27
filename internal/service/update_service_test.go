@@ -85,7 +85,7 @@ func TestCheckReportsNewerFromStoreChannel(t *testing.T) {
 		CurrentVersion: "v1.0.0", LatestVersion: "v2.0.0", HasUpdate: true,
 		ReleaseNotes: "说明", ReleaseURL: "https://x/r", PublishedAt: "2026-06-20T00:00:00Z",
 	}}
-	settings := &fakeSettingsReader{channel: "rc", proxy: "http://p:8080", intervalHours: 6}
+	settings := &fakeSettingsReader{channel: "prerelease", proxy: "http://p:8080", intervalHours: 6}
 	svc := newTestUpdateService(core, settings, time.Now)
 
 	v := svc.Check(context.Background(), false, "tester", "1.2.3.4")
@@ -95,10 +95,10 @@ func TestCheckReportsNewerFromStoreChannel(t *testing.T) {
 	if !v.HasUpdate || v.LatestVersion != "v2.0.0" {
 		t.Fatalf("应报有更新且最新 v2.0.0，实际 %+v", v)
 	}
-	if v.Channel != "rc" {
-		t.Fatalf("渠道应取 store 的 rc，实际 %q", v.Channel)
+	if v.Channel != "prerelease" {
+		t.Fatalf("渠道应取 store 的 prerelease，实际 %q", v.Channel)
 	}
-	if core.lastChannel != update.Channel("rc") || core.lastProxy != "http://p:8080" {
+	if core.lastChannel != update.Channel("prerelease") || core.lastProxy != "http://p:8080" {
 		t.Fatalf("应把 store 渠道 / 代理透传给核心，实际 ch=%q proxy=%q", core.lastChannel, core.lastProxy)
 	}
 	if core.lastOperator != "tester" || core.lastClientIP != "1.2.3.4" {
@@ -160,7 +160,7 @@ func TestCheckChannelChangeInvalidatesCache(t *testing.T) {
 	svc := newTestUpdateService(core, settings, func() time.Time { return fixed })
 
 	_ = svc.Check(context.Background(), false, "a", "")
-	settings.channel = "rc" // 渠道改了
+	settings.channel = "prerelease" // 渠道改了
 	_ = svc.Check(context.Background(), false, "a", "")
 	if core.checkCalls != 2 {
 		t.Fatalf("渠道变更应使缓存失效、重新打 GitHub，实际 %d 次", core.checkCalls)
@@ -218,7 +218,7 @@ func TestStatusReadsSnapshot(t *testing.T) {
 // TestApplyUsesStoreChannelAndProxy 触发应用：从 store 读渠道 / 代理透传给核心。
 func TestApplyUsesStoreChannelAndProxy(t *testing.T) {
 	core := &fakeUpdateCore{}
-	settings := &fakeSettingsReader{channel: "rc", proxy: "http://p:9090"}
+	settings := &fakeSettingsReader{channel: "prerelease", proxy: "http://p:9090"}
 	svc := NewUpdateService(core, settings)
 
 	if err := svc.Apply(context.Background(), "tester", "5.6.7.8"); err != nil {
@@ -227,7 +227,7 @@ func TestApplyUsesStoreChannelAndProxy(t *testing.T) {
 	if core.applyCalls != 1 {
 		t.Fatalf("应调一次核心 ApplyUpdate，实际 %d", core.applyCalls)
 	}
-	if core.lastChannel != update.Channel("rc") || core.lastProxy != "http://p:9090" {
+	if core.lastChannel != update.Channel("prerelease") || core.lastProxy != "http://p:9090" {
 		t.Fatalf("应把 store 渠道 / 代理透传，实际 ch=%q proxy=%q", core.lastChannel, core.lastProxy)
 	}
 }

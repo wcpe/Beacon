@@ -32,7 +32,7 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingMetricEnabled, "yesno"},          // bool 解析失败
 		{SettingLogLevel, "TRACE"},               // 枚举外
 		{SettingReverseFetchMaxFileBytes, "0"},   // 低于下界（1KB）
-		{SettingUpdateChannel, "beta"},           // 渠道枚举外（仅 stable/rc）
+		{SettingUpdateChannel, "beta"},           // 渠道枚举外（仅 stable/prerelease）
 		{SettingUpdateAutoCheckEnabled, "on"},    // bool 解析失败
 		{SettingUpdateCheckIntervalHours, "0"},   // 低于下界（1）
 		{SettingUpdateCheckIntervalHours, "169"}, // 高于上界（168）
@@ -47,7 +47,7 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingMetricEnabled, "false"},
 		{SettingLogLevel, "DEBUG"},
 		{SettingAlertWebhookURL, ""},             // URL 允许空（动态停用 webhook）
-		{SettingUpdateChannel, "rc"},             // 渠道枚举内
+		{SettingUpdateChannel, "prerelease"},     // 渠道枚举内（ADR-0052：stable / prerelease）
 		{SettingUpdateAutoCheckEnabled, "false"}, // bool 合法
 		{SettingUpdateCheckIntervalHours, "1"},   // 下界
 		{SettingUpdateCheckIntervalHours, "168"}, // 上界

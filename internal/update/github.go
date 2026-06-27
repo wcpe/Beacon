@@ -13,8 +13,8 @@ import (
 type Channel string
 
 const (
-	ChannelStable Channel = "stable" // 稳定渠道：取最新非 prerelease release
-	ChannelRC     Channel = "rc"     // 预发布渠道：取最新 prerelease release（rc 语义见 ADR-0046）
+	ChannelStable     Channel = "stable"     // 正式渠道：取最新非 prerelease release
+	ChannelPrerelease Channel = "prerelease" // 预发布渠道：取最新 prerelease（滚动预发布，ADR-0052）
 )
 
 // defaultRepo 是默认仓库（owner/name），可经构造入参覆盖（仓址做可配项默认此值，FR-97 见 ADR-0044）。
@@ -28,7 +28,10 @@ type ghAsset struct {
 
 // ghRelease 是 GitHub Release（仅取所需字段）。
 type ghRelease struct {
-	TagName     string    `json:"tag_name"`
+	TagName string `json:"tag_name"`
+	// Name 为 Release 标题。滚动预发布的 tag 为移动标签（如 prerelease）非 semver，
+	// 版本号写在 name（v<VERSION>）；releaseVersion 在 tag 非 semver 时回退解析 name（ADR-0052）。
+	Name        string    `json:"name"`
 	Prerelease  bool      `json:"prerelease"`
 	Draft       bool      `json:"draft"`
 	Body        string    `json:"body"`
@@ -76,7 +79,7 @@ func (c *releaseClient) latestForChannel(ctx context.Context, ch Channel) (*ghRe
 			if !r.Prerelease {
 				return r, nil
 			}
-		case ChannelRC:
+		case ChannelPrerelease:
 			if r.Prerelease {
 				return r, nil
 			}
@@ -114,6 +117,19 @@ func (c *releaseClient) listReleases(ctx context.Context) ([]ghRelease, error) {
 		return nil, fmt.Errorf("解析 release 列表失败: %w", err)
 	}
 	return releases, nil
+}
+
+// releaseVersion 解析 Release 的语义版本字符串（vX.Y.Z）。
+// 正式版 tag 即 vX.Y.Z，直接用 tag；滚动预发布 tag 为移动标签（非 semver），
+// 版本号写在 name（v<VERSION>），此时回退解析 name（ADR-0052）。两者都非 semver 即返回错误（当未知处理）。
+func releaseVersion(r *ghRelease) (string, error) {
+	if _, err := parseSemver(r.TagName); err == nil {
+		return r.TagName, nil
+	}
+	if _, err := parseSemver(r.Name); err == nil {
+		return r.Name, nil
+	}
+	return "", fmt.Errorf("无法从 tag(%q)/name(%q) 解析语义版本", r.TagName, r.Name)
 }
 
 // findAsset 在 release 资产中按精确文件名找资产（本平台二进制 / SHA256SUMS.txt）。

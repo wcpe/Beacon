@@ -90,6 +90,7 @@ func NewService(cfg Config) *Service {
 func (s *Service) Snapshot() Progress { return s.progress.Snapshot() }
 
 // assetName 返回本平台二进制资产名 beacon-<ver>-<os>-<arch>[.exe]。
+// version 去前导 "v" 与 CI 产物命名同口径（CI 用 ${GITHUB_REF_NAME#v} / 根 VERSION，均无 v 前缀）。
 // 仅 5 个已发布平台返回名 + true：linux-amd64/arm64、windows-amd64、darwin-amd64/arm64；其余返回 false（不可自更新）。
 func assetName(version string) (string, bool) {
 	supported := map[string]bool{
@@ -103,7 +104,8 @@ func assetName(version string) (string, bool) {
 	if !supported[key] {
 		return "", false
 	}
-	name := fmt.Sprintf("beacon-%s-%s-%s", version, runtime.GOOS, runtime.GOARCH)
+	ver := strings.TrimPrefix(version, "v")
+	name := fmt.Sprintf("beacon-%s-%s-%s", ver, runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
@@ -131,15 +133,20 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 		s.progress.fail(fmt.Sprintf("查 release 失败: %v", err))
 		return failRes, err
 	}
-	hasUpdate, cmpErr := IsNewer(s.currentVersion, rel.TagName)
+	// 解析语义版本（tag 优先、滚动预发布回退 name，ADR-0052）；解析失败按未知 / 无更新处理。
+	latest, verErr := releaseVersion(rel)
+	if verErr != nil {
+		slog.Warn("解析远端 release 版本失败，按无可用更新处理", "tag", rel.TagName, "name", rel.Name, "错误", verErr)
+	}
+	hasUpdate, cmpErr := IsNewer(s.currentVersion, latest)
 	if cmpErr != nil {
-		// 版本无法比较（远端 tag 非法 / 当前 dev）：不报 5xx 语义，按「无更新」返回，错误仅记日志。
-		slog.Warn("更新版本比较异常，按无可用更新处理", "当前", s.currentVersion, "远端", rel.TagName, "错误", cmpErr)
+		// 版本无法比较（远端版本非法 / 当前 dev）：不报 5xx 语义，按「无更新」返回，错误仅记日志。
+		slog.Warn("更新版本比较异常，按无可用更新处理", "当前", s.currentVersion, "远端", latest, "错误", cmpErr)
 	}
 	res := CheckResult{
 		Channel:        ch,
 		CurrentVersion: s.currentVersion,
-		LatestVersion:  rel.TagName,
+		LatestVersion:  latest,
 		HasUpdate:      hasUpdate,
 		IsDevBuild:     strings.TrimSpace(s.currentVersion) == devVersion,
 		ReleaseNotes:   rel.Body,
@@ -147,8 +154,8 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 		PublishedAt:    rel.PublishedAt,
 	}
 	s.progress.setPhase(PhaseIdle, "")
-	s.writeAudit(model.ActionSystemUpdateCheck, rel.TagName, model.ResultOK,
-		fmt.Sprintf("渠道=%s 当前=%s 最新=%s 有更新=%v", ch, s.currentVersion, rel.TagName, hasUpdate),
+	s.writeAudit(model.ActionSystemUpdateCheck, latest, model.ResultOK,
+		fmt.Sprintf("渠道=%s 当前=%s 最新=%s 有更新=%v", ch, s.currentVersion, latest, hasUpdate),
 		operator, clientIP)
 	return res, nil
 }
@@ -169,7 +176,11 @@ func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operato
 	if err != nil {
 		return s.failApply("", fmt.Errorf("查 release 失败: %w", err), operator, clientIP)
 	}
-	target := rel.TagName
+	// 目标版本取语义版本（tag 优先、滚动预发布回退 name，ADR-0052），同时用于判新与本平台资产名。
+	target, verErr := releaseVersion(rel)
+	if verErr != nil {
+		return s.failApply("", fmt.Errorf("解析远端 release 版本失败: %w", verErr), operator, clientIP)
+	}
 	s.progress.reset(target)
 
 	hasUpdate, cmpErr := IsNewer(s.currentVersion, target)

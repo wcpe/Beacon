@@ -589,7 +589,7 @@ data: {}
 
 ### 控制面在线更新（FR-99，见 [ADR-0044](adr/0044-control-plane-online-self-update.md)）
 
-把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`rc`）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。**一份端点契约真源（FR-100 前端消费）。**
+把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`prerelease`，ADR-0052）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。判新按语义版本号 `X.Y.Z` 比较（渠道版 > 运行版才报有更新，同号不报、跨号才报，FR-117）。**一份端点契约真源（FR-100 前端消费）。**
 
 | 端点 | 说明 |
 |---|---|
@@ -631,7 +631,7 @@ data: {}
 | `GET /admin/v1/settings` | 列全部热改项当前值 + 类型 + 默认 + 说明：`{ items: [{ key, value, valueType, default, desc, isStartup }] }`。`valueType ∈ {int,bool,string}`；`isStartup` 恒 `false`（白名单内皆热改项）。读对 full / readonly 都开。**含凭据项（`update.proxy-url`）的 `value` 回显脱敏**：userinfo 段掩为 `***`（如 `http://***:***@h:port`），落库存原值仅供运行（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)） |
 | `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>" }` → `{ ok: true }`。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。每次改入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**；含凭据项的新值脱敏后再记，FR-98）。**含凭据项「未改密码」语义**：若提交的 `value` 仍是当前值的脱敏占位（如原样回传 `http://***:***@h`），后端**保留原值不覆盖**、不入审计 |
 
-热改 key 白名单（16 项）：`health.degraded-after-sec` / `health.ttl-sec` / `health.offline-grace-sec` / `health.scan-interval-sec`、`metric.enabled` / `metric.sample-interval-sec` / `metric.retention-hours`、`longpoll.max-hold-ms`、`alert.webhook-url` / `alert.webhook-timeout-ms`、`log.level`（枚举 `ERROR|WARN|INFO|DEBUG`）、`reverse-fetch.max-file-bytes`（反向抓取单文件上限，默认 1MB；控制面据此 + agent 上报 size 重算 `overThreshold`，不信 agent 标记）、`update.proxy-url`（更新出站代理，`http(s)://host:port` 可含 `user:pass`，空=直连；仅作用于控制面更新检查/下载出站、不影响 webhook；含凭据故回显/审计/日志脱敏，FR-98 见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）、`update.channel`（更新渠道枚举 `stable|rc`，默认 `stable`，FR-101）、`update.auto-check-enabled`（是否自动检查更新，bool，默认 `true`，FR-101）、`update.check-interval-hours`（自动检查周期小时，`int [1,168]`，默认 6，FR-101）。`config.yml` 对这些项仅作**首启种子**：store 缺该 key 时才用文件值填，已 seed 后改文件不影响运行值。
+热改 key 白名单（16 项）：`health.degraded-after-sec` / `health.ttl-sec` / `health.offline-grace-sec` / `health.scan-interval-sec`、`metric.enabled` / `metric.sample-interval-sec` / `metric.retention-hours`、`longpoll.max-hold-ms`、`alert.webhook-url` / `alert.webhook-timeout-ms`、`log.level`（枚举 `ERROR|WARN|INFO|DEBUG`）、`reverse-fetch.max-file-bytes`（反向抓取单文件上限，默认 1MB；控制面据此 + agent 上报 size 重算 `overThreshold`，不信 agent 标记）、`update.proxy-url`（更新出站代理，`http(s)://host:port` 可含 `user:pass`，空=直连；仅作用于控制面更新检查/下载出站、不影响 webhook；含凭据故回显/审计/日志脱敏，FR-98 见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）、`update.channel`（更新渠道枚举 `stable|prerelease`，默认 `stable`，FR-117/ADR-0052）、`update.auto-check-enabled`（是否自动检查更新，bool，默认 `true`，FR-101）、`update.check-interval-hours`（自动检查周期小时，`int [1,168]`，默认 6，FR-101）。`config.yml` 对这些项仅作**首启种子**：store 缺该 key 时才用文件值填，已 seed 后改文件不影响运行值。
 
 ### 审计与环境
 | 端点 | 说明 |

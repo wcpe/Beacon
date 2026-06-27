@@ -30,9 +30,9 @@ const (
 	SettingUndoWindowHours          = "undo.window-hours"
 )
 
-// updateChannels 是 update.channel 的合法枚举集（stable=正式版线、rc=预发布版线，FR-101）。
+// updateChannels 是 update.channel 的合法枚举集（stable=正式版线、prerelease=滚动预发布线，FR-117/ADR-0052）。
 var updateChannels = map[string]struct{}{
-	"stable": {}, "rc": {},
+	"stable": {}, "prerelease": {},
 }
 
 // proxyURLValid 校验 update.proxy-url：空串=直连合法；非空须为 http/https 且 host:port 合法（FR-98，见 ADR-0047）。
@@ -139,7 +139,7 @@ var settingsWhitelist = map[string]settingMeta{
 		defaultFromConfig: func(c config.Config) string { return c.Update.ProxyURL },
 	},
 	SettingUpdateChannel: {
-		valueType: model.SettingValueTypeString, desc: "更新渠道：stable（正式版）/ rc（预发布版）",
+		valueType: model.SettingValueTypeString, desc: "更新渠道：stable（正式版）/ prerelease（滚动预发布版）",
 		enumOK: func(v string) bool {
 			_, ok := updateChannels[v]
 			return ok

@@ -1,6 +1,6 @@
 // 版本与更新独立页单测（FR-100，ADR-0048）：
 // 锁定行为——
-// ① 版本信息渲染当前版本 + 渠道选择（stable/rc 下拉）；切渠道写 update.channel 并触发强制重查；
+// ① 版本信息渲染当前版本 + 渠道选择（stable/prerelease 下拉）；切渠道写 update.channel 并触发强制重查；
 // ② 有更新时展示可用版本 / release 日志（纯文本安全渲染）+「立即更新」；点击二次确认后调 triggerUpdate；
 // ③「立即检查」调 checkUpdate(force=true)；
 // ④ 网络代理表单编辑 update.proxy-url 并保存（未改禁用保存）；
@@ -116,8 +116,8 @@ describe('VersionUpdatePage 版本信息 + 渠道（FR-100）', () => {
     const channelSelect = await screen.findByLabelText('更新渠道')
     await userEvent.click(channelSelect)
     const listbox = await screen.findByRole('listbox')
-    await userEvent.click(within(listbox).getByRole('option', { name: 'rc' }))
-    await waitFor(() => expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.channel', 'rc'))
+    await userEvent.click(within(listbox).getByRole('option', { name: 'prerelease' }))
+    await waitFor(() => expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.channel', 'prerelease'))
     // 切渠道后强制重查（force=true）
     await waitFor(() => expect(vi.mocked(checkUpdate)).toHaveBeenCalledWith(true))
   })

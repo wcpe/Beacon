@@ -12,32 +12,25 @@ import (
 // devVersion 是未经打包构建（直接 go run）时的版本哨兵，视为未知、不参与更新比较 / 不提示更新。
 const devVersion = "dev"
 
-// semver 是解析后的最小语义版本（仅支持 vX.Y.Z 与可选 -rc.N 预发布段，FR-97 不引第三方 semver 库）。
+// semver 是解析后的最小语义版本（仅支持 vX.Y.Z 三段数字，FR-117/ADR-0052：去 rc 预发布段，按版本号判新）。
 type semver struct {
 	major, minor, patch int
-	// isPrerelease 标记是否带 -rc.N 预发布段；prerelease 版本低于同主次补丁的正式版。
-	isPrerelease bool
-	// rc 为预发布序号（-rc.N 的 N）；非预发布时无意义。
-	rc int
 }
 
-// parseSemver 解析 vX.Y.Z 或 X.Y.Z，可带 -rc.N 预发布段。
-// 容忍可选前导 "v"；格式非法返回错误（调用方据此当未知处理、不误判更新）。
+// parseSemver 解析 vX.Y.Z 或 X.Y.Z（容忍可选前导 "v"）。
+// ADR-0052：渠道收敛为正式 / 预发布、按 X.Y.Z 判新，**不再支持任何预发布后缀**（含 -rc.N）；
+// 带后缀一律视为非法 → 解析失败，调用方据此当未知处理、不误判更新。
 func parseSemver(s string) (semver, error) {
 	raw := strings.TrimPrefix(strings.TrimSpace(s), "v")
 	if raw == "" {
 		return semver{}, fmt.Errorf("版本号为空")
 	}
-
-	// 切出预发布段：core[-pre]。仅支持 -rc.N 形式的预发布。
-	core := raw
-	var pre string
-	if idx := strings.IndexByte(raw, '-'); idx >= 0 {
-		core = raw[:idx]
-		pre = raw[idx+1:]
+	// 任何 '-' 后缀（预发布 / build 元数据）均拒：滚动预发布与正式版都用纯 X.Y.Z。
+	if strings.ContainsAny(raw, "-+") {
+		return semver{}, fmt.Errorf("版本号不支持后缀，须为纯 X.Y.Z，实际 %q", s)
 	}
 
-	parts := strings.Split(core, ".")
+	parts := strings.Split(raw, ".")
 	if len(parts) != 3 {
 		return semver{}, fmt.Errorf("版本号须为 X.Y.Z 三段，实际 %q", s)
 	}
@@ -51,18 +44,6 @@ func parseSemver(s string) (semver, error) {
 	}
 	if v.patch, err = parseNonNegInt(parts[2]); err != nil {
 		return semver{}, fmt.Errorf("补丁版本号非法: %q", s)
-	}
-
-	if pre != "" {
-		// 仅支持 rc.N（FR-97 渠道只产 stable=vX.Y.Z 与 rc=vX.Y.Z-rc.N，见 ADR-0044/0046）。
-		rcStr, ok := strings.CutPrefix(pre, "rc.")
-		if !ok {
-			return semver{}, fmt.Errorf("预发布段仅支持 rc.N，实际 %q", s)
-		}
-		if v.rc, err = parseNonNegInt(rcStr); err != nil {
-			return semver{}, fmt.Errorf("预发布序号非法: %q", s)
-		}
-		v.isPrerelease = true
 	}
 	return v, nil
 }
@@ -80,8 +61,7 @@ func parseNonNegInt(s string) (int, error) {
 }
 
 // compareSemver 比较两个版本：a<b 返回 -1，a==b 返回 0，a>b 返回 1。
-// 序：先比主、次、补丁数字；主次补丁相同时，预发布 < 正式（1.2.0-rc.1 < 1.2.0）；
-// 两者都预发布则按 rc 序号比（rc.1 < rc.2）。
+// 序：依次比主、次、补丁数字；三段全等即相等（同 X.Y.Z，ADR-0052 不判更新）。
 func compareSemver(a, b semver) int {
 	if c := cmpInt(a.major, b.major); c != 0 {
 		return c
@@ -89,20 +69,7 @@ func compareSemver(a, b semver) int {
 	if c := cmpInt(a.minor, b.minor); c != 0 {
 		return c
 	}
-	if c := cmpInt(a.patch, b.patch); c != 0 {
-		return c
-	}
-	// 主次补丁相同：正式版高于预发布版。
-	switch {
-	case a.isPrerelease && !b.isPrerelease:
-		return -1
-	case !a.isPrerelease && b.isPrerelease:
-		return 1
-	case a.isPrerelease && b.isPrerelease:
-		return cmpInt(a.rc, b.rc)
-	default:
-		return 0
-	}
+	return cmpInt(a.patch, b.patch)
 }
 
 // cmpInt 返回 a 与 b 的符号比较（-1/0/1）。

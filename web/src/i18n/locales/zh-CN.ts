@@ -264,8 +264,8 @@ export const zhCN = {
     sectionVersion: '版本信息',
     sectionProxy: '网络代理',
     sectionPrefs: '更新设置',
-    // 渠道选择说明：stable 稳定版 / rc 预发布候选版，切换后自动重新检查
-    channelHint: 'stable 稳定版 / rc 预发布候选版；切换后将按新渠道重新检查更新。',
+    // 渠道选择说明：stable 正式版 / prerelease 滚动预发布版，切换后自动重新检查
+    channelHint: 'stable 正式版 / prerelease 滚动预发布版；切换后将按新渠道重新检查更新。',
     // 切渠道成功提示
     channelSwitched: '已切换更新渠道，正在按新渠道重新检查…',
     // 网络代理表单

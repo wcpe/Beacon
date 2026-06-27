@@ -39,8 +39,8 @@ import type { SettingView, UpdateProgressView } from '@/api/types'
 
 // 进度轮询周期（毫秒）：触发应用后短周期反映 phase/percent，直到重启断连。
 const PROGRESS_POLL_MS = 1500
-// 渠道合法枚举（与后端 updateChannels / settingsEditing 同口径，FR-101）。
-const UPDATE_CHANNELS = ['stable', 'rc'] as const
+// 渠道合法枚举（与后端 updateChannels 同口径，FR-117/ADR-0052：stable 正式版 / prerelease 滚动预发布）。
+const UPDATE_CHANNELS = ['stable', 'prerelease'] as const
 // 更新设置周期上下界（与后端白名单 [1,168] 一致）。
 const MIN_INTERVAL_HOURS = 1
 const MAX_INTERVAL_HOURS = 168
