@@ -15,30 +15,50 @@
 - 如需经环境变量覆盖（如容器内、CI、临时改口令），真实环境变量与手动放置的 `.env` 仍生效，优先级 `真实 env > .env > config.yml`。
 - 管理员口令 / 签名密钥强随机、不入库（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)，非固定弱默认口令）；生产 MySQL 仍走上面的 compose 路径。
 
+### 1.2 进程监督与崩溃自启（systemd / docker restart 推荐）
+控制面是单进程，**进程崩溃自启交外部监督**（[ADR-0053](adr/0053-single-binary-self-replace.md)）——Beacon 自身不再带常驻监督进程。在线更新的「换版自替换 + 自动回滚」依赖外部监督在崩溃后重新拉起进程来累加重试计数、触发回退（见 [§2.1](#21-单进程自替换--自动回滚fr-119adr-0053)），故**生产部署务必启用以下任一监督**：
+- **容器（推荐）**：`docker-compose.yml` 已配 `restart: unless-stopped`，beacon 容器崩溃即由 Docker 自动重启，无需额外配置。
+- **裸跑（systemd）**：用 systemd 托管 `beacon`，关键是 `Restart=on-failure` + `RestartSec`，示例：
+  ```ini
+  [Unit]
+  Description=Beacon 控制面
+  After=network-online.target
+
+  [Service]
+  Type=simple
+  WorkingDirectory=/opt/beacon
+  ExecStart=/opt/beacon/beacon -config /opt/beacon/config.yml
+  Restart=on-failure
+  RestartSec=3s
+
+  [Install]
+  WantedBy=multi-user.target
+  ```
+  `systemctl daemon-reload && systemctl enable --now beacon` 后即托管；崩溃 3 秒后自动重启。
+- **裸跑无任何监督**：进程崩溃即停、需手动启动；此时换版后「新版起不来」的自动回退要到下次手动启动才触发（可接受，但不建议生产如此部署）。
+
 ## 2. 升级
 - **升级前先备份 MySQL**（见 §4）。
 - 控制面：拉新镜像 → `docker compose up -d beacon`（mysql 数据卷不动）。AutoMigrate 只增不删；删列 / 改类型等复杂变更它不处理，需要时再引入迁移工具并另立 ADR。
 - agent：替换 jar 重启子服。控制面与 agent 应同次发布、版本号一致（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。
-- **发布产物平台覆盖（FR-102）**：每个正式 tag 由 CI 在原生 runner 上 CGO=1 构建（非交叉编译，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 个平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每个平台同时产出主二进制 `beacon-<ver>-<target>[.exe]` 与 launcher 监督进程 `beacon-launcher-<ver>-<target>[.exe]`，并由 `SHA256SUMS.txt` 一并校验。双端 agent jar 与平台无关、各发布只构建一次。
+- **发布产物平台覆盖（FR-102）**：每个正式 tag 由 CI 在原生 runner 上 CGO=1 构建（非交叉编译，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 个平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每个平台产出单一主二进制 `beacon-<ver>-<target>[.exe]`，并由 `SHA256SUMS.txt` 校验。双端 agent jar 与平台无关、各发布只构建一次。
 
 ### 2.2 滚动预发布渠道（FR-117，[ADR-0052](adr/0052-rolling-prerelease-channel.md)，取代 [ADR-0046](adr/0046-rc-prerelease-channel.md) 的 rc 模型）
 渠道收敛为**正式版（stable）/ 滚动预发布（prerelease）两条**，预发布随 master 自动滚动刷新，便于试用最新并喂 in-app 在线更新使更新功能可测：
 
 - **正式版触发（不变）**：打**无后缀**正式 tag `vX.Y.Z`（如 `git tag v0.17.0 && git push origin v0.17.0`），CI 的 `release.yml` 触发、`prerelease=false`，行为同前；tag↔VERSION 严格校验（tag 去 `v` == 根 `VERSION`）。
-- **滚动预发布触发**：**推 master 即自动发布**。CI 的 `prerelease.yml` 由 master push 触发，调用同一套构建（5 平台原生矩阵含 launcher + 双端 jar + `SHA256SUMS.txt`），以**固定移动 tag `prerelease`** force-update **覆盖发布同一个** prerelease Release（`prerelease=true`，**只留最新一份、不堆 Release 列表**）；版本号取根 `VERSION`（资产名 `beacon-<VERSION>-...`、Release 标题 `v<VERSION>`），不参与 tag↔VERSION 校验。release notes 自动前置中文头「⚠ 滚动预发布版本：随 master 自动覆盖更新…勿用于生产」。
+- **滚动预发布触发**：**推 master 即自动发布**。CI 的 `prerelease.yml` 由 master push 触发，调用同一套构建（5 平台原生矩阵单一主二进制 + 双端 jar + `SHA256SUMS.txt`），以**固定移动 tag `prerelease`** force-update **覆盖发布同一个** prerelease Release（`prerelease=true`，**只留最新一份、不堆 Release 列表**）；版本号取根 `VERSION`（资产名 `beacon-<VERSION>-...`、Release 标题 `v<VERSION>`），不参与 tag↔VERSION 校验。release notes 自动前置中文头「⚠ 滚动预发布版本：随 master 自动覆盖更新…勿用于生产」。
 - **渠道判定（按版本号）**：控制面在线自更新（FR-99/FR-100）的「正式（stable）」渠道按 GitHub API 最新**非 prerelease** release 判定，「预发布（prerelease）」渠道按最新 **prerelease** release 判定；**是否有更新按语义版本号 `X.Y.Z` 比较**——渠道版 > 当前运行版才提示，**同 `X.Y.Z` 滚动覆盖不提示**（你已在最新，重拉 / 重启即可），**跨号才提示**。滚动预发布的版本号取 Release 标题（`v<VERSION>`），因其 tag 为移动标签 `prerelease` 非语义版本。
 - **用途**：给运维 / 试用方装预发布产物先验，并让 in-app 更新 / 切渠道功能有真实 Release 可检可更可测；确认无误后打无后缀正式 tag 发版。
 - **回退**：预发布仅供试用、不进生产；发现问题直接弃用、修后随下次 master push 自动覆盖刷新即可，无需特殊回滚。生产升级一律以**正式 Release** 为准。
 - **注意**：全局技能 `sdd-publish-snapshot` 基于旧快照 / rc 模型，与本节滚动预发布模型方向趋同但仍属全局插件；本仓库预发布以本节流程（ADR-0052）为准。
 
-### 2.1 内置 launcher 监督进程（FR-96，[ADR-0045](adr/0045-builtin-launcher-supervisor.md)）
-发布产物含独立第二二进制 `beacon-launcher[.exe]`（与主二进制 `beacon[.exe]` 同目录、同版本）。**裸跑单二进制时**，可改为跑 `beacon-launcher` 代替直接跑 `beacon`，使控制面无需外部 systemd / docker 即**崩溃自动重启**：
-- launcher 以子进程方式启动同目录的 `beacon[.exe]`，**透传你给 launcher 的命令行参数**（如 `beacon-launcher -config /etc/beacon/config.yml`）与全部环境变量，控制台日志直接继承显示。
-- 主进程正常退出（如 `Ctrl+C` 优雅关停）→ launcher 随之退出、不重启。崩溃 / 被信号杀死 → launcher 按**固定间隔 3 秒**重启，连续失败超 **5 次**即停并打 ERROR（避免疯狂重启，需人工排查）。
-- **端口先退后起**：在线更新（后续 FR-97）或重启时，主进程先优雅关停释放端口、退出，launcher 再拉起新进程重新监听同端口——其间有**亚秒级**端口不可用窗口；agent 在此期间按本地快照继续（fail-static），玩家进服不受影响。
-- **直接跑 `beacon`（不经 launcher）仍完全可用**，只是退化为「无自动重启」，崩溃后需手动重启；用不用 launcher 取决于是否需要免外部监督的自愈。
-- **容器形态（FR-102 已落地）**：Docker 镜像 `ENTRYPOINT` 已切到 `beacon-launcher`，与裸跑统一为「launcher 监督主进程」两形态；镜像构建阶段同时产出 `beacon` 与 `beacon-launcher` 并同放 `/usr/local/bin`（launcher 按 `os.Executable()` 同目录定位 `beacon`）。**容器内在线更新（后续 FR-97）换二进制仅临时有效**——镜像不可变，容器一旦重建即丢更新；**容器形态的生产升级一律以重拉镜像为准**（拉新镜像 → `docker compose up -d beacon`，见 §2 上文），不要依赖容器内自更新。
-- 本期 launcher **不自更新**（不查 Release / 不下载），仅做「监督 + 重启 + 换二进制」机制；自动检查与下载更新的能力在后续版本（FR-97）提供。
+### 2.1 单进程自替换 + 自动回滚（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）
+控制面是**单一 `beacon[.exe]`**——在线更新由主进程在自身进程内完成自我替换，无独立监督进程、无退出码交接。换版机制：
+- **自替换换版**：在线更新（FR-97）下载校验落位 `beacon.new[.exe]`（运行二进制同目录同卷）后，主进程**优雅关停释放端口** → `rename` 让位三步（`beacon`→`beacon.old`、`beacon.new`→`beacon`）→ spawn 新进程（继承命令行参数 / 环境变量 / 工作目录 / 标准流）→ 旧进程正常退出。Windows 同样允许 rename 运行中的 exe（重命名只改目录项、已打开句柄仍指向原映像），故让位可行；换二进制失败则就地回退、以旧版重启兜底。其间有**亚秒级**端口不可用窗口，agent 按本地快照继续（fail-static），玩家进服不受影响。
+- **自动回滚（崩溃循环闭合）**：换二进制成功后写 sentinel 标记（运行二进制同目录小文件，记崩溃计数 `attempt` + 目标版本）。新版**启动早期**（HTTP 起之前）自检——稳定运行**过验证期 10 秒**或收到正常关停信号（如 `Ctrl+C` / `docker stop`，视为新版已起来被操作）即判定成功，删 sentinel + 删 `.old` 清理备份；若换版后**反复起不来**（崩溃计数达阈值，默认 3）则在启动早期自动 rename 回退 `.old` 并重启旧版，最终以旧版稳定运行——**不依赖任何外部进程**。坏新版归档为 `beacon.failed[.exe]` 便于事后排查。
+- **崩溃自启交外部监督**：进程崩溃由 docker / systemd 拉起（部署见 [§1.2](#12-进程监督与崩溃自启systemd--docker-restart-推荐)），自动回滚依赖此重启逐次累加 `attempt` 至阈值后回退。**裸跑 `beacon` 无外部监督时**新版崩溃即停（可接受），但仍可靠下次手动启动触发自检回退。
+- **容器形态**：Docker 镜像 `ENTRYPOINT` 为 `beacon`，崩溃自启靠 compose `restart` 策略。**容器内在线更新换二进制仅临时有效**——镜像不可变，容器一旦重建即丢更新；**容器形态的生产升级一律以重拉镜像为准**（拉新镜像 → `docker compose up -d beacon`，见 §2 上文），不要依赖容器内自更新。
 
 ## 3. 健康与观测
 - 健康探针：`GET /admin/v1/namespaces`（只读、无副作用）。

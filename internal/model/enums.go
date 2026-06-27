@@ -203,7 +203,7 @@ const (
 	ActionConfigUndoFetch   = "config.undo-fetch"
 	// 控制面在线更新·检查（FR-97，见 ADR-0044）：按渠道查 Release 比对当前版本，detail 含渠道 / 目标版本 / 有无可用更新
 	ActionSystemUpdateCheck = "system.update-check"
-	// 控制面在线更新·应用（FR-97）：下载 + 校验 + 落位 pending 成功，请求 launcher 换二进制重启，detail 含目标版本
+	// 控制面在线更新·应用（FR-97/FR-119）：下载 + 校验 + 落位 pending 成功，请求主进程自替换换二进制重启，detail 含目标版本
 	ActionSystemUpdateApply = "system.update-apply"
 	// 控制面在线更新·失败（FR-97）：任一阶段失败保留旧二进制不退，detail 含目标版本 / 失败原因（不含敏感）
 	ActionSystemUpdateFailed = "system.update-failed"

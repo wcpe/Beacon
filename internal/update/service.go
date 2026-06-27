@@ -53,9 +53,9 @@ type Service struct {
 	repo           string // owner/name
 	// newHTTPClient 按代理构造出站 client（注入 internal/httpx.NewClient，使 core 不裸用 net/http）。
 	newHTTPClient func(proxyURL string, timeout time.Duration) (*http.Client, error)
-	// requestRestart 在落位 pending 成功后回调，触发主进程以 exitcode.RequestUpdateRestart 退出交还 launcher。
+	// requestRestart 在落位 pending 成功后回调，触发主进程优雅关停并自替换二进制重启（FR-119，见 ADR-0053）。
 	requestRestart func()
-	// pendingPath 是 launcher 约定的 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]）。
+	// pendingPath 是 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]），自替换时由主进程 rename 让位换上。
 	pendingPath string
 	audit       AuditWriter
 	progress    *progressTracker
@@ -66,7 +66,7 @@ type Config struct {
 	CurrentVersion string
 	APIBase        string // 空=官方 api.github.com
 	Repo           string // 空=wcpe/Beacon
-	PendingPath    string // launcher 约定 pending 路径
+	PendingPath    string // pending 新二进制路径（自替换换位点）
 	NewHTTPClient  func(proxyURL string, timeout time.Duration) (*http.Client, error)
 	RequestRestart func()
 	Audit          AuditWriter
@@ -162,7 +162,7 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 
 // ApplyUpdate 执行一次完整更新：查 release → 下载本平台资产 → SHA256 校验 → 原子落位 pending → 请求重启。
 // 任何阶段失败：保留旧二进制、清理临时文件、状态 failed、记 system.update-failed、返回错误（进程不退）。
-// 成功落位后记 system.update-apply 并回调 requestRestart（主进程将以退出码 70 退出交还 launcher）。
+// 成功落位后记 system.update-apply 并回调 requestRestart（主进程将优雅关停并自替换二进制重启）。
 func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operator, clientIP string) error {
 	s.progress.reset("")
 
@@ -239,11 +239,11 @@ func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operato
 
 	s.progress.setPhase(PhaseReadyRestart, target)
 	s.writeAudit(model.ActionSystemUpdateApply, target, model.ResultOK,
-		fmt.Sprintf("渠道=%s 目标版本=%s 已落位 pending，请求 launcher 换二进制重启", ch, target),
+		fmt.Sprintf("渠道=%s 目标版本=%s 已落位 pending，请求自替换换二进制重启", ch, target),
 		operator, clientIP)
-	slog.Info("更新已落位 pending，请求 launcher 换二进制重启", "目标版本", target, "pending", s.pendingPath)
+	slog.Info("更新已落位 pending，请求自替换换二进制重启", "目标版本", target, "pending", s.pendingPath)
 
-	// 触发主进程以退出码 70 退出，交还 launcher 换二进制。
+	// 触发主进程优雅关停并自替换换二进制重启（FR-119，见 ADR-0053）。
 	if s.requestRestart != nil {
 		s.requestRestart()
 	}

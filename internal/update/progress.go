@@ -11,7 +11,7 @@ const (
 	PhaseDownloading  Phase = "downloading"   // 下载资产中
 	PhaseVerifying    Phase = "verifying"     // SHA256 校验中
 	PhaseStaging      Phase = "staging"       // 原子落位 pending 中
-	PhaseReadyRestart Phase = "ready-restart" // 已落位、已请求重启交还 launcher
+	PhaseReadyRestart Phase = "ready-restart" // 已落位、已请求自替换重启
 	PhaseFailed       Phase = "failed"        // 任一阶段失败（保留旧二进制、进程不退）
 )
 

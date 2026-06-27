@@ -621,7 +621,7 @@ data: {}
 ```
 `phase ∈ {idle, checking, downloading, verifying, staging, ready-restart, failed}`；`percent` 仅下载阶段有意义；`error` 仅 `failed` 非空。
 
-`POST /admin/v1/system/update`（无请求体）：调更新核心执行「下载 → SHA256 校验 → 原子落位 pending → 请求重启」。落位成功回 `202 { "accepted": true }`，随后进程以退出码 `70` 退出交还 launcher 换二进制重启（FR-96）；任一阶段失败 → 保留旧二进制、进程不退，回 `500 INTERNAL`（失败原因记 `system.update-failed` 审计与日志，不含敏感）。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
+`POST /admin/v1/system/update`（无请求体）：调更新核心执行「下载 → SHA256 校验 → 原子落位 pending → 请求重启」。落位成功回 `202 { "accepted": true }`，随后主进程优雅关停 → 自替换（`rename` 让位三步）+ spawn 新进程重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）；任一阶段失败 → 保留旧二进制、进程不退，回 `500 INTERNAL`（失败原因记 `system.update-failed` 审计与日志，不含敏感）。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
 
 ### 运维设置（FR-61，见 [ADR-0038](adr/0038-ops-settings-store-hot-reload.md)）
 热改项真源由 `config.yml` 移到 DB 设置 store；改设置即热生效、免重启。**启动 / 安全项绝不出现在此 API**（`http-addr` / `database.*` / `auth.*` / `agent-token` / `git-export.*` 仍以文件 + env 为真源）。

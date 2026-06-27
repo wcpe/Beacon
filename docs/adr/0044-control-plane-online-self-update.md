@@ -1,6 +1,6 @@
 # ADR-0044：控制面在线自更新核心（按渠道查 Release → 下载 → SHA256 → 原子落位 → 退出码交还 launcher → 回滚）
 
-**状态**：已接受
+**状态**：已接受（决策 5/6/7 中「以退出码 70 交还 launcher 换二进制重启 / 换了起不来由 launcher 兜底」的 launcher 交接部分被 [ADR-0053](0053-single-binary-self-replace.md) 取代为主进程单进程自替换 + 自动回滚；查 Release / 下载 / SHA256 校验 / 原子落位 / 进度内存态 / 审计等其余决策不变）
 
 ## 背景
 

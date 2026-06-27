@@ -50,7 +50,7 @@ func (h *UpdateHandler) Status(w http.ResponseWriter, _ *http.Request) {
 
 // Apply 处理 POST /admin/v1/system/update：触发应用更新（写方法，readonly 经 readonlyWriteGuard 403）。
 // 调更新核心下载 → 校验 → 落位 pending → 请求重启；任一阶段失败保留旧二进制不退、返回对应错误。
-// 落位成功后进程将以退出码 70 退出交还 launcher，故仅在失败时返回错误体，成功时回 202 表示已接受并开始应用。
+// 落位成功后主进程将优雅关停并自替换换二进制重启，故仅在失败时返回错误体，成功时回 202 表示已接受并开始应用。
 func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Apply(r.Context(), auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)

@@ -22,7 +22,6 @@ import (
 	"github.com/wcpe/Beacon/internal/auth"
 	"github.com/wcpe/Beacon/internal/config"
 	"github.com/wcpe/Beacon/internal/embedweb"
-	"github.com/wcpe/Beacon/internal/exitcode"
 	"github.com/wcpe/Beacon/internal/gitexport"
 	"github.com/wcpe/Beacon/internal/handler"
 	"github.com/wcpe/Beacon/internal/httpx"
@@ -40,24 +39,12 @@ import (
 	"github.com/wcpe/Beacon/internal/version"
 )
 
-// errRequestUpdateRestart 是「请求 launcher 换二进制后重启」的出口哨兵（FR-96 退出码协议出口，见 ADR-0045）。
-// FR-97（见 ADR-0044）已接通：更新服务落位 pending 成功后经 updateRestartCh 触发 run 优雅关停并返回本哨兵，
-// main 据 errors.Is 以 exitcode.RequestUpdateRestart（70）退出，由 launcher 据约定换二进制重启。
-var errRequestUpdateRestart = errors.New("请求更新重启")
-
 func main() {
-	// 退出码协议（FR-96，见 internal/exitcode 与 ADR-0045）：正常返回=0、请求更新重启=70、其余致命错误=崩溃码 1。
-	// launcher 据退出码决策不重启 / 换二进制后重启 / 崩溃重启。
-	err := run()
-	switch {
-	case err == nil:
-		os.Exit(exitcode.OK)
-	case errors.Is(err, errRequestUpdateRestart):
-		slog.Info("控制面请求更新重启，以约定退出码交还 launcher 换二进制", "退出码", exitcode.RequestUpdateRestart)
-		os.Exit(exitcode.RequestUpdateRestart)
-	default:
-		slog.Error("Beacon 启动失败", "错误", err)
-		os.Exit(exitcode.Crash)
+	// 单进程自替换模型（FR-119，见 ADR-0053）：正常退出与自替换重启均返回 nil（exit 0），致命错误 exit 1。
+	// 进程崩溃的自动重启交外部监督（docker restart / systemd Restart=，见 docs/OPERATIONS.md）。
+	if err := run(); err != nil {
+		slog.Error("Beacon 退出", "错误", err)
+		os.Exit(1)
 	}
 }
 
@@ -65,6 +52,15 @@ func main() {
 func run() error {
 	// 进程启动时间：供控制面自身状态页眉计算运行时长（FR-33）。在 run 入口记录，尽量贴近真实启动点。
 	startedAt := time.Now().UTC()
+
+	// 换版后启动自检 + 自动回滚（FR-119，见 ADR-0053）：新版反复起不来则自动回退上一版本。
+	// 须在 HTTP 起之前尽早执行；自身路径解析失败则跳过自检与后续自替换（极罕见，退化为无自动回滚）。
+	selfPath, selfErr := os.Executable()
+	if selfErr != nil {
+		slog.Warn("解析自身可执行路径失败，跳过换版自检与自替换", "错误", selfErr)
+	} else {
+		update.CheckAndAutoRollback(selfPath)
+	}
 
 	var cfgPath string
 	flag.StringVar(&cfgPath, "config", "config.yml", "配置文件路径")
@@ -358,9 +354,9 @@ func run() error {
 		slog.Info("git 单向导出镜像未启用（git-export.enabled=false）")
 	}
 
-	// 控制面在线更新核心（FR-97，见 ADR-0044）：按渠道查 Release → 下载 → SHA256 → 落位 pending → 以退出码 70 交还 launcher。
+	// 控制面在线更新核心（FR-97/FR-119，见 ADR-0044/ADR-0053）：按渠道查 Release → 下载 → SHA256 → 落位 pending → 主进程自替换重启。
 	// updateRestartCh 是「更新就绪请求重启」的进程内信号：更新服务落位 pending 成功后关闭它，
-	// run 的 select 据此返回 errRequestUpdateRestart，main 既有 errors.Is 映射到退出码 70（FR-96 已备出口）。
+	// run 的 select 据此优雅关停后执行自替换（rename 让位 + spawn 新进程），本进程随后退出（exit 0）。
 	// 出站经 internal/httpx 工厂（带代理 + 超时，FR-98）；代理地址由触发端点（FR-99）从设置 store 读后传入。
 	updateRestartCh := make(chan struct{})
 	updateService := update.NewService(update.Config{
@@ -430,27 +426,34 @@ func run() error {
 	select {
 	case <-ctx.Done():
 		slog.Info("收到关停信号，开始优雅关停")
+		// 正常关停（管理员 / docker stop 介入）= 新版已被接受：确认更新成功、清理 sentinel 与 .old（FR-119，见 ADR-0053）。
+		if selfErr == nil {
+			update.ConfirmUpdateSuccess(selfPath)
+		}
 		// 给关停一个上限：略大于长轮询上限，到点强制结束
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	case <-updateRestartCh:
-		// 更新已落位 pending，请求换二进制重启（FR-97，见 ADR-0044）：优雅关停释放端口后返回哨兵，
-		// main 据 errors.Is 以退出码 70 退出，交还 launcher 做原子换二进制 + 重启（FR-96/ADR-0045）。
-		slog.Info("更新已就绪，优雅关停后以约定退出码交还 launcher 换二进制重启")
+		// 更新已落位 pending，优雅关停释放端口后自替换二进制并重启（FR-119，见 ADR-0053）：
+		// rename 让位三步换二进制 + spawn 新进程，本进程随后退出（exit 0）；换失败就地回退、重启旧版兜底。
+		slog.Info("更新已就绪，优雅关停后自替换二进制并重启")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			return err
 		}
-		return errRequestUpdateRestart
+		if selfErr != nil {
+			return fmt.Errorf("自替换失败：无法解析自身可执行路径: %w", selfErr)
+		}
+		return update.SwapAndRespawn(selfPath, resolvePendingPath(), updateService.Snapshot().TargetVersion)
 	case err := <-errCh:
 		return err
 	}
 }
 
-// resolvePendingPath 推导 launcher 约定的 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]）。
-// 与 cmd/beacon-launcher 的 resolvePaths 同约定（ADR-0045），更新服务据此原子落位、launcher 据此换二进制。
+// resolvePendingPath 推导 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]，FR-119/ADR-0053）。
+// 更新服务据此原子落位，自替换时由 update.SwapAndRespawn rename 让位换上。
 // 解析自身路径失败时回退到工作目录相对名（极少见；落位时若不可写会在更新阶段失败、不影响正常运行）。
 func resolvePendingPath() string {
 	suffix := ""

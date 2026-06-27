@@ -1,5 +1,5 @@
-// Package update 实现控制面在线自更新核心（FR-97，见 ADR-0044）：按渠道查 GitHub Release、
-// 下载本平台资产、SHA256 校验、原子落位 launcher 约定的 pending 路径、以退出码交还 launcher 换二进制重启。
+// Package update 实现控制面在线自更新核心（FR-97/FR-119，见 ADR-0044/ADR-0053）：按渠道查 GitHub Release、
+// 下载本平台资产、SHA256 校验、原子落位 pending 路径，再由主进程单进程自替换（rename 让位三步）+ 自动回滚重启。
 // 仅控制面单二进制（含 go:embed 前端整体替换），不涉 agent jar。
 package update
 
