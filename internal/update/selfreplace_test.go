@@ -264,3 +264,60 @@ func TestSwapAndRespawnLandFailFallback(t *testing.T) {
 		t.Fatalf("换失败应 spawn 旧版兜底，实际 calls=%d exe=%q", rec.spawnCalls, rec.spawnedExe)
 	}
 }
+
+// TestRollbackAvailable .old 存在与否决定可回退性（FR-120）。
+func TestRollbackAvailable(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	writeFile(t, run, "当前版")
+	if RollbackAvailable(run) {
+		t.Fatal("无 .old 时应不可回退")
+	}
+	writeFile(t, run+oldSuffix, "旧版")
+	if !RollbackAvailable(run) {
+		t.Fatal("有 .old 时应可回退")
+	}
+}
+
+// TestRollbackAndRespawnSuccess 手动回滚：旧版还原运行路径、当前版归档 .failed、spawn 旧版且不 osExit（交 main 退出）。
+func TestRollbackAndRespawnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	writeFile(t, run, "当前版")
+	writeFile(t, run+oldSuffix, "旧版")
+	rec := stubHooks(t)
+
+	if err := RollbackAndRespawn(run); err != nil {
+		t.Fatalf("RollbackAndRespawn 应成功: %v", err)
+	}
+	if got := readFile(t, run); got != "旧版" {
+		t.Fatalf("回滚后运行路径应为旧版，实际 %q", got)
+	}
+	if got := readFile(t, run+failedSuffix); got != "当前版" {
+		t.Fatalf("当前版应归档 .failed，实际 %q", got)
+	}
+	if rec.spawnCalls != 1 || rec.spawnedExe != run {
+		t.Fatalf("应 spawn 旧版 1 次，实际 calls=%d exe=%q", rec.spawnCalls, rec.spawnedExe)
+	}
+	if rec.exitCalls != 0 {
+		t.Fatalf("手动回滚不应 osExit（交 main 退出），实际 exit calls=%d", rec.exitCalls)
+	}
+}
+
+// TestRollbackAndRespawnNoBackup 无 .old：返回错误、不破坏运行路径、不 spawn（FR-120）。
+func TestRollbackAndRespawnNoBackup(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	writeFile(t, run, "当前版")
+	rec := stubHooks(t)
+
+	if err := RollbackAndRespawn(run); err == nil {
+		t.Fatal("无 .old 应返回错误")
+	}
+	if got := readFile(t, run); got != "当前版" {
+		t.Fatalf("无 .old 不应破坏运行路径，实际 %q", got)
+	}
+	if rec.spawnCalls != 0 {
+		t.Fatalf("无 .old 不应 spawn，实际 calls=%d", rec.spawnCalls)
+	}
+}

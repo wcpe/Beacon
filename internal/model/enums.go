@@ -207,6 +207,8 @@ const (
 	ActionSystemUpdateApply = "system.update-apply"
 	// 控制面在线更新·失败（FR-97）：任一阶段失败保留旧二进制不退，detail 含目标版本 / 失败原因（不含敏感）
 	ActionSystemUpdateFailed = "system.update-failed"
+	// 控制面手动回滚（FR-120）：回退到上一版本（.old），detail 记请求回退
+	ActionSystemUpdateRollback = "system.update-rollback"
 )
 
 // 审计对象类型。

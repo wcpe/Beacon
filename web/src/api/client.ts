@@ -555,6 +555,12 @@ export function triggerUpdate(): Promise<{ accepted: boolean }> {
   return request<{ accepted: boolean }>('/system/update', { method: 'POST' })
 }
 
+// 触发手动回滚到上一版本（FR-120，写，readonly→403）：无请求体；202 受理后控制面自替换回退重启。
+// 无可回退的上一版本（.old 备份）→ 409 NO_ROLLBACK_AVAILABLE（按码回显「无可回退的上一版本」）；本处仅触发，进度同样经 updateProgress 轮询。
+export function rollbackUpdate(): Promise<{ accepted: boolean }> {
+  return request<{ accepted: boolean }>('/system/rollback', { method: 'POST' })
+}
+
 // ===== zone 分配 =====
 
 export function listAssignments(

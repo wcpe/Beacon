@@ -28,14 +28,25 @@ vi.mock('@/api/client', async () => {
     updateSetting: vi.fn(),
     checkUpdate: vi.fn(),
     triggerUpdate: vi.fn(),
-    updateProgress: vi.fn().mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '' }),
+    rollbackUpdate: vi.fn(),
+    updateProgress: vi
+      .fn()
+      .mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '', rollbackAvailable: false }),
     // useConnectionStatus 复用 systemStatus 心跳
     systemStatus: vi.fn().mockResolvedValue({}),
   }
 })
 
 import VersionUpdatePage from './VersionUpdatePage'
-import { listSettings, updateSetting, checkUpdate, triggerUpdate, updateProgress } from '@/api/client'
+import {
+  ApiClientError,
+  listSettings,
+  updateSetting,
+  checkUpdate,
+  triggerUpdate,
+  rollbackUpdate,
+  updateProgress,
+} from '@/api/client'
 
 // jsdom 垫片：radix Select 打开需要指针捕获 / scrollIntoView
 if (!HTMLElement.prototype.hasPointerCapture) {
@@ -100,6 +111,15 @@ beforeEach(() => {
   vi.mocked(updateSetting).mockResolvedValue(undefined)
   vi.mocked(checkUpdate).mockResolvedValue(UPDATE_NONE)
   vi.mocked(triggerUpdate).mockResolvedValue({ accepted: true })
+  vi.mocked(rollbackUpdate).mockResolvedValue({ accepted: true })
+  // 默认进度态：无可回退版本（回滚按钮隐藏），各用例按需覆盖
+  vi.mocked(updateProgress).mockResolvedValue({
+    phase: 'idle',
+    percent: 0,
+    targetVersion: '',
+    error: '',
+    rollbackAvailable: false,
+  })
 })
 
 describe('VersionUpdatePage 版本信息 + 渠道（FR-100）', () => {
@@ -254,6 +274,57 @@ describe('VersionUpdatePage 更新设置（FR-101）', () => {
     await userEvent.click(within(prefsCard).getByRole('button', { name: '保存' }))
     await waitFor(() =>
       expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.check-interval-hours', '12'),
+    )
+  })
+})
+
+// FR-120：手动回滚——按 rollbackAvailable 显隐回滚按钮、二次确认、触发调 rollbackUpdate、409 回显
+describe('VersionUpdatePage 手动回滚（FR-120）', () => {
+  // 状态端点回 rollbackAvailable=true（有可回退的上一版本）
+  function withRollbackAvailable() {
+    vi.mocked(updateProgress).mockResolvedValue({
+      phase: 'idle',
+      percent: 0,
+      targetVersion: '',
+      error: '',
+      rollbackAvailable: true,
+    })
+  }
+
+  it('rollbackAvailable=false 时不显示「回滚到上一版本」按钮', async () => {
+    // 默认 beforeEach 即 rollbackAvailable=false
+    renderPage(<VersionUpdatePage />)
+    // 等版本信息渲染完成（当前版本可见）后再断言回滚按钮缺席，避免过早断言
+    expect(await screen.findByText('v0.10.0')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '回滚到上一版本' })).toBeNull()
+  })
+
+  it('rollbackAvailable=true 时显示「回滚到上一版本」按钮', async () => {
+    withRollbackAvailable()
+    renderPage(<VersionUpdatePage />)
+    expect(await screen.findByRole('button', { name: '回滚到上一版本' })).toBeInTheDocument()
+  })
+
+  it('点「回滚到上一版本」二次确认后调 rollbackUpdate', async () => {
+    withRollbackAvailable()
+    renderPage(<VersionUpdatePage />)
+    await userEvent.click(await screen.findByRole('button', { name: '回滚到上一版本' }))
+    // 二次确认对话框确认
+    const confirm = await screen.findByRole('button', { name: '确认回滚' })
+    await userEvent.click(confirm)
+    await waitFor(() => expect(vi.mocked(rollbackUpdate)).toHaveBeenCalled())
+  })
+
+  it('回滚触发返回 409 NO_ROLLBACK_AVAILABLE 时回显「无可回退的上一版本」', async () => {
+    withRollbackAvailable()
+    vi.mocked(rollbackUpdate).mockRejectedValue(
+      new ApiClientError('无可回退的上一版本', 'NO_ROLLBACK_AVAILABLE'),
+    )
+    renderPage(<VersionUpdatePage />)
+    await userEvent.click(await screen.findByRole('button', { name: '回滚到上一版本' }))
+    await userEvent.click(await screen.findByRole('button', { name: '确认回滚' }))
+    await waitFor(() =>
+      expect(showError).toHaveBeenCalledWith(expect.stringContaining('无可回退的上一版本')),
     )
   })
 })

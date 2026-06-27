@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, RefreshCw, Download } from 'lucide-react'
+import { ExternalLink, RefreshCw, Download, Undo2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,6 +32,7 @@ import {
   listSettings,
   updateSetting,
   triggerUpdate,
+  rollbackUpdate,
   updateProgress,
 } from '@/api/client'
 import { formatTime } from '@/api/format'
@@ -97,17 +98,22 @@ export default function VersionUpdatePage() {
   // 本地草稿态
   const [refreshing, setRefreshing] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // 回滚二次确认开合（FR-120）：与「立即更新」二次确认分开受控，复用同一 DestructiveConfirmDialog 范式。
+  const [rollbackConfirmOpen, setRollbackConfirmOpen] = useState(false)
   const [applying, setApplying] = useState(false)
+  // 进行中操作类别（FR-120）：update（立即更新）/ rollback（回滚），共用 applying / 进度轮询 / 重连裁决机制，
+  // 仅最终裁决 toast 文案按类别分流，避免重复一套重连边沿追踪逻辑。
+  const [opKind, setOpKind] = useState<'update' | 'rollback'>('update')
   const wentOfflineRef = useRef(false)
   const [reconnected, setReconnected] = useState(false)
   // 最终裁决只播报一次（FR-118 ②）：成功重连 / 失败各自一次性 toast。
   const verdictShownRef = useRef(false)
 
-  // 触发应用后才轮询进度；未触发不打扰后端。
+  // 更新进度内存态：挂载即拉一次（取 rollbackAvailable 决定回滚按钮显隐，FR-120），
+  // 仅在触发应用 / 回滚后才以短周期轮询进度（未进行操作时不高频打扰后端；该端点只读内存、不查库不打 GitHub）。
   const { data: progress } = useQuery({
     queryKey: ['update-progress'],
     queryFn: updateProgress,
-    enabled: applying,
     refetchInterval: applying ? PROGRESS_POLL_MS : false,
   })
 
@@ -119,28 +125,35 @@ export default function VersionUpdatePage() {
   }, [applying, connStatus])
 
   const canUpdate = data?.status === 'ok' && data.hasUpdate && !data.isDevBuild
+  // 是否存在可回退的上一版本（FR-120）：取自更新状态端点的 rollbackAvailable，决定「回滚到上一版本」按钮显隐。
+  const canRollback = progress?.rollbackAvailable === true
   const failed = progress?.phase === 'failed'
 
-  // 最终裁决 toast（FR-118 ②）：更新走完后明确成功 / 失败一次。
-  // 成功 = 重连成功边沿（已下载 / 换版 / 重启 / 重连完成）；失败 = 进度 phase=failed。
+  // 最终裁决 toast（FR-118 ②；FR-120 复用同一机制）：更新 / 回滚走完后明确成功 / 失败一次。
+  // 成功 = 重连成功边沿（已下载 / 换版 / 重启 / 重连完成）；失败 = 进度 phase=failed。文案按 opKind 分流。
   useEffect(() => {
     if (!applying || verdictShownRef.current) return
     if (reconnected) {
       verdictShownRef.current = true
-      showSuccess(
-        t('updateModal.updateSucceeded', {
-          version: data?.latestVersion || data?.currentVersion || '',
-        }),
-      )
+      if (opKind === 'rollback') {
+        showSuccess(t('versionUpdate.rollbackSucceeded'))
+      } else {
+        showSuccess(
+          t('updateModal.updateSucceeded', {
+            version: data?.latestVersion || data?.currentVersion || '',
+          }),
+        )
+      }
     } else if (failed) {
       verdictShownRef.current = true
-      showError(
-        t('updateModal.updateFailed', {
-          reason: progress?.error || t('updateModal.phaseFailed'),
-        }),
-      )
+      const reason = progress?.error || t('updateModal.phaseFailed')
+      if (opKind === 'rollback') {
+        showError(t('versionUpdate.rollbackFailed', { reason }))
+      } else {
+        showError(t('updateModal.updateFailed', { reason }))
+      }
     }
-  }, [applying, reconnected, failed, progress, data, showSuccess, showError, t])
+  }, [applying, opKind, reconnected, failed, progress, data, showSuccess, showError, t])
 
   // 当前渠道：优先取设置项（可改），回退检查结果回显渠道。
   const channelSetting = findSetting(settings, KEY_CHANNEL)
@@ -185,10 +198,30 @@ export default function VersionUpdatePage() {
     setConfirmOpen(false)
     try {
       await triggerUpdate()
+      setOpKind('update')
       setApplying(true)
     } catch (e) {
       const msg = e instanceof ApiClientError ? e.message : t('updateModal.triggerFailed')
       showError(msg)
+    }
+  }
+
+  // 「确认回滚」（FR-120）：POST 触发回滚，受理后复用「立即更新」的进度轮询 + 重启重连裁决机制（仅 opKind 标为 rollback）。
+  // 后端 409 NO_ROLLBACK_AVAILABLE → 提示「无可回退的上一版本」；其余错误回显 message 或兜底文案。
+  async function handleConfirmRollback() {
+    setRollbackConfirmOpen(false)
+    try {
+      await rollbackUpdate()
+      setOpKind('rollback')
+      setApplying(true)
+    } catch (e) {
+      if (e instanceof ApiClientError) {
+        const msg =
+          e.code === 'NO_ROLLBACK_AVAILABLE' ? t('versionUpdate.rollbackNoneAvailable') : e.message
+        showError(msg)
+      } else {
+        showError(t('versionUpdate.rollbackTriggerFailed'))
+      }
     }
   }
 
@@ -270,7 +303,7 @@ export default function VersionUpdatePage() {
             <span className="text-xs text-muted-foreground">{t('versionUpdate.channelHint')}</span>
           </div>
 
-          {/* 状态行 +「立即检查」（FR-118 ①：由第二层页眉下移至此，紧挨版本/更新区） */}
+          {/* 状态行 +「立即检查」（FR-118 ①：由第二层页眉下移至此，紧挨版本/更新区）+「回滚到上一版本」（FR-120） */}
           <div className="flex flex-wrap items-center gap-3">
             <span className={canUpdate ? 'text-sm font-medium text-foreground' : 'text-sm text-muted-foreground'}>
               {statusLine()}
@@ -279,6 +312,18 @@ export default function VersionUpdatePage() {
               <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
               {t('updateModal.checkNow')}
             </Button>
+            {/* 仅当存在可回退的上一版本（.old 备份）时显示回滚入口（FR-120） */}
+            {canRollback && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRollbackConfirmOpen(true)}
+                disabled={applying}
+              >
+                <Undo2 />
+                {t('versionUpdate.rollback')}
+              </Button>
+            )}
           </div>
 
           {/* 可用更新明细：版本 / 发布时间 / release 日志（安全渲染）/ 外链 */}
@@ -347,6 +392,20 @@ export default function VersionUpdatePage() {
           t('updateModal.confirmImpactIrreversible'),
         ]}
         onConfirm={handleConfirmUpdate}
+      />
+
+      {/* 回滚到上一版本二次确认（FR-120，复用同一破坏性确认范式） */}
+      <DestructiveConfirmDialog
+        open={rollbackConfirmOpen}
+        onOpenChange={setRollbackConfirmOpen}
+        title={t('versionUpdate.rollbackConfirmTitle')}
+        description={t('versionUpdate.rollbackConfirmDesc')}
+        confirmLabel={t('versionUpdate.rollbackConfirmAction')}
+        impacts={[
+          t('versionUpdate.rollbackConfirmImpactRestart'),
+          t('versionUpdate.rollbackConfirmImpactAgent'),
+        ]}
+        onConfirm={handleConfirmRollback}
       />
     </div>
   )

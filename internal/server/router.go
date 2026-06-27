@@ -253,6 +253,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/system/update-check", h.Update.Check)
 		r.Get("/system/update", h.Update.Status)
 		r.Post("/system/update", h.Update.Apply)
+		// 手动回滚到上一版本（FR-120）：写方法，readonly 经 readonlyWriteGuard 403，审计 system.update-rollback（已登记 FR-72 覆盖集）。
+		r.Post("/system/rollback", h.Update.Rollback)
 
 		// 运维设置 store（FR-61，见 ADR-0038）：列全部热改项（读）+ 改单项（写，readonly 403，入审计）。
 		// 与其它写端点一致无条件注册（handler 仅请求期解引用），PUT 已登记 FR-72 覆盖集。

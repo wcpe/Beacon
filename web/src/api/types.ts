@@ -326,6 +326,8 @@ export interface UpdateProgressView {
   targetVersion: string
   // 仅 failed 非空
   error: string
+  // 是否存在可回退的上一版本（.old 备份，FR-120）：前端据此显隐「回滚到上一版本」按钮
+  rollbackAvailable: boolean
 }
 
 // ===== 控制面自观测（FR-82）=====

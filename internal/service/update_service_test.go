@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/update"
 )
 
@@ -22,6 +23,10 @@ type fakeUpdateCore struct {
 	checkErr     error
 	applyErr     error
 	snap         update.Progress
+	// 回滚（FR-120）：可控可用性 + 调用计数 + 注入错误。
+	rollbackAvailable bool
+	rollbackCalls     int
+	rollbackErr       error
 }
 
 func (f *fakeUpdateCore) CheckForUpdate(_ context.Context, ch update.Channel, proxyURL, operator, clientIP string) (update.CheckResult, error) {
@@ -46,6 +51,39 @@ func (f *fakeUpdateCore) ApplyUpdate(_ context.Context, ch update.Channel, proxy
 }
 
 func (f *fakeUpdateCore) Snapshot() update.Progress { return f.snap }
+
+func (f *fakeUpdateCore) RollbackAvailable() bool { return f.rollbackAvailable }
+
+func (f *fakeUpdateCore) Rollback(operator, clientIP string) error {
+	f.rollbackCalls++
+	f.lastOperator = operator
+	f.lastClientIP = clientIP
+	return f.rollbackErr
+}
+
+// TestRollbackUnavailableReturns409 无 .old：服务返回 ErrNoRollbackAvailable（409），不调核心 Rollback（FR-120）。
+func TestRollbackUnavailableReturns409(t *testing.T) {
+	core := &fakeUpdateCore{rollbackAvailable: false}
+	svc := NewUpdateService(core, &fakeSettingsReader{})
+	if err := svc.Rollback("tester", "1.2.3.4"); !errors.Is(err, apperr.ErrNoRollbackAvailable) {
+		t.Fatalf("无 .old 应返回 ErrNoRollbackAvailable，实际 %v", err)
+	}
+	if core.rollbackCalls != 0 {
+		t.Fatalf("无 .old 不应调核心 Rollback，实际 calls=%d", core.rollbackCalls)
+	}
+}
+
+// TestRollbackAvailableForwardsToCore 有 .old：转发核心 Rollback（FR-120）。
+func TestRollbackAvailableForwardsToCore(t *testing.T) {
+	core := &fakeUpdateCore{rollbackAvailable: true}
+	svc := NewUpdateService(core, &fakeSettingsReader{})
+	if err := svc.Rollback("tester", "1.2.3.4"); err != nil {
+		t.Fatalf("有 .old 应成功: %v", err)
+	}
+	if core.rollbackCalls != 1 {
+		t.Fatalf("应转发核心 Rollback 1 次，实际 calls=%d", core.rollbackCalls)
+	}
+}
 
 // fakeSettingsReader 是设置 store 的测试假读口：渠道 / 代理 / 检查周期可调。
 type fakeSettingsReader struct {

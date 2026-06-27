@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/wcpe/Beacon/internal/apperr"
 	"github.com/wcpe/Beacon/internal/update"
 )
 
@@ -17,6 +18,10 @@ type updateCore interface {
 	ApplyUpdate(ctx context.Context, ch update.Channel, proxyURL, operator, clientIP string) error
 	// Snapshot 返回当前更新进度快照（进程内瞬态）。
 	Snapshot() update.Progress
+	// RollbackAvailable 报告是否有可回退的上一版本备份（.old，FR-120）。
+	RollbackAvailable() bool
+	// Rollback 触发手动回滚到上一版本（FR-120）：校验 .old 后请求主进程优雅关停回退重启。
+	Rollback(operator, clientIP string) error
 }
 
 // updateSettingsReader 是 UpdateService 对设置 store 的窄读依赖（FR-99 消费 FR-101 加的热改项）。
@@ -146,6 +151,19 @@ func (s *UpdateService) Apply(ctx context.Context, operator, clientIP string) er
 	channel := s.settings.GetString(SettingUpdateChannel)
 	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
 	return s.core.ApplyUpdate(ctx, update.Channel(channel), proxyURL, operator, clientIP)
+}
+
+// RollbackAvailable 报告是否有可回退的上一版本（.old，FR-120），供状态端点回显前端按钮显隐。
+func (s *UpdateService) RollbackAvailable() bool {
+	return s.core.RollbackAvailable()
+}
+
+// Rollback 触发手动回滚到上一版本（FR-120）：无 .old 返回 ErrNoRollbackAvailable（409），否则调核心回退。
+func (s *UpdateService) Rollback(operator, clientIP string) error {
+	if !s.core.RollbackAvailable() {
+		return apperr.ErrNoRollbackAvailable
+	}
+	return s.core.Rollback(operator, clientIP)
 }
 
 // cacheTTL 取检查结果缓存时长：store 的 update.check-interval-hours（小时）转 Duration。

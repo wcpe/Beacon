@@ -158,4 +158,7 @@ var (
 	ErrReversibleOpSuperseded = New(http.StatusConflict, "REVERSIBLE_OP_SUPERSEDED", "该操作已被后续操作覆盖，不可撤回")
 	// ErrReversibleOpState 可逆操作状态不符 / 反向快照损坏，不可撤回（FR-116）。
 	ErrReversibleOpState = New(http.StatusConflict, "REVERSIBLE_OP_STATE", "可逆操作状态不允许撤回")
+
+	// ErrNoRollbackAvailable 无可回退的上一版本备份（.old 不存在，FR-120）。
+	ErrNoRollbackAvailable = New(http.StatusConflict, "NO_ROLLBACK_AVAILABLE", "无可回退的上一版本")
 )

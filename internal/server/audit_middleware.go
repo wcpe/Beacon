@@ -89,6 +89,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"PUT /admin/v1/settings/{key}": {},
 	// 控制面在线更新触发（FR-99：更新核心自记 system.update-apply / system.update-failed 专项审计，detail 含目标版本）
 	"POST /admin/v1/system/update": {},
+	// 控制面手动回滚（FR-120：更新核心自记 system.update-rollback 专项审计，detail 记请求回退）
+	"POST /admin/v1/system/rollback": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

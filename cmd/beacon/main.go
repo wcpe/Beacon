@@ -359,13 +359,16 @@ func run() error {
 	// run 的 select 据此优雅关停后执行自替换（rename 让位 + spawn 新进程），本进程随后退出（exit 0）。
 	// 出站经 internal/httpx 工厂（带代理 + 超时，FR-98）；代理地址由触发端点（FR-99）从设置 store 读后传入。
 	updateRestartCh := make(chan struct{})
+	rollbackCh := make(chan struct{})
 	updateService := update.NewService(update.Config{
 		CurrentVersion: version.Version,
 		PendingPath:    resolvePendingPath(),
+		RunPath:        selfPath,
 		NewHTTPClient:  httpx.NewClient,
 		// 仅关一次：sync.Once 保证多次触发不重复关闭 channel（panic 防护）。
-		RequestRestart: sync.OnceFunc(func() { close(updateRestartCh) }),
-		Audit:          auditRepo,
+		RequestRestart:  sync.OnceFunc(func() { close(updateRestartCh) }),
+		RequestRollback: sync.OnceFunc(func() { close(rollbackCh) }),
+		Audit:           auditRepo,
 	})
 	// HTTP 触发面（FR-99，见 ADR-0044）：把更新核心接到 admin 端点——检查（只读、服务端缓存 + ?force 刷新）/
 	// 状态（读内存进度）/ 触发应用（写、readonly 403 + 审计）。渠道 / 代理 / 缓存 TTL 从设置 store 读、热生效（FR-101）。
@@ -447,6 +450,18 @@ func run() error {
 			return fmt.Errorf("自替换失败：无法解析自身可执行路径: %w", selfErr)
 		}
 		return update.SwapAndRespawn(selfPath, resolvePendingPath(), updateService.Snapshot().TargetVersion)
+	case <-rollbackCh:
+		// 手动回滚已触发（FR-120）：优雅关停释放端口后回退到上一版本（.old → 运行路径）并重启旧版。
+		slog.Info("手动回滚已触发，优雅关停后回退到上一版本并重启")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		if selfErr != nil {
+			return fmt.Errorf("回滚失败：无法解析自身可执行路径: %w", selfErr)
+		}
+		return update.RollbackAndRespawn(selfPath)
 	case err := <-errCh:
 		return err
 	}

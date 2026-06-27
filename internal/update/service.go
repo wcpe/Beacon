@@ -57,37 +57,62 @@ type Service struct {
 	requestRestart func()
 	// pendingPath 是 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]），自替换时由主进程 rename 让位换上。
 	pendingPath string
-	audit       AuditWriter
-	progress    *progressTracker
+	// runPath 是运行二进制路径（beacon[.exe]），手动回滚据此查 .old 备份（FR-120）。
+	runPath string
+	// requestRollback 在手动回滚校验通过后回调，触发主进程优雅关停并回退到上一版本（FR-120）。
+	requestRollback func()
+	audit           AuditWriter
+	progress        *progressTracker
 }
 
 // Config 是更新服务装配参数。
 type Config struct {
-	CurrentVersion string
-	APIBase        string // 空=官方 api.github.com
-	Repo           string // 空=wcpe/Beacon
-	PendingPath    string // pending 新二进制路径（自替换换位点）
-	NewHTTPClient  func(proxyURL string, timeout time.Duration) (*http.Client, error)
-	RequestRestart func()
-	Audit          AuditWriter
+	CurrentVersion  string
+	APIBase         string // 空=官方 api.github.com
+	Repo            string // 空=wcpe/Beacon
+	PendingPath     string // pending 新二进制路径（自替换换位点）
+	RunPath         string // 运行二进制路径（beacon[.exe]，手动回滚查 .old，FR-120）
+	NewHTTPClient   func(proxyURL string, timeout time.Duration) (*http.Client, error)
+	RequestRestart  func()
+	RequestRollback func() // 手动回滚触发（FR-120）
+	Audit           AuditWriter
 }
 
 // NewService 构造更新服务。
 func NewService(cfg Config) *Service {
 	return &Service{
-		currentVersion: cfg.CurrentVersion,
-		apiBase:        cfg.APIBase,
-		repo:           cfg.Repo,
-		newHTTPClient:  cfg.NewHTTPClient,
-		requestRestart: cfg.RequestRestart,
-		pendingPath:    cfg.PendingPath,
-		audit:          cfg.Audit,
-		progress:       newProgressTracker(),
+		currentVersion:  cfg.CurrentVersion,
+		apiBase:         cfg.APIBase,
+		repo:            cfg.Repo,
+		newHTTPClient:   cfg.NewHTTPClient,
+		requestRestart:  cfg.RequestRestart,
+		pendingPath:     cfg.PendingPath,
+		runPath:         cfg.RunPath,
+		requestRollback: cfg.RequestRollback,
+		audit:           cfg.Audit,
+		progress:        newProgressTracker(),
 	}
 }
 
 // Snapshot 返回当前更新进度快照（FR-99 状态端点消费）。
 func (s *Service) Snapshot() Progress { return s.progress.Snapshot() }
+
+// RollbackAvailable 报告是否有可回退的上一版本备份（.old，FR-120），供端点回显前端按钮显隐。
+func (s *Service) RollbackAvailable() bool { return RollbackAvailable(s.runPath) }
+
+// Rollback 触发手动回滚到上一版本（FR-120）：校验有 .old 后记审计并请求主进程优雅关停回退重启。
+// 无 .old（防御性，正常已由上层 RollbackAvailable 拦）返回错误；成功记 system.update-rollback 审计。
+func (s *Service) Rollback(operator, clientIP string) error {
+	if !RollbackAvailable(s.runPath) {
+		return fmt.Errorf("无可回退的上一版本备份")
+	}
+	s.writeAudit(model.ActionSystemUpdateRollback, "", model.ResultOK, "请求回退到上一版本", operator, clientIP)
+	slog.Info("收到手动回滚请求，优雅关停后回退到上一版本")
+	if s.requestRollback != nil {
+		s.requestRollback()
+	}
+	return nil
+}
 
 // assetName 返回本平台二进制资产名 beacon-<ver>-<os>-<arch>[.exe]。
 // version 去前导 "v" 与 CI 产物命名同口径（CI 用 ${GITHUB_REF_NAME#v} / 根 VERSION，均无 v 前缀）。

@@ -452,6 +452,63 @@ func TestProgressWriterUpdatesPercent(t *testing.T) {
 	}
 }
 
+// TestRollbackTriggersCallbackAndAudit 有 .old：RollbackAvailable 为真，Rollback 记 update-rollback 审计并触发回调（FR-120）。
+func TestRollbackTriggersCallbackAndAudit(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	if err := os.WriteFile(run, []byte("当前版"), 0o644); err != nil {
+		t.Fatalf("写运行二进制失败: %v", err)
+	}
+	if err := os.WriteFile(run+".old", []byte("旧版"), 0o644); err != nil {
+		t.Fatalf("写 .old 失败: %v", err)
+	}
+	audit := &fakeAudit{}
+	rolledBack := false
+	svc := NewService(Config{
+		CurrentVersion:  "1.0.0",
+		RunPath:         run,
+		RequestRollback: func() { rolledBack = true },
+		Audit:           audit,
+	})
+	if !svc.RollbackAvailable() {
+		t.Fatal("有 .old 应可回滚")
+	}
+	if err := svc.Rollback("tester", "1.2.3.4"); err != nil {
+		t.Fatalf("Rollback 应成功: %v", err)
+	}
+	if !rolledBack {
+		t.Fatal("应触发回滚回调")
+	}
+	if !contains(audit.actions(), model.ActionSystemUpdateRollback) {
+		t.Fatalf("应记 update-rollback 审计，实际 %v", audit.actions())
+	}
+}
+
+// TestRollbackNoBackupRejected 无 .old：RollbackAvailable 为假，Rollback 返回错误且不触发回调（FR-120）。
+func TestRollbackNoBackupRejected(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	if err := os.WriteFile(run, []byte("当前版"), 0o644); err != nil {
+		t.Fatalf("写运行二进制失败: %v", err)
+	}
+	rolledBack := false
+	svc := NewService(Config{
+		CurrentVersion:  "1.0.0",
+		RunPath:         run,
+		RequestRollback: func() { rolledBack = true },
+		Audit:           &fakeAudit{},
+	})
+	if svc.RollbackAvailable() {
+		t.Fatal("无 .old 应不可回滚")
+	}
+	if err := svc.Rollback("tester", ""); err == nil {
+		t.Fatal("无 .old 应返回错误")
+	}
+	if rolledBack {
+		t.Fatal("无 .old 不应触发回调")
+	}
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {

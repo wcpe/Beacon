@@ -285,6 +285,21 @@ export const zhCN = {
     // 后端暂无对应设置项时的兜底占位
     proxyEmpty: '暂无网络代理设置项。',
     prefsEmpty: '暂无自动检查 / 周期设置项。',
+    // 手动回滚到上一版本（FR-120）：仅在存在可回退的 .old 备份时显示
+    rollback: '回滚到上一版本',
+    // 二次确认（复用 FR-76 破坏性确认范式）
+    rollbackConfirmTitle: '确认回滚到上一版本？',
+    rollbackConfirmDesc: '回滚会把控制面重启回退到上一版本，期间管理台短暂不可用。',
+    rollbackConfirmImpactRestart: '控制面将重启并回退到上一版本、期间管理台不可用',
+    rollbackConfirmImpactAgent: 'agent 按本地快照继续运行，玩家不受影响',
+    rollbackConfirmAction: '确认回滚',
+    // 回滚最终裁决（复用 FR-118 重连回显）：成功重连 / 失败原因
+    rollbackSucceeded: '已回滚到上一版本，控制面已重连',
+    rollbackFailed: '回滚失败：{{reason}}',
+    // 无可回退的上一版本（后端 409 NO_ROLLBACK_AVAILABLE）
+    rollbackNoneAvailable: '无可回退的上一版本',
+    // 触发回滚失败兜底（POST 非 202 且无具体 message）
+    rollbackTriggerFailed: '触发回滚失败',
   },
 
   // ===== 控制面连接状态指示（FR-78）=====

@@ -22,10 +22,11 @@ func NewUpdateHandler(svc *service.UpdateService) *UpdateHandler {
 
 // progressView 是更新进度对外视图（FR-99 状态端点）。
 type progressView struct {
-	Phase         string `json:"phase"`         // idle / checking / downloading / verifying / staging / ready-restart / failed
-	Percent       int    `json:"percent"`       // 下载百分比 0-100（仅下载阶段有意义）
-	TargetVersion string `json:"targetVersion"` // 目标版本；空表示尚未确定
-	Error         string `json:"error"`         // 失败原因（仅 failed 非空）
+	Phase             string `json:"phase"`             // idle / checking / downloading / verifying / staging / ready-restart / failed
+	Percent           int    `json:"percent"`           // 下载百分比 0-100（仅下载阶段有意义）
+	TargetVersion     string `json:"targetVersion"`     // 目标版本；空表示尚未确定
+	Error             string `json:"error"`             // 失败原因（仅 failed 非空）
+	RollbackAvailable bool   `json:"rollbackAvailable"` // 是否有可回退的上一版本（.old，FR-120 前端按钮显隐）
 }
 
 // Check 处理 GET /admin/v1/system/update-check：按渠道检查有无可用更新（只读，full/readonly 皆可见）。
@@ -41,10 +42,11 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 func (h *UpdateHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	p := h.svc.Status()
 	render.WriteJSON(w, http.StatusOK, progressView{
-		Phase:         string(p.Phase),
-		Percent:       p.Percent,
-		TargetVersion: p.TargetVersion,
-		Error:         p.Error,
+		Phase:             string(p.Phase),
+		Percent:           p.Percent,
+		TargetVersion:     p.TargetVersion,
+		Error:             p.Error,
+		RollbackAvailable: h.svc.RollbackAvailable(),
 	})
 }
 
@@ -53,6 +55,16 @@ func (h *UpdateHandler) Status(w http.ResponseWriter, _ *http.Request) {
 // 落位成功后主进程将优雅关停并自替换换二进制重启，故仅在失败时返回错误体，成功时回 202 表示已接受并开始应用。
 func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.Apply(r.Context(), auth.Operator(r.Context()), clientIP(r)); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
+}
+
+// Rollback 处理 POST /admin/v1/system/rollback：触发手动回滚到上一版本（写方法，readonly 经 readonlyWriteGuard 403）。
+// 无 .old 备份返回 409；成功回 202 表示已接受，随后主进程优雅关停并回退重启（FR-120）。
+func (h *UpdateHandler) Rollback(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.Rollback(auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

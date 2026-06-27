@@ -137,30 +137,57 @@ func landBinary(runPath, pendingPath string) error {
 	return nil
 }
 
-// autoRollback 自动回退到上一版本：坏新版归档为 .failed → .old 还原为 runPath → 清 sentinel → spawn 旧版 → 退出本进程。
-// 无 .old 可退则清 sentinel 后返回（继续以当前版启动，无更好选择）；任一 rename 失败均尽力还原、不致卡死。
-func autoRollback(runPath string) {
+// rollbackToOld 把运行二进制回退到上一版本（纯文件操作，不 spawn / 不 exit）：当前 → .failed、.old → 运行路径。
+// 供启动期自动回滚（autoRollback）与运行期手动回滚（RollbackAndRespawn）复用。无 .old 或 rename 失败返回错误（尽力还原）。
+func rollbackToOld(runPath string) error {
 	oldPath := runPath + oldSuffix
 	if _, err := os.Stat(oldPath); err != nil {
-		slog.Error("自动回退失败：无上一版本备份，清除待验证标记后继续以当前版本启动", "错误", err)
-		removeSentinel(runPath)
-		return
+		return fmt.Errorf("无上一版本备份可回退: %w", err)
 	}
 	failedPath := runPath + failedSuffix
 	_ = os.Remove(failedPath)
 	if err := os.Rename(runPath, failedPath); err != nil {
-		slog.Error("自动回退失败：归档坏新版失败，继续以当前版本启动", "错误", err)
-		removeSentinel(runPath)
-		return
+		return fmt.Errorf("归档当前二进制失败: %w", err)
 	}
 	if err := os.Rename(oldPath, runPath); err != nil {
-		_ = os.Rename(failedPath, runPath) // 还原失败：把坏新版改回，保当前版可启动
-		slog.Error("自动回退失败：还原旧版失败，已复原当前版本继续启动", "错误", err)
-		removeSentinel(runPath)
-		return
+		_ = os.Rename(failedPath, runPath) // 还原失败：把当前版改回，保其可启动
+		return fmt.Errorf("还原上一版本失败: %w", err)
 	}
 	if runtime.GOOS != "windows" {
-		_ = os.Chmod(runPath, 0o755)
+		if err := os.Chmod(runPath, 0o755); err != nil {
+			slog.Warn("回退二进制补可执行位失败", "错误", err)
+		}
+	}
+	return nil
+}
+
+// RollbackAvailable 报告是否存在可回退的上一版本备份（.old），供手动回滚前置检查与前端按钮显隐（FR-120）。
+func RollbackAvailable(runPath string) bool {
+	_, err := os.Stat(runPath + oldSuffix)
+	return err == nil
+}
+
+// RollbackAndRespawn 运行期手动回退到上一版本并重启（FR-120）：当前 → .failed、.old → 运行路径 → spawn 旧版。
+// 由 main 在优雅关停后调用；spawn 成功后本进程正常退出（不 osExit，交 main 返回退出）。无 .old 或换位失败返回错误。
+func RollbackAndRespawn(runPath string) error {
+	if err := rollbackToOld(runPath); err != nil {
+		return err
+	}
+	removeSentinel(runPath) // 回退后清掉可能存在的待验证标记
+	slog.Info("已手动回退到上一版本，重启旧版")
+	if err := spawnProcess(runPath); err != nil {
+		return fmt.Errorf("回退后重启旧版失败: %w", err)
+	}
+	return nil
+}
+
+// autoRollback 启动期自动回退到上一版本：复用 rollbackToOld 换文件后 spawn 旧版并退出本进程（FR-119）。
+// 无 .old 可退 / 换文件失败则清 sentinel 后返回（继续以当前版启动，无更好选择、不致卡死）。
+func autoRollback(runPath string) {
+	if err := rollbackToOld(runPath); err != nil {
+		slog.Error("自动回退失败，清除待验证标记后继续以当前版本启动", "错误", err)
+		removeSentinel(runPath)
+		return
 	}
 	removeSentinel(runPath)
 	slog.Info("已自动回退到上一版本，重启旧版")
