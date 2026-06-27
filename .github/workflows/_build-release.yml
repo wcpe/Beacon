@@ -167,11 +167,13 @@ jobs:
     steps:
       - name: 检出仓库（读 VERSION 供滚动模式定版本号）
         uses: actions/checkout@v4
-      - name: 汇集全部产物
+      - name: 汇集发布产物（仅 beacon-* 二进制 / launcher / jar）
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          # 各 job 的 artifact 扁平合并到 artifacts/
+          # 只取 beacon-* 命名的 artifact（各平台二进制 / launcher / agent jar），扁平合并到 artifacts/。
+          # 排除前端 web-dist：它仅供二进制 go:embed、不进 Release，且其 assets/ 子目录会让下一步 sha256sum * 报「Is a directory」而失败。
+          pattern: beacon-*
           merge-multiple: true
       - name: 生成 SHA256 校验和
         shell: bash
