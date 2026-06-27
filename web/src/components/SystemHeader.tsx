@@ -22,16 +22,6 @@ interface SystemHeaderProps {
 // 自身状态刷新周期（毫秒）：短周期以实时反映控制面健康（含 DB 断开）
 const STATUS_REFETCH_MS = 5000
 
-// 单个紧凑指标项：标签 + 值
-function StatItem({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col">
-      <span className="text-[11px] leading-none text-muted-foreground">{label}</span>
-      <span className="mt-0.5 text-sm font-medium tabular-nums">{children}</span>
-    </div>
-  )
-}
-
 // 加载骨架灰条：首次加载时占位，避免闪 '-'。
 function Skeleton({ className }: { className?: string }) {
   return <span className={cn('inline-block h-4 animate-pulse rounded bg-muted', className)} />
@@ -109,17 +99,17 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
         </span>
       )}
 
-      {/* 运行 / 在线紧凑一行：运行时长 · 在线实例数 */}
-      <StatItem label={t('systemHeader.runtime')}>
-        {showSkeleton ? (
-          <Skeleton className="w-28" />
-        ) : (
-          t('systemHeader.runtimeValue', {
+      {/* 运行 / 在线紧凑一行（FR-118 E：去标签行，仅留「运行 X · 在线 N」一行） */}
+      {showSkeleton ? (
+        <Skeleton className="w-28" />
+      ) : (
+        <span className="text-sm font-medium tabular-nums">
+          {t('systemHeader.runtimeValue', {
             uptime: formatDuration(data?.uptimeSeconds),
             online: data?.onlineInstances ?? '-',
-          })
-        )}
-      </StatItem>
+          })}
+        </span>
+      )}
 
       {/* 右上角操作组（右对齐）：搜索入口 + 界面偏好控件 */}
       <div className="ml-auto flex items-center gap-1">

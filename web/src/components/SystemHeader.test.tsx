@@ -91,6 +91,14 @@ describe('SystemHeader', () => {
     expect(screen.getByText('运行 3 小时 25 分 · 在线 7')).toBeInTheDocument()
   })
 
+  it('运行/在线只一行：不再渲染「运行 / 在线」标签行（FR-118 E）', async () => {
+    renderHeader(<SystemHeader />)
+    // 等运行/在线值结算
+    expect(await screen.findByText('运行 3 小时 25 分 · 在线 7')).toBeInTheDocument()
+    // 旧的标签行「运行 / 在线」已去除，仅留值行
+    expect(screen.queryByText('运行 / 在线')).toBeNull()
+  })
+
   it('不再渲染采样器 / goroutine / Go 堆 / 进程 CPU%（已迁控制面健康页）', async () => {
     renderHeader(<SystemHeader />)
     // 等连通态结算

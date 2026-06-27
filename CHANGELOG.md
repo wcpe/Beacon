@@ -7,6 +7,9 @@
 ### 新增
 - CI 推 master 自动发滚动预发布 + in-app 更新两渠道按版本号判新（FR-117，CI + 控制面，见 [ADR-0052](docs/adr/0052-rolling-prerelease-channel.md)，取代 [ADR-0046](docs/adr/0046-rc-prerelease-channel.md) 的 rc / 不滚动决策）：渠道收敛为 **正式版（stable）/ 滚动预发布（prerelease）两条**（去 rc）。**CI**——`prerelease.yml` 由 rc-tag 触发改为 **master push 触发**，调用 `_build-release.yml`（新增 `rolling`/`rolling-tag` 入参）以固定移动 tag `prerelease` force-update **覆盖发布同一个** prerelease Release（`prerelease=true`、只留最新一份、5 平台二进制 + launcher + 双端 jar + `SHA256SUMS.txt`），版本取根 `VERSION`、Release 标题 `v<VERSION>`、不参与 tag↔VERSION 校验；`release.yml`（无后缀正式 tag → stable）行为不变。**in-app 更新**——`update.channel` 枚举改 `stable`/`prerelease`；判新改为**语义版本号 `X.Y.Z` 比较**（渠道版 > 运行版才提示、同号不提示、跨号才提示），渠道区分仍用 GitHub `prerelease` 布尔；滚动预发布版本号取 Release 标题（其 tag 为移动标签 `prerelease`，非语义版本，版本解析 tag 优先、回退 name）；`assetName` 去前导 `v` 与 CI 产物命名同口径。注：「推 master → CI 真发出 / 覆盖滚动 Release、管理台预发布渠道可检」需 push + GitHub Actions 真验，本地不可验。
 
+### 修复
+- 全局顶栏「运行 / 在线」由两行改一行（`web/src/components/SystemHeader.tsx`）：原 `StatItem` 把「运行 / 在线」标签独占一行、值「运行 X · 在线 N」另起一行，顶栏占两行偏高；去掉标签行，只留「运行 X · 在线 N」一行（移除已无引用的 `StatItem` 组件与 `systemHeader.runtime` 标签键）。
+
 ## 0.16.0（2026-06-27）
 
 ### 新增

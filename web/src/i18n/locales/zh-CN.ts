@@ -190,8 +190,7 @@ export const zhCN = {
     disconnected: '已断开',
     uptime: '运行时长',
     onlineInstances: '在线实例',
-    // 精简页眉「运行/在线」合并标签与值（紧凑一行：运行 X · 在线 N）
-    runtime: '运行 / 在线',
+    // 精简页眉「运行/在线」合并为一行（FR-118 E：仅值、无标签行）：运行 X · 在线 N
     runtimeValue: '运行 {{uptime}} · 在线 {{online}}',
     sampler: '采样器',
     samplerEnabled: '已启用',
