@@ -1,5 +1,8 @@
 package top.wcpe.beacon.agent.core.log
 
+import top.wcpe.beacon.agent.core.browse.DirListing
+import top.wcpe.beacon.agent.core.browse.FileContent
+import top.wcpe.beacon.agent.core.browse.TreeNode
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.io.File
 
@@ -58,4 +61,17 @@ class BufferingPlatformAdapter(
         delegate.publishConfigChanged(changed, newMd5)
 
     override fun dispatchConsoleCommand(command: String) = delegate.dispatchConsoleCommand(command)
+
+    // ===== 只读浏览（FR-109/110）：原样透传委托 =====
+    // 修复：装饰器此前漏委托 browse*，致经本装饰器时落到 PlatformAdapter 默认 null 实现、
+    // 壳层（Bukkit/Bungee）的真实委托永不可达——真机浏览全部返回 null（结果=false）。
+
+    override fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? =
+        delegate.browseListDir(relPath, offset, limit)
+
+    override fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? =
+        delegate.browseReadTree(relPath, maxDepth)
+
+    override fun browseReadFile(relPath: String): FileContent? =
+        delegate.browseReadFile(relPath)
 }
