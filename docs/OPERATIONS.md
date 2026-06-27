@@ -21,14 +21,15 @@
 - agent：替换 jar 重启子服。控制面与 agent 应同次发布、版本号一致（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。
 - **发布产物平台覆盖（FR-102）**：每个正式 tag 由 CI 在原生 runner 上 CGO=1 构建（非交叉编译，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 个平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每个平台同时产出主二进制 `beacon-<ver>-<target>[.exe]` 与 launcher 监督进程 `beacon-launcher-<ver>-<target>[.exe]`，并由 `SHA256SUMS.txt` 一并校验。双端 agent jar 与平台无关、各发布只构建一次。
 
-### 2.2 rc 预发布渠道（FR-103，[ADR-0046](adr/0046-rc-prerelease-channel.md)）
-正式版与 rc 预发布版并存，便于在正式发版前让人试用验证：
+### 2.2 滚动预发布渠道（FR-117，[ADR-0052](adr/0052-rolling-prerelease-channel.md)，取代 [ADR-0046](adr/0046-rc-prerelease-channel.md) 的 rc 模型）
+渠道收敛为**正式版（stable）/ 滚动预发布（prerelease）两条**，预发布随 master 自动滚动刷新，便于试用最新并喂 in-app 在线更新使更新功能可测：
 
-- **触发**：在 main 上打 rc tag `vX.Y.Z-rc.N`（如 `git tag v0.15.0-rc.1 && git push origin v0.15.0-rc.1`）。CI 的 `prerelease.yml` 据此触发，与正式版**复用同一套构建**（5 平台原生矩阵含 launcher + 双端 jar + `SHA256SUMS.txt`），经 GitHub 标 **prerelease=true**，release notes 自动前置中文提示头「⚠ 预发布版本（rc）：用于试用验证，可能不稳定，勿用于生产」。
-- **版本号关系**：rc 期间根 `VERSION` 已指向目标正式版（如要发 `0.15.0`，`VERSION` 即写 `0.15.0`），rc tag 带 `-rc.N` 后缀（`-rc.1`/`-rc.2`/…）；CI 的 tag↔VERSION 校验会剥 `-rc.<数字>` 后缀再与 `VERSION` 比对（严格只认 `-rc.<数字>`）。正式发布时打**无后缀** tag `vX.Y.Z`（走 `release.yml`，prerelease=false）。两条 tag glob 互斥不重叠。
-- **用途**：给运维 / 试用方先装 rc 产物验证（主二进制 / launcher / agent jar 命名同正式版、含 `-rc.N` 版本串），确认无误后再打无后缀正式 tag 发版。
-- **回退**：rc 仅供试用、不进生产；试用发现问题直接弃用该 rc、修后再发新 rc（`-rc.N+1`）或直接发正式版即可，无需特殊回滚。生产升级一律以**正式 Release**（非 prerelease）为准——控制面在线自更新（FR-99/FR-100）的「正式」渠道按 GitHub API 最新**非 prerelease** release 判定，「rc」渠道按最新 **prerelease** 判定。
-- **注意**：全局技能 `sdd-publish-snapshot` 基于旧快照模型（main 推送滚动发 `latest`），与本 rc 模型冲突，勿直接套用；本仓库预发布以本节 rc 流程为准。
+- **正式版触发（不变）**：打**无后缀**正式 tag `vX.Y.Z`（如 `git tag v0.17.0 && git push origin v0.17.0`），CI 的 `release.yml` 触发、`prerelease=false`，行为同前；tag↔VERSION 严格校验（tag 去 `v` == 根 `VERSION`）。
+- **滚动预发布触发**：**推 master 即自动发布**。CI 的 `prerelease.yml` 由 master push 触发，调用同一套构建（5 平台原生矩阵含 launcher + 双端 jar + `SHA256SUMS.txt`），以**固定移动 tag `prerelease`** force-update **覆盖发布同一个** prerelease Release（`prerelease=true`，**只留最新一份、不堆 Release 列表**）；版本号取根 `VERSION`（资产名 `beacon-<VERSION>-...`、Release 标题 `v<VERSION>`），不参与 tag↔VERSION 校验。release notes 自动前置中文头「⚠ 滚动预发布版本：随 master 自动覆盖更新…勿用于生产」。
+- **渠道判定（按版本号）**：控制面在线自更新（FR-99/FR-100）的「正式（stable）」渠道按 GitHub API 最新**非 prerelease** release 判定，「预发布（prerelease）」渠道按最新 **prerelease** release 判定；**是否有更新按语义版本号 `X.Y.Z` 比较**——渠道版 > 当前运行版才提示，**同 `X.Y.Z` 滚动覆盖不提示**（你已在最新，重拉 / 重启即可），**跨号才提示**。滚动预发布的版本号取 Release 标题（`v<VERSION>`），因其 tag 为移动标签 `prerelease` 非语义版本。
+- **用途**：给运维 / 试用方装预发布产物先验，并让 in-app 更新 / 切渠道功能有真实 Release 可检可更可测；确认无误后打无后缀正式 tag 发版。
+- **回退**：预发布仅供试用、不进生产；发现问题直接弃用、修后随下次 master push 自动覆盖刷新即可，无需特殊回滚。生产升级一律以**正式 Release** 为准。
+- **注意**：全局技能 `sdd-publish-snapshot` 基于旧快照 / rc 模型，与本节滚动预发布模型方向趋同但仍属全局插件；本仓库预发布以本节流程（ADR-0052）为准。
 
 ### 2.1 内置 launcher 监督进程（FR-96，[ADR-0045](adr/0045-builtin-launcher-supervisor.md)）
 发布产物含独立第二二进制 `beacon-launcher[.exe]`（与主二进制 `beacon[.exe]` 同目录、同版本）。**裸跑单二进制时**，可改为跑 `beacon-launcher` 代替直接跑 `beacon`，使控制面无需外部 systemd / docker 即**崩溃自动重启**：

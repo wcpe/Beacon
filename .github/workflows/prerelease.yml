@@ -1,25 +1,31 @@
-# Beacon rc 预发布触发壳（ADR-0046 预发布渠道）：推送 rc tag vX.Y.Z-rc.N 时，
-# 调用可复用 workflow _build-release.yml 做多平台原生构建 + 双端 jar + SHA256 + 建预发布 Release（prerelease=true）。
-# 本文件极薄、只管触发与传参；构建逻辑单点维护在 _build-release.yml（FR-103）。
-# 只做 rc，不做 beta/nightly（YAGNI）。
+# Beacon 滚动预发布触发壳（FR-117，[ADR-0052](../../docs/adr/0052-rolling-prerelease-channel.md)）：
+# 推 master 时调用可复用 workflow _build-release.yml 做多平台原生构建 + 双端 jar + SHA256，
+# 并以移动 tag「prerelease」覆盖发布同一个滚动预发布 Release（prerelease=true、只留最新一份）。
+# 版本号取根 VERSION（资产名 beacon-<VERSION>-...、Release 标题 v<VERSION>）。
+# 本文件极薄、只管触发与传参；构建逻辑单点维护在 _build-release.yml。
+# 正式版走 release.yml（无后缀 tag 触发），与本滚动路径互不重叠。
 name: Prerelease
 
 on:
   push:
-    tags:
-      # 仅 rc 预发布 tag 触发（严格三段版本号 + -rc.<数字>，与 release.yml 正式三段 glob 互斥不重叠）
-      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+    # 推 master 即滚动发出最新预发布，喂 in-app 在线更新使更新功能可被检查 / 更新 / 验证（ADR-0052）。
+    branches:
+      - master
 
 permissions:
-  # 创建 Release 并上传附件需要写 contents
+  # 创建 / 移动 tag 并发布 Release、上传附件需要写 contents
   contents: write
 
 jobs:
   call:
-    name: rc 预发布构建
+    name: 滚动预发布构建
     uses: ./.github/workflows/_build-release.yml
     permissions:
       contents: write
     with:
-      # rc 渠道：标记为预发布
+      # 预发布渠道：标记为预发布
       prerelease: true
+      # 滚动模式：版本取根 VERSION、以移动 tag 覆盖同一 Release
+      rolling: true
+      # 滚动预发布的固定移动 tag 名（in-app 预发布渠道取最新 prerelease=true 的 Release）
+      rolling-tag: prerelease

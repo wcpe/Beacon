@@ -1,6 +1,10 @@
-# Beacon 可复用发布构建 workflow（FR-103 / ADR-0046）：被 release.yml（稳定）与 prerelease.yml（rc 预发布）
-# 经 workflow_call 调用，单点维护「web 构建 / 多平台原生矩阵 / 双端 jar / 汇总 SHA256 / 建 Release」。
-# 调用方传入 prerelease 标志与 release 标题前缀；本 workflow 不自带 on.push 触发，触发由两个薄壳负责。
+# Beacon 可复用发布构建 workflow（FR-103/FR-117，ADR-0046/ADR-0052）：被 release.yml（正式版）与
+# prerelease.yml（滚动预发布）经 workflow_call 调用，单点维护「web 构建 / 多平台原生矩阵 / 双端 jar /
+# 汇总 SHA256 / 建 Release」。本 workflow 不自带 on.push 触发，触发由两个薄壳负责。
+#
+# 两种模式（由 inputs.rolling 区分）：
+#   - 正式版（rolling=false，tag 触发）：版本取触发 tag 去 v 前缀；tag↔VERSION 严格校验；Release 据 tag 建、不移动 tag。
+#   - 滚动预发布（rolling=true，master push）：版本取根 VERSION；以移动 tag（rolling-tag）force-update 覆盖同一 Release。
 #
 # 为什么矩阵原生而非交叉编译：控制面 sqlite 经 go-sqlite3 需 CGO，交叉编译会自动关闭 CGO
 # 导致 sqlite 不可用（默认开箱即跑的库）。故各平台二进制在对应原生 runner 上以 CGO=1 构建。
@@ -10,10 +14,23 @@ on:
   workflow_call:
     inputs:
       prerelease:
-        # 是否标记为预发布（GitHub Release 的 prerelease 标志）：稳定渠道传 false、rc 渠道传 true
-        description: "是否预发布（rc）"
+        # 是否标记为预发布（GitHub Release 的 prerelease 标志）：正式渠道传 false、预发布渠道传 true
+        description: "是否预发布"
         required: true
         type: boolean
+      rolling:
+        # 是否滚动模式（FR-117）：true=master push 滚动预发布（版本取根 VERSION、移动 tag 覆盖同一 Release）；
+        # false=正式版（tag 触发、版本取 tag、tag↔VERSION 严格校验）。缺省 false 兼容 release.yml。
+        description: "是否滚动预发布（master push）"
+        required: false
+        default: false
+        type: boolean
+      rolling-tag:
+        # 滚动模式的固定移动 tag 名（仅 rolling=true 用），如 prerelease。
+        description: "滚动预发布移动 tag 名"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   # 创建 Release 并上传附件需要写 contents
@@ -26,16 +43,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: 校验 tag 与 VERSION 一致
+      - name: 校验 tag 与 VERSION 一致（仅正式版 tag 触发）
+        # 滚动预发布走 master push、版本直接取根 VERSION、不参与 tag↔VERSION 校验（ADR-0052 决策 6）。
+        if: ${{ !inputs.rolling }}
         shell: bash
         run: |
-          # tag 去 v 前缀后再剥可选的 -rc.<数字> 预发布后缀（严格只认 -rc.<数字>，拒任意后缀防绕过），
-          # 结果须等于根 VERSION（rc 期间 VERSION 已指向目标正式版）。正式版无后缀路径行为不变。
-          raw="${GITHUB_REF_NAME#v}"
-          base="$(echo "$raw" | sed -E 's/-rc\.[0-9]+$//')"
+          # 正式版无后缀 tag：去 v 前缀后须等于根 VERSION（两条 tag glob 已互斥，此处不再剥任何后缀）。
+          base="${GITHUB_REF_NAME#v}"
           ver="$(cat VERSION)"
           if [ "$base" != "$ver" ]; then
-            echo "::error::tag $GITHUB_REF_NAME 去前缀剥 rc 后缀得 $base，与仓库 VERSION($ver) 不一致，拒绝发布"
+            echo "::error::tag $GITHUB_REF_NAME 去前缀得 $base，与仓库 VERSION($ver) 不一致，拒绝发布"
             exit 1
           fi
       - name: 安装 pnpm
@@ -93,9 +110,15 @@ jobs:
           path: web/dist
       - name: 原生构建控制面与 launcher 二进制
         shell: bash
+        env:
+          ROLLING: ${{ inputs.rolling }}
         run: |
-          # 版本号取 tag 去 v 前缀的完整串（含 -rc.N），使 rc 产物版本自带 rc 标识、与正式版可区分
-          ver="${GITHUB_REF_NAME#v}"
+          # 版本号：正式版取触发 tag 去 v 前缀；滚动预发布取根 VERSION（master push 无版本 tag，ADR-0052）。
+          if [ "$ROLLING" = "true" ]; then
+            ver="$(cat VERSION)"
+          else
+            ver="${GITHUB_REF_NAME#v}"
+          fi
           ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${ver}"
           out="beacon-${ver}-${{ matrix.target }}${{ matrix.ext }}"
           go build -trimpath -ldflags "${ldflags}" -o "${out}" ./cmd/beacon
@@ -134,13 +157,16 @@ jobs:
             dist/BeaconAgentProxy-*.jar
           if-no-files-found: error
 
-  # 汇集全部产物、生成 SHA256 校验和、创建 GitHub Release。
-  # prerelease 标志由调用方经 inputs.prerelease 传入：稳定渠道 false、rc 渠道 true。
+  # 汇集全部产物、生成 SHA256 校验和、创建 / 覆盖 GitHub Release。
+  # prerelease 标志由调用方经 inputs.prerelease 传入：正式渠道 false、预发布渠道 true。
+  # 滚动模式（inputs.rolling=true）以移动 tag（rolling-tag）force-update 覆盖同一 Release，只留最新一份。
   release:
     name: 发布 GitHub Release
     needs: [binaries, jars]
     runs-on: ubuntu-latest
     steps:
+      - name: 检出仓库（读 VERSION 供滚动模式定版本号）
+        uses: actions/checkout@v4
       - name: 汇集全部产物
         uses: actions/download-artifact@v4
         with:
@@ -154,26 +180,44 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           echo "==== 发布产物校验和 ===="
           cat SHA256SUMS.txt
-      - name: 生成预发布说明头（仅 rc）
+      - name: 解析发布 tag 与版本号
+        # 正式版：tag=触发 tag（vX.Y.Z）、版本=去 v；滚动：tag=rolling-tag（移动）、版本=根 VERSION、Release 标题 v<VERSION>。
+        id: meta
+        shell: bash
+        env:
+          ROLLING: ${{ inputs.rolling }}
+          ROLLING_TAG: ${{ inputs.rolling-tag }}
+        run: |
+          if [ "$ROLLING" = "true" ]; then
+            ver="$(cat VERSION)"
+            echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
+            echo "name=v${ver}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: 生成预发布说明头（仅预发布）
         # 预发布在 generate_release_notes 自动生成之上，前置固定中文提示头；正式版不加（body 留空走自动）
         if: ${{ inputs.prerelease }}
         shell: bash
         run: |
           {
-            echo "⚠ 预发布版本（rc）：用于试用验证，可能不稳定，勿用于生产。"
+            echo "⚠ 滚动预发布版本：随 master 自动覆盖更新，用于试用验证 / 喂在线更新，可能不稳定，勿用于生产。"
             echo ""
           } > release-notes-header.md
           echo "notes_header<<__EOF__" >> "$GITHUB_OUTPUT"
           cat release-notes-header.md >> "$GITHUB_OUTPUT"
           echo "__EOF__" >> "$GITHUB_OUTPUT"
         id: notes
-      - name: 创建 Release 并上传产物
+      - name: 创建 / 覆盖 Release 并上传产物
         uses: softprops/action-gh-release@v2
         with:
-          # tag 已存在（由本次 push 触发），自动据 tag 建 Release
+          # 正式版：tag 已由 push 提供；滚动：显式传移动 tag，action 会 force-update tag 并覆盖同一 Release
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
           files: artifacts/*
           prerelease: ${{ inputs.prerelease }}
-          # rc 用固定中文头 + 自动生成 notes 追加在后；正式版 body 留空、纯自动生成
+          # 预发布用固定中文头 + 自动生成 notes 追加在后；正式版 body 留空、纯自动生成
           body: ${{ inputs.prerelease && steps.notes.outputs.notes_header || '' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
