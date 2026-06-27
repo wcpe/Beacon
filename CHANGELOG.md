@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.18.0（2026-06-28）
+
 ### 变更
 - 控制面更新改单进程二进制自替换 + 自动回滚，移除 launcher 监督进程（FR-119，见 [ADR-0053](docs/adr/0053-single-binary-self-replace.md)，取代 [ADR-0045](docs/adr/0045-builtin-launcher-supervisor.md) + 部分取代 [ADR-0044](docs/adr/0044-control-plane-online-self-update.md) 决策 5/6/7）：删除独立第二二进制 `beacon-launcher`（`cmd/beacon-launcher`）与退出码协议（`internal/exitcode`），改为**主进程单进程自我替换**——在线更新下载校验落位 `beacon.new` 后优雅关停释放端口 → rename 让位三步（`beacon`→`beacon.old`、`beacon.new`→`beacon`）→ spawn 新进程 → 旧进程退出。Windows 允许 rename 运行中的 `.exe`（证伪原 ADR「主进程自换必败」前提），无需第三方监督进程换文件；下载临时文件与运行二进制同目录同卷，全程 rename 原子。新增 launcher 原本不具备的**自动回滚**：换版成功后写 sentinel 标记，新版启动早期自检——稳定运行过验证期（10s）或收到正常关停信号即确认成功（删 sentinel + `.old`），换版后反复起不来（启动计数达阈值 3）则在 `main` 启动早期自动 rename 回退 `.old` 并重启旧版、闭合崩溃循环。进程崩溃的自动重启改交外部监督（docker `restart` / systemd `Restart=`，`docs/OPERATIONS.md` 补推荐部署）；`Makefile`/`Dockerfile`/CI `_build-release.yml` 去 launcher 产物、Docker `ENTRYPOINT` 回 `beacon`。**手动回滚 API + 前端按钮属 FR-120**。真机（Win+Linux）真换版与「起不来自动回退」待验。
 - 控制面更新支持手动回滚到上一版本（FR-120，见 [ADR-0053](docs/adr/0053-single-binary-self-replace.md)）：新增 `POST /admin/v1/system/rollback`（无 `.old` 备份 → `409 NO_ROLLBACK_AVAILABLE`、readonly → 403、审计 `system.update-rollback`）+ 状态端点 `GET /system/update` 增 `rollbackAvailable` 字段；前端「版本与更新」页加「回滚到上一版本」按钮（仅有 `.old` 时显示）+ 二次确认 + 重连回显。回退复用 FR-119 的 `.old` 备份：主进程优雅关停 → rename 回退（当前 → `.failed`、`.old` → 运行路径）→ spawn 旧版重启。与 FR-119 自动回滚互补（自动=崩溃循环兜底，手动=主动退回）。真机回滚待验。

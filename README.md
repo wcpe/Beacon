@@ -2,7 +2,7 @@
 
 > 面向 Minecraft 服务器集群的自研控制面 —— 配置中心 · 服务发现 · 健康检查（"MC 版 Nacos"）。
 
-[![version](https://img.shields.io/badge/version-v0.14.1-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-v0.18.0-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
@@ -20,6 +20,7 @@ Beacon 是一个独立的后端控制面：用 **Go** 提供 API、内嵌 **Reac
 - **文件树托管 / 配置导入**：整文件 blob 托管并镜像落 agent 真实 dataFolder；可正向上传一份 plugins 目录，或从在线实例反向抓取，ingest 为组/实例级覆盖。
 - **可观测**：内嵌 Dashboard（人数 / TPS / 内存 / CPU 趋势、BC 代理专属指标、集群拓扑图）；Prometheus `/metrics`；全量操作审计可查。
 - **管理台**：React + shadcn-ui；配置中心 VS Code 风格编辑器（Monaco），含生效预览与逐键来源 provenance。
+- **在线自更新**：单二进制自我替换（下载校验 → rename 让位 → 重启），无需第二监督进程；换版失败自动回退、可手动回滚到上一版本；正式 / 滚动预发布双渠道。
 - **鉴权**：管理面 Bearer 登录令牌；运行时 API 密钥（full / readonly 两级角色，只读密钥对任何写端点一律 403）。
 - **数据面 agent**：Kotlin/TabooLib 双端（Bukkit / Bungee），fail-static、env 覆盖配置、内置可选跨服消息中间件；并提供只读 SDK 供业务插件接入。
 - **简单优先**：面向约 50 服规模，单节点 + REST/SSE，**不引入 Redis / MQ / DI 框架**（见 [ADR-0003](docs/adr/0003-no-redis-in-mvp.md)）；数据库经 GORM 抽象，MySQL / SQLite，可切 Postgres。
@@ -82,8 +83,8 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:0.14.1") // 只读契约
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.14.1") // 便捷门面（推荐）
+    compileOnly("top.wcpe.beacon:beacon-agent-api:0.18.0") // 只读契约
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.18.0") // 便捷门面（推荐）
 }
 ```
 
