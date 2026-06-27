@@ -1,7 +1,8 @@
 # Beacon 滚动预发布触发壳（FR-117，[ADR-0052](../../docs/adr/0052-rolling-prerelease-channel.md)）：
 # 推 master 时调用可复用 workflow _build-release.yml 做多平台原生构建 + 双端 jar + SHA256，
-# 并以移动 tag「prerelease」覆盖发布同一个滚动预发布 Release（prerelease=true、只留最新一份）。
-# 版本号由 CI 自算 = 最新正式 release 的 minor+1（与 VERSION 解耦、自动领先最新正式版，ADR-0054）。
+# 并以移动 tag「dev」覆盖发布同一个滚动预发布 Release（prerelease=true、只留最新一份）。
+# 版本号由 CI 自算 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>（收敛到 scripts/dev-version.sh、与 VERSION 解耦，FR-117）；
+# 提交距离为 0（主干无新提交）时 meta 置 skip、全程跳过，不凭空滚动出更高的 dev。
 # 本文件极薄、只管触发与传参；构建逻辑单点维护在 _build-release.yml。
 # 正式版走 release.yml（无后缀 tag 触发），与本滚动路径互不重叠。
 name: Prerelease
@@ -25,7 +26,7 @@ jobs:
     with:
       # 预发布渠道：标记为预发布
       prerelease: true
-      # 滚动模式：版本取根 VERSION、以移动 tag 覆盖同一 Release
+      # 滚动模式：版本由 scripts/dev-version.sh 自算、以移动 tag 覆盖同一 Release
       rolling: true
       # 滚动预发布的固定移动 tag 名（in-app 预发布渠道取最新 prerelease=true 的 Release）
-      rolling-tag: prerelease
+      rolling-tag: dev

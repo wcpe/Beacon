@@ -4,7 +4,9 @@
 #
 # 两种模式（由 inputs.rolling 区分）：
 #   - 正式版（rolling=false，tag 触发）：版本取触发 tag 去 v 前缀；tag↔VERSION 严格校验；Release 据 tag 建、不移动 tag。
-#   - 滚动预发布（rolling=true，master push）：版本 = 最新正式 release minor+1（CI 自算、与 VERSION 解耦，ADR-0054）；以移动 tag（rolling-tag）force-update 覆盖同一 Release。
+#   - 滚动预发布（rolling=true，master push）：版本 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>（CI 自算、与 VERSION 解耦，
+#     收敛到 scripts/dev-version.sh，FR-117）；以移动 tag（rolling-tag）force-update 覆盖同一 Release。
+#     提交距离为 0（主干无新提交）时 meta 置 skip=true，后续构建 / 发布 job 据此跳过。
 #
 # 为什么矩阵原生而非交叉编译：控制面 sqlite 经 go-sqlite3 需 CGO，交叉编译会自动关闭 CGO
 # 导致 sqlite 不可用（默认开箱即跑的库）。故各平台二进制在对应原生 runner 上以 CGO=1 构建。
@@ -19,14 +21,14 @@ on:
         required: true
         type: boolean
       rolling:
-        # 是否滚动模式（FR-117）：true=master push 滚动预发布（版本 = 最新正式 release minor+1、CI 自算、移动 tag 覆盖同一 Release，ADR-0054）；
+        # 是否滚动模式（FR-117）：true=master push 滚动预发布（版本 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>、CI 自算、移动 tag 覆盖同一 Release）；
         # false=正式版（tag 触发、版本取 tag、tag↔VERSION 严格校验）。缺省 false 兼容 release.yml。
         description: "是否滚动预发布（master push）"
         required: false
         default: false
         type: boolean
       rolling-tag:
-        # 滚动模式的固定移动 tag 名（仅 rolling=true 用），如 prerelease。
+        # 滚动模式的固定移动 tag 名（仅 rolling=true 用），如 dev。
         description: "滚动预发布移动 tag 名"
         required: false
         default: ""
@@ -37,8 +39,9 @@ permissions:
   contents: write
 
 jobs:
-  # 版本号 / tag / Release 名单点计算（ADR-0054）：滚动预发布取最新正式 release minor+1（与 VERSION 解耦、
-  # 自动领先），正式版取触发 tag 去 v 并做 tag↔VERSION 严格校验。各构建 / 发布 job 共用本 job 输出保证全程一致。
+  # 版本号 / tag / Release 名单点计算：滚动预发布取 <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>
+  # （收敛到 scripts/dev-version.sh、与 VERSION 解耦，FR-117），正式版取触发 tag 去 v 并做 tag↔VERSION 严格校验。
+  # 各构建 / 发布 job 共用本 job 输出保证全程一致；skip=true 时（主干无新提交）后续 job 跳过。
   meta:
     name: 解析版本号
     runs-on: ubuntu-latest
@@ -46,10 +49,11 @@ jobs:
       version: ${{ steps.calc.outputs.version }}
       tag: ${{ steps.calc.outputs.tag }}
       name: ${{ steps.calc.outputs.name }}
+      skip: ${{ steps.calc.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # 取全部 tag 供滚动预发布算「最新正式版 tag」的 minor+1（ADR-0054）；默认浅克隆不含 tag。
+          # 取全部 tag 与历史供 scripts/dev-version.sh 用 git describe / rev-list 推导基线与提交距离；默认浅克隆不含 tag。
           fetch-depth: 0
       - name: 计算版本号 / tag / Release 名
         id: calc
@@ -59,30 +63,24 @@ jobs:
           ROLLING_TAG: ${{ inputs.rolling-tag }}
         run: |
           if [ "$ROLLING" = "true" ]; then
-            # 滚动预发布：版本号 = 最新正式 release（releases/latest 天然排除 prerelease）的 minor+1、patch 归零，
-            # 与 VERSION 解耦、自动领先最新正式版（ADR-0054）。无正式 release / 解析失败回退基线 0 → 0.1.0。
-            # 用 git tag（一定存在）而非 GitHub Release——本仓暂无「正式 Release」（releases/latest 返 404），
-            # 但正式语义 tag 一定有。取最新 vX.Y.Z：grep -v '-' 排除 -rc 等预发布段、sort -V 版本序、tail 取最高。
-            latest="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | grep -vE '-' | sort -V | tail -n1)"
-            base="${latest#v}"
-            major="${base%%.*}"
-            rest="${base#*.}"
-            minor="${rest%%.*}"
-            # major/minor 必须为纯数字，否则（无正式 tag）回退基线 0/0（得 0.1.0），不污染版本号。
-            if ! printf '%s' "${major}.${minor}" | grep -qE '^[0-9]+\.[0-9]+$'; then
-              echo "::warning::未找到正式版 tag（latest=[${latest}]），回退基线 0"
-              major=0
-              minor=0
+            # 滚动预发布：版本号 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>，由 scripts/dev-version.sh 单点计算
+            # （基线取最新正式 tag 不 +1、提交距离作序号，FR-117）。脚本退出码非 0（提交距离为 0、主干无新提交）时
+            # 置 skip=true 并不写版本号，后续 build / jars / release job 据此跳过，避免凭空滚动出更高的 dev。
+            if ver="$(bash scripts/dev-version.sh)"; then
+              echo "滚动预发布版本号：ver=[${ver}]"
+              echo "version=${ver}" >> "$GITHUB_OUTPUT"
+              echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
+              # Release 名 = v<版本号>（如 v0.17.0-dev.3.g6b6dd71）。必须保持可被 parseSemver 解析：
+              # in-app 预发布渠道的 releaseVersion（internal/update/github.go）在 tag 为移动标签 dev（非 semver）时
+              # 回退解析 name 取远端版本号；若改成「开发预览（…）」式自由文案会令解析失败、判新功能失效。
+              echo "name=v${ver}" >> "$GITHUB_OUTPUT"
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "主干自上个正式版起无新提交，跳过 dev 预发布。"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
             fi
-            # 带上 7 位 commit sha 作 -dev 预发布段（ADR-0055）：每次 push sha 变 → 版本号变 →
-            # in-app 同基线标识不同即判「有更新」，使滚动预发布可被反复检测、便于验证在线更新功能。
-            sha="$(printf '%s' "${GITHUB_SHA}" | cut -c1-7)"
-            ver="${major}.$((minor + 1)).0-dev.${sha}"
-            echo "滚动预发布版本号：最新正式 tag=[${latest}] + commit ${sha} → ver=[${ver}]"
-            echo "version=${ver}" >> "$GITHUB_OUTPUT"
-            echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
-            echo "name=v${ver}" >> "$GITHUB_OUTPUT"
           else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
             # 正式版：取触发 tag 去 v 前缀，并与根 VERSION 严格校验一致（ADR-0052 决策 3/6）。
             base="${GITHUB_REF_NAME#v}"
             ver="$(cat VERSION)"
@@ -98,6 +96,9 @@ jobs:
   # 前端构建一次，作为 artifact 供各平台二进制 go:embed 复用（免每个 runner 重复装 Node 构建）。
   web:
     name: 前端构建
+    needs: [meta]
+    # 滚动预发布主干无新提交（meta.skip=true）时跳过，避免空转构建。
+    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -130,6 +131,8 @@ jobs:
   binaries:
     name: 控制面 ${{ matrix.target }}
     needs: [meta, web]
+    # 滚动预发布主干无新提交（meta.skip=true）时跳过。
+    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -157,7 +160,7 @@ jobs:
       - name: 原生构建控制面二进制
         shell: bash
         env:
-          # 版本号由 meta job 单点计算（滚动 = 最新正式 minor+1、正式 = tag，ADR-0054），各平台共用保证一致。
+          # 版本号由 meta job 单点计算（滚动 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>、正式 = tag），各平台共用保证一致。
           VER: ${{ needs.meta.outputs.version }}
         run: |
           ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${VER}"
@@ -175,6 +178,8 @@ jobs:
   jars:
     name: agent jar
     needs: [meta]
+    # 滚动预发布主干无新提交（meta.skip=true）时跳过。
+    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -188,7 +193,7 @@ jobs:
       - name: 构建 agent jar（make agent）
         env:
           # agent jar 版本须与 beacon 一致（ADR-0007 三组件同版本）：滚动预发布版本号由 meta 单点计算
-          # （ADR-0054、非根 VERSION），故临时把 VERSION 覆盖为该版本号供 gradle 读（CI 内、不提交）。
+          # （非根 VERSION），故临时把 VERSION 覆盖为该版本号供 gradle 读（CI 内、不提交）。
           # 正式版时 meta.version == 根 VERSION，覆盖为同值、无副作用。
           VER: ${{ needs.meta.outputs.version }}
         run: |
@@ -209,6 +214,8 @@ jobs:
   release:
     name: 发布 GitHub Release
     needs: [meta, binaries, jars]
+    # 滚动预发布主干无新提交（meta.skip=true）时跳过。
+    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: 检出仓库（供读 CHANGELOG 提取 Release 正文）

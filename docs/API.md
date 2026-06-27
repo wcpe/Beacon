@@ -589,7 +589,7 @@ data: {}
 
 ### 控制面在线更新（FR-99，见 [ADR-0044](adr/0044-control-plane-online-self-update.md)）
 
-把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`prerelease`，ADR-0052）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。判新 = 基线比较 + 同基线预发布标识（`-dev.<sha>`）不同即有更新（先比 `X.Y.Z` 基线，远端基线高即报、低即否；基线相同时预发布标识不同即视为有更新，FR-117，[ADR-0055](adr/0055-rolling-prerelease-dev-sha-version.md)）。**一份端点契约真源（FR-100 前端消费）。**
+把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`prerelease`，ADR-0052）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。判新 = 基线比较 + 提交距离序号（先比 `X.Y.Z` 基线，远端基线高即报、低即否；基线相同时都 dev 比提交距离序号、远端序号大才报，正式↔dev 视为有更新，FR-117，[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)）。**一份端点契约真源（FR-100 前端消费）。**
 
 | 端点 | 说明 |
 |---|---|

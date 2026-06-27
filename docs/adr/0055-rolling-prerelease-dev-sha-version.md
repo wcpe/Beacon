@@ -1,6 +1,6 @@
 # ADR-0055：滚动预发布版本号带 `-dev.<sha>` + 同基线标识变即提示更新（取代 ADR-0052 决策 4/5 与 ADR-0054 的纯 X.Y.Z）
 
-**状态**：已接受（取代 [ADR-0052](0052-rolling-prerelease-channel.md) 决策 4/5、与 [ADR-0054](0054-rolling-prerelease-version-ci-computed.md)「纯 X.Y.Z」部分；两者其余仍有效）
+**状态**：已被 [ADR-0056](0056-rolling-prerelease-dev-distance-version.md) 取代（原决策：取代 [ADR-0052](0052-rolling-prerelease-channel.md) 决策 4/5 与 [ADR-0054](0054-rolling-prerelease-version-ci-computed.md)「纯 X.Y.Z」部分。ADR-0056 改为基线不 +1、`-dev.<提交距离>.g<sha>`、提交距离序号判新）
 
 ## 背景
 
