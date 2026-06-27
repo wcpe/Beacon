@@ -1,6 +1,6 @@
 # ADR-0046：rc 预发布渠道（语义化 rc 号 + prerelease 标志）
 
-**状态**：已接受
+**状态**：已接受（**rc 语义号 / 只做 rc 不滚动 / rc 渠道有序判定 三条被 [ADR-0052](0052-rolling-prerelease-channel.md) 取代**——改用「正式 / 预发布」两渠道 + master-push 滚动预发布 + 按版本号判新；**仍有效**：GitHub `prerelease` 布尔区分渠道、`release.yml`/`prerelease.yml` 复用 `_build-release.yml` 的 DRY 构建）
 
 ## 背景
 

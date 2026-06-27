@@ -49,12 +49,13 @@
 | [0043](0043-admin-nav-grouping-and-settings-aggregation.md) | 管理台导航分组 + 设置区聚合 IA：侧栏 5 组可折叠手风琴 + 设置三块顶层 tab/子 tab + 嵌套子路由 search param 深链 + 旧路由前端重定向 | 部分被 [0048](0048-flatten-system-nav-pages.md) 取代（聚合/折叠/二级子 tab 部分；5 组手风琴 + NAV 单一真源仍有效） |
 | [0044](0044-control-plane-online-self-update.md) | 控制面在线自更新核心：按渠道查 wcpe/Beacon Release → 下载本平台资产（超时/上限/失败清理）→ SHA256 校验 → 原子落位 pending → 以退出码 70 交还 launcher → 任何阶段失败保留旧版不退；进度内存态不建表、审计落库（渠道语义引 ADR-0046） | 已接受 |
 | [0045](0045-builtin-launcher-supervisor.md) | 内置 launcher 监督进程：独立第二二进制 + 退出码协议（0/1/70）+ 跨平台换二进制（Win rename 让位 / Unix rename 覆盖）+ 端口先退后起 + 裸跑兜底，本期 launcher 不自更新 | 已接受 |
-| [0046](0046-rc-prerelease-channel.md) | rc 预发布渠道：语义化 rc 号（vX.Y.Z-rc.N）+ prerelease=true + 渠道判定（最新非 prerelease=正式 / 最新 prerelease=rc）+ 不做 nightly/beta（取代 ADR-0007「快照=滚动 latest」一条；标注 sdd-publish-snapshot 技能与新模型冲突） | 已接受 |
+| [0046](0046-rc-prerelease-channel.md) | rc 预发布渠道：语义化 rc 号（vX.Y.Z-rc.N）+ prerelease=true + 渠道判定（最新非 prerelease=正式 / 最新 prerelease=rc）+ 不做 nightly/beta（取代 ADR-0007「快照=滚动 latest」一条；标注 sdd-publish-snapshot 技能与新模型冲突） | rc 语义号/不滚动/rc 判定 被 [0052](0052-rolling-prerelease-channel.md) 取代 |
 | [0047](0047-update-outbound-proxy-and-secret-redaction.md) | 控制面更新出站代理 + httpx 客户端工厂收口 + 含凭据设置项脱敏（扩展 ADR-0038；仅更新出站不动 webhook，不照搬 ADR-0005 抽象） | 已接受 |
 | [0048](0048-flatten-system-nav-pages.md) | 管理台「系统」区拍平为 5 个扁平独立页（运维设置 / 版本与更新 / 控制面健康 / 密钥 / 环境）：取代 ADR-0043 的设置聚合页 + 旧页折叠 + 二级子 tab；版本与更新独立成页（渠道/检查/更新/代理/更新设置）；页眉版本徽章改跳转 | 已接受 |
 | [0049](0049-agent-fs-browse.md) | agent 只读交互式文件浏览（懒列目录 / 读文件树 / 读单文件）：限 plugins 根 + path traversal 强校验 + 纯只读 + async 不碰主线程 + 大目录分页惰加载 + fail-static；控制面侧（FR-110）复用 ADR-0027/0037 命令通道 + FR-104 生命周期代理浏览（区别于 FR-58 一次性 scan） | 已接受 |
 | [0050](0050-config-xftp-workspace.md) | 配置中心双面板 Xftp 工作台（左受管树 ↔ 右在线服实时浏览 plugins）：**前端改接已有分散端点、不新造 /workbench/* 聚合 BFF**（原型 mock 退场）；FR-112 真详情多标签编辑器、FR-113 三页合一 IA + 退役 ConfigsPage，反抓/拓印后端复用不变 | 已接受 |
 | [0051](0051-config-operation-undo.md) | 配置操作级撤回子系统：新增可移植 `reversible_operation` 表对 push/publish/fetch 记可逆账目，撤回复用既有版本回滚 + 长轮询重推 + 反抓软删，多表写事务原子（提交后才唤醒）+ status 幂等闸 + 行/乐观锁并发安全 + 时间窗/被覆盖双闸防脏撤回，agent 零改 | 已接受 |
+| [0052](0052-rolling-prerelease-channel.md) | 滚动预发布渠道 + 版本号判新（取代 ADR-0046 的 rc 模型）：渠道收敛为「正式/预发布」两条、去 rc；推 master 自动覆盖发布滚动 prerelease（移动 tag、版本=VERSION）；in-app 更新按语义版本号 X.Y.Z 比较判新（同号不提示、跨号才提示）；渠道仍用 GitHub prerelease 布尔区分、复用 _build-release.yml | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
