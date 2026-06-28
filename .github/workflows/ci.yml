@@ -125,6 +125,10 @@ jobs:
         # prettier --check：有未格式化文件即判失败
         working-directory: web
         run: pnpm format:check
+      - name: 前端单元测试 + 覆盖率门禁
+        # vitest run --coverage：跑全部前端单测并校验覆盖率阈值（70%），未达标即判失败
+        working-directory: web
+        run: pnpm test:coverage
       - name: 构建前端（make web）
         # 构建逻辑单一来源于 Makefile：cd web && pnpm install --frozen-lockfile && pnpm build
         # ubuntu runner 自带 make；从仓库根调用（make web 内部自行 cd web）
