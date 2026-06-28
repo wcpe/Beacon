@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -396,6 +397,12 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// 关停信号 ctx 作所有请求的根 context（fix-b）：Ctrl+C / SIGTERM 时取消所有在途请求——
+	// SSE / 长轮询等长连接据 r.Context() 即时退出、连接随之 drain，Shutdown 不必干等到 35s 超时（"关不掉"观感）。
+	srv.BaseContext = func(net.Listener) context.Context { return ctx }
+	// 异步在线更新下载挂到关停信号 ctx（fix-b）：Ctrl+C / 关停时取消进行中的下载，下载不再脱离进程生命周期。
+	updateAPIService.SetBaseContext(ctx)
 
 	// 启动后台健康扫描（随关停信号取消退出）
 	go healthScanner.Run(ctx)

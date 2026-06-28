@@ -31,6 +31,10 @@ type fakeUpdateCore struct {
 	// applyBlock 非空时阻塞在其上直至测试放行——用于断言 apply 异步不阻塞 + 并发守卫。
 	applyStarted chan struct{}
 	applyBlock   chan struct{}
+	// fix-b 可取消钩子：applyWaitCtx 为真时 ApplyUpdate 阻塞直到 ctx 取消；applyDone 非空时返回前关闭——
+	// 用于断言 CancelApply 真能取消进行中的下载 ctx。
+	applyWaitCtx bool
+	applyDone    chan struct{}
 }
 
 func (f *fakeUpdateCore) CheckForUpdate(_ context.Context, ch update.Channel, proxyURL, operator, clientIP string) (update.CheckResult, error) {
@@ -45,7 +49,7 @@ func (f *fakeUpdateCore) CheckForUpdate(_ context.Context, ch update.Channel, pr
 	return f.result, nil
 }
 
-func (f *fakeUpdateCore) ApplyUpdate(_ context.Context, ch update.Channel, proxyURL, operator, clientIP string) error {
+func (f *fakeUpdateCore) ApplyUpdate(ctx context.Context, ch update.Channel, proxyURL, operator, clientIP string) error {
 	f.applyCalls++
 	f.lastChannel = ch
 	f.lastProxy = proxyURL
@@ -55,8 +59,14 @@ func (f *fakeUpdateCore) ApplyUpdate(_ context.Context, ch update.Channel, proxy
 	if f.applyStarted != nil {
 		f.applyStarted <- struct{}{}
 	}
+	if f.applyWaitCtx {
+		<-ctx.Done() // 阻塞直到 ctx 取消（验 CancelApply / 关停取消下载）
+	}
 	if f.applyBlock != nil {
 		<-f.applyBlock
+	}
+	if f.applyDone != nil {
+		close(f.applyDone)
 	}
 	return f.applyErr
 }
@@ -304,4 +314,35 @@ func TestApplyIsAsyncAndGuardsConcurrency(t *testing.T) {
 	}
 
 	close(core.applyBlock) // 放行首次后台完成（避免 goroutine 泄漏）
+}
+
+// TestCancelApplyCancelsRunningApply fix-b/FR-125：CancelApply 取消进行中更新的 context，使下载中断；
+// 无进行中时返回 false。也是 fix-b「Ctrl+C/关停取消下载」的可取消基建回归。
+func TestCancelApplyCancelsRunningApply(t *testing.T) {
+	core := &fakeUpdateCore{
+		applyStarted: make(chan struct{}, 1),
+		applyWaitCtx: true, // 核心阻塞直到 ctx 取消
+		applyDone:    make(chan struct{}),
+	}
+	svc := NewUpdateService(core, &fakeSettingsReader{channel: "stable"})
+
+	// 无进行中：CancelApply 返回 false。
+	if svc.CancelApply() {
+		t.Fatal("无进行中更新时 CancelApply 应返回 false")
+	}
+
+	if err := svc.Apply("a", ""); err != nil {
+		t.Fatalf("Apply 应受理返回 nil，实际 %v", err)
+	}
+	<-core.applyStarted // 后台已进核心、阻塞在 ctx 上
+
+	// 进行中：CancelApply 返回 true 并取消核心 ctx → 核心从 <-ctx.Done() 解阻塞返回。
+	if !svc.CancelApply() {
+		t.Fatal("进行中更新时 CancelApply 应返回 true")
+	}
+	select {
+	case <-core.applyDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CancelApply 后核心未因 ctx 取消而返回（下载未被取消）")
+	}
 }

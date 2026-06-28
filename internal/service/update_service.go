@@ -82,6 +82,10 @@ type UpdateService struct {
 
 	// applying 标记是否有一次在线更新正在异步进行（fix-1）：CAS 守卫并发触发，避免重复下载 / 抢占自替换。
 	applying atomic.Bool
+	// baseCtx 是异步更新的父 context（fix-b）：由 main 传入进程信号 ctx，使 Ctrl+C / 关停时取消进行中的下载。
+	baseCtx context.Context
+	// applyCancel 是进行中更新的取消函数（fix-b / FR-125）：存于 mu 下，供关停（经 baseCtx）与手动取消（CancelApply）。
+	applyCancel context.CancelFunc
 }
 
 // NewUpdateService 构造服务（core=更新核心，settings=设置 store 读口）。
@@ -165,15 +169,46 @@ func (s *UpdateService) Apply(operator, clientIP string) error {
 	}
 	channel := s.settings.GetString(SettingUpdateChannel)
 	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
+	// 可取消 context（fix-b / FR-125）：派生自 baseCtx（进程信号 ctx）——Ctrl+C / 关停即取消下载，
+	// 不再用 context.Background() 致下载脱离进程生命周期、关不掉；存 cancel 供手动取消（CancelApply）。
+	base := s.baseCtx
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithCancel(base)
+	s.mu.Lock()
+	s.applyCancel = cancel
+	s.mu.Unlock()
 	go func() {
-		defer s.applying.Store(false)
-		// 用非请求 context：与触发它的 HTTP 请求生命周期解耦，下载不因请求结束 / 被取消而中断。
-		if err := s.core.ApplyUpdate(context.Background(), update.Channel(channel), proxyURL, operator, clientIP); err != nil {
-			// 失败已由核心写入进度态 + 审计；此处异步无处可返，仅补记一条服务层日志便于排查。
-			slog.Warn("在线更新应用失败（详情见进度态 / 审计）", "错误", err)
+		defer func() {
+			s.mu.Lock()
+			s.applyCancel = nil
+			s.mu.Unlock()
+			cancel()
+			s.applying.Store(false)
+		}()
+		if err := s.core.ApplyUpdate(ctx, update.Channel(channel), proxyURL, operator, clientIP); err != nil {
+			// 失败 / 被取消已由核心写入进度态 + 审计；此处异步无处可返，仅补记一条服务层日志便于排查。
+			slog.Warn("在线更新应用失败 / 已取消（详情见进度态 / 审计）", "错误", err)
 		}
 	}()
 	return nil
+}
+
+// SetBaseContext 设置异步更新的父 context（fix-b）：传入进程信号 ctx，使 Ctrl+C / 关停时取消进行中的下载。
+// 在开始服务前一次性设置（happens-before 任何 Apply），无需加锁。
+func (s *UpdateService) SetBaseContext(ctx context.Context) { s.baseCtx = ctx }
+
+// CancelApply 取消进行中的更新下载（FR-125）：有进行中则取消其 context 并返回 true；无进行中返回 false。
+func (s *UpdateService) CancelApply() bool {
+	s.mu.Lock()
+	cancel := s.applyCancel
+	s.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
 }
 
 // RollbackAvailable 报告是否有可回退的上一版本（.old，FR-120），供状态端点回显前端按钮显隐。
