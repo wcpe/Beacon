@@ -10,7 +10,8 @@ import VersionBadge from '@/components/VersionBadge'
 import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 import CommandPalette from '@/components/CommandPalette'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
-import { NAV_GROUPS } from '@/lib/navModel'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
+import { NAV_GROUPS, NAV_LEAVES } from '@/lib/navModel'
 import { toggleSidebar, useUiState } from '@/state/ui'
 import { cn } from '@/lib/utils'
 
@@ -26,6 +27,13 @@ export default function Layout() {
   // 侧栏折叠态（改进 1：可折叠图标条）：折叠=窄图标条 w-14（仅图标+tooltip）、展开=图标+文案 w-56；
   // 折叠态由 state/ui 持久化到 localStorage，品牌区与侧栏同宽联动。
   const { sidebarCollapsed } = useUiState()
+
+  // 动态标签标题（FR-123）：按当前路由匹配导航叶子（先精确、后前缀，使 /configs/:id 等子路由归其父页），
+  // 设 document.title = 「<页名> - Beacon」；未知路由回退「Beacon」。
+  const titleLeaf =
+    NAV_LEAVES.find((l) => l.to === location.pathname) ??
+    NAV_LEAVES.find((l) => location.pathname.startsWith(l.to + '/'))
+  useDocumentTitle(titleLeaf ? t(titleLeaf.labelKey) : undefined)
 
   // 全局 Ctrl/Cmd+K 监听：任意页面（含输入框聚焦时）皆可唤起，面板为模态覆盖；
   // 与配置页 Ctrl+S 保存（FR-75）不同键、不冲突。
@@ -72,9 +80,10 @@ export default function Layout() {
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       {/* 整宽顶栏（~40px）：左品牌区（宽 = 侧栏宽 w-56，右边框接侧栏竖线）+ 右控制面状态条（占满剩余宽度） */}
       <header className="flex h-10 shrink-0 items-stretch border-b bg-background">
-        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：logo（连接小灯 FR-78）+ 品牌文案 + 版本徽章。
-            FR-121：logo+文案 单击跳可观测看板、双击切换侧栏折叠/展开；版本徽章移到 logo 右侧（展开态显示）。
-            宽度随折叠态联动（折叠 w-14 仅居中显小灯、展开 w-56 显小灯+文案+版本）。 */}
+        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：logo（灯塔/信标矢量图 FR-123）+ 「Beacon」+ 版本徽章。
+            FR-121：logo+文案 单击跳可观测看板、双击切换侧栏折叠/展开；版本徽章在 logo 右侧（展开态显示）。
+            FR-123：原连接小灯（FR-78）移除——连接态仍由顶栏右侧「已连接」药丸显示，不在品牌区重复。
+            宽度随折叠态联动（折叠 w-14 仅居中显 logo、展开 w-56 显 logo+文案+版本）。 */}
         <div
           className={cn(
             'flex shrink-0 items-center border-r',
@@ -89,21 +98,10 @@ export default function Layout() {
             title={t('layout.brandHint')}
             className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm font-semibold transition-colors hover:bg-sidebar-accent/40"
           >
-            {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
-            <span
-              aria-label={t(`connection.${connectionStatus}`)}
-              title={t(`connection.${connectionStatus}`)}
-              className={cn(
-                'inline-block h-2 w-2 shrink-0 rounded-full',
-                connectionStatus === 'online'
-                  ? 'bg-green-600'
-                  : connectionStatus === 'offline'
-                    ? 'bg-red-600'
-                    : 'bg-muted-foreground',
-              )}
-            />
-            {/* 折叠态隐藏品牌文案，仅留小灯作 logo 点 */}
-            {!sidebarCollapsed && <span className="truncate">{t('app.brand')}</span>}
+            {/* 品牌 logo（灯塔/信标矢量图，FR-123）：折叠 / 展开态均显示，作 logo 点 */}
+            <img src="/logo.svg" alt="" className="size-5 shrink-0" />
+            {/* 折叠态隐藏品牌文案，仅留 logo */}
+            {!sidebarCollapsed && <span className="truncate">{t('app.name')}</span>}
           </button>
           {/* 版本徽章（FR-121）：移到 logo 右侧；展开态显示，折叠态隐藏 */}
           {!sidebarCollapsed && <VersionBadge />}

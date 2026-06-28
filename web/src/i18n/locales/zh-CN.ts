@@ -7,6 +7,8 @@ export const zhCN = {
   // ===== 应用级 =====
   app: {
     brand: 'Beacon 管理台',
+    // 品牌名（FR-123）：顶栏品牌区 logo 旁短名（去「管理台」），与标签标题后缀一致
+    name: 'Beacon',
     rootMissing: '找不到根节点 #root，无法挂载管理台',
   },
 
@@ -175,6 +177,8 @@ export const zhCN = {
   // ===== 登录页 =====
   login: {
     title: 'Beacon 管理台',
+    // 登录页标签标题名（FR-123）：「登录 - Beacon」
+    pageName: '登录',
     username: '账号',
     password: '口令',
     submit: '登录',

@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- 品牌标识 + 动态页标题（FR-123，纯前端 + 静态资源）：① 新增灯塔/信标光束矢量 SVG logo（`web/public/logo.svg`，靛蓝品牌色）；② 整宽顶栏品牌区改 **logo + 「Beacon」+ 版本号**（移除原连接小灯 FR-78，连接态仍由顶栏「已连接」药丸显示）；③ 浏览器标签图标（favicon）设为该 logo（`web/index.html` 加 `<link rel="icon">`，浏览器缓存）；④ 浏览器标签标题改动态 **「<当前页名> - Beacon」**（页名取导航叶子名、先精确后前缀匹配使子路由归父页，登录页「登录 - Beacon」、未知路由回退「Beacon」；新增 `useDocumentTitle` hook）。
 - 全局错误脱敏展示（FR-122，见 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 与 [.claude/rules/error-surfacing.md](.claude/rules/error-surfacing.md)）：此前后端 `render.WriteError` 对非预期内部错误**一律对外返回笼统「内部错误」、真因只进日志**，运维在前端看不到失败原因、问题被静默隐藏。改为反转姿态——**操作出错时把脱敏后的真实原因展示到前端**：① 新增叶子包 `internal/redact.Desensitize` 打码凭据类敏感片段（URL 里 `user:pass@` 密码段、`token=`/`password=`/`secret=`/`pwd=`/`api-key=` 键值、`Bearer`/`Basic` 令牌），内网地址 / 主机名 / 路径等运维上下文**不打码**（非凭据、是定位关键）；② `render.WriteError` 对内部错误返回 `redact.Desensitize(err)` 真因（仍记完整日志 + `traceId` 可对账）；③ 前端 react-query `MutationCache` 全局兜底 onError——未自带 `onError` 的写操作失败也 toast 出该脱敏错误，杜绝静默失败。配套新增防漂移规则 `.claude/rules/error-surfacing.md`、同步 `docs/API.md` 错误响应描述。
 
 ### 修复

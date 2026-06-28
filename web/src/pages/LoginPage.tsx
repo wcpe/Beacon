@@ -8,6 +8,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/client'
 import { setAuth, useAuth } from '../state/auth'
 import { useMessage } from '../components/useMessage'
+import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,6 +25,9 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { token } = useAuth()
+
+  // 动态标签标题（FR-123）：登录页「登录 - Beacon」
+  useDocumentTitle(t('login.pageName'))
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
