@@ -63,6 +63,16 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
 }
 
+// ProxyTest 处理 GET /admin/v1/system/proxy-test：用已配 update.proxy-url 试连 GitHub（FR-124，只读诊断）。
+// 连通→200 {ok:true}；失败→200 {ok:false, message: <脱敏原因>}（非服务端错误，前端行内回显，不泄露代理账密）。
+func (h *UpdateHandler) ProxyTest(w http.ResponseWriter, r *http.Request) {
+	if err := h.svc.TestProxy(r.Context()); err != nil {
+		render.WriteJSON(w, http.StatusOK, map[string]any{"ok": false, "message": redact.DesensitizeErr(err)})
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // Cancel 处理 POST /admin/v1/system/update/cancel：取消进行中的更新下载（写方法，readonly 经 readonlyWriteGuard 403）。
 // 有进行中→取消其下载 context 回 202 {cancelled:true}（核心于下载中断时审计 system.update-cancel、进度回 idle）；
 // 无进行中→幂等回 200 {cancelled:false}（非错误）。

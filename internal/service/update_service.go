@@ -20,6 +20,8 @@ type updateCore interface {
 	ApplyUpdate(ctx context.Context, ch update.Channel, proxyURL, operator, clientIP string) error
 	// Snapshot 返回当前更新进度快照（进程内瞬态）。
 	Snapshot() update.Progress
+	// TestProxy 用给定代理试连 GitHub release API（FR-124）：连通且 2xx 即可用，否则返回错误。
+	TestProxy(ctx context.Context, proxyURL string) error
 	// RollbackAvailable 报告是否有可回退的上一版本备份（.old，FR-120）。
 	RollbackAvailable() bool
 	// Rollback 触发手动回滚到上一版本（FR-120）：校验 .old 后请求主进程优雅关停回退重启。
@@ -209,6 +211,12 @@ func (s *UpdateService) CancelApply() bool {
 	}
 	cancel()
 	return true
+}
+
+// TestProxy 用当前已配 update.proxy-url 试连 GitHub（FR-124）：连通返回 nil，否则返回错误（由 handler 脱敏后回显）。
+func (s *UpdateService) TestProxy(ctx context.Context) error {
+	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
+	return s.core.TestProxy(ctx, proxyURL)
 }
 
 // RollbackAvailable 报告是否有可回退的上一版本（.old，FR-120），供状态端点回显前端按钮显隐。

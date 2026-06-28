@@ -595,6 +595,7 @@ data: {}
 |---|---|
 | `GET /admin/v1/system/update-check` | 检查有无可用更新（只读，full / readonly 皆可见） |
 | `GET /admin/v1/system/update` | 读更新进度内存态（只读、不查库、不打 GitHub） |
+| `GET /admin/v1/system/proxy-test` | 用已配 `update.proxy-url` 试连 GitHub（只读诊断，full/readonly 皆可），回 `{ ok, message? }`（FR-124） |
 | `POST /admin/v1/system/update` | 触发应用更新（写方法，readonly→`403`，入审计 `system.update-apply`/`system.update-failed`） |
 | `POST /admin/v1/system/update/cancel` | 取消进行中的更新下载（写方法，readonly→`403`，下载中断记 `system.update-cancel`，FR-125） |
 
@@ -623,6 +624,8 @@ data: {}
 `phase ∈ {idle, checking, downloading, verifying, staging, ready-restart, failed}`；`percent` 仅下载阶段有意义；`error` 仅 `failed` 非空；`rollbackAvailable` 表示是否存在可回退的上一版本（`.old` 备份，FR-120，前端据此显隐回滚按钮）。
 
 `POST /admin/v1/system/update`（无请求体）：**异步**触发更新（fix-1）——受理即回 `202 { "accepted": true }`，「下载 → SHA256 校验 → 原子落位 pending → 请求重启」在后台进行（用非请求 context，下载不因请求结束被取消）；前端经 `GET /admin/v1/system/update` 轮询进度（`phase`/`percent`/`error`）。落位成功后主进程优雅关停 → 自替换（`rename` 让位三步）+ spawn 新进程重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）；任一阶段失败 → 保留旧二进制、进程不退，失败原因写入进度态 `error`（**脱敏后**经状态端点展示，FR-122）+ 记 `system.update-failed` 审计与日志。**已有更新进行中再触发 → `409 UPDATE_IN_PROGRESS`**。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
+
+`GET /admin/v1/system/proxy-test`（FR-124，只读诊断）：用已保存的 `update.proxy-url` 构造出站 client 发一个轻量 GitHub release 列表请求，连通且 2xx → `200 { "ok": true }`；网络 / 代理失败或非 2xx → `200 { "ok": false, "message": "<脱敏原因>" }`（非服务端错误，前端行内回显；失败原因经脱敏，不泄露代理账密）。让运维配代理后即时验证能否连通 GitHub，而非等更新时才发现卡住。full / readonly 皆可调（只读、无副作用、不改状态）。
 
 `POST /admin/v1/system/update/cancel`（无请求体，FR-125）：取消进行中的更新下载。有进行中→取消其下载 context 回 `202 { "cancelled": true }`（核心于下载中断时进度回 `idle`、记 `system.update-cancel` 审计，留干净可重试态而非「失败」）；无进行中→幂等回 `200 { "cancelled": false }`（非错误）。写方法 readonly→`403`。注：进程关停（Ctrl+C / SIGTERM）经同一可取消 context 一并中断在途下载（fix-b）。
 

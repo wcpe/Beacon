@@ -555,6 +555,11 @@ export function triggerUpdate(): Promise<{ accepted: boolean }> {
   return request<{ accepted: boolean }>('/system/update', { method: 'POST' })
 }
 
+// 代理连通测试（FR-124，只读）：用已配 update.proxy-url 试连 GitHub，回 { ok, message? }（message 为脱敏失败原因）。
+export function testProxy(): Promise<{ ok: boolean; message?: string }> {
+  return request<{ ok: boolean; message?: string }>('/system/proxy-test')
+}
+
 // 取消进行中的更新下载（FR-125，写，readonly→403）：有进行中→202 {cancelled:true}（核心中断下载、进度回 idle）；
 // 无进行中→200 {cancelled:false}（幂等、非错误）。
 export function cancelUpdate(): Promise<{ cancelled: boolean }> {

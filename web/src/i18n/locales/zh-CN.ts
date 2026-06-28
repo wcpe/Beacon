@@ -296,7 +296,13 @@ export const zhCN = {
     // 网络代理表单
     proxyLabel: '出站代理地址',
     proxyPlaceholder: '如 http://127.0.0.1:7890（留空 = 直连）',
-    proxyHint: '为控制面连接 GitHub 检查 / 下载更新而配置的 http(s) 代理；留空表示直连。含口令的代理回显时会脱敏，未修改则不会覆盖原值。',
+    proxyHint: '为控制面连接 GitHub 检查 / 下载更新而配置的 http(s) 代理；留空表示直连（不读系统 *_PROXY 环境变量）。含口令的代理回显时会脱敏，未修改则不会覆盖原值。',
+    // 代理连通测试（FR-124）
+    proxyTest: '测试连通',
+    proxyTesting: '测试中…',
+    proxyTestSaveFirst: '请先保存再测试',
+    proxyTestOk: '代理可连通 GitHub',
+    proxyTestFailed: '代理测试失败：{{reason}}',
     // 更新设置
     autoCheckLabel: '自动检查更新',
     intervalLabel: '自动检查周期（小时）',

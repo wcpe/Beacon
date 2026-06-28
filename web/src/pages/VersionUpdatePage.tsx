@@ -29,6 +29,7 @@ import {
   ApiClientError,
   listSettings,
   updateSetting,
+  testProxy,
   triggerUpdate,
   cancelUpdate,
   rollbackUpdate,
@@ -531,6 +532,21 @@ function ProxySection({ settings }: { settings: SettingView[] | undefined }) {
     onError: (e: Error) => showError(e.message),
   })
 
+  // 代理连通测试（FR-124）：用已保存的 update.proxy-url 试连 GitHub，行内 toast 回显结果。
+  const [testing, setTesting] = useState(false)
+  async function handleTest() {
+    setTesting(true)
+    try {
+      const r = await testProxy()
+      if (r.ok) showSuccess(t('versionUpdate.proxyTestOk'))
+      else showError(t('versionUpdate.proxyTestFailed', { reason: r.message || '' }))
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('versionUpdate.proxyTestFailed', { reason: '' }))
+    } finally {
+      setTesting(false)
+    }
+  }
+
   // 项缺失（后端未含该设置）：兜底占位。
   if (!item) {
     return <p className="text-sm text-muted-foreground">{t('versionUpdate.proxyEmpty')}</p>
@@ -552,9 +568,21 @@ function ProxySection({ settings }: { settings: SettingView[] | undefined }) {
         />
         <p className="text-xs text-muted-foreground">{t('versionUpdate.proxyHint')}</p>
       </div>
-      <Button size="sm" disabled={!dirty || mut.isPending} onClick={() => mut.mutate(draft)}>
-        {mut.isPending ? t('settings.saving') : t('settings.saveBtn')}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={!dirty || mut.isPending} onClick={() => mut.mutate(draft)}>
+          {mut.isPending ? t('settings.saving') : t('settings.saveBtn')}
+        </Button>
+        {/* 测试已保存代理能否连通 GitHub（FR-124）：有未保存改动时禁用、提示先保存——测的是已保存值 */}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={testing || dirty}
+          title={dirty ? t('versionUpdate.proxyTestSaveFirst') : undefined}
+          onClick={handleTest}
+        >
+          {testing ? t('versionUpdate.proxyTesting') : t('versionUpdate.proxyTest')}
+        </Button>
+      </div>
     </div>
   )
 }

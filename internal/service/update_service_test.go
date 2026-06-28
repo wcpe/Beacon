@@ -27,6 +27,8 @@ type fakeUpdateCore struct {
 	rollbackAvailable bool
 	rollbackCalls     int
 	rollbackErr       error
+	// FR-124 代理测试注入错误（nil=连通）。
+	testProxyErr error
 	// fix-1 异步同步钩子：applyStarted 非空时 ApplyUpdate 进入后（写完字段）发信号；
 	// applyBlock 非空时阻塞在其上直至测试放行——用于断言 apply 异步不阻塞 + 并发守卫。
 	applyStarted chan struct{}
@@ -72,6 +74,11 @@ func (f *fakeUpdateCore) ApplyUpdate(ctx context.Context, ch update.Channel, pro
 }
 
 func (f *fakeUpdateCore) Snapshot() update.Progress { return f.snap }
+
+func (f *fakeUpdateCore) TestProxy(_ context.Context, proxyURL string) error {
+	f.lastProxy = proxyURL
+	return f.testProxyErr
+}
 
 func (f *fakeUpdateCore) RollbackAvailable() bool { return f.rollbackAvailable }
 
@@ -271,6 +278,24 @@ func TestStatusReadsSnapshot(t *testing.T) {
 	}
 	if core.checkCalls != 0 {
 		t.Fatal("状态端点不应打 GitHub")
+	}
+}
+
+// TestProxyTestUsesStoreProxy 代理测试（FR-124）：从 store 读 update.proxy-url 透传给核心；连通返回 nil、不通返回错误。
+func TestProxyTestUsesStoreProxy(t *testing.T) {
+	core := &fakeUpdateCore{testProxyErr: errors.New("连接 GitHub 失败")}
+	svc := NewUpdateService(core, &fakeSettingsReader{proxy: "http://p:9090"})
+
+	if err := svc.TestProxy(context.Background()); err == nil {
+		t.Fatal("代理不通应返回错误")
+	}
+	if core.lastProxy != "http://p:9090" {
+		t.Fatalf("应把 store 代理透传给核心，实际 %q", core.lastProxy)
+	}
+
+	core.testProxyErr = nil
+	if err := svc.TestProxy(context.Background()); err != nil {
+		t.Fatalf("代理连通应返回 nil，实际 %v", err)
 	}
 }
 

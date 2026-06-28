@@ -119,6 +119,26 @@ func (c *releaseClient) listReleases(ctx context.Context) ([]ghRelease, error) {
 	return releases, nil
 }
 
+// ping 用当前 client 试连 GitHub release API（FR-124 代理测试）：发一个轻量 release 列表请求，
+// 连通且 2xx 即视为可达；网络 / 代理失败或非 2xx 返回错误。不解析响应体。
+func (c *releaseClient) ping(ctx context.Context) error {
+	url := fmt.Sprintf("%s/repos/%s/releases?per_page=1", c.apiBase, c.repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("连接 GitHub 失败: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // 只读、不读体
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("GitHub 返回非 2xx: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // releaseVersion 解析 Release 的语义版本字符串（vX.Y.Z）。
 // 正式版 tag 即 vX.Y.Z，直接用 tag；滚动预发布 tag 为移动标签（非 semver），
 // 版本号写在 name（v<VERSION>），此时回退解析 name（ADR-0052）。两者都非 semver 即返回错误（当未知处理）。

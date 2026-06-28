@@ -26,6 +26,7 @@ vi.mock('@/api/client', async () => {
     ApiClientError: actual.ApiClientError,
     listSettings: vi.fn(),
     updateSetting: vi.fn(),
+    testProxy: vi.fn(),
     checkUpdate: vi.fn(),
     triggerUpdate: vi.fn(),
     cancelUpdate: vi.fn(),
@@ -43,6 +44,7 @@ import {
   ApiClientError,
   listSettings,
   updateSetting,
+  testProxy,
   checkUpdate,
   triggerUpdate,
   cancelUpdate,
@@ -323,6 +325,18 @@ describe('VersionUpdatePage 高级设置-网络代理（FR-98）', () => {
     await waitFor(() =>
       expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.proxy-url', 'http://127.0.0.1:7890'),
     )
+  })
+
+  // FR-124：未改动时「测试连通」可点，调 testProxy 并按结果回显
+  it('未改动时「测试连通」调 testProxy（FR-124）', async () => {
+    vi.mocked(testProxy).mockResolvedValue({ ok: true })
+    renderPage(<VersionUpdatePage />)
+    await expandAdvanced()
+    const input = await screen.findByLabelText('出站代理地址')
+    const proxyBlock = input.closest('div.space-y-3') as HTMLElement
+    // 未改动（draft===服务端值）→ 测试按钮可点
+    await userEvent.click(within(proxyBlock).getByRole('button', { name: '测试连通' }))
+    await waitFor(() => expect(vi.mocked(testProxy)).toHaveBeenCalled())
   })
 })
 

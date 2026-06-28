@@ -252,6 +252,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 与其它写端点一致无条件注册（handler 仅请求期解引用，构造期不调用）。
 		r.Get("/system/update-check", h.Update.Check)
 		r.Get("/system/update", h.Update.Status)
+		// 代理连通测试（FR-124，只读诊断）：用已配 update.proxy-url 试连 GitHub，回 {ok, message?}。
+		r.Get("/system/proxy-test", h.Update.ProxyTest)
 		r.Post("/system/update", h.Update.Apply)
 		// 取消进行中的更新下载（FR-125）：写方法，readonly 经 readonlyWriteGuard 403，核心于下载中断时审计 system.update-cancel。
 		r.Post("/system/update/cancel", h.Update.Cancel)

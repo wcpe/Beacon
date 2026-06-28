@@ -27,6 +27,8 @@ const (
 	maxReleaseListBytes = 8 << 20
 	// downloadTimeout 是下载阶段的整体超时（含连接 + 传输），防卡死占资源。
 	downloadTimeout = 5 * time.Minute
+	// proxyTestTimeout 是代理连通测试的整体超时（FR-124）：仅一个轻量请求，短超时快速返回结果。
+	proxyTestTimeout = 15 * time.Second
 )
 
 // AuditWriter 是更新服务所需的窄审计写入口（仅 Create，守最小依赖、便于测试）。
@@ -97,6 +99,16 @@ func NewService(cfg Config) *Service {
 
 // Snapshot 返回当前更新进度快照（FR-99 状态端点消费）。
 func (s *Service) Snapshot() Progress { return s.progress.Snapshot() }
+
+// TestProxy 用给定代理试连 GitHub release API（FR-124）：连通且 2xx 即代理可用；
+// 网络 / 代理失败返回错误（由上层脱敏后展示，不泄露代理账密）。供「测试」按钮诊断代理能否连通 GitHub。
+func (s *Service) TestProxy(ctx context.Context, proxyURL string) error {
+	client, err := s.newHTTPClient(proxyURL, proxyTestTimeout)
+	if err != nil {
+		return fmt.Errorf("构造出站客户端失败: %w", err)
+	}
+	return newReleaseClient(client, s.apiBase, s.repo).ping(ctx)
+}
 
 // RollbackAvailable 报告是否有可回退的上一版本备份（.old，FR-120），供端点回显前端按钮显隐。
 func (s *Service) RollbackAvailable() bool { return RollbackAvailable(s.runPath) }
