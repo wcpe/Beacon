@@ -1,0 +1,8 @@
+# 构建产物（由 vite build 生成，不入格式化范围）
+dist
+# 测试覆盖率报告
+coverage
+# 依赖锁文件（由 pnpm 维护，禁手改格式）
+pnpm-lock.yaml
+# 第三方依赖
+node_modules
