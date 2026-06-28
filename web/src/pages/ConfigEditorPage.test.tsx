@@ -13,11 +13,24 @@ import PageHeader from '@/components/PageHeader'
 
 // CodeEditor 替身：编辑模式暴露 textarea；diff 模式（有 original/modified）渲染只读标记，供断言历史 diff。
 vi.mock('@/components/CodeEditor', () => ({
-  default: (props: { value?: string; original?: string; modified?: string; onChange?: (v: string) => void }) =>
+  default: (props: {
+    value?: string
+    original?: string
+    modified?: string
+    onChange?: (v: string) => void
+  }) =>
     props.original !== undefined || props.modified !== undefined ? (
-      <div data-testid="diff-editor" data-original={props.original} data-modified={props.modified} />
+      <div
+        data-testid="diff-editor"
+        data-original={props.original}
+        data-modified={props.modified}
+      />
     ) : (
-      <textarea data-testid="code-editor" value={props.value ?? ''} onChange={(e) => props.onChange?.(e.target.value)} />
+      <textarea
+        data-testid="code-editor"
+        value={props.value ?? ''}
+        onChange={(e) => props.onChange?.(e.target.value)}
+      />
     ),
 }))
 
@@ -61,7 +74,12 @@ const FILE: WorkbenchFile = {
 }
 
 function mockFileHook(over: Partial<ReturnType<typeof useWorkbenchFile>> = {}) {
-  mockedFile.mockReturnValue({ data: FILE, isLoading: false, refetch: vi.fn(), ...over } as ReturnType<typeof useWorkbenchFile>)
+  mockedFile.mockReturnValue({
+    data: FILE,
+    isLoading: false,
+    refetch: vi.fn(),
+    ...over,
+  } as ReturnType<typeof useWorkbenchFile>)
 }
 
 function renderPage(id = 'plugins%2FEssentials%2Fconfig.yml') {
@@ -142,7 +160,9 @@ describe('ConfigEditorPage（FR-112）', () => {
     expect(await screen.findByText('保存确认')).toBeInTheDocument()
     // 确认保存 → 调 publishFile(id, content, comment)
     await userEvent.click(screen.getByRole('button', { name: '确认保存' }))
-    await waitFor(() => expect(publishFileMock).toHaveBeenCalledWith(42, 'a: 2\n', expect.any(String)))
+    await waitFor(() =>
+      expect(publishFileMock).toHaveBeenCalledWith(42, 'a: 2\n', expect.any(String)),
+    )
     // 成功 toast
     await waitFor(() => expect(toastSuccess).toHaveBeenCalled())
   })

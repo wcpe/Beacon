@@ -51,23 +51,33 @@ describe('deriveAutoCheckEnabled', () => {
     expect(deriveAutoCheckEnabled([])).toBe(true)
   })
   it('显式 false 关闭', () => {
-    expect(deriveAutoCheckEnabled([setting('update.auto-check-enabled', 'false', 'bool')])).toBe(false)
+    expect(deriveAutoCheckEnabled([setting('update.auto-check-enabled', 'false', 'bool')])).toBe(
+      false,
+    )
   })
   it('true 开启', () => {
-    expect(deriveAutoCheckEnabled([setting('update.auto-check-enabled', 'true', 'bool')])).toBe(true)
+    expect(deriveAutoCheckEnabled([setting('update.auto-check-enabled', 'true', 'bool')])).toBe(
+      true,
+    )
   })
 })
 
 describe('deriveIntervalMs', () => {
   it('缺项 / 非法回退默认 6h', () => {
     expect(deriveIntervalMs(undefined)).toBe(6 * 3600 * 1000)
-    expect(deriveIntervalMs([setting('update.check-interval-hours', 'abc', 'int')])).toBe(6 * 3600 * 1000)
+    expect(deriveIntervalMs([setting('update.check-interval-hours', 'abc', 'int')])).toBe(
+      6 * 3600 * 1000,
+    )
   })
   it('合法值按小时换算毫秒', () => {
-    expect(deriveIntervalMs([setting('update.check-interval-hours', '12', 'int')])).toBe(12 * 3600 * 1000)
+    expect(deriveIntervalMs([setting('update.check-interval-hours', '12', 'int')])).toBe(
+      12 * 3600 * 1000,
+    )
   })
   it('越界小值（0）回退默认（下界保护）', () => {
-    expect(deriveIntervalMs([setting('update.check-interval-hours', '0', 'int')])).toBe(6 * 3600 * 1000)
+    expect(deriveIntervalMs([setting('update.check-interval-hours', '0', 'int')])).toBe(
+      6 * 3600 * 1000,
+    )
   })
 })
 

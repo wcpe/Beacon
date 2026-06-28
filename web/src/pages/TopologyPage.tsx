@@ -59,12 +59,16 @@ export default function TopologyPage() {
         <SectionHeader icon={<Network className="size-4" />} title={t('topology.title')} />
         {namespace === '' ? (
           // 全局环境为「全部环境」时端点无单一 namespace 可查：提示在页眉选具体环境出图
-          <p className="py-12 text-center text-sm text-muted-foreground">{t('topology.noNamespace')}</p>
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            {t('topology.noNamespace')}
+          </p>
         ) : (
           <AsyncSection isLoading={isLoading} isError={isError} error={error}>
             {data &&
               (data.nodes.length === 0 ? (
-                <p className="py-12 text-center text-sm text-muted-foreground">{t('topology.noNodes')}</p>
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  {t('topology.noNodes')}
+                </p>
               ) : (
                 <TopologyGraph data={data} />
               ))}

@@ -5,7 +5,14 @@ import SummaryStrip from './SummaryStrip'
 
 describe('SummaryStrip（FR-106 汇总条）', () => {
   it('渲染每项的标签与数值', () => {
-    render(<SummaryStrip items={[{ label: '总实例', value: 5 }, { label: '在线', value: 3 }]} />)
+    render(
+      <SummaryStrip
+        items={[
+          { label: '总实例', value: 5 },
+          { label: '在线', value: 3 },
+        ]}
+      />,
+    )
     expect(screen.getByText('总实例')).toBeInTheDocument()
     expect(screen.getByText('5')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()

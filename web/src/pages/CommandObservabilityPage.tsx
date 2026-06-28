@@ -9,7 +9,16 @@ import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { Activity, CheckCircle2, Clock, ListChecks, Loader2, Server, Terminal, XCircle } from 'lucide-react'
+import {
+  Activity,
+  CheckCircle2,
+  Clock,
+  ListChecks,
+  Loader2,
+  Server,
+  Terminal,
+  XCircle,
+} from 'lucide-react'
 import { getCommandAnalytics, listCommands } from '../api/client'
 import type { CommandFilter } from '../api/client'
 import type { CommandMetaView } from '../api/types'
@@ -100,7 +109,9 @@ export default function CommandObservabilityPage() {
   // 页内视图（FR-108）：来源于 URL ?view=（非法回落实时）；切换仅写 query，不跳路由、侧栏不变。
   const [searchParams, setSearchParams] = useSearchParams()
   const rawView = searchParams.get('view') ?? ''
-  const view: CommandView = (VIEW_VALUES as string[]).includes(rawView) ? (rawView as CommandView) : DEFAULT_VIEW
+  const view: CommandView = (VIEW_VALUES as string[]).includes(rawView)
+    ? (rawView as CommandView)
+    : DEFAULT_VIEW
   const onViewChange = (next: string) => {
     setSearchParams(
       (prev) => {
@@ -132,7 +143,8 @@ export default function CommandObservabilityPage() {
   // 聚合（KPI + 趋势 + 按类型 / 服务器）：随环境 / 时间窗变更重查。
   const analyticsQuery = useQuery({
     queryKey: ['command-analytics', namespace, range.from, range.to],
-    queryFn: () => getCommandAnalytics({ namespace: namespace || undefined, from: range.from, to: range.to }),
+    queryFn: () =>
+      getCommandAnalytics({ namespace: namespace || undefined, from: range.from, to: range.to }),
   })
 
   // 实时队列（pending + fetched）：两次请求各取一状态合并（端点单状态过滤），自动刷新。
@@ -145,9 +157,7 @@ export default function CommandObservabilityPage() {
         ),
       )
       // 合并两状态后按创建时间倒序（新建在前）
-      return pages
-        .flatMap((p) => p.items)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      return pages.flatMap((p) => p.items).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     },
     refetchInterval: QUEUE_REFETCH_MS,
   })
@@ -214,7 +224,11 @@ export default function CommandObservabilityPage() {
     { header: t('commandObs.colType'), cell: (c) => typeLabel(c.type) },
     { header: t('commandObs.colStatus'), cell: (c) => statusBadge(c.status) },
     { header: t('commandObs.colOperator'), cell: (c) => c.operator || '-' },
-    { header: t('commandObs.colResultDetail'), className: 'max-w-xs truncate', cell: (c) => c.resultDetail || '-' },
+    {
+      header: t('commandObs.colResultDetail'),
+      className: 'max-w-xs truncate',
+      cell: (c) => c.resultDetail || '-',
+    },
   ]
 
   // 实时队列表列：commandId / 实例 / 类型 / 状态 / 已等时长（客户端按 createdAt 算）/ operator。
@@ -253,234 +267,248 @@ export default function CommandObservabilityPage() {
 
       {/* ===== 分析视图：时间窗 + KPI + 趋势 + 按类型 / 服务器分布 ===== */}
       {view === 'analytics' && (
-      <>
-      <div className="flex justify-end">
-        <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
-          <TabsList>
-            {WINDOWS.map((w) => (
-              <TabsTrigger key={w.value} value={w.value}>
-                {t(w.labelKey)}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
-
-      {/* KPI 区：总数 + 按状态 IconStat 组 + 按类型 */}
-      <AsyncSection
-        isLoading={analyticsQuery.isLoading}
-        isError={analyticsQuery.isError}
-        error={analyticsQuery.error}
-        skeleton={
-          <div className="space-y-4">
-            <CardGridSkeleton count={4} />
-            <Skeleton className="h-64 w-full rounded-xl" />
-          </div>
-        }
-      >
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <StatCard label={t('commandObs.cardTotal')} value={total} icon={<Terminal className="size-4" />} />
-          {/* 按状态紧凑 KPI 组：一张卡内并排 IconStat（含健康色） */}
-          <Card size="sm" className="sm:col-span-2">
-            <CardContent>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-                {statusKpis.map((k) => (
-                  <IconStat
-                    key={k.status}
-                    icon={k.icon}
-                    label={statusLabel(k.status)}
-                    value={statusCount[k.status] ?? 0}
-                    level={statusLevel(k.status)}
-                  />
+        <>
+          <div className="flex justify-end">
+            <Tabs value={window} onValueChange={(v) => setWindow(v as AnalyticsWindow)}>
+              <TabsList>
+                {WINDOWS.map((w) => (
+                  <TabsTrigger key={w.value} value={w.value}>
+                    {t(w.labelKey)}
+                  </TabsTrigger>
                 ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              </TabsList>
+            </Tabs>
+          </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {/* 命令量趋势（下发 / 完成 / 失败三折线） */}
-          <Card>
-            <CardContent className="space-y-3">
-              <div className="flex items-center gap-2 text-base font-medium">
-                <Activity className="size-4 text-muted-foreground" />
-                {t('commandObs.trendTitle')}
+          {/* KPI 区：总数 + 按状态 IconStat 组 + 按类型 */}
+          <AsyncSection
+            isLoading={analyticsQuery.isLoading}
+            isError={analyticsQuery.isError}
+            error={analyticsQuery.error}
+            skeleton={
+              <div className="space-y-4">
+                <CardGridSkeleton count={4} />
+                <Skeleton className="h-64 w-full rounded-xl" />
               </div>
-              <CommandTrendChart points={data?.byDay ?? []} />
-            </CardContent>
-          </Card>
+            }
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <StatCard
+                label={t('commandObs.cardTotal')}
+                value={total}
+                icon={<Terminal className="size-4" />}
+              />
+              {/* 按状态紧凑 KPI 组：一张卡内并排 IconStat（含健康色） */}
+              <Card size="sm" className="sm:col-span-2">
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                    {statusKpis.map((k) => (
+                      <IconStat
+                        key={k.status}
+                        icon={k.icon}
+                        label={statusLabel(k.status)}
+                        value={statusCount[k.status] ?? 0}
+                        level={statusLevel(k.status)}
+                      />
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
-          {/* 按类型 + 按服务器分布（计数条） */}
-          <Card>
-            <CardContent className="space-y-4">
-              <div>
-                <div className="flex items-center gap-2 text-base font-medium">
-                  <ListChecks className="size-4 text-muted-foreground" />
-                  {t('commandObs.byTypeTitle')}
-                </div>
-                <ul className="mt-2 space-y-1.5 text-sm">
-                  {(data?.byType ?? []).map((b) => (
-                    <li key={b.type} className="flex items-center justify-between">
-                      <span>{typeLabel(b.type)}</span>
-                      <span className="tabular-nums text-muted-foreground">{b.count}</span>
-                    </li>
-                  ))}
-                  {(data?.byType?.length ?? 0) === 0 && (
-                    <li className="text-muted-foreground">{t('commandObs.byServerEmpty')}</li>
-                  )}
-                </ul>
-              </div>
-              <div>
-                <div className="flex items-center gap-2 text-base font-medium">
-                  <Server className="size-4 text-muted-foreground" />
-                  {t('commandObs.byServerTitle')}
-                </div>
-                <ul className="mt-2 space-y-1.5 text-sm">
-                  {(data?.byServer ?? []).map((b) => (
-                    <li key={b.serverId} className="flex items-center justify-between">
-                      <span className="truncate">{b.serverId}</span>
-                      <span className="tabular-nums text-muted-foreground">{b.count}</span>
-                    </li>
-                  ))}
-                  {(data?.byServer?.length ?? 0) === 0 && (
-                    <li className="text-muted-foreground">{t('commandObs.byServerEmpty')}</li>
-                  )}
-                </ul>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </AsyncSection>
-      </>
+            <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {/* 命令量趋势（下发 / 完成 / 失败三折线） */}
+              <Card>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center gap-2 text-base font-medium">
+                    <Activity className="size-4 text-muted-foreground" />
+                    {t('commandObs.trendTitle')}
+                  </div>
+                  <CommandTrendChart points={data?.byDay ?? []} />
+                </CardContent>
+              </Card>
+
+              {/* 按类型 + 按服务器分布（计数条） */}
+              <Card>
+                <CardContent className="space-y-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-base font-medium">
+                      <ListChecks className="size-4 text-muted-foreground" />
+                      {t('commandObs.byTypeTitle')}
+                    </div>
+                    <ul className="mt-2 space-y-1.5 text-sm">
+                      {(data?.byType ?? []).map((b) => (
+                        <li key={b.type} className="flex items-center justify-between">
+                          <span>{typeLabel(b.type)}</span>
+                          <span className="tabular-nums text-muted-foreground">{b.count}</span>
+                        </li>
+                      ))}
+                      {(data?.byType?.length ?? 0) === 0 && (
+                        <li className="text-muted-foreground">{t('commandObs.byServerEmpty')}</li>
+                      )}
+                    </ul>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 text-base font-medium">
+                      <Server className="size-4 text-muted-foreground" />
+                      {t('commandObs.byServerTitle')}
+                    </div>
+                    <ul className="mt-2 space-y-1.5 text-sm">
+                      {(data?.byServer ?? []).map((b) => (
+                        <li key={b.serverId} className="flex items-center justify-between">
+                          <span className="truncate">{b.serverId}</span>
+                          <span className="tabular-nums text-muted-foreground">{b.count}</span>
+                        </li>
+                      ))}
+                      {(data?.byServer?.length ?? 0) === 0 && (
+                        <li className="text-muted-foreground">{t('commandObs.byServerEmpty')}</li>
+                      )}
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </AsyncSection>
+        </>
       )}
 
       {/* ===== 实时视图：实时队列（pending + fetched，自动刷新逐条） ===== */}
       {view === 'live' && (
-      <Card>
-        <CardContent className="space-y-3">
-          <div>
-            <div className="flex items-center gap-2 text-base font-medium">
-              <Clock className="size-4 text-muted-foreground" />
-              {t('commandObs.queueTitle')}
+        <Card>
+          <CardContent className="space-y-3">
+            <div>
+              <div className="flex items-center gap-2 text-base font-medium">
+                <Clock className="size-4 text-muted-foreground" />
+                {t('commandObs.queueTitle')}
+              </div>
+              <p className="text-xs text-muted-foreground">{t('commandObs.queueSubtitle')}</p>
             </div>
-            <p className="text-xs text-muted-foreground">{t('commandObs.queueSubtitle')}</p>
-          </div>
-          <AsyncSection
-            isLoading={queueQuery.isLoading}
-            isError={queueQuery.isError}
-            error={queueQuery.error}
-            skeleton={<TableSkeleton columns={queueColumns.length} rows={4} />}
-          >
-            <DataTable
-              columns={queueColumns}
-              rows={queueQuery.data}
-              rowKey={(c) => String(c.commandId)}
-              emptyText={t('commandObs.queueEmpty')}
-            />
-          </AsyncSection>
-        </CardContent>
-      </Card>
+            <AsyncSection
+              isLoading={queueQuery.isLoading}
+              isError={queueQuery.isError}
+              error={queueQuery.error}
+              skeleton={<TableSkeleton columns={queueColumns.length} rows={4} />}
+            >
+              <DataTable
+                columns={queueColumns}
+                rows={queueQuery.data}
+                rowKey={(c) => String(c.commandId)}
+                emptyText={t('commandObs.queueEmpty')}
+              />
+            </AsyncSection>
+          </CardContent>
+        </Card>
       )}
 
       {/* ===== 历史视图：历史查询（过滤 + 分页 + 结果摘要） ===== */}
       {view === 'history' && (
-      <Card>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2 text-base font-medium">
-            <Terminal className="size-4 text-muted-foreground" />
-            {t('commandObs.historyTitle')}
-          </div>
-          <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="co-serverid">{t('commandObs.colServerId')}</Label>
-              <Input
-                id="co-serverid"
-                value={serverId}
-                onChange={(e) => setServerId(e.target.value)}
-                placeholder={t('commandObs.serverIdPlaceholder')}
-              />
+        <Card>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-2 text-base font-medium">
+              <Terminal className="size-4 text-muted-foreground" />
+              {t('commandObs.historyTitle')}
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="co-type">{t('commandObs.colType')}</Label>
-              <Select value={type} onValueChange={setType}>
-                <SelectTrigger id="co-type" className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('commandObs.typeAll')}</SelectItem>
-                  {TYPE_OPTIONS.map((tp) => (
-                    <SelectItem key={tp} value={tp}>
-                      {typeLabel(tp)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="co-status">{t('commandObs.colStatus')}</Label>
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger id="co-status" className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>{t('commandObs.statusAll')}</SelectItem>
-                  {STATUS_OPTIONS.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {statusLabel(s)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="co-from">{t('commandObs.fromTime')}</Label>
-              <Input id="co-from" type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="co-to">{t('commandObs.toTime')}</Label>
-              <Input id="co-to" type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} />
-            </div>
-            <Button type="submit">{t('common.query')}</Button>
-          </form>
+            <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="co-serverid">{t('commandObs.colServerId')}</Label>
+                <Input
+                  id="co-serverid"
+                  value={serverId}
+                  onChange={(e) => setServerId(e.target.value)}
+                  placeholder={t('commandObs.serverIdPlaceholder')}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="co-type">{t('commandObs.colType')}</Label>
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger id="co-type" className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>{t('commandObs.typeAll')}</SelectItem>
+                    {TYPE_OPTIONS.map((tp) => (
+                      <SelectItem key={tp} value={tp}>
+                        {typeLabel(tp)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="co-status">{t('commandObs.colStatus')}</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger id="co-status" className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL}>{t('commandObs.statusAll')}</SelectItem>
+                    {STATUS_OPTIONS.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {statusLabel(s)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="co-from">{t('commandObs.fromTime')}</Label>
+                <Input
+                  id="co-from"
+                  type="datetime-local"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="co-to">{t('commandObs.toTime')}</Label>
+                <Input
+                  id="co-to"
+                  type="datetime-local"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </div>
+              <Button type="submit">{t('common.query')}</Button>
+            </form>
 
-          <AsyncSection
-            isLoading={historyQuery.isLoading}
-            isError={historyQuery.isError}
-            error={historyQuery.error}
-            skeleton={<TableSkeleton columns={columns.length} />}
-          >
-            <DataTable
-              columns={columns}
-              rows={historyQuery.data?.items}
-              rowKey={(c) => String(c.commandId)}
-              emptyText={t('commandObs.historyEmpty')}
-            />
-            <div className="mt-4 flex items-center justify-center gap-4 text-sm">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page <= 1 || historyQuery.isFetching}
-                onClick={() => goPage(page - 1)}
-              >
-                {t('common.prevPage')}
-              </Button>
-              <span className="text-muted-foreground">
-                {t('common.pageInfo', { page, total: totalPages, count: historyTotal })}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages || historyQuery.isFetching}
-                onClick={() => goPage(page + 1)}
-              >
-                {t('common.nextPage')}
-              </Button>
-            </div>
-          </AsyncSection>
-        </CardContent>
-      </Card>
+            <AsyncSection
+              isLoading={historyQuery.isLoading}
+              isError={historyQuery.isError}
+              error={historyQuery.error}
+              skeleton={<TableSkeleton columns={columns.length} />}
+            >
+              <DataTable
+                columns={columns}
+                rows={historyQuery.data?.items}
+                rowKey={(c) => String(c.commandId)}
+                emptyText={t('commandObs.historyEmpty')}
+              />
+              <div className="mt-4 flex items-center justify-center gap-4 text-sm">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1 || historyQuery.isFetching}
+                  onClick={() => goPage(page - 1)}
+                >
+                  {t('common.prevPage')}
+                </Button>
+                <span className="text-muted-foreground">
+                  {t('common.pageInfo', { page, total: totalPages, count: historyTotal })}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= totalPages || historyQuery.isFetching}
+                  onClick={() => goPage(page + 1)}
+                >
+                  {t('common.nextPage')}
+                </Button>
+              </div>
+            </AsyncSection>
+          </CardContent>
+        </Card>
       )}
     </div>
   )

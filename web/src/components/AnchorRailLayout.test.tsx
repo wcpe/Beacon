@@ -41,7 +41,10 @@ describe('AnchorRailLayout（FR-108）', () => {
 
   it('默认高亮首个分区（aria-current）', () => {
     renderLayout()
-    expect(screen.getByRole('button', { name: '进程运行时' })).toHaveAttribute('aria-current', 'true')
+    expect(screen.getByRole('button', { name: '进程运行时' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
     expect(screen.getByRole('button', { name: '数据库' })).not.toHaveAttribute('aria-current')
   })
 

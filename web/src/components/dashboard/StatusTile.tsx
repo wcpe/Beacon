@@ -22,8 +22,12 @@ interface StatusTileProps {
 function TileMetric({ label, value, large }: { label: string; value: string; large?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className={cn('truncate text-muted-foreground', large ? 'text-xs' : 'text-[11px]')}>{label}</div>
-      <div className={cn('tabular-nums', large ? 'text-lg font-semibold' : 'text-sm font-medium')}>{value}</div>
+      <div className={cn('truncate text-muted-foreground', large ? 'text-xs' : 'text-[11px]')}>
+        {label}
+      </div>
+      <div className={cn('tabular-nums', large ? 'text-lg font-semibold' : 'text-sm font-medium')}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -60,7 +64,10 @@ export default function StatusTile({ instance, large }: StatusTileProps) {
       {/* 左侧健康色条：按状态等级上色，远观即知该台健康。 */}
       <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1', levelSolid(level))} />
       <div className={cn('flex items-center gap-2', large ? 'pl-2' : 'pl-1.5')}>
-        <RoleIcon aria-hidden className={cn('shrink-0 text-muted-foreground', large ? 'size-5' : 'size-4')} />
+        <RoleIcon
+          aria-hidden
+          className={cn('shrink-0 text-muted-foreground', large ? 'size-5' : 'size-4')}
+        />
         <span
           className={cn('truncate font-medium', large ? 'text-base' : 'text-sm')}
           title={instance.serverId}
@@ -71,7 +78,11 @@ export default function StatusTile({ instance, large }: StatusTileProps) {
         <span className="ml-auto flex items-center gap-1.5">
           <span
             aria-hidden
-            className={cn('inline-block rounded-full', large ? 'size-2.5' : 'size-2', levelSolid(level))}
+            className={cn(
+              'inline-block rounded-full',
+              large ? 'size-2.5' : 'size-2',
+              levelSolid(level),
+            )}
           />
           <span className={cn('font-medium', large ? 'text-sm' : 'text-xs', levelText(level))}>
             {t(`status.${instance.status}`, { defaultValue: instance.status })}

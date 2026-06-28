@@ -11,13 +11,7 @@ describe('SectionHeader（FR-107 卡片降级）', () => {
   })
 
   it('渲染计数与右槽 actions', () => {
-    render(
-      <SectionHeader
-        title="归派看板"
-        count="3 台"
-        actions={<button>解锁改派</button>}
-      />,
-    )
+    render(<SectionHeader title="归派看板" count="3 台" actions={<button>解锁改派</button>} />)
     expect(screen.getByText('3 台')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '解锁改派' })).toBeInTheDocument()
   })

@@ -35,7 +35,12 @@ export default function SummaryStrip({ items }: { items: SummaryItem[] }) {
       {items.map((it, i) => (
         <div key={i} className="min-w-24 rounded-md bg-secondary px-3 py-2">
           <div className="text-[11px] leading-none text-muted-foreground">{it.label}</div>
-          <div className={cn('mt-1 text-xl font-semibold leading-none', TONE_CLASS[it.tone ?? 'default'])}>
+          <div
+            className={cn(
+              'mt-1 text-xl font-semibold leading-none',
+              TONE_CLASS[it.tone ?? 'default'],
+            )}
+          >
             {it.value}
           </div>
         </div>

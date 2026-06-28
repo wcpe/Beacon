@@ -43,7 +43,14 @@ function shortTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function TrendChart({ title, icon, points, metric, color, formatValue }: TrendChartProps) {
+export default function TrendChart({
+  title,
+  icon,
+  points,
+  metric,
+  color,
+  formatValue,
+}: TrendChartProps) {
   const { t } = useTranslation()
   return (
     <div className="space-y-2">

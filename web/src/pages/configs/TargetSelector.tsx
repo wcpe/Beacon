@@ -108,7 +108,9 @@ export default function TargetSelector({
                             <ChevronRight className="h-2.5 w-2.5 shrink-0" />
                           )}
                           <span className="truncate">{zone}</span>
-                          <span className="text-[0.6rem] text-muted-foreground/50">({servers.length})</span>
+                          <span className="text-[0.6rem] text-muted-foreground/50">
+                            ({servers.length})
+                          </span>
                         </button>
                         {isZoneExpanded &&
                           servers.map((s) => (
@@ -117,14 +119,20 @@ export default function TargetSelector({
                               type="button"
                               className={cn(
                                 'flex w-full items-center gap-1.5 px-2 py-0.5 text-xs transition-colors',
-                                selectedTarget?.type === 'server' && selectedTarget.value === s.serverId
+                                selectedTarget?.type === 'server' &&
+                                  selectedTarget.value === s.serverId
                                   ? 'bg-accent text-accent-foreground'
                                   : 'text-muted-foreground/60 hover:text-muted-foreground',
                               )}
                               style={{ paddingLeft: '40px' }}
                               onClick={() => onSelectTarget({ type: 'server', value: s.serverId })}
                             >
-                              <span className={cn('h-2 w-2 shrink-0 rounded-full', statusColor(s.status))} />
+                              <span
+                                className={cn(
+                                  'h-2 w-2 shrink-0 rounded-full',
+                                  statusColor(s.status),
+                                )}
+                              />
                               <span className="truncate">{s.serverId}</span>
                             </button>
                           ))}

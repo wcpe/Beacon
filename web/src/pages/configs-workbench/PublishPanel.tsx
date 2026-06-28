@@ -60,14 +60,20 @@ export default function PublishPanel({
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center p-6">
       {/* 半透明遮罩 */}
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onCancel} aria-hidden />
+      <div
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        onClick={onCancel}
+        aria-hidden
+      />
       {/* 浮层卡 */}
       <div className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
         {/* 头 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
           <Rocket className="h-4 w-4 text-primary" />
           <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">{t('configs.workbench.publishTitle')}</div>
+            <div className="text-sm font-medium text-foreground">
+              {t('configs.workbench.publishTitle')}
+            </div>
             <div className="text-[0.65rem] text-muted-foreground">
               {t('configs.workbench.publishSubtitle', { count: names.length })}
             </div>
@@ -106,8 +112,13 @@ export default function PublishPanel({
                         className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 text-xs last:border-b-0"
                       >
                         <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate font-mono text-foreground">{f.name}</span>
-                        <Badge variant="outline" className={cn('h-4 shrink-0 px-1 text-[0.6rem]', meta.badgeClass)}>
+                        <span className="min-w-0 flex-1 truncate font-mono text-foreground">
+                          {f.name}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={cn('h-4 shrink-0 px-1 text-[0.6rem]', meta.badgeClass)}
+                        >
                           {t(meta.labelKey)}
                         </Badge>
                         <span className="shrink-0 font-mono text-[0.65rem] text-muted-foreground">
@@ -131,7 +142,10 @@ export default function PublishPanel({
                     return (
                       <div key={g.label} className="rounded-md border border-border px-3 py-2">
                         <div className="mb-1.5 flex items-center gap-1.5 text-[0.7rem]">
-                          <Badge variant="outline" className={cn('h-4 px-1 text-[0.6rem]', meta.badgeClass)}>
+                          <Badge
+                            variant="outline"
+                            className={cn('h-4 px-1 text-[0.6rem]', meta.badgeClass)}
+                          >
                             {t(meta.labelKey)}
                           </Badge>
                           <span className="font-medium text-foreground">{g.label}</span>
@@ -187,12 +201,18 @@ export default function PublishPanel({
 
         {/* 底部：热更提示 + 取消 + 发布并热推 */}
         <div className="flex shrink-0 items-center gap-3 border-t border-border px-4 py-3">
-          <span className="text-[0.65rem] text-muted-foreground">{t('configs.workbench.publishHotReloadNote')}</span>
+          <span className="text-[0.65rem] text-muted-foreground">
+            {t('configs.workbench.publishHotReloadNote')}
+          </span>
           <div className="ml-auto flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={onCancel}>
               {t('common.cancel')}
             </Button>
-            <Button size="sm" disabled={!gatePassed || impact.isLoading} onClick={() => onPublish(onlineCount)}>
+            <Button
+              size="sm"
+              disabled={!gatePassed || impact.isLoading}
+              onClick={() => onPublish(onlineCount)}
+            >
               <Rocket className="mr-1 h-3.5 w-3.5" />
               {t('configs.workbench.publishConfirm', { count: onlineCount })}
             </Button>
@@ -202,7 +222,10 @@ export default function PublishPanel({
 
       {/* 批量 diff 子浮层（查看各文件 期望值 ⟷ 服务器现状） */}
       {diffOpen && data && (
-        <BatchDiffOverlay names={data.files.map((f) => f.name)} onClose={() => setDiffOpen(false)} />
+        <BatchDiffOverlay
+          names={data.files.map((f) => f.name)}
+          onClose={() => setDiffOpen(false)}
+        />
       )}
     </div>
   )
@@ -219,12 +242,17 @@ function ServerChip({ server }: { server: PublishImpactServer }) {
       )}
     >
       <span
-        className={cn('h-1.5 w-1.5 rounded-full', server.online ? 'bg-emerald-500' : 'bg-muted-foreground/40')}
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          server.online ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+        )}
       />
       <span className="font-mono text-foreground">{server.serverId}</span>
       {server.online ? (
         server.changed ? (
-          <span className="text-amber-600 dark:text-amber-400">{t('configs.workbench.publishChanged')}</span>
+          <span className="text-amber-600 dark:text-amber-400">
+            {t('configs.workbench.publishChanged')}
+          </span>
         ) : (
           <span className="text-muted-foreground">{t('configs.workbench.publishUnchanged')}</span>
         )
@@ -240,19 +268,28 @@ function ServerChip({ server }: { server: PublishImpactServer }) {
 function BatchDiffOverlay({ names, onClose }: { names: string[]; onClose: () => void }) {
   const { t } = useTranslation()
   // 仅取有 mock diff 的文件（其余无差异不进批量审阅）
-  const diffNames = useMemo(() => names.filter((n) => imprintDiffs[n.split('/').pop() ?? n]), [names])
+  const diffNames = useMemo(
+    () => names.filter((n) => imprintDiffs[n.split('/').pop() ?? n]),
+    [names],
+  )
   const [active, setActive] = useState(diffNames[0] ?? names[0] ?? '')
   const activeBase = active.split('/').pop() ?? active
   const diff = imprintDiffs[activeBase] ?? { expected: '', current: '' }
 
   return (
     <div className="absolute inset-0 z-[60] flex items-center justify-center p-6">
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        onClick={onClose}
+        aria-hidden
+      />
       <div className="relative flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
         {/* 头 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
           <GitCompare className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">{t('configs.workbench.publishBatchDiffTitle')}</span>
+          <span className="text-sm font-medium text-foreground">
+            {t('configs.workbench.publishBatchDiffTitle')}
+          </span>
           <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[0.6rem]">
             {t('configs.workbench.publishBatchDiffCount', { count: diffNames.length })}
           </Badge>
@@ -275,7 +312,9 @@ function BatchDiffOverlay({ names, onClose }: { names: string[]; onClose: () => 
                 onClick={() => setActive(n)}
                 className={cn(
                   'flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-xs transition-colors',
-                  n === active ? 'bg-primary/10 font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/50',
+                  n === active
+                    ? 'bg-primary/10 font-medium text-foreground'
+                    : 'text-muted-foreground hover:bg-muted/50',
                 )}
               >
                 <FileText className="h-3.5 w-3.5 shrink-0" />

@@ -51,7 +51,9 @@ function notFound(resource: string): Response {
 function parseQS(search: string): Record<string, string> {
   const params: Record<string, string> = {}
   const sp = new URLSearchParams(search)
-  sp.forEach((v, k) => { params[k] = v })
+  sp.forEach((v, k) => {
+    params[k] = v
+  })
   return params
 }
 
@@ -156,7 +158,10 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     if (idx === -1) return notFound(`环境 ${code}`)
     // prod / test 内置环境含在用数据，演示删除守卫（与后端 409 一致）
     if (code === 'prod' || code === 'test') {
-      return json({ code: 'CONFLICT', message: `环境 ${code} 下仍有实例 / zone / 配置，禁止删除` }, 409)
+      return json(
+        { code: 'CONFLICT', message: `环境 ${code} 下仍有实例 / zone / 配置，禁止删除` },
+        409,
+      )
     }
     mockNamespaces.splice(idx, 1)
     return new Response(null, { status: 204 })
@@ -164,7 +169,9 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
 
   // 审计
   if (p === '/admin/v1/audits' && method === 'GET') {
-    const result = getMockAudits(qs as unknown as { namespace?: string; operator?: string; action?: string })
+    const result = getMockAudits(
+      qs as unknown as { namespace?: string; operator?: string; action?: string },
+    )
     return json(result)
   }
 
@@ -174,7 +181,11 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
   }
   if (p === '/admin/v1/api-keys' && method === 'POST') {
     const body = init?.body ? JSON.parse(init.body as string) : {}
-    const created = newMockApiKey(body.name ?? 'mock-key', body.role ?? 'readonly', body.expiresAt ?? null)
+    const created = newMockApiKey(
+      body.name ?? 'mock-key',
+      body.role ?? 'readonly',
+      body.expiresAt ?? null,
+    )
     mockApiKeys.unshift(created)
     return json(created, 201)
   }
@@ -199,7 +210,11 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
 
   // 文件树托管
   if (p === '/admin/v1/files' && method === 'GET') {
-    return json({ items: getMockFileList(qs as unknown as { namespace?: string; group?: string; path?: string }) })
+    return json({
+      items: getMockFileList(
+        qs as unknown as { namespace?: string; group?: string; path?: string },
+      ),
+    })
   }
 
   const fileDetailMatch = p.match(/^\/admin\/v1\/files\/(\d+)$/)
@@ -228,7 +243,9 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
 
   // 覆盖集
   if (p === '/admin/v1/override-sets' && method === 'GET') {
-    return json({ items: getMockOverrideSetList(qs as unknown as { namespace?: string; group?: string }) })
+    return json({
+      items: getMockOverrideSetList(qs as unknown as { namespace?: string; group?: string }),
+    })
   }
 
   const osDetailMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)$/)
@@ -251,7 +268,11 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
 
   // Zone 指派
   if (p === '/admin/v1/zones/assignments' && method === 'GET') {
-    return json({ items: getMockAssignments(qs as unknown as { namespace?: string; group?: string; zone?: string }) })
+    return json({
+      items: getMockAssignments(
+        qs as unknown as { namespace?: string; group?: string; zone?: string },
+      ),
+    })
   }
 
   // 实例下线

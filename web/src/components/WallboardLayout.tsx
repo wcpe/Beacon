@@ -21,7 +21,9 @@ export default function WallboardLayout() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label={theme === 'dark' ? t('preferences.themeToLight') : t('preferences.themeToDark')}
+            aria-label={
+              theme === 'dark' ? t('preferences.themeToLight') : t('preferences.themeToDark')
+            }
             title={theme === 'dark' ? t('preferences.themeToLight') : t('preferences.themeToDark')}
             className="text-slate-300 transition-colors hover:bg-white/10 hover:text-slate-100"
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

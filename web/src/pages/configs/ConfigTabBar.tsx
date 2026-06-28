@@ -74,11 +74,15 @@ export default function ConfigTabBar({
               </DropdownMenuTrigger>
               {contextTabId === tab.configId && showTabMenu && (
                 <DropdownMenuContent align="start" className="w-40" sideOffset={4}>
-                  <DropdownMenuItem onClick={() => onContextAction('close')}>{t('configs.tabCloseCurrent')}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onContextAction('close')}>
+                    {t('configs.tabCloseCurrent')}
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => onContextAction('closeOthers')}>
                     {t('configs.tabCloseOthers')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onContextAction('closeAll')}>{t('configs.tabCloseAll')}</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onContextAction('closeAll')}>
+                    {t('configs.tabCloseAll')}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               )}
             </DropdownMenu>

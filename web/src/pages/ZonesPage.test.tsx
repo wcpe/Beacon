@@ -102,7 +102,14 @@ beforeEach(() => {
     { group: 'gA', zone: 'z2', serverCount: 0, onlineCount: 0 },
   ])
   vi.mocked(listAssignments).mockResolvedValue([
-    { namespace: 'prod', serverId: 'lobby-1', group: 'gA', zone: 'z1', note: '原备注', updatedAt: '' },
+    {
+      namespace: 'prod',
+      serverId: 'lobby-1',
+      group: 'gA',
+      zone: 'z1',
+      note: '原备注',
+      updatedAt: '',
+    },
   ])
   vi.mocked(assignZone).mockResolvedValue({
     namespace: 'prod',
@@ -173,9 +180,7 @@ describe('ZonesPage 取消指派需显式确认（FR-71）', () => {
     expect(vi.mocked(unassignZone)).not.toHaveBeenCalled()
     const alert = await screen.findByRole('alertdialog')
     await userEvent.click(within(alert).getByRole('button', { name: '确认取消指派' }))
-    await waitFor(() =>
-      expect(vi.mocked(unassignZone)).toHaveBeenCalledWith('prod', 'lobby-1'),
-    )
+    await waitFor(() => expect(vi.mocked(unassignZone)).toHaveBeenCalledWith('prod', 'lobby-1'))
   })
 })
 
@@ -194,11 +199,7 @@ describe('ZonesPage 排空门 409 提示（FR-71）', () => {
     await pick(dialog, '小区', 'z2')
     await userEvent.type(within(dialog).getByLabelText('手输 serverId 确认'), 'lobby-1')
     await userEvent.click(within(dialog).getByRole('button', { name: '确认改派' }))
-    await waitFor(() =>
-      expect(showError).toHaveBeenCalledWith(
-        expect.stringContaining('请先排空'),
-      ),
-    )
+    await waitFor(() => expect(showError).toHaveBeenCalledWith(expect.stringContaining('请先排空')))
   })
 
   it('取消指派遇 409 同样展示「先排空」提示', async () => {
@@ -211,9 +212,7 @@ describe('ZonesPage 排空门 409 提示（FR-71）', () => {
     await userEvent.click(await screen.findByRole('button', { name: '取消指派' }))
     const alert = await screen.findByRole('alertdialog')
     await userEvent.click(within(alert).getByRole('button', { name: '确认取消指派' }))
-    await waitFor(() =>
-      expect(showError).toHaveBeenCalledWith(expect.stringContaining('请先排空')),
-    )
+    await waitFor(() => expect(showError).toHaveBeenCalledWith(expect.stringContaining('请先排空')))
   })
 })
 
@@ -223,7 +222,9 @@ describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
     const dialog = await openAssignDialog()
     await waitFor(async () => {
       const listbox = await openCombobox(dialog, '环境')
-      const opts = within(listbox).getAllByRole('option').map((o) => o.textContent)
+      const opts = within(listbox)
+        .getAllByRole('option')
+        .map((o) => o.textContent)
       expect(opts).toContain('prod · 生产')
       expect(opts).toContain('test · 测试')
     })
@@ -234,7 +235,9 @@ describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
     const dialog = await openAssignDialog()
     await waitFor(async () => {
       const listbox = await openCombobox(dialog, 'serverId')
-      const opts = within(listbox).getAllByRole('option').map((o) => o.textContent)
+      const opts = within(listbox)
+        .getAllByRole('option')
+        .map((o) => o.textContent)
       expect(opts).toContain('lobby-1')
       expect(opts).not.toContain('bc-1')
     })
@@ -245,13 +248,17 @@ describe('ZonesPage 指派表单（FR-40 / FR-51）', () => {
     const dialog = await openAssignDialog()
     await waitFor(async () => {
       const glist = await openCombobox(dialog, '大区')
-      const gopts = within(glist).getAllByRole('option').map((o) => o.textContent)
+      const gopts = within(glist)
+        .getAllByRole('option')
+        .map((o) => o.textContent)
       expect(gopts).toContain('gA')
       expect(gopts).toContain('gB')
     })
     await waitFor(async () => {
       const zlist = await openCombobox(dialog, '小区')
-      const zopts = within(zlist).getAllByRole('option').map((o) => o.textContent)
+      const zopts = within(zlist)
+        .getAllByRole('option')
+        .map((o) => o.textContent)
       expect(zopts).toContain('z1')
       expect(zopts).toContain('z2')
     })

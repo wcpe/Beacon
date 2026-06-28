@@ -14,12 +14,7 @@ import StatusBadge from '../../components/StatusBadge'
 import RoleBadge from '../../components/RoleBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 
 // bungee 角色编码（与后端 role 约定一致）
 const ROLE_BUNGEE = 'bungee'
@@ -61,7 +56,15 @@ interface ServerDetailSheetProps {
 }
 
 // 单行键值对（定义列表行）
-function Field({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
+function Field({
+  label,
+  children,
+  mono,
+}: {
+  label: string
+  children: React.ReactNode
+  mono?: boolean
+}) {
   return (
     <>
       <dt className="text-muted-foreground">{label}</dt>
@@ -103,7 +106,9 @@ function TimelineSection({ instance }: { instance: InstanceView }) {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono break-all">{e.dataId}</span>
                 <Badge variant="outline">{scopeLabel(t, e.scopeLevel)}</Badge>
-                <Badge variant="secondary">{t('servers.timelineVersion', { version: e.version })}</Badge>
+                <Badge variant="secondary">
+                  {t('servers.timelineVersion', { version: e.version })}
+                </Badge>
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                 <span>{formatTime(e.createdAt)}</span>
@@ -129,7 +134,13 @@ function logLineClass(level: string): string {
 
 // LogsSection agent 日志区（FR-88，见 ADR-0040）：点按钮触发取日志（命令-回传）→ 轮询命令状态至 done/failed/expired
 // → 展示该 agent 自身最近日志（脱敏后）。仅 agent 自身日志、不读任意文件；轮询仅在有进行中命令时启用。
-function LogsSection({ instance, autoFetch = false }: { instance: InstanceView; autoFetch?: boolean }) {
+function LogsSection({
+  instance,
+  autoFetch = false,
+}: {
+  instance: InstanceView
+  autoFetch?: boolean
+}) {
   const { t } = useTranslation()
   // 已触发的命令 id（点过按钮后才开始轮询；null 表示尚未触发本次）
   const [commandId, setCommandId] = useState<number | null>(null)
@@ -248,8 +259,12 @@ export default function ServerDetailSheet({
                   <span className="text-muted-foreground">{t('servers.agentVersionUnknown')}</span>
                 )}
               </Field>
-              <Field label={t('servers.colLastHeartbeat')}>{formatTime(instance.lastHeartbeat)}</Field>
-              <Field label={t('servers.detailRegisteredAt')}>{formatTime(instance.registeredAt)}</Field>
+              <Field label={t('servers.colLastHeartbeat')}>
+                {formatTime(instance.lastHeartbeat)}
+              </Field>
+              <Field label={t('servers.detailRegisteredAt')}>
+                {formatTime(instance.registeredAt)}
+              </Field>
             </dl>
 
             {isBungee ? (
@@ -257,9 +272,13 @@ export default function ServerDetailSheet({
               <section className="space-y-3">
                 <h3 className="text-sm font-medium">{t('servers.detailProxySection')}</h3>
                 <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
-                  <Field label={t('servers.cardConnections')}>{instance.proxy.onlineConnections}</Field>
+                  <Field label={t('servers.cardConnections')}>
+                    {instance.proxy.onlineConnections}
+                  </Field>
                   <Field label={t('servers.cardThreads')}>{instance.proxy.threadCount}</Field>
-                  <Field label={t('servers.cardUptime')}>{formatDuration(instance.proxy.uptimeMs / 1000)}</Field>
+                  <Field label={t('servers.cardUptime')}>
+                    {formatDuration(instance.proxy.uptimeMs / 1000)}
+                  </Field>
                   <Field label={t('servers.cardBackendReach')}>
                     {reachText(t, instance.proxy.backendUp, instance.proxy.backendTotal)}
                   </Field>

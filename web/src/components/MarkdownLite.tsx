@@ -126,7 +126,13 @@ function renderBlocks(blocks: Block[]): ReactNode {
 }
 
 // 轻量 markdown 渲染组件：支持 ## / ### 标题、- / * 列表、**加粗**、空行分段。
-export default function MarkdownLite({ source, className }: { source: string; className?: string }) {
+export default function MarkdownLite({
+  source,
+  className,
+}: {
+  source: string
+  className?: string
+}) {
   const blocks = parseBlocks(source)
   return <div className={className}>{renderBlocks(blocks)}</div>
 }

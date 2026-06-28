@@ -94,9 +94,7 @@ describe('Combobox（FR-51）', () => {
   it('onChange 透传所选值给上层', async () => {
     const onChange = vi.fn()
     function Plain() {
-      return (
-        <Combobox aria-label="维度" value="" onChange={onChange} options={OPTS} allowCustom />
-      )
+      return <Combobox aria-label="维度" value="" onChange={onChange} options={OPTS} allowCustom />
     }
     render(<Plain />)
     await userEvent.click(screen.getByLabelText('维度'))

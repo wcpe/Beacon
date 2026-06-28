@@ -128,7 +128,10 @@ export function useConfigTabs() {
       const idx = revisions.findIndex((r) => r.version === rev.version)
       setDiffVersions((p) => ({
         ...p,
-        [configId]: { from: String(rev.version), to: String(revisions[idx + 1]?.version ?? rev.version) },
+        [configId]: {
+          from: String(rev.version),
+          to: String(revisions[idx + 1]?.version ?? rev.version),
+        },
       }))
       setViewModes((p) => ({ ...p, [configId]: 'diff' }))
     },

@@ -197,7 +197,10 @@ export default function ServersPage() {
     queryKey: ['instances', 'filter-options'],
     queryFn: () => listInstances({}),
   })
-  const zoneSummaryQuery = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
+  const zoneSummaryQuery = useQuery({
+    queryKey: ['zone-summary', 'all'],
+    queryFn: () => zoneSummary(),
+  })
   // 环境候选（仅供「新服接入向导」表单的环境下拉，非页内筛选）：候选显示「编码 · 名称」，真实值仍是 code（FR-70）。
   const namespacesQuery = useQuery({ queryKey: ['namespaces'], queryFn: () => listNamespaces() })
   const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
@@ -248,8 +251,16 @@ export default function ServersPage() {
       { label: t('servers.summaryTotal'), value: list.length },
       { label: t('servers.summaryOnline'), value: online, tone: 'success' },
       { label: t('servers.summaryLost'), value: lost, tone: lost > 0 ? 'danger' : 'default' },
-      { label: t('servers.summaryDrained'), value: drainCount, tone: drainCount > 0 ? 'warning' : 'default' },
-      { label: t('servers.summaryUnassigned'), value: unassigned, tone: unassigned > 0 ? 'warning' : 'default' },
+      {
+        label: t('servers.summaryDrained'),
+        value: drainCount,
+        tone: drainCount > 0 ? 'warning' : 'default',
+      },
+      {
+        label: t('servers.summaryUnassigned'),
+        value: unassigned,
+        tone: unassigned > 0 ? 'warning' : 'default',
+      },
     ]
   }, [data, drains, t])
 
@@ -348,7 +359,9 @@ export default function ServersPage() {
 
   // 取该实例现有指派备注（改派对话框沿用，避免清空运维填写的备注）。
   function noteFor(i: InstanceView): string {
-    const a = (assignments ?? []).find((x) => x.namespace === i.namespace && x.serverId === i.serverId)
+    const a = (assignments ?? []).find(
+      (x) => x.namespace === i.namespace && x.serverId === i.serverId,
+    )
     return a?.note ?? ''
   }
 
@@ -369,7 +382,10 @@ export default function ServersPage() {
           i.zone
         ),
     },
-    { header: t('servers.colStatus'), cell: (i) => <StatusBadge status={i.status} reason={i.healthReason} /> },
+    {
+      header: t('servers.colStatus'),
+      cell: (i) => <StatusBadge status={i.status} reason={i.healthReason} />,
+    },
     { header: t('servers.colAddress'), className: 'font-mono', cell: (i) => i.address },
     // 版本/agent 合一列（FR-106）：原 colVersion + colAgentVersion 合并
     { header: t('servers.colVersionAgent'), cell: (i) => versionAgentCell(t, i, majorityVersions) },
@@ -422,13 +438,17 @@ export default function ServersPage() {
                 {/* drain / undrain（FR-10）：按当前排空态切换 */}
                 {drained ? (
                   <DropdownMenuItem
-                    onClick={() => undrainMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+                    onClick={() =>
+                      undrainMut.mutate({ serverId: i.serverId, namespace: i.namespace })
+                    }
                   >
                     {t('servers.undrainBtn')}
                   </DropdownMenuItem>
                 ) : (
                   <DropdownMenuItem
-                    onClick={() => drainMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+                    onClick={() =>
+                      drainMut.mutate({ serverId: i.serverId, namespace: i.namespace })
+                    }
                   >
                     {t('servers.drainBtn')}
                   </DropdownMenuItem>
@@ -541,7 +561,9 @@ export default function ServersPage() {
       {/* 已主动下线标记（FR-49）：已下线实例不在上表（已移出可用集），裸分区标题 + 表，支持取消下线 */}
       {offlineMarkers && offlineMarkers.length > 0 && (
         <div className="space-y-2">
-          <h2 className="text-sm font-semibold text-muted-foreground">{t('servers.offlineSectionTitle')}</h2>
+          <h2 className="text-sm font-semibold text-muted-foreground">
+            {t('servers.offlineSectionTitle')}
+          </h2>
           <div className="overflow-x-auto">
             <DataTable
               columns={[
@@ -555,7 +577,9 @@ export default function ServersPage() {
                       variant="outline"
                       size="sm"
                       disabled={onlineMut.isPending}
-                      onClick={() => onlineMut.mutate({ serverId: o.serverId, namespace: o.namespace })}
+                      onClick={() =>
+                        onlineMut.mutate({ serverId: o.serverId, namespace: o.namespace })
+                      }
                     >
                       {t('servers.cancelOfflineBtn')}
                     </Button>
@@ -575,10 +599,12 @@ export default function ServersPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {offlineTarget && t('servers.offlineConfirmTitle', { serverId: offlineTarget.serverId })}
+              {offlineTarget &&
+                t('servers.offlineConfirmTitle', { serverId: offlineTarget.serverId })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {offlineTarget && t('servers.offlineConfirmDesc', { namespace: offlineTarget.namespace })}
+              {offlineTarget &&
+                t('servers.offlineConfirmDesc', { namespace: offlineTarget.namespace })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -586,7 +612,10 @@ export default function ServersPage() {
             <AlertDialogAction
               onClick={() => {
                 if (offlineTarget) {
-                  offlineMut.mutate({ serverId: offlineTarget.serverId, namespace: offlineTarget.namespace })
+                  offlineMut.mutate({
+                    serverId: offlineTarget.serverId,
+                    namespace: offlineTarget.namespace,
+                  })
                 }
                 setOfflineTarget(null)
               }}
@@ -604,7 +633,9 @@ export default function ServersPage() {
         onOpenChange={(open) => !open && setDetailInstance(null)}
         defaultEntry={
           detailInstance && detailInstance.zone
-            ? entryByZone.get(`${detailInstance.namespace}/${detailInstance.group}/${detailInstance.zone}`)
+            ? entryByZone.get(
+                `${detailInstance.namespace}/${detailInstance.group}/${detailInstance.zone}`,
+              )
             : undefined
         }
         agentVersionMismatch={

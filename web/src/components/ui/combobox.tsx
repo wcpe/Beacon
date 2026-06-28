@@ -163,7 +163,9 @@ export function Combobox({
         >
           <div role="listbox">
             {filtered.length === 0 ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">{t('common.noMatchOption')}</div>
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                {t('common.noMatchOption')}
+              </div>
             ) : (
               filtered.map((opt) => (
                 <div

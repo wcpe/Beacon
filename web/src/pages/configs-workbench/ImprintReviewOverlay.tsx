@@ -27,24 +27,29 @@ export default function ImprintReviewOverlay({
 
   // 按文件名末段取 mock diff（取不到给空 diff 占位）
   const fileName = queueName.split('/').pop() ?? queueName
-  const diff = useMemo(
-    () => imprintDiffs[fileName] ?? { expected: '', current: '' },
-    [fileName],
-  )
+  const diff = useMemo(() => imprintDiffs[fileName] ?? { expected: '', current: '' }, [fileName])
   const differs = diff.expected.trim() !== diff.current.trim()
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center p-6">
       {/* 半透明遮罩 */}
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onCancel} aria-hidden />
+      <div
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        onClick={onCancel}
+        aria-hidden
+      />
       {/* 浮层卡 */}
       <div className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
         {/* 头 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
           <GitCompare className="h-4 w-4 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">{t('configs.workbench.imprintTitle')}</div>
-            <div className="truncate font-mono text-[0.65rem] text-muted-foreground">{queueName}</div>
+            <div className="text-sm font-medium text-foreground">
+              {t('configs.workbench.imprintTitle')}
+            </div>
+            <div className="truncate font-mono text-[0.65rem] text-muted-foreground">
+              {queueName}
+            </div>
           </div>
           {differs ? (
             <Badge variant="destructive" className="ml-2 h-4 px-1.5 text-[0.6rem]">

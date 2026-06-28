@@ -16,7 +16,10 @@ applyThemeToDocument(currentPreferences().theme)
 // 开发模式下启用 mock API（无需后端即可验证前端交互）
 // 通过 VITE_USE_MOCK 环境变量控制，默认为 true（开发模式）
 import { enableMock } from './api/mock'
-if ((import.meta as unknown as { env: Record<string, string> }).env.DEV && (import.meta as unknown as { env: Record<string, string> }).env.VITE_USE_MOCK !== 'false') {
+if (
+  (import.meta as unknown as { env: Record<string, string> }).env.DEV &&
+  (import.meta as unknown as { env: Record<string, string> }).env.VITE_USE_MOCK !== 'false'
+) {
   enableMock()
 }
 

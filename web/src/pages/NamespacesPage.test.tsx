@@ -23,11 +23,7 @@ vi.mock('../api/client', () => ({
 }))
 
 import NamespacesPage from './NamespacesPage'
-import {
-  listNamespaces,
-  updateNamespace,
-  deleteNamespace,
-} from '../api/client'
+import { listNamespaces, updateNamespace, deleteNamespace } from '../api/client'
 
 function renderPage(ui: ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -79,7 +75,9 @@ describe('NamespacesPage 环境管理（FR-53）', () => {
   })
 
   it('守卫拒删时后端中文错误经 showError 提示', async () => {
-    vi.mocked(deleteNamespace).mockRejectedValueOnce(new Error('环境下仍有已注册实例，请先下线后再删除'))
+    vi.mocked(deleteNamespace).mockRejectedValueOnce(
+      new Error('环境下仍有已注册实例，请先下线后再删除'),
+    )
     renderPage(<NamespacesPage />)
     await screen.findByText('prod')
     const deleteButtons = screen.getAllByRole('button', { name: '删除' })

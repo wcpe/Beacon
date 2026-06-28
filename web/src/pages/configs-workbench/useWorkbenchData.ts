@@ -77,7 +77,13 @@ export function useManagedTree() {
 
 // 由扁平文件清单构建受管树：以 path 段建文件夹层级，文件挂叶子。
 function buildManagedTree(files: FileView[]): ManagedNode[] {
-  const root: ManagedNode = { key: 'plugins', name: 'plugins', type: 'folder', sync: 'managed-only', children: [] }
+  const root: ManagedNode = {
+    key: 'plugins',
+    name: 'plugins',
+    type: 'folder',
+    sync: 'managed-only',
+    children: [],
+  }
   const folderByPath = new Map<string, ManagedNode>([['plugins', root]])
   for (const f of files) {
     const segs = f.path.split('/').filter(Boolean)
@@ -86,7 +92,13 @@ function buildManagedTree(files: FileView[]): ManagedNode[] {
     for (let i = 0; i < segs.length - 1; i++) {
       const key = `${parentKey}/${segs[i]}`
       if (!folderByPath.has(key)) {
-        const node: ManagedNode = { key, name: segs[i], type: 'folder', sync: 'managed-only', children: [] }
+        const node: ManagedNode = {
+          key,
+          name: segs[i],
+          type: 'folder',
+          sync: 'managed-only',
+          children: [],
+        }
         folderByPath.get(parentKey)!.children!.push(node)
         folderByPath.set(key, node)
       }
@@ -119,7 +131,9 @@ export function useServerTree(serverId: string | undefined) {
   return useQuery({
     queryKey: ['wb-server-tree', namespace, serverId],
     queryFn: () =>
-      browse(serverId!, namespace, { op: 'tree' }).then((r) => browseTreeToServerNodes(r as BrowseTreeResult)),
+      browse(serverId!, namespace, { op: 'tree' }).then((r) =>
+        browseTreeToServerNodes(r as BrowseTreeResult),
+      ),
     enabled: !!namespace && !!serverId,
   })
 }
@@ -161,7 +175,13 @@ function browseEntryToServerNode(entry: BrowseEntry, parentKey: string): ServerN
 // 文件类型标签（Xftp 风「类型」列）：按扩展名给中文标签
 function fileTypeLabel(name: string): string {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
-  const map: Record<string, string> = { yml: 'YAML 文件', yaml: 'YAML 文件', json: 'JSON 文件', properties: '属性文件', txt: '文本文件' }
+  const map: Record<string, string> = {
+    yml: 'YAML 文件',
+    yaml: 'YAML 文件',
+    json: 'JSON 文件',
+    properties: '属性文件',
+    txt: '文本文件',
+  }
   return map[ext] ?? '文件'
 }
 
@@ -171,7 +191,8 @@ export function useSyncQueue() {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-sync-queue', namespace],
-    queryFn: () => listCommands({ namespace, page: 1, size: 50 }).then((r) => r.items.map(commandToQueueRow)),
+    queryFn: () =>
+      listCommands({ namespace, page: 1, size: 50 }).then((r) => r.items.map(commandToQueueRow)),
     enabled: !!namespace,
   })
 }
@@ -232,7 +253,10 @@ export function useOperationLog() {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-operation-log', namespace],
-    queryFn: () => listReversibleOperations({ namespace, limit: 100 }).then((ops) => ops.map(reversibleOpToLogEntry)),
+    queryFn: () =>
+      listReversibleOperations({ namespace, limit: 100 }).then((ops) =>
+        ops.map(reversibleOpToLogEntry),
+      ),
     enabled: !!namespace,
   })
 }
@@ -264,7 +288,12 @@ export function useWorkbenchOptions() {
 }
 
 function buildOptions(insts: InstanceView[]): { scopes: ScopeOption[]; servers: ServerOption[] } {
-  const servers: ServerOption[] = insts.map((i) => ({ serverId: i.serverId, label: i.serverId, online: true, group: i.group }))
+  const servers: ServerOption[] = insts.map((i) => ({
+    serverId: i.serverId,
+    label: i.serverId,
+    online: true,
+    group: i.group,
+  }))
   // 覆盖层候选：全局 + 各唯一组 + 各实例（实例层定向覆盖）
   const scopes: ScopeOption[] = [{ value: 'global', label: '全局', scope: 'global' }]
   const seenGroups = new Set<string>()
@@ -274,7 +303,8 @@ function buildOptions(insts: InstanceView[]): { scopes: ScopeOption[]; servers: 
       scopes.push({ value: `group:${i.group}`, label: `组 ${i.group}`, scope: 'group' })
     }
   }
-  for (const i of insts) scopes.push({ value: `server:${i.serverId}`, label: `实例 ${i.serverId}`, scope: 'server' })
+  for (const i of insts)
+    scopes.push({ value: `server:${i.serverId}`, label: `实例 ${i.serverId}`, scope: 'server' })
   return { scopes, servers }
 }
 
@@ -320,7 +350,13 @@ async function loadWorkbenchFile(namespace: string, key: string): Promise<Workbe
 // 由 path 扩展名推编辑器语言（文件树对象无独立 format 字段）
 function formatFromPath(path: string): string {
   const ext = path.includes('.') ? path.split('.').pop()!.toLowerCase() : ''
-  const map: Record<string, string> = { yml: 'yaml', yaml: 'yaml', json: 'json', properties: 'properties', txt: 'text' }
+  const map: Record<string, string> = {
+    yml: 'yaml',
+    yaml: 'yaml',
+    json: 'json',
+    properties: 'properties',
+    txt: 'text',
+  }
   return map[ext] ?? 'yaml'
 }
 
@@ -362,7 +398,8 @@ export function useEffectivePreview(serverId: string | undefined) {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-effective', namespace, serverId],
-    queryFn: () => effectiveFiles({ namespace, serverId }).then((tree) => tree.files.map(effectiveFileToView)),
+    queryFn: () =>
+      effectiveFiles({ namespace, serverId }).then((tree) => tree.files.map(effectiveFileToView)),
     enabled: !!namespace && !!serverId,
   })
 }
@@ -399,12 +436,19 @@ function layersFor(scope: OverrideScope): EffectiveLayer[] {
 
 // ---- 发布影响面 ← impactPreview（FR-79）----
 // 按选中文件解析受影响在线服清单；本 FR 以首个选中文件的覆盖层算一组影响面（多文件按需扩展）。
-export function usePublishImpact(names: string[], enabled: boolean, scopeLevel = 'group', group?: string) {
+export function usePublishImpact(
+  names: string[],
+  enabled: boolean,
+  scopeLevel = 'group',
+  group?: string,
+) {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-publish-impact', namespace, names, scopeLevel, group],
     queryFn: () =>
-      impactPreview({ namespace, scopeLevel, group }).then((impact) => impactToView(names, impact, scopeLevel)),
+      impactPreview({ namespace, scopeLevel, group }).then((impact) =>
+        impactToView(names, impact, scopeLevel),
+      ),
     enabled: enabled && !!namespace && names.length > 0,
   })
 }

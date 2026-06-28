@@ -61,7 +61,10 @@ function findSetting(settings: SettingView[] | undefined, key: string): SettingV
 }
 
 // 把进度阶段映射为中文进度文案。
-function phaseText(t: (k: string, opts?: Record<string, unknown>) => string, p: UpdateProgressView): string {
+function phaseText(
+  t: (k: string, opts?: Record<string, unknown>) => string,
+  p: UpdateProgressView,
+): string {
   switch (p.phase) {
     case 'checking':
       return t('updateModal.phaseChecking')
@@ -186,7 +189,9 @@ export default function VersionUpdatePage() {
         if (!result || result.status === 'check-failed') {
           showError(t('versionUpdate.recheckFailed', { channel }))
         } else if (result.hasUpdate && !result.isDevBuild) {
-          showSuccess(t('versionUpdate.recheckHasUpdate', { channel, version: result.latestVersion }))
+          showSuccess(
+            t('versionUpdate.recheckHasUpdate', { channel, version: result.latestVersion }),
+          )
         } else {
           showSuccess(t('versionUpdate.recheckUpToDate', { channel }))
         }
@@ -288,7 +293,9 @@ export default function VersionUpdatePage() {
   // 触发应用后进度行文案：重连成功优先回显新版本；进行中 / 失败按阶段；重启断连显示重连提示。
   function progressLine(): string {
     if (reconnected) {
-      return t('updateModal.reconnected', { version: data?.latestVersion ?? data?.currentVersion ?? '' })
+      return t('updateModal.reconnected', {
+        version: data?.latestVersion ?? data?.currentVersion ?? '',
+      })
     }
     if (failed) return phaseText(t, progress!)
     if (connStatus === 'offline' || wentOfflineRef.current) return t('updateModal.restarting')
@@ -339,11 +346,7 @@ export default function VersionUpdatePage() {
               >
                 <TabsList aria-label={t('versionUpdate.channelGroupAria')}>
                   {UPDATE_CHANNELS.map((c) => (
-                    <TabsTrigger
-                      key={c}
-                      value={c}
-                      disabled={channelMut.isPending || applying}
-                    >
+                    <TabsTrigger key={c} value={c} disabled={channelMut.isPending || applying}>
                       {c === 'stable'
                         ? t('versionUpdate.channelStable')
                         : t('versionUpdate.channelPrerelease')}
@@ -352,7 +355,12 @@ export default function VersionUpdatePage() {
                 </TabsList>
               </Tabs>
               {/* 立即检查（强制刷新，绕服务端缓存） */}
-              <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing || applying}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={refreshing || applying}
+              >
                 <RefreshCw className={refreshing ? 'animate-spin' : undefined} />
                 {t('updateModal.checkNow')}
               </Button>
@@ -369,13 +377,21 @@ export default function VersionUpdatePage() {
                     {t('versionUpdate.badgePrerelease')}
                   </Badge>
                 )}
-                <span className={canUpdate ? 'text-sm font-medium text-foreground' : 'text-sm text-muted-foreground'}>
+                <span
+                  className={
+                    canUpdate
+                      ? 'text-sm font-medium text-foreground'
+                      : 'text-sm text-muted-foreground'
+                  }
+                >
                   {statusLine()}
                 </span>
               </div>
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
                 <dt className="text-muted-foreground">{t('updateModal.currentVersion')}</dt>
-                <dd className="font-mono font-medium tabular-nums">{data?.currentVersion ?? '-'}</dd>
+                <dd className="font-mono font-medium tabular-nums">
+                  {data?.currentVersion ?? '-'}
+                </dd>
                 {canUpdate && (
                   <>
                     <dt className="text-muted-foreground">{t('updateModal.latestVersion')}</dt>
@@ -395,7 +411,9 @@ export default function VersionUpdatePage() {
                   {data?.releaseNotes ? (
                     <MarkdownLite source={data.releaseNotes} />
                   ) : (
-                    <span className="text-muted-foreground">{t('updateModal.releaseNotesEmpty')}</span>
+                    <span className="text-muted-foreground">
+                      {t('updateModal.releaseNotesEmpty')}
+                    </span>
                   )}
                 </div>
                 {data?.releaseUrl && (
@@ -433,12 +451,19 @@ export default function VersionUpdatePage() {
           {/* 卡片底部主操作：立即更新并重启（有更新时可用）+ 回滚到上一版本（仅有 .old 备份时显示，FR-120） */}
           <CardFooter className="gap-2">
             {/* 进行中（inProgress，fix-c 含后端派生）禁用；失败后（!failed）重新启用以便重试（fix-1）。防重复点击（fix-d）。 */}
-            <Button onClick={() => setConfirmOpen(true)} disabled={!canUpdate || (inProgress && !failed)}>
+            <Button
+              onClick={() => setConfirmOpen(true)}
+              disabled={!canUpdate || (inProgress && !failed)}
+            >
               <Download />
               {t('versionUpdate.applyAndRestart')}
             </Button>
             {canRollback && (
-              <Button variant="outline" onClick={() => setRollbackConfirmOpen(true)} disabled={inProgress && !failed}>
+              <Button
+                variant="outline"
+                onClick={() => setRollbackConfirmOpen(true)}
+                disabled={inProgress && !failed}
+              >
                 <Undo2 />
                 {t('versionUpdate.rollback')}
               </Button>
@@ -457,7 +482,9 @@ export default function VersionUpdatePage() {
             onClick={() => setAdvancedOpen((v) => !v)}
           >
             <span>{t('versionUpdate.advancedSettings')}</span>
-            <ChevronDown className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')} />
+            <ChevronDown
+              className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
+            />
           </button>
           {advancedOpen && (
             <div className="space-y-6 px-(--card-spacing) pt-1">

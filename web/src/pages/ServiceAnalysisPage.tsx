@@ -69,7 +69,12 @@ export default function ServiceAnalysisPage() {
 
   // 按动作排行：后端已降序，前端原样透传并映射中文标签喂图。
   const rankItems: ActionRankItem[] = useMemo(
-    () => (data?.byAction ?? []).map((a) => ({ action: a.action, label: actionLabel(a.action), count: a.count })),
+    () =>
+      (data?.byAction ?? []).map((a) => ({
+        action: a.action,
+        label: actionLabel(a.action),
+        count: a.count,
+      })),
     // actionLabel 闭包稳定（依赖 t），按 data 变更重算即可
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data],
@@ -144,13 +149,17 @@ export default function ServiceAnalysisPage() {
         <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
           {/* 按动作分布排行（降序柱状） */}
           <section className="space-y-3">
-            <h2 className="border-b pb-1.5 text-base font-medium">{t('serviceAnalysis.byActionTitle')}</h2>
+            <h2 className="border-b pb-1.5 text-base font-medium">
+              {t('serviceAnalysis.byActionTitle')}
+            </h2>
             <ActionRankChart items={rankItems} />
           </section>
 
           {/* 每日趋势折线 */}
           <section className="space-y-3">
-            <h2 className="border-b pb-1.5 text-base font-medium">{t('serviceAnalysis.byDayTitle')}</h2>
+            <h2 className="border-b pb-1.5 text-base font-medium">
+              {t('serviceAnalysis.byDayTitle')}
+            </h2>
             <DayTrendChart points={dayPoints} />
           </section>
         </div>

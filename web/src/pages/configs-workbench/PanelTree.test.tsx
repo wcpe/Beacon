@@ -5,7 +5,6 @@
 // flattenVisibleFiles 仅取展开下文件序。
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { DndContext } from '@dnd-kit/core'
 import { CircleCheck } from 'lucide-react'
 
@@ -98,33 +97,45 @@ describe('PanelTree（FR-115）', () => {
   it('点文件行触发 onSelectFile（普通点=非 ctrl/shift）', () => {
     const props = renderTree()
     fireEvent.click(screen.getByText('top.yml'))
-    expect(props.onSelectFile).toHaveBeenCalledWith('plugins/top.yml', { ctrl: false, shift: false })
+    expect(props.onSelectFile).toHaveBeenCalledWith('plugins/top.yml', {
+      ctrl: false,
+      shift: false,
+    })
   })
 
   it('双击文件触发 onOpenFile', () => {
     const props = renderTree()
     fireEvent.doubleClick(screen.getByText('top.yml'))
-    expect(props.onOpenFile).toHaveBeenCalledWith(expect.objectContaining({ key: 'plugins/top.yml' }))
+    expect(props.onOpenFile).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'plugins/top.yml' }),
+    )
   })
 
   it('文件复选框勾选触发 onSelectFile（ctrl=true 切换语义）', () => {
     const props = renderTree()
     fireEvent.click(screen.getByRole('checkbox', { name: 'top.yml' }))
-    expect(props.onSelectFile).toHaveBeenCalledWith('plugins/top.yml', expect.objectContaining({ ctrl: true }))
+    expect(props.onSelectFile).toHaveBeenCalledWith(
+      'plugins/top.yml',
+      expect.objectContaining({ ctrl: true }),
+    )
   })
 
   it('右键文件弹自定义菜单载荷（含 node/side/坐标）', () => {
     const props = renderTree()
     fireEvent.contextMenu(screen.getByText('top.yml'))
     expect(props.onContextMenu).toHaveBeenCalledWith(
-      expect.objectContaining({ side: 'managed', node: expect.objectContaining({ key: 'plugins/top.yml' }) }),
+      expect.objectContaining({
+        side: 'managed',
+        node: expect.objectContaining({ key: 'plugins/top.yml' }),
+      }),
     )
   })
 
   it('文件夹拖拽：folder 行作为 draggable + droppable 正常挂载（含拖拽 attributes）', () => {
     renderTree({ expanded: new Set(['plugins']) })
     // 文件夹行带 role 不变，但 dnd-kit 会注入 aria 与 draggable 属性；只要渲染不抛错即说明 droppable/draggable 已挂。
-    const folderRow = screen.getByText('plugins').closest('[role]') ?? screen.getByText('plugins').parentElement
+    const folderRow =
+      screen.getByText('plugins').closest('[role]') ?? screen.getByText('plugins').parentElement
     expect(folderRow).toBeTruthy()
     // 子文件可见 → 展开态文件夹未因 droppable 注入而破坏渲染
     expect(screen.getByText('a.yml')).toBeInTheDocument()

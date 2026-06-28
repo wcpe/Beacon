@@ -19,7 +19,11 @@ import type { ReactElement } from 'react'
 // ---- 替身：Monaco 编辑器 / toast 消息 ----
 vi.mock('@/components/CodeEditor', () => ({
   default: (props: { value?: string; onChange?: (v: string) => void }) => (
-    <textarea data-testid="code-editor" value={props.value ?? ''} onChange={(e) => props.onChange?.(e.target.value)} />
+    <textarea
+      data-testid="code-editor"
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange?.(e.target.value)}
+    />
   ),
 }))
 
@@ -88,8 +92,26 @@ const MANAGED: ManagedNode[] = [
     type: 'folder',
     sync: 'drift',
     children: [
-      { key: 'plugins/spawn.yml', name: 'spawn.yml', type: 'file', sync: 'drift', scope: 'group', version: 4, modifiedAt: '今天', fileId: 7 },
-      { key: 'plugins/motd.yml', name: 'motd.yml', type: 'file', sync: 'synced', scope: 'global', version: 2, modifiedAt: '3 天前', fileId: 8 },
+      {
+        key: 'plugins/spawn.yml',
+        name: 'spawn.yml',
+        type: 'file',
+        sync: 'drift',
+        scope: 'group',
+        version: 4,
+        modifiedAt: '今天',
+        fileId: 7,
+      },
+      {
+        key: 'plugins/motd.yml',
+        name: 'motd.yml',
+        type: 'file',
+        sync: 'synced',
+        scope: 'global',
+        version: 2,
+        modifiedAt: '3 天前',
+        fileId: 8,
+      },
     ],
   },
 ]
@@ -100,16 +122,51 @@ const SERVER: ServerNode[] = [
     type: 'folder',
     mark: 'drift',
     children: [
-      { key: 'srv/plugins/regions.yml', name: 'regions.yml', type: 'file', mark: 'untracked', size: '88 KB', fileType: 'YAML', modifiedAt: '今天' },
+      {
+        key: 'srv/plugins/regions.yml',
+        name: 'regions.yml',
+        type: 'file',
+        mark: 'untracked',
+        size: '88 KB',
+        fileType: 'YAML',
+        modifiedAt: '今天',
+      },
     ],
   },
 ]
 const QUEUE_SEED: SyncQueueRow[] = [
-  { id: 'q-ing', name: 'WorldGuard/regions.yml', direction: 'fetch', status: 'pending-ingest', scopeTarget: '组 main', sourcePath: 'a', targetPath: 'b', time: '14:33' },
-  { id: 'q-imp', name: 'motd.yml', direction: 'push', status: 'pending-imprint', scopeTarget: '实例 lobby-1', sourcePath: 'c', targetPath: 'd', time: '14:30' },
+  {
+    id: 'q-ing',
+    name: 'WorldGuard/regions.yml',
+    direction: 'fetch',
+    status: 'pending-ingest',
+    scopeTarget: '组 main',
+    sourcePath: 'a',
+    targetPath: 'b',
+    time: '14:33',
+  },
+  {
+    id: 'q-imp',
+    name: 'motd.yml',
+    direction: 'push',
+    status: 'pending-imprint',
+    scopeTarget: '实例 lobby-1',
+    sourcePath: 'c',
+    targetPath: 'd',
+    time: '14:30',
+  },
 ]
 const LOG_SEED: OpLogEntry[] = [
-  { id: 'log-seed-1', time: '14:33', action: 'push', operator: 'admin', files: ['spawn.yml'], target: '实例 lobby-1', detail: '下发 spawn.yml', undone: false },
+  {
+    id: 'log-seed-1',
+    time: '14:33',
+    action: 'push',
+    operator: 'admin',
+    files: ['spawn.yml'],
+    target: '实例 lobby-1',
+    detail: '下发 spawn.yml',
+    undone: false,
+  },
 ]
 const OPTIONS = {
   scopes: [
@@ -123,13 +180,25 @@ const EFFECTIVE: EffectiveFile[] = [
     name: 'spawn.yml',
     keys: [
       { key: 'world', chain: [{ scope: 'global', value: 'world' }] },
-      { key: 'x', chain: [{ scope: 'global', value: '120' }, { scope: 'group', value: '128' }] },
+      {
+        key: 'x',
+        chain: [
+          { scope: 'global', value: '120' },
+          { scope: 'group', value: '128' },
+        ],
+      },
     ],
   },
 ]
 const PUBLISH_IMPACT: PublishImpact = {
   files: [{ name: 'spawn.yml', scope: 'group', fromVersion: 4, toVersion: 5 }],
-  groups: [{ scope: 'group', label: '组 main', servers: [{ serverId: 'lobby-1', online: true, changed: true }] }],
+  groups: [
+    {
+      scope: 'group',
+      label: '组 main',
+      servers: [{ serverId: 'lobby-1', online: true, changed: true }],
+    },
+  ],
   driftCount: 1,
 }
 const FILE: WorkbenchFile = {
@@ -163,7 +232,15 @@ function installDefaults() {
   vi.mocked(wb.useIngestScanList).mockReturnValue(
     q({
       status: 'pending-review',
-      items: [{ path: 'regions.yml', size: '88 KB', ignored: false, defaultPick: true, overThreshold: false }],
+      items: [
+        {
+          path: 'regions.yml',
+          size: '88 KB',
+          ignored: false,
+          defaultPick: true,
+          overThreshold: false,
+        },
+      ],
       ignoreRules: ['*.db'],
     }),
   )
@@ -257,7 +334,15 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     vi.mocked(wb.useIngestScanList).mockReturnValue(
       q({
         status: 'pending-review',
-        items: [{ path: 'regions.yml', size: '88 KB', ignored: false, defaultPick: true, overThreshold: false }],
+        items: [
+          {
+            path: 'regions.yml',
+            size: '88 KB',
+            ignored: false,
+            defaultPick: true,
+            overThreshold: false,
+          },
+        ],
         ignoreRules: ['*.db'],
       }),
     )
@@ -287,8 +372,12 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     await userEvent.click(screen.getByRole('button', { name: /确认纳管/ }))
     await waitFor(() => expect(submitReverseFetchTaskMock).toHaveBeenCalled())
     // 任务 done（无冲突）→ 纳管 toast + 浮层关闭
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已纳管')))
-    await waitFor(() => expect(screen.queryByText('反向抓取 · 审核纳管清单')).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已纳管')),
+    )
+    await waitFor(() =>
+      expect(screen.queryByText('反向抓取 · 审核纳管清单')).not.toBeInTheDocument(),
+    )
   })
 
   it('③b 队列待审 imprint 行点开 → 拓印审核浮层（含审阅闸）→ 确认', async () => {
@@ -303,7 +392,9 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     // 审阅闸：勾选后确认
     await userEvent.click(screen.getByLabelText('我已审阅此 diff'))
     await userEvent.click(screen.getByRole('button', { name: '确认下发' }))
-    await waitFor(() => expect(screen.queryByText('拓印审核 · 期望值 ⟷ 服务器现状')).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.queryByText('拓印审核 · 期望值 ⟷ 服务器现状')).not.toBeInTheDocument(),
+    )
   })
 
   it('④ 逐条撤回：操作日志中种子 push 项撤回 → 标记「已撤回」 + toast', async () => {
@@ -313,7 +404,9 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     expect(screen.getByText('下发 spawn.yml')).toBeInTheDocument()
     // 逐条撤回（行内「撤回」钮；状态栏的是「撤回上一步」，用精确名区分）
     await userEvent.click(screen.getByRole('button', { name: '撤回' }))
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')))
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')),
+    )
     expect(screen.getByText('已撤回')).toBeInTheDocument()
   })
 
@@ -323,7 +416,9 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     // 勾选未撤回项复选框
     await userEvent.click(screen.getByRole('checkbox', { name: '下发 spawn.yml' }))
     await userEvent.click(screen.getByRole('button', { name: /批量撤回 1 项/ }))
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')))
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')),
+    )
   })
 
   it('⑤ 生效预览：切到「生效预览」视图，断言覆盖面计数与定制计数', async () => {

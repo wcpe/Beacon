@@ -50,11 +50,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import {
-  buildKanbanModel,
-  noteForServer,
-  type ZoneBucket,
-} from './zones/kanbanModel'
+import { buildKanbanModel, noteForServer, type ZoneBucket } from './zones/kanbanModel'
 import { buildSummaryTree } from './zones/summaryTree'
 import ServerCard from './zones/ServerCard'
 import DropBucket from './zones/DropBucket'
@@ -114,7 +110,8 @@ export default function ZonesPage() {
 
   const assignments = useQuery({
     queryKey: ['assignments', effectiveFilter],
-    queryFn: () => listAssignments(effectiveFilter.namespace, effectiveFilter.group, effectiveFilter.zone),
+    queryFn: () =>
+      listAssignments(effectiveFilter.namespace, effectiveFilter.group, effectiveFilter.zone),
   })
 
   const summary = useQuery({
@@ -132,10 +129,7 @@ export default function ZonesPage() {
   const allSummary = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
 
   // 环境候选：来自 listNamespaces。下拉显示「编码 · 名称」（FR-70）；校验仍用纯 code 集合。
-  const nsOptions = useMemo(
-    () => namespaceOptions(namespacesQuery.data),
-    [namespacesQuery.data],
-  )
+  const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
   const namespaceCodes = useMemo(
     () => (namespacesQuery.data ?? []).map((n) => n.code),
     [namespacesQuery.data],
@@ -260,9 +254,7 @@ export default function ZonesPage() {
           <DialogHeader>
             <DialogTitle>{t('zones.addAssign')}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {t('zones.assignDialogDesc')}
-          </p>
+          <p className="text-sm text-muted-foreground">{t('zones.assignDialogDesc')}</p>
           <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
@@ -414,47 +406,51 @@ export default function ZonesPage() {
           error={instances.error ?? summary.error}
         >
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
-              {/* 左侧未指派池 */}
-              <DropBucket
-                title={t('zones.unassignedTitle')}
-                meta={t('zones.unitServers', { count: model.unassigned.length })}
-              >
-                {model.unassigned.length === 0 ? (
-                  <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.noUnassigned')}</p>
-                ) : (
-                  model.unassigned.map((i) => (
-                    <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
-                  ))
-                )}
-              </DropBucket>
+            {/* 左侧未指派池 */}
+            <DropBucket
+              title={t('zones.unassignedTitle')}
+              meta={t('zones.unitServers', { count: model.unassigned.length })}
+            >
+              {model.unassigned.length === 0 ? (
+                <p className="px-0.5 py-2 text-xs text-muted-foreground">
+                  {t('zones.noUnassigned')}
+                </p>
+              ) : (
+                model.unassigned.map((i) => (
+                  <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
+                ))
+              )}
+            </DropBucket>
 
-              {/* 右侧按大区分组的 zone 桶 */}
-              <div className="space-y-4">
-                {model.groups.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {t('zones.noZones')}
-                  </p>
-                ) : (
-                  model.groups.map((col) => (
-                    <div key={col.group} className="space-y-2">
-                      <div className="text-sm font-semibold">{t('zones.groupLabel', { group: col.group })}</div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {col.zones.map((bucket) => (
-                          <ZoneBucketView
-                            key={`${bucket.group}/${bucket.zone}`}
-                            bucket={bucket}
-                            unlocked={unlocked}
-                            onReassign={setReassignTarget}
-                            onUnassign={(ns, sid) => unassignMut.mutate({ namespace: ns, serverId: sid })}
-                          />
-                        ))}
-                      </div>
+            {/* 右侧按大区分组的 zone 桶 */}
+            <div className="space-y-4">
+              {model.groups.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t('zones.noZones')}</p>
+              ) : (
+                model.groups.map((col) => (
+                  <div key={col.group} className="space-y-2">
+                    <div className="text-sm font-semibold">
+                      {t('zones.groupLabel', { group: col.group })}
                     </div>
-                  ))
-                )}
-              </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {col.zones.map((bucket) => (
+                        <ZoneBucketView
+                          key={`${bucket.group}/${bucket.zone}`}
+                          bucket={bucket}
+                          unlocked={unlocked}
+                          onReassign={setReassignTarget}
+                          onUnassign={(ns, sid) =>
+                            unassignMut.mutate({ namespace: ns, serverId: sid })
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
-          </AsyncSection>
+          </div>
+        </AsyncSection>
       </section>
 
       {/* 改派对话框（FR-71）：手输 serverId 复述确认；提交调既有 assignZone */}
@@ -466,7 +462,11 @@ export default function ZonesPage() {
         instance={reassignTarget}
         currentNote={
           reassignTarget
-            ? noteForServer(assignments.data ?? [], reassignTarget.namespace, reassignTarget.serverId)
+            ? noteForServer(
+                assignments.data ?? [],
+                reassignTarget.namespace,
+                reassignTarget.serverId,
+              )
             : ''
         }
         groupOptions={groupOptions}

@@ -60,22 +60,47 @@ import {
 } from '@/api/client'
 import type { ResolveDecision } from '@/api/types'
 import { useEnvironment } from '@/state/environment'
-import { useManagedTree, useOperationLog, useServerTree, useSyncQueue, useWorkbenchOptions } from './configs-workbench/useWorkbenchData'
-import PanelTree, { flattenVisibleFiles, type ContextMenuPayload, type PanelNode } from './configs-workbench/PanelTree'
+import {
+  useManagedTree,
+  useOperationLog,
+  useServerTree,
+  useSyncQueue,
+  useWorkbenchOptions,
+} from './configs-workbench/useWorkbenchData'
+import PanelTree, {
+  flattenVisibleFiles,
+  type ContextMenuPayload,
+  type PanelNode,
+} from './configs-workbench/PanelTree'
 import PanelToolbar, { type ToolbarAction } from './configs-workbench/PanelToolbar'
 import BottomDock from './configs-workbench/BottomDock'
 import SelectionStatusBar from './configs-workbench/SelectionStatusBar'
 import EditorOverlay, { type EditorTab } from './configs-workbench/EditorOverlay'
 import ChipSelect from './configs-workbench/ChipSelect'
-import ContextMenu, { type ContextAction, type ContextMenuState } from './configs-workbench/ContextMenu'
+import ContextMenu, {
+  type ContextAction,
+  type ContextMenuState,
+} from './configs-workbench/ContextMenu'
 import IngestReviewOverlay from './configs-workbench/IngestReviewOverlay'
 import WbCreateFileDialog from './configs-workbench/WbCreateFileDialog'
 import ImprintReviewOverlay from './configs-workbench/ImprintReviewOverlay'
 import PublishPanel from './configs-workbench/PublishPanel'
 import BatchReviewOverlay from './configs-workbench/BatchReviewOverlay'
 import EffectivePreviewView from './configs-workbench/EffectivePreviewView'
-import { SCOPE_META, SERVER_MARK_META, SYNC_LEGEND_META, SYNC_META, type DotMeta } from './configs-workbench/diffMeta'
-import type { ManagedNode, OpAction, OpLogEntry, ServerNode, SyncQueueRow } from './configs-workbench/types'
+import {
+  SCOPE_META,
+  SERVER_MARK_META,
+  SYNC_LEGEND_META,
+  SYNC_META,
+  type DotMeta,
+} from './configs-workbench/diffMeta'
+import type {
+  ManagedNode,
+  OpAction,
+  OpLogEntry,
+  ServerNode,
+  SyncQueueRow,
+} from './configs-workbench/types'
 
 // 覆盖层徽标图例
 const SCOPE_LEGEND = ['global', 'group', 'server'] as const
@@ -153,7 +178,9 @@ export default function ConfigWorkbenchPage() {
   // 待发布受管文件的 fileId 列表（与 publishNames 对应；onPublishConfirm 据此调真发布）
   const [publishFileIds, setPublishFileIds] = useState<number[]>([])
   // 待发布文件的真实覆盖层 + 大区（取首个选中文件；驱动发布面板影响面按真实 scope+group 算受影响在线服，FR-128）
-  const [publishScope, setPublishScope] = useState<{ scopeLevel: string; group: string } | null>(null)
+  const [publishScope, setPublishScope] = useState<{ scopeLevel: string; group: string } | null>(
+    null,
+  )
   // 队列批量审核（改进 4）：选中的待审队列行 id 集合 + 批量审核浮层开关
   const [queueSel, setQueueSel] = useState<Set<string>>(new Set())
   const [batchReview, setBatchReview] = useState<SyncQueueRow[] | null>(null)
@@ -395,7 +422,8 @@ export default function ConfigWorkbenchPage() {
 
       // 本地条目：移除其产生的队列行 + 标记已撤回（前端态，无真后端账目）
       const localRowIds = localEntries.flatMap((e) => e.queueRowIds ?? [])
-      if (localRowIds.length > 0) setExtraQueue((prev) => prev.filter((r) => !localRowIds.includes(r.id)))
+      if (localRowIds.length > 0)
+        setExtraQueue((prev) => prev.filter((r) => !localRowIds.includes(r.id)))
       if (localEntries.length > 0) {
         setUndoneLogIds((prev) => {
           const next = new Set(prev)
@@ -407,18 +435,20 @@ export default function ConfigWorkbenchPage() {
 
       // 真实账目：逐条调撤回端点，全部完成后失效操作日志查询重拉
       if (backendEntries.length > 0) {
-        void Promise.allSettled(backendEntries.map((e) => undoReversibleOperation(Number(e.id))))
-          .then((results) => {
-            const failed = results.filter((r) => r.status === 'rejected').length
-            void queryClient.invalidateQueries({ queryKey: ['wb-operation-log'] })
-            if (failed > 0) {
-              msg.showError(t('configs.workbench.toastUndoFailed', { count: failed }))
-            }
-          })
+        void Promise.allSettled(
+          backendEntries.map((e) => undoReversibleOperation(Number(e.id))),
+        ).then((results) => {
+          const failed = results.filter((r) => r.status === 'rejected').length
+          void queryClient.invalidateQueries({ queryKey: ['wb-operation-log'] })
+          if (failed > 0) {
+            msg.showError(t('configs.workbench.toastUndoFailed', { count: failed }))
+          }
+        })
       }
 
       const total = entries.length
-      if (total === 1) msg.showSuccess(t('configs.workbench.toastUndoneOne', { detail: entries[0].detail }))
+      if (total === 1)
+        msg.showSuccess(t('configs.workbench.toastUndoneOne', { detail: entries[0].detail }))
       else msg.showSuccess(t('configs.workbench.toastUndoneBatch', { count: total }))
     },
     [logRows, msg, t, queryClient],
@@ -438,7 +468,8 @@ export default function ConfigWorkbenchPage() {
   }, [serverId, options.data])
 
   // 双击工作台文件 → 进真详情多标签编辑器（FR-112，/configs/:id 真路由，不再开页内浮层）
-  const onDoubleClickFile = (node: PanelNode) => navigate(`/configs/${encodeURIComponent(node.key)}`)
+  const onDoubleClickFile = (node: PanelNode) =>
+    navigate(`/configs/${encodeURIComponent(node.key)}`)
 
   // 关闭整个浮层：清空标签 + 回 /configs（去掉深链 id）
   const closeOverlay = () => {
@@ -463,7 +494,8 @@ export default function ConfigWorkbenchPage() {
   const syncUrl = useCallback(
     (key: string | null) => {
       if (key) {
-        if (params.id !== encodeURIComponent(key)) navigate(`/configs/${encodeURIComponent(key)}`, { replace: true })
+        if (params.id !== encodeURIComponent(key))
+          navigate(`/configs/${encodeURIComponent(key)}`, { replace: true })
       } else if (params.id) {
         navigate('/configs', { replace: true })
       }
@@ -523,7 +555,8 @@ export default function ConfigWorkbenchPage() {
 
   // ---- 动作条 / 确认 → 批量入队 ----
   // 选中方向：受管有选中=下发；服务器有选中=抓取
-  const selSide: 'managed' | 'server' | null = selManaged.size > 0 ? 'managed' : selServer.size > 0 ? 'server' : null
+  const selSide: 'managed' | 'server' | null =
+    selManaged.size > 0 ? 'managed' : selServer.size > 0 ? 'server' : null
   const selNames = useMemo(() => {
     if (selSide === 'managed') return [...selManaged].map((k) => k.split('/').pop() ?? k)
     if (selSide === 'server') return [...selServer].map((k) => k.split('/').pop() ?? k)
@@ -558,8 +591,16 @@ export default function ConfigWorkbenchPage() {
     if (c.kind === 'transfer-push') {
       // 下发（左→右拖拽快捷）：本 FR 无专用真下发端点，保留乐观队列行（真相以重拉为准）
       const ids = enqueue(c.names, 'push', c.target)
-      logOp('push', c.names, c.target, t('configs.workbench.logDetailPush', { files: filesLabel, target: c.target }), ids)
-      msg.showSuccess(t('configs.workbench.toastPushBatch', { count: c.names.length, target: c.target }))
+      logOp(
+        'push',
+        c.names,
+        c.target,
+        t('configs.workbench.logDetailPush', { files: filesLabel, target: c.target }),
+        ids,
+      )
+      msg.showSuccess(
+        t('configs.workbench.toastPushBatch', { count: c.names.length, target: c.target }),
+      )
       setSelManaged(new Set())
     } else if (c.kind === 'transfer-fetch') {
       // 反向抓取：建真扫描任务 → 打开审核浮层（浮层内轮询清单、勾选后提交落库）
@@ -581,7 +622,9 @@ export default function ConfigWorkbenchPage() {
           msg.showError(t('configs.workbench.deleteNoTarget'))
         } else {
           Promise.all(ids.map((id) => deleteMut.mutateAsync(id)))
-            .then(() => msg.showSuccess(t('configs.workbench.toastFileDeleted', { count: ids.length })))
+            .then(() =>
+              msg.showSuccess(t('configs.workbench.toastFileDeleted', { count: ids.length })),
+            )
             .catch(() => {
               /* 单条错误已由 deleteMut.onError toast，不重复提示 */
             })
@@ -590,14 +633,26 @@ export default function ConfigWorkbenchPage() {
       setSelManaged(new Set())
       setSelServer(new Set())
     } else if (c.kind === 'rename') {
-      logOp('rename', c.names, t('configs.workbench.managedTitle'), t('configs.workbench.logDetailRename', { name: c.names[0] ?? '' }))
+      logOp(
+        'rename',
+        c.names,
+        t('configs.workbench.managedTitle'),
+        t('configs.workbench.logDetailRename', { name: c.names[0] ?? '' }),
+      )
       msg.showSuccess(t('configs.workbench.toastRenamed', { name: c.names[0] ?? '' }))
     } else if (c.kind === 'new') {
       // 新建已改走 WbCreateFileDialog 真 createFile，此分支不再触发（保留以满足类型穷举）
     } else if (c.kind === 'move') {
       // 改进 3：移动改目录（原型仅 toast 示意，不真改 mock 树）
-      logOp('move', c.names, c.target, t('configs.workbench.logDetailMove', { name: c.names[0] ?? '', target: c.target }))
-      msg.showSuccess(t('configs.workbench.toastMoved', { name: c.names[0] ?? '', target: c.target }))
+      logOp(
+        'move',
+        c.names,
+        c.target,
+        t('configs.workbench.logDetailMove', { name: c.names[0] ?? '', target: c.target }),
+      )
+      msg.showSuccess(
+        t('configs.workbench.toastMoved', { name: c.names[0] ?? '', target: c.target }),
+      )
     }
     setConfirm(null)
   }
@@ -633,7 +688,8 @@ export default function ConfigWorkbenchPage() {
     if (payload.side === 'managed') anchorManaged.current = payload.node.key
     else anchorServer.current = payload.node.key
     // 右键文件即选中它（单选），让删除 / 传输有明确目标
-    if (payload.node.type === 'file') selectFile(payload.side, payload.node.key, { ctrl: false, shift: false })
+    if (payload.node.type === 'file')
+      selectFile(payload.side, payload.node.key, { ctrl: false, shift: false })
   }
 
   function onCtxAction(action: ContextAction) {
@@ -670,9 +726,19 @@ export default function ConfigWorkbenchPage() {
             msg.showError(t('configs.workbench.fetchNeedServer'))
             break
           }
-          setConfirm({ kind: 'transfer-fetch', names: [name], target: options.data?.scopes.find((s) => s.value === scope)?.label ?? scope, side: 'server' })
+          setConfirm({
+            kind: 'transfer-fetch',
+            names: [name],
+            target: options.data?.scopes.find((s) => s.value === scope)?.label ?? scope,
+            side: 'server',
+          })
         } else {
-          setConfirm({ kind: 'transfer-push', names: [name], target: `实例 ${serverId}`, side: 'managed' })
+          setConfirm({
+            kind: 'transfer-push',
+            names: [name],
+            target: `实例 ${serverId}`,
+            side: 'managed',
+          })
         }
         break
       case 'diff':
@@ -698,7 +764,9 @@ export default function ConfigWorkbenchPage() {
         e.preventDefault()
         // 受管侧删除收集选中文件的 fileId（服务器侧只读、无 fileId）
         const fileIds =
-          selSide === 'managed' ? [...selManaged].map((k) => fileIdByKey(k)).filter((v): v is number => v != null) : []
+          selSide === 'managed'
+            ? [...selManaged].map((k) => fileIdByKey(k)).filter((v): v is number => v != null)
+            : []
         setConfirm({
           kind: 'delete',
           names,
@@ -731,7 +799,8 @@ export default function ConfigWorkbenchPage() {
     if (!fromSide) return
 
     // 落到文件夹（folder::<side>::<key>）→ 同面板移动改目录（文件 / 整个目录皆可拖入）
-    const overData = over.data.current as { side?: string; folderName?: string; folderKey?: string } | undefined
+    const overData = over.data.current as
+      { side?: string; folderName?: string; folderKey?: string } | undefined
     if (overData?.folderName) {
       // 仅同面板移动；跨面板落到对侧文件夹不触发同步（避免误判），忽略
       if (overData.side !== fromSide) return
@@ -742,16 +811,27 @@ export default function ConfigWorkbenchPage() {
     }
 
     // 落到面板体（drop-managed / drop-server）→ 跨面板同步
-    const overSide = over.id === 'drop-managed' ? 'managed' : over.id === 'drop-server' ? 'server' : undefined
+    const overSide =
+      over.id === 'drop-managed' ? 'managed' : over.id === 'drop-server' ? 'server' : undefined
     if (!overSide || fromSide === overSide) return
     if (fromSide === 'server') {
       if (!serverId) {
         msg.showError(t('configs.workbench.fetchNeedServer'))
         return
       }
-      setConfirm({ kind: 'transfer-fetch', names: [name], target: options.data?.scopes.find((s) => s.value === scope)?.label ?? scope, side: 'server' })
+      setConfirm({
+        kind: 'transfer-fetch',
+        names: [name],
+        target: options.data?.scopes.find((s) => s.value === scope)?.label ?? scope,
+        side: 'server',
+      })
     } else {
-      setConfirm({ kind: 'transfer-push', names: [name], target: `实例 ${serverId}`, side: 'managed' })
+      setConfirm({
+        kind: 'transfer-push',
+        names: [name],
+        target: `实例 ${serverId}`,
+        side: 'managed',
+      })
     }
   }
 
@@ -779,7 +859,9 @@ export default function ConfigWorkbenchPage() {
           t('configs.workbench.logDetailPublish', { files: names.join('、'), online: onlineCount }),
           ids,
         )
-        msg.showSuccess(t('configs.workbench.toastPublished', { count: names.length, online: onlineCount }))
+        msg.showSuccess(
+          t('configs.workbench.toastPublished', { count: names.length, online: onlineCount }),
+        )
         setPublishNames(null)
         setPublishFileIds([])
         setSelManaged(new Set())
@@ -826,7 +908,12 @@ export default function ConfigWorkbenchPage() {
     actions: (
       <div className="flex items-center gap-2">
         {/* 导入到组：P2 待接（需环境/组候选数据，本 FR 暂保留提示，不造假成功） */}
-        <Button variant="outline" size="xs" className="h-7 text-xs" onClick={() => msg.showSuccess(t('configs.workbench.importTodo'))}>
+        <Button
+          variant="outline"
+          size="xs"
+          className="h-7 text-xs"
+          onClick={() => msg.showSuccess(t('configs.workbench.importTodo'))}
+        >
           {t('configs.importBtn')}
         </Button>
         {/* 反向抓取：以右面板当前在线源建真扫描任务 → 打开审核浮层 */}
@@ -911,7 +998,10 @@ export default function ConfigWorkbenchPage() {
                 <ViewToggle value={managedView} onChange={setManagedView} />
                 <ChipSelect
                   value={scope}
-                  options={(options.data?.scopes ?? []).map((s) => ({ value: s.value, label: s.label }))}
+                  options={(options.data?.scopes ?? []).map((s) => ({
+                    value: s.value,
+                    label: s.label,
+                  }))}
                   onChange={setScope}
                 />
               </div>
@@ -966,7 +1056,12 @@ export default function ConfigWorkbenchPage() {
                   value: s.serverId,
                   label: (
                     <span className="flex items-center gap-1.5">
-                      <span className={cn('h-1.5 w-1.5 rounded-full', s.online ? 'bg-emerald-500' : 'bg-muted-foreground/40')} />
+                      <span
+                        className={cn(
+                          'h-1.5 w-1.5 rounded-full',
+                          s.online ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+                        )}
+                      />
                       {s.label}
                     </span>
                   ),
@@ -1049,7 +1144,9 @@ export default function ConfigWorkbenchPage() {
       />
 
       {/* ===== 右键菜单（容器内 absolute 定位）===== */}
-      {ctxMenu && <ContextMenu state={ctxMenu} onAction={onCtxAction} onClose={() => setCtxMenu(null)} />}
+      {ctxMenu && (
+        <ContextMenu state={ctxMenu} onAction={onCtxAction} onClose={() => setCtxMenu(null)} />
+      )}
 
       {/* ===== 二次确认弹窗（DestructiveConfirmDialog，FR-76 复用）===== */}
       {confirm && (
@@ -1077,7 +1174,11 @@ export default function ConfigWorkbenchPage() {
 
       {/* ===== 队列批量审核浮层（改进 4）：选中多个待审项 → 批量看 diff/清单 + 全部通过 ===== */}
       {batchReview && (
-        <BatchReviewOverlay rows={batchReview} onConfirm={onBatchReviewConfirm} onCancel={() => setBatchReview(null)} />
+        <BatchReviewOverlay
+          rows={batchReview}
+          onConfirm={onBatchReviewConfirm}
+          onCancel={() => setBatchReview(null)}
+        />
       )}
 
       {/* ===== 反向抓取审核浮层（真任务）：扫描清单轮询 + 勾选 → 提交落库（含冲突全覆盖）===== */}
@@ -1097,7 +1198,11 @@ export default function ConfigWorkbenchPage() {
 
       {/* ===== 队列待审核浮层：下发→拓印 diff 审核（抓取的真审核走上方 ingestTaskId 浮层）===== */}
       {reviewRow && reviewRow.direction === 'push' && (
-        <ImprintReviewOverlay queueName={reviewRow.name} onConfirm={onReviewConfirm} onCancel={() => setReviewRow(null)} />
+        <ImprintReviewOverlay
+          queueName={reviewRow.name}
+          onConfirm={onReviewConfirm}
+          onCancel={() => setReviewRow(null)}
+        />
       )}
 
       {/* ===== 新建受管文件对话框（真 createFile）===== */}
@@ -1161,8 +1266,12 @@ function managedCols(node: ManagedNode, t: (k: string) => string) {
     <Badge key="ov" variant="outline" className={cn('h-4 px-1 text-[0.6rem]', meta.badgeClass)}>
       {t(meta.labelKey)}
     </Badge>,
-    <span key="ver" className="text-[0.65rem]">v{node.version}</span>,
-    <span key="mod" className="text-[0.65rem]">{node.modifiedAt}</span>,
+    <span key="ver" className="text-[0.65rem]">
+      v{node.version}
+    </span>,
+    <span key="mod" className="text-[0.65rem]">
+      {node.modifiedAt}
+    </span>,
   ]
 }
 
@@ -1170,14 +1279,23 @@ function managedCols(node: ManagedNode, t: (k: string) => string) {
 function serverCols(node: ServerNode) {
   if (node.type !== 'file') return [null, null, null]
   return [
-    <span key="size" className="text-[0.65rem]">{node.size}</span>,
-    <span key="type" className="text-[0.65rem]">{node.fileType}</span>,
-    <span key="mod" className="text-[0.65rem]">{node.modifiedAt}</span>,
+    <span key="size" className="text-[0.65rem]">
+      {node.size}
+    </span>,
+    <span key="type" className="text-[0.65rem]">
+      {node.fileType}
+    </span>,
+    <span key="mod" className="text-[0.65rem]">
+      {node.modifiedAt}
+    </span>,
   ]
 }
 
 // ---- 二次确认文案 ----
-function confirmTitle(c: ConfirmState, t: (k: string, o?: Record<string, unknown>) => string): string {
+function confirmTitle(
+  c: ConfirmState,
+  t: (k: string, o?: Record<string, unknown>) => string,
+): string {
   switch (c.kind) {
     case 'transfer-fetch':
       return t('configs.workbench.confirmFetchTitle', { count: c.names.length })
@@ -1226,13 +1344,24 @@ function confirmLabel(c: ConfirmState, t: (k: string) => string): string {
   }
 }
 // 影响摘要：哪些文件 + 落哪覆盖层/哪服 + 拓印门提示
-function confirmImpacts(c: ConfirmState, t: (k: string, o?: Record<string, unknown>) => string): string[] {
+function confirmImpacts(
+  c: ConfirmState,
+  t: (k: string, o?: Record<string, unknown>) => string,
+): string[] {
   const fileLine = t('configs.workbench.impactFiles', { files: c.names.join('、') })
   switch (c.kind) {
     case 'transfer-fetch':
-      return [fileLine, t('configs.workbench.impactFetchScope', { scope: c.target }), t('configs.workbench.impactFetchIngest')]
+      return [
+        fileLine,
+        t('configs.workbench.impactFetchScope', { scope: c.target }),
+        t('configs.workbench.impactFetchIngest'),
+      ]
     case 'transfer-push':
-      return [fileLine, t('configs.workbench.impactPushTarget', { target: c.target }), t('configs.workbench.impactPushImprint')]
+      return [
+        fileLine,
+        t('configs.workbench.impactPushTarget', { target: c.target }),
+        t('configs.workbench.impactPushImprint'),
+      ]
     case 'delete':
       return [fileLine, t('configs.workbench.impactDeleteWhere', { where: c.target })]
     case 'rename':
@@ -1288,7 +1417,12 @@ function Panel({
         <div className="ml-auto shrink-0">{headerRight}</div>
       </div>
       {/* 工具栏行（上级 / 刷新 / 新建 / 搜索）+ 地址面包屑栏 */}
-      <PanelToolbar segments={segments} showNew={showNew} onAction={onToolbar} onCrumb={() => onToolbar('up')} />
+      <PanelToolbar
+        segments={segments}
+        showNew={showNew}
+        onAction={onToolbar}
+        onCrumb={() => onToolbar('up')}
+      />
       {/* 列头（名称 + 元信息列，与行等宽对齐）；生效预览模式下无元信息列 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/20 px-2 py-1 text-[0.65rem] font-medium text-muted-foreground">
         <span className="min-w-0 flex-1">{nameLabel}</span>
@@ -1301,7 +1435,10 @@ function Panel({
       {/* 树（放置区，固定高度内部滚） */}
       <div
         ref={setNodeRef}
-        className={cn('min-h-0 flex-1 overflow-y-auto scrollbar-hide px-1', isOver && 'bg-primary/5 ring-1 ring-inset ring-primary/30')}
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto scrollbar-hide px-1',
+          isOver && 'bg-primary/5 ring-1 ring-inset ring-primary/30',
+        )}
       >
         {loading ? (
           <div className="space-y-2 px-3 py-2">
@@ -1332,7 +1469,13 @@ function WorkbenchLegend() {
       ))}
       <span className="ml-1 font-medium">{t('configs.workbench.legendScopeTitle')}</span>
       {SCOPE_LEGEND.map((s) => (
-        <span key={s} className={cn('inline-flex h-4 items-center rounded border px-1 text-[0.6rem]', SCOPE_META[s].badgeClass)}>
+        <span
+          key={s}
+          className={cn(
+            'inline-flex h-4 items-center rounded border px-1 text-[0.6rem]',
+            SCOPE_META[s].badgeClass,
+          )}
+        >
           {t(SCOPE_META[s].labelKey)}
         </span>
       ))}
@@ -1341,14 +1484,28 @@ function WorkbenchLegend() {
 }
 
 // 受管面板视图切换：配置树 / 生效预览
-function ViewToggle({ value, onChange }: { value: ManagedView; onChange: (v: ManagedView) => void }) {
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: ManagedView
+  onChange: (v: ManagedView) => void
+}) {
   const { t } = useTranslation()
   return (
     <div className="flex items-center rounded-md border border-border bg-background p-0.5 text-[0.7rem]">
-      <ToggleBtn active={value === 'tree'} onClick={() => onChange('tree')} icon={<FolderTree className="h-3 w-3" />}>
+      <ToggleBtn
+        active={value === 'tree'}
+        onClick={() => onChange('tree')}
+        icon={<FolderTree className="h-3 w-3" />}
+      >
         {t('configs.workbench.viewTree')}
       </ToggleBtn>
-      <ToggleBtn active={value === 'effective'} onClick={() => onChange('effective')} icon={<ListTree className="h-3 w-3" />}>
+      <ToggleBtn
+        active={value === 'effective'}
+        onClick={() => onChange('effective')}
+        icon={<ListTree className="h-3 w-3" />}
+      >
         {t('configs.workbench.viewEffective')}
       </ToggleBtn>
     </div>
@@ -1372,7 +1529,9 @@ function ToggleBtn({
       onClick={onClick}
       className={cn(
         'flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors',
-        active ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground',
+        active
+          ? 'bg-muted font-medium text-foreground'
+          : 'text-muted-foreground hover:text-foreground',
       )}
     >
       {icon}

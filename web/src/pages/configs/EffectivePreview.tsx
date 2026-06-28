@@ -52,7 +52,9 @@ export default function EffectivePreview({
       </div>
       {/* 生效预览内容 */}
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">{t('configs.effectiveLoading')}</div>
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          {t('configs.effectiveLoading')}
+        </div>
       ) : data ? (
         <ScrollArea className="flex-1">
           <div className="p-3 space-y-3">
@@ -62,14 +64,18 @@ export default function EffectivePreview({
                   <span>
                     {item.dataId} ({item.format})
                   </span>
-                  <span className="text-muted-foreground font-mono">md5: {item.md5.slice(0, 8)}</span>
+                  <span className="text-muted-foreground font-mono">
+                    md5: {item.md5.slice(0, 8)}
+                  </span>
                 </div>
                 <pre className="p-2 text-xs font-mono whitespace-pre-wrap bg-background border-t border-border max-h-[200px] overflow-y-auto">
                   {item.content}
                 </pre>
                 {item.sources.length > 0 && (
                   <div className="px-2 py-1 bg-muted/10 border-t border-border">
-                    <span className="text-[0.65rem] text-muted-foreground">{t('configs.effectiveSourceLabel')}</span>
+                    <span className="text-[0.65rem] text-muted-foreground">
+                      {t('configs.effectiveSourceLabel')}
+                    </span>
                     {item.sources.map((src, idx) => (
                       <span key={idx} className="ml-1 text-[0.65rem] text-blue-600">
                         {src.path.join('.')} ({src.scope})

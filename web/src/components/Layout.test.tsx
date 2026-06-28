@@ -180,7 +180,9 @@ describe('Layout 品牌区可点跳可观测看板', () => {
     const logo = brand.querySelector('img[src="/logo.svg"]')
     expect(logo).not.toBeNull()
     // 连接小灯已移除（FR-123，不再在品牌区；连接态由顶栏药丸显示）
-    const dot = brand.querySelector('span.rounded-full[aria-label^="控制面"], span.rounded-full[aria-label^="正在连接"]')
+    const dot = brand.querySelector(
+      'span.rounded-full[aria-label^="控制面"], span.rounded-full[aria-label^="正在连接"]',
+    )
     expect(dot).toBeNull()
   })
 

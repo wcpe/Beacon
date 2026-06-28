@@ -16,8 +16,20 @@ vi.mock('./useWorkbenchData', () => ({
 const mockedHook = vi.mocked(useIngestScanList)
 
 const ITEMS: IngestScanItem[] = [
-  { path: 'Essentials/config.yml', size: '12.4 KB', ignored: false, defaultPick: true, overThreshold: false },
-  { path: 'WorldGuard/regions.yml', size: '88.0 KB', ignored: false, defaultPick: true, overThreshold: false },
+  {
+    path: 'Essentials/config.yml',
+    size: '12.4 KB',
+    ignored: false,
+    defaultPick: true,
+    overThreshold: false,
+  },
+  {
+    path: 'WorldGuard/regions.yml',
+    size: '88.0 KB',
+    ignored: false,
+    defaultPick: true,
+    overThreshold: false,
+  },
   { path: 'cache.db', size: '4.0 MB', ignored: true, defaultPick: false, overThreshold: false },
 ]
 const RULES = ['userdata/**', '*.db']
@@ -28,7 +40,9 @@ function readyData(items: IngestScanItem[] = ITEMS) {
 }
 
 function mockScan(over: Partial<ReturnType<typeof useIngestScanList>>) {
-  mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<typeof useIngestScanList>)
+  mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<
+    typeof useIngestScanList
+  >)
 }
 
 describe('IngestReviewOverlay（FR-115）', () => {
@@ -41,7 +55,9 @@ describe('IngestReviewOverlay（FR-115）', () => {
   it('标题与队列名呈现', () => {
     mockScan({ data: readyData() })
     // 用不在清单项里的队列名，避免与列表项文本撞车
-    render(<IngestReviewOverlay queueName="some-queue-item" onConfirm={vi.fn()} onCancel={vi.fn()} />)
+    render(
+      <IngestReviewOverlay queueName="some-queue-item" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+    )
     expect(screen.getByText('反向抓取 · 审核纳管清单')).toBeInTheDocument()
     expect(screen.getByText('some-queue-item')).toBeInTheDocument()
   })
@@ -69,7 +85,10 @@ describe('IngestReviewOverlay（FR-115）', () => {
     render(<IngestReviewOverlay queueName="x" onConfirm={onConfirm} onCancel={vi.fn()} />)
     await userEvent.click(screen.getByRole('button', { name: '确认纳管 2 项' }))
     // 新契约：回传选定 path 集 + 是否含超阈值项（此两项均非超阈值 → false）
-    expect(onConfirm).toHaveBeenCalledWith(['Essentials/config.yml', 'WorldGuard/regions.yml'], false)
+    expect(onConfirm).toHaveBeenCalledWith(
+      ['Essentials/config.yml', 'WorldGuard/regions.yml'],
+      false,
+    )
   })
 
   it('全不选后确认钮禁用', async () => {

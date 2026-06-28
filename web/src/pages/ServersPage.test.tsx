@@ -155,7 +155,9 @@ describe('ServersPage（FR-65 服务器页）', () => {
   })
 
   it('未分配 zone 的行黄色高亮 + 未分配徽标', async () => {
-    vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'free-1', zone: null, assigned: false })])
+    vi.mocked(listInstances).mockResolvedValue([
+      inst({ serverId: 'free-1', zone: null, assigned: false }),
+    ])
     renderPage(<ServersPage />)
     const row = (await screen.findByText('free-1')).closest('tr')!
     expect(row.className).toContain('bg-amber-50')
@@ -187,7 +189,9 @@ describe('ServersPage（FR-65 服务器页）', () => {
 
   it('已排空实例菜单内显示「取消排空」并调 undrainInstance', async () => {
     vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
-    vi.mocked(listDrains).mockResolvedValue([{ namespace: 'prod', serverId: 'lobby-1', reason: '维护' }])
+    vi.mocked(listDrains).mockResolvedValue([
+      { namespace: 'prod', serverId: 'lobby-1', reason: '维护' },
+    ])
     const user = userEvent.setup()
     renderPage(<ServersPage />)
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())

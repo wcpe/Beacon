@@ -20,7 +20,10 @@ export default function EnvSelector() {
 
   // 候选首项固定为「全部环境」（值为空串），其后接各环境；严格下拉，只在已知候选中选。
   const options = useMemo(
-    () => [{ value: '', label: t('pageHeader.allEnvironments') }, ...namespaceOptions(namespacesQuery.data)],
+    () => [
+      { value: '', label: t('pageHeader.allEnvironments') },
+      ...namespaceOptions(namespacesQuery.data),
+    ],
     [namespacesQuery.data, t],
   )
 

@@ -3,7 +3,7 @@
 // → 时序监控图按指标渲染 + 时间窗切换重查 → CPU 不可用展示 → BC 字段 → 底部导航 → 无玩家名单」。
 // recharts 较重且依赖容器尺寸，故把 TrendChart 与 MiniSparkline 替身为轻量桩，断言数据正确喂入而不渲染真图。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -241,7 +241,9 @@ describe('DashboardPage', () => {
 
   it('分角色面板：子服与 BC 两面板标题各为一个二级标题', async () => {
     renderPage(<DashboardPage />)
-    expect(await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { level: 2, name: '子服（bukkit）' }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: 'BC 代理' })).toBeInTheDocument()
   })
 

@@ -42,12 +42,21 @@ export default function ContextMenu({
   }, [onClose])
 
   // 抓取（server→managed）/ 下发（managed→server）方向语义
-  const transferKey = state.side === 'server' ? 'configs.workbench.ctxFetch' : 'configs.workbench.ctxPush'
+  const transferKey =
+    state.side === 'server' ? 'configs.workbench.ctxFetch' : 'configs.workbench.ctxPush'
 
   return (
     <>
       {/* 透明遮罩：点击空白处关闭（容器内 absolute 覆盖） */}
-      <div className="absolute inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }} aria-hidden />
+      <div
+        className="absolute inset-0 z-40"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          onClose()
+        }}
+        aria-hidden
+      />
       <div
         className="absolute z-50 w-44 overflow-hidden rounded-lg border border-border bg-popover py-1 shadow-xl"
         style={{ left: state.x, top: state.y }}
@@ -57,19 +66,43 @@ export default function ContextMenu({
           {state.name}
         </div>
         {!state.isFolder && (
-          <Item icon={<Pencil className="h-3.5 w-3.5" />} label={t('configs.workbench.ctxEdit')} onClick={() => onAction('edit')} />
+          <Item
+            icon={<Pencil className="h-3.5 w-3.5" />}
+            label={t('configs.workbench.ctxEdit')}
+            onClick={() => onAction('edit')}
+          />
         )}
-        <Item icon={<TypeIcon className="h-3.5 w-3.5" />} label={t('configs.workbench.ctxRename')} onClick={() => onAction('rename')} />
-        <Item icon={<FilePlus className="h-3.5 w-3.5" />} label={t('configs.workbench.ctxNew')} onClick={() => onAction('new')} />
+        <Item
+          icon={<TypeIcon className="h-3.5 w-3.5" />}
+          label={t('configs.workbench.ctxRename')}
+          onClick={() => onAction('rename')}
+        />
+        <Item
+          icon={<FilePlus className="h-3.5 w-3.5" />}
+          label={t('configs.workbench.ctxNew')}
+          onClick={() => onAction('new')}
+        />
         {!state.isFolder && (
-          <Item icon={<Send className="h-3.5 w-3.5" />} label={t(transferKey)} onClick={() => onAction('transfer')} />
+          <Item
+            icon={<Send className="h-3.5 w-3.5" />}
+            label={t(transferKey)}
+            onClick={() => onAction('transfer')}
+          />
         )}
         {!state.isFolder && (
-          <Item icon={<Eye className="h-3.5 w-3.5" />} label={t('configs.workbench.ctxDiff')} onClick={() => onAction('diff')} />
+          <Item
+            icon={<Eye className="h-3.5 w-3.5" />}
+            label={t('configs.workbench.ctxDiff')}
+            onClick={() => onAction('diff')}
+          />
         )}
         {/* 回滚到历史版本（仅受管文件，复用编辑器 revisions） */}
         {!state.isFolder && state.side === 'managed' && (
-          <Item icon={<History className="h-3.5 w-3.5" />} label={t('configs.workbench.ctxRollback')} onClick={() => onAction('rollback')} />
+          <Item
+            icon={<History className="h-3.5 w-3.5" />}
+            label={t('configs.workbench.ctxRollback')}
+            onClick={() => onAction('rollback')}
+          />
         )}
         <div className="my-1 h-px bg-border" />
         <Item
@@ -101,9 +134,7 @@ function Item({
       role="menuitem"
       className={cn(
         'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors',
-        danger
-          ? 'text-destructive hover:bg-destructive/10'
-          : 'text-foreground hover:bg-muted/60',
+        danger ? 'text-destructive hover:bg-destructive/10' : 'text-foreground hover:bg-muted/60',
       )}
     >
       {icon}

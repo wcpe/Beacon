@@ -104,7 +104,13 @@ describe('AddServerWizard（FR-85 接入向导）', () => {
     vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
     const user = userEvent.setup()
     renderWizard(
-      <AddServerWizard open onOpenChange={() => {}} namespace="prod" nsOptions={nsOptions} groupOptions={['area1']} />,
+      <AddServerWizard
+        open
+        onOpenChange={() => {}}
+        namespace="prod"
+        nsOptions={nsOptions}
+        groupOptions={['area1']}
+      />,
     )
     // 等查重数据就绪
     await waitFor(() => expect(listInstances).toHaveBeenCalled())
@@ -119,7 +125,13 @@ describe('AddServerWizard（FR-85 接入向导）', () => {
     vi.mocked(listInstances).mockResolvedValue([])
     const user = userEvent.setup()
     renderWizard(
-      <AddServerWizard open onOpenChange={() => {}} namespace="prod" nsOptions={nsOptions} groupOptions={['area1']} />,
+      <AddServerWizard
+        open
+        onOpenChange={() => {}}
+        namespace="prod"
+        nsOptions={nsOptions}
+        groupOptions={['area1']}
+      />,
     )
     await waitFor(() => expect(listInstances).toHaveBeenCalled())
     await fillStep1(user, 'lobby-2')
@@ -131,7 +143,13 @@ describe('AddServerWizard（FR-85 接入向导）', () => {
     vi.mocked(listInstances).mockResolvedValue([])
     const user = userEvent.setup()
     renderWizard(
-      <AddServerWizard open onOpenChange={() => {}} namespace="prod" nsOptions={nsOptions} groupOptions={['area1']} />,
+      <AddServerWizard
+        open
+        onOpenChange={() => {}}
+        namespace="prod"
+        nsOptions={nsOptions}
+        groupOptions={['area1']}
+      />,
     )
     await waitFor(() => expect(listInstances).toHaveBeenCalled())
     await fillStep1(user, 'lobby-2')
@@ -141,7 +159,12 @@ describe('AddServerWizard（FR-85 接入向导）', () => {
     await user.click(screen.getByRole('button', { name: '预建指派' }))
     await waitFor(() =>
       expect(assignZone).toHaveBeenCalledWith(
-        expect.objectContaining({ namespace: 'prod', serverId: 'lobby-2', group: 'area1', zone: 'z2' }),
+        expect.objectContaining({
+          namespace: 'prod',
+          serverId: 'lobby-2',
+          group: 'area1',
+          zone: 'z2',
+        }),
       ),
     )
   })
@@ -150,7 +173,13 @@ describe('AddServerWizard（FR-85 接入向导）', () => {
     vi.mocked(listInstances).mockResolvedValue([])
     const user = userEvent.setup()
     renderWizard(
-      <AddServerWizard open onOpenChange={() => {}} namespace="prod" nsOptions={nsOptions} groupOptions={['area1']} />,
+      <AddServerWizard
+        open
+        onOpenChange={() => {}}
+        namespace="prod"
+        nsOptions={nsOptions}
+        groupOptions={['area1']}
+      />,
     )
     await waitFor(() => expect(listInstances).toHaveBeenCalled())
     // 切角色为 bungee

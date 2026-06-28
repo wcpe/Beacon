@@ -109,7 +109,9 @@ export default function PageHeader() {
         <span className="shrink-0 text-sm text-muted-foreground">{config.count}</span>
       )}
       {config.subtitle != null && (
-        <span className="hidden min-w-0 text-sm text-muted-foreground lg:flex">{config.subtitle}</span>
+        <span className="hidden min-w-0 text-sm text-muted-foreground lg:flex">
+          {config.subtitle}
+        </span>
       )}
       {/* 右：环境槽（仅环境范围页）+ 主操作槽（不收缩，保持可点） */}
       <div className="ml-auto flex shrink-0 items-center gap-2">

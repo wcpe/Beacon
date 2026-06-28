@@ -296,7 +296,8 @@ export const zhCN = {
     // 网络代理表单
     proxyLabel: '出站代理地址',
     proxyPlaceholder: '如 http://127.0.0.1:7890（留空 = 直连）',
-    proxyHint: '为控制面连接 GitHub 检查 / 下载更新而配置的 http(s) 代理；留空表示直连（不读系统 *_PROXY 环境变量）。含口令的代理回显时会脱敏，未修改则不会覆盖原值。',
+    proxyHint:
+      '为控制面连接 GitHub 检查 / 下载更新而配置的 http(s) 代理；留空表示直连（不读系统 *_PROXY 环境变量）。含口令的代理回显时会脱敏，未修改则不会覆盖原值。',
     // 代理连通测试（FR-124）
     proxyTest: '测试连通',
     proxyTesting: '测试中…',
@@ -343,7 +344,8 @@ export const zhCN = {
   observability: {
     title: '控制面健康',
     // 点明本页边界：看 Beacon 自己，区别于 agent 网络负载（看板）与平台运维活动（服务分析）
-    subtitle: '控制面进程自身的内部运行态（只读）——区别于可观测看板的 agent 网络负载与服务分析的平台运维活动。',
+    subtitle:
+      '控制面进程自身的内部运行态（只读）——区别于可观测看板的 agent 网络负载与服务分析的平台运维活动。',
     // 锚点 rail 无障碍名称（FR-108）：左侧分区锚点导航
     railAria: '控制面健康分区导航',
     // 仪表环总览行（重构）：四子系统吃紧一眼看，按阈值变色
@@ -593,7 +595,8 @@ export const zhCN = {
   commandObs: {
     title: '命令观测',
     // 与审计日志（人的操作）/ 服务分析（admin 操作聚合）区分的副标题：本页观测控制面↔agent 控制命令生命周期。
-    subtitle: '观测控制面下发给 agent 的控制命令双向生命周期（下发 → 拉取 → 回执），区别于审计日志与服务分析。',
+    subtitle:
+      '观测控制面下发给 agent 的控制命令双向生命周期（下发 → 拉取 → 回执），区别于审计日志与服务分析。',
     // 页内视图 segmented tab（FR-108）：实时 / 历史 / 分析三视图，默认实时，切换不跳路由
     viewLive: '实时',
     viewHistory: '历史',
@@ -695,7 +698,8 @@ export const zhCN = {
     drainedBadge: '已排空',
     offlineBtn: '下线',
     offlineConfirmTitle: '确认下线实例 {{serverId}}？',
-    offlineConfirmDesc: '将把该实例标记为下线（环境 {{namespace}}）：移出可用集并拒绝其重新接入，直到取消下线。',
+    offlineConfirmDesc:
+      '将把该实例标记为下线（环境 {{namespace}}）：移出可用集并拒绝其重新接入，直到取消下线。',
     offlineConfirmAction: '确认下线',
     // 排空 / 取消排空（FR-10）
     drainBtn: '排空',
@@ -769,20 +773,23 @@ export const zhCN = {
     wizardTitle: '添加服务器（接入引导）',
     wizardDesc: '填写新服身份，生成可复制的 agent 接入配置；可选预先指派小区。',
     wizardServerIdPlaceholder: '环境内唯一，如 lobby-2',
-    wizardServerIdDuplicate: 'serverId「{{serverId}}」在环境 {{namespace}} 内已存在，请换一个（重复将被控制面拒绝）。',
+    wizardServerIdDuplicate:
+      'serverId「{{serverId}}」在环境 {{namespace}} 内已存在，请换一个（重复将被控制面拒绝）。',
     wizardGroupPlaceholder: '大区编码，如 area1',
     wizardAddressPlaceholder: '对外可达 ip:port，如 10.0.0.9:25565',
     wizardRequiredFields: '请填写环境、serverId、大区与地址',
     wizardNextBtn: '下一步',
     wizardBackBtn: '上一步',
     wizardDoneBtn: '完成',
-    wizardSnippetHint: '把下面片段填进 agent，二选一即可：写入 config.yml 的 identity 段，或在 run 脚本里用环境变量覆盖（env 优先于本地 yaml）。zone 由控制面指派，不在此配。',
+    wizardSnippetHint:
+      '把下面片段填进 agent，二选一即可：写入 config.yml 的 identity 段，或在 run 脚本里用环境变量覆盖（env 优先于本地 yaml）。zone 由控制面指派，不在此配。',
     wizardConfigLabel: 'agent config.yml（identity 段）',
     wizardEnvLabel: 'run 脚本环境变量（BEACON_AGENT_IDENTITY_*）',
     wizardCopyBtn: '复制',
     // 可选预建 zone 指派（仅 bukkit）
     wizardZoneLabel: '预建小区指派（可选）',
-    wizardZoneHint: '填目标小区可预先把该服指派进 (大区, 小区)，使其上线即归属正确小区、不经「未分配」中间态。留空则跳过。',
+    wizardZoneHint:
+      '填目标小区可预先把该服指派进 (大区, 小区)，使其上线即归属正确小区、不经「未分配」中间态。留空则跳过。',
     wizardZonePlaceholder: '小区编码，如 z2',
     wizardAssignBtn: '预建指派',
     wizardAssignNote: '接入向导预建',
@@ -900,7 +907,8 @@ export const zhCN = {
     unassignBtn: '取消指派',
     // 改派对话框（ReassignDialog，FR-71）
     reassignTitle: '改派 {{serverId}}',
-    reassignDesc: '改派会热更该服有效配置并触发热重载。请选择目标区，并手输该服 serverId 原样复述以确认（防误触）。',
+    reassignDesc:
+      '改派会热更该服有效配置并触发热重载。请选择目标区，并手输该服 serverId 原样复述以确认（防误触）。',
     reassignTargetGroup: '目标大区',
     reassignTargetZone: '目标小区',
     reassignTypeLabel: '手输 serverId 确认',
@@ -975,7 +983,8 @@ export const zhCN = {
     resetBtn: '重置',
     resetConfirmTitle: '重置密钥「{{name}}」？',
     // 统一二次确认（FR-76）的扁平描述与影响摘要
-    resetConfirmDescFlat: '将生成一把新明文，旧明文立即失效；密钥不能二次读取，请在重置后立即保存新明文。',
+    resetConfirmDescFlat:
+      '将生成一把新明文，旧明文立即失效；密钥不能二次读取，请在重置后立即保存新明文。',
     resetImpactInvalidate: '旧明文立即失效',
     resetImpactExternal: '使用旧明文的外部服务需更新为新值',
     resetConfirmAction: '确认重置',
@@ -993,7 +1002,8 @@ export const zhCN = {
     createSubmit: '创建',
     empty: '暂无密钥',
     revealTitle: '密钥已生成：请立即保存',
-    revealDesc: '这是该密钥明文唯一一次展示，关闭后无法再查看。如遗失只能重置（轮换）后获取新明文。',
+    revealDesc:
+      '这是该密钥明文唯一一次展示，关闭后无法再查看。如遗失只能重置（轮换）后获取新明文。',
     revealName: '密钥名称',
     revealKey: '明文密钥',
     revealUsageBefore: '经请求头 ',
@@ -1055,7 +1065,8 @@ export const zhCN = {
       markTracked: '已纳管一致',
       markDrift: '有差异',
       markUntracked: '未纳管',
-      legendHint: '勾选/ctrl/shift 多选 → 发布·影响面 · 拖文件入文件夹=改目录 · 右→左拖=抓取 · 左→右拖=给单服建实例覆盖 · 双击=编辑 · 右键=菜单',
+      legendHint:
+        '勾选/ctrl/shift 多选 → 发布·影响面 · 拖文件入文件夹=改目录 · 右→左拖=抓取 · 左→右拖=给单服建实例覆盖 · 双击=编辑 · 右键=菜单',
       // 覆盖层徽标
       scopeGlobal: '全局',
       scopeGroup: '组',

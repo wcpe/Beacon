@@ -120,7 +120,12 @@ function TreeRow({
 
   // 文件 / 文件夹均可拖：id 形如 managed::<key> / server::<key>，落点据前缀判定方向。
   // data 带 type / key，供上层区分「文件」与「整个目录」的同步语义。
-  const { attributes, listeners, setNodeRef: setDragRef, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
     id: `${side}::${node.key}`,
     data: { side, name: node.name, type: node.type, key: node.key },
   })
@@ -159,7 +164,8 @@ function TreeRow({
         className={cn(
           'group flex items-center gap-2 rounded px-2 py-1 text-xs select-none',
           'cursor-grab active:cursor-grabbing',
-          !isFolder && (isSelected ? 'bg-primary/10 ring-1 ring-inset ring-primary/30' : 'hover:bg-muted/50'),
+          !isFolder &&
+            (isSelected ? 'bg-primary/10 ring-1 ring-inset ring-primary/30' : 'hover:bg-muted/50'),
           isFolder && 'hover:bg-muted/50',
           // 拖文件悬停到本文件夹上：高亮提示「将移入此目录」（改进 3）
           isFolder && isFolderOver && 'bg-primary/10 ring-1 ring-inset ring-primary/40',
@@ -174,9 +180,14 @@ function TreeRow({
         title={isFolder ? undefined : node.name}
       >
         {/* 名称列（占满剩余宽度）：缩进 + 状态点 + 复选框 + 展开箭头 + 图标 + 名称 */}
-        <span className="flex min-w-0 flex-1 items-center gap-1.5" style={{ paddingLeft: `${depth * 14}px` }}>
+        <span
+          className="flex min-w-0 flex-1 items-center gap-1.5"
+          style={{ paddingLeft: `${depth * 14}px` }}
+        >
           {/* 行首状态图标（受管=同步状态 / 服务器=纳管标记）；改进 2：色球→lucide 图标 */}
-          <dot.icon className={cn('h-3.5 w-3.5 shrink-0', dot.iconClass, dot.spin && 'animate-spin')} />
+          <dot.icon
+            className={cn('h-3.5 w-3.5 shrink-0', dot.iconClass, dot.spin && 'animate-spin')}
+          />
           {/* 复选框（仅文件，多选用） */}
           {isFolder ? (
             <span className="w-3.5 shrink-0" />
@@ -185,7 +196,13 @@ function TreeRow({
               type="checkbox"
               checked={isSelected}
               onClick={(e) => e.stopPropagation()}
-              onChange={(e) => onSelectFile(node.key, { ctrl: true, shift: e.nativeEvent instanceof MouseEvent && (e.nativeEvent as MouseEvent).shiftKey })}
+              onChange={(e) =>
+                onSelectFile(node.key, {
+                  ctrl: true,
+                  shift:
+                    e.nativeEvent instanceof MouseEvent && (e.nativeEvent as MouseEvent).shiftKey,
+                })
+              }
               className="h-3 w-3 shrink-0 cursor-pointer accent-primary"
               aria-label={node.name}
             />
@@ -211,7 +228,10 @@ function TreeRow({
         </span>
         {/* 元信息列（等宽、与列头对齐） */}
         {cols.map((c, i) => (
-          <span key={i} className={cn('shrink-0 text-right tabular-nums text-muted-foreground', colWidths?.[i])}>
+          <span
+            key={i}
+            className={cn('shrink-0 text-right tabular-nums text-muted-foreground', colWidths?.[i])}
+          >
             {c}
           </span>
         ))}

@@ -163,11 +163,7 @@ export default function FileFullPreview({ instances }: { instances: InstanceView
             </option>
           ))}
         </select>
-        <Button
-          size="sm"
-          onClick={onTrigger}
-          disabled={!serverId || scanMut.isPending || scanning}
-        >
+        <Button size="sm" onClick={onTrigger} disabled={!serverId || scanMut.isPending || scanning}>
           {scanMut.isPending || scanning
             ? t('filePreview.fullScanning')
             : t('filePreview.fullTriggerBtn')}
@@ -214,7 +210,10 @@ export default function FileFullPreview({ instances }: { instances: InstanceView
                         {t('filePreview.trackedBadge')}
                       </Badge>
                     ) : (
-                      <Badge variant="outline" className="text-[0.6rem] text-amber-600 border-amber-300">
+                      <Badge
+                        variant="outline"
+                        className="text-[0.6rem] text-amber-600 border-amber-300"
+                      >
                         {t('filePreview.untrackedBadge')}
                       </Badge>
                     )}

@@ -5,7 +5,13 @@ import { NAV_GROUPS, NAV_LEAVES } from './navModel'
 describe('navModel 分组结构', () => {
   it('恰为 5 组，顺序为 概览/配置管理/集群/可观测/系统', () => {
     expect(NAV_GROUPS).toHaveLength(5)
-    expect(NAV_GROUPS.map((g) => g.id)).toEqual(['overview', 'config', 'cluster', 'observability', 'system'])
+    expect(NAV_GROUPS.map((g) => g.id)).toEqual([
+      'overview',
+      'config',
+      'cluster',
+      'observability',
+      'system',
+    ])
   })
 
   it('扁平叶子覆盖各组全部路由且不丢项', () => {

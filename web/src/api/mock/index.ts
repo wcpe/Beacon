@@ -24,7 +24,8 @@ export function enableMock(): void {
   const originalFetch = window.fetch
 
   window.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
 
     // 只拦截 admin API
     if (url.startsWith(MOCK_BASE) || url.includes(MOCK_BASE)) {

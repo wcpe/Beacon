@@ -54,7 +54,15 @@ const WINDOWS: Array<{ value: TrendWindow; labelKey: string }> = [
 ]
 
 // 全局 KPI chip：图标 + 大数值 + 标签，紧凑横排（替代低密度大数字卡）。
-function KpiChip({ icon, value, label }: { icon: React.ReactNode; value: React.ReactNode; label: string }) {
+function KpiChip({
+  icon,
+  value,
+  label,
+}: {
+  icon: React.ReactNode
+  value: React.ReactNode
+  label: string
+}) {
   return (
     <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
       <span aria-hidden className="text-muted-foreground">
@@ -121,7 +129,9 @@ export default function DashboardPage() {
 
   // CPU / 内存可用性与等级（KPI chips 与面板共用）。
   const cpuAvailable = (summary?.avgCpuLoad ?? -1) >= 0
-  const cpuText = cpuAvailable ? `${((summary?.avgCpuLoad ?? 0) * 100).toFixed(0)}%` : t('dashboard.cpuUnavailable')
+  const cpuText = cpuAvailable
+    ? `${((summary?.avgCpuLoad ?? 0) * 100).toFixed(0)}%`
+    : t('dashboard.cpuUnavailable')
   const memRatio = summary && summary.avgMemMax > 0 ? summary.avgMemUsed / summary.avgMemMax : null
 
   // 迷你趋势序列：从趋势点抽各指标数值序列喂 sparkline（CPU 哨兵已在 cpuPoints 置 null）。
@@ -133,7 +143,8 @@ export default function DashboardPage() {
   // BC 面板数值（FR-34）：仅 role=bungee 聚合。
   const bc = summary?.bc
   const bcLatencyAvailable = (bc?.avgBackendLatencyMs ?? -1) >= 0
-  const bcReachText = bc && bc.backendTotal > 0 ? `${bc.backendUp} / ${bc.backendTotal}` : t('dashboard.bcNoBackend')
+  const bcReachText =
+    bc && bc.backendTotal > 0 ? `${bc.backendUp} / ${bc.backendTotal}` : t('dashboard.bcNoBackend')
 
   // 页眉（FR-105 真机打磨）：标题 + 刷新副标题移入全局页头带；环境收口到页眉全局环境槽，页内不再渲染环境筛选。
   usePageHeader({
@@ -153,18 +164,26 @@ export default function DashboardPage() {
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <span className="flex items-center gap-1.5 text-green-700 dark:text-green-400">
               <CircleCheck aria-hidden className="size-4" />
-              <span className="tabular-nums">{t('dashboard.healthOnline', { count: healthOnline })}</span>
+              <span className="tabular-nums">
+                {t('dashboard.healthOnline', { count: healthOnline })}
+              </span>
             </span>
             <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
               <TriangleAlert aria-hidden className="size-4" />
-              <span className="tabular-nums">{t('dashboard.healthDegraded', { count: healthDegraded })}</span>
+              <span className="tabular-nums">
+                {t('dashboard.healthDegraded', { count: healthDegraded })}
+              </span>
             </span>
             <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
               <CircleX aria-hidden className="size-4" />
-              <span className="tabular-nums">{t('dashboard.healthLost', { count: healthLost })}</span>
+              <span className="tabular-nums">
+                {t('dashboard.healthLost', { count: healthLost })}
+              </span>
             </span>
             <span className="flex items-center gap-1.5 text-muted-foreground">
-              <span className="tabular-nums">{t('dashboard.healthOffline', { count: healthOffline })}</span>
+              <span className="tabular-nums">
+                {t('dashboard.healthOffline', { count: healthOffline })}
+              </span>
             </span>
           </div>
         </div>
@@ -180,7 +199,11 @@ export default function DashboardPage() {
             value={summary ? summary.avgTps.toFixed(1) : '-'}
             label={t('dashboard.cardAvgTps')}
           />
-          <KpiChip icon={<Cpu className="size-4" />} value={summary ? cpuText : '-'} label={t('dashboard.cardAvgCpu')} />
+          <KpiChip
+            icon={<Cpu className="size-4" />}
+            value={summary ? cpuText : '-'}
+            label={t('dashboard.cardAvgCpu')}
+          />
           <KpiChip
             icon={<Database className="size-4" />}
             value={summary ? formatBytes(summary.avgMemUsed) : '-'}
@@ -220,52 +243,63 @@ export default function DashboardPage() {
         isLoading={summaryQuery.isLoading}
         isError={summaryQuery.isError}
         error={summaryQuery.error}
-        skeleton={<CardGridSkeleton count={2} heightClass="h-56" gridClass="grid grid-cols-1 gap-3 xl:grid-cols-2" />}
+        skeleton={
+          <CardGridSkeleton
+            count={2}
+            heightClass="h-56"
+            gridClass="grid grid-cols-1 gap-3 xl:grid-cols-2"
+          />
+        }
       >
         {summary && (
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             {/* 子服（bukkit）面板（FR-107 卡片降级）：区段标题 + 轻分隔替代面板 Card；
                 玩家 / 服务器数 / 均TPS / 均内存 / 均CPU + 玩家迷你趋势 */}
             <section className="space-y-3">
-              <SectionHeader icon={<Server className="size-4" />} title={t('dashboard.sectionBukkit')} />
+              <SectionHeader
+                icon={<Server className="size-4" />}
+                title={t('dashboard.sectionBukkit')}
+              />
               <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-                  <IconStat
-                    icon={<Users className="size-4" />}
-                    label={t('dashboard.cardTotalPlayers')}
-                    value={summary.totalPlayers}
-                  />
-                  <IconStat
-                    icon={<Server className="size-4" />}
-                    label={t('dashboard.cardOnlineServers')}
-                    value={summary.onlineServers}
-                  />
-                  <IconStat
-                    icon={<Activity className="size-4" />}
-                    label={t('dashboard.cardAvgTps')}
-                    value={summary.avgTps.toFixed(1)}
-                  />
-                  <IconStat
-                    icon={<MemoryStick className="size-4" />}
-                    label={t('dashboard.cardAvgMem')}
-                    value={formatBytes(summary.avgMemUsed)}
-                    hint={t('dashboard.cardMemMax', { max: formatBytes(summary.avgMemMax) })}
-                    level={memRatio === null ? undefined : ratioLevel(memRatio)}
-                  />
-                  <IconStat
-                    icon={<Cpu className="size-4" />}
-                    label={t('dashboard.cardAvgCpu')}
-                    value={cpuText}
-                    hint={
-                      cpuAvailable
-                        ? t('dashboard.cardCpuSamples', { count: summary.cpuSampleCount })
-                        : t('dashboard.cardCpuNoSample')
-                    }
-                    level={cpuAvailable ? ratioLevel(summary.avgCpuLoad) : undefined}
-                  />
-                </div>
+                <IconStat
+                  icon={<Users className="size-4" />}
+                  label={t('dashboard.cardTotalPlayers')}
+                  value={summary.totalPlayers}
+                />
+                <IconStat
+                  icon={<Server className="size-4" />}
+                  label={t('dashboard.cardOnlineServers')}
+                  value={summary.onlineServers}
+                />
+                <IconStat
+                  icon={<Activity className="size-4" />}
+                  label={t('dashboard.cardAvgTps')}
+                  value={summary.avgTps.toFixed(1)}
+                />
+                <IconStat
+                  icon={<MemoryStick className="size-4" />}
+                  label={t('dashboard.cardAvgMem')}
+                  value={formatBytes(summary.avgMemUsed)}
+                  hint={t('dashboard.cardMemMax', { max: formatBytes(summary.avgMemMax) })}
+                  level={memRatio === null ? undefined : ratioLevel(memRatio)}
+                />
+                <IconStat
+                  icon={<Cpu className="size-4" />}
+                  label={t('dashboard.cardAvgCpu')}
+                  value={cpuText}
+                  hint={
+                    cpuAvailable
+                      ? t('dashboard.cardCpuSamples', { count: summary.cpuSampleCount })
+                      : t('dashboard.cardCpuNoSample')
+                  }
+                  level={cpuAvailable ? ratioLevel(summary.avgCpuLoad) : undefined}
+                />
+              </div>
               {/* 内嵌迷你趋势：在线玩家近况走向（复用趋势数据，靛蓝色 token） */}
               <div className="space-y-1 border-t pt-2">
-                <div className="text-[11px] text-muted-foreground">{t('dashboard.sparklinePlayers')}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {t('dashboard.sparklinePlayers')}
+                </div>
                 <MiniSparkline values={playersSeries} color="var(--chart-1)" />
               </div>
             </section>
@@ -273,50 +307,65 @@ export default function DashboardPage() {
             {/* BC 代理（bungee）面板（FR-107 卡片降级）：区段标题 + 轻分隔替代面板 Card；
                 代理数 / 连接 / 线程 / 后端可达 / 延迟 + 连接迷你趋势 */}
             <section className="space-y-3">
-              <SectionHeader icon={<Router className="size-4" />} title={t('dashboard.sectionBc')} />
+              <SectionHeader
+                icon={<Router className="size-4" />}
+                title={t('dashboard.sectionBc')}
+              />
               {bc && (
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-                    <IconStat
-                      icon={<Server className="size-4" />}
-                      label={t('dashboard.bcProxyCount')}
-                      value={bc.proxyCount}
-                    />
-                    <IconStat
-                      icon={<Plug className="size-4" />}
-                      label={t('dashboard.bcTotalConnections')}
-                      value={bc.totalConnections}
-                    />
-                    <IconStat
-                      icon={<Cpu className="size-4" />}
-                      label={t('dashboard.bcAvgThread')}
-                      value={bc.avgThreadCount.toFixed(0)}
-                    />
-                    <IconStat
-                      icon={<Network className="size-4" />}
-                      label={t('dashboard.bcBackendReach')}
-                      value={bcReachText}
-                      hint={
-                        bc.backendTotal > 0
-                          ? t('dashboard.bcReachPercent', {
-                              percent: Math.round((bc.backendUp / bc.backendTotal) * 100),
-                            })
-                          : t('dashboard.bcNoBackendConfigured')
-                      }
-                      level={
-                        bc.backendTotal > 0 ? ratioLevel(1 - bc.backendUp / bc.backendTotal, 0.01, 0.5) : undefined
-                      }
-                    />
-                    <IconStat
-                      icon={<Timer className="size-4" />}
-                      label={t('dashboard.bcAvgLatency')}
-                      value={bcLatencyAvailable ? `${bc.avgBackendLatencyMs.toFixed(0)} ms` : t('dashboard.bcUnavailable')}
-                      hint={bcLatencyAvailable ? t('dashboard.bcPingHint') : t('dashboard.bcNoReachableSample')}
-                    />
-                  </div>
-                )}
+                  <IconStat
+                    icon={<Server className="size-4" />}
+                    label={t('dashboard.bcProxyCount')}
+                    value={bc.proxyCount}
+                  />
+                  <IconStat
+                    icon={<Plug className="size-4" />}
+                    label={t('dashboard.bcTotalConnections')}
+                    value={bc.totalConnections}
+                  />
+                  <IconStat
+                    icon={<Cpu className="size-4" />}
+                    label={t('dashboard.bcAvgThread')}
+                    value={bc.avgThreadCount.toFixed(0)}
+                  />
+                  <IconStat
+                    icon={<Network className="size-4" />}
+                    label={t('dashboard.bcBackendReach')}
+                    value={bcReachText}
+                    hint={
+                      bc.backendTotal > 0
+                        ? t('dashboard.bcReachPercent', {
+                            percent: Math.round((bc.backendUp / bc.backendTotal) * 100),
+                          })
+                        : t('dashboard.bcNoBackendConfigured')
+                    }
+                    level={
+                      bc.backendTotal > 0
+                        ? ratioLevel(1 - bc.backendUp / bc.backendTotal, 0.01, 0.5)
+                        : undefined
+                    }
+                  />
+                  <IconStat
+                    icon={<Timer className="size-4" />}
+                    label={t('dashboard.bcAvgLatency')}
+                    value={
+                      bcLatencyAvailable
+                        ? `${bc.avgBackendLatencyMs.toFixed(0)} ms`
+                        : t('dashboard.bcUnavailable')
+                    }
+                    hint={
+                      bcLatencyAvailable
+                        ? t('dashboard.bcPingHint')
+                        : t('dashboard.bcNoReachableSample')
+                    }
+                  />
+                </div>
+              )}
               {/* 内嵌迷你趋势：均 TPS 近况走向（BC 无独立趋势序列，借集群 TPS 反映整体活跃） */}
               <div className="space-y-1 border-t pt-2">
-                <div className="text-[11px] text-muted-foreground">{t('dashboard.sparklineTps')}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {t('dashboard.sparklineTps')}
+                </div>
                 <MiniSparkline values={tpsSeries} color="var(--chart-4)" />
               </div>
             </section>
@@ -342,59 +391,65 @@ export default function DashboardPage() {
             </Tabs>
           }
         />
-        <AsyncSection isLoading={trendQuery.isLoading} isError={trendQuery.isError} error={trendQuery.error}>
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <TrendChart
-                title={t('dashboard.chartPlayers')}
-                icon={<Users className="size-4" />}
-                points={points}
-                metric="totalPlayers"
-                color="var(--chart-1)"
-                formatValue={(v) => String(Math.round(v))}
-              />
-              <TrendChart
-                title={t('dashboard.chartAvgTps')}
-                icon={<Zap className="size-4" />}
-                points={points}
-                metric="avgTps"
-                color="var(--chart-2)"
-                formatValue={(v) => v.toFixed(1)}
-              />
-              <TrendChart
-                title={t('dashboard.chartAvgMem')}
-                icon={<MemoryStick className="size-4" />}
-                points={points}
-                metric="avgMemUsed"
-                color="var(--chart-3)"
-                formatValue={(v) => formatBytes(v)}
-              />
-              <TrendChart
-                title={t('dashboard.chartAvgCpu')}
-                icon={<Cpu className="size-4" />}
-                points={cpuPoints}
-                metric="avgCpuLoad"
-                color="var(--chart-5)"
-                formatValue={(v) => (v < 0 ? t('dashboard.cpuUnavailable') : `${(v * 100).toFixed(0)}%`)}
-              />
-            </div>
-            {/* CPU 内存迷你趋势补位（与上方面板呼应，复用 cpuSeries/memSeries 避免变量未用） */}
-            <div className="grid grid-cols-1 gap-3 border-t pt-2 sm:grid-cols-2">
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Database aria-hidden className="size-3.5" />
-                  {t('dashboard.sparklineMem')}
-                </div>
-                <MiniSparkline values={memSeries} color="var(--chart-3)" />
+        <AsyncSection
+          isLoading={trendQuery.isLoading}
+          isError={trendQuery.isError}
+          error={trendQuery.error}
+        >
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <TrendChart
+              title={t('dashboard.chartPlayers')}
+              icon={<Users className="size-4" />}
+              points={points}
+              metric="totalPlayers"
+              color="var(--chart-1)"
+              formatValue={(v) => String(Math.round(v))}
+            />
+            <TrendChart
+              title={t('dashboard.chartAvgTps')}
+              icon={<Zap className="size-4" />}
+              points={points}
+              metric="avgTps"
+              color="var(--chart-2)"
+              formatValue={(v) => v.toFixed(1)}
+            />
+            <TrendChart
+              title={t('dashboard.chartAvgMem')}
+              icon={<MemoryStick className="size-4" />}
+              points={points}
+              metric="avgMemUsed"
+              color="var(--chart-3)"
+              formatValue={(v) => formatBytes(v)}
+            />
+            <TrendChart
+              title={t('dashboard.chartAvgCpu')}
+              icon={<Cpu className="size-4" />}
+              points={cpuPoints}
+              metric="avgCpuLoad"
+              color="var(--chart-5)"
+              formatValue={(v) =>
+                v < 0 ? t('dashboard.cpuUnavailable') : `${(v * 100).toFixed(0)}%`
+              }
+            />
+          </div>
+          {/* CPU 内存迷你趋势补位（与上方面板呼应，复用 cpuSeries/memSeries 避免变量未用） */}
+          <div className="grid grid-cols-1 gap-3 border-t pt-2 sm:grid-cols-2">
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Database aria-hidden className="size-3.5" />
+                {t('dashboard.sparklineMem')}
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Cpu aria-hidden className="size-3.5" />
-                  {t('dashboard.sparklineCpu')}
-                </div>
-                <MiniSparkline values={cpuSeries} color="var(--chart-5)" />
-              </div>
+              <MiniSparkline values={memSeries} color="var(--chart-3)" />
             </div>
-          </AsyncSection>
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <Cpu aria-hidden className="size-3.5" />
+                {t('dashboard.sparklineCpu')}
+              </div>
+              <MiniSparkline values={cpuSeries} color="var(--chart-5)" />
+            </div>
+          </div>
+        </AsyncSection>
       </section>
 
       {/* 底部导航链接（FR-64）：逐服深数据 / 拓扑入口 */}

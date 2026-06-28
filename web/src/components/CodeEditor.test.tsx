@@ -60,9 +60,7 @@ describe('CodeEditor 去抖校验（FR-75）', () => {
   // 受控壳：把 onChange 写回 value，模拟父层持有编辑内容
   function Controlled({ onValidate }: { onValidate: (e: unknown) => void }) {
     const [value, setValue] = useState('a: 1\n')
-    return (
-      <CodeEditor value={value} language="yaml" onChange={setValue} onValidate={onValidate} />
-    )
+    return <CodeEditor value={value} language="yaml" onChange={setValue} onValidate={onValidate} />
   }
 
   it('编辑后去抖落定才出错误条；落定前保持「校验中」禁用保存', () => {

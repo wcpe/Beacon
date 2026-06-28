@@ -32,7 +32,9 @@ function BigStat({
       <span aria-hidden className={className ?? 'text-slate-300'}>
         {icon}
       </span>
-      <div className={`text-5xl font-bold tabular-nums ${className ?? 'text-slate-100'}`}>{value}</div>
+      <div className={`text-5xl font-bold tabular-nums ${className ?? 'text-slate-100'}`}>
+        {value}
+      </div>
       <div className="text-sm text-slate-400">{label}</div>
     </div>
   )
@@ -116,7 +118,9 @@ export default function WallboardPage() {
           error={instancesQuery.error}
         >
           {instances.length === 0 ? (
-            <div className="rounded-lg bg-white/5 p-6 text-slate-400">{t('dashboard.statusWallEmpty')}</div>
+            <div className="rounded-lg bg-white/5 p-6 text-slate-400">
+              {t('dashboard.statusWallEmpty')}
+            </div>
           ) : (
             // 暗底下瓷砖用深色变体：覆盖 StatusTile 的卡片底/描边以贴合 NOC 暗底（[&_…] 任意值选择器，不改组件）。
             <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3 [&_[class*='bg-card']]:bg-white/5 [&_[class*='ring-foreground']]:ring-white/10">
@@ -132,7 +136,11 @@ export default function WallboardPage() {
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold text-slate-200">{t('dashboard.chartPlayers')}</h2>
         <div className="rounded-lg bg-white/5 p-4 ring-1 ring-white/10">
-          <AsyncSection isLoading={trendQuery.isLoading} isError={trendQuery.isError} error={trendQuery.error}>
+          <AsyncSection
+            isLoading={trendQuery.isLoading}
+            isError={trendQuery.isError}
+            error={trendQuery.error}
+          >
             <div className="h-64">
               <TrendChart
                 title={t('dashboard.chartPlayers')}

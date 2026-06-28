@@ -43,17 +43,25 @@ export function QueueList({
       <div className="flex shrink-0 items-center gap-3 border-b border-border bg-muted/20 px-3 py-1 text-[0.65rem] font-medium text-muted-foreground">
         <span className="w-3 shrink-0" />
         <span className="min-w-0 flex-1">{t('configs.workbench.qColName')}</span>
-        <span className={cn('shrink-0', COLS.direction)}>{t('configs.workbench.qColDirection')}</span>
+        <span className={cn('shrink-0', COLS.direction)}>
+          {t('configs.workbench.qColDirection')}
+        </span>
         <span className={cn('shrink-0', COLS.status)}>{t('configs.workbench.qColStatus')}</span>
         <span className={cn('shrink-0', COLS.progress)}>{t('configs.workbench.qColProgress')}</span>
-        <span className={cn('shrink-0', COLS.scopeTarget)}>{t('configs.workbench.qColScopeTarget')}</span>
+        <span className={cn('shrink-0', COLS.scopeTarget)}>
+          {t('configs.workbench.qColScopeTarget')}
+        </span>
         <span className={cn('min-w-0', COLS.path)}>{t('configs.workbench.qColPath')}</span>
-        <span className={cn('shrink-0 text-right', COLS.time)}>{t('configs.workbench.qColTime')}</span>
+        <span className={cn('shrink-0 text-right', COLS.time)}>
+          {t('configs.workbench.qColTime')}
+        </span>
       </div>
       {/* 列表（内部滚） */}
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
         {rows.length === 0 ? (
-          <div className="px-3 py-4 text-center text-xs text-muted-foreground">{t('configs.workbench.queueEmpty')}</div>
+          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+            {t('configs.workbench.queueEmpty')}
+          </div>
         ) : (
           rows.map((r) => (
             <QueueRow
@@ -127,10 +135,14 @@ function QueueRow({
       {/* 状态 */}
       <span className={cn('shrink-0', COLS.status)}>
         {row.status === 'done' && (
-          <span className="text-emerald-600 dark:text-emerald-400">{t('configs.workbench.statusDone')}</span>
+          <span className="text-emerald-600 dark:text-emerald-400">
+            {t('configs.workbench.statusDone')}
+          </span>
         )}
         {row.status === 'running' && (
-          <span className="text-sky-600 dark:text-sky-400">{t('configs.workbench.statusRunning')}</span>
+          <span className="text-sky-600 dark:text-sky-400">
+            {t('configs.workbench.statusRunning')}
+          </span>
         )}
         {row.status === 'pending-ingest' && (
           <span className="text-amber-600 underline decoration-dotted dark:text-amber-400">
@@ -148,9 +160,14 @@ function QueueRow({
         {row.status === 'running' ? (
           <>
             <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-              <span className="block h-full rounded-full bg-sky-500" style={{ width: `${row.progress ?? 0}%` }} />
+              <span
+                className="block h-full rounded-full bg-sky-500"
+                style={{ width: `${row.progress ?? 0}%` }}
+              />
             </span>
-            <span className="w-8 text-right tabular-nums text-muted-foreground">{row.progress ?? 0}%</span>
+            <span className="w-8 text-right tabular-nums text-muted-foreground">
+              {row.progress ?? 0}%
+            </span>
           </>
         ) : row.status === 'done' ? (
           <>
@@ -164,7 +181,9 @@ function QueueRow({
         )}
       </span>
       {/* 覆盖层·目标 */}
-      <span className={cn('shrink-0 truncate text-muted-foreground', COLS.scopeTarget)}>{row.scopeTarget}</span>
+      <span className={cn('shrink-0 truncate text-muted-foreground', COLS.scopeTarget)}>
+        {row.scopeTarget}
+      </span>
       {/* 源 → 目标 */}
       <span className={cn('flex min-w-0 items-center gap-1 text-muted-foreground/80', COLS.path)}>
         <span className="truncate font-mono text-[0.65rem]">{row.sourcePath}</span>
@@ -172,7 +191,9 @@ function QueueRow({
         <span className="truncate font-mono text-[0.65rem]">{row.targetPath}</span>
       </span>
       {/* 时间 */}
-      <span className={cn('shrink-0 text-right tabular-nums text-muted-foreground/70', COLS.time)}>{row.time}</span>
+      <span className={cn('shrink-0 text-right tabular-nums text-muted-foreground/70', COLS.time)}>
+        {row.time}
+      </span>
     </div>
   )
 }

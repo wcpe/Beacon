@@ -173,7 +173,10 @@ export default function ApiKeysPage() {
     },
     { header: t('apikeys.colCreatedAt'), cell: (k) => formatTime(k.createdAt) },
     { header: t('apikeys.colLastUsed'), cell: (k) => formatTime(k.lastUsedAt) },
-    { header: t('apikeys.colExpiresAt'), cell: (k) => (k.expiresAt ? formatTime(k.expiresAt) : t('apikeys.expiresNever')) },
+    {
+      header: t('apikeys.colExpiresAt'),
+      cell: (k) => (k.expiresAt ? formatTime(k.expiresAt) : t('apikeys.expiresNever')),
+    },
     {
       header: t('apikeys.colActions'),
       cell: (k) =>
@@ -216,9 +219,7 @@ export default function ApiKeysPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t('apikeys.createTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('apikeys.createDesc')}
-            </DialogDescription>
+            <DialogDescription>{t('apikeys.createDesc')}</DialogDescription>
           </DialogHeader>
           <form id="create-api-key" onSubmit={onCreate} className="space-y-4">
             <div className="space-y-1.5">
@@ -301,8 +302,11 @@ export default function ApiKeysPage() {
                 </pre>
               </div>
               <p className="text-xs text-muted-foreground">
-                {t('apikeys.revealUsageBefore')}<code className="font-mono">X-Beacon-Api-Key</code>{t('apikeys.revealUsageOr')}
-                <code className="font-mono">{t('apikeys.revealUsageBearer')}</code>{t('apikeys.revealUsageAfter')}
+                {t('apikeys.revealUsageBefore')}
+                <code className="font-mono">X-Beacon-Api-Key</code>
+                {t('apikeys.revealUsageOr')}
+                <code className="font-mono">{t('apikeys.revealUsageBearer')}</code>
+                {t('apikeys.revealUsageAfter')}
               </p>
             </div>
           )}

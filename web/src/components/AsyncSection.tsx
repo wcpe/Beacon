@@ -34,7 +34,8 @@ export default function AsyncSection({
     return <p className="text-sm text-muted-foreground">{loadingText ?? t('common.loading')}</p>
   }
   if (isError) {
-    const message = error instanceof Error ? error.message : String(error ?? t('common.unknownError'))
+    const message =
+      error instanceof Error ? error.message : String(error ?? t('common.unknownError'))
     return <p className="text-sm text-destructive">{t('common.loadFailed', { message })}</p>
   }
   return <>{children}</>

@@ -11,7 +11,9 @@ import type { ReactElement } from 'react'
 
 // 轻量桩替身趋势图：暴露收到的点数与序列化数据，规避 recharts 在 jsdom 下的尺寸/动画依赖。
 vi.mock('./command-observability/CommandTrendChart', () => ({
-  default: (props: { points: Array<{ date: string; issued: number; done: number; failed: number }> }) => (
+  default: (props: {
+    points: Array<{ date: string; issued: number; done: number; failed: number }>
+  }) => (
     <div
       data-testid="cmd-trend"
       data-count={props.points.length}
@@ -60,20 +62,41 @@ const ANALYTICS: CommandAnalytics = {
 
 // 实时队列样例：一条 pending（30 秒前）+ 一条 fetched。
 const QUEUE_PENDING: CommandMetaView = {
-  commandId: 101, namespace: 'prod', serverId: 'lobby-1', type: 'ingest-plugins', status: 'pending',
-  resultDetail: '', operator: 'admin', createdAt: new Date(Date.now() - 30000).toISOString(),
-  updatedAt: new Date(Date.now() - 30000).toISOString(), ageSeconds: 30,
+  commandId: 101,
+  namespace: 'prod',
+  serverId: 'lobby-1',
+  type: 'ingest-plugins',
+  status: 'pending',
+  resultDetail: '',
+  operator: 'admin',
+  createdAt: new Date(Date.now() - 30000).toISOString(),
+  updatedAt: new Date(Date.now() - 30000).toISOString(),
+  ageSeconds: 30,
 }
 const QUEUE_FETCHED: CommandMetaView = {
-  commandId: 102, namespace: 'prod', serverId: 'lobby-2', type: 'tail-logs', status: 'fetched',
-  resultDetail: '', operator: 'admin', createdAt: new Date(Date.now() - 10000).toISOString(),
-  updatedAt: new Date(Date.now() - 10000).toISOString(), ageSeconds: 10,
+  commandId: 102,
+  namespace: 'prod',
+  serverId: 'lobby-2',
+  type: 'tail-logs',
+  status: 'fetched',
+  resultDetail: '',
+  operator: 'admin',
+  createdAt: new Date(Date.now() - 10000).toISOString(),
+  updatedAt: new Date(Date.now() - 10000).toISOString(),
+  ageSeconds: 10,
 }
 // 历史样例：一条 done。
 const HISTORY_DONE: CommandMetaView = {
-  commandId: 90, namespace: 'prod', serverId: 'lobby-1', type: 'ingest-plugins', status: 'done',
-  resultDetail: 'ingest 3 files', operator: 'admin', createdAt: '2026-06-20T08:00:00Z',
-  updatedAt: '2026-06-20T08:01:00Z', ageSeconds: 9999,
+  commandId: 90,
+  namespace: 'prod',
+  serverId: 'lobby-1',
+  type: 'ingest-plugins',
+  status: 'done',
+  resultDetail: 'ingest 3 files',
+  operator: 'admin',
+  createdAt: '2026-06-20T08:00:00Z',
+  updatedAt: '2026-06-20T08:01:00Z',
+  ageSeconds: 9999,
 }
 
 function emptyPage(): CommandPage {

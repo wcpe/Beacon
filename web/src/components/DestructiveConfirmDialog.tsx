@@ -101,11 +101,7 @@ export default function DestructiveConfirmDialog({
 
         <AlertDialogFooter>
           <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={!canConfirm}
-            onClick={onConfirm}
-          >
+          <AlertDialogAction variant="destructive" disabled={!canConfirm} onClick={onConfirm}>
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

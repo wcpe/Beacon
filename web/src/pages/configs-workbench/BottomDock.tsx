@@ -48,16 +48,26 @@ export default function BottomDock({
     <div className="flex h-48 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card">
       {/* 头部：tab + 上下文操作 */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-2 py-1.5">
-        <TabBtn active={tab === 'queue'} onClick={() => setTab('queue')} icon={<ListChecks className="h-3.5 w-3.5" />}>
+        <TabBtn
+          active={tab === 'queue'}
+          onClick={() => setTab('queue')}
+          icon={<ListChecks className="h-3.5 w-3.5" />}
+        >
           {t('configs.workbench.queueTitle')}
         </TabBtn>
-        <TabBtn active={tab === 'log'} onClick={() => setTab('log')} icon={<ScrollText className="h-3.5 w-3.5" />}>
+        <TabBtn
+          active={tab === 'log'}
+          onClick={() => setTab('log')}
+          icon={<ScrollText className="h-3.5 w-3.5" />}
+        >
           {t('configs.workbench.logTitle')}
         </TabBtn>
         {tab === 'queue' && (
           <>
             <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-            <span className="text-[0.65rem] text-muted-foreground">{t('configs.workbench.queueLive')}</span>
+            <span className="text-[0.65rem] text-muted-foreground">
+              {t('configs.workbench.queueLive')}
+            </span>
           </>
         )}
         {/* 右侧上下文操作 */}
@@ -68,7 +78,12 @@ export default function BottomDock({
           </Button>
         )}
         {tab === 'log' && undoableSelected > 0 && (
-          <Button variant="outline" size="xs" className="ml-auto h-6 text-[0.65rem]" onClick={onBatchUndo}>
+          <Button
+            variant="outline"
+            size="xs"
+            className="ml-auto h-6 text-[0.65rem]"
+            onClick={onBatchUndo}
+          >
             <Undo2 className="mr-1 h-3 w-3" />
             {t('configs.workbench.logBatchUndo', { count: undoableSelected })}
           </Button>
@@ -76,7 +91,9 @@ export default function BottomDock({
         <span
           className={cn(
             'text-[0.65rem] text-muted-foreground',
-            (tab === 'queue' && pendingSelected > 0) || (tab === 'log' && undoableSelected > 0) ? 'ml-3' : 'ml-auto',
+            (tab === 'queue' && pendingSelected > 0) || (tab === 'log' && undoableSelected > 0)
+              ? 'ml-3'
+              : 'ml-auto',
           )}
         >
           {tab === 'queue'
@@ -86,9 +103,19 @@ export default function BottomDock({
       </div>
       {/* 内容：当前 tab 列表 */}
       {tab === 'queue' ? (
-        <QueueList rows={queueRows} onReview={onReview} selected={queueSel} onToggleSelect={onToggleQueueSel} />
+        <QueueList
+          rows={queueRows}
+          onReview={onReview}
+          selected={queueSel}
+          onToggleSelect={onToggleQueueSel}
+        />
       ) : (
-        <OperationLogList entries={logEntries} selected={logSel} onToggleSelect={onToggleLogSel} onUndo={onUndo} />
+        <OperationLogList
+          entries={logEntries}
+          selected={logSel}
+          onToggleSelect={onToggleLogSel}
+          onUndo={onUndo}
+        />
       )}
     </div>
   )
@@ -111,7 +138,9 @@ function TabBtn({
       onClick={onClick}
       className={cn(
         'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground',
       )}
     >
       {icon}

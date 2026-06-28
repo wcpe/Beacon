@@ -85,7 +85,12 @@ export default function ConfigSaveConfirmDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel() }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onCancel()
+      }}
+    >
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t('configs.saveConfirmTitle')}</DialogTitle>
@@ -118,11 +123,7 @@ export default function ConfigSaveConfirmDialog({
 
         {/* diff：左上一保存版本、右当前编辑态 */}
         <div className="h-72 rounded border border-border overflow-hidden">
-          <CodeEditor
-            original={originalContent}
-            modified={currentContent}
-            language={format}
-          />
+          <CodeEditor original={originalContent} modified={currentContent} language={format} />
         </div>
 
         {/* 备注输入 */}

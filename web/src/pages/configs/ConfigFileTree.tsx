@@ -64,7 +64,11 @@ function ConfigTreeNode({
         onClick={handleClick}
       >
         {hasChildren ? (
-          expanded ? <span className="text-xs">▼</span> : <span className="text-xs">▶</span>
+          expanded ? (
+            <span className="text-xs">▼</span>
+          ) : (
+            <span className="text-xs">▶</span>
+          )
         ) : (
           <span className="w-3" />
         )}

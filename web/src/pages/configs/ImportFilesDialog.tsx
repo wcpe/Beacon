@@ -68,7 +68,9 @@ export default function ImportFilesDialog({
   const importMut = useMutation({
     mutationFn: () => importFiles(namespace, group, entries),
     onSuccess: (r) => {
-      msg.showSuccess(t('configs.msgImported', { files: r.files, created: r.created, updated: r.updated }))
+      msg.showSuccess(
+        t('configs.msgImported', { files: r.files, created: r.created, updated: r.updated }),
+      )
       setPreviewOpen(false)
       setOpen(false)
       // 失效文件相关缓存，刷新文件树
@@ -153,7 +155,9 @@ export default function ImportFilesDialog({
             />
           </div>
           {entries.length > 0 && (
-            <p className="col-span-2 text-xs text-muted-foreground">{t('configs.importSelected', { count: entries.length })}</p>
+            <p className="col-span-2 text-xs text-muted-foreground">
+              {t('configs.importSelected', { count: entries.length })}
+            </p>
           )}
         </form>
         <DialogFooter>

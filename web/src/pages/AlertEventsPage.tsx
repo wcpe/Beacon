@@ -23,12 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20
@@ -234,7 +229,11 @@ export default function AlertEventsPage() {
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                   <span>{formatTime(ev.createdAt)}</span>
-                  {ev.namespace && <span>{t('alertEvent.colNamespace')}: {ev.namespace}</span>}
+                  {ev.namespace && (
+                    <span>
+                      {t('alertEvent.colNamespace')}: {ev.namespace}
+                    </span>
+                  )}
                   {ev.serverId && <span className="font-mono">{ev.serverId}</span>}
                   <Button
                     type="button"
@@ -296,7 +295,9 @@ export default function AlertEventsPage() {
                 <div>
                   <dt className="text-muted-foreground">{t('alertEvent.colLevel')}</dt>
                   <dd>
-                    <Badge variant={levelVariant(selected.level)}>{levelLabel(selected.level)}</Badge>
+                    <Badge variant={levelVariant(selected.level)}>
+                      {levelLabel(selected.level)}
+                    </Badge>
                   </dd>
                 </div>
                 <div>

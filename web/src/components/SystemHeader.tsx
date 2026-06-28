@@ -53,7 +53,9 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
     // fix-A：改 flex-nowrap（不换行）+ min-w-0，避免固定高 h-10 顶栏内换行被裁；次要项按断点渐进收起。
     <div className="flex w-full min-w-0 flex-nowrap items-center gap-x-3 lg:gap-x-6">
       {/* 控制面状态条标题（次要标识）：窄屏隐藏，xl 及以上显示。版本徽章已移至品牌区 logo 右侧（FR-121） */}
-      <span className="hidden shrink-0 text-sm font-semibold xl:inline">{t('systemHeader.title')}</span>
+      <span className="hidden shrink-0 text-sm font-semibold xl:inline">
+        {t('systemHeader.title')}
+      </span>
 
       {/* 连接态药丸：绿底绿字=已连接、红底红字=已断开 / 不可达；语义色类、不硬编码 */}
       {showSkeleton ? (
@@ -70,7 +72,10 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
         >
           <span
             aria-hidden
-            className={cn('inline-block size-1.5 rounded-full', dbConnected ? 'bg-green-600' : 'bg-red-600')}
+            className={cn(
+              'inline-block size-1.5 rounded-full',
+              dbConnected ? 'bg-green-600' : 'bg-red-600',
+            )}
           />
           {connLabel}
         </span>

@@ -47,7 +47,9 @@ export default function RevisionHistory({
                 onClick={() => onSelectRevision(rev)}
               >
                 <span className="w-10 shrink-0 font-medium text-foreground">v{rev.version}</span>
-                <span className="w-20 shrink-0 text-muted-foreground">{formatTime(rev.createdAt)}</span>
+                <span className="w-20 shrink-0 text-muted-foreground">
+                  {formatTime(rev.createdAt)}
+                </span>
                 <span className="w-20 shrink-0 text-foreground">{rev.operator}</span>
                 <span className="flex-1 truncate text-muted-foreground">{rev.comment || '—'}</span>
                 <span className="font-mono text-muted-foreground">{rev.md5.slice(0, 8)}</span>

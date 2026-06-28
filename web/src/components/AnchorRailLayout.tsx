@@ -28,7 +28,12 @@ interface AnchorRailLayoutProps {
   className?: string
 }
 
-export default function AnchorRailLayout({ sections, children, ariaLabel, className }: AnchorRailLayoutProps) {
+export default function AnchorRailLayout({
+  sections,
+  children,
+  ariaLabel,
+  className,
+}: AnchorRailLayoutProps) {
   // 当前高亮分区 id（scroll-spy 命中或点击锚点设定）；默认首个分区。
   const [activeId, setActiveId] = useState<string>(sections[0]?.id ?? '')
   // 右侧滚动内容容器引用（作为 IntersectionObserver 的 root 与平滑滚动目标）。
@@ -72,7 +77,10 @@ export default function AnchorRailLayout({ sections, children, ariaLabel, classN
   return (
     <div className={cn('flex min-h-0 flex-1 gap-6', className)}>
       {/* 左 sticky rail：分区锚点列表 */}
-      <nav aria-label={ariaLabel} className="sticky top-0 hidden w-44 shrink-0 self-start py-1 md:block">
+      <nav
+        aria-label={ariaLabel}
+        className="sticky top-0 hidden w-44 shrink-0 self-start py-1 md:block"
+      >
         <ul className="space-y-0.5">
           {sections.map((s) => {
             const active = s.id === activeId

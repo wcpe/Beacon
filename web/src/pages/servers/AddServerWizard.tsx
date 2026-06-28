@@ -195,7 +195,10 @@ export default function AddServerWizard({
               {/* serverId 环境内查重提示（实时 + 点下一步兜底） */}
               {(dupError || isDuplicate) && serverId.trim() !== '' && (
                 <p className="text-xs text-destructive">
-                  {t('servers.wizardServerIdDuplicate', { serverId: serverId.trim(), namespace: ns })}
+                  {t('servers.wizardServerIdDuplicate', {
+                    serverId: serverId.trim(),
+                    namespace: ns,
+                  })}
                 </p>
               )}
             </div>

@@ -28,7 +28,14 @@ function inst(overrides: Partial<InstanceView>): InstanceView {
     tps: 0,
     backends: [],
     zoneDefaultEntry: false,
-    proxy: { onlineConnections: 0, threadCount: 0, uptimeMs: 0, backendUp: 0, backendTotal: 0, backendAvgLatencyMs: -1 },
+    proxy: {
+      onlineConnections: 0,
+      threadCount: 0,
+      uptimeMs: 0,
+      backendUp: 0,
+      backendTotal: 0,
+      backendAvgLatencyMs: -1,
+    },
     registeredAt: '',
     ...overrides,
   }
@@ -36,7 +43,11 @@ function inst(overrides: Partial<InstanceView>): InstanceView {
 
 describe('StatusTile', () => {
   it('子服（bukkit）：展示 serverId + TPS·人数关键指标', () => {
-    render(<StatusTile instance={inst({ serverId: 'lobby-1', role: 'bukkit', tps: 19.8, playerCount: 42 })} />)
+    render(
+      <StatusTile
+        instance={inst({ serverId: 'lobby-1', role: 'bukkit', tps: 19.8, playerCount: 42 })}
+      />,
+    )
     expect(screen.getByText('lobby-1')).toBeInTheDocument()
     expect(screen.getByText('TPS')).toBeInTheDocument()
     expect(screen.getByText('19.8')).toBeInTheDocument()
@@ -50,7 +61,14 @@ describe('StatusTile', () => {
         instance={inst({
           serverId: 'proxy-1',
           role: 'bungee',
-          proxy: { onlineConnections: 150, threadCount: 48, uptimeMs: 0, backendUp: 3, backendTotal: 4, backendAvgLatencyMs: 12 },
+          proxy: {
+            onlineConnections: 150,
+            threadCount: 48,
+            uptimeMs: 0,
+            backendUp: 3,
+            backendTotal: 4,
+            backendAvgLatencyMs: 12,
+          },
         })}
       />,
     )
@@ -89,7 +107,12 @@ describe('StatusTile', () => {
 
   it('数值字段缺省时按 0 兜底不崩溃（容错）', () => {
     // 故意造缺 tps/playerCount 的越界桩：应渲染 0 而非抛错。
-    const broken = { serverId: 'srv-x', role: 'bukkit', status: 'online', proxy: {} } as unknown as InstanceView
+    const broken = {
+      serverId: 'srv-x',
+      role: 'bukkit',
+      status: 'online',
+      proxy: {},
+    } as unknown as InstanceView
     render(<StatusTile instance={broken} />)
     expect(screen.getByText('srv-x')).toBeInTheDocument()
     expect(screen.getByText('0.0')).toBeInTheDocument()

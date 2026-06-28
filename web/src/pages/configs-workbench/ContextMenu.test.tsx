@@ -24,13 +24,17 @@ describe('ContextMenu（FR-115）', () => {
   })
 
   it('服务器侧文件：传输文案为「抓取到受管」，且无回滚项（回滚仅受管）', () => {
-    render(<ContextMenu state={baseState({ side: 'server' })} onAction={vi.fn()} onClose={vi.fn()} />)
+    render(
+      <ContextMenu state={baseState({ side: 'server' })} onAction={vi.fn()} onClose={vi.fn()} />,
+    )
     expect(screen.getByText('抓取到受管')).toBeInTheDocument()
     expect(screen.queryByText('回滚到历史版本…')).not.toBeInTheDocument()
   })
 
   it('文件夹：隐藏文件专属项（编辑/传输/差异/回滚），保留重命名/新建/删除', () => {
-    render(<ContextMenu state={baseState({ isFolder: true })} onAction={vi.fn()} onClose={vi.fn()} />)
+    render(
+      <ContextMenu state={baseState({ isFolder: true })} onAction={vi.fn()} onClose={vi.fn()} />,
+    )
     expect(screen.queryByText('编辑')).not.toBeInTheDocument()
     expect(screen.queryByText('下发到服务器')).not.toBeInTheDocument()
     expect(screen.queryByText('查看差异')).not.toBeInTheDocument()

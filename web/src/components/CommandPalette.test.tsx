@@ -1,6 +1,6 @@
 // 命令面板组件单测（FR-83）：锁定唤起渲染 / 即时过滤 / 分组 / 键盘上下回车跳转 / 数据源失败降级。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'

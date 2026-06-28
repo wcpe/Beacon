@@ -25,7 +25,9 @@ export default function IconStat({ icon, label, value, hint, level }: IconStatPr
       <div className="mt-0.5 shrink-0 text-muted-foreground">{icon}</div>
       <div className="min-w-0">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={cn('mt-0.5 text-lg font-semibold tabular-nums', level && levelText(level))}>{value}</div>
+        <div className={cn('mt-0.5 text-lg font-semibold tabular-nums', level && levelText(level))}>
+          {value}
+        </div>
         {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
       </div>
     </div>

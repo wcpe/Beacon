@@ -30,7 +30,10 @@ function ServerLeaf({ server }: { server: SummaryServer }) {
     <li className="flex items-center gap-2 py-0.5 text-sm">
       <span
         aria-label={t('common.statusAria', { status: server.status })}
-        className={cn('size-2 shrink-0 rounded-full', DOT_COLOR[server.status] ?? 'bg-muted-foreground')}
+        className={cn(
+          'size-2 shrink-0 rounded-full',
+          DOT_COLOR[server.status] ?? 'bg-muted-foreground',
+        )}
       />
       <span className="font-mono">{server.serverId}</span>
     </li>
@@ -48,7 +51,9 @@ function ZoneNode({ zone }: { zone: SummaryZoneNode }) {
         <CountBadge serverCount={zone.serverCount} onlineCount={zone.onlineCount} />
       </div>
       {zone.servers.length === 0 ? (
-        <p className="ml-4 border-l py-0.5 pl-3 text-xs text-muted-foreground">{t('zones.treeNoServer')}</p>
+        <p className="ml-4 border-l py-0.5 pl-3 text-xs text-muted-foreground">
+          {t('zones.treeNoServer')}
+        </p>
       ) : (
         <ul className="ml-4 border-l pl-3">
           {zone.servers.map((s) => (
@@ -66,7 +71,9 @@ function GroupNode({ group }: { group: SummaryGroupNode }) {
   return (
     <li>
       <div className="flex items-center py-0.5">
-        <span className="text-sm font-semibold">{t('zones.treeGroupPrefix', { group: group.group })}</span>
+        <span className="text-sm font-semibold">
+          {t('zones.treeGroupPrefix', { group: group.group })}
+        </span>
         <CountBadge serverCount={group.serverCount} onlineCount={group.onlineCount} />
       </div>
       <ul className="ml-4 space-y-1 border-l pl-3">

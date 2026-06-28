@@ -34,10 +34,7 @@ function zoneKey(group: string, zone: string): string {
 //   - 实例按其 (group, zone) 落入对应桶；assigned 为 false 的进未指派池；
 //   - 实例指向的 (group, zone) 若不在 summary 中，临时补一个桶以免卡片丢失。
 // 输出按 group、zone、serverId 升序，保证渲染稳定（与拖拽顺序无关）。
-export function buildKanbanModel(
-  instances: InstanceView[],
-  summary: ZoneStatView[],
-): KanbanModel {
+export function buildKanbanModel(instances: InstanceView[], summary: ZoneStatView[]): KanbanModel {
   // 以 summary 预建空桶（保留无实例的 zone 作为放置目标）
   const buckets = new Map<string, ZoneBucket>()
   for (const s of summary) {
@@ -85,7 +82,11 @@ export function buildKanbanModel(
 }
 
 // 取某实例当前指派记录的备注（改派时沿用，避免拖拽清空备注）；无记录返回空串。
-export function noteForServer(assignments: AssignmentView[], namespace: string, serverId: string): string {
+export function noteForServer(
+  assignments: AssignmentView[],
+  namespace: string,
+  serverId: string,
+): string {
   const found = assignments.find((a) => a.namespace === namespace && a.serverId === serverId)
   return found?.note ?? ''
 }

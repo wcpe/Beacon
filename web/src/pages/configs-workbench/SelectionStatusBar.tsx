@@ -40,19 +40,27 @@ export default function SelectionStatusBar({
       {selSide === 'server' ? (
         <>
           <ArrowLeft className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <span className="font-medium text-foreground">{t('configs.workbench.barFetch', { count })}</span>
-          <span className="text-muted-foreground">{t('configs.workbench.barFetchTarget', { scope: fetchScopeLabel })}</span>
+          <span className="font-medium text-foreground">
+            {t('configs.workbench.barFetch', { count })}
+          </span>
+          <span className="text-muted-foreground">
+            {t('configs.workbench.barFetchTarget', { scope: fetchScopeLabel })}
+          </span>
         </>
       ) : selSide === 'managed' ? (
         <>
           <Rocket className="h-4 w-4 shrink-0 text-primary" />
-          <span className="font-medium text-foreground">{t('configs.workbench.barPublish', { count })}</span>
+          <span className="font-medium text-foreground">
+            {t('configs.workbench.barPublish', { count })}
+          </span>
           <span className="text-muted-foreground">{t('configs.workbench.barPublishHint')}</span>
         </>
       ) : (
         <>
           <MousePointerClick className="h-4 w-4 shrink-0 text-muted-foreground/60" />
-          <span className="min-w-0 truncate text-muted-foreground">{t('configs.workbench.legendHint')}</span>
+          <span className="min-w-0 truncate text-muted-foreground">
+            {t('configs.workbench.legendHint')}
+          </span>
         </>
       )}
 

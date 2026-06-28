@@ -6,10 +6,27 @@
  */
 
 import type {
-  AuditView, AuditPage, ConfigView, DefaultEntryView, DiffView, FileRevisionView, FileView,
-  InstanceView, NamespaceView, OverrideSetDryRunView, OverrideSetRevisionView,
-  ObservabilityView, OverrideSetView, RevisionView, SystemStatusView, TopologyEdge, TopologyGroup,
-  TopologyNode, TopologyView, ZoneStatView, AssignmentView,
+  AuditView,
+  AuditPage,
+  ConfigView,
+  DefaultEntryView,
+  DiffView,
+  FileRevisionView,
+  FileView,
+  InstanceView,
+  NamespaceView,
+  OverrideSetDryRunView,
+  OverrideSetRevisionView,
+  ObservabilityView,
+  OverrideSetView,
+  RevisionView,
+  SystemStatusView,
+  TopologyEdge,
+  TopologyGroup,
+  TopologyNode,
+  TopologyView,
+  ZoneStatView,
+  AssignmentView,
 } from '../types'
 import type { BCSummary, MetricsSummary, MetricsTrend, ServerPlayers, TrendPoint } from '../client'
 
@@ -126,16 +143,96 @@ function makeMockConfig(
 
 export const mockConfigs: MockConfig[] = [
   // prod 环境
-  makeMockConfig(1, 'prod', '__GLOBAL__', 'game_config.yml', 'global', '', 'yaml', [YAML_CONTENT_BASE, YAML_CONTENT_V2, YAML_CONTENT_V3], 'admin'),
-  makeMockConfig(2, 'prod', '__GLOBAL__', 'db.properties', 'global', '', 'properties', [PROPERTIES_BASE, PROPERTIES_V2], 'admin'),
-  makeMockConfig(3, 'prod', 'server-a', 'game_config.yml', 'group', '', 'yaml', [YAML_CONTENT_BASE, YAML_CONTENT_V2], 'developer'),
-  makeMockConfig(4, 'prod', 'server-a', 'server.json', 'zone', 'zone-01', 'json', [JSON_BASE, JSON_V2], 'admin'),
-  makeMockConfig(5, 'prod', 'server-b', 'game_config.yml', 'group', '', 'yaml', [YAML_CONTENT_BASE], 'developer'),
+  makeMockConfig(
+    1,
+    'prod',
+    '__GLOBAL__',
+    'game_config.yml',
+    'global',
+    '',
+    'yaml',
+    [YAML_CONTENT_BASE, YAML_CONTENT_V2, YAML_CONTENT_V3],
+    'admin',
+  ),
+  makeMockConfig(
+    2,
+    'prod',
+    '__GLOBAL__',
+    'db.properties',
+    'global',
+    '',
+    'properties',
+    [PROPERTIES_BASE, PROPERTIES_V2],
+    'admin',
+  ),
+  makeMockConfig(
+    3,
+    'prod',
+    'server-a',
+    'game_config.yml',
+    'group',
+    '',
+    'yaml',
+    [YAML_CONTENT_BASE, YAML_CONTENT_V2],
+    'developer',
+  ),
+  makeMockConfig(
+    4,
+    'prod',
+    'server-a',
+    'server.json',
+    'zone',
+    'zone-01',
+    'json',
+    [JSON_BASE, JSON_V2],
+    'admin',
+  ),
+  makeMockConfig(
+    5,
+    'prod',
+    'server-b',
+    'game_config.yml',
+    'group',
+    '',
+    'yaml',
+    [YAML_CONTENT_BASE],
+    'developer',
+  ),
 
   // test 环境
-  makeMockConfig(6, 'test', '__GLOBAL__', 'game_config.yml', 'global', '', 'yaml', [YAML_CONTENT_BASE, YAML_CONTENT_V2], 'admin'),
-  makeMockConfig(7, 'test', '__GLOBAL__', 'db.properties', 'global', '', 'properties', [PROPERTIES_BASE], 'developer'),
-  makeMockConfig(8, 'test', 'server-a', 'game_config.yml', 'group', '', 'yaml', [YAML_CONTENT_BASE], 'admin'),
+  makeMockConfig(
+    6,
+    'test',
+    '__GLOBAL__',
+    'game_config.yml',
+    'global',
+    '',
+    'yaml',
+    [YAML_CONTENT_BASE, YAML_CONTENT_V2],
+    'admin',
+  ),
+  makeMockConfig(
+    7,
+    'test',
+    '__GLOBAL__',
+    'db.properties',
+    'global',
+    '',
+    'properties',
+    [PROPERTIES_BASE],
+    'developer',
+  ),
+  makeMockConfig(
+    8,
+    'test',
+    'server-a',
+    'game_config.yml',
+    'group',
+    '',
+    'yaml',
+    [YAML_CONTENT_BASE],
+    'admin',
+  ),
 ]
 
 // ---- 导出便捷函数 ----
@@ -207,12 +304,139 @@ const ZERO_PROXY: InstanceView['proxy'] = {
 }
 
 export const mockInstances: InstanceView[] = [
-  { namespace: 'prod', serverId: 'server-01', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.0.1:25565', version: '1.20.4', agentVersion: '0.12.0', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(5), lastHeartbeatAgeSec: 5, healthReason: '', appliedMd5: 'abc12345', playerCount: 42, tps: 19.8, backends: [], zoneDefaultEntry: true, proxy: ZERO_PROXY, registeredAt: ago(86400) },
-  { namespace: 'prod', serverId: 'server-02', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.0.2:25565', version: '1.20.4', agentVersion: '0.12.0', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(10), lastHeartbeatAgeSec: 10, healthReason: '', appliedMd5: 'abc12345', playerCount: 38, tps: 19.5, backends: [], zoneDefaultEntry: false, proxy: ZERO_PROXY, registeredAt: ago(86400) },
-  { namespace: 'prod', serverId: 'server-03', role: 'bungee', group: 'server-b', zone: 'zone-02', assigned: true, address: '10.0.0.3:25565', version: '1.20.4', agentVersion: '0.12.0', status: 'online', capacity: 200, weight: 2, metadata: {}, lastHeartbeat: ago(60), lastHeartbeatAgeSec: 60, healthReason: '', appliedMd5: 'def67890', playerCount: 0, tps: 0, backends: ['server-01', 'server-04'], zoneDefaultEntry: false, proxy: { onlineConnections: 128, threadCount: 36, uptimeMs: 7_200_000, backendUp: 1, backendTotal: 2, backendAvgLatencyMs: 18 }, registeredAt: ago(172800) },
+  {
+    namespace: 'prod',
+    serverId: 'server-01',
+    role: 'bukkit',
+    group: 'server-a',
+    zone: 'zone-01',
+    assigned: true,
+    address: '10.0.0.1:25565',
+    version: '1.20.4',
+    agentVersion: '0.12.0',
+    status: 'online',
+    capacity: 100,
+    weight: 1,
+    metadata: {},
+    lastHeartbeat: ago(5),
+    lastHeartbeatAgeSec: 5,
+    healthReason: '',
+    appliedMd5: 'abc12345',
+    playerCount: 42,
+    tps: 19.8,
+    backends: [],
+    zoneDefaultEntry: true,
+    proxy: ZERO_PROXY,
+    registeredAt: ago(86400),
+  },
+  {
+    namespace: 'prod',
+    serverId: 'server-02',
+    role: 'bukkit',
+    group: 'server-a',
+    zone: 'zone-01',
+    assigned: true,
+    address: '10.0.0.2:25565',
+    version: '1.20.4',
+    agentVersion: '0.12.0',
+    status: 'online',
+    capacity: 100,
+    weight: 1,
+    metadata: {},
+    lastHeartbeat: ago(10),
+    lastHeartbeatAgeSec: 10,
+    healthReason: '',
+    appliedMd5: 'abc12345',
+    playerCount: 38,
+    tps: 19.5,
+    backends: [],
+    zoneDefaultEntry: false,
+    proxy: ZERO_PROXY,
+    registeredAt: ago(86400),
+  },
+  {
+    namespace: 'prod',
+    serverId: 'server-03',
+    role: 'bungee',
+    group: 'server-b',
+    zone: 'zone-02',
+    assigned: true,
+    address: '10.0.0.3:25565',
+    version: '1.20.4',
+    agentVersion: '0.12.0',
+    status: 'online',
+    capacity: 200,
+    weight: 2,
+    metadata: {},
+    lastHeartbeat: ago(60),
+    lastHeartbeatAgeSec: 60,
+    healthReason: '',
+    appliedMd5: 'def67890',
+    playerCount: 0,
+    tps: 0,
+    backends: ['server-01', 'server-04'],
+    zoneDefaultEntry: false,
+    proxy: {
+      onlineConnections: 128,
+      threadCount: 36,
+      uptimeMs: 7_200_000,
+      backendUp: 1,
+      backendTotal: 2,
+      backendAvgLatencyMs: 18,
+    },
+    registeredAt: ago(172800),
+  },
   // 演示集群版本不一致黄标（FR-86）：该服仍跑旧 agent 构建，与本环境多数 0.12.0 不同
-  { namespace: 'prod', serverId: 'server-04', role: 'bukkit', group: 'server-b', zone: 'zone-02', assigned: true, address: '10.0.0.4:25565', version: '1.20.4', agentVersion: '0.11.0', status: 'online', capacity: 100, weight: 1, metadata: {}, lastHeartbeat: ago(3), lastHeartbeatAgeSec: 3, healthReason: '', appliedMd5: 'abc12345', playerCount: 55, tps: 19.2, backends: [], zoneDefaultEntry: true, proxy: ZERO_PROXY, registeredAt: ago(43200) },
-  { namespace: 'test', serverId: 'test-01', role: 'bukkit', group: 'server-a', zone: 'zone-01', assigned: true, address: '10.0.1.1:25565', version: '1.20.4', agentVersion: '0.12.0', status: 'online', capacity: 50, weight: 1, metadata: {}, lastHeartbeat: ago(8), lastHeartbeatAgeSec: 8, healthReason: '', appliedMd5: 'abc12345', playerCount: 5, tps: 20.0, backends: [], zoneDefaultEntry: false, proxy: ZERO_PROXY, registeredAt: ago(86400) },
+  {
+    namespace: 'prod',
+    serverId: 'server-04',
+    role: 'bukkit',
+    group: 'server-b',
+    zone: 'zone-02',
+    assigned: true,
+    address: '10.0.0.4:25565',
+    version: '1.20.4',
+    agentVersion: '0.11.0',
+    status: 'online',
+    capacity: 100,
+    weight: 1,
+    metadata: {},
+    lastHeartbeat: ago(3),
+    lastHeartbeatAgeSec: 3,
+    healthReason: '',
+    appliedMd5: 'abc12345',
+    playerCount: 55,
+    tps: 19.2,
+    backends: [],
+    zoneDefaultEntry: true,
+    proxy: ZERO_PROXY,
+    registeredAt: ago(43200),
+  },
+  {
+    namespace: 'test',
+    serverId: 'test-01',
+    role: 'bukkit',
+    group: 'server-a',
+    zone: 'zone-01',
+    assigned: true,
+    address: '10.0.1.1:25565',
+    version: '1.20.4',
+    agentVersion: '0.12.0',
+    status: 'online',
+    capacity: 50,
+    weight: 1,
+    metadata: {},
+    lastHeartbeat: ago(8),
+    lastHeartbeatAgeSec: 8,
+    healthReason: '',
+    appliedMd5: 'abc12345',
+    playerCount: 5,
+    tps: 20.0,
+    backends: [],
+    zoneDefaultEntry: false,
+    proxy: ZERO_PROXY,
+    registeredAt: ago(86400),
+  },
 ]
 
 // ---- 分组/Zone 视图 ----
@@ -232,53 +456,167 @@ export const mockNamespaces: NamespaceView[] = [
 
 // ---- 审计 ----
 
-export function getMockAudits(filter?: { namespace?: string; operator?: string; action?: string; targetType?: string; page?: number; size?: number }): AuditPage {
+export function getMockAudits(filter?: {
+  namespace?: string
+  operator?: string
+  action?: string
+  targetType?: string
+  page?: number
+  size?: number
+}): AuditPage {
   const all: AuditView[] = [
-    { namespace: 'prod', operator: 'admin', action: 'publish', targetType: 'config', targetRef: 'game_config.yml', detail: '发布版本 v3', result: 'success', clientIp: '127.0.0.1', createdAt: ago(3600) },
-    { namespace: 'prod', operator: 'developer', action: 'create', targetType: 'config', targetRef: 'db.properties', detail: '新建配置', result: 'success', clientIp: '127.0.0.1', createdAt: ago(7200) },
-    { namespace: 'test', operator: 'admin', action: 'rollback', targetType: 'config', targetRef: 'game_config.yml', detail: '回滚到 v1', result: 'success', clientIp: '127.0.0.1', createdAt: ago(10800) },
-    { namespace: 'prod', operator: 'admin', action: 'delete', targetType: 'config', targetRef: 'old_plugin.yml', detail: '软删', result: 'success', clientIp: '127.0.0.1', createdAt: ago(14400) },
-    { namespace: 'prod', operator: 'admin', action: 'assign', targetType: 'zone', targetRef: 'server-01 → zone-01', detail: '指派 zone', result: 'success', clientIp: '127.0.0.1', createdAt: ago(18000) },
+    {
+      namespace: 'prod',
+      operator: 'admin',
+      action: 'publish',
+      targetType: 'config',
+      targetRef: 'game_config.yml',
+      detail: '发布版本 v3',
+      result: 'success',
+      clientIp: '127.0.0.1',
+      createdAt: ago(3600),
+    },
+    {
+      namespace: 'prod',
+      operator: 'developer',
+      action: 'create',
+      targetType: 'config',
+      targetRef: 'db.properties',
+      detail: '新建配置',
+      result: 'success',
+      clientIp: '127.0.0.1',
+      createdAt: ago(7200),
+    },
+    {
+      namespace: 'test',
+      operator: 'admin',
+      action: 'rollback',
+      targetType: 'config',
+      targetRef: 'game_config.yml',
+      detail: '回滚到 v1',
+      result: 'success',
+      clientIp: '127.0.0.1',
+      createdAt: ago(10800),
+    },
+    {
+      namespace: 'prod',
+      operator: 'admin',
+      action: 'delete',
+      targetType: 'config',
+      targetRef: 'old_plugin.yml',
+      detail: '软删',
+      result: 'success',
+      clientIp: '127.0.0.1',
+      createdAt: ago(14400),
+    },
+    {
+      namespace: 'prod',
+      operator: 'admin',
+      action: 'assign',
+      targetType: 'zone',
+      targetRef: 'server-01 → zone-01',
+      detail: '指派 zone',
+      result: 'success',
+      clientIp: '127.0.0.1',
+      createdAt: ago(18000),
+    },
   ]
   let items = all
-  if (filter?.namespace) items = items.filter(a => a.namespace === filter.namespace)
-  if (filter?.operator) items = items.filter(a => a.operator === filter.operator)
-  if (filter?.action) items = items.filter(a => a.action === filter.action)
+  if (filter?.namespace) items = items.filter((a) => a.namespace === filter.namespace)
+  if (filter?.operator) items = items.filter((a) => a.operator === filter.operator)
+  if (filter?.action) items = items.filter((a) => a.action === filter.action)
   return { total: items.length, items }
 }
 
 // ---- 文件树托管 ----
 
 export const mockFiles: FileView[] = [
-  { id: 1, namespace: 'prod', group: '__GLOBAL__', path: 'plugins/game/config.yml', scopeLevel: 'global', scopeTarget: '', version: 3, md5: 'abc12345', enabled: true, updatedAt: ago(3600), content: 'enabled: true\ncooldown: 30\n' },
-  { id: 2, namespace: 'prod', group: '__GLOBAL__', path: 'plugins/game/db.properties', scopeLevel: 'global', scopeTarget: '', version: 2, md5: 'def67890', enabled: true, updatedAt: ago(7200), content: 'url=jdbc:mysql://localhost/game\npool=10\n' },
-  { id: 3, namespace: 'prod', group: 'server-a', path: 'plugins/game/config.yml', scopeLevel: 'group', scopeTarget: '', version: 1, md5: 'aaa11111', enabled: true, updatedAt: ago(10800), content: 'enabled: true\ncooldown: 15\n' },
+  {
+    id: 1,
+    namespace: 'prod',
+    group: '__GLOBAL__',
+    path: 'plugins/game/config.yml',
+    scopeLevel: 'global',
+    scopeTarget: '',
+    version: 3,
+    md5: 'abc12345',
+    enabled: true,
+    updatedAt: ago(3600),
+    content: 'enabled: true\ncooldown: 30\n',
+  },
+  {
+    id: 2,
+    namespace: 'prod',
+    group: '__GLOBAL__',
+    path: 'plugins/game/db.properties',
+    scopeLevel: 'global',
+    scopeTarget: '',
+    version: 2,
+    md5: 'def67890',
+    enabled: true,
+    updatedAt: ago(7200),
+    content: 'url=jdbc:mysql://localhost/game\npool=10\n',
+  },
+  {
+    id: 3,
+    namespace: 'prod',
+    group: 'server-a',
+    path: 'plugins/game/config.yml',
+    scopeLevel: 'group',
+    scopeTarget: '',
+    version: 1,
+    md5: 'aaa11111',
+    enabled: true,
+    updatedAt: ago(10800),
+    content: 'enabled: true\ncooldown: 15\n',
+  },
 ]
 
-export function getMockFileList(filter?: { namespace?: string; group?: string; path?: string; scopeLevel?: string }): FileView[] {
+export function getMockFileList(filter?: {
+  namespace?: string
+  group?: string
+  path?: string
+  scopeLevel?: string
+}): FileView[] {
   let items = [...mockFiles]
-  if (filter?.namespace) items = items.filter(f => f.namespace === filter.namespace)
-  if (filter?.group) items = items.filter(f => f.group === filter.group)
-  if (filter?.path) items = items.filter(f => f.path === filter.path)
+  if (filter?.namespace) items = items.filter((f) => f.namespace === filter.namespace)
+  if (filter?.group) items = items.filter((f) => f.group === filter.group)
+  if (filter?.path) items = items.filter((f) => f.path === filter.path)
   return items
 }
 
 export function getMockFile(id: number): FileView | null {
-  return mockFiles.find(f => f.id === id) ?? null
+  return mockFiles.find((f) => f.id === id) ?? null
 }
 
 export function getMockFileRevisions(id: number): FileRevisionView[] {
-  const file = mockFiles.find(f => f.id === id)
+  const file = mockFiles.find((f) => f.id === id)
   // 最新版本在前（编辑器历史面板首项标「当前」，diff 取该项内容）
   return [
-    { version: 2, md5: 'bbb22222', operator: 'developer', comment: '更新', sourceRevision: null, createdAt: ago(3600), content: file?.content ?? '' },
-    { version: 1, md5: 'aaa11111', operator: 'admin', comment: '初始', sourceRevision: null, createdAt: ago(7200), content: '' },
+    {
+      version: 2,
+      md5: 'bbb22222',
+      operator: 'developer',
+      comment: '更新',
+      sourceRevision: null,
+      createdAt: ago(3600),
+      content: file?.content ?? '',
+    },
+    {
+      version: 1,
+      md5: 'aaa11111',
+      operator: 'admin',
+      comment: '初始',
+      sourceRevision: null,
+      createdAt: ago(7200),
+      content: '',
+    },
   ]
 }
 
 // 保存受管文件（发布新版本，FR-112）：把新内容写回内存 mockFiles + 版本号自增，返回发布结果。
 export function saveMockFile(id: number, content: string): { version: number; md5: string } | null {
-  const file = mockFiles.find(f => f.id === id)
+  const file = mockFiles.find((f) => f.id === id)
   if (!file) return null
   file.content = content
   file.version += 1
@@ -290,22 +628,46 @@ export function saveMockFile(id: number, content: string): { version: number; md
 // ---- 覆盖集 ----
 
 export const mockOverrideSets: OverrideSetView[] = [
-  { id: 1, namespace: 'prod', group: '__GLOBAL__', name: '三方插件覆盖', scopeLevel: 'global', scopeTarget: '', targetRoot: '/plugins/third-party', reloadCommand: '/reload', mode: 'merge', version: 1, enabled: true, updatedAt: ago(3600) },
+  {
+    id: 1,
+    namespace: 'prod',
+    group: '__GLOBAL__',
+    name: '三方插件覆盖',
+    scopeLevel: 'global',
+    scopeTarget: '',
+    targetRoot: '/plugins/third-party',
+    reloadCommand: '/reload',
+    mode: 'merge',
+    version: 1,
+    enabled: true,
+    updatedAt: ago(3600),
+  },
 ]
 
-export function getMockOverrideSetList(filter?: { namespace?: string; group?: string }): OverrideSetView[] {
+export function getMockOverrideSetList(filter?: {
+  namespace?: string
+  group?: string
+}): OverrideSetView[] {
   let items = [...mockOverrideSets]
-  if (filter?.namespace) items = items.filter(s => s.namespace === filter.namespace)
+  if (filter?.namespace) items = items.filter((s) => s.namespace === filter.namespace)
   return items
 }
 
 export function getMockOverrideSet(id: number): OverrideSetView | null {
-  return mockOverrideSets.find(s => s.id === id) ?? null
+  return mockOverrideSets.find((s) => s.id === id) ?? null
 }
 
 export function getMockOverrideSetRevisions(_id: number): OverrideSetRevisionView[] {
   return [
-    { version: 1, targetRoot: '/plugins/third-party', reloadCommand: '/reload', operator: 'admin', comment: '初始', sourceRevision: null, createdAt: ago(3600) },
+    {
+      version: 1,
+      targetRoot: '/plugins/third-party',
+      reloadCommand: '/reload',
+      operator: 'admin',
+      comment: '初始',
+      sourceRevision: null,
+      createdAt: ago(3600),
+    },
   ]
 }
 
@@ -321,16 +683,41 @@ export function getMockDryRun(_id: number): OverrideSetDryRunView {
 // ---- Zone 指派 ----
 
 export const mockAssignments: AssignmentView[] = [
-  { namespace: 'prod', serverId: 'server-01', group: 'server-a', zone: 'zone-01', note: '主力服', updatedAt: ago(3600) },
-  { namespace: 'prod', serverId: 'server-02', group: 'server-a', zone: 'zone-01', note: '备用', updatedAt: ago(3600) },
-  { namespace: 'prod', serverId: 'server-03', group: 'server-b', zone: 'zone-02', note: 'Bungee 入口', updatedAt: ago(3600) },
+  {
+    namespace: 'prod',
+    serverId: 'server-01',
+    group: 'server-a',
+    zone: 'zone-01',
+    note: '主力服',
+    updatedAt: ago(3600),
+  },
+  {
+    namespace: 'prod',
+    serverId: 'server-02',
+    group: 'server-a',
+    zone: 'zone-01',
+    note: '备用',
+    updatedAt: ago(3600),
+  },
+  {
+    namespace: 'prod',
+    serverId: 'server-03',
+    group: 'server-b',
+    zone: 'zone-02',
+    note: 'Bungee 入口',
+    updatedAt: ago(3600),
+  },
 ]
 
-export function getMockAssignments(filter?: { namespace?: string; group?: string; zone?: string }): AssignmentView[] {
+export function getMockAssignments(filter?: {
+  namespace?: string
+  group?: string
+  zone?: string
+}): AssignmentView[] {
   let items = [...mockAssignments]
-  if (filter?.namespace) items = items.filter(a => a.namespace === filter.namespace)
-  if (filter?.group) items = items.filter(a => a.group === filter.group)
-  if (filter?.zone) items = items.filter(a => a.zone === filter.zone)
+  if (filter?.namespace) items = items.filter((a) => a.namespace === filter.namespace)
+  if (filter?.group) items = items.filter((a) => a.group === filter.group)
+  if (filter?.zone) items = items.filter((a) => a.zone === filter.zone)
   return items
 }
 
@@ -348,7 +735,14 @@ function summarizeMockBC(online: InstanceView[]): BCSummary {
   const proxies = online.filter((i) => i.role === ROLE_BUNGEE)
   if (proxies.length === 0) {
     // 无在线 bc：各计数为 0、平均延迟哨兵 -1（与后端约定一致）
-    return { proxyCount: 0, totalConnections: 0, avgThreadCount: 0, backendUp: 0, backendTotal: 0, avgBackendLatencyMs: -1 }
+    return {
+      proxyCount: 0,
+      totalConnections: 0,
+      avgThreadCount: 0,
+      backendUp: 0,
+      backendTotal: 0,
+      avgBackendLatencyMs: -1,
+    }
   }
   const totalConnections = proxies.reduce((s, p) => s + p.proxy.onlineConnections, 0)
   const avgThreadCount = proxies.reduce((s, p) => s + p.proxy.threadCount, 0) / proxies.length
@@ -356,15 +750,25 @@ function summarizeMockBC(online: InstanceView[]): BCSummary {
   const backendTotal = proxies.reduce((s, p) => s + p.proxy.backendTotal, 0)
   // 平均后端延迟仅在「有可达样本（>=0）」的代理间取均值；全无样本则置 -1
   const sampled = proxies.filter((p) => p.proxy.backendAvgLatencyMs >= 0)
-  const avgBackendLatencyMs = sampled.length > 0
-    ? sampled.reduce((s, p) => s + p.proxy.backendAvgLatencyMs, 0) / sampled.length
-    : -1
-  return { proxyCount: proxies.length, totalConnections, avgThreadCount, backendUp, backendTotal, avgBackendLatencyMs }
+  const avgBackendLatencyMs =
+    sampled.length > 0
+      ? sampled.reduce((s, p) => s + p.proxy.backendAvgLatencyMs, 0) / sampled.length
+      : -1
+  return {
+    proxyCount: proxies.length,
+    totalConnections,
+    avgThreadCount,
+    backendUp,
+    backendTotal,
+    avgBackendLatencyMs,
+  }
 }
 
 // 当前快照聚合：从在线实例派生（namespace 为空时聚合全部环境），与后端 Summarize 同口径。
 export function getMockMetricsSummary(namespace?: string): MetricsSummary {
-  const online = mockInstances.filter((i) => i.status === 'online' && (!namespace || i.namespace === namespace))
+  const online = mockInstances.filter(
+    (i) => i.status === 'online' && (!namespace || i.namespace === namespace),
+  )
   // 每服明细：bukkit 取在线人数，bungee 取代理在线连接数（与 BC 面板 / 代理服管理页口径一致，FR-34）
   const servers: ServerPlayers[] = online
     .map((i) => ({
@@ -410,11 +814,16 @@ export function getMockTrend(namespace: string | undefined, window: string): Met
     points.push({
       sampledAt: ago((TREND_POINTS - 1 - i) * step),
       totalPlayers: Math.max(0, Math.round(base.totalPlayers * (1 + wave * 0.15))),
-      avgTps: base.avgTps > 0 ? Number(Math.min(20, Math.max(0, base.avgTps + wave * 0.3)).toFixed(2)) : 0,
+      avgTps:
+        base.avgTps > 0
+          ? Number(Math.min(20, Math.max(0, base.avgTps + wave * 0.3)).toFixed(2))
+          : 0,
       avgMemUsed: Math.max(0, Math.round(base.avgMemUsed * (1 + wave * 0.1))),
       avgMemMax: base.avgMemMax,
       // 无可用 CPU 样本时全程置 -1（前端据此断线），否则约束在 [0,1]
-      avgCpuLoad: cpuAvailable ? Number(Math.min(1, Math.max(0, base.avgCpuLoad + wave * 0.1)).toFixed(3)) : -1,
+      avgCpuLoad: cpuAvailable
+        ? Number(Math.min(1, Math.max(0, base.avgCpuLoad + wave * 0.1)).toFixed(3))
+        : -1,
     })
   }
   return { points }
@@ -448,7 +857,14 @@ export function getMockObservability(): ObservabilityView {
     registryByStatus[i.status] = (registryByStatus[i.status] ?? 0) + 1
   }
   return {
-    dbPool: { maxOpenConnections: 20, openConnections: 5, inUse: 2, idle: 3, waitCount: 0, waitDurationMs: 0 },
+    dbPool: {
+      maxOpenConnections: 20,
+      openConnections: 5,
+      inUse: 2,
+      idle: 3,
+      waitCount: 0,
+      waitDurationMs: 0,
+    },
     longpoll: { config: 3, file: 1, topology: 0, command: 2, total: 6 },
     registryByStatus,
     registryTotal: mockInstances.length,
@@ -463,11 +879,20 @@ const TOPOLOGY_AVAILABLE = new Set(['online', 'degraded'])
 
 // 由在线 / 亚健康实例派生某 namespace 的拓扑快照（节点 + bc→bukkit 边 + 大区/zone 分组）。
 export function buildMockTopology(namespace: string): TopologyView {
-  const avail = mockInstances.filter((i) => i.namespace === namespace && TOPOLOGY_AVAILABLE.has(i.status))
+  const avail = mockInstances.filter(
+    (i) => i.namespace === namespace && TOPOLOGY_AVAILABLE.has(i.status),
+  )
   const index = new Set(avail.map((i) => i.serverId))
 
   const nodes: TopologyNode[] = avail
-    .map((i) => ({ serverId: i.serverId, role: i.role, group: i.group, zone: i.zone, status: i.status, address: i.address }))
+    .map((i) => ({
+      serverId: i.serverId,
+      role: i.role,
+      group: i.group,
+      zone: i.zone,
+      status: i.status,
+      address: i.address,
+    }))
     .sort((a, b) => a.serverId.localeCompare(b.serverId))
 
   // 仅 bungee 有后端归属事实（FR-36）；剔除目标已离线的悬挂边
@@ -478,7 +903,9 @@ export function buildMockTopology(namespace: string): TopologyView {
       if (index.has(backend)) edges.push({ source: i.serverId, target: backend })
     }
   }
-  edges.sort((a, b) => (a.source === b.source ? a.target.localeCompare(b.target) : a.source.localeCompare(b.source)))
+  edges.sort((a, b) =>
+    a.source === b.source ? a.target.localeCompare(b.target) : a.source.localeCompare(b.source),
+  )
 
   // 按 (group, zone) 分簇（zone 为 null 单独成簇）
   const bucket = new Map<string, TopologyGroup>()
@@ -494,7 +921,9 @@ export function buildMockTopology(namespace: string): TopologyView {
   const groups: TopologyGroup[] = [...bucket.values()]
     .map((g) => ({ ...g, members: [...g.members].sort((a, b) => a.localeCompare(b)) }))
     .sort((a, b) =>
-      a.group === b.group ? (a.zone ?? '').localeCompare(b.zone ?? '') : a.group.localeCompare(b.group),
+      a.group === b.group
+        ? (a.zone ?? '').localeCompare(b.zone ?? '')
+        : a.group.localeCompare(b.group),
     )
 
   return { namespace, nodes, edges, groups }
@@ -503,11 +932,26 @@ export function buildMockTopology(namespace: string): TopologyView {
 // ---- 小区默认入口（FR-48）----
 
 export const mockDefaultEntries: DefaultEntryView[] = [
-  { namespace: 'prod', group: 'server-a', zone: 'zone-01', defaultServerId: 'server-01', updatedAt: ago(3600) },
-  { namespace: 'prod', group: 'server-b', zone: 'zone-02', defaultServerId: 'server-04', updatedAt: ago(3600) },
+  {
+    namespace: 'prod',
+    group: 'server-a',
+    zone: 'zone-01',
+    defaultServerId: 'server-01',
+    updatedAt: ago(3600),
+  },
+  {
+    namespace: 'prod',
+    group: 'server-b',
+    zone: 'zone-02',
+    defaultServerId: 'server-04',
+    updatedAt: ago(3600),
+  },
 ]
 
-export function getMockDefaultEntries(filter?: { namespace?: string; group?: string }): DefaultEntryView[] {
+export function getMockDefaultEntries(filter?: {
+  namespace?: string
+  group?: string
+}): DefaultEntryView[] {
   let items = [...mockDefaultEntries]
   if (filter?.namespace) items = items.filter((e) => e.namespace === filter.namespace)
   if (filter?.group) items = items.filter((e) => e.group === filter.group)
@@ -525,15 +969,30 @@ const mockBrowseTree = {
   size: 4096,
   children: [
     {
-      name: 'Essentials', dir: true, size: 4096, isText: false, overThreshold: false,
+      name: 'Essentials',
+      dir: true,
+      size: 4096,
+      isText: false,
+      overThreshold: false,
       children: [
         { name: 'config.yml', dir: false, size: 12400, isText: true, overThreshold: false },
         { name: 'kits.yml', dir: false, size: 3100, isText: true, overThreshold: false },
-        { name: 'userdata', dir: true, size: 4096, isText: false, overThreshold: false, children: [] },
+        {
+          name: 'userdata',
+          dir: true,
+          size: 4096,
+          isText: false,
+          overThreshold: false,
+          children: [],
+        },
       ],
     },
     {
-      name: 'WorldGuard', dir: true, size: 4096, isText: false, overThreshold: false,
+      name: 'WorldGuard',
+      dir: true,
+      size: 4096,
+      isText: false,
+      overThreshold: false,
       children: [
         { name: 'config.yml', dir: false, size: 6000, isText: true, overThreshold: false },
         { name: 'regions.yml', dir: false, size: 88000, isText: true, overThreshold: false },
@@ -548,7 +1007,8 @@ const mockBrowseTree = {
 
 // 示意单文件内容（op=file）：按路径末段给一段文本，未命中给占位。
 const mockBrowseFiles: Record<string, string> = {
-  'spawn.yml': '# 出生点配置（服务器现状）\nspawns:\n  default: { world: world, x: 120.0, y: 64.0, z: -64.5 }\nrespawn-at-spawn: false\n',
+  'spawn.yml':
+    '# 出生点配置（服务器现状）\nspawns:\n  default: { world: world, x: 120.0, y: 64.0, z: -64.5 }\nrespawn-at-spawn: false\n',
   'motd.yml': "# 服务器 MOTD（服务器现状）\nmotd: '&b欢迎'\nmax-players: 100\n",
 }
 
@@ -565,7 +1025,14 @@ export function getMockBrowse(op: string, path: string): unknown {
   if (op === 'list') {
     // 懒列一层：定位到 path 对应目录节点，列其直接子项（仅示意根层）
     const entries = mockBrowseTree.children.map(({ children: _children, ...rest }) => rest)
-    return { path, entries, offset: 0, limit: entries.length, total: entries.length, hasMore: false }
+    return {
+      path,
+      entries,
+      offset: 0,
+      limit: entries.length,
+      total: entries.length,
+      hasMore: false,
+    }
   }
   // 默认 tree：返回整棵示意子树
   return mockBrowseTree

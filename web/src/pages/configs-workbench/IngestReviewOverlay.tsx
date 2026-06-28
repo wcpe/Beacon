@@ -37,7 +37,7 @@ export default function IngestReviewOverlay({
   const status = scan.data?.status
   // 清单到位（pending-review）才有可审项；扫描中（pending/scanning）items 暂空，显扫描骨架
   const ready = status === INGEST_REVIEW_READY
-  const items = ready ? scan.data?.items ?? [] : []
+  const items = ready ? (scan.data?.items ?? []) : []
   const ignoreRules = scan.data?.ignoreRules ?? []
 
   // 勾选纳管集合：清单到位后按 defaultPick 初始化
@@ -74,15 +74,23 @@ export default function IngestReviewOverlay({
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center p-6">
       {/* 半透明遮罩 */}
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onCancel} aria-hidden />
+      <div
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        onClick={onCancel}
+        aria-hidden
+      />
       {/* 浮层卡 */}
       <div className="relative flex max-h-full w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
         {/* 头 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
           <FileSearch className="h-4 w-4 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">{t('configs.workbench.ingestTitle')}</div>
-            <div className="truncate font-mono text-[0.65rem] text-muted-foreground">{queueName}</div>
+            <div className="text-sm font-medium text-foreground">
+              {t('configs.workbench.ingestTitle')}
+            </div>
+            <div className="truncate font-mono text-[0.65rem] text-muted-foreground">
+              {queueName}
+            </div>
           </div>
           <button
             type="button"
@@ -97,7 +105,12 @@ export default function IngestReviewOverlay({
         {/* 工具行：全选 + 计数 */}
         <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2 text-xs">
           <label className="flex cursor-pointer items-center gap-1.5 text-muted-foreground">
-            <input type="checkbox" checked={allPicked} onChange={toggleAll} className="h-3 w-3 accent-primary" />
+            <input
+              type="checkbox"
+              checked={allPicked}
+              onChange={toggleAll}
+              className="h-3 w-3 accent-primary"
+            />
             {t('configs.workbench.ingestSelectAll')}
           </label>
           <span className="ml-auto text-muted-foreground">
@@ -110,7 +123,9 @@ export default function IngestReviewOverlay({
           {scanning ? (
             // 扫描中（命令 agent 扫描其 plugins/ 回传清单）：显骨架 + 扫描提示
             <div className="space-y-2 p-4">
-              <p className="text-xs text-muted-foreground">{t('configs.workbench.ingestScanning')}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('configs.workbench.ingestScanning')}
+              </p>
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="h-5 w-full" />
               ))}
@@ -132,13 +147,20 @@ export default function IngestReviewOverlay({
                     onChange={() => toggle(it.path)}
                     className="h-3 w-3 shrink-0 accent-primary"
                   />
-                  <span className="min-w-0 flex-1 truncate font-mono text-foreground">{it.path}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-foreground">
+                    {it.path}
+                  </span>
                   {it.ignored && (
-                    <Badge variant="outline" className="h-4 shrink-0 border-muted-foreground/40 px-1 text-[0.55rem] text-muted-foreground">
+                    <Badge
+                      variant="outline"
+                      className="h-4 shrink-0 border-muted-foreground/40 px-1 text-[0.55rem] text-muted-foreground"
+                    >
                       {t('configs.workbench.ingestIgnored')}
                     </Badge>
                   )}
-                  <span className="w-16 shrink-0 text-right tabular-nums text-muted-foreground">{it.size}</span>
+                  <span className="w-16 shrink-0 text-right tabular-nums text-muted-foreground">
+                    {it.size}
+                  </span>
                 </label>
               )
             })

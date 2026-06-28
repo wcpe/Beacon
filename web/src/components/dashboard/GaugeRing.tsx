@@ -55,7 +55,9 @@ export default function GaugeRing({ icon, ratio, level, label, valueText, hint }
       </div>
       <div className="space-y-0.5">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={cn('text-base font-semibold tabular-nums', levelText(level))}>{valueText}</div>
+        <div className={cn('text-base font-semibold tabular-nums', levelText(level))}>
+          {valueText}
+        </div>
         {hint && <div className="text-[11px] text-muted-foreground">{hint}</div>}
       </div>
     </div>

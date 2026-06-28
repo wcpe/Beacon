@@ -125,11 +125,14 @@ export default function EditorOverlay({
 
   function doSaveAll() {
     setDirtyKeys(new Set())
-    msg.showSuccess(t('configs.workbench.tbActionHint', { action: t('configs.workbench.tbSaveAll') }))
+    msg.showSuccess(
+      t('configs.workbench.tbActionHint', { action: t('configs.workbench.tbSaveAll') }),
+    )
   }
 
   // 工具栏次要动作：原型仅 toast
-  const tbHint = (action: string) => msg.showSuccess(t('configs.workbench.tbActionHint', { action }))
+  const tbHint = (action: string) =>
+    msg.showSuccess(t('configs.workbench.tbActionHint', { action }))
 
   // 最小化态：仅底部一条，点击恢复常态
   if (win === 'minimized') {
@@ -140,8 +143,12 @@ export default function EditorOverlay({
         className="absolute inset-x-0 bottom-0 z-30 flex items-center gap-2 border-t border-border bg-card px-3 py-2 text-left text-xs shadow-lg transition-colors hover:bg-muted/40"
       >
         <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-        <span className="font-medium text-foreground">{t('configs.workbench.overlayRestoreBar')}</span>
-        <span className="ml-2 truncate font-mono text-muted-foreground">{activeName(tabs, activeKey)}</span>
+        <span className="font-medium text-foreground">
+          {t('configs.workbench.overlayRestoreBar')}
+        </span>
+        <span className="ml-2 truncate font-mono text-muted-foreground">
+          {activeName(tabs, activeKey)}
+        </span>
         <Maximize2 className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
       </button>
     )
@@ -161,11 +168,18 @@ export default function EditorOverlay({
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-1.5">
         <Breadcrumb file={file.data} onBack={onClose} />
         <div className="ml-auto flex items-center gap-0.5">
-          <WinBtn label={t('configs.workbench.overlayMinimize')} onClick={() => setWin('minimized')}>
+          <WinBtn
+            label={t('configs.workbench.overlayMinimize')}
+            onClick={() => setWin('minimized')}
+          >
             <Minimize2 className="h-3.5 w-3.5" />
           </WinBtn>
           <WinBtn
-            label={t(win === 'maximized' ? 'configs.workbench.overlayRestore' : 'configs.workbench.overlayMaximize')}
+            label={t(
+              win === 'maximized'
+                ? 'configs.workbench.overlayRestore'
+                : 'configs.workbench.overlayMaximize',
+            )}
             onClick={() => setWin((s) => (s === 'maximized' ? 'normal' : 'maximized'))}
           >
             <Maximize2 className="h-3.5 w-3.5" />
@@ -188,23 +202,41 @@ export default function EditorOverlay({
         <TbBtn label={t('configs.workbench.tbRefresh')} onClick={() => file.refetch()}>
           <RefreshCw className="h-3.5 w-3.5" />
         </TbBtn>
-        <TbBtn label={t('configs.workbench.tbFind')} onClick={() => tbHint(t('configs.workbench.tbFind'))}>
+        <TbBtn
+          label={t('configs.workbench.tbFind')}
+          onClick={() => tbHint(t('configs.workbench.tbFind'))}
+        >
           <Search className="h-3.5 w-3.5" />
         </TbBtn>
-        <TbBtn label={t('configs.workbench.tbReplace')} onClick={() => tbHint(t('configs.workbench.tbReplace'))}>
+        <TbBtn
+          label={t('configs.workbench.tbReplace')}
+          onClick={() => tbHint(t('configs.workbench.tbReplace'))}
+        >
           <Replace className="h-3.5 w-3.5" />
         </TbBtn>
-        <TbBtn label={t('configs.workbench.tbGoto')} onClick={() => tbHint(t('configs.workbench.tbGoto'))}>
+        <TbBtn
+          label={t('configs.workbench.tbGoto')}
+          onClick={() => tbHint(t('configs.workbench.tbGoto'))}
+        >
           <span className="text-[0.7rem] font-medium">行</span>
         </TbBtn>
         <span className="mx-1 h-4 w-px bg-border" />
-        <TbBtn label={t('configs.workbench.tbFontSize')} onClick={() => tbHint(t('configs.workbench.tbFontSize'))}>
+        <TbBtn
+          label={t('configs.workbench.tbFontSize')}
+          onClick={() => tbHint(t('configs.workbench.tbFontSize'))}
+        >
           <TypeIcon className="h-3.5 w-3.5" />
         </TbBtn>
-        <TbBtn label={t('configs.workbench.tbTheme')} onClick={() => tbHint(t('configs.workbench.tbTheme'))}>
+        <TbBtn
+          label={t('configs.workbench.tbTheme')}
+          onClick={() => tbHint(t('configs.workbench.tbTheme'))}
+        >
           <SunMoon className="h-3.5 w-3.5" />
         </TbBtn>
-        <TbBtn label={t('configs.workbench.tbSettings')} onClick={() => tbHint(t('configs.workbench.tbSettings'))}>
+        <TbBtn
+          label={t('configs.workbench.tbSettings')}
+          onClick={() => tbHint(t('configs.workbench.tbSettings'))}
+        >
           <Settings className="h-3.5 w-3.5" />
         </TbBtn>
         {/* 历史折叠切换（右对齐） */}
@@ -235,7 +267,12 @@ export default function EditorOverlay({
                   : 'bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
               )}
             >
-              {tabDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" title={t('configs.workbench.tbDirty')} />}
+              {tabDirty && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                  title={t('configs.workbench.tbDirty')}
+                />
+              )}
               <span className="max-w-[140px] truncate">{tab.name}</span>
               <span
                 className="ml-0.5 shrink-0 cursor-pointer text-muted-foreground/60 hover:text-destructive"
@@ -336,13 +373,19 @@ function StatusBar({
       <span className="truncate font-mono">
         {file.namespace}/{file.group}/{file.dataId}
       </span>
-      {dirty && <span className="shrink-0 text-amber-600 dark:text-amber-400">●{t('configs.workbench.tbDirty')}</span>}
+      {dirty && (
+        <span className="shrink-0 text-amber-600 dark:text-amber-400">
+          ●{t('configs.workbench.tbDirty')}
+        </span>
+      )}
       <span className="ml-auto flex shrink-0 items-center gap-3">
         <Badge variant="outline" className={cn('h-4 px-1 text-[0.6rem]', meta.badgeClass)}>
           {t(meta.labelKey)}
         </Badge>
         <span>{t('configs.workbench.sbEol')}</span>
-        <span className="tabular-nums">{t('configs.workbench.sbCursor', { line: cursor.line, col: cursor.col })}</span>
+        <span className="tabular-nums">
+          {t('configs.workbench.sbCursor', { line: cursor.line, col: cursor.col })}
+        </span>
         <span>{t('configs.workbench.sbEncoding')}</span>
         <span>{t('configs.workbench.sbLanguage', { lang: file.format })}</span>
         <span>{t('configs.workbench.sbRevisions', { count: file.revisions.length })}</span>
@@ -359,7 +402,9 @@ function HistoryPanel({ file }: { file: WorkbenchFile | undefined }) {
     <div className="flex w-56 shrink-0 flex-col overflow-hidden border-l border-border bg-card">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
         <History className="h-4 w-4 text-muted-foreground" />
-        <span className="text-xs font-medium text-foreground">{t('configs.workbench.historyTitle')}</span>
+        <span className="text-xs font-medium text-foreground">
+          {t('configs.workbench.historyTitle')}
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide p-1.5">
         {revisions.map((r, idx) => (
@@ -409,7 +454,9 @@ function WinBtn({
       aria-label={label}
       className={cn(
         'flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors',
-        danger ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:bg-muted/60 hover:text-foreground',
+        danger
+          ? 'hover:bg-destructive/10 hover:text-destructive'
+          : 'hover:bg-muted/60 hover:text-foreground',
       )}
     >
       {children}

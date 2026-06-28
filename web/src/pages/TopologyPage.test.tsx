@@ -9,7 +9,9 @@ import type { ReactElement } from 'react'
 
 // 用轻量桩替身 TopologyGraph：序列化喂入的节点 serverId、边、分组，供断言图收到真实数据。
 vi.mock('./topology/TopologyGraph', () => ({
-  default: (props: { data: { nodes: { serverId: string }[]; edges: unknown[]; groups: unknown[] } }) => (
+  default: (props: {
+    data: { nodes: { serverId: string }[]; edges: unknown[]; groups: unknown[] }
+  }) => (
     <div
       data-testid="topology-graph"
       data-nodes={JSON.stringify(props.data.nodes.map((n) => n.serverId))}
@@ -33,9 +35,30 @@ import { setEnvironment } from '@/state/environment'
 const TOPO: TopologyView = {
   namespace: 'prod',
   nodes: [
-    { serverId: 'bc-1', role: 'bungee', group: 'area1', zone: null, status: 'online', address: '10.0.0.1:25577' },
-    { serverId: 'lobby-1', role: 'bukkit', group: 'area1', zone: 'z1', status: 'online', address: '10.0.0.2:25565' },
-    { serverId: 'pvp-1', role: 'bukkit', group: 'area1', zone: 'z2', status: 'degraded', address: '10.0.0.3:25565' },
+    {
+      serverId: 'bc-1',
+      role: 'bungee',
+      group: 'area1',
+      zone: null,
+      status: 'online',
+      address: '10.0.0.1:25577',
+    },
+    {
+      serverId: 'lobby-1',
+      role: 'bukkit',
+      group: 'area1',
+      zone: 'z1',
+      status: 'online',
+      address: '10.0.0.2:25565',
+    },
+    {
+      serverId: 'pvp-1',
+      role: 'bukkit',
+      group: 'area1',
+      zone: 'z2',
+      status: 'degraded',
+      address: '10.0.0.3:25565',
+    },
   ],
   edges: [
     { source: 'bc-1', target: 'lobby-1' },
@@ -89,7 +112,11 @@ describe('TopologyPage', () => {
     renderPage(<TopologyPage />)
     const graph = await screen.findByTestId('topology-graph')
     // 节点 serverId 透传
-    expect(JSON.parse(graph.getAttribute('data-nodes') ?? '[]')).toEqual(['bc-1', 'lobby-1', 'pvp-1'])
+    expect(JSON.parse(graph.getAttribute('data-nodes') ?? '[]')).toEqual([
+      'bc-1',
+      'lobby-1',
+      'pvp-1',
+    ])
     // 真实 bc→bukkit 边透传
     expect(JSON.parse(graph.getAttribute('data-edges') ?? '[]')).toEqual([
       { source: 'bc-1', target: 'lobby-1' },
@@ -113,7 +140,12 @@ describe('TopologyPage', () => {
 
   it('空拓扑（无在线实例）展示提示而非图', async () => {
     setEnvironment('prod')
-    vi.mocked(getTopology).mockResolvedValue({ namespace: 'prod', nodes: [], edges: [], groups: [] })
+    vi.mocked(getTopology).mockResolvedValue({
+      namespace: 'prod',
+      nodes: [],
+      edges: [],
+      groups: [],
+    })
     renderPage(<TopologyPage />)
     expect(await screen.findByText('该环境暂无在线实例。')).toBeInTheDocument()
     expect(screen.queryByTestId('topology-graph')).not.toBeInTheDocument()

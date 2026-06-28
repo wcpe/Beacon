@@ -57,8 +57,7 @@ export function useSettingsDraft() {
     })
   }, [data])
 
-  const setDraft = (key: string, value: string) =>
-    setDrafts((prev) => ({ ...prev, [key]: value }))
+  const setDraft = (key: string, value: string) => setDrafts((prev) => ({ ...prev, [key]: value }))
 
   const items = data ?? []
   const draftOf = (item: SettingView) => drafts[item.key] ?? item.value
@@ -216,9 +215,7 @@ export function SettingControl({
 
   // log.level 特例：固定枚举下拉
   if (item.key === 'log.level') {
-    return (
-      <EnumSelect options={LOG_LEVELS} draft={draft} onChange={onChange} width="w-32" />
-    )
+    return <EnumSelect options={LOG_LEVELS} draft={draft} onChange={onChange} width="w-32" />
   }
 
   if (item.valueType === 'bool') {
@@ -249,12 +246,7 @@ export function SettingControl({
 
   // string（log.level 以外）：普通文本输入
   return (
-    <Input
-      type="text"
-      className="w-56"
-      value={draft}
-      onChange={(e) => onChange(e.target.value)}
-    />
+    <Input type="text" className="w-56" value={draft} onChange={(e) => onChange(e.target.value)} />
   )
 }
 

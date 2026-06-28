@@ -309,13 +309,7 @@ export interface UpdateCheckView {
 // 更新进度阶段（对齐 GET /admin/v1/system/update 的 phase）：
 // idle（未开始）/ checking / downloading（percent 有意义）/ verifying / staging / ready-restart（已落位待重启）/ failed
 export type UpdatePhase =
-  | 'idle'
-  | 'checking'
-  | 'downloading'
-  | 'verifying'
-  | 'staging'
-  | 'ready-restart'
-  | 'failed'
+  'idle' | 'checking' | 'downloading' | 'verifying' | 'staging' | 'ready-restart' | 'failed'
 
 // 更新进度视图（进程内瞬态，对齐 GET /admin/v1/system/update）。
 export interface UpdateProgressView {

@@ -23,7 +23,8 @@ export function formatTime(iso: string | undefined | null): string {
 // 把秒数格式化为人类可读运行时长（天/时/分/秒，最多取两个量级）。
 // 负数或非有限值回退为 '-'；0 显示 '0 秒'。
 export function formatDuration(seconds: number | undefined | null): string {
-  if (seconds === undefined || seconds === null || !Number.isFinite(seconds) || seconds < 0) return '-'
+  if (seconds === undefined || seconds === null || !Number.isFinite(seconds) || seconds < 0)
+    return '-'
   if (seconds < 1) return '0 秒'
   const total = Math.floor(seconds)
   const days = Math.floor(total / 86400)

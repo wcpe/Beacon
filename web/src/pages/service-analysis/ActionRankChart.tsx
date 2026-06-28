@@ -45,14 +45,13 @@ export default function ActionRankChart({ items }: ActionRankChartProps) {
       >
         <CartesianGrid strokeDasharray="3 3" horizontal={false} className="stroke-border" />
         <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-        <YAxis
-          type="category"
-          dataKey="label"
-          tick={{ fontSize: 11 }}
-          width={96}
-          interval={0}
+        <YAxis type="category" dataKey="label" tick={{ fontSize: 11 }} width={96} interval={0} />
+        <Tooltip
+          formatter={(value) => [
+            String(value),
+            t('serviceAnalysis.actionCountHint', { count: value }),
+          ]}
         />
-        <Tooltip formatter={(value) => [String(value), t('serviceAnalysis.actionCountHint', { count: value })]} />
         <Bar dataKey="count" fill="#2563eb" isAnimationActive={false} radius={[0, 4, 4, 0]}>
           {items.map((it) => (
             <Cell key={it.action} />

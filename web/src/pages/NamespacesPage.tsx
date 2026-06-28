@@ -4,12 +4,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  createNamespace,
-  deleteNamespace,
-  listNamespaces,
-  updateNamespace,
-} from '../api/client'
+import { createNamespace, deleteNamespace, listNamespaces, updateNamespace } from '../api/client'
 import type { NamespaceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'

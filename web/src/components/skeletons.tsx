@@ -82,7 +82,7 @@ interface TileGridSkeletonProps {
 // 瓷砖网格骨架：状态墙 / 服务器瓷砖首屏占位。
 export function TileGridSkeleton({
   count = 8,
-  gridClass = "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2.5",
+  gridClass = 'grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2.5',
   heightClass = 'h-24',
 }: TileGridSkeletonProps) {
   return (

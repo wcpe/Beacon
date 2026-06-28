@@ -76,7 +76,10 @@ export function buildSummaryTree(summary: ZoneStatView[], model: KanbanModel): S
   for (const { group, zone } of zoneSet.values()) {
     const key = zoneKey(group, zone)
     const stat = stats.get(key) ?? { serverCount: 0, onlineCount: 0 }
-    const servers = (modelServers.get(key) ?? []).map((i) => ({ serverId: i.serverId, status: i.status }))
+    const servers = (modelServers.get(key) ?? []).map((i) => ({
+      serverId: i.serverId,
+      status: i.status,
+    }))
     const list = byGroup.get(group) ?? []
     list.push({ zone, serverCount: stat.serverCount, onlineCount: stat.onlineCount, servers })
     byGroup.set(group, list)

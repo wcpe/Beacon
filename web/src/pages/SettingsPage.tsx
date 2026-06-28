@@ -9,13 +9,11 @@ import { useTranslation } from 'react-i18next'
 import type { SettingView } from '../api/types'
 import AsyncSection from '@/components/AsyncSection'
 import { usePageHeader } from '@/components/PageHeader'
-import AnchorRailLayout, { AnchorSectionBlock, type AnchorSection } from '@/components/AnchorRailLayout'
-import {
-  prefixOf,
-  useSettingsDraft,
-  SettingRow,
-  SettingsSaveBar,
-} from './settings/settingsEditing'
+import AnchorRailLayout, {
+  AnchorSectionBlock,
+  type AnchorSection,
+} from '@/components/AnchorRailLayout'
+import { prefixOf, useSettingsDraft, SettingRow, SettingsSaveBar } from './settings/settingsEditing'
 
 // 6 个运维域分区（前缀 = 设置项 key 第一段；标题复用既有 settings.group* 键）。
 const OPS_SECTIONS: Array<{ prefix: string; labelKey: string }> = [
@@ -69,7 +67,11 @@ export default function SettingsPage() {
                 const secItems = itemsByPrefix.get(sec.prefix) ?? []
                 if (secItems.length === 0) return null
                 return (
-                  <AnchorSectionBlock key={sec.prefix} id={`settings-${sec.prefix}`} title={t(sec.labelKey)}>
+                  <AnchorSectionBlock
+                    key={sec.prefix}
+                    id={`settings-${sec.prefix}`}
+                    title={t(sec.labelKey)}
+                  >
                     <div className="divide-y">
                       {secItems.map((item) => (
                         <SettingRow

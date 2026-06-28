@@ -38,9 +38,12 @@ interface CodeEditorProps {
 
 function mapLanguage(format: string): string {
   switch (format) {
-    case 'yaml': return 'yaml'
-    case 'json': return 'json'
-    default: return 'plaintext'
+    case 'yaml':
+      return 'yaml'
+    case 'json':
+      return 'json'
+    default:
+      return 'plaintext'
   }
 }
 
@@ -90,25 +93,36 @@ export default function CodeEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDiff, validateError?.line, validateError?.message])
 
-  const handleEditorMount: OnMount = useCallback((ed) => {
-    editorRef.current = ed
-    ed.onKeyDown((e) => {
-      if ((e.ctrlKey || e.metaKey) && e.keyCode === 49) {
-        e.preventDefault()
-        window.dispatchEvent(new KeyboardEvent('keydown', {
-          key: 's', code: 'KeyS', keyCode: 49, ctrlKey: true, bubbles: true,
-        }))
-      }
-    })
+  const handleEditorMount: OnMount = useCallback(
+    (ed) => {
+      editorRef.current = ed
+      ed.onKeyDown((e) => {
+        if ((e.ctrlKey || e.metaKey) && e.keyCode === 49) {
+          e.preventDefault()
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 's',
+              code: 'KeyS',
+              keyCode: 49,
+              ctrlKey: true,
+              bubbles: true,
+            }),
+          )
+        }
+      })
+      onMount?.()
+    },
+    [onMount],
+  )
+
+  const handleDiffMount = useCallback(() => {
     onMount?.()
   }, [onMount])
 
-  const handleDiffMount = useCallback(() => { onMount?.() }, [onMount])
-
   const monacoLang = mapLanguage(language)
 
-  // 编辑模式配置
-  const editOptions = {
+  // 编辑模式配置（标注 monaco 选项类型，使字符串字面量按其联合类型收窄，无需在用处 as any）
+  const editOptions: editor.IStandaloneEditorConstructionOptions = {
     fontSize: 13,
     fontFamily: 'var(--font-mono)',
     minimap: { enabled: false },
@@ -149,8 +163,8 @@ export default function CodeEditor({
     },
   }
 
-  // Diff 模式配置
-  const diffOptions = {
+  // Diff 模式配置（同上标注 diff 选项类型）
+  const diffOptions: editor.IStandaloneDiffEditorConstructionOptions = {
     ...editOptions,
     readOnly: false,
     renderSideBySide: true,
@@ -168,7 +182,7 @@ export default function CodeEditor({
         modified={modified || value}
         language={monacoLang}
         theme="vs"
-        options={diffOptions as any}
+        options={diffOptions}
         onMount={handleDiffMount}
         loading={<EditorLoading />}
       />
@@ -184,7 +198,7 @@ export default function CodeEditor({
           theme="vs"
           onChange={(v) => onChange?.(v ?? '')}
           onMount={handleEditorMount}
-          options={editOptions as any}
+          options={editOptions}
           loading={<EditorLoading />}
         />
       </div>

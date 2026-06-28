@@ -56,7 +56,9 @@ export default function FileEffectivePreview({
       </div>
       {/* 预览内容 */}
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">{t('filePreview.loading')}</div>
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          {t('filePreview.loading')}
+        </div>
       ) : data ? (
         data.files.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
