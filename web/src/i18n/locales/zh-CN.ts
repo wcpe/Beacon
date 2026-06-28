@@ -184,6 +184,9 @@ export const zhCN = {
     submit: '登录',
     submitting: '登录中…',
     missingCredentials: '请填写账号与口令',
+    // 演示模式（假后端）：免真凭据 / 真后端直接体验完整可交互管理台
+    demoMode: '演示模式（免后端体验）',
+    demoModeHint: '开启假后端并直接进入，数据仅存浏览器内存，刷新即重置',
   },
 
   // ===== 控制面状态条（SystemHeader，精简版）=====

@@ -13,13 +13,15 @@ import './index.css'
 // 暗色主题首屏同步生效（FR-92）：渲染前按持久化偏好打 .dark 类，避免浅→暗闪烁。
 applyThemeToDocument(currentPreferences().theme)
 
-// 开发模式下启用 mock API（无需后端即可验证前端交互）
-// 通过 VITE_USE_MOCK 环境变量控制，默认为 true（开发模式）
+// 假后端（mock）API 启用判定（无需真后端即可完整体验前端交互）：
+// 1) 构建期 env 开关 VITE_USE_MOCK='true'（如 `pnpm dev:mock` 经 .env.mock 注入）→ 任何环境都启用；
+// 2) 开发模式默认启用，除非显式 VITE_USE_MOCK='false' 关闭。
+// 另：mock 模块自身还支持运行时 localStorage 开关（登录页「演示模式」触发），与本处构建期开关互不冲突。
 import { enableMock } from './api/mock'
-if (
-  (import.meta as unknown as { env: Record<string, string> }).env.DEV &&
-  (import.meta as unknown as { env: Record<string, string> }).env.VITE_USE_MOCK !== 'false'
-) {
+// import.meta.env 在本工程未纳入 tsconfig 的 .d.ts 类型（vite-env.d.ts 在 src 外），故按工程既有惯例做类型断言读取。
+const viteEnv = (import.meta as unknown as { env: Record<string, string | boolean> }).env
+const useMockEnv = viteEnv.VITE_USE_MOCK
+if (useMockEnv === 'true' || (viteEnv.DEV && useMockEnv !== 'false')) {
   enableMock()
 }
 

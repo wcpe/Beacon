@@ -43,11 +43,30 @@ export function enableMock(): void {
   console.log('[Mock] Mock API 模式已启用，拦截 /admin/v1/* 请求')
 }
 
-/** 如果环境变量设置了，自动启用 */
-if (typeof window !== 'undefined') {
-  // Vite 环境变量通过 import.meta.env 访问，但这里用运行时检查
-  const useMock = localStorage.getItem('VITE_USE_MOCK')
-  if (useMock === 'true') {
-    enableMock()
-  }
+// localStorage 标志键：登录页「演示模式」开关写入此键，刷新后据此自动启用 mock。
+const MOCK_FLAG_KEY = 'VITE_USE_MOCK'
+
+/** 运行时是否开启了演示模式（localStorage 标志） */
+export function isDemoModeOn(): boolean {
+  if (typeof window === 'undefined') return false
+  return localStorage.getItem(MOCK_FLAG_KEY) === 'true'
+}
+
+/**
+ * 开启演示模式（登录页「演示模式」开关触发）：写 localStorage 标志并立即启用 mock。
+ * 写标志使刷新后仍保持启用（fetch 一旦被某轮覆写无法干净还原，故启用后建议刷新以从干净态加载）。
+ */
+export function enableDemoMode(): void {
+  if (typeof window !== 'undefined') localStorage.setItem(MOCK_FLAG_KEY, 'true')
+  enableMock()
+}
+
+/** 关闭演示模式：清 localStorage 标志（已覆写的 fetch 需刷新页面才能还原为真后端） */
+export function disableDemoMode(): void {
+  if (typeof window !== 'undefined') localStorage.removeItem(MOCK_FLAG_KEY)
+}
+
+/** 如果 localStorage 标志开启了演示模式，自动启用（运行时开关，与构建期 env 开关并存） */
+if (typeof window !== 'undefined' && isDemoModeOn()) {
+  enableMock()
 }

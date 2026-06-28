@@ -1,39 +1,92 @@
 /**
- * Mock API handlers
+ * Mock API 路由分发
  *
- * 拦截 /admin/v1/* 请求，返回 mock 数据。
- * 支持：configs CRUD、revisions、diff、auth/login。
+ * 拦截 /admin/v1/* 请求，按「方法 + 路径」分发到 data.ts 的有状态读写函数。
+ * 覆盖 client.ts 的全部端点；写操作真实改内存态，后续读反映结果。
+ * 未匹配的端点统一回带特征码的 404（见 UNROUTED_CODE），供契约测试断言「无漏配」。
  */
 
 import {
-  getMockConfigList,
-  getMockConfigDetail,
-  getMockRevisions,
-  getMockDiff,
-  getNextId,
-  getNextVersion,
-  mockInstances,
-  mockZoneStats,
-  mockNamespaces,
-  getMockAudits,
-  getMockFileList,
-  getMockFile,
-  getMockFileRevisions,
-  saveMockFile,
-  getMockOverrideSetList,
-  getMockOverrideSet,
-  getMockOverrideSetRevisions,
-  getMockDryRun,
-  getMockAssignments,
-  getMockMetricsSummary,
-  getMockTrend,
-  getMockSystemStatus,
-  getMockObservability,
+  assignMockZone,
+  batchMockConfigs,
   buildMockTopology,
-  getMockDefaultEntries,
+  cancelMockReverseFetchTask,
+  createMockApiKey,
+  createMockCommand,
+  createMockConfig,
+  createMockFile,
+  createMockIgnoreRule,
+  createMockReverseFetchTask,
+  deleteMockConfig,
+  deleteMockFile,
+  deleteMockIgnoreRule,
+  deleteMockOverrideSet,
+  drainMockInstance,
+  getMockAgentLogs,
+  getMockAlertEvents,
+  getMockAssignments,
+  getMockAudits,
+  getMockAuditAnalytics,
   getMockBrowse,
+  getMockCommandAnalytics,
+  getMockCommands,
+  getMockConfigDetail,
+  getMockConfigList,
+  getMockConfigTimeline,
+  getMockConflictDiff,
+  getMockConflicts,
+  getMockDefaultEntries,
+  getMockDiff,
+  getMockDryRun,
+  getMockFile,
+  getMockFileList,
+  getMockFileRevision,
+  getMockFileRevisions,
+  getMockImpact,
+  getMockImprintDiff,
+  getMockMetricsSummary,
+  getMockObservability,
+  getMockOverrideSet,
+  getMockOverrideSetList,
+  getMockOverrideSetRevisions,
+  getMockReverseFetchTask,
+  getMockRevisions,
+  getMockSystemStatus,
+  getMockTrend,
+  getMockZoneStats,
+  listMockDrains,
+  listMockIgnoreRules,
+  listMockInstances,
+  listMockOfflineMarkers,
+  listMockReverseFetchTasks,
+  listMockReversibleOps,
+  listMockSettings,
+  makeMockImprintCommand,
+  mockApiKeys,
+  mockInstances,
+  mockNamespaces,
+  offlineMockInstance,
+  onlineMockInstance,
+  publishMockConfig,
+  publishMockOverrideSet,
+  resetMockApiKey,
+  resolveMockConflicts,
+  revokeMockApiKey,
+  rollbackMockConfig,
+  rollbackMockFile,
+  rollbackMockOverrideSet,
+  saveMockFile,
+  stripApiKeySecret,
+  submitMockReverseFetchTask,
+  undoMockReversibleOp,
+  undrainMockInstance,
+  unassignMockZone,
+  updateMockSetting,
 } from './data'
-import type { ConfigView, LoginResult, PublishResult, RevisionView } from '../types'
+import type { LoginResult } from '../types'
+
+// 未匹配端点的特征码：契约测试据此识别「漏配 mock handler」（与普通业务 404 区分）。
+export const UNROUTED_CODE = 'MOCK_UNROUTED'
 
 // ---- 辅助 ----
 
@@ -44,17 +97,38 @@ function json(data: unknown, status = 200): Response {
   })
 }
 
+function noContent(): Response {
+  return new Response(null, { status: 204 })
+}
+
 function notFound(resource: string): Response {
   return json({ code: 'NOT_FOUND', message: `${resource} 不存在` }, 404)
 }
 
+function badRequest(message: string): Response {
+  return json({ code: 'INVALID_PARAMS', message }, 400)
+}
+
 function parseQS(search: string): Record<string, string> {
   const params: Record<string, string> = {}
-  const sp = new URLSearchParams(search)
-  sp.forEach((v, k) => {
+  new URLSearchParams(search).forEach((v, k) => {
     params[k] = v
   })
   return params
+}
+
+function parseBody(init?: RequestInit): Record<string, unknown> {
+  if (!init?.body || typeof init.body !== 'string') return {}
+  try {
+    return JSON.parse(init.body) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function num(v: string | undefined, fallback = 0): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : fallback
 }
 
 // ---- 路由分发 ----
@@ -65,91 +139,43 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
   const qs = parseQS(url.search)
   const method = (init?.method ?? 'GET').toUpperCase()
 
-  // auth
+  // 顺序：先精确路径 + 方法，再正则匹配带 id 的子资源。
+
+  // ===== 登录 / 身份 =====
   if (p === '/admin/v1/auth/login' && method === 'POST') {
-    const body = init?.body ? JSON.parse(init.body as string) : {}
+    const body = parseBody(init)
     if (!body.username || !body.password) {
       return json({ code: 'INVALID_CREDENTIALS', message: '账号或口令为空' }, 401)
     }
-    const result: LoginResult = { token: 'mock-token-' + Date.now(), operator: body.username }
+    const result: LoginResult = {
+      token: 'mock-token-' + Date.now(),
+      operator: String(body.username),
+    }
     return json(result)
   }
-  if (p === '/admin/v1/auth/logout' && method === 'POST') {
-    // 登出仅记审计，后端返回 204；mock 直接回空体
-    return new Response(null, { status: 204 })
-  }
+  if (p === '/admin/v1/auth/logout' && method === 'POST') return noContent()
 
-  // 实例列表 GET
-  if (p === '/admin/v1/instances' && method === 'GET') {
-    return handleInstances(p, qs)
-  }
-
-  // 分组/Zone 汇总 GET
-  if (p === '/admin/v1/zones' && method === 'GET') {
-    return handleZones(p, qs)
-  }
-
-  // 小区默认入口 GET（FR-48）：供代理服管理页按 BC 所属 group+zone 索引默认入口（FR-52）
-  if (p === '/admin/v1/zones/default-entry' && method === 'GET') {
-    return json({ items: getMockDefaultEntries(qs) })
-  }
-
-  // 可观测看板·当前快照聚合 GET（FR-32 / FR-34）
-  if (p === '/admin/v1/metrics/summary' && method === 'GET') {
-    return json(getMockMetricsSummary(qs.namespace))
-  }
-
-  // 可观测看板·历史趋势 GET（FR-32）
-  if (p === '/admin/v1/metrics/trend' && method === 'GET') {
-    return json(getMockTrend(qs.namespace, qs.window ?? '1h'))
-  }
-
-  // 控制面自身状态 GET（FR-33）：页眉状态条消费
-  if (p === '/admin/v1/system/status' && method === 'GET') {
-    return json(getMockSystemStatus())
-  }
-
-  // 控制面自观测 GET（FR-82）：控制面健康页消费
-  if (p === '/admin/v1/system/observability' && method === 'GET') {
-    return json(getMockObservability())
-  }
-
-  // 集群拓扑 GET（FR-37）：namespace 必填（与后端一致，缺失返 400）
-  if (p === '/admin/v1/topology' && method === 'GET') {
-    if (!qs.namespace) {
-      return json({ code: 'INVALID_PARAMS', message: 'namespace 为必填' }, 400)
-    }
-    return json(buildMockTopology(qs.namespace))
-  }
-
-  // 环境
+  // ===== 环境（namespace）=====
   if (p === '/admin/v1/namespaces' && method === 'GET') {
     return json({ items: mockNamespaces })
   }
-
-  // 新建环境（FR-7）：编码必填、重复编码返 409（与后端一致）
   if (p === '/admin/v1/namespaces' && method === 'POST') {
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    if (!body.code) {
-      return json({ code: 'INVALID_PARAMS', message: '环境编码为必填' }, 400)
-    }
+    const body = parseBody(init)
+    if (!body.code) return badRequest('环境编码为必填')
     if (mockNamespaces.some((n) => n.code === body.code)) {
-      return json({ code: 'CONFLICT', message: `环境 ${body.code} 已存在` }, 409)
+      return json({ code: 'CONFLICT', message: `环境 ${String(body.code)} 已存在` }, 409)
     }
-    const ns = { code: body.code, name: body.name ?? '' }
+    const ns = { code: String(body.code), name: String(body.name ?? '') }
     mockNamespaces.push(ns)
     return json(ns, 201)
   }
-
-  // 环境改名 / 删除（FR-53）
   const namespaceMatch = p.match(/^\/admin\/v1\/namespaces\/([^/]+)$/)
   if (namespaceMatch && method === 'PUT') {
     const code = decodeURIComponent(namespaceMatch[1])
     const ns = mockNamespaces.find((n) => n.code === code)
     if (!ns) return notFound(`环境 ${code}`)
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    // code 不可变，仅改显示名
-    ns.name = body.name ?? ns.name
+    const body = parseBody(init)
+    ns.name = String(body.name ?? ns.name)
     return json({ code: ns.code, name: ns.name })
   }
   if (namespaceMatch && method === 'DELETE') {
@@ -164,254 +190,10 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
       )
     }
     mockNamespaces.splice(idx, 1)
-    return new Response(null, { status: 204 })
+    return noContent()
   }
 
-  // 审计
-  if (p === '/admin/v1/audits' && method === 'GET') {
-    const result = getMockAudits(
-      qs as unknown as { namespace?: string; operator?: string; action?: string },
-    )
-    return json(result)
-  }
-
-  // 管理面 API 密钥（FR-42）
-  if (p === '/admin/v1/api-keys' && method === 'GET') {
-    return json({ items: mockApiKeys.map(stripSecret) })
-  }
-  if (p === '/admin/v1/api-keys' && method === 'POST') {
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    const created = newMockApiKey(
-      body.name ?? 'mock-key',
-      body.role ?? 'readonly',
-      body.expiresAt ?? null,
-    )
-    mockApiKeys.unshift(created)
-    return json(created, 201)
-  }
-  const apiKeyResetMatch = p.match(/^\/admin\/v1\/api-keys\/(\d+)\/reset$/)
-  if (apiKeyResetMatch && method === 'POST') {
-    const id = Number(apiKeyResetMatch[1])
-    const k = mockApiKeys.find((x) => x.id === id)
-    if (!k || k.status === 'revoked') return notFound(`密钥 #${id}`)
-    k.key = 'bk_' + Math.random().toString(36).slice(2, 14)
-    k.keyPrefix = k.key.slice(0, 9)
-    k.lastUsedAt = null
-    return json(k)
-  }
-  const apiKeyMatch = p.match(/^\/admin\/v1\/api-keys\/(\d+)$/)
-  if (apiKeyMatch && method === 'DELETE') {
-    const id = Number(apiKeyMatch[1])
-    const k = mockApiKeys.find((x) => x.id === id)
-    if (!k || k.status === 'revoked') return notFound(`密钥 #${id}`)
-    k.status = 'revoked'
-    return json({ ok: true })
-  }
-
-  // 文件树托管
-  if (p === '/admin/v1/files' && method === 'GET') {
-    return json({
-      items: getMockFileList(
-        qs as unknown as { namespace?: string; group?: string; path?: string },
-      ),
-    })
-  }
-
-  const fileDetailMatch = p.match(/^\/admin\/v1\/files\/(\d+)$/)
-  if (fileDetailMatch && method === 'GET') {
-    const id = Number(fileDetailMatch[1])
-    const file = getMockFile(id)
-    if (!file) return notFound(`文件 #${id}`)
-    return json(file)
-  }
-
-  const fileRevMatch = p.match(/^\/admin\/v1\/files\/(\d+)\/revisions$/)
-  if (fileRevMatch && method === 'GET') {
-    const id = Number(fileRevMatch[1])
-    return json({ items: getMockFileRevisions(id) })
-  }
-
-  // 受管文件保存（发布新版本，FR-14/112）：真详情编辑器保存内容时调 PUT /files/:id。
-  // mock 把新内容写回该文件 + 版本号自增，返回 PublishResult，让 dev 下保存确认走通。
-  if (fileDetailMatch && method === 'PUT') {
-    const id = Number(fileDetailMatch[1])
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    const result = saveMockFile(id, body.content ?? '')
-    if (!result) return notFound(`文件 #${id}`)
-    return json(result)
-  }
-
-  // 覆盖集
-  if (p === '/admin/v1/override-sets' && method === 'GET') {
-    return json({
-      items: getMockOverrideSetList(qs as unknown as { namespace?: string; group?: string }),
-    })
-  }
-
-  const osDetailMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)$/)
-  if (osDetailMatch && method === 'GET') {
-    const id = Number(osDetailMatch[1])
-    const os = getMockOverrideSet(id)
-    if (!os) return notFound(`覆盖集 #${id}`)
-    return json(os)
-  }
-
-  const osRevMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)\/revisions$/)
-  if (osRevMatch && method === 'GET') {
-    return json({ items: getMockOverrideSetRevisions(Number(osRevMatch[1])) })
-  }
-
-  const osDryRunMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)\/dry-run$/)
-  if (osDryRunMatch && method === 'GET') {
-    return json(getMockDryRun(Number(osDryRunMatch[1])))
-  }
-
-  // Zone 指派
-  if (p === '/admin/v1/zones/assignments' && method === 'GET') {
-    return json({
-      items: getMockAssignments(
-        qs as unknown as { namespace?: string; group?: string; zone?: string },
-      ),
-    })
-  }
-
-  // 实例下线
-  const instOfflineMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/offline$/)
-  if (instOfflineMatch && method === 'POST') {
-    return new Response(null, { status: 204 })
-  }
-
-  // agent 只读文件浏览（FR-110）：dev 下返回示意结果，让双面板工作台右面板可浏览（真链路经命令通道代理 agent）。
-  // 结果形状随 op 而异（list / tree / file），与控制面透传 agent 的形状一致。
-  const browseMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/browse$/)
-  if (browseMatch && method === 'GET') {
-    return json(getMockBrowse(qs.op ?? 'tree', qs.path ?? ''))
-  }
-
-  // 反向抓取触发（FR-39）：命令某在线实例读 plugins 回传并 ingest，返回创建的 pending 命令
-  const reverseFetchMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/reverse-fetch$/)
-  if (reverseFetchMatch && method === 'POST') {
-    const serverId = decodeURIComponent(reverseFetchMatch[1])
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    if (!body.group) {
-      return json({ code: 'INVALID_PARAMS', message: '目标组为必填' }, 400)
-    }
-    if (body.scope === 'server' && !body.target) {
-      return json({ code: 'INVALID_PARAMS', message: 'server 层需指定目标实例' }, 400)
-    }
-    // namespace 由源实例的 ?namespace= 带上（与真实端点一致），回退到该实例的归属。
-    const ns = new URL(path, 'http://localhost').searchParams.get('namespace')
-    const inst = mockInstances.find((i) => i.serverId === serverId)
-    const command = {
-      id: Date.now(),
-      namespace: ns ?? inst?.namespace ?? 'prod',
-      serverId,
-      type: 'ingest-plugins',
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
-    // 真实端点建命令后返回 202 Accepted（命令异步执行），mock 对齐。
-    return json(command, 202)
-  }
-
-  // 按需拓印触发（FR-46）：命令某在线实例读 plugins 回传、控制面取目标文件转存待审，返回 pending 命令。
-  // mock 直接返回 ready 态命令（省去 agent 回传往返），便于审核台在 dev 下走通 diff/confirm。
-  const imprintMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/imprint$/)
-  if (imprintMatch && method === 'POST') {
-    const serverId = decodeURIComponent(imprintMatch[1])
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    if (!body.path) {
-      return json({ code: 'INVALID_PARAM', message: '目标文件 path 为必填' }, 400)
-    }
-    const ns = new URL(path, 'http://localhost').searchParams.get('namespace')
-    const inst = mockInstances.find((i) => i.serverId === serverId)
-    return json(
-      {
-        id: Date.now(),
-        namespace: ns ?? inst?.namespace ?? 'prod',
-        serverId,
-        type: 'ingest-plugins',
-        // mock 直接 ready：真实链路为 pending→agent 回传→ready，前端审核台以轮询到 ready 为准
-        status: 'ready',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      202,
-    )
-  }
-
-  // 拓印命令状态轮询（FR-46）：mock 直接回 ready（dev 下省去 agent 回传等待）。
-  const imprintStatusMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)$/)
-  if (imprintStatusMatch && method === 'GET') {
-    return json({
-      id: Number(imprintStatusMatch[1]),
-      namespace: 'prod',
-      serverId: 'lobby-1',
-      type: 'ingest-plugins',
-      status: 'ready',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    })
-  }
-
-  // 拓印 diff（FR-46）：返回本地实际值 ⟷ 期望合并值（mock 构造一处差异 + 逐键来源徽标）。
-  const imprintDiffMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)\/diff$/)
-  if (imprintDiffMatch && method === 'GET') {
-    return json({
-      path: 'AllinCore/config.yml',
-      actualContent: 'enabled: true\nmax-players: 200\nmotd: 本机实际值\n',
-      actualMd5: 'aaaaaaaa1111',
-      expectedContent: 'enabled: true\nmax-players: 100\nmotd: 期望合并值\n',
-      expectedMd5: 'bbbbbbbb2222',
-      expectedWholeFile: false,
-      expectedSources: [
-        { path: ['enabled'], scope: 'global' },
-        { path: ['max-players'], scope: 'group' },
-        { path: ['motd'], scope: 'zone' },
-      ],
-      expectedDeletions: [],
-      differs: true,
-    })
-  }
-
-  // 拓印确认落库（FR-46）：mock 简化为成功落 server 层首版。
-  const imprintConfirmMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)\/confirm$/)
-  if (imprintConfirmMatch && method === 'POST') {
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    return json({
-      fileId: 1,
-      scopeLevel: body.scope ?? 'server',
-      group: body.group ?? '',
-      target: body.target ?? '',
-      version: 1,
-      md5: body.reviewedMd5 ?? 'aaaaaaaa1111',
-    })
-  }
-
-  // 文件发布/回滚/删除（简化返回）
-  if (fileDetailMatch && method === 'PUT') {
-    return json({ version: 2, md5: 'mock-md5' })
-  }
-  if (fileDetailMatch && method === 'DELETE') {
-    return new Response(null, { status: 204 })
-  }
-
-  // 覆盖集发布/回滚/删除（简化返回）
-  if (osDetailMatch && method === 'PUT') {
-    return json({ version: 2, targetRoot: '/plugins/third-party' })
-  }
-  if (osDetailMatch && method === 'DELETE') {
-    return new Response(null, { status: 204 })
-  }
-  if (osRevMatch && method === 'POST') {
-    return json({ version: 2, targetRoot: '/plugins/third-party' })
-  }
-  if (fileRevMatch && method === 'POST') {
-    return json({ version: 2, md5: 'mock-md5' })
-  }
-
-  // 配置列表 GET
+  // ===== 配置中心 =====
   if (p === '/admin/v1/configs' && method === 'GET') {
     let items = getMockConfigList()
     if (qs.namespace) items = items.filter((c) => c.namespace === qs.namespace)
@@ -420,248 +202,664 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     if (qs.scopeLevel) items = items.filter((c) => c.scopeLevel === qs.scopeLevel)
     return json({ items })
   }
-
-  // 配置详情 GET
-  const detailMatch = p.match(/^\/admin\/v1\/configs\/(\d+)$/)
-  if (detailMatch && method === 'GET') {
-    const id = Number(detailMatch[1])
-    const detail = getMockConfigDetail(id)
-    if (!detail) return notFound(`配置 #${id}`)
-    return json(detail)
-  }
-
-  // 新建配置 POST
   if (p === '/admin/v1/configs' && method === 'POST') {
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    const id = getNextId()
-    const content = body.content ?? ''
-    const newConfig: ConfigView = {
-      id,
-      namespace: body.namespace ?? 'prod',
-      group: body.group ?? '__GLOBAL__',
-      dataId: body.dataId ?? 'new_config.yml',
-      scopeLevel: body.scopeLevel ?? 'global',
-      scopeTarget: body.scopeTarget ?? '',
-      format: body.format ?? 'yaml',
-      version: 1,
-      md5: 'mock-md5-' + id,
-      enabled: true,
-      updatedAt: new Date().toISOString(),
-      content,
-    }
-    const newRev: RevisionView = {
-      version: 1,
-      md5: 'mock-md5-' + id,
-      operator: 'admin',
-      comment: body.comment ?? '新建',
-      sourceRevision: null,
-      createdAt: new Date().toISOString(),
-      content,
-    }
-    // 存入 mock 数据（内存级别，仅当前会话有效）
-    mockStore.push({ item: newConfig, revisions: [newRev] })
-    return json(newConfig, 201)
+    return json(createMockConfig(parseBody(init)), 201)
+  }
+  if (p === '/admin/v1/configs/batch' && method === 'POST') {
+    const body = parseBody(init)
+    const action = String(body.action ?? '')
+    const ids = Array.isArray(body.ids) ? (body.ids as number[]) : []
+    if (!['delete', 'disable', 'enable'].includes(action)) return badRequest('非法批量动作')
+    if (ids.length === 0) return badRequest('ids 为空')
+    const count = batchMockConfigs(action as 'delete' | 'disable' | 'enable', ids)
+    return json({ action, count })
+  }
+  if (p === '/admin/v1/configs/effective' && method === 'GET') {
+    return json(getMockEffectiveConfig(qs))
+  }
+  if (p === '/admin/v1/configs/impact' && method === 'GET') {
+    if (!qs.namespace || !qs.scopeLevel) return badRequest('namespace 与 scopeLevel 为必填')
+    return json(
+      getMockImpact({
+        namespace: qs.namespace,
+        scopeLevel: qs.scopeLevel,
+        group: qs.group,
+        scopeTarget: qs.scopeTarget,
+      }),
+    )
   }
 
-  // 发布 PUT
-  if (detailMatch && method === 'PUT') {
-    const id = Number(detailMatch[1])
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    const existing = mockStore.find((c) => c.item.id === id)
-    if (!existing) return notFound(`配置 #${id}`)
-    const newVer = getNextVersion(id)
-    const content = body.content ?? existing.item.content ?? ''
-    const rev: RevisionView = {
-      version: newVer,
-      md5: 'mock-md5-v' + newVer,
-      operator: 'admin',
-      comment: body.comment ?? '',
-      sourceRevision: null,
-      createdAt: new Date().toISOString(),
-      content,
-    }
-    existing.revisions.push(rev)
-    existing.item.version = newVer
-    existing.item.content = content
-    existing.item.md5 = rev.md5
-    existing.item.updatedAt = rev.createdAt
-    const result: PublishResult = { version: newVer, md5: rev.md5 }
-    return json(result)
-  }
-
-  // 软删 DELETE
-  if (detailMatch && method === 'DELETE') {
-    const id = Number(detailMatch[1])
-    const idx = mockStore.findIndex((c) => c.item.id === id)
-    if (idx === -1) return notFound(`配置 #${id}`)
-    mockStore[idx].item.enabled = false
-    return new Response(null, { status: 204 })
-  }
-
-  // 版本列表 GET
-  const revMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/revisions$/)
-  if (revMatch && method === 'GET') {
-    const id = Number(revMatch[1])
-    const revisions = getMockRevisions(id)
-    if (revisions.length === 0) {
-      const existing = mockStore.find((c) => c.item.id === id)
-      if (!existing) return notFound(`配置 #${id}`)
-    }
-    return json({ items: revisions })
-  }
-
-  // 单版本 GET
-  const revDetailMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/revisions\/(\d+)$/)
-  if (revDetailMatch && method === 'GET') {
-    const id = Number(revDetailMatch[1])
-    const version = Number(revDetailMatch[2])
-    const revisions = getMockRevisions(id)
-    const rev = revisions.find((r) => r.version === version)
-    if (!rev) return notFound(`版本 v${version}`)
-    return json(rev)
-  }
-
-  // 回滚 POST
-  const rollbackMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/rollback$/)
-  if (rollbackMatch && method === 'POST') {
-    const id = Number(rollbackMatch[1])
-    const body = init?.body ? JSON.parse(init.body as string) : {}
-    const existing = mockStore.find((c) => c.item.id === id)
-    if (!existing) return notFound(`配置 #${id}`)
-    const targetVersion = body.toVersion ?? 1
-    const targetRev = existing.revisions.find((r) => r.version === targetVersion)
-    if (!targetRev) return notFound(`版本 v${targetVersion}`)
-    const newVer = getNextVersion(id)
-    const rev: RevisionView = {
-      version: newVer,
-      md5: 'mock-md5-v' + newVer,
-      operator: 'admin',
-      comment: body.comment ?? `回滚到版本 ${targetVersion}`,
-      sourceRevision: targetVersion,
-      createdAt: new Date().toISOString(),
-      content: targetRev.content,
-    }
-    existing.revisions.push(rev)
-    existing.item.version = newVer
-    existing.item.content = targetRev.content
-    existing.item.md5 = rev.md5
-    existing.item.updatedAt = rev.createdAt
-    const result: PublishResult = { version: newVer, md5: rev.md5 }
-    return json(result)
-  }
-
-  // Diff GET
-  const diffMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/diff$/)
-  if (diffMatch && method === 'GET') {
-    const id = Number(diffMatch[1])
-    const from = Number(qs.from ?? '0')
-    const to = Number(qs.to ?? '0')
-    if (!from || !to) {
-      return json({ code: 'INVALID_PARAMS', message: 'from 和 to 均为必填' }, 400)
-    }
+  const configDiffMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/diff$/)
+  if (configDiffMatch && method === 'GET') {
+    const id = Number(configDiffMatch[1])
+    const from = num(qs.from)
+    const to = num(qs.to)
+    if (!from || !to) return badRequest('from 和 to 均为必填')
     const diff = getMockDiff(id, from, to)
     if (!diff) return notFound(`配置 #${id} 的版本对比 v${from} → v${to}`)
     return json(diff)
   }
-
-  // ---- 配置操作级撤回（FR-116）----
-  // 列可逆操作账目：mock 返回空清单（撤回真后端能力由控制面提供，原型 / 单测不构造可逆账目）。
-  if (p === '/admin/v1/reversible-operations' && method === 'GET') {
-    return json({ items: [] })
+  const configRollbackMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/rollback$/)
+  if (configRollbackMatch && method === 'POST') {
+    const id = Number(configRollbackMatch[1])
+    const body = parseBody(init)
+    const r = rollbackMockConfig(id, num(String(body.toVersion), 1), String(body.comment ?? ''))
+    if (r === 'no-config') return notFound(`配置 #${id}`)
+    if (r === 'no-version') return notFound(`版本 v${String(body.toVersion)}`)
+    return json(r)
   }
-  // 撤回一条可逆操作：mock 返回幂等成功的已撤回账目（前端 toast + 重拉清单）。
-  const undoMatch = p.match(/^\/admin\/v1\/reversible-operations\/(\d+)\/undo$/)
-  if (undoMatch && method === 'POST') {
+  const configRevDetailMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/revisions\/(\d+)$/)
+  if (configRevDetailMatch && method === 'GET') {
+    const id = Number(configRevDetailMatch[1])
+    const version = Number(configRevDetailMatch[2])
+    const rev = getMockRevisions(id).find((r) => r.version === version)
+    if (!rev) return notFound(`版本 v${version}`)
+    return json(rev)
+  }
+  const configRevMatch = p.match(/^\/admin\/v1\/configs\/(\d+)\/revisions$/)
+  if (configRevMatch && method === 'GET') {
+    const id = Number(configRevMatch[1])
+    const revisions = getMockRevisions(id)
+    if (revisions.length === 0 && !getMockConfigDetail(id)) return notFound(`配置 #${id}`)
+    return json({ items: revisions })
+  }
+  const configDetailMatch = p.match(/^\/admin\/v1\/configs\/(\d+)$/)
+  if (configDetailMatch && method === 'GET') {
+    const id = Number(configDetailMatch[1])
+    const detail = getMockConfigDetail(id)
+    if (!detail) return notFound(`配置 #${id}`)
+    return json(detail)
+  }
+  if (configDetailMatch && method === 'PUT') {
+    const id = Number(configDetailMatch[1])
+    const body = parseBody(init)
+    const r = publishMockConfig(id, String(body.content ?? ''), String(body.comment ?? ''))
+    if (!r) return notFound(`配置 #${id}`)
+    return json(r)
+  }
+  if (configDetailMatch && method === 'DELETE') {
+    const id = Number(configDetailMatch[1])
+    if (!deleteMockConfig(id)) return notFound(`配置 #${id}`)
+    return noContent()
+  }
+
+  // ===== 文件树有效预览（FR-45）=====
+  if (p === '/admin/v1/files/effective' && method === 'GET') {
+    return json(getMockEffectiveFiles(qs))
+  }
+
+  // ===== 实例与健康 =====
+  if (p === '/admin/v1/instances' && method === 'GET') {
+    return json({ items: listMockInstances(qs) })
+  }
+  if (p === '/admin/v1/instances/offline' && method === 'GET') {
+    return json({ items: listMockOfflineMarkers(qs.namespace) })
+  }
+
+  const instTimelineMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/config-timeline$/)
+  if (instTimelineMatch && method === 'GET') {
+    const serverId = decodeURIComponent(instTimelineMatch[1])
+    if (!qs.namespace) return badRequest('namespace 为必填')
+    return json(getMockConfigTimeline(serverId, qs.namespace, qs.group))
+  }
+  const instOfflineMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/offline$/)
+  if (instOfflineMatch && method === 'POST') {
+    const serverId = decodeURIComponent(instOfflineMatch[1])
+    const ns = qs.namespace ?? ''
+    const body = parseBody(init)
+    offlineMockInstance(serverId, ns, String(body.reason ?? ''))
+    return noContent()
+  }
+  if (instOfflineMatch && method === 'DELETE') {
+    const serverId = decodeURIComponent(instOfflineMatch[1])
+    onlineMockInstance(serverId, qs.namespace ?? '')
+    return noContent()
+  }
+  const instBrowseMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/browse$/)
+  if (instBrowseMatch && method === 'GET') {
+    return json(getMockBrowse(qs.op ?? 'tree', qs.path ?? ''))
+  }
+  const instReverseFetchMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/reverse-fetch$/)
+  if (instReverseFetchMatch && method === 'POST') {
+    const serverId = decodeURIComponent(instReverseFetchMatch[1])
+    const body = parseBody(init)
+    if (!body.group) return badRequest('目标组为必填')
+    if (body.scope === 'server' && !body.target) return badRequest('server 层需指定目标实例')
+    const ns = qs.namespace ?? 'prod'
+    // FR-58 受管任务：触发即建任务并返回任务视图（client.createScanTask / triggerReverseFetch 共用此端点）
+    return json(
+      createMockReverseFetchTask(serverId, ns, {
+        scope: String(body.scope ?? 'group'),
+        group: String(body.group),
+        target: body.target ? String(body.target) : undefined,
+      }),
+      202,
+    )
+  }
+  const instImprintMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/imprint$/)
+  if (instImprintMatch && method === 'POST') {
+    const serverId = decodeURIComponent(instImprintMatch[1])
+    const body = parseBody(init)
+    if (!body.path) return badRequest('目标文件 path 为必填')
+    return json(makeMockImprintCommand(serverId, qs.namespace ?? 'prod'), 202)
+  }
+  const instLogsMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/logs$/)
+  if (instLogsMatch && method === 'POST') {
+    const serverId = decodeURIComponent(instLogsMatch[1])
+    const cmd = createMockCommand(serverId, qs.namespace ?? 'prod', 'tail-logs', 'pending')
+    return json({ commandId: cmd.id, status: 'pending', lines: [] }, 202)
+  }
+  if (instLogsMatch && method === 'GET') {
+    const serverId = decodeURIComponent(instLogsMatch[1])
+    return json(getMockAgentLogs(serverId))
+  }
+  const instResyncMatch = p.match(/^\/admin\/v1\/instances\/([^/]+)\/resync$/)
+  if (instResyncMatch && method === 'POST') {
+    const serverId = decodeURIComponent(instResyncMatch[1])
+    return json(
+      createMockCommand(serverId, qs.namespace ?? 'prod', 'resync-config', 'pending'),
+      202,
+    )
+  }
+
+  // ===== 流量调度·排空（FR-10）=====
+  if (p === '/admin/v1/scheduling/drains' && method === 'GET') {
+    return json({ items: listMockDrains(qs.namespace) })
+  }
+  if (p === '/admin/v1/scheduling/drains' && method === 'PUT') {
+    const body = parseBody(init)
+    if (!body.namespace || !body.serverId) return badRequest('namespace 与 serverId 为必填')
+    return json(
+      drainMockInstance(String(body.serverId), String(body.namespace), String(body.reason ?? '')),
+    )
+  }
+  if (p === '/admin/v1/scheduling/drains' && method === 'DELETE') {
+    if (!qs.namespace || !qs.serverId) return badRequest('namespace 与 serverId 为必填')
+    undrainMockInstance(qs.serverId, qs.namespace)
+    return noContent()
+  }
+
+  // ===== 集群拓扑（FR-37）=====
+  if (p === '/admin/v1/topology' && method === 'GET') {
+    if (!qs.namespace) return badRequest('namespace 为必填')
+    return json(buildMockTopology(qs.namespace))
+  }
+
+  // ===== 指标看板（FR-32 / FR-34）=====
+  if (p === '/admin/v1/metrics/summary' && method === 'GET') {
+    return json(getMockMetricsSummary(qs.namespace))
+  }
+  if (p === '/admin/v1/metrics/trend' && method === 'GET') {
+    return json(getMockTrend(qs.namespace, qs.window ?? '1h'))
+  }
+
+  // ===== 控制面自身状态 / 自观测 / 在线更新 =====
+  if (p === '/admin/v1/system/status' && method === 'GET') return json(getMockSystemStatus())
+  if (p === '/admin/v1/system/observability' && method === 'GET') {
+    return json(getMockObservability())
+  }
+  if (p === '/admin/v1/system/update-check' && method === 'GET') {
+    return json(getMockUpdateCheck())
+  }
+  if (p === '/admin/v1/system/update' && method === 'GET') return json(getMockUpdateProgress())
+  if (p === '/admin/v1/system/update' && method === 'POST') {
+    updateState.phase = 'downloading'
+    updateState.targetVersion = 'v0.99.0'
+    return json({ accepted: true }, 202)
+  }
+  if (p === '/admin/v1/system/update/cancel' && method === 'POST') {
+    const hadActive = updateState.phase !== 'idle'
+    updateState.phase = 'idle'
+    updateState.percent = 0
+    return json({ cancelled: hadActive }, hadActive ? 202 : 200)
+  }
+  if (p === '/admin/v1/system/proxy-test' && method === 'GET') {
+    return json({ ok: true })
+  }
+  if (p === '/admin/v1/system/rollback' && method === 'POST') {
+    return json({ accepted: true }, 202)
+  }
+
+  // ===== zone 分配 =====
+  if (p === '/admin/v1/zones/assignments' && method === 'GET') {
+    return json({ items: getMockAssignments(qs) })
+  }
+  if (p === '/admin/v1/zones/assignments' && method === 'PUT') {
+    const body = parseBody(init)
+    if (!body.namespace || !body.serverId || !body.zone) {
+      return badRequest('namespace / serverId / zone 为必填')
+    }
+    return json(
+      assignMockZone({
+        namespace: String(body.namespace),
+        serverId: String(body.serverId),
+        group: String(body.group ?? ''),
+        zone: String(body.zone),
+        note: String(body.note ?? ''),
+      }),
+    )
+  }
+  if (p === '/admin/v1/zones/assignments' && method === 'DELETE') {
+    if (!qs.namespace || !qs.serverId) return badRequest('namespace 与 serverId 为必填')
+    unassignMockZone(qs.namespace, qs.serverId)
+    return noContent()
+  }
+  if (p === '/admin/v1/zones/default-entry' && method === 'GET') {
+    return json({ items: getMockDefaultEntries(qs) })
+  }
+  if (p === '/admin/v1/zones' && method === 'GET') {
+    return json({ items: getMockZoneStats(qs.namespace, qs.group) })
+  }
+
+  // ===== 审计 / 服务分析 =====
+  if (p === '/admin/v1/audits' && method === 'GET') {
+    return json(
+      getMockAudits({
+        ...qs,
+        page: qs.page ? num(qs.page) : undefined,
+        size: qs.size ? num(qs.size) : undefined,
+      }),
+    )
+  }
+  if (p === '/admin/v1/audits/analytics' && method === 'GET') {
+    return json(getMockAuditAnalytics(qs))
+  }
+
+  // ===== 告警事件（FR-89）=====
+  if (p === '/admin/v1/alert-events' && method === 'GET') {
+    return json(
+      getMockAlertEvents({
+        ...qs,
+        page: qs.page ? num(qs.page) : undefined,
+        size: qs.size ? num(qs.size) : undefined,
+      }),
+    )
+  }
+
+  // ===== 命令观测（FR-104）=====
+  if (p === '/admin/v1/commands' && method === 'GET') {
+    return json(
+      getMockCommands({
+        ...qs,
+        page: qs.page ? num(qs.page) : undefined,
+        size: qs.size ? num(qs.size) : undefined,
+      }),
+    )
+  }
+  if (p === '/admin/v1/commands/analytics' && method === 'GET') {
+    return json(getMockCommandAnalytics(qs))
+  }
+
+  // ===== API 密钥（FR-42）=====
+  if (p === '/admin/v1/api-keys' && method === 'GET') {
+    return json({ items: mockApiKeys.map(stripApiKeySecret) })
+  }
+  if (p === '/admin/v1/api-keys' && method === 'POST') {
+    const body = parseBody(init)
+    const created = createMockApiKey(
+      String(body.name ?? 'mock-key'),
+      String(body.role ?? 'readonly'),
+      body.expiresAt ? String(body.expiresAt) : null,
+    )
+    return json(created, 201)
+  }
+  const apiKeyResetMatch = p.match(/^\/admin\/v1\/api-keys\/(\d+)\/reset$/)
+  if (apiKeyResetMatch && method === 'POST') {
+    const k = resetMockApiKey(Number(apiKeyResetMatch[1]))
+    if (!k) return notFound(`密钥 #${apiKeyResetMatch[1]}`)
+    return json(k)
+  }
+  const apiKeyMatch = p.match(/^\/admin\/v1\/api-keys\/(\d+)$/)
+  if (apiKeyMatch && method === 'DELETE') {
+    if (!revokeMockApiKey(Number(apiKeyMatch[1]))) return notFound(`密钥 #${apiKeyMatch[1]}`)
+    return noContent()
+  }
+
+  // ===== 文件树托管（FR-14）=====
+  if (p === '/admin/v1/files' && method === 'GET') {
+    return json({ items: getMockFileList(qs) })
+  }
+  if (p === '/admin/v1/files' && method === 'POST') {
+    return json(createMockFile(parseBody(init)), 201)
+  }
+  if (p === '/admin/v1/files/import' && method === 'POST') {
+    // 导入走 multipart：mock 无法解析 FormData 内容，返回示意计数（让上传对话框走通）。
+    return json({ files: 3, created: 2, updated: 1 })
+  }
+  const fileRollbackMatch = p.match(/^\/admin\/v1\/files\/(\d+)\/rollback$/)
+  if (fileRollbackMatch && method === 'POST') {
+    const id = Number(fileRollbackMatch[1])
+    const body = parseBody(init)
+    const r = rollbackMockFile(id, num(String(body.toVersion), 1), String(body.comment ?? ''))
+    if (r === 'no-file') return notFound(`文件 #${id}`)
+    if (r === 'no-version') return notFound(`版本 v${String(body.toVersion)}`)
+    return json(r)
+  }
+  const fileRevDetailMatch = p.match(/^\/admin\/v1\/files\/(\d+)\/revisions\/(\d+)$/)
+  if (fileRevDetailMatch && method === 'GET') {
+    const id = Number(fileRevDetailMatch[1])
+    const version = Number(fileRevDetailMatch[2])
+    const rev = getMockFileRevision(id, version)
+    if (!rev) return notFound(`文件 #${id} 版本 v${version}`)
+    return json(rev)
+  }
+  const fileRevMatch = p.match(/^\/admin\/v1\/files\/(\d+)\/revisions$/)
+  if (fileRevMatch && method === 'GET') {
+    return json({ items: getMockFileRevisions(Number(fileRevMatch[1])) })
+  }
+  const fileDetailMatch = p.match(/^\/admin\/v1\/files\/(\d+)$/)
+  if (fileDetailMatch && method === 'GET') {
+    const id = Number(fileDetailMatch[1])
+    const file = getMockFile(id)
+    if (!file) return notFound(`文件 #${id}`)
+    return json(file)
+  }
+  if (fileDetailMatch && method === 'PUT') {
+    const id = Number(fileDetailMatch[1])
+    const body = parseBody(init)
+    const r = saveMockFile(id, String(body.content ?? ''), String(body.comment ?? ''))
+    if (!r) return notFound(`文件 #${id}`)
+    return json(r)
+  }
+  if (fileDetailMatch && method === 'DELETE') {
+    const id = Number(fileDetailMatch[1])
+    if (!deleteMockFile(id)) return notFound(`文件 #${id}`)
+    return noContent()
+  }
+
+  // ===== 拓印审核台（FR-46）=====
+  const imprintDiffMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)\/diff$/)
+  if (imprintDiffMatch && method === 'GET') {
+    return json(getMockImprintDiff())
+  }
+  const imprintConfirmMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)\/confirm$/)
+  if (imprintConfirmMatch && method === 'POST') {
+    const body = parseBody(init)
     return json({
-      id: Number(undoMatch[1]),
-      namespace: qs.namespace ?? '',
-      opType: 'publish',
-      scope: 'global',
-      scopeTarget: '',
-      status: 'reversed',
-      summary: '已撤回',
-      operator: 'admin',
-      reversedBy: 'admin',
+      fileId: 1,
+      scopeLevel: String(body.scope ?? 'server'),
+      group: String(body.group ?? ''),
+      target: String(body.target ?? ''),
+      version: 1,
+      md5: String(body.reviewedMd5 ?? 'aaaaaaaa1111'),
+    })
+  }
+  const imprintStatusMatch = p.match(/^\/admin\/v1\/imprints\/(\d+)$/)
+  if (imprintStatusMatch && method === 'GET') {
+    return json({
+      id: Number(imprintStatusMatch[1]),
+      namespace: 'prod',
+      serverId: 'server-01',
+      type: 'ingest-plugins',
+      status: 'ready',
       createdAt: new Date().toISOString(),
-      reversible: false,
+      updatedAt: new Date().toISOString(),
     })
   }
 
-  // 兜底
-  return json({ code: 'NOT_FOUND', message: `未注册的 mock 端点: ${method} ${p}` }, 404)
+  // ===== 覆盖集（FR-15）=====
+  if (p === '/admin/v1/override-sets' && method === 'GET') {
+    return json({ items: getMockOverrideSetList(qs) })
+  }
+  const osRollbackMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)\/rollback$/)
+  if (osRollbackMatch && method === 'POST') {
+    const id = Number(osRollbackMatch[1])
+    const body = parseBody(init)
+    const r = rollbackMockOverrideSet(
+      id,
+      num(String(body.toVersion), 1),
+      String(body.comment ?? ''),
+    )
+    if (r === 'no-set') return notFound(`覆盖集 #${id}`)
+    if (r === 'no-version') return notFound(`版本 v${String(body.toVersion)}`)
+    return json(r)
+  }
+  const osDryRunMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)\/dry-run$/)
+  if (osDryRunMatch && method === 'GET') {
+    const dry = getMockDryRun(Number(osDryRunMatch[1]))
+    if (!dry) return notFound(`覆盖集 #${osDryRunMatch[1]}`)
+    return json(dry)
+  }
+  const osRevMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)\/revisions$/)
+  if (osRevMatch && method === 'GET') {
+    return json({ items: getMockOverrideSetRevisions(Number(osRevMatch[1])) })
+  }
+  const osDetailMatch = p.match(/^\/admin\/v1\/override-sets\/(\d+)$/)
+  if (osDetailMatch && method === 'GET') {
+    const os = getMockOverrideSet(Number(osDetailMatch[1]))
+    if (!os) return notFound(`覆盖集 #${osDetailMatch[1]}`)
+    return json(os)
+  }
+  if (osDetailMatch && method === 'PUT') {
+    const id = Number(osDetailMatch[1])
+    const body = parseBody(init)
+    const r = publishMockOverrideSet(
+      id,
+      String(body.targetRoot ?? ''),
+      String(body.reloadCommand ?? ''),
+      String(body.comment ?? ''),
+    )
+    if (!r) return notFound(`覆盖集 #${id}`)
+    return json(r)
+  }
+  if (osDetailMatch && method === 'DELETE') {
+    const id = Number(osDetailMatch[1])
+    if (!deleteMockOverrideSet(id)) return notFound(`覆盖集 #${id}`)
+    return noContent()
+  }
+
+  // ===== 反向抓取受管任务 + 冲突 + 忽略规则（FR-58/59）=====
+  if (p === '/admin/v1/reverse-fetch/tasks' && method === 'GET') {
+    return json({ items: listMockReverseFetchTasks(qs) })
+  }
+  if (p === '/admin/v1/reverse-fetch/ignore-rules' && method === 'GET') {
+    return json({ items: listMockIgnoreRules(qs) })
+  }
+  if (p === '/admin/v1/reverse-fetch/ignore-rules' && method === 'POST') {
+    const body = parseBody(init)
+    return json(
+      createMockIgnoreRule({
+        namespace: String(body.namespace ?? ''),
+        scope: String(body.scope ?? 'group'),
+        group: String(body.group ?? ''),
+        target: body.target ? String(body.target) : undefined,
+        ruleType: String(body.ruleType ?? 'exact'),
+        pattern: String(body.pattern ?? ''),
+        comment: body.comment ? String(body.comment) : undefined,
+      }),
+      201,
+    )
+  }
+  const ignoreRuleMatch = p.match(/^\/admin\/v1\/reverse-fetch\/ignore-rules\/(\d+)$/)
+  if (ignoreRuleMatch && method === 'DELETE') {
+    if (!deleteMockIgnoreRule(Number(ignoreRuleMatch[1]))) {
+      return notFound(`忽略规则 #${ignoreRuleMatch[1]}`)
+    }
+    return noContent()
+  }
+  const taskSubmitMatch = p.match(/^\/admin\/v1\/reverse-fetch\/tasks\/(\d+)\/submit$/)
+  if (taskSubmitMatch && method === 'POST') {
+    const id = Number(taskSubmitMatch[1])
+    const body = parseBody(init)
+    const paths = Array.isArray(body.selectedPaths) ? (body.selectedPaths as string[]) : []
+    const t = submitMockReverseFetchTask(id, paths)
+    if (!t) return notFound(`任务 #${id}`)
+    return json(t)
+  }
+  const taskCancelMatch = p.match(/^\/admin\/v1\/reverse-fetch\/tasks\/(\d+)\/cancel$/)
+  if (taskCancelMatch && method === 'POST') {
+    const t = cancelMockReverseFetchTask(Number(taskCancelMatch[1]))
+    if (!t) return notFound(`任务 #${taskCancelMatch[1]}`)
+    return json(t)
+  }
+  const taskConflictDiffMatch = p.match(
+    /^\/admin\/v1\/reverse-fetch\/tasks\/(\d+)\/conflicts\/diff$/,
+  )
+  if (taskConflictDiffMatch && method === 'GET') {
+    return json(getMockConflictDiff(Number(taskConflictDiffMatch[1]), qs.path ?? ''))
+  }
+  const taskConflictsMatch = p.match(/^\/admin\/v1\/reverse-fetch\/tasks\/(\d+)\/conflicts$/)
+  if (taskConflictsMatch && method === 'GET') {
+    return json({ conflicts: getMockConflicts(Number(taskConflictsMatch[1])) })
+  }
+  const taskResolveMatch = p.match(/^\/admin\/v1\/reverse-fetch\/tasks\/(\d+)\/resolve$/)
+  if (taskResolveMatch && method === 'POST') {
+    const id = Number(taskResolveMatch[1])
+    const body = parseBody(init)
+    const decisions = Array.isArray(body.decisions)
+      ? (body.decisions as Array<{ path: string; action: string }>)
+      : []
+    const r = resolveMockConflicts(id, decisions)
+    if (!r) return notFound(`任务 #${id}`)
+    return json(r)
+  }
+  const taskDetailMatch = p.match(/^\/admin\/v1\/reverse-fetch\/tasks\/(\d+)$/)
+  if (taskDetailMatch && method === 'GET') {
+    const t = getMockReverseFetchTask(Number(taskDetailMatch[1]))
+    if (!t) return notFound(`任务 #${taskDetailMatch[1]}`)
+    return json(t)
+  }
+
+  // ===== 运维设置（FR-61/62）=====
+  if (p === '/admin/v1/settings' && method === 'GET') {
+    return json({ items: listMockSettings() })
+  }
+  const settingMatch = p.match(/^\/admin\/v1\/settings\/([^/]+)$/)
+  if (settingMatch && method === 'PUT') {
+    const key = decodeURIComponent(settingMatch[1])
+    const body = parseBody(init)
+    if (!updateMockSetting(key, String(body.value ?? ''))) {
+      return badRequest(`未知设置项 ${key}`)
+    }
+    return noContent()
+  }
+
+  // ===== 配置操作级撤回（FR-116）=====
+  if (p === '/admin/v1/reversible-operations' && method === 'GET') {
+    return json({
+      items: listMockReversibleOps({ ...qs, limit: qs.limit ? num(qs.limit) : undefined }),
+    })
+  }
+  const undoMatch = p.match(/^\/admin\/v1\/reversible-operations\/(\d+)\/undo$/)
+  if (undoMatch && method === 'POST') {
+    const op = undoMockReversibleOp(Number(undoMatch[1]))
+    if (!op) return notFound(`可逆操作 #${undoMatch[1]}`)
+    return json(op)
+  }
+
+  // ===== 审计导出（FR-84）=====：返回附件流（CSV / JSON），让浏览器下载走通。
+  if (p === '/admin/v1/audits/export' && method === 'GET') {
+    const format = qs.format === 'json' ? 'json' : 'csv'
+    const page = getMockAudits(qs)
+    const body =
+      format === 'json'
+        ? JSON.stringify(page.items)
+        : 'namespace,operator,action,targetRef,detail,createdAt\n' +
+          page.items
+            .map(
+              (a) =>
+                `${a.namespace},${a.operator},${a.action},${a.targetRef},${a.detail},${a.createdAt}`,
+            )
+            .join('\n')
+    return new Response(body, {
+      status: 200,
+      headers: {
+        'Content-Type': format === 'json' ? 'application/json' : 'text/csv',
+        'Content-Disposition': `attachment; filename="audit-export.${format}"`,
+      },
+    })
+  }
+
+  // ===== 兜底：未注册端点回带特征码 404，供契约测试识别漏配 =====
+  return json({ code: UNROUTED_CODE, message: `未注册的 mock 端点: ${method} ${p}` }, 404)
 }
 
-// ---- 内存存储（用于新建/修改/回滚等写操作） ----
+// ---- 局部派生（有效配置 / 文件预览 / 更新态：纯展示派生，留在 handler 层） ----
 
-import { mockConfigs } from './data'
-import type { InstanceView } from '../types'
+import type { EffectiveConfigView, EffectiveFileTreeView } from '../client'
+import type { UpdateCheckView, UpdateProgressView } from '../types'
 
-interface MockStoreEntry {
-  item: ConfigView
-  revisions: RevisionView[]
-}
-
-const mockStore: MockStoreEntry[] = mockConfigs.map((c) => ({ ...c }))
-
-// ---- API 密钥 mock（内存级别，FR-42）----
-
-import type { ApiKeyCreated } from '../types'
-
-let apiKeySeq = 1
-const mockApiKeys: ApiKeyCreated[] = [
-  {
-    id: apiKeySeq++,
-    name: '业务管理后端',
-    role: 'readonly',
-    keyPrefix: 'bk_demo01',
-    status: 'active',
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    expiresAt: null,
-    lastUsedAt: new Date(Date.now() - 3600000).toISOString(),
-    key: '',
-  },
-]
-
-// 列表 / 元数据剥离明文 key（后端绝不返回明文）
-function stripSecret(k: ApiKeyCreated): Omit<ApiKeyCreated, 'key'> {
-  const { key: _key, ...rest } = k
-  return rest
-}
-
-// 生成一把新 mock 密钥（明文仅此返回）
-function newMockApiKey(name: string, role: string, expiresAt: string | null): ApiKeyCreated {
-  const key = 'bk_' + Math.random().toString(36).slice(2, 14)
+// 有效配置预览（FR-22）：从配置项按覆盖层 best-effort 派生（演示级，不做真合并）。
+function getMockEffectiveConfig(qs: Record<string, string>): EffectiveConfigView {
+  const namespace = qs.namespace ?? 'prod'
+  const items = getMockConfigList()
+    .filter((c) => c.namespace === namespace)
+    .filter((c) => (qs.group ? c.group === qs.group || c.scopeLevel === 'global' : true))
+    .map((c) => ({
+      dataId: c.dataId,
+      format: c.format,
+      content: '',
+      md5: c.md5,
+      sources: [{ path: [] as string[], scope: c.scopeLevel }],
+      deletions: [] as Array<{ path: string[]; scope: string }>,
+    }))
+  // 同 dataId 去重（取首个，演示级）
+  const seen = new Set<string>()
+  const deduped = items.filter((i) => (seen.has(i.dataId) ? false : (seen.add(i.dataId), true)))
   return {
-    id: apiKeySeq++,
-    name,
-    role,
-    keyPrefix: key.slice(0, 9),
-    status: 'active',
-    createdAt: new Date().toISOString(),
-    expiresAt,
-    lastUsedAt: null,
-    key,
+    namespace,
+    serverId: qs.serverId,
+    group: qs.group,
+    zone: qs.zone,
+    md5: 'mock-effective-md5',
+    items: deduped,
   }
 }
 
-// ---- 实例/分组路由 ----
-
-function handleInstances(p: string, qs: Record<string, string>): Response {
-  if (p === '/admin/v1/instances') {
-    let items: InstanceView[] = [...mockInstances]
-    if (qs.namespace) items = items.filter((i) => i.namespace === qs.namespace)
-    if (qs.group) items = items.filter((i) => i.group === qs.group)
-    if (qs.zone) items = items.filter((i) => i.zone === qs.zone)
-    if (qs.role) items = items.filter((i) => i.role === qs.role)
-    if (qs.status) items = items.filter((i) => i.status === qs.status)
-    return json({ items })
+// 有效文件树预览（FR-45）：从在线实例所在环境的受管文件派生（演示级）。
+function getMockEffectiveFiles(qs: Record<string, string>): EffectiveFileTreeView {
+  const namespace = qs.namespace ?? 'prod'
+  const inst = qs.serverId ? mockInstances.find((i) => i.serverId === qs.serverId) : undefined
+  return {
+    namespace,
+    serverId: qs.serverId,
+    group: qs.group ?? inst?.group,
+    zone: qs.zone ?? inst?.zone ?? null,
+    fileTreeMd5: 'mock-file-tree-md5',
+    files: [
+      {
+        path: 'plugins/game/config.yml',
+        md5: 'abc12345',
+        content: 'enabled: true\ncooldown: 30\n',
+        wholeFile: false,
+        sources: [{ path: ['enabled'], scope: 'global' }],
+        deletions: [],
+      },
+    ],
   }
-  return json({ code: 'NOT_FOUND', message: '未注册的 mock 端点' }, 404)
 }
 
-function handleZones(p: string, _qs: Record<string, string>): Response {
-  if (p === '/admin/v1/zones') {
-    return json({ items: [...mockZoneStats] })
+// 更新检查（FR-99）：mock 固定为「已是最新」（无可用更新），避免误叠红点。
+function getMockUpdateCheck(): UpdateCheckView {
+  return {
+    status: 'ok',
+    currentVersion: 'dev-mock',
+    channel: 'stable',
+    hasUpdate: false,
+    isDevBuild: true,
+    latestVersion: '',
+    releaseNotes: '',
+    releaseUrl: '',
+    publishedAt: '',
+    checkedAt: new Date().toISOString(),
+    cacheExpiresAt: new Date(Date.now() + 600000).toISOString(),
   }
-  return json({ code: 'NOT_FOUND', message: '未注册的 mock 端点' }, 404)
+}
+
+// 更新进度（FR-100）：进程内瞬态，触发更新 / 取消会改写 updateState。
+const updateState: { phase: UpdateProgressView['phase']; percent: number; targetVersion: string } =
+  {
+    phase: 'idle',
+    percent: 0,
+    targetVersion: '',
+  }
+
+function getMockUpdateProgress(): UpdateProgressView {
+  return {
+    phase: updateState.phase,
+    percent: updateState.percent,
+    targetVersion: updateState.targetVersion,
+    error: '',
+    rollbackAvailable: false,
+  }
 }
