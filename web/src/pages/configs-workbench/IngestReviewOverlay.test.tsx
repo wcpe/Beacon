@@ -16,11 +16,16 @@ vi.mock('./useWorkbenchData', () => ({
 const mockedHook = vi.mocked(useIngestScanList)
 
 const ITEMS: IngestScanItem[] = [
-  { path: 'Essentials/config.yml', size: '12.4 KB', ignored: false, defaultPick: true },
-  { path: 'WorldGuard/regions.yml', size: '88.0 KB', ignored: false, defaultPick: true },
-  { path: 'cache.db', size: '4.0 MB', ignored: true, defaultPick: false },
+  { path: 'Essentials/config.yml', size: '12.4 KB', ignored: false, defaultPick: true, overThreshold: false },
+  { path: 'WorldGuard/regions.yml', size: '88.0 KB', ignored: false, defaultPick: true, overThreshold: false },
+  { path: 'cache.db', size: '4.0 MB', ignored: true, defaultPick: false, overThreshold: false },
 ]
 const RULES = ['userdata/**', '*.db']
+
+// 清单到位状态：浮层据 status==='pending-review' 才显可勾选清单
+function readyData(items: IngestScanItem[] = ITEMS) {
+  return { status: 'pending-review', items, ignoreRules: RULES }
+}
 
 function mockScan(over: Partial<ReturnType<typeof useIngestScanList>>) {
   mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<typeof useIngestScanList>)
@@ -34,7 +39,7 @@ describe('IngestReviewOverlay（FR-115）', () => {
   })
 
   it('标题与队列名呈现', () => {
-    mockScan({ data: { items: ITEMS, ignoreRules: RULES } })
+    mockScan({ data: readyData() })
     // 用不在清单项里的队列名，避免与列表项文本撞车
     render(<IngestReviewOverlay queueName="some-queue-item" onConfirm={vi.fn()} onCancel={vi.fn()} />)
     expect(screen.getByText('反向抓取 · 审核纳管清单')).toBeInTheDocument()
@@ -42,7 +47,7 @@ describe('IngestReviewOverlay（FR-115）', () => {
   })
 
   it('按 defaultPick 初始化勾选 + 计数（2/3）；忽略项打标', () => {
-    mockScan({ data: { items: ITEMS, ignoreRules: RULES } })
+    mockScan({ data: readyData() })
     render(<IngestReviewOverlay queueName="x" onConfirm={vi.fn()} onCancel={vi.fn()} />)
     // 默认两条 defaultPick=true → 已选 2 / 3
     expect(screen.getByText('已选 2 / 3 项')).toBeInTheDocument()
@@ -52,22 +57,23 @@ describe('IngestReviewOverlay（FR-115）', () => {
   })
 
   it('全选：把 3 项全勾，计数变 3/3', async () => {
-    mockScan({ data: { items: ITEMS, ignoreRules: RULES } })
+    mockScan({ data: readyData() })
     render(<IngestReviewOverlay queueName="x" onConfirm={vi.fn()} onCancel={vi.fn()} />)
     await userEvent.click(screen.getByLabelText('全选'))
     expect(screen.getByText('已选 3 / 3 项')).toBeInTheDocument()
   })
 
   it('确认：回传当前选数', async () => {
-    mockScan({ data: { items: ITEMS, ignoreRules: RULES } })
+    mockScan({ data: readyData() })
     const onConfirm = vi.fn()
     render(<IngestReviewOverlay queueName="x" onConfirm={onConfirm} onCancel={vi.fn()} />)
     await userEvent.click(screen.getByRole('button', { name: '确认纳管 2 项' }))
-    expect(onConfirm).toHaveBeenCalledWith(2)
+    // 新契约：回传选定 path 集 + 是否含超阈值项（此两项均非超阈值 → false）
+    expect(onConfirm).toHaveBeenCalledWith(['Essentials/config.yml', 'WorldGuard/regions.yml'], false)
   })
 
   it('全不选后确认钮禁用', async () => {
-    mockScan({ data: { items: ITEMS, ignoreRules: RULES } })
+    mockScan({ data: readyData() })
     render(<IngestReviewOverlay queueName="x" onConfirm={vi.fn()} onCancel={vi.fn()} />)
     // 当前非全选 → 点全选先到全选；再点一次全选切到全不选
     const selectAll = screen.getByLabelText('全选')
@@ -78,7 +84,7 @@ describe('IngestReviewOverlay（FR-115）', () => {
   })
 
   it('取消触发 onCancel', async () => {
-    mockScan({ data: { items: ITEMS, ignoreRules: RULES } })
+    mockScan({ data: readyData() })
     const onCancel = vi.fn()
     render(<IngestReviewOverlay queueName="x" onConfirm={vi.fn()} onCancel={onCancel} />)
     // 头部 X 与底部按钮的可达名都是「取消」，取最后一个（底部）

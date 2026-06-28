@@ -12,35 +12,51 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useIngestScanList } from './useWorkbenchData'
 
+// 扫描已到清单的状态：仅此态展示可勾选清单，其余（pending/scanning）显「扫描中」。
+const INGEST_REVIEW_READY = 'pending-review'
+
 export default function IngestReviewOverlay({
   // 待审核的队列项名（标题展示）
   queueName,
-  // 关联的反向抓取受管任务 id（FR-58~60）：取其扫描清单；原型期无任务时为空态
+  // 关联的反向抓取受管任务 id（FR-58~60）：取其扫描清单
   taskId,
+  // 父级提交期间为 true：禁用确认 + 显 loading（提交→轮询→落库由父级编排）
+  submitting,
   onConfirm,
   onCancel,
 }: {
   queueName: string
   taskId?: number
-  // 确认 ingest（传纳管文件数）
-  onConfirm: (count: number) => void
+  submitting?: boolean
+  // 确认 ingest：传选定 path 集 + 是否确认纳入超阈值文件（由父级 submit）
+  onConfirm: (selectedPaths: string[], confirmOverThreshold: boolean) => void
   onCancel: () => void
 }) {
   const { t } = useTranslation()
   const scan = useIngestScanList(taskId)
-  const items = scan.data?.items ?? []
+  const status = scan.data?.status
+  // 清单到位（pending-review）才有可审项；扫描中（pending/scanning）items 暂空，显扫描骨架
+  const ready = status === INGEST_REVIEW_READY
+  const items = ready ? scan.data?.items ?? [] : []
   const ignoreRules = scan.data?.ignoreRules ?? []
 
-  // 勾选纳管集合：扫描加载完成后按 defaultPick 初始化
+  // 勾选纳管集合：清单到位后按 defaultPick 初始化
   const [picked, setPicked] = useState<Set<string>>(new Set())
   useEffect(() => {
-    if (scan.data) setPicked(new Set(items.filter((i) => i.defaultPick).map((i) => i.path)))
+    if (ready) setPicked(new Set(items.filter((i) => i.defaultPick).map((i) => i.path)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scan.data])
+  }, [ready, scan.data])
 
   const pickedCount = picked.size
   const total = items.length
   const allPicked = useMemo(() => total > 0 && pickedCount === total, [total, pickedCount])
+  // 选定集是否含超阈值项（提交时据此置 confirmOverThreshold，否则后端 400）
+  const confirmOverThreshold = useMemo(
+    () => items.some((i) => i.overThreshold && picked.has(i.path)),
+    [items, picked],
+  )
+  // 扫描尚未到清单（含初次加载）显骨架；到位后显清单
+  const scanning = !ready && status !== 'failed'
 
   function toggle(path: string) {
     setPicked((prev) => {
@@ -91,8 +107,10 @@ export default function IngestReviewOverlay({
 
         {/* 扫描清单 */}
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
-          {scan.isLoading ? (
+          {scanning ? (
+            // 扫描中（命令 agent 扫描其 plugins/ 回传清单）：显骨架 + 扫描提示
             <div className="space-y-2 p-4">
+              <p className="text-xs text-muted-foreground">{t('configs.workbench.ingestScanning')}</p>
               {Array.from({ length: 6 }).map((_, i) => (
                 <Skeleton key={i} className="h-5 w-full" />
               ))}
@@ -135,12 +153,18 @@ export default function IngestReviewOverlay({
 
         {/* 底部操作 */}
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-3">
-          <Button variant="outline" size="sm" onClick={onCancel}>
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={submitting}>
             {t('common.cancel')}
           </Button>
-          <Button size="sm" disabled={pickedCount === 0} onClick={() => onConfirm(pickedCount)}>
+          <Button
+            size="sm"
+            disabled={pickedCount === 0 || submitting || !ready}
+            onClick={() => onConfirm([...picked], confirmOverThreshold)}
+          >
             <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
-            {t('configs.workbench.ingestConfirm', { count: pickedCount })}
+            {submitting
+              ? t('configs.workbench.ingestSubmitting')
+              : t('configs.workbench.ingestConfirm', { count: pickedCount })}
           </Button>
         </div>
       </div>

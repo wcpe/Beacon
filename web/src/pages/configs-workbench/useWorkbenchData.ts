@@ -172,13 +172,35 @@ export function useSyncQueue() {
   })
 }
 
+// 命令类型 → 友好中文名（队列行展示用）：避免把 resultDetail 原始 JSON（如 {"taskId":1,"files":28}）直接抛到行名。
+const COMMAND_TYPE_LABEL: Record<string, string> = {
+  'ingest-plugins': '反向抓取',
+  'fs-browse': '浏览文件',
+  reload: '热更下发',
+}
+
+// 命令 → 队列行名：类型友好标签 + 实例；反向抓取若详情含文件数则附带（N 文件）。
+function commandRowName(c: CommandMetaView): string {
+  const label = COMMAND_TYPE_LABEL[c.type] ?? c.type
+  // resultDetail 可能是结构化 JSON（反向抓取回 {taskId,files}）：能解析出文件数则友好附带，非 JSON 不展示原文
+  if (c.resultDetail && c.resultDetail.trim().startsWith('{')) {
+    try {
+      const d = JSON.parse(c.resultDetail) as { files?: number }
+      if (typeof d.files === 'number') return `${label} @ ${c.serverId}（${d.files} 文件）`
+    } catch {
+      // 详情非合法 JSON：忽略附带，回落到「类型 @ 实例」
+    }
+  }
+  return `${label} @ ${c.serverId}`
+}
+
 // agent 命令 → 同步队列行：状态收口到队列四态。
 function commandToQueueRow(c: CommandMetaView): SyncQueueRow {
   // ingest-plugins 是反向抓取（server→managed），其余命令按下发处理（managed→server）
   const direction: 'fetch' | 'push' = c.type === 'ingest-plugins' ? 'fetch' : 'push'
   return {
     id: String(c.commandId),
-    name: c.resultDetail || `${c.type} @ ${c.serverId}`,
+    name: commandRowName(c),
     direction,
     status: commandStatusToQueueStatus(c.status, direction),
     scopeTarget: c.serverId,
@@ -238,7 +260,7 @@ export function useWorkbenchOptions() {
 }
 
 function buildOptions(insts: InstanceView[]): { scopes: ScopeOption[]; servers: ServerOption[] } {
-  const servers: ServerOption[] = insts.map((i) => ({ serverId: i.serverId, label: i.serverId, online: true }))
+  const servers: ServerOption[] = insts.map((i) => ({ serverId: i.serverId, label: i.serverId, online: true, group: i.group }))
   // 覆盖层候选：全局 + 各唯一组 + 各实例（实例层定向覆盖）
   const scopes: ScopeOption[] = [{ value: 'global', label: '全局', scope: 'global' }]
   const seenGroups = new Set<string>()
@@ -298,22 +320,35 @@ function formatFromPath(path: string): string {
   return map[ext] ?? 'yaml'
 }
 
+// 扫描清单轮询终止状态：清单已到（pending-review）或任务终态。
+const INGEST_SCAN_DONE = new Set(['pending-review', 'failed', 'cancelled', 'expired'])
+
 // ---- 反向抓取扫描清单 ← getReverseFetchTask（FR-58~60）----
 // 取某受管任务的扫描清单映射成 ingest 审核项；无任务 id 时返回空（审核浮层据此空态）。
+// 扫描未达终止状态（pending/scanning）时每 2s 轮询，直到 pending-review 拿到全量清单或落终态；
+// 额外回传 status（浮层据此区分「扫描中」与「待审」）。
 export function useIngestScanList(taskId: number | undefined) {
   return useQuery({
     queryKey: ['wb-ingest-scan', taskId],
     queryFn: () =>
       getReverseFetchTask(taskId!).then((task) => ({
+        status: task.status,
         items: task.files.map<IngestScanItem>((f) => ({
           path: f.path,
           size: humanSize(f.size),
           ignored: f.ignoredByRule || f.overThreshold,
           defaultPick: !f.ignoredByRule && !f.overThreshold,
+          overThreshold: f.overThreshold,
         })),
         ignoreRules: [] as string[],
       })),
     enabled: !!taskId,
+    // 扫描中（非终止态）每 2s 轮询；清单到位 / 终态停轮询
+    refetchInterval: (q) => {
+      const s = q.state.data?.status
+      if (s && INGEST_SCAN_DONE.has(s)) return false
+      return 2000
+    },
   })
 }
 
