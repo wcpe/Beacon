@@ -106,6 +106,18 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+      - name: 安装前端依赖
+        # lint / format 检查需 node_modules；make web 内部虽会装依赖，但其前置的检查步骤须先就绪
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: ESLint 静态检查
+        # 与 Go 静态检查同级门禁：未过不允许合并
+        working-directory: web
+        run: pnpm lint
+      - name: Prettier 格式校验
+        # prettier --check：有未格式化文件即判失败
+        working-directory: web
+        run: pnpm format:check
       - name: 构建前端（make web）
         # 构建逻辑单一来源于 Makefile：cd web && pnpm install --frozen-lockfile && pnpm build
         # ubuntu runner 自带 make；从仓库根调用（make web 内部自行 cd web）
