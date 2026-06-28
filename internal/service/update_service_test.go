@@ -27,6 +27,10 @@ type fakeUpdateCore struct {
 	rollbackAvailable bool
 	rollbackCalls     int
 	rollbackErr       error
+	// fix-1 异步同步钩子：applyStarted 非空时 ApplyUpdate 进入后（写完字段）发信号；
+	// applyBlock 非空时阻塞在其上直至测试放行——用于断言 apply 异步不阻塞 + 并发守卫。
+	applyStarted chan struct{}
+	applyBlock   chan struct{}
 }
 
 func (f *fakeUpdateCore) CheckForUpdate(_ context.Context, ch update.Channel, proxyURL, operator, clientIP string) (update.CheckResult, error) {
@@ -47,6 +51,13 @@ func (f *fakeUpdateCore) ApplyUpdate(_ context.Context, ch update.Channel, proxy
 	f.lastProxy = proxyURL
 	f.lastOperator = operator
 	f.lastClientIP = clientIP
+	// 字段写毕再发 started 信号（建立 happens-before，测试 <-applyStarted 后读字段无竞态）。
+	if f.applyStarted != nil {
+		f.applyStarted <- struct{}{}
+	}
+	if f.applyBlock != nil {
+		<-f.applyBlock
+	}
 	return f.applyErr
 }
 
@@ -253,15 +264,16 @@ func TestStatusReadsSnapshot(t *testing.T) {
 	}
 }
 
-// TestApplyUsesStoreChannelAndProxy 触发应用：从 store 读渠道 / 代理透传给核心。
+// TestApplyUsesStoreChannelAndProxy 触发应用：从 store 读渠道 / 代理透传给核心（fix-1：异步，经 started 信号同步后断言）。
 func TestApplyUsesStoreChannelAndProxy(t *testing.T) {
-	core := &fakeUpdateCore{}
+	core := &fakeUpdateCore{applyStarted: make(chan struct{}, 1)}
 	settings := &fakeSettingsReader{channel: "prerelease", proxy: "http://p:9090"}
 	svc := NewUpdateService(core, settings)
 
-	if err := svc.Apply(context.Background(), "tester", "5.6.7.8"); err != nil {
+	if err := svc.Apply("tester", "5.6.7.8"); err != nil {
 		t.Fatalf("apply 不应返回错误：%v", err)
 	}
+	<-core.applyStarted // 等后台 goroutine 进入核心（字段已写毕）
 	if core.applyCalls != 1 {
 		t.Fatalf("应调一次核心 ApplyUpdate，实际 %d", core.applyCalls)
 	}
@@ -270,11 +282,26 @@ func TestApplyUsesStoreChannelAndProxy(t *testing.T) {
 	}
 }
 
-// TestApplyPropagatesError 核心失败原样上抛（handler 据此回错误体、进程不退由核心保证）。
-func TestApplyPropagatesError(t *testing.T) {
-	core := &fakeUpdateCore{applyErr: errors.New("校验不通过")}
-	svc := NewUpdateService(core, &fakeSettingsReader{channel: "stable"})
-	if err := svc.Apply(context.Background(), "a", ""); err == nil {
-		t.Fatal("核心失败应上抛错误")
+// TestApplyIsAsyncAndGuardsConcurrency fix-1 复现/回归：apply 受理后立即返回（异步不阻塞），
+// 进行中再触发被并发守卫拒绝（409 ErrUpdateInProgress）。原同步实现会把整段下载压在调用内、
+// 且无并发守卫——此测试锁定异步 + 守卫语义。
+func TestApplyIsAsyncAndGuardsConcurrency(t *testing.T) {
+	core := &fakeUpdateCore{
+		applyStarted: make(chan struct{}, 1),
+		applyBlock:   make(chan struct{}),
 	}
+	svc := NewUpdateService(core, &fakeSettingsReader{channel: "stable"})
+
+	// 首次触发：异步受理，立即返回（若仍同步阻塞，此调用会卡在核心的 applyBlock 上不返回）。
+	if err := svc.Apply("a", ""); err != nil {
+		t.Fatalf("首次 Apply 应立即受理返回 nil，实际 %v", err)
+	}
+	<-core.applyStarted // 确认后台已进核心并阻塞在 applyBlock
+
+	// 进行中再触发：并发守卫返回 409 ErrUpdateInProgress（不再开第二次下载）。
+	if err := svc.Apply("b", ""); !errors.Is(err, apperr.ErrUpdateInProgress) {
+		t.Fatalf("进行中再触发应返回 ErrUpdateInProgress，实际 %v", err)
+	}
+
+	close(core.applyBlock) // 放行首次后台完成（避免 goroutine 泄漏）
 }

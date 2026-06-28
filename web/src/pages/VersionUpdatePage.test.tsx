@@ -233,6 +233,15 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
     await waitFor(() => expect(vi.mocked(triggerUpdate)).toHaveBeenCalled())
   })
 
+  // fix-1：触发被拒（如 409 已有更新进行中）→ 错误经 toast 展示，不静默；按钮不被锁死。
+  it('触发更新返回 409 进行中 → toast 出错误（不静默）', async () => {
+    vi.mocked(triggerUpdate).mockRejectedValue(new ApiClientError('已有更新正在进行中', 'UPDATE_IN_PROGRESS'))
+    renderPage(<VersionUpdatePage />)
+    await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
+    await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
+    await waitFor(() => expect(showError).toHaveBeenCalledWith('已有更新正在进行中'))
+  })
+
   // FR-118 ②：更新走完给明确失败裁决（成功重连裁决依赖 offline→online 真链路，真机验）
   it('更新进度 phase=failed 时给明确失败裁决 toast', async () => {
     vi.mocked(updateProgress).mockResolvedValue({

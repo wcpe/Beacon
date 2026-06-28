@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wcpe/Beacon/internal/apperr"
@@ -77,6 +79,9 @@ type UpdateService struct {
 
 	mu     sync.Mutex
 	cached *cachedCheck
+
+	// applying 标记是否有一次在线更新正在异步进行（fix-1）：CAS 守卫并发触发，避免重复下载 / 抢占自替换。
+	applying atomic.Bool
 }
 
 // NewUpdateService 构造服务（core=更新核心，settings=设置 store 读口）。
@@ -145,12 +150,29 @@ func (s *UpdateService) Status() update.Progress {
 	return s.core.Snapshot()
 }
 
-// Apply 触发一次应用更新（FR-99）：从 store 读渠道 / 代理后调更新核心，落位成功即请求重启。
-// 只读拒写 + 审计由上层中间件保证（写方法、复用 system.update-apply 审计）。
-func (s *UpdateService) Apply(ctx context.Context, operator, clientIP string) error {
+// Apply 触发一次应用更新（FR-99，fix-1 改异步）：受理后立即返回，下载 / 校验 / 落位 / 请求重启在后台 goroutine 内进行。
+// 改异步的原因（fix-1）：原同步实现把整段下载（可数分钟）压在 HTTP 请求内，202 要等下载完才返回——前端无即时反馈、
+// 进度无从轮询（"点击没反应"），且长阻塞请求被浏览器 / 代理取消会令下载 context canceled。改为：
+//   - 并发守卫：已有更新进行中再触发 → 返回 ErrUpdateInProgress（409），不重复下载、不抢占自替换；
+//   - 后台用 context.Background()（非请求 context）跑核心，下载超时由出站 client 自带（downloadTimeout）兜底，
+//     彻底摆脱"请求被取消即下载中断"；
+//   - 失败原因由核心写入进度态（failApply）+ 审计，前端经状态端点轮询 progress.error（脱敏后）看到，不再静默。
+// 只读拒写 + 审计由上层中间件 / 核心保证。
+func (s *UpdateService) Apply(operator, clientIP string) error {
+	if !s.applying.CompareAndSwap(false, true) {
+		return apperr.ErrUpdateInProgress
+	}
 	channel := s.settings.GetString(SettingUpdateChannel)
 	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
-	return s.core.ApplyUpdate(ctx, update.Channel(channel), proxyURL, operator, clientIP)
+	go func() {
+		defer s.applying.Store(false)
+		// 用非请求 context：与触发它的 HTTP 请求生命周期解耦，下载不因请求结束 / 被取消而中断。
+		if err := s.core.ApplyUpdate(context.Background(), update.Channel(channel), proxyURL, operator, clientIP); err != nil {
+			// 失败已由核心写入进度态 + 审计；此处异步无处可返，仅补记一条服务层日志便于排查。
+			slog.Warn("在线更新应用失败（详情见进度态 / 审计）", "错误", err)
+		}
+	}()
+	return nil
 }
 
 // RollbackAvailable 报告是否有可回退的上一版本（.old，FR-120），供状态端点回显前端按钮显隐。

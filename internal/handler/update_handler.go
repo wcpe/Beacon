@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/wcpe/Beacon/internal/auth"
+	"github.com/wcpe/Beacon/internal/redact"
 	"github.com/wcpe/Beacon/internal/render"
 	"github.com/wcpe/Beacon/internal/service"
 )
@@ -42,19 +43,20 @@ func (h *UpdateHandler) Check(w http.ResponseWriter, r *http.Request) {
 func (h *UpdateHandler) Status(w http.ResponseWriter, _ *http.Request) {
 	p := h.svc.Status()
 	render.WriteJSON(w, http.StatusOK, progressView{
-		Phase:             string(p.Phase),
-		Percent:           p.Percent,
-		TargetVersion:     p.TargetVersion,
-		Error:             p.Error,
+		Phase:         string(p.Phase),
+		Percent:       p.Percent,
+		TargetVersion: p.TargetVersion,
+		// 失败原因脱敏后展示（FR-122/ADR-0057）：让运维看见更新为何失败又不泄露凭据（如代理账密）。
+		Error:             redact.Desensitize(p.Error),
 		RollbackAvailable: h.svc.RollbackAvailable(),
 	})
 }
 
 // Apply 处理 POST /admin/v1/system/update：触发应用更新（写方法，readonly 经 readonlyWriteGuard 403）。
-// 调更新核心下载 → 校验 → 落位 pending → 请求重启；任一阶段失败保留旧二进制不退、返回对应错误。
-// 落位成功后主进程将优雅关停并自替换换二进制重启，故仅在失败时返回错误体，成功时回 202 表示已接受并开始应用。
+// fix-1：apply 改异步——受理后立即回 202，下载 / 校验 / 落位 / 重启在后台进行，前端经状态端点轮询进度；
+// 已有更新进行中再触发 → 409 UPDATE_IN_PROGRESS。失败原因写入进度态（脱敏）由前端轮询展示，不静默。
 func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Apply(r.Context(), auth.Operator(r.Context()), clientIP(r)); err != nil {
+	if err := h.svc.Apply(auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

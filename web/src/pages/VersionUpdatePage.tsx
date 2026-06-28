@@ -109,7 +109,9 @@ export default function VersionUpdatePage() {
   const { data: progress } = useQuery({
     queryKey: ['update-progress'],
     queryFn: updateProgress,
-    refetchInterval: applying ? PROGRESS_POLL_MS : false,
+    // 进行中才轮询；失败即停（不空转，进度区仍持续显失败原因，由按钮 !failed 条件支持重试，fix-1）。
+    refetchInterval: (query) =>
+      applying && query.state.data?.phase !== 'failed' ? PROGRESS_POLL_MS : false,
   })
 
   // 记录重启窗口的掉线 → 重连边沿：触发应用后控制面短暂断连，重连成功即回显新版本。
@@ -147,6 +149,8 @@ export default function VersionUpdatePage() {
       } else {
         showError(t('updateModal.updateFailed', { reason }))
       }
+      // fix-1：失败后保留 applying（进度区持续显失败原因），仅靠按钮的 !failed 条件重新启用以便重试；
+      // 进度轮询见 useQuery 的 refetchInterval——失败即停轮询，不空转。
     }
   }, [applying, opKind, reconnected, failed, progress, data, showSuccess, showError, t])
 
@@ -196,14 +200,21 @@ export default function VersionUpdatePage() {
     }
   }
 
-  // 「确认更新」：POST 触发应用，受理后进入进度轮询 + 重启重连阶段；失败回显 error。
+  // 「确认更新」：POST 触发应用（fix-1：后端已改异步、202 立即返回），点击即进 applying 态启动进度轮询；
+  // 失败由进度轮询 phase=failed 经裁决 effect 回显脱敏原因并复位 applying 以便重试。
   async function handleConfirmUpdate() {
     setConfirmOpen(false)
+    // 复位上一轮裁决 / 重连追踪，允许重试
+    verdictShownRef.current = false
+    wentOfflineRef.current = false
+    setReconnected(false)
+    setOpKind('update')
+    setApplying(true)
     try {
       await triggerUpdate()
-      setOpKind('update')
-      setApplying(true)
     } catch (e) {
+      // 触发被拒（如 409 已有更新进行中）/ 网络失败 → 退出 applying，toast 出错误
+      setApplying(false)
       const msg = e instanceof ApiClientError ? e.message : t('updateModal.triggerFailed')
       showError(msg)
     }
@@ -213,11 +224,16 @@ export default function VersionUpdatePage() {
   // 后端 409 NO_ROLLBACK_AVAILABLE → 提示「无可回退的上一版本」；其余错误回显 message 或兜底文案。
   async function handleConfirmRollback() {
     setRollbackConfirmOpen(false)
+    // 复位上一轮裁决 / 重连追踪，允许重试
+    verdictShownRef.current = false
+    wentOfflineRef.current = false
+    setReconnected(false)
+    setOpKind('rollback')
+    setApplying(true)
     try {
       await rollbackUpdate()
-      setOpKind('rollback')
-      setApplying(true)
     } catch (e) {
+      setApplying(false)
       if (e instanceof ApiClientError) {
         const msg =
           e.code === 'NO_ROLLBACK_AVAILABLE' ? t('versionUpdate.rollbackNoneAvailable') : e.message
@@ -375,12 +391,13 @@ export default function VersionUpdatePage() {
 
           {/* 卡片底部主操作：立即更新并重启（有更新时可用）+ 回滚到上一版本（仅有 .old 备份时显示，FR-120） */}
           <CardFooter className="gap-2">
-            <Button onClick={() => setConfirmOpen(true)} disabled={!canUpdate || applying}>
+            {/* 失败后（!failed 为假）重新启用以便重试：applying 仍为真使进度区持续显失败原因，但不锁死按钮（fix-1） */}
+            <Button onClick={() => setConfirmOpen(true)} disabled={!canUpdate || (applying && !failed)}>
               <Download />
               {t('versionUpdate.applyAndRestart')}
             </Button>
             {canRollback && (
-              <Button variant="outline" onClick={() => setRollbackConfirmOpen(true)} disabled={applying}>
+              <Button variant="outline" onClick={() => setRollbackConfirmOpen(true)} disabled={applying && !failed}>
                 <Undo2 />
                 {t('versionUpdate.rollback')}
               </Button>

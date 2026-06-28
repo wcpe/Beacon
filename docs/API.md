@@ -621,7 +621,7 @@ data: {}
 ```
 `phase ∈ {idle, checking, downloading, verifying, staging, ready-restart, failed}`；`percent` 仅下载阶段有意义；`error` 仅 `failed` 非空；`rollbackAvailable` 表示是否存在可回退的上一版本（`.old` 备份，FR-120，前端据此显隐回滚按钮）。
 
-`POST /admin/v1/system/update`（无请求体）：调更新核心执行「下载 → SHA256 校验 → 原子落位 pending → 请求重启」。落位成功回 `202 { "accepted": true }`，随后主进程优雅关停 → 自替换（`rename` 让位三步）+ spawn 新进程重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）；任一阶段失败 → 保留旧二进制、进程不退，回 `500 INTERNAL`（失败原因记 `system.update-failed` 审计与日志，不含敏感）。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
+`POST /admin/v1/system/update`（无请求体）：**异步**触发更新（fix-1）——受理即回 `202 { "accepted": true }`，「下载 → SHA256 校验 → 原子落位 pending → 请求重启」在后台进行（用非请求 context，下载不因请求结束被取消）；前端经 `GET /admin/v1/system/update` 轮询进度（`phase`/`percent`/`error`）。落位成功后主进程优雅关停 → 自替换（`rename` 让位三步）+ spawn 新进程重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）；任一阶段失败 → 保留旧二进制、进程不退，失败原因写入进度态 `error`（**脱敏后**经状态端点展示，FR-122）+ 记 `system.update-failed` 审计与日志。**已有更新进行中再触发 → `409 UPDATE_IN_PROGRESS`**。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
 
 `POST /admin/v1/system/rollback`（无请求体，FR-120，见 [ADR-0053](adr/0053-single-binary-self-replace.md)）：回退到上一版本（`.old` 备份）。校验存在 `.old` 后回 `202 { "accepted": true }`，随后主进程优雅关停 → `rename` 回退（当前 → `.failed`、`.old` → 运行路径）+ spawn 旧版重启；无 `.old` 可退 → `409 NO_ROLLBACK_AVAILABLE`。写方法 readonly→`403`，触发记 `system.update-rollback` 审计。回退可用性经上面 `GET /system/update` 的 `rollbackAvailable` 回显。
 
