@@ -4,7 +4,7 @@
 
 ## 通用约定
 
-- 统一错误体：`{ "code": "<业务码>", "message": "<中文说明>", "traceId": "<可选>" }`。
+- 统一错误体：`{ "code": "<业务码>", "message": "<中文说明>", "traceId": "<可选>" }`。领域错误返回其业务码与安全文案；**非预期内部错误（`code:"INTERNAL"`）的 `message` 为脱敏后的真实原因**（打码凭据：URL 账密 / token / password / secret / api-key / Bearer·Basic 令牌；保留内网地址 / 路径等运维上下文），而非笼统「内部错误」——让运维看得见失败原因又不泄露凭据（FR-122，[ADR-0057](adr/0057-surface-desensitized-errors.md)）；完整未脱敏错误仍记服务端日志，可凭 `traceId` 对账。
 - HTTP 状态：400 参数错 / 401 缺 token 或登录令牌 / **403 已认证但无权（只读密钥写）** / 404 不存在 / 409 冲突 / 422 校验失败 / 500 内部错；**304 仅用于长轮询无变更超时**。
 - 鉴权：admin 端需登录令牌**或 API 密钥**（见下「管理面鉴权」，自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)、[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）；agent 端用共享 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
 - 时间统一 UTC；内容指纹 `md5` 为小写 hex。

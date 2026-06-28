@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 全局错误脱敏展示（FR-122，见 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 与 [.claude/rules/error-surfacing.md](.claude/rules/error-surfacing.md)）：此前后端 `render.WriteError` 对非预期内部错误**一律对外返回笼统「内部错误」、真因只进日志**，运维在前端看不到失败原因、问题被静默隐藏。改为反转姿态——**操作出错时把脱敏后的真实原因展示到前端**：① 新增叶子包 `internal/redact.Desensitize` 打码凭据类敏感片段（URL 里 `user:pass@` 密码段、`token=`/`password=`/`secret=`/`pwd=`/`api-key=` 键值、`Bearer`/`Basic` 令牌），内网地址 / 主机名 / 路径等运维上下文**不打码**（非凭据、是定位关键）；② `render.WriteError` 对内部错误返回 `redact.Desensitize(err)` 真因（仍记完整日志 + `traceId` 可对账）；③ 前端 react-query `MutationCache` 全局兜底 onError——未自带 `onError` 的写操作失败也 toast 出该脱敏错误，杜绝静默失败。配套新增防漂移规则 `.claude/rules/error-surfacing.md`、同步 `docs/API.md` 错误响应描述。
+
 ### 修复
 - 密集卡片 / 控件窄屏挤压裁切（fix-B，`PageHeader` / 配置工作台）：窄宽度下第二层页头标题（如「配置中心」）、配置工作台面板标题（「受管配置」等）被 flex 挤到内容宽以下、CJK 文本逐字竖排。① `PageHeader`：标题加 `shrink-0` + `whitespace-nowrap` 不再被挤压，副标题次要项窄屏隐藏（`lg` 显），头带 `min-w-0` + `overflow-hidden`。② 配置工作台：双面板行改 `overflow-x-auto`、每个面板设 `min-w-[320px]`，低于阈值整行横向滚动而非把内容挤成竖排；面板标题改 `truncate` 省略、图标 / chip 不收缩。
 - 顶部状态条窄屏裁切（fix-A，`SystemHeader`）：整宽顶栏固定高 `h-10` + 状态条外层 `flex-wrap`，窄屏内容换行后被固定高裁掉（控制面状态 / 连接药丸 / 运行·在线被切在顶边）。改为 `flex-nowrap` + `min-w-0` 不换行，并对次要项做断点渐进收窄——标题（`xl` 显）、运行·在线（`lg` 显）、搜索文案 + 快捷键提示（`lg` 显，仅留搜索图标）窄屏自动收起；连接药丸 + 主题 / 大屏 / 账户头像始终显示，不裁切。

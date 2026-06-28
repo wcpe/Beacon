@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/wcpe/Beacon/internal/apperr"
+	"github.com/wcpe/Beacon/internal/redact"
 )
 
 // ctxKey 是本包私有的 context key 类型，避免键碰撞。
@@ -50,6 +51,8 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 // WriteError 把错误转换为统一错误体；非业务错误按 500 处理并记录日志。
+// FR-122/ADR-0057：领域错误（apperr）原样返回其安全文案；非预期内部错误**记完整日志（含未脱敏全文 + traceId）**，
+// 但对外返回 redact.Desensitize(err) 脱敏真因（不再笼统「内部错误」），让运维看得见失败原因又不泄露凭据。
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	tid := TraceID(r.Context())
 	var ae *apperr.Error
@@ -58,5 +61,5 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	slog.Error("内部错误", "路径", r.URL.Path, "traceId", tid, "错误", err)
-	WriteJSON(w, http.StatusInternalServerError, errorBody{Code: "INTERNAL", Message: "内部错误", TraceID: tid})
+	WriteJSON(w, http.StatusInternalServerError, errorBody{Code: "INTERNAL", Message: redact.DesensitizeErr(err), TraceID: tid})
 }

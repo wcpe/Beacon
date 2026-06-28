@@ -114,6 +114,8 @@ export const zhCN = {
     refreshing: '（刷新中…）',
     loading: '加载中…',
     loadFailed: '加载失败：{{message}}',
+    // 全局写操作失败兜底文案（FR-122）：错误无 message 时的回退
+    operationFailed: '操作失败',
     unknownError: '未知错误',
     emptyData: '暂无数据',
     pleaseSelect: '请选择',

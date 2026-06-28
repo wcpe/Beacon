@@ -10,6 +10,7 @@
 | [doc-sync.md](doc-sync.md) | **文档漂移**：文档随代码同 PR 更新 |
 | [testing-and-quality.md](testing-and-quality.md) | **质量漂移**：里程碑验证门与质量底线 |
 | [static-analysis.md](static-analysis.md) | **风格漂移**：格式化与静态检查工具链 + CI 门禁 |
+| [error-surfacing.md](error-surfacing.md) | **可观测漂移**：操作错误脱敏后展示前端、不静默隐藏（ADR-0057） |
 | [comments.md](comments.md) | 注释中文 |
 | [config-files.md](config-files.md) | YAML 配置规范 |
 | [git-commit.md](git-commit.md) | 提交规范与文档入库边界 |
