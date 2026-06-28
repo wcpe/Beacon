@@ -22,8 +22,18 @@ GOEXE := $(shell go env GOEXE)
 BUKKIT_JAR := agent/agent-bukkit/build/libs/BeaconAgent-$(VERSION).jar
 BUNGEE_JAR := agent/agent-bungee/build/libs/BeaconAgentProxy-$(VERSION).jar
 
+# 控制面 Go 模块路径（goimports 本地导入分组前缀，与 go.mod 一致）
+GOIMPORTS_LOCAL := github.com/wcpe/Beacon
+# golangci-lint 本地运行的 linter 集合 —— 必须与 .golangci.yml 的 linters（v2 standard
+# 默认集 errcheck/govet/ineffassign/staticcheck/unused + enable 的 bodyclose/misspell/
+# revive/sqlclosecheck）保持一致；增减 linter 时两处同步。
+# 用 --enable-only 显式列出而不直接 golangci-lint run，是为规避本机 CRLF：golangci-lint 的
+# gofmt/goimports 格式化器在 CRLF 工作树会全文件误报，而 AST 类 linter 不受行尾影响；
+# 故此处只跑 linter（CRLF 免疫），格式化交给下方 CRLF 安全的 gofmt/goimports 步骤（等价 CI）。
+GOLANGCI_LINTERS := errcheck,govet,ineffassign,staticcheck,unused,bodyclose,misspell,revive,sqlclosecheck
+
 .DEFAULT_GOAL := help
-.PHONY: help version web build agent package clean
+.PHONY: help version lint web build agent package clean
 
 # 列出可用目标
 help:
@@ -32,11 +42,23 @@ help:
 	@echo "  make build     control-plane binary only (current platform, embeds web + injects version)"
 	@echo "  make agent     both agent plugin jars only (gradle clean build)"
 	@echo "  make web       build frontend web/dist only (embedded into control-plane)"
+	@echo "  make lint      Go static checks: gofmt + goimports + golangci-lint (CRLF-safe, mirrors CI)"
 	@echo "  make clean     remove $(DIST)/ and agent build outputs"
 
 # 打印当前版本号
 version:
 	@echo $(VERSION)
+
+# Go 本地一键静态检查 —— 镜像 CI 的 lint job（golangci-lint + gofmt + goimports）。
+# 提交前必跑（见 .claude/rules/static-analysis.md §2）。在 Git Bash 运行。
+# CRLF 安全：本机 autocrlf=true 时工作树为 CRLF，直接 gofmt -l . / golangci-lint 的格式化器
+# 会全文件误报；故 golangci-lint 只跑 AST 类 linter（--enable-only，全模块覆盖），gofmt/goimports
+# 仅对本次改动的 .go 文件去 CR 后校验（快、等价 CI 的 LF 检查，见 static-analysis.md §2.1）。
+lint:
+	@echo "==== golangci-lint run（仅 linter，CRLF 免疫；格式化见下方步骤）===="
+	golangci-lint run --enable-only=$(GOLANGCI_LINTERS)
+	@bash scripts/check-go-format.sh $(GOIMPORTS_LOCAL)
+	@echo "==== Go 静态检查全部通过 ===="
 
 # 前端构建产物 web/dist（被控制面 go:embed 内嵌；必须先于 build）
 web:
