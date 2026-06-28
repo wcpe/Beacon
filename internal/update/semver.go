@@ -142,6 +142,8 @@ func IsNewer(current, remote string) (bool, error) {
 			}
 			return rem.devSeq > cur.devSeq, nil // 都 dev → 比提交距离序号
 		}
-		return true, nil // 一正式一预发布（同基线）→ 渠道切换视为更新
+		// 一正式一 dev（同基线）：dev.<N> 是基线后 N 个提交=更新的代码（ADR-0056），故按方向判（fix-a）——
+		// 远端是 dev（cur 是正式）→ dev 更新 → 提示更新；远端是正式（cur 是 dev）→ 正式是更旧基线 → 不提示。
+		return rem.isPre, nil
 	}
 }

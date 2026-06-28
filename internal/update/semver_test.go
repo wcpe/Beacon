@@ -90,8 +90,9 @@ func TestIsNewer(t *testing.T) {
 		{"0.16.0", "0.17.0", true, false},                                // 跨次版本
 		{"1.0.1", "1.0.0", false, false},                                 // 远端更低
 		{"1.0.0", "1.0.0", false, false},                                 // 都正式、同基线 → 不更新
-		{"0.17.0", "0.17.0-dev.3.gaaaaaaa", true, false},                 // 正式 → dev（同基线，切 dev）→ 更新
-		{"0.17.0-dev.3.gaaaaaaa", "0.17.0", true, false},                 // dev → 正式（同基线，升正式）→ 更新
+		{"0.17.0", "0.17.0-dev.3.gaaaaaaa", true, false},                 // 正式 → dev（同基线，dev 是基线后更新提交）→ 更新
+		{"0.17.0-dev.3.gaaaaaaa", "0.17.0", false, false},                // dev → 正式（同基线，dev 在基线之后=更新，正式是更旧基线）→ 不更新（fix-a）
+		{"0.18.0-dev.8.g0fa2bca", "0.18.0", false, false},                // 真机复现：dev 构建不被提示更新回同基线正式版（fix-a）
 		{"0.17.0-dev.3.gaaaaaaa", "0.17.0-dev.5.gbbbbbbb", true, false},  // dev 序号 5>3 → 更新（反复测试核心）
 		{"0.17.0-dev.5.gaaaaaaa", "0.17.0-dev.3.gbbbbbbb", false, false}, // dev 序号 3<5 → 不更新
 		{"0.17.0-dev.3.gaaaaaaa", "0.17.0-dev.3.gbbbbbbb", false, false}, // dev 序号相等（无新提交）→ 不更新
