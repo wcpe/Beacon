@@ -48,10 +48,11 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
   const showSkeleton = isLoading && !data && !isError
 
   return (
-    // 只渲染状态条内容（不含 header 外壳）：由顶栏容器统一边框/内边距，高度压低后用更紧凑的纵向留白。
-    <div className="flex w-full flex-wrap items-center gap-x-6 gap-y-1.5">
-      {/* 控制面状态条标题；版本徽章已移至整宽顶栏品牌区 logo 右侧（FR-121，见 VersionBadge） */}
-      <span className="text-sm font-semibold">{t('systemHeader.title')}</span>
+    // 只渲染状态条内容（不含 header 外壳）：由顶栏容器统一边框/内边距。
+    // fix-A：改 flex-nowrap（不换行）+ min-w-0，避免固定高 h-10 顶栏内换行被裁；次要项按断点渐进收起。
+    <div className="flex w-full min-w-0 flex-nowrap items-center gap-x-3 lg:gap-x-6">
+      {/* 控制面状态条标题（次要标识）：窄屏隐藏，xl 及以上显示。版本徽章已移至品牌区 logo 右侧（FR-121） */}
+      <span className="hidden shrink-0 text-sm font-semibold xl:inline">{t('systemHeader.title')}</span>
 
       {/* 连接态药丸：绿底绿字=已连接、红底红字=已断开 / 不可达；语义色类、不硬编码 */}
       {showSkeleton ? (
@@ -59,7 +60,8 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
       ) : (
         <span
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
+            // 连接态药丸为关键健康信号：始终显示、不收缩（shrink-0）
+            'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
             dbConnected
               ? 'bg-green-600/10 text-green-700 dark:text-green-400'
               : 'bg-red-600/10 text-red-700 dark:text-red-400',
@@ -73,11 +75,12 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
         </span>
       )}
 
-      {/* 运行 / 在线紧凑一行（FR-118 E：去标签行，仅留「运行 X · 在线 N」一行） */}
+      {/* 运行 / 在线紧凑一行（FR-118 E：去标签行，仅留「运行 X · 在线 N」一行）。
+          fix-A：次要信息，窄屏隐藏、lg 及以上显示。 */}
       {showSkeleton ? (
-        <Skeleton className="w-28" />
+        <Skeleton className="hidden w-28 lg:inline-block" />
       ) : (
-        <span className="text-sm font-medium tabular-nums">
+        <span className="hidden shrink-0 text-sm font-medium tabular-nums lg:inline">
           {t('systemHeader.runtimeValue', {
             uptime: formatDuration(data?.uptimeSeconds),
             online: data?.onlineInstances ?? '-',
@@ -85,8 +88,8 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
         </span>
       )}
 
-      {/* 右上角操作组（右对齐）：搜索入口 + 界面偏好控件 */}
-      <div className="ml-auto flex items-center gap-1">
+      {/* 右上角操作组（右对齐，不收缩）：搜索入口 + 界面偏好控件 + 账户菜单 */}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* 全局搜索入口（FR-83）：由侧栏移至此，点开命令面板浮层，与 Ctrl/Cmd+K 同一浮层 */}
         <button
           type="button"
@@ -95,8 +98,9 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
           className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <Search aria-hidden className="size-4 shrink-0" />
-          <span>{t('commandPalette.trigger')}</span>
-          <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+          {/* fix-A：搜索文案与快捷键提示窄屏隐藏，仅留图标；按钮无障碍名仍由 aria-label 保证 */}
+          <span className="hidden lg:inline">{t('commandPalette.trigger')}</span>
+          <kbd className="hidden rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground lg:inline-block">
             {t('commandPalette.shortcutHint')}
           </kbd>
         </button>

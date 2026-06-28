@@ -137,3 +137,27 @@ describe('SystemHeader 账户菜单（FR-121）', () => {
     expect(await screen.findByRole('button', { name: '账户菜单' })).toBeInTheDocument()
   })
 })
+
+// 窄屏渐进收窄（fix-A 回归护栏）：顶栏固定高 h-10 + 原 flex-wrap 致窄屏换行被裁。
+// jsdom 无布局引擎、无法测真实溢出，仅锁结构类名作护栏；真实收窄行为由浏览器验证。
+describe('SystemHeader 窄屏渐进收窄（fix-A）', () => {
+  it('外层不换行（flex-nowrap 而非 flex-wrap），避免固定高顶栏内换行被裁', async () => {
+    renderHeader(<SystemHeader />)
+    const title = await screen.findByText('控制面状态')
+    const root = title.parentElement as HTMLElement
+    expect(root.classList.contains('flex-nowrap')).toBe(true)
+    expect(root.classList.contains('flex-wrap')).toBe(false)
+  })
+
+  it('次要项（标题 / 运行·在线）带响应式隐藏断点类，窄屏收起', async () => {
+    renderHeader(<SystemHeader />)
+    // 标题：窄屏隐藏（hidden + 某断点显示）
+    const title = screen.getByText('控制面状态')
+    expect(title.className).toMatch(/hidden/)
+    expect(title.className).toMatch(/(md|lg|xl):(inline|block|flex)/)
+    // 运行 / 在线：窄屏隐藏
+    const runtime = await screen.findByText('运行 3 小时 25 分 · 在线 7')
+    expect(runtime.className).toMatch(/hidden/)
+    expect(runtime.className).toMatch(/(md|lg|xl):(inline|block|flex)/)
+  })
+})
