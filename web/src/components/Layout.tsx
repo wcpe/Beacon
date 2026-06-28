@@ -1,14 +1,12 @@
 // 顶层布局：侧边导航 + 当前登录身份 + 登出 + 主内容区。
 // 操作者身份由登录令牌决定（FR-11），写操作 operator 以认证身份为准，无需手填。
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { ChevronsLeft, ChevronsRight, LogOut } from 'lucide-react'
-import { clearAuth, useAuth } from '@/state/auth'
-import { logout } from '@/api/client'
-import { Button } from '@/components/ui/button'
+import { ChevronsLeft, ChevronsRight } from 'lucide-react'
 import SystemHeader from '@/components/SystemHeader'
+import VersionBadge from '@/components/VersionBadge'
 import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 import CommandPalette from '@/components/CommandPalette'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
@@ -18,7 +16,6 @@ import { cn } from '@/lib/utils'
 
 export default function Layout() {
   const { t } = useTranslation()
-  const { operator } = useAuth()
   const navigate = useNavigate()
   // 路由路径用作内容淡入的 key：切页时重挂载触发 animate-in fade-in，过渡不生硬（复用 tw-animate-css，无新依赖）
   const location = useLocation()
@@ -43,15 +40,31 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  async function onLogout() {
-    // 先请求后端记一条登出审计（需当前令牌）；无论成败都清本地登录态并跳登录——登出绝不被阻断。
-    try {
-      await logout()
-    } catch {
-      // 令牌已过期等场景审计失败，忽略：登出是本地动作，不依赖后端成功
+  // 品牌区单击 / 双击区分（FR-121）：单击跳看板、双击折叠/展开侧栏。
+  // 单击延迟 ~200ms 执行，留出双击取消窗口；双击命中则清掉待执行的单击跳转。
+  const brandClickTimer = useRef<number | null>(null)
+  useEffect(() => {
+    // 卸载时清理待执行的单击定时器，避免卸载后触发跳转
+    return () => {
+      if (brandClickTimer.current !== null) window.clearTimeout(brandClickTimer.current)
     }
-    clearAuth()
-    navigate('/login', { replace: true })
+  }, [])
+
+  function handleBrandClick() {
+    if (brandClickTimer.current !== null) window.clearTimeout(brandClickTimer.current)
+    brandClickTimer.current = window.setTimeout(() => {
+      brandClickTimer.current = null
+      navigate('/dashboard')
+    }, 200)
+  }
+
+  function handleBrandDoubleClick() {
+    // 双击：取消待执行的单击跳转，改为切换侧栏折叠/展开
+    if (brandClickTimer.current !== null) {
+      window.clearTimeout(brandClickTimer.current)
+      brandClickTimer.current = null
+    }
+    toggleSidebar()
   }
 
   return (
@@ -59,33 +72,42 @@ export default function Layout() {
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       {/* 整宽顶栏（~40px）：左品牌区（宽 = 侧栏宽 w-56，右边框接侧栏竖线）+ 右控制面状态条（占满剩余宽度） */}
       <header className="flex h-10 shrink-0 items-stretch border-b bg-background">
-        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：整块可点跳可观测看板（/dashboard），保留连接状态小灯（FR-78）。
-            改进 1：宽度随侧栏折叠态联动（折叠 w-14 仅居中显小灯、展开 w-56 显小灯+品牌文案）。 */}
-        <button
-          type="button"
-          onClick={() => navigate('/dashboard')}
-          aria-label={t('layout.brandToDashboard')}
+        {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：logo（连接小灯 FR-78）+ 品牌文案 + 版本徽章。
+            FR-121：logo+文案 单击跳可观测看板、双击切换侧栏折叠/展开；版本徽章移到 logo 右侧（展开态显示）。
+            宽度随折叠态联动（折叠 w-14 仅居中显小灯、展开 w-56 显小灯+文案+版本）。 */}
+        <div
           className={cn(
-            'flex shrink-0 items-center gap-2 border-r text-left text-sm font-semibold transition-all hover:bg-sidebar-accent/40',
-            sidebarCollapsed ? 'w-14 justify-center px-0' : 'w-56 px-5',
+            'flex shrink-0 items-center border-r',
+            sidebarCollapsed ? 'w-14 justify-center px-0' : 'w-56 gap-2 px-3',
           )}
         >
-          {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
-          <span
-            aria-label={t(`connection.${connectionStatus}`)}
-            title={t(`connection.${connectionStatus}`)}
-            className={cn(
-              'inline-block h-2 w-2 shrink-0 rounded-full',
-              connectionStatus === 'online'
-                ? 'bg-green-600'
-                : connectionStatus === 'offline'
-                  ? 'bg-red-600'
-                  : 'bg-muted-foreground',
-            )}
-          />
-          {/* 折叠态隐藏品牌文案，仅留小灯作 logo 点 */}
-          {!sidebarCollapsed && <span>{t('app.brand')}</span>}
-        </button>
+          <button
+            type="button"
+            onClick={handleBrandClick}
+            onDoubleClick={handleBrandDoubleClick}
+            aria-label={t('layout.brandToDashboard')}
+            title={t('layout.brandHint')}
+            className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm font-semibold transition-colors hover:bg-sidebar-accent/40"
+          >
+            {/* 全局连接状态小灯（FR-78）：绿=已连接、红=已断开、灰=连接中 */}
+            <span
+              aria-label={t(`connection.${connectionStatus}`)}
+              title={t(`connection.${connectionStatus}`)}
+              className={cn(
+                'inline-block h-2 w-2 shrink-0 rounded-full',
+                connectionStatus === 'online'
+                  ? 'bg-green-600'
+                  : connectionStatus === 'offline'
+                    ? 'bg-red-600'
+                    : 'bg-muted-foreground',
+              )}
+            />
+            {/* 折叠态隐藏品牌文案，仅留小灯作 logo 点 */}
+            {!sidebarCollapsed && <span className="truncate">{t('app.brand')}</span>}
+          </button>
+          {/* 版本徽章（FR-121）：移到 logo 右侧；展开态显示，折叠态隐藏 */}
+          {!sidebarCollapsed && <VersionBadge />}
+        </div>
         {/* 右侧控制面状态条（FR-33）：占满品牌区之外的剩余宽度；SystemHeader 只渲染内容，外壳由本顶栏统一。
             搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}
         <div className="flex min-w-0 flex-1 items-center px-6">
@@ -146,45 +168,41 @@ export default function Layout() {
             </div>
           ))}
         </nav>
-        {/* 底部「折叠切换 + 当前操作人 + 登出」（冻结，不随导航滚动）。
-            改进 1：折叠态仅留图标按钮（折叠切换 + 登出），展开态显完整操作人信息块。 */}
+        {/* 底部「开源协议 + 折叠/展开按钮」（FR-121，冻结，不随导航滚动）。
+            当前操作人 / 登出已移至顶栏右上角账户菜单（见 OperatorMenu）。
+            展开态：开源协议链接（左）+ 折叠按钮（右）一行；折叠态：仅居中展开图标按钮。 */}
         <div className="shrink-0 border-t p-2">
-          {/* 折叠 / 展开切换按钮：lucide chevrons，状态持久化 localStorage（state/ui） */}
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            aria-label={t(sidebarCollapsed ? 'layout.sidebarExpand' : 'layout.sidebarCollapse')}
-            title={t(sidebarCollapsed ? 'layout.sidebarExpand' : 'layout.sidebarCollapse')}
-            className={cn(
-              'mb-2 flex items-center gap-2 rounded-md py-1.5 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
-              sidebarCollapsed ? 'w-full justify-center px-0' : 'w-full px-3',
-            )}
-          >
-            {sidebarCollapsed ? (
-              <ChevronsRight aria-hidden className="size-4 shrink-0" />
-            ) : (
-              <ChevronsLeft aria-hidden className="size-4 shrink-0" />
-            )}
-            {!sidebarCollapsed && <span>{t('layout.sidebarCollapse')}</span>}
-          </button>
           {sidebarCollapsed ? (
-            // 折叠态：仅一枚登出图标按钮（操作人信息隐藏，hover tooltip 提示登出）
             <button
               type="button"
-              onClick={onLogout}
-              aria-label={t('layout.logout')}
-              title={`${operator || '-'} · ${t('layout.logout')}`}
+              onClick={toggleSidebar}
+              aria-label={t('layout.sidebarExpand')}
+              title={t('layout.sidebarExpand')}
               className="flex w-full justify-center rounded-md py-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
             >
-              <LogOut aria-hidden className="size-4 shrink-0" />
+              <ChevronsRight aria-hidden className="size-4 shrink-0" />
             </button>
           ) : (
-            <div className="px-1">
-              <div className="text-xs text-muted-foreground">{t('layout.currentOperator')}</div>
-              <div className="mb-2 mt-0.5 break-all text-sm font-medium">{operator || '-'}</div>
-              <Button variant="outline" size="sm" className="w-full" onClick={onLogout}>
-                {t('layout.logout')}
-              </Button>
+            <div className="flex items-center justify-between gap-2 px-1">
+              {/* 开源协议：新标签打开仓库 LICENSE（MIT） */}
+              <a
+                href="https://github.com/wcpe/Beacon/blob/master/LICENSE"
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-sidebar-foreground/60 transition-colors hover:text-sidebar-accent-foreground hover:underline"
+              >
+                {t('layout.openSourceLicense')}
+              </a>
+              {/* 折叠按钮 */}
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                aria-label={t('layout.sidebarCollapse')}
+                title={t('layout.sidebarCollapse')}
+                className="flex items-center justify-center rounded-md p-1.5 text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+              >
+                <ChevronsLeft aria-hidden className="size-4 shrink-0" />
+              </button>
             </div>
           )}
         </div>

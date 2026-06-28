@@ -407,8 +407,14 @@ export const zhCN = {
   layout: {
     currentOperator: '当前操作人',
     logout: '登出',
-    // 侧栏品牌区无障碍标签：整块可点跳可观测看板
+    // 品牌区无障碍标签：单击可点跳可观测看板
     brandToDashboard: '前往可观测看板',
+    // 品牌区悬浮提示（FR-121）：说明单击 / 双击两种行为
+    brandHint: '单击进看板 · 双击折叠/展开侧栏',
+    // 账户菜单（FR-121）：右上角首字母头像触发，下拉含操作人全名 + 登出
+    accountMenu: '账户菜单',
+    // 侧栏底部开源协议链接（FR-121）：跳仓库 LICENSE
+    openSourceLicense: '开源协议',
     // 侧栏折叠 / 展开切换按钮无障碍标签（改进 1：可折叠图标条）
     sidebarCollapse: '折叠侧栏',
     sidebarExpand: '展开侧栏',
