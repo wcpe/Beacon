@@ -59,6 +59,14 @@ describe('PageHeader 标题', () => {
     renderAt('/servers', { envScoped: false })
     expect(screen.getByRole('heading', { name: '服务器' })).toBeInTheDocument()
   })
+
+  // fix-B 回归护栏：标题不收缩、不换行，防窄屏被挤成竖排字符（jsdom 无布局引擎，仅锁结构类名）
+  it('标题不收缩不换行（shrink-0 + whitespace-nowrap）', () => {
+    renderAt('/servers', { title: '配置中心', envScoped: false })
+    const heading = screen.getByRole('heading', { name: '配置中心' })
+    expect(heading.className).toMatch(/shrink-0/)
+    expect(heading.className).toMatch(/whitespace-nowrap/)
+  })
 })
 
 describe('PageHeader 计数 / 副标题 / 主操作槽', () => {

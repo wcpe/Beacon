@@ -100,14 +100,19 @@ export default function PageHeader() {
   const envScoped = config.envScoped ?? leaf?.envScoped ?? false
 
   return (
-    // 第二层页面头带（FR-105 真机打磨：高度压低至 ~40px，py-3→py-2、标题降一档更紧凑）
-    <div className="flex h-10 shrink-0 items-center gap-3 border-b bg-background px-6 py-2">
+    // 第二层页面头带（FR-105 真机打磨：高度压低至 ~40px）。
+    // fix-B：min-w-0 + overflow-hidden，标题 shrink-0 不换行（防窄屏被挤成竖排字符）；副标题次要、窄屏隐藏。
+    <div className="flex h-10 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b bg-background px-6 py-2">
       {/* 左：标题 + 计数/副标题（小号弱色） */}
-      <h1 className="text-sm font-semibold">{title}</h1>
-      {config.count != null && <span className="text-sm text-muted-foreground">{config.count}</span>}
-      {config.subtitle != null && <span className="text-sm text-muted-foreground">{config.subtitle}</span>}
-      {/* 右：环境槽（仅环境范围页）+ 主操作槽 */}
-      <div className="ml-auto flex items-center gap-2">
+      <h1 className="shrink-0 text-sm font-semibold whitespace-nowrap">{title}</h1>
+      {config.count != null && (
+        <span className="shrink-0 text-sm text-muted-foreground">{config.count}</span>
+      )}
+      {config.subtitle != null && (
+        <span className="hidden min-w-0 text-sm text-muted-foreground lg:flex">{config.subtitle}</span>
+      )}
+      {/* 右：环境槽（仅环境范围页）+ 主操作槽（不收缩，保持可点） */}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         {envScoped && <EnvSelector />}
         {config.actions}
       </div>

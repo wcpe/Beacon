@@ -598,8 +598,9 @@ export default function ConfigWorkbenchPage() {
       />
 
       {/* ===== 双面板（选中驱动操作在顶部固定状态栏，不在面板上方插入动态条、避免挤动布局选错文件）===== */}
+      {/* fix-B：窄屏不再把面板挤到内容宽以下致 CJK 竖排——面板设 min-width，低于阈值整行横向滚动 */}
       <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-        <div className="flex min-h-0 flex-1 gap-0">
+        <div className="flex min-h-0 flex-1 gap-0 overflow-x-auto overflow-y-hidden">
           {/* 左：受管配置 */}
           <Panel
             side="managed"
@@ -933,12 +934,13 @@ function Panel({
   // 整个面板体作为 @dnd-kit 放置区（drop-managed / drop-server）
   const { setNodeRef, isOver } = useDroppable({ id: `drop-${side}` })
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
-      {/* 头部：图标 + 标题 + 右侧 chip */}
+    // fix-B：min-w-[320px] 给面板一个最小可用宽，低于阈值由父行横向滚动而非把内容挤成竖排
+    <div className="flex min-h-0 w-0 min-w-[320px] flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+      {/* 头部：图标 + 标题 + 右侧 chip。fix-B：图标 / chip 不收缩，标题截断省略而非逐字竖排 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
-        {icon}
-        <span className="text-xs font-medium text-foreground">{title}</span>
-        <div className="ml-auto">{headerRight}</div>
+        <span className="shrink-0">{icon}</span>
+        <span className="min-w-0 truncate text-xs font-medium text-foreground">{title}</span>
+        <div className="ml-auto shrink-0">{headerRight}</div>
       </div>
       {/* 工具栏行（上级 / 刷新 / 新建 / 搜索）+ 地址面包屑栏 */}
       <PanelToolbar segments={segments} showNew={showNew} onAction={onToolbar} onCrumb={() => onToolbar('up')} />

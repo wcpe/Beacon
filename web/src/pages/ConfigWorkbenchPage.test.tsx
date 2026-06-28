@@ -179,6 +179,15 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     expect(screen.getByText('regions.yml')).toBeInTheDocument()
   })
 
+  // fix-B 回归护栏：窄屏面板不再被挤成竖排——面板标题截断省略、双面板行可横向滚动（jsdom 无布局引擎，仅锁类名）
+  it('面板标题截断（truncate）、双面板行窄屏横向滚动（overflow-x-auto）', () => {
+    renderPage()
+    const title = screen.getByText('受管配置')
+    expect(title.className).toMatch(/truncate/)
+    // 双面板行为横向滚动容器
+    expect(title.closest('.overflow-x-auto')).not.toBeNull()
+  })
+
   it('① 选中受管文件 → 发布面板 → 确认发布：toast 含已发布 + 队列出现「按覆盖层热推」完成行', async () => {
     renderPage()
     // 勾选 spawn.yml（受管侧复选框）
