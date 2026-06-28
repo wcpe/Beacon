@@ -42,5 +42,40 @@ export default defineConfig({
     include: ['src/**/*.test.{ts,tsx}'],
     // 关闭 CSS 处理，加速且避免 Tailwind v4 插件介入测试
     css: false,
+    // 覆盖率门禁：基于 v8 引擎统计，CI 与本地共用
+    coverage: {
+      // 使用 V8 原生覆盖率（无需 babel 插桩，速度快）
+      provider: 'v8',
+      // text：控制台汇总；html：本地可视化产物（输出到 coverage/）
+      reporter: ['text', 'html'],
+      // 纳入统计的源码范围：仅业务源码
+      include: ['src/**/*.{ts,tsx}'],
+      // 排除不计覆盖的文件，理由见各行注释
+      exclude: [
+        // 测试文件本身不计入覆盖率
+        '**/*.test.{ts,tsx}',
+        // 测试脚手架（setup、工具），非业务代码
+        'src/test/**',
+        // 假后端 mock 数据/处理器，仅开发期使用，无需覆盖
+        'src/api/mock/**',
+        // 类型声明文件无可执行语句
+        '**/*.d.ts',
+        // 应用入口仅做挂载与初始化，难以单测且无业务逻辑
+        'src/main.tsx',
+        // 纯类型定义文件（接口/类型别名），无运行时语句
+        '**/types.ts',
+      ],
+      // 阈值门禁：达不到则 vitest run --coverage 失败
+      thresholds: {
+        // 行覆盖率底线
+        lines: 70,
+        // 语句覆盖率底线
+        statements: 70,
+        // 函数覆盖率底线
+        functions: 70,
+        // 分支覆盖率：分支覆盖通常偏低，按实测定一个不低于实测的整十数
+        branches: 70,
+      },
+    },
   },
 })
