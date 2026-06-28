@@ -39,6 +39,9 @@ import type { SettingView, UpdateCheckView, UpdateProgressView } from '@/api/typ
 
 // 进度轮询周期（毫秒）：触发应用后短周期反映 phase/percent，直到重启断连。
 const PROGRESS_POLL_MS = 1500
+// 后端「进行中」阶段（fix-c）：进度处于这些阶段即视为有更新在跑——使"进行中"态从后端派生，
+// 切走页面再回来仍能看到进度、按钮仍禁用（applying 是本地态、离开即丢，不能作唯一依据）。
+const BUSY_PHASES = ['checking', 'downloading', 'verifying', 'staging', 'ready-restart']
 // 渠道合法枚举（与后端 updateChannels 同口径，FR-117/ADR-0052：stable 正式版 / prerelease 滚动预发布）。
 const UPDATE_CHANNELS = ['stable', 'prerelease'] as const
 // 更新设置周期上下界（与后端白名单 [1,168] 一致）。
@@ -111,8 +114,12 @@ export default function VersionUpdatePage() {
     queryKey: ['update-progress'],
     queryFn: updateProgress,
     // 进行中才轮询；失败即停（不空转，进度区仍持续显失败原因，由按钮 !failed 条件支持重试，fix-1）。
-    refetchInterval: (query) =>
-      applying && query.state.data?.phase !== 'failed' ? PROGRESS_POLL_MS : false,
+    // fix-c：进行中态从后端派生——本地 applying 或后端 phase 处于进行中阶段都轮询，使切走再回来仍持续刷新进度。
+    refetchInterval: (query) => {
+      const phase = query.state.data?.phase
+      const busy = applying || (phase ? BUSY_PHASES.includes(phase) : false)
+      return busy && phase !== 'failed' ? PROGRESS_POLL_MS : false
+    },
   })
 
   // 记录重启窗口的掉线 → 重连边沿：触发应用后控制面短暂断连，重连成功即回显新版本。
@@ -126,6 +133,10 @@ export default function VersionUpdatePage() {
   // 是否存在可回退的上一版本（FR-120）：取自更新状态端点的 rollbackAvailable，决定「回滚到上一版本」按钮显隐。
   const canRollback = progress?.rollbackAvailable === true
   const failed = progress?.phase === 'failed'
+  // fix-c：进行中态从后端派生——本地 applying（本会话触发）或后端 phase 处于进行中阶段（切走再回来仍准）。
+  // 用于进度区显示与按钮禁用，使更新中切到别的页再回来仍能看到进度、且不能重复触发（fix-d）。
+  const backendBusy = progress ? BUSY_PHASES.includes(progress.phase) : false
+  const inProgress = applying || backendBusy
 
   // 最终裁决 toast（FR-118 ②；FR-120 复用同一机制）：更新 / 回滚走完后明确成功 / 失败一次。
   // 成功 = 重连成功边沿（已下载 / 换版 / 重启 / 重连完成）；失败 = 进度 phase=failed。文案按 opKind 分流。
@@ -205,6 +216,8 @@ export default function VersionUpdatePage() {
   // 失败由进度轮询 phase=failed 经裁决 effect 回显脱敏原因并复位 applying 以便重试。
   async function handleConfirmUpdate() {
     setConfirmOpen(false)
+    // 防重复触发（fix-d）：已有更新进行中（本地或后端）直接忽略；后端 409 守卫为最终兜底。
+    if (inProgress) return
     // 复位上一轮裁决 / 重连追踪，允许重试
     verdictShownRef.current = false
     wentOfflineRef.current = false
@@ -239,6 +252,8 @@ export default function VersionUpdatePage() {
   // 后端 409 NO_ROLLBACK_AVAILABLE → 提示「无可回退的上一版本」；其余错误回显 message 或兜底文案。
   async function handleConfirmRollback() {
     setRollbackConfirmOpen(false)
+    // 防重复触发（fix-d）：已有更新 / 回滚进行中直接忽略
+    if (inProgress) return
     // 复位上一轮裁决 / 重连追踪，允许重试
     verdictShownRef.current = false
     wentOfflineRef.current = false
@@ -396,8 +411,8 @@ export default function VersionUpdatePage() {
               </div>
             )}
 
-            {/* 更新 / 回滚进度（触发应用后展示）：阶段 / 进度 / 重启重连 / 失败 + 下载中「停止」按钮（FR-125） */}
-            {applying && (
+            {/* 更新 / 回滚进度（进行中展示，fix-c 从后端派生，切走再回来仍显示）：阶段 / 进度 / 重启重连 / 失败 + 下载中「停止」按钮（FR-125） */}
+            {inProgress && (
               <div
                 role="status"
                 className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
@@ -416,13 +431,13 @@ export default function VersionUpdatePage() {
 
           {/* 卡片底部主操作：立即更新并重启（有更新时可用）+ 回滚到上一版本（仅有 .old 备份时显示，FR-120） */}
           <CardFooter className="gap-2">
-            {/* 失败后（!failed 为假）重新启用以便重试：applying 仍为真使进度区持续显失败原因，但不锁死按钮（fix-1） */}
-            <Button onClick={() => setConfirmOpen(true)} disabled={!canUpdate || (applying && !failed)}>
+            {/* 进行中（inProgress，fix-c 含后端派生）禁用；失败后（!failed）重新启用以便重试（fix-1）。防重复点击（fix-d）。 */}
+            <Button onClick={() => setConfirmOpen(true)} disabled={!canUpdate || (inProgress && !failed)}>
               <Download />
               {t('versionUpdate.applyAndRestart')}
             </Button>
             {canRollback && (
-              <Button variant="outline" onClick={() => setRollbackConfirmOpen(true)} disabled={applying && !failed}>
+              <Button variant="outline" onClick={() => setRollbackConfirmOpen(true)} disabled={inProgress && !failed}>
                 <Undo2 />
                 {t('versionUpdate.rollback')}
               </Button>

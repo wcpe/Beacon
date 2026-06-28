@@ -244,8 +244,8 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
     await waitFor(() => expect(showError).toHaveBeenCalledWith('已有更新正在进行中'))
   })
 
-  // FR-125：下载进行中显「停止」按钮，点击调 cancelUpdate 取消下载
-  it('下载进行中显示「停止」按钮，点击调 cancelUpdate', async () => {
+  // FR-125 + fix-c：后端 downloading → 进度区 + 「停止」按钮从后端派生直接显示（无需本地触发），点击调 cancelUpdate
+  it('下载进行中（后端派生）显示「停止」按钮，点击调 cancelUpdate', async () => {
     vi.mocked(updateProgress).mockResolvedValue({
       phase: 'downloading',
       percent: 30,
@@ -255,11 +255,25 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
     })
     vi.mocked(cancelUpdate).mockResolvedValue({ cancelled: true })
     renderPage(<VersionUpdatePage />)
-    await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
-    await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
     const stopBtn = await screen.findByRole('button', { name: '停止' })
     await userEvent.click(stopBtn)
     await waitFor(() => expect(vi.mocked(cancelUpdate)).toHaveBeenCalled())
+  })
+
+  // fix-c/fix-d：后端进行中（downloading）时，进度区显示且「立即更新」按钮禁用——切走再回来仍准、防重复触发
+  it('后端进行中时「立即更新」按钮禁用（fix-c/fix-d 防重复）', async () => {
+    vi.mocked(updateProgress).mockResolvedValue({
+      phase: 'downloading',
+      percent: 50,
+      targetVersion: 'v0.11.0',
+      error: '',
+      rollbackAvailable: false,
+    })
+    renderPage(<VersionUpdatePage />)
+    // 进度区从后端派生显示（即便本地未触发）
+    expect(await screen.findByRole('button', { name: '停止' })).toBeInTheDocument()
+    // 「立即更新并重启」按钮禁用，不能重复触发
+    expect(screen.getByRole('button', { name: '立即更新并重启' })).toBeDisabled()
   })
 
   // FR-118 ②：更新走完给明确失败裁决（成功重连裁决依赖 offline→online 真链路，真机验）
