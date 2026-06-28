@@ -596,6 +596,7 @@ data: {}
 | `GET /admin/v1/system/update-check` | 检查有无可用更新（只读，full / readonly 皆可见） |
 | `GET /admin/v1/system/update` | 读更新进度内存态（只读、不查库、不打 GitHub） |
 | `POST /admin/v1/system/update` | 触发应用更新（写方法，readonly→`403`，入审计 `system.update-apply`/`system.update-failed`） |
+| `POST /admin/v1/system/update/cancel` | 取消进行中的更新下载（写方法，readonly→`403`，下载中断记 `system.update-cancel`，FR-125） |
 
 `GET /admin/v1/system/update-check`：按 store 当前渠道查 `wcpe/Beacon` 最新 release 与当前版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（FR-101），缓存未过期且渠道未变则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时仅回显 `currentVersion`/`channel`/时间字段，其余为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。返回：
 ```json
@@ -622,6 +623,8 @@ data: {}
 `phase ∈ {idle, checking, downloading, verifying, staging, ready-restart, failed}`；`percent` 仅下载阶段有意义；`error` 仅 `failed` 非空；`rollbackAvailable` 表示是否存在可回退的上一版本（`.old` 备份，FR-120，前端据此显隐回滚按钮）。
 
 `POST /admin/v1/system/update`（无请求体）：**异步**触发更新（fix-1）——受理即回 `202 { "accepted": true }`，「下载 → SHA256 校验 → 原子落位 pending → 请求重启」在后台进行（用非请求 context，下载不因请求结束被取消）；前端经 `GET /admin/v1/system/update` 轮询进度（`phase`/`percent`/`error`）。落位成功后主进程优雅关停 → 自替换（`rename` 让位三步）+ spawn 新进程重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）；任一阶段失败 → 保留旧二进制、进程不退，失败原因写入进度态 `error`（**脱敏后**经状态端点展示，FR-122）+ 记 `system.update-failed` 审计与日志。**已有更新进行中再触发 → `409 UPDATE_IN_PROGRESS`**。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
+
+`POST /admin/v1/system/update/cancel`（无请求体，FR-125）：取消进行中的更新下载。有进行中→取消其下载 context 回 `202 { "cancelled": true }`（核心于下载中断时进度回 `idle`、记 `system.update-cancel` 审计，留干净可重试态而非「失败」）；无进行中→幂等回 `200 { "cancelled": false }`（非错误）。写方法 readonly→`403`。注：进程关停（Ctrl+C / SIGTERM）经同一可取消 context 一并中断在途下载（fix-b）。
 
 `POST /admin/v1/system/rollback`（无请求体，FR-120，见 [ADR-0053](adr/0053-single-binary-self-replace.md)）：回退到上一版本（`.old` 备份）。校验存在 `.old` 后回 `202 { "accepted": true }`，随后主进程优雅关停 → `rename` 回退（当前 → `.failed`、`.old` → 运行路径）+ spawn 旧版重启；无 `.old` 可退 → `409 NO_ROLLBACK_AVAILABLE`。写方法 readonly→`403`，触发记 `system.update-rollback` 审计。回退可用性经上面 `GET /system/update` 的 `rollbackAvailable` 回显。
 

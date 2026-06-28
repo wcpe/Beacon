@@ -178,6 +178,43 @@ func TestApplyUpdateChecksumMismatch(t *testing.T) {
 	assertNoTempLeak(t, dir)
 }
 
+// TestApplyUpdateCanceled ctx 取消（运维停止下载 / 关停，FR-125）按「已取消」处理：
+// 进度回 idle（非 failed）+ 记 system.update-cancel 审计、不记 update-failed。
+func TestApplyUpdateCanceled(t *testing.T) {
+	const tag = "v9.9.9"
+	binName := currentAssetName(t, tag)
+	sums := fmt.Sprintf("%s  %s\n", sha256hex("内容"), binName)
+	srv := newMockReleaseServer(t, tag, binName, "内容", sums)
+
+	dir := t.TempDir()
+	audit := &fakeAudit{}
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0",
+		APIBase:        srv.URL,
+		PendingPath:    filepath.Join(dir, "beacon.new"),
+		NewHTTPClient:  directClient,
+		RequestRestart: func() {},
+		Audit:          audit,
+	})
+
+	// 预取消的 context：首个出站请求即 ctx.Canceled。
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := svc.ApplyUpdate(ctx, ChannelStable, "", "tester", ""); err == nil {
+		t.Fatal("取消应返回错误")
+	}
+	if snap := svc.Snapshot(); snap.Phase != PhaseIdle {
+		t.Fatalf("取消后进度应为 idle（非 failed），实际 %q", snap.Phase)
+	}
+	if !contains(audit.actions(), model.ActionSystemUpdateCancel) {
+		t.Fatalf("应记 update-cancel 审计，实际 %v", audit.actions())
+	}
+	if contains(audit.actions(), model.ActionSystemUpdateFailed) {
+		t.Fatalf("取消不应记 update-failed 审计，实际 %v", audit.actions())
+	}
+	assertNoTempLeak(t, dir)
+}
+
 // TestApplyUpdateNoNewerVersion 远端不高于当前：不下载、不落位、failed 带原因。
 func TestApplyUpdateNoNewerVersion(t *testing.T) {
 	const tag = "v1.0.0"

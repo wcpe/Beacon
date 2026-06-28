@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -393,7 +394,15 @@ func parseSums(content, binName string) (string, bool) {
 }
 
 // failApply 把失败统一收口：标进度 failed、记 system.update-failed 审计、返回错误（进程不退、保留旧二进制）。
+// 例外（FR-125）：ctx 被取消（运维主动停止下载 / 进程关停）不是失败——进度回 idle、记 system.update-cancel 审计，
+// 留干净可重试态而非「失败」。
 func (s *Service) failApply(target string, err error, operator, clientIP string) error {
+	if errors.Is(err, context.Canceled) {
+		s.progress.setPhase(PhaseIdle, "")
+		s.writeAudit(model.ActionSystemUpdateCancel, target, model.ResultOK, "更新下载已取消", operator, clientIP)
+		slog.Info("控制面在线更新已取消（下载中断）", "目标版本", target)
+		return err
+	}
 	s.progress.fail(err.Error())
 	s.writeAudit(model.ActionSystemUpdateFailed, target, model.ResultFail, err.Error(), operator, clientIP)
 	slog.Error("控制面在线更新失败，保留旧二进制继续运行", "目标版本", target, "错误", err)

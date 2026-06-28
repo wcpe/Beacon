@@ -63,6 +63,18 @@ func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
 }
 
+// Cancel 处理 POST /admin/v1/system/update/cancel：取消进行中的更新下载（写方法，readonly 经 readonlyWriteGuard 403）。
+// 有进行中→取消其下载 context 回 202 {cancelled:true}（核心于下载中断时审计 system.update-cancel、进度回 idle）；
+// 无进行中→幂等回 200 {cancelled:false}（非错误）。
+func (h *UpdateHandler) Cancel(w http.ResponseWriter, _ *http.Request) {
+	cancelled := h.svc.CancelApply()
+	status := http.StatusOK
+	if cancelled {
+		status = http.StatusAccepted
+	}
+	render.WriteJSON(w, status, map[string]any{"cancelled": cancelled})
+}
+
 // Rollback 处理 POST /admin/v1/system/rollback：触发手动回滚到上一版本（写方法，readonly 经 readonlyWriteGuard 403）。
 // 无 .old 备份返回 409；成功回 202 表示已接受，随后主进程优雅关停并回退重启（FR-120）。
 func (h *UpdateHandler) Rollback(w http.ResponseWriter, r *http.Request) {

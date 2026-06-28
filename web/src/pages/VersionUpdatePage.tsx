@@ -30,6 +30,7 @@ import {
   listSettings,
   updateSetting,
   triggerUpdate,
+  cancelUpdate,
   rollbackUpdate,
   updateProgress,
 } from '@/api/client'
@@ -220,6 +221,20 @@ export default function VersionUpdatePage() {
     }
   }
 
+  // 「停止」下载（FR-125）：取消进行中的更新下载，回到干净可重试态。后端进度回 idle（非 failed）。
+  async function handleCancel() {
+    try {
+      await cancelUpdate()
+      setApplying(false)
+      wentOfflineRef.current = false
+      setReconnected(false)
+      verdictShownRef.current = false
+      showSuccess(t('versionUpdate.updateCancelled'))
+    } catch (e) {
+      showError(e instanceof ApiClientError ? e.message : t('versionUpdate.cancelFailed'))
+    }
+  }
+
   // 「确认回滚」（FR-120）：POST 触发回滚，受理后复用「立即更新」的进度轮询 + 重启重连裁决机制（仅 opKind 标为 rollback）。
   // 后端 409 NO_ROLLBACK_AVAILABLE → 提示「无可回退的上一版本」；其余错误回显 message 或兜底文案。
   async function handleConfirmRollback() {
@@ -381,10 +396,20 @@ export default function VersionUpdatePage() {
               </div>
             )}
 
-            {/* 更新 / 回滚进度（触发应用后展示）：阶段 / 进度 / 重启重连 / 失败 */}
+            {/* 更新 / 回滚进度（触发应用后展示）：阶段 / 进度 / 重启重连 / 失败 + 下载中「停止」按钮（FR-125） */}
             {applying && (
-              <div role="status" className="rounded-md border px-3 py-2 text-sm" data-failed={failed ? 'true' : 'false'}>
-                {progressLine()}
+              <div
+                role="status"
+                className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+                data-failed={failed ? 'true' : 'false'}
+              >
+                <span className="min-w-0 break-words">{progressLine()}</span>
+                {/* 仅"下载进行中"（未失败、未进入重启重连）显示停止：取消下载、回到可重试态 */}
+                {opKind === 'update' && !failed && !reconnected && !wentOfflineRef.current && (
+                  <Button variant="outline" size="sm" className="shrink-0" onClick={handleCancel}>
+                    {t('versionUpdate.cancelDownload')}
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>

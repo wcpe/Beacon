@@ -28,6 +28,7 @@ vi.mock('@/api/client', async () => {
     updateSetting: vi.fn(),
     checkUpdate: vi.fn(),
     triggerUpdate: vi.fn(),
+    cancelUpdate: vi.fn(),
     rollbackUpdate: vi.fn(),
     updateProgress: vi
       .fn()
@@ -44,6 +45,7 @@ import {
   updateSetting,
   checkUpdate,
   triggerUpdate,
+  cancelUpdate,
   rollbackUpdate,
   updateProgress,
 } from '@/api/client'
@@ -240,6 +242,24 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
     await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
     await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
     await waitFor(() => expect(showError).toHaveBeenCalledWith('已有更新正在进行中'))
+  })
+
+  // FR-125：下载进行中显「停止」按钮，点击调 cancelUpdate 取消下载
+  it('下载进行中显示「停止」按钮，点击调 cancelUpdate', async () => {
+    vi.mocked(updateProgress).mockResolvedValue({
+      phase: 'downloading',
+      percent: 30,
+      targetVersion: 'v0.11.0',
+      error: '',
+      rollbackAvailable: false,
+    })
+    vi.mocked(cancelUpdate).mockResolvedValue({ cancelled: true })
+    renderPage(<VersionUpdatePage />)
+    await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
+    await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
+    const stopBtn = await screen.findByRole('button', { name: '停止' })
+    await userEvent.click(stopBtn)
+    await waitFor(() => expect(vi.mocked(cancelUpdate)).toHaveBeenCalled())
   })
 
   // FR-118 ②：更新走完给明确失败裁决（成功重连裁决依赖 offline→online 真链路，真机验）

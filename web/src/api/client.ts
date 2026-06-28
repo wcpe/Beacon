@@ -555,6 +555,12 @@ export function triggerUpdate(): Promise<{ accepted: boolean }> {
   return request<{ accepted: boolean }>('/system/update', { method: 'POST' })
 }
 
+// 取消进行中的更新下载（FR-125，写，readonly→403）：有进行中→202 {cancelled:true}（核心中断下载、进度回 idle）；
+// 无进行中→200 {cancelled:false}（幂等、非错误）。
+export function cancelUpdate(): Promise<{ cancelled: boolean }> {
+  return request<{ cancelled: boolean }>('/system/update/cancel', { method: 'POST' })
+}
+
 // 触发手动回滚到上一版本（FR-120，写，readonly→403）：无请求体；202 受理后控制面自替换回退重启。
 // 无可回退的上一版本（.old 备份）→ 409 NO_ROLLBACK_AVAILABLE（按码回显「无可回退的上一版本」）；本处仅触发，进度同样经 updateProgress 轮询。
 export function rollbackUpdate(): Promise<{ accepted: boolean }> {

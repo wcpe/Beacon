@@ -281,6 +281,10 @@ export const zhCN = {
     badgePrerelease: '预发布',
     // 「立即更新并重启」主操作按钮（卡片底部）
     applyAndRestart: '立即更新并重启',
+    // 下载取消（FR-125）：下载进行中「停止」按钮 + 取消成功 / 失败提示
+    cancelDownload: '停止',
+    updateCancelled: '已取消更新下载',
+    cancelFailed: '取消失败',
     // 高级设置折叠区（默认折叠，放网络代理 + 更新设置）
     advancedSettings: '高级设置',
     // 切渠道成功提示

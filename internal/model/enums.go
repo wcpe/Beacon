@@ -209,6 +209,8 @@ const (
 	ActionSystemUpdateFailed = "system.update-failed"
 	// 控制面手动回滚（FR-120）：回退到上一版本（.old），detail 记请求回退
 	ActionSystemUpdateRollback = "system.update-rollback"
+	// 控制面在线更新·取消（FR-125）：运维主动中断进行中的下载（或关停取消），detail 记目标版本 / 已取消
+	ActionSystemUpdateCancel = "system.update-cancel"
 )
 
 // 审计对象类型。
