@@ -85,6 +85,13 @@ jobs:
           java-version: "21"
       - name: 准备 Gradle（含依赖缓存）
         uses: gradle/actions/setup-gradle@v4
+      - name: ktlint 格式检查
+        # 与测试同级门禁：格式违规未过不允许合并（配置见各模块 ktlint 插件，版本固定）
+        run: ./agent/gradlew -p agent ktlintCheck
+      - name: detekt 静态检查
+        # 与测试同级门禁：静态问题未过不允许合并（规则见 agent/config/detekt/detekt.yml；
+        # 存量经评估挂在 agent/config/detekt/baseline.xml，规则对新代码仍生效——新增 finding 即挡合并）
+        run: ./agent/gradlew -p agent detekt
       - name: 运行 agent 单测
         # Linux 用 wrapper；-p 指定 agent 子工程根
         run: ./agent/gradlew -p agent test
