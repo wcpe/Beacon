@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
  * 拒 `..` / 绝对 / 反斜杠 / 冒号 / UNC / Windows 保留设备名 / 段尾点空格 / 空段；合法相对路径放行。
  */
 class PluginsPathGuardTest {
-
     @Test
     fun `合法相对路径放行`() {
         assertTrue(PluginsPathGuard.isSafe("config.yml"))
@@ -56,7 +55,7 @@ class PluginsPathGuardTest {
     @Test
     fun `段尾点或空格拒绝`() {
         // Windows 落盘剥离「段尾」的点 / 空格，借此绕过判定——故只拒段尾、不拒段内
-        //（"my config.yml" 等含内部空格属合法文件名，不应拒）。下列四例覆盖 末段/非末段 × 尾点/尾空格。
+        // （"my config.yml" 等含内部空格属合法文件名，不应拒）。下列四例覆盖 末段/非末段 × 尾点/尾空格。
         assertFalse(PluginsPathGuard.isSafe("config.yml.")) // 末段尾点
         assertFalse(PluginsPathGuard.isSafe("sub /x.yml")) // 非末段尾空格
         assertFalse(PluginsPathGuard.isSafe("name.yml ")) // 末段尾空格

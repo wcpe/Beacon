@@ -16,7 +16,6 @@ import taboolib.common.platform.event.SubscribeEvent
  * 注意：本监听需真机（BungeeCord + Redis）验证；本地无法跑事件链路。
  */
 object BungeeRosterListener {
-
     /** 名册引导引用；由主类在 ENABLE 时注入，未注入时事件为空操作。 */
     @Volatile
     var bootstrap: BungeePlayerRosterBootstrap? = null

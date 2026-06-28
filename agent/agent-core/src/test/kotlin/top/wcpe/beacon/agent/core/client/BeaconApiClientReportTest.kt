@@ -22,7 +22,6 @@ import kotlin.test.assertTrue
  * 键名与类型固定（供控制面 Go 侧对齐）；cpuLoad 不可用时如实发 -1.0。
  */
 class BeaconApiClientReportTest {
-
     /** 捕获 encode 入参的 codec：把待序列化的 Map 暴露给断言。 */
     private class CapturingCodec : JsonCodec {
         val lastEncoded = AtomicReference<Any?>(null)
@@ -40,49 +39,51 @@ class BeaconApiClientReportTest {
         override fun execute(request: HttpRequest): HttpResponse = HttpResponse(200, "")
     }
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     @Suppress("UNCHECKED_CAST")
-    private fun lastBody(codec: CapturingCodec): Map<String, Any?> =
-        codec.lastEncoded.get() as Map<String, Any?>
+    private fun lastBody(codec: CapturingCodec): Map<String, Any?> = codec.lastEncoded.get() as Map<String, Any?>
 
     @Test
     fun `report 载荷含人数TPS与新增内存CPU字段`() {
         val codec = CapturingCodec()
         val client = BeaconApiClient(OkReportTransport(), codec, settings())
 
-        val ok = client.report(
-            identity(),
-            appliedMd5 = "md5-x",
-            playerCount = 8,
-            tps = 19.5,
-            memUsed = 123L,
-            memMax = 456L,
-            cpuLoad = 0.25,
-        )
+        val ok =
+            client.report(
+                identity(),
+                appliedMd5 = "md5-x",
+                playerCount = 8,
+                tps = 19.5,
+                memUsed = 123L,
+                memMax = 456L,
+                cpuLoad = 0.25,
+            )
         assertTrue(ok, "report 应在 200 时返回 true")
 
         val body = lastBody(codec)
@@ -158,17 +159,19 @@ class BeaconApiClientReportTest {
             memUsed = 1L,
             memMax = 2L,
             cpuLoad = 0.3,
-            proxy = ProxyMetrics(
-                onlineConnections = 128,
-                threadCount = 64,
-                uptimeMs = 3_600_000L,
-                backendUp = 3,
-                backendTotal = 4,
-                backendAvgLatencyMs = 12.5,
-            ),
+            proxy =
+                ProxyMetrics(
+                    onlineConnections = 128,
+                    threadCount = 64,
+                    uptimeMs = 3_600_000L,
+                    backendUp = 3,
+                    backendTotal = 4,
+                    backendAvgLatencyMs = 12.5,
+                ),
         )
 
         val body = lastBody(codec)
+
         @Suppress("UNCHECKED_CAST")
         val proxy = body["proxy"] as Map<String, Any?>
         // BC 子对象键名固定，供控制面 Go 侧对齐。

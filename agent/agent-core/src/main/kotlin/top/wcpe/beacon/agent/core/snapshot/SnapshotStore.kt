@@ -1,8 +1,8 @@
 package top.wcpe.beacon.agent.core.snapshot
 
+import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
-import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.filetree.AtomicFileWriter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
@@ -23,7 +23,6 @@ class SnapshotStore(
     private val codec: JsonCodec,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
-
     /** 原子写快照。失败抛 IO 异常由上层记录。 */
     fun write(result: EffectiveResult) {
         val tree = LinkedHashMap<String, Any?>()
@@ -33,14 +32,15 @@ class SnapshotStore(
         tree["zone"] = result.zone
         tree["md5"] = result.md5
         tree["savedAt"] = now()
-        tree["items"] = result.items.map { item ->
-            linkedMapOf<String, Any?>(
-                "dataId" to item.dataId,
-                "format" to item.format,
-                "md5" to item.md5,
-                "content" to item.content,
-            )
-        }
+        tree["items"] =
+            result.items.map { item ->
+                linkedMapOf<String, Any?>(
+                    "dataId" to item.dataId,
+                    "format" to item.format,
+                    "md5" to item.md5,
+                    "content" to item.content,
+                )
+            }
         val json = codec.encode(tree)
         AtomicFileWriter.write(file, json.toByteArray(StandardCharsets.UTF_8))
     }
@@ -50,15 +50,16 @@ class SnapshotStore(
         if (!file.exists()) return null
         return try {
             val obj = JsonTree.asObject(codec.decode(file.readText(StandardCharsets.UTF_8)))
-            val items = JsonTree.asList(obj["items"]).map { raw ->
-                val itemObj = JsonTree.asObject(raw)
-                ConfigItem(
-                    dataId = JsonTree.strOr(itemObj, "dataId", ""),
-                    format = JsonTree.strOr(itemObj, "format", ""),
-                    md5 = JsonTree.strOr(itemObj, "md5", ""),
-                    content = JsonTree.strOr(itemObj, "content", ""),
-                )
-            }
+            val items =
+                JsonTree.asList(obj["items"]).map { raw ->
+                    val itemObj = JsonTree.asObject(raw)
+                    ConfigItem(
+                        dataId = JsonTree.strOr(itemObj, "dataId", ""),
+                        format = JsonTree.strOr(itemObj, "format", ""),
+                        md5 = JsonTree.strOr(itemObj, "md5", ""),
+                        content = JsonTree.strOr(itemObj, "content", ""),
+                    )
+                }
             EffectiveResult(
                 namespace = JsonTree.strOr(obj, "namespace", ""),
                 serverId = JsonTree.strOr(obj, "serverId", ""),

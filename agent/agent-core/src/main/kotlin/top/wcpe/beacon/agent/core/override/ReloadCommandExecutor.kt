@@ -18,7 +18,6 @@ class ReloadCommandExecutor(
     private val whitelist: CommandWhitelist,
     private val adapter: PlatformAdapter,
 ) {
-
     /**
      * 校验并派发一条重载命令。
      *

@@ -16,12 +16,14 @@ import java.util.concurrent.ConcurrentHashMap
  * 线程安全（文件同步在异步线程）。
  */
 class ManagedFileTracker {
-
     // path → agent 上次写入该 path 时的内容 md5。
     private val lastWrittenMd5 = ConcurrentHashMap<String, String>()
 
     /** 记录 agent 刚把 [path] 落盘为 md5=[writtenMd5] 的那一版（落盘成功后调用）。 */
-    fun markWritten(path: String, writtenMd5: String) {
+    fun markWritten(
+        path: String,
+        writtenMd5: String,
+    ) {
         lastWrittenMd5[path] = writtenMd5
     }
 
@@ -31,7 +33,10 @@ class ManagedFileTracker {
      * 受管（agent 写过）且磁盘 md5 与上次写入的不同 → true（外部改动，应告警）。
      * 未受管（无基准）→ false（交由首次落盘处理，不误报）。
      */
-    fun isExternallyModified(path: String, currentDiskMd5: String): Boolean {
+    fun isExternallyModified(
+        path: String,
+        currentDiskMd5: String,
+    ): Boolean {
         val baseline = lastWrittenMd5[path] ?: return false
         return baseline != currentDiskMd5
     }

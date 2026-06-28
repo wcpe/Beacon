@@ -37,7 +37,6 @@ class MessagingModule(
     private val warn: (String) -> Unit = {},
     private val error: (String, Throwable?) -> Unit = { _, _ -> },
 ) {
-
     @Volatile
     private var bus: MessageBus? = null
 
@@ -51,15 +50,16 @@ class MessagingModule(
             info("跨服消息模块未启用（messaging.enabled=false），保持降级")
             return false
         }
-        val newBus = MessageBus(
-            transport = transport,
-            codec = codec,
-            selfServerId = selfServerId,
-            settings = settings,
-            playerLocator = playerLocator,
-            scheduleTimeout = scheduleTimeout ?: MessageBus.DEFAULT_SCHEDULER,
-            warn = warn,
-        )
+        val newBus =
+            MessageBus(
+                transport = transport,
+                codec = codec,
+                selfServerId = selfServerId,
+                settings = settings,
+                playerLocator = playerLocator,
+                scheduleTimeout = scheduleTimeout ?: MessageBus.DEFAULT_SCHEDULER,
+                warn = warn,
+            )
         return try {
             newBus.start()
             bus = newBus

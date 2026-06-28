@@ -22,11 +22,11 @@ import java.util.concurrent.atomic.AtomicLong
  * 调用方（agent 既有 async 上报线程）仅有界等待汇总。探测结果交 [BackendReachability.summarize] 聚合。
  */
 object TcpBackendProbe {
-
     /** 后端探测专用守护线程池：逐后端并发阻塞连接、互不叠加超时；空闲线程自动回收。 */
-    private val executor: ExecutorService = Executors.newCachedThreadPool { r ->
-        Thread(r, "beacon-backend-probe").apply { isDaemon = true }
-    }
+    private val executor: ExecutorService =
+        Executors.newCachedThreadPool { r ->
+            Thread(r, "beacon-backend-probe").apply { isDaemon = true }
+        }
 
     /**
      * 并发探测一组后端地址，有界等待汇总每后端探测结果。
@@ -34,7 +34,10 @@ object TcpBackendProbe {
      * @param addresses 后端地址集合；空集返回空结果
      * @param connectTimeoutMs 单后端 TCP 连接超时（毫秒）；总等待略大于此值（少数慢后端不叠加超时）
      */
-    fun probe(addresses: List<SocketAddress>, connectTimeoutMs: Long): List<BackendReachability.PingProbe> {
+    fun probe(
+        addresses: List<SocketAddress>,
+        connectTimeoutMs: Long,
+    ): List<BackendReachability.PingProbe> {
         if (addresses.isEmpty()) return emptyList()
         val latch = CountDownLatch(addresses.size)
         val slots = addresses.map { Slot() }

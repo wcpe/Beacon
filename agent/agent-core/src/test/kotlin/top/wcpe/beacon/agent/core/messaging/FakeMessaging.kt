@@ -10,7 +10,6 @@ import java.util.concurrent.ConcurrentHashMap
  * 树与原树一致（深拷贝隔离），足以脚本化 MessageBus 的编解码 + 路由 + RPC 行为。
  */
 class FakeJsonCodec : JsonCodec {
-
     override fun encode(value: Any?): String {
         val token = "tok-${SEQ.getAndIncrement()}"
         // 深拷贝，模拟真序列化切断引用共享。
@@ -21,16 +20,17 @@ class FakeJsonCodec : JsonCodec {
     override fun decode(json: String): Any? = deepCopy(STORE[json])
 
     @Suppress("UNCHECKED_CAST")
-    private fun deepCopy(value: Any?): Any? = when (value) {
-        is Map<*, *> -> {
-            val copy = LinkedHashMap<String, Any?>()
-            for ((k, v) in value) copy[k.toString()] = deepCopy(v)
-            copy
-        }
+    private fun deepCopy(value: Any?): Any? =
+        when (value) {
+            is Map<*, *> -> {
+                val copy = LinkedHashMap<String, Any?>()
+                for ((k, v) in value) copy[k.toString()] = deepCopy(v)
+                copy
+            }
 
-        is List<*> -> value.map { deepCopy(it) }
-        else -> value
-    }
+            is List<*> -> value.map { deepCopy(it) }
+            else -> value
+        }
 
     private companion object {
         // 跨 bus 实例共享的「线缆」存储：encode 端与 decode 端可能是不同 codec 实例。
@@ -50,7 +50,6 @@ class FakeMessageTransport(
     private val network: FakeNetwork,
     private val selfServerId: String,
 ) : MessageTransport {
-
     @Volatile
     private var connected = false
 
@@ -65,15 +64,24 @@ class FakeMessageTransport(
 
     override fun isConnected(): Boolean = connected
 
-    override fun sendToServer(serverId: String, rawJson: String) {
+    override fun sendToServer(
+        serverId: String,
+        rawJson: String,
+    ) {
         network.deliverInbox(serverId, rawJson)
     }
 
-    override fun publishTopic(topic: String, rawJson: String) {
+    override fun publishTopic(
+        topic: String,
+        rawJson: String,
+    ) {
         network.deliverTopic(topic, rawJson)
     }
 
-    override fun sendReply(replyChannel: String, rawJson: String) {
+    override fun sendReply(
+        replyChannel: String,
+        rawJson: String,
+    ) {
         network.deliverReply(replyChannel, rawJson)
     }
 
@@ -81,11 +89,17 @@ class FakeMessageTransport(
         network.registerInbox(selfServerId, onMessage)
     }
 
-    override fun subscribeReplyInbox(replyChannel: String, onMessage: (String) -> Unit) {
+    override fun subscribeReplyInbox(
+        replyChannel: String,
+        onMessage: (String) -> Unit,
+    ) {
         network.registerReply(replyChannel, onMessage)
     }
 
-    override fun subscribeTopic(topic: String, onMessage: (String) -> Unit) {
+    override fun subscribeTopic(
+        topic: String,
+        onMessage: (String) -> Unit,
+    ) {
         network.registerTopic(topic, onMessage)
     }
 
@@ -96,7 +110,6 @@ class FakeMessageTransport(
 
 /** 测试用共享网络：收件流（消费组语义简化为单消费者）、回信通道、主题三张表。 */
 class FakeNetwork {
-
     private val inboxes = ConcurrentHashMap<String, (String) -> Unit>()
     private val replies = ConcurrentHashMap<String, (String) -> Unit>()
     private val topics = ConcurrentHashMap<String, (String) -> Unit>()
@@ -104,7 +117,10 @@ class FakeNetwork {
     /** 离线目标的留存消息（模拟 Streams：目标上线注册后补投）。 */
     private val pendingInbox = ConcurrentHashMap<String, MutableList<String>>()
 
-    fun registerInbox(serverId: String, onMessage: (String) -> Unit) {
+    fun registerInbox(
+        serverId: String,
+        onMessage: (String) -> Unit,
+    ) {
         inboxes[serverId] = onMessage
         // 补投离线期间留存的消息（模拟消费组补消费）。
         pendingInbox.remove(serverId)?.forEach { onMessage(it) }
@@ -114,11 +130,17 @@ class FakeNetwork {
         inboxes.remove(serverId)
     }
 
-    fun registerReply(channel: String, onMessage: (String) -> Unit) {
+    fun registerReply(
+        channel: String,
+        onMessage: (String) -> Unit,
+    ) {
         replies[channel] = onMessage
     }
 
-    fun registerTopic(topic: String, onMessage: (String) -> Unit) {
+    fun registerTopic(
+        topic: String,
+        onMessage: (String) -> Unit,
+    ) {
         topics[topic] = onMessage
     }
 
@@ -126,7 +148,10 @@ class FakeNetwork {
         topics.remove(topic)
     }
 
-    fun deliverInbox(serverId: String, raw: String) {
+    fun deliverInbox(
+        serverId: String,
+        raw: String,
+    ) {
         val handler = inboxes[serverId]
         if (handler != null) {
             handler(raw)
@@ -136,11 +161,17 @@ class FakeNetwork {
         }
     }
 
-    fun deliverReply(channel: String, raw: String) {
+    fun deliverReply(
+        channel: String,
+        raw: String,
+    ) {
         replies[channel]?.invoke(raw)
     }
 
-    fun deliverTopic(topic: String, raw: String) {
+    fun deliverTopic(
+        topic: String,
+        raw: String,
+    ) {
         // pub/sub：无订阅者即丢弃（可丢语义）。
         topics[topic]?.invoke(raw)
     }

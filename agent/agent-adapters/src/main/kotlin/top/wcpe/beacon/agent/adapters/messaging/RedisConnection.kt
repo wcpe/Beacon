@@ -19,9 +19,7 @@ data class RedisConnection(
     val password: String,
     val connectTimeoutMs: Int,
 ) {
-
     companion object {
-
         /**
          * 从 Beacon 下发配置解析出的泛型树（Map）构造连接参数（纯逻辑，便于单测）。
          *
@@ -31,7 +29,10 @@ data class RedisConnection(
          * @param tree            解码后的配置树（JsonCodec.decode 结果）
          * @param connectTimeoutMs 连接超时（由壳层按本地 timing 传入）
          */
-        fun fromTree(tree: Any?, connectTimeoutMs: Int): RedisConnection? {
+        fun fromTree(
+            tree: Any?,
+            connectTimeoutMs: Int,
+        ): RedisConnection? {
             val map = tree as? Map<*, *> ?: return null
             val host = (map["host"] as? String)?.takeIf { it.isNotBlank() } ?: return null
             val port = (map["port"] as? Number)?.toInt() ?: 6379

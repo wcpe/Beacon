@@ -18,9 +18,11 @@ class RedisPlayerRoster(
     private val pool: JedisPool,
     private val warn: (String) -> Unit = {},
 ) {
-
     /** 玩家进服/换服：登记其当前所在服。 */
-    fun onPlayerLocated(playerName: String, serverId: String) {
+    fun onPlayerLocated(
+        playerName: String,
+        serverId: String,
+    ) {
         try {
             pool.resource.use { jedis ->
                 jedis.hset(RedisChannels.PLAYER_LOCATION_HASH, playerName, serverId)
@@ -36,7 +38,10 @@ class RedisPlayerRoster(
      * 防换服误删：换服时旧服的退出事件可能晚于新服的进服事件到达，此时名册已是新服，
      * 旧服退出不应删除新位置。
      */
-    fun onPlayerQuit(playerName: String, fromServerId: String) {
+    fun onPlayerQuit(
+        playerName: String,
+        fromServerId: String,
+    ) {
         try {
             pool.resource.use { jedis ->
                 val current = jedis.hget(RedisChannels.PLAYER_LOCATION_HASH, playerName)
@@ -84,7 +89,6 @@ class RedisPlayerRoster(
     }
 
     companion object {
-
         /**
          * 退出是否应删除名册项（纯逻辑，便于单测）。
          *
@@ -96,7 +100,10 @@ class RedisPlayerRoster(
          * @param fromServerId    本次退出事件来源服（空 = 玩家整体断开、来源不可读）
          * @return true=应删除；false=换服误删保护，跳过
          */
-        fun shouldDeleteOnQuit(currentServerId: String?, fromServerId: String): Boolean {
+        fun shouldDeleteOnQuit(
+            currentServerId: String?,
+            fromServerId: String,
+        ): Boolean {
             if (fromServerId.isEmpty()) {
                 return true
             }

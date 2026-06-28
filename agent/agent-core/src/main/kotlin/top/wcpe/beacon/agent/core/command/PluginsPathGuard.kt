@@ -16,7 +16,6 @@ package top.wcpe.beacon.agent.core.command
  * 真实根目录做（无法纯函数化）；本类是字符串级前置闸，与壳侧 Path 级判定双保险。
  */
 object PluginsPathGuard {
-
     /** 判断相对路径是否安全（可纳入反向抓取回传）。 */
     fun isSafe(path: String): Boolean {
         if (path.isEmpty()) return false
@@ -43,11 +42,12 @@ object PluginsPathGuard {
     }
 
     /** Windows 保留设备名。 */
-    private val RESERVED_NAMES: Set<String> = buildSet {
-        addAll(listOf("con", "prn", "aux", "nul"))
-        for (i in 1..9) {
-            add("com$i")
-            add("lpt$i")
+    private val RESERVED_NAMES: Set<String> =
+        buildSet {
+            addAll(listOf("con", "prn", "aux", "nul"))
+            for (i in 1..9) {
+                add("com$i")
+                add("lpt$i")
+            }
         }
-    }
 }

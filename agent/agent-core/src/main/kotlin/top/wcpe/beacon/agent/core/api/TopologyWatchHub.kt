@@ -12,7 +12,6 @@ import java.util.concurrent.ConcurrentHashMap
  * 不在事件里搬实例数据——回调仅为"拓扑变了"通知，业务侧自行重查发现端点（守控制面/数据面边界）。
  */
 class TopologyWatchHub {
-
     // 监听器表：以句柄对象自身为键，便于注销。
     private val listeners = ConcurrentHashMap<Any, TopologyListener>()
 

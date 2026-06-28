@@ -14,7 +14,6 @@ import top.wcpe.beacon.agent.core.transport.StreamEvent
  * - 空行表示一帧结束：有 type 才产出事件，随即重置累积态。
  */
 class SseFrameParser {
-
     private var type: String? = null
     private var data: String = ""
 

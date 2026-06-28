@@ -25,7 +25,6 @@ import kotlin.test.assertTrue
  * - uploadIngest：报文为 {commandId, files:[{path,content}]}；200→true，其它→false；命中 /agent/files/ingest。
  */
 class BeaconApiClientReverseFetchTest {
-
     /** 按 URL 路由的可编排 transport：记录最近请求，按预置状态码 / 体作答。 */
     private class ScriptTransport : HttpTransport {
         val lastRequest = AtomicReference<HttpRequest?>(null)
@@ -68,63 +67,74 @@ class BeaconApiClientReverseFetchTest {
             return "encoded"
         }
 
-        override fun decode(json: String): Any? = when (json) {
-            BODY_INGEST_CMD -> mapOf(
-                "id" to 42,
-                "type" to "ingest-plugins",
-                "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
-            )
+        override fun decode(json: String): Any? =
+            when (json) {
+                BODY_INGEST_CMD ->
+                    mapOf(
+                        "id" to 42,
+                        "type" to "ingest-plugins",
+                        "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
+                    )
 
-            BODY_SCAN_CMD -> mapOf(
-                "id" to 43,
-                "type" to "ingest-plugins",
-                "payload" to mapOf("scope" to "group", "group" to "area1", "target" to "", "mode" to "scan"),
-            )
+                BODY_SCAN_CMD ->
+                    mapOf(
+                        "id" to 43,
+                        "type" to "ingest-plugins",
+                        "payload" to mapOf("scope" to "group", "group" to "area1", "target" to "", "mode" to "scan"),
+                    )
 
-            BODY_SUBMIT_CMD -> mapOf(
-                "id" to 44,
-                "type" to "ingest-plugins",
-                "payload" to mapOf(
-                    "scope" to "server", "group" to "area1", "target" to "lobby-1", "mode" to "submit",
-                    "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
-                ),
-            )
+                BODY_SUBMIT_CMD ->
+                    mapOf(
+                        "id" to 44,
+                        "type" to "ingest-plugins",
+                        "payload" to
+                            mapOf(
+                                "scope" to "server",
+                                "group" to "area1",
+                                "target" to "lobby-1",
+                                "mode" to "submit",
+                                "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
+                            ),
+                    )
 
-            else -> emptyMap<String, Any?>()
-        }
+                else -> emptyMap<String, Any?>()
+            }
     }
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     @Test
     fun `fetchPendingCommand 解析 200 命令`() {
-        val transport = ScriptTransport().apply {
-            commandsStatus = 200
-            commandsBody = BODY_INGEST_CMD
-        }
+        val transport =
+            ScriptTransport().apply {
+                commandsStatus = 200
+                commandsBody = BODY_INGEST_CMD
+            }
         val client = BeaconApiClient(transport, CmdCodec(), settings())
 
         val cmd = client.fetchPendingCommand(identity())
@@ -160,13 +170,15 @@ class BeaconApiClientReverseFetchTest {
         val codec = CmdCodec()
         val client = BeaconApiClient(transport, codec, settings())
 
-        val ok = client.uploadIngest(
-            commandId = 42L,
-            files = listOf(
-                IngestFile("config.yml", "k: v"),
-                IngestFile("lang/zh.yml", "hi: 你好"),
-            ),
-        )
+        val ok =
+            client.uploadIngest(
+                commandId = 42L,
+                files =
+                    listOf(
+                        IngestFile("config.yml", "k: v"),
+                        IngestFile("lang/zh.yml", "hi: 你好"),
+                    ),
+            )
         assertTrue(ok, "200 应返回 true")
         // 命中 ingest 端点。
         assertTrue(transport.lastRequest.get()!!.url.contains("/agent/files/ingest"))
@@ -197,10 +209,11 @@ class BeaconApiClientReverseFetchTest {
 
     @Test
     fun `fetchPendingCommand 解析 scan mode`() {
-        val transport = ScriptTransport().apply {
-            commandsStatus = 200
-            commandsBody = BODY_SCAN_CMD
-        }
+        val transport =
+            ScriptTransport().apply {
+                commandsStatus = 200
+                commandsBody = BODY_SCAN_CMD
+            }
         val client = BeaconApiClient(transport, CmdCodec(), settings())
         val cmd = client.fetchPendingCommand(identity())
         assertEquals(43L, cmd?.id)
@@ -210,10 +223,11 @@ class BeaconApiClientReverseFetchTest {
 
     @Test
     fun `fetchPendingCommand 解析 submit mode 与 selectedPaths`() {
-        val transport = ScriptTransport().apply {
-            commandsStatus = 200
-            commandsBody = BODY_SUBMIT_CMD
-        }
+        val transport =
+            ScriptTransport().apply {
+                commandsStatus = 200
+                commandsBody = BODY_SUBMIT_CMD
+            }
         val client = BeaconApiClient(transport, CmdCodec(), settings())
         val cmd = client.fetchPendingCommand(identity())
         assertEquals(44L, cmd?.id)
@@ -223,10 +237,11 @@ class BeaconApiClientReverseFetchTest {
 
     @Test
     fun `fetchPendingCommand 旧命令无 mode 字段时为空 mode`() {
-        val transport = ScriptTransport().apply {
-            commandsStatus = 200
-            commandsBody = BODY_INGEST_CMD // 无 mode / selectedPaths
-        }
+        val transport =
+            ScriptTransport().apply {
+                commandsStatus = 200
+                commandsBody = BODY_INGEST_CMD // 无 mode / selectedPaths
+            }
         val client = BeaconApiClient(transport, CmdCodec(), settings())
         val cmd = client.fetchPendingCommand(identity())
         assertEquals("", cmd?.payload?.mode, "旧命令缺 mode → 空串（向后兼容旧整树行为）")
@@ -239,13 +254,15 @@ class BeaconApiClientReverseFetchTest {
         val codec = CmdCodec()
         val client = BeaconApiClient(transport, codec, settings())
 
-        val ok = client.uploadScan(
-            commandId = 43L,
-            files = listOf(
-                ScanFile("config.yml", 100L, isText = true, overThreshold = false),
-                ScanFile("metrics.jsonl", 2_000_000L, isText = true, overThreshold = true),
-            ),
-        )
+        val ok =
+            client.uploadScan(
+                commandId = 43L,
+                files =
+                    listOf(
+                        ScanFile("config.yml", 100L, isText = true, overThreshold = false),
+                        ScanFile("metrics.jsonl", 2_000_000L, isText = true, overThreshold = true),
+                    ),
+            )
         assertTrue(ok, "200 应返回 true")
         // 命中 scan 端点（POST /agent/files/scan）。
         assertTrue(transport.lastRequest.get()!!.url.contains("/agent/files/scan"))

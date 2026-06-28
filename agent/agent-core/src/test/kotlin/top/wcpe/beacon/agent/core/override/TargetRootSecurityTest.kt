@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
  * 限定 plugins/<plugin>/ 内；拒穿越 / 绝对 / 盘符 / 反斜杠 / 保留名 / 段尾点空格 / 仅 plugins 根。
  */
 class TargetRootSecurityTest {
-
     private val serverRoot: File = Files.createTempDirectory("beacon-srv-tr").toFile()
     private val pluginsBase: File = File(serverRoot, "plugins").apply { mkdirs() }
     private val sec = TargetRootSecurity(pluginsBase)

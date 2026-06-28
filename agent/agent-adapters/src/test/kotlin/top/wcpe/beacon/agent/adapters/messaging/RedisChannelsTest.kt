@@ -5,7 +5,6 @@ import kotlin.test.assertEquals
 
 /** Redis 信道命名约定的纯逻辑单测（无需 Redis 连接）。 */
 class RedisChannelsTest {
-
     @Test
     fun `收件流键含 serverId`() {
         assertEquals("beacon:msg:lobby-1", RedisChannels.serverInbox("lobby-1"))

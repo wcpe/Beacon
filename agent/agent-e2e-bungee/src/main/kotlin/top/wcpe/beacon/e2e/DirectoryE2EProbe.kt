@@ -18,7 +18,6 @@ import java.io.File
  * 只读快照目录与命令注册状态，不发起任何传送动作。
  */
 object DirectoryE2EProbe {
-
     /** 快照文件名：外部驱动据此断言当前目录状态。 */
     private const val SNAPSHOT_FILE = "e2e-directory-latest.txt"
 

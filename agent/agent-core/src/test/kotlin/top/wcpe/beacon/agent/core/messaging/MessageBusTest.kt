@@ -12,13 +12,13 @@ import kotlin.test.assertTrue
 
 /** MessageBus 四种模式 + RPC 超时 + 可靠送达 + 降级的脚本化单测（假 transport，无 Redis）。 */
 class MessageBusTest {
-
-    private val settings = MessagingSettings(
-        enabled = true,
-        rpcTimeoutMs = 1000,
-        streamMaxLen = 10000,
-        consumerName = "test",
-    )
+    private val settings =
+        MessagingSettings(
+            enabled = true,
+            rpcTimeoutMs = 1000,
+            streamMaxLen = 10000,
+            consumerName = "test",
+        )
 
     private fun bus(
         network: FakeNetwork,
@@ -185,14 +185,15 @@ class MessageBusTest {
         a.start()
 
         val warnings = mutableListOf<String>()
-        val busWithWarn = MessageBus(
-            transport = FakeMessageTransport(net, "A2").also { it.start() },
-            codec = FakeJsonCodec(),
-            selfServerId = "A2",
-            settings = settings,
-            playerLocator = locator,
-            warn = warnings::add,
-        ).also { it.start() }
+        val busWithWarn =
+            MessageBus(
+                transport = FakeMessageTransport(net, "A2").also { it.start() },
+                codec = FakeJsonCodec(),
+                selfServerId = "A2",
+                settings = settings,
+                playerLocator = locator,
+                warn = warnings::add,
+            ).also { it.start() }
 
         val delivered = busWithWarn.sendToPlayer("Ghost", "dm", "x")
 
@@ -247,13 +248,14 @@ class MessageBusTest {
     fun `无处理器的消息类型被丢弃并告警`() {
         val net = FakeNetwork()
         val warnings = mutableListOf<String>()
-        val a = MessageBus(
-            transport = FakeMessageTransport(net, "A").also {},
-            codec = FakeJsonCodec(),
-            selfServerId = "A",
-            settings = settings,
-            warn = warnings::add,
-        )
+        val a =
+            MessageBus(
+                transport = FakeMessageTransport(net, "A").also {},
+                codec = FakeJsonCodec(),
+                selfServerId = "A",
+                settings = settings,
+                warn = warnings::add,
+            )
         val b = bus(net, "B")
         a.start()
         b.start()

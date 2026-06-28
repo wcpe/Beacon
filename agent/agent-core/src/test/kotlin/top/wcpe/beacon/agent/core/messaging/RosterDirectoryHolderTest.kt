@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
  * 可选名册实现的可变持有者——默认空、set 后转发、reset 复位空。优雅降级：未注入即返空 Map、不抛。
  */
 class RosterDirectoryHolderTest {
-
     private class FixedRoster(private val table: Map<String, String>) : RosterDirectory {
         override fun snapshot(): Map<String, String> = table
     }
@@ -37,9 +36,11 @@ class RosterDirectoryHolderTest {
     @Test
     fun `注入实现抛异常时降级返空 Map 不外抛`() {
         val holder = RosterDirectoryHolder()
-        holder.set(object : RosterDirectory {
-            override fun snapshot(): Map<String, String> = throw IllegalStateException("名册读取失败")
-        })
+        holder.set(
+            object : RosterDirectory {
+                override fun snapshot(): Map<String, String> = error("名册读取失败")
+            },
+        )
         assertTrue(holder.snapshot().isEmpty(), "实现抛异常时应降级返空、不外抛")
     }
 }

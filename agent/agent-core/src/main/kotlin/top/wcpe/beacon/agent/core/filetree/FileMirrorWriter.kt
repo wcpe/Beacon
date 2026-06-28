@@ -19,13 +19,15 @@ import java.nio.file.Files
 class FileMirrorWriter(
     private val root: File,
 ) {
-
     /**
      * 原子写一个文件到 root/<relativePath>。
      *
      * 路径非法抛 [IllegalArgumentException]；IO 失败抛 [IOException]（由上层记录、保 fail-static 不删既有）。
      */
-    fun write(relativePath: String, content: String) {
+    fun write(
+        relativePath: String,
+        content: String,
+    ) {
         require(RelativePathGuard.isSafe(relativePath)) { "非法落盘路径（绝对/穿越/反斜杠）：$relativePath" }
         AtomicFileWriter.write(resolve(relativePath), content.toByteArray(StandardCharsets.UTF_8))
     }

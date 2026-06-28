@@ -34,12 +34,13 @@ data class AgentSettings(
     // 被主动下线后降频探测间隔（FR-49）；默认 5 分钟，足够大以不刷屏，又能在取消下线后较快自动恢复。
     val offlineProbeIntervalMs: Long = 300_000,
     // 默认关闭的消息参数：让既有测试与不关心消息的调用方无需显式构造（FR-26 增量字段）。
-    val messaging: MessagingSettings = MessagingSettings(
-        enabled = false,
-        rpcTimeoutMs = 5000,
-        streamMaxLen = 10000,
-        consumerName = "default",
-    ),
+    val messaging: MessagingSettings =
+        MessagingSettings(
+            enabled = false,
+            rpcTimeoutMs = 5000,
+            streamMaxLen = 10000,
+            consumerName = "default",
+        ),
     // BC 代理路由参数（FR-48）：默认空（未配 → 默认服走兜底首个在线子服）；让既有测试 / bukkit 无需显式构造。
     val proxy: ProxySettings = ProxySettings(homeGroup = "", homeZone = ""),
 ) {

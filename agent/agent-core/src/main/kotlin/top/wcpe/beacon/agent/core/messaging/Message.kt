@@ -24,7 +24,6 @@ data class Message(
     val replyTo: String? = null,
     val source: String? = null,
 ) {
-
     /** 是否为 RPC 请求（带回信通道 + 关联 ID）。 */
     fun isRequest(): Boolean = correlationId != null && replyTo != null
 
@@ -45,7 +44,6 @@ data class Message(
     }
 
     companion object {
-
         /** 当前信封版本号。新增可选字段时不变；不兼容变更才升（本 FR 不预期发生）。 */
         const val CURRENT_VERSION: Int = 1
 

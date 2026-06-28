@@ -8,7 +8,6 @@ package top.wcpe.beacon.agent.core.command
  * 任一超限即**整体失败、不部分上传**——避免半截覆盖污染基线。
  */
 object PluginIngestLimits {
-
     /** 单文件内容字节上限（1MB）。 */
     const val MAX_FILE_BYTES: Long = 1024L * 1024L
 

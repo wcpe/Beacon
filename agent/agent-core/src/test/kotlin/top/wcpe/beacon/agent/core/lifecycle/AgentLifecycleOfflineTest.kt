@@ -22,38 +22,39 @@ import kotlin.test.assertTrue
  * 取消下线后降频探测可恢复 RUNNING；OFFLINE 与 DEGRADED（控制面不可用）严格区分。
  */
 class AgentLifecycleOfflineTest {
-
     private val backend = FakeBeaconBackend()
     private val adapter = ThreadPoolPlatformAdapter()
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
     // offlineProbeMs 给小值（80ms）以便测试内能观察到「取消下线后探测恢复」，又远大于单次注册耗时。
-    private fun settings(offlineProbeMs: Long = 80) = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        // 退避初始值给大，确保「停止猛重连」断言不被退避重试链干扰。
-        backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-        offlineProbeIntervalMs = offlineProbeMs,
-    )
+    private fun settings(offlineProbeMs: Long = 80) =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            // 退避初始值给大，确保「停止猛重连」断言不被退避重试链干扰。
+            backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+            offlineProbeIntervalMs = offlineProbeMs,
+        )
 
     private fun newLifecycle(offlineProbeMs: Long = 80): AgentLifecycle {
         val codec = CannedJsonCodec()
@@ -114,7 +115,10 @@ class AgentLifecycleOfflineTest {
         assertTrue(lifecycle.currentState() != AgentState.OFFLINE, "连接失败绝不进 OFFLINE")
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return

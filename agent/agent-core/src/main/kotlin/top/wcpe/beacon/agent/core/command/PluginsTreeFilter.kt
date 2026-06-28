@@ -22,7 +22,6 @@ import java.nio.charset.StandardCharsets
  * 设计要点：先剔除排除项，再对**保留集**判上限——jar / 二进制不计入数量与总量，避免无关大文件挤爆配额。
  */
 object PluginsTreeFilter {
-
     /**
      * 过滤并校验一棵 plugins 树。
      *
@@ -101,7 +100,10 @@ object PluginsTreeFilter {
      * @param selectedPaths 控制面选定回传的相对 path 子集
      * @return [FilterOutcome.Accepted]（选定集内的待 ingest 文本文件，按路径升序）或 [FilterOutcome.Rejected]（兜底超限）
      */
-    fun submitFilter(tree: Map<String, ByteArray>, selectedPaths: Collection<String>): FilterOutcome {
+    fun submitFilter(
+        tree: Map<String, ByteArray>,
+        selectedPaths: Collection<String>,
+    ): FilterOutcome {
         val selected = selectedPaths.toHashSet()
         val kept = ArrayList<IngestFile>(selected.size)
         var totalBytes = 0L
@@ -151,9 +153,10 @@ object PluginsTreeFilter {
             if (b.toInt() == 0) return null // NUL 字节 → 判为二进制
         }
         return try {
-            val decoder = StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            val decoder =
+                StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
             decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
         } catch (e: java.nio.charset.CharacterCodingException) {
             null // 非合法 UTF-8 → 判为二进制
@@ -184,7 +187,6 @@ data class ScanFile(
 
 /** [PluginsTreeFilter.filter] 的结果。 */
 sealed class FilterOutcome {
-
     /** 通过：携带过滤校验后的待 ingest 文本文件集（可空，表示无文本可传）。 */
     data class Accepted(val files: List<IngestFile>) : FilterOutcome()
 

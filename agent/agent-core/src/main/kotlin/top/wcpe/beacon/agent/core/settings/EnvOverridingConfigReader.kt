@@ -17,26 +17,39 @@ class EnvOverridingConfigReader(
     private val delegate: ConfigReader,
     private val env: (String) -> String?,
 ) : ConfigReader {
+    override fun string(
+        path: String,
+        default: String,
+    ): String = envValue(path) ?: delegate.string(path, default)
 
-    override fun string(path: String, default: String): String =
-        envValue(path) ?: delegate.string(path, default)
-
-    override fun int(path: String, default: Int): Int {
+    override fun int(
+        path: String,
+        default: Int,
+    ): Int {
         val raw = envValue(path) ?: return delegate.int(path, default)
         return raw.toIntOrNull() ?: delegate.int(path, default)
     }
 
-    override fun long(path: String, default: Long): Long {
+    override fun long(
+        path: String,
+        default: Long,
+    ): Long {
         val raw = envValue(path) ?: return delegate.long(path, default)
         return raw.toLongOrNull() ?: delegate.long(path, default)
     }
 
-    override fun double(path: String, default: Double): Double {
+    override fun double(
+        path: String,
+        default: Double,
+    ): Double {
         val raw = envValue(path) ?: return delegate.double(path, default)
         return raw.toDoubleOrNull() ?: delegate.double(path, default)
     }
 
-    override fun boolean(path: String, default: Boolean): Boolean {
+    override fun boolean(
+        path: String,
+        default: Boolean,
+    ): Boolean {
         val raw = envValue(path) ?: return delegate.boolean(path, default)
         return when (raw.trim().lowercase()) {
             "true" -> true
@@ -61,7 +74,6 @@ class EnvOverridingConfigReader(
 
     private companion object {
         /** 点分路径 → 环境变量名：BEACON_AGENT_ + 大写、'.' 与 '-' 转 '_'。 */
-        fun envName(path: String): String =
-            "BEACON_AGENT_" + path.uppercase().replace('.', '_').replace('-', '_')
+        fun envName(path: String): String = "BEACON_AGENT_" + path.uppercase().replace('.', '_').replace('-', '_')
     }
 }

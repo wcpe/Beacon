@@ -15,7 +15,6 @@ import java.util.concurrent.atomic.AtomicReference
  * 关键能力：register 可挂在 latch 上「保持在飞」，配合并发 reconnect 断言单飞不变量。
  */
 class FakeBeaconBackend : HttpTransport {
-
     /** 各端点累计调用次数（用于断言单飞）。 */
     val registerCalls = AtomicInteger(0)
     val heartbeatCalls = AtomicInteger(0)
@@ -127,38 +126,42 @@ class FakeBeaconBackend : HttpTransport {
  * decode 按 body key 返回预置泛型树，喂给 BeaconApiClient 的解析器。
  */
 class CannedJsonCodec : JsonCodec {
-
     override fun encode(value: Any?): String = "encoded"
 
-    override fun decode(json: String): Any? = when (json) {
-        FakeBeaconBackend.BODY_REGISTER -> mapOf(
-            "instanceKey" to "prod/lobby-1",
-            "resolvedGroup" to "area1",
-            "resolvedZone" to "zoneA",
-            "heartbeatIntervalSec" to 10,
-            "ttlSec" to 30,
-            "assigned" to true,
-        )
+    override fun decode(json: String): Any? =
+        when (json) {
+            FakeBeaconBackend.BODY_REGISTER ->
+                mapOf(
+                    "instanceKey" to "prod/lobby-1",
+                    "resolvedGroup" to "area1",
+                    "resolvedZone" to "zoneA",
+                    "heartbeatIntervalSec" to 10,
+                    "ttlSec" to 30,
+                    "assigned" to true,
+                )
 
-        FakeBeaconBackend.BODY_HEARTBEAT -> mapOf("ttlSec" to 30, "configDirty" to false)
+            FakeBeaconBackend.BODY_HEARTBEAT -> mapOf("ttlSec" to 30, "configDirty" to false)
 
-        FakeBeaconBackend.BODY_COMMAND -> mapOf(
-            "id" to 1,
-            "type" to "ingest-plugins",
-            "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
-        )
+            FakeBeaconBackend.BODY_COMMAND ->
+                mapOf(
+                    "id" to 1,
+                    "type" to "ingest-plugins",
+                    "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
+                )
 
-        FakeBeaconBackend.BODY_EFFECTIVE -> mapOf(
-            "namespace" to "prod",
-            "serverId" to "lobby-1",
-            "group" to "area1",
-            "zone" to "zoneA",
-            "md5" to "md5-v1",
-            "items" to listOf(
-                mapOf("dataId" to "demo.yml", "format" to "yaml", "md5" to "i1", "content" to "k: v"),
-            ),
-        )
+            FakeBeaconBackend.BODY_EFFECTIVE ->
+                mapOf(
+                    "namespace" to "prod",
+                    "serverId" to "lobby-1",
+                    "group" to "area1",
+                    "zone" to "zoneA",
+                    "md5" to "md5-v1",
+                    "items" to
+                        listOf(
+                            mapOf("dataId" to "demo.yml", "format" to "yaml", "md5" to "i1", "content" to "k: v"),
+                        ),
+                )
 
-        else -> emptyMap<String, Any?>()
-    }
+            else -> emptyMap<String, Any?>()
+        }
 }

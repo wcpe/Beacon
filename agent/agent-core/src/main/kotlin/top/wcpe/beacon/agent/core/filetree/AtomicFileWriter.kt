@@ -30,7 +30,6 @@ import java.util.concurrent.ThreadLocalRandom
  * 纯 java.nio 实现、无可变全局状态（[object] 仅承载无副作用静态逻辑），可在 core 复用。
  */
 object AtomicFileWriter {
-
     /** 重命名最大尝试次数（含首次），覆盖 Windows 杀软 / 索引器占用与多线程并发覆盖同一目标的争用窗口。 */
     private const val MAX_MOVE_ATTEMPTS = 10
 
@@ -45,11 +44,12 @@ object AtomicFileWriter {
      *
      * 重试耗尽仍失败抛 [IOException]，由上层（fail-static）记录并保留既有文件、下轮重试。
      */
-    fun write(target: File, bytes: ByteArray) {
+    fun write(
+        target: File,
+        bytes: ByteArray,
+    ) {
         val parent = target.parentFile
-        if (parent != null && !parent.exists() && !parent.mkdirs() && !parent.exists()) {
-            throw IOException("创建父目录失败：${parent.absolutePath}")
-        }
+        ensureParentDir(parent)
         // 唯一 tmp：随机 UUID 后缀，彻底消除并发落盘抢同一临时文件的竞争（无全局可变状态）。
         val tmp = File(parent, target.name + TMP_INFIX + UUID.randomUUID())
         try {
@@ -62,6 +62,19 @@ object AtomicFileWriter {
             }
         }
         fsyncDir(parent)
+    }
+
+    /**
+     * 确保父目录存在：不存在则尝试创建。创建失败后再复检一次——容忍并发线程已抢先把目录建好（mkdirs 返回 false 但目录确已存在）。
+     * 仍缺失才抛 [IOException]。parent 为 null（target 无父路径）直接放行。
+     */
+    private fun ensureParentDir(parent: File?) {
+        if (parent == null || parent.exists()) {
+            return
+        }
+        if (!parent.mkdirs() && !parent.exists()) {
+            throw IOException("创建父目录失败：${parent.absolutePath}")
+        }
     }
 
     /**
@@ -83,7 +96,10 @@ object AtomicFileWriter {
     }
 
     /** 写临时文件并 force（数据 + 元数据一并刷盘）。 */
-    private fun writeAndForce(tmp: File, bytes: ByteArray) {
+    private fun writeAndForce(
+        tmp: File,
+        bytes: ByteArray,
+    ) {
         Files.newByteChannel(
             tmp.toPath(),
             StandardOpenOption.CREATE,
@@ -101,7 +117,10 @@ object AtomicFileWriter {
     }
 
     /** 重命名覆盖目标：原子移动优先、瞬时占用有限重试；重试耗尽抛出。 */
-    private fun moveWithRetry(source: Path, target: Path) {
+    private fun moveWithRetry(
+        source: Path,
+        target: Path,
+    ) {
         var attempt = 0
         while (true) {
             attempt++
@@ -119,7 +138,10 @@ object AtomicFileWriter {
     }
 
     /** 单次移动：先试 `ATOMIC_MOVE`，平台不支持原子移动时回退非原子 `REPLACE_EXISTING`。 */
-    private fun moveOnce(source: Path, target: Path) {
+    private fun moveOnce(
+        source: Path,
+        target: Path,
+    ) {
         try {
             Files.move(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (e: AtomicMoveNotSupportedException) {

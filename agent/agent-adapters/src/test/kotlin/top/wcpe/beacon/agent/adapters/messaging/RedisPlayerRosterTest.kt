@@ -6,7 +6,6 @@ import kotlin.test.assertTrue
 
 /** 玩家名册退出删除决策的纯逻辑单测（换服误删保护）。 */
 class RedisPlayerRosterTest {
-
     @Test
     fun `当前所在服与退出服一致时删除`() {
         assertTrue(RedisPlayerRoster.shouldDeleteOnQuit(currentServerId = "lobby-1", fromServerId = "lobby-1"))

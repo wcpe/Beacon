@@ -1,6 +1,9 @@
 package top.wcpe.beacon.agent.bungee
 
 import net.md_5.bungee.api.ProxyServer
+import taboolib.common.platform.function.getDataFolder
+import taboolib.common.platform.function.submit
+import taboolib.common.platform.function.submitAsync
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
@@ -8,9 +11,6 @@ import top.wcpe.beacon.agent.core.browse.FsBrowseReader
 import top.wcpe.beacon.agent.core.browse.TreeNode
 import top.wcpe.beacon.agent.core.command.PluginsTreeReader
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
-import taboolib.common.platform.function.getDataFolder
-import taboolib.common.platform.function.submit
-import taboolib.common.platform.function.submitAsync
 import java.io.File
 import taboolib.common.platform.function.info as tabooInfo
 import taboolib.common.platform.function.severe as tabooSevere
@@ -24,12 +24,14 @@ import taboolib.common.platform.function.warning as tabooWarning
 class BungeePlatformAdapter(
     private val effectiveConfigView: EffectiveConfigView,
 ) : PlatformAdapter {
-
     override fun runAsync(task: () -> Unit) {
         submitAsync { task() }
     }
 
-    override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) {
+    override fun runAsyncDelayed(
+        delayMs: Long,
+        task: () -> Unit,
+    ) {
         // TabooLib 调度延迟单位为 tick（20 tick/秒）；ms→tick 取整，至少 1 tick。
         val ticks = (delayMs / 50).coerceAtLeast(1)
         submit(async = true, delay = ticks) { task() }
@@ -55,13 +57,20 @@ class BungeePlatformAdapter(
         return PluginsTreeReader.readMetadata(pluginsBaseFolder())
     }
 
-    override fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? {
+    override fun browseListDir(
+        relPath: String,
+        offset: Int,
+        limit: Int,
+    ): DirListing? {
         // 只读浏览（FR-109）：懒列真实 plugins 根下目录直接子项，分页。委托 core FsBrowseReader 做
         // path traversal + 符号链接逃逸校验；由 FR-110 命令在 async 线程触发（代理端无 tick 主线程，仍走 async）。
         return FsBrowseReader.listDir(pluginsBaseFolder(), relPath, offset, limit)
     }
 
-    override fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? {
+    override fun browseReadTree(
+        relPath: String,
+        maxDepth: Int,
+    ): TreeNode? {
         // 只读浏览（FR-109）：按需展开子树，逐层有界。委托 core，安全口径同 browseListDir，async 触发。
         return FsBrowseReader.readTree(pluginsBaseFolder(), relPath, maxDepth)
     }
@@ -71,7 +80,10 @@ class BungeePlatformAdapter(
         return FsBrowseReader.readFile(pluginsBaseFolder(), relPath)
     }
 
-    override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
+    override fun publishConfigChanged(
+        changed: Set<String>,
+        newMd5: String,
+    ) {
         // MVP：经 API 监听器派发（业务插件通过 EffectiveConfig.onChange 订阅）。
         effectiveConfigView.fireChanged(changed, newMd5)
     }
@@ -87,7 +99,10 @@ class BungeePlatformAdapter(
 
     override fun warn(msg: String) = tabooWarning(msg)
 
-    override fun error(msg: String, t: Throwable?) {
+    override fun error(
+        msg: String,
+        t: Throwable?,
+    ) {
         if (t != null) {
             tabooSevere("$msg：${t.message}")
         } else {

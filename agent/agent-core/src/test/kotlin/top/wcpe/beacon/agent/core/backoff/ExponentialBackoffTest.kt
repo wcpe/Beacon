@@ -7,13 +7,13 @@ import kotlin.test.assertTrue
 
 /** ExponentialBackoff 增长 / 封顶 / 重置的单元测试。 */
 class ExponentialBackoffTest {
-
-    private fun settings() = BackoffSettings(
-        initialMs = 1000,
-        maxMs = 8000,
-        multiplier = 2.0,
-        jitterRatio = 0.2,
-    )
+    private fun settings() =
+        BackoffSettings(
+            initialMs = 1000,
+            maxMs = 8000,
+            multiplier = 2.0,
+            jitterRatio = 0.2,
+        )
 
     @Test
     fun `无抖动时按倍率增长`() {

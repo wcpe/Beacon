@@ -14,20 +14,16 @@ import java.util.concurrent.ConcurrentHashMap
 class EffectiveConfigView(
     private val store: EffectiveConfigStore,
 ) : EffectiveConfig {
-
     // 监听器表：以句柄对象自身为键，便于注销。
     private val listeners = ConcurrentHashMap<Any, ConfigChangeListener>()
 
     override fun dataIds(): List<String> = store.dataIds()
 
-    override fun raw(dataId: String): Optional<String> =
-        Optional.ofNullable(store.item(dataId)?.content)
+    override fun raw(dataId: String): Optional<String> = Optional.ofNullable(store.item(dataId)?.content)
 
-    override fun format(dataId: String): Optional<String> =
-        Optional.ofNullable(store.item(dataId)?.format)
+    override fun format(dataId: String): Optional<String> = Optional.ofNullable(store.item(dataId)?.format)
 
-    override fun md5(dataId: String): Optional<String> =
-        Optional.ofNullable(store.item(dataId)?.md5)
+    override fun md5(dataId: String): Optional<String> = Optional.ofNullable(store.item(dataId)?.md5)
 
     override fun onChange(listener: ConfigChangeListener): ListenerHandle {
         val key = Any()
@@ -36,7 +32,10 @@ class EffectiveConfigView(
     }
 
     /** 由 apply 流程在有效配置变更后调用，回调所有监听器。 */
-    fun fireChanged(changedDataIds: Set<String>, newMd5: String) {
+    fun fireChanged(
+        changedDataIds: Set<String>,
+        newMd5: String,
+    ) {
         for (listener in listeners.values) {
             listener.onConfigChanged(changedDataIds, newMd5)
         }

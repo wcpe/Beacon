@@ -13,7 +13,6 @@ import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
  * 代理无 TPS 概念（无游戏主循环），TPS 恒上报 0。
  */
 object BungeeMetricsCollector {
-
     /** 采一帧完整运行指标：内存 / CPU（core 平台无关采集）+ 代理在线人数；TPS 恒 0。 */
     fun sample(): RuntimeMetrics {
         val playerCount = onlineCount()

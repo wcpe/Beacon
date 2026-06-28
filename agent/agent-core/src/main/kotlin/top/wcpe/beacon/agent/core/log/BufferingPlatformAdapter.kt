@@ -21,7 +21,6 @@ class BufferingPlatformAdapter(
     private val delegate: PlatformAdapter,
     private val buffer: AgentLogBuffer,
 ) : PlatformAdapter {
-
     // ===== 日志：先照常打，再旁路入缓冲（buffer 内部脱敏）=====
 
     override fun info(msg: String) {
@@ -34,7 +33,10 @@ class BufferingPlatformAdapter(
         buffer.append("WARN", msg)
     }
 
-    override fun error(msg: String, t: Throwable?) {
+    override fun error(
+        msg: String,
+        t: Throwable?,
+    ) {
         delegate.error(msg, t)
         // 异常信息也入缓冲（拼到文本里，脱敏在 buffer 内统一做）；异常类名 + 消息有助排障。
         val text = if (t != null) "$msg：${t.javaClass.simpleName}: ${t.message ?: "无错误信息"}" else msg
@@ -45,7 +47,10 @@ class BufferingPlatformAdapter(
 
     override fun runAsync(task: () -> Unit) = delegate.runAsync(task)
 
-    override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = delegate.runAsyncDelayed(delayMs, task)
+    override fun runAsyncDelayed(
+        delayMs: Long,
+        task: () -> Unit,
+    ) = delegate.runAsyncDelayed(delayMs, task)
 
     override fun runSync(task: () -> Unit) = delegate.runSync(task)
 
@@ -57,8 +62,10 @@ class BufferingPlatformAdapter(
 
     override fun readPluginsTreeMetadata(): Map<String, Long> = delegate.readPluginsTreeMetadata()
 
-    override fun publishConfigChanged(changed: Set<String>, newMd5: String) =
-        delegate.publishConfigChanged(changed, newMd5)
+    override fun publishConfigChanged(
+        changed: Set<String>,
+        newMd5: String,
+    ) = delegate.publishConfigChanged(changed, newMd5)
 
     override fun dispatchConsoleCommand(command: String) = delegate.dispatchConsoleCommand(command)
 
@@ -66,12 +73,16 @@ class BufferingPlatformAdapter(
     // 修复：装饰器此前漏委托 browse*，致经本装饰器时落到 PlatformAdapter 默认 null 实现、
     // 壳层（Bukkit/Bungee）的真实委托永不可达——真机浏览全部返回 null（结果=false）。
 
-    override fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? =
-        delegate.browseListDir(relPath, offset, limit)
+    override fun browseListDir(
+        relPath: String,
+        offset: Int,
+        limit: Int,
+    ): DirListing? = delegate.browseListDir(relPath, offset, limit)
 
-    override fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? =
-        delegate.browseReadTree(relPath, maxDepth)
+    override fun browseReadTree(
+        relPath: String,
+        maxDepth: Int,
+    ): TreeNode? = delegate.browseReadTree(relPath, maxDepth)
 
-    override fun browseReadFile(relPath: String): FileContent? =
-        delegate.browseReadFile(relPath)
+    override fun browseReadFile(relPath: String): FileContent? = delegate.browseReadFile(relPath)
 }

@@ -16,22 +16,43 @@ import kotlin.test.assertTrue
  * 检测外部改动告警而非盲盖；非法路径跳过不逃逸；回滚只还原文件不重放命令。
  */
 class OverrideApplierTest {
-
     private val targetRoot: File = Files.createTempDirectory("beacon-ov-target").toFile()
     private val backupDir: File = Files.createTempDirectory("beacon-ov-backup").toFile()
 
     private class RecordingAdapter(private val folder: File) : PlatformAdapter {
         val dispatched = mutableListOf<String>()
         val warnings = mutableListOf<String>()
+
         override fun runAsync(task: () -> Unit) = task()
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = folder
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
-        override fun dispatchConsoleCommand(command: String) { dispatched.add(command) }
+
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
+        override fun dispatchConsoleCommand(command: String) {
+            dispatched.add(command)
+        }
+
         override fun info(msg: String) {}
-        override fun warn(msg: String) { warnings.add(msg) }
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun warn(msg: String) {
+            warnings.add(msg)
+        }
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
     }
 
     private lateinit var adapter: RecordingAdapter
@@ -98,10 +119,11 @@ class OverrideApplierTest {
     @Test
     fun `非法路径跳过 不逃逸目标根 不阻断其余`() {
         val applier = newApplier(setOf("allin"))
-        val files = listOf(
-            OverrideFile("../escape.yml", "evil", md5("evil")),
-            OverrideFile("good.yml", "ok", md5("ok")),
-        )
+        val files =
+            listOf(
+                OverrideFile("../escape.yml", "evil", md5("evil")),
+                OverrideFile("good.yml", "ok", md5("ok")),
+            )
         applier.apply("set1", files, null)
         assertFalse(File(targetRoot.parentFile, "escape.yml").exists(), "逃逸文件不应被创建")
         assertEquals("ok", File(targetRoot, "good.yml").readText(StandardCharsets.UTF_8))
@@ -112,10 +134,11 @@ class OverrideApplierTest {
         val applier = newApplier(setOf("allin"))
         // 目标位置已存在同名目录（占位 / 不可读），反馈环读盘会抛异常。
         File(targetRoot, "blocked.yml").mkdirs()
-        val files = listOf(
-            OverrideFile("blocked.yml", "x", md5("x")),
-            OverrideFile("good.yml", "ok", md5("ok")),
-        )
+        val files =
+            listOf(
+                OverrideFile("blocked.yml", "x", md5("x")),
+                OverrideFile("good.yml", "ok", md5("ok")),
+            )
         // 关键：不抛异常（否则整个 override 异步循环会静默停摆）。
         val ok = applier.apply("set1", files, null)
         assertFalse(ok, "有文件读盘失败应记为未全量成功")

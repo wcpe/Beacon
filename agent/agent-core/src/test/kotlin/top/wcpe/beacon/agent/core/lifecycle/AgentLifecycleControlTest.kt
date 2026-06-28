@@ -25,36 +25,37 @@ import kotlin.test.assertTrue
  * 都不得出现两条 register 同时进行（maxConcurrentRegister == 1）。
  */
 class AgentLifecycleControlTest {
-
     private val backend = FakeBeaconBackend()
     private val adapter = ThreadPoolPlatformAdapter()
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        // 退避初始值给大，避免延迟重试在测试窗口内大量自调度干扰断言。
-        backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            // 退避初始值给大，避免延迟重试在测试窗口内大量自调度干扰断言。
+            backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     private fun newLifecycle(): AgentLifecycle {
         val codec = CannedJsonCodec()
@@ -84,12 +85,13 @@ class AgentLifecycleControlTest {
 
         // 在首次注册仍在飞期间，并发猛打 reconnect——单飞门应让它们全部 no-op 或排队，绝不并行进 register。
         val starter = CountDownLatch(1)
-        val threads = (1..16).map {
-            Thread {
-                starter.await()
-                repeat(3) { lifecycle.reconnectNow() }
-            }.apply { start() }
-        }
+        val threads =
+            (1..16).map {
+                Thread {
+                    starter.await()
+                    repeat(3) { lifecycle.reconnectNow() }
+                }.apply { start() }
+            }
         starter.countDown()
         threads.forEach { it.join(2000) }
 
@@ -113,12 +115,13 @@ class AgentLifecycleControlTest {
 
         // 在长轮询持续续杯的同时，并发打多次 reconnect。
         val starter = CountDownLatch(1)
-        val threads = (1..12).map {
-            Thread {
-                starter.await()
-                repeat(3) { lifecycle.reconnectNow() }
-            }.apply { start() }
-        }
+        val threads =
+            (1..12).map {
+                Thread {
+                    starter.await()
+                    repeat(3) { lifecycle.reconnectNow() }
+                }.apply { start() }
+            }
         starter.countDown()
         threads.forEach { it.join(3000) }
 
@@ -169,7 +172,10 @@ class AgentLifecycleControlTest {
         assertEquals(10, snap.heartbeatIntervalSec)
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return

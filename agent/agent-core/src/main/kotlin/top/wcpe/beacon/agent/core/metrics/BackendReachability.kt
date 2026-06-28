@@ -8,7 +8,6 @@ package top.wcpe.beacon.agent.core.metrics
  * 计数与求均值是无副作用纯函数。
  */
 object BackendReachability {
-
     /**
      * 单个后端的 ping 探测结果。
      *

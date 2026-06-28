@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
  * 规范化后不区分大小写比较。agent 为最终权威。
  */
 class OverridePathSecurityTest {
-
     private val root: File = Files.createTempDirectory("beacon-override").toFile()
     private val guard = OverridePathSecurity(root)
 

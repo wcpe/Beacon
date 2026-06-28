@@ -13,24 +13,44 @@ import java.util.concurrent.CompletableFuture
  * 让业务插件统一以 isAvailable() 判断后再用，模块关时优雅降级而非 NPE。
  */
 object DisabledMessaging : Messaging {
-
     override fun isAvailable(): Boolean = false
 
-    override fun send(targetServerId: String, type: String, payload: Any?) = unavailable()
+    override fun send(
+        targetServerId: String,
+        type: String,
+        payload: Any?,
+    ) = unavailable()
 
-    override fun call(targetServerId: String, type: String, payload: Any?): CompletableFuture<Any?> {
+    override fun call(
+        targetServerId: String,
+        type: String,
+        payload: Any?,
+    ): CompletableFuture<Any?> {
         val future = CompletableFuture<Any?>()
         future.completeExceptionally(IllegalStateException(REASON))
         return future
     }
 
-    override fun publish(topic: String, payload: Any?) = unavailable()
+    override fun publish(
+        topic: String,
+        payload: Any?,
+    ) = unavailable()
 
-    override fun subscribe(topic: String, handler: TopicHandler): ListenerHandle = NOOP_HANDLE
+    override fun subscribe(
+        topic: String,
+        handler: TopicHandler,
+    ): ListenerHandle = NOOP_HANDLE
 
-    override fun sendToPlayer(playerName: String, type: String, payload: Any?): Boolean = false
+    override fun sendToPlayer(
+        playerName: String,
+        type: String,
+        payload: Any?,
+    ): Boolean = false
 
-    override fun on(type: String, handler: MessageHandler): ListenerHandle = NOOP_HANDLE
+    override fun on(
+        type: String,
+        handler: MessageHandler,
+    ): ListenerHandle = NOOP_HANDLE
 
     private fun unavailable(): Nothing = throw IllegalStateException(REASON)
 

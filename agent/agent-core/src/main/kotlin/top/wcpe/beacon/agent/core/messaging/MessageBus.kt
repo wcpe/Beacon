@@ -33,7 +33,6 @@ class MessageBus(
     private val scheduleTimeout: (delayMs: Long, task: () -> Unit) -> Unit = DEFAULT_SCHEDULER,
     private val warn: (String) -> Unit = {},
 ) {
-
     /** 按消息类型注册的处理器：type → handler。非 RPC 收消息后回调，返回值忽略。 */
     private val typeHandlers = ConcurrentHashMap<String, (MessageContext) -> Unit>()
 
@@ -70,7 +69,10 @@ class MessageBus(
     fun isAvailable(): Boolean = started && transport.isConnected()
 
     /** 注册按类型分发的处理器。重复注册同 type 覆盖前者。 */
-    fun on(type: String, handler: (MessageContext) -> Unit) {
+    fun on(
+        type: String,
+        handler: (MessageContext) -> Unit,
+    ) {
         typeHandlers[type] = handler
     }
 
@@ -79,7 +81,11 @@ class MessageBus(
      *
      * @throws IllegalStateException 模块不可用
      */
-    fun send(targetServerId: String, type: String, payload: Any?) {
+    fun send(
+        targetServerId: String,
+        type: String,
+        payload: Any?,
+    ) {
         requireAvailable()
         val message = Message(type = type, payload = payload, source = selfServerId)
         transport.sendToServer(targetServerId, encode(message))
@@ -91,19 +97,24 @@ class MessageBus(
      * @return 完成值为目标返回的 payload（泛型树）；超时抛 [TimeoutException]
      * @throws IllegalStateException 模块不可用
      */
-    fun call(targetServerId: String, type: String, payload: Any?): CompletableFuture<Any?> {
+    fun call(
+        targetServerId: String,
+        type: String,
+        payload: Any?,
+    ): CompletableFuture<Any?> {
         requireAvailable()
         val correlationId = UUID.randomUUID().toString()
         val future = CompletableFuture<Any?>()
         pending[correlationId] = future
 
-        val request = Message(
-            type = type,
-            payload = payload,
-            correlationId = correlationId,
-            replyTo = replyChannel,
-            source = selfServerId,
-        )
+        val request =
+            Message(
+                type = type,
+                payload = payload,
+                correlationId = correlationId,
+                replyTo = replyChannel,
+                source = selfServerId,
+            )
         try {
             transport.sendToServer(targetServerId, encode(request))
         } catch (t: Throwable) {
@@ -130,7 +141,10 @@ class MessageBus(
      *
      * @throws IllegalStateException 模块不可用
      */
-    fun publish(topic: String, payload: Any?) {
+    fun publish(
+        topic: String,
+        payload: Any?,
+    ) {
         requireAvailable()
         val message = Message(type = topic, payload = payload, source = selfServerId)
         transport.publishTopic(topic, encode(message))
@@ -141,7 +155,10 @@ class MessageBus(
      *
      * @throws IllegalStateException 模块不可用
      */
-    fun subscribe(topic: String, handler: (Message) -> Unit) {
+    fun subscribe(
+        topic: String,
+        handler: (Message) -> Unit,
+    ) {
         requireAvailable()
         topicHandlers[topic] = handler
         transport.subscribeTopic(topic) { raw -> onTopicRaw(topic, raw) }
@@ -159,10 +176,15 @@ class MessageBus(
      * @return true=已解析并投递；false=名册无此玩家（找不到目标兜底，调用方可重试/丢弃）
      * @throws IllegalStateException 模块不可用 / 未配置 PlayerLocator
      */
-    fun sendToPlayer(playerName: String, type: String, payload: Any?): Boolean {
+    fun sendToPlayer(
+        playerName: String,
+        type: String,
+        payload: Any?,
+    ): Boolean {
         requireAvailable()
-        val locator = playerLocator
-            ?: throw IllegalStateException("未配置玩家位置解析（PlayerLocator），无法按玩家寻址")
+        val locator =
+            playerLocator
+                ?: error("未配置玩家位置解析（PlayerLocator），无法按玩家寻址")
         val serverId = locator.resolveServerId(playerName)
         if (serverId == null) {
             warn("按玩家寻址落空：玩家 $playerName 不在名册（可能已换服/离线），丢弃 type=$type")
@@ -207,7 +229,10 @@ class MessageBus(
     }
 
     /** 主题入站：解码 → 回调该 topic 处理器。 */
-    private fun onTopicRaw(topic: String, raw: String) {
+    private fun onTopicRaw(
+        topic: String,
+        raw: String,
+    ) {
         val message = decode(raw) ?: return
         val handler = topicHandlers[topic] ?: return
         try {
@@ -218,21 +243,23 @@ class MessageBus(
     }
 
     /** 由 [MessageContext.reply] 调用：把响应经发起方回信通道发回。 */
-    internal fun reply(request: Message, payload: Any?) {
+    internal fun reply(
+        request: Message,
+        payload: Any?,
+    ) {
         val replyTo = request.replyTo ?: return
-        val response = Message(
-            type = request.type,
-            payload = payload,
-            correlationId = request.correlationId,
-            source = selfServerId,
-        )
+        val response =
+            Message(
+                type = request.type,
+                payload = payload,
+                correlationId = request.correlationId,
+                source = selfServerId,
+            )
         transport.sendReply(replyTo, encode(response))
     }
 
     private fun requireAvailable() {
-        if (!isAvailable()) {
-            throw IllegalStateException("跨服消息模块不可用（未启用或 Redis 未连上）")
-        }
+        check(isAvailable()) { "跨服消息模块不可用（未启用或 Redis 未连上）" }
     }
 
     private fun failAllPending(error: Throwable) {
@@ -246,12 +273,13 @@ class MessageBus(
 
     /** 解码原始 json 为信封；非法消息（缺 type / 解析失败）告警并返回 null。 */
     private fun decode(raw: String): Message? {
-        val message = try {
-            Message.fromMap(codec.decode(raw))
-        } catch (t: Throwable) {
-            warn("消息解码失败，丢弃，错误=${t.message}")
-            return null
-        }
+        val message =
+            try {
+                Message.fromMap(codec.decode(raw))
+            } catch (t: Throwable) {
+                warn("消息解码失败，丢弃，错误=${t.message}")
+                return null
+            }
         if (message == null) {
             warn("非法消息（缺 type 或非对象），丢弃")
         }
@@ -259,7 +287,6 @@ class MessageBus(
     }
 
     companion object {
-
         /** 回信通道前缀：本服回信通道 = reply:<serverId>。 */
         private const val REPLY_PREFIX: String = "reply:"
 
@@ -290,7 +317,6 @@ class MessageContext internal constructor(
     val message: Message,
     private val bus: MessageBus,
 ) {
-
     /** 本消息是否为 RPC 请求（带回信通道）。 */
     fun isRequest(): Boolean = message.isRequest()
 

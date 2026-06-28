@@ -17,22 +17,23 @@ import kotlin.test.assertTrue
  * 验证 agent↔控制面 投递端点的 JSON 契约。
  */
 class BeaconApiClientOverrideTest {
-
     private val codec = KotlinxJsonCodec()
 
-    private fun client(transport: FakeHttpTransport) =
-        BeaconApiClient(transport, codec, TestFixtures.settings())
+    private fun client(transport: FakeHttpTransport) = BeaconApiClient(transport, codec, TestFixtures.settings())
 
     @Test
     fun `pollOverrideSets 200 解析 sets 与 overrideMd5`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(
-                200,
-                """{"namespace":"prod","serverId":"lobby-1","overrideMd5":"ab",
-                   "sets":[{"name":"AllinCore","targetRoot":"plugins/AllinCore","reloadCommand":"allin reload",
-                            "members":["config.yml","scripts/hello.js"]}]}""".trimIndent(),
-            ),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"namespace":"prod","serverId":"lobby-1","overrideMd5":"ab",
+                    "sets":[{"name":"AllinCore","targetRoot":"plugins/AllinCore","reloadCommand":"allin reload",
+                             "members":["config.yml","scripts/hello.js"]}]}
+                    """.trimIndent(),
+                ),
+            )
         val result = client(transport).pollOverrideSets(TestFixtures.identity(), null, 30000)
         val changed = assertIs<OverridePollResult.Changed>(result)
         assertEquals("ab", changed.manifest.overrideMd5)
@@ -46,13 +47,16 @@ class BeaconApiClientOverrideTest {
 
     @Test
     fun `pollOverrideSets 空命令归一化为 null`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(
-                200,
-                """{"namespace":"prod","serverId":"lobby-1","overrideMd5":"ab",
-                   "sets":[{"name":"AllinCore","targetRoot":"plugins/AllinCore","reloadCommand":"","members":["config.yml"]}]}""".trimIndent(),
-            ),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"namespace":"prod","serverId":"lobby-1","overrideMd5":"ab",
+                    "sets":[{"name":"AllinCore","targetRoot":"plugins/AllinCore","reloadCommand":"","members":["config.yml"]}]}
+                    """.trimIndent(),
+                ),
+            )
         val result = client(transport).pollOverrideSets(TestFixtures.identity(), null, 30000)
         val changed = assertIs<OverridePollResult.Changed>(result)
         assertNull(changed.manifest.sets[0].reloadCommand, "空命令应归一化为 null（不下发命令）")
@@ -88,9 +92,10 @@ class BeaconApiClientOverrideTest {
 
     @Test
     fun `fetchOverrideMember 200 解析整文件内容`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(200, """{"set":"AllinCore","path":"config.yml","md5":"9f","content":"k: 1\n"}"""),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(200, """{"set":"AllinCore","path":"config.yml","md5":"9f","content":"k: 1\n"}"""),
+            )
         val content = client(transport).fetchOverrideMember(TestFixtures.identity(), "AllinCore", "config.yml")!!
         assertEquals("config.yml", content.path)
         assertEquals("9f", content.md5)

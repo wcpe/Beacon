@@ -19,28 +19,30 @@ data class RuntimeMetrics(
     val memMax: Long,
     val cpuLoad: Double,
 ) {
-
     /**
      * 在当前内存 / CPU 指标基础上合入平台采到的人数与 TPS。
      *
      * 壳层组装路径：先经 [JvmRuntimeMetrics] 采内存 / CPU（平台无关），再用平台 API 采到的
      * 人数 / TPS 合入，得到完整的一帧运行指标。
      */
-    fun withPlayerCountAndTps(playerCount: Int, tps: Double): RuntimeMetrics =
-        copy(playerCount = playerCount, tps = tps)
+    fun withPlayerCountAndTps(
+        playerCount: Int,
+        tps: Double,
+    ): RuntimeMetrics = copy(playerCount = playerCount, tps = tps)
 
     companion object {
         /** CPU 负载不可用哨兵：与「0.0 表示真实空载」区分，由控制面判定不可用。 */
         const val CPU_UNAVAILABLE: Double = -1.0
 
         /** 零指标缺省：未注入指标供给时上报，向后兼容旧行为（人数 / TPS 恒 0、CPU 不可用）。 */
-        val ZERO: RuntimeMetrics = RuntimeMetrics(
-            playerCount = 0,
-            tps = 0.0,
-            memUsed = 0L,
-            memMax = 0L,
-            cpuLoad = CPU_UNAVAILABLE,
-        )
+        val ZERO: RuntimeMetrics =
+            RuntimeMetrics(
+                playerCount = 0,
+                tps = 0.0,
+                memUsed = 0L,
+                memMax = 0L,
+                cpuLoad = CPU_UNAVAILABLE,
+            )
     }
 }
 

@@ -10,7 +10,6 @@ import kotlin.concurrent.write
  * 无 version 代际号。读返回拷贝，避免外部改动内部状态。
  */
 class EffectiveConfigStore {
-
     private val lock = ReentrantReadWriteLock()
 
     private var md5: String? = null

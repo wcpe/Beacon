@@ -18,12 +18,13 @@ class BungeeServerDirectory : ProxyServerDirectory {
     override fun upsertManaged(instance: ServiceInstance): Boolean {
         if (hasServer(instance.serverId()) && !isManaged(instance.serverId())) return false
         val address = parseAddress(instance.address()) ?: return false
-        val info = ProxyServer.getInstance().constructServerInfo(
-            instance.serverId(),
-            address,
-            "Beacon 管理子服 ${instance.serverId()}",
-            false,
-        )
+        val info =
+            ProxyServer.getInstance().constructServerInfo(
+                instance.serverId(),
+                address,
+                "Beacon 管理子服 ${instance.serverId()}",
+                false,
+            )
         ProxyServer.getInstance().servers[instance.serverId()] = info
         managed.add(instance.serverId())
         return true

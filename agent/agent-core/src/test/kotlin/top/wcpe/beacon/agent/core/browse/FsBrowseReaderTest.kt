@@ -17,7 +17,6 @@ import kotlin.test.assertTrue
  * 覆盖验收标准：path traversal 各类越权被拒、大目录分页、读子树有界、单文件超限不读全文、jar/二进制排除、只读性。
  */
 class FsBrowseReaderTest {
-
     private val root: File = Files.createTempDirectory("beacon-browse-root").toFile()
     private val outside: File = Files.createTempDirectory("beacon-browse-outside").toFile()
 
@@ -27,7 +26,10 @@ class FsBrowseReaderTest {
         outside.deleteRecursively()
     }
 
-    private fun write(rel: String, content: String) {
+    private fun write(
+        rel: String,
+        content: String,
+    ) {
         val f = File(root, rel)
         f.parentFile.mkdirs()
         f.writeText(content, StandardCharsets.UTF_8)
@@ -281,7 +283,10 @@ class FsBrowseReaderTest {
     }
 
     /** 尝试创建符号链接；环境不支持返回 false 供跳过。 */
-    private fun trySymlink(link: java.nio.file.Path, target: java.nio.file.Path): Boolean {
+    private fun trySymlink(
+        link: java.nio.file.Path,
+        target: java.nio.file.Path,
+    ): Boolean {
         return try {
             Files.createSymbolicLink(link, target)
             true

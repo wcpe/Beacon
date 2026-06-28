@@ -10,7 +10,6 @@ package top.wcpe.beacon.agent.core.messaging
  * 由 [MessageBus] 走「找不到目标」兜底，不上强一致。
  */
 interface PlayerLocator {
-
     /**
      * 解析玩家当前所在子服 serverId。
      *

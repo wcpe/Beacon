@@ -13,7 +13,6 @@ package top.wcpe.beacon.agent.core.messaging
  * 业务插件须容忍瞬时偏差。
  */
 interface RosterDirectory {
-
     /**
      * 读取全量名册快照（玩家名 → 所在子服 serverId）。
      *

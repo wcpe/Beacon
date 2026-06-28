@@ -9,15 +9,15 @@ import redis.clients.jedis.JedisPoolConfig
  * 抽出工厂避免在多处重复连接池构造细节；Jedis 类型仅在适配器出现（守不变量 #5）。
  */
 object JedisPoolFactory {
-
     /** 构造一个小容量连接池。 */
     fun create(connection: RedisConnection): JedisPool {
-        val config = JedisPoolConfig().apply {
-            maxTotal = 8
-            maxIdle = 4
-            minIdle = 1
-            testOnBorrow = true
-        }
+        val config =
+            JedisPoolConfig().apply {
+                maxTotal = 8
+                maxIdle = 4
+                minIdle = 1
+                testOnBorrow = true
+            }
         val password = connection.password.takeIf { it.isNotBlank() }
         return JedisPool(
             config,

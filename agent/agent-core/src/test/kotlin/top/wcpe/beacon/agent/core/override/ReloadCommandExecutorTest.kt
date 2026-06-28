@@ -13,7 +13,6 @@ import kotlin.test.assertTrue
  * - 空白名单（默认）下任何命令都不派发。
  */
 class ReloadCommandExecutorTest {
-
     /** 记录派发的命令与是否经异步线程的测试桩适配器。 */
     private class RecordingAdapter : PlatformAdapter {
         val dispatched = mutableListOf<String>()
@@ -29,18 +28,33 @@ class ReloadCommandExecutorTest {
             }
         }
 
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = File(System.getProperty("java.io.tmpdir"))
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
+
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
         override fun dispatchConsoleCommand(command: String) {
             if (inAsync) dispatchedViaAsync = true
             dispatched.add(command)
         }
 
         override fun info(msg: String) {}
+
         override fun warn(msg: String) {}
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
     }
 
     @Test

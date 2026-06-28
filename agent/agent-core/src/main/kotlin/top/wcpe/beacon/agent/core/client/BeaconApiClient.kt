@@ -37,7 +37,6 @@ class BeaconApiClient(
     // 流式传输（SSE 推送，FR-24）：可选；为 null 时退回三条长轮询（迁移期兼容，见 ADR-0015 决策 8）。
     private val streamTransport: StreamTransport? = null,
 ) {
-
     private val base: String = settings.primaryEndpoint()
 
     /**
@@ -63,22 +62,27 @@ class BeaconApiClient(
      * URL 携带各通道当前 md5 供控制面"连接即对账"补发落下的增量；同步阻塞直到流结束。
      * 仅在异步线程调用（绝不上 MC 主线程）；未注入 streamTransport 时直接回调 onClosed。
      */
-    fun openStream(identity: AgentIdentity, reported: ReportedChannelMd5, listener: StreamListener) {
+    fun openStream(
+        identity: AgentIdentity,
+        reported: ReportedChannelMd5,
+        listener: StreamListener,
+    ) {
         val st = streamTransport
         if (st == null) {
             listener.onClosed(IllegalStateException("未注入 streamTransport"))
             return
         }
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/stream")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-            append("&configMd5=").append(urlEncode(reported.config))
-            append("&fileMd5=").append(urlEncode(reported.file))
-            append("&overrideMd5=").append(urlEncode(reported.override))
-            append("&topologyMd5=").append(urlEncode(reported.topology))
-        }
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/stream")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+                append("&configMd5=").append(urlEncode(reported.config))
+                append("&fileMd5=").append(urlEncode(reported.file))
+                append("&overrideMd5=").append(urlEncode(reported.override))
+                append("&topologyMd5=").append(urlEncode(reported.topology))
+            }
         // 读超时给保活留充足余量：取长轮询挂起上限的数倍，避免空闲被误判断流。
         val readTimeout = settings.pollTimeoutMs * 3 + settings.requestTimeoutMs
         st.open(
@@ -103,31 +107,36 @@ class BeaconApiClient(
      * backends 为本机（仅 bc 代理）当前代理的后端子服 serverId 集合（FR-36 事实，非身份），
      * 由调用方按帧传入；仅当非空时才拼入报文（bukkit / 旧控制面下为空、不拼，向后兼容）。
      */
-    fun register(identity: AgentIdentity, backends: List<String> = emptyList()): RegisterOutcome {
-        val body = buildMap {
-            put("namespace", identity.namespace)
-            put("serverId", identity.serverId)
-            put("role", identity.role)
-            put("groupHint", identity.groupHint)
-            put("address", identity.address)
-            put("version", identity.version)
-            put("capacity", identity.capacity)
-            put("weight", identity.weight)
-            put("metadata", identity.metadata)
-            // agent 自身构建版本：仅非空时附加，旧控制面 / 旧 agent 缺键即可（FR-86，见 ADR-0039）。
-            if (identity.agentVersion.isNotBlank()) put("agentVersion", identity.agentVersion)
-            // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
-            if (backends.isNotEmpty()) put("backends", backends)
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/register",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return RegisterOutcome.Failed(connectFailReason())
+    fun register(
+        identity: AgentIdentity,
+        backends: List<String> = emptyList(),
+    ): RegisterOutcome {
+        val body =
+            buildMap {
+                put("namespace", identity.namespace)
+                put("serverId", identity.serverId)
+                put("role", identity.role)
+                put("groupHint", identity.groupHint)
+                put("address", identity.address)
+                put("version", identity.version)
+                put("capacity", identity.capacity)
+                put("weight", identity.weight)
+                put("metadata", identity.metadata)
+                // agent 自身构建版本：仅非空时附加，旧控制面 / 旧 agent 缺键即可（FR-86，见 ADR-0039）。
+                if (identity.agentVersion.isNotBlank()) put("agentVersion", identity.agentVersion)
+                // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
+                if (backends.isNotEmpty()) put("backends", backends)
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/register",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return RegisterOutcome.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> RegisterOutcome.Success(parseRegister(resp.body))
@@ -142,19 +151,21 @@ class BeaconApiClient(
 
     /** 心跳：POST /beacon/v1/agent/heartbeat。404 → 需重新注册。 */
     fun heartbeat(identity: AgentIdentity): HeartbeatOutcome {
-        val body = mapOf(
-            "namespace" to identity.namespace,
-            "serverId" to identity.serverId,
-        )
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/heartbeat",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return HeartbeatOutcome.Failed(connectFailReason())
+        val body =
+            mapOf(
+                "namespace" to identity.namespace,
+                "serverId" to identity.serverId,
+            )
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/heartbeat",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return HeartbeatOutcome.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> {
@@ -173,26 +184,32 @@ class BeaconApiClient(
     }
 
     /** 长轮询有效配置：GET /beacon/v1/agent/config/effective。 */
-    fun pollEffective(identity: AgentIdentity, currentMd5: String?, timeoutMs: Long): PollResult {
+    fun pollEffective(
+        identity: AgentIdentity,
+        currentMd5: String?,
+        timeoutMs: Long,
+    ): PollResult {
         val md5Param = currentMd5 ?: ""
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/config/effective")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-            append("&md5=").append(urlEncode(md5Param))
-            append("&timeoutMs=").append(timeoutMs)
-        }
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/config/effective")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+                append("&md5=").append(urlEncode(md5Param))
+                append("&timeoutMs=").append(timeoutMs)
+            }
         // 读超时给长轮询留余量（挂起上限 + 普通读超时）。
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
-            ),
-        ) ?: return PollResult.Failed(connectFailReason())
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
+                ),
+            ) ?: return PollResult.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> PollResult.Changed(parseEffective(resp.body))
@@ -226,30 +243,32 @@ class BeaconApiClient(
         backends: List<String> = emptyList(),
         proxy: ProxyMetrics? = null,
     ): Boolean {
-        val body = buildMap {
-            put("namespace", identity.namespace)
-            put("serverId", identity.serverId)
-            put("appliedMd5", appliedMd5)
-            put("playerCount", playerCount)
-            put("tps", tps)
-            // 新增：JVM 已用 / 最大堆字节与进程 CPU 负载（键名固定供控制面对齐）。
-            put("memUsed", memUsed)
-            put("memMax", memMax)
-            put("cpuLoad", cpuLoad)
-            // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
-            if (backends.isNotEmpty()) put("backends", backends)
-            // bc 专属负载指标：仅 bc 壳注入时附加 proxy 子对象，旧控制面忽略即可（FR-34）。
-            if (proxy != null) put("proxy", proxyBody(proxy))
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/report",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+        val body =
+            buildMap {
+                put("namespace", identity.namespace)
+                put("serverId", identity.serverId)
+                put("appliedMd5", appliedMd5)
+                put("playerCount", playerCount)
+                put("tps", tps)
+                // 新增：JVM 已用 / 最大堆字节与进程 CPU 负载（键名固定供控制面对齐）。
+                put("memUsed", memUsed)
+                put("memMax", memMax)
+                put("cpuLoad", cpuLoad)
+                // bc 后端归属事实：仅非空时附加，旧控制面忽略即可（FR-36）。
+                if (backends.isNotEmpty()) put("backends", backends)
+                // bc 专属负载指标：仅 bc 壳注入时附加 proxy 子对象，旧控制面忽略即可（FR-34）。
+                if (proxy != null) put("proxy", proxyBody(proxy))
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/report",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -277,15 +296,16 @@ class BeaconApiClient(
         }
         val url = "$base/beacon/v1/agent/discovery" + if (params.isEmpty()) "" else "?$params"
 
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return emptyList()
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return emptyList()
         if (resp.statusCode != 200) {
             return emptyList()
         }
@@ -299,26 +319,32 @@ class BeaconApiClient(
      * 带当前 fileTreeMd5；变了 200 返回新清单（path→md5，不含内容），未变到超时 304。
      * 与配置长轮询唤醒集合独立（见 ADR-0010）。
      */
-    fun pollFileManifest(identity: AgentIdentity, currentMd5: String?, timeoutMs: Long): FileManifestPollResult {
+    fun pollFileManifest(
+        identity: AgentIdentity,
+        currentMd5: String?,
+        timeoutMs: Long,
+    ): FileManifestPollResult {
         val md5Param = currentMd5 ?: ""
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/files/manifest")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-            append("&md5=").append(urlEncode(md5Param))
-            append("&timeoutMs=").append(timeoutMs)
-        }
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/files/manifest")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+                append("&md5=").append(urlEncode(md5Param))
+                append("&timeoutMs=").append(timeoutMs)
+            }
         // 读超时给长轮询留余量（挂起上限 + 普通读超时）。
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
-            ),
-        ) ?: return FileManifestPollResult.Failed(connectFailReason())
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
+                ),
+            ) ?: return FileManifestPollResult.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> FileManifestPollResult.Changed(parseManifest(resp.body))
@@ -333,23 +359,28 @@ class BeaconApiClient(
      *
      * 200 返回该 path 按覆盖链解析后的整文件内容；404（FILE_NOT_FOUND/未注册）或连接失败返回 null。
      */
-    fun fetchFileContent(identity: AgentIdentity, path: String): FileContent? {
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/files/content")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-            append("&path=").append(urlEncode(path))
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return null
+    fun fetchFileContent(
+        identity: AgentIdentity,
+        path: String,
+    ): FileContent? {
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/files/content")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+                append("&path=").append(urlEncode(path))
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return null
         if (resp.statusCode != 200) {
             return null
         }
@@ -367,25 +398,31 @@ class BeaconApiClient(
      * 带当前 overrideMd5；变了 200 返回适用覆盖集（目标根 + 命令 + 成员 path，不含内容），未变到超时 304。
      * 与文件长轮询复用同一唤醒集合（同属通道B），但 md5 维度独立（见 ADR-0011）。
      */
-    fun pollOverrideSets(identity: AgentIdentity, currentMd5: String?, timeoutMs: Long): OverridePollResult {
+    fun pollOverrideSets(
+        identity: AgentIdentity,
+        currentMd5: String?,
+        timeoutMs: Long,
+    ): OverridePollResult {
         val md5Param = currentMd5 ?: ""
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/override-sets")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-            append("&md5=").append(urlEncode(md5Param))
-            append("&timeoutMs=").append(timeoutMs)
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
-            ),
-        ) ?: return OverridePollResult.Failed(connectFailReason())
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/override-sets")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+                append("&md5=").append(urlEncode(md5Param))
+                append("&timeoutMs=").append(timeoutMs)
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
+                ),
+            ) ?: return OverridePollResult.Failed(connectFailReason())
 
         return when (resp.statusCode) {
             200 -> OverridePollResult.Changed(parseOverrideManifest(resp.body))
@@ -400,24 +437,30 @@ class BeaconApiClient(
      *
      * 200 返回该 (set, path) 按覆盖链解析后的整文件内容；404 或连接失败返回 null（触发 fail-static 放弃本轮）。
      */
-    fun fetchOverrideMember(identity: AgentIdentity, setName: String, path: String): FileContent? {
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/override-sets/content")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-            append("&set=").append(urlEncode(setName))
-            append("&path=").append(urlEncode(path))
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return null
+    fun fetchOverrideMember(
+        identity: AgentIdentity,
+        setName: String,
+        path: String,
+    ): FileContent? {
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/override-sets/content")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+                append("&set=").append(urlEncode(setName))
+                append("&path=").append(urlEncode(path))
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return null
         if (resp.statusCode != 200) {
             return null
         }
@@ -437,21 +480,23 @@ class BeaconApiClient(
      * （命令流为 best-effort：拉不到本轮静默放弃，下次事件 / 重连再拉，不影响配置主流程）。
      */
     fun fetchPendingCommand(identity: AgentIdentity): AgentCommand? {
-        val url = buildString {
-            append(base)
-            append("/beacon/v1/agent/commands")
-            append("?namespace=").append(urlEncode(identity.namespace))
-            append("&serverId=").append(urlEncode(identity.serverId))
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "GET",
-                url = url,
-                headers = headers(withBody = false),
-                body = null,
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return null
+        val url =
+            buildString {
+                append(base)
+                append("/beacon/v1/agent/commands")
+                append("?namespace=").append(urlEncode(identity.namespace))
+                append("&serverId=").append(urlEncode(identity.serverId))
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = url,
+                    headers = headers(withBody = false),
+                    body = null,
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return null
         return when (resp.statusCode) {
             200 -> parsePendingCommand(resp.body)
             204 -> null // 无待办命令
@@ -465,20 +510,25 @@ class BeaconApiClient(
      * 携带命令 id + 文件集（path→content 文本）。控制面入库前同口径再校验（双保险）后复用 FileService.Import 落覆盖。
      * 200 视作成功；其它（命令态不符 / 校验失败 / 连接失败）返回 false（命令在控制面侧标 failed，agent 侧不重传）。
      */
-    fun uploadIngest(commandId: Long, files: List<IngestFile>): Boolean {
-        val body = mapOf(
-            "commandId" to commandId,
-            "files" to files.map { mapOf("path" to it.path, "content" to it.content) },
-        )
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/files/ingest",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+    fun uploadIngest(
+        commandId: Long,
+        files: List<IngestFile>,
+    ): Boolean {
+        val body =
+            mapOf(
+                "commandId" to commandId,
+                "files" to files.map { mapOf("path" to it.path, "content" to it.content) },
+            )
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/files/ingest",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -488,27 +538,33 @@ class BeaconApiClient(
      * 携带命令 id + 元信息清单（path/size/isText/overThreshold，**无 content**）。控制面存入任务 manifest、计数、转 pending-review。
      * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（命令在控制面侧标 failed，agent 侧不重传）。
      */
-    fun uploadScan(commandId: Long, files: List<ScanFile>): Boolean {
-        val body = mapOf(
-            "commandId" to commandId,
-            "files" to files.map {
-                mapOf(
-                    "path" to it.path,
-                    "size" to it.size,
-                    "isText" to it.isText,
-                    "overThreshold" to it.overThreshold,
-                )
-            },
-        )
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/files/scan",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+    fun uploadScan(
+        commandId: Long,
+        files: List<ScanFile>,
+    ): Boolean {
+        val body =
+            mapOf(
+                "commandId" to commandId,
+                "files" to
+                    files.map {
+                        mapOf(
+                            "path" to it.path,
+                            "size" to it.size,
+                            "isText" to it.isText,
+                            "overThreshold" to it.overThreshold,
+                        )
+                    },
+            )
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/files/scan",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -519,20 +575,25 @@ class BeaconApiClient(
      * 不再让任务静默卡在非终态等过期清理。携命令 id + 原因文本。
      * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（best-effort、不重试——回传不通仍交控制面超时清理为 expired）。
      */
-    fun uploadError(commandId: Long, reason: String): Boolean {
-        val body = mapOf(
-            "commandId" to commandId,
-            "reason" to reason,
-        )
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/files/error",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+    fun uploadError(
+        commandId: Long,
+        reason: String,
+    ): Boolean {
+        val body =
+            mapOf(
+                "commandId" to commandId,
+                "reason" to reason,
+            )
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/files/error",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -543,20 +604,25 @@ class BeaconApiClient(
      * 控制面把日志行存为命令瞬态（取完即弃、不入真源、不进审计 detail）后 CAS done。
      * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（命令在控制面侧标 failed / 超时清理，agent 侧不重传）。
      */
-    fun uploadLogs(commandId: Long, lines: List<LogLine>): Boolean {
-        val body = mapOf(
-            "commandId" to commandId,
-            "lines" to lines.map { mapOf("level" to it.level, "text" to it.text) },
-        )
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/logs",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+    fun uploadLogs(
+        commandId: Long,
+        lines: List<LogLine>,
+    ): Boolean {
+        val body =
+            mapOf(
+                "commandId" to commandId,
+                "lines" to lines.map { mapOf("level" to it.level, "text" to it.text) },
+            )
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/logs",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -566,21 +632,27 @@ class BeaconApiClient(
      * 用于强制重同步（resync-config）这类无内容回传、仅需推进命令生命周期的命令：携命令 id + ok（成功）+ 失败原因。
      * 控制面据此 CAS 命令 done / failed。200 视作成功；其它（命令态不符 / 连接失败）返回 false（控制面侧超时清理兜底，agent 不重传）。
      */
-    fun uploadCommandResult(commandId: Long, ok: Boolean, reason: String): Boolean {
-        val body = mapOf(
-            "commandId" to commandId,
-            "ok" to ok,
-            "reason" to reason,
-        )
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/commands/result",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+    fun uploadCommandResult(
+        commandId: Long,
+        ok: Boolean,
+        reason: String,
+    ): Boolean {
+        val body =
+            mapOf(
+                "commandId" to commandId,
+                "ok" to ok,
+                "reason" to reason,
+            )
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/commands/result",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -599,23 +671,25 @@ class BeaconApiClient(
         result: Map<String, Any?>?,
         reason: String,
     ): Boolean {
-        val body = buildMap {
-            put("namespace", identity.namespace)
-            put("serverId", identity.serverId)
-            put("commandId", commandId)
-            put("ok", ok)
-            if (result != null) put("result", result)
-            if (reason.isNotEmpty()) put("reason", reason)
-        }
-        val resp = exec(
-            HttpRequest(
-                method = "POST",
-                url = "$base/beacon/v1/agent/files/browse-result",
-                headers = headers(withBody = true),
-                body = codec.encode(body),
-                readTimeoutMs = settings.requestTimeoutMs,
-            ),
-        ) ?: return false
+        val body =
+            buildMap {
+                put("namespace", identity.namespace)
+                put("serverId", identity.serverId)
+                put("commandId", commandId)
+                put("ok", ok)
+                if (result != null) put("result", result)
+                if (reason.isNotEmpty()) put("reason", reason)
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v1/agent/files/browse-result",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
         return resp.statusCode == 200
     }
 
@@ -654,15 +728,16 @@ class BeaconApiClient(
 
     private fun parseEffective(jsonBody: String): EffectiveResult {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
-        val items = JsonTree.asList(obj["items"]).map { raw ->
-            val itemObj = JsonTree.asObject(raw)
-            ConfigItem(
-                dataId = JsonTree.strOr(itemObj, "dataId", ""),
-                format = JsonTree.strOr(itemObj, "format", ""),
-                md5 = JsonTree.strOr(itemObj, "md5", ""),
-                content = JsonTree.strOr(itemObj, "content", ""),
-            )
-        }
+        val items =
+            JsonTree.asList(obj["items"]).map { raw ->
+                val itemObj = JsonTree.asObject(raw)
+                ConfigItem(
+                    dataId = JsonTree.strOr(itemObj, "dataId", ""),
+                    format = JsonTree.strOr(itemObj, "format", ""),
+                    md5 = JsonTree.strOr(itemObj, "md5", ""),
+                    content = JsonTree.strOr(itemObj, "content", ""),
+                )
+            }
         return EffectiveResult(
             namespace = JsonTree.strOr(obj, "namespace", ""),
             serverId = JsonTree.strOr(obj, "serverId", ""),
@@ -675,13 +750,14 @@ class BeaconApiClient(
 
     private fun parseManifest(jsonBody: String): FileManifest {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
-        val entries = JsonTree.asList(obj["files"]).map { raw ->
-            val fileObj = JsonTree.asObject(raw)
-            FileManifestEntry(
-                path = JsonTree.strOr(fileObj, "path", ""),
-                md5 = JsonTree.strOr(fileObj, "md5", ""),
-            )
-        }
+        val entries =
+            JsonTree.asList(obj["files"]).map { raw ->
+                val fileObj = JsonTree.asObject(raw)
+                FileManifestEntry(
+                    path = JsonTree.strOr(fileObj, "path", ""),
+                    md5 = JsonTree.strOr(fileObj, "md5", ""),
+                )
+            }
         return FileManifest(
             namespace = JsonTree.strOr(obj, "namespace", ""),
             serverId = JsonTree.strOr(obj, "serverId", ""),
@@ -694,16 +770,17 @@ class BeaconApiClient(
 
     private fun parseOverrideManifest(jsonBody: String): OverrideManifest {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
-        val sets = JsonTree.asList(obj["sets"]).map { raw ->
-            val setObj = JsonTree.asObject(raw)
-            OverrideSetEntry(
-                name = JsonTree.strOr(setObj, "name", ""),
-                targetRoot = JsonTree.strOr(setObj, "targetRoot", ""),
-                // 空命令在控制面投递为 ""；归一化为 null（不下发命令），与 OverrideApplier 入参语义一致。
-                reloadCommand = JsonTree.strOr(setObj, "reloadCommand", "").ifEmpty { null },
-                members = JsonTree.asList(setObj["members"]).map { m -> JsonTree.asString(m) },
-            )
-        }
+        val sets =
+            JsonTree.asList(obj["sets"]).map { raw ->
+                val setObj = JsonTree.asObject(raw)
+                OverrideSetEntry(
+                    name = JsonTree.strOr(setObj, "name", ""),
+                    targetRoot = JsonTree.strOr(setObj, "targetRoot", ""),
+                    // 空命令在控制面投递为 ""；归一化为 null（不下发命令），与 OverrideApplier 入参语义一致。
+                    reloadCommand = JsonTree.strOr(setObj, "reloadCommand", "").ifEmpty { null },
+                    members = JsonTree.asList(setObj["members"]).map { m -> JsonTree.asString(m) },
+                )
+            }
         return OverrideManifest(
             namespace = JsonTree.strOr(obj, "namespace", ""),
             serverId = JsonTree.strOr(obj, "serverId", ""),
@@ -725,33 +802,39 @@ class BeaconApiClient(
         return AgentCommand(
             id = JsonTree.longOr(obj, "id", 0L),
             type = JsonTree.strOr(obj, "type", ""),
-            payload = IngestCommandPayload(
-                scope = JsonTree.strOr(payloadObj, "scope", ""),
-                group = JsonTree.strOr(payloadObj, "group", ""),
-                target = JsonTree.strOr(payloadObj, "target", ""),
-                mode = JsonTree.strOr(payloadObj, "mode", ""),
-                selectedPaths = JsonTree.asList(payloadObj["selectedPaths"]).map { JsonTree.asString(it) },
-                // 文件浏览字段（FR-110，仅 fs-browse 命令携带；其它命令缺省为空，向后兼容）。
-                op = JsonTree.strOr(payloadObj, "op", ""),
-                path = JsonTree.strOr(payloadObj, "path", ""),
-                offset = JsonTree.intOr(payloadObj, "offset", 0),
-                limit = JsonTree.intOr(payloadObj, "limit", 0),
-                maxDepth = JsonTree.intOr(payloadObj, "maxDepth", 0),
-            ),
+            payload =
+                IngestCommandPayload(
+                    scope = JsonTree.strOr(payloadObj, "scope", ""),
+                    group = JsonTree.strOr(payloadObj, "group", ""),
+                    target = JsonTree.strOr(payloadObj, "target", ""),
+                    mode = JsonTree.strOr(payloadObj, "mode", ""),
+                    selectedPaths = JsonTree.asList(payloadObj["selectedPaths"]).map { JsonTree.asString(it) },
+                    // 文件浏览字段（FR-110，仅 fs-browse 命令携带；其它命令缺省为空，向后兼容）。
+                    op = JsonTree.strOr(payloadObj, "op", ""),
+                    path = JsonTree.strOr(payloadObj, "path", ""),
+                    offset = JsonTree.intOr(payloadObj, "offset", 0),
+                    limit = JsonTree.intOr(payloadObj, "limit", 0),
+                    maxDepth = JsonTree.intOr(payloadObj, "maxDepth", 0),
+                ),
         )
     }
 
     /** 把 BC 专属指标拼成 report 报文的 `proxy` 子对象（键名固定供控制面对齐，FR-34）。 */
-    private fun proxyBody(proxy: ProxyMetrics): Map<String, Any?> = mapOf(
-        "onlineConnections" to proxy.onlineConnections,
-        "threadCount" to proxy.threadCount,
-        "uptimeMs" to proxy.uptimeMs,
-        "backendUp" to proxy.backendUp,
-        "backendTotal" to proxy.backendTotal,
-        "backendAvgLatencyMs" to proxy.backendAvgLatencyMs,
-    )
+    private fun proxyBody(proxy: ProxyMetrics): Map<String, Any?> =
+        mapOf(
+            "onlineConnections" to proxy.onlineConnections,
+            "threadCount" to proxy.threadCount,
+            "uptimeMs" to proxy.uptimeMs,
+            "backendUp" to proxy.backendUp,
+            "backendTotal" to proxy.backendTotal,
+            "backendAvgLatencyMs" to proxy.backendAvgLatencyMs,
+        )
 
-    private fun appendParam(sb: StringBuilder, key: String, value: String?) {
+    private fun appendParam(
+        sb: StringBuilder,
+        key: String,
+        value: String?,
+    ) {
         if (value.isNullOrEmpty()) return
         if (sb.isNotEmpty()) sb.append('&')
         sb.append(key).append('=').append(urlEncode(value))
@@ -769,7 +852,6 @@ class BeaconApiClient(
 
 /** 心跳结果分类。 */
 sealed class HeartbeatOutcome {
-
     /** 200：心跳成功。 */
     data class Ok(val result: HeartbeatResult) : HeartbeatOutcome()
 

@@ -23,7 +23,6 @@ data class ProxyMetrics(
     val backendTotal: Int,
     val backendAvgLatencyMs: Double,
 ) {
-
     companion object {
         /** 后端平均延迟不可用哨兵：无任何可达后端时上报，与「0ms 真实极低延迟」区分，由控制面判定不可用。 */
         const val LATENCY_UNAVAILABLE: Double = -1.0

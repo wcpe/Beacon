@@ -13,7 +13,6 @@ import java.lang.management.ManagementFactory
  * 均为廉价 MXBean / Runtime 调用，无阻塞 IO；由壳层在既有 async 上报线程内调用。
  */
 object JvmRuntimeMetrics {
-
     /**
      * 采一帧内存 + CPU 指标（人数 / TPS 由壳层后续合入，见 [RuntimeMetrics.withPlayerCountAndTps]）。
      *
@@ -67,7 +66,10 @@ object JvmRuntimeMetrics {
      * 入参为平台读到的近 1 分钟 TPS（Paper `getTPS()[0]`）；null（接口不存在 / Spigot 取不到）或
      * NaN / 负值归 0.0；上界裁剪到 [maxTps]（默认 20.0，Paper 偶尔报略大于 20 的值，统一封顶）。
      */
-    fun normalizeTps(raw: Double?, maxTps: Double = 20.0): Double {
+    fun normalizeTps(
+        raw: Double?,
+        maxTps: Double = 20.0,
+    ): Double {
         if (raw == null || raw.isNaN() || raw < 0.0) return 0.0
         return raw.coerceAtMost(maxTps)
     }

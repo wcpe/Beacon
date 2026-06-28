@@ -9,7 +9,6 @@ import top.wcpe.beacon.agent.api.Messaging
  * 关闭 / 重连失败时可 [reset] 回 Disabled。BeaconAgentImpl.messaging() 始终返回当前值（非 null）。
  */
 class MessagingHolder {
-
     @Volatile
     private var current: Messaging = DisabledMessaging
 

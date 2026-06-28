@@ -6,7 +6,6 @@ package top.wcpe.beacon.agent.core.transport
  * 实现需按请求设置读超时（长轮询需长读超时）。
  */
 interface HttpTransport {
-
     /** 同步执行一次请求并返回响应；连接级失败应抛异常由上层处理。 */
     fun execute(request: HttpRequest): HttpResponse
 }

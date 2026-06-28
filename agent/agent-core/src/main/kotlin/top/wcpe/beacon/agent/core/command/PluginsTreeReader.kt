@@ -28,7 +28,6 @@ import java.nio.file.Path
  *   真实 plugins 文本量通常远小于 64MB 总上限。
  */
 object PluginsTreeReader {
-
     // 单文件最多读这么多字节：上限 + 1，让超限文件被 PluginsTreeFilter 判为「超单文件上限」而整体失败。
     private const val PER_FILE_READ_CAP: Long = PluginIngestLimits.MAX_FILE_BYTES + 1
 
@@ -42,11 +41,12 @@ object PluginsTreeReader {
     fun read(root: File): Map<String, ByteArray> {
         if (!root.isDirectory) return emptyMap()
         // 以 root 的真实路径（解析符号链接）为容纳基准；取不到（异常）则放弃整次读取（宁可不抓也不越界）。
-        val rootReal: Path = try {
-            root.toPath().toRealPath()
-        } catch (e: IOException) {
-            return emptyMap()
-        }
+        val rootReal: Path =
+            try {
+                root.toPath().toRealPath()
+            } catch (e: IOException) {
+                return emptyMap()
+            }
 
         val result = LinkedHashMap<String, ByteArray>()
         // 候选数达上限+1 即停止再收（够 PluginsTreeFilter 判文件数超限）；jar 不计入，不致漏读本应保留的文本。
@@ -59,11 +59,12 @@ object PluginsTreeReader {
             // 读盘前按名跳 jar（最大二进制来源，本就排除）：不读其字节，免最大 OOM 风险。
             if (file.name.lowercase().endsWith(".jar")) return@walk
             // FS 级符号链接逃逸判定：候选真实路径必须仍在 root 真实路径之内。
-            val fileReal: Path = try {
-                file.toPath().toRealPath()
-            } catch (e: IOException) {
-                return@walk // 解析失败（坏链接等）→ 跳过，不上传
-            }
+            val fileReal: Path =
+                try {
+                    file.toPath().toRealPath()
+                } catch (e: IOException) {
+                    return@walk // 解析失败（坏链接等）→ 跳过，不上传
+                }
             if (!fileReal.startsWith(rootReal)) return@walk // 逃逸 root（符号链接指向外部）→ 剔除
 
             // 相对路径用 root 真实路径相对 file 真实路径，统一正斜杠（跨平台一致，供控制面再校验 / 落盘）。
@@ -93,11 +94,12 @@ object PluginsTreeReader {
     fun readMetadata(root: File): Map<String, Long> {
         if (!root.isDirectory) return emptyMap()
         // 以 root 的真实路径（解析符号链接）为容纳基准；取不到（异常）则放弃整次读取（宁可不抓也不越界）。
-        val rootReal: Path = try {
-            root.toPath().toRealPath()
-        } catch (e: IOException) {
-            return emptyMap()
-        }
+        val rootReal: Path =
+            try {
+                root.toPath().toRealPath()
+            } catch (e: IOException) {
+                return emptyMap()
+            }
 
         val result = LinkedHashMap<String, Long>()
         walk(root) { file ->
@@ -106,11 +108,12 @@ object PluginsTreeReader {
             // 按名跳 jar（最大二进制来源，本就排除）：scan 连其大小都不必列入（PluginsTreeFilter 仍会按后缀再排除一次）。
             if (file.name.lowercase().endsWith(".jar")) return@walk
             // FS 级符号链接逃逸判定：候选真实路径必须仍在 root 真实路径之内。
-            val fileReal: Path = try {
-                file.toPath().toRealPath()
-            } catch (e: IOException) {
-                return@walk // 解析失败（坏链接等）→ 跳过，不列入
-            }
+            val fileReal: Path =
+                try {
+                    file.toPath().toRealPath()
+                } catch (e: IOException) {
+                    return@walk // 解析失败（坏链接等）→ 跳过，不列入
+                }
             if (!fileReal.startsWith(rootReal)) return@walk // 逃逸 root（符号链接指向外部）→ 剔除
 
             // 相对路径用 root 真实路径相对 file 真实路径，统一正斜杠（跨平台一致，供控制面再校验）。
@@ -128,7 +131,10 @@ object PluginsTreeReader {
      * 不跟随目录符号链接下降（[LinkOption.NOFOLLOW_LINKS] 判定目录性），避免符号链接环导致无限递归；
      * 指向外部的文件符号链接在上层按真实路径容纳判定剔除。
      */
-    private fun walk(root: File, onFile: (File) -> Unit) {
+    private fun walk(
+        root: File,
+        onFile: (File) -> Unit,
+    ) {
         val stack = ArrayDeque<File>()
         stack.addLast(root)
         while (stack.isNotEmpty()) {

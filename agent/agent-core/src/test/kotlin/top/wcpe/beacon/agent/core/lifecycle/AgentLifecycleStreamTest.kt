@@ -27,37 +27,38 @@ import kotlin.test.assertTrue
  * - 流断后退避重连（再次 open）。
  */
 class AgentLifecycleStreamTest {
-
     private val backend = FakeBeaconBackend()
     private val stream = FakeStreamTransport()
     private val adapter = ThreadPoolPlatformAdapter()
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        // 退避初始值给小，便于断言流断后快速重连。
-        backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            // 退避初始值给小，便于断言流断后快速重连。
+            backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     private fun newLifecycle(onTopologyChanged: (() -> Unit)? = null): AgentLifecycle {
         val codec = CannedJsonCodec()
@@ -65,7 +66,13 @@ class AgentLifecycleStreamTest {
         val apiClient = BeaconApiClient(backend, codec, settings(), stream)
         val applier = ConfigApplier(store, null, adapter)
         return AgentLifecycle(
-            identity(), settings(), adapter, apiClient, store, applier, null,
+            identity(),
+            settings(),
+            adapter,
+            apiClient,
+            store,
+            applier,
+            null,
             topologyListener = onTopologyChanged,
         )
     }
@@ -92,8 +99,12 @@ class AgentLifecycleStreamTest {
         // 让本地先有一版有效配置（store 有 md5），SSE open 时应把它上报到 URL。
         store.replace(
             EffectiveResult(
-                namespace = "prod", serverId = "lobby-1", group = "area1", zone = null,
-                md5 = "local-md5", items = emptyList(),
+                namespace = "prod",
+                serverId = "lobby-1",
+                group = "area1",
+                zone = null,
+                md5 = "local-md5",
+                items = emptyList(),
             ),
         )
         val lifecycle = newLifecycle()
@@ -155,7 +166,10 @@ class AgentLifecycleStreamTest {
         assertTrue(stream.openCalls.get() > before, "流断后应退避重连再次 open，实际仍为 $before")
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return

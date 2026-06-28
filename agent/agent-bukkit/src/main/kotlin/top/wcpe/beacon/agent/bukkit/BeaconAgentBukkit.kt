@@ -1,5 +1,14 @@
 package top.wcpe.beacon.agent.bukkit
 
+import taboolib.common.LifeCycle
+import taboolib.common.env.RuntimeDependencies
+import taboolib.common.env.RuntimeDependency
+import taboolib.common.platform.Awake
+import taboolib.common.platform.Plugin
+import taboolib.common.platform.function.pluginVersion
+import taboolib.common.platform.function.severe
+import taboolib.module.configuration.Config
+import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
@@ -10,15 +19,6 @@ import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
-import taboolib.common.LifeCycle
-import taboolib.common.env.RuntimeDependencies
-import taboolib.common.env.RuntimeDependency
-import taboolib.common.platform.Awake
-import taboolib.common.platform.Plugin
-import taboolib.common.platform.function.pluginVersion
-import taboolib.common.platform.function.severe
-import taboolib.module.configuration.Config
-import taboolib.module.configuration.Configuration
 
 /**
  * Bukkit 子服侧 Beacon agent 插件主类（object + @Awake，不继承 JavaPlugin）。
@@ -89,7 +89,6 @@ import taboolib.module.configuration.Configuration
     ),
 )
 object BeaconAgentBukkit : Plugin() {
-
     /** agent 引导配置（资源 config.yml 随 jar 释放到数据目录）。 */
     @Config("config.yml")
     lateinit var config: Configuration
@@ -122,23 +121,24 @@ object BeaconAgentBukkit : Plugin() {
         val store = EffectiveConfigStore()
         val view = EffectiveConfigView(store)
         val adapter = BukkitPlatformAdapter(view)
-        val assembled = AgentAssembly.assemble(
-            identity = identity,
-            settings = settings,
-            // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
-            rawAdapter = adapter,
-            transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-            codec = KotlinxJsonCodec(),
-            store = store,
-            effectiveConfigView = view,
-            // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
-            streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-            // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
-            metricsProvider = { BukkitMetricsCollector.sample() },
-            // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
-            // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
-            selfPluginDirNames = setOf("BeaconAgent"),
-        )
+        val assembled =
+            AgentAssembly.assemble(
+                identity = identity,
+                settings = settings,
+                // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
+                rawAdapter = adapter,
+                transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                codec = KotlinxJsonCodec(),
+                store = store,
+                effectiveConfigView = view,
+                // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
+                streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
+                metricsProvider = { BukkitMetricsCollector.sample() },
+                // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+                // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+                selfPluginDirNames = setOf("BeaconAgent"),
+            )
         lifecycle = assembled.lifecycle
 
         // 对外注册门面，供同进程业务插件读取。
@@ -148,16 +148,17 @@ object BeaconAgentBukkit : Plugin() {
         BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
         // 跨服消息模块引导（FR-26）：据下发的 Redis 配置启停 / 重连。
-        val bootstrap = BukkitMessagingBootstrap(
-            identity = identity,
-            settings = settings,
-            store = store,
-            codec = KotlinxJsonCodec(),
-            holder = assembled.messagingHolder,
-            // 名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读，点亮 Discovery.roster()/rosterInZone()。
-            rosterHolder = assembled.rosterDirectoryHolder,
-            adapter = adapter,
-        )
+        val bootstrap =
+            BukkitMessagingBootstrap(
+                identity = identity,
+                settings = settings,
+                store = store,
+                codec = KotlinxJsonCodec(),
+                holder = assembled.messagingHolder,
+                // 名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读，点亮 Discovery.roster()/rosterInZone()。
+                rosterHolder = assembled.rosterDirectoryHolder,
+                adapter = adapter,
+            )
         messagingBootstrap = bootstrap
         // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
         view.onChange { _, _ -> bootstrap.sync() }

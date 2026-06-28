@@ -10,7 +10,6 @@ package top.wcpe.beacon.agent.core.transport
  * 具体实现（KotlinxJsonCodec）在 agent-adapters，core 内不得出现 @Serializable 类型。
  */
 interface JsonCodec {
-
     /** 将泛型树编码为 json 文本。 */
     fun encode(value: Any?): String
 

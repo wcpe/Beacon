@@ -25,36 +25,37 @@ import kotlin.test.assertTrue
  * 就绪前 false / 就绪后 true / 并发等待三点（供下游有界等待身份就绪用）。
  */
 class AgentLifecycleAwaitRegisterTest {
-
     private val backend = FakeBeaconBackend()
     private val adapter = ThreadPoolPlatformAdapter()
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        // 退避初始值给大，避免延迟重试在测试窗口内大量自调度干扰断言。
-        backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            // 退避初始值给大，避免延迟重试在测试窗口内大量自调度干扰断言。
+            backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     private fun newLifecycle(): AgentLifecycle {
         val codec = CannedJsonCodec()
@@ -129,13 +130,14 @@ class AgentLifecycleAwaitRegisterTest {
 
         val trueCount = AtomicInteger(0)
         val starter = CountDownLatch(1)
-        val waiters = (1..8).map {
-            Thread {
-                starter.await()
-                // 给足够长的超时（远大于放行耗时），就绪后应被唤醒返回 true。
-                if (lifecycle.awaitFirstRegister(3000)) trueCount.incrementAndGet()
-            }.apply { start() }
-        }
+        val waiters =
+            (1..8).map {
+                Thread {
+                    starter.await()
+                    // 给足够长的超时（远大于放行耗时），就绪后应被唤醒返回 true。
+                    if (lifecycle.awaitFirstRegister(3000)) trueCount.incrementAndGet()
+                }.apply { start() }
+            }
         starter.countDown()
         // 等待线程都已阻塞在闩上后再放行注册。
         Thread.sleep(100)
@@ -145,7 +147,10 @@ class AgentLifecycleAwaitRegisterTest {
         assertEquals(8, trueCount.get(), "注册成功后所有并发等待者都应返回 true")
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return

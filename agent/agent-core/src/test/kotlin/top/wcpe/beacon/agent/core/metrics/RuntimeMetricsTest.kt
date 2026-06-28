@@ -10,7 +10,6 @@ import kotlin.test.assertTrue
  * 覆盖：默认零值（向后兼容旧上报）、cpuLoad 不可用回退 -1.0、字段透传。
  */
 class RuntimeMetricsTest {
-
     @Test
     fun `默认零指标各字段为安全缺省值`() {
         val zero = RuntimeMetrics.ZERO
@@ -25,13 +24,14 @@ class RuntimeMetricsTest {
 
     @Test
     fun `构造指标按入参透传`() {
-        val m = RuntimeMetrics(
-            playerCount = 12,
-            tps = 19.8,
-            memUsed = 256L * 1024 * 1024,
-            memMax = 1024L * 1024 * 1024,
-            cpuLoad = 0.42,
-        )
+        val m =
+            RuntimeMetrics(
+                playerCount = 12,
+                tps = 19.8,
+                memUsed = 256L * 1024 * 1024,
+                memMax = 1024L * 1024 * 1024,
+                cpuLoad = 0.42,
+            )
         assertEquals(12, m.playerCount)
         assertEquals(19.8, m.tps)
         assertEquals(256L * 1024 * 1024, m.memUsed)
@@ -76,13 +76,14 @@ class RuntimeMetricsTest {
     @Test
     fun `withPlayerCountAndTps 在内存CPU基础上合入人数与TPS`() {
         // 壳层组装路径：先采内存/CPU（平台无关），再合入平台采到的人数/TPS。
-        val base = RuntimeMetrics(
-            playerCount = 0,
-            tps = 0.0,
-            memUsed = 100L,
-            memMax = 200L,
-            cpuLoad = 0.3,
-        )
+        val base =
+            RuntimeMetrics(
+                playerCount = 0,
+                tps = 0.0,
+                memUsed = 100L,
+                memMax = 200L,
+                cpuLoad = 0.3,
+            )
         val merged = base.withPlayerCountAndTps(playerCount = 7, tps = 20.0)
         assertEquals(7, merged.playerCount)
         assertEquals(20.0, merged.tps)

@@ -23,19 +23,19 @@ import kotlin.test.assertTrue
  * - 名册不可用（holder 未注入实现 / 实现返回空）→ roster()/rosterInZone() 返空 Map、不抛、不崩。
  */
 class DiscoveryViewRosterTest {
-
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     /** 假名册：固定 map。 */
     private class FakeRosterDirectory(private val table: Map<String, String>) : RosterDirectory {
@@ -49,6 +49,7 @@ class DiscoveryViewRosterTest {
      */
     private class InstancesCodec(private val serverIds: List<String>) : JsonCodec {
         override fun encode(value: Any?): String = "{}"
+
         override fun decode(json: String): Any? {
             val instances = serverIds.map { sid -> mapOf<String, Any?>("serverId" to sid, "zone" to "z") }
             return mapOf("instances" to instances)
@@ -58,6 +59,7 @@ class DiscoveryViewRosterTest {
     /** 占位 transport：回固定 200，不关心 URL。 */
     private class StubTransport : HttpTransport {
         val lastUrl = AtomicReference<String?>(null)
+
         override fun execute(request: HttpRequest): HttpResponse {
             lastUrl.set(request.url)
             return HttpResponse(200, "{}")

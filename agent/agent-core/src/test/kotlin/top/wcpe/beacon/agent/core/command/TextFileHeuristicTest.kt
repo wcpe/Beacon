@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
  * 反向抓取 scan 与只读浏览共用同一口径。
  */
 class TextFileHeuristicTest {
-
     @Test
     fun `常见文本扩展名判文本`() {
         assertTrue(TextFileHeuristic.looksTextByName("config.yml"))

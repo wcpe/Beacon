@@ -29,7 +29,6 @@ import java.nio.file.Path
  * 任一校验失败即拒该次请求：列目录得 null、读文件得 null、不读不回传。
  */
 object FsBrowseReader {
-
     /** 单文件读取上限 + 1 字节：让超限文件读到溢出量即可判 truncated，绝不全载。 */
     private const val PER_FILE_READ_CAP: Long = FsBrowseLimits.MAX_FILE_BYTES + 1
 
@@ -39,7 +38,12 @@ object FsBrowseReader {
      * [relPath] 为空串表示列 root 自身。返回 null 表示：root 非目录 / 路径越权 / 目标不存在或非目录。
      * 子项稳定排序（目录优先 + 名称升序），按 [offset]/[limit] 切片；[limit] 收口到 [FsBrowseLimits.MAX_LIST_LIMIT]。
      */
-    fun listDir(root: File, relPath: String, offset: Int, limit: Int): DirListing? {
+    fun listDir(
+        root: File,
+        relPath: String,
+        offset: Int,
+        limit: Int,
+    ): DirListing? {
         val rootReal = realRootOrNull(root) ?: return null
         val target = resolveWithinRoot(rootReal, relPath) ?: return null
         // 目标须是真实目录（不跟随符号链接判目录性，防链接环）。
@@ -47,18 +51,20 @@ object FsBrowseReader {
 
         val children = target.toFile().listFiles() ?: emptyArray()
         // 稳定排序：目录优先，再按名称升序（跨平台一致、可复现，便于分页与测试）。
-        val sorted = children
-            .mapNotNull { child -> toEntry(rootReal, child) }
-            .sortedWith(compareByDescending<BrowseEntry> { it.dir }.thenBy { it.name })
+        val sorted =
+            children
+                .mapNotNull { child -> toEntry(rootReal, child) }
+                .sortedWith(compareByDescending<BrowseEntry> { it.dir }.thenBy { it.name })
 
         val total = sorted.size
         val safeLimit = limit.coerceIn(1, FsBrowseLimits.MAX_LIST_LIMIT)
         val safeOffset = offset.coerceAtLeast(0)
-        val page = if (safeOffset >= total) {
-            emptyList()
-        } else {
-            sorted.subList(safeOffset, minOf(safeOffset + safeLimit, total))
-        }
+        val page =
+            if (safeOffset >= total) {
+                emptyList()
+            } else {
+                sorted.subList(safeOffset, minOf(safeOffset + safeLimit, total))
+            }
         return DirListing(
             path = relativeOf(rootReal, target),
             entries = page,
@@ -76,7 +82,11 @@ object FsBrowseReader {
      * 超深度 / 超节点上限的目录 `truncated=true`、children 空（前端可继续懒列）。
      * 返回 null 表示：root 非目录 / 路径越权 / 目标不存在或非目录。
      */
-    fun readTree(root: File, relPath: String, maxDepth: Int): TreeNode? {
+    fun readTree(
+        root: File,
+        relPath: String,
+        maxDepth: Int,
+    ): TreeNode? {
         val rootReal = realRootOrNull(root) ?: return null
         val target = resolveWithinRoot(rootReal, relPath) ?: return null
         if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) return null
@@ -92,7 +102,10 @@ object FsBrowseReader {
      * 排除目录 / `.jar` / 二进制（NUL 或非法 UTF-8）；超单文件上限只读前缀、`truncated=true`，绝不全载。
      * 返回 null 表示：路径越权 / 不存在 / 非普通文件 / jar / 二进制 / 读失败。
      */
-    fun readFile(root: File, relPath: String): FileContent? {
+    fun readFile(
+        root: File,
+        relPath: String,
+    ): FileContent? {
         if (relPath.isEmpty()) return null // 根不是文件
         val rootReal = realRootOrNull(root) ?: return null
         val target = resolveWithinRoot(rootReal, relPath) ?: return null
@@ -134,45 +147,57 @@ object FsBrowseReader {
      * 双保险（ADR-0049 决策 3）：① 字符串级前置闸 [PluginsPathGuard]（空串=列根除外）；
      * ② Path 级——拼接后 `normalize()` 仍 startsWith [rootReal]，再解析真实路径（符号链接）后**仍 startsWith [rootReal]**。
      */
-    private fun resolveWithinRoot(rootReal: Path, relPath: String): Path? {
+    private fun resolveWithinRoot(
+        rootReal: Path,
+        relPath: String,
+    ): Path? {
         if (relPath.isEmpty()) return rootReal // 空串 = 列 root 自身
         // 字符串级前置闸：拒 `..` / 绝对 / 反斜杠 / 冒号 / UNC / 保留名 / 段尾点空格。
         if (!PluginsPathGuard.isSafe(relPath)) return null
 
         // Path 级拼接 + 规范化容纳（即便字符串闸放过，normalize 后也必须仍在根内）。
-        val resolved = try {
-            rootReal.resolve(relPath).normalize()
-        } catch (e: Exception) {
-            return null
-        }
+        val resolved =
+            try {
+                rootReal.resolve(relPath).normalize()
+            } catch (e: Exception) {
+                return null
+            }
         if (!resolved.startsWith(rootReal)) return null
 
         // 解析真实路径（符号链接）后必须仍在根内——根除符号链接逃逸。
         // 目标可能尚不存在（理论上不该，浏览读已存在项）：解析失败即拒。
-        val real = try {
-            resolved.toRealPath()
-        } catch (e: IOException) {
-            return null
-        }
+        val real =
+            try {
+                resolved.toRealPath()
+            } catch (e: IOException) {
+                return null
+            }
         if (!real.startsWith(rootReal)) return null
         return real
     }
 
     /** 相对 root 真实路径的相对路径（正斜杠分隔；root 自身得空串）。 */
-    private fun relativeOf(rootReal: Path, target: Path): String {
+    private fun relativeOf(
+        rootReal: Path,
+        target: Path,
+    ): String {
         val rel = rootReal.relativize(target)
         return rel.joinToString("/") { it.toString() }
     }
 
     /** 把一个文件系统子项转为 [BrowseEntry]；逃逸 root 的符号链接被剔除（返回 null）。 */
-    private fun toEntry(rootReal: Path, child: File): BrowseEntry? {
+    private fun toEntry(
+        rootReal: Path,
+        child: File,
+    ): BrowseEntry? {
         val isDir = Files.isDirectory(child.toPath(), LinkOption.NOFOLLOW_LINKS)
         // 解析真实路径判逃逸：指向 root 外的符号链接（含目录链接）剔除。
-        val real = try {
-            child.toPath().toRealPath()
-        } catch (e: IOException) {
-            return null // 坏链接 / 解析失败 → 不列出
-        }
+        val real =
+            try {
+                child.toPath().toRealPath()
+            } catch (e: IOException) {
+                return null // 坏链接 / 解析失败 → 不列出
+            }
         if (!real.startsWith(rootReal)) return null
         val name = child.name
         return BrowseEntry(
@@ -185,24 +210,31 @@ object FsBrowseReader {
     }
 
     /** 递归构建子树节点，逐层有界（深度 + 全局节点预算）。 */
-    private fun buildNode(rootReal: Path, dir: Path, remainingDepth: Int, budget: NodeBudget): TreeNode {
+    private fun buildNode(
+        rootReal: Path,
+        dir: Path,
+        remainingDepth: Int,
+        budget: NodeBudget,
+    ): TreeNode {
         val dirName = dir.fileName?.toString() ?: ""
-        val base = TreeNode(
-            name = dirName,
-            relPath = relativeOf(rootReal, dir),
-            dir = true,
-            size = 0L,
-            text = false,
-            children = emptyList(),
-            truncated = false,
-        )
+        val base =
+            TreeNode(
+                name = dirName,
+                relPath = relativeOf(rootReal, dir),
+                dir = true,
+                size = 0L,
+                text = false,
+                children = emptyList(),
+                truncated = false,
+            )
         // 深度耗尽：该目录不再展开，标 truncated（前端可继续懒列）。
         if (remainingDepth <= 0) return base.copy(truncated = true)
 
         val rawChildren = dir.toFile().listFiles() ?: return base
-        val entries = rawChildren
-            .mapNotNull { child -> toEntry(rootReal, child) }
-            .sortedWith(compareByDescending<BrowseEntry> { it.dir }.thenBy { it.name })
+        val entries =
+            rawChildren
+                .mapNotNull { child -> toEntry(rootReal, child) }
+                .sortedWith(compareByDescending<BrowseEntry> { it.dir }.thenBy { it.name })
 
         val children = ArrayList<TreeNode>(entries.size)
         var truncated = false
@@ -258,9 +290,10 @@ object FsBrowseReader {
             if (b.toInt() == 0) return null // NUL 字节 → 二进制
         }
         return try {
-            val decoder = StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            val decoder =
+                StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
             decoder.decode(ByteBuffer.wrap(bytes)).toString()
         } catch (e: java.nio.charset.CharacterCodingException) {
             null // 非合法 UTF-8 → 二进制

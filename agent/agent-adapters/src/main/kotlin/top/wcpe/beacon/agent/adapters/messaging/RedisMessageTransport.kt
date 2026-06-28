@@ -42,9 +42,7 @@ class RedisMessageTransport(
     private val settings: MessagingSettings,
     private val info: (String) -> Unit = {},
     private val warn: (String) -> Unit = {},
-    private val error: (String, Throwable?) -> Unit = { _, _ -> },
 ) : MessageTransport {
-
     private val running = AtomicBoolean(false)
 
     /** 命令连接池（XADD / PUBLISH / XACK / hget 等短操作借还）。 */
@@ -110,23 +108,33 @@ class RedisMessageTransport(
         }
     }
 
-    override fun sendToServer(serverId: String, rawJson: String) {
+    override fun sendToServer(
+        serverId: String,
+        rawJson: String,
+    ) {
         val key = RedisChannels.serverInbox(serverId)
         // XADD + 近似 MAXLEN 裁剪（决策 12：旧消息自动淘汰，防无限增长）。
-        val params = XAddParams.xAddParams()
-            .maxLen(settings.streamMaxLen)
-            .approximateTrimming()
+        val params =
+            XAddParams.xAddParams()
+                .maxLen(settings.streamMaxLen)
+                .approximateTrimming()
         withResource { jedis ->
             jedis.xadd(key, params, mapOf(RedisChannels.ENVELOPE_FIELD to rawJson))
         }
     }
 
-    override fun publishTopic(topic: String, rawJson: String) {
+    override fun publishTopic(
+        topic: String,
+        rawJson: String,
+    ) {
         val channel = RedisChannels.topic(topic)
         withResource { jedis -> jedis.publish(channel, rawJson) }
     }
 
-    override fun sendReply(replyChannel: String, rawJson: String) {
+    override fun sendReply(
+        replyChannel: String,
+        rawJson: String,
+    ) {
         // replyChannel 是 MessageBus 生成的逻辑名（reply:<serverId>）；映射到 Redis pub/sub 物理信道。
         val channel = mapReplyToRedisChannel(replyChannel)
         withResource { jedis -> jedis.publish(channel, rawJson) }
@@ -136,12 +144,18 @@ class RedisMessageTransport(
         inboxHandler = onMessage
     }
 
-    override fun subscribeReplyInbox(replyChannel: String, onMessage: (String) -> Unit) {
+    override fun subscribeReplyInbox(
+        replyChannel: String,
+        onMessage: (String) -> Unit,
+    ) {
         val channel = mapReplyToRedisChannel(replyChannel)
         addPubSubChannel(channel, onMessage)
     }
 
-    override fun subscribeTopic(topic: String, onMessage: (String) -> Unit) {
+    override fun subscribeTopic(
+        topic: String,
+        onMessage: (String) -> Unit,
+    ) {
         val channel = RedisChannels.topic(topic)
         addPubSubChannel(channel, onMessage)
     }
@@ -161,16 +175,17 @@ class RedisMessageTransport(
      *
      * 名册由 BC 上的 beacon-proxy 维护（见 [RedisPlayerRoster]）；本端只读。
      */
-    fun playerLocator(): PlayerLocator = object : PlayerLocator {
-        override fun resolveServerId(playerName: String): String? {
-            return try {
-                withResource { jedis -> jedis.hget(RedisChannels.PLAYER_LOCATION_HASH, playerName) }
-            } catch (t: Throwable) {
-                warn("读玩家名册异常：player=$playerName ${t.message}")
-                null
+    fun playerLocator(): PlayerLocator =
+        object : PlayerLocator {
+            override fun resolveServerId(playerName: String): String? {
+                return try {
+                    withResource { jedis -> jedis.hget(RedisChannels.PLAYER_LOCATION_HASH, playerName) }
+                } catch (t: Throwable) {
+                    warn("读玩家名册异常：player=$playerName ${t.message}")
+                    null
+                }
             }
         }
-    }
 
     /**
      * 暴露基于本传输 Redis 连接的玩家位置名册全表读（FR-31 / ADR-0022），供 DiscoveryView 只读名册查询用。
@@ -178,16 +193,17 @@ class RedisMessageTransport(
      * 走 HGETALL beacon:player-loc，复用本传输的 Redis 连接 / 线程（不另起连接）；
      * 异常 / 名册空 → 返回空 Map（优雅降级，绝不抛、绝不阻塞调用方）。HGETALL 须在异步线程调用（守不变量 #5）。
      */
-    fun rosterDirectory(): RosterDirectory = object : RosterDirectory {
-        override fun snapshot(): Map<String, String> {
-            return try {
-                withResource { jedis -> jedis.hgetAll(RedisChannels.PLAYER_LOCATION_HASH) } ?: emptyMap()
-            } catch (t: Throwable) {
-                warn("读玩家名册全表异常，降级返空：${t.message}")
-                emptyMap()
+    fun rosterDirectory(): RosterDirectory =
+        object : RosterDirectory {
+            override fun snapshot(): Map<String, String> {
+                return try {
+                    withResource { jedis -> jedis.hgetAll(RedisChannels.PLAYER_LOCATION_HASH) } ?: emptyMap()
+                } catch (t: Throwable) {
+                    warn("读玩家名册全表异常，降级返空：${t.message}")
+                    emptyMap()
+                }
             }
         }
-    }
 
     // ---- 内部 ----
 
@@ -226,7 +242,11 @@ class RedisMessageTransport(
         thread.start()
     }
 
-    private fun inboxLoop(key: String, group: String, consumer: String) {
+    private fun inboxLoop(
+        key: String,
+        group: String,
+        consumer: String,
+    ) {
         val params = XReadGroupParams.xReadGroupParams().count(16).block(2000)
         while (running.get()) {
             try {
@@ -267,7 +287,10 @@ class RedisMessageTransport(
         }
     }
 
-    private fun addPubSubChannel(channel: String, onMessage: (String) -> Unit) {
+    private fun addPubSubChannel(
+        channel: String,
+        onMessage: (String) -> Unit,
+    ) {
         synchronized(pubSubLock) {
             pubSubHandlers[channel] = onMessage
             val current = activePubSub
@@ -296,32 +319,39 @@ class RedisMessageTransport(
             var initialChannels: List<String> = emptyList()
             try {
                 val reconciled = AtomicBoolean(false)
-                val pubSub = object : JedisPubSub() {
-                    override fun onMessage(channel: String, message: String) {
-                        try {
-                            pubSubHandlers[channel]?.invoke(message)
-                        } catch (t: Throwable) {
-                            warn("pub/sub 回调异常，已隔离：channel=$channel ${t.message}")
+                val pubSub =
+                    object : JedisPubSub() {
+                        override fun onMessage(
+                            channel: String,
+                            message: String,
+                        ) {
+                            try {
+                                pubSubHandlers[channel]?.invoke(message)
+                            } catch (t: Throwable) {
+                                warn("pub/sub 回调异常，已隔离：channel=$channel ${t.message}")
+                            }
                         }
-                    }
 
-                    override fun onSubscribe(channel: String, subscribedChannels: Int) {
-                        // 订阅已激活：对账一次，补订阅在「快照后、激活前」窗口内并发加入、未进初始集合的信道。
-                        if (!reconciled.compareAndSet(false, true)) return
-                        synchronized(pubSubLock) {
-                            if (!isSubscribed) return
-                            for (ch in pubSubHandlers.keys.toList()) {
-                                if (ch !in initialChannels) {
-                                    try {
-                                        subscribe(ch)
-                                    } catch (t: Throwable) {
-                                        warn("对账补订阅信道异常：channel=$ch ${t.message}")
+                        override fun onSubscribe(
+                            channel: String,
+                            subscribedChannels: Int,
+                        ) {
+                            // 订阅已激活：对账一次，补订阅在「快照后、激活前」窗口内并发加入、未进初始集合的信道。
+                            if (!reconciled.compareAndSet(false, true)) return
+                            synchronized(pubSubLock) {
+                                if (!isSubscribed) return
+                                for (ch in pubSubHandlers.keys.toList()) {
+                                    if (ch !in initialChannels) {
+                                        try {
+                                            subscribe(ch)
+                                        } catch (t: Throwable) {
+                                            warn("对账补订阅信道异常：channel=$ch ${t.message}")
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
                 // 在同一把锁下原子地「设 activePubSub + 取信道快照」，与 addPubSubChannel 串行。
                 synchronized(pubSubLock) {
                     initialChannels = pubSubHandlers.keys.toList()
@@ -354,7 +384,7 @@ class RedisMessageTransport(
 
     /** 借池执行短操作；池不可用或借还异常上抛（由 MessageBus 报失败）。 */
     private fun <T> withResource(block: (redis.clients.jedis.Jedis) -> T): T {
-        val p = pool ?: throw IllegalStateException("Redis 连接池未初始化（消息模块未启动或已关闭）")
+        val p = pool ?: error("Redis 连接池未初始化（消息模块未启动或已关闭）")
         return p.resource.use(block)
     }
 

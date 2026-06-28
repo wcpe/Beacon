@@ -62,7 +62,6 @@ class AgentLifecycle(
     // 为 null 时不处理命令（向后兼容：未装配执行器的部署不开放反向抓取）。
     private val reverseFetchExecutor: ReverseFetchExecutor? = null,
 ) {
-
     private val state = AtomicReference(AgentState.BOOTSTRAP)
 
     /** 总运行标志：shutdown 后置 false，所有循环据此停转。 */
@@ -154,13 +153,14 @@ class AgentLifecycle(
     /**
      * 当前可观测状态快照（供壳层 status 命令渲染）。core 不持有平台类型（守 ADR-0005）。
      */
-    fun snapshot(): LifecycleSnapshot = LifecycleSnapshot(
-        state = state.get(),
-        connected = isConnected(),
-        effectiveMd5 = store.currentMd5(),
-        heartbeatIntervalSec = (heartbeatIntervalMs / 1000L).toInt(),
-        endpoint = settings.primaryEndpoint(),
-    )
+    fun snapshot(): LifecycleSnapshot =
+        LifecycleSnapshot(
+            state = state.get(),
+            connected = isConnected(),
+            effectiveMd5 = store.currentMd5(),
+            heartbeatIntervalSec = (heartbeatIntervalMs / 1000L).toInt(),
+            endpoint = settings.primaryEndpoint(),
+        )
 
     /**
      * 立即重连（运维 reconnect）：打断退避、重置、重新接入控制面。
@@ -425,7 +425,10 @@ class AgentLifecycle(
         scheduleHeartbeat(gen, heartbeatIntervalMs)
     }
 
-    private fun scheduleHeartbeat(gen: Int, delayMs: Long) {
+    private fun scheduleHeartbeat(
+        gen: Int,
+        delayMs: Long,
+    ) {
         if (!running.get()) return
         adapter.runAsyncDelayed(delayMs) { heartbeatTick(gen) }
     }
@@ -464,7 +467,10 @@ class AgentLifecycle(
         scheduleMetricsReport(gen, 0)
     }
 
-    private fun scheduleMetricsReport(gen: Int, delayMs: Long) {
+    private fun scheduleMetricsReport(
+        gen: Int,
+        delayMs: Long,
+    ) {
         if (!running.get()) return
         if (delayMs <= 0) {
             adapter.runAsync { metricsReportTick(gen) }
@@ -489,7 +495,10 @@ class AgentLifecycle(
         schedulePoll(gen, 0)
     }
 
-    private fun schedulePoll(gen: Int, delayMs: Long) {
+    private fun schedulePoll(
+        gen: Int,
+        delayMs: Long,
+    ) {
         if (!running.get()) return
         if (delayMs <= 0) {
             adapter.runAsync { pollTick(gen) }
@@ -544,17 +553,18 @@ class AgentLifecycle(
         // 上报失败仅告警，不影响主流程。指标取当前一帧（人数 / TPS / 内存 / CPU），由壳层注入的供给采集；
         // 未注入时为零指标（向后兼容）。本调用在 async 上报线程内，指标采集为廉价 MXBean / Runtime 读取，不阻塞主线程。
         val metrics = currentMetrics()
-        val ok = apiClient.report(
-            identity,
-            appliedMd5,
-            playerCount = metrics.playerCount,
-            tps = metrics.tps,
-            memUsed = metrics.memUsed,
-            memMax = metrics.memMax,
-            cpuLoad = metrics.cpuLoad,
-            backends = currentBackends(),
-            proxy = currentProxyMetrics(),
-        )
+        val ok =
+            apiClient.report(
+                identity,
+                appliedMd5,
+                playerCount = metrics.playerCount,
+                tps = metrics.tps,
+                memUsed = metrics.memUsed,
+                memMax = metrics.memMax,
+                cpuLoad = metrics.cpuLoad,
+                backends = currentBackends(),
+                proxy = currentProxyMetrics(),
+            )
         if (!ok) {
             adapter.warn("上报 applied 状态失败（不影响有效配置生效）")
         }
@@ -600,7 +610,10 @@ class AgentLifecycle(
         scheduleFileTreePoll(gen, 0)
     }
 
-    private fun scheduleFileTreePoll(gen: Int, delayMs: Long) {
+    private fun scheduleFileTreePoll(
+        gen: Int,
+        delayMs: Long,
+    ) {
         if (!running.get()) return
         if (delayMs <= 0) {
             adapter.runAsync { fileTreeTick(gen) }
@@ -652,7 +665,10 @@ class AgentLifecycle(
         scheduleOverridePoll(gen, 0)
     }
 
-    private fun scheduleOverridePoll(gen: Int, delayMs: Long) {
+    private fun scheduleOverridePoll(
+        gen: Int,
+        delayMs: Long,
+    ) {
         if (!running.get()) return
         if (delayMs <= 0) {
             adapter.runAsync { overrideTick(gen) }
@@ -704,7 +720,10 @@ class AgentLifecycle(
         scheduleStream(gen, 0)
     }
 
-    private fun scheduleStream(gen: Int, delayMs: Long) {
+    private fun scheduleStream(
+        gen: Int,
+        delayMs: Long,
+    ) {
         if (!running.get()) return
         if (delayMs <= 0) {
             adapter.runAsync { streamConnect(gen) }
@@ -721,12 +740,13 @@ class AgentLifecycle(
         if (!running.get() || gen != streamGen.get()) return
         // 上报各通道本地当前 md5（空串=本地无该通道内容，控制面补全量）。
         // 拓扑通道 agent 不本地维护摘要，恒上报空串，让控制面在连接即对账时补一次 topology-changed（FR-29）。
-        val reported = ReportedChannelMd5(
-            config = store.currentMd5() ?: "",
-            file = fileTreeApplier?.currentFileTreeMd5() ?: "",
-            override = overrideApplier?.currentOverrideMd5() ?: "",
-            topology = "",
-        )
+        val reported =
+            ReportedChannelMd5(
+                config = store.currentMd5() ?: "",
+                file = fileTreeApplier?.currentFileTreeMd5() ?: "",
+                override = overrideApplier?.currentOverrideMd5() ?: "",
+                topology = "",
+            )
         apiClient.openStream(identity, reported, StreamLoopListener(gen))
     }
 
@@ -736,7 +756,10 @@ class AgentLifecycle(
      * 事件 data 行携带的 md5 仅作"有变更"通知、agent 不消费它——*-changed 一律忽略 event.data，
      * 改用本地已应用的 md5 走现有端点重拉（端点比对 md5，真变才返 200），故此处不解析载荷。
      */
-    private fun dispatchStreamEvent(gen: Int, event: StreamEvent) {
+    private fun dispatchStreamEvent(
+        gen: Int,
+        event: StreamEvent,
+    ) {
         if (!running.get() || gen != streamGen.get()) return
         when (event.type) {
             StreamEventTypes.READY -> {
@@ -766,7 +789,10 @@ class AgentLifecycle(
     }
 
     /** 流结束处理：进 DEGRADED（连接级降级）、保留本地快照，退避后重连（重连即再次对账）。 */
-    private fun onStreamClosed(gen: Int, error: Throwable?) {
+    private fun onStreamClosed(
+        gen: Int,
+        error: Throwable?,
+    ) {
         if (!running.get() || gen != streamGen.get()) return
         state.set(AgentState.DEGRADED)
         val delay = streamBackoff.nextDelayMs()
@@ -859,7 +885,6 @@ class AgentLifecycle(
 
     /** SSE 流监听器：把 transport 回调桥接到生命周期的事件分发与重连，携带流代标识自我作废过期回调。 */
     private inner class StreamLoopListener(private val gen: Int) : StreamListener {
-
         override fun onOpen() {
             if (!running.get() || gen != streamGen.get()) return
             streamBackoff.reset()

@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicReference
  * 仅捕获 report 报文（按是否含 appliedMd5 键判定），避免 register/heartbeat 体覆盖断言目标。
  */
 class MetricsCapturingCodec : JsonCodec {
-
     private val canned = CannedJsonCodec()
 
     /** 最近一次 report 报文体（Map）；null 表示尚未发生 report。 */

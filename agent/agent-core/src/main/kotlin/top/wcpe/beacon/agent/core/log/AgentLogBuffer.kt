@@ -27,7 +27,6 @@ data class LogLine(
  * @param capacity 最多保留的日志行数（有界；满则挤出最旧）
  */
 class AgentLogBuffer(private val capacity: Int) {
-
     init {
         require(capacity > 0) { "环形缓冲容量必须为正：$capacity" }
     }
@@ -44,7 +43,10 @@ class AgentLogBuffer(private val capacity: Int) {
      * @param level 日志级别（INFO / WARN / ERROR）
      * @param text  原始日志文本（本方法内脱敏，调用方无需预处理）
      */
-    fun append(level: String, text: String) {
+    fun append(
+        level: String,
+        text: String,
+    ) {
         val redacted = LogRedactor.redact(text)
         synchronized(lock) {
             if (lines.size >= capacity) {

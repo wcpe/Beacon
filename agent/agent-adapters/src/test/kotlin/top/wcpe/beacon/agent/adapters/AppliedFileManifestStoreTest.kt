@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
 
 /** AppliedFileManifestStore 原子读写往返一致性（用真实 KotlinxJsonCodec）。 */
 class AppliedFileManifestStoreTest {
-
     private val codec = KotlinxJsonCodec()
     private val dir: File = Files.createTempDirectory("beacon-applied").toFile()
 
@@ -47,9 +46,10 @@ class AppliedFileManifestStoreTest {
     @Test
     fun `写入采用原子替换不残留 tmp`() {
         store().write("m", emptyList())
-        val residue = dir.listFiles()
-            ?.filter { it.name.startsWith("applied.json") && it.name != "applied.json" }
-            ?: emptyList()
+        val residue =
+            dir.listFiles()
+                ?.filter { it.name.startsWith("applied.json") && it.name != "applied.json" }
+                ?: emptyList()
         assertTrue(residue.isEmpty(), "tmp 文件应在重命名后消失，实际残留：${residue.map { it.name }}")
         assertTrue(File(dir, "applied.json").exists())
     }

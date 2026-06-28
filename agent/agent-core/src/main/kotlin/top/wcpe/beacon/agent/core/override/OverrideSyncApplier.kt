@@ -36,7 +36,6 @@ class OverrideSyncApplier(
     private val adapter: PlatformAdapter,
     private val fetchMember: (setName: String, path: String) -> FileContent?,
 ) {
-
     // 共享备份器与受管标记（按集隔离 setId / path，跨集不冲突）。
     private val backupManager = BackupManager(backupRoot)
     private val tracker = ManagedFileTracker()
@@ -84,7 +83,10 @@ class OverrideSyncApplier(
     }
 
     /** 处理单个覆盖集：取齐成员 → 落盘 → 命中白名单才派发命令。返回是否已收敛。 */
-    private fun applyOne(overrideMd5: String, set: OverrideSetEntry): Boolean {
+    private fun applyOne(
+        overrideMd5: String,
+        set: OverrideSetEntry,
+    ): Boolean {
         // 幂等守卫：该集目标态（以整体 overrideMd5 为基准）未变则跳过。
         if (appliedMd5[set.name] == overrideMd5) {
             return true
@@ -108,14 +110,15 @@ class OverrideSyncApplier(
             files.add(OverrideFile(path = content.path, content = content.content, md5 = content.md5))
         }
 
-        val applier = OverrideApplier(
-            targetRoot = targetRoot,
-            backupManager = backupManager,
-            tracker = tracker,
-            pathSecurity = OverridePathSecurity(targetRoot),
-            reloadExecutor = reloadExecutor,
-            adapter = adapter,
-        )
+        val applier =
+            OverrideApplier(
+                targetRoot = targetRoot,
+                backupManager = backupManager,
+                tracker = tracker,
+                pathSecurity = OverridePathSecurity(targetRoot),
+                reloadExecutor = reloadExecutor,
+                adapter = adapter,
+            )
         // 落盘 + （全量成功且非空命令命中白名单才）派发重载命令。
         val allWritten = applier.apply(set.name, files, set.reloadCommand)
         if (allWritten) {

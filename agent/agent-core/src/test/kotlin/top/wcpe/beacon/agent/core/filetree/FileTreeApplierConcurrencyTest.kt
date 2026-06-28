@@ -19,7 +19,6 @@ import kotlin.test.assertTrue
  * 锁定：并发 apply 全程不抛任何异常、清单最终可读一致、无临时文件残留。
  */
 class FileTreeApplierConcurrencyTest {
-
     private val root: File = Files.createTempDirectory("beacon-applier-conc").toFile()
     private val manifestFile = File(root, "_applied.json")
 
@@ -31,35 +30,41 @@ class FileTreeApplierConcurrencyTest {
     @Test
     fun `并发 apply 不抛异常且清单最终一致无残留`() {
         val codec = TinyCodec()
-        val applier = FileTreeApplier(
-            mirrorWriter = FileMirrorWriter(root),
-            appliedStore = AppliedFileManifestStore(manifestFile, codec),
-            adapter = SilentAdapter(root),
-            fetchContent = { p -> FileContent(p, "md5-$p", "content-$p") },
-        )
+        val applier =
+            FileTreeApplier(
+                mirrorWriter = FileMirrorWriter(root),
+                appliedStore = AppliedFileManifestStore(manifestFile, codec),
+                adapter = SilentAdapter(root),
+                fetchContent = { p -> FileContent(p, "md5-$p", "content-$p") },
+            )
 
         val threads = 4
         val iterations = 120
         val errors = CopyOnWriteArrayList<Throwable>()
         val start = CountDownLatch(1)
-        val workers = (0 until threads).map { t ->
-            Thread {
-                start.await()
-                repeat(iterations) { i ->
-                    // 每次 fileTreeMd5 不同 → 必走真落盘（不被幂等守卫短路）→ 抢同一清单 tmp。
-                    val manifest = FileManifest(
-                        namespace = "prod", serverId = "s", group = "g", zone = "z",
-                        fileTreeMd5 = "t-$t-$i",
-                        entries = listOf(FileManifestEntry("f$t.yml", "$i")),
-                    )
-                    try {
-                        applier.apply(manifest)
-                    } catch (e: Throwable) {
-                        errors += e
+        val workers =
+            (0 until threads).map { t ->
+                Thread {
+                    start.await()
+                    repeat(iterations) { i ->
+                        // 每次 fileTreeMd5 不同 → 必走真落盘（不被幂等守卫短路）→ 抢同一清单 tmp。
+                        val manifest =
+                            FileManifest(
+                                namespace = "prod",
+                                serverId = "s",
+                                group = "g",
+                                zone = "z",
+                                fileTreeMd5 = "t-$t-$i",
+                                entries = listOf(FileManifestEntry("f$t.yml", "$i")),
+                            )
+                        try {
+                            applier.apply(manifest)
+                        } catch (e: Throwable) {
+                            errors += e
+                        }
                     }
                 }
             }
-        }
         workers.forEach { it.start() }
         start.countDown()
         workers.forEach { it.join() }
@@ -75,22 +80,39 @@ class FileTreeApplierConcurrencyTest {
             "清单应可读且为某次写入值，实际：${applied?.fileTreeMd5}",
         )
         // 无任何临时文件残留。
-        val residue = root.listFiles()
-            ?.filter { it.name.contains(".beacon-tmp") || it.name.endsWith(".tmp") }
-            ?: emptyList()
+        val residue =
+            root.listFiles()
+                ?.filter { it.name.contains(".beacon-tmp") || it.name.endsWith(".tmp") }
+                ?: emptyList()
         assertTrue(residue.isEmpty(), "不应残留临时文件，实际：${residue.map { it.name }}")
     }
 
     /** 静默 adapter：runAsync 同步执行，日志 no-op。 */
     private class SilentAdapter(private val folder: File) : PlatformAdapter {
         override fun runAsync(task: () -> Unit) = task()
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = folder
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
+
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
         override fun info(msg: String) {}
+
         override fun warn(msg: String) {}
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
     }
 
     /** 最小 JsonCodec：仅需写后读回 fileTreeMd5（entries 容错为空，本测试不依赖）。 */

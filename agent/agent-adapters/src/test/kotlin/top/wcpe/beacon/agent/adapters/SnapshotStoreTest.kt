@@ -13,7 +13,6 @@ import kotlin.test.assertTrue
 
 /** SnapshotStore 读写往返一致性（用真实 KotlinxJsonCodec）。 */
 class SnapshotStoreTest {
-
     private val codec = KotlinxJsonCodec()
     private val dir: File = Files.createTempDirectory("beacon-snap").toFile()
 
@@ -26,17 +25,19 @@ class SnapshotStoreTest {
 
     @Test
     fun `写后读回与原值一致`() {
-        val result = EffectiveResult(
-            namespace = "prod",
-            serverId = "lobby-1",
-            group = "area1",
-            zone = "zoneA",
-            md5 = "abc123",
-            items = listOf(
-                ConfigItem("mysql.yml", "yaml", "9f", "url: jdbc:mysql\npool: 20\n"),
-                ConfigItem("merge.json", "json", "77", "{\"area1\":[\"zoneA\"]}"),
-            ),
-        )
+        val result =
+            EffectiveResult(
+                namespace = "prod",
+                serverId = "lobby-1",
+                group = "area1",
+                zone = "zoneA",
+                md5 = "abc123",
+                items =
+                    listOf(
+                        ConfigItem("mysql.yml", "yaml", "9f", "url: jdbc:mysql\npool: 20\n"),
+                        ConfigItem("merge.json", "json", "77", "{\"area1\":[\"zoneA\"]}"),
+                    ),
+            )
         val store = store()
         store.write(result)
         val read = store.read()!!
@@ -66,9 +67,10 @@ class SnapshotStoreTest {
     fun `写入采用原子替换不残留 tmp`() {
         val store = store()
         store.write(EffectiveResult("prod", "s", "g", "z", "m", emptyList()))
-        val residue = dir.listFiles()
-            ?.filter { it.name.startsWith("snap.json") && it.name != "snap.json" }
-            ?: emptyList()
+        val residue =
+            dir.listFiles()
+                ?.filter { it.name.startsWith("snap.json") && it.name != "snap.json" }
+                ?: emptyList()
         assertTrue(residue.isEmpty(), "tmp 文件应在重命名后消失，实际残留：${residue.map { it.name }}")
     }
 }

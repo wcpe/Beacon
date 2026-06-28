@@ -30,35 +30,36 @@ import kotlin.test.assertTrue
  * 未注入供给时按零指标上报（向后兼容）。
  */
 class AgentLifecycleMetricsTest {
-
     private val backend = FakeBeaconBackend()
     private val adapter = ThreadPoolPlatformAdapter()
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     @AfterTest
     fun tearDown() {
@@ -71,17 +72,25 @@ class AgentLifecycleMetricsTest {
         val codec = MetricsCapturingCodec()
         val apiClient = BeaconApiClient(backend, codec, settings())
         val applier = ConfigApplier(store, null, adapter)
-        val fixed = RuntimeMetrics(
-            playerCount = 17,
-            tps = 19.7,
-            memUsed = 333L,
-            memMax = 777L,
-            cpuLoad = 0.55,
-        )
-        val lifecycle = AgentLifecycle(
-            identity(), settings(), adapter, apiClient, store, applier, null,
-            metricsProvider = { fixed },
-        )
+        val fixed =
+            RuntimeMetrics(
+                playerCount = 17,
+                tps = 19.7,
+                memUsed = 333L,
+                memMax = 777L,
+                cpuLoad = 0.55,
+            )
+        val lifecycle =
+            AgentLifecycle(
+                identity(),
+                settings(),
+                adapter,
+                apiClient,
+                store,
+                applier,
+                null,
+                metricsProvider = { fixed },
+            )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
         // 等首轮 apply→report 发生（pollStatus=200 触发 report）。
@@ -122,23 +131,32 @@ class AgentLifecycleMetricsTest {
         val codec = MetricsCapturingCodec()
         val apiClient = BeaconApiClient(backend, codec, settings())
         val applier = ConfigApplier(store, null, adapter)
-        val proxy = ProxyMetrics(
-            onlineConnections = 99,
-            threadCount = 50,
-            uptimeMs = 12345L,
-            backendUp = 2,
-            backendTotal = 3,
-            backendAvgLatencyMs = 8.0,
-        )
-        val lifecycle = AgentLifecycle(
-            identity(), settings(), adapter, apiClient, store, applier, null,
-            proxyMetricsProvider = { proxy },
-        )
+        val proxy =
+            ProxyMetrics(
+                onlineConnections = 99,
+                threadCount = 50,
+                uptimeMs = 12345L,
+                backendUp = 2,
+                backendTotal = 3,
+                backendAvgLatencyMs = 8.0,
+            )
+        val lifecycle =
+            AgentLifecycle(
+                identity(),
+                settings(),
+                adapter,
+                apiClient,
+                store,
+                applier,
+                null,
+                proxyMetricsProvider = { proxy },
+            )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
         waitUntil(3000) { codec.lastReport.get() != null }
 
         val body = codec.lastReport.get() ?: error("应至少有一次 report 报文被捕获")
+
         @Suppress("UNCHECKED_CAST")
         val proxyBody = body["proxy"] as? Map<String, Any?> ?: error("bc 上报应含 proxy 子对象")
         assertEquals(99, proxyBody["onlineConnections"])
@@ -175,17 +193,25 @@ class AgentLifecycleMetricsTest {
         val codec = FastHeartbeatCapturingCodec()
         val apiClient = BeaconApiClient(backend, codec, settings())
         val applier = ConfigApplier(store, null, adapter)
-        val fixed = RuntimeMetrics(
-            playerCount = 5,
-            tps = 20.0,
-            memUsed = 111L,
-            memMax = 222L,
-            cpuLoad = 0.3,
-        )
-        val lifecycle = AgentLifecycle(
-            identity(), settings(), adapter, apiClient, store, applier, null,
-            metricsProvider = { fixed },
-        )
+        val fixed =
+            RuntimeMetrics(
+                playerCount = 5,
+                tps = 20.0,
+                memUsed = 111L,
+                memMax = 222L,
+                cpuLoad = 0.3,
+            )
+        val lifecycle =
+            AgentLifecycle(
+                identity(),
+                settings(),
+                adapter,
+                apiClient,
+                store,
+                applier,
+                null,
+                metricsProvider = { fixed },
+            )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
         // 首跳即发 + 每 1s 续杯；3.5s 内应 ≥2 次 report，且全部由周期循环驱动（长轮询恒 304 绝不触发 report）。
@@ -208,20 +234,30 @@ class AgentLifecycleMetricsTest {
         val apiClient = BeaconApiClient(backend, codec, settings())
         val applier = ConfigApplier(store, null, adapter)
         var calls = 0
-        val lifecycle = AgentLifecycle(
-            identity(), settings(), adapter, apiClient, store, applier, null,
-            metricsProvider = {
-                calls++
-                RuntimeMetrics.ZERO
-            },
-        )
+        val lifecycle =
+            AgentLifecycle(
+                identity(),
+                settings(),
+                adapter,
+                apiClient,
+                store,
+                applier,
+                null,
+                metricsProvider = {
+                    calls++
+                    RuntimeMetrics.ZERO
+                },
+            )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
         waitUntil(3000) { calls >= 1 }
         assertTrue(calls >= 1, "上报时应调用 metricsProvider 取当前指标")
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return
@@ -235,7 +271,6 @@ class AgentLifecycleMetricsTest {
  * 使 [AgentLifecycle] 的周期性指标上报循环在短测试窗口内多次续杯；同时捕获最近一次 report 报文体供断言。
  */
 private class FastHeartbeatCapturingCodec : JsonCodec {
-
     private val canned = CannedJsonCodec()
 
     /** 最近一次 report 报文体（Map）；null 表示尚未发生 report。 */

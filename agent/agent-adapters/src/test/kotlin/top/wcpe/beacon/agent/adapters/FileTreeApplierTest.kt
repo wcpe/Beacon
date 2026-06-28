@@ -23,7 +23,6 @@ import kotlin.test.assertTrue
  * 重点：fail-static——取内容失败时不删既有文件、不写 applied 清单，保留本地镜像不动。
  */
 class FileTreeApplierTest {
-
     private val codec = KotlinxJsonCodec()
     private val baseDir: File = Files.createTempDirectory("beacon-ft").toFile()
     private val mirrorRoot = File(baseDir, "plugins").apply { mkdirs() }
@@ -47,21 +46,26 @@ class FileTreeApplierTest {
         )
     }
 
-    private fun manifest(md5: String, vararg entries: Pair<String, String>): FileManifest = FileManifest(
-        namespace = "prod",
-        serverId = "lobby-1",
-        group = "area1",
-        zone = "zoneA",
-        fileTreeMd5 = md5,
-        entries = entries.map { FileManifestEntry(it.first, it.second) },
-    )
+    private fun manifest(
+        md5: String,
+        vararg entries: Pair<String, String>,
+    ): FileManifest =
+        FileManifest(
+            namespace = "prod",
+            serverId = "lobby-1",
+            group = "area1",
+            zone = "zoneA",
+            fileTreeMd5 = md5,
+            entries = entries.map { FileManifestEntry(it.first, it.second) },
+        )
 
     private fun mirror(path: String) = File(mirrorRoot, path)
 
     @Test
     fun `首次同步全部落盘并写清单`() {
-        val ok = applier(mapOf("a.yml" to "AAA", "dir/b.js" to "BBB"))
-            .apply(manifest("t1", "a.yml" to "1", "dir/b.js" to "2"))
+        val ok =
+            applier(mapOf("a.yml" to "AAA", "dir/b.js" to "BBB"))
+                .apply(manifest("t1", "a.yml" to "1", "dir/b.js" to "2"))
         assertTrue(ok)
         assertEquals("AAA", mirror("a.yml").readText(StandardCharsets.UTF_8))
         assertEquals("BBB", mirror("dir/b.js").readText(StandardCharsets.UTF_8))

@@ -16,21 +16,22 @@ import kotlin.test.assertTrue
  * pollFileManifest 对 200/304/404 的映射、fetchFileContent 解析、请求 URL 与头。
  */
 class BeaconApiClientFileTest {
-
     private val codec = KotlinxJsonCodec()
 
-    private fun client(transport: FakeHttpTransport) =
-        BeaconApiClient(transport, codec, TestFixtures.settings())
+    private fun client(transport: FakeHttpTransport) = BeaconApiClient(transport, codec, TestFixtures.settings())
 
     @Test
     fun `pollFileManifest 200 返回 Changed 且解析 files 与 fileTreeMd5`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(
-                200,
-                """{"namespace":"prod","serverId":"lobby-1","group":"area1","zone":"zoneA","fileTreeMd5":"c4",
-                   "files":[{"path":"ui-components/main.allin","md5":"9f"},{"path":"scripts/hello.js","md5":"77"}]}""".trimIndent(),
-            ),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"namespace":"prod","serverId":"lobby-1","group":"area1","zone":"zoneA","fileTreeMd5":"c4",
+                    "files":[{"path":"ui-components/main.allin","md5":"9f"},{"path":"scripts/hello.js","md5":"77"}]}
+                    """.trimIndent(),
+                ),
+            )
         val result = client(transport).pollFileManifest(TestFixtures.identity(), null, 30000)
         val changed = assertIs<FileManifestPollResult.Changed>(result)
         assertEquals("c4", changed.manifest.fileTreeMd5)
@@ -70,9 +71,10 @@ class BeaconApiClientFileTest {
 
     @Test
     fun `fetchFileContent 200 解析整文件内容`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(200, """{"path":"ui-components/main.allin","md5":"9f","content":"line1\nline2\n"}"""),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(200, """{"path":"ui-components/main.allin","md5":"9f","content":"line1\nline2\n"}"""),
+            )
         val content = client(transport).fetchFileContent(TestFixtures.identity(), "ui-components/main.allin")!!
         assertEquals("ui-components/main.allin", content.path)
         assertEquals("9f", content.md5)

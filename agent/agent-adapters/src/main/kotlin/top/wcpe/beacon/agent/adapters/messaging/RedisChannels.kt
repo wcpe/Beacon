@@ -7,7 +7,6 @@ package top.wcpe.beacon.agent.adapters.messaging
  * 全集群一致，便于运维排查与避免键冲突。
  */
 object RedisChannels {
-
     /** 每服收件流键：beacon:msg:{serverId}。消费组名 = serverId。 */
     fun serverInbox(serverId: String): String = "beacon:msg:$serverId"
 

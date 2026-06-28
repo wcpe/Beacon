@@ -6,7 +6,6 @@ package top.wcpe.beacon.agent.core.client
  * 解码结果约定为 Map<String,Any?> / List<Any?> / String / Number / Boolean / null。
  */
 internal object JsonTree {
-
     /** 将任意解码结果视作对象（Map）；非对象返回空 map。 */
     fun asObject(value: Any?): Map<String, Any?> {
         @Suppress("UNCHECKED_CAST")
@@ -22,13 +21,24 @@ internal object JsonTree {
     fun asString(value: Any?): String = (value as? String) ?: ""
 
     /** 读字符串字段；缺失或非字符串返回 null。 */
-    fun str(obj: Map<String, Any?>, key: String): String? = obj[key] as? String
+    fun str(
+        obj: Map<String, Any?>,
+        key: String,
+    ): String? = obj[key] as? String
 
     /** 读字符串字段，缺失给默认值。 */
-    fun strOr(obj: Map<String, Any?>, key: String, default: String): String = str(obj, key) ?: default
+    fun strOr(
+        obj: Map<String, Any?>,
+        key: String,
+        default: String,
+    ): String = str(obj, key) ?: default
 
     /** 读整数字段；数值类型统一转 Int，缺失给默认值。 */
-    fun intOr(obj: Map<String, Any?>, key: String, default: Int): Int {
+    fun intOr(
+        obj: Map<String, Any?>,
+        key: String,
+        default: Int,
+    ): Int {
         return when (val v = obj[key]) {
             is Number -> v.toInt()
             else -> default
@@ -36,7 +46,11 @@ internal object JsonTree {
     }
 
     /** 读长整数字段；数值类型统一转 Long（保全 id 等大整数范围），缺失给默认值。 */
-    fun longOr(obj: Map<String, Any?>, key: String, default: Long): Long {
+    fun longOr(
+        obj: Map<String, Any?>,
+        key: String,
+        default: Long,
+    ): Long {
         return when (val v = obj[key]) {
             is Number -> v.toLong()
             else -> default
@@ -44,7 +58,11 @@ internal object JsonTree {
     }
 
     /** 读布尔字段，缺失给默认值。 */
-    fun boolOr(obj: Map<String, Any?>, key: String, default: Boolean): Boolean {
+    fun boolOr(
+        obj: Map<String, Any?>,
+        key: String,
+        default: Boolean,
+    ): Boolean {
         return obj[key] as? Boolean ?: default
     }
 }

@@ -33,7 +33,6 @@ import kotlin.test.assertTrue
  * - 读盘剔除 jar / 二进制（端到端经 PluginsTreeFilter）。
  */
 class ReverseFetchExecutorTest {
-
     /**
      * 按 URL 路由的 transport：commands 端点把预置命令体**只发 pendingCount 次**（模拟控制面 CAS：一条 pending 被拉走即 fetched），
      * 之后返回 204（无待办）——配合执行器的排空循环，避免同一命令被无限重拉。ingest 端点记录命中并返回 200。
@@ -54,119 +53,134 @@ class ReverseFetchExecutorTest {
         val browseCalls = AtomicInteger(0)
         val lastBrowseBody = AtomicReference<String?>(null)
 
-        override fun execute(request: HttpRequest): HttpResponse = when {
-            // 文件浏览结果回传端点（FR-110）：URL 含 /agent/files/browse-result（须在通用 /agent/files 前判定）。
-            request.url.contains("/agent/files/browse-result") -> {
-                browseCalls.incrementAndGet()
-                lastBrowseBody.set(request.body)
-                HttpResponse(200, "")
-            }
-            // 命令结果回传端点（FR-91）：URL 含 /agent/commands/result（须在通用 /agent/commands 前判定）。
-            request.url.contains("/agent/commands/result") -> {
-                resultCalls.incrementAndGet()
-                lastResultBody.set(request.body)
-                HttpResponse(200, "")
-            }
+        override fun execute(request: HttpRequest): HttpResponse =
+            when {
+                // 文件浏览结果回传端点（FR-110）：URL 含 /agent/files/browse-result（须在通用 /agent/files 前判定）。
+                request.url.contains("/agent/files/browse-result") -> {
+                    browseCalls.incrementAndGet()
+                    lastBrowseBody.set(request.body)
+                    HttpResponse(200, "")
+                }
+                // 命令结果回传端点（FR-91）：URL 含 /agent/commands/result（须在通用 /agent/commands 前判定）。
+                request.url.contains("/agent/commands/result") -> {
+                    resultCalls.incrementAndGet()
+                    lastResultBody.set(request.body)
+                    HttpResponse(200, "")
+                }
 
-            request.url.contains("/agent/commands") -> {
-                if (served.getAndIncrement() < pendingCount) HttpResponse(200, pendingBody) else HttpResponse(204, "")
-            }
+                request.url.contains("/agent/commands") -> {
+                    if (served.getAndIncrement() < pendingCount) HttpResponse(200, pendingBody) else HttpResponse(204, "")
+                }
 
-            // 取日志回传端点（FR-88）：URL 含 /agent/logs（须在通用分支前判定）。
-            request.url.contains("/agent/logs") -> {
-                logsCalls.incrementAndGet()
-                lastLogsBody.set(request.body)
-                HttpResponse(200, "")
-            }
+                // 取日志回传端点（FR-88）：URL 含 /agent/logs（须在通用分支前判定）。
+                request.url.contains("/agent/logs") -> {
+                    logsCalls.incrementAndGet()
+                    lastLogsBody.set(request.body)
+                    HttpResponse(200, "")
+                }
 
-            // error 端点须在 scan/ingest 之前判定：URL 含 /agent/files/error（FR-87，不与 scan/ingest 混淆）。
-            request.url.contains("/agent/files/error") -> {
-                errorCalls.incrementAndGet()
-                lastErrorBody.set(request.body)
-                HttpResponse(200, "")
-            }
+                // error 端点须在 scan/ingest 之前判定：URL 含 /agent/files/error（FR-87，不与 scan/ingest 混淆）。
+                request.url.contains("/agent/files/error") -> {
+                    errorCalls.incrementAndGet()
+                    lastErrorBody.set(request.body)
+                    HttpResponse(200, "")
+                }
 
-            // scan 端点须在 ingest 之前判定：URL 含 /agent/files/scan（不与 /ingest 混淆）。
-            request.url.contains("/agent/files/scan") -> {
-                scanCalls.incrementAndGet()
-                lastScanBody.set(request.body)
-                HttpResponse(200, "")
-            }
+                // scan 端点须在 ingest 之前判定：URL 含 /agent/files/scan（不与 /ingest 混淆）。
+                request.url.contains("/agent/files/scan") -> {
+                    scanCalls.incrementAndGet()
+                    lastScanBody.set(request.body)
+                    HttpResponse(200, "")
+                }
 
-            request.url.contains("/agent/files/ingest") -> {
-                ingestCalls.incrementAndGet()
-                lastIngestBody.set(request.body)
-                HttpResponse(200, "")
-            }
+                request.url.contains("/agent/files/ingest") -> {
+                    ingestCalls.incrementAndGet()
+                    lastIngestBody.set(request.body)
+                    HttpResponse(200, "")
+                }
 
-            else -> HttpResponse(404, "")
-        }
+                else -> HttpResponse(404, "")
+            }
     }
 
     /** 极简 codec：decode 按 body key 给命令树；encode 把上行 Map 透传为可断言的字符串。 */
     private class FakeCodec : JsonCodec {
         override fun encode(value: Any?): String = value.toString()
 
-        override fun decode(json: String): Any? = when (json) {
-            CMD_INGEST -> mapOf(
-                "id" to 7,
-                "type" to "ingest-plugins",
-                "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
-            )
+        override fun decode(json: String): Any? =
+            when (json) {
+                CMD_INGEST ->
+                    mapOf(
+                        "id" to 7,
+                        "type" to "ingest-plugins",
+                        "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
+                    )
 
-            CMD_UNKNOWN -> mapOf(
-                "id" to 8,
-                "type" to "some-future-command",
-                "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
-            )
+                CMD_UNKNOWN ->
+                    mapOf(
+                        "id" to 8,
+                        "type" to "some-future-command",
+                        "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
+                    )
 
-            CMD_SCAN -> mapOf(
-                "id" to 9,
-                "type" to "ingest-plugins",
-                "payload" to mapOf("scope" to "group", "group" to "area1", "target" to "", "mode" to "scan"),
-            )
+                CMD_SCAN ->
+                    mapOf(
+                        "id" to 9,
+                        "type" to "ingest-plugins",
+                        "payload" to mapOf("scope" to "group", "group" to "area1", "target" to "", "mode" to "scan"),
+                    )
 
-            CMD_SUBMIT -> mapOf(
-                "id" to 10,
-                "type" to "ingest-plugins",
-                "payload" to mapOf(
-                    "scope" to "group", "group" to "area1", "target" to "", "mode" to "submit",
-                    "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
-                ),
-            )
+                CMD_SUBMIT ->
+                    mapOf(
+                        "id" to 10,
+                        "type" to "ingest-plugins",
+                        "payload" to
+                            mapOf(
+                                "scope" to "group",
+                                "group" to "area1",
+                                "target" to "",
+                                "mode" to "submit",
+                                "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
+                            ),
+                    )
 
-            CMD_TAIL_LOGS -> mapOf(
-                "id" to 11,
-                "type" to "tail-logs",
-                "payload" to emptyMap<String, Any?>(),
-            )
+                CMD_TAIL_LOGS ->
+                    mapOf(
+                        "id" to 11,
+                        "type" to "tail-logs",
+                        "payload" to emptyMap<String, Any?>(),
+                    )
 
-            CMD_RESYNC -> mapOf(
-                "id" to 12,
-                "type" to "resync-config",
-                "payload" to emptyMap<String, Any?>(),
-            )
+                CMD_RESYNC ->
+                    mapOf(
+                        "id" to 12,
+                        "type" to "resync-config",
+                        "payload" to emptyMap<String, Any?>(),
+                    )
 
-            CMD_BROWSE_LIST -> mapOf(
-                "id" to 13,
-                "type" to "fs-browse",
-                "payload" to mapOf("op" to "list", "path" to "AllinCore", "offset" to 0, "limit" to 100),
-            )
+                CMD_BROWSE_LIST ->
+                    mapOf(
+                        "id" to 13,
+                        "type" to "fs-browse",
+                        "payload" to mapOf("op" to "list", "path" to "AllinCore", "offset" to 0, "limit" to 100),
+                    )
 
-            CMD_BROWSE_FILE -> mapOf(
-                "id" to 14,
-                "type" to "fs-browse",
-                "payload" to mapOf("op" to "file", "path" to "AllinCore/config.yml"),
-            )
+                CMD_BROWSE_FILE ->
+                    mapOf(
+                        "id" to 14,
+                        "type" to "fs-browse",
+                        "payload" to mapOf("op" to "file", "path" to "AllinCore/config.yml"),
+                    )
 
-            CMD_BROWSE_DENIED -> mapOf(
-                "id" to 15,
-                "type" to "fs-browse",
-                "payload" to mapOf("op" to "file", "path" to "../etc/passwd"),
-            )
+                CMD_BROWSE_DENIED ->
+                    mapOf(
+                        "id" to 15,
+                        "type" to "fs-browse",
+                        "payload" to mapOf("op" to "file", "path" to "../etc/passwd"),
+                    )
 
-            else -> emptyMap<String, Any?>()
-        }
+                else -> emptyMap<String, Any?>()
+            }
     }
 
     /**
@@ -185,9 +199,16 @@ class ReverseFetchExecutorTest {
         val browseFileCalls = AtomicInteger(0)
 
         override fun runAsync(task: () -> Unit) = task()
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = File(System.getProperty("java.io.tmpdir"))
+
         override fun readPluginsTree(): Map<String, ByteArray> {
             readCalls.incrementAndGet()
             if (failRead) throw java.io.IOException("permission denied")
@@ -202,19 +223,37 @@ class ReverseFetchExecutorTest {
         }
 
         // 浏览原语桩（FR-110）：browseEnabled=false 或路径含 .. → 返回 null（模拟未启用 / 越权拒读）。
-        override fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? {
+        override fun browseListDir(
+            relPath: String,
+            offset: Int,
+            limit: Int,
+        ): DirListing? {
             browseListCalls.incrementAndGet()
             if (!browseEnabled || relPath.contains("..")) return null
             return DirListing(
                 path = relPath,
                 entries = listOf(BrowseEntry(name = "config.yml", relPath = "$relPath/config.yml", dir = false, size = 12, text = true)),
-                offset = offset, limit = if (limit > 0) limit else 100, total = 1, hasMore = false,
+                offset = offset,
+                limit = if (limit > 0) limit else 100,
+                total = 1,
+                hasMore = false,
             )
         }
 
-        override fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? {
+        override fun browseReadTree(
+            relPath: String,
+            maxDepth: Int,
+        ): TreeNode? {
             if (!browseEnabled || relPath.contains("..")) return null
-            return TreeNode(name = relPath, relPath = relPath, dir = true, size = 0, text = false, children = emptyList(), truncated = false)
+            return TreeNode(
+                name = relPath,
+                relPath = relPath,
+                dir = true,
+                size = 0,
+                text = false,
+                children = emptyList(),
+                truncated = false,
+            )
         }
 
         override fun browseReadFile(relPath: String): FileContent? {
@@ -223,45 +262,74 @@ class ReverseFetchExecutorTest {
             return FileContent(path = relPath, content = "k: v\n", truncated = false)
         }
 
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
         override fun info(msg: String) {}
+
         override fun warn(msg: String) {}
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
     }
 
     private fun b(s: String): ByteArray = s.toByteArray(StandardCharsets.UTF_8)
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod", serverId = "lobby-1", role = "bukkit", groupHint = "area1",
-        address = "127.0.0.1:25565", version = "1.0", capacity = 100, weight = 1, metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "x.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "bk"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "x.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "bk"),
+        )
 
-    private fun executor(transport: FakeTransport, adapter: StubAdapter): ReverseFetchExecutor {
+    private fun executor(
+        transport: FakeTransport,
+        adapter: StubAdapter,
+    ): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter)
     }
 
     /** 带日志缓冲的执行器（FR-88 取日志路径用）。 */
-    private fun executor(transport: FakeTransport, adapter: StubAdapter, buffer: AgentLogBuffer): ReverseFetchExecutor {
+    private fun executor(
+        transport: FakeTransport,
+        adapter: StubAdapter,
+        buffer: AgentLogBuffer,
+    ): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter, buffer)
     }
 
     /** 带强制重同步回调的执行器（FR-91 重同步路径用；回调返回 true=已执行、false=因未运行跳过）。 */
-    private fun executor(transport: FakeTransport, adapter: StubAdapter, onResync: () -> Boolean): ReverseFetchExecutor {
+    private fun executor(
+        transport: FakeTransport,
+        adapter: StubAdapter,
+        onResync: () -> Boolean,
+    ): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter, onResyncConfig = onResync)
     }
@@ -279,14 +347,15 @@ class ReverseFetchExecutorTest {
     @Test
     fun `有命令与文本树时过滤后上传`() {
         val transport = FakeTransport() // 默认发 1 条 CMD_INGEST 后 204
-        val adapter = StubAdapter(
-            mapOf(
-                "config.yml" to b("k: v"),
-                "plugin.jar" to b("MZ"), // 应剔除
-                "world.dat" to byteArrayOf(0x00, 0x01), // 二进制应剔除
-                "lang/zh.yml" to b("hi: 你好"),
-            ),
-        )
+        val adapter =
+            StubAdapter(
+                mapOf(
+                    "config.yml" to b("k: v"),
+                    "plugin.jar" to b("MZ"), // 应剔除
+                    "world.dat" to byteArrayOf(0x00, 0x01), // 二进制应剔除
+                    "lang/zh.yml" to b("hi: 你好"),
+                ),
+            )
         executor(transport, adapter).trigger()
 
         assertEquals(1, adapter.readCalls.get(), "有命令应读盘一次")
@@ -339,13 +408,14 @@ class ReverseFetchExecutorTest {
         // 含超 1MB 文件的树：scan 不应失败、列出全部（治根）。
         val big = ByteArray((PluginIngestLimits.MAX_FILE_BYTES + 1).toInt()) { 'a'.code.toByte() }
         val transport = FakeTransport(pendingBody = CMD_SCAN)
-        val adapter = StubAdapter(
-            mapOf(
-                "config.yml" to b("k: v"),
-                "metrics.jsonl" to big, // 超阈值
-                "plugin.jar" to b("MZ"), // 剔除
-            ),
-        )
+        val adapter =
+            StubAdapter(
+                mapOf(
+                    "config.yml" to b("k: v"),
+                    "metrics.jsonl" to big, // 超阈值
+                    "plugin.jar" to b("MZ"), // 剔除
+                ),
+            )
         executor(transport, adapter).trigger()
 
         assertEquals(1, adapter.metadataCalls.get(), "scan 应只 stat 元信息一次")
@@ -362,13 +432,14 @@ class ReverseFetchExecutorTest {
     @Test
     fun `submit 模式只回传选定子集`() {
         val transport = FakeTransport(pendingBody = CMD_SUBMIT) // selectedPaths = [config.yml, lang/zh.yml]
-        val adapter = StubAdapter(
-            mapOf(
-                "config.yml" to b("k: v"),
-                "lang/zh.yml" to b("hi: 你好"),
-                "secret.yml" to b("token: x"), // 未选定 → 不回传
-            ),
-        )
+        val adapter =
+            StubAdapter(
+                mapOf(
+                    "config.yml" to b("k: v"),
+                    "lang/zh.yml" to b("hi: 你好"),
+                    "secret.yml" to b("token: x"), // 未选定 → 不回传
+                ),
+            )
         executor(transport, adapter).trigger()
 
         assertEquals(1, adapter.readCalls.get(), "submit 应读内容一次")
@@ -456,7 +527,10 @@ class ReverseFetchExecutorTest {
         val transport = FakeTransport(pendingBody = CMD_RESYNC)
         val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
         val resyncCalls = AtomicInteger(0)
-        executor(transport, adapter) { resyncCalls.incrementAndGet(); true }.trigger()
+        executor(transport, adapter) {
+            resyncCalls.incrementAndGet()
+            true
+        }.trigger()
 
         assertEquals(1, resyncCalls.get(), "应调重同步回调一次")
         assertEquals(0, adapter.readCalls.get(), "重同步绝不读 plugins 内容")

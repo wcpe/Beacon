@@ -13,23 +13,24 @@ import kotlin.test.fail
  * - 文本配置正常保留（按路径稳定排序回传）。
  */
 class PluginsTreeFilterTest {
-
     /** 文本转字节（UTF-8）。 */
     private fun b(s: String): ByteArray = s.toByteArray(StandardCharsets.UTF_8)
 
     /** 断言通过并取文件集；拒绝则 fail。 */
-    private fun accepted(outcome: FilterOutcome): List<IngestFile> = when (outcome) {
-        is FilterOutcome.Accepted -> outcome.files
-        is FilterOutcome.Rejected -> fail("期望通过，实际被拒：${outcome.reason}")
-    }
+    private fun accepted(outcome: FilterOutcome): List<IngestFile> =
+        when (outcome) {
+            is FilterOutcome.Accepted -> outcome.files
+            is FilterOutcome.Rejected -> fail("期望通过，实际被拒：${outcome.reason}")
+        }
 
     @Test
     fun `纯文本配置全部保留并按路径排序`() {
-        val tree = mapOf(
-            "config.yml" to b("k: v"),
-            "lang/zh_CN.yml" to b("hello: 你好"),
-            "data/notes.txt" to b("note"),
-        )
+        val tree =
+            mapOf(
+                "config.yml" to b("k: v"),
+                "lang/zh_CN.yml" to b("hello: 你好"),
+                "data/notes.txt" to b("note"),
+            )
         val files = accepted(PluginsTreeFilter.filter(tree))
         assertEquals(listOf("config.yml", "data/notes.txt", "lang/zh_CN.yml"), files.map { it.path })
         assertEquals("hello: 你好", files.first { it.path == "lang/zh_CN.yml" }.content)
@@ -37,22 +38,24 @@ class PluginsTreeFilterTest {
 
     @Test
     fun `排除 jar 后缀不区分大小写`() {
-        val tree = mapOf(
-            "AllinCore.jar" to b("MZ-binary"),
-            "libs/dep.JAR" to b("x"),
-            "nested/x.Jar" to b("y"),
-            "keep.yml" to b("k: v"),
-        )
+        val tree =
+            mapOf(
+                "AllinCore.jar" to b("MZ-binary"),
+                "libs/dep.JAR" to b("x"),
+                "nested/x.Jar" to b("y"),
+                "keep.yml" to b("k: v"),
+            )
         val files = accepted(PluginsTreeFilter.filter(tree))
         assertEquals(listOf("keep.yml"), files.map { it.path }, "jar 应被剔除，仅留文本")
     }
 
     @Test
     fun `排除含 NUL 字节的二进制`() {
-        val tree = mapOf(
-            "image.png" to byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x00, 0x01),
-            "keep.yml" to b("k: v"),
-        )
+        val tree =
+            mapOf(
+                "image.png" to byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x00, 0x01),
+                "keep.yml" to b("k: v"),
+            )
         val files = accepted(PluginsTreeFilter.filter(tree))
         assertEquals(listOf("keep.yml"), files.map { it.path }, "含 NUL 的二进制应剔除")
     }
@@ -60,10 +63,11 @@ class PluginsTreeFilterTest {
     @Test
     fun `排除非法 UTF-8 字节序列`() {
         // 0xFF 0xFE 不是合法 UTF-8 起始字节 → 判二进制剔除。
-        val tree = mapOf(
-            "bad.dat" to byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x41),
-            "keep.yml" to b("k: v"),
-        )
+        val tree =
+            mapOf(
+                "bad.dat" to byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x41),
+                "keep.yml" to b("k: v"),
+            )
         val files = accepted(PluginsTreeFilter.filter(tree))
         assertEquals(listOf("keep.yml"), files.map { it.path }, "非法 UTF-8 应剔除")
     }
@@ -87,17 +91,18 @@ class PluginsTreeFilterTest {
 
     @Test
     fun `剔除穿越与绝对与反斜杠等不安全路径`() {
-        val tree = mapOf(
-            "../escape.yml" to b("a: 1"),
-            "a/../../escape.yml" to b("a: 1"),
-            "/etc/passwd" to b("root"),
-            "a\\b.yml" to b("a: 1"),
-            "c:foo.yml" to b("a: 1"),
-            "CON" to b("a: 1"),
-            "con.yml" to b("a: 1"),
-            "trail.yml " to b("a: 1"), // 段尾空格（Windows 落盘剥离）→ 不安全，剔除
-            "ok.yml" to b("a: 1"),
-        )
+        val tree =
+            mapOf(
+                "../escape.yml" to b("a: 1"),
+                "a/../../escape.yml" to b("a: 1"),
+                "/etc/passwd" to b("root"),
+                "a\\b.yml" to b("a: 1"),
+                "c:foo.yml" to b("a: 1"),
+                "CON" to b("a: 1"),
+                "con.yml" to b("a: 1"),
+                "trail.yml " to b("a: 1"), // 段尾空格（Windows 落盘剥离）→ 不安全，剔除
+                "ok.yml" to b("a: 1"),
+            )
         val files = accepted(PluginsTreeFilter.filter(tree))
         assertEquals(listOf("ok.yml"), files.map { it.path }, "仅合法路径保留")
     }
@@ -164,11 +169,12 @@ class PluginsTreeFilterTest {
 
     @Test
     fun `全为排除项时通过且回传空集`() {
-        val tree = mapOf(
-            "plugin.jar" to b("MZ"),
-            "world.dat" to byteArrayOf(0x00),
-            "../escape.yml" to b("a: 1"),
-        )
+        val tree =
+            mapOf(
+                "plugin.jar" to b("MZ"),
+                "world.dat" to byteArrayOf(0x00),
+                "../escape.yml" to b("a: 1"),
+            )
         val files = accepted(PluginsTreeFilter.filter(tree))
         assertTrue(files.isEmpty(), "全为剔除项 → 通过但空集（不整体失败）")
     }
@@ -177,11 +183,12 @@ class PluginsTreeFilterTest {
 
     @Test
     fun `scan 列出全部并按路径排序`() {
-        val meta = mapOf(
-            "config.yml" to 100L,
-            "lang/zh_CN.yml" to 50L,
-            "data/notes.txt" to 20L,
-        )
+        val meta =
+            mapOf(
+                "config.yml" to 100L,
+                "lang/zh_CN.yml" to 50L,
+                "data/notes.txt" to 20L,
+            )
         val files = PluginsTreeFilter.scan(meta)
         assertEquals(listOf("config.yml", "data/notes.txt", "lang/zh_CN.yml"), files.map { it.path })
         assertEquals(100L, files.first { it.path == "config.yml" }.size)
@@ -192,11 +199,12 @@ class PluginsTreeFilterTest {
     @Test
     fun `scan 含超 1MB 文件不失败并红标`() {
         // 这是 FR-58 治根核心：超阈值运行时垃圾不再击穿整批，而是被列出并红标。
-        val meta = mapOf(
-            "metrics.jsonl" to (PluginIngestLimits.MAX_FILE_BYTES + 1), // 超阈值
-            "huge.dat" to (PluginIngestLimits.MAX_FILE_BYTES * 10), // 远超阈值
-            "config.yml" to 100L, // 正常小配置
-        )
+        val meta =
+            mapOf(
+                "metrics.jsonl" to (PluginIngestLimits.MAX_FILE_BYTES + 1), // 超阈值
+                "huge.dat" to (PluginIngestLimits.MAX_FILE_BYTES * 10), // 远超阈值
+                "config.yml" to 100L, // 正常小配置
+            )
         val files = PluginsTreeFilter.scan(meta)
         // 全部列出（不因任何超限失败）。
         assertEquals(setOf("metrics.jsonl", "huge.dat", "config.yml"), files.map { it.path }.toSet())
@@ -217,13 +225,14 @@ class PluginsTreeFilterTest {
 
     @Test
     fun `scan 排除 jar 与不安全路径`() {
-        val meta = mapOf(
-            "AllinCore.jar" to 5_000_000L, // jar 剔除（即便超大也不列）
-            "../escape.yml" to 10L, // 穿越剔除
-            "/etc/passwd" to 10L, // 绝对剔除
-            "a\\b.yml" to 10L, // 反斜杠剔除
-            "keep.yml" to 10L,
-        )
+        val meta =
+            mapOf(
+                "AllinCore.jar" to 5_000_000L, // jar 剔除（即便超大也不列）
+                "../escape.yml" to 10L, // 穿越剔除
+                "/etc/passwd" to 10L, // 绝对剔除
+                "a\\b.yml" to 10L, // 反斜杠剔除
+                "keep.yml" to 10L,
+            )
         val files = PluginsTreeFilter.scan(meta)
         assertEquals(listOf("keep.yml"), files.map { it.path }, "jar / 不安全路径应剔除")
     }
@@ -237,12 +246,13 @@ class PluginsTreeFilterTest {
 
     @Test
     fun `submit 仅回传选定子集`() {
-        val tree = mapOf(
-            "config.yml" to b("k: v"),
-            "lang/zh.yml" to b("hi: 你好"),
-            "secret.yml" to b("token: x"), // 未选定 → 不回传
-            "data/notes.txt" to b("note"), // 未选定 → 不回传
-        )
+        val tree =
+            mapOf(
+                "config.yml" to b("k: v"),
+                "lang/zh.yml" to b("hi: 你好"),
+                "secret.yml" to b("token: x"), // 未选定 → 不回传
+                "data/notes.txt" to b("note"), // 未选定 → 不回传
+            )
         val files = accepted(PluginsTreeFilter.submitFilter(tree, listOf("config.yml", "lang/zh.yml")))
         assertEquals(listOf("config.yml", "lang/zh.yml"), files.map { it.path }, "只回传选定集，未选定不传")
         assertEquals("hi: 你好", files.first { it.path == "lang/zh.yml" }.content)
@@ -260,15 +270,17 @@ class PluginsTreeFilterTest {
     @Test
     fun `submit 选定集里的不安全路径仍被剔除`() {
         // 即便被"选定"，不安全路径 / jar / 二进制仍是安全边界，一律剔除（控制面再校验双保险）。
-        val tree = mapOf(
-            "../escape.yml" to b("a: 1"),
-            "plugin.jar" to b("MZ"),
-            "bin.dat" to byteArrayOf(0x00, 0x01),
-            "ok.yml" to b("k: v"),
-        )
-        val files = accepted(
-            PluginsTreeFilter.submitFilter(tree, listOf("../escape.yml", "plugin.jar", "bin.dat", "ok.yml")),
-        )
+        val tree =
+            mapOf(
+                "../escape.yml" to b("a: 1"),
+                "plugin.jar" to b("MZ"),
+                "bin.dat" to byteArrayOf(0x00, 0x01),
+                "ok.yml" to b("k: v"),
+            )
+        val files =
+            accepted(
+                PluginsTreeFilter.submitFilter(tree, listOf("../escape.yml", "plugin.jar", "bin.dat", "ok.yml")),
+            )
         assertEquals(listOf("ok.yml"), files.map { it.path }, "选定集里的不安全/jar/二进制仍剔除")
     }
 

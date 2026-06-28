@@ -17,7 +17,6 @@ class ThreadPoolPlatformAdapter(
     private val folder: File = File(System.getProperty("java.io.tmpdir")),
     threads: Int = 8,
 ) : PlatformAdapter {
-
     private val pool: ScheduledExecutorService = Executors.newScheduledThreadPool(threads)
 
     /** 记录每次广播的（变更集, md5）。 */
@@ -27,7 +26,10 @@ class ThreadPoolPlatformAdapter(
         pool.submit { task() }
     }
 
-    override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) {
+    override fun runAsyncDelayed(
+        delayMs: Long,
+        task: () -> Unit,
+    ) {
         pool.schedule({ task() }, delayMs, TimeUnit.MILLISECONDS)
     }
 
@@ -37,7 +39,10 @@ class ThreadPoolPlatformAdapter(
 
     override fun dataFolder(): File = folder
 
-    override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
+    override fun publishConfigChanged(
+        changed: Set<String>,
+        newMd5: String,
+    ) {
         published.add(changed to newMd5)
     }
 
@@ -45,7 +50,10 @@ class ThreadPoolPlatformAdapter(
 
     override fun warn(msg: String) {}
 
-    override fun error(msg: String, t: Throwable?) {}
+    override fun error(
+        msg: String,
+        t: Throwable?,
+    ) {}
 
     /** 关停线程池并等待在飞任务自然结束（测试收尾用）。 */
     fun shutdown() {

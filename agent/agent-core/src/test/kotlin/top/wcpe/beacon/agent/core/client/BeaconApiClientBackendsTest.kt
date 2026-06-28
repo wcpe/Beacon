@@ -22,7 +22,6 @@ import kotlin.test.assertTrue
  * （旧 agent / bukkit 传空、向后兼容）；键名固定为 backends（供控制面 Go 侧对齐）。
  */
 class BeaconApiClientBackendsTest {
-
     /** 捕获 encode 入参的 codec：把待序列化的 Map 暴露给断言。 */
     private class CapturingCodec : JsonCodec {
         val lastEncoded = AtomicReference<Any?>(null)
@@ -33,46 +32,48 @@ class BeaconApiClientBackendsTest {
         }
 
         // register 解析需要一个最小响应对象。
-        override fun decode(json: String): Any? = mapOf(
-            "instanceKey" to "prod/bc-1",
-            "heartbeatIntervalSec" to 10,
-            "ttlSec" to 30,
-            "assigned" to false,
-        )
+        override fun decode(json: String): Any? =
+            mapOf(
+                "instanceKey" to "prod/bc-1",
+                "heartbeatIntervalSec" to 10,
+                "ttlSec" to 30,
+                "assigned" to false,
+            )
     }
 
     private class OkTransport : HttpTransport {
         override fun execute(request: HttpRequest): HttpResponse = HttpResponse(200, "")
     }
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "bc-1",
-        role = "bungee",
-        groupHint = "area1",
-        address = "127.0.0.1:25577",
-        version = "1.0",
-        capacity = 0,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "bc-1",
+            role = "bungee",
+            groupHint = "area1",
+            address = "127.0.0.1:25577",
+            version = "1.0",
+            capacity = 0,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 1000, maxMs = 1000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     @Suppress("UNCHECKED_CAST")
-    private fun lastBody(codec: CapturingCodec): Map<String, Any?> =
-        codec.lastEncoded.get() as Map<String, Any?>
+    private fun lastBody(codec: CapturingCodec): Map<String, Any?> = codec.lastEncoded.get() as Map<String, Any?>
 
     @Test
     fun `register 携带非空 backends`() {
@@ -102,16 +103,17 @@ class BeaconApiClientBackendsTest {
         val codec = CapturingCodec()
         val client = BeaconApiClient(OkTransport(), codec, settings())
 
-        val ok = client.report(
-            identity(),
-            appliedMd5 = "m",
-            playerCount = 3,
-            tps = 0.0,
-            memUsed = 1L,
-            memMax = 2L,
-            cpuLoad = 0.1,
-            backends = listOf("lobby-1"),
-        )
+        val ok =
+            client.report(
+                identity(),
+                appliedMd5 = "m",
+                playerCount = 3,
+                tps = 0.0,
+                memUsed = 1L,
+                memMax = 2L,
+                cpuLoad = 0.1,
+                backends = listOf("lobby-1"),
+            )
         assertTrue(ok)
 
         val body = lastBody(codec)

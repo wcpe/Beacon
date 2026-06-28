@@ -21,17 +21,21 @@ import java.util.concurrent.TimeUnit
 class OkHttpStreamTransport(
     connectTimeoutMs: Long = 5000,
 ) : StreamTransport {
-
     // 共享客户端：连接池复用；读超时按请求覆盖（SSE 需长读超时）。
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS) // 基础不限读超时；具体每请求再覆盖
-        .build()
-
-    override fun open(request: StreamRequest, listener: StreamListener) {
-        val perCall = client.newBuilder()
-            .readTimeout(request.readTimeoutMs, TimeUnit.MILLISECONDS)
+    private val client: OkHttpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS) // 基础不限读超时；具体每请求再覆盖
             .build()
+
+    override fun open(
+        request: StreamRequest,
+        listener: StreamListener,
+    ) {
+        val perCall =
+            client.newBuilder()
+                .readTimeout(request.readTimeoutMs, TimeUnit.MILLISECONDS)
+                .build()
 
         val builder = Request.Builder().url(request.url)
         for ((k, v) in request.headers) {
@@ -54,10 +58,11 @@ class OkHttpStreamTransport(
                 }
                 listener.onOpen()
 
-                val source = resp.body?.source() ?: run {
-                    listener.onClosed(IllegalStateException("SSE 流响应体为空"))
-                    return
-                }
+                val source =
+                    resp.body?.source() ?: run {
+                        listener.onClosed(IllegalStateException("SSE 流响应体为空"))
+                        return
+                    }
                 val parser = SseFrameParser()
                 // 逐行读取直到流结束（服务端关闭 / 读超时 / 客户端取消 → readUtf8Line 返回 null 或抛异常）。
                 while (true) {

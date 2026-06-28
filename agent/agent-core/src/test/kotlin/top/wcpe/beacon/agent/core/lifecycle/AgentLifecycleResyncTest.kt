@@ -11,11 +11,11 @@ import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
 import top.wcpe.beacon.agent.core.settings.OverrideSettings
+import top.wcpe.beacon.agent.core.testutil.ThreadPoolPlatformAdapter
 import top.wcpe.beacon.agent.core.transport.HttpRequest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
 import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
-import top.wcpe.beacon.agent.core.testutil.ThreadPoolPlatformAdapter
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
@@ -32,33 +32,34 @@ import kotlin.test.assertTrue
  * - 文件树子系统未启用（fileTreeApplier 为 null）时：返回 false，且不触发任何清单拉取。
  */
 class AgentLifecycleResyncTest {
-
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod",
-        serverId = "lobby-1",
-        role = "bukkit",
-        groupHint = "area1",
-        address = "127.0.0.1:25565",
-        version = "1.0",
-        capacity = 100,
-        weight = 1,
-        metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = true, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 60_000, maxMs = 60_000, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = true, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     @AfterTest
     fun tearDown() {
@@ -77,17 +78,25 @@ class AgentLifecycleResyncTest {
         val backend = FileTreeBackend()
         val codec = FileTreeCodec()
         val apiClient = BeaconApiClient(backend, codec, settings())
-        val fileTreeApplier = FileTreeApplier(
-            mirrorWriter = FileMirrorWriter(mirrorRoot),
-            appliedStore = AppliedFileManifestStore(File(dataFolder, "file-tree.applied.json"), codec),
-            adapter = adapterLocal,
-            fetchContent = { path -> apiClient.fetchFileContent(identity(), path) },
-        )
+        val fileTreeApplier =
+            FileTreeApplier(
+                mirrorWriter = FileMirrorWriter(mirrorRoot),
+                appliedStore = AppliedFileManifestStore(File(dataFolder, "file-tree.applied.json"), codec),
+                adapter = adapterLocal,
+                fetchContent = { path -> apiClient.fetchFileContent(identity(), path) },
+            )
         val applier = ConfigApplier(store, null, adapterLocal)
-        val lifecycle = AgentLifecycle(
-            identity(), settings(), adapterLocal, apiClient, store, applier, null,
-            fileTreeApplier = fileTreeApplier,
-        )
+        val lifecycle =
+            AgentLifecycle(
+                identity(),
+                settings(),
+                adapterLocal,
+                apiClient,
+                store,
+                applier,
+                null,
+                fileTreeApplier = fileTreeApplier,
+            )
         // 先接入控制面置 running=true（resync 仅在运行期生效）；文件树长轮询循环此后续杯。
         lifecycle.bootstrapWithSnapshotThenConnect()
         waitUntil(2000) { lifecycle.currentState() == AgentState.RUNNING }
@@ -115,10 +124,17 @@ class AgentLifecycleResyncTest {
         val apiClient = BeaconApiClient(backend, codec, settings())
         val applier = ConfigApplier(store, null, adapterLocal)
         // fileTreeApplier 为 null：文件树子系统未启用。
-        val lifecycle = AgentLifecycle(
-            identity(), settings(), adapterLocal, apiClient, store, applier, null,
-            fileTreeApplier = null,
-        )
+        val lifecycle =
+            AgentLifecycle(
+                identity(),
+                settings(),
+                adapterLocal,
+                apiClient,
+                store,
+                applier,
+                null,
+                fileTreeApplier = null,
+            )
 
         val triggered = lifecycle.forceSyncFileTreeNow()
         assertFalse(triggered, "文件树子系统未启用，resync 应返回未触发")
@@ -127,7 +143,10 @@ class AgentLifecycleResyncTest {
         assertEquals(0, backend.manifestCalls.get(), "未启用时不得拉清单")
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return
@@ -141,7 +160,6 @@ class AgentLifecycleResyncTest {
  * 记录清单调用数与「空 md5」清单调用数，供断言 resync 旁路 304 行为。
  */
 private class FileTreeBackend : HttpTransport {
-
     val manifestCalls = AtomicInteger(0)
     val emptyMd5ManifestCalls = AtomicInteger(0)
 
@@ -186,53 +204,56 @@ private class FileTreeBackend : HttpTransport {
 
 /** 极简 codec：encode 走 JSON 序列化兜底（清单落盘需可读回），decode 按 body key 返回预置树。 */
 private class FileTreeCodec : JsonCodec {
-
     override fun encode(value: Any?): String = renderJson(value)
 
-    override fun decode(json: String): Any? = when (json) {
-        FileTreeBackend.BODY_REGISTER -> mapOf(
-            "instanceKey" to "prod/lobby-1",
-            "resolvedGroup" to "area1",
-            "resolvedZone" to "zoneA",
-            "heartbeatIntervalSec" to 10,
-            "ttlSec" to 30,
-            "assigned" to true,
-        )
+    override fun decode(json: String): Any? =
+        when (json) {
+            FileTreeBackend.BODY_REGISTER ->
+                mapOf(
+                    "instanceKey" to "prod/lobby-1",
+                    "resolvedGroup" to "area1",
+                    "resolvedZone" to "zoneA",
+                    "heartbeatIntervalSec" to 10,
+                    "ttlSec" to 30,
+                    "assigned" to true,
+                )
 
-        FileTreeBackend.BODY_HEARTBEAT -> mapOf("ttlSec" to 30, "configDirty" to false)
+            FileTreeBackend.BODY_HEARTBEAT -> mapOf("ttlSec" to 30, "configDirty" to false)
 
-        FileTreeBackend.BODY_MANIFEST -> mapOf(
-            "namespace" to "prod",
-            "serverId" to "lobby-1",
-            "group" to "area1",
-            "zone" to "zoneA",
-            "fileTreeMd5" to "ft-v1",
-            "files" to listOf(mapOf("path" to "demo.yml", "md5" to "f1")),
-        )
+            FileTreeBackend.BODY_MANIFEST ->
+                mapOf(
+                    "namespace" to "prod",
+                    "serverId" to "lobby-1",
+                    "group" to "area1",
+                    "zone" to "zoneA",
+                    "fileTreeMd5" to "ft-v1",
+                    "files" to listOf(mapOf("path" to "demo.yml", "md5" to "f1")),
+                )
 
-        FileTreeBackend.BODY_CONTENT -> mapOf(
-            "path" to "demo.yml",
-            "md5" to "f1",
-            "content" to "k: v\n",
-        )
+            FileTreeBackend.BODY_CONTENT ->
+                mapOf(
+                    "path" to "demo.yml",
+                    "md5" to "f1",
+                    "content" to "k: v\n",
+                )
 
-        else -> JsonTreeReader.parse(json)
-    }
+            else -> JsonTreeReader.parse(json)
+        }
 }
 
 /** 极简 JSON 序列化（仅覆盖测试中已落盘清单的 map/list/标量结构），供清单写回再读回。 */
-private fun renderJson(value: Any?): String = when (value) {
-    null -> "null"
-    is String -> "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
-    is Number, is Boolean -> value.toString()
-    is Map<*, *> -> value.entries.joinToString(",", "{", "}") { (k, v) -> "\"$k\":" + renderJson(v) }
-    is List<*> -> value.joinToString(",", "[", "]") { renderJson(it) }
-    else -> "\"$value\""
-}
+private fun renderJson(value: Any?): String =
+    when (value) {
+        null -> "null"
+        is String -> "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\""
+        is Number, is Boolean -> value.toString()
+        is Map<*, *> -> value.entries.joinToString(",", "{", "}") { (k, v) -> "\"$k\":" + renderJson(v) }
+        is List<*> -> value.joinToString(",", "[", "]") { renderJson(it) }
+        else -> "\"$value\""
+    }
 
 /** 极简 JSON 解析（仅覆盖本测试写回的清单结构），把已落盘清单读回成 map。 */
 private object JsonTreeReader {
-
     fun parse(json: String): Any? = Parser(json).parseValue()
 
     private class Parser(private val s: String) {
@@ -244,9 +265,18 @@ private object JsonTreeReader {
                 '{' -> parseObject()
                 '[' -> parseArray()
                 '"' -> parseString()
-                't' -> { i += 4; true }
-                'f' -> { i += 5; false }
-                'n' -> { i += 4; null }
+                't' -> {
+                    i += 4
+                    true
+                }
+                'f' -> {
+                    i += 5
+                    false
+                }
+                'n' -> {
+                    i += 4
+                    null
+                }
                 else -> parseNumber()
             }
         }
@@ -255,7 +285,10 @@ private object JsonTreeReader {
             val map = LinkedHashMap<String, Any?>()
             i++ // {
             skipWs()
-            if (s[i] == '}') { i++; return map }
+            if (s[i] == '}') {
+                i++
+                return map
+            }
             while (true) {
                 skipWs()
                 val key = parseString()
@@ -264,7 +297,10 @@ private object JsonTreeReader {
                 val value = parseValue()
                 map[key] = value
                 skipWs()
-                if (s[i] == ',') { i++; continue }
+                if (s[i] == ',') {
+                    i++
+                    continue
+                }
                 i++ // }
                 break
             }
@@ -275,11 +311,17 @@ private object JsonTreeReader {
             val list = ArrayList<Any?>()
             i++ // [
             skipWs()
-            if (s[i] == ']') { i++; return list }
+            if (s[i] == ']') {
+                i++
+                return list
+            }
             while (true) {
                 list.add(parseValue())
                 skipWs()
-                if (s[i] == ',') { i++; continue }
+                if (s[i] == ',') {
+                    i++
+                    continue
+                }
                 i++ // ]
                 break
             }

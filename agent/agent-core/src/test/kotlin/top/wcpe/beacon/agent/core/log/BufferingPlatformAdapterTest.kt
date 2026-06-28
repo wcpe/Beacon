@@ -17,24 +17,48 @@ import kotlin.test.assertNotNull
  * 本测试包裹一个 browse* 返回已知值的桩，断言装饰器把三个 browse* 原样透传（不为 null）。
  */
 class BufferingPlatformAdapterTest {
-
     // 桩：browse* 返回已知值，其余抽象能力空实现
     private class StubAdapter : PlatformAdapter {
         override fun info(msg: String) {}
+
         override fun warn(msg: String) {}
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
+
         override fun runAsync(task: () -> Unit) = task()
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = File(System.getProperty("java.io.tmpdir"))
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
+
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
         override fun dispatchConsoleCommand(command: String) {}
-        override fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing =
-            DirListing(path = relPath, entries = emptyList(), offset = offset, limit = limit, total = 0, hasMore = false)
-        override fun browseReadTree(relPath: String, maxDepth: Int): TreeNode =
+
+        override fun browseListDir(
+            relPath: String,
+            offset: Int,
+            limit: Int,
+        ): DirListing = DirListing(path = relPath, entries = emptyList(), offset = offset, limit = limit, total = 0, hasMore = false)
+
+        override fun browseReadTree(
+            relPath: String,
+            maxDepth: Int,
+        ): TreeNode =
             TreeNode(name = "plugins", relPath = relPath, dir = true, size = 0, text = false, children = emptyList(), truncated = false)
-        override fun browseReadFile(relPath: String): FileContent =
-            FileContent(path = relPath, content = "x", truncated = false)
+
+        override fun browseReadFile(relPath: String): FileContent = FileContent(path = relPath, content = "x", truncated = false)
     }
 
     @Test

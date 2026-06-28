@@ -6,7 +6,6 @@ package top.wcpe.beacon.agent.core.filetree
  * 纯函数，无副作用；与控制面 admin 侧 path 校验同口径（见 docs/API.md INVALID_PATH）。
  */
 object RelativePathGuard {
-
     /**
      * 判断相对路径是否安全（可落盘到目标根内）。
      *
@@ -38,7 +37,10 @@ object RelativePathGuard {
      * core 不硬编码 plugin 名；具体保护集合由壳层（bukkit / bungee）按自身 plugin 名注入。
      * 空集合视为未启用保护，永远返回 false（保留旧装配的兼容路径）。
      */
-    fun isReservedSelfPath(path: String, reservedSegments: Set<String>): Boolean {
+    fun isReservedSelfPath(
+        path: String,
+        reservedSegments: Set<String>,
+    ): Boolean {
         if (reservedSegments.isEmpty() || path.isEmpty()) return false
         val top = path.substringBefore('/')
         return reservedSegments.contains(top)

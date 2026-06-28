@@ -6,21 +6,35 @@ package top.wcpe.beacon.agent.core.settings
  * 路径用点分（如 "identity.serverId"、"timing.pollTimeoutMs"）。
  */
 interface ConfigReader {
-
     /** 读字符串，缺失返回默认值。 */
-    fun string(path: String, default: String): String
+    fun string(
+        path: String,
+        default: String,
+    ): String
 
     /** 读整数，缺失返回默认值。 */
-    fun int(path: String, default: Int): Int
+    fun int(
+        path: String,
+        default: Int,
+    ): Int
 
     /** 读长整数，缺失返回默认值。 */
-    fun long(path: String, default: Long): Long
+    fun long(
+        path: String,
+        default: Long,
+    ): Long
 
     /** 读浮点，缺失返回默认值。 */
-    fun double(path: String, default: Double): Double
+    fun double(
+        path: String,
+        default: Double,
+    ): Double
 
     /** 读布尔，缺失返回默认值。 */
-    fun boolean(path: String, default: Boolean): Boolean
+    fun boolean(
+        path: String,
+        default: Boolean,
+    ): Boolean
 
     /** 读字符串列表，缺失返回空列表。 */
     fun stringList(path: String): List<String>

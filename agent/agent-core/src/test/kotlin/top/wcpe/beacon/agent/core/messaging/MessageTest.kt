@@ -8,7 +8,6 @@ import kotlin.test.assertTrue
 
 /** 信封序列化与还原的纯逻辑单测（不依赖 transport / codec 实现）。 */
 class MessageTest {
-
     @Test
     fun `toMap 含必填字段且省略空可选字段`() {
         val message = Message(type = "ping", payload = mapOf("k" to "v"))
@@ -25,13 +24,14 @@ class MessageTest {
 
     @Test
     fun `RPC 请求带 correlationId 与 replyTo`() {
-        val message = Message(
-            type = "q",
-            payload = null,
-            correlationId = "cid-1",
-            replyTo = "reply:A",
-            source = "A",
-        )
+        val message =
+            Message(
+                type = "q",
+                payload = null,
+                correlationId = "cid-1",
+                replyTo = "reply:A",
+                source = "A",
+            )
         assertTrue(message.isRequest())
         val map = message.toMap()
         assertEquals("cid-1", map[Message.FIELD_CORRELATION_ID])
@@ -41,13 +41,14 @@ class MessageTest {
 
     @Test
     fun `fromMap 往返一致`() {
-        val original = Message(
-            type = "q",
-            payload = listOf(1L, "x", true),
-            correlationId = "cid-2",
-            replyTo = "reply:B",
-            source = "B",
-        )
+        val original =
+            Message(
+                type = "q",
+                payload = listOf(1L, "x", true),
+                correlationId = "cid-2",
+                replyTo = "reply:B",
+                source = "B",
+            )
         val restored = Message.fromMap(original.toMap())
         assertEquals(original, restored)
     }

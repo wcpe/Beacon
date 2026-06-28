@@ -17,7 +17,6 @@ class ConfigApplier(
     private val snapshotStore: SnapshotStore?,
     private val adapter: PlatformAdapter,
 ) {
-
     /**
      * 应用一份新有效配置。
      *

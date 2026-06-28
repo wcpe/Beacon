@@ -1,10 +1,10 @@
 package top.wcpe.beacon.agent.bukkit
 
+import taboolib.common.platform.ProxyCommandSender
+import taboolib.common.platform.command.command
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.OpsCommandText
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
-import taboolib.common.platform.ProxyCommandSender
-import taboolib.common.platform.command.command
 
 /**
  * agent 本地运维命令 /beacon（权限 beacon.admin）：status / reload / reconnect / resync / help。
@@ -16,9 +16,11 @@ import taboolib.common.platform.command.command
  * （取代 TabooLib 默认的中英双语 generic 提示），各 literal 带 description 供补全与帮助发现。
  */
 object BeaconAgentCommand {
-
     /** 注册根命令；在壳层装配完成、确有 lifecycle 后调用。 */
-    fun register(lifecycle: AgentLifecycle, adapter: PlatformAdapter) {
+    fun register(
+        lifecycle: AgentLifecycle,
+        adapter: PlatformAdapter,
+    ) {
         command("beacon", permission = "beacon.admin") {
             literal("status", description = "查看 agent 接入与有效配置状态") {
                 execute<ProxyCommandSender> { sender, _, _ ->

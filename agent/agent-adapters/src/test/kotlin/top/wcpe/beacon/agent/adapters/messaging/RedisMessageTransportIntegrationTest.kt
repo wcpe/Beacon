@@ -34,7 +34,6 @@ import kotlin.test.fail
  * - 清理：[AfterTest] 关闭传输并删除本次用到的 stream / 主题键 / 玩家名册项，跑完不留垃圾。
  */
 class RedisMessageTransportIntegrationTest {
-
     private val host = System.getenv("BEACON_REDIS_TEST_HOST")?.takeIf { it.isNotBlank() } ?: "localhost"
     private val port = System.getenv("BEACON_REDIS_TEST_PORT")?.toIntOrNull() ?: 16379
     private val password = System.getenv("BEACON_REDIS_TEST_PASSWORD") ?: ""
@@ -42,12 +41,13 @@ class RedisMessageTransportIntegrationTest {
     /** 本次用例的唯一前缀（隔离 + 便于清理）。 */
     private val runTag = "it-" + UUID.randomUUID().toString().take(8)
 
-    private val settings = MessagingSettings(
-        enabled = true,
-        rpcTimeoutMs = 5000,
-        streamMaxLen = 10000,
-        consumerName = "it-consumer",
-    )
+    private val settings =
+        MessagingSettings(
+            enabled = true,
+            rpcTimeoutMs = 5000,
+            streamMaxLen = 10000,
+            consumerName = "it-consumer",
+        )
 
     /** 本用例创建的传输实例，[AfterTest] 统一关闭。 */
     private val transports = mutableListOf<RedisMessageTransport>()
@@ -58,24 +58,26 @@ class RedisMessageTransportIntegrationTest {
     /** 本用例使用到的玩家名（用于清理名册 field）。 */
     private val usedPlayers = mutableSetOf<String>()
 
-    private fun connection(): RedisConnection = RedisConnection(
-        host = host,
-        port = port,
-        database = 0,
-        password = password,
-        connectTimeoutMs = 3000,
-    )
+    private fun connection(): RedisConnection =
+        RedisConnection(
+            host = host,
+            port = port,
+            database = 0,
+            password = password,
+            connectTimeoutMs = 3000,
+        )
 
     @BeforeTest
     fun guardRedisReachable() {
         // 守卫：探测测试 Redis 是否可连，连不上则整类跳过（不红）。
-        val reachable = try {
-            JedisPoolFactory.create(connection()).use { pool ->
-                pool.resource.use { it.ping() == "PONG" }
+        val reachable =
+            try {
+                JedisPoolFactory.create(connection()).use { pool ->
+                    pool.resource.use { it.ping() == "PONG" }
+                }
+            } catch (t: Throwable) {
+                false
             }
-        } catch (t: Throwable) {
-            false
-        }
         Assumptions.assumeTrue(reachable, "测试 Redis 不可达（$host:$port），跳过集成测试")
     }
 
@@ -111,23 +113,28 @@ class RedisMessageTransportIntegrationTest {
     /** 构造一个传输实例并登记，便于统一关闭与清理。 */
     private fun newTransport(serverId: String): RedisMessageTransport {
         usedServerIds.add(serverId)
-        val transport = RedisMessageTransport(
-            connection = connection(),
-            serverId = serverId,
-            settings = settings,
-        )
+        val transport =
+            RedisMessageTransport(
+                connection = connection(),
+                serverId = serverId,
+                settings = settings,
+            )
         transports.add(transport)
         return transport
     }
 
     /** 用真实传输 + 真实 codec 构造 MessageBus（注入传输的 playerLocator）。 */
-    private fun newBus(serverId: String, transport: RedisMessageTransport): MessageBus = MessageBus(
-        transport = transport,
-        codec = KotlinxJsonCodec(),
-        selfServerId = serverId,
-        settings = settings,
-        playerLocator = transport.playerLocator(),
-    )
+    private fun newBus(
+        serverId: String,
+        transport: RedisMessageTransport,
+    ): MessageBus =
+        MessageBus(
+            transport = transport,
+            codec = KotlinxJsonCodec(),
+            selfServerId = serverId,
+            settings = settings,
+            playerLocator = transport.playerLocator(),
+        )
 
     @Test
     fun `定向发送 含离线补消费 B 后启动经消费组补收`() {
@@ -196,12 +203,13 @@ class RedisMessageTransportIntegrationTest {
         waitConnected(busC)
 
         val timeoutFuture = busA.call(idC, "noop", null)
-        val ex = try {
-            timeoutFuture.get(10, TimeUnit.SECONDS)
-            fail("期望 RPC 超时，但拿到了返回值")
-        } catch (e: ExecutionException) {
-            e
-        }
+        val ex =
+            try {
+                timeoutFuture.get(10, TimeUnit.SECONDS)
+                fail("期望 RPC 超时，但拿到了返回值")
+            } catch (e: ExecutionException) {
+                e
+            }
         assertTrue(ex.cause is TimeoutException, "期望 TimeoutException，实际=${ex.cause}")
     }
 
@@ -345,12 +353,13 @@ class RedisMessageTransportIntegrationTest {
 
             // 并发订阅：所有线程在同一放闸点齐发 subscribe，集中砸进激活窗口，制造并发加入竞态。
             val startGate = CountDownLatch(1)
-            val subscribeThreads = topics.map { topic ->
-                Thread {
-                    startGate.await()
-                    busB.subscribe(topic) { _ -> latches.getValue(topic).countDown() }
-                }.also { it.isDaemon = true }
-            }
+            val subscribeThreads =
+                topics.map { topic ->
+                    Thread {
+                        startGate.await()
+                        busB.subscribe(topic) { _ -> latches.getValue(topic).countDown() }
+                    }.also { it.isDaemon = true }
+                }
             subscribeThreads.forEach { it.start() }
             startGate.countDown()
             subscribeThreads.forEach { it.join(10_000) }
@@ -378,7 +387,10 @@ class RedisMessageTransportIntegrationTest {
     // ---- 测试辅助 ----
 
     /** 轮询等待 bus 的 transport 连上（isConnected）。 */
-    private fun waitConnected(bus: MessageBus, timeoutMs: Long = 5000) {
+    private fun waitConnected(
+        bus: MessageBus,
+        timeoutMs: Long = 5000,
+    ) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (bus.isAvailable()) return
@@ -399,15 +411,16 @@ class RedisMessageTransportIntegrationTest {
         val deadline = System.currentTimeMillis() + timeoutMs
         JedisPoolFactory.create(connection()).use { pool ->
             while (System.currentTimeMillis() < deadline) {
-                val count = try {
-                    pool.resource.use { jedis ->
-                        // PUBSUB NUMSUB 返回 [channel, count, ...]，取该信道的订阅计数。
-                        val result = jedis.pubsubNumSub(channel)
-                        result[channel]?.toLong() ?: 0L
+                val count =
+                    try {
+                        pool.resource.use { jedis ->
+                            // PUBSUB NUMSUB 返回 [channel, count, ...]，取该信道的订阅计数。
+                            val result = jedis.pubsubNumSub(channel)
+                            result[channel]?.toLong() ?: 0L
+                        }
+                    } catch (t: Throwable) {
+                        0L
                     }
-                } catch (t: Throwable) {
-                    0L
-                }
                 if (count > 0) return true
                 Thread.sleep(50)
             }

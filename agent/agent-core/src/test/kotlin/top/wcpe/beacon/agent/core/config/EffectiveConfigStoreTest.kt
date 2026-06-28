@@ -7,8 +7,10 @@ import kotlin.test.assertTrue
 
 /** EffectiveConfigStore 读写与拷贝语义的单元测试。 */
 class EffectiveConfigStoreTest {
-
-    private fun result(md5: String, vararg items: ConfigItem) = EffectiveResult(
+    private fun result(
+        md5: String,
+        vararg items: ConfigItem,
+    ) = EffectiveResult(
         namespace = "prod",
         serverId = "lobby-1",
         group = "area1",

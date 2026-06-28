@@ -8,7 +8,6 @@ import kotlin.test.assertNull
  * SseFrameParser 纯逻辑单测：按空行分帧、注释行（保活心跳）忽略、event/data 字段解析。
  */
 class SseFrameParserTest {
-
     @Test
     fun `空行前未凑齐不产出事件`() {
         val p = SseFrameParser()

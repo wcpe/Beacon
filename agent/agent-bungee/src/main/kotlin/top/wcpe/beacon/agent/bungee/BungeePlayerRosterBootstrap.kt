@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.bungee
 
+import net.md_5.bungee.api.ProxyServer
 import redis.clients.jedis.JedisPool
 import top.wcpe.beacon.agent.adapters.messaging.JedisPoolFactory
 import top.wcpe.beacon.agent.adapters.messaging.RedisConnection
@@ -10,7 +11,6 @@ import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.transport.JsonCodec
-import net.md_5.bungee.api.ProxyServer
 
 /**
  * Bungee（proxy）侧玩家位置名册引导（FR-26 / ADR-0016 决策 5）：
@@ -34,7 +34,6 @@ class BungeePlayerRosterBootstrap(
     private val rosterHolder: RosterDirectoryHolder,
     private val adapter: PlatformAdapter,
 ) {
-
     @Volatile
     private var pool: JedisPool? = null
 
@@ -60,9 +59,11 @@ class BungeePlayerRosterBootstrap(
                 roster = newRoster
                 lastConnection = connection
                 // 名册就绪：注入全表读，点亮 proxy 侧 Discovery 的只读名册查询（FR-31）。
-                rosterHolder.set(object : RosterDirectory {
-                    override fun snapshot(): Map<String, String> = newRoster.snapshot()
-                })
+                rosterHolder.set(
+                    object : RosterDirectory {
+                        override fun snapshot(): Map<String, String> = newRoster.snapshot()
+                    },
+                )
                 adapter.info("玩家位置名册已就绪并按当前在线玩家重建")
             } catch (t: Throwable) {
                 adapter.error("玩家位置名册初始化失败，proxy 仍正常运行（按玩家寻址不可用）", t)
@@ -71,12 +72,18 @@ class BungeePlayerRosterBootstrap(
     }
 
     /** 玩家进服/换服：登记当前所在服。 */
-    fun onPlayerLocated(playerName: String, serverId: String) {
+    fun onPlayerLocated(
+        playerName: String,
+        serverId: String,
+    ) {
         roster?.onPlayerLocated(playerName, serverId)
     }
 
     /** 玩家退出：仅当名册当前所在服与退出服一致才删（换服误删保护）。 */
-    fun onPlayerQuit(playerName: String, fromServerId: String) {
+    fun onPlayerQuit(
+        playerName: String,
+        fromServerId: String,
+    ) {
         roster?.onPlayerQuit(playerName, fromServerId)
     }
 
@@ -110,12 +117,13 @@ class BungeePlayerRosterBootstrap(
 
     private fun readRedisConnection(): RedisConnection? {
         val item = store.item(REDIS_CONFIG_DATA_ID) ?: return null
-        val tree = try {
-            codec.decode(item.content)
-        } catch (t: Throwable) {
-            adapter.warn("解析 Redis 下发配置失败：${t.message}")
-            return null
-        }
+        val tree =
+            try {
+                codec.decode(item.content)
+            } catch (t: Throwable) {
+                adapter.warn("解析 Redis 下发配置失败：${t.message}")
+                return null
+            }
         return RedisConnection.fromTree(tree, connectTimeoutMs = settings.requestTimeoutMs.toInt())
     }
 

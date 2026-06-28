@@ -1,6 +1,5 @@
 package top.wcpe.beacon.agent.adapters
 
-import top.wcpe.beacon.agent.core.transport.JsonCodec
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -10,6 +9,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
+import top.wcpe.beacon.agent.core.transport.JsonCodec
 
 /**
  * 基于 kotlinx.serialization 的 JsonCodec 实现（ADR-0005 唯一碰具体库的类之一）。
@@ -18,12 +18,12 @@ import kotlinx.serialization.json.longOrNull
  * 使 core 无需引入 @Serializable 与 kotlinx 类型。
  */
 class KotlinxJsonCodec : JsonCodec {
-
-    private val json = Json {
-        // 容忍服务端可能多出的字段；编码时省略 null 由我们手动控制（见 toElement）。
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    private val json =
+        Json {
+            // 容忍服务端可能多出的字段；编码时省略 null 由我们手动控制（见 toElement）。
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        }
 
     override fun encode(value: Any?): String {
         return json.encodeToString(JsonElement.serializer(), toElement(value))

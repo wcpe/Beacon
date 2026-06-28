@@ -15,7 +15,6 @@ import java.util.concurrent.atomic.AtomicReference
  * 测试通过 [pushEvent] / [closeStream] 向当前在飞连接喂指令，断言生命周期对事件的反应。
  */
 class FakeStreamTransport : StreamTransport {
-
     /** 累计 open 次数（断言重连发生）。 */
     val openCalls = AtomicInteger(0)
 
@@ -27,10 +26,14 @@ class FakeStreamTransport : StreamTransport {
 
     private sealed class Command {
         data class Emit(val event: StreamEvent) : Command()
+
         data class Close(val error: Throwable?) : Command()
     }
 
-    override fun open(request: StreamRequest, listener: StreamListener) {
+    override fun open(
+        request: StreamRequest,
+        listener: StreamListener,
+    ) {
         openCalls.incrementAndGet()
         lastRequest.set(request)
         val queue = LinkedBlockingQueue<Command>()
@@ -49,7 +52,10 @@ class FakeStreamTransport : StreamTransport {
     }
 
     /** 向当前在飞连接投递一条事件。 */
-    fun pushEvent(type: String, data: String = "") {
+    fun pushEvent(
+        type: String,
+        data: String = "",
+    ) {
         commands.get()?.put(Command.Emit(StreamEvent(type = type, data = data)))
     }
 

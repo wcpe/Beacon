@@ -1,6 +1,6 @@
 package top.wcpe.beacon.agent.core.browse
 
-/**
+/*
  * 只读文件浏览的回传数据模型（FR-109，见 ADR-0049）。纯数据类、无 IO。
  *
  * 与反向抓取 ScanFile 不同：浏览是「点开才看」的惰加载，相对路径都以 `plugins/` 根（正斜杠分隔）为基准。

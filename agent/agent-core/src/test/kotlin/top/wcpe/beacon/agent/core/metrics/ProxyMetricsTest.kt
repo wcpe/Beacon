@@ -10,17 +10,17 @@ import kotlin.test.assertTrue
  * 覆盖：字段透传、延迟不可用哨兵、线程数 / 运行时长 MXBean 读取的合理性。
  */
 class ProxyMetricsTest {
-
     @Test
     fun `构造代理指标按入参透传`() {
-        val m = ProxyMetrics(
-            onlineConnections = 128,
-            threadCount = 64,
-            uptimeMs = 3_600_000L,
-            backendUp = 3,
-            backendTotal = 4,
-            backendAvgLatencyMs = 12.5,
-        )
+        val m =
+            ProxyMetrics(
+                onlineConnections = 128,
+                threadCount = 64,
+                uptimeMs = 3_600_000L,
+                backendUp = 3,
+                backendTotal = 4,
+                backendAvgLatencyMs = 12.5,
+            )
         assertEquals(128, m.onlineConnections)
         assertEquals(64, m.threadCount)
         assertEquals(3_600_000L, m.uptimeMs)

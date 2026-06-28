@@ -18,7 +18,6 @@ import kotlin.test.assertTrue
  * 恶意 targetRoot（控制面被攻破）整集拒绝；同 overrideMd5 幂等跳过；fail-static 不臆测删盘。
  */
 class OverrideSyncApplierTest {
-
     // 模拟服务器根，其下建 plugins 基目录；targetRoot 相对服务器根（plugins/<plugin>）。
     private val serverRoot: File = Files.createTempDirectory("beacon-srv").toFile()
     private val pluginsBase: File = File(serverRoot, "plugins").apply { mkdirs() }
@@ -27,15 +26,37 @@ class OverrideSyncApplierTest {
     private class RecordingAdapter(private val folder: File) : PlatformAdapter {
         val dispatched = mutableListOf<String>()
         val warnings = mutableListOf<String>()
+
         override fun runAsync(task: () -> Unit) = task()
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = folder
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
-        override fun dispatchConsoleCommand(command: String) { dispatched.add(command) }
+
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
+        override fun dispatchConsoleCommand(command: String) {
+            dispatched.add(command)
+        }
+
         override fun info(msg: String) {}
-        override fun warn(msg: String) { warnings.add(msg) }
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun warn(msg: String) {
+            warnings.add(msg)
+        }
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
     }
 
     private lateinit var adapter: RecordingAdapter
@@ -45,7 +66,10 @@ class OverrideSyncApplierTest {
         return d.joinToString("") { "%02x".format(it) }
     }
 
-    private fun member(path: String, content: String) = FileContent(path, md5(content), content)
+    private fun member(
+        path: String,
+        content: String,
+    ) = FileContent(path, md5(content), content)
 
     private fun newApplier(
         whitelist: Set<String>,
@@ -61,8 +85,10 @@ class OverrideSyncApplierTest {
         )
     }
 
-    private fun manifest(md5: String, vararg sets: OverrideSetEntry) =
-        OverrideManifest("prod", "lobby-1", md5, sets.toList())
+    private fun manifest(
+        md5: String,
+        vararg sets: OverrideSetEntry,
+    ) = OverrideManifest("prod", "lobby-1", md5, sets.toList())
 
     @AfterTest
     fun cleanup() {
@@ -73,9 +99,10 @@ class OverrideSyncApplierTest {
     @Test
     fun `落 targetRoot 并按白名单派发命令`() {
         val applier = newApplier(setOf("allin")) { _, path -> member(path, "content-$path") }
-        val ok = applier.apply(
-            manifest("md5-1", OverrideSetEntry("AllinCore", "plugins/AllinCore", "allin reload", listOf("config.yml"))),
-        )
+        val ok =
+            applier.apply(
+                manifest("md5-1", OverrideSetEntry("AllinCore", "plugins/AllinCore", "allin reload", listOf("config.yml"))),
+            )
         assertTrue(ok)
         val written = File(pluginsBase, "AllinCore/config.yml")
         assertEquals("content-config.yml", written.readText(StandardCharsets.UTF_8))
@@ -95,9 +122,10 @@ class OverrideSyncApplierTest {
     @Test
     fun `取成员内容失败 整集 fail-static 不落盘不派发`() {
         val applier = newApplier(setOf("allin")) { _, _ -> null } // 取内容恒失败
-        val ok = applier.apply(
-            manifest("md5-1", OverrideSetEntry("AllinCore", "plugins/AllinCore", "allin reload", listOf("config.yml"))),
-        )
+        val ok =
+            applier.apply(
+                manifest("md5-1", OverrideSetEntry("AllinCore", "plugins/AllinCore", "allin reload", listOf("config.yml"))),
+            )
         assertFalse(ok, "取内容失败应返回未收敛")
         assertFalse(File(pluginsBase, "AllinCore/config.yml").exists(), "fail-static 不应落盘")
         assertTrue(adapter.dispatched.isEmpty(), "fail-static 不应派发命令")
@@ -106,9 +134,10 @@ class OverrideSyncApplierTest {
     @Test
     fun `恶意 targetRoot 逃逸 plugins 整集拒绝`() {
         val applier = newApplier(setOf("allin")) { _, path -> member(path, "evil") }
-        val ok = applier.apply(
-            manifest("md5-1", OverrideSetEntry("Evil", "plugins/../../etc", "allin reload", listOf("passwd"))),
-        )
+        val ok =
+            applier.apply(
+                manifest("md5-1", OverrideSetEntry("Evil", "plugins/../../etc", "allin reload", listOf("passwd"))),
+            )
         assertFalse(ok, "恶意目标根应整集拒绝")
         assertFalse(File(serverRoot.parentFile, "etc/passwd").exists(), "逃逸文件不应被创建")
         assertTrue(adapter.dispatched.isEmpty(), "拒绝集不应派发命令")
@@ -118,7 +147,11 @@ class OverrideSyncApplierTest {
     @Test
     fun `同 overrideMd5 幂等跳过 不重复派发命令`() {
         var fetchCount = 0
-        val applier = newApplier(setOf("allin")) { _, path -> fetchCount++; member(path, "x") }
+        val applier =
+            newApplier(setOf("allin")) { _, path ->
+                fetchCount++
+                member(path, "x")
+            }
         val m = manifest("md5-same", OverrideSetEntry("AllinCore", "plugins/AllinCore", "allin reload", listOf("config.yml")))
         applier.apply(m)
         val afterFirst = fetchCount
@@ -131,9 +164,10 @@ class OverrideSyncApplierTest {
     @Test
     fun `取内容失败一轮后 下一轮恢复可落盘`() {
         var failFirst = true
-        val applier = newApplier(setOf("allin")) { _, path ->
-            if (failFirst) null else member(path, "recovered")
-        }
+        val applier =
+            newApplier(setOf("allin")) { _, path ->
+                if (failFirst) null else member(path, "recovered")
+            }
         val m = manifest("md5-1", OverrideSetEntry("AllinCore", "plugins/AllinCore", "allin reload", listOf("config.yml")))
         assertFalse(applier.apply(m), "首轮取失败应未收敛")
         failFirst = false

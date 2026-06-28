@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
 
 /** MessagingView（Java 门面适配）与 DisabledMessaging、MessagingHolder、MessagingModule 单测。 */
 class MessagingViewTest {
-
     private val settings = MessagingSettings(enabled = true, rpcTimeoutMs = 1000, streamMaxLen = 1000, consumerName = "t")
 
     @Test
@@ -70,13 +69,14 @@ class MessagingViewTest {
     fun `MessagingModule 启用时启动成功并注入活跃门面`() {
         val net = FakeNetwork()
         val holder = MessagingHolder()
-        val module = MessagingModule(
-            transport = FakeMessageTransport(net, "A"),
-            codec = FakeJsonCodec(),
-            selfServerId = "A",
-            settings = settings,
-            holder = holder,
-        )
+        val module =
+            MessagingModule(
+                transport = FakeMessageTransport(net, "A"),
+                codec = FakeJsonCodec(),
+                selfServerId = "A",
+                settings = settings,
+                holder = holder,
+            )
         assertTrue(module.start())
         assertTrue(holder.get().isAvailable())
 
@@ -88,13 +88,14 @@ class MessagingViewTest {
     fun `MessagingModule 未启用时不启动 保持降级`() {
         val net = FakeNetwork()
         val holder = MessagingHolder()
-        val module = MessagingModule(
-            transport = FakeMessageTransport(net, "A"),
-            codec = FakeJsonCodec(),
-            selfServerId = "A",
-            settings = settings.copy(enabled = false),
-            holder = holder,
-        )
+        val module =
+            MessagingModule(
+                transport = FakeMessageTransport(net, "A"),
+                codec = FakeJsonCodec(),
+                selfServerId = "A",
+                settings = settings.copy(enabled = false),
+                holder = holder,
+            )
         assertFalse(module.start())
         assertFalse(holder.get().isAvailable())
     }
@@ -102,19 +103,23 @@ class MessagingViewTest {
     @Test
     fun `MessagingModule 启动失败时降级不抛`() {
         val holder = MessagingHolder()
-        val module = MessagingModule(
-            transport = ThrowingTransport(),
-            codec = FakeJsonCodec(),
-            selfServerId = "A",
-            settings = settings,
-            holder = holder,
-        )
+        val module =
+            MessagingModule(
+                transport = ThrowingTransport(),
+                codec = FakeJsonCodec(),
+                selfServerId = "A",
+                settings = settings,
+                holder = holder,
+            )
         // start 内部捕获异常并降级，返回 false，不抛。
         assertFalse(module.start())
         assertFalse(holder.get().isAvailable())
     }
 
-    private fun newBus(net: FakeNetwork, serverId: String): MessageBus {
+    private fun newBus(
+        net: FakeNetwork,
+        serverId: String,
+    ): MessageBus {
         return MessageBus(
             transport = FakeMessageTransport(net, serverId),
             codec = FakeJsonCodec(),
@@ -126,14 +131,38 @@ class MessagingViewTest {
     /** 启动即抛的传输，验证模块降级容错。 */
     private class ThrowingTransport : MessageTransport {
         override fun start() = throw RuntimeException("连接失败")
+
         override fun close() {}
+
         override fun isConnected(): Boolean = false
-        override fun sendToServer(serverId: String, rawJson: String) {}
-        override fun publishTopic(topic: String, rawJson: String) {}
-        override fun sendReply(replyChannel: String, rawJson: String) {}
+
+        override fun sendToServer(
+            serverId: String,
+            rawJson: String,
+        ) {}
+
+        override fun publishTopic(
+            topic: String,
+            rawJson: String,
+        ) {}
+
+        override fun sendReply(
+            replyChannel: String,
+            rawJson: String,
+        ) {}
+
         override fun subscribeServerInbox(onMessage: (String) -> Unit) {}
-        override fun subscribeReplyInbox(replyChannel: String, onMessage: (String) -> Unit) {}
-        override fun subscribeTopic(topic: String, onMessage: (String) -> Unit) {}
+
+        override fun subscribeReplyInbox(
+            replyChannel: String,
+            onMessage: (String) -> Unit,
+        ) {}
+
+        override fun subscribeTopic(
+            topic: String,
+            onMessage: (String) -> Unit,
+        ) {}
+
         override fun unsubscribeTopic(topic: String) {}
     }
 }

@@ -17,21 +17,22 @@ import kotlin.test.assertTrue
  * register 解析、pollEffective 对 200/304/404 的映射、请求头 X-Beacon-Token。
  */
 class BeaconApiClientTest {
-
     private val codec = KotlinxJsonCodec()
 
-    private fun client(transport: FakeHttpTransport) =
-        BeaconApiClient(transport, codec, TestFixtures.settings())
+    private fun client(transport: FakeHttpTransport) = BeaconApiClient(transport, codec, TestFixtures.settings())
 
     @Test
     fun `register 200 解析 resolvedGroup zone 与 assigned`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(
-                200,
-                """{"instanceKey":"prod/lobby-1","resolvedGroup":"area1","resolvedZone":"zoneA",
-                   "heartbeatIntervalSec":10,"ttlSec":30,"assigned":true}""".trimIndent(),
-            ),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"instanceKey":"prod/lobby-1","resolvedGroup":"area1","resolvedZone":"zoneA",
+                    "heartbeatIntervalSec":10,"ttlSec":30,"assigned":true}
+                    """.trimIndent(),
+                ),
+            )
         val outcome = client(transport).register(TestFixtures.identity())
         val success = assertIs<RegisterOutcome.Success>(outcome)
         assertEquals("area1", success.result.resolvedGroup)
@@ -43,9 +44,10 @@ class BeaconApiClientTest {
 
     @Test
     fun `register 请求体含顶层 capacity weight 与 metadata map 且头带 token`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(200, """{"instanceKey":"k","heartbeatIntervalSec":10,"ttlSec":30,"assigned":false}"""),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(200, """{"instanceKey":"k","heartbeatIntervalSec":10,"ttlSec":30,"assigned":false}"""),
+            )
         client(transport).register(TestFixtures.identity())
 
         val req = transport.captured.single()
@@ -78,13 +80,16 @@ class BeaconApiClientTest {
 
     @Test
     fun `pollEffective 200 返回 Changed 且解析 items 无 version`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(
-                200,
-                """{"namespace":"prod","serverId":"lobby-1","group":"area1","zone":"zoneA","md5":"abc",
-                   "items":[{"dataId":"mysql.yml","format":"yaml","md5":"9f","content":"url: jdbc"}]}""".trimIndent(),
-            ),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"namespace":"prod","serverId":"lobby-1","group":"area1","zone":"zoneA","md5":"abc",
+                    "items":[{"dataId":"mysql.yml","format":"yaml","md5":"9f","content":"url: jdbc"}]}
+                    """.trimIndent(),
+                ),
+            )
         val result = client(transport).pollEffective(TestFixtures.identity(), null, 30000)
         val changed = assertIs<PollResult.Changed>(result)
         assertEquals("abc", changed.effective.md5)
@@ -135,14 +140,17 @@ class BeaconApiClientTest {
 
     @Test
     fun `discover 解析 instances 列表`() {
-        val transport = FakeHttpTransport().enqueue(
-            HttpResponse(
-                200,
-                """{"instances":[{"serverId":"lobby-1","role":"bukkit","group":"area1","zone":"zoneA",
-                   "address":"10.0.0.7:25565","version":"1.4.2","status":"online","playerCount":12,
-                   "capacity":200,"weight":100}]}""".trimIndent(),
-            ),
-        )
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """
+                    {"instances":[{"serverId":"lobby-1","role":"bukkit","group":"area1","zone":"zoneA",
+                    "address":"10.0.0.7:25565","version":"1.4.2","status":"online","playerCount":12,
+                    "capacity":200,"weight":100}]}
+                    """.trimIndent(),
+                ),
+            )
         val list = client(transport).discover("prod", "area1", null, null)
         assertEquals(1, list.size)
         assertEquals("lobby-1", list[0]["serverId"])

@@ -15,7 +15,6 @@ package top.wcpe.beacon.agent.core.messaging
 class RosterDirectoryHolder(
     private val warn: (String) -> Unit = {},
 ) : RosterDirectory {
-
     /** 当前注入的名册实现；null 表示未注入（messaging 未开 / Redis 未连）。 */
     @Volatile
     private var current: RosterDirectory? = null

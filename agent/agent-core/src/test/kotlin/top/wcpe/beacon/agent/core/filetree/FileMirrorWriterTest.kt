@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
 
 /** FileMirrorWriter 原子落盘（临时文件→fsync→rename）+ 删除 + 路径安全校验单测。 */
 class FileMirrorWriterTest {
-
     private val root: File = Files.createTempDirectory("beacon-mirror").toFile()
     private val writer = FileMirrorWriter(root)
 
@@ -44,9 +43,10 @@ class FileMirrorWriterTest {
     fun `原子重命名不残留临时文件`() {
         writer.write("a.yml", "v1")
         // 临时文件应已被原子重命名消费，目录下不残留任何 a.yml.beacon-tmp* 临时文件。
-        val residue = root.listFiles()
-            ?.filter { it.name.startsWith("a.yml") && it.name != "a.yml" }
-            ?: emptyList()
+        val residue =
+            root.listFiles()
+                ?.filter { it.name.startsWith("a.yml") && it.name != "a.yml" }
+                ?: emptyList()
         assertTrue(residue.isEmpty(), "临时文件应在重命名后消失，实际残留：${residue.map { it.name }}")
     }
 
@@ -58,18 +58,19 @@ class FileMirrorWriterTest {
         val iterations = 60
         val errors = CopyOnWriteArrayList<Throwable>()
         val start = CountDownLatch(1)
-        val workers = (0 until threads).map { t ->
-            Thread {
-                start.await()
-                repeat(iterations) { i ->
-                    try {
-                        writer.write("shared.yml", "t$t-i$i")
-                    } catch (e: Throwable) {
-                        errors += e
+        val workers =
+            (0 until threads).map { t ->
+                Thread {
+                    start.await()
+                    repeat(iterations) { i ->
+                        try {
+                            writer.write("shared.yml", "t$t-i$i")
+                        } catch (e: Throwable) {
+                            errors += e
+                        }
                     }
                 }
             }
-        }
         workers.forEach { it.start() }
         start.countDown()
         workers.forEach { it.join() }
@@ -83,9 +84,10 @@ class FileMirrorWriterTest {
         assertTrue(target.exists())
         assertTrue(target.readText(StandardCharsets.UTF_8).matches(Regex("t\\d+-i\\d+")))
         // 不残留任何临时文件。
-        val residue = root.listFiles()
-            ?.filter { it.name.startsWith("shared.yml") && it.name != "shared.yml" }
-            ?: emptyList()
+        val residue =
+            root.listFiles()
+                ?.filter { it.name.startsWith("shared.yml") && it.name != "shared.yml" }
+                ?: emptyList()
         assertTrue(residue.isEmpty(), "不应残留临时文件，实际：${residue.map { it.name }}")
     }
 

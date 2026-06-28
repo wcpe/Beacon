@@ -14,7 +14,6 @@ import kotlin.test.assertTrue
  * TCP 连接探测以「端口能否连上」为准，恰好规避该误报。
  */
 class TcpBackendProbeTest {
-
     @Test
     fun `监听中的端口判可达、未监听端口判不可达`() {
         // 绑定随机空闲端口并监听 = 可达后端。
@@ -48,9 +47,10 @@ class TcpBackendProbeTest {
             tmp.close()
             val unreachable = InetSocketAddress("127.0.0.1", closedPort)
 
-            val reach = BackendReachability.summarize(
-                TcpBackendProbe.probe(listOf(reachable, unreachable), 1_000L),
-            )
+            val reach =
+                BackendReachability.summarize(
+                    TcpBackendProbe.probe(listOf(reachable, unreachable), 1_000L),
+                )
             assertEquals(1, reach.up, "应有 1 个可达后端")
             assertEquals(2, reach.total, "后端总数应为 2")
             assertTrue(reach.avgLatencyMs >= 0.0, "有可达后端时平均延迟应为非负、非不可用哨兵")

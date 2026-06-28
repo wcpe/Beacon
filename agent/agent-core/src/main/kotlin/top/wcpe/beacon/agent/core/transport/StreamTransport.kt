@@ -12,14 +12,16 @@ package top.wcpe.beacon.agent.core.transport
  * - 连接结束（正常关闭 / 断线 / 读超时）返回，调用方据此退避重连。
  */
 interface StreamTransport {
-
     /**
      * 打开一条 SSE 流并阻塞读取，逐帧回调 listener，直到流结束或 [request] 被中断。
      *
      * @param request 流请求（URL 含上报的各通道 md5；headers 含 X-Beacon-Token）
      * @param listener 事件与连接状态回调
      */
-    fun open(request: StreamRequest, listener: StreamListener)
+    fun open(
+        request: StreamRequest,
+        listener: StreamListener,
+    )
 }
 
 /**
@@ -39,7 +41,6 @@ data class StreamRequest(
  * SSE 流监听器：连接建立、收到事件、连接结束三类回调。
  */
 interface StreamListener {
-
     /** 流成功建立（HTTP 200 且 Content-Type 为 text/event-stream）时回调一次。 */
     fun onOpen()
 

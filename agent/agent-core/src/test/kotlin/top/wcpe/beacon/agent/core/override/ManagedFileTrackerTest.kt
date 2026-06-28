@@ -11,7 +11,6 @@ import kotlin.test.assertTrue
  * 说明被外部（插件自身重写 config）改过 → 应告警而非盲盖，打破「插件写→agent 盖→reload→插件又写」震荡环。
  */
 class ManagedFileTrackerTest {
-
     @Test
     fun `agent 写入后磁盘未变 不算外部改动`() {
         val tracker = ManagedFileTracker()

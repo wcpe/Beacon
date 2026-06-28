@@ -10,7 +10,6 @@ import top.wcpe.beacon.agent.core.messaging.MessagingSettings
  * role 由壳层按平台固定传入。
  */
 object AgentBootstrap {
-
     /** 从配置读取 AgentSettings。 */
     fun readSettings(reader: ConfigReader): AgentSettings {
         return AgentSettings(
@@ -19,36 +18,41 @@ object AgentBootstrap {
             pollTimeoutMs = reader.long("timing.poll-timeout-ms", 30000),
             requestTimeoutMs = reader.long("timing.request-timeout-ms", 5000),
             heartbeatFallbackMs = reader.long("timing.heartbeat-fallback-ms", 10000),
-            backoff = BackoffSettings(
-                initialMs = reader.long("backoff.initial-ms", 1000),
-                maxMs = reader.long("backoff.max-ms", 30000),
-                multiplier = reader.double("backoff.multiplier", 2.0),
-                jitterRatio = reader.double("backoff.jitter-ratio", 0.2),
-            ),
+            backoff =
+                BackoffSettings(
+                    initialMs = reader.long("backoff.initial-ms", 1000),
+                    maxMs = reader.long("backoff.max-ms", 30000),
+                    multiplier = reader.double("backoff.multiplier", 2.0),
+                    jitterRatio = reader.double("backoff.jitter-ratio", 0.2),
+                ),
             snapshotEnabled = reader.boolean("snapshot.enabled", true),
             snapshotFileName = reader.string("snapshot.file-name", "effective-config.snapshot.json"),
-            fileTree = FileTreeSettings(
-                enabled = reader.boolean("file-tree.enabled", true),
-                targetSubDir = reader.string("file-tree.target-sub-dir", ""),
-                appliedManifestFileName = reader.string("file-tree.applied-manifest-file-name", "file-tree.applied.json"),
-            ),
-            override = OverrideSettings(
-                // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
-                commandWhitelist = reader.stringList("override.command-whitelist").toSet(),
-                backupDirName = reader.string("override.backup-dir-name", "override-backup"),
-            ),
-            messaging = MessagingSettings(
-                // 跨服消息模块默认关（ADR-0016 决策 6）；Redis 连接由控制面下发，不在本地。
-                enabled = reader.boolean("messaging.enabled", false),
-                rpcTimeoutMs = reader.long("messaging.rpc-timeout-ms", 5000),
-                streamMaxLen = reader.long("messaging.stream-max-len", 10000),
-                consumerName = reader.string("messaging.consumer-name", "default"),
-            ),
-            proxy = ProxySettings(
-                // BC 代理服务的大区 / 小区（FR-48）；默认空 = 未配，默认服走兜底首个在线子服。bukkit 不读此项。
-                homeGroup = reader.string("proxy.home-group", ""),
-                homeZone = reader.string("proxy.home-zone", ""),
-            ),
+            fileTree =
+                FileTreeSettings(
+                    enabled = reader.boolean("file-tree.enabled", true),
+                    targetSubDir = reader.string("file-tree.target-sub-dir", ""),
+                    appliedManifestFileName = reader.string("file-tree.applied-manifest-file-name", "file-tree.applied.json"),
+                ),
+            override =
+                OverrideSettings(
+                    // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
+                    commandWhitelist = reader.stringList("override.command-whitelist").toSet(),
+                    backupDirName = reader.string("override.backup-dir-name", "override-backup"),
+                ),
+            messaging =
+                MessagingSettings(
+                    // 跨服消息模块默认关（ADR-0016 决策 6）；Redis 连接由控制面下发，不在本地。
+                    enabled = reader.boolean("messaging.enabled", false),
+                    rpcTimeoutMs = reader.long("messaging.rpc-timeout-ms", 5000),
+                    streamMaxLen = reader.long("messaging.stream-max-len", 10000),
+                    consumerName = reader.string("messaging.consumer-name", "default"),
+                ),
+            proxy =
+                ProxySettings(
+                    // BC 代理服务的大区 / 小区（FR-48）；默认空 = 未配，默认服走兜底首个在线子服。bukkit 不读此项。
+                    homeGroup = reader.string("proxy.home-group", ""),
+                    homeZone = reader.string("proxy.home-zone", ""),
+                ),
         )
     }
 
@@ -59,7 +63,11 @@ object AgentBootstrap {
      * @param agentVersion agent 自身构建版本（FR-86，见 ADR-0039）：壳层经 TabooLib pluginVersion 注入、
      *                     非从 config.yml 读（构建版本非运维可配）；默认空兼容旧调用点。
      */
-    fun readIdentity(reader: ConfigReader, role: String, agentVersion: String = ""): AgentIdentity {
+    fun readIdentity(
+        reader: ConfigReader,
+        role: String,
+        agentVersion: String = "",
+    ): AgentIdentity {
         val metadata = LinkedHashMap<String, String>()
         for (key in reader.keys("identity.metadata")) {
             metadata[key] = reader.string("identity.metadata.$key", "")

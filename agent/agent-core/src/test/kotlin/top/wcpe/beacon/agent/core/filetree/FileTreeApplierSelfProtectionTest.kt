@@ -19,7 +19,6 @@ import kotlin.test.assertTrue
  * 顶段属于受保护集合时 applier 跳过该 path（不取、不写、不删），不影响合法条目落盘与清单更新。
  */
 class FileTreeApplierSelfProtectionTest {
-
     private val root: File = Files.createTempDirectory("beacon-applier-self").toFile()
     private val mirrorWriter = FileMirrorWriter(root)
     private val manifestFile = File(root, "_applied.json")
@@ -36,27 +35,33 @@ class FileTreeApplierSelfProtectionTest {
     fun `受保护顶段路径跳过、不写本地、合法条目正常落盘`() {
         val protectedSegments = setOf("BeaconAgent")
         val fetched = mutableListOf<String>()
-        val applier = FileTreeApplier(
-            mirrorWriter = mirrorWriter,
-            appliedStore = appliedStore,
-            adapter = adapter,
-            // 记录哪些 path 被请求取内容——受保护项不应被请求
-            fetchContent = { p ->
-                fetched += p
-                FileContent(p, "md5-${p.hashCode()}", "content-of-$p")
-            },
-            protectedSegments = protectedSegments,
-        )
+        val applier =
+            FileTreeApplier(
+                mirrorWriter = mirrorWriter,
+                appliedStore = appliedStore,
+                adapter = adapter,
+                // 记录哪些 path 被请求取内容——受保护项不应被请求
+                fetchContent = { p ->
+                    fetched += p
+                    FileContent(p, "md5-${p.hashCode()}", "content-of-$p")
+                },
+                protectedSegments = protectedSegments,
+            )
 
-        val manifest = FileManifest(
-            namespace = "prod", serverId = "lobby-1", group = "area1", zone = "z1",
-            fileTreeMd5 = "tree-md5-1",
-            entries = listOf(
-                FileManifestEntry("BeaconAgent/config.yml", "m1"),
-                FileManifestEntry("LuckPerms/config.yml", "m2"),
-                FileManifestEntry("BeaconAgent/sub/effective.snapshot.json", "m3"),
-            ),
-        )
+        val manifest =
+            FileManifest(
+                namespace = "prod",
+                serverId = "lobby-1",
+                group = "area1",
+                zone = "z1",
+                fileTreeMd5 = "tree-md5-1",
+                entries =
+                    listOf(
+                        FileManifestEntry("BeaconAgent/config.yml", "m1"),
+                        FileManifestEntry("LuckPerms/config.yml", "m2"),
+                        FileManifestEntry("BeaconAgent/sub/effective.snapshot.json", "m3"),
+                    ),
+            )
 
         val ok = applier.apply(manifest)
         assertTrue(ok, "合法条目能落盘即整轮收敛")
@@ -83,19 +88,24 @@ class FileTreeApplierSelfProtectionTest {
 
     @Test
     fun `保护集合为空时不拦截任何路径（兼容旧装配）`() {
-        val applier = FileTreeApplier(
-            mirrorWriter = mirrorWriter,
-            appliedStore = appliedStore,
-            adapter = adapter,
-            fetchContent = { p -> FileContent(p, "md5", "x") },
-            protectedSegments = emptySet(),
-        )
+        val applier =
+            FileTreeApplier(
+                mirrorWriter = mirrorWriter,
+                appliedStore = appliedStore,
+                adapter = adapter,
+                fetchContent = { p -> FileContent(p, "md5", "x") },
+                protectedSegments = emptySet(),
+            )
 
-        val manifest = FileManifest(
-            namespace = "prod", serverId = "lobby-1", group = "area1", zone = "z1",
-            fileTreeMd5 = "tree-md5-2",
-            entries = listOf(FileManifestEntry("BeaconAgent/config.yml", "m1")),
-        )
+        val manifest =
+            FileManifest(
+                namespace = "prod",
+                serverId = "lobby-1",
+                group = "area1",
+                zone = "z1",
+                fileTreeMd5 = "tree-md5-2",
+                entries = listOf(FileManifestEntry("BeaconAgent/config.yml", "m1")),
+            )
 
         assertTrue(applier.apply(manifest))
         // 没有保护集合时回到旧语义：路径合法即写
@@ -108,13 +118,31 @@ class FileTreeApplierSelfProtectionTest {
         private val sink: MutableList<String>,
     ) : PlatformAdapter {
         override fun runAsync(task: () -> Unit) = task()
-        override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+
+        override fun runAsyncDelayed(
+            delayMs: Long,
+            task: () -> Unit,
+        ) = task()
+
         override fun runSync(task: () -> Unit) = task()
+
         override fun dataFolder(): File = folder
-        override fun publishConfigChanged(changed: Set<String>, newMd5: String) {}
+
+        override fun publishConfigChanged(
+            changed: Set<String>,
+            newMd5: String,
+        ) {}
+
         override fun info(msg: String) {}
-        override fun warn(msg: String) { sink += msg }
-        override fun error(msg: String, t: Throwable?) {}
+
+        override fun warn(msg: String) {
+            sink += msg
+        }
+
+        override fun error(
+            msg: String,
+            t: Throwable?,
+        ) {}
     }
 
     /**
@@ -126,6 +154,7 @@ class FileTreeApplierSelfProtectionTest {
         override fun encode(value: Any?): String {
             val tree = value as Map<*, *>
             val md5 = tree["fileTreeMd5"] as String
+
             @Suppress("UNCHECKED_CAST")
             val entries = tree["entries"] as List<Map<String, String>>
             val items = entries.joinToString(",") { """{"path":"${it["path"]}","md5":"${it["md5"]}"}""" }
@@ -136,9 +165,10 @@ class FileTreeApplierSelfProtectionTest {
             // 简单解析：抓 fileTreeMd5 与 entries 数组（仅本测试断言用 fileTreeMd5，entries 容错为空）。
             val md5 = Regex("\"fileTreeMd5\":\"([^\"]*)\"").find(json)?.groupValues?.get(1) ?: ""
             val entryPattern = Regex("\\{\"path\":\"([^\"]*)\",\"md5\":\"([^\"]*)\"}")
-            val entries = entryPattern.findAll(json)
-                .map { mapOf("path" to it.groupValues[1], "md5" to it.groupValues[2]) }
-                .toList()
+            val entries =
+                entryPattern.findAll(json)
+                    .map { mapOf("path" to it.groupValues[1], "md5" to it.groupValues[2]) }
+                    .toList()
             return mapOf("fileTreeMd5" to md5, "entries" to entries)
         }
     }

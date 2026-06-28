@@ -6,7 +6,6 @@ import kotlin.test.assertNull
 
 /** RedisConnection.fromTree 解析下发配置的纯逻辑单测。 */
 class RedisConnectionTest {
-
     @Test
     fun `完整配置解析`() {
         val tree = mapOf("host" to "redis", "port" to 6380L, "db" to 2L, "password" to "secret")

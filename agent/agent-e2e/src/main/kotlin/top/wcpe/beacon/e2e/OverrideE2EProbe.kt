@@ -25,7 +25,6 @@ import java.util.concurrent.atomic.AtomicReference
  * ADR-0011 安全不变量是否在真机上成立，绝不为「让断言通过」而旁路任何安全约束。
  */
 object OverrideE2EProbe {
-
     /** 被覆盖的目标文件名（相对覆盖集 targetRoot=plugins/BeaconE2E，落本插件数据目录）。 */
     private const val TARGET_FILE = "managed.yml"
 
@@ -81,12 +80,13 @@ object OverrideE2EProbe {
         command(RELOAD_COMMAND, permission = "beacon.e2e.reload") {
             execute<ProxyCommandSender> { _, _, _ ->
                 val target = File(getDataFolder(), TARGET_FILE)
-                val (md5, raw) = if (target.exists()) {
-                    val bytes = target.readBytes()
-                    E2EObservation.md5Hex(bytes) to String(bytes, Charsets.UTF_8)
-                } else {
-                    "-" to "（命令收到时目标文件不存在）"
-                }
+                val (md5, raw) =
+                    if (target.exists()) {
+                        val bytes = target.readBytes()
+                        E2EObservation.md5Hex(bytes) to String(bytes, Charsets.UTF_8)
+                    } else {
+                        "-" to "（命令收到时目标文件不存在）"
+                    }
                 E2EObservation.append(markFile, "COMMAND_RECEIVED", TARGET_FILE, md5, raw)
                 info("Beacon E2E 覆盖探针收到受限重载命令 $RELOAD_COMMAND（此刻 $TARGET_FILE md5=$md5）")
             }

@@ -11,7 +11,6 @@ import java.time.OffsetDateTime
  * 标记行格式：时间 | 来源 | path | md5 | 内容（内容里换行转义为 \\n，回车剔除），外部驱动按行 SplitN 解析。
  */
 object E2EObservation {
-
     /** 写文件锁：命令回调（主线程）与轮询（异步线程）可能并发追加，串行化。 */
     private val writeLock = Any()
 
@@ -22,7 +21,13 @@ object E2EObservation {
     }
 
     /** 向标记文件追加一行观测。 */
-    fun append(file: File, source: String, path: String, md5: String, raw: String) {
+    fun append(
+        file: File,
+        source: String,
+        path: String,
+        md5: String,
+        raw: String,
+    ) {
         synchronized(writeLock) {
             file.parentFile?.mkdirs()
             val escaped = raw.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "")

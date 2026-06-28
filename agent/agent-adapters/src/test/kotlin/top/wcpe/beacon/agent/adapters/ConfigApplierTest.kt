@@ -16,7 +16,6 @@ import kotlin.test.assertTrue
 
 /** ConfigApplier md5 守卫：同 md5 不 publish / 不写快照；不同则 publish + 写快照。 */
 class ConfigApplierTest {
-
     private val codec = KotlinxJsonCodec()
     private val dir: File = Files.createTempDirectory("beacon-applier").toFile()
     private val snapshotFile = File(dir, "snap.json")
@@ -26,8 +25,10 @@ class ConfigApplierTest {
         dir.deleteRecursively()
     }
 
-    private fun result(md5: String, vararg items: ConfigItem) =
-        EffectiveResult("prod", "lobby-1", "area1", "zoneA", md5, items.toList())
+    private fun result(
+        md5: String,
+        vararg items: ConfigItem,
+    ) = EffectiveResult("prod", "lobby-1", "area1", "zoneA", md5, items.toList())
 
     @Test
     fun `首次 apply 发布变更并写快照`() {

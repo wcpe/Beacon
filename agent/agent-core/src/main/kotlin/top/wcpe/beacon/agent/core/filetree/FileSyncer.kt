@@ -12,11 +12,13 @@ package top.wcpe.beacon.agent.core.filetree
  * fail-static 由上层把控（无目标态时根本不调用本差分，绝不臆测删文件）；本类只在确有目标清单时计算。
  */
 object FileSyncer {
-
     /**
      * 计算从 [applied]（本地已落盘 path→md5）到 [target]（目标 path→md5）的差分。
      */
-    fun diff(applied: Map<String, String>, target: Map<String, String>): FileSyncPlan {
+    fun diff(
+        applied: Map<String, String>,
+        target: Map<String, String>,
+    ): FileSyncPlan {
         val toAdd = LinkedHashSet<String>()
         val toUpdate = LinkedHashSet<String>()
         val toDelete = LinkedHashSet<String>()
@@ -55,8 +57,9 @@ data class FileSyncPlan(
     fun isEmpty(): Boolean = toAdd.isEmpty() && toUpdate.isEmpty() && toDelete.isEmpty()
 
     /** 需向控制面取内容的路径集合（新增 + 更新）。 */
-    fun toFetch(): Set<String> = LinkedHashSet<String>().apply {
-        addAll(toAdd)
-        addAll(toUpdate)
-    }
+    fun toFetch(): Set<String> =
+        LinkedHashSet<String>().apply {
+            addAll(toAdd)
+            addAll(toUpdate)
+        }
 }

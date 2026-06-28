@@ -15,7 +15,6 @@ package top.wcpe.beacon.agent.core.override
 class CommandWhitelist(
     allowedFirstTokens: Set<String>,
 ) {
-
     // 归一化为小写，比对时不区分大小写。
     private val allowed: Set<String> = allowedFirstTokens.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
 

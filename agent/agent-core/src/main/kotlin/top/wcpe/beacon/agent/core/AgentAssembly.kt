@@ -54,7 +54,6 @@ class AssembledAgent(
  * 不持有 adapter→view 的引用，由壳层在创建 adapter 时注入 view（见各壳）。
  */
 object AgentAssembly {
-
     fun assemble(
         identity: AgentIdentity,
         settings: AgentSettings,
@@ -87,11 +86,12 @@ object AgentAssembly {
 
         val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
 
-        val snapshotStore: SnapshotStore? = if (settings.snapshotEnabled) {
-            SnapshotStore(File(adapter.dataFolder(), settings.snapshotFileName), codec)
-        } else {
-            null
-        }
+        val snapshotStore: SnapshotStore? =
+            if (settings.snapshotEnabled) {
+                SnapshotStore(File(adapter.dataFolder(), settings.snapshotFileName), codec)
+            } else {
+                null
+            }
 
         val applier = ConfigApplier(store, snapshotStore, adapter)
 
@@ -110,39 +110,43 @@ object AgentAssembly {
         val mirrorEnabled = settings.fileTree.enabled && pluginsBaseValid
 
         // 文件树托管（通道B）：启用且基目录有效时装配镜像落盘 + 已落盘清单 + 编排器（取内容委托 apiClient）。
-        val fileTreeApplier: FileTreeApplier? = if (mirrorEnabled) {
-            val root = if (settings.fileTree.targetSubDir.isBlank()) {
-                pluginsBase
+        val fileTreeApplier: FileTreeApplier? =
+            if (mirrorEnabled) {
+                val root =
+                    if (settings.fileTree.targetSubDir.isBlank()) {
+                        pluginsBase
+                    } else {
+                        File(pluginsBase, settings.fileTree.targetSubDir)
+                    }
+                FileTreeApplier(
+                    mirrorWriter = FileMirrorWriter(root),
+                    appliedStore =
+                        AppliedFileManifestStore(
+                            File(adapter.dataFolder(), settings.fileTree.appliedManifestFileName),
+                            codec,
+                        ),
+                    adapter = adapter,
+                    fetchContent = { path -> apiClient.fetchFileContent(identity, path) },
+                    protectedSegments = selfPluginDirNames,
+                )
             } else {
-                File(pluginsBase, settings.fileTree.targetSubDir)
+                null
             }
-            FileTreeApplier(
-                mirrorWriter = FileMirrorWriter(root),
-                appliedStore = AppliedFileManifestStore(
-                    File(adapter.dataFolder(), settings.fileTree.appliedManifestFileName),
-                    codec,
-                ),
-                adapter = adapter,
-                fetchContent = { path -> apiClient.fetchFileContent(identity, path) },
-                protectedSegments = selfPluginDirNames,
-            )
-        } else {
-            null
-        }
 
         // 三方覆盖集接线（FR-15）：仅在文件树启用且基目录有效时装配（覆盖集是通道B 的一个 profile，依赖镜像落盘能力）。
         // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
-        val overrideApplier: OverrideSyncApplier? = if (mirrorEnabled) {
-            OverrideSyncApplier(
-                pluginsBaseFolder = pluginsBase,
-                backupRoot = File(adapter.dataFolder(), settings.override.backupDirName),
-                whitelist = CommandWhitelist(settings.override.commandWhitelist),
-                adapter = adapter,
-                fetchMember = { setName, path -> apiClient.fetchOverrideMember(identity, setName, path) },
-            )
-        } else {
-            null
-        }
+        val overrideApplier: OverrideSyncApplier? =
+            if (mirrorEnabled) {
+                OverrideSyncApplier(
+                    pluginsBaseFolder = pluginsBase,
+                    backupRoot = File(adapter.dataFolder(), settings.override.backupDirName),
+                    whitelist = CommandWhitelist(settings.override.commandWhitelist),
+                    adapter = adapter,
+                    fetchMember = { setName, path -> apiClient.fetchOverrideMember(identity, setName, path) },
+                )
+            } else {
+                null
+            }
 
         // 强制重同步回调（FR-91）的延迟持有者：executor 先于 lifecycle 构造，回调命令期才触发，
         // 故用可变引用打破构造顺序——lifecycle 建好后回填，命令到达时再解引用调用。
@@ -153,36 +157,41 @@ object AgentAssembly {
         // 取日志（FR-88）/ 强制重同步（FR-91）不依赖 plugins 基目录有效性（不读盘）；故执行器始终装配以响应这两类命令。
         // 反向抓取（读盘）仍受 pluginsBaseValid fail-closed 守卫：基目录无效时禁读盘上传（避免从错误目录读），
         // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config 不受影响。三类命令复用同一命令通路与单飞排空。
-        val reverseFetchExecutor = ReverseFetchExecutor(
-            identity, apiClient, adapter, logBuffer,
-            onResyncConfig = { lifecycleRef.get()?.forceResyncNow() ?: false },
-            reverseFetchEnabled = pluginsBaseValid,
-        )
+        val reverseFetchExecutor =
+            ReverseFetchExecutor(
+                identity,
+                apiClient,
+                adapter,
+                logBuffer,
+                onResyncConfig = { lifecycleRef.get()?.forceResyncNow() ?: false },
+                reverseFetchEnabled = pluginsBaseValid,
+            )
 
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
         val topologyWatchHub = TopologyWatchHub()
 
-        val lifecycle = AgentLifecycle(
-            identity = identity,
-            settings = settings,
-            adapter = adapter,
-            apiClient = apiClient,
-            store = store,
-            applier = applier,
-            snapshotStore = snapshotStore,
-            fileTreeApplier = fileTreeApplier,
-            overrideApplier = overrideApplier,
-            // 拓扑变更事件 → 扇出到 watch 监听器（业务侧据此重查发现端点）。
-            topologyListener = { topologyWatchHub.fireTopologyChanged() },
-            // 运行指标供给（FR-32）：上报时取当前一帧负载指标。
-            metricsProvider = metricsProvider,
-            // 后端归属供给（FR-36）：注册/上报时取当前代理的后端 serverId 集合。
-            backendsProvider = backendsProvider,
-            // BC 专属指标供给（FR-34）：上报时取当前一帧代理负载指标（仅 bc 注入）。
-            proxyMetricsProvider = proxyMetricsProvider,
-            // 反向抓取执行器（FR-39）：收到 SSE command-pending / READY 时触发拉命令→读 plugins→回传。
-            reverseFetchExecutor = reverseFetchExecutor,
-        )
+        val lifecycle =
+            AgentLifecycle(
+                identity = identity,
+                settings = settings,
+                adapter = adapter,
+                apiClient = apiClient,
+                store = store,
+                applier = applier,
+                snapshotStore = snapshotStore,
+                fileTreeApplier = fileTreeApplier,
+                overrideApplier = overrideApplier,
+                // 拓扑变更事件 → 扇出到 watch 监听器（业务侧据此重查发现端点）。
+                topologyListener = { topologyWatchHub.fireTopologyChanged() },
+                // 运行指标供给（FR-32）：上报时取当前一帧负载指标。
+                metricsProvider = metricsProvider,
+                // 后端归属供给（FR-36）：注册/上报时取当前代理的后端 serverId 集合。
+                backendsProvider = backendsProvider,
+                // BC 专属指标供给（FR-34）：上报时取当前一帧代理负载指标（仅 bc 注入）。
+                proxyMetricsProvider = proxyMetricsProvider,
+                // 反向抓取执行器（FR-39）：收到 SSE command-pending / READY 时触发拉命令→读 plugins→回传。
+                reverseFetchExecutor = reverseFetchExecutor,
+            )
         // 回填强制重同步回调持有者（FR-91）：lifecycle 已建好，命令期 onResyncConfig 经此解引用调用 forceResyncNow。
         lifecycleRef.set(lifecycle)
 

@@ -10,7 +10,6 @@ import top.wcpe.beacon.agent.core.transport.HttpTransport
 class FakeHttpTransport(
     private val responses: MutableList<HttpResponse> = mutableListOf(),
 ) : HttpTransport {
-
     /** 记录每次执行的请求，供断言请求头 / URL / body。 */
     val captured: MutableList<HttpRequest> = mutableListOf()
 
@@ -22,9 +21,7 @@ class FakeHttpTransport(
 
     override fun execute(request: HttpRequest): HttpResponse {
         captured.add(request)
-        if (responses.isEmpty()) {
-            throw IllegalStateException("无预设响应")
-        }
+        check(responses.isNotEmpty()) { "无预设响应" }
         return responses.removeAt(0)
     }
 }

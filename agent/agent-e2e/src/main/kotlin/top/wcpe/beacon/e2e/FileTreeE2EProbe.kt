@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicReference
  * 二者观测各自独立的文件与标记文件，互不干扰。本探针只读磁盘 + 写自己的标记文件，不触碰 agent 落盘逻辑。
  */
 object FileTreeE2EProbe {
-
     /** 文件树镜像落盘的目标文件名（相对本插件数据目录，即控制面 path 的末段）。 */
     private const val MIRROR_FILE = "tree-managed.yml"
 

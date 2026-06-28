@@ -15,7 +15,6 @@ import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
  * 反射取不到回退 0（由 [JvmRuntimeMetrics.normalizeTps] 归一化）。
  */
 object BukkitMetricsCollector {
-
     /** 采一帧完整运行指标：内存 / CPU（core 平台无关采集）+ 平台在线人数 / TPS。 */
     fun sample(): RuntimeMetrics {
         val playerCount = onlinePlayerCount()

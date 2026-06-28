@@ -27,29 +27,31 @@ import kotlin.test.assertTrue
  * - watch 注入流时注册到 TopologyWatchHub、句柄可注销；未注入流时回退为不可用 no-op 句柄。
  */
 class DiscoveryViewTest {
-
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "file-tree.applied.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "override-backup"),
+        )
 
     // 最小假 codec：encode 不用，decode 返回固定空 instances 树。
     private class FixedCodec : JsonCodec {
         override fun encode(value: Any?): String = "{}"
+
         override fun decode(json: String): Any? = mapOf("instances" to emptyList<Any?>())
     }
 
     // 记录最近一次请求 URL 的假 transport。
     private class CapturingTransport : HttpTransport {
         val lastUrl = AtomicReference<String?>(null)
+
         override fun execute(request: HttpRequest): HttpResponse {
             lastUrl.set(request.url)
             return HttpResponse(200, "{}")
@@ -58,7 +60,10 @@ class DiscoveryViewTest {
 
     // 占位流传输：注入即视为"具备流能力"。
     private class NoopStreamTransport : StreamTransport {
-        override fun open(request: StreamRequest, listener: StreamListener) { /* 测试不真正读流 */ }
+        override fun open(
+            request: StreamRequest,
+            listener: StreamListener,
+        ) { /* 测试不真正读流 */ }
     }
 
     @Test
@@ -78,15 +83,19 @@ class DiscoveryViewTest {
     @Test
     fun `query 解析 zoneDefaultEntry 标志`() {
         // codec 返回一条标了 zoneDefaultEntry 的 bukkit 实例与一条未标的。
-        val codec = object : JsonCodec {
-            override fun encode(value: Any?): String = "{}"
-            override fun decode(json: String): Any? = mapOf(
-                "instances" to listOf(
-                    mapOf("serverId" to "lobby-1", "role" to "bukkit", "status" to "online", "zoneDefaultEntry" to true),
-                    mapOf("serverId" to "lobby-2", "role" to "bukkit", "status" to "online"),
-                ),
-            )
-        }
+        val codec =
+            object : JsonCodec {
+                override fun encode(value: Any?): String = "{}"
+
+                override fun decode(json: String): Any? =
+                    mapOf(
+                        "instances" to
+                            listOf(
+                                mapOf("serverId" to "lobby-1", "role" to "bukkit", "status" to "online", "zoneDefaultEntry" to true),
+                                mapOf("serverId" to "lobby-2", "role" to "bukkit", "status" to "online"),
+                            ),
+                    )
+            }
         val apiClient = BeaconApiClient(CapturingTransport(), codec, settings(), NoopStreamTransport())
         val view = DiscoveryView(apiClient, TopologyWatchHub(), RosterDirectoryHolder())
 

@@ -11,7 +11,6 @@ class ExponentialBackoff(
     private val settings: BackoffSettings,
     private val jitterSource: () -> Double = { Math.random() },
 ) {
-
     private var current: Long = settings.initialMs
 
     /** 计算下次等待并推进；带 ±jitter 抖动避免惊群，结果不超过上限、不小于 0。 */

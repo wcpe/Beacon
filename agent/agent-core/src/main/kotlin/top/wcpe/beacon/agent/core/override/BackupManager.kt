@@ -20,7 +20,6 @@ import java.nio.file.StandardCopyOption
 class BackupManager(
     private val backupRoot: File,
 ) {
-
     /**
      * 在覆盖 [target] 前备份其当前状态。
      *
@@ -30,7 +29,11 @@ class BackupManager(
      * @param relPath  相对目标根的 path（决定备份区内的落点）
      * @return 备份记录，供回滚使用
      */
-    fun backup(setId: String, relPath: String, target: File): BackupRecord {
+    fun backup(
+        setId: String,
+        relPath: String,
+        target: File,
+    ): BackupRecord {
         if (!target.exists()) {
             return BackupRecord(setId, relPath, existedBefore = false, backupFile = null)
         }
@@ -45,10 +48,14 @@ class BackupManager(
      *
      * 失败抛 [IOException] 由上层记录并告警；回滚不触发任何重载命令。
      */
-    fun restore(record: BackupRecord, target: File) {
+    fun restore(
+        record: BackupRecord,
+        target: File,
+    ) {
         if (record.existedBefore) {
-            val backupFile = record.backupFile
-                ?: throw IOException("备份记录标记原本存在却无备份文件：${record.relPath}")
+            val backupFile =
+                record.backupFile
+                    ?: throw IOException("备份记录标记原本存在却无备份文件：${record.relPath}")
             target.parentFile?.mkdirs()
             Files.copy(backupFile.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         } else {
@@ -57,8 +64,7 @@ class BackupManager(
     }
 
     /** 把 setId 归一化为可作目录名的安全串（去掉路径分隔与冒号等）。 */
-    private fun sanitize(setId: String): String =
-        setId.replace(Regex("[^A-Za-z0-9_.-]"), "_").ifEmpty { "_" }
+    private fun sanitize(setId: String): String = setId.replace(Regex("[^A-Za-z0-9_.-]"), "_").ifEmpty { "_" }
 }
 
 /**
@@ -76,6 +82,5 @@ data class BackupRecord(
     val backupFile: File?,
 ) {
     /** 读备份内容（仅 existedBefore=true 时有意义；测试与校验用）。 */
-    fun readBackupContent(): String? =
-        backupFile?.takeIf { it.exists() }?.readText(StandardCharsets.UTF_8)
+    fun readBackupContent(): String? = backupFile?.takeIf { it.exists() }?.readText(StandardCharsets.UTF_8)
 }

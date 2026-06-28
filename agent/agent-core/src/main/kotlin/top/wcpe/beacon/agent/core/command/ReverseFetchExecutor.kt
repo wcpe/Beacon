@@ -46,7 +46,6 @@ class ReverseFetchExecutor(
     private val onResyncConfig: (() -> Boolean)? = null,
     private val reverseFetchEnabled: Boolean = true,
 ) {
-
     /** 单飞门：任意时刻只允许一条抓取流在跑（command-pending 与 READY 并发触发时去重）。 */
     private val running = AtomicBoolean(false)
 
@@ -125,13 +124,14 @@ class ReverseFetchExecutor(
      */
     private fun runScan(command: AgentCommand) {
         // 只 stat 取大小（壳层在此实现 FS 级路径安全 + 符号链接逃逸判定，不读内容）。失败 / 桩未实现得空映射。
-        val metadata = try {
-            adapter.readPluginsTreeMetadata()
-        } catch (e: Exception) {
-            adapter.error("扫描 plugins 目录元信息失败，放弃本次扫描：id=${command.id}", e)
-            reportError(command, "扫描 plugins 目录元信息失败：${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
-            return
-        }
+        val metadata =
+            try {
+                adapter.readPluginsTreeMetadata()
+            } catch (e: Exception) {
+                adapter.error("扫描 plugins 目录元信息失败，放弃本次扫描：id=${command.id}", e)
+                reportError(command, "扫描 plugins 目录元信息失败：${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
+                return
+            }
         // 纯函数过滤 + 标注：排除不安全路径 / jar，超阈值仅红标，永不失败。
         val files = PluginsTreeFilter.scan(metadata)
         val ok = apiClient.uploadScan(command.id, files)
@@ -152,25 +152,27 @@ class ReverseFetchExecutor(
      */
     private fun runSubmit(command: AgentCommand) {
         // 读真实 plugins 树（壳层在此实现 FS 级路径安全 + 符号链接逃逸判定）。读盘失败 / 桩未实现得空映射。
-        val tree = try {
-            adapter.readPluginsTree()
-        } catch (e: Exception) {
-            adapter.error("读 plugins 目录失败，放弃本次反向抓取：id=${command.id}", e)
-            // 仅 submit 模式回传错误（其所属任务处 fetching）；旧整树兼容无受管任务，回传也只会被控制面按命令态拒。
-            if (command.payload.mode == IngestCommandPayload.MODE_SUBMIT) {
-                reportError(command, "读 plugins 目录失败：${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
+        val tree =
+            try {
+                adapter.readPluginsTree()
+            } catch (e: Exception) {
+                adapter.error("读 plugins 目录失败，放弃本次反向抓取：id=${command.id}", e)
+                // 仅 submit 模式回传错误（其所属任务处 fetching）；旧整树兼容无受管任务，回传也只会被控制面按命令态拒。
+                if (command.payload.mode == IngestCommandPayload.MODE_SUBMIT) {
+                    reportError(command, "读 plugins 目录失败：${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
+                }
+                return
             }
-            return
-        }
 
         val selected = command.payload.selectedPaths
         // submit（有选定集）：限定只回传选定子集，超阈值由控制面已确认门控，仅文件数/总字节兜底。
         // 旧整树兼容（mode 空且无选定集）：沿用 filter（含单文件超限整批失败口径），不改旧 agent 行为。
-        val outcome = if (selected.isNotEmpty()) {
-            PluginsTreeFilter.submitFilter(tree, selected)
-        } else {
-            PluginsTreeFilter.filter(tree)
-        }
+        val outcome =
+            if (selected.isNotEmpty()) {
+                PluginsTreeFilter.submitFilter(tree, selected)
+            } else {
+                PluginsTreeFilter.filter(tree)
+            }
 
         when (outcome) {
             is FilterOutcome.Rejected -> {
@@ -224,14 +226,22 @@ class ReverseFetchExecutor(
             adapter.warn("收到强制重同步命令但未启用重同步回调（忽略）：id=${command.id}")
             return
         }
-        val executed = try {
-            callback()
-        } catch (e: Exception) {
-            adapter.error("强制重同步执行失败：id=${command.id}", e)
-            val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}")
-            if (!ok) adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
-            return
-        }
+        val executed =
+            try {
+                callback()
+            } catch (e: Exception) {
+                adapter.error("强制重同步执行失败：id=${command.id}", e)
+                val ok =
+                    apiClient.uploadCommandResult(
+                        command.id,
+                        ok = false,
+                        reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}",
+                    )
+                if (!ok) {
+                    adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+                }
+                return
+            }
         // 回调跳过（agent 未运行 / 正在停机）→ 回传 failed，不误报 done（真实未执行重拉）。
         if (!executed) {
             adapter.warn("强制重同步被跳过（agent 未运行/正在停机）：id=${command.id}")
@@ -258,34 +268,36 @@ class ReverseFetchExecutor(
      */
     private fun runBrowse(command: AgentCommand) {
         val payload = command.payload
-        val result: Map<String, Any?>? = try {
-            when (payload.op) {
-                IngestCommandPayload.OP_LIST ->
-                    adapter.browseListDir(payload.path, payload.offset, payload.limit)?.let(::dirListingToMap)
+        val result: Map<String, Any?>? =
+            try {
+                when (payload.op) {
+                    IngestCommandPayload.OP_LIST ->
+                        adapter.browseListDir(payload.path, payload.offset, payload.limit)?.let(::dirListingToMap)
 
-                IngestCommandPayload.OP_TREE ->
-                    adapter.browseReadTree(payload.path, payload.maxDepth)?.let(::treeNodeToMap)
+                    IngestCommandPayload.OP_TREE ->
+                        adapter.browseReadTree(payload.path, payload.maxDepth)?.let(::treeNodeToMap)
 
-                IngestCommandPayload.OP_FILE ->
-                    adapter.browseReadFile(payload.path)?.let(::fileContentToMap)
+                    IngestCommandPayload.OP_FILE ->
+                        adapter.browseReadFile(payload.path)?.let(::fileContentToMap)
 
-                else -> {
-                    // 未知 op：按不可读处理（控制面已校验 op，正常不会到此）。
-                    adapter.warn("收到未知文件浏览操作（忽略）：id=${command.id}，op=${payload.op}")
-                    null
+                    else -> {
+                        // 未知 op：按不可读处理（控制面已校验 op，正常不会到此）。
+                        adapter.warn("收到未知文件浏览操作（忽略）：id=${command.id}，op=${payload.op}")
+                        null
+                    }
                 }
+            } catch (e: Exception) {
+                adapter.error("文件浏览读盘失败：id=${command.id}，op=${payload.op}，path=${payload.path}", e)
+                null
             }
-        } catch (e: Exception) {
-            adapter.error("文件浏览读盘失败：id=${command.id}，op=${payload.op}，path=${payload.path}", e)
-            null
-        }
 
-        val ok = if (result != null) {
-            apiClient.uploadBrowseResult(identity, command.id, ok = true, result = result, reason = "")
-        } else {
-            // 原语拒读（越权 / 非目录 / 非文本 / 未启用）→ 回 ok=false（不携内容、仅原因摘要，无敏感）。
-            apiClient.uploadBrowseResult(identity, command.id, ok = false, result = null, reason = "目标不存在或不可读")
-        }
+        val ok =
+            if (result != null) {
+                apiClient.uploadBrowseResult(identity, command.id, ok = true, result = result, reason = "")
+            } else {
+                // 原语拒读（越权 / 非目录 / 非文本 / 未启用）→ 回 ok=false（不携内容、仅原因摘要，无敏感）。
+                apiClient.uploadBrowseResult(identity, command.id, ok = false, result = null, reason = "目标不存在或不可读")
+            }
         if (ok) {
             adapter.info("文件浏览结果回传成功：id=${command.id}，op=${payload.op}，命中=${result != null}")
         } else {
@@ -294,49 +306,56 @@ class ReverseFetchExecutor(
     }
 
     /** 把列目录结果映射为可序列化 Map（FR-110；键名与控制面代理透传给前端的形状一致）。 */
-    private fun dirListingToMap(listing: top.wcpe.beacon.agent.core.browse.DirListing): Map<String, Any?> = mapOf(
-        "type" to "list",
-        "path" to listing.path,
-        "entries" to listing.entries.map(::browseEntryToMap),
-        "offset" to listing.offset,
-        "limit" to listing.limit,
-        "total" to listing.total,
-        "hasMore" to listing.hasMore,
-    )
+    private fun dirListingToMap(listing: top.wcpe.beacon.agent.core.browse.DirListing): Map<String, Any?> =
+        mapOf(
+            "type" to "list",
+            "path" to listing.path,
+            "entries" to listing.entries.map(::browseEntryToMap),
+            "offset" to listing.offset,
+            "limit" to listing.limit,
+            "total" to listing.total,
+            "hasMore" to listing.hasMore,
+        )
 
     /** 把子树节点递归映射为可序列化 Map（FR-110）。 */
-    private fun treeNodeToMap(node: top.wcpe.beacon.agent.core.browse.TreeNode): Map<String, Any?> = mapOf(
-        "type" to "tree",
-        "name" to node.name,
-        "relPath" to node.relPath,
-        "dir" to node.dir,
-        "size" to node.size,
-        "text" to node.text,
-        "children" to node.children.map(::treeNodeToMap),
-        "truncated" to node.truncated,
-    )
+    private fun treeNodeToMap(node: top.wcpe.beacon.agent.core.browse.TreeNode): Map<String, Any?> =
+        mapOf(
+            "type" to "tree",
+            "name" to node.name,
+            "relPath" to node.relPath,
+            "dir" to node.dir,
+            "size" to node.size,
+            "text" to node.text,
+            "children" to node.children.map(::treeNodeToMap),
+            "truncated" to node.truncated,
+        )
 
     /** 把单文件内容映射为可序列化 Map（FR-110）。 */
-    private fun fileContentToMap(content: top.wcpe.beacon.agent.core.browse.FileContent): Map<String, Any?> = mapOf(
-        "type" to "file",
-        "path" to content.path,
-        "content" to content.content,
-        "truncated" to content.truncated,
-    )
+    private fun fileContentToMap(content: top.wcpe.beacon.agent.core.browse.FileContent): Map<String, Any?> =
+        mapOf(
+            "type" to "file",
+            "path" to content.path,
+            "content" to content.content,
+            "truncated" to content.truncated,
+        )
 
     /** 把列目录子项映射为可序列化 Map（FR-110）。 */
-    private fun browseEntryToMap(entry: top.wcpe.beacon.agent.core.browse.BrowseEntry): Map<String, Any?> = mapOf(
-        "name" to entry.name,
-        "relPath" to entry.relPath,
-        "dir" to entry.dir,
-        "size" to entry.size,
-        "text" to entry.text,
-    )
+    private fun browseEntryToMap(entry: top.wcpe.beacon.agent.core.browse.BrowseEntry): Map<String, Any?> =
+        mapOf(
+            "name" to entry.name,
+            "relPath" to entry.relPath,
+            "dir" to entry.dir,
+            "size" to entry.size,
+            "text" to entry.text,
+        )
 
     /**
      * 回传一条执行错误到控制面（FR-87）：best-effort，回传失败仅记 warn、不重试（交控制面超时清理兜底）。
      */
-    private fun reportError(command: AgentCommand, reason: String) {
+    private fun reportError(
+        command: AgentCommand,
+        reason: String,
+    ) {
         val ok = apiClient.uploadError(command.id, reason)
         if (ok) {
             adapter.info("已回传反向抓取执行错误：id=${command.id}")

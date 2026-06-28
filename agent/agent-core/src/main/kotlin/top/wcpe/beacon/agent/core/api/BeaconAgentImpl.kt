@@ -1,6 +1,5 @@
 package top.wcpe.beacon.agent.core.api
 
-import top.wcpe.beacon.agent.api.AgentIdentity as ApiIdentity
 import top.wcpe.beacon.agent.api.BeaconAgent
 import top.wcpe.beacon.agent.api.Discovery
 import top.wcpe.beacon.agent.api.EffectiveConfig
@@ -10,6 +9,7 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
 import java.util.Optional
+import top.wcpe.beacon.agent.api.AgentIdentity as ApiIdentity
 
 /**
  * BeaconAgent 门面的 core 实现，两个平台壳共用（避免重复）。
@@ -24,7 +24,6 @@ class BeaconAgentImpl(
     private val discovery: Discovery,
     private val messagingHolder: MessagingHolder,
 ) : BeaconAgent {
-
     override fun identity(): ApiIdentity {
         // group/zone 以 store 当前值为准（注册/拉取后回填、换区后更新）。
         return ApiIdentity(

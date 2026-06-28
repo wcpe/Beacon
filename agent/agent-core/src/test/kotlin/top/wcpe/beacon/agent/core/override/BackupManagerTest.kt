@@ -16,7 +16,6 @@ import kotlin.test.assertTrue
  * - 回滚按记录：原本存在→还原旧内容；原本不存在→删除。
  */
 class BackupManagerTest {
-
     private val targetRoot: File = Files.createTempDirectory("beacon-target").toFile()
     private val backupDir: File = Files.createTempDirectory("beacon-backup").toFile()
     private val mgr = BackupManager(backupDir)
@@ -27,7 +26,10 @@ class BackupManagerTest {
         backupDir.deleteRecursively()
     }
 
-    private fun write(path: String, content: String) {
+    private fun write(
+        path: String,
+        content: String,
+    ) {
         val f = File(targetRoot, path)
         f.parentFile?.mkdirs()
         f.writeText(content, StandardCharsets.UTF_8)

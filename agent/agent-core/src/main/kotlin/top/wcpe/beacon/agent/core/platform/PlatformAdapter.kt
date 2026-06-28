@@ -12,12 +12,14 @@ import java.io.File
  * 所有 HTTP / 文件 IO 由 core 经 runAsync / runAsyncDelayed 落到异步线程，绝不阻塞 MC 主线程。
  */
 interface PlatformAdapter {
-
     /** 异步执行任务（后台线程）。 */
     fun runAsync(task: () -> Unit)
 
     /** 延迟 delayMs 毫秒后异步执行（退避重连用，不 sleep 占线程）。 */
-    fun runAsyncDelayed(delayMs: Long, task: () -> Unit)
+    fun runAsyncDelayed(
+        delayMs: Long,
+        task: () -> Unit,
+    )
 
     /** 切回主线程执行极短任务（仅用于需主线程的事件派发）。 */
     fun runSync(task: () -> Unit)
@@ -72,7 +74,11 @@ interface PlatformAdapter {
      *
      * 默认 null 实现：未实现浏览的平台 / 测试桩不开放浏览能力。壳层各自委托 core FS 边界。
      */
-    fun browseListDir(relPath: String, offset: Int, limit: Int): DirListing? = null
+    fun browseListDir(
+        relPath: String,
+        offset: Int,
+        limit: Int,
+    ): DirListing? = null
 
     /**
      * 按需展开 `plugins/` 根下 [relPath] 起的子树，逐层有界（只读浏览，FR-109，见 ADR-0049 原语②）。
@@ -80,7 +86,10 @@ interface PlatformAdapter {
      * 只读、async；受深度 / 节点上限约束（非整盘一次拉全）。读取根 = [pluginsBaseFolder]，安全口径同 [browseListDir]。
      * 越权 / 目标非目录返回 null。默认 null 实现（桩不开放）。
      */
-    fun browseReadTree(relPath: String, maxDepth: Int): TreeNode? = null
+    fun browseReadTree(
+        relPath: String,
+        maxDepth: Int,
+    ): TreeNode? = null
 
     /**
      * 读 `plugins/` 根下 [relPath] 单文本文件内容（只读浏览，FR-109，见 ADR-0049 原语③）。
@@ -91,7 +100,10 @@ interface PlatformAdapter {
     fun browseReadFile(relPath: String): FileContent? = null
 
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
-    fun publishConfigChanged(changed: Set<String>, newMd5: String)
+    fun publishConfigChanged(
+        changed: Set<String>,
+        newMd5: String,
+    )
 
     /**
      * 派发一条受限控制台命令（三方插件文件覆盖兼容的重载命令，FR-15）。
@@ -116,5 +128,8 @@ interface PlatformAdapter {
     fun warn(msg: String)
 
     /** ERROR 级日志，可附异常。 */
-    fun error(msg: String, t: Throwable?)
+    fun error(
+        msg: String,
+        t: Throwable?,
+    )
 }

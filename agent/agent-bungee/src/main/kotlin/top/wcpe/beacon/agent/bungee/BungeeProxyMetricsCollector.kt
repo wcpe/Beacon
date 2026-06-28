@@ -1,11 +1,11 @@
 package top.wcpe.beacon.agent.bungee
 
 import net.md_5.bungee.api.ProxyServer
+import taboolib.common.platform.function.warning
 import top.wcpe.beacon.agent.core.metrics.BackendReachability
 import top.wcpe.beacon.agent.core.metrics.JvmRuntimeMetrics
 import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.metrics.TcpBackendProbe
-import taboolib.common.platform.function.warning
 
 /**
  * BungeeCord 代理侧 BC 专属负载指标采集（FR-34）：连接数 + 线程 + 运行时长 + 后端可达性·延迟。
@@ -20,7 +20,6 @@ import taboolib.common.platform.function.warning
  * 网络吞吐入 / 出字节数本期不采（BungeeCord 无干净 Netty pipeline 注入点，见 ADR-0025），故本采集器不含吞吐。
  */
 object BungeeProxyMetricsCollector {
-
     /** 后端 TCP 连接探测超时（毫秒）：在此内未建立连接即按不可达计，避免少数慢后端拖长整轮采集。 */
     private const val CONNECT_TIMEOUT_MS = 3_000L
 

@@ -24,15 +24,18 @@ class AppliedFileManifestStore(
     private val codec: JsonCodec,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) {
-
     /** 原子写已落盘清单。失败抛 IO 异常由上层记录。 */
-    fun write(fileTreeMd5: String, entries: List<FileManifestEntry>) {
+    fun write(
+        fileTreeMd5: String,
+        entries: List<FileManifestEntry>,
+    ) {
         val tree = LinkedHashMap<String, Any?>()
         tree["fileTreeMd5"] = fileTreeMd5
         tree["savedAt"] = now()
-        tree["entries"] = entries.map { e ->
-            linkedMapOf<String, Any?>("path" to e.path, "md5" to e.md5)
-        }
+        tree["entries"] =
+            entries.map { e ->
+                linkedMapOf<String, Any?>("path" to e.path, "md5" to e.md5)
+            }
         val json = codec.encode(tree)
         // 原子写委托 AtomicFileWriter（唯一 tmp + 重命名回退/重试 + 父目录 fsync），消除 Windows 并发竞争。
         AtomicFileWriter.write(file, json.toByteArray(StandardCharsets.UTF_8))
@@ -45,13 +48,14 @@ class AppliedFileManifestStore(
         if (!file.exists()) return null
         return try {
             val obj = JsonTree.asObject(codec.decode(file.readText(StandardCharsets.UTF_8)))
-            val entries = JsonTree.asList(obj["entries"]).map { raw ->
-                val itemObj = JsonTree.asObject(raw)
-                FileManifestEntry(
-                    path = JsonTree.strOr(itemObj, "path", ""),
-                    md5 = JsonTree.strOr(itemObj, "md5", ""),
-                )
-            }
+            val entries =
+                JsonTree.asList(obj["entries"]).map { raw ->
+                    val itemObj = JsonTree.asObject(raw)
+                    FileManifestEntry(
+                        path = JsonTree.strOr(itemObj, "path", ""),
+                        md5 = JsonTree.strOr(itemObj, "md5", ""),
+                    )
+                }
             AppliedFileManifest(
                 fileTreeMd5 = JsonTree.strOr(obj, "fileTreeMd5", ""),
                 entries = entries,

@@ -10,7 +10,6 @@ import top.wcpe.beacon.agent.core.command.PluginIngestLimits
  * 列目录 / 读子树的体量上限是浏览专属，集中在此。
  */
 object FsBrowseLimits {
-
     /** 列目录单页最多返回的直接子项数（防大目录一次性拉全；超出由 offset/limit 翻页）。 */
     const val MAX_DIR_PAGE: Int = 500
 

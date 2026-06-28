@@ -6,7 +6,6 @@ package top.wcpe.beacon.agent.core.stream
  * 流只发"变更通知"：agent 收到 *-changed 后用现有 HTTP 端点取内容并应用（取数据-应用逻辑复用，不变）。
  */
 object StreamEventTypes {
-
     /** 配置（通道A）有效配置变更：agent 据此强制重拉 config/effective。 */
     const val CONFIG_CHANGED = "config-changed"
 

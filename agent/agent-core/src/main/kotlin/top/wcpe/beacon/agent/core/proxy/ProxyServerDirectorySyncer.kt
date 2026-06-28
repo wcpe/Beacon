@@ -21,8 +21,10 @@ class ProxyServerDirectorySyncer(
     private val discover: () -> List<ServiceInstance>,
 ) {
     private val seenManaged: MutableSet<String> = linkedSetOf()
+
     // 上一轮已设的默认服 serverId，去重避免每轮重复打 INFO 日志 / 重复写 priority。
     private var lastDefaultServer: String? = null
+
     // 是否已为「选不出默认入口」打过 WARN，去重避免每轮（默认 10s）刷屏；选出默认服后复位。
     private var warnedNoDefault: Boolean = false
 
@@ -58,11 +60,12 @@ class ProxyServerDirectorySyncer(
         val target = DefaultEntrySelector.select(discovered, homeGroup, homeZone)
         if (target == null) {
             if (!warnedNoDefault) {
-                val zoneCtx = if (homeGroup.isBlank() || homeZone.isBlank()) {
-                    "本代理未配 proxy.home-group / proxy.home-zone"
-                } else {
-                    "home-zone=$homeGroup/$homeZone 的默认入口未在 Beacon 配置或当前不在线"
-                }
+                val zoneCtx =
+                    if (homeGroup.isBlank() || homeZone.isBlank()) {
+                        "本代理未配 proxy.home-group / proxy.home-zone"
+                    } else {
+                        "home-zone=$homeGroup/$homeZone 的默认入口未在 Beacon 配置或当前不在线"
+                    }
                 warn("未设 BungeeCord 默认/fallback 服：$zoneCtx，请在 Beacon 为该小区配置默认入口（否则玩家加入将报无默认服）")
                 warnedNoDefault = true
             }

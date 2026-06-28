@@ -12,7 +12,6 @@ import kotlin.test.assertTrue
  * - 大小写 / 分隔符（= 或 :）变体均覆盖。
  */
 class LogRedactorTest {
-
     @Test
     fun `token 键值被掩码`() {
         val out = LogRedactor.redact("注册请求头 X-Beacon-Token=abcdef123456 已发送")

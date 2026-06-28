@@ -6,7 +6,6 @@ import kotlin.test.assertTrue
 
 /** 落盘相对路径安全校验单测：拒绝绝对 / 穿越 / 反斜杠 / 盘符。 */
 class RelativePathGuardTest {
-
     @Test
     fun `合法相对路径放行`() {
         assertTrue(RelativePathGuard.isSafe("a.yml"))

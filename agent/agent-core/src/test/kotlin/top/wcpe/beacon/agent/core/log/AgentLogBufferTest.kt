@@ -15,7 +15,6 @@ import kotlin.test.assertTrue
  * - 线程安全：多线程并发 append 不丢行、不抛异常、不越界。
  */
 class AgentLogBufferTest {
-
     @Test
     fun `未满时按追加顺序返回全部行`() {
         val buf = AgentLogBuffer(capacity = 5)

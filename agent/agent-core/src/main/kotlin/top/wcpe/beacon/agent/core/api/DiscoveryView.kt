@@ -27,7 +27,6 @@ class DiscoveryView(
     private val topologyWatchHub: TopologyWatchHub,
     private val rosterDirectory: RosterDirectory,
 ) : Discovery {
-
     override fun query(query: DiscoveryQuery): List<ServiceInstance> {
         return apiClient.discover(
             namespace = query.namespace().orElse(null),
@@ -38,7 +37,10 @@ class DiscoveryView(
         ).map { toInstance(it) }
     }
 
-    override fun instancesInZone(group: String, zone: String): List<ServiceInstance> {
+    override fun instancesInZone(
+        group: String,
+        zone: String,
+    ): List<ServiceInstance> {
         return apiClient.discover(namespace = null, group = group, zone = zone, role = null)
             .map { toInstance(it) }
     }
@@ -61,7 +63,10 @@ class DiscoveryView(
         return rosterDirectory.snapshot()
     }
 
-    override fun rosterInZone(group: String, zone: String): Map<String, String> {
+    override fun rosterInZone(
+        group: String,
+        zone: String,
+    ): Map<String, String> {
         val full = rosterDirectory.snapshot()
         if (full.isEmpty()) {
             return emptyMap()

@@ -30,7 +30,6 @@ class OverrideApplier(
     private val reloadExecutor: ReloadCommandExecutor,
     private val adapter: PlatformAdapter,
 ) {
-
     private val root: File = targetRoot
     private val mirrorWriter = FileMirrorWriter(targetRoot)
 
@@ -39,7 +38,11 @@ class OverrideApplier(
      *
      * @return true 表示所有应覆盖的文件均已落盘（含因外部改动 / 非法路径跳过的视为"未全量成功"返回 false）。
      */
-    fun apply(setId: String, files: List<OverrideFile>, reloadCommand: String?): Boolean {
+    fun apply(
+        setId: String,
+        files: List<OverrideFile>,
+        reloadCommand: String?,
+    ): Boolean {
         // 不持有备份记录的入口：覆盖 + 派发，返回是否全量成功（需回滚的调用方改用 applyAndReturnBackups）。
         val (_, allWritten) = doApply(setId, files)
         if (allWritten && !reloadCommand.isNullOrBlank()) {
@@ -52,7 +55,11 @@ class OverrideApplier(
     /**
      * 同 [apply] 但返回备份记录（供调用方在外部失败时回滚）。reloadCommand 非空且全量成功才派发。
      */
-    fun applyAndReturnBackups(setId: String, files: List<OverrideFile>, reloadCommand: String?): List<BackupRecord> {
+    fun applyAndReturnBackups(
+        setId: String,
+        files: List<OverrideFile>,
+        reloadCommand: String?,
+    ): List<BackupRecord> {
         val (records, allWritten) = doApply(setId, files)
         if (allWritten && !reloadCommand.isNullOrBlank()) {
             reloadExecutor.execute(reloadCommand)
@@ -77,7 +84,10 @@ class OverrideApplier(
     }
 
     /** 执行覆盖主体，返回（备份记录, 是否全量成功）。 */
-    private fun doApply(setId: String, files: List<OverrideFile>): Pair<List<BackupRecord>, Boolean> {
+    private fun doApply(
+        setId: String,
+        files: List<OverrideFile>,
+    ): Pair<List<BackupRecord>, Boolean> {
         val records = mutableListOf<BackupRecord>()
         var allWritten = true
         for (file in files) {
@@ -91,13 +101,14 @@ class OverrideApplier(
             // 反馈环防护：检测外部改动则告警不盲盖。读盘异常（目标是目录占位 / 不可读）按「跳过该文件 + 告警」处理——
             // 不让单个文件令整个 override 异步循环静默停摆，也绝不盲盖。
             if (target.exists()) {
-                val diskMd5 = try {
-                    md5Hex(target.readText(StandardCharsets.UTF_8))
-                } catch (e: Exception) {
-                    adapter.warn("受管文件现状读盘失败（疑似目录占位 / 不可读），跳过不覆盖：$rel")
-                    allWritten = false
-                    continue
-                }
+                val diskMd5 =
+                    try {
+                        md5Hex(target.readText(StandardCharsets.UTF_8))
+                    } catch (e: Exception) {
+                        adapter.warn("受管文件现状读盘失败（疑似目录占位 / 不可读），跳过不覆盖：$rel")
+                        allWritten = false
+                        continue
+                    }
                 if (tracker.isExternallyModified(rel, diskMd5)) {
                     adapter.warn("检测到受管文件被外部改动（疑似插件自身重写），告警而非盲盖，跳过：$rel")
                     allWritten = false

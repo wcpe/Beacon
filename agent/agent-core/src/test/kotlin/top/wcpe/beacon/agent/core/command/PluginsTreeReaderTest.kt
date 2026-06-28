@@ -16,7 +16,6 @@ import kotlin.test.assertTrue
  * - 符号链接逃逸（指向 root 外）被剔除——FS 级 startsWith 真实路径判定。
  */
 class PluginsTreeReaderTest {
-
     private val root: File = Files.createTempDirectory("beacon-plugins-root").toFile()
     private val outside: File = Files.createTempDirectory("beacon-outside").toFile()
 
@@ -26,7 +25,10 @@ class PluginsTreeReaderTest {
         outside.deleteRecursively()
     }
 
-    private fun write(rel: String, content: String) {
+    private fun write(
+        rel: String,
+        content: String,
+    ) {
         val f = File(root, rel)
         f.parentFile.mkdirs()
         f.writeText(content, StandardCharsets.UTF_8)
@@ -164,7 +166,10 @@ class PluginsTreeReaderTest {
     }
 
     /** 尝试创建符号链接；环境不支持（无权限 / FS 不支持）返回 false 供调用方跳过。 */
-    private fun trySymlink(link: java.nio.file.Path, target: java.nio.file.Path): Boolean {
+    private fun trySymlink(
+        link: java.nio.file.Path,
+        target: java.nio.file.Path,
+    ): Boolean {
         return try {
             Files.createSymbolicLink(link, target)
             true

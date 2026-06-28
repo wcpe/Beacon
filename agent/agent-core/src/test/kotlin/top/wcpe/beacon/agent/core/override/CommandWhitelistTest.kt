@@ -9,7 +9,6 @@ import kotlin.test.assertTrue
  * 默认空白名单全拒；首 token 命中才放行；元字符 / 多条 / 控制字符一律拒绝（防注入）。
  */
 class CommandWhitelistTest {
-
     @Test
     fun `默认空白名单 任何命令都拒绝`() {
         val wl = CommandWhitelist(emptySet())

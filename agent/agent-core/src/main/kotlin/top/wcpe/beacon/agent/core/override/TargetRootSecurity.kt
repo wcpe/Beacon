@@ -17,13 +17,13 @@ import java.nio.file.Path
 class TargetRootSecurity(
     pluginsBaseFolder: File,
 ) {
-
     // plugins 基目录的规范化绝对 Path（比较基准）。
     private val pluginsPath: Path = pluginsBaseFolder.toPath().toAbsolutePath().normalize()
 
     // 服务器根（plugins 的父级）：targetRoot 形如 plugins/<plugin>，相对它解析。
-    private val serverRootPath: Path = (pluginsBaseFolder.parentFile ?: pluginsBaseFolder)
-        .toPath().toAbsolutePath().normalize()
+    private val serverRootPath: Path =
+        (pluginsBaseFolder.parentFile ?: pluginsBaseFolder)
+            .toPath().toAbsolutePath().normalize()
 
     /**
      * 判断 targetRoot（相对服务器根，形如 plugins/AllinCore）是否可安全作为覆盖集落盘根。
@@ -60,12 +60,13 @@ class TargetRootSecurity(
 
     companion object {
         /** Windows 保留设备名。 */
-        private val RESERVED_NAMES: Set<String> = buildSet {
-            addAll(listOf("con", "prn", "aux", "nul"))
-            for (i in 1..9) {
-                add("com$i")
-                add("lpt$i")
+        private val RESERVED_NAMES: Set<String> =
+            buildSet {
+                addAll(listOf("con", "prn", "aux", "nul"))
+                for (i in 1..9) {
+                    add("com$i")
+                    add("lpt$i")
+                }
             }
-        }
     }
 }

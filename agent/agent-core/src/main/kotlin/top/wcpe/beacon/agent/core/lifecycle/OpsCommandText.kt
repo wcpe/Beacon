@@ -10,7 +10,6 @@ package top.wcpe.beacon.agent.core.lifecycle
  * USAGE_LINES / HELP_LINES / 错参提示均由它派生，新增子命令只改一处。
  */
 object OpsCommandText {
-
     /** 根命令名（拼装用法行用，避免散落硬编码 "beacon"）。 */
     private const val ROOT = "beacon"
 
@@ -27,13 +26,14 @@ object OpsCommandText {
      *
      * 与壳层注册的 literal 子命令一一对应；新增 / 调整子命令时同步改此处与壳层注册。
      */
-    val SUBCOMMANDS: List<Subcommand> = listOf(
-        Subcommand("status", "查看 agent 接入与有效配置状态（生命周期 / 是否连上 / 有效配置 md5 / 心跳周期 / endpoint）"),
-        Subcommand("reload", "强制立刻重拉有效配置并应用，不等长轮询超时（不影响已生效配置）"),
-        Subcommand("reconnect", "打断退避、重置并重新接入控制面（保留当前有效配置，玩家不掉线）"),
-        Subcommand("resync", "强制立刻重新同步文件树（需在 config.yml 开启 file-tree.enabled）"),
-        Subcommand("help", "查看本帮助（各子命令用法）"),
-    )
+    val SUBCOMMANDS: List<Subcommand> =
+        listOf(
+            Subcommand("status", "查看 agent 接入与有效配置状态（生命周期 / 是否连上 / 有效配置 md5 / 心跳周期 / endpoint）"),
+            Subcommand("reload", "强制立刻重拉有效配置并应用，不等长轮询超时（不影响已生效配置）"),
+            Subcommand("reconnect", "打断退避、重置并重新接入控制面（保留当前有效配置，玩家不掉线）"),
+            Subcommand("resync", "强制立刻重新同步文件树（需在 config.yml 开启 file-tree.enabled）"),
+            Subcommand("help", "查看本帮助（各子命令用法）"),
+        )
 
     /** 子命令名按竖线拼成的可选集，如 status|reload|reconnect|resync|help。 */
     private val SUBCOMMAND_CHOICE: String = SUBCOMMANDS.joinToString("|") { it.name }
@@ -49,14 +49,15 @@ object OpsCommandText {
     }
 
     /** status：把 LifecycleSnapshot 渲染成多行中文，供壳层逐行回显。 */
-    fun statusLines(snapshot: LifecycleSnapshot): List<String> = listOf(
-        "Beacon agent 状态：",
-        "  生命周期=${snapshot.state}",
-        "  已连控制面=${if (snapshot.connected) "是" else "否"}",
-        "  有效配置 md5=${snapshot.effectiveMd5 ?: "（暂无）"}",
-        "  心跳周期=${snapshot.heartbeatIntervalSec}s",
-        "  控制面 endpoint=${snapshot.endpoint}",
-    )
+    fun statusLines(snapshot: LifecycleSnapshot): List<String> =
+        listOf(
+            "Beacon agent 状态：",
+            "  生命周期=${snapshot.state}",
+            "  已连控制面=${if (snapshot.connected) "是" else "否"}",
+            "  有效配置 md5=${snapshot.effectiveMd5 ?: "（暂无）"}",
+            "  心跳周期=${snapshot.heartbeatIntervalSec}s",
+            "  控制面 endpoint=${snapshot.endpoint}",
+        )
 
     /** reload 命令触发回显（动作本身异步执行，日志由 lifecycle 打）。 */
     const val RELOAD_TRIGGERED: String = "已触发强制重拉有效配置（reload），稍后在控制台日志查看结果"
@@ -78,27 +79,30 @@ object OpsCommandText {
     fun resyncReply(triggered: Boolean): String = if (triggered) RESYNC_TRIGGERED else RESYNC_DISABLED
 
     /** 根命令无子命令时的用法提示（首行 + 各子命令一行用法）。 */
-    val USAGE_LINES: List<String> = buildList {
-        add(USAGE_HEADER)
-        SUBCOMMANDS.forEach { add(subcommandLine(it)) }
-    }
+    val USAGE_LINES: List<String> =
+        buildList {
+            add(USAGE_HEADER)
+            SUBCOMMANDS.forEach { add(subcommandLine(it)) }
+        }
 
     /** help 子命令的完整帮助（含权限提示的标题 + 用法首行 + 各子命令用法）。 */
-    val HELP_LINES: List<String> = buildList {
-        add("Beacon agent 运维命令（仅本地，权限 beacon.admin）：")
-        add(USAGE_HEADER)
-        SUBCOMMANDS.forEach { add(subcommandLine(it)) }
-    }
+    val HELP_LINES: List<String> =
+        buildList {
+            add("Beacon agent 运维命令（仅本地，权限 beacon.admin）：")
+            add(USAGE_HEADER)
+            SUBCOMMANDS.forEach { add(subcommandLine(it)) }
+        }
 
     /**
      * 无参 / 错参 / 未知子命令时的友好提示：先点明输入有误（错参时带回显），再给完整用法。
      *
      * @param input 用户实际输入的子命令片段；null / 空表示无参（仅给用法、不报「未知」）
      */
-    fun incorrectInputLines(input: String?): List<String> = buildList {
-        if (!input.isNullOrBlank()) {
-            add("未知子命令：$input")
+    fun incorrectInputLines(input: String?): List<String> =
+        buildList {
+            if (!input.isNullOrBlank()) {
+                add("未知子命令：$input")
+            }
+            addAll(USAGE_LINES)
         }
-        addAll(USAGE_LINES)
-    }
 }

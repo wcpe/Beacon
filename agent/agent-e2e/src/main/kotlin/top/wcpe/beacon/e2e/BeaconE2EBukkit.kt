@@ -1,13 +1,13 @@
 package top.wcpe.beacon.e2e
 
-import top.wcpe.beacon.agent.api.BeaconAgentProvider
-import top.wcpe.beacon.agent.api.ListenerHandle
 import taboolib.common.LifeCycle
 import taboolib.common.platform.Awake
 import taboolib.common.platform.Plugin
 import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.info
 import taboolib.common.platform.function.submit
+import top.wcpe.beacon.agent.api.BeaconAgentProvider
+import top.wcpe.beacon.agent.api.ListenerHandle
 import java.io.File
 import java.security.MessageDigest
 import java.time.OffsetDateTime
@@ -29,7 +29,6 @@ import java.util.concurrent.atomic.AtomicReference
  *     避免错过在监听器注册之前就已收敛的首批配置。
  */
 object BeaconE2EBukkit : Plugin() {
-
     /** 约定观测的 dataId（与控制面侧 REST 建立的配置项一致）。 */
     private const val WATCH_DATA_ID = "beacon-e2e.yml"
 
@@ -84,13 +83,14 @@ object BeaconE2EBukkit : Plugin() {
         if (!BeaconAgentProvider.isAvailable()) {
             return
         }
-        handle = BeaconAgentProvider.get().config().onChange { changedDataIds, newMd5 ->
-            if (changedDataIds.contains(WATCH_DATA_ID)) {
-                val raw = readRaw()
-                lastRecordedMd5.set(perItemMd5OrWhole(raw, newMd5))
-                append(markFile, "ON_CHANGE", WATCH_DATA_ID, perItemMd5OrWhole(raw, newMd5), raw ?: "（变更但读取为空）")
+        handle =
+            BeaconAgentProvider.get().config().onChange { changedDataIds, newMd5 ->
+                if (changedDataIds.contains(WATCH_DATA_ID)) {
+                    val raw = readRaw()
+                    lastRecordedMd5.set(perItemMd5OrWhole(raw, newMd5))
+                    append(markFile, "ON_CHANGE", WATCH_DATA_ID, perItemMd5OrWhole(raw, newMd5), raw ?: "（变更但读取为空）")
+                }
             }
-        }
         info("Beacon E2E 已注册有效配置变更监听")
     }
 
@@ -129,7 +129,10 @@ object BeaconE2EBukkit : Plugin() {
     }
 
     /** onChange 回调里优先用单项 md5，缺失时退回整体 md5，再退回内容散列，保证记录非空。 */
-    private fun perItemMd5OrWhole(raw: String?, wholeMd5: String): String {
+    private fun perItemMd5OrWhole(
+        raw: String?,
+        wholeMd5: String,
+    ): String {
         return itemMd5() ?: if (raw != null) md5Hex(raw) else wholeMd5
     }
 
@@ -144,7 +147,13 @@ object BeaconE2EBukkit : Plugin() {
      * 时间 | 来源 | dataId | md5 | raw（\n 转义为 \\n）
      */
     @Synchronized
-    private fun append(file: File, source: String, dataId: String, md5: String, raw: String) {
+    private fun append(
+        file: File,
+        source: String,
+        dataId: String,
+        md5: String,
+        raw: String,
+    ) {
         file.parentFile?.mkdirs()
         val escaped = raw.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "")
         val line = "${OffsetDateTime.now()}|$source|$dataId|$md5|$escaped\n"

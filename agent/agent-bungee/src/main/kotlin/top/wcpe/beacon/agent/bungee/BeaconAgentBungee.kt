@@ -1,5 +1,14 @@
 package top.wcpe.beacon.agent.bungee
 
+import taboolib.common.LifeCycle
+import taboolib.common.env.RuntimeDependencies
+import taboolib.common.env.RuntimeDependency
+import taboolib.common.platform.Awake
+import taboolib.common.platform.Plugin
+import taboolib.common.platform.function.pluginVersion
+import taboolib.common.platform.function.severe
+import taboolib.module.configuration.Config
+import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
@@ -12,15 +21,6 @@ import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
-import taboolib.common.LifeCycle
-import taboolib.common.env.RuntimeDependencies
-import taboolib.common.env.RuntimeDependency
-import taboolib.common.platform.Awake
-import taboolib.common.platform.Plugin
-import taboolib.common.platform.function.pluginVersion
-import taboolib.common.platform.function.severe
-import taboolib.module.configuration.Config
-import taboolib.module.configuration.Configuration
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -90,7 +90,6 @@ import java.util.concurrent.atomic.AtomicBoolean
     ),
 )
 object BeaconAgentBungee : Plugin() {
-
     /** agent 引导配置（资源 config.yml 随 jar 释放到数据目录）。 */
     @Config("config.yml")
     lateinit var config: Configuration
@@ -131,27 +130,28 @@ object BeaconAgentBungee : Plugin() {
         val adapter = BungeePlatformAdapter(view)
         // 单一代理目录实例：同时供目录同步（注入子服）与后端归属上报（读当前后端集合，FR-36）。
         val serverDirectory = BungeeServerDirectory()
-        val assembled = AgentAssembly.assemble(
-            identity = identity,
-            settings = settings,
-            // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
-            rawAdapter = adapter,
-            transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-            codec = KotlinxJsonCodec(),
-            store = store,
-            effectiveConfigView = view,
-            // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
-            streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-            // 运行指标供给（FR-32）：上报时采代理在线人数 + JVM 内存 / CPU 真值（代理无 TPS，恒 0）。
-            metricsProvider = { BungeeMetricsCollector.sample() },
-            // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。
-            backendsProvider = { serverDirectory.backendServerIds().toList() },
-            // BC 专属指标供给（FR-34）：上报时采代理连接数 / 线程 / 运行时长 / 后端可达性·延迟（仅 bc 填）。
-            proxyMetricsProvider = { BungeeProxyMetricsCollector.sample() },
-            // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
-            // plugins/BeaconAgentProxy/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
-            selfPluginDirNames = setOf("BeaconAgentProxy"),
-        )
+        val assembled =
+            AgentAssembly.assemble(
+                identity = identity,
+                settings = settings,
+                // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
+                rawAdapter = adapter,
+                transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                codec = KotlinxJsonCodec(),
+                store = store,
+                effectiveConfigView = view,
+                // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
+                streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                // 运行指标供给（FR-32）：上报时采代理在线人数 + JVM 内存 / CPU 真值（代理无 TPS，恒 0）。
+                metricsProvider = { BungeeMetricsCollector.sample() },
+                // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。
+                backendsProvider = { serverDirectory.backendServerIds().toList() },
+                // BC 专属指标供给（FR-34）：上报时采代理连接数 / 线程 / 运行时长 / 后端可达性·延迟（仅 bc 填）。
+                proxyMetricsProvider = { BungeeProxyMetricsCollector.sample() },
+                // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+                // plugins/BeaconAgentProxy/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+                selfPluginDirNames = setOf("BeaconAgentProxy"),
+            )
         lifecycle = assembled.lifecycle
 
         // 对外注册门面，供同进程业务插件读取。
@@ -160,35 +160,37 @@ object BeaconAgentBungee : Plugin() {
         // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
         BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
-        val directorySyncer = ProxyServerDirectorySyncer(
-            directory = serverDirectory,
-            // BC 服务的 home-zone（FR-48）：据此选小区默认入口；未配 / 无命中则不设默认服并告警，不静默落任意服。
-            homeGroup = settings.proxy.homeGroup,
-            homeZone = settings.proxy.homeZone,
-            warn = { adapter.warn(it) },
-            info = { adapter.info(it) },
-        ) {
-            assembled.beaconAgent.discovery().query(
-                DiscoveryQuery.builder()
-                    .namespace(identity.namespace)
-                    .role("bukkit")
-                    .build(),
-            )
-        }
+        val directorySyncer =
+            ProxyServerDirectorySyncer(
+                directory = serverDirectory,
+                // BC 服务的 home-zone（FR-48）：据此选小区默认入口；未配 / 无命中则不设默认服并告警，不静默落任意服。
+                homeGroup = settings.proxy.homeGroup,
+                homeZone = settings.proxy.homeZone,
+                warn = { adapter.warn(it) },
+                info = { adapter.info(it) },
+            ) {
+                assembled.beaconAgent.discovery().query(
+                    DiscoveryQuery.builder()
+                        .namespace(identity.namespace)
+                        .role("bukkit")
+                        .build(),
+                )
+            }
         directorySyncRunning.set(true)
         assembled.lifecycle.onRegistered {
             adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer) }
         }
 
         // 玩家位置名册引导（FR-26）：据下发 Redis 配置维护「玩家→所在子服」，供子服按玩家寻址解析。
-        val roster = BungeePlayerRosterBootstrap(
-            settings = settings,
-            store = store,
-            codec = KotlinxJsonCodec(),
-            // 名册只读端口持有者（FR-31）：名册就绪后注入全表读，点亮 proxy 侧 Discovery.roster()/rosterInZone()。
-            rosterHolder = assembled.rosterDirectoryHolder,
-            adapter = adapter,
-        )
+        val roster =
+            BungeePlayerRosterBootstrap(
+                settings = settings,
+                store = store,
+                codec = KotlinxJsonCodec(),
+                // 名册只读端口持有者（FR-31）：名册就绪后注入全表读，点亮 proxy 侧 Discovery.roster()/rosterInZone()。
+                rosterHolder = assembled.rosterDirectoryHolder,
+                adapter = adapter,
+            )
         rosterBootstrap = roster
         BungeeRosterListener.bootstrap = roster
         // 配置变更后据下发 Redis 配置重建名册引导。
@@ -196,14 +198,15 @@ object BeaconAgentBungee : Plugin() {
 
         // 跨服消息模块引导（FR-26）：据下发 Redis 配置启动代理的消息收发（消费收件流 + on 分发 + publish/subscribe），
         // 使代理成为消息对等参与方（跨服编排控制层需接收业务消息并发布广播等）。与名册引导各持独立连接、互不影响。
-        val messaging = BungeeMessagingBootstrap(
-            identity = identity,
-            settings = settings,
-            store = store,
-            codec = KotlinxJsonCodec(),
-            holder = assembled.messagingHolder,
-            adapter = adapter,
-        )
+        val messaging =
+            BungeeMessagingBootstrap(
+                identity = identity,
+                settings = settings,
+                store = store,
+                codec = KotlinxJsonCodec(),
+                holder = assembled.messagingHolder,
+                adapter = adapter,
+            )
         messagingBootstrap = messaging
         // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
         view.onChange { _, _ -> messaging.sync() }
@@ -215,7 +218,10 @@ object BeaconAgentBungee : Plugin() {
         messaging.sync()
     }
 
-    private fun syncDirectoryLoop(adapter: BungeePlatformAdapter, syncer: ProxyServerDirectorySyncer) {
+    private fun syncDirectoryLoop(
+        adapter: BungeePlatformAdapter,
+        syncer: ProxyServerDirectorySyncer,
+    ) {
         if (!directorySyncRunning.get()) return
         try {
             syncer.syncOnce()

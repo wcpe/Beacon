@@ -26,29 +26,37 @@ import kotlin.test.assertTrue
  * - 未注入执行器时 command-pending 不触发拉命令（向后兼容）。
  */
 class AgentLifecycleReverseFetchTest {
-
     private val backend = FakeBeaconBackend()
     private val stream = FakeStreamTransport()
     private val adapter = ThreadPoolPlatformAdapter()
     private val store = EffectiveConfigStore()
 
-    private fun identity() = AgentIdentity(
-        namespace = "prod", serverId = "lobby-1", role = "bukkit", groupHint = "area1",
-        address = "127.0.0.1:25565", version = "1.0", capacity = 100, weight = 1, metadata = emptyMap(),
-    )
+    private fun identity() =
+        AgentIdentity(
+            namespace = "prod",
+            serverId = "lobby-1",
+            role = "bukkit",
+            groupHint = "area1",
+            address = "127.0.0.1:25565",
+            version = "1.0",
+            capacity = 100,
+            weight = 1,
+            metadata = emptyMap(),
+        )
 
-    private fun settings() = AgentSettings(
-        endpoints = listOf("http://localhost:8848"),
-        bootstrapToken = "tk",
-        pollTimeoutMs = 50,
-        requestTimeoutMs = 200,
-        heartbeatFallbackMs = 100_000,
-        backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
-        snapshotEnabled = false,
-        snapshotFileName = "snapshot.json",
-        fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "x.json"),
-        override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "bk"),
-    )
+    private fun settings() =
+        AgentSettings(
+            endpoints = listOf("http://localhost:8848"),
+            bootstrapToken = "tk",
+            pollTimeoutMs = 50,
+            requestTimeoutMs = 200,
+            heartbeatFallbackMs = 100_000,
+            backoff = BackoffSettings(initialMs = 50, maxMs = 50, multiplier = 1.0, jitterRatio = 0.0),
+            snapshotEnabled = false,
+            snapshotFileName = "snapshot.json",
+            fileTree = FileTreeSettings(enabled = false, targetSubDir = "", appliedManifestFileName = "x.json"),
+            override = OverrideSettings(commandWhitelist = emptySet(), backupDirName = "bk"),
+        )
 
     /** 装配带反向抓取执行器的生命周期（执行器复用同一 backend，命令端点默认 204 无待办）。 */
     private fun newLifecycleWithExecutor(): AgentLifecycle {
@@ -57,7 +65,13 @@ class AgentLifecycleReverseFetchTest {
         val applier = ConfigApplier(store, null, adapter)
         val executor = ReverseFetchExecutor(identity(), apiClient, adapter)
         return AgentLifecycle(
-            identity(), settings(), adapter, apiClient, store, applier, null,
+            identity(),
+            settings(),
+            adapter,
+            apiClient,
+            store,
+            applier,
+            null,
             reverseFetchExecutor = executor,
         )
     }
@@ -114,7 +128,10 @@ class AgentLifecycleReverseFetchTest {
         assertTrue(backend.commandsCalls.get() == before, "未注入执行器不应拉命令，实际增量 ${backend.commandsCalls.get() - before}")
     }
 
-    private fun waitUntil(timeoutMs: Long, cond: () -> Boolean) {
+    private fun waitUntil(
+        timeoutMs: Long,
+        cond: () -> Boolean,
+    ) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             if (cond()) return

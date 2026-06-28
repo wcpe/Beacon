@@ -10,7 +10,6 @@ package top.wcpe.beacon.agent.core.command
  * **不是安全边界**：仅作展示弱化提示。真正拦二进制内容的是读字节时的 UTF-8 解码 + NUL 判定。
  */
 object TextFileHeuristic {
-
     /** 按文件名（或相对路径）后缀启发判定是否疑似文本。 */
     fun looksTextByName(path: String): Boolean {
         val lower = path.lowercase()
@@ -21,14 +20,41 @@ object TextFileHeuristic {
     }
 
     /** 常见二进制扩展名集合（不含点，小写）。 */
-    private val BINARY_EXTENSIONS: Set<String> = setOf(
-        // 归档 / 库
-        "jar", "zip", "gz", "tar", "rar", "7z", "war",
-        // 图片
-        "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp",
-        // 序列化 / 数据库 / 区块数据
-        "dat", "db", "mca", "mcr", "nbt", "bin", "ser",
-        // 字体 / 音视频 / 可执行
-        "ttf", "otf", "wav", "ogg", "mp3", "class", "so", "dll", "exe",
-    )
+    private val BINARY_EXTENSIONS: Set<String> =
+        setOf(
+            // 归档 / 库
+            "jar",
+            "zip",
+            "gz",
+            "tar",
+            "rar",
+            "7z",
+            "war",
+            // 图片
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "bmp",
+            "ico",
+            "webp",
+            // 序列化 / 数据库 / 区块数据
+            "dat",
+            "db",
+            "mca",
+            "mcr",
+            "nbt",
+            "bin",
+            "ser",
+            // 字体 / 音视频 / 可执行
+            "ttf",
+            "otf",
+            "wav",
+            "ogg",
+            "mp3",
+            "class",
+            "so",
+            "dll",
+            "exe",
+        )
 }

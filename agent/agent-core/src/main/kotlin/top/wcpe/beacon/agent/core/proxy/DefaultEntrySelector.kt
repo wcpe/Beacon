@@ -14,7 +14,6 @@ import top.wcpe.beacon.agent.api.ServiceInstance
  * 纯函数、无副作用，单元可穷举。home-zone 是 BC 自身数据面路由配置（不是 zone 归属声明，不违反 ADR-0004）。
  */
 object DefaultEntrySelector {
-
     private const val ROLE_BUKKIT = "bukkit"
     private const val STATUS_ONLINE = "online"
 
@@ -24,7 +23,11 @@ object DefaultEntrySelector {
      * @param homeZone  BC 服务的小区（空串=未配）
      * @return 命中 home-zone 显式配置的在线默认入口 serverId；未配 / 无命中 / 不在线时为 null
      */
-    fun select(instances: List<ServiceInstance>, homeGroup: String, homeZone: String): String? {
+    fun select(
+        instances: List<ServiceInstance>,
+        homeGroup: String,
+        homeZone: String,
+    ): String? {
         if (homeGroup.isBlank() || homeZone.isBlank()) {
             return null
         }

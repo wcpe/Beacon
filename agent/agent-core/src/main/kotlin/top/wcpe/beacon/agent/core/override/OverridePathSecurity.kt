@@ -20,7 +20,6 @@ import java.nio.file.Path
 class OverridePathSecurity(
     root: File,
 ) {
-
     // 目标根的规范化绝对 Path（比较基准）。
     private val rootPath: Path = root.toPath().toAbsolutePath().normalize()
 
@@ -64,21 +63,23 @@ class OverridePathSecurity(
 
     companion object {
         /** Windows 保留设备名。 */
-        private val RESERVED_NAMES: Set<String> = buildSet {
-            addAll(listOf("con", "prn", "aux", "nul"))
-            for (i in 1..9) {
-                add("com$i")
-                add("lpt$i")
+        private val RESERVED_NAMES: Set<String> =
+            buildSet {
+                addAll(listOf("con", "prn", "aux", "nul"))
+                for (i in 1..9) {
+                    add("com$i")
+                    add("lpt$i")
+                }
             }
-        }
 
         /** 禁覆盖的 server 关键文件（相对根的精确小写名）。 */
-        private val FORBIDDEN_FILES: Set<String> = setOf(
-            "server.properties",
-            "bukkit.yml",
-            "spigot.yml",
-            "paper.yml",
-            "eula.txt",
-        )
+        private val FORBIDDEN_FILES: Set<String> =
+            setOf(
+                "server.properties",
+                "bukkit.yml",
+                "spigot.yml",
+                "paper.yml",
+                "eula.txt",
+            )
     }
 }

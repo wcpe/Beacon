@@ -32,7 +32,6 @@ class FileTreeApplier(
     private val fetchContent: (path: String) -> FileContent?,
     private val protectedSegments: Set<String> = emptySet(),
 ) {
-
     /**
      * 当前本地已落盘那一版的 fileTreeMd5；尚无落盘清单时为 null（首启长轮询 md5 传空）。
      */
@@ -48,9 +47,10 @@ class FileTreeApplier(
      *
      * @return true 表示已收敛（无变更或已落盘并更新清单）；false 表示因取内容失败 / 清单写入失败放弃本轮（保留既有，下次重试）。
      */
-    fun apply(manifest: FileManifest): Boolean = synchronized(applyLock) {
-        applyInternal(manifest)
-    }
+    fun apply(manifest: FileManifest): Boolean =
+        synchronized(applyLock) {
+            applyInternal(manifest)
+        }
 
     private fun applyInternal(manifest: FileManifest): Boolean {
         val applied = appliedStore.read()

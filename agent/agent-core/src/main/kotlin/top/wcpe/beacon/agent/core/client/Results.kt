@@ -45,7 +45,6 @@ data class ReportedChannelMd5(
 
 /** 长轮询有效配置的结果。 */
 sealed class PollResult {
-
     /** 200：有变更，携带新有效配置。 */
     data class Changed(val effective: EffectiveResult) : PollResult()
 
@@ -61,7 +60,6 @@ sealed class PollResult {
 
 /** 长轮询文件清单的结果（通道B，与配置长轮询独立）。 */
 sealed class FileManifestPollResult {
-
     /** 200：fileTreeMd5 有变更，携带新清单（path→md5，不含内容）。 */
     data class Changed(val manifest: FileManifest) : FileManifestPollResult()
 
@@ -77,7 +75,6 @@ sealed class FileManifestPollResult {
 
 /** 长轮询三方覆盖集投递的结果（FR-15，与文件长轮询独立的 md5 维度）。 */
 sealed class OverridePollResult {
-
     /** 200：overrideMd5 有变更，携带新清单（目标根 + 命令 + 成员 path，不含内容）。 */
     data class Changed(val manifest: OverrideManifest) : OverridePollResult()
 
@@ -93,7 +90,6 @@ sealed class OverridePollResult {
 
 /** 注册结果的状态分类（区分成功 / 重复 / 鉴权失败 / 身份缺失 / 连接失败）。 */
 sealed class RegisterOutcome {
-
     /** 200：注册成功。 */
     data class Success(val result: RegisterResult) : RegisterOutcome()
 

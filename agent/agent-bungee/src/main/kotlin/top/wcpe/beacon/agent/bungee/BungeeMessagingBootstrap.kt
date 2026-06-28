@@ -37,7 +37,6 @@ class BungeeMessagingBootstrap(
     private val holder: MessagingHolder,
     private val adapter: PlatformAdapter,
 ) {
-
     /** 当前消息模块；null 表示未启动（未启用 / 配置缺失 / 已停止）。 */
     @Volatile
     private var module: MessagingModule? = null
@@ -63,27 +62,28 @@ class BungeeMessagingBootstrap(
         }
         // 连接变化（或首次）：停旧起新。
         stop()
-        val transport = RedisMessageTransport(
-            connection = connection,
-            serverId = identity.serverId,
-            settings = settings.messaging,
-            info = adapter::info,
-            warn = adapter::warn,
-            error = adapter::error,
-        )
-        val newModule = MessagingModule(
-            transport = transport,
-            codec = codec,
-            selfServerId = identity.serverId,
-            settings = settings.messaging,
-            holder = holder,
-            // 代理侧亦可按玩家寻址（读自身维护的名册）。
-            playerLocator = transport.playerLocator(),
-            scheduleTimeout = adapter::runAsyncDelayed,
-            info = adapter::info,
-            warn = adapter::warn,
-            error = adapter::error,
-        )
+        val transport =
+            RedisMessageTransport(
+                connection = connection,
+                serverId = identity.serverId,
+                settings = settings.messaging,
+                info = adapter::info,
+                warn = adapter::warn,
+            )
+        val newModule =
+            MessagingModule(
+                transport = transport,
+                codec = codec,
+                selfServerId = identity.serverId,
+                settings = settings.messaging,
+                holder = holder,
+                // 代理侧亦可按玩家寻址（读自身维护的名册）。
+                playerLocator = transport.playerLocator(),
+                scheduleTimeout = adapter::runAsyncDelayed,
+                info = adapter::info,
+                warn = adapter::warn,
+                error = adapter::error,
+            )
         // 连接与重订阅是阻塞操作，放异步线程，绝不阻塞主线程。
         adapter.runAsync {
             if (newModule.start()) {
@@ -103,12 +103,13 @@ class BungeeMessagingBootstrap(
     /** 读取下发的 Redis 连接配置；缺失返回 null。 */
     private fun readRedisConnection(): RedisConnection? {
         val item = store.item(REDIS_CONFIG_DATA_ID) ?: return null
-        val tree = try {
-            codec.decode(item.content)
-        } catch (t: Throwable) {
-            adapter.warn("解析 Redis 下发配置失败：${t.message}")
-            return null
-        }
+        val tree =
+            try {
+                codec.decode(item.content)
+            } catch (t: Throwable) {
+                adapter.warn("解析 Redis 下发配置失败：${t.message}")
+                return null
+            }
         return RedisConnection.fromTree(tree, connectTimeoutMs = settings.requestTimeoutMs.toInt())
     }
 

@@ -9,19 +9,24 @@ import java.io.File
 class RecordingPlatformAdapter(
     private val folder: File,
 ) : PlatformAdapter {
-
     /** 记录每次广播的（变更集, md5）。 */
     val published: MutableList<Pair<Set<String>, String>> = mutableListOf()
 
     override fun runAsync(task: () -> Unit) = task()
 
-    override fun runAsyncDelayed(delayMs: Long, task: () -> Unit) = task()
+    override fun runAsyncDelayed(
+        delayMs: Long,
+        task: () -> Unit,
+    ) = task()
 
     override fun runSync(task: () -> Unit) = task()
 
     override fun dataFolder(): File = folder
 
-    override fun publishConfigChanged(changed: Set<String>, newMd5: String) {
+    override fun publishConfigChanged(
+        changed: Set<String>,
+        newMd5: String,
+    ) {
         published.add(changed to newMd5)
     }
 
@@ -29,5 +34,8 @@ class RecordingPlatformAdapter(
 
     override fun warn(msg: String) {}
 
-    override fun error(msg: String, t: Throwable?) {}
+    override fun error(
+        msg: String,
+        t: Throwable?,
+    ) {}
 }
