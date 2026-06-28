@@ -274,7 +274,7 @@ describe('Layout 连接状态指示（FR-78）', () => {
 })
 
 describe('Layout 侧栏可折叠图标条（改进 1）', () => {
-  it('默认折叠：侧栏 w-14、品牌区 w-14、隐藏品牌文案与版本徽章', () => {
+  it('默认折叠：侧栏 w-14、品牌区 w-14、隐藏品牌文案', () => {
     // 折叠态渲染（覆盖 beforeEach 的展开预置）
     setSidebarCollapsed(true)
     renderLayout()
@@ -321,7 +321,7 @@ describe('Layout 侧栏可折叠图标条（改进 1）', () => {
 })
 
 describe('Layout FR-121 页眉与侧栏重构', () => {
-  it('展开态版本徽章渲染在品牌区（整宽顶栏内、不在侧栏）', async () => {
+  it('版本徽章在状态条内（顶栏内、不在侧栏，FR-126 移到「已连接」后）', async () => {
     setSidebarCollapsed(false)
     renderLayout()
     const version = await screen.findByText('v0.7.0')
@@ -329,10 +329,10 @@ describe('Layout FR-121 页眉与侧栏重构', () => {
     expect(version.closest('aside')).toBeNull()
   })
 
-  it('折叠态隐藏版本徽章', () => {
+  it('折叠态版本徽章仍显示（FR-126：已移到状态条、不随侧栏折叠隐藏）', async () => {
     setSidebarCollapsed(true)
     renderLayout()
-    expect(screen.queryByText('v0.7.0')).toBeNull()
+    expect(await screen.findByText('v0.7.0')).toBeInTheDocument()
   })
 
   it('侧栏底部开源协议链接指向仓库 LICENSE（新标签打开）', () => {

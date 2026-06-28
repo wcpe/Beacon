@@ -6,7 +6,6 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ChevronsLeft, ChevronsRight } from 'lucide-react'
 import SystemHeader from '@/components/SystemHeader'
-import VersionBadge from '@/components/VersionBadge'
 import PageHeader, { PageHeaderProvider } from '@/components/PageHeader'
 import CommandPalette from '@/components/CommandPalette'
 import { useConnectionStatus } from '@/hooks/useConnectionStatus'
@@ -98,13 +97,12 @@ export default function Layout() {
             title={t('layout.brandHint')}
             className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm font-semibold transition-colors hover:bg-sidebar-accent/40"
           >
-            {/* 品牌 logo（灯塔/信标矢量图，FR-123）：折叠 / 展开态均显示，作 logo 点 */}
-            <img src="/logo.svg" alt="" className="size-5 shrink-0" />
-            {/* 折叠态隐藏品牌文案，仅留 logo */}
-            {!sidebarCollapsed && <span className="truncate">{t('app.name')}</span>}
+            {/* 品牌 logo（信标方块矢量图，FR-123/FR-126 放大）：折叠 / 展开态均显示，作 logo 点 */}
+            <img src="/logo.svg" alt="" className="size-7 shrink-0" />
+            {/* 折叠态隐藏品牌文案，仅留 logo；FR-126 名放大 text-base */}
+            {!sidebarCollapsed && <span className="truncate text-base font-semibold">{t('app.name')}</span>}
           </button>
-          {/* 版本徽章（FR-121）：移到 logo 右侧；展开态显示，折叠态隐藏 */}
-          {!sidebarCollapsed && <VersionBadge />}
+          {/* FR-126：版本徽章从品牌区移到顶栏「已连接」药丸之后（见 SystemHeader），品牌区不再含版本 */}
         </div>
         {/* 右侧控制面状态条（FR-33）：占满品牌区之外的剩余宽度；SystemHeader 只渲染内容，外壳由本顶栏统一。
             搜索入口已从侧栏移至此页眉右上角（FR-83），点开同一命令面板浮层。 */}

@@ -16,6 +16,22 @@ vi.mock('@/api/client', async () => {
   return {
     ApiClientError: actual.ApiClientError,
     systemStatus: vi.fn(),
+    // VersionBadge（FR-126：版本徽章移到状态条「已连接」后）用 useUpdateCheck → checkUpdate；默认无更新
+    checkUpdate: vi.fn().mockResolvedValue({
+      status: 'ok',
+      currentVersion: 'v0.6.0',
+      channel: 'stable',
+      hasUpdate: false,
+      isDevBuild: false,
+      latestVersion: '',
+      releaseNotes: '',
+      releaseUrl: '',
+      publishedAt: '',
+      checkedAt: '',
+      cacheExpiresAt: '',
+    }),
+    // VersionBadge 的 useUpdateCheck 还读 listSettings（取渠道）；默认空
+    listSettings: vi.fn().mockResolvedValue([]),
     // OperatorMenu（FR-121 右上角账户菜单）导入 logout；渲染不调用，仅登出点击触发
     logout: vi.fn(),
   }
@@ -135,6 +151,14 @@ describe('SystemHeader 账户菜单（FR-121）', () => {
   it('右上角渲染账户菜单头像', async () => {
     renderHeader(<SystemHeader />)
     expect(await screen.findByRole('button', { name: '账户菜单' })).toBeInTheDocument()
+  })
+})
+
+// 版本徽章（FR-126）：从品牌区移到状态条「已连接」之后，可点进版本页
+describe('SystemHeader 版本徽章（FR-126）', () => {
+  it('状态条内渲染版本徽章', async () => {
+    renderHeader(<SystemHeader />)
+    expect(await screen.findByText('v0.6.0')).toBeInTheDocument()
   })
 })
 

@@ -11,6 +11,7 @@ import { formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
 import HeaderControls from '@/components/HeaderControls'
 import OperatorMenu from '@/components/OperatorMenu'
+import VersionBadge from '@/components/VersionBadge'
 
 // 页眉属性：打开全局命令面板（FR-83，搜索入口由侧栏移至此页眉右上角）。
 interface SystemHeaderProps {
@@ -74,6 +75,9 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
           {connLabel}
         </span>
       )}
+
+      {/* 版本徽章（FR-126）：从品牌区移到此——「已连接」药丸之后；可点进版本页 + 有更新红点（FR-100） */}
+      <VersionBadge />
 
       {/* 运行 / 在线紧凑一行（FR-118 E：去标签行，仅留「运行 X · 在线 N」一行）。
           fix-A：次要信息，窄屏隐藏、lg 及以上显示。 */}
