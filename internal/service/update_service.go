@@ -157,6 +157,7 @@ func (s *UpdateService) Status() update.Progress {
 //   - 后台用 context.Background()（非请求 context）跑核心，下载超时由出站 client 自带（downloadTimeout）兜底，
 //     彻底摆脱"请求被取消即下载中断"；
 //   - 失败原因由核心写入进度态（failApply）+ 审计，前端经状态端点轮询 progress.error（脱敏后）看到，不再静默。
+//
 // 只读拒写 + 审计由上层中间件 / 核心保证。
 func (s *UpdateService) Apply(operator, clientIP string) error {
 	if !s.applying.CompareAndSwap(false, true) {
