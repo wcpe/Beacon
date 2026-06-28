@@ -228,12 +228,12 @@ export default function ZonesPage() {
       msg.showError(t('zones.requiredFields'))
       return
     }
-    // 非法值拦截：所选项须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）
+    // 非法值拦截：环境 / serverId / 大区须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）。
+    // 小区（zone）例外：它是要新建的区名，允许候选外新值，否则全新集群无任何区时无法创建首个区。
     if (
       !namespaceCodes.includes(form.namespace) ||
       !serverOptions.includes(form.serverId) ||
-      !groupOptions.includes(form.group) ||
-      !zoneOptions.includes(form.zone)
+      !groupOptions.includes(form.group)
     ) {
       msg.showError(t('zones.invalidValues'))
       return
@@ -304,13 +304,15 @@ export default function ZonesPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="a-zone">{t('common.zone')}</Label>
+              {/* 可编辑：小区是要新建的区名，须允许键入候选外的新值——否则全新集群无任何区、
+                  候选恒空，「指派首个 server 即创建该区」无从落地（修复首个区无法创建）。 */}
               <Combobox
                 id="a-zone"
                 aria-label={t('common.zone')}
                 value={form.zone}
                 onChange={(v) => setForm({ ...form, zone: v })}
                 options={zoneOptions}
-                allowCustom={false}
+                allowCustom
                 placeholder={t('common.pleaseSelect')}
               />
             </div>
