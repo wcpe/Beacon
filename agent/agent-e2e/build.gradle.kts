@@ -146,15 +146,14 @@ tasks.named<RunServer>("runServer") {
 
         // 写入 TabooLib 运行期仓库覆盖 env.properties（置于工作目录，覆盖 jar 内 env）。
         // 两个插件（BeaconAgent / BeaconE2E）共用，一处生效。
-        runDir.resolve("env.properties").writeText(
+        val envProps =
             """
             # 由 runServer 任务生成：覆盖 TabooLib 运行期库下载仓库（避开已下线的 sacredcraft.cn）。
             repo-central=https://maven.aliyun.com/repository/central
             repo-taboolib=$tabooRepo
             repo-reflex=$tabooRepo
-            """.trimIndent() + "\n",
-            Charsets.UTF_8,
-        )
+            """.trimIndent()
+        runDir.resolve("env.properties").writeText(envProps + "\n", Charsets.UTF_8)
 
         logger.lifecycle("E2E 运行目录：${runDir.absolutePath}")
         logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace（agent 配置经 BEACON_AGENT_* 注入）")

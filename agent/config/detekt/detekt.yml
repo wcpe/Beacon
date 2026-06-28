@@ -1,0 +1,51 @@
+# Beacon 数据面 agent 的 detekt 静态检查配置（唯一真源）。
+# 由根 build.gradle.kts 的 subprojects 块对所有含 Kotlin 插件的模块统一应用，buildUponDefaultConfig=true：
+# 本文件只声明相对 detekt 内置默认的「偏差」，未列出的规则沿用内置默认。
+#
+# 存量处理策略：
+#  1) 架构性冲突 / 与 ktlint 重复的规则 → 全局关闭（下方 active:false，附中文原因）：
+#     与 fail-static 不变量冲突（边界必须兜底捕获、不崩 MC 主线程）、行长与 ktlint 重复、HTTP 码 / 配置默认值的魔法数。
+#  2) 复杂度 / 风格类规则 → 保持启用。存量经逐条评估：能安全真修（不改行为、无风险）的已真修；
+#     真修需冒险大重构正常工作的核心类 / 长方法（BeaconApiClient / AgentLifecycle / FileTreeApplier 等）的，
+#     挂进 config/detekt/baseline.xml 把现有这批挂起——这些规则对**新代码仍然生效**，只豁免存量。
+#  关闭规则一律集中在此声明并写明中文原因（遵守 .claude/rules/static-analysis.md「禁用集中声明+注明原因」），
+#  不在代码里零散 @Suppress。
+
+build:
+  # 分析出任一 finding（且未被 baseline 豁免）即让构建失败。
+  maxIssues: 0
+
+empty-blocks:
+  # 空函数体：规则保持启用以挡住真正遗漏的空函数；但放行「空的 override」——
+  # 命中全为测试桩里对 PlatformAdapter.info/warn/error 等的 no-op 覆写（测试不关心这些回调），是刻意空实现而非遗漏。
+  EmptyFunctionBlock:
+    ignoreOverridden: true
+
+exceptions:
+  # 捕获宽泛异常（Exception/Throwable）：agent 的 fail-static 架构不变量要求绝不让异常冒泡崩 MC 主线程，
+  # 各边界（HTTP 调用 / 配置应用 / SSE 处理 / 平台回调）必须兜底捕获并转入降级路径。这是刻意设计，非坏味道。已关闭。
+  TooGenericExceptionCaught:
+    active: false
+  # 抛宽泛异常：仅命中测试桩用 RuntimeException 模拟连接失败，属测试需要、不影响生产代码。已关闭。
+  TooGenericExceptionThrown:
+    active: false
+  # 吞异常：捕获后转为「安全降级」（fail-static）或在测试桩里转标记，属本工程既定模式；
+  # 真正需展示的错误另有脱敏上报路径。逐处加 @Suppress 会满地撒，故集中关闭。已关闭。
+  SwallowedException:
+    active: false
+
+style:
+  # 魔法数：命中集中在 HTTP 状态码（when 分支的 200/404/409 等，自解释）与配置默认回退值
+  # （AgentBootstrap 的 30000/5000 等，紧邻字段名已说明语义）。这些场景提常量收益低、且本工程他处亦不提取，
+  # 强行外化会制造大量一次性常量。已关闭（真正的业务魔法值仍由 .claude/rules 人审把关）。
+  MagicNumber:
+    active: false
+  # 最大行长：ktlint 已以 140 列（CJK 宽=2）统一把关行长，detekt 默认 120 会与之重复且对中文注释 / 日志频繁误报。
+  # 行长检查归 ktlint 单一负责，detekt 侧关闭避免双标。已关闭。
+  MaxLineLength:
+    active: false
+  # 返回语句数：规则保持启用；但放行「卫语句式提前返回」——本工程大量解析 / 校验 / 路径守卫函数以
+  # 顶部 if(...) return 短路非法输入，是刻意的卫语句风格（比单出口 + 深嵌套更易读）。
+  # 仍命中的（循环内多出口等非卫语句返回）经评估走 baseline。
+  ReturnCount:
+    excludeGuardClauses: true

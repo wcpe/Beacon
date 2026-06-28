@@ -119,14 +119,13 @@ val runBungee by tasks.registering(RunWaterfall::class) {
             ?.filter { it.isFile && it.name.startsWith("Beacon") && it.name.endsWith(".jar") }
             ?.forEach { it.delete() }
         // TabooLib 运行期仓库覆盖（避开已下线的 sacredcraft.cn）。
-        runDir.resolve("env.properties").writeText(
+        val envProps =
             """
             repo-central=https://maven.aliyun.com/repository/central
             repo-taboolib=$tabooRepo
             repo-reflex=$tabooRepo
-            """.trimIndent() + "\n",
-            Charsets.UTF_8,
-        )
+            """.trimIndent()
+        runDir.resolve("env.properties").writeText(envProps + "\n", Charsets.UTF_8)
 
         logger.lifecycle("E2E 代理运行目录：${runDir.absolutePath}")
         logger.lifecycle("控制面地址：$beaconEndpoint，serverId=$serverId，namespace=$namespace（agent 配置经 BEACON_AGENT_* 注入）")
