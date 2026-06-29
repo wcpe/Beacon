@@ -37,7 +37,8 @@ export default function IngestReviewOverlay({
   const status = scan.data?.status
   // 清单到位（pending-review）才有可审项；扫描中（pending/scanning）items 暂空，显扫描骨架
   const ready = status === INGEST_REVIEW_READY
-  const items = ready ? (scan.data?.items ?? []) : []
+  // 包 useMemo 取稳定引用：否则每渲染新建数组，使下方依赖 items 的 useMemo 失效空转
+  const items = useMemo(() => (ready ? (scan.data?.items ?? []) : []), [ready, scan.data])
   const ignoreRules = scan.data?.ignoreRules ?? []
 
   // 勾选纳管集合：清单到位后按 defaultPick 初始化
