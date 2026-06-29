@@ -34,7 +34,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import { FolderTree, ListTree, Server } from 'lucide-react'
+import { FolderTree, Globe, ListTree, Server } from 'lucide-react'
 
 import { useAuth } from '@/state/auth'
 import { usePageHeader } from '@/components/PageHeader'
@@ -905,7 +905,8 @@ export default function ConfigWorkbenchPage() {
     title: t('configs.title'),
     envScoped: true,
     subtitle: <WorkbenchLegend />,
-    actions: (
+    // 「全部环境」(namespace 空)下配置工作台不可用（按单一环境管理），隐藏主操作避免触发空 namespace 写操作 400
+    actions: namespace ? (
       <div className="flex items-center gap-2">
         {/* 导入到组：P2 待接（需环境/组候选数据，本 FR 暂保留提示，不造假成功） */}
         <Button
@@ -937,7 +938,7 @@ export default function ConfigWorkbenchPage() {
           {t('configs.createBtn')}
         </Button>
       </div>
-    ),
+    ) : undefined,
   })
 
   const loading = managed.isLoading || server.isLoading
@@ -959,6 +960,20 @@ export default function ConfigWorkbenchPage() {
       search: 'configs.workbench.toolbarSearchHint',
     }
     msg.showSuccess(t(hintKey[action]))
+  }
+
+  // 「全部环境」(namespace 空)下配置工作台无法运作——受管树查询被禁用故左面板恒空、写操作 namespace 为空会被后端 400「参数错误」。
+  // 给出明确引导而非静默坏掉：提示去右上角环境选择器选一个具体环境（配置按单一环境管理，「全部环境」无意义）。
+  if (!namespace) {
+    return (
+      <div className="flex h-full min-h-0 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-card/40 px-6 text-center">
+        <Globe aria-hidden className="size-8 text-muted-foreground/40" />
+        <p className="text-sm font-medium text-foreground">{t('configs.workbench.needEnvTitle')}</p>
+        <p className="max-w-md text-xs text-muted-foreground">
+          {t('configs.workbench.needEnvDesc')}
+        </p>
+      </div>
+    )
   }
 
   return (

@@ -72,6 +72,15 @@ vi.mock('./configs-workbench/useWorkbenchData', () => ({
   usePublishImpact: vi.fn(),
 }))
 
+// ---- 替身：全局环境固定为 prod ----
+// 工作台是环境范围页：空环境（「全部环境」）下渲染「请选择具体环境」引导态而非双面板。
+// 测试覆盖的是有具体环境时的工作台闭环，故固定 prod。
+vi.mock('@/state/environment', () => ({
+  useEnvironment: () => 'prod',
+  setEnvironment: vi.fn(),
+  currentEnvironment: () => 'prod',
+}))
+
 import ConfigWorkbenchPage from './ConfigWorkbenchPage'
 import * as wb from './configs-workbench/useWorkbenchData'
 import type {

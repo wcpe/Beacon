@@ -1169,6 +1169,10 @@ export const zhCN = {
       toastFileDeleted: '已删除 {{count}} 项受管配置',
       toastIngested: '已纳管 {{count}} 项（反向抓取落库）',
       fetchNeedServer: '请先在右面板选中一台在线服务器作为抓取源',
+      // 「全部环境」(空 namespace) 引导：配置工作台按单一环境管理，空环境下无法运作
+      needEnvTitle: '请先选择一个具体环境',
+      needEnvDesc:
+        '配置中心按单一环境管理配置，「全部环境」下无法浏览 / 新建 / 编辑配置。请在右上角「环境」选择器选择一个具体环境（如 prod / test）。',
       deleteServerReadonly: '服务器侧文件为只读真实磁盘文件，不支持删除',
       deleteNoTarget: '未找到可删除的受管文件（仅受管文件可删）',
       publishNoTarget: '未找到可发布的受管文件',
