@@ -197,6 +197,10 @@ export const zhCN = {
     unreachable: '不可达',
     connected: '已连接',
     disconnected: '已断开',
+    // 演示模式（mock 假后端）醒目标记：提醒当前数据为假、非真后端
+    mockBadge: '演示模式',
+    mockBadgeTitle:
+      '当前为演示模式（mock 假后端）：所有数据为浏览器内存中的假数据、刷新即重置，非真实控制面。',
     uptime: '运行时长',
     onlineInstances: '在线实例',
     // 精简页眉「运行/在线」合并为一行（FR-118 E：仅值、无标签行）：运行 X · 在线 N

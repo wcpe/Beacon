@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import { systemStatus } from '@/api/client'
+import { isMockEnabled } from '@/api/mock'
 import { formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
 import HeaderControls from '@/components/HeaderControls'
@@ -48,6 +49,9 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
   // 首次加载（无数据且无错误）显示骨架，不闪 '-'
   const showSkeleton = isLoading && !data && !isError
 
+  // 演示模式（mock 假后端）：顶栏醒目标记，避免把假数据误当真后端（mock 启用后整会话不变，render 期直接读即可）
+  const mock = isMockEnabled()
+
   return (
     // 只渲染状态条内容（不含 header 外壳）：由顶栏容器统一边框/内边距。
     // fix-A：改 flex-nowrap（不换行）+ min-w-0，避免固定高 h-10 顶栏内换行被裁；次要项按断点渐进收起。
@@ -78,6 +82,20 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
             )}
           />
           {connLabel}
+        </span>
+      )}
+
+      {/* 演示模式标记（mock 假后端）：紧随连接态药丸、橙色醒目、始终显示不收缩，一眼区分假数据/真后端 */}
+      {mock && (
+        <span
+          title={t('systemHeader.mockBadgeTitle')}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-500/40 dark:text-amber-400"
+        >
+          <span
+            aria-hidden
+            className="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"
+          />
+          {t('systemHeader.mockBadge')}
         </span>
       )}
 
