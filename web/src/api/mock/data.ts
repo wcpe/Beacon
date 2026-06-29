@@ -1013,6 +1013,47 @@ export const mockFiles: FileView[] = [
     updatedAt: ago(10800),
     content: 'enabled: true\ncooldown: 15\n',
   },
+  // ===== test 环境受管配置：与 mock test-01 服务器同环境，使演示模式在 test 环境的配置中心开箱即有内容 =====
+  // path 约定为「相对 plugins/ 根」（与真后端一致，受管树固定以 plugins 为根，不带 plugins/ 前缀避免双层）。
+  {
+    id: 4,
+    namespace: 'test',
+    group: '__GLOBAL__',
+    path: 'Essentials/config.yml',
+    scopeLevel: 'global',
+    scopeTarget: '',
+    version: 2,
+    md5: 'e5e5e5e5',
+    enabled: true,
+    updatedAt: ago(1800),
+    content: 'spawn-on-join: true\nmotd: 欢迎来到测试服\n',
+  },
+  {
+    id: 5,
+    namespace: 'test',
+    group: '__GLOBAL__',
+    path: 'WorldGuard/config.yml',
+    scopeLevel: 'global',
+    scopeTarget: '',
+    version: 1,
+    md5: 'f6f6f6f6',
+    enabled: true,
+    updatedAt: ago(5400),
+    content: 'build-permission: false\nuse-region-flags: true\n',
+  },
+  {
+    id: 6,
+    namespace: 'test',
+    group: '__GLOBAL__',
+    path: 'Essentials/spawn.yml',
+    scopeLevel: 'global',
+    scopeTarget: '',
+    version: 1,
+    md5: 'a7a7a7a7',
+    enabled: true,
+    updatedAt: ago(3600),
+    content: 'spawns:\n  default:\n    world: world\n    x: 0\n    y: 64\n    z: 0\n',
+  },
 ]
 
 // 文件版本历史（可变：发布 / 回滚追加版本）；按 fileId 索引。
