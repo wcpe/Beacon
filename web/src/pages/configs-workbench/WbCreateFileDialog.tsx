@@ -93,11 +93,18 @@ export default function WbCreateFileDialog({
           </div>
         </form>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             {t('common.cancel')}
           </Button>
           <Button type="submit" form="wb-create-file" disabled={submitting || !path.trim()}>
-            {submitting ? t('configs.workbench.createFileSubmitting') : t('configs.workbench.createFileSubmit')}
+            {submitting
+              ? t('configs.workbench.createFileSubmitting')
+              : t('configs.workbench.createFileSubmit')}
           </Button>
         </DialogFooter>
       </DialogContent>
