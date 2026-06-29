@@ -152,6 +152,8 @@ export default function ConfigWorkbenchPage() {
   const [publishNames, setPublishNames] = useState<string[] | null>(null)
   // 待发布受管文件的 fileId 列表（与 publishNames 对应；onPublishConfirm 据此调真发布）
   const [publishFileIds, setPublishFileIds] = useState<number[]>([])
+  // 待发布文件的真实覆盖层 + 大区（取首个选中文件；驱动发布面板影响面按真实 scope+group 算受影响在线服，FR-128）
+  const [publishScope, setPublishScope] = useState<{ scopeLevel: string; group: string } | null>(null)
   // 队列批量审核（改进 4）：选中的待审队列行 id 集合 + 批量审核浮层开关
   const [queueSel, setQueueSel] = useState<Set<string>>(new Set())
   const [batchReview, setBatchReview] = useState<SyncQueueRow[] | null>(null)
@@ -200,6 +202,25 @@ export default function ConfigWorkbenchPage() {
       const walk = (nodes: ManagedNode[]) => {
         for (const n of nodes) {
           if (n.key === key && n.type === 'file') found = n.fileId
+          if (n.children) walk(n.children)
+        }
+      }
+      walk((managed.data ?? []) as ManagedNode[])
+      return found
+    },
+    [managed.data],
+  )
+
+  // 按受管文件 key 查其后端原始覆盖层 + 大区（发布影响面按真实 scope+group 算受影响在线服，FR-128）：
+  // 修复发布面板影响面恒 0 台——此前 PublishPanel 用默认 group=空查 impact、后端 400，致按钮禁用。
+  const scopeByKey = useCallback(
+    (key: string): { scopeLevel: string; group: string } | undefined => {
+      let found: { scopeLevel: string; group: string } | undefined
+      const walk = (nodes: ManagedNode[]) => {
+        for (const n of nodes) {
+          if (n.key === key && n.type === 'file' && n.scopeLevel) {
+            found = { scopeLevel: n.scopeLevel, group: n.group ?? '' }
+          }
           if (n.children) walk(n.children)
         }
       }
@@ -514,6 +535,9 @@ export default function ConfigWorkbenchPage() {
     // 收集选中受管文件的 fileId（确认发布时逐个 getFile + publishFile 触发热推）
     const ids = [...selManaged].map((k) => fileIdByKey(k)).filter((v): v is number => v != null)
     setPublishFileIds(ids)
+    // 取首个选中文件的真实覆盖层 + 大区，供影响面按真实 scope 算受影响在线服（修影响面恒 0 台）
+    const firstKey = [...selManaged][0]
+    setPublishScope(firstKey ? (scopeByKey(firstKey) ?? null) : null)
     setPublishNames(selNames)
   }
   // 打开「抓取选中」确认（落当前 scope 覆盖层）：确认后走真扫描任务
@@ -1042,7 +1066,13 @@ export default function ConfigWorkbenchPage() {
 
       {/* ===== 发布 + 影响面板（改进 1）：受管选中 → 按覆盖层发布热推到受影响在线服 ===== */}
       {publishNames && (
-        <PublishPanel names={publishNames} onPublish={onPublishConfirm} onCancel={() => setPublishNames(null)} />
+        <PublishPanel
+          names={publishNames}
+          scopeLevel={publishScope?.scopeLevel}
+          group={publishScope?.group}
+          onPublish={onPublishConfirm}
+          onCancel={() => setPublishNames(null)}
+        />
       )}
 
       {/* ===== 队列批量审核浮层（改进 4）：选中多个待审项 → 批量看 diff/清单 + 全部通过 ===== */}

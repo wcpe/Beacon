@@ -29,6 +29,10 @@ export interface ManagedNode {
   modifiedAt?: string
   // 文件专属：后端文件对象 id（编辑器 / 历史按此拉真内容；无 id 表示纯展示节点）
   fileId?: number
+  // 文件专属：后端原始覆盖层 / 大区 / 目标键（发布影响面需按真实 scope+group 算受影响在线服，FR-128）
+  scopeLevel?: string
+  group?: string
+  scopeTarget?: string
   children?: ManagedNode[]
 }
 

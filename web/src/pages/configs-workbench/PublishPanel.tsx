@@ -24,16 +24,22 @@ import { usePublishImpact } from './useWorkbenchData'
 export default function PublishPanel({
   // 待发布的受管文件名（含路径，如 spawn.yml / Essentials/config.yml）
   names,
+  // 待发布文件的真实覆盖层 + 大区（FR-128）：影响面据此算受影响在线服。
+  // 缺省回落到 group（兼容旧调用），但 group 为空时后端 impact 会 400 → 0 台，故须由上层传真实 group。
+  scopeLevel,
+  group,
   // 确认发布并热推（传在线热推台数，供 toast）
   onPublish,
   onCancel,
 }: {
   names: string[]
+  scopeLevel?: string
+  group?: string
   onPublish: (onlineCount: number) => void
   onCancel: () => void
 }) {
   const { t } = useTranslation()
-  const impact = usePublishImpact(names, true)
+  const impact = usePublishImpact(names, true, scopeLevel ?? 'group', group)
   // 批量审阅闸：有差异时须勾选才放行发布
   const [reviewed, setReviewed] = useState(false)
   // 批量 diff 子浮层开关

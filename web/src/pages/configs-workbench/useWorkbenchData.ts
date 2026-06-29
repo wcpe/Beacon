@@ -103,6 +103,10 @@ function buildManagedTree(files: FileView[]): ManagedNode[] {
       version: f.version,
       modifiedAt: clockTime(f.updatedAt),
       fileId: f.id,
+      // 保留后端原始 scope/group/target，供发布影响面按真实层级算受影响在线服（FR-128）
+      scopeLevel: f.scopeLevel,
+      group: f.group,
+      scopeTarget: f.scopeTarget,
     })
   }
   return [root]
