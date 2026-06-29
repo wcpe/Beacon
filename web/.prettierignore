@@ -6,3 +6,7 @@ coverage
 pnpm-lock.yaml
 # 第三方依赖
 node_modules
+# Playwright E2E 产物（报告 / 结果 / 真后端运行目录），不入格式化范围
+test-results
+playwright-report
+.e2e-real-run

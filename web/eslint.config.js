@@ -39,6 +39,14 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // E2E（Playwright）用例、共享步骤与构建脚本：运行在 Node 环境，
+    // 提供 node 全局（process / console / URL 等），避免 no-undef 误报。
+    files: ['e2e/**/*.{ts,mts,mjs}', 'playwright.config.ts'],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
   // 末尾接 prettier，关闭所有与 Prettier 冲突的格式类规则（缩进 / 引号 / 分号等格式归 Prettier 管）
   prettier,
 )
