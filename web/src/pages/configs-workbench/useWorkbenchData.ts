@@ -125,13 +125,16 @@ function buildManagedTree(files: FileView[]): ManagedNode[] {
 }
 
 // ---- 服务器实时 plugins 树 ← FR-110 浏览端点（op=tree）----
-// 选定某在线服后懒展开其真实 plugins 子树；映射成 ServerNode（纳管标记默认 untracked，与受管交叉判断为 partial）。
+// 选定某在线服后展开其真实 plugins 子树；映射成 ServerNode（纳管标记默认 untracked，与受管交叉判断为 partial）。
+// 注意：op=tree 不带 maxDepth 时后端只回根节点（children 空、truncated）——必须显式带 maxDepth 才返回子树，
+// 否则服务器面板「只有 plugins、点不进去」。覆盖 plugins/插件/子目录/文件 的常见深度（4 层），更深由 agent 硬上限收口。
+const SERVER_TREE_MAX_DEPTH = 4
 export function useServerTree(serverId: string | undefined) {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-server-tree', namespace, serverId],
     queryFn: () =>
-      browse(serverId!, namespace, { op: 'tree' }).then((r) =>
+      browse(serverId!, namespace, { op: 'tree', maxDepth: SERVER_TREE_MAX_DEPTH }).then((r) =>
         browseTreeToServerNodes(r as BrowseTreeResult),
       ),
     enabled: !!namespace && !!serverId,
