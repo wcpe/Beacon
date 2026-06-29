@@ -62,3 +62,42 @@ jobs:
         # 与目录用例相互独立；目录失败也照跑，便于一次拿全两条相位结论
         if: always()
         run: go test -tags=e2e -timeout=30m ./test/e2e/override
+
+  # 前端真后端 E2E：起真控制面（sqlite + 固定本地测试凭据，见 web/playwright.config.ts）
+  # + Playwright 真 admin 登录跑关键链路（页面可达 + 密钥增删改查闭环）。重型（构建内嵌
+  # 前端的 Go 二进制 + 下载浏览器），与上面 Go E2E 同属手动 / 定时触发、不进 PR 门禁。
+  # 假后端 E2E 轻量、已在 ci.yml 作 PR 必跑门禁。
+  web-e2e-real:
+    name: 前端真后端 E2E（sqlite）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # 控制面 sqlite 经 go-sqlite3 需 CGO；ubuntu 自带 gcc
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - name: 安装 Node（启用 pnpm store 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 安装前端依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: 安装 Playwright 浏览器（chromium）
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: 真后端 E2E（pnpm test:e2e:real）
+        # build-real.mjs 先出内嵌前端的 sqlite 版控制面二进制，Playwright 起它跑真 admin 登录链路
+        working-directory: web
+        run: pnpm test:e2e:real

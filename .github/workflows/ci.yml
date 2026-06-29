@@ -134,6 +134,34 @@ jobs:
         # ubuntu runner 自带 make；从仓库根调用（make web 内部自行 cd web）
         run: make web
 
+  # 前端 E2E（假后端）：Playwright 对 mock 模式跑关键业务流（登录 / 主页面可达 /
+  # 配置发布回滚 / 文件树 / 命令观测 / 密钥闭环）。无需真后端、最稳，纳入 PR 必跑门禁。
+  # 真后端 E2E 较重（需构建内嵌前端的 Go 二进制 + 浏览器），见 e2e.yml 手动/定时触发。
+  web-e2e:
+    name: 前端 E2E（假后端）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - name: 安装 Node（启用 pnpm store 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: 安装前端依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: 安装 Playwright 浏览器（chromium）
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: 假后端 E2E（pnpm test:e2e）
+        working-directory: web
+        run: pnpm test:e2e
+
   # 一键打包验证 + 产物上传：经 Makefile 完整构建控制面（原生二进制，内嵌前端 + 版本注入）+ 双端 agent jar，
   # 与本地 make package、release.yml 同一构建路径（Makefile 单一来源）。产物上传供 PR/push 后下载验证（临时）。
   package:
