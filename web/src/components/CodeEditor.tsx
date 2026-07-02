@@ -32,6 +32,9 @@ interface CodeEditorProps {
   onMount?: () => void
   // 客户端格式校验结果回调（FR-75）：合法上抛 null，非法上抛首个错误。仅编辑模式触发。
   onValidate?: (error: LintError | null) => void
+  // diff 模式强制左右并排：默认（false）窄区时 Monaco 会自动回退成行内堆叠（旧行为不变）；
+  // 传 true 关闭该回退，无论宽窄都保持左右两栏对比。
+  sideBySide?: boolean
 }
 
 // ---- 语言映射 ----
@@ -57,6 +60,7 @@ export default function CodeEditor({
   onChange,
   onMount,
   onValidate,
+  sideBySide = false,
 }: CodeEditorProps) {
   const { t } = useTranslation()
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
@@ -128,6 +132,8 @@ export default function CodeEditor({
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     automaticLayout: true,
+    // 浮窗/查找/悬浮等 overflow 小部件渲染到 body，避免被 overflow-hidden 容器裁切导致闪烁、无法点关闭
+    fixedOverflowWidgets: true,
     tabSize: 2,
     padding: { top: 8 },
     scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
@@ -168,6 +174,8 @@ export default function CodeEditor({
     ...editOptions,
     readOnly: false,
     renderSideBySide: true,
+    // sideBySide=true 时关闭「窄区自动回退行内」，保证始终左右两栏（默认保持原行为）
+    useInlineViewWhenSpaceIsLimited: !sideBySide,
     renderOverviewRuler: true,
     overviewRulerBorder: false,
     lineDecorationsWidth: 8,

@@ -5,6 +5,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { toast } from 'sonner'
 import App from './App'
 import { Toaster } from '@/components/ui/sonner'
+import { loader } from '@monaco-editor/react'
 // i18n 初始化（FR-50，见 ADR-0033）：import 即同步完成初始化，须在渲染前先执行
 import i18n from './i18n'
 import { applyThemeToDocument, currentPreferences } from './state/preferences'
@@ -12,6 +13,11 @@ import './index.css'
 
 // 暗色主题首屏同步生效（FR-92）：渲染前按持久化偏好打 .dark 类，避免浅→暗闪烁。
 applyThemeToDocument(currentPreferences().theme)
+
+// Monaco 自托管 + 中文化：从本地 /monaco/vs 加载（经 go:embed 随单二进制下发，离线可用、不依赖外网 CDN），
+// 并启用中文 UI（查找框 / 右键菜单 / 快捷键面板）。资产与中文语言包由 scripts/vendor-monaco.mjs 生成、修正。
+// 须在 Monaco 首次加载前配置才生效（base 固定为 '/'，与 vite.config 一致）。
+loader.config({ paths: { vs: '/monaco/vs' }, 'vs/nls': { availableLanguages: { '*': 'zh-cn' } } })
 
 // 假后端（mock）API 启用判定（无需真后端即可完整体验前端交互）：
 // 1) 构建期 env 开关 VITE_USE_MOCK='true'（如 `pnpm dev:mock` 经 .env.mock 注入）→ 任何环境都启用；

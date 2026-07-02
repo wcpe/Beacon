@@ -476,7 +476,7 @@ const ZERO_PROXY: InstanceView['proxy'] = {
   backendAvgLatencyMs: -1,
 }
 
-export const mockInstances: InstanceView[] = [
+const baseInstances: InstanceView[] = [
   {
     namespace: 'prod',
     serverId: 'server-01',
@@ -611,6 +611,60 @@ export const mockInstances: InstanceView[] = [
     registeredAt: ago(86400),
   },
 ]
+
+// 生成约 1000 台分层级实例（多大区 server-a..d × 多小区 zone-01..05），让全站（服务器/拓扑/区分配/看板）联动千级规模。
+// 确定性生成（不用随机），避免每次刷新数据漂移影响测试与截图对比。
+function genInstances(count: number): InstanceView[] {
+  const out: InstanceView[] = []
+  const groups = ['server-a', 'server-b', 'server-c', 'server-d']
+  const zonesByGroup: Record<string, string[]> = {
+    'server-a': ['zone-01', 'zone-02'],
+    'server-b': ['zone-02', 'zone-03'],
+    'server-c': ['zone-03', 'zone-04'],
+    'server-d': ['zone-04', 'zone-05'],
+  }
+  for (let n = 1; n <= count; n++) {
+    const g = groups[n % groups.length]
+    const zs = zonesByGroup[g]
+    const z = zs[n % zs.length]
+    const role: InstanceView['role'] = n % 12 === 0 ? 'bungee' : 'bukkit'
+    const status: InstanceView['status'] = n % 23 === 0 ? 'offline' : n % 17 === 0 ? 'lost' : 'online'
+    const ns = n % 6 === 0 ? 'test' : 'prod'
+    const age = (n * 7) % 300
+    out.push({
+      namespace: ns,
+      serverId: `srv-${String(n).padStart(4, '0')}`,
+      role,
+      group: g,
+      zone: z,
+      assigned: true,
+      address: `10.${Math.floor(n / 254) + 2}.${n % 254}:25565`,
+      version: '1.20.4',
+      agentVersion: n % 10 === 0 ? '0.11.0' : '0.12.0',
+      status,
+      capacity: role === 'bungee' ? 200 : 100,
+      weight: role === 'bungee' ? 2 : 1,
+      metadata: {},
+      lastHeartbeat: ago(age),
+      lastHeartbeatAgeSec: age,
+      healthReason: status === 'offline' ? '主动下线' : '',
+      appliedMd5: n % 2 === 0 ? 'abc12345' : 'def67890',
+      playerCount: role === 'bungee' ? 0 : (n * 13) % 140,
+      tps: role === 'bungee' ? 0 : Math.round((18 + (n % 20) / 10) * 10) / 10,
+      backends: role === 'bungee' ? [`srv-${String((n % count) + 1).padStart(4, '0')}`] : [],
+      zoneDefaultEntry: n % 30 === 0,
+      proxy:
+        role === 'bungee'
+          ? { onlineConnections: (n * 9) % 256, threadCount: 24 + (n % 32), uptimeMs: 7_200_000, backendUp: 1, backendTotal: 2, backendAvgLatencyMs: 10 + (n % 30) }
+          : ZERO_PROXY,
+      registeredAt: ago(86400 + n * 60),
+    })
+  }
+  return out
+}
+
+// 真源：5 台命名演示实例 + 1000 台分层级生成实例
+export const mockInstances: InstanceView[] = [...baseInstances, ...genInstances(1000)]
 
 export function listMockInstances(filter?: {
   namespace?: string

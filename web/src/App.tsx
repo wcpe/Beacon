@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import WallboardPage from './pages/WallboardPage'
 import ConfigWorkbenchPage from './pages/ConfigWorkbenchPage'
+import ConfigCenterPage from './pages/ConfigCenterPage'
 import ConfigEditorPage from './pages/ConfigEditorPage'
 import FilePreviewPage from './pages/FilePreviewPage'
 import ServersPage from './pages/ServersPage'
@@ -54,8 +55,10 @@ export default function App() {
           <Route index element={<Navigate to="/configs" replace />} />
           {/* 可观测看板（FR-32）：总览卡片 + 趋势图 + 每服明细 */}
           <Route path="dashboard" element={<DashboardPage />} />
-          {/* 配置中心双面板 Xftp 工作台（FR-111）：左右双面板 + 同步队列。 */}
-          <Route path="configs" element={<ConfigWorkbenchPage />} />
+          {/* 配置中心新版骨架（批1，纯 mock）：根目录文件树 + 看生效/写入层 + 生效/对盘视角。 */}
+          <Route path="configs" element={<ConfigCenterPage />} />
+          {/* 旧双面板 Xftp 工作台（FR-111）暂留 URL 兜底，迁移期参照，待批4下线。 */}
+          <Route path="configs-legacy" element={<ConfigWorkbenchPage />} />
           {/* 配置文件真详情多标签编辑器（FR-112，ADR-0050 决策 3）：双击文件进本聚焦编辑器真路由，
               保留多标签 + Monaco diff / 历史 + 保存确认（FR-67）+ 局部面包屑 / 返回。 */}
           <Route path="configs/:id" element={<ConfigEditorPage />} />

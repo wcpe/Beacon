@@ -28,6 +28,8 @@ package-lock.json
 # 注意：须忽略目录内容（/web/dist/*）而非目录本身，否则父目录被排除会使下面的 .gitkeep 例外失效
 /web/dist/*
 !/web/dist/.gitkeep
+# vendored Monaco 编辑器资产（scripts/vendor-monaco.mjs 由 node_modules 重生成，dev/build 前自动跑，不入库二进制）
+/web/public/monaco/
 # 前端测试覆盖率报告（vitest --coverage 产物，不入库）
 /web/coverage/
 # Playwright E2E 产物（报告 / 结果 / 真后端运行目录），不入库
