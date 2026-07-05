@@ -8,9 +8,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { importFiles } from '../../api/client'
 import type { ImportFileEntry } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
+import { Button } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Combobox, type ComboboxOption } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 import ImportPreviewModal from './ImportPreviewModal'
 
 // webkitdirectory 属性非标准 DOM 类型，单独声明以便在 input 上使用而不触发 TS 报错。

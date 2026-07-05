@@ -58,6 +58,7 @@ export const NAV_GROUPS: NavGroup[] = [
     // 三页合一后（FR-113，ADR-0050 决策 4）：拓印 / 反向抓取并入工作台，侧栏只留工作台 + 文件树预览 2 叶子。
     leaves: [
       { to: '/configs', labelKey: 'nav.configs', icon: SlidersHorizontal, envScoped: true },
+      { to: '/file-sync', labelKey: 'nav.fileSync', icon: RefreshCw, envScoped: true },
       { to: '/file-preview', labelKey: 'nav.filePreview', icon: FolderTree, envScoped: true },
     ],
   },

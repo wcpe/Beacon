@@ -3,7 +3,7 @@
 
 import { useTranslation } from 'react-i18next'
 import type { SummaryGroupNode, SummaryServer, SummaryTree, SummaryZoneNode } from './summaryTree'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 
 // 状态 → 状态点配色（与 ServerCard 一致：online 绿 / lost 琥珀 / offline 灰）
@@ -41,8 +41,16 @@ function ServerLeaf({ server }: { server: SummaryServer }) {
 }
 
 // 小区节点：标题（小区名 + 计数）+ 子服列表（左缩进 + 竖向连接线）
-function ZoneNode({ zone }: { zone: SummaryZoneNode }) {
+function ZoneNode({
+  zone,
+  serverLimitPerZone,
+}: {
+  zone: SummaryZoneNode
+  serverLimitPerZone?: number
+}) {
   const { t } = useTranslation()
+  const servers = serverLimitPerZone ? zone.servers.slice(0, serverLimitPerZone) : zone.servers
+  const hidden = zone.servers.length - servers.length
   return (
     <li>
       <div className="flex items-center py-0.5 text-sm">
@@ -56,9 +64,10 @@ function ZoneNode({ zone }: { zone: SummaryZoneNode }) {
         </p>
       ) : (
         <ul className="ml-4 border-l pl-3">
-          {zone.servers.map((s) => (
+          {servers.map((s) => (
             <ServerLeaf key={s.serverId} server={s} />
           ))}
+          {hidden > 0 && <li className="py-0.5 text-xs text-muted-foreground">还有 {hidden} 台</li>}
         </ul>
       )}
     </li>
@@ -66,7 +75,13 @@ function ZoneNode({ zone }: { zone: SummaryZoneNode }) {
 }
 
 // 大区节点：标题（大区名 + 合计计数）+ 小区列表（左缩进 + 竖向连接线）
-function GroupNode({ group }: { group: SummaryGroupNode }) {
+function GroupNode({
+  group,
+  serverLimitPerZone,
+}: {
+  group: SummaryGroupNode
+  serverLimitPerZone?: number
+}) {
   const { t } = useTranslation()
   return (
     <li>
@@ -78,7 +93,7 @@ function GroupNode({ group }: { group: SummaryGroupNode }) {
       </div>
       <ul className="ml-4 space-y-1 border-l pl-3">
         {group.zones.map((z) => (
-          <ZoneNode key={z.zone} zone={z} />
+          <ZoneNode key={z.zone} zone={z} serverLimitPerZone={serverLimitPerZone} />
         ))}
       </ul>
     </li>
@@ -86,7 +101,13 @@ function GroupNode({ group }: { group: SummaryGroupNode }) {
 }
 
 // 汇总树根：无大区时给空态文案
-export default function ZoneSummaryTree({ tree }: { tree: SummaryTree }) {
+export default function ZoneSummaryTree({
+  tree,
+  serverLimitPerZone,
+}: {
+  tree: SummaryTree
+  serverLimitPerZone?: number
+}) {
   const { t } = useTranslation()
   if (tree.groups.length === 0) {
     return <p className="text-sm text-muted-foreground">{t('zones.treeEmpty')}</p>
@@ -94,7 +115,7 @@ export default function ZoneSummaryTree({ tree }: { tree: SummaryTree }) {
   return (
     <ul className="space-y-3">
       {tree.groups.map((g) => (
-        <GroupNode key={g.group} group={g} />
+        <GroupNode key={g.group} group={g} serverLimitPerZone={serverLimitPerZone} />
       ))}
     </ul>
   )

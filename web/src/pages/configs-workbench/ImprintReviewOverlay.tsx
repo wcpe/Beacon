@@ -6,8 +6,8 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { GitCompare, X } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
 import CodeEditor from '@/components/CodeEditor'
 import { imprintDiffs } from './sampleData'
 

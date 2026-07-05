@@ -1,5 +1,7 @@
 # 构建产物（由 vite build 生成，不入格式化范围）
 dist
+apps/*/dist
+packages/*/dist
 # 测试覆盖率报告
 coverage
 # 依赖锁文件（由 pnpm 维护，禁手改格式）

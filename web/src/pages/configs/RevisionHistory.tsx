@@ -2,7 +2,7 @@
 
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { ScrollArea } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import { formatTime } from '../../api/format'
 import type { RevisionView } from '../../api/types'

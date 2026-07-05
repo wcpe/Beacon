@@ -6,8 +6,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
+} from '@beacon/ui'
+import { Badge } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import type { OpenTab } from './types'
 

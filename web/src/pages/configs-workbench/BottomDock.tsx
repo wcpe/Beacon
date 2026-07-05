@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ClipboardCheck, ListChecks, ScrollText, Undo2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import type { OpLogEntry, SyncQueueRow } from './types'
 import { QueueList, countPendingSelected } from './SyncQueuePanel'

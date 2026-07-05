@@ -2,9 +2,9 @@
 // 统一列出全部实例（bukkit+bungee，不限 role）：role / group / zone（未分配黄高亮）/ status / address / version
 // + 角色相关列（bukkit 人数·TPS；bungee 连接·运行时长·后端可达）+ 最近心跳 + 操作。
 // 操作：下线/取消下线（FR-49）、drain/undrain（FR-10）、区改派（复用 FR-71 ReassignDialog，含排空门 + 手输确认）。
-// 点行从右侧滑出单服详情 Sheet（按 role 分区展示深指标 + 关系）。5 秒轮询健康。
+// 点行只更新右侧明细；明确点 agent 详情 / 查看日志时才打开抽屉。5 秒轮询健康。
 
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -37,20 +37,16 @@ import StatusBadge from '../components/StatusBadge'
 import RoleBadge from '../components/RoleBadge'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
-import AsyncSection from '@/components/AsyncSection'
-import { TableSkeleton } from '@/components/skeletons'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Combobox } from '@/components/ui/combobox'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { AsyncSection } from '@beacon/ui'
+import { TableSkeleton } from '@beacon/ui'
+import { DataTable, type DataTableColumn } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Checkbox } from '@beacon/ui'
+import { Combobox } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,20 +56,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+} from '@beacon/ui'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+} from '@beacon/ui'
 import ReassignDialog from './zones/ReassignDialog'
 import ServerDetailSheet from './servers/ServerDetailSheet'
 import AddServerWizard from './servers/AddServerWizard'
+import { filterInstancesByKeyword } from '@/lib/instanceFiltering'
+import { cn } from '@/lib/utils'
 
 // 健康轮询周期（毫秒）
 const REFETCH_MS = 5000
+const SERVER_TABLE_PAGE_SIZE = 30
 
 // Radix Select 不允许空串值，"全部"用哨兵值 all 表示，提交时转 undefined
 const ALL = 'all'
@@ -83,6 +82,10 @@ const ROLE_BUNGEE = 'bungee'
 
 // 排空门错误码（与后端 apperr.ErrZoneServerOnlineNonempty 一致，FR-71/ADR-0036）
 const ERR_ZONE_SERVER_ONLINE_NONEMPTY = 'ZONE_SERVER_ONLINE_NONEMPTY'
+
+function instanceKey(i: Pick<InstanceView, 'namespace' | 'serverId'>): string {
+  return `${i.namespace}/${i.serverId}`
+}
 
 // 角色相关「人数/连接」列：bukkit 显在线人数，bungee 显代理在线连接。
 function loadCell(i: InstanceView): string {
@@ -126,6 +129,121 @@ function versionAgentCell(t: TFunction, i: InstanceView, majority: MajorityVersi
   )
 }
 
+function ServerInlineDetail({
+  instance,
+  onOpenDetail,
+  onOpenLogs,
+  onResync,
+}: {
+  instance: InstanceView | null
+  onOpenDetail: (instance: InstanceView) => void
+  onOpenLogs: (instance: InstanceView) => void
+  onResync: (instance: InstanceView) => void
+}) {
+  const { t } = useTranslation()
+  if (!instance) {
+    return (
+      <aside className="h-full rounded-md border bg-background p-4 text-sm text-muted-foreground shadow-sm">
+        {t('servers.inlineEmpty')}
+      </aside>
+    )
+  }
+  const cpu = instance.metadata.cpu ?? '-'
+  const mem = instance.metadata.mem ?? '-'
+  const disk = instance.metadata.disk ?? '-'
+  return (
+    <aside className="flex h-full min-h-0 flex-col rounded-md border bg-background shadow-sm">
+      <div className="flex h-9 shrink-0 items-center border-b px-3">
+        <h2 className="text-sm font-semibold">{t('servers.inlineTitle')}</h2>
+      </div>
+      <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3 text-xs">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-semibold">
+              {t('servers.inlineSelected', { serverId: instance.serverId })}
+            </span>
+            <StatusBadge status={instance.status} reason={instance.healthReason} />
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-muted-foreground">
+            <span className="font-mono">{instance.address}</span>
+            <RoleBadge role={instance.role} />
+          </div>
+        </div>
+
+        <div className="rounded-md border p-2">
+          <div className="mb-2 text-muted-foreground">{t('servers.inlineTrend')}</div>
+          <div className="grid grid-cols-3 gap-2">
+            <InlineGauge
+              label="TPS"
+              value={instance.role === ROLE_BUNGEE ? '-' : instance.tps.toFixed(1)}
+            />
+            <InlineGauge label="CPU" value={cpu} />
+            <InlineGauge label={t('servers.inlineMem')} value={mem} />
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+          <dt className="text-muted-foreground">{t('servers.colNamespace')}</dt>
+          <dd>{instance.namespace}</dd>
+          <dt className="text-muted-foreground">{t('servers.colGroup')}</dt>
+          <dd>{instance.group}</dd>
+          <dt className="text-muted-foreground">{t('servers.colZone')}</dt>
+          <dd>{instance.zone || '-'}</dd>
+          <dt className="text-muted-foreground">{t('servers.colVersionAgent')}</dt>
+          <dd className="truncate font-mono">
+            {instance.version} · {instance.agentVersion || t('servers.agentVersionUnknown')}
+          </dd>
+          <dt className="text-muted-foreground">{t('servers.detailRegisteredAt')}</dt>
+          <dd>{formatTime(instance.registeredAt)}</dd>
+          <dt className="text-muted-foreground">{t('servers.colLastHeartbeat')}</dt>
+          <dd>{formatTime(instance.lastHeartbeat)}</dd>
+          <dt className="text-muted-foreground">{t('servers.inlineDisk')}</dt>
+          <dd>{disk}</dd>
+        </dl>
+
+        <div className="rounded-md border p-2">
+          <div className="mb-2 font-medium">{t('servers.inlineRecentCommands')}</div>
+          <div className="space-y-1.5">
+            {[
+              t('servers.actionResync'),
+              t('servers.actionViewLogs'),
+              t('servers.actionAgentDetail'),
+            ].map((name, index) => (
+              <div key={name} className="flex items-center justify-between">
+                <span>{name}</span>
+                <span className={index === 0 ? 'text-green-600' : 'text-muted-foreground'}>
+                  {index === 0 ? t('servers.inlineCommandOk') : formatTime(instance.lastHeartbeat)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="outline" size="sm" onClick={() => onOpenDetail(instance)}>
+            {t('servers.actionAgentDetail')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => onOpenLogs(instance)}>
+            {t('servers.actionViewLogs')}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => onResync(instance)}>
+            {t('servers.actionResync')}
+          </Button>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+function InlineGauge({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="font-mono text-sm font-semibold">{value}</div>
+    </div>
+  )
+}
+
 export default function ServersPage() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -137,6 +255,9 @@ export default function ServersPage() {
   const [zone, setZone] = useState('')
   const [role, setRole] = useState(ALL)
   const [status, setStatus] = useState(ALL)
+  const [serverKeyword, setServerKeyword] = useState('')
+  const deferredServerKeyword = useDeferredValue(serverKeyword)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   // 页内非环境筛选的已生效条件（不含 namespace；namespace 由全局环境合并）
   const [filter, setFilter] = useState<InstanceFilter>({})
 
@@ -147,6 +268,8 @@ export default function ServersPage() {
     [filter, namespace],
   )
 
+  // 表格当前选中实例：只驱动右侧常驻明细，不打开抽屉。
+  const [selectedInstance, setSelectedInstance] = useState<InstanceView | null>(null)
   // 详情 Sheet 选中的实例（null 表示关闭）
   const [detailInstance, setDetailInstance] = useState<InstanceView | null>(null)
   // 详情 Sheet 打开时是否自动触发取日志（「查看日志」入口置 true，「agent 详情」入口置 false）
@@ -222,6 +345,62 @@ export default function ServersPage() {
 
   // 各环境 agent 多数版本（FR-86）：按当前列出实例聚合，供逐行判定版本是否不一致打黄标。
   const majorityVersions = useMemo(() => buildMajorityVersions(data ?? []), [data])
+  const tableRows = useMemo(
+    () => filterInstancesByKeyword(data ?? [], deferredServerKeyword),
+    [data, deferredServerKeyword],
+  )
+  const visibleKeys = useMemo(() => tableRows.map(instanceKey), [tableRows])
+  const selectedVisibleCount = useMemo(
+    () => visibleKeys.filter((key) => selectedKeys.has(key)).length,
+    [selectedKeys, visibleKeys],
+  )
+  const selectedCount = selectedKeys.size
+  const visibleSelectionChecked =
+    visibleKeys.length > 0 && selectedVisibleCount === visibleKeys.length
+      ? true
+      : selectedVisibleCount > 0
+        ? 'indeterminate'
+        : false
+  const inlineInstance = useMemo(() => {
+    if (!selectedInstance) return tableRows[0] ?? null
+    return (
+      tableRows.find(
+        (item) =>
+          item.namespace === selectedInstance.namespace &&
+          item.serverId === selectedInstance.serverId,
+      ) ??
+      tableRows[0] ??
+      null
+    )
+  }, [selectedInstance, tableRows])
+
+  function toggleVisibleSelection() {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev)
+      const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((key) => next.has(key))
+      for (const key of visibleKeys) {
+        if (allVisibleSelected) next.delete(key)
+        else next.add(key)
+      }
+      return next
+    })
+  }
+
+  function toggleRowSelection(i: InstanceView) {
+    setSelectedKeys((prev) => {
+      const key = instanceKey(i)
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function refreshServers() {
+    void qc.invalidateQueries({ queryKey: ['instances'] })
+    void qc.invalidateQueries({ queryKey: ['offline-instances'] })
+    void qc.invalidateQueries({ queryKey: ['drains'] })
+  }
 
   // 当前排空集合（namespace/serverId 复合键）：跨 namespace 列实例，须复合键避免同名 serverId 误判。
   const drainedSet = useMemo(() => {
@@ -329,8 +508,13 @@ export default function ServersPage() {
 
   // 打开详情 Sheet（focusLogs 为 true 时自动触发取日志，供「查看日志」入口直达）。
   function openDetail(i: InstanceView, focusLogs: boolean) {
+    setSelectedInstance(i)
     setDetailFocusLogs(focusLogs)
     setDetailInstance(i)
+  }
+
+  function selectRow(i: InstanceView) {
+    setSelectedInstance(i)
   }
 
   // 区改派（FR-71）：复用 ReassignDialog 提交的完整入参调既有 assignZone。
@@ -367,7 +551,33 @@ export default function ServersPage() {
 
   // 实例表列定义（操作列闭包引用各 mutation / state，故在组件内定义）。
   const columns: DataTableColumn<InstanceView>[] = [
-    { header: 'serverId', className: 'font-mono', cell: (i) => i.serverId },
+    {
+      header: (
+        <Checkbox
+          aria-label={t('servers.selectVisibleRows')}
+          checked={visibleSelectionChecked}
+          disabled={visibleKeys.length === 0}
+          onClick={(e) => e.stopPropagation()}
+          onCheckedChange={toggleVisibleSelection}
+        />
+      ),
+      headClassName: 'sticky left-0 z-30 w-9 bg-background',
+      className: 'sticky left-0 z-20 w-9 bg-inherit',
+      cell: (i) => (
+        <Checkbox
+          aria-label={t('servers.selectServerRow', { serverId: i.serverId })}
+          checked={selectedKeys.has(instanceKey(i))}
+          onClick={(e) => e.stopPropagation()}
+          onCheckedChange={() => toggleRowSelection(i)}
+        />
+      ),
+    },
+    {
+      header: 'serverId',
+      headClassName: 'sticky left-9 z-20 bg-background',
+      className: 'sticky left-9 z-10 bg-inherit font-mono',
+      cell: (i) => i.serverId,
+    },
     { header: t('servers.colNamespace'), cell: (i) => i.namespace },
     { header: t('servers.colRole'), cell: (i) => <RoleBadge role={i.role} /> },
     { header: t('servers.colGroup'), cell: (i) => i.group },
@@ -407,9 +617,11 @@ export default function ServersPage() {
     { header: t('servers.colLastHeartbeat'), cell: (i) => formatTime(i.lastHeartbeat) },
     {
       header: t('servers.colActions'),
+      headClassName: 'sticky right-0 z-20 bg-background',
+      className: 'sticky right-0 z-10 bg-inherit',
       cell: (i) => {
         const drained = drainedSet.has(`${i.namespace}/${i.serverId}`)
-        // 操作列 stopPropagation：避免触发行点击（打开详情 Sheet）。
+        // 操作列 stopPropagation：避免触发行点击切换右侧明细。
         const stop = (e: React.MouseEvent) => e.stopPropagation()
         // 整合为单个「⋯」下拉菜单：含查看类（agent 详情 / 查看日志）+ 运维类（重同步 / drain / 改派 / 下线）。
         // 下线确认弹窗提到菜单外层受控触发（offlineTarget），避免菜单关闭吞掉 AlertDialog。
@@ -485,14 +697,16 @@ export default function ServersPage() {
   })
 
   return (
-    <div className="space-y-4">
+    <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-3 overflow-hidden">
       {/* 顶部汇总条（FR-106）：关键计数一排紧凑 metric */}
-      <SummaryStrip items={summaryItems} />
+      <div className="shrink-0 overflow-hidden">
+        <SummaryStrip items={summaryItems} />
+      </div>
 
       {/* 内联吸顶工具栏（FR-106）：原筛选 Card 压成一行紧凑控件，保留全部筛选维度与「查询」 */}
       <form
         onSubmit={onSearch}
-        className="sticky top-0 z-10 flex flex-wrap items-center gap-2 bg-background py-1"
+        className="z-10 flex flex-wrap items-center gap-2 rounded-md border bg-background p-3 shadow-sm"
       >
         {/* 环境收口（FR-105 真机打磨）：原页内环境筛选已移除，环境改读页眉全局环境槽。 */}
         <Combobox
@@ -536,31 +750,86 @@ export default function ServersPage() {
             <SelectItem value="offline">offline</SelectItem>
           </SelectContent>
         </Select>
+        <Input
+          aria-label={t('servers.searchAria')}
+          className="w-48"
+          value={serverKeyword}
+          placeholder={t('servers.searchPlaceholder')}
+          onChange={(e) => setServerKeyword(e.target.value)}
+        />
+        <span className="text-sm tabular-nums text-muted-foreground">
+          {t('servers.visibleCount', {
+            visible: tableRows.length,
+            total: data?.length ?? 0,
+          })}
+        </span>
         <Button type="submit">{t('common.query')}</Button>
+        <div className="ml-auto flex h-8 flex-wrap items-center gap-1 rounded-md border bg-muted/20 px-2">
+          <span className="px-1 text-xs tabular-nums text-muted-foreground">
+            {t('servers.selectedCount', { count: selectedCount })}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={selectedCount === 0}
+            onClick={() => setSelectedKeys(new Set())}
+          >
+            {t('servers.clearSelection')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={selectedCount === 0}>
+            {t('servers.batchAction')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={selectedCount === 0}>
+            {t('servers.exportSelected')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={refreshServers}>
+            {t('servers.refreshBtn')}
+          </Button>
+        </div>
       </form>
 
-      {/* 裸密表（FR-106）：去 Card 外壳，列多时横向滚动不挤压 */}
-      <AsyncSection
-        isLoading={isLoading}
-        isError={isError}
-        error={error}
-        skeleton={<TableSkeleton columns={columns.length} />}
-      >
-        <div className="overflow-x-auto">
-          <DataTable
-            columns={columns}
-            rows={data}
-            rowKey={(i) => `${i.namespace}/${i.serverId}`}
-            emptyText={t('servers.empty')}
-            onRowClick={(i) => openDetail(i, false)}
-            rowClassName={(i) => (!i.assigned ? 'bg-amber-50' : undefined)}
-          />
+      <div className="grid min-h-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_20rem]">
+        {/* 裸密表（FR-106）：去 Card 外壳，列多时横向滚动不挤压 */}
+        <div className="min-h-0 overflow-hidden">
+          <AsyncSection
+            isLoading={isLoading}
+            isError={isError}
+            error={error}
+            skeleton={<TableSkeleton columns={columns.length} />}
+          >
+            <div className="h-full min-h-0 overflow-auto rounded-md border bg-background shadow-sm [&>div:last-child]:sticky [&>div:last-child]:bottom-0 [&>div:last-child]:border-t [&>div:last-child]:bg-background/95 [&>div:last-child]:px-3">
+              <DataTable
+                columns={columns}
+                rows={tableRows}
+                rowKey={(i) => `${i.namespace}/${i.serverId}`}
+                emptyText={t('servers.empty')}
+                onRowClick={selectRow}
+                rowClassName={(i) =>
+                  cn(
+                    !i.assigned && 'bg-amber-50',
+                    inlineInstance?.namespace === i.namespace &&
+                      inlineInstance.serverId === i.serverId &&
+                      'shadow-[inset_2px_0_0_hsl(var(--primary))]',
+                  )
+                }
+                pageSize={SERVER_TABLE_PAGE_SIZE}
+                density="compact"
+              />
+            </div>
+          </AsyncSection>
         </div>
-      </AsyncSection>
+        <ServerInlineDetail
+          instance={inlineInstance}
+          onOpenDetail={(i) => openDetail(i, false)}
+          onOpenLogs={(i) => openDetail(i, true)}
+          onResync={(i) => resyncMut.mutate({ serverId: i.serverId, namespace: i.namespace })}
+        />
+      </div>
 
       {/* 已主动下线标记（FR-49）：已下线实例不在上表（已移出可用集），裸分区标题 + 表，支持取消下线 */}
       {offlineMarkers && offlineMarkers.length > 0 && (
-        <div className="space-y-2">
+        <div className="max-h-40 space-y-2 overflow-auto rounded-md border bg-background p-3 shadow-sm">
           <h2 className="text-sm font-semibold text-muted-foreground">
             {t('servers.offlineSectionTitle')}
           </h2>
@@ -626,7 +895,7 @@ export default function ServersPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* 单服详情 Sheet：点行从右侧滑出，按 role 分区展示深指标 + 关系，不发新请求 */}
+      {/* 单服详情 Sheet：仅显式点 agent 详情 / 查看日志时打开，按 role 分区展示深指标 + 关系，不发新请求 */}
       <ServerDetailSheet
         instance={detailInstance}
         focusLogs={detailFocusLogs}

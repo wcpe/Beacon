@@ -8,22 +8,22 @@ import { listAlertEvents } from '../api/client'
 import type { AlertEventFilter } from '../api/client'
 import type { AlertEventView } from '../api/types'
 import { formatTime } from '../api/format'
-import AsyncSection from '@/components/AsyncSection'
+import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
+import { SummaryStrip, type SummaryItem  } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+} from '@beacon/ui'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@beacon/ui'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20

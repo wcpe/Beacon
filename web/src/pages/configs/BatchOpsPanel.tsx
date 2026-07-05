@@ -17,8 +17,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { batchConfigs, getConfig, type BatchAction } from '../../api/client'
 import type { ConfigView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@beacon/ui'
+import { Checkbox } from '@beacon/ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +28,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+} from '@beacon/ui'
 
 export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
   const { t } = useTranslation()

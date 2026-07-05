@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import { SearchIcon } from 'lucide-react'
 import { listConfigs, listFiles, listInstances } from '@/api/client'
-import { Input } from '@/components/ui/input'
+import { Input } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import { NAV_LEAVES } from '@/lib/navModel'
 import {

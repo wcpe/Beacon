@@ -10,10 +10,10 @@ import { enableDemoMode } from '../api/mock'
 import { setAuth, useAuth } from '../state/auth'
 import { useMessage } from '../components/useMessage'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Card, CardContent, CardHeader, CardTitle } from '@beacon/ui'
 
 // 路由守卫重定向时塞进 location.state 的来访信息
 interface FromState {

@@ -9,13 +9,13 @@ import prettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   // 忽略产物 / 覆盖率 / 依赖目录 / vendored Monaco 资产（均非本仓源码，不参与检查）
-  { ignores: ['dist', 'coverage', 'node_modules', 'public/monaco'] },
+  { ignores: ['dist', 'apps/*/dist', 'packages/*/dist', 'coverage', 'node_modules', 'public/monaco'] },
   // 基础推荐集：JS 通用 + typescript-eslint 非类型检查推荐（避免开 type-checked 拖慢 / 过严）
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    // 仅检查 src 下的 TS/TSX
-    files: ['src/**/*.{ts,tsx}'],
+    // 检查主应用、内部包与开发期 wiki 的 TS/TSX
+    files: ['src/**/*.{ts,tsx}', 'packages/*/src/**/*.{ts,tsx}', 'apps/*/src/**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2020,
       // 浏览器全局：window / document / fetch 等

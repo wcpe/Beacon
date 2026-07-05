@@ -23,7 +23,7 @@ export default function Layout() {
   const { status: connectionStatus } = useConnectionStatus()
   // 全局命令面板开合（FR-83）：Ctrl/Cmd+K 唤起、页眉搜索入口同开同一面板。
   const [paletteOpen, setPaletteOpen] = useState(false)
-  // 侧栏折叠态（改进 1：可折叠图标条）：折叠=窄图标条 w-14（仅图标+tooltip）、展开=图标+文案 w-56；
+  // 侧栏折叠态（改进 1：可折叠图标条）：折叠=窄图标条 w-14（仅图标+tooltip）、展开=图标+文案 w-52；
   // 折叠态由 state/ui 持久化到 localStorage，品牌区与侧栏同宽联动。
   const { sidebarCollapsed } = useUiState()
 
@@ -76,17 +76,17 @@ export default function Layout() {
 
   return (
     // 外层改纵向：最上是「贯穿整宽顶栏」（品牌区 | 控制面状态条），其下是 flex-1 的「侧栏 | 右列」（FR-105 真机打磨）。
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-      {/* 整宽顶栏（~40px）：左品牌区（宽 = 侧栏宽 w-56，右边框接侧栏竖线）+ 右控制面状态条（占满剩余宽度） */}
-      <header className="flex h-10 shrink-0 items-stretch border-b bg-background">
+    <div className="flex h-screen flex-col overflow-hidden bg-slate-50/70 text-foreground dark:bg-background">
+      {/* 整宽顶栏（~40px）：左品牌区（宽 = 侧栏宽 w-52，右边框接侧栏竖线）+ 右控制面状态条（占满剩余宽度） */}
+      <header className="flex h-12 shrink-0 items-stretch border-b bg-background">
         {/* 左侧品牌区（宽 = 侧栏宽、与下方侧栏对齐）：logo（灯塔/信标矢量图 FR-123）+ 「Beacon」+ 版本徽章。
             FR-121：logo+文案 单击跳可观测看板、双击切换侧栏折叠/展开；版本徽章在 logo 右侧（展开态显示）。
             FR-123：原连接小灯（FR-78）移除——连接态仍由顶栏右侧「已连接」药丸显示，不在品牌区重复。
-            宽度随折叠态联动（折叠 w-14 仅居中显 logo、展开 w-56 显 logo+文案+版本）。 */}
+            宽度随折叠态联动（折叠 w-14 仅居中显 logo、展开 w-52 显 logo+文案）。 */}
         <div
           className={cn(
             'flex shrink-0 items-center border-r',
-            sidebarCollapsed ? 'w-14 justify-center px-0' : 'w-56 gap-2 px-3',
+            sidebarCollapsed ? 'w-14 justify-center px-0' : 'w-52 gap-2 px-3',
           )}
         >
           <button
@@ -101,7 +101,12 @@ export default function Layout() {
             <img src="/logo.svg" alt="" className="size-7 shrink-0" />
             {/* 折叠态隐藏品牌文案，仅留 logo；FR-126 名放大 text-base */}
             {!sidebarCollapsed && (
-              <span className="truncate text-base font-semibold">{t('app.name')}</span>
+              <span className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap">
+                <span className="shrink-0 text-[15px] font-semibold">{t('app.name')}</span>
+                <span className="shrink-0 text-[13px] font-semibold text-sidebar-foreground/80">
+                  {t('app.consoleName')}
+                </span>
+              </span>
             )}
           </button>
           {/* FR-126：版本徽章从品牌区移到顶栏「已连接」药丸之后（见 SystemHeader），品牌区不再含版本 */}
@@ -115,11 +120,11 @@ export default function Layout() {
       {/* 顶栏之下：侧栏（导航 + 操作人）| 右列（断线横幅 + 第二层 PageHeader + 主内容） */}
       <div className="flex min-h-0 flex-1">
         {/* 侧栏整列撑满剩余高度并裁剪溢出：顶部品牌已上移顶栏，本侧栏顶部仅导航、底部操作区冻结，仅中间导航滚动。
-          改进 1：宽度随折叠态联动（折叠 w-14 仅图标条、展开 w-56 图标+文案），保持 FR-93/ADR-0048 扁平 IA（5 组叶子结构不变，仅折叠宽度不隐藏层级）。 */}
+          改进 1：宽度随折叠态联动（折叠 w-14 仅图标条、展开 w-52 图标+文案），保持 FR-93/ADR-0048 扁平 IA（5 组叶子结构不变，仅折叠宽度不隐藏层级）。 */}
         <aside
           className={cn(
-            'flex shrink-0 flex-col overflow-hidden border-r bg-sidebar text-sidebar-foreground transition-all',
-            sidebarCollapsed ? 'w-14' : 'w-56',
+            'flex shrink-0 flex-col overflow-hidden border-r bg-background text-sidebar-foreground transition-all',
+            sidebarCollapsed ? 'w-14' : 'w-52',
           )}
         >
           {/* 侧栏 5 组分组常驻（FR-93，方案 A）：分区标题（不可点、不折叠）+ 其下叶子常驻显示，
@@ -229,7 +234,7 @@ export default function Layout() {
             自管满屏页（配置/文件树/拓印）以 h-full + 内部滚动适配，不会触发此处滚动条。
             relative 必不可少：作为绝对定位后代（recharts 图表 / 状态瓷砖色条 / tooltip 等）的包含块，
             否则这些后代锚定到初始包含块（视口）、撑大整个文档导致连同侧栏页眉一起的窗口级滚动。 */}
-            <main className="scrollbar-hide relative min-w-0 flex-1 overflow-y-auto p-6">
+            <main className="scrollbar-hide relative min-w-0 flex-1 overflow-y-auto p-4">
               {/* 按路由 key 重挂载并淡入：克制的内容淡入，让路由切换不生硬（tw-animate-css 的 animate-in fade-in）。
               h-full 必不可少：给「自管满屏页」（配置工作台 / 拓印 / 文件预览，根用 h-full + overflow-hidden）
               一个有定值高度的父级，其 h-full 才能解析；否则父级高度为 auto，满屏页塌成内容高、

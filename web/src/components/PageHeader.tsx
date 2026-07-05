@@ -14,6 +14,7 @@ import { useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import EnvSelector from '@/components/EnvSelector'
 import { NAV_LEAVES } from '@/lib/navModel'
+import { cn } from '@/lib/utils'
 
 // 各页注入的页头配置：标题（已渲染节点，通常为 t('xxx.title')）、计数/副标题、主操作、是否环境范围。
 export interface PageHeaderConfig {
@@ -27,6 +28,8 @@ export interface PageHeaderConfig {
   actions?: ReactNode
   // 是否环境范围页（覆盖路由叶子的默认标记）：true 时右侧渲染环境选择器
   envScoped?: boolean
+  // 页头密度：default 为普通路由头带；prominent 用于总览类页面承载大标题行
+  variant?: 'default' | 'prominent'
 }
 
 // ===== 模块级外部 store（订阅者模式）=====
@@ -72,15 +75,15 @@ export function PageHeaderProvider({ children }: { children: ReactNode }) {
 
 // usePageHeader：各页在组件内调用，把页头配置同步进模块 store（依赖变化时更新、卸载时按归属清空）。
 export function usePageHeader(config: PageHeaderConfig): void {
-  const { title, subtitle, count, actions, envScoped } = config
+  const { title, subtitle, count, actions, envScoped, variant } = config
   // 记录本组件最近一次写入的归属令牌，卸载时据此判断是否仍由本组件归属
   const tokenRef = useRef(0)
   useEffect(() => {
-    tokenRef.current = setConfig({ title, subtitle, count, actions, envScoped })
+    tokenRef.current = setConfig({ title, subtitle, count, actions, envScoped, variant })
     return () => clearConfigIfOwner(tokenRef.current)
     // 各字段按值依赖触发更新；actions/title 等 JSX 节点每次渲染为新对象，
     // 但写 store 不回灌页面子树，故不会形成更新环。
-  }, [title, subtitle, count, actions, envScoped])
+  }, [title, subtitle, count, actions, envScoped, variant])
 }
 
 // PageHeader：第二层页面头带，由 Layout 渲染。订阅 store + 路由，组装标题 + 计数/副标题 + 环境槽 + 主操作槽。
@@ -98,13 +101,26 @@ export default function PageHeader() {
 
   // 是否环境范围：页 config 显式优先，否则取路由叶子标记，缺省 false。
   const envScoped = config.envScoped ?? leaf?.envScoped ?? false
+  const prominent = config.variant === 'prominent'
 
   return (
     // 第二层页面头带（FR-105 真机打磨：高度压低至 ~40px）。
     // fix-B：min-w-0 + overflow-hidden，标题 shrink-0 不换行（防窄屏被挤成竖排字符）；副标题次要、窄屏隐藏。
-    <div className="flex h-10 min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b bg-background px-6 py-2">
+    <div
+      className={cn(
+        'flex min-w-0 shrink-0 items-center gap-3 overflow-hidden border-b bg-background px-4',
+        prominent ? 'h-14 py-3' : 'h-11 py-2',
+      )}
+    >
       {/* 左：标题 + 计数/副标题（小号弱色） */}
-      <h1 className="shrink-0 text-sm font-semibold whitespace-nowrap">{title}</h1>
+      <h1
+        className={cn(
+          'shrink-0 font-semibold whitespace-nowrap',
+          prominent ? 'text-[24px] leading-none' : 'text-sm',
+        )}
+      >
+        {title}
+      </h1>
       {config.count != null && (
         <span className="shrink-0 text-sm text-muted-foreground">{config.count}</span>
       )}

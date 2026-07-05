@@ -27,24 +27,24 @@ import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
 import StatCard from './dashboard/StatCard'
 import CommandTrendChart from './command-observability/CommandTrendChart'
-import IconStat from '@/components/dashboard/IconStat'
-import { levelSoft, type HealthLevel } from '@/components/dashboard/health'
-import AsyncSection from '@/components/AsyncSection'
-import { CardGridSkeleton, TableSkeleton } from '@/components/skeletons'
-import { Skeleton } from '@/components/ui/skeleton'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { IconStat } from '@beacon/ui'
+import { levelSoft, type HealthLevel } from '@beacon/ui'
+import { AsyncSection } from '@beacon/ui'
+import { CardGridSkeleton, TableSkeleton } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import { DataTable, type DataTableColumn  } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Card, CardContent } from '@beacon/ui'
+import { Tabs, TabsList, TabsTrigger } from '@beacon/ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@beacon/ui'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20

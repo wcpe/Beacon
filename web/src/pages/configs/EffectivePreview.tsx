@@ -1,10 +1,11 @@
 // 生效预览：选择服务器/分组，展示该目标的有效配置（含来源链路与被删除的键）。
 
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@beacon/ui'
+import { ScrollArea } from '@beacon/ui'
 import type { EffectiveConfigView } from '../../api/client'
 import type { InstanceView } from '../../api/types'
+import { Combobox } from '@beacon/ui'
 
 export default function EffectivePreview({
   instances,
@@ -25,25 +26,19 @@ export default function EffectivePreview({
       {/* 生效预览目标选择 */}
       <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-border bg-muted/20">
         <span className="text-xs text-muted-foreground">{t('configs.effectiveTargetLabel')}</span>
-        <select
-          className="h-7 rounded border border-input bg-background px-2 text-xs"
+        <Combobox
+          className="w-72"
           value={target.serverId ?? target.group ?? ''}
-          onChange={(e) => {
-            const val = e.target.value
-            if (val.startsWith('server-')) {
-              onTargetChange({ serverId: val })
-            } else {
-              onTargetChange({ group: val })
-            }
+          onChange={(val) => {
+            onTargetChange(val ? { serverId: val } : {})
           }}
-        >
-          <option value="">{t('configs.effectiveSelectPlaceholder')}</option>
-          {instances.map((inst) => (
-            <option key={inst.serverId} value={inst.serverId}>
-              {inst.serverId} ({inst.group}/{inst.zone})
-            </option>
-          ))}
-        </select>
+          options={instances.map((inst) => ({
+            value: inst.serverId,
+            label: `${inst.serverId} (${inst.group}/${inst.zone ?? '-'})`,
+          }))}
+          allowCustom={false}
+          placeholder={t('configs.effectiveSelectPlaceholder')}
+        />
         {data && (
           <Badge variant="outline" className="text-xs">
             md5: {data.md5.slice(0, 8)}

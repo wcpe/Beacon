@@ -23,6 +23,8 @@ import type {
   DefaultEntryView,
   DiffView,
   FileRevisionView,
+  FileSyncEvent,
+  FileSyncTaskView,
   FileView,
   IgnoreRuleType,
   IgnoreRuleView,
@@ -1283,4 +1285,129 @@ export function listReversibleOperations(filter: ReversibleOpFilter): Promise<Re
 // 写操作需 full 角色（readonly→403）；过期 / 被覆盖 → 409；重复撤回返回幂等成功（status=reversed）。
 export function undoReversibleOperation(id: number): Promise<ReversibleOpView> {
   return request<ReversibleOpView>(`/reversible-operations/${id}/undo`, { method: 'POST' })
+}
+
+// ===== 多级灰度配置同步中心（file-sync）=====
+
+export interface CreateFileSyncTaskParams {
+  namespace: string
+  sourceServerId: string
+  directory: string
+  batchSize: number
+  intervalSec: number
+  failureThresholdPercent: number
+}
+
+export interface FileSyncTaskFilter {
+  namespace?: string
+  status?: string
+}
+
+export interface PlanFileSyncTaskParams {
+  targetServerIds: string[]
+}
+
+export interface StreamFileSyncEventsOptions {
+  signal?: AbortSignal
+  afterLogId?: number
+}
+
+export function createFileSyncTask(params: CreateFileSyncTaskParams): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>('/file-sync/tasks', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export function listFileSyncTasks(filter: FileSyncTaskFilter = {}): Promise<FileSyncTaskView[]> {
+  return request<ItemsResponse<FileSyncTaskView>>(`/file-sync/tasks${qs(filter)}`).then(
+    (r) => r.items,
+  )
+}
+
+export function getFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>(`/file-sync/tasks/${encodeURIComponent(id)}`)
+}
+
+export function planFileSyncTask(
+  id: string,
+  params: PlanFileSyncTaskParams,
+): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>(`/file-sync/tasks/${encodeURIComponent(id)}/plan`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+function fileSyncAction(id: string, action: string): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>(`/file-sync/tasks/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+  })
+}
+
+export function startFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'start')
+}
+
+export function pauseFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'pause')
+}
+
+export function resumeFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'resume')
+}
+
+export function terminateFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'terminate')
+}
+
+export async function streamFileSyncTaskEvents(
+  id: string,
+  onEvent: (event: FileSyncEvent) => void,
+  options: StreamFileSyncEventsOptions = {},
+): Promise<void> {
+  const token = currentToken()
+  const query = qs({ afterLogId: options.afterLogId })
+  const resp = await fetch(`${BASE}/file-sync/tasks/${encodeURIComponent(id)}/events${query}`, {
+    headers: {
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal: options.signal,
+  })
+  if (resp.status === 401) {
+    clearAuth()
+    if (unauthorizedHandler) unauthorizedHandler()
+    throw await toError(resp)
+  }
+  if (!resp.ok) throw await toError(resp)
+  if (!resp.body) return
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const consume = (frame: string) => {
+    const data = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n')
+    if (!data) return
+    onEvent(JSON.parse(data) as FileSyncEvent)
+  }
+
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    buffer = buffer.replace(/\r\n/g, '\n')
+    let sep = buffer.indexOf('\n\n')
+    while (sep >= 0) {
+      consume(buffer.slice(0, sep))
+      buffer = buffer.slice(sep + 2)
+      sep = buffer.indexOf('\n\n')
+    }
+    if (done) break
+  }
+  if (buffer.trim()) consume(buffer)
 }

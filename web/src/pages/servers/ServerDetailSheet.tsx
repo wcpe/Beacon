@@ -12,9 +12,9 @@ import { getAgentLogs, requestAgentLogs, serverConfigTimeline } from '../../api/
 import { formatDuration, formatTime } from '../../api/format'
 import StatusBadge from '../../components/StatusBadge'
 import RoleBadge from '../../components/RoleBadge'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@beacon/ui'
 
 // bungee 角色编码（与后端 role 约定一致）
 const ROLE_BUNGEE = 'bungee'

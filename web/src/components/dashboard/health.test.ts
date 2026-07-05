@@ -1,6 +1,6 @@
 // health 工具单测：状态→等级映射、比率双阈值定级、计数阈值定级（看板/健康页上色的判据，须穷举边界）。
 import { describe, it, expect } from 'vitest'
-import { statusLevel, ratioLevel, countLevel } from './health'
+import { statusLevel, ratioLevel, countLevel } from '@beacon/ui'
 
 describe('statusLevel', () => {
   it('online→ok / degraded→warn / lost→danger / offline→muted', () => {

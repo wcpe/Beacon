@@ -4,7 +4,7 @@
 
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, MousePointerClick, Rocket, Undo2, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 
 export default function SelectionStatusBar({

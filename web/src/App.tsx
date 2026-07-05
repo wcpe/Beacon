@@ -12,6 +12,7 @@ import WallboardPage from './pages/WallboardPage'
 import ConfigWorkbenchPage from './pages/ConfigWorkbenchPage'
 import ConfigCenterPage from './pages/ConfigCenterPage'
 import ConfigEditorPage from './pages/ConfigEditorPage'
+import ConfigSyncCenterPage from './pages/ConfigSyncCenterPage'
 import FilePreviewPage from './pages/FilePreviewPage'
 import ServersPage from './pages/ServersPage'
 import TopologyPage from './pages/TopologyPage'
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           {/* 配置中心新版骨架（批1，纯 mock）：根目录文件树 + 看生效/写入层 + 生效/对盘视角。 */}
           <Route path="configs" element={<ConfigCenterPage />} />
+          <Route path="file-sync" element={<ConfigSyncCenterPage />} />
           {/* 旧双面板 Xftp 工作台（FR-111）暂留 URL 兜底，迁移期参照，待批4下线。 */}
           <Route path="configs-legacy" element={<ConfigWorkbenchPage />} />
           {/* 配置文件真详情多标签编辑器（FR-112，ADR-0050 决策 3）：双击文件进本聚焦编辑器真路由，

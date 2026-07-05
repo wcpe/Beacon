@@ -6,9 +6,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, FileSearch, X } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import { useIngestScanList } from './useWorkbenchData'
 

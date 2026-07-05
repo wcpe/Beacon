@@ -11,13 +11,13 @@ import { formatTime } from '../api/format'
 import { apiBaseFromLocation, buildApiKeyCurl } from '@/lib/curlCommand'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
-import AsyncSection from '@/components/AsyncSection'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { AsyncSection } from '@beacon/ui'
+import { DataTable, type DataTableColumn  } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem  } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import {
   Select,
@@ -25,7 +25,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -34,8 +34,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
-import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
+} from '@beacon/ui'
+import { DestructiveConfirmDialog } from '@beacon/ui'
 
 // 状态徽标配色：active 绿 / expired 琥珀 / revoked 灰
 const STATUS_COLOR: Record<string, string> = {

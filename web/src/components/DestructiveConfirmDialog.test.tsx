@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import DestructiveConfirmDialog from './DestructiveConfirmDialog'
+import { DestructiveConfirmDialog } from '@beacon/ui'
 
 describe('DestructiveConfirmDialog 破坏性二次确认（FR-76）', () => {
   it('渲染标题与破坏性动作描述', async () => {

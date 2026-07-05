@@ -122,7 +122,7 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
           type="button"
           onClick={onOpenSearch}
           aria-label={t('commandPalette.trigger')}
-          className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="flex h-8 min-w-[18rem] items-center justify-start gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <Search aria-hidden className="size-4 shrink-0" />
           {/* fix-A：搜索文案与快捷键提示窄屏隐藏，仅留图标；按钮无障碍名仍由 aria-label 保证 */}

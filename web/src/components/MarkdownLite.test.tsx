@@ -1,7 +1,7 @@
 // 轻量 markdown 渲染单测（FR-100 安全渲染）：锁定基础语法解析 + XSS 防护。
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import MarkdownLite from './MarkdownLite'
+import { MarkdownLite } from '@beacon/ui'
 
 describe('MarkdownLite', () => {
   it('## / ### 渲染为标题', () => {

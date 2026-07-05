@@ -4,7 +4,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { InstanceView } from '../../api/types'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 
 // 状态 → 状态点配色（online 绿 / lost 琥珀 / offline 灰）

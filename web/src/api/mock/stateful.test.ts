@@ -94,4 +94,24 @@ describe('mock 有状态：写操作后读能看到结果', () => {
     // 列表视图剥离明文（ApiKeyView 无 key 字段）
     expect((found as unknown as { key?: string }).key).toBeUndefined()
   })
+
+  it('文件同步任务 → 创建后可规划并启动', async () => {
+    const created = await client.createFileSyncTask({
+      namespace: 'prod',
+      sourceServerId: 'server-01',
+      directory: 'plugins/AllinCore',
+      batchSize: 2,
+      intervalSec: 30,
+      failureThresholdPercent: 20,
+    })
+    const planned = await client.planFileSyncTask(created.id, {
+      targetServerIds: ['server-02', 'server-04'],
+    })
+    expect(planned.status).toBe('planned')
+    expect(planned.targets.map((target) => target.serverId)).toEqual(['server-02', 'server-04'])
+
+    const running = await client.startFileSyncTask(created.id)
+    expect(running.status).toBe('running')
+    expect(running.targets[0].status).toBe('transferring')
+  })
 })

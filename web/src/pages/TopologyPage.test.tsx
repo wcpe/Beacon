@@ -129,13 +129,14 @@ describe('TopologyPage', () => {
     ])
   })
 
-  it('图例显示 BC / 子服计数', async () => {
+  it('指标卡显示 BC / 子服计数', async () => {
     setEnvironment('prod')
     renderPage(<TopologyPage />)
     await screen.findByTestId('topology-graph')
     // 1 个 bc、2 个 bukkit
-    expect(screen.getByText(/BC 代理（1）/)).toBeInTheDocument()
-    expect(screen.getByText(/子服（2）/)).toBeInTheDocument()
+    expect(screen.getByText('BC 集群数')).toBeInTheDocument()
+    expect(screen.getByText('子服总数')).toBeInTheDocument()
+    expect(screen.getByText('异常链路列表')).toBeInTheDocument()
   })
 
   it('空拓扑（无在线实例）展示提示而非图', async () => {

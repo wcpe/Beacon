@@ -29,8 +29,8 @@ import {
   X,
 } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
 import { useMessage } from '@/components/useMessage'
 import { cn } from '@/lib/utils'
 import CodeEditor from '@/components/CodeEditor'

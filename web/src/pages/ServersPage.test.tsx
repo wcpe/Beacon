@@ -154,6 +154,38 @@ describe('ServersPage（FR-65 服务器页）', () => {
     expect(within(bcRow).getByText('2 / 2')).toBeInTheDocument()
   })
 
+  it('筛选条显示当前显示计数，并随客户端搜索过滤变化', async () => {
+    vi.mocked(listInstances).mockResolvedValue([
+      inst({ serverId: 'lobby-1', address: '10.0.0.1:25565' }),
+      inst({ serverId: 'pvp-1', address: '10.0.0.3:25565' }),
+      bc({ serverId: 'proxy-1', address: '10.0.0.2:25577' }),
+    ])
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    expect(await screen.findByText('当前显示 3 / 3')).toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: '搜索服务器' }), 'proxy')
+
+    expect(await screen.findByText('当前显示 1 / 3')).toBeInTheDocument()
+    expect(screen.getByText('proxy-1')).toBeInTheDocument()
+    expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
+  })
+
+  it('点击表格行只更新右侧明细，不打开详情抽屉', async () => {
+    vi.mocked(listInstances).mockResolvedValue([
+      inst({ serverId: 'lobby-1', address: '10.0.0.1:25565' }),
+      inst({ serverId: 'pvp-1', address: '10.0.0.3:25565' }),
+    ])
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    const row = (await screen.findByText('pvp-1')).closest('tr')!
+    await user.click(row)
+
+    expect(await screen.findByText('选中 pvp-1')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('未分配 zone 的行黄色高亮 + 未分配徽标', async () => {
     vi.mocked(listInstances).mockResolvedValue([
       inst({ serverId: 'free-1', zone: null, assigned: false }),

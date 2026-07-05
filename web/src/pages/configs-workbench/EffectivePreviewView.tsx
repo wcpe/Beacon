@@ -7,8 +7,8 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import { SCOPE_META } from './diffMeta'
 import { useEffectivePreview } from './useWorkbenchData'

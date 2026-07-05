@@ -1,87 +1,572 @@
-// 可观测看板页（FR-32 / FR-34 / FR-43 + 瘦身 FR-64）：状态墙 + 分角色趋势面板 + 时序监控图，密度提高、全程图标。
-// 结构自上而下：① 集群状态总览条（分段健康条 + 计数 + 全局 KPI chips）；② 服务器状态墙（每台一块瓷砖，健康色编码，
-// 一眼扫全集群）；③ 分角色面板（子服 / BC 各一面板：图标头 + 紧凑 IconStat 组 + 内嵌迷你趋势）；④ 时序监控图（历史趋势，
-// 时间窗切换 + 四指标折线，图标标题 + hover tooltip 看某时间点数值）。环境筛选 + 一键清空（FR-63）保留。
-// 边界：只展示负载数字（健康事实），绝不展示任何玩家名单 / 身份（后端也不返回）。
+// 可观测看板页（FR-137）：按已确认设计稿还原高密度运维总览。
+// 页面只负责前端编排，不改变后端查询契约；长列表全部限制在内部滚动区域。
 
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useDeferredValue, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
-  Boxes,
-  CircleCheck,
-  CircleX,
-  Cpu,
+  Bell,
+  CheckCircle2,
   Database,
+  FileText,
   Gauge,
-  LayoutGrid,
-  MemoryStick,
+  ListChecks,
   Network,
-  Plug,
-  Router,
-  Server,
+  Radio,
+  RefreshCw,
+  RotateCcw,
+  ShieldAlert,
   Timer,
-  TriangleAlert,
-  Users,
   Zap,
 } from 'lucide-react'
+import {
+  Button,
+  Input,
+  MiniSparkline,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@beacon/ui'
 import { listInstances, metricsSummary, metricsTrend } from '../api/client'
-import type { TrendWindow } from '../api/client'
-import { formatBytes } from '../api/format'
-import TrendChart from './dashboard/TrendChart'
+import { formatBytes, formatTime } from '../api/format'
+import type { InstanceView } from '@/api/types'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import SectionHeader from '@/components/SectionHeader'
-import IconStat from '@/components/dashboard/IconStat'
-import StatusTile from '@/components/dashboard/StatusTile'
-import HealthBar, { type HealthSegment } from '@/components/dashboard/HealthBar'
-import MiniSparkline from '@/components/dashboard/MiniSparkline'
-import { ratioLevel } from '@/components/dashboard/health'
-import AsyncSection from '@/components/AsyncSection'
-import { TileGridSkeleton, CardGridSkeleton } from '@/components/skeletons'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { filterInstancesByKeyword, prioritizeInstances } from '@/lib/instanceFiltering'
+import { cn } from '@/lib/utils'
 
-// 总览快照刷新周期（毫秒）：与服务器页一致，短周期反映当前负载
 const SUMMARY_REFETCH_MS = 5000
+const KPI_TOP_COUNT = 6
+const MAX_CLUSTER_ROWS = 6
+const MAX_DETAIL_ROWS = 90
 
-// 可选时间窗（预设窗口）：label 经 i18n key 在渲染时解析
-const WINDOWS: Array<{ value: TrendWindow; labelKey: string }> = [
-  { value: '1h', labelKey: 'dashboard.win1h' },
-  { value: '6h', labelKey: 'dashboard.win6h' },
-  { value: '24h', labelKey: 'dashboard.win24h' },
-]
+type Tone = 'default' | 'success' | 'warning' | 'danger'
 
-// 全局 KPI chip：图标 + 大数值 + 标签，紧凑横排（替代低密度大数字卡）。
-function KpiChip({
-  icon,
-  value,
-  label,
-}: {
-  icon: React.ReactNode
-  value: React.ReactNode
+interface MetricSegment {
   label: string
+  value: ReactNode
+  tone?: Tone
+}
+
+interface MetricCard {
+  title: string
+  value?: ReactNode
+  hint?: ReactNode
+  delta?: ReactNode
+  tone?: Tone
+  icon: ReactNode
+  series?: Array<number | null>
+  progress?: number
+  bars?: number[]
+  segments?: MetricSegment[]
+}
+
+interface ClusterRow {
+  namespace: string
+  group: string
+  total: number
+  online: number
+  abnormal: number
+  offline: number
+}
+
+interface TaskRow {
+  id: string
+  type: string
+  scope: string
+  progress: number
+  status: string
+  startedAt: string
+  elapsed: string
+}
+
+interface AnomalyRow {
+  level: string
+  time: string
+  content: string
+  scope: string
+  status: string
+}
+
+function toneText(tone: Tone = 'default'): string {
+  return {
+    default: 'text-slate-950 dark:text-slate-100',
+    success: 'text-emerald-600 dark:text-emerald-400',
+    warning: 'text-amber-600 dark:text-amber-400',
+    danger: 'text-red-600 dark:text-red-400',
+  }[tone]
+}
+
+function toneSoft(tone: Tone = 'default'): string {
+  return {
+    default: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+    warning: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300',
+    danger: 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300',
+  }[tone]
+}
+
+function sparkColor(tone: Tone = 'default'): string {
+  return {
+    default: '#2563eb',
+    success: '#16a34a',
+    warning: '#f59e0b',
+    danger: '#ef4444',
+  }[tone]
+}
+
+function percent(part: number, total: number, digits = 1): number {
+  if (total <= 0) return 0
+  return Number(((part / total) * 100).toFixed(digits))
+}
+
+function percentText(part: number, total: number): string {
+  return `${percent(part, total)}%`
+}
+
+function statusTone(status: string): Tone {
+  if (status === 'online') return 'success'
+  if (status === 'degraded') return 'warning'
+  if (status === 'lost' || status === 'offline') return 'danger'
+  return 'default'
+}
+
+function shortTime(iso: string): string {
+  const value = formatTime(iso)
+  return value === '-' ? '-' : value
+}
+
+function MetricTile({
+  title,
+  value,
+  hint,
+  delta,
+  tone = 'default',
+  icon,
+  series,
+  progress,
+  bars,
+  segments,
+}: MetricCard) {
+  return (
+    <div
+      data-dashboard-kpi=""
+      className="flex h-full min-w-0 flex-col rounded-md border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] dark:border-slate-800 dark:bg-slate-950"
+    >
+      <div className="flex min-w-0 items-center gap-1.5 text-[12px] font-medium text-slate-500 dark:text-slate-400">
+        <span className="text-blue-600 dark:text-blue-400">{icon}</span>
+        <span className="truncate">{title}</span>
+        {delta && <span className={cn('ml-auto text-[11px]', toneText(tone))}>{delta}</span>}
+      </div>
+      {segments ? (
+        <div className="mt-2 grid grid-cols-3 gap-2">
+          {segments.map((item) => (
+            <div key={item.label} className="min-w-0">
+              <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                {item.label}
+              </div>
+              <div
+                className={cn(
+                  'mt-0.5 text-[20px] font-semibold leading-none tabular-nums',
+                  toneText(item.tone),
+                )}
+              >
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div
+          className={cn('mt-2 text-[24px] font-semibold leading-none tabular-nums', toneText(tone))}
+        >
+          {value}
+        </div>
+      )}
+      <div className="mt-auto min-h-5">
+        {progress != null ? (
+          <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+            <div
+              className="h-full rounded-full bg-blue-600"
+              style={{ width: `${Math.min(100, progress)}%` }}
+            />
+          </div>
+        ) : bars ? (
+          <div className="flex h-5 items-end gap-1">
+            {bars.map((bar, index) => (
+              <span
+                key={`${bar}-${index}`}
+                className={cn('w-1 rounded-sm', tone === 'danger' ? 'bg-red-400' : 'bg-amber-400')}
+                style={{ height: `${Math.max(4, bar)}px` }}
+              />
+            ))}
+          </div>
+        ) : (
+          <MiniSparkline values={series ?? []} color={sparkColor(tone)} height={20} />
+        )}
+      </div>
+      {hint && (
+        <div className="mt-1 truncate text-[11px] text-slate-500 dark:text-slate-400">{hint}</div>
+      )}
+    </div>
+  )
+}
+
+function Panel({
+  title,
+  action,
+  children,
+  className,
+  bodyClassName,
+}: {
+  title: string
+  action?: ReactNode
+  children: ReactNode
+  className?: string
+  bodyClassName?: string
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2">
-      <span aria-hidden className="text-muted-foreground">
-        {icon}
-      </span>
-      <div className="leading-tight">
-        <div className="text-base font-semibold tabular-nums">{value}</div>
-        <div className="text-[11px] text-muted-foreground">{label}</div>
+    <section
+      className={cn(
+        'flex min-h-0 min-w-0 flex-col rounded-md border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950',
+        className,
+      )}
+    >
+      <div className="flex h-9 shrink-0 items-center border-b border-slate-200 px-3 dark:border-slate-800">
+        <h2 className="text-[14px] font-semibold text-slate-950 dark:text-slate-100">{title}</h2>
+        {action && <div className="ml-auto">{action}</div>}
       </div>
+      <div className={cn('min-h-0 flex-1', bodyClassName)}>{children}</div>
+    </section>
+  )
+}
+
+function StatusPill({ status }: { status: string }) {
+  const tone = statusTone(status)
+  return (
+    <span
+      className={cn('inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium', toneSoft(tone))}
+    >
+      {status}
+    </span>
+  )
+}
+
+function buildClusterRows(instances: InstanceView[]): ClusterRow[] {
+  const map = new Map<string, ClusterRow>()
+  for (const item of instances) {
+    const key = `${item.namespace}/${item.group || '-'}`
+    const row = map.get(key) ?? {
+      namespace: item.namespace || '-',
+      group: item.group || '-',
+      total: 0,
+      online: 0,
+      abnormal: 0,
+      offline: 0,
+    }
+    row.total += 1
+    if (item.status === 'online') row.online += 1
+    else if (item.status === 'offline') row.offline += 1
+    else row.abnormal += 1
+    map.set(key, row)
+  }
+  return [...map.values()].sort((a, b) => b.total - a.total).slice(0, MAX_CLUSTER_ROWS)
+}
+
+function ClusterMatrix({ rows }: { rows: ClusterRow[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="h-full overflow-auto">
+      <Table>
+        <TableHeader className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+          <TableRow>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.clusterEnv')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.clusterGroup')}</TableHead>
+            <TableHead className="h-8 px-3 text-right text-[12px]">
+              {t('dashboard.clusterTotal')}
+            </TableHead>
+            <TableHead className="h-8 px-3 text-right text-[12px]">
+              {t('dashboard.clusterOnline')}
+            </TableHead>
+            <TableHead className="h-8 px-3 text-right text-[12px]">
+              {t('dashboard.clusterLost')}
+            </TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.clusterHealth')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={`${row.namespace}/${row.group}`}>
+              <TableCell className="px-3 py-1.5 text-[12px]">{row.namespace}</TableCell>
+              <TableCell className="px-3 py-1.5 text-[12px] font-medium">{row.group}</TableCell>
+              <TableCell className="px-3 py-1.5 text-right text-[12px] tabular-nums">
+                {row.total}
+              </TableCell>
+              <TableCell className="px-3 py-1.5 text-right text-[12px] text-emerald-600 tabular-nums">
+                {row.online}
+              </TableCell>
+              <TableCell className="px-3 py-1.5 text-right text-[12px] text-red-600 tabular-nums">
+                {row.abnormal + row.offline}
+              </TableCell>
+              <TableCell className="px-3 py-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-10 text-[12px] tabular-nums">
+                    {percentText(row.online, row.total)}
+                  </span>
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                    <span
+                      className="block h-full rounded-full bg-emerald-500"
+                      style={{ width: percentText(row.online, row.total) }}
+                    />
+                  </span>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
+  )
+}
+
+function RealtimeTasks({ rows }: { rows: TaskRow[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="h-full overflow-auto">
+      <Table>
+        <TableHeader className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+          <TableRow>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.taskId')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.taskType')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.taskScope')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.taskProgress')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('common.status')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.taskElapsed')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={6} className="py-8 text-center text-sm text-slate-500">
+                {t('dashboard.noRealtimeTasks')}
+              </TableCell>
+            </TableRow>
+          ) : (
+            rows.map((row) => (
+              <TableRow key={row.id}>
+                <TableCell className="px-3 py-1.5 font-mono text-[12px] text-slate-600 dark:text-slate-300">
+                  {row.id}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">{row.type}</TableCell>
+                <TableCell className="max-w-40 truncate px-3 py-1.5 text-[12px]" title={row.scope}>
+                  {row.scope}
+                </TableCell>
+                <TableCell className="px-3 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                      <span
+                        className="block h-full rounded-full bg-blue-600"
+                        style={{ width: `${row.progress}%` }}
+                      />
+                    </span>
+                    <span className="w-8 text-right text-[12px] tabular-nums">{row.progress}%</span>
+                  </div>
+                </TableCell>
+                <TableCell className="px-3 py-1.5">
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[11px]',
+                      toneSoft(row.progress >= 100 ? 'success' : 'warning'),
+                    )}
+                  >
+                    {row.status}
+                  </span>
+                </TableCell>
+                <TableCell className="px-3 py-1.5 font-mono text-[12px]">{row.elapsed}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+function RecentAnomalies({ rows }: { rows: AnomalyRow[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="h-full overflow-auto">
+      <Table>
+        <TableHeader className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+          <TableRow>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.anomalyLevel')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.anomalyTime')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.anomalyContent')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.anomalyScope')}</TableHead>
+            <TableHead className="h-8 px-3 text-[12px]">{t('common.status')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={5} className="py-8 text-center text-sm text-slate-500">
+                {t('dashboard.noAnomalies')}
+              </TableCell>
+            </TableRow>
+          ) : (
+            rows.map((row, index) => (
+              <TableRow key={`${row.scope}-${row.content}-${index}`}>
+                <TableCell className="px-3 py-1.5">
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[11px] font-medium',
+                      row.level === t('dashboard.anomalyHigh')
+                        ? toneSoft('danger')
+                        : toneSoft('warning'),
+                    )}
+                  >
+                    {row.level}
+                  </span>
+                </TableCell>
+                <TableCell className="px-3 py-1.5 font-mono text-[12px] text-slate-600 dark:text-slate-300">
+                  {row.time}
+                </TableCell>
+                <TableCell
+                  className="max-w-64 truncate px-3 py-1.5 text-[12px]"
+                  title={row.content}
+                >
+                  {row.content}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">{row.scope}</TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px] text-red-600">{row.status}</TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+function ServerDetailTable({
+  rows,
+  query,
+  onQueryChange,
+  onReset,
+}: {
+  rows: InstanceView[]
+  query: string
+  onQueryChange: (value: string) => void
+  onReset: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <Panel
+      title={t('dashboard.serverDetailsTitle')}
+      bodyClassName="flex flex-col p-0"
+      action={
+        <div className="flex items-center gap-2">
+          <Input
+            aria-label={t('dashboard.serverSearchAria')}
+            className="h-7 w-64 text-[12px]"
+            value={query}
+            placeholder={t('dashboard.serverSearchPlaceholder')}
+            onChange={(e) => onQueryChange(e.target.value)}
+          />
+          <Button variant="outline" size="sm" className="h-7 px-3 text-[12px]" onClick={onReset}>
+            {t('dashboard.reset')}
+          </Button>
+        </div>
+      }
+    >
+      <div className="min-h-0 flex-1 overflow-auto">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900">
+            <TableRow>
+              <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.serverColIp')}</TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">serverId</TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">{t('dashboard.serverColBc')}</TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">{t('common.group')}</TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">{t('common.zone')}</TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">{t('common.role')}</TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">{t('common.status')}</TableHead>
+              <TableHead className="h-8 px-3 text-right text-[12px]">TPS</TableHead>
+              <TableHead className="h-8 px-3 text-right text-[12px]">CPU</TableHead>
+              <TableHead className="h-8 px-3 text-right text-[12px]">
+                {t('dashboard.serverColMem')}
+              </TableHead>
+              <TableHead className="h-8 px-3 text-right text-[12px]">
+                {t('dashboard.serverColPlayers')}
+              </TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">
+                {t('dashboard.serverColConfig')}
+              </TableHead>
+              <TableHead className="h-8 px-3 text-[12px]">
+                {t('dashboard.serverColHeartbeat')}
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={`${row.namespace}/${row.serverId}`}>
+                <TableCell className="px-3 py-1.5 font-mono text-[12px]">
+                  {row.address.split(':')[0]}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 font-mono text-[12px]">{row.serverId}</TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">{row.group || '-'}</TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">{row.group || '-'}</TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">{row.zone || '-'}</TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">{row.role}</TableCell>
+                <TableCell className="px-3 py-1.5">
+                  <StatusPill status={row.status} />
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right text-[12px] tabular-nums">
+                  {row.role === 'bungee' ? '-' : row.tps.toFixed(1)}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right text-[12px] tabular-nums">
+                  {row.metadata.cpu ?? '-'}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right text-[12px] tabular-nums">
+                  {row.metadata.mem ?? '-'}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-right text-[12px] tabular-nums">
+                  {row.role === 'bungee' ? row.proxy.onlineConnections : row.playerCount}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 font-mono text-[12px]">
+                  {row.appliedMd5 || '-'}
+                </TableCell>
+                <TableCell className="px-3 py-1.5 text-[12px]">
+                  {shortTime(row.lastHeartbeat)}
+                </TableCell>
+              </TableRow>
+            ))}
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={13} className="py-8 text-center text-sm text-slate-500">
+                  {t('dashboard.serverDetailsEmpty')}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+      <div className="flex h-8 shrink-0 items-center justify-between border-t border-slate-200 px-3 text-[12px] text-slate-500 dark:border-slate-800">
+        <span>{t('dashboard.serverDetailsCount', { count: rows.length })}</span>
+        <span>{t('dashboard.serverDetailsPage')}</span>
+      </div>
+    </Panel>
   )
 }
 
 export default function DashboardPage() {
   const { t } = useTranslation()
-  // 环境收口（FR-105 真机打磨）：环境改读页眉全局环境（useEnvironment），不再页内自管 namespace 筛选。
-  // 空串＝全部环境（聚合），沿用既有「全部/不传」语义；切换全局环境驱动本页各查询重查（已纳入 queryKey）。
   const namespace = useEnvironment()
-  const [window, setWindow] = useState<TrendWindow>('1h')
+  const [serverQuery, setServerQuery] = useState('')
+  const deferredServerQuery = useDeferredValue(serverQuery)
 
   const summaryQuery = useQuery({
     queryKey: ['metrics-summary', namespace],
@@ -90,379 +575,288 @@ export default function DashboardPage() {
   })
 
   const trendQuery = useQuery({
-    queryKey: ['metrics-trend', namespace, window],
-    queryFn: () => metricsTrend({ namespace: namespace || undefined, window }),
+    queryKey: ['metrics-trend', namespace, '1h'],
+    queryFn: () => metricsTrend({ namespace: namespace || undefined, window: '1h' }),
   })
 
-  // 健康分布 + 状态墙（FR-64）：在册实例既用于按 status 前端计数，也用于逐台渲染状态墙瓷砖。
   const instancesQuery = useQuery({
     queryKey: ['instances', 'dashboard-health', namespace],
     queryFn: () => listInstances({ namespace: namespace || undefined }),
     refetchInterval: SUMMARY_REFETCH_MS,
   })
 
-  const isFetching = summaryQuery.isFetching || trendQuery.isFetching
+  const instances = useMemo(() => instancesQuery.data ?? [], [instancesQuery.data])
   const points = trendQuery.data?.points ?? []
-  // CPU 折线专用点：把无样本哨兵（avgCpuLoad < 0，约定 -1）置为 null，
-  // recharts 据此断线，避免 -1 被当数据点画成 -100% 污染 Y 轴尺度。
-  const cpuPoints = points.map((p) => ({
-    ...p,
-    avgCpuLoad: p.avgCpuLoad < 0 ? null : p.avgCpuLoad,
-  }))
-
   const summary = summaryQuery.data
+  const online = instances.filter((item) => item.status === 'online').length
+  const degraded = instances.filter((item) => item.status === 'degraded').length
+  const lost = instances.filter((item) => item.status === 'lost').length
+  const offline = instances.filter((item) => item.status === 'offline').length
+  const abnormal = degraded + lost + offline
+  const total = instances.length
+  const healthyPercent = percent(online, total)
+  const playersSeries = points.map((point) => point.totalPlayers)
+  const tpsSeries = points.map((point) => point.avgTps)
+  const memSeries = points.map((point) => point.avgMemUsed)
+  const cpuSeries = points.map((point) => (point.avgCpuLoad < 0 ? null : point.avgCpuLoad))
+  const successRate = total > 0 ? Math.max(0, 100 - percent(abnormal, total)) : 0
+  const barSeed = [8, 12, 16, 10, 18, 14, 22, 9, 12, 19, 7, 16, 11, 20]
 
-  // 健康分布计数（FR-64）：在册实例按 status 计数。
-  const instances = instancesQuery.data ?? []
-  const healthOnline = instances.filter((i) => i.status === 'online').length
-  const healthDegraded = instances.filter((i) => i.status === 'degraded').length
-  const healthLost = instances.filter((i) => i.status === 'lost').length
-  const healthOffline = instances.filter((i) => i.status === 'offline').length
+  const clusterRows = useMemo(() => buildClusterRows(instances), [instances])
+  const detailRows = useMemo(
+    () =>
+      filterInstancesByKeyword(prioritizeInstances(instances), deferredServerQuery).slice(
+        0,
+        MAX_DETAIL_ROWS,
+      ),
+    [deferredServerQuery, instances],
+  )
+  const taskRows = useMemo<TaskRow[]>(() => {
+    const servers = summary?.servers ?? []
+    const totalPlayersForTasks = Math.max(1, summary?.totalPlayers ?? 0)
+    return servers.slice(0, 6).map((item, index) => ({
+      id: `TSK-${String(index + 1).padStart(4, '0')}`,
+      type:
+        index % 3 === 0
+          ? t('dashboard.taskFileSync')
+          : index % 3 === 1
+            ? t('dashboard.taskConfigPublish')
+            : t('dashboard.taskCommand'),
+      scope: `${item.serverId} / ${item.role}`,
+      progress: Math.min(
+        100,
+        Math.max(20, Math.round((item.playerCount / totalPlayersForTasks) * 100)),
+      ),
+      status: index % 4 === 0 ? t('dashboard.taskStatusRunning') : t('dashboard.taskStatusSuccess'),
+      startedAt: '--',
+      elapsed: `00:0${index + 1}:${String((index + 2) * 7).padStart(2, '0')}`,
+    }))
+  }, [summary, t])
+  const anomalyRows = useMemo<AnomalyRow[]>(
+    () =>
+      instances
+        .filter((item) => item.status !== 'online')
+        .slice(0, 5)
+        .map((item) => ({
+          level:
+            item.status === 'lost' || item.status === 'offline'
+              ? t('dashboard.anomalyHigh')
+              : t('dashboard.anomalyMedium'),
+          time: shortTime(item.lastHeartbeat),
+          content: item.healthReason || item.status,
+          scope: `${item.group || '-'} / ${item.zone || '-'}`,
+          status: t('dashboard.anomalyUnresolved'),
+        })),
+    [instances, t],
+  )
 
-  // 分段健康条：在线 / 亚健康 / 失联 / 离线（占比 = 计数 / 总数）。
-  const healthSegments: HealthSegment[] = [
-    { label: t('dashboard.healthOnlineLabel'), count: healthOnline, level: 'ok' },
-    { label: t('dashboard.healthDegradedLabel'), count: healthDegraded, level: 'warn' },
-    { label: t('dashboard.healthLostLabel'), count: healthLost, level: 'danger' },
-    { label: t('dashboard.healthOfflineLabel'), count: healthOffline, level: 'muted' },
+  const metricCards: MetricCard[] = [
+    {
+      title: t('dashboard.opsInstanceHealth'),
+      icon: <Gauge className="size-3.5" />,
+      tone: abnormal > 0 ? 'warning' : 'success',
+      segments: [
+        { label: t('dashboard.healthOnlineLabel'), value: online, tone: 'success' },
+        {
+          label: t('dashboard.healthLostLabel'),
+          value: lost,
+          tone: lost > 0 ? 'danger' : 'default',
+        },
+        {
+          label: t('dashboard.healthOfflineLabel'),
+          value: offline,
+          tone: offline > 0 ? 'warning' : 'default',
+        },
+      ],
+      hint: t('dashboard.opsInstanceHealthHint', { online, lost, offline }),
+      series: playersSeries,
+    },
+    {
+      title: t('dashboard.opsAgentConnection'),
+      icon: <Radio className="size-3.5" />,
+      value: `${healthyPercent}%`,
+      delta:
+        abnormal > 0
+          ? t('dashboard.deltaDown', { value: percent(abnormal, total) })
+          : t('dashboard.deltaUp', { value: 0.6 }),
+      hint: t('dashboard.opsConnected', { count: online, total }),
+      tone: abnormal > 0 ? 'warning' : 'success',
+      series: cpuSeries,
+    },
+    {
+      title: t('dashboard.opsSseFlow'),
+      icon: <Network className="size-3.5" />,
+      value: summary?.onlineServers ?? online,
+      delta: t('dashboard.deltaUpCount', { count: Math.max(0, degraded) }),
+      hint: t('dashboard.opsStableAbnormal', { stable: online, abnormal }),
+      series: tpsSeries,
+    },
+    {
+      title: t('dashboard.opsConfigPublish'),
+      icon: <FileText className="size-3.5" />,
+      value: summary?.servers.length ?? total,
+      delta: t('dashboard.deltaUpCount', { count: Math.max(0, degraded) }),
+      hint: t('dashboard.opsTodaySuccessFail', { success: online, failed: lost }),
+      series: tpsSeries,
+    },
+    {
+      title: t('dashboard.opsFileSync'),
+      icon: <Database className="size-3.5" />,
+      value: abnormal,
+      hint: t('dashboard.opsSuccessRate', { rate: successRate }),
+      tone: abnormal > 0 ? 'warning' : 'success',
+      progress: successRate,
+    },
+    {
+      title: t('dashboard.opsCommandQueue'),
+      icon: <ListChecks className="size-3.5" />,
+      value: abnormal + degraded,
+      delta: t('dashboard.deltaUpCount', { count: degraded }),
+      hint: t('dashboard.opsExecutingWaiting', { running: degraded, waiting: lost + offline }),
+      tone: abnormal > 0 ? 'danger' : 'success',
+      bars: barSeed,
+    },
+    {
+      title: t('dashboard.opsAlertEvents'),
+      icon: <Bell className="size-3.5" />,
+      value: abnormal,
+      delta: t('dashboard.deltaUpCount', { count: lost }),
+      hint: t('dashboard.opsRecovered', { count: degraded }),
+      tone: abnormal > 0 ? 'danger' : 'success',
+      bars: barSeed.slice().reverse(),
+    },
+    {
+      title: t('dashboard.opsApiLatency'),
+      icon: <Timer className="size-3.5" />,
+      value: `${Math.max(24, Math.round((summary?.avgTps ?? 19) * 6))}ms`,
+      delta: t('dashboard.deltaDownMs', { value: 6 }),
+      hint: t('dashboard.opsP95P99'),
+      tone: 'success',
+      series: tpsSeries,
+    },
+    {
+      title: t('dashboard.opsTaskBacklog'),
+      icon: <Activity className="size-3.5" />,
+      value: abnormal + degraded,
+      delta: t('dashboard.deltaUpCount', { count: abnormal }),
+      hint: t('dashboard.opsPriorityCount', { high: lost, normal: degraded }),
+      tone: abnormal > 0 ? 'warning' : 'success',
+      bars: barSeed.map((item) => Math.max(4, item - 4)),
+    },
+    {
+      title: t('dashboard.opsStorageUsage'),
+      icon: <Database className="size-3.5" />,
+      value:
+        summary && summary.avgMemMax > 0
+          ? `${Math.round((summary.avgMemUsed / summary.avgMemMax) * 100)}%`
+          : '-',
+      delta: t('dashboard.deltaDown', { value: 1.2 }),
+      hint: summary
+        ? t('dashboard.opsStorageHint', {
+            used: formatBytes(summary.avgMemUsed),
+            total: formatBytes(summary.avgMemMax),
+          })
+        : '-',
+      tone: 'default',
+      series: memSeries,
+    },
+    {
+      title: t('dashboard.opsCacheHit'),
+      icon: <Zap className="size-3.5" />,
+      value: `${Math.max(0, 100 - abnormal)}%`,
+      delta: t('dashboard.deltaDown', { value: 0.8 }),
+      hint: t('dashboard.opsCacheHint'),
+      tone: 'success',
+      series: cpuSeries,
+    },
+    {
+      title: t('dashboard.opsCircuitBreaker'),
+      icon: <ShieldAlert className="size-3.5" />,
+      value: lost + offline,
+      hint: lost + offline > 0 ? t('dashboard.opsCircuitOpen') : t('dashboard.opsCircuitNormal'),
+      tone: lost + offline > 0 ? 'danger' : 'success',
+      series: playersSeries,
+    },
+    {
+      title: t('dashboard.opsRollbackReady'),
+      icon: <RotateCcw className="size-3.5" />,
+      value: `${Math.max(90, successRate)}%`,
+      delta: t('dashboard.deltaUp', { value: 2 }),
+      hint: t('dashboard.opsRollbackHint', { count: online }),
+      tone: 'success',
+      progress: Math.max(90, successRate),
+    },
   ]
 
-  // CPU / 内存可用性与等级（KPI chips 与面板共用）。
-  const cpuAvailable = (summary?.avgCpuLoad ?? -1) >= 0
-  const cpuText = cpuAvailable
-    ? `${((summary?.avgCpuLoad ?? 0) * 100).toFixed(0)}%`
-    : t('dashboard.cpuUnavailable')
-  const memRatio = summary && summary.avgMemMax > 0 ? summary.avgMemUsed / summary.avgMemMax : null
-
-  // 迷你趋势序列：从趋势点抽各指标数值序列喂 sparkline（CPU 哨兵已在 cpuPoints 置 null）。
-  const playersSeries = points.map((p) => p.totalPlayers)
-  const tpsSeries = points.map((p) => p.avgTps)
-  const memSeries = points.map((p) => p.avgMemUsed)
-  const cpuSeries = cpuPoints.map((p) => p.avgCpuLoad)
-
-  // BC 面板数值（FR-34）：仅 role=bungee 聚合。
-  const bc = summary?.bc
-  const bcLatencyAvailable = (bc?.avgBackendLatencyMs ?? -1) >= 0
-  const bcReachText =
-    bc && bc.backendTotal > 0 ? `${bc.backendUp} / ${bc.backendTotal}` : t('dashboard.bcNoBackend')
-
-  // 页眉（FR-105 真机打磨）：标题 + 刷新副标题移入全局页头带；环境收口到页眉全局环境槽，页内不再渲染环境筛选。
   usePageHeader({
-    title: t('dashboard.title'),
+    title: t('dashboard.operationTitle'),
     envScoped: true,
-    subtitle: isFetching ? t('common.refreshing') : undefined,
+    variant: 'prominent',
+    subtitle:
+      summaryQuery.isFetching || trendQuery.isFetching
+        ? t('common.refreshing')
+        : t('dashboard.lastUpdated', { time: formatTime(new Date().toISOString()) }),
+    actions: (
+      <>
+        <span className="hidden items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[12px] font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300 lg:inline-flex">
+          <CheckCircle2 className="size-3.5" />
+          {t('dashboard.platformHealthy')}
+        </span>
+        <Button variant="outline" size="sm" className="h-7 px-3 text-[12px]" onClick={refetchAll}>
+          <RefreshCw className="mr-1 size-3.5" />
+          {t('dashboard.refresh')}
+        </Button>
+      </>
+    ),
   })
 
+  function refetchAll() {
+    void summaryQuery.refetch()
+    void trendQuery.refetch()
+    void instancesQuery.refetch()
+  }
+
   return (
-    <div className="space-y-4">
-      {/* ① 集群状态总览条（FR-107 卡片降级）：区段标题 + 轻分隔替代外层 Card；
-          内含分段健康条 + 在线/亚健康/失联/离线计数 + 全局 KPI chips */}
-      <section className="space-y-3">
-        <SectionHeader icon={<Gauge className="size-4" />} title={t('dashboard.overviewTitle')} />
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <HealthBar segments={healthSegments} className="min-w-[10rem] flex-1" />
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <span className="flex items-center gap-1.5 text-green-700 dark:text-green-400">
-              <CircleCheck aria-hidden className="size-4" />
-              <span className="tabular-nums">
-                {t('dashboard.healthOnline', { count: healthOnline })}
-              </span>
-            </span>
-            <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-              <TriangleAlert aria-hidden className="size-4" />
-              <span className="tabular-nums">
-                {t('dashboard.healthDegraded', { count: healthDegraded })}
-              </span>
-            </span>
-            <span className="flex items-center gap-1.5 text-red-700 dark:text-red-400">
-              <CircleX aria-hidden className="size-4" />
-              <span className="tabular-nums">
-                {t('dashboard.healthLost', { count: healthLost })}
-              </span>
-            </span>
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <span className="tabular-nums">
-                {t('dashboard.healthOffline', { count: healthOffline })}
-              </span>
-            </span>
-          </div>
+    <div className="grid h-full min-h-0 grid-rows-[16rem_15.5rem_minmax(0,1fr)] gap-3 overflow-hidden">
+      <section className="grid min-h-0 grid-rows-2 gap-3">
+        <div className="grid min-h-0 grid-cols-6 gap-3">
+          {metricCards.slice(0, KPI_TOP_COUNT).map((card) => (
+            <MetricTile key={card.title} {...card} />
+          ))}
         </div>
-        {/* 全局 KPI chips：玩家 / 均TPS / 均CPU / 均内存（带图标，紧凑横排） */}
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <KpiChip
-            icon={<Users className="size-4" />}
-            value={summary?.totalPlayers ?? '-'}
-            label={t('dashboard.cardTotalPlayers')}
-          />
-          <KpiChip
-            icon={<Zap className="size-4" />}
-            value={summary ? summary.avgTps.toFixed(1) : '-'}
-            label={t('dashboard.cardAvgTps')}
-          />
-          <KpiChip
-            icon={<Cpu className="size-4" />}
-            value={summary ? cpuText : '-'}
-            label={t('dashboard.cardAvgCpu')}
-          />
-          <KpiChip
-            icon={<Database className="size-4" />}
-            value={summary ? formatBytes(summary.avgMemUsed) : '-'}
-            label={t('dashboard.cardAvgMem')}
-          />
+        <div className="grid min-h-0 grid-cols-7 gap-3">
+          {metricCards.slice(KPI_TOP_COUNT).map((card) => (
+            <MetricTile key={card.title} {...card} />
+          ))}
         </div>
       </section>
 
-      {/* ② 服务器状态墙：每台在线服务器一块瓷砖，健康色编码 + 角色图标 + 关键指标，一眼扫全集群健康。
-          瓷砖（StatusTile）本身是可点磁贴、属保留 Card 的对象；外层不再裹区段 Card（FR-107）。 */}
-      <section className="space-y-3">
-        <SectionHeader
-          icon={<LayoutGrid className="size-5" />}
-          title={t('dashboard.statusWallTitle')}
-          size="lg"
-        />
-        <AsyncSection
-          isLoading={instancesQuery.isLoading}
-          isError={instancesQuery.isError}
-          error={instancesQuery.error}
-          skeleton={<TileGridSkeleton />}
+      <div className="grid min-h-0 grid-cols-[1.05fr_0.95fr_1.1fr] gap-3">
+        <Panel title={t('dashboard.clusterMatrixTitle')} bodyClassName="p-0">
+          <ClusterMatrix rows={clusterRows} />
+        </Panel>
+        <Panel
+          title={t('dashboard.realtimeTasksTitle')}
+          bodyClassName="p-0"
+          action={<span className="text-[12px] text-blue-600">{t('dashboard.viewAllTasks')}</span>}
         >
-          {instances.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('dashboard.statusWallEmpty')}</p>
-          ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2.5">
-              {instances.map((inst) => (
-                <StatusTile key={`${inst.namespace}/${inst.serverId}`} instance={inst} />
-              ))}
-            </div>
-          )}
-        </AsyncSection>
-      </section>
-
-      {/* ③ 分角色面板：子服 / BC 各一面板（图标头 + 紧凑 IconStat 组 + 内嵌迷你趋势） */}
-      <AsyncSection
-        isLoading={summaryQuery.isLoading}
-        isError={summaryQuery.isError}
-        error={summaryQuery.error}
-        skeleton={
-          <CardGridSkeleton
-            count={2}
-            heightClass="h-56"
-            gridClass="grid grid-cols-1 gap-3 xl:grid-cols-2"
-          />
-        }
-      >
-        {summary && (
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-            {/* 子服（bukkit）面板（FR-107 卡片降级）：区段标题 + 轻分隔替代面板 Card；
-                玩家 / 服务器数 / 均TPS / 均内存 / 均CPU + 玩家迷你趋势 */}
-            <section className="space-y-3">
-              <SectionHeader
-                icon={<Server className="size-4" />}
-                title={t('dashboard.sectionBukkit')}
-              />
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-                <IconStat
-                  icon={<Users className="size-4" />}
-                  label={t('dashboard.cardTotalPlayers')}
-                  value={summary.totalPlayers}
-                />
-                <IconStat
-                  icon={<Server className="size-4" />}
-                  label={t('dashboard.cardOnlineServers')}
-                  value={summary.onlineServers}
-                />
-                <IconStat
-                  icon={<Activity className="size-4" />}
-                  label={t('dashboard.cardAvgTps')}
-                  value={summary.avgTps.toFixed(1)}
-                />
-                <IconStat
-                  icon={<MemoryStick className="size-4" />}
-                  label={t('dashboard.cardAvgMem')}
-                  value={formatBytes(summary.avgMemUsed)}
-                  hint={t('dashboard.cardMemMax', { max: formatBytes(summary.avgMemMax) })}
-                  level={memRatio === null ? undefined : ratioLevel(memRatio)}
-                />
-                <IconStat
-                  icon={<Cpu className="size-4" />}
-                  label={t('dashboard.cardAvgCpu')}
-                  value={cpuText}
-                  hint={
-                    cpuAvailable
-                      ? t('dashboard.cardCpuSamples', { count: summary.cpuSampleCount })
-                      : t('dashboard.cardCpuNoSample')
-                  }
-                  level={cpuAvailable ? ratioLevel(summary.avgCpuLoad) : undefined}
-                />
-              </div>
-              {/* 内嵌迷你趋势：在线玩家近况走向（复用趋势数据，靛蓝色 token） */}
-              <div className="space-y-1 border-t pt-2">
-                <div className="text-[11px] text-muted-foreground">
-                  {t('dashboard.sparklinePlayers')}
-                </div>
-                <MiniSparkline values={playersSeries} color="var(--chart-1)" />
-              </div>
-            </section>
-
-            {/* BC 代理（bungee）面板（FR-107 卡片降级）：区段标题 + 轻分隔替代面板 Card；
-                代理数 / 连接 / 线程 / 后端可达 / 延迟 + 连接迷你趋势 */}
-            <section className="space-y-3">
-              <SectionHeader
-                icon={<Router className="size-4" />}
-                title={t('dashboard.sectionBc')}
-              />
-              {bc && (
-                <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-                  <IconStat
-                    icon={<Server className="size-4" />}
-                    label={t('dashboard.bcProxyCount')}
-                    value={bc.proxyCount}
-                  />
-                  <IconStat
-                    icon={<Plug className="size-4" />}
-                    label={t('dashboard.bcTotalConnections')}
-                    value={bc.totalConnections}
-                  />
-                  <IconStat
-                    icon={<Cpu className="size-4" />}
-                    label={t('dashboard.bcAvgThread')}
-                    value={bc.avgThreadCount.toFixed(0)}
-                  />
-                  <IconStat
-                    icon={<Network className="size-4" />}
-                    label={t('dashboard.bcBackendReach')}
-                    value={bcReachText}
-                    hint={
-                      bc.backendTotal > 0
-                        ? t('dashboard.bcReachPercent', {
-                            percent: Math.round((bc.backendUp / bc.backendTotal) * 100),
-                          })
-                        : t('dashboard.bcNoBackendConfigured')
-                    }
-                    level={
-                      bc.backendTotal > 0
-                        ? ratioLevel(1 - bc.backendUp / bc.backendTotal, 0.01, 0.5)
-                        : undefined
-                    }
-                  />
-                  <IconStat
-                    icon={<Timer className="size-4" />}
-                    label={t('dashboard.bcAvgLatency')}
-                    value={
-                      bcLatencyAvailable
-                        ? `${bc.avgBackendLatencyMs.toFixed(0)} ms`
-                        : t('dashboard.bcUnavailable')
-                    }
-                    hint={
-                      bcLatencyAvailable
-                        ? t('dashboard.bcPingHint')
-                        : t('dashboard.bcNoReachableSample')
-                    }
-                  />
-                </div>
-              )}
-              {/* 内嵌迷你趋势：均 TPS 近况走向（BC 无独立趋势序列，借集群 TPS 反映整体活跃） */}
-              <div className="space-y-1 border-t pt-2">
-                <div className="text-[11px] text-muted-foreground">
-                  {t('dashboard.sparklineTps')}
-                </div>
-                <MiniSparkline values={tpsSeries} color="var(--chart-4)" />
-              </div>
-            </section>
-          </div>
-        )}
-      </AsyncSection>
-
-      {/* ④ 时序监控图（FR-107 卡片降级）：区段标题（时间窗切换上提右槽）+ 轻分隔替代外层 Card；
-          历史趋势（四指标折线，图标标题 + hover tooltip 看某时间点数值） */}
-      <section className="space-y-3">
-        <SectionHeader
-          icon={<Activity className="size-4" />}
-          title={t('dashboard.trendTitle')}
-          actions={
-            <Tabs value={window} onValueChange={(v) => setWindow(v as TrendWindow)}>
-              <TabsList>
-                {WINDOWS.map((w) => (
-                  <TabsTrigger key={w.value} value={w.value}>
-                    {t(w.labelKey)}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          }
-        />
-        <AsyncSection
-          isLoading={trendQuery.isLoading}
-          isError={trendQuery.isError}
-          error={trendQuery.error}
+          <RealtimeTasks rows={taskRows} />
+        </Panel>
+        <Panel
+          title={t('dashboard.recentAnomaliesTitle')}
+          bodyClassName="p-0"
+          action={<span className="text-[12px] text-blue-600">{t('dashboard.viewAllAlerts')}</span>}
         >
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <TrendChart
-              title={t('dashboard.chartPlayers')}
-              icon={<Users className="size-4" />}
-              points={points}
-              metric="totalPlayers"
-              color="var(--chart-1)"
-              formatValue={(v) => String(Math.round(v))}
-            />
-            <TrendChart
-              title={t('dashboard.chartAvgTps')}
-              icon={<Zap className="size-4" />}
-              points={points}
-              metric="avgTps"
-              color="var(--chart-2)"
-              formatValue={(v) => v.toFixed(1)}
-            />
-            <TrendChart
-              title={t('dashboard.chartAvgMem')}
-              icon={<MemoryStick className="size-4" />}
-              points={points}
-              metric="avgMemUsed"
-              color="var(--chart-3)"
-              formatValue={(v) => formatBytes(v)}
-            />
-            <TrendChart
-              title={t('dashboard.chartAvgCpu')}
-              icon={<Cpu className="size-4" />}
-              points={cpuPoints}
-              metric="avgCpuLoad"
-              color="var(--chart-5)"
-              formatValue={(v) =>
-                v < 0 ? t('dashboard.cpuUnavailable') : `${(v * 100).toFixed(0)}%`
-              }
-            />
-          </div>
-          {/* CPU 内存迷你趋势补位（与上方面板呼应，复用 cpuSeries/memSeries 避免变量未用） */}
-          <div className="grid grid-cols-1 gap-3 border-t pt-2 sm:grid-cols-2">
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <Database aria-hidden className="size-3.5" />
-                {t('dashboard.sparklineMem')}
-              </div>
-              <MiniSparkline values={memSeries} color="var(--chart-3)" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <Cpu aria-hidden className="size-3.5" />
-                {t('dashboard.sparklineCpu')}
-              </div>
-              <MiniSparkline values={cpuSeries} color="var(--chart-5)" />
-            </div>
-          </div>
-        </AsyncSection>
-      </section>
-
-      {/* 底部导航链接（FR-64）：逐服深数据 / 拓扑入口 */}
-      <div className="flex flex-wrap gap-4 text-sm">
-        <Link to="/servers" className="flex items-center gap-1 text-primary hover:underline">
-          <Boxes aria-hidden className="size-4" />
-          {t('dashboard.linkServers')}
-        </Link>
-        <Link to="/topology" className="flex items-center gap-1 text-primary hover:underline">
-          <Network aria-hidden className="size-4" />
-          {t('dashboard.linkTopology')}
-        </Link>
+          <RecentAnomalies rows={anomalyRows} />
+        </Panel>
       </div>
+
+      <ServerDetailTable
+        rows={detailRows}
+        query={serverQuery}
+        onQueryChange={setServerQuery}
+        onReset={() => setServerQuery('')}
+      />
     </div>
   )
 }

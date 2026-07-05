@@ -15,6 +15,7 @@ import {
   createMockCommand,
   createMockConfig,
   createMockFile,
+  createMockFileSyncTask,
   createMockIgnoreRule,
   createMockReverseFetchTask,
   deleteMockConfig,
@@ -42,6 +43,8 @@ import {
   getMockFileList,
   getMockFileRevision,
   getMockFileRevisions,
+  getMockFileSyncEvents,
+  getMockFileSyncTask,
   getMockImpact,
   getMockImprintDiff,
   getMockMetricsSummary,
@@ -55,6 +58,7 @@ import {
   getMockTrend,
   getMockZoneStats,
   listMockDrains,
+  listMockFileSyncTasks,
   listMockIgnoreRules,
   listMockInstances,
   listMockOfflineMarkers,
@@ -69,12 +73,14 @@ import {
   onlineMockInstance,
   publishMockConfig,
   publishMockOverrideSet,
+  planMockFileSyncTask,
   resetMockApiKey,
   resolveMockConflicts,
   revokeMockApiKey,
   rollbackMockConfig,
   rollbackMockFile,
   rollbackMockOverrideSet,
+  runMockFileSyncAction,
   saveMockFile,
   stripApiKeySecret,
   submitMockReverseFetchTask,
@@ -718,6 +724,53 @@ export async function handleMockRequest(path: string, init?: RequestInit): Promi
     const t = getMockReverseFetchTask(Number(taskDetailMatch[1]))
     if (!t) return notFound(`任务 #${taskDetailMatch[1]}`)
     return json(t)
+  }
+
+  // ===== 多级灰度配置同步中心（file-sync）=====
+  if (p === '/admin/v1/file-sync/tasks' && method === 'GET') {
+    return json({ items: listMockFileSyncTasks(qs) })
+  }
+  if (p === '/admin/v1/file-sync/tasks' && method === 'POST') {
+    const body = parseBody(init)
+    if (!body.sourceServerId) return badRequest('源服务器为必填')
+    if (!body.directory) return badRequest('同步目录为必填')
+    return json(createMockFileSyncTask(body), 201)
+  }
+  const fileSyncEventsMatch = p.match(/^\/admin\/v1\/file-sync\/tasks\/([^/]+)\/events$/)
+  if (fileSyncEventsMatch && method === 'GET') {
+    const id = decodeURIComponent(fileSyncEventsMatch[1])
+    const events = getMockFileSyncEvents(id, Number(qs.afterLogId ?? 0))
+    const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')
+    return new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+    })
+  }
+  const fileSyncPlanMatch = p.match(/^\/admin\/v1\/file-sync\/tasks\/([^/]+)\/plan$/)
+  if (fileSyncPlanMatch && method === 'POST') {
+    const id = decodeURIComponent(fileSyncPlanMatch[1])
+    const body = parseBody(init)
+    const targets = Array.isArray(body.targetServerIds) ? (body.targetServerIds as string[]) : []
+    const task = planMockFileSyncTask(id, targets)
+    if (!task) return notFound(`文件同步任务 ${id}`)
+    return json(task)
+  }
+  const fileSyncActionMatch = p.match(
+    /^\/admin\/v1\/file-sync\/tasks\/([^/]+)\/(start|pause|resume|terminate)$/,
+  )
+  if (fileSyncActionMatch && method === 'POST') {
+    const id = decodeURIComponent(fileSyncActionMatch[1])
+    const action = fileSyncActionMatch[2]
+    const task = runMockFileSyncAction(id, action)
+    if (!task) return notFound(`文件同步任务 ${id}`)
+    return json(task)
+  }
+  const fileSyncTaskMatch = p.match(/^\/admin\/v1\/file-sync\/tasks\/([^/]+)$/)
+  if (fileSyncTaskMatch && method === 'GET') {
+    const id = decodeURIComponent(fileSyncTaskMatch[1])
+    const task = getMockFileSyncTask(id)
+    if (!task) return notFound(`文件同步任务 ${id}`)
+    return json(task)
   }
 
   // ===== 运维设置（FR-61/62）=====

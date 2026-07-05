@@ -8,12 +8,12 @@ import { createNamespace, deleteNamespace, listNamespaces, updateNamespace } fro
 import type { NamespaceView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
-import AsyncSection from '@/components/AsyncSection'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { AsyncSection } from '@beacon/ui'
+import { DataTable, type DataTableColumn  } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem  } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -21,8 +21,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
-import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
+} from '@beacon/ui'
+import { DestructiveConfirmDialog } from '@beacon/ui'
 
 export default function NamespacesPage() {
   const { t } = useTranslation()

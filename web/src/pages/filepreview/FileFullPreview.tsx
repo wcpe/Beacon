@@ -20,10 +20,11 @@ import {
 import type { EffectiveFileItem } from '../../api/client'
 import type { InstanceView, ReverseFetchScanFileView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { ScrollArea } from '@beacon/ui'
 import FileMergeCard from './FileMergeCard'
+import { Combobox } from '@beacon/ui'
 
 // 全量清单轮询的终止状态：清单已到（pending-review）或扫描失败/终态。
 const SCAN_DONE = new Set(['pending-review', 'failed', 'cancelled', 'expired'])
@@ -146,23 +147,22 @@ export default function FileFullPreview({ instances }: { instances: InstanceView
       {/* 源选择 + 触发 */}
       <div className="flex-shrink-0 flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-border bg-muted/20">
         <span className="text-xs text-muted-foreground">{t('filePreview.fullSourceLabel')}</span>
-        <select
+        <Combobox
           aria-label={t('filePreview.fullSourceLabel')}
-          className="h-7 rounded border border-input bg-background px-2 text-xs"
+          className="w-72"
           value={serverId}
-          onChange={(e) => {
-            setServerId(e.target.value)
+          onChange={(value) => {
+            setServerId(value)
             setTaskId(null)
             setExpanded(null)
           }}
-        >
-          <option value="">{t('filePreview.selectPlaceholder')}</option>
-          {onlineSources.map((i) => (
-            <option key={i.serverId} value={i.serverId}>
-              {i.serverId}（{i.group}）
-            </option>
-          ))}
-        </select>
+          options={onlineSources.map((i) => ({
+            value: i.serverId,
+            label: `${i.serverId}（${i.group}）`,
+          }))}
+          allowCustom={false}
+          placeholder={t('filePreview.selectPlaceholder')}
+        />
         <Button size="sm" onClick={onTrigger} disabled={!serverId || scanMut.isPending || scanning}>
           {scanMut.isPending || scanning
             ? t('filePreview.fullScanning')

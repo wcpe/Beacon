@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react
 import { BrowserRouter } from 'react-router-dom'
 import { toast } from 'sonner'
 import App from './App'
-import { Toaster } from '@/components/ui/sonner'
+import { Toaster } from '@beacon/ui'
 import { loader } from '@monaco-editor/react'
 // i18n 初始化（FR-50，见 ADR-0033）：import 即同步完成初始化，须在渲染前先执行
 import i18n from './i18n'

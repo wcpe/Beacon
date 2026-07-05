@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@beacon/ui':
+        specifier: workspace:*
+        version: link:packages/ui
       '@dnd-kit/core':
         specifier: 6.3.1
         version: 6.3.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -150,6 +153,55 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@25.9.3)(jsdom@25.0.1)(lightningcss@1.32.0)
+
+  apps/ui-wiki:
+    dependencies:
+      '@beacon/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+
+  packages/ui:
+    dependencies:
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      lucide-react:
+        specifier: ^1.20.0
+        version: 1.20.0(react@18.3.1)
+      radix-ui:
+        specifier: ^1.6.0
+        version: 1.6.0(@types/react-dom@18.3.1)(@types/react@18.3.12)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react:
+        specifier: 18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: 18.3.1
+        version: 18.3.1(react@18.3.1)
+      recharts:
+        specifier: 3.8.1
+        version: 3.8.1(@types/react@18.3.12)(react-dom@18.3.1(react@18.3.1))(react-is@17.0.2)(react@18.3.1)(redux@5.0.1)
+      sonner:
+        specifier: ^2.0.7
+        version: 2.0.7(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      tailwind-merge:
+        specifier: ^3.6.0
+        version: 3.6.0
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.3.1
+        version: 4.3.1(vite@5.4.21(@types/node@25.9.3)(lightningcss@1.32.0))
+      '@vitejs/plugin-react':
+        specifier: 4.3.4
+        version: 4.3.4(vite@5.4.21(@types/node@25.9.3)(lightningcss@1.32.0))
+      typescript:
+        specifier: 5.6.3
+        version: 5.6.3
+      vite:
+        specifier: 5.4.21
+        version: 5.4.21(@types/node@25.9.3)(lightningcss@1.32.0)
 
 packages:
 

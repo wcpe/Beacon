@@ -29,6 +29,10 @@ import type {
   DefaultEntryView,
   DiffView,
   FileRevisionView,
+  FileSyncEvent,
+  FileSyncLogView,
+  FileSyncTargetView,
+  FileSyncTaskView,
   FileView,
   IgnoreRuleView,
   ImpactView,
@@ -628,7 +632,8 @@ function genInstances(count: number): InstanceView[] {
     const zs = zonesByGroup[g]
     const z = zs[n % zs.length]
     const role: InstanceView['role'] = n % 12 === 0 ? 'bungee' : 'bukkit'
-    const status: InstanceView['status'] = n % 23 === 0 ? 'offline' : n % 17 === 0 ? 'lost' : 'online'
+    const status: InstanceView['status'] =
+      n % 23 === 0 ? 'offline' : n % 17 === 0 ? 'lost' : 'online'
     const ns = n % 6 === 0 ? 'test' : 'prod'
     const age = (n * 7) % 300
     out.push({
@@ -655,7 +660,14 @@ function genInstances(count: number): InstanceView[] {
       zoneDefaultEntry: n % 30 === 0,
       proxy:
         role === 'bungee'
-          ? { onlineConnections: (n * 9) % 256, threadCount: 24 + (n % 32), uptimeMs: 7_200_000, backendUp: 1, backendTotal: 2, backendAvgLatencyMs: 10 + (n % 30) }
+          ? {
+              onlineConnections: (n * 9) % 256,
+              threadCount: 24 + (n % 32),
+              uptimeMs: 7_200_000,
+              backendUp: 1,
+              backendTotal: 2,
+              backendAvgLatencyMs: 10 + (n % 30),
+            }
           : ZERO_PROXY,
       registeredAt: ago(86400 + n * 60),
     })
@@ -2513,4 +2525,227 @@ export function getMockImprintDiff(): {
     expectedDeletions: [],
     differs: true,
   }
+}
+
+// ---- 多级灰度配置同步中心（file-sync，可变任务态） ----
+
+let fileSyncTaskSeq = 1001
+let fileSyncLogSeq = 9001
+
+const seedFileSyncTask: FileSyncTaskView = makeFileSyncTask({
+  id: 'fs-1000',
+  namespace: 'prod',
+  sourceServerId: 'server-01',
+  directory: 'plugins/AllinCore',
+  batchSize: 20,
+  intervalSec: 30,
+  failureThresholdPercent: 20,
+  createdAt: ago(900),
+})
+
+seedFileSyncTask.status = 'planned'
+seedFileSyncTask.targets = buildFileSyncTargets(seedFileSyncTask, ['server-02', 'server-04'])
+refreshFileSyncCounts(seedFileSyncTask)
+seedFileSyncTask.logs.push(makeFileSyncLog(seedFileSyncTask.id, 'INFO', '已规划 2 台目标', '', 0))
+
+export const mockFileSyncTasks: FileSyncTaskView[] = [seedFileSyncTask]
+
+export function listMockFileSyncTasks(filter?: {
+  namespace?: string
+  status?: string
+}): FileSyncTaskView[] {
+  let items = [...mockFileSyncTasks]
+  if (filter?.namespace) items = items.filter((task) => task.namespace === filter.namespace)
+  if (filter?.status) items = items.filter((task) => task.status === filter.status)
+  return items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+export function getMockFileSyncTask(id: string): FileSyncTaskView | null {
+  return mockFileSyncTasks.find((task) => task.id === id) ?? null
+}
+
+export function createMockFileSyncTask(body: {
+  namespace?: string
+  sourceServerId?: string
+  directory?: string
+  batchSize?: number
+  intervalSec?: number
+  failureThresholdPercent?: number
+}): FileSyncTaskView {
+  const task = makeFileSyncTask({
+    id: `fs-${fileSyncTaskSeq++}`,
+    namespace: body.namespace ?? 'prod',
+    sourceServerId: body.sourceServerId ?? 'server-01',
+    directory: body.directory ?? 'plugins/AllinCore',
+    batchSize: Number(body.batchSize ?? 20),
+    intervalSec: Number(body.intervalSec ?? 30),
+    failureThresholdPercent: Number(body.failureThresholdPercent ?? 20),
+    createdAt: now(),
+  })
+  task.logs.push(makeFileSyncLog(task.id, 'INFO', `已创建任务，源服 ${task.sourceServerId}`, '', 0))
+  mockFileSyncTasks.unshift(task)
+  recordAudit({
+    namespace: task.namespace,
+    action: 'file-sync',
+    targetType: 'task',
+    targetRef: task.id,
+    detail: '创建文件同步任务',
+  })
+  return task
+}
+
+export function planMockFileSyncTask(
+  id: string,
+  targetServerIds: string[],
+): FileSyncTaskView | null {
+  const task = getMockFileSyncTask(id)
+  if (!task) return null
+  task.targets = buildFileSyncTargets(task, targetServerIds)
+  task.status = 'planned'
+  task.updatedAt = now()
+  task.logs.push(makeFileSyncLog(task.id, 'INFO', `已规划 ${task.targets.length} 台目标`, '', 0))
+  refreshFileSyncCounts(task)
+  return task
+}
+
+export function runMockFileSyncAction(id: string, action: string): FileSyncTaskView | null {
+  const task = getMockFileSyncTask(id)
+  if (!task) return null
+  if (action === 'start') startMockFileSyncTask(task)
+  if (action === 'pause') markMockFileSyncTask(task, 'paused', '任务已暂停')
+  if (action === 'resume') markMockFileSyncTask(task, 'running', '任务已继续')
+  if (action === 'terminate') markMockFileSyncTask(task, 'terminated', '任务已紧急终止')
+  refreshFileSyncCounts(task)
+  return task
+}
+
+export function getMockFileSyncEvents(id: string, afterLogId = 0): FileSyncEvent[] {
+  const task = getMockFileSyncTask(id)
+  if (!task) return []
+  const logs = task.logs.filter((log) => (log.id ?? 0) > afterLogId).slice(-5)
+  return [
+    { type: 'task', task: { id: task.id, status: task.status } },
+    ...logs.map((log) => ({ type: 'log' as const, log })),
+  ]
+}
+
+function makeFileSyncTask(input: {
+  id: string
+  namespace: string
+  sourceServerId: string
+  directory: string
+  batchSize: number
+  intervalSec: number
+  failureThresholdPercent: number
+  createdAt: string
+}): FileSyncTaskView {
+  return {
+    id: input.id,
+    namespace: input.namespace,
+    sourceServerId: input.sourceServerId,
+    directory: input.directory,
+    status: 'draft',
+    batchSize: input.batchSize,
+    intervalSec: input.intervalSec,
+    failureThresholdPercent: input.failureThresholdPercent,
+    operator: 'admin',
+    totalTargets: 0,
+    plannedTargets: 0,
+    succeededTargets: 0,
+    failedTargets: 0,
+    skippedTargets: 0,
+    currentBatch: 0,
+    totalBatches: 0,
+    lastError: '',
+    logs: [],
+    targets: [],
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    startedAt: '',
+    finishedAt: '',
+  }
+}
+
+function buildFileSyncTargets(
+  task: FileSyncTaskView,
+  targetServerIds: string[],
+): FileSyncTargetView[] {
+  const allowed = new Set(targetServerIds)
+  const targets = mockInstances.filter(
+    (inst) =>
+      allowed.has(inst.serverId) &&
+      inst.role === 'bukkit' &&
+      inst.status === 'online' &&
+      inst.serverId !== task.sourceServerId,
+  )
+  return targets.map((inst, index) => ({
+    taskId: task.id,
+    batchNo: Math.floor(index / Math.max(1, task.batchSize)) + 1,
+    serverId: inst.serverId,
+    namespace: inst.namespace,
+    group: inst.group,
+    zone: inst.zone ?? '',
+    status: 'pending',
+    backupPath: '',
+    currentFileCount: 128,
+    changedFileCount: 0,
+    skippedFileCount: 0,
+    bytesTotal: 96 * 1024 * 1024,
+    bytesDone: 0,
+    error: '',
+    updatedAt: now(),
+  }))
+}
+
+function startMockFileSyncTask(task: FileSyncTaskView): void {
+  task.status = 'running'
+  task.startedAt = task.startedAt || now()
+  task.currentBatch = task.targets.length > 0 ? 1 : 0
+  task.updatedAt = now()
+  task.targets = task.targets.map((target, index) =>
+    index === 0
+      ? {
+          ...target,
+          status: 'transferring',
+          changedFileCount: 18,
+          skippedFileCount: 110,
+          bytesDone: Math.floor(target.bytesTotal * 0.42),
+          updatedAt: now(),
+        }
+      : target,
+  )
+  task.logs.push(makeFileSyncLog(task.id, 'INFO', '任务开始执行', '', task.currentBatch))
+}
+
+function markMockFileSyncTask(
+  task: FileSyncTaskView,
+  status: FileSyncTaskView['status'],
+  message: string,
+): void {
+  task.status = status
+  task.updatedAt = now()
+  if (status === 'terminated') task.finishedAt = now()
+  task.logs.push(
+    makeFileSyncLog(task.id, status === 'terminated' ? 'WARN' : 'INFO', message, '', 0),
+  )
+}
+
+function refreshFileSyncCounts(task: FileSyncTaskView): void {
+  task.totalTargets = task.targets.length
+  task.plannedTargets = task.targets.length
+  task.succeededTargets = task.targets.filter((target) => target.status === 'succeeded').length
+  task.failedTargets = task.targets.filter((target) => target.status === 'failed').length
+  task.skippedTargets = task.targets.filter((target) => target.status === 'skipped').length
+  task.totalBatches =
+    task.targets.length === 0 ? 0 : Math.ceil(task.targets.length / Math.max(1, task.batchSize))
+}
+
+function makeFileSyncLog(
+  taskId: string,
+  level: FileSyncLogView['level'],
+  message: string,
+  serverId: string,
+  batchNo: number,
+): FileSyncLogView {
+  return { id: fileSyncLogSeq++, taskId, batchNo, serverId, level, message, createdAt: now() }
 }

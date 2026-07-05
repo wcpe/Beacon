@@ -168,6 +168,26 @@ describe('ZonesPage 看板默认只读 + 解锁（FR-71）', () => {
     renderPage(<ZonesPage />)
     expect(await screen.findByRole('heading', { name: '区分配' })).toBeInTheDocument()
   })
+
+  it('渲染高密度容量矩阵、筛选计数与最近指派记录', async () => {
+    renderPage(<ZonesPage />)
+    expect(await screen.findByText('小区容量矩阵')).toBeInTheDocument()
+    expect(screen.getByText('总小区')).toBeInTheDocument()
+    expect(screen.getByText('当前显示 2 / 2')).toBeInTheDocument()
+    expect(screen.getByText('最近指派记录')).toBeInTheDocument()
+  })
+
+  it('容量矩阵移除操作列，点击行直接切换右侧详情', async () => {
+    renderPage(<ZonesPage />)
+    expect(await screen.findByRole('region', { name: '小区容量矩阵列表' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '大区 / 小区树滚动列表' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分配详情滚动列表' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '操作' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '查看 gA / z2 分配详情' }))
+
+    expect(screen.getByRole('heading', { name: 'gA / z2' })).toBeInTheDocument()
+  })
 })
 
 describe('ZonesPage 取消指派需显式确认（FR-71）', () => {

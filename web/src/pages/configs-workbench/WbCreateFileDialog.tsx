@@ -6,16 +6,16 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 
 export default function WbCreateFileDialog({
   open,

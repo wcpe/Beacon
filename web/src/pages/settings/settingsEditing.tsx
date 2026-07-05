@@ -7,16 +7,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listSettings, updateSetting } from '../../api/client'
 import type { SettingView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Checkbox } from '@beacon/ui'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select'
+} from '@beacon/ui'
 
 // log.level 的合法枚举（硬编码，后端白名单同此集合）。
 const LOG_LEVELS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const

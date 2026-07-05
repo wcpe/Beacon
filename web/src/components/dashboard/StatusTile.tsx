@@ -5,7 +5,7 @@
 import { useTranslation } from 'react-i18next'
 import { Router, Server } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { levelSolid, levelText, statusLevel } from './health'
+import { levelSolid, levelText, statusLevel } from '@beacon/ui'
 import type { InstanceView } from '@/api/types'
 
 // 角色编码（与后端 metric_aggregate role 约定一致）：bungee 进 BC，其余按子服。
@@ -57,8 +57,8 @@ export default function StatusTile({ instance, large }: StatusTileProps) {
   return (
     <div
       className={cn(
-        'relative flex flex-col gap-2 overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10',
-        large ? 'p-4' : 'p-3',
+        'relative flex flex-col overflow-hidden rounded-md bg-card ring-1 ring-foreground/10',
+        large ? 'gap-2 p-4' : 'gap-1.5 p-2.5',
       )}
     >
       {/* 左侧健康色条：按状态等级上色，远观即知该台健康。 */}
@@ -89,7 +89,7 @@ export default function StatusTile({ instance, large }: StatusTileProps) {
           </span>
         </span>
       </div>
-      <div className={cn('grid grid-cols-2 gap-2', large ? 'pl-2' : 'pl-1.5')}>
+      <div className={cn('grid grid-cols-2', large ? 'gap-2 pl-2' : 'gap-1.5 pl-1.5')}>
         {metrics.map((m) => (
           <TileMetric key={m.label} label={m.label} value={m.value} large={large} />
         ))}

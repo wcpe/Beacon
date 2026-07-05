@@ -8,16 +8,16 @@ import { useQuery } from '@tanstack/react-query'
 
 import { impactPreview } from '../../api/client'
 import CodeEditor from '../../components/CodeEditor'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 
 export default function ConfigSaveConfirmDialog({
   open,

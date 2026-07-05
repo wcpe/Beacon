@@ -4,7 +4,7 @@
 import { Link, Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Moon, Sun, LogOut } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button } from '@beacon/ui'
 import { setTheme, usePreferences } from '@/state/preferences'
 
 export default function WallboardLayout() {

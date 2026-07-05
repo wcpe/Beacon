@@ -8,16 +8,16 @@ import { useTranslation } from 'react-i18next'
 
 import type { ImportFileEntry } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { ScrollArea } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 
 // 文本预览截断上限（字节）：超过只读前 N 字节并标记截断，防大文件卡渲染。
 const TEXT_PREVIEW_LIMIT = 2000

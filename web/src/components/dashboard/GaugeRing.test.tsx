@@ -1,7 +1,7 @@
 // GaugeRing 单测：conic-gradient 进度环按健康等级变色（绿/琥珀/红）+ 中心图标 + 值文案 + null 占比退化。
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import GaugeRing from './GaugeRing'
+import { GaugeRing } from '@beacon/ui'
 
 describe('GaugeRing', () => {
   it('渲染标签、值文案与中心图标', () => {

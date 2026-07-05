@@ -1,7 +1,7 @@
 // SummaryStrip 单测（FR-106）：锁定——渲染标签+数值、语义色映射、空 items 不渲染。
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import SummaryStrip from './SummaryStrip'
+import { SummaryStrip } from '@beacon/ui'
 
 describe('SummaryStrip（FR-106 汇总条）', () => {
   it('渲染每项的标签与数值', () => {

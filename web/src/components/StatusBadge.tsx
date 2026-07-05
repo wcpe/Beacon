@@ -1,7 +1,7 @@
 // 健康状态徽标：online 绿 / lost 琥珀 / offline 灰，基于 shadcn Badge。
 
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import type { InstanceStatus } from '@/api/types'
 

@@ -1,7 +1,7 @@
 // 通用展示格式化工具。
 
 import type { NamespaceView } from './types'
-import type { ComboboxOption } from '@/components/ui/combobox'
+import type { ComboboxOption } from '@beacon/ui'
 
 // 把环境列表派生为「值/显示分离」的下拉候选（FR-70）：value=code（真实值，供过滤 / 上报 / API），
 // label=「编码 · 名称」（名称为空时仅显示编码）。各页 namespace 下拉统一用此显示编码与名称。

@@ -21,17 +21,18 @@ describe('navModel 分组结构', () => {
     const tos = NAV_LEAVES.map((l) => l.to)
     expect(tos).toContain('/dashboard')
     expect(tos).toContain('/configs')
+    expect(tos).toContain('/file-sync')
     expect(tos).toContain('/servers')
     expect(tos).toContain('/service-analysis')
     expect(tos).toContain('/settings')
   })
 
-  it('三页合一后（FR-113）配置组只剩工作台 + 文件树预览，无拓印 / 反向抓取叶子', () => {
+  it('三页合一后（FR-113）配置组保留工作台 / 文件同步中心 / 文件树预览，无拓印 / 反向抓取叶子', () => {
     const tos = NAV_LEAVES.map((l) => l.to)
     expect(tos).not.toContain('/imprint')
     expect(tos).not.toContain('/reverse-fetch')
     const config = NAV_GROUPS.find((g) => g.id === 'config')!
-    expect(config.leaves.map((l) => l.to)).toEqual(['/configs', '/file-preview'])
+    expect(config.leaves.map((l) => l.to)).toEqual(['/configs', '/file-sync', '/file-preview'])
   })
 
   it('每个叶子都配了语义图标（方案 A）', () => {

@@ -146,6 +146,30 @@ const calls: Array<[string, () => Promise<unknown>]> = [
   ['getAuditAnalytics', () => client.getAuditAnalytics({ namespace: 'prod' })],
   ['listCommands', () => client.listCommands({ namespace: 'prod' })],
   ['getCommandAnalytics', () => client.getCommandAnalytics({ namespace: 'prod' })],
+  // 多级灰度配置同步中心
+  [
+    'createFileSyncTask',
+    () =>
+      client.createFileSyncTask({
+        namespace: 'prod',
+        sourceServerId: 'server-01',
+        directory: 'plugins/AllinCore',
+        batchSize: 20,
+        intervalSec: 30,
+        failureThresholdPercent: 20,
+      }),
+  ],
+  ['listFileSyncTasks', () => client.listFileSyncTasks({ namespace: 'prod' })],
+  ['getFileSyncTask', () => client.getFileSyncTask('fs-1000')],
+  [
+    'planFileSyncTask',
+    () => client.planFileSyncTask('fs-1000', { targetServerIds: ['server-02', 'server-04'] }),
+  ],
+  ['startFileSyncTask', () => client.startFileSyncTask('fs-1000')],
+  ['pauseFileSyncTask', () => client.pauseFileSyncTask('fs-1000')],
+  ['resumeFileSyncTask', () => client.resumeFileSyncTask('fs-1000')],
+  ['terminateFileSyncTask', () => client.terminateFileSyncTask('fs-1000')],
+  ['streamFileSyncTaskEvents', () => client.streamFileSyncTaskEvents('fs-1000', () => {})],
   // API 密钥
   ['listApiKeys', () => client.listApiKeys()],
   ['createApiKey', () => client.createApiKey({ name: '契约密钥', role: 'readonly' })],

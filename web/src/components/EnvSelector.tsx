@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Globe } from 'lucide-react'
 import { listNamespaces } from '@/api/client'
 import { namespaceOptions } from '@/api/format'
-import { Combobox } from '@/components/ui/combobox'
+import { Combobox } from '@beacon/ui'
 import { useEnvironment, setEnvironment } from '@/state/environment'
 
 export default function EnvSelector() {

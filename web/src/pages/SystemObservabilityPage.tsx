@@ -27,15 +27,15 @@ import {
 } from 'lucide-react'
 import { systemObservability, systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
-import AsyncSection from '@/components/AsyncSection'
+import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
-import AnchorRailLayout, {
+import { AnchorRailLayout,
   AnchorSectionBlock,
   type AnchorSection,
-} from '@/components/AnchorRailLayout'
-import { CardGridSkeleton } from '@/components/skeletons'
-import { Skeleton } from '@/components/ui/skeleton'
-import GaugeRing from '@/components/dashboard/GaugeRing'
+ } from '@beacon/ui'
+import { CardGridSkeleton } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import { GaugeRing } from '@beacon/ui'
 import {
   countLevel,
   levelSolid,
@@ -43,9 +43,9 @@ import {
   ratioLevel,
   statusLevel,
   type HealthLevel,
-} from '@/components/dashboard/health'
+} from '@beacon/ui'
 import { cn } from '@/lib/utils'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@beacon/ui'
 
 // 自观测快照刷新周期（毫秒）：本页打开时短周期轮询，反映控制面当前内部态（不进 FR-33 页眉高频轮询）。
 const OBS_REFETCH_MS = 5000

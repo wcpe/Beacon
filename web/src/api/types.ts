@@ -746,6 +746,101 @@ export interface CommandAnalytics {
   byDay: CommandDayCount[]
 }
 
+// ===== 多级灰度配置同步中心（file-sync）=====
+
+export type FileSyncTaskStatus =
+  | 'draft'
+  | 'scanning'
+  | 'cached'
+  | 'planned'
+  | 'running'
+  | 'paused'
+  | 'succeeded'
+  | 'failed'
+  | 'terminated'
+  | 'circuit-broken'
+
+export type FileSyncTargetStatus =
+  | 'pending'
+  | 'manifesting'
+  | 'backing-up'
+  | 'transferring'
+  | 'applying'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+
+export type FileSyncLogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG'
+
+export interface FileSyncLogView {
+  id?: number
+  taskId: string
+  batchNo: number
+  serverId: string
+  level: FileSyncLogLevel
+  message: string
+  createdAt: string
+}
+
+export interface FileSyncTargetView {
+  taskId: string
+  batchNo: number
+  serverId: string
+  namespace: string
+  group: string
+  zone: string
+  status: FileSyncTargetStatus
+  backupPath: string
+  currentFileCount: number
+  changedFileCount: number
+  skippedFileCount: number
+  bytesTotal: number
+  bytesDone: number
+  error: string
+  updatedAt: string
+}
+
+export interface FileSyncTaskView {
+  id: string
+  namespace: string
+  sourceServerId: string
+  directory: string
+  status: FileSyncTaskStatus
+  batchSize: number
+  intervalSec: number
+  failureThresholdPercent: number
+  operator: string
+  totalTargets: number
+  plannedTargets: number
+  succeededTargets: number
+  failedTargets: number
+  skippedTargets: number
+  currentBatch: number
+  totalBatches: number
+  lastError: string
+  logs: FileSyncLogView[]
+  targets: FileSyncTargetView[]
+  createdAt: string
+  updatedAt: string
+  startedAt: string
+  finishedAt: string
+}
+
+export interface FileSyncEvent {
+  type: 'task' | 'target' | 'log' | 'error'
+  taskId?: number
+  status?: FileSyncTaskStatus
+  logId?: number
+  batchId?: number
+  serverId?: string
+  level?: string
+  createdAt?: string
+  task?: Partial<FileSyncTaskView>
+  target?: Partial<FileSyncTargetView>
+  log?: Partial<FileSyncLogView>
+  message?: string
+}
+
 // ===== 运维设置（FR-62，消费 FR-61 设置端点）=====
 
 // 设置项值类型（对齐后端 GET /admin/v1/settings 的 valueType）。

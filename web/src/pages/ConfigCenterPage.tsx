@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -52,8 +53,7 @@ import Editor, { type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { usePageHeader } from '@/components/PageHeader'
 import CodeEditor from '@/components/CodeEditor'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@beacon/ui'
 import { useMessage } from '@/components/useMessage'
 import { cn } from '@/lib/utils'
 
@@ -469,13 +469,11 @@ export default function ConfigCenterPage() {
   // 文件多选（ctrl 点选 / shift 连选）→ 批量抓取
   const [multiSel, setMultiSel] = useState<Set<string>>(() => new Set())
   const lastClickRef = useRef<string | null>(null)
-  // 可拖拽抽屉尺寸：左右栏宽 / 底部队列高
-  const [leftW, setLeftW] = useState(220)
-  const [rightW, setRightW] = useState(200)
-  const [queueH, setQueueH] = useState(196)
-  const [queueOpen, setQueueOpen] = useState(true)
+  // 可拖拽抽屉尺寸：左右栏宽
+  const [leftW, setLeftW] = useState(260)
+  const [rightW, setRightW] = useState(360)
   const rowRef = useRef<HTMLDivElement | null>(null)
-  const colRef = useRef<HTMLDivElement | null>(null)
+  const { t } = useTranslation()
 
   const { data: instances = [] } = useQuery({ queryKey: ['instances', {}], queryFn: () => listInstances({}) })
   const servers: SrvMeta[] = useMemo(() => instances.map((i: InstanceView) => ({ id: i.serverId, group: i.group, zone: i.zone ?? '—', online: i.status === 'online' })), [instances])
@@ -533,7 +531,6 @@ export default function ConfigCenterPage() {
     title: '配置中心',
     subtitle: (
       <span className="flex items-center gap-2">
-        <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[0.65rem]"><Globe aria-hidden className="size-3" />prod</Badge>
         <span className="font-mono text-xs text-muted-foreground">{file ? file.path : '/'}</span>
       </span>
     ),
@@ -592,19 +589,14 @@ export default function ConfigCenterPage() {
   // 批量抓取：选中里「未纳管 / 有漂移」的文件一次性入库
   const selFetchable = useMemo(() => [...multiSel].filter((p) => { const f = s.files[p]; return f ? driftCount(f, s.group, s.zone, s.lookServer) > 0 : unmanagedText(p, s.lookServer) !== null }), [multiSel, s.files, s.group, s.zone, s.lookServer])
 
-  // 抽屉拖拽改尺寸（左右栏宽 / 队列高），拖动期间禁选中文本
-  function startResize(which: 'left' | 'right' | 'queue', e: React.MouseEvent) {
+  // 抽屉拖拽改尺寸（左右栏宽），拖动期间禁选中文本
+  function startResize(which: 'left' | 'right', e: React.MouseEvent) {
     e.preventDefault()
     const move = (ev: MouseEvent) => {
-      if (which === 'queue') {
-        const r = colRef.current?.getBoundingClientRect()
-        if (r) setQueueH(Math.min(520, Math.max(90, r.bottom - ev.clientY - 8)))
-      } else {
-        const r = rowRef.current?.getBoundingClientRect()
-        if (!r) return
-        if (which === 'left') setLeftW(Math.min(480, Math.max(170, ev.clientX - r.left)))
-        else setRightW(Math.min(480, Math.max(170, r.right - ev.clientX)))
-      }
+      const r = rowRef.current?.getBoundingClientRect()
+      if (!r) return
+      if (which === 'left') setLeftW(Math.min(480, Math.max(170, ev.clientX - r.left)))
+      else setRightW(Math.min(480, Math.max(170, r.right - ev.clientX)))
     }
     const up = () => {
       window.removeEventListener('mousemove', move)
@@ -617,8 +609,8 @@ export default function ConfigCenterPage() {
   }
 
   return (
-    <div ref={colRef} className="flex h-full min-h-0 flex-col gap-2 overflow-hidden" onClick={() => ctx && setCtx(null)}>
-      <div className={cn('flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border px-3 py-1.5 text-xs transition-colors', lb.wrap)}>
+    <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden" onClick={() => ctx && setCtx(null)}>
+      <div role="toolbar" aria-label={t('configs.density.toolbarAria')} className={cn('flex min-h-10 shrink-0 flex-wrap items-center gap-x-2.5 gap-y-1 rounded-md border bg-background px-3 py-1.5 text-xs shadow-sm transition-colors', lb.wrap)}>
         <span className="flex items-center gap-1.5"><Eye aria-hidden className="size-3.5 text-muted-foreground" /><span className="text-muted-foreground">看生效</span><ServerPicker servers={servers} value={s.lookServer} onChange={(m) => dispatch({ t: 'server', id: m.id, group: m.group, zone: m.zone })} /></span>
         <span className="h-4 w-px bg-border" />
         <span className="flex items-center gap-1.5">
@@ -626,15 +618,16 @@ export default function ConfigCenterPage() {
           <span className="text-muted-foreground">写入层</span>
           {LAYER_ORDER.map((lvl) => { const m = L[lvl]; const active = lvl === s.writeLayer; return <button key={lvl} type="button" onClick={() => dispatch({ t: 'layer', level: lvl })} title={`覆盖 ${scope[lvl].total} 台（在线 ${scope[lvl].online}）`} className={cn('flex items-center gap-1 rounded-md border px-2 py-0.5 transition-colors', active ? cn('bg-background font-medium', m.chip) : 'border-transparent text-muted-foreground hover:bg-background/60')}><span className={cn('size-1.5 rounded-full', m.dot)} />{LAYER_LABEL[lvl].label}<span className="text-[0.6rem] opacity-70">·{scope[lvl].total}</span></button> })}
         </span>
-        <span className={cn('ml-auto flex items-center gap-1.5 text-[0.7rem]', lb.text)}>{s.writeLayer === 'server' ? <><Lock aria-hidden className="size-3" />正在为 单服 {s.lookServer} 打补丁 —— 只覆盖这 1 台，其余继承上层</> : <><SquarePen aria-hidden className="size-3" />正在写 {LAYER_LABEL[s.writeLayer].label} 层 —— 覆盖该层 {scope[s.writeLayer].total} 台（在线 {scope[s.writeLayer].online}）中未单独覆盖的服</>}</span>
+        <span className={cn('ml-auto flex min-w-0 items-center gap-1.5 text-[0.7rem]', lb.text)}><span className="shrink-0 text-muted-foreground">{t('configs.density.impactScope')}</span>{s.writeLayer === 'server' ? <><Lock aria-hidden className="size-3 shrink-0" /><span className="truncate">正在为 单服 {s.lookServer} 打补丁 —— 只覆盖这 1 台，其余继承上层</span></> : <><SquarePen aria-hidden className="size-3 shrink-0" /><span className="truncate">正在写 {LAYER_LABEL[s.writeLayer].label} 层 —— 覆盖该层 {scope[s.writeLayer].total} 台（在线 {scope[s.writeLayer].online}）中未单独覆盖的服</span></>}</span>
       </div>
 
       <div ref={rowRef} className="flex min-h-0 flex-1 gap-0 overflow-hidden">
         {leftOpen ? (
           <>
-            <aside style={{ width: leftW }} className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card">
-              <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2.5 py-1.5">
+            <aside role="region" aria-label={t('configs.density.resourceColumn')} style={{ width: leftW }} className="flex shrink-0 flex-col overflow-hidden rounded-md border border-border bg-background shadow-sm">
+              <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1">
                 <FolderTree aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="text-xs font-medium text-foreground">{t('configs.density.resourceColumn')}</span>
                 <div className="flex overflow-hidden rounded-md border border-border text-[0.65rem]">
                   <button type="button" onClick={() => dispatch({ t: 'treeView', view: 'managed' })} className={cn('px-1.5 py-0.5', s.treeView === 'managed' ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}>受管库</button>
                   <button type="button" onClick={() => dispatch({ t: 'treeView', view: 'disk' })} className={cn('border-l border-border px-1.5 py-0.5', s.treeView === 'disk' ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}>磁盘</button>
@@ -665,26 +658,17 @@ export default function ConfigCenterPage() {
           <CollapsedStrip onExpand={() => setLeftOpen(true)} icon={<FolderTree className="size-4" />} label="配置库" />
         )}
 
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/cc-path')) e.preventDefault() }} onDrop={(e) => { const p = e.dataTransfer.getData('text/cc-path'); if (p) dispatch({ t: 'openEdit', path: p }) }}>{s.dirView !== null ? <DirectoryView state={s} dir={s.dirView} dispatch={dispatch} /> : file ? <Workspace state={s} file={file} dispatch={dispatch} msg={msg} /> : isDiskFile(s.selectedPath, s.lookServer) ? <DiskFilePanel state={s} path={s.selectedPath} dispatch={dispatch} msg={msg} /> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">从左侧选一个文件 / 目录</div>}</section>
+        <section role="region" aria-label={t('configs.density.workspaceColumn')} className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border bg-background shadow-sm" onDragOver={(e) => { if (e.dataTransfer.types.includes('text/cc-path')) e.preventDefault() }} onDrop={(e) => { const p = e.dataTransfer.getData('text/cc-path'); if (p) dispatch({ t: 'openEdit', path: p }) }}>{s.dirView !== null ? <DirectoryView state={s} dir={s.dirView} dispatch={dispatch} /> : file ? <Workspace state={s} file={file} dispatch={dispatch} msg={msg} /> : isDiskFile(s.selectedPath, s.lookServer) ? <DiskFilePanel state={s} path={s.selectedPath} dispatch={dispatch} msg={msg} /> : <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">从左侧选一个文件 / 目录</div>}</section>
 
         {rightOpen ? (
           <>
             <div onMouseDown={(e) => startResize('right', e)} title="拖动调整宽度" className="w-1.5 shrink-0 cursor-col-resize rounded transition-colors hover:bg-primary/30" />
-            <aside style={{ width: rightW }} className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card"><div className="flex shrink-0 items-center justify-between border-b border-border px-2.5 py-1.5"><span className="text-xs font-medium text-foreground">上下文</span><button type="button" onClick={() => setRightOpen(false)} title="收起" className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"><X aria-hidden className="size-3.5" /></button></div><div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto"><RightRail state={s} file={file} dispatch={dispatch} /></div></aside>
+            <aside role="region" aria-label={t('configs.density.contextQueueColumn')} style={{ width: rightW }} className="flex shrink-0 flex-col overflow-hidden rounded-md border border-border bg-background shadow-sm"><div className="flex shrink-0 items-center justify-between border-b border-border px-2 py-1"><span className="text-xs font-medium text-foreground">{t('configs.density.contextQueueColumn')}</span><button type="button" onClick={() => setRightOpen(false)} title="收起" className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"><X aria-hidden className="size-3.5" /></button></div><div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto"><RightRail state={s} file={file} dispatch={dispatch} /></div></aside>
           </>
         ) : (
           <CollapsedStrip onExpand={() => setRightOpen(true)} icon={<History className="size-4" />} label="上下文" />
         )}
       </div>
-
-      {queueOpen ? (
-        <div className="shrink-0">
-          <div onMouseDown={(e) => startResize('queue', e)} title="拖动调整高度" className="mx-auto mb-0.5 h-1.5 w-full cursor-row-resize rounded transition-colors hover:bg-primary/30" />
-          <QueueDock queue={s.queue} dispatch={dispatch} height={queueH} onCollapse={() => setQueueOpen(false)} />
-        </div>
-      ) : (
-        <button type="button" onClick={() => setQueueOpen(true)} className="flex shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"><ArrowRightLeft aria-hidden className="size-3.5" /><span className="font-medium text-foreground">同步队列</span><span className="rounded-full bg-muted px-1.5 text-[0.6rem]">{s.queue.length}</span><span className="ml-auto text-[0.7rem]">展开 ▴</span></button>
-      )}
 
       {s.dialog === 'publish' && file && <PublishDialog state={s} file={file} servers={servers} dispatch={dispatch} msg={msg} />}
       {s.dialog === 'exclude' && <ExcludeDialog state={s} dispatch={dispatch} />}
@@ -1061,26 +1045,34 @@ function RightRail({ state, file, dispatch }: { state: State; file: MockFile | u
         </Section>
       )}
       <Section title="版本 · 回滚"><div className="flex flex-col gap-1">{[cur, cur - 1, cur - 2].filter((v) => v >= 1).map((v, i) => <div key={v} className={cn('flex items-center justify-between rounded-md border px-2 py-1 text-xs', i === 0 ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground')}><span className="font-mono">v{v}</span>{i === 0 ? <span className="text-[0.65rem]">当前</span> : <button type="button" onClick={() => file && dispatch({ t: 'openDiff', path: file.path, version: v })} className="flex items-center gap-1 rounded px-1 hover:bg-muted hover:text-foreground" title="编辑器里看 diff 并回滚"><GitCompare className="size-3" /> diff/回滚</button>}</div>)}</div></Section>
+      <QueueContextPanel queue={state.queue} dispatch={dispatch} />
     </div>
   )
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <div className="border-b border-border px-2.5 py-2"><div className="mb-1.5 text-[0.65rem] text-muted-foreground">{title}</div>{children}</div>
+  return <div className="border-b border-border px-2.5 py-1.5"><div className="mb-1 text-[0.65rem] font-medium text-muted-foreground">{title}</div>{children}</div>
 }
 
-// ===== 底部同步队列（更高 + 信息更全 + 待审核可点） =====
+// ===== 右侧同步队列（压缩为上下文面板，保留待审核 / 灰度操作入口） =====
 const QUEUE_TABS: { id: QueueKind; label: string }[] = [{ id: 'fetch', label: '抓取 / 收编' }, { id: 'publish', label: '发布 / 灰度' }, { id: 'audit', label: '操作日志' }]
 
-function QueueDock({ queue, dispatch, height, onCollapse }: { queue: QueueItem[]; dispatch: React.Dispatch<Action>; height: number; onCollapse: () => void }) {
+function QueueContextPanel({ queue, dispatch }: { queue: QueueItem[]; dispatch: React.Dispatch<Action> }) {
+  const { t } = useTranslation()
   const [tab, setTab] = useState<QueueKind>('fetch')
   const rows = queue.filter((q) => q.kind === tab)
   return (
-    <div style={{ height }} className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card">
-      <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1"><ArrowRightLeft aria-hidden className="size-3.5 text-muted-foreground" /><span className="mr-2 text-xs font-medium text-foreground">同步队列</span>{QUEUE_TABS.map((t) => { const cnt = queue.filter((q) => q.kind === t.id).length; const pending = queue.filter((q) => q.kind === t.id && q.state === '待审核').length; return <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn('flex items-center gap-1 rounded-md px-2 py-0.5 text-xs', tab === t.id ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}>{t.label}<span className="rounded-full bg-muted px-1 text-[0.6rem]">{cnt}</span>{pending > 0 && <span className="rounded-full bg-amber-500/20 px-1 text-[0.6rem] text-amber-600 dark:text-amber-400">{pending} 待审</span>}</button> })}<button type="button" onClick={onCollapse} title="收起队列" className="ml-auto rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"><Minus aria-hidden className="size-3.5" /></button></div>
-      <div className="scrollbar-hide min-h-0 flex-1 overflow-y-auto">
+    <Section title={t('configs.density.queueContext')}>
+      <div className="mb-1 flex flex-wrap items-center gap-1">
+        {QUEUE_TABS.map((t) => {
+          const cnt = queue.filter((q) => q.kind === t.id).length
+          const pending = queue.filter((q) => q.kind === t.id && q.state === '待审核').length
+          return <button key={t.id} type="button" onClick={() => setTab(t.id)} className={cn('flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[0.65rem]', tab === t.id ? 'bg-accent font-medium text-accent-foreground' : 'text-muted-foreground hover:bg-muted')}>{t.label}<span className="rounded-full bg-muted px-1 text-[0.55rem]">{cnt}</span>{pending > 0 && <span className="rounded-full bg-amber-500/20 px-1 text-[0.55rem] text-amber-600 dark:text-amber-400">{pending}</span>}</button>
+        })}
+      </div>
+      <div className="max-h-52 overflow-y-auto border-t border-border/60">
         {rows.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[0.7rem] text-muted-foreground">暂无{QUEUE_TABS.find((t) => t.id === tab)?.label}消息</div>
+          <div className="px-1 py-3 text-center text-[0.7rem] text-muted-foreground">暂无{QUEUE_TABS.find((t) => t.id === tab)?.label}消息</div>
         ) : (
           rows.map((q) => {
             const pending = q.state === '待审核'
@@ -1089,16 +1081,15 @@ function QueueDock({ queue, dispatch, height, onCollapse }: { queue: QueueItem[]
             const dot = pending ? 'bg-amber-500' : gray ? 'bg-violet-500' : running ? 'bg-blue-500' : q.done ? 'bg-emerald-500' : 'bg-muted-foreground/40'
             const stateColor = pending ? 'text-amber-600 dark:text-amber-400' : gray ? 'text-violet-600 dark:text-violet-400' : running ? 'text-blue-600 dark:text-blue-400' : q.done ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'
             return (
-              <div key={q.id} className="relative flex items-center gap-2 border-b border-border/60 px-3 py-1.5 text-[0.7rem] hover:bg-muted/40">
+              <div key={q.id} className="relative flex flex-col gap-1 border-b border-border/60 px-1 py-1.5 text-[0.7rem] hover:bg-muted/40">
+                <div className="flex min-w-0 items-center gap-1.5">
                 <span className={cn('size-1.5 shrink-0 rounded-full', dot)} />
-                <span className="max-w-[24%] shrink-0 truncate font-medium text-foreground" title={q.title}>{q.title}</span>
-                <span className="min-w-0 flex-1 truncate text-muted-foreground" title={q.detail}>{q.detail}</span>
-                <span className="hidden shrink-0 rounded bg-muted px-1 text-[0.6rem] text-muted-foreground sm:inline">{q.operator}</span>
-                <span className="hidden max-w-[16%] shrink-0 truncate text-[0.6rem] text-muted-foreground md:inline" title={q.target}>{q.target}</span>
-                <span className="hidden shrink-0 text-[0.6rem] text-muted-foreground lg:inline">{q.time}</span>
+                <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={q.title}>{q.title}</span>
+                <span className={cn('shrink-0 font-medium', stateColor)}>{q.state}</span>
+                </div>
+                <div className="truncate text-[0.65rem] text-muted-foreground" title={q.detail}>{q.detail}</div>
                 <span className="ml-auto flex shrink-0 items-center gap-1.5">
                   {running && <span className="text-[0.6rem] text-blue-600 dark:text-blue-400">{q.progress}%</span>}
-                  <span className={cn('font-medium', stateColor)}>{q.state}</span>
                   {pending && q.review && <button type="button" onClick={() => dispatch({ t: 'reviewOpen', id: q.id })} className="rounded border border-amber-400/60 bg-amber-500/10 px-1.5 py-px text-[0.6rem] text-amber-700 hover:bg-amber-500/20 dark:text-amber-300">审核</button>}
                   {gray && (
                     <>
@@ -1113,7 +1104,7 @@ function QueueDock({ queue, dispatch, height, onCollapse }: { queue: QueueItem[]
           })
         )}
       </div>
-    </div>
+    </Section>
   )
 }
 

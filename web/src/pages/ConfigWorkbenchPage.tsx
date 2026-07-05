@@ -38,11 +38,11 @@ import { FolderTree, Globe, ListTree, Server } from 'lucide-react'
 
 import { useAuth } from '@/state/auth'
 import { usePageHeader } from '@/components/PageHeader'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
 import { useMessage } from '@/components/useMessage'
-import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
+import { DestructiveConfirmDialog } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 
 import {

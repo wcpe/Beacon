@@ -1,7 +1,7 @@
 // 单张统计卡片：总览卡片组与 BC 代理面板共用，避免重复骨架（仅展示负载数字，不含名单）。
 
 import type { ReactNode } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent } from '@beacon/ui'
 
 interface StatCardProps {
   // 卡片标题（指标名）

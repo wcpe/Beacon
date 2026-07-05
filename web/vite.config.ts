@@ -11,11 +11,13 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   // 资源根路径：与控制面同端口同根挂载
   base: '/',
-  // 路径别名：@ 指向 src（shadcn-ui 组件按 @/ 引用）
+  // 路径别名：@ 指向 src；@beacon/ui 指向内部 UI 包源码
   resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
+    alias: [
+      { find: '@beacon/ui/styles.css', replacement: fileURLToPath(new URL('./packages/ui/src/styles.css', import.meta.url)) },
+      { find: '@beacon/ui', replacement: fileURLToPath(new URL('./packages/ui/src/index.ts', import.meta.url)) },
+      { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
+    ],
   },
   build: {
     // 构建产物目录，对应 .gitignore 的 /web/dist/

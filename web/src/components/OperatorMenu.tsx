@@ -14,7 +14,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuItem,
-} from '@/components/ui/dropdown-menu'
+} from '@beacon/ui'
 
 export default function OperatorMenu() {
   const { t } = useTranslation()
