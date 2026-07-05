@@ -61,6 +61,8 @@
 | [0055](0055-rolling-prerelease-dev-sha-version.md) | 滚动预发布版本号带 -dev.&lt;sha&gt; + 同基线标识变即提示更新（取代 [0052](0052-rolling-prerelease-channel.md) 决策 4/5 与 [0054](0054-rolling-prerelease-version-ci-computed.md) 纯 X.Y.Z）：版本号 = minor+1 基线 + -dev.&lt;7位 commit sha&gt;（如 0.18.0-dev.715989a），in-app 判新改基线比较 + 同基线 dev.sha 标识变即更新，使每次 push 真机可反复检测触发、验证在线更新；正式渠道仍纯 X.Y.Z | 已被 [0056](0056-rolling-prerelease-dev-distance-version.md) 取代 |
 | [0056](0056-rolling-prerelease-dev-distance-version.md) | 滚动预发布版本号改 &lt;基线&gt;-dev.&lt;提交距离&gt;.g&lt;sha&gt; + 提交距离序号判新（取代 [0055](0055-rolling-prerelease-dev-sha-version.md) 全部、[0054](0054-rolling-prerelease-version-ci-computed.md) 基线 minor+1）：基线 = 最新正式 tag 不 +1、提交距离作有序序号、收敛 scripts/dev-version.sh、移动 tag prerelease→dev；in-app 判新改「基线比较 + 提交距离序号」，无新提交不误报、有新提交必触发；正式渠道仍纯 X.Y.Z | 已接受 |
 | [0057](0057-surface-desensitized-errors.md) | 操作错误脱敏后展示前端（反转「一律藏内部错误」）：新增 `internal/redact.Desensitize` 打码凭据（URL 账密 / token / password / secret / api-key / Bearer·Basic），`render.WriteError` 对内部错误返回脱敏真因（非笼统「内部错误」、仍记完整日志 + traceId），前端 MutationCache 全局兜底 toast；内网地址 / 路径等运维上下文不打码。让运维看得见失败原因又不泄露凭据（FR-122） | 已接受 |
+| [0058](0058-controlled-large-file-sync-channel.md) | 受控大文件同步通道：`agent_command` 只做编排控制，大文件经 agent 出站流式 HTTP 上传到控制面缓存、目标分批流式拉取；本通道允许 jar / 地图 / 资源包等二进制，目录限服务器根内相对路径，目标仅 bukkit，管理台进度走独立 SSE | 已接受 |
+| [0059](0059-internal-ui-package-and-component-museum.md) | 管理台通用 UI 包与控件博物馆：通用 UI / 展示组件迁入 `web/packages/ui` 内部包，业务壳组件留主应用；新增独立 `web/apps/ui-wiki` 开发期控件博物馆展示全部导出组件，不进主后台生产路由 | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

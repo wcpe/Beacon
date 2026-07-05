@@ -387,6 +387,35 @@ data: {}
 
 - 作用域叠加：`scope=server` 任务的扫描清单同时受**该大区 group 层规则**与**本实例 server 层规则**约束；`scope=group` 任务仅受 group 层规则约束。
 
+### 多级灰度文件同步中心（FR-129 / FR-131，见 [ADR-0058](adr/0058-controlled-large-file-sync-channel.md)）
+
+本模块把文件同步任务、批次、目标和日志作为 DB 真源：选择在线 `role=bukkit` 源服 + 服务器根内相对目录，规划一组在线 bukkit 目标，执行开始 / 暂停 / 继续 / 终止等控制动作，并通过管理台 SSE 回放持久日志与实时状态。`agent_command` 只承载 taskId / batchId / targetId / directory 等编排控制；文件内容通过 agent 侧流式 HTTP 上传到控制面本地 blob 缓存，再由目标 agent 流式下载。文件内容不得进入审计 detail、命令 payload 或 JSON ingest。
+
+**任务视图字段**：`{ id, namespace, sourceServerId, directory, status, batchSize, intervalSec, failureThresholdPercent, operator, totalTargets, plannedTargets, succeededTargets, failedTargets, skippedTargets, currentBatch, totalBatches, lastError, logs, targets, createdAt, updatedAt, startedAt, finishedAt }`。`logs` 元素为 `{ id, taskId, batchNo, serverId, level, message, createdAt }`；`targets` 元素为 `{ taskId, batchNo, serverId, namespace, group, zone, status, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone, error, updatedAt }`。
+
+| 端点 | 说明 |
+|---|---|
+| `POST /admin/v1/file-sync/tasks` | 创建文件同步任务（写操作 readonly→403）。body `{namespace,sourceServerId,directory,batchSize,intervalSec,failureThresholdPercent}`。源实例必须在线且 `role=bukkit`，`directory` 必须是服务器根内相对目录（拒绝空、`..`、绝对路径、盘符 / UNC、反斜杠、Windows 保留名）。成功后任务为 `scanning`，事务内写 `file-sync.create` 审计 / 持久日志，并下发源扫描命令。返回 `201` + 任务视图。 |
+| `GET /admin/v1/file-sync/tasks?namespace=&status=` | 列同步任务历史（最新在前）：`{ items: [任务视图] }`。 |
+| `GET /admin/v1/file-sync/tasks/{id}` | 查询任务详情，返回任务视图（含已规划 targets 与日志尾部）。不存在→`404 FILE_SYNC_TASK_NOT_FOUND`。 |
+| `POST /admin/v1/file-sync/tasks/{id}/plan` | 规划目标（写操作 readonly→403）。body `{targetServerIds:[string...]}`；服务端去重、排除源服、逐个校验在线 bukkit，空目标→`400 FILE_SYNC_NO_TARGETS`，非 bukkit / 离线目标→`400 FILE_SYNC_TARGET_INVALID`。按任务 `batchSize` 写入批次和目标，任务转 `planned`，旧规划会被重建。返回任务视图。 |
+| `POST /admin/v1/file-sync/tasks/{id}/start` | 启动任务控制态：`planned → running`，要求源 manifest 已缓存；写 `startedAt`、审计 `file-sync.start`、持久日志并推 SSE，随后按当前批次向目标下发 apply 命令。 |
+| `POST /admin/v1/file-sync/tasks/{id}/pause` | 暂停后续批次：`running → paused`，不影响已完成目标。 |
+| `POST /admin/v1/file-sync/tasks/{id}/resume` | 继续后续批次：`paused → running`。 |
+| `POST /admin/v1/file-sync/tasks/{id}/terminate` | 紧急终止：`draft/scanning/cached/planned/running/paused → terminated`，写 `finishedAt`。 |
+| `GET /admin/v1/file-sync/tasks/{id}/events?afterLogId=` | 管理台 SSE。连接先按 `afterLogId` 回放持久日志尾部，随后推送 `task` / `log` 事件；浏览器可用 `fetch + ReadableStream` 携带 Authorization 订阅，禁止短轮询替代实时进度。 |
+
+**agent 侧数据面端点（均挂 `/beacon/v1/agent` + `X-Beacon-Token`）**：
+
+| 端点 | 说明 |
+|---|---|
+| `POST /file-sync/{taskId}/manifest` | 源 agent 回传扫描清单。body `{ commandId, files:[{path,size,hash}] }`；控制面校验命令状态与 path/hash 后写 `file_sync_file`，任务进入可规划 / 可启动状态。 |
+| `PUT /file-sync/{taskId}/blobs/{sha256}` | 源 agent 流式上传某文件 blob。请求体为 `application/octet-stream`；控制面边读边算 sha256，摘要不匹配拒绝，匹配后落本地 blob 缓存。 |
+| `GET /file-sync/{taskId}/blobs/{sha256}` | 目标 agent 流式下载某文件 blob。响应 `application/octet-stream` + `Content-Length`，不把内容包进 JSON。 |
+| `POST /file-sync/{taskId}/targets/result` | 目标 agent 回传执行结果。body `{ commandId, ok, reason, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone }`；控制面推进目标、批次和熔断状态。 |
+
+错误：任务不存在 `404 FILE_SYNC_TASK_NOT_FOUND`；状态不符 `409 FILE_SYNC_TASK_STATE`；源非法 `400 FILE_SYNC_SOURCE_INVALID`；目标非法 `400 FILE_SYNC_TARGET_INVALID`；目标为空 `400 FILE_SYNC_NO_TARGETS`；路径非法 `400 INVALID_PATH`。
+
 ### 配置操作级撤回（FR-116，见 [ADR-0051](adr/0051-config-operation-undo.md) 与 [docs/specs/config-operation-undo.md](specs/config-operation-undo.md)）
 
 把工作台「撤回 / 回滚 / 操作日志」落成真实后端能力：清单内三类大操作（下发 `push` / 发布 `publish` / 反向抓取 ingest `fetch`）落地时连同反向快照记一条**可逆操作账目**，撤回 = 读账目按反向指令在一个 DB 事务内把控制面配置 / 纳管真源改回操作前，并经既有长轮询按需重推。撤回是受审计的写操作，幂等 + 并发安全 + 过期 / 被覆盖双闸。

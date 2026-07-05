@@ -68,6 +68,10 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.ReverseFetchIgnoreRule{},
 		&model.Setting{},
 		&model.ReversibleOperation{},
+		&model.FileSyncTask{},
+		&model.FileSyncBatch{},
+		&model.FileSyncTarget{},
+		&model.FileSyncLog{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}

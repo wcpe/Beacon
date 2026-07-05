@@ -83,6 +83,16 @@ var (
 	ErrBrowseTimeout = New(http.StatusGatewayTimeout, "BROWSE_TIMEOUT", "目标实例未在限期内返回浏览结果")
 	// ErrBrowseTargetNotFound 文件浏览目标越权 / 非目录 / 非文本（agent 原语拒读，FR-110）。
 	ErrBrowseTargetNotFound = New(http.StatusNotFound, "BROWSE_TARGET_NOT_FOUND", "浏览目标不存在或不可读")
+	// ErrFileSyncTaskNotFound 文件同步任务不存在（FR-129/FR-131）。
+	ErrFileSyncTaskNotFound = New(http.StatusNotFound, "FILE_SYNC_TASK_NOT_FOUND", "文件同步任务不存在")
+	// ErrFileSyncTaskState 文件同步任务状态不允许当前操作（FR-131）。
+	ErrFileSyncTaskState = New(http.StatusConflict, "FILE_SYNC_TASK_STATE", "文件同步任务状态不允许当前操作")
+	// ErrFileSyncSourceInvalid 文件同步源实例不存在、离线或不是 bukkit（FR-129）。
+	ErrFileSyncSourceInvalid = New(http.StatusBadRequest, "FILE_SYNC_SOURCE_INVALID", "文件同步源实例必须在线且为 bukkit")
+	// ErrFileSyncTargetInvalid 文件同步目标实例不存在、离线或不是 bukkit（FR-131）。
+	ErrFileSyncTargetInvalid = New(http.StatusBadRequest, "FILE_SYNC_TARGET_INVALID", "文件同步目标实例必须在线且为 bukkit")
+	// ErrFileSyncNoTargets 文件同步目标为空（FR-131）。
+	ErrFileSyncNoTargets = New(http.StatusBadRequest, "FILE_SYNC_NO_TARGETS", "文件同步目标不能为空")
 
 	// ErrReverseFetchTaskNotFound 反向抓取受管任务不存在（FR-58）。
 	ErrReverseFetchTaskNotFound = New(http.StatusNotFound, "REVERSE_FETCH_TASK_NOT_FOUND", "反向抓取任务不存在")

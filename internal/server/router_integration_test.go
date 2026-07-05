@@ -94,6 +94,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	commandService.SetNotifier(notifier)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
+	fileSyncSvc := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instSvc, auditRepo, service.NewFileSyncEventHub())
 	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。
 	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo, settingsSvc)
 	reverseFetchTaskSvc.SetNotifier(notifier)
@@ -127,6 +128,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
 		Command:          handler.NewCommandHandler(commandService, instSvc),
+		FileSync:         handler.NewFileSyncHandler(fileSyncSvc),
 		AgentLog:         agentLogHandler,
 		ReverseFetchTask: reverseFetchTaskHandler,
 		ReverseFetchRule: reverseFetchRuleHandler,

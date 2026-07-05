@@ -45,7 +45,8 @@ func (AgentCommand) TableName() string { return "agent_command" }
 // IsValidCommandType 校验命令类型取值。
 func IsValidCommandType(t string) bool {
 	switch t {
-	case CommandTypeIngestPlugins, CommandTypeTailLogs, CommandTypeResyncConfig, CommandTypeFsBrowse:
+	case CommandTypeIngestPlugins, CommandTypeTailLogs, CommandTypeResyncConfig, CommandTypeFsBrowse,
+		CommandTypeFileSyncSource, CommandTypeFileSyncApply, CommandTypeFileSyncRollback:
 		return true
 	default:
 		return false

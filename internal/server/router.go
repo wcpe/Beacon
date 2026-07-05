@@ -33,6 +33,7 @@ type Handlers struct {
 	APIKey           *handler.APIKeyHandler
 	Command          *handler.CommandHandler
 	Browse           *handler.BrowseHandler
+	FileSync         *handler.FileSyncHandler
 	AgentLog         *handler.AgentLogHandler
 	ReverseFetchTask *handler.ReverseFetchTaskHandler
 	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
@@ -76,6 +77,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/logs", h.AgentLog.Receive)
 		// 文件浏览结果回传（FR-110，见 ADR-0049）：agent 回传列目录 / 子树 / 文件内容，转存命令瞬态、唤醒等待的 admin
 		r.Post("/files/browse-result", h.Browse.BrowseResult)
+		// 多级灰度文件同步数据面（ADR-0058）：命令通道只编排，文件内容走流式 HTTP。
+		r.Post("/file-sync/{taskId}/manifest", h.FileSync.ReceiveManifest)
+		r.Put("/file-sync/{taskId}/blobs/{hash}", h.FileSync.UploadBlob)
+		r.Get("/file-sync/{taskId}/blobs/{hash}", h.FileSync.DownloadBlob)
+		r.Post("/file-sync/{taskId}/targets/result", h.FileSync.TargetResult)
 	})
 
 	// 运维指标：Prometheus 文本格式，与 agent 端点同属内网信任面，不挂管理台鉴权（见 ADR-0020）
@@ -189,6 +195,17 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/imprints/{commandId}", h.Command.ImprintStatus)
 		r.Get("/imprints/{commandId}/diff", h.Command.ImprintDiff)
 		r.Post("/imprints/{commandId}/confirm", h.Command.ConfirmImprint)
+
+		// 多级灰度文件同步中心（FR-129/FR-131）：任务真源 + 目标规划 + 控制动作 + 管理台 SSE。
+		r.Get("/file-sync/tasks", h.FileSync.List)
+		r.Post("/file-sync/tasks", h.FileSync.Create)
+		r.Get("/file-sync/tasks/{id}", h.FileSync.Get)
+		r.Post("/file-sync/tasks/{id}/plan", h.FileSync.Plan)
+		r.Post("/file-sync/tasks/{id}/start", h.FileSync.Start)
+		r.Post("/file-sync/tasks/{id}/pause", h.FileSync.Pause)
+		r.Post("/file-sync/tasks/{id}/resume", h.FileSync.Resume)
+		r.Post("/file-sync/tasks/{id}/terminate", h.FileSync.Terminate)
+		r.Get("/file-sync/tasks/{id}/events", h.FileSync.Events)
 
 		// 集群拓扑（FR-37）：bc→bukkit 真实连线 + 大区/zone 分组，读内存注册表快照
 		r.Get("/topology", h.Topology.Topology)

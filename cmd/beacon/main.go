@@ -292,6 +292,10 @@ func run() error {
 	commandService.SetBrowseResultHub(browseHub)
 	browseHandler := handler.NewBrowseHandler(commandService, instanceService)
 
+	// 多级灰度文件同步中心（FR-129/FR-131）：当前切片只装配任务真源、目标规划、控制动作与管理台 SSE。
+	fileSyncService := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instanceService, auditRepo, service.NewFileSyncEventHub())
+	fileSyncHandler := handler.NewFileSyncHandler(fileSyncService)
+
 	// 取 agent 日志（FR-88，见 ADR-0040）：编排取自身脱敏日志的命令-回传周期（触发 + 单活跃限速 + 回传转存瞬态 + 查询）。
 	// 复用同一 agent_command 通路（tail-logs 类型），命令提交后经 notifier 唤醒目标 agent。
 	agentLogService := service.NewAgentLogService(db, commandRepo, auditRepo)
@@ -386,7 +390,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

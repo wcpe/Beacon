@@ -66,6 +66,13 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 强制重同步触发（FR-91：instance.resync，service 在事务内自记专项审计，detail 不含内容）
 	"POST /admin/v1/instances/{serverId}/resync":  {},
 	"POST /admin/v1/imprints/{commandId}/confirm": {},
+	// 多级灰度文件同步中心（FR-129/FR-131：service 在事务内自记专项审计，detail 不含文件内容）
+	"POST /admin/v1/file-sync/tasks":                {},
+	"POST /admin/v1/file-sync/tasks/{id}/plan":      {},
+	"POST /admin/v1/file-sync/tasks/{id}/start":     {},
+	"POST /admin/v1/file-sync/tasks/{id}/pause":     {},
+	"POST /admin/v1/file-sync/tasks/{id}/resume":    {},
+	"POST /admin/v1/file-sync/tasks/{id}/terminate": {},
 	// 反向抓取受管任务·提交选定 / 取消（FR-58：file.reverse-fetch-submit / cancel，各在事务内或服务内自记专项审计）
 	"POST /admin/v1/reverse-fetch/tasks/{id}/submit": {},
 	"POST /admin/v1/reverse-fetch/tasks/{id}/cancel": {},

@@ -47,6 +47,12 @@ const (
 	CommandTypeResyncConfig = "resync-config"
 	// CommandTypeFsBrowse 只读文件浏览：令 agent 列目录 / 读子树 / 读单文件回传（FR-110，见 ADR-0049 决策 9；纯只读、不写盘）。
 	CommandTypeFsBrowse = "fs-browse"
+	// CommandTypeFileSyncSource 文件同步源扫描：令源 agent 扫描目录并通过数据面上传 blob。
+	CommandTypeFileSyncSource = "file-sync-source"
+	// CommandTypeFileSyncApply 文件同步目标应用：令目标 agent 拉取清单与变更 blob 后备份并覆盖。
+	CommandTypeFileSyncApply = "file-sync-apply"
+	// CommandTypeFileSyncRollback 文件同步回滚：令目标 agent 按备份点恢复目录。
+	CommandTypeFileSyncRollback = "file-sync-rollback"
 )
 
 // 文件浏览操作（FR-110，落 command payload 的 op 字段 + 应用层校验，见 ADR-0049）。
@@ -119,6 +125,59 @@ func IsValidCommandStatus(s string) bool {
 	}
 }
 
+// 文件同步任务状态（FR-129/FR-131，落 VARCHAR + 应用层校验）。
+const (
+	FileSyncTaskStatusDraft         = "draft"
+	FileSyncTaskStatusScanning      = "scanning"
+	FileSyncTaskStatusCached        = "cached"
+	FileSyncTaskStatusPlanned       = "planned"
+	FileSyncTaskStatusRunning       = "running"
+	FileSyncTaskStatusPaused        = "paused"
+	FileSyncTaskStatusSucceeded     = "succeeded"
+	FileSyncTaskStatusFailed        = "failed"
+	FileSyncTaskStatusTerminated    = "terminated"
+	FileSyncTaskStatusCircuitBroken = "circuit-broken"
+)
+
+// IsFileSyncTaskTerminal 判断文件同步任务是否已终结。
+func IsFileSyncTaskTerminal(status string) bool {
+	switch status {
+	case FileSyncTaskStatusSucceeded, FileSyncTaskStatusFailed,
+		FileSyncTaskStatusTerminated, FileSyncTaskStatusCircuitBroken:
+		return true
+	default:
+		return false
+	}
+}
+
+// 文件同步批次状态（FR-131，落 VARCHAR）。
+const (
+	FileSyncBatchStatusPending   = "pending"
+	FileSyncBatchStatusRunning   = "running"
+	FileSyncBatchStatusSucceeded = "succeeded"
+	FileSyncBatchStatusFailed    = "failed"
+	FileSyncBatchStatusSkipped   = "skipped"
+)
+
+// 文件同步目标状态（FR-131，落 VARCHAR）。
+const (
+	FileSyncTargetStatusPending      = "pending"
+	FileSyncTargetStatusManifesting  = "manifesting"
+	FileSyncTargetStatusBackingUp    = "backing-up"
+	FileSyncTargetStatusTransferring = "transferring"
+	FileSyncTargetStatusApplying     = "applying"
+	FileSyncTargetStatusSucceeded    = "succeeded"
+	FileSyncTargetStatusFailed       = "failed"
+	FileSyncTargetStatusSkipped      = "skipped"
+)
+
+// 文件同步日志级别（FR-129，落 VARCHAR）。
+const (
+	FileSyncLogLevelInfo  = "info"
+	FileSyncLogLevelWarn  = "warn"
+	FileSyncLogLevelError = "error"
+)
+
 // 审计动作（动词点分命名）。
 const (
 	ActionConfigCreate   = "config.create"
@@ -176,6 +235,13 @@ const (
 	ActionInstanceResync = "instance.resync"
 	// 文件浏览（FR-110，见 ADR-0049）：admin 触发命令在线实例列目录 / 读子树 / 读单文件（detail 仅 commandId/op/path，绝不含文件内容）
 	ActionFileBrowse = "file.browse"
+	// 多级灰度文件同步（FR-129/FR-131）：detail 仅记任务 / 批次 / 目标摘要，不含文件内容
+	ActionFileSyncCreate    = "file-sync.create"
+	ActionFileSyncPlan      = "file-sync.plan"
+	ActionFileSyncStart     = "file-sync.start"
+	ActionFileSyncPause     = "file-sync.pause"
+	ActionFileSyncResume    = "file-sync.resume"
+	ActionFileSyncTerminate = "file-sync.terminate"
 	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
 	ActionOverrideSetCreate   = "override-set.create"
 	ActionOverrideSetPublish  = "override-set.publish"
@@ -227,6 +293,8 @@ const (
 	TargetTypeAPIKey = "apikey"
 	// agent 命令（FR-39 反向抓取）的审计对象类型
 	TargetTypeCommand = "command"
+	// 多级灰度文件同步任务（FR-129/FR-131）的审计对象类型
+	TargetTypeFileSyncTask = "file-sync-task"
 	// 反向抓取受管任务（FR-58）的审计对象类型
 	TargetTypeReverseFetchTask = "reverse-fetch-task"
 	// 反向抓取持久忽略规则（FR-59）的审计对象类型
