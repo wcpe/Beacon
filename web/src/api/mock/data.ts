@@ -2544,6 +2544,9 @@ const seedFileSyncTask: FileSyncTaskView = makeFileSyncTask({
 })
 
 seedFileSyncTask.status = 'planned'
+seedFileSyncTask.sourceReady = true
+seedFileSyncTask.sourceFileCount = 128
+seedFileSyncTask.sourceTotalBytes = 96 * 1024 * 1024
 seedFileSyncTask.targets = buildFileSyncTargets(seedFileSyncTask, ['server-02', 'server-04'])
 refreshFileSyncCounts(seedFileSyncTask)
 seedFileSyncTask.logs.push(makeFileSyncLog(seedFileSyncTask.id, 'INFO', '已规划 2 台目标', '', 0))
@@ -2602,6 +2605,9 @@ export function planMockFileSyncTask(
   if (!task) return null
   task.targets = buildFileSyncTargets(task, targetServerIds)
   task.status = 'planned'
+  task.sourceReady = true
+  task.sourceFileCount = 128
+  task.sourceTotalBytes = 96 * 1024 * 1024
   task.updatedAt = now()
   task.logs.push(makeFileSyncLog(task.id, 'INFO', `已规划 ${task.targets.length} 台目标`, '', 0))
   refreshFileSyncCounts(task)
@@ -2649,6 +2655,9 @@ function makeFileSyncTask(input: {
     intervalSec: input.intervalSec,
     failureThresholdPercent: input.failureThresholdPercent,
     operator: 'admin',
+    sourceReady: false,
+    sourceFileCount: 0,
+    sourceTotalBytes: 0,
     totalTargets: 0,
     plannedTargets: 0,
     succeededTargets: 0,
@@ -2656,6 +2665,7 @@ function makeFileSyncTask(input: {
     skippedTargets: 0,
     currentBatch: 0,
     totalBatches: 0,
+    batches: [],
     lastError: '',
     logs: [],
     targets: [],
@@ -2738,6 +2748,44 @@ function refreshFileSyncCounts(task: FileSyncTaskView): void {
   task.skippedTargets = task.targets.filter((target) => target.status === 'skipped').length
   task.totalBatches =
     task.targets.length === 0 ? 0 : Math.ceil(task.targets.length / Math.max(1, task.batchSize))
+  task.batches = buildFileSyncBatches(task)
+}
+
+function buildFileSyncBatches(task: FileSyncTaskView): FileSyncTaskView['batches'] {
+  const byBatch = new Map<number, FileSyncTargetView[]>()
+  for (const target of task.targets) {
+    const list = byBatch.get(target.batchNo) ?? []
+    list.push(target)
+    byBatch.set(target.batchNo, list)
+  }
+  return [...byBatch.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([batchNo, targets]) => ({
+      id: batchNo,
+      taskId: Number(task.id),
+      batchNo,
+      status: batchStatusFromTargets(targets),
+      plannedCount: targets.length,
+      successCount: targets.filter((target) => target.status === 'succeeded').length,
+      failedCount: targets.filter((target) => target.status === 'failed').length,
+      startedAt: '',
+      finishedAt: '',
+    }))
+}
+
+function batchStatusFromTargets(targets: FileSyncTargetView[]): string {
+  if (targets.some((target) => target.status === 'failed')) return 'failed'
+  if (targets.every((target) => target.status === 'succeeded' || target.status === 'skipped')) {
+    return 'succeeded'
+  }
+  if (
+    targets.some((target) =>
+      ['manifesting', 'backing-up', 'transferring', 'applying'].includes(target.status),
+    )
+  ) {
+    return 'running'
+  }
+  return 'pending'
 }
 
 function makeFileSyncLog(

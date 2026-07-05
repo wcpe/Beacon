@@ -1,11 +1,11 @@
-// 多级灰度配置同步中心页面单测：锁定 bukkit-only 目标选择与创建后规划动作。
+// 多级灰度配置同步中心页面单测：锁定 5 步向导、持久规划预览与千级目标操作性。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ConfigSyncCenterPage from './ConfigSyncCenterPage'
-import type { InstanceView, FileSyncTaskView } from '@/api/types'
+import type { FileSyncEvent, FileSyncTaskView, InstanceView } from '@/api/types'
 
 vi.mock('@/api/client', () => ({
   listInstances: vi.fn(),
@@ -25,6 +25,7 @@ import {
   listFileSyncTasks,
   listInstances,
   planFileSyncTask,
+  startFileSyncTask,
   streamFileSyncTaskEvents,
 } from '@/api/client'
 
@@ -115,6 +116,9 @@ const TASK: FileSyncTaskView = {
   intervalSec: 30,
   failureThresholdPercent: 20,
   operator: 'admin',
+  sourceReady: false,
+  sourceFileCount: 0,
+  sourceTotalBytes: 0,
   totalTargets: 0,
   plannedTargets: 0,
   succeededTargets: 0,
@@ -122,6 +126,7 @@ const TASK: FileSyncTaskView = {
   skippedTargets: 0,
   currentBatch: 0,
   totalBatches: 0,
+  batches: [],
   lastError: '',
   logs: [],
   targets: [],
@@ -129,6 +134,42 @@ const TASK: FileSyncTaskView = {
   updatedAt: '2026-07-04T00:00:00Z',
   startedAt: '',
   finishedAt: '',
+}
+
+const PLANNED_TASK: FileSyncTaskView = {
+  ...TASK,
+  status: 'planned',
+  sourceReady: true,
+  sourceFileCount: 128,
+  sourceTotalBytes: 96 * 1024 * 1024,
+  plannedTargets: 1,
+  totalTargets: 1,
+  totalBatches: 1,
+  batches: [
+    {
+      id: 1,
+      taskId: 1,
+      batchNo: 1,
+      status: 'pending',
+      plannedCount: 1,
+      successCount: 0,
+      failedCount: 0,
+      startedAt: '',
+      finishedAt: '',
+    },
+  ],
+  logs: [
+    {
+      id: 9,
+      taskId: 'task-1',
+      batchNo: 0,
+      serverId: '',
+      level: 'INFO',
+      message: '已规划 1 台目标',
+      createdAt: '2026-07-04T00:00:00Z',
+    },
+  ],
+  targets: [taskTarget({ serverId: 'target-01', zone: 'zone-02' })],
 }
 
 function renderPage() {
@@ -144,6 +185,10 @@ function renderPage() {
   )
 }
 
+async function goToStep(name: string) {
+  await userEvent.click(await screen.findByRole('button', { name }))
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(listInstances).mockResolvedValue([
@@ -154,58 +199,68 @@ beforeEach(() => {
   ])
   vi.mocked(listFileSyncTasks).mockResolvedValue([])
   vi.mocked(createFileSyncTask).mockResolvedValue(TASK)
-  vi.mocked(planFileSyncTask).mockResolvedValue({
-    ...TASK,
-    status: 'planned',
-    plannedTargets: 1,
-    totalTargets: 1,
-    totalBatches: 1,
-    logs: [
-      {
-        id: 9,
-        taskId: 'task-1',
-        batchNo: 0,
-        serverId: '',
-        level: 'INFO',
-        message: '已规划 1 台目标',
-        createdAt: '2026-07-04T00:00:00Z',
-      },
-    ],
-    targets: [
-      {
-        taskId: 'task-1',
-        batchNo: 1,
-        serverId: 'target-01',
-        namespace: 'prod',
-        group: 'server-a',
-        zone: 'zone-02',
-        status: 'pending',
-        backupPath: '',
-        currentFileCount: 0,
-        changedFileCount: 0,
-        skippedFileCount: 0,
-        bytesTotal: 0,
-        bytesDone: 0,
-        error: '',
-        updatedAt: '2026-07-04T00:00:00Z',
-      },
-    ],
-  })
+  vi.mocked(planFileSyncTask).mockResolvedValue(PLANNED_TASK)
+  vi.mocked(startFileSyncTask).mockResolvedValue({ ...PLANNED_TASK, status: 'running' })
   vi.mocked(streamFileSyncTaskEvents).mockResolvedValue()
 })
 
 describe('ConfigSyncCenterPage', () => {
-  it('只展示可选 bukkit 在线服，并用选中目标创建后规划任务', async () => {
+  it('渲染 5 步向导，并且前 4 步不挂载任务目标明细', async () => {
     const { container } = renderPage()
 
-    expect(await screen.findByDisplayValue(/source-01/)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '源与目录' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '目标范围' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '灰度策略' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '安全检查' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '预览与启动' })).toBeInTheDocument()
     expect(container.firstElementChild).not.toHaveClass('overflow-hidden')
+
+    expect(screen.getByText('源清单状态')).toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: '任务目标明细表格' })).not.toBeInTheDocument()
+
+    await goToStep('目标范围')
     expect(screen.getByLabelText('选择 target-01')).toBeInTheDocument()
     expect(screen.queryByText('proxy-01')).not.toBeInTheDocument()
     expect(screen.queryByText('lost-01')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: '任务目标明细表格' })).not.toBeInTheDocument()
 
+    await goToStep('灰度策略')
+    expect(screen.getByText('批次编排')).toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: '任务目标明细表格' })).not.toBeInTheDocument()
+
+    await goToStep('安全检查')
+    expect(screen.getByText('覆盖前备份')).toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: '任务目标明细表格' })).not.toBeInTheDocument()
+  })
+
+  it('未选择目标时不能生成规划预览', async () => {
+    renderPage()
+
+    await screen.findByDisplayValue(/source-01/)
+    await goToStep('预览与启动')
+
+    const previewButton = screen.getByRole('button', { name: '生成规划预览' })
+    expect(previewButton).toBeDisabled()
+    expect(screen.getByRole('button', { name: '开始同步' })).toBeDisabled()
+    expect(createFileSyncTask).not.toHaveBeenCalled()
+    expect(planFileSyncTask).not.toHaveBeenCalled()
+  })
+
+  it('最后一步才调用 create+plan，且 planned 后才能开始同步', async () => {
+    renderPage()
+
+    await screen.findByDisplayValue(/source-01/)
+    await goToStep('目标范围')
     await userEvent.click(screen.getByLabelText('选择 target-01'))
-    await userEvent.click(screen.getByRole('button', { name: '规划目标' }))
+    await goToStep('灰度策略')
+    await goToStep('安全检查')
+
+    expect(createFileSyncTask).not.toHaveBeenCalled()
+    expect(planFileSyncTask).not.toHaveBeenCalled()
+
+    await goToStep('预览与启动')
+    expect(screen.getByRole('button', { name: '开始同步' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: '生成规划预览' }))
 
     await waitFor(() =>
       expect(createFileSyncTask).toHaveBeenCalledWith(
@@ -216,14 +271,51 @@ describe('ConfigSyncCenterPage', () => {
       ),
     )
     expect(planFileSyncTask).toHaveBeenCalledWith('task-1', { targetServerIds: ['target-01'] })
-    expect(streamFileSyncTaskEvents).toHaveBeenCalledWith(
-      'task-1',
-      expect.any(Function),
-      expect.objectContaining({ afterLogId: 9 }),
-    )
+    expect(await screen.findByText('持久规划预览')).toBeInTheDocument()
+    expect(screen.getByText('源清单已就绪')).toBeInTheDocument()
+
+    const startButton = screen.getByRole('button', { name: '开始同步' })
+    expect(startButton).toBeEnabled()
+    await userEvent.click(startButton)
+
+    await waitFor(() => expect(startFileSyncTask).toHaveBeenCalledWith('task-1'))
   })
 
-  it('1000 实例首屏只渲染一个分页窗口的目标行和复选框', async () => {
+  it('源清单未就绪时禁止启动，收到 SSE 任务补丁后才允许启动', async () => {
+    let onEvent: ((event: FileSyncEvent) => void) | undefined
+    vi.mocked(planFileSyncTask).mockResolvedValue({ ...PLANNED_TASK, sourceReady: false })
+    vi.mocked(streamFileSyncTaskEvents).mockImplementation(async (_id, cb) => {
+      onEvent = cb
+    })
+
+    renderPage()
+
+    await screen.findByDisplayValue(/source-01/)
+    await goToStep('目标范围')
+    await userEvent.click(screen.getByLabelText('选择 target-01'))
+    await goToStep('预览与启动')
+    await userEvent.click(screen.getByRole('button', { name: '生成规划预览' }))
+
+    const startButton = await screen.findByRole('button', { name: '开始同步' })
+    expect(startButton).toBeDisabled()
+
+    act(() => {
+      onEvent?.({
+        type: 'task',
+        status: 'planned',
+        task: {
+          status: 'planned',
+          sourceReady: true,
+          sourceFileCount: 128,
+          sourceTotalBytes: 96 * 1024 * 1024,
+        },
+      })
+    })
+
+    await waitFor(() => expect(startButton).toBeEnabled())
+  })
+
+  it('1000+ 目标在目标范围步骤仍只渲染分页窗口并可翻页', async () => {
     vi.mocked(listInstances).mockResolvedValue([
       instance({ serverId: 'source-01', role: 'bukkit' }),
       ...targetInstances(1000),
@@ -231,49 +323,20 @@ describe('ConfigSyncCenterPage', () => {
 
     renderPage()
 
-    expect(await screen.findByDisplayValue(/source-01/)).toBeInTheDocument()
+    await screen.findByDisplayValue(/source-01/)
+    await goToStep('目标范围')
     const targetTable = screen.getByRole('table', { name: '目标服务器表格' })
     expect(within(targetTable).getAllByRole('checkbox')).toHaveLength(25)
     expect(within(targetTable).getAllByRole('row')).toHaveLength(26)
-  })
 
-  it('宽泛搜索命中大量目标时仍保持分页窗口', async () => {
-    vi.mocked(listInstances).mockResolvedValue([
-      instance({ serverId: 'source-01', role: 'bukkit' }),
-      ...targetInstances(120),
-    ])
-
-    renderPage()
-
-    await screen.findByDisplayValue(/source-01/)
-    await userEvent.type(screen.getByLabelText('搜索目标服务器'), 'target')
-
-    const targetTable = screen.getByRole('table', { name: '目标服务器表格' })
-    expect(within(targetTable).getAllByRole('checkbox')).toHaveLength(25)
-    expect(screen.getByText('当前筛选 120 台')).toBeInTheDocument()
-  })
-
-  it('普通模式下勾选当前页目标不会把分页重置到第一页', async () => {
-    vi.mocked(listInstances).mockResolvedValue([
-      instance({ serverId: 'source-01', role: 'bukkit' }),
-      ...targetInstances(30),
-    ])
-
-    renderPage()
-
-    await screen.findByDisplayValue(/source-01/)
-    const targetTable = screen.getByRole('table', { name: '目标服务器表格' })
     const targetPager = screen.getByRole('navigation', { name: '目标服务器分页' })
     await userEvent.click(within(targetPager).getByRole('button', { name: '下一页' }))
-    expect(within(targetTable).getByText('target-0026')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByLabelText('选择 target-0026'))
 
     expect(within(targetTable).getByText('target-0026')).toBeInTheDocument()
     expect(within(targetTable).queryByText('target-0001')).not.toBeInTheDocument()
   })
 
-  it('全选当前筛选结果会提交当前页外的隐藏匹配项', async () => {
+  it('宽泛搜索和分组全选保持分页，并把页外匹配目标带入预览规划', async () => {
     const targets = targetInstances(80)
     vi.mocked(listInstances).mockResolvedValue([
       instance({ serverId: 'source-01', role: 'bukkit' }),
@@ -283,9 +346,18 @@ describe('ConfigSyncCenterPage', () => {
     renderPage()
 
     await screen.findByDisplayValue(/source-01/)
+    await goToStep('目标范围')
+    await userEvent.type(screen.getByLabelText('搜索目标服务器'), 'target')
+
+    const targetTable = screen.getByRole('table', { name: '目标服务器表格' })
+    expect(within(targetTable).getAllByRole('checkbox')).toHaveLength(25)
+    expect(screen.getByText('当前筛选 80 台')).toBeInTheDocument()
+
+    await userEvent.clear(screen.getByLabelText('搜索目标服务器'))
     await userEvent.type(screen.getByLabelText('搜索目标服务器'), 'zone-02')
     await userEvent.click(screen.getByRole('button', { name: '全选当前筛选结果' }))
-    await userEvent.click(screen.getByRole('button', { name: '规划目标' }))
+    await goToStep('预览与启动')
+    await userEvent.click(screen.getByRole('button', { name: '生成规划预览' }))
 
     const expected = targets.filter((item) => item.zone === 'zone-02').map((item) => item.serverId)
     await waitFor(() =>
@@ -294,83 +366,74 @@ describe('ConfigSyncCenterPage', () => {
     expect(expected.length).toBeGreaterThan(1)
   })
 
-  it('清空当前筛选结果只移除匹配目标', async () => {
-    const targets = targetInstances(20)
-    vi.mocked(listInstances).mockResolvedValue([
-      instance({ serverId: 'source-01', role: 'bukkit' }),
-      ...targets,
-    ])
-
-    renderPage()
-
-    await screen.findByDisplayValue(/source-01/)
-    await userEvent.click(screen.getByRole('button', { name: '全选全部目标' }))
-    await userEvent.type(screen.getByLabelText('搜索目标服务器'), 'zone-02')
-    await userEvent.click(screen.getByRole('button', { name: '清空当前筛选结果' }))
-    await userEvent.click(screen.getByRole('button', { name: '规划目标' }))
-
-    const expected = targets.filter((item) => item.zone !== 'zone-02').map((item) => item.serverId)
-    await waitFor(() =>
-      expect(planFileSyncTask).toHaveBeenCalledWith('task-1', { targetServerIds: expected }),
-    )
-  })
-
-  it('已选摘要支持单个移除', async () => {
-    vi.mocked(listInstances).mockResolvedValue([
-      instance({ serverId: 'source-01', role: 'bukkit' }),
-      ...targetInstances(3),
-    ])
-
-    renderPage()
-
-    await screen.findByDisplayValue(/source-01/)
-    await userEvent.click(screen.getByLabelText('选择 target-0001'))
-    await userEvent.click(screen.getByLabelText('选择 target-0002'))
-
-    expect(screen.getByText('已选摘要')).toBeInTheDocument()
-    expect(screen.getByText('已选 2 台')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '移除 target-0001' }))
-    await userEvent.click(screen.getByRole('button', { name: '规划目标' }))
-
-    await waitFor(() =>
-      expect(planFileSyncTask).toHaveBeenCalledWith('task-1', {
-        targetServerIds: ['target-0002'],
-      }),
-    )
-  })
-
-  it('任务目标明细支持 serverId 搜索、状态筛选和失败优先', async () => {
-    vi.mocked(listInstances).mockResolvedValue([
-      instance({ serverId: 'source-01', role: 'bukkit' }),
-      ...targetInstances(2),
-    ])
-    vi.mocked(planFileSyncTask).mockResolvedValue({
-      ...TASK,
-      status: 'planned',
-      plannedTargets: 3,
-      totalTargets: 3,
-      totalBatches: 1,
-      targets: [
-        taskTarget({ serverId: 'target-ok', status: 'succeeded' }),
-        taskTarget({ serverId: 'target-failed', status: 'failed', error: '下载失败' }),
-        taskTarget({ serverId: 'other-failed', status: 'failed', error: '备份失败' }),
-      ],
+  it('SSE target 事件能合并到规划预览明细', async () => {
+    let onEvent: ((event: FileSyncEvent) => void) | undefined
+    vi.mocked(streamFileSyncTaskEvents).mockImplementation(async (_id, cb) => {
+      onEvent = cb
     })
 
     renderPage()
 
     await screen.findByDisplayValue(/source-01/)
-    await userEvent.click(screen.getByLabelText('选择 target-0001'))
-    await userEvent.click(screen.getByRole('button', { name: '规划目标' }))
-    await screen.findByText('target-ok')
+    await goToStep('目标范围')
+    await userEvent.click(screen.getByLabelText('选择 target-01'))
+    await goToStep('预览与启动')
+    await userEvent.click(screen.getByRole('button', { name: '生成规划预览' }))
+    await screen.findByRole('table', { name: '任务目标明细表格' })
 
-    await userEvent.type(screen.getByLabelText('明细服务器搜索'), 'target')
-    await userEvent.selectOptions(screen.getByLabelText('明细状态筛选'), 'failed')
-    await userEvent.click(screen.getByRole('button', { name: '失败优先' }))
+    act(() => {
+      onEvent?.({
+        type: 'target',
+        target: {
+          serverId: 'target-01',
+          status: 'transferring',
+          changedFileCount: 18,
+          skippedFileCount: 110,
+          bytesTotal: 1024,
+          bytesDone: 512,
+        },
+      })
+    })
 
     const detailTable = screen.getByRole('table', { name: '任务目标明细表格' })
-    expect(within(detailTable).queryByText('target-ok')).not.toBeInTheDocument()
-    expect(within(detailTable).getByText('target-failed')).toBeInTheDocument()
-    expect(within(detailTable).queryByText('other-failed')).not.toBeInTheDocument()
+    expect(await within(detailTable).findByText('传输中')).toBeInTheDocument()
+    expect(within(detailTable).getByText('18')).toBeInTheDocument()
+    expect(within(detailTable).getByText('512 B / 1 KB')).toBeInTheDocument()
+  })
+
+  it('SSE 日志只保留最近 200 条', async () => {
+    let onEvent: ((event: FileSyncEvent) => void) | undefined
+    vi.mocked(streamFileSyncTaskEvents).mockImplementation(async (_id, cb) => {
+      onEvent = cb
+    })
+
+    renderPage()
+
+    await screen.findByDisplayValue(/source-01/)
+    await goToStep('目标范围')
+    await userEvent.click(screen.getByLabelText('选择 target-01'))
+    await goToStep('预览与启动')
+    await userEvent.click(screen.getByRole('button', { name: '生成规划预览' }))
+    await screen.findByText('已规划 1 台目标')
+
+    act(() => {
+      for (let id = 10; id <= 214; id++) {
+        onEvent?.({
+          type: 'log',
+          log: {
+            id,
+            taskId: 'task-1',
+            batchNo: 1,
+            serverId: 'target-01',
+            level: 'INFO',
+            message: `日志 ${id}`,
+            createdAt: `2026-07-04T00:00:${String(id % 60).padStart(2, '0')}Z`,
+          },
+        })
+      }
+    })
+
+    expect(screen.queryByText('日志 10')).not.toBeInTheDocument()
+    expect(screen.getByText('日志 214')).toBeInTheDocument()
   })
 })

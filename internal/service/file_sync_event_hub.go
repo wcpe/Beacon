@@ -14,6 +14,7 @@ type FileSyncEvent struct {
 	Type      string               `json:"type"`
 	TaskID    uint                 `json:"taskId"`
 	Status    string               `json:"status,omitempty"`
+	Task      *FileSyncTaskEvent   `json:"task,omitempty"`
 	LogID     uint                 `json:"logId,omitempty"`
 	BatchID   uint                 `json:"batchId,omitempty"`
 	ServerID  string               `json:"serverId,omitempty"`
@@ -21,6 +22,21 @@ type FileSyncEvent struct {
 	Message   string               `json:"message,omitempty"`
 	Target    *FileSyncTargetEvent `json:"target,omitempty"`
 	CreatedAt string               `json:"createdAt,omitempty"`
+}
+
+// FileSyncTaskEvent 是任务级 SSE 补丁。
+type FileSyncTaskEvent struct {
+	ID                      string `json:"id"`
+	Status                  string `json:"status"`
+	SourceReady             bool   `json:"sourceReady"`
+	SourceFileCount         int    `json:"sourceFileCount"`
+	SourceTotalBytes        int64  `json:"sourceTotalBytes"`
+	TotalTargets            int    `json:"totalTargets"`
+	PlannedTargets          int    `json:"plannedTargets"`
+	CurrentBatch            int    `json:"currentBatch,omitempty"`
+	TotalBatches            int    `json:"totalBatches"`
+	FailureThresholdPercent int    `json:"failureThresholdPercent"`
+	UpdatedAt               string `json:"updatedAt"`
 }
 
 // FileSyncTargetEvent 是单台目标的 SSE 补丁。

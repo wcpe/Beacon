@@ -418,6 +418,14 @@ func (s *FileSyncService) publishTask(task *model.FileSyncTask) {
 	}
 	s.events.Publish(task.ID, FileSyncEvent{
 		Type: FileSyncEventTypeTask, TaskID: task.ID, Status: task.Status,
+		Task: &FileSyncTaskEvent{
+			ID: fmt.Sprintf("%d", task.ID), Status: task.Status,
+			SourceReady: task.SourceReady, SourceFileCount: task.SourceFileCount,
+			SourceTotalBytes: task.SourceTotalBytes, TotalTargets: task.TargetCount,
+			PlannedTargets: task.TargetCount, CurrentBatch: 0, TotalBatches: task.BatchCount,
+			FailureThresholdPercent: task.FailureThresholdPercent,
+			UpdatedAt:               task.UpdatedAt.UTC().Format(time.RFC3339),
+		},
 		CreatedAt: task.UpdatedAt.UTC().Format(time.RFC3339),
 	})
 }

@@ -265,8 +265,11 @@ func (s *FileSyncService) requireFileSyncCommand(commandID uint, wantType string
 
 func (s *FileSyncService) dispatchNextBatch(taskID uint) error {
 	task, err := s.requireTask(taskID)
-	if err != nil || task.Status != model.FileSyncTaskStatusRunning {
+	if err != nil {
 		return err
+	}
+	if task.Status != model.FileSyncTaskStatusRunning && task.Status != model.FileSyncTaskStatusPaused {
+		return nil
 	}
 	batches, err := s.repo.ListBatches(task.ID)
 	if err != nil {
@@ -278,6 +281,9 @@ func (s *FileSyncService) dispatchNextBatch(taskID uint) error {
 	next := firstPendingFileSyncBatch(batches)
 	if next == nil {
 		return s.completeTaskIfSettled(task)
+	}
+	if task.Status != model.FileSyncTaskStatusRunning {
+		return nil
 	}
 	return s.dispatchBatch(task, next)
 }
@@ -379,13 +385,16 @@ func (s *FileSyncService) ReceiveTargetResult(commandID uint, result FileSyncTar
 	if err != nil {
 		return err
 	}
-	log, err := s.finishTargetResult(cmd, task, target, result)
+	log, advance, err := s.finishTargetResult(cmd, task, target, result)
 	if err != nil {
 		return err
 	}
 	s.publishLog(log)
 	if fresh, e := s.repo.GetTarget(target.ID); e == nil && fresh != nil {
 		s.publishTarget(fresh)
+	}
+	if advance.dispatch {
+		s.scheduleNextBatch(task.ID, advance.delaySec)
 	}
 	return nil
 }
@@ -410,37 +419,40 @@ func (s *FileSyncService) requireTargetResultScope(cmd *model.AgentCommand,
 }
 
 func (s *FileSyncService) finishTargetResult(cmd *model.AgentCommand, task *model.FileSyncTask,
-	target *model.FileSyncTarget, result FileSyncTargetResult) (*model.FileSyncLog, error) {
+	target *model.FileSyncTarget, result FileSyncTargetResult) (*model.FileSyncLog, fileSyncBatchAdvance, error) {
 	status, cmdStatus, reason := statusFromTargetResult(result)
 	now := time.Now().UTC()
 	log := &model.FileSyncLog{
 		TaskID: task.ID, BatchID: target.BatchID, ServerID: target.ServerID,
 		Level: targetLogLevel(status), Message: targetLogMessage(target.ServerID, status, reason),
 	}
+	var advance fileSyncBatchAdvance
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		return s.finishTargetResultLocked(tx, cmd, task, target, result, status, cmdStatus, reason, now, log)
+		var e error
+		advance, e = s.finishTargetResultLocked(tx, cmd, task, target, result, status, cmdStatus, reason, now, log)
+		return e
 	})
 	if err != nil {
-		return nil, err
+		return nil, fileSyncBatchAdvance{}, err
 	}
-	return log, nil
+	return log, advance, nil
 }
 
 func (s *FileSyncService) finishTargetResultLocked(tx *gorm.DB, cmd *model.AgentCommand, task *model.FileSyncTask,
 	target *model.FileSyncTarget, result FileSyncTargetResult, status, cmdStatus, reason string,
-	now time.Time, log *model.FileSyncLog) error {
+	now time.Time, log *model.FileSyncLog) (fileSyncBatchAdvance, error) {
 	repo := s.repo.WithTx(tx)
 	ok, err := repo.FinishTarget(target.ID, status, result.BackupPath, result.CurrentFileCount,
 		result.ChangedFileCount, result.SkippedFileCount, result.BytesTotal, result.BytesDone, reason, now)
 	if err != nil || !ok {
-		return errOrState(err)
+		return fileSyncBatchAdvance{}, errOrState(err)
 	}
 	if ok, err = s.cmdRepo.WithTx(tx).UpdateStatus(cmd.ID, model.CommandStatusFetched, cmdStatus,
 		fileSyncCommandResultDetail(task.ID, target.ID, status, reason)); err != nil || !ok {
-		return errOrCommand(err)
+		return fileSyncBatchAdvance{}, errOrCommand(err)
 	}
 	if err = repo.CreateLog(log); err != nil {
-		return err
+		return fileSyncBatchAdvance{}, err
 	}
 	return s.advanceBatchAfterTargetLocked(repo, task, target.BatchID, now)
 }
@@ -467,34 +479,42 @@ func fileSyncCommandResultDetail(taskID, targetID uint, status, reason string) s
 }
 
 func (s *FileSyncService) advanceBatchAfterTargetLocked(repo *repository.FileSyncRepository,
-	task *model.FileSyncTask, batchID uint, now time.Time) error {
+	task *model.FileSyncTask, batchID uint, now time.Time) (fileSyncBatchAdvance, error) {
 	targets, err := repo.ListTargetsByBatch(batchID)
 	if err != nil {
-		return err
+		return fileSyncBatchAdvance{}, err
 	}
 	stats := summarizeFileSyncTargets(targets)
 	if err = repo.UpdateBatchCounts(batchID, stats.success, stats.failed); err != nil {
-		return err
+		return fileSyncBatchAdvance{}, err
 	}
 	if !stats.done {
-		return nil
+		return fileSyncBatchAdvance{}, nil
 	}
 	batchStatus := model.FileSyncBatchStatusSucceeded
 	if stats.failed > 0 {
 		batchStatus = model.FileSyncBatchStatusFailed
 	}
 	if err = repo.UpdateBatchStatus(batchID, batchStatus, nil, &now); err != nil {
-		return err
+		return fileSyncBatchAdvance{}, err
 	}
 	return s.advanceTaskAfterBatchLocked(repo, task, stats, now)
 }
 
 func (s *FileSyncService) advanceTaskAfterBatchLocked(repo *repository.FileSyncRepository,
-	task *model.FileSyncTask, stats fileSyncTargetStats, now time.Time) error {
+	task *model.FileSyncTask, stats fileSyncTargetStats, now time.Time) (fileSyncBatchAdvance, error) {
 	if exceedsFileSyncFailureThreshold(stats.failed, stats.total, task.FailureThresholdPercent) {
-		return s.breakCircuitLocked(repo, task.ID, now)
+		return fileSyncBatchAdvance{}, s.breakCircuitLocked(repo, task.ID, now)
 	}
-	return nil
+	batches, err := repo.ListBatches(task.ID)
+	if err != nil {
+		return fileSyncBatchAdvance{}, err
+	}
+	delaySec := 0
+	if firstPendingFileSyncBatch(batches) != nil {
+		delaySec = task.IntervalSec
+	}
+	return fileSyncBatchAdvance{dispatch: true, delaySec: delaySec}, nil
 }
 
 func (s *FileSyncService) breakCircuitLocked(repo *repository.FileSyncRepository, taskID uint, now time.Time) error {
@@ -510,6 +530,11 @@ func (s *FileSyncService) breakCircuitLocked(repo *repository.FileSyncRepository
 		TaskID: taskID, Level: model.FileSyncLogLevelError,
 		Message: "批次失败率超过阈值，已触发熔断并停止后续批次",
 	})
+}
+
+type fileSyncBatchAdvance struct {
+	dispatch bool
+	delaySec int
 }
 
 type fileSyncTargetStats struct {
@@ -552,7 +577,9 @@ func (s *FileSyncService) completeTaskIfSettled(task *model.FileSyncTask) error 
 		status = model.FileSyncTaskStatusFailed
 	}
 	now := time.Now().UTC()
-	ok, err := s.repo.UpdateTaskStatusCAS(task.ID, []string{model.FileSyncTaskStatusRunning}, status, nil, &now)
+	ok, err := s.repo.UpdateTaskStatusCAS(task.ID, []string{
+		model.FileSyncTaskStatusRunning, model.FileSyncTaskStatusPaused,
+	}, status, nil, &now)
 	if err != nil || !ok {
 		return errOrState(err)
 	}

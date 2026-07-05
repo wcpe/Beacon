@@ -800,6 +800,18 @@ export interface FileSyncTargetView {
   updatedAt: string
 }
 
+export interface FileSyncBatchView {
+  id?: number
+  taskId: number
+  batchNo: number
+  status: string
+  plannedCount: number
+  successCount: number
+  failedCount: number
+  startedAt?: string
+  finishedAt?: string
+}
+
 export interface FileSyncTaskView {
   id: string
   namespace: string
@@ -810,6 +822,9 @@ export interface FileSyncTaskView {
   intervalSec: number
   failureThresholdPercent: number
   operator: string
+  sourceReady: boolean
+  sourceFileCount: number
+  sourceTotalBytes: number
   totalTargets: number
   plannedTargets: number
   succeededTargets: number
@@ -817,6 +832,7 @@ export interface FileSyncTaskView {
   skippedTargets: number
   currentBatch: number
   totalBatches: number
+  batches: FileSyncBatchView[]
   lastError: string
   logs: FileSyncLogView[]
   targets: FileSyncTargetView[]

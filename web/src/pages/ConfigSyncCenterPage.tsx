@@ -2,6 +2,7 @@ import {
   useEffect,
   useDeferredValue,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
@@ -68,12 +69,20 @@ const ALL_TARGET_STATUSES: FileSyncTargetStatus[] = [
 ]
 
 type TaskAction = 'start' | 'pause' | 'resume' | 'terminate'
+type WizardStepKey = 'source' | 'targets' | 'strategy' | 'safety' | 'preview'
+
+interface WizardStep {
+  key: WizardStepKey
+  label: string
+  description: string
+}
 
 export default function ConfigSyncCenterPage() {
   const { t } = useTranslation()
   const namespace = useEnvironment()
   const msg = useMessage()
   const qc = useQueryClient()
+  const targetIndexRef = useRef<Map<string, number>>(new Map())
   const [sourceServerId, setSourceServerId] = useState('')
   const [directory, setDirectory] = useState(DEFAULT_DIRECTORY)
   const [batchSize, setBatchSize] = useState(DEFAULT_BATCH_SIZE)
@@ -82,6 +91,8 @@ export default function ConfigSyncCenterPage() {
   const [selectedTargets, setSelectedTargets] = useState<string[]>([])
   const [activeTask, setActiveTask] = useState<FileSyncTaskView | null>(null)
   const [eventAfterLogId, setEventAfterLogId] = useState(0)
+  const [activeStep, setActiveStep] = useState(0)
+  const [plannedSignature, setPlannedSignature] = useState('')
 
   usePageHeader({
     title: t('fileSync.title'),
@@ -103,11 +114,19 @@ export default function ConfigSyncCenterPage() {
     () => onlineBukkit.filter((i) => i.serverId !== sourceServerId),
     [onlineBukkit, sourceServerId],
   )
-  const detailPreviewTargets = useMemo(() => {
-    if (selectedTargets.length === 0) return targetOptions
-    const selected = new Set(selectedTargets)
-    return targetOptions.filter((target) => selected.has(target.serverId))
-  }, [selectedTargets, targetOptions])
+  const steps = useMemo(() => buildWizardSteps(t), [t])
+  const currentPlanSignature = useMemo(
+    () =>
+      buildPlanSignature({
+        sourceServerId,
+        directory,
+        batchSize,
+        intervalSec,
+        failureThreshold,
+        selectedTargets,
+      }),
+    [batchSize, directory, failureThreshold, intervalSec, selectedTargets, sourceServerId],
+  )
 
   useEffect(() => {
     if (!sourceServerId && sourceOptions.length > 0) setSourceServerId(sourceOptions[0].serverId)
@@ -124,14 +143,23 @@ export default function ConfigSyncCenterPage() {
   useEffect(() => {
     if (!activeTask?.id) return
     const controller = new AbortController()
-    streamFileSyncTaskEvents(activeTask.id, (event) => applyEvent(setActiveTask, event), {
-      signal: controller.signal,
-      afterLogId: eventAfterLogId,
-    }).catch((e: Error) => {
+    streamFileSyncTaskEvents(
+      activeTask.id,
+      (event) => applyEvent(setActiveTask, event, targetIndexRef.current),
+      {
+        signal: controller.signal,
+        afterLogId: eventAfterLogId,
+      },
+    ).catch((e: Error) => {
       if (!controller.signal.aborted) msg.showError(e.message)
     })
     return () => controller.abort()
   }, [activeTask?.id, eventAfterLogId, msg])
+
+  function acceptTask(task: FileSyncTaskView) {
+    targetIndexRef.current = buildTargetIndex(task.targets)
+    setActiveTask(limitFileSyncLogs(task))
+  }
 
   const planMut = useMutation({
     mutationFn: async () => {
@@ -147,7 +175,8 @@ export default function ConfigSyncCenterPage() {
     },
     onSuccess: (task) => {
       setEventAfterLogId(lastFileSyncLogId(task))
-      setActiveTask(task)
+      setPlannedSignature(currentPlanSignature)
+      acceptTask(task)
       qc.invalidateQueries({ queryKey: ['file-sync-tasks'] })
       msg.showSuccess(t('fileSync.targetPlanned', { count: task.plannedTargets }))
     },
@@ -157,83 +186,522 @@ export default function ConfigSyncCenterPage() {
   const actionMut = useMutation({
     mutationFn: ({ id, action }: { id: string; action: TaskAction }) => runTaskAction(id, action),
     onSuccess: (task) => {
-      setActiveTask(task)
+      acceptTask(task)
       msg.showSuccess(t('fileSync.actionDone'))
     },
     onError: (e: Error) => msg.showError(e.message),
   })
 
-  function onPlan() {
+  function onPreview() {
     if (!sourceServerId) return msg.showError(t('fileSync.needSource'))
     if (!directory.trim()) return msg.showError(t('fileSync.needDirectory'))
     if (selectedTargets.length === 0) return msg.showError(t('fileSync.needTarget'))
     planMut.mutate()
   }
 
-  const summary = buildSummary(t, activeTask, detailPreviewTargets.length, batchSize)
+  const summary = buildSummary(t, activeTask, selectedTargets.length, batchSize)
   const busy = planMut.isPending || actionMut.isPending
+  const canPreview =
+    Boolean(sourceServerId) && Boolean(directory.trim()) && selectedTargets.length > 0
+  const canStart =
+    activeTask?.status === 'planned' &&
+    activeTask.sourceReady &&
+    plannedSignature === currentPlanSignature
+  const currentStep = steps[activeStep] ?? steps[0]
 
   return (
-    <div className="grid min-h-full grid-rows-[auto_auto_minmax(28rem,auto)_minmax(24rem,auto)] gap-3 pb-4">
-      <SyncToolbar
-        sourceOptions={sourceOptions}
-        sourceServerId={sourceServerId}
-        directory={directory}
-        batchSize={batchSize}
-        intervalSec={intervalSec}
-        failureThreshold={failureThreshold}
-        busy={busy}
-        hasTargets={targetOptions.length > 0}
-        task={activeTask}
-        onSourceChange={setSourceServerId}
-        onDirectoryChange={setDirectory}
-        onBatchSizeChange={setBatchSize}
-        onIntervalChange={setIntervalSec}
-        onFailureThresholdChange={setFailureThreshold}
-        onPlan={onPlan}
-        onTaskAction={(action) => activeTask && actionMut.mutate({ id: activeTask.id, action })}
-      />
+    <div className="flex min-h-full flex-col gap-3 pb-6">
+      <WizardStepNav steps={steps} activeStep={activeStep} onStepChange={setActiveStep} />
 
       <div className="shrink-0 overflow-hidden [&>div]:flex-nowrap">
         <SummaryStrip items={summary} />
         {activeTask?.lastError && <ErrorBanner message={activeTask.lastError} />}
       </div>
 
-      <div className="grid min-h-[28rem] grid-cols-1 gap-3 xl:grid-cols-[22rem_minmax(0,1fr)_22rem]">
-        <TargetPanel
-          targets={targetOptions}
-          selected={selectedTargets}
-          onSelectedChange={setSelectedTargets}
-          isLoading={instancesQuery.isLoading}
-          isError={instancesQuery.isError}
-          error={instancesQuery.error}
-        />
-        <BatchPlanPanel
-          task={activeTask}
-          selectedCount={detailPreviewTargets.length}
-          batchSize={batchSize}
-        />
-        <RiskPanel
-          task={activeTask}
-          failureThreshold={failureThreshold}
-          previewTargetCount={detailPreviewTargets.length}
-        />
-      </div>
-
-      <div className="grid min-h-[24rem] grid-cols-1 gap-3 xl:grid-cols-[minmax(22rem,0.7fr)_minmax(0,1.3fr)]">
-        <LogPanel task={activeTask} />
-        <Card className="flex min-h-0 flex-col rounded-md py-0 shadow-sm">
-          <CardHeader className="h-9 shrink-0 border-b px-3 py-0">
-            <CardTitle>{t('fileSync.tableTitle')}</CardTitle>
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1 p-0">
-            <FileSyncTargetDetails
-              task={activeTask}
-              previewTargets={detailPreviewTargets}
-              batchSize={batchSize}
+      <WizardStepFrame title={currentStep.label} description={currentStep.description}>
+        {currentStep.key === 'source' && (
+          <SourceDirectoryStep
+            sourceOptions={sourceOptions}
+            sourceServerId={sourceServerId}
+            directory={directory}
+            task={activeTask}
+            onSourceChange={setSourceServerId}
+            onDirectoryChange={setDirectory}
+          />
+        )}
+        {currentStep.key === 'targets' && (
+          <div className="min-h-[34rem]">
+            <TargetPanel
+              targets={targetOptions}
+              selected={selectedTargets}
+              onSelectedChange={setSelectedTargets}
+              isLoading={instancesQuery.isLoading}
+              isError={instancesQuery.isError}
+              error={instancesQuery.error}
             />
+          </div>
+        )}
+        {currentStep.key === 'strategy' && (
+          <StrategyStep
+            batchSize={batchSize}
+            intervalSec={intervalSec}
+            failureThreshold={failureThreshold}
+            selectedCount={selectedTargets.length}
+            onBatchSizeChange={setBatchSize}
+            onIntervalChange={setIntervalSec}
+            onFailureThresholdChange={setFailureThreshold}
+          />
+        )}
+        {currentStep.key === 'safety' && (
+          <SafetyStep
+            task={activeTask}
+            failureThreshold={failureThreshold}
+            previewTargetCount={selectedTargets.length}
+          />
+        )}
+        {currentStep.key === 'preview' && (
+          <PreviewStep
+            task={activeTask}
+            batchSize={batchSize}
+            failureThreshold={failureThreshold}
+            previewTargetCount={selectedTargets.length}
+            busy={busy}
+            canPreview={canPreview}
+            canStart={canStart}
+            onPreview={onPreview}
+            onTaskAction={(action) => activeTask && actionMut.mutate({ id: activeTask.id, action })}
+          />
+        )}
+      </WizardStepFrame>
+
+      <WizardFooter
+        activeStep={activeStep}
+        totalSteps={steps.length}
+        onStepChange={setActiveStep}
+      />
+    </div>
+  )
+}
+
+function buildWizardSteps(t: TFunction): WizardStep[] {
+  return [
+    {
+      key: 'source',
+      label: t('fileSync.steps.source'),
+      description: t('fileSync.stepDescriptions.source'),
+    },
+    {
+      key: 'targets',
+      label: t('fileSync.steps.targets'),
+      description: t('fileSync.stepDescriptions.targets'),
+    },
+    {
+      key: 'strategy',
+      label: t('fileSync.steps.strategy'),
+      description: t('fileSync.stepDescriptions.strategy'),
+    },
+    {
+      key: 'safety',
+      label: t('fileSync.steps.safety'),
+      description: t('fileSync.stepDescriptions.safety'),
+    },
+    {
+      key: 'preview',
+      label: t('fileSync.steps.preview'),
+      description: t('fileSync.stepDescriptions.preview'),
+    },
+  ]
+}
+
+function WizardStepNav({
+  steps,
+  activeStep,
+  onStepChange,
+}: {
+  steps: WizardStep[]
+  activeStep: number
+  onStepChange: (index: number) => void
+}) {
+  return (
+    <nav className="grid gap-2 md:grid-cols-5" aria-label="文件同步步骤">
+      {steps.map((step, index) => (
+        <button
+          key={step.key}
+          type="button"
+          aria-label={step.label}
+          aria-current={activeStep === index ? 'step' : undefined}
+          onClick={() => onStepChange(index)}
+          className={cn(
+            'flex min-h-16 items-start gap-2 rounded-md border bg-background p-3 text-left shadow-sm transition-colors',
+            activeStep === index && 'border-primary bg-primary/5 text-primary',
+          )}
+        >
+          <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold">
+            {index + 1}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">{step.label}</span>
+            <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
+              {step.description}
+            </span>
+          </span>
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+function WizardStepFrame({
+  title,
+  description,
+  children,
+}: {
+  title: string
+  description: string
+  children: ReactNode
+}) {
+  return (
+    <section className="min-h-[34rem] rounded-md border bg-background shadow-sm">
+      <div className="border-b px-4 py-3">
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </div>
+      <div className="p-3">{children}</div>
+    </section>
+  )
+}
+
+function WizardFooter({
+  activeStep,
+  totalSteps,
+  onStepChange,
+}: {
+  activeStep: number
+  totalSteps: number
+  onStepChange: (index: number) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        disabled={activeStep === 0}
+        onClick={() => onStepChange(Math.max(0, activeStep - 1))}
+      >
+        {t('fileSync.prevStep')}
+      </Button>
+      <Button
+        type="button"
+        disabled={activeStep >= totalSteps - 1}
+        onClick={() => onStepChange(Math.min(totalSteps - 1, activeStep + 1))}
+      >
+        {t('fileSync.nextStep')}
+      </Button>
+    </div>
+  )
+}
+
+function SourceDirectoryStep({
+  sourceOptions,
+  sourceServerId,
+  directory,
+  task,
+  onSourceChange,
+  onDirectoryChange,
+}: {
+  sourceOptions: InstanceView[]
+  sourceServerId: string
+  directory: string
+  task: FileSyncTaskView | null
+  onSourceChange: (value: string) => void
+  onDirectoryChange: (value: string) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <Card className="rounded-md py-0 shadow-sm">
+        <CardHeader className="h-9 border-b px-3 py-0">
+          <CardTitle>{t('fileSync.sourceTitle')}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-3 md:grid-cols-2">
+          <ToolbarField label={t('fileSync.sourceServer')} id="file-sync-source">
+            <Combobox
+              id="file-sync-source"
+              className="[&_input]:h-8 [&_input]:text-xs"
+              value={sourceServerId}
+              onChange={onSourceChange}
+              options={sourceOptions.map((s) => ({
+                value: s.serverId,
+                label: `${s.serverId} · ${s.address}`,
+              }))}
+              allowCustom={false}
+              placeholder={
+                sourceOptions.length === 0
+                  ? t('fileSync.noSource')
+                  : t('fileSync.sourceSearchPlaceholder')
+              }
+            />
+          </ToolbarField>
+          <ToolbarField label={t('fileSync.directory')} id="file-sync-directory">
+            <Input
+              id="file-sync-directory"
+              className="h-8 text-xs"
+              value={directory}
+              placeholder={t('fileSync.directoryPlaceholder')}
+              onChange={(e) => onDirectoryChange(e.target.value)}
+            />
+          </ToolbarField>
+        </CardContent>
+      </Card>
+      <SourceManifestCard task={task} />
+    </div>
+  )
+}
+
+function SourceManifestCard({ task }: { task: FileSyncTaskView | null }) {
+  const { t } = useTranslation()
+  const ready = Boolean(task?.sourceReady)
+  return (
+    <Card className="rounded-md py-0 shadow-sm">
+      <CardHeader className="h-9 border-b px-3 py-0">
+        <CardTitle>{t('fileSync.sourceManifestTitle')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 p-3">
+        <div>
+          <div className="text-sm font-semibold">
+            {ready ? t('fileSync.sourceManifestReady') : t('fileSync.sourceManifestPending')}
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {ready
+              ? t('fileSync.sourceManifestReadyDetail', {
+                  count: task?.sourceFileCount ?? 0,
+                  bytes: formatBytes(task?.sourceTotalBytes ?? 0),
+                })
+              : t('fileSync.sourceManifestPendingDetail')}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <RiskMetric label={t('fileSync.sourceFiles')} value={task?.sourceFileCount ?? 0} />
+          <RiskMetric
+            label={t('fileSync.sourceBytes')}
+            value={formatBytes(task?.sourceTotalBytes ?? 0)}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function StrategyStep({
+  batchSize,
+  intervalSec,
+  failureThreshold,
+  selectedCount,
+  onBatchSizeChange,
+  onIntervalChange,
+  onFailureThresholdChange,
+}: {
+  batchSize: number
+  intervalSec: number
+  failureThreshold: number
+  selectedCount: number
+  onBatchSizeChange: (value: number) => void
+  onIntervalChange: (value: number) => void
+  onFailureThresholdChange: (value: number) => void
+}) {
+  const { t } = useTranslation()
+  const batchCount = selectedCount > 0 ? Math.ceil(selectedCount / Math.max(1, batchSize)) : 0
+  return (
+    <div className="grid min-h-[30rem] gap-3 xl:grid-cols-[22rem_minmax(0,1fr)]">
+      <Card className="rounded-md py-0 shadow-sm">
+        <CardHeader className="h-9 border-b px-3 py-0">
+          <CardTitle>{t('fileSync.strategyTitle')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 p-3">
+          <ToolbarNumberField
+            id="file-sync-batch-size"
+            label={t('fileSync.batchSize')}
+            min={1}
+            value={batchSize}
+            onChange={onBatchSizeChange}
+          />
+          <ToolbarNumberField
+            id="file-sync-interval"
+            label={t('fileSync.intervalSec')}
+            min={0}
+            value={intervalSec}
+            onChange={onIntervalChange}
+          />
+          <ToolbarNumberField
+            id="file-sync-failure"
+            label={t('fileSync.failureThreshold')}
+            min={1}
+            max={100}
+            value={failureThreshold}
+            onChange={onFailureThresholdChange}
+          />
+          <div className="rounded-md bg-secondary p-3 text-sm">
+            <div className="text-muted-foreground">{t('fileSync.strategyBatchCount')}</div>
+            <div className="mt-1 text-2xl font-semibold">{batchCount}</div>
+          </div>
+        </CardContent>
+      </Card>
+      <BatchPlanPanel task={null} selectedCount={selectedCount} batchSize={batchSize} />
+    </div>
+  )
+}
+
+function SafetyStep({
+  task,
+  failureThreshold,
+  previewTargetCount,
+}: {
+  task: FileSyncTaskView | null
+  failureThreshold: number
+  previewTargetCount: number
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="grid min-h-[30rem] gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="grid gap-3 md:grid-cols-2">
+        {['incremental', 'backup', 'circuitBreaker', 'rollback'].map((item) => (
+          <SafetyCheckCard
+            key={item}
+            title={t(`fileSync.safety.${item}.title`)}
+            detail={t(`fileSync.safety.${item}.detail`)}
+          />
+        ))}
+      </div>
+      <RiskPanel
+        task={task}
+        failureThreshold={failureThreshold}
+        previewTargetCount={previewTargetCount}
+      />
+    </div>
+  )
+}
+
+function SafetyCheckCard({ title, detail }: { title: string; detail: string }) {
+  return (
+    <Card className="rounded-md py-0 shadow-sm">
+      <CardContent className="p-4">
+        <div className="text-sm font-semibold">{title}</div>
+        <div className="mt-2 text-sm text-muted-foreground">{detail}</div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PreviewStep({
+  task,
+  batchSize,
+  failureThreshold,
+  previewTargetCount,
+  busy,
+  canPreview,
+  canStart,
+  onPreview,
+  onTaskAction,
+}: {
+  task: FileSyncTaskView | null
+  batchSize: number
+  failureThreshold: number
+  previewTargetCount: number
+  busy: boolean
+  canPreview: boolean
+  canStart: boolean
+  onPreview: () => void
+  onTaskAction: (action: TaskAction) => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="grid min-h-[30rem] gap-3 xl:grid-cols-[22rem_minmax(0,1fr)]">
+      <Card className="rounded-md py-0 shadow-sm">
+        <CardHeader className="h-9 border-b px-3 py-0">
+          <CardTitle>{t('fileSync.previewPlanTitle')}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 p-3">
+          <SourceManifestStatusBlock task={task} />
+          <Button className="w-full" onClick={onPreview} disabled={busy || !canPreview}>
+            <ListChecks className="size-4" />
+            {t('fileSync.generatePreview')}
+          </Button>
+          <TaskButton
+            label={t('fileSync.start')}
+            icon={<Play className="size-4" />}
+            disabled={busy || !canStart}
+            onClick={() => onTaskAction('start')}
+          />
+          <TaskButton
+            label={t('fileSync.pause')}
+            icon={<Pause className="size-4" />}
+            disabled={busy || task?.status !== 'running'}
+            onClick={() => onTaskAction('pause')}
+          />
+          <TaskButton
+            label={t('fileSync.resume')}
+            icon={<RotateCcw className="size-4" />}
+            disabled={busy || task?.status !== 'paused'}
+            onClick={() => onTaskAction('resume')}
+          />
+          <TaskButton
+            label={t('fileSync.terminate')}
+            icon={<Square className="size-4" />}
+            disabled={busy || !task || isTerminal(task.status)}
+            onClick={() => onTaskAction('terminate')}
+            variant="destructive"
+          />
+        </CardContent>
+      </Card>
+      {task ? (
+        <div className="grid min-h-0 gap-3">
+          <div className="grid min-h-[14rem] gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <BatchPlanPanel task={task} selectedCount={previewTargetCount} batchSize={batchSize} />
+            <RiskPanel
+              task={task}
+              failureThreshold={failureThreshold}
+              previewTargetCount={previewTargetCount}
+            />
+          </div>
+          <div className="grid min-h-[24rem] gap-3 xl:grid-cols-[minmax(22rem,0.7fr)_minmax(0,1.3fr)]">
+            <LogPanel task={task} />
+            <Card className="flex min-h-0 flex-col rounded-md py-0 shadow-sm">
+              <CardHeader className="h-9 shrink-0 border-b px-3 py-0">
+                <CardTitle>{t('fileSync.tableTitle')}</CardTitle>
+              </CardHeader>
+              <CardContent className="min-h-0 flex-1 p-0">
+                <FileSyncTargetDetails task={task} previewTargets={[]} batchSize={batchSize} />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      ) : (
+        <Card className="rounded-md py-0 shadow-sm">
+          <CardContent className="flex h-full min-h-[24rem] items-center justify-center p-6 text-sm text-muted-foreground">
+            {t('fileSync.previewEmpty')}
           </CardContent>
         </Card>
+      )}
+    </div>
+  )
+}
+
+function SourceManifestStatusBlock({ task }: { task: FileSyncTaskView | null }) {
+  const { t } = useTranslation()
+  const ready = Boolean(task?.sourceReady)
+  return (
+    <div className="rounded-md bg-secondary p-3">
+      <div className="text-sm font-semibold">
+        {ready ? t('fileSync.sourceManifestReady') : t('fileSync.sourceManifestPending')}
+      </div>
+      <div className="mt-1 text-sm text-muted-foreground">
+        {ready
+          ? t('fileSync.sourceManifestReadyDetail', {
+              count: task?.sourceFileCount ?? 0,
+              bytes: formatBytes(task?.sourceTotalBytes ?? 0),
+            })
+          : t('fileSync.sourceManifestPendingDetail')}
       </div>
     </div>
   )
@@ -388,114 +856,6 @@ function ProgressLine({ value }: { value: number }) {
         <span className="block h-full rounded-full bg-primary" style={{ width: `${value}%` }} />
       </span>
       <span className="w-9 text-right tabular-nums">{value}%</span>
-    </div>
-  )
-}
-
-function SyncToolbar(props: {
-  sourceOptions: InstanceView[]
-  sourceServerId: string
-  directory: string
-  batchSize: number
-  intervalSec: number
-  failureThreshold: number
-  busy: boolean
-  hasTargets: boolean
-  task: FileSyncTaskView | null
-  onSourceChange: (value: string) => void
-  onDirectoryChange: (value: string) => void
-  onBatchSizeChange: (value: number) => void
-  onIntervalChange: (value: number) => void
-  onFailureThresholdChange: (value: number) => void
-  onPlan: () => void
-  onTaskAction: (action: TaskAction) => void
-}) {
-  const { t } = useTranslation()
-  return (
-    <div className="flex shrink-0 flex-wrap items-end gap-2 rounded-md border bg-background px-3 py-2 shadow-sm xl:flex-nowrap">
-      <ToolbarField className="w-64" label={t('fileSync.sourceServer')} id="file-sync-source">
-        <Combobox
-          id="file-sync-source"
-          className="[&_input]:h-8 [&_input]:text-xs"
-          value={props.sourceServerId}
-          onChange={props.onSourceChange}
-          options={props.sourceOptions.map((s) => ({
-            value: s.serverId,
-            label: `${s.serverId} · ${s.address}`,
-          }))}
-          allowCustom={false}
-          placeholder={
-            props.sourceOptions.length === 0
-              ? t('fileSync.noSource')
-              : t('fileSync.sourceSearchPlaceholder')
-          }
-        />
-      </ToolbarField>
-      <ToolbarField className="w-64" label={t('fileSync.directory')} id="file-sync-directory">
-        <Input
-          id="file-sync-directory"
-          className="h-8 text-xs"
-          value={props.directory}
-          placeholder={t('fileSync.directoryPlaceholder')}
-          onChange={(e) => props.onDirectoryChange(e.target.value)}
-        />
-      </ToolbarField>
-      <ToolbarNumberField
-        id="file-sync-batch-size"
-        label={t('fileSync.batchSize')}
-        className="w-24"
-        min={1}
-        value={props.batchSize}
-        onChange={props.onBatchSizeChange}
-      />
-      <ToolbarNumberField
-        id="file-sync-interval"
-        label={t('fileSync.intervalSec')}
-        className="w-28"
-        min={0}
-        value={props.intervalSec}
-        onChange={props.onIntervalChange}
-      />
-      <ToolbarNumberField
-        id="file-sync-failure"
-        label={t('fileSync.failureThreshold')}
-        className="w-28"
-        min={1}
-        max={100}
-        value={props.failureThreshold}
-        onChange={props.onFailureThresholdChange}
-      />
-      <div className="ml-auto flex flex-wrap items-center gap-2 xl:flex-nowrap">
-        <Button className="h-8" onClick={props.onPlan} disabled={props.busy || !props.hasTargets}>
-          <ListChecks className="size-4" />
-          {t('fileSync.planTargets')}
-        </Button>
-        <TaskButton
-          label={t('fileSync.start')}
-          icon={<Play className="size-4" />}
-          disabled={props.busy || !props.task}
-          onClick={() => props.onTaskAction('start')}
-        />
-        <TaskButton
-          label={t('fileSync.pause')}
-          icon={<Pause className="size-4" />}
-          disabled={props.busy || props.task?.status !== 'running'}
-          onClick={() => props.onTaskAction('pause')}
-        />
-        <TaskButton
-          label={t('fileSync.resume')}
-          icon={<RotateCcw className="size-4" />}
-          disabled={props.busy || props.task?.status !== 'paused'}
-          onClick={() => props.onTaskAction('resume')}
-        />
-        <TaskButton
-          label={t('fileSync.terminate')}
-          icon={<Square className="size-4" />}
-          disabled={props.busy || !props.task || isTerminal(props.task.status)}
-          onClick={() => props.onTaskAction('terminate')}
-          variant="destructive"
-        />
-      </div>
     </div>
   )
 }
@@ -1180,7 +1540,9 @@ function buildSummary(
   return [
     {
       label: t('fileSync.summaryStatus'),
-      value: task ? t(`fileSync.status.${task.status}`, { defaultValue: task.status }) : t('fileSync.previewStatus'),
+      value: task
+        ? t(`fileSync.status.${task.status}`, { defaultValue: task.status })
+        : t('fileSync.previewStatus'),
     },
     { label: t('fileSync.summaryTargets'), value: total },
     { label: t('fileSync.summarySucceeded'), value: task?.succeededTargets ?? 0, tone: 'success' },
@@ -1261,9 +1623,38 @@ function isTerminal(status: string): boolean {
   return ['succeeded', 'failed', 'terminated', 'circuit-broken'].includes(status)
 }
 
+function buildPlanSignature(input: {
+  sourceServerId: string
+  directory: string
+  batchSize: number
+  intervalSec: number
+  failureThreshold: number
+  selectedTargets: string[]
+}): string {
+  return JSON.stringify({
+    sourceServerId: input.sourceServerId,
+    directory: input.directory.trim(),
+    batchSize: input.batchSize,
+    intervalSec: input.intervalSec,
+    failureThreshold: input.failureThreshold,
+    selectedTargets: input.selectedTargets,
+  })
+}
+
+function buildTargetIndex(targets: FileSyncTargetView[]): Map<string, number> {
+  const index = new Map<string, number>()
+  targets.forEach((target, position) => index.set(target.serverId, position))
+  return index
+}
+
+function limitFileSyncLogs(task: FileSyncTaskView): FileSyncTaskView {
+  return { ...task, logs: task.logs.slice(-200) }
+}
+
 function applyEvent(
   setTask: Dispatch<SetStateAction<FileSyncTaskView | null>>,
   event: FileSyncEvent,
+  targetIndex: Map<string, number>,
 ) {
   setTask((prev) => {
     if (!prev) return prev
@@ -1277,9 +1668,15 @@ function applyEvent(
       createdAt?: string
     }
     if (event.type === 'task' && (event.task || raw.status)) {
-      return { ...prev, ...event.task, ...(raw.status ? { status: raw.status } : {}) }
+      return limitFileSyncLogs({
+        ...prev,
+        ...event.task,
+        ...(raw.status ? { status: raw.status } : {}),
+      })
     }
-    if (event.type === 'target' && event.target?.serverId) return mergeTarget(prev, event.target)
+    if (event.type === 'target' && event.target?.serverId) {
+      return mergeTarget(prev, event.target, targetIndex)
+    }
     if (event.type === 'log' && (event.log || raw.message))
       return appendFileSyncLog(
         prev,
@@ -1304,19 +1701,29 @@ function appendFileSyncLog(
   log: FileSyncTaskView['logs'][number],
 ): FileSyncTaskView {
   if (log.id && task.logs.some((item) => item.id === log.id)) return task
-  return { ...task, logs: [...task.logs, log] }
+  return { ...task, logs: [...task.logs, log].slice(-200) }
 }
 
 function lastFileSyncLogId(task: FileSyncTaskView | null): number {
   return Math.max(0, ...(task?.logs ?? []).map((log) => log.id ?? 0))
 }
 
-function mergeTarget(task: FileSyncTaskView, patch: Partial<FileSyncTargetView>): FileSyncTaskView {
+function mergeTarget(
+  task: FileSyncTaskView,
+  patch: Partial<FileSyncTargetView>,
+  targetIndex: Map<string, number>,
+): FileSyncTaskView {
+  const serverId = patch.serverId
+  if (!serverId) return task
+  const index = targetIndex.get(serverId)
+  if (index === undefined) return task
+  const current = task.targets[index]
+  if (!current || current.serverId !== serverId) return task
+  const targets = task.targets.slice()
+  targets[index] = { ...current, ...patch }
   return {
     ...task,
-    targets: task.targets.map((target) =>
-      target.serverId === patch.serverId ? { ...target, ...patch } : target,
-    ),
+    targets,
   }
 }
 

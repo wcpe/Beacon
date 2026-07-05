@@ -19,7 +19,8 @@
 - 目标 agent 扫描本地同路径 manifest，仅下载 hash 不同或缺失的文件。
 - 目标 agent 写入前备份旧目录，写入后回传状态。
 - 编排器按批次大小、批间等待、失败率阈值执行，支持暂停、继续、终止和熔断。
-- 管理台显示源选择、目录、目标筛选、批次参数、状态卡、实时日志、服务器明细和历史回滚。
+- 管理台 `/file-sync` 使用 5 步向导：源与目录、目标范围、灰度策略、安全检查、预览与启动。
+- 最后一步通过 `create + plan` 生成持久规划预览，展示源清单就绪状态、目标集合、批次、熔断参数与风险摘要；确认后才允许启动。
 - 浏览器实时进度走独立 SSE。
 - 历史任务支持整次、批次、单服回滚。
 
@@ -32,6 +33,7 @@
 - 不新增 Redis、MQ、DI 框架。
 - 不把文件内容写入 `agent_command`、审计 detail、JSON ingest 或配置中心文件对象。
 - 不做滚动重启、蓝绿切换、玩家 drain；本功能只同步文件。
+- 本轮不实现目标端 dry-run 扫描协议、不新增启动前文件级差异分页接口；目标本地 manifest 比对仍在执行期由目标 agent 完成。
 
 ## 3. 设计
 
@@ -43,12 +45,12 @@
 - agent 命令：新增同步相关命令类型，命令只含 taskId / batchId / targetId / directory / manifest 摘要等控制信息。
 - agent 数据通道：源上传 blob，目标下载 blob；用流式 IO。
 - 管理台 SSE：`/admin/v1/file-sync/tasks/{id}/events` 向浏览器推送状态和日志事件。
-- 前端页面：`/file-sync`，接真实 API 与 SSE。
+- 前端页面：`/file-sync`，接真实 API 与 SSE，按 5 步向导承载创建、规划预览与启动。
 
 ### 3.2 数据模型草案
 
 - `file_sync_task`：任务主表，记录 namespace、source_server_id、directory、status、batch_size、interval_sec、failure_threshold_percent、operator、started_at、finished_at。
-- `file_sync_file`：源 manifest 文件清单，记录 task_id、path、size、hash、mode、blob_key、status。
+- `file_sync_file`：源 manifest 文件清单，记录 task_id、path、size、hash、mode、blob_key、status；任务详情的 `sourceReady`、`sourceFileCount`、`sourceTotalBytes` 由该清单与 blob 缓存状态汇总。
 - `file_sync_batch`：批次表，记录 task_id、batch_no、status、planned_count、success_count、failed_count、started_at、finished_at。
 - `file_sync_target`：目标表，记录 task_id、batch_id、server_id、status、backup_path、current_file_count、changed_file_count、skipped_file_count、error。
 - `file_sync_log`：任务日志摘要，记录 task_id、batch_id、server_id、level、message、created_at。
@@ -87,9 +89,9 @@ rollback-pending → rollback-running → rollback-succeeded / rollback-failed
 
 - `POST /admin/v1/file-sync/tasks`：创建任务并触发源扫描。
 - `GET /admin/v1/file-sync/tasks`：历史任务列表。
-- `GET /admin/v1/file-sync/tasks/{id}`：任务详情。
-- `POST /admin/v1/file-sync/tasks/{id}/plan`：保存目标筛选并生成批次。
-- `POST /admin/v1/file-sync/tasks/{id}/start`：开始执行。
+- `GET /admin/v1/file-sync/tasks/{id}`：任务详情，含源清单就绪字段、批次、目标和日志。
+- `POST /admin/v1/file-sync/tasks/{id}/plan`：保存目标筛选并生成批次，返回最后一步展示的规划预览。
+- `POST /admin/v1/file-sync/tasks/{id}/start`：规划预览确认后开始执行；要求任务为 `planned` 且源清单已就绪。
 - `POST /admin/v1/file-sync/tasks/{id}/pause`：暂停后续批次。
 - `POST /admin/v1/file-sync/tasks/{id}/resume`：继续。
 - `POST /admin/v1/file-sync/tasks/{id}/terminate`：紧急终止。
@@ -106,6 +108,22 @@ agent：
 
 具体契约在实现时同步到 `docs/API.md`。
 
+### 3.5 管理台向导边界
+
+`/file-sync` 不再是一屏工作台，而是 5 步向导：
+
+1. 源与目录：选择黄金模板源、目录，并显示源扫描 / 清单状态。
+2. 目标范围：保留搜索、分组、分页和批量选择，避免 1000+ 目标一次性全量挂载。
+3. 灰度策略：配置批次大小、批间等待、失败率熔断阈值，并实时计算批次数。
+4. 安全检查：汇总源目录、目标范围、备份、熔断和回滚可用性，不启动任务。
+5. 预览与启动：调用创建与规划接口得到持久预览，展示源清单、目标、批次和风险摘要；只有预览存在且状态允许时才显示启动动作。
+
+本轮预览是控制面的规划预览，不承诺目标端 dry-run 扫描结果；目标端是否跳过 / 下载文件由执行期 manifest 哈希比对决定。
+
+### 3.6 批次推进语义
+
+启动后先下发当前 / 首个 pending 批次。某批全部目标回执后，控制面更新批次成功 / 失败计数：若失败率达到熔断阈值，任务进入 `circuit-broken`，后续 pending 批次不再下发；若未熔断且存在下一批 pending，则按 `intervalSec` 延迟调度；若不存在下一批 pending，则任务进入 `succeeded`。暂停只阻止下一批启动，不影响已完成目标；继续从下一批 pending 批次恢复。
+
 ## 4. 任务拆分
 
 - [ ] 新增 ADR-0058 与本 spec。
@@ -116,7 +134,7 @@ agent：
 - [ ] 新增 agent 流式传输抽象与 OkHttp 实现。
 - [ ] 新增 agent 源扫描 / 上传、目标下载 / 备份 / 应用 / 回滚执行器。
 - [ ] 新增编排器：批次、暂停 / 继续 / 终止、熔断。
-- [ ] 新增前端 API client、类型、mock 数据、页面和测试。
+- [ ] 新增前端 API client、类型、mock 数据、5 步向导页面和测试。
 - [ ] 同步 `docs/ARCHITECTURE.md`、`docs/API.md`、`CHANGELOG.md`。
 - [ ] 跑 `go test ./...`、agent 测试、`cd web && pnpm test`、前端 build，并做浏览器真机验证。
 
@@ -124,6 +142,7 @@ agent：
 
 - 选一台在线 bukkit 源服和相对目录后，控制面能拿到 manifest 与缓存 blob。
 - 目标只能选 `role=bukkit`，不能选 BungeeCord。
+- `/file-sync` 按 5 步推进，最后一步先展示规划预览，启动动作不会早于规划预览。
 - 同步 3 批目标时，页面实时显示批次进度和每台服务器状态。
 - 暂停后不再启动下一批；继续后恢复；终止后后续目标不执行。
 - 某批失败率超过阈值后任务进入熔断暂停，后续批次不执行。

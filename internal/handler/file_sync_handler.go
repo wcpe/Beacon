@@ -65,6 +65,9 @@ type fileSyncTaskView struct {
 	SourceServerID          string               `json:"sourceServerId"`
 	Directory               string               `json:"directory"`
 	Status                  string               `json:"status"`
+	SourceReady             bool                 `json:"sourceReady"`
+	SourceFileCount         int                  `json:"sourceFileCount"`
+	SourceTotalBytes        int64                `json:"sourceTotalBytes"`
 	BatchSize               int                  `json:"batchSize"`
 	IntervalSec             int                  `json:"intervalSec"`
 	FailureThresholdPercent int                  `json:"failureThresholdPercent"`
@@ -77,6 +80,7 @@ type fileSyncTaskView struct {
 	CurrentBatch            int                  `json:"currentBatch"`
 	TotalBatches            int                  `json:"totalBatches"`
 	LastError               string               `json:"lastError"`
+	Batches                 []fileSyncBatchView  `json:"batches"`
 	Logs                    []fileSyncLogView    `json:"logs"`
 	Targets                 []fileSyncTargetView `json:"targets"`
 	StartedAt               string               `json:"startedAt,omitempty"`
@@ -376,9 +380,10 @@ func toFileSyncTaskView(task *model.FileSyncTask) fileSyncTaskView {
 	return fileSyncTaskView{
 		ID: fmt.Sprintf("%d", task.ID), Namespace: task.NamespaceCode, SourceServerID: task.SourceServerID,
 		Directory: task.Directory, Status: task.Status, BatchSize: task.BatchSize,
+		SourceReady: task.SourceReady, SourceFileCount: task.SourceFileCount, SourceTotalBytes: task.SourceTotalBytes,
 		IntervalSec: task.IntervalSec, FailureThresholdPercent: task.FailureThresholdPercent,
 		Operator: task.Operator, TotalTargets: task.TargetCount, PlannedTargets: task.TargetCount,
-		TotalBatches: task.BatchCount, Logs: []fileSyncLogView{}, Targets: []fileSyncTargetView{},
+		TotalBatches: task.BatchCount, Batches: []fileSyncBatchView{}, Logs: []fileSyncLogView{}, Targets: []fileSyncTargetView{},
 		StartedAt: formatOptionalTime(task.StartedAt), FinishedAt: formatOptionalTime(task.FinishedAt),
 		CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: task.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -387,6 +392,7 @@ func toFileSyncTaskView(task *model.FileSyncTask) fileSyncTaskView {
 func toFileSyncTaskDetailView(task *model.FileSyncTask, batches []model.FileSyncBatch,
 	targets []model.FileSyncTarget, logs []model.FileSyncLog) fileSyncTaskView {
 	view := toFileSyncTaskView(task)
+	view.Batches = toFileSyncBatchViews(batches)
 	view.Targets = toFileSyncTargetViews(task.NamespaceCode, targets)
 	view.Logs = toFileSyncLogViews(logs)
 	view.SucceededTargets = countFileSyncTargets(targets, model.FileSyncTargetStatusSucceeded)
@@ -414,6 +420,7 @@ func toFileSyncTargetViews(namespace string, targets []model.FileSyncTarget) []f
 			ID: target.ID, TaskID: fmt.Sprintf("%d", target.TaskID), BatchID: target.BatchID, BatchNo: target.BatchNo,
 			ServerID: target.ServerID, Namespace: namespace, Status: target.Status, CurrentFileCount: target.CurrentFileCount,
 			ChangedFileCount: target.ChangedFileCount, SkippedFileCount: target.SkippedFileCount,
+			BackupPath: target.BackupPath, BytesTotal: target.BytesTotal, BytesDone: target.BytesDone,
 			Error: target.LastError, UpdatedAt: target.UpdatedAt.UTC().Format(time.RFC3339),
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"gorm.io/driver/sqlite"
@@ -18,6 +19,39 @@ import (
 	"github.com/wcpe/Beacon/internal/repository"
 	"github.com/wcpe/Beacon/internal/service"
 )
+
+func TestFileSyncTaskDetailViewIncludesSourcePlanAndTransferFields(t *testing.T) {
+	now := time.Now().UTC()
+	task := &model.FileSyncTask{
+		ID: 42, NamespaceCode: "prod", SourceServerID: "source-1", Directory: "plugins/demo",
+		Status: model.FileSyncTaskStatusPlanned, SourceReady: true, SourceFileCount: 3,
+		SourceTotalBytes: 4096, BatchSize: 2, IntervalSec: 0, FailureThresholdPercent: 50,
+		Operator: "admin", TargetCount: 2, BatchCount: 1, CreatedAt: now, UpdatedAt: now,
+	}
+	batches := []model.FileSyncBatch{{
+		ID: 7, TaskID: task.ID, BatchNo: 1, Status: model.FileSyncBatchStatusPending,
+		PlannedCount: 2, SuccessCount: 1, FailedCount: 0,
+	}}
+	targets := []model.FileSyncTarget{{
+		ID: 9, TaskID: task.ID, BatchID: 7, BatchNo: 1, ServerID: "target-1",
+		Status: model.FileSyncTargetStatusSucceeded, BackupPath: ".beacon/backups/task-42/target-1",
+		CurrentFileCount: 10, ChangedFileCount: 2, SkippedFileCount: 8,
+		BytesTotal: 2048, BytesDone: 2048, UpdatedAt: now,
+	}}
+
+	view := toFileSyncTaskDetailView(task, batches, targets, nil)
+
+	if !view.SourceReady || view.SourceFileCount != 3 || view.SourceTotalBytes != 4096 {
+		t.Fatalf("详情应包含源清单恢复字段，实际：%+v", view)
+	}
+	if len(view.Batches) != 1 || view.Batches[0].BatchNo != 1 || view.Batches[0].PlannedCount != 2 {
+		t.Fatalf("详情应包含批次预览字段，实际：%+v", view.Batches)
+	}
+	if len(view.Targets) != 1 || view.Targets[0].BackupPath == "" ||
+		view.Targets[0].BytesTotal != 2048 || view.Targets[0].BytesDone != 2048 {
+		t.Fatalf("目标视图应包含备份与传输字段，实际：%+v", view.Targets)
+	}
+}
 
 func TestFileSyncBlobUploadDownloadStreamsBytes(t *testing.T) {
 	h, taskID := newFileSyncBlobTestHandler(t)

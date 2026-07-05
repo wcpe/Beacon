@@ -389,21 +389,23 @@ data: {}
 
 ### 多级灰度文件同步中心（FR-129 / FR-131，见 [ADR-0058](adr/0058-controlled-large-file-sync-channel.md)）
 
-本模块把文件同步任务、批次、目标和日志作为 DB 真源：选择在线 `role=bukkit` 源服 + 服务器根内相对目录，规划一组在线 bukkit 目标，执行开始 / 暂停 / 继续 / 终止等控制动作，并通过管理台 SSE 回放持久日志与实时状态。`agent_command` 只承载 taskId / batchId / targetId / directory 等编排控制；文件内容通过 agent 侧流式 HTTP 上传到控制面本地 blob 缓存，再由目标 agent 流式下载。文件内容不得进入审计 detail、命令 payload 或 JSON ingest。
+本模块把文件同步任务、批次、目标和日志作为 DB 真源：选择在线 `role=bukkit` 源服 + 服务器根内相对目录，规划一组在线 bukkit 目标，执行开始 / 暂停 / 继续 / 终止等控制动作，并通过管理台 SSE 回放持久日志与实时状态。管理台 `/file-sync` 是 5 步向导：源与目录 → 目标范围 → 灰度策略 → 安全检查 → 预览与启动；本轮“预览”指启动前的规划预览（源清单状态、目标集合、批次与风险摘要），由 `create + plan` 持久化后展示，确认后才调用 `start`。本轮不实现目标端 dry-run 扫描协议或文件级差异分页接口。`agent_command` 只承载 taskId / batchId / targetId / directory 等编排控制；文件内容通过 agent 侧流式 HTTP 上传到控制面本地 blob 缓存，再由目标 agent 流式下载。文件内容不得进入审计 detail、命令 payload 或 JSON ingest。
 
-**任务视图字段**：`{ id, namespace, sourceServerId, directory, status, batchSize, intervalSec, failureThresholdPercent, operator, totalTargets, plannedTargets, succeededTargets, failedTargets, skippedTargets, currentBatch, totalBatches, lastError, logs, targets, createdAt, updatedAt, startedAt, finishedAt }`。`logs` 元素为 `{ id, taskId, batchNo, serverId, level, message, createdAt }`；`targets` 元素为 `{ taskId, batchNo, serverId, namespace, group, zone, status, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone, error, updatedAt }`。
+**任务详情视图字段**：`{ id, namespace, sourceServerId, directory, status, sourceReady, sourceFileCount, sourceTotalBytes, batchSize, intervalSec, failureThresholdPercent, operator, totalTargets, plannedTargets, succeededTargets, failedTargets, skippedTargets, currentBatch, totalBatches, lastError, batches, logs, targets, createdAt, updatedAt, startedAt, finishedAt }`。`sourceReady` 表示源清单和可启动所需缓存已就绪；`sourceFileCount` / `sourceTotalBytes` 来自源 manifest 汇总，用于刷新后恢复规划预览。`batches` 元素为 `{ id, taskId, batchNo, status, plannedCount, successCount, failedCount }`；`logs` 元素为 `{ id, taskId, batchNo, serverId, level, message, createdAt }`；`targets` 元素为 `{ taskId, batchNo, serverId, namespace, group, zone, status, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone, error, updatedAt }`。
 
 | 端点 | 说明 |
 |---|---|
 | `POST /admin/v1/file-sync/tasks` | 创建文件同步任务（写操作 readonly→403）。body `{namespace,sourceServerId,directory,batchSize,intervalSec,failureThresholdPercent}`。源实例必须在线且 `role=bukkit`，`directory` 必须是服务器根内相对目录（拒绝空、`..`、绝对路径、盘符 / UNC、反斜杠、Windows 保留名）。成功后任务为 `scanning`，事务内写 `file-sync.create` 审计 / 持久日志，并下发源扫描命令。返回 `201` + 任务视图。 |
 | `GET /admin/v1/file-sync/tasks?namespace=&status=` | 列同步任务历史（最新在前）：`{ items: [任务视图] }`。 |
-| `GET /admin/v1/file-sync/tasks/{id}` | 查询任务详情，返回任务视图（含已规划 targets 与日志尾部）。不存在→`404 FILE_SYNC_TASK_NOT_FOUND`。 |
-| `POST /admin/v1/file-sync/tasks/{id}/plan` | 规划目标（写操作 readonly→403）。body `{targetServerIds:[string...]}`；服务端去重、排除源服、逐个校验在线 bukkit，空目标→`400 FILE_SYNC_NO_TARGETS`，非 bukkit / 离线目标→`400 FILE_SYNC_TARGET_INVALID`。按任务 `batchSize` 写入批次和目标，任务转 `planned`，旧规划会被重建。返回任务视图。 |
-| `POST /admin/v1/file-sync/tasks/{id}/start` | 启动任务控制态：`planned → running`，要求源 manifest 已缓存；写 `startedAt`、审计 `file-sync.start`、持久日志并推 SSE，随后按当前批次向目标下发 apply 命令。 |
+| `GET /admin/v1/file-sync/tasks/{id}` | 查询任务详情，返回任务详情视图（含源清单就绪字段、批次、已规划 targets 与日志尾部）。不存在→`404 FILE_SYNC_TASK_NOT_FOUND`。 |
+| `POST /admin/v1/file-sync/tasks/{id}/plan` | 规划目标（写操作 readonly→403）。body `{targetServerIds:[string...]}`；服务端去重、排除源服、逐个校验在线 bukkit，空目标→`400 FILE_SYNC_NO_TARGETS`，非 bukkit / 离线目标→`400 FILE_SYNC_TARGET_INVALID`。按任务 `batchSize` 写入批次和目标，任务转 `planned`，旧规划会被重建。返回任务详情视图，作为 `/file-sync` 最后一步的持久规划预览。 |
+| `POST /admin/v1/file-sync/tasks/{id}/start` | 启动任务控制态：`planned → running`，要求已完成规划预览且 `sourceReady=true`；写 `startedAt`、审计 `file-sync.start`、持久日志并推 SSE，随后按当前 / 首个 pending 批次向目标下发 apply 命令。 |
 | `POST /admin/v1/file-sync/tasks/{id}/pause` | 暂停后续批次：`running → paused`，不影响已完成目标。 |
 | `POST /admin/v1/file-sync/tasks/{id}/resume` | 继续后续批次：`paused → running`。 |
 | `POST /admin/v1/file-sync/tasks/{id}/terminate` | 紧急终止：`draft/scanning/cached/planned/running/paused → terminated`，写 `finishedAt`。 |
 | `GET /admin/v1/file-sync/tasks/{id}/events?afterLogId=` | 管理台 SSE。连接先按 `afterLogId` 回放持久日志尾部，随后推送 `task` / `log` 事件；浏览器可用 `fetch + ReadableStream` 携带 Authorization 订阅，禁止短轮询替代实时进度。 |
+
+**批次推进语义**：批次内所有目标回执后，控制面先更新目标与批次计数；若失败率达到熔断阈值，任务进入 `circuit-broken` 并保持后续目标不再下发。未熔断且仍有 pending 批次时，按任务 `intervalSec` 调度下一批；没有后续 pending 批次时任务进入 `succeeded`。`pause` 只阻止下一批启动，不回滚已完成目标；`resume` 从下一批 pending 批次继续。
 
 **agent 侧数据面端点（均挂 `/beacon/v1/agent` + `X-Beacon-Token`）**：
 
