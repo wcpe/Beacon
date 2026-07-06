@@ -1,6 +1,6 @@
 # ADR-0002：Go 后端 + 内嵌 React 单二进制技术栈
 
-**状态**：已接受
+**状态**：已接受（仓库布局部分被 [ADR-0060](0060-monorepo-layout-and-v2-frontend-stack.md) 取代——代码迁入 monorepo `apps/*` 布局；Go + chi + GORM、React(Vite+TS) 经 go:embed 内嵌单二进制同端口的主体决策仍有效）
 
 ## 背景
 

@@ -1,6 +1,6 @@
 # ADR-0059：管理台通用 UI 包与控件博物馆
 
-**状态**：已接受（补充 [ADR-0012](0012-web-shadcn-ui-design-system.md)，不取代）
+**状态**：已接受（补充 [ADR-0012](0012-web-shadcn-ui-design-system.md)，不取代；UI 包与控件博物馆的路径随 [ADR-0060](0060-monorepo-layout-and-v2-frontend-stack.md) 自 `web/packages/ui`、`web/apps/ui-wiki` 迁至根级 `packages/ui`、`apps/ui-wiki`，组织边界决策不变）
 
 ## 背景
 
