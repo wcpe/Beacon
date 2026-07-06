@@ -2,7 +2,9 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布
+## 0.19.0（2026-07-07）
+
+> Legacy（第一版）收尾版：本版为 v0.1.0 起第一版探索期的最后一个功能版本；自下一版（0.20.x）起进入第二版路线（见 [docs/ROADMAP.md](docs/ROADMAP.md)），第一版功能进入维护态冻结。
 
 ### 新增
 - 管理台中间件高密度运维视觉重构（FR-137）：按已确认的简洁中间件后台方向收口 `/dashboard`、`/file-sync`、`/servers`、`/zones`、`/topology` 五页。可观测看板改为 KPI 矩阵 + 集群健康矩阵 / 实时任务 / 最近异常 + 服务器明细表；文件同步中心改为 5 步向导（源与目录 → 目标范围 → 灰度策略 → 安全检查 → 预览与启动），最后一步先通过 `create + plan` 展示源清单、目标集合、批次、熔断参数与风险摘要，确认后才允许启动；任务详情响应同步补 `sourceReady` / `sourceFileCount` / `sourceTotalBytes` / `batches`，用于刷新后恢复规划预览与批次进度。服务器页固定为摘要 / 筛选 / 密表 + 右侧明细，行点击只切详情；服务器详情改为宽模态框，补「概览 / 健康 / 变更历史 / agent 日志 / 文件浏览 / 命令记录」六区块，文件浏览和命令记录复用既有真实端点；排空 / 取消排空 / 取消下线 / 强制重同步改为二次确认后提交，重同步成功提示命令 ID，并补 resync + browse + commands 的服务器页后端集成回归用例。区分配改为指标卡 + 筛选工具条 + 区树 / 容量矩阵 / 风险详情 / 最近指派记录；集群拓扑改为指标卡 + 图层列表 / 分层拓扑画布 / 节点诊断 / 异常链路表。全程不新增依赖；本轮不包含目标端 dry-run 扫描协议或文件级差异分页接口。
@@ -15,6 +17,7 @@
 - 全局错误脱敏展示（FR-122，见 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 与 [.claude/rules/error-surfacing.md](.claude/rules/error-surfacing.md)）：此前后端 `render.WriteError` 对非预期内部错误**一律对外返回笼统「内部错误」、真因只进日志**，运维在前端看不到失败原因、问题被静默隐藏。改为反转姿态——**操作出错时把脱敏后的真实原因展示到前端**：① 新增叶子包 `internal/redact.Desensitize` 打码凭据类敏感片段（URL 里 `user:pass@` 密码段、`token=`/`password=`/`secret=`/`pwd=`/`api-key=` 键值、`Bearer`/`Basic` 令牌），内网地址 / 主机名 / 路径等运维上下文**不打码**（非凭据、是定位关键）；② `render.WriteError` 对内部错误返回 `redact.Desensitize(err)` 真因（仍记完整日志 + `traceId` 可对账）；③ 前端 react-query `MutationCache` 全局兜底 onError——未自带 `onError` 的写操作失败也 toast 出该脱敏错误，杜绝静默失败。配套新增防漂移规则 `.claude/rules/error-surfacing.md`、同步 `docs/API.md` 错误响应描述。
 
 ### 修复
+- agent filesync 遗留静态检查违例（`FileSyncPathGuard` ReturnCount 超限、`FileSyncBackupManager` 函数签名格式），agent gradle build 恢复全绿。
 - 区分配页仍与设计稿交互不一致（`web/src/pages/ZonesPage.tsx`）：1000+ 子服时区树 / 详情会把页面撑长，中间容量矩阵还保留“操作”列，必须点行尾按钮才切详情。修复：区树、容量矩阵、分配详情三块改为视口内滚动列表；容量矩阵移除“操作”列，点击整行或键盘 Enter/Space 直接切换右侧详情，保持一屏高密度运维布局。
 - 配置中心服务器面板「只有 plugins、点不进去」（`web/src/pages/configs-workbench/useWorkbenchData.ts`）：`useServerTree` 调浏览端点 `op=tree` 时未带 `maxDepth`，而后端不带 maxDepth 时只回根节点（`children` 空 + `truncated`），故右侧服务器文件树恒只显示一个空 plugins 根、无法展开看真实文件。修复：浏览改带 `maxDepth=4`（覆盖 plugins/插件/子目录/文件常见深度，更深由 agent 硬上限收口），服务器树即返回完整子树（实测 s1-1 返回 47 节点、各插件目录与 jar 齐全）。
 - 配置中心在「全部环境」下拉不到配置、新建报「参数错误」（`web/src/pages/ConfigWorkbenchPage.tsx`）：全局环境选择器含「全部环境」选项（namespace 空串），而配置工作台按**单一环境**管理配置——空环境下受管树查询被 `enabled:!!namespace` 禁用故左面板恒空（看似「拉不到配置文件」），且新建 / 抓取等写操作把空 namespace 发给后端被 400「参数错误」（看似「无法新建 / 编辑」）。全新用户 / 清了 localStorage 环境即落到空环境，正中此坑。修复：工作台在 namespace 为空时改显明确引导态「请先在右上角选择一个具体环境（如 prod / test）」并隐藏主操作按钮（新建 / 反向抓取 / 导入），不再渲染会静默失败的空面板；选择具体环境后恢复正常双面板。
