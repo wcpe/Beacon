@@ -29,11 +29,14 @@ class FileSyncPathGuard(
             try {
                 rootReal.resolve(relativePath).normalize()
             } catch (e: Exception) {
-                return null
+                null
             }
-        if (!target.startsWith(rootReal) || target == rootReal) return null
-        if (!nearestExistingPathStaysInRoot(target)) return null
-        return target
+        val safe =
+            target != null &&
+                target.startsWith(rootReal) &&
+                target != rootReal &&
+                nearestExistingPathStaysInRoot(target)
+        return if (safe) target else null
     }
 
     private fun nearestExistingPathStaysInRoot(target: Path): Boolean {

@@ -110,8 +110,7 @@ class FileSyncBackupManager(
         }
     }
 
-    private fun sanitize(relativeDir: String): String =
-        relativeDir.replace(Regex("[^A-Za-z0-9_.-]"), "_").ifEmpty { "_" }
+    private fun sanitize(relativeDir: String): String = relativeDir.replace(Regex("[^A-Za-z0-9_.-]"), "_").ifEmpty { "_" }
 
     companion object {
         private val TIMESTAMP: DateTimeFormatter =
