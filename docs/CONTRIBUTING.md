@@ -13,6 +13,7 @@
 | 文档 | 管什么 | 何时更新 | 入库 |
 |---|---|---|---|
 | `docs/PRD.md` | 需求（WHAT/WHY）：目标、角色、功能需求、验收 | 需求增删改时 | ✓ 活文档 |
+| `docs/ROADMAP.md` | 第二版路线图：版本线、阶段目标、退出条件、GA 准入 | 阶段 / 版本线调整时 | ✓ 活文档 |
 | `docs/specs/<feature>.md` | 非平凡功能的开发期工作规格（需求/设计/任务/验收） | 开发该功能时 | ✓ 留作记录 |
 | `docs/ARCHITECTURE.md` | 系统设计（HOW）：模块、数据模型、机制、部署 | 结构/机制/依赖变化时 | ✓ |
 | `docs/adr/*` | 重大决策的"为什么" | 做出/推翻架构决策时（见 §3） | ✓ |
@@ -48,7 +49,7 @@
 ## 4. 变更工作流（新需求 / 新功能如何落地）
 
 ```
-1. 改 PRD（docs/PRD.md）         增/改需求，标 P1/P2/P3
+1. 改 PRD（docs/PRD.md）         增/改需求，标 `docs/ROADMAP.md` 中已有阶段
 2. 影响架构？→ 写新 ADR          引入/推翻架构决策时（必要时取代旧 ADR）
 3. 改 ARCHITECTURE.md            反映新模块 / 数据模型 / 机制 / 依赖
 4. 改 API.md                    接口契约变更
@@ -89,13 +90,16 @@
 
 版本号唯一来源是根 `VERSION` 文件（ADR-0007），构建注入三组件，恒一致。
 
+阶段与版本线的关系以 `docs/ROADMAP.md` 为准。第二版从 `0.20.x` 开始，`0.1.0` 到 `0.19.x` 作为 Legacy 第一版探索期冻结；`0.20.x`、`0.21.x` 这类 `0.y.z` 仍是三段版本号，只是 `1.0.0` 之前属于预稳定阶段。`1.0.0` 之后严格按 SemVer 执行：补丁修复升 PATCH，兼容功能升 MINOR，破坏性变更升 MAJOR。
+
 ## 9. 文档如何长期演进（本次会话之后）
 
 这些文档不是一次性产物，而是随项目活下去。每篇的演进方式不同：
 
 | 文档 | 演进方式 |
 |---|---|
-| `docs/PRD.md` | **增量 + 状态流转**：加需求即加一行 FR（`计划`→`开发中`→`已交付@vX.Y.Z`），已交付的保留并标版本、不删——它是活的路线图 |
+| `docs/PRD.md` | **增量 + 状态流转**：加需求即加一行 FR（`计划`→`开发中`→`已交付@vX.Y.Z`），已交付的保留并标版本、不删——它是需求登记册 |
+| `docs/ROADMAP.md` | **阶段路线图**：只在版本线 / 阶段目标 / GA 准入变化时更新，不记录单个实现任务 |
 | `docs/ARCHITECTURE.md` | **原地更新**：始终反映当前系统真貌；结构 / 机制变了就改它 |
 | `docs/adr/*` | **只追加 + 取代**：决策变了写新 ADR 取代旧的，旧的不删（§3） |
 | `docs/API.md` | **原地更新**：始终是当前契约 |
@@ -107,6 +111,7 @@
 |---|---|---|
 | 🔥 高频（几乎每次迭代） | `CHANGELOG.md` | 每个用户可见变更 |
 | 🔥 高频 | `docs/PRD.md` | 每个新需求 / 交付（加行 / 改状态） |
+| 🌡 中频 | `docs/ROADMAP.md` | 阶段目标 / 版本线变化时 |
 | 🌡 中频（有相应变化才动） | `docs/ARCHITECTURE.md`、`docs/API.md` | 结构 / 机制 / 接口变更时 |
 | 🌡 中频 | `docs/OPERATIONS.md` | 部署 / 运维方式变化时 |
 | 🌡 中频 | `docs/specs/<feature>.md` | 功能开发期；交付后基本不动 |
@@ -119,7 +124,7 @@
 
 ## 10. 维护迭代周期（稳态操作手册）
 
-第一期交付后进入稳态迭代。**每个工作项的标准循环**：
+进入第二版治理后，日常开发按稳态迭代处理。**每个工作项的标准循环**：
 
 1. **识别工作项**，选对应技能（路由见下表）。
 2. **开分支**：`feature/*` / `fix/*` / `refactor/*` / `hotfix/*`（§8）。
@@ -150,23 +155,23 @@
 
 ### 10.1 一次变更各动哪些（速查）
 
-加 100 个 feat、100 个 fix，你"维护"的其实就那几样——**期数几乎不动**。
+加 100 个 feat、100 个 fix，你"维护"的其实就那几样——**阶段版本线几乎不动**。
 
 | 来了什么 | 要动 | 不用动 |
 |---|---|---|
-| **feat 新功能** | PRD §4 加一行 FR（贴**已有**期 + 状态 `计划`）· 非平凡写 `docs/specs/<f>.md` · 结构变更动 `ARCHITECTURE` · 接口变更动 `API` · `CHANGELOG` +1 行 · 加测试 | 期数 · `VERSION`（发版才动） |
-| **fix 修 bug** | `CHANGELOG` +1 行 · 复现 + 回归测试 | PRD · 期数 · `VERSION` · ADR · API |
-| **refactor 重构** | 结构变才动 `ARCHITECTURE` · 测试前后同样全绿 | PRD · 期数 · API · 行为 |
-| **rollback 回滚** | FR 状态回退 · 取代相关 ADR · `CHANGELOG` +1（移除） | 期数 |
-| **依赖升级** | 锁文件 · 有感知影响才记 `CHANGELOG` · 全测试绿 | PRD · 期数 · ADR |
-| **架构决策** | **ADR +1 条（或取代旧的，编号 = 现有最大 +1）** · 更新 `ARCHITECTURE` | 期数（除非顺带开新阶段） |
-| **发版 release** | **`VERSION` 改（按提交定 SemVer）** · `CHANGELOG` 未发布段 → `## X.Y.Z` · 交付的 FR 翻 `已交付@vX.Y.Z` · 打**无后缀** tag `vX.Y.Z`（CI `release.yml`） | 期数 |
-| **出 rc 预发布** | 打 rc tag `vX.Y.Z-rc.N`（CI `prerelease.yml` 出 prerelease=true，[ADR-0046](adr/0046-rc-prerelease-channel.md)；rc 期间 `VERSION` 已指向目标正式版） | `VERSION`（rc 不改）· `CHANGELOG` · 期数 |
-| **开新大阶段（罕见）** | §7 加一行主题 + 启用新期号 `P4…` | —— 这是**唯一**动期数的时候 |
+| **feat 新功能** | PRD §4 加一行 FR（贴 `docs/ROADMAP.md` 里已有阶段 + 状态 `计划`）· 非平凡写 `docs/specs/<f>.md` · 结构变更动 `ARCHITECTURE` · 接口变更动 `API` · `CHANGELOG` +1 行 · 加测试 | 阶段版本线 · `VERSION`（发版才动） |
+| **fix 修 bug** | `CHANGELOG` +1 行 · 复现 + 回归测试 | PRD · 阶段版本线 · `VERSION` · ADR · API |
+| **refactor 重构** | 结构变才动 `ARCHITECTURE` · 测试前后同样全绿 | PRD · 阶段版本线 · API · 行为 |
+| **rollback 回滚** | FR 状态回退 · 取代相关 ADR · `CHANGELOG` +1（移除） | 阶段版本线 |
+| **依赖升级** | 锁文件 · 有感知影响才记 `CHANGELOG` · 全测试绿 | PRD · 阶段版本线 · ADR |
+| **架构决策** | **ADR +1 条（或取代旧的，编号 = 现有最大 +1）** · 更新 `ARCHITECTURE` | 阶段版本线（除非顺带开新阶段） |
+| **发版 release** | **`VERSION` 改（按提交定 SemVer）** · `CHANGELOG` 未发布段 → `## X.Y.Z` · 交付的 FR 翻 `已交付@vX.Y.Z` · 打**无后缀** tag `vX.Y.Z`（CI `release.yml`） | 阶段版本线 |
+| **出 rc 预发布** | 打 rc tag `vX.Y.Z-rc.N`（CI `prerelease.yml` 出 prerelease=true，[ADR-0046](adr/0046-rc-prerelease-channel.md)；rc 期间 `VERSION` 已指向目标正式版） | `VERSION`（rc 不改）· `CHANGELOG` · 阶段版本线 |
+| **开新大阶段（罕见）** | 更新 `docs/ROADMAP.md` 阶段表 + PRD 阶段验收 | —— 这是**唯一**动阶段版本线的时候 |
 
 **谁常动 / 谁不动**：
 - 🔥 高频：`CHANGELOG`（几乎每次）、PRD FR 表（每个 feat 加行 / 发版翻状态）、`VERSION`（每次发版）。
 - ❄ 低频：ADR（只在架构决策时 +1 或取代）。
-- 🧊 几乎不动：**期数**（只在开新大阶段，罕见）、`.claude/rules`（项目内）/ 全局 `sdd-*` 技能（动它 = 动根基，要配 ADR）。
+- 🧊 几乎不动：**阶段版本线**（只在开新大阶段，罕见）、`.claude/rules`（项目内）/ 全局 `sdd-*` 技能（动它 = 动根基，要配 ADR）。
 
-> 所以"100 feat + 100 fix 怎么维护期数"——**根本不维护期数**：fix 只进 `CHANGELOG`；feat 进 FR 表（贴个已有期标签）；期数还是那 3~6 个，纹丝不动。
+> 所以"100 feat + 100 fix 怎么维护阶段"——**根本不频繁维护阶段版本线**：fix 只进 `CHANGELOG`；feat 进 FR 表（贴 `docs/ROADMAP.md` 里的已有阶段）；阶段版本线还是少数几条，纹丝不动。

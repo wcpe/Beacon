@@ -13,6 +13,7 @@
 | 需求 / 范围 / 验收标准 | `docs/PRD.md` |
 | 架构决策（新技术 / 新模式 / 推翻旧决策） | 新增 `docs/adr/NNNN-*.md`（见 §3） |
 | 模块 / 数据模型 / 机制 / 依赖流向 | `docs/ARCHITECTURE.md` |
+| 页面 / 导航 IA / 全局交互范式 | `docs/UX.md` |
 | REST 接口 | `docs/API.md` |
 | 任何用户可见变更 | `CHANGELOG.md` 未发布段 |
 
