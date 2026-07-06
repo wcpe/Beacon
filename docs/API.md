@@ -1,6 +1,12 @@
-# Beacon REST 契约（第一期）
+# Beacon REST 契约
 
-> 各端对齐的硬契约。Base：`/beacon/v1`（agent 侧）、`/admin/v1`（admin/UI 侧）。内容类型 `application/json; charset=utf-8`。
+> 本文档分两部分：**Legacy 契约（第一版，维护态）**与**[第二版契约草案（0.20+）](#第二版契约草案020)**。Legacy 契约（`/beacon/v1`、`/admin/v1` 等）对应仍在运行的第一版代码，随第一版进入**维护态冻结**（只修缺陷、不扩能力），并随第二版 P3-P9 各域接真被 v2 契约逐步取代（阶段与版本线见 [ROADMAP](ROADMAP.md)）。
+
+---
+
+# Legacy 契约（第一版，维护态）
+
+> 各端对齐的硬契约。Base：`/beacon/v1`（agent 侧）、`/admin/v1`（admin/UI 侧）。内容类型 `application/json; charset=utf-8`。以下各节（通用约定 ～ 三、字段对齐速查）均属 Legacy 契约。
 
 ## 通用约定
 
@@ -706,3 +712,307 @@ data: {}
 | 版本 | `version` | int64 | 单调递增，回滚也 +1 |
 | 角色 | `role` | string | bukkit / bungee |
 | 健康 | `status` | string | online / degraded / lost / offline |
+
+---
+
+# 第二版契约草案（0.20+）
+
+> P0 冻结的第二版 REST 与 agent-api 契约草案（[ROADMAP](ROADMAP.md) §5 最后一项）。**端点明细契约（请求 / 响应体、状态机、错误码）的单一真源在各 `docs/specs/v2-*.md` 规格的「§5 API 契约」章节，本章不复制**——本章只承载三样：跨域通用约定（本章为权威真源）、按域端点索引（方法 / 路径 / 一句话用途 + 指回权威规格）、契约治理规则。
+
+## 通用约定（本章为权威真源）
+
+各 v2 规格的端点必须遵守以下约定；规格与本章冲突时以本章裁决为准并回改规格（见文末「契约治理」）。
+
+### base path 分面
+
+| 面 | base path | 说明 |
+|---|---|---|
+| 管理面 | `/admin/v2/*` | 管理台 / 脚本 / 外部服务；归档域挂 `/admin/v2/archive/*` |
+| agent 面 | `/beacon/v2/agent/*` | agent 控制通道（注册 / 上报 / 调度 / 消息 / 资产 / 交付回执），沿用 Legacy `/beacon/v1/agent` 前缀惯例 |
+| 流式数据面 | `/beacon/v2/stream/*` | 大文件流式传输（不过命令通道），当前仅交付域 `/beacon/v2/stream/delivery/*`（[v2-delivery-orchestration](specs/v2-delivery-orchestration.md) §5.3） |
+
+### 认证
+
+- **管理面**：沿用第一版机制——登录令牌（`Authorization: Bearer`）或 API 密钥（`bk_` 前缀，`full` / `readonly` 两级角色，readonly 拒写）。
+- **agent 面**：namespace 级接入 token 头 `X-Beacon-Token`（token↔namespace 一致性校验，规则见 [v2-namespace-isolation](specs/v2-namespace-isolation.md)）+ 绑定身份头 `X-Beacon-Identity`（注册期另带 `X-Beacon-Boot`）；身份确认前 agent 仅可调 register / registration 两端点，其余端点一律 403（细则见 [v2-agent-identity](specs/v2-agent-identity.md) §5.1）。
+- **流式数据面**：同 agent 面双 header，另校验请求身份属于持有该 blob 引用的活动变更单（模板源仅可上传、目标仅可下载本单清单内 sha256）。
+
+### 错误体 / 时间 / 状态码惯例
+
+- 统一错误体 `{ "code": "...", "message": "...", "traceId": "..." }`；`message` 为脱敏后的真实原因（打码凭据、保留运维上下文），沿用 [ADR-0057](adr/0057-surface-desensitized-errors.md)。
+- 时间一律 UTC（ISO-8601）；毫秒时间戳字段以 `...Ms` 后缀显式标注。
+- 惯例状态码：批量异步上报受理 `202`（入队即回，写入队列满 `429` + 退避提示）；状态类长轮询无变化 `304`、队列类长轮询无消息 `204`；非法状态迁移 / 占用冲突 `409`；批量操作逐条结果用 207 风格（HTTP 200/207 + 响应体逐条 ok/code）。
+
+### 分页
+
+- 列表端点统一 query `page` / `pageSize`（+ 可选 `keyword`），响应 `{ "items": [...], "total": N }`。
+- 例外：连接 / 消息明细查日期分表，用**游标分页 + 强制时间范围或精确 ID**（查询防护，[v2-connection-message-storage](specs/v2-connection-message-storage.md) §5.2）。
+- 冷查询跨域参数 `includeArchived` / `from` / `to` 挂在各查询域自己的端点上，契约见 [v2-hot-cold-archive](specs/v2-hot-cold-archive.md) §4.4。
+
+### 长轮询 / SSE / 命令通道
+
+- **状态长轮询**（agent 面）：`GET /beacon/v2/agent/registration?wait=<sec>`，状态无变化超时 `304`（身份域）。
+- **队列长轮询**（agent 面）：`POST /beacon/v2/agent/messages/poll`（`waitSec`），无消息超时 `204`（消息域）。挂起时长参数命名以各域规格为准。
+- **SSE**（管理面实时进度）：`GET /admin/v2/change-orders/{id}/events`（交付域），断线后轮询可恢复。
+- **agent 命令下发**沿用既有长轮询命令通道机制（ADR-0006 一脉），v2 各域只登记新命令类型（如 `asset_rescan` / `asset_read`），不另建通道；命令 payload 与审计 detail 不携带文件内容。
+
+### 命名风格（含裁决记录）
+
+- **路径**：kebab-case 复数资源名（`agent-identities`、`change-orders`、`config-files`）；子动作用 `/{id}/<动词>` 路径段（`/approve`、`/rollback`、`/token/rotate`），**不用 `:verb` 冒号风格**。
+- **query 参数与 JSON 字段**：一律 camelCase（`namespaceId`、`pageSize`、`includeArchived`）。
+- **枚举值 / 错误码等字段值**：snake_case 小写（`pending_approval`、`zone_not_found`、`cross_namespace`），不受 camelCase 约束；审计事件名用点分小写（`identity.approve`、`cross_namespace.*`）。
+- **管理面 namespace 过滤参数**：统一 `namespaceId`（值为 namespace 主键）。
+- **内容指纹**：v2 统一 `sha256`（全新通道，不沿用 Legacy md5）。
+
+> 裁决记录：以上为各规格收口时的**多数派**用法。起草期少数规格用了 snake_case 参数（zone-authority / namespace-isolation / config-center 的 §5 表、hot-cold 的 `include_archived`）、`:verb` 冒号路径（namespace-isolation 的 `token:rotate` / `{id}:revoke`）与 `namespace` 过滤参数（metrics 的 sched-decisions、file-assets 管理面），均已按本裁决回改对应规格；**DB 列名仍为 snake_case，不受本约定约束**。
+
+### agent-api（业务插件本机接口）
+
+业务插件**禁止直连 Beacon HTTP**（直连不作为契约、随时可变），唯一入口是 agent 本机 `BeaconAgentApi` 门面（Kotlin；HTTP / JSON 只存在于适配器，[ADR-0005](adr/0005-agent-transport-codec-abstraction.md) 延续；fail-static 降级语义随门面，绝不阻塞 MC 主线程）：
+
+- 调度 / 健康门面 `BeaconScheduling`（`acquireCandidate` / `candidatesInZone` / `healthOf` / `selfHealth` / `dataSource`）：真源 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) §5.3。
+- 消息门面（`send` / `call` / `on` / `isAvailable`）：真源 [v2-connection-message-storage](specs/v2-connection-message-storage.md) §5.1。
+
+## 端点索引（按域）
+
+> 每域一表，只列方法 / 路径 / 一句话用途；请求响应体、错误码、状态机**以「权威规格」列为准，不在此复制**。阶段与版本线对齐 [ROADMAP](ROADMAP.md) §1 与 [PRD](PRD.md) §4 FR 表。
+
+| 域 | 阶段 | 对应 FR | 权威规格 | 端点数 |
+|---|---|---|---|---|
+| Agent 身份 | P3 · 0.23.x | FR-139/140/141 | [v2-agent-identity.md](specs/v2-agent-identity.md) §5 | 13 |
+| namespace 隔离 | P3 · 0.23.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 8 |
+| 区服权威 | P3 · 0.23.x | FR-142/143 | [v2-zone-authority.md](specs/v2-zone-authority.md) §5 | 20 |
+| 指标健康调度 | P4 · 0.24.x | FR-144/146/147/148 | [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5 | 14 |
+| 连接消息存储 | P5 · 0.25.x | FR-145/149/150 | [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5 | 11 |
+| 热冷归档 | P6 · 0.26.x | FR-151/152/153 | [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5 | 6 |
+| 配置中心 V2 | P7 · 0.27.x | FR-160/161 | [v2-config-center.md](specs/v2-config-center.md) §5 | 17 |
+| 文件资产 V2 | P8 · 0.28.x | FR-163/164 | [v2-file-assets.md](specs/v2-file-assets.md) §5 | 10 |
+| 交付编排 V2 | P9 · 0.29.x | FR-162/165/166/167/168/171 | [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5 | 27 |
+
+合计 126 个端点。
+
+### Agent 身份（P3 · 0.23.x，真源 [v2-agent-identity.md](specs/v2-agent-identity.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/register` | 携 identityId 注册 / 重注册，返回绑定状态 |
+| GET | `/beacon/v2/agent/registration` | 长轮询当前身份状态（确认 / 拒绝秒级感知） |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/agent-identities` | 身份分页列表（状态 / namespace / 关键字筛选） |
+| GET | `/admin/v2/agent-identities/{identityId}` | 单条详情（冲突时含双方明细） |
+| POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；换区重确认可带 target 落区，缺省取预填目标） |
+| POST | `/admin/v2/agent-identities/{identityId}/reject` | 拒绝接入（原因必填） |
+| POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 允许被拒身份重新申请 |
+| POST | `/admin/v2/agent-identities/{identityId}/disable` | 禁用（摘除调度与指令下发） |
+| POST | `/admin/v2/agent-identities/{identityId}/enable` | 恢复禁用身份 |
+| POST | `/admin/v2/agent-identities/{identityId}/unbind` | 解绑（换 serverId / namespace 的前置） |
+| POST | `/admin/v2/agent-identities/{identityId}/resolve-conflict` | 处置并发双实例冲突（指定保留方） |
+| POST | `/admin/v2/agent-identities/batch-approve` | 批量确认（逐条结果） |
+| POST | `/admin/v2/agent-identities/batch-reject` | 批量拒绝（逐条结果，原因整批共用） |
+
+### namespace 隔离（P3 · 0.23.x，真源 [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/namespaces` | namespace 列表（含 server / 集群 / 双向信任计数） |
+| POST | `/admin/v2/namespaces` | 创建 namespace（返回一次性明文接入 token） |
+| PATCH | `/admin/v2/namespaces/{id}` | 更新描述（name 不可改） |
+| DELETE | `/admin/v2/namespaces/{id}` | 删除（有 server / 集群 / 生效信任 → 409） |
+| POST | `/admin/v2/namespaces/{id}/token/rotate` | 轮换接入 token（旧 token 即时失效，高风险） |
+| GET | `/admin/v2/namespace-trusts` | 互通信任行列表 |
+| POST | `/admin/v2/namespace-trusts` | 授予单向信任（新增或复活，原因必填） |
+| POST | `/admin/v2/namespace-trusts/{id}/revoke` | 收回信任（原因必填，即时生效） |
+
+### 区服权威（P3 · 0.23.x，真源 [v2-zone-authority.md](specs/v2-zone-authority.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/envs` | env 列表（含映射 namespace 摘要） |
+| POST | `/admin/v2/envs` | 新建 env |
+| PATCH | `/admin/v2/envs/{id}` | 更新 env |
+| DELETE | `/admin/v2/envs/{id}` | 删除 env（映射级联删除） |
+| PUT | `/admin/v2/envs/{id}/namespaces` | 整体替换 env↔namespace 映射 |
+| GET | `/admin/v2/zone-tree` | BC 集群 → 大区 → 小区树 + 未分配计数 |
+| POST | `/admin/v2/bc-clusters` | 新建 BC 集群 |
+| PATCH | `/admin/v2/bc-clusters/{id}` | 更新 BC 集群 |
+| DELETE | `/admin/v2/bc-clusters/{id}` | 删除 BC 集群（有子级 / 挂 proxy → 409） |
+| POST | `/admin/v2/regions` | 新建大区 |
+| PATCH | `/admin/v2/regions/{id}` | 更新大区 |
+| DELETE | `/admin/v2/regions/{id}` | 删除大区（有子级 → 409） |
+| POST | `/admin/v2/zones` | 新建小区 |
+| PATCH | `/admin/v2/zones/{id}` | 更新小区 |
+| DELETE | `/admin/v2/zones/{id}` | 删除小区（挂 server → 409） |
+| GET | `/admin/v2/servers` | server 分页列表（`assigned=false` 即未分配篮） |
+| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server）/ 解除归属（整批事务）；已分配服改归属须走换区工单 |
+| POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配服解绑 + 记预填目标，重确认落区） |
+| PUT | `/admin/v2/servers/{id}/default-entry` | 设置 / 清除默认入口标记 |
+| PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（消费方为调度 schedulable 判定） |
+
+### 指标健康调度（P4 · 0.24.x，真源 [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/metrics/report` | 5s 批量上报 1s 采样指标（兼活性信号，顺带回传自身健康） |
+| GET | `/beacon/v2/agent/schedule/candidates` | 拉取本 namespace 各 zone 调度候选快照 |
+| POST | `/beacon/v2/agent/schedule/decide` | 请求控制面做一次调度决策（产生 traceId） |
+| POST | `/beacon/v2/agent/schedule/report-local` | 降级期本地决策恢复后补报（幂等） |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/metrics/summary` | 集群聚合概览（分角色 / level 分布 / schedulable 计数） |
+| GET | `/admin/v2/metrics/series` | 单服 / 多服指标时序（服务端聚合） |
+| GET | `/admin/v2/health` | 全部服务器当前健康列表（内存实时） |
+| GET | `/admin/v2/health/{serverId}` | 单服健康详情（因子分解 + 权重版本） |
+| GET | `/admin/v2/health/snapshots` | 健康快照回放 |
+| GET | `/admin/v2/sched-decisions` | 调度决策记录分页查询 |
+| GET | `/admin/v2/sched-decisions/{traceId}` | 单条决策详情（候选 / 排除原因 / 选择） |
+| GET | `/admin/v2/sched-decisions/summary` | 决策概览（成功率 / 失败原因 Top） |
+| GET | `/admin/v2/settings/health-weights` | 当前健康权重配置 + 历史 rev |
+| PUT | `/admin/v2/settings/health-weights` | 全量替换健康权重（热更 + 新 rev + 审计） |
+
+> agent-api 本机接口（`BeaconScheduling`）见其 §5.3；排空切换端点已收编至区服权威域（上表 `/servers/{serverId}/draining`），不重复。
+
+### 连接消息存储（P5 · 0.25.x，真源 [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player 寻址） |
+| POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204） |
+| POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） |
+| GET | `/admin/v2/connections/{connId}` | 单连接详情 |
+| GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 |
+| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**） |
+| GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） |
+| POST | `/admin/v2/messages/{messageId}/payload` | 查看 payload（权限 + 原因必填 + 先审计） |
+| GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源） |
+
+### 热冷归档（P6 · 0.26.x，真源 [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/archive/overview` | 归档总览（目标库 / 各域水位与保留期） |
+| POST | `/admin/v2/archive/jobs` | 创建归档任务（dry-run / 执行） |
+| GET | `/admin/v2/archive/jobs` | 任务列表 |
+| GET | `/admin/v2/archive/jobs/{id}` | 任务详情（逐域 item 进度与校验结果） |
+| POST | `/admin/v2/archive/jobs/{id}/retry` | 失败任务断点续跑 |
+| POST | `/admin/v2/archive/jobs/{id}/cancel` | 取消任务 |
+
+> 保留期等设置走运维设置域端点；冷查询参数 `includeArchived` 挂各查询域端点（§4.4 跨域契约），均不在 `/archive/*` 下。
+
+### 配置中心 V2（P7 · 0.27.x，真源 [v2-config-center.md](specs/v2-config-center.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/config-files` | 配置文件分页列表 |
+| POST | `/admin/v2/config-files` | 创建配置文件（格式 / schema / 敏感路径） |
+| GET | `/admin/v2/config-files/{id}` | 文件元数据 + 各层覆盖概览 |
+| PATCH | `/admin/v2/config-files/{id}` | 更新描述 / schema / 敏感路径 |
+| DELETE | `/admin/v2/config-files/{id}` | 移入回收站（软删除，版本链保留） |
+| GET | `/admin/v2/config-files/trash` | 回收站分页列表 |
+| POST | `/admin/v2/config-files/{id}/restore` | 从回收站恢复（名称被占用 409） |
+| POST | `/admin/v2/config-files/{id}/purge` | 彻底删除（物理删除连带版本链，原因必填） |
+| GET | `/admin/v2/config-files/{id}/scopes` | 各层贡献链概览 |
+| GET | `/admin/v2/config-files/{id}/versions` | 某链版本列表 |
+| GET | `/admin/v2/config-versions/{versionId}` | 版本详情（内容脱敏） |
+| POST | `/admin/v2/config-files/{id}/versions` | 保存新版本（语法 / schema 校验 + 并发守卫） |
+| POST | `/admin/v2/config-versions/{versionId}/rollback` | 回退（生成内容等于历史版本的新版本） |
+| DELETE | `/admin/v2/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}` | 撤销某层贡献（生成 removal 版本） |
+| POST | `/admin/v2/config-files/{id}/validate` | 只读校验（不落库不审计） |
+| GET | `/admin/v2/config-files/{id}/effective` | 有效配置预览（五层合并 + 逐键来源） |
+| GET | `/admin/v2/config-files/{id}/diff` | 版本间 / 层间 / 目标间键级 diff |
+
+> 本域**无 agent 面端点**：配置下发 / 生效 / 灰度全部归交付编排域（变更单）。
+
+### 文件资产 V2（P8 · 0.28.x，真源 [v2-file-assets.md](specs/v2-file-assets.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/assets/manifest` | 上报文件清单（增量 / 全量分片，摘要校准） |
+| POST | `/beacon/v2/agent/assets/content` | 回传单文件内容（响应 `asset_read` 命令） |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/assets` | 资产搜索分页（路径 / 扩展名 / 哈希组合条件） |
+| GET | `/admin/v2/assets/scan-status` | 每服扫描概要（摘要 / 文件数 / 耗时） |
+| GET | `/admin/v2/assets/compare` | 跨服同路径哈希分组比对 + 缺失服列表 |
+| POST | `/admin/v2/assets/rescan` | 批量下发重扫命令 |
+| POST | `/admin/v2/assets/preview` | 文本文件安全预览（敏感命中须填原因） |
+| POST | `/admin/v2/assets/diff` | 两侧文件内容 diff（二进制 / 超限拒绝） |
+| GET | `/admin/v2/assets/sensitive-rules` | 敏感路径规则清单 |
+| PUT | `/admin/v2/assets/sensitive-rules` | 整体替换敏感路径规则（审计） |
+
+> 下行命令 `asset_rescan` / `asset_read` 经既有长轮询命令通道，非独立端点。
+
+### 交付编排 V2（P9 · 0.29.x，真源 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5）
+
+管理面 `/admin/v2/change-orders`：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/admin/v2/change-orders` | 创建 draft 变更单 |
+| GET | `/admin/v2/change-orders` | 变更单列表 |
+| GET | `/admin/v2/change-orders/{id}` | 详情（单 + items + 批次概要） |
+| PATCH | `/admin/v2/change-orders/{id}` | 编辑（approved 编辑触发回 draft） |
+| DELETE | `/admin/v2/change-orders/{id}` | 删除 draft 单（高风险确认） |
+| POST | `/admin/v2/change-orders/{id}/diff-scan` | 触发模板源重扫并重算差异 |
+| GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页） |
+| POST | `/admin/v2/change-orders/{id}/submit` | 提交审批 |
+| POST | `/admin/v2/change-orders/{id}/withdraw` | 创建人撤回 |
+| POST | `/admin/v2/change-orders/{id}/approve` | 审批通过 |
+| POST | `/admin/v2/change-orders/{id}/reject` | 驳回（原因必填） |
+| POST | `/admin/v2/change-orders/{id}/start` | 启动（冲突守卫 + payload 准备） |
+| POST | `/admin/v2/change-orders/{id}/pause` | 人工暂停 |
+| POST | `/admin/v2/change-orders/{id}/resume` | 继续（retry_failed / skip_failed） |
+| POST | `/admin/v2/change-orders/{id}/cancel` | 紧急终止（原因必填） |
+| POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 批次推进门放行（末批确认即完成） |
+| POST | `/admin/v2/change-orders/{id}/rollback` | 整单回滚（重复调用重试 failed 目标） |
+| POST | `/admin/v2/change-orders/{id}/rollback/finish` | 残留失败时人工结束回滚 |
+| GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（批次 / 状态过滤） |
+| GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（健康 / TPS / 告警） |
+| GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度 |
+
+agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/beacon/v2/agent/delivery/orders/{id}/upload-manifest` | 模板源拉取待上传 blob 清单 |
+| GET | `/beacon/v2/agent/delivery/orders/{id}/manifest` | 目标拉取本服差异清单与配置摘要 |
+| POST | `/beacon/v2/agent/delivery/orders/{id}/result` | 阶段回执（upload / push / activate / rollback） |
+
+流式数据面 `/beacon/v2/stream/delivery`：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| HEAD | `/beacon/v2/stream/delivery/blobs/{sha256}` | blob 存在性 / 就绪查询（去重与断点判断） |
+| PUT | `/beacon/v2/stream/delivery/blobs/{sha256}` | 模板源流式上传（服务端校验 sha256） |
+| GET | `/beacon/v2/stream/delivery/blobs/{sha256}` | 目标流式下载（Range 断点续传） |
+
+## 契约治理
+
+- **P0 冻结**：本章通用约定 + 各 v2 规格 §5 端点表构成第二版契约草案基线，随 P0 出口冻结（[ROADMAP](ROADMAP.md) §3 / §5）。
+- **P2 mock 只依赖本草案**：全量 mock 管理台（FR-172）的页面数据形状只依赖本草案（含各规格 §5 的请求 / 响应形状），不接真后端。
+- **此后契约变更按 ADR 管理**：改语义、删字段、改路径、改错误码等破坏性变更，**必须**先写新 ADR 决策，并**同步已拍板的 mock 页面**；纯新增端点 / 新增可选字段类小改可不立 ADR，但仍须同一变更内更新对应规格 §5 与本章索引（doc-sync）。**禁止后端实现随手改契约**（ROADMAP §5 尾部约定）。
+- **漂移处置**：端点索引与规格 §5 不一致时，以规格为准并回补本章索引；通用约定与规格冲突时，以本章裁决为准并回改规格。
