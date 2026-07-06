@@ -2,6 +2,23 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 0.20.0（2026-07-07）
+
+> 第二版起点：本版为纯文档发布——第二版规格基线全部冻结，无运行时代码变更。此后按 [docs/ROADMAP.md](docs/ROADMAP.md) 版本线推进：工程化基建（0.21.x）→ 全量 mock 管理台（0.22.x）→ 后端按域接真（0.23.x-0.29.x）→ RC（0.30.x）→ 1.0.0。
+
+### 新增
+- 第二版 PRD 基线（[docs/PRD.md](docs/PRD.md)）：集群调度中间件控制面定位、核心约束（namespace 强隔离 / 首次接入人工确认 / 业务插件只走本机 agent-api / payload 查看填原因）、FR-138~FR-176 共 35 条功能需求与阶段验收表。
+- 第二版路线图真源（[docs/ROADMAP.md](docs/ROADMAP.md)）：0.20.x → 1.0.0 版本线、阶段目标与退出条件、规格清单。
+- 前端交互真源（[docs/UX.md](docs/UX.md)）与 mockup 评审门规则（`.claude/rules/ux-spec.md`）：导航四大域信息架构、页面唯一职责、全局交互契约；新页面 / 结构性大改先过 mock 评审拍板。
+- 九份第二版域规格（`docs/specs/v2-*.md`）：agent 身份、namespace 隔离、区服权威（含全仓建表约定）、采样健康调度、连接消息存储、热冷归档、配置中心、文件资产、交付编排（变更单统一灰度生效）。
+- 第二版 REST 契约草案（[docs/API.md](docs/API.md)）：跨域通用约定（权威）+ 按域 126 端点索引 + 契约治理规则（草案冻结、破坏性变更走新 ADR）。
+- ADR-0060（monorepo 工作区布局与第二版前端栈：pnpm + Turborepo + apps / packages，Vite / React Router / TanStack Query / Zustand / react-i18next / MSW）、ADR-0061（静态检查最严档三线：TS strictTypeChecked / Go golangci 全量启用档 / Kotlin detekt 全规则）。
+
+### 变更
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 重写为第二版架构真源：控制面 / 数据面硬边界、monorepo 目标布局、领域模型、热冷双库与日期分表、通信三分面、mock 先行前端架构、阶段映射。
+- 原 REST 契约整体归入 [docs/API.md](docs/API.md) 的 Legacy 维护态章节（正文不动，随各域接真被 v2 契约取代）。
+- Legacy（v0.1.0 - v0.19.x）冻结策略落文档：旧功能需求、旧页面原型不再驱动开发，需要的能力在第二版重新立项、重写规格、重新验收。
+
 ## 0.19.0（2026-07-07）
 
 > Legacy（第一版）收尾版：本版为 v0.1.0 起第一版探索期的最后一个功能版本；自下一版（0.20.x）起进入第二版路线（见 [docs/ROADMAP.md](docs/ROADMAP.md)），第一版功能进入维护态冻结。

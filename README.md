@@ -2,7 +2,7 @@
 
 > 面向 Minecraft 多群组服务器的自研中间件控制面 —— 集群调度 · 区服治理 · 可观测审计。
 
-[![version](https://img.shields.io/badge/version-v0.18.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-v0.20.0-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
@@ -84,8 +84,8 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:0.18.0") // 只读契约
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.18.0") // 便捷门面（推荐）
+    compileOnly("top.wcpe.beacon:beacon-agent-api:0.20.0") // 只读契约
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.20.0") // 便捷门面（推荐）
 }
 ```
 
