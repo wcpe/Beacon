@@ -171,7 +171,7 @@ describe('ServersPage（FR-65 服务器页）', () => {
     expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
   })
 
-  it('点击表格行只更新右侧明细，不打开详情抽屉', async () => {
+  it('点击表格行只更新右侧明细，不打开详情模态框', async () => {
     vi.mocked(listInstances).mockResolvedValue([
       inst({ serverId: 'lobby-1', address: '10.0.0.1:25565' }),
       inst({ serverId: 'pvp-1', address: '10.0.0.3:25565' }),
@@ -184,6 +184,17 @@ describe('ServersPage（FR-65 服务器页）', () => {
 
     expect(await screen.findByText('选中 pvp-1')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('页面根不锁定滚动，主表格使用自身滚动容器承载千级列表', async () => {
+    renderPage(<ServersPage />)
+    expect(await screen.findByText('lobby-1')).toBeInTheDocument()
+
+    expect(screen.getByTestId('servers-page').className).not.toContain('overflow-hidden')
+    const tableScroll = screen.getByTestId('servers-table-scroll')
+    expect(tableScroll.className).toContain('overflow-auto')
+    expect(tableScroll.className).toContain('max-h-[calc(100vh-26rem)]')
+    expect(screen.getByText('亚健康')).toBeInTheDocument()
   })
 
   it('未分配 zone 的行黄色高亮 + 未分配徽标', async () => {
@@ -216,6 +227,7 @@ describe('ServersPage（FR-65 服务器页）', () => {
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: '行操作' }))
     await user.click(await screen.findByRole('menuitem', { name: '排空' }))
+    await user.click(await screen.findByRole('button', { name: '确认排空' }))
     await waitFor(() => expect(drainInstance).toHaveBeenCalledWith('lobby-1', 'prod'))
   })
 
@@ -229,6 +241,7 @@ describe('ServersPage（FR-65 服务器页）', () => {
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: '行操作' }))
     await user.click(await screen.findByRole('menuitem', { name: '取消排空' }))
+    await user.click(await screen.findByRole('button', { name: '确认取消排空' }))
     await waitFor(() => expect(undrainInstance).toHaveBeenCalledWith('lobby-1', 'prod'))
   })
 
@@ -241,6 +254,19 @@ describe('ServersPage（FR-65 服务器页）', () => {
     await user.click(await screen.findByRole('menuitem', { name: '改派' }))
     // ReassignDialog 标题含被改派 serverId
     expect(await screen.findByText('改派 lobby-1')).toBeInTheDocument()
+  })
+
+  it('菜单内点「agent 详情」打开详情模态框并展示深层操作区块', async () => {
+    vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1' })])
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+    await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'agent 详情' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('文件浏览')).toBeInTheDocument()
+    expect(within(dialog).getByText('命令记录')).toBeInTheDocument()
   })
 
   it('行操作菜单含三新项（agent 详情 / 查看日志 / 强制重同步）', async () => {
@@ -261,8 +287,28 @@ describe('ServersPage（FR-65 服务器页）', () => {
     await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: '行操作' }))
     await user.click(await screen.findByRole('menuitem', { name: '强制重同步' }))
+    await user.click(await screen.findByRole('button', { name: '确认重同步' }))
     await waitFor(() => expect(triggerResync).toHaveBeenCalledWith('lobby-1', 'prod'))
     await waitFor(() => expect(showSuccess).toHaveBeenCalled())
+  })
+
+  it('排空和重同步写操作必须先二次确认，不在菜单点击时直接提交', async () => {
+    vi.mocked(listInstances).mockResolvedValue([inst({ serverId: 'lobby-1', namespace: 'prod' })])
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+    await waitFor(() => expect(screen.getByText('lobby-1')).toBeInTheDocument())
+
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '排空' }))
+    expect(drainInstance).not.toHaveBeenCalled()
+    await user.click(await screen.findByRole('button', { name: '确认排空' }))
+    await waitFor(() => expect(drainInstance).toHaveBeenCalledWith('lobby-1', 'prod'))
+
+    await user.click(screen.getByRole('button', { name: '行操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '强制重同步' }))
+    expect(triggerResync).not.toHaveBeenCalled()
+    await user.click(await screen.findByRole('button', { name: '确认重同步' }))
+    await waitFor(() => expect(triggerResync).toHaveBeenCalledWith('lobby-1', 'prod'))
   })
 
   it('已主动下线区可取消下线，携带其 serverId 与 namespace', async () => {
@@ -274,6 +320,7 @@ describe('ServersPage（FR-65 服务器页）', () => {
     renderPage(<ServersPage />)
     await waitFor(() => expect(screen.getByText('gone-1')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: '取消下线' }))
+    await user.click(await screen.findByRole('button', { name: '确认取消下线' }))
     await waitFor(() => expect(onlineInstance).toHaveBeenCalledWith('gone-1', 'stage'))
   })
 })

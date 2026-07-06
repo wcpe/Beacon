@@ -72,6 +72,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	apiKeySvc := service.NewAPIKeyService(db, repository.NewAPIKeyRepository(db), auditRepo)
 	testAlertInbox = alert.NewInboxAlerter(16)
 	commandHub := longpoll.NewHub()
+	browseHub := longpoll.NewHub()
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
@@ -92,8 +93,11 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileSvc, auditRepo)
 	commandService.SetNotifier(notifier)
+	commandService.SetBrowseResultHub(browseHub)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
+	browseHandler := handler.NewBrowseHandler(commandService, instSvc)
+	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
 	fileSyncSvc := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instSvc, auditRepo, service.NewFileSyncEventHub())
 	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。
 	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo, settingsSvc)
@@ -128,6 +132,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
 		Command:          handler.NewCommandHandler(commandService, instSvc),
+		CommandObserve:   commandObserveHandler,
+		Browse:           browseHandler,
 		FileSync:         handler.NewFileSyncHandler(fileSyncSvc),
 		AgentLog:         agentLogHandler,
 		ReverseFetchTask: reverseFetchTaskHandler,
