@@ -6,7 +6,7 @@ import { startControlPlaneMocking } from '@beacon/devmock'
 import '@beacon/ui/styles.css'
 import './styles.css'
 import './i18n'
-import AppShell from './App'
+import AppShell from './shell/app-shell'
 
 const queryClient = new QueryClient()
 

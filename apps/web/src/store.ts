@@ -1,17 +1,14 @@
 import { create } from 'zustand'
 
-export type AppView = 'overview' | 'topology' | 'settings'
-
+// Shell 全局状态：目前只管侧栏折叠；当前页高亮由路由（NavLink）自行判定
 interface ShellState {
-  activeView: AppView
   sidebarCollapsed: boolean
-  setActiveView: (view: AppView) => void
   toggleSidebar: () => void
 }
 
 export const useShellStore = create<ShellState>((set) => ({
-  activeView: 'overview',
   sidebarCollapsed: false,
-  setActiveView: (activeView) => { set({ activeView }); },
-  toggleSidebar: () => { set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })); },
+  toggleSidebar: () => {
+    set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed }))
+  },
 }))
