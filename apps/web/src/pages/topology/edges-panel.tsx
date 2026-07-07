@@ -1,0 +1,130 @@
+// 消息异常链路：messages/stats 边聚合，异常边（失败/过期）高亮；点击看明细（样本消息 + 主要失败原因）。
+// 明细支持与 /commands、/audits 互跳（FR-157）。
+
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
+
+import {
+  AsyncSection,
+  Badge,
+  DataTable,
+  SectionHeader,
+  type DataTableColumn,
+} from '@beacon/ui'
+import type { MessageEdgeStat } from '@beacon/devmock'
+
+import { fetchMessageEdges } from '../../api/cluster'
+
+// 边的失败率阈值：超过即视为异常边高亮
+const ABNORMAL_RATE = 5
+
+export default function EdgesPanel() {
+  const { t } = useTranslation()
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+
+  const query = useQuery({ queryKey: ['message-edges'], queryFn: fetchMessageEdges })
+  // 异常边（失败率高）排前，便于运维一眼看到问题链路
+  const edges = useMemo(
+    () => [...(query.data?.edges ?? [])].sort((a, b) => b.failRatePercent - a.failRatePercent),
+    [query.data],
+  )
+
+  const edgeKey = (edge: MessageEdgeStat) => `${edge.sourceServerId}→${edge.resolvedServerId}`
+  const selected = useMemo(
+    () => edges.find((edge) => edgeKey(edge) === selectedKey) ?? null,
+    [edges, selectedKey],
+  )
+
+  const columns = useMemo<DataTableColumn<MessageEdgeStat>[]>(
+    () => [
+      {
+        header: t('cluster.topology.edges.source'),
+        cell: (edge) => <span className="font-mono text-xs">{edge.sourceServerId}</span>,
+      },
+      {
+        header: t('cluster.topology.edges.target'),
+        cell: (edge) => <span className="font-mono text-xs">→ {edge.resolvedServerId}</span>,
+      },
+      { header: t('cluster.topology.edges.total'), cell: (edge) => edge.total },
+      {
+        header: t('cluster.topology.edges.failRate'),
+        cell: (edge) =>
+          edge.failRatePercent >= ABNORMAL_RATE ? (
+            <Badge variant="destructive">{edge.failRatePercent}%</Badge>
+          ) : (
+            <span>{edge.failRatePercent}%</span>
+          ),
+      },
+      { header: t('cluster.topology.edges.p95'), cell: (edge) => `${String(edge.p95DurationMs)}ms` },
+    ],
+    [t],
+  )
+
+  return (
+    <section className="grid gap-3">
+      <SectionHeader title={t('cluster.topology.edges.title')} />
+      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+        <DataTable
+          columns={columns}
+          rows={edges}
+          rowKey={(edge) => edgeKey(edge)}
+          emptyText={t('cluster.topology.edges.empty')}
+          density="compact"
+          pageSize={20}
+          onRowClick={(edge) => {
+            setSelectedKey(edgeKey(edge))
+          }}
+          rowClassName={(edge) => (edge.failRatePercent >= ABNORMAL_RATE ? 'bg-destructive/5' : undefined)}
+        />
+
+        {/* 链路明细：样本消息 + 主要失败原因 + 互跳入口 */}
+        {selected && (
+          <div className="grid gap-2 rounded-md border px-3 py-3 text-sm">
+            <p className="font-medium">{t('cluster.topology.edges.detailTitle')}</p>
+            <p className="font-mono text-xs">
+              {selected.sourceServerId} → {selected.resolvedServerId}
+            </p>
+
+            {selected.topFailReasons.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground">{t('cluster.topology.edges.topReasons')}</p>
+                <ul className="mt-1 flex flex-wrap gap-1.5">
+                  {selected.topFailReasons.map((reason) => (
+                    <li key={reason.reason}>
+                      <Badge variant="outline">
+                        {reason.reason} · {reason.count}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs text-muted-foreground">{t('cluster.topology.edges.sampleMessages')}</p>
+              <ul className="mt-1 grid gap-0.5">
+                {selected.sampleMessageIds.map((id) => (
+                  <li key={id} className="font-mono text-xs text-muted-foreground">
+                    {id}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* 与 /commands、/audits 互跳（FR-157） */}
+            <div className="flex gap-3 pt-1 text-xs">
+              <Link className="text-primary hover:underline" to="/commands">
+                {t('cluster.topology.edges.viewInCommands')}
+              </Link>
+              <Link className="text-primary hover:underline" to="/audits">
+                {t('cluster.topology.edges.viewInAudits')}
+              </Link>
+            </div>
+          </div>
+        )}
+      </AsyncSection>
+    </section>
+  )
+}
