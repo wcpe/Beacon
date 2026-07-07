@@ -60,7 +60,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 
 | 编号 | 能力 | 阶段 | 版本线 | 验收摘要 | 状态 |
 |---|---|---|---|---|---|
-| FR-138 | Legacy 前端整体冻结：`web/` 不再演进，第二版二进制仅嵌 `apps/web` 新管理台 | P1 | 0.21.x | 发布产物只嵌新管理台；`web/` 冻结边界写入 ARCHITECTURE；真机依赖旧功能时继续运行 v0.19 及更早版本并有文档说明 | 计划 |
+| FR-138 | Legacy 前端整体冻结：`web/` 不再演进，第二版二进制仅嵌 `apps/web` 新管理台 | P1 | 0.21.x | 发布产物只嵌新管理台；`web/` 冻结边界写入 ARCHITECTURE；真机依赖旧功能时继续运行 v0.19 及更早版本并有文档说明 | 已交付@v0.21.0 |
 | FR-139 | Agent 首启生成并持久化唯一 `identityId` | P3 | 0.23.x | 首启生成身份文件；重启不变；复制目录导致重复身份能被识别 | 计划 |
 | FR-140 | Agent 注册绑定：`identityId + namespace + serverId` 首次接入人工确认 | P3 | 0.23.x | 新 agent 出现在待确认列表；确认前不可调度；确认、拒绝、过期都入审计 | 计划 |
 | FR-141 | 身份冲突、解绑、换区、禁用、重新绑定流程 | P3 | 0.23.x | 后台能处理身份冲突和换区；解绑后旧绑定不可继续误用；所有操作入审计 | 计划 |
@@ -95,10 +95,10 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-170 | 「交付」大分类信息架构：与集群、系统并列的导航大域，聚合文件资产、配置中心、变更单与交付历史 | P2 | 0.22.x | 侧栏出现「交付」大分类；文件资产、配置中心、变更单、交付历史页面有明确挂载位；维护态旧入口不回流 | 计划 |
 | FR-171 | 生效编排：批次内触发子服重启 / 插件热重载，采集生效结果与观察窗健康数据 | P9 | 0.29.x | 批次可配置生效方式（重启 / 热重载 / 仅推送）；关服后超时未回归判生效失败并计入熔断；观察窗展示健康分、TPS、告警 | 计划 |
 | FR-172 | 全量 mock 管理台：`docs/UX.md` 全部页面以演示模式实现并逐页评审拍板 | P2 | 0.22.x | UX.md §2 所有页面在 mock 数据下可点击、可演示；每页过 mockup 评审门并拍板留档；mock 覆盖空态 / 常规 / 超大量 / 异常；只依赖 API 契约草案，不接真后端 | 计划 |
-| FR-173 | monorepo 工程化：pnpm workspace + Turborepo，`apps/`（server / agent / web / ui-wiki）+ `packages/`（ui / devmock / eslint-config / typescript-config）布局迁移 | P1 | 0.21.x | Go 迁 `apps/server` 且 go:embed、Makefile、CI、脚本全部打通；agent 迁 `apps/agent` 构建绿；`turbo run lint / test / build` 全仓一键；配套 monorepo 与前端栈 ADR 落地 | 计划 |
-| FR-174 | 第二版 web 脚手架：`apps/web` 新建（Vite + React Router + TanStack Query + Zustand + react-i18next + MSW） | P1 | 0.21.x | 新台骨架可跑（路由 / 布局 / 主题 / i18n）；MSW 经 `packages/devmock` 双端可用（浏览器 + 测试共享 handlers）；服务器状态归 TanStack Query、客户端状态归 Zustand 的边界写入规范 | 计划 |
-| FR-175 | UI 博物馆：`@beacon/ui` 提升 `packages/ui`，ui-wiki 提升 `apps/ui-wiki`，控件展示覆盖率门禁 | P1 | 0.21.x | 每个 `@beacon/ui` 导出控件在 ui-wiki 有展示页（覆盖率检查纳入 CI 必过）；新管理台组件一律取自 `packages/ui`，不允许页面内私建通用控件 | 计划 |
-| FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 计划 |
+| FR-173 | monorepo 工程化：pnpm workspace + Turborepo，`apps/`（server / agent / web / ui-wiki）+ `packages/`（ui / devmock / eslint-config / typescript-config）布局迁移 | P1 | 0.21.x | Go 迁 `apps/server` 且 go:embed、Makefile、CI、脚本全部打通；agent 迁 `apps/agent` 构建绿；`turbo run lint / test / build` 全仓一键；配套 monorepo 与前端栈 ADR 落地 | 已交付@v0.21.0 |
+| FR-174 | 第二版 web 脚手架：`apps/web` 新建（Vite + React Router + TanStack Query + Zustand + react-i18next + MSW） | P1 | 0.21.x | 新台骨架可跑（路由 / 布局 / 主题 / i18n）；MSW 经 `packages/devmock` 双端可用（浏览器 + 测试共享 handlers）；服务器状态归 TanStack Query、客户端状态归 Zustand 的边界写入规范 | 已交付@v0.21.0 |
+| FR-175 | UI 博物馆：`@beacon/ui` 提升 `packages/ui`，ui-wiki 提升 `apps/ui-wiki`，控件展示覆盖率门禁 | P1 | 0.21.x | 每个 `@beacon/ui` 导出控件在 ui-wiki 有展示页（覆盖率检查纳入 CI 必过）；新管理台组件一律取自 `packages/ui`，不允许页面内私建通用控件 | 已交付@v0.21.0 |
+| FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 已交付@v0.21.0 |
 
 ## 5. 非功能需求（NFR）
 

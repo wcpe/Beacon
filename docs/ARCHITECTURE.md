@@ -24,14 +24,14 @@ Beacon 是**集群调度中间件的控制面（control plane）**：集中存�
 
 ## 2. 仓库布局与模块
 
-### 2.1 monorepo 目标布局（随 P1 · 0.21.x 落地，FR-173；当前物理布局仍是 Legacy 形态）
+### 2.1 monorepo 工作区布局（随 P1 · 0.21.x 落地，FR-173）
 
 pnpm workspace + Turborepo，`turbo run lint / test / build` 全仓一键：
 
 ```
 apps/
-  server/      Go 控制面（Legacy cmd/ + internal/ 迁入；go:embed、Makefile、CI、脚本全部打通）
-  agent/       Kotlin/TabooLib agent（Legacy agent/ 迁入）
+  server/      Go 控制面（cmd/ + internal/ 已迁入；go:embed、Makefile、CI、脚本同步适配）
+  agent/       Kotlin/TabooLib agent
   web/         第二版管理台（新建，栈见 §6；发布二进制只嵌它）
   ui-wiki/     UI 控件博物馆（每个 @beacon/ui 导出控件必有展示页，覆盖率进 CI 门禁，FR-175）
 packages/
@@ -40,7 +40,7 @@ packages/
   eslint-config/ typescript-config/   共享工程配置（静态检查最严档三线，FR-176）
 ```
 
-迁移前的物理现状：Go 代码在 `cmd/` + `internal/`，Legacy 前端在 `web/`（P1 起整体冻结不演进，FR-138）。布局与栈的决策见 [ADR-0060](adr/0060-monorepo-layout-and-v2-frontend-stack.md)（monorepo 与第二版前端栈）、[ADR-0061](adr/0061-strictest-static-analysis-three-lines.md)（静态检查最严档三线）。
+当前物理现状：Go 控制面在 `apps/server/`，agent 在 `apps/agent/`，UI 包与控件博物馆已提升到 `packages/ui` 与 `apps/ui-wiki`；Legacy 前端仍在 `web/`（P1 起整体冻结不演进，FR-138）。布局与栈的决策见 [ADR-0060](adr/0060-monorepo-layout-and-v2-frontend-stack.md)（monorepo 与第二版前端栈）、[ADR-0061](adr/0061-strictest-static-analysis-three-lines.md)（静态检查最严档三线）。
 
 ### 2.2 控制面（Go）分层原则（沿用）
 

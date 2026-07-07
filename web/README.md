@@ -18,7 +18,7 @@ import { Button, DataTable, type DataTableColumn } from '@beacon/ui'
 
 ## 控件博物馆
 
-`apps/ui-wiki` 是独立开发期 wiki，不注册到 Beacon 管理台生产路由，也不会输出到 `web/dist`。
+`apps/ui-wiki` 是独立开发期 wiki，不注册到 Beacon 管理台生产路由，也不会输出到 `apps/web/dist`。
 
 常用命令：
 

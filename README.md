@@ -95,12 +95,18 @@ dependencies {
 
 ```
 Beacon/
-├── cmd/beacon/          # Go 入口
-├── internal/            # 控制面实现：server / handler / service / repository /
-│                        #   runtime / merge / model / store / sse / metrics / secret …（单向分层）
-├── web/                 # React(Vite+TS) 管理台，dist/ 被 go:embed 内嵌
-├── agent/               # Kotlin/TabooLib：agent-core / -api / -kit / -bukkit / -bungee / -adapters
-├── test/e2e/            # 跨平台 Go E2E（自管控制面 + 真 Paper/Waterfall）
+├── apps/server/cmd/beacon/  # Go 控制面入口
+├── apps/server/internal/    # 控制面实现：server / handler / service / repository /
+│                            #   runtime / merge / model / store / sse / metrics / secret …（单向分层）
+├── apps/web/            # 第二版 React(Vite+TS) 管理台，dist/ 被 go:embed 内嵌
+├── web/                 # Legacy React(Vite+TS) 管理台，冻结保留
+├── apps/agent/          # Kotlin/TabooLib：agent-core / -api / -kit / -bukkit / -bungee / -adapters
+├── apps/ui-wiki/        # UI 控件博物馆
+├── packages/devmock/    # 第二版前端开发期 mock 数据
+├── packages/eslint-config/      # 根级前端共享 ESLint 配置
+├── packages/typescript-config/  # 根级前端共享 TypeScript 配置
+├── packages/ui/         # 管理台共享 UI 包
+├── apps/server/test/e2e/ # 跨平台 Go E2E（自管控制面 + 真 Paper/Waterfall）
 ├── docs/                # 入库文档：PRD / ARCHITECTURE / API / ADR / OPERATIONS …
 ├── Dockerfile  docker-compose.yml  Makefile
 └── .tmp/                # 过程文档（不入库）

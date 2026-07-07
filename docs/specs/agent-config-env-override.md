@@ -37,8 +37,8 @@ agent（数据面，TabooLib 插件）当前只能从 `config.yml` 读配置；�
 ## 5. 验收标准
 
 - 单测：env 覆盖 string/int/long/double/boolean/stringList；env 缺失或空 → 文件值；env 解析失败 → 文件值；命名映射正确；`keys()` 始终委托文件。
-- E2E：agent 经 env 注入接入控制面（不写 `config.yml`），`go test -tags=e2e ./test/e2e/{directory,override,metrics}` 三套件全绿（注册 / 热更 / 目录注入 / override / metrics 均成立）。
-- 受影响组件测试绿：`./gradlew -p agent test`。
+- E2E：agent 经 env 注入接入控制面（不写 `config.yml`），`go test -tags=e2e ./apps/server/test/e2e/{directory,override,metrics}` 三套件全绿（注册 / 热更 / 目录注入 / override / metrics 均成立）。
+- 受影响组件测试绿：`./apps/agent/gradlew -p apps/agent test`。
 
 ## 6. 风险 / 待定
 

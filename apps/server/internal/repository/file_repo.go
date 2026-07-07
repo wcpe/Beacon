@@ -1,0 +1,205 @@
+package repository
+
+import (
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
+)
+
+// FileFilter 是文件对象列表查询的可选过滤条件。
+type FileFilter struct {
+	Namespace  string
+	Group      string
+	Path       string
+	ScopeLevel string
+}
+
+// FileObjectRepository 提供 file_object 表的数据访问（文件树托管通道B）。
+type FileObjectRepository struct {
+	db *gorm.DB
+}
+
+// NewFileObjectRepository 构造仓库。
+func NewFileObjectRepository(db *gorm.DB) *FileObjectRepository {
+	return &FileObjectRepository{db: db}
+}
+
+// WithTx 返回绑定到事务的仓库副本（供 service 在事务内复用）。
+func (r *FileObjectRepository) WithTx(tx *gorm.DB) *FileObjectRepository {
+	return &FileObjectRepository{db: tx}
+}
+
+// active 返回仅含未软删记录的查询（deleted_at = 哨兵）。
+func (r *FileObjectRepository) active() *gorm.DB {
+	return r.db.Where("deleted_at = ?", model.SoftDeleteSentinel)
+}
+
+// Create 插入一个文件对象。
+func (r *FileObjectRepository) Create(obj *model.FileObject) error {
+	return r.db.Create(obj).Error
+}
+
+// Save 全量保存文件对象（发布更新 content/md5/current_revision/version 等）。
+func (r *FileObjectRepository) Save(obj *model.FileObject) error {
+	return r.db.Save(obj).Error
+}
+
+// FindByID 按主键查找未软删项；不存在返回 (nil, nil)。
+func (r *FileObjectRepository) FindByID(id uint) (*model.FileObject, error) {
+	var obj model.FileObject
+	err := r.active().Where("id = ?", id).First(&obj).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &obj, nil
+}
+
+// FindByIDs 一次性按主键集合取未软删项（WHERE id IN (?)，占位符无方言、可移植）。
+// 供批量端点替代逐项 FindByID 消除 N+1；返回数量可能少于入参（含不存在 id），由上层据此判 404。
+func (r *FileObjectRepository) FindByIDs(ids []uint) ([]model.FileObject, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var objs []model.FileObject
+	if err := r.active().Where("id IN ?", ids).Find(&objs).Error; err != nil {
+		return nil, err
+	}
+	return objs, nil
+}
+
+// FindByIdentity 按标识五元组查找未软删项；不存在返回 (nil, nil)。
+func (r *FileObjectRepository) FindByIdentity(ns, group, path, scopeLevel, scopeTarget string) (*model.FileObject, error) {
+	var obj model.FileObject
+	err := r.active().Where(
+		"namespace_code = ? AND group_code = ? AND path = ? AND scope_level = ? AND scope_target = ?",
+		ns, group, path, scopeLevel, scopeTarget,
+	).First(&obj).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &obj, nil
+}
+
+// List 按可选条件列出未软删文件对象。
+func (r *FileObjectRepository) List(f FileFilter) ([]model.FileObject, error) {
+	q := r.active()
+	if f.Namespace != "" {
+		q = q.Where("namespace_code = ?", f.Namespace)
+	}
+	if f.Group != "" {
+		q = q.Where("group_code = ?", f.Group)
+	}
+	if f.Path != "" {
+		q = q.Where("path = ?", f.Path)
+	}
+	if f.ScopeLevel != "" {
+		q = q.Where("scope_level = ?", f.ScopeLevel)
+	}
+	var objs []model.FileObject
+	if err := q.Order("namespace_code, group_code, path, scope_level, scope_target").Find(&objs).Error; err != nil {
+		return nil, err
+	}
+	return objs, nil
+}
+
+// ListByOverrideSet 列出某覆盖集（FR-15）的全部未软删成员文件，按 path 字典序稳定排序。
+func (r *FileObjectRepository) ListByOverrideSet(setID uint) ([]model.FileObject, error) {
+	var objs []model.FileObject
+	if err := r.active().Where("override_set_id = ?", setID).Order("path").Find(&objs).Error; err != nil {
+		return nil, err
+	}
+	return objs, nil
+}
+
+// CountByNamespace 统计某环境下未软删的文件对象数（供环境删除守卫，FR-53）。
+func (r *FileObjectRepository) CountByNamespace(ns string) (int64, error) {
+	var n int64
+	err := r.active().Model(&model.FileObject{}).Where("namespace_code = ?", ns).Count(&n).Error
+	return n, err
+}
+
+// SoftDelete 软删文件对象：填真实删除时间并置 enabled=false。
+// 校验 RowsAffected：0 命中（项已被并发软删）即返回 not-found，由批量调用方据此回滚，
+// 杜绝预取通过、事务内目标已消失却照常写「幽灵审计」（TOCTOU，FR-74）。
+func (r *FileObjectRepository) SoftDelete(id uint, deletedAt time.Time) error {
+	res := r.db.Model(&model.FileObject{}).
+		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
+		Updates(map[string]any{"deleted_at": deletedAt, "enabled": false})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrFileNotFound
+	}
+	return nil
+}
+
+// SetEnabled 置未软删文件对象的启用态（批量禁用 / 启用复用，FR-74）。
+// 同 SoftDelete：0 命中返回 not-found，挡并发软删后的幽灵审计。
+func (r *FileObjectRepository) SetEnabled(id uint, enabled bool) error {
+	res := r.db.Model(&model.FileObject{}).
+		Where("id = ? AND deleted_at = ?", id, model.SoftDeleteSentinel).
+		Update("enabled", enabled)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return apperr.ErrFileNotFound
+	}
+	return nil
+}
+
+// FindEffectiveCandidates 拉取某 agent 身份的四层候选文件（已 enabled 且未软删）。
+// 一条查询拉全 global/group/zone/server 四层，由上层按 path 解析整文件覆盖。
+//
+// 排除覆盖集成员（override_set_id > 0）：成员文件落 targetRoot 须经 agent 侧
+// OverrideApplier（备份 + 受管标记 + 路径安全 + 命令派发，见 ADR-0011），不走通用文件树镜像，
+// 否则同一 path 会被双写到两个根。成员走独立的 override 投递通道（FindEffectiveSets）。
+func (r *FileObjectRepository) FindEffectiveCandidates(ns, group, zone, serverID string) ([]model.FileObject, error) {
+	levelCond := r.db.
+		Where("scope_level = ? AND group_code = ?", model.ScopeGlobal, model.GlobalGroupCode).
+		Or("scope_level = ? AND group_code = ?", model.ScopeGroup, group).
+		Or("scope_level = ? AND group_code = ? AND scope_target = ?", model.ScopeZone, group, zone).
+		Or("scope_level = ? AND group_code = ? AND scope_target = ?", model.ScopeServer, group, serverID)
+
+	var objs []model.FileObject
+	err := r.db.
+		Where("deleted_at = ?", model.SoftDeleteSentinel).
+		Where("enabled = ?", true).
+		Where("override_set_id = ?", 0). // 排除覆盖集成员，避免与 override 投递通道双写
+		Where("namespace_code = ?", ns).
+		Where(levelCond).
+		Find(&objs).Error
+	if err != nil {
+		return nil, err
+	}
+	return objs, nil
+}
+
+// FindOverrideMember 取某覆盖集成员文件（按 path 精确匹配，已 enabled 且未软删）；不存在返回 (nil, nil)。
+// agent 取覆盖集成员内容时用：成员 path 相对 targetRoot，与通用文件树 path 空间隔离（按 override_set_id 限定）。
+func (r *FileObjectRepository) FindOverrideMember(setID uint, path string) (*model.FileObject, error) {
+	var obj model.FileObject
+	err := r.active().
+		Where("enabled = ?", true).
+		Where("override_set_id = ?", setID).
+		Where("path = ?", path).
+		First(&obj).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &obj, nil
+}

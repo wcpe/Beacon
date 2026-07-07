@@ -6,7 +6,7 @@
 //   - 两个 project：
 //       · mock —— 对「假后端（演示模式）」跑，由 webServer 起 `pnpm dev:mock`（vite mock 模式），
 //         登录走登录页「演示模式」按钮，无需真后端。日常主跑、最稳，必须本机绿。
-//       · real —— 对「真控制面」跑：globalSetup 先 `make web` + `go build` 出 beacon 单二进制（内嵌前端），
+//       · real —— 对「真控制面」跑：启动脚本先构建 apps/web + `go build` 出 beacon 单二进制（内嵌前端），
 //         webServer 用 sqlite + 固定 admin 凭据 + 固定端口起它，登录走真凭据。覆盖关键链路。
 //   - 两 project 各自独立 baseURL / webServer；用 grep 标签或 testMatch 区分用例归属。
 //
@@ -27,7 +27,7 @@ export const REAL_ADMIN_USERNAME = 'admin'
 export const REAL_ADMIN_PASSWORD = 'beacon-e2e-admin-pass'
 export const REAL_AUTH_SECRET = 'beacon-e2e-auth-secret-0123456789'
 
-// 仓库根（web/ 的上一级）：globalSetup 在此跑 make web + go build。
+// 仓库根（web/ 的上一级）：真后端启动脚本在此构建 apps/web + go build。
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 // 构建出的真后端二进制路径（Windows 带 .exe）。
 const beaconBin = fileURLToPath(

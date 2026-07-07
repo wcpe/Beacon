@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 新增
+- P1 monorepo 根级前端工作区：新增根级 `pnpm-workspace.yaml`、`turbo.json` 与根 `package.json`，并把 `@beacon/ui` 与 UI 控件博物馆提升到 `packages/ui`、`apps/ui-wiki`；新增根级 `scripts/check-ui-wiki-coverage.mjs`，校验 ui-wiki 覆盖全部 UI 包导出。
+- P1 第二版前端基建包：新增 `packages/devmock`、`packages/eslint-config`、`packages/typescript-config`，`packages/devmock` 提供 MSW handlers 与浏览器 worker 启动入口，`apps/web` 使用 TanStack Query 承载服务器状态、Zustand 承载客户端 shell 状态，根级 `pnpm run lint` 通过 Turborepo 覆盖第二版前端工作区的 strict typed ESLint。
+- P1 Go 静态检查档位提升：`.golangci.yml` 切到 `default: all` 基线，集中声明 Legacy / 主观格式 / 不适用栈的禁用清单，`golangci-lint run` 作为 CI 与本地 Go linter 真源。
+- P1 monorepo `apps/agent` 迁移：把 Kotlin/TabooLib agent 从仓库根 `agent/` 迁入 `apps/agent/`，同步 Gradle 版本读取、Makefile、CI、E2E harness 与运维文档中的路径。
+- P1 monorepo `apps/server` 迁移：把 Go 控制面入口与 `internal/` 分层迁入 `apps/server/`，同步控制面构建入口、版本注入路径、Dockerfile、Release/E2E workflow 与 Go E2E 包路径。
+
 ## 0.20.0（2026-07-07）
 
 > 第二版起点：本版为纯文档发布——第二版规格基线全部冻结，无运行时代码变更。此后按 [docs/ROADMAP.md](docs/ROADMAP.md) 版本线推进：工程化基建（0.21.x）→ 全量 mock 管理台（0.22.x）→ 后端按域接真（0.23.x-0.29.x）→ RC（0.30.x）→ 1.0.0。

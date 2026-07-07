@@ -31,7 +31,7 @@ export BEACON_PUBLISH_URL='https://nexus.example.com/repository/maven-releases/'
 export BEACON_PUBLISH_USERNAME='<仓库账号>'
 export BEACON_PUBLISH_PASSWORD='<仓库口令或令牌>'
 
-cd agent
+cd apps/agent
 # 仅发远程仓库：
 ./gradlew :agent-api:publishAllPublicationsToBeaconRemoteRepository \
           :agent-kit:publishAllPublicationsToBeaconRemoteRepository

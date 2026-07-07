@@ -1,0 +1,560 @@
+package service
+
+import (
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/gitexport"
+	"github.com/wcpe/Beacon/apps/server/internal/merge"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
+)
+
+// MaxContentBytes 是单条配置内容大小上限（256KB）。
+const MaxContentBytes = 256 * 1024
+
+// CreateConfigParams 是新建配置项（首次发布）的入参。
+type CreateConfigParams struct {
+	Namespace   string
+	Group       string
+	DataID      string
+	ScopeLevel  string
+	ScopeTarget string
+	Format      string
+	Content     string
+	Operator    string
+	Comment     string
+	ClientIP    string
+	// 是否敏感项：为真则 content 加密入库（at-rest，FR-20）
+	Sensitive bool
+}
+
+// PublishRecorder 是配置发布计数的窄接口（由 metrics 实现，可选注入；未注入即不计数）。
+type PublishRecorder interface {
+	IncConfigPublish()
+}
+
+// ReversibleRecorder 是"在大操作事务内记一条可逆账目"的窄接口（由 ReversibleOperationService 实现，
+// 可选注入；未注入即不记账、该操作不可撤回，FR-116）。同事务记账保证操作与可逆账目原子（ADR-0051 决策 4）。
+type ReversibleRecorder interface {
+	RecordPublishInTx(tx *gorm.DB, p RecordPublishParams) error
+}
+
+// ConfigService 编排配置中心：CRUD/发布/回滚/历史/diff，事务内 item+revision+audit 原子完成。
+type ConfigService struct {
+	db         *gorm.DB
+	configRepo *repository.ConfigItemRepository
+	revRepo    *repository.ConfigRevisionRepository
+	auditRepo  *repository.AuditLogRepository
+	notifier   *ChangeNotifier    // 可选，事务提交后唤醒受影响长轮询
+	metrics    PublishRecorder    // 可选，发布计数（见 ADR-0020）
+	exporter   GitExporter        // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
+	reversible ReversibleRecorder // 可选，发布时同事务记可逆账目（FR-116，未注入即不可撤回）
+}
+
+// NewConfigService 构造服务。
+func NewConfigService(db *gorm.DB, configRepo *repository.ConfigItemRepository, revRepo *repository.ConfigRevisionRepository, auditRepo *repository.AuditLogRepository) *ConfigService {
+	return &ConfigService{db: db, configRepo: configRepo, revRepo: revRepo, auditRepo: auditRepo}
+}
+
+// SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
+func (s *ConfigService) SetNotifier(n *ChangeNotifier) {
+	s.notifier = n
+}
+
+// SetMetrics 注入发布计数器（启动时装配；未注入则不计数）。
+func (s *ConfigService) SetMetrics(m PublishRecorder) {
+	s.metrics = m
+}
+
+// recordPublish 在发布/回滚/首次发布成功后累加发布计数（注入了才计）。
+func (s *ConfigService) recordPublish() {
+	if s.metrics != nil {
+		s.metrics.IncConfigPublish()
+	}
+}
+
+// SetGitExporter 注入 git 导出触发器（启动时装配；未注入则不导出，FR-47）。
+func (s *ConfigService) SetGitExporter(e GitExporter) {
+	s.exporter = e
+}
+
+// SetReversibleRecorder 注入可逆账目记账器（启动时装配；未注入则发布不可撤回，FR-116）。
+func (s *ConfigService) SetReversibleRecorder(r ReversibleRecorder) {
+	s.reversible = r
+}
+
+// exportGit 在事务提交成功后触发 git 单向导出（best-effort 非阻塞；与 notify 并列、互不阻塞）。
+// 仅注入了导出器才触发；ExportAsync 内部立即返回，git IO 在导出 worker goroutine 跑（FR-47）。
+func (s *ConfigService) exportGit(item *model.ConfigItem, action, operator string) {
+	if s.exporter == nil {
+		return
+	}
+	s.exporter.ExportAsync(gitexport.ExportMeta{
+		Operator: operator,
+		Action:   action,
+		Target:   configTargetRef(item),
+		Version:  item.Version,
+	})
+}
+
+// configTargetRef 渲染配置项的可读对象引用（与审计 TargetRef 同格式），供 commit message 追溯。
+func configTargetRef(item *model.ConfigItem) string {
+	return fmt.Sprintf("%s/%s/%s@%s:%s", item.NamespaceCode, item.GroupCode, item.DataID, item.ScopeLevel, item.ScopeTarget)
+}
+
+// mapDuplicateKey 把并发撞唯一键的 gorm.ErrDuplicatedKey 映射为 409 CONFLICT，
+// 其它错误原样返回（避免唯一键冲突透出 500）。
+func mapDuplicateKey(err error) error {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return apperr.ErrConfigConflict
+	}
+	return err
+}
+
+// notify 在事务提交成功后唤醒该配置项 scope 下受影响的长轮询。
+func (s *ConfigService) notify(item *model.ConfigItem) {
+	if s.notifier != nil {
+		s.notifier.NotifyConfigChange(item.NamespaceCode, item.ScopeLevel, item.GroupCode, item.ScopeTarget)
+	}
+}
+
+// List 列出配置项。
+func (s *ConfigService) List(f repository.ConfigFilter) ([]model.ConfigItem, error) {
+	return s.configRepo.List(f)
+}
+
+// Get 取单个配置项；不存在返回 CONFIG_NOT_FOUND。
+func (s *ConfigService) Get(id uint) (*model.ConfigItem, error) {
+	item, err := s.configRepo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, apperr.ErrConfigNotFound
+	}
+	return item, nil
+}
+
+// Create 新建配置项并首次发布（version=1）。
+func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) {
+	if p.Namespace == "" || p.DataID == "" || p.Operator == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	group, scopeTarget, err := normalizeScope(p.ScopeLevel, p.Group, p.ScopeTarget)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateContent(p.Format, p.Content); err != nil {
+		return nil, err
+	}
+	if err := s.checkFormatConsistency(p.Namespace, p.DataID, p.Format); err != nil {
+		return nil, err
+	}
+	existing, err := s.configRepo.FindByIdentity(p.Namespace, group, p.DataID, p.ScopeLevel, scopeTarget)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, apperr.ErrConfigConflict
+	}
+
+	md5 := merge.MD5Hex(p.Content)
+	item := &model.ConfigItem{
+		NamespaceCode: p.Namespace, GroupCode: group, DataID: p.DataID,
+		ScopeLevel: p.ScopeLevel, ScopeTarget: scopeTarget, Format: p.Format,
+		Content: p.Content, ContentMD5: md5, Version: 1, Enabled: true, Sensitive: p.Sensitive,
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.configRepo.WithTx(tx).Create(item); err != nil {
+			return err
+		}
+		rev, err := s.appendRevision(tx, item, 1, nil, p.Operator, p.Comment)
+		if err != nil {
+			return err
+		}
+		item.CurrentRevision = rev.ID
+		if err := s.configRepo.WithTx(tx).Save(item); err != nil {
+			return err
+		}
+		return s.writeAudit(tx, item, p.Operator, model.ActionConfigCreate,
+			fmt.Sprintf(`{"version":1,"md5":"%s"}`, md5), p.ClientIP)
+	})
+	if err != nil {
+		return nil, mapDuplicateKey(err)
+	}
+	slog.Info("新建配置项", "namespace", p.Namespace, "group", group, "dataId", p.DataID, "scope", p.ScopeLevel)
+	s.recordPublish()
+	s.notify(item)
+	s.exportGit(item, model.ActionConfigCreate, p.Operator)
+	return item, nil
+}
+
+// Publish 发布配置新版本（version+1）。
+func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP string) (*model.ConfigItem, error) {
+	if operator == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	item, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateContent(item.Format, content); err != nil {
+		return nil, err
+	}
+	md5 := merge.MD5Hex(content)
+	preVersion := item.Version
+	newVersion := item.Version + 1
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, content, md5, item.Sensitive, nil, operator, comment)
+		if err != nil {
+			return err
+		}
+		item.Content, item.ContentMD5, item.Version, item.CurrentRevision = content, md5, newVersion, rev.ID
+		if err := s.configRepo.WithTx(tx).Save(item); err != nil {
+			return err
+		}
+		if err := s.writeAudit(tx, item, operator, model.ActionConfigPublish,
+			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP); err != nil {
+			return err
+		}
+		// 同事务记可逆账目（FR-116）：撤回 = 回滚到发布前版本 preVersion。首次发布（preVersion=0）无可回滚版本、不记账。
+		return s.recordReversible(tx, item, model.ReversibleOpPublish, preVersion, operator)
+	})
+	if err != nil {
+		// 并发对同一 item 发布同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
+		return nil, mapDuplicateKey(err)
+	}
+	slog.Info("发布配置", "id", id, "version", newVersion)
+	s.recordPublish()
+	s.notify(item)
+	s.exportGit(item, model.ActionConfigPublish, operator)
+	return item, nil
+}
+
+// Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。
+func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.ConfigItem, error) {
+	if operator == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	item, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	target, err := s.revRepo.FindByItemAndVersion(id, toVersion)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, apperr.ErrRevisionNotFound
+	}
+	// 回滚等同于把历史版本内容作为新版本发布，需同样过发布前 schema 校验，兜底防御历史脏数据。
+	if err := validateContent(item.Format, target.Content); err != nil {
+		return nil, err
+	}
+	newVersion := item.Version + 1
+	src := target.ID
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, target.Content, target.ContentMD5, item.Sensitive, &src, operator, comment)
+		if err != nil {
+			return err
+		}
+		item.Content, item.ContentMD5, item.Version, item.CurrentRevision = target.Content, target.ContentMD5, newVersion, rev.ID
+		if err := s.configRepo.WithTx(tx).Save(item); err != nil {
+			return err
+		}
+		return s.writeAudit(tx, item, operator, model.ActionConfigRollback,
+			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"md5":"%s"}`, newVersion, toVersion, target.ContentMD5), clientIP)
+	})
+	if err != nil {
+		// 并发回滚与发布撞同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
+		return nil, mapDuplicateKey(err)
+	}
+	slog.Info("回滚配置", "id", id, "toVersion", toVersion, "newVersion", newVersion)
+	s.recordPublish()
+	s.notify(item)
+	s.exportGit(item, model.ActionConfigRollback, operator)
+	return item, nil
+}
+
+// GetInTx 在给定事务内按 id 取配置项；不存在返回 CONFIG_NOT_FOUND（撤回子系统事务内取目标用，FR-116）。
+func (s *ConfigService) GetInTx(tx *gorm.DB, id uint) (*model.ConfigItem, error) {
+	item, err := s.configRepo.WithTx(tx).FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, apperr.ErrConfigNotFound
+	}
+	return item, nil
+}
+
+// RollbackInTx 在给定事务内把配置项回滚到目标版本（= 读该版本内容作为新版本发布，version+1），
+// 不写审计、不唤醒长轮询、不触发 git 导出——供撤回子系统（FR-116）在其自身事务内复用回滚核，
+// 由撤回服务统一写 config.undo-* 审计 + 提交后唤醒（避免嵌套事务、避免重复审计）。返回回滚后的 item。
+// 与 Rollback 共用同样的内容校验与 appendRevisionContent 原语，行为一致。
+func (s *ConfigService) RollbackInTx(tx *gorm.DB, item *model.ConfigItem, toVersion int64, operator, comment string) (*model.ConfigItem, error) {
+	target, err := s.revRepo.WithTx(tx).FindByItemAndVersion(item.ID, toVersion)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil {
+		return nil, apperr.ErrRevisionNotFound
+	}
+	if err := validateContent(item.Format, target.Content); err != nil {
+		return nil, err
+	}
+	newVersion := item.Version + 1
+	src := target.ID
+	rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, target.Content, target.ContentMD5, item.Sensitive, &src, operator, comment)
+	if err != nil {
+		return nil, err
+	}
+	item.Content, item.ContentMD5, item.Version, item.CurrentRevision = target.Content, target.ContentMD5, newVersion, rev.ID
+	if err := s.configRepo.WithTx(tx).Save(item); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// Notify 在事务提交成功后唤醒该配置项 scope 下受影响的长轮询（导出供撤回子系统提交后唤醒，FR-116）。
+func (s *ConfigService) Notify(item *model.ConfigItem) {
+	s.notify(item)
+}
+
+// Delete 软删配置项（该层从合并链脱落）。
+func (s *ConfigService) Delete(id uint, operator, _, clientIP string) error {
+	if operator == "" {
+		return apperr.ErrInvalidParam
+	}
+	item, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.configRepo.WithTx(tx).SoftDelete(id, now); err != nil {
+			return err
+		}
+		return s.writeAudit(tx, item, operator, model.ActionConfigDelete, `{"deleted":true}`, clientIP)
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("软删配置项", "id", id)
+	s.notify(item)
+	s.exportGit(item, model.ActionConfigDelete, operator)
+	return nil
+}
+
+// BatchDelete 在一个事务内批量软删一组配置项（FR-74）：逐项软删 + 各记一条 config.delete 审计，
+// 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒长轮询并触发 git 导出。
+func (s *ConfigService) BatchDelete(ids []uint, operator, clientIP string) error {
+	return s.batchMutate(ids, operator, clientIP, model.ActionConfigDelete, `{"deleted":true}`,
+		func(tx *gorm.DB, id uint) error {
+			return s.configRepo.WithTx(tx).SoftDelete(id, time.Now().UTC())
+		})
+}
+
+// BatchSetEnabled 在一个事务内批量置一组配置项的启用态（FR-74）：逐项置 enabled + 各记一条
+// config.disable / config.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
+func (s *ConfigService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
+	action := model.ActionConfigEnable
+	if !enabled {
+		action = model.ActionConfigDisable
+	}
+	return s.batchMutate(ids, operator, clientIP, action, fmt.Sprintf(`{"enabled":%t}`, enabled),
+		func(tx *gorm.DB, id uint) error {
+			return s.configRepo.WithTx(tx).SetEnabled(id, enabled)
+		})
+}
+
+// dedupIDs 去重保序返回 id 集合：批量端点据去重后数量判存在性，避免重复 id 绕过 404 校验。
+func dedupIDs(ids []uint) []uint {
+	seen := make(map[uint]struct{}, len(ids))
+	out := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+// batchMutate 是批量软删 / 置启用态的共用骨架：去重后一次性批量取出（任一不存在即 404），再在单事务内
+// 对每项执行 mutate + 写一条审计，提交后逐项唤醒长轮询与触发 git 导出。
+// 双保险：预取批量存在性挡明显不存在；事务内 mutate 的 RowsAffected 校验挡预取后被并发软删（防幽灵审计）。
+func (s *ConfigService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
+	if operator == "" || len(ids) == 0 {
+		return apperr.ErrInvalidParam
+	}
+	uniqueIDs := dedupIDs(ids)
+	items, err := s.configRepo.FindByIDs(uniqueIDs)
+	if err != nil {
+		return err
+	}
+	// 取回数量 < 去重后 id 数 → 含不存在 id，整批 404
+	if len(items) < len(uniqueIDs) {
+		return apperr.ErrConfigNotFound
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		for i := range items {
+			if err := mutate(tx, items[i].ID); err != nil {
+				return err
+			}
+			if err := s.writeAudit(tx, &items[i], operator, action, detail, clientIP); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	slog.Info("批量操作配置项", "动作", action, "数量", len(items))
+	for i := range items {
+		s.notify(&items[i])
+		s.exportGit(&items[i], action, operator)
+	}
+	return nil
+}
+
+// ListRevisions 列出某配置项的历史版本。
+func (s *ConfigService) ListRevisions(id uint) ([]model.ConfigRevision, error) {
+	if _, err := s.Get(id); err != nil {
+		return nil, err
+	}
+	return s.revRepo.ListByItem(id)
+}
+
+// GetRevision 取某配置项的指定历史版本。
+func (s *ConfigService) GetRevision(id uint, version int64) (*model.ConfigRevision, error) {
+	rev, err := s.revRepo.FindByItemAndVersion(id, version)
+	if err != nil {
+		return nil, err
+	}
+	if rev == nil {
+		return nil, apperr.ErrRevisionNotFound
+	}
+	return rev, nil
+}
+
+// Diff 返回两版本内容文本（供前端渲染差异）。
+func (s *ConfigService) Diff(id uint, from, to int64) (string, string, error) {
+	fromRev, err := s.GetRevision(id, from)
+	if err != nil {
+		return "", "", err
+	}
+	toRev, err := s.GetRevision(id, to)
+	if err != nil {
+		return "", "", err
+	}
+	return fromRev.Content, toRev.Content, nil
+}
+
+// appendRevision 以 item 当前内容追加一条版本快照。
+func (s *ConfigService) appendRevision(tx *gorm.DB, item *model.ConfigItem, version int64, source *uint, operator, comment string) (*model.ConfigRevision, error) {
+	return s.appendRevisionContent(tx, item.ID, item.Format, version, item.Content, item.ContentMD5, item.Sensitive, source, operator, comment)
+}
+
+// appendRevisionContent 追加一条指定内容的版本快照。sensitive 与所属 item 镜像，为真则该快照 content 加密落库。
+func (s *ConfigService) appendRevisionContent(tx *gorm.DB, itemID uint, format string, version int64, content, md5 string, sensitive bool, source *uint, operator, comment string) (*model.ConfigRevision, error) {
+	rev := &model.ConfigRevision{
+		ConfigItemID: itemID, Version: version, Format: format,
+		Content: content, ContentMD5: md5, Sensitive: sensitive, SourceRevision: source,
+		Operator: operator, Comment: comment,
+	}
+	if err := s.revRepo.WithTx(tx).Create(rev); err != nil {
+		return nil, err
+	}
+	return rev, nil
+}
+
+// recordReversible 在事务内记一条配置发布的可逆账目（FR-116）：未注入记账器或无可回滚版本（preVersion=0
+// 即首次发布）则跳过。撤回 = 回滚到 preVersion；摘要无敏感内容。
+func (s *ConfigService) recordReversible(tx *gorm.DB, item *model.ConfigItem, opType string, preVersion int64, operator string) error {
+	if s.reversible == nil || preVersion <= 0 {
+		return nil
+	}
+	return s.reversible.RecordPublishInTx(tx, RecordPublishParams{
+		Namespace: item.NamespaceCode, OpType: opType,
+		Scope: item.ScopeLevel, ScopeTarget: item.ScopeTarget,
+		ItemID: item.ID, PreVersion: preVersion,
+		ForwardRef: configTargetRef(item),
+		Summary:    fmt.Sprintf("发布 %s @ %s", item.DataID, item.ScopeLevel),
+		Operator:   operator,
+	})
+}
+
+// writeAudit 在事务内写一条配置审计。
+func (s *ConfigService) writeAudit(tx *gorm.DB, item *model.ConfigItem, operator, action, detail, clientIP string) error {
+	return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		NamespaceCode: item.NamespaceCode,
+		Operator:      operator,
+		Action:        action,
+		TargetType:    model.TargetTypeConfig,
+		TargetRef:     fmt.Sprintf("%s/%s/%s@%s:%s", item.NamespaceCode, item.GroupCode, item.DataID, item.ScopeLevel, item.ScopeTarget),
+		Detail:        detail,
+		Result:        model.ResultOK,
+		ClientIP:      clientIP,
+	})
+}
+
+// checkFormatConsistency 校验同一 dataId 跨层格式一致。
+func (s *ConfigService) checkFormatConsistency(ns, dataID, format string) error {
+	existing, err := s.configRepo.FindFormatByDataID(ns, dataID)
+	if err != nil {
+		return err
+	}
+	if existing != "" && existing != format {
+		return apperr.ErrFormatInconsistent
+	}
+	return nil
+}
+
+// validateContent 校验格式合法、大小不超限、内容可解析。
+func validateContent(format, content string) error {
+	if !merge.IsValidFormat(format) {
+		return apperr.ErrInvalidParam
+	}
+	if len(content) > MaxContentBytes {
+		return apperr.ErrContentTooLarge
+	}
+	if _, err := merge.Parse(format, content); err != nil {
+		return apperr.ErrContentInvalid
+	}
+	// 发布前结构 / 类型 / 必填项校验（FR-27）：拦下能解析但非法的坏配置。
+	if err := merge.ValidateSchema(format, content); err != nil {
+		return apperr.ErrContentSchemaInvalid
+	}
+	return nil
+}
+
+// normalizeScope 按覆盖层规整并校验 (group, scopeTarget)。
+// global → group=__GLOBAL__、target=”；group → target=”；zone/server → target 非空。
+func normalizeScope(level, group, scopeTarget string) (string, string, error) {
+	if !model.IsValidScopeLevel(level) {
+		return "", "", apperr.ErrInvalidScope
+	}
+	switch level {
+	case model.ScopeGlobal:
+		return model.GlobalGroupCode, "", nil
+	case model.ScopeGroup:
+		if group == "" || group == model.GlobalGroupCode {
+			return "", "", apperr.ErrInvalidScope
+		}
+		return group, "", nil
+	default: // zone / server
+		if group == "" || group == model.GlobalGroupCode || scopeTarget == "" {
+			return "", "", apperr.ErrInvalidScope
+		}
+		return group, scopeTarget, nil
+	}
+}

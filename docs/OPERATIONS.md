@@ -93,16 +93,16 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **控制面短暂不可用时不要重启子服**：agent 会按本地快照 fail-static 继续，控制面恢复后自动重连。
 
 ## 7. 端到端验收（agent 真机接入联调）
-用 `agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」，全程由 gradle（jpenilla run-task 的 run-paper/run-waterfall 插件）自动下载并运行服务端，无需手工准备 MC 服。
+用 `apps/agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」，全程由 gradle（jpenilla run-task 的 run-paper/run-waterfall 插件）自动下载并运行服务端，无需手工准备 MC 服。
 
 > **本地前置（工具链）**：下面的手动联调与 §7.1–7.3 的 Go E2E 都需在本机构建控制面二进制并经 gradle 起真机服务端，跑前先就位：
-> - **JDK21**：跑 gradle 与 MC 服务端（Paper 1.20.4 / Waterfall 1.20 需 Java 17+）。Windows 上若 `JAVA_HOME` 路径含 `!` 等特殊字符，`gradlew.bat` 可能回退到 PATH 上的旧 JDK；E2E 经 harness 调 `./agent/gradlew` 继承环境，跑前把 `JAVA_HOME` 显式指向干净路径的 JDK21。
-> - **C 编译器（CGO）**：控制面默认 sqlite 驱动为 `mattn/go-sqlite3`（CGO），需 `CGO_ENABLED=1` 且 PATH 上有 gcc/clang，否则 `go build ./cmd/beacon` 编不出（即便走 `E2E_DB_DRIVER=mysql` 也一样——编译期已静态 import sqlite 驱动）。
-> - **已构建前端**：控制面 `go:embed web/dist`，跑前先 `make web`（或 `cd web && pnpm build`），否则报 `pattern all:web/dist: no matching files found`。
+> - **JDK21**：跑 gradle 与 MC 服务端（Paper 1.20.4 / Waterfall 1.20 需 Java 17+）。Windows 上若 `JAVA_HOME` 路径含 `!` 等特殊字符，`gradlew.bat` 可能回退到 PATH 上的旧 JDK；E2E 经 harness 调 `./apps/agent/gradlew` 继承环境，跑前把 `JAVA_HOME` 显式指向干净路径的 JDK21。
+> - **C 编译器（CGO）**：控制面默认 sqlite 驱动为 `mattn/go-sqlite3`（CGO），需 `CGO_ENABLED=1` 且 PATH 上有 gcc/clang，否则 `go build ./apps/server/cmd/beacon` 编不出（即便走 `E2E_DB_DRIVER=mysql` 也一样——编译期已静态 import sqlite 驱动）。
+> - **已构建前端**：控制面 `go:embed apps/web/dist`，跑前先 `make web`（或根目录 `pnpm --filter @beacon/web build`），否则只会内嵌占位目录。
 
-- 先起控制面：`docker compose up -d`（或本地 `go run ./cmd/beacon`），确保 `GET /admin/v1/namespaces` 可达。
+- 先起控制面：`docker compose up -d`（或本地 `go run ./apps/server/cmd/beacon`），确保 `GET /admin/v1/namespaces` 可达。
 - 经 REST/管理台建一条全局配置（如 dataId `beacon-e2e.yml`）。
-- Bukkit 端：`cd agent && ./gradlew :agent-e2e:runServer` —— run-paper 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
+- Bukkit 端：`cd apps/agent && ./gradlew :agent-e2e:runServer` —— run-paper 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
 - Bungee 端：`./gradlew :agent-e2e-bungee:runBungee` —— run-waterfall 自动下载 Waterfall，加载 BeaconAgentProxy 与验收插件。
 - 验证：`GET /admin/v1/instances` 看 serverId online；改配置发布后看验收插件数据目录的 `e2e-observations.log` 是否出现新值（业务插件经 agent Java 只读 API 读到热更）；`GET /admin/v1/audits` 查发布记录。
 
@@ -129,7 +129,7 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 
 ```powershell
 $env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
-go test -tags=e2e -timeout=30m ./test/e2e/override
+go test -tags=e2e -timeout=30m ./apps/server/test/e2e/override
 ```
 
 测试依次跑四相位（任一 FAIL 即测试失败）：
@@ -153,7 +153,7 @@ go test -tags=e2e -timeout=30m ./test/e2e/override
 
 ```powershell
 $env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
-go test -tags=e2e -timeout=30m ./test/e2e/directory
+go test -tags=e2e -timeout=30m ./apps/server/test/e2e/directory
 ```
 
 测试依次跑两相位（任一 FAIL 即测试失败）：
@@ -167,25 +167,25 @@ go test -tags=e2e -timeout=30m ./test/e2e/directory
 
 ```powershell
 $env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
-go test -tags=e2e -timeout=30m ./test/e2e/metrics
+go test -tags=e2e -timeout=30m ./apps/server/test/e2e/metrics
 ```
 
 依次断言四相位（任一 FAIL 即失败）：summary 含目标子服且 `avgMemMax>0`（真 JVM 堆）；trend 时间序列非空且字段为真值；persist 经 GORM 直读 `metric_sample` 已落样本；boundary 响应不含玩家名单 / 身份字段。
 
 ## 8. 测试运行方式（单元 / 集成）
 
-- **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`internal/service` / `internal/server` 显示 `no test files` 属正常（其用例全为集成）。
+- **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`apps/server/internal/service` / `apps/server/internal/server` 显示 `no test files` 属正常（其用例全为集成）。
 - **集成测试**（需真实 MySQL）：先起测试库、设 DSN，再带 `integration` 标记跑：
   ```bash
   export BEACON_TEST_DSN='root:<密码>@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=true&loc=UTC'
   go test -tags=integration ./... -count=1
   ```
-  `internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。FR-32 的 `metric_sample` 仓库与 `/admin/v1/metrics/*` 端点集成亦在此 `-tags=integration` 套内。
+  `apps/server/internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。FR-32 的 `metric_sample` 仓库与 `/admin/v1/metrics/*` 端点集成亦在此 `-tags=integration` 套内。
 - **agent 侧集成测试**（需真实 Redis）：agent-adapters 对真实 Redis 的集成用例（含 FR-31 名册 `HGETALL` 全表读）默认连 `localhost:16379` 无密码，连不上即 `assumeTrue` 跳过。先起 Redis、再跑：
   ```bash
   # 默认 16379，可经 BEACON_REDIS_TEST_HOST / BEACON_REDIS_TEST_PORT / BEACON_REDIS_TEST_PASSWORD 覆盖
-  cd agent && ./gradlew :agent-adapters:cleanTest :agent-adapters:test --tests '*RedisMessageTransportIntegrationTest'
+  cd apps/agent && ./gradlew :agent-adapters:cleanTest :agent-adapters:test --tests '*RedisMessageTransportIntegrationTest'
   ```
-  绿不等于真跑——须确认 `agent/agent-adapters/build/test-results/test` 报告里该类 `skipped=0`（跳过即 Redis 没连上）。
+  绿不等于真跑——须确认 `apps/agent/agent-adapters/build/test-results/test` 报告里该类 `skipped=0`（跳过即 Redis 没连上）。
 - **CI / 发版前**：单测 + MySQL 集成 + agent Redis 集成都跑，E2E 另见 §7（跨平台 `go test -tags=e2e`，CI 见 `.github/workflows/e2e.yml`）。务必确认集成是 PASS 而非 SKIP。
 - **前端单元测试**（vitest + React Testing Library，jsdom 环境、无外部依赖、不连后端）：`cd web && pnpm test`（监听模式 `pnpm test:watch`）。测试文件经 `tsconfig` 排除出生产 `tsc -b`，与 `make web` 的 `go:embed` 构建解耦。

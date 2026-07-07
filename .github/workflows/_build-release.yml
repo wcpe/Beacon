@@ -93,7 +93,7 @@ jobs:
             echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-  # 前端构建一次，作为 artifact 供各平台二进制 go:embed 复用（免每个 runner 重复装 Node 构建）。
+  # 第二版前端构建一次，作为 artifact 供各平台二进制 go:embed 复用（免每个 runner 重复装 Node 构建）。
   web:
     name: 前端构建
     needs: [meta]
@@ -111,18 +111,18 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
       - name: 构建前端（make web）
         run: make web
       - name: 上传前端产物
         uses: actions/upload-artifact@v4
         with:
           name: web-dist
-          path: web/dist/
+          path: apps/web/dist/
           if-no-files-found: error
 
   # 各平台原生构建控制面二进制 beacon。
-  # CGO=1 原生构建（sqlite 可用）；beacon go:embed 复用上一步的 web/dist。
+  # CGO=1 原生构建（sqlite 可用）；beacon go:embed 复用上一步的 apps/web/dist。
   # 直接 go build（非 make build）：矩阵需原生 CGO + 复用预构建前端，且 windows runner 无 make；
   # 链接参数与 Makefile build 目标一致（-trimpath + 注入 version.Version）。
   # 4 平台原生矩阵（含 linux-arm64 用 GitHub 原生 arm64 runner，仍非交叉编译）；
@@ -152,20 +152,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: 取回前端产物到 web/dist
+      - name: 取回前端产物到 apps/web/dist
         uses: actions/download-artifact@v4
         with:
           name: web-dist
-          path: web/dist
+          path: apps/web/dist
       - name: 原生构建控制面二进制
         shell: bash
         env:
           # 版本号由 meta job 单点计算（滚动 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>、正式 = tag），各平台共用保证一致。
           VER: ${{ needs.meta.outputs.version }}
         run: |
-          ldflags="-s -w -X github.com/wcpe/Beacon/internal/version.Version=${VER}"
+          ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${VER}"
           out="beacon-${VER}-${{ matrix.target }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "${ldflags}" -o "${out}" ./cmd/beacon
+          go build -trimpath -ldflags "${ldflags}" -o "${out}" ./apps/server/cmd/beacon
           echo "已构建 ${out}"
       - name: 上传二进制
         uses: actions/upload-artifact@v4

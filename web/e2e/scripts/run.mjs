@@ -12,21 +12,29 @@ if (target !== 'mock' && target !== 'real') {
   process.exit(2)
 }
 const extra = process.argv.slice(3)
+const isWin = process.platform === 'win32'
 
 // web/ 工程根（本脚本在 web/e2e/scripts 下，上溯三级到 web/）
 const webRoot = fileURLToPath(new URL('../../', import.meta.url))
 
-// 真后端：先构建二进制（make web + go build），再交给 playwright（其 webServer 起二进制）。
+function commandSpec(cmd, args) {
+  if (isWin && cmd === 'pnpm') {
+    return { cmd: 'cmd.exe', args: ['/d', '/s', '/c', cmd, ...args] }
+  }
+  return { cmd, args }
+}
+
+// 真后端：先构建 apps/web 与二进制，再交给 playwright（其 webServer 起二进制）。
 async function ensureRealBinary() {
-  await runStep('node', [fileURLToPath(new URL('./build-real.mjs', import.meta.url))])
+  await runStep(process.execPath, [fileURLToPath(new URL('./build-real.mjs', import.meta.url))])
 }
 
 function runStep(cmd, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, {
+    const spec = commandSpec(cmd, args)
+    const child = spawn(spec.cmd, spec.args, {
       cwd: webRoot,
       stdio: 'inherit',
-      shell: process.platform === 'win32',
     })
     child.on('exit', (code) =>
       code === 0 ? resolve() : reject(new Error(`${cmd} 退出码 ${code}`)),
@@ -41,10 +49,10 @@ async function main() {
   }
   // 透传 --project 与额外参数给 playwright；PW_TARGET 控制 webServer 选择（见 playwright.config.ts）。
   const args = ['playwright', 'test', '--project', target, ...extra]
-  const child = spawn('pnpm', ['exec', ...args], {
+  const spec = commandSpec('pnpm', ['exec', ...args])
+  const child = spawn(spec.cmd, spec.args, {
     cwd: webRoot,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
     env: { ...process.env, PW_TARGET: target },
   })
   child.on('exit', (code) => process.exit(code ?? 1))

@@ -1,15 +1,18 @@
-# Beacon 多阶段构建：node 构建前端 dist → go 内嵌编译 → 极小运行镜像。
+# Beacon 多阶段构建：node 构建第二版前端 dist → go 内嵌编译 → 极小运行镜像。
 
 # —— 阶段一：构建前端 dist ——
 FROM node:22-alpine AS web
-WORKDIR /web
+WORKDIR /workspace
 # 启用 corepack，按 package.json 的 packageManager 字段使用固定版 pnpm
 RUN corepack enable
 # 先拷依赖清单以利用层缓存
-COPY web/package.json web/pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
 RUN pnpm install --frozen-lockfile
-COPY web/ ./
-RUN pnpm run build
+COPY apps/web ./apps/web
+COPY packages/ui ./packages/ui
+RUN pnpm --filter @beacon/web build
 
 # —— 阶段二：Go 内嵌编译 ——
 FROM golang:1.26-alpine AS build
@@ -21,10 +24,10 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# 注入前端构建产物供 go:embed 内嵌（覆盖占位 .gitkeep）
-COPY --from=web /web/dist ./web/dist
+# 注入第二版前端构建产物供 go:embed 内嵌（覆盖占位 .gitkeep）
+COPY --from=web /workspace/apps/web/dist ./apps/web/dist
 # 静态链接、去符号表，产出极小二进制：控制面单进程 beacon
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/beacon ./cmd/beacon
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/beacon ./apps/server/cmd/beacon
 
 # —— 阶段三：极小运行镜像 ——
 FROM alpine:3.20

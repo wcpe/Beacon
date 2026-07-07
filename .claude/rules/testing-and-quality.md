@@ -11,7 +11,7 @@
 ### 1.1 测试分层（怎么分、在哪跑）
 - **单元**：纯逻辑（尤其 `merge` 合并、`digest`）—— Go `testing` / Kotlin 测试，不连外部依赖，最快最多；前端组件与纯逻辑用 vitest + React Testing Library（jsdom，`cd web && pnpm test`）。
 - **集成**：控制面 + 真实 MySQL（测试库 / 容器）跑配置发布/解析/长轮询；agent 对接 mock 或真实 beacon。集成用例带 `//go:build integration` 标记与单测隔离：`go test ./...` **不含**集成（`internal/service` / `internal/server` 显示 no test files 属正常），`go test -tags=integration ./...` + `BEACON_TEST_DSN` 才跑（运行方式见 `docs/OPERATIONS.md` §8）——避免集成被静默 skip 误判为"全绿"。
-- **E2E**：跨平台纯 Go 入口 `go test -tags=e2e -timeout=30m ./test/e2e/{directory,override}`（默认 sqlite、无需 docker，可选 mysql），自管控制面 + 真实 agent，跑关键时序（首次接入、发布热更、目录注入、三方覆盖，见 ARCHITECTURE 时序与 PRD §6）；CI 见 `.github/workflows/e2e.yml`，运行细节见 `docs/OPERATIONS.md` §7。
+- **E2E**：跨平台纯 Go 入口 `go test -tags=e2e -timeout=30m ./apps/server/test/e2e/{directory,override,metrics}`（默认 sqlite、无需 docker，可选 mysql），自管控制面 + 真实 agent，跑关键时序（首次接入、发布热更、目录注入、三方覆盖，见 ARCHITECTURE 时序与 PRD §6）；CI 见 `.github/workflows/e2e.yml`，运行细节见 `docs/OPERATIONS.md` §7。
 - **前端 E2E**：Playwright 两套——**假后端**（mock 模式，`cd web && pnpm test:e2e`）走演示模式登录，跑主页面可达 / 配置发布回滚 / 文件树 / 命令观测 / 密钥闭环，**PR 必跑门禁**（`ci.yml` 的 `web-e2e`）；**真后端**（sqlite 控制面 + 真 admin 登录，`pnpm test:e2e:real`）跑关键链路，重型，随 `e2e.yml` 手动 / 定时触发。
 - **何时跑**：单元 / 集成 / 前端假后端 E2E 随每次改动与 CI；后端 E2E 与前端真后端 E2E 在发版前（`sdd-release-version` / `sdd-hotfix`）至少跑一遍。
 

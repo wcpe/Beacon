@@ -62,7 +62,7 @@ FR-87 补这两点，**不改受管任务状态机本身、不加新状态**：�
 - agent 读盘失败 → 回传 `/files/error` → 任务转 `failed`、`lastError` 落库且可查、命令转 `failed`。
 - error 端点对命令 / 任务态不符按 404/409 拒（不误终结无关任务）。
 - 前端任务台显已用时长；非终态超阈值显「疑似 agent 未响应」；`failed` 显 `lastError`。
-- 受影响组件测试全绿（`go build/test/vet ./...`；真 MySQL 集成验 lastError 落库 + failed 流转；`cd agent && ./gradlew :agent-core:build`；`cd web && pnpm test && pnpm build`）。
+- 受影响组件测试全绿（`go build/test/vet ./...`；真 MySQL 集成验 lastError 落库 + failed 流转；`cd apps/agent && ./gradlew :agent-core:build`；`cd web && pnpm test && pnpm build`）。
 - **真机**：制造扫描失败（如 plugins 目录不可读）→ 任务台见 `lastError` + 非终态卡死警示。
 
 ## 6. 风险 / 待定

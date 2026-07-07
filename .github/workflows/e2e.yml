@@ -1,7 +1,7 @@
 # Beacon 跨平台端到端验收（headless）。
 # 重型：需 JDK21 + 联网首跑下载 Paper/Waterfall（约 12 分钟），故不进 PR 必跑门禁，
 # 仅手动触发或每日定时跑。E2E 默认 sqlite，无需 docker/MySQL。
-# 入口为纯 Go：go test -tags=e2e ./test/e2e/{directory,override}。
+# 入口为纯 Go：go test -tags=e2e ./apps/server/test/e2e/{directory,override}。
 name: E2E
 
 on:
@@ -57,11 +57,11 @@ jobs:
             echo "E2E_AUTH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           fi
       - name: 目录注入 E2E（FR-4，默认 sqlite、无需 docker）
-        run: go test -tags=e2e -timeout=30m ./test/e2e/directory
+        run: go test -tags=e2e -timeout=30m ./apps/server/test/e2e/directory
       - name: 三方覆盖 E2E（FR-15，默认 sqlite）
         # 与目录用例相互独立；目录失败也照跑，便于一次拿全两条相位结论
         if: always()
-        run: go test -tags=e2e -timeout=30m ./test/e2e/override
+        run: go test -tags=e2e -timeout=30m ./apps/server/test/e2e/override
 
   # 前端真后端 E2E：起真控制面（sqlite + 固定本地测试凭据，见 web/playwright.config.ts）
   # + Playwright 真 admin 登录跑关键链路（页面可达 + 密钥增删改查闭环）。重型（构建内嵌
@@ -90,7 +90,9 @@ jobs:
         with:
           node-version: "22"
           cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            pnpm-lock.yaml
       - name: 安装前端依赖
         working-directory: web
         run: pnpm install --frozen-lockfile

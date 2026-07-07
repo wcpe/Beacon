@@ -25,8 +25,8 @@ Beacon 控制面作为单二进制部署时，运维需手工准备 `config.yml`
 
 ## 3. 设计（怎么做）
 
-控制面侧（根 `embed.go` + `internal/config` + `cmd/beacon`）：
-- **根包内嵌模板**：`embed.go` 内嵌 `config.example.yml`（与 `web/dist` 同包），暴露为 `[]byte`，供首启释放。
+控制面侧（根 `embed.go` + `apps/server/internal/config` + `apps/server/cmd/beacon`）：
+- **根包内嵌模板**：`embed.go` 内嵌 `config.example.yml`（与 `apps/web/dist` 同包），暴露为 `[]byte`，供首启释放。
 - **`internal/config` 无状态函数**：
   - `EnsureConfigFile(path, template) (released bool, err error)`：`path` 不存在则把 `template` 释放为 `config.yml`、把留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值（`injectCredentials` 纯函数做字符串替换、保留注释；随机值经 base64url 仅含安全字符）、写入（0600）返回 `true`；已存在跳过返回 `false`。
   - `LoadDotEnv(path) error`：读 `.env`，跳过空行与 `#` 整行注释、按首个 `=` 切分、去引号 trim，仅对 `os.LookupEnv` 不存在的键 `os.Setenv`；文件不存在视为正常。
