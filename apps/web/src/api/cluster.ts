@@ -7,6 +7,7 @@ import type {
   AssignmentResponse,
   HealthDetail,
   MessageEdgeStat,
+  NamespaceListResponse,
   ServerItem,
   ServerListResponse,
   ZoneTreeResponse,
@@ -59,6 +60,12 @@ export function buildQuery(params: Record<string, string | number | boolean | nu
   }
   const query = search.toString()
   return query === '' ? '' : `?${query}`
+}
+
+// ---- namespace（页面顶部作用域选择）----
+
+export function fetchNamespaces(): Promise<NamespaceListResponse> {
+  return request('GET', '/admin/v2/namespaces?pageSize=100')
 }
 
 // ---- 身份域（注册待确认 / 绑定状态机）----
