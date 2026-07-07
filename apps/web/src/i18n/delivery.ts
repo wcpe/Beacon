@@ -493,6 +493,8 @@ export const delivery = {
       desc: '将对所有已推送 / 已生效目标执行回滚，高风险操作',
       phrase: '回滚',
       phraseLabel: '请输入「{{phrase}}」以确认',
+      reasonLabel: '回滚原因',
+      reasonPlaceholder: '例如：新版本导致刷怪异常',
       confirm: '确认回滚',
       finish: '人工结束回滚',
       finishTitle: '结束回滚',
