@@ -50,9 +50,14 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	r := chi.NewRouter()
 	r.Use(recoverMiddleware, traceMiddleware, accessLog)
 
+	var v2Auth AgentV2Authenticator
+	if h.V2 != nil {
+		v2Auth = h.V2
+	}
+
 	// agent 侧：内网信任，仅以共享 token 防误连
 	r.Route("/beacon/v1/agent", func(r chi.Router) {
-		r.Use(agentTokenMiddleware(agentToken, h.V2))
+		r.Use(agentTokenMiddleware(agentToken, v2Auth))
 		r.Post("/register", h.Agent.Register)
 		r.Post("/heartbeat", h.Agent.Heartbeat)
 		r.Get("/config/effective", h.Agent.Effective)

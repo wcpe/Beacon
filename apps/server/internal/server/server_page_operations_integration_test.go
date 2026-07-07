@@ -21,7 +21,7 @@ func TestServerPageResyncCommandVisible(t *testing.T) {
 	if code != http.StatusAccepted {
 		t.Fatalf("触发重同步应 202，实际 %d：%v", code, cmd)
 	}
-	cmdID := int(cmd["commandId"].(float64))
+	cmdID := int(cmd["id"].(float64))
 
 	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-resync-1", nil)
 	if code != http.StatusOK || int(pulled["id"].(float64)) != cmdID || pulled["type"] != "resync-config" {

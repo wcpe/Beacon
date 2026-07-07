@@ -74,8 +74,8 @@ type ReversibleOperation struct {
 	Operator string `gorm:"column:operator;size:128;not null"`
 	// 撤回人（撤回后回填）
 	ReversedBy string `gorm:"column:reversed_by;size:128;not null;default:''"`
-	// 撤回时间（撤回后回填；未撤回为哨兵零值）
-	ReversedAt time.Time `gorm:"column:reversed_at"`
+	// 撤回时间（撤回后回填；未撤回为 NULL）
+	ReversedAt *time.Time `gorm:"column:reversed_at"`
 	// 创建时间（UTC）
 	CreatedAt time.Time
 	// 更新时间（UTC）

@@ -2,10 +2,12 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	gomysql "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
@@ -22,6 +24,8 @@ const (
 	undoConfigComment = "撤回发布（FR-116）"
 	undoFileComment   = "撤回下发（FR-116）"
 )
+
+const mysqlDeadlockErrorNumber = 1213
 
 // pubPushPayload 是 publish/push 撤回的反向快照：撤回 = 把目标对象回滚到操作前版本。
 type pubPushPayload struct {
@@ -234,15 +238,7 @@ func (s *ReversibleOperationService) Undo(id uint, operator, clientIP string) (*
 		return s.writeUndoAudit(tx, op, operator, clientIP)
 	})
 	if err != nil {
-		// errAlreadyReversed 是事务内回查判定为"已被并发撤回"的哨兵：回滚事务后对外返回幂等成功。
-		if err == errAlreadyReversed {
-			cur, _ := s.repo.FindByID(op.ID)
-			if cur != nil {
-				return cur, nil
-			}
-			return op, nil
-		}
-		return nil, err
+		return s.handleUndoTransactionError(op, err)
 	}
 
 	// 提交成功后唤醒受影响长轮询（复用既有"唤醒即重算比对 md5"，真变才下发）。
@@ -256,13 +252,42 @@ func (s *ReversibleOperationService) Undo(id uint, operator, clientIP string) (*
 	}
 	op.Status = model.ReversibleStatusReversed
 	op.ReversedBy = operator
-	op.ReversedAt = now
+	op.ReversedAt = &now
 	slog.Info("撤回配置操作", "id", op.ID, "类型", op.OpType, "scope", op.Scope, "操作人", operator)
 	return op, nil
 }
 
 // errAlreadyReversed 是事务内回查发现账目已被并发撤回的哨兵错误：用于回滚本事务后对外返回幂等成功。
 var errAlreadyReversed = fmt.Errorf("reversible-op already reversed")
+
+func (s *ReversibleOperationService) handleUndoTransactionError(op *model.ReversibleOperation, err error) (*model.ReversibleOperation, error) {
+	if err == errAlreadyReversed {
+		cur, _ := s.repo.FindByID(op.ID)
+		if cur != nil {
+			return cur, nil
+		}
+		return op, nil
+	}
+	if isMySQLDeadlock(err) {
+		return s.undoOutcomeAfterDeadlock(op.ID)
+	}
+	return nil, err
+}
+
+func (s *ReversibleOperationService) undoOutcomeAfterDeadlock(id uint) (*model.ReversibleOperation, error) {
+	cur, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if cur == nil {
+		return nil, apperr.ErrReversibleOpNotFound
+	}
+	outcome := statusToUndoOutcome(cur)
+	if outcome == errAlreadyReversed {
+		return cur, nil
+	}
+	return nil, outcome
+}
 
 // statusToUndoOutcome 把"抢不到 CAS 后回查到的状态"映射为撤回结果：
 // reversed → errAlreadyReversed（幂等成功）；expired/superseded → 对应明确错误；其它（已不存在等）→ 状态错。
@@ -280,6 +305,12 @@ func statusToUndoOutcome(cur *model.ReversibleOperation) error {
 	default:
 		return apperr.ErrReversibleOpState
 	}
+}
+
+// isMySQLDeadlock 判断事务是否被 MySQL 死锁检测主动回滚。
+func isMySQLDeadlock(err error) bool {
+	var mysqlErr *gomysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlDeadlockErrorNumber
 }
 
 // undoPublishInTx 撤回一次发布：把 config_item 回滚到发布前版本（复用 ConfigService.RollbackInTx）。

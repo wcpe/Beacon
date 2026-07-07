@@ -13,6 +13,11 @@
 - P1 monorepo `apps/agent` 迁移：把 Kotlin/TabooLib agent 从仓库根 `agent/` 迁入 `apps/agent/`，同步 Gradle 版本读取、Makefile、CI、E2E harness 与运维文档中的路径。
 - P1 monorepo `apps/server` 迁移：把 Go 控制面入口与 `internal/` 分层迁入 `apps/server/`，同步控制面构建入口、版本注入路径、Dockerfile、Release/E2E workflow 与 Go E2E 包路径。
 
+### 修复
+- 修复未装配 v2 控制面处理器时错误 agent token 触发空指针 panic 的问题，legacy agent 数据面仍按预期返回 401。
+- 修复可逆操作账目在 MySQL 8 严格模式下把未撤回时间写成零值时间的问题，未撤回记录改以 NULL 表示。
+- 修复撤回旧发布与同对象新发布并发竞争时 MySQL deadlock 原样透出的问题，事务回滚后按账目最终状态返回已覆盖结果。
+
 ## 0.20.0（2026-07-07）
 
 > 第二版起点：本版为纯文档发布——第二版规格基线全部冻结，无运行时代码变更。此后按 [docs/ROADMAP.md](docs/ROADMAP.md) 版本线推进：工程化基建（0.21.x）→ 全量 mock 管理台（0.22.x）→ 后端按域接真（0.23.x-0.29.x）→ RC（0.30.x）→ 1.0.0。
