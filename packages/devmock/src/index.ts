@@ -1,5 +1,13 @@
 import { http, HttpResponse, type HttpHandler } from 'msw'
 
+export {
+  MOCK_SCENARIOS,
+  getMockScenario,
+  setMockScenario,
+  subscribeMockScenario,
+} from './scenario'
+export type { MockScenario } from './scenario'
+
 export interface ControlPlaneStatusFixture {
   phase: string
   release: string
