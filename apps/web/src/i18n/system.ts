@@ -9,6 +9,10 @@ export const system = {
   },
   settings: {
     mission: '采样、保留期、健康权重等运行参数；含归档与清理',
+    // 锚点分区标题（与各块内部卡片标题区分，避免重复文本）
+    paramsTitle: '运行参数',
+    weightsSection: '健康权重',
+    archiveSection: '归档清理',
     // 分块标题
     groups: {
       sampling: '采样与指标',
