@@ -21,6 +21,69 @@ func IsValidScopeLevel(level string) bool {
 	}
 }
 
+// v2 server 类型。
+const (
+	ServerKindProxy   = "proxy"
+	ServerKindBackend = "backend"
+)
+
+func IsValidServerKind(kind string) bool {
+	switch kind {
+	case ServerKindProxy, ServerKindBackend:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 agent 身份状态。
+const (
+	AgentIdentityStatusPending  = "pending"
+	AgentIdentityStatusActive   = "active"
+	AgentIdentityStatusRejected = "rejected"
+	AgentIdentityStatusExpired  = "expired"
+	AgentIdentityStatusDisabled = "disabled"
+	AgentIdentityStatusConflict = "conflict"
+	AgentIdentityStatusUnbound  = "unbound"
+)
+
+func IsActiveAgentIdentityStatus(status string) bool {
+	switch status {
+	case AgentIdentityStatusPending, AgentIdentityStatusActive, AgentIdentityStatusDisabled, AgentIdentityStatusConflict:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 namespace 信任能力。
+const (
+	NamespaceTrustCapabilitySchedule = "schedule"
+	NamespaceTrustCapabilityMessage  = "message"
+	NamespaceTrustCapabilityAgentOps = "agent_ops"
+)
+
+func IsValidNamespaceTrustCapability(capability string) bool {
+	switch capability {
+	case NamespaceTrustCapabilitySchedule, NamespaceTrustCapabilityMessage, NamespaceTrustCapabilityAgentOps:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 namespace 信任状态。
+const (
+	NamespaceTrustStatusActive  = "active"
+	NamespaceTrustStatusRevoked = "revoked"
+)
+
+// v2 server 分配目标。
+const (
+	AssignmentTargetZone      = "zone"
+	AssignmentTargetBCCluster = "bc_cluster"
+)
+
 // 管理面角色（落 VARCHAR + 应用层校验，不绑方言；FR-42，见 ADR-0026）。
 const (
 	RoleFull     = "full"     // 读写：等同现操作者，可访问全部 admin 端点
@@ -254,6 +317,30 @@ const (
 	ActionNamespaceCreate = "namespace.create"
 	ActionNamespaceUpdate = "namespace.update"
 	ActionNamespaceDelete = "namespace.delete"
+	// 第二版 namespace 互通信任。
+	ActionNamespaceTrustGrant  = "namespace_trust.grant"
+	ActionNamespaceTrustRevoke = "namespace_trust.revoke"
+	// 第二版 agent 身份状态机。
+	ActionIdentityRegistered      = "identity.registered"
+	ActionIdentityApproved        = "identity.approved"
+	ActionIdentityRejected        = "identity.rejected"
+	ActionIdentityExpired         = "identity.expired"
+	ActionIdentityDisabled        = "identity.disabled"
+	ActionIdentityEnabled         = "identity.enabled"
+	ActionIdentityUnbound         = "identity.unbound"
+	ActionIdentityConflict        = "identity.conflict_detected"
+	ActionIdentityConflictResolve = "identity.conflict_resolved"
+	ActionIdentityAddressChanged  = "identity.address_changed"
+	ActionIdentityReapplyAllowed  = "identity.reapply_allowed"
+	ActionIdentityForceRebind     = "identity.rebind_with_force_unbind"
+	// 第二版区服权威结构。
+	ActionBCClusterCreate  = "bc_cluster.create"
+	ActionRegionCreate     = "region.create"
+	ActionZoneCreate       = "zone.create"
+	ActionServerAssign     = "server.assign"
+	ActionServerUnassign   = "server.unassign"
+	ActionServerRezoneInit = "zone.rezone.initiated"
+	ActionServerRezoneDone = "zone.rezone.completed"
 	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"
@@ -281,12 +368,17 @@ const (
 
 // 审计对象类型。
 const (
-	TargetTypeConfig      = "config"
-	TargetTypeInstance    = "instance"
-	TargetTypeZone        = "zone"
-	TargetTypeFile        = "file"
-	TargetTypeOverrideSet = "override-set"
-	TargetTypeNamespace   = "namespace"
+	TargetTypeConfig         = "config"
+	TargetTypeInstance       = "instance"
+	TargetTypeZone           = "zone"
+	TargetTypeFile           = "file"
+	TargetTypeOverrideSet    = "override-set"
+	TargetTypeNamespace      = "namespace"
+	TargetTypeNamespaceTrust = "namespace-trust"
+	TargetTypeIdentity       = "agent-identity"
+	TargetTypeServer         = "server"
+	TargetTypeBCCluster      = "bc-cluster"
+	TargetTypeRegion         = "region"
 	// 认证会话（登录 / 登出）的审计对象类型
 	TargetTypeAuth = "auth"
 	// 管理面 API 密钥的审计对象类型

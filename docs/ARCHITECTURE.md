@@ -108,9 +108,9 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 
 | 架构块 | 阶段 · 版本线 |
 |---|---|
-| §2.1 monorepo 布局、apps/web 脚手架、UI 博物馆、静态检查三线、Legacy 前端冻结 | P1 · 0.21.x |
+| §2.1 monorepo 布局、apps/web 脚手架、UI 博物馆、静态检查三线、Legacy 前端冻结；§3 权威实体落库 + 身份确认 / namespace 隔离 / 区服权威基础闭环 | P1 · 0.21.x |
 | §6 全量 mock 管理台（四大域 IA + 演示模式，逐页拍板） | P2 · 0.22.x |
-| §3 权威实体落库 + 身份确认 / namespace 隔离 / 区服权威（接真 `/servers` `/zones` `/namespaces`） | P3 · 0.23.x |
+| 集群管理页接真深化：`/servers` `/zones` `/namespaces` 接入 P1 v2 API，补齐换区工单、冲突处置、zone-tree 与 env 映射体验 | P3 · 0.23.x |
 | 指标采样入库、健康值、调度决策、本机 agent-api（接真 `/dashboard` `/service-analysis`） | P4 · 0.24.x |
 | §5 消息单跳中转（新 ADR 取代 ADR-0016）、连接明细日表、payload 审计（接真 `/topology` 与可观测页） | P5 · 0.25.x |
 | §4 热冷归档双库、冷查询、归档清理（接真系统设置页） | P6 · 0.26.x |

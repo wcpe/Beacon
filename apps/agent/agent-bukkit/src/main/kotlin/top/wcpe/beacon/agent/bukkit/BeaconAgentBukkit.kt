@@ -5,8 +5,10 @@ import taboolib.common.env.RuntimeDependencies
 import taboolib.common.env.RuntimeDependency
 import taboolib.common.platform.Awake
 import taboolib.common.platform.Plugin
+import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.pluginVersion
 import taboolib.common.platform.function.severe
+import taboolib.common.platform.function.submitAsync
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
@@ -16,9 +18,11 @@ import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
+import java.util.UUID
 
 /**
  * Bukkit 子服侧 Beacon agent 插件主类（object + @Awake，不继承 JavaPlugin）。
@@ -104,69 +108,82 @@ object BeaconAgentBukkit : Plugin() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
         val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
         val settings = AgentBootstrap.readSettings(reader)
-        // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
-        val identity = AgentBootstrap.readIdentity(reader, role = "bukkit", agentVersion = pluginVersion)
+        submitAsync {
+            val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
+            // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
+            val identity =
+                AgentBootstrap.readIdentity(reader, role = "bukkit", agentVersion = pluginVersion)
+                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString())
 
-        // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
-        if (!identity.isValid()) {
-            severe("身份缺失：identity.serverId 与 identity.namespace 必须显式配置，Beacon agent 不接入控制面")
-            return
+            // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
+            var canConnect = true
+            if (!storedIdentity.isValid) {
+                severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
+                canConnect = false
+            }
+            if (canConnect && !identity.isValid()) {
+                severe("身份缺失：identity.serverId 与 identity.namespace 必须显式配置，Beacon agent 不接入控制面")
+                canConnect = false
+            }
+            if (canConnect && (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank())) {
+                severe("配置缺失：beacon.endpoints 与 beacon.bootstrapToken 必填，Beacon agent 不接入控制面")
+                canConnect = false
+            }
+            if (!canConnect) {
+                return@submitAsync
+            }
+
+            // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
+            val store = EffectiveConfigStore()
+            val view = EffectiveConfigView(store)
+            val adapter = BukkitPlatformAdapter(view)
+            val assembled =
+                AgentAssembly.assemble(
+                    identity = identity,
+                    settings = settings,
+                    // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
+                    rawAdapter = adapter,
+                    transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                    codec = KotlinxJsonCodec(),
+                    store = store,
+                    effectiveConfigView = view,
+                    // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
+                    streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                    // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
+                    metricsProvider = { BukkitMetricsCollector.sample() },
+                    // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+                    // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+                    selfPluginDirNames = setOf("BeaconAgent"),
+                )
+            lifecycle = assembled.lifecycle
+
+            // 对外注册门面，供同进程业务插件读取。
+            BeaconAgentProvider.register(assembled.beaconAgent)
+
+            // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
+            BeaconAgentCommand.register(assembled.lifecycle, adapter)
+
+            // 跨服消息模块引导（FR-26）：据下发的 Redis 配置启停 / 重连。
+            val bootstrap =
+                BukkitMessagingBootstrap(
+                    identity = identity,
+                    settings = settings,
+                    store = store,
+                    codec = KotlinxJsonCodec(),
+                    holder = assembled.messagingHolder,
+                    // 名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读，点亮 Discovery.roster()/rosterInZone()。
+                    rosterHolder = assembled.rosterDirectoryHolder,
+                    adapter = adapter,
+                )
+            messagingBootstrap = bootstrap
+            // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
+            view.onChange { _, _ -> bootstrap.sync() }
+
+            // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
+            assembled.lifecycle.bootstrapWithSnapshotThenConnect()
+            // 快照可能已含 Redis 配置：立即尝试一次（缺失则保持降级，待配置下发再起）。
+            bootstrap.sync()
         }
-        if (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank()) {
-            severe("配置缺失：beacon.endpoints 与 beacon.bootstrapToken 必填，Beacon agent 不接入控制面")
-            return
-        }
-
-        // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
-        val store = EffectiveConfigStore()
-        val view = EffectiveConfigView(store)
-        val adapter = BukkitPlatformAdapter(view)
-        val assembled =
-            AgentAssembly.assemble(
-                identity = identity,
-                settings = settings,
-                // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
-                rawAdapter = adapter,
-                transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                codec = KotlinxJsonCodec(),
-                store = store,
-                effectiveConfigView = view,
-                // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
-                streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
-                metricsProvider = { BukkitMetricsCollector.sample() },
-                // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
-                // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
-                selfPluginDirNames = setOf("BeaconAgent"),
-            )
-        lifecycle = assembled.lifecycle
-
-        // 对外注册门面，供同进程业务插件读取。
-        BeaconAgentProvider.register(assembled.beaconAgent)
-
-        // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
-        BeaconAgentCommand.register(assembled.lifecycle, adapter)
-
-        // 跨服消息模块引导（FR-26）：据下发的 Redis 配置启停 / 重连。
-        val bootstrap =
-            BukkitMessagingBootstrap(
-                identity = identity,
-                settings = settings,
-                store = store,
-                codec = KotlinxJsonCodec(),
-                holder = assembled.messagingHolder,
-                // 名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读，点亮 Discovery.roster()/rosterInZone()。
-                rosterHolder = assembled.rosterDirectoryHolder,
-                adapter = adapter,
-            )
-        messagingBootstrap = bootstrap
-        // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
-        view.onChange { _, _ -> bootstrap.sync() }
-
-        // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
-        assembled.lifecycle.bootstrapWithSnapshotThenConnect()
-        // 快照可能已含 Redis 配置：立即尝试一次（缺失则保持降级，待配置下发再起）。
-        bootstrap.sync()
     }
 
     @Awake(LifeCycle.DISABLE)

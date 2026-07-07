@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- P1 v2 控制面基础闭环：新增 agent `identity.yml` 首启生成 / 损坏 fail-closed、v2 注册 pending→approve→active 确认流、namespace token 哈希与 trust 快照、区服权威表（namespace_trust/env/bc_cluster/region/zone/server/agent_identity）迁移、admin v2 身份迁移与未分配 server 首次分配端点；agent v2 active 后继续衔接 legacy 数据面注册，保持既有配置 / 心跳链路可用。
 - P1 monorepo 根级前端工作区：新增根级 `pnpm-workspace.yaml`、`turbo.json` 与根 `package.json`，并把 `@beacon/ui` 与 UI 控件博物馆提升到 `packages/ui`、`apps/ui-wiki`；新增根级 `scripts/check-ui-wiki-coverage.mjs`，校验 ui-wiki 覆盖全部 UI 包导出。
 - P1 第二版前端基建包：新增 `packages/devmock`、`packages/eslint-config`、`packages/typescript-config`，`packages/devmock` 提供 MSW handlers 与浏览器 worker 启动入口，`apps/web` 使用 TanStack Query 承载服务器状态、Zustand 承载客户端 shell 状态，根级 `pnpm run lint` 通过 Turborepo 覆盖第二版前端工作区的 strict typed ESLint。
 - P1 Go 静态检查档位提升：`.golangci.yml` 切到 `default: all` 基线，集中声明 Legacy / 主观格式 / 不适用栈的禁用清单，`golangci-lint run` 作为 CI 与本地 Go linter 真源。

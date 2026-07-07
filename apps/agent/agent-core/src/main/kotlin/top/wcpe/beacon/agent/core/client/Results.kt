@@ -93,6 +93,18 @@ sealed class RegisterOutcome {
     /** 200：注册成功。 */
     data class Success(val result: RegisterResult) : RegisterOutcome()
 
+    /** 202：v2 身份已进入待人工确认。 */
+    data class PendingApproval(val serverId: String, val namespace: String) : RegisterOutcome()
+
+    /** 200：v2 身份已确认但被禁用。 */
+    object Disabled : RegisterOutcome()
+
+    /** 403：v2 身份已被拒绝。 */
+    object Rejected : RegisterOutcome()
+
+    /** 409：v2 身份处于冲突态，等待后台处置。 */
+    object IdentityConflict : RegisterOutcome()
+
     /** 409：重复 serverId。 */
     object DuplicateServerId : RegisterOutcome()
 
@@ -107,4 +119,28 @@ sealed class RegisterOutcome {
 
     /** 连接级失败/其它非预期状态。 */
     data class Failed(val reason: String) : RegisterOutcome()
+}
+
+/** v2 registration 长轮询结果。 */
+sealed class RegistrationPollResult {
+    /** 身份已确认可继续注册数据面。 */
+    object Active : RegistrationPollResult()
+
+    /** 仍在等待人工确认。 */
+    object Pending : RegistrationPollResult()
+
+    /** 身份被禁用。 */
+    object Disabled : RegistrationPollResult()
+
+    /** 身份被拒绝。 */
+    object Rejected : RegistrationPollResult()
+
+    /** 身份冲突。 */
+    object Conflict : RegistrationPollResult()
+
+    /** 304：本轮无状态变化。 */
+    object NotModified : RegistrationPollResult()
+
+    /** 连接级失败/其它非预期状态。 */
+    data class Failed(val reason: String) : RegistrationPollResult()
 }

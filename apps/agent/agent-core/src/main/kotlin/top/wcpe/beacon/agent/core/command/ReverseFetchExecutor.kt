@@ -134,7 +134,7 @@ class ReverseFetchExecutor(
             }
         // 纯函数过滤 + 标注：排除不安全路径 / jar，超阈值仅红标，永不失败。
         val files = PluginsTreeFilter.scan(metadata)
-        val ok = apiClient.uploadScan(command.id, files)
+        val ok = apiClient.uploadScan(command.id, files, identity)
         if (ok) {
             val over = files.count { it.overThreshold }
             adapter.info("反向抓取扫描回传成功：id=${command.id}，清单文件=${files.size}，超阈值=$over")
@@ -181,7 +181,7 @@ class ReverseFetchExecutor(
             }
 
             is FilterOutcome.Accepted -> {
-                val ok = apiClient.uploadIngest(command.id, outcome.files)
+                val ok = apiClient.uploadIngest(command.id, outcome.files, identity)
                 if (ok) {
                     adapter.info("反向抓取回传成功：id=${command.id}，文本文件=${outcome.files.size}")
                 } else {
@@ -204,7 +204,7 @@ class ReverseFetchExecutor(
             return
         }
         val lines = buffer.snapshot()
-        val ok = apiClient.uploadLogs(command.id, lines)
+        val ok = apiClient.uploadLogs(command.id, lines, identity)
         if (ok) {
             adapter.info("agent 日志回传成功：id=${command.id}，行数=${lines.size}")
         } else {
@@ -236,6 +236,7 @@ class ReverseFetchExecutor(
                         command.id,
                         ok = false,
                         reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}",
+                        identity = identity,
                     )
                 if (!ok) {
                     adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
@@ -245,11 +246,11 @@ class ReverseFetchExecutor(
         // 回调跳过（agent 未运行 / 正在停机）→ 回传 failed，不误报 done（真实未执行重拉）。
         if (!executed) {
             adapter.warn("强制重同步被跳过（agent 未运行/正在停机）：id=${command.id}")
-            val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "agent 未运行/正在停机，跳过强制重同步")
+            val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "agent 未运行/正在停机，跳过强制重同步", identity = identity)
             if (!ok) adapter.warn("强制重同步跳过结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
             return
         }
-        val ok = apiClient.uploadCommandResult(command.id, ok = true, reason = "")
+        val ok = apiClient.uploadCommandResult(command.id, ok = true, reason = "", identity = identity)
         if (ok) {
             adapter.info("强制重同步完成并回传：id=${command.id}")
         } else {
@@ -356,7 +357,7 @@ class ReverseFetchExecutor(
         command: AgentCommand,
         reason: String,
     ) {
-        val ok = apiClient.uploadError(command.id, reason)
+        val ok = apiClient.uploadError(command.id, reason, identity)
         if (ok) {
             adapter.info("已回传反向抓取执行错误：id=${command.id}")
         } else {

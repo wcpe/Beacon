@@ -13,6 +13,10 @@ type Namespace struct {
 	Code string `gorm:"column:code;size:64;uniqueIndex;not null"`
 	// 环境显示名
 	Name string `gorm:"column:name;size:128;not null"`
+	// v2 描述文本；Legacy 未使用，第二版 namespace 管理使用。
+	Description string `gorm:"column:description;size:255"`
+	// v2 namespace 接入 token 的 sha256 摘要；明文只在创建 / 轮换响应返回一次。
+	AccessTokenHash string `gorm:"column:access_token_hash;size:64;index"`
 	// 创建时间（UTC）
 	CreatedAt time.Time
 	// 更新时间（UTC）

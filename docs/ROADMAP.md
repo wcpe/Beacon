@@ -17,9 +17,9 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 |---|---|---|
 | Legacy | 0.1.0 - 0.19.x | 第一版探索期，历史冻结，不作为第二版验收基准 |
 | P0 | 0.20.x | 规格冻结：全部规格 / ADR、API 契约草案、PRD / 路线图对齐 |
-| P1 | 0.21.x | 工程化基建：monorepo（pnpm + Turborepo + apps / packages）、apps/web 新栈脚手架、UI 博物馆、静态检查最严档三线、Legacy 前端冻结 |
+| P1 | 0.21.x | 工程化基建 + v2 控制面基础闭环：monorepo、apps/web 新栈脚手架、UI 博物馆、静态检查最严档三线、Legacy 前端冻结；Agent 身份、注册确认、namespace 隔离、区服权威模型基础可用 |
 | P2 | 0.22.x | 全量 mock 管理台：演示模式先行、全站页面 mock 逐页拍板、「交付」大分类 IA |
-| P3 | 0.23.x | Agent 身份、注册确认、namespace 隔离、区服权威 + 接真 `/servers`、`/zones`、`/namespaces` |
+| P3 | 0.23.x | 集群管理页接真深化：基于 P1 v2 基础 API 补齐 `/servers`、`/zones`、`/namespaces` 的换区工单、冲突处置、zone-tree 与 env 映射 |
 | P4 | 0.24.x | 采样、健康值、调度决策、本机 agent-api + 接真 `/dashboard`、`/service-analysis` |
 | P5 | 0.25.x | 每连接明细、跨服消息、payload 审计 + 接真 `/topology` 与可观测页 |
 | P6 | 0.26.x | 热冷归档、冷查询、归档清理 + 接真系统设置页 |
@@ -51,9 +51,9 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 - 核心边界确认：namespace 强隔离、首次接入人工确认、业务插件只走本机 agent-api、payload 查看必须填原因。
 - §5 规格清单**全部完成**（含 API 契约草案入 `docs/API.md`）；规格完成前不进入后续任何阶段编码。
 
-### P1：0.21.x 工程化基建
+### P1：0.21.x 工程化基建与 v2 控制面基础闭环
 
-目标：把仓库工程底座一次换好——monorepo 布局、第二版前端栈脚手架、UI 博物馆、最严档静态检查——让 P2 起的一切代码都长在新底座上，不再欠工程债。
+目标：把仓库工程底座一次换好，并提前落下 v2 控制面最小可信闭环：agent identity、注册确认、namespace/token/trust、区服权威表与首次分配链路。
 
 交付：
 
@@ -63,9 +63,11 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 - UI 博物馆：`@beacon/ui` 与 ui-wiki 从 Legacy `web/` 内部提升到根级；每个导出控件必须有展示页（覆盖率检查进 CI）；新管理台组件一律取自 `packages/ui`。
 - 静态检查最严档三线进 CI 门禁：TS = typescript-eslint strictTypeChecked + stylisticTypeChecked；Go = golangci-lint 全量启用档（禁用项集中声明并注明原因）；Kotlin = detekt 全规则（存量走 baseline，新代码零违例）。
 - Legacy 前端冻结（FR-138）：`web/` 不再演进，发布产物只嵌 `apps/web`；真机依赖旧功能时继续运行 v0.19 及更早版本。
+- Agent 身份与注册确认（FR-139~FR-141）：agent 首启生成 `identity.yml`，携 `identityId + bootId` 走 `/beacon/v2/agent/register`；pending 经后台确认后转 active，并衔接 legacy 数据面注册；拒绝、允许重新申请、禁用、启用、解绑与 Q3 强制换绑入审计。
+- namespace 隔离与区服权威基础（FR-142~FR-143）：v2 权威表纳入 AutoMigrate，namespace token 哈希落库，namespace_trust 授予 / 收回即时刷新快照；approve 创建未分配 server，未分配 server 可首次分配到 zone / BC 集群，已分配直改返回 `rezone_required`。
 - 配套 ADR 已随 P0 落地：monorepo 布局与第二版前端栈（ADR-0060）、静态检查最严档三线（ADR-0061，`static-analysis.md` 随 FR-176 实施同步）。
 
-退出条件：`turbo run lint / test / build` 全仓一键绿；三线静态检查门禁生效；ui-wiki 覆盖率门禁生效；新二进制构建产物只嵌 `apps/web`。
+退出条件：`turbo run lint / test / build` 全仓一键绿；三线静态检查门禁生效；ui-wiki 覆盖率门禁生效；新二进制构建产物只嵌 `apps/web`；Go v2 service/handler/router 测试与 agent v2 identity/client 测试通过。
 
 ### P2：0.22.x 全量 mock 管理台
 
@@ -80,18 +82,17 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 
 退出条件：所有页面拍板留档；此后页面结构性变更必须重过评审门。
 
-### P3：0.23.x Agent 身份与区服权威
+### P3：0.23.x 集群管理页接真深化
 
-目标：让所有 BC 与子服能自连接 Beacon，但在人工确认前不可调度。
+目标：把 P1 已可用的 v2 身份 / namespace / 区服权威 API 接入全量管理台，并补齐换区工单与冲突处置的高风险 UI 闭环。
 
 交付：
 
-- agent 首启生成并持久化 `identityId`。
-- `identityId + namespace + serverId` 绑定。
-- 首次注册待确认、拒绝、禁用、解绑、换区闭环。
-- namespace 默认强隔离，跨 namespace 只能通过互通信任关系开放。
-- 未分配 agent 后台可见，可分配到 BC / 大区 / 小区 / 默认入口。
-- `/servers`、`/zones`、`/namespaces` 从 mock 接真：注册确认、身份绑定、区服分配闭环真机可用。
+- `/servers`、`/zones`、`/namespaces` 从 mock 接真：注册确认、身份绑定、区服分配与信任管理使用 P1 v2 API。
+- zone-tree、server list、agent-identities list 的 1000+ 规模搜索 / 筛选 / 分页体验完成。
+- 换区工单 UI：已分配服必须解绑 + 重确认，不提供后台直接改派通道。
+- Q4 并发身份冲突、保留实例 / 解绑处置的可视化闭环完成。
+- env 映射、default-entry、draining 等区服管理细节在页面内可操作并保留审计入口。
 
 ### P4：0.24.x 健康采样与调度闭环
 

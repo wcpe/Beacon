@@ -124,6 +124,20 @@ var (
 	ErrAdminUnauthorized = New(http.StatusUnauthorized, "ADMIN_UNAUTHORIZED", "缺少或非法的登录令牌")
 	// ErrForbidden 已认证但无权执行该操作（只读密钥访问写端点，FR-42，见 ADR-0026）。
 	ErrForbidden = New(http.StatusForbidden, "FORBIDDEN", "只读密钥无权执行写操作")
+	// ErrIdentityRejected 身份已被拒绝，需后台允许重新申请。
+	ErrIdentityRejected = New(http.StatusForbidden, "identity_rejected", "身份已被拒绝，请先在后台允许重新申请")
+	// ErrIdentityBindingMismatch identityId 与当前 namespace/serverId 绑定不一致。
+	ErrIdentityBindingMismatch = New(http.StatusConflict, "identity_binding_mismatch", "身份绑定与当前 namespace 或 serverId 不一致")
+	// ErrIdentityConflict 身份处于冲突态，需后台处置。
+	ErrIdentityConflict = New(http.StatusConflict, "identity_conflict", "身份处于冲突态，请在后台处置")
+	// ErrServerIDPendingElsewhere 同 namespace/serverId 已有其他待确认身份。
+	ErrServerIDPendingElsewhere = New(http.StatusConflict, "server_id_pending_elsewhere", "该 serverId 已有其他待确认身份")
+	// ErrServerIDOccupied 同 namespace/serverId 已被其他有效身份占用。
+	ErrServerIDOccupied = New(http.StatusConflict, "server_id_occupied", "该 serverId 已被其他身份占用")
+	// ErrIllegalState 当前状态不允许该操作。
+	ErrIllegalState = New(http.StatusConflict, "illegal_state", "当前状态不允许该操作")
+	// ErrRezoneRequired 已分配 server 改归属必须走换区工单。
+	ErrRezoneRequired = New(http.StatusConflict, "rezone_required", "已分配 server 改归属必须走换区工单")
 	// ErrAPIKeyNotFound API 密钥不存在（吊销 / 重置目标不存在或已吊销，FR-42）。
 	ErrAPIKeyNotFound = New(http.StatusNotFound, "API_KEY_NOT_FOUND", "API 密钥不存在")
 	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。

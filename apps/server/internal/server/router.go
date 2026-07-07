@@ -12,6 +12,7 @@ import (
 // Handlers 汇集各 HTTP 处理器，供路由装配（避免过长的位置参数）。
 type Handlers struct {
 	Namespace        *handler.NamespaceHandler
+	V2               *handler.V2ControlPlaneHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
 	OverrideSet      *handler.OverrideSetHandler
@@ -51,7 +52,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 	// agent 侧：内网信任，仅以共享 token 防误连
 	r.Route("/beacon/v1/agent", func(r chi.Router) {
-		r.Use(agentTokenMiddleware(agentToken))
+		r.Use(agentTokenMiddleware(agentToken, h.V2))
 		r.Post("/register", h.Agent.Register)
 		r.Post("/heartbeat", h.Agent.Heartbeat)
 		r.Get("/config/effective", h.Agent.Effective)
@@ -89,8 +90,42 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Method(http.MethodGet, "/metrics", h.Metrics)
 	}
 
+	if h.V2 != nil {
+		// v2 agent 侧：namespace token 在注册 handler 内按库中哈希校验，未确认身份仅开放 register / registration。
+		r.Route("/beacon/v2/agent", func(r chi.Router) {
+			r.Post("/register", h.V2.AgentRegister)
+			r.Get("/registration", h.V2.AgentRegistration)
+		})
+	}
+
 	// 管理台登录：签发令牌，自身不挂令牌中间件
 	r.Post("/admin/v1/auth/login", h.Auth.Login)
+
+	if h.V2 != nil {
+		r.Route("/admin/v2", func(r chi.Router) {
+			r.Use(adminAuthMiddleware(authn, apiKeys))
+			r.Use(readonlyWriteGuard)
+			r.Use(auditWriteMiddleware(audit))
+
+			r.Get("/namespaces", h.V2.ListNamespaces)
+			r.Post("/namespaces", h.V2.CreateNamespace)
+			r.Get("/namespace-trusts", h.V2.ListNamespaceTrusts)
+			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
+			r.Post("/namespace-trusts/{id}/revoke", h.V2.RevokeNamespaceTrust)
+			r.Get("/agent-identities", h.V2.ListAgentIdentities)
+			r.Post("/agent-identities/{identityId}/approve", h.V2.ApproveAgentIdentity)
+			r.Post("/agent-identities/{identityId}/reject", h.V2.RejectAgentIdentity)
+			r.Post("/agent-identities/{identityId}/allow-reapply", h.V2.AllowAgentIdentityReapply)
+			r.Post("/agent-identities/{identityId}/disable", h.V2.DisableAgentIdentity)
+			r.Post("/agent-identities/{identityId}/enable", h.V2.EnableAgentIdentity)
+			r.Post("/agent-identities/{identityId}/unbind", h.V2.UnbindAgentIdentity)
+			r.Post("/bc-clusters", h.V2.CreateBCCluster)
+			r.Post("/regions", h.V2.CreateRegion)
+			r.Post("/zones", h.V2.CreateZone)
+			r.Get("/servers", h.V2.ListServers)
+			r.Post("/server-assignments", h.V2.AssignServers)
+		})
+	}
 
 	// admin 侧：除登录外一律校验身份（登录令牌 / API 密钥），再经只读拒写裁决
 	r.Route("/admin/v1", func(r chi.Router) {

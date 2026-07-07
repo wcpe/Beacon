@@ -6,7 +6,9 @@ import top.wcpe.beacon.agent.api.ListenerHandle
 import top.wcpe.beacon.agent.api.ServiceInstance
 import top.wcpe.beacon.agent.api.TopologyListener
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.DiscoveryFilters
 import top.wcpe.beacon.agent.core.client.JsonTree
+import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.messaging.RosterDirectory
 
 /**
@@ -26,14 +28,18 @@ class DiscoveryView(
     private val apiClient: BeaconApiClient,
     private val topologyWatchHub: TopologyWatchHub,
     private val rosterDirectory: RosterDirectory,
+    private val identity: AgentIdentity? = null,
 ) : Discovery {
     override fun query(query: DiscoveryQuery): List<ServiceInstance> {
         return apiClient.discover(
-            namespace = query.namespace().orElse(null),
-            group = query.group().orElse(null),
-            zone = query.zone().orElse(null),
-            role = query.role().orElse(null),
-            tags = query.tags(),
+            DiscoveryFilters(
+                namespace = query.namespace().orElse(null),
+                group = query.group().orElse(null),
+                zone = query.zone().orElse(null),
+                role = query.role().orElse(null),
+                tags = query.tags(),
+            ),
+            identity = identity,
         ).map { toInstance(it) }
     }
 
@@ -41,12 +47,12 @@ class DiscoveryView(
         group: String,
         zone: String,
     ): List<ServiceInstance> {
-        return apiClient.discover(namespace = null, group = group, zone = zone, role = null)
+        return apiClient.discover(DiscoveryFilters(namespace = null, group = group, zone = zone, role = null), identity = identity)
             .map { toInstance(it) }
     }
 
     override fun instancesInGroup(group: String): List<ServiceInstance> {
-        return apiClient.discover(namespace = null, group = group, zone = null, role = null)
+        return apiClient.discover(DiscoveryFilters(namespace = null, group = group, zone = null, role = null), identity = identity)
             .map { toInstance(it) }
     }
 

@@ -775,13 +775,13 @@ data: {}
 
 ## 端点索引（按域）
 
-> 每域一表，只列方法 / 路径 / 一句话用途；请求响应体、错误码、状态机**以「权威规格」列为准，不在此复制**。阶段与版本线对齐 [ROADMAP](ROADMAP.md) §1 与 [PRD](PRD.md) §4 FR 表。
+> 每域一表，只列方法 / 路径 / 一句话用途；请求响应体、错误码、状态机**以「权威规格」列为准，不在此复制**。阶段与版本线对齐 [ROADMAP](ROADMAP.md) §1 与 [PRD](PRD.md) §4 FR 表。P1 行仅列当前基础闭环已接端点，完整规格剩余端点在 P3 接真深化补齐。
 
 | 域 | 阶段 | 对应 FR | 权威规格 | 端点数 |
 |---|---|---|---|---|
-| Agent 身份 | P3 · 0.23.x | FR-139/140/141 | [v2-agent-identity.md](specs/v2-agent-identity.md) §5 | 13 |
-| namespace 隔离 | P3 · 0.23.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 8 |
-| 区服权威 | P3 · 0.23.x | FR-142/143 | [v2-zone-authority.md](specs/v2-zone-authority.md) §5 | 20 |
+| Agent 身份 | P1 · 0.21.x | FR-139/140/141 | [v2-agent-identity.md](specs/v2-agent-identity.md) §5 | 9 |
+| namespace 隔离 | P1 · 0.21.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 5 |
+| 区服权威 | P1 · 0.21.x | FR-142/143 | [v2-zone-authority.md](specs/v2-zone-authority.md) §5 | 5 |
 | 指标健康调度 | P4 · 0.24.x | FR-144/146/147/148 | [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5 | 14 |
 | 连接消息存储 | P5 · 0.25.x | FR-145/149/150 | [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5 | 11 |
 | 热冷归档 | P6 · 0.26.x | FR-151/152/153 | [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5 | 6 |
@@ -789,9 +789,9 @@ data: {}
 | 文件资产 V2 | P8 · 0.28.x | FR-163/164 | [v2-file-assets.md](specs/v2-file-assets.md) §5 | 10 |
 | 交付编排 V2 | P9 · 0.29.x | FR-162/165/166/167/168/171 | [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5 | 27 |
 
-合计 126 个端点。
+当前表内合计 104 个端点；其中 P1 基础已接 19 个，第二版全量规划仍以各规格为准。
 
-### Agent 身份（P3 · 0.23.x，真源 [v2-agent-identity.md](specs/v2-agent-identity.md) §5）
+### Agent 身份（P1 · 0.21.x，真源 [v2-agent-identity.md](specs/v2-agent-identity.md) §5）
 
 agent 面：
 
@@ -805,54 +805,32 @@ agent 面：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/admin/v2/agent-identities` | 身份分页列表（状态 / namespace / 关键字筛选） |
-| GET | `/admin/v2/agent-identities/{identityId}` | 单条详情（冲突时含双方明细） |
-| POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；换区重确认可带 target 落区，缺省取预填目标） |
+| POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；确认后只创建未分配 server） |
 | POST | `/admin/v2/agent-identities/{identityId}/reject` | 拒绝接入（原因必填） |
 | POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 允许被拒身份重新申请 |
 | POST | `/admin/v2/agent-identities/{identityId}/disable` | 禁用（摘除调度与指令下发） |
 | POST | `/admin/v2/agent-identities/{identityId}/enable` | 恢复禁用身份 |
 | POST | `/admin/v2/agent-identities/{identityId}/unbind` | 解绑（换 serverId / namespace 的前置） |
-| POST | `/admin/v2/agent-identities/{identityId}/resolve-conflict` | 处置并发双实例冲突（指定保留方） |
-| POST | `/admin/v2/agent-identities/batch-approve` | 批量确认（逐条结果） |
-| POST | `/admin/v2/agent-identities/batch-reject` | 批量拒绝（逐条结果，原因整批共用） |
 
-### namespace 隔离（P3 · 0.23.x，真源 [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5）
+### namespace 隔离（P1 · 0.21.x，真源 [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5）
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/namespaces` | namespace 列表（含 server / 集群 / 双向信任计数） |
+| GET | `/admin/v2/namespaces` | namespace 列表 |
 | POST | `/admin/v2/namespaces` | 创建 namespace（返回一次性明文接入 token） |
-| PATCH | `/admin/v2/namespaces/{id}` | 更新描述（name 不可改） |
-| DELETE | `/admin/v2/namespaces/{id}` | 删除（有 server / 集群 / 生效信任 → 409） |
-| POST | `/admin/v2/namespaces/{id}/token/rotate` | 轮换接入 token（旧 token 即时失效，高风险） |
 | GET | `/admin/v2/namespace-trusts` | 互通信任行列表 |
 | POST | `/admin/v2/namespace-trusts` | 授予单向信任（新增或复活，原因必填） |
 | POST | `/admin/v2/namespace-trusts/{id}/revoke` | 收回信任（原因必填，即时生效） |
 
-### 区服权威（P3 · 0.23.x，真源 [v2-zone-authority.md](specs/v2-zone-authority.md) §5）
+### 区服权威（P1 · 0.21.x，真源 [v2-zone-authority.md](specs/v2-zone-authority.md) §5）
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/envs` | env 列表（含映射 namespace 摘要） |
-| POST | `/admin/v2/envs` | 新建 env |
-| PATCH | `/admin/v2/envs/{id}` | 更新 env |
-| DELETE | `/admin/v2/envs/{id}` | 删除 env（映射级联删除） |
-| PUT | `/admin/v2/envs/{id}/namespaces` | 整体替换 env↔namespace 映射 |
-| GET | `/admin/v2/zone-tree` | BC 集群 → 大区 → 小区树 + 未分配计数 |
 | POST | `/admin/v2/bc-clusters` | 新建 BC 集群 |
-| PATCH | `/admin/v2/bc-clusters/{id}` | 更新 BC 集群 |
-| DELETE | `/admin/v2/bc-clusters/{id}` | 删除 BC 集群（有子级 / 挂 proxy → 409） |
 | POST | `/admin/v2/regions` | 新建大区 |
-| PATCH | `/admin/v2/regions/{id}` | 更新大区 |
-| DELETE | `/admin/v2/regions/{id}` | 删除大区（有子级 → 409） |
 | POST | `/admin/v2/zones` | 新建小区 |
-| PATCH | `/admin/v2/zones/{id}` | 更新小区 |
-| DELETE | `/admin/v2/zones/{id}` | 删除小区（挂 server → 409） |
 | GET | `/admin/v2/servers` | server 分页列表（`assigned=false` 即未分配篮） |
-| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server）/ 解除归属（整批事务）；已分配服改归属须走换区工单 |
-| POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配服解绑 + 记预填目标，重确认落区） |
-| PUT | `/admin/v2/servers/{id}/default-entry` | 设置 / 清除默认入口标记 |
-| PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（消费方为调度 schedulable 判定） |
+| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server）；已分配服改归属须走后续换区工单 |
 
 ### 指标健康调度（P4 · 0.24.x，真源 [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5）
 

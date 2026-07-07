@@ -8,6 +8,9 @@ enum class AgentState {
     /** 注册中。 */
     REGISTERING,
 
+    /** 等待后台人工确认 v2 身份。 */
+    PENDING_APPROVAL,
+
     /** 运行中：心跳 + 长轮询双循环。 */
     RUNNING,
 

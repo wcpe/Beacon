@@ -28,16 +28,29 @@ type APIKeyVerifier interface {
 	Verify(rawKey string) (principal string, role string, err error)
 }
 
+// AgentV2Authenticator 校验已确认 v2 身份对 legacy v1 数据面的兼容访问。
+type AgentV2Authenticator interface {
+	AuthenticateAgentV2(token, identityID, bootID string) error
+}
+
 // agentTokenMiddleware 校验 agent 端共享 token（仅防误连，非安全边界）。
 // token 为空表示停用校验（开发场景）。
-func agentTokenMiddleware(token string) func(http.Handler) http.Handler {
+func agentTokenMiddleware(token string, v2 AgentV2Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if token != "" && r.Header.Get("X-Beacon-Token") != token {
-				render.WriteError(w, r, apperr.ErrUnauthorized)
+			rawToken := r.Header.Get("X-Beacon-Token")
+			if token == "" || rawToken == token {
+				next.ServeHTTP(w, r)
 				return
 			}
-			next.ServeHTTP(w, r)
+			if v2 != nil {
+				err := v2.AuthenticateAgentV2(rawToken, r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"))
+				if err == nil {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			render.WriteError(w, r, apperr.ErrUnauthorized)
 		})
 	}
 }

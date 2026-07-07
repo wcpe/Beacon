@@ -118,6 +118,24 @@ class AgentLifecycle(
     @Volatile
     private var heartbeatIntervalMs: Long = settings.heartbeatFallbackMs
 
+    private val pendingRegistration =
+        PendingRegistrationController(
+            identity = identity,
+            settings = settings,
+            adapter = adapter,
+            apiClient = apiClient,
+            runtime =
+                PendingRegistrationRuntime(
+                    state = state,
+                    running = running,
+                    registering = registering,
+                ),
+            actions =
+                PendingRegistrationActions(
+                    registerNow = { doRegister() },
+                ),
+        )
+
     private val registerBackoff = ExponentialBackoff(settings.backoff)
     private val pollBackoff = ExponentialBackoff(settings.backoff)
     private val fileTreeBackoff = ExponentialBackoff(settings.backoff)
@@ -328,12 +346,31 @@ class AgentLifecycle(
         state.set(AgentState.REGISTERING)
         when (val outcome = apiClient.register(identity, currentBackends())) {
             is RegisterOutcome.Success -> onRegisterSuccess(outcome.result)
+            is RegisterOutcome.PendingApproval -> pendingRegistration.waitForApproval(outcome)
             is RegisterOutcome.DuplicateServerId -> {
                 adapter.error("注册被拒：重复的 serverId（${identity.serverId}），请检查部署是否冲突", null)
                 degradeAndRetryRegister()
             }
 
             is RegisterOutcome.OfflineRejected -> enterOfflineAndProbe()
+
+            is RegisterOutcome.Disabled -> {
+                adapter.warn("身份已确认但被后台禁用：${identity.serverId}，保持本地快照并等待启用")
+                state.set(AgentState.DEGRADED)
+                registering.set(false)
+            }
+
+            is RegisterOutcome.Rejected -> {
+                adapter.warn("身份申请已被后台拒绝：${identity.serverId}，停止自动重试")
+                state.set(AgentState.DEGRADED)
+                registering.set(false)
+            }
+
+            is RegisterOutcome.IdentityConflict -> {
+                adapter.warn("身份处于冲突态：${identity.serverId}，等待后台处置")
+                state.set(AgentState.DEGRADED)
+                registering.set(false)
+            }
 
             is RegisterOutcome.Unauthorized -> {
                 adapter.error("注册被拒：X-Beacon-Token 缺失或错误", null)

@@ -23,6 +23,14 @@ import top.wcpe.beacon.agent.core.transport.StreamListener
 import top.wcpe.beacon.agent.core.transport.StreamRequest
 import top.wcpe.beacon.agent.core.transport.StreamTransport
 
+data class DiscoveryFilters(
+    val namespace: String?,
+    val group: String?,
+    val zone: String?,
+    val role: String?,
+    val tags: Map<String, String> = emptyMap(),
+)
+
 /**
  * 收口 agent REST 语义调用：register / heartbeat / pollEffective / report / discover，
  * 以及文件树托管（通道B）的 pollFileManifest / fetchFileContent。
@@ -86,15 +94,22 @@ class BeaconApiClient(
         // 读超时给保活留充足余量：取长轮询挂起上限的数倍，避免空闲被误判断流。
         val readTimeout = settings.pollTimeoutMs * 3 + settings.requestTimeoutMs
         st.open(
-            StreamRequest(url = url, headers = headers(withBody = false), readTimeoutMs = readTimeout),
+            StreamRequest(url = url, headers = headers(withBody = false, identity = identity), readTimeoutMs = readTimeout),
             listener,
         )
     }
 
     /** agent 侧公共请求头：内容类型 + 防误连 token。 */
-    private fun headers(withBody: Boolean): Map<String, String> {
+    private fun headers(
+        withBody: Boolean,
+        identity: AgentIdentity? = null,
+    ): Map<String, String> {
         val h = LinkedHashMap<String, String>()
         h[HEADER_TOKEN] = settings.bootstrapToken
+        if (identity?.hasV2Identity() == true) {
+            h[HEADER_IDENTITY] = identity.identityId
+            h[HEADER_BOOT] = identity.bootId
+        }
         if (withBody) {
             h["Content-Type"] = "application/json; charset=utf-8"
         }
@@ -108,6 +123,16 @@ class BeaconApiClient(
      * 由调用方按帧传入；仅当非空时才拼入报文（bukkit / 旧控制面下为空、不拼，向后兼容）。
      */
     fun register(
+        identity: AgentIdentity,
+        backends: List<String> = emptyList(),
+    ): RegisterOutcome {
+        if (identity.hasV2Identity()) {
+            return registerV2(identity, backends)
+        }
+        return registerLegacy(identity, backends)
+    }
+
+    private fun registerLegacy(
         identity: AgentIdentity,
         backends: List<String> = emptyList(),
     ): RegisterOutcome {
@@ -132,7 +157,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/register",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -149,6 +174,97 @@ class BeaconApiClient(
         }
     }
 
+    /** v2 身份注册：先走确认状态机，active 后再衔接 legacy 数据面注册。 */
+    private fun registerV2(
+        identity: AgentIdentity,
+        backends: List<String>,
+    ): RegisterOutcome {
+        val body =
+            buildMap {
+                put("identityId", identity.identityId)
+                put("serverId", identity.serverId)
+                put("kind", v2Kind(identity.role))
+                put("bootId", identity.bootId)
+                if (identity.agentVersion.isNotBlank()) put("agentVersion", identity.agentVersion)
+                if (identity.address.isNotBlank()) put("addr", identity.address)
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/register",
+                    headers = headers(withBody = true),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return RegisterOutcome.Failed(connectFailReason())
+
+        return when (resp.statusCode) {
+            200 -> activeRegisterOutcome(resp.body, identity, backends)
+            202 -> pendingApprovalOutcome(resp.body, identity)
+            401 -> RegisterOutcome.Unauthorized
+            403 -> RegisterOutcome.Rejected
+            409 -> RegisterOutcome.IdentityConflict
+            400 -> RegisterOutcome.IdentityRequired
+            else -> RegisterOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    private fun activeRegisterOutcome(
+        body: String,
+        identity: AgentIdentity,
+        backends: List<String>,
+    ): RegisterOutcome =
+        when (parseRegistrationStatus(body)) {
+            "active" -> registerLegacy(identity, backends)
+            "disabled" -> RegisterOutcome.Disabled
+            "conflict" -> RegisterOutcome.IdentityConflict
+            else -> RegisterOutcome.Failed("非预期注册状态")
+        }
+
+    private fun pendingApprovalOutcome(
+        body: String,
+        identity: AgentIdentity,
+    ): RegisterOutcome.PendingApproval {
+        val obj = JsonTree.asObject(codec.decode(body))
+        return RegisterOutcome.PendingApproval(
+            serverId = JsonTree.strOr(obj, "serverId", identity.serverId),
+            namespace = JsonTree.strOr(obj, "namespace", identity.namespace),
+        )
+    }
+
+    /** v2 注册确认状态长轮询。 */
+    fun pollRegistration(
+        identity: AgentIdentity,
+        waitSeconds: Int,
+    ): RegistrationPollResult {
+        if (!identity.hasV2Identity()) return RegistrationPollResult.Failed("缺少 v2 身份")
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = "$base/beacon/v2/agent/registration?wait=$waitSeconds",
+                    headers = v2IdentityHeaders(identity),
+                    body = null,
+                    readTimeoutMs = waitSeconds * 1000L + settings.requestTimeoutMs,
+                ),
+            ) ?: return RegistrationPollResult.Failed(connectFailReason())
+        return when (resp.statusCode) {
+            200 ->
+                when (parseRegistrationStatus(resp.body)) {
+                    "active" -> RegistrationPollResult.Active
+                    "pending" -> RegistrationPollResult.Pending
+                    "disabled" -> RegistrationPollResult.Disabled
+                    "rejected" -> RegistrationPollResult.Rejected
+                    "conflict" -> RegistrationPollResult.Conflict
+                    else -> RegistrationPollResult.Failed("非预期注册状态")
+                }
+
+            304 -> RegistrationPollResult.NotModified
+            else -> RegistrationPollResult.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
     /** 心跳：POST /beacon/v1/agent/heartbeat。404 → 需重新注册。 */
     fun heartbeat(identity: AgentIdentity): HeartbeatOutcome {
         val body =
@@ -161,7 +277,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/heartbeat",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -205,7 +321,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
                 ),
@@ -264,7 +380,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/report",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -284,14 +400,19 @@ class BeaconApiClient(
         zone: String?,
         role: String?,
         tags: Map<String, String> = emptyMap(),
+    ): List<Map<String, Any?>> = discover(DiscoveryFilters(namespace = namespace, group = group, zone = zone, role = role, tags = tags))
+
+    fun discover(
+        filters: DiscoveryFilters,
+        identity: AgentIdentity? = null,
     ): List<Map<String, Any?>> {
         val params = StringBuilder()
-        appendParam(params, "namespace", namespace)
-        appendParam(params, "group", group)
-        appendParam(params, "zone", zone)
-        appendParam(params, "role", role)
+        appendParam(params, "namespace", filters.namespace)
+        appendParam(params, "group", filters.group)
+        appendParam(params, "zone", filters.zone)
+        appendParam(params, "role", filters.role)
         // 自定义元数据过滤：每个键拼为 tag.<key>=<value>，控制面按 metadata 键值匹配。
-        for ((k, v) in tags) {
+        for ((k, v) in filters.tags) {
             appendParam(params, "tag.$k", v)
         }
         val url = "$base/beacon/v1/agent/discovery" + if (params.isEmpty()) "" else "?$params"
@@ -301,16 +422,17 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
-            ) ?: return emptyList()
-        if (resp.statusCode != 200) {
-            return emptyList()
+            )
+        return if (resp?.statusCode == 200) {
+            val obj = JsonTree.asObject(codec.decode(resp.body))
+            JsonTree.asList(obj["instances"]).map { JsonTree.asObject(it) }
+        } else {
+            emptyList()
         }
-        val obj = JsonTree.asObject(codec.decode(resp.body))
-        return JsonTree.asList(obj["instances"]).map { JsonTree.asObject(it) }
     }
 
     /**
@@ -340,7 +462,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
                 ),
@@ -376,7 +498,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -418,7 +540,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = timeoutMs + settings.requestTimeoutMs,
                 ),
@@ -456,7 +578,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -492,7 +614,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "GET",
                     url = url,
-                    headers = headers(withBody = false),
+                    headers = headers(withBody = false, identity = identity),
                     body = null,
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -513,6 +635,7 @@ class BeaconApiClient(
     fun uploadIngest(
         commandId: Long,
         files: List<IngestFile>,
+        identity: AgentIdentity? = null,
     ): Boolean {
         val body =
             mapOf(
@@ -524,7 +647,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/files/ingest",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -541,6 +664,7 @@ class BeaconApiClient(
     fun uploadScan(
         commandId: Long,
         files: List<ScanFile>,
+        identity: AgentIdentity? = null,
     ): Boolean {
         val body =
             mapOf(
@@ -560,7 +684,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/files/scan",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -578,6 +702,7 @@ class BeaconApiClient(
     fun uploadError(
         commandId: Long,
         reason: String,
+        identity: AgentIdentity? = null,
     ): Boolean {
         val body =
             mapOf(
@@ -589,7 +714,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/files/error",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -607,6 +732,7 @@ class BeaconApiClient(
     fun uploadLogs(
         commandId: Long,
         lines: List<LogLine>,
+        identity: AgentIdentity? = null,
     ): Boolean {
         val body =
             mapOf(
@@ -618,7 +744,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/logs",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -636,6 +762,7 @@ class BeaconApiClient(
         commandId: Long,
         ok: Boolean,
         reason: String,
+        identity: AgentIdentity? = null,
     ): Boolean {
         val body =
             mapOf(
@@ -648,7 +775,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/commands/result",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -685,7 +812,7 @@ class BeaconApiClient(
                 HttpRequest(
                     method = "POST",
                     url = "$base/beacon/v1/agent/files/browse-result",
-                    headers = headers(withBody = true),
+                    headers = headers(withBody = true, identity = identity),
                     body = codec.encode(body),
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
@@ -724,6 +851,11 @@ class BeaconApiClient(
             ttlSec = JsonTree.intOr(obj, "ttlSec", 0),
             assigned = JsonTree.boolOr(obj, "assigned", false),
         )
+    }
+
+    private fun parseRegistrationStatus(jsonBody: String): String {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return JsonTree.strOr(obj, "status", "")
     }
 
     private fun parseEffective(jsonBody: String): EffectiveResult {
@@ -844,9 +976,25 @@ class BeaconApiClient(
         return java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
     }
 
+    private fun v2IdentityHeaders(identity: AgentIdentity): Map<String, String> {
+        val h = LinkedHashMap<String, String>()
+        h[HEADER_TOKEN] = settings.bootstrapToken
+        h[HEADER_IDENTITY] = identity.identityId
+        h[HEADER_BOOT] = identity.bootId
+        return h
+    }
+
+    private fun v2Kind(role: String): String = if (role == "bungee") "proxy" else "backend"
+
     companion object {
         /** agent 侧防误连令牌请求头名。 */
         const val HEADER_TOKEN: String = "X-Beacon-Token"
+
+        /** v2 已绑定身份请求头名。 */
+        const val HEADER_IDENTITY: String = "X-Beacon-Identity"
+
+        /** v2 本次进程启动标识请求头名。 */
+        const val HEADER_BOOT: String = "X-Beacon-Boot"
     }
 }
 

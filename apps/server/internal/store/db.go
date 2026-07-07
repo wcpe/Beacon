@@ -72,6 +72,14 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.FileSyncBatch{},
 		&model.FileSyncTarget{},
 		&model.FileSyncLog{},
+		&model.NamespaceTrust{},
+		&model.Env{},
+		&model.EnvNamespace{},
+		&model.BCCluster{},
+		&model.Region{},
+		&model.Zone{},
+		&model.Server{},
+		&model.AgentIdentity{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}

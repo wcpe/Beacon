@@ -171,6 +171,7 @@ func run() error {
 		return err
 	}
 	nsHandler := handler.NewNamespaceHandler(nsService)
+	v2ControlPlaneHandler := handler.NewV2ControlPlaneHandler(service.NewV2ControlPlaneService(db))
 
 	// 心跳周期仍为启动期固定项（agent 注册时一次性下发，非热改白名单内）；
 	// ttl 供实例服务做注册期重复守卫，取设置 store 当前值（FR-61 健康阈值已移入 store）。
@@ -388,7 +389,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

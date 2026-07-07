@@ -16,6 +16,8 @@ package top.wcpe.beacon.agent.core.identity
  * @param metadata  自定义元数据标签（仅 map<string,string>，无 canary）
  * @param agentVersion agent 自身构建版本（FR-86，见 ADR-0039）：由壳层经 TabooLib pluginVersion 注入、
  *                     非运维手填，与业务 [version] 语义不同；空表示未注入（旧 agent，向后兼容）。
+ * @param identityId agent 首启生成并持久化的 v2 身份标识；空表示沿用 legacy 注册。
+ * @param bootId     本次进程启动标识；只存内存，随 v2 注册上报。
  */
 data class AgentIdentity(
     val namespace: String,
@@ -28,7 +30,12 @@ data class AgentIdentity(
     val weight: Int,
     val metadata: Map<String, String>,
     val agentVersion: String = "",
+    val identityId: String = "",
+    val bootId: String = "",
 ) {
     /** 身份是否合法（serverId / namespace 非空）。 */
     fun isValid(): Boolean = serverId.isNotBlank() && namespace.isNotBlank()
+
+    /** 是否已具备 v2 身份注册所需的运行期身份。 */
+    fun hasV2Identity(): Boolean = identityId.isNotBlank() && bootId.isNotBlank()
 }
