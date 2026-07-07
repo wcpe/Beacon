@@ -1,10 +1,11 @@
-// 页眉：导航折叠开关 + 控制台标识
+// 页眉：导航折叠开关 + 常驻演示模式徽标（FR-159）+ 四态场景切换器
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@beacon/ui'
+import { Badge, Button } from '@beacon/ui'
 
 import { useShellStore } from '../store'
+import ScenarioSwitcher from './scenario-switcher'
 
 export default function Header() {
   const { t } = useTranslation()
@@ -28,6 +29,10 @@ export default function Header() {
           )}
         </Button>
         <span className="truncate text-sm text-muted-foreground">{t('common.consoleName')}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant="secondary">{t('common.demoMode')}</Badge>
+        <ScenarioSwitcher />
       </div>
     </header>
   )

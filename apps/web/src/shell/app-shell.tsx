@@ -1,5 +1,10 @@
-// 布局 Shell：侧栏 + 页眉 + 路由出口
+// 布局 Shell：侧栏 + 页眉 + 路由出口。
+// 订阅 mock 场景切换（FR-159），场景变化时全量失效查询让所有页面重取数据。
+import { useEffect } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
+
+import { subscribeMockScenario } from '@beacon/devmock'
+import { useQueryClient } from '@tanstack/react-query'
 
 import { ALL_PAGES } from '../routes'
 import { useShellStore } from '../store'
@@ -8,6 +13,13 @@ import Sidebar from './sidebar'
 
 export default function AppShell() {
   const sidebarCollapsed = useShellStore((state) => state.sidebarCollapsed)
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    return subscribeMockScenario(() => {
+      void queryClient.invalidateQueries()
+    })
+  }, [queryClient])
 
   return (
     <div className="min-h-screen bg-background text-foreground">

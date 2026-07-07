@@ -7,3 +7,34 @@ import { afterEach } from 'vitest'
 afterEach(() => {
   cleanup()
 })
+
+// radix-ui（Select 等浮层组件）依赖的浏览器 API 在 jsdom 中缺失，统一打桩
+if (!('ResizeObserver' in globalThis)) {
+  class ResizeObserverStub {
+    observe(): void {
+      // jsdom 无布局，桩实现即可
+    }
+
+    unobserve(): void {
+      // jsdom 无布局，桩实现即可
+    }
+
+    disconnect(): void {
+      // jsdom 无布局，桩实现即可
+    }
+  }
+  Object.defineProperty(globalThis, 'ResizeObserver', { value: ResizeObserverStub })
+}
+
+Object.assign(window.HTMLElement.prototype, {
+  scrollIntoView: () => {
+    // jsdom 无滚动布局，桩实现即可
+  },
+  hasPointerCapture: () => false,
+  setPointerCapture: () => {
+    // jsdom 无指针捕获，桩实现即可
+  },
+  releasePointerCapture: () => {
+    // jsdom 无指针捕获，桩实现即可
+  },
+})
