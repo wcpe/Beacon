@@ -12,7 +12,7 @@ export default function NamespacesPage() {
 
   return (
     <section className="grid gap-6">
-      <SectionHeader size="lg" title={t('system.namespaces.title')} />
+      <SectionHeader size="lg" title={t('nav.namespaces')} />
       <p className="rounded-md bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
         {t('system.namespaces.isolationHint')}
       </p>

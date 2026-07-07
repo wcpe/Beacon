@@ -147,7 +147,7 @@ export default function ApiKeysPage() {
   return (
     <section className="grid gap-4">
       <div className="flex items-center justify-between">
-        <SectionHeader size="lg" title={t('system.apiKeys.title')} />
+        <SectionHeader size="lg" title={t('nav.apiKeys')} />
         <Button
           onClick={() => {
             setCreateError(null)
