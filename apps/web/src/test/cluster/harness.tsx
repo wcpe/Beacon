@@ -11,8 +11,11 @@ import { allHandlers, resetMockData, setMockScenario, type MockScenario } from '
 
 import '../../i18n'
 
-/** 集群页测试共用的 mock 服务端（全量 handlers） */
-export const server = setupServer(...allHandlers)
+/** 为单个测试文件创建独立的 mock 服务端（全量 handlers）。
+ *  每个文件独享实例，避免并行 worker 共享单例导致 listen/close 竞态。 */
+export function createTestServer(): ReturnType<typeof setupServer> {
+  return setupServer(...allHandlers)
+}
 
 /** 复位到指定场景并重建数据仓（用例前调用，保证隔离） */
 export function useScenario(scenario: MockScenario): void {

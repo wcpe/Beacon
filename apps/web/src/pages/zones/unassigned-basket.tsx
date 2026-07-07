@@ -2,7 +2,7 @@
 // 选择集只允许同 kind（分配要求同 namespace、同 kind），换区中的 server 标注 pending。
 
 import { useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -34,10 +34,12 @@ export default function UnassignedBasket({ namespaceId }: { namespaceId: number 
   const query = useQuery({
     queryKey: ['servers', 'unassigned', namespaceId],
     queryFn: () => fetchServers({ namespaceId, assigned: false, pageSize: 200 }),
+    placeholderData: keepPreviousData,
   })
   const treeQuery = useQuery({
     queryKey: ['zone-tree', namespaceId],
     queryFn: () => fetchZoneTree(namespaceId),
+    placeholderData: keepPreviousData,
   })
 
   const rows = query.data?.items ?? []

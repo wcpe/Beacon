@@ -1,6 +1,6 @@
 // 区服结构树：BC 集群 → 大区 → 小区，各层可新建。小区显示子服计数 / 默认入口计数。
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { AsyncSection, Badge, Button, SectionHeader } from '@beacon/ui'
@@ -34,6 +34,8 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
   const query = useQuery({
     queryKey: ['zone-tree', namespaceId],
     queryFn: () => fetchZoneTree(namespaceId),
+    // namespace 作用域切换时保留上一份结果，避免结构树短暂闪回加载态
+    placeholderData: keepPreviousData,
   })
 
   const invalidate = async () => {

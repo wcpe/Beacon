@@ -4,7 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ServersPage from '../../pages/servers'
-import { renderPage, server, useScenario } from './harness'
+import { createTestServer, renderPage, useScenario } from './harness'
+
+// 本文件独享 mock 服务端实例
+const server = createTestServer()
 
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' })
