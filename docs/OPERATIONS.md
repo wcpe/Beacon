@@ -172,6 +172,24 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/metrics
 
 依次断言四相位（任一 FAIL 即失败）：summary 含目标子服且 `avgMemMax>0`（真 JVM 堆）；trend 时间序列非空且字段为真值；persist 经 GORM 直读 `metric_sample` 已落样本；boundary 响应不含玩家名单 / 身份字段。
 
+### 7.4 P1 v2 Bungee 注册确认真机 smoke/E2E
+
+校验第二版 agent 身份、注册确认、namespace 隔离入口与区服权威首次分配链路在真实 BungeeCord 目录成立。默认使用本机 `D:\Games\MinecraftServer\BungeeCord`，测试会临时备份并替换 `plugins/BeaconAgentProxy*.jar`，同时备份 `plugins/BeaconAgentProxy/identity.yml`、`effective-config.snapshot.json`、`file-tree.applied.json`，结束后恢复。
+
+可选环境变量：
+
+- `E2E_BUNGEE_DIR`：真实 BungeeCord 目录，默认 `D:\Games\MinecraftServer\BungeeCord`。
+- `E2E_BEACON_URL`：临时控制面地址，默认 `http://localhost:18848`。
+- `E2E_JAVA`：指定 Java 可执行文件；未设时优先 `JAVA_HOME\bin\java.exe`。
+
+运行：
+
+```powershell
+go test -tags=e2e -timeout=15m ./apps/server/test/e2e/p1v2 -v
+```
+
+测试依次断言：首启生成 `identity.yml`；新身份进入 pending 且归属目标 namespace；管理员 approve 后转 active 并继续衔接 legacy v1 online；approve 只创建未分配 proxy server；首次分配到 BC 集群成功；重启后 `identityId` 保持不变；损坏身份文件后 agent fail-closed，不静默重生成。
+
 ## 8. 测试运行方式（单元 / 集成）
 
 - **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`apps/server/internal/service` / `apps/server/internal/server` 显示 `no test files` 属正常（其用例全为集成）。
