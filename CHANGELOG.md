@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.21.0（2026-07-07）
+
 ### 新增
 - P1 v2 控制面基础闭环：新增 agent `identity.yml` 首启生成 / 损坏 fail-closed、v2 注册 pending→approve→active 确认流、namespace token 哈希与 trust 快照、区服权威表（namespace_trust/env/bc_cluster/region/zone/server/agent_identity）迁移、admin v2 身份迁移与未分配 server 首次分配端点；agent v2 active 后继续衔接 legacy 数据面注册，保持既有配置 / 心跳链路可用。
 - P1 v2 真机 Bungee smoke/E2E：新增 `go test -tags=e2e ./apps/server/test/e2e/p1v2`，在真实 BungeeCord 目录验证 `identity.yml` 首启、pending→approve→active、legacy v1 online 衔接、approve 后未分配 server、首次分配到 BC 集群、重启身份持久与损坏身份 fail-closed。
@@ -17,6 +19,7 @@
 - 修复未装配 v2 控制面处理器时错误 agent token 触发空指针 panic 的问题，legacy agent 数据面仍按预期返回 401。
 - 修复可逆操作账目在 MySQL 8 严格模式下把未撤回时间写成零值时间的问题，未撤回记录改以 NULL 表示。
 - 修复撤回旧发布与同对象新发布并发竞争时 MySQL deadlock 原样透出的问题，事务回滚后按账目最终状态返回已覆盖结果。
+- 修复 Windows 本地 `make package` 把 `mkdir -p` 误当目录名的问题，打包目录创建、复制、清理与 Gradle 调用改为平台分支命令。
 
 ## 0.20.0（2026-07-07）
 
