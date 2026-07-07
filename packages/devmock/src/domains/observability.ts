@@ -3,7 +3,7 @@
 //（分页参数 page/size、响应 total+items，与 v2 的 page/pageSize 不同——已在汇报列明）。
 
 import { HttpResponse, type HttpHandler } from 'msw'
-import { jsonError, mockGet, paginate, queryStr, queryTimeMs } from '../http'
+import { jsonError, mockGet, mockPost, paginate, pathParam, queryStr, queryTimeMs, readBody } from '../http'
 import { getClusterState } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
@@ -59,6 +59,9 @@ export interface CommandAnalytics {
   byDay: { date: string; issued: number; done: number; failed: number }[]
 }
 
+/** 告警事件处理状态（open 待处理 / acknowledged 已确认 / resolved 已处理） */
+export type AlertEventStatus = 'open' | 'acknowledged' | 'resolved'
+
 /** 告警事件行（Legacy /admin/v1/alert-events items 元素） */
 export interface AlertEventItem {
   id: number
@@ -69,6 +72,11 @@ export interface AlertEventItem {
   message: string
   detail: string
   createdAt: string
+  status: AlertEventStatus
+  // 处理人 / 处理时间 / 处理备注（open 时均为 null）
+  handledBy: string | null
+  handledAt: string | null
+  handleNote: string | null
 }
 
 interface ObservabilityState {
@@ -152,6 +160,8 @@ function buildObservability(scenario: MockScenario): ObservabilityState {
   for (let i = 0; i < alertCount; i++) {
     const server = pickOne(rng, servers)
     const critical = rng() < 0.2
+    // 前几条保持 open（待处理），便于展示未处理告警与写闭环入口
+    const resolved = i >= 4 && rng() < 0.35
     alertEvents.push({
       id: alertCount - i,
       type: 'health-transition',
@@ -161,6 +171,10 @@ function buildObservability(scenario: MockScenario): ObservabilityState {
       message: critical ? `${server.serverId} 状态 lost → offline` : `${server.serverId} 状态 online → degraded`,
       detail: `${String(35 + Math.floor(rng() * 60))}s 未心跳 > ttl 30s`,
       createdAt: new Date(BASE_MS - i * 40 * MINUTE).toISOString(),
+      status: resolved ? 'resolved' : 'open',
+      handledBy: resolved ? 'ops-chen' : null,
+      handledAt: resolved ? new Date(BASE_MS - i * 40 * MINUTE + 5 * MINUTE).toISOString() : null,
+      handleNote: resolved ? '已重启 agent 恢复心跳' : null,
     })
   }
 
@@ -358,5 +372,27 @@ export const observabilityHandlers: HttpHandler[] = [
     })
     const { items, total } = paginate(rows, url, { sizeParam: 'size' })
     return HttpResponse.json({ items, total })
+  }),
+
+  // 处理告警事件（确认 / 处理写闭环）：更新状态 + 处理人 / 时间 / 备注，返回更新后的行
+  mockPost('/admin/v1/alert-events/:id/handle', async (info) => {
+    const id = Number.parseInt(pathParam(info, 'id'), 10)
+    const row = getObservabilityState().alertEvents.find((r) => r.id === id)
+    if (!row) {
+      return jsonError(404, 'NOT_FOUND', '告警事件不存在')
+    }
+    const body = await readBody<{ status?: string; note?: string }>(info.request)
+    const status = body.status
+    if (status !== 'acknowledged' && status !== 'resolved') {
+      return jsonError(400, 'INVALID_PARAM', 'status 仅支持 acknowledged / resolved')
+    }
+    if (status === 'resolved' && (!body.note || body.note.trim() === '')) {
+      return jsonError(400, 'MISSING_REASON', '标记已处理必须填写处理备注')
+    }
+    row.status = status
+    row.handledBy = 'admin'
+    row.handledAt = new Date(BASE_MS).toISOString()
+    row.handleNote = body.note?.trim() ?? null
+    return HttpResponse.json(row)
   }),
 ]

@@ -1,4 +1,58 @@
 // 运维总览域文案（/dashboard）：由 dashboard 页面 agent 维护，其他域勿改
 export const dashboard = {
   mission: '一屏看全局：健康、玩家流、连接流、告警、调度概览；只看不改，异常可下钻到对应页',
+  loadFailed: '加载失败',
+  retry: '重试',
+  // 集群健康总览
+  health: {
+    title: '集群健康总览',
+    proxy: '代理',
+    backend: '子服',
+    online: '在线',
+    schedulable: '可调度',
+    notSchedulable: '不可调度',
+    players: '在线玩家',
+    avgTps: '平均 TPS',
+    avgCpu: '平均 CPU',
+    levelHealthy: '健康',
+    levelDegraded: '亚健康',
+    levelUnhealthy: '不健康',
+    distribution: '健康等级分布',
+    empty: '暂无健康数据，接入服务器后展示集群健康总览',
+    viewServers: '前往服务器',
+  },
+  // 玩家流 / 连接流趋势
+  flow: {
+    title: '玩家流 / 连接流',
+    opens: '新建连接',
+    closes: '断开连接',
+    abnormal: '异常断开',
+    estimatedOpen: '在线连接',
+    window1h: '最近 1 小时',
+    empty: '当前时间窗内无连接活动',
+    peakOnline: '峰值在线',
+    totalOpens: '累计接入',
+    totalAbnormal: '异常断开',
+  },
+  // 告警概览
+  alerts: {
+    title: '告警概览',
+    open: '待处理',
+    critical: '严重',
+    warning: '警告',
+    empty: '当前无未处理告警',
+    viewAll: '查看告警事件',
+    latest: '最新告警',
+  },
+  // 调度概览
+  sched: {
+    title: '调度概览',
+    total: '决策总数',
+    successRate: '成功率',
+    localFallback: '本地降级占比',
+    failTop: '失败原因 Top',
+    empty: '当前时间窗内无调度决策',
+    viewAnalysis: '前往服务分析',
+    viewAlerts: '前往告警事件',
+  },
 } as const
