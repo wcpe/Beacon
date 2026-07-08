@@ -2,6 +2,7 @@
 // 选在线子服（可多选）→ 看指标时序（CPU/TPS/内存/在线人数）与多服对比。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { LineChart, MousePointerClick } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
 
@@ -31,8 +32,13 @@ export default function ServiceAnalysisPage() {
   const serverIds = [...selected]
 
   return (
-    <section className="grid gap-6">
-      <SectionHeader size="lg" title={t('nav.serviceAnalysis')} />
+    <section className="grid gap-5">
+      <SectionHeader
+        size="lg"
+        icon={<LineChart className="size-5" />}
+        title={t('nav.serviceAnalysis')}
+        count={t('observability.serviceAnalysis.mission')}
+      />
       <ServerPicker
         selected={selected}
         onToggle={toggle}
@@ -41,7 +47,10 @@ export default function ServiceAnalysisPage() {
         }}
       />
       {serverIds.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('observability.serviceAnalysis.pickHint')}</p>
+        <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border bg-card/60 px-4 py-8 text-sm text-ink-3">
+          <MousePointerClick className="size-4 shrink-0 text-ink-4" />
+          {t('observability.serviceAnalysis.pickHint')}
+        </div>
       ) : (
         <SeriesPanel
           serverIds={serverIds}

@@ -18,6 +18,7 @@ export const observability = {
     pickServers: '选择服务器（可多选对比）',
     pickHint: '至少选择一台在线子服查看指标时序',
     empty: '暂无在线子服可供分析，接入并分配子服后展示指标时序',
+    onlineCount: '{{count}} 台在线',
     selectedCount: '已选 {{count}} 台',
     metric: '指标',
     metricCpu: 'CPU %',

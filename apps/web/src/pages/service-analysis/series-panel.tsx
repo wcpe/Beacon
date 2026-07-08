@@ -4,9 +4,12 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Activity, ArrowUpRight, Gauge, MemoryStick, TrendingUp, Users } from 'lucide-react'
 
 import {
   AsyncSection,
+  Card,
+  CardContent,
   IconStat,
   MiniSparkline,
   SectionHeader,
@@ -20,6 +23,14 @@ import FilterSelect from '../../features/observability/filter-select'
 // 可选指标 → MetricsSeriesPoint 字段与展示
 const METRICS = ['cpu', 'tps', 'mem', 'online'] as const
 type MetricKey = (typeof METRICS)[number]
+
+// 指标 → 卡片图标（lucide），用于时序卡右上角。
+const METRIC_ICON: Record<MetricKey, typeof Gauge> = {
+  cpu: Gauge,
+  tps: Activity,
+  mem: MemoryStick,
+  online: Users,
+}
 
 interface SeriesPanelProps {
   // 已选 serverId（顺序稳定）
@@ -68,26 +79,30 @@ export default function SeriesPanel({
   }
 
   const series = useMemo(() => query.data?.series ?? [], [query.data])
+  const MetricIcon = METRIC_ICON[metric]
 
   return (
     <section className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SectionHeader title={t('observability.serviceAnalysis.seriesTitle')} />
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterSelectMetric metric={metric} onChange={onMetricChange} metricLabel={metricLabel} />
-          <FilterSelect
-            label={t('observability.serviceAnalysis.step')}
-            value={String(step)}
-            options={[
-              { value: '60', label: t('observability.serviceAnalysis.step1m') },
-              { value: '300', label: t('observability.serviceAnalysis.step5m') },
-            ]}
-            onChange={(value) => {
-              onStepChange(Number.parseInt(value, 10))
-            }}
-          />
-        </div>
-      </div>
+      <SectionHeader
+        icon={<TrendingUp className="size-4" />}
+        title={t('observability.serviceAnalysis.seriesTitle')}
+        actions={
+          <>
+            <FilterSelectMetric metric={metric} onChange={onMetricChange} metricLabel={metricLabel} />
+            <FilterSelect
+              label={t('observability.serviceAnalysis.step')}
+              value={String(step)}
+              options={[
+                { value: '60', label: t('observability.serviceAnalysis.step1m') },
+                { value: '300', label: t('observability.serviceAnalysis.step5m') },
+              ]}
+              onChange={(value) => {
+                onStepChange(Number.parseInt(value, 10))
+              }}
+            />
+          </>
+        }
+      />
 
       <AsyncSection
         isLoading={query.isLoading}
@@ -96,39 +111,50 @@ export default function SeriesPanel({
         skeleton={<TableSkeleton columns={2} rows={serverIds.length || 2} />}
       >
         {series.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('observability.serviceAnalysis.noSeries')}</p>
+          <p className="rounded-xl border border-dashed border-border bg-card/60 px-4 py-8 text-sm text-ink-3">
+            {t('observability.serviceAnalysis.noSeries')}
+          </p>
         ) : (
-          <div className="grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2">
             {series.map((s) => {
               const values = s.points.map((p) => valueOf(p, metric))
               const latest = values.at(-1) ?? 0
               const avg = values.length === 0 ? 0 : values.reduce((sum, v) => sum + v, 0) / values.length
               const peak = values.length === 0 ? 0 : Math.max(...values)
               return (
-                <div key={s.serverId} className="grid gap-2 rounded-md border px-3 py-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-sm">{s.serverId}</span>
-                    <span className="text-xs text-muted-foreground">{metricLabel[metric]}</span>
-                  </div>
-                  <MiniSparkline values={values} color="var(--primary)" height={40} />
-                  <div className="flex flex-wrap gap-6">
-                    <IconStat
-                      icon={null}
-                      label={t('observability.serviceAnalysis.latest')}
-                      value={latest.toFixed(1)}
-                    />
-                    <IconStat
-                      icon={null}
-                      label={t('observability.serviceAnalysis.avg')}
-                      value={avg.toFixed(1)}
-                    />
-                    <IconStat
-                      icon={null}
-                      label={t('observability.serviceAnalysis.peak')}
-                      value={peak.toFixed(1)}
-                    />
-                  </div>
-                </div>
+                <Card key={s.serverId}>
+                  <CardContent className="grid gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand">
+                        <MetricIcon className="size-[15px]" />
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[13px] font-semibold text-ink-1">
+                        {s.serverId}
+                      </span>
+                      <span className="text-[11px] font-medium text-ink-4">{metricLabel[metric]}</span>
+                    </div>
+                    <div className="rounded-lg bg-secondary/50 px-2 pt-2">
+                      <MiniSparkline values={values} color="var(--brand)" height={48} />
+                    </div>
+                    <div className="flex flex-wrap gap-5 border-t border-border pt-3">
+                      <IconStat
+                        icon={<ArrowUpRight className="size-4" />}
+                        label={t('observability.serviceAnalysis.latest')}
+                        value={latest.toFixed(1)}
+                      />
+                      <IconStat
+                        icon={<Activity className="size-4" />}
+                        label={t('observability.serviceAnalysis.avg')}
+                        value={avg.toFixed(1)}
+                      />
+                      <IconStat
+                        icon={<TrendingUp className="size-4" />}
+                        label={t('observability.serviceAnalysis.peak')}
+                        value={peak.toFixed(1)}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
               )
             })}
           </div>
