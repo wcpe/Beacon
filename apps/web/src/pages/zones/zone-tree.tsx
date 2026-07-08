@@ -2,8 +2,9 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Boxes, Layers, MapPin, Plus } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, SectionHeader } from '@beacon/ui'
+import { AsyncSection, Badge, Button } from '@beacon/ui'
 import type { ZoneTreeResponse } from '@beacon/devmock'
 
 import {
@@ -74,73 +75,90 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
         : t('cluster.zones.create.zoneTitle')
 
   return (
-    <section className="grid gap-3">
-      <div className="flex items-center justify-between">
-        <SectionHeader title={t('cluster.zones.tree.title')} />
+    <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+          <Boxes className="size-[15px]" />
+        </span>
+        <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.zones.tree.title')}</h2>
         <Button
           size="sm"
+          className="ml-auto gap-1"
           onClick={() => {
             setErrorText(null)
             setIntent({ level: 'cluster' })
           }}
         >
+          <Plus className="size-3.5" />
           {t('cluster.zones.tree.newCluster')}
         </Button>
       </div>
 
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         {tree?.clusters.length === 0 ? (
-          <p className="rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+          <p className="rounded-lg border border-dashed border-border-strong px-4 py-8 text-center text-sm text-ink-3">
             {t('cluster.zones.tree.empty')}
           </p>
         ) : (
-          <ul className="grid gap-2">
+          <ul className="grid gap-2.5">
             {tree?.clusters.map((cluster) => (
-              <li key={cluster.id} className="rounded-lg border">
-                <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
-                  <span className="flex items-center gap-2 font-medium">
-                    <span>{cluster.name}</span>
-                    <Badge variant="secondary">{t('cluster.zones.tree.proxyCount', { count: cluster.proxyCount })}</Badge>
+              <li key={cluster.id} className="overflow-hidden rounded-lg border border-border">
+                {/* BC 集群头（品牌浅底） */}
+                <div className="flex items-center justify-between gap-2 border-b border-border bg-brand-50 px-3 py-2">
+                  <span className="flex items-center gap-2 text-[12.5px] font-semibold text-brand-600">
+                    <Boxes className="size-3.5" />
+                    {cluster.name}
+                    <Badge variant="brand" className="tnum">
+                      {t('cluster.zones.tree.proxyCount', { count: cluster.proxyCount })}
+                    </Badge>
                   </span>
                   <Button
                     size="sm"
                     variant="ghost"
+                    className="gap-1"
                     onClick={() => {
                       setErrorText(null)
                       setIntent({ level: 'region', bcClusterId: cluster.id })
                     }}
                   >
+                    <Plus className="size-3.5" />
                     {t('cluster.zones.tree.newRegion')}
                   </Button>
                 </div>
-                <ul className="grid gap-1.5 p-3">
+                <ul className="grid gap-2 p-3">
                   {cluster.regions.map((region) => (
-                    <li key={region.id} className="rounded-md bg-secondary/40 p-2">
+                    <li key={region.id} className="rounded-md border border-border bg-surface-2 p-2.5">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">{region.name}</span>
+                        <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-1">
+                          <Layers className="size-3.5 text-ink-4" />
+                          {region.name}
+                        </span>
                         <Button
                           size="sm"
                           variant="ghost"
+                          className="gap-1"
                           onClick={() => {
                             setErrorText(null)
                             setIntent({ level: 'zone', regionId: region.id })
                           }}
                         >
+                          <Plus className="size-3.5" />
                           {t('cluster.zones.tree.newZone')}
                         </Button>
                       </div>
-                      <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                      <ul className="mt-2 flex flex-wrap gap-1.5">
                         {region.zones.map((zone) => (
                           <li
                             key={zone.id}
-                            className="flex items-center gap-1.5 rounded-md bg-background px-2 py-1 text-xs ring-1 ring-border"
+                            className="flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs shadow-card"
                           >
-                            <span className="font-mono">{zone.name}</span>
-                            <span className="text-muted-foreground">
+                            <MapPin className="size-3 text-brand" />
+                            <span className="font-mono font-medium text-ink-1">{zone.name}</span>
+                            <span className="text-ink-4 tnum">
                               {t('cluster.zones.tree.serverCount', { count: zone.serverCount })}
                             </span>
                             {zone.defaultEntryCount > 0 && (
-                              <Badge variant="outline">{t('cluster.zones.tree.defaultEntry')}</Badge>
+                              <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>
                             )}
                           </li>
                         ))}

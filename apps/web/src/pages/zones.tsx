@@ -2,6 +2,7 @@
 // 高频任务「接入新服」的第二步：/servers 待确认 → 本页分配区服。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Boxes } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
 
@@ -16,12 +17,12 @@ export default function ZonesPage() {
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
-    <section className="grid gap-6">
+    <section className="grid gap-3.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" title={t('nav.zones')} />
+        <SectionHeader size="lg" icon={<Boxes className="size-5" />} title={t('nav.zones')} className="border-b-0 pb-0" />
         <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
       </div>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-3.5 lg:grid-cols-2">
         <ZoneTree namespaceId={effectiveNamespaceId} />
         <UnassignedBasket namespaceId={effectiveNamespaceId} />
       </div>

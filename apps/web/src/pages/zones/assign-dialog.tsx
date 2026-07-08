@@ -107,7 +107,7 @@ export default function AssignDialog({
               onChange={(e) => {
                 setTarget(e.target.value)
               }}
-              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm text-ink-1"
             >
               <option value="">—</option>
               {options.map((opt) => (
@@ -133,22 +133,22 @@ export default function AssignDialog({
 
           {/* 影响预览 */}
           {target !== '' && (
-            <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-brand-600">
               {t('cluster.zones.assign.previewLine', { count: servers.length, target: targetLabel })}
             </div>
           )}
 
           {/* 逐台结果 */}
           {results && (
-            <div className="grid gap-1 rounded-md border px-3 py-2 text-sm">
-              <p className="font-medium">{t('cluster.zones.assign.resultTitle')}</p>
+            <div className="grid gap-1 rounded-md border border-border px-3 py-2 text-sm">
+              <p className="font-semibold text-ink-1">{t('cluster.zones.assign.resultTitle')}</p>
               {succeeded.length > 0 && (
-                <p className="text-green-600">{t('cluster.zones.assign.resultOk', { count: succeeded.length })}</p>
+                <p className="text-ok">{t('cluster.zones.assign.resultOk', { count: succeeded.length })}</p>
               )}
               {failed.length > 0 && (
                 <>
-                  <p className="text-destructive">{t('cluster.zones.assign.resultFail', { count: failed.length })}</p>
-                  <ul className="list-disc pl-5 text-muted-foreground">
+                  <p className="text-crit">{t('cluster.zones.assign.resultFail', { count: failed.length })}</p>
+                  <ul className="list-disc pl-5 text-ink-3">
                     {failed.map((r) => (
                       <li key={r.id}>
                         {r.serverId} ·{' '}
@@ -163,7 +163,7 @@ export default function AssignDialog({
             </div>
           )}
 
-          {errorText && <p className="text-sm text-destructive">{errorText}</p>}
+          {errorText && <p className="text-sm text-crit">{errorText}</p>}
         </div>
 
         <DialogFooter>

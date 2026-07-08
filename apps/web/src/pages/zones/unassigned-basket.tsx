@@ -4,6 +4,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Inbox, Network, Server } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -11,7 +12,7 @@ import {
   Button,
   Checkbox,
   DataTable,
-  SectionHeader,
+  cn,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { AssignmentResult, ServerItem } from '@beacon/devmock'
@@ -103,21 +104,50 @@ export default function UnassignedBasket({ namespaceId }: { namespaceId: number 
           />
         ),
       },
-      { header: t('cluster.servers.columns.serverId'), cell: (row) => <span className="font-mono">{row.serverId}</span> },
-      { header: t('cluster.servers.columns.kind'), cell: (row) => t(`cluster.servers.kind.${row.kind}`) },
+      {
+        header: t('cluster.servers.columns.serverId'),
+        cell: (row) => {
+          const isProxy = row.kind === 'proxy'
+          return (
+            <span className="flex items-center gap-2 font-mono font-semibold text-ink-1">
+              <span
+                className={cn(
+                  'grid size-5 place-items-center rounded-md',
+                  isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                )}
+                aria-hidden
+              >
+                {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
+              </span>
+              {row.serverId}
+            </span>
+          )
+        },
+      },
+      {
+        header: t('cluster.servers.columns.kind'),
+        cell: (row) => <span className="text-ink-2">{t(`cluster.servers.kind.${row.kind}`)}</span>,
+      },
       {
         header: t('cluster.servers.columns.status'),
         cell: (row) => (
           <div className="flex flex-wrap gap-1">
             {row.pendingZoneId !== null && (
-              <Badge variant="secondary">
+              <Badge variant="warn" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
                 {t('cluster.servers.pending.rezoneHint')} → {row.pendingZoneName ?? ''}
               </Badge>
             )}
             {row.online ? (
-              <Badge variant="outline">{t('cluster.servers.summary.online')}</Badge>
+              <Badge variant="ok" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
+                {t('cluster.servers.summary.online')}
+              </Badge>
             ) : (
-              <Badge variant="destructive">lost</Badge>
+              <Badge variant="crit" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
+                lost
+              </Badge>
             )}
           </div>
         ),
@@ -129,11 +159,15 @@ export default function UnassignedBasket({ namespaceId }: { namespaceId: number 
   const options = targetOptionsOf(treeQuery.data, selectionKind === 'proxy' ? 'proxy' : 'backend')
 
   return (
-    <section className="grid gap-3">
-      <div className="flex items-center justify-between">
-        <SectionHeader title={t('cluster.zones.basket.title')} />
+    <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+          <Inbox className="size-[15px]" />
+        </span>
+        <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.zones.basket.title')}</h2>
         <Button
           size="sm"
+          className="ml-auto"
           disabled={selectedIds.size === 0}
           onClick={() => {
             setErrorText(null)
@@ -146,7 +180,7 @@ export default function UnassignedBasket({ namespaceId }: { namespaceId: number 
       </div>
 
       {selectedIds.size > 0 && (
-        <div className="rounded-md bg-secondary px-3 py-2 text-sm">
+        <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-[12.5px] font-medium text-brand-600">
           {t('cluster.zones.basket.selected', { count: selectedIds.size })}
         </div>
       )}

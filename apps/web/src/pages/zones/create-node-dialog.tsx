@@ -70,7 +70,7 @@ export default function CreateNodeDialog({
               }}
             />
           </div>
-          {errorText && <p className="text-sm text-destructive">{errorText}</p>}
+          {errorText && <p className="text-sm text-crit">{errorText}</p>}
         </div>
         <DialogFooter>
           <Button
