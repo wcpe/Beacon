@@ -73,9 +73,11 @@ describe('/topology 拓扑页', () => {
     expect(firstRow).not.toBeNull()
     await user.click(firstRow as HTMLElement)
 
-    // 明细区出现样本消息标题
+    // 明细区出现样本消息标题，且落在右侧固定侧面板（<aside>）内——不再放页面底部
     await waitFor(() => {
-      expect(screen.getByText('样本消息')).toBeInTheDocument()
+      const sample = screen.getByText('样本消息')
+      expect(sample).toBeInTheDocument()
+      expect(sample.closest('aside')).not.toBeNull()
     })
   })
 
@@ -85,5 +87,25 @@ describe('/topology 拓扑页', () => {
 
     // 出现折叠提示文案（节点过多按大区聚合）
     expect(await screen.findByText('节点过多，已按大区聚合折叠')).toBeInTheDocument()
+  })
+
+  it('超大量态请求链路按节点盒对去重并硬性截断，避免渲染上千条动画边（防卡死）', async () => {
+    useScenario('huge')
+    const { container } = renderPage(<TopologyPage />)
+
+    // 等图加载
+    await screen.findByText('BC-子服链路')
+    // 链路截断明示文案出现（说明上千聚合边未被逐条渲染）
+    expect(await screen.findByText(/链路过多，仅展示失败率最高的前/)).toBeInTheDocument()
+
+    // 只数拓扑图主 SVG（role="img"）内的链路 path：上限 60 条链路，每条至多 2 个 path
+    // （静态底 + 动画流），故 ≤120；断言远小于「上千聚合边逐条渲染」规模，证明截断生效。
+    await waitFor(() => {
+      const graphSvg = container.querySelector('svg[role="img"]')
+      expect(graphSvg).not.toBeNull()
+      const paths = (graphSvg as SVGElement).querySelectorAll('path')
+      expect(paths.length).toBeGreaterThan(0)
+      expect(paths.length).toBeLessThanOrEqual(60 * 2)
+    })
   })
 })

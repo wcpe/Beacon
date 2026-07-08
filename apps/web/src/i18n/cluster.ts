@@ -178,6 +178,7 @@ export const cluster = {
       proxy: '代理',
       zone: '小区',
       truncated: '仅展示前 {{shown}} / 共 {{total}} 个节点，请按 namespace / 大区收拢查看',
+      edgesTruncated: '链路过多，仅展示失败率最高的前 {{shown}} / 共 {{total}} 条聚合链路',
       collapseHint: '节点过多，已按大区聚合折叠',
       abnormalLinks: '异常链路（点击看明细）',
       flowToggle: '数据流动画',

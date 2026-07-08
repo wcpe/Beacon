@@ -18,6 +18,12 @@ import { fetchMessageEdges, fetchServers, fetchZoneTree } from '../../api/cluste
 const MAX_ZONE_NODES = 24
 // 边失败率阈值：超过即视为异常链路高亮
 const ABNORMAL_RATE = 5
+// 图上渲染的请求链路上限：超大量场景下上千条聚合边会同源同宿画在少数节点盒间，
+// 上千个 SVG path + 数据流动画持续重绘会把页面拖垮。故先按「节点盒对」去重，
+// 再硬性截断到该上限（异常边优先），避免一次渲染上千条动画边。
+const MAX_RENDER_EDGES = 60
+// 参与数据流动画的边数上限：仅对有限条跑流动画（异常优先），超出静态呈现，避免过多元素持续重绘
+const MAX_FLOW_EDGES = 24
 
 interface TopologyGraphProps {
   namespaceId: number
@@ -38,6 +44,8 @@ interface RenderEdge {
   from: Box
   to: Box
   abnormal: boolean
+  // 是否参与数据流动画（仅有限条跑动画，异常优先）
+  flow: boolean
 }
 
 // 统计一棵树里的小区节点总数（判定是否需要折叠）
@@ -173,9 +181,11 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
   }, [tree, collapsed])
 
   // 请求链路边：把消息边两端解析到节点盒（展开态到小区盒；折叠态到所属大区盒），画在图上。
-  const renderEdges = useMemo<RenderEdge[]>(() => {
+  // 超大量场景下上千条边会同源同宿地压在少数节点盒间——先按「节点盒对」去重（每对只留最差的一条），
+  // 再按异常优先排序、硬性截断到上限，避免一次渲染上千条带动画的 SVG path 拖垮页面。
+  const renderEdgeInfo = useMemo<{ edges: RenderEdge[]; truncated: boolean; resolvedTotal: number }>(() => {
     if (!layout) {
-      return []
+      return { edges: [], truncated: false, resolvedTotal: 0 }
     }
     // 小区 id → 盒；小区 id → 大区盒（折叠态用）
     const zoneBoxById = new Map(layout.zoneBoxes.map((z) => [z.id, z.box]))
@@ -202,7 +212,8 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
       return zoneBoxById.get(zoneId) ?? null
     }
 
-    const result: RenderEdge[] = []
+    // 先解析并按「节点盒对」去重：同一对盒之间只保留失败率最高的一条（避免上千重叠边）
+    const byPair = new Map<string, RenderEdge>()
     for (const edge of allEdges) {
       if (edge.resolvedServerId === '') {
         continue
@@ -213,16 +224,33 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
       if (from === null || to === null || from === to) {
         continue
       }
-      result.push({
+      const pairKey = `${String(from.x)},${String(from.y)}→${String(to.x)},${String(to.y)}`
+      const existing = byPair.get(pairKey)
+      // 每对盒保留失败率更高（更值得展示）的一条
+      if (existing && existing.edge.failRatePercent >= edge.failRatePercent) {
+        continue
+      }
+      byPair.set(pairKey, {
         key: edgeKey(edge),
         edge,
         from,
         to,
         abnormal: edge.failRatePercent >= ABNORMAL_RATE,
+        flow: false,
       })
     }
-    return result
+    const resolvedTotal = byPair.size
+    // 异常优先、其次失败率降序，便于截断后仍保留最值得关注的链路
+    const sorted = [...byPair.values()].sort(
+      (a, b) => Number(b.abnormal) - Number(a.abnormal) || b.edge.failRatePercent - a.edge.failRatePercent,
+    )
+    const truncated = sorted.length > MAX_RENDER_EDGES
+    const capped = sorted.slice(0, MAX_RENDER_EDGES)
+    // 仅前 MAX_FLOW_EDGES 条参与动画（异常优先，已在排序中靠前）
+    const edges = capped.map((re, i) => ({ ...re, flow: i < MAX_FLOW_EDGES }))
+    return { edges, truncated, resolvedTotal }
   }, [layout, allEdges, zoneOfServer, collapsed, tree])
+  const renderEdges = renderEdgeInfo.edges
 
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
@@ -340,8 +368,8 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                           strokeWidth={re.abnormal ? 2 : 1.25}
                           strokeOpacity={active ? 0.9 : re.abnormal ? 0.7 : 0.35}
                         />
-                        {/* 数据流动效：沿路径流动的虚线（正常品牌 / 异常红） */}
-                        {flowOn && (
+                        {/* 数据流动效：沿路径流动的虚线（正常品牌 / 异常红）；仅有限条参与动画 */}
+                        {flowOn && re.flow && (
                           <path
                             d={d}
                             fill="none"
@@ -498,6 +526,15 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                 {t('cluster.topology.graph.truncated', { shown: MAX_ZONE_NODES, total: zoneTotal })}
               </p>
             )}
+            {/* 链路过多截断明示：只画了失败率最高的前 N 条 */}
+            {renderEdgeInfo.truncated && (
+              <p className="text-[11px] text-ink-4">
+                {t('cluster.topology.graph.edgesTruncated', {
+                  shown: renderEdges.length,
+                  total: renderEdgeInfo.resolvedTotal,
+                })}
+              </p>
+            )}
 
             {/* 异常链路快捷选择：点击 chip 在右侧侧面板看明细（与图上点边等效） */}
             {abnormalEdges.length > 0 && (
@@ -507,7 +544,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                   {t('cluster.topology.graph.abnormalLinks')}
                 </p>
                 <ul className="flex flex-wrap gap-1.5">
-                  {abnormalEdges.map((edge) => {
+                  {abnormalEdges.slice(0, MAX_RENDER_EDGES).map((edge) => {
                     const key = edgeKey(edge)
                     const active = key === selectedKey
                     return (
