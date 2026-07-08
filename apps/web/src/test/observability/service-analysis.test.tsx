@@ -49,11 +49,33 @@ describe('/service-analysis 服务分析页', () => {
     const firstCheckbox = (await screen.findAllByRole('checkbox'))[0]
     await user.click(firstCheckbox)
 
-    // 时序区出现（含指标切换）
+    // 时序区出现（含指标切换）；「指标时序」同时作为板块切换 tab 与区块标题，用指标下拉唯一定位时序区
     await waitFor(() => {
-      expect(screen.getByText('指标时序')).toBeInTheDocument()
+      expect(screen.getByLabelText('指标')).toBeInTheDocument()
     })
-    expect(screen.getByLabelText('指标')).toBeInTheDocument()
+    // 板块切换：默认「指标时序」tab 选中
+    expect(screen.getByRole('tab', { name: '指标时序' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('切到「数据对比」板块展示并排对比矩阵与差异图例', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServiceAnalysisPage />)
+
+    await screen.findByText('选择服务器（可多选对比）')
+    // 选两台以上才可对比
+    await user.click(await screen.findByRole('checkbox', { name: 'lobby-1' }))
+    await user.click(screen.getByRole('checkbox', { name: 'game-1' }))
+
+    // 切到数据对比板块
+    await user.click(screen.getByRole('tab', { name: '数据对比' }))
+
+    // 对比矩阵表头「对比维度」+ 已知维度行「健康分」出现，差异图例「最优」可见
+    await waitFor(() => {
+      expect(screen.getByText('对比维度')).toBeInTheDocument()
+    })
+    expect(screen.getByText('健康分')).toBeInTheDocument()
+    expect(screen.getByText('最优')).toBeInTheDocument()
   })
 
   it('搜索关键词过滤左侧服务器清单', async () => {

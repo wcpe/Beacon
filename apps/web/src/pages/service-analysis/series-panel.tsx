@@ -84,7 +84,7 @@ export default function SeriesPanel({
   return (
     <section className="grid gap-3">
       {/* 指标 / 步长控制条吸顶常驻：对比入口始终可见，选服后无需下滚 */}
-      <div className="sticky top-0 z-10 -mx-1 bg-surface-2/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-surface-2/80">
+      <div className="sticky top-11 z-10 -mx-1 bg-surface-2/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-surface-2/80">
         <SectionHeader
           icon={<TrendingUp className="size-4" />}
           title={t('observability.serviceAnalysis.seriesTitle')}

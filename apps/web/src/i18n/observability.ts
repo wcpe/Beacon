@@ -37,6 +37,43 @@ export const observability = {
     avg: '均值',
     peak: '峰值',
     clear: '清空选择',
+    // 右侧区板块切换：指标时序 / 数据对比
+    tabSeries: '指标时序',
+    tabCompare: '数据对比',
+    compareMission: '按维度并排对比所选服务器，差异一眼可见',
+    compareNoData: '所选服务器暂无可对比的健康与属性数据',
+    compareOnlyOne: '再选一台服务器即可开始对比',
+    // 对比矩阵：维度列表头
+    dimension: '对比维度',
+    // 差异提示图例
+    legendDiff: '该维度各服取值不一致',
+    legendSame: '一致',
+    legendBest: '最优',
+    legendWorst: '最差',
+    // 对比维度名
+    dims: {
+      score: '健康分',
+      level: '健康等级',
+      schedulable: '可调度',
+      reasons: '不可调度原因',
+      kind: '角色',
+      region: '大区',
+      zone: '小区',
+      draining: '摘流中',
+      defaultEntry: '默认入口',
+      factorPrefix: '因子',
+    },
+    // 布尔与占位取值
+    yes: '是',
+    no: '否',
+    none: '无',
+    dash: '—',
+    // 健康等级取值
+    level: {
+      healthy: '健康',
+      degraded: '降级',
+      unhealthy: '不健康',
+    },
   },
   commands: {
     mission: 'agent 命令双向生命周期与队列',
