@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Boxes, Search } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -93,21 +94,25 @@ export default function NamespacePanel() {
 
   return (
     <section className="grid gap-3">
-      <div className="flex items-center justify-between">
-        <SectionHeader title={t('system.namespaces.title')} />
-        <Button onClick={openCreate}>{t('system.namespaces.create')}</Button>
-      </div>
-
-      <Input
-        aria-label={t('system.namespaces.keyword')}
-        placeholder={t('system.namespaces.keyword')}
-        value={keyword}
-        onChange={(e) => {
-          setKeyword(e.target.value)
-          setPage(1)
-        }}
-        className="w-52"
+      <SectionHeader
+        icon={<Boxes className="size-4" />}
+        title={t('system.namespaces.title')}
+        actions={<Button onClick={openCreate}>{t('system.namespaces.create')}</Button>}
       />
+
+      <div className="relative w-64">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-ink-4" aria-hidden />
+        <Input
+          aria-label={t('system.namespaces.keyword')}
+          placeholder={t('system.namespaces.keyword')}
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value)
+            setPage(1)
+          }}
+          className="pl-8"
+        />
+      </div>
 
       <AsyncSection
         isLoading={query.isLoading}

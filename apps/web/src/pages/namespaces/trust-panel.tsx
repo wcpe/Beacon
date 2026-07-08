@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { ArrowRight, Handshake } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -106,13 +107,19 @@ export default function TrustPanel() {
       },
       {
         header: t('system.namespaces.trusts.to'),
-        cell: (row) => <span className="font-medium">{row.toNamespaceName}</span>,
+        cell: (row) => (
+          <span className="flex items-center gap-1.5 font-medium">
+            <ArrowRight className="size-3.5 text-ink-4" aria-hidden />
+            {row.toNamespaceName}
+          </span>
+        ),
       },
       { header: t('system.namespaces.trusts.capability'), cell: (row) => capabilityLabel(row.capability) },
       {
         header: t('system.namespaces.trusts.status'),
         cell: (row) => (
-          <Badge variant={row.status === 'active' ? 'secondary' : 'outline'}>
+          <Badge variant={row.status === 'active' ? 'ok' : 'off'} className="gap-1.5">
+            <span className="size-1.5 rounded-full bg-current" />
             {row.status === 'active'
               ? t('system.namespaces.trusts.statusActive')
               : t('system.namespaces.trusts.statusRevoked')}
@@ -145,18 +152,21 @@ export default function TrustPanel() {
 
   return (
     <section className="grid gap-3">
-      <div className="flex items-center justify-between">
-        <SectionHeader title={t('system.namespaces.trusts.title')} />
-        <Button
-          onClick={() => {
-            setGrantError(null)
-            setGrantOpen(true)
-          }}
-        >
-          {t('system.namespaces.trusts.grant')}
-        </Button>
-      </div>
-      <p className="text-sm text-muted-foreground">{t('system.namespaces.trusts.desc')}</p>
+      <SectionHeader
+        icon={<Handshake className="size-4" />}
+        title={t('system.namespaces.trusts.title')}
+        actions={
+          <Button
+            onClick={() => {
+              setGrantError(null)
+              setGrantOpen(true)
+            }}
+          >
+            {t('system.namespaces.trusts.grant')}
+          </Button>
+        }
+      />
+      <p className="text-sm text-ink-3">{t('system.namespaces.trusts.desc')}</p>
 
       <div className="flex flex-wrap gap-2">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
