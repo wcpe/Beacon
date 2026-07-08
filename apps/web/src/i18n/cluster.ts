@@ -4,6 +4,7 @@ export const cluster = {
     mission: '服务器资产：注册待确认、身份绑定、禁用 / 解绑 / 换区、健康详情',
     pending: {
       title: '注册待确认',
+      sheetDesc: '新 agent 首次接入后在此确认或拒绝；确认后可到区服分配页落区。',
       empty: '暂无待确认的注册请求，新 agent 首次接入后会出现在此',
       approve: '确认接入',
       reject: '拒绝',
@@ -107,6 +108,7 @@ export const cluster = {
       title: '区服结构树',
       empty: '尚未建立任何 BC 集群，先新建一个集群开始规划区服',
       proxyCount: '{{count}} 台代理',
+      proxyRole: '代理',
       serverCount: '{{count}} 台子服',
       defaultEntry: '默认入口',
       draining: '排空中',
@@ -115,10 +117,12 @@ export const cluster = {
       newZone: '新建小区',
     },
     basket: {
-      title: '未分配篮',
+      title: '未分配',
+      sheetDesc: '已确认但尚未落区的服务器。勾选同类服务器后批量首次分配到小区 / 集群。',
       empty: '没有待分配的服务器，所有已确认服务器都已落区',
       assign: '批量分配',
       selected: '已选 {{count}} 台',
+      selectHint: '勾选服务器后可批量分配（须同类）',
     },
     create: {
       clusterTitle: '新建 BC 集群',
@@ -153,6 +157,10 @@ export const cluster = {
   },
   topology: {
     mission: 'BC-子服链路、消息流、请求拓扑与异常链路',
+    mode: {
+      graph: '可视化',
+      data: '数据剖析',
+    },
     graph: {
       title: 'BC-子服链路',
       empty: '暂无拓扑数据，接入服务器并完成区服分配后展示链路',
@@ -160,6 +168,13 @@ export const cluster = {
       zone: '小区',
       truncated: '仅展示前 {{shown}} / 共 {{total}} 个节点，请按 namespace / 大区收拢查看',
       collapseHint: '节点过多，已按大区聚合折叠',
+      abnormalLinks: '异常链路（点击看明细）',
+    },
+    data: {
+      linkCount: '链路数',
+      totalMessages: '消息总量',
+      maxFailRate: '最高失败率',
+      maxP95: '最高 P95',
     },
     edges: {
       title: '消息异常链路',

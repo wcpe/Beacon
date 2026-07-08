@@ -1,4 +1,5 @@
-// /servers 页测试：常规渲染、空态引导、approve 写闭环、keyword 筛选。
+// /servers 页测试（主从布局）：主体资产列表常规渲染、空态引导、待确认抽屉 approve 写闭环、
+// keyword 筛选。待确认收敛到吸顶入口 → 抽屉里处理，故 approve 用例先开抽屉。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -20,32 +21,34 @@ afterAll(() => {
 })
 
 describe('/servers 服务器页', () => {
-  it('常规态渲染服务器资产列表与待确认区', async () => {
+  it('常规态渲染服务器资产列表，待确认入口带计数', async () => {
     useScenario('normal')
     renderPage(<ServersPage />)
 
     // 资产列表出现已知子服
     expect(await screen.findByText('lobby-1')).toBeInTheDocument()
-    // 待确认区出现待确认身份
-    expect(await screen.findByText('game-new-1')).toBeInTheDocument()
+    // 吸顶入口按钮存在（待确认收敛为入口，不再默认铺开）
+    const pendingBtn = await screen.findByRole('button', { name: /注册待确认/ })
+    expect(pendingBtn).toBeInTheDocument()
   })
 
-  it('空态给出接入引导文案', async () => {
+  it('空态给出资产列表接入引导', async () => {
     useScenario('empty')
     renderPage(<ServersPage />)
 
     expect(await screen.findByText('当前筛选条件下无服务器')).toBeInTheDocument()
-    expect(
-      await screen.findByText('暂无待确认的注册请求，新 agent 首次接入后会出现在此'),
-    ).toBeInTheDocument()
   })
 
-  it('approve 待确认身份后该行从待确认区消失（写闭环）', async () => {
+  it('打开待确认抽屉后 approve 该行从抽屉消失（写闭环）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ServersPage />)
 
-    // 定位 game-new-1 所在待确认行的确认按钮
+    // 等主体加载完，再从吸顶入口打开待确认抽屉
+    await screen.findByText('lobby-1')
+    await user.click(await screen.findByRole('button', { name: /注册待确认/ }))
+
+    // 抽屉内定位 game-new-1 所在待确认行的确认按钮
     const pendingRow = (await screen.findByText('game-new-1')).closest('tr')
     expect(pendingRow).not.toBeNull()
     const approveBtn = within(pendingRow as HTMLElement).getByRole('button', { name: '确认接入' })
@@ -55,7 +58,7 @@ describe('/servers 服务器页', () => {
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '确认接入' }))
 
-    // game-new-1 从待确认区消失
+    // game-new-1 从待确认抽屉消失
     await waitFor(() => {
       expect(screen.queryByText('game-new-1')).not.toBeInTheDocument()
     })

@@ -1,4 +1,5 @@
-// 注册待确认区：pending 身份列表 + approve（含 Q3 占用冲突强制解绑）/ reject（带原因）。
+// 注册待确认抽屉（Sheet）：从吸顶操作条的「待确认 N」入口打开，右侧抽屉里处理 approve / reject，
+// 不在主列表上方铺开占屏。approve 含 Q3 占用冲突强制解绑，reject 带原因。
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +12,11 @@ import {
   Checkbox,
   DataTable,
   Label,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -22,7 +28,14 @@ import ReasonDialog from './reason-dialog'
 // 当前操作意图：approve 或 reject
 type PendingAction = { kind: 'approve'; row: AgentIdentityItem } | { kind: 'reject'; row: AgentIdentityItem }
 
-export default function PendingPanel({ namespaceId }: { namespaceId?: number }) {
+interface PendingSheetProps {
+  namespaceId?: number
+  // 抽屉开关（由父级吸顶入口控制）
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export default function PendingSheet({ namespaceId, open, onOpenChange }: PendingSheetProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [action, setAction] = useState<PendingAction | null>(null)
@@ -66,8 +79,6 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
     },
   })
 
-  const pendingCount = query.data?.items.length ?? 0
-
   const columns = useMemo<DataTableColumn<AgentIdentityItem>[]>(
     () => [
       {
@@ -89,10 +100,6 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
             </div>
           )
         },
-      },
-      {
-        header: t('cluster.servers.columns.namespace'),
-        cell: (row) => <span className="text-ink-3 tnum">#{String(row.namespaceId)}</span>,
       },
       {
         header: t('cluster.servers.columns.kind'),
@@ -153,83 +160,84 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
   const occupied = approving?.conflictReason === 'server-id-occupied'
 
   return (
-    <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      {/* 图标标题 + 待确认数徽标 */}
-      <div className="flex items-center gap-2.5">
-        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-          <UserPlus className="size-[15px]" />
-        </span>
-        <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.servers.pending.title')}</h2>
-        {pendingCount > 0 && (
-          <Badge variant="warn" className="tnum">
-            {pendingCount}
-          </Badge>
-        )}
-      </div>
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
-          columns={columns}
-          rows={query.data?.items}
-          rowKey={(row) => row.identityId}
-          emptyText={t('cluster.servers.pending.empty')}
-          density="compact"
-        />
-      </AsyncSection>
-
-      {/* 确认接入：占用冲突时强制解绑勾选（不勾选则后端 409） */}
-      <ReasonDialog
-        open={approving !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAction(null)
-          }
-        }}
-        title={t('cluster.servers.pending.approveTitle')}
-        description={t('cluster.servers.pending.approveDesc')}
-        confirmLabel={t('cluster.servers.pending.approve')}
-        requireReason={false}
-        pending={approveMutation.isPending}
-        errorText={errorText}
-        impacts={approving ? [`serverId ${approving.serverId}`] : undefined}
-        onConfirm={() => {
-          if (approving) {
-            approveMutation.mutate(approving)
-          }
-        }}
-      >
-        {occupied && (
-          <label className="flex items-start gap-2 rounded-md border border-crit-bd bg-crit-bg px-3 py-2 text-sm text-crit">
-            <Checkbox
-              checked={forceUnbind}
-              onCheckedChange={(value) => {
-                setForceUnbind(value === true)
-              }}
-              aria-label={t('cluster.servers.pending.forceUnbind')}
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <UserPlus className="size-4 text-brand" />
+            {t('cluster.servers.pending.title')}
+          </SheetTitle>
+          <SheetDescription>{t('cluster.servers.pending.sheetDesc')}</SheetDescription>
+        </SheetHeader>
+        <div className="px-4 pb-6">
+          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+            <DataTable
+              columns={columns}
+              rows={query.data?.items}
+              rowKey={(row) => row.identityId}
+              emptyText={t('cluster.servers.pending.empty')}
+              density="compact"
             />
-            <Label className="cursor-pointer font-normal text-crit">{t('cluster.servers.pending.forceUnbind')}</Label>
-          </label>
-        )}
-      </ReasonDialog>
+          </AsyncSection>
+        </div>
 
-      {/* 拒绝接入：原因必填 */}
-      <ReasonDialog
-        open={rejecting !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAction(null)
-          }
-        }}
-        title={t('cluster.servers.pending.rejectTitle')}
-        description={t('cluster.servers.pending.rejectDesc')}
-        confirmLabel={t('cluster.servers.pending.reject')}
-        pending={rejectMutation.isPending}
-        errorText={errorText}
-        onConfirm={(reason) => {
-          if (rejecting) {
-            rejectMutation.mutate({ row: rejecting, reason })
-          }
-        }}
-      />
-    </section>
+        {/* 确认接入：占用冲突时强制解绑勾选（不勾选则后端 409） */}
+        <ReasonDialog
+          open={approving !== null}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) {
+              setAction(null)
+            }
+          }}
+          title={t('cluster.servers.pending.approveTitle')}
+          description={t('cluster.servers.pending.approveDesc')}
+          confirmLabel={t('cluster.servers.pending.approve')}
+          requireReason={false}
+          pending={approveMutation.isPending}
+          errorText={errorText}
+          impacts={approving ? [`serverId ${approving.serverId}`] : undefined}
+          onConfirm={() => {
+            if (approving) {
+              approveMutation.mutate(approving)
+            }
+          }}
+        >
+          {occupied && (
+            <label className="flex items-start gap-2 rounded-md border border-crit-bd bg-crit-bg px-3 py-2 text-sm text-crit">
+              <Checkbox
+                checked={forceUnbind}
+                onCheckedChange={(value) => {
+                  setForceUnbind(value === true)
+                }}
+                aria-label={t('cluster.servers.pending.forceUnbind')}
+              />
+              <Label className="cursor-pointer font-normal text-crit">
+                {t('cluster.servers.pending.forceUnbind')}
+              </Label>
+            </label>
+          )}
+        </ReasonDialog>
+
+        {/* 拒绝接入：原因必填 */}
+        <ReasonDialog
+          open={rejecting !== null}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) {
+              setAction(null)
+            }
+          }}
+          title={t('cluster.servers.pending.rejectTitle')}
+          description={t('cluster.servers.pending.rejectDesc')}
+          confirmLabel={t('cluster.servers.pending.reject')}
+          pending={rejectMutation.isPending}
+          errorText={errorText}
+          onConfirm={(reason) => {
+            if (rejecting) {
+              rejectMutation.mutate({ row: rejecting, reason })
+            }
+          }}
+        />
+      </SheetContent>
+    </Sheet>
   )
 }

@@ -1,14 +1,14 @@
-// 服务器资产列表：类型 / 分配状态 / 小区筛选 + keyword 搜索 + 服务端分页，
-// 行内动作（禁用 / 启用 / 解绑 / 排空 / 健康详情）+ 批量选择集顶部操作条。
+// 服务器资产主列表（页面主体）：紧凑 KPI 一行 + 吸顶筛选/操作条（keyword + 类型 + 分配状态 +
+// 待确认入口 + 批量操作）+ 高密度分页表。列表区自身滚动，筛选条 sticky 吸顶不被推走。
+// 点某行看健康详情走右侧抽屉（onViewHealth 回调），绝不内联展开把下面内容顶走。
 
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
-  Activity,
   ChevronLeft,
   ChevronRight,
-  MapPinOff,
+  Inbox,
   Network,
   Search,
   Server,
@@ -22,12 +22,12 @@ import {
   Checkbox,
   DataTable,
   Input,
-  KpiCard,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SummaryStrip,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -53,10 +53,15 @@ type RowAction =
 
 interface AssetsPanelProps {
   namespaceId?: number
+  // 查看健康详情（父级用右侧抽屉承载）
   onViewHealth: (serverId: string) => void
+  // 打开注册待确认抽屉
+  onOpenPending: () => void
+  // 待确认数（吸顶入口徽标）
+  pendingCount: number
 }
 
-export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelProps) {
+export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, pendingCount }: AssetsPanelProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -165,6 +170,10 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
               toggleRow(row.serverId)
             }}
             aria-label={`选择 ${row.serverId}`}
+            // 行整体点击已用于打开详情，勾选框自己吞掉事件避免误触发详情
+            onClick={(e) => {
+              e.stopPropagation()
+            }}
           />
         ),
       },
@@ -192,7 +201,12 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
       },
       {
         header: t('cluster.servers.columns.kind'),
-        cell: (row) => <span className="text-ink-2">{t(`cluster.servers.kind.${row.kind}`)}</span>,
+        cell: (row) => (
+          <Badge variant={row.kind === 'proxy' ? 'brand' : 'secondary'} className="gap-1">
+            {row.kind === 'proxy' ? <Network className="size-3" /> : <Server className="size-3" />}
+            {t(`cluster.servers.kind.${row.kind}`)}
+          </Badge>
+        ),
       },
       {
         header: t('cluster.servers.columns.zone'),
@@ -224,8 +238,10 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
       },
       {
         header: t('cluster.servers.columns.actions'),
+        headClassName: 'text-right',
+        className: 'text-right',
         cell: (row) => (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap justify-end gap-1.5" onClick={(e) => { e.stopPropagation() }}>
             <Button size="sm" variant="ghost" onClick={() => { onViewHealth(row.serverId) }}>
               {t('cluster.servers.actions.viewHealth')}
             </Button>
@@ -270,46 +286,35 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
     [t, selected, onViewHealth],
   )
 
-  const onlineCount = query.data?.items.filter((s) => s.online).length ?? 0
-  const unassignedCount = query.data?.items.filter((s) => !s.assigned).length ?? 0
-
   const active = action?.row ?? null
   const dialogConfig = action ? dialogConfigOf(action, t) : null
 
+  // 紧凑 KPI 一行：总数 / 未分配 / 待确认（不占大块，语义色提示）
+  const summaryItems = useMemo(
+    () => [
+      { label: t('cluster.servers.summary.total'), value: total, tone: 'default' as const },
+      {
+        label: t('cluster.servers.summary.pending'),
+        value: pendingCount,
+        tone: pendingCount > 0 ? ('warning' as const) : ('muted' as const),
+      },
+    ],
+    [t, total, pendingCount],
+  )
+
   return (
     <section className="grid gap-3.5">
-      {/* KPI 指标卡行：总数 / 在线 / 未分配 */}
-      <div className="grid gap-3.5 sm:grid-cols-3">
-        <KpiCard
-          label={t('cluster.servers.summary.total')}
-          value={total}
-          icon={<Server className="size-4" />}
-          tone="brand"
-        />
-        <KpiCard
-          label={t('cluster.servers.summary.online')}
-          value={onlineCount}
-          icon={<Activity className="size-4" />}
-          tone="ok"
-        />
-        <KpiCard
-          label={t('cluster.servers.summary.unassigned')}
-          value={unassignedCount}
-          icon={<MapPinOff className="size-4" />}
-          tone={unassignedCount > 0 ? 'warn' : 'off'}
-        />
-      </div>
+      <SummaryStrip items={summaryItems} />
 
-      <div className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-            <Server className="size-[15px]" />
+      <div className="grid gap-0 rounded-xl border border-border bg-card shadow-card">
+        {/* 吸顶筛选/操作条：keyword + 类型 + 分配状态 + 待确认入口。列表滚动时保持可见。 */}
+        <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-t-xl border-b border-border bg-card/95 px-4 py-3 backdrop-blur supports-backdrop-filter:bg-card/80">
+          <span className="mr-1 flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+            <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+              <Server className="size-[15px]" />
+            </span>
+            {t('cluster.servers.assets.title')}
           </span>
-          <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.servers.assets.title')}</h2>
-        </div>
-
-        {/* 筛选条：keyword + 类型 + 分配状态 */}
-        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-4" />
             <Input
@@ -320,7 +325,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
                 setKeyword(e.target.value)
                 setPage(1)
               }}
-              className="w-52 pl-8"
+              className="w-48 pl-8"
             />
           </div>
           <Select
@@ -330,7 +335,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
               setPage(1)
             }}
           >
-            <SelectTrigger className="w-32" aria-label={t('cluster.servers.assets.filterKind')}>
+            <SelectTrigger className="w-28" aria-label={t('cluster.servers.assets.filterKind')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -346,7 +351,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
               setPage(1)
             }}
           >
-            <SelectTrigger className="w-32" aria-label={t('cluster.servers.assets.filterAssigned')}>
+            <SelectTrigger className="w-28" aria-label={t('cluster.servers.assets.filterAssigned')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -355,11 +360,22 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
               <SelectItem value="no">{t('cluster.servers.assets.assignedNo')}</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* 待确认入口：收敛到吸顶条，点开在抽屉里处理，不占主列表版面 */}
+          <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onOpenPending}>
+            <Inbox className="size-3.5" />
+            {t('cluster.servers.pending.title')}
+            {pendingCount > 0 && (
+              <Badge variant="warn" className="tnum">
+                {pendingCount}
+              </Badge>
+            )}
+          </Button>
         </div>
 
-        {/* 批量选择集顶部操作条 */}
+        {/* 批量选择集操作条：紧随筛选条，选择集非空才出现 */}
         {selected.size > 0 && (
-          <div className="flex items-center gap-3 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-[12.5px] text-brand-600">
+          <div className="flex items-center gap-3 border-b border-brand-100 bg-brand-50 px-4 py-2 text-[12.5px] text-brand-600">
             <span className="font-medium">{t('cluster.servers.selection.selected', { count: selected.size })}</span>
             <Button
               size="sm"
@@ -375,19 +391,23 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
           </div>
         )}
 
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-          <DataTable
-            columns={columns}
-            rows={query.data?.items}
-            rowKey={(row) => String(row.id)}
-            emptyText={t('cluster.servers.assets.empty')}
-            density="compact"
-          />
-        </AsyncSection>
+        {/* 列表区：自身滚动（max-height），页面整体高度可控，1000+ 台亦不无限增高 */}
+        <div className="max-h-[calc(100vh-20rem)] overflow-y-auto px-4 pt-2 pb-1">
+          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+            <DataTable
+              columns={columns}
+              rows={query.data?.items}
+              rowKey={(row) => String(row.id)}
+              emptyText={t('cluster.servers.assets.empty')}
+              density="compact"
+              onRowClick={(row) => { onViewHealth(row.serverId) }}
+            />
+          </AsyncSection>
+        </div>
 
-        {/* 服务端分页控件 */}
+        {/* 服务端分页控件（吸底于卡片） */}
         {total > PAGE_SIZE && (
-          <div className="flex items-center justify-end gap-2 text-[12px] text-ink-3">
+          <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2 text-[12px] text-ink-3">
             <span className="tnum">
               第 {page} / {pageCount} 页 · 共 {total} 台
             </span>
