@@ -9,6 +9,7 @@ export { CardGridSkeleton, TableSkeleton, TileGridSkeleton } from './components/
 export { default as GaugeRing } from './components/dashboard/GaugeRing'
 export { default as HealthBar, type HealthSegment } from './components/dashboard/HealthBar'
 export { default as IconStat } from './components/dashboard/IconStat'
+export { default as KpiCard, type KpiTone, type KpiTrend } from './components/dashboard/KpiCard'
 export { default as MiniSparkline } from './components/dashboard/MiniSparkline'
 export {
   countLevel,

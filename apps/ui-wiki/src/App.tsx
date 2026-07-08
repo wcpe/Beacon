@@ -17,6 +17,8 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   Terminal,
+  TrendingUp,
+  Users,
   Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -67,6 +69,7 @@ import {
   type HealthSegment,
   IconStat,
   Input,
+  KpiCard,
   Label,
   MarkdownLite,
   MiniSparkline,
@@ -173,6 +176,26 @@ function ButtonPreview() {
           <Pause />
         </Button>
         <Button disabled>禁用</Button>
+      </div>
+      {/* B 版状态药丸：浅底 + 描边 + 语义色文字 + 前导圆点 */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Badge variant="ok">
+          <span className="size-1.5 rounded-full bg-current" />
+          在线
+        </Badge>
+        <Badge variant="warn">
+          <span className="size-1.5 rounded-full bg-current" />
+          降级
+        </Badge>
+        <Badge variant="crit">
+          <span className="size-1.5 rounded-full bg-current" />
+          危急
+        </Badge>
+        <Badge variant="off">
+          <span className="size-1.5 rounded-full bg-current" />
+          离线
+        </Badge>
+        <Badge variant="brand">品牌</Badge>
       </div>
     </ComponentShell>
   )
@@ -425,6 +448,46 @@ function FeedbackPreview() {
 function DashboardPreview() {
   return (
     <ComponentShell>
+      {/* B 版 KPI 卡：图标角标 + 26px 大数值 + 趋势 + 底部可视化槽 */}
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <KpiCard
+          label="可调度服务器"
+          value="10"
+          unit=" / 19 台"
+          icon={<Server className="size-4" />}
+          tone="brand"
+          visual={
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-brand" style={{ width: '52.6%' }} />
+            </div>
+          }
+          meta={
+            <>
+              健康可接量
+              <span className="font-semibold text-ok">稳定</span>
+            </>
+          }
+        />
+        <KpiCard
+          label="在线玩家"
+          value="440"
+          icon={<Users className="size-4" />}
+          tone="ok"
+          meta={
+            <span className="inline-flex items-center gap-0.5 font-semibold text-ok">
+              <TrendingUp className="size-3" />
+              6.8%
+            </span>
+          }
+        />
+        <KpiCard
+          label="平均 TPS"
+          value="19.4"
+          icon={<Gauge className="size-4" />}
+          tone="warn"
+          meta={<span className="text-warn">2 台 &lt; 18</span>}
+        />
+      </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div className="grid place-items-center rounded-md border p-4">
           <GaugeRing
@@ -501,7 +564,7 @@ const items: MuseumItem[] = [
     group: '基础控件',
     description: '覆盖常用按钮 variant、size、禁用态和 Badge 状态呈现。',
     exports: ['Button', 'buttonVariants', 'Badge', 'badgeVariants'],
-    states: ['default', 'secondary', 'outline', 'ghost', 'destructive', 'link', 'disabled'],
+    states: ['default', 'secondary', 'outline', 'ghost', 'destructive', 'link', 'disabled', 'ok', 'warn', 'crit', 'off', 'brand'],
     preview: <ButtonPreview />,
   },
   {
@@ -647,6 +710,9 @@ const items: MuseumItem[] = [
       'HealthBar',
       'HealthSegment',
       'IconStat',
+      'KpiCard',
+      'KpiTone',
+      'KpiTrend',
       'MiniSparkline',
       'HealthLevel',
       'levelSolid',

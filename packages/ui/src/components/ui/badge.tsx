@@ -16,6 +16,12 @@ const badgeVariants = cva(
         outline: 'border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground',
         ghost: 'hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50',
         link: 'text-primary underline-offset-4 hover:underline',
+        /* B 版状态药丸：浅底 + 同色描边 + 语义色文字（配合前导圆点使用）。 */
+        ok: 'border-ok-bd bg-ok-bg text-ok',
+        warn: 'border-warn-bd bg-warn-bg text-warn',
+        crit: 'border-crit-bd bg-crit-bg text-crit',
+        off: 'border-off-bd bg-off-bg text-off',
+        brand: 'border-brand-100 bg-brand-50 text-brand-600',
       },
     },
     defaultVariants: {
