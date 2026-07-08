@@ -1,6 +1,7 @@
 // 审计详情抽屉（Sheet）：单条审计全字段展示 + 与 /commands 互跳（FR-157）。
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { ArrowUpRight } from 'lucide-react'
 
 import {
   Badge,
@@ -34,21 +35,22 @@ export default function AuditDetailSheet({ item, onOpenChange }: AuditDetailShee
             <Field label={t('observability.audits.columns.targetType')} value={item.targetType} />
             <Field label={t('observability.audits.columns.targetRef')} value={item.targetRef} mono />
             <div className="grid gap-1">
-              <span className="text-xs text-muted-foreground">{t('observability.audits.columns.result')}</span>
-              <Badge variant={item.result === 'ok' ? 'secondary' : 'destructive'}>
+              <span className="text-xs text-ink-4">{t('observability.audits.columns.result')}</span>
+              <Badge className="w-fit" variant={item.result === 'ok' ? 'ok' : 'crit'}>
                 {t(`observability.audits.result.${item.result}`)}
               </Badge>
             </div>
             <Field label={t('observability.audits.columns.clientIp')} value={item.clientIp} mono />
             <div className="grid gap-1">
-              <span className="text-xs text-muted-foreground">{t('observability.audits.columns.detail')}</span>
-              <p className="rounded-md bg-muted px-2 py-1.5 text-xs">{item.detail}</p>
+              <span className="text-xs text-ink-4">{t('observability.audits.columns.detail')}</span>
+              <p className="rounded-lg bg-secondary/60 px-2.5 py-2 text-xs text-ink-2">{item.detail}</p>
             </div>
             <Link
-              className="text-xs text-primary hover:underline"
+              className="inline-flex w-fit items-center gap-0.5 text-xs text-brand-600 hover:underline"
               to={`/commands?serverId=${item.targetRef}`}
             >
               {t('observability.audits.viewInCommands')}
+              <ArrowUpRight className="size-3" />
             </Link>
           </div>
         )}
@@ -61,8 +63,8 @@ export default function AuditDetailSheet({ item, onOpenChange }: AuditDetailShee
 function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="grid gap-1">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span className={mono ? 'font-mono text-xs' : 'text-sm'}>{value}</span>
+      <span className="text-xs text-ink-4">{label}</span>
+      <span className={mono ? 'font-mono text-xs text-ink-2' : 'text-sm text-ink-1'}>{value}</span>
     </div>
   )
 }

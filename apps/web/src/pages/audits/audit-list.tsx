@@ -4,6 +4,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Download, ListFilter } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -11,6 +12,7 @@ import {
   Button,
   DataTable,
   Input,
+  SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -88,22 +90,22 @@ export default function AuditList({ onView }: AuditListProps) {
     () => [
       {
         header: t('observability.audits.columns.time'),
-        cell: (row) => <span className="text-xs">{new Date(row.createdAt).toLocaleString()}</span>,
+        cell: (row) => <span className="tabular-nums text-xs text-ink-3">{new Date(row.createdAt).toLocaleString()}</span>,
       },
-      { header: t('observability.audits.columns.operator'), cell: (row) => row.operator },
+      { header: t('observability.audits.columns.operator'), cell: (row) => <span className="text-ink-2">{row.operator}</span> },
       {
         header: t('observability.audits.columns.action'),
-        cell: (row) => <span className="font-mono text-xs">{row.action}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.action}</span>,
       },
-      { header: t('observability.audits.columns.targetType'), cell: (row) => row.targetType },
+      { header: t('observability.audits.columns.targetType'), cell: (row) => <span className="text-ink-3">{row.targetType}</span> },
       {
         header: t('observability.audits.columns.targetRef'),
-        cell: (row) => <span className="font-mono text-xs">{row.targetRef}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.targetRef}</span>,
       },
       {
         header: t('observability.audits.columns.result'),
         cell: (row) => (
-          <Badge variant={row.result === 'ok' ? 'secondary' : 'destructive'}>
+          <Badge variant={row.result === 'ok' ? 'ok' : 'crit'}>
             {t(`observability.audits.result.${row.result}`)}
           </Badge>
         ),
@@ -114,6 +116,27 @@ export default function AuditList({ onView }: AuditListProps) {
 
   return (
     <section className="grid gap-3">
+      <SectionHeader
+        icon={<ListFilter className="size-4" />}
+        title={t('observability.audits.listTitle')}
+        count={total > 0 ? t('observability.common.total', { count: total }) : undefined}
+        actions={
+          <>
+            <Button size="sm" variant="outline" asChild>
+              <a href={auditExportUrl('csv')} download>
+                <Download className="size-3.5" />
+                {t('observability.audits.exportCsv')}
+              </a>
+            </Button>
+            <Button size="sm" variant="outline" asChild>
+              <a href={auditExportUrl('json')} download>
+                <Download className="size-3.5" />
+                {t('observability.audits.exportJson')}
+              </a>
+            </Button>
+          </>
+        }
+      />
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('observability.audits.filterKeyword')}
@@ -152,18 +175,6 @@ export default function AuditList({ onView }: AuditListProps) {
             setPage(1)
           }}
         />
-        <div className="ml-auto flex gap-2">
-          <Button size="sm" variant="outline" asChild>
-            <a href={auditExportUrl('csv')} download>
-              {t('observability.audits.exportCsv')}
-            </a>
-          </Button>
-          <Button size="sm" variant="outline" asChild>
-            <a href={auditExportUrl('json')} download>
-              {t('observability.audits.exportJson')}
-            </a>
-          </Button>
-        </div>
       </div>
 
       <AsyncSection
@@ -172,14 +183,16 @@ export default function AuditList({ onView }: AuditListProps) {
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}
       >
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('observability.audits.listEmpty')}
-          density="compact"
-          onRowClick={onView}
-        />
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(row) => String(row.id)}
+            emptyText={t('observability.audits.listEmpty')}
+            density="compact"
+            onRowClick={onView}
+          />
+        </div>
       </AsyncSection>
 
       {total > PAGE_SIZE && (

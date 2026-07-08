@@ -86,6 +86,7 @@ export const observability = {
     filterKeyword: '详情关键词',
     exportCsv: '导出 CSV',
     exportJson: '导出 JSON',
+    listTitle: '审计记录',
     listEmpty: '当前筛选条件下无审计记录',
     columns: {
       time: '时间',
