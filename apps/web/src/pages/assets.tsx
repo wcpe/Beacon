@@ -2,6 +2,7 @@
 // 顶部 namespace 作用域 + 扫描概要 + 文件清单（预览 / 触发重扫）+ 跨服比对 + 两侧 diff。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FolderTree } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
 
@@ -17,9 +18,13 @@ export default function AssetsPage() {
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
-    <section className="grid gap-6">
+    <section className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" title={t('delivery.assets.title')} />
+        <SectionHeader
+          size="lg"
+          icon={<FolderTree className="size-5" aria-hidden />}
+          title={t('delivery.assets.title')}
+        />
         <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
       </div>
       <ScanPanel namespaceId={effectiveNamespaceId} />

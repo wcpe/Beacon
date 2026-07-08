@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { GitCompare } from 'lucide-react'
 
 import { Badge, Button, Input, Label, SectionHeader } from '@beacon/ui'
 import type { AssetCompareResponse } from '@beacon/devmock'
@@ -30,8 +31,11 @@ export default function ComparePanel({ namespaceId }: { namespaceId: number }) {
 
   return (
     <section className="grid gap-3" aria-label={t('delivery.assets.compare.title')}>
-      <SectionHeader title={t('delivery.assets.compare.title')} />
-      <p className="text-sm text-muted-foreground">{t('delivery.assets.compare.hint')}</p>
+      <SectionHeader
+        icon={<GitCompare className="size-4" aria-hidden />}
+        title={t('delivery.assets.compare.title')}
+      />
+      <p className="text-sm text-ink-3">{t('delivery.assets.compare.hint')}</p>
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="grid gap-1.5">
@@ -60,28 +64,29 @@ export default function ComparePanel({ namespaceId }: { namespaceId: number }) {
       {errorText && <p className="text-sm text-destructive">{errorText}</p>}
 
       {result === null && !errorText && (
-        <p className="text-sm text-muted-foreground">{t('delivery.assets.compare.empty')}</p>
+        <p className="text-sm text-ink-3">{t('delivery.assets.compare.empty')}</p>
       )}
 
       {result && (
         <div className="grid gap-4">
           {/* 哈希分组 */}
           <div className="grid gap-2">
-            <p className="text-sm font-medium">{t('delivery.assets.compare.groupTitle')}</p>
+            <p className="text-sm font-medium text-ink-2">{t('delivery.assets.compare.groupTitle')}</p>
             {result.groups.map((group) => (
-              <div key={group.sha256} className="rounded-md border p-3">
+              <div key={group.sha256} className="rounded-xl border border-border bg-card p-3 shadow-card">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs">{shortHash(group.sha256)}</span>
-                  <Badge variant="secondary">{formatBytes(group.size)}</Badge>
-                  <Badge variant="outline">
+                  <span className="font-mono text-xs text-ink-2">{shortHash(group.sha256)}</span>
+                  <Badge variant="secondary" className="tnum">{formatBytes(group.size)}</Badge>
+                  <Badge variant="ok" className="gap-1.5">
+                    <span className="size-1.5 rounded-full bg-current" />
                     {t('delivery.assets.compare.groupServers', { count: group.servers.length })}
                   </Badge>
                 </div>
-                <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-3">
                   {group.servers.map((s) => (
                     <li key={s.serverId} className="font-mono">
                       {s.serverId}
-                      <span className="ml-1 opacity-70">{formatTime(s.scannedAt)}</span>
+                      <span className="ml-1 text-ink-4">{formatTime(s.scannedAt)}</span>
                     </li>
                   ))}
                 </ul>
@@ -91,13 +96,14 @@ export default function ComparePanel({ namespaceId }: { namespaceId: number }) {
 
           {/* 缺失该文件的子服 */}
           <div className="grid gap-2">
-            <p className="text-sm font-medium">{t('delivery.assets.compare.missingTitle')}</p>
+            <p className="text-sm font-medium text-ink-2">{t('delivery.assets.compare.missingTitle')}</p>
             {result.missing.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t('delivery.assets.compare.noMissing')}</p>
+              <p className="text-sm text-ink-3">{t('delivery.assets.compare.noMissing')}</p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {result.missing.map((serverId) => (
-                  <Badge key={serverId} variant="destructive" className="font-mono">
+                  <Badge key={serverId} variant="crit" className="gap-1.5 font-mono">
+                    <span className="size-1.5 rounded-full bg-current" />
                     {serverId}
                   </Badge>
                 ))}

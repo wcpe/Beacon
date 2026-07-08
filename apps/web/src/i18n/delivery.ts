@@ -18,6 +18,12 @@ export const delivery = {
     scan: {
       title: '扫描概要',
       empty: '当前 namespace 下暂无扫描记录，接入 agent 并完成首次清单上报后出现在此',
+      // 本页合计概要小卡
+      summary: {
+        servers: '本页子服',
+        files: '文件数合计',
+        size: '总大小合计',
+      },
       columns: {
         serverId: '子服',
         fileCount: '文件数',

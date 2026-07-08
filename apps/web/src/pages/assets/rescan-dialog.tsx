@@ -43,22 +43,28 @@ export default function RescanDialog({
           <AlertDialogDescription>{t('delivery.assets.rescan.desc')}</AlertDialogDescription>
         </AlertDialogHeader>
 
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-ink-3">
           {t('delivery.assets.rescan.selected', { count: serverIds.length })}
         </p>
 
         {/* 下发结果 */}
         {result && (
           <div className="space-y-1.5">
-            <p className="text-sm font-medium">{t('delivery.assets.rescan.resultTitle')}</p>
+            <p className="text-sm font-medium text-ink-2">{t('delivery.assets.rescan.resultTitle')}</p>
             <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
               {result.results.map((r) => (
                 <li key={r.serverId} className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs">{r.serverId}</span>
+                  <span className="font-mono text-xs text-ink-2">{r.serverId}</span>
                   {r.offline ? (
-                    <Badge variant="outline">{t('delivery.assets.rescan.offline')}</Badge>
+                    <Badge variant="off" className="gap-1.5">
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {t('delivery.assets.rescan.offline')}
+                    </Badge>
                   ) : (
-                    <Badge variant="secondary">{t('delivery.assets.rescan.dispatched')}</Badge>
+                    <Badge variant="ok" className="gap-1.5">
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {t('delivery.assets.rescan.dispatched')}
+                    </Badge>
                   )}
                 </li>
               ))}

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { FileText } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -111,13 +112,13 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
       },
       {
         header: t('delivery.assets.list.columns.path'),
-        cell: (row) => <span className="font-mono text-xs">{row.path}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.path}</span>,
       },
       { header: t('delivery.assets.list.columns.ext'), cell: (row) => row.ext || '-' },
       { header: t('delivery.assets.list.columns.size'), cell: (row) => formatBytes(row.size) },
       {
         header: t('delivery.assets.list.columns.sha256'),
-        cell: (row) => <span className="font-mono text-xs">{shortHash(row.sha256)}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-3">{shortHash(row.sha256)}</span>,
       },
       {
         header: t('delivery.assets.list.columns.mtime'),
@@ -128,9 +129,12 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
         cell: (row) => (
           <div className="flex items-center gap-1.5">
             {row.isText ? (
-              <Badge variant="secondary">{t('delivery.assets.list.text')}</Badge>
+              <Badge variant="brand">{t('delivery.assets.list.text')}</Badge>
             ) : (
-              <Badge variant="outline">{t('delivery.assets.list.binary')}</Badge>
+              <Badge variant="off" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
+                {t('delivery.assets.list.binary')}
+              </Badge>
             )}
             <Button
               size="sm"
@@ -155,7 +159,10 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('delivery.assets.list.title')} />
+      <SectionHeader
+        icon={<FileText className="size-4" aria-hidden />}
+        title={t('delivery.assets.list.title')}
+      />
 
       {/* 筛选条 */}
       <div className="flex flex-wrap items-center gap-2">
@@ -198,12 +205,14 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
       </div>
 
       {nameNeedsIndex && (
-        <p className="text-sm text-amber-700">{t('delivery.assets.list.needIndex')}</p>
+        <p className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-sm text-warn">
+          {t('delivery.assets.list.needIndex')}
+        </p>
       )}
 
       {/* 批量选择集顶部操作条 */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 rounded-md bg-secondary px-3 py-2 text-sm">
+        <div className="flex items-center gap-3 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2">
           <span>{t('delivery.assets.rescan.selected', { count: selected.size })}</span>
           <Button
             size="sm"

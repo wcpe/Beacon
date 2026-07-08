@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { SplitSquareHorizontal } from 'lucide-react'
 
 import { Button, Input, Label, SectionHeader } from '@beacon/ui'
 import type { AssetDiffResponse } from '@beacon/devmock'
@@ -39,8 +40,11 @@ export default function DiffPanel() {
 
   return (
     <section className="grid gap-3" aria-label={t('delivery.assets.diff.title')}>
-      <SectionHeader title={t('delivery.assets.diff.title')} />
-      <p className="text-sm text-muted-foreground">{t('delivery.assets.diff.hint')}</p>
+      <SectionHeader
+        icon={<SplitSquareHorizontal className="size-4" aria-hidden />}
+        title={t('delivery.assets.diff.title')}
+      />
+      <p className="text-sm text-ink-3">{t('delivery.assets.diff.hint')}</p>
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="grid gap-1.5">
@@ -92,11 +96,12 @@ export default function DiffPanel() {
       {errorText && <p className="text-sm text-destructive">{errorText}</p>}
 
       {result === null && !errorText && (
-        <p className="text-sm text-muted-foreground">{t('delivery.assets.diff.empty')}</p>
+        <p className="text-sm text-ink-3">{t('delivery.assets.diff.empty')}</p>
       )}
 
       {result?.identical === true && (
-        <p className="rounded-md bg-green-500/10 px-3 py-2 text-sm text-green-700">
+        <p className="flex items-center gap-2 rounded-lg border border-ok-bd bg-ok-bg px-3 py-2 text-sm text-ok">
+          <span className="size-1.5 rounded-full bg-current" />
           {t('delivery.assets.diff.identical')}
         </p>
       )}

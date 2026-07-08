@@ -61,32 +61,32 @@ function diffLines(leftLines: string[], rightLines: string[]): DiffRow[] {
 export default function TextDiff({ left, right, leftLabel, rightLabel }: TextDiffProps) {
   const rows = useMemo(() => diffLines(left.split('\n'), right.split('\n')), [left, right])
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <div className="grid grid-cols-2 border-b bg-muted/50 text-xs font-medium">
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <div className="grid grid-cols-2 border-b border-border bg-surface-2 text-xs font-medium text-ink-3">
         <div className="px-3 py-1.5">{leftLabel}</div>
-        <div className="border-l px-3 py-1.5">{rightLabel}</div>
+        <div className="border-l border-border px-3 py-1.5">{rightLabel}</div>
       </div>
-      <div className="grid grid-cols-2 font-mono text-xs leading-relaxed">
+      <div className="grid grid-cols-2 font-mono text-xs leading-relaxed text-ink-2">
         <div>
           {rows.map((row, idx) =>
             row.kind === 'add' ? (
-              <div key={idx} className="min-h-[1.4em] bg-muted/30 px-3">
+              <div key={idx} className="min-h-[1.4em] bg-muted/40 px-3">
                 &nbsp;
               </div>
             ) : (
               <div
                 key={idx}
-                className={cn('whitespace-pre-wrap px-3', row.kind === 'del' && 'bg-destructive/15')}
+                className={cn('whitespace-pre-wrap px-3', row.kind === 'del' && 'bg-crit-bg text-crit')}
               >
                 {row.left === '' ? ' ' : row.left}
               </div>
             ),
           )}
         </div>
-        <div className="border-l">
+        <div className="border-l border-border">
           {rows.map((row, idx) =>
             row.kind === 'del' ? (
-              <div key={idx} className="min-h-[1.4em] bg-muted/30 px-3">
+              <div key={idx} className="min-h-[1.4em] bg-muted/40 px-3">
                 &nbsp;
               </div>
             ) : (
@@ -94,7 +94,7 @@ export default function TextDiff({ left, right, leftLabel, rightLabel }: TextDif
                 key={idx}
                 className={cn(
                   'whitespace-pre-wrap px-3',
-                  row.kind === 'add' && 'bg-green-500/15',
+                  row.kind === 'add' && 'bg-ok-bg text-ok',
                 )}
               >
                 {row.right === '' ? ' ' : row.right}

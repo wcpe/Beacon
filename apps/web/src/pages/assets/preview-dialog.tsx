@@ -98,7 +98,7 @@ export default function PreviewDialog({ target, onOpenChange }: PreviewDialogPro
         {/* 敏感文件：填原因后查看 */}
         {needReason && (
           <div className="space-y-2">
-            <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700">
+            <p className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-sm text-warn">
               {t('delivery.assets.preview.sensitiveHint')}
             </p>
             <Label htmlFor="preview-reason">{t('delivery.assets.preview.reasonLabel')}</Label>
@@ -118,27 +118,33 @@ export default function PreviewDialog({ target, onOpenChange }: PreviewDialogPro
         {/* 内容展示 */}
         {result && !needReason && (
           <div className="space-y-2">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-3">
+              <span className="tnum">
                 {t('delivery.assets.preview.meta', {
                   size: formatBytes(result.size),
                   sha256: shortHash(result.sha256),
                 })}
               </span>
               {result.sensitive && (
-                <Badge variant="destructive">{t('delivery.assets.preview.sensitiveBadge')}</Badge>
+                <Badge variant="crit" className="gap-1.5">
+                  <span className="size-1.5 rounded-full bg-current" />
+                  {t('delivery.assets.preview.sensitiveBadge')}
+                </Badge>
               )}
               {result.truncated && (
-                <Badge variant="outline">{t('delivery.assets.preview.truncated')}</Badge>
+                <Badge variant="warn" className="gap-1.5">
+                  <span className="size-1.5 rounded-full bg-current" />
+                  {t('delivery.assets.preview.truncated')}
+                </Badge>
               )}
             </div>
             {result.binary ? (
-              <p className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+              <p className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm text-ink-3">
                 {t('delivery.assets.preview.binaryOnly')}
               </p>
             ) : (
-              <ScrollArea className="h-80 rounded-md border">
-                <pre className="whitespace-pre-wrap p-3 font-mono text-xs">{result.content}</pre>
+              <ScrollArea className="h-80 rounded-xl border border-border">
+                <pre className="whitespace-pre-wrap p-3 font-mono text-xs text-ink-2">{result.content}</pre>
               </ScrollArea>
             )}
           </div>
