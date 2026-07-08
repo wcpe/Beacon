@@ -3,6 +3,12 @@ export const common = {
   consoleName: '第二版管理台',
   demoMode: '演示模式',
   mockBuilding: 'mock 建设中',
+  // 侧栏底部操作人角色
+  superAdmin: '超级管理员',
+  // 页眉刷新按钮
+  refresh: '刷新',
+  // 页眉控制面在线状态药丸
+  controlPlaneOnline: '控制面在线',
   scenario: {
     label: '数据场景',
     empty: '空态',

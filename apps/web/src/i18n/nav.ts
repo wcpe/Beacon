@@ -2,6 +2,7 @@
 // 真源对照 docs/UX.md §2；新增页面先改 UX.md 再回填本文件。
 export const nav = {
   groups: {
+    ops: '运维',
     cluster: '集群',
     observability: '可观测',
     delivery: '交付',

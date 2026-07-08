@@ -24,9 +24,9 @@ export default function AppShell() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Sidebar />
-      <main className={sidebarCollapsed ? undefined : 'md:pl-56'}>
+      <main className={sidebarCollapsed ? undefined : 'md:pl-[232px]'}>
         <Header />
-        <div className="grid gap-5 p-4">
+        <div className="grid gap-5 p-4 sm:px-[22px] sm:py-[18px]">
           <Routes>
             <Route element={<Navigate replace to="/dashboard" />} path="/" />
             {ALL_PAGES.map((page) => (
