@@ -1,18 +1,16 @@
-// 命令历史：类型 / 状态过滤 + serverId 搜索 + 服务端分页，展示命令生命周期结果。
-// 与 /audits 互跳（FR-157）：按命令追溯审计记录。
+// 命令历史（主列）：吸顶工具条（类型 / 状态过滤 + serverId 搜索）+ 自区滚动列表 + 吸底服务端分页。
+// 行点击交父级用右侧非模态详情面板承载（含双向生命周期与在审计中追溯，FR-157）；选中行高亮。
 
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
-import { ArrowUpRight, History } from 'lucide-react'
+import { History } from 'lucide-react'
 
 import {
   AsyncSection,
   Badge,
   DataTable,
   Input,
-  SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -20,6 +18,7 @@ import type { CommandItem } from '@beacon/devmock'
 
 import { fetchCommands } from '../../api/observability'
 import FilterSelect from '../../features/observability/filter-select'
+import ListCard from '../../features/observability/list-card'
 import Pager from '../../features/observability/pager'
 
 const PAGE_SIZE = 15
@@ -37,7 +36,14 @@ function badgeVariant(status: CommandItem['status']): 'ok' | 'off' | 'crit' {
   return 'off'
 }
 
-export default function CommandHistory() {
+interface CommandHistoryProps {
+  // 点击命令行看详情（父级用右侧非模态面板承载）
+  onView: (item: CommandItem) => void
+  // 当前选中命令 id（高亮用）
+  selectedId: number | null
+}
+
+export default function CommandHistory({ onView, selectedId }: CommandHistoryProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
   const [type, setType] = useState('all')
@@ -82,31 +88,21 @@ export default function CommandHistory() {
         header: t('observability.commands.columns.result'),
         cell: (row) => <span className="text-xs text-ink-3">{row.resultDetail || '—'}</span>,
       },
-      {
-        header: '',
-        headClassName: 'w-24',
-        cell: (row) => (
-          <Link
-            className="inline-flex items-center gap-0.5 text-xs text-brand-600 hover:underline"
-            to={`/audits?targetRef=${row.serverId}`}
-          >
-            {t('observability.commands.viewInAudits')}
-            <ArrowUpRight className="size-3" />
-          </Link>
-        ),
-      },
     ],
     [t],
   )
 
-  return (
-    <section className="grid gap-3">
-      <SectionHeader
-        icon={<History className="size-4" />}
-        title={t('observability.commands.historyTitle')}
-        count={total > 0 ? t('observability.common.total', { count: total }) : undefined}
-      />
-
+  const toolbar = (
+    <div className="grid gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <History className="size-[15px]" />
+          </span>
+          {t('observability.commands.historyTitle')}
+        </span>
+        {total > 0 && <span className="text-xs text-ink-3">{t('observability.common.total', { count: total })}</span>}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('observability.commands.filterServer')}
@@ -140,27 +136,34 @@ export default function CommandHistory() {
           }}
         />
       </div>
+    </div>
+  )
 
+  return (
+    <ListCard
+      toolbar={toolbar}
+      footer={
+        total > PAGE_SIZE ? (
+          <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+        ) : undefined
+      }
+    >
       <AsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}
       >
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
-          <DataTable
-            columns={columns}
-            rows={query.data?.items}
-            rowKey={(row) => String(row.commandId)}
-            emptyText={t('observability.commands.historyEmpty')}
-            density="compact"
-          />
-        </div>
+        <DataTable
+          columns={columns}
+          rows={query.data?.items}
+          rowKey={(row) => String(row.commandId)}
+          emptyText={t('observability.commands.historyEmpty')}
+          density="compact"
+          onRowClick={onView}
+          rowClassName={(row) => (row.commandId === selectedId ? 'bg-brand-50/60' : undefined)}
+        />
       </AsyncSection>
-
-      {total > PAGE_SIZE && (
-        <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
-      )}
-    </section>
+    </ListCard>
   )
 }

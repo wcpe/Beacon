@@ -1,5 +1,5 @@
 // 命令实时队列：仅 pending / fetched 在途命令，展示已等待时长；5 秒轮询刷新。
-// 只读元数据，永不展示命令 payload / 回执明文。
+// 只读元数据，永不展示命令 payload / 回执明文。行可点开右侧详情面板。
 
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -20,7 +20,14 @@ import { fetchCommands } from '../../api/observability'
 
 const REFETCH_MS = 5000
 
-export default function CommandQueue() {
+interface CommandQueueProps {
+  // 点击命令行看详情（父级用右侧非模态面板承载）
+  onView: (item: CommandItem) => void
+  // 当前选中命令 id（高亮用）
+  selectedId: number | null
+}
+
+export default function CommandQueue({ onView, selectedId }: CommandQueueProps) {
   const { t } = useTranslation()
 
   // 分别拉 pending / fetched（Legacy 端点单值 status 过滤），合并成在途队列
@@ -84,13 +91,15 @@ export default function CommandQueue() {
         error={pendingQuery.error ?? fetchedQuery.error}
         skeleton={<TableSkeleton columns={columns.length} rows={4} />}
       >
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+        <div className="max-h-[16rem] overflow-y-auto rounded-xl border border-border bg-card shadow-card">
           <DataTable
             columns={columns}
             rows={rows}
             rowKey={(row) => String(row.commandId)}
             emptyText={t('observability.commands.queueEmpty')}
             density="compact"
+            onRowClick={onView}
+            rowClassName={(row) => (row.commandId === selectedId ? 'bg-brand-50/60' : undefined)}
           />
         </div>
       </AsyncSection>

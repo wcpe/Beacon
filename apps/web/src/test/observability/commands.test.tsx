@@ -55,4 +55,28 @@ describe('/commands 命令观测页', () => {
       expect(screen.getAllByText('执行失败：agent 回执超时').length).toBeGreaterThan(0)
     })
   })
+
+  it('点击命令历史行打开右侧非模态详情面板', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<CommandsPage />)
+
+    await screen.findByText('命令历史')
+
+    // 取命令历史列表首行（有 tr 祖先的命令类型单元格）
+    let row: HTMLTableRowElement | null = null
+    await waitFor(() => {
+      const cells = screen.getAllByText(/asset_rescan|resync-config|tail-logs/)
+      row = cells.map((el) => el.closest('tr')).find((tr): tr is HTMLTableRowElement => tr !== null) ?? null
+      expect(row).not.toBeNull()
+    })
+    await user.click(row as unknown as HTMLElement)
+
+    // 右侧详情面板出现（命令详情标题 + 生命周期字段），且不产生模态遮罩层
+    await waitFor(() => {
+      expect(screen.getByText('命令详情')).toBeInTheDocument()
+    })
+    expect(screen.getByText('生命周期')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
 })

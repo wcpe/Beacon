@@ -71,6 +71,9 @@ export const observability = {
       expired: '过期',
     },
     ageSeconds: '{{count}} 秒',
+    lifecycle: '生命周期',
+    updatedAt: '更新时间',
+    detailTitle: '命令详情',
     viewInAudits: '在审计中追溯',
   },
   audits: {
