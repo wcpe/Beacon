@@ -2,6 +2,7 @@
 // 排障任务：/dashboard 下钻 → /servers 详情 → 本页看链路与异常边，可与 /commands /audits 互跳。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Network } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
 
@@ -16,9 +17,9 @@ export default function TopologyPage() {
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
-    <section className="grid gap-6">
+    <section className="grid gap-3.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" title={t('nav.topology')} />
+        <SectionHeader size="lg" icon={<Network className="size-5" />} title={t('nav.topology')} className="border-b-0 pb-0" />
         <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
       </div>
       <LinkGraph namespaceId={effectiveNamespaceId} />
