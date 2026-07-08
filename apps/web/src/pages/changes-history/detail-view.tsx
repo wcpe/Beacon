@@ -4,6 +4,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
+import { ChevronLeft, Layers, RotateCcw, Server } from 'lucide-react'
+
 import {
   AsyncSection,
   Badge,
@@ -23,6 +25,7 @@ import {
   finishRollbackChangeOrder,
   rollbackChangeOrder,
 } from '../../api/delivery-changes'
+import { BatchStatusBadge, TargetStatusBadge } from '../changes/status-badge'
 import RollbackDialog from './rollback-dialog'
 import StatusBadge from './status-badge'
 import { formatTime } from './format'
@@ -86,10 +89,13 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
 
   const batchColumns = useMemo<DataTableColumn<ChangeBatch>[]>(
     () => [
-      { header: t('delivery.changes.detail.batches.columns.batch'), cell: (row) => `#${String(row.batchNo)}` },
+      {
+        header: t('delivery.changes.detail.batches.columns.batch'),
+        cell: (row) => <span className="tnum">#{String(row.batchNo)}</span>,
+      },
       {
         header: t('delivery.changes.detail.batches.columns.status'),
-        cell: (row) => <Badge variant="outline">{t(`delivery.changes.batchStatus.${row.status}`)}</Badge>,
+        cell: (row) => <BatchStatusBadge status={row.status} />,
       },
       { header: t('delivery.changes.detail.batches.columns.planned'), cell: (row) => row.plannedCount },
       { header: t('delivery.changes.detail.batches.columns.success'), cell: (row) => row.successCount },
@@ -106,21 +112,25 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
       },
       {
         header: t('delivery.changesHistory.detail.columns.batch'),
-        cell: (row) => `#${String(row.batchNo)}`,
+        cell: (row) => <span className="tnum">#{String(row.batchNo)}</span>,
       },
       {
         header: t('delivery.changesHistory.detail.columns.status'),
-        cell: (row) => <Badge variant="outline">{t(`delivery.changes.targetStatus.${row.status}`)}</Badge>,
+        cell: (row) => <TargetStatusBadge status={row.status} />,
       },
       {
         header: t('delivery.changesHistory.detail.columns.rollback'),
         cell: (row) =>
           row.rollbackStatus === null ? (
-            <span className="text-muted-foreground">
+            <span className="text-ink-4">
               {t('delivery.changesHistory.detail.rollbackStatus.none')}
             </span>
           ) : (
-            <Badge variant={row.rollbackStatus === 'failed' ? 'destructive' : 'secondary'}>
+            <Badge
+              variant={row.rollbackStatus === 'failed' ? 'crit' : 'ok'}
+              className="gap-1.5"
+            >
+              <span className="size-1.5 rounded-full bg-current" aria-hidden />
               {t(`delivery.changesHistory.detail.rollbackStatus.${row.rollbackStatus}`)}
             </Badge>
           ),
@@ -134,14 +144,17 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={onBack}>
-            {t('delivery.changesHistory.detail.backToList')}
-          </Button>
+      <Button variant="ghost" size="sm" className="w-fit" onClick={onBack}>
+        <ChevronLeft className="size-4" />
+        {t('delivery.changesHistory.detail.backToList')}
+      </Button>
+
+      {/* 标题 + 状态 + 回滚 / 结束操作（软卡片头部） */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+        <div className="flex flex-wrap items-center gap-3">
           {detail && (
             <>
-              <SectionHeader title={detail.title} />
+              <h2 className="text-lg font-semibold text-ink-1">{detail.title}</h2>
               <StatusBadge status={detail.status} />
             </>
           )}
@@ -156,6 +169,7 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
                 setRollbackOpen(true)
               }}
             >
+              <RotateCcw className="size-4" />
               {t('delivery.changesHistory.rollback.action')}
             </Button>
           )}
@@ -183,18 +197,24 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
 
       {/* 回滚信息横幅 */}
       {detail?.rollbackAt != null && (
-        <p className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-          {t('delivery.changesHistory.detail.rollbackInfo', {
-            who: detail.rollbackBy ?? '-',
-            at: formatTime(detail.rollbackAt),
-            reason: detail.rollbackReason ?? '-',
-          })}
+        <p className="flex items-start gap-2 rounded-lg border border-warn-bd bg-warn-bg px-3 py-2.5 text-sm text-warn">
+          <RotateCcw className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>
+            {t('delivery.changesHistory.detail.rollbackInfo', {
+              who: detail.rollbackBy ?? '-',
+              at: formatTime(detail.rollbackAt),
+              reason: detail.rollbackReason ?? '-',
+            })}
+          </span>
         </p>
       )}
 
       {/* 批次状态 */}
       <div className="grid gap-2">
-        <SectionHeader title={t('delivery.changesHistory.detail.batchesTitle')} />
+        <SectionHeader
+          icon={<Layers className="size-4" />}
+          title={t('delivery.changesHistory.detail.batchesTitle')}
+        />
         <AsyncSection isLoading={detailQuery.isLoading} isError={detailQuery.isError} error={detailQuery.error}>
           <DataTable
             columns={batchColumns}
@@ -208,7 +228,10 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
 
       {/* 单服状态 */}
       <div className="grid gap-2">
-        <SectionHeader title={t('delivery.changesHistory.detail.targetsTitle')} />
+        <SectionHeader
+          icon={<Server className="size-4" />}
+          title={t('delivery.changesHistory.detail.targetsTitle')}
+        />
         <AsyncSection isLoading={targetsQuery.isLoading} isError={targetsQuery.isError} error={targetsQuery.error}>
           <DataTable
             columns={targetColumns}

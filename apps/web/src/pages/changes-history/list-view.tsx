@@ -4,6 +4,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
+import { History } from 'lucide-react'
+
 import {
   AsyncSection,
   Button,
@@ -106,7 +108,10 @@ export default function ListView({ namespaceId, onView }: ListViewProps) {
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('delivery.changesHistory.list.title')} />
+      <SectionHeader
+        icon={<History className="size-4" />}
+        title={t('delivery.changesHistory.list.title')}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
