@@ -184,6 +184,8 @@ export const system = {
     },
     // 明细块
     detail: {
+      title: '子系统明细',
+      emptyCounts: '暂无数据',
       dbPoolTitle: '连接池明细',
       maxOpen: '最大连接',
       open: '当前连接',
