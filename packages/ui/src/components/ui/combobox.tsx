@@ -159,7 +159,7 @@ export function Combobox({
           // 阻止聚焦回退到触发器，保持输入框焦点以便连续键入过滤
           onOpenAutoFocus={(e) => { e.preventDefault(); }}
           className={cn(
-            'z-50 max-h-60 w-(--radix-popover-trigger-width) min-w-36 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-card ring-1 ring-foreground/10',
+            'z-50 max-h-60 w-(--radix-popover-trigger-width) min-w-36 overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-[var(--sh-pop)] ring-1 ring-foreground/10',
           )}
         >
           <div role="listbox">

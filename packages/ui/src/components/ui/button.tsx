@@ -9,9 +9,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        // 主操作：靛蓝实底 + 极轻软投影提「可点」感，hover 加深底色，配合基类 active 微下沉
+        // 主操作：靛蓝实底 + 软投影提「可点」感，hover 加深底色并抬升为弹层级投影，active 收投影配合基类微下沉
         default:
-          'bg-primary text-primary-foreground shadow-card hover:bg-brand-600',
+          'bg-primary text-primary-foreground shadow-card hover:bg-brand-600 hover:shadow-[var(--sh-pop)] active:shadow-none',
         // 描边按钮：白底细边 + 轻投影提层次，hover 浮出浅底，比 ghost 分明
         outline:
           'border-border bg-background shadow-card hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50',
