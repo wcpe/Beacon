@@ -3,14 +3,12 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { CheckCircle2, Cloud, Rocket, Wifi } from 'lucide-react'
+
 import {
   AsyncSection,
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   MarkdownLite,
   SectionHeader,
 } from '@beacon/ui'
@@ -111,12 +109,40 @@ export default function SystemVersionPage() {
       {/* 版本信息卡 */}
       <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>
         {check && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-base">{t('system.version.title')}</CardTitle>
+          <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
+            {/* 当前版本主行：图标框 + 大版本号 + 渠道 / 状态药丸 + 检查更新 */}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand" aria-hidden>
+                <Rocket className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-[11.5px] font-medium text-ink-3">{t('system.version.current')}</div>
+                <div className="text-[22px] leading-none font-bold tracking-[-0.5px] text-ink-1 tnum">
+                  {check.currentVersion}
+                </div>
+              </div>
+              <Badge variant="off" className="ml-1">
+                {check.channel === 'prerelease'
+                  ? t('system.version.channelPrerelease')
+                  : t('system.version.channelStable')}
+              </Badge>
+              {check.isDevBuild ? (
+                <Badge variant="brand">{t('system.version.devBuild')}</Badge>
+              ) : check.hasUpdate ? (
+                <Badge variant="warn" className="gap-1.5">
+                  <span className="size-1.5 rounded-full bg-current" />
+                  {t('system.version.hasUpdate')}: {check.latestVersion}
+                </Badge>
+              ) : (
+                <Badge variant="ok" className="gap-1.5">
+                  <CheckCircle2 className="size-3" />
+                  {t('system.version.upToDate')}
+                </Badge>
+              )}
               <Button
                 size="sm"
                 variant="outline"
+                className="ml-auto"
                 disabled={checkQuery.isFetching}
                 onClick={() => {
                   void checkQuery.refetch()
@@ -124,66 +150,48 @@ export default function SystemVersionPage() {
               >
                 {checkQuery.isFetching ? t('system.version.checking') : t('system.version.check')}
               </Button>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              <div className="flex flex-wrap items-center gap-3 text-sm">
-                <span className="text-muted-foreground">{t('system.version.current')}</span>
-                <span className="font-semibold">{check.currentVersion}</span>
-                <Badge variant="outline">
-                  {check.channel === 'prerelease'
-                    ? t('system.version.channelPrerelease')
-                    : t('system.version.channelStable')}
-                </Badge>
-                {check.isDevBuild ? (
-                  <Badge variant="secondary">{t('system.version.devBuild')}</Badge>
-                ) : check.hasUpdate ? (
-                  <Badge variant="secondary">
-                    {t('system.version.hasUpdate')}: {check.latestVersion}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline">{t('system.version.upToDate')}</Badge>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {t('system.version.checkedAt')}: {formatIso(check.checkedAt)}
-              </p>
+            </div>
 
-              {check.hasUpdate && check.releaseNotes !== '' && (
-                <div className="rounded-md bg-muted/50 p-3 text-sm">
-                  <p className="mb-1 font-medium">
-                    {t('system.version.releaseNotes')} · {check.latestVersion}
-                  </p>
-                  <MarkdownLite source={check.releaseNotes} />
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {t('system.version.publishedAt')}: {formatIso(check.publishedAt)}
-                  </p>
-                </div>
-              )}
+            <p className="text-xs text-ink-4">
+              {t('system.version.checkedAt')}: {formatIso(check.checkedAt)}
+            </p>
 
-              {/* 更新 / 回滚操作区 */}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  disabled={!check.hasUpdate || check.isDevBuild}
-                  onClick={() => {
-                    setActionError(null)
-                    setTriggerOpen(true)
-                  }}
-                >
-                  {t('system.version.trigger')}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={!rollbackAvailable}
-                  onClick={() => {
-                    setActionError(null)
-                    setRollbackOpen(true)
-                  }}
-                >
-                  {rollbackAvailable ? t('system.version.rollback') : t('system.version.rollbackUnavailable')}
-                </Button>
+            {check.hasUpdate && check.releaseNotes !== '' && (
+              <div className="rounded-lg border border-border bg-surface-2 p-4 text-sm">
+                <p className="mb-1.5 flex items-center gap-1.5 font-semibold text-ink-1">
+                  <Cloud className="size-4 text-brand" />
+                  {t('system.version.releaseNotes')} · {check.latestVersion}
+                </p>
+                <MarkdownLite source={check.releaseNotes} />
+                <p className="mt-2 text-xs text-ink-4">
+                  {t('system.version.publishedAt')}: {formatIso(check.publishedAt)}
+                </p>
               </div>
-            </CardContent>
-          </Card>
+            )}
+
+            {/* 更新 / 回滚操作区 */}
+            <div className="flex flex-wrap gap-2 border-t pt-4">
+              <Button
+                disabled={!check.hasUpdate || check.isDevBuild}
+                onClick={() => {
+                  setActionError(null)
+                  setTriggerOpen(true)
+                }}
+              >
+                {t('system.version.trigger')}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!rollbackAvailable}
+                onClick={() => {
+                  setActionError(null)
+                  setRollbackOpen(true)
+                }}
+              >
+                {rollbackAvailable ? t('system.version.rollback') : t('system.version.rollbackUnavailable')}
+              </Button>
+            </div>
+          </div>
         )}
       </AsyncSection>
 
@@ -199,12 +207,10 @@ export default function SystemVersionPage() {
       )}
 
       {/* 代理测试 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t('system.version.proxy.title')}</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2">
-          <p className="text-sm text-muted-foreground">{t('system.version.proxy.hint')}</p>
+      <section className="grid gap-3">
+        <SectionHeader icon={<Wifi className="size-4" />} title={t('system.version.proxy.title')} />
+        <div className="grid gap-2.5 rounded-xl border border-border bg-card p-4 shadow-card">
+          <p className="text-sm text-ink-3">{t('system.version.proxy.hint')}</p>
           <div className="flex items-center gap-3">
             <Button
               size="sm"
@@ -218,13 +224,14 @@ export default function SystemVersionPage() {
               {proxyMutation.isPending ? t('system.version.proxy.testing') : t('system.version.proxy.test')}
             </Button>
             {proxyResult !== null && (
-              <span className={proxyResult.ok ? 'text-sm text-green-600' : 'text-sm text-destructive'}>
+              <Badge variant={proxyResult.ok ? 'ok' : 'crit'} className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
                 {proxyResult.message}
-              </span>
+              </Badge>
             )}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* 触发更新确认（无需原因，但二次确认） */}
       <SystemReasonDialog
