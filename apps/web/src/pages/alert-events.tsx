@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { ArrowUpRight, TriangleAlert } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -12,7 +13,6 @@ import {
   DataTable,
   SectionHeader,
   TableSkeleton,
-  levelSoft,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/devmock'
@@ -29,15 +29,26 @@ const LEVELS = ['info', 'warning', 'critical'] as const
 const TYPES = ['health-transition', 'publish-fail', 'backend-unreachable'] as const
 const STATUSES = ['open', 'acknowledged', 'resolved'] as const
 
-// 告警级别 → 健康等级（徽标配色）
-function levelToHealth(level: AlertEventItem['level']): 'ok' | 'warn' | 'danger' | 'muted' {
+// 告警级别 → 状态药丸语义 variant：严重危急、警告注意、提示次要。
+function levelBadgeVariant(level: AlertEventItem['level']): 'crit' | 'warn' | 'off' {
   if (level === 'critical') {
-    return 'danger'
+    return 'crit'
   }
   if (level === 'warning') {
     return 'warn'
   }
-  return 'muted'
+  return 'off'
+}
+
+// 处理状态 → 状态药丸语义 variant：待处理危急、已处理正常、已确认次要。
+function statusBadgeVariant(status: AlertEventItem['status']): 'crit' | 'ok' | 'off' {
+  if (status === 'open') {
+    return 'crit'
+  }
+  if (status === 'resolved') {
+    return 'ok'
+  }
+  return 'off'
 }
 
 // 处理动作意图（携带目标行）
@@ -97,29 +108,29 @@ export default function AlertEventsPage() {
     () => [
       {
         header: t('observability.alertEvents.columns.time'),
-        cell: (row) => <span className="text-xs">{new Date(row.createdAt).toLocaleString()}</span>,
+        cell: (row) => <span className="tabular-nums text-xs text-ink-3">{new Date(row.createdAt).toLocaleString()}</span>,
       },
       {
         header: t('observability.alertEvents.columns.level'),
         cell: (row) => (
-          <span className={`rounded-md px-1.5 py-0.5 text-xs ${levelSoft(levelToHealth(row.level))}`}>
+          <Badge variant={levelBadgeVariant(row.level)}>
             {t(`observability.alertEvents.level.${row.level}`)}
-          </span>
+          </Badge>
         ),
       },
       {
         header: t('observability.alertEvents.columns.type'),
-        cell: (row) => t(`observability.alertEvents.type.${row.type}`),
+        cell: (row) => <span className="text-ink-3">{t(`observability.alertEvents.type.${row.type}`)}</span>,
       },
       {
         header: t('observability.alertEvents.columns.serverId'),
-        cell: (row) => <span className="font-mono text-xs">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.serverId}</span>,
       },
-      { header: t('observability.alertEvents.columns.message'), cell: (row) => row.message },
+      { header: t('observability.alertEvents.columns.message'), cell: (row) => <span className="text-ink-2">{row.message}</span> },
       {
         header: t('observability.alertEvents.columns.status'),
         cell: (row) => (
-          <Badge variant={row.status === 'open' ? 'destructive' : row.status === 'resolved' ? 'secondary' : 'outline'}>
+          <Badge variant={statusBadgeVariant(row.status)}>
             {t(`observability.alertEvents.status.${row.status}`)}
           </Badge>
         ),
@@ -131,7 +142,7 @@ export default function AlertEventsPage() {
             <div className="flex flex-wrap gap-1.5">
               <Button
                 size="sm"
-                variant="ghost"
+                variant="outline"
                 onClick={() => {
                   setErrorText(null)
                   setAction({ intent: 'acknowledged', row })
@@ -141,7 +152,6 @@ export default function AlertEventsPage() {
               </Button>
               <Button
                 size="sm"
-                variant="ghost"
                 onClick={() => {
                   setErrorText(null)
                   setAction({ intent: 'resolved', row })
@@ -151,12 +161,20 @@ export default function AlertEventsPage() {
               </Button>
             </div>
           ) : (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <Link className="text-primary hover:underline" to={`/audits?targetRef=${row.serverId}`}>
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <Link
+                className="inline-flex items-center gap-0.5 text-brand-600 hover:underline"
+                to={`/audits?targetRef=${row.serverId}`}
+              >
                 {t('observability.alertEvents.viewInAudits')}
+                <ArrowUpRight className="size-3" />
               </Link>
-              <Link className="text-primary hover:underline" to="/servers">
+              <Link
+                className="inline-flex items-center gap-0.5 text-brand-600 hover:underline"
+                to="/servers"
+              >
                 {t('observability.alertEvents.viewInServers')}
+                <ArrowUpRight className="size-3" />
               </Link>
             </div>
           ),
@@ -166,8 +184,13 @@ export default function AlertEventsPage() {
   )
 
   return (
-    <section className="grid gap-6">
-      <SectionHeader size="lg" title={t('nav.alertEvents')} />
+    <section className="grid gap-5">
+      <SectionHeader
+        size="lg"
+        icon={<TriangleAlert className="size-5" />}
+        title={t('nav.alertEvents')}
+        count={t('observability.alertEvents.mission')}
+      />
       <AlertKpi total={total} items={query.data?.items ?? []} />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -206,13 +229,15 @@ export default function AlertEventsPage() {
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}
       >
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('observability.alertEvents.listEmpty')}
-          density="compact"
-        />
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(row) => String(row.id)}
+            emptyText={t('observability.alertEvents.listEmpty')}
+            density="compact"
+          />
+        </div>
       </AsyncSection>
 
       {total > PAGE_SIZE && <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />}

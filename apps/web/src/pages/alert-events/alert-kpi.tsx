@@ -1,8 +1,10 @@
 // 告警 KPI：告警总数 + 待处理 / 严重 / 已处理计数（客户端按当前页数据派生，超大量以 total 明示）。
+// 对齐 B 版：图标角标 KpiCard 卡带，按语义上色。
 
 import { useTranslation } from 'react-i18next'
+import { Bell, CircleAlert, CircleCheck, Inbox } from 'lucide-react'
 
-import { SummaryStrip, type SummaryItem } from '@beacon/ui'
+import { KpiCard, type KpiTone } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/devmock'
 
 interface AlertKpiProps {
@@ -18,11 +20,28 @@ export default function AlertKpi({ total, items }: AlertKpiProps) {
   const criticalCount = items.filter((i) => i.level === 'critical').length
   const resolvedCount = items.filter((i) => i.status === 'resolved').length
 
-  const summary: SummaryItem[] = [
-    { label: t('observability.alertEvents.kpi.total'), value: total },
-    { label: t('observability.alertEvents.kpi.open'), value: openCount, tone: 'warning' },
-    { label: t('observability.alertEvents.kpi.critical'), value: criticalCount, tone: 'danger' },
-    { label: t('observability.alertEvents.kpi.resolved'), value: resolvedCount, tone: 'success' },
+  // KPI 四卡：总数（品牌）/ 待处理（注意）/ 严重（危急）/ 已处理（正常）。
+  const cards: { key: string; value: number; icon: typeof Bell; tone: KpiTone }[] = [
+    { key: 'total', value: total, icon: Bell, tone: 'brand' },
+    { key: 'open', value: openCount, icon: Inbox, tone: 'warn' },
+    { key: 'critical', value: criticalCount, icon: CircleAlert, tone: 'crit' },
+    { key: 'resolved', value: resolvedCount, icon: CircleCheck, tone: 'ok' },
   ]
-  return <SummaryStrip items={summary} />
+
+  return (
+    <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+      {cards.map((c) => {
+        const Icon = c.icon
+        return (
+          <KpiCard
+            key={c.key}
+            label={t(`observability.alertEvents.kpi.${c.key}`)}
+            value={c.value}
+            icon={<Icon className="size-4" />}
+            tone={c.tone}
+          />
+        )
+      })}
+    </div>
+  )
 }
