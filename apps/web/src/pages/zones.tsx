@@ -59,7 +59,11 @@ export default function ZonesPage() {
       {/* 主从布局：结构树占主区，未分配窄栏（非模态）在右侧共存，不遮罩、不 reflow 主区 */}
       <div className="flex items-start gap-3.5">
         <div className="min-w-0 flex-1">
-          <ZoneTree namespaceId={effectiveNamespaceId} draggingKind={draggingKind} />
+          <ZoneTree
+            namespaceId={effectiveNamespaceId}
+            draggingKind={draggingKind}
+            onDraggingKindChange={setDraggingKind}
+          />
         </div>
         <UnassignedBasket
           namespaceId={effectiveNamespaceId}

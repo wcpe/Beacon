@@ -3,11 +3,14 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import {
+  ArrowRightLeft,
   Boxes,
   ChevronDown,
   ChevronRight,
   Layers,
+  Link2Off,
   MapPin,
   Network,
   Plus,
@@ -24,10 +27,14 @@ import {
   createZone,
   fetchServers,
   fetchZoneTree,
+  rezoneServers,
 } from '../../api/cluster'
-import { readAssignDrag, type AssignDragPayload } from '../../features/cluster/assign-drag'
+import { readAssignDrag, writeAssignDrag, type AssignDragPayload } from '../../features/cluster/assign-drag'
 import { messageOf as assignMessageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
 import CreateNodeDialog from './create-node-dialog'
+import DragConfirmDialog, { type PendingDrop } from './drag-confirm-dialog'
+import RezoneDialog from './rezone-dialog'
+import ServerContextMenu, { type ContextMenuItem } from './server-context-menu'
 
 // 放置目标类型：backend 落小区、proxy 落集群；其余节点非目标
 type DropTargetKind = 'zone' | 'cluster'
@@ -48,12 +55,16 @@ function messageOf(error: unknown): string {
 export default function ZoneTree({
   namespaceId,
   draggingKind,
+  onDraggingKindChange,
 }: {
   namespaceId: number
   // 当前拖拽中的服务器 kind（由父页面共享）：dragover 阶段据此高亮兼容目标
   draggingKind?: 'backend' | 'proxy' | null
+  // 树内已分配服务器拖起/结束时上报 kind（改派拖拽用），供树高亮兼容目标
+  onDraggingKindChange?: (kind: 'backend' | 'proxy' | null) => void
 }) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [intent, setIntent] = useState<CreateIntent | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -127,7 +138,42 @@ export default function ZoneTree({
   // 拖拽落区：当前 drag-over 的目标键（高亮）与最近一次落区错误/结果反馈
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [dropFeedback, setDropFeedback] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  // 待确认的拖拽落区意图（松手后先弹确认，确认才写）
+  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null)
+  const [dropError, setDropError] = useState<string | null>(null)
   const dropAssign = useAssignServers()
+
+  const tree: ZoneTreeResponse | undefined = query.data
+
+  // 目标 id → 可读名：小区含集群/大区路径，集群直接用名（确认弹窗展示）
+  const nameOfTarget = (targetKind: DropTargetKind, targetId: number): string => {
+    if (!tree) {
+      return String(targetId)
+    }
+    if (targetKind === 'cluster') {
+      return tree.clusters.find((c) => c.id === targetId)?.name ?? String(targetId)
+    }
+    for (const cluster of tree.clusters) {
+      for (const region of cluster.regions) {
+        for (const zone of region.zones) {
+          if (zone.id === targetId) {
+            return `${cluster.name} / ${region.name} / ${zone.name}`
+          }
+        }
+      }
+    }
+    return String(targetId)
+  }
+
+  // 换区改派 mutation：已分配服务器改归属走 server-rezones 工单
+  const rezoneMutation = useMutation({
+    mutationFn: ({ serverRowId, target, reason }: { serverRowId: number; target: PendingDrop['target']; reason: string }) =>
+      rezoneServers({ serverIds: [serverRowId], target, reason }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['servers'] })
+      await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
+    },
+  })
 
   // kind 与目标是否兼容：backend→小区、proxy→集群
   const kindFits = (kind: 'backend' | 'proxy', targetKind: DropTargetKind): boolean =>
@@ -141,39 +187,175 @@ export default function ZoneTree({
   const isCompatible = (payload: AssignDragPayload | null, targetKind: DropTargetKind): boolean =>
     payload !== null && kindFits(payload.kind, targetKind)
 
-  // 落区：读取拖拽载荷，兼容则调用分配 mutation
+  // 落区：读取拖拽载荷，兼容则暂存意图并弹二次确认（不立即写）。
+  // 未分配（fromId 为空）→ 首次分配；已分配拖到不同节点 → 换区改派；拖到原属节点无操作。
   const handleDrop = (targetKind: DropTargetKind, targetId: number, dt: DataTransfer) => {
     setDragOverKey(null)
     const payload = readAssignDrag(dt)
     if (!isCompatible(payload, targetKind) || payload === null) {
       return
     }
+    const target = { kind: targetKind === 'zone' ? ('zone' as const) : ('bc_cluster' as const), id: targetId }
+    const targetName = nameOfTarget(targetKind, targetId)
+    setDropError(null)
+    // 已分配（携带原归属）
+    if (payload.fromId != null) {
+      // 拖回原属节点：无操作
+      if (payload.fromId === targetId) {
+        return
+      }
+      setPendingDrop({
+        mode: 'rezone',
+        serverRowId: payload.id,
+        serverId: payload.serverId,
+        target,
+        targetName,
+        fromName: payload.fromName ?? undefined,
+      })
+      return
+    }
+    // 未分配：首次分配确认
+    setPendingDrop({ mode: 'assign', serverRowId: payload.id, serverId: payload.serverId, target, targetName })
+  }
+
+  // 确认落区：assign 走首次分配、rezone 走换区工单
+  const confirmDrop = (reason: string) => {
+    const drop = pendingDrop
+    if (drop === null) {
+      return
+    }
     setDropFeedback(null)
-    dropAssign.mutate(
-      {
-        serverIds: [payload.id],
-        target: { kind: targetKind === 'zone' ? 'zone' : 'bc_cluster', id: targetId },
-      },
+    setDropError(null)
+    if (drop.mode === 'assign') {
+      dropAssign.mutate(
+        { serverIds: [drop.serverRowId], target: drop.target },
+        {
+          onSuccess: (response) => {
+            const failed = response.results.find((r) => !r.ok)
+            setDropFeedback(
+              failed
+                ? { tone: 'error', text: t('cluster.zones.drag.dropFail', { serverId: drop.serverId }) }
+                : { tone: 'ok', text: t('cluster.zones.drag.dropOk', { serverId: drop.serverId }) },
+            )
+            setPendingDrop(null)
+          },
+          onError: (error) => {
+            setDropError(assignMessageOf(error))
+          },
+        },
+      )
+      return
+    }
+    rezoneMutation.mutate(
+      { serverRowId: drop.serverRowId, target: drop.target, reason },
       {
         onSuccess: (response) => {
           const failed = response.results.find((r) => !r.ok)
-          if (failed) {
-            setDropFeedback({
-              tone: 'error',
-              text: t('cluster.zones.drag.dropFail', { serverId: payload.serverId }),
-            })
-          } else {
-            setDropFeedback({ tone: 'ok', text: t('cluster.zones.drag.dropOk', { serverId: payload.serverId }) })
-          }
+          setDropFeedback(
+            failed
+              ? { tone: 'error', text: t('cluster.zones.drag.dropFail', { serverId: drop.serverId }) }
+              : { tone: 'ok', text: t('cluster.zones.drag.rezoneOk', { serverId: drop.serverId }) },
+          )
+          setPendingDrop(null)
         },
         onError: (error) => {
-          setDropFeedback({ tone: 'error', text: assignMessageOf(error) })
+          setDropError(assignMessageOf(error))
         },
       },
     )
   }
 
-  const tree: ZoneTreeResponse | undefined = query.data
+  // 右键菜单状态：光标位置 + 目标服务器
+  const [menu, setMenu] = useState<{ x: number; y: number; server: ServerItem } | null>(null)
+  // 「改派到…」目标选择弹窗的当前服务器
+  const [rezoneServer, setRezoneServer] = useState<ServerItem | null>(null)
+  const [rezoneError, setRezoneError] = useState<string | null>(null)
+
+  const openContextMenu = (e: React.MouseEvent, server: ServerItem) => {
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY, server })
+  }
+
+  // 点选式改派确认：reason 必填由弹窗保证
+  const confirmRezonePick = (targetId: number, reason: string) => {
+    const server = rezoneServer
+    if (server === null) {
+      return
+    }
+    const target = { kind: server.kind === 'proxy' ? ('bc_cluster' as const) : ('zone' as const), id: targetId }
+    setRezoneError(null)
+    rezoneMutation.mutate(
+      { serverRowId: server.id, target, reason },
+      {
+        onSuccess: () => {
+          setRezoneServer(null)
+        },
+        onError: (error) => {
+          setRezoneError(assignMessageOf(error))
+        },
+      },
+    )
+  }
+
+  // 构造某服务器行的右键菜单项：已分配可改派 + 查看健康详情（跳 /servers）
+  const menuItemsFor = (server: ServerItem): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = []
+    if (server.assigned) {
+      items.push({
+        key: 'rezone',
+        label: t('cluster.zones.menu.rezone'),
+        icon: <ArrowRightLeft className="size-3.5" />,
+        onSelect: () => {
+          setRezoneError(null)
+          setRezoneServer(server)
+        },
+      })
+    }
+    items.push({
+      key: 'detail',
+      label: t('cluster.zones.menu.viewDetail'),
+      icon: <Server className="size-3.5" />,
+      onSelect: () => {
+        navigate(`/servers?keyword=${encodeURIComponent(server.serverId)}`)
+      },
+    })
+    items.push({
+      key: 'unbind',
+      label: t('cluster.zones.menu.unbind'),
+      icon: <Link2Off className="size-3.5" />,
+      tone: 'danger',
+      onSelect: () => {
+        navigate(`/servers?keyword=${encodeURIComponent(server.serverId)}`)
+      },
+    })
+    return items
+  }
+
+  // 树里已分配服务器叶的拖拽 + 右键属性：拖起写入含原归属的载荷（供落区判定改派），右键弹菜单。
+  const leafInteractions = (server: ServerItem) => {
+    const fromId = server.kind === 'proxy' ? server.bcClusterId : server.zoneId
+    const fromName =
+      server.kind === 'proxy' ? server.bcClusterName : (server.zoneName ?? server.regionName)
+    return {
+      draggable: true,
+      onDragStart: (e: React.DragEvent) => {
+        writeAssignDrag(e.dataTransfer, {
+          id: server.id,
+          serverId: server.serverId,
+          kind: server.kind === 'proxy' ? 'proxy' : 'backend',
+          fromId,
+          fromName,
+        })
+        onDraggingKindChange?.(server.kind === 'proxy' ? 'proxy' : 'backend')
+      },
+      onDragEnd: () => {
+        onDraggingKindChange?.(null)
+      },
+      onContextMenu: (e: React.MouseEvent) => {
+        openContextMenu(e, server)
+      },
+    }
+  }
 
   // 首帧自动展开集群 + 大区
   if (tree && !autoExpanded) {
@@ -310,6 +492,7 @@ export default function ZoneTree({
                               role={t('cluster.servers.kind.proxy')}
                               roleTone="brand"
                               online={proxy.online}
+                              interactions={leafInteractions(proxy)}
                             />
                           </li>
                         ))}
@@ -387,6 +570,7 @@ export default function ZoneTree({
                                                   role={t('cluster.servers.kind.backend')}
                                                   roleTone="secondary"
                                                   online={s.online}
+                                                  interactions={leafInteractions(s)}
                                                   extra={
                                                     <>
                                                       {s.isDefaultEntry && (
@@ -432,6 +616,44 @@ export default function ZoneTree({
         errorText={errorText}
         onSubmit={(name, description) => {
           createMutation.mutate({ name, description })
+        }}
+      />
+
+      {/* 拖拽落区 / 改派二次确认（松手后弹，确认才写） */}
+      <DragConfirmDialog
+        pending={pendingDrop}
+        submitting={dropAssign.isPending || rezoneMutation.isPending}
+        errorText={dropError}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDrop(null)
+            setDropError(null)
+          }
+        }}
+        onConfirm={confirmDrop}
+      />
+
+      {/* 右键菜单「改派到…」触发的点选式改派弹窗 */}
+      <RezoneDialog
+        server={rezoneServer}
+        tree={tree}
+        pending={rezoneMutation.isPending}
+        errorText={rezoneError}
+        onConfirm={confirmRezonePick}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRezoneServer(null)
+            setRezoneError(null)
+          }
+        }}
+      />
+
+      {/* 服务器行右键操作菜单（自绘绝对定位） */}
+      <ServerContextMenu
+        position={menu ? { x: menu.x, y: menu.y } : null}
+        items={menu ? menuItemsFor(menu.server) : []}
+        onClose={() => {
+          setMenu(null)
         }}
       />
     </section>
@@ -537,6 +759,7 @@ function TreeRow({
 }
 
 // 叶子行（代理服 / 子服）：无展开箭头，带角色徽标 + 在线状态点。
+// 已分配服务器叶可拖起改派并支持右键菜单（interactions 提供）。
 function TreeLeaf({
   depth,
   icon,
@@ -545,6 +768,7 @@ function TreeLeaf({
   roleTone,
   online,
   extra,
+  interactions,
 }: {
   depth: number
   icon: React.ReactNode
@@ -553,11 +777,25 @@ function TreeLeaf({
   roleTone: 'brand' | 'secondary'
   online: boolean
   extra?: React.ReactNode
+  // 拖拽 + 右键交互（可选）：已分配服务器叶传入以支持改派拖拽与右键菜单
+  interactions?: {
+    draggable: boolean
+    onDragStart: (e: React.DragEvent) => void
+    onDragEnd: () => void
+    onContextMenu: (e: React.MouseEvent) => void
+  }
 }) {
   return (
     <div
-      className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-surface-2"
+      className={cn(
+        'flex items-center gap-1.5 rounded-md px-2 py-1 text-xs hover:bg-surface-2',
+        interactions && 'cursor-grab active:cursor-grabbing active:opacity-60',
+      )}
       style={{ paddingLeft: `${String(depth * 18 + 8)}px` }}
+      draggable={interactions?.draggable}
+      onDragStart={interactions?.onDragStart}
+      onDragEnd={interactions?.onDragEnd}
+      onContextMenu={interactions?.onContextMenu}
     >
       {/* 无子项，占位对齐箭头列 */}
       <span className="size-4 shrink-0" />

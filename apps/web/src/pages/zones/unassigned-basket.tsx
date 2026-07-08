@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
@@ -15,6 +16,7 @@ import { fetchServers, fetchZoneTree } from '../../api/cluster'
 import { writeAssignDrag } from '../../features/cluster/assign-drag'
 import { messageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
 import AssignDialog from './assign-dialog'
+import ServerContextMenu, { type ContextMenuItem } from './server-context-menu'
 
 interface UnassignedRailProps {
   namespaceId: number
@@ -27,10 +29,13 @@ interface UnassignedRailProps {
 
 export default function UnassignedBasket({ namespaceId, open, onClose, onDraggingKindChange }: UnassignedRailProps) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [assignOpen, setAssignOpen] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [results, setResults] = useState<AssignmentResult[] | null>(null)
+  // 未分配 chip 右键菜单：光标位置 + 目标服务器
+  const [menu, setMenu] = useState<{ x: number; y: number; server: ServerItem } | null>(null)
 
   const query = useQuery({
     queryKey: ['servers', 'unassigned', namespaceId],
@@ -132,6 +137,10 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
                       onDragEnd={() => {
                         onDraggingKindChange(null)
                       }}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        setMenu({ x: e.clientX, y: e.clientY, server: row })
+                      }}
                       className={cn(
                         'group flex items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
                         disabled
@@ -214,6 +223,28 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
         errorText={errorText}
         results={results}
         onConfirm={submitAssign}
+      />
+
+      {/* 未分配 chip 右键菜单：未分配服务器仅提供查看详情（改派 / 解绑在 /servers 处理） */}
+      <ServerContextMenu
+        position={menu ? { x: menu.x, y: menu.y } : null}
+        items={
+          menu
+            ? ([
+                {
+                  key: 'detail',
+                  label: t('cluster.zones.menu.viewDetail'),
+                  icon: <Server className="size-3.5" />,
+                  onSelect: () => {
+                    navigate(`/servers?keyword=${encodeURIComponent(menu.server.serverId)}`)
+                  },
+                },
+              ] satisfies ContextMenuItem[])
+            : []
+        }
+        onClose={() => {
+          setMenu(null)
+        }}
       />
     </aside>
   )

@@ -116,7 +116,7 @@ describe('/zones 区服分配页', () => {
     expect(await within(dialog).findByRole('treeitem', { name: /area-1/ })).toBeInTheDocument()
   })
 
-  it('从窄栏拖拽 build-1 落到小区 area-1 完成分配（原生 HTML5 拖拽落区）', async () => {
+  it('从窄栏拖拽 build-1 落到小区 area-1 弹二次确认，确认后完成分配（原生 HTML5 拖拽 + 二次确认）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
@@ -132,15 +132,106 @@ describe('/zones 区服分配页', () => {
     const zoneRow = (await screen.findByText('area-1')).closest('[role="button"]')
     expect(zoneRow).not.toBeNull()
 
-    // 原生拖拽序列：dragStart（组件写真实载荷）→ dragOver（目标 preventDefault 接收）→ drop（触发分配）
+    // 原生拖拽序列：dragStart（组件写真实载荷）→ dragOver（目标 preventDefault 接收）→ drop（弹确认）
     const dt = makeDragDataTransfer()
     fireEvent.dragStart(chip as HTMLElement, { dataTransfer: dt })
     fireEvent.dragOver(zoneRow as HTMLElement, { dataTransfer: dt })
     fireEvent.drop(zoneRow as HTMLElement, { dataTransfer: dt })
 
+    // 松手后不立即分配，先弹确认弹窗（显示将 build-1 分配到目标）——build-1 仍在窄栏
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText(/将 build-1 分配到/)).toBeInTheDocument()
+    expect(screen.getByText('build-1')).toBeInTheDocument()
+
+    // 点确认才真正分配
+    await user.click(within(dialog).getByRole('button', { name: '确认' }))
+
     // 分配成功后 build-1 从未分配窄栏消失（写闭环失效缓存）
     await waitFor(() => {
       expect(screen.queryByText('build-1')).not.toBeInTheDocument()
     })
+  })
+
+  it('拖拽落区确认弹窗点取消则不分配（二次确认可撤销）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    await screen.findByText('bc-main')
+    await user.click(await screen.findByRole('button', { name: /未分配/ }))
+    const chip = (await screen.findByText('build-1')).closest('[draggable="true"]')
+    const zoneRow = (await screen.findByText('area-1')).closest('[role="button"]')
+
+    const dt = makeDragDataTransfer()
+    fireEvent.dragStart(chip as HTMLElement, { dataTransfer: dt })
+    fireEvent.dragOver(zoneRow as HTMLElement, { dataTransfer: dt })
+    fireEvent.drop(zoneRow as HTMLElement, { dataTransfer: dt })
+
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
+
+    // 取消后 build-1 仍在未分配窄栏（未发生分配）
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('build-1')).toBeInTheDocument()
+  })
+
+  it('树里已分配子服 game-3 拖到另一小区 area-1 走换区改派确认（填原因后提交）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    // 展开华南大区下 area-2（含 game-3），先定位其树行叶。华东/华南默认展开，小区默认收起需点开。
+    await screen.findByText('bc-main')
+    // 点开 area-2（game-3 归属小区 id 31）
+    const area2Row = (await screen.findByText('area-2')).closest('[role="button"]')
+    await user.click(area2Row as HTMLElement)
+
+    // 定位已分配叶 game-3（可拖起）
+    const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
+    expect(leaf).not.toBeNull()
+
+    // 拖到另一小区 area-1（目标不同于原属）
+    const targetZone = (await screen.findByText('area-1')).closest('[role="button"]')
+    const dt = makeDragDataTransfer()
+    fireEvent.dragStart(leaf as HTMLElement, { dataTransfer: dt })
+    fireEvent.dragOver(targetZone as HTMLElement, { dataTransfer: dt })
+    fireEvent.drop(targetZone as HTMLElement, { dataTransfer: dt })
+
+    // 弹换区改派确认（走换区工单，需填原因）
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByText(/将 game-3 从 area-2 改派到/)).toBeInTheDocument()
+    // 未填原因时确认禁用
+    const confirmBtn = within(dialog).getByRole('button', { name: '确认' })
+    expect(confirmBtn).toBeDisabled()
+    // 填原因后可确认
+    await user.type(within(dialog).getByLabelText('换区原因'), '业务迁移到主城区')
+    expect(confirmBtn).not.toBeDisabled()
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    })
+  })
+
+  it('已分配子服右键弹操作菜单（改派 / 查看详情 / 解绑）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    await screen.findByText('bc-main')
+    const area2Row = (await screen.findByText('area-2')).closest('[role="button"]')
+    await user.click(area2Row as HTMLElement)
+
+    // 右键 game-3 叶行
+    const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
+    fireEvent.contextMenu(leaf as HTMLElement)
+
+    // 菜单出现，含改派 / 查看详情 / 解绑
+    const menu = await screen.findByRole('menu')
+    expect(within(menu).getByRole('menuitem', { name: /改派到/ })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: /查看健康详情/ })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: /解绑/ })).toBeInTheDocument()
   })
 })

@@ -132,6 +132,24 @@ export const cluster = {
       hintProxy: '将代理服拖到目标 BC 集群节点上松手即可落区',
       dropOk: '{{serverId}} 已分配',
       dropFail: '{{serverId}} 分配失败，请改用批量分配查看逐台原因',
+      // 拖拽落区二次确认
+      confirmAssignTitle: '确认分配',
+      confirmAssignDesc: '将 {{serverId}} 分配到 {{target}}？',
+      // 已分配服务器改派（换区 / 改集群）确认
+      confirmRezoneTitle: '确认换区改派',
+      confirmRezoneDesc: '将 {{serverId}} 从 {{from}} 改派到 {{target}}？此操作走换区工单。',
+      rezoneReasonLabel: '换区原因',
+      rezoneReasonPlaceholder: '填写本次换区原因（必填）',
+      confirm: '确认',
+      cancel: '取消',
+      rezoneOk: '{{serverId}} 已改派',
+    },
+    menu: {
+      rezone: '改派到…',
+      viewDetail: '查看健康详情',
+      unbind: '解绑',
+      // 右键菜单：拖拽提示
+      dragHint: '也可直接拖动到目标节点',
     },
     create: {
       clusterTitle: '新建 BC 集群',
