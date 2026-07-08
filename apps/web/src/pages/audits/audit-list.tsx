@@ -101,6 +101,10 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       },
       { header: t('observability.audits.columns.targetType'), cell: (row) => <span className="text-ink-3">{row.targetType}</span> },
       {
+        header: t('observability.audits.columns.targetRef'),
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.targetRef}</span>,
+      },
+      {
         header: t('observability.audits.columns.result'),
         cell: (row) => (
           <Badge variant={row.result === 'ok' ? 'ok' : 'crit'}>

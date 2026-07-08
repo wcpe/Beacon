@@ -35,6 +35,17 @@ describe('/audits 审计页', () => {
     expect(await screen.findByText('当前筛选条件下无审计记录')).toBeInTheDocument()
   })
 
+  it('列表行直接展示目标（targetRef），无需点开详情', async () => {
+    useScenario('normal')
+    renderPage(<AuditsPage />)
+
+    // 表头出现「目标」列（基础信息前置到行）
+    expect(await screen.findByText('目标')).toBeInTheDocument()
+    // 未点开任何行时右侧详情面板不渲染（列表行已可见目标，不产生模态遮罩）
+    expect(screen.queryByText('审计详情')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('点击行打开审计详情', async () => {
     useScenario('normal')
     const user = userEvent.setup()
