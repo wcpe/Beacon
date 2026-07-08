@@ -2,6 +2,7 @@
 // 数据来自 Legacy /admin/v1/system/status 与 /system/observability，定期轮询刷新。
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { HeartPulse } from 'lucide-react'
 
 import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
 
@@ -28,7 +29,7 @@ export default function SystemPage() {
 
   return (
     <section className="grid gap-6">
-      <SectionHeader size="lg" title={t('system.health.title')} />
+      <SectionHeader size="lg" icon={<HeartPulse className="size-5" />} title={t('system.health.title')} />
 
       <AsyncSection
         isLoading={statusQuery.isLoading}

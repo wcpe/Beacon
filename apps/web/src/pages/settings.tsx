@@ -1,6 +1,7 @@
 // 运维设置页（/settings）：Legacy 热改运行参数（分组编辑保存）+ 健康因子权重（编辑 + rev 历史）+ 归档与清理。
 // 页内用锚点 rail 组织三大块，侧栏保持扁平。
 import { useTranslation } from 'react-i18next'
+import { SlidersHorizontal } from 'lucide-react'
 
 import { AnchorRailLayout, AnchorSectionBlock, SectionHeader, type AnchorSection } from '@beacon/ui'
 
@@ -19,7 +20,7 @@ export default function SettingsPage() {
 
   return (
     <section className="grid gap-4">
-      <SectionHeader size="lg" title={t('nav.settings')} />
+      <SectionHeader size="lg" icon={<SlidersHorizontal className="size-5" />} title={t('nav.settings')} />
       <AnchorRailLayout sections={sections} ariaLabel={t('nav.settings')}>
         <AnchorSectionBlock id="settings-params" title={t('system.settings.paramsTitle')}>
           <SettingsBlock />

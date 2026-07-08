@@ -3,13 +3,11 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { History } from 'lucide-react'
+
 import {
   AsyncSection,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Input,
   Label,
   Table,
@@ -85,19 +83,19 @@ export default function WeightsBlock() {
   }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+    <div className="grid gap-4 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex flex-row items-start justify-between gap-3">
         <div>
-          <CardTitle className="text-base">{t('system.settings.weights.title')}</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">{t('system.settings.weights.desc')}</p>
+          <h3 className="text-[14px] font-semibold text-ink-1">{t('system.settings.weights.title')}</h3>
+          <p className="mt-1 text-sm text-ink-3">{t('system.settings.weights.desc')}</p>
         </div>
         {!editing && current && (
           <Button size="sm" variant="outline" onClick={startEdit}>
             {t('system.settings.weights.edit')}
           </Button>
         )}
-      </CardHeader>
-      <CardContent className="grid gap-4">
+      </div>
+      <div className="grid gap-4">
         <AsyncSection
           isLoading={query.isLoading}
           isError={query.isError}
@@ -107,16 +105,20 @@ export default function WeightsBlock() {
         >
           {current && (
             <>
-              <p className="text-sm text-muted-foreground">
-                {t('system.settings.weights.currentRev')} #{current.rev} · {current.operator} ·{' '}
-                {formatIso(current.createdAt)}
-              </p>
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-sm">
+                <span className="text-ink-3">{t('system.settings.weights.currentRev')}</span>
+                <span className="font-semibold text-brand-600 tnum">#{current.rev}</span>
+                <span className="text-ink-4">·</span>
+                <span className="text-ink-2">{current.operator}</span>
+                <span className="text-ink-4">·</span>
+                <span className="text-ink-3 tnum">{formatIso(current.createdAt)}</span>
+              </div>
 
               {/* 因子权重编辑 / 展示 */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {weightKeys.map((factor) => (
-                  <div key={factor} className="grid gap-1">
-                    <Label className="text-xs text-muted-foreground">{factor}</Label>
+                  <div key={factor} className="grid gap-1 rounded-lg bg-surface-2 px-3 py-2">
+                    <Label className="text-[11px] text-ink-4">{factor}</Label>
                     {editing && draft ? (
                       <Input
                         type="number"
@@ -128,7 +130,9 @@ export default function WeightsBlock() {
                         className="h-8 w-20"
                       />
                     ) : (
-                      <span className="font-medium tabular-nums">{current.config.weights[factor]}</span>
+                      <span className="text-[15px] font-semibold tabular-nums text-ink-1">
+                        {current.config.weights[factor]}
+                      </span>
                     )}
                   </div>
                 ))}
@@ -136,8 +140,8 @@ export default function WeightsBlock() {
 
               {/* 等级阈值 */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-1">
-                  <Label className="text-xs text-muted-foreground">{t('system.settings.weights.healthyMin')}</Label>
+                <div className="grid gap-1 rounded-lg bg-surface-2 px-3 py-2">
+                  <Label className="text-[11px] text-ink-4">{t('system.settings.weights.healthyMin')}</Label>
                   {editing && draft ? (
                     <Input
                       type="number"
@@ -149,11 +153,13 @@ export default function WeightsBlock() {
                       className="h-8 w-24"
                     />
                   ) : (
-                    <span className="font-medium tabular-nums">{current.config.levels.healthyMin}</span>
+                    <span className="text-[15px] font-semibold tabular-nums text-ink-1">
+                      {current.config.levels.healthyMin}
+                    </span>
                   )}
                 </div>
-                <div className="grid gap-1">
-                  <Label className="text-xs text-muted-foreground">{t('system.settings.weights.degradedMin')}</Label>
+                <div className="grid gap-1 rounded-lg bg-surface-2 px-3 py-2">
+                  <Label className="text-[11px] text-ink-4">{t('system.settings.weights.degradedMin')}</Label>
                   {editing && draft ? (
                     <Input
                       type="number"
@@ -165,7 +171,9 @@ export default function WeightsBlock() {
                       className="h-8 w-24"
                     />
                   ) : (
-                    <span className="font-medium tabular-nums">{current.config.levels.degradedMin}</span>
+                    <span className="text-[15px] font-semibold tabular-nums text-ink-1">
+                      {current.config.levels.degradedMin}
+                    </span>
                   )}
                 </div>
               </div>
@@ -195,13 +203,16 @@ export default function WeightsBlock() {
                   >
                     {t('system.settings.weights.cancel')}
                   </Button>
-                  {error !== null && <span className="text-sm text-destructive">{error}</span>}
+                  {error !== null && <span className="text-sm text-crit">{error}</span>}
                 </div>
               )}
 
               {/* rev 历史 */}
               <div>
-                <p className="mb-1.5 text-sm font-medium">{t('system.settings.weights.history')}</p>
+                <p className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-ink-1">
+                  <History className="size-3.5 text-ink-4" />
+                  {t('system.settings.weights.history')}
+                </p>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -224,7 +235,7 @@ export default function WeightsBlock() {
             </>
           )}
         </AsyncSection>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }

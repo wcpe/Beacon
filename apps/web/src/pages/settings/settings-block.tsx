@@ -3,14 +3,12 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { Gauge } from 'lucide-react'
+
 import {
   AsyncSection,
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   Input,
   Select,
   SelectContent,
@@ -131,12 +129,14 @@ export default function SettingsBlock() {
             return null
           }
           return (
-            <Card key={g.key}>
-              <CardHeader>
-                <CardTitle className="text-base">{t(`system.settings.groups.${g.key}`)}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
+            <div key={g.key} className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+              <div className="flex items-center gap-2">
+                <span className="grid size-[26px] shrink-0 place-items-center rounded-lg bg-brand-50 text-brand" aria-hidden>
+                  <Gauge className="size-[15px]" />
+                </span>
+                <h3 className="text-[13px] font-semibold text-ink-1">{t(`system.settings.groups.${g.key}`)}</h3>
+              </div>
+              <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t('system.settings.table.key')}</TableHead>
@@ -160,7 +160,7 @@ export default function SettingsBlock() {
                         <TableCell className="text-xs text-muted-foreground">
                           {item.desc}
                           {item.isStartup && (
-                            <Badge variant="outline" className="ml-1">
+                            <Badge variant="warn" className="ml-1">
                               {t('system.settings.table.startup')}
                             </Badge>
                           )}
@@ -205,8 +205,7 @@ export default function SettingsBlock() {
                     ))}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
+            </div>
           )
         })}
       </div>

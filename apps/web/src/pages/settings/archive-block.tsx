@@ -3,14 +3,12 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { Archive, Database } from 'lucide-react'
+
 import {
   AsyncSection,
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   DataTable,
   DestructiveConfirmDialog,
   Select,
@@ -130,7 +128,7 @@ export default function ArchiveBlock() {
       {
         header: t('system.settings.archive.mode'),
         cell: (row) => (
-          <Badge variant="outline">
+          <Badge variant={row.mode === 'dry_run' ? 'off' : 'brand'}>
             {row.mode === 'dry_run'
               ? t('system.settings.archive.modeDryRun')
               : t('system.settings.archive.modeExecute')}
@@ -147,7 +145,10 @@ export default function ArchiveBlock() {
       {
         header: t('system.settings.archive.status'),
         cell: (row) => (
-          <Badge variant={statusTone(row.status)}>{t(`system.settings.archive.status${statusSuffix(row.status)}`)}</Badge>
+          <Badge variant={statusTone(row.status)} className="gap-1.5">
+            <span className="size-1.5 rounded-full bg-current" />
+            {t(`system.settings.archive.status${statusSuffix(row.status)}`)}
+          </Badge>
         ),
       },
       { header: t('system.settings.archive.operator'), cell: (row) => row.operator },
@@ -200,13 +201,18 @@ export default function ArchiveBlock() {
   const confirmConfig = confirm ? confirmConfigOf(confirm, t) : null
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <div>
-          <CardTitle className="text-base">{t('system.settings.archive.title')}</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">{t('system.settings.archive.desc')}</p>
+    <div className="grid gap-4 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex flex-row items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <span className="grid size-[26px] shrink-0 place-items-center rounded-lg bg-brand-50 text-brand" aria-hidden>
+            <Archive className="size-[15px]" />
+          </span>
+          <div>
+            <h3 className="text-[14px] font-semibold text-ink-1">{t('system.settings.archive.title')}</h3>
+            <p className="mt-1 text-sm text-ink-3">{t('system.settings.archive.desc')}</p>
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex shrink-0 gap-2">
           <Button
             size="sm"
             variant="outline"
@@ -227,8 +233,8 @@ export default function ArchiveBlock() {
             {t('system.settings.archive.createExecute')}
           </Button>
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-4">
+      </div>
+      <div className="grid gap-4">
         {/* 目标库 + 各域水位总览 */}
         <AsyncSection
           isLoading={overviewQuery.isLoading}
@@ -239,15 +245,17 @@ export default function ArchiveBlock() {
         >
           {overview && (
             <>
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-muted-foreground">{t('system.settings.archive.target')}</span>
-                <Badge variant="outline">
+              <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 px-3 py-2.5 text-sm">
+                <Database className="size-4 text-ink-4" aria-hidden />
+                <span className="text-ink-3">{t('system.settings.archive.target')}</span>
+                <Badge variant="brand">
                   {overview.target.mode === 'external'
                     ? t('system.settings.archive.targetExternal')
                     : t('system.settings.archive.targetSameInstance')}
                 </Badge>
-                <span className="font-mono text-xs">{overview.target.dsnMasked}</span>
-                <Badge variant={overview.target.reachable ? 'secondary' : 'destructive'}>
+                <span className="font-mono text-xs text-ink-2">{overview.target.dsnMasked}</span>
+                <Badge variant={overview.target.reachable ? 'ok' : 'crit'} className="gap-1.5">
+                  <span className="size-1.5 rounded-full bg-current" />
                   {overview.target.reachable
                     ? t('system.settings.archive.reachable')
                     : t('system.settings.archive.unreachable')}
@@ -272,7 +280,7 @@ export default function ArchiveBlock() {
                       <TableCell className="text-right tabular-nums">{formatCount(d.archiveRows)}</TableCell>
                       <TableCell className="text-right tabular-nums">
                         {d.expiredRows > 0 ? (
-                          <span className="text-amber-600">{formatCount(d.expiredRows)}</span>
+                          <span className="font-semibold text-warn">{formatCount(d.expiredRows)}</span>
                         ) : (
                           formatCount(d.expiredRows)
                         )}
@@ -288,7 +296,7 @@ export default function ArchiveBlock() {
         {/* 任务列表 */}
         <div className="grid gap-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium">{t('system.settings.archive.jobs')}</p>
+            <p className="text-sm font-medium text-ink-1">{t('system.settings.archive.jobs')}</p>
             <Select
               value={statusFilter}
               onValueChange={(value) => {
@@ -348,7 +356,7 @@ export default function ArchiveBlock() {
             </div>
           )}
         </div>
-      </CardContent>
+      </div>
 
       {/* 任务详情抽屉 */}
       <ArchiveDetailSheet
@@ -391,19 +399,20 @@ export default function ArchiveBlock() {
           }}
         />
       )}
-      {error !== null && <p className="px-6 pb-4 text-sm text-destructive">{error}</p>}
-    </Card>
+      {error !== null && <p className="text-sm text-crit">{error}</p>}
+    </div>
   )
 }
 
-function statusTone(status: ArchiveJob['status']): 'secondary' | 'outline' | 'destructive' {
+// 归档任务状态 → 语义药丸变体：成功绿 / 失败红 / 其他（运行 / 待处理 / 取消）中性。
+function statusTone(status: ArchiveJob['status']): 'ok' | 'crit' | 'off' {
   if (status === 'succeeded') {
-    return 'secondary'
+    return 'ok'
   }
   if (status === 'failed') {
-    return 'destructive'
+    return 'crit'
   }
-  return 'outline'
+  return 'off'
 }
 
 function confirmConfigOf(

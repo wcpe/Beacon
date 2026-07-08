@@ -38,12 +38,12 @@ export default function ArchiveDetailSheet({ jobId, onOpenChange }: ArchiveDetai
 
   const verifyBadge = (item: ArchiveJobItem) => {
     if (item.verifyPassed === true) {
-      return <Badge variant="secondary">{t('system.settings.archive.verifyPassed')}</Badge>
+      return <Badge variant="ok">{t('system.settings.archive.verifyPassed')}</Badge>
     }
     if (item.verifyPassed === false) {
-      return <Badge variant="destructive">{t('system.settings.archive.verifyFailed')}</Badge>
+      return <Badge variant="crit">{t('system.settings.archive.verifyFailed')}</Badge>
     }
-    return <Badge variant="outline">{t('system.settings.archive.verifyPending')}</Badge>
+    return <Badge variant="off">{t('system.settings.archive.verifyPending')}</Badge>
   }
 
   return (

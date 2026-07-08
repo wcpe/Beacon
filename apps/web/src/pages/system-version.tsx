@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { CheckCircle2, Cloud, Rocket, Wifi } from 'lucide-react'
+import { CheckCircle2, Cloud, PackageCheck, Rocket, Wifi } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -104,7 +104,7 @@ export default function SystemVersionPage() {
 
   return (
     <section className="grid gap-6">
-      <SectionHeader size="lg" title={t('system.version.title')} />
+      <SectionHeader size="lg" icon={<PackageCheck className="size-5" />} title={t('system.version.title')} />
 
       {/* 版本信息卡 */}
       <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>
