@@ -1,8 +1,6 @@
 // 运维总览页（/dashboard，FR-154，对齐 B 版明亮 SaaS）：一屏看全局——KPI 指标带 + 服务器状态墙 +
 // 玩家流/连接流趋势 + 告警概览 + 调度概览，只看不改。各卡异常可下钻到对应页。
 // 数据仍取自现有 mock 端点（metrics / connections / observability），只重塑呈现。
-import { useTranslation } from 'react-i18next'
-
 import AlertOverview from './dashboard/alert-overview'
 import FlowOverview from './dashboard/flow-overview'
 import HealthOverview from './dashboard/health-overview'
@@ -10,15 +8,8 @@ import SchedOverview from './dashboard/sched-overview'
 import ServerWall from './dashboard/server-wall'
 
 export default function DashboardPage() {
-  const { t } = useTranslation()
   return (
     <div className="grid gap-3.5">
-      {/* 页标题（面包屑归属：运维 › 运维总览） */}
-      <div className="flex items-center gap-1.5 text-[12px] text-ink-4">
-        <span>{t('nav.groups.ops')}</span>
-        <span aria-hidden>›</span>
-        <h1 className="text-[15px] font-semibold text-ink-1">{t('nav.dashboard')}</h1>
-      </div>
       {/* 顶部 KPI 指标带（含区段标题与健康分布环） */}
       <HealthOverview />
       {/* 中区：服务器状态墙（宽）+ 玩家流 / 连接流趋势 */}

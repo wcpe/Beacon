@@ -44,27 +44,9 @@ export default function Sidebar() {
         sidebarCollapsed ? 'md:hidden' : 'md:flex',
       ].join(' ')}
     >
-      {/* 品牌区：靛蓝渐变方块灯塔 logo + 名称 + 环境副标题 */}
+      {/* 品牌区：旧版信标矢量 logo + 名称 + 环境副标题 */}
       <div className="flex items-center gap-2.5 border-b border-border px-[18px] py-[14px]">
-        <div className="grid size-[30px] place-items-center rounded-lg bg-gradient-to-br from-brand to-[oklch(0.62_0.19_282)] text-white shadow-[0_2px_6px_rgba(79,70,229,0.35)]">
-          <svg
-            width="17"
-            height="17"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="M12 2v3" />
-            <path d="m4.5 21 3-9m12 9-3-9" />
-            <path d="M8 8h8l1 4H7z" />
-            <path d="M9 12v9m6-9v9" />
-            <path d="M8 21h8" />
-          </svg>
-        </div>
+        <img alt="" className="size-[30px] shrink-0" src="/logo.svg" />
         <div className="min-w-0">
           <div className="text-[15px] font-semibold tracking-[0.2px] text-ink-1">Beacon</div>
           <div className="truncate text-[11px] text-ink-4">{t('common.consoleName')}</div>
