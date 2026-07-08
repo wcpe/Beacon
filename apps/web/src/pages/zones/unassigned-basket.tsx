@@ -1,4 +1,5 @@
-// 未分配篮：assigned=false 的 server 列表 + 批量首次分配。
+// 未分配抽屉（Sheet）：assigned=false 的 server 列表 + 批量首次分配。默认收起，
+// 由页面顶部「未分配 N」入口打开，不默认占版面。
 // 选择集只允许同 kind（分配要求同 namespace、同 kind），换区中的 server 标注 pending。
 
 import { useMemo, useState } from 'react'
@@ -12,6 +13,11 @@ import {
   Button,
   Checkbox,
   DataTable,
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -24,7 +30,14 @@ function messageOf(error: unknown): string {
   return error instanceof ApiClientError ? error.message : String(error)
 }
 
-export default function UnassignedBasket({ namespaceId }: { namespaceId: number }) {
+interface UnassignedBasketProps {
+  namespaceId: number
+  // 抽屉开关（由页面顶部入口控制）
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+export default function UnassignedBasket({ namespaceId, open, onOpenChange }: UnassignedBasketProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -126,7 +139,12 @@ export default function UnassignedBasket({ namespaceId }: { namespaceId: number 
       },
       {
         header: t('cluster.servers.columns.kind'),
-        cell: (row) => <span className="text-ink-2">{t(`cluster.servers.kind.${row.kind}`)}</span>,
+        cell: (row) => (
+          <Badge variant={row.kind === 'proxy' ? 'brand' : 'secondary'} className="gap-1">
+            {row.kind === 'proxy' ? <Network className="size-3" /> : <Server className="size-3" />}
+            {t(`cluster.servers.kind.${row.kind}`)}
+          </Badge>
+        ),
       },
       {
         header: t('cluster.servers.columns.status'),
@@ -159,61 +177,72 @@ export default function UnassignedBasket({ namespaceId }: { namespaceId: number 
   const options = targetOptionsOf(treeQuery.data, selectionKind === 'proxy' ? 'proxy' : 'backend')
 
   return (
-    <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      <div className="flex items-center gap-2.5">
-        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-          <Inbox className="size-[15px]" />
-        </span>
-        <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.zones.basket.title')}</h2>
-        <Button
-          size="sm"
-          className="ml-auto"
-          disabled={selectedIds.size === 0}
-          onClick={() => {
-            setErrorText(null)
-            setResults(null)
-            setAssignOpen(true)
-          }}
-        >
-          {t('cluster.zones.basket.assign')}
-        </Button>
-      </div>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="flex w-full flex-col gap-0 sm:max-w-xl">
+        <SheetHeader>
+          <SheetTitle className="flex items-center gap-2">
+            <Inbox className="size-4 text-brand" />
+            {t('cluster.zones.basket.title')}
+          </SheetTitle>
+          <SheetDescription>{t('cluster.zones.basket.sheetDesc')}</SheetDescription>
+        </SheetHeader>
 
-      {selectedIds.size > 0 && (
-        <div className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-[12.5px] font-medium text-brand-600">
-          {t('cluster.zones.basket.selected', { count: selectedIds.size })}
+        {/* 操作条：选择集提示 + 批量分配 */}
+        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+          {selectedIds.size > 0 ? (
+            <span className="text-[12.5px] font-medium text-brand-600">
+              {t('cluster.zones.basket.selected', { count: selectedIds.size })}
+            </span>
+          ) : (
+            <span className="text-[12.5px] text-ink-4">{t('cluster.zones.basket.selectHint')}</span>
+          )}
+          <Button
+            size="sm"
+            className="ml-auto"
+            disabled={selectedIds.size === 0}
+            onClick={() => {
+              setErrorText(null)
+              setResults(null)
+              setAssignOpen(true)
+            }}
+          >
+            {t('cluster.zones.basket.assign')}
+          </Button>
         </div>
-      )}
 
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('cluster.zones.basket.empty')}
-          density="compact"
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+            <DataTable
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => String(row.id)}
+              emptyText={t('cluster.zones.basket.empty')}
+              density="compact"
+              pageSize={20}
+            />
+          </AsyncSection>
+        </div>
+
+        <AssignDialog
+          open={assignOpen}
+          onOpenChange={(isOpen) => {
+            setAssignOpen(isOpen)
+            if (!isOpen) {
+              setResults(null)
+              setErrorText(null)
+            }
+          }}
+          servers={selectedRows}
+          kind={selectionKind === 'proxy' ? 'proxy' : 'backend'}
+          options={options}
+          pending={assignMutation.isPending}
+          errorText={errorText}
+          results={results}
+          onConfirm={(targetId, isDefaultEntry) => {
+            assignMutation.mutate({ targetId, isDefaultEntry })
+          }}
         />
-      </AsyncSection>
-
-      <AssignDialog
-        open={assignOpen}
-        onOpenChange={(open) => {
-          setAssignOpen(open)
-          if (!open) {
-            setResults(null)
-            setErrorText(null)
-          }
-        }}
-        servers={selectedRows}
-        kind={selectionKind === 'proxy' ? 'proxy' : 'backend'}
-        options={options}
-        pending={assignMutation.isPending}
-        errorText={errorText}
-        results={results}
-        onConfirm={(targetId, isDefaultEntry) => {
-          assignMutation.mutate({ targetId, isDefaultEntry })
-        }}
-      />
-    </section>
+      </SheetContent>
+    </Sheet>
   )
 }
