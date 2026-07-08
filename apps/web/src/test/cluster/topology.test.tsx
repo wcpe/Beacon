@@ -39,6 +39,26 @@ describe('/topology 拓扑页', () => {
     ).toBeInTheDocument()
   })
 
+  it('可视化模式点击异常链路 chip，明细在图区右侧固定侧面板展示（不 reflow 图）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    const { container } = renderPage(<TopologyPage />)
+
+    // 等图加载：拓扑 SVG 出现
+    await screen.findByText('BC-子服链路')
+    const svg = container.querySelector('svg')
+    expect(svg).not.toBeNull()
+
+    // 点击一个异常链路 chip（异常链路层里带失败率百分比的按钮）
+    const chips = await screen.findAllByRole('button', { name: /%$/ })
+    await user.click(chips[0])
+
+    // 明细出现在 <aside> 固定侧面板内（样本消息标题），且 SVG 仍在（图未被替换/移除）
+    const sample = await screen.findByText('样本消息')
+    expect(sample.closest('aside')).not.toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
+  })
+
   it('切到数据剖析模式，点击异常边展开链路明细（样本消息）', async () => {
     useScenario('normal')
     const user = userEvent.setup()

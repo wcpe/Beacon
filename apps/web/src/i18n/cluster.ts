@@ -180,6 +180,8 @@ export const cluster = {
       truncated: '仅展示前 {{shown}} / 共 {{total}} 个节点，请按 namespace / 大区收拢查看',
       collapseHint: '节点过多，已按大区聚合折叠',
       abnormalLinks: '异常链路（点击看明细）',
+      flowToggle: '数据流动画',
+      detailEmpty: '点击图上链路或下方异常链路查看明细',
     },
     data: {
       linkCount: '链路数',

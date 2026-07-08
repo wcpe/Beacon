@@ -1,16 +1,18 @@
 // 拓扑可视化图（自绘 SVG，不引新依赖）：分层布局 BC 集群 → 大区 → 小区（聚合子服计数），
-// 层间连线呈现全局 BC↔子服链路结构。异常链路（失败率高的边）在图上高亮，点击看该链路明细。
-// 1000+ 节点时按大区/小区聚合折叠（图只画到小区聚合粒度，不逐台画上千点），并明示截断边界。
+// 层间连线呈现结构；请求链路（消息边）直接画在小区↔小区之间——正常边中性/品牌色，
+// 异常边 crit 红并带失败率标签与异常标记；连线上叠加轻量数据流动画（CSS stroke-dashoffset）。
+// 选中某条异常链路 → 在图区右侧固定侧面板展示明细，图本身不 reflow、不跳动。
+// 1000+ 节点时按大区聚合折叠（图只画到小区聚合粒度，不逐台画上千点），并明示截断边界。
 
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowRight, Boxes, Network, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Boxes, Network, TriangleAlert, Waves } from 'lucide-react'
 
-import { AsyncSection, Badge } from '@beacon/ui'
+import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
 import type { MessageEdgeStat, ZoneTreeResponse } from '@beacon/devmock'
 
-import { fetchMessageEdges, fetchZoneTree } from '../../api/cluster'
+import { fetchMessageEdges, fetchServers, fetchZoneTree } from '../../api/cluster'
 
 // 小区节点总数上限：超过则按大区聚合折叠，不再逐个渲染小区（避免一次渲染上千节点）
 const MAX_ZONE_NODES = 24
@@ -29,12 +31,31 @@ interface Box {
   h: number
 }
 
+// 画在图上的请求链路：两端已解析到某个已渲染节点盒（小区或折叠态的大区）
+interface RenderEdge {
+  key: string
+  edge: MessageEdgeStat
+  from: Box
+  to: Box
+  abnormal: boolean
+}
+
 // 统计一棵树里的小区节点总数（判定是否需要折叠）
 function countZones(tree: ZoneTreeResponse): number {
   return tree.clusters.reduce(
     (sum, cluster) => sum + cluster.regions.reduce((rs, region) => rs + region.zones.length, 0),
     0,
   )
+}
+
+// 三次贝塞尔路径（自底部弯向另一节点顶部），让链路曲线不与结构线重叠、易辨识
+function edgePath(from: Box, to: Box): string {
+  const x1 = from.x + from.w / 2
+  const y1 = from.y + from.h / 2
+  const x2 = to.x + to.w / 2
+  const y2 = to.y + to.h / 2
+  const dx = (x2 - x1) / 2
+  return `M ${String(x1)} ${String(y1)} C ${String(x1 + dx)} ${String(y1)}, ${String(x2 - dx)} ${String(y2)}, ${String(x2)} ${String(y2)}`
 }
 
 export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
@@ -45,28 +66,48 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     placeholderData: keepPreviousData,
   })
   const edgesQuery = useQuery({ queryKey: ['message-edges'], queryFn: fetchMessageEdges })
+  // 用于把消息边两端 serverId 解析到所属小区（进而定位节点盒）
+  const serversQuery = useQuery({
+    queryKey: ['servers', 'topology', namespaceId],
+    queryFn: () => fetchServers({ namespaceId, pageSize: 2000 }),
+    placeholderData: keepPreviousData,
+  })
   const tree = treeQuery.data
 
-  // 被选中的异常链路（点击高亮边打开明细）
+  // 被选中的请求链路（点击边或 chip 打开右侧明细）
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // 数据流动画开关（默认开，节制低速）
+  const [flowOn, setFlowOn] = useState(true)
 
   const zoneTotal = useMemo(() => (tree ? countZones(tree) : 0), [tree])
   const collapsed = zoneTotal > MAX_ZONE_NODES
   const isEmpty = tree?.clusters.length === 0
 
-  // 异常边（失败率超阈值），按失败率降序，画在图顶部作为「异常链路层」
+  const allEdges = edgesQuery.data?.edges ?? []
+  // 异常边（失败率超阈值），按失败率降序，供 chip 列表与计数
   const abnormalEdges = useMemo(
     () =>
-      [...(edgesQuery.data?.edges ?? [])]
+      [...allEdges]
         .filter((e) => e.failRatePercent >= ABNORMAL_RATE)
         .sort((a, b) => b.failRatePercent - a.failRatePercent),
-    [edgesQuery.data],
+    [allEdges],
   )
   const edgeKey = (edge: MessageEdgeStat) => `${edge.sourceServerId}→${edge.resolvedServerId}`
   const selectedEdge = useMemo(
-    () => abnormalEdges.find((e) => edgeKey(e) === selectedKey) ?? null,
-    [abnormalEdges, selectedKey],
+    () => allEdges.find((e) => edgeKey(e) === selectedKey) ?? null,
+    [allEdges, selectedKey],
   )
+
+  // serverId → zoneId 映射（后端子服）：解析请求边两端所属小区
+  const zoneOfServer = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const s of serversQuery.data?.items ?? []) {
+      if (s.kind === 'backend' && s.zoneId !== null) {
+        map.set(s.serverId, s.zoneId)
+      }
+    }
+    return map
+  }, [serversQuery.data])
 
   // 分层布局：为 SVG 计算各层节点坐标。
   // 第 0 层：BC 集群；第 1 层：大区；第 2 层：小区聚合（折叠态只到大区）。
@@ -131,8 +172,68 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     return { clusterBoxes, regionBoxes, zoneBoxes, width, height }
   }, [tree, collapsed])
 
+  // 请求链路边：把消息边两端解析到节点盒（展开态到小区盒；折叠态到所属大区盒），画在图上。
+  const renderEdges = useMemo<RenderEdge[]>(() => {
+    if (!layout) {
+      return []
+    }
+    // 小区 id → 盒；小区 id → 大区盒（折叠态用）
+    const zoneBoxById = new Map(layout.zoneBoxes.map((z) => [z.id, z.box]))
+    const regionOfZone = new Map<number, number>()
+    for (const cluster of tree?.clusters ?? []) {
+      for (const region of cluster.regions) {
+        for (const zone of region.zones) {
+          regionOfZone.set(zone.id, region.id)
+        }
+      }
+    }
+    const regionBoxById = new Map(layout.regionBoxes.map((r) => [r.id, r.box]))
+
+    // 解析某 serverId 到当前粒度下的节点盒
+    const resolveBox = (serverId: string): Box | null => {
+      const zoneId = zoneOfServer.get(serverId)
+      if (zoneId === undefined) {
+        return null
+      }
+      if (collapsed) {
+        const regionId = regionOfZone.get(zoneId)
+        return regionId === undefined ? null : (regionBoxById.get(regionId) ?? null)
+      }
+      return zoneBoxById.get(zoneId) ?? null
+    }
+
+    const result: RenderEdge[] = []
+    for (const edge of allEdges) {
+      if (edge.resolvedServerId === '') {
+        continue
+      }
+      const from = resolveBox(edge.sourceServerId)
+      const to = resolveBox(edge.resolvedServerId)
+      // 两端可定位且不是同一节点（同节点自环不画）
+      if (from === null || to === null || from === to) {
+        continue
+      }
+      result.push({
+        key: edgeKey(edge),
+        edge,
+        from,
+        to,
+        abnormal: edge.failRatePercent >= ABNORMAL_RATE,
+      })
+    }
+    return result
+  }, [layout, allEdges, zoneOfServer, collapsed, tree])
+
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      {/* 数据流动画的作用域样式：沿路径流动的虚线偏移动画（不引库） */}
+      <style>{`
+        @keyframes beacon-edge-flow { to { stroke-dashoffset: -24; } }
+        .beacon-flow { animation: beacon-edge-flow 1.4s linear infinite; }
+        .beacon-flow-fast { animation-duration: 0.7s; }
+        @media (prefers-reduced-motion: reduce) { .beacon-flow { animation: none; } }
+      `}</style>
+
       <div className="flex items-center gap-2.5">
         <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
           <Network className="size-[15px]" />
@@ -143,6 +244,19 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
             {t('cluster.topology.edges.abnormal')} {abnormalEdges.length}
           </Badge>
         )}
+        {/* 数据流动画开关：默认开，低速节制 */}
+        <Button
+          variant={flowOn ? 'default' : 'outline'}
+          size="sm"
+          className="ml-auto gap-1.5"
+          onClick={() => {
+            setFlowOn((v) => !v)
+          }}
+          aria-pressed={flowOn}
+        >
+          <Waves className="size-3.5" />
+          {t('cluster.topology.graph.flowToggle')}
+        </Button>
       </div>
 
       <AsyncSection isLoading={treeQuery.isLoading} isError={treeQuery.isError} error={treeQuery.error}>
@@ -159,112 +273,224 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
               </p>
             )}
 
-            {/* 分层拓扑图：SVG 自绘，横向滚动容纳多集群列 */}
-            <div className="overflow-x-auto pb-2">
-              <svg
-                width={layout.width}
-                height={layout.height}
-                viewBox={`0 0 ${String(layout.width)} ${String(layout.height)}`}
-                role="img"
-                aria-label={t('cluster.topology.graph.title')}
-                className="min-w-full"
-              >
-                {/* 连线：集群 → 大区 → 小区（层次化，非力导向） */}
-                {layout.regionBoxes.map((region) => {
-                  const cluster = layout.clusterBoxes.find((c) => c.id === region.clusterId)
-                  if (!cluster) return null
-                  return (
-                    <line
-                      key={`cl-${String(region.id)}`}
-                      x1={cluster.box.x + cluster.box.w / 2}
-                      y1={cluster.box.y + cluster.box.h}
-                      x2={region.box.x + region.box.w / 2}
-                      y2={region.box.y}
-                      stroke="var(--color-border-strong)"
-                      strokeWidth={1.5}
-                    />
-                  )
-                })}
-                {layout.zoneBoxes.map((zone) => {
-                  const region = layout.regionBoxes.find((r) => r.id === zone.regionId)
-                  if (!region) return null
-                  return (
-                    <line
-                      key={`rz-${String(zone.id)}`}
-                      x1={region.box.x + 16}
-                      y1={region.box.y + region.box.h}
-                      x2={zone.box.x + 8}
-                      y2={zone.box.y + zone.box.h / 2}
-                      stroke="var(--color-border)"
-                      strokeWidth={1}
-                    />
-                  )
-                })}
+            {/* 图区 + 右侧固定明细侧面板：非模态、图不 reflow */}
+            <div className="flex items-start gap-3">
+              {/* 分层拓扑图：SVG 自绘，横向滚动容纳多集群列 */}
+              <div className="min-w-0 flex-1 overflow-x-auto pb-2">
+                <svg
+                  width={layout.width}
+                  height={layout.height}
+                  viewBox={`0 0 ${String(layout.width)} ${String(layout.height)}`}
+                  role="img"
+                  aria-label={t('cluster.topology.graph.title')}
+                  className="min-w-full"
+                >
+                  {/* 结构连线：集群 → 大区 → 小区（层次化，非力导向） */}
+                  {layout.regionBoxes.map((region) => {
+                    const cluster = layout.clusterBoxes.find((c) => c.id === region.clusterId)
+                    if (!cluster) return null
+                    return (
+                      <line
+                        key={`cl-${String(region.id)}`}
+                        x1={cluster.box.x + cluster.box.w / 2}
+                        y1={cluster.box.y + cluster.box.h}
+                        x2={region.box.x + region.box.w / 2}
+                        y2={region.box.y}
+                        stroke="var(--color-border-strong)"
+                        strokeWidth={1.5}
+                      />
+                    )
+                  })}
+                  {layout.zoneBoxes.map((zone) => {
+                    const region = layout.regionBoxes.find((r) => r.id === zone.regionId)
+                    if (!region) return null
+                    return (
+                      <line
+                        key={`rz-${String(zone.id)}`}
+                        x1={region.box.x + 16}
+                        y1={region.box.y + region.box.h}
+                        x2={zone.box.x + 8}
+                        y2={zone.box.y + zone.box.h / 2}
+                        stroke="var(--color-border)"
+                        strokeWidth={1}
+                      />
+                    )
+                  })}
 
-                {/* 集群节点（含代理数） */}
-                {layout.clusterBoxes.map((c) => (
-                  <g key={`c-${String(c.id)}`}>
-                    <rect
-                      x={c.box.x}
-                      y={c.box.y}
-                      width={c.box.w}
-                      height={c.box.h}
-                      rx={8}
-                      fill="var(--color-brand-50)"
-                      stroke="var(--color-brand-100)"
-                    />
-                    <text x={c.box.x + 12} y={c.box.y + 20} fill="var(--color-brand-600)" fontSize={12} fontWeight={600}>
-                      {c.name}
-                    </text>
-                    <text x={c.box.x + 12} y={c.box.y + 36} fill="var(--color-brand)" fontSize={10}>
-                      {t('cluster.topology.graph.proxy')} · {c.proxyCount}
-                    </text>
-                  </g>
-                ))}
+                  {/* 请求链路边：直接画在节点间，按状态着色 + 数据流动画 */}
+                  {renderEdges.map((re) => {
+                    const active = re.key === selectedKey
+                    const color = re.abnormal ? 'var(--color-crit)' : 'var(--color-brand)'
+                    const d = edgePath(re.from, re.to)
+                    const midX = (re.from.x + re.from.w / 2 + re.to.x + re.to.w / 2) / 2
+                    const midY = (re.from.y + re.from.h / 2 + re.to.y + re.to.h / 2) / 2
+                    return (
+                      <g
+                        key={`edge-${re.key}`}
+                        className="cursor-pointer"
+                        onClick={() => {
+                          setSelectedKey(active ? null : re.key)
+                        }}
+                      >
+                        {/* 底层静态链路：正常细淡、异常粗红；选中加粗 */}
+                        <path
+                          d={d}
+                          fill="none"
+                          stroke={color}
+                          strokeWidth={re.abnormal ? 2 : 1.25}
+                          strokeOpacity={active ? 0.9 : re.abnormal ? 0.7 : 0.35}
+                        />
+                        {/* 数据流动效：沿路径流动的虚线（正常品牌 / 异常红） */}
+                        {flowOn && (
+                          <path
+                            d={d}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={re.abnormal ? 2.5 : 1.5}
+                            strokeDasharray="4 8"
+                            strokeLinecap="round"
+                            className={cn('beacon-flow', re.abnormal && 'beacon-flow-fast')}
+                            opacity={0.85}
+                          />
+                        )}
+                        {/* 异常链路标记：失败率标签 + 三角警示 */}
+                        {re.abnormal && (
+                          <g transform={`translate(${String(midX)}, ${String(midY)})`}>
+                            <rect x={-20} y={-9} width={40} height={16} rx={8} fill="var(--color-crit)" />
+                            <text x={0} y={3} textAnchor="middle" fill="white" fontSize={10} fontWeight={700}>
+                              {re.edge.failRatePercent}%
+                            </text>
+                          </g>
+                        )}
+                      </g>
+                    )
+                  })}
 
-                {/* 大区节点（含聚合子服计数） */}
-                {layout.regionBoxes.map((r) => (
-                  <g key={`r-${String(r.id)}`}>
-                    <rect
-                      x={r.box.x}
-                      y={r.box.y}
-                      width={r.box.w}
-                      height={r.box.h}
-                      rx={6}
-                      fill="var(--color-surface-2)"
-                      stroke="var(--color-border)"
-                    />
-                    <text x={r.box.x + 10} y={r.box.y + 19} fill="var(--color-ink-1)" fontSize={11} fontWeight={600}>
-                      {r.name}
-                    </text>
-                    <text x={r.box.x + 10} y={r.box.y + 34} fill="var(--color-ink-4)" fontSize={10}>
-                      {t('cluster.topology.graph.zone')} · {r.serverCount}
-                    </text>
-                  </g>
-                ))}
+                  {/* 集群节点（含代理数） */}
+                  {layout.clusterBoxes.map((c) => (
+                    <g key={`c-${String(c.id)}`}>
+                      <rect
+                        x={c.box.x}
+                        y={c.box.y}
+                        width={c.box.w}
+                        height={c.box.h}
+                        rx={8}
+                        fill="var(--color-brand-50)"
+                        stroke="var(--color-brand-100)"
+                      />
+                      <text x={c.box.x + 12} y={c.box.y + 20} fill="var(--color-brand-600)" fontSize={12} fontWeight={600}>
+                        {c.name}
+                      </text>
+                      <text x={c.box.x + 12} y={c.box.y + 36} fill="var(--color-brand)" fontSize={10}>
+                        {t('cluster.topology.graph.proxy')} · {c.proxyCount}
+                      </text>
+                    </g>
+                  ))}
 
-                {/* 小区聚合节点（展开态） */}
-                {layout.zoneBoxes.map((z) => (
-                  <g key={`z-${String(z.id)}`}>
-                    <rect
-                      x={z.box.x}
-                      y={z.box.y}
-                      width={z.box.w}
-                      height={z.box.h}
-                      rx={5}
-                      fill="var(--color-card)"
-                      stroke="var(--color-border)"
-                    />
-                    <rect x={z.box.x} y={z.box.y} width={3} height={z.box.h} fill="var(--color-brand)" />
-                    <text x={z.box.x + 10} y={z.box.y + 19} fill="var(--color-ink-1)" fontSize={10}>
-                      {z.name}
-                    </text>
-                    <text x={z.box.x + z.box.w - 8} y={z.box.y + 19} textAnchor="end" fill="var(--color-ink-4)" fontSize={10}>
-                      {z.serverCount}
-                    </text>
-                  </g>
-                ))}
-              </svg>
+                  {/* 大区节点（含聚合子服计数） */}
+                  {layout.regionBoxes.map((r) => (
+                    <g key={`r-${String(r.id)}`}>
+                      <rect
+                        x={r.box.x}
+                        y={r.box.y}
+                        width={r.box.w}
+                        height={r.box.h}
+                        rx={6}
+                        fill="var(--color-surface-2)"
+                        stroke="var(--color-border)"
+                      />
+                      <text x={r.box.x + 10} y={r.box.y + 19} fill="var(--color-ink-1)" fontSize={11} fontWeight={600}>
+                        {r.name}
+                      </text>
+                      <text x={r.box.x + 10} y={r.box.y + 34} fill="var(--color-ink-4)" fontSize={10}>
+                        {t('cluster.topology.graph.zone')} · {r.serverCount}
+                      </text>
+                    </g>
+                  ))}
+
+                  {/* 小区聚合节点（展开态） */}
+                  {layout.zoneBoxes.map((z) => (
+                    <g key={`z-${String(z.id)}`}>
+                      <rect
+                        x={z.box.x}
+                        y={z.box.y}
+                        width={z.box.w}
+                        height={z.box.h}
+                        rx={5}
+                        fill="var(--color-card)"
+                        stroke="var(--color-border)"
+                      />
+                      <rect x={z.box.x} y={z.box.y} width={3} height={z.box.h} fill="var(--color-brand)" />
+                      <text x={z.box.x + 10} y={z.box.y + 19} fill="var(--color-ink-1)" fontSize={10}>
+                        {z.name}
+                      </text>
+                      <text x={z.box.x + z.box.w - 8} y={z.box.y + 19} textAnchor="end" fill="var(--color-ink-4)" fontSize={10}>
+                        {z.serverCount}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+
+              {/* 固定右侧明细侧面板：常驻布局列，选中链路在此展示，图不被推动 */}
+              <aside className="w-[248px] shrink-0 self-start rounded-lg border border-border bg-surface-2 p-3">
+                {selectedEdge ? (
+                  <div className="grid gap-2.5 text-sm">
+                    <p
+                      className={cn(
+                        'flex items-center gap-1 font-mono text-xs',
+                        selectedEdge.failRatePercent >= ABNORMAL_RATE ? 'text-crit' : 'text-ink-2',
+                      )}
+                    >
+                      <Boxes className="size-3.5 shrink-0 text-brand" />
+                      <span className="truncate">{selectedEdge.sourceServerId}</span>
+                      <ArrowRight className="size-3 shrink-0 text-ink-4" />
+                      <span className="truncate">{selectedEdge.resolvedServerId}</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge variant={selectedEdge.failRatePercent >= ABNORMAL_RATE ? 'crit' : 'secondary'} className="tnum">
+                        {t('cluster.topology.edges.failRate')} {selectedEdge.failRatePercent}%
+                      </Badge>
+                      <Badge variant="secondary" className="tnum">
+                        {t('cluster.topology.edges.total')} {selectedEdge.total}
+                      </Badge>
+                      <Badge variant="secondary" className="tnum">
+                        P95 {selectedEdge.p95DurationMs}ms
+                      </Badge>
+                    </div>
+                    {selectedEdge.topFailReasons.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                          {t('cluster.topology.edges.topReasons')}
+                        </p>
+                        <ul className="mt-1 flex flex-wrap gap-1.5">
+                          {selectedEdge.topFailReasons.map((reason) => (
+                            <li key={reason.reason}>
+                              <Badge variant="crit" className="tnum">
+                                {reason.reason} · {reason.count}
+                              </Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                        {t('cluster.topology.edges.sampleMessages')}
+                      </p>
+                      <ul className="mt-1 grid gap-0.5">
+                        {selectedEdge.sampleMessageIds.map((id) => (
+                          <li key={id} className="truncate font-mono text-xs text-ink-3">
+                            {id}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="py-6 text-center text-xs text-ink-4">{t('cluster.topology.graph.detailEmpty')}</p>
+                )}
+              </aside>
             </div>
 
             {collapsed && (
@@ -273,7 +499,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
               </p>
             )}
 
-            {/* 异常链路层：可视化高亮失败率高的边，点击看该链路明细 */}
+            {/* 异常链路快捷选择：点击 chip 在右侧侧面板看明细（与图上点边等效） */}
             {abnormalEdges.length > 0 && (
               <div className="grid gap-1.5 rounded-lg border border-crit-bd bg-crit-bg/40 p-3">
                 <p className="flex items-center gap-1.5 text-[12px] font-semibold text-crit">
@@ -305,46 +531,6 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                     )
                   })}
                 </ul>
-
-                {/* 选中链路明细：样本消息 + 主要失败原因 */}
-                {selectedEdge && (
-                  <div className="mt-1 grid gap-2 rounded-md border border-border bg-card px-3 py-2.5 text-sm">
-                    <p className="flex items-center gap-1 font-mono text-xs text-ink-2">
-                      <Boxes className="size-3.5 text-brand" />
-                      {selectedEdge.sourceServerId}
-                      <ArrowRight className="size-3 text-ink-4" />
-                      {selectedEdge.resolvedServerId}
-                    </p>
-                    {selectedEdge.topFailReasons.length > 0 && (
-                      <div>
-                        <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
-                          {t('cluster.topology.edges.topReasons')}
-                        </p>
-                        <ul className="mt-1 flex flex-wrap gap-1.5">
-                          {selectedEdge.topFailReasons.map((reason) => (
-                            <li key={reason.reason}>
-                              <Badge variant="crit" className="tnum">
-                                {reason.reason} · {reason.count}
-                              </Badge>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    <div>
-                      <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
-                        {t('cluster.topology.edges.sampleMessages')}
-                      </p>
-                      <ul className="mt-1 grid gap-0.5">
-                        {selectedEdge.sampleMessageIds.map((id) => (
-                          <li key={id} className="font-mono text-xs text-ink-3">
-                            {id}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </>
