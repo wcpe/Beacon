@@ -1,5 +1,5 @@
-// 审计列表：操作人 / 动作 / 目标类型过滤 + 详情关键词搜索 + 服务端分页；行点击看详情。
-// 导出按钮（CSV / JSON）在 mock 下由浏览器直接下载。
+// 审计列表（主列）：吸顶工具条（关键词 + 操作人 / 动作 / 目标类型筛选 + 导出）+ 自区滚动列表 + 吸底分页。
+// 行点击回调交父级用右侧非模态详情面板承载；选中行高亮。导出按钮在吸顶工具区始终可见。
 
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -12,7 +12,6 @@ import {
   Button,
   DataTable,
   Input,
-  SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -20,6 +19,7 @@ import type { AuditItem } from '@beacon/devmock'
 
 import { auditExportUrl, fetchAudits } from '../../api/observability'
 import FilterSelect from '../../features/observability/filter-select'
+import ListCard from '../../features/observability/list-card'
 import Pager from '../../features/observability/pager'
 
 const PAGE_SIZE = 15
@@ -51,9 +51,11 @@ const TARGET_TYPES = [
 
 interface AuditListProps {
   onView: (item: AuditItem) => void
+  // 当前选中行 id（高亮用）
+  selectedId: number | null
 }
 
-export default function AuditList({ onView }: AuditListProps) {
+export default function AuditList({ onView, selectedId }: AuditListProps) {
   const { t } = useTranslation()
   const [operator, setOperator] = useState('all')
   const [action, setAction] = useState('all')
@@ -99,10 +101,6 @@ export default function AuditList({ onView }: AuditListProps) {
       },
       { header: t('observability.audits.columns.targetType'), cell: (row) => <span className="text-ink-3">{row.targetType}</span> },
       {
-        header: t('observability.audits.columns.targetRef'),
-        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.targetRef}</span>,
-      },
-      {
         header: t('observability.audits.columns.result'),
         cell: (row) => (
           <Badge variant={row.result === 'ok' ? 'ok' : 'crit'}>
@@ -114,29 +112,31 @@ export default function AuditList({ onView }: AuditListProps) {
     [t],
   )
 
-  return (
-    <section className="grid gap-3">
-      <SectionHeader
-        icon={<ListFilter className="size-4" />}
-        title={t('observability.audits.listTitle')}
-        count={total > 0 ? t('observability.common.total', { count: total }) : undefined}
-        actions={
-          <>
-            <Button size="sm" variant="outline" asChild>
-              <a href={auditExportUrl('csv')} download>
-                <Download className="size-3.5" />
-                {t('observability.audits.exportCsv')}
-              </a>
-            </Button>
-            <Button size="sm" variant="outline" asChild>
-              <a href={auditExportUrl('json')} download>
-                <Download className="size-3.5" />
-                {t('observability.audits.exportJson')}
-              </a>
-            </Button>
-          </>
-        }
-      />
+  const toolbar = (
+    <div className="grid gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <ListFilter className="size-[15px]" />
+          </span>
+          {t('observability.audits.listTitle')}
+        </span>
+        {total > 0 && <span className="text-xs text-ink-3">{t('observability.common.total', { count: total })}</span>}
+        <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant="outline" asChild>
+            <a href={auditExportUrl('csv')} download>
+              <Download className="size-3.5" />
+              {t('observability.audits.exportCsv')}
+            </a>
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <a href={auditExportUrl('json')} download>
+              <Download className="size-3.5" />
+              {t('observability.audits.exportJson')}
+            </a>
+          </Button>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('observability.audits.filterKeyword')}
@@ -176,28 +176,34 @@ export default function AuditList({ onView }: AuditListProps) {
           }}
         />
       </div>
+    </div>
+  )
 
+  return (
+    <ListCard
+      toolbar={toolbar}
+      footer={
+        total > PAGE_SIZE ? (
+          <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+        ) : undefined
+      }
+    >
       <AsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}
       >
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
-          <DataTable
-            columns={columns}
-            rows={rows}
-            rowKey={(row) => String(row.id)}
-            emptyText={t('observability.audits.listEmpty')}
-            density="compact"
-            onRowClick={onView}
-          />
-        </div>
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => String(row.id)}
+          emptyText={t('observability.audits.listEmpty')}
+          density="compact"
+          onRowClick={onView}
+          rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+        />
       </AsyncSection>
-
-      {total > PAGE_SIZE && (
-        <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
-      )}
-    </section>
+    </ListCard>
   )
 }

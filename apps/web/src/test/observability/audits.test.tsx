@@ -1,5 +1,5 @@
 // /audits 审计页测试：KPI + 列表渲染、空态、操作人筛选、详情打开。
-import { screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -49,11 +49,11 @@ describe('/audits 审计页', () => {
     })
     await user.click(row as unknown as HTMLElement)
 
-    // 详情面板出现
+    // 右侧非模态详情面板出现（含来源 IP 字段），且不产生模态遮罩层
     await waitFor(() => {
       expect(screen.getByText('审计详情')).toBeInTheDocument()
     })
-    const dialog = screen.getByRole('dialog')
-    expect(within(dialog).getByText('来源 IP')).toBeInTheDocument()
+    expect(screen.getByText('来源 IP')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

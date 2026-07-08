@@ -1,5 +1,5 @@
-// 审计页（/audits）：审计查询、追溯与导出。
-// KPI + 过滤列表（操作人/动作/目标类型/关键词）+ 分页 + 行详情抽屉 + 导出；与 /commands 互跳（FR-157）。
+// 审计页（/audits）：主从布局——KPI + 主列（吸顶筛选 + 自区滚列表 + 分页），右侧非模态详情面板。
+// KPI + 过滤列表（操作人/动作/目标类型/关键词）+ 分页 + 右侧详情面板（追溯明细）+ 导出；与 /commands 互跳（FR-157）。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollText } from 'lucide-react'
@@ -7,13 +7,14 @@ import { ScrollText } from 'lucide-react'
 import { SectionHeader } from '@beacon/ui'
 import type { AuditItem } from '@beacon/devmock'
 
-import AuditDetailSheet from './audits/audit-detail-sheet'
+import MasterDetail from '../features/observability/master-detail'
+import AuditDetailPanel from './audits/audit-detail-panel'
 import AuditKpi from './audits/audit-kpi'
 import AuditList from './audits/audit-list'
 
 export default function AuditsPage() {
   const { t } = useTranslation()
-  // 当前查看详情的审计行
+  // 当前查看详情的审计行（null 表示右侧详情列收起）
   const [detail, setDetail] = useState<AuditItem | null>(null)
 
   return (
@@ -25,13 +26,13 @@ export default function AuditsPage() {
         count={t('observability.audits.mission')}
       />
       <AuditKpi />
-      <AuditList onView={setDetail} />
-      <AuditDetailSheet
-        item={detail}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDetail(null)
-          }
+      <MasterDetail
+        master={<AuditList onView={setDetail} selectedId={detail?.id ?? null} />}
+        detail={detail ? <AuditDetailPanel item={detail} /> : null}
+        detailTitle={t('observability.audits.detailTitle')}
+        closeLabel={t('observability.common.close')}
+        onClose={() => {
+          setDetail(null)
         }}
       />
     </section>
