@@ -11,6 +11,7 @@ import {
   AsyncSection,
   Badge,
   DataTable,
+  SummaryStrip,
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -36,6 +37,14 @@ export default function EdgesPanel() {
     () => edges.filter((edge) => edge.failRatePercent >= ABNORMAL_RATE).length,
     [edges],
   )
+
+  // 数据剖析聚合指标：总链路 / 总消息 / 异常边 / 最高失败率 / 最高 P95。
+  const aggregates = useMemo(() => {
+    const totalMessages = edges.reduce((sum, e) => sum + e.total, 0)
+    const maxFailRate = edges.reduce((m, e) => Math.max(m, e.failRatePercent), 0)
+    const maxP95 = edges.reduce((m, e) => Math.max(m, e.p95DurationMs), 0)
+    return { totalMessages, maxFailRate, maxP95 }
+  }, [edges])
 
   const edgeKey = (edge: MessageEdgeStat) => `${edge.sourceServerId}→${edge.resolvedServerId}`
   const selected = useMemo(
@@ -89,6 +98,24 @@ export default function EdgesPanel() {
           </Badge>
         )}
       </div>
+      {/* 数据剖析聚合指标条：一眼看总量与最差链路 */}
+      <SummaryStrip
+        items={[
+          { label: t('cluster.topology.data.linkCount'), value: edges.length },
+          { label: t('cluster.topology.data.totalMessages'), value: aggregates.totalMessages },
+          {
+            label: t('cluster.topology.edges.abnormal'),
+            value: abnormalCount,
+            tone: abnormalCount > 0 ? 'danger' : 'muted',
+          },
+          {
+            label: t('cluster.topology.data.maxFailRate'),
+            value: `${String(aggregates.maxFailRate)}%`,
+            tone: aggregates.maxFailRate >= ABNORMAL_RATE ? 'danger' : 'muted',
+          },
+          { label: t('cluster.topology.data.maxP95'), value: `${String(aggregates.maxP95)}ms` },
+        ]}
+      />
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         <DataTable
           columns={columns}

@@ -1,4 +1,5 @@
-// /topology 页测试：常规渲染链路图与异常链路、空态引导、异常边点击看明细、超大量截断明示。
+// /topology 拓扑页测试（双模式）：可视化模式渲染拓扑图与集群节点、空态引导、超大量按聚合折叠明示；
+// 数据剖析模式渲染异常链路表并点击边看明细。默认可视化模式，切到「数据剖析」看表。
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -20,14 +21,12 @@ afterAll(() => {
 })
 
 describe('/topology 拓扑页', () => {
-  it('常规态渲染链路图与消息异常链路', async () => {
+  it('可视化模式渲染拓扑图与集群节点', async () => {
     useScenario('normal')
     renderPage(<TopologyPage />)
 
-    // 链路图标题与消息异常链路标题
+    // 拓扑图标题与集群节点（SVG 内 text）
     expect(await screen.findByText('BC-子服链路')).toBeInTheDocument()
-    expect(await screen.findByText('消息异常链路')).toBeInTheDocument()
-    // 拓扑图出现集群节点
     expect(await screen.findByText('bc-main')).toBeInTheDocument()
   })
 
@@ -40,10 +39,13 @@ describe('/topology 拓扑页', () => {
     ).toBeInTheDocument()
   })
 
-  it('点击异常边展开链路明细（样本消息）', async () => {
+  it('切到数据剖析模式，点击异常边展开链路明细（样本消息）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<TopologyPage />)
+
+    // 切换到数据剖析 Tab
+    await user.click(await screen.findByRole('tab', { name: /数据剖析/ }))
 
     // 等待边表格出数据：定位第一条边的表格行（含目标列的 → 文本）
     const targetCells = await screen.findAllByText(/^→ /)
