@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { ArrowUpRight, History } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -25,15 +26,15 @@ const PAGE_SIZE = 15
 const COMMAND_TYPES = ['asset_rescan', 'asset_read', 'ingest-plugins', 'tail-logs', 'resync-config'] as const
 const COMMAND_STATUSES = ['pending', 'fetched', 'done', 'failed', 'expired'] as const
 
-// 命令状态 → 徽标语气：done 成功、failed/expired 危险、其余中性
-function badgeVariant(status: CommandItem['status']): 'secondary' | 'outline' | 'destructive' {
+// 命令状态 → 状态药丸语义色：done 正常绿、failed/expired 危急红、其余次要。
+function badgeVariant(status: CommandItem['status']): 'ok' | 'off' | 'crit' {
   if (status === 'failed' || status === 'expired') {
-    return 'destructive'
+    return 'crit'
   }
   if (status === 'done') {
-    return 'secondary'
+    return 'ok'
   }
-  return 'outline'
+  return 'off'
 }
 
 export default function CommandHistory() {
@@ -63,33 +64,34 @@ export default function CommandHistory() {
     () => [
       {
         header: t('observability.commands.columns.createdAt'),
-        cell: (row) => <span className="text-xs">{new Date(row.createdAt).toLocaleString()}</span>,
+        cell: (row) => <span className="tabular-nums text-xs text-ink-3">{new Date(row.createdAt).toLocaleString()}</span>,
       },
       {
         header: t('observability.commands.columns.serverId'),
-        cell: (row) => <span className="font-mono text-xs">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.serverId}</span>,
       },
-      { header: t('observability.commands.columns.type'), cell: (row) => row.type },
+      { header: t('observability.commands.columns.type'), cell: (row) => <span className="text-ink-2">{row.type}</span> },
       {
         header: t('observability.commands.columns.status'),
         cell: (row) => (
           <Badge variant={badgeVariant(row.status)}>{t(`observability.commands.status.${row.status}`)}</Badge>
         ),
       },
-      { header: t('observability.commands.columns.operator'), cell: (row) => row.operator },
+      { header: t('observability.commands.columns.operator'), cell: (row) => <span className="text-ink-2">{row.operator}</span> },
       {
         header: t('observability.commands.columns.result'),
-        cell: (row) => <span className="text-xs text-muted-foreground">{row.resultDetail || '-'}</span>,
+        cell: (row) => <span className="text-xs text-ink-3">{row.resultDetail || '—'}</span>,
       },
       {
         header: '',
         headClassName: 'w-24',
         cell: (row) => (
           <Link
-            className="text-xs text-primary hover:underline"
+            className="inline-flex items-center gap-0.5 text-xs text-brand-600 hover:underline"
             to={`/audits?targetRef=${row.serverId}`}
           >
             {t('observability.commands.viewInAudits')}
+            <ArrowUpRight className="size-3" />
           </Link>
         ),
       },
@@ -99,7 +101,11 @@ export default function CommandHistory() {
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('observability.commands.historyTitle')} />
+      <SectionHeader
+        icon={<History className="size-4" />}
+        title={t('observability.commands.historyTitle')}
+        count={total > 0 ? t('observability.common.total', { count: total }) : undefined}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
@@ -141,13 +147,15 @@ export default function CommandHistory() {
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}
       >
-        <DataTable
-          columns={columns}
-          rows={query.data?.items}
-          rowKey={(row) => String(row.commandId)}
-          emptyText={t('observability.commands.historyEmpty')}
-          density="compact"
-        />
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+          <DataTable
+            columns={columns}
+            rows={query.data?.items}
+            rowKey={(row) => String(row.commandId)}
+            emptyText={t('observability.commands.historyEmpty')}
+            density="compact"
+          />
+        </div>
       </AsyncSection>
 
       {total > PAGE_SIZE && (

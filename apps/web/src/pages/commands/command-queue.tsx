@@ -4,6 +4,7 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Radio } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -41,23 +42,30 @@ export default function CommandQueue() {
 
   const columns = useMemo<DataTableColumn<CommandItem>[]>(
     () => [
-      { header: t('observability.commands.columns.commandId'), cell: (row) => row.commandId },
+      {
+        header: t('observability.commands.columns.commandId'),
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.commandId}</span>,
+      },
       {
         header: t('observability.commands.columns.serverId'),
-        cell: (row) => <span className="font-mono text-xs">{row.serverId}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.serverId}</span>,
       },
-      { header: t('observability.commands.columns.type'), cell: (row) => row.type },
+      { header: t('observability.commands.columns.type'), cell: (row) => <span className="text-ink-2">{row.type}</span> },
       {
         header: t('observability.commands.columns.status'),
         cell: (row) => (
-          <Badge variant={row.status === 'pending' ? 'secondary' : 'outline'}>
+          <Badge variant={row.status === 'pending' ? 'warn' : 'brand'}>
             {t(`observability.commands.status.${row.status}`)}
           </Badge>
         ),
       },
       {
         header: t('observability.commands.columns.age'),
-        cell: (row) => t('observability.commands.ageSeconds', { count: row.ageSeconds }),
+        cell: (row) => (
+          <span className="tabular-nums text-ink-2">
+            {t('observability.commands.ageSeconds', { count: row.ageSeconds })}
+          </span>
+        ),
       },
     ],
     [t],
@@ -65,20 +73,26 @@ export default function CommandQueue() {
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('observability.commands.queueTitle')} />
+      <SectionHeader
+        icon={<Radio className="size-4 text-brand" />}
+        title={t('observability.commands.queueTitle')}
+        count={rows.length > 0 ? t('observability.common.total', { count: rows.length }) : undefined}
+      />
       <AsyncSection
         isLoading={pendingQuery.isLoading || fetchedQuery.isLoading}
         isError={pendingQuery.isError || fetchedQuery.isError}
         error={pendingQuery.error ?? fetchedQuery.error}
         skeleton={<TableSkeleton columns={columns.length} rows={4} />}
       >
-        <DataTable
-          columns={columns}
-          rows={rows}
-          rowKey={(row) => String(row.commandId)}
-          emptyText={t('observability.commands.queueEmpty')}
-          density="compact"
-        />
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(row) => String(row.commandId)}
+            emptyText={t('observability.commands.queueEmpty')}
+            density="compact"
+          />
+        </div>
       </AsyncSection>
     </section>
   )
