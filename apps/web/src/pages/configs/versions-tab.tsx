@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { History } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -100,29 +101,32 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
     {
       header: t('delivery.configs.detail.versions.columns.version'),
       cell: (row) => (
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-1.5 tnum text-ink-1">
           v{String(row.versionNo)}
           {row.isRemoval && (
-            <Badge variant="secondary">{t('delivery.configs.detail.versions.removal')}</Badge>
+            <Badge variant="off" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" />
+              {t('delivery.configs.detail.versions.removal')}
+            </Badge>
           )}
         </span>
       ),
     },
     {
       header: t('delivery.configs.detail.versions.columns.hash'),
-      cell: (row) => <span className="font-mono text-xs">{row.contentHash.slice(0, 12)}</span>,
+      cell: (row) => <span className="tnum font-mono text-xs text-ink-3">{row.contentHash.slice(0, 12)}</span>,
     },
     {
       header: t('delivery.configs.detail.versions.columns.remark'),
-      cell: (row) => row.remark || '-',
+      cell: (row) => <span className="text-ink-2">{row.remark || '-'}</span>,
     },
     {
       header: t('delivery.configs.detail.versions.columns.createdBy'),
-      cell: (row) => row.createdBy,
+      cell: (row) => <span className="text-ink-2">{row.createdBy}</span>,
     },
     {
       header: t('delivery.configs.detail.versions.columns.createdAt'),
-      cell: (row) => new Date(row.createdAt).toLocaleString(),
+      cell: (row) => <span className="text-ink-3">{new Date(row.createdAt).toLocaleString()}</span>,
     },
     {
       header: '',
@@ -156,7 +160,10 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('delivery.configs.detail.versions.title')} />
+      <SectionHeader
+        icon={<History className="size-4" />}
+        title={t('delivery.configs.detail.versions.title')}
+      />
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1.5">

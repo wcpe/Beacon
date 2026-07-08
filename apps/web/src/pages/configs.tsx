@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { FileCog, Info } from 'lucide-react'
 
 import { Button, SectionHeader } from '@beacon/ui'
 
@@ -21,9 +22,13 @@ export default function ConfigsPage() {
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
-    <section className="grid gap-6">
+    <section className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" title={t('delivery.configs.title')} />
+        <SectionHeader
+          size="lg"
+          icon={<FileCog className="size-4" />}
+          title={t('delivery.configs.title')}
+        />
         <NamespacePicker
           value={namespaceId}
           onChange={(id) => {
@@ -34,9 +39,12 @@ export default function ConfigsPage() {
         />
       </div>
 
-      {/* 下发走变更单的显眼提示 + 跳转入口 */}
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm">
-        <span className="text-muted-foreground">{t('delivery.configs.deliveryHint')}</span>
+      {/* 下发走变更单的显眼提示 + 跳转入口（B 版 warn 提示条） */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warn-bd bg-warn-bg px-4 py-2.5 text-sm text-warn">
+        <span className="flex items-center gap-2">
+          <Info className="size-4 shrink-0" aria-hidden />
+          {t('delivery.configs.deliveryHint')}
+        </span>
         <Button asChild variant="outline" size="sm">
           <Link to="/changes">{t('delivery.configs.goChanges')}</Link>
         </Button>

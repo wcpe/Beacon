@@ -60,12 +60,12 @@ export default function ReasonDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
+          <AlertDialogTitle className="text-ink-1">{title}</AlertDialogTitle>
+          <AlertDialogDescription className="text-ink-3">{description}</AlertDialogDescription>
         </AlertDialogHeader>
 
         {impacts && impacts.length > 0 && (
-          <ul className="list-disc space-y-1 rounded-md bg-muted/50 px-5 py-3 text-sm text-muted-foreground">
+          <ul className="list-disc space-y-1 rounded-lg border border-border bg-surface-2 px-5 py-3 text-sm text-ink-2">
             {impacts.map((line, i) => (
               <li key={i}>{line}</li>
             ))}
@@ -86,7 +86,7 @@ export default function ReasonDialog({
           />
         </div>
 
-        {errorText && <p className="text-sm text-destructive">{errorText}</p>}
+        {errorText && <p className="text-sm text-crit">{errorText}</p>}
 
         <AlertDialogFooter>
           <AlertDialogCancel>{t('delivery.configs.create.cancel')}</AlertDialogCancel>

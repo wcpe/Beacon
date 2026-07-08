@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { ArrowLeft, FileCog } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -36,19 +37,20 @@ export default function DetailView({ fileId, onBack }: DetailViewProps) {
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={onBack}>
-            {t('delivery.configs.detail.backToList')}
-          </Button>
-          {detailQuery.data && (
-            <SectionHeader
-              title={<span className="font-mono">{detailQuery.data.name}</span>}
-              count={detailQuery.data.description || undefined}
-            />
-          )}
-        </div>
-        {detailQuery.data && <Badge variant="outline">{detailQuery.data.format}</Badge>}
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="outline" size="sm" onClick={onBack}>
+          <ArrowLeft className="size-3.5" aria-hidden />
+          {t('delivery.configs.detail.backToList')}
+        </Button>
+        {detailQuery.data && (
+          <SectionHeader
+            className="flex-1"
+            icon={<FileCog className="size-4" />}
+            title={<span className="font-mono text-ink-1">{detailQuery.data.name}</span>}
+            count={detailQuery.data.description || undefined}
+            actions={<Badge variant="brand">{detailQuery.data.format}</Badge>}
+          />
+        )}
       </div>
 
       <AsyncSection
@@ -63,16 +65,16 @@ export default function DetailView({ fileId, onBack }: DetailViewProps) {
             <TabsTrigger value="versions">{t('delivery.configs.detail.tabs.versions')}</TabsTrigger>
             <TabsTrigger value="diff">{t('delivery.configs.detail.tabs.diff')}</TabsTrigger>
           </TabsList>
-          <TabsContent value="scopes">
+          <TabsContent value="scopes" className="pt-4">
             <ScopesTab fileId={fileId} />
           </TabsContent>
-          <TabsContent value="effective">
+          <TabsContent value="effective" className="pt-4">
             <EffectiveTab fileId={fileId} />
           </TabsContent>
-          <TabsContent value="versions">
+          <TabsContent value="versions" className="pt-4">
             <VersionsTab fileId={fileId} />
           </TabsContent>
-          <TabsContent value="diff">
+          <TabsContent value="diff" className="pt-4">
             <DiffTab fileId={fileId} />
           </TabsContent>
         </Tabs>

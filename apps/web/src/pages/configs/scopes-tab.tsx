@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Layers } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, DataTable, SectionHeader, type DataTableColumn } from '@beacon/ui'
 import type { ConfigScopeSummary } from '@beacon/devmock'
@@ -79,27 +80,32 @@ export default function ScopesTab({ fileId }: ScopesTabProps) {
     {
       header: t('delivery.configs.detail.scopes.columns.scope'),
       cell: (row) => (
-        <span className="flex items-center gap-1.5 font-mono">
+        <span className="flex items-center gap-1.5 font-mono text-ink-1">
           {row.scopeLevel} / {row.scopeName}
-          {row.isRemoval && <Badge variant="secondary">{t('delivery.configs.detail.scopes.removal')}</Badge>}
+          {row.isRemoval && (
+            <Badge variant="off" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" />
+              {t('delivery.configs.detail.scopes.removal')}
+            </Badge>
+          )}
         </span>
       ),
     },
     {
       header: t('delivery.configs.detail.scopes.columns.version'),
-      cell: (row) => `v${String(row.headVersionNo)}`,
+      cell: (row) => <span className="tnum text-ink-2">v{String(row.headVersionNo)}</span>,
     },
     {
       header: t('delivery.configs.detail.scopes.columns.hash'),
-      cell: (row) => <span className="font-mono text-xs">{row.headHash.slice(0, 12)}</span>,
+      cell: (row) => <span className="tnum font-mono text-xs text-ink-3">{row.headHash.slice(0, 12)}</span>,
     },
     {
       header: t('delivery.configs.detail.scopes.columns.updatedBy'),
-      cell: (row) => row.updatedBy,
+      cell: (row) => <span className="text-ink-2">{row.updatedBy}</span>,
     },
     {
       header: t('delivery.configs.detail.scopes.columns.updatedAt'),
-      cell: (row) => new Date(row.updatedAt).toLocaleString(),
+      cell: (row) => <span className="text-ink-3">{new Date(row.updatedAt).toLocaleString()}</span>,
     },
     {
       header: '',
@@ -137,7 +143,10 @@ export default function ScopesTab({ fileId }: ScopesTabProps) {
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('delivery.configs.detail.scopes.title')} />
+      <SectionHeader
+        icon={<Layers className="size-4" />}
+        title={t('delivery.configs.detail.scopes.title')}
+      />
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         <DataTable
           columns={columns}

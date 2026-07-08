@@ -54,7 +54,7 @@ export default function CreateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t('delivery.configs.create.title')}</DialogTitle>
+          <DialogTitle className="text-ink-1">{t('delivery.configs.create.title')}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="space-y-1.5">
@@ -102,7 +102,7 @@ export default function CreateDialog({
               }}
             />
           </div>
-          {errorText && <p className="text-sm text-destructive">{errorText}</p>}
+          {errorText && <p className="text-sm text-crit">{errorText}</p>}
         </div>
         <DialogFooter>
           <Button

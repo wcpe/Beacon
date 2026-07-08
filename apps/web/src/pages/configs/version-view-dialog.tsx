@@ -35,11 +35,11 @@ export default function VersionViewDialog({ versionId, onOpenChange }: VersionVi
     >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t('delivery.configs.detail.versions.view')}</DialogTitle>
+          <DialogTitle className="text-ink-1">{t('delivery.configs.detail.versions.view')}</DialogTitle>
         </DialogHeader>
         <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
           {query.data && (
-            <pre className="max-h-[60vh] overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs whitespace-pre-wrap">
+            <pre className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs whitespace-pre-wrap text-ink-2">
               {query.data.content === '' ? '(空)' : query.data.content}
             </pre>
           )}

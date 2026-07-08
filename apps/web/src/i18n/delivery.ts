@@ -125,6 +125,11 @@ export const delivery = {
       keyword: '搜索文件名',
       create: '新建配置文件',
       trash: '回收站',
+      // 概要条指标
+      summary: {
+        files: '配置文件',
+        layers: '贡献层合计',
+      },
       columns: {
         name: '文件名',
         format: '格式',
@@ -227,8 +232,11 @@ export const delivery = {
     trash: {
       title: '回收站',
       empty: '回收站为空',
+      // 回收站行状态药丸文案
+      deleted: '已删除',
       columns: {
         name: '文件名',
+        status: '状态',
         deletedBy: '删除人',
         deletedAt: '删除时间',
       },

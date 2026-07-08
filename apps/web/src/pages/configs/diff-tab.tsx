@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { SplitSquareHorizontal } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -54,7 +55,10 @@ export default function DiffTab({ fileId }: DiffTabProps) {
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('delivery.configs.detail.diff.title')} />
+      <SectionHeader
+        icon={<SplitSquareHorizontal className="size-4" />}
+        title={t('delivery.configs.detail.diff.title')}
+      />
 
       <AsyncSection
         isLoading={scopesQuery.isLoading}
@@ -112,18 +116,18 @@ export default function DiffTab({ fileId }: DiffTabProps) {
       </AsyncSection>
 
       {applied === null ? (
-        <p className="text-sm text-muted-foreground">{t('delivery.configs.detail.diff.pickHint')}</p>
+        <p className="text-sm text-ink-3">{t('delivery.configs.detail.diff.pickHint')}</p>
       ) : (
         <AsyncSection isLoading={diffQuery.isLoading} isError={diffQuery.isError} error={diffQuery.error}>
           {diffQuery.data && (
             <div className="grid gap-3">
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-ink-3">
                 {scopeLabel(applied.left)} → {scopeLabel(applied.right)}
               </p>
               {diffQuery.data.added.length === 0 &&
               diffQuery.data.removed.length === 0 &&
               diffQuery.data.changed.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-ink-3">
                   {t('delivery.configs.detail.diff.identical')}
                 </p>
               ) : (
@@ -131,7 +135,7 @@ export default function DiffTab({ fileId }: DiffTabProps) {
                   {diffQuery.data.added.length > 0 && (
                     <div className="grid gap-1">
                       <SectionHeader title={t('delivery.configs.detail.diff.added')} />
-                      <ul className="rounded-md border border-green-500/30 bg-green-500/10 p-2 font-mono text-xs">
+                      <ul className="rounded-xl border border-ok-bd bg-ok-bg p-2.5 font-mono text-xs text-ok">
                         {diffQuery.data.added.map((a) => (
                           <li key={a.path}>
                             + {a.path}: {a.right}
@@ -143,7 +147,7 @@ export default function DiffTab({ fileId }: DiffTabProps) {
                   {diffQuery.data.removed.length > 0 && (
                     <div className="grid gap-1">
                       <SectionHeader title={t('delivery.configs.detail.diff.removed')} />
-                      <ul className="rounded-md border border-destructive/30 bg-destructive/10 p-2 font-mono text-xs">
+                      <ul className="rounded-xl border border-crit-bd bg-crit-bg p-2.5 font-mono text-xs text-crit">
                         {diffQuery.data.removed.map((r) => (
                           <li key={r.path}>
                             - {r.path}: {r.left}
@@ -155,7 +159,7 @@ export default function DiffTab({ fileId }: DiffTabProps) {
                   {diffQuery.data.changed.length > 0 && (
                     <div className="grid gap-1">
                       <SectionHeader title={t('delivery.configs.detail.diff.changed')} />
-                      <ul className="rounded-md border bg-muted/30 p-2 font-mono text-xs">
+                      <ul className="rounded-xl border border-border bg-surface-2 p-2.5 font-mono text-xs text-ink-2">
                         {diffQuery.data.changed.map((c) => (
                           <li key={c.path}>
                             {c.path}: {c.left} → {c.right}

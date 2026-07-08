@@ -2,9 +2,11 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { ArrowLeft, Trash2 } from 'lucide-react'
 
 import {
   AsyncSection,
+  Badge,
   Button,
   DataTable,
   SectionHeader,
@@ -73,11 +75,20 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
   const columns: DataTableColumn<TrashItem>[] = [
     {
       header: t('delivery.configs.trash.columns.name'),
-      cell: (row) => <span className="font-mono">{row.name}</span>,
+      cell: (row) => <span className="font-mono text-ink-1">{row.name}</span>,
+    },
+    {
+      header: t('delivery.configs.trash.columns.status'),
+      cell: () => (
+        <Badge variant="off" className="gap-1.5">
+          <span className="size-1.5 rounded-full bg-current" />
+          {t('delivery.configs.trash.deleted')}
+        </Badge>
+      ),
     },
     {
       header: t('delivery.configs.trash.columns.deletedBy'),
-      cell: (row) => row.deletedBy ?? '-',
+      cell: (row) => <span className="text-ink-2">{row.deletedBy ?? '-'}</span>,
     },
     {
       header: t('delivery.configs.trash.columns.deletedAt'),
@@ -115,7 +126,7 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
             </Button>
           </div>
           {restoreError.get(row.id) !== undefined && (
-            <span className="text-xs text-destructive">{restoreError.get(row.id)}</span>
+            <span className="text-xs text-crit">{restoreError.get(row.id)}</span>
           )}
         </div>
       ),
@@ -124,12 +135,17 @@ export default function TrashView({ namespaceId, onBack }: TrashViewProps) {
 
   return (
     <section className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SectionHeader title={t('delivery.configs.trash.title')} />
-        <Button variant="outline" onClick={onBack}>
-          {t('delivery.configs.trash.back')}
-        </Button>
-      </div>
+      <SectionHeader
+        icon={<Trash2 className="size-4" />}
+        title={t('delivery.configs.trash.title')}
+        actions={
+          <Button variant="outline" size="sm" onClick={onBack}>
+            <ArrowLeft className="size-3.5" aria-hidden />
+            {t('delivery.configs.trash.back')}
+          </Button>
+        }
+      />
+
 
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         <DataTable

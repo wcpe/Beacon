@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { FileCheck } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -38,25 +39,28 @@ export default function EffectiveTab({ fileId }: EffectiveTabProps) {
   const provColumns: DataTableColumn<ConfigProvenanceEntry>[] = [
     {
       header: t('delivery.configs.detail.effective.provColumns.key'),
-      cell: (row) => <span className="font-mono">{row.path}</span>,
+      cell: (row) => <span className="font-mono text-ink-1">{row.path}</span>,
     },
     {
       header: t('delivery.configs.detail.effective.provColumns.from'),
       cell: (row) => (
-        <span className="font-mono text-xs">
+        <span className="font-mono text-xs text-ink-2">
           {row.scopeLevel} / {row.scopeName}
         </span>
       ),
     },
     {
       header: t('delivery.configs.detail.effective.provColumns.version'),
-      cell: (row) => `v${String(row.versionNo)}`,
+      cell: (row) => <span className="tnum text-ink-2">v{String(row.versionNo)}</span>,
     },
   ]
 
   return (
     <section className="grid gap-3">
-      <SectionHeader title={t('delivery.configs.detail.effective.title')} />
+      <SectionHeader
+        icon={<FileCheck className="size-4" />}
+        title={t('delivery.configs.detail.effective.title')}
+      />
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1.5">
@@ -87,13 +91,13 @@ export default function EffectiveTab({ fileId }: EffectiveTabProps) {
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         {query.data && (
           <div className="grid gap-4">
-            <p className="text-sm text-muted-foreground">
+            <p className="tnum text-sm text-ink-3">
               {t('delivery.configs.detail.effective.hash', { hash: query.data.effectiveHash.slice(0, 16) })}
             </p>
 
             <div className="grid gap-1.5">
               <SectionHeader title={t('delivery.configs.detail.effective.content')} />
-              <pre className="overflow-x-auto rounded-md border bg-muted/30 p-3 font-mono text-xs whitespace-pre-wrap">
+              <pre className="overflow-x-auto rounded-xl border border-border bg-surface-2 p-3 font-mono text-xs whitespace-pre-wrap text-ink-2">
                 {query.data.effectiveContent === '' ? '(空)' : query.data.effectiveContent}
               </pre>
             </div>
@@ -112,11 +116,11 @@ export default function EffectiveTab({ fileId }: EffectiveTabProps) {
             <div className="grid gap-1.5">
               <SectionHeader title={t('delivery.configs.detail.effective.deletedKeys')} />
               {query.data.deletedKeys.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm text-ink-3">
                   {t('delivery.configs.detail.effective.noDeleted')}
                 </p>
               ) : (
-                <ul className="list-disc space-y-1 pl-5 text-sm">
+                <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
                   {query.data.deletedKeys.map((k) => (
                     <li key={`${k.path}:${k.scopeLevel}:${String(k.scopeRefId)}`} className="font-mono">
                       {k.path}（{k.scopeLevel} · v{String(k.versionNo)}）

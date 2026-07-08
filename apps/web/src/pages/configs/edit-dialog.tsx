@@ -99,12 +99,12 @@ export default function EditDialog({ fileId, target, onOpenChange, onSaved }: Ed
     >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t('delivery.configs.detail.edit.title')}</DialogTitle>
+          <DialogTitle className="text-ink-1">{t('delivery.configs.detail.edit.title')}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-3">
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-ink-3">
             {t('delivery.configs.detail.edit.scopeLabel')}：
-            <span className="font-mono">
+            <span className="font-mono text-ink-1">
               {target.scopeLevel} / {target.scopeName}
             </span>
           </div>
@@ -133,8 +133,8 @@ export default function EditDialog({ fileId, target, onOpenChange, onSaved }: Ed
               rows={2}
             />
           </div>
-          {validateText !== null && <p className="text-sm text-muted-foreground">{validateText}</p>}
-          {saveError !== null && <p className="text-sm text-destructive">{saveError}</p>}
+          {validateText !== null && <p className="text-sm text-ink-3">{validateText}</p>}
+          {saveError !== null && <p className="text-sm text-crit">{saveError}</p>}
         </div>
         <DialogFooter>
           <Button

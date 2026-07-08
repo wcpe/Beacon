@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Files, Trash2 } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -12,7 +13,9 @@ import {
   DestructiveConfirmDialog,
   Input,
   SectionHeader,
+  SummaryStrip,
   type DataTableColumn,
+  type SummaryItem,
 } from '@beacon/ui'
 import type { ConfigFileItem } from '@beacon/devmock'
 
@@ -84,19 +87,32 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
   })
 
   const total = query.data?.total ?? 0
+  const items = query.data?.items ?? []
+
+  // 概要条：从本页已取 items 聚合——文件总数（服务端 total 权威）+ 本页可见文件的贡献层合计
+  const summaryItems: SummaryItem[] =
+    items.length > 0
+      ? [
+          { label: t('delivery.configs.list.summary.files'), value: total },
+          {
+            label: t('delivery.configs.list.summary.layers'),
+            value: items.reduce((sum, it) => sum + it.contributingLayerCount, 0),
+          },
+        ]
+      : []
 
   const columns: DataTableColumn<ConfigFileItem>[] = [
     {
       header: t('delivery.configs.list.columns.name'),
-      cell: (row) => <span className="font-mono">{row.name}</span>,
+      cell: (row) => <span className="font-mono text-ink-1">{row.name}</span>,
     },
     {
       header: t('delivery.configs.list.columns.format'),
-      cell: (row) => <Badge variant="outline">{row.format}</Badge>,
+      cell: (row) => <Badge variant="brand">{row.format}</Badge>,
     },
     {
       header: t('delivery.configs.list.columns.layers'),
-      cell: (row) => row.contributingLayerCount,
+      cell: (row) => <span className="tnum text-ink-2">{row.contributingLayerCount}</span>,
     },
     {
       header: t('delivery.configs.list.columns.updatedAt'),
@@ -132,22 +148,29 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
 
   return (
     <section className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <SectionHeader title={t('delivery.configs.list.title')} />
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={onOpenTrash}>
-            {t('delivery.configs.list.trash')}
-          </Button>
-          <Button
-            onClick={() => {
-              setCreateError(null)
-              setCreateOpen(true)
-            }}
-          >
-            {t('delivery.configs.list.create')}
-          </Button>
-        </div>
-      </div>
+      <SectionHeader
+        icon={<Files className="size-4" />}
+        title={t('delivery.configs.list.title')}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={onOpenTrash}>
+              <Trash2 className="size-3.5" aria-hidden />
+              {t('delivery.configs.list.trash')}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setCreateError(null)
+                setCreateOpen(true)
+              }}
+            >
+              {t('delivery.configs.list.create')}
+            </Button>
+          </>
+        }
+      />
+
+      {summaryItems.length > 0 && <SummaryStrip items={summaryItems} />}
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
