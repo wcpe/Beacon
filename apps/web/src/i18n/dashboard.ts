@@ -3,6 +3,39 @@ export const dashboard = {
   mission: '一屏看全局：健康、玩家流、连接流、告警、调度概览；只看不改，异常可下钻到对应页',
   loadFailed: '加载失败',
   retry: '重试',
+  // 顶部 KPI 卡行
+  kpi: {
+    schedulable: '可调度服务器',
+    schedulableHint: '健康可接量',
+    online: '代理 / 子服在线',
+    proxy: '代理',
+    backend: '子服',
+    players: '在线玩家',
+    playersHint: '当前在线玩家总数',
+    avgTps: '平均 TPS',
+    target: '目标',
+    avgCpu: '平均 CPU',
+    units: '台',
+    distribution: '健康等级分布',
+    levelHealthy: '健康',
+    levelDegraded: '亚健康',
+    levelUnhealthy: '不健康',
+  },
+  // 服务器状态墙
+  wall: {
+    title: '服务器状态墙',
+    viewAll: '查看全部',
+    server: '服务器',
+    zone: '大区 / 小区',
+    status: '状态',
+    score: '健康分',
+    online: '在线',
+    degraded: '降级',
+    critical: '危急',
+    offline: '离线',
+    unassigned: '未分配',
+    empty: '暂无服务器，接入后展示状态墙',
+  },
   // 集群健康总览
   health: {
     title: '集群健康总览',
@@ -33,6 +66,9 @@ export const dashboard = {
     peakOnline: '峰值在线',
     totalOpens: '累计接入',
     totalAbnormal: '异常断开',
+    detail: '明细',
+    currentPlayers: '当前玩家',
+    currentOpens: '当前连接',
   },
   // 告警概览
   alerts: {
@@ -40,6 +76,7 @@ export const dashboard = {
     open: '待处理',
     critical: '严重',
     warning: '警告',
+    info: '提示',
     empty: '当前无未处理告警',
     viewAll: '查看告警事件',
     latest: '最新告警',
@@ -47,8 +84,11 @@ export const dashboard = {
   // 调度概览
   sched: {
     title: '调度概览',
+    window1h: '近 1 小时',
     total: '决策总数',
     successRate: '成功率',
+    landed: '成功落位',
+    retried: '失败重试',
     localFallback: '本地降级占比',
     failTop: '失败原因 Top',
     empty: '当前时间窗内无调度决策',

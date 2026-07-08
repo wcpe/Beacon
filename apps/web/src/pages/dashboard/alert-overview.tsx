@@ -1,23 +1,30 @@
-// 告警概览卡：待处理 / 严重告警计数 + 最新几条告警摘要，下钻到 /alert-events。
-// 数据源 alert-events 列表（取首页派生计数与最新条目）。
+// 告警概览卡（对齐 B 版）：图标标题 + 未处理数 + 危急/警告/提示计数药丸 + 最新告警列表
+// （左侧等级图标框 + 服务器名 + 摘要）。下钻到 /alert-events。数据源 alert-events 列表。
 
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
-import { BellRing, TriangleAlert } from 'lucide-react'
+import { CircleAlert, Info, TriangleAlert } from 'lucide-react'
 
-import {
-  AsyncSection,
-  CardGridSkeleton,
-  IconStat,
-  SectionHeader,
-  countLevel,
-} from '@beacon/ui'
+import { AsyncSection, Badge, CardGridSkeleton, cn } from '@beacon/ui'
+import type { AlertEventItem } from '@beacon/devmock'
 
 import { fetchAlertEvents } from '../../api/observability'
 
-const ICON = 'h-4 w-4'
+// 告警等级 → 图标框样式 + 图标。
+const SEV_META: Record<
+  string,
+  { box: string; icon: typeof CircleAlert }
+> = {
+  critical: { box: 'bg-crit-bg text-crit', icon: CircleAlert },
+  warning: { box: 'bg-warn-bg text-warn', icon: TriangleAlert },
+  info: { box: 'bg-brand-50 text-brand', icon: Info },
+}
+
+function sevMeta(level: string) {
+  return SEV_META[level] ?? SEV_META.info
+}
 
 export default function AlertOverview() {
   const { t } = useTranslation()
@@ -29,15 +36,25 @@ export default function AlertOverview() {
 
   const openItems = items.filter((i) => i.status === 'open')
   const criticalOpen = openItems.filter((i) => i.level === 'critical').length
-  const latest = openItems.slice(0, 3)
+  const warningOpen = openItems.filter((i) => i.level === 'warning').length
+  const infoOpen = openItems.filter((i) => i.level !== 'critical' && i.level !== 'warning').length
+  const latest: AlertEventItem[] = openItems.slice(0, 5)
 
   return (
-    <section className="grid gap-3 rounded-lg border p-4">
-      <div className="flex items-center justify-between">
-        <SectionHeader title={t('dashboard.alerts.title')} />
-        <Link className="text-xs text-primary hover:underline" to="/alert-events">
-          {t('dashboard.alerts.viewAll')}
-        </Link>
+    <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-[26px] place-items-center rounded-lg bg-crit-bg text-crit">
+          <TriangleAlert className="size-[15px]" />
+        </span>
+        <h2 className="text-[13px] font-semibold text-ink-1">{t('dashboard.alerts.title')}</h2>
+        <span className="text-[11px] text-ink-4">
+          {t('dashboard.alerts.open')} {openItems.length}
+        </span>
+        <div className="ml-auto flex gap-2">
+          {criticalOpen > 0 && <Badge variant="crit">{t('dashboard.alerts.critical')} {criticalOpen}</Badge>}
+          {warningOpen > 0 && <Badge variant="warn">{t('dashboard.alerts.warning')} {warningOpen}</Badge>}
+          {infoOpen > 0 && <Badge variant="brand">{t('dashboard.alerts.info')} {infoOpen}</Badge>}
+        </div>
       </div>
       <AsyncSection
         isLoading={query.isLoading}
@@ -46,33 +63,42 @@ export default function AlertOverview() {
         skeleton={<CardGridSkeleton count={2} />}
       >
         {openItems.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('dashboard.alerts.empty')}</p>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-ink-3">{t('dashboard.alerts.empty')}</p>
+            <Link className="text-xs text-brand-600 hover:underline" to="/alert-events">
+              {t('dashboard.alerts.viewAll')}
+            </Link>
+          </div>
         ) : (
-          <div className="grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <IconStat
-                icon={<BellRing className={ICON} />}
-                label={t('dashboard.alerts.open')}
-                value={openItems.length}
-                level={countLevel(openItems.length)}
-              />
-              <IconStat
-                icon={<TriangleAlert className={ICON} />}
-                label={t('dashboard.alerts.critical')}
-                value={criticalOpen}
-                level={countLevel(criticalOpen)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <span className="text-xs text-muted-foreground">{t('dashboard.alerts.latest')}</span>
-              <ul className="grid gap-1">
-                {latest.map((item) => (
-                  <li key={item.id} className="truncate text-xs">
-                    <span className="font-mono text-muted-foreground">{item.serverId}</span> · {item.message}
+          <div className="grid gap-2">
+            <ul className="flex flex-col">
+              {latest.map((item) => {
+                const meta = sevMeta(item.level)
+                const Icon = meta.icon
+                return (
+                  <li
+                    key={item.id}
+                    className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+                  >
+                    <span className={cn('grid size-[30px] shrink-0 place-items-center rounded-lg', meta.box)}>
+                      <Icon className="size-[15px]" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[12.5px] text-ink-2">
+                        <span className="font-semibold text-brand-600">{item.serverId}</span> ·{' '}
+                        {item.message}
+                      </div>
+                    </div>
                   </li>
-                ))}
-              </ul>
-            </div>
+                )
+              })}
+            </ul>
+            <Link
+              className="text-xs text-brand-600 hover:underline"
+              to="/alert-events"
+            >
+              {t('dashboard.alerts.viewAll')}
+            </Link>
           </div>
         )}
       </AsyncSection>
