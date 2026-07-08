@@ -148,6 +148,8 @@ export const observability = {
       acknowledge: '确认',
       resolve: '标记已处理',
     },
+    detailTitle: '告警详情',
+    listTitle: '告警事件',
     handleTitle: '处理告警',
     handleAckDesc: '确认后该告警标记为「已确认」，表示已知悉正在跟进。',
     handleResolveDesc: '标记已处理需填写处理备注，说明如何消除该告警。',

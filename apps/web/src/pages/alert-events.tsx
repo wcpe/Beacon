@@ -1,15 +1,13 @@
-// 告警事件页（/alert-events）：告警事件列表与处理状态。
-// KPI + 过滤列表（级别/类型/状态 + 分页）+ 行内确认 / 标记已处理写闭环；与 /audits、/servers 互跳（FR-157）。
+// 告警事件页（/alert-events）：主从布局——KPI + 主列（吸顶过滤 + 自区滚列表 + 分页），右侧非模态详情面板。
+// 详情面板内完成确认 / 标记已处理写闭环，状态即时更新；与 /audits、/servers 互跳（FR-157）。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
-import { ArrowUpRight, TriangleAlert } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 
 import {
   AsyncSection,
   Badge,
-  Button,
   DataTable,
   SectionHeader,
   TableSkeleton,
@@ -20,9 +18,11 @@ import type { AlertEventItem } from '@beacon/devmock'
 import { ApiClientError } from '../api/http'
 import { fetchAlertEvents, handleAlertEvent } from '../api/observability'
 import FilterSelect from '../features/observability/filter-select'
+import ListCard from '../features/observability/list-card'
+import MasterDetail from '../features/observability/master-detail'
 import Pager from '../features/observability/pager'
+import AlertDetailPanel, { type HandleIntent } from './alert-events/alert-detail-panel'
 import AlertKpi from './alert-events/alert-kpi'
-import HandleDialog, { type HandleIntent } from './alert-events/handle-dialog'
 
 const PAGE_SIZE = 15
 const LEVELS = ['info', 'warning', 'critical'] as const
@@ -51,12 +51,6 @@ function statusBadgeVariant(status: AlertEventItem['status']): 'crit' | 'ok' | '
   return 'off'
 }
 
-// 处理动作意图（携带目标行）
-interface HandleAction {
-  intent: HandleIntent
-  row: AlertEventItem
-}
-
 export default function AlertEventsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -65,7 +59,7 @@ export default function AlertEventsPage() {
   const [type, setType] = useState('all')
   const [status, setStatus] = useState('all')
   const [page, setPage] = useState(1)
-  const [action, setAction] = useState<HandleAction | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
 
   const query = useQuery({
@@ -89,15 +83,20 @@ export default function AlertEventsPage() {
     return items.filter((row) => row.status === status)
   }, [query.data, status])
 
+  // 选中行从最新数据派生，写操作后状态即时反映到详情面板
+  const selected = useMemo(
+    () => (query.data?.items ?? []).find((row) => row.id === selectedId) ?? null,
+    [query.data, selectedId],
+  )
+
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   const mutation = useMutation({
-    mutationFn: ({ row, intent, note }: { row: AlertEventItem; intent: HandleIntent; note: string }) =>
-      handleAlertEvent(row.id, { status: intent, note: note === '' ? undefined : note }),
+    mutationFn: ({ id, intent, note }: { id: number; intent: HandleIntent; note: string }) =>
+      handleAlertEvent(id, { status: intent, note: note === '' ? undefined : note }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['alert-events'] })
-      setAction(null)
     },
     onError: (error) => {
       setErrorText(error instanceof ApiClientError ? error.message : String(error))
@@ -113,9 +112,7 @@ export default function AlertEventsPage() {
       {
         header: t('observability.alertEvents.columns.level'),
         cell: (row) => (
-          <Badge variant={levelBadgeVariant(row.level)}>
-            {t(`observability.alertEvents.level.${row.level}`)}
-          </Badge>
+          <Badge variant={levelBadgeVariant(row.level)}>{t(`observability.alertEvents.level.${row.level}`)}</Badge>
         ),
       },
       {
@@ -130,69 +127,24 @@ export default function AlertEventsPage() {
       {
         header: t('observability.alertEvents.columns.status'),
         cell: (row) => (
-          <Badge variant={statusBadgeVariant(row.status)}>
-            {t(`observability.alertEvents.status.${row.status}`)}
-          </Badge>
+          <Badge variant={statusBadgeVariant(row.status)}>{t(`observability.alertEvents.status.${row.status}`)}</Badge>
         ),
-      },
-      {
-        header: t('observability.alertEvents.columns.actions'),
-        cell: (row) =>
-          row.status === 'open' ? (
-            <div className="flex flex-wrap gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setErrorText(null)
-                  setAction({ intent: 'acknowledged', row })
-                }}
-              >
-                {t('observability.alertEvents.actions.acknowledge')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setErrorText(null)
-                  setAction({ intent: 'resolved', row })
-                }}
-              >
-                {t('observability.alertEvents.actions.resolve')}
-              </Button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3 text-xs">
-              <Link
-                className="inline-flex items-center gap-0.5 text-brand-600 hover:underline"
-                to={`/audits?targetRef=${row.serverId}`}
-              >
-                {t('observability.alertEvents.viewInAudits')}
-                <ArrowUpRight className="size-3" />
-              </Link>
-              <Link
-                className="inline-flex items-center gap-0.5 text-brand-600 hover:underline"
-                to="/servers"
-              >
-                {t('observability.alertEvents.viewInServers')}
-                <ArrowUpRight className="size-3" />
-              </Link>
-            </div>
-          ),
       },
     ],
     [t],
   )
 
-  return (
-    <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
-        icon={<TriangleAlert className="size-5" />}
-        title={t('nav.alertEvents')}
-        count={t('observability.alertEvents.mission')}
-      />
-      <AlertKpi total={total} items={query.data?.items ?? []} />
-
+  const toolbar = (
+    <div className="grid gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <TriangleAlert className="size-[15px]" />
+          </span>
+          {t('observability.alertEvents.listTitle')}
+        </span>
+        {total > 0 && <span className="text-xs text-ink-3">{t('observability.common.total', { count: total })}</span>}
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <FilterSelect
           label={t('observability.alertEvents.filterLevel')}
@@ -222,39 +174,71 @@ export default function AlertEventsPage() {
           }}
         />
       </div>
+    </div>
+  )
 
-      <AsyncSection
-        isLoading={query.isLoading}
-        isError={query.isError}
-        error={query.error}
-        skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+  const master = (
+    <div className="grid gap-3.5">
+      <AlertKpi total={total} items={query.data?.items ?? []} />
+      <ListCard
+        toolbar={toolbar}
+        footer={
+          total > PAGE_SIZE ? (
+            <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+          ) : undefined
+        }
       >
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-card">
+        <AsyncSection
+          isLoading={query.isLoading}
+          isError={query.isError}
+          error={query.error}
+          skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+        >
           <DataTable
             columns={columns}
             rows={rows}
             rowKey={(row) => String(row.id)}
             emptyText={t('observability.alertEvents.listEmpty')}
             density="compact"
+            onRowClick={(row) => {
+              setErrorText(null)
+              setSelectedId(row.id)
+            }}
+            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
           />
-        </div>
-      </AsyncSection>
+        </AsyncSection>
+      </ListCard>
+    </div>
+  )
 
-      {total > PAGE_SIZE && <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />}
-
-      <HandleDialog
-        intent={action?.intent ?? null}
-        pending={mutation.isPending}
-        errorText={errorText}
-        onOpenChange={(open) => {
-          if (!open) {
-            setAction(null)
-          }
-        }}
-        onConfirm={(note) => {
-          if (action) {
-            mutation.mutate({ row: action.row, intent: action.intent, note })
-          }
+  return (
+    <section className="grid gap-5">
+      <SectionHeader
+        size="lg"
+        icon={<TriangleAlert className="size-5" />}
+        title={t('nav.alertEvents')}
+        count={t('observability.alertEvents.mission')}
+      />
+      <MasterDetail
+        master={master}
+        detail={
+          selected ? (
+            <AlertDetailPanel
+              item={selected}
+              pending={mutation.isPending}
+              errorText={errorText}
+              onHandle={(intent, note) => {
+                setErrorText(null)
+                mutation.mutate({ id: selected.id, intent, note })
+              }}
+            />
+          ) : null
+        }
+        detailTitle={t('observability.alertEvents.detailTitle')}
+        closeLabel={t('observability.common.close')}
+        onClose={() => {
+          setSelectedId(null)
+          setErrorText(null)
         }}
       />
     </section>

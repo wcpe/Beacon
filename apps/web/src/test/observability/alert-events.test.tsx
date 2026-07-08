@@ -1,5 +1,5 @@
 // /alert-events 告警事件页测试：KPI + 列表渲染、空态、确认写闭环（状态变化可见）。
-import { screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -35,7 +35,7 @@ describe('/alert-events 告警事件页', () => {
     expect(await screen.findByText('当前筛选条件下无告警事件')).toBeInTheDocument()
   })
 
-  it('确认待处理告警后状态徽标更新为已确认（写闭环）', async () => {
+  it('点行开右侧非模态详情面板并确认待处理告警（写闭环）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<AlertEventsPage />)
@@ -48,16 +48,23 @@ describe('/alert-events 告警事件页', () => {
       expect(tr).not.toBeNull()
       row = tr
     })
-    const scoped = within(row as unknown as HTMLElement)
 
-    // 点确认 → 打开处理弹窗 → 确认
-    await user.click(scoped.getByRole('button', { name: '确认' }))
-    const dialog = await screen.findByRole('dialog')
-    await user.click(within(dialog).getByRole('button', { name: '确认' }))
-
-    // 该行状态徽标变为「已确认」
+    // 点行 → 右侧非模态详情面板出现（不产生模态遮罩层）
+    await user.click(row as unknown as HTMLElement)
     await waitFor(() => {
-      expect(within(row as unknown as HTMLElement).getByText('已确认')).toBeInTheDocument()
+      expect(screen.getByText('告警详情')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    // 面板内点「确认」完成写闭环
+    await user.click(screen.getByRole('button', { name: '确认' }))
+
+    // 详情面板内状态徽标更新为「已确认」（选中行从最新数据派生；排除筛选下拉的同名 option）
+    await waitFor(() => {
+      const acknowledged = screen
+        .getAllByText('已确认')
+        .filter((el) => el.tagName !== 'OPTION')
+      expect(acknowledged.length).toBeGreaterThan(0)
     })
   })
 })
