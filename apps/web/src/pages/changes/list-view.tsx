@@ -3,11 +3,14 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { ClipboardList, Plus } from 'lucide-react'
+
 import {
   AsyncSection,
   Button,
   DataTable,
   Input,
+  SectionHeader,
   Select,
   SelectContent,
   SelectItem,
@@ -132,17 +135,22 @@ export default function ListView({ namespaceId, onOpen }: ListViewProps) {
 
   return (
     <section className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <Button
-          size="sm"
-          onClick={() => {
-            setCreateError(null)
-            setCreateOpen(true)
-          }}
-        >
-          {t('delivery.changes.list.create')}
-        </Button>
-      </div>
+      <SectionHeader
+        icon={<ClipboardList className="size-4" />}
+        title={t('delivery.changes.list.title')}
+        actions={
+          <Button
+            size="sm"
+            onClick={() => {
+              setCreateError(null)
+              setCreateOpen(true)
+            }}
+          >
+            <Plus className="size-4" />
+            {t('delivery.changes.list.create')}
+          </Button>
+        }
+      />
 
       {/* 筛选条：状态 + 标题搜索 */}
       <div className="flex flex-wrap items-center gap-2">

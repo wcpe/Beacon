@@ -273,7 +273,7 @@ export const delivery = {
     title: '变更单',
     // 列表
     list: {
-      title: '变更单',
+      title: '变更单列表',
       empty: '暂无变更单，点「新建变更单」发起一次交付',
       create: '新建变更单',
       keyword: '搜索标题',

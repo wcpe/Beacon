@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { ChevronLeft } from 'lucide-react'
+
 import {
   AsyncSection,
   Button,
-  SectionHeader,
   Tabs,
   TabsContent,
   TabsList,
@@ -112,6 +113,7 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
     <section className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button variant="ghost" size="sm" onClick={onBack}>
+          <ChevronLeft className="size-4" />
           {t('delivery.changes.detail.backToList')}
         </Button>
       </div>
@@ -119,20 +121,20 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         {order && (
           <div className="grid gap-4">
-            {/* 标题 + 状态徽标 */}
-            <div className="flex flex-wrap items-center gap-3">
-              <SectionHeader size="lg" title={order.title} />
-              <OrderStatusBadge status={order.status} />
+            {/* 标题 + 状态徽标 + 生命周期操作区（软卡片头部，一眼看清是哪张单、什么状态、能做什么） */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-lg font-semibold text-ink-1">{order.title}</h2>
+                <OrderStatusBadge status={order.status} />
+              </div>
+              <LifecycleActions
+                order={order}
+                onPick={(kind) => {
+                  setErrorText(null)
+                  setAction(kind)
+                }}
+              />
             </div>
-
-            {/* 生命周期操作区 */}
-            <LifecycleActions
-              order={order}
-              onPick={(kind) => {
-                setErrorText(null)
-                setAction(kind)
-              }}
-            />
 
             {/* Tabs */}
             <Tabs defaultValue="items">

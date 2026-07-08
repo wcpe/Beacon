@@ -72,9 +72,15 @@ export default function ImpactTab({ orderId }: ImpactTabProps) {
         header: t('delivery.changes.detail.impact.columns.online'),
         cell: (row) =>
           row.online ? (
-            <Badge variant="secondary">{t('delivery.changes.detail.impact.online')}</Badge>
+            <Badge variant="ok" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" aria-hidden />
+              {t('delivery.changes.detail.impact.online')}
+            </Badge>
           ) : (
-            <Badge variant="outline">{t('delivery.changes.detail.impact.offline')}</Badge>
+            <Badge variant="off" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" aria-hidden />
+              {t('delivery.changes.detail.impact.offline')}
+            </Badge>
           ),
       },
       { header: t('delivery.changes.detail.impact.columns.level'), cell: (row) => row.level },
@@ -96,10 +102,15 @@ export default function ImpactTab({ orderId }: ImpactTabProps) {
         {/* 批次划分 */}
         {summary && summary.batches.length > 0 && (
           <div className="grid gap-1.5">
-            <h4 className="text-sm font-medium">{t('delivery.changes.detail.impact.batchesTitle')}</h4>
-            <ul className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+            <h4 className="text-[13px] font-semibold text-ink-2">
+              {t('delivery.changes.detail.impact.batchesTitle')}
+            </h4>
+            <ul className="flex flex-wrap gap-2 text-sm">
               {summary.batches.map((b) => (
-                <li key={b.batchNo} className="rounded-md bg-secondary px-3 py-1">
+                <li
+                  key={b.batchNo}
+                  className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-1 text-brand-600 tnum"
+                >
                   {t('delivery.changes.detail.impact.batchLine', { no: b.batchNo, count: b.count })}
                 </li>
               ))}
@@ -109,7 +120,9 @@ export default function ImpactTab({ orderId }: ImpactTabProps) {
 
         {/* 逐目标分页表 */}
         <div className="grid gap-2">
-          <h4 className="text-sm font-medium">{t('delivery.changes.detail.impact.targetsTitle')}</h4>
+          <h4 className="text-[13px] font-semibold text-ink-2">
+            {t('delivery.changes.detail.impact.targetsTitle')}
+          </h4>
           <DataTable
             columns={columns}
             rows={query.data?.targets.items}

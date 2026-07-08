@@ -16,7 +16,7 @@ export default function ChangesPage() {
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
-    <section className="grid gap-6">
+    <section className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SectionHeader size="lg" title={t('delivery.changes.title')} />
         <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
