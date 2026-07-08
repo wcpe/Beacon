@@ -55,4 +55,24 @@ describe('/service-analysis 服务分析页', () => {
     })
     expect(screen.getByLabelText('指标')).toBeInTheDocument()
   })
+
+  it('搜索关键词过滤左侧服务器清单', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServiceAnalysisPage />)
+
+    await screen.findByText('选择服务器（可多选对比）')
+    // 首屏应含 lobby-* 与 game-* 在线子服
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: 'lobby-1' })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('checkbox', { name: 'game-1' })).toBeInTheDocument()
+
+    // 搜索 lobby 后仅剩 lobby-* 候选
+    await user.type(screen.getByLabelText('搜索 serverId'), 'lobby')
+    await waitFor(() => {
+      expect(screen.queryByRole('checkbox', { name: 'game-1' })).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('checkbox', { name: 'lobby-1' })).toBeInTheDocument()
+  })
 })

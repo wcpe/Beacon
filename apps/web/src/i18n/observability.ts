@@ -16,6 +16,8 @@ export const observability = {
   serviceAnalysis: {
     mission: '指标聚合、趋势与对比',
     pickServers: '选择服务器（可多选对比）',
+    searchServers: '搜索 serverId',
+    searchEmpty: '无匹配的在线子服',
     pickHint: '至少选择一台在线子服查看指标时序',
     empty: '暂无在线子服可供分析，接入并分配子服后展示指标时序',
     onlineCount: '{{count}} 台在线',

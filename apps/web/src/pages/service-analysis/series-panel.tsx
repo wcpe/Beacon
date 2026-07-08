@@ -83,26 +83,30 @@ export default function SeriesPanel({
 
   return (
     <section className="grid gap-3">
-      <SectionHeader
-        icon={<TrendingUp className="size-4" />}
-        title={t('observability.serviceAnalysis.seriesTitle')}
-        actions={
-          <>
-            <FilterSelectMetric metric={metric} onChange={onMetricChange} metricLabel={metricLabel} />
-            <FilterSelect
-              label={t('observability.serviceAnalysis.step')}
-              value={String(step)}
-              options={[
-                { value: '60', label: t('observability.serviceAnalysis.step1m') },
-                { value: '300', label: t('observability.serviceAnalysis.step5m') },
-              ]}
-              onChange={(value) => {
-                onStepChange(Number.parseInt(value, 10))
-              }}
-            />
-          </>
-        }
-      />
+      {/* 指标 / 步长控制条吸顶常驻：对比入口始终可见，选服后无需下滚 */}
+      <div className="sticky top-0 z-10 -mx-1 bg-surface-2/95 px-1 py-1 backdrop-blur supports-backdrop-filter:bg-surface-2/80">
+        <SectionHeader
+          icon={<TrendingUp className="size-4" />}
+          title={t('observability.serviceAnalysis.seriesTitle')}
+          count={serverIds.length > 1 ? t('observability.serviceAnalysis.selectedCount', { count: serverIds.length }) : undefined}
+          actions={
+            <>
+              <FilterSelectMetric metric={metric} onChange={onMetricChange} metricLabel={metricLabel} />
+              <FilterSelect
+                label={t('observability.serviceAnalysis.step')}
+                value={String(step)}
+                options={[
+                  { value: '60', label: t('observability.serviceAnalysis.step1m') },
+                  { value: '300', label: t('observability.serviceAnalysis.step5m') },
+                ]}
+                onChange={(value) => {
+                  onStepChange(Number.parseInt(value, 10))
+                }}
+              />
+            </>
+          }
+        />
+      </div>
 
       <AsyncSection
         isLoading={query.isLoading}
