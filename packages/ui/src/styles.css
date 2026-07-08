@@ -3,6 +3,12 @@
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
 
+/* 显式把 @beacon/ui 组件源纳入 Tailwind 内容扫描：
+   consumer（apps/web / ui-wiki）的 vite 自动检测以各自 cwd 为根、不含本包，
+   导致组件里独有的工具类（复合变体 / 任意值阴影等）不被生成、静默失效。
+   路径相对本样式文件所在目录（packages/ui/src）解析。 */
+@source './components';
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -246,5 +252,39 @@
   }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+
+  /* 应用背景：给整屏加层次与品牌微光（消除「平灰」，衬白卡片浮起）。
+     左上靛蓝光晕 + 右上蓝紫光晕 + 顶部提亮渐变，固定不随滚动，克制不喧宾夺主。 */
+  .app-bg {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(
+        1000px 520px at 8% -10%,
+        color-mix(in oklch, var(--brand) 12%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 460px at 98% -8%,
+        color-mix(in oklch, var(--chart-3) 9%, transparent),
+        transparent 56%
+      ),
+      linear-gradient(180deg, oklch(0.995 0.004 264), transparent 40%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+  }
+  .dark .app-bg {
+    background-image:
+      radial-gradient(
+        1000px 520px at 8% -10%,
+        color-mix(in oklch, var(--brand) 22%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 460px at 98% -8%,
+        color-mix(in oklch, var(--chart-3) 16%, transparent),
+        transparent 56%
+      ),
+      linear-gradient(180deg, oklch(0.22 0.02 277), transparent 42%);
   }
 }

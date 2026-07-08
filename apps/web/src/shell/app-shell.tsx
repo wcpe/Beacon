@@ -22,7 +22,7 @@ export default function AppShell() {
   }, [queryClient])
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="app-bg min-h-screen text-foreground">
       <Sidebar />
       <main className={sidebarCollapsed ? undefined : 'md:pl-[232px]'}>
         <Header />
