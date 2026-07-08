@@ -117,75 +117,89 @@ export default function EdgesPanel() {
         ]}
       />
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
-          columns={columns}
-          rows={edges}
-          rowKey={(edge) => edgeKey(edge)}
-          emptyText={t('cluster.topology.edges.empty')}
-          density="compact"
-          pageSize={20}
-          onRowClick={(edge) => {
-            setSelectedKey(edgeKey(edge))
-          }}
-          rowClassName={(edge) => (edge.failRatePercent >= ABNORMAL_RATE ? 'bg-crit-bg' : undefined)}
-        />
-
-        {/* 链路明细：样本消息 + 主要失败原因 + 互跳入口 */}
-        {selected && (
-          <div className="grid gap-2.5 rounded-lg border border-border bg-surface-2 px-3 py-3 text-sm">
-            <p className="flex items-center gap-1.5 font-semibold text-ink-1">
-              <GitCompareArrows className="size-3.5 text-brand" />
-              {t('cluster.topology.edges.detailTitle')}
-            </p>
-            <p className="flex items-center gap-1 font-mono text-xs text-ink-2">
-              {selected.sourceServerId}
-              <ArrowRight className="size-3 text-ink-4" />
-              {selected.resolvedServerId}
-            </p>
-
-            {selected.topFailReasons.length > 0 && (
-              <div>
-                <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
-                  {t('cluster.topology.edges.topReasons')}
-                </p>
-                <ul className="mt-1.5 flex flex-wrap gap-1.5">
-                  {selected.topFailReasons.map((reason) => (
-                    <li key={reason.reason}>
-                      <Badge variant="crit" className="tnum">
-                        {reason.reason} · {reason.count}
-                      </Badge>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div>
-              <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
-                {t('cluster.topology.edges.sampleMessages')}
-              </p>
-              <ul className="mt-1 grid gap-0.5">
-                {selected.sampleMessageIds.map((id) => (
-                  <li key={id} className="font-mono text-xs text-ink-3">
-                    {id}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* 与 /commands、/audits 互跳（FR-157） */}
-            <div className="flex gap-3 pt-1 text-xs">
-              <Link className="flex items-center gap-1 text-brand-600 hover:underline" to="/commands">
-                <ExternalLink className="size-3" />
-                {t('cluster.topology.edges.viewInCommands')}
-              </Link>
-              <Link className="flex items-center gap-1 text-brand-600 hover:underline" to="/audits">
-                <ExternalLink className="size-3" />
-                {t('cluster.topology.edges.viewInAudits')}
-              </Link>
-            </div>
+        {/* 主从布局：链路表占主区，选中明细进右侧固定侧面板（不落页面底部、不 reflow 主区） */}
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <DataTable
+              columns={columns}
+              rows={edges}
+              rowKey={(edge) => edgeKey(edge)}
+              emptyText={t('cluster.topology.edges.empty')}
+              density="compact"
+              pageSize={20}
+              onRowClick={(edge) => {
+                setSelectedKey(edgeKey(edge))
+              }}
+              rowClassName={(edge) =>
+                cn(
+                  edge.failRatePercent >= ABNORMAL_RATE && 'bg-crit-bg',
+                  edgeKey(edge) === selectedKey && 'ring-1 ring-brand ring-inset',
+                )
+              }
+            />
           </div>
-        )}
+
+          {/* 链路明细固定侧面板：常驻布局列，选中链路在此展示明细 + 互跳入口，图不被推动 */}
+          <aside className="w-[248px] shrink-0 self-start rounded-lg border border-border bg-surface-2 p-3 text-sm">
+            {selected ? (
+              <div className="grid gap-2.5">
+                <p className="flex items-center gap-1.5 font-semibold text-ink-1">
+                  <GitCompareArrows className="size-3.5 text-brand" />
+                  {t('cluster.topology.edges.detailTitle')}
+                </p>
+                <p className="flex items-center gap-1 font-mono text-xs text-ink-2">
+                  <span className="truncate">{selected.sourceServerId}</span>
+                  <ArrowRight className="size-3 shrink-0 text-ink-4" />
+                  <span className="truncate">{selected.resolvedServerId}</span>
+                </p>
+
+                {selected.topFailReasons.length > 0 && (
+                  <div>
+                    <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                      {t('cluster.topology.edges.topReasons')}
+                    </p>
+                    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+                      {selected.topFailReasons.map((reason) => (
+                        <li key={reason.reason}>
+                          <Badge variant="crit" className="tnum">
+                            {reason.reason} · {reason.count}
+                          </Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div>
+                  <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                    {t('cluster.topology.edges.sampleMessages')}
+                  </p>
+                  <ul className="mt-1 grid gap-0.5">
+                    {selected.sampleMessageIds.map((id) => (
+                      <li key={id} className="truncate font-mono text-xs text-ink-3">
+                        {id}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {/* 与 /commands、/audits 互跳（FR-157） */}
+                <div className="flex flex-wrap gap-3 pt-1 text-xs">
+                  <Link className="flex items-center gap-1 text-brand-600 hover:underline" to="/commands">
+                    <ExternalLink className="size-3" />
+                    {t('cluster.topology.edges.viewInCommands')}
+                  </Link>
+                  <Link className="flex items-center gap-1 text-brand-600 hover:underline" to="/audits">
+                    <ExternalLink className="size-3" />
+                    {t('cluster.topology.edges.viewInAudits')}
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <p className="py-6 text-center text-xs text-ink-4">{t('cluster.topology.graph.detailEmpty')}</p>
+            )}
+          </aside>
+        </div>
       </AsyncSection>
     </section>
   )
