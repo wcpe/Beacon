@@ -289,6 +289,13 @@ export const system = {
     },
     never: '永不过期',
     neverUsed: '未使用',
+    // 顶部汇总
+    summary: {
+      total: '密钥总数',
+      active: '生效',
+      expired: '已过期',
+      revoked: '已吊销',
+    },
     empty: '暂无 API 密钥，点击「创建密钥」新增第一把',
     loadFail: '密钥列表加载失败',
     // 创建

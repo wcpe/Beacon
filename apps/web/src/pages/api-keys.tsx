@@ -3,6 +3,8 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
+import { KeyRound } from 'lucide-react'
+
 import {
   AsyncSection,
   Badge,
@@ -10,8 +12,10 @@ import {
   DataTable,
   DestructiveConfirmDialog,
   SectionHeader,
+  SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
+  type SummaryItem,
 } from '@beacon/ui'
 import type { ApiKeyItem } from '@beacon/devmock'
 
@@ -85,8 +89,9 @@ export default function ApiKeysPage() {
     },
   })
 
-  const statusTone = (status: ApiKeyItem['status']): 'secondary' | 'outline' | 'destructive' =>
-    status === 'active' ? 'secondary' : status === 'expired' ? 'outline' : 'destructive'
+  // 密钥状态 → 语义药丸变体：生效绿 / 已过期灰 / 已吊销红。
+  const statusTone = (status: ApiKeyItem['status']): 'ok' | 'off' | 'crit' =>
+    status === 'active' ? 'ok' : status === 'expired' ? 'off' : 'crit'
 
   const columns = useMemo<DataTableColumn<ApiKeyItem>[]>(
     () => [
@@ -98,7 +103,12 @@ export default function ApiKeysPage() {
       },
       {
         header: t('system.apiKeys.columns.status'),
-        cell: (row) => <Badge variant={statusTone(row.status)}>{t(`system.apiKeys.status.${row.status}`)}</Badge>,
+        cell: (row) => (
+          <Badge variant={statusTone(row.status)} className="gap-1.5">
+            <span className="size-1.5 rounded-full bg-current" />
+            {t(`system.apiKeys.status.${row.status}`)}
+          </Badge>
+        ),
       },
       { header: t('system.apiKeys.columns.createdAt'), cell: (row) => formatIso(row.createdAt) },
       {
@@ -144,19 +154,52 @@ export default function ApiKeysPage() {
   const revoking = confirm?.kind === 'revoke' ? confirm.row : null
   const resetting = confirm?.kind === 'reset' ? confirm.row : null
 
+  // 顶部汇总：总数 / 生效 / 已过期 / 已吊销
+  const items = query.data?.items ?? []
+  const summary: SummaryItem[] = useMemo(() => {
+    const rows = query.data?.items ?? []
+    if (rows.length === 0) {
+      return []
+    }
+    return [
+      { label: t('system.apiKeys.summary.total'), value: rows.length },
+      {
+        label: t('system.apiKeys.summary.active'),
+        value: rows.filter((r) => r.status === 'active').length,
+        tone: 'success',
+      },
+      {
+        label: t('system.apiKeys.summary.expired'),
+        value: rows.filter((r) => r.status === 'expired').length,
+        tone: 'muted',
+      },
+      {
+        label: t('system.apiKeys.summary.revoked'),
+        value: rows.filter((r) => r.status === 'revoked').length,
+        tone: 'danger',
+      },
+    ]
+  }, [query.data, t])
+
   return (
     <section className="grid gap-4">
-      <div className="flex items-center justify-between">
-        <SectionHeader size="lg" title={t('nav.apiKeys')} />
-        <Button
-          onClick={() => {
-            setCreateError(null)
-            setCreateOpen(true)
-          }}
-        >
-          {t('system.apiKeys.create')}
-        </Button>
-      </div>
+      <SectionHeader
+        size="lg"
+        icon={<KeyRound className="size-5" />}
+        title={t('nav.apiKeys')}
+        actions={
+          <Button
+            onClick={() => {
+              setCreateError(null)
+              setCreateOpen(true)
+            }}
+          >
+            {t('system.apiKeys.create')}
+          </Button>
+        }
+      />
+
+      {items.length > 0 && <SummaryStrip items={summary} />}
 
       <AsyncSection
         isLoading={query.isLoading}
