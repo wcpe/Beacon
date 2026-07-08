@@ -33,7 +33,7 @@ export default function MasterDetail({
     <div
       className={cn(
         'grid gap-4',
-        open ? 'lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_26rem]' : 'grid-cols-1',
+        open ? 'lg:grid-cols-[minmax(0,1fr)_28rem] xl:grid-cols-[minmax(0,1fr)_32rem]' : 'grid-cols-1',
       )}
     >
       {/* 主列：始终占据剩余宽度，min-w-0 防止内容撑破网格 */}
