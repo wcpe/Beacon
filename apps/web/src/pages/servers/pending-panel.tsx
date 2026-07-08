@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Network, Server, UserPlus } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -10,7 +11,7 @@ import {
   Checkbox,
   DataTable,
   Label,
-  SectionHeader,
+  cn,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { AgentIdentityItem } from '@beacon/devmock'
@@ -65,23 +66,53 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
     },
   })
 
+  const pendingCount = query.data?.items.length ?? 0
+
   const columns = useMemo<DataTableColumn<AgentIdentityItem>[]>(
     () => [
-      { header: t('cluster.servers.columns.serverId'), cell: (row) => <span className="font-mono">{row.serverId}</span> },
-      { header: t('cluster.servers.columns.namespace'), cell: (row) => `#${String(row.namespaceId)}` },
+      {
+        header: t('cluster.servers.columns.serverId'),
+        cell: (row) => {
+          const isProxy = row.kind === 'proxy'
+          return (
+            <div className="flex items-center gap-2 font-mono font-semibold text-ink-1">
+              <span
+                className={cn(
+                  'grid size-5 place-items-center rounded-md',
+                  isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                )}
+                aria-hidden
+              >
+                {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
+              </span>
+              {row.serverId}
+            </div>
+          )
+        },
+      },
+      {
+        header: t('cluster.servers.columns.namespace'),
+        cell: (row) => <span className="text-ink-3 tnum">#{String(row.namespaceId)}</span>,
+      },
       {
         header: t('cluster.servers.columns.kind'),
-        cell: (row) => t(`cluster.servers.kind.${row.kind}`),
+        cell: (row) => <span className="text-ink-2">{t(`cluster.servers.kind.${row.kind}`)}</span>,
       },
       {
         header: t('cluster.servers.columns.status'),
         cell: (row) => (
           <div className="flex flex-wrap gap-1">
             {row.conflictReason === 'server-id-occupied' && (
-              <Badge variant="destructive">{t('cluster.servers.pending.conflictOccupied')}</Badge>
+              <Badge variant="crit" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
+                {t('cluster.servers.pending.conflictOccupied')}
+              </Badge>
             )}
             {row.pendingExpiresAt !== null && row.conflictReason !== 'server-id-occupied' && (
-              <Badge variant="outline">{t('cluster.servers.identityStatus.pending')}</Badge>
+              <Badge variant="warn" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-current" />
+                {t('cluster.servers.identityStatus.pending')}
+              </Badge>
             )}
           </div>
         ),
@@ -122,8 +153,19 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
   const occupied = approving?.conflictReason === 'server-id-occupied'
 
   return (
-    <section className="grid gap-3">
-      <SectionHeader title={t('cluster.servers.pending.title')} />
+    <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      {/* 图标标题 + 待确认数徽标 */}
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+          <UserPlus className="size-[15px]" />
+        </span>
+        <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.servers.pending.title')}</h2>
+        {pendingCount > 0 && (
+          <Badge variant="warn" className="tnum">
+            {pendingCount}
+          </Badge>
+        )}
+      </div>
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         <DataTable
           columns={columns}
@@ -156,7 +198,7 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
         }}
       >
         {occupied && (
-          <label className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm">
+          <label className="flex items-start gap-2 rounded-md border border-crit-bd bg-crit-bg px-3 py-2 text-sm text-crit">
             <Checkbox
               checked={forceUnbind}
               onCheckedChange={(value) => {
@@ -164,7 +206,7 @@ export default function PendingPanel({ namespaceId }: { namespaceId?: number }) 
               }}
               aria-label={t('cluster.servers.pending.forceUnbind')}
             />
-            <Label className="cursor-pointer font-normal">{t('cluster.servers.pending.forceUnbind')}</Label>
+            <Label className="cursor-pointer font-normal text-crit">{t('cluster.servers.pending.forceUnbind')}</Label>
           </label>
         )}
       </ReasonDialog>

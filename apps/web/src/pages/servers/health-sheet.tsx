@@ -1,6 +1,7 @@
 // 健康详情抽屉（Sheet）：因子分解 + 不可调度原因。抽屉形态不遮挡主流程。
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { CircleCheck, CircleX } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -16,6 +17,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  cn,
+  levelSolid,
+  levelText,
+  type HealthLevel,
 } from '@beacon/ui'
 
 import { fetchHealthDetail } from '../../api/cluster'
@@ -26,6 +31,13 @@ interface HealthSheetProps {
   onOpenChange: (open: boolean) => void
 }
 
+// 健康等级（healthy/degraded/unhealthy）→ 设计语言等级（决定分值配色）。
+const LEVEL_META: Record<string, HealthLevel> = {
+  healthy: 'ok',
+  degraded: 'warn',
+  unhealthy: 'danger',
+}
+
 export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps) {
   const { t } = useTranslation()
   const query = useQuery({
@@ -34,48 +46,75 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
     enabled: serverId !== null,
   })
   const detail = query.data
+  const level = detail ? (LEVEL_META[detail.level] ?? 'warn') : 'warn'
 
   return (
     <Sheet open={serverId !== null} onOpenChange={onOpenChange}>
       <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-md">
         <SheetHeader>
           <SheetTitle>{t('cluster.servers.health.title')}</SheetTitle>
-          <SheetDescription>{serverId}</SheetDescription>
+          <SheetDescription className="font-mono">{serverId}</SheetDescription>
         </SheetHeader>
         <div className="grid gap-4 px-4 pb-6">
           <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
             {detail && (
               <>
-                <div className="flex flex-wrap items-center gap-3 text-sm">
-                  <span className="text-muted-foreground">{t('cluster.servers.health.score')}</span>
-                  <span className="text-lg font-semibold">{detail.score}</span>
-                  <Badge variant="outline">{t(`cluster.servers.health.level_${detail.level}`)}</Badge>
-                  <Badge variant={detail.schedulable ? 'secondary' : 'destructive'}>
-                    {detail.schedulable
-                      ? t('cluster.servers.health.schedulable')
-                      : t('cluster.servers.health.notSchedulable')}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
+                {/* 健康分总览卡：大号分值 + 等级 / 可调度药丸 + 分值条 */}
+                <div className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+                  <div className="flex items-end gap-3">
+                    <span className={cn('text-[34px] leading-none font-bold tracking-[-1px] tnum', levelText(level))}>
+                      {detail.score}
+                    </span>
+                    <div className="mb-1 flex flex-col gap-1.5">
+                      <span className="text-[11px] text-ink-4">{t('cluster.servers.health.score')}</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant={badgeOf(level)} className="gap-1.5">
+                          <span className="size-1.5 rounded-full bg-current" />
+                          {t(`cluster.servers.health.level_${detail.level}`)}
+                        </Badge>
+                        <Badge variant={detail.schedulable ? 'ok' : 'crit'} className="gap-1">
+                          {detail.schedulable ? (
+                            <CircleCheck className="size-3" />
+                          ) : (
+                            <CircleX className="size-3" />
+                          )}
+                          {detail.schedulable
+                            ? t('cluster.servers.health.schedulable')
+                            : t('cluster.servers.health.notSchedulable')}
+                        </Badge>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                    <span
+                      className={cn('block h-full rounded-full', levelSolid(level))}
+                      style={{ width: `${String(Math.max(0, Math.min(100, detail.score)))}%` }}
+                    />
+                  </span>
+                  <span className="text-[11px] text-ink-4">
                     {t('cluster.servers.health.weightsRev')} #{detail.weightsRev}
                   </span>
                 </div>
 
                 {detail.reasons.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">{t('cluster.servers.health.reasons')}</p>
+                  <div className="space-y-1.5">
+                    <p className="text-[12.5px] font-semibold text-ink-1">{t('cluster.servers.health.reasons')}</p>
                     <ul className="flex flex-wrap gap-1.5">
                       {detail.reasons.map((reason) => (
                         <li key={reason}>
-                          <Badge variant="destructive">{reason}</Badge>
+                          <Badge variant="crit" className="gap-1.5">
+                            <span className="size-1.5 rounded-full bg-current" />
+                            {reason}
+                          </Badge>
                         </li>
                       ))}
                     </ul>
                   </div>
                 )}
 
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">{t('cluster.servers.health.factors')}</p>
-                  <Table>
+                <div className="space-y-1.5">
+                  <p className="text-[12.5px] font-semibold text-ink-1">{t('cluster.servers.health.factors')}</p>
+                  <Table className="tnum">
                     <TableHeader>
                       <TableRow>
                         <TableHead>{t('cluster.servers.health.factor')}</TableHead>
@@ -85,14 +124,24 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
                     </TableHeader>
                     <TableBody>
                       {detail.factors.map((factor) => (
-                        <TableRow key={factor.factor} className={factor.applicable ? undefined : 'opacity-50'}>
-                          <TableCell>{factor.factor}</TableCell>
+                        <TableRow key={factor.factor} className={factor.applicable ? undefined : 'opacity-45'}>
+                          <TableCell className="text-ink-2">{factor.factor}</TableCell>
                           <TableCell>
-                            {factor.applicable
-                              ? factor.normalized
-                              : t('cluster.servers.health.notApplicable')}
+                            {factor.applicable ? (
+                              <div className="flex items-center gap-2">
+                                <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+                                  <span
+                                    className="block h-full rounded-full bg-brand"
+                                    style={{ width: `${String(Math.max(0, Math.min(100, factor.normalized)))}%` }}
+                                  />
+                                </span>
+                                <span className="w-9 text-right text-ink-2">{factor.normalized}</span>
+                              </div>
+                            ) : (
+                              <span className="text-ink-4">{t('cluster.servers.health.notApplicable')}</span>
+                            )}
                           </TableCell>
-                          <TableCell>{factor.weight}</TableCell>
+                          <TableCell className="text-ink-3">{factor.weight}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -105,4 +154,12 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
       </SheetContent>
     </Sheet>
   )
+}
+
+// 健康等级 → 药丸语义变体。
+function badgeOf(level: HealthLevel): 'ok' | 'warn' | 'crit' | 'off' {
+  if (level === 'ok') return 'ok'
+  if (level === 'warn') return 'warn'
+  if (level === 'danger') return 'crit'
+  return 'off'
 }

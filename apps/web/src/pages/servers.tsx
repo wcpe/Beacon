@@ -2,6 +2,7 @@
 // 高频任务「接入新服」的第一步（待确认），确认后到 /zones 分配。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Server } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
 
@@ -15,8 +16,8 @@ export default function ServersPage() {
   const [healthServerId, setHealthServerId] = useState<string | null>(null)
 
   return (
-    <section className="grid gap-6">
-      <SectionHeader size="lg" title={t('nav.servers')} />
+    <section className="grid gap-3.5">
+      <SectionHeader size="lg" icon={<Server className="size-5" />} title={t('nav.servers')} />
       <PendingPanel />
       <AssetsPanel onViewHealth={setHealthServerId} />
       <HealthSheet

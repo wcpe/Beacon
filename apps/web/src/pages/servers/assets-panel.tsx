@@ -4,6 +4,16 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import {
+  Activity,
+  ChevronLeft,
+  ChevronRight,
+  MapPinOff,
+  Network,
+  Search,
+  Server,
+  X,
+} from 'lucide-react'
 
 import {
   AsyncSection,
@@ -12,13 +22,13 @@ import {
   Checkbox,
   DataTable,
   Input,
-  SectionHeader,
+  KpiCard,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  SummaryStrip,
+  cn,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { ServerItem } from '@beacon/devmock'
@@ -160,35 +170,56 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
       },
       {
         header: t('cluster.servers.columns.serverId'),
-        cell: (row) => (
-          <span className="flex items-center gap-1.5 font-mono">
-            {row.serverId}
-            {row.isDefaultEntry && <Badge variant="outline">{t('cluster.zones.tree.defaultEntry')}</Badge>}
-            {row.draining && <Badge variant="secondary">{t('cluster.zones.tree.draining')}</Badge>}
-          </span>
-        ),
+        cell: (row) => {
+          const isProxy = row.kind === 'proxy'
+          return (
+            <span className="flex items-center gap-2 font-mono font-semibold text-ink-1">
+              <span
+                className={cn(
+                  'grid size-5 place-items-center rounded-md',
+                  isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                )}
+                aria-hidden
+              >
+                {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
+              </span>
+              {row.serverId}
+              {row.isDefaultEntry && <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>}
+              {row.draining && <Badge variant="warn">{t('cluster.zones.tree.draining')}</Badge>}
+            </span>
+          )
+        },
       },
-      { header: t('cluster.servers.columns.kind'), cell: (row) => t(`cluster.servers.kind.${row.kind}`) },
+      {
+        header: t('cluster.servers.columns.kind'),
+        cell: (row) => <span className="text-ink-2">{t(`cluster.servers.kind.${row.kind}`)}</span>,
+      },
       {
         header: t('cluster.servers.columns.zone'),
         cell: (row) =>
           row.assigned ? (
-            <span>
+            <span className="rounded-md border border-border-strong bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-3">
               {row.kind === 'backend'
                 ? `${row.regionName ?? '-'} / ${row.zoneName ?? '-'}`
                 : (row.bcClusterName ?? '-')}
             </span>
           ) : (
-            <Badge variant="outline">{t('cluster.servers.assets.assignedNo')}</Badge>
+            <Badge variant="off">{t('cluster.servers.assets.assignedNo')}</Badge>
           ),
       },
       {
         header: t('cluster.servers.columns.health'),
         cell: (row) =>
           row.online ? (
-            <Badge variant="secondary">{t('cluster.servers.summary.online')}</Badge>
+            <Badge variant="ok" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" />
+              {t('cluster.servers.summary.online')}
+            </Badge>
           ) : (
-            <Badge variant="destructive">lost</Badge>
+            <Badge variant="crit" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" />
+              lost
+            </Badge>
           ),
       },
       {
@@ -239,128 +270,154 @@ export default function AssetsPanel({ namespaceId, onViewHealth }: AssetsPanelPr
     [t, selected, onViewHealth],
   )
 
-  const summaryItems = [
-    { label: t('cluster.servers.summary.total'), value: total },
-    {
-      label: t('cluster.servers.summary.online'),
-      value: query.data?.items.filter((s) => s.online).length ?? 0,
-      tone: 'success' as const,
-    },
-    {
-      label: t('cluster.servers.summary.unassigned'),
-      value: query.data?.items.filter((s) => !s.assigned).length ?? 0,
-      tone: 'warning' as const,
-    },
-  ]
+  const onlineCount = query.data?.items.filter((s) => s.online).length ?? 0
+  const unassignedCount = query.data?.items.filter((s) => !s.assigned).length ?? 0
 
   const active = action?.row ?? null
   const dialogConfig = action ? dialogConfigOf(action, t) : null
 
   return (
-    <section className="grid gap-3">
-      <SectionHeader title={t('cluster.servers.assets.title')} />
-      <SummaryStrip items={summaryItems} />
-
-      {/* 筛选条：keyword + 类型 + 分配状态 */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          aria-label={t('cluster.servers.assets.keyword')}
-          placeholder={t('cluster.servers.assets.keyword')}
-          value={keyword}
-          onChange={(e) => {
-            setKeyword(e.target.value)
-            setPage(1)
-          }}
-          className="w-52"
+    <section className="grid gap-3.5">
+      {/* KPI 指标卡行：总数 / 在线 / 未分配 */}
+      <div className="grid gap-3.5 sm:grid-cols-3">
+        <KpiCard
+          label={t('cluster.servers.summary.total')}
+          value={total}
+          icon={<Server className="size-4" />}
+          tone="brand"
         />
-        <Select
-          value={kind}
-          onValueChange={(value) => {
-            setKind(value)
-            setPage(1)
-          }}
-        >
-          <SelectTrigger className="w-32" aria-label={t('cluster.servers.assets.filterKind')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('cluster.servers.assets.filterKind')}</SelectItem>
-            <SelectItem value="proxy">{t('cluster.servers.kind.proxy')}</SelectItem>
-            <SelectItem value="backend">{t('cluster.servers.kind.backend')}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select
-          value={assigned}
-          onValueChange={(value) => {
-            setAssigned(value)
-            setPage(1)
-          }}
-        >
-          <SelectTrigger className="w-32" aria-label={t('cluster.servers.assets.filterAssigned')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('cluster.servers.assets.filterAssigned')}</SelectItem>
-            <SelectItem value="yes">{t('cluster.servers.assets.assignedYes')}</SelectItem>
-            <SelectItem value="no">{t('cluster.servers.assets.assignedNo')}</SelectItem>
-          </SelectContent>
-        </Select>
+        <KpiCard
+          label={t('cluster.servers.summary.online')}
+          value={onlineCount}
+          icon={<Activity className="size-4" />}
+          tone="ok"
+        />
+        <KpiCard
+          label={t('cluster.servers.summary.unassigned')}
+          value={unassignedCount}
+          icon={<MapPinOff className="size-4" />}
+          tone={unassignedCount > 0 ? 'warn' : 'off'}
+        />
       </div>
 
-      {/* 批量选择集顶部操作条 */}
-      {selected.size > 0 && (
-        <div className="flex items-center gap-3 rounded-md bg-secondary px-3 py-2 text-sm">
-          <span>{t('cluster.servers.selection.selected', { count: selected.size })}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setSelected(new Set())
-            }}
-          >
-            {t('cluster.servers.selection.clear')}
-          </Button>
-        </div>
-      )}
-
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
-          columns={columns}
-          rows={query.data?.items}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('cluster.servers.assets.empty')}
-          density="compact"
-        />
-      </AsyncSection>
-
-      {/* 服务端分页控件 */}
-      {total > PAGE_SIZE && (
-        <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
-          <span>
-            第 {page} / {pageCount} 页 · 共 {total} 台
+      <div className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <Server className="size-[15px]" />
           </span>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={page <= 1}
-            onClick={() => {
-              setPage((p) => Math.max(1, p - 1))
-            }}
-          >
-            上一页
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={page >= pageCount}
-            onClick={() => {
-              setPage((p) => Math.min(pageCount, p + 1))
-            }}
-          >
-            下一页
-          </Button>
+          <h2 className="text-[13px] font-semibold text-ink-1">{t('cluster.servers.assets.title')}</h2>
         </div>
-      )}
+
+        {/* 筛选条：keyword + 类型 + 分配状态 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-4" />
+            <Input
+              aria-label={t('cluster.servers.assets.keyword')}
+              placeholder={t('cluster.servers.assets.keyword')}
+              value={keyword}
+              onChange={(e) => {
+                setKeyword(e.target.value)
+                setPage(1)
+              }}
+              className="w-52 pl-8"
+            />
+          </div>
+          <Select
+            value={kind}
+            onValueChange={(value) => {
+              setKind(value)
+              setPage(1)
+            }}
+          >
+            <SelectTrigger className="w-32" aria-label={t('cluster.servers.assets.filterKind')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('cluster.servers.assets.filterKind')}</SelectItem>
+              <SelectItem value="proxy">{t('cluster.servers.kind.proxy')}</SelectItem>
+              <SelectItem value="backend">{t('cluster.servers.kind.backend')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={assigned}
+            onValueChange={(value) => {
+              setAssigned(value)
+              setPage(1)
+            }}
+          >
+            <SelectTrigger className="w-32" aria-label={t('cluster.servers.assets.filterAssigned')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('cluster.servers.assets.filterAssigned')}</SelectItem>
+              <SelectItem value="yes">{t('cluster.servers.assets.assignedYes')}</SelectItem>
+              <SelectItem value="no">{t('cluster.servers.assets.assignedNo')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 批量选择集顶部操作条 */}
+        {selected.size > 0 && (
+          <div className="flex items-center gap-3 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-[12.5px] text-brand-600">
+            <span className="font-medium">{t('cluster.servers.selection.selected', { count: selected.size })}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto gap-1"
+              onClick={() => {
+                setSelected(new Set())
+              }}
+            >
+              <X className="size-3" />
+              {t('cluster.servers.selection.clear')}
+            </Button>
+          </div>
+        )}
+
+        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <DataTable
+            columns={columns}
+            rows={query.data?.items}
+            rowKey={(row) => String(row.id)}
+            emptyText={t('cluster.servers.assets.empty')}
+            density="compact"
+          />
+        </AsyncSection>
+
+        {/* 服务端分页控件 */}
+        {total > PAGE_SIZE && (
+          <div className="flex items-center justify-end gap-2 text-[12px] text-ink-3">
+            <span className="tnum">
+              第 {page} / {pageCount} 页 · 共 {total} 台
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-0.5"
+              disabled={page <= 1}
+              onClick={() => {
+                setPage((p) => Math.max(1, p - 1))
+              }}
+            >
+              <ChevronLeft className="size-3" />
+              上一页
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-0.5"
+              disabled={page >= pageCount}
+              onClick={() => {
+                setPage((p) => Math.min(pageCount, p + 1))
+              }}
+            >
+              下一页
+              <ChevronRight className="size-3" />
+            </Button>
+          </div>
+        )}
+      </div>
 
       {/* 行内写操作确认弹窗（原因必填） */}
       {dialogConfig && action && active && (
