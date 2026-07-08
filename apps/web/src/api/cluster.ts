@@ -31,6 +31,22 @@ interface ErrorBodyShape {
   message?: unknown
 }
 
+/**
+ * 安全解析响应体为 JSON：空体返回 null；若拿到的是 HTML（演示模式下 mock 尚未接管
+ * 或端点未实现时请求会 bypass 到 SPA 返回 index.html），抛出清晰的 ApiClientError，
+ * 而非让 JSON.parse 抛出难懂的「Unexpected token '<'」。各请求封装统一调用。
+ */
+export function parseApiJson(text: string, status: number): unknown {
+  if (text === '') {
+    return null
+  }
+  const head = text.trimStart().slice(0, 1)
+  if (head === '<') {
+    throw new ApiClientError(status, 'mock_not_ready', '演示数据未就绪（请刷新页面重试）')
+  }
+  return JSON.parse(text)
+}
+
 /** 统一请求封装：非 2xx 抛 ApiClientError（取脱敏 message），204 返回 undefined。 */
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
@@ -39,7 +55,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await response.text()
-  const parsed: unknown = text === '' ? null : JSON.parse(text)
+  const parsed: unknown = parseApiJson(text, response.status)
   if (!response.ok) {
     const shape = (parsed ?? {}) as ErrorBodyShape
     const code = typeof shape.code === 'string' ? shape.code : 'unknown'

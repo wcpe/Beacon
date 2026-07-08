@@ -14,6 +14,7 @@ import { fileAssetsHandlers } from './domains/file-assets'
 import { deliveryHandlers } from './domains/delivery'
 import { systemHandlers } from './domains/system'
 import { observabilityHandlers } from './domains/observability'
+import { fallbackHandlers } from './http'
 
 export {
   MOCK_SCENARIOS,
@@ -75,8 +76,9 @@ export const domainHandlers = {
   observability: observabilityHandlers,
 } satisfies Record<string, HttpHandler[]>
 
-/** 全量 handlers：浏览器 worker 与 Node setupServer 共用 */
-export const allHandlers: HttpHandler[] = Object.values(domainHandlers).flat()
+/** 全量 handlers：浏览器 worker 与 Node setupServer 共用。
+    fallbackHandlers 兜底置于末尾——真实 handler 优先命中，未匹配的 /admin|/beacon 才回 JSON 404。 */
+export const allHandlers: HttpHandler[] = [...Object.values(domainHandlers).flat(), ...fallbackHandlers]
 
 let controlPlaneWorkerStart: Promise<void> | undefined
 

@@ -1,7 +1,7 @@
 // 交付大域共用的底层请求封装：与集群域 cluster.ts 同构，但复用其 ApiClientError 类，
 // 保证 instanceof 判定一致。非 2xx 抛脱敏 message（ADR-0057），204 返回 undefined。
 
-import { ApiClientError } from './cluster'
+import { ApiClientError, parseApiJson } from './cluster'
 
 interface ErrorBodyShape {
   code?: unknown
@@ -16,7 +16,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await response.text()
-  const parsed: unknown = text === '' ? null : JSON.parse(text)
+  const parsed: unknown = parseApiJson(text, response.status)
   if (!response.ok) {
     const shape = (parsed ?? {}) as ErrorBodyShape
     const code = typeof shape.code === 'string' ? shape.code : 'unknown'

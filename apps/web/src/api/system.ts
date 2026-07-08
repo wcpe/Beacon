@@ -20,7 +20,7 @@ import type {
   UpdateProgress,
 } from '@beacon/devmock'
 
-import { ApiClientError } from './cluster'
+import { ApiClientError, parseApiJson } from './cluster'
 
 export { ApiClientError }
 
@@ -37,7 +37,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const text = await response.text()
-  const parsed: unknown = text === '' ? null : JSON.parse(text)
+  const parsed: unknown = parseApiJson(text, response.status)
   if (!response.ok) {
     const shape = (parsed ?? {}) as ErrorBodyShape
     const code = typeof shape.code === 'string' ? shape.code : 'unknown'

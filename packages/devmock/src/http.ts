@@ -78,6 +78,16 @@ export function mockDelete(path: string, resolver: MockResolver): HttpHandler {
   return http.delete(toPattern(path), withScenario(resolver))
 }
 
+/**
+ * 兜底 handler：未被任何真实 handler 命中的 /admin | /beacon 请求返回明确 JSON 404，
+ * 避免 onUnhandledRequest:'bypass' 让请求落到 SPA 返回 index.html、前端 JSON.parse 崩
+ * 「Unexpected token '<'」。必须置于全部真实 handler 之后（MSW 按顺序首个命中优先）。
+ */
+export const fallbackHandlers: HttpHandler[] = [
+  http.all('*/admin/*', () => jsonError(404, 'not_implemented', '演示模式未实现该端点')),
+  http.all('*/beacon/*', () => jsonError(404, 'not_implemented', '演示模式未实现该端点')),
+]
+
 /** 读取路径参数（msw params 值可能是数组，统一取首个） */
 export function pathParam(info: MockRequestInfo, name: string): string {
   const value = info.params[name]
