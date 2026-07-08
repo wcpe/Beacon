@@ -1,45 +1,32 @@
-// 未分配抽屉（Sheet）：assigned=false 的 server 列表 + 批量首次分配。默认收起，
-// 由页面顶部「未分配 N」入口打开，不默认占版面。
-// 选择集只允许同 kind（分配要求同 namespace、同 kind），换区中的 server 标注 pending。
+// 未分配右侧窄栏（非模态、布局内常驻/开合）：assigned=false 的 server 以紧凑可拖拽 chip 列出，
+// 打开时主区（结构树）不被遮罩、仍可交互——因为要能从窄栏往树里拖。
+// 两种分配路径：① 直接拖 chip 到树里的兼容目标；② 勾选多个 chip → 底部「分配到…」走目标选择器。
+// 选择集只允许同 kind（分配要求同 namespace、同 kind）。
 
 import { useMemo, useState } from 'react'
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Inbox, Network, Server } from 'lucide-react'
+import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
 
-import {
-  AsyncSection,
-  Badge,
-  Button,
-  Checkbox,
-  DataTable,
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  cn,
-  type DataTableColumn,
-} from '@beacon/ui'
+import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
 import type { AssignmentResult, ServerItem } from '@beacon/devmock'
 
-import { ApiClientError, assignServers, fetchServers, fetchZoneTree } from '../../api/cluster'
-import AssignDialog, { targetOptionsOf } from './assign-dialog'
+import { fetchServers, fetchZoneTree } from '../../api/cluster'
+import { writeAssignDrag } from '../../features/cluster/assign-drag'
+import { messageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
+import AssignDialog from './assign-dialog'
 
-function messageOf(error: unknown): string {
-  return error instanceof ApiClientError ? error.message : String(error)
-}
-
-interface UnassignedBasketProps {
+interface UnassignedRailProps {
   namespaceId: number
-  // 抽屉开关（由页面顶部入口控制）
+  // 窄栏开合（由页面顶部入口控制）；关闭时整栏从布局移除
   open: boolean
-  onOpenChange: (open: boolean) => void
+  onClose: () => void
+  // 上报正在拖拽的服务器 kind（拖起/结束），供树高亮兼容目标
+  onDraggingKindChange: (kind: 'backend' | 'proxy' | null) => void
 }
 
-export default function UnassignedBasket({ namespaceId, open, onOpenChange }: UnassignedBasketProps) {
+export default function UnassignedBasket({ namespaceId, open, onClose, onDraggingKindChange }: UnassignedRailProps) {
   const { t } = useTranslation()
-  const queryClient = useQueryClient()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [assignOpen, setAssignOpen] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -60,33 +47,9 @@ export default function UnassignedBasket({ namespaceId, open, onOpenChange }: Un
   // 已选中的 server 行（决定 kind 与分配目标）
   const selectedRows = useMemo(() => rows.filter((r) => selectedIds.has(r.id)), [rows, selectedIds])
   // 选择集的 kind：以首个选中项为准（无选中为 null），其余 kind 的行禁选
-  const selectionKind: 'backend' | 'proxy' | null =
-    selectedRows.length > 0 ? selectedRows[0].kind : null
+  const selectionKind: 'backend' | 'proxy' | null = selectedRows.length > 0 ? selectedRows[0].kind : null
 
-  const assignMutation = useMutation({
-    mutationFn: ({ targetId, isDefaultEntry }: { targetId: string; isDefaultEntry: boolean }) => {
-      const kind = selectionKind === 'proxy' ? 'bc_cluster' : 'zone'
-      return assignServers({
-        serverIds: selectedRows.map((r) => r.id),
-        target: { kind, id: Number.parseInt(targetId, 10) },
-        isDefaultEntry,
-      })
-    },
-    onSuccess: async (response) => {
-      setResults(response.results)
-      setSelectedIds(new Set())
-      await queryClient.invalidateQueries({ queryKey: ['servers'] })
-      await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
-    },
-    onError: (error) => {
-      // 整批 409（含 rezone_required 逐台原因）：把结构化结果展示到弹窗
-      if (error instanceof ApiClientError && error.status === 409) {
-        setErrorText(error.message)
-      } else {
-        setErrorText(messageOf(error))
-      }
-    },
-  })
+  const assignMutation = useAssignServers()
 
   const toggle = (row: ServerItem) => {
     setSelectedIds((prev) => {
@@ -100,149 +63,158 @@ export default function UnassignedBasket({ namespaceId, open, onOpenChange }: Un
     })
   }
 
-  const columns = useMemo<DataTableColumn<ServerItem>[]>(
-    () => [
+  const submitAssign = (targetId: string, isDefaultEntry: boolean) => {
+    setErrorText(null)
+    setResults(null)
+    const kind = selectionKind === 'proxy' ? 'bc_cluster' : 'zone'
+    assignMutation.mutate(
       {
-        header: '',
-        headClassName: 'w-8',
-        cell: (row) => (
-          <Checkbox
-            checked={selectedIds.has(row.id)}
-            // 已选其它 kind 时禁选跨 kind 行
-            disabled={selectionKind !== null && row.kind !== selectionKind && !selectedIds.has(row.id)}
-            onCheckedChange={() => {
-              toggle(row)
-            }}
-            aria-label={`选择 ${row.serverId}`}
-          />
-        ),
+        serverIds: selectedRows.map((r) => r.id),
+        target: { kind, id: Number.parseInt(targetId, 10) },
+        isDefaultEntry,
       },
       {
-        header: t('cluster.servers.columns.serverId'),
-        cell: (row) => {
-          const isProxy = row.kind === 'proxy'
-          return (
-            <span className="flex items-center gap-2 font-mono font-semibold text-ink-1">
-              <span
-                className={cn(
-                  'grid size-5 place-items-center rounded-md',
-                  isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
-                )}
-                aria-hidden
-              >
-                {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
-              </span>
-              {row.serverId}
-            </span>
-          )
+        onSuccess: (response) => {
+          setResults(response.results)
+          setSelectedIds(new Set())
+        },
+        onError: (error) => {
+          setErrorText(messageOf(error))
         },
       },
-      {
-        header: t('cluster.servers.columns.kind'),
-        cell: (row) => (
-          <Badge variant={row.kind === 'proxy' ? 'brand' : 'secondary'} className="gap-1">
-            {row.kind === 'proxy' ? <Network className="size-3" /> : <Server className="size-3" />}
-            {t(`cluster.servers.kind.${row.kind}`)}
-          </Badge>
-        ),
-      },
-      {
-        header: t('cluster.servers.columns.status'),
-        cell: (row) => (
-          <div className="flex flex-wrap gap-1">
-            {row.pendingZoneId !== null && (
-              <Badge variant="warn" className="gap-1.5">
-                <span className="size-1.5 rounded-full bg-current" />
-                {t('cluster.servers.pending.rezoneHint')} → {row.pendingZoneName ?? ''}
-              </Badge>
-            )}
-            {row.online ? (
-              <Badge variant="ok" className="gap-1.5">
-                <span className="size-1.5 rounded-full bg-current" />
-                {t('cluster.servers.summary.online')}
-              </Badge>
-            ) : (
-              <Badge variant="crit" className="gap-1.5">
-                <span className="size-1.5 rounded-full bg-current" />
-                lost
-              </Badge>
-            )}
-          </div>
-        ),
-      },
-    ],
-    [t, selectedIds, selectionKind],
-  )
+    )
+  }
 
-  const options = targetOptionsOf(treeQuery.data, selectionKind === 'proxy' ? 'proxy' : 'backend')
+  if (!open) {
+    return null
+  }
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-full flex-col gap-0 sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
-            <Inbox className="size-4 text-brand" />
-            {t('cluster.zones.basket.title')}
-          </SheetTitle>
-          <SheetDescription>{t('cluster.zones.basket.sheetDesc')}</SheetDescription>
-        </SheetHeader>
+    // 布局内的右侧窄栏（非模态、无 overlay），主区树仍完全可见可交互
+    <aside className="flex w-[280px] shrink-0 flex-col self-start rounded-xl border border-border bg-card shadow-card">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+        <Inbox className="size-4 text-brand" />
+        <h2 className="text-[12.5px] font-semibold text-ink-1">{t('cluster.zones.basket.title')}</h2>
+        {rows.length > 0 && (
+          <Badge variant="warn" className="tnum">
+            {rows.length}
+          </Badge>
+        )}
+        <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onClose} aria-label={t('cluster.zones.basket.close')}>
+          <PanelRightClose className="size-4" />
+        </Button>
+      </div>
 
-        {/* 操作条：选择集提示 + 批量分配 */}
-        <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-          {selectedIds.size > 0 ? (
-            <span className="text-[12.5px] font-medium text-brand-600">
-              {t('cluster.zones.basket.selected', { count: selectedIds.size })}
-            </span>
+      <p className="px-3 pt-2 text-[11px] leading-relaxed text-ink-4">{t('cluster.zones.basket.railHint')}</p>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          {rows.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border-strong px-3 py-6 text-center text-xs text-ink-3">
+              {t('cluster.zones.basket.empty')}
+            </p>
           ) : (
-            <span className="text-[12.5px] text-ink-4">{t('cluster.zones.basket.selectHint')}</span>
+            <ul className="grid gap-1.5">
+              {rows.map((row) => {
+                const checked = selectedIds.has(row.id)
+                // 已选其它 kind 时禁选/禁拖跨 kind 行
+                const disabled = selectionKind !== null && row.kind !== selectionKind && !checked
+                const isProxy = row.kind === 'proxy'
+                return (
+                  <li key={row.id}>
+                    <div
+                      // 原生 HTML5 可拖拽 chip：拖起写入载荷，供树里目标接收
+                      draggable={!disabled}
+                      onDragStart={(e) => {
+                        writeAssignDrag(e.dataTransfer, { id: row.id, serverId: row.serverId, kind: row.kind })
+                        onDraggingKindChange(row.kind)
+                      }}
+                      onDragEnd={() => {
+                        onDraggingKindChange(null)
+                      }}
+                      className={cn(
+                        'group flex items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
+                        disabled
+                          ? 'cursor-not-allowed border-border bg-surface-2 opacity-50'
+                          : cn(
+                              'cursor-grab border-border bg-surface-2 hover:border-brand-100 hover:bg-brand-50 active:cursor-grabbing active:opacity-60',
+                              checked && 'border-brand-100 bg-brand-50',
+                            ),
+                      )}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={disabled}
+                        onCheckedChange={() => {
+                          toggle(row)
+                        }}
+                        aria-label={`选择 ${row.serverId}`}
+                      />
+                      <GripVertical className="size-3.5 shrink-0 text-ink-4" aria-hidden />
+                      <span
+                        className={cn(
+                          'grid size-5 shrink-0 place-items-center rounded-md',
+                          isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                        )}
+                        aria-hidden
+                      >
+                        {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold text-ink-1">
+                        {row.serverId}
+                      </span>
+                      <Badge variant={isProxy ? 'brand' : 'secondary'} className="shrink-0">
+                        {t(`cluster.servers.kind.${row.kind}`)}
+                      </Badge>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
           )}
-          <Button
-            size="sm"
-            className="ml-auto"
-            disabled={selectedIds.size === 0}
-            onClick={() => {
-              setErrorText(null)
-              setResults(null)
-              setAssignOpen(true)
-            }}
-          >
-            {t('cluster.zones.basket.assign')}
-          </Button>
-        </div>
+        </AsyncSection>
+      </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-3">
-          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-            <DataTable
-              columns={columns}
-              rows={rows}
-              rowKey={(row) => String(row.id)}
-              emptyText={t('cluster.zones.basket.empty')}
-              density="compact"
-              pageSize={20}
-            />
-          </AsyncSection>
-        </div>
+      {/* 底部操作条：选择集提示 + 「分配到…」 */}
+      <div className="flex items-center gap-2 border-t border-border px-3 py-2.5">
+        {selectedIds.size > 0 ? (
+          <span className="text-[11.5px] font-medium text-brand-600">
+            {t('cluster.zones.basket.selected', { count: selectedIds.size })}
+          </span>
+        ) : (
+          <span className="text-[11.5px] text-ink-4">{t('cluster.zones.basket.selectHint')}</span>
+        )}
+        <Button
+          size="sm"
+          className="ml-auto"
+          disabled={selectedIds.size === 0}
+          onClick={() => {
+            setErrorText(null)
+            setResults(null)
+            setAssignOpen(true)
+          }}
+        >
+          {t('cluster.zones.basket.assignTo')}
+        </Button>
+      </div>
 
-        <AssignDialog
-          open={assignOpen}
-          onOpenChange={(isOpen) => {
-            setAssignOpen(isOpen)
-            if (!isOpen) {
-              setResults(null)
-              setErrorText(null)
-            }
-          }}
-          servers={selectedRows}
-          kind={selectionKind === 'proxy' ? 'proxy' : 'backend'}
-          options={options}
-          pending={assignMutation.isPending}
-          errorText={errorText}
-          results={results}
-          onConfirm={(targetId, isDefaultEntry) => {
-            assignMutation.mutate({ targetId, isDefaultEntry })
-          }}
-        />
-      </SheetContent>
-    </Sheet>
+      <AssignDialog
+        open={assignOpen}
+        onOpenChange={(isOpen) => {
+          setAssignOpen(isOpen)
+          if (!isOpen) {
+            setResults(null)
+            setErrorText(null)
+          }
+        }}
+        servers={selectedRows}
+        kind={selectionKind === 'proxy' ? 'proxy' : 'backend'}
+        tree={treeQuery.data}
+        pending={assignMutation.isPending}
+        errorText={errorText}
+        results={results}
+        onConfirm={submitAssign}
+      />
+    </aside>
   )
 }

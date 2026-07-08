@@ -25,7 +25,12 @@ import {
   fetchServers,
   fetchZoneTree,
 } from '../../api/cluster'
+import { readAssignDrag, type AssignDragPayload } from '../../features/cluster/assign-drag'
+import { messageOf as assignMessageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
 import CreateNodeDialog from './create-node-dialog'
+
+// 放置目标类型：backend 落小区、proxy 落集群；其余节点非目标
+type DropTargetKind = 'zone' | 'cluster'
 
 // 新建意图：集群（顶层）/ 大区（挂集群）/ 小区（挂大区）
 type CreateIntent =
@@ -40,7 +45,14 @@ function messageOf(error: unknown): string {
   return error instanceof ApiClientError ? error.message : String(error)
 }
 
-export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
+export default function ZoneTree({
+  namespaceId,
+  draggingKind,
+}: {
+  namespaceId: number
+  // 当前拖拽中的服务器 kind（由父页面共享）：dragover 阶段据此高亮兼容目标
+  draggingKind?: 'backend' | 'proxy' | null
+}) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [intent, setIntent] = useState<CreateIntent | null>(null)
@@ -112,6 +124,55 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
     },
   })
 
+  // 拖拽落区：当前 drag-over 的目标键（高亮）与最近一次落区错误/结果反馈
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null)
+  const [dropFeedback, setDropFeedback] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  const dropAssign = useAssignServers()
+
+  // kind 与目标是否兼容：backend→小区、proxy→集群
+  const kindFits = (kind: 'backend' | 'proxy', targetKind: DropTargetKind): boolean =>
+    targetKind === 'zone' ? kind === 'backend' : kind === 'proxy'
+
+  // dragover 阶段用共享 draggingKind 判定（此时读不到 dataTransfer 数据）
+  const targetAcceptsDragging = (targetKind: DropTargetKind): boolean =>
+    draggingKind != null && kindFits(draggingKind, targetKind)
+
+  // 落下阶段用真实载荷判定
+  const isCompatible = (payload: AssignDragPayload | null, targetKind: DropTargetKind): boolean =>
+    payload !== null && kindFits(payload.kind, targetKind)
+
+  // 落区：读取拖拽载荷，兼容则调用分配 mutation
+  const handleDrop = (targetKind: DropTargetKind, targetId: number, dt: DataTransfer) => {
+    setDragOverKey(null)
+    const payload = readAssignDrag(dt)
+    if (!isCompatible(payload, targetKind) || payload === null) {
+      return
+    }
+    setDropFeedback(null)
+    dropAssign.mutate(
+      {
+        serverIds: [payload.id],
+        target: { kind: targetKind === 'zone' ? 'zone' : 'bc_cluster', id: targetId },
+      },
+      {
+        onSuccess: (response) => {
+          const failed = response.results.find((r) => !r.ok)
+          if (failed) {
+            setDropFeedback({
+              tone: 'error',
+              text: t('cluster.zones.drag.dropFail', { serverId: payload.serverId }),
+            })
+          } else {
+            setDropFeedback({ tone: 'ok', text: t('cluster.zones.drag.dropOk', { serverId: payload.serverId }) })
+          }
+        },
+        onError: (error) => {
+          setDropFeedback({ tone: 'error', text: assignMessageOf(error) })
+        },
+      },
+    )
+  }
+
   const tree: ZoneTreeResponse | undefined = query.data
 
   // 首帧自动展开集群 + 大区
@@ -167,6 +228,25 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
         </Button>
       </div>
 
+      {/* 拖拽提示：拖拽中提示可放置目标；落区后给成功/失败反馈（非模态、行内） */}
+      {draggingKind != null && (
+        <p className="mx-3 mt-2 rounded-md border border-brand-100 bg-brand-50 px-3 py-1.5 text-[11.5px] text-brand-600">
+          {draggingKind === 'proxy' ? t('cluster.zones.drag.hintProxy') : t('cluster.zones.drag.hintBackend')}
+        </p>
+      )}
+      {dropFeedback && draggingKind == null && (
+        <p
+          className={cn(
+            'mx-3 mt-2 rounded-md px-3 py-1.5 text-[11.5px]',
+            dropFeedback.tone === 'ok'
+              ? 'border border-ok-bd bg-ok-bg text-ok'
+              : 'border border-crit-bd bg-crit-bg text-crit',
+          )}
+        >
+          {dropFeedback.text}
+        </p>
+      )}
+
       <div className="max-h-[calc(100vh-16rem)] overflow-y-auto p-3">
         <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
           {tree?.clusters.length === 0 ? (
@@ -181,7 +261,7 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
                 const proxies = proxiesByCluster.get(cluster.id) ?? []
                 return (
                   <li key={cluster.id} role="treeitem" aria-expanded={clusterOpen}>
-                    {/* BC 集群节点：代理服（BC/bungee）明确标注 */}
+                    {/* BC 集群节点：代理服（BC/bungee）明确标注，同时作为 proxy 落区目标 */}
                     <TreeRow
                       depth={0}
                       open={clusterOpen}
@@ -189,6 +269,13 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
                       icon={<Boxes className="size-3.5 text-brand" />}
                       label={cluster.name}
                       tone="cluster"
+                      dropTarget={{
+                        active: dragOverKey === clusterKey,
+                        accepts: () => targetAcceptsDragging('cluster'),
+                        onDragEnter: () => { setDragOverKey(clusterKey) },
+                        onDragLeave: () => { setDragOverKey((k) => (k === clusterKey ? null : k)) },
+                        onDrop: (dt) => { handleDrop('cluster', cluster.id, dt) },
+                      }}
                       trailing={
                         <>
                           <Badge variant="brand" className="gap-1 tnum">
@@ -271,6 +358,13 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
                                           label={zone.name}
                                           mono
                                           tone="zone"
+                                          dropTarget={{
+                                            active: dragOverKey === zoneKey,
+                                            accepts: () => targetAcceptsDragging('zone'),
+                                            onDragEnter: () => { setDragOverKey(zoneKey) },
+                                            onDragLeave: () => { setDragOverKey((k) => (k === zoneKey ? null : k)) },
+                                            onDrop: (dt) => { handleDrop('zone', zone.id, dt) },
+                                          }}
                                           trailing={
                                             <>
                                               <span className="text-ink-4 tnum">
@@ -345,6 +439,7 @@ export default function ZoneTree({ namespaceId }: { namespaceId: number }) {
 }
 
 // 可展开的树行（集群 / 大区 / 小区）：左侧缩进 + 展开箭头 + 图标 + 名称 + 右侧尾随内容。
+// 作为放置目标时（dropTarget 提供）：drag-over 兼容则高亮，松手触发落区。
 function TreeRow({
   depth,
   open,
@@ -355,6 +450,7 @@ function TreeRow({
   mono,
   tone,
   trailing,
+  dropTarget,
 }: {
   depth: number
   open: boolean
@@ -365,6 +461,14 @@ function TreeRow({
   mono?: boolean
   tone: 'cluster' | 'region' | 'zone'
   trailing?: React.ReactNode
+  // 放置目标能力：判定兼容、drag-over 高亮态、进入/离开/落下回调
+  dropTarget?: {
+    active: boolean
+    accepts: () => boolean
+    onDragEnter: () => void
+    onDragLeave: () => void
+    onDrop: (dt: DataTransfer) => void
+  }
 }) {
   const toneClass =
     tone === 'cluster'
@@ -378,6 +482,8 @@ function TreeRow({
         'group flex items-center gap-1.5 rounded-md px-2 py-1.5 transition-colors',
         toneClass,
         !disabled && 'cursor-pointer hover:bg-brand-50',
+        // 拖拽兼容目标 drag-over 高亮：品牌色描边 + 底色
+        dropTarget?.active && 'bg-brand-100 ring-2 ring-brand ring-inset',
       )}
       style={{ paddingLeft: `${String(depth * 18 + 8)}px` }}
       onClick={disabled ? undefined : onToggle}
@@ -389,6 +495,35 @@ function TreeRow({
           onToggle()
         }
       }}
+      onDragOver={
+        dropTarget
+          ? (e) => {
+              if (dropTarget.accepts()) {
+                // 允许放置（否则浏览器默认禁止 drop）
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                if (!dropTarget.active) {
+                  dropTarget.onDragEnter()
+                }
+              }
+            }
+          : undefined
+      }
+      onDragLeave={
+        dropTarget
+          ? () => {
+              dropTarget.onDragLeave()
+            }
+          : undefined
+      }
+      onDrop={
+        dropTarget
+          ? (e) => {
+              e.preventDefault()
+              dropTarget.onDrop(e.dataTransfer)
+            }
+          : undefined
+      }
     >
       {/* 展开箭头（无子项时占位保持对齐） */}
       <span className="grid size-4 shrink-0 place-items-center text-ink-4">

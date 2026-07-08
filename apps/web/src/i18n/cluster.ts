@@ -119,10 +119,19 @@ export const cluster = {
     basket: {
       title: '未分配',
       sheetDesc: '已确认但尚未落区的服务器。勾选同类服务器后批量首次分配到小区 / 集群。',
+      railHint: '拖动服务器到左侧结构树的兼容目标即可分配；或勾选后用「分配到…」批量分配（须同类）。',
       empty: '没有待分配的服务器，所有已确认服务器都已落区',
       assign: '批量分配',
+      assignTo: '分配到…',
+      close: '收起未分配栏',
       selected: '已选 {{count}} 台',
       selectHint: '勾选服务器后可批量分配（须同类）',
+    },
+    drag: {
+      hintBackend: '将子服拖到目标小区节点上松手即可落区',
+      hintProxy: '将代理服拖到目标 BC 集群节点上松手即可落区',
+      dropOk: '{{serverId}} 已分配',
+      dropFail: '{{serverId}} 分配失败，请改用批量分配查看逐台原因',
     },
     create: {
       clusterTitle: '新建 BC 集群',
@@ -140,6 +149,8 @@ export const cluster = {
       targetZone: '目标小区',
       targetCluster: '目标集群',
       setDefaultEntry: '同时设为默认入口',
+      searchTarget: '搜索目标（按名称过滤）',
+      noTargetMatch: '无匹配的目标节点',
       preview: '影响预览',
       previewLine: '将把 {{count}} 台服务器分配到 {{target}}',
       confirm: '确认分配',

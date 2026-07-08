@@ -16,29 +16,26 @@ import {
 } from '@beacon/ui'
 import type { AssignmentResult, ServerItem, ZoneTreeResponse } from '@beacon/devmock'
 
-// 目标选项：value 为目标 id（字符串），label 为可读名称。
-export interface TargetOption {
-  value: string
-  label: string
-}
+import AssignTargetTree from './assign-target-tree'
 
-/** 从结构树派生目标选项：backend 落小区（zone id），proxy 落集群（cluster id）。 */
-export function targetOptionsOf(tree: ZoneTreeResponse | undefined, kind: 'backend' | 'proxy'): TargetOption[] {
-  if (!tree) {
-    return []
+/** 从结构树按 id 找目标可读名（小区含集群 / 大区路径，集群直接用名）。 */
+function targetLabelOf(tree: ZoneTreeResponse | undefined, kind: 'backend' | 'proxy', target: string): string {
+  if (!tree || target === '') {
+    return ''
   }
   if (kind === 'proxy') {
-    return tree.clusters.map((cluster) => ({ value: String(cluster.id), label: cluster.name }))
+    return tree.clusters.find((c) => String(c.id) === target)?.name ?? ''
   }
-  const options: TargetOption[] = []
   for (const cluster of tree.clusters) {
     for (const region of cluster.regions) {
       for (const zone of region.zones) {
-        options.push({ value: String(zone.id), label: `${cluster.name} / ${region.name} / ${zone.name}` })
+        if (String(zone.id) === target) {
+          return `${cluster.name} / ${region.name} / ${zone.name}`
+        }
       }
     }
   }
-  return options
+  return ''
 }
 
 interface AssignDialogProps {
@@ -48,7 +45,8 @@ interface AssignDialogProps {
   servers: ServerItem[]
   // 篮内 server 的 kind，决定目标是小区还是集群
   kind: 'backend' | 'proxy'
-  options: TargetOption[]
+  // 结构树：目标选择器用可搜索树呈现
+  tree: ZoneTreeResponse | undefined
   pending: boolean
   errorText?: string | null
   // 逐台结果（成功后展示）；null 表示尚未提交
@@ -62,7 +60,7 @@ export default function AssignDialog({
   onOpenChange,
   servers,
   kind,
-  options,
+  tree,
   pending,
   errorText,
   results,
@@ -80,10 +78,7 @@ export default function AssignDialog({
     }
   }, [open])
 
-  const targetLabel = useMemo(
-    () => options.find((o) => o.value === target)?.label ?? '',
-    [options, target],
-  )
+  const targetLabel = useMemo(() => targetLabelOf(tree, kind, target), [tree, kind, target])
 
   const failed = results?.filter((r) => !r.ok) ?? []
   const succeeded = results?.filter((r) => r.ok) ?? []
@@ -98,24 +93,9 @@ export default function AssignDialog({
 
         <div className="grid gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="assign-target">{t(targetLabelKey)}</Label>
-            {/* 用原生 select：候选来自结构树，严格选已存在项 */}
-            <select
-              id="assign-target"
-              aria-label={t(targetLabelKey)}
-              value={target}
-              onChange={(e) => {
-                setTarget(e.target.value)
-              }}
-              className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm text-ink-1"
-            >
-              <option value="">—</option>
-              {options.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+            <Label>{t(targetLabelKey)}</Label>
+            {/* 可搜索树选目标：不拍平成下拉，按 集群 → 大区 → 小区 / 代理 层级选择 */}
+            <AssignTargetTree tree={tree} kind={kind} value={target} onChange={setTarget} />
           </div>
 
           {kind === 'backend' && (
