@@ -5,11 +5,15 @@
 // 沿线虚线流动动画（CSS stroke-dashoffset，节制、respect prefers-reduced-motion、可开关）。
 // 点选链路 / 小区节点 → 右侧固定侧面板展示明细 / 概要，图本身不 reflow、不跳动。
 // 超大量（如 48 小区 / 1200 台）时按大区聚合为节点并明示聚合；动画只跑有限条边（异常优先）。
+// 画布可缩放平移：固定高度视口 + 逻辑坐标系放大防遮挡；滚轮（含触控板 ctrl+wheel）以鼠标位置
+// 为中心缩放、按住拖拽平移（几像素阈值内视为点击）、右下角控件组（放大 / 缩小 / 适应视图 / 百分比）；
+// 缩放平移状态全走 ref 直改舞台层 CSS transform（合成器层，不重绘 SVG），交互期间零 React 重渲染；
+// 缩得很小（<0.6x）时按语义缩放隐藏次要文字（健康分布行 / 分区统计等），避免糊成一团。
 
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowRight, Boxes, Network, TriangleAlert, Waves } from 'lucide-react'
+import { ArrowRight, Boxes, Maximize, Network, TriangleAlert, Waves, ZoomIn, ZoomOut } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
 import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/devmock'
@@ -29,26 +33,41 @@ const MAX_FLOW_EDGES = 24
 const MAX_EDGE_LABELS = 8
 
 // ---- 放射布局几何常量（确定性静态计算，不做力导向物理模拟）----
+// 逻辑坐标系已按「标签互不重叠」拉开间距（画布可缩放，不再迁就视口宽度硬挤）
 // 代理节点半径（靛蓝、稍大）
 const PROXY_R = 42
-// 小区 / 大区聚合节点半径
-const NODE_R = 33
-// 分区内节点网格：单元宽高（含名称与健康说明文字）
-const CELL_W = 150
-const CELL_H = 128
+// 小区 / 大区聚合节点半径（名称 / 计数移到节点正下方后圆体可更紧凑）
+const NODE_R = 26
+// 分区内节点网格：单元宽高（含节点正下方的名称 / 计数 / 健康说明三行文字）
+const CELL_W = 200
+const CELL_H = 148
 // 分区盒内边距与标题高度
 const GROUP_PAD_X = 16
 const GROUP_HEAD = 44
-const GROUP_PAD_B = 10
+const GROUP_PAD_B = 12
 // 分区盒之间的纵向间距
-const GROUP_GAP = 20
+const GROUP_GAP = 36
 // 分区列起始 x / 代理列中心 x
-const GROUP_X = 236
+const GROUP_X = 260
 const PROXY_CX = 104
 // 分区内每行最多节点数
 const MAX_COLS = 4
 // 画布内边距
-const PAD = 16
+const PAD = 24
+
+// ---- 画布缩放平移常量 ----
+// 缩放范围与单步系数（按钮 / 双击步进用）
+const MIN_ZOOM = 0.25
+const MAX_ZOOM = 4
+const ZOOM_STEP = 1.25
+// 语义缩放阈值：低于该倍率隐藏次要文字（健康分布行 / 分区统计等）
+const LOD_ZOOM = 0.6
+// 拖拽平移判定阈值（px）：位移小于该值视为点击而非拖拽
+const DRAG_THRESHOLD = 4
+// 适应视图时四周留白（px）
+const FIT_MARGIN = 24
+// 异常失败率药丸沿贝塞尔链路的错开取样点（按标签序轮转，防中点堆叠）
+const LABEL_TS = [0.5, 0.34, 0.66, 0.42, 0.58, 0.26, 0.74, 0.5]
 
 interface TopologyGraphProps {
   namespaceId: number
@@ -125,14 +144,48 @@ function countZones(tree: ZoneTreeResponse): number {
   )
 }
 
-// 三次贝塞尔链路路径：从代理圆右缘弯向节点圆左缘（控制点水平外推，走势同 mockup）
-function linkPath(proxy: ProxyNode, node: GraphNode): string {
+// 链路三次贝塞尔几何：从代理圆右缘弯向节点圆左缘（控制点水平外推，走势同 mockup）
+interface LinkGeometry {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  dx: number
+}
+
+function linkGeometry(proxy: ProxyNode, node: GraphNode): LinkGeometry {
   const x1 = proxy.cx + PROXY_R
   const y1 = proxy.cy
   const x2 = node.cx - NODE_R
   const y2 = node.cy
   const dx = Math.max(40, (x2 - x1) / 2)
-  return `M ${String(x1)} ${String(y1)} C ${String(x1 + dx)} ${String(y1)}, ${String(x2 - dx)} ${String(y2)}, ${String(x2)} ${String(y2)}`
+  return { x1, y1, x2, y2, dx }
+}
+
+function linkPath(g: LinkGeometry): string {
+  return `M ${String(g.x1)} ${String(g.y1)} C ${String(g.x1 + g.dx)} ${String(g.y1)}, ${String(g.x2 - g.dx)} ${String(g.y2)}, ${String(g.x2)} ${String(g.y2)}`
+}
+
+// 三次贝塞尔曲线上参数 t 处的点（异常失败率药丸沿边错开摆放用）
+function linkPointAt(g: LinkGeometry, t: number): { x: number; y: number } {
+  const p0 = { x: g.x1, y: g.y1 }
+  const p1 = { x: g.x1 + g.dx, y: g.y1 }
+  const p2 = { x: g.x2 - g.dx, y: g.y2 }
+  const p3 = { x: g.x2, y: g.y2 }
+  const u = 1 - t
+  const a = u * u * u
+  const b = 3 * u * u * t
+  const c = 3 * u * t * t
+  const d = t * t * t
+  return {
+    x: a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+    y: a * p0.y + b * p1.y + c * p2.y + d * p3.y,
+  }
+}
+
+// 数值收敛到闭区间
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v))
 }
 
 // 放射布局：分区盒纵向堆叠在右侧，分区内节点按网格排布；代理列在左侧纵向均匀分布
@@ -199,7 +252,7 @@ function buildLayout(tree: ZoneTreeResponse, collapsed: boolean): GraphLayout {
       nodes.push({
         ...item,
         cx: GROUP_X + GROUP_PAD_X + col * CELL_W + CELL_W / 2,
-        cy: cursorY + GROUP_HEAD + row * CELL_H + NODE_R + 8,
+        cy: cursorY + GROUP_HEAD + row * CELL_H + NODE_R + 12,
       })
     })
     maxGroupW = Math.max(maxGroupW, w)
@@ -276,6 +329,55 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
   const [selection, setSelection] = useState<Selection>(null)
   // 数据流动画开关（默认开，节制低速）
   const [flowOn, setFlowOn] = useState(true)
+
+  // ---- 画布缩放平移：状态全走 ref 直改 DOM，交互期间零 React 重渲染 ----
+  const canvasRef = useRef<HTMLDivElement | null>(null)
+  // 缩放平移作用的 HTML 舞台层（包住 SVG）：CSS transform + will-change 走合成器层，
+  // 拖拽 / 缩放期间不触发 SVG 重绘（SVG 内部元素无法提升为合成层，直改 <g> 会整图重绘掉帧）
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  // 右下角控件里的缩放百分比文字（同样 ref 直改，避免 wheel 触发 state 更新风暴）
+  const zoomTextRef = useRef<HTMLSpanElement | null>(null)
+  // 当前视图变换：k 缩放倍率、tx/ty 平移
+  const viewRef = useRef({ k: 1, tx: 0, ty: 0 })
+  // 拖拽会话：active 拖拽中、moved 是否超过点击阈值（超过则抑制随后的 click）
+  const dragRef = useRef({ active: false, moved: false, startX: 0, startY: 0, baseTx: 0, baseTy: 0 })
+
+  // 把 viewRef 应用到 DOM：transform + 语义缩放（LOD）类 + 百分比文字
+  const applyView = useCallback(() => {
+    const v = viewRef.current
+    const stage = stageRef.current
+    if (stage) {
+      stage.style.transform = `translate(${String(v.tx)}px, ${String(v.ty)}px) scale(${String(v.k)})`
+      stage.classList.toggle('beacon-lod-hide', v.k < LOD_ZOOM)
+    }
+    if (zoomTextRef.current) {
+      zoomTextRef.current.textContent = `${String(Math.round(v.k * 100))}%`
+    }
+  }, [])
+
+  // 以画布内某点 (px, py) 为中心缩放 factor 倍
+  const zoomAt = useCallback(
+    (px: number, py: number, factor: number) => {
+      const v = viewRef.current
+      const k = clamp(v.k * factor, MIN_ZOOM, MAX_ZOOM)
+      if (k === v.k) {
+        return
+      }
+      const scale = k / v.k
+      viewRef.current = { k, tx: px - (px - v.tx) * scale, ty: py - (py - v.ty) * scale }
+      applyView()
+    },
+    [applyView],
+  )
+
+  // 按钮步进缩放：以画布中心为锚点
+  const zoomStep = useCallback(
+    (factor: number) => {
+      const rect = canvasRef.current?.getBoundingClientRect()
+      zoomAt((rect?.width ?? 0) / 2, (rect?.height ?? 0) / 2, factor)
+    },
+    [zoomAt],
+  )
 
   const zoneTotal = useMemo(() => (tree ? countZones(tree) : 0), [tree])
   const collapsed = zoneTotal > MAX_ZONE_NODES
@@ -388,6 +490,116 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     }
     return buildLayout(tree, collapsed)
   }, [tree, collapsed])
+
+  // 适应视图：全图缩放居中到可视区（无法量到画布尺寸时回退 1x 原点，jsdom 亦稳定）
+  const fitToView = useCallback(() => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!layout || !rect || rect.width < 1 || rect.height < 1) {
+      viewRef.current = { k: 1, tx: 0, ty: 0 }
+      applyView()
+      return
+    }
+    const k = clamp(
+      Math.min((rect.width - FIT_MARGIN * 2) / layout.width, (rect.height - FIT_MARGIN * 2) / layout.height),
+      MIN_ZOOM,
+      1,
+    )
+    viewRef.current = {
+      k,
+      tx: (rect.width - layout.width * k) / 2,
+      ty: (rect.height - layout.height * k) / 2,
+    }
+    applyView()
+  }, [layout, applyView])
+
+  // 初始加载 / 布局形态变化（折叠切换、namespace 切换）即适应视图
+  useLayoutEffect(() => {
+    fitToView()
+  }, [fitToView])
+
+  // 滚轮缩放（含触控板双指 ctrl+wheel）：React 的 onWheel 在根上是 passive 的，
+  // 无法 preventDefault 阻断页面滚动 / 浏览器缩放，故手动挂 non-passive 监听；
+  // 画布 div 随 layout 就绪才挂载，故依赖 layout 重挂监听（首渲染 loading 态无画布）
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el || !layout) {
+      return
+    }
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      // 触控板捏合（ctrlKey）deltaY 幅度小，用更大灵敏度；普通滚轮平滑小步
+      const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0018))
+      zoomAt(e.clientX - rect.left, e.clientY - rect.top, factor)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+    }
+  }, [zoomAt, layout])
+
+  // 拖拽平移：move/up 挂 window（无需 pointer capture，拖出画布不丢事件）
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag.active) {
+        return
+      }
+      const dx = e.clientX - drag.startX
+      const dy = e.clientY - drag.startY
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) {
+        return
+      }
+      if (!drag.moved) {
+        drag.moved = true
+        if (canvasRef.current) {
+          canvasRef.current.style.cursor = 'grabbing'
+        }
+      }
+      viewRef.current = { ...viewRef.current, tx: drag.baseTx + dx, ty: drag.baseTy + dy }
+      applyView()
+    }
+    const onUp = () => {
+      const drag = dragRef.current
+      if (!drag.active) {
+        return
+      }
+      drag.active = false
+      if (canvasRef.current) {
+        canvasRef.current.style.cursor = ''
+      }
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [applyView])
+
+  // 按下开始拖拽会话（左键）；moved 复位，等待位移判定；控件区按下不当拖拽
+  const onCanvasPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 || (e.target as Element).closest('[data-topo-controls]') !== null) {
+      return
+    }
+    dragRef.current = {
+      active: true,
+      moved: false,
+      startX: e.clientX,
+      startY: e.clientY,
+      baseTx: viewRef.current.tx,
+      baseTy: viewRef.current.ty,
+    }
+  }, [])
+
+  // 拖拽超过阈值后抑制随后的 click（捕获阶段拦截，节点 / 链路的点选不被误触发）
+  const onCanvasClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (dragRef.current.moved) {
+      e.preventDefault()
+      e.stopPropagation()
+      dragRef.current.moved = false
+    }
+  }, [])
 
   // 聚合链路：结构主链路（集群 → 其下每个节点）+ 消息统计按「源集群 → 目标节点」聚合；
   // 上千条服务器间原始边天然收敛为少量集群 → 节点链路（跨集群消息也会生成对应链路），
@@ -532,12 +744,13 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
 
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      {/* 数据流动画的作用域样式：沿路径流动的虚线偏移动画（不引库） */}
+      {/* 数据流动画 + 语义缩放的作用域样式：流动虚线偏移动画、低倍率隐藏次要文字（不引库） */}
       <style>{`
         @keyframes beacon-edge-flow { to { stroke-dashoffset: -24; } }
         .beacon-flow { animation: beacon-edge-flow 1.6s linear infinite; }
         .beacon-flow-fast { animation-duration: 0.8s; }
         @media (prefers-reduced-motion: reduce) { .beacon-flow { animation: none; } }
+        .beacon-lod-hide .beacon-lod { display: none; }
       `}</style>
 
       <div className="flex flex-wrap items-center gap-2.5">
@@ -595,17 +808,30 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
 
             {/* 图区 + 右侧固定明细侧面板：非模态、图不 reflow */}
             <div className="flex items-start gap-3">
-              {/* 放射拓扑画布：SVG 自绘 + 左下角图例悬浮卡 */}
-              <div className="relative min-w-0 flex-1">
-                <div className="overflow-x-auto pb-2">
+              {/* 放射拓扑画布：固定高度视口 + 缩放平移舞台层（左下图例 / 右下缩放控件悬浮） */}
+              <div
+                ref={canvasRef}
+                className="relative h-[calc(100vh-340px)] min-h-[420px] min-w-0 flex-1 cursor-grab touch-none overflow-hidden rounded-lg border border-border select-none"
+                onPointerDown={onCanvasPointerDown}
+                onClickCapture={onCanvasClickCapture}
+              >
+                {/* 舞台层：CSS transform 由 ref 直改并走合成器（will-change），缩放平移不重绘 SVG */}
+                <div
+                  ref={stageRef}
+                  style={{
+                    width: layout.width,
+                    height: layout.height,
+                    transformOrigin: '0 0',
+                    willChange: 'transform',
+                  }}
+                >
                   <svg
                     width={layout.width}
                     height={layout.height}
                     viewBox={`0 0 ${String(layout.width)} ${String(layout.height)}`}
-                    preserveAspectRatio="xMinYMin meet"
                     role="img"
                     aria-label={t('cluster.topology.graph.title')}
-                    className="min-w-full"
+                    className="block"
                   >
                     <defs>
                       {/* 代理节点靛蓝渐变 */}
@@ -632,7 +858,14 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                         <text x={g.x + 18} y={g.y + 26} fontSize={12} fontWeight={700} fill="var(--color-ink-3)">
                           {g.name}
                         </text>
-                        <text x={g.x + 18} y={g.y + 26} dx={g.name.length * 13 + 10} fontSize={10} fill="var(--color-ink-4)">
+                        <text
+                          x={g.x + 18}
+                          y={g.y + 26}
+                          dx={g.name.length * 13 + 10}
+                          fontSize={10}
+                          fill="var(--color-ink-4)"
+                          className="beacon-lod"
+                        >
                           {collapsed
                             ? t('cluster.topology.graph.clusterMeta', { regions: g.nodeCount, servers: g.serverCount })
                             : t('cluster.topology.graph.regionMeta', { zones: g.nodeCount, servers: g.serverCount })}
@@ -644,7 +877,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                     <text x={PROXY_CX} y={PAD + 12} textAnchor="middle" fontSize={12} fontWeight={700} fill="var(--color-ink-3)">
                       {t('cluster.topology.graph.proxyLayerTitle')}
                     </text>
-                    <text x={PROXY_CX} y={PAD + 28} textAnchor="middle" fontSize={10} fill="var(--color-ink-4)">
+                    <text x={PROXY_CX} y={PAD + 28} textAnchor="middle" fontSize={10} fill="var(--color-ink-4)" className="beacon-lod">
                       {t('cluster.topology.graph.proxyLayerSub', { online: proxyStat.online, total: proxyStat.total })}
                     </text>
 
@@ -657,9 +890,10 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                       }
                       const active = selectedLink !== null && selectedLink.key === link.key
                       const color = link.abnormal ? 'var(--color-crit)' : 'var(--color-brand)'
-                      const d = linkPath(proxy, node)
-                      const midX = (proxy.cx + PROXY_R + node.cx - NODE_R) / 2
-                      const midY = (proxy.cy + node.cy) / 2
+                      const geom = linkGeometry(proxy, node)
+                      const d = linkPath(geom)
+                      // 失败率药丸沿边错开取样（异常链路已排最前，按序轮转避免中点堆叠）
+                      const labelAt = linkPointAt(geom, LABEL_TS[linkIndex % LABEL_TS.length] ?? 0.5)
                       const width = linkWidth(link)
                       const worst = link.worstEdge
                       const label = `${String(link.failRatePercent)}% ${t('cluster.topology.edges.failRate')}`
@@ -709,7 +943,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                           )}
                           {/* 异常链路失败率标签：只直显最差的前几条（选中的始终显示），防标签堆叠 */}
                           {link.abnormal && (linkIndex < MAX_EDGE_LABELS || active) && (
-                            <g transform={`translate(${String(midX)}, ${String(midY)})`}>
+                            <g transform={`translate(${String(labelAt.x)}, ${String(labelAt.y)})`}>
                               <rect x={-46} y={-11} width={92} height={22} rx={11} fill="var(--color-card)" stroke="var(--color-crit-bd)" strokeWidth={active ? 1.5 : 1} />
                               <circle cx={-34} cy={0} r={3} fill="var(--color-crit)" />
                               <text x={5} y={3.5} textAnchor="middle" fontSize={10.5} fontWeight={700} fill="var(--color-crit)">
@@ -738,7 +972,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                           <text x={p.cx} y={p.cy - 2} textAnchor="middle" fontSize={12.5} fontWeight={700} fill="white">
                             {p.name}
                           </text>
-                          <text x={p.cx} y={p.cy + 14} textAnchor="middle" fontSize={9.5} fill="rgba(255,255,255,.78)" className="tnum">
+                          <text x={p.cx} y={p.cy + 14} textAnchor="middle" fontSize={9.5} fill="rgba(255,255,255,.78)" className="tnum beacon-lod">
                             {t('cluster.topology.graph.proxyBadge', { count: p.proxyCount })}
                           </text>
                           <circle cx={p.cx + PROXY_R * 0.68} cy={p.cy - PROXY_R * 0.68} r={5.5} fill={dotColor} stroke="var(--color-card)" strokeWidth={2} />
@@ -777,21 +1011,32 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                               r={NODE_R}
                               fill="none"
                               stroke={seg.color}
-                              strokeWidth={4.5}
+                              strokeWidth={4}
                               pathLength={100}
                               strokeDasharray={`${seg.share.toFixed(2)} ${(100 - seg.share).toFixed(2)}`}
                               strokeDashoffset={seg.offset.toFixed(2)}
                             />
                           ))}
-                          <text x={node.cx} y={node.cy - 2} textAnchor="middle" fontSize={node.name.length > 9 ? 9 : 11} fontWeight={700} fill="var(--color-ink-1)">
+                          {/* 圆内图形符号：名称 / 计数已移到节点正下方，圆体保持干净不再挤文字 */}
+                          <Boxes
+                            x={node.cx - 10}
+                            y={node.cy - 10}
+                            width={20}
+                            height={20}
+                            color="var(--color-ink-3)"
+                            strokeWidth={1.7}
+                            aria-hidden
+                          />
+                          {/* 节点正下方固定偏移：名称 + 计数（防遮挡：不再塞进圆内被截断） */}
+                          <text x={node.cx} y={node.cy + NODE_R + 18} textAnchor="middle" fontSize={11.5} fontWeight={700} fill="var(--color-ink-1)">
                             {node.name}
                           </text>
-                          <text x={node.cx} y={node.cy + 13} textAnchor="middle" fontSize={9.5} fill="var(--color-ink-3)" className="tnum">
+                          <text x={node.cx} y={node.cy + NODE_R + 32} textAnchor="middle" fontSize={9.5} fill="var(--color-ink-3)" className="tnum">
                             {t('cluster.topology.graph.serverCountShort', { count: node.serverCount })}
                           </text>
-                          {/* 节点下方健康说明：仅列非零状态 */}
+                          {/* 健康说明行：仅列非零状态；语义缩放低倍率时隐藏（beacon-lod） */}
                           {parts.length > 0 && (
-                            <text x={node.cx} y={node.cy + NODE_R + 18} textAnchor="middle" fontSize={9.5}>
+                            <text x={node.cx} y={node.cy + NODE_R + 46} textAnchor="middle" fontSize={9.5} className="beacon-lod">
                               {parts.map((part, i) => (
                                 <tspan key={part.key} fill={part.color}>
                                   {i > 0 ? ' · ' : ''}
@@ -806,8 +1051,49 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                   </svg>
                 </div>
 
-                {/* ===== 图例（右下角悬浮卡，纯说明不拦截交互；避开左列代理节点） ===== */}
-                <div className="pointer-events-none absolute right-3 bottom-3 w-[200px] rounded-lg border border-border bg-card/90 p-2.5 text-[10.5px] text-ink-3 shadow-card backdrop-blur-sm">
+                {/* ===== 缩放控件（右下角悬浮）：放大 / 缩小 / 适应视图 + 当前百分比 ===== */}
+                <div
+                  data-topo-controls
+                  className="absolute right-3 bottom-3 flex cursor-default items-center gap-0.5 rounded-lg border border-border bg-card/90 p-1 shadow-card backdrop-blur-sm"
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('cluster.topology.graph.zoomOut')}
+                    title={t('cluster.topology.graph.zoomOut')}
+                    onClick={() => {
+                      zoomStep(1 / ZOOM_STEP)
+                    }}
+                  >
+                    <ZoomOut />
+                  </Button>
+                  <span ref={zoomTextRef} className="tnum w-11 text-center text-[11px] text-ink-2">
+                    100%
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('cluster.topology.graph.zoomIn')}
+                    title={t('cluster.topology.graph.zoomIn')}
+                    onClick={() => {
+                      zoomStep(ZOOM_STEP)
+                    }}
+                  >
+                    <ZoomIn />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t('cluster.topology.graph.zoomFit')}
+                    title={t('cluster.topology.graph.zoomFit')}
+                    onClick={fitToView}
+                  >
+                    <Maximize />
+                  </Button>
+                </div>
+
+                {/* ===== 图例（左下角悬浮卡，纯说明不拦截交互；右下角让给缩放控件） ===== */}
+                <div className="pointer-events-none absolute bottom-3 left-3 w-[200px] rounded-lg border border-border bg-card/90 p-2.5 text-[10.5px] text-ink-3 shadow-card backdrop-blur-sm">
                   <p className="text-[9.5px] font-semibold tracking-[0.5px] text-ink-4 uppercase">
                     {t('cluster.topology.graph.legendTitle')}
                   </p>

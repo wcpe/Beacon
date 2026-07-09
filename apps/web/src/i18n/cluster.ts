@@ -244,6 +244,10 @@ export const cluster = {
       nodeServers: '子服数',
       healthBreakdown: '健康分布',
       linkAgg: '聚合自 {{count}} 条服务器间链路',
+      // 画布缩放控件（右下角悬浮）
+      zoomIn: '放大',
+      zoomOut: '缩小',
+      zoomFit: '适应视图',
     },
     data: {
       linkCount: '链路数',

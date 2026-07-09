@@ -1,7 +1,8 @@
 // /topology 拓扑页测试（双模式）：可视化模式渲染放射网络拓扑图（代理节点 / 大区分区 / 小区健康节点 /
-// 异常链路失败率标签）、点节点或链路出右侧固定侧面板明细、空态引导、超大量按大区聚合折叠并明示聚合；
+// 异常链路失败率标签）、画布缩放平移（右下角控件 / 适应视图重置 / 拖拽超阈值抑制点选）、
+// 点节点或链路出右侧固定侧面板明细、空态引导、超大量按大区聚合折叠并明示聚合；
 // 数据剖析模式渲染异常链路表并点击边看明细。默认可视化模式，切到「数据剖析」看表。
-import { screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -84,6 +85,55 @@ describe('/topology 拓扑页', () => {
     expect(sample.closest('aside')).not.toBeNull()
   })
 
+  it('画布缩放控件存在：放大 / 缩小 / 适应视图与当前百分比', async () => {
+    useScenario('normal')
+    renderPage(<TopologyPage />)
+
+    await screen.findByText('area-1')
+    expect(screen.getByRole('button', { name: '放大' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '缩小' })).toBeInTheDocument()
+    const fitButton = screen.getByRole('button', { name: '适应视图' })
+    // 百分比展示在控件组内；jsdom 量不到画布尺寸时适应视图回退 1x，显示 100%
+    const controls = fitButton.closest('div')
+    expect(controls).not.toBeNull()
+    expect(within(controls as HTMLElement).getByText('100%')).toBeInTheDocument()
+  })
+
+  it('放大后百分比变化，点适应视图重置回初始倍率', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<TopologyPage />)
+
+    await screen.findByText('area-1')
+    const controls = screen.getByRole('button', { name: '适应视图' }).closest('div') as HTMLElement
+    await user.click(screen.getByRole('button', { name: '放大' }))
+    expect(within(controls).getByText('125%')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '适应视图' }))
+    expect(within(controls).getByText('100%')).toBeInTheDocument()
+  })
+
+  it('拖拽超过阈值抑制点选，阈值内视为点击（点选节点正常出侧面板）', async () => {
+    useScenario('normal')
+    renderPage(<TopologyPage />)
+
+    await screen.findByText('area-1')
+    const node = screen.getByRole('button', { name: 'area-1' })
+
+    // 拖拽：按下后位移超过阈值再松开，随后的 click 被捕获阶段抑制（不触发点选）
+    fireEvent(node, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(window, new MouseEvent('pointermove', { bubbles: true, clientX: 140, clientY: 130 }))
+    fireEvent(window, new MouseEvent('pointerup', { bubbles: true, clientX: 140, clientY: 130 }))
+    fireEvent(node, new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 140, clientY: 130 }))
+    expect(screen.queryByText('小区概要')).not.toBeInTheDocument()
+
+    // 点击：位移在阈值内，click 正常触发点选出侧面板
+    fireEvent(node, new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }))
+    fireEvent(window, new MouseEvent('pointermove', { bubbles: true, clientX: 101, clientY: 101 }))
+    fireEvent(window, new MouseEvent('pointerup', { bubbles: true, clientX: 101, clientY: 101 }))
+    fireEvent(node, new MouseEvent('click', { bubbles: true, cancelable: true, clientX: 101, clientY: 101 }))
+    expect(await screen.findByText('小区概要')).toBeInTheDocument()
+  })
+
   it('空态给出接入引导', async () => {
     useScenario('empty')
     renderPage(<TopologyPage />)
@@ -152,12 +202,15 @@ describe('/topology 拓扑页', () => {
     // 聚合明示文案出现（说明上千条服务器间原始边未被逐条渲染）
     expect(await screen.findByText(/条服务器间链路聚合为/)).toBeInTheDocument()
 
-    // 只数拓扑图主 SVG（role="img"）内的链路 path：上限 60 条聚合链路，每条至多 3 个 path
-    // （选中光晕 + 静态底 + 动画流），故 ≤180；断言远小于「上千原始边逐条渲染」规模，证明聚合生效。
+    // 只数拓扑图主 SVG（role="img"）直属的链路 path（排除节点图标等嵌套 svg 内的 path）：
+    // 上限 60 条聚合链路，每条至多 3 个 path（选中光晕 + 静态底 + 动画流），故 ≤180；
+    // 断言远小于「上千原始边逐条渲染」规模，证明聚合生效。
     await waitFor(() => {
       const graphSvg = container.querySelector('svg[role="img"]')
       expect(graphSvg).not.toBeNull()
-      const paths = (graphSvg as SVGElement).querySelectorAll('path')
+      const paths = [...(graphSvg as SVGElement).querySelectorAll('path')].filter(
+        (p) => p.closest('svg') === graphSvg,
+      )
       expect(paths.length).toBeGreaterThan(0)
       expect(paths.length).toBeLessThanOrEqual(60 * 3)
     })
