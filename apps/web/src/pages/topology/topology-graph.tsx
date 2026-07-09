@@ -7,8 +7,9 @@
 // 超大量（如 48 小区 / 1200 台）时按大区聚合为节点并明示聚合；动画只跑有限条边（异常优先）。
 // 画布可缩放平移：固定高度视口 + 逻辑坐标系放大防遮挡；滚轮（含触控板 ctrl+wheel）以鼠标位置
 // 为中心缩放、按住拖拽平移（几像素阈值内视为点击）、右下角控件组（放大 / 缩小 / 适应视图 / 百分比）；
+// 百分比以「适应视图」为 100% 基准（fit 即全览居中显示 100%，逻辑坐标系拉开后 1:1 无直觉意义），
 // 缩放平移状态全走 ref 直改舞台层 CSS transform（合成器层，不重绘 SVG），交互期间零 React 重渲染；
-// 缩得很小（<0.6x）时按语义缩放隐藏次要文字（健康分布行 / 分区统计等），避免糊成一团。
+// 实际倍率很小（绝对 k<0.6）时按语义缩放隐藏次要文字（健康分布行 / 分区统计等），避免糊成一团。
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -56,11 +57,14 @@ const MAX_COLS = 4
 const PAD = 24
 
 // ---- 画布缩放平移常量 ----
-// 缩放范围与单步系数（按钮 / 双击步进用）
-const MIN_ZOOM = 0.25
-const MAX_ZOOM = 4
+// 缩放上下限：相对「适应视图」基准倍率（fit=100%）的倍数，非绝对 k
+const MIN_ZOOM_RATIO = 0.25
+const MAX_ZOOM_RATIO = 4
+// 单步缩放系数（按钮步进用）
 const ZOOM_STEP = 1.25
-// 语义缩放阈值：低于该倍率隐藏次要文字（健康分布行 / 分区统计等）
+// 语义缩放阈值：低于该【绝对】倍率隐藏次要文字（健康分布行 / 分区统计等）。
+// 按绝对 k 而非相对 fit 基准判断：文字可读性取决于屏幕上的实际像素大小——
+// huge 态 fit(100%) 时实际 k 很小、次要文字本就糊成一团，该隐照隐
 const LOD_ZOOM = 0.6
 // 拖拽平移判定阈值（px）：位移小于该值视为点击而非拖拽
 const DRAG_THRESHOLD = 4
@@ -337,8 +341,10 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   // 右下角控件里的缩放百分比文字（同样 ref 直改，避免 wheel 触发 state 更新风暴）
   const zoomTextRef = useRef<HTMLSpanElement | null>(null)
-  // 当前视图变换：k 缩放倍率、tx/ty 平移
+  // 当前视图变换：k 缩放倍率（绝对逻辑倍率）、tx/ty 平移
   const viewRef = useRef({ k: 1, tx: 0, ty: 0 })
+  // 「适应视图」基准倍率：显示的百分比 = 当前 k / fitK（fit 时即 100%），数据 / 视口变化时重算
+  const fitKRef = useRef(1)
   // 拖拽会话：active 拖拽中、moved 是否超过点击阈值（超过则抑制随后的 click）
   const dragRef = useRef({ active: false, moved: false, startX: 0, startY: 0, baseTx: 0, baseTy: 0 })
 
@@ -351,7 +357,8 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
       stage.classList.toggle('beacon-lod-hide', v.k < LOD_ZOOM)
     }
     if (zoomTextRef.current) {
-      zoomTextRef.current.textContent = `${String(Math.round(v.k * 100))}%`
+      // 百分比 = 当前 k 相对「适应视图」基准的倍率（fit 即 100%），不是逻辑 1:1
+      zoomTextRef.current.textContent = `${String(Math.round((v.k / fitKRef.current) * 100))}%`
     }
   }, [])
 
@@ -359,7 +366,8 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
   const zoomAt = useCallback(
     (px: number, py: number, factor: number) => {
       const v = viewRef.current
-      const k = clamp(v.k * factor, MIN_ZOOM, MAX_ZOOM)
+      // 上下限相对 fit 基准（25%~400%）收敛，随 fitK 重算自动适配大小图
+      const k = clamp(v.k * factor, fitKRef.current * MIN_ZOOM_RATIO, fitKRef.current * MAX_ZOOM_RATIO)
       if (k === v.k) {
         return
       }
@@ -491,31 +499,66 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     return buildLayout(tree, collapsed)
   }, [tree, collapsed])
 
-  // 适应视图：全图缩放居中到可视区（无法量到画布尺寸时回退 1x 原点，jsdom 亦稳定）
+  // 计算「适应视图」基准倍率：全图 + 四周留白正好放进可视区。
+  // 不再 clamp ≤1：小图（常规规模）fit 后放大占满可视区、大图缩小到全览，两种场景 fit 都定义为 100%
+  const computeFitK = useCallback(
+    (rect: { width: number; height: number }): number => {
+      if (!layout) {
+        return 1
+      }
+      const k = Math.min(
+        (rect.width - FIT_MARGIN * 2) / layout.width,
+        (rect.height - FIT_MARGIN * 2) / layout.height,
+      )
+      // 可视区过小 / 异常时回退 1，避免负值或非有限倍率
+      return Number.isFinite(k) && k > 0 ? k : 1
+    },
+    [layout],
+  )
+
+  // 适应视图：全图缩放居中到可视区，并把该倍率记为 100% 基准（jsdom 量不到尺寸时回退 1x 原点）
   const fitToView = useCallback(() => {
     const rect = canvasRef.current?.getBoundingClientRect()
     if (!layout || !rect || rect.width < 1 || rect.height < 1) {
+      fitKRef.current = 1
       viewRef.current = { k: 1, tx: 0, ty: 0 }
       applyView()
       return
     }
-    const k = clamp(
-      Math.min((rect.width - FIT_MARGIN * 2) / layout.width, (rect.height - FIT_MARGIN * 2) / layout.height),
-      MIN_ZOOM,
-      1,
-    )
+    const k = computeFitK(rect)
+    fitKRef.current = k
     viewRef.current = {
       k,
       tx: (rect.width - layout.width * k) / 2,
       ty: (rect.height - layout.height * k) / 2,
     }
     applyView()
-  }, [layout, applyView])
+  }, [layout, computeFitK, applyView])
 
   // 初始加载 / 布局形态变化（折叠切换、namespace 切换）即适应视图
   useLayoutEffect(() => {
     fitToView()
   }, [fitToView])
+
+  // 视口尺寸变化只重算 fit 基准（百分比与缩放上下限保持有意义），不强行重置用户当前的缩放平移
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el || !layout || typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect()
+      if (rect.width < 1 || rect.height < 1) {
+        return
+      }
+      fitKRef.current = computeFitK(rect)
+      applyView()
+    })
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [layout, computeFitK, applyView])
 
   // 滚轮缩放（含触控板双指 ctrl+wheel）：React 的 onWheel 在根上是 passive 的，
   // 无法 preventDefault 阻断页面滚动 / 浏览器缩放，故手动挂 non-passive 监听；
