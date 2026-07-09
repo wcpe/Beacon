@@ -1,7 +1,11 @@
 // vitest 全局装配：注入 jest-dom 断言扩展
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach } from 'vitest'
+
+// findBy*/waitFor 默认 1s 在 20 个测试文件并行的 jsdom + MSW 负载下偶发不够（如 settings
+// 页多查询首屏），导致脆失败；校准到 3s 只放宽等待时限、不削弱断言。
+configure({ asyncUtilTimeout: 3000 })
 
 // 未开启 vitest globals，React Testing Library 不会自动清理，这里显式注册
 afterEach(() => {
