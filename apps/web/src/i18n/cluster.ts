@@ -34,6 +34,7 @@ export const cluster = {
       cluster: 'BC 集群',
       status: '身份状态',
       health: '健康',
+      metrics: '指标',
       actions: '操作',
     },
     kind: {
@@ -79,6 +80,23 @@ export const cluster = {
       level_healthy: '健康',
       level_degraded: '亚健康',
       level_unhealthy: '不健康',
+      lost: '失联',
+    },
+    // 列表行直显的实时指标标签（取自最新指标点）
+    metrics: {
+      tps: 'TPS',
+      cpu: 'CPU',
+      players: '{{count}} 人在线',
+    },
+    // 不可调度原因码 → 中文摘要（列表行直显用）
+    schedReason: {
+      kind_not_schedulable: '类型不可调度',
+      pending_confirm: '待确认',
+      disabled: '已禁用',
+      unassigned: '未分配',
+      draining: '排空中',
+      lost: '失联',
+      unhealthy: '不健康',
     },
     identityStatus: {
       pending: '待确认',

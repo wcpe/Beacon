@@ -64,6 +64,53 @@ describe('/servers 服务器页', () => {
     })
   })
 
+  it('列表行直显健康分/等级/实时指标与不可调度原因摘要', async () => {
+    useScenario('normal')
+    renderPage(<ServersPage />)
+
+    // lobby-1（健康可调度子服）：行内直显健康分 87 + 等级「健康」+ TPS/CPU/在线人数
+    const lobbyCell = await screen.findByText('lobby-1')
+    const lobbyRow = lobbyCell.closest('tr')
+    expect(lobbyRow).not.toBeNull()
+    await waitFor(() => {
+      expect(within(lobbyRow as HTMLElement).getByText('87')).toBeInTheDocument()
+    })
+    expect(within(lobbyRow as HTMLElement).getByText('健康')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(within(lobbyRow as HTMLElement).getByText(/TPS/)).toBeInTheDocument()
+    })
+    expect(within(lobbyRow as HTMLElement).getByText(/CPU/)).toBeInTheDocument()
+    expect(within(lobbyRow as HTMLElement).getByText(/人在线/)).toBeInTheDocument()
+    // 可调度按例外呈现：可调度行不出现不可调度药丸
+    expect(within(lobbyRow as HTMLElement).queryByText(/不可调度/)).not.toBeInTheDocument()
+
+    // proxy-1（代理，类型不可调度）：直显不可调度原因摘要
+    const proxyRow = screen.getByText('proxy-1').closest('tr')
+    expect(proxyRow).not.toBeNull()
+    expect(within(proxyRow as HTMLElement).getByText(/类型不可调度/)).toBeInTheDocument()
+
+    // game-4（失联）：失联徽标 + 指标列占位不显示误导性旧值
+    const lostRow = screen.getByText('game-4').closest('tr')
+    expect(lostRow).not.toBeNull()
+    expect(within(lostRow as HTMLElement).getByText('失联')).toBeInTheDocument()
+    expect(within(lostRow as HTMLElement).getByText('—')).toBeInTheDocument()
+  })
+
+  it('点行打开健康详情抽屉：面板已加宽且展示因子分解', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    await user.click(await screen.findByText('lobby-1'))
+
+    // 抽屉打开并加载因子分解内容
+    expect(await screen.findByText('因子分解')).toBeInTheDocument()
+    // 加宽类已应用（jsdom 无布局，按既有约定锁类名断言）
+    const content = document.querySelector('[data-slot="sheet-content"]')
+    expect(content).not.toBeNull()
+    expect((content as HTMLElement).className).toContain('max-w-[min(32rem,90vw)]')
+  })
+
   it('keyword 搜索按 serverId 过滤资产列表', async () => {
     useScenario('normal')
     const user = userEvent.setup()

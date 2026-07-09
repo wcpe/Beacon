@@ -29,9 +29,10 @@ import {
   SelectValue,
   SummaryStrip,
   cn,
+  levelText,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ServerItem } from '@beacon/devmock'
+import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/devmock'
 
 import {
   ApiClientError,
@@ -41,6 +42,8 @@ import {
   setDraining,
   unbindIdentity,
 } from '../../api/cluster'
+import { fetchHealthList, fetchMetricsSeries } from '../../api/metrics'
+import { LEVEL_META, badgeOf } from './health-level'
 import ReasonDialog from './reason-dialog'
 
 const PAGE_SIZE = 15
@@ -96,6 +99,41 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
     identitiesQuery.data?.items.find(
       (item) => item.serverId === row.serverId && item.namespaceId === row.namespaceId,
     )?.identityId ?? null
+
+  // 健康视图列表：serverId → 健康分/等级/可调度/不可调度原因，供列表行直显基础健康信息（一眼可见，不必点开详情）。
+  // 一次全量拉取（huge 场景 1200+ 台仍在单页上限内），避免逐行查详情的 N+1。
+  const healthQuery = useQuery({
+    queryKey: ['health', 'list', namespaceId],
+    queryFn: () => fetchHealthList({ namespaceId, pageSize: 2000 }),
+  })
+  const healthByServer = useMemo(() => {
+    const map = new Map<string, HealthItem>()
+    for (const item of healthQuery.data?.items ?? []) {
+      map.set(item.serverId, item)
+    }
+    return map
+  }, [healthQuery.data])
+
+  // 当前页各服的最新指标点（TPS / CPU / 在线人数）：一次请求带上整页 serverId，避免逐行 N+1。
+  const pageServerIds = useMemo(
+    () => (query.data?.items ?? []).map((row) => row.serverId).join(','),
+    [query.data],
+  )
+  const seriesQuery = useQuery({
+    queryKey: ['servers', 'latest-metrics', pageServerIds],
+    queryFn: () => fetchMetricsSeries({ serverId: pageServerIds, step: 60 }),
+    enabled: pageServerIds !== '',
+  })
+  const latestMetricsByServer = useMemo(() => {
+    const map = new Map<string, MetricsSeriesPoint>()
+    for (const series of seriesQuery.data?.series ?? []) {
+      const last = series.points.at(-1)
+      if (last) {
+        map.set(series.serverId, last)
+      }
+    }
+    return map
+  }, [seriesQuery.data])
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -223,18 +261,76 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
       },
       {
         header: t('cluster.servers.columns.health'),
-        cell: (row) =>
-          row.online ? (
-            <Badge variant="ok" className="gap-1.5">
-              <span className="size-1.5 rounded-full bg-current" />
-              {t('cluster.servers.summary.online')}
-            </Badge>
-          ) : (
-            <Badge variant="crit" className="gap-1.5">
-              <span className="size-1.5 rounded-full bg-current" />
-              lost
-            </Badge>
-          ),
+        cell: (row) => {
+          const health = healthByServer.get(row.serverId)
+          const level = health ? (LEVEL_META[health.level] ?? 'warn') : 'warn'
+          // 不可调度原因摘要：取首条原因码译文，多条时补「+N」
+          const reasonSummary =
+            health && health.reasons.length > 0
+              ? t(`cluster.servers.schedReason.${health.reasons[0]}`, health.reasons[0]) +
+                (health.reasons.length > 1 ? ` +${String(health.reasons.length - 1)}` : '')
+              : null
+          return (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {/* 在线 / 失联 */}
+              {row.online ? (
+                <Badge variant="ok" className="gap-1.5">
+                  <span className="size-1.5 rounded-full bg-current" />
+                  {t('cluster.servers.summary.online')}
+                </Badge>
+              ) : (
+                <Badge variant="crit" className="gap-1.5">
+                  <span className="size-1.5 rounded-full bg-current" />
+                  {t('cluster.servers.health.lost')}
+                </Badge>
+              )}
+              {/* 健康分 + 等级（一眼可见，不必点开详情） */}
+              {health && (
+                <span className="flex items-center gap-1">
+                  <span className={cn('text-[12px] font-semibold tnum', levelText(level))}>{health.score}</span>
+                  <Badge variant={badgeOf(level)} className="gap-1">
+                    {t(`cluster.servers.health.level_${health.level}`)}
+                  </Badge>
+                </span>
+              )}
+              {/* 可调度状态按例外呈现：仅不可调度时直显原因摘要，可调度不加多余药丸 */}
+              {health && !health.schedulable && (
+                <Badge variant="warn" title={health.reasons.join(', ')}>
+                  {t('cluster.servers.health.notSchedulable')}
+                  {reasonSummary != null && ` · ${reasonSummary}`}
+                </Badge>
+              )}
+            </div>
+          )
+        },
+      },
+      {
+        header: t('cluster.servers.columns.metrics'),
+        cell: (row) => {
+          const point = latestMetricsByServer.get(row.serverId)
+          // 失联或指标未就绪时给占位，不展示误导性的旧数值
+          if (!row.online || !point) {
+            return <span className="text-ink-4">—</span>
+          }
+          return (
+            <span className="tnum flex items-center gap-2.5 text-[12px] whitespace-nowrap">
+              {/* TPS 只对子服有意义，代理不显示 */}
+              {row.kind === 'backend' && (
+                <span className="text-ink-4">
+                  {t('cluster.servers.metrics.tps')}{' '}
+                  <span className="font-semibold text-ink-2">{point.tpsAvg}</span>
+                </span>
+              )}
+              <span className="text-ink-4">
+                {t('cluster.servers.metrics.cpu')}{' '}
+                <span className="font-semibold text-ink-2">{point.cpuPctAvg}%</span>
+              </span>
+              <span className="font-semibold text-ink-2">
+                {t('cluster.servers.metrics.players', { count: point.onlineAvg })}
+              </span>
+            </span>
+          )
+        },
       },
       {
         header: t('cluster.servers.columns.actions'),
@@ -283,7 +379,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         ),
       },
     ],
-    [t, selected, onViewHealth],
+    [t, selected, onViewHealth, healthByServer, latestMetricsByServer],
   )
 
   const active = action?.row ?? null

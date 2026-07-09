@@ -20,22 +20,15 @@ import {
   cn,
   levelSolid,
   levelText,
-  type HealthLevel,
 } from '@beacon/ui'
 
 import { fetchHealthDetail } from '../../api/cluster'
+import { LEVEL_META, badgeOf } from './health-level'
 
 interface HealthSheetProps {
   // 打开的 serverId；null 表示关闭
   serverId: string | null
   onOpenChange: (open: boolean) => void
-}
-
-// 健康等级（healthy/degraded/unhealthy）→ 设计语言等级（决定分值配色）。
-const LEVEL_META: Record<string, HealthLevel> = {
-  healthy: 'ok',
-  degraded: 'warn',
-  unhealthy: 'danger',
 }
 
 export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps) {
@@ -50,7 +43,10 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
 
   return (
     <Sheet open={serverId !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-md">
+      {/* 加宽健康详情面板到 32rem（窄屏不超 90vw），让因子分解表从容展开。
+          必须用与组件默认值同变体栈的 data-[side=right]:sm: 前缀，tailwind-merge 才会
+          去重掉默认 data-[side=right]:sm:max-w-sm（裸 sm:max-w-* 会输在选择器特异性上）。 */}
+      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[min(32rem,90vw)]">
         <SheetHeader>
           <SheetTitle>{t('cluster.servers.health.title')}</SheetTitle>
           <SheetDescription className="font-mono">{serverId}</SheetDescription>
@@ -154,12 +150,4 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
       </SheetContent>
     </Sheet>
   )
-}
-
-// 健康等级 → 药丸语义变体。
-function badgeOf(level: HealthLevel): 'ok' | 'warn' | 'crit' | 'off' {
-  if (level === 'ok') return 'ok'
-  if (level === 'warn') return 'warn'
-  if (level === 'danger') return 'crit'
-  return 'off'
 }
