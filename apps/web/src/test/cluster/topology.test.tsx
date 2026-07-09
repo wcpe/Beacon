@@ -1,4 +1,5 @@
-// /topology 拓扑页测试（双模式）：可视化模式渲染拓扑图与集群节点、空态引导、超大量按聚合折叠明示；
+// /topology 拓扑页测试（双模式）：可视化模式渲染放射网络拓扑图（代理节点 / 大区分区 / 小区健康节点 /
+// 异常链路失败率标签）、点节点或链路出右侧固定侧面板明细、空态引导、超大量按大区聚合折叠并明示聚合；
 // 数据剖析模式渲染异常链路表并点击边看明细。默认可视化模式，切到「数据剖析」看表。
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -21,13 +22,66 @@ afterAll(() => {
 })
 
 describe('/topology 拓扑页', () => {
-  it('可视化模式渲染拓扑图与集群节点', async () => {
+  it('可视化模式渲染放射拓扑图：代理节点、大区分区与小区聚合节点', async () => {
     useScenario('normal')
     renderPage(<TopologyPage />)
 
-    // 拓扑图标题与集群节点（SVG 内 text）
+    // 拓扑图标题与代理节点（SVG 内 text，每个 BC 集群一个靛蓝代理节点）
     expect(await screen.findByText('BC-子服链路')).toBeInTheDocument()
     expect(await screen.findByText('bc-main')).toBeInTheDocument()
+    // 大区分区背景标签与小区聚合节点
+    expect(await screen.findByText('华东大区')).toBeInTheDocument()
+    expect(await screen.findByText('area-1')).toBeInTheDocument()
+    // 图例悬浮卡
+    expect(await screen.findByText('图例')).toBeInTheDocument()
+  })
+
+  it('异常聚合链路失败率标签直显在图上（红色加粗边旁）', async () => {
+    // normal 场景下 prod 域内可解析链路恰好全部健康（异常边集中在跨域 / 未解析目标），
+    // 用 huge 场景断言：其消息量大、聚合失败率超阈值的链路必然存在
+    useScenario('huge')
+    const { container } = renderPage(<TopologyPage />)
+
+    await screen.findByText('BC-子服链路')
+    // 等消息边与服务器归属解析完成（图上出现可点击的聚合链路）
+    await screen.findAllByRole('button', { name: / → / })
+    // 图内出现「x.x% 失败率」标签（异常聚合链路直显失败率）
+    await waitFor(() => {
+      const graphSvg = container.querySelector('svg[role="img"]')
+      expect(graphSvg).not.toBeNull()
+      const labels = [...(graphSvg as SVGElement).querySelectorAll('text')].filter((el) =>
+        /%\s*失败率/.test(el.textContent ?? ''),
+      )
+      expect(labels.length).toBeGreaterThan(0)
+    })
+  })
+
+  it('点击小区节点，右侧固定侧面板展示该区概要（健康分布）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<TopologyPage />)
+
+    await screen.findByText('area-1')
+    // 小区节点是可点击的 SVG 分组（role=button，aria-label 为小区名）
+    await user.click(await screen.findByRole('button', { name: 'area-1' }))
+
+    const summary = await screen.findByText('小区概要')
+    expect(summary.closest('aside')).not.toBeNull()
+    expect(await screen.findByText('健康分布')).toBeInTheDocument()
+  })
+
+  it('点击图上聚合链路，右侧固定侧面板展示链路明细（样本消息）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<TopologyPage />)
+
+    await screen.findByText('area-1')
+    // 聚合链路是可点击的 SVG 分组（role=button，aria-label 为「集群 → 节点」）
+    const linkButtons = await screen.findAllByRole('button', { name: / → / })
+    await user.click(linkButtons[0])
+
+    const sample = await screen.findByText('样本消息')
+    expect(sample.closest('aside')).not.toBeNull()
   })
 
   it('空态给出接入引导', async () => {
@@ -89,23 +143,23 @@ describe('/topology 拓扑页', () => {
     expect(await screen.findByText('节点过多，已按大区聚合折叠')).toBeInTheDocument()
   })
 
-  it('超大量态请求链路按节点盒对去重并硬性截断，避免渲染上千条动画边（防卡死）', async () => {
+  it('超大量态服务器间原始链路聚合为集群 → 大区链路并明示，避免渲染上千条动画边（防卡死）', async () => {
     useScenario('huge')
     const { container } = renderPage(<TopologyPage />)
 
     // 等图加载
     await screen.findByText('BC-子服链路')
-    // 链路截断明示文案出现（说明上千聚合边未被逐条渲染）
-    expect(await screen.findByText(/链路过多，仅展示失败率最高的前/)).toBeInTheDocument()
+    // 聚合明示文案出现（说明上千条服务器间原始边未被逐条渲染）
+    expect(await screen.findByText(/条服务器间链路聚合为/)).toBeInTheDocument()
 
-    // 只数拓扑图主 SVG（role="img"）内的链路 path：上限 60 条链路，每条至多 2 个 path
-    // （静态底 + 动画流），故 ≤120；断言远小于「上千聚合边逐条渲染」规模，证明截断生效。
+    // 只数拓扑图主 SVG（role="img"）内的链路 path：上限 60 条聚合链路，每条至多 3 个 path
+    // （选中光晕 + 静态底 + 动画流），故 ≤180；断言远小于「上千原始边逐条渲染」规模，证明聚合生效。
     await waitFor(() => {
       const graphSvg = container.querySelector('svg[role="img"]')
       expect(graphSvg).not.toBeNull()
       const paths = (graphSvg as SVGElement).querySelectorAll('path')
       expect(paths.length).toBeGreaterThan(0)
-      expect(paths.length).toBeLessThanOrEqual(60 * 2)
+      expect(paths.length).toBeLessThanOrEqual(60 * 3)
     })
   })
 })
