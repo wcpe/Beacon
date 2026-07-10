@@ -209,6 +209,49 @@ describe('/changes 引导创建向导', () => {
     expect(within(dialog).queryByText('teleport-cooldown: 5')).not.toBeInTheDocument()
   })
 
+  it('范围步：小区候选搜索过滤、全选 / 反选 / 清空与 Shift 连选', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 走纯配置路径最快到第 4 步
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: /更新配置文件/ }))
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickConfigFile(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await within(dialog).findByText('交付范围')
+
+    // 切「按小区」：4 个小区候选就绪
+    await user.click(within(dialog).getByRole('button', { name: /按小区/ }))
+    await within(dialog).findByRole('checkbox', { name: '华东大区 / area-1' })
+
+    // 全选 → 4 个；反选 → 0 个
+    await user.click(within(dialog).getByRole('button', { name: '全选' }))
+    await within(dialog).findByText('已选 4 个')
+    await user.click(within(dialog).getByRole('button', { name: '反选' }))
+    await within(dialog).findByText('已选 0 个')
+
+    // Shift 连选：点第 1 个再 Shift 点第 3 个 → 区间 3 个选中
+    await user.click(within(dialog).getByRole('checkbox', { name: '华东大区 / area-1' }))
+    await user.keyboard('{Shift>}')
+    await user.click(within(dialog).getByRole('checkbox', { name: '华南大区 / area-3' }))
+    await user.keyboard('{/Shift}')
+    await within(dialog).findByText('已选 3 个')
+    expect(within(dialog).getByRole('checkbox', { name: '华东大区 / area-2' })).toBeChecked()
+
+    // 搜索过滤：只剩匹配项，反选仅作用于可见项（不可见的已选保留）
+    await user.type(within(dialog).getByLabelText('搜索候选'), 'survival')
+    expect(within(dialog).queryByRole('checkbox', { name: '华东大区 / area-1' })).not.toBeInTheDocument()
+    await within(dialog).findByRole('checkbox', { name: '华南大区 / survival-1' })
+    await user.click(within(dialog).getByRole('button', { name: '反选' }))
+    await within(dialog).findByText('已选 4 个')
+
+    // 清空清掉全部（含不可见已选）
+    await user.click(within(dialog).getByRole('button', { name: '清空' }))
+    await within(dialog).findByText('已选 0 个')
+  })
+
   it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
     useScenario('normal')
     const user = userEvent.setup()
