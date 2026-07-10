@@ -4,11 +4,17 @@
 
 ## 未发布
 
+## 0.23.0（2026-07-11）
+
 ### 新增
-- P3 区服权威缺口端点（FR-155 后端）：补齐第二版 `/servers` `/zones` `/namespaces` 页接真所需的后端端点——`GET /admin/v2/zone-tree` 区服结构树只读聚合（BC 集群 → 大区 → 小区计数 + 未分配计数，一次拉四表内存拼树）、`GET /admin/v2/agent-identities/{identityId}` 单条身份详情（附换区预填目标）、`POST /admin/v2/server-rezones` 换区工单（已分配服解绑清归属 + 写预填目标 + 身份重入 pending，单事务原子）、`PUT /admin/v2/servers/{serverId}/draining` 排空标记切换、`PUT /admin/v2/servers/{id}/default-entry` 默认入口标记（未分配 → 409）。`GET /admin/v2/servers` 改返富化视图（camelCase + 归属名 / 默认入口 / 在线摘要），`POST /admin/v2/server-assignments` 响应改 `{results}`，`GET /admin/v2/namespaces` 补 server / BC 集群 / 生效信任计数摘要；`approve` 放开换区重确认按预填 / 指定目标落区或暂不分配。全部写操作单事务原子 + 审计（`zone.rezone.initiated` / `zone.rezone.completed` / `server.set-draining` / `zone.set-default-entry`）。
+- 集群管理页接真数据面（FR-155）：`/servers`、`/zones`、`/namespaces` 三页从演示 mock 接入真实 v2 控制面 API——注册确认 / 身份绑定 / 区服分配 / namespace 信任 / zone-tree 结构树 / 换区工单 / 排空 / 默认入口。后端补齐缺口端点：`GET /admin/v2/zone-tree`（BC 集群 → 大区 → 小区 + 未分配计数，一次拉四表拼树）、`GET /admin/v2/agent-identities/{identityId}`（单条身份详情附换区预填）、`POST /admin/v2/server-rezones`（换区工单：已分配服解绑清归属 + 写预填 + 身份重入 pending，单事务原子，**禁后台直接改派**）、`PUT /admin/v2/servers/{serverId}/draining`、`PUT /admin/v2/servers/{id}/default-entry`（未分配 → 409）；`GET /admin/v2/servers` 改返富化视图（camelCase + 归属名 / 默认入口 / 在线摘要），`POST /admin/v2/server-assignments` 响应改 `{results}`，`GET /admin/v2/namespaces`、`GET /admin/v2/namespace-trusts` 补计数 / 双方名摘要，`approve` 放开换区重确认按预填 / 指定目标落区或暂不分配。写操作单事务原子 + 审计。经真 MySQL 集成、Go `-tags=e2e` 换区→draining 链路、Playwright 真后端三页链路三重验证。
+  > 接真前置：`apps/web` 管理台登录 / 鉴权（`Authorization: Bearer` 注入）尚未建（单立 FR-179），控制面 `adminAuthMiddleware` 要求令牌——本版交付**接真数据面**，浏览器真机直用待 FR-179 落地。
 
 ### 变更
-- 前端响应契约类型独立成 `packages/contracts`（`@beacon/contracts`，纯 type-only、无运行时依赖）：`apps/web` 生产代码不再在类型层依赖演示 mock 包 `@beacon/devmock`，`import type` 一律改指向 contracts；devmock 反向依赖 contracts，其 handler 仍以 `satisfies XxxResponse` 锚定契约防漂移。纯类型搬迁、零行为变更，演示 mock 构建隔离不变（FR-155 前置，ADR-0062）。
+- 前端响应契约类型独立成 `packages/contracts`（`@beacon/contracts`，纯 type-only、无运行时依赖）：`apps/web` 生产代码不再在类型层依赖演示 mock 包 `@beacon/devmock`，`import type` 一律改指向 contracts；devmock 反向依赖 contracts，其 handler 仍以 `satisfies XxxResponse` 锚定契约防漂移。纯类型搬迁、零行为变更，演示 mock 构建隔离不变（ADR-0062）。
+
+### 修复
+- 修复 `SheetOverlay` 未用 `forwardRef` 导致的 ref 警告。
 
 ## 0.22.0（2026-07-10）
 
