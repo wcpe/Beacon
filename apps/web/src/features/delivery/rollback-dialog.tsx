@@ -1,5 +1,5 @@
-// 整单回滚高风险确认弹窗：手输复述「回滚」+ 原因必填（承 UX §4 高风险二次确认 + 原因）。
-// 手输不等于复述词则禁用确认；提交进行中禁用；内联脱敏错误。
+// 整单回滚高风险确认弹窗（共享控件）：手输复述「回滚」+ 原因必填（承 UX §4 高风险二次确认 + 原因）。
+// 手输不等于复述词则禁用确认；提交进行中禁用；内联脱敏错误。/changes 与历史页共用。
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -33,7 +33,7 @@ export default function RollbackDialog({
   onOpenChange,
 }: RollbackDialogProps) {
   const { t } = useTranslation()
-  const phrase = t('delivery.changesHistory.rollback.phrase')
+  const phrase = t('delivery.rollback.phrase')
   const [typed, setTyped] = useState('')
   const [reason, setReason] = useState('')
 
@@ -51,19 +51,19 @@ export default function RollbackDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('delivery.changesHistory.rollback.title')}</AlertDialogTitle>
+          <AlertDialogTitle>{t('delivery.rollback.title')}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t('delivery.changesHistory.rollback.desc')}
+            {t('delivery.rollback.desc')}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         <div className="space-y-1.5">
           <Label htmlFor="rollback-phrase">
-            {t('delivery.changesHistory.rollback.phraseLabel', { phrase })}
+            {t('delivery.rollback.phraseLabel', { phrase })}
           </Label>
           <Input
             id="rollback-phrase"
-            aria-label={t('delivery.changesHistory.rollback.phraseLabel', { phrase })}
+            aria-label={t('delivery.rollback.phraseLabel', { phrase })}
             value={typed}
             onChange={(e) => {
               setTyped(e.target.value)
@@ -73,16 +73,16 @@ export default function RollbackDialog({
 
         <div className="space-y-1.5">
           <Label htmlFor="rollback-reason">
-            {t('delivery.changesHistory.rollback.reasonLabel')}
+            {t('delivery.rollback.reasonLabel')}
           </Label>
           <Textarea
             id="rollback-reason"
-            aria-label={t('delivery.changesHistory.rollback.reasonLabel')}
+            aria-label={t('delivery.rollback.reasonLabel')}
             value={reason}
             onChange={(e) => {
               setReason(e.target.value)
             }}
-            placeholder={t('delivery.changesHistory.rollback.reasonPlaceholder')}
+            placeholder={t('delivery.rollback.reasonPlaceholder')}
             rows={2}
           />
         </div>
@@ -98,7 +98,7 @@ export default function RollbackDialog({
               onConfirm(reason.trim())
             }}
           >
-            {t('delivery.changesHistory.rollback.confirm')}
+            {t('delivery.rollback.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

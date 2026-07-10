@@ -214,4 +214,38 @@ describe('/changes 变更单页', () => {
     await user.click(eventsPanel.getByRole('button', { name: '可视化' }))
     expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
   })
+
+  it('整单回滚与结束回滚写闭环：残留失败回滚人工收单', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 进入「排行榜插件升级 v3.1」（completed，首目标缺失备份）详情
+    const row = (await screen.findByText('排行榜插件升级 v3.1')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    // 详情头部动作区「整单回滚」→ 高摩擦确认（手输「回滚」+ 原因）
+    await user.click(await screen.findByRole('button', { name: '整单回滚' }))
+    const dialog = await screen.findByRole('alertdialog')
+    const boxes = within(dialog).getAllByRole('textbox')
+    await user.type(boxes[0], '回滚')
+    await user.type(boxes[1], '新版本排行异常，整单回滚')
+    await user.click(within(dialog).getByRole('button', { name: '确认回滚' }))
+
+    // 缺失备份目标回滚失败 → 单据停在回滚中：横幅显示回滚进度，动作区出现「人工结束回滚」
+    expect(await screen.findByText(/回滚进度/)).toBeInTheDocument()
+    expect((await screen.findAllByText('回滚中')).length).toBeGreaterThan(0)
+
+    // 人工结束回滚 → 确认 → 单据收到已回滚
+    await user.click(await screen.findByRole('button', { name: '人工结束回滚' }))
+    const finishDialog = await screen.findByRole('alertdialog')
+    await user.click(within(finishDialog).getByRole('button', { name: '确认结束' }))
+    await waitFor(() => {
+      expect(screen.getAllByText('已回滚').length).toBeGreaterThan(0)
+    })
+  })
 })

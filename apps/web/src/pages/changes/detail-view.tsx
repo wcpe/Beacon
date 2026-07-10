@@ -28,6 +28,7 @@ import {
   type ChangeOrderDetail,
 } from '../../api/delivery-changes'
 import ConfirmDialog, { type ConfirmResult } from './confirm-dialog'
+import { OrderRollbackActions, RollbackBanner } from '../../features/delivery/order-rollback'
 import { OrderStatusBadge } from '../../features/delivery/status-badges'
 import ItemsTab from './items-tab'
 import ImpactTab from './impact-tab'
@@ -115,14 +116,21 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
             {/* 状态徽标 + 生命周期操作区（面板标题已由 MasterDetail 头部承担，此处只留状态与可做动作） */}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
               <OrderStatusBadge status={order.status} />
-              <LifecycleActions
-                order={order}
-                onPick={(kind) => {
-                  setErrorText(null)
-                  setAction(kind)
-                }}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <LifecycleActions
+                  order={order}
+                  onPick={(kind) => {
+                    setErrorText(null)
+                    setAction(kind)
+                  }}
+                />
+                {/* 合法终态（已完成 / 已暂停 / 已终止）整单回滚；回滚中人工结束 */}
+                <OrderRollbackActions order={order} />
+              </div>
             </div>
+
+            {/* 回滚信息横幅 + 回滚中逐目标进度 */}
+            <RollbackBanner order={order} />
 
             {/* Tabs */}
             <Tabs defaultValue="items">
