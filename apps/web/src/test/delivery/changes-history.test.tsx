@@ -79,7 +79,7 @@ describe('/changes/history 交付历史页', () => {
     expect(await timelinePanel.findByText('变更单 · 已完成')).toBeInTheDocument()
     await user.click(timelinePanel.getByRole('button', { name: '详细' }))
     expect(await timelinePanel.findByRole('columnheader', { name: '序号' })).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('行内前置基础字段可见 + 吸顶筛选存在', async () => {
     useScenario('normal')

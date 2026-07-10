@@ -131,9 +131,10 @@ describe('/changes 变更单页', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
     expect(await screen.findByRole('button', { name: '确认完成整单' })).toBeInTheDocument()
-  })
+  }, 20_000)
 
-  it('变更项与影响预览 Tab 使用共享预览控件', async () => {
+  // 单次渲染巡检四个只读 Tab（合并跑，避免多次整页渲染在并行 worker 下拖爆时限）
+  it('详情四 Tab 复用共享控件：变更项 / 影响预览 / 观察窗 / 时间线双模式', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -156,22 +157,9 @@ describe('/changes 变更单页', () => {
     expect(screen.getByText('生效方式')).toBeInTheDocument()
     expect(screen.getByText('影响面汇总')).toBeInTheDocument()
     expect(screen.getByText('逐目标')).toBeInTheDocument()
-  })
 
-  it('观察窗 Tab 渲染汇总与逐台指标并支持手动刷新', async () => {
-    useScenario('normal')
-    const user = userEvent.setup()
-    renderPage(<ChangesPage />)
-
-    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
-    if (!row) {
-      throw new Error('未找到变更单所在行')
-    }
-    await user.click(row)
-    await screen.findByRole('button', { name: '返回列表' })
+    // 观察窗 Tab：观察说明 + 当前批标注 + 汇总条 + 逐台表 + 手动刷新
     await user.click(screen.getByRole('tab', { name: '观察窗' }))
-
-    // 观察说明 + 当前批标注 + 汇总条 + 逐台表
     expect(await screen.findByText('观察批次：第 2 批')).toBeInTheDocument()
     expect(screen.getByText(/确认放行下一批前/)).toBeInTheDocument()
     expect(screen.getByText('均值健康分')).toBeInTheDocument()
@@ -180,26 +168,12 @@ describe('/changes 变更单页', () => {
     expect(screen.getByRole('columnheader', { name: '健康分' })).toBeInTheDocument()
     // 逐台表有数据行（表头行之外至少一行）
     expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
-
     // 手动刷新可点（请求进行中短暂置灰，不崩溃即视为闭环）
     await user.click(screen.getByRole('button', { name: '刷新' }))
     expect(await screen.findByText('观察批次：第 2 批')).toBeInTheDocument()
-  })
 
-  it('进度时间线双模式切换：可视化时间轴与详细表格', async () => {
-    useScenario('normal')
-    const user = userEvent.setup()
-    renderPage(<ChangesPage />)
-
-    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
-    if (!row) {
-      throw new Error('未找到变更单所在行')
-    }
-    await user.click(row)
-    await screen.findByRole('button', { name: '返回列表' })
+    // 进度时间线 Tab：默认可视化，种子事件按「主体 · 状态」呈现（单据级关键节点）
     await user.click(screen.getByRole('tab', { name: '进度时间线' }))
-
-    // 默认可视化：种子事件按「主体 · 状态」呈现（单据级关键节点）
     const eventsPanel = within(await screen.findByRole('tabpanel'))
     expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
     expect(eventsPanel.getByText('变更单 · 已批准')).toBeInTheDocument()
@@ -213,7 +187,7 @@ describe('/changes 变更单页', () => {
     // 切回可视化
     await user.click(eventsPanel.getByRole('button', { name: '可视化' }))
     expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('整单回滚与结束回滚写闭环：残留失败回滚人工收单', async () => {
     useScenario('normal')
@@ -247,5 +221,5 @@ describe('/changes 变更单页', () => {
     await waitFor(() => {
       expect(screen.getAllByText('已回滚').length).toBeGreaterThan(0)
     })
-  })
+  }, 20_000)
 })

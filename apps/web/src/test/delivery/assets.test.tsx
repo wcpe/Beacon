@@ -62,6 +62,7 @@ describe('/assets 文件资产页', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  // 逐字符键入长路径在并行 worker 负载下偶发超过默认 5s，只放宽时限、不削弱断言
   it('切到跨服比对视图输入路径后返回哈希分组', async () => {
     useScenario('normal')
     const user = userEvent.setup()
@@ -76,7 +77,7 @@ describe('/assets 文件资产页', () => {
 
     // 出现哈希分组标题
     expect(await screen.findByText('哈希分组')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('清单行内前置基础字段可见 + 吸顶筛选存在', async () => {
     useScenario('normal')
