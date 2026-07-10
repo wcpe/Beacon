@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { ChartLine, ChevronRight } from 'lucide-react'
 
 import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
-import { BASE_MS } from '@beacon/devmock'
+import { BASE_MS } from '@beacon/devmock/support'
 
 import { fetchConnStats } from '../../api/connections'
 

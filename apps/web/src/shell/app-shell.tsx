@@ -10,7 +10,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 
-import { subscribeMockScenario } from '@beacon/devmock'
+import { subscribeMockScenario } from '@beacon/devmock/scenario'
 import { useQueryClient } from '@tanstack/react-query'
 
 import { ALL_PAGES } from '../routes'

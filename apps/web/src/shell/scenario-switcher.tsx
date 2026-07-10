@@ -8,7 +8,7 @@ import {
   MOCK_SCENARIOS,
   setMockScenario,
   subscribeMockScenario,
-} from '@beacon/devmock'
+} from '@beacon/devmock/scenario'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 
 export default function ScenarioSwitcher() {
