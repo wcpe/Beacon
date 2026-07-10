@@ -1,4 +1,4 @@
-# ADR-XXXX：前端响应契约类型独立成包（devmock 反向依赖 contracts）
+# ADR-0062：前端响应契约类型独立成包（devmock 反向依赖 contracts）
 
 **状态**：已接受（承接 [ADR-0060](0060-monorepo-layout-and-v2-frontend-stack.md) 的 monorepo 布局，新增 `packages/contracts` 共享包；随 P3（FR-155 前置）落地）
 
