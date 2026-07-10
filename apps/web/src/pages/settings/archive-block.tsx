@@ -36,8 +36,8 @@ import {
   retryArchiveJob,
 } from '../../api/system'
 import { formatCount, formatIso } from '../../features/system/format'
-import ListCard from '../../features/observability/list-card'
-import MasterDetail from '../../features/observability/master-detail'
+import ListCard from '../../features/shared/list-card'
+import MasterDetail from '../../features/shared/master-detail'
 import Pager from '../../features/observability/pager'
 import ArchiveDetailPanel from './archive-detail-panel'
 

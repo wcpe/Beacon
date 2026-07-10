@@ -30,8 +30,8 @@ import {
   type CreateApiKeyBody,
 } from '../api/system'
 import { formatIso } from '../features/system/format'
-import ListCard from '../features/observability/list-card'
-import MasterDetail from '../features/observability/master-detail'
+import ListCard from '../features/shared/list-card'
+import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
 import CreateDialog from './api-keys/create-dialog'
 import DetailPanel from './api-keys/detail-panel'

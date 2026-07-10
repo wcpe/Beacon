@@ -10,7 +10,7 @@ import type { HealthLevel } from '@beacon/ui'
 import type { ReactNode } from 'react'
 import type { SystemObservability } from '@beacon/devmock'
 
-import MasterDetail from '../../features/observability/master-detail'
+import MasterDetail from '../../features/shared/master-detail'
 import { formatCount } from '../../features/system/format'
 
 // 健康等级 → 状态药丸变体。
