@@ -13,6 +13,11 @@ import {
   IconStat,
   MiniSparkline,
   SectionHeader,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   TableSkeleton,
 } from '@beacon/ui'
 import type { MetricsSeriesPoint } from '@beacon/devmock'
@@ -168,7 +173,7 @@ export default function SeriesPanel({
   )
 }
 
-// 指标下拉（原生 select，label 走 i18n「指标」，便于测试定位）
+// 指标下拉（组件库 Select，label 走 i18n「指标」，便于测试定位）
 function FilterSelectMetric({
   metric,
   onChange,
@@ -180,19 +185,22 @@ function FilterSelectMetric({
 }) {
   const { t } = useTranslation()
   return (
-    <select
-      aria-label={t('observability.serviceAnalysis.metric')}
+    <Select
       value={metric}
-      onChange={(e) => {
-        onChange(e.target.value as MetricKey)
+      onValueChange={(next) => {
+        onChange(next as MetricKey)
       }}
-      className="h-9 rounded-md border bg-background px-2 text-sm"
     >
-      {METRICS.map((m) => (
-        <option key={m} value={m}>
-          {metricLabel[m]}
-        </option>
-      ))}
-    </select>
+      <SelectTrigger className="h-9 w-32" aria-label={t('observability.serviceAnalysis.metric')}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {METRICS.map((m) => (
+          <SelectItem key={m} value={m}>
+            {metricLabel[m]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
