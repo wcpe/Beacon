@@ -44,36 +44,36 @@ func (EnvNamespace) TableName() string { return "env_namespace" }
 
 // BCCluster 是 BC 代理集群。
 type BCCluster struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	NamespaceID uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_bc_cluster_name,priority:1;index"`
-	Name        string `gorm:"column:name;size:64;not null;uniqueIndex:uk_bc_cluster_name,priority:2"`
-	Description string `gorm:"column:description;size:255"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	NamespaceID uint      `gorm:"column:namespace_id;not null;uniqueIndex:uk_bc_cluster_name,priority:1;index" json:"namespaceId"`
+	Name        string    `gorm:"column:name;size:64;not null;uniqueIndex:uk_bc_cluster_name,priority:2" json:"name"`
+	Description string    `gorm:"column:description;size:255" json:"description"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (BCCluster) TableName() string { return "bc_cluster" }
 
 // Region 是大区，隶属于一个 BC 集群。
 type Region struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	BCClusterID uint   `gorm:"column:bc_cluster_id;not null;uniqueIndex:uk_region_name,priority:1;index"`
-	Name        string `gorm:"column:name;size:64;not null;uniqueIndex:uk_region_name,priority:2"`
-	Description string `gorm:"column:description;size:255"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	BCClusterID uint      `gorm:"column:bc_cluster_id;not null;uniqueIndex:uk_region_name,priority:1;index" json:"bcClusterId"`
+	Name        string    `gorm:"column:name;size:64;not null;uniqueIndex:uk_region_name,priority:2" json:"name"`
+	Description string    `gorm:"column:description;size:255" json:"description"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (Region) TableName() string { return "region" }
 
 // Zone 是小区，隶属于一个大区。
 type Zone struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	RegionID    uint   `gorm:"column:region_id;not null;uniqueIndex:uk_zone_name,priority:1;index"`
-	Name        string `gorm:"column:name;size:64;not null;uniqueIndex:uk_zone_name,priority:2"`
-	Description string `gorm:"column:description;size:255"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	RegionID    uint      `gorm:"column:region_id;not null;uniqueIndex:uk_zone_name,priority:1;index" json:"regionId"`
+	Name        string    `gorm:"column:name;size:64;not null;uniqueIndex:uk_zone_name,priority:2" json:"name"`
+	Description string    `gorm:"column:description;size:255" json:"description"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (Zone) TableName() string { return "zone" }
