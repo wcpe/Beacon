@@ -805,7 +805,8 @@ agent 面：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/admin/v2/agent-identities` | 身份分页列表（状态 / namespace / 关键字筛选） |
-| POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；确认后只创建未分配 server） |
+| GET | `/admin/v2/agent-identities/{identityId}` | 单条身份详情（附 `conflictPeers` 与换区 `rezonePrefill` 预填目标） |
+| POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；首次确认只创建未分配 server；换区中按预填 / 指定 `target` 落区或 `target:null` 暂不分配） |
 | POST | `/admin/v2/agent-identities/{identityId}/reject` | 拒绝接入（原因必填） |
 | POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 允许被拒身份重新申请 |
 | POST | `/admin/v2/agent-identities/{identityId}/disable` | 禁用（摘除调度与指令下发） |
@@ -829,8 +830,12 @@ agent 面：
 | POST | `/admin/v2/bc-clusters` | 新建 BC 集群 |
 | POST | `/admin/v2/regions` | 新建大区 |
 | POST | `/admin/v2/zones` | 新建小区 |
-| GET | `/admin/v2/servers` | server 分页列表（`assigned=false` 即未分配篮） |
-| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server）；已分配服改归属须走后续换区工单 |
+| GET | `/admin/v2/zone-tree?namespaceId=` | 区服结构树只读聚合（BC 集群 → 大区 → 小区，各节点带计数，附未分配计数） |
+| GET | `/admin/v2/servers` | server 分页列表（富化视图：含归属名 / 默认入口 / 在线摘要；`assigned=false` 即未分配篮） |
+| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server），响应 `{results:[{id,serverId,ok,code?}]}`；已分配服改归属须走换区工单 |
+| POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配、同 namespace 同 kind）：单事务解绑清归属 + 写预填目标 + 身份重入 pending；未分配台 400 `not_assigned`，整批原子回滚 |
+| PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（路径为业务 serverId），写审计，返回富化视图 |
+| PUT | `/admin/v2/servers/{id}/default-entry` | 更新默认入口标记（路径为 server 行 id）；未分配小区 → 409 `not_assigned` |
 
 ### 指标健康调度（P4 · 0.24.x，真源 [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5）
 

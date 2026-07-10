@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- P3 区服权威缺口端点（FR-155 后端）：补齐第二版 `/servers` `/zones` `/namespaces` 页接真所需的后端端点——`GET /admin/v2/zone-tree` 区服结构树只读聚合（BC 集群 → 大区 → 小区计数 + 未分配计数，一次拉四表内存拼树）、`GET /admin/v2/agent-identities/{identityId}` 单条身份详情（附换区预填目标）、`POST /admin/v2/server-rezones` 换区工单（已分配服解绑清归属 + 写预填目标 + 身份重入 pending，单事务原子）、`PUT /admin/v2/servers/{serverId}/draining` 排空标记切换、`PUT /admin/v2/servers/{id}/default-entry` 默认入口标记（未分配 → 409）。`GET /admin/v2/servers` 改返富化视图（camelCase + 归属名 / 默认入口 / 在线摘要），`POST /admin/v2/server-assignments` 响应改 `{results}`，`GET /admin/v2/namespaces` 补 server / BC 集群 / 生效信任计数摘要；`approve` 放开换区重确认按预填 / 指定目标落区或暂不分配。全部写操作单事务原子 + 审计（`zone.rezone.initiated` / `zone.rezone.completed` / `server.set-draining` / `zone.set-default-entry`）。
+
 ### 变更
 - 前端响应契约类型独立成 `packages/contracts`（`@beacon/contracts`，纯 type-only、无运行时依赖）：`apps/web` 生产代码不再在类型层依赖演示 mock 包 `@beacon/devmock`，`import type` 一律改指向 contracts；devmock 反向依赖 contracts，其 handler 仍以 `satisfies XxxResponse` 锚定契约防漂移。纯类型搬迁、零行为变更，演示 mock 构建隔离不变（FR-155 前置，ADR-0062）。
 
