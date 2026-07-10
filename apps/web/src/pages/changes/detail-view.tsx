@@ -28,7 +28,7 @@ import {
   type ChangeOrderDetail,
 } from '../../api/delivery-changes'
 import ConfirmDialog, { type ConfirmResult } from './confirm-dialog'
-import { OrderStatusBadge } from './status-badge'
+import { OrderStatusBadge } from '../../features/delivery/status-badges'
 import ItemsTab from './items-tab'
 import ImpactTab from './impact-tab'
 import BatchesTab from './batches-tab'

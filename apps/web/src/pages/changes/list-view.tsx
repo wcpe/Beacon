@@ -32,7 +32,7 @@ import Pager from '../../features/delivery/pager'
 import CreateDialog, { type CreateDraftInput } from './create-dialog'
 import EmptyGuide from './empty-guide'
 import GuidedWizard from './guided-wizard'
-import { OrderStatusBadge } from './status-badge'
+import { OrderStatusBadge } from '../../features/delivery/status-badges'
 import { formatTime } from './format'
 import type { WizardContent } from './wizard-state'
 

@@ -13,7 +13,7 @@ import {
   type ChangeOrderDetail,
 } from '../../api/delivery-changes'
 import ConfirmDialog from './confirm-dialog'
-import { BatchStatusBadge } from './status-badge'
+import { BatchStatusBadge } from '../../features/delivery/status-badges'
 import { formatTime } from './format'
 
 interface BatchesTabProps {

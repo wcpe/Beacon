@@ -711,6 +711,40 @@ export const delivery = {
       expandDiff: '展开差异',
       collapseDiff: '收起差异',
     },
+    // 批次状态机可视化（batch-flow）
+    batchFlow: {
+      batchTitle: '第 {{no}} 批',
+      current: '当前批',
+      planned: '目标 {{count}} 台',
+      success: '成功 {{count}}',
+      failed: '失败 {{count}}',
+      skipped: '跳过 {{count}}',
+      gateBy: '已放行：{{who}} 于 {{at}}',
+      confirmNext: '确认放行下一批',
+      confirmLast: '确认完成整单',
+    },
+    // 进度时间线（events-timeline，双模式）
+    timeline: {
+      modeLabel: '时间线模式',
+      mode: {
+        visual: '可视化',
+        table: '详细',
+      },
+      columns: {
+        seq: '序号',
+        at: '时间',
+        kind: '类型',
+        batch: '批次',
+        target: '目标',
+        status: '状态',
+      },
+      rel: {
+        justNow: '刚刚',
+        minutes: '{{count}} 分钟前',
+        hours: '{{count}} 小时前',
+        days: '{{count}} 天前',
+      },
+    },
     // 完整编排预览（orchestration-preview）
     orchestration: {
       scopeTitle: '目标范围',

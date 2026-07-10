@@ -25,7 +25,7 @@ import {
   finishRollbackChangeOrder,
   rollbackChangeOrder,
 } from '../../api/delivery-changes'
-import { BatchStatusBadge, TargetStatusBadge } from '../changes/status-badge'
+import { BatchStatusBadge, TargetStatusBadge } from '../../features/delivery/status-badges'
 import RollbackDialog from './rollback-dialog'
 import StatusBadge from './status-badge'
 import { formatTime } from './format'
