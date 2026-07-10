@@ -19,7 +19,7 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 | P0 | 0.20.x | 规格冻结：全部规格 / ADR、API 契约草案、PRD / 路线图对齐 |
 | P1 | 0.21.x | 工程化基建 + v2 控制面基础闭环：monorepo、apps/web 新栈脚手架、UI 博物馆、静态检查最严档三线、Legacy 前端冻结；Agent 身份、注册确认、namespace 隔离、区服权威模型基础可用 |
 | P2 | 0.22.x | 全量 mock 管理台：演示模式先行、全站页面 mock 逐页拍板、「交付」大分类 IA |
-| P3 | 0.23.x | 集群管理页接真深化：基于 P1 v2 基础 API 补齐 `/servers`、`/zones`、`/namespaces` 的换区工单、冲突处置、zone-tree 与 env 映射 |
+| P3 | 0.23.x | 集群管理页接真深化：基于 P1 v2 基础 API 补齐 `/servers`、`/zones`、`/namespaces` 的换区工单、zone-tree、draining / default-entry；Q4 冲突可视化与 env 映射延后（FR-177 / FR-178） |
 | P4 | 0.24.x | 采样、健康值、调度决策、本机 agent-api + 接真 `/dashboard`、`/service-analysis` |
 | P5 | 0.25.x | 每连接明细、跨服消息、payload 审计 + 接真 `/topology` 与可观测页 |
 | P6 | 0.26.x | 热冷归档、冷查询、归档清理 + 接真系统设置页 |
@@ -91,8 +91,9 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 - `/servers`、`/zones`、`/namespaces` 从 mock 接真：注册确认、身份绑定、区服分配与信任管理使用 P1 v2 API。
 - zone-tree、server list、agent-identities list 的 1000+ 规模搜索 / 筛选 / 分页体验完成。
 - 换区工单 UI：已分配服必须解绑 + 重确认，不提供后台直接改派通道。
-- Q4 并发身份冲突、保留实例 / 解绑处置的可视化闭环完成。
-- env 映射、default-entry、draining 等区服管理细节在页面内可操作并保留审计入口。
+- default-entry、draining 等区服管理细节在页面内可操作并保留审计入口。
+
+> 延后（本期不做）：Q4 并发身份冲突可视化闭环、env 映射体验从 P3 拆出——P2 全量 mock 未建对应 UI，另立专项 FR-177 / FR-178（待排期，须走 mockup 评审门）后单独交付。
 
 ### P4：0.24.x 健康采样与调度闭环
 

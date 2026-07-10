@@ -63,7 +63,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-138 | Legacy 前端整体冻结：`web/` 不再演进，第二版二进制仅嵌 `apps/web` 新管理台 | P1 | 0.21.x | 发布产物只嵌新管理台；`web/` 冻结边界写入 ARCHITECTURE；真机依赖旧功能时继续运行 v0.19 及更早版本并有文档说明 | 已交付@v0.21.0 |
 | FR-139 | Agent 首启生成并持久化唯一 `identityId` | P1 | 0.21.x | 首启生成身份文件；重启不变；损坏身份文件不静默重生成 | 已交付@v0.21.0 |
 | FR-140 | Agent 注册绑定：`identityId + namespace + serverId` 首次接入人工确认 | P1 | 0.21.x | 新 agent 进入 pending；管理员确认后转 active；确认、拒绝、重新申请、禁用、解绑入审计 | 已交付@v0.21.0 |
-| FR-141 | 身份冲突、解绑、换区、禁用、重新绑定流程 | P1 | 0.21.x | Q3 占用需显式强制解绑；禁用 / 启用 / 解绑有状态机保护；换区完整工单与 Q4 并发冲突处置继续在 P3 UI 接真深化 | 已交付@v0.21.0 |
+| FR-141 | 身份冲突、解绑、换区、禁用、重新绑定流程 | P1 | 0.21.x | Q3 占用需显式强制解绑；禁用 / 启用 / 解绑有状态机保护；换区完整工单在 P3 接真深化（FR-155），Q4 并发冲突可视化处置延后另立 FR-177 | 已交付@v0.21.0 |
 | FR-142 | namespace / 环境 / BC / 大区 / 小区 / 子服权威模型与强隔离 | P1 | 0.21.x | namespace token 哈希落库；namespace_trust 单向授权 / 收回即时刷新；v2 权威表完成迁移 | 已交付@v0.21.0 |
 | FR-143 | 未分配 Agent 后台分配到大区 / 小区 / 默认入口 | P1 | 0.21.x | approve 创建未分配 server；未分配 server 可批量首次分配到 zone / BC 集群；已分配直改返回 rezone_required | 已交付@v0.21.0 |
 | FR-144 | Agent 1s 采样，Beacon 5s 批量入库基础指标 | P4 | 0.24.x | TPS、CPU、内存、在线、连接摘要按批入库；断连后可恢复；不阻塞请求主线程 | 计划 |
@@ -99,6 +99,8 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-174 | 第二版 web 脚手架：`apps/web` 新建（Vite + React Router + TanStack Query + Zustand + react-i18next + MSW） | P1 | 0.21.x | 新台骨架可跑（路由 / 布局 / 主题 / i18n）；MSW 经 `packages/devmock` 双端可用（浏览器 + 测试共享 handlers）；服务器状态归 TanStack Query、客户端状态归 Zustand 的边界写入规范 | 已交付@v0.21.0 |
 | FR-175 | UI 博物馆：`@beacon/ui` 提升 `packages/ui`，ui-wiki 提升 `apps/ui-wiki`，控件展示覆盖率门禁 | P1 | 0.21.x | 每个 `@beacon/ui` 导出控件在 ui-wiki 有展示页（覆盖率检查纳入 CI 必过）；新管理台组件一律取自 `packages/ui`，不允许页面内私建通用控件 | 已交付@v0.21.0 |
 | FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 已交付@v0.21.0 |
+| FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | 待排期 | 待定 | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 计划 |
+| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | 待排期 | 待定 | env 可增删改；整体替换 env→namespace 映射且 namespace 至多属一个 env（冲突 409）；顶栏按 env 过滤视图；env 变更入审计 | 计划 |
 
 ## 5. 非功能需求（NFR）
 
@@ -118,7 +120,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | P0 | 0.20.x | PRD、路线图、核心边界确认；路线图 §5 规格清单与 API 契约草案全部完成 |
 | P1 | 0.21.x | 工程化基建 + v2 控制面基础闭环：monorepo 布局迁移、全仓构建打通、静态检查最严档三线进 CI、UI 博物馆覆盖率门禁生效、apps/web 脚手架 + MSW 基建可跑、Legacy 前端冻结；Agent identity.yml、v2 注册确认、namespace/trust、区服权威表与首次分配链路可用 |
 | P2 | 0.22.x | 全量 mock 管理台：UX.md 全部页面 mock 拍板、演示模式与「交付」大分类落地 |
-| P3 | 0.23.x | 集群管理页接真深化：`/servers`、`/zones`、`/namespaces` 接入 P1 v2 基础 API，补齐换区工单 UI、并发身份冲突处置可视化、zone-tree 与 env 映射体验 |
+| P3 | 0.23.x | 集群管理页接真深化：`/servers`、`/zones`、`/namespaces` 接入 P1 v2 基础 API，补齐换区工单 UI（解绑 + 重确认）、zone-tree 规模体验、draining / default-entry 页内可操作；Q4 冲突可视化与 env 映射延后（FR-177 / FR-178） |
 | P4 | 0.24.x | 基础指标、健康值、调度决策、本机 agent-api 形成闭环；`/dashboard`、`/service-analysis` 接真 |
 | P5 | 0.25.x | 每连接明细、跨服消息追踪、payload 审计、异常链路可排查；`/topology` 与可观测页贯通接真 |
 | P6 | 0.26.x | 热 / 冷归档、冷查询、归档清理可用且清理前必归档；系统设置页接真 |
