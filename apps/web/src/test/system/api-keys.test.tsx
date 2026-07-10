@@ -54,21 +54,45 @@ describe('/api-keys 密钥页', () => {
     expect(within(plaintextDialog).getByText(/^bk_\w{20,}/)).toBeInTheDocument()
   })
 
-  it('吊销生效密钥后状态变为已吊销（写闭环）', async () => {
+  it('点击密钥行展开非模态详情面板（不产生遮罩）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ApiKeysPage />)
 
-    const row = (await screen.findByText('业务管理后端')).closest('tr')
-    expect(row).not.toBeNull()
-    await user.click(within(row as HTMLElement).getByRole('button', { name: '吊销' }))
+    // 初始无详情面板、无任何模态遮罩
+    expect(screen.queryByText('密钥详情')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(await screen.findByText('业务管理后端'))
+
+    // 详情面板出现且是布局内列（非 role=dialog 遮罩）
+    expect(await screen.findByText('密钥详情')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // 详情面板内出现吊销 / 重置操作
+    expect(screen.getByRole('button', { name: '吊销' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重置' })).toBeInTheDocument()
+  })
+
+  it('详情面板吊销生效密钥后状态变为已吊销（写闭环）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ApiKeysPage />)
+
+    // 点行展开详情面板，在面板内发起吊销
+    await user.click(await screen.findByText('业务管理后端'))
+    await user.click(await screen.findByRole('button', { name: '吊销' }))
 
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '确认吊销' }))
 
+    // 名称在行与详情面板各出现一次，定位到表格行断言其状态列变已吊销
     await waitFor(() => {
-      const updated = screen.getByText('业务管理后端').closest('tr')
-      expect(within(updated as HTMLElement).getByText('已吊销')).toBeInTheDocument()
+      const row = screen
+        .getAllByText('业务管理后端')
+        .map((el) => el.closest('tr'))
+        .find((tr): tr is HTMLTableRowElement => tr !== null)
+      expect(row).toBeDefined()
+      expect(within(row as HTMLElement).getByText('已吊销')).toBeInTheDocument()
     })
   })
 })

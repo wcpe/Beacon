@@ -6,6 +6,8 @@ export const system = {
     reasonLabel: '原因',
     prev: '上一页',
     next: '下一页',
+    close: '关闭',
+    detail: '详情',
   },
   settings: {
     mission: '采样、保留期、健康权重等运行参数；含归档与清理',
@@ -298,6 +300,10 @@ export const system = {
     },
     empty: '暂无 API 密钥，点击「创建密钥」新增第一把',
     loadFail: '密钥列表加载失败',
+    // 列表主列 + 非模态详情面板
+    listTitle: 'API 密钥',
+    detailTitle: '密钥详情',
+    selectHint: '点击左侧密钥查看详情与吊销 / 重置操作',
     // 创建
     create: '创建密钥',
     createTitle: '创建 API 密钥',
