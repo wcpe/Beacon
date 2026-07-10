@@ -318,9 +318,8 @@ export default function GuidedWizard({
             <WizardStepReview
               orderId={orderId}
               prepared={prepared}
+              namespaceId={namespaceId}
               content={content}
-              source={source}
-              fileCount={scan?.items.length ?? 0}
               picks={picks}
               scope={scope}
               batch={batch}

@@ -123,9 +123,8 @@ describe('/changes 引导创建向导', () => {
     await user.click(within(dialog).getByRole('button', { name: '下一步' }))
 
     await throughScopeToReview(user, dialog)
-    // 概要卡同时含文件差异与配置项两行
-    expect(within(dialog).getByText('文件差异')).toBeInTheDocument()
-    expect(within(dialog).getByText('配置项')).toBeInTheDocument()
+    // 简单模式概要句同时提到文件与配置载荷
+    expect(within(dialog).getByText(/个文件变更与 1 项配置变更/)).toBeInTheDocument()
     await submitAndAssert(user, dialog)
   })
 
@@ -296,6 +295,45 @@ describe('/changes 引导创建向导', () => {
     await within(dialog).findByText('台数合计 3 台，比目标多 1 台')
     await user.click(within(dialog).getByRole('button', { name: '删除第 2 批' }))
     expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
+  })
+
+  it('第五步：简单 / 详细概要切换，详细模式出两个完整预览控件', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 纯配置路径到第 5 步（全量范围 + 默认推荐批次）
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: /更新配置文件/ }))
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickConfigFile(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await throughScopeToReview(user, dialog)
+
+    // 默认简单模式：人话概要句 + KPI 大字
+    expect(within(dialog).getByRole('button', { name: '简单' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(dialog).getByText(/将向全命名空间共 \d+ 台服务器分 \d+ 批推送 1 项配置变更，生效方式：热重载。/)).toBeInTheDocument()
+    expect(within(dialog).getByText('批次数')).toBeInTheDocument()
+
+    // 切详细：变更内容预览（配置清单 + 版本区间）+ 完整编排预览四分区
+    await user.click(within(dialog).getByRole('button', { name: '详细' }))
+    await within(dialog).findByText('配置变更清单（1 项）')
+    expect(within(dialog).getByText('plugins/Essentials/config.yml')).toBeInTheDocument()
+    expect(within(dialog).getByText('v1 → v2')).toBeInTheDocument()
+    expect(within(dialog).getByText('目标范围')).toBeInTheDocument()
+    expect(within(dialog).getByText('批次规划')).toBeInTheDocument()
+    expect(within(dialog).getByText('生效方式')).toBeInTheDocument()
+    expect(within(dialog).getByText('影响面汇总')).toBeInTheDocument()
+
+    // 配置行展开差异：行级 diff 出新旧内容
+    await user.click(within(dialog).getByRole('button', { name: /展开差异/ }))
+    await within(dialog).findByText('teleport-cooldown: 5')
+    expect(within(dialog).getByText('teleport-cooldown: 3')).toBeInTheDocument()
+
+    // 切回简单：概要句复现、预览控件收起
+    await user.click(within(dialog).getByRole('button', { name: '简单' }))
+    expect(within(dialog).getByText(/将向全命名空间/)).toBeInTheDocument()
+    expect(within(dialog).queryByText('配置变更清单（1 项）')).not.toBeInTheDocument()
   })
 
   it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
