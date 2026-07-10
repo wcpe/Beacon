@@ -4,8 +4,6 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { ChevronLeft } from 'lucide-react'
-
 import {
   AsyncSection,
   Button,
@@ -110,23 +108,13 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
   const order = query.data
 
   return (
-    <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button variant="ghost" size="sm" onClick={onBack}>
-          <ChevronLeft className="size-4" />
-          {t('delivery.changes.detail.backToList')}
-        </Button>
-      </div>
-
+    <div className="grid gap-4">
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
         {order && (
           <div className="grid gap-4">
-            {/* 标题 + 状态徽标 + 生命周期操作区（软卡片头部，一眼看清是哪张单、什么状态、能做什么） */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-              <div className="flex flex-wrap items-center gap-3">
-                <h2 className="text-lg font-semibold text-ink-1">{order.title}</h2>
-                <OrderStatusBadge status={order.status} />
-              </div>
+            {/* 状态徽标 + 生命周期操作区（面板标题已由 MasterDetail 头部承担，此处只留状态与可做动作） */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+              <OrderStatusBadge status={order.status} />
               <LifecycleActions
                 order={order}
                 onPick={(kind) => {
@@ -185,7 +173,7 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
           }}
         />
       )}
-    </section>
+    </div>
   )
 }
 

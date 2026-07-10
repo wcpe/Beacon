@@ -1,4 +1,5 @@
-// 变更单列表视图：状态筛选 + 标题搜索 + 服务端分页 + 行「详情」+ 顶部「新建变更单」。
+// 变更单列表（主从布局主列）：ListCard 吸顶工具条（标题 / 新建 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
+// 点行选中（右侧非模态详情面板打开）；新建走模态表单。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -10,7 +11,6 @@ import {
   Button,
   DataTable,
   Input,
-  SectionHeader,
   Select,
   SelectContent,
   SelectItem,
@@ -26,6 +26,7 @@ import {
   type ChangeOrderStatus,
   type ChangeOrderSummary,
 } from '../../api/delivery-changes'
+import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/delivery/pager'
 import CreateDialog, { type CreateDraftInput } from './create-dialog'
 import { OrderStatusBadge } from './status-badge'
@@ -48,10 +49,11 @@ const STATUS_OPTIONS: ChangeOrderStatus[] = [
 
 interface ListViewProps {
   namespaceId: number
-  onOpen: (id: number) => void
+  selectedId: number | null
+  onOpen: (order: ChangeOrderSummary) => void
 }
 
-export default function ListView({ namespaceId, onOpen }: ListViewProps) {
+export default function ListView({ namespaceId, selectedId, onOpen }: ListViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -87,8 +89,8 @@ export default function ListView({ namespaceId, onOpen }: ListViewProps) {
     onSuccess: async (detail) => {
       await queryClient.invalidateQueries({ queryKey: ['change-orders'] })
       setCreateOpen(false)
-      // 创建成功直接进入新单详情
-      onOpen(detail.id)
+      // 创建成功直接进入新单详情面板
+      onOpen(detail)
     },
     onError: (error) => {
       setCreateError(error instanceof ApiClientError ? error.message : String(error))
@@ -97,6 +99,10 @@ export default function ListView({ namespaceId, onOpen }: ListViewProps) {
 
   const columns = useMemo<DataTableColumn<ChangeOrderSummary>[]>(
     () => [
+      {
+        header: t('delivery.changes.list.columns.id'),
+        cell: (row) => <span className="tnum text-xs text-ink-3">#{String(row.id)}</span>,
+      },
       { header: t('delivery.changes.list.columns.title'), cell: (row) => row.title },
       {
         header: t('delivery.changes.list.columns.status'),
@@ -113,46 +119,33 @@ export default function ListView({ namespaceId, onOpen }: ListViewProps) {
       { header: t('delivery.changes.list.columns.createdBy'), cell: (row) => row.createdBy },
       {
         header: t('delivery.changes.list.columns.updatedAt'),
-        cell: (row) => formatTime(row.updatedAt),
-      },
-      {
-        header: '',
-        cell: (row) => (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              onOpen(row.id)
-            }}
-          >
-            {t('delivery.changes.list.view')}
-          </Button>
-        ),
+        cell: (row) => <span className="tnum text-xs text-ink-3">{formatTime(row.updatedAt)}</span>,
       },
     ],
-    [t, onOpen],
+    [t],
   )
 
-  return (
-    <section className="grid gap-3">
-      <SectionHeader
-        icon={<ClipboardList className="size-4" />}
-        title={t('delivery.changes.list.title')}
-        actions={
-          <Button
-            size="sm"
-            onClick={() => {
-              setCreateError(null)
-              setCreateOpen(true)
-            }}
-          >
-            <Plus className="size-4" />
-            {t('delivery.changes.list.create')}
-          </Button>
-        }
-      />
-
-      {/* 筛选条：状态 + 标题搜索 */}
+  const toolbar = (
+    <div className="grid gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <ClipboardList className="size-[15px]" />
+          </span>
+          {t('delivery.changes.list.title')}
+          {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
+        </span>
+        <Button
+          size="sm"
+          onClick={() => {
+            setCreateError(null)
+            setCreateOpen(true)
+          }}
+        >
+          <Plus className="size-4" />
+          {t('delivery.changes.list.create')}
+        </Button>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('delivery.changes.list.keyword')}
@@ -184,18 +177,29 @@ export default function ListView({ namespaceId, onOpen }: ListViewProps) {
           </SelectContent>
         </Select>
       </div>
+    </div>
+  )
 
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
-          columns={columns}
-          rows={query.data?.items}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('delivery.changes.list.empty')}
-          density="compact"
-        />
-      </AsyncSection>
-
-      <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />
+  return (
+    <div className="grid gap-3.5">
+      <ListCard
+        toolbar={toolbar}
+        footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
+      >
+        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <DataTable
+            columns={columns}
+            rows={query.data?.items}
+            rowKey={(row) => String(row.id)}
+            emptyText={t('delivery.changes.list.empty')}
+            density="compact"
+            onRowClick={(row) => {
+              onOpen(row)
+            }}
+            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+          />
+        </AsyncSection>
+      </ListCard>
 
       <CreateDialog
         open={createOpen}
@@ -207,6 +211,6 @@ export default function ListView({ namespaceId, onOpen }: ListViewProps) {
           createMutation.mutate(input)
         }}
       />
-    </section>
+    </div>
   )
 }

@@ -281,6 +281,7 @@ export const delivery = {
       filterStatus: '按状态过滤',
       allStatus: '全部状态',
       columns: {
+        id: '单号',
         title: '标题',
         status: '状态',
         batch: '批次策略',
