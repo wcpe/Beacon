@@ -1,9 +1,8 @@
-// 文件清单面板：按子服 / 路径前缀 / 文件名 / 扩展名 / 哈希搜索分页；行内预览；
-// 勾选子服批量触发重扫（离线服本批跳过）。
+// 文件清单（主从布局）：ListCard 吸顶筛选（子服 / 路径前缀 / 文件名 / 扩展名）+ 自区滚列表 + 吸底分页，
+// 勾选子服批量触发重扫（离线服本批跳过）；点行打开右侧非模态详情面板（元数据 / 预览 / 哈希）。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { FileText } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -12,25 +11,21 @@ import {
   Checkbox,
   DataTable,
   Input,
-  SectionHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
 import type { AssetItem, AssetRescanResponse } from '@beacon/devmock'
 
+import MasterDetail from '../../features/shared/master-detail'
 import Pager from '../../features/delivery/pager'
+import ListCard from '../../features/shared/list-card'
 import { ApiClientError } from '../../api/delivery'
 import { fetchAssets, rescanAssets } from '../../api/delivery-assets'
-import PreviewDialog from './preview-dialog'
+import ManifestDetailPanel from './manifest-detail-panel'
 import RescanDialog from './rescan-dialog'
 import { formatBytes, formatTime, shortHash } from './format'
 
 const PAGE_SIZE = 15
-
-interface PreviewTarget {
-  serverId: string
-  path: string
-}
 
 export default function ManifestPanel({ namespaceId }: { namespaceId: number }) {
   const { t } = useTranslation()
@@ -41,7 +36,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
   const [ext, setExt] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [preview, setPreview] = useState<PreviewTarget | null>(null)
+  const [detail, setDetail] = useState<AssetItem | null>(null)
   const [rescanOpen, setRescanOpen] = useState(false)
   const [rescanResult, setRescanResult] = useState<AssetRescanResponse | null>(null)
   const [rescanError, setRescanError] = useState<string | null>(null)
@@ -91,19 +86,29 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
     })
   }
 
+  const rowKeyOf = (row: AssetItem): string => `${row.serverId}:${row.path}`
+
   const columns = useMemo<DataTableColumn<AssetItem>[]>(
     () => [
       {
         header: '',
         headClassName: 'w-8',
         cell: (row) => (
-          <Checkbox
-            checked={selected.has(row.serverId)}
-            onCheckedChange={() => {
-              toggleRow(row.serverId)
+          <span
+            className="inline-flex"
+            onClick={(e) => {
+              // 勾选用于批量重扫，阻止冒泡到行点击（行点击用于打开详情面板）
+              e.stopPropagation()
             }}
-            aria-label={`选择 ${row.serverId}`}
-          />
+          >
+            <Checkbox
+              checked={selected.has(row.serverId)}
+              onCheckedChange={() => {
+                toggleRow(row.serverId)
+              }}
+              aria-label={`选择 ${row.serverId}`}
+            />
+          </span>
         ),
       },
       {
@@ -122,31 +127,19 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
       },
       {
         header: t('delivery.assets.list.columns.mtime'),
-        cell: (row) => formatTime(new Date(row.mtimeMs).toISOString()),
+        cell: (row) => <span className="tnum text-xs text-ink-3">{formatTime(new Date(row.mtimeMs).toISOString())}</span>,
       },
       {
-        header: t('delivery.assets.list.columns.actions'),
-        cell: (row) => (
-          <div className="flex items-center gap-1.5">
-            {row.isText ? (
-              <Badge variant="brand">{t('delivery.assets.list.text')}</Badge>
-            ) : (
-              <Badge variant="off" className="gap-1.5">
-                <span className="size-1.5 rounded-full bg-current" />
-                {t('delivery.assets.list.binary')}
-              </Badge>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setPreview({ serverId: row.serverId, path: row.path })
-              }}
-            >
-              {t('delivery.assets.list.preview')}
-            </Button>
-          </div>
-        ),
+        header: t('delivery.assets.list.columns.type'),
+        cell: (row) =>
+          row.isText ? (
+            <Badge variant="brand">{t('delivery.assets.list.text')}</Badge>
+          ) : (
+            <Badge variant="off" className="gap-1.5">
+              <span className="size-1.5 rounded-full bg-current" />
+              {t('delivery.assets.list.binary')}
+            </Badge>
+          ),
       },
     ],
     [t, selected],
@@ -157,13 +150,8 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
     setPage(1)
   }
 
-  return (
-    <section className="grid gap-3">
-      <SectionHeader
-        icon={<FileText className="size-4" aria-hidden />}
-        title={t('delivery.assets.list.title')}
-      />
-
+  const toolbar = (
+    <div className="grid gap-2.5">
       {/* 筛选条 */}
       <div className="flex flex-wrap items-center gap-2">
         <Input
@@ -173,7 +161,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           onChange={(e) => {
             setFilter(setServerId, e.target.value)
           }}
-          className="w-40"
+          className="w-36"
         />
         <Input
           aria-label={t('delivery.assets.list.filters.pathPrefix')}
@@ -182,7 +170,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           onChange={(e) => {
             setFilter(setPathPrefix, e.target.value)
           }}
-          className="w-48"
+          className="w-44"
         />
         <Input
           aria-label={t('delivery.assets.list.filters.name')}
@@ -191,7 +179,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           onChange={(e) => {
             setFilter(setName, e.target.value)
           }}
-          className="w-40"
+          className="w-36"
         />
         <Input
           aria-label={t('delivery.assets.list.filters.ext')}
@@ -200,7 +188,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           onChange={(e) => {
             setFilter(setExt, e.target.value)
           }}
-          className="w-28"
+          className="w-24"
         />
       </div>
 
@@ -210,7 +198,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
         </p>
       )}
 
-      {/* 批量选择集顶部操作条 */}
+      {/* 批量选择集操作条 */}
       {selected.size > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2">
           <span>{t('delivery.assets.rescan.selected', { count: selected.size })}</span>
@@ -235,7 +223,18 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           </Button>
         </div>
       )}
+    </div>
+  )
 
+  const master = (
+    <ListCard
+      toolbar={toolbar}
+      footer={
+        !nameNeedsIndex && total > PAGE_SIZE ? (
+          <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />
+        ) : undefined
+      }
+    >
       <AsyncSection
         isLoading={query.isLoading && !nameNeedsIndex}
         isError={query.isError}
@@ -248,17 +247,24 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           rowKey={(row, index) => `${row.serverId}:${row.path}:${String(index)}`}
           emptyText={t('delivery.assets.list.empty')}
           density="compact"
+          onRowClick={(row) => {
+            setDetail(row)
+          }}
+          rowClassName={(row) => (detail && rowKeyOf(row) === rowKeyOf(detail) ? 'bg-brand-50/60' : undefined)}
         />
       </AsyncSection>
+    </ListCard>
+  )
 
-      <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />
-
-      <PreviewDialog
-        target={preview}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPreview(null)
-          }
+  return (
+    <>
+      <MasterDetail
+        master={master}
+        detail={detail ? <ManifestDetailPanel item={detail} /> : null}
+        detailTitle={detail ? <span className="font-mono">{detail.path}</span> : ''}
+        closeLabel={t('delivery.assets.preview.close')}
+        onClose={() => {
+          setDetail(null)
         }}
       />
 
@@ -279,6 +285,6 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
           }
         }}
       />
-    </section>
+    </>
   )
 }

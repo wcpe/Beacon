@@ -46,6 +46,7 @@ export const delivery = {
         size: '大小',
         sha256: '哈希',
         mtime: '修改时间',
+        type: '类型',
         actions: '操作',
       },
       filters: {
@@ -58,6 +59,21 @@ export const delivery = {
       preview: '预览',
       binary: '二进制',
       text: '文本',
+    },
+    // 详情面板（右侧非模态）
+    detail: {
+      metaTitle: '元数据',
+      previewTitle: '内容预览',
+      previewLoading: '加载预览中…',
+      sensitiveOpen: '填写原因查看',
+      fields: {
+        serverId: '子服',
+        path: '路径',
+        size: '大小',
+        type: '类型',
+        sha256: '哈希',
+        mtime: '修改时间',
+      },
     },
     // 内容预览
     preview: {
