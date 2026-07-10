@@ -1,14 +1,12 @@
-// 配置文件详情视图：顶部返回列表 + 文件名 / 格式 / 描述，四个 Tab（作用域概览 / 有效配置 / 版本链 / 差异对比）。
+// 配置文件详情（右侧非模态详情面板内容）：文件名 / 格式 / 描述 + 四个 Tab（作用域概览 / 有效配置 / 版本链 / 差异对比）。
+// 面板的关闭由外层 MasterDetail 承担，此处不渲染返回按钮。
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, FileCog } from 'lucide-react'
 
 import {
   AsyncSection,
   Badge,
-  Button,
-  SectionHeader,
   Tabs,
   TabsContent,
   TabsList,
@@ -23,10 +21,9 @@ import DiffTab from './diff-tab'
 
 interface DetailViewProps {
   fileId: number
-  onBack: () => void
 }
 
-export default function DetailView({ fileId, onBack }: DetailViewProps) {
+export default function DetailView({ fileId }: DetailViewProps) {
   const { t } = useTranslation()
   const [tab, setTab] = useState('scopes')
 
@@ -36,22 +33,18 @@ export default function DetailView({ fileId, onBack }: DetailViewProps) {
   })
 
   return (
-    <section className="grid gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" size="sm" onClick={onBack}>
-          <ArrowLeft className="size-3.5" aria-hidden />
-          {t('delivery.configs.detail.backToList')}
-        </Button>
-        {detailQuery.data && (
-          <SectionHeader
-            className="flex-1"
-            icon={<FileCog className="size-4" />}
-            title={<span className="font-mono text-ink-1">{detailQuery.data.name}</span>}
-            count={detailQuery.data.description || undefined}
-            actions={<Badge variant="brand">{detailQuery.data.format}</Badge>}
-          />
-        )}
-      </div>
+    <div className="grid gap-3">
+      {detailQuery.data && (
+        <div className="grid gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-sm text-ink-1">{detailQuery.data.name}</span>
+            <Badge variant="brand">{detailQuery.data.format}</Badge>
+          </div>
+          {detailQuery.data.description !== '' && (
+            <p className="text-xs text-ink-3">{detailQuery.data.description}</p>
+          )}
+        </div>
+      )}
 
       <AsyncSection
         isLoading={detailQuery.isLoading}
@@ -79,6 +72,6 @@ export default function DetailView({ fileId, onBack }: DetailViewProps) {
           </TabsContent>
         </Tabs>
       </AsyncSection>
-    </section>
+    </div>
   )
 }

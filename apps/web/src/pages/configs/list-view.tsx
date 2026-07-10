@@ -1,5 +1,5 @@
-// 配置文件列表视图：keyword 搜索 + 服务端分页，行「详情」进入详情、行「删除」移入回收站，
-// 顶部「新建配置文件」+「回收站」入口。四态齐全（loading/error/empty/huge 分页）。
+// 配置文件列表（主从布局主列）：ListCard 吸顶工具条（标题 / 新建 / 回收站 / keyword）+ 自区滚列表 + 吸底分页。
+// 点行选中（右侧非模态详情面板打开），行「删除」移入回收站（模态确认）。四态齐全（loading/error/empty/huge 分页）。
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -12,13 +12,13 @@ import {
   DataTable,
   DestructiveConfirmDialog,
   Input,
-  SectionHeader,
   SummaryStrip,
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
 import type { ConfigFileItem } from '@beacon/devmock'
 
+import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/delivery/pager'
 import { ApiClientError } from '../../api/delivery'
 import { createConfigFile, deleteConfigFile, fetchConfigFiles } from '../../api/delivery-configs'
@@ -28,11 +28,12 @@ const PAGE_SIZE = 15
 
 interface ListViewProps {
   namespaceId: number
-  onOpenDetail: (id: number) => void
+  selectedId: number | null
+  onSelect: (file: ConfigFileItem) => void
   onOpenTrash: () => void
 }
 
-export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: ListViewProps) {
+export default function ListView({ namespaceId, selectedId, onSelect, onOpenTrash }: ListViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -115,8 +116,16 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
       cell: (row) => <span className="tnum text-ink-2">{row.contributingLayerCount}</span>,
     },
     {
+      header: t('delivery.configs.list.columns.hash'),
+      cell: (row) => (
+        <span className="font-mono text-xs text-ink-3">
+          {row.effectiveHash ? row.effectiveHash.slice(0, 10) : '-'}
+        </span>
+      ),
+    },
+    {
       header: t('delivery.configs.list.columns.updatedAt'),
-      cell: (row) => new Date(row.updatedAt).toLocaleString(),
+      cell: (row) => <span className="tnum text-xs text-ink-3">{new Date(row.updatedAt).toLocaleString()}</span>,
     },
     {
       header: '',
@@ -125,16 +134,9 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => {
-              onOpenDetail(row.id)
-            }}
-          >
-            {t('delivery.changes.list.view')}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
+            onClick={(e) => {
+              // 阻止冒泡到行点击（行点击用于打开详情面板）
+              e.stopPropagation()
               setRemoveError(null)
               setRemoveTarget(row)
             }}
@@ -146,32 +148,32 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
     },
   ]
 
-  return (
-    <section className="grid gap-3">
-      <SectionHeader
-        icon={<Files className="size-4" />}
-        title={t('delivery.configs.list.title')}
-        actions={
-          <>
-            <Button variant="outline" size="sm" onClick={onOpenTrash}>
-              <Trash2 className="size-3.5" aria-hidden />
-              {t('delivery.configs.list.trash')}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                setCreateError(null)
-                setCreateOpen(true)
-              }}
-            >
-              {t('delivery.configs.list.create')}
-            </Button>
-          </>
-        }
-      />
-
-      {summaryItems.length > 0 && <SummaryStrip items={summaryItems} />}
-
+  const toolbar = (
+    <div className="grid gap-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <Files className="size-[15px]" />
+          </span>
+          {t('delivery.configs.list.title')}
+          {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
+        </span>
+        <div className="flex items-center gap-1.5">
+          <Button variant="outline" size="sm" onClick={onOpenTrash}>
+            <Trash2 className="size-3.5" aria-hidden />
+            {t('delivery.configs.list.trash')}
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              setCreateError(null)
+              setCreateOpen(true)
+            }}
+          >
+            {t('delivery.configs.list.create')}
+          </Button>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('delivery.configs.list.keyword')}
@@ -184,25 +186,31 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
           className="w-64"
         />
       </div>
+    </div>
+  )
 
-      <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-        <DataTable
-          columns={columns}
-          rows={query.data?.items}
-          rowKey={(row) => String(row.id)}
-          emptyText={t('delivery.configs.list.empty')}
-          density="compact"
-        />
-      </AsyncSection>
+  return (
+    <div className="grid gap-3.5">
+      {summaryItems.length > 0 && <SummaryStrip items={summaryItems} />}
 
-      <Pager
-        page={page}
-        total={total}
-        pageSize={PAGE_SIZE}
-        onPageChange={(next) => {
-          setPage(next)
-        }}
-      />
+      <ListCard
+        toolbar={toolbar}
+        footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
+      >
+        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+          <DataTable
+            columns={columns}
+            rows={query.data?.items}
+            rowKey={(row) => String(row.id)}
+            emptyText={t('delivery.configs.list.empty')}
+            density="compact"
+            onRowClick={(row) => {
+              onSelect(row)
+            }}
+            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+          />
+        </AsyncSection>
+      </ListCard>
 
       <CreateDialog
         open={createOpen}
@@ -228,9 +236,7 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
             }
           }}
           title={t('delivery.configs.remove.title')}
-          description={
-            removeError ?? t('delivery.configs.remove.desc')
-          }
+          description={removeError ?? t('delivery.configs.remove.desc')}
           confirmLabel={t('delivery.configs.remove.confirm')}
           cancelLabel={t('delivery.configs.create.cancel')}
           impacts={[removeTarget.name]}
@@ -240,7 +246,7 @@ export default function ListView({ namespaceId, onOpenDetail, onOpenTrash }: Lis
           }}
         />
       )}
-    </section>
+    </div>
   )
 }
 

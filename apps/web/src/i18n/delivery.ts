@@ -134,6 +134,7 @@ export const delivery = {
         name: '文件名',
         format: '格式',
         layers: '贡献层数',
+        hash: '有效哈希',
         updatedAt: '更新时间',
       },
     },

@@ -6,19 +6,21 @@ import { useTranslation } from 'react-i18next'
 import { FileCog, Info } from 'lucide-react'
 
 import { Button, SectionHeader } from '@beacon/ui'
+import type { ConfigFileItem } from '@beacon/devmock'
 
+import MasterDetail from '../features/shared/master-detail'
 import NamespacePicker from '../features/delivery/namespace-picker'
 import ListView from './configs/list-view'
 import TrashView from './configs/trash-view'
 import DetailView from './configs/detail-view'
 
-// 当前视图：列表 / 回收站 / 某文件详情
-type View = { kind: 'list' } | { kind: 'trash' } | { kind: 'detail'; fileId: number }
-
 export default function ConfigsPage() {
   const { t } = useTranslation()
   const [namespaceId, setNamespaceId] = useState<number | null>(null)
-  const [view, setView] = useState<View>({ kind: 'list' })
+  // 是否在回收站视图（回收站为整块视图切换，非详情面板）
+  const [trashOpen, setTrashOpen] = useState(false)
+  // 选中的配置文件（打开右侧非模态详情面板）
+  const [selected, setSelected] = useState<ConfigFileItem | null>(null)
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
@@ -33,8 +35,9 @@ export default function ConfigsPage() {
           value={namespaceId}
           onChange={(id) => {
             setNamespaceId(id)
-            // 切换 namespace 回到列表，避免残留其他 ns 的详情
-            setView({ kind: 'list' })
+            // 切换 namespace 复位视图与选中，避免残留其他 ns 的详情
+            setTrashOpen(false)
+            setSelected(null)
           }}
         />
       </div>
@@ -50,32 +53,30 @@ export default function ConfigsPage() {
         </Button>
       </div>
 
-      {view.kind === 'list' && (
-        <ListView
-          namespaceId={effectiveNamespaceId}
-          onOpenDetail={(fileId) => {
-            setView({ kind: 'detail', fileId })
-          }}
-          onOpenTrash={() => {
-            setView({ kind: 'trash' })
-          }}
-        />
-      )}
-
-      {view.kind === 'trash' && (
+      {trashOpen ? (
         <TrashView
           namespaceId={effectiveNamespaceId}
           onBack={() => {
-            setView({ kind: 'list' })
+            setTrashOpen(false)
           }}
         />
-      )}
-
-      {view.kind === 'detail' && (
-        <DetailView
-          fileId={view.fileId}
-          onBack={() => {
-            setView({ kind: 'list' })
+      ) : (
+        <MasterDetail
+          master={
+            <ListView
+              namespaceId={effectiveNamespaceId}
+              selectedId={selected?.id ?? null}
+              onSelect={setSelected}
+              onOpenTrash={() => {
+                setTrashOpen(true)
+              }}
+            />
+          }
+          detail={selected ? <DetailView fileId={selected.id} /> : null}
+          detailTitle={selected ? <span className="font-mono">{selected.name}</span> : ''}
+          closeLabel={t('delivery.configs.detail.backToList')}
+          onClose={() => {
+            setSelected(null)
           }}
         />
       )}

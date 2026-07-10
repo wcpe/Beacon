@@ -59,15 +59,22 @@ describe('/configs 配置中心页', () => {
     expect(await screen.findByText('plugins/NewPlugin/config.yml')).toBeInTheDocument()
   })
 
-  it('进入详情切「有效配置」看到合并内容', async () => {
+  it('点行打开右侧非模态详情面板并切「有效配置」看到合并内容', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ConfigsPage />)
 
-    // 进入第一个文件详情
-    await screen.findByText('plugins/Essentials/config.yml')
-    const detailButtons = await screen.findAllByRole('button', { name: '详情' })
-    await user.click(detailButtons[0])
+    // 点第一个文件所在行打开详情面板（非模态，不产生 dialog 遮罩）
+    const nameCell = await screen.findByText('plugins/Essentials/config.yml')
+    const row = nameCell.closest('tr')
+    if (!row) {
+      throw new Error('未找到配置文件所在行')
+    }
+    await user.click(row)
+
+    // 详情面板出现（作用域概览 Tab）且不产生模态遮罩
+    expect(await screen.findByRole('tab', { name: '作用域概览' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     // 切到「有效配置」Tab
     await user.click(await screen.findByRole('tab', { name: '有效配置' }))
@@ -76,6 +83,17 @@ describe('/configs 配置中心页', () => {
     await waitFor(() => {
       expect(screen.getAllByText(/economy-enabled/).length).toBeGreaterThan(0)
     })
+  })
+
+  it('行内前置基础字段可见（格式 / 贡献层数 / 有效哈希）', async () => {
+    useScenario('normal')
+    renderPage(<ConfigsPage />)
+
+    // 列表就绪后，表头出现前置字段列（格式 / 贡献层数 / 有效哈希 / 更新时间）
+    await screen.findByText('plugins/Essentials/config.yml')
+    expect(screen.getByRole('columnheader', { name: '格式' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '贡献层数' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '有效哈希' })).toBeInTheDocument()
   })
 
   it('keyword 搜索过滤配置文件', async () => {
