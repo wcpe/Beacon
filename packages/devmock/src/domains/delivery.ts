@@ -165,6 +165,22 @@ export interface ChangeOrderEvent {
   status: string
 }
 
+/**
+ * 变更项文件内容预览响应（mock 临时能力）。
+ * 说明：本端点超出 docs/API.md v2 草案（草案未定义变更项文件内容查询），仅为 mock 支撑
+ * 「点开预览文件内容」的前端评审；后端接真时需正式化契约（响应形状 / 截断阈值 / 二进制处理）。
+ * 属管理面查询，不经命令通道 / 审计，不违反「命令通道不携带文件内容」约束。
+ */
+export interface FileDiffResponse {
+  path: string
+  // added=新增文件（before 为空）；modified=前后行级 diff；removed=删除文件（after 为空）
+  changeType: 'added' | 'modified' | 'removed'
+  before: string | null
+  after: string | null
+  // 超过阈值的大文件仅回前若干行并置 true，前端据此提示已截断
+  truncated: boolean
+}
+
 interface OrderState extends ChangeOrderDetail {
   targets: ChangeTarget[]
   events: ChangeOrderEvent[]
@@ -266,6 +282,39 @@ function fileItems(orderId: number, count: number): ChangeOrderItem[] {
     })
   }
   return items
+}
+
+// 大文件截断阈值（字节）：超过即只回前若干行并置 truncated
+const FILE_DIFF_TRUNCATE_BYTES = 512_000
+
+/**
+ * 生成确定性文件文本内容（仿 server.properties / config.yml 片段），供文件内容预览。
+ * before / after 共享结构行（同 seed），仅在 debug 行与构建标记行按 variant 变化，
+ * 使 modified 的行级 diff 有真实且最小的差异。
+ */
+function fileDiffText(path: string, seed: number, variant: 'before' | 'after'): string {
+  const rng = createRng(seed)
+  const maxPlayers = 20 + Math.floor(rng() * 80)
+  const viewDistance = 6 + Math.floor(rng() * 6)
+  const mark = pseudoSha256(`file-diff:${path}:${variant}`).slice(0, 8)
+  return [
+    `# ${path}`,
+    'enabled: true',
+    `max-players: ${String(maxPlayers)}`,
+    `view-distance: ${String(viewDistance)}`,
+    'options:',
+    '  language: zh_CN',
+    `  debug: ${variant === 'after' ? 'true' : 'false'}`,
+    `  build-mark: ${mark}`,
+  ].join('\n')
+}
+
+// 截断大文件预览：仅保留前 4 行并追加提示
+function truncateContent(content: string | null): string | null {
+  if (content === null) {
+    return null
+  }
+  return `${content.split('\n').slice(0, 4).join('\n')}\n# …（大文件已截断预览）`
 }
 
 function configItem(orderId: number, index: number): ChangeOrderItem {
@@ -1068,6 +1117,33 @@ export const deliveryHandlers: HttpHandler[] = [
       return orderNotFound()
     }
     return HttpResponse.json({ events: order.events })
+  }),
+
+  // 变更项文件内容预览（mock 临时能力，见 FileDiffResponse 注释）：按变更项 id 回文件前后内容
+  mockGet('/admin/v2/change-orders/:id/items/:itemId/file-diff', (info) => {
+    const order = findOrder(info)
+    if (!order) {
+      return orderNotFound()
+    }
+    const itemId = Number.parseInt(pathParam(info, 'itemId'), 10)
+    const item = order.items.find((i) => i.id === itemId && i.kind === 'file_diff')
+    if (item?.path == null || item.action === null) {
+      return jsonError(404, 'item_not_found', '文件差异项不存在')
+    }
+    const seed = hashString(`file-diff:${String(order.id)}:${item.path}`)
+    const truncated = (item.sizeBytes ?? 0) > FILE_DIFF_TRUNCATE_BYTES
+    const beforeRaw = item.action === 'add' ? null : fileDiffText(item.path, seed, 'before')
+    const afterRaw = item.action === 'delete' ? null : fileDiffText(item.path, seed, 'after')
+    const changeType: FileDiffResponse['changeType'] =
+      item.action === 'add' ? 'added' : item.action === 'delete' ? 'removed' : 'modified'
+    const response: FileDiffResponse = {
+      path: item.path,
+      changeType,
+      before: truncated ? truncateContent(beforeRaw) : beforeRaw,
+      after: truncated ? truncateContent(afterRaw) : afterRaw,
+      truncated,
+    }
+    return HttpResponse.json(response)
   }),
 
   // 详情（单 + items + 批次概要）
