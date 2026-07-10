@@ -56,12 +56,33 @@ describe('/namespaces 页', () => {
     expect(within(tokenDialog).getByText(/^nstk_/)).toBeInTheDocument()
   })
 
-  it('收回生效信任后该行状态变为已收回（写闭环）', async () => {
+  it('点击 namespace 行展开非模态详情面板（不产生遮罩）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<NamespacesPage />)
 
-    // 种子含 test → prod 的生效信任，定位其行的收回按钮
+    // 初始无详情面板、无模态遮罩
+    expect(screen.queryByText('namespace 详情')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    // 选中 test 域（种子含出向生效信任 test → prod）
+    await user.click(await screen.findByText('test'))
+
+    // 详情面板出现且是布局内列（非 role=dialog 遮罩）
+    expect(await screen.findByText('namespace 详情')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // 面板内出现互通信任关系区与授予入口
+    expect(screen.getByText('互通信任关系')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '授予信任' })).toBeInTheDocument()
+  })
+
+  it('详情面板收回生效信任后该关系变为已收回（写闭环）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    // 选中 test 域后在详情面板内发起收回
+    await user.click(await screen.findByText('test'))
     const revokeBtn = (await screen.findAllByRole('button', { name: '收回' }))[0]
     await user.click(revokeBtn)
 
@@ -69,9 +90,10 @@ describe('/namespaces 页', () => {
     await user.type(within(dialog).getByLabelText('收回原因'), '业务下线不再需要跨域')
     await user.click(within(dialog).getByRole('button', { name: '确认收回' }))
 
-    // 收回后该三元组不再出现生效状态的收回按钮（本用例断言列表出现「已收回」）
+    // 收回后 test 域再无生效信任，详情面板不再出现收回按钮
     await waitFor(() => {
-      expect(screen.getAllByText('已收回').length).toBeGreaterThan(0)
+      expect(screen.queryByRole('button', { name: '收回' })).not.toBeInTheDocument()
     })
+    expect(screen.getAllByText('已收回').length).toBeGreaterThan(0)
   })
 })

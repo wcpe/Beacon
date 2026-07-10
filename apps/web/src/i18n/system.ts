@@ -350,6 +350,16 @@ export const system = {
     loadFail: 'namespace 列表加载失败',
     keyword: '搜索名称',
     listHint: '第 {{page}} / {{pageCount}} 页 · 共 {{total}} 个',
+    // 列表主列 + 非模态详情面板
+    listTitle: 'namespace 列表',
+    detailTitle: 'namespace 详情',
+    trustDegree: '出 {{out}} · 入 {{in}}',
+    trustDegreeHeader: '信任出入度',
+    selectHint: '点击左侧 namespace 查看概要与互通信任关系',
+    relationsTitle: '互通信任关系',
+    relationOutbound: '出向（本域可操作目标域）',
+    relationInbound: '入向（来源域可操作本域）',
+    noRelations: '该 namespace 暂无信任关系，与其它域完全隔离',
     // 创建
     create: '创建 namespace',
     createTitle: '创建 namespace',
