@@ -113,12 +113,14 @@ export interface ChangeOrderSummary {
   updatedAt: string
 }
 
-/** 变更单详情：单 + items + 批次概要 + 目标计数 */
+/** 变更单详情：单 + items + 批次概要 + 目标计数 + 回滚进度计数 */
 export interface ChangeOrderDetail extends ChangeOrderSummary {
   selector: ChangeSelector
   items: ChangeOrderItem[]
   batches: ChangeBatch[]
   targetCounts: Record<string, number>
+  /** 各目标 rollbackStatus 计数（未进入回滚的目标不计入），供前端展示回滚进度 */
+  rollbackCounts: Record<string, number>
 }
 
 export type ChangeOrderListResponse = Paged<ChangeOrderSummary>
@@ -182,9 +184,58 @@ function emptySelector(): ChangeSelector {
 
 let eventSeq = 0
 
-function pushEvent(order: OrderState, type: ChangeOrderEvent['type'], status: string, batchNo: number | null = null, serverId: string | null = null): void {
+function pushEvent(order: OrderState, type: ChangeOrderEvent['type'], status: string, batchNo: number | null = null, serverId: string | null = null, at: string = isoOffset(0)): void {
   eventSeq += 1
-  order.events.push({ seq: eventSeq, at: isoOffset(0), type, orderId: order.id, batchNo, serverId, status })
+  order.events.push({ seq: eventSeq, at, type, orderId: order.id, batchNo, serverId, status })
+}
+
+/** 按种子单的生命周期字段补齐历史事件（时间与各阶段字段一致），供进度时间线回放 */
+function seedEvents(order: OrderState): void {
+  pushEvent(order, 'order_status', 'draft', null, null, order.createdAt)
+  if (order.submittedAt !== null) {
+    pushEvent(order, 'order_status', 'pending_approval', null, null, order.submittedAt)
+  }
+  if (order.approvedAt !== null) {
+    pushEvent(order, 'order_status', 'approved', null, null, order.approvedAt)
+  }
+  if (order.startedAt !== null) {
+    pushEvent(order, 'order_status', 'rolling', null, null, order.startedAt)
+  }
+  for (const batch of order.batches) {
+    if (batch.startedAt !== null) {
+      pushEvent(order, 'batch_status', 'running', batch.batchNo, null, batch.startedAt)
+    }
+    if (batch.observeStartedAt !== null) {
+      pushEvent(order, 'batch_status', 'observing', batch.batchNo, null, batch.observeStartedAt)
+    }
+    if (batch.status === 'completed' && batch.finishedAt !== null) {
+      pushEvent(order, 'batch_status', 'completed', batch.batchNo, null, batch.finishedAt)
+    }
+    if (batch.status === 'awaiting_confirm' || batch.status === 'failed') {
+      pushEvent(order, 'batch_status', batch.status, batch.batchNo, null, batch.observeStartedAt ?? batch.startedAt ?? order.updatedAt)
+    }
+  }
+  // 失败目标逐台补事件（成功目标不铺开，避免时间线被淹没）
+  for (const target of order.targets) {
+    if (target.status === 'failed') {
+      pushEvent(order, 'target_status', 'failed', target.batchNo, target.serverId, target.pushedAt ?? order.updatedAt)
+    }
+  }
+  if (order.status === 'paused') {
+    pushEvent(order, 'order_status', 'paused', null, null, order.updatedAt)
+  }
+  if (order.status === 'cancelled') {
+    pushEvent(order, 'order_status', 'cancelled', null, null, order.updatedAt)
+  }
+  if (order.rollbackAt !== null) {
+    pushEvent(order, 'order_status', 'rolling_back', null, null, order.rollbackAt)
+  }
+  if (order.status === 'rolled_back' && order.finishedAt !== null) {
+    pushEvent(order, 'order_status', 'rolled_back', null, null, order.finishedAt)
+  }
+  if (order.status === 'completed' && order.finishedAt !== null) {
+    pushEvent(order, 'order_status', 'completed', null, null, order.finishedAt)
+  }
 }
 
 function fileItems(orderId: number, count: number): ChangeOrderItem[] {
@@ -232,11 +283,12 @@ function configItem(orderId: number, index: number): ChangeOrderItem {
   }
 }
 
-/** 生成批次 + 目标（按状态推进到指定形态） */
+/** 生成批次 + 目标（按状态推进到指定形态）；missingBackup 时首个完成目标标记无备份（演示回滚残留失败） */
 function makeExecution(
   order: OrderState,
   serverIds: string[],
   shape: 'rolling' | 'completed' | 'paused' | 'rolled_back',
+  missingBackup = false,
 ): void {
   const sizes = [Math.max(1, Math.ceil(serverIds.length * 0.1)), Math.max(1, Math.ceil(serverIds.length * 0.3))]
   const batch1End = sizes[0]
@@ -278,7 +330,7 @@ function makeExecution(
         activatedAt: finished && !failed ? isoOffset(-2 * HOUR + b * 600_000 + 240_000) : null,
         changedFileCount: finished ? 5 : 0,
         skippedFileCount: finished ? 2 : 0,
-        backupPresent: finished || failed,
+        backupPresent: (finished || failed) && !(missingBackup && b === 1 && memberIndex === 0),
         error: failed ? '生效超时：重启后 300 秒内心跳未回归' : null,
         rollbackStatus:
           shape === 'rolled_back' ? (hashString(`rb:${String(order.id)}:${serverId}`) % 29 === 0 ? 'failed' : 'rolled_back') : null,
@@ -302,6 +354,7 @@ function makeOrder(
     configOnly?: boolean
     pauseKind?: 'manual' | 'circuit_break' | 'prepare_failed'
     ageDays?: number
+    missingBackup?: boolean
   } = {},
 ): OrderState {
   const id = state.nextId
@@ -343,13 +396,15 @@ function makeOrder(
     items: options.configOnly ? [configItem(id, 0)] : [...fileItems(id, 6), configItem(id, 0)],
     batches: [],
     targetCounts: {},
+    rollbackCounts: {},
     targets: [],
     events: [],
   }
   if (executed && options.serverIds && options.serverIds.length > 0) {
     const shape = status === 'rolling' ? 'rolling' : status === 'paused' ? 'paused' : status === 'rolled_back' || status === 'rolling_back' ? 'rolled_back' : 'completed'
-    makeExecution(order, options.serverIds, shape)
+    makeExecution(order, options.serverIds, shape, options.missingBackup ?? false)
   }
+  seedEvents(order)
   refreshCounts(order)
   state.orders.push(order)
   return order
@@ -357,10 +412,15 @@ function makeOrder(
 
 function refreshCounts(order: OrderState): void {
   const counts: Record<string, number> = {}
+  const rollbackCounts: Record<string, number> = {}
   for (const target of order.targets) {
     counts[target.status] = (counts[target.status] ?? 0) + 1
+    if (target.rollbackStatus !== null) {
+      rollbackCounts[target.rollbackStatus] = (rollbackCounts[target.rollbackStatus] ?? 0) + 1
+    }
   }
   order.targetCounts = counts
+  order.rollbackCounts = rollbackCounts
 }
 
 /** 解析 selector 为合格目标集（§4.3.1）：backend + 已分配 + 同 namespace，
@@ -423,6 +483,8 @@ function buildDelivery(scenario: MockScenario): DeliveryState {
   makeOrder(state, 1, '全网核心配置基线对齐', 'completed', { configOnly: true, serverIds: smallSet, ageDays: 5 })
   makeOrder(state, 1, 'PVP 平衡性补丁', 'paused', { serverIds: smallSet.slice(6, 9), ageDays: 3 })
   makeOrder(state, 1, '坏更新整单回滚示例', 'rolled_back', { serverIds: smallSet, ageDays: 8 })
+  // 首目标缺失备份的完成单：整单回滚会留下残留失败，用于演示「结束回滚」人工收尾路径
+  makeOrder(state, 1, '排行榜插件升级 v3.1', 'completed', { serverIds: smallSet.slice(9, 12), ageDays: 6, missingBackup: true })
   if (scenario === 'huge') {
     // 1200 目标的滚动大单 + 批量历史单
     makeOrder(state, 1, '全网 Essentials 大版本升级', 'rolling', { serverIds: backends, ageDays: 0 })
@@ -455,13 +517,14 @@ function illegalState(current: ChangeOrderStatus, action: string): Response {
 }
 
 function toSummary(order: OrderState): ChangeOrderSummary {
-  const summary: ChangeOrderSummary & { selector?: unknown; items?: unknown; batches?: unknown; targets?: unknown; events?: unknown; targetCounts?: unknown } = { ...order }
+  const summary: ChangeOrderSummary & { selector?: unknown; items?: unknown; batches?: unknown; targets?: unknown; events?: unknown; targetCounts?: unknown; rollbackCounts?: unknown } = { ...order }
   delete summary.selector
   delete summary.items
   delete summary.batches
   delete summary.targets
   delete summary.events
   delete summary.targetCounts
+  delete summary.rollbackCounts
   return summary
 }
 
@@ -573,6 +636,7 @@ export const deliveryHandlers: HttpHandler[] = [
       items: [],
       batches: [],
       targetCounts: {},
+      rollbackCounts: {},
       targets: [],
       events: [],
     }
@@ -910,6 +974,7 @@ export const deliveryHandlers: HttpHandler[] = [
         }
       }
     }
+    refreshCounts(order)
     pushEvent(order, 'order_status', 'rolling_back')
     // 全部回滚目标成功 → 直接收单
     if (order.targets.every((t) => t.rollbackStatus !== 'failed')) {
