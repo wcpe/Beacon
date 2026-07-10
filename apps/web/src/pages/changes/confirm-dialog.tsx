@@ -15,6 +15,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Textarea,
 } from '@beacon/ui'
 
@@ -89,33 +94,28 @@ export default function ConfirmDialog({
         )}
 
         {requireMode && (
-          <fieldset className="space-y-1.5">
-            <legend className="text-sm font-medium">{t('delivery.changes.confirm.resumeMode')}</legend>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="resume-mode"
-                value="retry_failed"
-                checked={mode === 'retry_failed'}
-                onChange={() => {
-                  setMode('retry_failed')
-                }}
-              />
-              {t('delivery.changes.confirm.retryFailed')}
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="resume-mode"
-                value="skip_failed"
-                checked={mode === 'skip_failed'}
-                onChange={() => {
-                  setMode('skip_failed')
-                }}
-              />
-              {t('delivery.changes.confirm.skipFailed')}
-            </label>
-          </fieldset>
+          <div className="space-y-1.5">
+            <Label htmlFor="change-confirm-mode" className="text-sm font-medium">
+              {t('delivery.changes.confirm.resumeMode')}
+            </Label>
+            <Select
+              value={mode}
+              onValueChange={(next) => {
+                setMode(next as ResumeMode)
+              }}
+            >
+              <SelectTrigger
+                id="change-confirm-mode"
+                aria-label={t('delivery.changes.confirm.resumeMode')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="retry_failed">{t('delivery.changes.confirm.retryFailed')}</SelectItem>
+                <SelectItem value="skip_failed">{t('delivery.changes.confirm.skipFailed')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         )}
 
         {requireReason && (

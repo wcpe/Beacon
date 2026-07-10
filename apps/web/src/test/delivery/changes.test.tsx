@@ -210,6 +210,17 @@ describe('/changes 变更单页', () => {
     expect((await screen.findAllByText(/max-players/)).length).toBeGreaterThan(0)
   }, 20_000)
 
+  it('作用域选择走组件库 Select（可展开命名空间选项）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+    await screen.findByText('大厅插件升级 v2.4')
+
+    // NamespacePicker 现为组件库 Select（combobox 角色），可展开出命名空间选项
+    await user.click(screen.getByRole('combobox', { name: '选择 命名空间' }))
+    expect(await screen.findByRole('option', { name: 'test' })).toBeInTheDocument()
+  })
+
   it('整单回滚与结束回滚写闭环：残留失败回滚人工收单', async () => {
     useScenario('normal')
     const user = userEvent.setup()
