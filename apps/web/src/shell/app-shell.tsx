@@ -33,14 +33,14 @@ export default function AppShell() {
     <div className="app-bg h-screen overflow-hidden text-foreground">
       <Sidebar />
 
-      {/* 折叠触发器：浮于侧栏右缘、垂直居中的小圆按钮，跨侧栏与内容交界 */}
+      {/* 折叠触发器：浮于侧栏右缘、页眉与内容区交界线上的小圆按钮 */}
       <button
         aria-label={toggleLabel}
         title={toggleLabel}
         type="button"
         onClick={toggleSidebar}
         className={[
-          'fixed top-1/2 z-30 hidden size-6 -translate-y-1/2 place-items-center rounded-full',
+          'fixed top-14 z-30 hidden size-6 -translate-y-1/2 place-items-center rounded-full',
           'border border-border bg-card text-ink-3 shadow-card transition',
           'hover:border-border-strong hover:text-ink-1 md:grid',
           sidebarCollapsed ? 'left-2' : 'left-[220px]',
@@ -60,7 +60,8 @@ export default function AppShell() {
         ].join(' ')}
       >
         <Header />
-        <main className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+        {/* 内容区只允许纵向滚动：100% 缩放下禁止横向滚动，超宽内容由各自容器内部滚动 */}
+        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
           <div className="grid gap-5 p-4 sm:px-[22px] sm:py-[18px]">
             <Routes>
               <Route element={<Navigate replace to="/dashboard" />} path="/" />
