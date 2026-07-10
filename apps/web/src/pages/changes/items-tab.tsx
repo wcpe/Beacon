@@ -53,7 +53,7 @@ export default function ItemsTab({ order }: ItemsTabProps) {
       {errorText !== null && <p className="text-sm text-destructive">{errorText}</p>}
 
       {/* 共享变更内容预览（含配置版本反查与行级 diff 懒展开） */}
-      <OrderChangePreview items={order.items} />
+      <OrderChangePreview items={order.items} orderId={order.id} />
     </section>
   )
 }

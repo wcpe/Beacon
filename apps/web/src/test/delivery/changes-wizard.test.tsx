@@ -89,6 +89,21 @@ describe('/changes 引导创建向导', () => {
     await submitAndAssert(user, dialog)
   })
 
+  it('模板源步：差异行可点开预览文件内容（懒加载）', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickSourceAndScan(user, dialog)
+
+    // 差异行「预览」→ 懒加载文件内容出现（内联展开，不叠模态）
+    const previews = await within(dialog).findAllByRole('button', { name: '预览' })
+    await user.click(previews[0])
+    expect((await within(dialog).findAllByText(/max-players/)).length).toBeGreaterThan(0)
+  })
+
   it('纯配置路径：跳过模板源，选配置版本 → 成单', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
     useScenario('normal')
     const user = userEvent.setup()

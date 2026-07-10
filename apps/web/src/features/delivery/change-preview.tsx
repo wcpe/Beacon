@@ -26,6 +26,8 @@ interface ChangePreviewProps {
   configLabelOf?: (item: ChangeOrderItem) => ConfigChangeLabel | null
   /** 配置行展开时渲染行级 diff（懒加载由调用方注入）；缺省不提供展开 */
   renderConfigDiff?: (item: ChangeOrderItem) => ReactNode
+  /** 文件差异行展开时渲染文件内容预览（懒加载由调用方注入）；缺省不提供展开 */
+  renderFileDiff?: (item: ChangeOrderItem) => ReactNode
 }
 
 // 文件动作 → 语义色徽标变体与分组顺序
@@ -35,7 +37,12 @@ const FILE_GROUPS = [
   { action: 'delete', variant: 'crit' },
 ] as const
 
-export default function ChangePreview({ items, configLabelOf, renderConfigDiff }: ChangePreviewProps) {
+export default function ChangePreview({
+  items,
+  configLabelOf,
+  renderConfigDiff,
+  renderFileDiff,
+}: ChangePreviewProps) {
   const { t } = useTranslation()
   // 展开 diff 的配置项 id 集合
   const [expandedIds, setExpandedIds] = useState<number[]>([])
@@ -83,21 +90,52 @@ export default function ChangePreview({ items, configLabelOf, renderConfigDiff }
                     )}
                   </div>
                   <ul className="divide-y divide-border/60">
-                    {group.map((item) => (
-                      <li key={item.id} className="flex items-center gap-2 px-3 py-1 text-sm">
-                        <span
-                          className={cn(
-                            'min-w-0 flex-1 truncate font-mono text-xs',
-                            action === 'delete' && 'line-through opacity-70',
+                    {group.map((item) => {
+                      const expanded = expandedIds.includes(item.id)
+                      const expandable = renderFileDiff !== undefined
+                      return (
+                        <li key={item.id}>
+                          <div className="flex items-center gap-2 px-3 py-1 text-sm">
+                            <span
+                              className={cn(
+                                'min-w-0 flex-1 truncate font-mono text-xs',
+                                action === 'delete' && 'line-through opacity-70',
+                              )}
+                            >
+                              {item.path}
+                            </span>
+                            <span className="tnum shrink-0 text-xs text-ink-3">
+                              {item.sizeBytes === null ? '-' : formatBytes(item.sizeBytes)}
+                            </span>
+                            {expandable && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 shrink-0 px-2 text-xs"
+                                aria-expanded={expanded}
+                                onClick={() => {
+                                  toggleExpanded(item.id)
+                                }}
+                              >
+                                {expanded ? (
+                                  <ChevronDown className="size-3.5" />
+                                ) : (
+                                  <ChevronRight className="size-3.5" />
+                                )}
+                                {expanded
+                                  ? t('delivery.preview.change.collapseFile')
+                                  : t('delivery.preview.change.previewFile')}
+                              </Button>
+                            )}
+                          </div>
+                          {expanded && renderFileDiff !== undefined && (
+                            <div className="border-t border-dashed border-border bg-surface-2/50 px-3 py-2.5">
+                              {renderFileDiff(item)}
+                            </div>
                           )}
-                        >
-                          {item.path}
-                        </span>
-                        <span className="tnum shrink-0 text-xs text-ink-3">
-                          {item.sizeBytes === null ? '-' : formatBytes(item.sizeBytes)}
-                        </span>
-                      </li>
-                    ))}
+                        </li>
+                      )
+                    })}
                   </ul>
                 </div>
               )

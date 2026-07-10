@@ -5,12 +5,13 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { ScanSearch } from 'lucide-react'
+import { ChevronDown, ChevronRight, ScanSearch } from 'lucide-react'
 
 import { Badge, Button, Input, cn } from '@beacon/ui'
 
 import { fetchServers } from '../../api/cluster'
 import type { ChangeOrderItem } from '../../api/delivery-changes'
+import FileDiffPreview from '../../features/delivery/file-diff-preview'
 import { formatBytes, formatTime } from './format'
 
 /** 扫描结果（父级持有，步骤往返保留） */
@@ -27,6 +28,8 @@ interface StepSourceProps {
   scanning: boolean
   onScan: () => void
   errorText: string | null
+  // 已建草稿单 id（扫描后就绪）：差异行「预览」文件内容懒加载所需
+  orderId: number | null
 }
 
 // 差异动作 → 语义色徽标变体（新增 ok / 修改 warn / 删除 crit）
@@ -40,9 +43,12 @@ export default function WizardStepSource({
   scanning,
   onScan,
   errorText,
+  orderId,
 }: StepSourceProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
+  // 展开预览的差异项 id 集合
+  const [expandedIds, setExpandedIds] = useState<number[]>([])
 
   // 运行中且已分配小区的 backend 子服作为模板源候选
   const serversQuery = useQuery({
@@ -166,21 +172,49 @@ export default function WizardStepSource({
               {t('delivery.changes.wizard.source.snapshotAt', { at: formatTime(scan.snapshotAt) })}
             </span>
           </div>
-          {/* 差异文件清单 */}
+          {/* 差异文件清单（可点开预览文件内容） */}
           <ul className="max-h-56 divide-y divide-border overflow-y-auto rounded-lg border border-border">
-            {scan.items.map((item) => (
-              <li key={item.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                <Badge variant={ACTION_VARIANT[item.action ?? 'update']} className="w-12 justify-center">
-                  {t(`delivery.changes.wizard.source.action${actionKey(item.action)}`)}
-                </Badge>
-                <span className={cn('min-w-0 flex-1 truncate font-mono text-xs', item.action === 'delete' && 'line-through opacity-70')}>
-                  {item.path}
-                </span>
-                <span className="tnum shrink-0 text-xs text-ink-3">
-                  {item.sizeBytes === null ? '-' : formatBytes(item.sizeBytes)}
-                </span>
-              </li>
-            ))}
+            {scan.items.map((item) => {
+              const expanded = expandedIds.includes(item.id)
+              return (
+                <li key={item.id}>
+                  <div className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                    <Badge variant={ACTION_VARIANT[item.action ?? 'update']} className="w-12 justify-center">
+                      {t(`delivery.changes.wizard.source.action${actionKey(item.action)}`)}
+                    </Badge>
+                    <span className={cn('min-w-0 flex-1 truncate font-mono text-xs', item.action === 'delete' && 'line-through opacity-70')}>
+                      {item.path}
+                    </span>
+                    <span className="tnum shrink-0 text-xs text-ink-3">
+                      {item.sizeBytes === null ? '-' : formatBytes(item.sizeBytes)}
+                    </span>
+                    {orderId !== null && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 shrink-0 px-2 text-xs"
+                        aria-expanded={expanded}
+                        onClick={() => {
+                          setExpandedIds((prev) =>
+                            prev.includes(item.id) ? prev.filter((v) => v !== item.id) : [...prev, item.id],
+                          )
+                        }}
+                      >
+                        {expanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                        {expanded
+                          ? t('delivery.preview.change.collapseFile')
+                          : t('delivery.preview.change.previewFile')}
+                      </Button>
+                    )}
+                  </div>
+                  {expanded && orderId !== null && (
+                    <div className="border-t border-dashed border-border bg-surface-2/50 px-3 py-2.5">
+                      <FileDiffPreview orderId={orderId} item={item} />
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}

@@ -189,6 +189,27 @@ describe('/changes 变更单页', () => {
     expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
   }, 20_000)
 
+  it('变更项 Tab 文件行可点开预览文件内容（懒加载）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    // 变更项 Tab 默认展示：文件差异行带「预览」按钮（懒加载，点开才取）
+    const previews = await screen.findAllByRole('button', { name: '预览' })
+    expect(previews.length).toBeGreaterThan(0)
+
+    // 点开首个文件行 → 文件内容出现（生成内容含 max-players 行；modified 出双栏 diff）
+    await user.click(previews[0])
+    expect((await screen.findAllByText(/max-players/)).length).toBeGreaterThan(0)
+  }, 20_000)
+
   it('整单回滚与结束回滚写闭环：残留失败回滚人工收单', async () => {
     useScenario('normal')
     const user = userEvent.setup()

@@ -289,6 +289,7 @@ export default function GuidedWizard({
                 scanMutation.mutate()
               }}
               errorText={errorText}
+              orderId={orderId}
             />
           )}
           {current === 'config' && (

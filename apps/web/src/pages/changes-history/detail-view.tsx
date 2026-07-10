@@ -92,7 +92,7 @@ export default function DetailView({ orderId }: DetailViewProps) {
             </TabsContent>
             <TabsContent value="content" className="pt-3">
               {/* 当时改了什么：共享变更内容预览（含配置版本反查与行级 diff） */}
-              <OrderChangePreview items={detail.items} />
+              <OrderChangePreview items={detail.items} orderId={detail.id} />
             </TabsContent>
             <TabsContent value="orchestration" className="pt-3">
               <OrchestrationTab detail={detail} />

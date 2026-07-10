@@ -719,6 +719,17 @@ export const delivery = {
       versionIdRange: '版本 #{{from}} → #{{to}}',
       expandDiff: '展开差异',
       collapseDiff: '收起差异',
+      previewFile: '预览',
+      collapseFile: '收起',
+    },
+    // 文件内容预览（file-diff-preview，懒加载）
+    fileDiff: {
+      loading: '正在加载文件内容…',
+      beforeLabel: '变更前',
+      afterLabel: '变更后',
+      addedLabel: '新增文件内容',
+      removedLabel: '删除前内容',
+      truncated: '文件较大，仅预览前若干行',
     },
     // 批次状态机可视化（batch-flow）
     batchFlow: {

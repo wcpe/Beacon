@@ -15,6 +15,7 @@ import { fetchZoneTree } from '../../api/cluster'
 import { fetchChangeImpact, fetchChangeOrder, type ChangeOrderItem } from '../../api/delivery-changes'
 import ChangePreview, { type ConfigChangeLabel } from '../../features/delivery/change-preview'
 import ConfigVersionDiff from '../../features/delivery/config-version-diff'
+import FileDiffPreview from '../../features/delivery/file-diff-preview'
 import OrchestrationPreview from '../../features/delivery/orchestration-preview'
 import { formatBytes } from './format'
 import {
@@ -101,6 +102,10 @@ export default function WizardStepReview({
       />
     )
   }
+
+  // 文件内容预览懒加载（orderId 就绪时提供）：变更内容预览的文件行可点开查看前后内容
+  const renderFileDiff = (item: ChangeOrderItem): ReactNode =>
+    orderId === null ? null : <FileDiffPreview orderId={orderId} item={item} />
 
   const activationMethod = detailQuery.data?.activationMethod ?? (includesFiles(content) ? 'restart' : 'hot_reload')
 
@@ -192,6 +197,7 @@ export default function WizardStepReview({
                   items={detailQuery.data?.items ?? []}
                   configLabelOf={configLabelOf}
                   renderConfigDiff={renderConfigDiff}
+                  renderFileDiff={renderFileDiff}
                 />
                 <OrchestrationPreview
                   scope={{ mode: scope.mode, picked: pickedNames }}

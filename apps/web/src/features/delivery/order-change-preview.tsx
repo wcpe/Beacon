@@ -10,12 +10,15 @@ import type { ChangeOrderItem } from '../../api/delivery-changes'
 import { fetchConfigFileDetail, fetchConfigVersion } from '../../api/delivery-configs'
 import ChangePreview, { type ConfigChangeLabel } from './change-preview'
 import ConfigVersionDiff from './config-version-diff'
+import FileDiffPreview from './file-diff-preview'
 
 interface OrderChangePreviewProps {
   items: ChangeOrderItem[]
+  /** 变更单 id：文件内容预览懒加载所需（详情 / 历史详情均可提供） */
+  orderId: number
 }
 
-export default function OrderChangePreview({ items }: OrderChangePreviewProps) {
+export default function OrderChangePreview({ items, orderId }: OrderChangePreviewProps) {
   const { t } = useTranslation()
 
   const configItems = items.filter((item) => item.kind === 'config_change' && item.configToVersionId !== null)
@@ -79,5 +82,16 @@ export default function OrderChangePreview({ items }: OrderChangePreviewProps) {
     )
   }
 
-  return <ChangePreview items={items} configLabelOf={configLabelOf} renderConfigDiff={renderConfigDiff} />
+  const renderFileDiff = (item: ChangeOrderItem): ReactNode => (
+    <FileDiffPreview orderId={orderId} item={item} />
+  )
+
+  return (
+    <ChangePreview
+      items={items}
+      configLabelOf={configLabelOf}
+      renderConfigDiff={renderConfigDiff}
+      renderFileDiff={renderFileDiff}
+    />
+  )
 }
