@@ -369,7 +369,10 @@ export const delivery = {
       source: {
         lead: '黄金模板源 = 已装好新版本并经人工验证的样板服务器。系统将扫描它与线上标准的文件差异，作为本单的交付载荷。',
         pickLabel: '模板源服务器',
-        pickPlaceholder: '从运行中的子服里选一台',
+        filter: '搜索模板源',
+        filterPlaceholder: '输入 serverId 或大区 / 小区名过滤',
+        noMatch: '没有匹配的子服，换个关键字试试',
+        picked: '已选：{{serverId}}',
         noServer: '当前命名空间下没有运行中的子服',
         scan: '扫描差异',
         rescan: '重新扫描',

@@ -31,9 +31,7 @@ async function openWizard(user: ReturnType<typeof userEvent.setup>): Promise<HTM
 
 /** 第 2 步：选模板源并完成扫描 */
 async function pickSourceAndScan(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement): Promise<void> {
-  const select = await within(dialog).findByLabelText('模板源服务器')
-  await within(dialog).findByRole('option', { name: /lobby-2/ })
-  await user.selectOptions(select, 'lobby-2')
+  await user.click(await within(dialog).findByRole('radio', { name: /lobby-2/ }))
   await user.click(within(dialog).getByRole('button', { name: /扫描差异/ }))
   // 差异清单出现（语义色计数徽标）
   await within(dialog).findByText(/新增 \d+/)
@@ -158,17 +156,42 @@ describe('/changes 引导创建向导', () => {
     await user.click(within(dialog).getByRole('button', { name: '下一步' }))
 
     // 第 2 步：未选模板源 → 下一步禁用
-    await within(dialog).findByLabelText('模板源服务器')
+    await within(dialog).findByLabelText('搜索模板源')
     expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled()
 
     // 选了模板源但未扫描 → 仍禁用
-    await within(dialog).findByRole('option', { name: /lobby-2/ })
-    await user.selectOptions(within(dialog).getByLabelText('模板源服务器'), 'lobby-2')
+    await user.click(await within(dialog).findByRole('radio', { name: /lobby-2/ }))
     expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled()
 
     // 扫描完成 → 放行
     await user.click(within(dialog).getByRole('button', { name: /扫描差异/ }))
     await within(dialog).findByText(/新增 \d+/)
     expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
+  })
+
+  it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+
+    // 初始候选包含 lobby / game 系列
+    await within(dialog).findByRole('radio', { name: /lobby-1/ })
+    expect(within(dialog).getByRole('radio', { name: /game-1/ })).toBeInTheDocument()
+
+    // 按 serverId 过滤：只剩 lobby 系列
+    await user.type(within(dialog).getByLabelText('搜索模板源'), 'lobby')
+    expect(within(dialog).getByRole('radio', { name: /lobby-2/ })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('radio', { name: /game-1/ })).not.toBeInTheDocument()
+
+    // 选中后清掉关键字换按小区名过滤，选中态保留（已选提示常显）
+    await user.click(within(dialog).getByRole('radio', { name: /lobby-2/ }))
+    await user.clear(within(dialog).getByLabelText('搜索模板源'))
+    await user.type(within(dialog).getByLabelText('搜索模板源'), 'area-2')
+    expect(within(dialog).queryByRole('radio', { name: /lobby-2/ })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('radio', { name: /game-3/ })).toBeInTheDocument()
+    expect(within(dialog).getByText('已选：lobby-2')).toBeInTheDocument()
   })
 })

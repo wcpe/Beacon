@@ -1,11 +1,13 @@
-// 向导第 2 步：选黄金模板源并扫描差异。原生 select 列出运行中子服（便于测试），
-// 点「扫描差异」由父级懒建 draft 单并调 diff-scan，差异清单带语义色计数徽标展示。
+// 向导第 2 步：选黄金模板源并扫描差异。候选以可筛选列表展示（搜索框按 serverId /
+// 大区 / 小区名即输即滤，单选行），点「扫描差异」由父级懒建 draft 单并调 diff-scan，
+// 差异清单带语义色计数徽标展示。
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { ScanSearch } from 'lucide-react'
 
-import { Badge, Button, Label, cn } from '@beacon/ui'
+import { Badge, Button, Input, cn } from '@beacon/ui'
 
 import { fetchServers } from '../../api/cluster'
 import type { ChangeOrderItem } from '../../api/delivery-changes'
@@ -40,6 +42,7 @@ export default function WizardStepSource({
   errorText,
 }: StepSourceProps) {
   const { t } = useTranslation()
+  const [keyword, setKeyword] = useState('')
 
   // 运行中且已分配小区的 backend 子服作为模板源候选
   const serversQuery = useQuery({
@@ -48,33 +51,34 @@ export default function WizardStepSource({
   })
   const candidates = (serversQuery.data?.items ?? []).filter((s) => s.online)
 
+  // 即输即滤：按 serverId / 小区名 / 大区名匹配（大小写不敏感）
+  const needle = keyword.trim().toLowerCase()
+  const filtered =
+    needle === ''
+      ? candidates
+      : candidates.filter((s) =>
+          [s.serverId, s.zoneName ?? '', s.regionName ?? ''].some((text) =>
+            text.toLowerCase().includes(needle),
+          ),
+        )
+
   const counts = countActions(scan?.items ?? [])
 
   return (
     <div className="grid gap-3">
       <p className="text-sm text-muted-foreground">{t('delivery.changes.wizard.source.lead')}</p>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="grid gap-1.5">
-          <Label htmlFor="wizard-source-server">{t('delivery.changes.wizard.source.pickLabel')}</Label>
-          <select
-            id="wizard-source-server"
-            aria-label={t('delivery.changes.wizard.source.pickLabel')}
-            value={source}
-            onChange={(e) => {
-              onSourceChange(e.target.value)
-            }}
-            className="h-9 w-64 rounded-md border bg-background px-2 text-sm"
-          >
-            <option value="">{t('delivery.changes.wizard.source.pickPlaceholder')}</option>
-            {candidates.map((s) => (
-              <option key={s.serverId} value={s.serverId}>
-                {s.serverId}
-                {s.zoneName === null ? '' : ` · ${s.zoneName}`}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* 搜索框 + 扫描按钮 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          aria-label={t('delivery.changes.wizard.source.filter')}
+          placeholder={t('delivery.changes.wizard.source.filterPlaceholder')}
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value)
+          }}
+          className="h-9 w-64"
+        />
         <Button size="sm" disabled={source === '' || scanning} onClick={onScan}>
           <ScanSearch className="size-4" />
           {scanning
@@ -83,11 +87,64 @@ export default function WizardStepSource({
               ? t('delivery.changes.wizard.source.scan')
               : t('delivery.changes.wizard.source.rescan')}
         </Button>
+        {source !== '' && (
+          <span className="text-xs text-ink-3">
+            {t('delivery.changes.wizard.source.picked', { serverId: source })}
+          </span>
+        )}
       </div>
 
-      {candidates.length === 0 && !serversQuery.isLoading && (
+      {/* 候选列表（单选） */}
+      {candidates.length === 0 && !serversQuery.isLoading ? (
         <p className="text-sm text-muted-foreground">{t('delivery.changes.wizard.source.noServer')}</p>
+      ) : filtered.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
+          {t('delivery.changes.wizard.source.noMatch')}
+        </p>
+      ) : (
+        <ul
+          role="radiogroup"
+          aria-label={t('delivery.changes.wizard.source.pickLabel')}
+          className="grid max-h-44 gap-0.5 overflow-y-auto rounded-lg border border-border p-1.5 sm:grid-cols-2"
+        >
+          {filtered.map((s) => {
+            const selected = s.serverId === source
+            return (
+              <li key={s.serverId}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => {
+                    onSourceChange(s.serverId)
+                  }}
+                  className={cn(
+                    'flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left text-sm hover:bg-muted',
+                    selected && 'bg-brand-50/60 ring-1 ring-brand',
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'grid size-3.5 shrink-0 place-items-center rounded-full border',
+                      selected ? 'border-brand' : 'border-ink-3/50',
+                    )}
+                  >
+                    {selected && <span className="size-2 rounded-full bg-brand" />}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs">{s.serverId}</span>
+                  {s.zoneName !== null && (
+                    <span className="shrink-0 text-xs text-ink-3">
+                      {s.regionName === null ? s.zoneName : `${s.regionName} / ${s.zoneName}`}
+                    </span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
       )}
+
       {errorText !== null && <p className="text-sm text-destructive">{errorText}</p>}
 
       {scan === null ? (
