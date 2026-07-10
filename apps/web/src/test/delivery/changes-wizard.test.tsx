@@ -169,6 +169,46 @@ describe('/changes 引导创建向导', () => {
     expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
   })
 
+  it('配置步：Shift 连选区间、全选 / 清空、预览出版本 diff', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: /更新配置文件/ }))
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+
+    // 列表就绪（normal 场景 namespace 1 有 4 个配置文件）
+    await within(dialog).findByRole('checkbox', { name: 'plugins/Essentials/config.yml' })
+
+    // 点选第 1 行，再按住 Shift 点第 3 行 → 区间 3 项全选中
+    await user.click(within(dialog).getByRole('checkbox', { name: 'plugins/Essentials/config.yml' }))
+    await within(dialog).findByText('已选 1 个配置文件')
+    await user.keyboard('{Shift>}')
+    await user.click(within(dialog).getByRole('checkbox', { name: 'plugins/Quests/config.json' }))
+    await user.keyboard('{/Shift}')
+    await within(dialog).findByText('已选 3 个配置文件')
+    expect(within(dialog).getByRole('checkbox', { name: 'plugins/Economy/config.yml' })).toBeChecked()
+
+    // 全选 → 4 项；清空 → 0 项
+    await user.click(within(dialog).getByRole('button', { name: '全选' }))
+    await within(dialog).findByText('已选 4 个配置文件')
+    await user.click(within(dialog).getByRole('button', { name: '清空' }))
+    await within(dialog).findByText('已选 0 个配置文件')
+
+    // 预览：Essentials 首层 namespace 链有 v1→v2，行级 diff 双栏出现新旧内容
+    await user.click(within(dialog).getAllByRole('button', { name: '预览' })[0])
+    await within(dialog).findByText(/将从 v1 更新到 v2/)
+    await within(dialog).findByText('teleport-cooldown: 5')
+    expect(within(dialog).getByText('teleport-cooldown: 3')).toBeInTheDocument()
+    expect(within(dialog).getByText('当前版本 v1')).toBeInTheDocument()
+    expect(within(dialog).getByText('目标版本 v2')).toBeInTheDocument()
+
+    // 收起预览后 diff 消失（展开不叠模态、不打断选择流）
+    await user.click(within(dialog).getByRole('button', { name: '收起' }))
+    expect(within(dialog).queryByText('teleport-cooldown: 5')).not.toBeInTheDocument()
+  })
+
   it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
     useScenario('normal')
     const user = userEvent.setup()

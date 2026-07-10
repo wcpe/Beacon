@@ -393,7 +393,15 @@ export const delivery = {
           name: '文件名',
           format: '格式',
           version: '目标版本',
+          preview: '预览',
         },
+        selectAll: '全选',
+        clear: '清空',
+        shiftHint: '按住 Shift 点击可连选一段',
+        preview: '预览',
+        previewClose: '收起',
+        previewNew: '首次下发：目标版本 v{{no}}（{{scope}}），此前无版本',
+        previewRange: '将从 v{{from}} 更新到 v{{to}}（{{scope}}），差异如下',
         resolving: '正在读取最新版本…',
         versionText: 'v{{no}}（{{scope}}）',
         unpickedVersion: '勾选后自动取该文件的最新版本',
@@ -642,6 +650,15 @@ export const delivery = {
       manual: '人工暂停',
       circuit_break: '熔断暂停',
       prepare_failed: '准备失败',
+    },
+  },
+  // 交付共享预览控件（features/delivery：变更内容预览 / 编排预览 / 版本 diff）
+  preview: {
+    versionDiff: {
+      loading: '正在加载版本内容…',
+      fromEmpty: '（无历史版本）',
+      fromLabel: '当前版本 v{{no}}',
+      toLabel: '目标版本 v{{no}}',
     },
   },
   changesHistory: {

@@ -278,11 +278,14 @@ export default function GuidedWizard({
             <WizardStepConfig
               namespaceId={namespaceId}
               picks={picks}
-              onAdd={(pick) => {
-                setPicks((prev) => [...prev.filter((p) => p.fileId !== pick.fileId), pick])
+              onAddMany={(added) => {
+                setPicks((prev) => [
+                  ...prev.filter((p) => !added.some((a) => a.fileId === p.fileId)),
+                  ...added,
+                ])
               }}
-              onRemove={(fileId) => {
-                setPicks((prev) => prev.filter((p) => p.fileId !== fileId))
+              onRemoveMany={(fileIds) => {
+                setPicks((prev) => prev.filter((p) => !fileIds.includes(p.fileId)))
               }}
             />
           )}

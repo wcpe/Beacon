@@ -21,6 +21,7 @@ export interface WizardConfigPick {
   scopeId: number
   scopeName: string
   fromVersionId: number | null
+  fromVersionNo: number | null
   toVersionId: number
   toVersionNo: number
 }
