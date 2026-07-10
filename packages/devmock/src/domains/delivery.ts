@@ -4,7 +4,7 @@
 
 import { HttpResponse, type HttpHandler } from 'msw'
 import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody, type Paged } from '../http'
-import { getClusterState } from '../data/cluster'
+import { getClusterState, type ClusterState } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { createRng, hashString, isoOffset, pseudoSha256 } from '../support'
@@ -363,6 +363,47 @@ function refreshCounts(order: OrderState): void {
   order.targetCounts = counts
 }
 
+/** 解析 selector 为合格目标集（§4.3.1）：backend + 已分配 + 同 namespace，
+ *  all / regions（大区展开为小区）/ zones / servers 取并集后减 excludes，模板源自身自动排除。 */
+function resolveSelectorTargets(order: OrderState, cluster: ClusterState): string[] {
+  const regionZoneIds = new Set(
+    cluster.zones.filter((z) => order.selector.regions.includes(z.regionId)).map((z) => z.id),
+  )
+  return cluster.servers
+    .filter((s) => s.kind === 'backend' && s.zoneId !== null && s.namespaceId === order.namespaceId)
+    .filter(
+      (s) =>
+        order.selector.all ||
+        (s.zoneId !== null && (order.selector.zones.includes(s.zoneId) || regionZoneIds.has(s.zoneId))) ||
+        order.selector.servers.includes(s.serverId),
+    )
+    .filter((s) => !order.selector.excludes.includes(s.serverId) && s.serverId !== order.sourceServerId)
+    .map((s) => s.serverId)
+    .sort()
+}
+
+/** 批次划分预览（§4.4.1）：percent 逐批向上取整、count 逐批固定台数，均不超过剩余；剩余进末批。 */
+function planBatches(order: OrderState, targetTotal: number): { batchNo: number; count: number }[] {
+  const result: { batchNo: number; count: number }[] = []
+  let remaining = targetTotal
+  for (const size of order.batchSizes) {
+    if (remaining <= 0) {
+      break
+    }
+    const raw = order.batchMode === 'percent' ? Math.ceil((targetTotal * size) / 100) : size
+    const count = Math.min(raw, remaining)
+    if (count <= 0) {
+      continue
+    }
+    remaining -= count
+    result.push({ batchNo: result.length + 1, count })
+  }
+  if (remaining > 0) {
+    result.push({ batchNo: result.length + 1, count: remaining })
+  }
+  return result
+}
+
 function buildDelivery(scenario: MockScenario): DeliveryState {
   const state: DeliveryState = { orders: [], nextId: 5001 }
   if (scenario === 'empty') {
@@ -465,6 +506,14 @@ function advanceAfterConfirm(order: OrderState, confirmed: ChangeBatch): void {
   refreshCounts(order)
 }
 
+/** 配置变更项输入（PATCH configChanges，整组替换 config_change 项） */
+export interface ConfigChangeInput {
+  configScopeKind: string
+  configScopeId: number
+  configFromVersionId: number | null
+  configToVersionId: number
+}
+
 interface CreateOrderBody {
   namespaceId?: number
   title?: string
@@ -478,6 +527,7 @@ interface CreateOrderBody {
   activateTimeoutSec?: number
   failureRateThresholdPercent?: number
   unhealthyRateThresholdPercent?: number
+  configChanges?: ConfigChangeInput[]
 }
 
 export const deliveryHandlers: HttpHandler[] = [
@@ -560,7 +610,7 @@ export const deliveryHandlers: HttpHandler[] = [
     return HttpResponse.json({ items, total } satisfies ChangeOrderListResponse)
   }),
 
-  // 触发模板源重扫并重算差异
+  // 触发模板源重扫并重算差异：重建 file_diff 项（保留 config_change 项）并返回差异清单
   mockPost('/admin/v2/change-orders/:id/diff-scan', (info) => {
     const order = findOrder(info)
     if (!order) {
@@ -569,9 +619,14 @@ export const deliveryHandlers: HttpHandler[] = [
     if (order.status !== 'draft') {
       return illegalState(order.status, '重扫差异')
     }
+    if (order.sourceServerId === null) {
+      return jsonError(400, 'missing_source', '未指定黄金模板源，无法扫描文件差异')
+    }
+    const diffItems = fileItems(order.id, 7)
+    order.items = [...diffItems, ...order.items.filter((i) => i.kind === 'config_change')]
     order.diffSnapshotAt = isoOffset(0)
     order.updatedAt = isoOffset(0)
-    return HttpResponse.json({ status: 'done', diffSnapshotAt: order.diffSnapshotAt })
+    return HttpResponse.json({ status: 'done', diffSnapshotAt: order.diffSnapshotAt, items: diffItems })
   }),
 
   // 影响预览（汇总 + 逐目标分页）
@@ -582,14 +637,8 @@ export const deliveryHandlers: HttpHandler[] = [
     }
     const url = new URL(info.request.url)
     const cluster = getClusterState()
-    const backends = cluster.servers.filter((s) => s.kind === 'backend' && s.zoneId !== null && s.namespaceId === order.namespaceId)
     const selected =
-      order.targets.length > 0
-        ? order.targets.map((t) => t.serverId)
-        : backends
-            .filter((s) => order.selector.all || (s.zoneId !== null && order.selector.zones.includes(s.zoneId)) || order.selector.servers.includes(s.serverId))
-            .filter((s) => !order.selector.excludes.includes(s.serverId))
-            .map((s) => s.serverId)
+      order.targets.length > 0 ? order.targets.map((t) => t.serverId) : resolveSelectorTargets(order, cluster)
     const fileItemsOnly = order.items.filter((i) => i.kind === 'file_diff')
     const totalBytes = fileItemsOnly.reduce((sum, i) => sum + (i.sizeBytes ?? 0), 0)
     const rng = createRng(order.id * 13)
@@ -603,14 +652,10 @@ export const deliveryHandlers: HttpHandler[] = [
       skipCount: Math.floor(rng() * 3),
     }))
     const paged = paginate(targetRows, url)
-    const sizes = order.batchSizes
     const response: ChangeImpactResponse = {
       summary: {
         targetTotal: selected.length,
-        batches: sizes.map((size, index) => ({
-          batchNo: index + 1,
-          count: order.batchMode === 'percent' ? Math.ceil((selected.length * size) / 100) : size,
-        })),
+        batches: planBatches(order, selected.length),
         fileTotal: fileItemsOnly.length,
         totalBytes,
         transferBytes: Math.floor(totalBytes * 0.6),
@@ -701,12 +746,7 @@ export const deliveryHandlers: HttpHandler[] = [
     }
     const state = getDeliveryState()
     const cluster = getClusterState()
-    const selected = cluster.servers
-      .filter((s) => s.kind === 'backend' && s.zoneId !== null && s.namespaceId === order.namespaceId)
-      .filter((s) => order.selector.all || (s.zoneId !== null && order.selector.zones.includes(s.zoneId)) || order.selector.servers.includes(s.serverId))
-      .filter((s) => !order.selector.excludes.includes(s.serverId) && s.serverId !== order.sourceServerId)
-      .map((s) => s.serverId)
-      .sort()
+    const selected = resolveSelectorTargets(order, cluster)
     if (selected.length === 0) {
       return jsonError(400, 'no_target', 'selector 未解析出任何合格目标')
     }
@@ -997,14 +1037,39 @@ export const deliveryHandlers: HttpHandler[] = [
     if (body.description !== undefined) {
       order.description = body.description
     }
+    if (body.sourceServerId !== undefined) {
+      order.sourceServerId = body.sourceServerId
+    }
     if (body.selector !== undefined) {
       order.selector = { ...emptySelector(), ...body.selector }
+    }
+    if (body.batchMode !== undefined) {
+      order.batchMode = body.batchMode
     }
     if (body.batchSizes !== undefined) {
       order.batchSizes = body.batchSizes
     }
     if (body.activationMethod !== undefined) {
       order.activationMethod = body.activationMethod
+    }
+    if (body.configChanges !== undefined) {
+      // 整组替换 config_change 项（file_diff 项保留），供组单向导挂接 / 重挂配置版本
+      const files = order.items.filter((i) => i.kind === 'file_diff')
+      order.items = [
+        ...files,
+        ...body.configChanges.map((change, index) => ({
+          id: order.id * 100 + 90 + index,
+          kind: 'config_change' as const,
+          path: null,
+          action: null,
+          sha256: null,
+          sizeBytes: null,
+          configScopeKind: change.configScopeKind,
+          configScopeId: change.configScopeId,
+          configFromVersionId: change.configFromVersionId,
+          configToVersionId: change.configToVersionId,
+        })),
+      ]
     }
     order.updatedAt = isoOffset(0)
     return HttpResponse.json(toDetail(order))
