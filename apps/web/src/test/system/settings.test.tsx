@@ -19,16 +19,38 @@ afterAll(() => {
 })
 
 describe('/settings 运维设置页', () => {
-  it('常规态渲染热改项、健康权重与归档总览', async () => {
+  it('分区导航切换渲染对应分区内容（不同时长堆三块）', async () => {
     useScenario('normal')
+    const user = userEvent.setup()
     renderPage(<SettingsPage />)
 
-    // 热改项种子含 health.ttl-sec
+    // 默认「运行参数」分区：热改项种子含 health.ttl-sec；其它分区内容此时不渲染
     expect(await screen.findByText('health.ttl-sec')).toBeInTheDocument()
-    // 健康权重块标题
+    expect(screen.queryByText('健康因子权重')).not.toBeInTheDocument()
+
+    // 切到「健康权重」分区
+    await user.click(screen.getByRole('button', { name: '健康权重' }))
     expect(await screen.findByText('健康因子权重')).toBeInTheDocument()
-    // 归档与清理块标题
+
+    // 切到「归档清理」分区
+    await user.click(screen.getByRole('button', { name: '归档清理' }))
     expect(await screen.findByText('归档与清理')).toBeInTheDocument()
+  })
+
+  it('归档任务点行展开非模态详情面板（不产生遮罩）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<SettingsPage />)
+
+    await user.click(screen.getByRole('button', { name: '归档清理' }))
+
+    // 点第一个任务行（任务号 #N）
+    const jobCell = (await screen.findAllByText(/^#\d+$/))[0]
+    await user.click(jobCell)
+
+    // 详情面板为布局内列（非 role=dialog 遮罩）
+    expect(await screen.findByText('归档任务详情')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('编辑并保存单个热改项后提示已保存（写闭环）', async () => {
@@ -55,7 +77,11 @@ describe('/settings 运维设置页', () => {
 
   it('健康权重块展示当前版本 rev', async () => {
     useScenario('normal')
+    const user = userEvent.setup()
     renderPage(<SettingsPage />)
+
+    // 切到「健康权重」分区
+    await user.click(screen.getByRole('button', { name: '健康权重' }))
 
     // normal 场景种子权重历史含 rev 2
     expect(await screen.findByText(/当前版本/)).toBeInTheDocument()

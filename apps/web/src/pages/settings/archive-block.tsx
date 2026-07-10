@@ -36,7 +36,10 @@ import {
   retryArchiveJob,
 } from '../../api/system'
 import { formatCount, formatIso } from '../../features/system/format'
-import ArchiveDetailSheet from './archive-detail-sheet'
+import ListCard from '../../features/observability/list-card'
+import MasterDetail from '../../features/observability/master-detail'
+import Pager from '../../features/observability/pager'
+import ArchiveDetailPanel from './archive-detail-panel'
 
 const PAGE_SIZE = 10
 
@@ -62,7 +65,7 @@ export default function ArchiveBlock() {
 
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState('all')
-  const [detailId, setDetailId] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -153,52 +156,38 @@ export default function ArchiveBlock() {
       },
       { header: t('system.settings.archive.operator'), cell: (row) => row.operator },
       { header: t('system.settings.archive.createdAt'), cell: (row) => formatIso(row.createdAt) },
-      {
-        header: t('system.settings.archive.jobActions'),
-        cell: (row) => (
-          <div className="flex flex-wrap gap-1.5">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setDetailId(row.id)
-              }}
-            >
-              {t('system.settings.archive.detail')}
-            </Button>
-            {row.status === 'failed' && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setError(null)
-                  setConfirm({ kind: 'retry', job: row })
-                }}
-              >
-                {t('system.settings.archive.retry')}
-              </Button>
-            )}
-            {(row.status === 'pending' || row.status === 'running') && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setError(null)
-                  setConfirm({ kind: 'cancel', job: row })
-                }}
-              >
-                {t('system.settings.archive.cancel')}
-              </Button>
-            )}
-          </div>
-        ),
-      },
     ],
     [t],
   )
 
   const overview = overviewQuery.data
   const confirmConfig = confirm ? confirmConfigOf(confirm, t) : null
+  const jobs = jobsQuery.data?.items ?? []
+  const selectedJob = jobs.find((j) => j.id === selectedId) ?? null
+
+  const jobsToolbar = (
+    <div className="flex items-center justify-between gap-2">
+      <p className="text-[13px] font-semibold text-ink-1">{t('system.settings.archive.jobs')}</p>
+      <Select
+        value={statusFilter}
+        onValueChange={(value) => {
+          setStatusFilter(value)
+          setPage(1)
+        }}
+      >
+        <SelectTrigger className="w-32" aria-label={t('system.settings.archive.filterStatus')}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">{t('system.settings.archive.filterStatus')}</SelectItem>
+          <SelectItem value="succeeded">{t('system.settings.archive.statusSucceeded')}</SelectItem>
+          <SelectItem value="failed">{t('system.settings.archive.statusFailed')}</SelectItem>
+          <SelectItem value="running">{t('system.settings.archive.statusRunning')}</SelectItem>
+          <SelectItem value="cancelled">{t('system.settings.archive.statusCancelled')}</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  )
 
   return (
     <div className="grid gap-4 rounded-xl border border-border bg-card p-4 shadow-card">
@@ -293,80 +282,59 @@ export default function ArchiveBlock() {
           )}
         </AsyncSection>
 
-        {/* 任务列表 */}
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-ink-1">{t('system.settings.archive.jobs')}</p>
-            <Select
-              value={statusFilter}
-              onValueChange={(value) => {
-                setStatusFilter(value)
-                setPage(1)
-              }}
+        {/* 任务列表主从：主列（吸顶过滤 + 自区滚 + 吸底分页）+ 点行右侧非模态详情面板 */}
+        <MasterDetail
+          master={
+            <ListCard
+              toolbar={jobsToolbar}
+              footer={
+                total > PAGE_SIZE ? (
+                  <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+                ) : undefined
+              }
             >
-              <SelectTrigger className="w-32" aria-label={t('system.settings.archive.filterStatus')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('system.settings.archive.filterStatus')}</SelectItem>
-                <SelectItem value="succeeded">{t('system.settings.archive.statusSucceeded')}</SelectItem>
-                <SelectItem value="failed">{t('system.settings.archive.statusFailed')}</SelectItem>
-                <SelectItem value="running">{t('system.settings.archive.statusRunning')}</SelectItem>
-                <SelectItem value="cancelled">{t('system.settings.archive.statusCancelled')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <AsyncSection
-            isLoading={jobsQuery.isLoading}
-            isError={jobsQuery.isError}
-            error={jobsQuery.error}
-            skeleton={<TableSkeleton columns={7} rows={4} />}
-          >
-            <DataTable
-              columns={columns}
-              rows={jobsQuery.data?.items}
-              rowKey={(row) => String(row.id)}
-              emptyText={t('system.settings.archive.jobsEmpty')}
-              density="compact"
-            />
-          </AsyncSection>
-          {total > PAGE_SIZE && (
-            <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
-              <span>{t('system.settings.archive.jobsHint', { page, pageCount, total })}</span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page <= 1}
-                onClick={() => {
-                  setPage((p) => Math.max(1, p - 1))
-                }}
+              <AsyncSection
+                isLoading={jobsQuery.isLoading}
+                isError={jobsQuery.isError}
+                error={jobsQuery.error}
+                skeleton={<TableSkeleton columns={columns.length} rows={4} />}
               >
-                {t('system.common.prev')}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page >= pageCount}
-                onClick={() => {
-                  setPage((p) => Math.min(pageCount, p + 1))
-                }}
-              >
-                {t('system.common.next')}
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* 任务详情抽屉 */}
-      <ArchiveDetailSheet
-        jobId={detailId}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDetailId(null)
+                <DataTable
+                  columns={columns}
+                  rows={jobs}
+                  rowKey={(row) => String(row.id)}
+                  emptyText={t('system.settings.archive.jobsEmpty')}
+                  density="compact"
+                  onRowClick={(row) => {
+                    setSelectedId(row.id)
+                  }}
+                  rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+                />
+              </AsyncSection>
+            </ListCard>
           }
-        }}
-      />
+          detail={
+            selectedJob ? (
+              <ArchiveDetailPanel
+                job={selectedJob}
+                onRetry={(job) => {
+                  setError(null)
+                  setConfirm({ kind: 'retry', job })
+                }}
+                onCancel={(job) => {
+                  setError(null)
+                  setConfirm({ kind: 'cancel', job })
+                }}
+              />
+            ) : null
+          }
+          detailTitle={t('system.settings.archive.detailTitle')}
+          closeLabel={t('system.common.close')}
+          onClose={() => {
+            setSelectedId(null)
+          }}
+        />
+      </div>
 
       {/* 统一二次确认（试运行 / 执行 / 重试 / 取消） */}
       {confirmConfig && (
