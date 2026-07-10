@@ -94,6 +94,8 @@ Beacon 从项目开始就使用 `MAJOR.MINOR.PATCH` 三段版本号。`1.0.0` �
 - default-entry、draining 等区服管理细节在页面内可操作并保留审计入口。
 
 > 延后（本期不做）：Q4 并发身份冲突可视化闭环、env 映射体验从 P3 拆出——P2 全量 mock 未建对应 UI，另立专项 FR-177 / FR-178（待排期，须走 mockup 评审门）后单独交付。
+>
+> 接真前置：`apps/web` 管理台登录 / 鉴权（登录页 + `Authorization: Bearer` 注入 + 401 处理）P2 mock-first 未建，为全站接真页**真机浏览器可用**的前置（控制面 `adminAuthMiddleware` 要求 Bearer 令牌，当前 apps/web 不带）。单立 FR-179（P4 起先行）。P3 交付**接真数据面**——端点 / 契约 / 写闭环经真 MySQL 集成 + Go `-tags=e2e` + Playwright 真后端（注入令牌）三重验证；浏览器真机直用待 FR-179 落地。
 
 ### P4：0.24.x 健康采样与调度闭环
 

@@ -101,6 +101,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 已交付@v0.21.0 |
 | FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | 待排期 | 待定 | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 计划 |
 | FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | 待排期 | 待定 | env 可增删改；整体替换 env→namespace 映射且 namespace 至多属一个 env（冲突 409）；顶栏按 env 过滤视图；env 变更入审计 | 计划 |
+| FR-179 | 管理台登录鉴权：登录页、令牌注入、401 处理、登出 | P4 | 0.24.x | 管理员经登录页换 `/admin/v1/auth/login` 令牌；所有 `/admin/*` 请求带 `Authorization: Bearer`；401 / 令牌过期跳登录页；登出清令牌；为全站接真页真机可用前置，登录页过 mockup 评审门 | 计划 |
 
 ## 5. 非功能需求（NFR）
 
