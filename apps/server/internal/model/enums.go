@@ -84,6 +84,16 @@ const (
 	AssignmentTargetBCCluster = "bc_cluster"
 )
 
+// IsValidAssignmentTarget 校验 server 分配 / 换区目标类型取值。
+func IsValidAssignmentTarget(kind string) bool {
+	switch kind {
+	case AssignmentTargetZone, AssignmentTargetBCCluster:
+		return true
+	default:
+		return false
+	}
+}
+
 // 管理面角色（落 VARCHAR + 应用层校验，不绑方言；FR-42，见 ADR-0026）。
 const (
 	RoleFull     = "full"     // 读写：等同现操作者，可访问全部 admin 端点
@@ -341,6 +351,8 @@ const (
 	ActionServerUnassign   = "server.unassign"
 	ActionServerRezoneInit = "zone.rezone.initiated"
 	ActionServerRezoneDone = "zone.rezone.completed"
+	// 第二版 server 排空标记切换（区服权威域，收编自调度域；消费方为调度 schedulable 判定）
+	ActionServerSetDraining = "server.set-draining"
 	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"

@@ -115,8 +115,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
+	v2Handler := handler.NewV2ControlPlaneHandler(service.NewV2ControlPlaneService(db))
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
+		V2:               v2Handler,
 		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo)),
 		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),

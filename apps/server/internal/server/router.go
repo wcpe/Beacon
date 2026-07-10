@@ -118,6 +118,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
 			r.Post("/namespace-trusts/{id}/revoke", h.V2.RevokeNamespaceTrust)
 			r.Get("/agent-identities", h.V2.ListAgentIdentities)
+			r.Get("/agent-identities/{identityId}", h.V2.GetAgentIdentity)
 			r.Post("/agent-identities/{identityId}/approve", h.V2.ApproveAgentIdentity)
 			r.Post("/agent-identities/{identityId}/reject", h.V2.RejectAgentIdentity)
 			r.Post("/agent-identities/{identityId}/allow-reapply", h.V2.AllowAgentIdentityReapply)
@@ -127,8 +128,15 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/bc-clusters", h.V2.CreateBCCluster)
 			r.Post("/regions", h.V2.CreateRegion)
 			r.Post("/zones", h.V2.CreateZone)
+			// 区服结构树只读聚合（FR-155）
+			r.Get("/zone-tree", h.V2.ZoneTree)
 			r.Get("/servers", h.V2.ListServers)
 			r.Post("/server-assignments", h.V2.AssignServers)
+			// 换区工单（FR-155）：已分配 server 改归属，解绑重确认编排
+			r.Post("/server-rezones", h.V2.RezoneServers)
+			// server 排空标记（业务 serverId）与默认入口（行数字 id）；chi 同段参数名须一致，统一用 serverRef
+			r.Put("/servers/{serverRef}/draining", h.V2.SetServerDraining)
+			r.Put("/servers/{serverRef}/default-entry", h.V2.SetServerDefaultEntry)
 		})
 	}
 

@@ -138,6 +138,10 @@ var (
 	ErrIllegalState = New(http.StatusConflict, "illegal_state", "当前状态不允许该操作")
 	// ErrRezoneRequired 已分配 server 改归属必须走换区工单。
 	ErrRezoneRequired = New(http.StatusConflict, "rezone_required", "已分配 server 改归属必须走换区工单")
+	// ErrRezoneNotAssigned 换区工单选中未分配 server（应走首次分配，FR-155）。
+	ErrRezoneNotAssigned = New(http.StatusBadRequest, "not_assigned", "server 未分配，应走首次分配")
+	// ErrDefaultEntryNotAssigned 未分配小区的 server 不能设为默认入口（FR-155）。
+	ErrDefaultEntryNotAssigned = New(http.StatusConflict, "not_assigned", "未分配小区的 server 不能设为默认入口")
 	// ErrAPIKeyNotFound API 密钥不存在（吊销 / 重置目标不存在或已吊销，FR-42）。
 	ErrAPIKeyNotFound = New(http.StatusNotFound, "API_KEY_NOT_FOUND", "API 密钥不存在")
 	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。

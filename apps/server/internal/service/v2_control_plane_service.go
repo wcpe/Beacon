@@ -255,11 +255,15 @@ type ApproveAgentIdentityParams struct {
 	Operator            string
 	ClientIP            string
 	ForceUnbindOccupier bool
-	TargetKind          string
-	TargetID            *uint
+	// TargetExplicitNull 表示请求显式传 target:null——换区重确认时含义为「确认但暂不分配」。
+	TargetExplicitNull bool
+	// TargetKind / TargetID 表示请求带对象目标（换区重确认落区）；非换区中带目标一律拒。
+	TargetKind string
+	TargetID   *uint
 }
 
-// ApproveAgentIdentity 确认待确认身份，并创建未分配 server 行。
+// ApproveAgentIdentity 确认待确认身份。首次确认只创建未分配 server 行；
+// 若该 server 正处于换区中（pending 归属非空），则按预填 / 指定目标落区（或暂不分配），并清 pending + 记换区完成审计。
 func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
 	now := time.Now().UTC()
 	var out model.AgentIdentity
@@ -281,11 +285,8 @@ func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p Approv
 		if err := s.resolveOccupierForApprove(tx, ident, p); err != nil {
 			return err
 		}
-		if _, err := ensureServerRow(tx, ident.NamespaceID, ident.ServerID, ident.Kind); err != nil {
+		if err := s.applyApproveBinding(tx, ns, ident, p); err != nil {
 			return err
-		}
-		if p.TargetID != nil {
-			return apperr.ErrInvalidParam
 		}
 		ident.Status = model.AgentIdentityStatusActive
 		ident.PendingExpiresAt = nil
@@ -301,6 +302,61 @@ func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p Approv
 		return nil, err
 	}
 	return &out, nil
+}
+
+// applyApproveBinding 处理确认时的 server 落绑定：换区中走重确认落区、否则首次确认只建未分配 server 行。
+func (s *V2ControlPlaneService) applyApproveBinding(tx *gorm.DB, ns *model.Namespace, ident *model.AgentIdentity, p ApproveAgentIdentityParams) error {
+	server, err := findServerRow(tx, ident.NamespaceID, ident.ServerID)
+	if err != nil {
+		return err
+	}
+	if server != nil && (server.PendingZoneID != nil || server.PendingBCClusterID != nil) {
+		return s.completeRezoneApprove(tx, ns, server, p)
+	}
+	if p.TargetID != nil {
+		return apperr.ErrInvalidParam // 非换区中不允许指定落区目标
+	}
+	_, err = ensureServerRow(tx, ident.NamespaceID, ident.ServerID, ident.Kind)
+	return err
+}
+
+// completeRezoneApprove 换区工单重确认：按显式 / 预填目标落区（或暂不分配），清 pending，记 zone.rezone.completed 审计。
+func (s *V2ControlPlaneService) completeRezoneApprove(tx *gorm.DB, ns *model.Namespace, server *model.Server, p ApproveAgentIdentityParams) error {
+	targetKind, targetID, assign := resolveRezoneApproveTarget(server, p)
+	if assign {
+		targetNS, kind, err := resolveAssignmentTarget(tx, targetKind, targetID)
+		if err != nil {
+			return err
+		}
+		if err := validateAssignableServer(server, targetNS, kind); err != nil {
+			return err
+		}
+		applyAssignment(server, kind, targetID, false)
+	}
+	server.PendingZoneID = nil
+	server.PendingBCClusterID = nil
+	if err := tx.Save(server).Error; err != nil {
+		return err
+	}
+	return createAudit(tx, model.AuditLog{
+		NamespaceCode: ns.Code, Operator: operatorOrSystem(p.Operator),
+		Action: model.ActionServerRezoneDone, TargetType: model.TargetTypeServer,
+		TargetRef: fmt.Sprintf("%d", server.ID), Result: model.ResultOK, ClientIP: p.ClientIP,
+	})
+}
+
+// resolveRezoneApproveTarget 定换区重确认落区目标：显式 null=暂不分配；显式对象=该目标；缺省=预填目标。
+func resolveRezoneApproveTarget(server *model.Server, p ApproveAgentIdentityParams) (kind string, id uint, assign bool) {
+	if p.TargetExplicitNull {
+		return "", 0, false
+	}
+	if p.TargetID != nil {
+		return p.TargetKind, *p.TargetID, true
+	}
+	if server.PendingZoneID != nil {
+		return model.AssignmentTargetZone, *server.PendingZoneID, true
+	}
+	return model.AssignmentTargetBCCluster, *server.PendingBCClusterID, true
 }
 
 type IdentityTransitionParams struct {
@@ -443,8 +499,8 @@ type ListServersParams struct {
 	PageSize    int
 }
 
-// ListServers 分页查询 v2 server 资产列表。
-func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]model.Server, int64, error) {
+// ListServers 分页查询 v2 server 资产列表，返回富化视图（含归属名 / 默认入口 / 在线摘要）。
+func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, int64, error) {
 	q := s.db.Model(&model.Server{})
 	if p.NamespaceID != 0 {
 		q = q.Where("namespace_id = ?", p.NamespaceID)
@@ -467,14 +523,14 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]model.Server
 		return nil, 0, err
 	}
 	var items []model.Server
-	err := q.Order("updated_at DESC").Offset(pageOffset(p.Page, p.PageSize)).Limit(pageSize(p.PageSize)).Find(&items).Error
-	return items, total, err
-}
-
-func (s *V2ControlPlaneService) ListNamespaces() ([]model.Namespace, error) {
-	var items []model.Namespace
-	err := s.db.Order("id ASC").Find(&items).Error
-	return items, err
+	if err := q.Order("updated_at DESC").Offset(pageOffset(p.Page, p.PageSize)).Limit(pageSize(p.PageSize)).Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	views, err := enrichServers(s.db, items)
+	if err != nil {
+		return nil, 0, err
+	}
+	return views, total, nil
 }
 
 func (s *V2ControlPlaneService) ListNamespaceTrusts() ([]model.NamespaceTrust, error) {
@@ -744,13 +800,7 @@ func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Se
 			if err := validateAssignableServer(&servers[i], targetNS, targetKind); err != nil {
 				return err
 			}
-			if targetKind == model.AssignmentTargetZone {
-				servers[i].ZoneID = &p.TargetID
-				servers[i].IsDefaultEntry = p.IsDefaultEntry
-			} else {
-				servers[i].BCClusterID = &p.TargetID
-				servers[i].IsDefaultEntry = false
-			}
+			applyAssignment(&servers[i], targetKind, p.TargetID, p.IsDefaultEntry)
 			if err := tx.Save(&servers[i]).Error; err != nil {
 				return err
 			}
@@ -766,6 +816,18 @@ func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Se
 		return nil
 	})
 	return out, err
+}
+
+// applyAssignment 把 server 归属落到目标（zone→backend 落 zone_id，bc_cluster→proxy 落 bc_cluster_id）。
+func applyAssignment(server *model.Server, targetKind string, targetID uint, isDefaultEntry bool) {
+	id := targetID
+	if targetKind == model.AssignmentTargetZone {
+		server.ZoneID = &id
+		server.IsDefaultEntry = isDefaultEntry
+	} else {
+		server.BCClusterID = &id
+		server.IsDefaultEntry = false
+	}
 }
 
 func validateAssignableServer(server *model.Server, targetNS uint, targetKind string) error {
@@ -819,6 +881,256 @@ func namespaceIDForZone(tx *gorm.DB, zoneID uint) (uint, error) {
 		return 0, apperr.ErrInstanceNotFound
 	}
 	return row.NamespaceID, nil
+}
+
+// AssignmentResult 是批量分配 / 换区的逐台结果（对齐 mock zone-authority.ts 的 AssignmentResult）。
+type AssignmentResult struct {
+	ID       uint   `json:"id"`
+	ServerID string `json:"serverId"`
+	Ok       bool   `json:"ok"`
+	Code     string `json:"code,omitempty"`
+}
+
+type RezoneServersParams struct {
+	ServerIDs  []uint
+	TargetKind string
+	TargetID   uint
+	Reason     string
+	Operator   string
+	ClientIP   string
+}
+
+// RezoneServers 批量发起换区工单（§4.7）：逐台校验已分配 + 同 namespace + 同 kind，
+// 单事务内解绑清归属 + 写预填目标 + 驱动身份重入 pending + 记 zone.rezone.initiated 审计；任一失败整批回滚。
+func (s *V2ControlPlaneService) RezoneServers(p RezoneServersParams) ([]AssignmentResult, error) {
+	if len(p.ServerIDs) == 0 || p.TargetID == 0 || p.Reason == "" || !model.IsValidAssignmentTarget(p.TargetKind) {
+		return nil, apperr.ErrInvalidParam
+	}
+	now := time.Now().UTC()
+	expiresAt := now.Add(defaultPendingTTL)
+	var results []AssignmentResult
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		targetNS, targetKind, err := resolveAssignmentTarget(tx, p.TargetKind, p.TargetID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.ErrInstanceNotFound
+			}
+			return err
+		}
+		servers, err := loadServersByIDs(tx, p.ServerIDs)
+		if err != nil {
+			return err
+		}
+		for i := range servers {
+			if err := validateRezonableServer(&servers[i], targetNS, targetKind); err != nil {
+				return err
+			}
+		}
+		results = make([]AssignmentResult, 0, len(servers))
+		for i := range servers {
+			if err := s.initRezone(tx, &servers[i], p, targetKind, now, expiresAt); err != nil {
+				return err
+			}
+			results = append(results, AssignmentResult{ID: servers[i].ID, ServerID: servers[i].ServerID, Ok: true})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// initRezone 对单台已分配 server 发起换区：解绑清归属（含默认入口）+ 写预填目标 + 驱动身份重入 pending + 审计。
+func (s *V2ControlPlaneService) initRezone(tx *gorm.DB, server *model.Server, p RezoneServersParams, targetKind string, now, expiresAt time.Time) error {
+	id := p.TargetID
+	server.ZoneID = nil
+	server.BCClusterID = nil
+	server.IsDefaultEntry = false
+	if targetKind == model.AssignmentTargetZone {
+		server.PendingZoneID = &id
+		server.PendingBCClusterID = nil
+	} else {
+		server.PendingBCClusterID = &id
+		server.PendingZoneID = nil
+	}
+	if err := tx.Save(server).Error; err != nil {
+		return err
+	}
+	if err := driveIdentityPending(tx, server.NamespaceID, server.ServerID, now, expiresAt); err != nil {
+		return err
+	}
+	return createAudit(tx, model.AuditLog{
+		Operator: operatorOrSystem(p.Operator), Action: model.ActionServerRezoneInit,
+		TargetType: model.TargetTypeServer, TargetRef: fmt.Sprintf("%d", server.ID),
+		Detail: p.Reason, Result: model.ResultOK, ClientIP: p.ClientIP,
+	})
+}
+
+// driveIdentityPending 换区工单编排：把绑定该 server 的身份直接重入 pending（对齐 mock：工单编排不经 unbound 中转）。
+func driveIdentityPending(tx *gorm.DB, namespaceID uint, serverID string, now, expiresAt time.Time) error {
+	ident, err := findBoundIdentityByServer(tx, namespaceID, serverID)
+	if err != nil || ident == nil {
+		return err
+	}
+	exp := expiresAt
+	ident.Status = model.AgentIdentityStatusPending
+	ident.PendingExpiresAt = &exp
+	ident.StatusChangedAt = now
+	return tx.Save(ident).Error
+}
+
+func validateRezonableServer(server *model.Server, targetNS uint, targetKind string) error {
+	if !isServerAssigned(server) {
+		return apperr.ErrRezoneNotAssigned
+	}
+	if server.NamespaceID != targetNS {
+		return apperr.ErrForbidden
+	}
+	if targetKind == model.AssignmentTargetZone && server.Kind != model.ServerKindBackend {
+		return apperr.ErrInvalidParam
+	}
+	if targetKind == model.AssignmentTargetBCCluster && server.Kind != model.ServerKindProxy {
+		return apperr.ErrInvalidParam
+	}
+	return nil
+}
+
+func loadServersByIDs(tx *gorm.DB, ids []uint) ([]model.Server, error) {
+	var servers []model.Server
+	if err := tx.Where("id IN ?", ids).Find(&servers).Error; err != nil {
+		return nil, err
+	}
+	if len(servers) != len(ids) {
+		return nil, apperr.ErrInstanceNotFound
+	}
+	return servers, nil
+}
+
+func findBoundIdentityByServer(tx *gorm.DB, namespaceID uint, serverID string) (*model.AgentIdentity, error) {
+	var ident model.AgentIdentity
+	err := tx.Where("namespace_id = ? AND server_id = ? AND status IN ?", namespaceID, serverID,
+		[]string{model.AgentIdentityStatusActive, model.AgentIdentityStatusDisabled}).First(&ident).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ident, nil
+}
+
+type SetServerDrainingParams struct {
+	ServerID string
+	Draining bool
+	Reason   string
+	Operator string
+	ClientIP string
+}
+
+// SetServerDraining 切换 server 排空标记（消费方为调度 schedulable 判定），单事务 + 审计，返回富化视图。
+// 路径按业务 serverId 定位（前端契约不带 namespace，同名 serverId 取首条）。
+func (s *V2ControlPlaneService) SetServerDraining(p SetServerDrainingParams) (*ServerView, error) {
+	if p.ServerID == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	var view *ServerView
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		server, err := findServerByServerID(tx, p.ServerID)
+		if err != nil {
+			return err
+		}
+		server.Draining = p.Draining
+		if err := tx.Save(server).Error; err != nil {
+			return err
+		}
+		if err := createAudit(tx, model.AuditLog{
+			Operator: operatorOrSystem(p.Operator), Action: model.ActionServerSetDraining,
+			TargetType: model.TargetTypeServer, TargetRef: fmt.Sprintf("%d", server.ID),
+			Detail: p.Reason, Result: model.ResultOK, ClientIP: p.ClientIP,
+		}); err != nil {
+			return err
+		}
+		view, err = enrichSingleServer(tx, *server)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return view, nil
+}
+
+type SetServerDefaultEntryParams struct {
+	ServerRowID uint
+	Value       bool
+	Operator    string
+	ClientIP    string
+}
+
+// SetServerDefaultEntry 更新 server 默认入口标记；未分配小区（zone_id 为空）置默认入口一律 409，单事务 + 审计，返回富化视图。
+func (s *V2ControlPlaneService) SetServerDefaultEntry(p SetServerDefaultEntryParams) (*ServerView, error) {
+	if p.ServerRowID == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	var view *ServerView
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var server model.Server
+		if err := tx.First(&server, p.ServerRowID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.ErrInstanceNotFound
+			}
+			return err
+		}
+		if server.ZoneID == nil {
+			return apperr.ErrDefaultEntryNotAssigned
+		}
+		server.IsDefaultEntry = p.Value
+		if err := tx.Save(&server).Error; err != nil {
+			return err
+		}
+		action := model.ActionZoneSetDefaultEntry
+		if !p.Value {
+			action = model.ActionZoneClearDefaultEntry
+		}
+		if err := createAudit(tx, model.AuditLog{
+			Operator: operatorOrSystem(p.Operator), Action: action,
+			TargetType: model.TargetTypeServer, TargetRef: fmt.Sprintf("%d", server.ID),
+			Result: model.ResultOK, ClientIP: p.ClientIP,
+		}); err != nil {
+			return err
+		}
+		enriched, err := enrichSingleServer(tx, server)
+		if err != nil {
+			return err
+		}
+		view = enriched
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return view, nil
+}
+
+// enrichSingleServer 富化单台 server 为视图。
+func enrichSingleServer(db *gorm.DB, server model.Server) (*ServerView, error) {
+	views, err := enrichServers(db, []model.Server{server})
+	if err != nil {
+		return nil, err
+	}
+	return &views[0], nil
+}
+
+func findServerByServerID(tx *gorm.DB, serverID string) (*model.Server, error) {
+	var server model.Server
+	err := tx.Where("server_id = ?", serverID).First(&server).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperr.ErrInstanceNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &server, nil
 }
 
 func (s *V2ControlPlaneService) namespaceByToken(token string) (*model.Namespace, error) {

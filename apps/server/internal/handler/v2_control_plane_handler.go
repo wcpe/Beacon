@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -96,12 +97,15 @@ type v2CreateNamespaceRequest struct {
 }
 
 type v2NamespaceView struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	AccessToken string    `json:"accessToken,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID               uint      `json:"id"`
+	Name             string    `json:"name"`
+	Description      string    `json:"description"`
+	ServerCount      int64     `json:"serverCount"`
+	BCClusterCount   int64     `json:"bcClusterCount"`
+	ActiveTrustCount int64     `json:"activeTrustCount"`
+	AccessToken      string    `json:"accessToken,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // CreateNamespace 处理 POST /admin/v2/namespaces。
@@ -121,16 +125,16 @@ func (h *V2ControlPlaneHandler) CreateNamespace(w http.ResponseWriter, r *http.R
 	render.WriteJSON(w, http.StatusCreated, v2NamespaceResponse(ns, token))
 }
 
-// ListNamespaces 处理 GET /admin/v2/namespaces。
+// ListNamespaces 处理 GET /admin/v2/namespaces（附 server 数 / BC 集群数 / 生效信任数摘要）。
 func (h *V2ControlPlaneHandler) ListNamespaces(w http.ResponseWriter, r *http.Request) {
-	items, err := h.svc.ListNamespaces()
+	stats, err := h.svc.ListNamespacesWithStats()
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	views := make([]v2NamespaceView, 0, len(items))
-	for i := range items {
-		views = append(views, v2NamespaceResponse(&items[i], ""))
+	views := make([]v2NamespaceView, 0, len(stats))
+	for i := range stats {
+		views = append(views, v2NamespaceStatView(stats[i]))
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views, "total": len(views)})
 }
@@ -194,8 +198,9 @@ func (h *V2ControlPlaneHandler) RevokeNamespaceTrust(w http.ResponseWriter, r *h
 }
 
 type v2ApproveIdentityRequest struct {
-	ForceUnbindOccupier bool      `json:"forceUnbindOccupier"`
-	Target              *v2Target `json:"target"`
+	ForceUnbindOccupier bool `json:"forceUnbindOccupier"`
+	// Target 用 RawMessage 承接以区分三态：缺省（无键）/ 显式 null（换区确认但暂不分配）/ 对象目标（换区落区）。
+	Target json.RawMessage `json:"target"`
 }
 
 type v2Target struct {
@@ -214,9 +219,9 @@ func (h *V2ControlPlaneHandler) ApproveAgentIdentity(w http.ResponseWriter, r *h
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 		ForceUnbindOccupier: req.ForceUnbindOccupier,
 	}
-	if req.Target != nil {
-		params.TargetKind = req.Target.Kind
-		params.TargetID = &req.Target.ID
+	if err := applyApproveTarget(&params, req.Target); err != nil {
+		render.WriteError(w, r, err)
+		return
 	}
 	ident, err := h.svc.ApproveAgentIdentity(chi.URLParam(r, "identityId"), params)
 	if err != nil {
@@ -224,6 +229,36 @@ func (h *V2ControlPlaneHandler) ApproveAgentIdentity(w http.ResponseWriter, r *h
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, agentIdentityView(ident))
+}
+
+// applyApproveTarget 解析 approve 请求的 target 三态并落到 service 参数：
+// 无键=换区重确认取预填目标；显式 null=确认但暂不分配；对象=换区落区到该目标。
+func applyApproveTarget(params *service.ApproveAgentIdentityParams, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		params.TargetExplicitNull = true
+		return nil
+	}
+	var target v2Target
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return apperr.ErrInvalidParam
+	}
+	params.TargetKind = target.Kind
+	id := target.ID
+	params.TargetID = &id
+	return nil
+}
+
+// GetAgentIdentity 处理 GET /admin/v2/agent-identities/{identityId}（只读单条详情，附换区预填目标）。
+func (h *V2ControlPlaneHandler) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
+	ident, prefill, err := h.svc.GetAgentIdentity(chi.URLParam(r, "identityId"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, agentIdentityDetailView(ident, prefill))
 }
 
 type v2ReasonRequest struct {
@@ -380,6 +415,21 @@ type v2ServerAssignmentRequest struct {
 	Reason         string    `json:"reason"`
 }
 
+type v2RezoneRequest struct {
+	ServerIDs []uint    `json:"serverIds"`
+	Target    *v2Target `json:"target"`
+	Reason    string    `json:"reason"`
+}
+
+type v2DrainingRequest struct {
+	Draining bool   `json:"draining"`
+	Reason   string `json:"reason"`
+}
+
+type v2DefaultEntryRequest struct {
+	Value bool `json:"value"`
+}
+
 // AssignServers 处理 POST /admin/v2/server-assignments。
 func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Request) {
 	var req v2ServerAssignmentRequest
@@ -400,7 +450,88 @@ func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Req
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"items": servers})
+	results := make([]service.AssignmentResult, 0, len(servers))
+	for i := range servers {
+		results = append(results, service.AssignmentResult{ID: servers[i].ID, ServerID: servers[i].ServerID, Ok: true})
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// RezoneServers 处理 POST /admin/v2/server-rezones（批量发起换区工单）。
+func (h *V2ControlPlaneHandler) RezoneServers(w http.ResponseWriter, r *http.Request) {
+	var req v2RezoneRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if req.Target == nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	results, err := h.svc.RezoneServers(service.RezoneServersParams{
+		ServerIDs: req.ServerIDs, TargetKind: req.Target.Kind, TargetID: req.Target.ID,
+		Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// ZoneTree 处理 GET /admin/v2/zone-tree?namespaceId=（区服结构树只读聚合）。
+func (h *V2ControlPlaneHandler) ZoneTree(w http.ResponseWriter, r *http.Request) {
+	namespaceID, err := optionalUintQuery(r.URL.Query().Get("namespaceId"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	tree, err := h.svc.ZoneTree(namespaceID)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, tree)
+}
+
+// SetServerDraining 处理 PUT /admin/v2/servers/{serverRef}/draining（切换排空标记，路径为业务 serverId）。
+func (h *V2ControlPlaneHandler) SetServerDraining(w http.ResponseWriter, r *http.Request) {
+	var req v2DrainingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	view, err := h.svc.SetServerDraining(service.SetServerDrainingParams{
+		ServerID: chi.URLParam(r, "serverRef"), Draining: req.Draining, Reason: req.Reason,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
+}
+
+// SetServerDefaultEntry 处理 PUT /admin/v2/servers/{serverRef}/default-entry（路径为 server 行数字 id）。
+func (h *V2ControlPlaneHandler) SetServerDefaultEntry(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "serverRef")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req v2DefaultEntryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	view, err := h.svc.SetServerDefaultEntry(service.SetServerDefaultEntryParams{
+		ServerRowID: id, Value: req.Value, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 // ListServers 处理 GET /admin/v2/servers。
@@ -427,10 +558,21 @@ func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Reque
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
+// v2NamespaceResponse 构造 namespace 创建响应（新建 namespace 计数恒为 0）。
 func v2NamespaceResponse(ns *model.Namespace, token string) v2NamespaceView {
 	return v2NamespaceView{
 		ID: ns.ID, Name: ns.Code, Description: ns.Description,
 		AccessToken: token, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
+	}
+}
+
+// v2NamespaceStatView 构造 namespace 列表项（附统计摘要）。
+func v2NamespaceStatView(stat service.NamespaceStat) v2NamespaceView {
+	ns := stat.Namespace
+	return v2NamespaceView{
+		ID: ns.ID, Name: ns.Code, Description: ns.Description,
+		ServerCount: stat.ServerCount, BCClusterCount: stat.BCClusterCount,
+		ActiveTrustCount: stat.ActiveTrustCount, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
 	}
 }
 
@@ -442,6 +584,14 @@ func agentIdentityView(ident *model.AgentIdentity) map[string]any {
 		"pendingExpiresAt": ident.PendingExpiresAt, "boundAt": ident.BoundAt,
 		"statusChangedAt": ident.StatusChangedAt, "conflictReason": ident.ConflictReason,
 	}
+}
+
+// agentIdentityDetailView 在身份基础视图上补详情字段：conflictPeers（Q4 冲突处置延后，恒 null）与换区预填目标。
+func agentIdentityDetailView(ident *model.AgentIdentity, prefill *service.RezonePrefillView) map[string]any {
+	view := agentIdentityView(ident)
+	view["conflictPeers"] = nil
+	view["rezonePrefill"] = prefill
+	return view
 }
 
 func addrOrClientIP(addr string, r *http.Request) string {
