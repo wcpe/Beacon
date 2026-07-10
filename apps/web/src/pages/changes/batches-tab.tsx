@@ -1,26 +1,37 @@
-// 灰度批次 Tab：批次表（批次/状态/计划/成功/失败/跳过/推进确认）；
-// awaiting_confirm 批显示「确认推进」（走确认弹窗），failed 批显示熔断原因。
-import { useMemo, useState } from 'react'
+// 灰度批次 Tab：批次状态机可视化（共享 batch-flow：纵向推进流 / 当前批高亮 /
+// 熔断提示 / 待确认批醒目放行按钮）+ 执行期快捷操作（暂停 / 继续 / 紧急终止，
+// 回调父级统一确认弹窗）。放行走本 Tab 内确认弹窗，推进后随详情失效即时刷新。
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { Button, DataTable, type DataTableColumn } from '@beacon/ui'
+import { Button } from '@beacon/ui'
 
 import { ApiClientError } from '../../api/delivery'
-import {
-  confirmChangeBatch,
-  type ChangeBatch,
-  type ChangeOrderDetail,
-} from '../../api/delivery-changes'
+import { confirmChangeBatch, type ChangeOrderDetail } from '../../api/delivery-changes'
+import BatchFlow from '../../features/delivery/batch-flow'
 import ConfirmDialog from './confirm-dialog'
-import { BatchStatusBadge } from '../../features/delivery/status-badges'
-import { formatTime } from './format'
+
+/** 执行期快捷操作（与详情头部生命周期动作同源，由父级打开统一确认弹窗） */
+export type BatchQuickAction = 'pause' | 'resume' | 'cancel'
 
 interface BatchesTabProps {
   order: ChangeOrderDetail
+  onQuickAction: (kind: BatchQuickAction) => void
 }
 
-export default function BatchesTab({ order }: BatchesTabProps) {
+// 状态 → 可用快捷操作
+function quickActionsOf(status: ChangeOrderDetail['status']): BatchQuickAction[] {
+  if (status === 'rolling') {
+    return ['pause', 'cancel']
+  }
+  if (status === 'paused') {
+    return ['resume', 'cancel']
+  }
+  return []
+}
+
+export default function BatchesTab({ order, onQuickAction }: BatchesTabProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
 
@@ -38,65 +49,37 @@ export default function BatchesTab({ order }: BatchesTabProps) {
     },
   })
 
-  const columns = useMemo<DataTableColumn<ChangeBatch>[]>(
-    () => [
-      { header: t('delivery.changes.detail.batches.columns.batch'), cell: (row) => row.batchNo },
-      {
-        header: t('delivery.changes.detail.batches.columns.status'),
-        cell: (row) => <BatchStatusBadge status={row.status} />,
-      },
-      { header: t('delivery.changes.detail.batches.columns.planned'), cell: (row) => row.plannedCount },
-      { header: t('delivery.changes.detail.batches.columns.success'), cell: (row) => row.successCount },
-      { header: t('delivery.changes.detail.batches.columns.failed'), cell: (row) => row.failedCount },
-      { header: t('delivery.changes.detail.batches.columns.skipped'), cell: (row) => row.skippedCount },
-      {
-        header: t('delivery.changes.detail.batches.columns.gate'),
-        cell: (row) => {
-          if (row.status === 'awaiting_confirm' && order.status === 'rolling') {
-            return (
-              <Button
-                size="sm"
-                onClick={() => {
-                  setErrorText(null)
-                  setConfirmBatchNo(row.batchNo)
-                }}
-              >
-                {t('delivery.changes.detail.batches.confirm')}
-              </Button>
-            )
-          }
-          if (row.status === 'failed' && row.breakReason !== null) {
-            return (
-              <span className="text-xs text-destructive">
-                {t('delivery.changes.detail.batches.breakReason', { reason: row.breakReason })}
-              </span>
-            )
-          }
-          if (row.gateConfirmedBy !== null && row.gateConfirmedAt !== null) {
-            return (
-              <span className="text-xs text-muted-foreground">
-                {t('delivery.changes.detail.batches.gateBy', {
-                  who: row.gateConfirmedBy,
-                  at: formatTime(row.gateConfirmedAt),
-                })}
-              </span>
-            )
-          }
-          return '-'
-        },
-      },
-    ],
-    [t, order.status],
-  )
+  const quickActions = quickActionsOf(order.status)
 
   return (
     <section className="grid gap-3">
-      <DataTable
-        columns={columns}
-        rows={order.batches}
-        rowKey={(row) => String(row.batchNo)}
-        emptyText={t('delivery.changes.detail.batches.empty')}
-        density="compact"
+      {/* 执行期快捷操作：暂停 / 继续 / 紧急终止（统一走父级确认弹窗） */}
+      {quickActions.length > 0 && (
+        <div className="flex flex-wrap justify-end gap-2">
+          {quickActions.map((kind) => (
+            <Button
+              key={kind}
+              size="sm"
+              variant={kind === 'cancel' ? 'outline' : 'default'}
+              onClick={() => {
+                onQuickAction(kind)
+              }}
+            >
+              {t(`delivery.changes.actions.${kind}`)}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {/* 批次状态机可视化（共享控件） */}
+      <BatchFlow
+        batches={order.batches}
+        orderStatus={order.status}
+        confirmPending={confirmMutation.isPending}
+        onConfirm={(batchNo) => {
+          setErrorText(null)
+          setConfirmBatchNo(batchNo)
+        }}
       />
 
       <ConfirmDialog

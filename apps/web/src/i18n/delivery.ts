@@ -625,6 +625,15 @@ export const delivery = {
         title: '生效观察',
         empty: '当前无观察中的批次',
         batchNo: '观察批次：第 {{no}} 批',
+        lead: '确认放行下一批前，先观察本批目标的健康分 / TPS / 告警是否回归正常；有异常先暂停排查，不要带病放量。',
+        refresh: '刷新',
+        summary: {
+          avgScore: '均值健康分',
+          worstScore: '最差健康分',
+          avgTps: '均值 TPS',
+          minTps: '最低 TPS',
+          alertTotal: '告警总数',
+        },
         columns: {
           serverId: '子服',
           score: '健康分',

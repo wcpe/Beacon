@@ -99,7 +99,7 @@ describe('/changes 变更单页', () => {
     })
   })
 
-  it('批次推进写闭环：对灰度中单确认待确认批次', async () => {
+  it('批次推进写闭环：状态机放行待确认批后即时推进到下一批', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -112,19 +112,106 @@ describe('/changes 变更单页', () => {
     }
     await user.click(row)
 
-    // 切到「灰度批次」Tab
+    // 切到「灰度批次」Tab：状态机流呈现当前批 + 快捷操作（暂停 / 终止；页眉同款动作并存故用 All）
     await screen.findByRole('button', { name: '返回列表' })
     await user.click(screen.getByRole('tab', { name: '灰度批次' }))
+    const batchesPanel = within(await screen.findByRole('tabpanel'))
+    expect(await batchesPanel.findByText('当前批')).toBeInTheDocument()
+    expect(batchesPanel.getByRole('button', { name: '暂停' })).toBeInTheDocument()
+    expect(batchesPanel.getByRole('button', { name: '终止' })).toBeInTheDocument()
 
-    // 找到「确认推进」按钮并点击 → 确认弹窗 → 确认
-    const confirmBtn = await screen.findByRole('button', { name: '确认推进' })
+    // 待确认批（第 2 批，非末批）上是醒目主按钮「确认放行下一批」→ 确认弹窗 → 确认
+    const confirmBtn = await screen.findByRole('button', { name: '确认放行下一批' })
     await user.click(confirmBtn)
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '确认推进' }))
 
-    // 批次推进后：待确认批徽标消失（该批变已完成 / 下一批推进），确认弹窗关闭
+    // 推进后即时刷新：弹窗关闭，推进指针到末批（第 3 批），按钮文案变「确认完成整单」
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     })
+    expect(await screen.findByRole('button', { name: '确认完成整单' })).toBeInTheDocument()
+  })
+
+  it('变更项与影响预览 Tab 使用共享预览控件', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+
+    // 变更项 Tab（默认）：共享变更内容预览的分组清单
+    expect(await screen.findByText('文件差异清单（6 项）')).toBeInTheDocument()
+    expect(screen.getByText('配置变更清单（1 项）')).toBeInTheDocument()
+
+    // 影响预览 Tab：共享编排预览（范围 / 批次 / 生效方式 / 影响面）+ 逐目标表
+    await user.click(screen.getByRole('tab', { name: '影响预览' }))
+    expect(await screen.findByText('目标范围')).toBeInTheDocument()
+    expect(screen.getByText('批次规划')).toBeInTheDocument()
+    expect(screen.getByText('生效方式')).toBeInTheDocument()
+    expect(screen.getByText('影响面汇总')).toBeInTheDocument()
+    expect(screen.getByText('逐目标')).toBeInTheDocument()
+  })
+
+  it('观察窗 Tab 渲染汇总与逐台指标并支持手动刷新', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+    await user.click(screen.getByRole('tab', { name: '观察窗' }))
+
+    // 观察说明 + 当前批标注 + 汇总条 + 逐台表
+    expect(await screen.findByText('观察批次：第 2 批')).toBeInTheDocument()
+    expect(screen.getByText(/确认放行下一批前/)).toBeInTheDocument()
+    expect(screen.getByText('均值健康分')).toBeInTheDocument()
+    expect(screen.getByText('最差健康分')).toBeInTheDocument()
+    expect(screen.getByText('告警总数')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '健康分' })).toBeInTheDocument()
+    // 逐台表有数据行（表头行之外至少一行）
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
+
+    // 手动刷新可点（请求进行中短暂置灰，不崩溃即视为闭环）
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    expect(await screen.findByText('观察批次：第 2 批')).toBeInTheDocument()
+  })
+
+  it('进度时间线双模式切换：可视化时间轴与详细表格', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const row = (await screen.findByText('Quests 插件灰度 v1.9')).closest('tr')
+    if (!row) {
+      throw new Error('未找到变更单所在行')
+    }
+    await user.click(row)
+    await screen.findByRole('button', { name: '返回列表' })
+    await user.click(screen.getByRole('tab', { name: '进度时间线' }))
+
+    // 默认可视化：种子事件按「主体 · 状态」呈现（单据级关键节点）
+    const eventsPanel = within(await screen.findByRole('tabpanel'))
+    expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
+    expect(eventsPanel.getByText('变更单 · 已批准')).toBeInTheDocument()
+
+    // 切到详细表格：全字段列头出现，可视化标题消失
+    await user.click(eventsPanel.getByRole('button', { name: '详细' }))
+    expect(await eventsPanel.findByRole('columnheader', { name: '序号' })).toBeInTheDocument()
+    expect(eventsPanel.getByRole('columnheader', { name: '状态' })).toBeInTheDocument()
+    expect(eventsPanel.queryByText('变更单 · 灰度中')).not.toBeInTheDocument()
+
+    // 切回可视化
+    await user.click(eventsPanel.getByRole('button', { name: '可视化' }))
+    expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
   })
 })

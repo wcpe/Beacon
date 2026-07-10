@@ -1,25 +1,19 @@
-// 影响预览 Tab：GET impact → 汇总条（目标/文件/字节/传输/配置作用域）+ 批次划分 + 逐目标分页表。
+// 影响预览 Tab：GET impact → 共享编排预览（目标范围 / 批次占比累计 / 生效方式 /
+// 影响面汇总）+ 逐目标分页表。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import {
-  AsyncSection,
-  Badge,
-  DataTable,
-  SummaryStrip,
-  type DataTableColumn,
-  type SummaryItem,
-} from '@beacon/ui'
+import { AsyncSection, Badge, DataTable, type DataTableColumn } from '@beacon/ui'
 
-import { fetchChangeImpact } from '../../api/delivery-changes'
+import { fetchChangeImpact, type ChangeOrderDetail } from '../../api/delivery-changes'
+import OrderOrchestration from '../../features/delivery/order-orchestration'
 import Pager from '../../features/delivery/pager'
-import { formatBytes } from './format'
 
 const PAGE_SIZE = 20
 
 interface ImpactTabProps {
-  orderId: number
+  order: ChangeOrderDetail
 }
 
 interface TargetRow {
@@ -32,35 +26,17 @@ interface TargetRow {
   skipCount: number
 }
 
-export default function ImpactTab({ orderId }: ImpactTabProps) {
+export default function ImpactTab({ order }: ImpactTabProps) {
   const { t } = useTranslation()
   const [page, setPage] = useState(1)
 
   const query = useQuery({
-    queryKey: ['change-orders', 'impact', orderId, page],
-    queryFn: () => fetchChangeImpact(orderId, page, PAGE_SIZE),
+    queryKey: ['change-orders', 'impact', order.id, page],
+    queryFn: () => fetchChangeImpact(order.id, page, PAGE_SIZE),
     placeholderData: keepPreviousData,
   })
 
   const summary = query.data?.summary
-  const summaryItems = useMemo<SummaryItem[]>(() => {
-    if (!summary) {
-      return []
-    }
-    return [
-      { label: t('delivery.changes.detail.impact.targetTotal'), value: summary.targetTotal },
-      { label: t('delivery.changes.detail.impact.fileTotal'), value: summary.fileTotal },
-      { label: t('delivery.changes.detail.impact.totalBytes'), value: formatBytes(summary.totalBytes) },
-      {
-        label: t('delivery.changes.detail.impact.transferBytes'),
-        value: formatBytes(summary.transferBytes),
-      },
-      {
-        label: t('delivery.changes.detail.impact.configScope'),
-        value: summary.configScopeCount,
-      },
-    ]
-  }, [summary, t])
 
   const columns = useMemo<DataTableColumn<TargetRow>[]>(
     () => [
@@ -97,26 +73,8 @@ export default function ImpactTab({ orderId }: ImpactTabProps) {
   return (
     <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
       <section className="grid gap-4">
-        <SummaryStrip items={summaryItems} />
-
-        {/* 批次划分 */}
-        {summary && summary.batches.length > 0 && (
-          <div className="grid gap-1.5">
-            <h4 className="text-[13px] font-semibold text-ink-2">
-              {t('delivery.changes.detail.impact.batchesTitle')}
-            </h4>
-            <ul className="flex flex-wrap gap-2 text-sm">
-              {summary.batches.map((b) => (
-                <li
-                  key={b.batchNo}
-                  className="rounded-lg border border-brand-100 bg-brand-50 px-3 py-1 text-brand-600 tnum"
-                >
-                  {t('delivery.changes.detail.impact.batchLine', { no: b.batchNo, count: b.count })}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        {/* 共享编排预览：范围 / 批次 / 生效方式 / 影响面汇总 */}
+        {summary && <OrderOrchestration order={order} summary={summary} />}
 
         {/* 逐目标分页表 */}
         <div className="grid gap-2">

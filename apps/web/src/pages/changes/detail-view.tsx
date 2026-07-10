@@ -137,10 +137,16 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
                 <ItemsTab order={order} />
               </TabsContent>
               <TabsContent value="impact" className="pt-3">
-                <ImpactTab orderId={orderId} />
+                <ImpactTab order={order} />
               </TabsContent>
               <TabsContent value="batches" className="pt-3">
-                <BatchesTab order={order} />
+                <BatchesTab
+                  order={order}
+                  onQuickAction={(kind) => {
+                    setErrorText(null)
+                    setAction(kind)
+                  }}
+                />
               </TabsContent>
               <TabsContent value="observe" className="pt-3">
                 <ObserveTab orderId={orderId} />
