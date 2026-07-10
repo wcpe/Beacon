@@ -29,7 +29,7 @@ export const cluster = {
     columns: {
       serverId: 'serverId',
       kind: '类型',
-      namespace: 'namespace',
+      namespace: '命名空间',
       zone: '大区 / 小区',
       cluster: 'BC 集群',
       status: '身份状态',
@@ -54,7 +54,7 @@ export const cluster = {
       disableTitle: '禁用服务器',
       disableDesc: '禁用后摘除调度与指令下发，绑定保留，可随时启用。',
       unbindTitle: '解绑服务器身份',
-      unbindDesc: '解绑后该 serverId 释放，agent 需重新申请接入。这是换 serverId / namespace 的前置。',
+      unbindDesc: '解绑后该 serverId 释放，agent 需重新申请接入。这是换 serverId / 命名空间 的前置。',
       drainingTitle: '切换排空标记',
       drainingDesc: '排空后不再作为调度落点，已在场玩家不受影响。',
     },
@@ -198,7 +198,7 @@ export const cluster = {
     },
     rezoneCode: {
       rezone_required: '已分配（需换区）',
-      namespace_mismatch: 'namespace 不匹配',
+      namespace_mismatch: '命名空间 不匹配',
       kind_mismatch: '类型与目标不匹配',
     },
   },
@@ -213,7 +213,7 @@ export const cluster = {
       empty: '暂无拓扑数据，接入服务器并完成区服分配后展示链路',
       proxy: '代理',
       zone: '小区',
-      truncated: '仅展示前 {{shown}} / 共 {{total}} 个节点，请按 namespace / 大区收拢查看',
+      truncated: '仅展示前 {{shown}} / 共 {{total}} 个节点，请按 命名空间 / 大区收拢查看',
       edgesTruncated: '链路过多，仅展示失败率最高的前 {{shown}} / 共 {{total}} 条聚合链路',
       collapseHint: '节点过多，已按大区聚合折叠',
       abnormalLinks: '异常链路（点击看明细）',
@@ -271,8 +271,8 @@ export const cluster = {
       viewInCommands: '在命令观测中查看',
     },
     filter: {
-      namespace: 'namespace',
-      allNamespace: '全部 namespace',
+      namespace: '命名空间',
+      allNamespace: '全部 命名空间',
     },
   },
 } as const

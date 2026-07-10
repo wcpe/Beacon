@@ -36,7 +36,7 @@ const pageCases: [string, string][] = [
   ['/system', '控制面健康'],
   ['/system/version', '版本与更新'],
   ['/api-keys', '密钥'],
-  ['/namespaces', 'namespace'],
+  ['/namespaces', '命名空间'],
 ]
 
 describe('全站路由', () => {

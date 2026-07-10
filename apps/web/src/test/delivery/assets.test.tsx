@@ -39,7 +39,7 @@ describe('/assets 文件资产页', () => {
     await user.click(await screen.findByRole('tab', { name: '扫描概要' }))
     expect(
       await screen.findByText(
-        '当前 namespace 下暂无扫描记录，接入 agent 并完成首次清单上报后出现在此',
+        '当前 命名空间 下暂无扫描记录，接入 agent 并完成首次清单上报后出现在此',
       ),
     ).toBeInTheDocument()
   })

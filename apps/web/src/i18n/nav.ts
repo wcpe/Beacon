@@ -24,5 +24,5 @@ export const nav = {
   system: '控制面健康',
   systemVersion: '版本与更新',
   apiKeys: '密钥',
-  namespaces: 'namespace',
+  namespaces: '命名空间',
 } as const

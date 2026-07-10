@@ -2,8 +2,8 @@
 export const delivery = {
   // 顶部作用域选择（各页共用）
   scope: {
-    namespace: 'namespace',
-    pickNamespace: '选择 namespace',
+    namespace: '命名空间',
+    pickNamespace: '选择 命名空间',
   },
   // 通用分页
   pager: {
@@ -17,7 +17,7 @@ export const delivery = {
     // 扫描概要
     scan: {
       title: '扫描概要',
-      empty: '当前 namespace 下暂无扫描记录，接入 agent 并完成首次清单上报后出现在此',
+      empty: '当前 命名空间 下暂无扫描记录，接入 agent 并完成首次清单上报后出现在此',
       // 本页合计概要小卡
       summary: {
         servers: '本页子服',
@@ -137,7 +137,7 @@ export const delivery = {
     // 列表
     list: {
       title: '配置文件',
-      empty: '当前 namespace 下暂无配置文件，点「新建配置文件」创建第一个',
+      empty: '当前 命名空间 下暂无配置文件，点「新建配置文件」创建第一个',
       keyword: '搜索文件名',
       create: '新建配置文件',
       trash: '回收站',

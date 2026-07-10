@@ -19,11 +19,11 @@ afterAll(() => {
 })
 
 describe('/namespaces 页', () => {
-  it('常规态渲染 namespace 列表与信任关系', async () => {
+  it('常规态渲染 命名空间 列表与信任关系', async () => {
     useScenario('normal')
     renderPage(<NamespacesPage />)
 
-    // namespace 列表出现已知 namespace（种子数据含 default）
+    // 命名空间 列表出现已知 namespace（种子数据含 default）
     expect(await screen.findByText(/强隔离/)).toBeInTheDocument()
     // 至少渲染一行 namespace
     await waitFor(() => {
@@ -31,45 +31,45 @@ describe('/namespaces 页', () => {
     })
   })
 
-  it('空态给出 namespace 创建引导', async () => {
+  it('空态给出 命名空间 创建引导', async () => {
     useScenario('empty')
     renderPage(<NamespacesPage />)
 
     expect(
-      await screen.findByText('暂无 namespace，点击「创建 namespace」新增第一个'),
+      await screen.findByText('暂无 命名空间，点击「创建 namespace」新增第一个'),
     ).toBeInTheDocument()
   })
 
-  it('创建 namespace 后弹出一次性接入 token（写闭环）', async () => {
+  it('创建 命名空间 后弹出一次性接入 token（写闭环）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<NamespacesPage />)
 
-    await user.click(await screen.findByRole('button', { name: '创建 namespace' }))
+    await user.click(await screen.findByRole('button', { name: '创建 命名空间' }))
     const dialog = await screen.findByRole('dialog')
     await user.type(within(dialog).getByLabelText('名称'), 'game-new')
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
-    expect(await screen.findByText('namespace 已创建')).toBeInTheDocument()
+    expect(await screen.findByText('命名空间 已创建')).toBeInTheDocument()
     // 一次性明文接入 token 以 nstk_ 前缀
     const tokenDialog = screen.getByRole('dialog')
     expect(within(tokenDialog).getByText(/^nstk_/)).toBeInTheDocument()
   })
 
-  it('点击 namespace 行展开非模态详情面板（不产生遮罩）', async () => {
+  it('点击 命名空间 行展开非模态详情面板（不产生遮罩）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<NamespacesPage />)
 
     // 初始无详情面板、无模态遮罩
-    expect(screen.queryByText('namespace 详情')).not.toBeInTheDocument()
+    expect(screen.queryByText('命名空间 详情')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     // 选中 test 域（种子含出向生效信任 test → prod）
     await user.click(await screen.findByText('test'))
 
     // 详情面板出现且是布局内列（非 role=dialog 遮罩）
-    expect(await screen.findByText('namespace 详情')).toBeInTheDocument()
+    expect(await screen.findByText('命名空间 详情')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // 面板内出现互通信任关系区与授予入口
     expect(screen.getByText('互通信任关系')).toBeInTheDocument()

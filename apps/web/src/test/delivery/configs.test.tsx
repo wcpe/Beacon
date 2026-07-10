@@ -36,7 +36,7 @@ describe('/configs 配置中心页', () => {
     renderPage(<ConfigsPage />)
 
     expect(
-      await screen.findByText('当前 namespace 下暂无配置文件，点「新建配置文件」创建第一个'),
+      await screen.findByText('当前 命名空间 下暂无配置文件，点「新建配置文件」创建第一个'),
     ).toBeInTheDocument()
   })
 
@@ -79,7 +79,7 @@ describe('/configs 配置中心页', () => {
     // 切到「有效配置」Tab
     await user.click(await screen.findByRole('tab', { name: '有效配置' }))
 
-    // 合并内容区出现（默认按 namespace 合并，含 economy-enabled 键）
+    // 合并内容区出现（默认按 命名空间 合并，含 economy-enabled 键）
     await waitFor(() => {
       expect(screen.getAllByText(/economy-enabled/).length).toBeGreaterThan(0)
     })
