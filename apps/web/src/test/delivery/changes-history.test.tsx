@@ -36,17 +36,28 @@ describe('/changes/history 交付历史页', () => {
     expect(await screen.findByText('暂无历史变更单')).toBeInTheDocument()
   })
 
-  it('进入详情展示单服状态', async () => {
+  it('点行打开右侧非模态详情面板并展示单服状态', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesHistoryPage />)
 
     const row = (await screen.findByText('全网核心配置基线对齐')).closest('tr')
     expect(row).not.toBeNull()
-    await user.click(within(row as HTMLElement).getByRole('button', { name: '查看' }))
+    await user.click(row as HTMLElement)
 
-    // 详情单服状态区标题
+    // 详情面板单服状态区标题出现，且未产生模态遮罩
     expect(await screen.findByText('单服状态')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('行内前置基础字段可见 + 吸顶筛选存在', async () => {
+    useScenario('normal')
+    renderPage(<ChangesHistoryPage />)
+
+    await screen.findByText('全网核心配置基线对齐')
+    expect(screen.getByRole('columnheader', { name: '单号' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '结束时间' })).toBeInTheDocument()
+    expect(screen.getByLabelText('按状态过滤')).toBeInTheDocument()
   })
 
   it('整单回滚写闭环：完成单回滚后状态推进', async () => {
@@ -56,7 +67,7 @@ describe('/changes/history 交付历史页', () => {
 
     // 进入已完成单详情
     const row = (await screen.findByText('全网核心配置基线对齐')).closest('tr')
-    await user.click(within(row as HTMLElement).getByRole('button', { name: '查看' }))
+    await user.click(row as HTMLElement)
     await screen.findByText('单服状态')
 
     // 触发整单回滚

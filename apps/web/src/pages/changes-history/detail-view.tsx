@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 
-import { ChevronLeft, Layers, RotateCcw, Server } from 'lucide-react'
+import { Layers, RotateCcw, Server } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -37,10 +37,9 @@ const ROLLBACKABLE = new Set(['completed', 'paused', 'cancelled'])
 
 interface DetailViewProps {
   orderId: number
-  onBack: () => void
 }
 
-export default function DetailView({ orderId, onBack }: DetailViewProps) {
+export default function DetailView({ orderId }: DetailViewProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
@@ -143,21 +142,11 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
   const canFinish = detail?.status === 'rolling_back'
 
   return (
-    <section className="grid gap-4">
-      <Button variant="ghost" size="sm" className="w-fit" onClick={onBack}>
-        <ChevronLeft className="size-4" />
-        {t('delivery.changesHistory.detail.backToList')}
-      </Button>
-
-      {/* 标题 + 状态 + 回滚 / 结束操作（软卡片头部） */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+    <div className="grid gap-4">
+      {/* 状态 + 回滚 / 结束操作（面板标题已由 MasterDetail 头部承担） */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-3">
-          {detail && (
-            <>
-              <h2 className="text-lg font-semibold text-ink-1">{detail.title}</h2>
-              <StatusBadge status={detail.status} />
-            </>
-          )}
+          {detail && <StatusBadge status={detail.status} />}
         </div>
         <div className="flex items-center gap-2">
           {canRollback && (
@@ -279,6 +268,6 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
           finishMutation.mutate()
         }}
       />
-    </section>
+    </div>
   )
 }

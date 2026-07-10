@@ -4,7 +4,9 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SectionHeader } from '@beacon/ui'
+import type { ChangeOrderSummary } from '@beacon/devmock'
 
+import MasterDetail from '../features/shared/master-detail'
 import NamespacePicker from '../features/delivery/namespace-picker'
 import ListView from './changes-history/list-view'
 import DetailView from './changes-history/detail-view'
@@ -12,26 +14,38 @@ import DetailView from './changes-history/detail-view'
 export default function ChangesHistoryPage() {
   const { t } = useTranslation()
   const [namespaceId, setNamespaceId] = useState<number | null>(null)
-  const [activeOrderId, setActiveOrderId] = useState<number | null>(null)
+  // 选中的历史变更单（打开右侧非模态详情面板）
+  const [selected, setSelected] = useState<ChangeOrderSummary | null>(null)
   const effectiveNamespaceId = namespaceId ?? 0
 
   return (
     <section className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SectionHeader size="lg" title={t('delivery.changesHistory.title')} />
-        <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
-      </div>
-
-      {activeOrderId === null ? (
-        <ListView namespaceId={effectiveNamespaceId} onView={setActiveOrderId} />
-      ) : (
-        <DetailView
-          orderId={activeOrderId}
-          onBack={() => {
-            setActiveOrderId(null)
+        <NamespacePicker
+          value={namespaceId}
+          onChange={(id) => {
+            setNamespaceId(id)
+            setSelected(null)
           }}
         />
-      )}
+      </div>
+
+      <MasterDetail
+        master={
+          <ListView
+            namespaceId={effectiveNamespaceId}
+            selectedId={selected?.id ?? null}
+            onView={setSelected}
+          />
+        }
+        detail={selected ? <DetailView orderId={selected.id} /> : null}
+        detailTitle={selected?.title ?? ''}
+        closeLabel={t('delivery.changesHistory.detail.backToList')}
+        onClose={() => {
+          setSelected(null)
+        }}
+      />
     </section>
   )
 }
