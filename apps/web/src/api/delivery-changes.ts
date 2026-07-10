@@ -7,9 +7,11 @@ import type {
   ChangeObserveResponse,
   ChangeOrderDetail,
   ChangeOrderEvent,
+  ChangeOrderItem,
   ChangeOrderListResponse,
   ChangeSelector,
   ChangeTarget,
+  ConfigChangeInput,
   Paged,
 } from '@beacon/devmock'
 
@@ -32,6 +34,7 @@ export type {
   ChangeSelector,
   ChangeTarget,
   ChangeTargetStatus,
+  ConfigChangeInput,
   PayloadState,
 } from '@beacon/devmock'
 
@@ -40,10 +43,11 @@ export interface ChangeEventsResponse {
   events: ChangeOrderEvent[]
 }
 
-/** 差异重扫响应 */
+/** 差异重扫响应：含本次扫描出的文件差异清单 */
 export interface DiffScanResponse {
   status: string
   diffSnapshotAt: string | null
+  items: ChangeOrderItem[]
 }
 
 // ---- 列表 ----
@@ -76,6 +80,8 @@ export interface ChangeOrderInput {
   activateTimeoutSec?: number
   failureRateThresholdPercent?: number
   unhealthyRateThresholdPercent?: number
+  /** 配置变更项（整组替换 config_change 项，PATCH 专用） */
+  configChanges?: ConfigChangeInput[]
 }
 
 export function createChangeOrder(body: ChangeOrderInput): Promise<ChangeOrderDetail> {

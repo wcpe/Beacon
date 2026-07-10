@@ -1,11 +1,12 @@
 // 文件资产页（/assets，只读）：看目录清单、哈希、内容预览与 diff。
-// 顶部 namespace 作用域；四类视图独立切换（清单主从 / 扫描概要 / 跨服比对 / 两侧差异），
-// 避免多块面板堆叠导致的超长页面。清单视图为主从布局：列表主列 + 右侧非模态详情面板。
+// 顶部 namespace 作用域 +「差异经变更单交付」去向提示；四类视图独立切换（清单主从 /
+// 扫描概要 / 跨服比对 / 两侧差异），避免多块面板堆叠导致的超长页面。
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { FolderTree } from 'lucide-react'
+import { FolderTree, Info } from 'lucide-react'
 
-import { SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
+import { Button, SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
 import NamespacePicker from '../features/delivery/namespace-picker'
 import ScanPanel from './assets/scan-panel'
@@ -28,6 +29,17 @@ export default function AssetsPage() {
           title={t('delivery.assets.title')}
         />
         <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
+      </div>
+
+      {/* 去向提示：文件差异的下发统一走变更单（与 /configs 提示同款式） */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warn-bd bg-warn-bg px-4 py-2.5 text-sm text-warn">
+        <span className="flex items-center gap-2">
+          <Info className="size-4 shrink-0" aria-hidden />
+          {t('delivery.assets.deliveryHint')}
+        </span>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/changes">{t('delivery.assets.goChanges')}</Link>
+        </Button>
       </div>
 
       <Tabs value={view} onValueChange={setView}>

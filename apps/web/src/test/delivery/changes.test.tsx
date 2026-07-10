@@ -29,11 +29,16 @@ describe('/changes 变更单页', () => {
     expect(await screen.findAllByText('草稿')).not.toHaveLength(0)
   })
 
-  it('空态给出新建引导', async () => {
+  it('空态给出任务卡引导（三张任务说明卡 + 引导创建按钮）', async () => {
     useScenario('empty')
     renderPage(<ChangesPage />)
 
-    expect(await screen.findByText('暂无变更单，点「新建变更单」发起一次交付')).toBeInTheDocument()
+    // 空态不再是一句空文案，而是任务说明卡 + 大号引导创建按钮
+    expect(await screen.findByText('还没有变更单')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /更新插件 \/ 服务端文件/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /更新配置文件/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /混合交付/ })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /引导创建/ }).length).toBeGreaterThan(0)
   })
 
   it('行内前置基础字段可见 + 吸顶工具条与筛选存在', async () => {
@@ -44,9 +49,25 @@ describe('/changes 变更单页', () => {
     // 行内前置列：单号 / 状态 / 批次策略 / 创建人 / 更新时间
     expect(screen.getByRole('columnheader', { name: '单号' })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '批次策略' })).toBeInTheDocument()
-    // 吸顶工具条：新建入口 + 状态筛选始终可见
-    expect(screen.getByRole('button', { name: '新建变更单' })).toBeInTheDocument()
+    // 吸顶工具条：引导创建（主）+ 高级创建（保留原表单）+ 状态筛选始终可见
+    expect(screen.getByRole('button', { name: '引导创建' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '高级创建' })).toBeInTheDocument()
     expect(screen.getByLabelText('按状态过滤')).toBeInTheDocument()
+  })
+
+  it('页头「交付流程」入口展开五步生命周期说明卡', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    await screen.findByText('大厅插件升级 v2.4')
+    await user.click(screen.getByRole('button', { name: '交付流程' }))
+
+    // 非模态说明卡：五步生命周期
+    expect(await screen.findByText('一次交付是怎么走完的')).toBeInTheDocument()
+    expect(screen.getByText('灰度批次')).toBeInTheDocument()
+    expect(screen.getByText('完成 / 回滚')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('审批写闭环：对待审批单点通过后状态变为已批准', async () => {

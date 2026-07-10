@@ -1,10 +1,11 @@
-// 变更单列表（主从布局主列）：ListCard 吸顶工具条（标题 / 新建 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
-// 点行选中（右侧非模态详情面板打开）；新建走模态表单。
+// 变更单列表（主从布局主列）：ListCard 吸顶工具条（标题 / 引导创建 / 高级创建 / 状态筛选 /
+// 标题搜索）+ 自区滚列表 + 吸底分页。点行选中（右侧非模态详情面板打开）。
+// 引导创建走五步向导（新手主入口），高级创建保留原有直建表单；空态用任务卡引导进向导。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { ClipboardList, Plus } from 'lucide-react'
+import { ClipboardList, Plus, Sparkles } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -29,8 +30,11 @@ import {
 import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/delivery/pager'
 import CreateDialog, { type CreateDraftInput } from './create-dialog'
+import EmptyGuide from './empty-guide'
+import GuidedWizard from './guided-wizard'
 import { OrderStatusBadge } from './status-badge'
 import { formatTime } from './format'
+import type { WizardContent } from './wizard-state'
 
 const PAGE_SIZE = 15
 
@@ -62,6 +66,9 @@ export default function ListView({ namespaceId, selectedId, onOpen }: ListViewPr
   const [page, setPage] = useState(1)
   const [createOpen, setCreateOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  // 引导向导开合与预选交付内容（空态任务卡带类型进入）
+  const [wizardOpen, setWizardOpen] = useState(false)
+  const [wizardPreset, setWizardPreset] = useState<WizardContent>('files')
 
   const query = useQuery({
     queryKey: ['change-orders', 'list', namespaceId, keyword, status, page],
@@ -135,16 +142,29 @@ export default function ListView({ namespaceId, selectedId, onOpen }: ListViewPr
           {t('delivery.changes.list.title')}
           {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
         </span>
-        <Button
-          size="sm"
-          onClick={() => {
-            setCreateError(null)
-            setCreateOpen(true)
-          }}
-        >
-          <Plus className="size-4" />
-          {t('delivery.changes.list.create')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => {
+              setWizardPreset('files')
+              setWizardOpen(true)
+            }}
+          >
+            <Sparkles className="size-4" />
+            {t('delivery.changes.list.createGuided')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setCreateError(null)
+              setCreateOpen(true)
+            }}
+          >
+            <Plus className="size-4" />
+            {t('delivery.changes.list.createAdvanced')}
+          </Button>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Input
@@ -180,25 +200,38 @@ export default function ListView({ namespaceId, selectedId, onOpen }: ListViewPr
     </div>
   )
 
+  // 空态引导：确无任何变更单（非筛选造成的空）时用任务卡代替空表格
+  const showEmptyGuide =
+    !query.isLoading && !query.isError && total === 0 && keyword.trim() === '' && status === 'all'
+
+  const startWizard = (preset: WizardContent): void => {
+    setWizardPreset(preset)
+    setWizardOpen(true)
+  }
+
   return (
     <div className="grid gap-3.5">
       <ListCard
         toolbar={toolbar}
         footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
       >
-        <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-          <DataTable
-            columns={columns}
-            rows={query.data?.items}
-            rowKey={(row) => String(row.id)}
-            emptyText={t('delivery.changes.list.empty')}
-            density="compact"
-            onRowClick={(row) => {
-              onOpen(row)
-            }}
-            rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
-          />
-        </AsyncSection>
+        {showEmptyGuide ? (
+          <EmptyGuide onStart={startWizard} />
+        ) : (
+          <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+            <DataTable
+              columns={columns}
+              rows={query.data?.items}
+              rowKey={(row) => String(row.id)}
+              emptyText={t('delivery.changes.list.empty')}
+              density="compact"
+              onRowClick={(row) => {
+                onOpen(row)
+              }}
+              rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+            />
+          </AsyncSection>
+        )}
       </ListCard>
 
       <CreateDialog
@@ -210,6 +243,14 @@ export default function ListView({ namespaceId, selectedId, onOpen }: ListViewPr
           setCreateError(null)
           createMutation.mutate(input)
         }}
+      />
+
+      <GuidedWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        namespaceId={namespaceId}
+        initialContent={wizardPreset}
+        onCreated={onOpen}
       />
     </div>
   )

@@ -14,6 +14,9 @@ export const delivery = {
   assets: {
     mission: '看：目录清单、哈希、内容预览与 diff，只读',
     title: '文件资产',
+    // 去向提示：文件差异的下发统一走变更单（与 /configs 提示同款式）
+    deliveryHint: '文件差异经变更单统一交付，本页只看不改',
+    goChanges: '前往变更单',
     // 扫描概要
     scan: {
       title: '扫描概要',
@@ -291,8 +294,9 @@ export const delivery = {
     // 列表
     list: {
       title: '变更单列表',
-      empty: '暂无变更单，点「新建变更单」发起一次交付',
-      create: '新建变更单',
+      empty: '当前筛选条件下无匹配变更单',
+      createGuided: '引导创建',
+      createAdvanced: '高级创建',
       keyword: '搜索标题',
       filterStatus: '按状态过滤',
       allStatus: '全部状态',
@@ -305,6 +309,164 @@ export const delivery = {
         updatedAt: '更新时间',
       },
       view: '详情',
+      // 空态引导：无变更单时以任务说明卡代替空表格
+      emptyGuide: {
+        title: '还没有变更单',
+        desc: '交付 = 把插件 / 文件或配置按批次发到线上服务器。选一个任务类型，向导会一步步带你完成。',
+        cta: '引导创建',
+      },
+    },
+    // 页头「交付流程」帮助卡：五步生命周期一句话说明
+    flow: {
+      open: '交付流程',
+      title: '一次交付是怎么走完的',
+      close: '收起',
+      steps: {
+        create: { name: '创建', desc: '选好交付内容、范围与批次，提交审批' },
+        approve: { name: '审批', desc: '管理员核对影响面，通过后才能启动' },
+        batch: { name: '灰度批次', desc: '启动后按批推送并生效，先小批后大批' },
+        observe: { name: '观察', desc: '每批生效后看健康数据，确认正常再放行下一批' },
+        finish: { name: '完成 / 回滚', desc: '末批确认即完成；发现问题可整单回滚' },
+      },
+    },
+    // 引导创建五步向导
+    wizard: {
+      title: '引导创建变更单',
+      // 步骤条
+      steps: {
+        content: '选交付内容',
+        source: '选模板源',
+        config: '选配置变更',
+        scope: '范围与批次',
+        review: '预览与提交',
+      },
+      stepSkipped: '本次不涉及',
+      prev: '上一步',
+      next: '下一步',
+      cancel: '取消',
+      submit: '提交审批',
+      preparing: '正在保存草稿并计算影响面…',
+      // 第 1 步：选交付内容
+      content: {
+        lead: '第一步，告诉系统这次要交付什么。选好类型后，向导只保留需要的步骤。',
+        files: {
+          title: '更新插件 / 服务端文件',
+          desc: '适合升级插件 jar、更换服务端文件。',
+          hint: '前提：先在一台「黄金模板源」服务器上手动装好新版本并验证通过。',
+        },
+        configs: {
+          title: '更新配置文件',
+          desc: '适合只改配置不动文件，从配置中心选择要下发的配置版本。',
+          hint: '前提：改好的配置已在「配置中心」保存为新版本。',
+        },
+        both: {
+          title: '混合交付（两者都要）',
+          desc: '文件和配置绑成一单：一起审批、一起灰度、出问题一起回滚。',
+          hint: '适合「换新版 jar + 配套新配置」的完整升级。',
+        },
+      },
+      // 第 2 步：选模板源并扫描差异
+      source: {
+        lead: '黄金模板源 = 已装好新版本并经人工验证的样板服务器。系统将扫描它与线上标准的文件差异，作为本单的交付载荷。',
+        pickLabel: '模板源服务器',
+        pickPlaceholder: '从运行中的子服里选一台',
+        noServer: '当前命名空间下没有运行中的子服',
+        scan: '扫描差异',
+        rescan: '重新扫描',
+        scanning: '扫描中…',
+        snapshotAt: '差异快照：{{at}}',
+        empty: '选好模板源后点「扫描差异」，差异清单会显示在这里',
+        addCount: '新增 {{count}}',
+        updateCount: '修改 {{count}}',
+        deleteCount: '删除 {{count}}',
+        actionAdd: '新增',
+        actionUpdate: '修改',
+        actionDelete: '删除',
+      },
+      // 第 3 步：选配置变更
+      config: {
+        lead: '从配置中心选择要下发的配置文件，可多选。配置不会立刻生效——它将随本单在生效阶段一并下发到目标服。',
+        columns: {
+          name: '文件名',
+          format: '格式',
+          version: '目标版本',
+        },
+        resolving: '正在读取最新版本…',
+        versionText: 'v{{no}}（{{scope}}）',
+        unpickedVersion: '勾选后自动取该文件的最新版本',
+        pickedCount: '已选 {{count}} 个配置文件',
+        empty: '当前命名空间下还没有配置文件，请先到「配置中心」创建并保存版本',
+        noVersion: '该文件还没有任何已保存版本，请先到「配置中心」编辑保存',
+      },
+      // 第 4 步：交付范围与批次
+      scope: {
+        lead: '选择这次交付要覆盖的服务器范围，以及按什么节奏推进。范围越小、批次越小，出问题的波及面就越小。',
+        modeLabel: '交付范围',
+        modes: {
+          all: '全量',
+          regions: '按大区',
+          zones: '按小区',
+          servers: '单服',
+        },
+        modeHints: {
+          all: '命名空间内全部已分配的子服',
+          regions: '覆盖选中大区下的所有子服',
+          zones: '只覆盖选中的小区',
+          servers: '手工指定具体某几台',
+        },
+        pickRegions: '选择大区',
+        pickZones: '选择小区',
+        pickServers: '选择子服',
+        serverFilter: '搜索子服',
+        selectedCount: '已选 {{count}} 个',
+        regionZones: '{{count}} 个小区',
+        pickEmpty: '暂无可选项',
+        batchLabel: '批次策略',
+        batchSingle: '一次性',
+        batchSingleHint: '全部目标一批生效，适合影响面小或已充分验证的变更',
+        batchStaged: '分批推进',
+        batchStagedHint: '先小批验证、再逐批放量，推荐默认使用',
+        perBatchLabel: '每批台数',
+        batchNote: '分批推进时，每批生效并确认后才放行下一批；失败率超阈值会自动暂停整单。',
+      },
+      // 第 5 步：影响预览与提交
+      review: {
+        lead: '最后确认一遍交付内容与影响面。提交后进入待审批，审批通过并启动后按批推进。',
+        titleLabel: '变更单标题',
+        titlePlaceholder: '给这次交付起个一眼能懂的名字',
+        defaultTitle: {
+          files: '文件更新（模板源 {{source}}）',
+          configs: '配置更新（{{count}} 个文件）',
+          both: '文件与配置更新（模板源 {{source}}）',
+        },
+        summaryTitle: '本单概要',
+        fields: {
+          content: '交付内容',
+          source: '模板源',
+          files: '文件差异',
+          configs: '配置项',
+          scope: '交付范围',
+          batch: '批次策略',
+          activation: '生效方式',
+        },
+        noSource: '不涉及',
+        filesCount: '{{count}} 项',
+        configsCount: '{{count}} 个',
+        scopeText: {
+          all: '全量',
+          regions: '按大区（{{count}} 个）',
+          zones: '按小区（{{count}} 个）',
+          servers: '单服（{{count}} 台）',
+        },
+        batchSingleText: '一次性全量',
+        batchStagedText: '分批推进 · 每批 {{count}} 台',
+        activationRestart: '重启生效（文件替换需重启才可靠）',
+        activationHotReload: '热更生效（仅配置，无需重启）',
+        impactTitle: '影响面预览',
+        impactEmpty: '按当前范围没有解析出任何目标服，请返回上一步调整范围',
+        notReady: '草稿尚未创建，请返回上一步重试',
+        submitNote: '点「提交审批」后：变更单进入待审批 → 审批通过 → 手动启动 → 按批推送生效，每批需人工确认，全程可暂停、可整单回滚。',
+      },
     },
     // 状态文案
     status: {
