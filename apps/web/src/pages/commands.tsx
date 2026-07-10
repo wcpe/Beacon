@@ -7,7 +7,7 @@ import { TerminalSquare } from 'lucide-react'
 import { SectionHeader } from '@beacon/ui'
 import type { CommandItem } from '@beacon/devmock'
 
-import MasterDetail from '../features/observability/master-detail'
+import MasterDetail from '../features/shared/master-detail'
 import CommandDetailPanel from './commands/command-detail-panel'
 import CommandHistory from './commands/command-history'
 import CommandKpi from './commands/command-kpi'

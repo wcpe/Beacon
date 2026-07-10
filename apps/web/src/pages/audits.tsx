@@ -7,7 +7,7 @@ import { ScrollText } from 'lucide-react'
 import { SectionHeader } from '@beacon/ui'
 import type { AuditItem } from '@beacon/devmock'
 
-import MasterDetail from '../features/observability/master-detail'
+import MasterDetail from '../features/shared/master-detail'
 import AuditDetailPanel from './audits/audit-detail-panel'
 import AuditKpi from './audits/audit-kpi'
 import AuditList from './audits/audit-list'

@@ -18,7 +18,7 @@ import type { CommandItem } from '@beacon/devmock'
 
 import { fetchCommands } from '../../api/observability'
 import FilterSelect from '../../features/observability/filter-select'
-import ListCard from '../../features/observability/list-card'
+import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/observability/pager'
 
 const PAGE_SIZE = 15
