@@ -252,6 +252,52 @@ describe('/changes 引导创建向导', () => {
     await within(dialog).findByText('已选 0 个')
   })
 
+  it('批次编排：推荐批次一键应用，台数总和不符即红字并禁下一步', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    // 纯配置路径到第 4 步，单服模式选 2 台（目标数确定为 2）
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: /更新配置文件/ }))
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickConfigFile(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await within(dialog).findByText('交付范围')
+    await user.click(within(dialog).getByRole('button', { name: /^单服/ }))
+    await user.click(await within(dialog).findByRole('checkbox', { name: 'lobby-1' }))
+    await user.click(within(dialog).getByRole('checkbox', { name: 'lobby-2' }))
+    await within(dialog).findByText('预计目标 2 台（按当前范围估算）')
+
+    // 一键推荐：2 台 → 按台数均分两批 [1,1]，每行显示实际与累计
+    await user.click(within(dialog).getByRole('button', { name: /应用推荐批次/ }))
+    expect(within(dialog).getByLabelText('第 1 批数量')).toHaveValue(1)
+    expect(within(dialog).getByLabelText('第 2 批数量')).toHaveValue(1)
+    expect(within(dialog).getByText('实际 1 台 · 累计 2 台')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
+
+    // 改首批为 5 → 合计 6 比目标多 4 → 红字 + 禁下一步
+    const firstRow = within(dialog).getByLabelText('第 1 批数量')
+    await user.clear(firstRow)
+    await user.type(firstRow, '5')
+    await within(dialog).findByText('台数合计 6 台，比目标多 4 台')
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled()
+
+    // 删除第 2 批 → 合计 5 仍多 3 台；改回 2 → 校验通过放行
+    await user.click(within(dialog).getByRole('button', { name: '删除第 2 批' }))
+    await within(dialog).findByText('台数合计 5 台，比目标多 3 台')
+    await user.clear(within(dialog).getByLabelText('第 1 批数量'))
+    await user.type(within(dialog).getByLabelText('第 1 批数量'), '2')
+    expect(within(dialog).queryByText(/台数合计/)).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
+
+    // 增加批次默认补齐缺口后校验仍通过（2 台已满 → 新行给最小量 1 → 超出，先删掉验证增删闭环）
+    await user.click(within(dialog).getByRole('button', { name: /增加批次/ }))
+    await within(dialog).findByText('台数合计 3 台，比目标多 1 台')
+    await user.click(within(dialog).getByRole('button', { name: '删除第 2 批' }))
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
+  })
+
   it('模板源列表搜索即输即滤，选中态跨筛选保留', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
     useScenario('normal')
     const user = userEvent.setup()

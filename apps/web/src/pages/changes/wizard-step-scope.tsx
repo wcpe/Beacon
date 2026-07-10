@@ -1,14 +1,23 @@
-// 向导第 4 步：交付范围与批次策略。范围四模式（全量 / 按大区 / 按小区 / 单服，复用
+// 向导第 4 步：交付范围与批次编排。范围四模式（全量 / 按大区 / 按小区 / 单服，复用
 // selector 形状），候选列表统一带搜索即输即滤与 全选 / 反选 / 清空 + Shift 连选；
-// 批次两模式（一次性 / 分批推进 + 每批台数），说明文案解释推进门与熔断。
+// 批次编排窗口：一次性全量 / 分批推进（推荐金丝雀一键应用 + 增删批次行 + 台数 / 百分比
+// 单位 + 每批实际台数与累计覆盖 + 总和校验红字）。
 import { useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { Button, Checkbox, Input, Label, cn } from '@beacon/ui'
+import { Plus, Sparkles, X } from 'lucide-react'
+
+import { Button, Checkbox, Input, cn } from '@beacon/ui'
 
 import { fetchServers, fetchZoneTree } from '../../api/cluster'
-import type { WizardBatch, WizardScope } from './wizard-state'
+import {
+  batchIssue,
+  planBatchRows,
+  recommendedBatch,
+  type WizardBatch,
+  type WizardScope,
+} from './wizard-state'
 
 interface StepScopeProps {
   namespaceId: number
@@ -16,6 +25,8 @@ interface StepScopeProps {
   onScopeChange: (scope: WizardScope) => void
   batch: WizardBatch
   onBatchChange: (batch: WizardBatch) => void
+  // 按当前范围估算的目标台数（null = 结构树未就绪，未知）
+  targetEstimate: number | null
 }
 
 const SCOPE_MODES: WizardScope['mode'][] = ['all', 'regions', 'zones', 'servers']
@@ -26,6 +37,7 @@ export default function WizardStepScope({
   onScopeChange,
   batch,
   onBatchChange,
+  targetEstimate,
 }: StepScopeProps) {
   const { t } = useTranslation()
   // 候选搜索关键字（切换范围模式时清空，避免带着上个模式的过滤看新列表）
@@ -139,7 +151,7 @@ export default function WizardStepScope({
         />
       )}
 
-      {/* 批次策略 */}
+      {/* 批次编排 */}
       <div className="grid gap-2">
         <span className="text-[13px] font-semibold text-ink-2">{t('delivery.changes.wizard.scope.batchLabel')}</span>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -161,23 +173,166 @@ export default function WizardStepScope({
           />
         </div>
         {batch.mode === 'staged' && (
-          <div className="flex items-center gap-2">
-            <Label htmlFor="wizard-per-batch">{t('delivery.changes.wizard.scope.perBatchLabel')}</Label>
-            <Input
-              id="wizard-per-batch"
-              type="number"
-              min={1}
-              value={String(batch.perBatch)}
-              onChange={(e) => {
-                const parsed = Number.parseInt(e.target.value, 10)
-                onBatchChange({ ...batch, perBatch: Number.isNaN(parsed) ? 1 : Math.max(1, parsed) })
-              }}
-              className="w-24"
-            />
-          </div>
+          <BatchPlanEditor batch={batch} onBatchChange={onBatchChange} targetEstimate={targetEstimate} />
         )}
         <p className="text-xs text-ink-3">{t('delivery.changes.wizard.scope.batchNote')}</p>
       </div>
+    </div>
+  )
+}
+
+// 批次编排窗口：单位切换（台数 / 百分比）、一键推荐、逐行编辑量值、
+// 每行显示实际台数与累计覆盖，总和不符即时红字（父级同时据此禁「下一步」）。
+function BatchPlanEditor({
+  batch,
+  onBatchChange,
+  targetEstimate,
+}: {
+  batch: WizardBatch
+  onBatchChange: (batch: WizardBatch) => void
+  targetEstimate: number | null
+}) {
+  const { t } = useTranslation()
+  const planRows = planBatchRows(batch, targetEstimate)
+  const issue = batchIssue(batch, targetEstimate)
+  const sum = batch.rows.reduce((acc, size) => acc + size, 0)
+
+  const setRow = (index: number, raw: string): void => {
+    const parsed = Number.parseInt(raw, 10)
+    const rows = batch.rows.map((size, i) => (i === index ? (Number.isNaN(parsed) ? 0 : Math.max(0, parsed)) : size))
+    onBatchChange({ ...batch, rows })
+  }
+
+  const removeRow = (index: number): void => {
+    onBatchChange({ ...batch, rows: batch.rows.filter((_, i) => i !== index) })
+  }
+
+  // 增行默认补齐缺口（百分比补到 100、台数补到目标数），无缺口给最小量 1
+  const addRow = (): void => {
+    const gap = batch.unit === 'percent' ? 100 - sum : (targetEstimate ?? sum + 1) - sum
+    onBatchChange({ ...batch, rows: [...batch.rows, Math.max(1, gap)] })
+  }
+
+  // 切单位重置为该单位下的推荐编排（数值跨单位无意义，不保留）
+  const switchUnit = (unit: WizardBatch['unit']): void => {
+    if (unit === batch.unit) {
+      return
+    }
+    if (unit === 'percent') {
+      onBatchChange({ mode: 'staged', unit: 'percent', rows: [10, 30, 60] })
+      return
+    }
+    const recommended = recommendedBatch(targetEstimate)
+    onBatchChange(
+      recommended.unit === 'count' ? recommended : { mode: 'staged', unit: 'count', rows: [1] },
+    )
+  }
+
+  const unitSuffix = batch.unit === 'percent' ? '%' : t('delivery.changes.wizard.scope.unitServers')
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-border bg-surface-2/50 p-3">
+      {/* 工具行：单位切换 + 一键推荐 + 目标数估算 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex overflow-hidden rounded-md border border-border" role="group" aria-label={t('delivery.changes.wizard.scope.unitLabel')}>
+          {(['count', 'percent'] as const).map((unit) => (
+            <button
+              key={unit}
+              type="button"
+              aria-pressed={batch.unit === unit}
+              onClick={() => {
+                switchUnit(unit)
+              }}
+              className={cn(
+                'px-2.5 py-1 text-xs transition-colors',
+                batch.unit === unit ? 'bg-brand text-white' : 'bg-background text-ink-2 hover:bg-muted',
+              )}
+            >
+              {t(`delivery.changes.wizard.scope.units.${unit}`)}
+            </button>
+          ))}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7"
+          onClick={() => {
+            onBatchChange(recommendedBatch(targetEstimate))
+          }}
+        >
+          <Sparkles className="size-3.5" />
+          {t('delivery.changes.wizard.scope.applyRecommended')}
+        </Button>
+        <span className="ml-auto text-xs text-ink-3">
+          {targetEstimate === null
+            ? t('delivery.changes.wizard.scope.estimateUnknown')
+            : t('delivery.changes.wizard.scope.estimateTotal', { count: targetEstimate })}
+        </span>
+      </div>
+
+      {/* 批次行 */}
+      <ul className="grid gap-1.5">
+        {batch.rows.map((size, index) => {
+          const plan = planRows.at(index)
+          return (
+            <li key={index} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="w-12 shrink-0 text-xs text-ink-3">
+                {t('delivery.changes.wizard.scope.batchRowLabel', { no: index + 1 })}
+              </span>
+              <Input
+                type="number"
+                min={1}
+                aria-label={t('delivery.changes.wizard.scope.batchRowInput', { no: index + 1 })}
+                value={String(size)}
+                onChange={(e) => {
+                  setRow(index, e.target.value)
+                }}
+                className="h-8 w-20"
+              />
+              <span className="text-xs text-ink-2">{unitSuffix}</span>
+              <span className="tnum text-xs text-ink-3">
+                {plan?.count === null || plan?.count === undefined
+                  ? t('delivery.changes.wizard.scope.batchRowUnknown')
+                  : t('delivery.changes.wizard.scope.batchRowPlan', {
+                      count: plan.count,
+                      cumulative: plan.cumulative ?? plan.count,
+                    })}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto size-7 p-0"
+                aria-label={t('delivery.changes.wizard.scope.removeBatch', { no: index + 1 })}
+                disabled={batch.rows.length <= 1}
+                onClick={() => {
+                  removeRow(index)
+                }}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="ghost" className="h-7" onClick={addRow}>
+          <Plus className="size-3.5" />
+          {t('delivery.changes.wizard.scope.addBatch')}
+        </Button>
+      </div>
+
+      {/* 总和校验红字 */}
+      {issue !== null && (
+        <p className="text-sm text-destructive" role="alert">
+          {issue === 'invalid_row' && t('delivery.changes.wizard.scope.issue.invalidRow')}
+          {issue === 'percent_sum' && t('delivery.changes.wizard.scope.issue.percentSum', { sum })}
+          {issue === 'count_short' &&
+            t('delivery.changes.wizard.scope.issue.countShort', { sum, diff: (targetEstimate ?? 0) - sum })}
+          {issue === 'count_over' &&
+            t('delivery.changes.wizard.scope.issue.countOver', { sum, diff: sum - (targetEstimate ?? 0) })}
+        </p>
+      )}
     </div>
   )
 }

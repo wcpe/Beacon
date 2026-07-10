@@ -94,7 +94,7 @@ export default function WizardStepReview({
       value:
         batch.mode === 'single'
           ? t('delivery.changes.wizard.review.batchSingleText')
-          : t('delivery.changes.wizard.review.batchStagedText', { count: batch.perBatch }),
+          : t('delivery.changes.wizard.review.batchStagedText', { count: batch.rows.length }),
     },
     {
       label: t('delivery.changes.wizard.review.fields.activation'),

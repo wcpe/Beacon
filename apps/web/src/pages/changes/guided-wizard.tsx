@@ -2,14 +2,15 @@
 // 范围与批次 → 影响预览与提交。步骤间状态保留；纯配置跳过模板源步、纯文件跳过配置步。
 // 组合既有 mock 端点闭环：POST /change-orders（懒建 draft）→ diff-scan → PATCH（范围 /
 // 批次 / 挂配置）→ impact → submit；取消时删除已建 draft，成单后交给父级打开详情面板。
-import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { Check } from 'lucide-react'
 
 import { Button, Dialog, DialogContent, DialogHeader, DialogTitle, cn } from '@beacon/ui'
 
+import { fetchZoneTree } from '../../api/cluster'
 import { ApiClientError } from '../../api/delivery'
 import {
   createChangeOrder,
@@ -27,10 +28,14 @@ import WizardStepReview from './wizard-step-review'
 import {
   WIZARD_STEPS,
   activeSteps,
+  batchIssue,
   buildBatch,
   buildSelector,
+  estimateTargetTotal,
+  flattenZoneCounts,
   includesConfigs,
   includesFiles,
+  recommendedBatch,
   scopeReady,
   toConfigChanges,
   type WizardBatch,
@@ -67,7 +72,7 @@ export default function GuidedWizard({
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [picks, setPicks] = useState<WizardConfigPick[]>([])
   const [scope, setScope] = useState<WizardScope>({ mode: 'all', regions: [], zones: [], servers: [] })
-  const [batch, setBatch] = useState<WizardBatch>({ mode: 'staged', perBatch: 5 })
+  const [batch, setBatch] = useState<WizardBatch>(() => recommendedBatch(null))
   const [title, setTitle] = useState('')
   const [prepared, setPrepared] = useState(0)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -84,7 +89,7 @@ export default function GuidedWizard({
       setScan(null)
       setPicks([])
       setScope({ mode: 'all', regions: [], zones: [], servers: [] })
-      setBatch({ mode: 'staged', perBatch: 5 })
+      setBatch(recommendedBatch(null))
       setTitle('')
       setPrepared(0)
       setErrorText(null)
@@ -94,6 +99,15 @@ export default function GuidedWizard({
 
   const steps = activeSteps(content)
   const current: WizardStepId = steps[Math.min(stepIndex, steps.length - 1)]
+
+  // 结构树 → 按当前范围估算目标台数（批次编排换算与总和校验用；与范围步共用查询缓存）
+  const treeQuery = useQuery({
+    queryKey: ['change-orders', 'wizard-zone-tree', namespaceId],
+    queryFn: () => fetchZoneTree(namespaceId),
+    enabled: open,
+  })
+  const zoneCounts = useMemo(() => flattenZoneCounts(treeQuery.data), [treeQuery.data])
+  const targetEstimate = estimateTargetTotal(scope, zoneCounts)
 
   // 标题：用户已填用用户的，否则按内容类型给默认
   const resolvedTitle = (): string => {
@@ -224,7 +238,8 @@ export default function GuidedWizard({
       case 'config':
         return picks.length > 0
       case 'scope':
-        return scopeReady(scope)
+        // 范围已选出目标 + 批次编排通过校验（百分比合计 100 / 台数合计等于目标数）
+        return scopeReady(scope) && batchIssue(batch, targetEstimate) === null
       case 'review':
         return title.trim() !== ''
     }
@@ -296,6 +311,7 @@ export default function GuidedWizard({
               onScopeChange={setScope}
               batch={batch}
               onBatchChange={setBatch}
+              targetEstimate={targetEstimate}
             />
           )}
           {current === 'review' && (
