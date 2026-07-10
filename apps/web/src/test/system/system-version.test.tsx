@@ -29,6 +29,10 @@ describe('/system/version 版本与更新页', () => {
     await waitFor(() => {
       expect(screen.getAllByText(/v0\.22\.0/).length).toBeGreaterThan(0)
     })
+    // 紧凑分区：版本信息 / 更新与渠道 / 维护操作三段常驻
+    expect(screen.getByText('版本信息')).toBeInTheDocument()
+    expect(screen.getByText('更新与渠道')).toBeInTheDocument()
+    expect(screen.getByText('维护操作')).toBeInTheDocument()
   })
 
   it('空态（已是最新）给出已最新提示', async () => {

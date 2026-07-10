@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { CheckCircle2, Cloud, PackageCheck, Rocket, Wifi } from 'lucide-react'
+import { CheckCircle2, Cloud, DownloadCloud, PackageCheck, Rocket, Wifi } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -103,83 +103,112 @@ export default function SystemVersionPage() {
   const rollbackAvailable = progress?.rollbackAvailable ?? false
 
   return (
-    <section className="grid gap-6">
-      <SectionHeader size="lg" icon={<PackageCheck className="size-5" />} title={t('system.version.title')} />
+    <section className="grid gap-5">
+      <SectionHeader size="lg" icon={<PackageCheck className="size-5" />} title={t('nav.systemVersion')} />
 
-      {/* 版本信息卡 */}
+      {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
       <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>
         {check && (
-          <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
-            {/* 当前版本主行：图标框 + 大版本号 + 渠道 / 状态药丸 + 检查更新 */}
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand" aria-hidden>
-                <Rocket className="size-5" />
-              </span>
-              <div className="min-w-0">
-                <div className="text-[11.5px] font-medium text-ink-3">{t('system.version.current')}</div>
-                <div className="text-[22px] leading-none font-bold tracking-[-0.5px] text-ink-1 tnum">
-                  {check.currentVersion}
+          <section className="grid gap-3">
+            <SectionHeader icon={<Rocket className="size-4" />} title={t('system.version.sections.info')} />
+            <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
+              {/* 当前版本主行：图标框 + 大版本号 + 渠道 / 状态药丸 + 检查更新 */}
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand" aria-hidden>
+                  <Rocket className="size-5" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[11.5px] font-medium text-ink-3">{t('system.version.current')}</div>
+                  <div className="text-[22px] leading-none font-bold tracking-[-0.5px] text-ink-1 tnum">
+                    {check.currentVersion}
+                  </div>
                 </div>
+                <Badge variant="off" className="ml-1">
+                  {check.channel === 'prerelease'
+                    ? t('system.version.channelPrerelease')
+                    : t('system.version.channelStable')}
+                </Badge>
+                {check.isDevBuild ? (
+                  <Badge variant="brand">{t('system.version.devBuild')}</Badge>
+                ) : check.hasUpdate ? (
+                  <Badge variant="warn" className="gap-1.5">
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {t('system.version.hasUpdate')}: {check.latestVersion}
+                  </Badge>
+                ) : (
+                  <Badge variant="ok" className="gap-1.5">
+                    <CheckCircle2 className="size-3" />
+                    {t('system.version.upToDate')}
+                  </Badge>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto"
+                  disabled={checkQuery.isFetching}
+                  onClick={() => {
+                    void checkQuery.refetch()
+                  }}
+                >
+                  {checkQuery.isFetching ? t('system.version.checking') : t('system.version.check')}
+                </Button>
               </div>
-              <Badge variant="off" className="ml-1">
-                {check.channel === 'prerelease'
-                  ? t('system.version.channelPrerelease')
-                  : t('system.version.channelStable')}
-              </Badge>
-              {check.isDevBuild ? (
-                <Badge variant="brand">{t('system.version.devBuild')}</Badge>
-              ) : check.hasUpdate ? (
-                <Badge variant="warn" className="gap-1.5">
-                  <span className="size-1.5 rounded-full bg-current" />
-                  {t('system.version.hasUpdate')}: {check.latestVersion}
-                </Badge>
-              ) : (
-                <Badge variant="ok" className="gap-1.5">
-                  <CheckCircle2 className="size-3" />
-                  {t('system.version.upToDate')}
-                </Badge>
+
+              <p className="text-xs text-ink-4">
+                {t('system.version.checkedAt')}: {formatIso(check.checkedAt)}
+              </p>
+
+              {check.hasUpdate && check.releaseNotes !== '' && (
+                <div className="rounded-lg border border-border bg-surface-2 p-4 text-sm">
+                  <p className="mb-1.5 flex items-center gap-1.5 font-semibold text-ink-1">
+                    <Cloud className="size-4 text-brand" />
+                    {t('system.version.releaseNotes')} · {check.latestVersion}
+                  </p>
+                  <MarkdownLite source={check.releaseNotes} />
+                  <p className="mt-2 text-xs text-ink-4">
+                    {t('system.version.publishedAt')}: {formatIso(check.publishedAt)}
+                  </p>
+                </div>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                className="ml-auto"
-                disabled={checkQuery.isFetching}
-                onClick={() => {
-                  void checkQuery.refetch()
-                }}
-              >
-                {checkQuery.isFetching ? t('system.version.checking') : t('system.version.check')}
-              </Button>
             </div>
+          </section>
+        )}
+      </AsyncSection>
 
-            <p className="text-xs text-ink-4">
-              {t('system.version.checkedAt')}: {formatIso(check.checkedAt)}
-            </p>
-
-            {check.hasUpdate && check.releaseNotes !== '' && (
-              <div className="rounded-lg border border-border bg-surface-2 p-4 text-sm">
-                <p className="mb-1.5 flex items-center gap-1.5 font-semibold text-ink-1">
-                  <Cloud className="size-4 text-brand" />
-                  {t('system.version.releaseNotes')} · {check.latestVersion}
-                </p>
-                <MarkdownLite source={check.releaseNotes} />
-                <p className="mt-2 text-xs text-ink-4">
-                  {t('system.version.publishedAt')}: {formatIso(check.publishedAt)}
-                </p>
-              </div>
-            )}
-
-            {/* 更新 / 回滚操作区 */}
-            <div className="flex flex-wrap gap-2 border-t pt-4">
-              <Button
-                disabled={!check.hasUpdate || check.isDevBuild}
-                onClick={() => {
-                  setActionError(null)
-                  setTriggerOpen(true)
+      {/* 更新与渠道 / 维护操作：紧凑双栏，避免长页堆叠 */}
+      <div className="grid gap-5 lg:grid-cols-2">
+        {/* 更新与渠道：触发更新 + 更新进度（常驻可见，不被顶下去） */}
+        <section className="grid gap-3">
+          <SectionHeader icon={<DownloadCloud className="size-4" />} title={t('system.version.sections.update')} />
+          <div className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+            <Button
+              disabled={!check || !check.hasUpdate || check.isDevBuild}
+              onClick={() => {
+                setActionError(null)
+                setTriggerOpen(true)
+              }}
+            >
+              {t('system.version.trigger')}
+            </Button>
+            {progress && progress.phase !== 'idle' ? (
+              <ProgressCard
+                progress={progress}
+                cancelling={cancelMutation.isPending}
+                onCancel={() => {
+                  cancelMutation.mutate()
                 }}
-              >
-                {t('system.version.trigger')}
-              </Button>
+              />
+            ) : (
+              <p className="text-sm text-ink-4">{t('system.version.progress.idleHint')}</p>
+            )}
+          </div>
+        </section>
+
+        {/* 维护操作：回滚 + 出站代理测试 */}
+        <section className="grid gap-3">
+          <SectionHeader icon={<Wifi className="size-4" />} title={t('system.version.sections.maintenance')} />
+          <div className="grid gap-4 rounded-xl border border-border bg-card p-4 shadow-card">
+            <div className="grid gap-2">
               <Button
                 variant="outline"
                 disabled={!rollbackAvailable}
@@ -191,47 +220,31 @@ export default function SystemVersionPage() {
                 {rollbackAvailable ? t('system.version.rollback') : t('system.version.rollbackUnavailable')}
               </Button>
             </div>
+            <div className="grid gap-2.5 border-t border-border pt-3">
+              <p className="text-sm text-ink-3">{t('system.version.proxy.hint')}</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={proxyMutation.isPending}
+                  onClick={() => {
+                    setProxyResult(null)
+                    proxyMutation.mutate()
+                  }}
+                >
+                  {proxyMutation.isPending ? t('system.version.proxy.testing') : t('system.version.proxy.test')}
+                </Button>
+                {proxyResult !== null && (
+                  <Badge variant={proxyResult.ok ? 'ok' : 'crit'} className="gap-1.5">
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {proxyResult.message}
+                  </Badge>
+                )}
+              </div>
+            </div>
           </div>
-        )}
-      </AsyncSection>
-
-      {/* 更新进度 */}
-      {progress && (
-        <ProgressCard
-          progress={progress}
-          cancelling={cancelMutation.isPending}
-          onCancel={() => {
-            cancelMutation.mutate()
-          }}
-        />
-      )}
-
-      {/* 代理测试 */}
-      <section className="grid gap-3">
-        <SectionHeader icon={<Wifi className="size-4" />} title={t('system.version.proxy.title')} />
-        <div className="grid gap-2.5 rounded-xl border border-border bg-card p-4 shadow-card">
-          <p className="text-sm text-ink-3">{t('system.version.proxy.hint')}</p>
-          <div className="flex items-center gap-3">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={proxyMutation.isPending}
-              onClick={() => {
-                setProxyResult(null)
-                proxyMutation.mutate()
-              }}
-            >
-              {proxyMutation.isPending ? t('system.version.proxy.testing') : t('system.version.proxy.test')}
-            </Button>
-            {proxyResult !== null && (
-              <Badge variant={proxyResult.ok ? 'ok' : 'crit'} className="gap-1.5">
-                <span className="size-1.5 rounded-full bg-current" />
-                {proxyResult.message}
-              </Badge>
-            )}
-          </div>
-        </div>
-      </section>
+        </section>
+      </div>
 
       {/* 触发更新确认（无需原因，但二次确认） */}
       <SystemReasonDialog

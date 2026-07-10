@@ -222,6 +222,12 @@ export const system = {
   version: {
     mission: '版本、渠道与在线更新',
     title: '版本与更新',
+    // 紧凑分区标题（避免长页堆叠）
+    sections: {
+      info: '版本信息',
+      update: '更新与渠道',
+      maintenance: '维护操作',
+    },
     current: '当前版本',
     channel: '更新渠道',
     channelStable: '稳定版',
@@ -250,6 +256,7 @@ export const system = {
       staging: '暂存中',
       readyRestart: '待重启生效',
       failed: '更新失败',
+      idleHint: '当前无进行中的更新任务',
     },
     trigger: '应用更新',
     triggering: '受理中…',
