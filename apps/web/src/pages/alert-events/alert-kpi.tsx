@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Bell, CircleAlert, CircleCheck, Inbox } from 'lucide-react'
 
 import { KpiCard, type KpiTone } from '@beacon/ui'
-import type { AlertEventItem } from '@beacon/devmock'
+import type { AlertEventItem } from '@beacon/contracts'
 
 interface AlertKpiProps {
   // 记录总数（来自服务端分页 total）

@@ -19,7 +19,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
-import type { ApiKeyItem } from '@beacon/devmock'
+import type { ApiKeyItem } from '@beacon/contracts'
 
 import {
   ApiClientError,

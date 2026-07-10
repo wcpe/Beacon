@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@beacon/ui'
-import type { ArchiveJob, ArchiveJobItem } from '@beacon/devmock'
+import type { ArchiveJob, ArchiveJobItem } from '@beacon/contracts'
 
 import { fetchArchiveJobDetail } from '../../api/system'
 import { formatCount, formatIso } from '../../features/system/format'

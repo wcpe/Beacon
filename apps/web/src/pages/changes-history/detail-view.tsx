@@ -20,7 +20,7 @@ import {
   TabsTrigger,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ChangeTarget } from '@beacon/devmock'
+import type { ChangeTarget } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
 import {

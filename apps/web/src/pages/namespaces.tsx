@@ -23,7 +23,7 @@ import {
   Textarea,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/devmock'
+import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/contracts'
 
 import {
   ApiClientError,

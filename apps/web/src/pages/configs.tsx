@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { FileCog, Info } from 'lucide-react'
 
 import { Button, SectionHeader } from '@beacon/ui'
-import type { ConfigFileItem } from '@beacon/devmock'
+import type { ConfigFileItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
 import NamespacePicker from '../features/delivery/namespace-picker'

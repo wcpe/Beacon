@@ -2,7 +2,7 @@
 // 复用集群域已导出的 ApiClientError（保证 instanceof 一致），请求封装走本域 request.ts。
 // 各子域端点拆到 delivery-assets.ts / delivery-configs.ts / delivery-changes.ts。
 
-import type { NamespaceListResponse } from '@beacon/devmock'
+import type { NamespaceListResponse } from '@beacon/contracts'
 
 import { ApiClientError } from './cluster'
 import { buildQuery, request } from './request'

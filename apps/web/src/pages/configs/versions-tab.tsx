@@ -19,7 +19,7 @@ import {
   SelectValue,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ConfigScopeLevel, ConfigScopeSummary } from '@beacon/devmock'
+import type { ConfigScopeLevel, ConfigScopeSummary } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
 import { ApiClientError } from '../../api/delivery'

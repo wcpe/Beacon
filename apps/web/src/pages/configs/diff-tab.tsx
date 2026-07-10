@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@beacon/ui'
-import type { ConfigScopeSummary } from '@beacon/devmock'
+import type { ConfigScopeSummary } from '@beacon/contracts'
 
 import { fetchConfigDiff, fetchConfigScopes } from '../../api/delivery-configs'
 

@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
-import type { AssignmentResult, ServerItem } from '@beacon/devmock'
+import type { AssignmentResult, ServerItem } from '@beacon/contracts'
 
 import { fetchServers, fetchZoneTree } from '../../api/cluster'
 import { writeAssignDrag } from '../../features/cluster/assign-drag'

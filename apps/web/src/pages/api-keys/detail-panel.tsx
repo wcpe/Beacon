@@ -3,7 +3,7 @@
 import { useTranslation } from 'react-i18next'
 
 import { Badge, Button } from '@beacon/ui'
-import type { ApiKeyItem } from '@beacon/devmock'
+import type { ApiKeyItem } from '@beacon/contracts'
 
 import { formatIso } from '../../features/system/format'
 

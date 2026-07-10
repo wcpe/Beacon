@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
-import type { ServerItem, ZoneTreeResponse } from '@beacon/devmock'
+import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import {
   ApiClientError,

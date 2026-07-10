@@ -15,7 +15,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { AuditItem } from '@beacon/devmock'
+import type { AuditItem } from '@beacon/contracts'
 
 import { auditExportUrl, fetchAudits } from '../../api/observability'
 import FilterSelect from '../../features/observability/filter-select'

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { DownloadCloud } from 'lucide-react'
 
 import { Badge, Button, SectionHeader, cn } from '@beacon/ui'
-import type { UpdateProgress } from '@beacon/devmock'
+import type { UpdateProgress } from '@beacon/contracts'
 
 interface ProgressCardProps {
   progress: UpdateProgress

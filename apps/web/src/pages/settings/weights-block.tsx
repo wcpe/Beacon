@@ -18,7 +18,7 @@ import {
   TableRow,
   TableSkeleton,
 } from '@beacon/ui'
-import type { HealthWeightsConfig } from '@beacon/devmock'
+import type { HealthWeightsConfig } from '@beacon/contracts'
 
 import { ApiClientError, fetchHealthWeights, putHealthWeights } from '../../api/system'
 import { formatIso } from '../../features/system/format'

@@ -8,7 +8,7 @@ import type {
   AssetPreviewResponse,
   AssetRescanResponse,
   AssetScanStatusItem,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 import { buildQuery, request } from './request'
 

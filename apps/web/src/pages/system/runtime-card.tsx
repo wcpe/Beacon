@@ -6,7 +6,7 @@ import { Activity, Cpu, Database, MemoryStick, Server, Tag, Timer } from 'lucide
 
 import { Badge, SectionHeader, cn, levelText, ratioLevel } from '@beacon/ui'
 import type { ReactNode } from 'react'
-import type { SystemStatus } from '@beacon/devmock'
+import type { SystemStatus } from '@beacon/contracts'
 
 import { formatBytes, formatCount, formatDuration } from '../../features/system/format'
 

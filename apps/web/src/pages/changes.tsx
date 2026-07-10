@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { CircleHelp } from 'lucide-react'
 
 import { Button, SectionHeader } from '@beacon/ui'
-import type { ChangeOrderSummary } from '@beacon/devmock'
+import type { ChangeOrderSummary } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
 import NamespacePicker from '../features/delivery/namespace-picker'

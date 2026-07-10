@@ -17,7 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowRight, Boxes, Maximize, Network, TriangleAlert, Waves, ZoomIn, ZoomOut } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
-import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/devmock'
+import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/contracts'
 
 import { fetchMessageEdges, fetchServers, fetchZoneTree } from '../../api/cluster'
 import { fetchHealthList } from '../../api/metrics'

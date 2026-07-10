@@ -136,6 +136,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@beacon/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@beacon/devmock':
         specifier: workspace:*
         version: link:../../packages/devmock

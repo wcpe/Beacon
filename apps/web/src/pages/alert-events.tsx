@@ -13,7 +13,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { AlertEventItem } from '@beacon/devmock'
+import type { AlertEventItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/http'
 import { fetchAlertEvents, handleAlertEvent } from '../api/observability'

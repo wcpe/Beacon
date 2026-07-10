@@ -18,7 +18,7 @@ import {
   SelectValue,
   Textarea,
 } from '@beacon/ui'
-import type { NamespaceItem } from '@beacon/devmock'
+import type { NamespaceItem } from '@beacon/contracts'
 
 import type { GrantTrustBody } from '../../api/system'
 

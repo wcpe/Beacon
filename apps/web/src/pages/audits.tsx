@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { ScrollText } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
-import type { AuditItem } from '@beacon/devmock'
+import type { AuditItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
 import AuditDetailPanel from './audits/audit-detail-panel'

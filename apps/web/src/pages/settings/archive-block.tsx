@@ -25,7 +25,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ArchiveJob } from '@beacon/devmock'
+import type { ArchiveJob } from '@beacon/contracts'
 
 import {
   ApiClientError,

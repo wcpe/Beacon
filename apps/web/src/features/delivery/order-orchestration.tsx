@@ -4,7 +4,7 @@
 // 历史详情「交付编排」共用；影响面汇总由调用方传入（各页自己的 impact 查询），不重复取数。
 import { useQuery } from '@tanstack/react-query'
 
-import type { ZoneTreeResponse } from '@beacon/devmock'
+import type { ZoneTreeResponse } from '@beacon/contracts'
 
 import { fetchZoneTree } from '../../api/cluster'
 import type { ChangeImpactResponse, ChangeOrderDetail } from '../../api/delivery-changes'

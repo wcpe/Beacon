@@ -14,7 +14,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { CommandItem } from '@beacon/devmock'
+import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
 

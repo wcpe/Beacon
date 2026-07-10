@@ -8,7 +8,7 @@ import type {
   MetricsSummary,
   Paged,
   SchedDecisionSummary,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 import { buildQuery, request } from './http'
 

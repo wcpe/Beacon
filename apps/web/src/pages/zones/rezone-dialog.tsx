@@ -15,7 +15,7 @@ import {
   Label,
   Textarea,
 } from '@beacon/ui'
-import type { ServerItem, ZoneTreeResponse } from '@beacon/devmock'
+import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import AssignTargetTree from './assign-target-tree'
 

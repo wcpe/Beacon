@@ -14,7 +14,7 @@ import {
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { AssetItem, AssetRescanResponse } from '@beacon/devmock'
+import type { AssetItem, AssetRescanResponse } from '@beacon/contracts'
 
 import MasterDetail from '../../features/shared/master-detail'
 import Pager from '../../features/delivery/pager'

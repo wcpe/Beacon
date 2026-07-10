@@ -11,7 +11,7 @@ import type {
   ServerItem,
   ServerListResponse,
   ZoneTreeResponse,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 /** 携带后端错误码的 API 错误（message 已脱敏，可直接展示） */
 export class ApiClientError extends Error {

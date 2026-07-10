@@ -20,7 +20,7 @@ import {
   SelectValue,
   TableSkeleton,
 } from '@beacon/ui'
-import type { MetricsSeriesPoint } from '@beacon/devmock'
+import type { MetricsSeriesPoint } from '@beacon/contracts'
 
 import { fetchMetricsSeries } from '../../api/metrics'
 import FilterSelect from '../../features/observability/filter-select'

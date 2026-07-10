@@ -15,7 +15,7 @@ import {
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { MessageEdgeStat } from '@beacon/devmock'
+import type { MessageEdgeStat } from '@beacon/contracts'
 
 import { fetchMessageEdges } from '../../api/cluster'
 

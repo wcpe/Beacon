@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom'
 import { ArrowUpRight } from 'lucide-react'
 
 import { Badge, Button, Label, Textarea } from '@beacon/ui'
-import type { AlertEventItem } from '@beacon/devmock'
+import type { AlertEventItem } from '@beacon/contracts'
 
 // 处理意图：确认或标记已处理
 export type HandleIntent = 'acknowledged' | 'resolved'

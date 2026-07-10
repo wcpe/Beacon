@@ -22,7 +22,7 @@ import {
   levelSolid,
   type HealthLevel,
 } from '@beacon/ui'
-import type { HealthItem } from '@beacon/devmock'
+import type { HealthItem } from '@beacon/contracts'
 
 import { fetchHealthList } from '../../api/metrics'
 

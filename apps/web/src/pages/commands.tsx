@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { TerminalSquare } from 'lucide-react'
 
 import { SectionHeader } from '@beacon/ui'
-import type { CommandItem } from '@beacon/devmock'
+import type { CommandItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
 import CommandDetailPanel from './commands/command-detail-panel'

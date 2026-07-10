@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { GitCompareArrows } from 'lucide-react'
 
 import { AsyncSection, TableSkeleton, cn } from '@beacon/ui'
-import type { HealthDetail, HealthItem, HealthLevel, ServerItem } from '@beacon/devmock'
+import type { HealthDetail, HealthItem, HealthLevel, ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
 import { fetchHealthDetail, fetchHealthList } from '../../api/metrics'

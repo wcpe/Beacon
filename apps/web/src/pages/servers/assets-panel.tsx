@@ -32,7 +32,7 @@ import {
   levelText,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/devmock'
+import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contracts'
 
 import {
   ApiClientError,

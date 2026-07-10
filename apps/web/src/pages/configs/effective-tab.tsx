@@ -14,7 +14,7 @@ import {
   SectionHeader,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ConfigProvenanceEntry } from '@beacon/devmock'
+import type { ConfigProvenanceEntry } from '@beacon/contracts'
 
 import { fetchConfigEffective } from '../../api/delivery-configs'
 

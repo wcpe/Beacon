@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { ArrowUpRight } from 'lucide-react'
 
 import { Badge } from '@beacon/ui'
-import type { AuditItem } from '@beacon/devmock'
+import type { AuditItem } from '@beacon/contracts'
 
 interface AuditDetailPanelProps {
   // 展示的审计行

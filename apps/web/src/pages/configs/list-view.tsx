@@ -16,7 +16,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
-import type { ConfigFileItem } from '@beacon/devmock'
+import type { ConfigFileItem } from '@beacon/contracts'
 
 import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/delivery/pager'

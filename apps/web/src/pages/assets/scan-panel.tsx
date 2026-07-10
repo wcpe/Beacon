@@ -14,7 +14,7 @@ import {
   type DataTableColumn,
   type SummaryItem,
 } from '@beacon/ui'
-import type { AssetScanStatusItem } from '@beacon/devmock'
+import type { AssetScanStatusItem } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
 import { fetchScanStatus } from '../../api/delivery-assets'

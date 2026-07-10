@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Layers } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, DataTable, SectionHeader, type DataTableColumn } from '@beacon/ui'
-import type { ConfigScopeSummary } from '@beacon/devmock'
+import type { ConfigScopeSummary } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import {

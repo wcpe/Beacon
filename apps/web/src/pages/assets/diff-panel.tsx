@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { SplitSquareHorizontal } from 'lucide-react'
 
 import { Button, Input, Label, SectionHeader } from '@beacon/ui'
-import type { AssetDiffResponse } from '@beacon/devmock'
+import type { AssetDiffResponse } from '@beacon/contracts'
 
 import TextDiff from '../../features/delivery/text-diff'
 import { ApiClientError } from '../../api/delivery'

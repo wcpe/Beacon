@@ -8,7 +8,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Badge, GaugeRing, SectionHeader, cn, ratioLevel, statusLevel } from '@beacon/ui'
 import type { HealthLevel } from '@beacon/ui'
 import type { ReactNode } from 'react'
-import type { SystemObservability } from '@beacon/devmock'
+import type { SystemObservability } from '@beacon/contracts'
 
 import MasterDetail from '../../features/shared/master-detail'
 import { formatCount } from '../../features/system/format'

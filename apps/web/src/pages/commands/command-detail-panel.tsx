@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { ArrowUpRight } from 'lucide-react'
 
 import { Badge } from '@beacon/ui'
-import type { CommandItem } from '@beacon/devmock'
+import type { CommandItem } from '@beacon/contracts'
 
 // 命令状态 → 状态药丸语义色：done 正常绿、failed/expired 危急红、其余次要。
 function badgeVariant(status: CommandItem['status']): 'ok' | 'off' | 'crit' {

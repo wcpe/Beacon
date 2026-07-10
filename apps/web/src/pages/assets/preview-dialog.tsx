@@ -17,7 +17,7 @@ import {
   ScrollArea,
   Textarea,
 } from '@beacon/ui'
-import type { AssetPreviewResponse } from '@beacon/devmock'
+import type { AssetPreviewResponse } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import { previewAsset } from '../../api/delivery-assets'

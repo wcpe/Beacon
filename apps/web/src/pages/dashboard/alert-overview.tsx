@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import { CircleAlert, Info, TriangleAlert } from 'lucide-react'
 
 import { AsyncSection, Badge, CardGridSkeleton, cn } from '@beacon/ui'
-import type { AlertEventItem } from '@beacon/devmock'
+import type { AlertEventItem } from '@beacon/contracts'
 
 import { fetchAlertEvents } from '../../api/observability'
 

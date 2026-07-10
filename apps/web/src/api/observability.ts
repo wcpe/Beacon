@@ -9,7 +9,7 @@ import type {
   CommandAnalytics,
   CommandItem,
   Paged,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 import { buildQuery, request } from './http'
 

@@ -12,7 +12,7 @@ import {
   AlertDialogTitle,
   Badge,
 } from '@beacon/ui'
-import type { AssetRescanResponse } from '@beacon/devmock'
+import type { AssetRescanResponse } from '@beacon/contracts'
 
 interface RescanDialogProps {
   open: boolean

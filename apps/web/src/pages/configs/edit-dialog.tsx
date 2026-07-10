@@ -14,7 +14,7 @@ import {
   Label,
   Textarea,
 } from '@beacon/ui'
-import type { ConfigScopeLevel } from '@beacon/devmock'
+import type { ConfigScopeLevel } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import { saveConfigVersion, validateConfig } from '../../api/delivery-configs'

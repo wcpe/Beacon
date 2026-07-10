@@ -18,7 +18,7 @@ import type {
   SystemStatus,
   UpdateCheck,
   UpdateProgress,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 import { ApiClientError, parseApiJson } from './cluster'
 

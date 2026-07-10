@@ -14,7 +14,7 @@ import {
   DialogTitle,
   Label,
 } from '@beacon/ui'
-import type { AssignmentResult, ServerItem, ZoneTreeResponse } from '@beacon/devmock'
+import type { AssignmentResult, ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import AssignTargetTree from './assign-target-tree'
 

@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
-import type { ConfigFileItem } from '@beacon/devmock'
+import type { ConfigFileItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import { fetchConfigScopes, fetchConfigFiles, fetchConfigVersions } from '../../api/delivery-configs'

@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { GitCompare } from 'lucide-react'
 
 import { Badge, Button, Input, Label, SectionHeader } from '@beacon/ui'
-import type { AssetCompareResponse } from '@beacon/devmock'
+import type { AssetCompareResponse } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import { fetchCompare } from '../../api/delivery-assets'

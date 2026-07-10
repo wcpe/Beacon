@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { Badge, Button, ScrollArea } from '@beacon/ui'
-import type { AssetItem } from '@beacon/devmock'
+import type { AssetItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/delivery'
 import { previewAsset } from '../../api/delivery-assets'

@@ -14,7 +14,7 @@ import type {
   ConfigChangeInput,
   FileDiffResponse,
   Paged,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 import { buildQuery, request } from './request'
 
@@ -38,7 +38,7 @@ export type {
   ConfigChangeInput,
   FileDiffResponse,
   PayloadState,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 /** 事件端点响应：SSE 的轮询替代形态（一次性数组） */
 export interface ChangeEventsResponse {

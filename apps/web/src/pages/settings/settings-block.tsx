@@ -23,7 +23,7 @@ import {
   TableRow,
   TableSkeleton,
 } from '@beacon/ui'
-import type { SettingItem } from '@beacon/devmock'
+import type { SettingItem } from '@beacon/contracts'
 
 import { ApiClientError, fetchSettings, updateSetting } from '../../api/system'
 

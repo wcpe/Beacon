@@ -13,7 +13,7 @@ import {
   Input,
   cn,
 } from '@beacon/ui'
-import type { ServerItem } from '@beacon/devmock'
+import type { ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
 

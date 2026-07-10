@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@beacon/contracts": "workspace:*",
     "@beacon/devmock": "workspace:*",
     "@beacon/ui": "workspace:*",
     "@tanstack/react-query": "5.62.7",

@@ -20,7 +20,7 @@ import {
   cn,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { AgentIdentityItem } from '@beacon/devmock'
+import type { AgentIdentityItem } from '@beacon/contracts'
 
 import { ApiClientError, approveIdentity, fetchIdentities, rejectIdentity } from '../../api/cluster'
 import ReasonDialog from './reason-dialog'

@@ -12,7 +12,7 @@ import type {
   ConfigScopeSummary,
   ConfigValidateResponse,
   ConfigVersionRow,
-} from '@beacon/devmock'
+} from '@beacon/contracts'
 
 import { buildQuery, request } from './request'
 

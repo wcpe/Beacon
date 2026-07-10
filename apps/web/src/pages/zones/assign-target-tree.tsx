@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Boxes, Check, ChevronDown, ChevronRight, Layers, MapPin, Search } from 'lucide-react'
 
 import { Input, cn } from '@beacon/ui'
-import type { ZoneTreeResponse } from '@beacon/devmock'
+import type { ZoneTreeResponse } from '@beacon/contracts'
 
 interface AssignTargetTreeProps {
   tree: ZoneTreeResponse | undefined

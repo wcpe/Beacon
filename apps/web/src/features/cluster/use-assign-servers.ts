@@ -2,7 +2,7 @@
 // 统一处理成功失效缓存、逐台结果与脱敏错误，避免两处重复 mutation 逻辑。
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 
-import type { AssignmentResult } from '@beacon/devmock'
+import type { AssignmentResult } from '@beacon/contracts'
 
 import { ApiClientError, assignServers } from '../../api/cluster'
 

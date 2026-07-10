@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@beacon/ui'
-import type { ConfigFormat } from '@beacon/devmock'
+import type { ConfigFormat } from '@beacon/contracts'
 
 const FORMATS: readonly ConfigFormat[] = ['yaml', 'json', 'properties']
 

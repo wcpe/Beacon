@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowRight, Handshake } from 'lucide-react'
 
 import { Badge, Button } from '@beacon/ui'
-import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/devmock'
+import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/contracts'
 
 import { formatIso } from '../../features/system/format'
 
