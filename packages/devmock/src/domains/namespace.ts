@@ -2,46 +2,17 @@
 // 契约真源：docs/specs/v2-namespace-isolation.md §5（namespace 增查、信任增查/收回）。
 
 import { HttpResponse, type HttpHandler } from 'msw'
-import { jsonError, mockGet, mockPost, paginate, pathParam, queryStr, readBody, type Paged } from '../http'
-import { getClusterState, isAssigned, type TrustCapability, type TrustRow } from '../data/cluster'
+import type {
+  NamespaceCreated,
+  NamespaceItem,
+  NamespaceListResponse,
+  NamespaceTrustItem,
+  NamespaceTrustListResponse,
+  TrustCapability,
+} from '@beacon/contracts'
+import { jsonError, mockGet, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
+import { getClusterState, isAssigned, type TrustRow } from '../data/cluster'
 import { isoOffset, pseudoSha256 } from '../support'
-
-/** namespace 列表项：附 server 数、bc_cluster 数与双向生效信任数 */
-export interface NamespaceItem {
-  id: number
-  name: string
-  description: string
-  serverCount: number
-  bcClusterCount: number
-  activeTrustCount: number
-  createdAt: string
-}
-
-export type NamespaceListResponse = Paged<NamespaceItem>
-
-/** 创建 namespace 的响应：一次性明文接入 token 只在此返回 */
-export interface NamespaceCreated extends NamespaceItem {
-  accessToken: string
-}
-
-/** 信任行视图（含授予 / 收回人、时间、原因） */
-export interface NamespaceTrustItem {
-  id: number
-  fromNamespaceId: number
-  toNamespaceId: number
-  fromNamespaceName: string
-  toNamespaceName: string
-  capability: TrustCapability
-  status: 'active' | 'revoked'
-  note: string
-  grantedBy: string
-  grantedAt: string
-  revokedBy: string | null
-  revokedAt: string | null
-  revokeReason: string | null
-}
-
-export type NamespaceTrustListResponse = Paged<NamespaceTrustItem>
 
 const TRUST_CAPABILITIES: readonly TrustCapability[] = ['schedule', 'message', 'agent_ops']
 

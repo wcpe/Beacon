@@ -2,73 +2,22 @@
 // 契约真源：docs/specs/v2-file-assets.md §5.2；敏感放行 §4.6（无 reason → 403 + sensitive 标记）。
 
 import { HttpResponse, type HttpHandler } from 'msw'
-import { jsonError, mockGet, mockPost, mockPut, paginate, queryStr, readBody, type Paged } from '../http'
+import type {
+  AssetCompareGroup,
+  AssetCompareResponse,
+  AssetDiffResponse,
+  AssetItem,
+  AssetListResponse,
+  AssetPreviewResponse,
+  AssetRescanResponse,
+  AssetScanStatusItem,
+  Paged,
+} from '@beacon/contracts'
+import { jsonError, mockGet, mockPost, mockPut, paginate, queryStr, readBody } from '../http'
 import { getClusterState } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { BASE_MS, hashString, isoOffset, pseudoSha256, uuidFrom } from '../support'
-
-/** 资产行（每服最新清单快照的一个文件） */
-export interface AssetItem {
-  serverId: string
-  namespaceId: number
-  path: string
-  ext: string
-  sha256: string
-  size: number
-  mtimeMs: number
-  isText: boolean
-  scannedAt: string
-}
-
-export type AssetListResponse = Paged<AssetItem>
-
-/** 每服扫描概要 */
-export interface AssetScanStatusItem {
-  serverId: string
-  namespaceId: number
-  manifestDigest: string
-  fileCount: number
-  totalSize: number
-  truncated: boolean
-  scannedAt: string
-  scanDurationMs: number
-}
-
-/** 跨服哈希比对分组 */
-export interface AssetCompareGroup {
-  sha256: string
-  size: number
-  servers: { serverId: string; mtimeMs: number; scannedAt: string }[]
-}
-
-export interface AssetCompareResponse {
-  path: string
-  groups: AssetCompareGroup[]
-  missing: string[]
-}
-
-/** 重扫下发结果 */
-export interface AssetRescanResponse {
-  results: { serverId: string; commandId: string | null; offline: boolean }[]
-}
-
-/** 文本预览响应 */
-export interface AssetPreviewResponse {
-  content: string | null
-  truncated: boolean
-  binary: boolean
-  sha256: string
-  size: number
-  sensitive: boolean
-}
-
-/** diff 响应：两侧内容或 identical 短路 */
-export interface AssetDiffResponse {
-  identical: boolean
-  left?: { serverId: string; path: string; content: string; sha256: string }
-  right?: { serverId: string; path: string; content: string; sha256: string }
-}
 
 // 默认敏感路径规则（spec §4.6 默认清单）
 const DEFAULT_SENSITIVE_PATTERNS = [

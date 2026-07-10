@@ -230,6 +230,9 @@ importers:
 
   packages/devmock:
     dependencies:
+      '@beacon/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       msw:
         specifier: 2.14.6
         version: 2.14.6(@types/node@25.9.4)(typescript@5.6.3)

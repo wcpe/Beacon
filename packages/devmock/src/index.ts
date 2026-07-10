@@ -25,10 +25,12 @@ export {
 export type { MockScenario } from './scenario'
 export { resetMockData } from './store'
 export { MOCK_TRACE_ID, errorBody } from './http'
-export type { MockErrorBody, Paged } from './http'
 export { BASE_MS } from './support'
 
-// 各域响应类型全部导出，供页面 agent 复用
+// 对外响应契约类型真源已迁至 @beacon/contracts（FR-155 前置）；此处整包 re-export，旧引用不破。
+export * from '@beacon/contracts'
+
+// 各域 mock 内部值 / 状态类型（handlers、mock 私有 Row / State）按域再导出，供测试与场景切换复用
 export * from './data/cluster'
 export * from './domains/identity'
 export * from './domains/namespace'

@@ -30,6 +30,7 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
+    "@beacon/contracts": "workspace:*",
     "msw": "2.14.6"
   }
 }

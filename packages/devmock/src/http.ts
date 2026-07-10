@@ -3,14 +3,8 @@
 // 分页 page/pageSize（+keyword）响应 {items,total}。
 
 import { http, HttpResponse, type HttpHandler } from 'msw'
+import type { MockErrorBody, Paged } from '@beacon/contracts'
 import { getMockScenario } from './scenario'
-
-/** 统一错误体（docs/API.md 通用约定） */
-export interface MockErrorBody {
-  code: string
-  message: string
-  traceId: string
-}
 
 /** mock 固定 traceId（确定性，测试可断言） */
 export const MOCK_TRACE_ID = 'trace-devmock'
@@ -107,12 +101,6 @@ export async function readBody<T>(request: Request): Promise<Partial<T>> {
   } catch {
     return {}
   }
-}
-
-/** 统一分页响应形状 {items,total} */
-export interface Paged<T> {
-  items: T[]
-  total: number
 }
 
 export interface PageOptions {

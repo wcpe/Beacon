@@ -3,22 +3,16 @@
 // 保证跨页面（/servers、/zones、/namespaces、/dashboard）看到的是同一个"集群"。
 // 实体字段以 docs/specs/v2-zone-authority.md §3 与 v2-agent-identity.md §3/§5 为真源。
 
+import type {
+  ConflictPeer,
+  IdentityStatus,
+  RezonePrefill,
+  ServerKind,
+  TrustCapability,
+} from '@beacon/contracts'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { isoOffset, uuidFrom } from '../support'
-
-export type ServerKind = 'proxy' | 'backend'
-
-export type IdentityStatus =
-  | 'pending'
-  | 'active'
-  | 'rejected'
-  | 'expired'
-  | 'disabled'
-  | 'conflict'
-  | 'unbound'
-
-export type TrustCapability = 'schedule' | 'message' | 'agent_ops'
 
 export interface NamespaceRow {
   id: number
@@ -84,18 +78,6 @@ export interface ServerRow {
   /** 在线摘要（活性来自指标批上报，mock 直接给结论） */
   online: boolean
   createdAt: string
-}
-
-export interface ConflictPeer {
-  bootId: string
-  lastAddr: string
-  lastSeenAt: string
-}
-
-export interface RezonePrefill {
-  targetKind: 'zone' | 'bc_cluster'
-  targetId: number
-  targetName: string
 }
 
 export interface IdentityRow {

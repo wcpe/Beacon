@@ -4,121 +4,28 @@
 // 足以支撑页面演示逐键来源 / diff / 版本链 / 回收站闭环。
 
 import { HttpResponse, type HttpHandler } from 'msw'
-import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody, type Paged } from '../http'
+import type {
+  ConfigDeletedKey,
+  ConfigDiffResponse,
+  ConfigEffectiveResponse,
+  ConfigFileItem,
+  ConfigFileListResponse,
+  ConfigFileRow,
+  ConfigFormat,
+  ConfigProvenanceEntry,
+  ConfigScopeLevel,
+  ConfigScopeSummary,
+  ConfigValidateResponse,
+  ConfigVersionRow,
+} from '@beacon/contracts'
+import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
 import { getClusterState, namespaceOfZone, type ClusterState } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { isoOffset, pseudoSha256 } from '../support'
 
-export type ConfigFormat = 'yaml' | 'json' | 'properties'
-export type ConfigScopeLevel = 'namespace' | 'bc_cluster' | 'region' | 'zone' | 'server'
-
 /** 敏感值占位符（读出口统一脱敏） */
 export const CONFIG_MASKED = '__BEACON_MASKED__'
-
-/** 配置文件行 */
-export interface ConfigFileRow {
-  id: number
-  namespaceId: number
-  name: string
-  format: ConfigFormat
-  description: string
-  schemaJson: string | null
-  sensitivePaths: string[]
-  deletedAt: string | null
-  deletedBy: string | null
-  createdBy: string
-  createdAt: string
-  updatedAt: string
-}
-
-/** 层版本行（不可变链） */
-export interface ConfigVersionRow {
-  id: number
-  configFileId: number
-  scopeLevel: ConfigScopeLevel
-  scopeRefId: number
-  versionNo: number
-  content: string
-  contentHash: string
-  isRemoval: boolean
-  basedOnVersionId: number | null
-  remark: string
-  createdBy: string
-  createdAt: string
-}
-
-/** 文件列表项 */
-export interface ConfigFileItem {
-  id: number
-  namespaceId: number
-  name: string
-  format: ConfigFormat
-  description: string
-  contributingLayerCount: number
-  updatedAt: string
-  effectiveHash?: string
-}
-
-export type ConfigFileListResponse = Paged<ConfigFileItem>
-
-/** 层贡献链概览 */
-export interface ConfigScopeSummary {
-  scopeLevel: ConfigScopeLevel
-  scopeRefId: number
-  scopeName: string
-  headVersionNo: number
-  headHash: string
-  isRemoval: boolean
-  updatedBy: string
-  updatedAt: string
-}
-
-/** 逐键来源 */
-export interface ConfigProvenanceEntry {
-  path: string
-  scopeLevel: ConfigScopeLevel
-  scopeRefId: number
-  scopeName: string
-  versionNo: number
-}
-
-/** 被 null 删除的键 */
-export interface ConfigDeletedKey {
-  path: string
-  scopeLevel: ConfigScopeLevel
-  scopeRefId: number
-  versionNo: number
-}
-
-/** 有效配置预览响应 */
-export interface ConfigEffectiveResponse {
-  effectiveContent: string
-  effectiveHash: string
-  provenance: ConfigProvenanceEntry[]
-  deletedKeys: ConfigDeletedKey[]
-  layers: {
-    scopeLevel: ConfigScopeLevel
-    scopeRefId: number | null
-    scopeName: string | null
-    contributing: boolean
-    headVersionNo: number | null
-    headHash: string | null
-  }[]
-}
-
-/** 键级 diff 响应 */
-export interface ConfigDiffResponse {
-  added: { path: string; right: string }[]
-  removed: { path: string; left: string }[]
-  changed: { path: string; left: string; right: string }[]
-  unifiedDiff: string
-}
-
-export interface ConfigValidateResponse {
-  valid: boolean
-  errors: { path: string; message: string }[]
-}
 
 interface ConfigState {
   files: ConfigFileRow[]
