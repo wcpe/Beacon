@@ -1,5 +1,6 @@
 // /system 控制面健康页测试：常规渲染运行时与子系统、空态、加载错误可重试。
 import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import SystemPage from '../../pages/system'
@@ -26,8 +27,26 @@ describe('/system 控制面健康页', () => {
     expect(await screen.findByText('v0.21.0')).toBeInTheDocument()
     // 子系统块标题存在
     expect(await screen.findByText('子系统健康')).toBeInTheDocument()
-    // 连接池明细存在
+    // 子系统列表存在
+    expect(await screen.findByText('子系统列表')).toBeInTheDocument()
+  })
+
+  it('点击子系统行展开非模态明细面板（不产生遮罩）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<SystemPage />)
+
+    // 初始无连接池明细、无模态遮罩
+    await screen.findByText('子系统列表')
+    expect(screen.queryByText('连接池明细')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    // 点「数据库连接池」子系统行（列表内为可点按钮，区别于仪表环标签）
+    await user.click(screen.getByRole('button', { name: /数据库连接池/ }))
+
+    // 明细面板为布局内列（非 role=dialog 遮罩）
     expect(await screen.findByText('连接池明细')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('空态（无在线实例）仍渲染运行时卡片', async () => {

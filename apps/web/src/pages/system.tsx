@@ -29,7 +29,7 @@ export default function SystemPage() {
 
   return (
     <section className="grid gap-6">
-      <SectionHeader size="lg" icon={<HeartPulse className="size-5" />} title={t('system.health.title')} />
+      <SectionHeader size="lg" icon={<HeartPulse className="size-5" />} title={t('nav.system')} />
 
       <AsyncSection
         isLoading={statusQuery.isLoading}

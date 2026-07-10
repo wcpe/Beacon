@@ -157,6 +157,13 @@ export const system = {
   health: {
     mission: 'Beacon 自身运行时与子系统健康',
     title: '控制面健康',
+    // 子系统健康等级 → 状态药丸文案
+    level: {
+      ok: '正常',
+      warn: '注意',
+      danger: '异常',
+      muted: '未知',
+    },
     // 运行时块
     runtime: {
       title: '进程运行时',
@@ -183,6 +190,10 @@ export const system = {
       registry: '实例注册表',
       command: '命令队列',
       loadFail: '控制面运行态加载失败',
+      // 子系统列表主列 + 非模态详情面板
+      listTitle: '子系统列表',
+      keyMetric: '关键指标',
+      selectHint: '点击左侧子系统查看明细指标',
     },
     // 明细块
     detail: {
