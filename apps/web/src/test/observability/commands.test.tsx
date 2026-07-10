@@ -46,9 +46,9 @@ describe('/commands 命令观测页', () => {
     // 等待首屏历史列表
     await screen.findByText('命令历史')
 
-    // 选择状态=失败
-    const statusSelect = screen.getByLabelText('状态')
-    await user.selectOptions(statusSelect, 'failed')
+    // 选择状态=失败：组件库 Select 需先展开触发器再点选项
+    await user.click(screen.getByLabelText('状态'))
+    await user.click(await screen.findByRole('option', { name: '失败' }))
 
     // 列表内出现失败结果文案（devmock failed 行 resultDetail），且筛选后仅剩失败命令
     await waitFor(() => {
