@@ -416,6 +416,9 @@ plugins/Beacon/delivery-backups/<orderId>/
 | GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（batch / status / serverId 过滤） |
 | GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（逐目标健康分 / 等级 / TPS / 告警序列） |
 | GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度（单 / 批 / 目标状态变更事件） |
+| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（file_diff 项返回 before/after 文本 + changeType + truncated）※ |
+
+> ※ 由 P2 全量 mock 管理台（FR-172）交付引导向导「预览文件内容」评审需求新增，当前仅 mock 实现。文件内容预览的真实数据面依赖 FR-164（P8 文件资产 V2 安全预览），接真时须走文件资产 V2 的敏感路径保护 + 查看审计通道，并在此处正式定稿请求 / 响应体与错误码。
 
 ### 5.2 agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发，此处为配套拉取 / 回执接口）
 

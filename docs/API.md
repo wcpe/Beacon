@@ -971,6 +971,9 @@ agent 面：
 | GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（批次 / 状态过滤） |
 | GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（健康 / TPS / 告警） |
 | GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度 |
+| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（before/after，供向导与详情预览）※ |
+
+> ※ 该端点为 P2 全量 mock 管理台（FR-172）交付引导向导「预览文件内容」评审需求新增，当前仅 mock 层实现。文件内容预览的真实数据面归 FR-164（文件内容预览与安全边界，P8）：接真时须并入文件资产 V2 的安全预览通道（敏感路径保护 + 查看审计），并将本端点契约（请求 / 响应体、错误码）正式化进 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.1 或 file-assets 规格。
 
 agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）：
 
