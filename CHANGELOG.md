@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 变更
+- 前端响应契约类型独立成 `packages/contracts`（`@beacon/contracts`，纯 type-only、无运行时依赖）：`apps/web` 生产代码不再在类型层依赖演示 mock 包 `@beacon/devmock`，`import type` 一律改指向 contracts；devmock 反向依赖 contracts，其 handler 仍以 `satisfies XxxResponse` 锚定契约防漂移。纯类型搬迁、零行为变更，演示 mock 构建隔离不变（FR-155 前置，ADR-XXXX）。
+
 ## 0.22.0（2026-07-10）
 
 ### 新增
