@@ -328,6 +328,42 @@ func TestV2ListServersEnriched(t *testing.T) {
 	}
 }
 
+// TestV2ListNamespaceTrustsEnriched 信任列表 / 授予返回富化视图：双方 namespace 名（code 口径），active 行 revoked* 为 nil。
+func TestV2ListNamespaceTrustsEnriched(t *testing.T) {
+	f := setupFR155Cluster(t)
+	other, _, err := f.svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "test", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建第二 namespace 失败: %v", err)
+	}
+	granted, err := f.svc.GrantNamespaceTrust(GrantNamespaceTrustParams{
+		FromNamespaceID: f.ns.ID, ToNamespaceID: other.ID, Capability: model.NamespaceTrustCapabilitySchedule,
+		Note: "联调", Operator: "admin",
+	})
+	if err != nil {
+		t.Fatalf("授予信任失败: %v", err)
+	}
+	if granted.FromNamespaceName != f.ns.Code || granted.ToNamespaceName != other.Code {
+		t.Fatalf("授予视图名应为 %s→%s，实际 %s→%s", f.ns.Code, other.Code, granted.FromNamespaceName, granted.ToNamespaceName)
+	}
+	trusts, err := f.svc.ListNamespaceTrusts()
+	if err != nil {
+		t.Fatalf("列信任失败: %v", err)
+	}
+	if len(trusts) != 1 {
+		t.Fatalf("应有 1 条信任，实际 %d", len(trusts))
+	}
+	v := trusts[0]
+	if v.FromNamespaceName != f.ns.Code || v.ToNamespaceName != other.Code {
+		t.Fatalf("信任视图名应为 %s→%s，实际 %s→%s", f.ns.Code, other.Code, v.FromNamespaceName, v.ToNamespaceName)
+	}
+	if v.Status != model.NamespaceTrustStatusActive {
+		t.Fatalf("信任应 active，实际 %s", v.Status)
+	}
+	if v.RevokedBy != nil || v.RevokedAt != nil || v.RevokeReason != nil {
+		t.Fatalf("active 信任 revoked* 应为 nil，实际 by=%v at=%v reason=%v", v.RevokedBy, v.RevokedAt, v.RevokeReason)
+	}
+}
+
 // TestV2ListNamespacesWithStats namespace 列表统计摘要正确。
 func TestV2ListNamespacesWithStats(t *testing.T) {
 	f := setupFR155Cluster(t)

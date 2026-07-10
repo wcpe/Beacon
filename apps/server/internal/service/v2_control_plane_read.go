@@ -405,6 +405,77 @@ func (s *V2ControlPlaneService) activeTrustCountsByNamespace() (map[uint]int64, 
 	return counts, nil
 }
 
+// NamespaceTrustView 是信任行富化视图（camelCase + 双方 namespace 名，对齐前端契约 NamespaceTrustItem）。
+// 名称取 namespace.code（与 /namespaces 列表的 name 口径一致）；空的 revokedBy / revokeReason 记 null。
+type NamespaceTrustView struct {
+	ID                uint       `json:"id"`
+	FromNamespaceID   uint       `json:"fromNamespaceId"`
+	ToNamespaceID     uint       `json:"toNamespaceId"`
+	FromNamespaceName string     `json:"fromNamespaceName"`
+	ToNamespaceName   string     `json:"toNamespaceName"`
+	Capability        string     `json:"capability"`
+	Status            string     `json:"status"`
+	Note              string     `json:"note"`
+	GrantedBy         string     `json:"grantedBy"`
+	GrantedAt         time.Time  `json:"grantedAt"`
+	RevokedBy         *string    `json:"revokedBy"`
+	RevokedAt         *time.Time `json:"revokedAt"`
+	RevokeReason      *string    `json:"revokeReason"`
+}
+
+// enrichTrusts 把信任行批量富化为视图：一次性批量取双方 namespace code，禁循环内查库（N+1）。
+func enrichTrusts(db *gorm.DB, trusts []model.NamespaceTrust) ([]NamespaceTrustView, error) {
+	views := make([]NamespaceTrustView, 0, len(trusts))
+	if len(trusts) == 0 {
+		return views, nil
+	}
+	nsSet := map[uint]struct{}{}
+	for i := range trusts {
+		nsSet[trusts[i].FromNamespaceID] = struct{}{}
+		nsSet[trusts[i].ToNamespaceID] = struct{}{}
+	}
+	var namespaces []model.Namespace
+	if err := db.Select("id", "code").Where("id IN ?", uintKeys(nsSet)).Find(&namespaces).Error; err != nil {
+		return nil, err
+	}
+	codeByID := make(map[uint]string, len(namespaces))
+	for i := range namespaces {
+		codeByID[namespaces[i].ID] = namespaces[i].Code
+	}
+	for i := range trusts {
+		views = append(views, buildTrustView(&trusts[i], codeByID))
+	}
+	return views, nil
+}
+
+// enrichTrust 富化单条信任行（授予响应用）。
+func enrichTrust(db *gorm.DB, trust *model.NamespaceTrust) (*NamespaceTrustView, error) {
+	views, err := enrichTrusts(db, []model.NamespaceTrust{*trust})
+	if err != nil {
+		return nil, err
+	}
+	return &views[0], nil
+}
+
+// buildTrustView 组装单条信任视图（名称来自已批量取的映射；空的 revokedBy / revokeReason 记 null）。
+func buildTrustView(t *model.NamespaceTrust, codeByID map[uint]string) NamespaceTrustView {
+	view := NamespaceTrustView{
+		ID: t.ID, FromNamespaceID: t.FromNamespaceID, ToNamespaceID: t.ToNamespaceID,
+		FromNamespaceName: codeByID[t.FromNamespaceID], ToNamespaceName: codeByID[t.ToNamespaceID],
+		Capability: t.Capability, Status: t.Status, Note: t.Note,
+		GrantedBy: t.GrantedBy, GrantedAt: t.GrantedAt, RevokedAt: t.RevokedAt,
+	}
+	if t.RevokedBy != "" {
+		rb := t.RevokedBy
+		view.RevokedBy = &rb
+	}
+	if t.RevokeReason != "" {
+		rr := t.RevokeReason
+		view.RevokeReason = &rr
+	}
+	return view
+}
+
 // RezonePrefillView 是换区工单重确认的预填目标（源自 server 的 pending 归属列）。
 type RezonePrefillView struct {
 	TargetKind string `json:"targetKind"`

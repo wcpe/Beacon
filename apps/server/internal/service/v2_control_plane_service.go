@@ -533,10 +533,12 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, 
 	return views, total, nil
 }
 
-func (s *V2ControlPlaneService) ListNamespaceTrusts() ([]model.NamespaceTrust, error) {
+func (s *V2ControlPlaneService) ListNamespaceTrusts() ([]NamespaceTrustView, error) {
 	var items []model.NamespaceTrust
-	err := s.db.Order("updated_at DESC").Find(&items).Error
-	return items, err
+	if err := s.db.Order("updated_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return enrichTrusts(s.db, items)
 }
 
 func pageSize(size int) int {
@@ -586,7 +588,7 @@ type GrantNamespaceTrustParams struct {
 }
 
 // GrantNamespaceTrust 授予或复活一条 namespace 信任。
-func (s *V2ControlPlaneService) GrantNamespaceTrust(p GrantNamespaceTrustParams) (*model.NamespaceTrust, error) {
+func (s *V2ControlPlaneService) GrantNamespaceTrust(p GrantNamespaceTrustParams) (*NamespaceTrustView, error) {
 	if p.FromNamespaceID == 0 || p.ToNamespaceID == 0 || p.FromNamespaceID == p.ToNamespaceID ||
 		!model.IsValidNamespaceTrustCapability(p.Capability) || p.Note == "" {
 		return nil, apperr.ErrInvalidParam
@@ -634,7 +636,7 @@ func (s *V2ControlPlaneService) GrantNamespaceTrust(p GrantNamespaceTrustParams)
 	if err := s.reloadTrustSnapshot(); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return enrichTrust(s.db, &out)
 }
 
 // RevokeNamespaceTrust 收回信任并刷新进程内快照。
