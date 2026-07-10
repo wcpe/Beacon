@@ -269,8 +269,10 @@ export default function GuidedWizard({
 
         <Stepper content={content} current={current} />
 
-        {/* 步骤主体：往返切换保留各步状态 */}
-        <div className="max-h-[62vh] min-h-[280px] overflow-y-auto pr-1">
+        {/* 步骤主体：往返切换保留各步状态。
+            overflow-y-auto 会连带裁切横向溢出，故左右各留内边距容纳卡片阴影 / ring，
+            再以等量负外边距抵消，保持与上方步骤条对齐。 */}
+        <div className="-mx-1.5 max-h-[62vh] min-h-[280px] overflow-y-auto px-1.5">
           {current === 'content' && <WizardStepContent value={content} onChange={handleContentChange} />}
           {current === 'source' && (
             <WizardStepSource
