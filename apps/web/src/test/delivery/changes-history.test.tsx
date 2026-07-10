@@ -36,7 +36,7 @@ describe('/changes/history 交付历史页', () => {
     expect(await screen.findByText('暂无历史变更单')).toBeInTheDocument()
   })
 
-  it('点行打开右侧非模态详情面板并展示单服状态', async () => {
+  it('点行打开右侧非模态详情面板并展示执行回放（批次状态机 + 单服状态）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesHistoryPage />)
@@ -45,9 +45,40 @@ describe('/changes/history 交付历史页', () => {
     expect(row).not.toBeNull()
     await user.click(row as HTMLElement)
 
-    // 详情面板单服状态区标题出现，且未产生模态遮罩
+    // 默认「执行回放」Tab：批次状态机只读回放 + 单服状态表，且未产生模态遮罩
+    expect(await screen.findByText('批次状态')).toBeInTheDocument()
+    expect(await screen.findByText('第 1 批')).toBeInTheDocument()
     expect(await screen.findByText('单服状态')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // 只读回放：不出现放行按钮
+    expect(screen.queryByRole('button', { name: '确认放行下一批' })).not.toBeInTheDocument()
+  })
+
+  it('历史详情复用共享控件：变更内容 / 交付编排 / 进度时间线可完整追溯', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesHistoryPage />)
+
+    const row = (await screen.findByText('全网核心配置基线对齐')).closest('tr')
+    await user.click(row as HTMLElement)
+    await screen.findByText('批次状态')
+
+    // 变更内容 Tab：共享变更内容预览（当时改了什么）
+    await user.click(screen.getByRole('tab', { name: '变更内容' }))
+    expect(await screen.findByText('配置变更清单（1 项）')).toBeInTheDocument()
+
+    // 交付编排 Tab：共享编排预览（发给谁 / 怎么编排）
+    await user.click(screen.getByRole('tab', { name: '交付编排' }))
+    expect(await screen.findByText('目标范围')).toBeInTheDocument()
+    expect(screen.getByText('批次规划')).toBeInTheDocument()
+    expect(screen.getByText('生效方式')).toBeInTheDocument()
+
+    // 进度时间线 Tab：共享双模式时间线（出过什么事）
+    await user.click(screen.getByRole('tab', { name: '进度时间线' }))
+    const timelinePanel = within(await screen.findByRole('tabpanel'))
+    expect(await timelinePanel.findByText('变更单 · 已完成')).toBeInTheDocument()
+    await user.click(timelinePanel.getByRole('button', { name: '详细' }))
+    expect(await timelinePanel.findByRole('columnheader', { name: '序号' })).toBeInTheDocument()
   })
 
   it('行内前置基础字段可见 + 吸顶筛选存在', async () => {

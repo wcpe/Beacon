@@ -1,5 +1,6 @@
-// 交付历史详情：溯任务 / 批次 / 单服状态 + 整单回滚（共享 order-rollback：高摩擦确认 +
-// 残留失败人工结束 + 回滚进度横幅）。
+// 交付历史详情：复用共享控件达成全程追溯——「当时改了什么」（变更内容预览）、
+// 「发给谁 / 怎么编排」（编排预览）、「怎么推进的」（批次状态机只读回放 + 单服状态）、
+// 「出过什么事」（进度时间线双模式）；整单回滚 / 结束回滚走共享 order-rollback。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -13,14 +14,28 @@ import {
   Button,
   DataTable,
   SectionHeader,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ChangeBatch, ChangeTarget } from '@beacon/devmock'
+import type { ChangeTarget } from '@beacon/devmock'
 
 import Pager from '../../features/delivery/pager'
-import { fetchChangeOrder, fetchChangeTargets } from '../../api/delivery-changes'
+import {
+  fetchChangeEvents,
+  fetchChangeImpact,
+  fetchChangeOrder,
+  fetchChangeTargets,
+  type ChangeOrderDetail,
+} from '../../api/delivery-changes'
+import BatchFlow from '../../features/delivery/batch-flow'
+import EventsTimeline from '../../features/delivery/events-timeline'
+import OrderChangePreview from '../../features/delivery/order-change-preview'
+import OrderOrchestration from '../../features/delivery/order-orchestration'
 import { OrderRollbackActions, RollbackBanner } from '../../features/delivery/order-rollback'
-import { BatchStatusBadge, TargetStatusBadge } from '../../features/delivery/status-badges'
+import { TargetStatusBadge } from '../../features/delivery/status-badges'
 import StatusBadge from './status-badge'
 
 const TARGET_PAGE_SIZE = 20
@@ -31,38 +46,78 @@ interface DetailViewProps {
 
 export default function DetailView({ orderId }: DetailViewProps) {
   const { t } = useTranslation()
-  const [page, setPage] = useState(1)
 
   const detailQuery = useQuery({
     queryKey: ['change-orders', 'detail', orderId],
     queryFn: () => fetchChangeOrder(orderId),
   })
 
+  const detail = detailQuery.data
+
+  return (
+    <div className="grid gap-4">
+      {/* 状态 + 回滚 / 结束操作（面板标题已由 MasterDetail 头部承担） */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-3">
+          {detail && <StatusBadge status={detail.status} />}
+        </div>
+        <div className="flex items-center gap-2">
+          {detail && <OrderRollbackActions order={detail} />}
+          {detail && (
+            <Button variant="ghost" size="sm" asChild>
+              <Link to={`/changes?order=${String(detail.id)}`}>
+                {t('delivery.changesHistory.list.openInChanges')}
+              </Link>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* 回滚信息横幅 + 回滚中逐目标进度 */}
+      {detail && <RollbackBanner order={detail} />}
+
+      <AsyncSection isLoading={detailQuery.isLoading} isError={detailQuery.isError} error={detailQuery.error}>
+        {detail && (
+          <Tabs defaultValue="replay">
+            <TabsList>
+              <TabsTrigger value="replay">{t('delivery.changesHistory.detail.tabs.replay')}</TabsTrigger>
+              <TabsTrigger value="content">{t('delivery.changesHistory.detail.tabs.content')}</TabsTrigger>
+              <TabsTrigger value="orchestration">
+                {t('delivery.changesHistory.detail.tabs.orchestration')}
+              </TabsTrigger>
+              <TabsTrigger value="timeline">{t('delivery.changesHistory.detail.tabs.timeline')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="replay" className="pt-3">
+              <ReplayTab detail={detail} />
+            </TabsContent>
+            <TabsContent value="content" className="pt-3">
+              {/* 当时改了什么：共享变更内容预览（含配置版本反查与行级 diff） */}
+              <OrderChangePreview items={detail.items} />
+            </TabsContent>
+            <TabsContent value="orchestration" className="pt-3">
+              <OrchestrationTab detail={detail} />
+            </TabsContent>
+            <TabsContent value="timeline" className="pt-3">
+              <TimelineTab orderId={detail.id} />
+            </TabsContent>
+          </Tabs>
+        )}
+      </AsyncSection>
+    </div>
+  )
+}
+
+// 执行回放：批次状态机（只读）+ 单服状态分页表
+function ReplayTab({ detail }: { detail: ChangeOrderDetail }) {
+  const { t } = useTranslation()
+  const [page, setPage] = useState(1)
+
   const targetsQuery = useQuery({
-    queryKey: ['change-orders', 'targets', orderId, page],
-    queryFn: () => fetchChangeTargets(orderId, { page, pageSize: TARGET_PAGE_SIZE }),
+    queryKey: ['change-orders', 'targets', detail.id, page],
+    queryFn: () => fetchChangeTargets(detail.id, { page, pageSize: TARGET_PAGE_SIZE }),
     placeholderData: keepPreviousData,
   })
-
-  const detail = detailQuery.data
   const targetsTotal = targetsQuery.data?.total ?? 0
-
-  const batchColumns = useMemo<DataTableColumn<ChangeBatch>[]>(
-    () => [
-      {
-        header: t('delivery.changes.detail.batches.columns.batch'),
-        cell: (row) => <span className="tnum">#{String(row.batchNo)}</span>,
-      },
-      {
-        header: t('delivery.changes.detail.batches.columns.status'),
-        cell: (row) => <BatchStatusBadge status={row.status} />,
-      },
-      { header: t('delivery.changes.detail.batches.columns.planned'), cell: (row) => row.plannedCount },
-      { header: t('delivery.changes.detail.batches.columns.success'), cell: (row) => row.successCount },
-      { header: t('delivery.changes.detail.batches.columns.failed'), cell: (row) => row.failedCount },
-    ],
-    [t],
-  )
 
   const targetColumns = useMemo<DataTableColumn<ChangeTarget>[]>(
     () => [
@@ -101,41 +156,13 @@ export default function DetailView({ orderId }: DetailViewProps) {
 
   return (
     <div className="grid gap-4">
-      {/* 状态 + 回滚 / 结束操作（面板标题已由 MasterDetail 头部承担） */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
-        <div className="flex flex-wrap items-center gap-3">
-          {detail && <StatusBadge status={detail.status} />}
-        </div>
-        <div className="flex items-center gap-2">
-          {detail && <OrderRollbackActions order={detail} />}
-          {detail && (
-            <Button variant="ghost" size="sm" asChild>
-              <Link to={`/changes?order=${String(detail.id)}`}>
-                {t('delivery.changesHistory.list.openInChanges')}
-              </Link>
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* 回滚信息横幅 + 回滚中逐目标进度 */}
-      {detail && <RollbackBanner order={detail} />}
-
-      {/* 批次状态 */}
+      {/* 批次状态机只读回放 */}
       <div className="grid gap-2">
         <SectionHeader
           icon={<Layers className="size-4" />}
           title={t('delivery.changesHistory.detail.batchesTitle')}
         />
-        <AsyncSection isLoading={detailQuery.isLoading} isError={detailQuery.isError} error={detailQuery.error}>
-          <DataTable
-            columns={batchColumns}
-            rows={detail?.batches}
-            rowKey={(row) => String(row.batchNo)}
-            emptyText={t('delivery.changes.detail.batches.empty')}
-            density="compact"
-          />
-        </AsyncSection>
+        <BatchFlow batches={detail.batches} orderStatus={detail.status} readOnly />
       </div>
 
       {/* 单服状态 */}
@@ -156,5 +183,32 @@ export default function DetailView({ orderId }: DetailViewProps) {
         <Pager page={page} total={targetsTotal} pageSize={TARGET_PAGE_SIZE} onPageChange={setPage} />
       </div>
     </div>
+  )
+}
+
+// 交付编排：影响面汇总（固化目标集时反映实际执行范围）+ 共享编排预览
+function OrchestrationTab({ detail }: { detail: ChangeOrderDetail }) {
+  const impactQuery = useQuery({
+    // pageSize 1：本 Tab 只用 summary，逐目标见「执行回放」
+    queryKey: ['change-orders', 'impact', detail.id, 1, 1],
+    queryFn: () => fetchChangeImpact(detail.id, 1, 1),
+  })
+  return (
+    <AsyncSection isLoading={impactQuery.isLoading} isError={impactQuery.isError} error={impactQuery.error}>
+      {impactQuery.data && <OrderOrchestration order={detail} summary={impactQuery.data.summary} />}
+    </AsyncSection>
+  )
+}
+
+// 进度时间线：共享双模式时间线（历史单为全程回放，不必轮询）
+function TimelineTab({ orderId }: { orderId: number }) {
+  const query = useQuery({
+    queryKey: ['change-orders', 'events', orderId],
+    queryFn: () => fetchChangeEvents(orderId),
+  })
+  return (
+    <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+      <EventsTimeline events={query.data?.events ?? []} />
+    </AsyncSection>
   )
 }

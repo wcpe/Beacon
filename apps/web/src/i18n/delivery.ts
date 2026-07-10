@@ -826,6 +826,12 @@ export const delivery = {
     // 详情
     detail: {
       backToList: '返回历史',
+      tabs: {
+        replay: '执行回放',
+        content: '变更内容',
+        orchestration: '交付编排',
+        timeline: '进度时间线',
+      },
       batchesTitle: '批次状态',
       targetsTitle: '单服状态',
       columns: {
