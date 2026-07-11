@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 指标采样入库·控制面接收端（FR-144 后端半边）：新增 agent 面 `POST /beacon/v2/agent/metrics/report`，接收双端 agent 每 5s 批量上报的 5s 桶聚合指标（TPS / CPU / 内存 / 在线 / 连接摘要）。端点挂 token↔namespace + identity 鉴权中间件（未人工确认的身份 `403 agent_not_confirmed`、token / 身份非法 `401`），把权威 namespace / serverId / kind 注入上下文、绝不信任请求体自报身份。接收路径**请求 goroutine 不碰 DB**——只做时钟偏移校验（>5min 回 `400 clock_skew_too_large`）+ 更新每实例 60s 内存窗口（独立锁、12 批环形、供后续健康计算与 dashboard 实时读）+ 非阻塞入队即回 `202 {accepted, deduplicated, self}`；有界队列满回 `429 metrics_ingest_busy` 背压 agent（数据不丢在 agent 侧）。后台写入协程池攒批（200 行 / 500ms）事务批插到当日 `metric_sample_YYYYMMDD` 日表——全仓首个日表基建：`store.EnsureDailyTable` 经 GORM Migrator 按需建表 + 进程内表名缓存、UTC 日期后缀、零方言可移植；唯一键 `(server_id, bucket_start_ms)` 幂等去重（重放 / 补报安全，回报 `deduplicated`）、跨日批自动拆表；写入多次重试仍失败则丢弃并累计计数暴露到 `/system` 自观测（错误不静默，ADR-0057）。`self`（自身健康）字段暂占位 `null`——健康值模型（FR-147）属 P4b。调度候选 / 决策 / 补报（FR-146/148）、管理面查询与页面接真尚待实现。
+
 ## 0.24.0（2026-07-11）
 
 ### 新增

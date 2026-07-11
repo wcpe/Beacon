@@ -280,6 +280,9 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 | POST | `/beacon/v2/agent/schedule/decide` | `{zone, purpose?, plugin?}` | 200 `{traceId, chosen:{serverId, score}?, candidateCount, excludedCount, failReason?}`；404 `zone_not_found`；403 `cross_namespace` |
 | POST | `/beacon/v2/agent/schedule/report-local` | `{decisions:[{localTraceId, tsMs, zone, plugin?, purpose?, candidateCount, excluded[], chosenServerId?, failReason?}]}` ≤100 条/批 | 202 `{accepted, deduplicated}`（按 localTraceId 幂等） |
 
+> **实现状态**：`POST /beacon/v2/agent/metrics/report`（FR-144 采样入库半边）已实现——token↔namespace + identity 鉴权中间件（未确认 403），接收端只校验 + 更 60s 内存窗口 + 非阻塞入队回 202，后台写入池事务批插当日 `metric_sample_YYYYMMDD`（唯一键幂等去重、跨日拆表、队列满 429、时钟偏移 400），`self` 暂占位 `null`（健康模型 FR-147 属 P4b）。
+> **落地口径澄清**：接收端**不再对 1s 原始样本做 5s 桶聚合**——`samples[]` 由 agent 端已聚合为 5s 桶（每条含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min`），控制面只做校验 / 去重 / 入库。这与 §4.3「批内按 5s 桶聚合」的措辞在**聚合发生位置**上不同（聚合前移到 agent）；若需以本口径为准，应写新 ADR 取代 §4.3 该措辞，此处仅登记现状不擅改决策正文。`GET /schedule/*` 与管理面查询、健康模型（FR-147）尚待实现。
+
 ### 5.2 管理面（`/admin/v2/*`，沿用登录令牌 / API 密钥）
 
 | 方法 | 路径 | 说明 | 消费页面 |

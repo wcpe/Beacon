@@ -844,10 +844,12 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/beacon/v2/agent/metrics/report` | 5s 批量上报 1s 采样指标（兼活性信号，顺带回传自身健康） |
+| POST | `/beacon/v2/agent/metrics/report` | 5s 批量上报 5s 桶聚合指标（兼活性信号，顺带回传自身健康）**【已实现·FR-144 采样入库半边】** |
 | GET | `/beacon/v2/agent/schedule/candidates` | 拉取本 namespace 各 zone 调度候选快照 |
 | POST | `/beacon/v2/agent/schedule/decide` | 请求控制面做一次调度决策（产生 traceId） |
 | POST | `/beacon/v2/agent/schedule/report-local` | 降级期本地决策恢复后补报（幂等） |
+
+> **FR-144 采样入库（后端半边）已实现**：`POST /beacon/v2/agent/metrics/report` 挂 token↔namespace + identity 鉴权中间件（未确认身份 403），接收端只做校验 + 更 60s 内存窗口 + 非阻塞入队即回 `202 {accepted, deduplicated, self}`（请求 goroutine 不碰 DB），后台写入池攒批事务批插当日 `metric_sample_YYYYMMDD` 日表（唯一键 `(server_id,bucket_start_ms)` 幂等去重、跨日自动拆表、队列满回 `429 metrics_ingest_busy`、时钟偏移 >5min 回 `400 clock_skew_too_large`）。`self`（自身健康）字段暂占位为 `null`——健康值模型（FR-147）在 P4b 落地后填充。`samples[]` 为 agent 端已按 5s 桶聚合的批（含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min` 字段）。调度候选 / 决策 / 补报（FR-146/148）与管理面查询、健康模型（FR-147）尚待实现。
 
 管理面：
 
