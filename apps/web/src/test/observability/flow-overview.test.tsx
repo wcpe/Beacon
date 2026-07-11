@@ -1,6 +1,7 @@
 // FlowOverview 卡（/dashboard 玩家流 / 连接流）测试：
 // 1) 生产源码不得引用 @beacon/devmock（生产代码只依赖 @beacon/contracts，mock 包仅测试 / 演示装配可用）；
-// 2) 时间窗按「挂载时刻 5 分钟取整」本地计算（to = 取整基准，from = to − 1h），不再取 mock 包的 BASE_MS。
+// 2) 时间窗按「挂载时刻 5 分钟取整」本地计算（to = 取整基准，from = to − 1h），不再取 mock 包的 BASE_MS；
+// 3) 缺端点降级：连接流端点未提供时（SPA 回退 HTML / 404）展示中性占位，不显误导性错误；真错误仍如实展示。
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { screen } from '@testing-library/react'
@@ -58,5 +59,44 @@ describe('FlowOverview 玩家流 / 连接流卡', () => {
     expect(url.searchParams.get('to')).toBe(new Date(expectedBaseMs).toISOString())
     expect(url.searchParams.get('from')).toBe(new Date(expectedBaseMs - 3_600_000).toISOString())
     expect(url.searchParams.get('bucket')).toBe('5m')
+  })
+
+  it('端点未提供（真后端 SPA 回退返回 HTML）时展示中性占位而非错误', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('/admin/v2/connections/stats', () =>
+        HttpResponse.html('<!doctype html><html><body>SPA</body></html>'),
+      ),
+    )
+
+    renderPage(<FlowOverview />)
+    expect(await screen.findByText('连接流数据暂未开放（随后续版本提供）')).toBeInTheDocument()
+    expect(screen.queryByText(/加载失败/)).not.toBeInTheDocument()
+  })
+
+  it('端点未提供（404）时同样归一为中性占位', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('/admin/v2/connections/stats', () =>
+        HttpResponse.json({ code: 'not_found', message: '端点不存在' }, { status: 404 }),
+      ),
+    )
+
+    renderPage(<FlowOverview />)
+    expect(await screen.findByText('连接流数据暂未开放（随后续版本提供）')).toBeInTheDocument()
+    expect(screen.queryByText(/加载失败/)).not.toBeInTheDocument()
+  })
+
+  it('真实错误（500）仍如实展示脱敏错误文案，不被占位吞掉', async () => {
+    useScenario('normal')
+    server.use(
+      http.get('/admin/v2/connections/stats', () =>
+        HttpResponse.json({ code: 'internal', message: '数据库连接失败' }, { status: 500 }),
+      ),
+    )
+
+    renderPage(<FlowOverview />)
+    expect(await screen.findByText(/加载失败：数据库连接失败/)).toBeInTheDocument()
+    expect(screen.queryByText('连接流数据暂未开放（随后续版本提供）')).not.toBeInTheDocument()
   })
 })

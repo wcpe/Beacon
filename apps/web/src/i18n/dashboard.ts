@@ -63,6 +63,7 @@ export const dashboard = {
     estimatedOpen: '在线连接',
     window1h: '最近 1 小时',
     empty: '当前时间窗内无连接活动',
+    pending: '连接流数据暂未开放（随后续版本提供）',
     peakOnline: '峰值在线',
     totalOpens: '累计接入',
     totalAbnormal: '异常断开',

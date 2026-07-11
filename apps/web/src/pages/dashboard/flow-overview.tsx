@@ -9,6 +9,7 @@ import { ChartLine, ChevronRight } from 'lucide-react'
 import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
 
 import { fetchConnStats } from '../../api/connections'
+import { ApiClientError } from '../../api/http'
 
 const WINDOW_MS = 3_600_000
 // 时间基准取整粒度（5 分钟）：查询窗与 queryKey 随之稳定，演示模式下与 mock 数据基准（同取整）自然对齐
@@ -36,6 +37,13 @@ function polyline(points: { x: number; y: number }[]): string {
   return points.map((p) => `${String(p.x)},${String(p.y)}`).join(' ')
 }
 
+// 端点未提供判定：连接流端点由后续阶段交付，真后端未挂载时请求回落 SPA 返回 HTML
+//（被请求层判为 mock_not_ready）或 404。这两种归一为「数据暂未开放」中性占位，
+// 不展示误导性错误文案；其余错误仍如实经 AsyncSection 展示（ADR-0057 不静默）。
+function isEndpointNotReady(error: unknown): boolean {
+  return error instanceof ApiClientError && (error.code === 'mock_not_ready' || error.status === 404)
+}
+
 export default function FlowOverview() {
   const { t } = useTranslation()
   // 挂载时刻按 5 分钟取整一次作为窗口终点（本地计算，不依赖 mock 包的时间基准）
@@ -48,6 +56,8 @@ export default function FlowOverview() {
     queryFn: () => fetchConnStats({ from, to, bucket: '5m' }),
   })
   const buckets = useMemo(() => query.data?.buckets ?? [], [query.data])
+  // 缺端点降级：端点未提供不算错误，改走中性占位分支
+  const endpointPending = query.isError && isEndpointNotReady(query.error)
 
   const onlineSeries = buckets.map((b) => b.estimatedOpen)
   const opensSeries = buckets.map((b) => b.opens)
@@ -82,11 +92,13 @@ export default function FlowOverview() {
       </div>
       <AsyncSection
         isLoading={query.isLoading}
-        isError={query.isError}
+        isError={query.isError && !endpointPending}
         error={query.error}
         skeleton={<CardGridSkeleton count={3} />}
       >
-        {isEmpty ? (
+        {endpointPending ? (
+          <p className="text-sm text-ink-3">{t('dashboard.flow.pending')}</p>
+        ) : isEmpty ? (
           <p className="text-sm text-ink-3">{t('dashboard.flow.empty')}</p>
         ) : (
           <div className="grid gap-3">
