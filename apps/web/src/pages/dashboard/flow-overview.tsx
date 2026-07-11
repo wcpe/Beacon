@@ -7,11 +7,12 @@ import { useTranslation } from 'react-i18next'
 import { ChartLine, ChevronRight } from 'lucide-react'
 
 import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
-import { BASE_MS } from '@beacon/devmock/support'
 
 import { fetchConnStats } from '../../api/connections'
 
 const WINDOW_MS = 3_600_000
+// 时间基准取整粒度（5 分钟）：查询窗与 queryKey 随之稳定，演示模式下与 mock 数据基准（同取整）自然对齐
+const BASE_ALIGN_MS = 300_000
 // SVG 画布尺寸（viewBox），随卡片宽度自适应。
 const VW = 560
 const VH = 200
@@ -37,8 +38,10 @@ function polyline(points: { x: number; y: number }[]): string {
 
 export default function FlowOverview() {
   const { t } = useTranslation()
-  const to = useMemo(() => new Date(BASE_MS).toISOString(), [])
-  const from = useMemo(() => new Date(BASE_MS - WINDOW_MS).toISOString(), [])
+  // 挂载时刻按 5 分钟取整一次作为窗口终点（本地计算，不依赖 mock 包的时间基准）
+  const baseMs = useMemo(() => Math.floor(Date.now() / BASE_ALIGN_MS) * BASE_ALIGN_MS, [])
+  const to = useMemo(() => new Date(baseMs).toISOString(), [baseMs])
+  const from = useMemo(() => new Date(baseMs - WINDOW_MS).toISOString(), [baseMs])
 
   const query = useQuery({
     queryKey: ['dashboard', 'conn-stats', from, to],
