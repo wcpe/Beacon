@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * v2 指标采样 + 批上报协调器（FR-144）：从 [AgentLifecycle] 拆出，避免其膨胀成上帝类（AGENTS §10.1）。
  *
- * 两条独立「代」循环，各自续杯、[start] 递增代使旧循环自然退出（reconnect 重注册即重启、[stop] 令其退出）：
+ * 两条独立「代」循环，各自续杯（[start] 幂等，重注册不重启；[stop] 令其退出，之后重新 [start] 递增代使旧 tick 失效）：
  * - **1s 采样循环**：每秒读一帧指标（廉价 MXBean + 主线程原子埋点值）经 [MetricSampleFactory] 建样本入环形缓冲，**绝不上主线程**。
  * - **5s 批上报循环**：取缓冲已闭合桶经 [MetricBatchAggregator] 聚成 5s 批上报（[BeaconApiClient.reportMetricsBatch]），
  *   202 才 ack 移除；忙 / 未确认 / 拒绝 / 失败保留缓冲下一 tick 重试（固定节奏、缓冲即背压不退避）。断连补报即此机制的自然结果。
@@ -77,11 +77,13 @@ class MetricsSamplingCoordinator(
     }
 
     /**
-     * 启动两条循环（随注册成功调用；reconnect 重注册即重启，递增代使旧循环退出）。
-     * 起始代内联于此以精简函数数量。
+     * 启动两条循环（随注册成功调用）。**幂等**：已激活时的重复 start（心跳 404 / 断连恢复等触发的重注册）
+     * 直接返回，不补打立即帧、不递增代，现有循环继续跑——否则旧代循环退出前与新代立即帧叠加，
+     * 会把 >5 个 1s 样本挤进同一 5s 桶（spec §3.1 规定 1~5）。
+     * 仅「未激活 → 激活」转变时启动；stop 后重新 start 仍正常重启（递增代使 stop 前遗留的旧 tick 失效）。
      */
     fun start() {
-        active.set(true)
+        if (!active.compareAndSet(false, true)) return
         val sGen = samplingGen.get() + 1
         samplingGen.set(sGen)
         scheduleSampling(sGen, 0)

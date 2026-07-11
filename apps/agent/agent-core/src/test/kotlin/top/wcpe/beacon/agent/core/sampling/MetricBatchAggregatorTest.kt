@@ -149,6 +149,33 @@ class MetricBatchAggregatorTest {
     }
 
     @Test
+    fun `桶内超额样本封顶为 5 且只聚合最新 5 条`() {
+        // 7 条同桶样本（重注册竞态可致超额，spec §3.1 规定 1~5）：前 2 条带明显异常值，应被封顶剔除。
+        val batches =
+            MetricBatchAggregator.aggregate(
+                listOf(
+                    backend(tsMs = 0L, cpuPct = 90.0, tps = 1.0, online = 50, reportRttMs = 1),
+                    backend(tsMs = 500L, cpuPct = 90.0, tps = 1.0, online = 50, reportRttMs = 2),
+                    backend(tsMs = 1000L, cpuPct = 40.0, tps = 20.0, online = 4, reportRttMs = 3),
+                    backend(tsMs = 2000L, cpuPct = 60.0, tps = 18.0, online = 6, reportRttMs = 4),
+                    backend(tsMs = 3000L, cpuPct = 50.0, tps = 16.0, online = 8, reportRttMs = 5),
+                    backend(tsMs = 4000L, cpuPct = 50.0, tps = 14.0, online = 2, reportRttMs = 6),
+                    backend(tsMs = 4500L, cpuPct = 50.0, tps = 12.0, online = 10, reportRttMs = 7),
+                ),
+            )
+        val b = batches.single()
+        assertEquals(5, b.sampleCount, "超额桶 sample_count 封顶为 5")
+        assertEquals(50.0, b.load.cpuPctAvg, "只对最新 5 条（40/60/50/50/50）求均，前 2 条被剔除")
+        assertEquals(60.0, b.load.cpuPctMax)
+        assertEquals(7, b.reportRttMs, "reportRttMs 仍取桶内末样本")
+        val bp = assertIs<BackendBatch>(b.payload)
+        assertEquals(16.0, bp.tpsAvg, "tps 均值只含最新 5 条（20/18/16/14/12）")
+        assertEquals(12.0, bp.tpsMin, "tps 最小值不含被剔除的 1.0")
+        assertEquals(6, bp.onlineAvg)
+        assertEquals(10, bp.onlineMax, "在线最大值不含被剔除的 50")
+    }
+
+    @Test
     fun `proxy RTT 全不可用聚合为 -1`() {
         val batches =
             MetricBatchAggregator.aggregate(

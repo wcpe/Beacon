@@ -6,7 +6,8 @@ import kotlin.math.roundToInt
  * 批内 5s 桶聚合（FR-144 §4.1 / §3.1，无副作用纯函数，便于穷举单测）。
  *
  * 把升序的原始 1s 样本按 `bucketStart = tsMs − tsMs % 5000` 分桶，每桶聚成一行 [MetricBatch]
- * （avg / max / min，`sampleCount` 为桶内实际样本数 1~5）。桶内样本同角色（一台 agent 只采一种角色）。
+ * （avg / max / min，`sampleCount` 为桶内实际样本数 1~5；超额时防御封顶只取最新 5 条）。
+ * 桶内样本同角色（一台 agent 只采一种角色）。
  *
  * 聚合口径（agent 侧，控制面按行入库、不再二次聚合）：
  * - CPU：仅对**可用**样本（cpuPct ≥ 0）求 avg / max；全不可用为 -1（不被 -1 哨兵拉低）。
@@ -16,6 +17,9 @@ import kotlin.math.roundToInt
  * - reportRttMs：取桶内**最后一条**样本携带值（最新一次上报 RTT）。
  */
 object MetricBatchAggregator {
+    /** 单桶样本数上限（spec §3.1 sample_count 1~5）：超额（重注册竞态等）时只保留最新样本作防御封顶。 */
+    private const val MAX_SAMPLES_PER_BUCKET = 5
+
     /**
      * 按 [bucketMs] 桶（默认 5s）聚合升序样本，返回按桶起点升序的聚合行。空输入返回空列表。
      *
@@ -39,14 +43,17 @@ object MetricBatchAggregator {
     private fun aggregateBucket(
         bucketStart: Long,
         group: List<MetricSample>,
-    ): MetricBatch =
-        MetricBatch(
+    ): MetricBatch {
+        // 防御封顶：超额时取升序列表的末 5 条（保留最新），聚合值只对被取样本计算。
+        val capped = if (group.size > MAX_SAMPLES_PER_BUCKET) group.takeLast(MAX_SAMPLES_PER_BUCKET) else group
+        return MetricBatch(
             bucketStartMs = bucketStart,
-            sampleCount = group.size,
-            load = aggregateLoad(group),
-            reportRttMs = group.last().reportRttMs,
-            payload = aggregatePayload(group),
+            sampleCount = capped.size,
+            load = aggregateLoad(capped),
+            reportRttMs = capped.last().reportRttMs,
+            payload = aggregatePayload(capped),
         )
+    }
 
     private fun aggregateLoad(group: List<MetricSample>): LoadAgg {
         val cpuAvailable = group.map { it.cpuPct }.filter { it >= 0.0 }
