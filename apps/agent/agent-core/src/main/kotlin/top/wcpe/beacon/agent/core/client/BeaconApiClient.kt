@@ -1002,31 +1002,33 @@ class BeaconApiClient(
     }
 
     /**
-     * 把一个 5s 批聚合行拼成 v2 指标上报 samples 元素（FR-144 §3.1，snake_case 键固定供控制面对齐）。
+     * 把一个 5s 批聚合行拼成 v2 指标上报 samples 元素（FR-144）。
      *
-     * 每行含全部 §3.1 指标列，不适用维度写缺省值（数值 0、后端 RTT -1），由控制面按 kind 解释，不特判 NULL。
+     * 线上键与信封同为 **camelCase**（v2 API 通用约定；控制面接收结构体 json tag 亦 camelCase，再映射到 §3.1 的
+     * snake_case DB 列——§3.1 是库表列名、非线上键）。每行含全部指标维度，不适用维度写缺省值（数值 0、后端 RTT -1），
+     * 由控制面按 kind 解释，不特判 NULL。
      */
     private fun metricBatchBody(batch: MetricBatch): Map<String, Any?> {
         val backend = batch.payload as? BackendBatch
         val proxy = batch.payload as? ProxyBatch
         return mapOf(
-            "bucket_start_ms" to batch.bucketStartMs,
-            "sample_count" to batch.sampleCount,
-            "cpu_pct_avg" to batch.load.cpuPctAvg,
-            "cpu_pct_max" to batch.load.cpuPctMax,
-            "mem_used_mb_avg" to batch.load.memUsedMbAvg,
-            "mem_max_mb" to batch.load.memMaxMb,
-            "tps_avg" to (backend?.tpsAvg ?: 0.0),
-            "tps_min" to (backend?.tpsMin ?: 0.0),
-            "online_avg" to (backend?.onlineAvg ?: 0),
-            "online_max" to (backend?.onlineMax ?: 0),
-            "max_online" to (backend?.maxOnline ?: 0),
-            "conn_avg" to (proxy?.connAvg ?: 0),
-            "conn_max" to (proxy?.connMax ?: 0),
-            "backend_up" to (proxy?.backendUp ?: 0),
-            "backend_total" to (proxy?.backendTotal ?: 0),
-            "backend_rtt_ms_avg" to (proxy?.backendRttMsAvg ?: MetricSample.RTT_UNAVAILABLE),
-            "report_rtt_ms" to batch.reportRttMs,
+            "bucketStartMs" to batch.bucketStartMs,
+            "sampleCount" to batch.sampleCount,
+            "cpuPctAvg" to batch.load.cpuPctAvg,
+            "cpuPctMax" to batch.load.cpuPctMax,
+            "memUsedMbAvg" to batch.load.memUsedMbAvg,
+            "memMaxMb" to batch.load.memMaxMb,
+            "tpsAvg" to (backend?.tpsAvg ?: 0.0),
+            "tpsMin" to (backend?.tpsMin ?: 0.0),
+            "onlineAvg" to (backend?.onlineAvg ?: 0),
+            "onlineMax" to (backend?.onlineMax ?: 0),
+            "maxOnline" to (backend?.maxOnline ?: 0),
+            "connAvg" to (proxy?.connAvg ?: 0),
+            "connMax" to (proxy?.connMax ?: 0),
+            "backendUp" to (proxy?.backendUp ?: 0),
+            "backendTotal" to (proxy?.backendTotal ?: 0),
+            "backendRttMsAvg" to (proxy?.backendRttMsAvg ?: MetricSample.RTT_UNAVAILABLE),
+            "reportRttMs" to batch.reportRttMs,
         )
     }
 

@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * BeaconApiClient.reportMetricsBatch 契约单测（FR-144 §5.1）。
  *
  * 锁定：v2 端点路径、鉴权头（X-Beacon-Token + X-Beacon-Identity）、报文信封与 samples 元素键集
- * （snake_case §3.1）、不适用维度缺省值、状态码 → outcome 映射（202/429/403/400）。
+ * （全 camelCase，与控制面接收结构体对齐）、不适用维度缺省值、状态码 → outcome 映射（202/429/403/400）。
  */
 class BeaconApiClientMetricsBatchTest {
     private class CapturingCodec(private val decodeBody: (String) -> Any?) : JsonCodec {
@@ -139,36 +139,36 @@ class BeaconApiClientMetricsBatchTest {
         val s = firstSample(codec)
         assertEquals(
             setOf(
-                "bucket_start_ms",
-                "sample_count",
-                "cpu_pct_avg",
-                "cpu_pct_max",
-                "mem_used_mb_avg",
-                "mem_max_mb",
-                "tps_avg",
-                "tps_min",
-                "online_avg",
-                "online_max",
-                "max_online",
-                "conn_avg",
-                "conn_max",
-                "backend_up",
-                "backend_total",
-                "backend_rtt_ms_avg",
-                "report_rtt_ms",
+                "bucketStartMs",
+                "sampleCount",
+                "cpuPctAvg",
+                "cpuPctMax",
+                "memUsedMbAvg",
+                "memMaxMb",
+                "tpsAvg",
+                "tpsMin",
+                "onlineAvg",
+                "onlineMax",
+                "maxOnline",
+                "connAvg",
+                "connMax",
+                "backendUp",
+                "backendTotal",
+                "backendRttMsAvg",
+                "reportRttMs",
             ),
             s.keys,
-            "samples 元素键集合须与 §3.1 列一致",
+            "samples 元素键集合须为 camelCase，与控制面接收结构体一致",
         )
-        assertEquals(5000L, s["bucket_start_ms"])
-        assertEquals(5, s["sample_count"])
-        assertEquals(19.5, s["tps_avg"])
-        assertEquals(40, s["online_max"])
-        assertEquals(12, s["report_rtt_ms"])
+        assertEquals(5000L, s["bucketStartMs"])
+        assertEquals(5, s["sampleCount"])
+        assertEquals(19.5, s["tpsAvg"])
+        assertEquals(40, s["onlineMax"])
+        assertEquals(12, s["reportRttMs"])
         // backend 行 proxy 维度写缺省：连接 / 后端 0，后端 RTT -1。
-        assertEquals(0, s["conn_avg"])
-        assertEquals(0, s["backend_up"])
-        assertEquals(-1.0, s["backend_rtt_ms_avg"])
+        assertEquals(0, s["connAvg"])
+        assertEquals(0, s["backendUp"])
+        assertEquals(-1.0, s["backendRttMsAvg"])
     }
 
     @Test
@@ -178,13 +178,13 @@ class BeaconApiClientMetricsBatchTest {
             .reportMetricsBatch(identity(), MetricKind.PROXY, agentTimeMs = 1L, droppedSinceLast = 0L, batches = listOf(proxyBatch()))
 
         val s = firstSample(codec)
-        assertEquals(120, s["conn_avg"])
-        assertEquals(3, s["backend_up"])
-        assertEquals(9.0, s["backend_rtt_ms_avg"])
+        assertEquals(120, s["connAvg"])
+        assertEquals(3, s["backendUp"])
+        assertEquals(9.0, s["backendRttMsAvg"])
         // proxy 行 backend 维度写缺省 0。
-        assertEquals(0.0, s["tps_avg"])
-        assertEquals(0, s["online_max"])
-        assertEquals(0, s["max_online"])
+        assertEquals(0.0, s["tpsAvg"])
+        assertEquals(0, s["onlineMax"])
+        assertEquals(0, s["maxOnline"])
     }
 
     @Test

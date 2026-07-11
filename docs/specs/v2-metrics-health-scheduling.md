@@ -277,7 +277,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 5.1 agent 面（`/beacon/v2/agent/*`，鉴权 `X-Beacon-Token` + `X-Beacon-Identity`）
 
-> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`（camelCase），samples 每元素为 5s 批聚合行、键按 §3.1 列名 **snake_case**（`bucket_start_ms`/`sample_count`/`cpu_pct_avg`/… 全 17 列，不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段本片忽略（P4b 用）。其余三行（candidates / decide / report-local）为 FR-146/148 范围，本片未实现。
+> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封与 samples 元素键**全 camelCase**（v2 API 通用约定；控制面接收结构体 json tag 同为 camelCase，再映射到 §3.1 的 snake_case DB 列——§3.1 是库表列名、非线上键）。信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`，samples 每元素为 5s 批聚合行、17 个 camelCase 键（`bucketStartMs`/`sampleCount`/`cpuPctAvg`/`memUsedMbAvg`/`tpsAvg`/`connAvg`/`backendRttMsAvg`/… 不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段本片忽略（P4b 用）。其余三行（candidates / decide / report-local）为 FR-146/148 范围，本片未实现。
 
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
