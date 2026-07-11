@@ -204,4 +204,7 @@ var (
 	ErrNoRollbackAvailable = New(http.StatusConflict, "NO_ROLLBACK_AVAILABLE", "无可回退的上一版本")
 	// ErrUpdateInProgress 已有一次在线更新进行中，拒绝并发触发（fix-1：apply 异步后并发守卫）。
 	ErrUpdateInProgress = New(http.StatusConflict, "UPDATE_IN_PROGRESS", "已有更新正在进行中")
+
+	// ErrSchedDecisionNotFound 调度决策记录在保留窗内不存在（FR-146，spec §5.2；code 对齐 devmock）。
+	ErrSchedDecisionNotFound = New(http.StatusNotFound, "decision_not_found", "调度决策记录不存在")
 )

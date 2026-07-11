@@ -16,6 +16,7 @@ type Handlers struct {
 	V2Metrics        *handler.V2MetricsHandler
 	V2Health         *handler.V2HealthHandler
 	V2Sched          *handler.V2SchedHandler
+	SchedDecision    *handler.SchedDecisionAdminHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
 	OverrideSet      *handler.OverrideSetHandler
@@ -170,7 +171,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Put("/servers/{serverRef}/draining", h.V2.SetServerDraining)
 			r.Put("/servers/{serverRef}/default-entry", h.V2.SetServerDefaultEntry)
 
-			// P4b 挂载点：调度决策管理端点（FR-146）
+			// P4b 挂载点：调度决策管理端点（FR-146，见 §5.2）：决策记录跨日分页查询 /
+			// 概览聚合 / 单条详情（静态 summary 置于 {traceId} 前，chi 静态路由本就优先，此处仅为可读性）。
+			if h.SchedDecision != nil {
+				r.Get("/sched-decisions", h.SchedDecision.List)
+				r.Get("/sched-decisions/summary", h.SchedDecision.Summary)
+				r.Get("/sched-decisions/{traceId}", h.SchedDecision.Detail)
+			}
 		})
 	}
 

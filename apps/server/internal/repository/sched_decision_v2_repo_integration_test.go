@@ -80,3 +80,48 @@ func TestSchedDecisionFlushDailyMySQL(t *testing.T) {
 		t.Fatalf("回读行内容不符: %+v", got)
 	}
 }
+
+// TestSchedDecisionQueryMySQL 真 MySQL：跨日并表列表过滤 / 分页、详情逆序查表、概览聚合真查。
+func TestSchedDecisionQueryMySQL(t *testing.T) {
+	db := testsupport.OpenTestDB(t, "fr146_repo")
+	now := time.Now().UTC()
+	dropSchedDaily(t, db, now)
+	dropSchedDaily(t, db, now.AddDate(0, 0, -1))
+	seedSchedQueryRows(t, db)
+	repo := NewSchedDecisionV2Repository(db)
+	fromMs, toMs := queryWindow()
+
+	// 列表：全量降序 + 跨表第 2 页 + 过滤抽查。
+	rows, total, err := repo.QueryRange(SchedDecisionQuery{FromMs: fromMs, ToMs: toMs, Limit: 20})
+	if err != nil || total != 5 || len(rows) != 5 {
+		t.Fatalf("全量应 5 行，实际 total=%d len=%d err=%v", total, len(rows), err)
+	}
+	rows, _, err = repo.QueryRange(SchedDecisionQuery{FromMs: fromMs, ToMs: toMs, Offset: 2, Limit: 2})
+	if err != nil || len(rows) != 2 || rows[0].TraceID != "q-t1" || rows[1].TraceID != "q-y2" {
+		t.Fatalf("跨表第 2 页应 [q-t1, q-y2]，实际 %+v err=%v", rows, err)
+	}
+	_, total, err = repo.QueryRange(SchedDecisionQuery{FromMs: fromMs, ToMs: toMs, Limit: 20, Result: "failed"})
+	if err != nil || total != 1 {
+		t.Fatalf("result=failed 应 1 行，实际 %d err=%v", total, err)
+	}
+	_, total, err = repo.QueryRange(SchedDecisionQuery{FromMs: fromMs, ToMs: toMs, Limit: 20, ServerID: "req-9"})
+	if err != nil || total != 1 {
+		t.Fatalf("serverId=req-9 应 1 行，实际 %d err=%v", total, err)
+	}
+
+	// 详情：昨日表命中；未知 trace 未命中。
+	row, err := repo.FindByTraceID("q-y1", 60)
+	if err != nil || row == nil || row.TraceID != "q-y1" {
+		t.Fatalf("昨日 trace 应命中，实际 %+v err=%v", row, err)
+	}
+	if row, err = repo.FindByTraceID("q-nope", 60); err != nil || row != nil {
+		t.Fatalf("未知 trace 应 nil，实际 %+v err=%v", row, err)
+	}
+
+	// 概览聚合：总数 / 成功 / 失败分布 / 降级数。
+	agg, err := repo.Summarize(fromMs, toMs)
+	if err != nil || agg.Total != 5 || agg.SuccessCount != 4 || agg.FallbackCount != 1 ||
+		agg.FailReasonCounts["no_candidate"] != 1 {
+		t.Fatalf("聚合不符: %+v err=%v", agg, err)
+	}
+}

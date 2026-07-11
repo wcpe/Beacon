@@ -2,6 +2,16 @@ package model
 
 import "time"
 
+// 调度决策行的枚举字面值（strategy / source 列，VARCHAR 落库 + 应用层校验，spec §3.4）。
+const (
+	// SchedStrategyHighestScore 本版唯一调度策略：分数最高者胜（spec §8 待定 11）。
+	SchedStrategyHighestScore = "highest_score"
+	// SchedSourceControlPlane 控制面在线决策。
+	SchedSourceControlPlane = "control_plane"
+	// SchedSourceLocalFallback 降级期 agent 本地决策的补报（spec §4.6 降级路径）。
+	SchedSourceLocalFallback = "local_fallback"
+)
+
 // SchedDecisionV2 是调度决策日表 sched_decision_YYYYMMDD 的行模型（FR-146，见 v2-metrics-health-scheduling.md §3.4）。
 //
 // 每行 = 一次调度决策（control_plane 在线决策或 local_fallback 降级补报）。日表按 UTC 日期后缀

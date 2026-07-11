@@ -37,15 +37,15 @@ func (e SchedDecisionEnqueuer) Enqueue(rows []model.SchedDecisionV2) bool {
 	return EnqueueRows(e.Writer, RouteKindSchedDecision, rows)
 }
 
-// 调度决策记录的枚举字面值（落库 VARCHAR + 应用层校验，见 spec §3.4）。
-// 导出供 handler 映射响应（如 local_fallback 的 weightsRev 显示为 null）。
+// 调度决策记录的枚举字面值：strategy / source 的落库真源在 model（sched_decision_v2.go），
+// 此处按服务层口径转引导出；失败原因码为决策流程产物，定义于此（见 spec §3.4/§4.6）。
 const (
 	// SchedStrategyHighestScore 本版唯一调度策略：分数最高者胜（spec §8 待定 11）。
-	SchedStrategyHighestScore = "highest_score"
+	SchedStrategyHighestScore = model.SchedStrategyHighestScore
 	// SchedSourceControlPlane 控制面在线决策。
-	SchedSourceControlPlane = "control_plane"
+	SchedSourceControlPlane = model.SchedSourceControlPlane
 	// SchedSourceLocalFallback 降级期 agent 本地决策的补报（spec §4.6 降级路径）。
-	SchedSourceLocalFallback = "local_fallback"
+	SchedSourceLocalFallback = model.SchedSourceLocalFallback
 	// SchedFailNoCandidate 圈定 zone 后无任何可调度候选（成功响应携带，非 HTTP 错误）。
 	SchedFailNoCandidate = "no_candidate"
 	// SchedFailZoneNotFound 请求方 namespace 内无该 zone 名（HTTP 404，决策行仍落库可查）。
