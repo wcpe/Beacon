@@ -4,6 +4,11 @@
 
 ## 未发布
 
+## 0.24.3（2026-07-12）
+
+### 新增
+- 本机 agent-api 调度接口与 fail-static 降级（FR-148）：agent-core 新增 `BeaconScheduling` 门面（业务插件经 `BeaconAgent.scheduling()` 获取，纯 Java 8 只读契约、仅本 JVM，直连 Beacon HTTP 不作为契约）：`acquireCandidate(zone[, purpose])` 异步取一台可调度候选，`candidatesInZone` / `healthOf` / `selfHealth` / `dataSource` 读本地缓存快照（O(1)、可主线程调用）。正常路径经控制面在线决策（`POST /beacon/v2/agent/schedule/decide`，读超时 800ms）；`SchedulingView` 每 10s 拉候选（`GET /schedule/candidates`）刷新 `@Volatile` 快照并原子落盘 `candidates-snapshot.json`（重启恢复）。**fail-static**：控制面不可用时（网络 / 5xx / 超时）自动用本地快照在目标 zone 内 `highest_score` 本地决策（`source=LOCAL_FALLBACK`、本地 traceId），玩家链路不等待、不阻断、**绝不抛因控制面不可达的异常**；降级期决策记入内存补报队列（容量 512、满丢最旧），控制面恢复后经 `POST /schedule/report-local` 批量补报入库（`source=local_fallback`、按 localTraceId 幂等）；快照超龄 >10 分钟仍继续使用但数据源标 `STALE`（fail-static 优先可用性）。指标上报 202 响应内 `self` 健康字段解析后供 `selfHealth()` 返回（约 5s 新鲜度）。HTTP / JSON 实现只在适配器（延续 ADR-0005，core 依赖 `HttpTransport` / `JsonCodec` 接口）；门面对业务插件只读、无改配置 / 改 zone 旁路（架构不变量 §1 / §5）。
+
 ## 0.24.2（2026-07-12）
 
 ### 新增
