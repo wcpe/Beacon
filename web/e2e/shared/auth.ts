@@ -32,21 +32,24 @@ export async function loginWithCredentials(
   await expectLoggedIn(page)
 }
 
-// 真后端令牌头注入：调真实登录端点取 HMAC 令牌，注入到浏览器后续所有请求头。
+// 第二版管理台 apps/web 真登录（FR-179 落地后）：走真实登录页 /login 填真 admin 凭据提交，
+// 应用把 HMAC 令牌存 localStorage 并给后续 fetch 注入 Authorization、路由守卫据此放行。
+// 返回令牌，供测试内以 page.request 携带鉴权做数据 seed 与交叉校验（page.request 与页面同源
+// 但不共享 localStorage，故仍需显式带头）。
 //
-// 为何需要：内嵌的第二版权威前端 apps/web 目前尚未内建登录页与令牌附着逻辑
-//（发布产物里既无 /login 页，也不给 fetch 带 Authorization），因此常规「填表单登录」
-// 流程（loginWithCredentials）对它不适用。此处以测试侧手段注入真实 admin 令牌，
-// 让内嵌 app 的真实请求能通过控制面鉴权、打到真后端渲染真数据——不改任何生产源码。
-// 返回令牌，供测试内以 page.request 携带鉴权做数据 seed 与交叉校验。
-export async function attachRealAdminAuth(page: Page): Promise<string> {
-  const res = await page.request.post('/admin/v1/auth/login', {
-    data: { username: REAL_ADMIN_USERNAME, password: REAL_ADMIN_PASSWORD },
-  })
-  if (!res.ok()) {
-    throw new Error(`真 admin 登录失败：HTTP ${String(res.status())}`)
+// 取代旧的「测试侧注入令牌头」workaround：FR-179 前 apps/web 无登录页 / 无令牌附着，只能靠
+// setExtraHTTPHeaders 注头；现登录闭环已建，直接走真实登录流程，且路由守卫要求 localStorage
+// 有令牌（仅注头不再够）。
+export async function loginRealAdmin(page: Page): Promise<string> {
+  await page.goto('/login')
+  await page.getByLabel('用户名').fill(REAL_ADMIN_USERNAME)
+  await page.getByLabel('口令').fill(REAL_ADMIN_PASSWORD)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  // 登录成功默认回跳首页「/」→ 重定向到运维总览 /dashboard
+  await expect(page).toHaveURL(/\/dashboard$/)
+  const token = await page.evaluate(() => localStorage.getItem('beacon.token'))
+  if (token === null || token === '') {
+    throw new Error('登录成功后未在 localStorage 取得令牌')
   }
-  const body = (await res.json()) as { token: string }
-  await page.setExtraHTTPHeaders({ Authorization: `Bearer ${body.token}` })
-  return body.token
+  return token
 }

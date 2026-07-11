@@ -1,13 +1,13 @@
 // FR-155 集群管理三页（/servers /zones /namespaces）真后端 E2E：
 // 打到真控制面（sqlite + 真 admin 令牌）验证「可达 + 真数据渲染 + 关键写闭环」。
 //
-// 鉴权说明：第二版权威前端 apps/web 目前尚无登录页 / 令牌附着（发布产物里无 /login、
-// fetch 不带 Authorization），故用 attachRealAdminAuth 以测试侧注入真实 admin 令牌头，
-// 使内嵌 app 的真实请求通过鉴权、打到真后端。数据 seed 与交叉校验走 page.request 携带同一令牌。
+// 鉴权说明：apps/web 登录鉴权已落地（FR-179），故走真实登录页 /login 用真 admin 凭据登录，
+// 应用存令牌到 localStorage 并给 fetch 注入 Authorization、路由守卫据此放行。
+// 数据 seed 与交叉校验走 page.request 携带同一令牌（page.request 不共享页面 localStorage）。
 
 import { randomUUID } from 'node:crypto'
 import { test, expect, type Page } from '@playwright/test'
-import { attachRealAdminAuth } from '../shared/auth'
+import { loginRealAdmin } from '../shared/auth'
 
 // ---- 携带 admin 令牌的真后端 API 辅助（seed 与交叉校验用）----
 
@@ -190,7 +190,7 @@ async function ensureExpanded(page: Page, name: string): Promise<void> {
 // ================= 可达 + 真数据渲染 =================
 
 test('三页接真后端可达：真实 /admin/v2 200、渲染真数据与空态、不白屏', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
 
   // /servers —— 页面骨架 + 资产面板渲染；真实 servers 列表为数组（空库空态）
   await page.goto('/servers')
@@ -221,7 +221,7 @@ test('三页接真后端可达：真实 /admin/v2 200、渲染真数据与空态
 // ================= /namespaces 写闭环 =================
 
 test('命名空间：创建 → 一次性接入 token 展示 → 列表可见（交叉校验真后端）', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   await page.goto('/namespaces')
 
   const name = `e2e-ns-${uid()}`
@@ -254,7 +254,7 @@ test('命名空间：创建 → 一次性接入 token 展示 → 列表可见（
 // 契约与详情面板按 camelCase（tr.fromNamespaceId / fromNamespaceName）读取 → 关系恒为空、
 // 收回按钮不渲染。故这里以真后端端点校验授予 + 收回闭环，UI 面板缺口在交付报告中单列。
 test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收回闭环', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   const suffix = uid()
   const fromName = `e2e-ta-${suffix}`
   const toName = `e2e-tb-${suffix}`
@@ -305,7 +305,7 @@ test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收�
 // ================= /zones 写闭环 =================
 
 test('区服分配：新建 集群 → 大区 → 小区，结构树渲染层级（交叉校验真后端）', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   const suffix = uid()
   const clusterName = `bc-${suffix}`
   const regionName = `r-${suffix}`
@@ -356,7 +356,7 @@ test('区服分配：新建 集群 → 大区 → 小区，结构树渲染层级
 })
 
 test('区服分配：未分配子服首次落小区，分配结果可见（交叉校验真后端）', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   const suffix = uid()
   const nsName = `e2e-asn-${suffix}`
   const clusterName = `bc-${suffix}`
@@ -397,7 +397,7 @@ test('区服分配：未分配子服首次落小区，分配结果可见（交�
 })
 
 test('区服分配：已分配子服右键改派 → 解绑重确认（走换区工单，非后台直改）', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   const suffix = uid()
   const nsName = `e2e-rz-${suffix}`
   const clusterName = `bc-${suffix}`
@@ -457,7 +457,7 @@ test('区服分配：已分配子服右键改派 → 解绑重确认（走换区
 test('服务器：注册待确认 → 确认接入 → 身份转 active、进入资产列表（交叉校验真后端）', async ({
   page,
 }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   const suffix = uid()
   const ns = await seedNamespace(page, token, `e2e-srv-${suffix}`)
   const serverId = `srv-${suffix}`
@@ -493,7 +493,7 @@ test('服务器：注册待确认 → 确认接入 → 身份转 active、进入
 })
 
 test('服务器：已分配子服切换排空标记写闭环（交叉校验真后端）', async ({ page }) => {
-  const token = await attachRealAdminAuth(page)
+  const token = await loginRealAdmin(page)
   const suffix = uid()
   const nsName = `e2e-drn-${suffix}`
   const serverId = `lobby-${suffix}`
