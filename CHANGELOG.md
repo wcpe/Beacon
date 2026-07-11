@@ -4,6 +4,17 @@
 
 ## 未发布
 
+## 0.24.2（2026-07-12）
+
+### 新增
+- 健康值模型（FR-147）：控制面新增健康计算轮，每 5s 对全部已确认实例重算——锁外读 DB 事实（v2 `server` 的 zone 归属 / `draining` / kind、`agent_identity.status`）+ 读每实例 60s 指标内存窗口（cpu / tps 用 avg、容量 / 连接用 max 取保守值、延迟按 kind 取上报 RTT 或后端探测 RTT），把 TPS / CPU / 容量 / 连接 / 延迟 / 告警六因子各归一到 0~100 后加权求综合分（**仅对适用因子求和、权重自动重归一**：proxy 无 tps / capacity、backend 无 conn、RTT 缺失剔除 latency，不因角色差异失真），输出 `score`(0-100) / `level`(healthy / degraded / unhealthy) / `schedulable` / `reasons` / `factors` 并整批原子替换内存健康视图（独立锁、单一真源，调度决策与管理面共读）；窗口无数据沿用上一轮结果 ≤30s、超 30s 判 `lost`。告警因子 P4 期恒 0（输入源随 P5 告警事件域接入）。`schedulable` 七类原因（`kind_not_schedulable` / `pending_confirm` / `unassigned` / `disabled` / `draining` / `lost` / `unhealthy`）可叠加，**degraded 仍可调度**（仅排序劣势）。每 30s 把全量视图（含 factors 明细与 weightsRev）经异步写入通道批量落 `health_snapshot_YYYYMMDD` 日表供回放。
+- 健康权重版本化配置与热更（FR-147）：新增 `health_weights_rev` 表与专用配置服务（`RWMutex` 缓存整块 + 指针原子替换），`GET|PUT /admin/v2/settings/health-weights`——PUT 校验（权重非负、good / bad 边界有序、`0<degradedMin<healthyMin≤100`，非法回 `400 invalid_health_weights`）后**事务内**写设置镜像 + 插入新 rev + 写审计，提交后内存原子替换、下一轮计算生效；快照与决策记录带 `weightsRev`，配合历史 rev 可精确回放解释任一历史分数。权重对象独立存储、不进运维设置标量白名单。
+- 健康与指标管理查询端点（FR-147）：`GET /admin/v2/health`（内存实时、分页 + namespace / zone / level / schedulable 筛选）、`/health/{serverId}`（含 factors 因子分解与 weightsRev）、`/health/snapshots`（健康快照回放、查询侧不隐式建表）、`/metrics/summary`（集群聚合概览、内存实时）、`/metrics/series`（单 / 多服时序，serverId 必填**禁全量扫**、step 服务端桶聚合、跨日自动并表）。指标上报响应 `self` 字段从占位 `null` 改为回填真实健康视图（score / level / schedulable / reasons），供本机 agent-api `selfHealth` 消费（P4c）。
+- 调度决策记录（FR-146）：控制面新增调度决策服务，在健康视图内存真源上**纯内存决策（全程无 DB 读、目标 <5ms）**——按请求方 namespace + zone 名圈定候选，逐台按 `schedulable` 判定记入 `excluded[{serverId, reason}]`，剩余按 `highest_score` 策略择优（分数最高者胜、同分优先容量占用率低者、再同随机），无候选 `no_candidate` / zone 不存在 `zone_not_found`。每次决策生成唯一 `traceId`，把请求方 / zone / 策略 / 候选数 / 逐台排除原因 / 最终选择 / 失败原因 / 耗时经异步写入通道落 `sched_decision_YYYYMMDD` 日表（`trace_id` 唯一键幂等、跨日拆表），请求 goroutine 不落库。新增 agent 面 `GET /schedule/candidates`（候选快照）、`POST /schedule/decide`（在线决策）、`POST /schedule/report-local`（降级期本地决策批量补报，≤100 条 / 批、按 `localTraceId` 幂等、`source=local_fallback`），均挂 token↔namespace + identity 鉴权（未确认 `403`）。新增管理面 `GET /admin/v2/sched-decisions`（跨日并表分页、时间范围必填）、`/{traceId}`（详情可解释「为什么选 / 不选某台」）、`/summary`（总数 / 成功率 / 失败原因 Top / 降级补报占比），决策可追溯排查。健康快照与调度决策日表复用 P4a 的异步写入通道（泛化为多表路由，共享背压与批量语义）。
+
+### 修复
+- 采样启动期指标桶样本数超额（FR-144）：修复 agent 采样协调器 `start()` 非幂等的缺陷——启动爬坡期多个触发点（心跳 / 长轮询 404 重注册 / 断连恢复）各补打一帧立即样本，叠加旧采样代循环退出前的重叠窗口，导致 >5 个 1s 样本挤进同一个 5s 桶（规格标称 1~5）。改 `start()` 幂等（仅「未激活→激活」转变时补立即帧，重复调用不补帧、不重启现有循环），并在批内聚合端对每桶封顶 ≤5 条（取最新 5 条计算 avg / max / min）作防御性兜底；端到端桶样本数断言随之收紧回 `1..5`。
+
 ## 0.24.1（2026-07-11）
 
 ### 新增
