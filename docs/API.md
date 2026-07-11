@@ -223,6 +223,7 @@ data: {}
 - **写操作审计兜底（FR-72，增强 FR-7）**：`/admin/v1/*` 下所有写方法（POST/PUT/DELETE）经一道兜底审计中间件——对**尚无专项审计**的写端点统一补记一条 `audit_log`（`operator` 取认证态、`action`/`targetType`/`targetRef` 由路由模式与路径参数推导、`result` 按响应状态 2xx=ok 否则 fail、`clientIp` 取来源 IP）。已带专项审计的端点（配置/文件/zone/实例/环境/密钥/调度等）**不重复双记**；兜底审计 `detail` **绝不含请求体**（敏感豁免）；审计落库失败不阻断主响应（旁路）。意义在于"任何写操作都有迹可循"是结构性保证，新增写端点即使忘补专项审计也会被自动兜底。
 - 令牌有效期由配置 `auth.token-ttl-sec` 决定（默认 86400 秒）；过期需重新登录。
 - 登录操作者恒为 `full`（读写）角色。
+- **消费方**：Legacy `web/` 与第二版管理台 `apps/web`（自 FR-179 起）均消费本组端点——登录存令牌、请求注入 `Authorization: Bearer`、任意 `/admin/*` 遇 `401` 清令牌跳登录、登出清本地令牌。第二版无 API-key 登录 / RBAC / 记住我 / 2FA；demo 模式免登录（前端路由守卫放行，不发这些请求）。
 
 ### 管理面 API 密钥与只读角色（FR-42，见 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）
 
