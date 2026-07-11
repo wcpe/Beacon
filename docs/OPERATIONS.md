@@ -207,6 +207,23 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/schedhealth
 - **zone**：建 bc 集群 / 大区 / 小区并首次分配该 server 后，健康视图转 `schedulable=true`（zone 归属由控制面权威指派）。
 - **sched（FR-146）**：candidates 含该 zone 与候选 → decide 选中该服（traceId 非空）→ 决策记录（source=`control_plane`）经详情 / 列表 / summary 可查 → report-local 补报 1 条本地决策 → 详情 source=`local_fallback`。
 
+### 7.6 FR-148 本机 agent-api 调度门面 + fail-static 真机 E2E（真门面 → 杀控制面降级 → 恢复补报）
+
+纯 Go e2e，自起控制面（SQLite）+ 真 Paper + BeaconAgent，与 §7.5 的本质区别：§7.5 用 Go HTTP 客户端**模拟** agent 面直调端点；本用例驱动**真 agent 的纯 Java 只读门面** `BeaconAgentProvider.get().scheduling().acquireCandidate(zone)`（经 BeaconE2E 探针周期取候选、把结果落 `plugins/BeaconE2E/e2e-scheduling.log`），验证 FR-148 的 fail-static 三条时序端到端成立。
+
+前置同 §7.1；**默认 sqlite、无需 docker/MySQL**。必填 `E2E_ADMIN_PASS` / `E2E_AUTH_SECRET`；可选 `E2E_BEACON_URL`（默认 `http://localhost:18850`）。运行（PowerShell；Bash 把赋值换成 `export` 即可）：
+
+```powershell
+$env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
+go test -tags=e2e -timeout=30m ./apps/server/test/e2e/schedagent
+```
+
+目标小区名经 `-Pe2eSchedZone` 注入 agent 环境变量 `BEACON_E2E_SCHED_ZONE`（agent 启动早于建区，故不能靠自身 zone 回填）。依次断言三相位（任一 FAIL 即失败）：
+
+- **正常路径**：建区分配后真门面观测到 `source=CONTROL_PLANE` 且选中该服、候选快照就绪（`candidates≥1`）；控制面 decide 决策落库可查 `source=control_plane`。
+- **fail-static（杀控制面）**：`cp.Stop()` 后真门面下一轮仍经本地快照返回候选 `source=LOCAL_FALLBACK` 选中该服、不阻断、无 `ACQUIRE_ERROR` 观测（探针持续产观测即 agent 未崩、玩家链路不阻断的活性证明）。
+- **恢复**：重启控制面（同库）后 agent 自动回 `source=CONTROL_PLANE`；降级期本地决策经 `report-local` 补报入库可查 `source=local_fallback`。
+
 ## 8. 测试运行方式（单元 / 集成）
 
 - **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`apps/server/internal/service` / `apps/server/internal/server` 显示 `no test files` 属正常（其用例全为集成）。

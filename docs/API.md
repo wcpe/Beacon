@@ -851,7 +851,7 @@ agent 面：
 
 > **FR-144 采样入库已实现**：`POST /beacon/v2/agent/metrics/report` 挂 token↔namespace + identity 鉴权中间件（未确认身份 403），接收端只做校验 + 更 60s 内存窗口 + 非阻塞入队即回 `202 {accepted, deduplicated, self}`（请求 goroutine 不碰 DB），后台写入池攒批事务批插当日 `metric_sample_YYYYMMDD` 日表（唯一键 `(server_id,bucket_start_ms)` 幂等去重、跨日自动拆表、队列满回 `429 metrics_ingest_busy`、时钟偏移 >5min 回 `400 clock_skew_too_large`）。`samples[]` 为 agent 端已按 5s 桶聚合的批（含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min` 字段）。
 >
-> **FR-147 健康值模型已实现**：`self` 回传 `{score, level, schedulable, reasons[]}`（无视图时仍 `null`）；健康计算轮每 5s 锁外读 DB 事实 + 聚合 60s 内存窗口整批替换健康视图，>30s 无批判 `lost`；每 30s 全量视图经异步通道落 `health_snapshot_YYYYMMDD`。**FR-146 调度决策服务端已实现**：`decide` 在健康视图上纯内存 highest_score 决策（同分优先容量占用率低者再随机）、决策行异步落 `sched_decision_YYYYMMDD`（trace_id 唯一键幂等）；`report-local` 按 localTraceId 幂等补报（≤100 条/批）；候选与决策全程请求 goroutine 零 DB。agent 侧客户端与 `BeaconScheduling` 门面（FR-148）尚待实现。
+> **FR-147 健康值模型已实现**：`self` 回传 `{score, level, schedulable, reasons[]}`（无视图时仍 `null`）；健康计算轮每 5s 锁外读 DB 事实 + 聚合 60s 内存窗口整批替换健康视图，>30s 无批判 `lost`；每 30s 全量视图经异步通道落 `health_snapshot_YYYYMMDD`。**FR-146 调度决策服务端已实现**：`decide` 在健康视图上纯内存 highest_score 决策（同分优先容量占用率低者再随机）、决策行异步落 `sched_decision_YYYYMMDD`（trace_id 唯一键幂等）；`report-local` 按 localTraceId 幂等补报（≤100 条/批）；候选与决策全程请求 goroutine 零 DB。**agent 侧客户端与 `BeaconScheduling` 门面（FR-148）已实现**：agent-api 纯 Java 8 门面 + core `SchedulingView`（连接级失败走本地快照 highest_score 降级、future 不异常完成不阻塞玩家链路）+ `SchedulingRefresher`（10s 拉候选刷缓存 + 原子落盘 `candidates-snapshot.json`、恢复后 report-local 补报）+ `selfHealth` 消费 metrics 响应 self 段；真机 fail-static e2e 见 [OPERATIONS](OPERATIONS.md) §7.6。
 
 管理面：
 

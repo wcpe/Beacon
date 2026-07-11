@@ -249,7 +249,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 4.6 调度决策流程
 
-> 实现状态（控制面，FR-146）：**已实现**（`service/sched_decision_service.go`：健康视图上纯内存 highest_score，同分优先容量占用率低者再随机、随机源可注种子；决策行经异步通道落 `sched_decision_YYYYMMDD`，trace_id 唯一键幂等）。落地口径澄清：P4 的 decide 请求无 namespace 参数、候选严格圈定请求方 namespace，跨 ns 请求形态不存在——`cross_namespace` 错误码 / 排除码预留不可达、决策行 `cross_namespace` 恒 false（§2.2 默认拒绝的最小落地，信任放行随 namespace 隔离域接入）；`zone_not_found` 决策同样落库（fail_reason=zone_not_found、candidateCount=0）。agent 侧降级路径（FR-148）尚待实现。
+> 实现状态（控制面，FR-146）：**已实现**（`service/sched_decision_service.go`：健康视图上纯内存 highest_score，同分优先容量占用率低者再随机、随机源可注种子；决策行经异步通道落 `sched_decision_YYYYMMDD`，trace_id 唯一键幂等）。落地口径澄清：P4 的 decide 请求无 namespace 参数、候选严格圈定请求方 namespace，跨 ns 请求形态不存在——`cross_namespace` 错误码 / 排除码预留不可达、决策行 `cross_namespace` 恒 false（§2.2 默认拒绝的最小落地，信任放行随 namespace 隔离域接入）；`zone_not_found` 决策同样落库（fail_reason=zone_not_found、candidateCount=0）。agent 侧降级路径（FR-148）**已实现**（见 §5.3 实现状态注：`SchedulingView` 连接级失败走本地快照 highest_score 降级、`SchedulingRefresher` 恢复后经 report-local 补报，真机 e2e 验证见 `docs/OPERATIONS.md` §7.6）。
 
 **正常路径（source=control_plane）**：
 
@@ -281,7 +281,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 5.1 agent 面（`/beacon/v2/agent/*`，鉴权 `X-Beacon-Token` + `X-Beacon-Identity`）
 
-> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封与 samples 元素键**全 camelCase**（v2 API 通用约定；控制面接收结构体 json tag 同为 camelCase，再映射到 §3.1 的 snake_case DB 列——§3.1 是库表列名、非线上键）。信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`，samples 每元素为 5s 批聚合行、17 个 camelCase 键（`bucketStartMs`/`sampleCount`/`cpuPctAvg`/`memUsedMbAvg`/`tpsAvg`/`connAvg`/`backendRttMsAvg`/… 不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段暂未消费（`selfHealth()` 随 FR-148 接入）。其余三行（candidates / decide / report-local）**服务端已实现（FR-146）**，agent 侧客户端为 FR-148 范围、尚待实现。
+> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封与 samples 元素键**全 camelCase**（v2 API 通用约定；控制面接收结构体 json tag 同为 camelCase，再映射到 §3.1 的 snake_case DB 列——§3.1 是库表列名、非线上键）。信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`，samples 每元素为 5s 批聚合行、17 个 camelCase 键（`bucketStartMs`/`sampleCount`/`cpuPctAvg`/`memUsedMbAvg`/`tpsAvg`/`connAvg`/`backendRttMsAvg`/… 不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段已由 `selfHealth()` 消费（FR-148：经 `SelfHealthHolder`，指标上报 202 响应刷新）。其余三行（candidates / decide / report-local）**服务端已实现（FR-146）**，agent 侧客户端（`BeaconApiClient.scheduleCandidates` / `scheduleDecide` / `reportLocalDecisions`）**已实现（FR-148）**，见 §5.3 实现状态注。
 
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
@@ -315,6 +315,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 ### 5.3 agent-api 本机接口（Kotlin，业务插件唯一入口）
 
 位于 agent-core `beacon.agent.api` 包，业务插件经 `BeaconAgentApi.scheduling()` 获取（仅本 JVM，禁止业务插件直连 Beacon HTTP——直连不作为契约，随时可变）。HTTP / JSON 实现只存在于适配器（ADR-0005 延续），本接口不暴露任何传输细节。
+
+> 实现状态（agent 侧，FR-148）：**已实现**。门面契约以 **Java 8** 落地于 `agent-api`（纯 Java 模块，公开签名只用 `java.util.*` / `CompletableFuture`，不漏 core 类型）：`BeaconScheduling` 接口 + 值对象 `ScheduleResult`/`CandidateView`/`HealthView`/`DataSourceState` + 枚举 `HealthLevel`/`DecisionSource`/`DataSource`；语义与下方 Kotlin 展示一致，默认参数 `purpose` 以重载表达（`acquireCandidate(zone)` / `acquireCandidate(zone, purpose)`）。core 实现 `scheduling/SchedulingView`：`acquireCandidate` 异步走 `decide`，连接级失败（网络 / 超时 800ms / 5xx）用本地候选快照在目标 zone 内 highest_score 降级决策（本地 traceId、`LOCAL_FALLBACK`），future 绝不异常完成、绝不阻塞玩家链路；`zone_not_found` / `cross_namespace` / 参数非法如实回控制面失败（`CONTROL_PLANE`）不降级。`SchedulingRefresher` 每 10s 拉 `candidates` 刷新 `SchedulingCache` + 原子落盘 `candidates-snapshot.json`（重启后恢复即注册前可降级），恢复后经 `report-local` 批量补报积压降级决策（内存队列 512、满丢最旧）；快照超龄 >10min 仍用但 `dataSource` 标 STALE。`selfHealth` 读 `SelfHealthHolder`（由指标上报 202 响应内 `self` 段刷新，约 5s 新鲜度）。HTTP 客户端（`candidates`/`decide`/`report-local`）与 JSON 仍只在 core 客户端 / 适配器（守 ADR-0005）。随注册成功 start、停机 stop、启动时从落盘快照恢复。
 
 ```kotlin
 interface BeaconScheduling {
