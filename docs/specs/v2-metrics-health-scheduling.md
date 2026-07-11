@@ -191,7 +191,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 4.4 健康值计算
 
-**计算时机**：独立健康计算 goroutine 每 5s 一轮，对内存中全部已确认实例重算；权重配置热更后下一轮即生效。
+> 实现状态（控制面，FR-147）：**已实现**。因子归一化 / 权重重归一 / level 判定为 `service/health_calc.go` 纯函数（穷举单测）；计算轮 `service/health_compute_service.go` 每 5s 锁外读 DB 事实（server 的 zone/draining/kind + `agent_identity.status`）+ 聚合 60s 内存窗口 → `runtime/healthview` 整批原子替换；权重配置版本化 `health_weights_rev` 表 + `HealthWeightsService`（事务内写镜像+插 rev+审计，内存指针原子替换热更）。落地口径澄清（spec 未尽处的最小实现，登记备查）：窗口内 cpu<0 批次剔除、全负则 cpu 因子不适用（与 latency rtt=-1 同构）；capacity 在 maxOnline≤0 时不适用；「沿用上一轮 ≤30s」仅覆盖窗口空缝隙且不刷新计算时刻，最近批距今 >30s 即判 lost（§4.2 权威）。
 
 **因子输入**：取该实例最近 60s（12 批）内存窗口的加权均值（cpu 用 avg、tps 用 avg、容量与连接用 max，取保守值）。窗口内无任何数据：沿用上一轮结果最多 30s，超过即判 `lost`（不再输出分数，score 置 0、level=`unhealthy`）。
 
@@ -230,6 +230,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 4.5 schedulable 判定（全枚举）
 
+> 实现状态（控制面，FR-147）：**已实现**（判定在每轮健康计算时更新内存视图，管理面与调度共用单一真源）。落地口径澄清：`unassigned` 仅对 backend 判定（proxy 不按 zone 分配，对齐管理台 mock 契约；本表字面未分角色，登记备查）。
+
 `schedulable = true` 当且仅当以下原因**全部不成立**。原因码可叠加（reasons 数组）：
 
 | 原因码 | 判定条件 | 事实来源 |
@@ -246,6 +248,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 - 判定在每轮健康计算时一并更新内存视图，管理面与调度决策共用同一份判定结果（单一真源）。
 
 ### 4.6 调度决策流程
+
+> 实现状态（控制面，FR-146）：**已实现**（`service/sched_decision_service.go`：健康视图上纯内存 highest_score，同分优先容量占用率低者再随机、随机源可注种子；决策行经异步通道落 `sched_decision_YYYYMMDD`，trace_id 唯一键幂等）。落地口径澄清：P4 的 decide 请求无 namespace 参数、候选严格圈定请求方 namespace，跨 ns 请求形态不存在——`cross_namespace` 错误码 / 排除码预留不可达、决策行 `cross_namespace` 恒 false（§2.2 默认拒绝的最小落地，信任放行随 namespace 隔离域接入）；`zone_not_found` 决策同样落库（fail_reason=zone_not_found、candidateCount=0）。agent 侧降级路径（FR-148）尚待实现。
 
 **正常路径（source=control_plane）**：
 
@@ -277,7 +281,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 5.1 agent 面（`/beacon/v2/agent/*`，鉴权 `X-Beacon-Token` + `X-Beacon-Identity`）
 
-> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封与 samples 元素键**全 camelCase**（v2 API 通用约定；控制面接收结构体 json tag 同为 camelCase，再映射到 §3.1 的 snake_case DB 列——§3.1 是库表列名、非线上键）。信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`，samples 每元素为 5s 批聚合行、17 个 camelCase 键（`bucketStartMs`/`sampleCount`/`cpuPctAvg`/`memUsedMbAvg`/`tpsAvg`/`connAvg`/`backendRttMsAvg`/… 不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段本片忽略（P4b 用）。其余三行（candidates / decide / report-local）为 FR-146/148 范围，本片未实现。
+> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封与 samples 元素键**全 camelCase**（v2 API 通用约定；控制面接收结构体 json tag 同为 camelCase，再映射到 §3.1 的 snake_case DB 列——§3.1 是库表列名、非线上键）。信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`，samples 每元素为 5s 批聚合行、17 个 camelCase 键（`bucketStartMs`/`sampleCount`/`cpuPctAvg`/`memUsedMbAvg`/`tpsAvg`/`connAvg`/`backendRttMsAvg`/… 不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段暂未消费（`selfHealth()` 随 FR-148 接入）。其余三行（candidates / decide / report-local）**服务端已实现（FR-146）**，agent 侧客户端为 FR-148 范围、尚待实现。
 
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
@@ -286,10 +290,12 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 | POST | `/beacon/v2/agent/schedule/decide` | `{zone, purpose?, plugin?}` | 200 `{traceId, chosen:{serverId, score}?, candidateCount, excludedCount, failReason?}`；404 `zone_not_found`；403 `cross_namespace` |
 | POST | `/beacon/v2/agent/schedule/report-local` | `{decisions:[{localTraceId, tsMs, zone, plugin?, purpose?, candidateCount, excluded[], chosenServerId?, failReason?}]}` ≤100 条/批 | 202 `{accepted, deduplicated}`（按 localTraceId 幂等） |
 
-> **实现状态**：`POST /beacon/v2/agent/metrics/report`（FR-144 采样入库半边）已实现——token↔namespace + identity 鉴权中间件（未确认 403），接收端只校验 + 更 60s 内存窗口 + 非阻塞入队回 202，后台写入池事务批插当日 `metric_sample_YYYYMMDD`（唯一键幂等去重、跨日拆表、队列满 429、时钟偏移 400），`self` 暂占位 `null`（健康模型 FR-147 属 P4b）。
-> **落地口径澄清**：接收端**不再对 1s 原始样本做 5s 桶聚合**——`samples[]` 由 agent 端已聚合为 5s 桶（每条含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min`），控制面只做校验 / 去重 / 入库。这与 §4.3「批内按 5s 桶聚合」的措辞在**聚合发生位置**上不同（聚合前移到 agent）；若需以本口径为准，应写新 ADR 取代 §4.3 该措辞，此处仅登记现状不擅改决策正文。`GET /schedule/*` 与管理面查询、健康模型（FR-147）尚待实现。
+> **实现状态**：`POST /beacon/v2/agent/metrics/report`（FR-144）已实现——token↔namespace + identity 鉴权中间件（未确认 403），接收端只校验 + 更 60s 内存窗口 + 非阻塞入队回 202，后台写入池事务批插当日 `metric_sample_YYYYMMDD`（唯一键幂等去重、跨日拆表、队列满 429、时钟偏移 400）；`self` 已接真实健康视图（FR-147，无视图时仍 `null`）。`GET /schedule/candidates`、`POST /schedule/decide`、`POST /schedule/report-local` 服务端已实现（FR-146，均挂同一鉴权中间件、请求 goroutine 零 DB）。
+> **落地口径澄清**：接收端**不再对 1s 原始样本做 5s 桶聚合**——`samples[]` 由 agent 端已聚合为 5s 桶（每条含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min`），控制面只做校验 / 去重 / 入库。这与 §4.3「批内按 5s 桶聚合」的措辞在**聚合发生位置**上不同（聚合前移到 agent）；若需以本口径为准，应写新 ADR 取代 §4.3 该措辞，此处仅登记现状不擅改决策正文（§4.3 已于 2026-07-11 纠正为 agent 侧聚合）。
 
 ### 5.2 管理面（`/admin/v2/*`，沿用登录令牌 / API 密钥）
+
+> 实现状态（控制面，FR-146/147）：下表 10 端点**已全部实现**（响应形状对齐 `packages/contracts` 契约类型；series 的 serverId 必填、日表查询侧不隐式建表；sched-decisions 的 from/to 必填、范围上限 60 天）。消费页面接真为 FR-154 范围。
 
 | 方法 | 路径 | 说明 | 消费页面 |
 |---|---|---|---|

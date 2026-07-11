@@ -844,27 +844,29 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/beacon/v2/agent/metrics/report` | 5s 批量上报 5s 桶聚合指标（兼活性信号，顺带回传自身健康）**【已实现·FR-144 采样入库半边】** |
-| GET | `/beacon/v2/agent/schedule/candidates` | 拉取本 namespace 各 zone 调度候选快照 |
-| POST | `/beacon/v2/agent/schedule/decide` | 请求控制面做一次调度决策（产生 traceId） |
-| POST | `/beacon/v2/agent/schedule/report-local` | 降级期本地决策恢复后补报（幂等） |
+| POST | `/beacon/v2/agent/metrics/report` | 5s 批量上报 5s 桶聚合指标（兼活性信号，顺带回传自身健康）**【已实现·FR-144，`self` 已接真实健康视图·FR-147】** |
+| GET | `/beacon/v2/agent/schedule/candidates` | 拉取本 namespace 各 zone 调度候选快照 **【已实现·FR-146 服务端】** |
+| POST | `/beacon/v2/agent/schedule/decide` | 请求控制面做一次调度决策（产生 traceId）**【已实现·FR-146 服务端】** |
+| POST | `/beacon/v2/agent/schedule/report-local` | 降级期本地决策恢复后补报（幂等）**【已实现·FR-146 服务端】** |
 
-> **FR-144 采样入库（后端半边）已实现**：`POST /beacon/v2/agent/metrics/report` 挂 token↔namespace + identity 鉴权中间件（未确认身份 403），接收端只做校验 + 更 60s 内存窗口 + 非阻塞入队即回 `202 {accepted, deduplicated, self}`（请求 goroutine 不碰 DB），后台写入池攒批事务批插当日 `metric_sample_YYYYMMDD` 日表（唯一键 `(server_id,bucket_start_ms)` 幂等去重、跨日自动拆表、队列满回 `429 metrics_ingest_busy`、时钟偏移 >5min 回 `400 clock_skew_too_large`）。`self`（自身健康）字段暂占位为 `null`——健康值模型（FR-147）在 P4b 落地后填充。`samples[]` 为 agent 端已按 5s 桶聚合的批（含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min` 字段）。调度候选 / 决策 / 补报（FR-146/148）与管理面查询、健康模型（FR-147）尚待实现。
+> **FR-144 采样入库已实现**：`POST /beacon/v2/agent/metrics/report` 挂 token↔namespace + identity 鉴权中间件（未确认身份 403），接收端只做校验 + 更 60s 内存窗口 + 非阻塞入队即回 `202 {accepted, deduplicated, self}`（请求 goroutine 不碰 DB），后台写入池攒批事务批插当日 `metric_sample_YYYYMMDD` 日表（唯一键 `(server_id,bucket_start_ms)` 幂等去重、跨日自动拆表、队列满回 `429 metrics_ingest_busy`、时钟偏移 >5min 回 `400 clock_skew_too_large`）。`samples[]` 为 agent 端已按 5s 桶聚合的批（含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min` 字段）。
+>
+> **FR-147 健康值模型已实现**：`self` 回传 `{score, level, schedulable, reasons[]}`（无视图时仍 `null`）；健康计算轮每 5s 锁外读 DB 事实 + 聚合 60s 内存窗口整批替换健康视图，>30s 无批判 `lost`；每 30s 全量视图经异步通道落 `health_snapshot_YYYYMMDD`。**FR-146 调度决策服务端已实现**：`decide` 在健康视图上纯内存 highest_score 决策（同分优先容量占用率低者再随机）、决策行异步落 `sched_decision_YYYYMMDD`（trace_id 唯一键幂等）；`report-local` 按 localTraceId 幂等补报（≤100 条/批）；候选与决策全程请求 goroutine 零 DB。agent 侧客户端与 `BeaconScheduling` 门面（FR-148）尚待实现。
 
 管理面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/metrics/summary` | 集群聚合概览（分角色 / level 分布 / schedulable 计数） |
-| GET | `/admin/v2/metrics/series` | 单服 / 多服指标时序（服务端聚合） |
-| GET | `/admin/v2/health` | 全部服务器当前健康列表（内存实时） |
-| GET | `/admin/v2/health/{serverId}` | 单服健康详情（因子分解 + 权重版本） |
-| GET | `/admin/v2/health/snapshots` | 健康快照回放 |
-| GET | `/admin/v2/sched-decisions` | 调度决策记录分页查询 |
-| GET | `/admin/v2/sched-decisions/{traceId}` | 单条决策详情（候选 / 排除原因 / 选择） |
-| GET | `/admin/v2/sched-decisions/summary` | 决策概览（成功率 / 失败原因 Top） |
-| GET | `/admin/v2/settings/health-weights` | 当前健康权重配置 + 历史 rev |
-| PUT | `/admin/v2/settings/health-weights` | 全量替换健康权重（热更 + 新 rev + 审计） |
+| GET | `/admin/v2/metrics/summary` | 集群聚合概览（分角色 / level 分布 / schedulable 计数）**【已实现·FR-147】** |
+| GET | `/admin/v2/metrics/series` | 单服 / 多服指标时序（服务端聚合，serverId 必填、跨日并表）**【已实现·FR-147】** |
+| GET | `/admin/v2/health` | 全部服务器当前健康列表（内存实时）**【已实现·FR-147】** |
+| GET | `/admin/v2/health/{serverId}` | 单服健康详情（因子分解 + 权重版本）**【已实现·FR-147】** |
+| GET | `/admin/v2/health/snapshots` | 健康快照回放（查询侧不隐式建日表）**【已实现·FR-147】** |
+| GET | `/admin/v2/sched-decisions` | 调度决策记录分页查询（from/to 必填、跨日并表）**【已实现·FR-146】** |
+| GET | `/admin/v2/sched-decisions/{traceId}` | 单条决策详情（候选 / 排除原因 / 选择）**【已实现·FR-146】** |
+| GET | `/admin/v2/sched-decisions/summary` | 决策概览（成功率 / 失败原因 Top / 降级占比）**【已实现·FR-146】** |
+| GET | `/admin/v2/settings/health-weights` | 当前健康权重配置 + 历史 rev **【已实现·FR-147】** |
+| PUT | `/admin/v2/settings/health-weights` | 全量替换健康权重（校验 → 镜像 + 新 rev + 审计 → 热更下轮生效）**【已实现·FR-147】** |
 
 > agent-api 本机接口（`BeaconScheduling`）见其 §5.3；排空切换端点已收编至区服权威域（上表 `/servers/{serverId}/draining`），不重复。
 
