@@ -121,6 +121,27 @@ sealed class RegisterOutcome {
     data class Failed(val reason: String) : RegisterOutcome()
 }
 
+/**
+ * v2 指标批量上报结果（FR-144 §5.1）。区分成功 / 过载 / 未确认 / 拒绝 / 连接失败，
+ * 供上报循环决定 ack 缓冲还是保留重试（仅 [Accepted] 才移除已上报样本）。
+ */
+sealed class MetricsReportOutcome {
+    /** 202：控制面已受理该批。accepted / deduplicated 为控制面回报的入库 / 去重数，rttMs 为本批上报往返毫秒。 */
+    data class Accepted(val accepted: Int, val deduplicated: Int, val rttMs: Int) : MetricsReportOutcome()
+
+    /** 429：控制面写入队列忙（过载保护）；agent 视为上报失败保留缓冲、下一 tick 重试。 */
+    object Busy : MetricsReportOutcome()
+
+    /** 403：身份未确认，尚不能上报指标（基座 §2）；保留缓冲，待确认后再报。 */
+    object Forbidden : MetricsReportOutcome()
+
+    /** 400：请求被拒（如 clock_skew_too_large 时钟偏移过大）；保留缓冲，携带脱敏原因供告警。 */
+    data class Rejected(val reason: String) : MetricsReportOutcome()
+
+    /** 连接级失败 / 5xx / 其它非预期状态：保留缓冲，退避外由固定 5s 节奏重试。 */
+    data class Failed(val reason: String) : MetricsReportOutcome()
+}
+
 /** v2 registration 长轮询结果。 */
 sealed class RegistrationPollResult {
     /** 身份已确认可继续注册数据面。 */

@@ -77,6 +77,22 @@ class AgentLifecycle(
      */
     private val metricsReportGen = AtomicReference(0)
 
+    /** 是否启用 v2 指标采样与批上报（壳层经 [enableMetricsSampling] 在接入前开启；默认关，向后兼容既有测试）。 */
+    private val metricsSamplingEnabled = AtomicBoolean(false)
+
+    /**
+     * v2 指标采样 + 批上报协调器（FR-144）：拆出以免本类膨胀。采集经既有 provider（内存 / CPU / 在线 / TPS
+     * 与 BC 专属），采集失败在 provider 内回退（fail-static 不变）。启用后随注册成功 start、shutdown 时 stop。
+     */
+    private val metricsSampling =
+        MetricsSamplingCoordinator(
+            adapter = adapter,
+            apiClient = apiClient,
+            identity = identity,
+            runtimeProvider = { currentMetrics() },
+            proxyProvider = { currentProxyMetrics() },
+        )
+
     /**
      * 文件树长轮询（通道B）的「代」标识：与配置长轮询并行、各自 gen，重启循环时递增。
      * 唤醒集合与配置独立（fileTreeMd5 ≠ 配置 md5，见 ADR-0010）。
@@ -166,6 +182,26 @@ class AgentLifecycle(
     /** 注册成功回调；每次 register 成功都会触发。 */
     fun onRegistered(listener: () -> Unit) {
         registeredListeners.add(listener)
+    }
+
+    /**
+     * 启用 v2 指标 1s 采样 + 5s 批上报（FR-144，生产默认周期）。壳层在 [bootstrapWithSnapshotThenConnect]
+     * **之前**调用，使注册成功时即启两条循环。须在接入前开启以避开「注册先于开启」的竞态。
+     */
+    fun enableMetricsSampling() {
+        metricsSamplingEnabled.set(true)
+    }
+
+    /**
+     * 启用 v2 指标采样并覆盖周期与桶宽（仅测试为加速用；须在接入前调用，无并发）。
+     */
+    fun enableMetricsSampling(
+        sampleIntervalMs: Long,
+        batchReportIntervalMs: Long,
+        bucketMs: Long,
+    ) {
+        metricsSampling.configure(sampleIntervalMs, batchReportIntervalMs, bucketMs)
+        metricsSamplingEnabled.set(true)
     }
 
     /**
@@ -295,7 +331,7 @@ class AgentLifecycle(
         }
     }
 
-    /** 停止：置 running=false，递增代标识使所有循环在下一跳退出。 */
+    /** 停止：置 running=false，递增代标识使所有循环在下一跳退出，并停 v2 指标采样协调器。 */
     fun shutdown() {
         running.set(false)
         heartbeatGen.set(heartbeatGen.get() + 1)
@@ -303,6 +339,7 @@ class AgentLifecycle(
         fileTreeGen.set(fileTreeGen.get() + 1)
         overrideGen.set(overrideGen.get() + 1)
         streamGen.set(streamGen.get() + 1)
+        metricsSampling.stop()
         adapter.info("agent 生命周期已停止")
     }
 
@@ -402,6 +439,10 @@ class AgentLifecycle(
         startHeartbeatLoop()
         // 周期性把负载指标刷进控制面注册表（FR-32 / FR-34）：与配置变更解耦，稳态 304 时仍持续上报真值。
         startMetricsReportLoop()
+        // v2 指标 1s 采样 + 5s 批上报（FR-144）：启用时随注册成功启动；缓冲跨重连保留支撑断连补报。
+        if (metricsSamplingEnabled.get()) {
+            metricsSampling.start()
+        }
         // 注入了 streamTransport（FR-24）：以单条 SSE 推送流取代三条长轮询；否则退回三条长轮询（迁移期兼容）。
         if (apiClient.streamingEnabled()) {
             startStreamLoop()

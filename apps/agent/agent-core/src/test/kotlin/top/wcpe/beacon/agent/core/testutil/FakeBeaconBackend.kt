@@ -24,6 +24,13 @@ class FakeBeaconBackend : HttpTransport {
     /** 反向抓取拉命令端点累计调用次数（FR-39，断言 command-pending / READY 触发）。 */
     val commandsCalls = AtomicInteger(0)
 
+    /** v2 指标批上报端点累计调用次数（FR-144）。 */
+    val metricsReportCalls = AtomicInteger(0)
+
+    /** v2 指标批上报响应码（默认 202 受理；置 500 模拟断连 / 过载以验保留缓冲重试补报）。 */
+    @Volatile
+    var metricsReportStatus: Int = 202
+
     /** 拉命令响应码（默认 204 无待办；置 200 走拉命令成功路径）。 */
     @Volatile
     var commandsStatus: Int = 204
@@ -73,6 +80,12 @@ class FakeBeaconBackend : HttpTransport {
                 lastPollMd5.set(md5)
                 if (md5 == null) emptyMd5PollCalls.incrementAndGet()
                 if (pollStatus == 200) HttpResponse(200, BODY_EFFECTIVE) else HttpResponse(pollStatus, "")
+            }
+
+            // v2 指标批上报（FR-144）：须先于 v1 `/report` 匹配（两者 URL 都以 /report 结尾）。
+            url.contains("/metrics/report") -> {
+                metricsReportCalls.incrementAndGet()
+                HttpResponse(metricsReportStatus, "")
             }
 
             url.endsWith("/report") -> {

@@ -14,6 +14,11 @@ import top.wcpe.beacon.agent.core.log.LogLine
 import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.override.OverrideManifest
 import top.wcpe.beacon.agent.core.override.OverrideSetEntry
+import top.wcpe.beacon.agent.core.sampling.BackendBatch
+import top.wcpe.beacon.agent.core.sampling.MetricBatch
+import top.wcpe.beacon.agent.core.sampling.MetricKind
+import top.wcpe.beacon.agent.core.sampling.MetricSample
+import top.wcpe.beacon.agent.core.sampling.ProxyBatch
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.transport.HttpRequest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
@@ -386,6 +391,51 @@ class BeaconApiClient(
                 ),
             ) ?: return false
         return resp.statusCode == 200
+    }
+
+    /**
+     * v2 指标批量上报：POST /beacon/v2/agent/metrics/report（FR-144 §5.1）。同步调用，请在异步线程使用。
+     *
+     * 报文 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`；samples 为 5s 批聚合行
+     * （§3.1 字段集，snake_case 键，单批 ≤120）。控制面按 `(serverId, bucket_start_ms)` 唯一键去重。
+     * 202 受理（回报 accepted / deduplicated + 本批往返 RTT）；429 忙、403 未确认、400 拒绝、其它失败——
+     * 均保留缓冲由上报循环重试（仅 202 才 ack 移除已上报样本）。
+     */
+    fun reportMetricsBatch(
+        identity: AgentIdentity,
+        kind: MetricKind,
+        agentTimeMs: Long,
+        droppedSinceLast: Long,
+        batches: List<MetricBatch>,
+    ): MetricsReportOutcome {
+        val body =
+            buildMap<String, Any?> {
+                put("namespace", identity.namespace)
+                put("serverId", identity.serverId)
+                put("kind", kind.wire)
+                put("agentTimeMs", agentTimeMs)
+                put("droppedSinceLast", droppedSinceLast)
+                put("samples", batches.map { metricBatchBody(it) })
+            }
+        val startNanos = System.nanoTime()
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/metrics/report",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return MetricsReportOutcome.Failed(connectFailReason())
+        val rttMs = ((System.nanoTime() - startNanos) / 1_000_000L).toInt()
+        return when (resp.statusCode) {
+            202 -> parseMetricsAccepted(resp.body, rttMs)
+            429 -> MetricsReportOutcome.Busy
+            403 -> MetricsReportOutcome.Forbidden
+            400 -> MetricsReportOutcome.Rejected(parseErrorCode(resp.body))
+            else -> MetricsReportOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
     }
 
     /**
@@ -949,6 +999,54 @@ class BeaconApiClient(
                     maxDepth = JsonTree.intOr(payloadObj, "maxDepth", 0),
                 ),
         )
+    }
+
+    /**
+     * 把一个 5s 批聚合行拼成 v2 指标上报 samples 元素（FR-144 §3.1，snake_case 键固定供控制面对齐）。
+     *
+     * 每行含全部 §3.1 指标列，不适用维度写缺省值（数值 0、后端 RTT -1），由控制面按 kind 解释，不特判 NULL。
+     */
+    private fun metricBatchBody(batch: MetricBatch): Map<String, Any?> {
+        val backend = batch.payload as? BackendBatch
+        val proxy = batch.payload as? ProxyBatch
+        return mapOf(
+            "bucket_start_ms" to batch.bucketStartMs,
+            "sample_count" to batch.sampleCount,
+            "cpu_pct_avg" to batch.load.cpuPctAvg,
+            "cpu_pct_max" to batch.load.cpuPctMax,
+            "mem_used_mb_avg" to batch.load.memUsedMbAvg,
+            "mem_max_mb" to batch.load.memMaxMb,
+            "tps_avg" to (backend?.tpsAvg ?: 0.0),
+            "tps_min" to (backend?.tpsMin ?: 0.0),
+            "online_avg" to (backend?.onlineAvg ?: 0),
+            "online_max" to (backend?.onlineMax ?: 0),
+            "max_online" to (backend?.maxOnline ?: 0),
+            "conn_avg" to (proxy?.connAvg ?: 0),
+            "conn_max" to (proxy?.connMax ?: 0),
+            "backend_up" to (proxy?.backendUp ?: 0),
+            "backend_total" to (proxy?.backendTotal ?: 0),
+            "backend_rtt_ms_avg" to (proxy?.backendRttMsAvg ?: MetricSample.RTT_UNAVAILABLE),
+            "report_rtt_ms" to batch.reportRttMs,
+        )
+    }
+
+    /** 解析 202 受理响应（accepted / deduplicated 计数），并带上本批上报 RTT。 */
+    private fun parseMetricsAccepted(
+        jsonBody: String,
+        rttMs: Int,
+    ): MetricsReportOutcome.Accepted {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return MetricsReportOutcome.Accepted(
+            accepted = JsonTree.intOr(obj, "accepted", 0),
+            deduplicated = JsonTree.intOr(obj, "deduplicated", 0),
+            rttMs = rttMs,
+        )
+    }
+
+    /** 从错误响应体解析原因码（优先 code，退 message，再退笼统）；供 400 拒绝告警可读（已脱敏，ADR-0057）。 */
+    private fun parseErrorCode(jsonBody: String): String {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return JsonTree.str(obj, "code") ?: JsonTree.str(obj, "message") ?: "请求被拒"
     }
 
     /** 把 BC 专属指标拼成 report 报文的 `proxy` 子对象（键名固定供控制面对齐，FR-34）。 */
