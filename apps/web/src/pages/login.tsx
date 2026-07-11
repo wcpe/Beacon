@@ -1,50 +1,61 @@
-// 登录页（/login，FR-179 阶段 A mockup）：全屏、无侧栏无页眉，独立于 AppShell。
-// 居中卡片——灯塔品牌 logo + 标题 + 用户名 / 口令输入 + 登录主按钮 + 错误 / 成功提示区 + 环境副文案。
-// 本阶段仅视觉与四态交互演示，用纯前端 mock 模拟提交：不接真实 /admin/v1/auth/login、
-// 不存令牌、不注入 Authorization、不做路由守卫（均为阶段 B 内容）。
+// 登录页（/login，FR-179）：全屏、无侧栏无页眉，独立于 AppShell。
+// 居中卡片——灯塔品牌 logo + 标题 + 用户名 / 口令输入 + 登录主按钮 + 错误提示区 + 环境副文案。
+// 阶段 B 接真鉴权：真实 POST /admin/v1/auth/login，成功存令牌并回跳来访页（或首页），
+// 失败内联展示后端脱敏文案（ADR-0057）。视觉 / 布局 / 品牌区沿用阶段 A 拍板稿，仅换提交行为。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { CircleCheck, Loader2, TriangleAlert } from 'lucide-react'
+import { useMutation } from '@tanstack/react-query'
+import { Loader2, TriangleAlert } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from '@beacon/ui'
 
-// 提交状态机：空态 / 加载 / 成功 / 失败（供四态评审）
-type SubmitStatus = 'idle' | 'loading' | 'success' | 'error'
+import { ApiClientError } from '../api/cluster'
+import { login } from '../api/auth'
+import { setAuth } from '../state/auth'
 
-// mockup 模拟提交时延（毫秒）：让评审者看得到加载态
-const MOCK_SUBMIT_DELAY_MS = 1000
+// 路由守卫 / 401 重定向时塞进 location.state 的来访信息
+interface FromState {
+  from?: { pathname: string }
+}
 
 export default function LoginPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [status, setStatus] = useState<SubmitStatus>('idle')
-  const [message, setMessage] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // 纯前端 mock 提交：校验非空 → 加载 1s → 按约定演示输入切成功 / 失败态，不真实跳转。
+  // 登录成功后的目标：优先回被拦截的来访页，否则运维总览首页
+  const target = (location.state as FromState | null)?.from?.pathname ?? '/'
+
+  const loginMut = useMutation({
+    mutationFn: () => login(username.trim(), password),
+    onSuccess: (result) => {
+      setAuth(result.token, result.operator)
+      navigate(target, { replace: true })
+    },
+    onError: (err) => {
+      // 后端脱敏文案直接展示；非 ApiClientError 兜底通用失败文案。
+      setError(err instanceof ApiClientError ? err.message : t('auth.login.failed'))
+    },
+  })
+
+  // 真实登录提交：前端仅校验非空，凭据校验交由后端（凭据错回 401，展示脱敏 message）。
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     if (username.trim() === '' || password === '') {
-      setStatus('error')
-      setMessage(t('auth.login.missingCredentials'))
+      setError(t('auth.login.missingCredentials'))
       return
     }
-    setStatus('loading')
-    setMessage(null)
-    window.setTimeout(() => {
-      if (password.includes('bad')) {
-        setStatus('error')
-        setMessage(t('auth.login.errorMock'))
-      } else {
-        setStatus('success')
-        setMessage(t('auth.login.successMock'))
-      }
-    }, MOCK_SUBMIT_DELAY_MS)
+    setError(null)
+    loginMut.mutate()
   }
 
-  const loading = status === 'loading'
+  const loading = loginMut.isPending
 
   return (
     <div className="app-bg flex min-h-screen flex-col items-center justify-center gap-4 p-4 text-foreground">
@@ -91,24 +102,13 @@ export default function LoginPage() {
             </div>
 
             {/* 失败提示区（脱敏文案样式：crit 浅底 + 同色描边，只显脱敏后的安全文案） */}
-            {status === 'error' && message !== null && (
+            {error !== null && (
               <div
                 className="flex items-start gap-2 rounded-lg border border-crit-bd bg-crit-bg px-3 py-2 text-[13px] text-crit"
                 role="alert"
               >
                 <TriangleAlert className="mt-px size-4 shrink-0" />
-                <span>{message}</span>
-              </div>
-            )}
-
-            {/* 成功提示区（mockup 不跳转，仅演示成功态：ok 浅底 + 同色描边） */}
-            {status === 'success' && message !== null && (
-              <div
-                className="flex items-start gap-2 rounded-lg border border-ok-bd bg-ok-bg px-3 py-2 text-[13px] text-ok"
-                role="status"
-              >
-                <CircleCheck className="mt-px size-4 shrink-0" />
-                <span>{message}</span>
+                <span>{error}</span>
               </div>
             )}
 
@@ -122,9 +122,6 @@ export default function LoginPage() {
                 t('auth.login.submit')
               )}
             </Button>
-
-            {/* 演示提示：告知评审者如何触发失败态（阶段 B 接真鉴权后移除） */}
-            <p className="text-center text-[11px] text-ink-4">{t('auth.login.mockTip')}</p>
           </form>
         </CardContent>
       </Card>

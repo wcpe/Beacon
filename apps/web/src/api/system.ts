@@ -20,46 +20,10 @@ import type {
   UpdateProgress,
 } from '@beacon/contracts'
 
-import { ApiClientError, parseApiJson } from './cluster'
+// 收敛到集群域的全站统一请求封装（含鉴权注入与 401 处理，FR-179）；ApiClientError 再导出供调用方 instanceof。
+import { ApiClientError, buildQuery, request } from './cluster'
 
 export { ApiClientError }
-
-interface ErrorBodyShape {
-  code?: unknown
-  message?: unknown
-}
-
-/** 统一请求封装：非 2xx 抛 ApiClientError（取脱敏 message），204 返回 undefined。 */
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const response = await fetch(path, {
-    method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  const text = await response.text()
-  const parsed: unknown = parseApiJson(text, response.status)
-  if (!response.ok) {
-    const shape = (parsed ?? {}) as ErrorBodyShape
-    const code = typeof shape.code === 'string' ? shape.code : 'unknown'
-    const message =
-      typeof shape.message === 'string' ? shape.message : `请求失败（HTTP ${String(response.status)}）`
-    throw new ApiClientError(response.status, code, message)
-  }
-  return parsed as T
-}
-
-/** 拼装 query 串：跳过 null / undefined / 空串。 */
-function buildQuery(params: Record<string, string | number | boolean | null | undefined>): string {
-  const search = new URLSearchParams()
-  for (const [key, value] of Object.entries(params)) {
-    if (value === null || value === undefined || value === '') {
-      continue
-    }
-    search.set(key, String(value))
-  }
-  const query = search.toString()
-  return query === '' ? '' : `?${query}`
-}
 
 // ---- /system 控制面健康（Legacy 形状）----
 

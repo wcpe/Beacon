@@ -13,6 +13,8 @@ import type {
   ZoneTreeResponse,
 } from '@beacon/contracts'
 
+import { clearAuth, currentToken, notifyUnauthorized } from '../state/auth'
+
 /** 携带后端错误码的 API 错误（message 已脱敏，可直接展示） */
 export class ApiClientError extends Error {
   readonly code: string
@@ -47,13 +49,32 @@ export function parseApiJson(text: string, status: number): unknown {
   return JSON.parse(text)
 }
 
-/** 统一请求封装：非 2xx 抛 ApiClientError（取脱敏 message），204 返回 undefined。 */
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/**
+ * 全站统一请求封装（FR-179）：注入登录令牌 Authorization + 处理 401 + 非 2xx 抛脱敏 message。
+ *
+ * 交付 / 可观测 / 系统等域的请求封装均收敛委托到此实现（见 http.ts / request.ts / system.ts），
+ * 保证鉴权注入与 401 行为四处一致。有令牌则带 `Authorization: Bearer <令牌>`；
+ * 遇 401（令牌缺失 / 失效 / 过期，或登录端点凭据错）先清登录态并触发全局跳登录回调，再抛错供调用方提示。
+ */
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {}
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json'
+  }
+  const token = currentToken()
+  if (token !== '') {
+    headers.Authorization = `Bearer ${token}`
+  }
   const response = await fetch(path, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: Object.keys(headers).length === 0 ? undefined : headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
+  if (response.status === 401) {
+    // 令牌失效：清登录态并触发全局跳登录（登录端点凭据错也 401，跳登录为幂等，错误仍抛给调用方提示）。
+    clearAuth()
+    notifyUnauthorized()
+  }
   const text = await response.text()
   const parsed: unknown = parseApiJson(text, response.status)
   if (!response.ok) {
