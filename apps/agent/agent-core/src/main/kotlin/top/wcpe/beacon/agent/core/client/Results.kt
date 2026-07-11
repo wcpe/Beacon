@@ -126,8 +126,16 @@ sealed class RegisterOutcome {
  * 供上报循环决定 ack 缓冲还是保留重试（仅 [Accepted] 才移除已上报样本）。
  */
 sealed class MetricsReportOutcome {
-    /** 202：控制面已受理该批。accepted / deduplicated 为控制面回报的入库 / 去重数，rttMs 为本批上报往返毫秒。 */
-    data class Accepted(val accepted: Int, val deduplicated: Int, val rttMs: Int) : MetricsReportOutcome()
+    /**
+     * 202：控制面已受理该批。accepted / deduplicated 为控制面回报的入库 / 去重数，rttMs 为本批上报往返毫秒。
+     * self 为控制面顺带回传的自身健康视图（FR-147/FR-148），无视图时为 null，供 `selfHealth()` 消费。
+     */
+    data class Accepted(
+        val accepted: Int,
+        val deduplicated: Int,
+        val rttMs: Int,
+        val self: SelfHealth? = null,
+    ) : MetricsReportOutcome()
 
     /** 429：控制面写入队列忙（过载保护）；agent 视为上报失败保留缓冲、下一 tick 重试。 */
     object Busy : MetricsReportOutcome()
@@ -164,4 +172,111 @@ sealed class RegistrationPollResult {
 
     /** 连接级失败/其它非预期状态。 */
     data class Failed(val reason: String) : RegistrationPollResult()
+}
+
+// ---- 调度 / 健康（FR-148 §5.1）：wire DTO 与调用结果 ----
+// 线上键为 camelCase（v2 API 通用约定）；level 为小写线上值（healthy/degraded/unhealthy），
+// 到 API 强类型枚举的映射在 SchedulingView 边界完成，client 只承载 wire 值，不依赖 api 枚举。
+
+/** 自身健康视图（指标上报 202 响应内的 self 段）；level 为小写线上值。 */
+data class SelfHealth(
+    val score: Int,
+    val level: String,
+    val schedulable: Boolean,
+    val reasons: List<String>,
+)
+
+/** 单个候选（candidates 快照元素 / 本地快照元素）；level 为小写线上值。 */
+data class CandidateEntry(
+    val serverId: String,
+    val score: Int,
+    val level: String,
+    val schedulable: Boolean,
+    val onlineCount: Int,
+    val maxOnline: Int,
+)
+
+/** 某小区的候选集（candidates 响应 zones 元素）。 */
+data class ZoneCandidates(
+    val zone: String,
+    val candidates: List<CandidateEntry>,
+)
+
+/** candidates 200 响应体（生成时刻 + 各 zone 候选）。 */
+data class SchedCandidates(
+    val generatedAtMs: Long,
+    val zones: List<ZoneCandidates>,
+)
+
+/** 拉取候选快照的结果。 */
+sealed class SchedCandidatesOutcome {
+    /** 200：成功，携带候选快照。 */
+    data class Success(val candidates: SchedCandidates) : SchedCandidatesOutcome()
+
+    /** 连接级失败 / 其它非预期状态：本轮放弃刷新，沿用上一快照（fail-static）。 */
+    data class Failed(val reason: String) : SchedCandidatesOutcome()
+}
+
+/** decide 命中的选择（serverId + 健康分）。 */
+data class DecidedChoice(
+    val serverId: String,
+    val score: Int,
+)
+
+/** 请求控制面做一次决策的结果。 */
+sealed class SchedDecideOutcome {
+    /** 200：控制面完成决策（chosen 为 null 表示无候选，此时 failReason 非空）。 */
+    data class Decided(
+        val traceId: String,
+        val chosen: DecidedChoice?,
+        val candidateCount: Int,
+        val excludedCount: Int,
+        val failReason: String?,
+    ) : SchedDecideOutcome()
+
+    /** 404：目标小区不存在（zone_not_found）——控制面权威判定，非降级触发。 */
+    object ZoneNotFound : SchedDecideOutcome()
+
+    /** 403：跨 namespace 被拒（cross_namespace）——控制面权威判定。 */
+    object CrossNamespace : SchedDecideOutcome()
+
+    /** 400：请求被拒（如 INVALID_PARAM）；携脱敏原因。 */
+    data class Rejected(val reason: String) : SchedDecideOutcome()
+
+    /** 连接级失败 / 超时 / 5xx / 其它：触发本地快照降级决策（fail-static）。 */
+    data class Failed(val reason: String) : SchedDecideOutcome()
+}
+
+/** 一台候选的排除记录（report-local 补报的 excluded 元素）。 */
+data class ExcludedRef(
+    val serverId: String,
+    val reason: String,
+)
+
+/** 降级期一条本地决策的补报记录（report-local 请求 decisions 元素）。 */
+data class LocalDecisionReport(
+    val localTraceId: String,
+    val tsMs: Long,
+    val zone: String,
+    val plugin: String?,
+    val purpose: String?,
+    val candidateCount: Int,
+    val excluded: List<ExcludedRef>,
+    val chosenServerId: String?,
+    val failReason: String?,
+)
+
+/** 补报降级决策的结果。 */
+sealed class SchedReportLocalOutcome {
+    /** 202：控制面已受理（accepted / deduplicated 为入库 / 按 localTraceId 去重数）。 */
+    data class Accepted(val accepted: Int, val deduplicated: Int) : SchedReportLocalOutcome()
+
+    /** 400：请求被拒（如超 100 条 / 参数非法）；携脱敏原因。 */
+    data class Rejected(val reason: String) : SchedReportLocalOutcome()
+
+    /** 403：身份未确认，尚不能补报；保留队列待恢复后重试。 */
+    object Forbidden : SchedReportLocalOutcome()
+
+    /** 连接级失败 / 其它非预期状态：保留队列下次恢复再补报（best-effort）。 */
+    data class Failed(val reason: String) : SchedReportLocalOutcome()
 }
