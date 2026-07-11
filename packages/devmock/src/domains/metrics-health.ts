@@ -8,6 +8,7 @@ import type {
   HealthItem,
   HealthLevel,
   HealthSnapshotPoint,
+  HealthSnapshotsResponse,
   HealthWeightsConfig,
   HealthWeightsResponse,
   HealthWeightsRev,
@@ -312,7 +313,7 @@ export const metricsHealthHandlers: HttpHandler[] = [
     const state = getClusterState()
     const server = state.servers.find((s) => s.serverId === serverId)
     if (!server) {
-      return HttpResponse.json({ items: [] as HealthSnapshotPoint[] })
+      return HttpResponse.json({ items: [] } satisfies HealthSnapshotsResponse)
     }
     const toMs = queryTimeMs(url, 'to') ?? BASE_MS
     const fromMs = queryTimeMs(url, 'from') ?? toMs - 3_600_000
@@ -333,7 +334,7 @@ export const metricsHealthHandlers: HttpHandler[] = [
         weightsRev: config.rev,
       })
     }
-    return HttpResponse.json({ items })
+    return HttpResponse.json({ items } satisfies HealthSnapshotsResponse)
   }),
 
   // 全部服务器当前健康列表（分页 + 筛选）

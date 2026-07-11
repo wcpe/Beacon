@@ -72,6 +72,11 @@ export interface HealthSnapshotPoint {
   weightsRev: number
 }
 
+/** 健康快照回放响应（GET /admin/v2/health/snapshots，包装 items 数组） */
+export interface HealthSnapshotsResponse {
+  items: HealthSnapshotPoint[]
+}
+
 /** 调度决策记录（列表项） */
 export interface SchedDecisionItem {
   traceId: string
