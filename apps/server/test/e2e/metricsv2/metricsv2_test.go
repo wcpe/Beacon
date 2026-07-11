@@ -208,8 +208,8 @@ func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration) {
 	// 代表行强断言：归属一致、真实负载、桶 5s 对齐、样本数标称 1~5、CPU 合法值。
 	assertRowSound(t, chosen)
 
-	// 全量行硬不变量：归属一致、桶 5s 对齐、样本数 ≥1、CPU 合法；样本数 >5 仅作观测记录（见下）。
-	cpuUnavail, overCount := 0, 0
+	// 全量行硬不变量：归属一致、桶 5s 对齐、样本数 1~5（spec §3.1，agent 侧已幂等启动 + 聚合封顶）、CPU 合法。
+	cpuUnavail := 0
 	for i := range rows {
 		r := rows[i]
 		if r.ServerID != serverID {
@@ -221,8 +221,8 @@ func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration) {
 		if r.BucketStartMs <= 0 || r.BucketStartMs%5000 != 0 {
 			t.Fatalf("行 bucket_start_ms=%d 应为正且 5s 对齐", r.BucketStartMs)
 		}
-		if r.SampleCount < 1 {
-			t.Fatalf("行 sample_count=%d 应 ≥1", r.SampleCount)
+		if r.SampleCount < 1 || r.SampleCount > 5 {
+			t.Fatalf("行 sample_count=%d 应在 1~5（spec §3.1）", r.SampleCount)
 		}
 		if r.CPUPctAvg != -1 && r.CPUPctAvg <= 0 {
 			t.Fatalf("行 cpu_pct_avg=%.4f 非法：应为真实使用率(>0) 或不可用哨兵(-1)", r.CPUPctAvg)
@@ -230,14 +230,6 @@ func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration) {
 		if r.CPUPctAvg == -1 {
 			cpuUnavail++
 		}
-		if r.SampleCount > 5 {
-			overCount++
-		}
-	}
-	if overCount > 0 {
-		// 启动期 MC 主线程/异步调度在负载高峰抖动，个别 5s 桶可聚入 >5 个 1s 样本（标称 5）；
-		// 稳态回归为 5。此为调度时序抖动的良性观测、非入库链路缺陷，故记录不失败。
-		t.Logf("观测：%d/%d 行 sample_count>5（启动期采样调度抖动，稳态为 5，非入库链路缺陷）", overCount, len(rows))
 	}
 	if cpuUnavail > 0 {
 		// 本机 getProcessCpuLoad 因 OS 性能计数器不可用恒返 -1；agent 已正确归一为哨兵，链路无损。
