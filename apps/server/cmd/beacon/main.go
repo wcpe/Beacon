@@ -31,6 +31,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 	"github.com/wcpe/Beacon/apps/server/internal/secret"
@@ -331,6 +332,14 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// 健康视图内存真源（§3.6）+ 健康计算轮（§4.4）：每 5s 锁外读 DB 事实、聚合 60s 指标窗口、
+	// 整批替换全实例视图；每 6 轮（30s）把全量视图转快照行经异步写入通道落 health_snapshot 日表
+	// （flusher 注册必须先于 asyncDailyWriter.Start）。计算轮 goroutine 在下方随关停信号统一启动。
+	healthViewStore := healthview.NewStore()
+	healthSnapshotRepo := repository.NewHealthSnapshotRepository(db)
+	service.RegisterFlusher(asyncDailyWriter, service.RouteKindHealthSnapshot, healthSnapshotRepo.FlushDaily)
+	healthComputeService := service.NewHealthComputeService(repository.NewHealthFactsRepository(db),
+		metricWindow, healthViewStore, healthWeightsService, service.HealthSnapshotEnqueuer{Writer: asyncDailyWriter})
 	v2HealthHandler := handler.NewV2HealthHandler(healthWeightsService)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
@@ -436,6 +445,9 @@ func run() error {
 
 	// 启动异步日表写入通道（FR-144）：每路由多 worker 共享该路由有界队列，攒批事务批插当日日表，随关停信号退出。
 	asyncDailyWriter.Start(ctx)
+
+	// 启动健康计算轮（FR-147）：每 5s 重算全实例健康视图、每 30s 全量快照经写入通道落库，随关停信号退出。
+	go healthComputeService.Run(ctx)
 
 	// 启动 git 导出 worker（FR-47）：单 worker 串行消费导出信号，随关停信号退出；未启用时也起（空转无害、无信号即不动）
 	if cfg.GitExport.Enabled {
