@@ -81,6 +81,29 @@ func insertBatchIgnore(tx *gorm.DB, tableName string, rows []model.MetricSampleV
 	return deduplicated, nil
 }
 
+// QueryRange 查一组 server 在 [fromMs, toMs] 的 5s 聚合行（跨日并表、bucket_start_ms 升序）。
+// serverIDs 必填（1000+ 子服禁全量扫，§5.2）；查询侧严禁隐式建表——逐日 HasTable 判存在，缺表跳过。
+func (r *MetricSampleV2Repository) QueryRange(serverIDs []string, fromMs, toMs int64) ([]model.MetricSampleV2, error) {
+	if len(serverIDs) == 0 {
+		return []model.MetricSampleV2{}, nil
+	}
+	out := make([]model.MetricSampleV2, 0, 256)
+	for _, day := range utcDaysBetween(fromMs, toMs) {
+		name := store.DailyTableName(model.MetricSampleV2{}.TableName(), day)
+		if !r.db.Migrator().HasTable(name) {
+			continue
+		}
+		var rows []model.MetricSampleV2
+		if err := r.db.Table(name).
+			Where("server_id IN ? AND bucket_start_ms >= ? AND bucket_start_ms <= ?", serverIDs, fromMs, toMs).
+			Order("bucket_start_ms ASC").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
 // groupRowsByDay 按 bucket_start_ms 对应的 UTC 日（零点）分组，支撑跨日批拆分。
 func groupRowsByDay(rows []model.MetricSampleV2) map[time.Time]([]model.MetricSampleV2) {
 	byDay := make(map[time.Time][]model.MetricSampleV2)

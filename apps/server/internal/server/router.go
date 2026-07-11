@@ -137,6 +137,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 			// 健康与指标管理端点（FR-147，见 §5.2）
 			if h.V2Health != nil {
+				// 集群聚合概览 / 单服时序（serverId 必填、step 服务端桶聚合、跨日并表）
+				r.Get("/metrics/summary", h.V2Health.MetricsSummary)
+				r.Get("/metrics/series", h.V2Health.MetricsSeries)
+				// 当前健康列表（内存实时，分页 + 筛选）；快照回放为静态路由，先于 {serverId} 通配
+				r.Get("/health", h.V2Health.ListHealth)
+				r.Get("/health/snapshots", h.V2Health.ListHealthSnapshots)
+				r.Get("/health/{serverId}", h.V2Health.GetHealthDetail)
 				// 健康权重版本化配置：读当前 + 历史 / 全量替换热更（校验 → 镜像 + 新 rev + 审计）
 				r.Get("/settings/health-weights", h.V2Health.GetHealthWeights)
 				r.Put("/settings/health-weights", h.V2Health.PutHealthWeights)

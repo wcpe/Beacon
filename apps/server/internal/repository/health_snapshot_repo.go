@@ -57,6 +57,26 @@ func (r *HealthSnapshotRepository) FlushDaily(rows []model.HealthSnapshot) (int,
 	return 0, nil
 }
 
+// QueryRange 查某 server 在 [fromMs, toMs] 的快照（跨日并表、ts_ms 升序）。
+// 查询侧严禁隐式建表：逐日 Migrator().HasTable 判存在，缺表跳过（该日无数据）。
+func (r *HealthSnapshotRepository) QueryRange(serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error) {
+	out := make([]model.HealthSnapshot, 0, 64)
+	for _, day := range utcDaysBetween(fromMs, toMs) {
+		name := store.DailyTableName(model.HealthSnapshot{}.TableName(), day)
+		if !r.db.Migrator().HasTable(name) {
+			continue
+		}
+		var rows []model.HealthSnapshot
+		if err := r.db.Table(name).
+			Where("server_id = ? AND ts_ms >= ? AND ts_ms <= ?", serverID, fromMs, toMs).
+			Order("ts_ms ASC").Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
 // groupSnapshotsByDay 按 ts_ms 对应的 UTC 日（零点）分组，支撑跨日批拆分。
 func groupSnapshotsByDay(rows []model.HealthSnapshot) map[time.Time][]model.HealthSnapshot {
 	byDay := make(map[time.Time][]model.HealthSnapshot)
