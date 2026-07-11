@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apikey"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
@@ -31,6 +32,28 @@ type APIKeyVerifier interface {
 // AgentV2Authenticator 校验已确认 v2 身份对 legacy v1 数据面的兼容访问。
 type AgentV2Authenticator interface {
 	AuthenticateAgentV2(token, identityID, bootID string) error
+}
+
+// AgentV2ReportAuthenticator 校验 v2 agent 数据面上报端点（指标 / 调度）鉴权并返回权威绑定身份（FR-144，见 §5.1）。
+type AgentV2ReportAuthenticator interface {
+	AuthenticateAgentReport(token, identityID string) (agentauth.Identity, error)
+}
+
+// agentV2ReportMiddleware 校验 v2 agent 数据面端点鉴权：token↔namespace + identity 绑定（spec §4.2/§5.1）。
+// 通过则把权威身份（namespace / serverId / kind）注入 context，供 handler 归属上报数据、绝不信任请求体自报身份；
+// 失败按服务层 apperr 决定状态码——未确认（status≠active）403、token / 身份非法 401，经 render.WriteError 脱敏。
+func agentV2ReportMiddleware(authn AgentV2ReportAuthenticator) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			identity, err := authn.AuthenticateAgentReport(
+				r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"))
+			if err != nil {
+				render.WriteError(w, r, err)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(agentauth.WithIdentity(r.Context(), identity)))
+		})
+	}
 }
 
 // agentTokenMiddleware 校验 agent 端共享 token（仅防误连，非安全边界）。

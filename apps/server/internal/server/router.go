@@ -13,6 +13,7 @@ import (
 type Handlers struct {
 	Namespace        *handler.NamespaceHandler
 	V2               *handler.V2ControlPlaneHandler
+	V2Metrics        *handler.V2MetricsHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
 	OverrideSet      *handler.OverrideSetHandler
@@ -100,6 +101,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Route("/beacon/v2/agent", func(r chi.Router) {
 			r.Post("/register", h.V2.AgentRegister)
 			r.Get("/registration", h.V2.AgentRegistration)
+			// 指标上报（FR-144，见 §5.1）：挂 token↔namespace + identity 鉴权中间件（未确认 403）、
+			// 注入权威身份供归属；接收端只校验 + 更内存窗口 + 异步入队，请求 goroutine 不碰 DB。
+			if h.V2Metrics != nil {
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/metrics/report", h.V2Metrics.Report)
+			}
 		})
 	}
 

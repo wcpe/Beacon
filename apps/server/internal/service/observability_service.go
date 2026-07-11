@@ -25,6 +25,12 @@ type commandCounter interface {
 	CountByStatus() (map[string]int, error)
 }
 
+// metricWriteDiscardCounter 是自观测对指标异步写入累计丢弃行数的窄依赖（FR-144）：
+// 由 *MetricIngestWriter 的 Discarded 实现（多次重试仍失败被丢弃的行）。可选注入，未注入即 0。
+type metricWriteDiscardCounter interface {
+	Discarded() int64
+}
+
 // DBPoolStats 是数据库连接池统计快照（仅观测，FR-82）。
 // 取自 sql.DBStats（database/sql 通用、非方言），字段语义与标准库一致。
 type DBPoolStats struct {
@@ -54,6 +60,8 @@ type Observability struct {
 	RegistryByStatus map[string]int // 注册表按健康状态计数（online/degraded/lost/offline，缺省键不返回）
 	RegistryTotal    int            // 注册表实例总数
 	CommandByStatus  map[string]int // 命令队列按状态计数（pending/fetched/... 缺省键不返回）
+	// 指标异步写入累计丢弃行数（FR-144）：多次重试仍失败被丢弃的行；未注入写入池时恒 0。
+	MetricWriteDiscarded int64
 }
 
 // ObservabilityService 聚合控制面内部自观测指标（FR-82）。
@@ -67,6 +75,8 @@ type ObservabilityService struct {
 	topologyHub    waiterCounter
 	commandHub     waiterCounter
 	commandCounter commandCounter
+	// 指标异步写入丢弃计数（FR-144）：可选注入（SetMetricWriteDiscardCounter），未注入即 0。
+	metricDiscard metricWriteDiscardCounter
 }
 
 // NewObservabilityService 构造服务（启动处装配同一连接池 / 注册表 / 四条长轮询 Hub / 命令仓库）。
@@ -85,6 +95,12 @@ func NewObservabilityService(
 		commandHub:     commandHub,
 		commandCounter: commandCounter,
 	}
+}
+
+// SetMetricWriteDiscardCounter 注入指标异步写入丢弃计数源（FR-144）：启动处把写入池接上，
+// 使 /system 自观测能看见「入库多次重试仍失败被丢弃了多少行」（错误不静默，ADR-0057）。
+func (s *ObservabilityService) SetMetricWriteDiscardCounter(c metricWriteDiscardCounter) {
+	s.metricDiscard = c
 }
 
 // Snapshot 采集一次自观测快照。各来源均为只读：连接池统计、内存注册表计数、Hub 挂起数同步取；
@@ -109,6 +125,11 @@ func (s *ObservabilityService) Snapshot() Observability {
 		cmdByStatus = map[string]int{}
 	}
 
+	var metricDiscarded int64
+	if s.metricDiscard != nil {
+		metricDiscarded = s.metricDiscard.Discarded()
+	}
+
 	return Observability{
 		DBPool: DBPoolStats{
 			MaxOpenConnections: st.MaxOpenConnections,
@@ -125,8 +146,9 @@ func (s *ObservabilityService) Snapshot() Observability {
 			Command:  cmdN,
 			Total:    configN + fileN + topoN + cmdN,
 		},
-		RegistryByStatus: byStatus,
-		RegistryTotal:    total,
-		CommandByStatus:  cmdByStatus,
+		RegistryByStatus:     byStatus,
+		RegistryTotal:        total,
+		CommandByStatus:      cmdByStatus,
+		MetricWriteDiscarded: metricDiscarded,
 	}
 }

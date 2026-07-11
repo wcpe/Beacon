@@ -118,6 +118,13 @@ var (
 
 	// ErrUnauthorized agent 端缺少或错误的 token。
 	ErrUnauthorized = New(http.StatusUnauthorized, "UNAUTHORIZED", "缺少或非法的 token")
+	// ErrAgentNotConfirmed agent 身份未人工确认（status≠active），禁止调数据面上报端点（v2 指标 / 调度，spec §4.2）。
+	// 区别于 401（token / 身份非法）——已识别但未获准，故 403。code 用 agent 面小写下划线约定。
+	ErrAgentNotConfirmed = New(http.StatusForbidden, "agent_not_confirmed", "agent 身份未确认，禁止上报")
+	// ErrClockSkewTooLarge agent 上报时钟与控制面偏移超阈值（>5min），整批拒绝，倒逼校时（spec §4.2/§5.1）。
+	ErrClockSkewTooLarge = New(http.StatusBadRequest, "clock_skew_too_large", "上报时钟与控制面偏移过大，请校时后重试")
+	// ErrMetricsIngestBusy 指标写入队列已满，控制面过载保护，agent 保留缓冲重试不丢数据（spec §4.3/§5.1）。
+	ErrMetricsIngestBusy = New(http.StatusTooManyRequests, "metrics_ingest_busy", "指标写入繁忙，请稍后重试")
 	// ErrBadCredentials 管理台登录用户名或口令错误。
 	ErrBadCredentials = New(http.StatusUnauthorized, "BAD_CREDENTIALS", "用户名或口令错误")
 	// ErrAdminUnauthorized 管理台缺少或非法的登录令牌 / API 密钥（含过期 / 已吊销）。

@@ -18,6 +18,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 	"github.com/wcpe/Beacon/apps/server/internal/server"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
@@ -116,9 +117,15 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
 	v2Handler := handler.NewV2ControlPlaneHandler(service.NewV2ControlPlaneService(db))
+	// P4 指标上报（FR-144）：60s 窗口 + 异步写入池 + 接收服务 + 处理器。测试不启写入 worker——
+	// 鉴权 / 窗口去重 / 202 语义即可验，落库经 service 集成用例（启 worker）覆盖。
+	v2MetricsHandler := handler.NewV2MetricsHandler(
+		service.NewMetricIngestService(metricwindow.New(metricwindow.DefaultCapacity),
+			service.NewMetricIngestWriter(repository.NewMetricSampleV2Repository(db))))
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
 		V2:               v2Handler,
+		V2Metrics:        v2MetricsHandler,
 		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo)),
 		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),

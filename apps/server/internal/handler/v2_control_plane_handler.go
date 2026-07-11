@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -32,6 +33,11 @@ func NewV2ControlPlaneHandler(svc *service.V2ControlPlaneService) *V2ControlPlan
 // AuthenticateAgentV2 供 legacy v1 数据面中间件兼容已确认 v2 身份。
 func (h *V2ControlPlaneHandler) AuthenticateAgentV2(token, identityID, bootID string) error {
 	return h.svc.AuthenticateAgentV2(token, identityID, bootID)
+}
+
+// AuthenticateAgentReport 供 v2 agent 数据面中间件鉴权指标 / 调度端点并取权威绑定身份（FR-144，见 §5.1）。
+func (h *V2ControlPlaneHandler) AuthenticateAgentReport(token, identityID string) (agentauth.Identity, error) {
+	return h.svc.AuthenticateAgentReport(token, identityID)
 }
 
 type v2AgentRegisterRequest struct {

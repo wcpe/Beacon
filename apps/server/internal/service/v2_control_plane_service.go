@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
@@ -177,6 +178,35 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 		return apperr.ErrUnauthorized
 	}
 	return nil
+}
+
+// AuthenticateAgentReport 校验 v2 agent 数据面上报端点（指标 / 调度）的鉴权并返回权威绑定身份。
+//
+// 契约（spec §4.2/§5.1）：token↔namespace + identity 绑定校验。区别于 AuthenticateAgentV2（legacy v1 兼容、
+// 一律 401 且需 bootId）——本端点按 spec 只认 token + identity，且把「已识别但未确认（status≠active）」细化为 403，
+// 其余非法（token / 身份缺失或跨 namespace）返回 401。成功返回权威 namespace / serverId / kind 供注入 context。
+func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID string) (agentauth.Identity, error) {
+	if !validUUID(identityID) {
+		return agentauth.Identity{}, apperr.ErrUnauthorized
+	}
+	ns, err := s.namespaceByToken(token)
+	if err != nil {
+		return agentauth.Identity{}, err
+	}
+	ident, err := findIdentityByID(s.db, identityID)
+	if err != nil {
+		return agentauth.Identity{}, err
+	}
+	if ident == nil || ident.NamespaceID != ns.ID {
+		return agentauth.Identity{}, apperr.ErrUnauthorized
+	}
+	if ident.Status != model.AgentIdentityStatusActive {
+		return agentauth.Identity{}, apperr.ErrAgentNotConfirmed
+	}
+	return agentauth.Identity{
+		NamespaceID: ns.ID, Namespace: ns.Code, ServerID: ident.ServerID,
+		Kind: ident.Kind, IdentityID: ident.IdentityID,
+	}, nil
 }
 
 // GetAgentRegistrationV2 返回当前身份状态；token 仍决定 namespace 可见边界。

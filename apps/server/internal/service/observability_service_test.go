@@ -29,6 +29,11 @@ type fakeCmdCounter struct {
 
 func (f fakeCmdCounter) CountByStatus() (map[string]int, error) { return f.counts, f.err }
 
+// fakeDiscardCounter 是 metricWriteDiscardCounter 测试替身：返回预置丢弃行数。
+type fakeDiscardCounter int64
+
+func (f fakeDiscardCounter) Discarded() int64 { return int64(f) }
+
 // newObsRegistry 构造含若干在线实例的注册表（供注册表规模断言）。
 func newObsRegistry(t *testing.T, n int) *rt.Registry {
 	t.Helper()
@@ -59,7 +64,17 @@ func TestObservabilitySnapshot(t *testing.T) {
 		fakeCmdCounter{counts: map[string]int{"pending": 2, "fetched": 1}},
 	)
 
+	// 未注入丢弃计数器时应为 0。
+	if svc.Snapshot().MetricWriteDiscarded != 0 {
+		t.Fatalf("未注入丢弃计数器应为 0，实际 %d", svc.Snapshot().MetricWriteDiscarded)
+	}
+	// 注入后透传丢弃计数（FR-144 写入退化可观测）。
+	svc.SetMetricWriteDiscardCounter(fakeDiscardCounter(7))
+
 	snap := svc.Snapshot()
+	if snap.MetricWriteDiscarded != 7 {
+		t.Fatalf("指标写入丢弃计数应透传为 7，实际 %d", snap.MetricWriteDiscarded)
+	}
 
 	// DB 连接池透传（WaitDuration 转毫秒）。
 	if snap.DBPool.MaxOpenConnections != 10 || snap.DBPool.OpenConnections != 4 ||

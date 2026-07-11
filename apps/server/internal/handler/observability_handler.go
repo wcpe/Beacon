@@ -45,6 +45,8 @@ type observabilityView struct {
 	RegistryByStatus map[string]int `json:"registryByStatus"`
 	RegistryTotal    int            `json:"registryTotal"`
 	CommandByStatus  map[string]int `json:"commandByStatus"`
+	// 指标异步写入累计丢弃行数（FR-144）：入库多次重试仍失败被丢弃的行，供运维发现写入退化。
+	MetricWriteDiscarded int64 `json:"metricWriteDiscarded"`
 }
 
 // Observability 处理 GET /admin/v1/system/observability：返回控制面内部运行态快照。
@@ -66,8 +68,9 @@ func (h *ObservabilityHandler) Observability(w http.ResponseWriter, _ *http.Requ
 			Command:  o.Longpoll.Command,
 			Total:    o.Longpoll.Total,
 		},
-		RegistryByStatus: o.RegistryByStatus,
-		RegistryTotal:    o.RegistryTotal,
-		CommandByStatus:  o.CommandByStatus,
+		RegistryByStatus:     o.RegistryByStatus,
+		RegistryTotal:        o.RegistryTotal,
+		CommandByStatus:      o.CommandByStatus,
+		MetricWriteDiscarded: o.MetricWriteDiscarded,
 	})
 }

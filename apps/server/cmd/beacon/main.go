@@ -32,6 +32,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 	"github.com/wcpe/Beacon/apps/server/internal/secret"
 	"github.com/wcpe/Beacon/apps/server/internal/server"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -307,6 +308,17 @@ func run() error {
 	// 长轮询四通道挂起数（配置 / 文件 / 拓扑 / 命令 Hub）、注册表规模（按健康状态）、命令队列深度（按状态）。
 	// 只读、不参与决策；区别于 FR-33 页眉条与 FR-32 agent 网络负载。
 	observabilityService := service.NewObservabilityService(sqlDB, registry, hub, fileHub, topologyHub, commandHub, commandRepo)
+
+	// P4 指标采样入库（FR-144，见 v2-metrics-health-scheduling.md §4）：agent 5s 批上报 → 接收端只校验 +
+	// 更 60s 内存窗口 + 非阻塞入队 → 后台写入池事务批插当日日表。请求 goroutine 不碰 DB、队列满回 429 背压。
+	// 60s 窗口是「每实例最新指标」内存真源（独立锁），供后续健康计算与 dashboard 实时读消费。
+	metricWindow := metricwindow.New(metricwindow.DefaultCapacity)
+	metricSampleV2Repo := repository.NewMetricSampleV2Repository(db)
+	metricIngestWriter := service.NewMetricIngestWriter(metricSampleV2Repo)
+	metricIngestService := service.NewMetricIngestService(metricWindow, metricIngestWriter)
+	v2MetricsHandler := handler.NewV2MetricsHandler(metricIngestService)
+	// 写入失败累计丢弃计数暴露到 /system 自观测（错误不静默，ADR-0057）。
+	observabilityService.SetMetricWriteDiscardCounter(metricIngestWriter)
 	observabilityHandler := handler.NewObservabilityHandler(observabilityService)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
@@ -389,7 +401,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
@@ -415,6 +427,9 @@ func run() error {
 	// 启动后台指标采样器（FR-32）：恒常驻，每轮从设置 store 读 metric.enabled 决定本轮是否采样 / 清理（FR-61）。
 	// 不再启动期一次性决定起不起——运维改 metric.enabled 即热生效停 / 起采样，免重启。
 	go metricSampler.Run(ctx)
+
+	// 启动 P4 指标写入池（FR-144）：多 worker 共享有界队列，攒批事务批插当日日表，随关停信号退出。
+	startMetricWriters(ctx, metricIngestWriter)
 
 	// 启动 git 导出 worker（FR-47）：单 worker 串行消费导出信号，随关停信号退出；未启用时也起（空转无害、无信号即不动）
 	if cfg.GitExport.Enabled {
@@ -476,6 +491,13 @@ func run() error {
 		return update.RollbackAndRespawn(selfPath)
 	case err := <-errCh:
 		return err
+	}
+}
+
+// startMetricWriters 启动 P4 指标写入池的各 worker（FR-144）：多协程共享有界队列，随关停信号退出。
+func startMetricWriters(ctx context.Context, writer *service.MetricIngestWriter) {
+	for i := 0; i < writer.Workers(); i++ {
+		go writer.Run(ctx)
 	}
 }
 
