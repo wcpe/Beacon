@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.24.1（2026-07-11）
+
 ### 新增
 - 指标采样入库·控制面接收端（FR-144 后端半边）：新增 agent 面 `POST /beacon/v2/agent/metrics/report`，接收双端 agent 每 5s 批量上报的 5s 桶聚合指标（TPS / CPU / 内存 / 在线 / 连接摘要）。端点挂 token↔namespace + identity 鉴权中间件（未人工确认的身份 `403 agent_not_confirmed`、token / 身份非法 `401`），把权威 namespace / serverId / kind 注入上下文、绝不信任请求体自报身份。接收路径**请求 goroutine 不碰 DB**——只做时钟偏移校验（>5min 回 `400 clock_skew_too_large`）+ 更新每实例 60s 内存窗口（独立锁、12 批环形、供后续健康计算与 dashboard 实时读）+ 非阻塞入队即回 `202 {accepted, deduplicated, self}`；有界队列满回 `429 metrics_ingest_busy` 背压 agent（数据不丢在 agent 侧）。后台写入协程池攒批（200 行 / 500ms）事务批插到当日 `metric_sample_YYYYMMDD` 日表——全仓首个日表基建：`store.EnsureDailyTable` 经 GORM Migrator 按需建表 + 进程内表名缓存、UTC 日期后缀、零方言可移植；唯一键 `(server_id, bucket_start_ms)` 幂等去重（重放 / 补报安全，回报 `deduplicated`）、跨日批自动拆表；写入多次重试仍失败则丢弃并累计计数暴露到 `/system` 自观测（错误不静默，ADR-0057）。`self`（自身健康）字段暂占位 `null`——健康值模型（FR-147）属 P4b。调度候选 / 决策 / 补报（FR-146/148）、管理面查询与页面接真尚待实现。
 - Agent 侧指标采样与批量上报（FR-144，agent 半边）：双端 agent 以 1s 粒度采样基础指标（backend：TPS / CPU / 内存 / 在线 / 容量；proxy：连接数 / 后端可达性·RTT / CPU / 内存）入有界环形缓冲（600 条 / 10 分钟，写满覆盖最旧并计丢弃数），每 5s 批内按 5s 桶聚合（avg / max / min）后批量上报 `POST /beacon/v2/agent/metrics/report`（信封与 samples 元素键全 camelCase，与控制面接收结构体一致）。断连（网络错 / 5xx / 429）保留缓冲、固定 5s 节奏重试，恢复后一次批补报积压的多个已闭合桶、样本零丢失，`droppedSinceLast` 随首个成功批上报使「丢了多少」可见。**核心改造**：采样与上报全程不在 MC 主线程——bukkit 子服改由主线程每 tick 零成本原子埋点（tick 计数 + 在线 volatile），采样线程只读原子值推算 TPS / 在线，替换旧「async 线程反射调线程不安全的 `Bukkit.getOnlinePlayers()` / `getTPS()`」；proxy 后端可达性 TCP 探测慢刷缓存、1s 采样只读缓存不被阻塞。控制面接收 / 入库端与 `/dashboard`·`/service-analysis` 接真为 FR-144 控制面半边，另行交付。
