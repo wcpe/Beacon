@@ -74,6 +74,22 @@ class RuntimeMetricsTest {
     }
 
     @Test
+    fun `estimateTps 由 tick 增量与墙钟间隔推算并封顶`() {
+        val oneSecond = 1_000_000_000L
+        // 1 秒内 20 tick → 20 TPS（满速）。
+        assertEquals(20.0, JvmRuntimeMetrics.estimateTps(deltaTicks = 20L, elapsedNanos = oneSecond))
+        // 1 秒内 10 tick（卡顿）→ 10 TPS。
+        assertEquals(10.0, JvmRuntimeMetrics.estimateTps(deltaTicks = 10L, elapsedNanos = oneSecond))
+        // 2 秒内 40 tick → 20 TPS（按墙钟间隔而非 tick 数）。
+        assertEquals(20.0, JvmRuntimeMetrics.estimateTps(deltaTicks = 40L, elapsedNanos = 2 * oneSecond))
+        // 超速采样（1 秒 25 tick，理论 25）→ 封顶 20。
+        assertEquals(20.0, JvmRuntimeMetrics.estimateTps(deltaTicks = 25L, elapsedNanos = oneSecond))
+        // 非法入参（elapsed ≤ 0 / delta < 0）→ 0。
+        assertEquals(0.0, JvmRuntimeMetrics.estimateTps(deltaTicks = 20L, elapsedNanos = 0L))
+        assertEquals(0.0, JvmRuntimeMetrics.estimateTps(deltaTicks = -1L, elapsedNanos = oneSecond))
+    }
+
+    @Test
     fun `withPlayerCountAndTps 在内存CPU基础上合入人数与TPS`() {
         // 壳层组装路径：先采内存/CPU（平台无关），再合入平台采到的人数/TPS。
         val base =

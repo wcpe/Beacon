@@ -75,6 +75,23 @@ object JvmRuntimeMetrics {
     }
 
     /**
+     * 由主线程 tick 计数增量推算 TPS（FR-144 §4.1，纯逻辑便于单测）。
+     *
+     * MC 主线程每 tick 自增计数、采样线程按墙钟间隔读取增量：`tps = deltaTicks / (elapsedNanos / 1e9)`，
+     * 归一到 [0, maxTps]（默认 20）。用真实墙钟间隔而非「20 tick=1 秒」——卡顿时单位时间内 tick 更少、
+     * TPS 自然更低。非法入参（elapsed ≤ 0 / delta < 0，如刚播种基线的首轮）回退 0。
+     */
+    fun estimateTps(
+        deltaTicks: Long,
+        elapsedNanos: Long,
+        maxTps: Double = 20.0,
+    ): Double {
+        if (elapsedNanos <= 0L || deltaTicks < 0L) return 0.0
+        val seconds = elapsedNanos / 1_000_000_000.0
+        return normalizeTps(deltaTicks / seconds, maxTps)
+    }
+
+    /**
      * 读进程 CPU 负载 [0,1]；接口不可用 / 调用异常 / 越界一律回退 -1.0（不可用）。
      *
      * `getProcessCpuLoad` 在 JVM 刚启动的极短窗口可能返回负值（尚无采样），归一化为不可用。

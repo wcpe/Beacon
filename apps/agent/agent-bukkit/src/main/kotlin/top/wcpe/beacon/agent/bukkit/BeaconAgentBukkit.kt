@@ -16,11 +16,14 @@ import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
+import top.wcpe.beacon.agent.core.AssembledAgent
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
+import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import java.util.UUID
 
@@ -100,6 +103,9 @@ object BeaconAgentBukkit : Plugin() {
     /** 当前生命周期；null 表示因身份缺失未启动。 */
     private var lifecycle: AgentLifecycle? = null
 
+    /** 主线程指标埋点（FR-144）；null 表示未启动（身份缺失等）。 */
+    private var tickInstrumentation: BukkitTickInstrumentation? = null
+
     /** 跨服消息模块引导（FR-26）；null 表示未装配（身份缺失等）。 */
     private var messagingBootstrap: BukkitMessagingBootstrap? = null
 
@@ -133,6 +139,12 @@ object BeaconAgentBukkit : Plugin() {
                 return@submitAsync
             }
 
+            // 主线程指标埋点（FR-144）：MC 主线程每 tick 零成本埋点（tick 计数 / 在线 volatile），
+            // 采样 / 上报线程只读 volatile 推算，绝不在别的线程调线程不安全的 Bukkit API。
+            val instrumentation = BukkitTickInstrumentation()
+            instrumentation.start()
+            tickInstrumentation = instrumentation
+
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
             val view = EffectiveConfigView(store)
@@ -149,8 +161,8 @@ object BeaconAgentBukkit : Plugin() {
                     effectiveConfigView = view,
                     // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
                     streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    // 运行指标供给（FR-32）：上报时采在线人数 + 服务器 TPS + JVM 内存 / CPU 真值。
-                    metricsProvider = { BukkitMetricsCollector.sample() },
+                    // 运行指标供给（FR-32 / FR-144）：内存 / CPU 现采，在线 / TPS 取自主线程原子埋点（不在采样线程调 Bukkit API）。
+                    metricsProvider = { BukkitMetricsCollector.sample(instrumentation.currentTps(), instrumentation.onlineCount()) },
                     // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
                     // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
                     selfPluginDirNames = setOf("BeaconAgent"),
@@ -164,20 +176,13 @@ object BeaconAgentBukkit : Plugin() {
             BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
             // 跨服消息模块引导（FR-26）：据下发的 Redis 配置启停 / 重连。
-            val bootstrap =
-                BukkitMessagingBootstrap(
-                    identity = identity,
-                    settings = settings,
-                    store = store,
-                    codec = KotlinxJsonCodec(),
-                    holder = assembled.messagingHolder,
-                    // 名册只读端口持有者（FR-31）：模块启动后注入 Redis 全表读，点亮 Discovery.roster()/rosterInZone()。
-                    rosterHolder = assembled.rosterDirectoryHolder,
-                    adapter = adapter,
-                )
+            val bootstrap = createMessaging(identity, settings, store, assembled, adapter)
             messagingBootstrap = bootstrap
             // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
             view.onChange { _, _ -> bootstrap.sync() }
+
+            // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
+            assembled.lifecycle.enableMetricsSampling()
 
             // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
             assembled.lifecycle.bootstrapWithSnapshotThenConnect()
@@ -186,10 +191,29 @@ object BeaconAgentBukkit : Plugin() {
         }
     }
 
+    /** 构造跨服消息模块引导（FR-26）：抽出以精简 enable 主流程；名册只读端口持有者随之注入（FR-31）。 */
+    private fun createMessaging(
+        identity: AgentIdentity,
+        settings: AgentSettings,
+        store: EffectiveConfigStore,
+        assembled: AssembledAgent,
+        adapter: BukkitPlatformAdapter,
+    ): BukkitMessagingBootstrap =
+        BukkitMessagingBootstrap(
+            identity = identity,
+            settings = settings,
+            store = store,
+            codec = KotlinxJsonCodec(),
+            holder = assembled.messagingHolder,
+            rosterHolder = assembled.rosterDirectoryHolder,
+            adapter = adapter,
+        )
+
     @Awake(LifeCycle.DISABLE)
     fun disable() {
         messagingBootstrap?.stop()
         lifecycle?.shutdown()
+        tickInstrumentation?.stop()
         BeaconAgentProvider.unregister()
     }
 }

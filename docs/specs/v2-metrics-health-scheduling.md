@@ -150,6 +150,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 4.1 agent 采样与环形缓冲
 
+> 实现状态（agent 侧，FR-144）：**已实现**。采样字段 / 环形缓冲 / 批内聚合在 agent-core `core/sampling/`（`MetricSample`·`MetricSampleBuffer`·`MetricBatchAggregator`·`MetricSampleFactory`）；1s 采样 + 5s 批上报由 `lifecycle/MetricsSamplingCoordinator` 编排（仿既有 gen 代 + 自我重调度）。主线程原子埋点在 bukkit 壳 `BukkitTickInstrumentation`（每 tick 零成本计数 + 每秒读一次在线数写 volatile，采样线程只读推算），替换旧「async 线程反射调 `Bukkit.getOnlinePlayers()`/`getTPS()`」做法；proxy 后端可达性经 `BungeeProxyMetricsCache` 慢刷缓存、采样只读。控制面接收端在另一 worktree 实现。
+
 - **采样周期 1s**，在 agent 独立采样线程执行（TabooLib async 调度），**绝不在 MC 主线程做采样或 IO**（架构不变量 §5）。主线程只承担零成本埋点：backend 每 tick 自增原子计数 / 更新最近 tick 时间戳，采样线程读取原子值推算 TPS；在线人数由 tick 任务维护的 volatile 计数提供，采样线程不直接调线程不安全的 Bukkit API。
 - **采样字段集**（每秒一条样本）：
 
@@ -168,6 +170,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 - **环形缓冲**：容量默认 600 条（10 分钟）。写满未及上报 → 覆盖最旧样本并 `droppedCount++`（agent 记 WARN 中文日志）。缓冲仅内存，不落盘。
 
 ### 4.2 5s 批量上报协议（含断连补报 / 丢弃）
+
+> 实现状态（agent 侧，FR-144）：**已实现**。5s 固定节奏批上报、断连保留缓冲重试、恢复后一次补报积压多桶、`droppedSinceLast` 随成功批上报，均由 `MetricsSamplingCoordinator` 落地；单批 ≤120 桶结构由缓冲容量（600 条 1s 样本）保证。控制面 429 / 202 / 400 语义与去重待其接收端实现联调。
 
 - 每 5s 一个上报 tick：取缓冲中全部**未上报样本**按 tsMs 升序打包，单批上限 120 条；超过上限则本 tick 报最旧 120 条，下一 tick 继续，直到追平（断连补报即此机制的自然结果，无特殊分支）。
 - 上报失败（网络错误 / 5xx / 429）：样本保留在缓冲，本 tick 放弃，下一 tick 重试（固定 5s 节奏，不做指数退避——缓冲即背压）。断连超过 10 分钟的样本被环形覆盖，永久丢弃。
@@ -272,6 +276,8 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 ## 5. API 契约
 
 ### 5.1 agent 面（`/beacon/v2/agent/*`，鉴权 `X-Beacon-Token` + `X-Beacon-Identity`）
+
+> 实现状态（agent 侧，FR-144）：`POST /beacon/v2/agent/metrics/report` 客户端**已实现**（`BeaconApiClient.reportMetricsBatch`）：信封 `{namespace, serverId, kind, agentTimeMs, droppedSinceLast, samples[]}`（camelCase），samples 每元素为 5s 批聚合行、键按 §3.1 列名 **snake_case**（`bucket_start_ms`/`sample_count`/`cpu_pct_avg`/… 全 17 列，不适用维度写 0 / -1 缺省），响应 202/429/403/400 已映射。响应体 `self.*` 健康字段本片忽略（P4b 用）。其余三行（candidates / decide / report-local）为 FR-146/148 范围，本片未实现。
 
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|

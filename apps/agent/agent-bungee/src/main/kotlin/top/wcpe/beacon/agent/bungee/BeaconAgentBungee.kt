@@ -104,6 +104,9 @@ object BeaconAgentBungee : Plugin() {
     /** Proxy 服务器目录同步循环开关；disable 时关闭，避免卸载后继续调度。 */
     private val directorySyncRunning = AtomicBoolean(false)
 
+    /** BC 专属指标缓存（FR-144）；null 表示未装配。 */
+    private var proxyMetricsCache: BungeeProxyMetricsCache? = null
+
     /** 玩家位置名册引导（FR-26）；null 表示未装配。 */
     private var rosterBootstrap: BungeePlayerRosterBootstrap? = null
 
@@ -146,6 +149,10 @@ object BeaconAgentBungee : Plugin() {
             val adapter = BungeePlatformAdapter(view)
             // 单一代理目录实例：同时供目录同步（注入子服）与后端归属上报（读当前后端集合，FR-36）。
             val serverDirectory = BungeeServerDirectory()
+            // BC 专属指标缓存（FR-144）：慢刷后端可达性，使 1s 采样只读缓存不被阻塞探测拖住。
+            val proxyCache = BungeeProxyMetricsCache(adapter)
+            proxyCache.start()
+            proxyMetricsCache = proxyCache
             val assembled =
                 AgentAssembly.assemble(
                     identity = identity,
@@ -162,8 +169,8 @@ object BeaconAgentBungee : Plugin() {
                     metricsProvider = { BungeeMetricsCollector.sample() },
                     // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。
                     backendsProvider = { serverDirectory.backendServerIds().toList() },
-                    // BC 专属指标供给（FR-34）：上报时采代理连接数 / 线程 / 运行时长 / 后端可达性·延迟（仅 bc 填）。
-                    proxyMetricsProvider = { BungeeProxyMetricsCollector.sample() },
+                    // BC 专属指标供给（FR-34 / FR-144）：现采连接 / 线程 / 运行时长 + 缓存的后端可达性（仅 bc 填，不阻塞采样）。
+                    proxyMetricsProvider = { proxyCache.current() },
                     // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
                     // plugins/BeaconAgentProxy/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
                     selfPluginDirNames = setOf("BeaconAgentProxy"),
@@ -227,6 +234,9 @@ object BeaconAgentBungee : Plugin() {
             // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
             view.onChange { _, _ -> messaging.sync() }
 
+            // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
+            assembled.lifecycle.enableMetricsSampling()
+
             // 先点亮快照再异步接入，不阻塞主线程。
             assembled.lifecycle.bootstrapWithSnapshotThenConnect()
             // 快照可能已含 Redis 配置：立即尝试一次（缺失则空闲，待配置下发再起）。
@@ -256,6 +266,7 @@ object BeaconAgentBungee : Plugin() {
         BungeeRosterListener.bootstrap = null
         messagingBootstrap?.stop()
         rosterBootstrap?.stop()
+        proxyMetricsCache?.stop()
         lifecycle?.shutdown()
         BeaconAgentProvider.unregister()
     }
