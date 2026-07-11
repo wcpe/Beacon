@@ -183,7 +183,7 @@ Beacon 第二版的定位是集群调度中间件控制面（PRD §1.1）。P3 �
 
 ### 4.3 控制面异步批量入库
 
-- 接收 handler 只做：鉴权（token↔namespace、identity 绑定校验）→ 请求体校验 → 批内按 5s 桶聚合 → 更新内存最新指标窗口（锁内纯内存操作）→ 将聚合行推入**有界内存队列**（channel，默认容量 4096 批）→ 立即返回 202。**请求 goroutine 不碰 DB**。
+- 接收 handler 只做：鉴权（token↔namespace、identity 绑定校验）→ 请求体校验（samples 为 agent 已按 5s 桶预聚合的行，见 §3.1「agent 批内聚合」与 §5.1；控制面不二次聚合）→ 更新内存最新指标窗口（锁内纯内存操作）→ 将 5s 桶行推入**有界内存队列**（channel，默认容量 4096 批）→ 立即返回 202。**请求 goroutine 不碰 DB**。
 - 队列满 → 返回 429 `{code:"metrics_ingest_busy"}`，agent 视为上报失败保留缓冲重试（控制面过载保护，数据不丢在 agent 侧）。
 - **写入协程池**（默认 2 个 goroutine）：从队列取批，攒到 200 行或 500ms 超时即 flush，一次事务批量 INSERT 到当日 `metric_sample_YYYYMMDD`（日表不存在则先建）。写失败：WARN 日志 + 有限重试（3 次退避），仍失败丢弃该 flush 并累计丢弃计数暴露到控制面自身健康（`/system`），不阻塞队列。
 - 健康快照与调度决策记录复用同一写入通道（不同表路由），共享背压与批量语义。
