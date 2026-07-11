@@ -190,6 +190,23 @@ go test -tags=e2e -timeout=15m ./apps/server/test/e2e/p1v2 -v
 
 测试依次断言：首启生成 `identity.yml`；新身份进入 pending 且归属目标 namespace；管理员 approve 后转 active 并继续衔接 legacy v1 online；approve 只创建未分配 proxy server；首次分配到 BC 集群成功；重启后 `identityId` 保持不变；损坏身份文件后 agent fail-closed，不静默重生成。
 
+### 7.5 FR-146/147 健康真值与调度决策真机 E2E（指标窗口 → 健康计算 → 调度闭环）
+
+纯 Go e2e，自起控制面（SQLite）+ 真 Paper + BeaconAgent，验证「真 agent 指标批 → 健康计算轮产出健康真值（`/admin/v2/health*` 的 score / level / schedulable / factors 与 `/admin/v2/metrics/summary` 实例计数）→ 建区首次分配后转 schedulable → agent 面调度闭环（candidates / decide / 决策异步落库经 `/admin/v2/sched-decisions*` 可查 / report-local 降级补报）」端到端成立。
+
+前置同 §7.1（Go / JDK21 / CGO / 已构建前端 / 联网，首跑下载 Paper 耗时可观）；**默认 sqlite、无需 docker/MySQL**。必填 `E2E_ADMIN_PASS` / `E2E_AUTH_SECRET`；可选 `E2E_BEACON_URL`（默认 `http://localhost:18850`）。运行（PowerShell；Bash 把赋值换成 `export` 即可）：
+
+```powershell
+$env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
+go test -tags=e2e -timeout=30m ./apps/server/test/e2e/schedhealth
+```
+
+依次断言三相位（任一 FAIL 即失败）：
+
+- **health（FR-147）**：`/admin/v2/health` 出现该真 agent 条目且 score∈[0,100]、level 合法，未分配阶段 reasons 含 `unassigned`；详情 factors 非空、weightsRev≥1（cpu 因子容忍宿主采集不可用哨兵 -1，真值与否作观察项记日志）；`/admin/v2/metrics/summary` backend 计数 ≥1。
+- **zone**：建 bc 集群 / 大区 / 小区并首次分配该 server 后，健康视图转 `schedulable=true`（zone 归属由控制面权威指派）。
+- **sched（FR-146）**：candidates 含该 zone 与候选 → decide 选中该服（traceId 非空）→ 决策记录（source=`control_plane`）经详情 / 列表 / summary 可查 → report-local 补报 1 条本地决策 → 详情 source=`local_fallback`。
+
 ## 8. 测试运行方式（单元 / 集成）
 
 - **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`apps/server/internal/service` / `apps/server/internal/server` 显示 `no test files` 属正常（其用例全为集成）。
