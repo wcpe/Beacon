@@ -365,6 +365,10 @@ func run() error {
 	reverseFetchIgnoreRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchIgnoreRuleService)
 
 	// P4b 装配点：调度域（FR-146）
+	// 调度决策日表落库（见 v2-metrics-health-scheduling.md §3.4/§4.3）：决策行复用同一异步写入
+	// 通道（sched_decision 路由独立攒批），trace_id 唯一键幂等去重、跨日按 ts_ms 拆表。
+	schedDecisionRepo := repository.NewSchedDecisionV2Repository(db)
+	service.RegisterFlusher(asyncDailyWriter, service.RouteKindSchedDecision, schedDecisionRepo.FlushDaily)
 
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。

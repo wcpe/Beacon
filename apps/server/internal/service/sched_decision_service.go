@@ -2,7 +2,9 @@ package service
 
 import (
 	crand "crypto/rand"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"sort"
 	"sync"
@@ -10,8 +12,30 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
+
+// RouteKindSchedDecision 是调度决策行在异步日表写入通道中的路由键（FR-146，见 §4.3：
+// 决策记录复用与指标相同的写入通道、不同表路由、独立攒批）。
+const RouteKindSchedDecision = "sched_decision"
+
+// schedDecisionEnqueuer 是决策服务对异步写入池的窄依赖：非阻塞投递决策行，队列满返回 false。
+// 抽成接口便于单测注入替身断言入库行内容与队列满行为。
+type schedDecisionEnqueuer interface {
+	Enqueue(rows []model.SchedDecisionV2) bool
+}
+
+// SchedDecisionEnqueuer 把泛化异步日表写入通道绑定到 sched_decision 路由（装配用）。
+type SchedDecisionEnqueuer struct {
+	// Writer 泛化异步日表写入通道（须已注册 RouteKindSchedDecision 路由）。
+	Writer *AsyncDailyWriter
+}
+
+// Enqueue 非阻塞投递一批决策行；队列满返回 false。
+func (e SchedDecisionEnqueuer) Enqueue(rows []model.SchedDecisionV2) bool {
+	return EnqueueRows(e.Writer, RouteKindSchedDecision, rows)
+}
 
 // 调度决策记录的枚举字面值（落库 VARCHAR + 应用层校验，见 spec §3.4）。
 // 导出供 handler 映射响应（如 local_fallback 的 weightsRev 显示为 null）。
@@ -81,6 +105,8 @@ type SchedulingV2Service struct {
 	now func() time.Time
 	// newTraceID 可注入 traceId 生成器（默认 UUID v4），测试注入固定值。
 	newTraceID func() string
+	// enqueue 决策行异步入库通道（可选装配；nil 时仅决策不落库，单测用）。
+	enqueue schedDecisionEnqueuer
 }
 
 // NewSchedulingV2Service 构造调度决策服务；rng 注入随机源（同分同容量随机决胜），
@@ -142,9 +168,51 @@ func (s *SchedulingV2Service) Decide(id agentauth.Identity, zone, purpose, plugi
 	return outcome, nil
 }
 
-// finish 结算决策耗时（用注入时钟，测试可确定断言）。
+// SetDecisionEnqueuer 装配决策行异步入库通道（main 装配期调用；请求 goroutine 仍零 DB）。
+func (s *SchedulingV2Service) SetDecisionEnqueuer(e schedDecisionEnqueuer) {
+	s.enqueue = e
+}
+
+// finish 结算决策耗时（用注入时钟，测试可确定断言）并把决策行推入异步入库通道。
 func (s *SchedulingV2Service) finish(o *SchedDecisionOutcome, started time.Time) {
 	o.DurationMs = int(s.now().Sub(started).Milliseconds())
+	s.persistOutcome(*o)
+}
+
+// persistOutcome 把决策行经异步写入通道入库（spec §4.6 步骤 3：不阻塞响应）。
+// 入队失败（队列满 / 未装配）记 WARN 中文日志，不影响决策响应；DB trace_id 唯一索引兜底幂等。
+func (s *SchedulingV2Service) persistOutcome(o SchedDecisionOutcome) {
+	if s.enqueue == nil {
+		return
+	}
+	if !s.enqueue.Enqueue([]model.SchedDecisionV2{toSchedDecisionRow(o)}) {
+		slog.Warn("调度决策写入队列已满，本条决策记录被丢弃", "traceId", o.TraceID, "zone", o.ZoneName)
+	}
+}
+
+// toSchedDecisionRow 把决策产出映射为日表行模型（excluded 序列化为 json 数组文本，spec §3.4）。
+func toSchedDecisionRow(o SchedDecisionOutcome) model.SchedDecisionV2 {
+	// SchedExcluded 仅含字符串字段，序列化不可失败；Excluded 恒非 nil（初始化为空切片）→ "[]"。
+	excluded, _ := json.Marshal(o.Excluded)
+	return model.SchedDecisionV2{
+		TraceID:           o.TraceID,
+		TsMs:              o.TsMs,
+		NamespaceID:       o.NamespaceID,
+		CrossNamespace:    o.CrossNamespace,
+		RequesterServerID: o.RequesterServerID,
+		Plugin:            o.Plugin,
+		Purpose:           o.Purpose,
+		ZoneName:          o.ZoneName,
+		Strategy:          o.Strategy,
+		Source:            o.Source,
+		WeightsRev:        o.WeightsRev,
+		CandidateCount:    o.CandidateCount,
+		Excluded:          string(excluded),
+		ChosenServerID:    o.ChosenServerID,
+		ChosenScore:       o.ChosenScore,
+		FailReason:        o.FailReason,
+		DurationMs:        o.DurationMs,
+	}
 }
 
 // validateDecideParams 校验决策请求字段：zone 必填且各字段不超日表列宽（防坏行毒化异步 flush 批）。

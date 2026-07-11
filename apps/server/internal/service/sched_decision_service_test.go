@@ -10,6 +10,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
 
@@ -266,6 +267,91 @@ func TestDecideParamValidation(t *testing.T) {
 		if _, err := svc.Decide(schedTestIdentity(), c.zone, c.purpose, c.plugin); !errors.Is(err, apperr.ErrInvalidParam) {
 			t.Fatalf("%s 应 ErrInvalidParam，实际 %v", c.name, err)
 		}
+	}
+}
+
+// fakeSchedEnqueuer 是决策入库通道替身：记录收到的行，可模拟队列满。
+type fakeSchedEnqueuer struct {
+	rows []model.SchedDecisionV2
+	full bool
+}
+
+func (f *fakeSchedEnqueuer) Enqueue(rows []model.SchedDecisionV2) bool {
+	if f.full {
+		return false
+	}
+	f.rows = append(f.rows, rows...)
+	return true
+}
+
+// TestDecidePersistsOutcomeRow 决策产出经异步通道入库：行字段与 outcome 一致、excluded 为 json 文本。
+func TestDecidePersistsOutcomeRow(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{
+		backendView("s-1", "area-1", 90, 10, 100),
+		excludedView("s-2", "area-1", healthview.ReasonDraining),
+	})
+	svc := newSchedServiceForTest(store, 1)
+	sink := &fakeSchedEnqueuer{}
+	svc.SetDecisionEnqueuer(sink)
+
+	out, err := svc.Decide(schedTestIdentity(), "area-1", "lobby-transfer", "Lodestone")
+	if err != nil {
+		t.Fatalf("决策不应出错: %v", err)
+	}
+	if len(sink.rows) != 1 {
+		t.Fatalf("应入队 1 行，实际 %d", len(sink.rows))
+	}
+	row := sink.rows[0]
+	if row.TraceID != out.TraceID || row.TsMs != out.TsMs || row.NamespaceID != 1 ||
+		row.RequesterServerID != "req-1" || row.Plugin != "Lodestone" || row.Purpose != "lobby-transfer" ||
+		row.ZoneName != "area-1" || row.Strategy != SchedStrategyHighestScore ||
+		row.Source != SchedSourceControlPlane || row.WeightsRev != 3 || row.CandidateCount != 2 ||
+		row.ChosenServerID != "s-1" || row.ChosenScore != 90 || row.FailReason != "" ||
+		row.CrossNamespace || row.DurationMs != out.DurationMs {
+		t.Fatalf("入库行字段与 outcome 不符: %+v vs %+v", row, out)
+	}
+	want := `[{"serverId":"s-2","reason":"draining"}]`
+	if row.Excluded != want {
+		t.Fatalf("excluded json 应 %s，实际 %s", want, row.Excluded)
+	}
+}
+
+// TestDecidePersistsFailureRows zone_not_found 与 no_candidate 的失败决策同样落行（可查可解释）。
+func TestDecidePersistsFailureRows(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{excludedView("s-1", "area-1", healthview.ReasonUnhealthy)})
+	svc := newSchedServiceForTest(store, 1)
+	sink := &fakeSchedEnqueuer{}
+	svc.SetDecisionEnqueuer(sink)
+
+	if _, err := svc.Decide(schedTestIdentity(), "area-x", "", ""); !errors.Is(err, apperr.ErrSchedZoneNotFound) {
+		t.Fatalf("应 zone_not_found，实际 %v", err)
+	}
+	if _, err := svc.Decide(schedTestIdentity(), "area-1", "", ""); err != nil {
+		t.Fatalf("no_candidate 不应出错: %v", err)
+	}
+	if len(sink.rows) != 2 {
+		t.Fatalf("两次失败决策均应落行，实际 %d", len(sink.rows))
+	}
+	if sink.rows[0].FailReason != SchedFailZoneNotFound || sink.rows[0].Excluded != "[]" {
+		t.Fatalf("zone_not_found 行不符: %+v", sink.rows[0])
+	}
+	if sink.rows[1].FailReason != SchedFailNoCandidate || sink.rows[1].ChosenScore != -1 {
+		t.Fatalf("no_candidate 行不符: %+v", sink.rows[1])
+	}
+}
+
+// TestDecideQueueFullDoesNotFail 入库队列满仅 WARN，不影响决策响应（best-effort 记录）。
+func TestDecideQueueFullDoesNotFail(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{backendView("s-1", "area-1", 90, 10, 100)})
+	svc := newSchedServiceForTest(store, 1)
+	svc.SetDecisionEnqueuer(&fakeSchedEnqueuer{full: true})
+
+	out, err := svc.Decide(schedTestIdentity(), "area-1", "", "")
+	if err != nil || out.ChosenServerID != "s-1" {
+		t.Fatalf("队列满不应影响决策响应: err=%v out=%+v", err, out)
 	}
 }
 
