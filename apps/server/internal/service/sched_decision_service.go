@@ -107,6 +107,9 @@ type SchedulingV2Service struct {
 	newTraceID func() string
 	// enqueue 决策行异步入库通道（可选装配；nil 时仅决策不落库，单测用）。
 	enqueue schedDecisionEnqueuer
+	// reportMu 保护 reportSeen（补报判重集合，按 (namespace, server) 维度懒建）。
+	reportMu   sync.Mutex
+	reportSeen map[reportSeenKey]*boundedTraceSet
 }
 
 // NewSchedulingV2Service 构造调度决策服务；rng 注入随机源（同分同容量随机决胜），
@@ -121,6 +124,7 @@ func NewSchedulingV2Service(views *healthview.Store, rng *rand.Rand) *Scheduling
 		rng:        rng,
 		now:        func() time.Time { return time.Now().UTC() },
 		newTraceID: newUUIDv4,
+		reportSeen: make(map[reportSeenKey]*boundedTraceSet),
 	}
 }
 
@@ -269,6 +273,56 @@ func (s *SchedulingV2Service) pickHighestScore(eligible []healthview.View) healt
 		return occupancyRate(eligible[i]) < occupancyRate(eligible[j])
 	})
 	return eligible[0]
+}
+
+// SchedCandidate 是候选快照中的一台可调度服务器（agent 本地缓存 / 降级快照的数据源，spec §4.6 降级路径）。
+type SchedCandidate struct {
+	ServerID    string
+	Score       int
+	Level       string
+	Schedulable bool
+	OnlineCount int
+	MaxOnline   int
+}
+
+// SchedZoneCandidates 是一个 zone 的候选集。
+type SchedZoneCandidates struct {
+	Zone       string
+	Candidates []SchedCandidate
+}
+
+// SchedCandidatesResult 是候选快照结果（对齐 §5.1 candidates 响应）。
+type SchedCandidatesResult struct {
+	GeneratedAtMs int64
+	Zones         []SchedZoneCandidates
+}
+
+// Candidates 返回请求方 namespace 内全部 zone 的当前可调度候选快照（纯内存，零 DB）：
+// 仅含 Schedulable==true 候选（degraded 且可调度者含入），仅列出有候选的 zone；
+// zone 按名、候选按分数降序（同分按 serverId）排序，输出确定。
+func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesResult {
+	byZone := map[string][]SchedCandidate{}
+	for _, v := range s.views.List() {
+		if v.NamespaceID != id.NamespaceID || v.ZoneName == "" || !v.Schedulable {
+			continue
+		}
+		byZone[v.ZoneName] = append(byZone[v.ZoneName], SchedCandidate{
+			ServerID: v.ServerID, Score: v.Score, Level: v.Level, Schedulable: v.Schedulable,
+			OnlineCount: v.OnlineCount, MaxOnline: v.MaxOnline,
+		})
+	}
+	zones := make([]SchedZoneCandidates, 0, len(byZone))
+	for zone, candidates := range byZone {
+		sort.Slice(candidates, func(i, j int) bool {
+			if candidates[i].Score != candidates[j].Score {
+				return candidates[i].Score > candidates[j].Score
+			}
+			return candidates[i].ServerID < candidates[j].ServerID
+		})
+		zones = append(zones, SchedZoneCandidates{Zone: zone, Candidates: candidates})
+	}
+	sort.Slice(zones, func(i, j int) bool { return zones[i].Zone < zones[j].Zone })
+	return SchedCandidatesResult{GeneratedAtMs: s.now().UnixMilli(), Zones: zones}
 }
 
 // occupancyRate 计算容量占用率 onlineCount/maxOnline；maxOnline≤0 视为占满（1.0），排序自然靠后。

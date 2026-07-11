@@ -15,6 +15,7 @@ type Handlers struct {
 	V2               *handler.V2ControlPlaneHandler
 	V2Metrics        *handler.V2MetricsHandler
 	V2Health         *handler.V2HealthHandler
+	V2Sched          *handler.V2SchedHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
 	OverrideSet      *handler.OverrideSetHandler
@@ -108,7 +109,14 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/metrics/report", h.V2Metrics.Report)
 			}
 
-			// P4b 挂载点：调度决策 agent 端点（FR-146）
+			// P4b 挂载点：调度决策 agent 端点（FR-146，见 §5.1）：与指标上报同挂
+			// token↔namespace + identity 鉴权中间件（未确认 403）；候选快照 / 在线决策 /
+			// 降级补报全程纯内存 + 异步入库，请求 goroutine 不碰 DB。
+			if h.V2Sched != nil {
+				r.With(agentV2ReportMiddleware(h.V2)).Get("/schedule/candidates", h.V2Sched.Candidates)
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/schedule/decide", h.V2Sched.Decide)
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/schedule/report-local", h.V2Sched.ReportLocal)
+			}
 		})
 	}
 

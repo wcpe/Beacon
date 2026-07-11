@@ -369,6 +369,13 @@ func run() error {
 	// 通道（sched_decision 路由独立攒批），trace_id 唯一键幂等去重、跨日按 ts_ms 拆表。
 	schedDecisionRepo := repository.NewSchedDecisionV2Repository(db)
 	service.RegisterFlusher(asyncDailyWriter, service.RouteKindSchedDecision, schedDecisionRepo.FlushDaily)
+	// 决策服务在健康视图内存真源上纯内存决策（§4.6，随机决胜用默认时钟种子源）。
+	// 注意：schedHealthViews 应与健康域（FR-147）计算轮填充的 Store 为同一实例——健康域装配
+	// 就位后由集成方统一为单实例，此处先行自建保证独立可编译。
+	schedHealthViews := healthview.NewStore()
+	schedulingV2Service := service.NewSchedulingV2Service(schedHealthViews, nil)
+	schedulingV2Service.SetDecisionEnqueuer(service.SchedDecisionEnqueuer{Writer: asyncDailyWriter})
+	v2SchedHandler := handler.NewV2SchedHandler(schedulingV2Service)
 
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。
@@ -424,7 +431,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
