@@ -9,6 +9,7 @@ import top.wcpe.beacon.agent.core.client.PollResult
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegisterResult
 import top.wcpe.beacon.agent.core.client.ReportedChannelMd5
+import top.wcpe.beacon.agent.core.client.SelfHealth
 import top.wcpe.beacon.agent.core.command.ReverseFetchExecutor
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
@@ -20,6 +21,7 @@ import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import top.wcpe.beacon.agent.core.scheduling.SchedulingRuntime
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
 import top.wcpe.beacon.agent.core.stream.StreamEventTypes
@@ -61,6 +63,11 @@ class AgentLifecycle(
     // 反向抓取执行器（FR-39，见 ADR-0027）：收到 SSE command-pending 事件 / READY 对账时触发「拉命令→读 plugins→回传」；
     // 为 null 时不处理命令（向后兼容：未装配执行器的部署不开放反向抓取）。
     private val reverseFetchExecutor: ReverseFetchExecutor? = null,
+    // 调度候选刷新循环（FR-148）：注册成功时 start、停机时 stop、启动时 restoreSnapshot；
+    // 为 null 时不启用（向后兼容既有测试；生产由 AgentAssembly 注入 SchedulingRefresher）。
+    private val schedulingRuntime: SchedulingRuntime? = null,
+    // 自身健康回传 sink（FR-148）：转交给指标上报协调器，把 202 响应内 self 刷给调度门面；默认 no-op。
+    private val selfHealthSink: (SelfHealth?) -> Unit = {},
 ) {
     private val state = AtomicReference(AgentState.BOOTSTRAP)
 
@@ -91,6 +98,7 @@ class AgentLifecycle(
             identity = identity,
             runtimeProvider = { currentMetrics() },
             proxyProvider = { currentProxyMetrics() },
+            selfHealthSink = selfHealthSink,
         )
 
     /**
@@ -326,6 +334,8 @@ class AgentLifecycle(
         adapter.runAsync {
             // 1) 先点亮本地快照，玩家此刻已可进服。
             applySnapshotIfPresent()
+            // 1.1) 从落盘候选快照恢复调度缓存（注册前即可 fail-static 降级决策，FR-148 §4.6 降级 step 1）。
+            schedulingRuntime?.restoreSnapshot()
             // 2) 再异步注册并启循环（经单飞门）。
             beginRegister(registerGen.get())
         }
@@ -340,6 +350,7 @@ class AgentLifecycle(
         overrideGen.set(overrideGen.get() + 1)
         streamGen.set(streamGen.get() + 1)
         metricsSampling.stop()
+        schedulingRuntime?.stop()
         adapter.info("agent 生命周期已停止")
     }
 
@@ -443,6 +454,8 @@ class AgentLifecycle(
         if (metricsSamplingEnabled.get()) {
             metricsSampling.start()
         }
+        // 调度候选刷新循环（FR-148）：随注册成功启动（幂等，重注册不重启）；候选快照跨重连保留、恢复后自动补报降级决策。
+        schedulingRuntime?.start()
         // 注入了 streamTransport（FR-24）：以单条 SSE 推送流取代三条长轮询；否则退回三条长轮询（迁移期兼容）。
         if (apiClient.streamingEnabled()) {
             startStreamLoop()

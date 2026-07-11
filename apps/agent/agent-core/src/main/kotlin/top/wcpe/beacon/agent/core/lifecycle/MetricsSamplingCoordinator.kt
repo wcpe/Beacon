@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.lifecycle
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.MetricsReportOutcome
+import top.wcpe.beacon.agent.core.client.SelfHealth
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
@@ -29,6 +30,9 @@ class MetricsSamplingCoordinator(
     private val identity: AgentIdentity,
     private val runtimeProvider: () -> RuntimeMetrics,
     private val proxyProvider: () -> ProxyMetrics?,
+    // 自身健康回传 sink（FR-148）：每次上报 202 受理即把响应内 self 段刷给持有者，供 selfHealth() 消费；
+    // 默认 no-op（未接入调度门面 / 既有测试向后兼容）。
+    private val selfHealthSink: (SelfHealth?) -> Unit = {},
 ) {
     /** 采样角色：bungee → proxy，其余 → backend（与 v2 注册 kind 一致）。 */
     private val kind: MetricKind = if (identity.role == "bungee") MetricKind.PROXY else MetricKind.BACKEND
@@ -152,6 +156,8 @@ class MetricsSamplingCoordinator(
         if (outcome is MetricsReportOutcome.Accepted) {
             buffer.ack(snapshot.lastSeq, snapshot.droppedSinceLast)
             lastReportRttMs = outcome.rttMs
+            // 顺带把控制面回传的自身健康刷给调度门面（FR-148 selfHealth 数据源）。
+            selfHealthSink(outcome.self)
             onSuccess(snapshot.droppedSinceLast)
         } else {
             onFailure(outcome)

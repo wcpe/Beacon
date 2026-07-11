@@ -24,6 +24,12 @@ import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
 import top.wcpe.beacon.agent.core.override.CommandWhitelist
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import top.wcpe.beacon.agent.core.scheduling.LocalDecisionReportQueue
+import top.wcpe.beacon.agent.core.scheduling.SchedulingCache
+import top.wcpe.beacon.agent.core.scheduling.SchedulingRefresher
+import top.wcpe.beacon.agent.core.scheduling.SchedulingSnapshotStore
+import top.wcpe.beacon.agent.core.scheduling.SchedulingView
+import top.wcpe.beacon.agent.core.scheduling.SelfHealthHolder
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
 import top.wcpe.beacon.agent.core.transport.HttpTransport
@@ -170,6 +176,21 @@ object AgentAssembly {
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
         val topologyWatchHub = TopologyWatchHub()
 
+        // 调度门面与 fail-static 降级（FR-148）：自身健康持有者（指标上报响应刷新）、候选缓存、补报队列、
+        // 候选落盘（与配置快照同受 snapshotEnabled 门控）、门面视图（只读 + 单次决策）、刷新循环（10s 拉候选 + 补报）。
+        val selfHealthHolder = SelfHealthHolder()
+        val schedulingCache = SchedulingCache()
+        val reportQueue = LocalDecisionReportQueue()
+        val schedulingSnapshotStore: SchedulingSnapshotStore? =
+            if (settings.snapshotEnabled) {
+                SchedulingSnapshotStore(File(adapter.dataFolder(), CANDIDATES_SNAPSHOT_FILE), codec)
+            } else {
+                null
+            }
+        val schedulingView = SchedulingView(apiClient, identity, adapter, schedulingCache, reportQueue, selfHealthHolder)
+        val schedulingRefresher =
+            SchedulingRefresher(apiClient, identity, adapter, schedulingCache, schedulingSnapshotStore, reportQueue)
+
         val lifecycle =
             AgentLifecycle(
                 identity = identity,
@@ -191,6 +212,10 @@ object AgentAssembly {
                 proxyMetricsProvider = proxyMetricsProvider,
                 // 反向抓取执行器（FR-39）：收到 SSE command-pending / READY 时触发拉命令→读 plugins→回传。
                 reverseFetchExecutor = reverseFetchExecutor,
+                // 调度候选刷新循环（FR-148）：随注册成功 start、停机 stop、启动时从落盘快照恢复。
+                schedulingRuntime = schedulingRefresher,
+                // 自身健康回传 sink（FR-148）：把指标上报 202 响应内 self 刷进 selfHealth 数据源。
+                selfHealthSink = selfHealthHolder::set,
             )
         // 回填强制重同步回调持有者（FR-91）：lifecycle 已建好，命令期 onResyncConfig 经此解引用调用 forceResyncNow。
         lifecycleRef.set(lifecycle)
@@ -201,11 +226,15 @@ object AgentAssembly {
         val discoveryView = DiscoveryView(apiClient, topologyWatchHub, rosterDirectoryHolder, identity)
         // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging，壳层在消息模块就绪后注入活跃门面。
         val messagingHolder = MessagingHolder()
-        val beaconAgent = BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder)
+        val beaconAgent =
+            BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder, schedulingView)
 
         return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder)
     }
 
     /** agent 自身日志环形缓冲容量（FR-88，见 ADR-0040）：最近 N 行，够排障、内存可忽略；有界不溢出。 */
     private const val LOG_BUFFER_CAPACITY = 300
+
+    /** 候选快照落盘文件名（FR-148，落 agent 数据目录，与配置快照平行）。 */
+    private const val CANDIDATES_SNAPSHOT_FILE = "candidates-snapshot.json"
 }
