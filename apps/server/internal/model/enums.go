@@ -376,6 +376,8 @@ const (
 	ActionSystemUpdateRollback = "system.update-rollback"
 	// 控制面在线更新·取消（FR-125）：运维主动中断进行中的下载（或关停取消），detail 记目标版本 / 已取消
 	ActionSystemUpdateCancel = "system.update-cancel"
+	// 健康权重配置热更（FR-147，spec §4.4）：detail 记新配置 json（不含任何凭据）
+	ActionHealthWeightsUpdate = "health-weights.update"
 )
 
 // 审计对象类型。
@@ -409,6 +411,8 @@ const (
 	TargetTypeSystem = "system"
 	// 配置操作级撤回（FR-116）的审计对象类型：目标是一条可逆操作账目，见 ADR-0051
 	TargetTypeReversibleOp = "reversible-op"
+	// 健康权重配置（FR-147）的审计对象类型
+	TargetTypeHealthWeights = "health-weights"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

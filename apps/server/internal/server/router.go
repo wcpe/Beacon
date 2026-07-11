@@ -14,6 +14,7 @@ type Handlers struct {
 	Namespace        *handler.NamespaceHandler
 	V2               *handler.V2ControlPlaneHandler
 	V2Metrics        *handler.V2MetricsHandler
+	V2Health         *handler.V2HealthHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
 	OverrideSet      *handler.OverrideSetHandler
@@ -134,7 +135,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/agent-identities/{identityId}/enable", h.V2.EnableAgentIdentity)
 			r.Post("/agent-identities/{identityId}/unbind", h.V2.UnbindAgentIdentity)
 
-			// P4b 挂载点：健康与指标管理端点（FR-147）
+			// 健康与指标管理端点（FR-147，见 §5.2）
+			if h.V2Health != nil {
+				// 健康权重版本化配置：读当前 + 历史 / 全量替换热更（校验 → 镜像 + 新 rev + 审计）
+				r.Get("/settings/health-weights", h.V2Health.GetHealthWeights)
+				r.Put("/settings/health-weights", h.V2Health.PutHealthWeights)
+			}
 
 			r.Post("/bc-clusters", h.V2.CreateBCCluster)
 			r.Post("/regions", h.V2.CreateRegion)

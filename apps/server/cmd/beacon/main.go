@@ -323,7 +323,15 @@ func run() error {
 	observabilityService.SetMetricWriteDiscardCounter(asyncDailyWriter)
 	observabilityHandler := handler.NewObservabilityHandler(observabilityService)
 
-	// P4b 装配点：健康域（FR-147）
+	// P4b 装配：健康域（FR-147，见 v2-metrics-health-scheduling.md §3.3/§4.4）。
+	// 健康权重版本化存储与热更：启动载入最新 rev（表空种子默认配置 rev=1、operator=system），
+	// PUT 校验 → 事务内写设置镜像 + 插入新 rev + 写审计 → 提交后内存原子替换（下一轮健康计算生效）。
+	healthWeightsService, err := service.NewHealthWeightsService(
+		db, repository.NewHealthWeightsRepository(db), repository.NewSettingRepository(db), auditRepo)
+	if err != nil {
+		return err
+	}
+	v2HealthHandler := handler.NewV2HealthHandler(healthWeightsService)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。
@@ -368,15 +376,7 @@ func run() error {
 	// gitRepo 端口：未启用 NopGitRepo、启用用 go-git 实现的 GoGitRepo（见 newGitRepo / ADR-0030 决策5）。
 	exportSourceRepo := repository.NewExportSourceRepository(db)
 	gitExportService := service.NewGitExportService(exportSourceRepo, newGitRepo(cfg.GitExport))
-	if cfg.GitExport.Enabled {
-		configService.SetGitExporter(gitExportService)
-		fileService.SetGitExporter(gitExportService)
-		zoneService.SetGitExporter(gitExportService)
-		slog.Info("git 单向导出镜像已启用", "仓路径", cfg.GitExport.RepoPath,
-			"远程", gitRemoteForLog(cfg.GitExport.RemoteURL))
-	} else {
-		slog.Info("git 单向导出镜像未启用（git-export.enabled=false）")
-	}
+	wireGitExport(cfg.GitExport, gitExportService, configService, fileService, zoneService)
 
 	// 控制面在线更新核心（FR-97/FR-119，见 ADR-0044/ADR-0053）：按渠道查 Release → 下载 → SHA256 → 落位 pending → 主进程自替换重启。
 	// updateRestartCh 是「更新就绪请求重启」的进程内信号：更新服务落位 pending 成功后关闭它，
@@ -407,7 +407,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
@@ -538,4 +538,18 @@ func gitRemoteForLog(remoteURL string) string {
 		return "仅本地"
 	}
 	return remoteURL
+}
+
+// wireGitExport 按配置接线 git 单向导出触发器（FR-47，见 ADR-0030）：仅 enabled 时把导出器
+// 注入发布 / 回滚 / 改派链路（从 run 原样提取，行为不变，控制 run 圈复杂度）。
+func wireGitExport(cfg config.GitExportConfig, gitExportService *service.GitExportService,
+	configService *service.ConfigService, fileService *service.FileService, zoneService *service.ZoneService) {
+	if !cfg.Enabled {
+		slog.Info("git 单向导出镜像未启用（git-export.enabled=false）")
+		return
+	}
+	configService.SetGitExporter(gitExportService)
+	fileService.SetGitExporter(gitExportService)
+	zoneService.SetGitExporter(gitExportService)
+	slog.Info("git 单向导出镜像已启用", "仓路径", cfg.RepoPath, "远程", gitRemoteForLog(cfg.RemoteURL))
 }
