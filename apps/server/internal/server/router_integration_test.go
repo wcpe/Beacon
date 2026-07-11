@@ -17,6 +17,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 	"github.com/wcpe/Beacon/apps/server/internal/server"
@@ -36,6 +37,9 @@ var adminToken string
 
 // testAlertInbox 暴露当前测试服的站内信通道，供告警端点测试直接投递一条告警再经 HTTP 读回。
 var testAlertInbox *alert.InboxAlerter
+
+// testHealthViews 暴露当前测试服的健康视图存储（FR-147）：供指标上报测试预置视图后验证 self 回填。
+var testHealthViews *healthview.Store
 
 // newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
 func newTestServer(t *testing.T) *httptest.Server {
@@ -121,9 +125,12 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// 鉴权 / 窗口去重 / 202 语义即可验，落库经 service 集成用例（启 worker）覆盖。
 	metricWriter := service.NewAsyncDailyWriter()
 	service.RegisterFlusher(metricWriter, service.RouteKindMetricSample, repository.NewMetricSampleV2Repository(db).FlushDaily)
-	v2MetricsHandler := handler.NewV2MetricsHandler(
-		service.NewMetricIngestService(metricwindow.New(metricwindow.DefaultCapacity),
-			service.MetricSampleEnqueuer{Writer: metricWriter}))
+	metricIngestSvc := service.NewMetricIngestService(metricwindow.New(metricwindow.DefaultCapacity),
+		service.MetricSampleEnqueuer{Writer: metricWriter})
+	// 健康视图存储（FR-147）：测试不启计算轮，用例按需直接预置视图验证 self 回填。
+	testHealthViews = healthview.NewStore()
+	metricIngestSvc.SetHealthViews(testHealthViews)
+	v2MetricsHandler := handler.NewV2MetricsHandler(metricIngestSvc)
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
 		V2:               v2Handler,

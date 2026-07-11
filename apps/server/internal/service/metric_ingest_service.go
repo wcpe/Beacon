@@ -7,6 +7,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 )
 
@@ -70,10 +71,20 @@ type MetricReportParams struct {
 	Samples          []MetricReportSample // 5s 批聚合样本，单批 ≤120
 }
 
-// MetricReportResult 是一次上报的处理结果（对齐 spec §5.1 的 202 响应 accepted / deduplicated）。
+// SelfHealthView 是上报响应顺带回传的自身健康视图（FR-147，见 §5.1 self；
+// json 键 camelCase，供 agent-api selfHealth 数据源消费）。
+type SelfHealthView struct {
+	Score       int      `json:"score"`
+	Level       string   `json:"level"`
+	Schedulable bool     `json:"schedulable"`
+	Reasons     []string `json:"reasons"`
+}
+
+// MetricReportResult 是一次上报的处理结果（对齐 spec §5.1 的 202 响应 accepted / deduplicated / self）。
 type MetricReportResult struct {
-	Accepted     int // 本次新接收（窗口新增桶）的批数
-	Deduplicated int // 被判为重放（窗口内已存在，含批内重复）的批数
+	Accepted     int             // 本次新接收（窗口新增桶）的批数
+	Deduplicated int             // 被判为重放（窗口内已存在，含批内重复）的批数
+	Self         *SelfHealthView // 自身当前健康视图；健康计算尚无该实例视图时为 nil（响应 null）
 }
 
 // MetricIngestService 是控制面指标接收端（FR-144，见 §4.2/§4.3）：
@@ -83,6 +94,32 @@ type MetricIngestService struct {
 	enqueue   metricEnqueuer
 	now       func() time.Time
 	skewLimit time.Duration
+	// healthViews 健康视图内存真源（FR-147 装配注入，可空）：上报响应据此回填 self（纯内存读，无 IO）。
+	healthViews *healthview.Store
+}
+
+// SetHealthViews 注入健康视图存储（装配期调用；未注入时 self 恒为 null）。
+func (s *MetricIngestService) SetHealthViews(views *healthview.Store) {
+	s.healthViews = views
+}
+
+// selfHealthOf 查上报方自身当前健康视图；未注入存储或尚无该实例视图返回 nil。
+func (s *MetricIngestService) selfHealthOf(id agentauth.Identity) *SelfHealthView {
+	if s.healthViews == nil {
+		return nil
+	}
+	view, ok := s.healthViews.Get(id.NamespaceID, id.ServerID)
+	if !ok {
+		return nil
+	}
+	reasons := view.Reasons
+	if reasons == nil {
+		reasons = []string{}
+	}
+	return &SelfHealthView{
+		Score: view.Score, Level: view.Level,
+		Schedulable: view.Schedulable, Reasons: reasons,
+	}
 }
 
 // NewMetricIngestService 构造接收服务（window 为 60s 内存窗口，enqueue 为异步写入池）。
@@ -112,7 +149,7 @@ func (s *MetricIngestService) Ingest(p MetricReportParams) (MetricReportResult, 
 			"namespace", p.Identity.Namespace, "serverId", p.Identity.ServerID, "丢弃样本数", p.DroppedSinceLast)
 	}
 	if len(p.Samples) == 0 {
-		return MetricReportResult{}, nil
+		return MetricReportResult{Self: s.selfHealthOf(p.Identity)}, nil
 	}
 	if len(p.Samples) > maxSamplesPerReport {
 		return MetricReportResult{}, apperr.ErrInvalidParam
@@ -147,7 +184,7 @@ func (s *MetricIngestService) Ingest(p MetricReportParams) (MetricReportResult, 
 			s.window.Upsert(ws)
 		}
 	}
-	return MetricReportResult{Accepted: len(newRows), Deduplicated: deduplicated}, nil
+	return MetricReportResult{Accepted: len(newRows), Deduplicated: deduplicated, Self: s.selfHealthOf(p.Identity)}, nil
 }
 
 // validateBinding 校验请求体自报 serverId / kind 与权威身份一致（防错配 agent 用他人身份串报）。

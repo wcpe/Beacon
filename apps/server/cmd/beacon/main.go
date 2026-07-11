@@ -343,6 +343,8 @@ func run() error {
 	// 管理面只读查询（§5.2）：实时走内存视图 + 60s 窗口，回放走快照 / 指标日表（缺表跳过、禁隐式建表）。
 	healthQueryService := service.NewHealthQueryService(healthViewStore, metricWindow, healthSnapshotRepo, metricSampleV2Repo)
 	v2HealthHandler := handler.NewV2HealthHandler(healthQueryService, healthWeightsService)
+	// 指标上报响应回填自身健康视图（§5.1 self）：接收端注入视图存储，尚无视图时响应 null。
+	metricIngestService.SetHealthViews(healthViewStore)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。

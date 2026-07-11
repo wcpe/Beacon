@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
 
 // doAgentJSON 发起一次带 agent 头（X-Beacon-*）的 JSON 请求，不携带 admin 令牌。
@@ -123,12 +125,16 @@ func TestV2MetricsReportAuthAndDedup(t *testing.T) {
 	if acc, _ := body["accepted"].(float64); acc != 2 {
 		t.Fatalf("应接收 2 个批，实际 %v", body["accepted"])
 	}
-	// self 健康占位为 null（P4b 才填）。
+	// 健康计算尚未产出该实例视图 → self 为 null（FR-147，§5.1）。
 	if v, ok := body["self"]; !ok || v != nil {
-		t.Fatalf("self 应占位为 null，实际 %v", body["self"])
+		t.Fatalf("尚无健康视图时 self 应为 null，实际 %v", body["self"])
 	}
 
-	// 重放同批 → 窗口去重，accepted=0 / deduplicated=2。
+	// 预置健康视图后重放同批 → 窗口去重 accepted=0 / deduplicated=2，且 self 回填自身健康。
+	testHealthViews.ReplaceAll([]healthview.View{{
+		NamespaceID: nsIDBySelfReport(t, ts.URL, "p4ns"), Namespace: "p4ns", ServerID: serverID,
+		Kind: "backend", Score: 87, Level: "healthy", Schedulable: true, Reasons: []string{},
+	}})
 	code, body = doAgentJSON(t, http.MethodPost, reportURL,
 		map[string]string{"X-Beacon-Token": token, "X-Beacon-Identity": identityID},
 		metricReportBody(serverID, "backend", []int64{bucket, bucket + 5000}))
@@ -141,6 +147,35 @@ func TestV2MetricsReportAuthAndDedup(t *testing.T) {
 	if dup, _ := body["deduplicated"].(float64); dup != 2 {
 		t.Fatalf("重放 deduplicated 应 2，实际 %v", body["deduplicated"])
 	}
+	self, ok := body["self"].(map[string]any)
+	if !ok {
+		t.Fatalf("有健康视图时 self 应回填对象，实际 %v", body["self"])
+	}
+	if score, _ := self["score"].(float64); score != 87 || self["level"] != "healthy" || self["schedulable"] != true {
+		t.Fatalf("self 内容不符，实际 %v", self)
+	}
+	if reasons, ok := self["reasons"].([]any); !ok || len(reasons) != 0 {
+		t.Fatalf("self.reasons 应为空数组，实际 %v", self["reasons"])
+	}
+}
+
+// nsIDBySelfReport 查建出的 namespace 行数字 id（self 回填按 (namespaceId, serverId) 定位视图）。
+func nsIDBySelfReport(t *testing.T, baseURL, name string) uint {
+	t.Helper()
+	code, body := doJSON(t, http.MethodGet, baseURL+"/admin/v2/namespaces", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查 namespaces 应 200，实际 %d", code)
+	}
+	items, _ := body["items"].([]any)
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		if item["name"] == name {
+			id, _ := item["id"].(float64)
+			return uint(id)
+		}
+	}
+	t.Fatalf("未找到 namespace %s", name)
+	return 0
 }
 
 // TestV2MetricsClockSkewRejected 端到端：时钟偏移超阈值 → 400 clock_skew_too_large。

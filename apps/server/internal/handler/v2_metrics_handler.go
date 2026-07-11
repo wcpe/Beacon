@@ -82,8 +82,8 @@ func (h *V2MetricsHandler) Report(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusAccepted, map[string]any{
 		"accepted":     result.Accepted,
 		"deduplicated": result.Deduplicated,
-		// self 健康视图数据源在 P4b 健康计算就绪后填充，本片占位为 null。
-		"self": nil,
+		// 顺带回传自身健康视图（§5.1）：健康计算尚未产出该实例视图时为 null。
+		"self": result.Self,
 	})
 }
 
