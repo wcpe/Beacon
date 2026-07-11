@@ -106,6 +106,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			if h.V2Metrics != nil {
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/metrics/report", h.V2Metrics.Report)
 			}
+
+			// P4b 挂载点：调度决策 agent 端点（FR-146）
 		})
 	}
 
@@ -131,6 +133,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/agent-identities/{identityId}/disable", h.V2.DisableAgentIdentity)
 			r.Post("/agent-identities/{identityId}/enable", h.V2.EnableAgentIdentity)
 			r.Post("/agent-identities/{identityId}/unbind", h.V2.UnbindAgentIdentity)
+
+			// P4b 挂载点：健康与指标管理端点（FR-147）
+
 			r.Post("/bc-clusters", h.V2.CreateBCCluster)
 			r.Post("/regions", h.V2.CreateRegion)
 			r.Post("/zones", h.V2.CreateZone)
@@ -143,6 +148,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// server 排空标记（业务 serverId）与默认入口（行数字 id）；chi 同段参数名须一致，统一用 serverRef
 			r.Put("/servers/{serverRef}/draining", h.V2.SetServerDraining)
 			r.Put("/servers/{serverRef}/default-entry", h.V2.SetServerDefaultEntry)
+
+			// P4b 挂载点：调度决策管理端点（FR-146）
 		})
 	}
 

@@ -323,6 +323,8 @@ func run() error {
 	observabilityService.SetMetricWriteDiscardCounter(asyncDailyWriter)
 	observabilityHandler := handler.NewObservabilityHandler(observabilityService)
 
+	// P4b 装配点：健康域（FR-147）
+
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
@@ -340,6 +342,8 @@ func run() error {
 	reverseFetchIgnoreRuleService := service.NewReverseFetchIgnoreRuleService(db, reverseFetchIgnoreRuleRepo, auditRepo)
 	reverseFetchTaskHandler := handler.NewReverseFetchTaskHandler(reverseFetchTaskService, instanceService, reverseFetchIgnoreRuleService)
 	reverseFetchIgnoreRuleHandler := handler.NewReverseFetchIgnoreRuleHandler(reverseFetchIgnoreRuleService)
+
+	// P4b 装配点：调度域（FR-146）
 
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。

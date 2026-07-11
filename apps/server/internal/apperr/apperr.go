@@ -125,6 +125,12 @@ var (
 	ErrClockSkewTooLarge = New(http.StatusBadRequest, "clock_skew_too_large", "上报时钟与控制面偏移过大，请校时后重试")
 	// ErrMetricsIngestBusy 指标写入队列已满，控制面过载保护，agent 保留缓冲重试不丢数据（spec §4.3/§5.1）。
 	ErrMetricsIngestBusy = New(http.StatusTooManyRequests, "metrics_ingest_busy", "指标写入繁忙，请稍后重试")
+	// ErrSchedZoneNotFound 调度请求的目标 zone 在请求方 namespace 内不存在（FR-146，spec §4.6）。
+	ErrSchedZoneNotFound = New(http.StatusNotFound, "zone_not_found", "目标 zone 不存在")
+	// ErrSchedCrossNamespace 跨 namespace 调度请求默认拒绝（信任放行规则归 namespace 隔离域，FR-146，spec §4.6）。
+	ErrSchedCrossNamespace = New(http.StatusForbidden, "cross_namespace", "禁止跨 namespace 调度请求")
+	// ErrInvalidHealthWeights 健康权重配置校验不通过（权重非负 / good、bad 边界有序 / 等级阈值有序，FR-147，spec §4.4）。
+	ErrInvalidHealthWeights = New(http.StatusBadRequest, "invalid_health_weights", "健康权重配置不合法")
 	// ErrBadCredentials 管理台登录用户名或口令错误。
 	ErrBadCredentials = New(http.StatusUnauthorized, "BAD_CREDENTIALS", "用户名或口令错误")
 	// ErrAdminUnauthorized 管理台缺少或非法的登录令牌 / API 密钥（含过期 / 已吊销）。
