@@ -369,11 +369,9 @@ func run() error {
 	// 通道（sched_decision 路由独立攒批），trace_id 唯一键幂等去重、跨日按 ts_ms 拆表。
 	schedDecisionRepo := repository.NewSchedDecisionV2Repository(db)
 	service.RegisterFlusher(asyncDailyWriter, service.RouteKindSchedDecision, schedDecisionRepo.FlushDaily)
-	// 决策服务在健康视图内存真源上纯内存决策（§4.6，随机决胜用默认时钟种子源）。
-	// 注意：schedHealthViews 应与健康域（FR-147）计算轮填充的 Store 为同一实例——健康域装配
-	// 就位后由集成方统一为单实例，此处先行自建保证独立可编译。
-	schedHealthViews := healthview.NewStore()
-	schedulingV2Service := service.NewSchedulingV2Service(schedHealthViews, nil)
+	// 决策服务在健康视图内存真源上纯内存决策（§4.6，随机决胜用默认时钟种子源）；
+	// 健康视图与健康域计算轮填充的 Store 为同一实例（单一真源，§4.5）。
+	schedulingV2Service := service.NewSchedulingV2Service(healthViewStore, nil)
 	schedulingV2Service.SetDecisionEnqueuer(service.SchedDecisionEnqueuer{Writer: asyncDailyWriter})
 	v2SchedHandler := handler.NewV2SchedHandler(schedulingV2Service)
 	// 决策记录管理面查询（§5.2）：跨日并表列表 / 详情 / 概览，只读、查询侧不隐式建日表。
