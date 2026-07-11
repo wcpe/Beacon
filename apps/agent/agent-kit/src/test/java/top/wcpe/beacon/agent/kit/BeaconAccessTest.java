@@ -5,13 +5,20 @@ import org.junit.jupiter.api.Test;
 import top.wcpe.beacon.agent.api.AgentIdentity;
 import top.wcpe.beacon.agent.api.BeaconAgent;
 import top.wcpe.beacon.agent.api.BeaconAgentProvider;
+import top.wcpe.beacon.agent.api.BeaconScheduling;
+import top.wcpe.beacon.agent.api.CandidateView;
 import top.wcpe.beacon.agent.api.ConfigChangeListener;
+import top.wcpe.beacon.agent.api.DataSource;
+import top.wcpe.beacon.agent.api.DataSourceState;
+import top.wcpe.beacon.agent.api.DecisionSource;
 import top.wcpe.beacon.agent.api.Discovery;
 import top.wcpe.beacon.agent.api.DiscoveryQuery;
 import top.wcpe.beacon.agent.api.EffectiveConfig;
 import top.wcpe.beacon.agent.api.ListenerHandle;
+import top.wcpe.beacon.agent.api.HealthView;
 import top.wcpe.beacon.agent.api.MessageHandler;
 import top.wcpe.beacon.agent.api.Messaging;
+import top.wcpe.beacon.agent.api.ScheduleResult;
 import top.wcpe.beacon.agent.api.ServiceInstance;
 import top.wcpe.beacon.agent.api.TopicHandler;
 import top.wcpe.beacon.agent.api.TopologyListener;
@@ -321,6 +328,40 @@ class BeaconAccessTest {
             }
         };
 
+        /** 假调度门面：始终无候选、fail-static 空视图（本测试不覆盖 FR-148 行为，仅满足接口实现）。 */
+        private static final BeaconScheduling FAKE_SCHEDULING = new BeaconScheduling() {
+            @Override
+            public CompletableFuture<ScheduleResult> acquireCandidate(String zone) {
+                return acquireCandidate(zone, null);
+            }
+
+            @Override
+            public CompletableFuture<ScheduleResult> acquireCandidate(String zone, String purpose) {
+                return CompletableFuture.completedFuture(
+                        new ScheduleResult(null, "fake-trace", DecisionSource.LOCAL_FALLBACK, "no_candidate"));
+            }
+
+            @Override
+            public List<CandidateView> candidatesInZone(String zone) {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public HealthView healthOf(String serverId) {
+                return null;
+            }
+
+            @Override
+            public HealthView selfHealth() {
+                return null;
+            }
+
+            @Override
+            public DataSourceState dataSource() {
+                return new DataSourceState(DataSource.LOCAL_SNAPSHOT, false, Long.MAX_VALUE);
+            }
+        };
+
         final Map<String, String> config = new LinkedHashMap<>();
         final FakeDiscovery discovery = new FakeDiscovery();
         final FakeEffectiveConfig effectiveConfig = new FakeEffectiveConfig(this);
@@ -345,6 +386,11 @@ class BeaconAccessTest {
         @Override
         public Messaging messaging() {
             return FAKE_MESSAGING;
+        }
+
+        @Override
+        public BeaconScheduling scheduling() {
+            return FAKE_SCHEDULING;
         }
 
         @Override

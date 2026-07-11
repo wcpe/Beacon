@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.api
 
 import top.wcpe.beacon.agent.api.BeaconAgent
+import top.wcpe.beacon.agent.api.BeaconScheduling
 import top.wcpe.beacon.agent.api.Discovery
 import top.wcpe.beacon.agent.api.EffectiveConfig
 import top.wcpe.beacon.agent.api.Messaging
@@ -23,6 +24,8 @@ class BeaconAgentImpl(
     private val effectiveConfig: EffectiveConfig,
     private val discovery: Discovery,
     private val messagingHolder: MessagingHolder,
+    // 调度 / 健康门面（FR-148）：装配期注入真实 SchedulingView；未注入时用占位实现兜底（fail-static 语义仍成立）。
+    private val scheduling: BeaconScheduling = UnavailableScheduling,
 ) : BeaconAgent {
     override fun identity(): ApiIdentity {
         // group/zone 以 store 当前值为准（注册/拉取后回填、换区后更新）。
@@ -41,6 +44,8 @@ class BeaconAgentImpl(
 
     // 始终返回当前生效门面（未启用时为 DisabledMessaging，isAvailable=false）。
     override fun messaging(): Messaging = messagingHolder.get()
+
+    override fun scheduling(): BeaconScheduling = scheduling
 
     override fun connected(): Boolean = lifecycle.isConnected()
 

@@ -23,6 +23,13 @@ public interface BeaconAgent {
     Messaging messaging();
 
     /**
+     * 本机调度 / 健康门面（FR-148）：取调度候选与健康事实的唯一入口。
+     *
+     * <p>始终返回非 null；控制面不可用时按本地快照 fail-static 降级，绝不阻塞玩家链路（见 {@link BeaconScheduling}）。</p>
+     */
+    BeaconScheduling scheduling();
+
+    /**
      * agent 当前是否已连上控制面。
      *
      * <p>false 表示正在用本地快照 fail-static 运行——配置仍可读，但可能非最新。</p>

@@ -15,6 +15,13 @@ build:
   # 分析出任一 finding（且未被 baseline 豁免）即让构建失败。
   maxIssues: 0
 
+complexity:
+  # 长参数列表：规则保持启用把关真正的参数堆积；但可选（带默认值）的尾参不计入阈值。
+  # 门面聚合类（如 BeaconAgentImpl 逐一委托各子门面 config/discovery/messaging/scheduling，每方法一行、非上帝类）
+  # 追加可选子门面时，带默认值的形参不应被判为「参数过多」——这是刻意的门面聚合而非坏味道。
+  LongParameterList:
+    ignoreDefaultParameters: true
+
 empty-blocks:
   # 空函数体：规则保持启用以挡住真正遗漏的空函数；但放行「空的 override」——
   # 命中全为测试桩里对 PlatformAdapter.info/warn/error 等的 no-op 覆写（测试不关心这些回调），是刻意空实现而非遗漏。
