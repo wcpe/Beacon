@@ -67,6 +67,9 @@ object BeaconE2EBukkit : Plugin() {
 
         // 启动 FR-14 文件树镜像探针（轮询观测 agent 把文件树文件镜像落盘到本插件数据目录）。
         FileTreeE2EProbe.start()
+
+        // 启动 FR-148 调度门面探针（周期经只读 API 取候选，观测正常 / 杀控制面降级 / 恢复，写各自标记文件）。
+        SchedulingE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)
