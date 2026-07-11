@@ -3,6 +3,7 @@
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
+import { auth } from './auth'
 import { cluster } from './cluster'
 import { common } from './common'
 import { dashboard } from './dashboard'
@@ -27,6 +28,7 @@ void i18next.use(initReactI18next).init({
         observability,
         delivery,
         system,
+        auth,
       },
     },
   },
