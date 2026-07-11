@@ -117,11 +117,13 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
 	v2Handler := handler.NewV2ControlPlaneHandler(service.NewV2ControlPlaneService(db))
-	// P4 指标上报（FR-144）：60s 窗口 + 异步写入池 + 接收服务 + 处理器。测试不启写入 worker——
+	// P4 指标上报（FR-144）：60s 窗口 + 异步写入通道 + 接收服务 + 处理器。测试不启写入 worker——
 	// 鉴权 / 窗口去重 / 202 语义即可验，落库经 service 集成用例（启 worker）覆盖。
+	metricWriter := service.NewAsyncDailyWriter()
+	service.RegisterFlusher(metricWriter, service.RouteKindMetricSample, repository.NewMetricSampleV2Repository(db).FlushDaily)
 	v2MetricsHandler := handler.NewV2MetricsHandler(
 		service.NewMetricIngestService(metricwindow.New(metricwindow.DefaultCapacity),
-			service.NewMetricIngestWriter(repository.NewMetricSampleV2Repository(db))))
+			service.MetricSampleEnqueuer{Writer: metricWriter}))
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
 		V2:               v2Handler,

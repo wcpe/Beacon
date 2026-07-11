@@ -19,10 +19,24 @@ const (
 	rttUnavailable = -1.0
 )
 
+// RouteKindMetricSample 是指标批在异步日表写入通道中的路由键（FR-144，见 §4.3）。
+const RouteKindMetricSample = "metric_sample"
+
 // metricEnqueuer 是接收服务对异步写入池的窄依赖：非阻塞投递一批聚合行，队列满返回 false。
-// 由 *MetricIngestWriter 实现，抽成接口便于单测注入「队列满」替身验证 429 背压。
+// 由 MetricSampleEnqueuer 实现，抽成接口便于单测注入「队列满」替身验证 429 背压。
 type metricEnqueuer interface {
 	Enqueue(rows []model.MetricSampleV2) bool
+}
+
+// MetricSampleEnqueuer 把泛化异步日表写入通道绑定到 metric_sample 路由（装配用）。
+type MetricSampleEnqueuer struct {
+	// Writer 泛化异步日表写入通道（须已注册 RouteKindMetricSample 路由）。
+	Writer *AsyncDailyWriter
+}
+
+// Enqueue 非阻塞投递一批指标聚合行；队列满返回 false（上层据此回 429 背压）。
+func (e MetricSampleEnqueuer) Enqueue(rows []model.MetricSampleV2) bool {
+	return EnqueueRows(e.Writer, RouteKindMetricSample, rows)
 }
 
 // MetricReportSample 是一条 5s 批聚合样本（agent 端已按 5s 桶聚合，控制面不再重聚合，见 §4.3）。

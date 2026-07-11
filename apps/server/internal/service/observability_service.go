@@ -25,8 +25,8 @@ type commandCounter interface {
 	CountByStatus() (map[string]int, error)
 }
 
-// metricWriteDiscardCounter 是自观测对指标异步写入累计丢弃行数的窄依赖（FR-144）：
-// 由 *MetricIngestWriter 的 Discarded 实现（多次重试仍失败被丢弃的行）。可选注入，未注入即 0。
+// metricWriteDiscardCounter 是自观测对异步日表写入累计丢弃行数的窄依赖（FR-144）：
+// 由 *AsyncDailyWriter 的 Discarded 实现（多次重试仍失败被丢弃的行，全路由合计）。可选注入，未注入即 0。
 type metricWriteDiscardCounter interface {
 	Discarded() int64
 }

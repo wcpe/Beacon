@@ -312,13 +312,15 @@ func run() error {
 	// P4 指标采样入库（FR-144，见 v2-metrics-health-scheduling.md §4）：agent 5s 批上报 → 接收端只校验 +
 	// 更 60s 内存窗口 + 非阻塞入队 → 后台写入池事务批插当日日表。请求 goroutine 不碰 DB、队列满回 429 背压。
 	// 60s 窗口是「每实例最新指标」内存真源（独立锁），供后续健康计算与 dashboard 实时读消费。
+	// 写入通道按路由键分发（§4.3）：指标 / 健康快照 / 调度决策各注册自己的 flusher、各自攒批互不阻塞。
 	metricWindow := metricwindow.New(metricwindow.DefaultCapacity)
 	metricSampleV2Repo := repository.NewMetricSampleV2Repository(db)
-	metricIngestWriter := service.NewMetricIngestWriter(metricSampleV2Repo)
-	metricIngestService := service.NewMetricIngestService(metricWindow, metricIngestWriter)
+	asyncDailyWriter := service.NewAsyncDailyWriter()
+	service.RegisterFlusher(asyncDailyWriter, service.RouteKindMetricSample, metricSampleV2Repo.FlushDaily)
+	metricIngestService := service.NewMetricIngestService(metricWindow, service.MetricSampleEnqueuer{Writer: asyncDailyWriter})
 	v2MetricsHandler := handler.NewV2MetricsHandler(metricIngestService)
 	// 写入失败累计丢弃计数暴露到 /system 自观测（错误不静默，ADR-0057）。
-	observabilityService.SetMetricWriteDiscardCounter(metricIngestWriter)
+	observabilityService.SetMetricWriteDiscardCounter(asyncDailyWriter)
 	observabilityHandler := handler.NewObservabilityHandler(observabilityService)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
@@ -428,8 +430,8 @@ func run() error {
 	// 不再启动期一次性决定起不起——运维改 metric.enabled 即热生效停 / 起采样，免重启。
 	go metricSampler.Run(ctx)
 
-	// 启动 P4 指标写入池（FR-144）：多 worker 共享有界队列，攒批事务批插当日日表，随关停信号退出。
-	startMetricWriters(ctx, metricIngestWriter)
+	// 启动异步日表写入通道（FR-144）：每路由多 worker 共享该路由有界队列，攒批事务批插当日日表，随关停信号退出。
+	asyncDailyWriter.Start(ctx)
 
 	// 启动 git 导出 worker（FR-47）：单 worker 串行消费导出信号，随关停信号退出；未启用时也起（空转无害、无信号即不动）
 	if cfg.GitExport.Enabled {
@@ -491,13 +493,6 @@ func run() error {
 		return update.RollbackAndRespawn(selfPath)
 	case err := <-errCh:
 		return err
-	}
-}
-
-// startMetricWriters 启动 P4 指标写入池的各 worker（FR-144）：多协程共享有界队列，随关停信号退出。
-func startMetricWriters(ctx context.Context, writer *service.MetricIngestWriter) {
-	for i := 0; i < writer.Workers(); i++ {
-		go writer.Run(ctx)
 	}
 }
 

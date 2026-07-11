@@ -56,13 +56,14 @@ func TestMetricIngestAsyncWriteAndReplayDedupMySQL(t *testing.T) {
 
 	repo := repository.NewMetricSampleV2Repository(db)
 	window := metricwindow.New(metricwindow.DefaultCapacity)
-	writer := NewMetricIngestWriter(repo)
+	writer := NewAsyncDailyWriter()
 	writer.flushInterval = 100 * time.Millisecond // 加速 flush
-	svc := NewMetricIngestService(window, writer)
+	RegisterFlusher(writer, RouteKindMetricSample, repo.FlushDaily)
+	svc := NewMetricIngestService(window, MetricSampleEnqueuer{Writer: writer})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go writer.Run(ctx)
+	writer.Start(ctx)
 
 	id := agentauth.Identity{NamespaceID: 1, Namespace: "prod", ServerID: "int-s1", Kind: model.ServerKindBackend}
 	bucket := (now.UnixMilli() / 5000) * 5000
@@ -109,12 +110,13 @@ func TestMetricIngestQueueFull429MySQL(t *testing.T) {
 
 	repo := repository.NewMetricSampleV2Repository(db)
 	window := metricwindow.New(metricwindow.DefaultCapacity)
-	writer := NewMetricIngestWriter(repo)
-	writer.queue = make(chan []model.MetricSampleV2, 1) // 极小队列
+	writer := NewAsyncDailyWriter()
+	writer.queueCapacity = 1 // 极小队列
+	RegisterFlusher(writer, RouteKindMetricSample, repo.FlushDaily)
 	// 不启动 worker：队列不会被消费。
-	writer.Enqueue([]model.MetricSampleV2{{ServerID: "filler"}}) // 填满
+	EnqueueRows(writer, RouteKindMetricSample, []model.MetricSampleV2{{ServerID: "filler"}}) // 填满
 
-	svc := NewMetricIngestService(window, writer)
+	svc := NewMetricIngestService(window, MetricSampleEnqueuer{Writer: writer})
 	id := agentauth.Identity{NamespaceID: 1, Namespace: "prod", ServerID: "int-s2", Kind: model.ServerKindBackend}
 	bucket := (now.UnixMilli() / 5000) * 5000
 	_, err := svc.Ingest(MetricReportParams{
