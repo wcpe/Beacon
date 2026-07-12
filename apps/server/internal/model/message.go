@@ -26,7 +26,7 @@ const (
 
 // IsValidMsgTargetKind 校验目标类型取值（结构校验用）。
 func IsValidMsgTargetKind(kind string) bool {
-	return kind == MsgTargetKindServer || kind == MsgTargetKindPlayer
+	return kind == MsgTargetKindServer || kind == MsgTargetKindPlayer || kind == MsgTargetKindBroadcast
 }
 
 // 消息失败 / 过期原因码（msg_trace.fail_reason，脱敏后文案；spec §4.2/§7）。
@@ -55,7 +55,7 @@ type MsgTrace struct {
 	SourceServerID string `gorm:"column:source_server_id;size:64;not null;index:,composite:src_created,priority:2"`
 	// 业务消息类型（业务插件定义）
 	MsgType string `gorm:"column:msg_type;size:64;not null"`
-	// server / player
+	// server / player / broadcast
 	TargetKind string `gorm:"column:target_kind;size:16;not null"`
 	// 定向目标（target_kind=server），未用为空
 	TargetServerID string `gorm:"column:target_server_id;size:64;not null;default:''"`

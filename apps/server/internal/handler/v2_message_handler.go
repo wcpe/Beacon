@@ -22,13 +22,15 @@ func NewV2MessageHandler(svc *service.MessageService) *V2MessageHandler {
 	return &V2MessageHandler{svc: svc}
 }
 
-// msgSendRequest 是 POST /beacon/v2/agent/messages/send 的请求体（camelCase，对齐 spec §5.1）。
+// msgSendRequest 是 POST /beacon/v2/agent/messages/send 的请求体（camelCase，对齐 spec §5.1；
+// targetZone 为广播 zone 级定向的 additive 键，FR-180）。
 type msgSendRequest struct {
 	MessageID        string `json:"messageId"`
 	MsgType          string `json:"msgType"`
 	TargetKind       string `json:"targetKind"`
 	TargetServerID   string `json:"targetServerId"`
 	TargetPlayerUUID string `json:"targetPlayerUuid"`
+	TargetZone       string `json:"targetZone"`
 	CorrelationID    string `json:"correlationId"`
 	Payload          string `json:"payload"`
 	SentAt           string `json:"sentAt"`
@@ -50,8 +52,9 @@ func (h *V2MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 	result, err := h.svc.Send(service.MessageSendParams{
 		Identity: identity, MessageID: req.MessageID, MsgType: req.MsgType,
 		TargetKind: req.TargetKind, TargetServerID: req.TargetServerID,
-		TargetPlayerUUID: req.TargetPlayerUUID, CorrelationID: req.CorrelationID,
-		Payload: req.Payload, SentAtMs: parseISOms(req.SentAt),
+		TargetPlayerUUID: req.TargetPlayerUUID, TargetZone: req.TargetZone,
+		CorrelationID: req.CorrelationID,
+		Payload:       req.Payload, SentAtMs: parseISOms(req.SentAt),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -98,6 +101,10 @@ func (h *V2MessageHandler) Poll(w http.ResponseWriter, r *http.Request) {
 		}
 		if m.CorrelationID != "" {
 			item["correlationId"] = m.CorrelationID
+		}
+		if m.Broadcast {
+			// 广播投递标记（additive 键，FR-180）：定向消息不带，agent 据此路由 topic 订阅分发。
+			item["broadcast"] = true
 		}
 		out = append(out, item)
 	}

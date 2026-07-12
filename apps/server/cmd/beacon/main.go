@@ -396,7 +396,8 @@ func run() error {
 	messageRepo := repository.NewMessageRepository(db)
 	service.RegisterFlusher(asyncDailyWriter, service.RouteKindMessageTrace, messageRepo.FlushDaily)
 	messageRelay := service.NewMessageRelay(service.MessageRecordEnqueuer{Writer: asyncDailyWriter})
-	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService)
+	// 广播寻址（FR-180）复用健康视图内存真源解析当前在线服集合（与调度决策同一份事实，读深拷贝无锁嵌套）。
+	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService, healthViewStore)
 	v2MessageHandler := handler.NewV2MessageHandler(messageService)
 
 	// 连接明细 / 消息元数据 / payload 查看管理面查询装配（FR-145/149/150，见 §5.2）：复用 P5a 的
