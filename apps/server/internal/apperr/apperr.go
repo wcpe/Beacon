@@ -125,6 +125,12 @@ var (
 	ErrClockSkewTooLarge = New(http.StatusBadRequest, "clock_skew_too_large", "上报时钟与控制面偏移过大，请校时后重试")
 	// ErrMetricsIngestBusy 指标写入队列已满，控制面过载保护，agent 保留缓冲重试不丢数据（spec §4.3/§5.1）。
 	ErrMetricsIngestBusy = New(http.StatusTooManyRequests, "metrics_ingest_busy", "指标写入繁忙，请稍后重试")
+	// ErrConnIngestBusy 连接明细写入队列已满，控制面过载保护，agent 退避后重报不丢数据（FR-145，spec §4.1/§5.1）。
+	ErrConnIngestBusy = New(http.StatusTooManyRequests, "conn_ingest_busy", "连接明细写入繁忙，请稍后重试")
+	// ErrPayloadTooLarge 消息 payload 超出上限（默认 64KB），发送请求被拒不截断（FR-150，spec §3.4/§5.1）。
+	ErrPayloadTooLarge = New(http.StatusBadRequest, "payload_too_large", "消息 payload 超出大小上限")
+	// ErrMessageCrossNamespaceNoTrust 跨 namespace 消息目标无 capability=message 信任，拒绝并记 failed（FR-149，spec §4.2）。
+	ErrMessageCrossNamespaceNoTrust = New(http.StatusForbidden, "namespace_not_trusted", "跨环境消息目标未授信")
 	// ErrSchedZoneNotFound 调度请求的目标 zone 在请求方 namespace 内不存在（FR-146，spec §4.6）。
 	ErrSchedZoneNotFound = New(http.StatusNotFound, "zone_not_found", "目标 zone 不存在")
 	// ErrSchedCrossNamespace 跨 namespace 调度请求默认拒绝（信任放行规则归 namespace 隔离域，FR-146，spec §4.6）。

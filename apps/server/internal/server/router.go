@@ -16,6 +16,7 @@ type Handlers struct {
 	V2Metrics        *handler.V2MetricsHandler
 	V2Health         *handler.V2HealthHandler
 	V2Sched          *handler.V2SchedHandler
+	V2Connection     *handler.V2ConnectionHandler
 	SchedDecision    *handler.SchedDecisionAdminHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
@@ -117,6 +118,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.With(agentV2ReportMiddleware(h.V2)).Get("/schedule/candidates", h.V2Sched.Candidates)
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/schedule/decide", h.V2Sched.Decide)
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/schedule/report-local", h.V2Sched.ReportLocal)
+			}
+
+			// P5a 挂载点：连接明细采集 agent 端点（FR-145，见 §5.1）：与指标 / 调度上报同挂
+			// token↔namespace + identity 鉴权中间件（未确认 403）；proxy 上报 open/close 事件，
+			// 接收端只校验 + 更内存名册 + 异步入库，请求 goroutine 不碰 DB、队列满回 429。
+			if h.V2Connection != nil {
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/connections/batch", h.V2Connection.Batch)
 			}
 		})
 	}

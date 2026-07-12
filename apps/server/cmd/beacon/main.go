@@ -34,6 +34,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/roster"
 	"github.com/wcpe/Beacon/apps/server/internal/secret"
 	"github.com/wcpe/Beacon/apps/server/internal/server"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -377,6 +378,15 @@ func run() error {
 	// 决策记录管理面查询（§5.2）：跨日并表列表 / 详情 / 概览，只读、查询侧不隐式建日表。
 	schedDecisionAdminHandler := handler.NewSchedDecisionAdminHandler(service.NewSchedDecisionQueryService(schedDecisionRepo))
 
+	// P5a 装配点：连接明细采集（FR-145，见 v2-connection-message-storage.md §3.2/§4.1）。
+	// proxy 上报 open/close 事件 → 接收端只校验 + 更内存名册 + 非阻塞入队 → 后台写入池按 conn_id 内嵌时间
+	// 事务批插当日日表；同驱动「玩家 → 所在服」名册（供按玩家寻址消息解析）与孤儿会话对账（proxy 重启补 close）。
+	connDetailRepo := repository.NewConnDetailRepository(db)
+	service.RegisterFlusher(asyncDailyWriter, service.RouteKindConnEvent, connDetailRepo.FlushDaily)
+	playerRoster := roster.NewStore()
+	connIngestService := service.NewConnIngestService(service.ConnEventEnqueuer{Writer: asyncDailyWriter}, playerRoster, connDetailRepo)
+	v2ConnectionHandler := handler.NewV2ConnectionHandler(connIngestService)
+
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。
 	// 提交成功后经 notifier 唤醒受影响长轮询（与正向发布同一唤醒机制）。
@@ -431,7 +441,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
@@ -460,6 +470,11 @@ func run() error {
 
 	// 启动异步日表写入通道（FR-144）：每路由多 worker 共享该路由有界队列，攒批事务批插当日日表，随关停信号退出。
 	asyncDailyWriter.Start(ctx)
+
+	// P5a：进程启动期从 status=open 连接行重建「玩家 → 所在服」名册（FR-145，spec §4.1），并启动孤儿会话对账 worker
+	// （消费 proxy 重启对账请求补 close，DB 写全在后台、请求线程不碰 DB），随关停信号退出。
+	connIngestService.RebuildRoster()
+	go connIngestService.Run(ctx)
 
 	// 启动健康计算轮（FR-147）：每 5s 重算全实例健康视图、每 30s 全量快照经写入通道落库，随关停信号退出。
 	go healthComputeService.Run(ctx)
