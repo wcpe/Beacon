@@ -47,18 +47,18 @@ async function seedNamespace(page: Page, token: string, name: string): Promise<S
   return { id: ns.id, accessToken: ns.accessToken }
 }
 
-// 建 BC 集群 / 大区 / 小区。注意：这三个创建端点返回原始 GORM 模型（PascalCase 字段 ID）。
+// 建 BC 集群 / 大区 / 小区（创建端点响应已改 camelCase 对齐契约，字段为 id）。
 async function seedCluster(
   page: Page,
   token: string,
   namespaceId: number,
   name: string,
 ): Promise<number> {
-  const c = await apiPost<{ ID: number }>(page, token, '/admin/v2/bc-clusters', {
+  const c = await apiPost<{ id: number }>(page, token, '/admin/v2/bc-clusters', {
     namespaceId,
     name,
   })
-  return c.ID
+  return c.id
 }
 
 async function seedRegion(
@@ -67,8 +67,8 @@ async function seedRegion(
   bcClusterId: number,
   name: string,
 ): Promise<number> {
-  const r = await apiPost<{ ID: number }>(page, token, '/admin/v2/regions', { bcClusterId, name })
-  return r.ID
+  const r = await apiPost<{ id: number }>(page, token, '/admin/v2/regions', { bcClusterId, name })
+  return r.id
 }
 
 async function seedZone(
@@ -77,8 +77,8 @@ async function seedZone(
   regionId: number,
   name: string,
 ): Promise<number> {
-  const z = await apiPost<{ ID: number }>(page, token, '/admin/v2/zones', { regionId, name })
-  return z.ID
+  const z = await apiPost<{ id: number }>(page, token, '/admin/v2/zones', { regionId, name })
+  return z.id
 }
 
 // 用 namespace 接入 token 注册一个 agent，造出「待确认」身份（返回 202 Accepted）。
@@ -248,11 +248,8 @@ test('命名空间：创建 → 一次性接入 token 展示 → 列表可见（
   expect(nss.items.some((n) => n.name === name)).toBeTruthy()
 })
 
-// 说明：授予动作全程走 UI（详情面板 → 授予弹窗 → 真实 POST）。信任「关系面板渲染」与
-// 「面板内 UI 收回」当前被后端契约不一致阻断：GET /admin/v2/namespace-trusts 返回原始
-// GORM 模型（PascalCase：FromNamespaceID… 且无 fromNamespaceName），而前端 NamespaceTrustItem
-// 契约与详情面板按 camelCase（tr.fromNamespaceId / fromNamespaceName）读取 → 关系恒为空、
-// 收回按钮不渲染。故这里以真后端端点校验授予 + 收回闭环，UI 面板缺口在交付报告中单列。
+// 说明：授予动作全程走 UI（详情面板 → 授予弹窗 → 真实 POST）；授予后的存在性与收回闭环
+// 以真后端端点校验（GET /admin/v2/namespace-trusts 已返回 camelCase 富化视图，对齐契约）。
 test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收回闭环', async ({ page }) => {
   const token = await loginRealAdmin(page)
   const suffix = uid()
@@ -276,30 +273,30 @@ test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收�
   // 授予成功后弹窗关闭
   await expect(page.getByRole('button', { name: '授予', exact: true })).toHaveCount(0)
 
-  // 交叉校验：真后端确有该 UI 授予的生效信任（列表端点返回原始模型 PascalCase 字段）
-  interface RawTrust {
-    ID: number
-    FromNamespaceID: number
-    ToNamespaceID: number
-    Status: string
+  // 交叉校验：真后端确有该 UI 授予的生效信任（列表端点返回 camelCase 富化视图）
+  interface TrustItem {
+    id: number
+    fromNamespaceId: number
+    toNamespaceId: number
+    status: string
   }
-  const trusts = await apiGet<{ items: RawTrust[] }>(page, token, '/admin/v2/namespace-trusts')
+  const trusts = await apiGet<{ items: TrustItem[] }>(page, token, '/admin/v2/namespace-trusts')
   const created = trusts.items.find(
-    (t) => t.FromNamespaceID === fromNs.id && t.ToNamespaceID === toNs.id && t.Status === 'active',
+    (t) => t.fromNamespaceId === fromNs.id && t.toNamespaceId === toNs.id && t.status === 'active',
   )
   expect(created, '经 UI 授予的信任应在真后端可见且生效').toBeTruthy()
 
   // 收回闭环：真后端端点收回 → 状态转 revoked
   const revoke = await page.request.post(
-    `/admin/v2/namespace-trusts/${String(created?.ID ?? 0)}/revoke`,
+    `/admin/v2/namespace-trusts/${String(created?.id ?? 0)}/revoke`,
     {
       headers: authHeader(token),
       data: { reason: '业务下线不再需要跨域' },
     },
   )
   expect(revoke.ok(), `revoke → HTTP ${String(revoke.status())}`).toBeTruthy()
-  const after = await apiGet<{ items: RawTrust[] }>(page, token, '/admin/v2/namespace-trusts')
-  expect(after.items.find((t) => t.ID === created?.ID)?.Status).toBe('revoked')
+  const after = await apiGet<{ items: TrustItem[] }>(page, token, '/admin/v2/namespace-trusts')
+  expect(after.items.find((t) => t.id === created?.id)?.status).toBe('revoked')
 })
 
 // ================= /zones 写闭环 =================
