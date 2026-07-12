@@ -127,7 +127,8 @@ type MessageQuery struct {
 	PlayerUUID     string // 匹配按玩家寻址的 target_player
 	Status         string
 	MsgType        string
-	CrossNamespace *bool // nil 不过滤
+	TargetKind     string // server / player / broadcast（FR-180 additive 过滤），空不过滤
+	CrossNamespace *bool  // nil 不过滤
 	NamespaceID    uint
 	FromMs         int64
 	ToMs           int64
@@ -210,6 +211,9 @@ func (q MessageQuery) applyMsgFilters(db *gorm.DB) *gorm.DB {
 	}
 	if q.MsgType != "" {
 		db = db.Where("msg_type = ?", q.MsgType)
+	}
+	if q.TargetKind != "" {
+		db = db.Where("target_kind = ?", q.TargetKind)
 	}
 	if q.CrossNamespace != nil {
 		db = db.Where("cross_namespace = ?", *q.CrossNamespace)
@@ -301,6 +305,7 @@ func (r *MessageRepository) FindPayload(messageID string) (*model.MsgPayload, er
 type MsgStatRow struct {
 	MessageID        string `gorm:"column:message_id"`
 	MsgType          string `gorm:"column:msg_type"`
+	TargetKind       string `gorm:"column:target_kind"`
 	SourceServerID   string `gorm:"column:source_server_id"`
 	ResolvedServerID string `gorm:"column:resolved_server_id"`
 	Status           string `gorm:"column:status"`
@@ -321,7 +326,7 @@ func (r *MessageRepository) ScanMessageStats(fromMs, toMs int64) ([]MsgStatRow, 
 		}
 		var rows []MsgStatRow
 		if err := r.db.Table(tbl).
-			Select("message_id", "msg_type", "source_server_id", "resolved_server_id",
+			Select("message_id", "msg_type", "target_kind", "source_server_id", "resolved_server_id",
 				"status", "fail_reason", "duration_ms").
 			Where("created_at >= ? AND created_at <= ?", from, to).
 			Order("created_at DESC, message_id DESC").

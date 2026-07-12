@@ -32,6 +32,7 @@ func NewV2MessageAdminHandler(queryS *service.MessageQueryService, payloadS *ser
 }
 
 // messageItemJS 是消息元数据列表项（键对齐 contracts MessageItem，**永不含 payload**）。
+// 广播聚合字段（FR-180）为 additive 键：仅广播行输出（omitempty），定向 / 按玩家行键集合不变。
 type messageItemJS struct {
 	MessageID         string  `json:"messageId"`
 	NamespaceID       uint    `json:"namespaceId"`
@@ -40,6 +41,11 @@ type messageItemJS struct {
 	TargetKind        string  `json:"targetKind"`
 	TargetServerID    *string `json:"targetServerId"`
 	TargetPlayer      *string `json:"targetPlayer"`
+	TargetZone        *string `json:"targetZone,omitempty"`
+	FanoutTotal       *int    `json:"fanoutTotal,omitempty"`
+	DeliveredCount    *int    `json:"deliveredCount,omitempty"`
+	FailedCount       *int    `json:"failedCount,omitempty"`
+	ExpiredCount      *int    `json:"expiredCount,omitempty"`
 	ResolvedServerID  *string `json:"resolvedServerId"`
 	TargetNamespaceID *uint   `json:"targetNamespaceId"`
 	CrossNamespace    bool    `json:"crossNamespace"`
@@ -130,6 +136,7 @@ func (h *V2MessageAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 		PlayerUUID:     q.Get("playerUuid"),
 		Status:         q.Get("status"),
 		MsgType:        q.Get("msgType"),
+		TargetKind:     q.Get("targetKind"),
 		CrossNamespace: crossNS,
 		NamespaceID:    namespaceID,
 		FromMs:         parseISOms(q.Get("from")),
@@ -230,6 +237,11 @@ func messageItem(row *model.MsgTrace) messageItemJS {
 		TargetKind:        row.TargetKind,
 		TargetServerID:    nullableStr(row.TargetServerID),
 		TargetPlayer:      nullableStr(row.TargetPlayer),
+		TargetZone:        row.TargetZone,
+		FanoutTotal:       row.FanoutTotal,
+		DeliveredCount:    row.DeliveredCount,
+		FailedCount:       row.FailedCount,
+		ExpiredCount:      row.ExpiredCount,
 		ResolvedServerID:  nullableStr(row.ResolvedServerID),
 		TargetNamespaceID: row.TargetNamespaceID,
 		CrossNamespace:    row.CrossNamespace,

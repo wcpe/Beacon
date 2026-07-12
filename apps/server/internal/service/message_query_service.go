@@ -41,6 +41,7 @@ type ListMessagesParams struct {
 	PlayerUUID     string
 	Status         string
 	MsgType        string
+	TargetKind     string // server / player / broadcast（FR-180 additive 过滤），空不过滤
 	CrossNamespace *bool
 	NamespaceID    uint
 	FromMs         int64
@@ -82,7 +83,7 @@ func (s *MessageQueryService) List(p ListMessagesParams) (MsgPage, error) {
 	offset := clampOffset(p.Cursor)
 	rows, hasMore, err := s.repo.QueryMessages(repository.MessageQuery{
 		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status, MsgType: p.MsgType,
-		CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID,
+		TargetKind: p.TargetKind, CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID,
 		FromMs: p.FromMs, ToMs: p.ToMs, Offset: offset, Limit: limit,
 	})
 	if err != nil {
@@ -177,10 +178,14 @@ type edgeAccum struct {
 }
 
 // aggregateByEdge 按 source→resolved 边聚合失败计数 / 失败率 / p95 耗时 / top 原因 / 失败样本（口径对齐 devmock）。
+// 广播行无单一目标边、不参与 edge 聚合（跳过，FR-180 / ADR-0065 决策 3）。
 func aggregateByEdge(rows []repository.MsgStatRow) []MsgEdgeStat {
 	edges := make(map[string]*edgeAccum)
 	for i := range rows {
 		row := rows[i]
+		if row.TargetKind == model.MsgTargetKindBroadcast {
+			continue
+		}
 		target := row.ResolvedServerID
 		if target == "" {
 			target = unresolvedEdgeTarget

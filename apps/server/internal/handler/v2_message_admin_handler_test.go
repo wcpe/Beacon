@@ -47,6 +47,12 @@ type msgSeed struct {
 	durationMs    *int64
 	hops          string
 	payload       string // 非空则落 payload 表
+	// 广播聚合字段（仅 targetKind=broadcast 的行设置，FR-180）
+	targetZone string
+	fanout     *int
+	delivered  *int
+	failed     *int
+	expired    *int
 }
 
 // newMsgAdminRouter 构造挂 sqlite 真仓库的消息管理面路由（payload 路由前置注入操作者身份）。
@@ -97,6 +103,11 @@ func seedMsg(t *testing.T, repo *repository.MessageRepository, s msgSeed) {
 		ResolvedServerID: s.resolved, CrossNamespace: s.crossNS, CorrelationID: s.correlationID,
 		Status: s.status, FailReason: s.failReason, CreatedAt: created, DurationMs: s.durationMs,
 		HopCount: 1, Hops: hops,
+		FanoutTotal: s.fanout, DeliveredCount: s.delivered, FailedCount: s.failed, ExpiredCount: s.expired,
+	}
+	if s.targetZone != "" {
+		zone := s.targetZone
+		trace.TargetZone = &zone
 	}
 	rec := model.MessageRecord{Trace: trace}
 	if s.payload != "" {
@@ -257,6 +268,104 @@ func TestMsgAdminStatsEdge(t *testing.T) {
 	assertKeys(t, rc, "reason", "count")
 	if rc["reason"] != model.MsgFailAckTimeout {
 		t.Fatalf("top 原因不符: %v", rc)
+	}
+}
+
+// intPtr 造 int 指针（广播聚合造数用）。
+func intPtr(v int) *int { return &v }
+
+// TestMsgAdminListBroadcastFilterAndAggregates 列表广播支持（FR-180）：targetKind 过滤只回广播行；
+// 广播行输出聚合字段（camelCase targetZone/fanoutTotal/deliveredCount/failedCount/expiredCount）且仍无 payload；
+// 定向行不带聚合键（additive，契约键集合不变）。
+func TestMsgAdminListBroadcastFilterAndAggregates(t *testing.T) {
+	r, repo, _ := newMsgAdminRouter(t, "msg_adm_bcast")
+	base := time.Now().UTC().Add(-5 * time.Minute).UnixMilli()
+	seedMsg(t, repo, msgSeed{id: uuidV7AtHandler(base, "b1"), src: "game-1", msgType: "announce",
+		targetKind: model.MsgTargetKindBroadcast, status: model.MsgStatusDelivered,
+		targetZone: "z1", fanout: intPtr(3), delivered: intPtr(2), failed: intPtr(1), expired: intPtr(0),
+		payload: "hello-all"})
+	seedMsg(t, repo, msgSeed{id: uuidV7AtHandler(base+10, "d1"), src: "game-1", msgType: "chat",
+		targetKind: model.MsgTargetKindServer, targetServer: "game-2", resolved: "game-2",
+		status: model.MsgStatusDelivered})
+
+	from, to := isoOf(base-time.Hour.Milliseconds()), isoOf(base+time.Hour.Milliseconds())
+	// ① targetKind=broadcast 过滤：只回广播行，聚合字段齐备且值正确。
+	code, body := getJSON(t, r, fmt.Sprintf("/admin/v2/messages?serverId=game-1&targetKind=broadcast&from=%s&to=%s", from, to))
+	if code != http.StatusOK {
+		t.Fatalf("targetKind 过滤应 200，实际 %d：%v", code, body)
+	}
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("targetKind=broadcast 应只回 1 条广播行，实际 %d", len(items))
+	}
+	item, _ := items[0].(map[string]any)
+	assertKeys(t, item, append([]string{"targetZone", "fanoutTotal", "deliveredCount", "failedCount", "expiredCount"}, messageItemKeys...)...)
+	if item["targetKind"] != model.MsgTargetKindBroadcast || item["targetZone"] != "z1" {
+		t.Fatalf("广播行 targetKind/targetZone 不符: %v", item)
+	}
+	if item["fanoutTotal"] != float64(3) || item["deliveredCount"] != float64(2) ||
+		item["failedCount"] != float64(1) || item["expiredCount"] != float64(0) {
+		t.Fatalf("广播聚合计数不符: %v", item)
+	}
+	if _, has := item["payload"]; has {
+		t.Fatalf("广播列表项照旧不含 payload 字段")
+	}
+
+	// ② targetKind=server 过滤：只回定向行，且定向行不带聚合键（additive 语义、契约键集合不变）。
+	code, body = getJSON(t, r, fmt.Sprintf("/admin/v2/messages?serverId=game-1&targetKind=server&from=%s&to=%s", from, to))
+	if code != http.StatusOK {
+		t.Fatalf("targetKind=server 过滤应 200，实际 %d", code)
+	}
+	items, _ = body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("targetKind=server 应只回 1 条定向行，实际 %d", len(items))
+	}
+	assertKeys(t, items[0].(map[string]any), messageItemKeys...)
+
+	// ③ 不带 targetKind：两条都回（过滤为 additive query param，不影响既有语义）。
+	code, body = getJSON(t, r, fmt.Sprintf("/admin/v2/messages?serverId=game-1&from=%s&to=%s", from, to))
+	if code != http.StatusOK {
+		t.Fatalf("无过滤应 200，实际 %d", code)
+	}
+	if items, _ = body["items"].([]any); len(items) != 2 {
+		t.Fatalf("无 targetKind 过滤应回 2 条，实际 %d", len(items))
+	}
+}
+
+// TestMsgAdminStatsEdgeSkipsBroadcast stats(groupBy=edge) 跳过广播行（无单一目标边，ADR-0065）；
+// groupBy=type 照旧计入广播（一条广播即一条逻辑消息）。
+func TestMsgAdminStatsEdgeSkipsBroadcast(t *testing.T) {
+	r, repo, _ := newMsgAdminRouter(t, "msg_adm_edge_bcast")
+	base := time.Now().UTC().Add(-3 * time.Minute).UnixMilli()
+	seedMsg(t, repo, msgSeed{id: uuidV7AtHandler(base, "e1"), src: "game-1", msgType: "chat", targetKind: model.MsgTargetKindServer,
+		targetServer: "game-2", resolved: "game-2", status: model.MsgStatusDelivered})
+	// 广播失败行：resolved 为空，若未跳过将聚成 game-1→(未解析) 的假异常边。
+	seedMsg(t, repo, msgSeed{id: uuidV7AtHandler(base+10, "e2"), src: "game-1", msgType: "announce",
+		targetKind: model.MsgTargetKindBroadcast, status: model.MsgStatusFailed, failReason: model.MsgFailNoOnlineTarget,
+		fanout: intPtr(0), delivered: intPtr(0), failed: intPtr(0), expired: intPtr(0)})
+
+	from, to := isoOf(base-time.Hour.Milliseconds()), isoOf(base+time.Hour.Milliseconds())
+	code, body := getJSON(t, r, fmt.Sprintf("/admin/v2/messages/stats?groupBy=edge&from=%s&to=%s", from, to))
+	if code != http.StatusOK {
+		t.Fatalf("stats 应 200，实际 %d：%v", code, body)
+	}
+	edges, _ := body["edges"].([]any)
+	if len(edges) != 1 {
+		t.Fatalf("edge 聚合应跳过广播行、只余 1 条定向边，实际 %d：%v", len(edges), edges)
+	}
+	edge, _ := edges[0].(map[string]any)
+	if edge["sourceServerId"] != "game-1" || edge["resolvedServerId"] != "game-2" {
+		t.Fatalf("唯一边应为 game-1→game-2，实际 %v", edge)
+	}
+
+	// groupBy=type 照旧计入广播行。
+	code, body = getJSON(t, r, fmt.Sprintf("/admin/v2/messages/stats?groupBy=type&from=%s&to=%s", from, to))
+	if code != http.StatusOK {
+		t.Fatalf("stats(type) 应 200，实际 %d", code)
+	}
+	types, _ := body["types"].([]any)
+	if len(types) != 2 {
+		t.Fatalf("type 聚合应含 chat 与 announce 两类，实际 %v", types)
 	}
 }
 
