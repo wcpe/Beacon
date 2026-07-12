@@ -5,9 +5,12 @@
 import type {
   HealthDetail,
   HealthItem,
+  HealthSnapshotsResponse,
   MetricsSeriesResponse,
   MetricsSummary,
   Paged,
+  SchedDecisionDetail,
+  SchedDecisionItem,
   SchedDecisionSummary,
 } from '@beacon/contracts'
 
@@ -56,4 +59,41 @@ export function fetchHealthDetail(serverId: string): Promise<HealthDetail> {
 /** 调度决策概览（成功率 / 失败原因 Top / 降级占比） */
 export function fetchSchedSummary(window: string): Promise<SchedDecisionSummary> {
   return request('GET', `/admin/v2/sched-decisions/summary${buildQuery({ window })}`)
+}
+
+export interface SchedDecisionsQuery {
+  // 起止毫秒时间戳（后端必填，范围 ≤60 天）
+  from: number
+  to: number
+  namespaceId?: number
+  zone?: string
+  // 匹配发起方或选中目标 serverId
+  serverId?: string
+  // 结果过滤：success / failed
+  result?: string
+  page?: number
+  pageSize?: number
+}
+
+/** 调度决策记录分页查询（service-analysis 调度决策下钻） */
+export function fetchSchedDecisions(query: SchedDecisionsQuery): Promise<Paged<SchedDecisionItem>> {
+  return request('GET', `/admin/v2/sched-decisions${buildQuery({ ...query })}`)
+}
+
+/** 单条调度决策详情（含逐台排除原因，可解释「为什么没选某台」） */
+export function fetchSchedDecisionDetail(traceId: string): Promise<SchedDecisionDetail> {
+  return request('GET', `/admin/v2/sched-decisions/${traceId}`)
+}
+
+export interface HealthSnapshotsQuery {
+  // 目标服务器（必填）
+  serverId: string
+  // 时间窗（RFC3339），缺省服务端按最近 1h
+  from?: string
+  to?: string
+}
+
+/** 健康快照回放（service-analysis 健康快照下钻：分数 / 等级随时间变化） */
+export function fetchHealthSnapshots(query: HealthSnapshotsQuery): Promise<HealthSnapshotsResponse> {
+  return request('GET', `/admin/v2/health/snapshots${buildQuery({ ...query })}`)
 }
