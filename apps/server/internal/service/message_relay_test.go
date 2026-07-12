@@ -218,6 +218,225 @@ func TestRelayPollLongPollWakeup(t *testing.T) {
 	}
 }
 
+// broadcastMsg 构造一条广播消息元数据（FR-180）。
+func broadcastMsg(id string, ns uint, src, zone string, createdMs int64, payload string) IncomingMessage {
+	return IncomingMessage{
+		MessageID: id, NamespaceID: ns, SourceServerID: src, MsgType: "announce",
+		TargetKind: model.MsgTargetKindBroadcast, TargetZone: zone,
+		ResolvedNamespaceID: ns,
+		Payload:             payload, PayloadSize: len(payload), SentAtMs: createdMs - 1, CreatedAtMs: createdMs,
+	}
+}
+
+// recordCount 返回已捕获的落库记录总数。
+func (c *captureEnqueuer) recordCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.records)
+}
+
+// TestRelayBroadcastAllDelivered 校验广播 fan-out 全部送达：各目标（含发送者自身）poll 到带
+// Broadcast 标记的消息、逐目标 ack 后只落一行聚合记录（status=delivered、计数 / 链路 / 耗时正确、payload 一份）。
+func TestRelayBroadcastAllDelivered(t *testing.T) {
+	sink := &captureEnqueuer{}
+	now := int64(10_000_000)
+	r := newTestRelay(sink, &now)
+
+	targets := []string{"game-1", "game-2", "proxy-1"} // game-1 为发送者自身（含自身语义）
+	if !r.AcceptBroadcast(broadcastMsg("bid-1", 1, "game-1", "", now, "hello-all"), targets) {
+		t.Fatalf("非空目标集合应受理成功")
+	}
+	for _, sid := range targets {
+		got := r.Poll(context.Background(), 1, sid, 0, 10)
+		if len(got) != 1 || got[0].MessageID != "bid-1" || got[0].Payload != "hello-all" {
+			t.Fatalf("目标 %s 应 poll 到广播消息，实际 %+v", sid, got)
+		}
+		if !got[0].Broadcast {
+			t.Fatalf("广播下发应带 Broadcast 标记（目标 %s）", sid)
+		}
+	}
+	// 非目标服冒领：不应 applied（复合键按（消息, 目标）定位）。
+	if applied, ignored := r.Ack(1, "game-9", []AckResult{{MessageID: "bid-1", Status: model.MsgStatusDelivered}}); applied != 0 || ignored != 1 {
+		t.Fatalf("非目标服 ack 应 ignored，实际 applied=%d ignored=%d", applied, ignored)
+	}
+	// 各目标逐一回执 delivered；全部到齐前不落任何记录。
+	for i, sid := range targets {
+		if sink.recordCount() != 0 {
+			t.Fatalf("聚合收口前不应落库，实际已有 %d 条", sink.recordCount())
+		}
+		now += 10
+		if applied, _ := r.Ack(1, sid, []AckResult{{MessageID: "bid-1", Status: model.MsgStatusDelivered, DeliveredAtMs: now}}); applied != 1 {
+			t.Fatalf("目标 %s（第 %d 个）回执应 applied=1", sid, i)
+		}
+	}
+	if sink.recordCount() != 1 {
+		t.Fatalf("一条广播应只落一行聚合记录，实际 %d 行", sink.recordCount())
+	}
+	rec, _ := sink.byID("bid-1")
+	assertBroadcastAllDelivered(t, rec)
+}
+
+// assertBroadcastAllDelivered 断言全部送达的广播聚合行：状态 / 计数 / 耗时 / 单跳 / payload / 概要链路。
+func assertBroadcastAllDelivered(t *testing.T, rec model.MessageRecord) {
+	t.Helper()
+	if rec.Trace.Status != model.MsgStatusDelivered || rec.Trace.FailReason != "" {
+		t.Fatalf("全部送达应 status=delivered 无原因，实际 %s/%s", rec.Trace.Status, rec.Trace.FailReason)
+	}
+	if rec.Trace.TargetKind != model.MsgTargetKindBroadcast || rec.Trace.TargetZone != nil {
+		t.Fatalf("聚合行应 target_kind=broadcast 且无 zone，实际 %+v", rec.Trace)
+	}
+	if rec.Trace.FanoutTotal == nil || *rec.Trace.FanoutTotal != 3 ||
+		rec.Trace.DeliveredCount == nil || *rec.Trace.DeliveredCount != 3 ||
+		rec.Trace.FailedCount == nil || *rec.Trace.FailedCount != 0 ||
+		rec.Trace.ExpiredCount == nil || *rec.Trace.ExpiredCount != 0 {
+		t.Fatalf("聚合计数应 3/3/0/0，实际 %+v", rec.Trace)
+	}
+	if rec.Trace.DurationMs == nil || *rec.Trace.DurationMs != 30 {
+		t.Fatalf("duration 应按最后一次 delivered 结算为 30ms，实际 %v", rec.Trace.DurationMs)
+	}
+	if rec.Trace.HopCount != 1 {
+		t.Fatalf("广播经控制面单跳 hop_count 应为 1，实际 %d", rec.Trace.HopCount)
+	}
+	if rec.Payload == nil || rec.Payload.Payload != "hello-all" {
+		t.Fatalf("payload 应只存一份，实际 %+v", rec.Payload)
+	}
+	var hops []hopEvent
+	if err := json.Unmarshal([]byte(rec.Trace.Hops), &hops); err != nil || len(hops) != 4 {
+		t.Fatalf("聚合链路应为 sent/received/dispatched/delivered 概要四段，实际 %s err=%v", rec.Trace.Hops, err)
+	}
+	if hops[2].Event != hopDispatched || hops[3].Event != hopDelivered {
+		t.Fatalf("概要链路后两段应为 dispatched/delivered，实际 %s/%s", hops[2].Event, hops[3].Event)
+	}
+}
+
+// TestRelayBroadcastPartialDelivered 校验部分送达口径：任一 delivered 即整行 delivered，
+// 失败 / 过期面经计数可见（1 delivered + 1 failed + 1 TTL expired → delivered 1/1/1）。
+func TestRelayBroadcastPartialDelivered(t *testing.T) {
+	sink := &captureEnqueuer{}
+	now := int64(11_000_000)
+	r := newTestRelay(sink, &now)
+
+	r.AcceptBroadcast(broadcastMsg("bid-2", 1, "game-1", "", now, "x"), []string{"game-1", "game-2", "game-3"})
+	// game-1 送达、game-2 回执失败、game-3 从不取走（TTL 过期）。
+	r.Poll(context.Background(), 1, "game-1", 0, 10)
+	r.Poll(context.Background(), 1, "game-2", 0, 10)
+	r.Ack(1, "game-1", []AckResult{{MessageID: "bid-2", Status: model.MsgStatusDelivered, DeliveredAtMs: now + 5}})
+	r.Ack(1, "game-2", []AckResult{{MessageID: "bid-2", Status: model.MsgStatusFailed, Reason: "boom"}})
+	now += 31_000
+	r.Sweep()
+
+	rec, ok := sink.byID("bid-2")
+	if !ok || rec.Trace.Status != model.MsgStatusDelivered {
+		t.Fatalf("有任一 delivered 整行应 delivered，实际 %+v ok=%v", rec.Trace, ok)
+	}
+	if *rec.Trace.FanoutTotal != 3 || *rec.Trace.DeliveredCount != 1 || *rec.Trace.FailedCount != 1 || *rec.Trace.ExpiredCount != 1 {
+		t.Fatalf("聚合计数应 3/1/1/1，实际 %+v", rec.Trace)
+	}
+}
+
+// TestRelayBroadcastAllFailedTakesMajority 校验全军覆没口径：无一 delivered 时按 failed/expired
+// 多数定整行状态（平手偏 failed），fail_reason 取目标原因中出现最多者。
+func TestRelayBroadcastAllFailedTakesMajority(t *testing.T) {
+	sink := &captureEnqueuer{}
+	now := int64(12_000_000)
+	r := newTestRelay(sink, &now)
+
+	// 场景一：2 failed（handler boom）+ 1 expired → 整行 failed(boom)。
+	r.AcceptBroadcast(broadcastMsg("bid-3", 1, "game-1", "", now, ""), []string{"game-1", "game-2", "game-3"})
+	r.Poll(context.Background(), 1, "game-1", 0, 10)
+	r.Poll(context.Background(), 1, "game-2", 0, 10)
+	r.Ack(1, "game-1", []AckResult{{MessageID: "bid-3", Status: model.MsgStatusFailed, Reason: "boom"}})
+	r.Ack(1, "game-2", []AckResult{{MessageID: "bid-3", Status: model.MsgStatusFailed, Reason: "boom"}})
+	now += 31_000
+	r.Sweep()
+	rec, _ := sink.byID("bid-3")
+	if rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != "boom" {
+		t.Fatalf("failed 多数应整行 failed(boom)，实际 %s/%s", rec.Trace.Status, rec.Trace.FailReason)
+	}
+
+	// 场景二：1 failed + 2 expired → 整行 expired，原因取多数 ttl_expired。
+	base := now + 1000
+	r2 := newTestRelay(sink, &now)
+	now = base
+	r2.AcceptBroadcast(broadcastMsg("bid-4", 1, "game-1", "", now, ""), []string{"game-1", "game-2", "game-3"})
+	r2.Poll(context.Background(), 1, "game-1", 0, 10)
+	r2.Ack(1, "game-1", []AckResult{{MessageID: "bid-4", Status: model.MsgStatusFailed, Reason: "boom"}})
+	now += 31_000
+	r2.Sweep()
+	rec4, _ := sink.byID("bid-4")
+	if rec4.Trace.Status != model.MsgStatusExpired || rec4.Trace.FailReason != model.MsgFailTTLExpired {
+		t.Fatalf("expired 多数应整行 expired(ttl_expired)，实际 %s/%s", rec4.Trace.Status, rec4.Trace.FailReason)
+	}
+	if *rec4.Trace.ExpiredCount != 2 || *rec4.Trace.FailedCount != 1 {
+		t.Fatalf("聚合计数应 expired=2 failed=1，实际 %+v", rec4.Trace)
+	}
+}
+
+// TestRelayBroadcastEmptyTargets 校验空在线集合：不入队、直接落聚合终态行 failed(no_online_target)、fanout=0。
+func TestRelayBroadcastEmptyTargets(t *testing.T) {
+	sink := &captureEnqueuer{}
+	now := int64(13_000_000)
+	r := newTestRelay(sink, &now)
+
+	if r.AcceptBroadcast(broadcastMsg("bid-5", 1, "game-1", "zone-x", now, "p"), nil) {
+		t.Fatalf("空目标集合应返回 false")
+	}
+	rec, ok := sink.byID("bid-5")
+	if !ok || rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != model.MsgFailNoOnlineTarget {
+		t.Fatalf("应落 failed(no_online_target)，实际 %+v ok=%v", rec.Trace, ok)
+	}
+	if rec.Trace.FanoutTotal == nil || *rec.Trace.FanoutTotal != 0 || rec.Trace.TargetZone == nil || *rec.Trace.TargetZone != "zone-x" {
+		t.Fatalf("聚合行应 fanout=0 且带 zone，实际 %+v", rec.Trace)
+	}
+	if len(r.Poll(context.Background(), 1, "game-1", 0, 10)) != 0 {
+		t.Fatalf("空 fan-out 不应有任何入队消息")
+	}
+}
+
+// TestRelayBroadcastRedispatchThenAckTimeout 校验广播目标沿用重投规则：取走不回执 → 重投 2 次 →
+// 仍无回执按 ack_timeout 计入聚合并收口。
+func TestRelayBroadcastRedispatchThenAckTimeout(t *testing.T) {
+	sink := &captureEnqueuer{}
+	now := int64(14_000_000)
+	r := newTestRelay(sink, &now)
+	r.AcceptBroadcast(broadcastMsg("bid-6", 1, "game-1", "", now, ""), []string{"game-2"})
+
+	for i := 0; i < 3; i++ { // 首发 + 2 次重投均取走且不回执
+		if len(r.Poll(context.Background(), 1, "game-2", 0, 10)) != 1 {
+			t.Fatalf("第 %d 次下发应能取到", i+1)
+		}
+		now += 11_000
+		r.Sweep()
+	}
+	rec, ok := sink.byID("bid-6")
+	if !ok || rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != model.MsgFailAckTimeout {
+		t.Fatalf("重投用尽应整行 failed(ack_timeout)，实际 %+v ok=%v", rec.Trace, ok)
+	}
+	if *rec.Trace.FailedCount != 1 || *rec.Trace.FanoutTotal != 1 {
+		t.Fatalf("聚合计数应 fanout=1 failed=1，实际 %+v", rec.Trace)
+	}
+}
+
+// TestRelayBroadcastQueueOverflowCountsExpired 校验广播目标被队列溢出淘汰时计入 expired_count
+// （每目标独立走溢出规则）。
+func TestRelayBroadcastQueueOverflowCountsExpired(t *testing.T) {
+	sink := &captureEnqueuer{}
+	now := int64(15_000_000)
+	r := newTestRelay(sink, &now)
+	r.queueCap = 1
+
+	// 广播先占 game-2 队列，随后两条定向把它挤出（第一条挤出广播目标、第二条挤出第一条定向）。
+	r.AcceptBroadcast(broadcastMsg("bid-7", 1, "game-1", "", now, ""), []string{"game-2"})
+	r.Accept(serverMsg("dir-1", 1, "game-1", "game-2", now, ""))
+	rec, ok := sink.byID("bid-7")
+	if !ok || rec.Trace.Status != model.MsgStatusExpired || rec.Trace.FailReason != model.MsgFailQueueOverflow {
+		t.Fatalf("被溢出淘汰的单目标广播应收口为 expired(queue_overflow)，实际 %+v ok=%v", rec.Trace, ok)
+	}
+	if *rec.Trace.ExpiredCount != 1 {
+		t.Fatalf("expired_count 应为 1，实际 %+v", rec.Trace)
+	}
+}
+
 // TestRelayRecordTerminalDirect 校验发送期直接判失败（不入队）落 failed 终态。
 func TestRelayRecordTerminalDirect(t *testing.T) {
 	sink := &captureEnqueuer{}
