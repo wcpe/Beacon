@@ -17,6 +17,7 @@ type Handlers struct {
 	V2Health         *handler.V2HealthHandler
 	V2Sched          *handler.V2SchedHandler
 	V2Connection     *handler.V2ConnectionHandler
+	V2Message        *handler.V2MessageHandler
 	SchedDecision    *handler.SchedDecisionAdminHandler
 	Config           *handler.ConfigHandler
 	File             *handler.FileHandler
@@ -125,6 +126,14 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 接收端只校验 + 更内存名册 + 异步入库，请求 goroutine 不碰 DB、队列满回 429。
 			if h.V2Connection != nil {
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/connections/batch", h.V2Connection.Batch)
+			}
+
+			// P5a 挂载点：跨服消息 agent 端点（FR-149/150，见 §5.1、ADR-0063）：与采集面同挂鉴权中间件。
+			// send 上行 / poll 长轮询下行 / ack 回执；寻址走内存名册、中转走内存队列、终态异步落库，请求 goroutine 不碰 DB。
+			if h.V2Message != nil {
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/send", h.V2Message.Send)
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/poll", h.V2Message.Poll)
+				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/ack", h.V2Message.Ack)
 			}
 		})
 	}

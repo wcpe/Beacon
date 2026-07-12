@@ -174,7 +174,8 @@ func run() error {
 		return err
 	}
 	nsHandler := handler.NewNamespaceHandler(nsService)
-	v2ControlPlaneHandler := handler.NewV2ControlPlaneHandler(service.NewV2ControlPlaneService(db))
+	v2ControlPlaneService := service.NewV2ControlPlaneService(db)
+	v2ControlPlaneHandler := handler.NewV2ControlPlaneHandler(v2ControlPlaneService)
 
 	// 心跳周期仍为启动期固定项（agent 注册时一次性下发，非热改白名单内）；
 	// ttl 供实例服务做注册期重复守卫，取设置 store 当前值（FR-61 健康阈值已移入 store）。
@@ -387,6 +388,16 @@ func run() error {
 	connIngestService := service.NewConnIngestService(service.ConnEventEnqueuer{Writer: asyncDailyWriter}, playerRoster, connDetailRepo)
 	v2ConnectionHandler := handler.NewV2ConnectionHandler(connIngestService)
 
+	// P5a 装配点：跨服消息控制面中转（FR-149/150，见 v2-connection-message-storage.md §4.2、ADR-0063）。
+	// send 上行 → 内存投递队列（每服有界），poll 长轮询下行，ack 回执；accepted→dispatched→终态状态机
+	// 由中转维护、终态一次性经 message_trace 路由把 msg_trace + msg_payload 同事务落库。按玩家寻址查上面的名册，
+	// 跨域放行查 v2ControlPlaneHandler 的 namespace_trust(capability=message)。请求 goroutine 全程不碰 DB。
+	messageRepo := repository.NewMessageRepository(db)
+	service.RegisterFlusher(asyncDailyWriter, service.RouteKindMessageTrace, messageRepo.FlushDaily)
+	messageRelay := service.NewMessageRelay(service.MessageRecordEnqueuer{Writer: asyncDailyWriter})
+	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService)
+	v2MessageHandler := handler.NewV2MessageHandler(messageService)
+
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。
 	// 提交成功后经 notifier 唤醒受影响长轮询（与正向发布同一唤醒机制）。
@@ -441,7 +452,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
@@ -475,6 +486,9 @@ func run() error {
 	// （消费 proxy 重启对账请求补 close，DB 写全在后台、请求线程不碰 DB），随关停信号退出。
 	connIngestService.RebuildRoster()
 	go connIngestService.Run(ctx)
+
+	// P5a：启动消息中转清理轮（FR-149，spec §4.2）：周期推进 TTL 过期 / 重投 / ack 超时，把终态消息经写入通道落库，随关停信号退出。
+	go messageRelay.Run(ctx)
 
 	// 启动健康计算轮（FR-147）：每 5s 重算全实例健康视图、每 30s 全量快照经写入通道落库，随关停信号退出。
 	go healthComputeService.Run(ctx)
