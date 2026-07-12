@@ -213,4 +213,14 @@ var (
 
 	// ErrSchedDecisionNotFound 调度决策记录在保留窗内不存在（FR-146，spec §5.2；code 对齐 devmock）。
 	ErrSchedDecisionNotFound = New(http.StatusNotFound, "decision_not_found", "调度决策记录不存在")
+
+	// ErrQueryGuardViolation 连接 / 消息列表查询未满足查询防护（无精确 ID 时须带 serverId/playerUuid + 时间范围 ≤168h，
+	// FR-145，spec §4.3；code 对齐 devmock）。
+	ErrQueryGuardViolation = New(http.StatusBadRequest, "query_guard_violation", "查询须携带精确 ID，或服务器/玩家过滤加不超过 168 小时的时间范围")
+	// ErrConnectionNotFound 连接明细在保留窗内不存在（FR-145，spec §5.2；code 对齐 devmock）。
+	ErrConnectionNotFound = New(http.StatusNotFound, "connection_not_found", "连接不存在")
+	// ErrMessageNotFound 消息记录在保留窗内不存在（FR-149，spec §5.2；code 对齐 devmock）。
+	ErrMessageNotFound = New(http.StatusNotFound, "message_not_found", "消息不存在")
+	// ErrPayloadReasonRequired 查看 payload 未填原因或原因超长（≤255 字，FR-150，spec §4.4；code 对齐 devmock）。
+	ErrPayloadReasonRequired = New(http.StatusBadRequest, "missing_reason", "查看 payload 必须填写原因（≤255 字）")
 )
