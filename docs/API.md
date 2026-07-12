@@ -354,7 +354,8 @@ data: {}
 | `POST /admin/v1/instances/{serverId}/resync?namespace=` | **触发该 agent 强制重同步**（FR-91，写操作 readonly→403，复用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) 命令队列、不新增 ADR）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `resync-config` 命令（`pending`，空载荷）+ `instance.resync` 审计（detail 仅 commandId/serverId、无内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§15）。agent 重拉有效配置/文件树/覆盖集并 apply（幂等，已是最新则 no-op），回传命令结果。返回 `202` + 命令视图。见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md) |
 | `GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=` | **只读浏览该在线服真实 `plugins/`**（FR-110，见 [ADR-0049](adr/0049-agent-fs-browse.md)）。`op ∈ {list, tree, file}`：`list` 懒列 `path` 目录直接子项（`offset`/`limit` 分页）、`tree` 按需展开 `path` 子树（`maxDepth` 逐层有界）、`file` 读 `path` 单文本文件内容。方法是 GET 但有写副作用（建命令 / 唤醒 agent / 入审计），故 **`full` 角色才可触发、`readonly`→`403 FORBIDDEN`**（扩展 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）。流程：校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `fs-browse` 命令（`pending`）+ `file.browse` 审计（detail 仅 `commandId`/`op`/`path`、**绝不含文件内容**）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§16）→ **阻塞等待** agent 回传结果（转存命令瞬态后唤醒本请求）→ 把结果 JSON 原文代理给前端。`op` 非法→`400 INVALID_PARAM`；目标越权 / 非目录 / 非文本→`404 BROWSE_TARGET_NOT_FOUND`；agent 离线 / 未在限期内回传→`504 BROWSE_TIMEOUT`。返回 `200` + 浏览结果（形状见 agent §16 `result`）。是 FR-111 配置工作台双面板右侧实时浏览的底座。见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md) |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
-| `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt }]`。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
+| `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt, status, handledBy, handledAt, handleNote }]`（status 族为处理工作流字段，FR-157 见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；未处理时 handled* 为 `null`）。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
+| `POST /admin/v1/alert-events/{id}/handle` | **告警事件处理**（FR-157，见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；写操作 readonly→403）：入参 `{status: acknowledged\|resolved, note?}`（兼容等价措辞 `{action, handleNote}`），更新处理状态 / 处理人（取登录身份）/ 处理时刻 / 处置说明并**写审计**（`alert-event.acknowledge` / `alert-event.resolve`）。事件不存在 `404`、动作非法 `400`。健康分 `alert` 因子按当前 `status=open` 计数取真值（activeAlerts） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
@@ -885,13 +886,13 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） |
-| GET | `/admin/v2/connections/{connId}` | 单连接详情 |
-| GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 |
-| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**） |
-| GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） |
-| POST | `/admin/v2/messages/{messageId}/payload` | 查看 payload（权限 + 原因必填 + 先审计） |
-| GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源） |
+| GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） **【已实现·FR-145】** |
+| GET | `/admin/v2/connections/{connId}` | 单连接详情 **【已实现·FR-145】** |
+| GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
+| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**） **【已实现·FR-149】** |
+| GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
+| POST | `/admin/v2/messages/{messageId}/payload` | 查看 payload（权限 + 原因必填 + 先审计后返回） **【已实现·FR-150】** |
+| GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
 
 ### 热冷归档（P6 · 0.26.x，真源 [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5）
 

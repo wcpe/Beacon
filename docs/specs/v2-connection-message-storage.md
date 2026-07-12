@@ -223,7 +223,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 | GET | `/admin/v2/messages` | Query：`messageId`/`correlationId` 直查，或 `serverId`（来源或目标）/`playerUuid` + `from`&`to` + 游标分页；可选 `status`、`msgType`、`crossNamespace`、`namespaceId` | 元数据列表（**永不含 payload**） |
 | GET | `/admin/v2/messages/{messageId}` | 路径 ID 定位日表 | 元数据 + `hops` 链路明细 + `correlation_id` 关联消息摘要；payload 仅返回 `payloadSize`/`payloadStored` |
 | POST | `/admin/v2/messages/{messageId}/payload` | `{reason}` 必填 ≤255 字 | 校验权限点 `message.payload.view` → 先写审计后返回 `{payload, sha256, size}`；无权限 `403`、缺原因 `400` |
-| GET | `/admin/v2/messages/stats` | `from`&`to` + `groupBy: edge\|type\|bucket` | 异常链路聚合：边级失败计数/失败率/p95 耗时/top 原因 + 失败样本 ID（`/topology` 异常链路数据源） |
+| GET | `/admin/v2/messages/stats` | `from`&`to` + `groupBy: edge\|type`（独立 bucket 时间桶维度暂缓——无契约类型与前端消费方，需要时先在 `packages/contracts` 定型再做） | 异常链路聚合：边级失败计数/失败率/p95 耗时/top 原因 + 失败样本 ID（`/topology` 异常链路数据源） |
 
 ### 5.3 与前端页面的对应
 

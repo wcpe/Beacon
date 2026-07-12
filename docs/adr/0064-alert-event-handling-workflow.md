@@ -16,7 +16,7 @@
 
 1. **`alert_event` 表加处理状态列**：新增 `status`（`open` / `acknowledged` / `resolved`，落 `VARCHAR` + 应用层校验，遵 [architecture-invariants](../../.claude/rules/architecture-invariants.md) §4 禁 ENUM）、`handled_by`（处理人，`VARCHAR`）、`handled_at`（`DATETIME`，NULL 未处理）、`handle_note`（处理说明，`VARCHAR`）。新告警插入即 `status=open`。GORM Migrator 加列，向后兼容。
 2. **存量历史行迁移为终态**：既有 append-only 历史行在迁移时回填 `status=resolved`（属过去已闭事件，不计入当前活跃），避免存量把 `activeAlerts` 撑爆。
-3. **新增处理端点**：`POST /admin/v2/alert-events/{id}/handle`，入参 `{action: acknowledge|resolve, handleNote?}`，更新 status / handledBy（取登录身份）/ handledAt / handleNote，**写审计**（含操作者 / 事件 id / 动作 / 原因），错误经 `render.WriteError` 脱敏（[ADR-0057](0057-surface-desensitized-errors.md)）。
+3. **新增处理端点**：`POST /admin/v1/alert-events/{id}/handle`（挂既有 `/admin/v1` 告警面——列表 `GET /admin/v1/alert-events` 与前端消费均在 v1，处理端点同面不拆），入参 `{status: acknowledged|resolved, note?}`（对齐前端已锚定的 `HandleAlertBody`；等价措辞 `{action, handleNote}` 亦兼容归一），更新 status / handledBy（取登录身份）/ handledAt / handleNote，**写审计**（含操作者 / 事件 id / 动作 / 原因），错误经 `render.WriteError` 脱敏（[ADR-0057](0057-surface-desensitized-errors.md)）。
 4. **`activeAlerts` 接真 = 当前 `status=open` 计数**：健康计算轮（`health_compute_service`）**在轮次开始一次性批量**取各实例的 open 告警计数（`namespace + serverId → open 数`），再按 key 注入 `HealthFactorInputs.ActiveAlerts`——**禁在逐实例循环里查库**（[testing-and-quality](../../.claude/rules/testing-and-quality.md) §3 / 规则 §17）。
 5. **契约保留 status 族字段**：`AlertEventItem` 的 `status` / `handledBy` / `handledAt` / `handleNote` 由真后端补齐，消除 mock 超集漂移；`/alert-events` 页与 `/dashboard` 告警卡的处理 UI 从 mock 平移接真。
 

@@ -4,6 +4,11 @@
 
 ## 未发布
 
+### 新增
+- 连接与消息管理面查询（FR-145/149 查询侧）：`/admin/v2` 新增 `connections`（列表 / 单连接详情 / 时间桶聚合 stats）与 `messages`（列表**永不含 payload** / 详情含 `hops` 链路与 `correlated` 关联摘要 / stats 异常链路聚合 `groupBy=edge|type` 供 `/topology`）七端点，响应键逐字对齐 `packages/contracts`。查询防护落地（spec §4.3）：无精确 ID（connId / messageId / correlationId 直查免时间范围）必须带 serverId / playerUuid + 显式时间范围（≤168h / 8 张日表），违反回 400 `query_guard_violation`；游标分页（默认 50 / 上限 200）+ 逐日表倒序短路，禁全量扫描。
+- 消息 payload 受控查看审计门（FR-150）：`POST /admin/v2/messages/{messageId}/payload` 原因必填（≤255 字）、readonly 角色 403（full 即具备 `message.payload.view`，P9 FR-168 统一收编风险分级）、**先写审计后返回内容**（同请求内审计写入失败则整个请求失败）；审计条目含原因原文 / 操作者 / messageId，**绝不含 payload 内容**；列表与详情响应体经契约测试断言不出现 payload 字段。
+- 告警事件处理工作流与健康告警因子接真（FR-157，[ADR-0064](docs/adr/0064-alert-event-handling-workflow.md)）：`alert_event` 表加 `status`（open / acknowledged / resolved，VARCHAR + 应用层校验）/ `handled_by` / `handled_at` / `handle_note` 列，存量历史行幂等回填 `resolved`；新增 `POST /admin/v1/alert-events/{id}/handle`（readonly 403、写审计 `alert-event.acknowledge|resolve`），列表响应补齐 status 族字段、消除前端 mock 契约超集漂移。健康分 `alert` 因子（`100 − activeAlerts × alertPenalty`）的 `activeAlerts` 由恒 0 接真为「当前 `status=open` 计数」——健康计算轮开始时一条分组查询批量取全量、逐实例零查库（fail-static：取数失败按 0 计不阻断计算轮）。
+
 ## 0.25.0（2026-07-12）
 
 ### 新增
