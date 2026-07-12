@@ -1,6 +1,7 @@
 // 运维总览页（/dashboard，FR-154，对齐 B 版明亮 SaaS）：一屏看全局——KPI 指标带 + 服务器状态墙 +
 // 玩家流/连接流趋势 + 告警概览 + 调度概览，只看不改。各卡异常可下钻到对应页。
-// 数据仍取自现有 mock 端点（metrics / connections / observability），只重塑呈现。
+// 健康与调度概览已接真（/admin/v2 metrics·health·sched-decisions）；连接流端点随后续阶段
+// 提供（卡内降级占位），告警卡消费既有 /admin/v1/alert-events。
 import { useTranslation } from 'react-i18next'
 
 import { SectionHeader } from '@beacon/ui'

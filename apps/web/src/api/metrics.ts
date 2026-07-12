@@ -1,5 +1,6 @@
-// 指标健康调度域数据获取（/dashboard /service-analysis）：走 mock /admin/v2/metrics*、/health*、/sched-decisions*。
-// 读端点用于 useQuery；错误按脱敏 message 抛出（ADR-0057）。
+// 指标健康调度域数据获取（/dashboard /service-analysis）：走真实 /admin/v2/metrics*、/health*、
+// /sched-decisions*（FR-146/147 已实现，形状对齐 @beacon/contracts）。读端点用于 useQuery；
+// 错误按脱敏 message 抛出（ADR-0057）。
 
 import type {
   HealthDetail,

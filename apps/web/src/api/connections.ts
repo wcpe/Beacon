@@ -1,4 +1,5 @@
-// 连接消息域数据获取（/dashboard 玩家流 / 连接流趋势）：走 mock /admin/v2/connections/stats。
+// 连接消息域数据获取（/dashboard 玩家流 / 连接流趋势）：/admin/v2/connections/stats。
+// 真后端随连接消息存储域交付，当前仅演示模式 mock 提供（消费卡对缺端点降级占位）。
 // 只取聚合时间桶（不涉及玩家名单 / payload）。
 
 import { buildQuery, request } from './http'
