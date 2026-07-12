@@ -1,6 +1,6 @@
 # ADR-0016：agent 内置跨服消息中间件，基于 Redis 的通用通信层
 
-**状态**：已接受
+**状态**：传输层决策已被 [ADR-0063](0063-cross-server-message-control-plane-relay.md) 取代（Redis 数据面直连 → 控制面 HTTP 单跳中转；§1 三层分层思想与 §13 信封「只增不改」演进规约予以承继）
 
 ## 背景
 
