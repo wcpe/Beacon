@@ -79,3 +79,53 @@ func TestMessageFlushCrossDayMySQL(t *testing.T) {
 		t.Fatalf("跨日应各落 1 行 trace")
 	}
 }
+
+// TestMessageBroadcastColumnMigrationMySQL 真 MySQL：升级当日存量 msg_trace 日表（缺广播聚合列）
+// 被 EnsureDailyTable 触达时补列（GORM 加列、零方言），随后广播聚合行落库、聚合计数回读一致（FR-180）。
+//
+// 用「按当前模型建表后 DropColumn 掉新列」模拟旧版二进制建出的表形态；
+// 日表日期按纳秒时刻取唯一日，保证 -count=2 复跑时不撞进程内建表缓存（每轮都是全新日表）。
+func TestMessageBroadcastColumnMigrationMySQL(t *testing.T) {
+	db := testsupport.OpenTestDB(t, "p5a_msg")
+	repo := NewMessageRepository(db)
+
+	day := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(time.Now().UnixNano()%3000))
+	ms := day.Add(12 * time.Hour).UnixMilli()
+	traceName := dropDailyIT(t, db, "msg_trace", day)
+	t.Cleanup(func() { _ = db.Migrator().DropTable(traceName) })
+
+	// ① 直接按当前模型建出日表（绕过 EnsureDailyTable 缓存），再删掉 5 个新列，模拟旧版存量表。
+	if err := db.Table(traceName).Migrator().CreateTable(&model.MsgTrace{}); err != nil {
+		t.Fatalf("建模拟存量表失败: %v", err)
+	}
+	for _, col := range []string{"target_zone", "fanout_total", "delivered_count", "failed_count", "expired_count"} {
+		if err := db.Table(traceName).Migrator().DropColumn(&model.MsgTrace{}, col); err != nil {
+			t.Fatalf("模拟旧表删列 %s 失败: %v", col, err)
+		}
+	}
+	if db.Table(traceName).Migrator().HasColumn(&model.MsgTrace{}, "fanout_total") {
+		t.Fatalf("预置失败：模拟旧表不应含 fanout_total 列")
+	}
+
+	// ② 广播聚合行落库：EnsureDailyTable 触达存量表应先补列、事务内插入成功。
+	bid := uuidV7At(ms, "bm1")
+	if _, err := repo.FlushDaily([]model.MessageRecord{broadcastTraceRecord(bid, 1, "game-1", "zone-a")}); err != nil {
+		t.Fatalf("存量表补列后广播聚合行应落库成功: %v", err)
+	}
+	if !db.Table(traceName).Migrator().HasColumn(&model.MsgTrace{}, "fanout_total") {
+		t.Fatalf("存量表应已被补上 fanout_total 列")
+	}
+
+	// ③ 回读聚合计数与 zone（MySQL 可空列可移植）。
+	var row model.MsgTrace
+	if err := db.Table(traceName).Where("message_id = ?", bid).Take(&row).Error; err != nil {
+		t.Fatalf("回读广播聚合行失败: %v", err)
+	}
+	if row.TargetKind != model.MsgTargetKindBroadcast || row.TargetZone == nil || *row.TargetZone != "zone-a" {
+		t.Fatalf("广播行 target_zone 不符: %+v", row)
+	}
+	if row.FanoutTotal == nil || *row.FanoutTotal != 3 || row.DeliveredCount == nil || *row.DeliveredCount != 2 ||
+		row.FailedCount == nil || *row.FailedCount != 1 || row.ExpiredCount == nil || *row.ExpiredCount != 0 {
+		t.Fatalf("广播聚合计数回读不符: %+v", row)
+	}
+}

@@ -89,6 +89,54 @@ func TestEnsureDailyTableIsolatesByDB(t *testing.T) {
 	}
 }
 
+// dailyProbeV1 模拟旧版模型（列较少）；与 dailyProbeV2 共用同一基表名，供加列迁移测试。
+type dailyProbeV1 struct {
+	ID string `gorm:"column:id;size:36;primaryKey"`
+}
+
+func (dailyProbeV1) TableName() string { return "daily_probe_migrate" }
+
+// dailyProbeV2 模拟新版模型：在旧表基础上新增可空列（FR-180 广播聚合列的抽象化形态）。
+type dailyProbeV2 struct {
+	ID    string `gorm:"column:id;size:36;primaryKey"`
+	Extra *int   `gorm:"column:extra"`
+}
+
+func (dailyProbeV2) TableName() string { return "daily_probe_migrate" }
+
+// TestEnsureDailyTableAddsMissingColumns 校验存量日表（旧版二进制建出、缺新列）在进程重启后
+// 首次触达时按当前模型补齐缺失列（GORM 加列、零方言），新列可写可读（FR-180 加列向后兼容）。
+func TestEnsureDailyTableAddsMissingColumns(t *testing.T) {
+	resetDailyTableCacheForTest()
+	t.Cleanup(resetDailyTableCacheForTest)
+	db := openMemSQLite(t, "daily_addcol")
+	day := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
+
+	// 旧版模型建出当日表（模拟升级前的二进制）。
+	name, err := EnsureDailyTable(db, &dailyProbeV1{}, day)
+	if err != nil {
+		t.Fatalf("旧版建表失败: %v", err)
+	}
+	// 清缓存模拟进程重启（升级换新二进制后缓存为空、表已存在）。
+	resetDailyTableCacheForTest()
+
+	if _, err := EnsureDailyTable(db, &dailyProbeV2{}, day); err != nil {
+		t.Fatalf("新版触达存量表应补列而非报错: %v", err)
+	}
+	if !db.Table(name).Migrator().HasColumn(&dailyProbeV2{}, "extra") {
+		t.Fatalf("存量日表应被补上新增列 extra")
+	}
+	// 新列可写可读（升级当日聚合行落库不被缺列卡死）。
+	extra := 7
+	if err := db.Table(name).Create(&dailyProbeV2{ID: "row-1", Extra: &extra}).Error; err != nil {
+		t.Fatalf("补列后写入含新列的行失败: %v", err)
+	}
+	var got dailyProbeV2
+	if err := db.Table(name).Where("id = ?", "row-1").Take(&got).Error; err != nil || got.Extra == nil || *got.Extra != 7 {
+		t.Fatalf("回读新列失败: %+v err=%v", got, err)
+	}
+}
+
 // TestEnsureDailyTableCrossDaySameDB 校验同库跨日建多张日表不冲突（composite 空名索引按表名自动命名）。
 func TestEnsureDailyTableCrossDaySameDB(t *testing.T) {
 	resetDailyTableCacheForTest()

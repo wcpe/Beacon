@@ -16,10 +16,12 @@ const (
 	MsgStatusExpired = "expired"
 )
 
-// 消息寻址目标类型（msg_trace.target_kind，spec §3.3；仅定向 server 与按玩家 player 两种）。
+// 消息寻址目标类型（msg_trace.target_kind，spec §3.3；broadcast 见 FR-180 / ADR-0065）。
 const (
 	MsgTargetKindServer = "server"
 	MsgTargetKindPlayer = "player"
+	// MsgTargetKindBroadcast 广播 fan-out：按当前在线服集合投递（恒发送者 namespace，可选 zone 级定向）。
+	MsgTargetKindBroadcast = "broadcast"
 )
 
 // IsValidMsgTargetKind 校验目标类型取值（结构校验用）。
@@ -35,6 +37,7 @@ const (
 	MsgFailQueueOverflow    = "queue_overflow"        // 每服投递队列溢出淘汰最旧
 	MsgFailTTLExpired       = "ttl_expired"           // accepted 停留超 TTL 无人取走
 	MsgFailHandlerError     = "handler_error"         // 目标业务 handler 回执失败
+	MsgFailNoOnlineTarget   = "no_online_target"      // 广播解析出的在线目标集合为空（FR-180）
 )
 
 // MsgTrace 是消息元数据日表 msg_trace_YYYYMMDD 的行模型（FR-149，见 spec §3.3）。
@@ -58,6 +61,16 @@ type MsgTrace struct {
 	TargetServerID string `gorm:"column:target_server_id;size:64;not null;default:''"`
 	// 按玩家寻址的玩家 UUID（target_kind=player），未用为空
 	TargetPlayer string `gorm:"column:target_player;size:36;not null;default:''"`
+	// 广播 zone 级定向的 zone 名（target_kind=broadcast 且指定 zone 时），其余为 NULL（FR-180）
+	TargetZone *string `gorm:"column:target_zone;size:64"`
+	// 广播 fan-out 目标数（仅广播行非空；一条广播只落一行，防 ×N 写放大，ADR-0065）
+	FanoutTotal *int `gorm:"column:fanout_total"`
+	// 广播送达计数（仅广播行非空）
+	DeliveredCount *int `gorm:"column:delivered_count"`
+	// 广播失败计数（仅广播行非空）
+	FailedCount *int `gorm:"column:failed_count"`
+	// 广播过期计数（仅广播行非空）
+	ExpiredCount *int `gorm:"column:expired_count"`
 	// 控制面据名册解析出的实际目标服，未解析为空
 	ResolvedServerID string `gorm:"column:resolved_server_id;size:64;not null;default:'';index:,composite:resolved_created,priority:2"`
 	// 跨域时的目标 namespace，同域为 NULL

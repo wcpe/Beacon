@@ -33,8 +33,12 @@ func DailyTableName(base string, day time.Time) string {
 // 判存（HasTable）、缺失则动态表名建表（db.Table(name).Migrator().CreateTable）。DDL 由 GORM
 // 按方言生成，绝不手写方言专有 SQL / 分区语法（守可移植）。
 //
+// 表已存在时按当前模型补齐缺失列（AutoMigrate 只增列不删列）：旧版二进制建出的当日存量表
+// 在升级后首次触达即被加列对齐，模型新增可空列（如 FR-180 广播聚合列）向后兼容、写入不因缺列失败。
+// 每表每进程仅补一次（随缓存短路），对齐后为空操作。
+//
 // model 须实现 TableName() 提供基名；其 TableName 会被 db.Table(name) 覆盖为日表名，
-// 故该模型不进 AutoMigrate、只经本函数按日建表。并发下多协程可能同时探测同一日表，
+// 故该模型不进全局 AutoMigrate、只经本函数按日建表。并发下多协程可能同时探测同一日表，
 // 建表用 IF NOT EXISTS 语义幂等，且建表报错后再判存一次容错（另一协程已建即视为成功）。
 func EnsureDailyTable(db *gorm.DB, model any, day time.Time) (string, error) {
 	namer, ok := model.(tableNamer)
@@ -55,6 +59,9 @@ func EnsureDailyTable(db *gorm.DB, model any, day time.Time) (string, error) {
 				return "", fmt.Errorf("建日表 %s 失败: %w", name, err)
 			}
 		}
+	} else if err := db.Table(name).AutoMigrate(model); err != nil {
+		// 存量表按当前模型补齐缺失列（模型演进只增可空列）；失败即报错暴露，不让后续写入静默失败。
+		return "", fmt.Errorf("存量日表 %s 补列失败: %w", name, err)
 	}
 	ensuredDailyTables.Store(cacheKey, struct{}{})
 	return name, nil

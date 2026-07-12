@@ -29,6 +29,75 @@ func traceRecord(msgID string, ns uint, src string, withPayload bool) model.Mess
 	return rec
 }
 
+// broadcastTraceRecord 构造一条广播聚合行（FR-180：一条广播只落一行，聚合计数非空）。
+func broadcastTraceRecord(msgID string, ns uint, src, zone string) model.MessageRecord {
+	ms, _ := store.TimeMsFromUUIDv7(msgID)
+	fanout, delivered, failed, expired := 3, 2, 1, 0
+	rec := model.MessageRecord{
+		Trace: model.MsgTrace{
+			MessageID: msgID, NamespaceID: ns, SourceServerID: src, MsgType: "announce",
+			TargetKind:  model.MsgTargetKindBroadcast,
+			FanoutTotal: &fanout, DeliveredCount: &delivered, FailedCount: &failed, ExpiredCount: &expired,
+			Status: model.MsgStatusDelivered, CreatedAt: time.UnixMilli(ms).UTC(), HopCount: 1, Hops: "[]",
+		},
+	}
+	if zone != "" {
+		rec.Trace.TargetZone = &zone
+	}
+	return rec
+}
+
+// TestMessageFlushBroadcastAggregateRow 校验广播聚合行落库：聚合列写入回读一致、
+// 无 zone 时 target_zone 为 NULL、定向行的聚合列保持 NULL（可空列语义，FR-180）。
+func TestMessageFlushBroadcastAggregateRow(t *testing.T) {
+	db := openRepoSQLite(t, "msg_broadcast_agg")
+	repo := NewMessageRepository(db)
+	ms := time.Date(2026, 7, 13, 10, 0, 0, 0, time.UTC).UnixMilli()
+	bidZone := uuidV7At(ms, "b1")
+	bidAll := uuidV7At(ms+1, "b2")
+	directed := uuidV7At(ms+2, "b3")
+	traceTbl := store.DailyTableName("msg_trace", time.UnixMilli(ms).UTC())
+
+	if _, err := repo.FlushDaily([]model.MessageRecord{
+		broadcastTraceRecord(bidZone, 1, "game-1", "zone-a"),
+		broadcastTraceRecord(bidAll, 1, "game-1", ""),
+		traceRecord(directed, 1, "game-1", false),
+	}); err != nil {
+		t.Fatalf("写广播聚合行失败: %v", err)
+	}
+
+	var zoneRow model.MsgTrace
+	if err := db.Table(traceTbl).Where("message_id = ?", bidZone).Take(&zoneRow).Error; err != nil {
+		t.Fatalf("回读 zone 广播行失败: %v", err)
+	}
+	if zoneRow.TargetKind != model.MsgTargetKindBroadcast || zoneRow.TargetZone == nil || *zoneRow.TargetZone != "zone-a" {
+		t.Fatalf("zone 广播行 target_zone 不符: %+v", zoneRow)
+	}
+	if zoneRow.FanoutTotal == nil || *zoneRow.FanoutTotal != 3 ||
+		zoneRow.DeliveredCount == nil || *zoneRow.DeliveredCount != 2 ||
+		zoneRow.FailedCount == nil || *zoneRow.FailedCount != 1 ||
+		zoneRow.ExpiredCount == nil || *zoneRow.ExpiredCount != 0 {
+		t.Fatalf("广播聚合计数回读不符: %+v", zoneRow)
+	}
+
+	var allRow model.MsgTrace
+	if err := db.Table(traceTbl).Where("message_id = ?", bidAll).Take(&allRow).Error; err != nil {
+		t.Fatalf("回读全 ns 广播行失败: %v", err)
+	}
+	if allRow.TargetZone != nil {
+		t.Fatalf("无 zone 广播行 target_zone 应为 NULL，实际 %v", *allRow.TargetZone)
+	}
+
+	var dirRow model.MsgTrace
+	if err := db.Table(traceTbl).Where("message_id = ?", directed).Take(&dirRow).Error; err != nil {
+		t.Fatalf("回读定向行失败: %v", err)
+	}
+	if dirRow.TargetZone != nil || dirRow.FanoutTotal != nil || dirRow.DeliveredCount != nil ||
+		dirRow.FailedCount != nil || dirRow.ExpiredCount != nil {
+		t.Fatalf("定向行的广播聚合列应全为 NULL，实际 %+v", dirRow)
+	}
+}
+
 // TestMessageFlushWritesBothTablesSameTx 校验 trace 与 payload 同事务写两表、各落一行。
 func TestMessageFlushWritesBothTablesSameTx(t *testing.T) {
 	db := openRepoSQLite(t, "msg_twotable")
