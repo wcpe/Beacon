@@ -77,12 +77,17 @@ func (s *MessageService) Send(p MessageSendParams) (MessageSendResult, error) {
 		return MessageSendResult{}, err
 	}
 	nowMs := s.now().UnixMilli()
+	sentAtMs := p.SentAtMs
+	if sentAtMs <= 0 {
+		// sentAt 缺省回退 message_id 内嵌 UUIDv7 时间（≈ 发出时刻），保证 sent 链路事件时间完整（spec §3.3）。
+		sentAtMs, _ = store.TimeMsFromUUIDv7(p.MessageID)
+	}
 	msg := IncomingMessage{
 		MessageID: p.MessageID, NamespaceID: p.Identity.NamespaceID, SourceServerID: p.Identity.ServerID,
 		MsgType: p.MsgType, TargetKind: p.TargetKind, TargetServerID: p.TargetServerID,
 		TargetPlayer: p.TargetPlayerUUID, CorrelationID: p.CorrelationID,
 		Payload: p.Payload, PayloadSize: len(p.Payload),
-		SentAtMs: p.SentAtMs, CreatedAtMs: nowMs,
+		SentAtMs: sentAtMs, CreatedAtMs: nowMs,
 	}
 	failReason, err := s.resolveTarget(&msg)
 	if err != nil {
