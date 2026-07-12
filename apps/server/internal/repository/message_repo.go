@@ -116,3 +116,220 @@ func insertMsgPayloads(tx *gorm.DB, tableName string, rows []model.MsgPayload) e
 		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "message_id"}}, DoNothing: true}).
 		CreateInBatches(&rows, msgInsertBatchSize).Error
 }
+
+// msgStatsScanCap 是异常链路聚合单次扫描上限（安全阀，防超大窗口无界拉行）：
+// 聚合本走短窗（默认 1h、上限 168h），按 created_at 倒序取最近 msgStatsScanCap 行足以覆盖热点异常边。
+const msgStatsScanCap = 100000
+
+// MessageQuery 是消息元数据跨日并表查询的过滤与游标分页参数（spec §5.2 列表端点）。
+type MessageQuery struct {
+	ServerID       string // 匹配来源 / 解析目标 / 定向目标任一（对齐 devmock 语义）
+	PlayerUUID     string // 匹配按玩家寻址的 target_player
+	Status         string
+	MsgType        string
+	CrossNamespace *bool // nil 不过滤
+	NamespaceID    uint
+	FromMs         int64
+	ToMs           int64
+	Offset         int
+	Limit          int
+}
+
+// FindByMessageID 由 message_id 内嵌 UUIDv7 时间直定 msg_trace 日表查单行（免时间范围，spec §4.3）。
+// 非法 message_id / 日表不存在 / 无此行均返回 (nil, nil)。
+func (r *MessageRepository) FindByMessageID(messageID string) (*model.MsgTrace, error) {
+	ms, ok := store.TimeMsFromUUIDv7(messageID)
+	if !ok {
+		return nil, nil
+	}
+	return r.findTraceInDay(store.DailyTableName(model.MsgTrace{}.TableName(), utcDayStart(ms)), "message_id = ?", messageID)
+}
+
+// findTraceInDay 在某日表按条件取单行 MsgTrace；表不存在或无命中返回 (nil, nil)。
+func (r *MessageRepository) findTraceInDay(tableName, cond string, args ...any) (*model.MsgTrace, error) {
+	if !r.db.Migrator().HasTable(tableName) {
+		return nil, nil
+	}
+	var row model.MsgTrace
+	res := r.db.Table(tableName).Where(cond, args...).Limit(1).Find(&row)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &row, nil
+}
+
+// FindByCorrelationID 由 correlationId 内嵌时间所在日（及次日，容跨午夜往返）直查：
+// 取 correlation_id 或 message_id 命中该 id 的行（RPC 往返请求 + 响应两条，spec §3.3/§4.3）。
+func (r *MessageRepository) FindByCorrelationID(correlationID string) ([]model.MsgTrace, error) {
+	ms, ok := store.TimeMsFromUUIDv7(correlationID)
+	if !ok {
+		return nil, nil
+	}
+	day := utcDayStart(ms)
+	out := make([]model.MsgTrace, 0, 2)
+	for _, d := range []time.Time{day, day.AddDate(0, 0, 1)} {
+		name := store.DailyTableName(model.MsgTrace{}.TableName(), d)
+		if !r.db.Migrator().HasTable(name) {
+			continue
+		}
+		var rows []model.MsgTrace
+		if err := r.db.Table(name).
+			Where("correlation_id = ? OR message_id = ?", correlationID, correlationID).
+			Order("created_at DESC, message_id DESC").
+			Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
+// QueryMessages 跨日并表按游标分页查询消息元数据（created_at 降序），只查范围内已存在日表、逐表短路凑满即停。
+func (r *MessageRepository) QueryMessages(q MessageQuery) ([]model.MsgTrace, bool, error) {
+	tables := existingDailyTablesInRange(r.db, model.MsgTrace{}.TableName(), q.FromMs, q.ToMs)
+	return fetchDailyOffsetPage[model.MsgTrace](
+		r.db, tables, "created_at DESC, message_id DESC", q.Offset, q.Limit, q.applyMsgFilters,
+	)
+}
+
+// applyMsgFilters 套用消息查询的时间窗与过滤（serverId 匹配来源/解析目标/定向目标任一，对齐 devmock）。
+func (q MessageQuery) applyMsgFilters(db *gorm.DB) *gorm.DB {
+	db = db.Where("created_at >= ? AND created_at <= ?", msToTime(q.FromMs), msToTime(q.ToMs))
+	if q.ServerID != "" {
+		db = db.Where("source_server_id = ? OR resolved_server_id = ? OR target_server_id = ?",
+			q.ServerID, q.ServerID, q.ServerID)
+	}
+	if q.PlayerUUID != "" {
+		db = db.Where("target_player = ?", q.PlayerUUID)
+	}
+	if q.Status != "" {
+		db = db.Where("status = ?", q.Status)
+	}
+	if q.MsgType != "" {
+		db = db.Where("msg_type = ?", q.MsgType)
+	}
+	if q.CrossNamespace != nil {
+		db = db.Where("cross_namespace = ?", *q.CrossNamespace)
+	}
+	if q.NamespaceID != 0 {
+		db = db.Where("namespace_id = ?", q.NamespaceID)
+	}
+	return db
+}
+
+// FindCorrelated 查一条消息在 RPC 往返中的关联消息（spec §3.3/§5.2 详情 correlated）。
+// correlationId 为空 → 无关联。否则在候选日表找对手（排除自身）：
+// request（message_id=correlationId）或 response（correlation_id=自身 message_id）。
+func (r *MessageRepository) FindCorrelated(messageID, correlationID string) (*model.MsgTrace, error) {
+	if correlationID == "" {
+		return nil, nil
+	}
+	for _, day := range correlatedCandidateDays(messageID, correlationID) {
+		name := store.DailyTableName(model.MsgTrace{}.TableName(), day)
+		if !r.db.Migrator().HasTable(name) {
+			continue
+		}
+		var row model.MsgTrace
+		res := r.db.Table(name).
+			Where("(message_id = ? OR correlation_id = ?) AND message_id <> ?", correlationID, messageID, messageID).
+			Order("created_at ASC, message_id ASC").Limit(1).Find(&row)
+		if res.Error != nil {
+			return nil, res.Error
+		}
+		if res.RowsAffected > 0 {
+			return &row, nil
+		}
+	}
+	return nil, nil
+}
+
+// correlatedCandidateDays 汇总关联查找的候选 UTC 日（去重）：自身 message_id 当日与次日（response 跨午夜落次日）、
+// correlationId 当日（request 在其自身当日）。
+func correlatedCandidateDays(messageID, correlationID string) []time.Time {
+	seen := make(map[int64]struct{}, 3)
+	days := make([]time.Time, 0, 3)
+	add := func(ms int64, ok bool, alsoNext bool) {
+		if !ok {
+			return
+		}
+		candidates := []time.Time{utcDayStart(ms)}
+		if alsoNext {
+			candidates = append(candidates, utcDayStart(ms).AddDate(0, 0, 1))
+		}
+		for _, d := range candidates {
+			key := d.UnixMilli()
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			days = append(days, d)
+		}
+	}
+	selfMs, selfOK := store.TimeMsFromUUIDv7(messageID)
+	corrMs, corrOK := store.TimeMsFromUUIDv7(correlationID)
+	add(selfMs, selfOK, true)
+	add(corrMs, corrOK, false)
+	return days
+}
+
+// FindPayload 由 message_id 内嵌时间直定 msg_payload 日表查 payload 行（payload 查看流程，spec §4.4）。
+// 非法 id / 日表不存在 / 无此行返回 (nil, nil)——上层据此判 payload 未落库。
+func (r *MessageRepository) FindPayload(messageID string) (*model.MsgPayload, error) {
+	ms, ok := store.TimeMsFromUUIDv7(messageID)
+	if !ok {
+		return nil, nil
+	}
+	name := store.DailyTableName(model.MsgPayload{}.TableName(), utcDayStart(ms))
+	if !r.db.Migrator().HasTable(name) {
+		return nil, nil
+	}
+	var row model.MsgPayload
+	res := r.db.Table(name).Where("message_id = ?", messageID).Limit(1).Find(&row)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &row, nil
+}
+
+// MsgStatRow 是异常链路聚合的窄投影（spec §5.2 messages/stats）：仅取聚合所需列，不触碰 payload。
+type MsgStatRow struct {
+	MessageID        string `gorm:"column:message_id"`
+	MsgType          string `gorm:"column:msg_type"`
+	SourceServerID   string `gorm:"column:source_server_id"`
+	ResolvedServerID string `gorm:"column:resolved_server_id"`
+	Status           string `gorm:"column:status"`
+	FailReason       string `gorm:"column:fail_reason"`
+	DurationMs       *int64 `gorm:"column:duration_ms"`
+}
+
+// ScanMessageStats 取窗口内消息的聚合投影（created_at 倒序、上限 msgStatsScanCap），供 service 在 Go 侧按边/类型聚合。
+// 只扫范围内已存在日表；不返回 payload 相关内容（异常链路数据源，spec §4.5）。
+func (r *MessageRepository) ScanMessageStats(fromMs, toMs int64) ([]MsgStatRow, error) {
+	from := msToTime(fromMs)
+	to := msToTime(toMs)
+	out := make([]MsgStatRow, 0, 512)
+	for _, tbl := range existingDailyTablesInRange(r.db, model.MsgTrace{}.TableName(), fromMs, toMs) {
+		remaining := msgStatsScanCap - len(out)
+		if remaining <= 0 {
+			break
+		}
+		var rows []MsgStatRow
+		if err := r.db.Table(tbl).
+			Select("message_id", "msg_type", "source_server_id", "resolved_server_id",
+				"status", "fail_reason", "duration_ms").
+			Where("created_at >= ? AND created_at <= ?", from, to).
+			Order("created_at DESC, message_id DESC").
+			Limit(remaining).
+			Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
