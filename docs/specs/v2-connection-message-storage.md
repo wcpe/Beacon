@@ -23,7 +23,7 @@
 
 ### 2.2 明确不做
 
-- 不做消息主题（topic）发布订阅与广播 fan-out：第二版消息目标只有定向（server）与按玩家（player）两种寻址（Legacy 的 Redis Streams / pub-sub 通道随 Legacy 冻结，不迁移——第二版禁 Redis）。
+- 消息寻址三种：定向（server）、按玩家（player）、**广播（broadcast，FR-180 / [ADR-0065](../adr/0065-message-broadcast-addressing.md)）**——广播按注册表在线集合 fan-out（本 namespace 全部在线服，或 `targetZone` 定向该 zone），**不建订阅状态表**（订阅是 agent 本地按 topic 分发）、可丢语义（只投在线、离线不补、沿用 TTL / 重投 / 溢出规则）、跨 namespace 广播一律拒绝。不做订阅式 pub/sub 与离线留存（Legacy 的 Redis Streams / pub-sub 通道随 Legacy 冻结，不迁移——第二版禁 Redis / MQ）。
 - 不做消息离线补投队列：目标 agent 长时间不在线的消息按 TTL 过期，不做持久化待投（避免控制面变 MQ，违反基座禁重型件）。
 - 不做 payload 静态加密、不做 payload 内容检索（只按元数据查，PRD §1.3）。
 - 不做连接明细里逐次后端切换的事件流水（只记摘要字段，见 §3.2）；玩家在服内的行为数据一律不采集（控制面禁游戏逻辑）。
@@ -82,9 +82,14 @@ proxy 宕机产生的「孤儿 open 行」：proxy agent 重启后首次上报�
 | `namespace_id` | BIGINT | 来源 namespace |
 | `source_server_id` | VARCHAR(64) | 来源 serverId |
 | `msg_type` | VARCHAR(64) | 业务消息类型（业务插件定义） |
-| `target_kind` | VARCHAR(16) | `server` / `player` |
+| `target_kind` | VARCHAR(16) | `server` / `player` / `broadcast`（FR-180） |
 | `target_server_id` | VARCHAR(64) NULL | 定向目标（target_kind=server） |
 | `target_player` | VARCHAR(36) NULL | 按玩家寻址的玩家 UUID |
+| `target_zone` | VARCHAR(64) NULL | 广播 zone 级定向（target_kind=broadcast 且指定 zone 时） |
+| `fanout_total` | INT NULL | 广播 fan-out 目标数（仅广播行，一条广播一行防 ×N 写放大） |
+| `delivered_count` | INT NULL | 广播送达计数（仅广播行） |
+| `failed_count` | INT NULL | 广播失败计数（仅广播行） |
+| `expired_count` | INT NULL | 广播过期计数（仅广播行） |
 | `resolved_server_id` | VARCHAR(64) NULL | 控制面据连接明细名册解析出的实际目标服 |
 | `target_namespace_id` | BIGINT NULL | 跨域时的目标 namespace |
 | `cross_namespace` | BOOLEAN | 是否跨 namespace（须有 `namespace_trust` capability=`message` 才放行） |
@@ -159,6 +164,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 
 - **发送（上行）**：源 agent POST 消息（元数据 + payload）；控制面校验 namespace 隔离（跨域须 `namespace_trust` 存在 capability=`message`，否则 403 记失败）、目标存在性、payload 上限，校验通过即入目标服的内存投递队列、状态机在控制面内存置 `accepted`（**请求 goroutine 不碰 DB**，对齐 §4.1 异步入库与验收 #10 写入不阻塞）。`msg_trace` + `msg_payload` 不在 send 时落库，而在消息到达终态（delivered/failed/expired）时经异步日表通道**同一事务一次性写入两表**——in-flight（accepted/dispatched，≤TTL）消息暂存内存、落库前不可查，终态后可按 messageId 查得完整链路。
 - **按玩家寻址**：控制面查 §4.1 名册快照解析 `resolved_server_id`（hops 记 `resolved` 事件）；玩家不在线 → `failed`（`fail_reason=player_not_online`）。
+- **广播寻址（FR-180，[ADR-0065](../adr/0065-message-broadcast-addressing.md)）**：控制面按当前在线服集合（注册 / 健康内存事实）解析接收方——无 `targetZone` = 发送者 namespace 全部在线服（backend + proxy，含发送者自身）、有 `targetZone` = 该 zone 在线服——逐服入既有投递队列；每目标独立走 dispatched / ack / TTL / 重投规则。**一条广播只落一行 `msg_trace`**（聚合 fanout / delivered / failed / expired 计数），全部目标终态后一次性落库；payload 只存一份；广播行不入 §4.5 edge 聚合（无单一目标边）。跨 namespace 广播一律拒绝；poll 下发消息体携带广播标记（additive 键），agent 据此路由到 topic 订阅分发（与定向 `on(type)` 分发表隔离）。
 - **下发（下行）**：目标 agent 独立长轮询消息通道（与命令通道分离——命令通道只做控制面编排，消息是业务通信面）；取走即置 `dispatched` 并携带 payload 下发。
 - **回执**：目标 agent 把消息交业务 handler 后批量 ACK（成功 → `delivered`、失败 → `failed` 带原因）；ACK 同时上报 agent 侧 hop 事件，控制面合并进 `hops` 并计算 `duration_ms` / `hop_count`。
 - **重投**：`dispatched` 后 10s 未收到 ACK 重投（重新入队），最多 2 次；仍无回执 → `failed`（`fail_reason=ack_timeout`）。业务侧以 `message_id` 幂等去重。
@@ -207,8 +213,8 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 专用；`{bootId, droppedCount, events:[{kind: open\|close, connId, playerUuid, playerName, clientIp?, protocolVersion?, openedAt, closedAt?, closeKind?, closeReason?, firstBackend?, lastBackend?, backendSwitchCount?}]}`，单批 ≤500 | `202 {accepted, duplicated}`；队列满 `429` 带退避提示 |
-| POST | `/beacon/v2/agent/messages/send` | `{messageId, msgType, targetKind: server\|player, targetServerId?, targetPlayerUuid?, correlationId?, payload, sentAt}` | `200 {messageId, status}`；跨域无信任 `403`；payload 超限 `400 payload_too_large`；目标无效 `200 status=failed` 带原因 |
-| POST | `/beacon/v2/agent/messages/poll` | `{waitSec ≤25, max ≤50}` 长轮询取本服待投消息 | `200 {messages:[{messageId, msgType, sourceServerId, correlationId?, payload, createdAt}]}`；无消息超时 `204` |
+| POST | `/beacon/v2/agent/messages/send` | `{messageId, msgType, targetKind: server\|player\|broadcast, targetServerId?, targetPlayerUuid?, targetZone?, correlationId?, payload, sentAt}`（broadcast 时 targetZone 可选做 zone 级定向，FR-180） | `200 {messageId, status}`；跨域无信任 / 跨域广播 `403`；payload 超限 `400 payload_too_large`；目标无效 `200 status=failed` 带原因 |
+| POST | `/beacon/v2/agent/messages/poll` | `{waitSec ≤25, max ≤50}` 长轮询取本服待投消息 | `200 {messages:[{messageId, msgType, sourceServerId, correlationId?, broadcast?, payload, createdAt}]}`（`broadcast: true` 为广播投递标记，agent 据此路由 topic 订阅分发，FR-180）；无消息超时 `204` |
 | POST | `/beacon/v2/agent/messages/ack` | `{results:[{messageId, status: delivered\|failed, reason?, deliveredAt, handlerCostMs?}]}` 批量回执 | `200 {applied}`；未知 messageId 忽略计入 `ignored` |
 
 业务插件不感知以上端点，只调本机 agent-api 的 `send(target, type, payload)` / `call(...) → Future` / `on(type, handler)` / `isAvailable()`；agent-api 与降级语义的宿主约束（不阻塞主线程、HTTP/JSON 只在适配器）随 `v2-metrics-health-scheduling.md` 的 agent-api 章节统一收口。
@@ -255,13 +261,14 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 8. **拓扑供给**（FR-156 联验）：构造一批失败消息后，`messages/stats(groupBy=edge)` 返回对应异常边的失败计数与样本 ID，`/topology` 能据此展示异常链路并下钻到消息详情。
 9. **fail-static**：杀控制面后 proxy 玩家照常进出服，连接事件本地缓冲并在控制面恢复后补报（丢弃计数可见）；agent-api 消息 `isAvailable()=false` 快速失败不抛异常到业务插件主流程。
 10. **写入不阻塞**：连接 / 消息上报接口 p99 响应仅含队列入队耗时（压测验证）；入库由后台批量 worker 完成，队列满时 429 生效。
+11. **广播可用**（FR-180）：A 服 `publish(topic, payload)` 后同 namespace 全部在线服的 `subscribe(topic)` handler 收到（真 agent e2e）；`publish(topic, payload, zone)` 只投该 zone；离线服不补投、TTL 过期计入 `expired_count`；跨 namespace 广播被拒；`msg_trace` 广播行聚合计数正确、管理面列表可按 `targetKind=broadcast` 过滤且不含 payload；**真机**广播场景可用（Lodestone / 探针）。
 
 ## 8. 风险 / 待定（默认决定集中登记，待拍板）
 
 1. **消息经控制面单跳中转**：Legacy ADR-0016 决策为「消息不经控制面、走 Redis」，与第二版禁 Redis 冲突。本规格默认改为控制面中转 + 长轮询下发，**需要新 ADR 正式取代 ADR-0016**（不静默违背）。延迟量级（长轮询下发百 ms 级）能否满足业务插件预期需真机压测确认。**已拍板（2026-07-07）：确认控制面中转；[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 已取代 ADR-0016 落地。**
 2. **主键用 UUIDv7 并以 ID 内嵌时间定位日表**：换取「免日期提示按 ID 直查」；代价是依赖 agent 时钟（已加 24h 拒收护栏）。备选是控制面接收时间定表 + 查询按 ID 需扫多表，未采用。
 3. **连接明细取「会话行」而非事件流水**：后端切换只记 `backend_switch_count` 与首末后端摘要，不存逐次切换事件——玩家流以 proxy 聚合近似。若后续要求精确「服 → 服」玩家迁移图，需另立事件表（待需求确认再做）。
-4. **消息目标只做 server / player 两种寻址**：topic 发布订阅与广播 fan-out 不做（Legacy 有、v2 PRD 无对应 FR）。若业务插件确有需要须回 PRD 立项。
+4. ~~消息目标只做 server / player 两种寻址~~ **已由 FR-180 / [ADR-0065](../adr/0065-message-broadcast-addressing.md) 补齐广播寻址**（真机 Lodestone 依赖广播，已回 PRD 立项——正是本条预留的口子）；订阅式 pub/sub 与离线留存仍不做。
 5. **可靠性档位**：TTL 30s、`dispatched` 后 10s 重投、最多 2 次、每服投递队列 1000 条——「至多短暂重试、不离线补投」。数值走运维设置热更，默认值待真机校准。
 6. **payload 上限 64KB、超限拒发不截断**；payload 明文落库（PRD 明确不做静态加密），DB 层防护依赖部署侧（DSN 权限、备份加密）另行约定。
 7. **查询窗口上限 168h / 8 张日表、默认窗口 1h、分页上限 200**：为「禁全量扫描」的具体化默认值，可调不可关。

@@ -1,6 +1,6 @@
 # ADR-0063：跨服消息通道由 Redis 数据面直连改为控制面 HTTP 单跳中转
 
-**状态**：已接受（取代 [ADR-0016](0016-agent-cross-server-messaging-middleware.md) 的传输层与 Redis 决策；随 P5（FR-149/150）落地）
+**状态**：已接受（取代 [ADR-0016](0016-agent-cross-server-messaging-middleware.md) 的传输层与 Redis 决策；随 P5（FR-149/150）落地）。**决策 2 的寻址范围与决策 7 的 topic no-op 条款已被 [ADR-0065](0065-message-broadcast-addressing.md) 取代**（新增广播寻址、复活 publish/subscribe），其余决策仍有效。
 
 ## 背景
 
