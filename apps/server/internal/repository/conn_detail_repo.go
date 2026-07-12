@@ -200,6 +200,103 @@ func (r *ConnDetailRepository) CloseOrphans(namespaceID uint, proxyServerID stri
 	return total, nil
 }
 
+// ConnQuery 是连接明细跨日并表查询的过滤与游标分页参数（spec §5.2 列表端点）。
+type ConnQuery struct {
+	ServerID    string // 匹配 proxy / 首后端 / 末后端任一（对齐 devmock 语义）
+	PlayerUUID  string
+	Status      string // "" 全部 / open / closed
+	CloseKind   string
+	NamespaceID uint
+	FromMs      int64
+	ToMs        int64
+	Offset      int
+	Limit       int
+}
+
+// FindByConnID 由 conn_id 内嵌 UUIDv7 时间直定日表按主键查单行（免时间范围，spec §4.3 精确 ID 直查）。
+// 非法 conn_id / 日表不存在 / 无此行均返回 (nil, nil)。
+func (r *ConnDetailRepository) FindByConnID(connID string) (*model.ConnDetail, error) {
+	ms, ok := store.TimeMsFromUUIDv7(connID)
+	if !ok {
+		return nil, nil
+	}
+	name := store.DailyTableName(model.ConnDetail{}.TableName(), utcDayStart(ms))
+	if !r.db.Migrator().HasTable(name) {
+		return nil, nil
+	}
+	var row model.ConnDetail
+	res := r.db.Table(name).Where("conn_id = ?", connID).Limit(1).Find(&row)
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil, nil
+	}
+	return &row, nil
+}
+
+// QueryConnections 跨日并表按游标分页查询连接明细（opened_at 降序），只查范围内已存在日表、逐表短路凑满即停。
+// 返回本页行与是否还有下一页（供上层算 nextCursor）。
+func (r *ConnDetailRepository) QueryConnections(q ConnQuery) ([]model.ConnDetail, bool, error) {
+	tables := existingDailyTablesInRange(r.db, model.ConnDetail{}.TableName(), q.FromMs, q.ToMs)
+	return fetchDailyOffsetPage[model.ConnDetail](
+		r.db, tables, "opened_at DESC, conn_id DESC", q.Offset, q.Limit, q.applyConnFilters,
+	)
+}
+
+// applyConnFilters 套用连接查询的时间窗与过滤（serverId 匹配 proxy/首后端/末后端任一，对齐 devmock）。
+func (q ConnQuery) applyConnFilters(db *gorm.DB) *gorm.DB {
+	db = db.Where("opened_at >= ? AND opened_at <= ?", msToTime(q.FromMs), msToTime(q.ToMs))
+	if q.ServerID != "" {
+		db = db.Where("proxy_server_id = ? OR first_backend_server_id = ? OR last_backend_server_id = ?",
+			q.ServerID, q.ServerID, q.ServerID)
+	}
+	if q.PlayerUUID != "" {
+		db = db.Where("player_uuid = ?", q.PlayerUUID)
+	}
+	if q.Status != "" {
+		db = db.Where("status = ?", q.Status)
+	}
+	if q.CloseKind != "" {
+		db = db.Where("close_kind = ?", q.CloseKind)
+	}
+	if q.NamespaceID != 0 {
+		db = db.Where("namespace_id = ?", q.NamespaceID)
+	}
+	return db
+}
+
+// ConnStatRow 是连接流时间桶聚合的窄投影（spec §5.2 connections/stats）：仅取聚合所需三列。
+type ConnStatRow struct {
+	OpenedAt  time.Time  `gorm:"column:opened_at"`
+	ClosedAt  *time.Time `gorm:"column:closed_at"`
+	CloseKind string     `gorm:"column:close_kind"`
+}
+
+// ScanConnStats 取与窗口重叠的连接会话投影（proxy 过滤），供 service 在 Go 侧按时间桶聚合（禁方言日期函数，保可移植）。
+// 限定 opened_at ≤ to 且（closed_at 空 或 closed_at ≥ from），圈定与窗口重叠的会话（含窗口前建立仍在线者，供存量估算）。
+// 只扫范围内已存在日表；窗口前更早日表内仍在线的会话不计入（估算近似，spec §4.5）。
+func (r *ConnDetailRepository) ScanConnStats(proxyServerID string, fromMs, toMs int64) ([]ConnStatRow, error) {
+	from := msToTime(fromMs)
+	to := msToTime(toMs)
+	out := make([]ConnStatRow, 0, 256)
+	for _, tbl := range existingDailyTablesInRange(r.db, model.ConnDetail{}.TableName(), fromMs, toMs) {
+		q := r.db.Table(tbl).
+			Select("opened_at", "closed_at", "close_kind").
+			Where("opened_at <= ?", to).
+			Where("closed_at IS NULL OR closed_at >= ?", from)
+		if proxyServerID != "" {
+			q = q.Where("proxy_server_id = ?", proxyServerID)
+		}
+		var rows []ConnStatRow
+		if err := q.Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
 // ListOpenConnections 逐张保留窗内已存在日表读出 status=open 的会话行投影（名册重建用，spec §4.1）。
 // 只读、缺表跳过、不隐式建表；进程重启后据此重建「玩家 → 所在服」内存名册。
 func (r *ConnDetailRepository) ListOpenConnections(retentionDays int) ([]OpenConn, error) {

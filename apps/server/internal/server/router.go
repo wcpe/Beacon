@@ -11,43 +11,44 @@ import (
 
 // Handlers 汇集各 HTTP 处理器，供路由装配（避免过长的位置参数）。
 type Handlers struct {
-	Namespace        *handler.NamespaceHandler
-	V2               *handler.V2ControlPlaneHandler
-	V2Metrics        *handler.V2MetricsHandler
-	V2Health         *handler.V2HealthHandler
-	V2Sched          *handler.V2SchedHandler
-	V2Connection     *handler.V2ConnectionHandler
-	V2Message        *handler.V2MessageHandler
-	SchedDecision    *handler.SchedDecisionAdminHandler
-	Config           *handler.ConfigHandler
-	File             *handler.FileHandler
-	OverrideSet      *handler.OverrideSetHandler
-	Agent            *handler.AgentHandler
-	Stream           *handler.StreamHandler
-	Instance         *handler.InstanceHandler
-	Topology         *handler.TopologyHandler
-	Zone             *handler.ZoneHandler
-	Scheduling       *handler.SchedulingHandler
-	Audit            *handler.AuditHandler
-	Alert            *handler.AlertHandler
-	AlertEvent       *handler.AlertEventHandler
-	Metric           *handler.MetricHandler
-	System           *handler.SystemHandler
-	Observability    *handler.ObservabilityHandler
-	CommandObserve   *handler.CommandObserveHandler
-	Update           *handler.UpdateHandler
-	Auth             *handler.AuthHandler
-	APIKey           *handler.APIKeyHandler
-	Command          *handler.CommandHandler
-	Browse           *handler.BrowseHandler
-	FileSync         *handler.FileSyncHandler
-	AgentLog         *handler.AgentLogHandler
-	ReverseFetchTask *handler.ReverseFetchTaskHandler
-	ReverseFetchRule *handler.ReverseFetchIgnoreRuleHandler
-	Settings         *handler.SettingsHandler
-	ReversibleOp     *handler.ReversibleOperationHandler
-	Metrics          http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
-	Web              http.Handler
+	Namespace         *handler.NamespaceHandler
+	V2                *handler.V2ControlPlaneHandler
+	V2Metrics         *handler.V2MetricsHandler
+	V2Health          *handler.V2HealthHandler
+	V2Sched           *handler.V2SchedHandler
+	V2Connection      *handler.V2ConnectionHandler
+	V2Message         *handler.V2MessageHandler
+	V2ConnectionAdmin *handler.V2ConnectionAdminHandler
+	SchedDecision     *handler.SchedDecisionAdminHandler
+	Config            *handler.ConfigHandler
+	File              *handler.FileHandler
+	OverrideSet       *handler.OverrideSetHandler
+	Agent             *handler.AgentHandler
+	Stream            *handler.StreamHandler
+	Instance          *handler.InstanceHandler
+	Topology          *handler.TopologyHandler
+	Zone              *handler.ZoneHandler
+	Scheduling        *handler.SchedulingHandler
+	Audit             *handler.AuditHandler
+	Alert             *handler.AlertHandler
+	AlertEvent        *handler.AlertEventHandler
+	Metric            *handler.MetricHandler
+	System            *handler.SystemHandler
+	Observability     *handler.ObservabilityHandler
+	CommandObserve    *handler.CommandObserveHandler
+	Update            *handler.UpdateHandler
+	Auth              *handler.AuthHandler
+	APIKey            *handler.APIKeyHandler
+	Command           *handler.CommandHandler
+	Browse            *handler.BrowseHandler
+	FileSync          *handler.FileSyncHandler
+	AgentLog          *handler.AgentLogHandler
+	ReverseFetchTask  *handler.ReverseFetchTaskHandler
+	ReverseFetchRule  *handler.ReverseFetchIgnoreRuleHandler
+	Settings          *handler.SettingsHandler
+	ReversibleOp      *handler.ReversibleOperationHandler
+	Metrics           http.Handler // 运维指标端点 /metrics（Prometheus 文本，内网信任、不挂鉴权，见 ADR-0020）
+	Web               http.Handler
 }
 
 // NewRouter 装配 HTTP 路由：agent API（挂 token）+ admin API（登录除外挂鉴权 + 只读拒写 + 写审计兜底）+ 内嵌前端（SPA 回退）。
@@ -196,10 +197,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.Get("/sched-decisions/{traceId}", h.SchedDecision.Detail)
 			}
 
-			// [P5b-A 锚点] 连接明细 / 消息元数据 / payload 查看管理面查询端点在此新增（spec §5.2）：
-			// GET /connections + /connections/{connId} + /connections/stats；GET /messages + /messages/{messageId}
-			// + /messages/stats；POST /messages/{messageId}/payload（权限 message.payload.view + 原因 + 先审计后返回）。
-			// 查询防护：无精确 ID 须带 serverId/playerUuid + 时间范围 ≤168h、游标分页、禁全量扫描。
+			// 连接明细管理面查询端点（FR-145，见 spec §5.2）：connId 直查或条件游标分页 / 单条详情 / 时间桶聚合。
+			// 静态 stats 置于 {connId} 前（chi 静态路由本就优先，此处仅为可读性）。查询防护见 §4.3。
+			if h.V2ConnectionAdmin != nil {
+				r.Get("/connections", h.V2ConnectionAdmin.List)
+				r.Get("/connections/stats", h.V2ConnectionAdmin.Stats)
+				r.Get("/connections/{connId}", h.V2ConnectionAdmin.Detail)
+			}
 		})
 	}
 
