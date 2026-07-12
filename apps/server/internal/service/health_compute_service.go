@@ -37,6 +37,12 @@ type healthSnapshotEnqueuer interface {
 	Enqueue(rows []model.HealthSnapshot) bool
 }
 
+// activeAlertCounter 是计算轮对「当前活跃告警计数」的窄依赖（由 AlertEventService 实现，测试可替身，FR-157）。
+// 每轮开始一次性批量取全量 open 计数 map，按 (namespace, serverId) 注入 activeAlerts 因子——禁逐实例查库。
+type activeAlertCounter interface {
+	ActiveCounts() (map[AlertActiveKey]int, error)
+}
+
 // HealthSnapshotEnqueuer 把泛化异步日表写入通道绑定到 health_snapshot 路由（装配用）。
 type HealthSnapshotEnqueuer struct {
 	// Writer 泛化异步日表写入通道（须已注册 RouteKindHealthSnapshot 路由）。
@@ -57,15 +63,16 @@ type HealthComputeService struct {
 	views    *healthview.Store
 	weights  *HealthWeightsService
 	snapshot healthSnapshotEnqueuer
+	alerts   activeAlertCounter
 	now      func() time.Time
 	rounds   int
 }
 
-// NewHealthComputeService 构造健康计算轮。
+// NewHealthComputeService 构造健康计算轮。alerts 供每轮批量取活跃告警数注入 activeAlerts 因子（FR-157）。
 func NewHealthComputeService(facts healthFactsSource, window *metricwindow.Store, views *healthview.Store,
-	weights *HealthWeightsService, snapshot healthSnapshotEnqueuer) *HealthComputeService {
+	weights *HealthWeightsService, snapshot healthSnapshotEnqueuer, alerts activeAlertCounter) *HealthComputeService {
 	return &HealthComputeService{
-		facts: facts, window: window, views: views, weights: weights, snapshot: snapshot,
+		facts: facts, window: window, views: views, weights: weights, snapshot: snapshot, alerts: alerts,
 		now: func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -97,11 +104,15 @@ func (s *HealthComputeService) runRound() {
 	nowMs := s.now().UnixMilli()
 	weights := s.weights.Current()
 	prev := s.prevViewIndex()
+	// 轮次开始一次性批量取全量 open 告警计数（禁逐实例查库，FR-157 / 规则 §17）；
+	// 取数失败按 0 处理（activeAlerts 因子满分），瞬时故障不清空 / 不误伤健康视图（fail-static 精神）。
+	activeAlerts := s.activeAlertCounts()
 	views := make([]healthview.View, 0, len(facts))
 	for i := range facts {
 		fact := facts[i]
 		samples := s.window.List(fact.NamespaceID, fact.ServerID)
-		views = append(views, computeInstanceView(fact, samples, prev[viewKey{fact.NamespaceID, fact.ServerID}], nowMs, weights))
+		active := activeAlerts[AlertActiveKey{Namespace: fact.Namespace, ServerID: fact.ServerID}]
+		views = append(views, computeInstanceView(fact, samples, prev[viewKey{fact.NamespaceID, fact.ServerID}], active, nowMs, weights))
 	}
 	s.views.ReplaceAll(views)
 
@@ -114,6 +125,16 @@ func (s *HealthComputeService) runRound() {
 		// 队列满丢弃本轮快照（内存视图仍最新）；WARN 让丢失可见（错误不静默，ADR-0057）。
 		slog.Warn("健康快照写入队列已满，丢弃本轮快照", "行数", len(rows))
 	}
+}
+
+// activeAlertCounts 取本轮全量活跃告警计数 map；取数失败记 WARN 并返回空 map（不阻断计算轮，FR-157）。
+func (s *HealthComputeService) activeAlertCounts() map[AlertActiveKey]int {
+	counts, err := s.alerts.ActiveCounts()
+	if err != nil {
+		slog.Warn("健康计算轮读取活跃告警数失败，本轮 activeAlerts 按 0 计", "错误", err)
+		return map[AlertActiveKey]int{}
+	}
+	return counts
 }
 
 // viewKey 按 (namespace, server) 定位上一轮视图。
@@ -138,11 +159,13 @@ func (s *HealthComputeService) prevViewIndex() map[viewKey]*healthview.View {
 //     reasons 含 lost、不输出因子；
 //   - 窗口完全无数据（如控制面重启后内存窗口清空）→ 上一轮视图距今 ≤30s 且非 lost 则沿用
 //     其分数 / 因子（仅按当前事实重判 schedulable），超 30s 同判 lost。
+//
+// activeAlerts 为该实例当前活跃告警数，仅正常计算路径注入 alert 因子（lost / 沿用路径不涉，FR-157）。
 func computeInstanceView(fact repository.HealthFact, samples []metricwindow.Sample,
-	prev *healthview.View, nowMs int64, weights HealthWeightsSnapshot) healthview.View {
+	prev *healthview.View, activeAlerts int, nowMs int64, weights HealthWeightsSnapshot) healthview.View {
 	lastSeen := lastReceivedMs(samples)
 	if lastSeen > 0 && nowMs-lastSeen <= healthLostAfterMs {
-		return freshView(fact, recentSamples(samples, nowMs), nowMs, weights)
+		return freshView(fact, recentSamples(samples, nowMs), activeAlerts, nowMs, weights)
 	}
 	if lastSeen == 0 && prev != nil && nowMs-prev.ComputedAtMs <= healthLostAfterMs &&
 		!containsReason(prev.Reasons, healthview.ReasonLost) {
@@ -174,9 +197,10 @@ func recentSamples(samples []metricwindow.Sample, nowMs int64) []metricwindow.Sa
 	return out
 }
 
-// freshView 用窗口聚合输入完成正常计算路径。
-func freshView(fact repository.HealthFact, fresh []metricwindow.Sample, nowMs int64, weights HealthWeightsSnapshot) healthview.View {
+// freshView 用窗口聚合输入完成正常计算路径；activeAlerts 为该实例当前活跃告警数，注入 alert 因子（FR-157）。
+func freshView(fact repository.HealthFact, fresh []metricwindow.Sample, activeAlerts int, nowMs int64, weights HealthWeightsSnapshot) healthview.View {
 	in, online, maxOnline := aggregateFactorInputs(fact.Kind, fresh)
+	in.ActiveAlerts = activeAlerts
 	factors := ComputeHealthFactors(in, weights.Config)
 	score := HealthScore(factors)
 	level := HealthLevelOf(score, weights.Config.Levels)

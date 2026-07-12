@@ -100,6 +100,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/system/update/cancel": {},
 	// 控制面手动回滚（FR-120：更新核心自记 system.update-rollback 专项审计，detail 记请求回退）
 	"POST /admin/v1/system/rollback": {},
+	// 告警事件处理（FR-157：alert-event.acknowledge / resolve，service 在事务内自记专项审计，detail 记状态 + 处置说明）
+	"POST /admin/v1/alert-events/{id}/handle": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

@@ -145,7 +145,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Scheduling:       handler.NewSchedulingHandler(schedSvc),
 		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo)),
 		Alert:            handler.NewAlertHandler(testAlertInbox),
-		AlertEvent:       handler.NewAlertEventHandler(service.NewAlertEventService(repository.NewAlertEventRepository(db))),
+		AlertEvent:       handler.NewAlertEventHandler(service.NewAlertEventService(db, repository.NewAlertEventRepository(db), auditRepo)),
 		Metric:           handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),

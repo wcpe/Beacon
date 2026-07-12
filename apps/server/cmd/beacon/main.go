@@ -183,7 +183,7 @@ func run() error {
 	ttl := time.Duration(settingsService.GetInt(service.SettingHealthTTLSec)) * time.Second
 
 	// 告警事件留痕（FR-89，ADR-0041）：把每条告警额外落 alert_event 供管理台「事件」页历史信息流。
-	alertEventService := service.NewAlertEventService(repository.NewAlertEventRepository(db))
+	alertEventService := service.NewAlertEventService(db, repository.NewAlertEventRepository(db), auditRepo)
 	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 通道恒挂载、靠设置 store 的 url 空与否动态启停（FR-61）；
 	// persist 通道把告警额外留痕（FR-89，落库失败仅 WARN、不阻断扫描，见 Dispatcher 兜错）。
 	inbox := alert.NewInboxAlerter(cfg.Alert.InboxCapacity)
@@ -341,7 +341,8 @@ func run() error {
 	healthSnapshotRepo := repository.NewHealthSnapshotRepository(db)
 	service.RegisterFlusher(asyncDailyWriter, service.RouteKindHealthSnapshot, healthSnapshotRepo.FlushDaily)
 	healthComputeService := service.NewHealthComputeService(repository.NewHealthFactsRepository(db),
-		metricWindow, healthViewStore, healthWeightsService, service.HealthSnapshotEnqueuer{Writer: asyncDailyWriter})
+		metricWindow, healthViewStore, healthWeightsService, service.HealthSnapshotEnqueuer{Writer: asyncDailyWriter},
+		alertEventService)
 	// 管理面只读查询（§5.2）：实时走内存视图 + 60s 窗口，回放走快照 / 指标日表（缺表跳过、禁隐式建表）。
 	healthQueryService := service.NewHealthQueryService(healthViewStore, metricWindow, healthSnapshotRepo, metricSampleV2Repo)
 	v2HealthHandler := handler.NewV2HealthHandler(healthQueryService, healthWeightsService)

@@ -87,6 +87,42 @@ func TestAlertEventListFilters(t *testing.T) {
 	}
 }
 
+// TestAlertEventActiveCounts ActiveCounts 按 (namespace, serverId) 只聚合 open（GROUP BY 可移植，FR-157）。
+func TestAlertEventActiveCounts(t *testing.T) {
+	r := newAlertEventTestDB(t)
+	mk := func(ns, serverID, status string) {
+		if err := r.Create(&model.AlertEvent{
+			Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
+			Namespace: ns, ServerID: serverID, Message: "m", Status: status,
+		}); err != nil {
+			t.Fatalf("落库失败: %v", err)
+		}
+	}
+	mk("prod", "s1", model.AlertEventStatusOpen)
+	mk("prod", "s1", model.AlertEventStatusOpen)
+	mk("prod", "s1", model.AlertEventStatusResolved)     // 不计
+	mk("prod", "s2", model.AlertEventStatusAcknowledged) // 不计
+	mk("dev", "s3", model.AlertEventStatusOpen)
+
+	rows, err := r.ActiveCounts()
+	if err != nil {
+		t.Fatalf("ActiveCounts 失败: %v", err)
+	}
+	got := make(map[string]int, len(rows))
+	for _, row := range rows {
+		got[row.Namespace+"/"+row.ServerID] = row.Count
+	}
+	if got["prod/s1"] != 2 {
+		t.Fatalf("prod/s1 应 2 条 open，实际 %d", got["prod/s1"])
+	}
+	if _, ok := got["prod/s2"]; ok {
+		t.Fatalf("prod/s2 无 open，不应出现")
+	}
+	if got["dev/s3"] != 1 {
+		t.Fatalf("dev/s3 应 1 条 open，实际 %d", got["dev/s3"])
+	}
+}
+
 // TestAlertEventListPagination 分页：每页 1 条、共 3 条 → 第 2 页取中间一条。
 func TestAlertEventListPagination(t *testing.T) {
 	r := newAlertEventTestDB(t)

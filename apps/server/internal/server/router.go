@@ -341,8 +341,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/alerts", h.Alert.List)
 		// 告警历史 / 事件信息流（FR-89，见 ADR-0041）：持久化的告警事件按类型/级别/环境/时间过滤分页查询
 		r.Get("/alert-events", h.AlertEvent.List)
-		// [P5b-B 锚点] 告警事件处理工作流在此新增（FR-157，见 ADR-0064）：POST /alert-events/{id}/handle
-		// （action=acknowledge|resolve + handleNote，写审计；status/handledBy/handledAt/handleNote 补入 List 响应）。
+		// 告警事件处理工作流（FR-157，见 ADR-0064）：确认 / 标记已处理（写方法，readonly 经 readonlyWriteGuard 403）；
+		// service 内在事务中更新 status/handledBy/handledAt/handleNote 并写专项审计（含操作者 / 事件 id / 动作 / 原因）。
+		r.Post("/alert-events/{id}/handle", h.AlertEvent.Handle)
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)

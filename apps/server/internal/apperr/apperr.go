@@ -223,4 +223,8 @@ var (
 	ErrMessageNotFound = New(http.StatusNotFound, "message_not_found", "消息不存在")
 	// ErrPayloadReasonRequired 查看 payload 未填原因或原因超长（≤255 字，FR-150，spec §4.4；code 对齐 devmock）。
 	ErrPayloadReasonRequired = New(http.StatusBadRequest, "missing_reason", "查看 payload 必须填写原因（≤255 字）")
+	// ErrAlertEventNotFound 告警事件不存在（处理目标缺失，FR-157，见 ADR-0064）。
+	ErrAlertEventNotFound = New(http.StatusNotFound, "ALERT_EVENT_NOT_FOUND", "告警事件不存在")
+	// ErrAlertActionInvalid 告警处理动作不合法（仅允许 acknowledge / resolve，FR-157）。
+	ErrAlertActionInvalid = New(http.StatusBadRequest, "ALERT_ACTION_INVALID", "告警处理动作不合法")
 )

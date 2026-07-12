@@ -29,9 +29,49 @@ func NewAlertEventRepository(db *gorm.DB) *AlertEventRepository {
 	return &AlertEventRepository{db: db}
 }
 
+// WithTx 返回绑定到事务的仓库副本（供处理工作流在事务内与审计原子落库，FR-157）。
+func (r *AlertEventRepository) WithTx(tx *gorm.DB) *AlertEventRepository {
+	return &AlertEventRepository{db: tx}
+}
+
 // Create 追加一条告警事件。
 func (r *AlertEventRepository) Create(e *model.AlertEvent) error {
 	return r.db.Create(e).Error
+}
+
+// Get 按主键取单条告警事件；不存在返回 gorm.ErrRecordNotFound，由 service 转领域错误。
+func (r *AlertEventRepository) Get(id uint) (*model.AlertEvent, error) {
+	var e model.AlertEvent
+	if err := r.db.First(&e, id).Error; err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// Save 覆盖保存一条告警事件（处理工作流更新 status / handled_* 用）。
+func (r *AlertEventRepository) Save(e *model.AlertEvent) error {
+	return r.db.Save(e).Error
+}
+
+// AlertActiveCount 是按实例聚合的活跃（open）告警计数行（FR-157，健康 activeAlerts 因子输入）。
+type AlertActiveCount struct {
+	Namespace string
+	ServerID  string
+	Count     int
+}
+
+// ActiveCounts 一次性批量统计各实例当前 open 告警数（namespace + serverId → 计数）。
+// 单条分组查询（标准 GROUP BY，无方言函数），供健康计算轮每轮取一次——严禁逐实例循环查库。
+func (r *AlertEventRepository) ActiveCounts() ([]AlertActiveCount, error) {
+	var rows []AlertActiveCount
+	if err := r.db.Model(&model.AlertEvent{}).
+		Select("namespace, server_id, COUNT(*) AS count").
+		Where("status = ?", model.AlertEventStatusOpen).
+		Group("namespace, server_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // applyAlertEventFilter 把过滤条件叠加到查询上（仅占位符 + 标准 SQL，不依赖方言函数，保 Postgres 可移植）。
