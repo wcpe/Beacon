@@ -33,7 +33,7 @@ export default function AuditDetailPanel({ item }: AuditDetailPanelProps) {
       </div>
       <Link
         className="inline-flex w-fit items-center gap-0.5 text-xs text-brand-600 hover:underline"
-        to={`/commands?serverId=${item.targetRef}`}
+        to={`/commands?serverId=${encodeURIComponent(item.targetRef)}`}
       >
         {t('observability.audits.viewInCommands')}
         <ArrowUpRight className="size-3" />

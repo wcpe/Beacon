@@ -79,4 +79,25 @@ describe('/commands 命令观测页', () => {
     expect(screen.getByText('生命周期')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
+
+  it('URL 查询参数初始化筛选：serverId 落进搜索框并驱动服务端过滤（互跳承接，FR-157）', async () => {
+    useScenario('normal')
+    renderPage(<CommandsPage />, ['/commands?serverId=srv-none&status=failed'])
+
+    // serverId 搜索框以 URL 参数为初值
+    expect(await screen.findByLabelText('搜索 serverId')).toHaveValue('srv-none')
+    // 不存在的 serverId → 服务端过滤后历史列表为空
+    expect(await screen.findByText('当前筛选条件下无命令记录')).toBeInTheDocument()
+  })
+
+  it('URL status=failed 免交互直达失败命令列表（FR-157）', async () => {
+    useScenario('normal')
+    renderPage(<CommandsPage />, ['/commands?status=failed'])
+
+    await screen.findByText('命令历史')
+    // 无需任何 UI 交互，历史列表即为失败命令（devmock failed 行 resultDetail）
+    await waitFor(() => {
+      expect(screen.getAllByText('执行失败：agent 回执超时').length).toBeGreaterThan(0)
+    })
+  })
 })

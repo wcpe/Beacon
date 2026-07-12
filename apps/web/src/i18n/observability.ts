@@ -125,6 +125,7 @@ export const observability = {
     filterOperator: '操作人',
     filterAction: '动作',
     filterTargetType: '目标类型',
+    filterTargetRef: '目标（targetRef）',
     filterKeyword: '详情关键词',
     exportCsv: '导出 CSV',
     exportJson: '导出 JSON',

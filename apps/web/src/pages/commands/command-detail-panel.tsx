@@ -64,7 +64,7 @@ export default function CommandDetailPanel({ item }: CommandDetailPanelProps) {
 
       <Link
         className="inline-flex w-fit items-center gap-0.5 text-xs text-brand-600 hover:underline"
-        to={`/audits?targetRef=${item.serverId}`}
+        to={`/audits?targetRef=${encodeURIComponent(item.serverId)}`}
       >
         {t('observability.commands.viewInAudits')}
         <ArrowUpRight className="size-3" />

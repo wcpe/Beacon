@@ -1,9 +1,13 @@
-// 审计列表（主列）：吸顶工具条（关键词 + 操作人 / 动作 / 目标类型筛选 + 导出）+ 自区滚动列表 + 吸底分页。
+// 审计列表（主列）：吸顶工具条（关键词 / 目标 + 操作人 / 动作 / 目标类型筛选 + 导出）+ 自区滚动列表 + 吸底分页。
 // 行点击回调交父级用右侧非模态详情面板承载；选中行高亮。导出按钮在吸顶工具区始终可见。
+// 筛选初值消费 URL 查询参数（targetRef/action/operator/targetType），承接 /commands、/alert-events、
+// 连接消息查询面等页的互跳链接（FR-157，含 action=message.payload.view 定位 payload 查看审计）；
+// 页内变更筛选不回写 URL（最简策略）。
 
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import { Download, ListFilter } from 'lucide-react'
 
 import {
@@ -49,6 +53,21 @@ const TARGET_TYPES = [
   'setting',
 ] as const
 
+// 从 URL 查询参数取下拉筛选初值：非空即采纳（审计动作 / 目标类型随后端演进，未知值也按原样过滤），
+// 缺省回退「全部」。
+function initialParam(params: URLSearchParams, name: string): string {
+  const value = params.get(name)
+  return value !== null && value !== '' ? value : 'all'
+}
+
+// 下拉候选集：URL 带入的未知取值动态并入候选首位，保证触发器可回显当前筛选值
+function withCurrent(options: readonly string[], current: string): readonly string[] {
+  if (current === 'all' || options.includes(current)) {
+    return options
+  }
+  return [current, ...options]
+}
+
 interface AuditListProps {
   onView: (item: AuditItem) => void
   // 当前选中行 id（高亮用）
@@ -57,20 +76,24 @@ interface AuditListProps {
 
 export default function AuditList({ onView, selectedId }: AuditListProps) {
   const { t } = useTranslation()
-  const [operator, setOperator] = useState('all')
-  const [action, setAction] = useState('all')
-  const [targetType, setTargetType] = useState('all')
+  // 互跳承接：以 URL 查询参数为筛选初值（仅初始化，页内变更不回写 URL）
+  const [searchParams] = useSearchParams()
+  const [operator, setOperator] = useState(() => initialParam(searchParams, 'operator'))
+  const [action, setAction] = useState(() => initialParam(searchParams, 'action'))
+  const [targetType, setTargetType] = useState(() => initialParam(searchParams, 'targetType'))
+  const [targetRef, setTargetRef] = useState(() => searchParams.get('targetRef') ?? '')
   const [keyword, setKeyword] = useState('')
   const [page, setPage] = useState(1)
 
   const query = useQuery({
-    queryKey: ['audits', 'list', operator, action, targetType, keyword, page],
+    queryKey: ['audits', 'list', operator, action, targetType, targetRef, keyword, page],
     queryFn: () =>
       fetchAudits({
         operator: operator === 'all' ? undefined : operator,
         action: action === 'all' ? undefined : action,
-        // 目标类型为真后端原生查询参数（audit_handler.go List），走服务端过滤
+        // 目标类型 / 目标为真后端原生查询参数（audit_handler.go List），走服务端过滤
         targetType: targetType === 'all' ? undefined : targetType,
+        targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
         detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
         page,
         size: PAGE_SIZE,
@@ -147,10 +170,20 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           }}
           className="w-52"
         />
+        <Input
+          aria-label={t('observability.audits.filterTargetRef')}
+          placeholder={t('observability.audits.filterTargetRef')}
+          value={targetRef}
+          onChange={(e) => {
+            setTargetRef(e.target.value)
+            setPage(1)
+          }}
+          className="w-52"
+        />
         <FilterSelect
           label={t('observability.audits.filterOperator')}
           value={operator}
-          options={OPERATORS.map((v) => ({ value: v, label: v }))}
+          options={withCurrent(OPERATORS, operator).map((v) => ({ value: v, label: v }))}
           onChange={(value) => {
             setOperator(value)
             setPage(1)
@@ -159,7 +192,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         <FilterSelect
           label={t('observability.audits.filterAction')}
           value={action}
-          options={ACTIONS.map((v) => ({ value: v, label: v }))}
+          options={withCurrent(ACTIONS, action).map((v) => ({ value: v, label: v }))}
           onChange={(value) => {
             setAction(value)
             setPage(1)
@@ -168,7 +201,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         <FilterSelect
           label={t('observability.audits.filterTargetType')}
           value={targetType}
-          options={TARGET_TYPES.map((v) => ({ value: v, label: v }))}
+          options={withCurrent(TARGET_TYPES, targetType).map((v) => ({ value: v, label: v }))}
           onChange={(value) => {
             setTargetType(value)
             setPage(1)

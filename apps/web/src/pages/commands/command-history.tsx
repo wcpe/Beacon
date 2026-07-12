@@ -1,9 +1,12 @@
 // 命令历史（主列）：吸顶工具条（类型 / 状态过滤 + serverId 搜索）+ 自区滚动列表 + 吸底服务端分页。
 // 行点击交父级用右侧非模态详情面板承载（含双向生命周期与在审计中追溯，FR-157）；选中行高亮。
+// 筛选初值消费 URL 查询参数（serverId/type/status），承接 /audits 详情等页的互跳链接（FR-157）；
+// 页内变更筛选不回写 URL（最简策略）。
 
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import { History } from 'lucide-react'
 
 import {
@@ -25,6 +28,12 @@ const PAGE_SIZE = 15
 const COMMAND_TYPES = ['asset_rescan', 'asset_read', 'ingest-plugins', 'tail-logs', 'resync-config'] as const
 const COMMAND_STATUSES = ['pending', 'fetched', 'done', 'failed', 'expired'] as const
 
+// 从 URL 查询参数取筛选初值：值在候选集内才采纳，否则回退「全部」（防脏参数打乱下拉展示）
+function initialOption(params: URLSearchParams, name: string, options: readonly string[]): string {
+  const value = params.get(name)
+  return value !== null && options.includes(value) ? value : 'all'
+}
+
 // 命令状态 → 状态药丸语义色：done 正常绿、failed/expired 危急红、其余次要。
 function badgeVariant(status: CommandItem['status']): 'ok' | 'off' | 'crit' {
   if (status === 'failed' || status === 'expired') {
@@ -45,9 +54,11 @@ interface CommandHistoryProps {
 
 export default function CommandHistory({ onView, selectedId }: CommandHistoryProps) {
   const { t } = useTranslation()
-  const [keyword, setKeyword] = useState('')
-  const [type, setType] = useState('all')
-  const [status, setStatus] = useState('all')
+  // 互跳承接：以 URL 查询参数为筛选初值（仅初始化，页内变更不回写 URL）
+  const [searchParams] = useSearchParams()
+  const [keyword, setKeyword] = useState(() => searchParams.get('serverId') ?? '')
+  const [type, setType] = useState(() => initialOption(searchParams, 'type', COMMAND_TYPES))
+  const [status, setStatus] = useState(() => initialOption(searchParams, 'status', COMMAND_STATUSES))
   const [page, setPage] = useState(1)
 
   const query = useQuery({

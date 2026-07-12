@@ -128,7 +128,7 @@ export default function AlertDetailPanel({ item, pending, errorText, onHandle }:
       <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3 text-xs">
         <Link
           className="inline-flex items-center gap-0.5 text-brand-600 hover:underline"
-          to={`/audits?targetRef=${item.serverId}`}
+          to={`/audits?targetRef=${encodeURIComponent(item.serverId)}`}
         >
           {t('observability.alertEvents.viewInAudits')}
           <ArrowUpRight className="size-3" />

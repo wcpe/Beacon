@@ -22,14 +22,17 @@ export function useScenario(scenario: MockScenario): void {
   resetMockData()
 }
 
-/** 在 Provider 树内渲染页面（retry:false 让错误态立即可断言） */
-export function renderPage(ui: ReactElement): RenderResult {
+/**
+ * 在 Provider 树内渲染页面（retry:false 让错误态立即可断言）。
+ * initialEntries 可指定初始路由（含查询参数），供互跳 URL query 初始化用例断言（FR-157）。
+ */
+export function renderPage(ui: ReactElement, initialEntries?: string[]): RenderResult {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
     </QueryClientProvider>,
   )
 }
