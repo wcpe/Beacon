@@ -195,6 +195,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.Get("/sched-decisions/summary", h.SchedDecision.Summary)
 				r.Get("/sched-decisions/{traceId}", h.SchedDecision.Detail)
 			}
+
+			// [P5b-A 锚点] 连接明细 / 消息元数据 / payload 查看管理面查询端点在此新增（spec §5.2）：
+			// GET /connections + /connections/{connId} + /connections/stats；GET /messages + /messages/{messageId}
+			// + /messages/stats；POST /messages/{messageId}/payload（权限 message.payload.view + 原因 + 先审计后返回）。
+			// 查询防护：无精确 ID 须带 serverId/playerUuid + 时间范围 ≤168h、游标分页、禁全量扫描。
 		})
 	}
 
@@ -320,6 +325,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/alerts", h.Alert.List)
 		// 告警历史 / 事件信息流（FR-89，见 ADR-0041）：持久化的告警事件按类型/级别/环境/时间过滤分页查询
 		r.Get("/alert-events", h.AlertEvent.List)
+		// [P5b-B 锚点] 告警事件处理工作流在此新增（FR-157，见 ADR-0064）：POST /alert-events/{id}/handle
+		// （action=acknowledge|resolve + handleNote，写审计；status/handledBy/handledAt/handleNote 补入 List 响应）。
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)
