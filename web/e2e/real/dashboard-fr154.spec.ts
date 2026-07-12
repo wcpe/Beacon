@@ -1,7 +1,8 @@
 // FR-154（本期部分：健康与调度概览、服务分析接真）真后端 E2E：
 // /dashboard 五卡打真端点渲染（各卡真数据或优雅空态、全页无「加载失败」）、
-// FlowOverview 对后端尚未提供的连接流端点显中性占位不报错；/service-analysis 可达 + 空态；
-// 并以 page.request 携带 Bearer 令牌直打 /admin/v2 端点交叉校验契约形状（camelCase 对齐 contracts）。
+// FlowOverview 打真连接流端点（/admin/v2/connections/stats 已交付）渲染空态或数据；
+// /service-analysis 可达 + 空态；并以 page.request 携带 Bearer 令牌直打 /admin/v2 端点
+// 交叉校验契约形状（camelCase 对齐 contracts）。
 //
 // 注意：真后端为 sqlite 单实例、用例间共享库（含其他 spec 的 seed 数据），故页面断言用
 // 「空态文案 或 真数据元素」二选一的稳健形式，不假定库一定为空。
@@ -33,18 +34,17 @@ test('运维总览：健康 / 状态墙 / 调度概览打真端点渲染，真�
   await loginRealAdmin(page)
   await expect(page.getByRole('heading', { name: '运维总览', exact: true })).toBeVisible()
 
-  // 五卡区块标题齐备（卡骨架渲染，未白屏）
-  await expect(page.getByText('集群健康总览')).toBeVisible()
+  // 五卡区块标题齐备（卡骨架渲染，未白屏）；健康卡空态文案含标题子串，须精确匹配标题
+  await expect(page.getByText('集群健康总览', { exact: true })).toBeVisible()
   await expect(page.getByText('服务器状态墙')).toBeVisible()
   await expect(page.getByText('玩家流 / 连接流')).toBeVisible()
   await expect(page.getByText('告警概览')).toBeVisible()
   await expect(page.getByText('调度概览')).toBeVisible()
 
-  // FlowOverview：连接流端点真后端尚未提供 → 中性占位而非误导性错误
-  //（请求层默认重试 3 次后才落错分支，放宽等待时间）
-  await expect(page.getByText('连接流数据暂未开放（随后续版本提供）')).toBeVisible({
-    timeout: 20_000,
-  })
+  // FlowOverview：连接流端点已交付 → 空态文案 或 图例（库里有无连接数据均可）
+  await expect(
+    page.getByText('当前时间窗内无连接活动').or(page.getByText('在线连接')).first(),
+  ).toBeVisible()
 
   // 健康总览：空态引导 或 KPI 卡行（库里有无服务器均可）
   await expect(
@@ -141,16 +141,9 @@ test('契约交叉校验：metrics/health/sched 管理端点响应形状对齐 c
   expect(typeof field(alerts, 'total')).toBe('number')
   expect(Array.isArray(field(alerts, 'items'))).toBeTruthy()
 
-  // /admin/v2/connections/stats：后端尚未提供（SPA 回退返回 HTML）→ FlowOverview 占位的前提。
-  // 该端点交付后本断言应随 FlowOverview 接真一并更新。
-  const connStats = await page.request.get('/admin/v2/connections/stats', {
-    headers: authHeader(token),
-  })
-  const contentType = connStats.headers()['content-type'] ?? ''
-  expect(
-    connStats.status() === 404 || contentType.includes('text/html'),
-    `connections/stats 应为未提供（404 或 SPA HTML），实际 HTTP ${String(connStats.status())} ${contentType}`,
-  ).toBeTruthy()
+  // /admin/v2/connections/stats：端点已交付 → {buckets: []}（形状细节由 topology-fr156 spec 覆盖）
+  const connStats = await apiGetJson(page, token, '/admin/v2/connections/stats')
+  expect(Array.isArray(field(connStats, 'buckets'))).toBeTruthy()
 })
 
 test('服务分析：页面可达、选择列渲染真数据或空态、无加载失败', async ({ page }) => {
