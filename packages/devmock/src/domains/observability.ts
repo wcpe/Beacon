@@ -1,6 +1,7 @@
 // 可观测域 mock：审计（/audits）、命令观测（/commands）、告警事件（/alert-events）三页数据源。
-// 第二版契约草案未覆盖这三页的端点，沿用 docs/API.md Legacy /admin/v1 契约形状
-//（分页参数 page/size、响应 total+items，与 v2 的 page/pageSize 不同——已在汇报列明）。
+// 契约形状与查询参数逐项对齐真后端 /admin/v1 handler
+//（apps/server/internal/handler/{command_observe,audit,alert_event}_handler.go 为权威）：
+// 分页参数 page/size、响应 total+items（与 v2 的 page/pageSize 不同——已在汇报列明）。
 
 import { HttpResponse, type HttpHandler } from 'msw'
 import type {
@@ -189,7 +190,7 @@ export const observabilityHandlers: HttpHandler[] = [
     const namespace = queryStr(url, 'namespace')
     const operator = queryStr(url, 'operator')
     const action = queryStr(url, 'action')
-    const actionPrefix = queryStr(url, 'actionPrefix')
+    const targetType = queryStr(url, 'targetType')
     const targetRef = queryStr(url, 'targetRef')
     const detailKeyword = queryStr(url, 'detailKeyword')
     const fromMs = queryTimeMs(url, 'from')
@@ -204,7 +205,7 @@ export const observabilityHandlers: HttpHandler[] = [
       if (action !== null && row.action !== action) {
         return false
       }
-      if (actionPrefix !== null && !row.action.startsWith(actionPrefix)) {
+      if (targetType !== null && row.targetType !== targetType) {
         return false
       }
       if (targetRef !== null && row.targetRef !== targetRef) {
@@ -311,7 +312,8 @@ export const observabilityHandlers: HttpHandler[] = [
     return HttpResponse.json({ items, total })
   }),
 
-  // 处理告警事件（确认 / 处理写闭环）：更新状态 + 处理人 / 时间 / 备注，返回更新后的行
+  // 处理告警事件（确认 / 处理写闭环）：更新状态 + 处理人 / 时间 / 备注，返回更新后的行。
+  // 对齐真后端行为（alert_event_handler.go Handle）：备注非必填（必填约束在前端面板），空备注落 null。
   mockPost('/admin/v1/alert-events/:id/handle', async (info) => {
     const id = Number.parseInt(pathParam(info, 'id'), 10)
     const row = getObservabilityState().alertEvents.find((r) => r.id === id)
@@ -323,13 +325,11 @@ export const observabilityHandlers: HttpHandler[] = [
     if (status !== 'acknowledged' && status !== 'resolved') {
       return jsonError(400, 'INVALID_PARAM', 'status 仅支持 acknowledged / resolved')
     }
-    if (status === 'resolved' && (!body.note || body.note.trim() === '')) {
-      return jsonError(400, 'MISSING_REASON', '标记已处理必须填写处理备注')
-    }
+    const note = body.note?.trim() ?? ''
     row.status = status
     row.handledBy = 'admin'
     row.handledAt = new Date(BASE_MS).toISOString()
-    row.handleNote = body.note?.trim() ?? null
+    row.handleNote = note === '' ? null : note
     return HttpResponse.json(row)
   }),
 ]

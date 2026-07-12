@@ -1,4 +1,5 @@
-// 可观测域数据获取（/commands /audits /alert-events）：走 mock Legacy /admin/v1 端点（page/size 分页）。
+// 可观测域数据获取（/commands /audits /alert-events）：真后端 /admin/v1 端点（page/size 分页，响应 total+items）。
+// 查询参数与响应形状以 apps/server/internal/handler/{command_observe,audit,alert_event}_handler.go 为权威。
 // 读端点用于 useQuery，写端点（告警处理）用于 useMutation；错误按脱敏 message 抛出（ADR-0057）。
 
 import type {
@@ -38,7 +39,7 @@ export interface AuditQuery {
   namespace?: string
   operator?: string
   action?: string
-  actionPrefix?: string
+  targetType?: string
   targetRef?: string
   detailKeyword?: string
   from?: string

@@ -69,6 +69,8 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       fetchAudits({
         operator: operator === 'all' ? undefined : operator,
         action: action === 'all' ? undefined : action,
+        // 目标类型为真后端原生查询参数（audit_handler.go List），走服务端过滤
+        targetType: targetType === 'all' ? undefined : targetType,
         detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
         page,
         size: PAGE_SIZE,
@@ -76,14 +78,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
     placeholderData: keepPreviousData,
   })
 
-  // 目标类型无独立后端参数，改用 action 归类做客户端二次过滤（不破坏服务端分页 total 展示）
-  const rows = useMemo(() => {
-    const items = query.data?.items ?? []
-    if (targetType === 'all') {
-      return items
-    }
-    return items.filter((row) => row.targetType === targetType)
-  }, [query.data, targetType])
+  const rows = query.data?.items ?? []
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
