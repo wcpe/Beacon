@@ -24,6 +24,11 @@ dependencies {
     // BungeeCord 平台 API（net.md_5.bungee.*）：FR-4 目录探针需读 ProxyServer 服务器目录与命令注册状态；
     // TabooLib install(platform-bungee) 未把它加到编译类路径，显式 compileOnly 引入（运行期由代理提供）。
     compileOnly("net.md-5:bungeecord-api:1.20-R0.2@jar")
+    // FR-145 连接采集探针需引用 agent 已装配的真采集入口 BungeeConnectionListener（agent-bungee）与
+    // ProxyConnectionTracker（agent-core），直接喂构造事件走真上报路径。仅编译期依赖：运行期这两模块的类
+    // 由同进程 BeaconAgentProxy（shadowed 打入）提供，与 agent-api 同款跨插件类共享，不打进本探针 jar。
+    compileOnly(project(":agent-bungee"))
+    compileOnly(project(":agent-core"))
 }
 
 taboolib {
@@ -68,6 +73,8 @@ val bootstrapToken = (project.findProperty("e2eBootstrapToken") as String?) ?: "
 val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bungee-1"
 // 环境（须与控制面 namespace 一致）；经 -Pe2eNamespace 覆盖。
 val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
+// FR-145 连接采集探针开关（经 -Pe2eConnInject 打开）：注入 BEACON_E2E_CONNINJECT 使探针驱动真采集入口。
+val e2eConnInject = project.hasProperty("e2eConnInject")
 // TabooLib 6.2.3 的 repo-reflex 默认指向已下线的 sacredcraft.cn:8081，统一改指可达仓库；经 -Pe2eTabooRepo 覆盖。
 val tabooRepo = (project.findProperty("e2eTabooRepo") as String?) ?: "https://repo.tabooproject.org/repository/releases"
 // 本模块版本（jar 名用，源自仓库根 VERSION）。
@@ -105,6 +112,10 @@ val runBungee by tasks.registering(RunWaterfall::class) {
     environment("BEACON_AGENT_IDENTITY_NAMESPACE", namespace)
     environment("BEACON_AGENT_IDENTITY_SERVER_ID", serverId)
     environment("BEACON_AGENT_IDENTITY_ADDRESS", "127.0.0.1:25577")
+    // FR-145 连接采集探针（-Pe2eConnInject 时）：点亮 ConnectionInjectE2EProbe 驱动真采集入口喂 open/close。
+    if (e2eConnInject) {
+        environment("BEACON_E2E_CONNINJECT", "1")
+    }
 
     // 启动前置：写 TabooLib 仓库覆盖 env.properties（代理无需 EULA；agent 配置改由上面的环境变量注入）。
     doFirst {

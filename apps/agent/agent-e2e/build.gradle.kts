@@ -78,6 +78,8 @@ val serverId = (project.findProperty("e2eServerId") as String?) ?: "e2e-bukkit-1
 val namespace = (project.findProperty("e2eNamespace") as String?) ?: "prod"
 // FR-148 调度探针目标小区名（经 -Pe2eSchedZone 注入 BEACON_E2E_SCHED_ZONE）；空则不启用调度探针。
 val schedZone = (project.findProperty("e2eSchedZone") as String?) ?: ""
+// FR-149 跨服消息探针开关（经 -Pe2eMessaging 打开）：注入 messaging.enabled=true 使消息模块启动 + 启用消息探针。
+val e2eMessaging = project.hasProperty("e2eMessaging")
 // TabooLib 6.2.3 的 repo-reflex 默认指向已下线的 sacredcraft.cn:8081，统一改指可达仓库；经 -Pe2eTabooRepo 覆盖。
 val tabooRepo = (project.findProperty("e2eTabooRepo") as String?) ?: "https://repo.tabooproject.org/repository/releases"
 // -Pe2eDebug 打开 TabooLib 调试输出，排查插件生命周期问题。
@@ -134,6 +136,11 @@ tasks.named<RunServer>("runServer") {
     // FR-148 调度探针目标小区（非空才注入）：BeaconE2E 的 SchedulingE2EProbe 据此周期取候选。
     if (schedZone.isNotEmpty()) {
         environment("BEACON_E2E_SCHED_ZONE", schedZone)
+    }
+    // FR-149 跨服消息（-Pe2eMessaging 时）：打开 agent 消息模块（默认关，ADR-0016 决策 6）+ 点亮消息探针。
+    if (e2eMessaging) {
+        environment("BEACON_AGENT_MESSAGING_ENABLED", "true")
+        environment("BEACON_E2E_MESSAGING", "1")
     }
 
     // 启动前置：写 Paper EULA 与 TabooLib 仓库覆盖 env.properties（agent 配置改由上面的环境变量注入）。

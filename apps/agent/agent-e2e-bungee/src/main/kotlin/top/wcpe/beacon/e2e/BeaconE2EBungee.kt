@@ -53,6 +53,9 @@ object BeaconE2EBungee : Plugin() {
         // 不再各自作为 TabooLib Plugin，避免「一插件多 Plugin 实例」致 PlatformFactory 注入抛
         // IllegalStateException「Plugin instance already set」、整个插件加载失败）。
         DirectoryE2EProbe.start()
+
+        // 启动 FR-145 连接采集探针（直接驱动 agent 真采集入口喂 open/close，观测 wire 与落库；由 BEACON_E2E_CONNINJECT 门控）。
+        ConnectionInjectE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)

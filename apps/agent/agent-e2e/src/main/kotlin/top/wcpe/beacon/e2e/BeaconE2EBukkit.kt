@@ -70,6 +70,9 @@ object BeaconE2EBukkit : Plugin() {
 
         // 启动 FR-148 调度门面探针（周期经只读 API 取候选，观测正常 / 杀控制面降级 / 恢复，写各自标记文件）。
         SchedulingE2EProbe.start()
+
+        // 启动 FR-149 跨服消息探针（经门面走 send/call/on 真收发，观测 wire 与落库；由 BEACON_E2E_MESSAGING 门控）。
+        MessagingE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)
