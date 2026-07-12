@@ -88,7 +88,7 @@ proxy 宕机产生的「孤儿 open 行」：proxy agent 重启后首次上报�
 | `resolved_server_id` | VARCHAR(64) NULL | 控制面据连接明细名册解析出的实际目标服 |
 | `target_namespace_id` | BIGINT NULL | 跨域时的目标 namespace |
 | `cross_namespace` | BOOLEAN | 是否跨 namespace（须有 `namespace_trust` capability=`message` 才放行） |
-| `correlation_id` | VARCHAR(36) NULL | RPC 关联：响应消息填请求的 message_id |
+| `correlation_id` | VARCHAR(36) NULL | RPC 关联：请求消息自引用填自身 message_id、响应消息填请求 message_id——按 correlation_id 查询可得整条往返两条（§4.2）；非 RPC 单向消息为空 |
 | `status` | VARCHAR(16) | `accepted` / `dispatched` / `delivered` / `failed` / `expired` |
 | `fail_reason` | VARCHAR(255) NULL | 失败 / 过期原因（脱敏后文案） |
 | `created_at` | DATETIME(3) | 控制面接收时间 |
@@ -157,15 +157,15 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 （accepted 阶段校验失败——目标不存在、跨域无信任、payload 超限——直接 failed，含原因）
 ```
 
-- **发送（上行）**：源 agent POST 消息（元数据 + payload）；控制面校验 namespace 隔离（跨域须 `namespace_trust` 存在 capability=`message`，否则 403 记失败）、目标存在性、payload 上限，事务内写 `msg_trace` + `msg_payload`，状态 `accepted`，同时入目标服的内存投递队列。
+- **发送（上行）**：源 agent POST 消息（元数据 + payload）；控制面校验 namespace 隔离（跨域须 `namespace_trust` 存在 capability=`message`，否则 403 记失败）、目标存在性、payload 上限，校验通过即入目标服的内存投递队列、状态机在控制面内存置 `accepted`（**请求 goroutine 不碰 DB**，对齐 §4.1 异步入库与验收 #10 写入不阻塞）。`msg_trace` + `msg_payload` 不在 send 时落库，而在消息到达终态（delivered/failed/expired）时经异步日表通道**同一事务一次性写入两表**——in-flight（accepted/dispatched，≤TTL）消息暂存内存、落库前不可查，终态后可按 messageId 查得完整链路。
 - **按玩家寻址**：控制面查 §4.1 名册快照解析 `resolved_server_id`（hops 记 `resolved` 事件）；玩家不在线 → `failed`（`fail_reason=player_not_online`）。
 - **下发（下行）**：目标 agent 独立长轮询消息通道（与命令通道分离——命令通道只做控制面编排，消息是业务通信面）；取走即置 `dispatched` 并携带 payload 下发。
 - **回执**：目标 agent 把消息交业务 handler 后批量 ACK（成功 → `delivered`、失败 → `failed` 带原因）；ACK 同时上报 agent 侧 hop 事件，控制面合并进 `hops` 并计算 `duration_ms` / `hop_count`。
 - **重投**：`dispatched` 后 10s 未收到 ACK 重投（重新入队），最多 2 次；仍无回执 → `failed`（`fail_reason=ack_timeout`）。业务侧以 `message_id` 幂等去重。
 - **TTL**：`accepted` 停留超过 30s 无人取走 → `expired`。内存投递队列每服有界（默认 1000 条），溢出即对最旧消息判 `expired`（`fail_reason=queue_overflow`）。
-- **RPC**：`call` = 一条请求消息 + 一条 `correlation_id` 指回请求的响应消息；请求方 agent-api 本地维护 Future 超时。链路查询可按 `correlation_id` 把往返两条消息串成一次调用。
+- **RPC**：`call` = 一条请求消息（`correlation_id` 自引用为自身 message_id，供 agent 侧入站区分请求/响应/单向三路分发）+ 一条 `correlation_id` 指回请求的响应消息；请求方 agent-api 本地维护 Future 超时。链路查询按 `correlation_id` 把往返两条串成一次调用。
 - **降级**：控制面不可用时消息功能快速失败（agent-api 返回不可用错误，`isAvailable()=false`），**不做本地缓冲重发**——实时消息过时即无意义；配置 / 调度缓存的 fail-static 不受影响，玩家进服不受影响。
-- 状态与时间戳更新均按 `message_id` 定位日表（UUIDv7 推导），写放大只发生在单行。
+- 终态一次性落库按 `message_id`（UUIDv7 推导）定位日表；状态机中间态在内存演进、无中间态 DB UPDATE，落库写放大仅单行单次 INSERT。
 
 ### 4.3 默认查询防护（管理面）
 
@@ -258,7 +258,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 
 ## 8. 风险 / 待定（默认决定集中登记，待拍板）
 
-1. **消息经控制面单跳中转**：Legacy ADR-0016 决策为「消息不经控制面、走 Redis」，与第二版禁 Redis 冲突。本规格默认改为控制面中转 + 长轮询下发，**需要新 ADR 正式取代 ADR-0016**（不静默违背）。延迟量级（长轮询下发百 ms 级）能否满足业务插件预期需真机压测确认。**已拍板（2026-07-07）：确认控制面中转；新 ADR 在 P5 开工前补写。**
+1. **消息经控制面单跳中转**：Legacy ADR-0016 决策为「消息不经控制面、走 Redis」，与第二版禁 Redis 冲突。本规格默认改为控制面中转 + 长轮询下发，**需要新 ADR 正式取代 ADR-0016**（不静默违背）。延迟量级（长轮询下发百 ms 级）能否满足业务插件预期需真机压测确认。**已拍板（2026-07-07）：确认控制面中转；[ADR-0063](../adr/0063-cross-server-message-control-plane-relay.md) 已取代 ADR-0016 落地。**
 2. **主键用 UUIDv7 并以 ID 内嵌时间定位日表**：换取「免日期提示按 ID 直查」；代价是依赖 agent 时钟（已加 24h 拒收护栏）。备选是控制面接收时间定表 + 查询按 ID 需扫多表，未采用。
 3. **连接明细取「会话行」而非事件流水**：后端切换只记 `backend_switch_count` 与首末后端摘要，不存逐次切换事件——玩家流以 proxy 聚合近似。若后续要求精确「服 → 服」玩家迁移图，需另立事件表（待需求确认再做）。
 4. **消息目标只做 server / player 两种寻址**：topic 发布订阅与广播 fan-out 不做（Legacy 有、v2 PRD 无对应 FR）。若业务插件确有需要须回 PRD 立项。

@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 跨服连接明细与消息追踪数据面（FR-145/149/150 数据侧，[ADR-0063](docs/adr/0063-cross-server-message-control-plane-relay.md) / [ADR-0064](docs/adr/0064-alert-event-handling-workflow.md)）：控制面新增 `conn_detail` / `msg_trace` / `msg_payload` 三张 UTC 日期后缀日表（复用 `EnsureDailyTable` 按需建表、零方言、禁 `PARTITION`，跨日查询逐表游标合并，主键 UUIDv7 内嵌时间戳定位日表），经 `AsyncDailyWriter` 异步批量入库（请求 goroutine 不碰 DB、队列满 429）。proxy 侧 agent 采集每玩家连接 open / close 会话行（有界内存缓冲 + 5s 或 200 条批量上报、fail-static 本地缓冲补报、`bootId` 孤儿会话对账），控制面据连接明细在内存维护 `player_uuid → 所在服` 名册供按玩家寻址解析。跨服消息由 Redis 数据面直连改为**控制面 HTTP 单跳中转**（ADR-0063 取代 Legacy ADR-0016）：agent 面新增 `connections/batch`、`messages/send`、`messages/poll`（长轮询无消息 204）、`messages/ack` 四端点；消息状态机（accepted → dispatched → delivered / failed / expired，TTL 30s、重投 2 次、每服投递队列 1000）在控制面内存演进、终态时同一事务一次性写 `msg_trace` + `msg_payload`；agent 侧 `Message` 信封扩展 `messageId`(UUIDv7) / `hops`、`MessageBus` 底层换 HTTP 传输并保留门面向后兼容（topic 发布订阅按 v2 边界下线为 no-op）。payload 默认不出列表、上限 64KB 超限拒发。查询端点与前端接真随后续版本补齐。
+
 ## 0.24.4（2026-07-12）
 
 ### 新增

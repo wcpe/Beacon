@@ -87,7 +87,7 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 | 流式数据面 | `/beacon/v2/stream/*` | 同 agent 面双 header + blob 归属校验；当前仅交付域 |
 
 - **agent 面 REST + 长轮询基调**（沿用 [ADR-0006](adr/0006-rest-long-poll-push.md)）：状态长轮询无变化 304（身份 registration）、队列长轮询无消息 204（消息 poll）；agent 命令下发沿用既有长轮询命令通道，v2 各域只登记新命令类型（如 `asset_rescan` / `asset_read`）、不另建通道，命令 payload 与审计 detail 绝不携带文件内容。
-- **跨服消息经控制面单跳中转**（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）：上行 REST `messages/send`、下行长轮询 `messages/poll` + `ack` 回执，不引入 Redis / MQ。此决策**将由新 ADR 取代 Legacy [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md)**（其 Redis 通道与第二版禁 Redis 冲突），新 ADR 在 P5 开工前补写（已拍板 2026-07-07，不静默违背）。
+- **跨服消息经控制面单跳中转**（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）：上行 REST `messages/send`、下行长轮询 `messages/poll` + `ack` 回执，不引入 Redis / MQ。此决策由 **[ADR-0063](adr/0063-cross-server-message-control-plane-relay.md) 取代 Legacy [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md)**（其 Redis 通道与第二版禁 Redis 冲突）落地；玩家名册权威随之迁至控制面 `conn_detail` 内存快照。
 - **交付数据面：流式 HTTP + 控制面中转 blob**（[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.3）：命令通道只做编排；文件内容由模板源 agent 流式 PUT 到控制面 blob 存储（sha256 寻址去重）、目标 agent 流式 GET（Range 断点续传），HEAD 判存在性与断点。
 - **控制面不直连 agent**：管理面一切对 agent 的动作（重扫、取内容、交付回执）经命令通道 + agent 面回传端点完成，agent 不开端口、控制面不反向连接。
 
@@ -104,7 +104,7 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 - **agent 首次接入（人工确认）**：agent 首启生成并持久化身份文件 → 携 token + identityId 注册 → 控制面落待确认、出现在 `/servers` 待确认列表 → 管理员 approve（可同时落区）/ reject → agent 经 registration 长轮询秒级感知 → 确认且分配后方可调度。冲突 / 禁用 / 解绑同一状态机（[v2-agent-identity.md](specs/v2-agent-identity.md) §4）。
 - **换区工单**：已分配服改归属必须解绑 + 重新人工确认——`server-rezones` 整批事务解绑、清归属、记预填目标 → agent 自动重入待确认（换区中不可调度）→ 管理员重确认按预填落区 → 调度候选 / 配置作用域 / 拓扑按分配变更契约重算（[v2-zone-authority.md](specs/v2-zone-authority.md) §4.7 / §4.5）。
 - **配置发布经变更单灰度生效**：配置中心只管编辑 / 校验 / 版本，保存不下发（[v2-config-center.md](specs/v2-config-center.md)）→ 变更单把模板源文件差异 + 配置版本绑成一单 → 影响预览 → 审批 → 启动后按批次推进：流式 blob 推送 → 生效（restart / hot_reload / push_only）→ 观察窗 → 人工放行下一批；失败率 / 健康恶化自动熔断，支持暂停 / 紧急终止与整单回滚（文件备份还原 + 配置版本回退 + 重新生效，[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §4）。
-- **消息追踪链路**：业务插件经 agent-api `send` / `call` → agent 面上行 → 控制面同事务写 `msg_trace`（+ 可选 `msg_payload`）→ 目标 agent 长轮询取走、`ack` 回执更新状态与 hops → 管理台按 messageId 追链路；payload 查看必须权限 + 填原因 + 先审计（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）。
+- **消息追踪链路**：业务插件经 agent-api `send` / `call` → agent 面上行 → 控制面内存中转维护状态机与 hops（请求 goroutine 不碰 DB）→ 目标 agent 长轮询取走、`ack` 回执 → 终态（delivered/failed/expired）时同事务一次性写 `msg_trace`（+ 可选 `msg_payload`）→ 管理台按 messageId 追链路；payload 查看必须权限 + 填原因 + 先审计（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）。
 
 ## 8. 架构块 → 阶段映射（对齐 [ROADMAP.md](ROADMAP.md) §1）
 
@@ -114,7 +114,7 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 | §6 全量 mock 管理台（四大域 IA + 演示模式，逐页拍板） | P2 · 0.22.x |
 | 集群管理页接真深化：`/servers` `/zones` `/namespaces` 接入 P1 v2 API，补齐换区工单、冲突处置、zone-tree 与 env 映射体验 | P3 · 0.23.x |
 | 指标采样入库、健康值、调度决策、本机 agent-api（接真 `/dashboard` `/service-analysis`） | P4 · 0.24.x |
-| §5 消息单跳中转（新 ADR 取代 ADR-0016）、连接明细日表、payload 审计（接真 `/topology` 与可观测页） | P5 · 0.25.x |
+| §5 消息单跳中转（[ADR-0063](adr/0063-cross-server-message-control-plane-relay.md) 取代 ADR-0016）、连接明细日表、payload 审计（接真 `/topology` 与可观测页） | P5 · 0.25.x |
 | §4 热冷归档双库、冷查询、归档清理（接真系统设置页） | P6 · 0.26.x |
 | 配置中心 V2（五层作用域、版本、校验） | P7 · 0.27.x |
 | 文件资产 V2（清单索引、预览、安全审计） | P8 · 0.28.x |

@@ -876,10 +876,10 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 |
-| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player 寻址） |
-| POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204） |
-| POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 |
+| POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player 寻址） **【已实现·FR-149】** |
+| POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204） **【已实现·FR-149】** |
+| POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |
 
 管理面：
 
