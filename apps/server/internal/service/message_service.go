@@ -131,20 +131,20 @@ func (s *MessageService) resolveTarget(msg *IncomingMessage) (string, error) {
 }
 
 // PollMessages 长轮询取本服待投消息（clamp waitSec/max 到上限）；空返回长度 0（handler 回 204）。
-func (s *MessageService) PollMessages(ctx context.Context, id agentauth.Identity, waitSec, max int) []DispatchedMessage {
+func (s *MessageService) PollMessages(ctx context.Context, id agentauth.Identity, waitSec, limit int) []DispatchedMessage {
 	if waitSec > maxPollWaitSec {
 		waitSec = maxPollWaitSec
 	}
 	if waitSec < 0 {
 		waitSec = 0
 	}
-	if max > maxPollBatch {
-		max = maxPollBatch
+	if limit > maxPollBatch {
+		limit = maxPollBatch
 	}
-	if max <= 0 {
-		max = maxPollBatch
+	if limit <= 0 {
+		limit = maxPollBatch
 	}
-	return s.relay.Poll(ctx, id.NamespaceID, id.ServerID, waitSec, max)
+	return s.relay.Poll(ctx, id.NamespaceID, id.ServerID, waitSec, limit)
 }
 
 // AckMessages 批量回执转发中转；超上限截断保护。返回 applied / ignored。

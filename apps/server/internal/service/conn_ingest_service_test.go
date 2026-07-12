@@ -33,14 +33,14 @@ type fakeReconciler struct {
 	openConns  []repository.OpenConn
 }
 
-func (f *fakeReconciler) CloseOrphans(nsID uint, proxy string, before time.Time, retentionDays int) (int64, error) {
+func (f *fakeReconciler) CloseOrphans(nsID uint, proxy string, before time.Time, _ int) (int64, error) {
 	f.mu.Lock()
 	f.closeCalls = append(f.closeCalls, reconcileReq{namespaceID: nsID, proxyServerID: proxy, before: before})
 	f.mu.Unlock()
 	return 1, nil
 }
 
-func (f *fakeReconciler) ListOpenConnections(retentionDays int) ([]repository.OpenConn, error) {
+func (f *fakeReconciler) ListOpenConnections(_ int) ([]repository.OpenConn, error) {
 	return f.openConns, nil
 }
 

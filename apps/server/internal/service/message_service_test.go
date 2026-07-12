@@ -23,15 +23,15 @@ func (f fakeTrust) NamespaceTrustAllowed(from, to uint, capability string) bool 
 
 func newMsgSvc(t *testing.T) (*MessageService, *MessageRelay, *captureEnqueuer, *roster.Store, fakeTrust) {
 	t.Helper()
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := time.Now().UTC().UnixMilli()
 	nowPtr := &now
-	relay := newTestRelay(cap, nowPtr)
+	relay := newTestRelay(sink, nowPtr)
 	rs := roster.NewStore()
 	trust := fakeTrust{allowed: map[[2]uint]bool{}}
 	svc := NewMessageService(relay, rs, trust)
 	svc.now = func() time.Time { return time.UnixMilli(*nowPtr).UTC() }
-	return svc, relay, cap, rs, trust
+	return svc, relay, sink, rs, trust
 }
 
 func sendParams(msgID string, id agentauth.Identity) MessageSendParams {
@@ -72,7 +72,7 @@ func TestMessageSendPayloadTooLarge(t *testing.T) {
 
 // TestMessageSendPlayerNotOnline 校验按玩家寻址不在线 → 200 status=failed(player_not_online) 且落库。
 func TestMessageSendPlayerNotOnline(t *testing.T) {
-	svc, _, cap, _, _ := newMsgSvc(t)
+	svc, _, sink, _, _ := newMsgSvc(t)
 	mid := uuid7(time.Now().UTC().UnixMilli(), "s3")
 	p := sendParams(mid, backendID(1, "game-1"))
 	p.TargetKind = model.MsgTargetKindPlayer
@@ -82,7 +82,7 @@ func TestMessageSendPlayerNotOnline(t *testing.T) {
 	if err != nil || res.Status != model.MsgStatusFailed {
 		t.Fatalf("玩家不在线应 200 failed，实际 %+v err=%v", res, err)
 	}
-	rec, ok := cap.byID(mid)
+	rec, ok := sink.byID(mid)
 	if !ok || rec.Trace.FailReason != model.MsgFailPlayerNotOnline {
 		t.Fatalf("应落 failed(player_not_online)，实际 %+v ok=%v", rec.Trace, ok)
 	}
@@ -108,7 +108,7 @@ func TestMessageSendPlayerSameNamespace(t *testing.T) {
 
 // TestMessageSendCrossNamespaceNoTrust 校验跨域玩家无信任 → 403 并记 failed。
 func TestMessageSendCrossNamespaceNoTrust(t *testing.T) {
-	svc, _, cap, rs, _ := newMsgSvc(t)
+	svc, _, sink, rs, _ := newMsgSvc(t)
 	rs.ApplyOpen(2, "bob", "c2", "game-5") // bob 在 ns2
 	mid := uuid7(time.Now().UTC().UnixMilli(), "s5")
 	p := sendParams(mid, backendID(1, "game-1")) // 源 ns1
@@ -118,7 +118,7 @@ func TestMessageSendCrossNamespaceNoTrust(t *testing.T) {
 	if _, err := svc.Send(p); err != apperr.ErrMessageCrossNamespaceNoTrust {
 		t.Fatalf("跨域无信任应 403，实际 %v", err)
 	}
-	rec, ok := cap.byID(mid)
+	rec, ok := sink.byID(mid)
 	if !ok || rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != model.MsgFailNamespaceNoTrust || !rec.Trace.CrossNamespace {
 		t.Fatalf("应落 failed(namespace_not_trusted) 且 cross_namespace=true，实际 %+v ok=%v", rec.Trace, ok)
 	}
@@ -155,7 +155,7 @@ func TestMessageSendInvalidMessageID(t *testing.T) {
 
 // TestMessagePollAckRoundtrip 校验 poll 取走 → ack delivered 全链路。
 func TestMessagePollAckRoundtrip(t *testing.T) {
-	svc, _, cap, _, _ := newMsgSvc(t)
+	svc, _, sink, _, _ := newMsgSvc(t)
 	mid := uuid7(time.Now().UTC().UnixMilli(), "s7")
 	if _, err := svc.Send(sendParams(mid, backendID(1, "game-1"))); err != nil {
 		t.Fatalf("发送失败: %v", err)
@@ -169,7 +169,7 @@ func TestMessagePollAckRoundtrip(t *testing.T) {
 	if applied != 1 || ignored != 0 {
 		t.Fatalf("ack 应 applied=1，实际 %d/%d", applied, ignored)
 	}
-	if rec, ok := cap.byID(mid); !ok || rec.Trace.Status != model.MsgStatusDelivered {
+	if rec, ok := sink.byID(mid); !ok || rec.Trace.Status != model.MsgStatusDelivered {
 		t.Fatalf("应落 delivered，实际 %+v ok=%v", rec.Trace, ok)
 	}
 }

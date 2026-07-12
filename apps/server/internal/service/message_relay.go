@@ -201,37 +201,37 @@ type DispatchedMessage struct {
 
 // Poll 长轮询取本服待投消息：先即时排空，无则登记 waiter 再排空（防丢唤醒），仍无则等待至超时。
 // 取走即置 dispatched、记 dispatched 事件、携 payload 返回。
-func (r *MessageRelay) Poll(ctx context.Context, namespaceID uint, serverID string, waitSec, max int) []DispatchedMessage {
+func (r *MessageRelay) Poll(ctx context.Context, namespaceID uint, serverID string, waitSec, limit int) []DispatchedMessage {
 	key := serverKey{namespaceID: namespaceID, serverID: serverID}
-	if msgs := r.drain(key, max); len(msgs) > 0 {
+	if msgs := r.drain(key, limit); len(msgs) > 0 {
 		return msgs
 	}
 	w := r.hub.Register(hubNS(namespaceID), serverID)
 	defer r.hub.Deregister(w)
 	// 登记后再排空一次：消除「登记前入队」的丢唤醒窗口（与配置长轮询同口径）。
-	if msgs := r.drain(key, max); len(msgs) > 0 {
+	if msgs := r.drain(key, limit); len(msgs) > 0 {
 		return msgs
 	}
 	if waitSec <= 0 {
 		return nil
 	}
 	if w.Wait(ctx, time.Duration(waitSec)*time.Second) {
-		return r.drain(key, max)
+		return r.drain(key, limit)
 	}
 	return nil
 }
 
-// drain 从某服队列取至多 max 条 accepted，置 dispatched 并返回下发形态（锁内纯内存）。
-func (r *MessageRelay) drain(key serverKey, max int) []DispatchedMessage {
-	if max <= 0 {
+// drain 从某服队列取至多 limit 条 accepted，置 dispatched 并返回下发形态（锁内纯内存）。
+func (r *MessageRelay) drain(key serverKey, limit int) []DispatchedMessage {
+	if limit <= 0 {
 		return nil
 	}
 	nowMs := r.now().UnixMilli()
-	out := make([]DispatchedMessage, 0, max)
+	out := make([]DispatchedMessage, 0, limit)
 	r.mu.Lock()
 	q := r.queues[key]
 	if q != nil {
-		n := min(max, len(q.pending))
+		n := min(limit, len(q.pending))
 		for i := 0; i < n; i++ {
 			msg := q.pending[i]
 			msg.status = model.MsgStatusDispatched

@@ -39,8 +39,8 @@ func (c *captureEnqueuer) byID(id string) (model.MessageRecord, bool) {
 }
 
 // newTestRelay 构造带可控时钟与小档位的中转。
-func newTestRelay(cap *captureEnqueuer, nowMs *int64) *MessageRelay {
-	r := NewMessageRelay(cap)
+func newTestRelay(sink *captureEnqueuer, nowMs *int64) *MessageRelay {
+	r := NewMessageRelay(sink)
 	r.now = func() time.Time { return time.UnixMilli(*nowMs).UTC() }
 	r.ttl = 30 * time.Second
 	r.ackTimeout = 10 * time.Second
@@ -59,9 +59,9 @@ func serverMsg(id string, ns uint, src, target string, createdMs int64, payload 
 
 // TestRelayAcceptPollDeliver 校验 accept→poll(dispatched)→ack(delivered) 全链路 hops 与耗时。
 func TestRelayAcceptPollDeliver(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(1_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 
 	r.Accept(serverMsg("mid-1", 1, "game-1", "game-2", now, "hello"))
 	got := r.Poll(context.Background(), 1, "game-2", 0, 10)
@@ -74,7 +74,7 @@ func TestRelayAcceptPollDeliver(t *testing.T) {
 	if applied != 1 || ignored != 0 {
 		t.Fatalf("ack 应 applied=1 ignored=0，实际 %d/%d", applied, ignored)
 	}
-	rec, ok := cap.byID("mid-1")
+	rec, ok := sink.byID("mid-1")
 	if !ok || rec.Trace.Status != model.MsgStatusDelivered {
 		t.Fatalf("应落 delivered 终态记录，实际 %+v ok=%v", rec.Trace.Status, ok)
 	}
@@ -98,13 +98,13 @@ func TestRelayAcceptPollDeliver(t *testing.T) {
 
 // TestRelayAckFailed 校验回执失败落 failed 终态带原因。
 func TestRelayAckFailed(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(2_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	r.Accept(serverMsg("mid-2", 1, "game-1", "game-2", now, ""))
 	r.Poll(context.Background(), 1, "game-2", 0, 10)
 	r.Ack(1, "game-2", []AckResult{{MessageID: "mid-2", Status: model.MsgStatusFailed, Reason: "boom", DeliveredAtMs: now}})
-	rec, _ := cap.byID("mid-2")
+	rec, _ := sink.byID("mid-2")
 	if rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != "boom" {
 		t.Fatalf("应落 failed(boom)，实际 %s/%s", rec.Trace.Status, rec.Trace.FailReason)
 	}
@@ -115,13 +115,13 @@ func TestRelayAckFailed(t *testing.T) {
 
 // TestRelayTTLExpire 校验 accepted 超 TTL 无人取走 → expired(ttl_expired)。
 func TestRelayTTLExpire(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(3_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	r.Accept(serverMsg("mid-3", 1, "game-1", "game-2", now, "x"))
 	now += 31_000
 	r.Sweep()
-	rec, ok := cap.byID("mid-3")
+	rec, ok := sink.byID("mid-3")
 	if !ok || rec.Trace.Status != model.MsgStatusExpired || rec.Trace.FailReason != model.MsgFailTTLExpired {
 		t.Fatalf("应 expired(ttl_expired)，实际 %+v ok=%v", rec.Trace, ok)
 	}
@@ -129,9 +129,9 @@ func TestRelayTTLExpire(t *testing.T) {
 
 // TestRelayRequeueThenAckTimeout 校验 dispatched 超时重投至多 2 次、仍无回执 → failed(ack_timeout)。
 func TestRelayRequeueThenAckTimeout(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(4_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	r.Accept(serverMsg("mid-4", 1, "game-1", "game-2", now, ""))
 
 	// 首次取走（dispatch 1）
@@ -153,7 +153,7 @@ func TestRelayRequeueThenAckTimeout(t *testing.T) {
 	// dispatch 3 仍无回执超时 → failed(ack_timeout)
 	now += 11_000
 	r.Sweep()
-	rec, ok := cap.byID("mid-4")
+	rec, ok := sink.byID("mid-4")
 	if !ok || rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != model.MsgFailAckTimeout {
 		t.Fatalf("3 次下发耗尽应 failed(ack_timeout)，实际 %+v ok=%v", rec.Trace, ok)
 	}
@@ -161,14 +161,14 @@ func TestRelayRequeueThenAckTimeout(t *testing.T) {
 
 // TestRelayQueueOverflow 校验队列溢出淘汰最旧为 expired(queue_overflow)。
 func TestRelayQueueOverflow(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(5_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	r.queueCap = 2
 	r.Accept(serverMsg("old", 1, "game-1", "game-2", now, ""))
 	r.Accept(serverMsg("mid", 1, "game-1", "game-2", now, ""))
 	r.Accept(serverMsg("new", 1, "game-1", "game-2", now, "")) // 溢出，淘汰 old
-	rec, ok := cap.byID("old")
+	rec, ok := sink.byID("old")
 	if !ok || rec.Trace.Status != model.MsgStatusExpired || rec.Trace.FailReason != model.MsgFailQueueOverflow {
 		t.Fatalf("最旧应被淘汰为 expired(queue_overflow)，实际 %+v ok=%v", rec.Trace, ok)
 	}
@@ -181,9 +181,9 @@ func TestRelayQueueOverflow(t *testing.T) {
 
 // TestRelayAckUnknownAndCrossServer 校验未知 messageId 与非本服 ack 计入 ignored。
 func TestRelayAckUnknownAndCrossServer(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(6_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	r.Accept(serverMsg("mid-6", 1, "game-1", "game-2", now, ""))
 	r.Poll(context.Background(), 1, "game-2", 0, 10)
 	// 未知 id + 另一台服冒领本服消息
@@ -198,9 +198,9 @@ func TestRelayAckUnknownAndCrossServer(t *testing.T) {
 
 // TestRelayPollLongPollWakeup 校验空队列长轮询被 Accept 唤醒后取到消息。
 func TestRelayPollLongPollWakeup(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(7_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	done := make(chan []DispatchedMessage, 1)
 	go func() {
 		done <- r.Poll(context.Background(), 1, "game-2", 5, 10)
@@ -220,16 +220,16 @@ func TestRelayPollLongPollWakeup(t *testing.T) {
 
 // TestRelayRecordTerminalDirect 校验发送期直接判失败（不入队）落 failed 终态。
 func TestRelayRecordTerminalDirect(t *testing.T) {
-	cap := &captureEnqueuer{}
+	sink := &captureEnqueuer{}
 	now := int64(8_000_000)
-	r := newTestRelay(cap, &now)
+	r := newTestRelay(sink, &now)
 	m := IncomingMessage{
 		MessageID: "mid-8", NamespaceID: 1, SourceServerID: "game-1", MsgType: "rpc",
 		TargetKind: model.MsgTargetKindPlayer, TargetPlayer: "ghost", Resolved: false,
 		SentAtMs: now - 1, CreatedAtMs: now,
 	}
 	r.RecordTerminal(m, model.MsgStatusFailed, model.MsgFailPlayerNotOnline)
-	rec, ok := cap.byID("mid-8")
+	rec, ok := sink.byID("mid-8")
 	if !ok || rec.Trace.Status != model.MsgStatusFailed || rec.Trace.FailReason != model.MsgFailPlayerNotOnline {
 		t.Fatalf("应直接落 failed(player_not_online)，实际 %+v ok=%v", rec.Trace, ok)
 	}
