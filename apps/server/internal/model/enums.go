@@ -380,6 +380,9 @@ const (
 	ActionHealthWeightsUpdate = "health-weights.update"
 	// 消息 payload 查看（FR-150，spec §4.4）：高风险受控查看，先审计后返回；detail 记 messageId/类型/来源目标/原因原文，绝不含 payload 内容
 	ActionMessagePayloadView = "message.payload.view"
+	// 告警事件处理（FR-157，见 ADR-0064）：确认 / 标记已处理，detail 记事件 id / 动作 / 处置说明（不含凭据）
+	ActionAlertEventAcknowledge = "alert-event.acknowledge"
+	ActionAlertEventResolve     = "alert-event.resolve"
 )
 
 // 审计对象类型。
@@ -417,6 +420,8 @@ const (
 	TargetTypeHealthWeights = "health-weights"
 	// 跨服消息（FR-150 payload 查看）的审计对象类型
 	TargetTypeMessage = "message"
+	// 告警事件（FR-157）处理工作流的审计对象类型
+	TargetTypeAlertEvent = "alert-event"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
@@ -443,4 +448,13 @@ const (
 	AlertLevelInfo     = "info"
 	AlertLevelWarning  = "warning"
 	AlertLevelCritical = "critical"
+)
+
+// 告警事件处理状态（FR-157，落 VARCHAR + 应用层校验，见 ADR-0064）。
+// open=待处理（新告警默认，计入健康 activeAlerts）；acknowledged=已确认；resolved=已处理（终态）。
+// 存量加列前的历史行由启动迁移回填 resolved（属过去已闭事件，不计入当前活跃）。
+const (
+	AlertEventStatusOpen         = "open"
+	AlertEventStatusAcknowledged = "acknowledged"
+	AlertEventStatusResolved     = "resolved"
 )

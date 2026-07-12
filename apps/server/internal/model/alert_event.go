@@ -25,6 +25,18 @@ type AlertEvent struct {
 	Detail string `gorm:"column:detail;type:text"`
 	// 发生时间（UTC）；支撑按时间倒序与时间窗过滤
 	CreatedAt time.Time `gorm:"index:idx_alert_event_time;index:idx_alert_event_type,priority:2"`
+
+	// 以下为处理工作流字段（FR-157，见 ADR-0064）：把 append-only 历史升级为可确认 / 可处置。
+	// 全部落 VARCHAR + 应用层校验，禁 ENUM，AutoMigrate 加列对既有行用 NOT NULL DEFAULT 兼容（守 DB 可移植）。
+	// 处理状态（open 待处理 / acknowledged 已确认 / resolved 已处理）；新告警插入即 open（由 AlertEventService.Record 设默认）。
+	// 加列 DEFAULT '' 让存量历史行落空串，供启动迁移回填 resolved（区别于应用层显式写 open 的新行）。
+	Status string `gorm:"column:status;size:16;not null;default:'';index:idx_alert_event_status"`
+	// 处理人（管理台登录身份）；未处理为空串
+	HandledBy string `gorm:"column:handled_by;size:128;not null;default:''"`
+	// 处理时刻（UTC）；未处理为 NULL（故用指针）
+	HandledAt *time.Time `gorm:"column:handled_at"`
+	// 处理说明（运维填写的确认 / 处置原因）；未处理为空串
+	HandleNote string `gorm:"column:handle_note;size:512;not null;default:''"`
 }
 
 // TableName 固定表名为 alert_event。

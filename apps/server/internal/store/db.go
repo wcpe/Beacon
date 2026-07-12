@@ -3,6 +3,7 @@ package store
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"gorm.io/driver/mysql"
@@ -84,7 +85,29 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
+
+	// 告警处理状态存量回填（FR-157，见 ADR-0064）：加列前的 append-only 历史行属过去已闭事件，
+	// 回填为终态 resolved，避免把当前健康 activeAlerts 撑爆。幂等一次性——只命中空串 / NULL 的旧行，
+	// 新行由应用层显式写 open、不会被回填。
+	if err := backfillLegacyAlertStatus(db); err != nil {
+		return nil, err
+	}
 	return db, nil
+}
+
+// backfillLegacyAlertStatus 把加列前的存量告警历史行（status 为空串 / NULL）回填为终态 resolved。
+// 仅标准 SQL（无方言函数），保 Postgres 可移植；命中 0 行时静默返回（幂等）。
+func backfillLegacyAlertStatus(db *gorm.DB) error {
+	res := db.Model(&model.AlertEvent{}).
+		Where("status = ? OR status IS NULL", "").
+		Update("status", model.AlertEventStatusResolved)
+	if res.Error != nil {
+		return fmt.Errorf("回填存量告警状态失败: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		slog.Info("回填存量告警历史为终态 resolved", "行数", res.RowsAffected)
+	}
+	return nil
 }
 
 // Close 关闭底层连接池。
