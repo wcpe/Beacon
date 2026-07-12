@@ -7,7 +7,7 @@ import { expect, type Page } from '@playwright/test'
 // 各主要页面：侧栏导航文案（NavLink 可见名）+ 路由 path + 页面加载后第二层页眉 h1 标题文案。
 // 标题取自各页 usePageHeader({title}) 实际注入值（多数 = t('xxx.title')）。
 export const PAGES = {
-  dashboard: { nav: '可观测看板', path: '/dashboard', heading: '可观测看板' },
+  dashboard: { nav: '运维总览', path: '/dashboard', heading: '运维总览' },
   configs: { nav: '配置中心', path: '/configs', heading: '配置中心' },
   filePreview: { nav: '文件树预览', path: '/file-preview', heading: '文件树有效预览' },
   servers: { nav: '服务器', path: '/servers', heading: '服务器' },
