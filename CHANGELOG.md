@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- `/topology` 与可观测页贯通接真（FR-156/157，`/dashboard` 流与告警补全收口 FR-154）：拓扑页消息流 / 异常链路消费真后端 `messages/stats(groupBy=edge)`，消息样本新增 **payload 受控查看弹窗**（必填原因 ≤255 → `POST /admin/v2/messages/{messageId}/payload` → 展示原文 + SHA-256，403/400 内联脱敏展示；payload 仅弹窗内存持有、不写日志不落列表）；`/dashboard` 玩家流 / 连接流卡随 `connections/stats` 就位自动接真，告警卡 `status==='open'` 过滤对真数据生效。`/commands`、`/audits`、`/alert-events` 三页 API 层与 devmock 对齐真后端形状（audits `targetType` 改服务端过滤、删无效 `actionPrefix`、告警处理空备注落 `null`）；**互跳链接消费 URL 查询参数**（`/commands`、`/audits` 经 `useSearchParams` 初始化筛选，command↔audit↔alert 互跳真正落位，audits 支持按 action 定位 `message.payload.view` 审计）；告警处理闭环（acknowledge / resolve + 备注）接真。`/service-analysis` 页内新增**调度决策下钻**（时间窗 + 过滤 + 分页 + 逐台 excluded 排除原因详情面板）与**健康快照回放**（按服分数时序 / 等级分布 / 权重 rev / 不可调度原因）两个子视图，`?view=` 直达，dashboard 调度概览入口可达。前端测试：vitest 190 例（新增 21）、Playwright 真后端套件 31 例全绿（新增 topology / observability / drilldown 三 spec，契约交叉校验 + 互跳真点击）。
+
 ## 0.25.1（2026-07-12）
 
 ### 新增
