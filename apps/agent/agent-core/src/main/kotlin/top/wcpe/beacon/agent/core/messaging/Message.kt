@@ -1,7 +1,7 @@
 package top.wcpe.beacon.agent.core.messaging
 
 /**
- * 跨服消息信封（ADR-0016 决策 13：带 type + version，演进「只增不改」）。
+ * 跨服消息信封（ADR-0016 决策 13：带 type + version，演进「只增不改」；P5 起经控制面 HTTP 中转，见 ADR-0063）。
  *
  * 信封与具体序列化库解耦：core 不引入 @Serializable，用 [toMap] / [fromMap] 在
  * 泛型树（Map<String,Any?>）与信封间互转，由 JsonCodec（适配器）落地 json 文本。
@@ -10,9 +10,13 @@ package top.wcpe.beacon.agent.core.messaging
  * - [type]          业务消息类型，决定走哪条 on(type) 处理器；演进只增不改。
  * - [version]       信封版本号，向后兼容判据（新老插件混跑）。
  * - [payload]       与内容无关的业务负载（泛型树：Map/List/基本类型/null）。
- * - [correlationId] RPC 关联 ID：请求与回信据此配对；非 RPC 为 null。
- * - [replyTo]       RPC 回信通道：发起方专属回信地址；目标处理后回发到此；非 RPC 为 null。
- * - [source]        发起方 serverId，便于目标识别来源（可空）。
+ * - [correlationId] RPC 关联 ID：RPC 请求填自身 messageId（自引用）、响应填请求的 messageId；非 RPC 为 null。
+ * - [replyTo]       RPC 回信通道：仅 Redis 通道用（发起方回信地址）；HTTP 中转回信改按 [source] 定向，不依赖此。
+ * - [source]        发起方 serverId，便于目标识别来源与 HTTP 中转回信定向（可空）。
+ * - [messageId]     P5 起：源 agent 发送时生成的 UUIDv7（控制面据高 48 位时间戳定位日表）；旧 Redis 通道可空。
+ * - [sentAt]        P5 起：发送时刻（Unix 毫秒）；上线经适配器格式化为 UTC ISO8601。
+ * - [targetKind]    P5 起：寻址类型 `server` / `player`；HTTP 中转据此建 wire 目标（Redis 通道忽略）。
+ * - [targetId]      P5 起：目标标识（targetKind=server 为 serverId、player 为 playerUuid）。
  *
  * 不可变值对象。
  */
@@ -23,9 +27,19 @@ data class Message(
     val correlationId: String? = null,
     val replyTo: String? = null,
     val source: String? = null,
+    val messageId: String? = null,
+    val sentAt: Long? = null,
+    val targetKind: String? = null,
+    val targetId: String? = null,
 ) {
-    /** 是否为 RPC 请求（带回信通道 + 关联 ID）。 */
-    fun isRequest(): Boolean = correlationId != null && replyTo != null
+    /**
+     * 是否为需要回信的 RPC 请求。
+     *
+     * HTTP 中转下回信通道（replyTo）不随控制面转发投递到目标，故不能以 replyTo 判定；改以「带 correlationId」
+     * 为判据：能抵达 on(type) 处理器的消息里，带 correlationId 者即 RPC 请求（响应在 [MessageBus] 分发时已被
+     * correlationId 前置拦截、不会抵达处理器），单向 send 无 correlationId。
+     */
+    fun isRequest(): Boolean = correlationId != null
 
     /**
      * 转为泛型树（供 JsonCodec.encode）。
@@ -40,6 +54,10 @@ data class Message(
         if (correlationId != null) map[FIELD_CORRELATION_ID] = correlationId
         if (replyTo != null) map[FIELD_REPLY_TO] = replyTo
         if (source != null) map[FIELD_SOURCE] = source
+        if (messageId != null) map[FIELD_MESSAGE_ID] = messageId
+        if (sentAt != null) map[FIELD_SENT_AT] = sentAt
+        if (targetKind != null) map[FIELD_TARGET_KIND] = targetKind
+        if (targetId != null) map[FIELD_TARGET_ID] = targetId
         return map
     }
 
@@ -53,6 +71,16 @@ data class Message(
         const val FIELD_CORRELATION_ID: String = "correlationId"
         const val FIELD_REPLY_TO: String = "replyTo"
         const val FIELD_SOURCE: String = "source"
+        const val FIELD_MESSAGE_ID: String = "messageId"
+        const val FIELD_SENT_AT: String = "sentAt"
+        const val FIELD_TARGET_KIND: String = "targetKind"
+        const val FIELD_TARGET_ID: String = "targetId"
+
+        /** 寻址类型：定向到子服。 */
+        const val TARGET_SERVER: String = "server"
+
+        /** 寻址类型：按玩家所在服（控制面解析）。 */
+        const val TARGET_PLAYER: String = "player"
 
         /**
          * 从泛型树（JsonCodec.decode 的结果）还原信封。
@@ -72,6 +100,10 @@ data class Message(
                 correlationId = map[FIELD_CORRELATION_ID] as? String,
                 replyTo = map[FIELD_REPLY_TO] as? String,
                 source = map[FIELD_SOURCE] as? String,
+                messageId = map[FIELD_MESSAGE_ID] as? String,
+                sentAt = (map[FIELD_SENT_AT] as? Number)?.toLong(),
+                targetKind = map[FIELD_TARGET_KIND] as? String,
+                targetId = map[FIELD_TARGET_ID] as? String,
             )
         }
     }

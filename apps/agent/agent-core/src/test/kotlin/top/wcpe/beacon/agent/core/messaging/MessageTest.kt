@@ -73,9 +73,40 @@ class MessageTest {
     }
 
     @Test
-    fun `isRequest 仅在同时有 correlationId 与 replyTo 时为真`() {
-        assertFalse(Message(type = "t", payload = null, correlationId = "c").isRequest())
-        assertFalse(Message(type = "t", payload = null, replyTo = "r").isRequest())
+    fun `isRequest 以带 correlationId 为判据`() {
+        // HTTP 中转下 replyTo 不随控制面转发投递，改以 correlationId 判定「期待回信的 RPC 请求」。
+        assertTrue(Message(type = "t", payload = null, correlationId = "c").isRequest())
         assertTrue(Message(type = "t", payload = null, correlationId = "c", replyTo = "r").isRequest())
+        assertFalse(Message(type = "t", payload = null).isRequest())
+        assertFalse(Message(type = "t", payload = null, replyTo = "r").isRequest())
+    }
+
+    @Test
+    fun `messageId 与 sentAt 及目标字段 toMap 只增可往返`() {
+        val message =
+            Message(
+                type = "evt",
+                payload = mapOf("k" to "v"),
+                source = "A",
+                messageId = "0190a1b2-c3d4-7000-8000-000000000000",
+                sentAt = 1_752_307_200_123L,
+                targetKind = Message.TARGET_SERVER,
+                targetId = "B",
+            )
+        val map = message.toMap()
+        assertEquals("0190a1b2-c3d4-7000-8000-000000000000", map[Message.FIELD_MESSAGE_ID])
+        assertEquals(1_752_307_200_123L, map[Message.FIELD_SENT_AT])
+        assertEquals("server", map[Message.FIELD_TARGET_KIND])
+        assertEquals("B", map[Message.FIELD_TARGET_ID])
+        assertEquals(message, Message.fromMap(map))
+    }
+
+    @Test
+    fun `toMap 省略空的新增字段`() {
+        val map = Message(type = "t", payload = null).toMap()
+        assertFalse(map.containsKey(Message.FIELD_MESSAGE_ID))
+        assertFalse(map.containsKey(Message.FIELD_SENT_AT))
+        assertFalse(map.containsKey(Message.FIELD_TARGET_KIND))
+        assertFalse(map.containsKey(Message.FIELD_TARGET_ID))
     }
 }
