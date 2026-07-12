@@ -100,10 +100,20 @@ object JvmRuntimeMetrics {
         return try {
             val osBean = ManagementFactory.getOperatingSystemMXBean()
             // com.sun.management.OperatingSystemMXBean.getProcessCpuLoad()：反射避免编译期硬绑 JDK 扩展接口。
-            val method = osBean.javaClass.getMethod("getProcessCpuLoad")
-            method.isAccessible = true
-            val load = (method.invoke(osBean) as? Double) ?: return RuntimeMetrics.CPU_UNAVAILABLE
-            if (load < 0.0 || load.isNaN()) RuntimeMetrics.CPU_UNAVAILABLE else load.coerceAtMost(1.0)
+            // 必须经「已导出的扩展接口」查方法——JDK 9+ 模块化下实现类所在包未导出，
+            // 按实现类（javaClass）反射会被模块封装拦截（InaccessibleObjectException），导致恒回退 -1。
+            val iface = Class.forName("com.sun.management.OperatingSystemMXBean")
+            val load =
+                if (iface.isInstance(osBean)) {
+                    iface.getMethod("getProcessCpuLoad").invoke(osBean) as? Double
+                } else {
+                    null
+                }
+            if (load == null || load < 0.0 || load.isNaN()) {
+                RuntimeMetrics.CPU_UNAVAILABLE
+            } else {
+                load.coerceAtMost(1.0)
+            }
         } catch (e: Exception) {
             // 接口缺失 / 反射失败：CPU 不可用，回退哨兵（不抛、不刷屏）。
             RuntimeMetrics.CPU_UNAVAILABLE
