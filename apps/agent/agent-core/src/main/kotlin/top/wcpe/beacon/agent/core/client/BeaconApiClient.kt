@@ -6,6 +6,7 @@ import top.wcpe.beacon.agent.core.command.IngestFile
 import top.wcpe.beacon.agent.core.command.ScanFile
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
+import top.wcpe.beacon.agent.core.connection.ConnectionEvent
 import top.wcpe.beacon.agent.core.filetree.FileContent
 import top.wcpe.beacon.agent.core.filetree.FileManifest
 import top.wcpe.beacon.agent.core.filetree.FileManifestEntry
@@ -526,6 +527,138 @@ class BeaconApiClient(
             400 -> SchedReportLocalOutcome.Rejected(parseErrorCode(resp.body))
             403 -> SchedReportLocalOutcome.Forbidden
             else -> SchedReportLocalOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 连接明细批上报：POST /beacon/v2/agent/connections/batch（FR-145 §5.1，proxy 专用）。同步调用，请在异步线程使用。
+     *
+     * 报文 `{bootId, droppedCount, events[]}`；events 为 open/close 混合（单批 ≤500，全 camelCase 键），
+     * 时间字段上线为 UTC ISO8601。202 受理（accepted / duplicated 计数）；429 队列忙、403 未确认、其它失败——
+     * 均保留缓冲由上报循环重试（仅 202 才 ack 移除已上报事件）。
+     */
+    fun reportConnectionsBatch(
+        identity: AgentIdentity,
+        bootId: String,
+        droppedCount: Long,
+        events: List<ConnectionEvent>,
+    ): ConnectionsReportOutcome {
+        val body =
+            buildMap<String, Any?> {
+                put("bootId", bootId)
+                put("droppedCount", droppedCount)
+                put("events", events.map { connectionEventBody(it) })
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/connections/batch",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return ConnectionsReportOutcome.Failed(connectFailReason())
+        return when (resp.statusCode) {
+            202 -> parseConnectionsAccepted(resp.body)
+            429 -> ConnectionsReportOutcome.Busy
+            403 -> ConnectionsReportOutcome.Forbidden
+            else -> ConnectionsReportOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 跨服消息上行发送：POST /beacon/v2/agent/messages/send（FR-149 §5.1，ADR-0063）。同步调用，请在异步线程使用。
+     *
+     * 报文 `{messageId, msgType, targetKind, targetServerId?|targetPlayerUuid?, correlationId?, payload, sentAt}`
+     * （全 camelCase，sentAt 为 UTC ISO8601）。200 受理（回报 status）；403 跨域无信任、400 payload 超限等被拒、其它失败。
+     */
+    fun sendMessage(
+        identity: AgentIdentity,
+        message: OutboundMessage,
+    ): MessageSendOutcome {
+        val body =
+            buildMap<String, Any?> {
+                put("messageId", message.messageId)
+                put("msgType", message.msgType)
+                put("targetKind", message.targetKind)
+                if (message.targetServerId != null) put("targetServerId", message.targetServerId)
+                if (message.targetPlayerUuid != null) put("targetPlayerUuid", message.targetPlayerUuid)
+                if (message.correlationId != null) put("correlationId", message.correlationId)
+                put("payload", message.payload)
+                put("sentAt", isoUtc(message.sentAtMs))
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/messages/send",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return MessageSendOutcome.Failed(connectFailReason())
+        return when (resp.statusCode) {
+            200 -> parseMessageSent(resp.body, message.messageId)
+            403 -> MessageSendOutcome.Forbidden
+            400 -> MessageSendOutcome.Rejected(parseErrorCode(resp.body))
+            else -> MessageSendOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 跨服消息下行长轮询：POST /beacon/v2/agent/messages/poll（FR-149 §5.1）。同步调用，请在异步线程使用。
+     *
+     * 报文 `{waitSec, max}`（waitSec ≤25、max ≤50）。200 返回 `{messages[]}`（本服待投消息）；204 无消息超时。
+     * 读超时给长轮询留余量（挂起上限 + 普通读超时）。
+     */
+    fun pollMessages(
+        identity: AgentIdentity,
+        waitSec: Int,
+        max: Int,
+    ): MessagePollOutcome {
+        val body = mapOf("waitSec" to waitSec, "max" to max)
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/messages/poll",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = waitSec * 1000L + settings.requestTimeoutMs,
+                ),
+            ) ?: return MessagePollOutcome.Failed(connectFailReason())
+        return when (resp.statusCode) {
+            200 -> MessagePollOutcome.Messages(parsePolledMessages(resp.body))
+            204 -> MessagePollOutcome.Empty
+            else -> MessagePollOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 跨服消息回执：POST /beacon/v2/agent/messages/ack（FR-149 §5.1）。同步调用，请在异步线程使用。
+     *
+     * 报文 `{results:[{messageId, status, reason?, deliveredAt, handlerCostMs?}]}`（status delivered/failed，
+     * deliveredAt 为 UTC ISO8601）。200 返回 `{applied, ignored}`（未知 messageId 计入 ignored）。
+     */
+    fun ackMessages(
+        identity: AgentIdentity,
+        acks: List<MessageAck>,
+    ): MessageAckOutcome {
+        val body = mapOf("results" to acks.map { messageAckBody(it) })
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/messages/ack",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return MessageAckOutcome.Failed(connectFailReason())
+        return when (resp.statusCode) {
+            200 -> parseMessageAckApplied(resp.body)
+            else -> MessageAckOutcome.Failed("非预期状态码 ${resp.statusCode}")
         }
     }
 
@@ -1216,6 +1349,83 @@ class BeaconApiClient(
             "chosenServerId" to (report.chosenServerId ?: ""),
             "failReason" to (report.failReason ?: ""),
         )
+
+    /** 把一条连接事件拼成 batch 报文的 events 元素（全 camelCase，空可选字段省略；时间 UTC ISO8601）。 */
+    private fun connectionEventBody(event: ConnectionEvent): Map<String, Any?> =
+        buildMap {
+            put("kind", event.kind.wire)
+            put("connId", event.connId)
+            put("playerUuid", event.playerUuid)
+            put("playerName", event.playerName)
+            if (event.clientIp != null) put("clientIp", event.clientIp)
+            if (event.protocolVersion != null) put("protocolVersion", event.protocolVersion)
+            put("openedAt", isoUtc(event.openedAtMs))
+            if (event.closedAtMs != null) put("closedAt", isoUtc(event.closedAtMs))
+            if (event.closeKind != null) put("closeKind", event.closeKind)
+            if (event.closeReason != null) put("closeReason", event.closeReason)
+            if (event.firstBackend != null) put("firstBackend", event.firstBackend)
+            if (event.lastBackend != null) put("lastBackend", event.lastBackend)
+            if (event.backendSwitchCount != null) put("backendSwitchCount", event.backendSwitchCount)
+        }
+
+    /** 解析连接批上报 202 响应（accepted / duplicated 计数）。 */
+    private fun parseConnectionsAccepted(jsonBody: String): ConnectionsReportOutcome.Accepted {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return ConnectionsReportOutcome.Accepted(
+            accepted = JsonTree.intOr(obj, "accepted", 0),
+            duplicated = JsonTree.intOr(obj, "duplicated", 0),
+        )
+    }
+
+    /** 解析消息发送 200 响应（messageId + status；messageId 缺失回退本地生成值）。 */
+    private fun parseMessageSent(
+        jsonBody: String,
+        fallbackId: String,
+    ): MessageSendOutcome.Ok {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return MessageSendOutcome.Ok(
+            messageId = JsonTree.strOr(obj, "messageId", fallbackId),
+            status = JsonTree.strOr(obj, "status", ""),
+        )
+    }
+
+    /** 解析长轮询 200 响应（messages 数组 → PolledMessage）。 */
+    private fun parsePolledMessages(jsonBody: String): List<PolledMessage> {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return JsonTree.asList(obj["messages"]).map { raw ->
+            val m = JsonTree.asObject(raw)
+            PolledMessage(
+                messageId = JsonTree.strOr(m, "messageId", ""),
+                msgType = JsonTree.strOr(m, "msgType", ""),
+                sourceServerId = JsonTree.strOr(m, "sourceServerId", ""),
+                correlationId = JsonTree.str(m, "correlationId"),
+                payload = m["payload"],
+                createdAt = JsonTree.strOr(m, "createdAt", ""),
+            )
+        }
+    }
+
+    /** 把一条回执拼成 ack 报文的 results 元素（全 camelCase，空可选字段省略；deliveredAt 为 UTC ISO8601）。 */
+    private fun messageAckBody(ack: MessageAck): Map<String, Any?> =
+        buildMap {
+            put("messageId", ack.messageId)
+            put("status", ack.status)
+            if (ack.reason != null) put("reason", ack.reason)
+            put("deliveredAt", isoUtc(ack.deliveredAtMs))
+            if (ack.handlerCostMs != null) put("handlerCostMs", ack.handlerCostMs)
+        }
+
+    /** 解析回执 200 响应（applied / ignored 计数）。 */
+    private fun parseMessageAckApplied(jsonBody: String): MessageAckOutcome.Applied {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return MessageAckOutcome.Applied(
+            applied = JsonTree.intOr(obj, "applied", 0),
+            ignored = JsonTree.intOr(obj, "ignored", 0),
+        )
+    }
+
+    /** Unix 毫秒 → UTC ISO8601（如 2026-07-06T08:00:00.123Z），与控制面时间口径一致。 */
+    private fun isoUtc(epochMs: Long): String = java.time.Instant.ofEpochMilli(epochMs).toString()
 
     /** 从错误响应体解析原因码（优先 code，退 message，再退笼统）；供 400 拒绝告警可读（已脱敏，ADR-0057）。 */
     private fun parseErrorCode(jsonBody: String): String {

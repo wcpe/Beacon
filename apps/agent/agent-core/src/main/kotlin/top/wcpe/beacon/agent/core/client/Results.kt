@@ -280,3 +280,98 @@ sealed class SchedReportLocalOutcome {
     /** 连接级失败 / 其它非预期状态：保留队列下次恢复再补报（best-effort）。 */
     data class Failed(val reason: String) : SchedReportLocalOutcome()
 }
+
+// ---- P5 连接采集批上报（FR-145 §5.1）：wire DTO 与调用结果 ----
+
+/** 连接批上报的结果（对应 /connections/batch 202 / 429）。 */
+sealed class ConnectionsReportOutcome {
+    /** 202：控制面已受理（accepted / duplicated 为入库 / 幂等去重数）。 */
+    data class Accepted(val accepted: Int, val duplicated: Int) : ConnectionsReportOutcome()
+
+    /** 429：控制面写入队列忙（过载保护）；agent 保留缓冲退避后重报。 */
+    object Busy : ConnectionsReportOutcome()
+
+    /** 403：身份未确认，尚不能上报；保留缓冲待确认后再报。 */
+    object Forbidden : ConnectionsReportOutcome()
+
+    /** 连接级失败 / 其它非预期状态：保留缓冲下一轮重报。 */
+    data class Failed(val reason: String) : ConnectionsReportOutcome()
+}
+
+// ---- P5 跨服消息（FR-149）：wire DTO 与调用结果 ----
+
+/**
+ * 上行发送的一条消息（client 侧 wire DTO）。
+ *
+ * 由 messaging 适配器从信封解出后传入，避免 client 反向依赖 messaging.Message（保持包依赖单向）。
+ *
+ * @param targetKind server / player（[top.wcpe.beacon.agent.core.messaging.Message.TARGET_SERVER] 等值）
+ * @param targetServerId targetKind=server 时的目标子服；否则 null
+ * @param targetPlayerUuid targetKind=player 时的目标玩家；否则 null
+ * @param sentAtMs 发送时刻（Unix 毫秒）；上线格式化为 UTC ISO8601
+ */
+data class OutboundMessage(
+    val messageId: String,
+    val msgType: String,
+    val targetKind: String,
+    val targetServerId: String?,
+    val targetPlayerUuid: String?,
+    val correlationId: String?,
+    val payload: Any?,
+    val sentAtMs: Long,
+)
+
+/** 长轮询取回的一条待投消息（对应 /messages/poll 200 的 messages 元素）。 */
+data class PolledMessage(
+    val messageId: String,
+    val msgType: String,
+    val sourceServerId: String,
+    val correlationId: String?,
+    val payload: Any?,
+    val createdAt: String,
+)
+
+/** 消息上行发送的结果（对应 /messages/send 200 / 403 / 400）。 */
+sealed class MessageSendOutcome {
+    /** 200：控制面已受理（status 为 accepted / failed 等控制面回报状态）。 */
+    data class Ok(val messageId: String, val status: String) : MessageSendOutcome()
+
+    /** 403：跨 namespace 无信任被拒。 */
+    object Forbidden : MessageSendOutcome()
+
+    /** 400：请求被拒（如 payload_too_large）；携脱敏原因码。 */
+    data class Rejected(val reason: String) : MessageSendOutcome()
+
+    /** 连接级失败 / 其它非预期状态。 */
+    data class Failed(val reason: String) : MessageSendOutcome()
+}
+
+/** 长轮询取消息的结果（对应 /messages/poll 200 / 204）。 */
+sealed class MessagePollOutcome {
+    /** 200：取到一批待投消息。 */
+    data class Messages(val messages: List<PolledMessage>) : MessagePollOutcome()
+
+    /** 204：本轮无消息（长轮询超时）。 */
+    object Empty : MessagePollOutcome()
+
+    /** 连接级失败 / 其它非预期状态：退避后重试。 */
+    data class Failed(val reason: String) : MessagePollOutcome()
+}
+
+/** 一条消息回执（ack 请求的 results 元素）。 */
+data class MessageAck(
+    val messageId: String,
+    val status: String,
+    val reason: String?,
+    val deliveredAtMs: Long,
+    val handlerCostMs: Long?,
+)
+
+/** 批量回执的结果（对应 /messages/ack 200）。 */
+sealed class MessageAckOutcome {
+    /** 200：控制面已应用（applied / ignored 为生效 / 未知 messageId 忽略数）。 */
+    data class Applied(val applied: Int, val ignored: Int) : MessageAckOutcome()
+
+    /** 连接级失败 / 其它非预期状态：best-effort，下一轮取消息后仍会重投则再 ack。 */
+    data class Failed(val reason: String) : MessageAckOutcome()
+}
