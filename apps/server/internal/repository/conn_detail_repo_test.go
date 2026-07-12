@@ -94,7 +94,7 @@ func TestConnFlushCrossDayCloseHitsOpenDay(t *testing.T) {
 	repo := NewConnDetailRepository(db)
 	openedMs := time.Date(2026, 7, 11, 23, 59, 0, 0, time.UTC).UnixMilli()
 	closedMs := openedMs + 2*3600*1000 // 跨到 07-12
-	cid := uuidV7At(openedMs, "b2")     // conn_id 内嵌 open 时间 → 恒定位 07-11 表
+	cid := uuidV7At(openedMs, "b2")    // conn_id 内嵌 open 时间 → 恒定位 07-11 表
 	openTable := store.DailyTableName("conn_detail", time.UnixMilli(openedMs).UTC())
 
 	if _, err := repo.FlushDaily([]model.ConnEvent{openEvent(cid, 1, "proxy-1", "p2", openedMs)}); err != nil {
@@ -166,7 +166,7 @@ func TestConnCloseOrphans(t *testing.T) {
 	db := openRepoSQLite(t, "conn_orphan")
 	repo := NewConnDetailRepository(db)
 	base := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC).UnixMilli()
-	old := openEvent(uuidV7At(base, "e5"), 1, "proxy-1", "old", base)          // 旧进程孤儿
+	old := openEvent(uuidV7At(base, "e5"), 1, "proxy-1", "old", base)               // 旧进程孤儿
 	fresh := openEvent(uuidV7At(base+60000, "e6"), 1, "proxy-1", "new", base+60000) // 新进程鲜活
 	if _, err := repo.FlushDaily([]model.ConnEvent{old, fresh}); err != nil {
 		t.Fatalf("写 open 失败: %v", err)

@@ -29,12 +29,12 @@ func IsValidMsgTargetKind(kind string) bool {
 
 // 消息失败 / 过期原因码（msg_trace.fail_reason，脱敏后文案；spec §4.2/§7）。
 const (
-	MsgFailPlayerNotOnline = "player_not_online" // 按玩家寻址但玩家不在名册
+	MsgFailPlayerNotOnline  = "player_not_online"     // 按玩家寻址但玩家不在名册
 	MsgFailNamespaceNoTrust = "namespace_not_trusted" // 跨域无 capability=message 信任
-	MsgFailAckTimeout       = "ack_timeout"       // dispatched 后重投用尽仍无回执
-	MsgFailQueueOverflow    = "queue_overflow"    // 每服投递队列溢出淘汰最旧
-	MsgFailTTLExpired       = "ttl_expired"       // accepted 停留超 TTL 无人取走
-	MsgFailHandlerError     = "handler_error"     // 目标业务 handler 回执失败
+	MsgFailAckTimeout       = "ack_timeout"           // dispatched 后重投用尽仍无回执
+	MsgFailQueueOverflow    = "queue_overflow"        // 每服投递队列溢出淘汰最旧
+	MsgFailTTLExpired       = "ttl_expired"           // accepted 停留超 TTL 无人取走
+	MsgFailHandlerError     = "handler_error"         // 目标业务 handler 回执失败
 )
 
 // MsgTrace 是消息元数据日表 msg_trace_YYYYMMDD 的行模型（FR-149，见 spec §3.3）。
