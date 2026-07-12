@@ -48,7 +48,7 @@ func TestConnFlushDailyMySQL(t *testing.T) {
 		t.Fatalf("MySQL 下 close 会话行 / 可空列不符: %+v", row)
 	}
 	if row.FirstBackendServerID != "game-1" || row.LastBackendServerID != "game-2" {
-		t.Fatalf("close 应保留 open 首后端并落末后端: %+v", row)
+		t.Fatalf("close 应落首后端与末后端（open 事件不带后端）: %+v", row)
 	}
 
 	// 跨日：open 于 D、close 于 D+1，行留在 open 日表且被闭合，不在 D+1 建表。

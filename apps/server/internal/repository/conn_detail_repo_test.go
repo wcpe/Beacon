@@ -21,21 +21,23 @@ func uuidV7At(ms int64, seq string) string {
 	return p + "-7abc-8def-" + tail
 }
 
+// openEvent 构造 open 事件：贴合真实采集——玩家刚连上代理、尚未进任何后端，故 open 事件不带后端。
 func openEvent(connID string, ns uint, proxy, player string, openedMs int64) model.ConnEvent {
 	return model.ConnEvent{
 		Kind: model.ConnEventKindOpen, ConnID: connID, NamespaceID: ns,
 		ProxyServerID: proxy, PlayerUUID: player, PlayerName: "Steve",
 		ClientIP: "10.0.0.1", ProtocolVersion: 765, OpenedAtMs: openedMs,
-		FirstBackend: "game-1",
 	}
 }
 
+// closeEvent 构造 close 事件：首末后端与切换次数由 close 携带（open 不带后端），close 更新时须落齐。
 func closeEvent(connID string, ns uint, proxy, player string, openedMs, closedMs int64) model.ConnEvent {
 	ev := openEvent(connID, ns, proxy, player, openedMs)
 	ev.Kind = model.ConnEventKindClose
 	ev.ClosedAtMs = closedMs
 	ev.CloseKind = model.ConnCloseKindQuit
 	ev.CloseReason = "disconnect"
+	ev.FirstBackend = "game-1"
 	ev.LastBackend = "game-2"
 	ev.BackendSwitchCount = 1
 	return ev
@@ -66,6 +68,9 @@ func TestConnFlushOpenThenClose(t *testing.T) {
 	if row.Status != model.ConnStatusOpen || row.ClosedAt != nil {
 		t.Fatalf("open 后应为 open 且 closed_at 为空，实际 status=%s closedAt=%v", row.Status, row.ClosedAt)
 	}
+	if row.FirstBackendServerID != "" {
+		t.Fatalf("open 事件不带后端，open 行首后端应为空，实际 %q", row.FirstBackendServerID)
+	}
 
 	if _, err := repo.FlushDaily([]model.ConnEvent{closeEvent(cid, 1, "proxy-1", "p-uuid", openedMs, closedMs)}); err != nil {
 		t.Fatalf("写 close 失败: %v", err)
@@ -84,7 +89,7 @@ func TestConnFlushOpenThenClose(t *testing.T) {
 		t.Fatalf("close 摘要字段未落齐: %+v", row)
 	}
 	if row.FirstBackendServerID != "game-1" {
-		t.Fatalf("close 更新应保留 open 时段首后端 game-1，实际 %s", row.FirstBackendServerID)
+		t.Fatalf("close 携带的首后端 game-1 应落库（open 事件不带后端），实际 %q", row.FirstBackendServerID)
 	}
 }
 
@@ -205,7 +210,7 @@ func TestConnListOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("列 open 失败: %v", err)
 	}
-	if len(open) != 1 || open[0].PlayerUUID != "alice" || open[0].FirstBackend != "game-1" {
-		t.Fatalf("应只返回 1 条 open（alice），实际 %+v", open)
+	if len(open) != 1 || open[0].PlayerUUID != "alice" || open[0].FirstBackend != "" {
+		t.Fatalf("应只返回 1 条 open（alice、open 行不带后端），实际 %+v", open)
 	}
 }

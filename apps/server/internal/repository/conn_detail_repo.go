@@ -119,15 +119,18 @@ func insertConnOpens(tx *gorm.DB, tableName string, rows []model.ConnDetail) (in
 	return deduplicated, nil
 }
 
-// upsertConnCloses 批量落 close：conn_id 冲突（open 行已在）即只更新断开相关列（open 时段字段保留），
-// 冲突不存在（close 先于 open 到达 / 跨批乱序）则整行插入为 closed。避免逐条 UPDATE 的 N+1。
+// upsertConnCloses 批量落 close：conn_id 冲突（open 行已在）即只更新断开相关列（opened_at/player 等 open 时段
+// 字段保留），冲突不存在（close 先于 open 到达 / 跨批乱序）则整行插入为 closed。避免逐条 UPDATE 的 N+1。
+//
+// 首末后端均在此更新：open 事件在玩家连上代理、尚未进后端时发出、不带后端；首后端与末后端都由 close 事件携带，
+// 故 first_backend_server_id 必须进 DoUpdates，否则 close 更新既有 open 行时首后端被静默丢弃、永不落库。
 func upsertConnCloses(tx *gorm.DB, tableName string, rows []model.ConnDetail) error {
 	return tx.Table(tableName).
 		Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "conn_id"}},
 			DoUpdates: clause.AssignmentColumns([]string{
-				"status", "closed_at", "duration_ms", "close_kind",
-				"close_reason", "last_backend_server_id", "backend_switch_count",
+				"status", "closed_at", "duration_ms", "close_kind", "close_reason",
+				"first_backend_server_id", "last_backend_server_id", "backend_switch_count",
 			}),
 		}).
 		CreateInBatches(&rows, connInsertBatchSize).Error
