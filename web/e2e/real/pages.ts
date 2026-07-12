@@ -17,6 +17,7 @@ export const PAGES = {
   configs: { nav: '配置中心', path: '/configs', heading: '配置中心' },
   servers: { nav: '服务器', path: '/servers', heading: '服务器' },
   zones: { nav: '区服分配', path: '/zones', heading: '区服分配' },
+  serviceAnalysis: { nav: '服务分析', path: '/service-analysis', heading: '服务分析' },
   commands: { nav: '命令观测', path: '/commands', heading: '命令观测' },
   audits: { nav: '审计', path: '/audits', heading: '审计' },
   apiKeys: { nav: '密钥', path: '/api-keys', heading: '密钥' },
