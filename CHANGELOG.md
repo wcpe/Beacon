@@ -4,6 +4,14 @@
 
 ## 未发布
 
+## 0.24.4（2026-07-12）
+
+### 新增
+- `/dashboard` 与 `/service-analysis` 接真（FR-154 本期部分）：运维总览的健康与调度概览、服务分析的指标时序与数据对比从 mock 切到真实后端——集群健康总览（分角色实例数 / 在线合计 / 平均 TPS·CPU / 健康等级分布 / 可调度计数）、服务器状态墙、调度概览（决策总数 / 成功率 / 降级占比）消费 `/admin/v2/metrics/summary`、`/health`、`/sched-decisions/summary`；服务分析消费 `/admin/v2/metrics/series`（步长桶聚合时序）与 `/health/{serverId}`（因子对比）。玩家流 / 连接流卡在其端点（连接明细域）就位前显示中性占位「连接流数据暂未开放」，不再显示误导性错误文案；告警卡走既有 `/admin/v1/alert-events`。`flow-overview` 解除对 `@beacon/devmock` 的生产耦合（时间基准改本地时钟，生产代码只依赖 `@beacon/contracts`）；契约包补 `HealthSnapshotsResponse` 包装类型并给 devmock 快照 handler 加 satisfies 锚定。新增真后端 Playwright 用例（dashboard 各卡可达与契约交叉校验、service-analysis 可达）。真机浏览器验收：真控制面 + 真双端 agent 下五卡全真数据渲染。
+
+### 修复
+- Agent 进程 CPU 采样在现代 JVM 上恒不可用（-1）：`readProcessCpuLoad` 原按实现类反射调 `getProcessCpuLoad`——JDK 9+ 模块化下实现类所在内部包未导出，反射被模块封装拦截（`InaccessibleObjectException`），导致 GraalVM 17 / JDK 21 等一切现代 JVM 上 CPU 采样恒回退哨兵 -1（真机与 e2e 观测到的 `cpu_pct_avg=-1` 根因即此，非宿主性能计数器问题）。改经已导出的扩展接口 `com.sun.management.OperatingSystemMXBean` 查方法调用，无需 `setAccessible`；接口缺失的异构 JVM 仍回退哨兵。修复后真机双端 CPU 落真值并参与健康 cpu 因子计算。
+
 ## 0.24.3（2026-07-12）
 
 ### 新增
