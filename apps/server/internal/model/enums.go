@@ -378,6 +378,8 @@ const (
 	ActionSystemUpdateCancel = "system.update-cancel"
 	// 健康权重配置热更（FR-147，spec §4.4）：detail 记新配置 json（不含任何凭据）
 	ActionHealthWeightsUpdate = "health-weights.update"
+	// 消息 payload 查看（FR-150，spec §4.4）：高风险受控查看，先审计后返回；detail 记 messageId/类型/来源目标/原因原文，绝不含 payload 内容
+	ActionMessagePayloadView = "message.payload.view"
 )
 
 // 审计对象类型。
@@ -413,6 +415,8 @@ const (
 	TargetTypeReversibleOp = "reversible-op"
 	// 健康权重配置（FR-147）的审计对象类型
 	TargetTypeHealthWeights = "health-weights"
+	// 跨服消息（FR-150 payload 查看）的审计对象类型
+	TargetTypeMessage = "message"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

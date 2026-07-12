@@ -398,9 +398,14 @@ func run() error {
 	messageService := service.NewMessageService(messageRelay, playerRoster, v2ControlPlaneService)
 	v2MessageHandler := handler.NewV2MessageHandler(messageService)
 
-	// 连接明细管理面查询装配（FR-145，见 §5.2）：复用 P5a 的 connDetailRepo；查询侧请求 goroutine 可读 DB
-	// （读非采集面），但仍走游标分页 + 逐表短路防全量扫描。
+	// 连接明细 / 消息元数据 / payload 查看管理面查询装配（FR-145/149/150，见 §5.2）：复用 P5a 的
+	// connDetailRepo / messageRepo / auditRepo；查询侧请求 goroutine 可读 DB（读非采集面），但仍走
+	// 游标分页 + 逐表短路防全量扫描；payload 受控查看先写 message.payload.view 审计后返回内容。
 	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(service.NewConnQueryService(connDetailRepo))
+	v2MessageAdminHandler := handler.NewV2MessageAdminHandler(
+		service.NewMessageQueryService(messageRepo),
+		service.NewMessagePayloadService(messageRepo, auditRepo),
+	)
 
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。
@@ -456,7 +461,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

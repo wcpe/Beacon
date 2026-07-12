@@ -19,6 +19,7 @@ type Handlers struct {
 	V2Connection      *handler.V2ConnectionHandler
 	V2Message         *handler.V2MessageHandler
 	V2ConnectionAdmin *handler.V2ConnectionAdminHandler
+	V2MessageAdmin    *handler.V2MessageAdminHandler
 	SchedDecision     *handler.SchedDecisionAdminHandler
 	Config            *handler.ConfigHandler
 	File              *handler.FileHandler
@@ -203,6 +204,17 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.Get("/connections", h.V2ConnectionAdmin.List)
 				r.Get("/connections/stats", h.V2ConnectionAdmin.Stats)
 				r.Get("/connections/{connId}", h.V2ConnectionAdmin.Detail)
+			}
+
+			// 跨服消息管理面查询端点（FR-149/150，见 spec §5.2）：messageId/correlationId 直查或条件游标分页 /
+			// 详情（hops + 关联摘要）/ 异常链路聚合（/topology 数据源）/ payload 受控查看（权限点 message.payload.view：
+			// POST 属写方法，readonly 经上面 readonlyWriteGuard 403）+ 必填原因 + 先审计后返回。列表与详情永不含 payload。
+			// payload 端点由 service 自记 message.payload.view 专项审计（detail 不含 payload）。
+			if h.V2MessageAdmin != nil {
+				r.Get("/messages", h.V2MessageAdmin.List)
+				r.Get("/messages/stats", h.V2MessageAdmin.Stats)
+				r.Get("/messages/{messageId}", h.V2MessageAdmin.Detail)
+				r.Post("/messages/{messageId}/payload", h.V2MessageAdmin.Payload)
 			}
 		})
 	}
