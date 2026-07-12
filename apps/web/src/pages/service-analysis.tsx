@@ -1,10 +1,11 @@
 // 服务分析页（/service-analysis）：左右分栏——左侧吸顶服务器选择列（可搜索多选，固定不随右侧滚），
-// 右侧主区分「指标时序 / 数据对比 / 调度决策」板块（吸顶切换常驻）。指标时序 / 数据对比选服即时出图；
-// 调度决策自带时间窗与筛选、不依赖左侧选服。支持 ?view= 定位板块（dashboard 调度概览下钻入口）。
+// 右侧主区分「指标时序 / 数据对比 / 调度决策 / 健康快照」板块（吸顶切换常驻）。指标时序 / 数据对比 /
+// 健康快照选服即时出图；调度决策自带时间窗与筛选、不依赖左侧选服。支持 ?view= 定位板块
+//（dashboard 调度概览下钻入口）。
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
-import { GitCompareArrows, LineChart, MousePointerClick, TrendingUp, Workflow } from 'lucide-react'
+import { GitCompareArrows, History, LineChart, MousePointerClick, TrendingUp, Workflow } from 'lucide-react'
 
 import { SectionHeader, cn } from '@beacon/ui'
 
@@ -12,10 +13,11 @@ import ComparePanel from './service-analysis/compare-panel'
 import DecisionsPanel from './service-analysis/decisions-panel'
 import ServerPicker from './service-analysis/server-picker'
 import SeriesPanel from './service-analysis/series-panel'
+import SnapshotsPanel from './service-analysis/snapshots-panel'
 
 type MetricKey = 'cpu' | 'tps' | 'mem' | 'online'
-// 右侧区板块：指标时序 / 数据对比 / 调度决策
-const PANEL_TABS = ['series', 'compare', 'decisions'] as const
+// 右侧区板块：指标时序 / 数据对比 / 调度决策 / 健康快照
+const PANEL_TABS = ['series', 'compare', 'decisions', 'snapshots'] as const
 type PanelTab = (typeof PANEL_TABS)[number]
 
 // 校验 URL ?view= 参数是否为合法板块名
@@ -94,6 +96,14 @@ export default function ServiceAnalysisPage() {
                 icon={<Workflow className="size-4" />}
                 label={t('observability.serviceAnalysis.tabDecisions')}
               />
+              <PanelTabButton
+                active={tab === 'snapshots'}
+                onClick={() => {
+                  setTab('snapshots')
+                }}
+                icon={<History className="size-4" />}
+                label={t('observability.serviceAnalysis.tabSnapshots')}
+              />
             </div>
             {tab === 'series' &&
               (serverIds.length === 0 ? (
@@ -114,6 +124,12 @@ export default function ServiceAnalysisPage() {
                 <ComparePanel serverIds={serverIds} />
               ))}
             {tab === 'decisions' && <DecisionsPanel />}
+            {tab === 'snapshots' &&
+              (serverIds.length === 0 ? (
+                <PickHint text={t('observability.serviceAnalysis.pickHintSnapshots')} />
+              ) : (
+                <SnapshotsPanel serverIds={serverIds} />
+              ))}
           </div>
         </div>
       </div>
@@ -131,7 +147,7 @@ function PickHint({ text }: { text: string }) {
   )
 }
 
-// 板块切换按钮（指标时序 / 数据对比 / 调度决策）：激活态品牌底色高亮，role=tab 便于测试与无障碍定位。
+// 板块切换按钮（指标时序 / 数据对比 / 调度决策 / 健康快照）：激活态品牌底色高亮，role=tab 便于测试与无障碍定位。
 function PanelTabButton({
   active,
   onClick,

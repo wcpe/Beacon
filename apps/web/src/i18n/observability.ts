@@ -37,10 +37,13 @@ export const observability = {
     avg: '均值',
     peak: '峰值',
     clear: '清空选择',
-    // 右侧区板块切换：指标时序 / 数据对比 / 调度决策
+    // 右侧区板块切换：指标时序 / 数据对比 / 调度决策 / 健康快照
     tabSeries: '指标时序',
     tabCompare: '数据对比',
     tabDecisions: '调度决策',
+    tabSnapshots: '健康快照',
+    // 健康快照板块选服前的引导占位
+    pickHintSnapshots: '至少选择一台在线子服回放健康快照',
     // 时间窗预设（调度决策 / 健康快照共用）
     window: '时间范围',
     window1h: '近 1 小时',
@@ -92,6 +95,19 @@ export const observability = {
       durationMs: '{{count}} 毫秒',
       excludedTitle: '逐台排除原因',
       excludedEmpty: '无排除记录',
+    },
+    // 健康快照回放板块
+    snapshots: {
+      title: '健康快照回放',
+      mission: '回放所选服务器健康分与等级随时间的变化',
+      empty: '该时间窗内无健康快照',
+      latest: '最新分',
+      min: '最低',
+      max: '最高',
+      weightsRev: '权重 rev {{rev}}',
+      levelCounts: '健康 {{healthy}} · 降级 {{degraded}} · 不健康 {{unhealthy}}',
+      latestReasons: '最新不可调度原因',
+      points: '{{count}} 个快照点',
     },
     compareMission: '按维度并排对比所选服务器，差异一眼可见',
     compareNoData: '所选服务器暂无可对比的健康与属性数据',
