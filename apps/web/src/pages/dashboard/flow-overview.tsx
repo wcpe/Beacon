@@ -37,9 +37,9 @@ function polyline(points: { x: number; y: number }[]): string {
   return points.map((p) => `${String(p.x)},${String(p.y)}`).join(' ')
 }
 
-// 端点未提供判定：连接流端点由后续阶段交付，真后端未挂载时请求回落 SPA 返回 HTML
-//（被请求层判为 mock_not_ready）或 404。这两种归一为「数据暂未开放」中性占位，
-// 不展示误导性错误文案；其余错误仍如实经 AsyncSection 展示（ADR-0057 不静默）。
+// 端点未提供判定（防御保留）：连接流端点已随连接消息查询域交付；对未含该端点的旧版
+// 控制面，请求回落 SPA 返回 HTML（被请求层判为 mock_not_ready）或 404，归一为
+//「数据暂未开放」中性占位，不展示误导性错误文案；其余错误仍如实经 AsyncSection 展示（ADR-0057 不静默）。
 function isEndpointNotReady(error: unknown): boolean {
   return error instanceof ApiClientError && (error.code === 'mock_not_ready' || error.status === 404)
 }
