@@ -18,6 +18,7 @@ import {
 import type { MessageEdgeStat } from '@beacon/contracts'
 
 import { fetchMessageEdges } from '../../api/cluster'
+import SampleMessages from './sample-messages'
 
 // 边的失败率阈值：超过即视为异常边高亮
 const ABNORMAL_RATE = 5
@@ -170,18 +171,8 @@ export default function EdgesPanel() {
                   </div>
                 )}
 
-                <div>
-                  <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
-                    {t('cluster.topology.edges.sampleMessages')}
-                  </p>
-                  <ul className="mt-1 grid gap-0.5">
-                    {selected.sampleMessageIds.map((id) => (
-                      <li key={id} className="truncate font-mono text-xs text-ink-3">
-                        {id}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                {/* 样本消息 + payload 受控查看入口（共用组件） */}
+                <SampleMessages ids={selected.sampleMessageIds} />
 
                 {/* 与 /commands、/audits 互跳（FR-157） */}
                 <div className="flex flex-wrap gap-3 pt-1 text-xs">

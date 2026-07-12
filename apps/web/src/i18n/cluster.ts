@@ -270,6 +270,18 @@ export const cluster = {
       viewInAudits: '在审计中追溯',
       viewInCommands: '在命令观测中查看',
     },
+    // payload 受控查看弹窗（原因必填 + 先审计后返回）
+    payload: {
+      view: '查看 payload',
+      title: '查看消息 payload',
+      desc: 'payload 属敏感内容，查看需填写原因并记录审计',
+      reasonLabel: '查看原因（必填，≤255 字）',
+      reasonPlaceholder: '如：排查跨服传送失败的异常链路样本',
+      confirm: '确认查看',
+      loading: '获取中…',
+      sizeBytes: '大小 {{size}} 字节',
+      close: '关闭',
+    },
     filter: {
       namespace: '命名空间',
       allNamespace: '全部 命名空间',

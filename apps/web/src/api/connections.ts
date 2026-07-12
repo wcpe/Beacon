@@ -1,6 +1,8 @@
-// 连接消息域数据获取（/dashboard 玩家流 / 连接流趋势）：/admin/v2/connections/stats。
-// 真后端随连接消息存储域交付，当前仅演示模式 mock 提供（消费卡对缺端点降级占位）。
-// 只取聚合时间桶（不涉及玩家名单 / payload）。
+// 连接消息域数据获取：/admin/v2/connections/stats（/dashboard 玩家流 / 连接流趋势）与
+// /admin/v2/messages/{messageId}/payload（/topology 消息 payload 受控查看），真后端均已交付。
+// 聚合 / 列表永不含 payload；payload 仅经受控查看端点（原因必填 + 先审计后返回）按需获取。
+
+import type { MessagePayloadResponse } from '@beacon/contracts'
 
 import { buildQuery, request } from './http'
 
@@ -30,4 +32,9 @@ export interface ConnStatsQuery {
 /** 连接 / 玩家流时间桶聚合（dashboard 玩家流卡片） */
 export function fetchConnStats(query: ConnStatsQuery): Promise<ConnStatsResponse> {
   return request('GET', `/admin/v2/connections/stats${buildQuery({ ...query })}`)
+}
+
+/** 受控查看消息 payload：原因必填（≤255 字），后端先写审计再返回内容（spec §4.4） */
+export function viewMessagePayload(messageId: string, reason: string): Promise<MessagePayloadResponse> {
+  return request('POST', `/admin/v2/messages/${encodeURIComponent(messageId)}/payload`, { reason })
 }

@@ -4,6 +4,7 @@
 // 数据剖析模式渲染异常链路表并点击边看明细。默认可视化模式，切到「数据剖析」看表。
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import TopologyPage from '../../pages/topology'
@@ -193,6 +194,20 @@ describe('/topology 拓扑页', () => {
     expect(await screen.findByText('节点过多，已按大区聚合折叠')).toBeInTheDocument()
   })
 
+  it('数据剖析模式消息聚合查询失败时如实展示脱敏错误（不静默）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    server.use(
+      http.get('/admin/v2/messages/stats', () =>
+        HttpResponse.json({ code: 'internal', message: '数据库连接失败' }, { status: 500 }),
+      ),
+    )
+    renderPage(<TopologyPage />)
+
+    await user.click(await screen.findByRole('tab', { name: /数据剖析/ }))
+    expect(await screen.findByText(/加载失败：数据库连接失败/)).toBeInTheDocument()
+  })
+
   it('超大量态服务器间原始链路聚合为集群 → 大区链路并明示，避免渲染上千条动画边（防卡死）', async () => {
     useScenario('huge')
     const { container } = renderPage(<TopologyPage />)
@@ -214,5 +229,68 @@ describe('/topology 拓扑页', () => {
       expect(paths.length).toBeGreaterThan(0)
       expect(paths.length).toBeLessThanOrEqual(60 * 3)
     })
+  })
+})
+
+// 在数据剖析模式选中失败率最高的边（必有失败样本），打开首个样本的 payload 查看弹窗
+async function openPayloadDialog(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole('tab', { name: /数据剖析/ }))
+  const targetCells = await screen.findAllByText(/^→ /)
+  await user.click(targetCells[0].closest('tr') as HTMLElement)
+  const viewButtons = await screen.findAllByRole('button', { name: '查看 payload' })
+  await user.click(viewButtons[0])
+}
+
+describe('/topology 消息 payload 受控查看弹窗', () => {
+  it('原因必填：为空禁用确认，填写后可提交', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<TopologyPage />)
+    await openPayloadDialog(user)
+
+    // 弹窗打开：标题 + 确认按钮在原因为空时禁用
+    expect(await screen.findByText('查看消息 payload')).toBeInTheDocument()
+    const confirm = screen.getByRole('button', { name: '确认查看' })
+    expect(confirm).toBeDisabled()
+    await user.type(screen.getByLabelText(/查看原因/), '排查异常链路失败样本')
+    expect(confirm).toBeEnabled()
+  })
+
+  it('填写原因提交成功：展示 payload 原文 + SHA-256 + 大小', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<TopologyPage />)
+    await openPayloadDialog(user)
+
+    await user.type(screen.getByLabelText(/查看原因/), '排查异常链路失败样本')
+    await user.click(screen.getByRole('button', { name: '确认查看' }))
+
+    // devmock payload 为 JSON 原文（含 "type" 键），并带 64 位十六进制 SHA-256 与字节大小
+    expect(await screen.findByText(/"type"/)).toBeInTheDocument()
+    expect(screen.getByText('SHA-256')).toBeInTheDocument()
+    expect(screen.getByText(/^[0-9a-f]{64}$/)).toBeInTheDocument()
+    expect(screen.getByText(/大小 \d+ 字节/)).toBeInTheDocument()
+    // 展示后确认按钮换为关闭
+    expect(screen.queryByRole('button', { name: '确认查看' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument()
+  })
+
+  it('无权限（403）时弹窗内展示脱敏错误文案，不静默', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    server.use(
+      http.post('/admin/v2/messages/:messageId/payload', () =>
+        HttpResponse.json({ code: 'forbidden', message: '只读密钥无权执行写操作' }, { status: 403 }),
+      ),
+    )
+    renderPage(<TopologyPage />)
+    await openPayloadDialog(user)
+
+    await user.type(screen.getByLabelText(/查看原因/), '排查异常链路失败样本')
+    await user.click(screen.getByRole('button', { name: '确认查看' }))
+
+    // 脱敏错误内联展示在弹窗内，payload 未被展示
+    expect(await screen.findByText('只读密钥无权执行写操作')).toBeInTheDocument()
+    expect(screen.queryByText('SHA-256')).not.toBeInTheDocument()
   })
 })

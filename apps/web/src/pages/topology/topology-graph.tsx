@@ -21,6 +21,7 @@ import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/cont
 
 import { fetchMessageEdges, fetchServers, fetchZoneTree } from '../../api/cluster'
 import { fetchHealthList } from '../../api/metrics'
+import SampleMessages from './sample-messages'
 
 // 小区节点总数上限：超过则按大区聚合折叠（节点 = 大区），不再逐个渲染小区
 const MAX_ZONE_NODES = 24
@@ -1241,18 +1242,8 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                         </ul>
                       </div>
                     )}
-                    <div>
-                      <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
-                        {t('cluster.topology.edges.sampleMessages')}
-                      </p>
-                      <ul className="mt-1 grid gap-0.5">
-                        {selectedEdge.sampleMessageIds.map((id) => (
-                          <li key={id} className="truncate font-mono text-xs text-ink-3">
-                            {id}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {/* 样本消息 + payload 受控查看入口（共用组件） */}
+                    <SampleMessages ids={selectedEdge.sampleMessageIds} />
                   </div>
                 ) : selectedNode ? (
                   <div className="grid gap-2.5 text-sm">
