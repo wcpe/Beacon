@@ -19,8 +19,12 @@ import top.wcpe.beacon.agent.api.DiscoveryQuery
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
+import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
+import top.wcpe.beacon.agent.core.connection.ProxyConnectionTracker
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
@@ -113,6 +117,12 @@ object BeaconAgentBungee : Plugin() {
     /** 跨服消息模块引导（FR-26）；null 表示未装配。 */
     private var messagingBootstrap: BungeeMessagingBootstrap? = null
 
+    /** 连接明细批上报协调器（FR-145）；null 表示未装配。 */
+    private var connectionReporter: ConnectionReportCoordinator? = null
+
+    /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
+    private var messagingRuntime: MessagingRuntime? = null
+
     @Awake(LifeCycle.ENABLE)
     fun enable() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
@@ -176,6 +186,8 @@ object BeaconAgentBungee : Plugin() {
                     selfPluginDirNames = setOf("BeaconAgentProxy"),
                 )
             lifecycle = assembled.lifecycle
+            // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
+            messagingRuntime = assembled.messagingRuntime
 
             // 对外注册门面，供同进程业务插件读取。
             BeaconAgentProvider.register(assembled.beaconAgent)
@@ -234,6 +246,24 @@ object BeaconAgentBungee : Plugin() {
             // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
             view.onChange { _, _ -> messaging.sync() }
 
+            // 连接明细采集（FR-145，proxy 专用）：登入/换服/登出 → 会话追踪 → 有界缓冲 → 每 5s 或满 200 条批上报。
+            // 采集埋点零成本、上报走 async，绝不阻塞 BC 主线程；fail-static：控制面不可用照常缓冲、玩家进出服不受影响。
+            val connectionBuffer = ConnectionEventBuffer()
+            val reporter =
+                ConnectionReportCoordinator(
+                    adapter = adapter,
+                    apiClient = assembled.apiClient,
+                    identity = identity,
+                    buffer = connectionBuffer,
+                    bootId = identity.bootId,
+                )
+            connectionReporter = reporter
+            // 缓冲满阈值即触发即时上报（「满 200 条即上报」，单飞去重）。
+            BungeeConnectionListener.tracker =
+                ProxyConnectionTracker(sink = { event -> if (connectionBuffer.add(event)) reporter.flushNow() })
+            // 随注册成功启动上报循环（幂等；未注册前采集照常入缓冲，注册后补报）。
+            assembled.lifecycle.onRegistered { reporter.start() }
+
             // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
             assembled.lifecycle.enableMetricsSampling()
 
@@ -264,6 +294,9 @@ object BeaconAgentBungee : Plugin() {
     fun disable() {
         directorySyncRunning.set(false)
         BungeeRosterListener.bootstrap = null
+        BungeeConnectionListener.tracker = null
+        connectionReporter?.stop()
+        messagingRuntime?.stop()
         messagingBootstrap?.stop()
         rosterBootstrap?.stop()
         proxyMetricsCache?.stop()

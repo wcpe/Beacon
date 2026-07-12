@@ -22,6 +22,7 @@ import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
@@ -109,6 +110,9 @@ object BeaconAgentBukkit : Plugin() {
     /** 跨服消息模块引导（FR-26）；null 表示未装配（身份缺失等）。 */
     private var messagingBootstrap: BukkitMessagingBootstrap? = null
 
+    /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
+    private var messagingRuntime: MessagingRuntime? = null
+
     @Awake(LifeCycle.ENABLE)
     fun enable() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
@@ -168,6 +172,8 @@ object BeaconAgentBukkit : Plugin() {
                     selfPluginDirNames = setOf("BeaconAgent"),
                 )
             lifecycle = assembled.lifecycle
+            // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
+            messagingRuntime = assembled.messagingRuntime
 
             // 对外注册门面，供同进程业务插件读取。
             BeaconAgentProvider.register(assembled.beaconAgent)
@@ -211,6 +217,7 @@ object BeaconAgentBukkit : Plugin() {
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
+        messagingRuntime?.stop()
         messagingBootstrap?.stop()
         lifecycle?.shutdown()
         tickInstrumentation?.stop()

@@ -16,7 +16,11 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.log.AgentLogBuffer
 import top.wcpe.beacon.agent.core.log.BufferingPlatformAdapter
+import top.wcpe.beacon.agent.core.messaging.HttpMessageTransport
+import top.wcpe.beacon.agent.core.messaging.MessageBus
+import top.wcpe.beacon.agent.core.messaging.MessagePollCoordinator
 import top.wcpe.beacon.agent.core.messaging.MessagingHolder
+import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
 import top.wcpe.beacon.agent.core.metrics.ProxyMetricsProvider
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
@@ -49,6 +53,8 @@ class AssembledAgent(
     val messagingHolder: MessagingHolder,
     // 玩家位置名册只读端口持有者（FR-31）：默认空名册；壳层在消息模块启动成功后 set 活跃实现、停止时 reset。
     val rosterDirectoryHolder: RosterDirectoryHolder,
+    // 跨服消息模块运行时（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered）；壳层在 DISABLE 调 stop()。
+    val messagingRuntime: MessagingRuntime,
 )
 
 /**
@@ -191,6 +197,30 @@ object AgentAssembly {
         val schedulingRefresher =
             SchedulingRefresher(apiClient, identity, adapter, schedulingCache, schedulingSnapshotStore, reportQueue)
 
+        // 跨服消息模块（HTTP 中转，ADR-0063）：holder 早建（供 MessagingRuntime 与 BeaconAgentImpl 共用）。
+        // 上行经 HttpMessageTransport→apiClient.sendMessage；下行由 MessagePollCoordinator 长轮询取回后交 MessageBus 分发。
+        // 按玩家寻址不注入本地 PlayerLocator（名册权威在控制面，ADR-0063 §4）。随注册启停，未启用则保持降级。
+        val messagingHolder = MessagingHolder()
+        val messageBus =
+            MessageBus(
+                transport = HttpMessageTransport(apiClient, identity, codec, warn = adapter::warn),
+                codec = codec,
+                selfServerId = identity.serverId,
+                settings = settings.messaging,
+                playerLocator = null,
+                scheduleTimeout = adapter::runAsyncDelayed,
+                warn = adapter::warn,
+            )
+        val messagingRuntime =
+            MessagingRuntime(
+                settings = settings.messaging,
+                holder = messagingHolder,
+                bus = messageBus,
+                poll = MessagePollCoordinator(apiClient, identity, adapter, messageBus),
+                info = adapter::info,
+                error = adapter::error,
+            )
+
         val lifecycle =
             AgentLifecycle(
                 identity = identity,
@@ -217,6 +247,8 @@ object AgentAssembly {
                 // 自身健康回传 sink（FR-148）：把指标上报 202 响应内 self 刷进 selfHealth 数据源。
                 selfHealthSink = selfHealthHolder::set,
             )
+        // 跨服消息模块随注册成功启动（幂等，重注册不重启）；停止由壳层在 DISABLE 调 messagingRuntime.stop()（与连接采集同）。
+        lifecycle.onRegistered { messagingRuntime.start() }
         // 回填强制重同步回调持有者（FR-91）：lifecycle 已建好，命令期 onResyncConfig 经此解引用调用 forceResyncNow。
         lifecycleRef.set(lifecycle)
 
@@ -224,12 +256,10 @@ object AgentAssembly {
         // 壳层在消息模块就绪后注入 Redis 实现。
         val rosterDirectoryHolder = RosterDirectoryHolder(warn = adapter::warn)
         val discoveryView = DiscoveryView(apiClient, topologyWatchHub, rosterDirectoryHolder, identity)
-        // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging，壳层在消息模块就绪后注入活跃门面。
-        val messagingHolder = MessagingHolder()
         val beaconAgent =
             BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder, schedulingView)
 
-        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder)
+        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder, messagingRuntime)
     }
 
     /** agent 自身日志环形缓冲容量（FR-88，见 ADR-0040）：最近 N 行，够排障、内存可忽略；有界不溢出。 */
