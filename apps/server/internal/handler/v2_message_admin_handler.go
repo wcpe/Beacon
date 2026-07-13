@@ -24,11 +24,12 @@ const defaultMessageStatsWindowMs = int64(time.Hour / time.Millisecond)
 type V2MessageAdminHandler struct {
 	queryS   *service.MessageQueryService
 	payloadS *service.MessagePayloadService
+	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
 }
 
 // NewV2MessageAdminHandler 构造处理器。
-func NewV2MessageAdminHandler(queryS *service.MessageQueryService, payloadS *service.MessagePayloadService) *V2MessageAdminHandler {
-	return &V2MessageAdminHandler{queryS: queryS, payloadS: payloadS}
+func NewV2MessageAdminHandler(queryS *service.MessageQueryService, payloadS *service.MessagePayloadService, settings *service.SettingsService) *V2MessageAdminHandler {
+	return &V2MessageAdminHandler{queryS: queryS, payloadS: payloadS, settings: settings}
 }
 
 // messageItemJS 是消息元数据列表项（键对齐 contracts MessageItem，**永不含 payload**）。
@@ -129,20 +130,31 @@ func (h *V2MessageAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
+	fromMs, toMs := parseISOms(q.Get("from")), parseISOms(q.Get("to"))
+	includeArchived := coldQueryRequested(q)
+	// 冷查询强制时间范围校验（messageId/correlationId 直查免范围，交服务层直查分支）。
+	if includeArchived && q.Get("messageId") == "" && q.Get("correlationId") == "" {
+		if err := validateColdQueryRange(fromMs, toMs, coldQueryMaxDays(h.settings)); err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+	}
 	page, err := h.queryS.List(service.ListMessagesParams{
-		MessageID:      q.Get("messageId"),
-		CorrelationID:  q.Get("correlationId"),
-		ServerID:       q.Get("serverId"),
-		PlayerUUID:     q.Get("playerUuid"),
-		Status:         q.Get("status"),
-		MsgType:        q.Get("msgType"),
-		TargetKind:     q.Get("targetKind"),
-		CrossNamespace: crossNS,
-		NamespaceID:    namespaceID,
-		FromMs:         parseISOms(q.Get("from")),
-		ToMs:           parseISOms(q.Get("to")),
-		Cursor:         intQuery(q.Get("cursor")),
-		Limit:          intQuery(q.Get("limit")),
+		MessageID:       q.Get("messageId"),
+		CorrelationID:   q.Get("correlationId"),
+		ServerID:        q.Get("serverId"),
+		PlayerUUID:      q.Get("playerUuid"),
+		Status:          q.Get("status"),
+		MsgType:         q.Get("msgType"),
+		TargetKind:      q.Get("targetKind"),
+		CrossNamespace:  crossNS,
+		NamespaceID:     namespaceID,
+		FromMs:          fromMs,
+		ToMs:            toMs,
+		Cursor:          intQuery(q.Get("cursor")),
+		Limit:           intQuery(q.Get("limit")),
+		IncludeArchived: includeArchived,
+		ColdCursor:      q.Get("cursor"),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -152,7 +164,11 @@ func (h *V2MessageAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 	for i := range page.Items {
 		items = append(items, messageItem(&page.Items[i]))
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "nextCursor": nullableStr(page.NextCursor)})
+	body := map[string]any{"items": items, "nextCursor": nullableStr(page.NextCursor)}
+	if includeArchived {
+		body["includeArchived"] = true // 冷查询结果元信息（spec §4.4）
+	}
+	render.WriteJSON(w, http.StatusOK, body)
 }
 
 // Detail 处理 GET /admin/v2/messages/{messageId}：元数据 + hops 链路 + 关联摘要（payload 仅元信息，未命中 404）。

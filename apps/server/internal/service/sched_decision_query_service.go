@@ -40,6 +40,9 @@ type ListSchedDecisionsParams struct {
 	ToMs        int64
 	Page        int
 	PageSize    int
+	// IncludeArchived 为 true 时跨热 / 冷并表查询（FR-152）；ColdCursor 为冷查询 keyset 令牌。
+	IncludeArchived bool
+	ColdCursor      string
 }
 
 // List 分页查询决策记录（ts_ms 降序）；参数非法一律 400（from/to 缺失 / 倒置 / 超保留窗 / result 非法）。
@@ -57,6 +60,33 @@ func (s *SchedDecisionQueryService) List(p ListSchedDecisionsParams) ([]model.Sc
 		Offset:      pageOffset(p.Page, p.PageSize),
 		Limit:       pageSize(p.PageSize),
 	})
+}
+
+// ColdPage 是决策记录冷查询游标分页结果（NextCursor 空串表示无下一页）。
+type ColdPage struct {
+	Items      []model.SchedDecisionV2
+	NextCursor string
+}
+
+// ListCold 冷查询并表（FR-152，spec §4.4）：归档不可达即 503，跨热 / 冷 keyset 并表（时间范围与
+// cold-query-max-days 跨度已由 handler 校验）。result 枚举仍校验，非法 400。
+func (s *SchedDecisionQueryService) ListCold(p ListSchedDecisionsParams) (ColdPage, error) {
+	if !s.repo.HasArchive() {
+		return ColdPage{}, apperr.ErrArchiveUnavailable
+	}
+	switch p.Result {
+	case "", "success", "failed":
+	default:
+		return ColdPage{}, apperr.ErrInvalidParam
+	}
+	rows, nextToken, err := s.repo.QueryRangeCold(repository.SchedDecisionQuery{
+		NamespaceID: p.NamespaceID, Zone: p.Zone, ServerID: p.ServerID, Result: p.Result,
+		FromMs: p.FromMs, ToMs: p.ToMs,
+	}, p.ColdCursor, pageSize(p.PageSize))
+	if err != nil {
+		return ColdPage{}, err
+	}
+	return ColdPage{Items: rows, NextCursor: nextToken}, nil
 }
 
 // validateListParams 校验列表参数：from/to 必填且有序、范围 ≤60 天、result 枚举合法。

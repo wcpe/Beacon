@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -15,12 +16,13 @@ import (
 
 // AuditHandler 处理审计查询。
 type AuditHandler struct {
-	svc *service.AuditService
+	svc      *service.AuditService
+	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
 }
 
 // NewAuditHandler 构造处理器。
-func NewAuditHandler(svc *service.AuditService) *AuditHandler {
-	return &AuditHandler{svc: svc}
+func NewAuditHandler(svc *service.AuditService, settings *service.SettingsService) *AuditHandler {
+	return &AuditHandler{svc: svc, settings: settings}
 }
 
 // auditView 是审计对外视图。
@@ -40,6 +42,10 @@ type auditView struct {
 // List 处理 GET /admin/v1/audits（分页 + 过滤，时间倒序）。
 func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if coldQueryRequested(q) {
+		h.listCold(w, r, q)
+		return
+	}
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
 	items, total, err := h.svc.List(repository.AuditFilter{
@@ -58,6 +64,39 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"total": total, "items": auditViews(items)})
+}
+
+// listCold 处理审计冷查询（FR-152，spec §4.4）：强制时间范围 + 跨热 / 冷单表 keyset 并表，
+// 响应改游标分页（nextCursor）并带 includeArchived 元信息（不再回 total——归并去重后精确总数需全扫两侧）。
+func (h *AuditHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Values) {
+	from, to := parseRFC3339(q.Get("from")), parseRFC3339(q.Get("to"))
+	if err := validateColdQueryRange(timeMs(from), timeMs(to), coldQueryMaxDays(h.settings)); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	size, _ := strconv.Atoi(q.Get("size"))
+	page, err := h.svc.ListCold(repository.AuditFilter{
+		Namespace:     q.Get("namespace"),
+		Operator:      q.Get("operator"),
+		Action:        q.Get("action"),
+		TargetType:    q.Get("targetType"),
+		TargetRef:     q.Get("targetRef"),
+		DetailKeyword: q.Get("detailKeyword"),
+		From:          from,
+		To:            to,
+	}, q.Get("cursor"), size)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"items": auditViews(page.Items), "nextCursor": nullableStr(page.NextCursor), "includeArchived": true,
+	})
+}
+
+// auditViews 把审计模型批量映射为对外视图。
+func auditViews(items []model.AuditLog) []auditView {
 	views := make([]auditView, 0, len(items))
 	for _, a := range items {
 		views = append(views, auditView{
@@ -66,7 +105,15 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 			Result: a.Result, ClientIP: a.ClientIP, CreatedAt: a.CreatedAt,
 		})
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"total": total, "items": views})
+	return views
+}
+
+// timeMs 把时间转毫秒（零值返回 0，供冷查询范围校验判缺失）。
+func timeMs(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
 }
 
 // auditExportFilter 从查询串提取与 List 同口径的过滤（不含分页，导出全量，FR-84）。

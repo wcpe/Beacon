@@ -36,7 +36,7 @@ func newSchedAdminRouter(t *testing.T, name string) (chi.Router, *gorm.DB) {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
 	t.Cleanup(func() { store.Close(db) })
-	h := NewSchedDecisionAdminHandler(service.NewSchedDecisionQueryService(repository.NewSchedDecisionV2Repository(db)))
+	h := NewSchedDecisionAdminHandler(service.NewSchedDecisionQueryService(repository.NewSchedDecisionV2Repository(db)), newTestSettings(t, db))
 	r := chi.NewRouter()
 	r.Get("/admin/v2/sched-decisions", h.List)
 	r.Get("/admin/v2/sched-decisions/summary", h.Summary)

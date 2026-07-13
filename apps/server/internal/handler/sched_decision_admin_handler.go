@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -16,12 +17,13 @@ import (
 // SchedDecisionAdminHandler 处理调度决策记录的管理面查询端点（FR-146，见 spec §5.2）：
 // 列表（分页 + 过滤）/ 单条详情 / 概览聚合。响应形状对齐 contracts SchedDecisionItem/Detail/Summary。
 type SchedDecisionAdminHandler struct {
-	svc *service.SchedDecisionQueryService
+	svc      *service.SchedDecisionQueryService
+	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
 }
 
 // NewSchedDecisionAdminHandler 构造处理器。
-func NewSchedDecisionAdminHandler(svc *service.SchedDecisionQueryService) *SchedDecisionAdminHandler {
-	return &SchedDecisionAdminHandler{svc: svc}
+func NewSchedDecisionAdminHandler(svc *service.SchedDecisionQueryService, settings *service.SettingsService) *SchedDecisionAdminHandler {
+	return &SchedDecisionAdminHandler{svc: svc, settings: settings}
 }
 
 // schedDecisionItemJS 是决策记录列表项（键对齐 contracts SchedDecisionItem，camelCase）。
@@ -65,6 +67,10 @@ func (h *SchedDecisionAdminHandler) List(w http.ResponseWriter, r *http.Request)
 		render.WriteError(w, r, err)
 		return
 	}
+	if coldQueryRequested(q) {
+		h.listCold(w, r, q, namespaceID, fromMs, toMs)
+		return
+	}
 	rows, total, err := h.svc.List(service.ListSchedDecisionsParams{
 		NamespaceID: namespaceID,
 		Zone:        q.Get("zone"),
@@ -84,6 +90,36 @@ func (h *SchedDecisionAdminHandler) List(w http.ResponseWriter, r *http.Request)
 		items = append(items, schedDecisionItem(&rows[i]))
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// listCold 处理决策记录冷查询（FR-152，spec §4.4）：强制时间范围 + 跨热 / 冷 keyset 并表，
+// 响应改游标分页（nextCursor）并带 includeArchived 元信息（不再回 total——归并去重后精确总数需全扫两侧）。
+func (h *SchedDecisionAdminHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Values, namespaceID uint, fromMs, toMs int64) {
+	if err := validateColdQueryRange(fromMs, toMs, coldQueryMaxDays(h.settings)); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	page, err := h.svc.ListCold(service.ListSchedDecisionsParams{
+		NamespaceID: namespaceID,
+		Zone:        q.Get("zone"),
+		ServerID:    q.Get("serverId"),
+		Result:      q.Get("result"),
+		FromMs:      fromMs,
+		ToMs:        toMs,
+		PageSize:    intQuery(q.Get("pageSize")),
+		ColdCursor:  q.Get("cursor"),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	items := make([]schedDecisionItemJS, 0, len(page.Items))
+	for i := range page.Items {
+		items = append(items, schedDecisionItem(&page.Items[i]))
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"items": items, "nextCursor": nullableStr(page.NextCursor), "includeArchived": true,
+	})
 }
 
 // Detail 处理 GET /admin/v2/sched-decisions/{traceId}：单条决策详情（含逐台排除原因）。

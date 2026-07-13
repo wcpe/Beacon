@@ -15,12 +15,13 @@ import (
 // 列表（connId 直查或条件游标分页）/ 单条详情 / 时间桶聚合。响应形状对齐 contracts ConnectionItem /
 // CursorPage / ConnStatsBucket（camelCase 键逐字匹配）。
 type V2ConnectionAdminHandler struct {
-	svc *service.ConnQueryService
+	svc      *service.ConnQueryService
+	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
 }
 
 // NewV2ConnectionAdminHandler 构造处理器。
-func NewV2ConnectionAdminHandler(svc *service.ConnQueryService) *V2ConnectionAdminHandler {
-	return &V2ConnectionAdminHandler{svc: svc}
+func NewV2ConnectionAdminHandler(svc *service.ConnQueryService, settings *service.SettingsService) *V2ConnectionAdminHandler {
+	return &V2ConnectionAdminHandler{svc: svc, settings: settings}
 }
 
 // connectionItemJS 是连接明细列表项 / 详情（键对齐 contracts ConnectionItem，camelCase）。
@@ -60,17 +61,28 @@ func (h *V2ConnectionAdminHandler) List(w http.ResponseWriter, r *http.Request) 
 		render.WriteError(w, r, err)
 		return
 	}
+	fromMs, toMs := parseISOms(q.Get("from")), parseISOms(q.Get("to"))
+	includeArchived := coldQueryRequested(q)
+	// 冷查询强制时间范围校验（连接直查 connId 免范围，交服务层直查分支）。
+	if includeArchived && q.Get("connId") == "" {
+		if err := validateColdQueryRange(fromMs, toMs, coldQueryMaxDays(h.settings)); err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+	}
 	page, err := h.svc.List(service.ListConnectionsParams{
-		ConnID:      q.Get("connId"),
-		ServerID:    q.Get("serverId"),
-		PlayerUUID:  q.Get("playerUuid"),
-		Status:      q.Get("status"),
-		CloseKind:   q.Get("closeKind"),
-		NamespaceID: namespaceID,
-		FromMs:      parseISOms(q.Get("from")),
-		ToMs:        parseISOms(q.Get("to")),
-		Cursor:      intQuery(q.Get("cursor")),
-		Limit:       intQuery(q.Get("limit")),
+		ConnID:          q.Get("connId"),
+		ServerID:        q.Get("serverId"),
+		PlayerUUID:      q.Get("playerUuid"),
+		Status:          q.Get("status"),
+		CloseKind:       q.Get("closeKind"),
+		NamespaceID:     namespaceID,
+		FromMs:          fromMs,
+		ToMs:            toMs,
+		Cursor:          intQuery(q.Get("cursor")),
+		Limit:           intQuery(q.Get("limit")),
+		IncludeArchived: includeArchived,
+		ColdCursor:      q.Get("cursor"),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -80,7 +92,11 @@ func (h *V2ConnectionAdminHandler) List(w http.ResponseWriter, r *http.Request) 
 	for i := range page.Items {
 		items = append(items, connectionItem(&page.Items[i]))
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "nextCursor": nullableStr(page.NextCursor)})
+	body := map[string]any{"items": items, "nextCursor": nullableStr(page.NextCursor)}
+	if includeArchived {
+		body["includeArchived"] = true // 冷查询结果元信息（spec §4.4，前端明示「含归档库，可能较慢」）
+	}
+	render.WriteJSON(w, http.StatusOK, body)
 }
 
 // Detail 处理 GET /admin/v2/connections/{connId}：单条连接详情，未命中 404 connection_not_found。

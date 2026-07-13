@@ -283,7 +283,7 @@ func run() error {
 	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
 	zoneHandler := handler.NewZoneHandler(zoneService)
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
-	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo))
+	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo), settingsService)
 	alertHandler := handler.NewAlertHandler(inbox)
 	alertEventHandler := handler.NewAlertEventHandler(alertEventService)
 	authHandler := handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo))
@@ -356,7 +356,7 @@ func run() error {
 		alertEventService)
 	// 管理面只读查询（§5.2）：实时走内存视图 + 60s 窗口，回放走快照 / 指标日表（缺表跳过、禁隐式建表）。
 	healthQueryService := service.NewHealthQueryService(healthViewStore, metricWindow, healthSnapshotRepo, metricSampleV2Repo)
-	v2HealthHandler := handler.NewV2HealthHandler(healthQueryService, healthWeightsService)
+	v2HealthHandler := handler.NewV2HealthHandler(healthQueryService, healthWeightsService, settingsService)
 	// 指标上报响应回填自身健康视图（§5.1 self）：接收端注入视图存储，尚无视图时响应 null。
 	metricIngestService.SetHealthViews(healthViewStore)
 
@@ -389,7 +389,7 @@ func run() error {
 	schedulingV2Service.SetDecisionEnqueuer(service.SchedDecisionEnqueuer{Writer: asyncDailyWriter})
 	v2SchedHandler := handler.NewV2SchedHandler(schedulingV2Service)
 	// 决策记录管理面查询（§5.2）：跨日并表列表 / 详情 / 概览，只读、查询侧不隐式建日表。
-	schedDecisionAdminHandler := handler.NewSchedDecisionAdminHandler(service.NewSchedDecisionQueryService(schedDecisionRepo))
+	schedDecisionAdminHandler := handler.NewSchedDecisionAdminHandler(service.NewSchedDecisionQueryService(schedDecisionRepo), settingsService)
 
 	// P5a 装配点：连接明细采集（FR-145，见 v2-connection-message-storage.md §3.2/§4.1）。
 	// proxy 上报 open/close 事件 → 接收端只校验 + 更内存名册 + 非阻塞入队 → 后台写入池按 conn_id 内嵌时间
@@ -414,11 +414,22 @@ func run() error {
 	// 连接明细 / 消息元数据 / payload 查看管理面查询装配（FR-145/149/150，见 §5.2）：复用 P5a 的
 	// connDetailRepo / messageRepo / auditRepo；查询侧请求 goroutine 可读 DB（读非采集面），但仍走
 	// 游标分页 + 逐表短路防全量扫描；payload 受控查看先写 message.payload.view 审计后返回内容。
-	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(service.NewConnQueryService(connDetailRepo))
+	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(service.NewConnQueryService(connDetailRepo), settingsService)
 	v2MessageAdminHandler := handler.NewV2MessageAdminHandler(
 		service.NewMessageQueryService(messageRepo),
 		service.NewMessagePayloadService(messageRepo, auditRepo),
+		settingsService,
 	)
+
+	// 冷查询双连接注入（FR-152，见 ADR-0066 决策 5）：把 P6a 的归档连接注入 6 个查询 repo，
+	// includeArchived 时对热 / 冷两连接同构查询后应用层归并。archiveDB 可能为 nil（不可达降级）——
+	// repo 侧 HasArchive 判空，冷查询前上层返 503，绝不静默只返回热库结果（fail-static 不阻断热查询）。
+	auditRepo.SetArchiveDB(archiveDB)
+	metricSampleV2Repo.SetArchiveDB(archiveDB)
+	healthSnapshotRepo.SetArchiveDB(archiveDB)
+	schedDecisionRepo.SetArchiveDB(archiveDB)
+	connDetailRepo.SetArchiveDB(archiveDB)
+	messageRepo.SetArchiveDB(archiveDB)
 
 	// 配置操作级撤回子系统（FR-116，见 ADR-0051）：可逆账目仓库 + 服务（记账 + 撤回编排 + 幂等 + 过期/被覆盖双闸）+ 处理器。
 	// 撤回复用 ConfigService/FileService 的事务内回滚核；记账器注入三类大操作落地处（发布/下发同事务记、ingest 落库后补记）。

@@ -48,6 +48,9 @@ type ListMessagesParams struct {
 	ToMs           int64
 	Cursor         int
 	Limit          int
+	// IncludeArchived 为 true 时跨热 / 冷并表查询（FR-152）；ColdCursor 为冷查询 keyset 令牌。
+	IncludeArchived bool
+	ColdCursor      string
 }
 
 // MsgPage 是消息元数据游标分页结果（NextCursor 空串表示无下一页）。
@@ -76,6 +79,9 @@ func (s *MessageQueryService) List(p ListMessagesParams) (MsgPage, error) {
 		}
 		return MsgPage{Items: rows, NextCursor: ""}, nil
 	}
+	if p.IncludeArchived {
+		return s.listCold(p)
+	}
 	if err := validateRangeFilter(p.ServerID != "" || p.PlayerUUID != "", p.FromMs, p.ToMs); err != nil {
 		return MsgPage{}, err
 	}
@@ -90,6 +96,25 @@ func (s *MessageQueryService) List(p ListMessagesParams) (MsgPage, error) {
 		return MsgPage{}, err
 	}
 	return MsgPage{Items: rows, NextCursor: nextCursorOf(offset, limit, hasMore)}, nil
+}
+
+// listCold 冷查询并表（FR-152，spec §4.4）：归档不可达即 503，校验选择性 + 有序范围后跨热 / 冷 keyset 并表。
+func (s *MessageQueryService) listCold(p ListMessagesParams) (MsgPage, error) {
+	if !s.repo.HasArchive() {
+		return MsgPage{}, apperr.ErrArchiveUnavailable
+	}
+	if err := validateColdSelector(p.ServerID != "" || p.PlayerUUID != "", p.FromMs, p.ToMs); err != nil {
+		return MsgPage{}, err
+	}
+	rows, nextToken, err := s.repo.QueryMessagesCold(repository.MessageQuery{
+		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status, MsgType: p.MsgType,
+		TargetKind: p.TargetKind, CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID,
+		FromMs: p.FromMs, ToMs: p.ToMs,
+	}, p.ColdCursor, clampLimit(p.Limit))
+	if err != nil {
+		return MsgPage{}, err
+	}
+	return MsgPage{Items: rows, NextCursor: nextToken}, nil
 }
 
 // MessageDetailResult 是消息详情（元数据 + 关联消息，hops 解析在 handler 层）。

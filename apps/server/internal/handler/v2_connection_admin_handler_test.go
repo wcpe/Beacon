@@ -47,7 +47,7 @@ func newConnAdminRouter(t *testing.T, name string) (chi.Router, *repository.Conn
 	}
 	t.Cleanup(func() { store.Close(db) })
 	repo := repository.NewConnDetailRepository(db)
-	h := NewV2ConnectionAdminHandler(service.NewConnQueryService(repo))
+	h := NewV2ConnectionAdminHandler(service.NewConnQueryService(repo), newTestSettings(t, db))
 	r := chi.NewRouter()
 	r.Get("/admin/v2/connections", h.List)
 	r.Get("/admin/v2/connections/stats", h.Stats)

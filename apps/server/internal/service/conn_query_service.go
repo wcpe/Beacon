@@ -37,6 +37,9 @@ type ListConnectionsParams struct {
 	ToMs        int64
 	Cursor      int
 	Limit       int
+	// IncludeArchived 为 true 时跨热 / 冷并表查询（FR-152）；ColdCursor 为冷查询 keyset 令牌。
+	IncludeArchived bool
+	ColdCursor      string
 }
 
 // ConnPage 是连接明细游标分页结果（NextCursor 空串表示无下一页，handler 映射为 null）。
@@ -58,6 +61,9 @@ func (s *ConnQueryService) List(p ListConnectionsParams) (ConnPage, error) {
 		}
 		return ConnPage{Items: items, NextCursor: ""}, nil
 	}
+	if p.IncludeArchived {
+		return s.listCold(p)
+	}
 	if err := validateRangeFilter(p.ServerID != "" || p.PlayerUUID != "", p.FromMs, p.ToMs); err != nil {
 		return ConnPage{}, err
 	}
@@ -72,6 +78,26 @@ func (s *ConnQueryService) List(p ListConnectionsParams) (ConnPage, error) {
 		return ConnPage{}, err
 	}
 	return ConnPage{Items: rows, NextCursor: nextCursorOf(offset, limit, hasMore)}, nil
+}
+
+// listCold 冷查询并表（FR-152，spec §4.4）：归档不可达即 503（绝不静默只返回热库），
+// 校验选择性 + 有序范围后跨热 / 冷 keyset 并表（时间跨度上限已由 handler 按 cold-query-max-days 校验）。
+func (s *ConnQueryService) listCold(p ListConnectionsParams) (ConnPage, error) {
+	if !s.repo.HasArchive() {
+		return ConnPage{}, apperr.ErrArchiveUnavailable
+	}
+	if err := validateColdSelector(p.ServerID != "" || p.PlayerUUID != "", p.FromMs, p.ToMs); err != nil {
+		return ConnPage{}, err
+	}
+	rows, nextToken, err := s.repo.QueryConnectionsCold(repository.ConnQuery{
+		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status,
+		CloseKind: p.CloseKind, NamespaceID: p.NamespaceID,
+		FromMs: p.FromMs, ToMs: p.ToMs,
+	}, p.ColdCursor, clampLimit(p.Limit))
+	if err != nil {
+		return ConnPage{}, err
+	}
+	return ConnPage{Items: rows, NextCursor: nextToken}, nil
 }
 
 // Detail 按 connId 查单条连接：conn_id 内嵌时间直定日表，未命中 404 connection_not_found。

@@ -85,6 +85,31 @@ func (s *AuditService) List(f repository.AuditFilter) ([]model.AuditLog, int64, 
 	return s.repo.List(f)
 }
 
+// AuditColdPage 是审计冷查询游标分页结果（NextCursor 空串表示无下一页）。
+type AuditColdPage struct {
+	Items      []model.AuditLog
+	NextCursor string
+}
+
+// ListCold 冷查询并表（FR-152，spec §4.4）：归档不可达即 503，跨热 / 冷 audit_log 单表 keyset 并表
+// （时间范围与 cold-query-max-days 跨度已由 handler 校验）。size 规整同热路径。
+func (s *AuditService) ListCold(f repository.AuditFilter, cursorToken string, size int) (AuditColdPage, error) {
+	if !s.repo.HasArchive() {
+		return AuditColdPage{}, apperr.ErrArchiveUnavailable
+	}
+	if size < 1 {
+		size = defaultAuditPageSize
+	}
+	if size > maxAuditPageSize {
+		size = maxAuditPageSize
+	}
+	items, nextToken, err := s.repo.ListCold(f, cursorToken, size)
+	if err != nil {
+		return AuditColdPage{}, err
+	}
+	return AuditColdPage{Items: items, NextCursor: nextToken}, nil
+}
+
 // auditExportRow 是审计导出的对外行（小驼峰 JSON 键，与 handler 的 auditView 同口径）。
 type auditExportRow struct {
 	ID         uint      `json:"id"`

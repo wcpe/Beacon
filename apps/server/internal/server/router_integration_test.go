@@ -143,7 +143,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc, effSvc),
 		Zone:             handler.NewZoneHandler(zoneSvc),
 		Scheduling:       handler.NewSchedulingHandler(schedSvc),
-		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo)),
+		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo), settingsSvc),
 		Alert:            handler.NewAlertHandler(testAlertInbox),
 		AlertEvent:       handler.NewAlertEventHandler(service.NewAlertEventService(db, repository.NewAlertEventRepository(db), auditRepo)),
 		Metric:           handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),

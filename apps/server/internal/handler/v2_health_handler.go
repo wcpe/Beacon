@@ -19,13 +19,14 @@ import (
 // V2HealthHandler 处理健康与指标管理端点（FR-147，见 §5.2）。
 // handler 只做解码 / 参数提取 / 调服务，不碰内存结构与 GORM。
 type V2HealthHandler struct {
-	query   *service.HealthQueryService
-	weights *service.HealthWeightsService
+	query    *service.HealthQueryService
+	weights  *service.HealthWeightsService
+	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
 }
 
 // NewV2HealthHandler 构造处理器。
-func NewV2HealthHandler(query *service.HealthQueryService, weights *service.HealthWeightsService) *V2HealthHandler {
-	return &V2HealthHandler{query: query, weights: weights}
+func NewV2HealthHandler(query *service.HealthQueryService, weights *service.HealthWeightsService, settings *service.SettingsService) *V2HealthHandler {
+	return &V2HealthHandler{query: query, weights: weights, settings: settings}
 }
 
 // ListHealth 处理 GET /admin/v2/health：全部服务器当前健康列表（内存实时；分页 + 筛选）。
@@ -64,6 +65,7 @@ func (h *V2HealthHandler) GetHealthDetail(w http.ResponseWriter, r *http.Request
 }
 
 // ListHealthSnapshots 处理 GET /admin/v2/health/snapshots?serverId=&from=&to=：健康快照回放。
+// includeArchived 时跨热 / 冷并表（FR-152），强制携带时间范围且跨度 ≤ archive.cold-query-max-days。
 func (h *V2HealthHandler) ListHealthSnapshots(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	fromMs, toMs, err := timeRangeQuery(q)
@@ -71,12 +73,23 @@ func (h *V2HealthHandler) ListHealthSnapshots(w http.ResponseWriter, r *http.Req
 		render.WriteError(w, r, err)
 		return
 	}
-	items, err := h.query.HealthSnapshots(q.Get("serverId"), fromMs, toMs)
+	includeArchived := coldQueryRequested(q)
+	if includeArchived {
+		if err := validateColdQueryRange(fromMs, toMs, coldQueryMaxDays(h.settings)); err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+	}
+	items, err := h.query.HealthSnapshots(q.Get("serverId"), fromMs, toMs, includeArchived)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
+	body := map[string]any{"items": items}
+	if includeArchived {
+		body["includeArchived"] = true // 冷查询结果元信息（spec §4.4）
+	}
+	render.WriteJSON(w, http.StatusOK, body)
 }
 
 // MetricsSummary 处理 GET /admin/v2/metrics/summary：集群聚合概览（内存实时）。
@@ -93,13 +106,28 @@ func (h *V2HealthHandler) MetricsSeries(w http.ResponseWriter, r *http.Request) 
 		render.WriteError(w, r, err)
 		return
 	}
+	includeArchived := coldQueryRequested(q)
+	if includeArchived {
+		if err := validateColdQueryRange(fromMs, toMs, coldQueryMaxDays(h.settings)); err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+	}
 	series, err := h.query.MetricsSeries(service.MetricsSeriesParams{
 		ServerIDs: splitCSVQuery(q.Get("serverId")),
 		FromMs:    fromMs, ToMs: toMs,
-		StepSec: intQuery(q.Get("step")),
+		StepSec:         intQuery(q.Get("step")),
+		IncludeArchived: includeArchived,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
+		return
+	}
+	if includeArchived {
+		// 冷查询在既有 {stepSec, series} 形状上附加 includeArchived 元信息（spec §4.4）。
+		render.WriteJSON(w, http.StatusOK, map[string]any{
+			"stepSec": series.StepSec, "series": series.Series, "includeArchived": true,
+		})
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, series)

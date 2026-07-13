@@ -61,7 +61,7 @@ func newMsgAdminRouter(t *testing.T, name string) (chi.Router, *repository.Messa
 	db := openMsgAdminDB(t, name)
 	repo := repository.NewMessageRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
-	h := NewV2MessageAdminHandler(service.NewMessageQueryService(repo), service.NewMessagePayloadService(repo, auditRepo))
+	h := NewV2MessageAdminHandler(service.NewMessageQueryService(repo), service.NewMessagePayloadService(repo, auditRepo), newTestSettings(t, db))
 	r := chi.NewRouter()
 	r.Get("/admin/v2/messages", h.List)
 	r.Get("/admin/v2/messages/stats", h.Stats)

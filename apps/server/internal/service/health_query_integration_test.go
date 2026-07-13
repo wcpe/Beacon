@@ -62,7 +62,7 @@ func TestHealthQueryDailyTablesMySQL(t *testing.T) {
 	if _, err := snapshotRepo.FlushDaily(snapRows); err != nil {
 		t.Fatalf("快照预置失败: %v", err)
 	}
-	points, err := svc.HealthSnapshots("q-s1", d1.UnixMilli()-1_000, d3.UnixMilli())
+	points, err := svc.HealthSnapshots("q-s1", d1.UnixMilli()-1_000, d3.UnixMilli(), false)
 	if err != nil {
 		t.Fatalf("snapshots 查询失败: %v", err)
 	}

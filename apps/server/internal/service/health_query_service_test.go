@@ -12,9 +12,13 @@ import (
 )
 
 // fakeSnapshotQuerier / fakeSeriesQuerier 是日表查询替身（单测不连 DB）。
+// coldRows / hasArchive 供冷查询（includeArchived）分支替身：coldCalled 记是否走了冷路径。
 type fakeSnapshotQuerier struct {
-	rows []model.HealthSnapshot
-	got  struct {
+	rows       []model.HealthSnapshot
+	coldRows   []model.HealthSnapshot
+	hasArchive bool
+	coldCalled bool
+	got        struct {
 		serverID     string
 		fromMs, toMs int64
 	}
@@ -25,13 +29,31 @@ func (f *fakeSnapshotQuerier) QueryRange(serverID string, fromMs, toMs int64) ([
 	return f.rows, nil
 }
 
+func (f *fakeSnapshotQuerier) QueryRangeCold(serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error) {
+	f.coldCalled = true
+	f.got.serverID, f.got.fromMs, f.got.toMs = serverID, fromMs, toMs
+	return f.coldRows, nil
+}
+
+func (f *fakeSnapshotQuerier) HasArchive() bool { return f.hasArchive }
+
 type fakeSeriesQuerier struct {
-	rows []model.MetricSampleV2
+	rows       []model.MetricSampleV2
+	coldRows   []model.MetricSampleV2
+	hasArchive bool
+	coldCalled bool
 }
 
 func (f *fakeSeriesQuerier) QueryRange(_ []string, _, _ int64) ([]model.MetricSampleV2, error) {
 	return f.rows, nil
 }
+
+func (f *fakeSeriesQuerier) QueryRangeCold(_ []string, _, _ int64) ([]model.MetricSampleV2, error) {
+	f.coldCalled = true
+	return f.coldRows, nil
+}
+
+func (f *fakeSeriesQuerier) HasArchive() bool { return f.hasArchive }
 
 // queryView 构造一条视图。
 func queryView(ns uint, serverID, kind, zone, level string, schedulable bool, reasons []string) healthview.View {
@@ -135,10 +157,10 @@ func TestHealthSnapshotsQuery(t *testing.T) {
 		{TsMs: 2, Score: 0, Level: "unhealthy", Schedulable: false, Reasons: `["lost","unhealthy"]`, WeightsRev: 2},
 	}
 
-	if _, err := svc.HealthSnapshots("", 0, 0); !errors.Is(err, apperr.ErrInvalidParam) {
+	if _, err := svc.HealthSnapshots("", 0, 0, false); !errors.Is(err, apperr.ErrInvalidParam) {
 		t.Fatalf("缺 serverId 应参数错误，实际 %v", err)
 	}
-	points, err := svc.HealthSnapshots("s1", 0, 0)
+	points, err := svc.HealthSnapshots("s1", 0, 0, false)
 	if err != nil {
 		t.Fatalf("查询失败: %v", err)
 	}
@@ -150,10 +172,10 @@ func TestHealthSnapshotsQuery(t *testing.T) {
 	}
 
 	// 范围校验：from > to / 跨度超 31 天均拒绝。
-	if _, err := svc.HealthSnapshots("s1", 200, 100); !errors.Is(err, apperr.ErrInvalidParam) {
+	if _, err := svc.HealthSnapshots("s1", 200, 100, false); !errors.Is(err, apperr.ErrInvalidParam) {
 		t.Fatalf("from>to 应参数错误，实际 %v", err)
 	}
-	if _, err := svc.HealthSnapshots("s1", 1, 1+maxQueryRangeMs+1); !errors.Is(err, apperr.ErrInvalidParam) {
+	if _, err := svc.HealthSnapshots("s1", 1, 1+maxQueryRangeMs+1, false); !errors.Is(err, apperr.ErrInvalidParam) {
 		t.Fatalf("超 31 天应参数错误，实际 %v", err)
 	}
 }
@@ -238,5 +260,79 @@ func TestMetricsSeriesParams(t *testing.T) {
 	}
 	if out, _ = svc.MetricsSeries(MetricsSeriesParams{ServerIDs: []string{"s1"}, StepSec: 1}); out.StepSec != minSeriesStepSec {
 		t.Fatalf("step 应钳到下限 5，实际 %d", out.StepSec)
+	}
+}
+
+// TestHealthSnapshotsColdUnavailable503 冷查询归档不可达时返回 503，绝不静默只返回热库。
+func TestHealthSnapshotsColdUnavailable503(t *testing.T) {
+	svc, snapshots, _ := newQueryFixture(nil)
+	snapshots.hasArchive = false
+	if _, err := svc.HealthSnapshots("s1", 1, 2, true); !errors.Is(err, apperr.ErrArchiveUnavailable) {
+		t.Fatalf("归档不可达冷查询应 503，实际 %v", err)
+	}
+	if snapshots.coldCalled {
+		t.Fatalf("归档不可达不应调用冷查询")
+	}
+}
+
+// TestHealthSnapshotsColdRouted 归档可达时冷查询走 QueryRangeCold（并表数据源）。
+func TestHealthSnapshotsColdRouted(t *testing.T) {
+	svc, snapshots, _ := newQueryFixture(nil)
+	snapshots.hasArchive = true
+	snapshots.rows = []model.HealthSnapshot{{TsMs: 1, Level: "healthy", Reasons: "[]"}}                               // 热
+	snapshots.coldRows = []model.HealthSnapshot{{TsMs: 1, Level: "healthy", Reasons: "[]"}, {TsMs: 2, Reasons: "[]"}} // 并表
+	points, err := svc.HealthSnapshots("s1", 1, 3, true)
+	if err != nil {
+		t.Fatalf("冷查询失败: %v", err)
+	}
+	if !snapshots.coldCalled {
+		t.Fatalf("冷查询应走 QueryRangeCold")
+	}
+	if len(points) != 2 {
+		t.Fatalf("应返回并表 2 点，实际 %d", len(points))
+	}
+}
+
+// TestHealthSnapshotsDefaultSkipsArchive 默认查询不触归档：即使归档可达也走热库 QueryRange。
+func TestHealthSnapshotsDefaultSkipsArchive(t *testing.T) {
+	svc, snapshots, _ := newQueryFixture(nil)
+	snapshots.hasArchive = true
+	snapshots.rows = []model.HealthSnapshot{{TsMs: 1, Reasons: "[]"}}
+	if _, err := svc.HealthSnapshots("s1", 1, 3, false); err != nil {
+		t.Fatalf("默认查询失败: %v", err)
+	}
+	if snapshots.coldCalled {
+		t.Fatalf("默认查询绝不应调用冷查询")
+	}
+}
+
+// TestMetricsSeriesColdUnavailable503 指标时序冷查询归档不可达时 503。
+func TestMetricsSeriesColdUnavailable503(t *testing.T) {
+	store := healthview.NewStore()
+	series := &fakeSeriesQuerier{hasArchive: false}
+	svc := NewHealthQueryService(store, metricwindow.New(metricwindow.DefaultCapacity), &fakeSnapshotQuerier{}, series)
+	_, err := svc.MetricsSeries(MetricsSeriesParams{ServerIDs: []string{"s1"}, FromMs: 1, ToMs: 2, IncludeArchived: true})
+	if !errors.Is(err, apperr.ErrArchiveUnavailable) {
+		t.Fatalf("归档不可达指标冷查询应 503，实际 %v", err)
+	}
+	if series.coldCalled {
+		t.Fatalf("归档不可达不应调用冷查询")
+	}
+}
+
+// TestMetricsSeriesColdRouted 指标时序归档可达时走 QueryRangeCold。
+func TestMetricsSeriesColdRouted(t *testing.T) {
+	store := healthview.NewStore()
+	series := &fakeSeriesQuerier{hasArchive: true, coldRows: []model.MetricSampleV2{{ServerID: "s1", BucketStartMs: 1, CPUPctAvg: 10, TPSAvg: 20}}}
+	svc := NewHealthQueryService(store, metricwindow.New(metricwindow.DefaultCapacity), &fakeSnapshotQuerier{}, series)
+	out, err := svc.MetricsSeries(MetricsSeriesParams{ServerIDs: []string{"s1"}, FromMs: 1, ToMs: 3, IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("指标冷查询失败: %v", err)
+	}
+	if !series.coldCalled {
+		t.Fatalf("指标冷查询应走 QueryRangeCold")
+	}
+	if len(out.Series) != 1 || len(out.Series[0].Points) == 0 {
+		t.Fatalf("并表时序应有数据点，实际 %+v", out.Series)
 	}
 }

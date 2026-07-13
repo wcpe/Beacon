@@ -25,13 +25,18 @@ const (
 )
 
 // healthSnapshotQuerier 是快照日表查询的窄依赖（由 repository.HealthSnapshotRepository 实现）。
+// QueryRangeCold / HasArchive 供冷查询（includeArchived）并表与可用性判定（FR-152）。
 type healthSnapshotQuerier interface {
 	QueryRange(serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error)
+	QueryRangeCold(serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error)
+	HasArchive() bool
 }
 
 // metricSeriesQuerier 是指标日表查询的窄依赖（由 repository.MetricSampleV2Repository 实现）。
 type metricSeriesQuerier interface {
 	QueryRange(serverIDs []string, fromMs, toMs int64) ([]model.MetricSampleV2, error)
+	QueryRangeCold(serverIDs []string, fromMs, toMs int64) ([]model.MetricSampleV2, error)
+	HasArchive() bool
 }
 
 // HealthQueryService 提供健康与指标的管理面只读查询（FR-147，见 §5.2）：
@@ -169,7 +174,8 @@ type HealthSnapshotPointView struct {
 }
 
 // HealthSnapshots 查健康快照回放（serverId 必填；from/to 缺省为最近 1 小时；跨日并表、缺表跳过）。
-func (s *HealthQueryService) HealthSnapshots(serverID string, fromMs, toMs int64) ([]HealthSnapshotPointView, error) {
+// includeArchived 时跨热 / 冷并表（FR-152）：归档不可达即 503（绝不静默只返回热库），否则按 (server_id, ts_ms) 去重并表。
+func (s *HealthQueryService) HealthSnapshots(serverID string, fromMs, toMs int64, includeArchived bool) ([]HealthSnapshotPointView, error) {
 	if serverID == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -177,7 +183,7 @@ func (s *HealthQueryService) HealthSnapshots(serverID string, fromMs, toMs int64
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.snapshots.QueryRange(serverID, fromMs, toMs)
+	rows, err := s.snapshotRows(serverID, fromMs, toMs, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +192,17 @@ func (s *HealthQueryService) HealthSnapshots(serverID string, fromMs, toMs int64
 		points = append(points, snapshotPointOf(&rows[i]))
 	}
 	return points, nil
+}
+
+// snapshotRows 按 includeArchived 决定走热库或跨热 / 冷并表（冷查询归档不可达即 503）。
+func (s *HealthQueryService) snapshotRows(serverID string, fromMs, toMs int64, includeArchived bool) ([]model.HealthSnapshot, error) {
+	if !includeArchived {
+		return s.snapshots.QueryRange(serverID, fromMs, toMs)
+	}
+	if !s.snapshots.HasArchive() {
+		return nil, apperr.ErrArchiveUnavailable
+	}
+	return s.snapshots.QueryRangeCold(serverID, fromMs, toMs)
 }
 
 // MetricsKindCountView 是分角色实例计数（total 在册 / online 活性正常即非 lost）。
@@ -294,10 +311,11 @@ type MetricsSeriesView struct {
 
 // MetricsSeriesParams 是时序查询参数。
 type MetricsSeriesParams struct {
-	ServerIDs []string // 必填（禁全量扫）
-	FromMs    int64    // 0 = 缺省（to − 1h）
-	ToMs      int64    // 0 = 缺省（now）
-	StepSec   int      // 0 = 缺省 60；下限 5
+	ServerIDs       []string // 必填（禁全量扫）
+	FromMs          int64    // 0 = 缺省（to − 1h）
+	ToMs            int64    // 0 = 缺省（now）
+	StepSec         int      // 0 = 缺省 60；下限 5
+	IncludeArchived bool     // true 时跨热 / 冷并表（FR-152）
 }
 
 // MetricsSeries 查单服 / 多服指标时序：日表跨日并表 + 按 step 服务端桶聚合（avg/max/min）。
@@ -316,7 +334,7 @@ func (s *HealthQueryService) MetricsSeries(p MetricsSeriesParams) (*MetricsSerie
 	if stepSec < minSeriesStepSec {
 		stepSec = minSeriesStepSec
 	}
-	rows, err := s.series.QueryRange(p.ServerIDs, fromMs, toMs)
+	rows, err := s.seriesRows(p.ServerIDs, fromMs, toMs, p.IncludeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +350,17 @@ func (s *HealthQueryService) MetricsSeries(p MetricsSeriesParams) (*MetricsSerie
 		})
 	}
 	return out, nil
+}
+
+// seriesRows 按 includeArchived 决定走热库或跨热 / 冷并表（冷查询归档不可达即 503）。
+func (s *HealthQueryService) seriesRows(serverIDs []string, fromMs, toMs int64, includeArchived bool) ([]model.MetricSampleV2, error) {
+	if !includeArchived {
+		return s.series.QueryRange(serverIDs, fromMs, toMs)
+	}
+	if !s.series.HasArchive() {
+		return nil, apperr.ErrArchiveUnavailable
+	}
+	return s.series.QueryRangeCold(serverIDs, fromMs, toMs)
 }
 
 // normalizeQueryRange 归一化查询时间范围：to 缺省 now、from 缺省 to−1h；
