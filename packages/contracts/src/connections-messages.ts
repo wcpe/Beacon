@@ -46,7 +46,7 @@ export interface MessageItem {
   namespaceId: number
   sourceServerId: string
   msgType: string
-  targetKind: 'server' | 'player'
+  targetKind: 'server' | 'player' | 'broadcast'
   targetServerId: string | null
   targetPlayer: string | null
   resolvedServerId: string | null
@@ -62,6 +62,16 @@ export interface MessageItem {
   hopCount: number
   payloadSize: number
   payloadStored: boolean
+  /** 广播 zone 级定向（仅广播行且指定 zone 时，FR-180；后端 omitempty，非广播行不出现） */
+  targetZone?: string
+  /** 广播 fan-out 目标数（仅广播行，FR-180） */
+  fanoutTotal?: number
+  /** 广播送达计数（仅广播行，FR-180） */
+  deliveredCount?: number
+  /** 广播失败计数（仅广播行，FR-180） */
+  failedCount?: number
+  /** 广播过期计数（仅广播行，FR-180） */
+  expiredCount?: number
 }
 
 /** 消息详情：元数据 + hops 链路 + 关联消息摘要 */
