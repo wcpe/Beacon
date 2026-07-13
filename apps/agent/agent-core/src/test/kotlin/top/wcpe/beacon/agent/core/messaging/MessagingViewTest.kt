@@ -16,6 +16,8 @@ class MessagingViewTest {
         assertFalse(DisabledMessaging.isAvailable())
         assertFailsWith<IllegalStateException> { DisabledMessaging.send("B", "t", null) }
         assertFailsWith<IllegalStateException> { DisabledMessaging.publish("t", null) }
+        // zone 重载走接口默认实现委托 2 参 publish，同样抛不可用（FR-180）。
+        assertFailsWith<IllegalStateException> { DisabledMessaging.publish("t", null, "zone-1") }
         assertFalse(DisabledMessaging.sendToPlayer("p", "t", null))
         // call 返回异常完成的 Future，不直接抛。
         val future = DisabledMessaging.call("B", "t", null)
@@ -51,6 +53,40 @@ class MessagingViewTest {
 
         a.send("B", "greet", "hi")
         assertEquals("hi", received)
+    }
+
+    @Test
+    fun `MessagingView 广播 publish 经 subscribe 跨服收到`() {
+        val net = FakeNetwork()
+        val a = MessagingView(newBus(net, "A").also { it.start() })
+        val b = MessagingView(newBus(net, "B").also { it.start() })
+
+        var receivedTopic: String? = null
+        var receivedPayload: Any? = null
+        b.subscribe("chat.global") { topic, payload ->
+            receivedTopic = topic
+            receivedPayload = payload
+        }
+
+        a.publish("chat.global", "hello")
+
+        assertEquals("chat.global", receivedTopic)
+        assertEquals("hello", receivedPayload)
+    }
+
+    @Test
+    fun `MessagingView zone 重载透传仍投递到订阅者`() {
+        val net = FakeNetwork()
+        val a = MessagingView(newBus(net, "A").also { it.start() })
+        val b = MessagingView(newBus(net, "B").also { it.start() })
+
+        var got: Any? = null
+        b.subscribe("cache.invalidate") { _, payload -> got = payload }
+
+        // 3 参 zone 重载：zone 落信封 targetId（本地假网络忽略 zone 路由），投递闭环不受影响。
+        a.publish("cache.invalidate", "key-1", "zone-pvp")
+
+        assertEquals("key-1", got)
     }
 
     @Test

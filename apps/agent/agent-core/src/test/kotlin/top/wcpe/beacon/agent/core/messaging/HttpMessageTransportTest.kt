@@ -96,6 +96,51 @@ class HttpMessageTransportTest {
     }
 
     @Test
+    fun `broadcast 信封 zone 映射为 targetZone 无 server 与 player`() {
+        val transport = SendCaptureTransport()
+        val http = HttpMessageTransport(apiClientWith(transport), identity(), codec)
+        val message =
+            Message(
+                type = "chat.global",
+                payload = "hi",
+                messageId = "m3",
+                sentAt = 0L,
+                targetKind = Message.TARGET_BROADCAST,
+                targetId = "zone-pvp",
+                broadcast = true,
+            )
+        http.publishTopic("chat.global", codec.encode(message.toMap()))
+
+        val body = wireBody(transport)
+        assertEquals("broadcast", body["targetKind"])
+        assertEquals("zone-pvp", body["targetZone"])
+        assertNull(body["targetServerId"])
+        assertNull(body["targetPlayerUuid"])
+        assertEquals("chat.global", body["msgType"])
+    }
+
+    @Test
+    fun `broadcast 信封无 zone 时 targetZone 省略`() {
+        val transport = SendCaptureTransport()
+        val http = HttpMessageTransport(apiClientWith(transport), identity(), codec)
+        val message =
+            Message(
+                type = "cache.invalidate",
+                payload = null,
+                messageId = "m4",
+                sentAt = 0L,
+                targetKind = Message.TARGET_BROADCAST,
+                targetId = null,
+                broadcast = true,
+            )
+        http.publishTopic("cache.invalidate", codec.encode(message.toMap()))
+
+        val body = wireBody(transport)
+        assertEquals("broadcast", body["targetKind"])
+        assertNull(body["targetZone"], "无 zone 定向时 targetZone 省略（全 namespace 广播）")
+    }
+
+    @Test
     fun `缺 messageId 的信封被丢弃不发请求`() {
         val transport = SendCaptureTransport()
         val warns = mutableListOf<String>()

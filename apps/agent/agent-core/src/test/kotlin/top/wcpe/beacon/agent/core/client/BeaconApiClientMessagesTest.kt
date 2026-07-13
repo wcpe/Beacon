@@ -13,6 +13,7 @@ import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -132,6 +133,85 @@ class BeaconApiClientMessagesTest {
         assertEquals("player", body["targetKind"])
         assertEquals("11111111-1111-1111-1111-111111111111", body["targetPlayerUuid"])
         assertNull(body["correlationId"], "无 correlationId 时省略")
+    }
+
+    @Test
+    fun `send broadcast 目标键集带 targetZone`() {
+        val codec = CapturingCodec { mapOf("messageId" to "m", "status" to "accepted") }
+        BeaconApiClient(StatusTransport(200), codec, settings()).sendMessage(
+            identity(),
+            OutboundMessage(
+                messageId = "m5",
+                msgType = "chat.global",
+                targetKind = Message.TARGET_BROADCAST,
+                targetServerId = null,
+                targetPlayerUuid = null,
+                correlationId = null,
+                payload = mapOf("text" to "hi"),
+                sentAtMs = 0L,
+                targetZone = "zone-pvp",
+            ),
+        )
+        val body = envelope(codec)
+        assertEquals(setOf("messageId", "msgType", "targetKind", "targetZone", "payload", "sentAt"), body.keys)
+        assertEquals("broadcast", body["targetKind"])
+        assertEquals("zone-pvp", body["targetZone"])
+        assertNull(body["targetServerId"])
+        assertNull(body["targetPlayerUuid"])
+    }
+
+    @Test
+    fun `send broadcast 无 zone 时省略 targetZone`() {
+        val codec = CapturingCodec { mapOf("messageId" to "m", "status" to "accepted") }
+        BeaconApiClient(StatusTransport(200), codec, settings()).sendMessage(
+            identity(),
+            OutboundMessage(
+                messageId = "m6",
+                msgType = "cache.invalidate",
+                targetKind = Message.TARGET_BROADCAST,
+                targetServerId = null,
+                targetPlayerUuid = null,
+                correlationId = null,
+                payload = null,
+                sentAtMs = 0L,
+                targetZone = null,
+            ),
+        )
+        val body = envelope(codec)
+        assertEquals(setOf("messageId", "msgType", "targetKind", "payload", "sentAt"), body.keys)
+        assertNull(body["targetZone"], "全 namespace 广播省略 targetZone")
+    }
+
+    @Test
+    fun `poll 解析 broadcast 标记 定向缺省 false`() {
+        val codec =
+            CapturingCodec {
+                mapOf(
+                    "messages" to
+                        listOf(
+                            mapOf(
+                                "messageId" to "b1",
+                                "msgType" to "chat.global",
+                                "sourceServerId" to "lobby-2",
+                                "payload" to mapOf("text" to "hi"),
+                                "createdAt" to "1970-01-01T00:00:00.001Z",
+                                "broadcast" to true,
+                            ),
+                            mapOf(
+                                "messageId" to "d1",
+                                "msgType" to "match.invite",
+                                "sourceServerId" to "game-7",
+                                "payload" to null,
+                                "createdAt" to "1970-01-01T00:00:00.002Z",
+                            ),
+                        ),
+                )
+            }
+        val outcome = BeaconApiClient(StatusTransport(200), codec, settings()).pollMessages(identity(), 20, 50)
+        val messages = assertIs<MessagePollOutcome.Messages>(outcome).messages
+        assertEquals(2, messages.size)
+        assertTrue(messages[0].broadcast, "带 broadcast:true 的条目应解析为广播")
+        assertFalse(messages[1].broadcast, "定向条目不带 broadcast 键，缺省 false")
     }
 
     @Test
