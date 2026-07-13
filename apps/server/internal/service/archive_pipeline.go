@@ -236,10 +236,18 @@ func (r *archiveItemRunner) readBatch(item *model.ArchiveJobItem) ([]map[string]
 	return rows, pkToString(rows[len(rows)-1][r.dom.pkColumn]), nil
 }
 
-// writeArchiveBatch 幂等批量写归档表（OnConflict DoNothing，MySQL / Postgres 均可移植；禁 INSERT IGNORE / REPLACE）。
+// writeArchiveBatch 幂等批量写归档表（可移植；禁 INSERT IGNORE / REPLACE）。
+//
+// 冲突主键时把主键赋值自身（no-op 不改数据）：MySQL 生成 `ON DUPLICATE KEY UPDATE pk=VALUES(pk)`、
+// sqlite 生成 `ON CONFLICT(pk) DO UPDATE SET pk=excluded.pk`，两方言均合法且幂等。
+// 不用裸 `DoNothing: true`——因 rows 是 []map（无 struct schema）+ Table() 动态表名，MySQL 方言
+// 取不到主键列会生成空 `ON DUPLICATE KEY UPDATE ` 语法错（1064）；sqlite 的 `DO NOTHING` 不需列故只在 sqlite 通过。
 func (r *archiveItemRunner) writeArchiveBatch(tableName string, rows []map[string]any) error {
 	return r.archive.Table(tableName).
-		Clauses(clause.OnConflict{DoNothing: true}).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: r.dom.pkColumn}},
+			DoUpdates: clause.AssignmentColumns([]string{r.dom.pkColumn}),
+		}).
 		Create(&rows).Error
 }
 
