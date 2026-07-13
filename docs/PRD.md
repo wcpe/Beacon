@@ -102,7 +102,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | 待排期 | 待定 | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 计划 |
 | FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | 待排期 | 待定 | env 可增删改；整体替换 env→namespace 映射且 namespace 至多属一个 env（冲突 409）；顶栏按 env 过滤视图；env 变更入审计 | 计划 |
 | FR-179 | 管理台登录鉴权：登录页、令牌注入、401 处理、登出 | P4 | 0.24.x | 登录页（新 SaaS 设计，过 mockup 评审门）用户名/口令换 `/admin/v1/auth/login` 令牌，存 localStorage 持久；所有 `/admin/*` 带 `Authorization: Bearer`；路由守卫未登录跳登录页并登录后回跳原路径；任意 401 / 令牌过期清令牌跳登录（无自动 refresh）；登出 `/admin/v1/auth/logout` 清令牌；真机浏览器登录后 FR-155 接真页真数据可用、登出回登录页。单 admin 凭据，不含 API-key 登录 / RBAC / 记住我 / 2FA。全站接真页真机可用前置 | 已交付@v0.24.0 |
-| FR-180 | 跨服消息广播寻址（namespace / zone 级 fan-out）与 agent topic 门面复活 | P5 | 0.25.x | `publish` / `subscribe` 原接口真实可用（业务插件零改动）；本 namespace 全部在线服与 zone 级定向 fan-out；可丢语义（只投在线、离线不补、TTL 过期）；广播追踪行含聚合送达 / 失败计数、列表可按广播过滤且不含 payload；跨 namespace 广播拒绝；真机广播场景可用 | 开发中 |
+| FR-180 | 跨服消息广播寻址（namespace / zone 级 fan-out）与 agent topic 门面复活 | P5 | 0.25.x | `publish` / `subscribe` 原接口真实可用（业务插件零改动）；本 namespace 全部在线服与 zone 级定向 fan-out；可丢语义（只投在线、离线不补、TTL 过期）；广播追踪行含聚合送达 / 失败计数、列表可按广播过滤且不含 payload；跨 namespace 广播拒绝；真机广播场景可用 | 已交付@v0.25.3 |
 
 ## 5. 非功能需求（NFR）
 

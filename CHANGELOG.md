@@ -4,8 +4,12 @@
 
 ## 未发布
 
+## 0.25.3（2026-07-13）
+
 ### 新增
 - 跨服消息广播寻址与 topic 门面复活（FR-180，[ADR-0065](docs/adr/0065-message-broadcast-addressing.md)）：`messages/send` 新增 `targetKind=broadcast`（可选 `targetZone` 做 zone 级定向），控制面按当前在线服集合 fan-out——无 zone 即发送者 namespace 全部在线服（含自身）、有 zone 即该 zone 在线服；**可丢语义**（只投在线、离线不补、TTL 过期即弃）、跨 namespace 广播拒绝、无订阅状态表（不撞禁 MQ 红线）。**一条广播只落一行 `msg_trace`**（`target_kind=broadcast` + 可空聚合列 `target_zone`/`fanout_total`/`delivered_count`/`failed_count`/`expired_count`，防 ×N 写放大），payload 只存一份，广播行不入拓扑 edge 聚合；管理面 `/admin/v2/messages` 支持 `targetKind` 过滤并输出聚合字段（payload 照旧不出列表）。agent 侧 `Messaging.publish(topic, payload)` / `subscribe(topic, handler)` 从 no-op **复活为真实广播**（业务插件零改动，topic 落 `msgType`、本地 topic 分发表与定向 `on(type)` 隔离），新增 `publish(topic, payload, zone)` 重载做 zone 定向（接口只增不改、纯 Java 8 二进制兼容）。契约 `MessageItem` 补 `broadcast` 与聚合字段。真 Paper e2e 验证 `publish → subscribe` 闭环与单行聚合落库。修复：poll 协调器构建入站信封漏传 `broadcast` 标记致广播被误判定向、订阅者不触发（e2e 真联调逮出，单测因绕过协调器漏检，已补协调器回归单测）。
+
+> 验证：Go build/vet/test + `make lint` + 真 MySQL 集成 `-count=2`（含广播加列迁移）+ agent gradle test/ktlint/detekt + 真 Paper e2e（`broadcast_delivered` 子用例验 subscribe 收到与单行聚合 `fanout_total=1/delivered_count=1` 落库、directed/rpc/player 零回归）全绿；前端 lint/build + vitest 190（契约扩展 broadcast union 与聚合字段不破）。广播端到端由真 agent-api e2e 证（真机等价）；prod2 双端重部与 Lodestone 广播接入随其上线时连同 lobby 端 messaging 开关一并现场落地。
 
 ## 0.25.2（2026-07-12）
 
