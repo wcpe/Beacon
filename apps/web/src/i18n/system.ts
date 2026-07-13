@@ -21,6 +21,7 @@ export const system = {
       health: '健康与失联',
       longpoll: '长轮询与告警',
       update: '更新与代理',
+      archive: '归档策略',
       other: '其他运行参数',
     },
     // 热改项表

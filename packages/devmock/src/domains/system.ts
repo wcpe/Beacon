@@ -45,6 +45,19 @@ const SETTING_SEEDS: [string, string, SettingItem['valueType'], string][] = [
   ['update.channel', 'stable', 'string', '更新渠道（stable|prerelease）'],
   ['update.auto-check-enabled', 'true', 'bool', '是否自动检查更新'],
   ['update.check-interval-hours', '6', 'int', '自动检查更新周期（小时）'],
+  ['archive.retention-days.metric-sample', '14', 'int', '指标采样热库保留天数（超期归档，下限 7）'],
+  ['archive.retention-days.health-snapshot', '30', 'int', '健康快照热库保留天数（下限 7）'],
+  ['archive.retention-days.sched-decision', '60', 'int', '调度决策热库保留天数（下限 7）'],
+  ['archive.retention-days.conn-detail', '60', 'int', '连接明细热库保留天数（下限 7）'],
+  ['archive.retention-days.msg-trace', '60', 'int', '消息链路热库保留天数（下限 7）'],
+  ['archive.retention-days.msg-payload', '30', 'int', '消息载荷热库保留天数（下限 7）'],
+  ['archive.retention-days.audit', '180', 'int', '审计日志热库保留天数（下限 7）'],
+  ['archive.auto-enabled', 'true', 'bool', '是否启用每日自动归档'],
+  ['archive.schedule-hour-utc', '4', 'int', '每日自动归档触发时刻（UTC 小时，0-23）'],
+  ['archive.batch-rows', '1000', 'int', '归档搬迁每批行数（1-100000）'],
+  ['archive.batch-interval-ms', '200', 'int', '归档批次间隔毫秒（0-60000）'],
+  ['archive.verify-sample-size', '100', 'int', '删除前 sha256 抽样校验行数（1-10000）'],
+  ['archive.cold-query-max-days', '31', 'int', '冷查询单次最大时间跨度（天，1-366）'],
 ]
 
 function buildSystem(scenario: MockScenario): SystemState {

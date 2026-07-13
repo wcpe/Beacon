@@ -33,6 +33,7 @@ const GROUPS: { key: string; prefixes: string[] }[] = [
   { key: 'health', prefixes: ['health.'] },
   { key: 'longpoll', prefixes: ['longpoll.', 'alert.'] },
   { key: 'update', prefixes: ['update.', 'reverse-fetch.'] },
+  { key: 'archive', prefixes: ['archive.'] },
   { key: 'other', prefixes: ['log.'] },
 ]
 
