@@ -6,32 +6,22 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/store"
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
 )
 
-// dropDailyIT 删掉某 UTC 日的日表，给集成用例干净起点（表跨运行持久，须先清）。
-func dropDailyIT(t *testing.T, db *gorm.DB, base string, day time.Time) string {
-	t.Helper()
-	name := store.DailyTableName(base, day)
-	_ = db.Migrator().DropTable(name)
-	return name
-}
-
 // TestConnFlushDailyMySQL 真 MySQL：会话行 open 插入 / close upsert 更新、DATETIME(3) 与可空列可移植、跨日定位 open 日表。
+// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 func TestConnFlushDailyMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "p5a_conn")
 	repo := NewConnDetailRepository(db)
 
-	// 先清齐本用例用到的三张日表（同库跨运行持久；须在任何 EnsureDailyTable 之前，避免进程缓存与物理表不一致）。
 	openedMs := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC).UnixMilli()
-	crossOpenMs := time.Date(2026, 7, 8, 23, 59, 0, 0, time.UTC).UnixMilli() // 与上面不同日，避免同表被中途 drop
-	name := dropDailyIT(t, db, "conn_detail", time.UnixMilli(openedMs).UTC())
-	crossName := dropDailyIT(t, db, "conn_detail", time.UnixMilli(crossOpenMs).UTC())
-	nextName := dropDailyIT(t, db, "conn_detail", time.UnixMilli(crossOpenMs+2*3600*1000).UTC())
+	crossOpenMs := time.Date(2026, 7, 8, 23, 59, 0, 0, time.UTC).UnixMilli()
+	name := store.DailyTableName("conn_detail", time.UnixMilli(openedMs).UTC())
+	crossName := store.DailyTableName("conn_detail", time.UnixMilli(crossOpenMs).UTC())
+	nextName := store.DailyTableName("conn_detail", time.UnixMilli(crossOpenMs+2*3600*1000).UTC())
 	cid := uuidV7At(openedMs, "it1")
 
 	if _, err := repo.FlushDaily([]model.ConnEvent{openEvent(cid, 1, "proxy-1", "alice", openedMs)}); err != nil {
@@ -72,7 +62,7 @@ func TestConnFlushDailyMySQLStable(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "p5a_conn")
 	repo := NewConnDetailRepository(db)
 	openedMs := time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC).UnixMilli()
-	name := dropDailyIT(t, db, "conn_detail", time.UnixMilli(openedMs).UTC())
+	name := store.DailyTableName("conn_detail", time.UnixMilli(openedMs).UTC())
 	cid := uuidV7At(openedMs, "its")
 
 	batch := []model.ConnEvent{
@@ -98,7 +88,7 @@ func TestConnOrphanAndListOpenMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "p5a_conn")
 	repo := NewConnDetailRepository(db)
 	base := time.Now().UTC().Add(-2 * time.Hour).UnixMilli() // 落今日表，供 retention 回溯命中
-	name := dropDailyIT(t, db, "conn_detail", time.UnixMilli(base).UTC())
+	name := store.DailyTableName("conn_detail", time.UnixMilli(base).UTC())
 
 	oldCid := uuidV7At(base, "ito")
 	freshCid := uuidV7At(base+3600*1000, "itf")

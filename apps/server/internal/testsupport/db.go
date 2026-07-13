@@ -5,7 +5,9 @@ package testsupport
 import (
 	"database/sql"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	gomysql "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
@@ -56,5 +58,36 @@ func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
 	}
+	dropDailyTables(t, db)
 	return db
+}
+
+// dropDailyTables 清掉全部残留日表（<base>_YYYYMMDD，命名规则见 store.DailyTableName）。
+// resetTables 静态白名单管不到动态日表；残留日表会跨运行污染行数敏感断言
+// （如查询窗覆盖到历史测试固定日期种子表）。用 GORM Migrator.GetTables 枚举
+// （portable，非方言专有 SQL），凡带 8 位日期后缀的表一律 Drop。
+func dropDailyTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	all, err := db.Migrator().GetTables()
+	if err != nil {
+		t.Fatalf("枚举测试库表失败: %v", err)
+	}
+	for _, tbl := range all {
+		if !hasDailySuffix(tbl) {
+			continue
+		}
+		if err := db.Migrator().DropTable(tbl); err != nil {
+			t.Fatalf("清残留日表 %s 失败: %v", tbl, err)
+		}
+	}
+}
+
+// hasDailySuffix 判表名是否带 _YYYYMMDD 日期后缀（与 store.DailyTableName 命名规则一致）。
+func hasDailySuffix(table string) bool {
+	i := strings.LastIndexByte(table, '_')
+	if i < 0 || len(table)-i-1 != 8 {
+		return false
+	}
+	_, err := time.ParseInLocation("20060102", table[i+1:], time.UTC)
+	return err == nil
 }

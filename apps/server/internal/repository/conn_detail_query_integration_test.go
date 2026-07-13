@@ -17,8 +17,6 @@ func TestConnQueryMySQL(t *testing.T) {
 
 	dayD := time.Date(2026, 7, 11, 20, 0, 0, 0, time.UTC).UnixMilli()
 	dayN := time.Date(2026, 7, 12, 2, 0, 0, 0, time.UTC).UnixMilli()
-	dropDailyIT(t, db, "conn_detail", time.UnixMilli(dayD).UTC())
-	dropDailyIT(t, db, "conn_detail", time.UnixMilli(dayN).UTC())
 
 	seeds := []int64{dayD, dayD + 1000, dayN, dayN + 1000}
 	for i, ms := range seeds {
@@ -53,7 +51,6 @@ func TestConnStatsMySQL(t *testing.T) {
 	repo := NewConnDetailRepository(db)
 	winFrom := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC).UnixMilli()
 	winTo := winFrom + 30*60_000
-	dropDailyIT(t, db, "conn_detail", time.UnixMilli(winFrom).UTC())
 
 	preOpen := uuidV7At(winFrom-20*60_000, "s1")
 	inMs := winFrom + 5*60_000

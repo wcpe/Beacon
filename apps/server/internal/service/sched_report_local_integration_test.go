@@ -42,8 +42,8 @@ func waitSchedRows(t *testing.T, db *gorm.DB, name string, want int64) {
 func TestSchedReportLocalReplayUniqueMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "fr146_svc")
 	now := time.Now().UTC()
+	// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 	name := store.DailyTableName("sched_decision", now)
-	_ = db.Migrator().DropTable(name)
 
 	repo := repository.NewSchedDecisionV2Repository(db)
 	writer := NewAsyncDailyWriter()

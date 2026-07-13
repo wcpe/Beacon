@@ -15,10 +15,8 @@ func TestMessageQueryMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "p5b_msg")
 	repo := NewMessageRepository(db)
 
-	// ① 元数据 + payload 分表直查。
+	// ① 元数据 + payload 分表直查（残留日表由 testsupport.OpenTestDB 统一清理）。
 	ms := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC).UnixMilli()
-	dropDailyIT(t, db, "msg_trace", time.UnixMilli(ms).UTC())
-	dropDailyIT(t, db, "msg_payload", time.UnixMilli(ms).UTC())
 	mid := uuidV7At(ms, "m0")
 	if _, err := repo.FlushDaily([]model.MessageRecord{traceRecord(mid, 1, "game-1", true)}); err != nil {
 		t.Fatalf("造数失败: %v", err)
@@ -33,10 +31,6 @@ func TestMessageQueryMySQL(t *testing.T) {
 	// ② 跨日游标分页。
 	dayD := time.Date(2026, 7, 8, 22, 0, 0, 0, time.UTC).UnixMilli()
 	dayN := time.Date(2026, 7, 9, 1, 0, 0, 0, time.UTC).UnixMilli()
-	dropDailyIT(t, db, "msg_trace", time.UnixMilli(dayD).UTC())
-	dropDailyIT(t, db, "msg_trace", time.UnixMilli(dayN).UTC())
-	dropDailyIT(t, db, "msg_payload", time.UnixMilli(dayD).UTC())
-	dropDailyIT(t, db, "msg_payload", time.UnixMilli(dayN).UTC())
 	for i, t0 := range []int64{dayD, dayD + 1000, dayN, dayN + 1000} {
 		id := uuidV7At(t0, "c"+string(rune('a'+i)))
 		if _, err := repo.FlushDaily([]model.MessageRecord{msgTraceAt(id, "game-7", "game-8", model.MsgStatusDelivered, "")}); err != nil {
@@ -56,10 +50,6 @@ func TestMessageCorrelationMySQL(t *testing.T) {
 	repo := NewMessageRepository(db)
 	reqMs := time.Date(2026, 7, 6, 23, 59, 30, 0, time.UTC).UnixMilli()
 	respMs := time.Date(2026, 7, 7, 0, 0, 10, 0, time.UTC).UnixMilli()
-	dropDailyIT(t, db, "msg_trace", time.UnixMilli(reqMs).UTC())
-	dropDailyIT(t, db, "msg_trace", time.UnixMilli(respMs).UTC())
-	dropDailyIT(t, db, "msg_payload", time.UnixMilli(reqMs).UTC())
-	dropDailyIT(t, db, "msg_payload", time.UnixMilli(respMs).UTC())
 
 	reqID := uuidV7At(reqMs, "rq")
 	respID := uuidV7At(respMs, "rp")

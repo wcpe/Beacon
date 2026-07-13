@@ -23,12 +23,9 @@ func TestHealthQueryDailyTablesMySQL(t *testing.T) {
 	svc := NewHealthQueryService(healthview.NewStore(), metricwindow.New(metricwindow.DefaultCapacity), snapshotRepo, metricRepo)
 
 	// 固定远期两相邻 UTC 日（避开其它用例的「今天」表）；中缺一日验证缺表跳过。
+	// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 	d1 := time.Date(2032, 1, 10, 23, 59, 0, 0, time.UTC)
 	d3 := time.Date(2032, 1, 12, 0, 1, 0, 0, time.UTC)
-	for _, day := range []time.Time{d1, d1.AddDate(0, 0, 1), d3} {
-		_ = db.Migrator().DropTable(store.DailyTableName("metric_sample", day))
-		_ = db.Migrator().DropTable(store.DailyTableName("health_snapshot", day))
-	}
 
 	// 指标：d1 两行（同 60s 桶）+ d3 一行，d2 无表。
 	metricRows := []model.MetricSampleV2{

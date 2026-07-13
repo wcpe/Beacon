@@ -7,17 +7,19 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/store"
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
 )
 
 // TestMessageFlushDailyMySQL 真 MySQL：msg_trace 与 msg_payload 同事务写两表、TEXT/可空列可移植、跨日拆表、幂等去重。
+// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 func TestMessageFlushDailyMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "p5a_msg")
 	repo := NewMessageRepository(db)
 
 	ms := time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC).UnixMilli()
-	traceName := dropDailyIT(t, db, "msg_trace", time.UnixMilli(ms).UTC())
-	payloadName := dropDailyIT(t, db, "msg_payload", time.UnixMilli(ms).UTC())
+	traceName := store.DailyTableName("msg_trace", time.UnixMilli(ms).UTC())
+	payloadName := store.DailyTableName("msg_payload", time.UnixMilli(ms).UTC())
 	mid := uuidV7At(ms, "itm")
 
 	if _, err := repo.FlushDaily([]model.MessageRecord{traceRecord(mid, 1, "game-1", true)}); err != nil {
@@ -66,8 +68,8 @@ func TestMessageFlushCrossDayMySQL(t *testing.T) {
 	repo := NewMessageRepository(db)
 	d1 := time.Date(2026, 7, 9, 23, 0, 0, 0, time.UTC).UnixMilli()
 	d2 := time.Date(2026, 7, 10, 1, 0, 0, 0, time.UTC).UnixMilli()
-	n1 := dropDailyIT(t, db, "msg_trace", time.UnixMilli(d1).UTC())
-	n2 := dropDailyIT(t, db, "msg_trace", time.UnixMilli(d2).UTC())
+	n1 := store.DailyTableName("msg_trace", time.UnixMilli(d1).UTC())
+	n2 := store.DailyTableName("msg_trace", time.UnixMilli(d2).UTC())
 
 	if _, err := repo.FlushDaily([]model.MessageRecord{
 		traceRecord(uuidV7At(d1, "cd1"), 1, "game-1", false),
@@ -91,7 +93,7 @@ func TestMessageBroadcastColumnMigrationMySQL(t *testing.T) {
 
 	day := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(time.Now().UnixNano()%3000))
 	ms := day.Add(12 * time.Hour).UnixMilli()
-	traceName := dropDailyIT(t, db, "msg_trace", day)
+	traceName := store.DailyTableName("msg_trace", day)
 	t.Cleanup(func() { _ = db.Migrator().DropTable(traceName) })
 
 	// ① 直接按当前模型建出日表（绕过 EnsureDailyTable 缓存），再删掉 5 个新列，模拟旧版存量表。

@@ -18,15 +18,8 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
 )
 
-// dropDaily 删掉某 UTC 日的指标日表，给集成用例干净起点（表在库间持久，跨运行须先清）。
-func dropDaily(t *testing.T, db *gorm.DB, day time.Time) string {
-	t.Helper()
-	name := store.DailyTableName("metric_sample", day)
-	_ = db.Migrator().DropTable(name)
-	return name
-}
-
 // waitDailyRows 轮询等待某日表行数达到期望（异步写入池 flush 后落库）。
+// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 func waitDailyRows(t *testing.T, db *gorm.DB, name string, want int64) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -52,7 +45,7 @@ func waitDailyRows(t *testing.T, db *gorm.DB, name string, want int64) {
 func TestMetricIngestAsyncWriteAndReplayDedupMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "metric_ingest")
 	now := time.Now().UTC()
-	name := dropDaily(t, db, now)
+	name := store.DailyTableName("metric_sample", now)
 
 	repo := repository.NewMetricSampleV2Repository(db)
 	window := metricwindow.New(metricwindow.DefaultCapacity)
@@ -106,7 +99,6 @@ func TestMetricIngestAsyncWriteAndReplayDedupMySQL(t *testing.T) {
 func TestMetricIngestQueueFull429MySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "metric_ingest")
 	now := time.Now().UTC()
-	dropDaily(t, db, now)
 
 	repo := repository.NewMetricSampleV2Repository(db)
 	window := metricwindow.New(metricwindow.DefaultCapacity)
@@ -134,8 +126,8 @@ func TestMetricFlushCrossDaySplitMySQL(t *testing.T) {
 	// 取两个相邻 UTC 日（用远期固定日期避免与其它用例的「今天」表撞行）。
 	d1 := time.Date(2031, 3, 3, 23, 59, 55, 0, time.UTC)
 	d2 := time.Date(2031, 3, 4, 0, 0, 0, 0, time.UTC)
-	n1 := dropDaily(t, db, d1)
-	n2 := dropDaily(t, db, d2)
+	n1 := store.DailyTableName("metric_sample", d1)
+	n2 := store.DailyTableName("metric_sample", d2)
 
 	repo := repository.NewMetricSampleV2Repository(db)
 	rows := []model.MetricSampleV2{

@@ -6,28 +6,19 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/store"
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
 )
 
-// dropSchedDaily 删掉某 UTC 日的决策日表，给集成用例干净起点（表在库间持久，跨运行须先清）。
-func dropSchedDaily(t *testing.T, db *gorm.DB, day time.Time) string {
-	t.Helper()
-	name := store.DailyTableName("sched_decision", day)
-	_ = db.Migrator().DropTable(name)
-	return name
-}
-
 // TestSchedDecisionFlushDailyMySQL 真 MySQL：日表按需建 + 行落库 + trace_id 幂等去重 + 跨日拆表。
+// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 func TestSchedDecisionFlushDailyMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "fr146_repo")
 	day1 := time.Date(2026, 7, 11, 23, 59, 59, 0, time.UTC)
 	day2 := time.Date(2026, 7, 12, 0, 0, 1, 0, time.UTC)
-	name1 := dropSchedDaily(t, db, day1)
-	name2 := dropSchedDaily(t, db, day2)
+	name1 := store.DailyTableName("sched_decision", day1)
+	name2 := store.DailyTableName("sched_decision", day2)
 	repo := NewSchedDecisionV2Repository(db)
 
 	// 跨日批：day1 一行 + day2 两行 → 两张日表按需建、行各归其日。
@@ -84,9 +75,6 @@ func TestSchedDecisionFlushDailyMySQL(t *testing.T) {
 // TestSchedDecisionQueryMySQL 真 MySQL：跨日并表列表过滤 / 分页、详情逆序查表、概览聚合真查。
 func TestSchedDecisionQueryMySQL(t *testing.T) {
 	db := testsupport.OpenTestDB(t, "fr146_repo")
-	now := time.Now().UTC()
-	dropSchedDaily(t, db, now)
-	dropSchedDaily(t, db, now.AddDate(0, 0, -1))
 	seedSchedQueryRows(t, db)
 	repo := NewSchedDecisionV2Repository(db)
 	fromMs, toMs := queryWindow()

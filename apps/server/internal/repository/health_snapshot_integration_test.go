@@ -6,20 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/store"
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
 )
-
-// dropSnapshotDaily 删掉某 UTC 日的快照日表，给集成用例干净起点（表在库间持久，跨运行须先清）。
-func dropSnapshotDaily(t *testing.T, db *gorm.DB, day time.Time) string {
-	t.Helper()
-	name := store.DailyTableName("health_snapshot", day)
-	_ = db.Migrator().DropTable(name)
-	return name
-}
 
 // snapshotRowAt 构造一行快照（ts 毫秒）。
 func snapshotRowAt(tsMs int64, serverID string, score int) model.HealthSnapshot {
@@ -36,8 +26,9 @@ func TestHealthSnapshotFlushDailyMySQL(t *testing.T) {
 	repo := NewHealthSnapshotRepository(db)
 
 	// 当日批：按需建表 + 行落库可查（含 reasons/factors json 文本回读）。
+	// 残留日表由 testsupport.OpenTestDB 统一清理（跨运行持久，无需各测试自清）。
 	now := time.Now().UTC()
-	name := dropSnapshotDaily(t, db, now)
+	name := store.DailyTableName("health_snapshot", now)
 	rows := []model.HealthSnapshot{
 		snapshotRowAt(now.UnixMilli(), "it-h1", 95),
 		snapshotRowAt(now.UnixMilli(), "it-h2", 42),
@@ -62,8 +53,8 @@ func TestHealthSnapshotFlushDailyMySQL(t *testing.T) {
 	// 跨日批：按 ts_ms 拆分两表写入。
 	d1 := time.Date(2031, 5, 5, 23, 59, 55, 0, time.UTC)
 	d2 := time.Date(2031, 5, 6, 0, 0, 5, 0, time.UTC)
-	n1 := dropSnapshotDaily(t, db, d1)
-	n2 := dropSnapshotDaily(t, db, d2)
+	n1 := store.DailyTableName("health_snapshot", d1)
+	n2 := store.DailyTableName("health_snapshot", d2)
 	cross := []model.HealthSnapshot{
 		snapshotRowAt(d1.UnixMilli(), "it-h1", 90),
 		snapshotRowAt(d2.UnixMilli(), "it-h1", 91),
