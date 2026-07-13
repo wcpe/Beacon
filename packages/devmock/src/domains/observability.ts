@@ -11,7 +11,19 @@ import type {
   CommandAnalytics,
   CommandItem,
 } from '@beacon/contracts'
-import { jsonError, mockGet, mockPost, paginate, pathParam, queryStr, queryTimeMs, readBody } from '../http'
+import {
+  coldRangeError,
+  coldRequested,
+  cursorPaginate,
+  jsonError,
+  mockGet,
+  mockPost,
+  paginate,
+  pathParam,
+  queryStr,
+  queryTimeMs,
+  readBody,
+} from '../http'
 import { getClusterState } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
@@ -184,9 +196,16 @@ export const observabilityHandlers: HttpHandler[] = [
     return HttpResponse.json(analytics)
   }),
 
-  // 分页审计（Legacy page/size 参数）
+  // 分页审计（Legacy page/size 参数；includeArchived=true 冷查询改游标分页，FR-152）
   mockGet('/admin/v1/audits', ({ request }) => {
     const url = new URL(request.url)
+    const cold = coldRequested(url)
+    if (cold) {
+      const rangeError = coldRangeError(queryTimeMs(url, 'from'), queryTimeMs(url, 'to'))
+      if (rangeError !== null) {
+        return rangeError
+      }
+    }
     const namespace = queryStr(url, 'namespace')
     const operator = queryStr(url, 'operator')
     const action = queryStr(url, 'action')
@@ -216,6 +235,10 @@ export const observabilityHandlers: HttpHandler[] = [
       }
       return inWindow(row.createdAt, fromMs, toMs)
     })
+    if (cold) {
+      const { items, nextCursor } = cursorPaginate(rows, url, { sizeParam: 'size' })
+      return HttpResponse.json({ items, nextCursor, includeArchived: true })
+    }
     const { items, total } = paginate(rows, url, { sizeParam: 'size' })
     return HttpResponse.json({ items, total })
   }),

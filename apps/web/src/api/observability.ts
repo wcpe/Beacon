@@ -9,10 +9,11 @@ import type {
   AuditItem,
   CommandAnalytics,
   CommandItem,
+  CursorPage,
   Paged,
 } from '@beacon/contracts'
 
-import { buildQuery, request } from './http'
+import { buildQuery, request, type ColdListResult } from './http'
 
 // ---- 命令观测（/commands）----
 
@@ -42,14 +43,32 @@ export interface AuditQuery {
   targetType?: string
   targetRef?: string
   detailKeyword?: string
+  // 时间范围（RFC3339）；冷查询强制必填且跨度 ≤ 冷查询上限
   from?: string
   to?: string
   page?: number
   size?: number
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表，分页改 keyset 游标（忽略 page，用 cursor）
+  includeArchived?: boolean
+  // 冷查询 keyset 游标（首页省略）
+  cursor?: string
 }
 
-export function fetchAudits(query: AuditQuery): Promise<Paged<AuditItem>> {
-  return request('GET', `/admin/v1/audits${buildQuery({ ...query })}`)
+/**
+ * 审计查询：默认热库 page/size 分页；includeArchived=true 时走冷查询 keyset 游标并表
+ * （后端不回 total），两种形状归一为 ColdListResult。
+ */
+export async function fetchAudits(query: AuditQuery): Promise<ColdListResult<AuditItem>> {
+  const { includeArchived, cursor, page, ...rest } = query
+  if (includeArchived === true) {
+    const cold = await request<CursorPage<AuditItem>>(
+      'GET',
+      `/admin/v1/audits${buildQuery({ ...rest, cursor, includeArchived: true })}`,
+    )
+    return { items: cold.items, total: null, nextCursor: cold.nextCursor }
+  }
+  const hot = await request<Paged<AuditItem>>('GET', `/admin/v1/audits${buildQuery({ ...rest, page })}`)
+  return { items: hot.items, total: hot.total, nextCursor: null }
 }
 
 export function fetchAuditAnalytics(): Promise<AuditAnalytics> {

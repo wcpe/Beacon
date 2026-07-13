@@ -37,6 +37,30 @@ describe('/audits 审计页', () => {
     expect(await screen.findByText('当前筛选条件下无审计记录')).toBeInTheDocument()
   })
 
+  it('勾选「包含归档」冷查询：时间范围自动收敛 30 天、游标翻页取代页码，选回全部时间自动退出', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<AuditsPage />)
+
+    await screen.findByText('审计总数')
+    expect((await screen.findAllByText(/共 \d+ 条/)).length).toBeGreaterThan(0)
+
+    // 勾选冷查询：时间范围从「全部」自动收敛 30 天，总数隐藏、出游标翻页
+    await user.click(screen.getByRole('checkbox', { name: '包含归档' }))
+    expect(await screen.findByText(/第 1 页（含归档）/)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryAllByText(/共 \d+ 条/)).toHaveLength(0)
+    })
+
+    // 时间范围选回「全部」：冷查询强制有界范围 → 自动退出冷查询，回热分页与总数
+    await user.click(screen.getByLabelText('时间范围'))
+    await user.click(await screen.findByRole('option', { name: /全部/ }))
+    await waitFor(() => {
+      expect(screen.queryByText(/（含归档）/)).not.toBeInTheDocument()
+    })
+    expect((await screen.findAllByText(/共 \d+ 条/)).length).toBeGreaterThan(0)
+  })
+
   it('列表行直接展示目标（targetRef），无需点开详情', async () => {
     useScenario('normal')
     renderPage(<AuditsPage />)

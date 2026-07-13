@@ -14,6 +14,7 @@ import {
   AsyncSection,
   Badge,
   Button,
+  Checkbox,
   DataTable,
   Input,
   TableSkeleton,
@@ -25,8 +26,16 @@ import { auditExportUrl, fetchAudits } from '../../api/observability'
 import FilterSelect from '../../features/observability/filter-select'
 import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/observability/pager'
+import CursorPager from '../../features/observability/cursor-pager'
+import { useCursorStack } from '../../features/observability/use-cursor-stack'
 
 const PAGE_SIZE = 15
+// 时间范围预设 key → 毫秒跨度（'all' = 不限时间，仅热查询可用；冷查询强制有界且 ≤31 天上限）
+const AUDIT_WINDOW_MS: Record<string, number> = {
+  '24h': 86_400_000,
+  '7d': 604_800_000,
+  '30d': 2_592_000_000,
+}
 const OPERATORS = ['admin', 'ops-chen', 'ops-wang', 'system'] as const
 // 与 devmock AUDIT_ACTIONS 对齐（动作 / 目标类型枚举）
 const ACTIONS = [
@@ -84,20 +93,38 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   const [targetRef, setTargetRef] = useState(() => searchParams.get('targetRef') ?? '')
   const [keyword, setKeyword] = useState('')
   const [page, setPage] = useState(1)
+  // 时间范围预设（'all' = 不限时间，保持原有全量行为）与冷查询开关（FR-152）
+  const [windowKey, setWindowKey] = useState('all')
+  const [cold, setCold] = useState(false)
+  const cursor = useCursorStack()
+
+  // 切换过滤 / 时间窗 / 冷查询开关时回到首页（热重置页码、冷重置游标栈）
+  const resetPaging = () => {
+    setPage(1)
+    cursor.reset()
+  }
 
   const query = useQuery({
-    queryKey: ['audits', 'list', operator, action, targetType, targetRef, keyword, page],
-    queryFn: () =>
-      fetchAudits({
+    queryKey: ['audits', 'list', operator, action, targetType, targetRef, keyword, windowKey, cold, cold ? cursor.cursor : String(page)],
+    queryFn: () => {
+      // 时间范围按预设窗口自「现在」往前推（RFC3339）；'all' 不带 from/to（仅热查询可达）
+      const span = windowKey === 'all' ? undefined : AUDIT_WINDOW_MS[windowKey]
+      const to = Date.now()
+      return fetchAudits({
         operator: operator === 'all' ? undefined : operator,
         action: action === 'all' ? undefined : action,
         // 目标类型 / 目标为真后端原生查询参数（audit_handler.go List），走服务端过滤
         targetType: targetType === 'all' ? undefined : targetType,
         targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
         detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
+        from: span === undefined ? undefined : new Date(to - span).toISOString(),
+        to: span === undefined ? undefined : new Date(to).toISOString(),
         page,
         size: PAGE_SIZE,
-      }),
+        includeArchived: cold ? true : undefined,
+        cursor: cold ? cursor.cursor : undefined,
+      })
+    },
     placeholderData: keepPreviousData,
   })
 
@@ -105,6 +132,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const nextCursor = query.data?.nextCursor ?? null
 
   const columns = useMemo<DataTableColumn<AuditItem>[]>(
     () => [
@@ -166,7 +194,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           value={keyword}
           onChange={(e) => {
             setKeyword(e.target.value)
-            setPage(1)
+            resetPaging()
           }}
           className="w-52"
         />
@@ -176,7 +204,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           value={targetRef}
           onChange={(e) => {
             setTargetRef(e.target.value)
-            setPage(1)
+            resetPaging()
           }}
           className="w-52"
         />
@@ -186,7 +214,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           options={withCurrent(OPERATORS, operator).map((v) => ({ value: v, label: v }))}
           onChange={(value) => {
             setOperator(value)
-            setPage(1)
+            resetPaging()
           }}
         />
         <FilterSelect
@@ -195,7 +223,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           options={withCurrent(ACTIONS, action).map((v) => ({ value: v, label: v }))}
           onChange={(value) => {
             setAction(value)
-            setPage(1)
+            resetPaging()
           }}
         />
         <FilterSelect
@@ -204,9 +232,44 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           options={withCurrent(TARGET_TYPES, targetType).map((v) => ({ value: v, label: v }))}
           onChange={(value) => {
             setTargetType(value)
-            setPage(1)
+            resetPaging()
           }}
         />
+        <FilterSelect
+          label={t('observability.audits.filterWindow')}
+          value={windowKey}
+          options={Object.keys(AUDIT_WINDOW_MS).map((key) => ({
+            value: key,
+            label: t(`observability.audits.window${key}`),
+          }))}
+          onChange={(value) => {
+            setWindowKey(value)
+            // 冷查询强制有界时间范围：选回「全部」时自动退出冷查询（避免 400 死角）
+            if (value === 'all') {
+              setCold(false)
+            }
+            resetPaging()
+          }}
+        />
+        <label
+          className="flex cursor-pointer items-center gap-2 text-sm text-ink-2"
+          title={t('observability.common.includeArchivedHint')}
+        >
+          <Checkbox
+            checked={cold}
+            onCheckedChange={(v) => {
+              const next = v === true
+              setCold(next)
+              // 勾选时若时间范围为「全部」自动收敛到 30 天（冷查询强制有界 ≤31 天）
+              if (next && windowKey === 'all') {
+                setWindowKey('30d')
+              }
+              resetPaging()
+            }}
+            aria-label={t('observability.common.includeArchived')}
+          />
+          {t('observability.common.includeArchived')}
+        </label>
       </div>
     </div>
   )
@@ -215,9 +278,25 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
     <ListCard
       toolbar={toolbar}
       footer={
-        total > PAGE_SIZE ? (
-          <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
-        ) : undefined
+        cold
+          ? nextCursor !== null || cursor.canPrev
+            ? (
+                <CursorPager
+                  pageIndex={cursor.pageIndex}
+                  canPrev={cursor.canPrev}
+                  canNext={nextCursor !== null}
+                  onPrev={cursor.goPrev}
+                  onNext={() => {
+                    if (nextCursor !== null) {
+                      cursor.goNext(nextCursor)
+                    }
+                  }}
+                />
+              )
+            : undefined
+          : total > PAGE_SIZE
+            ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+            : undefined
       }
     >
       <AsyncSection

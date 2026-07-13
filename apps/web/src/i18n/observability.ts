@@ -201,6 +201,11 @@ export const observability = {
     filterTargetType: '目标类型',
     filterTargetRef: '目标（targetRef）',
     filterKeyword: '详情关键词',
+    // 时间范围预设（「全部」= 不限时间，仅热查询；冷查询强制有界范围）
+    filterWindow: '时间范围',
+    window24h: '近 24 小时',
+    window7d: '近 7 天',
+    window30d: '近 30 天',
     exportCsv: '导出 CSV',
     exportJson: '导出 JSON',
     listTitle: '审计记录',
