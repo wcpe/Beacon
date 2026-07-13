@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"sort"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
@@ -15,13 +17,20 @@ const healthSnapshotInsertBatchSize = 200
 // HealthSnapshotRepository 提供健康快照日表（health_snapshot_YYYYMMDD）的数据访问（FR-147，见 §3.2）：
 // 按行内 ts_ms 定当日表、跨日批自动拆分批量写（快照无唯一键，不做冲突去重）。
 type HealthSnapshotRepository struct {
-	db *gorm.DB
+	db        *gorm.DB
+	archiveDB *gorm.DB // 归档库连接，供冷查询并表（FR-152）；nil 表示不可达 / 未配置
 }
 
 // NewHealthSnapshotRepository 构造仓库。
 func NewHealthSnapshotRepository(db *gorm.DB) *HealthSnapshotRepository {
 	return &HealthSnapshotRepository{db: db}
 }
+
+// SetArchiveDB 注入归档库连接供冷查询（includeArchived）并表（FR-152，见 ADR-0066）。
+func (r *HealthSnapshotRepository) SetArchiveDB(archiveDB *gorm.DB) { r.archiveDB = archiveDB }
+
+// HasArchive 归档库连接是否就绪（冷查询可用性）。
+func (r *HealthSnapshotRepository) HasArchive() bool { return r.archiveDB != nil }
 
 // FlushDaily 批量写一批（可能跨日）快照行到各自当日表；返回值 0 为写入通道契约的去重数占位
 // （快照每 30s 单向产出、无重放语义，故无去重）。
@@ -60,14 +69,35 @@ func (r *HealthSnapshotRepository) FlushDaily(rows []model.HealthSnapshot) (int,
 // QueryRange 查某 server 在 [fromMs, toMs] 的快照（跨日并表、ts_ms 升序）。
 // 查询侧严禁隐式建表：逐日 Migrator().HasTable 判存在，缺表跳过（该日无数据）。
 func (r *HealthSnapshotRepository) QueryRange(serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error) {
+	return r.queryRangeOn(r.db, serverID, fromMs, toMs)
+}
+
+// QueryRangeCold 冷查询并表（FR-152，spec §4.4）：对热 + 归档连接执行同构区间查询，
+// 应用层按 (server_id, ts_ms) 去重保热侧并表（无分页，整段交上层聚合）。归并后仍按 ts_ms 升序。
+func (r *HealthSnapshotRepository) QueryRangeCold(serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error) {
+	hot, err := r.queryRangeOn(r.db, serverID, fromMs, toMs)
+	if err != nil {
+		return nil, err
+	}
+	arc, err := r.queryRangeOn(r.archiveDB, serverID, fromMs, toMs)
+	if err != nil {
+		return nil, err
+	}
+	merged := unionColdRows(hot, arc, healthSnapshotDedupKey)
+	sort.Slice(merged, func(i, j int) bool { return merged[i].TsMs < merged[j].TsMs })
+	return merged, nil
+}
+
+// queryRangeOn 在指定连接上按 [fromMs, toMs] 跨日并表查快照（ts_ms 升序、缺表跳过、禁隐式建表）。
+func (r *HealthSnapshotRepository) queryRangeOn(db *gorm.DB, serverID string, fromMs, toMs int64) ([]model.HealthSnapshot, error) {
 	out := make([]model.HealthSnapshot, 0, 64)
 	for _, day := range utcDaysBetween(fromMs, toMs) {
 		name := store.DailyTableName(model.HealthSnapshot{}.TableName(), day)
-		if !r.db.Migrator().HasTable(name) {
+		if !db.Migrator().HasTable(name) {
 			continue
 		}
 		var rows []model.HealthSnapshot
-		if err := r.db.Table(name).
+		if err := db.Table(name).
 			Where("server_id = ? AND ts_ms >= ? AND ts_ms <= ?", serverID, fromMs, toMs).
 			Order("ts_ms ASC").Find(&rows).Error; err != nil {
 			return nil, err
@@ -75,6 +105,11 @@ func (r *HealthSnapshotRepository) QueryRange(serverID string, fromMs, toMs int6
 		out = append(out, rows...)
 	}
 	return out, nil
+}
+
+// healthSnapshotDedupKey 冷查询去重键：快照无唯一键，身份 = (server_id, ts_ms)。
+func healthSnapshotDedupKey(s model.HealthSnapshot) string {
+	return s.ServerID + "\x00" + strconv.FormatInt(s.TsMs, 10)
 }
 
 // groupSnapshotsByDay 按 ts_ms 对应的 UTC 日（零点）分组，支撑跨日批拆分。

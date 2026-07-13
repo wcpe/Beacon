@@ -17,13 +17,21 @@ const connInsertBatchSize = 200
 // 按 conn_id 内嵌 UUIDv7 时间定当日表、跨日批自动拆分；open 插入会话行、close 按 conn_id 更新同一行；
 // 另供孤儿 open 会话对账（proxy 重启补 close）与名册重建（进程重启读 open 行）两个数据面读原语。
 type ConnDetailRepository struct {
-	db *gorm.DB
+	db        *gorm.DB
+	archiveDB *gorm.DB // 归档库连接，供冷查询并表（FR-152）；nil 表示不可达 / 未配置
 }
 
 // NewConnDetailRepository 构造仓库。
 func NewConnDetailRepository(db *gorm.DB) *ConnDetailRepository {
 	return &ConnDetailRepository{db: db}
 }
+
+// SetArchiveDB 注入归档库连接供冷查询（includeArchived）并表（FR-152，见 ADR-0066）。
+// nil 表示归档库不可达 / 未配置——冷查询前上层据 HasArchive 判 503，绝不静默返回仅热库结果。
+func (r *ConnDetailRepository) SetArchiveDB(archiveDB *gorm.DB) { r.archiveDB = archiveDB }
+
+// HasArchive 归档库连接是否就绪（冷查询可用性）。
+func (r *ConnDetailRepository) HasArchive() bool { return r.archiveDB != nil }
 
 // OpenConn 是一条遗留 open 会话行的最小投影（名册重建用，spec §4.1）。
 type OpenConn struct {
@@ -242,6 +250,39 @@ func (r *ConnDetailRepository) QueryConnections(q ConnQuery) ([]model.ConnDetail
 	return fetchDailyOffsetPage[model.ConnDetail](
 		r.db, tables, "opened_at DESC, conn_id DESC", q.Offset, q.Limit, q.applyConnFilters,
 	)
+}
+
+// QueryConnectionsCold 冷查询并表（FR-152，spec §4.4）：对热 + 归档连接执行同构查询（同过滤 / 同
+// opened_at DESC, conn_id DESC / keyset 边界），应用层有序归并、按 conn_id 去重保热侧、取前 limit。
+// cursorToken 空为首页；返回本页行与下一页令牌（空串表示无下一页）。
+func (r *ConnDetailRepository) QueryConnectionsCold(q ConnQuery, cursorToken string, limit int) ([]model.ConnDetail, string, error) {
+	cursor := decodeColdCursor(cursorToken)
+	want := limit + 1
+	const order = "opened_at DESC, conn_id DESC"
+	apply := func(db *gorm.DB) *gorm.DB {
+		db = q.applyConnFilters(db)
+		if !cursor.isZero() {
+			ct := msToTime(cursor.TimeMs)
+			db = db.Where("opened_at < ? OR (opened_at = ? AND conn_id < ?)", ct, ct, cursor.ID)
+		}
+		return db
+	}
+	base := model.ConnDetail{}.TableName()
+	hot, err := fetchColdSide[model.ConnDetail](r.db, existingDailyTablesInRange(r.db, base, q.FromMs, q.ToMs), order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	arc, err := fetchColdSide[model.ConnDetail](r.archiveDB, existingDailyTablesInRange(r.archiveDB, base, q.FromMs, q.ToMs), order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	page, next, _ := mergeColdPage(hot, arc, limit, connColdKey, coldLessStringDesc)
+	return page, next.encode(), nil
+}
+
+// connColdKey 取连接行的冷查询归并键（opened_at 毫秒 + conn_id）。
+func connColdKey(row model.ConnDetail) coldCursor {
+	return coldCursor{TimeMs: row.OpenedAt.UnixMilli(), ID: row.ConnID}
 }
 
 // applyConnFilters 套用连接查询的时间窗与过滤（serverId 匹配 proxy/首后端/末后端任一，对齐 devmock）。

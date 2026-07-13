@@ -17,13 +17,20 @@ const msgInsertBatchSize = 200
 // 按 message_id 内嵌 UUIDv7 时间定当日表、跨日批自动拆分；元数据与 payload 同一事务写两表、message_id
 // 冲突即忽略（消息终态一次性落库、无更新语义、重放幂等）。
 type MessageRepository struct {
-	db *gorm.DB
+	db        *gorm.DB
+	archiveDB *gorm.DB // 归档库连接，供冷查询并表（FR-152）；nil 表示不可达 / 未配置
 }
 
 // NewMessageRepository 构造仓库。
 func NewMessageRepository(db *gorm.DB) *MessageRepository {
 	return &MessageRepository{db: db}
 }
+
+// SetArchiveDB 注入归档库连接供冷查询（includeArchived）并表（FR-152，见 ADR-0066）。
+func (r *MessageRepository) SetArchiveDB(archiveDB *gorm.DB) { r.archiveDB = archiveDB }
+
+// HasArchive 归档库连接是否就绪（冷查询可用性）。
+func (r *MessageRepository) HasArchive() bool { return r.archiveDB != nil }
 
 // FlushDaily 幂等批量把一批（可能跨日）终态消息记录落各自当日表，返回被去重（未落）的记录数。
 //
@@ -194,6 +201,38 @@ func (r *MessageRepository) QueryMessages(q MessageQuery) ([]model.MsgTrace, boo
 	return fetchDailyOffsetPage[model.MsgTrace](
 		r.db, tables, "created_at DESC, message_id DESC", q.Offset, q.Limit, q.applyMsgFilters,
 	)
+}
+
+// QueryMessagesCold 冷查询并表（FR-152，spec §4.4）：对热 + 归档连接执行同构查询（同过滤 / 同
+// created_at DESC, message_id DESC / keyset 边界），应用层有序归并、按 message_id 去重保热侧、取前 limit。
+func (r *MessageRepository) QueryMessagesCold(q MessageQuery, cursorToken string, limit int) ([]model.MsgTrace, string, error) {
+	cursor := decodeColdCursor(cursorToken)
+	want := limit + 1
+	const order = "created_at DESC, message_id DESC"
+	apply := func(db *gorm.DB) *gorm.DB {
+		db = q.applyMsgFilters(db)
+		if !cursor.isZero() {
+			ct := msToTime(cursor.TimeMs)
+			db = db.Where("created_at < ? OR (created_at = ? AND message_id < ?)", ct, ct, cursor.ID)
+		}
+		return db
+	}
+	base := model.MsgTrace{}.TableName()
+	hot, err := fetchColdSide[model.MsgTrace](r.db, existingDailyTablesInRange(r.db, base, q.FromMs, q.ToMs), order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	arc, err := fetchColdSide[model.MsgTrace](r.archiveDB, existingDailyTablesInRange(r.archiveDB, base, q.FromMs, q.ToMs), order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	page, next, _ := mergeColdPage(hot, arc, limit, msgColdKey, coldLessStringDesc)
+	return page, next.encode(), nil
+}
+
+// msgColdKey 取消息行的冷查询归并键（created_at 毫秒 + message_id）。
+func msgColdKey(row model.MsgTrace) coldCursor {
+	return coldCursor{TimeMs: row.CreatedAt.UnixMilli(), ID: row.MessageID}
 }
 
 // applyMsgFilters 套用消息查询的时间窗与过滤（serverId 匹配来源/解析目标/定向目标任一，对齐 devmock）。

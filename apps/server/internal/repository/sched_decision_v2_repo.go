@@ -16,13 +16,20 @@ const schedDecisionInsertBatchSize = 200
 // SchedDecisionV2Repository 提供调度决策日表（sched_decision_YYYYMMDD）的数据访问（FR-146）：
 // 按行内 ts_ms 定当日表、跨日批自动拆分、幂等批量写（trace_id 唯一键冲突忽略并计去重）。
 type SchedDecisionV2Repository struct {
-	db *gorm.DB
+	db        *gorm.DB
+	archiveDB *gorm.DB // 归档库连接，供冷查询并表（FR-152）；nil 表示不可达 / 未配置
 }
 
 // NewSchedDecisionV2Repository 构造仓库。
 func NewSchedDecisionV2Repository(db *gorm.DB) *SchedDecisionV2Repository {
 	return &SchedDecisionV2Repository{db: db}
 }
+
+// SetArchiveDB 注入归档库连接供冷查询（includeArchived）并表（FR-152，见 ADR-0066）。
+func (r *SchedDecisionV2Repository) SetArchiveDB(archiveDB *gorm.DB) { r.archiveDB = archiveDB }
+
+// HasArchive 归档库连接是否就绪（冷查询可用性）。
+func (r *SchedDecisionV2Repository) HasArchive() bool { return r.archiveDB != nil }
 
 // FlushDaily 幂等批量写一批（可能跨日）决策行到各自当日表，返回被唯一键去重的行数。
 //
@@ -131,6 +138,38 @@ func (r *SchedDecisionV2Repository) QueryRange(q SchedDecisionQuery) ([]model.Sc
 		offset = 0
 	}
 	return rows, total, nil
+}
+
+// QueryRangeCold 冷查询并表（FR-152，spec §4.4）：对热 + 归档连接执行同构查询（同过滤 / 同
+// ts_ms DESC, trace_id DESC / keyset 边界），应用层有序归并、按 trace_id 去重保热侧、取前 limit。
+// 排序次键用 trace_id（全局唯一）而非热路径的自增 id——后者按日表各自递增、跨库不可比。
+func (r *SchedDecisionV2Repository) QueryRangeCold(q SchedDecisionQuery, cursorToken string, limit int) ([]model.SchedDecisionV2, string, error) {
+	cursor := decodeColdCursor(cursorToken)
+	want := limit + 1
+	const order = "ts_ms DESC, trace_id DESC"
+	apply := func(db *gorm.DB) *gorm.DB {
+		db = applySchedFilters(db, q)
+		if !cursor.isZero() {
+			db = db.Where("ts_ms < ? OR (ts_ms = ? AND trace_id < ?)", cursor.TimeMs, cursor.TimeMs, cursor.ID)
+		}
+		return db
+	}
+	base := model.SchedDecisionV2{}.TableName()
+	hot, err := fetchColdSide[model.SchedDecisionV2](r.db, existingDailyTablesInRange(r.db, base, q.FromMs, q.ToMs), order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	arc, err := fetchColdSide[model.SchedDecisionV2](r.archiveDB, existingDailyTablesInRange(r.archiveDB, base, q.FromMs, q.ToMs), order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	page, next, _ := mergeColdPage(hot, arc, limit, schedColdKey, coldLessStringDesc)
+	return page, next.encode(), nil
+}
+
+// schedColdKey 取决策行的冷查询归并键（ts_ms + trace_id）。
+func schedColdKey(row model.SchedDecisionV2) coldCursor {
+	return coldCursor{TimeMs: row.TsMs, ID: row.TraceID}
 }
 
 // FindByTraceID 自今日起在保留窗内逆序逐日表按 trace_id 查（缺表跳过），命中即返；未命中返回 nil。

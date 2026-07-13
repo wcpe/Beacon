@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,13 +50,20 @@ type AuditAnalyticsRow struct {
 
 // AuditLogRepository 提供 audit_log 表的数据访问（append-only）。
 type AuditLogRepository struct {
-	db *gorm.DB
+	db        *gorm.DB
+	archiveDB *gorm.DB // 归档库连接，供冷查询并表（FR-152）；nil 表示不可达 / 未配置
 }
 
 // NewAuditLogRepository 构造仓库。
 func NewAuditLogRepository(db *gorm.DB) *AuditLogRepository {
 	return &AuditLogRepository{db: db}
 }
+
+// SetArchiveDB 注入归档库连接供冷查询（includeArchived）并表（FR-152，见 ADR-0066）。
+func (r *AuditLogRepository) SetArchiveDB(archiveDB *gorm.DB) { r.archiveDB = archiveDB }
+
+// HasArchive 归档库连接是否就绪（冷查询可用性）。
+func (r *AuditLogRepository) HasArchive() bool { return r.archiveDB != nil }
 
 // WithTx 返回绑定到事务的仓库副本。
 func (r *AuditLogRepository) WithTx(tx *gorm.DB) *AuditLogRepository {
@@ -113,6 +121,39 @@ func (r *AuditLogRepository) List(f AuditFilter) ([]model.AuditLog, int64, error
 		return nil, 0, err
 	}
 	return items, total, nil
+}
+
+// ListCold 冷查询并表（FR-152，spec §4.4）：对热 + 归档 audit_log 单表执行同构查询（同过滤 / 同
+// created_at DESC, id DESC / keyset 边界），应用层有序归并、按 id 去重保热侧、取前 limit。
+// audit 主键为全局自增 id（跨库唯一），排序次键按数值比较（非字典序）。
+func (r *AuditLogRepository) ListCold(f AuditFilter, cursorToken string, limit int) ([]model.AuditLog, string, error) {
+	cursor := decodeColdCursor(cursorToken)
+	want := limit + 1
+	const order = "created_at desc, id desc"
+	tables := []string{model.AuditLog{}.TableName()}
+	apply := func(db *gorm.DB) *gorm.DB {
+		db = applyFilter(db, f)
+		if !cursor.isZero() {
+			ct := msToTime(cursor.TimeMs)
+			db = db.Where("created_at < ? OR (created_at = ? AND id < ?)", ct, ct, coldParseNumericID(cursor.ID))
+		}
+		return db
+	}
+	hot, err := fetchColdSide[model.AuditLog](r.db, tables, order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	arc, err := fetchColdSide[model.AuditLog](r.archiveDB, tables, order, want, apply)
+	if err != nil {
+		return nil, "", err
+	}
+	page, next, _ := mergeColdPage(hot, arc, limit, auditColdKey, coldLessNumericDesc)
+	return page, next.encode(), nil
+}
+
+// auditColdKey 取审计行的冷查询归并键（created_at 毫秒 + 自增 id 的十进制串）。
+func auditColdKey(row model.AuditLog) coldCursor {
+	return coldCursor{TimeMs: row.CreatedAt.UnixMilli(), ID: strconv.FormatUint(uint64(row.ID), 10)}
 }
 
 // ScanForAnalytics 取窗口内审计的聚合投影行（仅 created_at/result/action 三列、按时间升序）。
