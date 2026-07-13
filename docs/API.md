@@ -878,7 +878,7 @@ agent 面：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
-| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player 寻址） **【已实现·FR-149】** |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向） **【已实现·FR-149/180】** |
 | POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204） **【已实现·FR-149】** |
 | POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |
 
@@ -889,7 +889,7 @@ agent 面：
 | GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） **【已实现·FR-145】** |
 | GET | `/admin/v2/connections/{connId}` | 单连接详情 **【已实现·FR-145】** |
 | GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
-| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**） **【已实现·FR-149】** |
+| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`） **【已实现·FR-149/180】** |
 | GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
 | POST | `/admin/v2/messages/{messageId}/payload` | 查看 payload（权限 + 原因必填 + 先审计后返回） **【已实现·FR-150】** |
 | GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
