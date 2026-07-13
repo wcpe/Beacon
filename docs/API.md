@@ -898,14 +898,14 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/archive/overview` | 归档总览（目标库 / 各域水位与保留期） |
-| POST | `/admin/v2/archive/jobs` | 创建归档任务（dry-run / 执行） |
-| GET | `/admin/v2/archive/jobs` | 任务列表 |
-| GET | `/admin/v2/archive/jobs/{id}` | 任务详情（逐域 item 进度与校验结果） |
-| POST | `/admin/v2/archive/jobs/{id}/retry` | 失败任务断点续跑 |
-| POST | `/admin/v2/archive/jobs/{id}/cancel` | 取消任务 |
+| GET | `/admin/v2/archive/overview` | 归档总览（目标库 / 各域水位与保留期） **【已实现·FR-151/153】** |
+| POST | `/admin/v2/archive/jobs` | 创建归档任务（dry-run / 执行；有 running 409） **【已实现·FR-153】** |
+| GET | `/admin/v2/archive/jobs` | 任务列表（status/mode/trigger 过滤 + 分页） **【已实现·FR-153】** |
+| GET | `/admin/v2/archive/jobs/{id}` | 任务详情（逐域 item 进度与校验结果） **【已实现·FR-153】** |
+| POST | `/admin/v2/archive/jobs/{id}/retry` | 失败任务断点续跑（仅 failed 否则 409） **【已实现·FR-153】** |
+| POST | `/admin/v2/archive/jobs/{id}/cancel` | 取消任务（仅 pending/running 否则 409） **【已实现·FR-153】** |
 
-> 保留期等设置走运维设置域端点；冷查询参数 `includeArchived` 挂各查询域端点（§4.4 跨域契约），均不在 `/archive/*` 下。
+> 保留期等设置走运维设置域端点（`archive.*` 键已入 `/admin/v1/settings` 白名单，≥7 天守卫，**【已实现·FR-151】**）；冷查询参数 `includeArchived=true`（强制时间范围 ≤ `archive.cold-query-max-days` 默认 31、归档不可达 503、应用层归并去重保热侧）已挂各查询域端点 `/audits`、`/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}`（§4.4 跨域契约，**【已实现·FR-152】**），均不在 `/archive/*` 下。归档到同实例独立 database `beacon_archive`（或独立 DSN）走双连接应用层搬运 + sha256 校验门（[ADR-0066](adr/0066-hot-cold-archive-dual-connection.md)）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
 
 ### 配置中心 V2（P7 · 0.27.x，真源 [v2-config-center.md](specs/v2-config-center.md) §5）
 
