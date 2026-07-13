@@ -13,13 +13,19 @@ interface CursorPagerProps {
   canNext: boolean
   onPrev: () => void
   onNext: () => void
+  // 是否冷查询（页信息带「含归档」标注）；连接 / 消息明细热查询也原生游标分页，传 false 用普通文案
+  cold?: boolean
 }
 
-export default function CursorPager({ pageIndex, canPrev, canNext, onPrev, onNext }: CursorPagerProps) {
+export default function CursorPager({ pageIndex, canPrev, canNext, onPrev, onNext, cold = true }: CursorPagerProps) {
   const { t } = useTranslation()
   return (
     <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
-      <span>{t('observability.common.cursorPageInfo', { page: pageIndex })}</span>
+      <span>
+        {cold
+          ? t('observability.common.cursorPageInfo', { page: pageIndex })
+          : t('observability.common.cursorPageInfoHot', { page: pageIndex })}
+      </span>
       <Button size="sm" variant="outline" disabled={!canPrev} onClick={onPrev}>
         {t('observability.common.prevPage')}
       </Button>

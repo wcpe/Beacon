@@ -1,10 +1,11 @@
 // 全站路由与导航信息架构配置（真源：docs/UX.md §2）：
-// 顶层运维总览 + 集群 / 可观测 / 交付 / 系统四大域，共 17 页。
+// 顶层运维总览 + 集群 / 可观测 / 交付 / 系统四大域，共 19 页。
 // 后续页面 agent 只改 src/pages/ 下自己的页面文件与 src/i18n/ 下所属域资源文件，勿改本文件结构。
 import type { ComponentType } from 'react'
 import {
   BellRing,
   Boxes,
+  Cable,
   ChartLine,
   FileSliders,
   FolderArchive,
@@ -14,6 +15,7 @@ import {
   History,
   KeyRound,
   LayoutDashboard,
+  MessagesSquare,
   RefreshCw,
   ScrollText,
   Server,
@@ -30,6 +32,8 @@ import AuditsPage from './pages/audits'
 import ChangesPage from './pages/changes'
 import ChangesHistoryPage from './pages/changes-history'
 import CommandsPage from './pages/commands'
+import ConnectionsPage from './pages/connections'
+import MessagesPage from './pages/messages'
 import ConfigsPage from './pages/configs'
 import DashboardPage from './pages/dashboard'
 import NamespacesPage from './pages/namespaces'
@@ -86,6 +90,8 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ChartLine,
         Component: ServiceAnalysisPage,
       },
+      { path: '/connections', titleKey: 'nav.connections', icon: Cable, Component: ConnectionsPage },
+      { path: '/messages', titleKey: 'nav.messages', icon: MessagesSquare, Component: MessagesPage },
       { path: '/commands', titleKey: 'nav.commands', icon: SquareTerminal, Component: CommandsPage },
       { path: '/audits', titleKey: 'nav.audits', icon: ScrollText, Component: AuditsPage },
       { path: '/alert-events', titleKey: 'nav.alertEvents', icon: BellRing, Component: AlertEventsPage },

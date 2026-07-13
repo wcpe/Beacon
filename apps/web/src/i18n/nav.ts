@@ -13,6 +13,8 @@ export const nav = {
   zones: '区服分配',
   topology: '拓扑',
   serviceAnalysis: '服务分析',
+  connections: '连接明细',
+  messages: '消息链路',
   commands: '命令观测',
   audits: '审计',
   alertEvents: '告警事件',
