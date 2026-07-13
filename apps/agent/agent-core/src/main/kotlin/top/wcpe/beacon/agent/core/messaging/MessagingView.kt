@@ -39,6 +39,15 @@ class MessagingView(private val bus: MessageBus) : Messaging {
         bus.publish(topic, payload)
     }
 
+    /** zone 级定向广播（FR-180 重载）：覆盖接口默认实现，把 zone 透传给 [MessageBus.publish] 做 zone 过滤。 */
+    override fun publish(
+        topic: String,
+        payload: Any?,
+        zone: String?,
+    ) {
+        bus.publish(topic, payload, zone)
+    }
+
     override fun subscribe(
         topic: String,
         handler: TopicHandler,

@@ -42,14 +42,37 @@ public interface Messaging {
     CompletableFuture<Object> call(String targetServerId, String type, Object payload);
 
     /**
-     * 主题发布（可丢，pub/sub）：当前无订阅者即丢弃，不留存。
+     * 主题发布（可丢广播，FR-180 / ADR-0065）：向发送者 namespace 当前全部在线服 fan-out 一条广播
+     * （含发送者自身），topic 落 msg_type，接收方按 {@link #subscribe} 注册的同名处理器分发。
      *
+     * <p>可丢语义：只投当前在线服，离线不补投；要可靠送达请用 {@link #send} / {@link #call}。
+     * 广播不跨 namespace，不出信任边界。</p>
+     *
+     * @param topic   主题名（落 msg_type，接收方据此路由订阅处理器）
+     * @param payload 业务负载（泛型树）
      * @throws IllegalStateException 模块不可用
      */
     void publish(String topic, Object payload);
 
     /**
-     * 主题订阅：注册处理器并接收该主题消息。
+     * 主题发布 · zone 级定向（FR-180 重载，接口只增不改、守二进制兼容）：只向发送者 namespace 内指定
+     * {@code zone} 的当前在线服 fan-out；其余语义同 {@link #publish(String, Object)}（可丢、不补投、不出信任边界）。
+     *
+     * <p>默认实现忽略 {@code zone} 退化为全 namespace 广播（保证既有实现零改动仍可编译）；
+     * core 门面已覆盖此方法、按 {@code zone} 定向。</p>
+     *
+     * @param topic   主题名
+     * @param payload 业务负载（泛型树）
+     * @param zone    目标 zone；{@code null} 等价于 {@link #publish(String, Object)}（全 namespace 广播）
+     * @throws IllegalStateException 模块不可用
+     */
+    default void publish(String topic, Object payload, String zone) {
+        publish(topic, payload);
+    }
+
+    /**
+     * 主题订阅（FR-180 / ADR-0065）：登记本地按 topic 分发的处理器，接收经 {@link #publish} 广播到本服的该主题消息。
+     * 与 {@link #on} 的定向消息分发表相互隔离、互不干扰。
      *
      * @return 可注销句柄（{@link ListenerHandle#remove()} 后取消订阅）
      * @throws IllegalStateException 模块不可用
