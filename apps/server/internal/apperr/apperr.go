@@ -227,4 +227,15 @@ var (
 	ErrAlertEventNotFound = New(http.StatusNotFound, "ALERT_EVENT_NOT_FOUND", "告警事件不存在")
 	// ErrAlertActionInvalid 告警处理动作不合法（仅允许 acknowledge / resolve，FR-157）。
 	ErrAlertActionInvalid = New(http.StatusBadRequest, "ALERT_ACTION_INVALID", "告警处理动作不合法")
+
+	// ErrArchiveJobRunning 已有归档任务在执行中，单飞拒绝并发创建 / 重试（FR-151，spec §4.3，见 ADR-0066）。
+	ErrArchiveJobRunning = New(http.StatusConflict, "ARCHIVE_JOB_RUNNING", "已有归档任务在执行中，请稍后再试")
+	// ErrArchiveJobNotFound 归档任务不存在（重试 / 取消 / 详情目标缺失，FR-151）。
+	ErrArchiveJobNotFound = New(http.StatusNotFound, "ARCHIVE_JOB_NOT_FOUND", "归档任务不存在")
+	// ErrArchiveJobState 归档任务当前状态不允许该操作（仅 failed 可重试、仅 pending/running 可取消，FR-151）。
+	ErrArchiveJobState = New(http.StatusConflict, "ARCHIVE_JOB_STATE", "归档任务状态不允许该操作")
+	// ErrArchiveUnavailable 归档库不可达，归档能力降级不可用（FR-151，spec §4.1，见 ADR-0066）。
+	ErrArchiveUnavailable = New(http.StatusServiceUnavailable, "ARCHIVE_UNAVAILABLE", "归档库不可用，归档能力暂不可用")
+	// ErrArchiveDomainInvalid 请求的归档域不在注册表内（FR-151，spec §3.1）。
+	ErrArchiveDomainInvalid = New(http.StatusBadRequest, "ARCHIVE_DOMAIN_INVALID", "未知的归档域")
 )
