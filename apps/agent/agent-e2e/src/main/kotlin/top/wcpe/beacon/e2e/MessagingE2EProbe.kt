@@ -15,7 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 数据目录下 `e2e-messaging.log`，供外部 Go 驱动断言 wire 与落库：
  *  - 定向 send 自寻址（目标=本服 serverId）：控制面受理 → 长轮询取回 → on 处理器收到 → 回执 delivered；
  *  - RPC call 自寻址：请求 correlationId 自引用其 messageId、响应回填该 messageId，Future 往返完成；
- *  - 玩家寻址落空：向名册无此人的随机 UUID 发消息，控制面记 failed(player_not_online)。
+ *  - 玩家寻址落空：向名册无此人的随机 UUID 发消息，控制面记 failed(player_not_online)；
+ *  - 广播 publish/subscribe（FR-180）：控制面按在线服集合 fan-out（含发送者自身）→ 本机 subscribe 收到自身广播 →
+ *    回执 delivered，一条广播只落一行聚合 msg_trace（target_kind=broadcast）。
  *
  * 由环境变量 `BEACON_E2E_MESSAGING` 门控（非空才启用；随消息模块开关 messaging.enabled 一并由 runServer 注入）。
  * 全程 async 线程，绝不上 MC 主线程；send/call 前置判 isAvailable 优雅降级。
@@ -40,6 +42,9 @@ object MessagingE2EProbe {
     /** 玩家寻址落空的业务消息类型（独立类型，便于 Go 侧无歧义查其 failed 行）。 */
     private const val TYPE_MISS = "beacon-e2e-miss"
 
+    /** 广播 publish/subscribe 的业务消息类型（Go 侧按此 msgType 查 msg_trace 广播聚合行，FR-180）。 */
+    private const val TYPE_BCAST = "beacon-e2e-bcast"
+
     /** 定向 send 的固定 payload 标记（字符串，契合 wire 的 payload 字符串形态）。 */
     private const val MSG_PAYLOAD = "beacon-e2e-hello"
 
@@ -48,6 +53,9 @@ object MessagingE2EProbe {
 
     /** RPC 响应 payload 前缀（handler 回信 = 该前缀 + 请求 payload）。 */
     private const val RPC_REPLY_PREFIX = "pong:"
+
+    /** 广播 publish 的固定 payload 标记。 */
+    private const val BCAST_PAYLOAD = "beacon-e2e-broadcast"
 
     /** 玩家寻址落空用的随机玩家 UUID（名册绝无此人 → 控制面判 player_not_online）。 */
     private const val MISSING_PLAYER_UUID = "00000000-0000-7000-8000-0000e2e0dead"
@@ -69,6 +77,9 @@ object MessagingE2EProbe {
 
     /** 玩家寻址落空是否已发过一次（只发一次，控制面即记 failed）。 */
     private val playerMissSent = AtomicBoolean(false)
+
+    /** 本机 subscribe 是否已收到自身广播（含自身语义，收到即停发）。 */
+    private val bcastReceived = AtomicBoolean(false)
 
     fun start() {
         if (enabled.isBlank()) {
@@ -105,6 +116,16 @@ object MessagingE2EProbe {
                 messaging.send(self, TYPE_MSG, MSG_PAYLOAD)
             } catch (t: Throwable) {
                 E2EObservation.append(markFile, "SEND_ERROR", TYPE_MSG, "-", "err=${t.message}")
+            }
+        }
+
+        // 广播 publish 含自身语义（FR-180）：approve 前会被控制面 403 丢弃（无落库行），故每轮重发直至本机
+        // subscribe 收到自身广播为止（approve 后一条即 fan-out 回自身、随即停发）。
+        if (!bcastReceived.get()) {
+            try {
+                messaging.publish(TYPE_BCAST, BCAST_PAYLOAD)
+            } catch (t: Throwable) {
+                E2EObservation.append(markFile, "PUBLISH_ERROR", TYPE_BCAST, "-", "err=${t.message}")
             }
         }
 
@@ -151,7 +172,12 @@ object MessagingE2EProbe {
                 incoming.reply(RPC_REPLY_PREFIX + incoming.payload())
             }
         }
-        info("Beacon E2E 消息探针已注册 on($TYPE_MSG) / on($TYPE_RPC) 处理器")
+        // 广播订阅：本机 publish 的广播经控制面 fan-out 含自身，回投本机长轮询后按 topic 路由到此（与 on 分发隔离，FR-180）。
+        messaging.subscribe(TYPE_BCAST) { topic, payload ->
+            E2EObservation.append(markFile, "BCAST_RECEIVED", topic, "-", "payload=$payload")
+            bcastReceived.set(true)
+        }
+        info("Beacon E2E 消息探针已注册 on($TYPE_MSG) / on($TYPE_RPC) / subscribe($TYPE_BCAST) 处理器")
     }
 
     /** 发一次 RPC call 并挂 whenComplete：完成记 RPC_REPLY 并置 rpcDone；异常记 RPC_ERROR；无论成败释放单飞。 */
