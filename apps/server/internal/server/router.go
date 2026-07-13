@@ -20,6 +20,7 @@ type Handlers struct {
 	V2Message         *handler.V2MessageHandler
 	V2ConnectionAdmin *handler.V2ConnectionAdminHandler
 	V2MessageAdmin    *handler.V2MessageAdminHandler
+	V2Archive         *handler.V2ArchiveHandler
 	SchedDecision     *handler.SchedDecisionAdminHandler
 	Config            *handler.ConfigHandler
 	File              *handler.FileHandler
@@ -216,6 +217,18 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.Get("/messages/{messageId}", h.V2MessageAdmin.Detail)
 				r.Post("/messages/{messageId}/payload", h.V2MessageAdmin.Payload)
 			}
+
+			// 热冷归档管理面端点（FR-153，见 spec §5、ADR-0066）：总览 / 建任务 / 列表 / 详情 / 重试 / 取消。
+			// 写端点（建 / 重试 / 取消）为 POST，readonly 经上面 readonlyWriteGuard 403；创建 / 重试 / 取消的
+			// 专项审计由 ArchiveService 在事务内自记（archive.job-create / -retry / -cancel），与其它 v2 写端点自审一致。
+			// 与 /admin/v1 各 handler 一致无条件注册（V2Archive 在 main.go 恒构造；handler 仅请求期解引用），
+			// 静态 overview / jobs 置于 {id} 前（chi 静态路由本就优先，此处仅为可读性）。
+			r.Get("/archive/overview", h.V2Archive.Overview)
+			r.Post("/archive/jobs", h.V2Archive.CreateJob)
+			r.Get("/archive/jobs", h.V2Archive.ListJobs)
+			r.Get("/archive/jobs/{id}", h.V2Archive.GetJob)
+			r.Post("/archive/jobs/{id}/retry", h.V2Archive.RetryJob)
+			r.Post("/archive/jobs/{id}/cancel", h.V2Archive.CancelJob)
 		})
 	}
 
