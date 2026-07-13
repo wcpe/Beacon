@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -50,8 +51,12 @@ class MessagePollCoordinatorTest {
             }
     }
 
-    /** 捕获 ack 报文、按 body 返回预置树的 codec。 */
-    private class MsgCodec(private val msgType: String, private val correlationId: String?) : JsonCodec {
+    /** 捕获 ack 报文、按 body 返回预置树的 codec；broadcast=true 时 poll 消息携带广播标记（FR-180）。 */
+    private class MsgCodec(
+        private val msgType: String,
+        private val correlationId: String?,
+        private val broadcast: Boolean = false,
+    ) : JsonCodec {
         val lastAck = AtomicReference<Map<String, Any?>>(null)
 
         @Suppress("UNCHECKED_CAST")
@@ -63,20 +68,20 @@ class MessagePollCoordinatorTest {
 
         override fun decode(json: String): Any? =
             when (json) {
-                "poll-msgs" ->
-                    mapOf(
-                        "messages" to
-                            listOf(
-                                mapOf(
-                                    "messageId" to "m1",
-                                    "msgType" to msgType,
-                                    "sourceServerId" to "game-7",
-                                    "correlationId" to correlationId,
-                                    "payload" to mapOf("k" to "v"),
-                                    "createdAt" to "1970-01-01T00:00:00.001Z",
-                                ),
-                            ),
-                    )
+                "poll-msgs" -> {
+                    val msg =
+                        linkedMapOf<String, Any?>(
+                            "messageId" to "m1",
+                            "msgType" to msgType,
+                            "sourceServerId" to "game-7",
+                            "correlationId" to correlationId,
+                            "payload" to mapOf("k" to "v"),
+                            "createdAt" to "1970-01-01T00:00:00.001Z",
+                        )
+                    // 广播条携带 additive broadcast 标记（定向条不带，缺省 false）。
+                    if (broadcast) msg["broadcast"] = true
+                    mapOf("messages" to listOf(msg))
+                }
 
                 "ack-ok" -> mapOf("applied" to 1, "ignored" to 0)
                 else -> emptyMap<String, Any?>()
@@ -112,6 +117,28 @@ class MessagePollCoordinatorTest {
         assertEquals("delivered", results[0]["status"])
         // 第二次 poll down → 循环退避入延迟队列（不再同步递归）。
         assertTrue(adapter.delayedCount() >= 1, "连接失败后下一轮应入延迟队列")
+    }
+
+    @Test
+    fun `广播标记消息经协调器传递并分发到 subscribe 处理器不入 on`() {
+        val transport = MsgFakeTransport()
+        // 广播消息（broadcast=true、correlationId=null）：协调器须把标记传入信封，deliverInbound 分流到 subscribe(topic) 表。
+        val codec = MsgCodec(msgType = "chat.global", correlationId = null, broadcast = true)
+        val bus = bus(codec)
+        var onHit: Any? = null
+        var topicHit: Any? = null
+        bus.on("chat.global") { ctx -> onHit = ctx.payload() } // 定向表：不应命中
+        bus.subscribe("chat.global") { message -> topicHit = message.payload } // 订阅表：应命中
+
+        val coord = MessagePollCoordinator(BeaconApiClient(transport, codec, settings()), identity(), adapter, bus)
+        coord.configure(waitSec = 1, maxMessages = 10, retryDelayMs = 5000)
+        coord.start()
+
+        assertEquals(mapOf("k" to "v"), topicHit, "广播应经协调器传递 broadcast 标记、分发到 subscribe 处理器")
+        assertNull(onHit, "广播绝不应误入 on(type) 定向处理器")
+        @Suppress("UNCHECKED_CAST")
+        val results = codec.lastAck.get()!!["results"] as List<Map<String, Any?>>
+        assertEquals("delivered", results[0]["status"], "命中订阅的广播应回执 delivered")
     }
 
     @Test

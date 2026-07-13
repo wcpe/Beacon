@@ -121,6 +121,8 @@ class MessagePollCoordinator(
                         correlationId = pm.correlationId,
                         source = pm.sourceServerId,
                         messageId = pm.messageId,
+                        // 传递广播标记（FR-180）：deliverInbound 据此分流到 topic 订阅分发表，缺失则误入定向 on(type) 路由
+                        broadcast = pm.broadcast,
                     )
                 val outcome = bus.deliverInbound(message)
                 MessageAck(
