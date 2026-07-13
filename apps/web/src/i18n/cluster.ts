@@ -48,6 +48,8 @@ export const cluster = {
       rezone: '换区',
       startDraining: '置为排空',
       stopDraining: '取消排空',
+      setDefaultEntry: '设为默认入口',
+      clearDefaultEntry: '取消默认入口',
       viewHealth: '健康详情',
     },
     confirm: {
@@ -57,6 +59,11 @@ export const cluster = {
       unbindDesc: '解绑后该 serverId 释放，agent 需重新申请接入。这是换 serverId / 命名空间 的前置。',
       drainingTitle: '切换排空标记',
       drainingDesc: '排空后不再作为调度落点，已在场玩家不受影响。',
+      setDefaultEntryTitle: '设为小区默认入口？',
+      setDefaultEntryDesc: '新玩家经 BC 代理进入该小区时将落到此服务器（同步下发给代理 fallback 注入）。',
+      clearDefaultEntryTitle: '取消小区默认入口？',
+      clearDefaultEntryDesc: '取消后该小区无默认入口，BC 代理将不设默认服（新玩家进入报无默认服，直到重新指定）。',
+      cancel: '取消',
     },
     reason: {
       label: '原因',

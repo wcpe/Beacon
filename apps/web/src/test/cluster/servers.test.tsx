@@ -64,6 +64,28 @@ describe('/servers 服务器页', () => {
     })
   })
 
+  it('行操作切换默认入口：取消后该行徽标消失（FR-48/ADR-0067 写闭环）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    // lobby-1 在 mock 中为已分配默认入口：行内带「默认入口」徽标与「取消默认入口」操作
+    const row = (await screen.findByText('lobby-1')).closest('tr')
+    expect(row).not.toBeNull()
+    expect(within(row as HTMLElement).getByText('默认入口')).toBeInTheDocument()
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '取消默认入口' }))
+
+    // 无原因确认框：确认后徽标消失、操作文案翻转
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('button', { name: '取消默认入口' }))
+    await waitFor(() => {
+      const fresh = screen.getByText('lobby-1').closest('tr')
+      expect(within(fresh as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
+    })
+    const fresh = screen.getByText('lobby-1').closest('tr')
+    expect(within(fresh as HTMLElement).getByRole('button', { name: '设为默认入口' })).toBeInTheDocument()
+  })
+
   it('列表行直显健康分/等级/实时指标与不可调度原因摘要', async () => {
     useScenario('normal')
     renderPage(<ServersPage />)

@@ -21,6 +21,7 @@ import {
   Button,
   Checkbox,
   DataTable,
+  DestructiveConfirmDialog,
   Input,
   Select,
   SelectContent,
@@ -39,6 +40,7 @@ import {
   disableIdentity,
   fetchIdentities,
   fetchServers,
+  setDefaultEntry,
   setDraining,
   unbindIdentity,
 } from '../../api/cluster'
@@ -48,11 +50,12 @@ import ReasonDialog from './reason-dialog'
 
 const PAGE_SIZE = 15
 
-// 行动作意图
+// 行动作意图（defaultEntry 走无原因确认框：v2 端点仅收 value，操作人经审计记录）
 type RowAction =
   | { kind: 'disable'; row: ServerItem }
   | { kind: 'unbind'; row: ServerItem }
   | { kind: 'draining'; row: ServerItem; next: boolean }
+  | { kind: 'defaultEntry'; row: ServerItem; next: boolean }
 
 interface AssetsPanelProps {
   namespaceId?: number
@@ -175,6 +178,17 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
   const drainingMutation = useMutation({
     mutationFn: ({ row, reason, next }: { row: ServerItem; reason: string; next: boolean }) =>
       setDraining(row.serverId, next, reason),
+    onSuccess: async () => {
+      await invalidate()
+      setAction(null)
+    },
+    onError: (error) => {
+      setErrorText(messageOf(error))
+    },
+  })
+  // 默认入口 toggle（FR-48/ADR-0067）：v2 端点按行数字 id 定位、仅收 value，设置即热下发 BC 注入。
+  const defaultEntryMutation = useMutation({
+    mutationFn: ({ row, next }: { row: ServerItem; next: boolean }) => setDefaultEntry(row.id, next),
     onSuccess: async () => {
       await invalidate()
       setAction(null)
@@ -365,6 +379,20 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
                   : t('cluster.servers.actions.startDraining')}
               </Button>
             )}
+            {row.kind === 'backend' && row.assigned && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setErrorText(null)
+                  setAction({ kind: 'defaultEntry', row, next: !row.isDefaultEntry })
+                }}
+              >
+                {row.isDefaultEntry
+                  ? t('cluster.servers.actions.clearDefaultEntry')
+                  : t('cluster.servers.actions.setDefaultEntry')}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -383,7 +411,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
   )
 
   const active = action?.row ?? null
-  const dialogConfig = action ? dialogConfigOf(action, t) : null
+  const dialogConfig = action && action.kind !== 'defaultEntry' ? dialogConfigOf(action, t) : null
 
   // 紧凑 KPI 一行：总数 / 未分配 / 待确认（不占大块，语义色提示）
   const summaryItems = useMemo(
@@ -535,8 +563,8 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         )}
       </div>
 
-      {/* 行内写操作确认弹窗（原因必填） */}
-      {dialogConfig && action && active && (
+      {/* 行内写操作确认弹窗（原因必填）；defaultEntry 端点不收原因，走下方无原因确认框 */}
+      {dialogConfig && action && action.kind !== 'defaultEntry' && active && (
         <ReasonDialog
           open
           onOpenChange={(open) => {
@@ -559,6 +587,38 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
             } else {
               drainingMutation.mutate({ row: current.row, reason, next: current.next })
             }
+          }}
+        />
+      )}
+
+      {/* 默认入口 toggle 确认（无原因字段：v2 端点仅收 value，操作人入审计） */}
+      {action?.kind === 'defaultEntry' && active && (
+        <DestructiveConfirmDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setAction(null)
+            }
+          }}
+          title={
+            action.next
+              ? t('cluster.servers.confirm.setDefaultEntryTitle')
+              : t('cluster.servers.confirm.clearDefaultEntryTitle')
+          }
+          description={`serverId ${active.serverId} · ${
+            action.next
+              ? t('cluster.servers.confirm.setDefaultEntryDesc')
+              : t('cluster.servers.confirm.clearDefaultEntryDesc')
+          }${errorText === null ? '' : `（${errorText}）`}`}
+          confirmLabel={
+            action.next
+              ? t('cluster.servers.actions.setDefaultEntry')
+              : t('cluster.servers.actions.clearDefaultEntry')
+          }
+          cancelLabel={t('cluster.servers.confirm.cancel')}
+          pending={defaultEntryMutation.isPending}
+          onConfirm={() => {
+            defaultEntryMutation.mutate({ row: action.row, next: action.next })
           }}
         />
       )}
