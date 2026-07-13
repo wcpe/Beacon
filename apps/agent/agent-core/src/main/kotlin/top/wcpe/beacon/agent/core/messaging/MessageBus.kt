@@ -150,21 +150,38 @@ class MessageBus(
     }
 
     /**
-     * 主题发布（可丢，pub/sub）：HTTP 中转下底层 no-op（ADR-0063 §7，v2 不做 topic）；Redis 通道仍投递。
+     * 主题发布（可丢广播，FR-180 / ADR-0065 复活 ADR-0063 §7 的 no-op 条款）：topic 落 msg_type，
+     * HTTP 中转经控制面按当前在线服集合 fan-out（含发送者自身；离线不补投）；Redis 通道仍走原 pub/sub。
      *
+     * @param zone 可选 zone 级定向：非空只投该 zone 当前在线服（仅 HTTP 中转生效，Redis 通道无 zone 概念）
      * @throws IllegalStateException 模块不可用
+     * @throws IllegalArgumentException payload 超过上限（本地前置拒绝，不发无谓请求）
      */
     fun publish(
         topic: String,
         payload: Any?,
+        zone: String? = null,
     ) {
         requireAvailable()
-        val message = Message(type = topic, payload = payload, source = selfServerId)
+        checkPayloadSize(payload)
+        val message =
+            Message(
+                type = topic,
+                payload = payload,
+                source = selfServerId,
+                messageId = Uuid7.generate(),
+                sentAt = System.currentTimeMillis(),
+                targetKind = Message.TARGET_BROADCAST,
+                targetId = zone,
+                broadcast = true,
+            )
         transport.publishTopic(topic, encode(message))
     }
 
     /**
-     * 主题订阅：注册处理器并向 transport 订阅。HTTP 中转下底层 no-op（ADR-0063 §7），handler 不会触发。
+     * 主题订阅：登记本地 topic 分发表（与定向 on(type) 分发表隔离）并向 transport 订阅。
+     * HTTP 中转下广播经长轮询取回、按信封 broadcast 标记路由到本表（[deliverInbound]），
+     * transport 侧订阅为 no-op；Redis 通道仍走真订阅回调。
      *
      * @throws IllegalStateException 模块不可用
      */
@@ -220,7 +237,8 @@ class MessageBus(
     /**
      * 分发一条入站消息（HTTP 长轮询协调器逐条调用；Redis 收件流回调经 [onInboundRaw] 亦走此）。
      *
-     * 三路（HTTP 单通道下响应与请求同路，故按 correlationId 前置区分）：
+     * 广播（信封 broadcast 标记，FR-180）前置分流到 topic 订阅分发表，与定向三路隔离。定向三路
+     * （HTTP 单通道下响应与请求同路，故按 correlationId 前置区分）：
      * - RPC 响应（correlationId 非空且不等于自身 messageId）→ 唤醒挂起 Future，绝不再当请求路由（杜绝响应回环）。
      * - RPC 请求（correlationId 自引用其 messageId）→ 路由 type 处理器，handler 可回信。
      * - 单向 send（correlationId 为 null）→ 路由 type 处理器。
@@ -228,6 +246,9 @@ class MessageBus(
      * @return 回执结果（供 HTTP 协调器 ack）：delivered / failed + 失败原因 + handler 耗时
      */
     fun deliverInbound(message: Message): InboundOutcome {
+        if (message.broadcast) {
+            return routeToTopicHandler(message)
+        }
         val correlationId = message.correlationId
         if (correlationId != null && correlationId != message.messageId) {
             return completeResponse(correlationId, message)
@@ -279,7 +300,24 @@ class MessageBus(
         }
     }
 
-    /** 主题入站：解码 → 回调该 topic 处理器。 */
+    /**
+     * 广播入站（FR-180）：按 topic（落信封 type）路由本地订阅分发表，与定向 on(type) 分发表隔离。
+     * 无订阅者回 delivered——广播 fan-out 及本 namespace 全部在线服，订阅与否是各服本地状态，
+     * 不订阅不构成投递失败（pub/sub 可丢语义）；订阅 handler 抛异常回 failed（计入广播聚合 failed_count）。
+     */
+    private fun routeToTopicHandler(message: Message): InboundOutcome {
+        val handler = topicHandlers[message.type] ?: return InboundOutcome.delivered(null)
+        val startNanos = System.nanoTime()
+        return try {
+            handler(message)
+            InboundOutcome.delivered((System.nanoTime() - startNanos) / 1_000_000L)
+        } catch (t: Throwable) {
+            warn("主题处理器抛异常：topic=${message.type}，已隔离，错误=${t.message}")
+            InboundOutcome.failed(t.message ?: "handler_error")
+        }
+    }
+
+    /** 主题入站（Redis 通道订阅回调）：解码 → 回调该 topic 处理器。 */
     private fun onTopicRaw(
         topic: String,
         raw: String,

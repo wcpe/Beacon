@@ -10,10 +10,12 @@ import top.wcpe.beacon.agent.core.transport.JsonCodec
  * 跨服消息 HTTP 中转传输（ADR-0063 取代 [RedisMessageTransport][top.wcpe.beacon.agent.adapters.messaging.RedisMessageTransport]）：
  * 把 [MessageBus] 的出站原语映射为控制面 REST 上行。
  *
- * - 上行：sendToServer / sendReply → 解信封 → [BeaconApiClient.sendMessage]（据信封 targetKind 建 server/player wire 目标）。
+ * - 上行：sendToServer / sendReply / publishTopic → 解信封 → [BeaconApiClient.sendMessage]
+ *   （据信封 targetKind 建 server / player / broadcast wire 目标，广播见 FR-180 / ADR-0065）。
  * - 入站不经此：HTTP 单通道由 [MessagePollCoordinator] 长轮询取回后直调 [MessageBus.deliverInbound]，
  *   故 subscribeServerInbox / subscribeReplyInbox 只满足接口、不驱动。
- * - publishTopic / subscribeTopic / unsubscribeTopic 底层 no-op（ADR-0063 §7，v2 不做 topic）。
+ * - subscribeTopic / unsubscribeTopic 底层 no-op：topic 订阅是 [MessageBus] 本地分发表，
+ *   广播经长轮询取回后按信封广播标记路由，transport 侧无订阅状态。
  *
  * 守 ADR-0005：不 import okhttp / kotlinx，只依赖 [BeaconApiClient]（其 HTTP/JSON 在适配器）与 [JsonCodec] 接口。
  *
@@ -72,6 +74,8 @@ class HttpMessageTransport(
                 correlationId = message.correlationId,
                 payload = message.payload,
                 sentAtMs = message.sentAt ?: System.currentTimeMillis(),
+                // 广播 zone 级定向：信封 targetId 兼载可选 zone 名（FR-180）。
+                targetZone = if (kind == Message.TARGET_BROADCAST) message.targetId else null,
             )
         when (val outcome = apiClient.sendMessage(identity, outbound)) {
             is MessageSendOutcome.Ok -> Unit
@@ -92,10 +96,11 @@ class HttpMessageTransport(
         rawJson: String,
     ) = sendToServer(replyChannel, rawJson)
 
+    /** 广播上行（FR-180）：信封已带 targetKind=broadcast（可选 zone 落 targetId），与定向同路经 send 端点上行。 */
     override fun publishTopic(
         topic: String,
         rawJson: String,
-    ) = Unit
+    ) = sendToServer(topic, rawJson)
 
     override fun subscribeServerInbox(onMessage: (String) -> Unit) = Unit
 

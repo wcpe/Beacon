@@ -570,8 +570,9 @@ class BeaconApiClient(
     /**
      * 跨服消息上行发送：POST /beacon/v2/agent/messages/send（FR-149 §5.1，ADR-0063）。同步调用，请在异步线程使用。
      *
-     * 报文 `{messageId, msgType, targetKind, targetServerId?|targetPlayerUuid?, correlationId?, payload, sentAt}`
-     * （全 camelCase，sentAt 为 UTC ISO8601）。200 受理（回报 status）；403 跨域无信任、400 payload 超限等被拒、其它失败。
+     * 报文 `{messageId, msgType, targetKind, targetServerId?|targetPlayerUuid?|targetZone?, correlationId?, payload, sentAt}`
+     * （全 camelCase，sentAt 为 UTC ISO8601；targetZone 仅广播 zone 级定向时携带，FR-180）。
+     * 200 受理（回报 status）；403 跨域无信任、400 payload 超限等被拒、其它失败。
      */
     fun sendMessage(
         identity: AgentIdentity,
@@ -584,6 +585,7 @@ class BeaconApiClient(
                 put("targetKind", message.targetKind)
                 if (message.targetServerId != null) put("targetServerId", message.targetServerId)
                 if (message.targetPlayerUuid != null) put("targetPlayerUuid", message.targetPlayerUuid)
+                if (message.targetZone != null) put("targetZone", message.targetZone)
                 if (message.correlationId != null) put("correlationId", message.correlationId)
                 put("payload", message.payload)
                 put("sentAt", isoUtc(message.sentAtMs))
@@ -1401,6 +1403,8 @@ class BeaconApiClient(
                 correlationId = JsonTree.str(m, "correlationId"),
                 payload = m["payload"],
                 createdAt = JsonTree.strOr(m, "createdAt", ""),
+                // 广播投递标记（additive 键，FR-180）：定向消息不带，缺省 false。
+                broadcast = JsonTree.boolOr(m, "broadcast", false),
             )
         }
     }

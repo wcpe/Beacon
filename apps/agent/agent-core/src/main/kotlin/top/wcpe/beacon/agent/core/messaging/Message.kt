@@ -15,8 +15,10 @@ package top.wcpe.beacon.agent.core.messaging
  * - [source]        发起方 serverId，便于目标识别来源与 HTTP 中转回信定向（可空）。
  * - [messageId]     P5 起：源 agent 发送时生成的 UUIDv7（控制面据高 48 位时间戳定位日表）；旧 Redis 通道可空。
  * - [sentAt]        P5 起：发送时刻（Unix 毫秒）；上线经适配器格式化为 UTC ISO8601。
- * - [targetKind]    P5 起：寻址类型 `server` / `player`；HTTP 中转据此建 wire 目标（Redis 通道忽略）。
- * - [targetId]      P5 起：目标标识（targetKind=server 为 serverId、player 为 playerUuid）。
+ * - [targetKind]    P5 起：寻址类型 `server` / `player` / `broadcast`（FR-180）；HTTP 中转据此建 wire 目标（Redis 通道忽略）。
+ * - [targetId]      P5 起：目标标识（targetKind=server 为 serverId、player 为 playerUuid、broadcast 为可选 zone 名）。
+ * - [broadcast]     FR-180：广播投递标记（additive 键，只增不改）。入站消息带 true 时按 topic 订阅分发表路由，
+ *                   与定向 on(type) 分发表隔离；定向消息缺省 false。
  *
  * 不可变值对象。
  */
@@ -31,6 +33,7 @@ data class Message(
     val sentAt: Long? = null,
     val targetKind: String? = null,
     val targetId: String? = null,
+    val broadcast: Boolean = false,
 ) {
     /**
      * 是否为需要回信的 RPC 请求。
@@ -58,6 +61,7 @@ data class Message(
         if (sentAt != null) map[FIELD_SENT_AT] = sentAt
         if (targetKind != null) map[FIELD_TARGET_KIND] = targetKind
         if (targetId != null) map[FIELD_TARGET_ID] = targetId
+        if (broadcast) map[FIELD_BROADCAST] = true
         return map
     }
 
@@ -75,12 +79,16 @@ data class Message(
         const val FIELD_SENT_AT: String = "sentAt"
         const val FIELD_TARGET_KIND: String = "targetKind"
         const val FIELD_TARGET_ID: String = "targetId"
+        const val FIELD_BROADCAST: String = "broadcast"
 
         /** 寻址类型：定向到子服。 */
         const val TARGET_SERVER: String = "server"
 
         /** 寻址类型：按玩家所在服（控制面解析）。 */
         const val TARGET_PLAYER: String = "player"
+
+        /** 寻址类型：广播 fan-out（控制面按当前在线服集合解析，FR-180 / ADR-0065）。 */
+        const val TARGET_BROADCAST: String = "broadcast"
 
         /**
          * 从泛型树（JsonCodec.decode 的结果）还原信封。
@@ -104,6 +112,7 @@ data class Message(
                 sentAt = (map[FIELD_SENT_AT] as? Number)?.toLong(),
                 targetKind = map[FIELD_TARGET_KIND] as? String,
                 targetId = map[FIELD_TARGET_ID] as? String,
+                broadcast = map[FIELD_BROADCAST] as? Boolean ?: false,
             )
         }
     }

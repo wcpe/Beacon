@@ -305,9 +305,10 @@ sealed class ConnectionsReportOutcome {
  *
  * 由 messaging 适配器从信封解出后传入，避免 client 反向依赖 messaging.Message（保持包依赖单向）。
  *
- * @param targetKind server / player（[top.wcpe.beacon.agent.core.messaging.Message.TARGET_SERVER] 等值）
+ * @param targetKind server / player / broadcast（[top.wcpe.beacon.agent.core.messaging.Message.TARGET_SERVER] 等值）
  * @param targetServerId targetKind=server 时的目标子服；否则 null
  * @param targetPlayerUuid targetKind=player 时的目标玩家；否则 null
+ * @param targetZone targetKind=broadcast 时的可选 zone 级定向（FR-180）；否则 null
  * @param sentAtMs 发送时刻（Unix 毫秒）；上线格式化为 UTC ISO8601
  */
 data class OutboundMessage(
@@ -319,9 +320,14 @@ data class OutboundMessage(
     val correlationId: String?,
     val payload: Any?,
     val sentAtMs: Long,
+    val targetZone: String? = null,
 )
 
-/** 长轮询取回的一条待投消息（对应 /messages/poll 200 的 messages 元素）。 */
+/**
+ * 长轮询取回的一条待投消息（对应 /messages/poll 200 的 messages 元素）。
+ *
+ * @param broadcast 广播投递标记（wire additive 键，FR-180）：true 时按 topic 订阅分发表路由，定向缺省 false
+ */
 data class PolledMessage(
     val messageId: String,
     val msgType: String,
@@ -329,6 +335,7 @@ data class PolledMessage(
     val correlationId: String?,
     val payload: Any?,
     val createdAt: String,
+    val broadcast: Boolean = false,
 )
 
 /** 消息上行发送的结果（对应 /messages/send 200 / 403 / 400）。 */
