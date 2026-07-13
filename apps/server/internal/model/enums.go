@@ -383,6 +383,12 @@ const (
 	// 告警事件处理（FR-157，见 ADR-0064）：确认 / 标记已处理，detail 记事件 id / 动作 / 处置说明（不含凭据）
 	ActionAlertEventAcknowledge = "alert-event.acknowledge"
 	ActionAlertEventResolve     = "alert-event.resolve"
+	// 热冷归档任务（FR-151，见 ADR-0066）：创建（含 dry-run）/ 完成 / 失败 / 重试 / 取消，detail 记任务 id / 模式 / 域（不含数据内容）
+	ActionArchiveJobCreate   = "archive.job-create"
+	ActionArchiveJobComplete = "archive.job-complete"
+	ActionArchiveJobFailed   = "archive.job-failed"
+	ActionArchiveJobRetry    = "archive.job-retry"
+	ActionArchiveJobCancel   = "archive.job-cancel"
 )
 
 // 审计对象类型。
@@ -422,6 +428,8 @@ const (
 	TargetTypeMessage = "message"
 	// 告警事件（FR-157）处理工作流的审计对象类型
 	TargetTypeAlertEvent = "alert-event"
+	// 热冷归档任务（FR-151）的审计对象类型
+	TargetTypeArchiveJob = "archive-job"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
