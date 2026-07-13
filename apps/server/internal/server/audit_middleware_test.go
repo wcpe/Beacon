@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/handler"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -61,6 +62,11 @@ func newAuditMiddlewareRouter(creator auditCreator) http.Handler {
 	r.Get("/admin/v1/widgets", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	// 已在覆盖集合内的端点（专项审计已记，中间件不应重复补记）。
 	r.Post("/admin/v1/configs", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
+	// v2 前缀·未被专项审计覆盖的合成写端点（应被兜底补记，且 action/target 须由 /admin/v2/ 前缀正确推导）。
+	r.Post("/admin/v2/gadgets", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
+	r.Put("/admin/v2/gadgets/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	// v2 前缀·已在覆盖集合内的端点（专项审计已记，中间件不应重复补记）。
+	r.Post("/admin/v2/namespaces", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
 
 	return r
 }
@@ -155,6 +161,50 @@ func TestAuditMiddlewareSkipsCovered(t *testing.T) {
 	}
 }
 
+// TestAuditMiddlewareV2PrefixDerivation 复现并守护 /admin/v2 前缀缺陷：兜底审计原只硬编码剥 /admin/v1/ 前缀，
+// 对 /admin/v2 写路由资源词解析为空 → 写出 action=".create"、targetType="" 的垃圾行。
+// 修复后 v2 未覆盖写端点应与 v1 同样正确推导（gadget.create / gadget.update）。
+func TestAuditMiddlewareV2PrefixDerivation(t *testing.T) {
+	creator := &recordingAuditCreator{}
+	h := newAuditMiddlewareRouter(creator)
+
+	if code := doReq(t, h, http.MethodPost, "/admin/v2/gadgets", ""); code != http.StatusCreated {
+		t.Fatalf("POST v2 gadgets 应 201，实际 %d", code)
+	}
+	if code := doReq(t, h, http.MethodPut, "/admin/v2/gadgets/g-3", `{"k":"v"}`); code != http.StatusOK {
+		t.Fatalf("PUT v2 gadgets 应 200，实际 %d", code)
+	}
+
+	entries := creator.all()
+	if len(entries) != 2 {
+		t.Fatalf("v2 未覆盖写端点应兜底补记 2 条，实际 %d", len(entries))
+	}
+	// POST 无路径参数：action=gadget.create、targetType=gadget、targetRef 退回资源词 gadget。
+	if entries[0].Action != "gadget.create" || entries[0].TargetType != "gadget" || entries[0].TargetRef != "gadget" {
+		t.Fatalf("v2 POST 推导错误（前缀未剥净会得 .create/空类型）：action=%q targetType=%q targetRef=%q",
+			entries[0].Action, entries[0].TargetType, entries[0].TargetRef)
+	}
+	// PUT 带路径参数：action=gadget.update、targetType=gadget、targetRef=g-3。
+	if entries[1].Action != "gadget.update" || entries[1].TargetType != "gadget" || entries[1].TargetRef != "g-3" {
+		t.Fatalf("v2 PUT 推导错误：action=%q targetType=%q targetRef=%q",
+			entries[1].Action, entries[1].TargetType, entries[1].TargetRef)
+	}
+}
+
+// TestAuditMiddlewareSkipsCoveredV2 守护本缺陷核心症状：/admin/v2 下已自带专项审计的写端点（如 namespace 创建）
+// 必须登记进 coveredWriteRoutes 并被兜底中间件跳过，否则与专项审计双记。
+func TestAuditMiddlewareSkipsCoveredV2(t *testing.T) {
+	creator := &recordingAuditCreator{}
+	h := newAuditMiddlewareRouter(creator)
+
+	if code := doReq(t, h, http.MethodPost, "/admin/v2/namespaces", `{"name":"x"}`); code != http.StatusCreated {
+		t.Fatalf("POST v2 namespaces 应 201，实际 %d", code)
+	}
+	if n := len(creator.all()); n != 0 {
+		t.Fatalf("v2 已覆盖端点不应兜底补记，实际 %d 条（会与专项审计双记）", n)
+	}
+}
+
 // TestAuditMiddlewareIgnoresReads 守护：GET 等读方法不产生兜底审计。
 func TestAuditMiddlewareIgnoresReads(t *testing.T) {
 	creator := &recordingAuditCreator{}
@@ -230,14 +280,21 @@ type errFake string
 func (e errFake) Error() string { return string(e) }
 
 // TestAuditCoveredRoutesMatchRegisteredWriteRoutes 守护 FR-72 兜底语义不漂移：coveredWriteRoutes
-// 必须与真实路由器内 /admin/v1 鉴权组下注册的写路由「逐一相等」。
+// 必须与真实路由器内 /admin/v1、/admin/v2 两鉴权组下注册的写路由「逐一相等」。
 // 方向①缺失 → 新写端点未登记会被兜底中间件与其专项审计「双记」；方向②多余 → 陈旧条目。
 // 二者任一不符即静默漂移（gap-filling 的核心风险，git 不会替你报警），本测试把它挡在 go test。
 func TestAuditCoveredRoutesMatchRegisteredWriteRoutes(t *testing.T) {
 	// 仅用于「枚举路由」的真实路由器：指针处理器留 nil（注册只取方法值、不调用，安全）；
 	// Web 须非 nil（NotFound 调 h.Web.ServeHTTP，nil 接口会 panic）；Metrics/Metric 经 nil 守卫跳过；
 	// authn/apiKeys/audit 仅被中间件闭包捕获、构造期不解引用，故传 nil 安全。
-	h := Handlers{Web: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}
+	// V2/V2Health/V2MessageAdmin 传零值指针以触发 /admin/v2 组下三处写路由注册（核心域 / 健康权重 PUT /
+	// 消息 payload），供本测试对账 v2 写路由；同理只取方法值、不调用，零值指针安全。
+	h := Handlers{
+		Web:            http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+		V2:             &handler.V2ControlPlaneHandler{},
+		V2Health:       &handler.V2HealthHandler{},
+		V2MessageAdmin: &handler.V2MessageAdminHandler{},
+	}
 	routes, ok := NewRouter(h, "", nil, nil, nil).(chi.Routes)
 	if !ok {
 		t.Fatal("NewRouter 返回值应实现 chi.Routes")
@@ -248,7 +305,7 @@ func TestAuditCoveredRoutesMatchRegisteredWriteRoutes(t *testing.T) {
 
 	registered := map[string]struct{}{}
 	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if !isWriteMethod(method) || !strings.HasPrefix(route, adminAPIPrefix) {
+		if !isWriteMethod(method) || !hasAdminAPIPrefix(route) {
 			return nil
 		}
 		if key := method + " " + route; key != loginRoute {
@@ -259,7 +316,7 @@ func TestAuditCoveredRoutesMatchRegisteredWriteRoutes(t *testing.T) {
 		t.Fatalf("遍历路由失败: %v", err)
 	}
 	if len(registered) == 0 {
-		t.Fatal("未枚举到任何 /admin/v1 写路由，路由器构造或遍历异常")
+		t.Fatal("未枚举到任何 /admin/v1、/admin/v2 写路由，路由器构造或遍历异常")
 	}
 
 	// 方向①：每条注册的组内写路由都必须在覆盖集合（否则被兜底审计与专项审计双记）。

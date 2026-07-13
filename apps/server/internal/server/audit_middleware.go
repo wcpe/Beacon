@@ -13,8 +13,29 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 )
 
-// adminAPIPrefix 是管理面 API 的统一前缀，推导资源词时从 RoutePattern 中剥除。
-const adminAPIPrefix = "/admin/v1/"
+// adminAPIPrefixes 列出管理面各版本 API 的统一前缀。兜底审计推导资源词时按此集合剥前缀、
+// 守护测试枚举写路由时按此集合判归属，使 /admin/v1 与 /admin/v2 走同一套兜底 + 防漂移机制。
+var adminAPIPrefixes = []string{"/admin/v1/", "/admin/v2/"}
+
+// trimAdminAPIPrefix 剥除 RoutePattern 命中的管理面 API 前缀（v1/v2 其一），未命中返回原串。
+func trimAdminAPIPrefix(pattern string) string {
+	for _, prefix := range adminAPIPrefixes {
+		if strings.HasPrefix(pattern, prefix) {
+			return strings.TrimPrefix(pattern, prefix)
+		}
+	}
+	return pattern
+}
+
+// hasAdminAPIPrefix 判断路由是否归属任一管理面 API 前缀（供守护测试枚举写路由）。
+func hasAdminAPIPrefix(route string) bool {
+	for _, prefix := range adminAPIPrefixes {
+		if strings.HasPrefix(route, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // auditCreator 是兜底审计落库的最小依赖（仅追加一条），由 repository.AuditLogRepository 满足。
 // 抽成接口便于中间件单测用内存假实现驱动，不连库。
@@ -22,10 +43,11 @@ type auditCreator interface {
 	Create(entry *model.AuditLog) error
 }
 
-// coveredWriteRoutes 是「已被专项审计覆盖的写路由」集中清单（method + chi RoutePattern）。
-// 命中清单的写请求由各 service 在事务内自记领域审计，兜底中间件不再补记，避免双记。
+// coveredWriteRoutes 是「已被专项审计覆盖的写路由」集中清单（method + chi RoutePattern），
+// 覆盖 /admin/v1 与 /admin/v2 两鉴权组。命中清单的写请求由各 service 在事务内自记领域审计，
+// 兜底中间件不再补记，避免双记。
 // 维护约定：新增「自带专项审计」的写端点须把其 (method, pattern) 加入本集合；
-// 新增「无专项审计」的写端点不必登记，会被中间件自动兜底。
+// 新增「无专项审计」的写端点不必登记，会被中间件自动兜底（前缀 v1/v2 均正确推导）。
 var coveredWriteRoutes = map[string]struct{}{
 	// 登出（auth.logout）
 	"POST /admin/v1/auth/logout": {},
@@ -102,6 +124,37 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/system/rollback": {},
 	// 告警事件处理（FR-157：alert-event.acknowledge / resolve，service 在事务内自记专项审计，detail 记状态 + 处置说明）
 	"POST /admin/v1/alert-events/{id}/handle": {},
+
+	// —— /admin/v2 控制面：各域写端点一律在 service 事务内自记专项审计，登记于此使兜底跳过、避免双记 ——
+	// 环境创建（namespace.create）
+	"POST /admin/v2/namespaces": {},
+	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）
+	"POST /admin/v2/namespace-trusts":             {},
+	"POST /admin/v2/namespace-trusts/{id}/revoke": {},
+	// agent 身份状态机（identity.approve / reject / allow-reapply / disable / enable / unbind）
+	"POST /admin/v2/agent-identities/{identityId}/approve":       {},
+	"POST /admin/v2/agent-identities/{identityId}/reject":        {},
+	"POST /admin/v2/agent-identities/{identityId}/allow-reapply": {},
+	"POST /admin/v2/agent-identities/{identityId}/disable":       {},
+	"POST /admin/v2/agent-identities/{identityId}/enable":        {},
+	"POST /admin/v2/agent-identities/{identityId}/unbind":        {},
+	// 区服权威节点创建（bc-cluster.create / region.create / zone.create）
+	"POST /admin/v2/bc-clusters": {},
+	"POST /admin/v2/regions":     {},
+	"POST /admin/v2/zones":       {},
+	// 区服归属编排（server-assignment.assign / rezone、server draining / default-entry）
+	"POST /admin/v2/server-assignments":               {},
+	"POST /admin/v2/server-rezones":                   {},
+	"PUT /admin/v2/servers/{serverRef}/draining":      {},
+	"PUT /admin/v2/servers/{serverRef}/default-entry": {},
+	// 健康权重版本化配置全量替换（health-weights.update，service 在事务内自记专项审计）
+	"PUT /admin/v2/settings/health-weights": {},
+	// 跨服消息 payload 受控查看（message.payload.view，POST 属写方法，service 先审计后返回，detail 不含 payload）
+	"POST /admin/v2/messages/{messageId}/payload": {},
+	// 归档任务创建 / 重试 / 取消（FR-153，service 事务内自记 archive.job-create/-retry/-cancel 专项审计）
+	"POST /admin/v2/archive/jobs":             {},
+	"POST /admin/v2/archive/jobs/{id}/retry":  {},
+	"POST /admin/v2/archive/jobs/{id}/cancel": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；
@@ -118,7 +171,7 @@ var specialActionVerbs = map[string]string{
 	"gray":          "gray",
 }
 
-// auditWriteMiddleware 兜底审计中间件（FR-72，增强 FR-7）：对 /admin/v1 下尚无专项审计的写端点，
+// auditWriteMiddleware 兜底审计中间件（FR-72，增强 FR-7）：对 /admin/v1、/admin/v2 下尚无专项审计的写端点，
 // 在 handler 执行后补记一条 audit_log（operator + action + target + result + clientIP）。
 // 兜底审计 detail 一律不含请求体（敏感豁免）；落库失败只记 WARN、绝不阻断主响应（旁路语义）。
 func auditWriteMiddleware(creator auditCreator) func(http.Handler) http.Handler {
@@ -175,9 +228,9 @@ func deriveAuditTarget(r *http.Request, pattern string) (action, targetType, tar
 	return action, targetType, targetRef
 }
 
-// firstResourceSegment 取 RoutePattern 剥除 /admin/v1/ 前缀后的首个路径段（如 configs / instances）。
+// firstResourceSegment 取 RoutePattern 剥除管理面前缀（/admin/v1 或 /admin/v2）后的首个路径段（如 configs / instances）。
 func firstResourceSegment(pattern string) string {
-	trimmed := strings.TrimPrefix(pattern, adminAPIPrefix)
+	trimmed := trimAdminAPIPrefix(pattern)
 	if i := strings.IndexByte(trimmed, '/'); i >= 0 {
 		trimmed = trimmed[:i]
 	}

@@ -4,6 +4,11 @@
 
 ## 未发布
 
+### 修复
+- `/admin/v2` 全体写端点兜底审计「双记」（内部缺陷）：兜底写审计中间件 `auditWriteMiddleware` 同挂 `/admin/v1` 与 `/admin/v2` 两鉴权组，但资源词推导硬编码只剥 `/admin/v1/` 前缀——对 `/admin/v2/...` 的 RoutePattern 前缀未剥净、资源词解析为空，落出 `action=".create"`、`targetType=""` 的垃圾兜底行。而 v2 各域写端点（环境创建 / 信任、身份状态机、bc-cluster / region / zone、server 分配 / 换区 / draining / 默认入口、健康权重 PUT、消息 payload 查看）均已在 service 事务内自记专项审计，故每次写产生「专项 1 条 + 垃圾 1 条」双记、污染审计台。修复：前缀剥离与防漂移守护统一支持 `/admin/v1` 与 `/admin/v2`（改为 `adminAPIPrefixes` 前缀集合），把 18 个 v2 自审写端点登记进兜底覆盖集使其跳过；守护测试 `TestAuditCoveredRoutesMatchRegisteredWriteRoutes` 扩展枚举 v2 写路由，此后任一新增 v2 写端点未登记即测试失败，同缺陷不再复发。
+
+> 验证：go 全量单测 + 真 MySQL 集成（含 v2 自审端点端到端断言恰 1 条专项审计、无 `.create` 垃圾行）+ `make lint` 全绿。
+
 ## 0.25.3（2026-07-13）
 
 ### 新增

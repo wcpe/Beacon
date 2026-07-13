@@ -426,6 +426,35 @@ func TestAuditMiddlewareCoveredNoDoubleLog(t *testing.T) {
 	}
 }
 
+// TestAuditMiddlewareV2CoveredNoDoubleLog 经真实路由 + DB 审计仓库 end-to-end 守护 /admin/v2 兜底双记缺陷修复：
+// v2 自审写端点（namespace 创建）只落「一条」专项审计（namespace.create）；此前兜底中间件硬编码只剥
+// /admin/v1/ 前缀，会对 v2 路由再补记一条 action=".create"、targetType="" 的垃圾行 → 双记。
+func TestAuditMiddlewareV2CoveredNoDoubleLog(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+
+	// 建一个 v2 namespace：service 在事务内自记 namespace.create 专项审计。
+	createNamespaceV2(t, ts.URL, "prod")
+
+	// 专项审计恰好 1 条。
+	code, special := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?action=namespace.create", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查 namespace.create 审计应 200，实际 %d", code)
+	}
+	if total, _ := special["total"].(float64); total != 1 {
+		t.Fatalf("namespace.create 应恰好 1 条专项审计，实际 %v", special["total"])
+	}
+
+	// 无前缀未剥净的垃圾兜底行（action=".create"、targetType 空）。
+	code, garbage := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?action=.create", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查 .create 垃圾审计应 200，实际 %d", code)
+	}
+	if total, _ := garbage["total"].(float64); total != 0 {
+		t.Fatalf("v2 写端点不应产生 action=\".create\" 兜底垃圾行，实际 %v 条（双记）", garbage["total"])
+	}
+}
+
 // itoa 是不引入额外依赖的小工具。
 func itoa(n int) string {
 	if n == 0 {
