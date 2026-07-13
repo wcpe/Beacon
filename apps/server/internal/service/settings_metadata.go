@@ -28,6 +28,40 @@ const (
 	SettingUpdateAutoCheckEnabled   = "update.auto-check-enabled"
 	SettingUpdateCheckIntervalHours = "update.check-interval-hours"
 	SettingUndoWindowHours          = "undo.window-hours"
+	// 热冷归档策略键（FR-151，见 ADR-0066）：各域热库保留天数（≥7 守卫）+ 调度 / 批量 / 校验 / 冷查询参数。
+	SettingArchiveRetentionMetricSample   = "archive.retention-days.metric-sample"
+	SettingArchiveRetentionHealthSnapshot = "archive.retention-days.health-snapshot"
+	SettingArchiveRetentionSchedDecision  = "archive.retention-days.sched-decision"
+	SettingArchiveRetentionConnDetail     = "archive.retention-days.conn-detail"
+	SettingArchiveRetentionMsgTrace       = "archive.retention-days.msg-trace"
+	SettingArchiveRetentionMsgPayload     = "archive.retention-days.msg-payload"
+	SettingArchiveRetentionAudit          = "archive.retention-days.audit"
+	SettingArchiveAutoEnabled             = "archive.auto-enabled"
+	SettingArchiveScheduleHourUTC         = "archive.schedule-hour-utc"
+	SettingArchiveBatchRows               = "archive.batch-rows"
+	SettingArchiveBatchIntervalMs         = "archive.batch-interval-ms"
+	SettingArchiveVerifySampleSize        = "archive.verify-sample-size"
+	SettingArchiveColdQueryMaxDays        = "archive.cold-query-max-days"
+)
+
+// 热冷归档策略键默认值（FR-151，spec §3.3；各域保留期默认以属主规格量级为准）。
+// 这些键无 config.yml 对应项、纯设置 store 项，默认值由此常量提供。
+const (
+	archiveDefaultRetentionMetricSample   = 14
+	archiveDefaultRetentionHealthSnapshot = 30
+	archiveDefaultRetentionSchedDecision  = 60
+	archiveDefaultRetentionConnDetail     = 60
+	archiveDefaultRetentionMsgTrace       = 60
+	archiveDefaultRetentionMsgPayload     = 30
+	archiveDefaultRetentionAudit          = 180
+	archiveDefaultAutoEnabled             = true
+	archiveDefaultScheduleHourUTC         = 4
+	archiveDefaultBatchRows               = 1000
+	archiveDefaultBatchIntervalMs         = 200
+	archiveDefaultVerifySampleSize        = 100
+	archiveDefaultColdQueryMaxDays        = 31
+	// 保留期下限守卫：任何 retention-days.* 不得小于此值，防误配当天删光（spec §3.3）。
+	archiveMinRetentionDays = 7
 )
 
 // updateChannels 是 update.channel 的合法枚举集（stable=正式版线、prerelease=滚动预发布线，FR-117/ADR-0052）。
@@ -159,6 +193,71 @@ var settingsWhitelist = map[string]settingMeta{
 		valueType: model.SettingValueTypeInt, desc: "配置操作可撤回时间窗（小时）：下发 / 发布 / 反向抓取超此时长不可撤回（FR-116）",
 		min: 1, max: 8760, // 1 小时 ~ 1 年
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(DefaultUndoWindowHours) },
+	},
+	// 热冷归档保留期（FR-151，见 ADR-0066）：各域热库保留天数，下限 7（防误配当天删光）、上限 3650（约 10 年）。
+	SettingArchiveRetentionMetricSample: {
+		valueType: model.SettingValueTypeInt, desc: "指标批（metric_sample）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionMetricSample) },
+	},
+	SettingArchiveRetentionHealthSnapshot: {
+		valueType: model.SettingValueTypeInt, desc: "健康快照（health_snapshot）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionHealthSnapshot) },
+	},
+	SettingArchiveRetentionSchedDecision: {
+		valueType: model.SettingValueTypeInt, desc: "调度决策（sched_decision）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionSchedDecision) },
+	},
+	SettingArchiveRetentionConnDetail: {
+		valueType: model.SettingValueTypeInt, desc: "连接明细（conn_detail）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionConnDetail) },
+	},
+	SettingArchiveRetentionMsgTrace: {
+		valueType: model.SettingValueTypeInt, desc: "消息元数据（msg_trace）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionMsgTrace) },
+	},
+	SettingArchiveRetentionMsgPayload: {
+		valueType: model.SettingValueTypeInt, desc: "消息 payload（msg_payload）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionMsgPayload) },
+	},
+	SettingArchiveRetentionAudit: {
+		valueType: model.SettingValueTypeInt, desc: "审计记录（audit）热库保留天数；到期后归档并从热库删除",
+		min: archiveMinRetentionDays, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultRetentionAudit) },
+	},
+	SettingArchiveAutoEnabled: {
+		valueType: model.SettingValueTypeBool, desc: "是否每日自动执行归档任务；false 时仅手动触发",
+		defaultFromConfig: func(config.Config) string { return strconv.FormatBool(archiveDefaultAutoEnabled) },
+	},
+	SettingArchiveScheduleHourUTC: {
+		valueType: model.SettingValueTypeInt, desc: "每日自动执行归档任务的 UTC 整点（0~23）",
+		min: 0, max: 23,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultScheduleHourUTC) },
+	},
+	SettingArchiveBatchRows: {
+		valueType: model.SettingValueTypeInt, desc: "归档单批搬运 / 删除行数（越大越快、对主库压力越大）",
+		min: 1, max: 100000,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultBatchRows) },
+	},
+	SettingArchiveBatchIntervalMs: {
+		valueType: model.SettingValueTypeInt, desc: "归档批间歇（毫秒）：每批之间 sleep 限流、保护主库",
+		min: 0, max: 60000,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultBatchIntervalMs) },
+	},
+	SettingArchiveVerifySampleSize: {
+		valueType: model.SettingValueTypeInt, desc: "归档删除前抽样校验条数上限（sha256 抽样）",
+		min: 1, max: 10000,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultVerifySampleSize) },
+	},
+	SettingArchiveColdQueryMaxDays: {
+		valueType: model.SettingValueTypeInt, desc: "冷查询（includeArchived）单次最大时间跨度（天）",
+		min: 1, max: 366,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(archiveDefaultColdQueryMaxDays) },
 	},
 }
 
