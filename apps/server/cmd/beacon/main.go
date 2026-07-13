@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"gorm.io/gorm"
+
 	beacon "github.com/wcpe/Beacon"
 
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
@@ -119,6 +121,13 @@ func run() error {
 		return err
 	}
 	settingsHandler := handler.NewSettingsHandler(settingsService)
+
+	// 热冷归档核心（FR-151，见 ADR-0066）：第二个独立归档连接 + 任务表 + 后台工作器。
+	// 归档库不可达时降级——archiveDB=nil，overview 标不可用、拒绝创建任务，绝不阻断控制面启动（fail-static）。
+	archiveDB, archiveInfo := openArchiveConn(cfg.Database, cfg.Archive)
+	defer store.Close(archiveDB) // nil 安全（不可达降级时 archiveDB=nil）
+	archiveService := service.NewArchiveService(db, archiveDB, archiveInfo,
+		repository.NewArchiveJobRepository(db), settingsService, auditRepo)
 
 	nsRepo := repository.NewNamespaceRepository(db)
 	// 环境服务（含改名 / 删除守卫，FR-53）依赖注册表 / zone 指派 / 配置仓库查在用数据，
@@ -493,6 +502,10 @@ func run() error {
 	// 启动异步日表写入通道（FR-144）：每路由多 worker 共享该路由有界队列，攒批事务批插当日日表，随关停信号退出。
 	asyncDailyWriter.Start(ctx)
 
+	// 启动热冷归档后台工作器（FR-151，见 ADR-0066）：每日 schedule-hour-utc 自动归档 + 手动任务搬运，随关停信号退出。
+	// 归档库不可达时 Run 内部直接返回不启动搬运循环（overview 仍标不可用）。
+	go archiveService.Run(ctx)
+
 	// P5a：进程启动期从 status=open 连接行重建「玩家 → 所在服」名册（FR-145，spec §4.1），并启动孤儿会话对账 worker
 	// （消费 proxy 重启对账请求补 close，DB 写全在后台、请求线程不碰 DB），随关停信号退出。
 	connIngestService.RebuildRoster()
@@ -565,6 +578,19 @@ func run() error {
 	case err := <-errCh:
 		return err
 	}
+}
+
+// openArchiveConn 建立归档库连接（FR-151，见 ADR-0066）：不可达时 WARN + 返回 nil 连接，
+// 归档能力降级为不可用、绝不阻断控制面启动（fail-static）；ArchiveInfo 恒返回供 overview 展示目标。
+func openArchiveConn(mainDB config.DatabaseConfig, arc config.ArchiveConfig) (*gorm.DB, store.ArchiveInfo) {
+	archiveDB, info, err := store.OpenArchive(mainDB, arc)
+	if err != nil {
+		slog.Warn("归档库不可达，归档能力降级不可用（不阻断控制面启动）",
+			"目标模式", info.Mode, "库", info.Database, "错误", err)
+		return nil, info
+	}
+	slog.Info("归档库已连接", "目标模式", info.Mode, "库", info.Database)
+	return archiveDB, info
 }
 
 // resolvePendingPath 推导 pending 新二进制路径（运行二进制同目录 beacon.new[.exe]，FR-119/ADR-0053）。
