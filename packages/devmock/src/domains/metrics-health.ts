@@ -299,12 +299,18 @@ export const metricsHealthHandlers: HttpHandler[] = [
     return HttpResponse.json(summary)
   }),
 
-  // 单服 / 多服指标时序（serverId 必填，1000+ 子服禁全量扫）
+  // 单服 / 多服指标时序（serverId 必填，1000+ 子服禁全量扫；includeArchived=true 冷查询强制时间范围，FR-152）
   mockGet('/admin/v2/metrics/series', ({ request }) => {
     const url = new URL(request.url)
     const serverIdRaw = queryStr(url, 'serverId')
     if (serverIdRaw === null) {
       return jsonError(400, 'invalid_param', 'serverId 必填（禁止全量扫描）')
+    }
+    if (coldRequested(url)) {
+      const rangeError = coldRangeError(queryTimeMs(url, 'from'), queryTimeMs(url, 'to'))
+      if (rangeError !== null) {
+        return rangeError
+      }
     }
     const stepSec = queryInt(url, 'step', 60)
     const toMs = queryTimeMs(url, 'to') ?? BASE_MS
@@ -317,12 +323,18 @@ export const metricsHealthHandlers: HttpHandler[] = [
     return HttpResponse.json(response)
   }),
 
-  // 健康快照回放（serverId 必填）
+  // 健康快照回放（serverId 必填；includeArchived=true 冷查询强制时间范围，FR-152）
   mockGet('/admin/v2/health/snapshots', ({ request }) => {
     const url = new URL(request.url)
     const serverId = queryStr(url, 'serverId')
     if (serverId === null) {
       return jsonError(400, 'invalid_param', 'serverId 必填')
+    }
+    if (coldRequested(url)) {
+      const rangeError = coldRangeError(queryTimeMs(url, 'from'), queryTimeMs(url, 'to'))
+      if (rangeError !== null) {
+        return rangeError
+      }
     }
     const state = getClusterState()
     const server = state.servers.find((s) => s.serverId === serverId)

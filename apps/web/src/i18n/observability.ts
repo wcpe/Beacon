@@ -54,6 +54,7 @@ export const observability = {
     window6h: '近 6 小时',
     window24h: '近 24 小时',
     window7d: '近 7 天',
+    window30d: '近 30 天',
     // 调度决策下钻板块
     decisions: {
       title: '调度决策',

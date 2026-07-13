@@ -57,6 +57,27 @@ describe('/service-analysis 服务分析页', () => {
     expect(screen.getByRole('tab', { name: '指标时序' })).toHaveAttribute('aria-selected', 'true')
   })
 
+  it('指标时序支持时间窗与「包含归档」冷查询（30 天窗仍出时序统计）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServiceAnalysisPage />)
+
+    await screen.findByText('选择服务器（可多选对比）')
+    await user.click(await screen.findByRole('checkbox', { name: 'lobby-1' }))
+    await waitFor(() => {
+      expect(screen.getByText('最新')).toBeInTheDocument()
+    })
+
+    // 切 30 天窗 + 勾选包含归档：请求带 includeArchived 与强制时间范围，时序统计仍渲染
+    await user.click(screen.getByLabelText('时间范围'))
+    await user.click(await screen.findByRole('option', { name: '近 30 天' }))
+    await user.click(screen.getByRole('checkbox', { name: '包含归档' }))
+    await waitFor(() => {
+      expect(screen.getByText('最新')).toBeInTheDocument()
+    })
+    expect(screen.getByText('峰值')).toBeInTheDocument()
+  })
+
   it('切到「数据对比」板块展示并排对比矩阵与差异图例', async () => {
     useScenario('normal')
     const user = userEvent.setup()

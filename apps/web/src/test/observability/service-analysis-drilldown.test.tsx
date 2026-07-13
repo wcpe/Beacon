@@ -193,6 +193,21 @@ describe('/service-analysis 健康快照回放板块', () => {
     expect(screen.getByText('最高')).toBeInTheDocument()
   })
 
+  it('勾选「包含归档」冷查询后快照卡仍正常回放', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServiceAnalysisPage />)
+
+    await user.click(await screen.findByRole('checkbox', { name: 'lobby-1' }))
+    await user.click(screen.getByRole('tab', { name: '健康快照' }))
+    await screen.findByText(/个快照点/)
+
+    // 勾选冷查询：请求带 includeArchived 与强制时间范围，快照卡仍渲染
+    await user.click(screen.getByRole('checkbox', { name: '包含归档' }))
+    expect(await screen.findByText(/个快照点/)).toBeInTheDocument()
+    expect(screen.getByText('最新分')).toBeInTheDocument()
+  })
+
   it('空态（empty 场景无在线子服）显选择列空态而快照板块保持引导', async () => {
     useScenario('empty')
     const user = userEvent.setup()

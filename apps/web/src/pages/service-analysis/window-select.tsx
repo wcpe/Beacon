@@ -5,8 +5,8 @@ import { useTranslation } from 'react-i18next'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 
-// 预设时间窗 key
-export type WindowKey = '1h' | '6h' | '24h' | '7d'
+// 预设时间窗 key（30d 供冷查询回溯，≤ 冷查询上限 31 天）
+export type WindowKey = '1h' | '6h' | '24h' | '7d' | '30d'
 
 // 时间窗 key → 毫秒跨度
 export const WINDOW_MS: Record<WindowKey, number> = {
@@ -14,6 +14,7 @@ export const WINDOW_MS: Record<WindowKey, number> = {
   '6h': 21_600_000,
   '24h': 86_400_000,
   '7d': 604_800_000,
+  '30d': 2_592_000_000,
 }
 
 interface WindowSelectProps {

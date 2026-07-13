@@ -42,9 +42,11 @@ export interface MetricsSeriesQuery {
   serverId: string
   // 聚合步长（秒）
   step?: number
-  // 时间窗（RFC3339），缺省服务端按最近 1h
+  // 时间窗（RFC3339），缺省服务端按最近 1h；冷查询强制必填且跨度 ≤ 冷查询上限
   from?: string
   to?: string
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表聚合（无分页，响应形状不变）
+  includeArchived?: boolean
 }
 
 /** 单服 / 多服指标时序（service-analysis 多指标趋势与多服对比） */
@@ -108,9 +110,11 @@ export function fetchSchedDecisionDetail(traceId: string): Promise<SchedDecision
 export interface HealthSnapshotsQuery {
   // 目标服务器（必填）
   serverId: string
-  // 时间窗（RFC3339），缺省服务端按最近 1h
+  // 时间窗（RFC3339），缺省服务端按最近 1h；冷查询强制必填且跨度 ≤ 冷查询上限
   from?: string
   to?: string
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表回放（无分页，响应形状不变）
+  includeArchived?: boolean
 }
 
 /** 健康快照回放（service-analysis 健康快照下钻：分数 / 等级随时间变化） */

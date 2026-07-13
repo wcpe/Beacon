@@ -12,6 +12,7 @@ import {
   Badge,
   Card,
   CardContent,
+  Checkbox,
   IconStat,
   MiniSparkline,
   SectionHeader,
@@ -41,11 +42,13 @@ interface SnapshotsPanelProps {
 export default function SnapshotsPanel({ serverIds }: SnapshotsPanelProps) {
   const { t } = useTranslation()
   const [windowKey, setWindowKey] = useState<WindowKey>('1h')
+  // 冷查询（含归档）开关：开启后跨热 / 冷并表回放（FR-152，无分页、响应形状不变）
+  const [cold, setCold] = useState(false)
 
   // 逐台拉快照回放（受选择数约束）
   const queries = useQueries({
     queries: serverIds.map((serverId) => ({
-      queryKey: ['service-analysis', 'health-snapshots', serverId, windowKey],
+      queryKey: ['service-analysis', 'health-snapshots', serverId, windowKey, cold],
       queryFn: () => {
         // 时间窗按预设窗口自「现在」往前推（RFC3339，与 metrics/series 取数一致）
         const to = Date.now()
@@ -53,6 +56,7 @@ export default function SnapshotsPanel({ serverIds }: SnapshotsPanelProps) {
           serverId,
           from: new Date(to - WINDOW_MS[windowKey]).toISOString(),
           to: new Date(to).toISOString(),
+          includeArchived: cold ? true : undefined,
         })
       },
     })),
@@ -70,7 +74,24 @@ export default function SnapshotsPanel({ serverIds }: SnapshotsPanelProps) {
           icon={<History className="size-4" />}
           title={t('observability.serviceAnalysis.snapshots.title')}
           count={t('observability.serviceAnalysis.snapshots.mission')}
-          actions={<WindowSelect value={windowKey} keys={['1h', '6h', '24h']} onChange={setWindowKey} />}
+          actions={
+            <div className="flex items-center gap-3">
+              <label
+                className="flex cursor-pointer items-center gap-2 text-sm text-ink-2"
+                title={t('observability.common.includeArchivedHint')}
+              >
+                <Checkbox
+                  checked={cold}
+                  onCheckedChange={(v) => {
+                    setCold(v === true)
+                  }}
+                  aria-label={t('observability.common.includeArchived')}
+                />
+                {t('observability.common.includeArchived')}
+              </label>
+              <WindowSelect value={windowKey} keys={['1h', '6h', '24h']} onChange={setWindowKey} />
+            </div>
+          }
         />
       </div>
 

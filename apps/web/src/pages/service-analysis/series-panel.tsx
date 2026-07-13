@@ -1,7 +1,7 @@
 // 指标时序 + 多服对比：所选服务器的指标时序（sparkline）与最新 / 均值 / 峰值。
 // 指标（CPU / TPS / 内存 / 在线人数）与步长可切换；仅聚合数字，不涉及玩家名单。
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Activity, ArrowUpRight, Gauge, MemoryStick, TrendingUp, Users } from 'lucide-react'
@@ -10,6 +10,7 @@ import {
   AsyncSection,
   Card,
   CardContent,
+  Checkbox,
   IconStat,
   MiniSparkline,
   SectionHeader,
@@ -24,6 +25,7 @@ import type { MetricsSeriesPoint } from '@beacon/contracts'
 
 import { fetchMetricsSeries } from '../../api/metrics'
 import FilterSelect from '../../features/observability/filter-select'
+import WindowSelect, { WINDOW_MS, type WindowKey } from './window-select'
 
 // 可选指标 → MetricsSeriesPoint 字段与展示
 const METRICS = ['cpu', 'tps', 'mem', 'online'] as const
@@ -69,10 +71,24 @@ export default function SeriesPanel({
 }: SeriesPanelProps) {
   const { t } = useTranslation()
   const joined = serverIds.join(',')
+  // 时间窗（默认近 1h，与原服务端缺省一致）；冷查询回溯用 30d 档（热采样保留 14 天，更早走归档）
+  const [windowKey, setWindowKey] = useState<WindowKey>('1h')
+  // 冷查询（含归档）开关：开启后跨热 / 冷并表聚合（FR-152，无分页、响应形状不变）
+  const [cold, setCold] = useState(false)
 
   const query = useQuery({
-    queryKey: ['service-analysis', 'series', joined, step],
-    queryFn: () => fetchMetricsSeries({ serverId: joined, step }),
+    queryKey: ['service-analysis', 'series', joined, step, windowKey, cold],
+    queryFn: () => {
+      // 时间窗按预设窗口自「现在」往前推（RFC3339）；冷查询强制携带时间范围（≤ 冷查询上限）
+      const to = Date.now()
+      return fetchMetricsSeries({
+        serverId: joined,
+        step,
+        from: new Date(to - WINDOW_MS[windowKey]).toISOString(),
+        to: new Date(to).toISOString(),
+        includeArchived: cold ? true : undefined,
+      })
+    },
     enabled: serverIds.length > 0,
   })
 
@@ -96,6 +112,20 @@ export default function SeriesPanel({
           count={serverIds.length > 1 ? t('observability.serviceAnalysis.selectedCount', { count: serverIds.length }) : undefined}
           actions={
             <>
+              <label
+                className="flex cursor-pointer items-center gap-2 text-sm text-ink-2"
+                title={t('observability.common.includeArchivedHint')}
+              >
+                <Checkbox
+                  checked={cold}
+                  onCheckedChange={(v) => {
+                    setCold(v === true)
+                  }}
+                  aria-label={t('observability.common.includeArchived')}
+                />
+                {t('observability.common.includeArchived')}
+              </label>
+              <WindowSelect value={windowKey} keys={['1h', '6h', '24h', '7d', '30d']} onChange={setWindowKey} />
               <FilterSelectMetric metric={metric} onChange={onMetricChange} metricLabel={metricLabel} />
               <FilterSelect
                 label={t('observability.serviceAnalysis.step')}
