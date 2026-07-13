@@ -50,6 +50,13 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("BEACON_DB_DSN"); v != "" {
 		cfg.Database.DSN = v
 	}
+	// 归档库（FR-151，见 ADR-0066）：DSN 含凭据为敏感项，仅从 env 注入、不入库 yaml；库名可 env 覆盖
+	if v := os.Getenv("BEACON_ARCHIVE_DSN"); v != "" {
+		cfg.Archive.DSN = v
+	}
+	if v := os.Getenv("BEACON_ARCHIVE_DATABASE"); v != "" {
+		cfg.Archive.Database = v
+	}
 	if v := os.Getenv("BEACON_ADMIN_USERNAME"); v != "" {
 		cfg.Auth.Username = v
 	}

@@ -39,6 +39,16 @@ database:
   # 单个连接最大存活秒数
   conn-max-lifetime-sec: 1800
 
+# 热冷归档库（FR-151，见 docs/adr/0066）：控制面的第二个独立 DB 连接，到期数据从主库搬到这里的冷库。
+# 属启动项——改后须重启（仅保留期 / 调度 / 批量参数走设置页热更，见设置 API）。
+# mysql 部署须先预建 beacon_archive database（Beacon 只建表、不执行 CREATE DATABASE）；不可达时控制面照常启动、归档能力标不可用。
+archive:
+  # 独立归档库 DSN；留空 = 与主库同实例模式（复用主库连接参数、仅把库名替换为下面的 database）。
+  # 非空 = 独立库模式，归档写入与冷查询路由该 DSN、database 忽略。含凭据时留空此项、走环境变量 BEACON_ARCHIVE_DSN 注入，勿写入此文件
+  dsn: ""
+  # 同实例模式下的归档库名：mysql=同实例第二个 database、sqlite=同目录第二个 .db 文件名前缀。默认 beacon_archive
+  database: "beacon_archive"
+
 # 注：本段 degraded-after-sec / ttl-sec / offline-grace-sec / scan-interval-sec 为热改项（首启种子，FR-61），
 # 改后需在设置页 / 设置 API 修改才热生效；heartbeat-interval-sec 是启动项（注册时一次性下发）、改后须重启。
 health:

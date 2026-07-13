@@ -9,6 +9,8 @@ type Config struct {
 	AgentToken string `yaml:"agent-token"`
 	// 配置/版本/分配/审计的权威库连接
 	Database DatabaseConfig `yaml:"database"`
+	// 热冷归档库连接（FR-151，见 ADR-0066）：第二个独立 DB 连接，承载到期数据的冷库
+	Archive ArchiveConfig `yaml:"archive"`
 	// 管理面鉴权（操作者认证 + 令牌，见 ADR-0009）
 	Auth AuthConfig `yaml:"auth"`
 	// 注册健康相关参数
@@ -135,6 +137,17 @@ type DatabaseConfig struct {
 	ConnMaxLifetimeSec int `yaml:"conn-max-lifetime-sec"`
 }
 
+// ArchiveConfig 是热冷归档库连接配置（FR-151，见 ADR-0066）。
+// 归档库是控制面的第二个独立 DB 连接（非跨库 SQL）：sqlite=第二个文件、mysql=同实例第二个 database。
+// 属启动配置——含凭据的 DSN 走 env 覆盖、不入库 yaml 明文，改后须重启（仅保留期 / 调度 / 批量参数走设置 store 热更）。
+type ArchiveConfig struct {
+	// 独立归档库 DSN；留空 = 与主库同实例模式（复用主库连接参数、仅替换库名为 database）。
+	// 非空 = 独立库模式，归档写入与冷查询全部路由该 DSN、database 忽略。含凭据走 env BEACON_ARCHIVE_DSN 注入。
+	DSN string `yaml:"dsn"`
+	// 同实例模式下的归档库名（mysql=同实例第二个 database、sqlite=同目录第二个 .db 文件名前缀）；默认 beacon_archive。
+	Database string `yaml:"database"`
+}
+
 // LogConfig 是日志配置。
 type LogConfig struct {
 	// 日志级别：ERROR / WARN / INFO / DEBUG
@@ -152,6 +165,11 @@ func Default() Config {
 			MaxOpenConns:       1,
 			MaxIdleConns:       1,
 			ConnMaxLifetimeSec: 1800,
+		},
+		// 归档库默认同实例模式（dsn 留空）、库名 beacon_archive（FR-151，见 ADR-0066）。
+		Archive: ArchiveConfig{
+			DSN:      "",
+			Database: "beacon_archive",
 		},
 		Auth: AuthConfig{
 			// 用户名给默认值；口令与签名密钥默认空，必须经 env 注入（禁空凭据空跑）
