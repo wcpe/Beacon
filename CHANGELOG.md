@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.26.0（2026-07-14）
+
 ### 新增
 - 热冷数据归档核心、管理面 API 与冷查询后端（FR-151/152/153 后端，[ADR-0066](docs/adr/0066-hot-cold-archive-dual-connection.md)）：控制面新增归档库**第二个独立连接**（同实例独立 database `beacon_archive` 或独立 `archive.dsn`，`store.OpenArchive` 复用方言、不可达仅 WARN 降级不阻断启动），进程内**单例后台工作器**（goroutine + 每日 `archive.schedule-hour-utc` 触发、单飞 409）把到期数据分域搬迁：`copying`（主键升序分批、`OnConflict` 主键自赋值幂等、cursor 断点续跑）→ `verifying`（行数 + sha256 抽样**删除前置校验门**，`verify_passed=true` 才删）→ `deleting`（日表整表 `DropTable` / audit 单表 `DELETE ... IN`），全程**应用层搬运、禁跨库 JOIN/UNION/`INSERT...SELECT`/`DELETE LIMIT`**，两库无分布式事务靠幂等补偿收敛。7 域（metric_sample/health_snapshot/sched_decision/conn_detail/msg_trace/msg_payload 日表 + audit 单表）保留期默认 14/30/60/60/60/30/180 天。管理面 `/admin/v2/archive/*` 六端点（overview / jobs 创建[dry_run｜execute]、列表、详情、retry 断点续跑、cancel，全程写审计）。冷查询：`/audits` 与 `/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}` 六端点接受 `includeArchived=true`——热 / 归档双连接同构查询 + 应用层有序归并取前 N + **主键去重保热侧**，强制时间范围 ≤ `archive.cold-query-max-days`（默认 31，违反 400）、归档不可达 503（绝不静默只返热库）、namespace 隔离不绕过；默认查询零回归只走热库。13 个 `archive.*` 策略键（保留期 7 项 + auto-enabled/schedule-hour-utc/batch-rows/batch-interval-ms/verify-sample-size/cold-query-max-days）入 `/admin/v1/settings` 白名单（保留期 ≥7 守卫、热更下一次任务与冷查询生效）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
 
