@@ -86,6 +86,19 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   return parsed as T
 }
 
+/**
+ * 冷查询归一列表结果（FR-152）：把「热查询 page/pageSize（有 total、无游标）」与
+ * 「冷查询 includeArchived keyset（有 nextCursor、无 total）」两种后端分页形状收敛为统一 shape，
+ * 使消费页面按 total===null 判定冷模式而无需区分两种响应类型。
+ */
+export interface ColdListResult<T> {
+  items: T[]
+  // 热查询总数；冷查询归并去重后不回总数，为 null。
+  total: number | null
+  // 冷查询下一页 keyset 游标（null 表示无下一页）；热查询恒 null。
+  nextCursor: string | null
+}
+
 /** 拼装 query 串：跳过 null / undefined / 空串。 */
 export function buildQuery(params: Record<string, string | number | boolean | null | undefined>): string {
   const search = new URLSearchParams()

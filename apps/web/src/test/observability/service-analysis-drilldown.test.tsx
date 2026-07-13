@@ -135,6 +135,32 @@ describe('/service-analysis 调度决策下钻板块', () => {
     expect(await screen.findByRole('tab', { name: '调度决策' })).toHaveAttribute('aria-selected', 'true')
     expect((await screen.findAllByText(/共 48 条/)).length).toBeGreaterThan(0)
   })
+
+  it('勾选「包含归档」切冷查询：游标翻页取代页码、总数隐藏，取消勾选回热分页', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServiceAnalysisPage />)
+
+    await user.click(await screen.findByRole('tab', { name: '调度决策' }))
+    await screen.findAllByText(/共 48 条/)
+
+    // 勾选冷查询：无总数（后端不回 total），出「第 N 页（含归档）」游标翻页
+    await user.click(screen.getByRole('checkbox', { name: '包含归档' }))
+    expect(await screen.findByText(/第 1 页（含归档）/)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryAllByText(/共 48 条/)).toHaveLength(0)
+    })
+
+    // 游标前进 / 回退（48 条 · 每页 15 → 有下一页）
+    await user.click(screen.getByRole('button', { name: '下一页' }))
+    expect(await screen.findByText(/第 2 页（含归档）/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '上一页' }))
+    expect(await screen.findByText(/第 1 页（含归档）/)).toBeInTheDocument()
+
+    // 取消勾选：回热查询页码分页与总数
+    await user.click(screen.getByRole('checkbox', { name: '包含归档' }))
+    expect((await screen.findAllByText(/共 48 条/)).length).toBeGreaterThan(0)
+  })
 })
 
 describe('/service-analysis 健康快照回放板块', () => {

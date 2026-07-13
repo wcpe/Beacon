@@ -7,6 +7,10 @@ export const observability = {
     prevPage: '上一页',
     nextPage: '下一页',
     pageInfo: '第 {{page}} / {{pages}} 页 · 共 {{total}} 条',
+    // 冷查询（含归档）勾选与游标翻页文案（FR-152）
+    includeArchived: '包含归档',
+    includeArchivedHint: '跨热库与归档冷库查询，需时间范围且不超过冷查询上限',
+    cursorPageInfo: '第 {{page}} 页（含归档）',
     all: '全部',
     filterReset: '重置筛选',
     close: '关闭',

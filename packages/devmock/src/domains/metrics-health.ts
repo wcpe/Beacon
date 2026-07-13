@@ -20,7 +20,21 @@ import type {
   SchedDecisionItem,
   SchedDecisionSummary,
 } from '@beacon/contracts'
-import { jsonError, mockGet, mockPut, paginate, pathParam, queryStr, queryInt, queryTimeMs, readBody } from '../http'
+import {
+  coldRangeError,
+  coldRequested,
+  cursorPaginate,
+  jsonError,
+  mockGet,
+  mockPut,
+  paginate,
+  pathParam,
+  queryMsFlexible,
+  queryStr,
+  queryInt,
+  queryTimeMs,
+  readBody,
+} from '../http'
 import { getClusterState, type ClusterState, type ServerRow } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
@@ -414,9 +428,16 @@ export const metricsHealthHandlers: HttpHandler[] = [
     return HttpResponse.json(summary)
   }),
 
-  // 决策记录分页查询
+  // 决策记录分页查询（热 page/pageSize；includeArchived=true 冷查询改游标分页，FR-152）
   mockGet('/admin/v2/sched-decisions', ({ request }) => {
     const url = new URL(request.url)
+    const cold = coldRequested(url)
+    if (cold) {
+      const rangeError = coldRangeError(queryMsFlexible(url, 'from'), queryMsFlexible(url, 'to'))
+      if (rangeError !== null) {
+        return rangeError
+      }
+    }
     const namespaceId = queryStr(url, 'namespaceId')
     const zone = queryStr(url, 'zone')
     const serverId = queryStr(url, 'serverId')
@@ -449,6 +470,10 @@ export const metricsHealthHandlers: HttpHandler[] = [
         return true
       })
       .map(toDecisionItem)
+    if (cold) {
+      const { items, nextCursor } = cursorPaginate(rows, url)
+      return HttpResponse.json({ items, nextCursor, includeArchived: true })
+    }
     const { items, total } = paginate(rows, url)
     return HttpResponse.json({ items, total } satisfies Paged<SchedDecisionItem>)
   }),

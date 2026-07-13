@@ -3,6 +3,7 @@
 // 错误按脱敏 message 抛出（ADR-0057）。
 
 import type {
+  CursorPage,
   HealthDetail,
   HealthItem,
   HealthSnapshotsResponse,
@@ -14,7 +15,7 @@ import type {
   SchedDecisionSummary,
 } from '@beacon/contracts'
 
-import { buildQuery, request } from './http'
+import { buildQuery, request, type ColdListResult } from './http'
 
 /** 集群聚合概览（dashboard 健康 / 调度总览） */
 export function fetchMetricsSummary(): Promise<MetricsSummary> {
@@ -62,7 +63,7 @@ export function fetchSchedSummary(window: string): Promise<SchedDecisionSummary>
 }
 
 export interface SchedDecisionsQuery {
-  // 起止毫秒时间戳（后端必填，范围 ≤60 天）
+  // 起止毫秒时间戳（后端必填，范围 ≤60 天；冷查询收紧到 ≤archive.cold-query-max-days）
   from: number
   to: number
   namespaceId?: number
@@ -73,11 +74,30 @@ export interface SchedDecisionsQuery {
   result?: string
   page?: number
   pageSize?: number
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表，分页改 keyset 游标（忽略 page，用 cursor）
+  includeArchived?: boolean
+  // 冷查询 keyset 游标（首页空串 / 省略）
+  cursor?: string
 }
 
-/** 调度决策记录分页查询（service-analysis 调度决策下钻） */
-export function fetchSchedDecisions(query: SchedDecisionsQuery): Promise<Paged<SchedDecisionItem>> {
-  return request('GET', `/admin/v2/sched-decisions${buildQuery({ ...query })}`)
+/**
+ * 调度决策记录查询（service-analysis 调度决策下钻）：默认热库 page/pageSize 分页；
+ * includeArchived=true 时走冷查询 keyset 游标并表，两种形状归一为 ColdListResult。
+ */
+export async function fetchSchedDecisions(query: SchedDecisionsQuery): Promise<ColdListResult<SchedDecisionItem>> {
+  const { from, to, namespaceId, zone, serverId, result, page, pageSize, includeArchived, cursor } = query
+  if (includeArchived === true) {
+    const cold = await request<CursorPage<SchedDecisionItem>>(
+      'GET',
+      `/admin/v2/sched-decisions${buildQuery({ from, to, namespaceId, zone, serverId, result, pageSize, cursor, includeArchived: true })}`,
+    )
+    return { items: cold.items, total: null, nextCursor: cold.nextCursor }
+  }
+  const hot = await request<Paged<SchedDecisionItem>>(
+    'GET',
+    `/admin/v2/sched-decisions${buildQuery({ from, to, namespaceId, zone, serverId, result, page, pageSize })}`,
+  )
+  return { items: hot.items, total: hot.total, nextCursor: null }
 }
 
 /** 单条调度决策详情（含逐台排除原因，可解释「为什么没选某台」） */

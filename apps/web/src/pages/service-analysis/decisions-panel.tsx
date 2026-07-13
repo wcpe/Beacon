@@ -6,12 +6,14 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Workflow } from 'lucide-react'
 
-import { AsyncSection, Badge, DataTable, Input, TableSkeleton, type DataTableColumn } from '@beacon/ui'
+import { AsyncSection, Badge, Checkbox, DataTable, Input, TableSkeleton, type DataTableColumn } from '@beacon/ui'
 import type { SchedDecisionItem } from '@beacon/contracts'
 
 import { fetchSchedDecisions } from '../../api/metrics'
 import FilterSelect from '../../features/observability/filter-select'
 import Pager from '../../features/observability/pager'
+import CursorPager from '../../features/observability/cursor-pager'
+import { useCursorStack } from '../../features/observability/use-cursor-stack'
 import ListCard from '../../features/shared/list-card'
 import MasterDetail from '../../features/shared/master-detail'
 import DecisionDetail from './decision-detail'
@@ -27,28 +29,45 @@ export default function DecisionsPanel() {
   const [keyword, setKeyword] = useState('')
   const [result, setResult] = useState('all')
   const [page, setPage] = useState(1)
+  // 冷查询（含归档）开关：开启后跨热 / 冷并表、分页改 keyset 游标（FR-152）
+  const [cold, setCold] = useState(false)
+  const cursor = useCursorStack()
   // 当前查看详情的 traceId（null 表示右侧详情列收起）
   const [selected, setSelected] = useState<string | null>(null)
 
+  // 切换过滤 / 时间窗 / 冷查询开关时回到首页（热重置页码、冷重置游标栈）
+  const resetPaging = () => {
+    setPage(1)
+    cursor.reset()
+  }
+
   const query = useQuery({
-    queryKey: ['service-analysis', 'sched-decisions', windowKey, keyword, result, page],
+    queryKey: ['service-analysis', 'sched-decisions', windowKey, keyword, result, cold, cold ? cursor.cursor : String(page)],
     queryFn: () => {
       // 时间范围必填：按预设时间窗自「现在」往前推（毫秒时间戳，对齐后端 from/to 必填约束）
       const to = Date.now()
-      return fetchSchedDecisions({
-        from: to - WINDOW_MS[windowKey],
-        to,
-        serverId: keyword.trim() === '' ? undefined : keyword.trim(),
-        result: result === 'all' ? undefined : result,
-        page,
-        pageSize: PAGE_SIZE,
-      })
+      const from = to - WINDOW_MS[windowKey]
+      const serverId = keyword.trim() === '' ? undefined : keyword.trim()
+      const resultFilter = result === 'all' ? undefined : result
+      if (cold) {
+        return fetchSchedDecisions({
+          from,
+          to,
+          serverId,
+          result: resultFilter,
+          includeArchived: true,
+          cursor: cursor.cursor,
+          pageSize: PAGE_SIZE,
+        })
+      }
+      return fetchSchedDecisions({ from, to, serverId, result: resultFilter, page, pageSize: PAGE_SIZE })
     },
     placeholderData: keepPreviousData,
   })
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const nextCursor = query.data?.nextCursor ?? null
   const dash = t('observability.serviceAnalysis.dash')
 
   const columns = useMemo<DataTableColumn<SchedDecisionItem>[]>(
@@ -114,7 +133,7 @@ export default function DecisionsPanel() {
           keys={['1h', '6h', '24h', '7d']}
           onChange={(key) => {
             setWindowKey(key)
-            setPage(1)
+            resetPaging()
           }}
         />
         <Input
@@ -123,7 +142,7 @@ export default function DecisionsPanel() {
           value={keyword}
           onChange={(e) => {
             setKeyword(e.target.value)
-            setPage(1)
+            resetPaging()
           }}
           className="w-56"
         />
@@ -136,9 +155,20 @@ export default function DecisionsPanel() {
           }))}
           onChange={(value) => {
             setResult(value)
-            setPage(1)
+            resetPaging()
           }}
         />
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-2" title={t('observability.common.includeArchivedHint')}>
+          <Checkbox
+            checked={cold}
+            onCheckedChange={(v) => {
+              setCold(v === true)
+              resetPaging()
+            }}
+            aria-label={t('observability.common.includeArchived')}
+          />
+          {t('observability.common.includeArchived')}
+        </label>
       </div>
     </div>
   )
@@ -149,9 +179,25 @@ export default function DecisionsPanel() {
         <ListCard
           toolbar={toolbar}
           footer={
-            total > PAGE_SIZE ? (
-              <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
-            ) : undefined
+            cold
+              ? nextCursor !== null || cursor.canPrev
+                ? (
+                    <CursorPager
+                      pageIndex={cursor.pageIndex}
+                      canPrev={cursor.canPrev}
+                      canNext={nextCursor !== null}
+                      onPrev={cursor.goPrev}
+                      onNext={() => {
+                        if (nextCursor !== null) {
+                          cursor.goNext(nextCursor)
+                        }
+                      }}
+                    />
+                  )
+                : undefined
+              : total > PAGE_SIZE
+                ? <Pager page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+                : undefined
           }
         >
           <AsyncSection

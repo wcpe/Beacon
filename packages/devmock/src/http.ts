@@ -145,3 +145,55 @@ export function queryTimeMs(url: URL, name: string): number | null {
   const ms = Date.parse(raw)
   return Number.isNaN(ms) ? null : ms
 }
+
+// ---- 冷查询（includeArchived，FR-152）mock 共享工具：与后端 handler/cold_query.go 契约对齐 ----
+
+/** 冷查询单次最大时间跨度（天），对齐 archive.cold-query-max-days 默认值 */
+export const COLD_QUERY_MAX_DAYS = 31
+
+/** 判请求是否开启冷查询（仅字面 "true" 视为开启） */
+export function coldRequested(url: URL): boolean {
+  return url.searchParams.get('includeArchived') === 'true'
+}
+
+/** 解析时间参数为毫秒：先按纯数字毫秒时间戳，再退 RFC3339（sched 用毫秒、audits 用 RFC3339） */
+export function queryMsFlexible(url: URL, name: string): number | null {
+  const raw = queryStr(url, name)
+  if (raw === null) {
+    return null
+  }
+  if (/^\d+$/.test(raw)) {
+    return Number.parseInt(raw, 10)
+  }
+  const ms = Date.parse(raw)
+  return Number.isNaN(ms) ? null : ms
+}
+
+/** 校验冷查询强制时间范围：缺失 / 倒置 / 超跨度返回 400 响应，合法返回 null */
+export function coldRangeError(fromMs: number | null, toMs: number | null): Response | null {
+  if (fromMs === null || toMs === null || fromMs <= 0 || toMs <= 0 || fromMs > toMs) {
+    return jsonError(400, 'COLD_QUERY_RANGE_REQUIRED', '启用 includeArchived 冷查询必须携带有效时间范围 from/to')
+  }
+  if (toMs - fromMs > COLD_QUERY_MAX_DAYS * 86_400_000) {
+    return jsonError(
+      400,
+      'COLD_QUERY_RANGE_TOO_WIDE',
+      `冷查询时间跨度不得超过 ${String(COLD_QUERY_MAX_DAYS)} 天（archive.cold-query-max-days）`,
+    )
+  }
+  return null
+}
+
+/** 冷查询游标分页（mock 以不透明偏移量作 nextCursor 令牌，前端只透传不解析） */
+export function cursorPaginate<T>(
+  all: readonly T[],
+  url: URL,
+  options?: { sizeParam?: string; defaultSize?: number },
+): { items: T[]; nextCursor: string | null } {
+  const size = queryInt(url, options?.sizeParam ?? 'pageSize', options?.defaultSize ?? 20)
+  const raw = queryStr(url, 'cursor')
+  const parsed = raw === null ? 0 : Number.parseInt(raw, 10)
+  const offset = Number.isNaN(parsed) ? 0 : Math.max(0, parsed)
+  const next = offset + size
+  return { items: all.slice(offset, next), nextCursor: next < all.length ? String(next) : null }
+}
