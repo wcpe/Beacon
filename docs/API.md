@@ -497,15 +497,13 @@ data: {}
 
 #### 小区默认入口（FR-48）
 
-每个小区 `(group, zone)` 唯一指定一个「默认入口」serverId（指向已指派该 zone 的在线 bukkit），经发现下发给该 zone 下的 BC agent 设为 BungeeCord 默认/fallback 服（修复「动态注入子服但无默认服 → 玩家加入报 Could not connect to a default or fallback server」）。默认入口归属由控制面 DB 权威（[ADR-0031](adr/0031-zone-default-entry-and-bc-injection.md)）。
+每个小区唯一指定一个「默认入口」serverId（指向已分配该小区的 bukkit），经发现下发给该 zone 下的 BC agent 设为 BungeeCord 默认/fallback 服（修复「动态注入子服但无默认服 → 玩家加入报 Could not connect to a default or fallback server」）。**真源为 v2 `server.is_default_entry` 列**（[ADR-0067](adr/0067-default-entry-v2-authority.md) 取代 ADR-0031 的存储决策）：写操作走 v2 分配勾选（`POST /admin/v2/server-assignments` 的 `isDefaultEntry`）与 `PUT /admin/v2/servers/{id}/default-entry`；v1 写端点（原 `PUT/DELETE /admin/v1/zones/default-entry`）**已移除**（从未有 UI 调用者，写的 `zone_default_entry` 表无人消费即静默失效陷阱，该表已一并删除）。
 
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/zones/default-entry?namespace=&group=` | 列出小区默认入口：`{ items: [{ namespace, group, zone, defaultServerId, updatedAt }] }` |
-| `PUT /admin/v1/zones/default-entry` | 设置/覆盖：`{ namespace, group, zone, defaultServerId }`（operator 由认证态派生）；提交后唤醒拓扑 watch |
-| `DELETE /admin/v1/zones/default-entry?namespace=&group=&zone=` | 清除该小区默认入口（operator 由认证态派生） |
+| `GET /admin/v1/zones/default-entry?namespace=&group=` | 列出小区默认入口（只读，Legacy 消费；由 v2 真源解析，`group`/`zone` 取大区名/小区名）：`{ items: [{ namespace, group, zone, defaultServerId, updatedAt }] }` |
 
-校验：`defaultServerId` 必须是当前已指派到该 `(group, zone)` 的 serverId，否则 `400 DEFAULT_ENTRY_SERVER_NOT_IN_ZONE`；清除时该小区无默认入口返回 `404 DEFAULT_ENTRY_NOT_FOUND`。写端点 readonly 角色经 `readonlyWriteGuard` 一律 403。审计动作 `zone.set-default-entry` / `zone.clear-default-entry`。
+校验与审计在 v2 写端点：未分配小区置默认入口 `409 not_assigned`；审计动作 `zone.set-default-entry` / `zone.clear-default-entry`（v2 service 事务内自记）。
 
 下发：发现（`GET /beacon/v1/agent/discovery`）与实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）的每个 bukkit 实例新增布尔字段 `zoneDefaultEntry`（被指定为其小区默认入口为 true，其余 false；bungee 恒 false；旧 agent 忽略未知字段，向后兼容）。BC agent 用自身 `config.yml` 的 `proxy.home-group` / `proxy.home-zone`（数据面路由配置，非 zone 归属声明）挑出命中 home-zone 的在线默认入口设默认服；未配 / 该 zone 未设默认入口 / 默认入口不在线时**不设任何默认服 + 打一条 WARN**，绝不回退到任意在线 bukkit（避免静默把玩家落到非大厅服）。
 

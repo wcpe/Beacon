@@ -362,10 +362,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Get("/zones/assignments", h.Zone.ListAssignments)
 		r.Put("/zones/assignments", h.Zone.Assign)
 		r.Delete("/zones/assignments", h.Zone.Unassign)
-		// 小区默认入口（FR-48）：每 zone 唯一默认入口 serverId，供 BC 设 BungeeCord 默认/fallback 服
+		// 小区默认入口只读列表（FR-48）：真源为 v2 server.is_default_entry（ADR-0067）。
+		// v1 写端点已移除（从未有 UI 调用者、写的表无人消费即静默失效陷阱）；写走 v2 分配 / toggle 端点。
 		r.Get("/zones/default-entry", h.Zone.ListDefaultEntries)
-		r.Put("/zones/default-entry", h.Zone.SetDefaultEntry)
-		r.Delete("/zones/default-entry", h.Zone.ClearDefaultEntry)
 		r.Get("/zones", h.Zone.Summary)
 
 		// 流量调度（FR-10）：落位建议（query-only）+ drain 标记，控制面只给决策不执行玩家连接（ADR-0017）

@@ -4,6 +4,10 @@
 
 ## 未发布
 
+### 修复
+- 修复小区默认入口 v1/v2 双真源断层，真源收敛 v2 `server.is_default_entry`（[ADR-0067](docs/adr/0067-default-entry-v2-authority.md) 取代 ADR-0031 存储决策）：此前管理台唯一可写的 v2 默认入口列**无任何下发链路消费**、BC fallback 注入读的 v1 `zone_default_entry` 表**写端点从未有 UI 调用者**（表恒空、动态默认服注入从未激活）——管理台改默认入口 BC 永远看不到。现发现 / 实例视图的 `zoneDefaultEntry` 标志改由 v2 列解析（管理台勾选 / toggle 即下发 BC）；v1 只读列表 `GET /admin/v1/zones/default-entry` 改 v2 背书（形状不变，Legacy 兼容）；**v1 写端点 `PUT/DELETE /admin/v1/zones/default-entry` 与 `zone_default_entry` 表移除**（无调用者的静默失效陷阱）。管理台 /servers 行操作补「设为 / 取消默认入口」toggle（补 PRD P3「default-entry 页内可操作」缺口）。e2e 新增贯通断言（v2 置默认入口 → v1 发现打标 + v1 列表可见）。已知边界：实例 zone 解析仍走 v1 zone_assignment（v1/v2 拓扑真源分裂为独立事项，见 ADR-0067）。
+- 修复集成测试共享库残留日表污染行数敏感断言（`TestSchedDecisionQueryMySQL` 三天查询窗撞上历史固定日期种子表误报 6 行）：`testsupport.OpenTestDB` 清表阶段用跨方言 `Migrator.GetTables` 枚举、凡带 `_YYYYMMDD` 日期后缀的残留日表一律 Drop；删除各测试分散的按天点名 drop 绕行 helper。
+
 ## 0.26.1（2026-07-14）
 
 ### 新增

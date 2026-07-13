@@ -146,8 +146,6 @@ func run() error {
 	revRepo := repository.NewConfigRevisionRepository(db, configCipher)
 	grayRepo := repository.NewConfigGrayRepository(db, configCipher)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
-	// 小区默认入口（FR-48）：每 zone 唯一指定默认入口 serverId，供 BC 设默认/fallback 服
-	defaultEntryRepo := repository.NewZoneDefaultEntryRepository(db)
 	// 主动下线拒绝态（FR-49）：server_offline 仓库，供注册前查拒绝表与下线/取消下线落库
 	offlineRepo := repository.NewServerOfflineRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
@@ -207,9 +205,10 @@ func run() error {
 	metricsSet := metrics.New(registry)
 
 	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
-	zoneService := service.NewZoneService(db, assignRepo, defaultEntryRepo, auditRepo, registry)
-	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：解析器由 zoneService 提供（handler 不碰仓库）
-	instanceService.SetDefaultEntryResolver(zoneService.DefaultEntryServerIDs)
+	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
+	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：真源为 v2 server.is_default_entry（ADR-0067），
+	// 管理台分配勾选 / toggle 的默认入口经此下发给 BC fallback 注入。
+	instanceService.SetDefaultEntryResolver(v2ControlPlaneService.DefaultEntryServerIDs)
 
 	// 负载指标看板（FR-32，ADR-0023）：metric_sample 仓库 + 服务（聚合实时读注册表、趋势查库降采样）
 	metricRepo := repository.NewMetricSampleRepository(db)
@@ -281,7 +280,7 @@ func run() error {
 	// effectiveService 供 per-server 有效配置变更时间线端点（FR-80）。
 	instanceHandler := handler.NewInstanceHandler(instanceService, settingsService, effectiveService)
 	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
-	zoneHandler := handler.NewZoneHandler(zoneService)
+	zoneHandler := handler.NewZoneHandler(zoneService, v2ControlPlaneService)
 	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
 	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo), settingsService)
 	alertHandler := handler.NewAlertHandler(inbox)

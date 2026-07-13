@@ -181,10 +181,6 @@ var (
 	ErrZoneNotAssignableToBC = New(http.StatusBadRequest, "ZONE_NOT_ASSIGNABLE_TO_BC", "zone 不可分配给 BC 代理实例")
 	// ErrZoneServerOnlineNonempty 服务器在线且有玩家，禁止变更其区归属（排空门硬闸，FR-71/ADR-0036）。
 	ErrZoneServerOnlineNonempty = New(http.StatusConflict, "ZONE_SERVER_ONLINE_NONEMPTY", "服务器在线且有玩家，禁止变更其区归属；请先排空（drain 或等玩家离开）后再操作")
-	// ErrDefaultEntryServerNotInZone 默认入口指向的 serverId 未指派到该 (group, zone)（FR-48）。
-	ErrDefaultEntryServerNotInZone = New(http.StatusBadRequest, "DEFAULT_ENTRY_SERVER_NOT_IN_ZONE", "默认入口子服未指派到该小区")
-	// ErrDefaultEntryNotFound 清除默认入口时该小区无默认入口（FR-48）。
-	ErrDefaultEntryNotFound = New(http.StatusNotFound, "DEFAULT_ENTRY_NOT_FOUND", "该小区未设默认入口")
 	// ErrDrainNotFound 取消 drain 时该标记不存在（FR-10）。
 	ErrDrainNotFound = New(http.StatusNotFound, "DRAIN_NOT_FOUND", "drain 标记不存在")
 	// ErrInstanceOfflineRejected 实例已被主动下线，拒绝其注册接入（FR-49，区别于 NOT_REGISTERED / DUPLICATE_SERVER_ID）。

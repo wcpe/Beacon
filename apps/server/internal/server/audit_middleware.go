@@ -102,11 +102,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/reverse-fetch/tasks/{id}/resolve":  {},
 	"POST /admin/v1/reverse-fetch/ignore-rules":        {},
 	"DELETE /admin/v1/reverse-fetch/ignore-rules/{id}": {},
-	// zone 分配与默认入口（zone.assign / unassign / set-default-entry / clear-default-entry）
-	"PUT /admin/v1/zones/assignments":      {},
-	"DELETE /admin/v1/zones/assignments":   {},
-	"PUT /admin/v1/zones/default-entry":    {},
-	"DELETE /admin/v1/zones/default-entry": {},
+	// zone 分配（zone.assign / unassign）；v1 默认入口写端点已移除（ADR-0067，写走 v2）
+	"PUT /admin/v1/zones/assignments":    {},
+	"DELETE /admin/v1/zones/assignments": {},
 	// 流量调度（scheduling.drain / undrain）
 	"PUT /admin/v1/scheduling/drains":    {},
 	"DELETE /admin/v1/scheduling/drains": {},

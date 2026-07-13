@@ -162,6 +162,13 @@ func TestRezoneE2E(t *testing.T) {
 		t.Fatalf("default-entry 切换后响应应 isDefaultEntry=true，实际 %v", entryView)
 	}
 
+	// 相位六下发：v2 默认入口必须贯通到 v1 发现（BC fallback 注入消费链，ADR-0067）。
+	// 先经 v1 register 把实例放进内存注册表（BC 目录同步的数据前提），再断言 discovery 打 zoneDefaultEntry 标。
+	registerAgentV1(t, nsName, serverMain)
+	assertDiscoveryDefaultEntry(t, nsName, serverMain, true)
+	// v1 只读列表（Legacy 消费）同步反映 v2 真源：(group, zone) 取大区名 / 小区名。
+	assertDefaultEntryList(t, token, nsName, regionName, zoneBName, serverMain)
+
 	// 相位六负例：未分配小区的 server 置默认入口应 409 not_assigned。
 	registerAgent(t, nsToken, identityBare, serverBare, kindBackend)
 	approveIdentity(t, token, identityBare, nil)
@@ -279,6 +286,75 @@ func setDefaultEntry(t *testing.T, token string, rowID uint, value bool, wantSta
 	doAdmin(t, http.MethodPut, adminV2+"/servers/"+utoa(rowID)+"/default-entry", token,
 		map[string]any{"value": value}, wantStatus, &out)
 	return out
+}
+
+// registerAgentV1 以共享 agent 令牌把实例注册进 v1 内存注册表（发现视图的数据前提）。
+func registerAgentV1(t *testing.T, ns, serverID string) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{
+		"namespace": ns, "serverId": serverID, "role": "bukkit", "address": "127.0.0.1:25565",
+	})
+	req, _ := http.NewRequest(http.MethodPost, beaconURL+"/beacon/v1/agent/register", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Beacon-Token", bootstrapToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("v1 注册 %s 失败：%v", serverID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		t.Fatalf("v1 注册 %s 应 200，实际 %d：%s", serverID, resp.StatusCode, string(data))
+	}
+}
+
+// assertDiscoveryDefaultEntry 断言 v1 发现输出中某实例的 zoneDefaultEntry 标志（BC 注入消费的字段）。
+func assertDiscoveryDefaultEntry(t *testing.T, ns, serverID string, want bool) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, beaconURL+"/beacon/v1/agent/discovery?namespace="+ns, nil)
+	req.Header.Set("X-Beacon-Token", bootstrapToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("拉取发现失败：%v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Instances []struct {
+			ServerID         string `json:"serverId"`
+			ZoneDefaultEntry bool   `json:"zoneDefaultEntry"`
+		} `json:"instances"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("解析发现响应失败：%v", err)
+	}
+	for _, inst := range out.Instances {
+		if inst.ServerID == serverID {
+			if inst.ZoneDefaultEntry != want {
+				t.Fatalf("发现输出 %s 的 zoneDefaultEntry 应为 %v，实际 %v（v2 默认入口未贯通 v1 下发）", serverID, want, inst.ZoneDefaultEntry)
+			}
+			return
+		}
+	}
+	t.Fatalf("发现输出应含实例 %s，实际 %+v", serverID, out.Instances)
+}
+
+// assertDefaultEntryList 断言 v1 默认入口只读列表含指定 (group, zone, serverId) 行。
+func assertDefaultEntryList(t *testing.T, token, ns, group, zone, serverID string) {
+	t.Helper()
+	var out struct {
+		Items []struct {
+			Group           string `json:"group"`
+			Zone            string `json:"zone"`
+			DefaultServerID string `json:"defaultServerId"`
+		} `json:"items"`
+	}
+	doAdmin(t, http.MethodGet, "/admin/v1/zones/default-entry?namespace="+ns, token, nil, http.StatusOK, &out)
+	for _, item := range out.Items {
+		if item.Group == group && item.Zone == zone && item.DefaultServerID == serverID {
+			return
+		}
+	}
+	t.Fatalf("v1 默认入口列表应含 (%s, %s, %s)，实际 %+v", group, zone, serverID, out.Items)
 }
 
 // ---- 断言助手 ----

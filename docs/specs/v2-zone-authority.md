@@ -206,7 +206,7 @@ server 行由首次注册人工确认通过时创建（流程归 v2-agent-identi
 - 定义：小区内被标记为玩家兜底落点的子服（如 lobby）。一个 zone 可有 0..N 台默认入口；N>1 提供容错。
 - 消费方约定：
   - 调度（P4）：请求无偏好或候选集按健康过滤后为空时，默认入口作为兜底候选优先级参考（具体算法归 v2-metrics-health-scheduling.md）。
-  - BC 注入（P3 接真深化起）：控制面把小区默认入口列表随拓扑事实下发给同集群 proxy agent，供其维护代理侧优先连接目标；agent fail-static——控制面不可用时按本地快照继续。
+  - BC 注入（已实现，[ADR-0067](../adr/0067-default-entry-v2-authority.md)）：发现端点（`GET /beacon/v1/agent/discovery`）的实例视图按本列打 `zoneDefaultEntry` 标志下发，proxy agent 据此设 BungeeCord 默认/fallback 服（选择器与 fail-static 语义沿 ADR-0031 决策 2/3/4）；`server.is_default_entry` 是默认入口唯一真源（v1 `zone_default_entry` 表已废弃删除）。
 - 某 zone 默认入口数为 0 时，`/zones` 页在该节点明示「无默认入口」提示（不阻断，只提醒）。
 - 变更默认入口 = 写操作入审计；解除分配自动清标记（§3.6 不变量）。
 

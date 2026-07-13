@@ -1,6 +1,6 @@
 # 功能规格：小区默认入口 + BC 默认服注入
 
-> 状态：开发中　·　关联 PRD：FR-48　·　分支：feature/fr-48-zone-default-entry
+> 状态：已交付；**存储与写入口已被 [ADR-0067](../adr/0067-default-entry-v2-authority.md) 取代**——真源收敛 v2 `server.is_default_entry`、`zone_default_entry` 表与 v1 写端点已删除，本文表模型与写 API 段仅存历史；注入机制（发现下发 + agent 选择器）仍有效　·　关联 PRD：FR-48
 
 ## 1. 背景与目标
 

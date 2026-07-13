@@ -12,14 +12,16 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-// ZoneHandler 处理 zone 指派 CRUD 与汇总。
+// ZoneHandler 处理 zone 指派 CRUD 与汇总；默认入口只读列表由 v2 真源解析（ADR-0067）。
 type ZoneHandler struct {
 	svc *service.ZoneService
+	// v2 控制面服务：默认入口真源 server.is_default_entry 的只读解析（v1 列表端点兼容）
+	v2svc *service.V2ControlPlaneService
 }
 
 // NewZoneHandler 构造处理器。
-func NewZoneHandler(svc *service.ZoneService) *ZoneHandler {
-	return &ZoneHandler{svc: svc}
+func NewZoneHandler(svc *service.ZoneService, v2svc *service.V2ControlPlaneService) *ZoneHandler {
+	return &ZoneHandler{svc: svc, v2svc: v2svc}
 }
 
 // assignmentView 是 zone 指派对外视图。
@@ -96,7 +98,7 @@ func (h *ZoneHandler) Unassign(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// defaultEntryView 是小区默认入口对外视图（FR-48）。
+// defaultEntryView 是小区默认入口对外视图（FR-48；真源 v2 server.is_default_entry，ADR-0067）。
 type defaultEntryView struct {
 	Namespace       string    `json:"namespace"`
 	Group           string    `json:"group"`
@@ -105,59 +107,23 @@ type defaultEntryView struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
-func toDefaultEntryView(e model.ZoneDefaultEntry) defaultEntryView {
-	return defaultEntryView{
-		Namespace: e.NamespaceCode, Group: e.GroupCode, Zone: e.ZoneCode,
-		DefaultServerID: e.DefaultServerID, UpdatedAt: e.UpdatedAt,
-	}
-}
-
 // ListDefaultEntries 处理 GET /admin/v1/zones/default-entry（按 namespace[/group] 列默认入口，FR-48）。
+// 写操作走 v2（分配勾选 / PUT /admin/v2/servers/{id}/default-entry），v1 写端点已移除。
 func (h *ZoneHandler) ListDefaultEntries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	list, err := h.svc.ListDefaultEntries(q.Get("namespace"), q.Get("group"))
+	list, err := h.v2svc.ListDefaultEntries(q.Get("namespace"), q.Get("group"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
 	views := make([]defaultEntryView, 0, len(list))
 	for _, e := range list {
-		views = append(views, toDefaultEntryView(e))
+		views = append(views, defaultEntryView{
+			Namespace: e.Namespace, Group: e.Group, Zone: e.Zone,
+			DefaultServerID: e.DefaultServerID, UpdatedAt: e.UpdatedAt,
+		})
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views})
-}
-
-// defaultEntryRequest 是设置默认入口请求体（operator 由认证态派生，不接收手填）。
-type defaultEntryRequest struct {
-	Namespace       string `json:"namespace"`
-	Group           string `json:"group"`
-	Zone            string `json:"zone"`
-	DefaultServerID string `json:"defaultServerId"`
-}
-
-// SetDefaultEntry 处理 PUT /admin/v1/zones/default-entry（设置/覆盖某小区默认入口，FR-48）。
-func (h *ZoneHandler) SetDefaultEntry(w http.ResponseWriter, r *http.Request) {
-	var req defaultEntryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	e, err := h.svc.SetDefaultEntry(req.Namespace, req.Group, req.Zone, req.DefaultServerID, auth.Operator(r.Context()), clientIP(r))
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusOK, toDefaultEntryView(*e))
-}
-
-// ClearDefaultEntry 处理 DELETE /admin/v1/zones/default-entry?namespace=&group=&zone=（清除默认入口，FR-48）。
-func (h *ZoneHandler) ClearDefaultEntry(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	if err := h.svc.ClearDefaultEntry(q.Get("namespace"), q.Get("group"), q.Get("zone"), auth.Operator(r.Context()), clientIP(r)); err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // Summary 处理 GET /admin/v1/zones（zone 维度汇总）。

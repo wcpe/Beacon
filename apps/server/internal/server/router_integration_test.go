@@ -52,7 +52,6 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	db := testsupport.OpenTestDB(t, "server")
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
-	defaultEntryRepo := repository.NewZoneDefaultEntryRepository(db)
 	configRepo := repository.NewConfigItemRepository(db, noEncryptCipher())
 	fileRepo := repository.NewFileObjectRepository(db)
 	registry := runtime.NewRegistry()
@@ -64,8 +63,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	cfgSvc := service.NewConfigService(db, configRepo, revRepo, auditRepo)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	instSvc := service.NewInstanceService(db, registry, assignRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
-	zoneSvc := service.NewZoneService(db, assignRepo, defaultEntryRepo, auditRepo, registry)
-	instSvc.SetDefaultEntryResolver(zoneSvc.DefaultEntryServerIDs)
+	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
 	grayRepo := repository.NewConfigGrayRepository(db, noEncryptCipher())
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	graySvc := service.NewConfigGrayService(db, cfgSvc, configRepo, grayRepo, auditRepo)
@@ -120,7 +118,10 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
-	v2Handler := handler.NewV2ControlPlaneHandler(service.NewV2ControlPlaneService(db))
+	v2Svc := service.NewV2ControlPlaneService(db)
+	v2Handler := handler.NewV2ControlPlaneHandler(v2Svc)
+	// 发现/实例视图默认入口标志：真源为 v2 server.is_default_entry（ADR-0067），与 main.go 装配一致。
+	instSvc.SetDefaultEntryResolver(v2Svc.DefaultEntryServerIDs)
 	// P4 指标上报（FR-144）：60s 窗口 + 异步写入通道 + 接收服务 + 处理器。测试不启写入 worker——
 	// 鉴权 / 窗口去重 / 202 语义即可验，落库经 service 集成用例（启 worker）覆盖。
 	metricWriter := service.NewAsyncDailyWriter()
@@ -141,7 +142,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),
 		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
 		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc, effSvc),
-		Zone:             handler.NewZoneHandler(zoneSvc),
+		Zone:             handler.NewZoneHandler(zoneSvc, v2Svc),
 		Scheduling:       handler.NewSchedulingHandler(schedSvc),
 		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo), settingsSvc),
 		Alert:            handler.NewAlertHandler(testAlertInbox),
