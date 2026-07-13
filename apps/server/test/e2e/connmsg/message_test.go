@@ -37,9 +37,10 @@ const (
 	msgSQLiteDB    = "beacon-e2e-connmsg-msg.db"
 
 	// 探针业务消息类型（与 MessagingE2EProbe 中常量一致）。
-	typeMsg  = "beacon-e2e-msg"
-	typeRPC  = "beacon-e2e-rpc"
-	typeMiss = "beacon-e2e-miss"
+	typeMsg   = "beacon-e2e-msg"
+	typeRPC   = "beacon-e2e-rpc"
+	typeMiss  = "beacon-e2e-miss"
+	typeBcast = "beacon-e2e-bcast"
 
 	// 首跑含 gradle 冷编译全 agent 模块 + 下载 Paper + 运行期依赖，给足到「pending 身份出现」。
 	msgPendingWait = 18 * time.Minute
@@ -119,6 +120,7 @@ func TestMessageWireE2E(t *testing.T) {
 	t.Run("directed_delivered", func(t *testing.T) { runDirectedDelivered(t, obsPath, sqliteDB) })
 	t.Run("rpc_roundtrip", func(t *testing.T) { runRPCRoundtrip(t, obsPath, sqliteDB) })
 	t.Run("player_not_online", func(t *testing.T) { runPlayerNotOnline(t, obsPath, sqliteDB) })
+	t.Run("broadcast_delivered", func(t *testing.T) { runBroadcastDelivered(t, obsPath, sqliteDB) })
 }
 
 // runDirectedDelivered 断言定向 send 自寻址端到端 delivered：本机 on 收到 + msg_trace/msg_payload 落库。
@@ -226,6 +228,67 @@ func runPlayerNotOnline(t *testing.T, obsPath, sqliteDB string) {
 	t.Logf("PASS 玩家寻址落空：message_id=%s status=failed fail_reason=%s", row.MessageID, row.FailReason)
 }
 
+// runBroadcastDelivered 断言广播 publish 含自身语义端到端 delivered（FR-180 / ADR-0065）：
+// 本机 subscribe 收到经控制面 fan-out 回投的自身广播 + msg_trace 落「一行」聚合广播行
+// （target_kind=broadcast、无 zone、单机在线集合仅本服 → fanout_total=1/delivered_count=1）。
+func runBroadcastDelivered(t *testing.T, obsPath, sqliteDB string) {
+	// ① 探针本机 subscribe 处理器已收到自身广播（广播收发闭环 + 含自身语义 API 侧证据）。
+	obs := waitMarkSource(t, obsPath, "BCAST_RECEIVED", msgObsWait, "本机 subscribe 收到自身广播")
+	t.Logf("PASS subscribe 收到广播：%s", obs.rest)
+
+	// ② 直读 msg_trace 当日表：广播（target_kind=broadcast）终态 delivered 的聚合行。
+	db := openE2EDB(t, sqliteDB)
+	var row msgTraceRow
+	ok := waitUntil(msgPersistWait, func() bool {
+		for _, r := range queryTraces(db, typeBcast, "broadcast") {
+			if r.Status == model.MsgStatusDelivered {
+				row = r
+				return true
+			}
+		}
+		return false
+	})
+	if !ok {
+		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=broadcast status=delivered 的行", msgPersistWait, typeBcast)
+	}
+
+	if row.SourceServerID != msgServerID {
+		t.Fatalf("广播 source 应为 %s，实际 %s", msgServerID, row.SourceServerID)
+	}
+
+	// ③ 广播聚合不变量：一条广播落「一行」聚合、fan-out 各目标计数进聚合列（防 ×N 写放大，ADR-0065）。
+	//    单机在线集合仅本服 → 每行 fanout_total=1/delivered_count=1、failed/expired=0、无 zone 定向 target_zone 空、payload 只分表存一份。
+	//    探针收到自身广播前可能按轮重发（与定向 send 自愈同型），各次 publish 是独立广播、各落一行且各自 fanout=1，
+	//    故按「≥1 行 delivered 且每行聚合恒等」断言（比恰一行更健壮，同样证得单目标聚合与无 ×N 放大）。
+	deliveredRows := 0
+	for _, r := range queryTraces(db, typeBcast, "broadcast") {
+		if r.Status != model.MsgStatusDelivered {
+			continue
+		}
+		deliveredRows++
+		if r.FanoutTotal == nil || *r.FanoutTotal != 1 {
+			t.Fatalf("单机在线集合每条广播 fanout_total 应为 1，实际 %v（message_id=%s）", r.FanoutTotal, r.MessageID)
+		}
+		if r.DeliveredCount == nil || *r.DeliveredCount != 1 {
+			t.Fatalf("每条广播 delivered_count 应为 1，实际 %v（message_id=%s）", r.DeliveredCount, r.MessageID)
+		}
+		if r.FailedCount == nil || *r.FailedCount != 0 || r.ExpiredCount == nil || *r.ExpiredCount != 0 {
+			t.Fatalf("每条广播 failed/expired 聚合计数应为 0，实际 failed=%v expired=%v（message_id=%s）", r.FailedCount, r.ExpiredCount, r.MessageID)
+		}
+		if r.TargetZone != nil {
+			t.Fatalf("全 namespace 广播 target_zone 应为空，实际 %q（message_id=%s）", *r.TargetZone, r.MessageID)
+		}
+		// payload 只存一份分表落库（广播 payload 不因 fan-out 放大）。
+		if !r.PayloadStored || !payloadExists(db, r.MessageID) {
+			t.Fatalf("广播 payload 应分表落库一份（message_id=%s）", r.MessageID)
+		}
+	}
+	if deliveredRows < 1 {
+		t.Fatalf("应至少一行 delivered 广播聚合，实际 %d", deliveredRows)
+	}
+	t.Logf("PASS 广播 delivered：%d 行聚合、每行 fanout_total=1/delivered_count=1、无 zone、payload 分表落库", deliveredRows)
+}
+
 // ---- msg_trace / msg_payload 直读 ----
 
 // msgTraceRow 是 msg_trace 当日表断言用的行投影（列名按 GORM snake_case 映射）。
@@ -242,6 +305,12 @@ type msgTraceRow struct {
 	Hops             string
 	DurationMs       *int64
 	PayloadStored    bool
+	// 广播聚合列（仅 target_kind=broadcast 行非空，FR-180）
+	TargetZone     *string
+	FanoutTotal    *int
+	DeliveredCount *int
+	FailedCount    *int
+	ExpiredCount   *int
 }
 
 // queryTraces 查当日 msg_trace 表某 msgType（targetKind 非空时再按 target_kind 过滤）；表不存在返回空。
