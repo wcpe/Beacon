@@ -18,6 +18,7 @@ import type { ArchiveJob, ArchiveJobItem } from '@beacon/contracts'
 
 import { fetchArchiveJobDetail } from '../../api/system'
 import { formatCount, formatIso } from '../../features/system/format'
+import { ARCHIVE_POLL_MS, isActiveArchiveStatus } from '../../features/system/archive-status'
 
 interface ArchiveDetailPanelProps {
   // 选中的任务行（提供状态与创建时间，避免二次等待明细）
@@ -32,6 +33,9 @@ export default function ArchiveDetailPanel({ job, onRetry, onCancel }: ArchiveDe
   const query = useQuery({
     queryKey: ['archive', 'job', job.id],
     queryFn: () => fetchArchiveJobDetail(job.id),
+    // 任务进行中时轮询逐 item 进度，终态即停（优先用详情自身最新状态，回退到列表行状态）。
+    refetchInterval: (q) =>
+      isActiveArchiveStatus(q.state.data?.status ?? job.status) ? ARCHIVE_POLL_MS : false,
   })
   const detail = query.data
 

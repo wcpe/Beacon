@@ -36,6 +36,7 @@ import {
   retryArchiveJob,
 } from '../../api/system'
 import { formatCount, formatIso } from '../../features/system/format'
+import { ARCHIVE_POLL_MS, hasActiveArchiveJob } from '../../features/system/archive-status'
 import ListCard from '../../features/shared/list-card'
 import MasterDetail from '../../features/shared/master-detail'
 import Pager from '../../features/observability/pager'
@@ -69,11 +70,6 @@ export default function ArchiveBlock() {
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const overviewQuery = useQuery({
-    queryKey: ['archive', 'overview'],
-    queryFn: fetchArchiveOverview,
-  })
-
   const jobsQuery = useQuery({
     queryKey: ['archive', 'jobs', statusFilter, page],
     queryFn: () =>
@@ -83,6 +79,15 @@ export default function ArchiveBlock() {
         pageSize: PAGE_SIZE,
       }),
     placeholderData: keepPreviousData,
+    // 当前页存在进行中任务时轮询，全部终态即停（回调每轮基于最新数据重算）。
+    refetchInterval: (query) => (hasActiveArchiveJob(query.state.data?.items) ? ARCHIVE_POLL_MS : false),
+  })
+
+  // 水位随归档删除变化：进行中任务期间跟随列表一起轮询，否则不轮询。
+  const overviewQuery = useQuery({
+    queryKey: ['archive', 'overview'],
+    queryFn: fetchArchiveOverview,
+    refetchInterval: hasActiveArchiveJob(jobsQuery.data?.items) ? ARCHIVE_POLL_MS : false,
   })
 
   const total = jobsQuery.data?.total ?? 0
