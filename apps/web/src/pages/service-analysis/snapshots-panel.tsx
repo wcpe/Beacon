@@ -21,7 +21,7 @@ import {
 import type { HealthLevel, HealthSnapshotPoint } from '@beacon/contracts'
 
 import { fetchHealthSnapshots } from '../../api/metrics'
-import WindowSelect, { WINDOW_MS, type WindowKey } from './window-select'
+import WindowSelect, { WINDOW_MS, type WindowKey } from '../../features/observability/window-select'
 
 // 健康等级 → 状态药丸语义色
 function levelBadgeVariant(level: HealthLevel): 'ok' | 'warn' | 'crit' {

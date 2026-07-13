@@ -17,7 +17,7 @@ import { useCursorStack } from '../../features/observability/use-cursor-stack'
 import ListCard from '../../features/shared/list-card'
 import MasterDetail from '../../features/shared/master-detail'
 import DecisionDetail from './decision-detail'
-import WindowSelect, { WINDOW_MS, type WindowKey } from './window-select'
+import WindowSelect, { WINDOW_MS, type WindowKey } from '../../features/observability/window-select'
 
 const PAGE_SIZE = 15
 // 结果过滤候选（「全部」由 FilterSelect 自动前置）

@@ -25,7 +25,7 @@ import type { MetricsSeriesPoint } from '@beacon/contracts'
 
 import { fetchMetricsSeries } from '../../api/metrics'
 import FilterSelect from '../../features/observability/filter-select'
-import WindowSelect, { WINDOW_MS, type WindowKey } from './window-select'
+import WindowSelect, { WINDOW_MS, type WindowKey } from '../../features/observability/window-select'
 
 // 可选指标 → MetricsSeriesPoint 字段与展示
 const METRICS = ['cpu', 'tps', 'mem', 'online'] as const

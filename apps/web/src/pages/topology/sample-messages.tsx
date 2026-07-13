@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Eye } from 'lucide-react'
 
-import PayloadDialog from './payload-dialog'
+import PayloadDialog from '../../features/observability/payload-dialog'
 
 interface SampleMessagesProps {
   ids: string[]
