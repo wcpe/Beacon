@@ -16,6 +16,11 @@ export const common = {
     huge: '超大量',
     error: '异常',
   },
+  // 顶栏 env 过滤器（FR-178）：按 env 过滤各页视图的作用域
+  envFilter: {
+    label: 'env 过滤器',
+    all: '全部环境',
+  },
   sidebar: {
     expand: '展开导航',
     collapse: '收起导航',

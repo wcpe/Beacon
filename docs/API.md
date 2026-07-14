@@ -838,6 +838,16 @@ agent 面：
 | PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（路径为业务 serverId），写审计，返回富化视图 |
 | PUT | `/admin/v2/servers/{id}/default-entry` | 更新默认入口标记（路径为 server 行 id）；未分配小区 → 409 `not_assigned` |
 
+env 展示维度（FR-178 · P8 · 0.28.x）：纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；映射整体替换、一个 namespace 至多属一个 env。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/envs` | env 列表（含映射的 namespace 摘要） |
+| POST | `/admin/v2/envs` | 创建 env（name 全局唯一，撞名 409 `ENV_CONFLICT`） |
+| PATCH | `/admin/v2/envs/{id}` | 改 env 名 / 描述（局部更新；撞名 409，不存在 404 `ENV_NOT_FOUND`） |
+| DELETE | `/admin/v2/envs/{id}` | 删 env（映射级联删除，204；只影响过滤视图、不动权威数据） |
+| PUT | `/admin/v2/envs/{id}/namespaces` | 整体替换 env→namespace 映射（幂等；被其他 env 占用的 namespace → 409 `ENV_NAMESPACE_CONFLICT` 指明冲突方；不存在 namespace → 400 `ENV_NAMESPACE_NOT_FOUND`） |
+
 ### 指标健康调度（P4 · 0.24.x，真源 [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5）
 
 agent 面：

@@ -28,4 +28,5 @@ export const nav = {
   systemVersion: '版本与更新',
   apiKeys: '密钥',
   namespaces: '命名空间',
+  envs: '环境',
 } as const

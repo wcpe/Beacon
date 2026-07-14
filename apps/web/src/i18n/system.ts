@@ -439,4 +439,48 @@ export const system = {
       revoked: '信任已收回',
     },
   },
+  // env 展示维度（FR-178）：增删改 + env→namespace 映射
+  envs: {
+    mission: 'env 展示维度：增删改与 env→namespace 映射',
+    hint: 'env 是纯展示 / 过滤维度：把一个或多个 namespace 归到一个 env，供顶栏按 env 过滤视图。env 不参与隔离、调度与配置作用域链，删除只影响过滤视图、不动任何权威数据。',
+    listTitle: 'env 列表',
+    detailTitle: 'env 详情',
+    columns: {
+      name: '名称',
+      description: '描述',
+      namespaceCount: '映射 namespace',
+      updatedAt: '更新时间',
+    },
+    empty: '暂无 env，点击「创建 env」新增第一个',
+    keyword: '搜索名称',
+    total: '共 {{count}} 个',
+    namespaceCountLabel: '{{count}} 个 namespace',
+    // 创建 / 编辑
+    create: '创建 env',
+    createTitle: '创建 env',
+    editTitle: '编辑 env',
+    nameLabel: '名称',
+    namePlaceholder: '如 生产 / 测试',
+    descLabel: '描述（可选）',
+    save: '保存',
+    saving: '保存中…',
+    edit: '编辑',
+    delete: '删除',
+    // 详情面板
+    selectHint: '点击左侧 env 查看其映射的 namespace 与管理入口',
+    mappedNamespaces: '映射的 namespace',
+    noNamespaces: '尚未映射任何 namespace',
+    // 映射编辑
+    mapping: '设置映射',
+    mappingTitle: '设置 env→namespace 映射',
+    mappingDesc: '整体替换：勾选归入本 env 的 namespace。一个 namespace 至多属于一个 env——已被其他 env 占用的会在保存时被拒绝并指明占用方。',
+    mappingEmpty: '暂无 namespace 可映射',
+    occupiedBy: '已属 env「{{env}}」',
+    mappingSave: '保存映射',
+    mappingSaving: '保存中…',
+    // 删除
+    confirmDeleteTitle: '删除 env「{{name}}」？',
+    confirmDeleteDesc: '删除后该 env 的所有 namespace 映射一并移除，仅影响顶栏过滤视图，不影响任何权威数据。',
+    confirmDelete: '确认删除',
+  },
 } as const

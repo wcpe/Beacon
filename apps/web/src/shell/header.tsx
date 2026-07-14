@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@beacon/ui'
 
 import { isDemoMode } from '../demo-mode'
+import EnvFilter from './env-filter'
 import OperatorMenu from './operator-menu'
 import ScenarioSwitcher from './scenario-switcher'
 
@@ -20,6 +21,8 @@ export default function Header() {
         <span className="size-[7px] rounded-full bg-current shadow-[0_0_0_3px_color-mix(in_srgb,currentColor_18%,transparent)]" />
         {t('common.controlPlaneOnline')}
       </Badge>
+      {/* 顶栏 env 过滤器（FR-178）：全局按 env 过滤各页视图的作用域，纯展示维度不改权威数据 */}
+      <EnvFilter />
       {/* 右侧：演示模式显示徽标 + 场景切换器；真鉴权模式显示操作人 + 登出 */}
       <div className="flex flex-1 items-center justify-end gap-2.5">
         {demo ? (

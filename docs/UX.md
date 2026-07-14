@@ -37,6 +37,7 @@
 | 系统 | 版本与更新 | `/system/version` | 版本、渠道与在线更新 | P6 |
 | 系统 | 密钥 | `/api-keys` | API 密钥管理 | P6 |
 | 系统 | namespace | `/namespaces` | namespace 管理与互通信任关系 | P3 |
+| 系统 | 环境 | `/envs` | env 展示维度：增删改与 env→namespace 映射（整体替换、一个 namespace 至多属一个 env）；顶栏 env 过滤器的数据源 | P8 |
 
 交付四页路由已随对应 FR spec 定稿回填（P2 全量 mock 管理台按此落地）。**全部页面在 P2 全量 mock 管理台阶段（FR-172）以 mock 拍板**；「接真阶段」= 该页从 mock 切到真后端并真机验收的阶段。
 
@@ -55,6 +56,7 @@
 | 集群管理员 | 建 / 调大区小区、换区解绑 | `/zones`、`/servers` |
 | 集群管理员 | 处置并发身份冲突：看清冲突双方 → 保留一方 / 解绑 | `/identity-conflicts`（侧栏红点提示）|
 | 集群管理员 | namespace 隔离与互通信任 | `/namespaces` |
+| 集群管理员 | env 展示维度映射 + 按 env 过滤各页视图 | `/envs` + 顶栏 env 过滤器（全局作用域，纯展示 / 过滤，不改权威数据） |
 | 审计与安全人员 | 追溯一次操作 / 一条消息链路 | `/audits` ↔ `/commands` ↔ `/topology` 相互跳转 |
 | 审计与安全人员 | payload 查看（填原因） | 消息明细 → 原因弹窗 → 记录入 `/audits` |
 | 业务插件开发者 | **不使用后台**——只走本机 agent-api | 无页面；禁止为其新增后台页面 |

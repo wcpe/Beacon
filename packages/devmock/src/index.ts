@@ -14,6 +14,7 @@ import { fileAssetsHandlers } from './domains/file-assets'
 import { deliveryHandlers } from './domains/delivery'
 import { systemHandlers } from './domains/system'
 import { observabilityHandlers } from './domains/observability'
+import { envHandlers } from './domains/env'
 import { fallbackHandlers } from './http'
 
 export {
@@ -45,6 +46,7 @@ export * from './domains/file-assets'
 export * from './domains/delivery'
 export * from './domains/system'
 export * from './domains/observability'
+export * from './domains/env'
 
 export interface ControlPlaneStatusFixture {
   phase: string
@@ -78,6 +80,7 @@ export const domainHandlers = {
   delivery: deliveryHandlers,
   system: systemHandlers,
   observability: observabilityHandlers,
+  env: envHandlers,
 } satisfies Record<string, HttpHandler[]>
 
 /** 全量 handlers：浏览器 worker 与 Node setupServer 共用。

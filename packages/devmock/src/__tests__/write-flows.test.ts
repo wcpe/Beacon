@@ -230,3 +230,71 @@ describe('健康权重热更', () => {
     expect((good.json as { current: { rev: number } }).current.rev).toBe(current.current.rev + 1)
   })
 })
+
+describe('env 展示维度写闭环（FR-178）', () => {
+  interface EnvItemShape {
+    id: number
+    name: string
+    description: string
+    namespaceCount: number
+  }
+
+  async function listEnvs(): Promise<EnvItemShape[]> {
+    const { json } = await callJson('GET', '/admin/v2/envs?pageSize=100')
+    return (json as { items: EnvItemShape[] }).items
+  }
+
+  it('建 env → 抢占已占用 namespace 409 指明冲突方 → 删占用 env 释放后可映射', async () => {
+    // 常规态已有「生产」映射 prod(ns=1)、「测试」映射 test(ns=2)
+    const created = await callJson('POST', '/admin/v2/envs', { name: '预发布', description: '演示新增' })
+    expect(created.status).toBe(201)
+    const envId = (created.json as EnvItemShape).id
+    expect((await listEnvs()).some((e) => e.name === '预发布')).toBe(true)
+
+    // 抢占 prod(ns=1)（已属「生产」）→ 409 且 message 指明冲突方
+    const conflict = await callJson('PUT', `/admin/v2/envs/${String(envId)}/namespaces`, { namespaceIds: [1] })
+    expect(conflict.status).toBe(409)
+    const body = conflict.json as { code: string; message: string }
+    expect(body.code).toBe('ENV_NAMESPACE_CONFLICT')
+    expect(body.message).toContain('生产')
+
+    // 删「生产」env → 释放 ns=1，之后可映射
+    const prod = (await listEnvs()).find((e) => e.name === '生产')
+    expect((await callJson('DELETE', `/admin/v2/envs/${String(prod?.id ?? 0)}`)).status).toBe(204)
+    const remap = await callJson('PUT', `/admin/v2/envs/${String(envId)}/namespaces`, { namespaceIds: [1] })
+    expect(remap.status).toBe(200)
+    expect((remap.json as EnvItemShape).namespaceCount).toBe(1)
+  })
+
+  it('同名 env 冲突 409；PATCH 局部改描述生效', async () => {
+    const dup = await callJson('POST', '/admin/v2/envs', { name: '生产' })
+    expect(dup.status).toBe(409)
+    expect((dup.json as { code: string }).code).toBe('ENV_CONFLICT')
+
+    const test = (await listEnvs()).find((e) => e.name === '测试')
+    const patched = await callJson('PATCH', `/admin/v2/envs/${String(test?.id ?? 0)}`, { description: '改后描述' })
+    expect(patched.status).toBe(200)
+    expect((patched.json as { description: string }).description).toBe('改后描述')
+    expect((patched.json as { name: string }).name).toBe('测试')
+  })
+
+  it('整体替换语义：去重 + 幂等', async () => {
+    // 先删「生产」释放 ns=1，再把「测试」整体替换到 [1,1,2]（去重成 [1,2]）
+    const prod = (await listEnvs()).find((e) => e.name === '生产')
+    await callJson('DELETE', `/admin/v2/envs/${String(prod?.id ?? 0)}`)
+    const test = (await listEnvs()).find((e) => e.name === '测试')
+    const envId = test?.id ?? 0
+    const replaced = await callJson('PUT', `/admin/v2/envs/${String(envId)}/namespaces`, { namespaceIds: [1, 1, 2] })
+    expect(replaced.status).toBe(200)
+    expect((replaced.json as EnvItemShape).namespaceCount).toBe(2)
+    const again = await callJson('PUT', `/admin/v2/envs/${String(envId)}/namespaces`, { namespaceIds: [1, 2] })
+    expect((again.json as EnvItemShape).namespaceCount).toBe(2)
+  })
+
+  it('待映射 namespace 不存在返回 400', async () => {
+    const test = (await listEnvs()).find((e) => e.name === '测试')
+    const bad = await callJson('PUT', `/admin/v2/envs/${String(test?.id ?? 0)}/namespaces`, { namespaceIds: [9999] })
+    expect(bad.status).toBe(400)
+    expect((bad.json as { code: string }).code).toBe('ENV_NAMESPACE_NOT_FOUND')
+  })
+})

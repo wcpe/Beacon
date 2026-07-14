@@ -7,6 +7,8 @@ import type {
   ArchiveJobDetail,
   ArchiveJobListResponse,
   ArchiveOverview,
+  EnvItem,
+  EnvListResponse,
   HealthWeightsConfig,
   HealthWeightsResponse,
   NamespaceCreated,
@@ -197,4 +199,44 @@ export function grantTrust(body: GrantTrustBody): Promise<NamespaceTrustItem> {
 
 export function revokeTrust(id: number, reason: string): Promise<NamespaceTrustItem> {
   return request('POST', `/admin/v2/namespace-trusts/${String(id)}/revoke`, { reason })
+}
+
+// ---- /envs env 展示维度（v2，FR-178）----
+// env 是纯展示 / 过滤维度：env→namespace 映射整体替换（PUT 幂等），一个 namespace 至多属一个 env。
+
+export interface EnvQuery {
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
+export function fetchEnvList(query: EnvQuery): Promise<EnvListResponse> {
+  return request('GET', `/admin/v2/envs${buildQuery({ ...query })}`)
+}
+
+export interface CreateEnvBody {
+  name: string
+  description?: string
+}
+
+export function createEnv(body: CreateEnvBody): Promise<EnvItem> {
+  return request('POST', '/admin/v2/envs', body)
+}
+
+export interface UpdateEnvBody {
+  name?: string
+  description?: string
+}
+
+export function updateEnv(id: number, body: UpdateEnvBody): Promise<EnvItem> {
+  return request('PATCH', `/admin/v2/envs/${String(id)}`, body)
+}
+
+export function deleteEnv(id: number): Promise<void> {
+  return request('DELETE', `/admin/v2/envs/${String(id)}`)
+}
+
+/** 整体替换 env→namespace 映射：被其他 env 占用的 namespace 返回 409 指明冲突方。 */
+export function setEnvNamespaces(id: number, namespaceIds: number[]): Promise<EnvItem> {
+  return request('PUT', `/admin/v2/envs/${String(id)}/namespaces`, { namespaceIds })
 }

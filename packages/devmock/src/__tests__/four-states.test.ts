@@ -20,6 +20,7 @@ const TO = new Date(BASE_MS + 60_000).toISOString()
 const LIST_ENDPOINTS: { domain: string; path: string }[] = [
   { domain: 'identity', path: '/admin/v2/agent-identities' },
   { domain: 'namespace', path: '/admin/v2/namespaces' },
+  { domain: 'env', path: '/admin/v2/envs' },
   { domain: 'zone-authority', path: '/admin/v2/servers' },
   { domain: 'metrics-health', path: '/admin/v2/health' },
   { domain: 'archive', path: '/admin/v2/archive/jobs' },

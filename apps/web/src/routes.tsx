@@ -15,6 +15,7 @@ import {
   HeartPulse,
   History,
   KeyRound,
+  Layers,
   LayoutDashboard,
   MessagesSquare,
   RefreshCw,
@@ -39,6 +40,7 @@ import MessagesPage from './pages/messages'
 import ConfigsPage from './pages/configs'
 import DashboardPage from './pages/dashboard'
 import IdentityConflictsPage from './pages/identity-conflicts'
+import EnvsPage from './pages/envs'
 import NamespacesPage from './pages/namespaces'
 import ServersPage from './pages/servers'
 import ServiceAnalysisPage from './pages/service-analysis'
@@ -136,6 +138,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       { path: '/api-keys', titleKey: 'nav.apiKeys', icon: KeyRound, Component: ApiKeysPage },
       { path: '/namespaces', titleKey: 'nav.namespaces', icon: Globe, Component: NamespacesPage },
+      { path: '/envs', titleKey: 'nav.envs', icon: Layers, Component: EnvsPage },
     ],
   },
 ]

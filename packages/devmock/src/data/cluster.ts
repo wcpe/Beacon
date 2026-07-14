@@ -21,6 +21,16 @@ export interface NamespaceRow {
   createdAt: string
 }
 
+/** env 展示维度行（FR-178）：namespaceIds 即 env→namespace 映射，一个 namespace 至多出现在一个 env 里 */
+export interface EnvRow {
+  id: number
+  name: string
+  description: string
+  namespaceIds: number[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface TrustRow {
   id: number
   fromNamespaceId: number
@@ -101,6 +111,7 @@ export interface IdentityRow {
 
 export interface ClusterState {
   namespaces: NamespaceRow[]
+  envs: EnvRow[]
   trusts: TrustRow[]
   bcClusters: BcClusterRow[]
   regions: RegionRow[]
@@ -181,6 +192,7 @@ function makeServer(state: ClusterState, namespaceId: number, seed: ServerSeed):
 function emptyState(): ClusterState {
   return {
     namespaces: [],
+    envs: [],
     trusts: [],
     bcClusters: [],
     regions: [],
@@ -199,6 +211,12 @@ function buildNormal(): ClusterState {
   state.namespaces.push(
     { id: 1, name: 'prod', description: '生产环境（主力集群）', createdAt: isoOffset(-90 * DAY) },
     { id: 2, name: 'test', description: '测试环境（预发验证）', createdAt: isoOffset(-60 * DAY) },
+  )
+
+  // env 展示维度（FR-178）：生产映射 prod、测试映射 test，供顶栏按 env 过滤视图
+  state.envs.push(
+    { id: 1, name: '生产', description: '面向运维的生产展示维度', namespaceIds: [1], createdAt: isoOffset(-88 * DAY), updatedAt: isoOffset(-88 * DAY) },
+    { id: 2, name: '测试', description: '测试与预发展示维度', namespaceIds: [2], createdAt: isoOffset(-58 * DAY), updatedAt: isoOffset(-58 * DAY) },
   )
 
   state.trusts.push(
@@ -334,6 +352,11 @@ function buildHuge(): ClusterState {
   state.namespaces.push(
     { id: 1, name: 'prod', description: '生产环境（全网 1200+ 子服）', createdAt: isoOffset(-365 * DAY) },
     { id: 2, name: 'test', description: '测试环境', createdAt: isoOffset(-200 * DAY) },
+  )
+  // env 展示维度（FR-178）
+  state.envs.push(
+    { id: 1, name: '生产', description: '生产展示维度（全网）', namespaceIds: [1], createdAt: isoOffset(-360 * DAY), updatedAt: isoOffset(-360 * DAY) },
+    { id: 2, name: '测试', description: '测试展示维度', namespaceIds: [2], createdAt: isoOffset(-190 * DAY), updatedAt: isoOffset(-190 * DAY) },
   )
   state.trusts.push({
     id: 1,
