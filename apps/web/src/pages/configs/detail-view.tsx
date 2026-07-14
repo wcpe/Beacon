@@ -109,7 +109,7 @@ export default function DetailView({ fileId }: DetailViewProps) {
               <VersionsTab fileId={fileId} />
             </TabsContent>
             <TabsContent value="diff" className="pt-4">
-              <DiffTab fileId={fileId} />
+              <DiffTab fileId={fileId} file={detailQuery.data} />
             </TabsContent>
           </Tabs>
         )}

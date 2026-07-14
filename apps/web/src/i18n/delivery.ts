@@ -275,6 +275,15 @@ export const delivery = {
         title: '差异对比',
         leftLabel: '左侧',
         rightLabel: '右侧',
+        // 三种侧描述（规格 §4.5）：层 head / 历史版本 / 有效结果
+        sideType: '描述类型',
+        sideTypes: {
+          scope: '层 head',
+          version: '历史版本',
+          effective: '有效结果',
+        },
+        pickScope: '选择层',
+        pickVersion: '选择版本',
         run: '对比',
         added: '新增',
         removed: '删除',
