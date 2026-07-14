@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.27.1（2026-07-14）
+
 ### 新增
 - 配置中心 V2 页面交互增强（FR-161 前端侧，P7）：`/configs` 详情补**文件元数据编辑**（PATCH 描述 / JSON Schema / 敏感键路径，改敏感路径走高风险二次确认 + 原因必填）；作用域概览**五层全显**（无贡献层标识 + 五层色点），空层「添加本层配置」完成首次贡献（namespace 直开空白编辑器，bc_cluster / region / zone 结构树选实体，server 服务端搜索分页不卡 1000+）；有效预览**目标五选一**（仅 namespace 基线 / bc_cluster / region / zone 假想目标 / server 真目标）+ 逐键来源改**五层五色色块与图例** + 被删除键标执行删除层；diff 补全**三种侧描述符**任意组合（层 head / 历史版本 / 有效结果，覆盖版本间 / 层间 / 目标间对比）；编辑器**实时校验**（内容变更 500ms 去抖调 validate，语法 / schema 违例逐条 `{path,message}` 内联）+ 敏感占位符说明条（`__BEACON_MASKED__` 保持不变即沿用旧值、替换新值保存后不可再查看明文）；回退 / 撤销确认框固定提示「此操作不影响线上，生效需走变更单」。契约收敛：8 个散落响应类型迁入 `@beacon/contracts`、mock 全端点 `satisfies` 锚定、`ConfigDeletedKey` 补 `scopeName`、api client 补 PATCH 端点。演示模式 devmock 换**真语义嵌套合并引擎**（json 全语义 / yaml 缩进简版 / properties 扁平；标量覆盖 / map 深合并 / list 整替 / null 删键 + 递归叶子 provenance + 嵌套敏感路径脱敏与占位符回填）与 **JSON Schema 九关键字子集校验器**（部分校验 + required 仅 namespace 层 + null 跳过），validate 与保存端点共用同一引擎、保存按规格 §4.2 顺序执行。
 
