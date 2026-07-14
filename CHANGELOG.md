@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 0.27.0（2026-07-14）
+
 ### 新增
 - 配置中心 V2 完整 Go 后端（FR-160/161，规格 [v2-config-center.md](docs/specs/v2-config-center.md)）：以**文件**为一等公民重建配置中心，作用域与第二版区服权威模型五层完全一致（namespace→bc_cluster→region→zone→server，低→高键级深合并覆盖：标量覆盖 / map 深合并 / list 整替 / null 删键；未分配 zone 的 server 只受 namespace + server 两层影响）。新表 `config_file`（可空 `deleted_at` 回收站软删）+ `config_layer_version`（文件 × 作用域**不可变追加链**，唯一索引兜底并发插入，内容 sha256）。管理面 `/admin/v2/config-files*`、`/admin/v2/config-versions*` 全 17 端点：文件 CRUD / 回收站（软删屏蔽 404、恢复重名 409、purge 原因必填并连带删链 + 审计摘要记各链最终版本号与 hash）/ **保存即定稿**七步流水线（scope 校验→1 MiB 上限→语法门→敏感回填→schema 校验→乐观并发 `basedOnVersionId`（旧基线 409）→归一化判无变化→事务内 max+1 插入 + 审计）/ 回退（基于历史版本生成新版本、过当前 schema 可被收紧阻断）/ 撤销层贡献（removal 版本）/ 编辑器实时 validate（与保存同引擎，不落库不审计）/ 有效预览（`effectiveContent` 脱敏 + `effectiveHash` 基于明文 + 逐键 provenance `{path,scopeLevel,scopeRefId,scopeName,versionNo}` + `deletedKeys` + 层摘要，假想目标支持 zone / region / bc_cluster / 仅 namespace）/ 统一 diff（`version:` / `scope:` / `effective:` 三描述符任意组合）。**schema 校验**引入 `santhosh-tekuri/jsonschema/v6`（Draft 2020-12 子集，经确认新增依赖）：保存 schema 先过元 schema 自校验，内容按**部分校验**执行（只校验出现的键、`required` 仅 namespace 基线层强制、显式 null 删键指令跳过类型校验、properties 格式按扁平键名校验 pattern/enum），违例逐条 `{path,message}` 返回并阻断落库。**敏感值 write-only 全链脱敏**：`sensitive_paths` 精确路径命中的叶子值在版本详情 / 有效预览 / diff / 审计 detail 一律 `__BEACON_MASKED__`，保存提交占位符自动回填链 head 明文（回填后 hash 与直接提交明文一致），审计 detail 只落键路径级摘要、任何位置不落明文。跨 namespace 写入 / 解析一律 `CONFIG_SCOPE_MISMATCH`。为 P9 变更单预留**进程内明文有效渲染接口**（支持 scope→versionId 版本指派覆盖参数，不经任何 HTTP 端点）。本域只产出「已定稿的配置版本」，无 agent 面端点、无下发 / 灰度链路（归 P9 变更单）；`/configs` 页面接真随 0.27.1。
 
