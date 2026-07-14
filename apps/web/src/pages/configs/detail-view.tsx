@@ -103,7 +103,7 @@ export default function DetailView({ fileId }: DetailViewProps) {
               <ScopesTab fileId={fileId} file={detailQuery.data} />
             </TabsContent>
             <TabsContent value="effective" className="pt-4">
-              <EffectiveTab fileId={fileId} />
+              <EffectiveTab fileId={fileId} file={detailQuery.data} />
             </TabsContent>
             <TabsContent value="versions" className="pt-4">
               <VersionsTab fileId={fileId} />

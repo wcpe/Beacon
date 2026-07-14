@@ -222,16 +222,23 @@ export const delivery = {
       // 有效配置
       effective: {
         title: '有效配置预览',
-        targetLabel: '目标',
+        targetTypeLabel: '目标类型',
+        // 五选一目标：namespace 基线 / 三级假想目标 / server 真目标
+        targetTypes: {
+          namespace: '仅命名空间基线',
+          bc_cluster: '按 BC 集群（假想）',
+          region: '按大区（假想）',
+          zone: '按小区（假想）',
+          server: '按服务器',
+        },
+        run: '查询',
+        current: '当前目标：{{label}}',
         content: '合并内容',
         provenance: '逐键来源',
+        legend: '来源图例',
         deletedKeys: '被删除的键',
         noDeleted: '无被删除的键',
-        provColumns: {
-          key: '键',
-          from: '来自层',
-          version: '版本',
-        },
+        deletedAt: '删除于',
         hash: '有效哈希：{{hash}}',
       },
       // 版本链
