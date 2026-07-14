@@ -14,13 +14,7 @@ import { Button } from '@beacon/ui'
 import { Input } from '@beacon/ui'
 import { Label } from '@beacon/ui'
 import { Combobox } from '@beacon/ui'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,

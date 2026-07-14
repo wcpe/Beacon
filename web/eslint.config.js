@@ -9,7 +9,16 @@ import prettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   // 忽略产物 / 覆盖率 / 依赖目录 / vendored Monaco 资产（均非本仓源码，不参与检查）
-  { ignores: ['dist', 'apps/*/dist', 'packages/*/dist', 'coverage', 'node_modules', 'public/monaco'] },
+  {
+    ignores: [
+      'dist',
+      'apps/*/dist',
+      'packages/*/dist',
+      'coverage',
+      'node_modules',
+      'public/monaco',
+    ],
+  },
   // 基础推荐集：JS 通用 + typescript-eslint 非类型检查推荐（避免开 type-checked 拖慢 / 过严）
   js.configs.recommended,
   ...tseslint.configs.recommended,

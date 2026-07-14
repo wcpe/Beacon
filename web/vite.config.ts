@@ -14,8 +14,14 @@ export default defineConfig({
   // 路径别名：@ 指向 src；@beacon/ui 指向内部 UI 包源码
   resolve: {
     alias: [
-      { find: '@beacon/ui/styles.css', replacement: fileURLToPath(new URL('./packages/ui/src/styles.css', import.meta.url)) },
-      { find: '@beacon/ui', replacement: fileURLToPath(new URL('./packages/ui/src/index.ts', import.meta.url)) },
+      {
+        find: '@beacon/ui/styles.css',
+        replacement: fileURLToPath(new URL('./packages/ui/src/styles.css', import.meta.url)),
+      },
+      {
+        find: '@beacon/ui',
+        replacement: fileURLToPath(new URL('./packages/ui/src/index.ts', import.meta.url)),
+      },
       { find: '@', replacement: fileURLToPath(new URL('./src', import.meta.url)) },
     ],
   },

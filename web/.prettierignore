@@ -12,3 +12,5 @@ node_modules
 test-results
 playwright-report
 .e2e-real-run
+# Monaco 第三方静态资产（由 scripts/vendor-monaco.mjs 生成）
+public/monaco/

@@ -11,13 +11,7 @@ import CodeEditor from '../../components/CodeEditor'
 import { Button } from '@beacon/ui'
 import { Input } from '@beacon/ui'
 import { Label } from '@beacon/ui'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@beacon/ui'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@beacon/ui'
 
 export default function ConfigSaveConfirmDialog({
   open,

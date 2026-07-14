@@ -32,19 +32,13 @@ import { levelSoft, type HealthLevel } from '@beacon/ui'
 import { AsyncSection } from '@beacon/ui'
 import { CardGridSkeleton, TableSkeleton } from '@beacon/ui'
 import { Skeleton } from '@beacon/ui'
-import { DataTable, type DataTableColumn  } from '@beacon/ui'
+import { DataTable, type DataTableColumn } from '@beacon/ui'
 import { Button } from '@beacon/ui'
 import { Input } from '@beacon/ui'
 import { Label } from '@beacon/ui'
 import { Card, CardContent } from '@beacon/ui'
 import { Tabs, TabsList, TabsTrigger } from '@beacon/ui'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20

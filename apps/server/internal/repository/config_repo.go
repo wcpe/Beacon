@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -195,7 +196,9 @@ func (r *ConfigItemRepository) List(f ConfigFilter) ([]model.ConfigItem, error) 
 // CountSensitive 统计库中未软删的敏感配置项数量（供启动 fail-fast 探测）。
 func (r *ConfigItemRepository) CountSensitive() (int64, error) {
 	var n int64
-	err := r.active().Model(&model.ConfigItem{}).Where("sensitive = ?", true).Count(&n).Error
+	err := r.active().Model(&model.ConfigItem{}).
+		Where(clause.Eq{Column: clause.Column{Name: "sensitive"}, Value: true}).
+		Count(&n).Error
 	return n, err
 }
 

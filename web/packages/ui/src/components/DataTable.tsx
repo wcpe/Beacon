@@ -2,14 +2,7 @@
 // 仅做表格呈现（含空态行），加载/错误三态交给外层 AsyncSection，职责单一便于测试。
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from './ui/table'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { cn } from '../lib/utils'
 
 // 单列定义
@@ -77,10 +70,7 @@ export default function DataTable<T>({
             {columns.map((col, i) => (
               <TableHead
                 key={i}
-                className={cn(
-                  density === 'compact' && 'h-8 px-2 text-xs',
-                  col.headClassName,
-                )}
+                className={cn(density === 'compact' && 'h-8 px-2 text-xs', col.headClassName)}
               >
                 {col.header}
               </TableHead>
@@ -102,10 +92,7 @@ export default function DataTable<T>({
                   {columns.map((col, i) => (
                     <TableCell
                       key={i}
-                      className={cn(
-                        density === 'compact' && 'px-2 py-1.5 text-xs',
-                        col.className,
-                      )}
+                      className={cn(density === 'compact' && 'px-2 py-1.5 text-xs', col.className)}
                     >
                       {col.cell(row)}
                     </TableCell>

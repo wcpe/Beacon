@@ -10,7 +10,7 @@ const UI_STATE_KEY = 'beacon.ui'
 
 // 界面布局状态快照
 export interface UiState {
-// 侧栏是否折叠为窄图标条（true=折叠 w-14；false=展开 w-52）
+  // 侧栏是否折叠为窄图标条（true=折叠 w-14；false=展开 w-52）
   sidebarCollapsed: boolean
 }
 

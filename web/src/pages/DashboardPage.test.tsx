@@ -124,9 +124,19 @@ beforeEach(() => {
   vi.mocked(metricsTrend).mockResolvedValue(TREND)
   vi.mocked(listNamespaces).mockResolvedValue([{ code: 'prod', name: '生产' }])
   vi.mocked(listInstances).mockResolvedValue([
-    inst({ serverId: 'lobby-1', status: 'online', playerCount: 42, metadata: { cpu: '32%', mem: '45%' } }),
+    inst({
+      serverId: 'lobby-1',
+      status: 'online',
+      playerCount: 42,
+      metadata: { cpu: '32%', mem: '45%' },
+    }),
     inst({ serverId: 'pvp-2', status: 'online', playerCount: 8, address: '10.0.0.2:25565' }),
-    inst({ serverId: 'lost-1', status: 'lost', healthReason: 'Agent 心跳超时', address: '10.0.0.3:25565' }),
+    inst({
+      serverId: 'lost-1',
+      status: 'lost',
+      healthReason: 'Agent 心跳超时',
+      address: '10.0.0.3:25565',
+    }),
   ])
 })
 
@@ -175,7 +185,9 @@ describe('DashboardPage', () => {
 
     setEnvironment('prod')
     await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith('prod'))
-    await waitFor(() => expect(vi.mocked(listInstances)).toHaveBeenCalledWith({ namespace: 'prod' }))
+    await waitFor(() =>
+      expect(vi.mocked(listInstances)).toHaveBeenCalledWith({ namespace: 'prod' }),
+    )
 
     setEnvironment('')
     await waitFor(() => expect(vi.mocked(metricsSummary)).toHaveBeenCalledWith(undefined))

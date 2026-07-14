@@ -91,9 +91,7 @@ export default function DestructiveConfirmDialog({
         {/* 高摩擦档：手输复述指定短语才放行 */}
         {confirmPhrase && (
           <div className="space-y-1.5">
-            <Label htmlFor="destructive-confirm-phrase">
-              {confirmPhraseLabel(confirmPhrase)}
-            </Label>
+            <Label htmlFor="destructive-confirm-phrase">{confirmPhraseLabel(confirmPhrase)}</Label>
             <Input
               id="destructive-confirm-phrase"
               aria-label={confirmPhraseAriaLabel}

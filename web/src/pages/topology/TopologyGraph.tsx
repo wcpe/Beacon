@@ -70,7 +70,9 @@ function toGraphSpec(t: TFunction, data: TopologyView, selectedId?: string): Gra
   const largeGraph = data.nodes.length > 300
   const bungeeNodes = sortedNodes(data.nodes.filter((n) => n.role === 'bungee'))
   const serverNodes = sortedNodes(data.nodes.filter((n) => n.role !== 'bungee'))
-  const groupNames = Array.from(new Set(data.groups.map((g) => g.group || t('topology.clusterNoGroup')))).sort()
+  const groupNames = Array.from(
+    new Set(data.groups.map((g) => g.group || t('topology.clusterNoGroup'))),
+  ).sort()
   const groups = data.groups
     .map((g) => ({ ...g, orderKey: `${g.group || t('topology.clusterNoGroup')}/${g.zone ?? ''}` }))
     .sort((a, b) => a.orderKey.localeCompare(b.orderKey))
@@ -122,7 +124,8 @@ function toGraphSpec(t: TFunction, data: TopologyView, selectedId?: string): Gra
         category: roleIndex.get('bungee') ?? 0,
         itemStyle: {
           color: style.color,
-          borderColor: selectedId === n.serverId ? '#111827' : STATUS_BORDER[n.status] ?? '#94a3b8',
+          borderColor:
+            selectedId === n.serverId ? '#111827' : (STATUS_BORDER[n.status] ?? '#94a3b8'),
           borderWidth: selectedId === n.serverId ? 4 : 2,
         },
         label: { show: true, color: '#ffffff', fontWeight: 700 },
@@ -178,7 +181,8 @@ function toGraphSpec(t: TFunction, data: TopologyView, selectedId?: string): Gra
         category: roleIndex.get('bukkit') ?? 3,
         itemStyle: {
           color: n.status === 'degraded' ? '#f97316' : style.color,
-          borderColor: selectedId === n.serverId ? '#111827' : STATUS_BORDER[n.status] ?? '#94a3b8',
+          borderColor:
+            selectedId === n.serverId ? '#111827' : (STATUS_BORDER[n.status] ?? '#94a3b8'),
           borderWidth: selectedId === n.serverId ? 3 : 1,
           opacity: largeGraph && !emphasized ? 0.48 : 1,
         },
@@ -235,7 +239,9 @@ function toGraphSpec(t: TFunction, data: TopologyView, selectedId?: string): Gra
           return typeof p.value === 'string' ? p.value : p.name
         },
       },
-      legend: [{ data: categories.map((c) => c.name), top: 6, right: 8, itemWidth: 12, itemHeight: 8 }],
+      legend: [
+        { data: categories.map((c) => c.name), top: 6, right: 8, itemWidth: 12, itemHeight: 8 },
+      ],
       series: [
         {
           type: 'graph',

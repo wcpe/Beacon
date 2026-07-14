@@ -9,10 +9,7 @@ import { useTranslation } from 'react-i18next'
 import type { SettingView } from '../api/types'
 import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
-import { AnchorRailLayout,
-  AnchorSectionBlock,
-  type AnchorSection,
- } from '@beacon/ui'
+import { AnchorRailLayout, AnchorSectionBlock, type AnchorSection } from '@beacon/ui'
 import { prefixOf, useSettingsDraft, SettingRow, SettingsSaveBar } from './settings/settingsEditing'
 
 // 6 个运维域分区（前缀 = 设置项 key 第一段；标题复用既有 settings.group* 键）。

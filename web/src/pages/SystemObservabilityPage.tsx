@@ -29,10 +29,7 @@ import { systemObservability, systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
 import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
-import { AnchorRailLayout,
-  AnchorSectionBlock,
-  type AnchorSection,
- } from '@beacon/ui'
+import { AnchorRailLayout, AnchorSectionBlock, type AnchorSection } from '@beacon/ui'
 import { CardGridSkeleton } from '@beacon/ui'
 import { Skeleton } from '@beacon/ui'
 import { GaugeRing } from '@beacon/ui'

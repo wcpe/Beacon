@@ -276,7 +276,9 @@ function OverlayPreview() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>确认终止同步？</AlertDialogTitle>
-              <AlertDialogDescription>后续批次会停止下发，已完成目标保持现状。</AlertDialogDescription>
+              <AlertDialogDescription>
+                后续批次会停止下发，已完成目标保持现状。
+              </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>取消</AlertDialogCancel>
@@ -373,7 +375,9 @@ function LayoutPreview() {
         <TabsContent value="rail" className="h-64 pt-3">
           <AnchorRailLayout sections={sectionItems} ariaLabel="控件分区">
             <AnchorSectionBlock id="base" title="基础信息">
-              <p className="text-sm text-muted-foreground">锚点 rail 适合设置页、健康页等重内容页面。</p>
+              <p className="text-sm text-muted-foreground">
+                锚点 rail 适合设置页、健康页等重内容页面。
+              </p>
             </AnchorSectionBlock>
             <AnchorSectionBlock id="state" title="状态与反馈">
               <p className="text-sm text-muted-foreground">点击左侧锚点会滚动到对应分区。</p>
@@ -439,8 +443,18 @@ function DashboardPreview() {
         <div className="space-y-4">
           <HealthBar segments={healthSegments} />
           <div className="grid grid-cols-2 gap-3">
-            <IconStat icon={<Server className="size-4" />} label="在线子服" value="742" level="ok" />
-            <IconStat icon={<Gauge className="size-4" />} label="平均 TPS" value="19.8" level="ok" />
+            <IconStat
+              icon={<Server className="size-4" />}
+              label="在线子服"
+              value="742"
+              level="ok"
+            />
+            <IconStat
+              icon={<Gauge className="size-4" />}
+              label="平均 TPS"
+              value="19.8"
+              level="ok"
+            />
           </div>
           <div className="h-14 rounded-md border p-2">
             <MiniSparkline values={[17.8, 18.4, 19.1, 19.6, 19.8, 19.4]} color="var(--primary)" />
@@ -455,7 +469,11 @@ function TextPreview() {
   return (
     <ComponentShell>
       <div className="space-y-4">
-        <SectionHeader icon={<ListChecks className="size-4" />} title="发布说明" count="MarkdownLite" />
+        <SectionHeader
+          icon={<ListChecks className="size-4" />}
+          title="发布说明"
+          count="MarkdownLite"
+        />
         <MarkdownLite
           source={[
             '## 同步前检查',
@@ -480,8 +498,15 @@ function UtilityPreview() {
         <div className="flex flex-wrap gap-2">
           <span className={cn(badgeVariants({ variant: 'outline' }), 'font-mono')}>cn</span>
           <span className={buttonVariants({ variant: 'outline', size: 'sm' })}>buttonVariants</span>
-          <span className={cn(tabsListVariants({ variant: 'line' }), 'h-8 px-2')}>tabsListVariants</span>
-          <span className={cn('rounded-md px-2 py-1', level === 'warn' && 'bg-amber-500/10 text-amber-700')}>
+          <span className={cn(tabsListVariants({ variant: 'line' }), 'h-8 px-2')}>
+            tabsListVariants
+          </span>
+          <span
+            className={cn(
+              'rounded-md px-2 py-1',
+              level === 'warn' && 'bg-amber-500/10 text-amber-700',
+            )}
+          >
             ratioLevel(0.82) = {level}
           </span>
         </div>
@@ -596,7 +621,19 @@ const items: MuseumItem[] = [
     title: '数据展示',
     group: '展示组件',
     description: '展示汇总指标条和列定义驱动表格。',
-    exports: ['SummaryStrip', 'SummaryItem', 'SummaryTone', 'DataTable', 'DataTableColumn', 'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell'],
+    exports: [
+      'SummaryStrip',
+      'SummaryItem',
+      'SummaryTone',
+      'DataTable',
+      'DataTableColumn',
+      'Table',
+      'TableHeader',
+      'TableBody',
+      'TableRow',
+      'TableHead',
+      'TableCell',
+    ],
     states: ['empty', 'paged', 'row click', 'semantic tone'],
     preview: <DataPreview />,
   },
@@ -633,7 +670,14 @@ const items: MuseumItem[] = [
     title: '加载与反馈',
     group: '交互反馈',
     description: '展示异步三态、骨架屏、Toast 容器和常用骨架组合。',
-    exports: ['AsyncSection', 'Skeleton', 'TableSkeleton', 'CardGridSkeleton', 'TileGridSkeleton', 'Toaster'],
+    exports: [
+      'AsyncSection',
+      'Skeleton',
+      'TableSkeleton',
+      'CardGridSkeleton',
+      'TileGridSkeleton',
+      'Toaster',
+    ],
     states: ['loading', 'error', 'toast', 'table skeleton', 'card skeleton'],
     preview: <FeedbackPreview />,
   },
@@ -708,9 +752,7 @@ function App() {
             </div>
             <div>
               <h1 className="text-base font-semibold">Beacon UI 控件博物馆</h1>
-              <p className="text-xs text-muted-foreground">
-                已覆盖 {covered.size} 个 UI 包导出
-              </p>
+              <p className="text-xs text-muted-foreground">已覆盖 {covered.size} 个 UI 包导出</p>
             </div>
           </div>
           <div className="relative mt-4">
@@ -770,10 +812,7 @@ function App() {
               <h2 className="text-2xl font-semibold">{active.title}</h2>
               <p className="mt-1 text-sm text-muted-foreground">{active.description}</p>
             </div>
-            <Button
-              variant="outline"
-              onClick={() => toast.info(`已定位 ${active.title}`)}
-            >
+            <Button variant="outline" onClick={() => toast.info(`已定位 ${active.title}`)}>
               <Zap />
               试用状态
             </Button>
@@ -785,7 +824,11 @@ function App() {
             {active.preview}
           </section>
           <section className="grid gap-3">
-            <SectionHeader icon={<ArchiveRestore className="size-4" />} title="覆盖导出" count={`${active.exports.length} 项`} />
+            <SectionHeader
+              icon={<ArchiveRestore className="size-4" />}
+              title="覆盖导出"
+              count={`${active.exports.length} 项`}
+            />
             <ExportList names={active.exports} />
           </section>
           <section className="grid gap-3">

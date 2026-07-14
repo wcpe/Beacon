@@ -2,14 +2,7 @@
 // 复用 shadcn Skeleton（animate-pulse + bg-muted），无新依赖；供各主数据页在 React Query 加载态接入。
 
 import { Skeleton } from './ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from './ui/table'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 
 interface TableSkeletonProps {
   // 列数（与真实表格列定义对齐，骨架列宽随列数均分）

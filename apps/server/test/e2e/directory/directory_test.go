@@ -28,7 +28,7 @@ var beaconURL = harness.BeaconURL()
 // 服务端编排相关常量（与 runServer/runBungee gradle 任务的约定一致）。
 const (
 	adminUser      = "admin"
-	namespace      = "prod"
+	namespace      = "e2e-directory"
 	bukkitServerID = "e2e-bukkit-1"
 	bungeeServerID = "e2e-bungee-1"
 	bukkitPort     = "25566"
@@ -55,8 +55,12 @@ func TestDirectoryE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("定位仓库根失败：%v", err)
 	}
-	bungeeRunDir := filepath.Join(repoRoot, ".tmp", "e2e-run", "bungee")
+	// Gradle runDirectory 位于 apps/.tmp；启动前清掉旧快照，避免历史观测造成假绿。
+	bungeeRunDir := filepath.Join(repoRoot, "apps", ".tmp", "e2e-run", "bungee")
 	snapshotPath := filepath.Join(bungeeRunDir, "plugins", "BeaconE2EProxy", "e2e-directory-latest.txt")
+	if err := os.Remove(snapshotPath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("清理旧目录快照失败：%v", err)
+	}
 
 	// 控制面 SQLite 库文件（每轮删除从干净库开始）。
 	sqliteDB := filepath.Join(repoRoot, ".tmp", sqliteDBName)
@@ -88,22 +92,59 @@ func TestDirectoryE2E(t *testing.T) {
 		}
 	}()
 
+	token, err := harness.Login(beaconURL, adminUser, adminPass)
+	if err != nil {
+		t.Fatalf("登录失败：%v", err)
+	}
+	namespaceID, accessToken, err := harness.CreateV2Namespace(beaconURL, token, namespace, "FR-4 目录注入 e2e")
+	if err != nil {
+		t.Fatalf("创建 %s namespace 失败：%v", namespace, err)
+	}
+	t.Logf("已建 v2 namespace id=%d", namespaceID)
+
 	t.Log("== 起 Paper 子服（25566）+ Waterfall 代理（25577）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{"-Pe2eMcPort=" + bukkitPort, harness.BeaconEndpointProp()}, "paper")
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+		"-Pe2eMcPort=" + bukkitPort,
+		harness.BeaconEndpointProp(),
+		"-Pe2eBootstrapToken=" + accessToken,
+		"-Pe2eNamespace=" + namespace,
+		"-Pe2eServerId=" + bukkitServerID,
+	}, "paper")
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
 	defer paper.Stop()
-	bungee, err := harness.StartGradleTask(repoRoot, ":agent-e2e-bungee:runBungee", []string{harness.BeaconEndpointProp()}, "bungee")
+	bungee, err := harness.StartGradleTask(repoRoot, ":agent-e2e-bungee:runBungee", []string{
+		harness.BeaconEndpointProp(),
+		"-Pe2eBootstrapToken=" + accessToken,
+		"-Pe2eNamespace=" + namespace,
+		"-Pe2eServerId=" + bungeeServerID,
+	}, "bungee")
 	if err != nil {
 		t.Fatalf("起 Waterfall 失败：%v", err)
 	}
 	defer bungee.Stop()
 
-	t.Log("== 等子服与代理 online（首跑含下载/构建，耐心等）==")
-	token, err := harness.Login(beaconURL, adminUser, adminPass)
+	t.Log("== 等子服与代理 identity pending，批准后继续等 legacy online ==")
+	bukkitIdentityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bukkitServerID, "pending", onlineWait)
 	if err != nil {
-		t.Fatalf("登录失败：%v", err)
+		t.Fatalf("等 %s identity pending 超时（见 .tmp/paper.out.log）：%v", bukkitServerID, err)
+	}
+	if err := harness.ApproveIdentity(beaconURL, token, bukkitIdentityID); err != nil {
+		t.Fatalf("批准 %s identity 失败：%v", bukkitServerID, err)
+	}
+	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bukkitServerID, "active", onlineWait); err != nil {
+		t.Fatalf("等 %s identity active 超时：%v", bukkitServerID, err)
+	}
+	bungeeIdentityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bungeeServerID, "pending", onlineWait)
+	if err != nil {
+		t.Fatalf("等 %s identity pending 超时（见 .tmp/bungee.out.log）：%v", bungeeServerID, err)
+	}
+	if err := harness.ApproveIdentity(beaconURL, token, bungeeIdentityID); err != nil {
+		t.Fatalf("批准 %s identity 失败：%v", bungeeServerID, err)
+	}
+	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bungeeServerID, "active", onlineWait); err != nil {
+		t.Fatalf("等 %s identity active 超时：%v", bungeeServerID, err)
 	}
 	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, bukkitServerID, onlineWait); err != nil {
 		t.Fatalf("等 %s online 超时（见 .tmp/paper.out.log）：%v", bukkitServerID, err)
@@ -111,7 +152,7 @@ func TestDirectoryE2E(t *testing.T) {
 	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, bungeeServerID, onlineWait); err != nil {
 		t.Fatalf("等 %s online 超时（见 .tmp/bungee.out.log）：%v", bungeeServerID, err)
 	}
-	t.Log("子服与代理均 online")
+	t.Log("子服与代理均 active + online")
 
 	t.Run("directory", func(t *testing.T) { runDirectory(t, snapshotPath) })
 

@@ -11,13 +11,7 @@ import { useMessage } from '../../components/useMessage'
 import { Badge } from '@beacon/ui'
 import { Button } from '@beacon/ui'
 import { ScrollArea } from '@beacon/ui'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@beacon/ui'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@beacon/ui'
 
 // 文本预览截断上限（字节）：超过只读前 N 字节并标记截断，防大文件卡渲染。
 const TEXT_PREVIEW_LIMIT = 2000

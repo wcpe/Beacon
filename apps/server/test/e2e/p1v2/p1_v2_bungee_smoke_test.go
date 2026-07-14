@@ -56,6 +56,17 @@ type serverView struct {
 	Kind        string
 	BCClusterID *uint
 	ZoneID      *uint
+	Assigned    bool `json:"assigned"`
+}
+
+type assignmentResultView struct {
+	ID       uint   `json:"id"`
+	ServerID string `json:"serverId"`
+	Ok       bool   `json:"ok"`
+}
+
+type assignmentResponseView struct {
+	Results []assignmentResultView `json:"results"`
 }
 
 type bcClusterView struct {
@@ -138,8 +149,8 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	t.Log("== 验证 approve 只创建未分配 server，再做首次 BC 集群分配 ==")
 	server := requireUnassignedServer(t, adminToken, ns.ID)
 	cluster := createBCCluster(t, adminToken, ns.ID)
-	assigned := assignServerToBCCluster(t, adminToken, server.ID, cluster.ID)
-	if assigned.BCClusterID == nil || *assigned.BCClusterID != cluster.ID || assigned.ZoneID != nil {
+	assigned := assignServerToBCCluster(t, adminToken, ns.ID, server.ID, cluster.ID)
+	if assigned.BCClusterID == nil || *assigned.BCClusterID != cluster.ID || assigned.ZoneID != nil || !assigned.Assigned {
 		t.Fatalf("server 首次分配结果不符合预期：server=%+v cluster=%+v", assigned, cluster)
 	}
 
@@ -226,9 +237,9 @@ func createBCCluster(t *testing.T, token string, namespaceID uint) bcClusterView
 	return cluster
 }
 
-func assignServerToBCCluster(t *testing.T, token string, serverRowID, clusterID uint) serverView {
+func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowID, clusterID uint) serverView {
 	t.Helper()
-	var resp listResponse[serverView]
+	var assignmentResp assignmentResponseView
 	doAdminJSON(t, http.MethodPost, "/admin/v2/server-assignments", token, map[string]any{
 		"serverIds": []uint{serverRowID},
 		"target": map[string]any{
@@ -236,11 +247,25 @@ func assignServerToBCCluster(t *testing.T, token string, serverRowID, clusterID 
 			"id":   clusterID,
 		},
 		"reason": "P1 v2 真机 smoke 首次分配",
-	}, http.StatusOK, &resp)
-	if len(resp.Items) != 1 {
-		t.Fatalf("server 分配响应应返回 1 项，实际 %+v", resp)
+	}, http.StatusOK, &assignmentResp)
+	if len(assignmentResp.Results) != 1 {
+		t.Fatalf("server 分配响应应返回 1 项，实际 %+v", assignmentResp)
 	}
-	return resp.Items[0]
+	result := assignmentResp.Results[0]
+	if result.ID != serverRowID || result.ServerID != serverID || !result.Ok {
+		t.Fatalf("server 分配响应不符合预期：want id=%d serverId=%s ok=true，实际 %+v", serverRowID, serverID, result)
+	}
+
+	var servers listResponse[serverView]
+	path := fmt.Sprintf("/admin/v2/servers?namespaceId=%d&assigned=true&keyword=%s", namespaceID, url.QueryEscape(serverID))
+	doAdminJSON(t, http.MethodGet, path, token, nil, http.StatusOK, &servers)
+	for _, item := range servers.Items {
+		if item.ID == serverRowID && item.ServerID == serverID {
+			return item
+		}
+	}
+	t.Fatalf("未找到写后已分配 server：rowID=%d serverId=%s 响应=%+v", serverRowID, serverID, servers)
+	return serverView{}
 }
 
 func waitIdentityStatus(t *testing.T, token, identityID, status string, timeout time.Duration) identityView {

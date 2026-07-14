@@ -9,13 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@beacon/ui'
 import { Input } from '@beacon/ui'
 import { Label } from '@beacon/ui'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@beacon/ui'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@beacon/ui'
 
 export default function WbCreateFileDialog({
   open,

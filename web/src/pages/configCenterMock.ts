@@ -194,21 +194,49 @@ const MESSAGES_TXT = `welcome=欢迎来到服务器！
 leave=玩家 {player} 离开了
 broadcast.restart=服务器将在 {n} 秒后重启`
 
-function f(path: string, name: string, kind: FileKind, global: string, extra?: Partial<MockFile>): MockFile {
+function f(
+  path: string,
+  name: string,
+  kind: FileKind,
+  global: string,
+  extra?: Partial<MockFile>,
+): MockFile {
   return { path, name, kind, global, version: 1, ...extra }
 }
 
 export function initialFiles(): Record<string, MockFile> {
   const list: MockFile[] = [
-    f('server.properties', 'server.properties', 'config', SERVER_PROPERTIES, { sensitive: true, server: { [DEMO_SERVER]: 'max-players=80' }, disk: { [DEMO_SERVER]: SERVER_PROPERTIES.replace('white-list=false', 'white-list=true') } }),
+    f('server.properties', 'server.properties', 'config', SERVER_PROPERTIES, {
+      sensitive: true,
+      server: { [DEMO_SERVER]: 'max-players=80' },
+      disk: { [DEMO_SERVER]: SERVER_PROPERTIES.replace('white-list=false', 'white-list=true') },
+    }),
     f('bukkit.yml', 'bukkit.yml', 'config', BUKKIT_YML, { nested: true }),
     f('spigot.yml', 'spigot.yml', 'config', SPIGOT_YML, { nested: true }),
-    f('paper-global.yml', 'paper-global.yml', 'config', PAPER_GLOBAL, { nested: true, area: PAPER_AREA, disk: { [DEMO_SERVER]: PAPER_GLOBAL_DISK } }),
+    f('paper-global.yml', 'paper-global.yml', 'config', PAPER_GLOBAL, {
+      nested: true,
+      area: PAPER_AREA,
+      disk: { [DEMO_SERVER]: PAPER_GLOBAL_DISK },
+    }),
     f('eula.txt', 'eula.txt', 'text', 'eula=true'),
-    f('plugins/Essentials/config.yml', 'config.yml', 'config', ESSENTIALS_GLOBAL, { version: 3, area: ESSENTIALS_AREA, server: { [DEMO_SERVER]: ESSENTIALS_SERVER01 }, disk: { [DEMO_SERVER]: ESSENTIALS_DISK01 } }),
-    f('plugins/Essentials/messages.txt', 'messages.txt', 'text', MESSAGES_TXT, { disk: { [DEMO_SERVER]: MESSAGES_TXT + '\nbroadcast.maintenance=维护中' } }),
-    f('plugins/Essentials/items.json', 'items.json', 'config', ITEMS_JSON, { nested: true, disk: { [DEMO_SERVER]: ITEMS_JSON_DISK } }),
-    f('plugins/LuckPerms/config.yml', 'config.yml', 'config', LUCKPERMS_GLOBAL, { version: 2, nested: true, area: LUCKPERMS_AREA }),
+    f('plugins/Essentials/config.yml', 'config.yml', 'config', ESSENTIALS_GLOBAL, {
+      version: 3,
+      area: ESSENTIALS_AREA,
+      server: { [DEMO_SERVER]: ESSENTIALS_SERVER01 },
+      disk: { [DEMO_SERVER]: ESSENTIALS_DISK01 },
+    }),
+    f('plugins/Essentials/messages.txt', 'messages.txt', 'text', MESSAGES_TXT, {
+      disk: { [DEMO_SERVER]: MESSAGES_TXT + '\nbroadcast.maintenance=维护中' },
+    }),
+    f('plugins/Essentials/items.json', 'items.json', 'config', ITEMS_JSON, {
+      nested: true,
+      disk: { [DEMO_SERVER]: ITEMS_JSON_DISK },
+    }),
+    f('plugins/LuckPerms/config.yml', 'config.yml', 'config', LUCKPERMS_GLOBAL, {
+      version: 2,
+      nested: true,
+      area: LUCKPERMS_AREA,
+    }),
   ]
   const map: Record<string, MockFile> = {}
   for (const x of list) map[x.path] = x
@@ -300,7 +328,12 @@ export const TREE: TreeNode[] = [
           { type: 'file', name: 'items.json', path: 'plugins/Essentials/items.json' },
         ],
       },
-      { type: 'dir', name: 'LuckPerms', path: 'plugins/LuckPerms', children: [{ type: 'file', name: 'config.yml', path: 'plugins/LuckPerms/config.yml' }] },
+      {
+        type: 'dir',
+        name: 'LuckPerms',
+        path: 'plugins/LuckPerms',
+        children: [{ type: 'file', name: 'config.yml', path: 'plugins/LuckPerms/config.yml' }],
+      },
       {
         type: 'dir',
         name: 'WorldGuard',
@@ -310,7 +343,12 @@ export const TREE: TreeNode[] = [
           { type: 'file', name: 'regions.yml', path: 'plugins/WorldGuard/regions.yml' },
         ],
       },
-      { type: 'dir', name: 'Vault', path: 'plugins/Vault', children: [{ type: 'file', name: 'config.yml', path: 'plugins/Vault/config.yml' }] },
+      {
+        type: 'dir',
+        name: 'Vault',
+        path: 'plugins/Vault',
+        children: [{ type: 'file', name: 'config.yml', path: 'plugins/Vault/config.yml' }],
+      },
     ],
   },
   {
@@ -319,11 +357,26 @@ export const TREE: TreeNode[] = [
     path: 'world',
     children: [
       { type: 'file', name: 'level.dat', path: 'world/level.dat' },
-      { type: 'dir', name: 'region', path: 'world/region', children: [{ type: 'file', name: 'r.0.0.mca', path: 'world/region/r.0.0.mca' }] },
+      {
+        type: 'dir',
+        name: 'region',
+        path: 'world/region',
+        children: [{ type: 'file', name: 'r.0.0.mca', path: 'world/region/r.0.0.mca' }],
+      },
     ],
   },
-  { type: 'dir', name: 'logs', path: 'logs', children: [{ type: 'file', name: 'latest.log', path: 'logs/latest.log' }] },
-  { type: 'dir', name: 'cache', path: 'cache', children: [{ type: 'file', name: 'FileCache.json', path: 'cache/FileCache.json' }] },
+  {
+    type: 'dir',
+    name: 'logs',
+    path: 'logs',
+    children: [{ type: 'file', name: 'latest.log', path: 'logs/latest.log' }],
+  },
+  {
+    type: 'dir',
+    name: 'cache',
+    path: 'cache',
+    children: [{ type: 'file', name: 'FileCache.json', path: 'cache/FileCache.json' }],
+  },
 ]
 
 // 服务器磁盘上的运行期 / 非配置文件（通常被排除，不纳管）。「磁盘视图」要能看到它们——
@@ -353,7 +406,13 @@ export function isBinaryName(name: string): boolean {
 }
 
 // 某路径在某服磁盘上的实际文本：已纳管→磁盘快照(有漂移)或已部署生效内容；未纳管→其磁盘文本；运行期→样例/二进制占位
-export function diskText(path: string, files: Record<string, MockFile>, group: string, zone: string, serverId: string): string {
+export function diskText(
+  path: string,
+  files: Record<string, MockFile>,
+  group: string,
+  zone: string,
+  serverId: string,
+): string {
   const f = files[path]
   if (f) {
     const d = f.disk?.[serverId]
@@ -396,7 +455,14 @@ export function initialExcludeRules(): ExcludeRule[] {
     { id: 'r2', pattern: 'logs/**', scope: '全局', scan: true, sync: true, manage: true },
     { id: 'r3', pattern: 'cache/**', scope: '全局', scan: true, sync: true, manage: true },
     { id: 'r4', pattern: '*.bak', scope: '全局', scan: true, sync: true, manage: false },
-    { id: 'r5', pattern: '**/*.tmp', scope: '小区 zone-01', scan: true, sync: false, manage: false },
+    {
+      id: 'r5',
+      pattern: '**/*.tmp',
+      scope: '小区 zone-01',
+      scan: true,
+      sync: false,
+      manage: false,
+    },
   ]
 }
 
@@ -426,19 +492,108 @@ export interface QueueItem {
 
 export function initialQueue(): QueueItem[] {
   return [
-    { id: 1, kind: 'fetch', title: '反向抓取 server-01 / Essentials', detail: '扫描 28 文件 · 3 项待纳管', state: '待审核', operator: 'admin', target: '→ 小区 zone-01', time: '2 分钟前', review: [
-      { path: 'plugins/Essentials/config.yml', lines: 3 },
-      { path: 'plugins/Essentials/kits.yml', lines: 12 },
-      { path: 'plugins/Essentials/spawn.yml', lines: 5 },
-    ] },
-    { id: 2, kind: 'fetch', title: '反向抓取 srv-0042 / WorldGuard', detail: '扫描 11 文件 · 1 项待纳管', state: '待审核', operator: 'ops-li', target: '→ 大区 server-b', time: '8 分钟前', review: [{ path: 'plugins/WorldGuard/config.yml', lines: 7 }] },
-    { id: 3, kind: 'fetch', title: '收编 server-01 / config.yml', detail: '3 处磁盘改动 → 单服补丁', state: '已收编', done: true, operator: 'admin', target: '单服 server-01', time: '20 分钟前' },
-    { id: 4, kind: 'publish', title: '发布 config.yml → 大区 server-a', detail: 'v2→v3 · 热推 90 台在线服 · 校验通过', state: '完成', done: true, operator: 'admin', target: '大区 server-a · 90 台', time: '12 分钟前' },
-    { id: 5, kind: 'publish', title: '灰度 paper-global.yml → cohort', detail: 'v4→v5 · 先发 12 台 · 待晋升', state: '灰度中', operator: 'ops-li', target: 'cohort 12 台', time: '30 分钟前' },
-    { id: 6, kind: 'publish', title: '发布 spigot.yml → 全局', detail: 'v1→v2 · 热推 980 台在线服', state: '完成', done: true, operator: 'admin', target: '全局 · 980 台', time: '1 小时前' },
-    { id: 7, kind: 'audit', title: 'admin 改 config.yml 单服 server-01', detail: 'spawn-protection 16→0 · motd 改写', state: '已记录', done: true, operator: 'admin', target: '单服 server-01', time: '1 小时前' },
-    { id: 8, kind: 'audit', title: 'ops-li 回滚 LuckPerms/config.yml → v1', detail: '读 v1 内容发为 v3', state: '已记录', done: true, operator: 'ops-li', target: '大区 server-a', time: '2 小时前' },
-    { id: 9, kind: 'audit', title: 'admin 新增排除规则 world/**', detail: '作用于 扫描/同步/管理', state: '已记录', done: true, operator: 'admin', target: '全局', time: '昨天' },
+    {
+      id: 1,
+      kind: 'fetch',
+      title: '反向抓取 server-01 / Essentials',
+      detail: '扫描 28 文件 · 3 项待纳管',
+      state: '待审核',
+      operator: 'admin',
+      target: '→ 小区 zone-01',
+      time: '2 分钟前',
+      review: [
+        { path: 'plugins/Essentials/config.yml', lines: 3 },
+        { path: 'plugins/Essentials/kits.yml', lines: 12 },
+        { path: 'plugins/Essentials/spawn.yml', lines: 5 },
+      ],
+    },
+    {
+      id: 2,
+      kind: 'fetch',
+      title: '反向抓取 srv-0042 / WorldGuard',
+      detail: '扫描 11 文件 · 1 项待纳管',
+      state: '待审核',
+      operator: 'ops-li',
+      target: '→ 大区 server-b',
+      time: '8 分钟前',
+      review: [{ path: 'plugins/WorldGuard/config.yml', lines: 7 }],
+    },
+    {
+      id: 3,
+      kind: 'fetch',
+      title: '收编 server-01 / config.yml',
+      detail: '3 处磁盘改动 → 单服补丁',
+      state: '已收编',
+      done: true,
+      operator: 'admin',
+      target: '单服 server-01',
+      time: '20 分钟前',
+    },
+    {
+      id: 4,
+      kind: 'publish',
+      title: '发布 config.yml → 大区 server-a',
+      detail: 'v2→v3 · 热推 90 台在线服 · 校验通过',
+      state: '完成',
+      done: true,
+      operator: 'admin',
+      target: '大区 server-a · 90 台',
+      time: '12 分钟前',
+    },
+    {
+      id: 5,
+      kind: 'publish',
+      title: '灰度 paper-global.yml → cohort',
+      detail: 'v4→v5 · 先发 12 台 · 待晋升',
+      state: '灰度中',
+      operator: 'ops-li',
+      target: 'cohort 12 台',
+      time: '30 分钟前',
+    },
+    {
+      id: 6,
+      kind: 'publish',
+      title: '发布 spigot.yml → 全局',
+      detail: 'v1→v2 · 热推 980 台在线服',
+      state: '完成',
+      done: true,
+      operator: 'admin',
+      target: '全局 · 980 台',
+      time: '1 小时前',
+    },
+    {
+      id: 7,
+      kind: 'audit',
+      title: 'admin 改 config.yml 单服 server-01',
+      detail: 'spawn-protection 16→0 · motd 改写',
+      state: '已记录',
+      done: true,
+      operator: 'admin',
+      target: '单服 server-01',
+      time: '1 小时前',
+    },
+    {
+      id: 8,
+      kind: 'audit',
+      title: 'ops-li 回滚 LuckPerms/config.yml → v1',
+      detail: '读 v1 内容发为 v3',
+      state: '已记录',
+      done: true,
+      operator: 'ops-li',
+      target: '大区 server-a',
+      time: '2 小时前',
+    },
+    {
+      id: 9,
+      kind: 'audit',
+      title: 'admin 新增排除规则 world/**',
+      detail: '作用于 扫描/同步/管理',
+      state: '已记录',
+      done: true,
+      operator: 'admin',
+      target: '全局',
+      time: '昨天',
+    },
   ]
 }
 
@@ -466,10 +621,17 @@ difficulty: normal`,
 // ===== 纯函数：层文本 / 块解析 / 合并 =====
 
 // 某层对某 (group,zone,server) 生效的文本（不适用返回 null）
-export function layerText(file: MockFile, level: LayerLevel, group: string, zone: string, serverId: string): string | null {
+export function layerText(
+  file: MockFile,
+  level: LayerLevel,
+  group: string,
+  zone: string,
+  serverId: string,
+): string | null {
   if (level === 'global') return file.global
   if (level === 'area') return group === AREA_GROUP ? (file.area ?? null) : null
-  if (level === 'zone') return group === AREA_GROUP && zone === ZONE_TARGET ? (file.zone ?? null) : null
+  if (level === 'zone')
+    return group === AREA_GROUP && zone === ZONE_TARGET ? (file.zone ?? null) : null
   return file.server?.[serverId] ?? null
 }
 
@@ -531,7 +693,13 @@ function fmtVal(v: unknown): string {
 }
 
 // 某层对某 (group,zone,server) 生效的叶子路径
-function layerFlat(file: MockFile, level: LayerLevel, group: string, zone: string, serverId: string): Flat[] {
+function layerFlat(
+  file: MockFile,
+  level: LayerLevel,
+  group: string,
+  zone: string,
+  serverId: string,
+): Flat[] {
   const t = layerText(file, level, group, zone, serverId)
   return t === null ? [] : parseFlat(t, fileLang(file))
 }
@@ -543,7 +711,12 @@ export interface FlatLine {
   source: LayerLevel
 }
 
-export function flatEffective(file: MockFile, group: string, zone: string, serverId: string): FlatLine[] {
+export function flatEffective(
+  file: MockFile,
+  group: string,
+  zone: string,
+  serverId: string,
+): FlatLine[] {
   const order: string[] = []
   const map = new Map<string, { value: string; source: LayerLevel }>()
   for (const lvl of LAYER_ORDER) {
@@ -562,9 +735,19 @@ export interface ColumnRow {
   winner: LayerLevel
 }
 
-export function columnRows(file: MockFile, group: string, zone: string, serverId: string): ColumnRow[] {
+export function columnRows(
+  file: MockFile,
+  group: string,
+  zone: string,
+  serverId: string,
+): ColumnRow[] {
   const order: string[] = []
-  const perLayer: Record<LayerLevel, Map<string, string>> = { global: new Map(), area: new Map(), zone: new Map(), server: new Map() }
+  const perLayer: Record<LayerLevel, Map<string, string>> = {
+    global: new Map(),
+    area: new Map(),
+    zone: new Map(),
+    server: new Map(),
+  }
   for (const lvl of LAYER_ORDER) {
     for (const { path, value } of layerFlat(file, lvl, group, zone, serverId)) {
       if (!order.includes(path)) order.push(path)
@@ -574,7 +757,8 @@ export function columnRows(file: MockFile, group: string, zone: string, serverId
   const winner = new Map(flatEffective(file, group, zone, serverId).map((e) => [e.path, e.source]))
   return order.map((path) => {
     const cells = {} as Record<LayerLevel, string | null>
-    for (const lvl of LAYER_ORDER) cells[lvl] = perLayer[lvl].has(path) ? perLayer[lvl].get(path)! : null
+    for (const lvl of LAYER_ORDER)
+      cells[lvl] = perLayer[lvl].has(path) ? perLayer[lvl].get(path)! : null
     return { path, cells, winner: winner.get(path) ?? 'global' }
   })
 }
@@ -588,10 +772,20 @@ export interface DriftRow {
   kind: DiffKind
 }
 
-export function driftRows(file: MockFile, group: string, zone: string, serverId: string): DriftRow[] {
+export function driftRows(
+  file: MockFile,
+  group: string,
+  zone: string,
+  serverId: string,
+): DriftRow[] {
   const eff = new Map(flatEffective(file, group, zone, serverId).map((e) => [e.path, e.value]))
   const diskText = file.disk?.[serverId]
-  const disk = new Map((diskText !== undefined ? parseFlat(diskText, fileLang(file)) : []).map((x) => [x.path, x.value]))
+  const disk = new Map(
+    (diskText !== undefined ? parseFlat(diskText, fileLang(file)) : []).map((x) => [
+      x.path,
+      x.value,
+    ]),
+  )
   const order: string[] = []
   for (const k of eff.keys()) order.push(k)
   for (const k of disk.keys()) if (!order.includes(k)) order.push(k)
@@ -619,7 +813,8 @@ export function descendantFiles(dirPath: string): string[] {
   function walk(ns: TreeNode[]): void {
     for (const n of ns) {
       if (n.type === 'file') {
-        if (dirPath === '' || n.path === dirPath || n.path.startsWith(`${dirPath}/`)) out.push(n.path)
+        if (dirPath === '' || n.path === dirPath || n.path.startsWith(`${dirPath}/`))
+          out.push(n.path)
       } else walk(n.children ?? [])
     }
   }
@@ -640,18 +835,45 @@ export interface DirFileRow {
 }
 
 // 计算某目录（递归）下每个文件的对盘状态
-export function dirFileRows(dir: string, files: Record<string, MockFile>, rules: ExcludeRule[], group: string, zone: string, serverId: string): DirFileRow[] {
+export function dirFileRows(
+  dir: string,
+  files: Record<string, MockFile>,
+  rules: ExcludeRule[],
+  group: string,
+  zone: string,
+  serverId: string,
+): DirFileRow[] {
   return descendantFiles(dir).map((path) => {
     const excluded = isExcluded(path, rules)
     const f = files[path]
     if (f) {
       const hasDisk = f.disk?.[serverId] !== undefined
-      return { path, name: f.name, lang: fileLang(f), managed: true, unmanaged: false, excluded, hasDisk, drift: hasDisk ? driftCount(f, group, zone, serverId) : 0 }
+      return {
+        path,
+        name: f.name,
+        lang: fileLang(f),
+        managed: true,
+        unmanaged: false,
+        excluded,
+        hasDisk,
+        drift: hasDisk ? driftCount(f, group, zone, serverId) : 0,
+      }
     }
     const disk = unmanagedText(path, serverId)
     const name = path.split('/').pop() ?? path
-    const lines = disk ? disk.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#')).length : 0
-    return { path, name, lang: langOfName(name), managed: false, unmanaged: disk !== null, excluded, hasDisk: disk !== null, drift: lines }
+    const lines = disk
+      ? disk.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#')).length
+      : 0
+    return {
+      path,
+      name,
+      lang: langOfName(name),
+      managed: false,
+      unmanaged: disk !== null,
+      excluded,
+      hasDisk: disk !== null,
+      drift: lines,
+    }
   })
 }
 
@@ -693,7 +915,8 @@ function coerce(v: string): unknown {
   if (v === 'false') return false
   if (v === 'null') return null
   if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v)
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) return v.slice(1, -1)
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'")))
+    return v.slice(1, -1)
   return v
 }
 
@@ -738,10 +961,20 @@ export function fileLang(file: MockFile): string {
 
 // ===== 生效"真源文件"（深合并后序列化成真实 yaml/json/properties，供编辑器编辑） =====
 
-function deepMergeObj(base: Record<string, unknown>, over: Record<string, unknown>): Record<string, unknown> {
+function deepMergeObj(
+  base: Record<string, unknown>,
+  over: Record<string, unknown>,
+): Record<string, unknown> {
   for (const [k, v] of Object.entries(over)) {
     const b = base[k]
-    if (v && typeof v === 'object' && !Array.isArray(v) && b && typeof b === 'object' && !Array.isArray(b)) {
+    if (
+      v &&
+      typeof v === 'object' &&
+      !Array.isArray(v) &&
+      b &&
+      typeof b === 'object' &&
+      !Array.isArray(b)
+    ) {
       base[k] = deepMergeObj({ ...(b as Record<string, unknown>) }, v as Record<string, unknown>)
     } else base[k] = v
   }
@@ -749,7 +982,12 @@ function deepMergeObj(base: Record<string, unknown>, over: Record<string, unknow
 }
 
 // plaintext / 非结构化：取最具体的有内容层（整文件覆盖）
-export function topSourceLayer(file: MockFile, group: string, zone: string, serverId: string): LayerLevel {
+export function topSourceLayer(
+  file: MockFile,
+  group: string,
+  zone: string,
+  serverId: string,
+): LayerLevel {
   for (const lvl of [...LAYER_ORDER].reverse()) {
     const t = layerText(file, lvl, group, zone, serverId)
     if (t !== null && t.trim() !== '') return lvl
@@ -758,12 +996,22 @@ export function topSourceLayer(file: MockFile, group: string, zone: string, serv
 }
 
 // 合并后的真实源文本
-export function effectiveSource(file: MockFile, group: string, zone: string, serverId: string): string {
+export function effectiveSource(
+  file: MockFile,
+  group: string,
+  zone: string,
+  serverId: string,
+): string {
   const lang = fileLang(file)
-  if (lang === 'plaintext') return layerText(file, topSourceLayer(file, group, zone, serverId), group, zone, serverId) ?? file.global
+  if (lang === 'plaintext')
+    return (
+      layerText(file, topSourceLayer(file, group, zone, serverId), group, zone, serverId) ??
+      file.global
+    )
   if (lang === 'properties') {
     const m = new Map<string, string>()
-    for (const lvl of LAYER_ORDER) for (const { path, value } of layerFlat(file, lvl, group, zone, serverId)) m.set(path, value)
+    for (const lvl of LAYER_ORDER)
+      for (const { path, value } of layerFlat(file, lvl, group, zone, serverId)) m.set(path, value)
     return [...m].map(([k, v]) => `${k}=${v}`).join('\n')
   }
   let obj: Record<string, unknown> = {}
@@ -781,7 +1029,12 @@ export function effectiveSource(file: MockFile, group: string, zone: string, ser
 }
 
 // 叶子路径来源扩展成"每段前缀的统一来源"（去数组下标）：某前缀下所有叶子同源才记，供逐行着色继承
-export function provenanceMap(file: MockFile, group: string, zone: string, serverId: string): Map<string, LayerLevel> {
+export function provenanceMap(
+  file: MockFile,
+  group: string,
+  zone: string,
+  serverId: string,
+): Map<string, LayerLevel> {
   const sets = new Map<string, Set<LayerLevel>>()
   for (const { path, source } of flatEffective(file, group, zone, serverId)) {
     const cleaned = path.replace(/\[\d+\]/g, '')
@@ -798,7 +1051,12 @@ export function provenanceMap(file: MockFile, group: string, zone: string, serve
 }
 
 // 真实源文本逐行 → 来源层：按缩进键栈定位前缀路径查 prov；查不到继承父块来源，再不行用兜底（保证每行都有标签）
-export function lineSources(text: string, prov: Map<string, LayerLevel>, lang: string, fallback: LayerLevel): (LayerLevel | null)[] {
+export function lineSources(
+  text: string,
+  prov: Map<string, LayerLevel>,
+  lang: string,
+  fallback: LayerLevel,
+): (LayerLevel | null)[] {
   const out: (LayerLevel | null)[] = []
   const stack: { indent: number; key: string; source: LayerLevel }[] = []
   for (const raw of text.split('\n')) {
@@ -819,8 +1077,14 @@ export function lineSources(text: string, prov: Map<string, LayerLevel>, lang: s
       out.push(parent)
       continue
     }
-    const key = trimmed.slice(0, sep).trim().replace(/^["']|["']$/g, '')
-    const rest = trimmed.slice(sep + 1).trim().replace(/,$/, '')
+    const key = trimmed
+      .slice(0, sep)
+      .trim()
+      .replace(/^["']|["']$/g, '')
+    const rest = trimmed
+      .slice(sep + 1)
+      .trim()
+      .replace(/,$/, '')
     const path = lang === 'properties' ? key : [...stack.map((s) => s.key), key].join('.')
     const src = prov.get(path) ?? parent
     if (lang !== 'properties' && (rest === '' || rest === '{' || rest === '[')) {

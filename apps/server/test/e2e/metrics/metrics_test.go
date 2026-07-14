@@ -45,7 +45,7 @@ const (
 	adminUser    = "admin"
 	serverID     = "e2e-bukkit-1"
 	mcPort       = "25566"
-	namespace    = "prod"
+	namespace    = "e2e-metrics"
 	bootstrap    = "beacon-bootstrap-2026"
 	onlineWait   = 12 * time.Minute // 首跑含下载 Paper + 构建 jar，给足时间
 	logPrefixCP  = "beacon-metrics"
@@ -56,7 +56,7 @@ const (
 	sampleIntervalSec = "2"
 )
 
-// 触发上报用的最小配置（global 层，namespace=prod → 覆盖到该环境全部在线实例，含 e2e-bukkit-1）。
+// 触发上报用的最小配置（global 层，使用独立 E2E namespace → 覆盖到该环境全部在线实例，含 e2e-bukkit-1）。
 const (
 	triggerDataID  = "beacon-e2e-metrics"
 	triggerFormat  = merge.FormatYAML
@@ -101,22 +101,44 @@ func TestMetricsE2E(t *testing.T) {
 	}
 	defer cp.Stop()
 
+	token, err := harness.Login(beaconURL, adminUser, adminPass)
+	if err != nil {
+		t.Fatalf("登录失败：%v", err)
+	}
+	namespaceID, accessToken, err := harness.CreateV2Namespace(beaconURL, token, namespace, "FR-32 指标看板 e2e")
+	if err != nil {
+		t.Fatalf("创建 %s namespace 失败：%v", namespace, err)
+	}
+	t.Logf("已建 v2 namespace id=%d", namespaceID)
+
 	t.Log("== 起 Paper 子服（" + mcPort + "）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{"-Pe2eMcPort=" + mcPort, harness.BeaconEndpointProp()}, logPrefixMC)
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+		"-Pe2eMcPort=" + mcPort,
+		harness.BeaconEndpointProp(),
+		"-Pe2eBootstrapToken=" + accessToken,
+		"-Pe2eNamespace=" + namespace,
+		"-Pe2eServerId=" + serverID,
+	}, logPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
 	defer paper.Stop()
 
-	t.Log("== 等 agent online（首跑含下载/构建，耐心等）==")
-	token, err := harness.Login(beaconURL, adminUser, adminPass)
+	t.Log("== 等 agent identity pending，批准后继续等 legacy online ==")
+	identityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "pending", onlineWait)
 	if err != nil {
-		t.Fatalf("登录失败：%v", err)
+		t.Fatalf("等 %s identity pending 超时（见 .tmp/paper.out.log）：%v", serverID, err)
+	}
+	if err := harness.ApproveIdentity(beaconURL, token, identityID); err != nil {
+		t.Fatalf("批准 %s identity 失败：%v", serverID, err)
+	}
+	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "active", onlineWait); err != nil {
+		t.Fatalf("等 %s identity active 超时：%v", serverID, err)
 	}
 	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, serverID, onlineWait); err != nil {
 		t.Fatalf("等 %s online 超时（见 .tmp/paper.out.log）：%v", serverID, err)
 	}
-	t.Log("agent 已 online")
+	t.Log("agent 已 active + online")
 
 	// 触发一次「配置 apply → 上报指标」，使注册表里 e2e-bukkit-1 带上真 JVM 负载（供 summary 出真值）。
 	runReport(t, token)

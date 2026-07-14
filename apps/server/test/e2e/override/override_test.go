@@ -56,12 +56,14 @@ const (
 // 控制面地址：默认 http://localhost:8848，可经 E2E_BEACON_URL 覆盖（本地避端口争用）。
 var beaconURL = harness.BeaconURL()
 
+// namespace 每个测试进程生成一次唯一值，进程内所有控制面与数据层操作稳定复用。
+var namespace = fmt.Sprintf("e2e-override-%d", time.Now().UnixNano())
+
 // 服务端编排相关常量（与 runServer gradle 任务的约定一致）。
 const (
 	adminUser    = "admin"
 	serverID     = "e2e-bukkit-1"
 	mcPort       = "25566"
-	namespace    = "prod"
 	bootstrap    = "beacon-bootstrap-2026"
 	onlineWait   = 12 * time.Minute // 首跑含下载 Paper + 构建 jar，给足时间
 	logPrefixCP  = "beacon-override"
@@ -104,7 +106,8 @@ func TestOverrideE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("定位仓库根失败：%v", err)
 	}
-	runDir := filepath.Join(repoRoot, ".tmp", "e2e-run", "bukkit")
+	// Gradle runDirectory 位于 apps/.tmp，观测与受管文件均从实际运行目录读取。
+	runDir := filepath.Join(repoRoot, "apps", ".tmp", "e2e-run", "bukkit")
 	paths := runPaths(runDir)
 
 	// 数据库 DSN：sqlite 用 .tmp 下独立文件并起前删除（等价 Reset-Db 的干净库）；mysql 用 E2E_DB_DSN 并 TRUNCATE。
@@ -132,20 +135,41 @@ func TestOverrideE2E(t *testing.T) {
 			cp.Stop()
 		}
 	}()
+
+	adminToken, err := harness.Login(beaconURL, adminUser, adminPass)
+	if err != nil {
+		t.Fatalf("登录失败：%v", err)
+	}
+	namespaceID, accessToken, err := harness.CreateV2Namespace(beaconURL, adminToken, namespace, "FR-15 覆盖集 e2e")
+	if err != nil {
+		t.Fatalf("创建 %s namespace 失败：%v", namespace, err)
+	}
+	t.Logf("已建 v2 namespace id=%d", namespaceID)
+
 	if dbDriver == "mysql" {
 		truncateOverrideTables(t, dbDriver, dbDSN)
 	}
-	resetRunDirMirror(runDir)
+	resetRunDirMirror(t, runDir)
 
 	t.Log("== 相位 inert（空白名单）+ filetree（FR-14 文件树镜像落盘）==")
-	paper := startPaper(t, repoRoot, "")
+	paper := startPaper(t, repoRoot, accessToken, "")
 	paperStopped := false
 	defer func() {
 		if !paperStopped {
 			paper.Stop()
 		}
 	}()
-	if err := harness.WaitInstanceOnline(beaconURL, login(t, adminPass), namespace, serverID, onlineWait); err != nil {
+	identityID, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "pending", onlineWait)
+	if err != nil {
+		t.Fatalf("inert：agent identity 未进入 pending（见 .tmp/paper.out.log）：%v", err)
+	}
+	if err := harness.ApproveIdentity(beaconURL, adminToken, identityID); err != nil {
+		t.Fatalf("inert：批准 agent identity 失败：%v", err)
+	}
+	if _, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait); err != nil {
+		t.Fatalf("inert：agent identity 未进入 active：%v", err)
+	}
+	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait); err != nil {
 		t.Fatalf("inert：agent 未 online（见 .tmp/paper.out.log）：%v", err)
 	}
 
@@ -161,28 +185,27 @@ func TestOverrideE2E(t *testing.T) {
 	// （Paper2 经 gradle --no-daemon 重建较慢，且 CoreLib.onEnable 在主线程等首次注册才放行 BeaconE2E，
 	// 故必须等到 Paper2 的全新注册，而非残留 online）。
 	// FR-49 后「下线」是粘性拒绝态：下线只为清掉陈旧 online 条目，须随即「取消下线」清掉拒绝表，
-	// 否则 Paper2 的全新注册会被 403 INSTANCE_OFFLINE_REJECTED 拒、永不 online（取消下线不影响"等新注册"）。
-	if tok, err := harness.Login(beaconURL, adminUser, adminPass); err != nil {
-		t.Logf("ordering 前登录失败、跳过强制下线（继续）：%v", err)
-	} else {
-		if err := harness.OfflineInstance(beaconURL, tok, namespace, serverID); err != nil {
-			t.Logf("ordering 前强制下线失败（继续）：%v", err)
-		}
-		if err := harness.CancelOfflineInstance(beaconURL, tok, namespace, serverID); err != nil {
-			t.Logf("ordering 前取消下线失败（继续）：%v", err)
-		}
+	// 否则 Paper2 的全新注册会被 403 INSTANCE_OFFLINE_REJECTED 拒、永不 online。两步均是重启前置条件，失败即终止。
+	if err := harness.OfflineInstance(beaconURL, adminToken, namespace, serverID); err != nil {
+		t.Fatalf("ordering 前强制下线失败：%v", err)
+	}
+	if err := harness.CancelOfflineInstance(beaconURL, adminToken, namespace, serverID); err != nil {
+		t.Fatalf("ordering 前取消下线失败：%v", err)
 	}
 
 	t.Log("== 相位 ordering（放行白名单：次序 + 回滚不重放）==")
-	resetRunDirMirror(runDir) // 复位 managed.yml 为 A；DB 覆盖集保留（含命令）
-	paper2 := startPaper(t, repoRoot, reloadCmd)
+	resetRunDirMirror(t, runDir) // 复位 managed.yml 为 A；DB 覆盖集保留（含命令）
+	paper2 := startPaper(t, repoRoot, accessToken, reloadCmd)
 	paper2Stopped := false
 	defer func() {
 		if !paper2Stopped {
 			paper2.Stop()
 		}
 	}()
-	if err := harness.WaitInstanceOnline(beaconURL, login(t, adminPass), namespace, serverID, onlineWait); err != nil {
+	if _, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait); err != nil {
+		t.Fatalf("ordering：复用的 agent identity 不再 active：%v", err)
+	}
+	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait); err != nil {
 		t.Fatalf("ordering：agent 未 online：%v", err)
 	}
 	t.Run("ordering", func(t *testing.T) { runOrdering(t, adminPass, paths) })
@@ -197,10 +220,16 @@ func TestOverrideE2E(t *testing.T) {
 	paper2Stopped = true
 }
 
-// startPaper 起 Paper（whitelist 非空则注入本地命令白名单，空则保持默认空 = inert）。
-func startPaper(t *testing.T, repoRoot, whitelist string) *harness.GradleProc {
+// startPaper 起 Paper，并显式注入 v2 namespace token；whitelist 为空时保持默认 inert。
+func startPaper(t *testing.T, repoRoot, accessToken, whitelist string) *harness.GradleProc {
 	t.Helper()
-	props := []string{"-Pe2eMcPort=" + mcPort, harness.BeaconEndpointProp()}
+	props := []string{
+		"-Pe2eMcPort=" + mcPort,
+		harness.BeaconEndpointProp(),
+		"-Pe2eBootstrapToken=" + accessToken,
+		"-Pe2eNamespace=" + namespace,
+		"-Pe2eServerId=" + serverID,
+	}
 	if whitelist != "" {
 		props = append(props, "-Pe2eCommandWhitelist="+whitelist)
 	}
@@ -336,7 +365,7 @@ func ensureSet(t *testing.T, token string) uint {
 		return id
 	}
 	body := map[string]any{
-		"namespace": "prod", "group": model.GlobalGroupCode, "name": setName,
+		"namespace": namespace, "group": model.GlobalGroupCode, "name": setName,
 		"scopeLevel": model.ScopeGlobal, "scopeTarget": "",
 		"targetRoot": targetRoot, "reloadCommand": "", "comment": "e2e 初始化（空命令）",
 	}
@@ -355,7 +384,7 @@ func findSet(t *testing.T, token string) (uint, bool) {
 			Name string `json:"name"`
 		} `json:"items"`
 	}
-	doAdmin(t, http.MethodGet, "/admin/v1/override-sets?namespace=prod", token, nil, http.StatusOK, &resp)
+	doAdmin(t, http.MethodGet, "/admin/v1/override-sets?namespace="+namespace, token, nil, http.StatusOK, &resp)
 	for _, it := range resp.Items {
 		if it.Name == setName {
 			return it.ID, true
@@ -387,7 +416,7 @@ func rollbackSet(t *testing.T, token string, id uint, toVersion int) {
 // publishTreeFile 经 admin REST 建一个文件树文件（global 层），触发 agent 文件树镜像落盘（FR-14）。
 func publishTreeFile(t *testing.T, token string) {
 	body := map[string]any{
-		"namespace": "prod", "group": model.GlobalGroupCode, "path": treeFilePath,
+		"namespace": namespace, "group": model.GlobalGroupCode, "path": treeFilePath,
 		"scopeLevel": model.ScopeGlobal, "scopeTarget": "",
 		"content": treeContent, "comment": "e2e 文件树镜像验收",
 	}
@@ -407,7 +436,7 @@ func ensureMember(t *testing.T, dbDriver, dbDSN string, setID uint) {
 	}
 	sum := md5.Sum([]byte(contentB))
 	obj := &model.FileObject{
-		NamespaceCode: "prod", GroupCode: model.GlobalGroupCode, Path: memberPath,
+		NamespaceCode: namespace, GroupCode: model.GlobalGroupCode, Path: memberPath,
 		ScopeLevel: model.ScopeGlobal, Content: contentB, ContentMD5: hex.EncodeToString(sum[:]),
 		Version: 1, Enabled: true, OverrideSetID: setID,
 	}
@@ -593,15 +622,23 @@ func escape(s string) string {
 // ---- 运行目录复位 ----
 
 // resetRunDirMirror 复位运行目录的镜像/覆盖状态：删受管文件（验收插件 ENABLE 时重种原文件 A）、覆盖与文件树观测日志、
-// 陈旧备份、误落 plugins/plugins、文件树镜像文件与 agent 已落盘清单，确保每轮观测的是 agent 本轮新落的内容。
-func resetRunDirMirror(runDir string) {
-	_ = os.RemoveAll(filepath.Join(runDir, "plugins", "plugins"))
-	_ = os.Remove(filepath.Join(runDir, "plugins", "BeaconE2E", "managed.yml"))
-	_ = os.Remove(filepath.Join(runDir, "plugins", "BeaconE2E", "e2e-override-observations.log"))
-	_ = os.RemoveAll(filepath.Join(runDir, "plugins", "BeaconAgent", "override-backup"))
-	_ = os.Remove(filepath.Join(runDir, "plugins", "BeaconE2E", "tree-managed.yml"))
-	_ = os.Remove(filepath.Join(runDir, "plugins", "BeaconE2E", "e2e-filetree-observations.log"))
-	_ = os.Remove(filepath.Join(runDir, "plugins", "BeaconAgent", "file-tree.applied.json"))
+// 陈旧备份、误落 plugins/plugins、文件树镜像文件与 agent 已落盘清单；任何清理失败都终止测试，避免残留观测假绿。
+func resetRunDirMirror(t *testing.T, runDir string) {
+	t.Helper()
+	removeRunPath(t, filepath.Join(runDir, "plugins", "plugins"), os.RemoveAll)
+	removeRunPath(t, filepath.Join(runDir, "plugins", "BeaconE2E", "managed.yml"), os.Remove)
+	removeRunPath(t, filepath.Join(runDir, "plugins", "BeaconE2E", "e2e-override-observations.log"), os.Remove)
+	removeRunPath(t, filepath.Join(runDir, "plugins", "BeaconAgent", "override-backup"), os.RemoveAll)
+	removeRunPath(t, filepath.Join(runDir, "plugins", "BeaconE2E", "tree-managed.yml"), os.Remove)
+	removeRunPath(t, filepath.Join(runDir, "plugins", "BeaconE2E", "e2e-filetree-observations.log"), os.Remove)
+	removeRunPath(t, filepath.Join(runDir, "plugins", "BeaconAgent", "file-tree.applied.json"), os.Remove)
+}
+
+func removeRunPath(t *testing.T, path string, remove func(string) error) {
+	t.Helper()
+	if err := remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("清理运行目录失败（%s）：%v", path, err)
+	}
 }
 
 // ---- 小工具 ----

@@ -12,20 +12,14 @@ import { apiBaseFromLocation, buildApiKeyCurl } from '@/lib/curlCommand'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
 import { AsyncSection } from '@beacon/ui'
-import { DataTable, type DataTableColumn  } from '@beacon/ui'
-import { SummaryStrip, type SummaryItem  } from '@beacon/ui'
+import { DataTable, type DataTableColumn } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem } from '@beacon/ui'
 import { Badge } from '@beacon/ui'
 import { Button } from '@beacon/ui'
 import { Input } from '@beacon/ui'
 import { Label } from '@beacon/ui'
 import { cn } from '@/lib/utils'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,

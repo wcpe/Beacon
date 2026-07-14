@@ -17,14 +17,20 @@ const marker = join(destDir, '.monaco-version')
 
 // 未安装 monaco-editor → 明确报错，避免后续编辑器静默不可用
 if (!existsSync(srcVs)) {
-  console.error('[vendor-monaco] 未找到 node_modules/monaco-editor/min/vs，请先安装依赖（pnpm install）')
+  console.error(
+    '[vendor-monaco] 未找到 node_modules/monaco-editor/min/vs，请先安装依赖（pnpm install）',
+  )
   process.exit(1)
 }
 
 const version = JSON.parse(readFileSync(join(monacoRoot, 'package.json'), 'utf8')).version
 
 // 已是目标版本则跳过：拷贝 16M 资产较慢，避免每次 dev / build 重复执行
-if (existsSync(marker) && readFileSync(marker, 'utf8').trim() === version && existsSync(join(destVs, 'loader.js'))) {
+if (
+  existsSync(marker) &&
+  readFileSync(marker, 'utf8').trim() === version &&
+  existsSync(join(destVs, 'loader.js'))
+) {
   console.log(`[vendor-monaco] 已是 ${version}，跳过`)
   process.exit(0)
 }
@@ -43,7 +49,10 @@ cpSync(srcVs, destVs, { recursive: true })
 //（语言包通过 globalThis._VSCODE_NLS_MESSAGES 注入文案，只需被成功执行即可生效）。
 const localeSrc = join(srcVs, 'nls.messages.zh-cn.js.js')
 if (existsSync(localeSrc)) {
-  const code = readFileSync(localeSrc, 'utf8').replace('define("vs/nls.messages.zh-cn.js"', 'define("vs/nls.messages.zh-cn"')
+  const code = readFileSync(localeSrc, 'utf8').replace(
+    'define("vs/nls.messages.zh-cn.js"',
+    'define("vs/nls.messages.zh-cn"',
+  )
   writeFileSync(join(destVs, 'nls.messages.zh-cn.js'), code)
   // 删除无用的双后缀副本，避免误导
   rmSync(join(destVs, 'nls.messages.zh-cn.js.js'), { force: true })

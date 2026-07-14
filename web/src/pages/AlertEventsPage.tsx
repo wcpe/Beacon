@@ -11,18 +11,12 @@ import { formatTime } from '../api/format'
 import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import { SummaryStrip, type SummaryItem  } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem } from '@beacon/ui'
 import { Skeleton } from '@beacon/ui'
 import { Button } from '@beacon/ui'
 import { Input } from '@beacon/ui'
 import { Badge } from '@beacon/ui'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@beacon/ui'
 
 // 单页条数（固定，运维场景无需可配）
