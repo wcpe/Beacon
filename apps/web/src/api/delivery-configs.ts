@@ -69,6 +69,19 @@ export function fetchConfigFileDetail(id: number): Promise<ConfigFileDetail> {
   return request('GET', `/admin/v2/config-files/${String(id)}`)
 }
 
+// ---- 更新文件元数据（描述 / schema / 敏感路径；改敏感路径需 reason） ----
+
+export interface UpdateConfigFileBody {
+  description?: string
+  schemaJson?: string
+  sensitivePaths?: string[]
+  reason?: string
+}
+
+export function updateConfigFile(id: number, body: UpdateConfigFileBody): Promise<ConfigFileDetail> {
+  return request('PATCH', `/admin/v2/config-files/${String(id)}`, body)
+}
+
 // ---- 软删除（移入回收站） ----
 
 export function deleteConfigFile(id: number): Promise<void> {

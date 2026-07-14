@@ -483,6 +483,7 @@ function mergeLayers(state: ClusterState, file: ConfigFileRow, target: ResolvedT
             path: key,
             scopeLevel: layer.scopeLevel,
             scopeRefId: layer.scopeRefId,
+            scopeName: scopeName(state, layer.scopeLevel, layer.scopeRefId),
             versionNo: head.versionNo,
           })
         }

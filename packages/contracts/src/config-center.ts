@@ -131,11 +131,12 @@ export interface ConfigProvenanceEntry {
   versionNo: number
 }
 
-/** 被 null 删除的键 */
+/** 被 null 删除的键（含执行删除层的名称，供页面直接展示） */
 export interface ConfigDeletedKey {
   path: string
   scopeLevel: ConfigScopeLevel
   scopeRefId: number
+  scopeName: string
   versionNo: number
 }
 
