@@ -22,6 +22,7 @@ type Handlers struct {
 	V2MessageAdmin    *handler.V2MessageAdminHandler
 	V2Archive         *handler.V2ArchiveHandler
 	V2ConfigCenter    *handler.V2ConfigCenterHandler
+	V2Assets          *handler.V2AssetsHandler
 	SchedDecision     *handler.SchedDecisionAdminHandler
 	Config            *handler.ConfigHandler
 	File              *handler.FileHandler
@@ -139,6 +140,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/poll", h.V2Message.Poll)
 				r.With(agentV2ReportMiddleware(h.V2)).Post("/messages/ack", h.V2Message.Ack)
 			}
+
+			// P8 挂载点：文件资产清单上报（FR-163，见 §5.1）：与指标 / 连接采集面同挂 token↔namespace +
+			// identity 鉴权中间件（未确认 403），注入权威身份归属清单；增量 / 全量分片入库走常规同步事务。
+			// 抽成函数注册（内部 nil 守卫），避免本 v2 agent 组内联 if 累加触发 nestif。
+			registerV2AssetsAgentRoutes(r, h)
 		})
 	}
 
@@ -252,6 +258,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Get("/config-files/{id}/diff", h.V2ConfigCenter.Diff)
 			r.Get("/config-versions/{versionId}", h.V2ConfigCenter.GetVersion)
 			r.Post("/config-versions/{versionId}/rollback", h.V2ConfigCenter.Rollback)
+
+			// 文件资产索引管理面（FR-163，见 §5.2）：搜索 / 每服概要 / 跨服比对（只读 GET）+ 批量重扫下发（POST 写）。
+			// rescan 为写方法，readonly 经上面 readonlyWriteGuard 403；其 asset.rescan 专项审计由 AssetService 在事务内自记，
+			// 已登记 coveredWriteRoutes 使兜底审计跳过、避免双记。抽成函数注册（内部 nil 守卫），避免内联 if 触发 nestif。
+			registerV2AssetsAdminRoutes(r, h)
 		})
 	}
 
@@ -459,4 +470,25 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）
 	r.NotFound(h.Web.ServeHTTP)
 	return r
+}
+
+// registerV2AssetsAgentRoutes 注册文件资产 agent 面清单上报（FR-163，见 §5.1）；V2Assets 未装配则跳过。
+// 抽成独立函数使 /beacon/v2/agent 组不因内联 if 累加触发 nestif；挂 v2 上报鉴权中间件（未确认 403）。
+func registerV2AssetsAgentRoutes(r chi.Router, h Handlers) {
+	if h.V2Assets == nil {
+		return
+	}
+	r.With(agentV2ReportMiddleware(h.V2)).Post("/assets/manifest", h.V2Assets.Manifest)
+}
+
+// registerV2AssetsAdminRoutes 注册文件资产管理面端点（FR-163，见 §5.2）；V2Assets 未装配则跳过。
+// 搜索 / 概要 / 比对为只读 GET；rescan 为写方法（readonly 经 readonlyWriteGuard 403，自审计已登记 coveredWriteRoutes）。
+func registerV2AssetsAdminRoutes(r chi.Router, h Handlers) {
+	if h.V2Assets == nil {
+		return
+	}
+	r.Get("/assets", h.V2Assets.Search)
+	r.Get("/assets/scan-status", h.V2Assets.ScanStatus)
+	r.Get("/assets/compare", h.V2Assets.Compare)
+	r.Post("/assets/rescan", h.V2Assets.Rescan)
 }

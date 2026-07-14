@@ -313,6 +313,14 @@ func run() error {
 	commandService.SetBrowseResultHub(browseHub)
 	browseHandler := handler.NewBrowseHandler(commandService, instanceService)
 
+	// P8 装配点：文件资产索引（FR-163，见 v2-file-assets.md）：agent 面清单上报（增量 / 全量分片，摘要校准）+
+	// 管理面搜索 / 概要 / 跨服比对 / 批量重扫。重扫复用同一 commandRepo（asset-rescan 类型）经既有长轮询命令通道下发，
+	// 建命令提交后经 notifier 唤醒目标 agent。本域对目标文件系统零写入（只读索引）。
+	assetService := service.NewAssetService(db,
+		repository.NewFileAssetRepository(db), repository.NewFileAssetScanRepository(db), commandRepo, auditRepo)
+	assetService.SetNotifier(notifier)
+	v2AssetsHandler := handler.NewV2AssetsHandler(assetService)
+
 	// 多级灰度文件同步中心（FR-129/FR-131）：当前切片只装配任务真源、目标规划、控制动作与管理台 SSE。
 	fileSyncService := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instanceService, auditRepo, service.NewFileSyncEventHub())
 	fileSyncHandler := handler.NewFileSyncHandler(fileSyncService)
@@ -490,7 +498,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

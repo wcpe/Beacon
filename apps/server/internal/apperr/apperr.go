@@ -125,6 +125,9 @@ var (
 	ErrClockSkewTooLarge = New(http.StatusBadRequest, "clock_skew_too_large", "上报时钟与控制面偏移过大，请校时后重试")
 	// ErrMetricsIngestBusy 指标写入队列已满，控制面过载保护，agent 保留缓冲重试不丢数据（spec §4.3/§5.1）。
 	ErrMetricsIngestBusy = New(http.StatusTooManyRequests, "metrics_ingest_busy", "指标写入繁忙，请稍后重试")
+	// ErrAssetManifestOutOfSync 文件清单增量基线摘要失配（delta baseDigest ≠ 库内摘要 / 全量分片暂存丢失或乱序），
+	// agent 收到即改发全量自愈（FR-163，spec §4.3，见 ADR 清单上报协议）。code 用 agent 面小写下划线约定。
+	ErrAssetManifestOutOfSync = New(http.StatusConflict, "asset_manifest_out_of_sync", "文件清单基线失配，请改发全量")
 	// ErrConnIngestBusy 连接明细写入队列已满，控制面过载保护，agent 退避后重报不丢数据（FR-145，spec §4.1/§5.1）。
 	ErrConnIngestBusy = New(http.StatusTooManyRequests, "conn_ingest_busy", "连接明细写入繁忙，请稍后重试")
 	// ErrPayloadTooLarge 消息 payload 超出上限（默认 64KB），发送请求被拒不截断（FR-150，spec §3.4/§5.1）。

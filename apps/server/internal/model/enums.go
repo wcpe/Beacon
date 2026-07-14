@@ -428,6 +428,8 @@ const (
 	ActionConfigVersionSave     = "config.version.save"
 	ActionConfigVersionRollback = "config.version.rollback"
 	ActionConfigScopeRemove     = "config.scope.remove"
+	// 文件资产重扫下发（FR-163，spec §4.7）：批量对目标服下发 asset-rescan 命令，detail 记目标 serverId 列表 + force（不含文件内容）
+	ActionAssetRescan = "asset.rescan"
 )
 
 // 审计对象类型。

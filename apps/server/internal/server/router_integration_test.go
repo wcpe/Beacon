@@ -101,6 +101,9 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	commandService.SetFileEffectiveService(fileEffSvc)
 	browseHandler := handler.NewBrowseHandler(commandService, instSvc)
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
+	// P8 文件资产索引（FR-163）：清单上报 + 搜索 / 概要 / 比对 / 重扫；复用同一 commandRepo 下发 asset-rescan。
+	assetSvc := service.NewAssetService(db, repository.NewFileAssetRepository(db), repository.NewFileAssetScanRepository(db), commandRepo, auditRepo)
+	assetSvc.SetNotifier(notifier)
 	fileSyncSvc := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instSvc, auditRepo, service.NewFileSyncEventHub())
 	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。
 	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo, settingsSvc)
@@ -136,6 +139,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Namespace:        nsHandler,
 		V2:               v2Handler,
 		V2Metrics:        v2MetricsHandler,
+		V2Assets:         handler.NewV2AssetsHandler(assetSvc),
 		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo)),
 		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),

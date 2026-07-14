@@ -165,6 +165,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"DELETE /admin/v2/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}": {},
 	// 配置实时校验（spec §4.4）：POST 语义的只读校验，刻意不落库不审计——登记于此使兜底跳过、显式放行
 	"POST /admin/v2/config-files/{id}/validate": {},
+	// 文件资产批量重扫（FR-163：asset.rescan，AssetService 在事务内自记专项审计，detail 记目标 serverId + force）
+	"POST /admin/v2/assets/rescan": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；
