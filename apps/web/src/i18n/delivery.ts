@@ -176,6 +176,23 @@ export const delivery = {
         versions: '版本链',
         diff: '差异对比',
       },
+      // 元数据编辑（PATCH：描述 / schema / 敏感路径）
+      metadata: {
+        edit: '编辑元数据',
+        title: '编辑元数据',
+        descLabel: '描述',
+        schemaLabel: 'JSON Schema（留空 = 不做 schema 校验）',
+        sensitiveLabel: '敏感键路径（每行一个，精确路径，如 database.password）',
+        sensitiveChangedHint: '敏感路径有变更：保存时需二次确认并填写原因',
+        sensitiveConfirmTitle: '确认修改敏感键路径',
+        sensitiveConfirmDesc: '高风险操作：变更将改变脱敏范围，新标记的敏感值保存后不可再查看明文',
+        sensitiveConfirm: '确认修改',
+        sensitiveBefore: '修改前',
+        sensitiveAfter: '修改后',
+        sensitiveCount: '敏感键 {{count}}',
+        save: '保存',
+        cancel: '取消',
+      },
       // 作用域概览
       scopes: {
         title: '各层贡献',
