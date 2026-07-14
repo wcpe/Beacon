@@ -175,6 +175,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/agent-identities/{identityId}/disable", h.V2.DisableAgentIdentity)
 			r.Post("/agent-identities/{identityId}/enable", h.V2.EnableAgentIdentity)
 			r.Post("/agent-identities/{identityId}/unbind", h.V2.UnbindAgentIdentity)
+			r.Post("/agent-identities/{identityId}/resolve-conflict", h.V2.ResolveAgentIdentityConflict)
 
 			// 健康与指标管理端点（FR-147，见 §5.2）
 			if h.V2Health != nil {

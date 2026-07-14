@@ -129,13 +129,14 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）
 	"POST /admin/v2/namespace-trusts":             {},
 	"POST /admin/v2/namespace-trusts/{id}/revoke": {},
-	// agent 身份状态机（identity.approve / reject / allow-reapply / disable / enable / unbind）
-	"POST /admin/v2/agent-identities/{identityId}/approve":       {},
-	"POST /admin/v2/agent-identities/{identityId}/reject":        {},
-	"POST /admin/v2/agent-identities/{identityId}/allow-reapply": {},
-	"POST /admin/v2/agent-identities/{identityId}/disable":       {},
-	"POST /admin/v2/agent-identities/{identityId}/enable":        {},
-	"POST /admin/v2/agent-identities/{identityId}/unbind":        {},
+	// agent 身份状态机（identity.approve / reject / allow-reapply / disable / enable / unbind / conflict_resolved）
+	"POST /admin/v2/agent-identities/{identityId}/approve":          {},
+	"POST /admin/v2/agent-identities/{identityId}/reject":           {},
+	"POST /admin/v2/agent-identities/{identityId}/allow-reapply":    {},
+	"POST /admin/v2/agent-identities/{identityId}/disable":          {},
+	"POST /admin/v2/agent-identities/{identityId}/enable":           {},
+	"POST /admin/v2/agent-identities/{identityId}/unbind":           {},
+	"POST /admin/v2/agent-identities/{identityId}/resolve-conflict": {},
 	// 区服权威节点创建（bc-cluster.create / region.create / zone.create）
 	"POST /admin/v2/bc-clusters": {},
 	"POST /admin/v2/regions":     {},

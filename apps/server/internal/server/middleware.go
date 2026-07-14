@@ -35,18 +35,20 @@ type AgentV2Authenticator interface {
 }
 
 // AgentV2ReportAuthenticator 校验 v2 agent 数据面上报端点（指标 / 调度）鉴权并返回权威绑定身份（FR-144，见 §5.1）。
+// bootID / addr 供并发身份冲突检测（FR-177，spec §4.5）：陈旧 boot 401 促重注册、冲突态 / 落败方 409。
 type AgentV2ReportAuthenticator interface {
-	AuthenticateAgentReport(token, identityID string) (agentauth.Identity, error)
+	AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error)
 }
 
 // agentV2ReportMiddleware 校验 v2 agent 数据面端点鉴权：token↔namespace + identity 绑定（spec §4.2/§5.1）。
 // 通过则把权威身份（namespace / serverId / kind）注入 context，供 handler 归属上报数据、绝不信任请求体自报身份；
-// 失败按服务层 apperr 决定状态码——未确认（status≠active）403、token / 身份非法 401，经 render.WriteError 脱敏。
+// 失败按服务层 apperr 决定状态码——未确认（status≠active）403、token / 身份非法 401、冲突 / 落败 409，经 render.WriteError 脱敏。
 func agentV2ReportMiddleware(authn AgentV2ReportAuthenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, err := authn.AuthenticateAgentReport(
-				r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"))
+				r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"),
+				r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
 			if err != nil {
 				render.WriteError(w, r, err)
 				return

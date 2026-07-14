@@ -498,6 +498,7 @@ const (
 // 供将来在对应发生处接入告警扇出时复用，本期不凭空制造这两类触发（守范围纪律）。
 const (
 	AlertEventTypeHealthTransition   = "health-transition"   // 实例健康状态异常转移（degraded/lost/offline）
+	AlertEventTypeIdentityConflict   = "identity-conflict"   // 并发身份冲突（Q4，FR-177）：同 identityId 交替 bootId 判并发双实例，转 conflict 冻结
 	AlertEventTypePublishFail        = "publish-fail"        // 配置/文件发布失败（预留枚举，当前无触发点）
 	AlertEventTypeBackendUnreachable = "backend-unreachable" // 后端不可达（预留枚举，当前无触发点）
 )

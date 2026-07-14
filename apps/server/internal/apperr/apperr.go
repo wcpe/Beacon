@@ -152,6 +152,10 @@ var (
 	ErrIdentityBindingMismatch = New(http.StatusConflict, "identity_binding_mismatch", "身份绑定与当前 namespace 或 serverId 不一致")
 	// ErrIdentityConflict 身份处于冲突态，需后台处置。
 	ErrIdentityConflict = New(http.StatusConflict, "identity_conflict", "身份处于冲突态，请在后台处置")
+	// ErrIdentityConflictLoser 冲突处置落败方 / 副本实例持续拒绝，附人工处理指引（FR-177，spec §4.5）。
+	ErrIdentityConflictLoser = New(http.StatusConflict, "identity_conflict", "本实例身份已被判为副本，请删除本目录下 identity.yml 后按新身份重新接入，或直接下线本实例")
+	// ErrConflictKeepBootInvalid 冲突处置指定保留的 bootId 不在冲突双方内（FR-177，spec §5.2；code 对齐 devmock）。
+	ErrConflictKeepBootInvalid = New(http.StatusBadRequest, "boot_id_not_in_conflict", "保留的 bootId 不在冲突双方内")
 	// ErrServerIDPendingElsewhere 同 namespace/serverId 已有其他待确认身份。
 	ErrServerIDPendingElsewhere = New(http.StatusConflict, "server_id_pending_elsewhere", "该 serverId 已有其他待确认身份")
 	// ErrServerIDOccupied 同 namespace/serverId 已被其他有效身份占用。

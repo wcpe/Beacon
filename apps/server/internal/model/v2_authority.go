@@ -111,8 +111,11 @@ type AgentIdentity struct {
 	BoundAt          *time.Time `gorm:"column:bound_at"`
 	StatusChangedAt  time.Time  `gorm:"column:status_changed_at;not null"`
 	ConflictReason   string     `gorm:"column:conflict_reason;size:255"`
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// ConflictPeers 是并发身份冲突（Q4，FR-177）双方 boot 明细的持久化载体：
+	// JSON 序列化的 [{bootId,lastAddr,lastSeenAt}] 落 TEXT 列（禁 JSON 列，守 DB 可移植）；非冲突态为空串。
+	ConflictPeers string `gorm:"column:conflict_peers;type:text"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func (AgentIdentity) TableName() string { return "agent_identity" }

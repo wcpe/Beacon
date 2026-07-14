@@ -36,8 +36,9 @@ func (h *V2ControlPlaneHandler) AuthenticateAgentV2(token, identityID, bootID st
 }
 
 // AuthenticateAgentReport 供 v2 agent 数据面中间件鉴权指标 / 调度端点并取权威绑定身份（FR-144，见 §5.1）。
-func (h *V2ControlPlaneHandler) AuthenticateAgentReport(token, identityID string) (agentauth.Identity, error) {
-	return h.svc.AuthenticateAgentReport(token, identityID)
+// bootID / addr 供并发身份冲突检测（FR-177，spec §4.5）。
+func (h *V2ControlPlaneHandler) AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error) {
+	return h.svc.AuthenticateAgentReport(token, identityID, bootID, addr)
 }
 
 type v2AgentRegisterRequest struct {
@@ -326,6 +327,30 @@ func (h *V2ControlPlaneHandler) UnbindAgentIdentity(w http.ResponseWriter, r *ht
 	h.transitionIdentity(w, r, h.svc.UnbindAgentIdentity)
 }
 
+type v2ResolveConflictRequest struct {
+	KeepBootID string `json:"keepBootId"`
+	Reason     string `json:"reason"`
+}
+
+// ResolveAgentIdentityConflict 处理 POST /admin/v2/agent-identities/{identityId}/resolve-conflict（FR-177，spec §5.2）。
+// 保留指定实例恢复 active，落败方后续持续 409；非 conflict → 409，keepBootId 不在冲突双方 → 400。
+func (h *V2ControlPlaneHandler) ResolveAgentIdentityConflict(w http.ResponseWriter, r *http.Request) {
+	var req v2ResolveConflictRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ident, err := h.svc.ResolveAgentIdentityConflict(chi.URLParam(r, "identityId"), service.ResolveConflictParams{
+		KeepBootID: req.KeepBootID, Reason: req.Reason,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, agentIdentityView(ident))
+}
+
 func (h *V2ControlPlaneHandler) transitionIdentity(w http.ResponseWriter, r *http.Request, fn func(string, service.IdentityTransitionParams) (*model.AgentIdentity, error)) {
 	var req v2ReasonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -592,10 +617,15 @@ func agentIdentityView(ident *model.AgentIdentity) map[string]any {
 	}
 }
 
-// agentIdentityDetailView 在身份基础视图上补详情字段：conflictPeers（Q4 冲突处置延后，恒 null）与换区预填目标。
+// agentIdentityDetailView 在身份基础视图上补详情字段：conflictPeers（Q4 冲突双方 boot 明细，FR-177）与换区预填目标。
+// 非冲突态 conflictPeers 为 null；冲突态回显持久化的 {bootId,lastAddr,lastSeenAt}（spec §5.2）。
 func agentIdentityDetailView(ident *model.AgentIdentity, prefill *service.RezonePrefillView) map[string]any {
 	view := agentIdentityView(ident)
-	view["conflictPeers"] = nil
+	if peers := service.ParseConflictPeers(ident.ConflictPeers); len(peers) > 0 {
+		view["conflictPeers"] = peers
+	} else {
+		view["conflictPeers"] = nil
+	}
 	view["rezonePrefill"] = prefill
 	return view
 }

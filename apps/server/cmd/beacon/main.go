@@ -33,6 +33,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/bootwatch"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
@@ -199,6 +200,17 @@ func run() error {
 
 	// 告警事件留痕（FR-89，ADR-0041）：把每条告警额外落 alert_event 供管理台「事件」页历史信息流。
 	alertEventService := service.NewAlertEventService(db, repository.NewAlertEventRepository(db), auditRepo)
+
+	// 并发身份冲突检测（FR-177，spec §4.5）：bootId 活跃注册表（进程内真源，map+锁，不引中间件）+
+	// 冲突窗口从设置 store 热读 + 冲突告警复用告警留痕出口。装配后 register/report 路径即启用往复检测。
+	bootRegistry := bootwatch.New()
+	v2ControlPlaneService.SetConflictWatch(
+		bootRegistry,
+		func() time.Duration {
+			return time.Duration(settingsService.GetInt(service.SettingIdentityConflictWindowSec)) * time.Second
+		},
+		alertEventService,
+	)
 	// 健康告警通道（FR-28，ADR-0019）：站内信常驻；webhook 通道恒挂载、靠设置 store 的 url 空与否动态启停（FR-61）；
 	// persist 通道把告警额外留痕（FR-89，落库失败仅 WARN、不阻断扫描，见 Dispatcher 兜错）。
 	inbox := alert.NewInboxAlerter(cfg.Alert.InboxCapacity)

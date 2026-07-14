@@ -812,6 +812,7 @@ agent 面：
 | POST | `/admin/v2/agent-identities/{identityId}/disable` | 禁用（摘除调度与指令下发） |
 | POST | `/admin/v2/agent-identities/{identityId}/enable` | 恢复禁用身份 |
 | POST | `/admin/v2/agent-identities/{identityId}/unbind` | 解绑（换 serverId / namespace 的前置） |
+| POST | `/admin/v2/agent-identities/{identityId}/resolve-conflict` | 并发身份冲突处置（FR-177）：body `keepBootId`（保留哪个实例）+ `reason`（必填）；保留方恢复 active、落败方后续持续 409 并指引；非 conflict → 409、`keepBootId` 不在冲突双方 → 400 |
 
 ### namespace 隔离（P1 · 0.21.x，真源 [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5）
 

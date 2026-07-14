@@ -28,6 +28,8 @@ const (
 	SettingUpdateAutoCheckEnabled   = "update.auto-check-enabled"
 	SettingUpdateCheckIntervalHours = "update.check-interval-hours"
 	SettingUndoWindowHours          = "undo.window-hours"
+	// 并发身份冲突检测窗口（FR-177，spec §4.5）：窗口内同 identityId bootId 往复活跃即判并发双实例。
+	SettingIdentityConflictWindowSec = "identity.conflict-window-sec"
 	// 热冷归档策略键（FR-151，见 ADR-0066）：各域热库保留天数（≥7 守卫）+ 调度 / 批量 / 校验 / 冷查询参数。
 	SettingArchiveRetentionMetricSample   = "archive.retention-days.metric-sample"
 	SettingArchiveRetentionHealthSnapshot = "archive.retention-days.health-snapshot"
@@ -63,6 +65,9 @@ const (
 	// 保留期下限守卫：任何 retention-days.* 不得小于此值，防误配当天删光（spec §3.3）。
 	archiveMinRetentionDays = 7
 )
+
+// 并发身份冲突检测窗口默认值（FR-177，spec §4.5）：默认 10 分钟；无 config.yml 对应项、纯设置 store 项。
+const identityDefaultConflictWindowSec = 600
 
 // updateChannels 是 update.channel 的合法枚举集（stable=正式版线、prerelease=滚动预发布线，FR-117/ADR-0052）。
 var updateChannels = map[string]struct{}{
@@ -193,6 +198,11 @@ var settingsWhitelist = map[string]settingMeta{
 		valueType: model.SettingValueTypeInt, desc: "配置操作可撤回时间窗（小时）：下发 / 发布 / 反向抓取超此时长不可撤回（FR-116）",
 		min: 1, max: 8760, // 1 小时 ~ 1 年
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(DefaultUndoWindowHours) },
+	},
+	SettingIdentityConflictWindowSec: {
+		valueType: model.SettingValueTypeInt, desc: "并发身份冲突检测窗口（秒）：窗口内同一 identityId 出现 bootId 往复活跃即判并发双实例并冻结待处置（FR-177）",
+		min: 30, max: 86400, // 30 秒 ~ 1 天
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(identityDefaultConflictWindowSec) },
 	},
 	// 热冷归档保留期（FR-151，见 ADR-0066）：各域热库保留天数，下限 7（防误配当天删光）、上限 3650（约 10 年）。
 	SettingArchiveRetentionMetricSample: {

@@ -15,6 +15,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/bootwatch"
 )
 
 const (
@@ -35,6 +36,11 @@ type V2ControlPlaneService struct {
 	registerMu sync.Mutex
 	trustMu    sync.RWMutex
 	trustSet   map[trustKey]struct{}
+	// 并发身份冲突检测（FR-177，spec §4.5）：bootId 活跃注册表（进程内真源）+ 冲突窗口取值 + 告警留痕出口。
+	// 未装配（nil）时检测禁用——保持旧构造 NewV2ControlPlaneService(db) 与既有测试行为不变。
+	bootRegistry   *bootwatch.Registry
+	conflictWindow func() time.Duration
+	alertSink      AlertSink
 }
 
 // NewV2ControlPlaneService 构造第二版控制面服务。
@@ -127,6 +133,11 @@ func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*Agent
 	defer s.registerMu.Unlock()
 	now := time.Now().UTC()
 	expiresAt := now.Add(defaultPendingTTL)
+	// 并发身份冲突检测（FR-177，spec §4.5）：先做内存往复观测（本调用释放注册表锁后再落库，守锁内不做 DB IO）。
+	// 被冲突短路（落败方 / 已转冲突）则直接返回对应 409；否则落常规注册路径。
+	if handled, err := s.detectRegisterConflict(p, now); handled {
+		return nil, err
+	}
 	var out AgentRegisterV2Result
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		current, err := findIdentityByID(tx, p.IdentityID)
@@ -174,7 +185,20 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 	if err != nil {
 		return err
 	}
-	if ident == nil || ident.NamespaceID != ns.ID || ident.Status != model.AgentIdentityStatusActive || ident.BootID != bootID {
+	if ident == nil || ident.NamespaceID != ns.ID {
+		return apperr.ErrUnauthorized
+	}
+	// 已判冲突：双方都 409（权威取 DB 状态，跨重启可靠，spec §4.5）。
+	if ident.Status == model.AgentIdentityStatusConflict {
+		return apperr.ErrIdentityConflict
+	}
+	// bootId 活跃观测：resolve 落败方持续 409 + 指引；同时喂养往复检测。
+	if s.bootRegistry != nil {
+		if rep := s.bootRegistry.OnReport(identityID, bootID, "", time.Now().UTC(), s.conflictWindowDur()); rep.Evicted {
+			return apperr.ErrIdentityConflictLoser
+		}
+	}
+	if ident.Status != model.AgentIdentityStatusActive || ident.BootID != bootID {
 		return apperr.ErrUnauthorized
 	}
 	return nil
@@ -185,7 +209,7 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 // 契约（spec §4.2/§5.1）：token↔namespace + identity 绑定校验。区别于 AuthenticateAgentV2（legacy v1 兼容、
 // 一律 401 且需 bootId）——本端点按 spec 只认 token + identity，且把「已识别但未确认（status≠active）」细化为 403，
 // 其余非法（token / 身份缺失或跨 namespace）返回 401。成功返回权威 namespace / serverId / kind 供注入 context。
-func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID string) (agentauth.Identity, error) {
+func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error) {
 	if !validUUID(identityID) {
 		return agentauth.Identity{}, apperr.ErrUnauthorized
 	}
@@ -200,8 +224,24 @@ func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID string
 	if ident == nil || ident.NamespaceID != ns.ID {
 		return agentauth.Identity{}, apperr.ErrUnauthorized
 	}
+	// 已判冲突：双方都 409（权威取 DB 状态，跨重启可靠，spec §4.5）。
+	if ident.Status == model.AgentIdentityStatusConflict {
+		return agentauth.Identity{}, apperr.ErrIdentityConflict
+	}
+	// bootId 活跃观测（往复检测喂养 + resolve 落败识别，spec §4.5）。
+	if s.bootRegistry != nil {
+		if rep := s.bootRegistry.OnReport(identityID, bootID, addr, time.Now().UTC(), s.conflictWindowDur()); rep.Evicted {
+			// resolve 落败方持续 409 + 指引。
+			return agentauth.Identity{}, apperr.ErrIdentityConflictLoser
+		}
+	}
 	if ident.Status != model.AgentIdentityStatusActive {
 		return agentauth.Identity{}, apperr.ErrAgentNotConfirmed
+	}
+	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 401 促其重注册，喂养往复检测（spec §4.5）。
+	// bootId 为空（未带 X-Beacon-Boot 头）时跳过，兼容旧行为不影响存量上报路径。
+	if bootID != "" && bootID != ident.BootID {
+		return agentauth.Identity{}, apperr.ErrUnauthorized
 	}
 	return agentauth.Identity{
 		NamespaceID: ns.ID, Namespace: ns.Code, ServerID: ident.ServerID,
@@ -477,6 +517,10 @@ func (s *V2ControlPlaneService) transitionIdentity(identityID string, allowed []
 	})
 	if err != nil {
 		return nil, err
+	}
+	// 解绑终结绑定：清除该身份的 bootId 活跃状态，令重新绑定从干净态开始（FR-177）。
+	if nextStatus == model.AgentIdentityStatusUnbound && s.bootRegistry != nil {
+		s.bootRegistry.Forget(identityID)
 	}
 	return &out, nil
 }
