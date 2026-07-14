@@ -96,8 +96,24 @@ export default function DataTable<T>({
               return (
                 <TableRow
                   key={rowKey(row, absoluteIndex)}
-                  className={cn(onRowClick && 'cursor-pointer', rowClassName?.(row))}
+                  className={cn(
+                    onRowClick &&
+                      'cursor-pointer outline-none focus-visible:bg-brand-50/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                    rowClassName?.(row),
+                  )}
                   onClick={onRowClick ? () => { onRowClick(row); } : undefined}
+                  // 可点击行的键盘可达性：可聚焦 + Enter / 空格触发（与鼠标点击等价）
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            onRowClick(row)
+                          }
+                        }
+                      : undefined
+                  }
                 >
                   {columns.map((col, i) => (
                     <TableCell
