@@ -28,6 +28,7 @@ function SidebarNavItem({ page }: { page: NavPage }) {
             className={['size-4 shrink-0', isActive ? 'text-brand' : 'text-ink-4'].join(' ')}
           />
           <span>{t(page.titleKey)}</span>
+          {page.Badge && <page.Badge />}
         </>
       )}
     </NavLink>

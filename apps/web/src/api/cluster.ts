@@ -161,6 +161,15 @@ export function unbindIdentity(identityId: string, reason: string): Promise<Agen
   return request('POST', `/admin/v2/agent-identities/${identityId}/unbind`, { reason })
 }
 
+// 并发身份冲突处置（FR-177）：保留指定实例恢复 active，落败方后续持续 409。
+export function resolveConflictIdentity(
+  identityId: string,
+  keepBootId: string,
+  reason: string,
+): Promise<AgentIdentityDetail> {
+  return request('POST', `/admin/v2/agent-identities/${identityId}/resolve-conflict`, { keepBootId, reason })
+}
+
 // ---- 区服权威域（结构树 / server 资产 / 分配 / 换区）----
 
 export interface ServerQuery {

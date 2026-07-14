@@ -1,5 +1,5 @@
 // 全站路由与导航信息架构配置（真源：docs/UX.md §2）：
-// 顶层运维总览 + 集群 / 可观测 / 交付 / 系统四大域，共 19 页。
+// 顶层运维总览 + 集群 / 可观测 / 交付 / 系统四大域，共 20 页。
 // 后续页面 agent 只改 src/pages/ 下自己的页面文件与 src/i18n/ 下所属域资源文件，勿改本文件结构。
 import type { ComponentType } from 'react'
 import {
@@ -7,6 +7,7 @@ import {
   Boxes,
   Cable,
   ChartLine,
+  Copy,
   FileSliders,
   FolderArchive,
   GitPullRequestArrow,
@@ -25,6 +26,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
+import ConflictNavBadge from './shell/conflict-nav-badge'
 import AlertEventsPage from './pages/alert-events'
 import ApiKeysPage from './pages/api-keys'
 import AssetsPage from './pages/assets'
@@ -36,6 +38,7 @@ import ConnectionsPage from './pages/connections'
 import MessagesPage from './pages/messages'
 import ConfigsPage from './pages/configs'
 import DashboardPage from './pages/dashboard'
+import IdentityConflictsPage from './pages/identity-conflicts'
 import NamespacesPage from './pages/namespaces'
 import ServersPage from './pages/servers'
 import ServiceAnalysisPage from './pages/service-analysis'
@@ -54,6 +57,8 @@ export interface NavPage {
   icon: LucideIcon
   // 页面组件
   Component: ComponentType
+  // 可选：侧栏项右侧徽标组件（如身份冲突红点计数，FR-177）；无则不渲染
+  Badge?: ComponentType
 }
 
 export interface NavGroup {
@@ -77,6 +82,13 @@ export const NAV_GROUPS: NavGroup[] = [
     titleKey: 'nav.groups.cluster',
     pages: [
       { path: '/servers', titleKey: 'nav.servers', icon: Server, Component: ServersPage },
+      {
+        path: '/identity-conflicts',
+        titleKey: 'nav.identityConflicts',
+        icon: Copy,
+        Component: IdentityConflictsPage,
+        Badge: ConflictNavBadge,
+      },
       { path: '/zones', titleKey: 'nav.zones', icon: Boxes, Component: ZonesPage },
       { path: '/topology', titleKey: 'nav.topology', icon: Workflow, Component: TopologyPage },
     ],

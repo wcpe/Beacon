@@ -18,10 +18,11 @@ function renderAt(path: string) {
   )
 }
 
-// UX.md §2 的 17 条路由与页面标题（真源对照表）
+// UX.md §2 的 18 条路由与页面标题（真源对照表）
 const pageCases: [string, string][] = [
   ['/dashboard', '运维总览'],
   ['/servers', '服务器'],
+  ['/identity-conflicts', '身份冲突'],
   ['/zones', '区服分配'],
   ['/topology', '拓扑'],
   ['/service-analysis', '服务分析'],

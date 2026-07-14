@@ -422,6 +422,29 @@ function buildHuge(): ClusterState {
       }),
     )
   }
+  // 12 台并发身份冲突（复制整服目录起第二份实例，FR-177）：超大量态下验证冲突抽屉列表 / 处置流
+  for (let n = 1; n <= 12; n++) {
+    const serverId = `dup-${String(n).padStart(3, '0')}`
+    state.identities.push(
+      makeIdentity(1, serverId, 'backend', 'conflict', {
+        bootId: uuidFrom(`boot:${serverId}:a`),
+        conflictReason: 'duplicate-boot-id',
+        conflictPeers: [
+          {
+            bootId: uuidFrom(`boot:${serverId}:a`),
+            lastAddr: `10.30.9.${String(n + 10)}:25565`,
+            lastSeenAt: isoOffset(-(n + 2) * 60_000),
+          },
+          {
+            bootId: uuidFrom(`boot:${serverId}:b`),
+            lastAddr: `10.30.9.${String(n + 60)}:25565`,
+            lastSeenAt: isoOffset(-n * 60_000),
+          },
+        ],
+        statusChangedAt: isoOffset(-n * HOUR),
+      }),
+    )
+  }
 
   return state
 }

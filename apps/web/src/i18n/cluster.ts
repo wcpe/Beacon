@@ -294,4 +294,38 @@ export const cluster = {
       allNamespace: '全部 命名空间',
     },
   },
+  // 身份冲突页（/identity-conflicts，FR-177）：复制整服目录导致的同 identityId 并发双实例，卡片平铺处置
+  identityConflicts: {
+    mission: '复制整服目录导致的同 identityId 并发双实例：一眼看清冲突双方，保留一方或解绑',
+    empty: '当前没有身份冲突',
+    emptyHint: '一切正常——每个 identityId 只有一个活跃实例。复制整服目录起第二份实例时，冲突会在此出现待处置。',
+    reason: {
+      duplicateBootId: '并发双实例 · bootId 往复活跃',
+      fallback: '身份冲突',
+    },
+    // 卡片：卡头 + 左右两栏冲突双方明细 + 操作
+    card: {
+      instance: '实例 {{label}}',
+      current: '当前绑定',
+      bootId: 'bootId',
+      lastAddr: '来源地址',
+      lastSeen: '最后活跃',
+      keep: '保留实例 {{label}}',
+      unbind: '解绑此身份',
+      peersEmpty: '暂无冲突双方明细（可能已被处置）',
+    },
+    // 保留（高风险）二次确认：唯一模态
+    resolve: {
+      title: '保留此实例？',
+      desc: '保留实例 {{label}}（bootId {{bootId}}）恢复接入，其余实例判为副本。',
+      confirm: '确认保留',
+      guidance: '未保留的实例后续请求将持续被拒（409），需删除其目录下 identity.yml 后按新身份重新接入，或直接下线该实例。控制面不会远程删除 agent 文件。',
+    },
+    // 解绑二次确认
+    unbind: {
+      title: '解绑冲突身份？',
+      desc: '解绑后该 serverId 释放，双方实例都需重新申请接入。',
+      confirm: '解绑',
+    },
+  },
 } as const
