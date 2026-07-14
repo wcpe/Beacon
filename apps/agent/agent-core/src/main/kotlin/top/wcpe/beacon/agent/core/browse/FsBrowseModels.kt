@@ -77,3 +77,21 @@ data class FileContent(
     val content: String,
     val truncated: Boolean,
 )
+
+/**
+ * 读单文件资产内容的结果（FR-164，见 v2-file-assets.md §4.5）。
+ *
+ * 与 [FileContent] 的区别：不排除二进制——二进制文件回 [binary]=true + 空 [content]（前端只展示元数据），
+ * 供文件资产预览「二进制只回元数据、文本可预览」。sha256/size 由控制面取清单权威值填充，agent 不回传。
+ *
+ * @param path      文件相对 `plugins/` 根的相对路径（正斜杠分隔）
+ * @param binary    是否二进制（NUL 字节或非法 UTF-8；true 时 content 为空串、只回元数据）
+ * @param truncated 是否因超单文件上限被截断（仅文本；二进制恒 false）
+ * @param content   文本内容（UTF-8 解码；binary=true 时为空串）
+ */
+data class AssetContent(
+    val path: String,
+    val binary: Boolean,
+    val truncated: Boolean,
+    val content: String,
+)

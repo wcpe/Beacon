@@ -8,6 +8,7 @@ import type {
   AssetPreviewResponse,
   AssetRescanResponse,
   AssetScanStatusItem,
+  AssetSensitiveRulesResponse,
 } from '@beacon/contracts'
 
 import { buildQuery, request } from './request'
@@ -92,4 +93,14 @@ export interface RescanBody {
 
 export function rescanAssets(body: RescanBody): Promise<AssetRescanResponse> {
   return request('POST', '/admin/v2/assets/rescan', body)
+}
+
+// ---- 敏感路径规则（FR-164）：读 / 整体替换；命中 glob 的文件预览 / diff 需原因单次放行 ----
+
+export function fetchSensitiveRules(): Promise<AssetSensitiveRulesResponse> {
+  return request('GET', '/admin/v2/assets/sensitive-rules')
+}
+
+export function updateSensitiveRules(patterns: string[]): Promise<AssetSensitiveRulesResponse> {
+  return request('PUT', '/admin/v2/assets/sensitive-rules', { patterns })
 }

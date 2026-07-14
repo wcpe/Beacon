@@ -212,6 +212,62 @@ class FsBrowseReaderTest {
         assertNull(FsBrowseReader.readFile(root, ""), "空路径读文件应 null")
     }
 
+    // ---- FR-164：文件资产读取（readAsset：二进制回元数据、不按扩展名排除、按传入上限截断） ----
+
+    @Test
+    fun `readAsset 读文本文件得内容`() {
+        write("PluginA/config.yml", "key: 值")
+        val asset = FsBrowseReader.readAsset(root, "PluginA/config.yml", 512 * 1024)
+        assertNotNull(asset)
+        assertFalse(asset.binary, "文本不应判二进制")
+        assertFalse(asset.truncated)
+        assertEquals("PluginA/config.yml", asset.path)
+        assertEquals("key: 值", asset.content)
+    }
+
+    @Test
+    fun `readAsset 二进制回元数据不排除 对比 readFile 排除`() {
+        val f = File(root, "plugin.jar")
+        f.parentFile.mkdirs()
+        f.writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x00, 0x01)) // ZIP/jar 头含 NUL
+        val asset = FsBrowseReader.readAsset(root, "plugin.jar", 512 * 1024)
+        assertNotNull(asset, "资产读取不因扩展名 / 二进制返回 null（回元数据）")
+        assertTrue(asset.binary, "二进制应 binary=true")
+        assertEquals("", asset.content, "二进制不回内容")
+        assertFalse(asset.truncated)
+        // 对比：只读文本浏览 readFile 对 jar / 二进制返回 null（排除）——两原语语义差异。
+        assertNull(FsBrowseReader.readFile(root, "plugin.jar"))
+    }
+
+    @Test
+    fun `readAsset 超传入上限截断只读前缀`() {
+        write("big.yml", "0123456789abcdef")
+        val asset = FsBrowseReader.readAsset(root, "big.yml", 8)
+        assertNotNull(asset)
+        assertTrue(asset.truncated, "超上限应标 truncated")
+        assertEquals(8, asset.content.length, "内容应截断到 maxBytes、非全文")
+        assertEquals("01234567", asset.content)
+    }
+
+    @Test
+    fun `readAsset 上限为 0 回退默认单文件上限`() {
+        val big = "a".repeat((FsBrowseLimits.MAX_FILE_BYTES + 4096).toInt())
+        write("huge.yml", big)
+        val asset = FsBrowseReader.readAsset(root, "huge.yml", 0)
+        assertNotNull(asset)
+        assertTrue(asset.truncated)
+        assertEquals(FsBrowseLimits.MAX_FILE_BYTES.toInt(), asset.content.length, "上限 0 应回退默认上限截断")
+    }
+
+    @Test
+    fun `readAsset 越权 目录 不存在 空路径返回 null`() {
+        mkdir("adir")
+        assertNull(FsBrowseReader.readAsset(root, "../secret.txt", 512 * 1024), "越权应 null")
+        assertNull(FsBrowseReader.readAsset(root, "adir", 512 * 1024), "目录应 null")
+        assertNull(FsBrowseReader.readAsset(root, "no-such.yml", 512 * 1024))
+        assertNull(FsBrowseReader.readAsset(root, "", 512 * 1024), "空路径应 null")
+    }
+
     @Test
     fun `浏览全程只读 不改盘`() {
         write("a.yml", "k: v")

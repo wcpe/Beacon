@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.client
 
+import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.command.AssetEntry
 import top.wcpe.beacon.agent.core.command.IngestCommandPayload
@@ -1149,6 +1150,45 @@ class BeaconApiClient(
     }
 
     /**
+     * 回传文件资产内容：POST /beacon/v2/agent/assets/content（FR-164，见 v2-file-assets.md §5.1）。同步调用，请在异步线程使用。
+     *
+     * 携命令 id + 身份（namespace/serverId）+ 内容元数据（binary/truncated/content）或读失败原因（error）。
+     * [asset] 非空=读成功（含二进制回元数据）；null=读失败（越权 / 不存在 / 读盘异常），回**已脱敏**的通用原因。
+     * 控制面据命令 id 定位命令（不依赖回传 path），内容为受审计的瞬态数据、转存内存中继唤醒等待的 admin，**绝不落库**。
+     * 200 视作成功；其它（命令态不符 / 连接失败）返回 false（best-effort、不重试——控制面超时清理兜底）。
+     */
+    fun postAssetContent(
+        identity: AgentIdentity,
+        commandId: Long,
+        asset: AssetContent?,
+    ): Boolean {
+        val body =
+            buildMap<String, Any?> {
+                put("commandId", commandId)
+                put("namespace", identity.namespace)
+                put("serverId", identity.serverId)
+                if (asset != null) {
+                    put("binary", asset.binary)
+                    put("truncated", asset.truncated)
+                    put("content", asset.content)
+                } else {
+                    put("error", "目标不存在或不可读") // 已脱敏、无凭据；真实原因仅落 agent 本地日志
+                }
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/assets/content",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
+        return resp.statusCode == 200
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
@@ -1277,6 +1317,8 @@ class BeaconApiClient(
                     maxDepth = JsonTree.intOr(payloadObj, "maxDepth", 0),
                     // 文件资产重扫字段（FR-163，仅 asset-rescan 命令携带；其它命令缺省 false，向后兼容）。
                     force = JsonTree.boolOr(payloadObj, "force", false),
+                    // 文件资产读取上限（FR-164，仅 asset-read 命令携带；其它命令缺省 0，向后兼容）。
+                    maxBytes = JsonTree.intOr(payloadObj, "maxBytes", 0),
                 ),
         )
     }

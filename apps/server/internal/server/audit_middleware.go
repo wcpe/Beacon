@@ -167,6 +167,11 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/config-files/{id}/validate": {},
 	// 文件资产批量重扫（FR-163：asset.rescan，AssetService 在事务内自记专项审计，detail 记目标 serverId + force）
 	"POST /admin/v2/assets/rescan": {},
+	// 文件资产内容预览 / diff / 敏感规则修改（FR-164）：service 内自记 asset.preview / asset.diff /
+	// asset.sensitive_rule_update 专项审计（detail 绝不含文件内容），登记于此使兜底跳过、避免双记
+	"POST /admin/v2/assets/preview":        {},
+	"POST /admin/v2/assets/diff":           {},
+	"PUT /admin/v2/assets/sensitive-rules": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

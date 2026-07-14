@@ -338,6 +338,12 @@ const (
 	ActionInstanceResync = "instance.resync"
 	// 文件浏览（FR-110，见 ADR-0049）：admin 触发命令在线实例列目录 / 读子树 / 读单文件（detail 仅 commandId/op/path，绝不含文件内容）
 	ActionFileBrowse = "file.browse"
+	// 文件资产内容预览 / diff / 敏感规则修改（FR-164，见 v2-file-assets.md §4.7）：
+	// preview/diff 的 detail 记 serverId/path/truncated/binary/sensitiveOverride/reason，**绝不含文件内容**；
+	// sensitive_rule_update 记规则前后差异（glob 清单，非凭据）。
+	ActionAssetPreview             = "asset.preview"
+	ActionAssetDiff                = "asset.diff"
+	ActionAssetSensitiveRuleUpdate = "asset.sensitive_rule_update"
 	// 多级灰度文件同步（FR-129/FR-131）：detail 仅记任务 / 批次 / 目标摘要，不含文件内容
 	ActionFileSyncCreate    = "file-sync.create"
 	ActionFileSyncPlan      = "file-sync.plan"
@@ -473,6 +479,8 @@ const (
 	TargetTypeArchiveJob = "archive-job"
 	// 配置中心 V2 配置文件（FR-160/161）的审计对象类型
 	TargetTypeConfigFile = "config-file"
+	// 文件资产内容预览 / diff（FR-164）的审计对象类型（TargetRef=serverId，path 记入 detail）
+	TargetTypeAsset = "asset"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

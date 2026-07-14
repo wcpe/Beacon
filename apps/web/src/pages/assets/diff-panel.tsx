@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { SplitSquareHorizontal } from 'lucide-react'
 
-import { Button, Input, Label, SectionHeader } from '@beacon/ui'
+import { Button, Input, Label, SectionHeader, Textarea } from '@beacon/ui'
 import type { AssetDiffResponse } from '@beacon/contracts'
 
 import TextDiff from '../../features/delivery/text-diff'
@@ -16,22 +16,32 @@ export default function DiffPanel() {
   const [leftServer, setLeftServer] = useState('')
   const [rightServer, setRightServer] = useState('')
   const [path, setPath] = useState('')
+  const [reason, setReason] = useState('')
+  const [needReason, setNeedReason] = useState(false)
   const [result, setResult] = useState<AssetDiffResponse | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
 
   const diffMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (withReason: string | undefined) =>
       diffAssets({
         left: { serverId: leftServer.trim(), path: path.trim() },
         right: { serverId: rightServer.trim(), path: path.trim() },
+        reason: withReason,
       }),
     onSuccess: (data) => {
       setResult(data)
       setErrorText(null)
+      setNeedReason(false)
     },
     onError: (error) => {
       setResult(null)
-      setErrorText(error instanceof ApiClientError ? error.message : String(error))
+      // 任一侧命中敏感规则且未带原因 → 403 asset_sensitive_path，转为要求填原因
+      if (error instanceof ApiClientError && error.code === 'asset_sensitive_path') {
+        setNeedReason(true)
+        setErrorText(null)
+      } else {
+        setErrorText(error instanceof ApiClientError ? error.message : String(error))
+      }
     },
   })
 
@@ -86,16 +96,46 @@ export default function DiffPanel() {
         <Button
           disabled={!canRun}
           onClick={() => {
-            diffMutation.mutate()
+            setReason('')
+            setNeedReason(false)
+            diffMutation.mutate(undefined)
           }}
         >
           {t('delivery.assets.diff.run')}
         </Button>
       </div>
 
+      {/* 敏感命中：填原因后带原因重试 */}
+      {needReason && (
+        <div className="space-y-2">
+          <p className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-sm text-warn">
+            {t('delivery.assets.diff.sensitiveHint')}
+          </p>
+          <Label htmlFor="diff-reason">{t('delivery.assets.diff.reasonLabel')}</Label>
+          <Textarea
+            id="diff-reason"
+            aria-label={t('delivery.assets.diff.reasonLabel')}
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value)
+            }}
+            placeholder={t('delivery.assets.diff.reasonPlaceholder')}
+            rows={2}
+          />
+          <Button
+            disabled={reason.trim() === '' || diffMutation.isPending}
+            onClick={() => {
+              diffMutation.mutate(reason.trim())
+            }}
+          >
+            {t('delivery.assets.diff.confirm')}
+          </Button>
+        </div>
+      )}
+
       {errorText && <p className="text-sm text-destructive">{errorText}</p>}
 
-      {result === null && !errorText && (
+      {result === null && !errorText && !needReason && (
         <p className="text-sm text-ink-3">{t('delivery.assets.diff.empty')}</p>
       )}
 

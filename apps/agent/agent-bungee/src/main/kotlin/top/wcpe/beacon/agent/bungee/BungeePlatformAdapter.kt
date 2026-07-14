@@ -5,6 +5,7 @@ import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.submit
 import taboolib.common.platform.function.submitAsync
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
 import top.wcpe.beacon.agent.core.browse.FsBrowseReader
@@ -78,6 +79,14 @@ class BungeePlatformAdapter(
     override fun browseReadFile(relPath: String): FileContent? {
         // 只读浏览（FR-109）：读单文本文件内容，受单文件上限、排除 jar/二进制。委托 core，async 触发。
         return FsBrowseReader.readFile(pluginsBaseFolder(), relPath)
+    }
+
+    override fun browseReadAsset(
+        relPath: String,
+        maxBytes: Int,
+    ): AssetContent? {
+        // 文件资产预览（FR-164）：读单文件内容，二进制回元数据、文本可预览、超限截断。委托 core，async 触发。
+        return FsBrowseReader.readAsset(pluginsBaseFolder(), relPath, maxBytes)
     }
 
     override fun publishConfigChanged(

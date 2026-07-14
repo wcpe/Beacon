@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.command
 
+import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.BrowseEntry
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
@@ -52,9 +53,17 @@ class ReverseFetchExecutorTest {
         val lastResultBody = AtomicReference<String?>(null)
         val browseCalls = AtomicInteger(0)
         val lastBrowseBody = AtomicReference<String?>(null)
+        val assetContentCalls = AtomicInteger(0)
+        val lastAssetContentBody = AtomicReference<String?>(null)
 
         override fun execute(request: HttpRequest): HttpResponse =
             when {
+                // 文件资产内容回传端点（FR-164）：URL 含 /agent/assets/content。
+                request.url.contains("/agent/assets/content") -> {
+                    assetContentCalls.incrementAndGet()
+                    lastAssetContentBody.set(request.body)
+                    HttpResponse(200, "")
+                }
                 // 文件浏览结果回传端点（FR-110）：URL 含 /agent/files/browse-result（须在通用 /agent/files 前判定）。
                 request.url.contains("/agent/files/browse-result") -> {
                     browseCalls.incrementAndGet()
@@ -186,6 +195,20 @@ class ReverseFetchExecutorTest {
                         "payload" to mapOf("force" to true),
                     )
 
+                CMD_ASSET_READ ->
+                    mapOf(
+                        "id" to 16,
+                        "type" to "asset-read",
+                        "payload" to mapOf("path" to "AllinCore/config.yml", "maxBytes" to 524_288),
+                    )
+
+                CMD_ASSET_READ_DENIED ->
+                    mapOf(
+                        "id" to 17,
+                        "type" to "asset-read",
+                        "payload" to mapOf("path" to "../etc/passwd", "maxBytes" to 524_288),
+                    )
+
                 else -> emptyMap<String, Any?>()
             }
     }
@@ -204,6 +227,7 @@ class ReverseFetchExecutorTest {
         val metadataCalls = AtomicInteger(0)
         val browseListCalls = AtomicInteger(0)
         val browseFileCalls = AtomicInteger(0)
+        val browseAssetCalls = AtomicInteger(0)
 
         override fun runAsync(task: () -> Unit) = task()
 
@@ -267,6 +291,16 @@ class ReverseFetchExecutorTest {
             browseFileCalls.incrementAndGet()
             if (!browseEnabled || relPath.contains("..")) return null
             return FileContent(path = relPath, content = "k: v\n", truncated = false)
+        }
+
+        // 文件资产读取原语桩（FR-164）：browseEnabled=false 或路径含 .. → null（模拟未启用 / 越权拒读）。
+        override fun browseReadAsset(
+            relPath: String,
+            maxBytes: Int,
+        ): AssetContent? {
+            browseAssetCalls.incrementAndGet()
+            if (!browseEnabled || relPath.contains("..")) return null
+            return AssetContent(path = relPath, binary = false, truncated = false, content = "k: v\n")
         }
 
         override fun publishConfigChanged(
@@ -630,6 +664,37 @@ class ReverseFetchExecutorTest {
     }
 
     @Test
+    fun `资产读取命令调原语回传内容到 assets-content`() {
+        // FR-164：asset-read → 调 browseReadAsset → 回传到 /agent/assets/content（携命令 id/path/content，不走 browse-result / ingest）。
+        val transport = FakeTransport(pendingBody = CMD_ASSET_READ)
+        val adapter = StubAdapter(emptyMap())
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, adapter.browseAssetCalls.get(), "应调读资产原语一次")
+        assertEquals(1, transport.assetContentCalls.get(), "应走 /agent/assets/content 一次")
+        assertEquals(0, transport.browseCalls.get(), "不应走文件浏览端点")
+        assertEquals(0, transport.ingestCalls.get(), "不应走 ingest")
+        val body = transport.lastAssetContentBody.get()!!
+        assertTrue(body.contains("commandId=16"), "回传应携命令 id：$body")
+        assertTrue(body.contains("binary=false"), "文本应回 binary=false：$body")
+        assertTrue(body.contains("k: v"), "命中应回传文件内容：$body")
+    }
+
+    @Test
+    fun `资产读取越权路径原语返回 null 回传携 error`() {
+        // FR-164：path traversal（../）→ 原语返回 null → 回传携脱敏 error（控制面据此回 asset_read_failed，不含内容）。
+        val transport = FakeTransport(pendingBody = CMD_ASSET_READ_DENIED)
+        val adapter = StubAdapter(emptyMap())
+        executor(transport, adapter).trigger()
+
+        assertEquals(1, transport.assetContentCalls.get(), "拒读也应回传一次")
+        val body = transport.lastAssetContentBody.get()!!
+        assertTrue(body.contains("commandId=17"), "回传应携命令 id：$body")
+        assertTrue(body.contains("error="), "拒读应携 error：$body")
+        assertTrue(!body.contains("passwd"), "拒读不应回传任何内容 / 目标细节：$body")
+    }
+
+    @Test
     fun `浏览越权路径原语返回 null 回传 ok=false`() {
         // FR-110：path traversal（../）→ 原语返回 null → 回 ok=false（控制面 CAS failed、admin 得 404）。
         val transport = FakeTransport(pendingBody = CMD_BROWSE_DENIED)
@@ -710,5 +775,7 @@ class ReverseFetchExecutorTest {
         private const val CMD_BROWSE_FILE = "cmd-browse-file"
         private const val CMD_BROWSE_DENIED = "cmd-browse-denied"
         private const val CMD_ASSET_RESCAN = "cmd-asset-rescan"
+        private const val CMD_ASSET_READ = "cmd-asset-read"
+        private const val CMD_ASSET_READ_DENIED = "cmd-asset-read-denied"
     }
 }

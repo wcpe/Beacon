@@ -321,6 +321,15 @@ func run() error {
 	assetService.SetNotifier(notifier)
 	v2AssetsHandler := handler.NewV2AssetsHandler(assetService)
 
+	// 文件资产内容预览 / diff / 敏感规则（FR-164，见 spec §4.5/§4.6/§4.7）：控制面不存文件内容，
+	// 经 asset-read 命令下发向 agent 现取 + 内存中继同步透传。复用 commandRepo（命令生命周期）/ notifier（唤醒 agent）/
+	// instanceService（在线校验）/ auditRepo；结果 waiter 用独立 assetHub（与命令待办 / 浏览结果 Hub 分立，互不干扰）；
+	// 敏感规则读写底层设置项 assets.sensitive-path-patterns（非热改白名单、/settings 不重复暴露）。
+	assetHub := longpoll.NewHub()
+	assetPreviewService := service.NewAssetPreviewService(db, commandRepo, repository.NewFileAssetRepository(db),
+		repository.NewSettingRepository(db), auditRepo, assetHub, notifier, instanceService)
+	assetHandler := handler.NewAssetHandler(assetPreviewService)
+
 	// 多级灰度文件同步中心（FR-129/FR-131）：当前切片只装配任务真源、目标规划、控制动作与管理台 SSE。
 	fileSyncService := service.NewFileSyncService(db, repository.NewFileSyncRepository(db), instanceService, auditRepo, service.NewFileSyncEventHub())
 	fileSyncHandler := handler.NewFileSyncHandler(fileSyncService)
@@ -500,7 +509,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

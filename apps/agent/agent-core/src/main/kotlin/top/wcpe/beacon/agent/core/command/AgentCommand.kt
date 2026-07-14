@@ -33,6 +33,9 @@ data class AgentCommand(
 
         /** 文件资产重扫命令类型：调扫描协调器立即扫描并全量上报清单（FR-163，见 ADR asset-manifest-sync-protocol；payload.force 忽略 mtime 缓存全部重哈希）。 */
         const val TYPE_ASSET_RESCAN = "asset-rescan"
+
+        /** 文件资产内容读取命令类型：读单文本文件回传供预览 / diff（FR-164，见 v2-file-assets.md §4.5；纯只读、不写盘）。 */
+        const val TYPE_ASSET_READ = "asset-read"
     }
 }
 
@@ -56,6 +59,7 @@ data class AgentCommand(
  * @param limit         文件浏览列目录分页条数（FR-110，仅 op=list 用；0=由 core 收口到默认/上限）
  * @param maxDepth      文件浏览读子树展开深度（FR-110，仅 op=tree 用）
  * @param force         文件资产重扫是否忽略本地 mtime 缓存全部重哈希（FR-163，仅 asset-rescan 命令用；其它命令缺省 false）
+ * @param maxBytes      文件资产读取单文件上限字节（FR-164，仅 asset-read 命令用；0=由 core 收口到默认上限）
  */
 data class IngestCommandPayload(
     val scope: String,
@@ -69,6 +73,7 @@ data class IngestCommandPayload(
     val limit: Int = 0,
     val maxDepth: Int = 0,
     val force: Boolean = false,
+    val maxBytes: Int = 0,
 ) {
     companion object {
         /** 扫描模式：只列元信息清单（path/size/isText/overThreshold），不读内容、永不失败。 */

@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.platform
 
+import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
 import top.wcpe.beacon.agent.core.browse.TreeNode
@@ -98,6 +99,18 @@ interface PlatformAdapter {
      * 越权 / 非普通文件 / jar / 二进制返回 null。默认 null 实现（桩不开放）。
      */
     fun browseReadFile(relPath: String): FileContent? = null
+
+    /**
+     * 读 `plugins/` 根下 [relPath] 单文件资产内容供预览 / diff（FR-164，见 v2-file-assets.md §4.5）。
+     *
+     * 与 [browseReadFile] 的区别：**不排除二进制**——二进制回 [AssetContent.binary]=true + 空内容（前端只展示元数据）。
+     * [maxBytes] 为单文件上限（0=core 默认上限），超限截断。只读、async；读取根 = [pluginsBaseFolder]，安全口径同 [browseReadFile]。
+     * 越权 / 非普通文件 / 读失败返回 null。默认 null 实现（桩不开放）。
+     */
+    fun browseReadAsset(
+        relPath: String,
+        maxBytes: Int,
+    ): AssetContent? = null
 
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(

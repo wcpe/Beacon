@@ -64,3 +64,8 @@ export interface AssetDiffResponse {
   left?: { serverId: string; path: string; content: string; sha256: string }
   right?: { serverId: string; path: string; content: string; sha256: string }
 }
+
+/** 敏感路径规则清单（GET/PUT /admin/v2/assets/sensitive-rules；整体替换语义，命中即禁止预览 / diff 内容） */
+export interface AssetSensitiveRulesResponse {
+  patterns: string[]
+}

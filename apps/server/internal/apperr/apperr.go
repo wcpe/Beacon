@@ -262,4 +262,17 @@ var (
 	ErrConfigSensitivePlaceholderInvalid = New(http.StatusBadRequest, "CONFIG_SENSITIVE_PLACEHOLDER_INVALID", "敏感占位符无上一版本明文可回填")
 	// ErrConfigReasonRequired 高风险配置操作（彻底删除 / 撤销层贡献 / 改敏感路径）必须填写原因（code 对齐 devmock）。
 	ErrConfigReasonRequired = New(http.StatusBadRequest, "missing_reason", "该操作必须填写原因")
+
+	// ErrAssetNotFound 文件资产在该服最新清单中不存在（预览 / diff 目标缺失，FR-164，spec §5.2；code 对齐 devmock）。
+	ErrAssetNotFound = New(http.StatusNotFound, "asset_not_found", "该服清单中不存在此文件")
+	// ErrAssetAgentOffline 预览 / diff 目标 agent 离线，无法实时读取文件内容（FR-164，spec §4.5；code 对齐 devmock）。
+	ErrAssetAgentOffline = New(http.StatusGatewayTimeout, "asset_agent_offline", "agent 离线，无法实时读取文件内容")
+	// ErrAssetPreviewTimeout 预览 / diff 等待 agent 回传内容超时（FR-164，spec §4.5；code 对齐 devmock 同族）。
+	ErrAssetPreviewTimeout = New(http.StatusGatewayTimeout, "asset_preview_timeout", "目标实例未在限期内返回文件内容")
+	// ErrAssetReadFailed agent 读取目标文件失败（清单存在但现取失败，如已删除 / 越权，FR-164）。
+	ErrAssetReadFailed = New(http.StatusBadGateway, "asset_read_failed", "目标文件读取失败")
+	// ErrAssetSensitivePath 命中敏感路径规则且未填原因，禁止查看内容（FR-164，spec §4.6；code 对齐 devmock，响应体附 sensitive=true）。
+	ErrAssetSensitivePath = New(http.StatusForbidden, "asset_sensitive_path", "命中敏感路径规则，查看内容必须填写原因")
+	// ErrAssetDiffUnsupported diff 任一侧为二进制或超 512 KiB，不支持 diff（FR-164，spec §4.5；code 对齐 devmock）。
+	ErrAssetDiffUnsupported = New(http.StatusBadRequest, "asset_diff_unsupported", "二进制或超过 512 KiB 的文件不支持 diff，请改用哈希比对")
 )

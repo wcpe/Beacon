@@ -129,6 +129,39 @@ object FsBrowseReader {
         )
     }
 
+    /**
+     * 读单文件资产内容（FR-164，见 v2-file-assets.md §4.5）：与 [readFile] 同源安全口径（路径校验 + 符号链接不逃逸），
+     * 但**不排除二进制**——二进制回 [AssetContent.binary]=true + 空内容（前端只展示元数据）。
+     *
+     * [maxBytes] 为该次读取的单文件上限（0=回退到 [FsBrowseLimits.MAX_FILE_BYTES]）；超上限只读前缀、`truncated=true`。
+     * 返回 null 表示：路径越权 / 不存在 / 非普通文件 / 读失败（控制面据此回「读取失败」，清单存在仍现取失败的兜底）。
+     */
+    fun readAsset(
+        root: File,
+        relPath: String,
+        maxBytes: Int,
+    ): AssetContent? {
+        if (relPath.isEmpty()) return null // 根不是文件
+        val rootReal = realRootOrNull(root) ?: return null
+        val target = resolveWithinRoot(rootReal, relPath) ?: return null
+        // 必须是真实普通文件（非目录 / 非目录符号链接 / 非设备文件）。
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target)) return null
+        // 复用文件浏览读取原语（上限 MAX_FILE_BYTES+1，≥ 预览上限 512 KiB），再按本次 maxBytes 内存内截断判 truncated。
+        val raw = readCapped(target.toFile()) ?: return null
+
+        val cap = if (maxBytes in 1..FsBrowseLimits.MAX_FILE_BYTES.toInt()) maxBytes.toLong() else FsBrowseLimits.MAX_FILE_BYTES
+        val overCap = raw.size.toLong() > cap
+        val effective = if (overCap) raw.copyOf(cap.toInt()) else raw
+        val text = decodeUtf8OrNull(effective)
+        val rel = relativeOf(rootReal, target)
+        return if (text == null) {
+            // 二进制（含 jar / zip / 图片等）：只回元数据，不回内容、不标截断。
+            AssetContent(path = rel, binary = true, truncated = false, content = "")
+        } else {
+            AssetContent(path = rel, binary = false, truncated = overCap, content = text)
+        }
+    }
+
     // ---- 内部：路径解析与安全校验 ----
 
     /** 取 root 真实规范化路径；非目录 / 解析失败返回 null（宁可不读也不越界）。 */
@@ -284,22 +317,6 @@ object FsBrowseReader {
         }
     }
 
-    /** 严格按 UTF-8 解码；含 NUL 或非法 UTF-8 视作二进制返回 null（与反向抓取同口径）。 */
-    private fun decodeUtf8OrNull(bytes: ByteArray): String? {
-        for (b in bytes) {
-            if (b.toInt() == 0) return null // NUL 字节 → 二进制
-        }
-        return try {
-            val decoder =
-                StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-            decoder.decode(ByteBuffer.wrap(bytes)).toString()
-        } catch (e: java.nio.charset.CharacterCodingException) {
-            null // 非合法 UTF-8 → 二进制
-        }
-    }
-
     /** 子树展开的全局节点预算（逐层共享，达上限即停止再收）。 */
     private class NodeBudget(private var remaining: Int) {
         /** 尝试消费一个节点配额；返回 false 表示已耗尽。 */
@@ -308,5 +325,24 @@ object FsBrowseReader {
             remaining--
             return true
         }
+    }
+}
+
+/**
+ * 严格按 UTF-8 解码；含 NUL 或非法 UTF-8 视作二进制返回 null（与反向抓取同口径）。
+ * 文件级私有函数（不占 [FsBrowseReader] 对象方法数），供 readFile / readAsset 共用同一二进制判定。
+ */
+private fun decodeUtf8OrNull(bytes: ByteArray): String? {
+    for (b in bytes) {
+        if (b.toInt() == 0) return null // NUL 字节 → 二进制
+    }
+    return try {
+        val decoder =
+            StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+        decoder.decode(ByteBuffer.wrap(bytes)).toString()
+    } catch (e: java.nio.charset.CharacterCodingException) {
+        null // 非合法 UTF-8 → 二进制
     }
 }

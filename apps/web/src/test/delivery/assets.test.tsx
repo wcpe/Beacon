@@ -2,6 +2,7 @@
 // 清单主从布局点行出非模态详情面板、空态引导、比对交互。
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import AssetsPage from '../../pages/assets'
@@ -91,4 +92,57 @@ describe('/assets 文件资产页', () => {
     // 吸顶筛选始终可见
     expect(screen.getByLabelText('按子服过滤')).toBeInTheDocument()
   })
+
+  // FR-164：敏感路径规则编辑（非结构性小面板）——打开弹窗、载入默认规则、编辑保存
+  it('敏感路径规则编辑：载入默认规则并保存', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<AssetsPage />)
+
+    await user.click(await screen.findByRole('button', { name: '敏感路径规则' }))
+    const dialog = await screen.findByRole('dialog')
+    // 载入默认清单（含 agent 身份目录规则）
+    const textarea = await within(dialog).findByLabelText(
+      '规则清单（每行一个 glob，如 **/*.pem、plugins/Beacon/**）',
+    )
+    expect((textarea as HTMLTextAreaElement).value).toContain('plugins/Beacon/**')
+    // 追加一条并保存 → 成功提示
+    await user.type(textarea, '\nplugins/Custom/**')
+    await user.click(within(dialog).getByRole('button', { name: '保存规则' }))
+    expect(await within(dialog).findByText('已保存敏感路径规则')).toBeInTheDocument()
+  }, 20_000)
+
+  // FR-164：两侧 diff 命中敏感规则 → 403 后填原因带原因重试（前端 403→原因输入→重试逻辑）
+  it('两侧 diff 敏感命中 403 后填原因重试', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 覆盖 diff 端点：无 reason → 403 asset_sensitive_path；带 reason → 一致，锁定前端交互不依赖 mock 清单命中
+    server.use(
+      http.post('/admin/v2/assets/diff', async ({ request }) => {
+        const body = (await request.json()) as { reason?: string }
+        if (!body.reason) {
+          return HttpResponse.json(
+            { code: 'asset_sensitive_path', message: '命中敏感路径规则，diff 必须填写原因', sensitive: true, traceId: 't' },
+            { status: 403 },
+          )
+        }
+        return HttpResponse.json({ identical: true })
+      }),
+    )
+    renderPage(<AssetsPage />)
+
+    await user.click(await screen.findByRole('tab', { name: '两侧差异' }))
+    const region = await screen.findByRole('region', { name: '两侧差异' })
+    await user.type(within(region).getByLabelText('左侧子服'), 'lobby-1')
+    await user.type(within(region).getByLabelText('右侧子服'), 'lobby-2')
+    await user.type(within(region).getByLabelText('文件路径'), 'plugins/Beacon/config.yml')
+    await user.click(within(region).getByRole('button', { name: '比对差异' }))
+
+    // 403 → 原因输入出现
+    const reasonInput = await within(region).findByLabelText('diff 原因')
+    await user.type(reasonInput, '核对经济配置差异')
+    await user.click(within(region).getByRole('button', { name: '带原因比对' }))
+    // 带原因重试 → identical 提示
+    expect(await within(region).findByText('两侧内容一致（哈希相同）')).toBeInTheDocument()
+  }, 20_000)
 })

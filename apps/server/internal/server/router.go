@@ -45,6 +45,7 @@ type Handlers struct {
 	APIKey            *handler.APIKeyHandler
 	Command           *handler.CommandHandler
 	Browse            *handler.BrowseHandler
+	Asset             *handler.AssetHandler
 	FileSync          *handler.FileSyncHandler
 	AgentLog          *handler.AgentLogHandler
 	ReverseFetchTask  *handler.ReverseFetchTaskHandler
@@ -145,6 +146,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// identity 鉴权中间件（未确认 403），注入权威身份归属清单；增量 / 全量分片入库走常规同步事务。
 			// 抽成函数注册（内部 nil 守卫），避免本 v2 agent 组内联 if 累加触发 nestif。
 			registerV2AssetsAgentRoutes(r, h)
+			// 文件资产内容回传（FR-164，见 spec §5.1）：agent 读单文本文件回传供预览 / diff；
+			// 与采集面同挂 token↔namespace + identity 鉴权中间件（未确认 403），归属以注入的权威身份为准；
+			// 内容转存内存中继唤醒等待的 admin，**绝不落库**。与其它 agent 面端点一致无条件注册（assetHandler 恒构造）。
+			r.With(agentV2ReportMiddleware(h.V2)).Post("/assets/content", h.Asset.ReceiveContent)
 		})
 	}
 
@@ -263,6 +268,16 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// rescan 为写方法，readonly 经上面 readonlyWriteGuard 403；其 asset.rescan 专项审计由 AssetService 在事务内自记，
 			// 已登记 coveredWriteRoutes 使兜底审计跳过、避免双记。抽成函数注册（内部 nil 守卫），避免内联 if 触发 nestif。
 			registerV2AssetsAdminRoutes(r, h)
+			// 文件资产内容预览 / diff / 敏感规则（FR-164，见 spec §5.2）：控制面不存文件内容，preview/diff 经命令
+			// 下发向 agent 现取。preview/diff 为 POST（有建命令 / 唤醒 agent 写副作用，readonly 经 readonlyWriteGuard 403），
+			// service 内在成功读取后自记 asset.preview / asset.diff 专项审计（先审计后返回，detail 绝不含文件内容）。
+			// 敏感规则读写底层设置项 assets.sensitive-path-patterns（/settings 不重复暴露），PUT 自记 asset.sensitive_rule_update。
+			// 三个写端点登记 coveredWriteRoutes 使兜底审计跳过、避免双记。与 archive / config-center 一致无条件注册
+			// （assetHandler 在 main.go 恒构造；handler 仅请求期解引用，构造期不调用）。
+			r.Post("/assets/preview", h.Asset.Preview)
+			r.Post("/assets/diff", h.Asset.Diff)
+			r.Get("/assets/sensitive-rules", h.Asset.GetSensitiveRules)
+			r.Put("/assets/sensitive-rules", h.Asset.PutSensitiveRules)
 		})
 	}
 

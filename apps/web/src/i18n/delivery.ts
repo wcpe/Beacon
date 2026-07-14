@@ -118,6 +118,24 @@ export const delivery = {
       rightHeading: '右侧',
       empty: '暂无差异结果',
       unsupported: '二进制或超大文件不支持 diff',
+      // 任一侧命中敏感规则时的原因输入（无原因 diff 被 403，填原因重试）
+      sensitiveHint: '任一侧命中敏感规则，diff 需填写原因（将记入审计）',
+      reasonLabel: 'diff 原因',
+      reasonPlaceholder: '例如：核对两服经济配置差异',
+      confirm: '带原因比对',
+    },
+    // 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因，整体替换语义
+    sensitiveRules: {
+      manage: '敏感路径规则',
+      title: '敏感路径规则',
+      hint: '命中以下 glob 的文件，预览 / diff 默认禁止查看内容、需填写原因单次放行（记入审计）。每行一个 glob，保存即整体替换。',
+      label: '规则清单（每行一个 glob，如 **/*.pem、plugins/Beacon/**）',
+      placeholder: '**/*secret*',
+      save: '保存规则',
+      cancel: '取消',
+      saved: '已保存敏感路径规则',
+      empty: '（空清单 = 关闭敏感保护，所有文件可直接查看）',
+      loadError: '加载敏感规则失败',
     },
     // 触发重扫
     rescan: {

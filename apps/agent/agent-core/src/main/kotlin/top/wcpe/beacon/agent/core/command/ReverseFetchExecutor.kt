@@ -102,6 +102,11 @@ class ReverseFetchExecutor(
             runAssetRescan(command)
             return true
         }
+        // 文件资产内容读取命令（FR-164）：读单文件内容 + 二进制 / 截断标记回传供预览 / diff，纯只读、不写盘。
+        if (command.type == AgentCommand.TYPE_ASSET_READ) {
+            runAssetRead(command)
+            return true
+        }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
             // 只接 ingest-plugins / tail-logs / resync-config；未知类型不处理（不预埋多命令空壳，守 scope-discipline）。命令已被控制面 CAS fetched、不会重现，继续排空。
             adapter.warn("收到未知命令类型（忽略）：id=${command.id}，type=${command.type}")
@@ -350,6 +355,29 @@ class ReverseFetchExecutor(
             adapter.info("文件浏览结果回传成功：id=${command.id}，op=${payload.op}，命中=${result != null}")
         } else {
             adapter.warn("文件浏览结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    /**
+     * 单文件资产读取阶段（FR-164）：读 plugins 根下单文件内容 + 二进制 / 截断标记回传供预览 / diff。
+     *
+     * 纯只读、绝不写盘；越权 / 不存在 / 读失败 → 回 ok=false 带脱敏原因（fail-static、不崩）。
+     * 二进制文件回 binary=true + 空内容（前端只展示元数据）；超单文件上限回 truncated=true + 前缀。
+     */
+    private fun runAssetRead(command: AgentCommand) {
+        val payload = command.payload
+        val asset =
+            try {
+                adapter.browseReadAsset(payload.path, payload.maxBytes)
+            } catch (e: Exception) {
+                adapter.error("文件资产读盘失败：id=${command.id}，path=${payload.path}", e)
+                null
+            }
+        val ok = apiClient.postAssetContent(identity, command.id, asset)
+        if (ok) {
+            adapter.info("文件资产内容回传成功：id=${command.id}，path=${payload.path}，命中=${asset != null}")
+        } else {
+            adapter.warn("文件资产内容回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 
