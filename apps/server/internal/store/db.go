@@ -84,6 +84,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		// 热冷归档任务表（FR-151，见 ADR-0066）：落热库、控制面事实，不随数据归档
 		&model.ArchiveJob{},
 		&model.ArchiveJobItem{},
+		// 配置中心 V2（FR-160/161）：文件 + 层版本不可变链，低频小表不分日表、不进归档（spec §3.4）
+		&model.ConfigFile{},
+		&model.ConfigLayerVersion{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}

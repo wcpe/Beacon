@@ -21,6 +21,30 @@ func IsValidScopeLevel(level string) bool {
 	}
 }
 
+// 配置中心 V2 的五层作用域（FR-160，落 VARCHAR + 应用层校验；低 → 高覆盖顺序见 ConfigScopeLevelsLowToHigh）。
+const (
+	ConfigScopeNamespace = "namespace"  // namespace 基线层
+	ConfigScopeBCCluster = "bc_cluster" // BC 集群层
+	ConfigScopeRegion    = "region"     // 大区层
+	ConfigScopeZone      = "zone"       // 小区层
+	ConfigScopeServer    = "server"     // 子服层
+)
+
+// ConfigScopeLevelsLowToHigh 是五层作用域的覆盖顺序（低 → 高，高层覆盖低层，规格 §4.1）。
+var ConfigScopeLevelsLowToHigh = []string{
+	ConfigScopeNamespace, ConfigScopeBCCluster, ConfigScopeRegion, ConfigScopeZone, ConfigScopeServer,
+}
+
+// IsValidConfigScopeLevel 校验配置中心 V2 作用域层取值。
+func IsValidConfigScopeLevel(level string) bool {
+	switch level {
+	case ConfigScopeNamespace, ConfigScopeBCCluster, ConfigScopeRegion, ConfigScopeZone, ConfigScopeServer:
+		return true
+	default:
+		return false
+	}
+}
+
 // v2 server 类型。
 const (
 	ServerKindProxy   = "proxy"
