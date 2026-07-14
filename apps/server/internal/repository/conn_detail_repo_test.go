@@ -170,7 +170,8 @@ func TestConnFlushSameBatchOpenClose(t *testing.T) {
 func TestConnCloseOrphans(t *testing.T) {
 	db := openRepoSQLite(t, "conn_orphan")
 	repo := NewConnDetailRepository(db)
-	base := time.Date(2026, 7, 11, 10, 0, 0, 0, time.UTC).UnixMilli()
+	// 相对当前时间取基点：CloseOrphans 按回看天数扫日表，固定日期会随时间滑出窗口（日期腐化）
+	base := time.Now().UTC().Add(-time.Hour).UnixMilli()
 	old := openEvent(uuidV7At(base, "e5"), 1, "proxy-1", "old", base)               // 旧进程孤儿
 	fresh := openEvent(uuidV7At(base+60000, "e6"), 1, "proxy-1", "new", base+60000) // 新进程鲜活
 	if _, err := repo.FlushDaily([]model.ConnEvent{old, fresh}); err != nil {
@@ -197,7 +198,8 @@ func TestConnCloseOrphans(t *testing.T) {
 func TestConnListOpen(t *testing.T) {
 	db := openRepoSQLite(t, "conn_listopen")
 	repo := NewConnDetailRepository(db)
-	base := time.Date(2026, 7, 11, 11, 0, 0, 0, time.UTC).UnixMilli()
+	// 相对当前时间取基点：ListOpenConnections 按回看天数扫日表，固定日期会随时间滑出窗口（日期腐化）
+	base := time.Now().UTC().Add(-time.Hour).UnixMilli()
 	openCid := uuidV7At(base, "f7")
 	closedCid := uuidV7At(base+1000, "f8")
 	if _, err := repo.FlushDaily([]model.ConnEvent{
