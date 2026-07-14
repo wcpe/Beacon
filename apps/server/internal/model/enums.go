@@ -413,6 +413,15 @@ const (
 	ActionArchiveJobFailed   = "archive.job-failed"
 	ActionArchiveJobRetry    = "archive.job-retry"
 	ActionArchiveJobCancel   = "archive.job-cancel"
+	// 配置中心 V2（FR-160/161，spec §4.7/§4.9）：detail 只落键路径级摘要，敏感路径只记「值已变更」，任何位置不落明文
+	ActionConfigFileCreate      = "config.file.create"
+	ActionConfigFileUpdate      = "config.file.update"
+	ActionConfigFileTrash       = "config.file.trash"
+	ActionConfigFileRestore     = "config.file.restore"
+	ActionConfigFilePurge       = "config.file.purge"
+	ActionConfigVersionSave     = "config.version.save"
+	ActionConfigVersionRollback = "config.version.rollback"
+	ActionConfigScopeRemove     = "config.scope.remove"
 )
 
 // 审计对象类型。
@@ -454,6 +463,8 @@ const (
 	TargetTypeAlertEvent = "alert-event"
 	// 热冷归档任务（FR-151）的审计对象类型
 	TargetTypeArchiveJob = "archive-job"
+	// 配置中心 V2 配置文件（FR-160/161）的审计对象类型
+	TargetTypeConfigFile = "config-file"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

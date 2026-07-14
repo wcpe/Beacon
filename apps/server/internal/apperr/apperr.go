@@ -234,4 +234,29 @@ var (
 	ErrArchiveUnavailable = New(http.StatusServiceUnavailable, "ARCHIVE_UNAVAILABLE", "归档库不可用，归档能力暂不可用")
 	// ErrArchiveDomainInvalid 请求的归档域不在注册表内（FR-151，spec §3.1）。
 	ErrArchiveDomainInvalid = New(http.StatusBadRequest, "ARCHIVE_DOMAIN_INVALID", "未知的归档域")
+
+	// ErrConfigFileNotFound 配置文件不存在或已入回收站（除回收站端点外一律视同不存在，FR-160，spec §4.9）。
+	ErrConfigFileNotFound = New(http.StatusNotFound, "CONFIG_FILE_NOT_FOUND", "配置文件不存在")
+	// ErrConfigVersionNotFound 配置层版本不存在（版本详情 / 回退 / diff 引用目标缺失，FR-161）。
+	ErrConfigVersionNotFound = New(http.StatusNotFound, "CONFIG_VERSION_NOT_FOUND", "配置版本不存在")
+	// ErrConfigFileDuplicate 同 namespace 内逻辑名已被未删除文件占用（创建 / 恢复冲突，spec §4.9）。
+	ErrConfigFileDuplicate = New(http.StatusConflict, "CONFIG_FILE_DUPLICATE", "同名配置文件已存在")
+	// ErrConfigFileNotTrashed 彻底删除仅对回收站内文件可执行（spec §4.9）。
+	ErrConfigFileNotTrashed = New(http.StatusBadRequest, "CONFIG_FILE_NOT_TRASHED", "仅回收站内文件可彻底删除")
+	// ErrConfigScopeMismatch 作用域实体不存在或不属于文件 namespace（跨 namespace 强隔离，spec §4.8）。
+	ErrConfigScopeMismatch = New(http.StatusBadRequest, "CONFIG_SCOPE_MISMATCH", "作用域不存在或不属于文件所在环境")
+	// ErrConfigSyntaxInvalid 配置内容按声明格式解析失败（保存前阻断，spec §4.2；具体原因经 New 构造同码错误携带）。
+	ErrConfigSyntaxInvalid = New(http.StatusBadRequest, "CONFIG_SYNTAX_INVALID", "配置内容语法解析失败")
+	// ErrConfigSchemaViolation 内容未通过文件 JSON Schema 校验（逐条 {path,message} 由 service 附带，spec §4.4）。
+	ErrConfigSchemaViolation = New(http.StatusBadRequest, "CONFIG_SCHEMA_VIOLATION", "配置内容未通过 schema 校验")
+	// ErrConfigVersionConflict 乐观并发冲突：basedOnVersionId 不等于链当前 head（spec §4.2）。
+	ErrConfigVersionConflict = New(http.StatusConflict, "CONFIG_VERSION_CONFLICT", "基线版本已过期，请重新加载后合并")
+	// ErrConfigNoChange 归一化内容与当前 head 相同，不产生空版本（spec §4.2/§4.6）。
+	ErrConfigNoChange = New(http.StatusBadRequest, "CONFIG_NO_CHANGE", "内容与当前版本相同，未产生变更")
+	// ErrConfigContentTooLarge 单版本内容超出 1 MiB 上限（spec §3.3）。
+	ErrConfigContentTooLarge = New(http.StatusUnprocessableEntity, "CONFIG_CONTENT_TOO_LARGE", "配置内容超出 1 MiB 上限")
+	// ErrConfigSensitivePlaceholderInvalid 敏感占位符出现在新增键 / 无上一版本可回填处（spec §4.7）。
+	ErrConfigSensitivePlaceholderInvalid = New(http.StatusBadRequest, "CONFIG_SENSITIVE_PLACEHOLDER_INVALID", "敏感占位符无上一版本明文可回填")
+	// ErrConfigReasonRequired 高风险配置操作（彻底删除 / 撤销层贡献 / 改敏感路径）必须填写原因（code 对齐 devmock）。
+	ErrConfigReasonRequired = New(http.StatusBadRequest, "missing_reason", "该操作必须填写原因")
 )
