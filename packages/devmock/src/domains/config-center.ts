@@ -1,7 +1,8 @@
 // 配置中心 V2 域 mock（/admin/v2/config-files*、/admin/v2/config-versions*，全套 17 端点）。
-// 契约真源：docs/specs/v2-config-center.md §5；错误码 §5 汇总表；
-// 合并语义 §4.1（mock 采用"扁平键"简化实现：`key: value` 行级解析 + 高层覆盖 + null 删键），
-// 足以支撑页面演示逐键来源 / diff / 版本链 / 回收站闭环。
+// 契约真源：docs/specs/v2-config-center.md §5；错误码 §5 汇总表。
+// 合并语义 §4.1 由 config-engine.ts 的嵌套深合并引擎承担（标量覆盖 / map 深合并 / list 整替 /
+// null 删键 + 递归 provenance + 嵌套敏感路径）；schema 校验 §4.4 由 config-schema.ts 的
+// 九关键字子集校验器承担，validate 与保存端点共用同一引擎。
 
 import { HttpResponse, type HttpHandler } from 'msw'
 import type {
@@ -28,6 +29,18 @@ import { getClusterState, namespaceOfZone, type ClusterState } from '../data/clu
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { isoOffset, pseudoSha256 } from '../support'
+import {
+  flattenLeaves,
+  getAtPath,
+  maskTree,
+  mergeLayerTrees,
+  parseConfig,
+  serializeConfig,
+  setAtPath,
+  type ConfigTree,
+  type MergeLayerInput,
+} from './config-engine'
+import { checkSchemaDefinition, validateContentAgainstSchema, type SchemaIssue, type SchemaNode } from './config-schema'
 
 /** 敏感值占位符（读出口统一脱敏） */
 export const CONFIG_MASKED = '__BEACON_MASKED__'
@@ -42,58 +55,21 @@ interface ConfigState {
 const DAY = 86_400_000
 const SCOPE_LEVELS: readonly ConfigScopeLevel[] = ['namespace', 'bc_cluster', 'region', 'zone', 'server']
 
-// ---- 扁平内容解析（mock 简化的合并引擎） ----
-
-/** 解析扁平键值内容：yaml/properties 按行解析，json 解析顶层对象；值 "null" 表示删键指令 */
-export function parseFlat(format: ConfigFormat, content: string): Map<string, string | null> {
-  const map = new Map<string, string | null>()
-  if (format === 'json') {
-    const parsed: unknown = JSON.parse(content)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new Error('JSON 顶层必须是对象')
-    }
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      map.set(key, value === null ? null : typeof value === 'string' ? value : JSON.stringify(value))
-    }
-    return map
-  }
-  const separator = format === 'properties' ? '=' : ':'
-  const lines = content.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    const trimmed = line.trim()
-    if (trimmed === '' || trimmed.startsWith('#')) {
-      continue
-    }
-    const sepIndex = trimmed.indexOf(separator)
-    if (sepIndex <= 0) {
-      throw new Error(`第 ${String(i + 1)} 行语法错误：缺少 "${separator}" 分隔符`)
-    }
-    const key = trimmed.slice(0, sepIndex).trim()
-    const value = trimmed.slice(sepIndex + 1).trim()
-    // yaml/json 支持 null 删键；properties 的 null 是普通字符串
-    map.set(key, format === 'yaml' && value === 'null' ? null : value)
-  }
-  return map
-}
-
-/** 按固定键序规范序列化（保证 hash 幂等） */
-export function serializeFlat(format: ConfigFormat, map: Map<string, string | null>): string {
-  const keys = [...map.keys()].sort()
-  const separator = format === 'properties' ? '=' : ': '
-  return keys
-    .map((key) => {
-      const value = map.get(key)
-      return `${key}${separator}${value ?? 'null'}`
-    })
-    .join('\n')
-}
-
+/** 归一化内容 hash：parse → 固定键序序列化 → 伪 sha256（解析失败直接对原文取 hash，仅种子容错） */
 function contentHashOf(format: ConfigFormat, content: string): string {
   try {
-    return pseudoSha256(serializeFlat(format, parseFlat(format, content)))
+    return pseudoSha256(serializeConfig(format, parseConfig(format, content)))
   } catch {
     return pseudoSha256(content)
+  }
+}
+
+/** 容错解析（种子 / 历史内容），失败返回 null */
+function parseSafe(format: ConfigFormat, content: string): ConfigTree | null {
+  try {
+    return parseConfig(format, content)
+  } catch {
+    return null
   }
 }
 
@@ -107,8 +83,9 @@ function seedFile(
   description: string,
   sensitivePaths: string[],
   chains: { scopeLevel: ConfigScopeLevel; scopeRefId: number; contents: string[] }[],
-  deleted = false,
+  options?: { deleted?: boolean; schemaJson?: string },
 ): void {
+  const deleted = options?.deleted ?? false
   const fileId = state.nextFileId
   state.nextFileId += 1
   state.files.push({
@@ -117,7 +94,7 @@ function seedFile(
     name,
     format,
     description,
-    schemaJson: null,
+    schemaJson: options?.schemaJson ?? null,
     sensitivePaths,
     deletedAt: deleted ? isoOffset(-2 * DAY) : null,
     deletedBy: deleted ? 'ops-chen' : null,
@@ -154,7 +131,7 @@ function buildConfig(scenario: MockScenario): ConfigState {
   if (scenario === 'empty') {
     return state
   }
-  // 常规数据：贴近真实运维的插件配置文件，覆盖五层贡献 / 敏感值 / 回收站样本
+  // 常规数据：贴近真实运维的插件配置文件，覆盖五层贡献 / 嵌套敏感值 / null 删键 / schema / 回收站样本
   seedFile(
     state,
     1,
@@ -177,11 +154,24 @@ function buildConfig(scenario: MockScenario): ConfigState {
         contents: ['teleport-cooldown: 1\nmotd: 一区主城欢迎你'],
       },
       {
+        // lobby-1（server 层）：改标量 + null 删键（演示 deletedKeys 与执行层）
         scopeLevel: 'server',
         scopeRefId: 1002,
-        contents: ['spawn-on-join: true'],
+        contents: ['spawn-on-join: true\nmotd: null'],
       },
     ],
+    {
+      // 文件级 schema 演示（部分校验：类型 / 取值范围；required 演示留给专项用例，避免与旧内容冲突）
+      schemaJson: JSON.stringify({
+        type: 'object',
+        properties: {
+          'teleport-cooldown': { type: 'integer', minimum: 0, maximum: 3600 },
+          'spawn-on-join': { type: 'boolean' },
+          'economy-enabled': { type: 'boolean' },
+          motd: { type: 'string' },
+        },
+      }),
+    },
   )
   seedFile(
     state,
@@ -192,10 +182,11 @@ function buildConfig(scenario: MockScenario): ConfigState {
     ['database.password'],
     [
       {
+        // 真嵌套结构：database.password 是嵌套敏感路径
         scopeLevel: 'namespace',
         scopeRefId: 1,
         contents: [
-          'database.host: 10.30.0.6\ndatabase.password: prod-secret-233\nstart-balance: 100\ncurrency-name: 金币',
+          'database:\n  host: 10.30.0.6\n  password: prod-secret-233\nstart-balance: 100\ncurrency-name: 金币',
         ],
       },
       {
@@ -210,13 +201,13 @@ function buildConfig(scenario: MockScenario): ConfigState {
     1,
     'plugins/Quests/config.json',
     'json',
-    '任务系统配置（JSON 格式样例）',
+    '任务系统配置（JSON 格式样例，含嵌套奖励表）',
     [],
     [
       {
         scopeLevel: 'namespace',
         scopeRefId: 1,
-        contents: ['{"daily-limit": 10, "reward-multiplier": "1.5", "notify": "actionbar"}'],
+        contents: ['{"daily-limit": 10, "reward-multiplier": 1.5, "notify": "actionbar", "rewards": {"daily": 100, "weekly": 500}}'],
       },
     ],
   )
@@ -258,7 +249,7 @@ function buildConfig(scenario: MockScenario): ConfigState {
     '已下线的旧商店插件配置',
     [],
     [{ scopeLevel: 'namespace', scopeRefId: 1, contents: ['shop-enabled: false'] }],
-    true,
+    { deleted: true },
   )
   if (scenario === 'huge') {
     // 超大量：1500 份文件（各一条 namespace 链），分页真实生效
@@ -355,22 +346,38 @@ function scopeBelongs(state: ClusterState, file: ConfigFileRow, level: ConfigSco
   }
 }
 
-/** 敏感键脱敏 */
+/** 敏感键脱敏（嵌套路径命中的标量叶子替换为占位符） */
 function maskContent(file: ConfigFileRow, content: string): string {
   if (file.sensitivePaths.length === 0 || content === '') {
     return content
   }
-  try {
-    const map = parseFlat(file.format, content)
-    for (const path of file.sensitivePaths) {
-      if (map.has(path) && map.get(path) !== null) {
-        map.set(path, CONFIG_MASKED)
-      }
-    }
-    return serializeFlat(file.format, map)
-  } catch {
+  const tree = parseSafe(file.format, content)
+  if (tree === null) {
     return content
   }
+  return serializeConfig(file.format, maskTree(tree, file.sensitivePaths, CONFIG_MASKED))
+}
+
+/** 解析文件级 schema（schemaJson 合法性已在创建 / PATCH 时把关） */
+function schemaOf(file: ConfigFileRow): SchemaNode | null {
+  if (file.schemaJson === null || file.schemaJson === '') {
+    return null
+  }
+  try {
+    return JSON.parse(file.schemaJson) as SchemaNode
+  } catch {
+    return null
+  }
+}
+
+/** validate 与保存端点共用的 schema 校验：无 schema 只做语法（返回空数组） */
+function schemaIssuesOf(file: ConfigFileRow, scopeLevel: string | undefined, tree: ConfigTree): SchemaIssue[] {
+  const schema = schemaOf(file)
+  if (schema === null) {
+    return []
+  }
+  // required 完整性仅 namespace 层（完整基线层）强制
+  return validateContentAgainstSchema(file.format, schema, tree, scopeLevel === 'namespace')
 }
 
 interface ResolvedTarget {
@@ -431,18 +438,16 @@ function resolveTarget(state: ClusterState, file: ConfigFileRow, url: URL): Reso
 }
 
 interface MergedResult {
-  merged: Map<string, string | null>
+  merged: ConfigTree
   provenance: ConfigProvenanceEntry[]
   deletedKeys: ConfigDeletedKey[]
   layerSummaries: ConfigEffectiveResponse['layers']
 }
 
-/** 低 → 高逐层合并并记录逐键来源与删键 */
+/** 收集各层 head 树后交由合并引擎低 → 高深合并，并产出层摘要 */
 function mergeLayers(state: ClusterState, file: ConfigFileRow, target: ResolvedTarget): MergedResult {
-  const merged = new Map<string, string | null>()
-  const origin = new Map<string, ConfigProvenanceEntry>()
-  const deletedKeys: ConfigDeletedKey[] = []
   const layerSummaries: ConfigEffectiveResponse['layers'] = []
+  const inputs: MergeLayerInput[] = []
   for (const layer of target.layers) {
     if (layer.scopeRefId === null) {
       layerSummaries.push({
@@ -468,43 +473,20 @@ function mergeLayers(state: ClusterState, file: ConfigFileRow, target: ResolvedT
     if (!head || !contributing) {
       continue
     }
-    let map: Map<string, string | null>
-    try {
-      map = parseFlat(file.format, head.content)
-    } catch {
+    const tree = parseSafe(file.format, head.content)
+    if (tree === null) {
       continue
     }
-    for (const [key, value] of map) {
-      if (value === null) {
-        if (merged.has(key)) {
-          merged.delete(key)
-          origin.delete(key)
-          deletedKeys.push({
-            path: key,
-            scopeLevel: layer.scopeLevel,
-            scopeRefId: layer.scopeRefId,
-            scopeName: scopeName(state, layer.scopeLevel, layer.scopeRefId),
-            versionNo: head.versionNo,
-          })
-        }
-        continue
-      }
-      merged.set(key, value)
-      origin.set(key, {
-        path: key,
-        scopeLevel: layer.scopeLevel,
-        scopeRefId: layer.scopeRefId,
-        scopeName: scopeName(state, layer.scopeLevel, layer.scopeRefId),
-        versionNo: head.versionNo,
-      })
-    }
+    inputs.push({
+      scopeLevel: layer.scopeLevel,
+      scopeRefId: layer.scopeRefId,
+      scopeName: scopeName(state, layer.scopeLevel, layer.scopeRefId),
+      versionNo: head.versionNo,
+      tree,
+    })
   }
-  return {
-    merged,
-    provenance: [...origin.values()].sort((a, b) => (a.path < b.path ? -1 : 1)),
-    deletedKeys,
-    layerSummaries,
-  }
+  const outcome = mergeLayerTrees(file.format, inputs)
+  return { ...outcome, layerSummaries }
 }
 
 function toFileItem(row: ConfigFileRow): ConfigFileItem {
@@ -549,22 +531,22 @@ function fileDetailOf(file: ConfigFileRow): ConfigFileDetail {
 }
 
 /** 解析 diff 端点的一侧描述：version:<id> / scope:<level>:<refId> / effective:<targetType>:<targetId> */
-function resolveDiffSide(state: ClusterState, file: ConfigFileRow, spec: string): Map<string, string | null> | Response {
+function resolveDiffSide(state: ClusterState, file: ConfigFileRow, spec: string): ConfigTree | Response {
   const parts = spec.split(':')
   if (parts[0] === 'version') {
     const version = getConfigState().versions.find((v) => v.id === Number.parseInt(parts[1], 10))
     if (version?.configFileId !== file.id) {
       return jsonError(404, 'CONFIG_VERSION_NOT_FOUND', 'diff 引用的版本不存在')
     }
-    return parseFlat(file.format, version.content)
+    return parseSafe(file.format, version.content) ?? {}
   }
   if (parts[0] === 'scope') {
     const level = parts[1] as ConfigScopeLevel
     const head = headOf(file.id, level, Number.parseInt(parts[2], 10))
     if (!head || head.isRemoval) {
-      return new Map<string, string | null>()
+      return {}
     }
-    return parseFlat(file.format, head.content)
+    return parseSafe(file.format, head.content) ?? {}
   }
   if (parts[0] === 'effective') {
     const targetType = parts[1]
@@ -582,16 +564,6 @@ function resolveDiffSide(state: ClusterState, file: ConfigFileRow, spec: string)
     return mergeLayers(state, file, target).merged
   }
   return jsonError(400, 'invalid_param', `无法识别的 diff 侧描述：${spec}`)
-}
-
-function maskMap(file: ConfigFileRow, map: Map<string, string | null>): Map<string, string | null> {
-  const masked = new Map(map)
-  for (const path of file.sensitivePaths) {
-    if (masked.has(path) && masked.get(path) !== null) {
-      masked.set(path, CONFIG_MASKED)
-    }
-  }
-  return masked
 }
 
 interface SaveVersionBody {
@@ -661,7 +633,7 @@ export const configCenterHandlers: HttpHandler[] = [
           const target = resolveTarget(state, f, url2)
           if (!(target instanceof Response)) {
             const merged = mergeLayers(state, f, target)
-            item.effectiveHash = pseudoSha256(serializeFlat(f.format, merged.merged))
+            item.effectiveHash = pseudoSha256(serializeConfig(f.format, merged.merged))
           }
         }
         return item
@@ -686,6 +658,13 @@ export const configCenterHandlers: HttpHandler[] = [
     const state = getConfigState()
     if (state.files.some((f) => f.namespaceId === body.namespaceId && f.name === body.name && f.deletedAt === null)) {
       return jsonError(409, 'CONFIG_FILE_DUPLICATE', `文件 ${body.name} 已存在`)
+    }
+    // schema 保存前先校验其本身是合法 JSON Schema（§4.4）
+    if (body.schemaJson !== undefined && body.schemaJson !== '') {
+      const schemaError = checkSchemaDefinition(body.schemaJson)
+      if (schemaError !== null) {
+        return jsonError(400, 'invalid_param', `schemaJson 非法：${schemaError}`)
+      }
     }
     const row: ConfigFileRow = {
       id: state.nextFileId,
@@ -763,7 +742,7 @@ export const configCenterHandlers: HttpHandler[] = [
     return HttpResponse.json({ items, total } satisfies VersionListResponse)
   }),
 
-  // 保存新版本（语法校验 + 乐观并发 + 无变化拒绝 + 敏感占位符回填）
+  // 保存新版本（§4.2 顺序：scope → 语法 → 敏感回填 → schema → 乐观并发 → 归一化去重 → 落库）
   mockPost('/admin/v2/config-files/:id/versions', async (info) => {
     const file = findFile(Number.parseInt(pathParam(info, 'id'), 10))
     if (!file) {
@@ -780,31 +759,39 @@ export const configCenterHandlers: HttpHandler[] = [
     if (body.content.length > 1024 * 1024) {
       return jsonError(422, 'CONFIG_CONTENT_TOO_LARGE', '单版本内容超过 1 MiB 上限')
     }
-    let map: Map<string, string | null>
+    let tree: ConfigTree
     try {
-      map = parseFlat(file.format, body.content)
+      tree = parseConfig(file.format, body.content)
     } catch (error) {
       return jsonError(400, 'CONFIG_SYNTAX_INVALID', error instanceof Error ? error.message : '语法解析失败')
     }
     const head = headOf(file.id, body.scopeLevel, body.scopeRefId)
-    const basedOn = body.basedOnVersionId ?? null
-    if ((head?.id ?? null) !== basedOn) {
-      return jsonError(409, 'CONFIG_VERSION_CONFLICT', '基线版本已过期，请重新加载后合并')
-    }
-    // 敏感占位符回填：等于占位符的敏感键取上一版本明文
+    // 敏感占位符回填：等于占位符的敏感键取上一版本（head）明文
     for (const path of file.sensitivePaths) {
-      if (map.get(path) === CONFIG_MASKED) {
-        if (!head || head.isRemoval) {
-          return jsonError(400, 'CONFIG_SENSITIVE_PLACEHOLDER_INVALID', `敏感键 ${path} 无上一版本可回填`)
-        }
-        const previous = parseFlat(file.format, head.content).get(path)
+      if (getAtPath(tree, path) === CONFIG_MASKED) {
+        const previousTree = head !== undefined && !head.isRemoval ? parseSafe(file.format, head.content) : null
+        const previous = previousTree === null ? undefined : getAtPath(previousTree, path)
         if (previous === undefined || previous === null) {
           return jsonError(400, 'CONFIG_SENSITIVE_PLACEHOLDER_INVALID', `敏感键 ${path} 无上一版本可回填`)
         }
-        map.set(path, previous)
+        setAtPath(tree, path, previous)
       }
     }
-    const normalized = serializeFlat(file.format, map)
+    // schema 校验（部分校验；required 仅 namespace 层），违例逐条返回并拒绝落库
+    const issues = schemaIssuesOf(file, body.scopeLevel, tree)
+    if (issues.length > 0) {
+      return jsonError(
+        400,
+        'CONFIG_SCHEMA_VIOLATION',
+        `schema 校验不通过：${issues.map((i) => `${i.path} ${i.message}`).join('；')}`,
+        { errors: issues },
+      )
+    }
+    // 乐观并发：basedOnVersionId 必须等于当前 head（链空为 null）
+    if ((head?.id ?? null) !== (body.basedOnVersionId ?? null)) {
+      return jsonError(409, 'CONFIG_VERSION_CONFLICT', '基线版本已过期，请重新加载后合并')
+    }
+    const normalized = serializeConfig(file.format, tree)
     const contentHash = pseudoSha256(normalized)
     if (head && !head.isRemoval && head.contentHash === contentHash) {
       return jsonError(400, 'CONFIG_NO_CHANGE', '内容与当前 head 相同，不产生空版本')
@@ -833,7 +820,7 @@ export const configCenterHandlers: HttpHandler[] = [
     )
   }),
 
-  // 只读校验（不落库不审计）
+  // 只读校验（不落库不审计）：语法 + schema，与保存端点同一引擎
   mockPost('/admin/v2/config-files/:id/validate', async (info) => {
     const file = findFile(Number.parseInt(pathParam(info, 'id'), 10))
     if (!file) {
@@ -843,15 +830,17 @@ export const configCenterHandlers: HttpHandler[] = [
     if (typeof body.content !== 'string') {
       return jsonError(400, 'invalid_param', 'content 必填')
     }
+    let tree: ConfigTree
     try {
-      parseFlat(file.format, body.content)
-      return HttpResponse.json({ valid: true, errors: [] } satisfies ConfigValidateResponse)
+      tree = parseConfig(file.format, body.content)
     } catch (error) {
       return HttpResponse.json({
         valid: false,
         errors: [{ path: '(root)', message: error instanceof Error ? error.message : '语法解析失败' }],
       } satisfies ConfigValidateResponse)
     }
+    const issues = schemaIssuesOf(file, body.scopeLevel, tree)
+    return HttpResponse.json({ valid: issues.length === 0, errors: issues } satisfies ConfigValidateResponse)
   }),
 
   // 有效配置预览（合并 + 逐键来源 + 删键列表）
@@ -866,9 +855,10 @@ export const configCenterHandlers: HttpHandler[] = [
       return target
     }
     const merged = mergeLayers(cluster, file, target)
-    const effectiveHash = pseudoSha256(serializeFlat(file.format, merged.merged))
+    // 有效 hash 对脱敏前内容计算（与下发渲染一致）；展示内容再脱敏
+    const effectiveHash = pseudoSha256(serializeConfig(file.format, merged.merged))
     const response: ConfigEffectiveResponse = {
-      effectiveContent: serializeFlat(file.format, maskMap(file, merged.merged)),
+      effectiveContent: serializeConfig(file.format, maskTree(merged.merged, file.sensitivePaths, CONFIG_MASKED)),
       effectiveHash,
       provenance: merged.provenance,
       deletedKeys: merged.deletedKeys,
@@ -890,29 +880,30 @@ export const configCenterHandlers: HttpHandler[] = [
       return jsonError(400, 'invalid_param', 'left / right 必填')
     }
     const cluster = getClusterState()
-    const leftMap = resolveDiffSide(cluster, file, left)
-    if (leftMap instanceof Response) {
-      return leftMap
+    const leftTree = resolveDiffSide(cluster, file, left)
+    if (leftTree instanceof Response) {
+      return leftTree
     }
-    const rightMap = resolveDiffSide(cluster, file, right)
-    if (rightMap instanceof Response) {
-      return rightMap
+    const rightTree = resolveDiffSide(cluster, file, right)
+    if (rightTree instanceof Response) {
+      return rightTree
     }
-    const maskedLeft = maskMap(file, leftMap)
-    const maskedRight = maskMap(file, rightMap)
+    // 先脱敏再进 diff 输出（叶子路径级对比）
+    const maskedLeft = flattenLeaves(maskTree(leftTree, file.sensitivePaths, CONFIG_MASKED))
+    const maskedRight = flattenLeaves(maskTree(rightTree, file.sensitivePaths, CONFIG_MASKED))
     const added: ConfigDiffResponse['added'] = []
     const removed: ConfigDiffResponse['removed'] = []
     const changed: ConfigDiffResponse['changed'] = []
     for (const [key, value] of maskedRight) {
       if (!maskedLeft.has(key)) {
-        added.push({ path: key, right: value ?? 'null' })
+        added.push({ path: key, right: value })
       } else if (maskedLeft.get(key) !== value) {
-        changed.push({ path: key, left: maskedLeft.get(key) ?? 'null', right: value ?? 'null' })
+        changed.push({ path: key, left: maskedLeft.get(key) ?? '', right: value })
       }
     }
     for (const [key, value] of maskedLeft) {
       if (!maskedRight.has(key)) {
-        removed.push({ path: key, left: value ?? 'null' })
+        removed.push({ path: key, left: value })
       }
     }
     const unifiedDiff = [
@@ -1030,12 +1021,14 @@ export const configCenterHandlers: HttpHandler[] = [
       file.description = body.description
     }
     if (body.schemaJson !== undefined) {
-      try {
-        JSON.parse(body.schemaJson)
-      } catch {
-        return jsonError(400, 'invalid_param', 'schemaJson 不是合法 JSON')
+      // schema 保存前先校验其本身是合法 JSON Schema（§4.4）；空串 = 清除 schema
+      if (body.schemaJson !== '') {
+        const schemaError = checkSchemaDefinition(body.schemaJson)
+        if (schemaError !== null) {
+          return jsonError(400, 'invalid_param', `schemaJson 非法：${schemaError}`)
+        }
       }
-      file.schemaJson = body.schemaJson
+      file.schemaJson = body.schemaJson === '' ? null : body.schemaJson
     }
     if (body.sensitivePaths !== undefined) {
       file.sensitivePaths = body.sensitivePaths
