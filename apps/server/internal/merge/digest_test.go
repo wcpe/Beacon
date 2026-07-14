@@ -44,3 +44,16 @@ func TestOverallMD5ChangesWithContent(t *testing.T) {
 		t.Error("内容变化未反映到整体 md5")
 	}
 }
+
+// TestSha256Hex 已知向量校验（空串与 abc 的标准 sha256），并确认输出为 64 位小写 hex。
+func TestSha256Hex(t *testing.T) {
+	if got := Sha256Hex(""); got != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Errorf("空串 sha256 = %s，与标准向量不符", got)
+	}
+	if got := Sha256Hex("abc"); got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		t.Errorf("abc sha256 = %s，与标准向量不符", got)
+	}
+	if a, b := Sha256Hex("x"), Sha256Hex("x"); a != b {
+		t.Error("相同输入 sha256 不幂等")
+	}
+}

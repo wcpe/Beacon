@@ -2,6 +2,7 @@ package merge
 
 import (
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"sort"
 	"strings"
@@ -10,6 +11,12 @@ import (
 // MD5Hex 返回字符串内容的小写十六进制 md5。
 func MD5Hex(content string) string {
 	sum := md5.Sum([]byte(content))
+	return hex.EncodeToString(sum[:])
+}
+
+// Sha256Hex 返回字符串内容的小写十六进制 sha256（配置中心 V2 的 content_hash / 有效 hash 摘要，FR-160）。
+func Sha256Hex(content string) string {
+	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
 }
 
