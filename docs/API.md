@@ -754,7 +754,7 @@ data: {}
 - **状态长轮询**（agent 面）：`GET /beacon/v2/agent/registration?wait=<sec>`，状态无变化超时 `304`（身份域）。
 - **队列长轮询**（agent 面）：`POST /beacon/v2/agent/messages/poll`（`waitSec`），无消息超时 `204`（消息域）。挂起时长参数命名以各域规格为准。
 - **SSE**（管理面实时进度）：`GET /admin/v2/change-orders/{id}/events`（交付域），断线后轮询可恢复。
-- **agent 命令下发**沿用既有长轮询命令通道机制（ADR-0006 一脉），v2 各域只登记新命令类型（如 `asset_rescan` / `asset_read`），不另建通道；命令 payload 与审计 detail 不携带文件内容。
+- **agent 命令下发**沿用既有长轮询命令通道机制（ADR-0006 一脉），v2 各域只登记新命令类型（如 `asset-rescan` / `asset-read`），不另建通道；命令 payload 与审计 detail 不携带文件内容。
 
 ### 命名风格（含裁决记录）
 
@@ -936,7 +936,7 @@ agent 面：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | POST | `/beacon/v2/agent/assets/manifest` | 上报文件清单（增量 / 全量分片，摘要校准） |
-| POST | `/beacon/v2/agent/assets/content` | 回传单文件内容（响应 `asset_read` 命令） |
+| POST | `/beacon/v2/agent/assets/content` | 回传单文件内容（响应 `asset-read` 命令） |
 
 管理面：
 
@@ -951,7 +951,7 @@ agent 面：
 | GET | `/admin/v2/assets/sensitive-rules` | 敏感路径规则清单 |
 | PUT | `/admin/v2/assets/sensitive-rules` | 整体替换敏感路径规则（审计） |
 
-> 下行命令 `asset_rescan` / `asset_read` 经既有长轮询命令通道，非独立端点。
+> 下行命令 `asset-rescan` / `asset-read` 经既有长轮询命令通道，非独立端点。
 
 ### 交付编排 V2（P9 · 0.29.x，真源 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5）
 

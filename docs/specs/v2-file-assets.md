@@ -48,6 +48,7 @@
 | mtime_ms | BIGINT | 文件修改时间，UTC epoch 毫秒（避免方言时区差异） |
 | is_text | BOOLEAN | 扫描期按扩展名启发的文本提示（权威判定在预览期做） |
 | scanned_at | DATETIME | 本行来自哪次扫描（UTC） |
+| created_at / updated_at | DATETIME | 建表通用约定（`v2-zone-authority.md` §3.1），GORM 自动维护 |
 
 索引：
 
@@ -70,6 +71,7 @@
 | truncated | BOOLEAN | agent 侧超单服文件数上限被截断 |
 | scanned_at | DATETIME | 最近一次扫描完成时间（UTC） |
 | scan_duration_ms | INT | 最近一次扫描耗时 |
+| created_at / updated_at | DATETIME | 建表通用约定（`v2-zone-authority.md` §3.1），GORM 自动维护 |
 
 ### 3.3 敏感路径规则
 
@@ -90,7 +92,7 @@
 ### 4.2 扫描频率与触发
 
 - **周期扫描**：默认每 30 分钟一次，首次在 agent 确认接入后启动，起始加 0~10% 周期随机抖动（防 1000 台同时上报踩踏）；周期可由运维设置热更（键 `assets.scan-interval-sec`，下限 300）。
-- **手动扫描**：管理面 `POST /admin/v2/assets/rescan` 对目标服创建 agent 命令（类型 `asset_rescan`，沿用 ADR-0006 长轮询命令通道），支持 `force=true` 忽略本地 mtime 缓存全部重哈希；命令生命周期与结果按命令通道通用模型可观测。
+- **手动扫描**：管理面 `POST /admin/v2/assets/rescan` 对目标服创建 agent 命令（类型 `asset-rescan`，沿用 ADR-0006 长轮询命令通道），支持 `force=true` 忽略本地 mtime 缓存全部重哈希；命令生命周期与结果按命令通道通用模型可观测。
 - **agent 执行约束**（架构不变量 §5）：扫描全程在 TabooLib async 线程执行；目录遍历用 java.nio、不跟随符号链接下降、解析后仍须落在扫描根内；哈希分块读（128 KiB）、逐文件让出，不阻塞 MC 主线程；`(size, mtime)` 与本地缓存一致则复用上次哈希，不重读文件。
 - **fail-static**：控制面不可达时扫描照常执行并更新本地缓存，上报失败静默等待下个周期重试（不影响 agent 其他职责，不重试风暴）。
 
@@ -115,7 +117,7 @@
 
 清单是快照，内容是实时——控制面**不存文件内容**，每次预览向 agent 现取：
 
-1. 管理面 `POST /admin/v2/assets/preview` → 控制面校验敏感规则与在线状态 → 创建 agent 命令（类型 `asset_read`，payload：path、maxBytes）→ handler 注册等待器同步等待。
+1. 管理面 `POST /admin/v2/assets/preview` → 控制面校验敏感规则与在线状态 → 创建 agent 命令（类型 `asset-read`，payload：path、maxBytes）→ handler 注册等待器同步等待。
 2. agent 长轮询取到命令，async 线程读文件（只读原语口径：路径校验、符号链接不逃逸），回传 `POST /beacon/v2/agent/assets/content`。
 3. 控制面唤醒等待器，把内容透传前端；**内容为瞬态，不落库、不进审计 detail、不缓存**（每次查看都是一次受审计的实时读取）。
 - **大小上限**：文本预览上限 **512 KiB**。超限时 agent 只读取并回传前 512 KiB，响应带 `truncated=true`，前端明示「已截断，完整内容超出预览上限」；不支持继续翻页读尾部（需要完整文件时走 P9 数据面）。512 KiB 属小载荷，经 agent 面 JSON 回传不违反「大文件必须走流式数据面」约束（该约束针对交付级文件搬运）。
@@ -143,7 +145,7 @@
 
 审计接入统一审计设施（P5 落地），本域登记以下事件类型，全部含操作者、namespace、serverId、path、结果（成功 / 超时 / 拒绝）、traceId：
 
-事件命名统一「点分小写 `<域>.<动作>`」形态（与 `identity.*`、`cross_namespace.*`、`delivery.order.*`、`message.payload.view` 一致；`asset_rescan` / `asset_read` 是命令类型，不受此约束）：
+事件命名统一「点分小写 `<域>.<动作>`」形态（与 `identity.*`、`cross_namespace.*`、`delivery.order.*`、`message.payload.view` 一致；`asset-rescan` / `asset-read` 是命令类型，不受此约束）：
 
 | 事件 | 附加字段 |
 |---|---|
@@ -165,7 +167,7 @@
 | POST | `/beacon/v2/agent/assets/manifest` | `mode`(full/delta)、`scannedAt`、`scanDurationMs`、`truncated`；delta：`baseDigest`+`upserts[]`(path/sha256/size/mtimeMs/isText)+`deleted[]`；full 分片：`uploadId`+`seq`+`eof` | `digest`（应用后清单摘要）、`fileCount`；delta 基线失配 409 `asset_manifest_out_of_sync` |
 | POST | `/beacon/v2/agent/assets/content` | `commandId`、`path`、`sha256`、`size`、`binary`、`truncated`、`content`（UTF-8 文本；binary 时缺省）、`error`（读取失败原因） | 200 确认；命令等待器已超时则丢弃内容仅标记命令完成 |
 
-下行命令（经 ADR-0006 长轮询命令通道，非独立端点）：`asset_rescan`（payload：force）、`asset_read`（payload：path、maxBytes）。
+下行命令（经 ADR-0006 长轮询命令通道，非独立端点）：`asset-rescan`（payload：force）、`asset-read`（payload：path、maxBytes）。
 
 ### 5.2 管理面
 
@@ -184,7 +186,7 @@
 
 - **本域只读**：对目标文件系统零写入。文件同步、覆盖、备份、还原、模板源差异下发等一切写操作归 `v2-delivery-orchestration.md`（FR-162/165/167）；但**模板源差异扫描复用本域能力**——P9 以本域清单快照与 `manifest_digest`/sha256 比对为差异计算输入，本域协议字段（path/sha256/size/mtimeMs）即差异扫描的数据契约，P9 不另建一套清单。
 - **实体与隔离**：`namespace`/`server`/zone 层级引用基座 §3 与 `v2-zone-authority.md`；namespace 强隔离在本域的落点（查询强制 namespace、agent token 匹配校验、跨域拒绝）遵循 `v2-namespace-isolation.md`。
-- **身份与命令通道**：agent 鉴权、未确认 agent 的能力限制依 `v2-agent-identity.md`；`asset_rescan`/`asset_read` 命令生命周期沿用命令通道通用模型，本域只定义命令类型与 payload。
+- **身份与命令通道**：agent 鉴权、未确认 agent 的能力限制依 `v2-agent-identity.md`；`asset-rescan`/`asset-read` 命令生命周期沿用命令通道通用模型，本域只定义命令类型与 payload。
 - **审计**：审计存储与查询设施依 P5 相关规格；本域只登记事件类型（§4.7）。
 - **权限分级**：统一风险分级与二次确认框架归 FR-168（`v2-delivery-orchestration.md`）；本域 P8 先以「登录态 + 敏感原因放行」执行，P9 框架落地后 preview/diff/规则编辑纳入统一分级，契约不变。
 - **运维设置**：`assets.scan-interval-sec`、`assets.scan-exclude-patterns`、`assets.sensitive-path-patterns` 挂运维设置（`/settings`，FR-158 设施），热更下发机制依 P6 设置规格。

@@ -150,6 +150,12 @@ const (
 	CommandTypeFileSyncApply = "file-sync-apply"
 	// CommandTypeFileSyncRollback 文件同步回滚：令目标 agent 按备份点恢复目录。
 	CommandTypeFileSyncRollback = "file-sync-rollback"
+	// CommandTypeAssetRescan 文件资产重扫：令 agent 立即重扫本机文件清单并上报（FR-163，见 v2-file-assets.md §4.2；
+	// payload 的 force=true 时忽略本地 mtime 缓存全部重哈希）。
+	CommandTypeAssetRescan = "asset-rescan"
+	// CommandTypeAssetRead 文件资产内容读取：令 agent 读单个文本文件回传供预览 / diff（FR-164，见 §4.5；
+	// payload 含 path、maxBytes；纯只读、不写盘，内容瞬态不落库）。
+	CommandTypeAssetRead = "asset-read"
 )
 
 // 文件浏览操作（FR-110，落 command payload 的 op 字段 + 应用层校验，见 ADR-0049）。

@@ -86,7 +86,7 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 | agent 面 | `/beacon/v2/agent/*` | `X-Beacon-Token`（namespace 级）+ `X-Beacon-Identity`（注册期另带 `X-Beacon-Boot`）；身份确认前仅可调 register / registration |
 | 流式数据面 | `/beacon/v2/stream/*` | 同 agent 面双 header + blob 归属校验；当前仅交付域 |
 
-- **agent 面 REST + 长轮询基调**（沿用 [ADR-0006](adr/0006-rest-long-poll-push.md)）：状态长轮询无变化 304（身份 registration）、队列长轮询无消息 204（消息 poll）；agent 命令下发沿用既有长轮询命令通道，v2 各域只登记新命令类型（如 `asset_rescan` / `asset_read`）、不另建通道，命令 payload 与审计 detail 绝不携带文件内容。
+- **agent 面 REST + 长轮询基调**（沿用 [ADR-0006](adr/0006-rest-long-poll-push.md)）：状态长轮询无变化 304（身份 registration）、队列长轮询无消息 204（消息 poll）；agent 命令下发沿用既有长轮询命令通道，v2 各域只登记新命令类型（如 `asset-rescan` / `asset-read`）、不另建通道，命令 payload 与审计 detail 绝不携带文件内容。
 - **跨服消息经控制面单跳中转**（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）：上行 REST `messages/send`、下行长轮询 `messages/poll` + `ack` 回执，不引入 Redis / MQ。此决策由 **[ADR-0063](adr/0063-cross-server-message-control-plane-relay.md) 取代 Legacy [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md)**（其 Redis 通道与第二版禁 Redis 冲突）落地；玩家名册权威随之迁至控制面 `conn_detail` 内存快照。
 - **交付数据面：流式 HTTP + 控制面中转 blob**（[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.3）：命令通道只做编排；文件内容由模板源 agent 流式 PUT 到控制面 blob 存储（sha256 寻址去重）、目标 agent 流式 GET（Range 断点续传），HEAD 判存在性与断点。
 - **控制面不直连 agent**：管理面一切对 agent 的动作（重扫、取内容、交付回执）经命令通道 + agent 面回传端点完成，agent 不开端口、控制面不反向连接。

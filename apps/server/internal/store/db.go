@@ -87,6 +87,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		// 配置中心 V2（FR-160/161）：文件 + 层版本不可变链，低频小表不分日表、不进归档（spec §3.4）
 		&model.ConfigFile{},
 		&model.ConfigLayerVersion{},
+		// 文件资产 V2（FR-163/164）：每服最新清单 + 扫描概要，只存最新快照，不分日表（spec §3.1/§3.2）
+		&model.FileAsset{},
+		&model.FileAssetScan{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
