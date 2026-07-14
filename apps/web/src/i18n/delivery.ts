@@ -204,6 +204,17 @@ export const delivery = {
           updatedBy: '更新人',
           updatedAt: '更新时间',
         },
+        // 五层层级中文名（覆盖链低 → 高）
+        levels: {
+          namespace: '命名空间',
+          bc_cluster: 'BC 集群',
+          region: '大区',
+          zone: '小区',
+          server: '服务器',
+        },
+        noContribution: '本层无贡献',
+        addContribution: '添加本层配置',
+        currentNamespace: '当前命名空间',
         removal: '已撤销贡献',
         revoke: '撤销本层贡献',
         edit: '编辑本层',
@@ -264,6 +275,19 @@ export const delivery = {
         identical: '两侧无差异',
         pickHint: '选择左右两侧后点「对比」',
       },
+    },
+    // 作用域实体选择器（首层贡献 / 预览目标 / diff 目标共用）
+    scopePicker: {
+      pickLabel: '选择作用域实体',
+      searchServer: '搜索 serverId',
+      empty: '无可选实体',
+      serverEmpty: '无匹配服务器',
+    },
+    // 空层首次贡献
+    addScope: {
+      title: '添加本层配置：{{level}}',
+      confirm: '开始编辑',
+      cancel: '取消',
     },
     // 回收站
     trash: {

@@ -91,26 +91,28 @@ export default function DetailView({ fileId }: DetailViewProps) {
         isError={detailQuery.isError}
         error={detailQuery.error}
       >
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
-            <TabsTrigger value="scopes">{t('delivery.configs.detail.tabs.scopes')}</TabsTrigger>
-            <TabsTrigger value="effective">{t('delivery.configs.detail.tabs.effective')}</TabsTrigger>
-            <TabsTrigger value="versions">{t('delivery.configs.detail.tabs.versions')}</TabsTrigger>
-            <TabsTrigger value="diff">{t('delivery.configs.detail.tabs.diff')}</TabsTrigger>
-          </TabsList>
-          <TabsContent value="scopes" className="pt-4">
-            <ScopesTab fileId={fileId} />
-          </TabsContent>
-          <TabsContent value="effective" className="pt-4">
-            <EffectiveTab fileId={fileId} />
-          </TabsContent>
-          <TabsContent value="versions" className="pt-4">
-            <VersionsTab fileId={fileId} />
-          </TabsContent>
-          <TabsContent value="diff" className="pt-4">
-            <DiffTab fileId={fileId} />
-          </TabsContent>
-        </Tabs>
+        {detailQuery.data && (
+          <Tabs value={tab} onValueChange={setTab}>
+            <TabsList>
+              <TabsTrigger value="scopes">{t('delivery.configs.detail.tabs.scopes')}</TabsTrigger>
+              <TabsTrigger value="effective">{t('delivery.configs.detail.tabs.effective')}</TabsTrigger>
+              <TabsTrigger value="versions">{t('delivery.configs.detail.tabs.versions')}</TabsTrigger>
+              <TabsTrigger value="diff">{t('delivery.configs.detail.tabs.diff')}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="scopes" className="pt-4">
+              <ScopesTab fileId={fileId} file={detailQuery.data} />
+            </TabsContent>
+            <TabsContent value="effective" className="pt-4">
+              <EffectiveTab fileId={fileId} />
+            </TabsContent>
+            <TabsContent value="versions" className="pt-4">
+              <VersionsTab fileId={fileId} />
+            </TabsContent>
+            <TabsContent value="diff" className="pt-4">
+              <DiffTab fileId={fileId} />
+            </TabsContent>
+          </Tabs>
+        )}
       </AsyncSection>
     </div>
   )
