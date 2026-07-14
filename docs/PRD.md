@@ -99,8 +99,8 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-174 | 第二版 web 脚手架：`apps/web` 新建（Vite + React Router + TanStack Query + Zustand + react-i18next + MSW） | P1 | 0.21.x | 新台骨架可跑（路由 / 布局 / 主题 / i18n）；MSW 经 `packages/devmock` 双端可用（浏览器 + 测试共享 handlers）；服务器状态归 TanStack Query、客户端状态归 Zustand 的边界写入规范 | 已交付@v0.21.0 |
 | FR-175 | UI 博物馆：`@beacon/ui` 提升 `packages/ui`，ui-wiki 提升 `apps/ui-wiki`，控件展示覆盖率门禁 | P1 | 0.21.x | 每个 `@beacon/ui` 导出控件在 ui-wiki 有展示页（覆盖率检查纳入 CI 必过）；新管理台组件一律取自 `packages/ui`，不允许页面内私建通用控件 | 已交付@v0.21.0 |
 | FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 已交付@v0.21.0 |
-| FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | 待排期 | 待定 | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 计划 |
-| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | 待排期 | 待定 | env 可增删改；整体替换 env→namespace 映射且 namespace 至多属一个 env（冲突 409）；顶栏按 env 过滤视图；env 变更入审计 | 计划 |
+| FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | P8 | 0.28.x | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 计划 |
+| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | P8 | 0.28.x | env 可增删改；整体替换 env→namespace 映射且 namespace 至多属一个 env（冲突 409）；顶栏按 env 过滤视图；env 变更入审计 | 计划 |
 | FR-179 | 管理台登录鉴权：登录页、令牌注入、401 处理、登出 | P4 | 0.24.x | 登录页（新 SaaS 设计，过 mockup 评审门）用户名/口令换 `/admin/v1/auth/login` 令牌，存 localStorage 持久；所有 `/admin/*` 带 `Authorization: Bearer`；路由守卫未登录跳登录页并登录后回跳原路径；任意 401 / 令牌过期清令牌跳登录（无自动 refresh）；登出 `/admin/v1/auth/logout` 清令牌；真机浏览器登录后 FR-155 接真页真数据可用、登出回登录页。单 admin 凭据，不含 API-key 登录 / RBAC / 记住我 / 2FA。全站接真页真机可用前置 | 已交付@v0.24.0 |
 | FR-180 | 跨服消息广播寻址（namespace / zone 级 fan-out）与 agent topic 门面复活 | P5 | 0.25.x | `publish` / `subscribe` 原接口真实可用（业务插件零改动）；本 namespace 全部在线服与 zone 级定向 fan-out；可丢语义（只投在线、离线不补、TTL 过期）；广播追踪行含聚合送达 / 失败计数、列表可按广播过滤且不含 payload；跨 namespace 广播拒绝；真机广播场景可用 | 已交付@v0.25.3 |
 | FR-181 | 连接明细与消息链路查询页（/connections、/messages） | P6 | 0.26.x | 两页挂可观测组；查询防护同 spec §4.3（精确 ID 直查，否则 serverId / playerUuid + 时间范围 ≤168h，未满足不发请求给引导空态）；游标分页；「包含归档」冷查询（FR-152）；消息详情含逐跳链路 / 关联消息 / payload 受控查看（原因必填先审计）；四态齐备；mockup 经用户浏览器评审后接真 | 已交付@v0.26.3 |
@@ -123,12 +123,12 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | P0 | 0.20.x | PRD、路线图、核心边界确认；路线图 §5 规格清单与 API 契约草案全部完成 |
 | P1 | 0.21.x | 工程化基建 + v2 控制面基础闭环：monorepo 布局迁移、全仓构建打通、静态检查最严档三线进 CI、UI 博物馆覆盖率门禁生效、apps/web 脚手架 + MSW 基建可跑、Legacy 前端冻结；Agent identity.yml、v2 注册确认、namespace/trust、区服权威表与首次分配链路可用 |
 | P2 | 0.22.x | 全量 mock 管理台：UX.md 全部页面 mock 拍板、演示模式与「交付」大分类落地 |
-| P3 | 0.23.x | 集群管理页接真深化：`/servers`、`/zones`、`/namespaces` 接入 P1 v2 基础 API，补齐换区工单 UI（解绑 + 重确认）、zone-tree 规模体验、draining / default-entry 页内可操作；Q4 冲突可视化与 env 映射延后（FR-177 / FR-178） |
+| P3 | 0.23.x | 集群管理页接真深化：`/servers`、`/zones`、`/namespaces` 接入 P1 v2 基础 API，补齐换区工单 UI（解绑 + 重确认）、zone-tree 规模体验、draining / default-entry 页内可操作；Q4 冲突可视化与 env 映射延后（FR-177 / FR-178，已排入 P8） |
 | P4 | 0.24.x | 基础指标、健康值、调度决策、本机 agent-api 形成闭环；`/dashboard`、`/service-analysis` 接真 |
 | P5 | 0.25.x | 每连接明细、跨服消息追踪、payload 审计、异常链路可排查；`/topology` 与可观测页贯通接真 |
 | P6 | 0.26.x | 热 / 冷归档、冷查询、归档清理可用且清理前必归档；系统设置页接真 |
 | P7 | 0.27.x | 配置中心 V2 权威模型、编辑校验、版本管理接真完成 |
-| P8 | 0.28.x | 文件资产 V2 资产索引、内容预览与安全审计接真完成 |
+| P8 | 0.28.x | 文件资产 V2 资产索引、内容预览与安全审计接真完成；同期收编 P3 延后项 Q4 身份冲突可视化闭环（FR-177）与 env 映射体验（FR-178） |
 | P9 | 0.29.x | 交付编排 V2 变更单、数据面、灰度生效编排、整单回滚与统一审计接真完成 |
 | P10 RC | 0.30.x | RC 验收、兼容性冻结、迁移说明与 1.0.0 发布门完成 |
 | GA | 1.0.0 | 正式稳定版，开始严格 SemVer |
