@@ -23,6 +23,8 @@ interface ReasonDialogProps {
   onOpenChange: (open: boolean) => void
   title: string
   description: string
+  // 固定附加提示（如回退 / 撤销的「不影响线上，生效需走变更单」，规格 §4.6）
+  notice?: string
   confirmLabel: string
   // 影响预览行（撤销哪层 / 影响哪些服）
   impacts?: string[]
@@ -38,6 +40,7 @@ export default function ReasonDialog({
   onOpenChange,
   title,
   description,
+  notice,
   confirmLabel,
   impacts,
   pending,
@@ -63,6 +66,10 @@ export default function ReasonDialog({
           <AlertDialogTitle className="text-ink-1">{title}</AlertDialogTitle>
           <AlertDialogDescription className="text-ink-3">{description}</AlertDialogDescription>
         </AlertDialogHeader>
+
+        {notice !== undefined && (
+          <p className="rounded-lg border border-warn-bd bg-warn-bg px-3 py-2 text-xs text-warn">{notice}</p>
+        )}
 
         {impacts && impacts.length > 0 && (
           <ul className="list-disc space-y-1 rounded-lg border border-border bg-surface-2 px-5 py-3 text-sm text-ink-2">

@@ -234,6 +234,7 @@ export default function VersionsTab({ fileId }: VersionsTabProps) {
           }}
           title={t('delivery.configs.rollback.title')}
           description={t('delivery.configs.rollback.desc')}
+          notice={t('delivery.configs.noLiveEffect')}
           confirmLabel={t('delivery.configs.rollback.confirm')}
           impacts={[`v${String(rollbackTarget.versionNo)}`]}
           pending={rollbackMutation.isPending}

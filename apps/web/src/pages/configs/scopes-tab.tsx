@@ -239,6 +239,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
           }}
           title={t('delivery.configs.revoke.title')}
           description={t('delivery.configs.revoke.desc')}
+          notice={t('delivery.configs.noLiveEffect')}
           confirmLabel={t('delivery.configs.revoke.confirm')}
           impacts={[`${revokeTarget.scopeLevel} / ${revokeTarget.scopeName}`]}
           pending={revokeMutation.isPending}

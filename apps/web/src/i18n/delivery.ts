@@ -347,6 +347,8 @@ export const delivery = {
       desc: '将基于该历史版本生成一条新版本',
       confirm: '确认回退',
     },
+    // 回退 / 撤销确认框固定提示（规格 §4.6：只改定稿态）
+    noLiveEffect: '此操作不影响线上，生效需走变更单',
     masked: '（敏感，已脱敏）',
   },
   changes: {
