@@ -118,7 +118,7 @@ func TestEnvCreateEmptyNameRejected(t *testing.T) {
 	if _, err := svc.Create("   ", "", "alice", "10.0.0.1"); err == nil {
 		t.Fatal("空名应返回参数错误")
 	} else {
-		mustAppErr(t, err, apperr.ErrInvalidParam.Code, 400)
+		_ = mustAppErr(t, err, apperr.ErrInvalidParam.Code, 400)
 	}
 	if n := countAudits(t, db, model.ActionEnvCreate); n != 0 {
 		t.Fatalf("空名不应产生审计，实际 %d", n)
@@ -136,7 +136,7 @@ func TestEnvCreateDuplicateRejected(t *testing.T) {
 	if _, err := svc.Create("dup", "", "bob", "10.0.0.2"); err == nil {
 		t.Fatal("同名应返回冲突")
 	} else {
-		mustAppErr(t, err, apperr.ErrEnvConflict.Code, 409)
+		_ = mustAppErr(t, err, apperr.ErrEnvConflict.Code, 409)
 	}
 	if n := countAudits(t, db, model.ActionEnvCreate); n != 1 {
 		t.Fatalf("冲突不应产生额外审计，应恒为 1，实际 %d", n)
@@ -184,7 +184,7 @@ func TestEnvUpdate(t *testing.T) {
 	if _, err := svc.Update(9999, &newName, nil, "bob", "10.0.0.2"); err == nil {
 		t.Fatal("更新不存在 env 应 404")
 	} else {
-		mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
+		_ = mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
 	}
 
 	// 撞另一个 env 的名
@@ -192,7 +192,7 @@ func TestEnvUpdate(t *testing.T) {
 	if _, err := svc.Update(created.ID, &conflictName, nil, "bob", "10.0.0.2"); err == nil {
 		t.Fatal("改名撞名应 409")
 	} else {
-		mustAppErr(t, err, apperr.ErrEnvConflict.Code, 409)
+		_ = mustAppErr(t, err, apperr.ErrEnvConflict.Code, 409)
 	}
 	_ = other
 }
@@ -324,12 +324,12 @@ func TestEnvSetNamespacesUnknownRejected(t *testing.T) {
 	if _, err := svc.SetNamespaces(env.ID, []uint{ns1, 9999}, "alice", "10.0.0.1"); err == nil {
 		t.Fatal("含不存在 namespace 应 400")
 	} else {
-		mustAppErr(t, err, apperr.ErrEnvNamespaceNotFound.Code, 400)
+		_ = mustAppErr(t, err, apperr.ErrEnvNamespaceNotFound.Code, 400)
 	}
 	if _, err := svc.SetNamespaces(9999, []uint{ns1}, "alice", "10.0.0.1"); err == nil {
 		t.Fatal("env 不存在应 404")
 	} else {
-		mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
+		_ = mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
 	}
 }
 
@@ -375,7 +375,7 @@ func TestEnvDeleteCascadesMappings(t *testing.T) {
 	if err := svc.Delete(9999, "bob", "10.0.0.2"); err == nil {
 		t.Fatal("删不存在 env 应 404")
 	} else {
-		mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
+		_ = mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
 	}
 }
 
