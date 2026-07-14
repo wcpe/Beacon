@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.log
 
+import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
 import top.wcpe.beacon.agent.core.browse.TreeNode
@@ -59,6 +60,11 @@ class BufferingPlatformAdapterTest {
             TreeNode(name = "plugins", relPath = relPath, dir = true, size = 0, text = false, children = emptyList(), truncated = false)
 
         override fun browseReadFile(relPath: String): FileContent = FileContent(path = relPath, content = "x", truncated = false)
+
+        override fun browseReadAsset(
+            relPath: String,
+            maxBytes: Int,
+        ): AssetContent = AssetContent(path = relPath, binary = false, truncated = false, content = "asset")
     }
 
     @Test
@@ -68,5 +74,8 @@ class BufferingPlatformAdapterTest {
         assertNotNull(wrapped.browseReadTree("", 3), "browseReadTree 应透传被包裹 adapter")
         assertNotNull(wrapped.browseReadFile("a.yml"), "browseReadFile 应透传被包裹 adapter")
         assertEquals("plugins", wrapped.browseReadTree("", 3)!!.name)
+        // 文件资产读取（FR-164）：同款漏委托在真机复发过一次（默认 null 致预览恒失败），一并守护。
+        assertNotNull(wrapped.browseReadAsset("plugins/Foo/a.yml", 0), "browseReadAsset 应透传被包裹 adapter")
+        assertEquals("asset", wrapped.browseReadAsset("plugins/Foo/a.yml", 0)!!.content)
     }
 }

@@ -86,7 +86,9 @@ class BungeePlatformAdapter(
         maxBytes: Int,
     ): AssetContent? {
         // 文件资产预览（FR-164）：读单文件内容，二进制回元数据、文本可预览、超限截断。委托 core，async 触发。
-        return FsBrowseReader.readAsset(pluginsBaseFolder(), relPath, maxBytes)
+        // 根须与 FR-163 扫描根一致（服务器工作目录 = pluginsBaseFolder 的父目录，见 AgentAssembly 装配 AssetScanScope）；
+        // 否则 preview 传来的清单 path（plugins/xxx、根配置如 bukkit.yml）会拼错根致读失败。
+        return FsBrowseReader.readAsset(pluginsBaseFolder().parentFile ?: pluginsBaseFolder(), relPath, maxBytes)
     }
 
     override fun publishConfigChanged(

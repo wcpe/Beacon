@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.command
 
+import top.wcpe.beacon.agent.core.browse.FsBrowseReader
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -9,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -55,6 +57,21 @@ class AssetIndexReaderTest {
         assertEquals(setOf("plugins/Foo/a.yml", "server.properties"), paths)
         assertTrue(result.entries.none { it.path.contains('\\') }, "相对路径应为正斜杠")
         assertFalse(result.truncated)
+    }
+
+    @Test
+    fun `readAsset 以扫描根能读扫描产出的两类 path（FR-164 根一致回归）`() {
+        // 复现 FR-164 真机 bug：扫描根 = 服务器工作目录，asset-read 须用同根读扫描产出的 path。
+        // 修复前双端 adapter 误用 pluginsBaseFolder（plugins 目录）为读取根：读 "plugins/Foo/a.yml" 拼成 plugins/plugins/... 读不到，根白名单更不在 plugins 内。
+        write("plugins/Foo/a.yml", "k: v")
+        write("server.properties", "motd=hi")
+        val paths = AssetIndexReader.scan(serverRoot, emptyMap(), force = false).entries.map { it.path }.toSet()
+        assertEquals(setOf("plugins/Foo/a.yml", "server.properties"), paths)
+        // 正确根（serverRoot，与扫描一致）：扫描产出的两类 path（plugins 子路径 + 根白名单）都能读到内容。
+        assertEquals("k: v", FsBrowseReader.readAsset(serverRoot, "plugins/Foo/a.yml", 0)?.content)
+        assertEquals("motd=hi", FsBrowseReader.readAsset(serverRoot, "server.properties", 0)?.content)
+        // 错误根（plugins 目录，修复前 adapter 的根）：读 plugins 子路径拼成 plugins/plugins/... → 读不到（复现 bug）。
+        assertNull(FsBrowseReader.readAsset(File(serverRoot, "plugins"), "plugins/Foo/a.yml", 0))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.log
 
+import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.browse.DirListing
 import top.wcpe.beacon.agent.core.browse.FileContent
 import top.wcpe.beacon.agent.core.browse.TreeNode
@@ -85,4 +86,11 @@ class BufferingPlatformAdapter(
     ): TreeNode? = delegate.browseReadTree(relPath, maxDepth)
 
     override fun browseReadFile(relPath: String): FileContent? = delegate.browseReadFile(relPath)
+
+    // 文件资产内容读取（FR-164）：同上必须显式委托——漏委托会落到接口默认 null 实现，
+    // 生产装配（本装饰器包裹壳层 adapter）下壳层实现永不可达、预览恒失败（真机复发过一次的同款坑）。
+    override fun browseReadAsset(
+        relPath: String,
+        maxBytes: Int,
+    ): AssetContent? = delegate.browseReadAsset(relPath, maxBytes)
 }
