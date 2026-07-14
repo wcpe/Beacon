@@ -909,25 +909,25 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| GET | `/admin/v2/config-files` | 配置文件分页列表 |
-| POST | `/admin/v2/config-files` | 创建配置文件（格式 / schema / 敏感路径） |
-| GET | `/admin/v2/config-files/{id}` | 文件元数据 + 各层覆盖概览 |
-| PATCH | `/admin/v2/config-files/{id}` | 更新描述 / schema / 敏感路径 |
-| DELETE | `/admin/v2/config-files/{id}` | 移入回收站（软删除，版本链保留） |
-| GET | `/admin/v2/config-files/trash` | 回收站分页列表 |
-| POST | `/admin/v2/config-files/{id}/restore` | 从回收站恢复（名称被占用 409） |
-| POST | `/admin/v2/config-files/{id}/purge` | 彻底删除（物理删除连带版本链，原因必填） |
-| GET | `/admin/v2/config-files/{id}/scopes` | 各层贡献链概览 |
-| GET | `/admin/v2/config-files/{id}/versions` | 某链版本列表 |
-| GET | `/admin/v2/config-versions/{versionId}` | 版本详情（内容脱敏） |
-| POST | `/admin/v2/config-files/{id}/versions` | 保存新版本（语法 / schema 校验 + 并发守卫） |
-| POST | `/admin/v2/config-versions/{versionId}/rollback` | 回退（生成内容等于历史版本的新版本） |
-| DELETE | `/admin/v2/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}` | 撤销某层贡献（生成 removal 版本） |
-| POST | `/admin/v2/config-files/{id}/validate` | 只读校验（不落库不审计） |
-| GET | `/admin/v2/config-files/{id}/effective` | 有效配置预览（五层合并 + 逐键来源） |
-| GET | `/admin/v2/config-files/{id}/diff` | 版本间 / 层间 / 目标间键级 diff |
+| GET | `/admin/v2/config-files` | 配置文件分页列表 **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files` | 创建配置文件（格式 / schema / 敏感路径） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}` | 文件元数据 + 各层覆盖概览 **【已实现·FR-160/161】** |
+| PATCH | `/admin/v2/config-files/{id}` | 更新描述 / schema / 敏感路径 **【已实现·FR-160/161】** |
+| DELETE | `/admin/v2/config-files/{id}` | 移入回收站（软删除，版本链保留） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/trash` | 回收站分页列表 **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/restore` | 从回收站恢复（名称被占用 409） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/purge` | 彻底删除（物理删除连带版本链，原因必填） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/scopes` | 各层贡献链概览 **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/versions` | 某链版本列表 **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-versions/{versionId}` | 版本详情（内容脱敏） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/versions` | 保存新版本（语法 / schema 校验 + 并发守卫） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-versions/{versionId}/rollback` | 回退（生成内容等于历史版本的新版本） **【已实现·FR-160/161】** |
+| DELETE | `/admin/v2/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}` | 撤销某层贡献（生成 removal 版本） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/validate` | 只读校验（不落库不审计） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/effective` | 有效配置预览（五层合并 + 逐键来源） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/diff` | 版本间 / 层间 / 目标间键级 diff **【已实现·FR-160/161】** |
 
-> 本域**无 agent 面端点**：配置下发 / 生效 / 灰度全部归交付编排域（变更单）。
+> 本域**无 agent 面端点**：配置下发 / 生效 / 灰度全部归交付编排域（变更单）。合并语义为键级深合并（标量覆盖 / map 深合并 / list 整替 / null 删键，spec §4.1）；schema 用 JSON Schema Draft 2020-12 子集（`santhosh-tekuri/jsonschema/v6`）做部分校验（required 仅 namespace 基线层强制）；敏感值 write-only（读出口统一 `__BEACON_MASKED__`、保存占位符回填 head 明文）；`/configs` 页面接真随 0.27.1。
 
 ### 文件资产 V2（P8 · 0.28.x，真源 [v2-file-assets.md](specs/v2-file-assets.md) §5）
 
