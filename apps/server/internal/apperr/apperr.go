@@ -279,4 +279,13 @@ var (
 	ErrAssetSensitivePath = New(http.StatusForbidden, "asset_sensitive_path", "命中敏感路径规则，查看内容必须填写原因")
 	// ErrAssetDiffUnsupported diff 任一侧为二进制或超 512 KiB，不支持 diff（FR-164，spec §4.5；code 对齐 devmock）。
 	ErrAssetDiffUnsupported = New(http.StatusBadRequest, "asset_diff_unsupported", "二进制或超过 512 KiB 的文件不支持 diff，请改用哈希比对")
+	// ErrEnvNotFound env 展示维度不存在（改名 / 删除 / 设置映射目标缺失，FR-178）。
+	ErrEnvNotFound = New(http.StatusNotFound, "ENV_NOT_FOUND", "env 不存在")
+	// ErrEnvConflict 同名 env 已存在（创建 / 改名撞名，FR-178）。
+	ErrEnvConflict = New(http.StatusConflict, "ENV_CONFLICT", "同名 env 已存在")
+	// ErrEnvNamespaceConflict 待映射 namespace 已归属其他 env（一个 namespace 至多属一个 env，FR-178，spec §4.1）。
+	// 具体冲突方（namespace 名 + 占用 env 名）经 service 用同码 apperr.New 携带在 message 中，让运维看清冲突方。
+	ErrEnvNamespaceConflict = New(http.StatusConflict, "ENV_NAMESPACE_CONFLICT", "存在已归属其他 env 的 namespace")
+	// ErrEnvNamespaceNotFound 待映射 namespace 不存在（整体替换映射时校验，FR-178）。
+	ErrEnvNamespaceNotFound = New(http.StatusBadRequest, "ENV_NAMESPACE_NOT_FOUND", "待映射 namespace 不存在")
 )

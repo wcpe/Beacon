@@ -123,6 +123,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	}
 	v2Svc := service.NewV2ControlPlaneService(db)
 	v2Handler := handler.NewV2ControlPlaneHandler(v2Svc)
+	// env 展示维度（FR-178）：env 增删改 + 整体替换 env→namespace 映射，与 main.go 装配一致。
+	envHandler := handler.NewEnvHandler(service.NewEnvService(db, repository.NewEnvRepository(db), repository.NewNamespaceRepository(db), auditRepo))
 	// 发现/实例视图默认入口标志：真源为 v2 server.is_default_entry（ADR-0067），与 main.go 装配一致。
 	instSvc.SetDefaultEntryResolver(v2Svc.DefaultEntryServerIDs)
 	// P4 指标上报（FR-144）：60s 窗口 + 异步写入通道 + 接收服务 + 处理器。测试不启写入 worker——
@@ -137,6 +139,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	v2MetricsHandler := handler.NewV2MetricsHandler(metricIngestSvc)
 	router := server.NewRouter(server.Handlers{
 		Namespace:        nsHandler,
+		Env:              envHandler,
 		V2:               v2Handler,
 		V2Metrics:        v2MetricsHandler,
 		V2Assets:         handler.NewV2AssetsHandler(assetSvc),

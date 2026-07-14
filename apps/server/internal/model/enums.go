@@ -389,6 +389,12 @@ const (
 	ActionServerRezoneDone = "zone.rezone.completed"
 	// 第二版 server 排空标记切换（区服权威域，收编自调度域；消费方为调度 schedulable 判定）
 	ActionServerSetDraining = "server.set-draining"
+	// 第二版 env 展示维度（FR-178，见 v2-zone-authority.md §3.4/§4.1）：env 增删改与整体替换 env→namespace 映射。
+	// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；detail 仅记 env 名 / 映射 namespace id 列表。
+	ActionEnvCreate        = "env.create"
+	ActionEnvUpdate        = "env.update"
+	ActionEnvDelete        = "env.delete"
+	ActionEnvSetNamespaces = "env.set-namespaces"
 	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
 	ActionAuthLogin  = "auth.login"
 	ActionAuthLogout = "auth.logout"
@@ -481,6 +487,8 @@ const (
 	TargetTypeConfigFile = "config-file"
 	// 文件资产内容预览 / diff（FR-164）的审计对象类型（TargetRef=serverId，path 记入 detail）
 	TargetTypeAsset = "asset"
+	// env 展示维度（FR-178）的审计对象类型
+	TargetTypeEnv = "env"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

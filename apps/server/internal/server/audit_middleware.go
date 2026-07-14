@@ -129,6 +129,11 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）
 	"POST /admin/v2/namespace-trusts":             {},
 	"POST /admin/v2/namespace-trusts/{id}/revoke": {},
+	// env 展示维度增删改 + 整体替换映射（FR-178：env.create / update / delete / set-namespaces，service 事务内自记专项审计）
+	"POST /admin/v2/envs":                {},
+	"PATCH /admin/v2/envs/{id}":          {},
+	"DELETE /admin/v2/envs/{id}":         {},
+	"PUT /admin/v2/envs/{id}/namespaces": {},
 	// agent 身份状态机（identity.approve / reject / allow-reapply / disable / enable / unbind / conflict_resolved）
 	"POST /admin/v2/agent-identities/{identityId}/approve":          {},
 	"POST /admin/v2/agent-identities/{identityId}/reject":           {},

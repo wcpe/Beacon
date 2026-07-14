@@ -12,6 +12,7 @@ import (
 // Handlers 汇集各 HTTP 处理器，供路由装配（避免过长的位置参数）。
 type Handlers struct {
 	Namespace         *handler.NamespaceHandler
+	Env               *handler.EnvHandler
 	V2                *handler.V2ControlPlaneHandler
 	V2Metrics         *handler.V2MetricsHandler
 	V2Health          *handler.V2HealthHandler
@@ -167,6 +168,16 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Get("/namespace-trusts", h.V2.ListNamespaceTrusts)
 			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
 			r.Post("/namespace-trusts/{id}/revoke", h.V2.RevokeNamespaceTrust)
+
+			// env 展示维度（FR-178，见 v2-zone-authority.md §5）：env 增删改 + 整体替换 env→namespace 映射。
+			// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；写端点由 EnvService 在事务内自记专项审计
+			// （env.create / update / delete / set-namespaces），已登记 coveredWriteRoutes 使兜底跳过、避免双记。
+			// 与 /admin/v2 各 handler 一致无条件注册（h.Env 仅请求期解引用，构造期取方法值安全）。
+			r.Get("/envs", h.Env.List)
+			r.Post("/envs", h.Env.Create)
+			r.Patch("/envs/{id}", h.Env.Update)
+			r.Delete("/envs/{id}", h.Env.Delete)
+			r.Put("/envs/{id}/namespaces", h.Env.SetNamespaces)
 			r.Get("/agent-identities", h.V2.ListAgentIdentities)
 			r.Get("/agent-identities/{identityId}", h.V2.GetAgentIdentity)
 			r.Post("/agent-identities/{identityId}/approve", h.V2.ApproveAgentIdentity)
