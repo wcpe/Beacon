@@ -153,6 +153,18 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/archive/jobs":             {},
 	"POST /admin/v2/archive/jobs/{id}/retry":  {},
 	"POST /admin/v2/archive/jobs/{id}/cancel": {},
+	// 配置中心 V2（FR-160/161）：写端点由 ConfigCenterService 在事务内自记
+	// config.file.create/update/trash/restore/purge、config.version.save/rollback、config.scope.remove 专项审计
+	"POST /admin/v2/config-files":                                         {},
+	"PATCH /admin/v2/config-files/{id}":                                   {},
+	"DELETE /admin/v2/config-files/{id}":                                  {},
+	"POST /admin/v2/config-files/{id}/restore":                            {},
+	"POST /admin/v2/config-files/{id}/purge":                              {},
+	"POST /admin/v2/config-files/{id}/versions":                           {},
+	"POST /admin/v2/config-versions/{versionId}/rollback":                 {},
+	"DELETE /admin/v2/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}": {},
+	// 配置实时校验（spec §4.4）：POST 语义的只读校验，刻意不落库不审计——登记于此使兜底跳过、显式放行
+	"POST /admin/v2/config-files/{id}/validate": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

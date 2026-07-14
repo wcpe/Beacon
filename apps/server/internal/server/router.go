@@ -21,6 +21,7 @@ type Handlers struct {
 	V2ConnectionAdmin *handler.V2ConnectionAdminHandler
 	V2MessageAdmin    *handler.V2MessageAdminHandler
 	V2Archive         *handler.V2ArchiveHandler
+	V2ConfigCenter    *handler.V2ConfigCenterHandler
 	SchedDecision     *handler.SchedDecisionAdminHandler
 	Config            *handler.ConfigHandler
 	File              *handler.FileHandler
@@ -229,6 +230,28 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Get("/archive/jobs/{id}", h.V2Archive.GetJob)
 			r.Post("/archive/jobs/{id}/retry", h.V2Archive.RetryJob)
 			r.Post("/archive/jobs/{id}/cancel", h.V2Archive.CancelJob)
+
+			// 配置中心 V2（FR-160/161，spec §5 全 17 端点）：文件 CRUD / 回收站 / 五层作用域版本链 /
+			// 有效解析 / diff / 校验。写端点专项审计由 ConfigCenterService 在事务内自记并登记 coveredWriteRoutes；
+			// validate 为只读校验（POST 方法），按 spec §4.4 刻意不落库不审计，登记覆盖集使兜底跳过。
+			// 静态 /config-files/trash 置于 {id} 前（chi 静态路由本就优先，此处仅为可读性）。
+			r.Get("/config-files/trash", h.V2ConfigCenter.Trash)
+			r.Get("/config-files", h.V2ConfigCenter.List)
+			r.Post("/config-files", h.V2ConfigCenter.Create)
+			r.Get("/config-files/{id}", h.V2ConfigCenter.Get)
+			r.Patch("/config-files/{id}", h.V2ConfigCenter.Patch)
+			r.Delete("/config-files/{id}", h.V2ConfigCenter.Delete)
+			r.Post("/config-files/{id}/restore", h.V2ConfigCenter.Restore)
+			r.Post("/config-files/{id}/purge", h.V2ConfigCenter.Purge)
+			r.Get("/config-files/{id}/scopes", h.V2ConfigCenter.Scopes)
+			r.Delete("/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}", h.V2ConfigCenter.RemoveScope)
+			r.Get("/config-files/{id}/versions", h.V2ConfigCenter.ListVersions)
+			r.Post("/config-files/{id}/versions", h.V2ConfigCenter.SaveVersion)
+			r.Post("/config-files/{id}/validate", h.V2ConfigCenter.Validate)
+			r.Get("/config-files/{id}/effective", h.V2ConfigCenter.Effective)
+			r.Get("/config-files/{id}/diff", h.V2ConfigCenter.Diff)
+			r.Get("/config-versions/{versionId}", h.V2ConfigCenter.GetVersion)
+			r.Post("/config-versions/{versionId}/rollback", h.V2ConfigCenter.Rollback)
 		})
 	}
 
