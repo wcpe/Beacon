@@ -22,6 +22,7 @@ import type { ConnectionItem } from '@beacon/contracts'
 
 import { fetchConnections, type ConnectionsQuery } from '../api/connections'
 import FilterSelect from '../features/observability/filter-select'
+import QueryField from '../features/observability/query-field'
 import CursorPager from '../features/observability/cursor-pager'
 import { useCursorStack } from '../features/observability/use-cursor-stack'
 import WindowSelect, { WINDOW_MS, type WindowKey } from '../features/observability/window-select'
@@ -109,8 +110,10 @@ export default function ConnectionsPage() {
   const selected = rows.find((r) => r.connId === selectedId) ?? null
   const dash = t('observability.connections.dash')
 
-  const columns = useMemo<DataTableColumn<ConnectionItem>[]>(
-    () => [
+  // 详情面板打开时收起次要列（后端路径 / 时长 / 断开类别在详情内均可见），避免主表被挤出横向滚动
+  const detailOpen = selected !== null
+  const columns = useMemo<DataTableColumn<ConnectionItem>[]>(() => {
+    const all: (DataTableColumn<ConnectionItem> & { secondary?: boolean })[] = [
       {
         header: t('observability.connections.columns.openedAt'),
         cell: (row) => (
@@ -127,6 +130,7 @@ export default function ConnectionsPage() {
       },
       {
         header: t('observability.connections.columns.backendPath'),
+        secondary: true,
         cell: (row) => (
           <span className="font-mono text-xs text-ink-2">
             {row.firstBackendServerId ?? dash}
@@ -136,6 +140,7 @@ export default function ConnectionsPage() {
       },
       {
         header: t('observability.connections.columns.duration'),
+        secondary: true,
         cell: (row) => (
           <span className="tabular-nums text-xs text-ink-3">
             {row.durationMs === null
@@ -154,6 +159,7 @@ export default function ConnectionsPage() {
       },
       {
         header: t('observability.connections.columns.closeKind'),
+        secondary: true,
         cell: (row) =>
           row.closeKind === null ? (
             <span className="text-xs text-ink-4">{dash}</span>
@@ -163,9 +169,9 @@ export default function ConnectionsPage() {
             </Badge>
           ),
       },
-    ],
-    [t, dash],
-  )
+    ]
+    return detailOpen ? all.filter((col) => col.secondary !== true) : all
+  }, [t, dash, detailOpen])
 
   const toolbar = (
     <div className="grid gap-2.5">
@@ -178,51 +184,63 @@ export default function ConnectionsPage() {
         </span>
         <span className="text-xs text-ink-4">{t('observability.connections.guardHint')}</span>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          aria-label={t('observability.connections.filterConnId')}
-          placeholder={t('observability.connections.filterConnId')}
-          value={connId}
-          onChange={(e) => {
-            setConnId(e.target.value)
-          }}
-          className="w-64 font-mono"
-        />
-        <Input
-          aria-label={t('observability.connections.filterServer')}
-          placeholder={t('observability.connections.filterServer')}
-          value={serverId}
-          onChange={(e) => {
-            setServerId(e.target.value)
-          }}
-          className="w-48"
-          disabled={exactMode}
-        />
-        <Input
-          aria-label={t('observability.connections.filterPlayer')}
-          placeholder={t('observability.connections.filterPlayer')}
-          value={playerUuid}
-          onChange={(e) => {
-            setPlayerUuid(e.target.value)
-          }}
-          className="w-64 font-mono"
-          disabled={exactMode}
-        />
-        <FilterSelect
-          label={t('observability.connections.filterStatus')}
-          value={status}
-          options={STATUSES.map((v) => ({ value: v, label: t(`observability.connections.status.${v}`) }))}
-          onChange={setStatus}
-        />
-        <FilterSelect
-          label={t('observability.connections.filterCloseKind')}
-          value={closeKind}
-          options={CLOSE_KINDS.map((v) => ({ value: v, label: t(`observability.connections.closeKind.${v}`) }))}
-          onChange={setCloseKind}
-        />
-        <WindowSelect value={windowKey} keys={['1h', '6h', '24h', '7d']} onChange={setWindowKey} />
+      <div className="flex flex-wrap items-end gap-2">
+        <QueryField label={t('observability.connections.filterConnId')}>
+          <Input
+            aria-label={t('observability.connections.filterConnId')}
+            placeholder={t('observability.connections.filterConnId')}
+            value={connId}
+            onChange={(e) => {
+              setConnId(e.target.value)
+            }}
+            className="w-60 font-mono"
+          />
+        </QueryField>
+        <QueryField label={t('observability.connections.filterServer')}>
+          <Input
+            aria-label={t('observability.connections.filterServer')}
+            placeholder={t('observability.connections.filterServer')}
+            value={serverId}
+            onChange={(e) => {
+              setServerId(e.target.value)
+            }}
+            className="w-44"
+            disabled={exactMode}
+          />
+        </QueryField>
+        <QueryField label={t('observability.connections.filterPlayer')}>
+          <Input
+            aria-label={t('observability.connections.filterPlayer')}
+            placeholder={t('observability.connections.filterPlayer')}
+            value={playerUuid}
+            onChange={(e) => {
+              setPlayerUuid(e.target.value)
+            }}
+            className="w-60 font-mono"
+            disabled={exactMode}
+          />
+        </QueryField>
+        <QueryField label={t('observability.connections.filterStatus')}>
+          <FilterSelect
+            label={t('observability.connections.filterStatus')}
+            value={status}
+            options={STATUSES.map((v) => ({ value: v, label: t(`observability.connections.status.${v}`) }))}
+            onChange={setStatus}
+          />
+        </QueryField>
+        <QueryField label={t('observability.connections.filterCloseKind')}>
+          <FilterSelect
+            label={t('observability.connections.filterCloseKind')}
+            value={closeKind}
+            options={CLOSE_KINDS.map((v) => ({ value: v, label: t(`observability.connections.closeKind.${v}`) }))}
+            onChange={setCloseKind}
+          />
+        </QueryField>
+        <QueryField label={t('observability.connections.filterWindow')}>
+          <WindowSelect value={windowKey} keys={['1h', '6h', '24h', '7d']} onChange={setWindowKey} />
+        </QueryField>
         <label
-          className="flex cursor-pointer items-center gap-2 text-sm text-ink-2"
+          className="flex h-9 cursor-pointer items-center gap-2 text-sm text-ink-2"
           title={t('observability.common.includeArchivedHint')}
         >
           <Checkbox
@@ -234,7 +252,8 @@ export default function ConnectionsPage() {
           />
           {t('observability.common.includeArchived')}
         </label>
-        <Button size="sm" disabled={!canSearch} onClick={submit}>
+        {/* 禁用态用 outline 变体拉开与可点态的视觉差（灰边框空心 vs 品牌实心） */}
+        <Button size="sm" variant={canSearch ? 'default' : 'outline'} disabled={!canSearch} onClick={submit}>
           <Search className="size-3.5" />
           {t('observability.connections.search')}
         </Button>

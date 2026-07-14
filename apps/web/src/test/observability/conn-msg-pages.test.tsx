@@ -79,6 +79,30 @@ describe('/connections 连接明细页', () => {
 
     expect(await screen.findByText('当前条件下无连接记录')).toBeInTheDocument()
   })
+
+  it('可点击行键盘可达：Tab 聚焦 + Enter 打开详情，详情打开后次要列收起', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ConnectionsPage />)
+
+    await user.type(screen.getByLabelText('serverId（代理或后端）'), 'proxy-1')
+    await user.click(screen.getByRole('button', { name: '查询' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
+    })
+
+    // 数据行可聚焦（tabindex=0），Enter 触发与点击等价
+    const firstRow = screen.getAllByRole('row')[1]
+    expect(firstRow).toHaveAttribute('tabindex', '0')
+    firstRow.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => {
+      expect(screen.getByText('连接详情')).toBeInTheDocument()
+    })
+    // 详情打开后次要列（后端路径 / 时长 / 断开类别）收起，避免主表横向滚动
+    expect(screen.queryByText('后端路径')).not.toBeInTheDocument()
+    expect(screen.queryByText('时长')).not.toBeInTheDocument()
+  })
 })
 
 describe('/messages 消息链路页', () => {
@@ -116,6 +140,22 @@ describe('/messages 消息链路页', () => {
     const hops = screen.getByText('逐跳链路').closest('div')
     expect(within(hops as HTMLElement).getByText('发出')).toBeInTheDocument()
     expect(within(hops as HTMLElement).getByText('接收')).toBeInTheDocument()
+  })
+
+  it('超大量场景消息可稳定游标翻页（数据集中于头部后端）', async () => {
+    useScenario('huge')
+    const user = userEvent.setup()
+    renderPage(<MessagesPage />)
+
+    // huge 场景后端命名带补零（game-0001..1200）；消息集中于前 8 台，任一头部后端可出分页
+    await user.type(screen.getByLabelText('serverId（来源或目标）'), 'game-0001')
+    await user.click(screen.getByRole('button', { name: '查询' }))
+
+    expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '下一页' }))
+    expect(await screen.findByText(/第 2 页$/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '上一页' }))
+    expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
   })
 
   it('payload 受控查看：原因必填提交后展示原文与 SHA-256', async () => {

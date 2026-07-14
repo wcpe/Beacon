@@ -77,11 +77,14 @@ function buildState(scenario: MockScenario): ConnMsgState {
   }
   connections.sort((a, b) => (a.openedAt < b.openedAt ? 1 : -1))
 
+  // 超大量场景消息集中在前几台后端：4000 条摊到 1200 台会稀释到单服无法翻页，
+  // 集中后任一热门 serverId（如首台后端）检索即可稳定演示游标分页。
+  const msgBackends = scenario === 'huge' ? backends.slice(0, 8) : backends
   const messages: MessageDetail[] = []
   const payloads = new Map<string, string>()
   for (let i = 0; i < msgCount; i++) {
-    const source = pickOne(rng, backends)
-    const target = pickOne(rng, backends)
+    const source = pickOne(rng, msgBackends)
+    const target = pickOne(rng, msgBackends)
     const createdMs = BASE_MS - Math.floor(rng() * 30 * MINUTE)
     const messageId = uuidFrom(`msg:${String(i)}`)
     const byPlayer = rng() < 0.3

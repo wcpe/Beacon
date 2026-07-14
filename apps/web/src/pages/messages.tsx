@@ -16,6 +16,7 @@ import {
   DataTable,
   Input,
   SectionHeader,
+  Skeleton,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -23,6 +24,7 @@ import type { MessageItem, MsgStatus } from '@beacon/contracts'
 
 import { fetchMessageDetail, fetchMessages, type MessagesQuery } from '../api/connections'
 import FilterSelect from '../features/observability/filter-select'
+import QueryField from '../features/observability/query-field'
 import CursorPager from '../features/observability/cursor-pager'
 import { useCursorStack } from '../features/observability/use-cursor-stack'
 import WindowSelect, { WINDOW_MS, type WindowKey } from '../features/observability/window-select'
@@ -126,10 +128,13 @@ export default function MessagesPage() {
 
   const rows = query.data?.items ?? []
   const nextCursor = query.data?.nextCursor ?? null
+  const selected = rows.find((r) => r.messageId === selectedId) ?? null
   const dash = t('observability.messages.dash')
 
-  const columns = useMemo<DataTableColumn<MessageItem>[]>(
-    () => [
+  // 详情面板打开时收起次要列（寻址 / 耗时在详情内均可见），避免主表被挤出横向滚动
+  const detailOpen = selected !== null
+  const columns = useMemo<DataTableColumn<MessageItem>[]>(() => {
+    const all: (DataTableColumn<MessageItem> & { secondary?: boolean })[] = [
       {
         header: t('observability.messages.columns.createdAt'),
         cell: (row) => (
@@ -150,6 +155,7 @@ export default function MessagesPage() {
       },
       {
         header: t('observability.messages.columns.targetKind'),
+        secondary: true,
         cell: (row) => (
           <Badge variant={row.targetKind === 'broadcast' ? 'brand' : 'secondary'}>
             {t(`observability.messages.targetKind.${row.targetKind}`)}
@@ -164,15 +170,16 @@ export default function MessagesPage() {
       },
       {
         header: t('observability.messages.columns.duration'),
+        secondary: true,
         cell: (row) => (
           <span className="tabular-nums text-xs text-ink-3">
             {row.durationMs === null ? dash : t('observability.messages.durationMs', { count: row.durationMs })}
           </span>
         ),
       },
-    ],
-    [t, dash],
-  )
+    ]
+    return detailOpen ? all.filter((col) => col.secondary !== true) : all
+  }, [t, dash, detailOpen])
 
   const toolbar = (
     <div className="grid gap-2.5">
@@ -185,60 +192,74 @@ export default function MessagesPage() {
         </span>
         <span className="text-xs text-ink-4">{t('observability.messages.guardHint')}</span>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          aria-label={t('observability.messages.filterMessageId')}
-          placeholder={t('observability.messages.filterMessageId')}
-          value={messageId}
-          onChange={(e) => {
-            setMessageId(e.target.value)
-          }}
-          className="w-64 font-mono"
-        />
-        <Input
-          aria-label={t('observability.messages.filterCorrelationId')}
-          placeholder={t('observability.messages.filterCorrelationId')}
-          value={correlationId}
-          onChange={(e) => {
-            setCorrelationId(e.target.value)
-          }}
-          className="w-64 font-mono"
-        />
-        <Input
-          aria-label={t('observability.messages.filterServer')}
-          placeholder={t('observability.messages.filterServer')}
-          value={serverId}
-          onChange={(e) => {
-            setServerId(e.target.value)
-          }}
-          className="w-48"
-          disabled={exactMode}
-        />
-        <Input
-          aria-label={t('observability.messages.filterPlayer')}
-          placeholder={t('observability.messages.filterPlayer')}
-          value={playerUuid}
-          onChange={(e) => {
-            setPlayerUuid(e.target.value)
-          }}
-          className="w-64 font-mono"
-          disabled={exactMode}
-        />
-        <FilterSelect
-          label={t('observability.messages.filterStatus')}
-          value={status}
-          options={STATUSES.map((v) => ({ value: v, label: t(`observability.messages.status.${v}`) }))}
-          onChange={setStatus}
-        />
-        <FilterSelect
-          label={t('observability.messages.filterTargetKind')}
-          value={targetKind}
-          options={TARGET_KINDS.map((v) => ({ value: v, label: t(`observability.messages.targetKind.${v}`) }))}
-          onChange={setTargetKind}
-        />
-        <WindowSelect value={windowKey} keys={['1h', '6h', '24h', '7d']} onChange={setWindowKey} />
+      <div className="flex flex-wrap items-end gap-2">
+        <QueryField label={t('observability.messages.filterMessageId')}>
+          <Input
+            aria-label={t('observability.messages.filterMessageId')}
+            placeholder={t('observability.messages.filterMessageId')}
+            value={messageId}
+            onChange={(e) => {
+              setMessageId(e.target.value)
+            }}
+            className="w-60 font-mono"
+          />
+        </QueryField>
+        <QueryField label={t('observability.messages.filterCorrelationId')}>
+          <Input
+            aria-label={t('observability.messages.filterCorrelationId')}
+            placeholder={t('observability.messages.filterCorrelationId')}
+            value={correlationId}
+            onChange={(e) => {
+              setCorrelationId(e.target.value)
+            }}
+            className="w-60 font-mono"
+          />
+        </QueryField>
+        <QueryField label={t('observability.messages.filterServer')}>
+          <Input
+            aria-label={t('observability.messages.filterServer')}
+            placeholder={t('observability.messages.filterServer')}
+            value={serverId}
+            onChange={(e) => {
+              setServerId(e.target.value)
+            }}
+            className="w-44"
+            disabled={exactMode}
+          />
+        </QueryField>
+        <QueryField label={t('observability.messages.filterPlayer')}>
+          <Input
+            aria-label={t('observability.messages.filterPlayer')}
+            placeholder={t('observability.messages.filterPlayer')}
+            value={playerUuid}
+            onChange={(e) => {
+              setPlayerUuid(e.target.value)
+            }}
+            className="w-60 font-mono"
+            disabled={exactMode}
+          />
+        </QueryField>
+        <QueryField label={t('observability.messages.filterStatus')}>
+          <FilterSelect
+            label={t('observability.messages.filterStatus')}
+            value={status}
+            options={STATUSES.map((v) => ({ value: v, label: t(`observability.messages.status.${v}`) }))}
+            onChange={setStatus}
+          />
+        </QueryField>
+        <QueryField label={t('observability.messages.filterTargetKind')}>
+          <FilterSelect
+            label={t('observability.messages.filterTargetKind')}
+            value={targetKind}
+            options={TARGET_KINDS.map((v) => ({ value: v, label: t(`observability.messages.targetKind.${v}`) }))}
+            onChange={setTargetKind}
+          />
+        </QueryField>
+        <QueryField label={t('observability.messages.filterWindow')}>
+          <WindowSelect value={windowKey} keys={['1h', '6h', '24h', '7d']} onChange={setWindowKey} />
+        </QueryField>
         <label
-          className="flex cursor-pointer items-center gap-2 text-sm text-ink-2"
+          className="flex h-9 cursor-pointer items-center gap-2 text-sm text-ink-2"
           title={t('observability.common.includeArchivedHint')}
         >
           <Checkbox
@@ -250,7 +271,8 @@ export default function MessagesPage() {
           />
           {t('observability.common.includeArchived')}
         </label>
-        <Button size="sm" disabled={!canSearch} onClick={submit}>
+        {/* 禁用态用 outline 变体拉开与可点态的视觉差（灰边框空心 vs 品牌实心） */}
+        <Button size="sm" variant={canSearch ? 'default' : 'outline'} disabled={!canSearch} onClick={submit}>
           <Search className="size-3.5" />
           {t('observability.messages.search')}
         </Button>
@@ -313,7 +335,7 @@ export default function MessagesPage() {
             )}
           </ListCard>
         }
-        detail={selectedId === null ? null : <MessageDetailPanel messageId={selectedId} />}
+        detail={selected === null ? null : <MessageDetailPanel row={selected} />}
         detailTitle={t('observability.messages.detailTitle')}
         closeLabel={t('observability.common.close')}
         onClose={() => {
@@ -324,74 +346,115 @@ export default function MessagesPage() {
   )
 }
 
-// 消息详情面板：详情端点补 hops 逐跳链路 + 关联消息摘要 + payload 受控查看入口。
-function MessageDetailPanel({ messageId }: { messageId: string }) {
+// 消息详情面板：正文全部由列表行数据直显（永不空白，与连接详情同范式）；
+// 仅逐跳链路 / 关联消息为详情端点独有，异步增强、带独立加载 / 错误态。
+function MessageDetailPanel({ row }: { row: MessageItem }) {
   const { t } = useTranslation()
   const [payloadOpen, setPayloadOpen] = useState(false)
+  const dash = t('observability.messages.dash')
+
+  return (
+    <div className="grid gap-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={statusTone(row.status)}>{t(`observability.messages.status.${row.status}`)}</Badge>
+        <Badge variant={row.targetKind === 'broadcast' ? 'brand' : 'secondary'}>
+          {t(`observability.messages.targetKind.${row.targetKind}`)}
+        </Badge>
+        <span className="font-mono text-xs text-ink-3">{row.msgType}</span>
+      </div>
+
+      <dl className="grid gap-1.5">
+        {(
+          [
+            ['messageId', row.messageId],
+            ['correlationId', row.correlationId ?? dash],
+            ['source', row.sourceServerId],
+            ['target', row.targetServerId ?? row.targetPlayer ?? dash],
+            ['resolved', row.resolvedServerId ?? dash],
+            ['crossNamespace', row.crossNamespace ? '是' : '否'],
+            ['failReason', row.failReason ?? dash],
+            ['createdAt', new Date(row.createdAt).toLocaleString()],
+            ['dispatchedAt', row.dispatchedAt === null ? dash : new Date(row.dispatchedAt).toLocaleString()],
+            ['deliveredAt', row.deliveredAt === null ? dash : new Date(row.deliveredAt).toLocaleString()],
+            [
+              'duration',
+              row.durationMs === null ? dash : t('observability.messages.durationMs', { count: row.durationMs }),
+            ],
+            ['payloadSize', `${String(row.payloadSize)} B`],
+          ] as [string, string][]
+        ).map(([key, value]) => (
+          <div key={key} className="flex items-baseline justify-between gap-3">
+            <dt className="shrink-0 text-xs text-ink-4">{t(`observability.messages.fields.${key}`)}</dt>
+            <dd className="truncate text-right font-mono text-xs text-ink-1" title={value}>
+              {value}
+            </dd>
+          </div>
+        ))}
+        {row.targetKind === 'broadcast' && row.fanoutTotal !== undefined && (
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="shrink-0 text-xs text-ink-4">{t('observability.messages.fields.broadcast')}</dt>
+            <dd className="text-right text-xs text-ink-1">
+              {t('observability.messages.fields.broadcastCounts', {
+                total: row.fanoutTotal,
+                delivered: row.deliveredCount ?? 0,
+                failed: row.failedCount ?? 0,
+                expired: row.expiredCount ?? 0,
+              })}
+            </dd>
+          </div>
+        )}
+      </dl>
+
+      <MessageHops messageId={row.messageId} />
+
+      {/* payload 受控查看（原因必填 + 先审计后返回；未存储则禁入口） */}
+      <div className="border-t border-border pt-2.5">
+        {row.payloadStored ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setPayloadOpen(true)
+            }}
+          >
+            {t('observability.messages.viewPayload')}
+          </Button>
+        ) : (
+          <span className="text-xs text-ink-4">{t('observability.messages.payloadNotStored')}</span>
+        )}
+      </div>
+      {payloadOpen && (
+        <PayloadDialog
+          messageId={row.messageId}
+          onClose={() => {
+            setPayloadOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// 逐跳链路 + 关联消息（详情端点独有数据）：异步增强区，加载 / 错误只影响本区、不拖垮整个面板。
+function MessageHops({ messageId }: { messageId: string }) {
+  const { t } = useTranslation()
   const query = useQuery({
     queryKey: ['messages', 'detail', messageId],
     queryFn: () => fetchMessageDetail(messageId),
   })
   const detail = query.data
-  const dash = t('observability.messages.dash')
 
   return (
-    <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
-      {detail && (
-        <div className="grid gap-3 text-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={statusTone(detail.status)}>{t(`observability.messages.status.${detail.status}`)}</Badge>
-            <Badge variant={detail.targetKind === 'broadcast' ? 'brand' : 'secondary'}>
-              {t(`observability.messages.targetKind.${detail.targetKind}`)}
-            </Badge>
-            <span className="font-mono text-xs text-ink-3">{detail.msgType}</span>
-          </div>
-
-          <dl className="grid gap-1.5">
-            {(
-              [
-                ['messageId', detail.messageId],
-                ['correlationId', detail.correlationId ?? dash],
-                ['source', detail.sourceServerId],
-                ['target', detail.targetServerId ?? detail.targetPlayer ?? dash],
-                ['resolved', detail.resolvedServerId ?? dash],
-                ['crossNamespace', detail.crossNamespace ? '是' : '否'],
-                ['failReason', detail.failReason ?? dash],
-                ['createdAt', new Date(detail.createdAt).toLocaleString()],
-                ['dispatchedAt', detail.dispatchedAt === null ? dash : new Date(detail.dispatchedAt).toLocaleString()],
-                ['deliveredAt', detail.deliveredAt === null ? dash : new Date(detail.deliveredAt).toLocaleString()],
-                [
-                  'duration',
-                  detail.durationMs === null ? dash : t('observability.messages.durationMs', { count: detail.durationMs }),
-                ],
-                ['payloadSize', `${String(detail.payloadSize)} B`],
-              ] as [string, string][]
-            ).map(([key, value]) => (
-              <div key={key} className="flex items-baseline justify-between gap-3">
-                <dt className="shrink-0 text-xs text-ink-4">{t(`observability.messages.fields.${key}`)}</dt>
-                <dd className="truncate text-right font-mono text-xs text-ink-1" title={value}>
-                  {value}
-                </dd>
-              </div>
-            ))}
-            {detail.targetKind === 'broadcast' && detail.fanoutTotal !== undefined && (
-              <div className="flex items-baseline justify-between gap-3">
-                <dt className="shrink-0 text-xs text-ink-4">{t('observability.messages.fields.broadcast')}</dt>
-                <dd className="text-right text-xs text-ink-1">
-                  {t('observability.messages.fields.broadcastCounts', {
-                    total: detail.fanoutTotal,
-                    delivered: detail.deliveredCount ?? 0,
-                    failed: detail.failedCount ?? 0,
-                    expired: detail.expiredCount ?? 0,
-                  })}
-                </dd>
-              </div>
-            )}
-          </dl>
-
-          {/* 逐跳链路时间线 */}
-          <div className="border-t border-border pt-2.5">
-            <p className="mb-1.5 text-xs font-semibold text-ink-2">{t('observability.messages.hopsTitle')}</p>
+    <div className="border-t border-border pt-2.5">
+      <p className="mb-1.5 text-xs font-semibold text-ink-2">{t('observability.messages.hopsTitle')}</p>
+      <AsyncSection
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        skeleton={<Skeleton className="h-16 w-full" />}
+      >
+        {detail ? (
+          <>
             <ol className="grid gap-1">
               {detail.hops.map((hop) => (
                 <li key={hop.seq} className="flex items-center gap-2 text-xs">
@@ -407,48 +470,26 @@ function MessageDetailPanel({ messageId }: { messageId: string }) {
                 </li>
               ))}
             </ol>
-          </div>
-
-          {/* 关联消息（correlationId RPC 往返） */}
-          {detail.correlated !== null && (
-            <div className="border-t border-border pt-2.5">
-              <p className="mb-1.5 text-xs font-semibold text-ink-2">{t('observability.messages.correlatedTitle')}</p>
-              <div className="flex items-center gap-2 text-xs">
-                <Badge variant={statusTone(detail.correlated.status)}>
-                  {t(`observability.messages.status.${detail.correlated.status}`)}
-                </Badge>
-                <span className="font-mono text-ink-2">{detail.correlated.msgType}</span>
-                <span className="min-w-0 flex-1 truncate font-mono text-ink-4">{detail.correlated.messageId}</span>
+            {/* 关联消息（correlationId RPC 往返） */}
+            {detail.correlated !== null && (
+              <div className="mt-2.5 border-t border-border pt-2.5">
+                <p className="mb-1.5 text-xs font-semibold text-ink-2">
+                  {t('observability.messages.correlatedTitle')}
+                </p>
+                <div className="flex items-center gap-2 text-xs">
+                  <Badge variant={statusTone(detail.correlated.status)}>
+                    {t(`observability.messages.status.${detail.correlated.status}`)}
+                  </Badge>
+                  <span className="font-mono text-ink-2">{detail.correlated.msgType}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-ink-4">{detail.correlated.messageId}</span>
+                </div>
               </div>
-            </div>
-          )}
-
-          {/* payload 受控查看（原因必填 + 先审计后返回；未存储则禁入口） */}
-          <div className="border-t border-border pt-2.5">
-            {detail.payloadStored ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setPayloadOpen(true)
-                }}
-              >
-                {t('observability.messages.viewPayload')}
-              </Button>
-            ) : (
-              <span className="text-xs text-ink-4">{t('observability.messages.payloadNotStored')}</span>
             )}
-          </div>
-          {payloadOpen && (
-            <PayloadDialog
-              messageId={detail.messageId}
-              onClose={() => {
-                setPayloadOpen(false)
-              }}
-            />
-          )}
-        </div>
-      )}
-    </AsyncSection>
+          </>
+        ) : (
+          <span className="text-xs text-ink-4">{t('observability.messages.dash')}</span>
+        )}
+      </AsyncSection>
+    </div>
   )
 }
