@@ -4,6 +4,20 @@
 
 ## 未发布
 
+## 0.27.2（2026-07-14）
+
+### 变更
+- 将 Vitest 从 2.1.9 升级到 3.2.4，与 Vite 6 保持兼容；根工作区与 legacy `web/` 的测试、覆盖率、Playwright 与构建门禁均通过。
+
+### 修复
+- 修复控制面启动统计敏感配置时在 MySQL 8.0 生成 `WHERE sensitive = true`，因 `sensitive` 保留字触发 SQL 1064、阻断启动的问题；改用 GORM 方言感知列引用，并新增真 MySQL 回归覆盖空表与单条敏感配置。
+- 修复 legacy `web/` 的 Prettier 门禁：将自动生成的 `public/monaco/` 明确排除，只格式化受管源码，避免第三方 Monaco 资产进入格式化改动。
+- 修复真机 Go E2E 与第二版 agent 契约漂移：旧目录、指标与覆盖集用例改用 namespace access token 完成 pending → active → legacy online；同步 server 分配 `{results}` 响应断言，并修正 Gradle 实际运行目录与残留观测假绿。
+
+### 安全
+- 将 Go 工具链从 1.26.4 升级到 1.26.5，修复 `crypto/tls` 的 GO-2026-5856；`govulncheck` 对当前调用链报告 0 个漏洞。
+- 将 Vite 从 5.4.21 升级到 6.4.3，修复 GHSA-fx2h-pf6j-xcff；发布所用根工作区 `pnpm audit` 无已知漏洞。
+
 ## 0.27.1（2026-07-14）
 
 ### 新增
