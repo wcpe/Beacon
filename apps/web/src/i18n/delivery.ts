@@ -263,12 +263,16 @@ export const delivery = {
         scopeLabel: '作用域层',
         contentLabel: '内容',
         remarkLabel: '备注',
-        validate: '语法校验',
+        validate: '立即校验',
         save: '保存新版本',
         cancel: '取消',
-        validateOk: '语法校验通过',
-        validateFail: '语法校验失败',
+        validating: '校验中…',
+        validateOk: '校验通过',
+        validateFail: '校验不通过',
         conflict: '基线已过期，请返回重新加载后再保存',
+        // 敏感占位符说明（§4.7 write-only 体验）
+        sensitiveHint:
+          '敏感键（{{paths}}）当前以占位符 {{placeholder}} 显示：保持占位符不变即沿用旧值；替换为新值后，保存即生效且不可再查看明文',
       },
       // 差异
       diff: {

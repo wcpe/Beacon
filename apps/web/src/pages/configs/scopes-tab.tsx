@@ -215,6 +215,7 @@ export default function ScopesTab({ fileId, file }: ScopesTabProps) {
       {editTarget && (
         <EditDialog
           fileId={fileId}
+          sensitivePaths={file.sensitivePaths}
           target={editTarget}
           onOpenChange={(open) => {
             if (!open) {
