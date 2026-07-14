@@ -91,7 +91,7 @@
 
 ### 4.2 扫描频率与触发
 
-- **周期扫描**：默认每 30 分钟一次，首次在 agent 确认接入后启动，起始加 0~10% 周期随机抖动（防 1000 台同时上报踩踏）；周期可由运维设置热更（键 `assets.scan-interval-sec`，下限 300）。
+- **周期扫描**：默认每 30 分钟一次，首次在 agent 确认接入后启动，起始加 0~10% 周期随机抖动（防 1000 台同时上报踩踏）；周期由 agent 本地配置 `assets.scan-interval-sec` 决定（下限 300s，每轮重读即改次周期生效）。控制面推送式热更依赖 agent 设置下发通道——当前 agent 无该通道（仅心跳周期随注册响应下发），故 P8 先以 agent 本地配置为准，控制面推送留待通道就绪后接入（见 §8 待定 8）。
 - **手动扫描**：管理面 `POST /admin/v2/assets/rescan` 对目标服创建 agent 命令（类型 `asset-rescan`，沿用 ADR-0006 长轮询命令通道），支持 `force=true` 忽略本地 mtime 缓存全部重哈希；命令生命周期与结果按命令通道通用模型可观测。
 - **agent 执行约束**（架构不变量 §5）：扫描全程在 TabooLib async 线程执行；目录遍历用 java.nio、不跟随符号链接下降、解析后仍须落在扫描根内；哈希分块读（128 KiB）、逐文件让出，不阻塞 MC 主线程；`(size, mtime)` 与本地缓存一致则复用上次哈希，不重读文件。
 - **fail-static**：控制面不可达时扫描照常执行并更新本地缓存，上报失败静默等待下个周期重试（不影响 agent 其他职责，不重试风暴）。
@@ -110,7 +110,7 @@
 ### 4.4 搜索、分页与跨服比对（管理面）
 
 - **搜索**：`namespaceId` 必填（强隔离 + 保证走索引，禁止无 namespace 全表扫描）；可组合 `serverId`、`pathPrefix`（左锚定）、`name`（文件名包含，兜底条件，需与其他至少一个索引条件组合，否则拒绝——防无索引慢查询）、`ext`、`sha256`。强制分页，`pageSize ≤ 200`，默认 50。
-- **跨服哈希比对**：给定 `namespace + path`（精确相对路径）+ 范围（整 namespace / bc 集群 / 大区 / 小区 / 显式 serverId 列表），控制面按 `(namespace_id, path)` 索引单查，把命中行按 sha256 分组返回：每组含 sha256、size、成员服务器（serverId / mtime / scanned_at），另返回范围内**没有该文件**的服务器列表；最大组即多数派，前端据此标注少数派差异。范围内服务器数不设上限但成员列表分页（每组默认展开前 50 台）。
+- **跨服哈希比对**：给定 `namespace + path`（精确相对路径）+ 范围（整 namespace / 小区 / 显式 serverId 列表；bc 集群 / 大区级比对留待前端接入再加，见 §5.2），控制面按 `(namespace_id, path)` 索引单查，把命中行按 sha256 分组返回：每组含 sha256、size、成员服务器（serverId / mtime / scanned_at），另返回范围内**没有该文件**的服务器列表；最大组即多数派（分组按成员数降序，前端据此标注少数派差异）。范围内服务器数不设上限（本规模全量返回成员列表，前端做展开折叠）。
 - **页面性能边界**（UX §4 契约）：所有列表服务端筛选分页；比对视图按组折叠；超大量（如比对范围 1000 台）截断并明示边界；查询接口目标为纯索引查询，不做实时聚合重算。
 
 ### 4.5 文本内容预览与 diff（实时向 agent 取）
@@ -175,7 +175,7 @@
 |---|---|---|---|
 | GET | `/admin/v2/assets` | query：`namespaceId`(必)、`serverId`、`pathPrefix`、`name`、`ext`、`sha256`、`page`、`pageSize`(≤200) | `items[]`(serverId/path/ext/sha256/size/mtimeMs/isText/scannedAt)、`total` |
 | GET | `/admin/v2/assets/scan-status` | query：`namespaceId`(必)、`serverId`、`page`、`pageSize` | 每服概要：`manifestDigest`、`fileCount`、`totalSize`、`truncated`、`scannedAt`、`scanDurationMs` |
-| GET | `/admin/v2/assets/compare` | query：`namespaceId`(必)、`path`(必,精确)、范围三选一：`clusterId`/`regionId`/`zoneId`/`serverIds` | `groups[]`(sha256/size/servers[](serverId/mtimeMs/scannedAt))、`missing[]`(无此文件的 serverId)、组内成员分页 |
+| GET | `/admin/v2/assets/compare` | query：`namespaceId`(必)、`path`(必,精确)、范围可选：`zoneId` 或 `serverIds`(逗号分隔业务串)，均空即整 namespace（cluster/region 级留待前端接入） | `groups[]`(sha256/size/servers[](serverId/mtimeMs/scannedAt)，按成员数降序)、`missing[]`(无此文件的 serverId) |
 | POST | `/admin/v2/assets/rescan` | `namespaceId`、`serverIds[]`(≤100)、`force` | 每服创建的命令 id 列表；离线服标记入响应不阻断整批 |
 | POST | `/admin/v2/assets/preview` | `serverId`、`path`、`reason`(命中敏感时必填) | `content`、`truncated`、`binary`、`sha256`、`size`、`sensitive`；超时 / 离线 / 敏感未放行返回对应 code |
 | POST | `/admin/v2/assets/diff` | `left{serverId,path}`、`right{serverId,path}`、`reason`(任一侧敏感时必填) | `identical` 或 双侧 `content`+元数据；二进制 / 超限拒绝 `asset_diff_unsupported` |
@@ -210,13 +210,13 @@
 
 ## 8. 风险 / 待定（默认决定集中登记，待拍板）
 
-1. **上报协议选型**：定为「增量 diff + 摘要校准 + 全量兜底」（§4.3），弃纯全量快照方案——默认决定待拍板。
+1. **上报协议选型**：定为「增量 diff + 摘要校准 + 全量兜底」（§4.3），弃纯全量快照方案——**已拍板并落 ADR**（`docs/adr/*-asset-manifest-sync-protocol.md`，真号随 P8 落地统一分配）。
 2. **默认数值**：扫描周期 30 分钟（下限 300s）、单服文件数上限 50000、单请求条目上限 2000、全量分片暂存 TTL 5 分钟、预览上限 512 KiB、预览同步等待超时 10s、pageSize 上限 200——均为估值默认，待真机压测校准。
 3. **扫描根白名单**：根目录顶层配置文件清单（§4.1）按主流 Bukkit/Paper/BC/Velocity 发行版拟定，可能需按实际部署补充；白名单定为代码内置不开放配置（YAGNI）——待拍板。
 4. **敏感默认清单**：§4.6 模式为拟定值（含 `plugins/Beacon/**` 整目录），`**/*password*` 类通配可能误伤（如 `password-strength.yml` 之类业务配置），靠单次原因放行兜底而非收窄模式——待拍板。
 5. **预览内容走 agent 面 JSON 回传**（≤512 KiB 小载荷）而非流式数据面：判断该约束针对交付级搬运，预览属控制面编排级小消息——若认为一切文件内容都须走数据面则需改走 `/beacon/v2/stream/*`，待拍板。
 6. **全量分片内存暂存**：控制面重启丢弃未收齐分片、agent 下周期重传，接受这一窗口（不落临时表）——待拍板。
 7. **预览采用同步等待**（HTTP 请求挂起 ≤10s）而非「创建任务 + 前端轮询」两段式：依据长轮询下行延迟低、交互显著更简洁；若未来预览排队严重再演进——待拍板。
-8. **扫描相关设置挂运维设置**（FR-158 设施，P6 已落地）而非本域自建设置面——默认决定。
+8. **扫描相关设置**：目标态挂运维设置（FR-158 设施）而非本域自建设置面——默认决定。**P8 实际落地**：scan-interval / scan-exclude 是 agent 侧消费的 knob，而 agent 当前无控制面设置下发通道（唯一热推值是随注册响应的心跳周期），故 FR-163 先由 agent 本地 `config.yml` 读取（`assets.scan-interval-sec` 下限 300s、`assets.scan-exclude-patterns`）；控制面推送式热更留待 agent 设置下发通道就绪（或另立 FR）后接入——待拍板是否补该通道。
 9. **mtime 用 UTC epoch 毫秒 BIGINT**、`ext` 冗余列、`file_asset` 不分片不分日期表（200 万行量级单表 + 索引可承载）——默认决定。
 10. **diff 渲染在前端**（控制面只透传双侧内容），与配置中心 diff 组件复用同一前端能力——默认决定。

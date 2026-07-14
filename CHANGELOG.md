@@ -4,6 +4,9 @@
 
 ## 未发布
 
+### 新增
+- 文件资产 V2 索引后端（FR-163，规格 [v2-file-assets.md](docs/specs/v2-file-assets.md)，上报协议见新增 ADR《文件资产清单上报协议》）：agent 周期扫描本机 `plugins/` 与根配置白名单，把每文件「路径 / sha256 / 大小 / mtime」清单**只读**上报控制面（对目标文件系统零写入）。上报走**增量 diff + 摘要校准 + 全量分片兜底**协议：清单摘要两侧同源，增量携 `baseDigest` 单事务应用、基线失配返回 409 `asset_manifest_out_of_sync` 令 agent 退全量自愈；全量 >2000 文件分片、5 分钟内按 `uploadId`/`seq`/`eof` 收齐后单事务原子整体替换该服全部行（替换期查询不见半截清单）。控制面新增端点：`POST /beacon/v2/agent/assets/manifest`（agent 面清单上报，挂 token↔namespace + identity 鉴权，未确认 403）、`GET /admin/v2/assets`（按服务器 / 路径前缀 / 扩展名 / 哈希组合搜索分页，`namespaceId` 必填、裸文件名查询拒绝、`pageSize≤200`）、`GET /admin/v2/assets/scan-status`（每服扫描概要）、`GET /admin/v2/assets/compare`（跨服同路径哈希分组比对 + 缺失服列表，多数派在前）、`POST /admin/v2/assets/rescan`（批量下发 `asset-rescan` 命令走既有长轮询命令通道，在线服建命令、离线服标记不阻断整批，`force` 忽略 agent mtime 缓存全重哈希）。重扫记 `asset.rescan` 专项审计（detail 仅目标 serverId 列表 + force，无文件内容）。`/assets` 页面（清单 / 概要 / 比对 / 重扫）从演示 mock 接入真实后端。
+
 ## 0.27.2（2026-07-14）
 
 ### 变更
