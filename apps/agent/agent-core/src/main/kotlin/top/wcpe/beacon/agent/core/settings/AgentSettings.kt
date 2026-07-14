@@ -19,6 +19,7 @@ import top.wcpe.beacon.agent.core.messaging.MessagingSettings
  *                           取消下线后下一次探测即可恢复（运维亦可经 reconnect 立即拉起）
  * @param messaging          跨服消息中间件（FR-26）本地行为参数（Redis 连接由控制面下发，不在此）
  * @param proxy              BC 代理本地路由参数（FR-48 home-zone）；bukkit 不用，默认空
+ * @param assets             文件资产索引（FR-163）本地参数（周期扫描间隔来自本地 config.yml）
  */
 data class AgentSettings(
     val endpoints: List<String>,
@@ -43,10 +44,31 @@ data class AgentSettings(
         ),
     // BC 代理路由参数（FR-48）：默认空（未配 → 默认服走兜底首个在线子服）；让既有测试 / bukkit 无需显式构造。
     val proxy: ProxySettings = ProxySettings(homeGroup = "", homeZone = ""),
+    // 文件资产索引（FR-163）：默认启用；有默认值让既有测试 / 不关心资产的调用方无需显式构造。
+    val assets: AssetIndexSettings =
+        AssetIndexSettings(
+            enabled = true,
+            scanIntervalSec = 1800,
+            manifestFileName = "asset-manifest.json",
+        ),
 ) {
     /** 当前选用的控制面基址（MVP：首个 endpoint）。 */
     fun primaryEndpoint(): String = endpoints.first().trimEnd('/')
 }
+
+/**
+ * 文件资产索引（FR-163）本地参数。周期扫描间隔来自本地 config.yml——
+ * agent 无设置轮询通道，控制面对该间隔的热更下发不在本期范围（见规格 §4.2，YAGNI）。
+ *
+ * @param enabled          是否启用文件资产索引（关则不扫描、不上报清单）
+ * @param scanIntervalSec  周期扫描间隔（秒），下限 300（AgentBootstrap 读取时兜底收口）
+ * @param manifestFileName 本地清单缓存文件名（落 agent 数据目录）
+ */
+data class AssetIndexSettings(
+    val enabled: Boolean,
+    val scanIntervalSec: Long,
+    val manifestFileName: String,
+)
 
 /**
  * BC 代理本地路由参数（FR-48）。它是数据面路由配置（「本代理服务哪个小区的玩家」），

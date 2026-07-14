@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.client
 
+import top.wcpe.beacon.agent.core.command.AssetEntry
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.filetree.FileManifest
 import top.wcpe.beacon.agent.core.override.OverrideManifest
@@ -381,4 +382,46 @@ sealed class MessageAckOutcome {
 
     /** 连接级失败 / 其它非预期状态：best-effort，下一轮取消息后仍会重投则再 ack。 */
     data class Failed(val reason: String) : MessageAckOutcome()
+}
+
+// ---- P8 文件资产清单上报（FR-163 §5.1，见 ADR asset-manifest-sync-protocol）：wire DTO 与调用结果 ----
+
+/**
+ * 文件资产清单上报的公共报文段（FR-163）：模式 + 扫描时刻 / 耗时 / 截断 + 本次条目（delta upserts / full 分片）。
+ *
+ * 收敛 [BeaconApiClient.reportAssetManifest] 参数（避免长参数列表）；mode 决定 delta（携 baseDigest+deleted）
+ * 还是 full（携 uploadId+seq+eof）分支。
+ *
+ * @param mode          "delta" 或 "full"
+ * @param scannedAtMs   扫描完成时刻（Unix 毫秒），上线格式化为 UTC ISO8601
+ * @param scanDurationMs 扫描耗时（毫秒）
+ * @param truncated     是否因超单服文件数上限被截断
+ * @param upserts       本次上报的条目（delta=变化项，full=该分片条目）
+ */
+data class AssetManifestMeta(
+    val mode: String,
+    val scannedAtMs: Long,
+    val scanDurationMs: Long,
+    val truncated: Boolean,
+    val upserts: List<AssetEntry>,
+)
+
+/**
+ * 文件资产清单上报结果（对应 POST /beacon/v2/agent/assets/manifest 的 200/409/400）。
+ *
+ * 供扫描协调器决定：入库确认（[Accepted] 且返回摘要与本地一致）、退全量自愈（[OutOfSync]）、
+ * 告警脱敏原因（[Rejected]）、fail-static 保留本地状态等下周期（[Failed]）。
+ */
+sealed class AssetManifestOutcome {
+    /** 200：控制面已应用。digest 为应用后清单摘要（全量非末批分片可能为空串），fileCount 为清单文件数。 */
+    data class Accepted(val digest: String, val fileCount: Int) : AssetManifestOutcome()
+
+    /** 409：delta 基线失配 / 全量暂存丢失过期 / seq 跳号（asset_manifest_out_of_sync）；agent 下次改发全量。 */
+    object OutOfSync : AssetManifestOutcome()
+
+    /** 400：参数错误（携脱敏原因码）。 */
+    data class Rejected(val code: String) : AssetManifestOutcome()
+
+    /** 连接级失败 / 其它非预期状态：fail-static 保留本地状态、等下周期。 */
+    data class Failed(val reason: String) : AssetManifestOutcome()
 }

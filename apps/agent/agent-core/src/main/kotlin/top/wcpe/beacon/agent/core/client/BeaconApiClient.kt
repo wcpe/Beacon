@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.client
 
 import top.wcpe.beacon.agent.core.command.AgentCommand
+import top.wcpe.beacon.agent.core.command.AssetEntry
 import top.wcpe.beacon.agent.core.command.IngestCommandPayload
 import top.wcpe.beacon.agent.core.command.IngestFile
 import top.wcpe.beacon.agent.core.command.ScanFile
@@ -436,6 +437,57 @@ class BeaconApiClient(
             403 -> MetricsReportOutcome.Forbidden
             400 -> MetricsReportOutcome.Rejected(parseErrorCode(resp.body))
             else -> MetricsReportOutcome.Failed("非预期状态码 ${resp.statusCode}")
+        }
+    }
+
+    /**
+     * 上报文件资产清单：POST /beacon/v2/agent/assets/manifest（FR-163 §5.1，见 ADR asset-manifest-sync-protocol）。
+     * 同步调用，请在异步线程使用。
+     *
+     * 增量（[mode]=delta）携 [baseDigest] + [upserts] + [deleted]；全量（[mode]=full）携 [uploadId] + [seq] + [eof] + [upserts] 分片。
+     * 200 受理（返回应用后 digest + fileCount）；409 基线失配 / 暂存丢失（asset_manifest_out_of_sync，改发全量）；
+     * 400 参数错误；连接失败 / 其它 → Failed（fail-static 等下周期）。
+     */
+    fun reportAssetManifest(
+        identity: AgentIdentity,
+        meta: AssetManifestMeta,
+        baseDigest: String? = null,
+        deleted: List<String> = emptyList(),
+        uploadId: String? = null,
+        seq: Int = 0,
+        eof: Boolean = false,
+    ): AssetManifestOutcome {
+        val body =
+            buildMap<String, Any?> {
+                put("mode", meta.mode)
+                put("scannedAt", isoUtc(meta.scannedAtMs))
+                put("scanDurationMs", meta.scanDurationMs)
+                put("truncated", meta.truncated)
+                put("upserts", meta.upserts.map { assetEntryBody(it) })
+                if (meta.mode == "delta") {
+                    put("baseDigest", baseDigest ?: "")
+                    put("deleted", deleted)
+                } else {
+                    put("uploadId", uploadId ?: "")
+                    put("seq", seq)
+                    put("eof", eof)
+                }
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/assets/manifest",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return AssetManifestOutcome.Failed(connectFailReason())
+        return when (resp.statusCode) {
+            200 -> parseAssetManifestAccepted(resp.body)
+            409 -> AssetManifestOutcome.OutOfSync
+            400 -> AssetManifestOutcome.Rejected(parseErrorCode(resp.body))
+            else -> AssetManifestOutcome.Failed("非预期状态码 ${resp.statusCode}")
         }
     }
 
@@ -1223,6 +1275,8 @@ class BeaconApiClient(
                     offset = JsonTree.intOr(payloadObj, "offset", 0),
                     limit = JsonTree.intOr(payloadObj, "limit", 0),
                     maxDepth = JsonTree.intOr(payloadObj, "maxDepth", 0),
+                    // 文件资产重扫字段（FR-163，仅 asset-rescan 命令携带；其它命令缺省 false，向后兼容）。
+                    force = JsonTree.boolOr(payloadObj, "force", false),
                 ),
         )
     }
@@ -1269,6 +1323,25 @@ class BeaconApiClient(
             deduplicated = JsonTree.intOr(obj, "deduplicated", 0),
             rttMs = rttMs,
             self = parseSelfHealth(obj["self"]),
+        )
+    }
+
+    /** 把一个资产清单条目拼成上报报文 upserts 元素（键集 camelCase，与控制面接收结构体对齐，FR-163）。 */
+    private fun assetEntryBody(entry: AssetEntry): Map<String, Any?> =
+        mapOf(
+            "path" to entry.path,
+            "sha256" to entry.sha256,
+            "size" to entry.size,
+            "mtimeMs" to entry.mtimeMs,
+            "isText" to entry.isText,
+        )
+
+    /** 解析文件资产清单 200 受理响应（应用后清单摘要 + 文件数）。 */
+    private fun parseAssetManifestAccepted(jsonBody: String): AssetManifestOutcome.Accepted {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        return AssetManifestOutcome.Accepted(
+            digest = JsonTree.strOr(obj, "digest", ""),
+            fileCount = JsonTree.intOr(obj, "fileCount", 0),
         )
     }
 

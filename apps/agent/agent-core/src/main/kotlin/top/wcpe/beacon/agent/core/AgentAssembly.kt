@@ -10,10 +10,13 @@ import top.wcpe.beacon.agent.core.command.ReverseFetchExecutor
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.AppliedFileManifestStore
+import top.wcpe.beacon.agent.core.filetree.AssetManifestStore
 import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
 import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.lifecycle.AssetScanCoordinator
+import top.wcpe.beacon.agent.core.lifecycle.AssetScanScope
 import top.wcpe.beacon.agent.core.log.AgentLogBuffer
 import top.wcpe.beacon.agent.core.log.BufferingPlatformAdapter
 import top.wcpe.beacon.agent.core.messaging.HttpMessageTransport
@@ -164,11 +167,30 @@ object AgentAssembly {
         // 故用可变引用打破构造顺序——lifecycle 建好后回填，命令到达时再解引用调用。
         val lifecycleRef = AtomicReference<AgentLifecycle?>(null)
 
+        // 文件资产索引周期扫描协调器（FR-163，见 ADR asset-manifest-sync-protocol）：启用且 plugins 基目录有效时装配。
+        // 扫描根 = 服务器工作目录（pluginsBase 的父目录）；纯 java.nio 读盘 + 分块哈希在 async 线程，绝不上主线程（fail-static）。
+        // 与文件树 / 反向抓取同一 pluginsBaseValid fail-closed 守卫：基目录解析异常时不扫描（避免从错误目录读出误导性清单）。
+        val assetScanCoordinator: AssetScanCoordinator? =
+            if (settings.assets.enabled && pluginsBaseValid) {
+                AssetScanCoordinator(
+                    adapter = adapter,
+                    apiClient = apiClient,
+                    identity = identity,
+                    store = AssetManifestStore(File(adapter.dataFolder(), settings.assets.manifestFileName), codec),
+                    // 扫描根 = 服务器工作目录（pluginsBase 的父目录）；agent 自身数据目录整棵排除出扫描：
+                    // 其内自写缓存 / 快照（asset-manifest / candidates-snapshot 等）每周期变，纳入清单会自我指涉致永不收敛。
+                    scope = AssetScanScope(serverRoot = { pluginsBase.parentFile ?: pluginsBase }, selfDataDir = adapter.dataFolder()),
+                    intervalMs = settings.assets.scanIntervalSec * 1000L,
+                )
+            } else {
+                null
+            }
+
         // 反向抓取执行器（FR-39，见 ADR-0027）：仅在 plugins 基目录有效时装配（与文件树同一 fail-closed 守卫，
         // 避免从错误目录读盘上传）。读盘委托 adapter.readPluginsTree（壳层实现 FS 级路径安全）。
-        // 取日志（FR-88）/ 强制重同步（FR-91）不依赖 plugins 基目录有效性（不读盘）；故执行器始终装配以响应这两类命令。
+        // 取日志（FR-88）/ 强制重同步（FR-91）/ 文件资产重扫（FR-163）不依赖 plugins 基目录有效性；故执行器始终装配以响应这些命令。
         // 反向抓取（读盘）仍受 pluginsBaseValid fail-closed 守卫：基目录无效时禁读盘上传（避免从错误目录读），
-        // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config 不受影响。三类命令复用同一命令通路与单飞排空。
+        // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config / asset-rescan 不受影响。各命令复用同一命令通路与单飞排空。
         val reverseFetchExecutor =
             ReverseFetchExecutor(
                 identity,
@@ -177,6 +199,8 @@ object AgentAssembly {
                 logBuffer,
                 onResyncConfig = { lifecycleRef.get()?.forceResyncNow() ?: false },
                 reverseFetchEnabled = pluginsBaseValid,
+                // 文件资产重扫回调（FR-163）：协调器存在（assets 启用且基目录有效）才派发，否则回 false（命令回传 ok=false）。
+                onAssetRescan = { force -> assetScanCoordinator?.forceScanNow(force) ?: false },
             )
 
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
@@ -246,6 +270,8 @@ object AgentAssembly {
                 schedulingRuntime = schedulingRefresher,
                 // 自身健康回传 sink（FR-148）：把指标上报 202 响应内 self 刷进 selfHealth 数据源。
                 selfHealthSink = selfHealthHolder::set,
+                // 文件资产索引周期扫描协调器（FR-163）：随注册成功 start、停机 stop；null=未启用（assets 关闭 / 基目录无效）。
+                assetScan = assetScanCoordinator,
             )
         // 跨服消息模块随注册成功启动（幂等，重注册不重启）；停止由壳层在 DISABLE 调 messagingRuntime.stop()（与连接采集同）。
         lifecycle.onRegistered { messagingRuntime.start() }

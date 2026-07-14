@@ -53,6 +53,15 @@ object AgentBootstrap {
                     homeGroup = reader.string("proxy.home-group", ""),
                     homeZone = reader.string("proxy.home-zone", ""),
                 ),
+            assets =
+                AssetIndexSettings(
+                    // 是否启用文件资产索引（FR-163）；默认启用。
+                    enabled = reader.boolean("assets.enabled", true),
+                    // 周期扫描间隔（秒），默认 1800（30 分钟）；下限 300（规格 §4.2）：低于下限一律收口到 300，防过频扫描踩踏。
+                    scanIntervalSec = reader.long("assets.scan-interval-sec", 1800).coerceAtLeast(300),
+                    // 本地清单缓存文件名（落 agent 数据目录）。
+                    manifestFileName = reader.string("assets.manifest-file-name", "asset-manifest.json"),
+                ),
         )
     }
 

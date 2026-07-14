@@ -68,6 +68,9 @@ class AgentLifecycle(
     private val schedulingRuntime: SchedulingRuntime? = null,
     // 自身健康回传 sink（FR-148）：转交给指标上报协调器，把 202 响应内 self 刷给调度门面；默认 no-op。
     private val selfHealthSink: (SelfHealth?) -> Unit = {},
+    // 文件资产索引周期扫描协调器（FR-163，见 ADR asset-manifest-sync-protocol）：注册成功时 start、停机时 stop；
+    // 为 null 时不启用（assets 关闭 / 基目录无效 / 既有测试向后兼容），由 AgentAssembly 按 settings.assets.enabled 装配。
+    private val assetScan: AssetScanCoordinator? = null,
 ) {
     private val state = AtomicReference(AgentState.BOOTSTRAP)
 
@@ -351,6 +354,7 @@ class AgentLifecycle(
         streamGen.set(streamGen.get() + 1)
         metricsSampling.stop()
         schedulingRuntime?.stop()
+        assetScan?.stop()
         adapter.info("agent 生命周期已停止")
     }
 
@@ -456,6 +460,8 @@ class AgentLifecycle(
         }
         // 调度候选刷新循环（FR-148）：随注册成功启动（幂等，重注册不重启）；候选快照跨重连保留、恢复后自动补报降级决策。
         schedulingRuntime?.start()
+        // 文件资产索引周期扫描（FR-163）：随注册成功启动（幂等，重注册不重启）；扫描 + 上报全在 async 线程，fail-static。
+        assetScan?.start()
         // 注入了 streamTransport（FR-24）：以单条 SSE 推送流取代三条长轮询；否则退回三条长轮询（迁移期兼容）。
         if (apiClient.streamingEnabled()) {
             startStreamLoop()

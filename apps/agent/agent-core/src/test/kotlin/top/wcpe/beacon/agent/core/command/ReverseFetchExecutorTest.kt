@@ -179,6 +179,13 @@ class ReverseFetchExecutorTest {
                         "payload" to mapOf("op" to "file", "path" to "../etc/passwd"),
                     )
 
+                CMD_ASSET_RESCAN ->
+                    mapOf(
+                        "id" to 16,
+                        "type" to "asset-rescan",
+                        "payload" to mapOf("force" to true),
+                    )
+
                 else -> emptyMap<String, Any?>()
             }
     }
@@ -332,6 +339,16 @@ class ReverseFetchExecutorTest {
     ): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter, onResyncConfig = onResync)
+    }
+
+    /** 带文件资产重扫回调的执行器（FR-163 重扫路径用；回调入参 force、返回是否已派发）。 */
+    private fun assetExecutor(
+        transport: FakeTransport,
+        adapter: StubAdapter,
+        onAssetRescan: (Boolean) -> Boolean,
+    ): ReverseFetchExecutor {
+        val client = BeaconApiClient(transport, FakeCodec(), settings())
+        return ReverseFetchExecutor(identity(), client, adapter, onAssetRescan = onAssetRescan)
     }
 
     @Test
@@ -638,6 +655,50 @@ class ReverseFetchExecutorTest {
         assertTrue(body.contains("ok=false"), "未启用浏览应回 ok=false：$body")
     }
 
+    @Test
+    fun `资产重扫命令调回调透传 force 并回传 ok=true`() {
+        // FR-163：asset-rescan 命令 → 调资产重扫回调（透传 payload.force）→ 经命令结果端点回传 done，绝不读 plugins 树。
+        val transport = FakeTransport(pendingBody = CMD_ASSET_RESCAN)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        val forceSeen = AtomicReference<Boolean?>(null)
+        assetExecutor(transport, adapter) { force ->
+            forceSeen.set(force)
+            true
+        }.trigger()
+
+        assertEquals(true, forceSeen.get(), "应把 payload.force 透传给回调")
+        assertEquals(0, adapter.readCalls.get(), "资产重扫绝不读 plugins 内容")
+        assertEquals(0, adapter.metadataCalls.get(), "资产重扫绝不 stat plugins 元信息")
+        assertEquals(0, transport.ingestCalls.get(), "资产重扫不走 ingest")
+        assertEquals(1, transport.resultCalls.get(), "应走 /agent/commands/result 一次")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("commandId=16"), "结果回传应携命令 id：$body")
+        assertTrue(body.contains("ok=true"), "已派发应回传 ok=true：$body")
+    }
+
+    @Test
+    fun `资产重扫回调返回 false 回传 ok=false`() {
+        // FR-163：回调返回 false（资产索引未启用 / 内部失败）→ 回传 ok=false，不误报 done。
+        val transport = FakeTransport(pendingBody = CMD_ASSET_RESCAN)
+        val adapter = StubAdapter(emptyMap())
+        assetExecutor(transport, adapter) { false }.trigger()
+
+        assertEquals(1, transport.resultCalls.get(), "未派发也应回传结果一次")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("ok=false"), "未派发应回传 ok=false：$body")
+    }
+
+    @Test
+    fun `未注入资产重扫回调时命令忽略不回传`() {
+        // 向后兼容：未注入回调（assets 关闭 / 旧装配）→ asset-rescan 按未知能力忽略、不回传。
+        val transport = FakeTransport(pendingBody = CMD_ASSET_RESCAN)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        executor(transport, adapter).trigger() // 无 onAssetRescan 重载
+
+        assertEquals(0, transport.resultCalls.get(), "未注入回调不应回传结果")
+        assertEquals(0, adapter.readCalls.get(), "不应读盘")
+    }
+
     companion object {
         private const val CMD_INGEST = "cmd-ingest"
         private const val CMD_UNKNOWN = "cmd-unknown"
@@ -648,5 +709,6 @@ class ReverseFetchExecutorTest {
         private const val CMD_BROWSE_LIST = "cmd-browse-list"
         private const val CMD_BROWSE_FILE = "cmd-browse-file"
         private const val CMD_BROWSE_DENIED = "cmd-browse-denied"
+        private const val CMD_ASSET_RESCAN = "cmd-asset-rescan"
     }
 }

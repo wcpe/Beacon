@@ -37,6 +37,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *                           返回 true=已执行三条重拉；false=因 agent 未运行/正在停机跳过（runResync 据此回传 failed，不误报 done）。
  * @param reverseFetchEnabled 是否启用反向抓取读盘路径（plugins 基目录有效时 true；无效时 fail-closed 关闭，
  *                            收到 ingest-plugins 命令仅记 warn、不读盘——但 tail-logs / resync-config 不受此守卫影响）
+ * @param onAssetRescan       文件资产重扫回调（FR-163，可选；为 null 时不响应 asset-rescan，按未知能力忽略）。
+ *                            入参 force（忽略 mtime 缓存全部重哈希），由装配方注入扫描协调器 forceScanNow 闭包。
+ *                            返回 true=已派发；false=未启用 / 内部失败（runAssetRescan 据此回传 ok=false，不误报 done）。
  */
 class ReverseFetchExecutor(
     private val identity: AgentIdentity,
@@ -45,6 +48,7 @@ class ReverseFetchExecutor(
     private val logBuffer: AgentLogBuffer? = null,
     private val onResyncConfig: (() -> Boolean)? = null,
     private val reverseFetchEnabled: Boolean = true,
+    private val onAssetRescan: ((Boolean) -> Boolean)? = null,
 ) {
     /** 单飞门：任意时刻只允许一条抓取流在跑（command-pending 与 READY 并发触发时去重）。 */
     private val running = AtomicBoolean(false)
@@ -91,6 +95,11 @@ class ReverseFetchExecutor(
         // 只读文件浏览命令（FR-110）：按 op 列目录 / 读子树 / 读单文件回传，纯只读、不写盘。
         if (command.type == AgentCommand.TYPE_FS_BROWSE) {
             runBrowse(command)
+            return true
+        }
+        // 文件资产重扫命令（FR-163）：调扫描协调器立即扫描本机资产并全量上报，回传命令结果，不读 plugins 树。
+        if (command.type == AgentCommand.TYPE_ASSET_RESCAN) {
+            runAssetRescan(command)
             return true
         }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
@@ -255,6 +264,44 @@ class ReverseFetchExecutor(
             adapter.info("强制重同步完成并回传：id=${command.id}")
         } else {
             adapter.warn("强制重同步完成结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    /**
+     * 文件资产重扫阶段（FR-163）：调 [onAssetRescan] 回调立即扫描本机资产并全量上报控制面
+     * （payload.force=true 忽略本地 mtime 缓存全部重哈希），再经命令结果端点回传结果。**绝不读 plugins 树**。
+     *
+     * 回调返回 true=已派发（即便控制面暂不可达，扫描已执行、上报按 fail-static 等下周期）→ 回传 ok=true；
+     * false=资产索引未启用 / 内部失败 → 回传 ok=false（不误报 done）。回调抛异常 → 回传 ok=false（带原因摘要）。
+     * 未注入回调（assets 关闭 / 旧装配 / 测试桩）则按未知能力忽略：记 warn、不回传（控制面超时清理）。
+     */
+    private fun runAssetRescan(command: AgentCommand) {
+        val callback = onAssetRescan
+        if (callback == null) {
+            adapter.warn("收到文件资产重扫命令但未启用资产索引（忽略）：id=${command.id}")
+            return
+        }
+        val dispatched =
+            try {
+                callback(command.payload.force)
+            } catch (e: Exception) {
+                adapter.error("文件资产重扫执行失败：id=${command.id}", e)
+                val ok =
+                    apiClient.uploadCommandResult(
+                        command.id,
+                        ok = false,
+                        reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}",
+                        identity = identity,
+                    )
+                if (!ok) adapter.warn("文件资产重扫失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+                return
+            }
+        val reason = if (dispatched) "" else "资产索引未启用或内部失败"
+        val ok = apiClient.uploadCommandResult(command.id, ok = dispatched, reason = reason, identity = identity)
+        if (ok) {
+            adapter.info("文件资产重扫已派发并回传：id=${command.id}，force=${command.payload.force}，dispatched=$dispatched")
+        } else {
+            adapter.warn("文件资产重扫结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 
