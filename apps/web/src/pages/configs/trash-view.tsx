@@ -13,14 +13,11 @@ import {
   type DataTableColumn,
 } from '@beacon/ui'
 
+import type { TrashItem } from '@beacon/contracts'
+
 import Pager from '../../features/delivery/pager'
 import { ApiClientError } from '../../api/delivery'
-import {
-  fetchConfigTrash,
-  purgeConfigFile,
-  restoreConfigFile,
-  type TrashItem,
-} from '../../api/delivery-configs'
+import { fetchConfigTrash, purgeConfigFile, restoreConfigFile } from '../../api/delivery-configs'
 import ReasonDialog from './reason-dialog'
 
 const PAGE_SIZE = 15

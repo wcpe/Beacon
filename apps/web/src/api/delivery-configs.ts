@@ -5,6 +5,7 @@
 import type {
   ConfigDiffResponse,
   ConfigEffectiveResponse,
+  ConfigFileDetail,
   ConfigFileListResponse,
   ConfigFileRow,
   ConfigFormat,
@@ -12,6 +13,10 @@ import type {
   ConfigScopeSummary,
   ConfigValidateResponse,
   ConfigVersionRow,
+  RevokeResult,
+  SaveVersionResult,
+  TrashListResponse,
+  VersionListResponse,
 } from '@beacon/contracts'
 
 import { buildQuery, request } from './request'
@@ -31,20 +36,6 @@ export function fetchConfigFiles(query: ConfigFileQuery): Promise<ConfigFileList
 }
 
 // ---- 回收站列表 ----
-
-export interface TrashItem {
-  id: number
-  namespaceId: number
-  name: string
-  format: ConfigFormat
-  deletedBy: string | null
-  deletedAt: string | null
-}
-
-export interface TrashListResponse {
-  items: TrashItem[]
-  total: number
-}
 
 export interface TrashQuery {
   namespaceId: number
@@ -74,16 +65,6 @@ export function createConfigFile(body: CreateConfigFileBody): Promise<ConfigFile
 
 // ---- 文件详情（元数据 + 各层概览） ----
 
-export interface ConfigFileScopeOverview {
-  scopeLevel: ConfigScopeLevel
-  scopeRefId: number
-  scopeName: string
-  headVersionNo: number
-  isRemoval: boolean
-}
-
-export type ConfigFileDetail = ConfigFileRow & { scopes: ConfigFileScopeOverview[] }
-
 export function fetchConfigFileDetail(id: number): Promise<ConfigFileDetail> {
   return request('GET', `/admin/v2/config-files/${String(id)}`)
 }
@@ -96,7 +77,7 @@ export function deleteConfigFile(id: number): Promise<void> {
 
 // ---- 从回收站恢复 ----
 
-export function restoreConfigFile(id: number): Promise<ConfigFileRow> {
+export function restoreConfigFile(id: number): Promise<ConfigFileDetail> {
   return request('POST', `/admin/v2/config-files/${String(id)}/restore`)
 }
 
@@ -117,22 +98,6 @@ export function fetchConfigScopes(id: number): Promise<ScopesResponse> {
 }
 
 // ---- 某链版本列表（新 → 旧） ----
-
-export interface ConfigVersionListItem {
-  versionId: number
-  versionNo: number
-  contentHash: string
-  isRemoval: boolean
-  basedOnVersionId: number | null
-  remark: string
-  createdBy: string
-  createdAt: string
-}
-
-export interface VersionListResponse {
-  items: ConfigVersionListItem[]
-  total: number
-}
 
 export interface VersionListQuery {
   scopeLevel: ConfigScopeLevel
@@ -162,12 +127,6 @@ export interface SaveVersionBody {
   basedOnVersionId: number | null
 }
 
-export interface SaveVersionResult {
-  versionId: number
-  versionNo: number
-  contentHash: string
-}
-
 export function saveConfigVersion(id: number, body: SaveVersionBody): Promise<SaveVersionResult> {
   return request('POST', `/admin/v2/config-files/${String(id)}/versions`, body)
 }
@@ -179,12 +138,6 @@ export function rollbackConfigVersion(versionId: number, remark?: string): Promi
 }
 
 // ---- 撤销某层贡献（原因必填） ----
-
-export interface RevokeResult {
-  versionId: number
-  versionNo: number
-  isRemoval: true
-}
 
 export function revokeConfigScope(
   id: number,

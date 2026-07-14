@@ -8,6 +8,7 @@ import type {
   ConfigDeletedKey,
   ConfigDiffResponse,
   ConfigEffectiveResponse,
+  ConfigFileDetail,
   ConfigFileItem,
   ConfigFileListResponse,
   ConfigFileRow,
@@ -17,6 +18,10 @@ import type {
   ConfigScopeSummary,
   ConfigValidateResponse,
   ConfigVersionRow,
+  RevokeResult,
+  SaveVersionResult,
+  TrashListResponse,
+  VersionListResponse,
 } from '@beacon/contracts'
 import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
 import { getClusterState, namespaceOfZone, type ClusterState } from '../data/cluster'
@@ -522,6 +527,26 @@ function fileNotFound(): Response {
   return jsonError(404, 'CONFIG_FILE_NOT_FOUND', '配置文件不存在')
 }
 
+/** 组装文件详情（元数据 + 各层覆盖概览），GET 详情 / PATCH / restore 共用 */
+function fileDetailOf(file: ConfigFileRow): ConfigFileDetail {
+  const cluster = getClusterState()
+  const scopes = chainsOf(file.id)
+    .map((chain) => {
+      const head = headOf(file.id, chain.scopeLevel, chain.scopeRefId)
+      return head
+        ? {
+            scopeLevel: chain.scopeLevel,
+            scopeRefId: chain.scopeRefId,
+            scopeName: scopeName(cluster, chain.scopeLevel, chain.scopeRefId),
+            headVersionNo: head.versionNo,
+            isRemoval: head.isRemoval,
+          }
+        : null
+    })
+    .filter((s) => s !== null)
+  return { ...file, scopes }
+}
+
 /** 解析 diff 端点的一侧描述：version:<id> / scope:<level>:<refId> / effective:<targetType>:<targetId> */
 function resolveDiffSide(state: ClusterState, file: ConfigFileRow, spec: string): Map<string, string | null> | Response {
   const parts = spec.split(':')
@@ -604,7 +629,7 @@ export const configCenterHandlers: HttpHandler[] = [
         deletedAt: f.deletedAt,
       }))
     const { items, total } = paginate(rows, url)
-    return HttpResponse.json({ items, total })
+    return HttpResponse.json({ items, total } satisfies TrashListResponse)
   }),
 
   // 配置文件分页列表（不含回收站）
@@ -677,7 +702,7 @@ export const configCenterHandlers: HttpHandler[] = [
     }
     state.nextFileId += 1
     state.files.push(row)
-    return HttpResponse.json(row, { status: 201 })
+    return HttpResponse.json(row satisfies ConfigFileRow, { status: 201 })
   }),
 
   // 各层贡献链概览
@@ -706,7 +731,7 @@ export const configCenterHandlers: HttpHandler[] = [
       })
       .filter((s): s is ConfigScopeSummary => s !== null)
       .sort((a, b) => SCOPE_LEVELS.indexOf(a.scopeLevel) - SCOPE_LEVELS.indexOf(b.scopeLevel))
-    return HttpResponse.json({ scopes })
+    return HttpResponse.json({ scopes } satisfies { scopes: ConfigScopeSummary[] })
   }),
 
   // 某链版本列表
@@ -734,7 +759,7 @@ export const configCenterHandlers: HttpHandler[] = [
       }))
       .reverse()
     const { items, total } = paginate(chain, url)
-    return HttpResponse.json({ items, total })
+    return HttpResponse.json({ items, total } satisfies VersionListResponse)
   }),
 
   // 保存新版本（语法校验 + 乐观并发 + 无变化拒绝 + 敏感占位符回填）
@@ -802,7 +827,7 @@ export const configCenterHandlers: HttpHandler[] = [
     state.versions.push(version)
     file.updatedAt = isoOffset(0)
     return HttpResponse.json(
-      { versionId: version.id, versionNo: version.versionNo, contentHash },
+      { versionId: version.id, versionNo: version.versionNo, contentHash } satisfies SaveVersionResult,
       { status: 201 },
     )
   }),
@@ -914,7 +939,7 @@ export const configCenterHandlers: HttpHandler[] = [
     }
     file.deletedAt = null
     file.deletedBy = null
-    return HttpResponse.json(file)
+    return HttpResponse.json(fileDetailOf(file) satisfies ConfigFileDetail)
   }),
 
   // 彻底删除（仅回收站内文件；原因必填；连带版本链）
@@ -971,7 +996,7 @@ export const configCenterHandlers: HttpHandler[] = [
     state.nextVersionId += 1
     state.versions.push(version)
     return HttpResponse.json(
-      { versionId: version.id, versionNo: version.versionNo, isRemoval: true },
+      { versionId: version.id, versionNo: version.versionNo, isRemoval: true } satisfies RevokeResult,
       { status: 201 },
     )
   }),
@@ -982,22 +1007,7 @@ export const configCenterHandlers: HttpHandler[] = [
     if (!file) {
       return fileNotFound()
     }
-    const cluster = getClusterState()
-    const scopes = chainsOf(file.id)
-      .map((chain) => {
-        const head = headOf(file.id, chain.scopeLevel, chain.scopeRefId)
-        return head
-          ? {
-              scopeLevel: chain.scopeLevel,
-              scopeRefId: chain.scopeRefId,
-              scopeName: scopeName(cluster, chain.scopeLevel, chain.scopeRefId),
-              headVersionNo: head.versionNo,
-              isRemoval: head.isRemoval,
-            }
-          : null
-      })
-      .filter((s) => s !== null)
-    return HttpResponse.json({ ...file, scopes })
+    return HttpResponse.json(fileDetailOf(file) satisfies ConfigFileDetail)
   }),
 
   // 更新描述 / schema / 敏感路径（改敏感路径需 reason）
@@ -1030,7 +1040,7 @@ export const configCenterHandlers: HttpHandler[] = [
       file.sensitivePaths = body.sensitivePaths
     }
     file.updatedAt = isoOffset(0)
-    return HttpResponse.json(file)
+    return HttpResponse.json(fileDetailOf(file) satisfies ConfigFileDetail)
   }),
 
   // 移入回收站（软删除，版本链保留）
@@ -1056,7 +1066,7 @@ export const configCenterHandlers: HttpHandler[] = [
     if (!file) {
       return fileNotFound()
     }
-    return HttpResponse.json({ ...version, content: maskContent(file, version.content) })
+    return HttpResponse.json({ ...version, content: maskContent(file, version.content) } satisfies ConfigVersionRow)
   }),
 
   // 回退：基于历史版本生成新版本
@@ -1092,7 +1102,7 @@ export const configCenterHandlers: HttpHandler[] = [
     state.nextVersionId += 1
     state.versions.push(version)
     return HttpResponse.json(
-      { versionId: version.id, versionNo: version.versionNo, contentHash: version.contentHash },
+      { versionId: version.id, versionNo: version.versionNo, contentHash: version.contentHash } satisfies SaveVersionResult,
       { status: 201 },
     )
   }),

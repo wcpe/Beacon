@@ -19,16 +19,11 @@ import {
   SelectValue,
   type DataTableColumn,
 } from '@beacon/ui'
-import type { ConfigScopeLevel, ConfigScopeSummary } from '@beacon/contracts'
+import type { ConfigScopeLevel, ConfigScopeSummary, ConfigVersionListItem } from '@beacon/contracts'
 
 import Pager from '../../features/delivery/pager'
 import { ApiClientError } from '../../api/delivery'
-import {
-  fetchConfigScopes,
-  fetchConfigVersions,
-  rollbackConfigVersion,
-  type ConfigVersionListItem,
-} from '../../api/delivery-configs'
+import { fetchConfigScopes, fetchConfigVersions, rollbackConfigVersion } from '../../api/delivery-configs'
 import ReasonDialog from './reason-dialog'
 import VersionViewDialog from './version-view-dialog'
 
