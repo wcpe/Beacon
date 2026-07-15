@@ -74,9 +74,9 @@ func TestOneWaySwitchDoesNotFlagConflict(t *testing.T) {
 		t.Fatalf("换机注册应恢复 active，实际 %s", res.Status)
 	}
 
-	// 旧机 A 已死，仅有一次在途拖尾上报到达 → 应为陈旧 401，绝不触发冲突。
-	if _, err := svc.AuthenticateAgentReport(token, conflictTestIdentity, "boot-A", "10.0.0.1:25565"); !errors.Is(err, apperr.ErrUnauthorized) {
-		t.Fatalf("拖尾上报应判陈旧 401，实际 %v", err)
+	// 旧机 A 已死，仅有一次在途拖尾上报到达 → 判陈旧 404 促重注册；但死机不会真重注册，故绝不触发冲突（spec §4.5/§4.6）。
+	if _, err := svc.AuthenticateAgentReport(token, conflictTestIdentity, "boot-A", "10.0.0.1:25565"); !errors.Is(err, apperr.ErrAgentStaleReregister) {
+		t.Fatalf("拖尾上报应判陈旧 404 促重注册，实际 %v", err)
 	}
 	// 幸存者 B 上报正常。
 	if _, err := svc.AuthenticateAgentReport(token, conflictTestIdentity, "boot-B", "10.0.0.2:25565"); err != nil {
@@ -110,7 +110,7 @@ func TestAlternatingBootTransitionsToConflict(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("副本 B 注册失败: %v", err)
 	}
-	// 被顶替的 A 重新注册（真实系统里由数据面陈旧 401 促其重注册）→ 往复 → 冲突。
+	// 被顶替的 A 重新注册（真实系统里由数据面陈旧 404 促其重注册）→ 往复 → 冲突。
 	_, err := svc.RegisterAgentV2(AgentRegisterV2Params{
 		Token: token, IdentityID: conflictTestIdentity, ServerID: "lobby-1",
 		Kind: model.ServerKindBackend, BootID: "boot-A", Addr: "10.0.0.1:25565",
@@ -142,6 +142,47 @@ func TestAlternatingBootTransitionsToConflict(t *testing.T) {
 	db.Model(&model.AuditLog{}).Where("action = ? AND operator = ?", model.ActionIdentityConflict, "system").Count(&count)
 	if count != 1 {
 		t.Fatalf("应写 1 条 conflict_detected(system) 审计，实际 %d", count)
+	}
+}
+
+// TestStaleReportPromptsReregisterThenConflict 验证 FR-177 真机缺口修复（stale→404 促重注册喂养往复）：
+// 活着的旧实例被顶替后，其数据面上报判陈旧 404（而非旧的 401），agent 据此走既有「404→重注册」路径重注册 →
+// 往复 → 转 conflict。串起真机端到端链路，让并发双实例被及时检测（旧的 401 agent 不识别、只重试同 boot 不重注册）。
+func TestStaleReportPromptsReregisterThenConflict(t *testing.T) {
+	db, svc, spy := newConflictTestService(t)
+	token := conflictTestNamespace(t, svc)
+	registerApproveActive(t, svc, token, "lobby-1", "boot-A") // A active，current=A
+
+	// 副本 B 注册顶替（Q1 刷新 active，current=B）。
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: conflictTestIdentity, ServerID: "lobby-1",
+		Kind: model.ServerKindBackend, BootID: "boot-B", Addr: "10.0.0.2:25565",
+	}); err != nil {
+		t.Fatalf("副本 B 注册失败: %v", err)
+	}
+
+	// 活着的 A 持续上报 boot-A（≠current B）→ 判陈旧 404 促重注册（修复核心：非旧的静态 401）。
+	if _, err := svc.AuthenticateAgentReport(token, conflictTestIdentity, "boot-A", "10.0.0.1:25565"); !errors.Is(err, apperr.ErrAgentStaleReregister) {
+		t.Fatalf("活实例陈旧上报应判 404 促重注册，实际 %v", err)
+	}
+
+	// A 收 404 后重注册（agent 既有「404→重注册」）→ A 曾被顶替（wasCurrent）→ 往复 → conflict。
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: conflictTestIdentity, ServerID: "lobby-1",
+		Kind: model.ServerKindBackend, BootID: "boot-A", Addr: "10.0.0.1:25565",
+	}); !errors.Is(err, apperr.ErrIdentityConflict) {
+		t.Fatalf("重注册往复应转 conflict，实际 %v", err)
+	}
+
+	var ident model.AgentIdentity
+	if err := db.Where("identity_id = ?", conflictTestIdentity).First(&ident).Error; err != nil {
+		t.Fatalf("查身份失败: %v", err)
+	}
+	if ident.Status != model.AgentIdentityStatusConflict {
+		t.Fatalf("应转 conflict，实际 %s", ident.Status)
+	}
+	if len(spy.events) != 1 || spy.events[0].Type != model.AlertEventTypeIdentityConflict {
+		t.Fatalf("应产生 1 条 identity-conflict 告警，实际 %+v", spy.events)
 	}
 }
 

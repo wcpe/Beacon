@@ -150,8 +150,8 @@ func TestV2ActiveIdentityAuthenticatesLegacyDataPlane(t *testing.T) {
 	if err := svc.AuthenticateAgentV2(token, identityID, bootID); err != nil {
 		t.Fatalf("active 身份应通过 legacy 数据面鉴权: %v", err)
 	}
-	if err := svc.AuthenticateAgentV2(token, identityID, "boot-b"); !errors.Is(err, apperr.ErrUnauthorized) {
-		t.Fatalf("bootId 不匹配应拒绝，实际 %v", err)
+	if err := svc.AuthenticateAgentV2(token, identityID, "boot-b"); !errors.Is(err, apperr.ErrAgentStaleReregister) {
+		t.Fatalf("bootId 不匹配应判陈旧 404 促重注册，实际 %v", err)
 	}
 }
 

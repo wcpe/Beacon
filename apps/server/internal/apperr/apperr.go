@@ -156,6 +156,10 @@ var (
 	ErrIdentityConflictLoser = New(http.StatusConflict, "identity_conflict", "本实例身份已被判为副本，请删除本目录下 identity.yml 后按新身份重新接入，或直接下线本实例")
 	// ErrConflictKeepBootInvalid 冲突处置指定保留的 bootId 不在冲突双方内（FR-177，spec §5.2；code 对齐 devmock）。
 	ErrConflictKeepBootInvalid = New(http.StatusBadRequest, "boot_id_not_in_conflict", "保留的 bootId 不在冲突双方内")
+	// ErrAgentStaleReregister 数据面上报携带陈旧 bootId（与权威 boot 不一致但未判冲突）→ 404 促 agent 重注册，
+	// 喂养并发双实例往复检测（FR-177，spec §4.5）。选 404 而非 401：复用 agent 既有「404→重注册」路径，
+	// 活着的旧实例被顶替后据此主动重注册触发往复转 conflict；已死旧实例收 404 不会重注册，故不误判单向切换。
+	ErrAgentStaleReregister = New(http.StatusNotFound, "agent_stale_reregister", "boot 已过期或被顶替，请重新注册")
 	// ErrServerIDPendingElsewhere 同 namespace/serverId 已有其他待确认身份。
 	ErrServerIDPendingElsewhere = New(http.StatusConflict, "server_id_pending_elsewhere", "该 serverId 已有其他待确认身份")
 	// ErrServerIDOccupied 同 namespace/serverId 已被其他有效身份占用。

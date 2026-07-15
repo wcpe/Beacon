@@ -35,7 +35,7 @@ type AgentV2Authenticator interface {
 }
 
 // AgentV2ReportAuthenticator 校验 v2 agent 数据面上报端点（指标 / 调度）鉴权并返回权威绑定身份（FR-144，见 §5.1）。
-// bootID / addr 供并发身份冲突检测（FR-177，spec §4.5）：陈旧 boot 401 促重注册、冲突态 / 落败方 409。
+// bootID / addr 供并发身份冲突检测（FR-177，spec §4.5）：陈旧 boot 404 促重注册、冲突态 / 落败方 409。
 type AgentV2ReportAuthenticator interface {
 	AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error)
 }
@@ -74,6 +74,10 @@ func agentTokenMiddleware(token string, v2 AgentV2Authenticator) func(http.Handl
 					next.ServeHTTP(w, r)
 					return
 				}
+				// 保留 v2 鉴权的真实错误状态（陈旧 boot 404 促重注册 / 未激活 403 / 冲突 409 / 落败 409），
+				// 不吞成固定 401——否则 agent 收不到 404、v1 数据面（心跳）无法据此触发重注册喂养并发双实例往复检测（FR-177，spec §4.5）。
+				render.WriteError(w, r, err)
+				return
 			}
 			render.WriteError(w, r, apperr.ErrUnauthorized)
 		})

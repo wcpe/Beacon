@@ -198,8 +198,13 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 			return apperr.ErrIdentityConflictLoser
 		}
 	}
-	if ident.Status != model.AgentIdentityStatusActive || ident.BootID != bootID {
+	if ident.Status != model.AgentIdentityStatusActive {
 		return apperr.ErrUnauthorized
+	}
+	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 404 促其重注册，复用 agent「404→重注册」路径喂养往复检测（spec §4.5）。
+	// 选 404 而非 401：agent 只把 404 识别为「未注册需重注册」，401 仅退避重试同 boot（真机双实例不触发的根因）。
+	if ident.BootID != bootID {
+		return apperr.ErrAgentStaleReregister
 	}
 	return nil
 }
@@ -238,10 +243,11 @@ func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID, bootI
 	if ident.Status != model.AgentIdentityStatusActive {
 		return agentauth.Identity{}, apperr.ErrAgentNotConfirmed
 	}
-	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 401 促其重注册，喂养往复检测（spec §4.5）。
+	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 404 促其重注册，复用 agent「404→重注册」路径喂养往复检测（spec §4.5）。
+	// 选 404 而非 401：agent 只把 404 识别为「未注册需重注册」，401 仅退避重试同 boot（真机双实例不触发的根因）。
 	// bootId 为空（未带 X-Beacon-Boot 头）时跳过，兼容旧行为不影响存量上报路径。
 	if bootID != "" && bootID != ident.BootID {
-		return agentauth.Identity{}, apperr.ErrUnauthorized
+		return agentauth.Identity{}, apperr.ErrAgentStaleReregister
 	}
 	return agentauth.Identity{
 		NamespaceID: ns.ID, Namespace: ns.Code, ServerID: ident.ServerID,
