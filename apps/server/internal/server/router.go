@@ -24,6 +24,7 @@ type Handlers struct {
 	V2Archive         *handler.V2ArchiveHandler
 	V2ConfigCenter    *handler.V2ConfigCenterHandler
 	V2Assets          *handler.V2AssetsHandler
+	Delivery          *handler.DeliveryAdminHandler
 	SchedDecision     *handler.SchedDecisionAdminHandler
 	Config            *handler.ConfigHandler
 	File              *handler.FileHandler
@@ -290,6 +291,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/assets/diff", h.Asset.Diff)
 			r.Get("/assets/sensitive-rules", h.Asset.GetSensitiveRules)
 			r.Put("/assets/sensitive-rules", h.Asset.PutSensitiveRules)
+
+			// 交付编排 V2 变更单（FR-162，spec §5.1；M1：组单 / 差异扫描 / 影响预览 / 审批链路 + 读端点）。
+			// 写端点专项审计由 Delivery 两服务在事务内自记（delivery.order.*）并登记 coveredWriteRoutes；
+			// M3+ 的 start / pause / resume / cancel / batches confirm / rollback 端点本切片不建路由。
+			// 抽成函数注册（内部 nil 守卫），避免本组内联累加触发 nestif。
+			registerV2DeliveryAdminRoutes(r, h)
 		})
 	}
 
@@ -518,4 +525,28 @@ func registerV2AssetsAdminRoutes(r chi.Router, h Handlers) {
 	r.Get("/assets/scan-status", h.V2Assets.ScanStatus)
 	r.Get("/assets/compare", h.V2Assets.Compare)
 	r.Post("/assets/rescan", h.V2Assets.Rescan)
+}
+
+// registerV2DeliveryAdminRoutes 注册交付编排变更单管理面端点（FR-162，spec §5.1 的 M1 子集）；
+// Delivery 未装配则跳过。静态 diff-scan / impact 等在 {itemId} 通配前（chi 静态路由本就优先，此处仅为可读性）。
+// file-diff 是 GET 但带写副作用（建 asset-read 命令 / 唤醒 agent / 记查看审计），显式挂 requireFullRole 挡 readonly。
+func registerV2DeliveryAdminRoutes(r chi.Router, h Handlers) {
+	if h.Delivery == nil {
+		return
+	}
+	r.Get("/change-orders", h.Delivery.List)
+	r.Post("/change-orders", h.Delivery.Create)
+	r.Get("/change-orders/{id}", h.Delivery.Get)
+	r.Patch("/change-orders/{id}", h.Delivery.Patch)
+	r.Delete("/change-orders/{id}", h.Delivery.Delete)
+	r.Post("/change-orders/{id}/diff-scan", h.Delivery.DiffScan)
+	r.Get("/change-orders/{id}/impact", h.Delivery.Impact)
+	r.Post("/change-orders/{id}/submit", h.Delivery.Submit)
+	r.Post("/change-orders/{id}/withdraw", h.Delivery.Withdraw)
+	r.Post("/change-orders/{id}/approve", h.Delivery.Approve)
+	r.Post("/change-orders/{id}/reject", h.Delivery.Reject)
+	r.Get("/change-orders/{id}/targets", h.Delivery.Targets)
+	r.Get("/change-orders/{id}/observe", h.Delivery.Observe)
+	r.Get("/change-orders/{id}/events", h.Delivery.Events)
+	r.With(requireFullRole).Get("/change-orders/{id}/items/{itemId}/file-diff", h.Delivery.FileDiff)
 }

@@ -287,14 +287,15 @@ func TestAuditCoveredRoutesMatchRegisteredWriteRoutes(t *testing.T) {
 	// 仅用于「枚举路由」的真实路由器：指针处理器留 nil（注册只取方法值、不调用，安全）；
 	// Web 须非 nil（NotFound 调 h.Web.ServeHTTP，nil 接口会 panic）；Metrics/Metric 经 nil 守卫跳过；
 	// authn/apiKeys/audit 仅被中间件闭包捕获、构造期不解引用，故传 nil 安全。
-	// V2/V2Health/V2MessageAdmin/V2Assets 传零值指针以触发 /admin/v2 组下各写路由注册（核心域 / 健康权重 PUT /
-	// 消息 payload / 文件资产重扫），供本测试对账 v2 写路由；同理只取方法值、不调用，零值指针安全。
+	// V2/V2Health/V2MessageAdmin/V2Assets/Delivery 传零值指针以触发 /admin/v2 组下各写路由注册（核心域 /
+	// 健康权重 PUT / 消息 payload / 文件资产重扫 / 变更单 M1），供本测试对账 v2 写路由；同理只取方法值、不调用，零值指针安全。
 	h := Handlers{
 		Web:            http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
 		V2:             &handler.V2ControlPlaneHandler{},
 		V2Health:       &handler.V2HealthHandler{},
 		V2MessageAdmin: &handler.V2MessageAdminHandler{},
 		V2Assets:       &handler.V2AssetsHandler{},
+		Delivery:       &handler.DeliveryAdminHandler{},
 	}
 	routes, ok := NewRouter(h, "", nil, nil, nil).(chi.Routes)
 	if !ok {

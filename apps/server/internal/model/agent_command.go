@@ -47,7 +47,8 @@ func IsValidCommandType(t string) bool {
 	switch t {
 	case CommandTypeIngestPlugins, CommandTypeTailLogs, CommandTypeResyncConfig, CommandTypeFsBrowse,
 		CommandTypeFileSyncSource, CommandTypeFileSyncApply, CommandTypeFileSyncRollback,
-		CommandTypeAssetRescan, CommandTypeAssetRead:
+		CommandTypeAssetRescan, CommandTypeAssetRead,
+		CommandTypeDeliveryUpload, CommandTypeDeliveryPush, CommandTypeDeliveryActivate, CommandTypeDeliveryRollback:
 		return true
 	default:
 		return false

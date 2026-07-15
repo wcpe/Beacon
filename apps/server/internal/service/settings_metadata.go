@@ -30,6 +30,9 @@ const (
 	SettingUndoWindowHours          = "undo.window-hours"
 	// 并发身份冲突检测窗口（FR-177，spec §4.5）：窗口内同 identityId bootId 往复活跃即判并发双实例。
 	SettingIdentityConflictWindowSec = "identity.conflict-window-sec"
+	// 交付编排审批职责分离（FR-162/168，spec v2-delivery-orchestration.md §4.8.1）：
+	// 开启时变更单审批人不得是创建人；单管理员小规模部署可关闭（关闭动作走 settings.update 审计）。
+	SettingDeliveryApproverSeparationEnabled = "delivery.approver-separation-enabled"
 	// 热冷归档策略键（FR-151，见 ADR-0066）：各域热库保留天数（≥7 守卫）+ 调度 / 批量 / 校验 / 冷查询参数。
 	SettingArchiveRetentionMetricSample   = "archive.retention-days.metric-sample"
 	SettingArchiveRetentionHealthSnapshot = "archive.retention-days.health-snapshot"
@@ -203,6 +206,10 @@ var settingsWhitelist = map[string]settingMeta{
 		valueType: model.SettingValueTypeInt, desc: "并发身份冲突检测窗口（秒）：窗口内同一 identityId 出现 bootId 往复活跃即判并发双实例并冻结待处置（FR-177）",
 		min: 30, max: 86400, // 30 秒 ~ 1 天
 		defaultFromConfig: func(config.Config) string { return strconv.Itoa(identityDefaultConflictWindowSec) },
+	},
+	SettingDeliveryApproverSeparationEnabled: {
+		valueType: model.SettingValueTypeBool, desc: "变更单审批职责分离：开启时审批人不得是创建人；单管理员部署可关闭（关闭动作入审计）",
+		defaultFromConfig: func(config.Config) string { return strconv.FormatBool(true) },
 	},
 	// 热冷归档保留期（FR-151，见 ADR-0066）：各域热库保留天数，下限 7（防误配当天删光）、上限 3650（约 10 年）。
 	SettingArchiveRetentionMetricSample: {

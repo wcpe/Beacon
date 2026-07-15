@@ -399,6 +399,17 @@ func run() error {
 	// 指标上报响应回填自身健康视图（§5.1 self）：接收端注入视图存储，尚无视图时响应 null。
 	metricIngestService.SetHealthViews(healthViewStore)
 
+	// P9 装配点：交付编排 V2 变更单 M1（FR-162，见 v2-delivery-orchestration.md §4.1/§4.2/§5.1）。
+	// 生命周期（组单 CRUD / 提审 / 撤回 / 审批 / 驳回）与差异面（同步 diff-scan / 影响预览 / file-diff）分服务承载：
+	// 差异读文件资产最新快照（不下发重扫）、file-diff 复用 FR-164 安全预览通道（敏感路径 / 在线 / 查看审计）、
+	// 影响预览的在线 / 健康读 healthViewStore 内存真源、审批职责分离开关走设置 store 热改。
+	changeOrderRepo := repository.NewChangeOrderRepository(db)
+	deliveryOrderService := service.NewDeliveryOrderService(db, changeOrderRepo,
+		repository.NewConfigLayerVersionRepository(db), auditRepo, settingsService, healthViewStore)
+	deliveryDiffService := service.NewDeliveryDiffService(db, changeOrderRepo,
+		repository.NewFileAssetRepository(db), auditRepo, assetPreviewService, healthViewStore)
+	deliveryHandler := handler.NewDeliveryAdminHandler(deliveryOrderService, deliveryDiffService)
+
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
@@ -524,7 +535,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)

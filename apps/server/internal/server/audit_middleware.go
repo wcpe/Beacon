@@ -178,6 +178,16 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/assets/preview":        {},
 	"POST /admin/v2/assets/diff":           {},
 	"PUT /admin/v2/assets/sensitive-rules": {},
+	// 交付编排变更单 M1（FR-162/168）：写端点由 Delivery 两服务在事务内自记 delivery.order.create /
+	// update / delete / submit / withdraw / approve / reject 专项审计（detail 必含 orderId、绝不含文件内容）
+	"POST /admin/v2/change-orders":                {},
+	"PATCH /admin/v2/change-orders/{id}":          {},
+	"DELETE /admin/v2/change-orders/{id}":         {},
+	"POST /admin/v2/change-orders/{id}/diff-scan": {},
+	"POST /admin/v2/change-orders/{id}/submit":    {},
+	"POST /admin/v2/change-orders/{id}/withdraw":  {},
+	"POST /admin/v2/change-orders/{id}/approve":   {},
+	"POST /admin/v2/change-orders/{id}/reject":    {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

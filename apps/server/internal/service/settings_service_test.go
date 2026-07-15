@@ -137,11 +137,12 @@ func TestListCoversAllHotKeys(t *testing.T) {
 	if len(views) != len(settingsWhitelist) {
 		t.Fatalf("List 应覆盖全部 %d 个热改项，实际 %d", len(settingsWhitelist), len(views))
 	}
-	// 31 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url + FR-101 新增 update 渠道/自动检查/检查周期 3 项
+	// 32 项 = ADR-0038 的 12 项 + FR-98 新增 update.proxy-url + FR-101 新增 update 渠道/自动检查/检查周期 3 项
 	// + FR-116 新增 undo.window-hours（配置操作可撤回时间窗）+ FR-151 新增 13 个 archive.* 策略键（见 ADR-0066）
-	// + FR-177 新增 identity.conflict-window-sec（并发身份冲突检测窗口）。
-	if len(views) != 31 {
-		t.Fatalf("热改白名单应为 31 项，实际 %d", len(views))
+	// + FR-177 新增 identity.conflict-window-sec（并发身份冲突检测窗口）
+	// + FR-162 新增 delivery.approver-separation-enabled（变更单审批职责分离开关）。
+	if len(views) != 32 {
+		t.Fatalf("热改白名单应为 32 项，实际 %d", len(views))
 	}
 	for _, v := range views {
 		if v.IsStartup {

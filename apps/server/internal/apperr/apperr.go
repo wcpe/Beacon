@@ -271,6 +271,31 @@ var (
 	// ErrConfigReasonRequired 高风险配置操作（彻底删除 / 撤销层贡献 / 改敏感路径）必须填写原因（code 对齐 devmock）。
 	ErrConfigReasonRequired = New(http.StatusBadRequest, "missing_reason", "该操作必须填写原因")
 
+	// —— 交付编排 V2 变更单（FR-162，M1 组单 / 差异 / 影响预览 / 审批；code 对齐 devmock 小写下划线约定）——
+	// ErrChangeOrderNotFound 变更单不存在。
+	ErrChangeOrderNotFound = New(http.StatusNotFound, "change_order_not_found", "变更单不存在")
+	// ErrChangeItemNotFound 变更项不存在或不是文件差异项（file-diff 目标缺失）。
+	ErrChangeItemNotFound = New(http.StatusNotFound, "item_not_found", "文件差异项不存在")
+	// ErrChangeSourceMissing 未指定黄金模板源，无法扫描文件差异。
+	ErrChangeSourceMissing = New(http.StatusBadRequest, "missing_source", "未指定黄金模板源，无法扫描文件差异")
+	// ErrChangeSourceInvalid 模板源不合格（不存在 / 非 backend / 身份未确认绑定 / 不在线）。
+	ErrChangeSourceInvalid = New(http.StatusBadRequest, "source_invalid", "模板源必须是本环境内已确认绑定且在线的 backend 子服")
+	// ErrChangeSourceSnapshotMissing 模板源尚无文件资产快照，差异计算无依据（防把「源未上报」误判成「源为空」而生成全删差异）。
+	ErrChangeSourceSnapshotMissing = New(http.StatusConflict, "source_snapshot_missing", "模板源尚无文件资产快照，请先等待 agent 上报或触发重扫")
+	// ErrChangeNoItems 变更单没有任何变更项，不可提交审批。
+	ErrChangeNoItems = New(http.StatusBadRequest, "no_items", "变更单没有任何变更项，无法提交审批")
+	// ErrChangeNoTarget selector 未解析出任何合格目标。
+	ErrChangeNoTarget = New(http.StatusBadRequest, "no_target", "selector 未解析出任何合格目标")
+	// ErrChangeSelectorCrossNamespace selector 引用了异 namespace 或不存在的实体（FR-162 跨 namespace 拒绝；
+	// 具体冲突实体经 service 用同码 New 携带在 message 中）。
+	ErrChangeSelectorCrossNamespace = New(http.StatusBadRequest, "selector_cross_namespace", "selector 引用了不属于本环境的实体")
+	// ErrChangeConfigVersionInvalid 配置变更项引用的目标版本不存在、与作用域不匹配或跨 namespace。
+	ErrChangeConfigVersionInvalid = New(http.StatusBadRequest, "config_version_invalid", "配置版本不存在或与作用域不匹配")
+	// ErrChangeApproverSeparation 审批职责分离：审批人不得是创建人（默认开启，可在运维设置关闭，spec §4.7）。
+	ErrChangeApproverSeparation = New(http.StatusForbidden, "approver_separation", "审批人不得是创建人（可在运维设置关闭该限制）")
+	// ErrChangeNotCreator 仅创建人可撤回变更单（spec §4.1）。
+	ErrChangeNotCreator = New(http.StatusForbidden, "not_creator", "仅创建人可撤回变更单")
+
 	// ErrAssetNotFound 文件资产在该服最新清单中不存在（预览 / diff 目标缺失，FR-164，spec §5.2；code 对齐 devmock）。
 	ErrAssetNotFound = New(http.StatusNotFound, "asset_not_found", "该服清单中不存在此文件")
 	// ErrAssetAgentOffline 预览 / diff 目标 agent 离线，无法实时读取文件内容（FR-164，spec §4.5；code 对齐 devmock）。

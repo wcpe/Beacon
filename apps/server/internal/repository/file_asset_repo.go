@@ -131,6 +131,25 @@ func (r *FileAssetRepository) ListByServer(serverID uint) ([]model.FileAsset, er
 	return rows, nil
 }
 
+// ListByServersWithPrefix 取一批服在某目录前缀内的资产行（交付编排差异扫描用，v2-delivery-orchestration.md §4.2）。
+// prefix 为归一化相对目录（无尾斜杠）：命中 `<prefix>/` 下全部路径；空串 = 整棵树不过滤。
+// 调用方负责按 ≤100 服分块传入，防单条 SQL IN 参数过大（决策：分块 IN 查询防 N+1）。
+// 转义符用 '#'（见 escapeLikeHash）：`ESCAPE '\'` 在 MySQL 是语法错误（字符串字面量消费反斜杠）。
+func (r *FileAssetRepository) ListByServersWithPrefix(serverIDs []uint, prefix string) ([]model.FileAsset, error) {
+	if len(serverIDs) == 0 {
+		return []model.FileAsset{}, nil
+	}
+	query := r.db.Where("server_id IN ?", serverIDs)
+	if prefix != "" {
+		query = query.Where("path LIKE ? ESCAPE '#'", escapeLikeHash(prefix)+"/%")
+	}
+	var rows []model.FileAsset
+	if err := query.Order("server_id ASC, path ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // UpsertAssets 按唯一键 (server_id, path) 批量 upsert：命中即更新内容元数据（增量 upsert / 全量替换共用）。
 // 显式声明冲突列，避免 MySQL 生成空 `ON DUPLICATE KEY UPDATE` 语法错（见 conn_detail_repo 同款注意）。
 // created_at 不进 DoUpdates（保留首次落库时间）；须在外层事务内调用。

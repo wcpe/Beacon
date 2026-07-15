@@ -156,6 +156,14 @@ const (
 	// CommandTypeAssetRead 文件资产内容读取：令 agent 读单个文本文件回传供预览 / diff（FR-164，见 §4.5；
 	// payload 含 path、maxBytes；纯只读、不写盘，内容瞬态不落库）。
 	CommandTypeAssetRead = "asset-read"
+	// CommandTypeDeliveryUpload 交付上传：令模板源 agent 流式上传缺失 blob 到控制面中转存储（FR-165，见 §4.5.2；payload 只含控制信息，绝不含文件内容）。
+	CommandTypeDeliveryUpload = "delivery_upload"
+	// CommandTypeDeliveryPush 交付推送：令目标 agent 拉本服清单、覆盖前备份、流式下载 blob 后落盘覆盖（FR-165，见 §4.5.3）。
+	CommandTypeDeliveryPush = "delivery_push"
+	// CommandTypeDeliveryActivate 交付生效：令目标 agent 按 activation_method 生效（restart / hot_reload / push_only，FR-171，见 §4.6.1）。
+	CommandTypeDeliveryActivate = "delivery_activate"
+	// CommandTypeDeliveryRollback 交付回滚：令目标 agent 按备份 manifest 还原被覆盖 / 删除文件（FR-167，见 §4.7.2）。
+	CommandTypeDeliveryRollback = "delivery_rollback"
 )
 
 // 文件浏览操作（FR-110，落 command payload 的 op 字段 + 应用层校验，见 ADR-0049）。
@@ -279,6 +287,142 @@ const (
 	FileSyncLogLevelInfo  = "info"
 	FileSyncLogLevelWarn  = "warn"
 	FileSyncLogLevelError = "error"
+)
+
+// 交付编排 V2 变更单状态机（FR-162，规格 v2-delivery-orchestration.md §4.1，落 VARCHAR + 应用层校验）。
+const (
+	// 草稿：可编辑、可物理删除
+	ChangeOrderStatusDraft = "draft"
+	// 待审批
+	ChangeOrderStatusPendingApproval = "pending_approval"
+	// 审批通过、待启动
+	ChangeOrderStatusApproved = "approved"
+	// 灰度执行中
+	ChangeOrderStatusRolling = "rolling"
+	// 全部批次完成（非严格终态，仍可回滚）
+	ChangeOrderStatusCompleted = "completed"
+	// 已暂停（人工 / 熔断 / 准备失败，由 pause_kind 区分）
+	ChangeOrderStatusPaused = "paused"
+	// 紧急终止（非严格终态，仍可回滚）
+	ChangeOrderStatusCancelled = "cancelled"
+	// 整单回滚中
+	ChangeOrderStatusRollingBack = "rolling_back"
+	// 已回滚（终态）
+	ChangeOrderStatusRolledBack = "rolled_back"
+)
+
+// 交付编排批次状态机（规格 §4.1，落 VARCHAR + 应用层校验）。
+const (
+	// 待启动
+	ChangeBatchStatusPending = "pending"
+	// 批内目标并行推进中
+	ChangeBatchStatusRunning = "running"
+	// 观察窗计时中
+	ChangeBatchStatusObserving = "observing"
+	// 观察窗结束、待推进门人工确认
+	ChangeBatchStatusAwaitingConfirm = "awaiting_confirm"
+	// 已确认完成
+	ChangeBatchStatusCompleted = "completed"
+	// 未开始即被紧急终止跳过
+	ChangeBatchStatusSkipped = "skipped"
+	// 熔断失败
+	ChangeBatchStatusFailed = "failed"
+)
+
+// 交付编排目标服状态机（规格 §4.1，落 VARCHAR + 应用层校验）。
+const (
+	// 待下发
+	ChangeTargetStatusPending = "pending"
+	// 推送中（已下发 delivery_push）
+	ChangeTargetStatusPushing = "pushing"
+	// 推送完成、待生效
+	ChangeTargetStatusPushed = "pushed"
+	// 生效中（已下发 delivery_activate）
+	ChangeTargetStatusActivating = "activating"
+	// 已生效
+	ChangeTargetStatusActivated = "activated"
+	// 紧急终止跳过
+	ChangeTargetStatusSkipped = "skipped"
+	// 失败
+	ChangeTargetStatusFailed = "failed"
+)
+
+// 变更单生效方式 activation_method（规格 §3.1/§4.6.1，单级配置、全批继承）。
+const (
+	// 重启：agent 优雅关服 + 宿主自启拉起，心跳回归即生效
+	ActivationMethodRestart = "restart"
+	// 热重载：落盘 + 配置热更回调，回执驱动状态
+	ActivationMethodHotReload = "hot_reload"
+	// 仅推送：推送落盘即生效，无生效动作
+	ActivationMethodPushOnly = "push_only"
+)
+
+// 变更单 blob 就绪度 payload_state（规格 §3.1/§4.4.2）。
+const (
+	// 待准备
+	PayloadStatePending = "pending"
+	// 上传中
+	PayloadStateUploading = "uploading"
+	// 就绪
+	PayloadStateReady = "ready"
+	// 准备失败
+	PayloadStateFailed = "failed"
+)
+
+// 变更单暂停来源 pause_kind（规格 §3.1/§4.1）。
+const (
+	// 人工暂停
+	PauseKindManual = "manual"
+	// 自动熔断暂停
+	PauseKindCircuitBreak = "circuit_break"
+	// payload 准备失败暂停
+	PauseKindPrepareFailed = "prepare_failed"
+)
+
+// 变更单批次规划模式 batch_mode（规格 §3.1/§4.4.1）。
+const (
+	// 按目标总数百分比切批
+	BatchModePercent = "percent"
+	// 按固定台数切批
+	BatchModeCount = "count"
+)
+
+// 变更项载荷类型 kind（规格 §3.2）。
+const (
+	// 文件差异项
+	ChangeItemKindFileDiff = "file_diff"
+	// 配置变更项
+	ChangeItemKindConfigChange = "config_change"
+)
+
+// 文件变更项动作 action（规格 §3.2，执行期按目标本地清单重判）。
+const (
+	// 新增
+	ChangeItemActionAdd = "add"
+	// 覆盖
+	ChangeItemActionUpdate = "update"
+	// 删除
+	ChangeItemActionDelete = "delete"
+)
+
+// 目标回滚状态 rollback_status（规格 §3.4，独立于目标主状态）。
+const (
+	// 待回滚
+	RollbackStatusPending = "pending"
+	// 回滚中
+	RollbackStatusRunning = "running"
+	// 已回滚
+	RollbackStatusRolledBack = "rolled_back"
+	// 回滚失败
+	RollbackStatusFailed = "failed"
+)
+
+// 中转 blob 就绪度 state（规格 §3.5，仅两态；与变更单 payload_state 分立）。
+const (
+	// 上传中
+	DeliveryBlobStateUploading = "uploading"
+	// 就绪
+	DeliveryBlobStateReady = "ready"
 )
 
 // 审计动作（动词点分命名）。
@@ -442,6 +586,40 @@ const (
 	ActionConfigScopeRemove     = "config.scope.remove"
 	// 文件资产重扫下发（FR-163，spec §4.7）：批量对目标服下发 asset-rescan 命令，detail 记目标 serverId 列表 + force（不含文件内容）
 	ActionAssetRescan = "asset.rescan"
+	// 交付编排变更单全生命周期审计（FR-168，spec §4.8.2）：每条 detail 必含 orderId（批 / 目标级动作再含 batchNo / serverId），
+	// 绝不落文件内容 / 配置明文 / blob 数据，错误文案经脱敏（ADR-0057）；按 orderId 过滤即得一条变更单完整链路。
+	// 创建 draft 单
+	ActionDeliveryOrderCreate = "delivery.order.create"
+	// 编辑变更单（approved 后编辑触发回 draft）
+	ActionDeliveryOrderUpdate = "delivery.order.update"
+	// 删除 draft 单
+	ActionDeliveryOrderDelete = "delivery.order.delete"
+	// 提交审批
+	ActionDeliveryOrderSubmit = "delivery.order.submit"
+	// 创建人撤回
+	ActionDeliveryOrderWithdraw = "delivery.order.withdraw"
+	// 审批通过
+	ActionDeliveryOrderApprove = "delivery.order.approve"
+	// 审批驳回
+	ActionDeliveryOrderReject = "delivery.order.reject"
+	// 启动
+	ActionDeliveryOrderStart = "delivery.order.start"
+	// 人工暂停
+	ActionDeliveryOrderPause = "delivery.order.pause"
+	// 继续
+	ActionDeliveryOrderResume = "delivery.order.resume"
+	// 推进门放行确认
+	ActionDeliveryOrderBatchConfirm = "delivery.order.batch_confirm"
+	// 紧急终止
+	ActionDeliveryOrderCancel = "delivery.order.cancel"
+	// 整单回滚
+	ActionDeliveryOrderRollback = "delivery.order.rollback"
+	// 人工结束回滚
+	ActionDeliveryOrderRollbackFinish = "delivery.order.rollback_finish"
+	// 自动熔断（系统动作，actor=system）
+	ActionDeliveryOrderCircuitBreak = "delivery.order.circuit_break"
+	// blob 清理（系统动作，actor=system，含清理数量与释放字节）
+	ActionDeliveryOrderBlobCleanup = "delivery.order.blob_cleanup"
 )
 
 // 审计对象类型。
@@ -489,6 +667,8 @@ const (
 	TargetTypeAsset = "asset"
 	// env 展示维度（FR-178）的审计对象类型
 	TargetTypeEnv = "env"
+	// 交付编排变更单（FR-162/168）的审计对象类型（TargetRef=orderId）
+	TargetTypeChangeOrder = "change-order"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
