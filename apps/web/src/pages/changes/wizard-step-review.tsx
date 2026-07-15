@@ -19,10 +19,8 @@ import FileDiffPreview from '../../features/delivery/file-diff-preview'
 import OrchestrationPreview from '../../features/delivery/orchestration-preview'
 import { formatBytes } from './format'
 import {
-  includesFiles,
   type WizardBatch,
   type WizardConfigPick,
-  type WizardContent,
   type WizardScope,
 } from './wizard-state'
 
@@ -31,7 +29,6 @@ interface StepReviewProps {
   // 每次进入本步 +1，作为 impact / 详情重新拉取的 key（返回改范围后再进来要重算）
   prepared: number
   namespaceId: number
-  content: WizardContent
   picks: WizardConfigPick[]
   scope: WizardScope
   batch: WizardBatch
@@ -43,7 +40,6 @@ export default function WizardStepReview({
   orderId,
   prepared,
   namespaceId,
-  content,
   picks,
   scope,
   batch,
@@ -107,7 +103,8 @@ export default function WizardStepReview({
   const renderFileDiff = (item: ChangeOrderItem): ReactNode =>
     orderId === null ? null : <FileDiffPreview orderId={orderId} item={item} />
 
-  const activationMethod = detailQuery.data?.activationMethod ?? (includesFiles(content) ? 'restart' : 'hot_reload')
+  // 本期生效方式固定「仅推送」（push_only）；详情已回显则以详情为准（后续里程碑开放 restart / hot_reload 选择）。
+  const activationMethod = detailQuery.data?.activationMethod ?? 'push_only'
 
   const kpiItems: SummaryItem[] = summary
     ? [

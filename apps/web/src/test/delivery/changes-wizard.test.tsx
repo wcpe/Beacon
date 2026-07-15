@@ -373,7 +373,7 @@ describe('/changes 引导创建向导', () => {
 
     // 默认简单模式：人话概要句 + KPI 大字
     expect(within(dialog).getByRole('button', { name: '简单' })).toHaveAttribute('aria-pressed', 'true')
-    expect(within(dialog).getByText(/将向全命名空间共 \d+ 台服务器分 \d+ 批推送 1 项配置变更，生效方式：热重载。/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/将向全命名空间共 \d+ 台服务器分 \d+ 批推送 1 项配置变更，生效方式：仅推送。/)).toBeInTheDocument()
     expect(within(dialog).getByText('批次数')).toBeInTheDocument()
 
     // 切详细：变更内容预览（配置清单 + 版本区间）+ 完整编排预览四分区

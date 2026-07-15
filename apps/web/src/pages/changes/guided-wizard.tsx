@@ -180,7 +180,9 @@ export default function GuidedWizard({
         scanDir: includesFiles(content) ? scanDir : '',
         selector: buildSelector(scope),
         ...buildBatch(batch),
-        activationMethod: includesFiles(content) ? 'restart' : 'hot_reload',
+        // 本期生效方式固定「仅推送」：文件 / 配置推送到位、随子服下次自然重启生效；
+        // 即时重启（restart）/ 热重载（hot_reload）生效随后续里程碑开放（agent 侧生效动作与配置灰度切版）。
+        activationMethod: 'push_only',
         configChanges: includesConfigs(content) ? toConfigChanges(picks) : [],
       })
       return id
@@ -341,7 +343,6 @@ export default function GuidedWizard({
               orderId={orderId}
               prepared={prepared}
               namespaceId={namespaceId}
-              content={content}
               picks={picks}
               scope={scope}
               batch={batch}
