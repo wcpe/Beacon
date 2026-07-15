@@ -406,14 +406,60 @@ func TestOrchestratorCancelRequiresReason(t *testing.T) {
 	}
 }
 
-// TestOrchestratorRejectsConfigOrder M3 含配置项单启动被拒（配置灰度切版为 M4 接缝）。
-func TestOrchestratorRejectsConfigOrder(t *testing.T) {
-	h := newOrchestratorHarness(t)
-	detail := createDraftOrder(t, h.f)
-	seedConfigItem(t, h.env.db, detail.ID)
+// seedGrayConfigFile 建一个配置文件 + 指定作用域链上的一个定稿版本，返回 (fileID, versionID)（配置灰度测试用）。
+func seedGrayConfigFile(t *testing.T, db *gorm.DB, nsID uint, scopeKind string, scopeRefID uint, content string) (uint, uint) {
+	t.Helper()
+	file := model.ConfigFile{NamespaceID: nsID, Name: "plugins/Gray/config.yml", Format: "yaml"}
+	mustCreate(t, db, &file)
+	v := model.ConfigLayerVersion{
+		ConfigFileID: file.ID, ScopeLevel: scopeKind, ScopeRefID: scopeRefID,
+		VersionNo: 1, Content: content,
+	}
+	mustCreate(t, db, &v)
+	return file.ID, v.ID
+}
+
+// createApprovedConfigOrder 建一张纯配置灰度单（点名 servers + 指定作用域挂 toVersion），经服务校验后置 approved，返回单 id。
+func (h *orchestratorHarness) createApprovedConfigOrder(t *testing.T, title string, servers []string, scopeKind string, scopeID, toVersionID uint) uint {
+	t.Helper()
+	detail, err := h.env.orders.Create(h.f.nsID, ChangeOrderInput{
+		Title: strPtr(title), Selector: &ChangeSelector{Servers: servers},
+	}, "ops-chen", "10.0.0.1")
+	if err != nil {
+		t.Fatalf("建配置单失败: %v", err)
+	}
+	if _, err := h.env.orders.Update(detail.ID, ChangeOrderInput{ConfigChanges: &[]ChangeConfigInput{
+		{ConfigScopeKind: scopeKind, ConfigScopeID: scopeID, ConfigToVersionID: toVersionID},
+	}}, "ops-chen", ""); err != nil {
+		t.Fatalf("挂配置版本失败: %v", err)
+	}
 	setOrderStatus(t, h.env.db, detail.ID, model.ChangeOrderStatusApproved)
-	if _, err := h.orch.Start(detail.ID, "", "ops", "ip"); err != apperr.ErrChangeConfigGrayUnsupported {
-		t.Fatalf("含配置项单应拒: %v", err)
+	return detail.ID
+}
+
+// TestOrchestratorConfigScopeConflict 配置作用域冲突守卫（ADR-0071 决策5）：两单灰度同一 (文件, 作用域)
+// 且目标不相交时，后启单被 config_scope_conflict 拒绝；同时证明含配置项单不再被前置拒（首单正常进 rolling）。
+func TestOrchestratorConfigScopeConflict(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+
+	// 首单：灰度 zone1 配置、点名 t-1，正常进 rolling（证明含配置项单不再被拒）。
+	first := h.createApprovedConfigOrder(t, "配置灰度A", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	if _, err := h.orch.Start(first, "", "ops", "ip"); err != nil {
+		t.Fatalf("含配置项单应可启动: %v", err)
+	}
+	if h.reload(first).Status != model.ChangeOrderStatusRolling {
+		t.Fatal("首单应进 rolling")
+	}
+
+	// 次单：灰度同一 (文件, zone1)、点名 t-2（与首单目标不相交排除目标冲突），应被配置作用域冲突拒绝。
+	second := h.createApprovedConfigOrder(t, "配置灰度B", []string{"t-2"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	_, err := h.orch.Start(second, "", "ops", "ip")
+	if err == nil {
+		t.Fatal("配置作用域相交应拒绝启动")
+	}
+	if ae, ok := err.(*apperr.Error); !ok || ae.Code != "config_scope_conflict" {
+		t.Fatalf("应为 config_scope_conflict: %v", err)
 	}
 }
 

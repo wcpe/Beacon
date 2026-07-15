@@ -67,17 +67,8 @@ type startPlan struct {
 	nsCode string
 }
 
-// prepareStart 启动前置计算：拒绝含配置项单（M4 接缝）→ 固化目标 → 冲突守卫 → 批次规划 → payload 准备决策。
+// prepareStart 启动前置计算：固化目标 → 目标集冲突守卫 → 配置作用域冲突守卫 → 批次规划 → payload 准备决策。
 func (s *DeliveryOrchestrator) prepareStart(order *model.ChangeOrder) (*startPlan, error) {
-	items, err := s.repo.ListItems(order.ID)
-	if err != nil {
-		return nil, err
-	}
-	if hasConfigChangeItem(items) {
-		// M3 只做载荷=文件的 push_only 完整脊柱；配置项的 pin 冻结渲染与末批正式切版是 M4（ADR-0071 §4.6.2）。
-		// 暂拒含配置项单启动，避免把「配置未真正生效」的单误推到 completed 制造半套状态。M4 解禁此守卫。
-		return nil, apperr.ErrChangeConfigGrayUnsupported
-	}
 	targets, err := resolveChangeTargets(s.db, order.NamespaceID, decodeSelector(order.Selector), order.SourceServerID)
 	if err != nil {
 		return nil, err
@@ -90,6 +81,9 @@ func (s *DeliveryOrchestrator) prepareStart(order *model.ChangeOrder) (*startPla
 		serverIDs = append(serverIDs, targets[i].ServerID)
 	}
 	if err := s.guardStartConflict(order, serverIDs); err != nil {
+		return nil, err
+	}
+	if err := s.guardConfigConflict(order); err != nil {
 		return nil, err
 	}
 	plan := &startPlan{
@@ -127,8 +121,7 @@ func (s *DeliveryOrchestrator) resolvePayloadPlan(order *model.ChangeOrder, plan
 	return nil
 }
 
-// guardStartConflict 冲突守卫（ADR-0071 §4.1）：目标集与其他活动单目标集相交即拒绝。
-// 配置项 (config_file, scope) 重叠守卫随 M4 配置灰度解禁一并补上（本版含配置项单已被前置拒，不可达）。
+// guardStartConflict 目标集冲突守卫（ADR-0071 §4.1）：目标集与其他活动单目标集相交即拒绝。
 func (s *DeliveryOrchestrator) guardStartConflict(order *model.ChangeOrder, serverIDs []string) error {
 	busy, err := s.repo.ListActiveTargetServerIDs(order.NamespaceID, order.ID, deliveryStartConflictStatuses)
 	if err != nil {
@@ -151,6 +144,51 @@ func (s *DeliveryOrchestrator) guardStartConflict(order *model.ChangeOrder, serv
 		return changeStartConflict(conflicts)
 	}
 	return nil
+}
+
+// guardConfigConflict 配置作用域冲突守卫（ADR-0071 决策5）：本单 config_change 的 (config_file, scope)
+// 与其他活动单（rolling / paused / rolling_back）的 config_change 重叠即拒绝——防两单并发灰度同一配置
+// 作用域时经 head 互相泄漏未定稿的灰度值。纯文件单无 config_change 项，本守卫对其为空操作。
+func (s *DeliveryOrchestrator) guardConfigConflict(order *model.ChangeOrder) error {
+	mine, err := s.repo.ListConfigScopeKeysForOrder(order.ID)
+	if err != nil {
+		return err
+	}
+	if len(mine) == 0 {
+		return nil
+	}
+	busy, err := s.repo.ListActiveConfigScopeKeys(order.NamespaceID, order.ID, deliveryStartConflictStatuses)
+	if err != nil {
+		return err
+	}
+	if len(busy) == 0 {
+		return nil
+	}
+	busySet := make(map[repository.ConfigScopeKey]struct{}, len(busy))
+	for _, key := range busy {
+		busySet[key] = struct{}{}
+	}
+	conflicts := make([]repository.ConfigScopeKey, 0)
+	for _, key := range mine {
+		if _, hit := busySet[key]; hit {
+			conflicts = append(conflicts, key)
+		}
+	}
+	if len(conflicts) > 0 {
+		return changeConfigScopeConflict(conflicts)
+	}
+	return nil
+}
+
+// changeConfigScopeConflict 构造带冲突 (文件, 作用域) 清单的配置作用域冲突错误
+// （文件 id / 作用域是运维定位上下文非凭据，无需脱敏）。
+func changeConfigScopeConflict(keys []repository.ConfigScopeKey) *apperr.Error {
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("文件 %d 作用域 %s/%d", key.ConfigFileID, key.ScopeKind, key.ScopeID))
+	}
+	return apperr.New(http.StatusConflict, "config_scope_conflict",
+		fmt.Sprintf("配置作用域与其他进行中的变更单冲突：%s", strings.Join(parts, "，")))
 }
 
 // persistStart 在事务内落启动：CAS approved→rolling + 批次 / 目标固化落库 + payload 状态 + 首批就绪则置 running + 审计。
@@ -216,16 +254,6 @@ func persistBatchesAndTargets(repoTx *repository.ChangeOrderRepository, orderID 
 		}
 	}
 	return repoTx.CreateTargets(targets)
-}
-
-// hasConfigChangeItem 判项集内是否存在配置变更项。
-func hasConfigChangeItem(items []model.ChangeOrderItem) bool {
-	for i := range items {
-		if items[i].Kind == model.ChangeItemKindConfigChange {
-			return true
-		}
-	}
-	return false
 }
 
 // planBatchMembers 按批次规划把字典序目标切成逐批成员（planBatchCounts 定切分，稳定可复现，spec §4.4.1）。

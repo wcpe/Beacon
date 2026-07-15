@@ -445,3 +445,42 @@ func (r *ChangeOrderRepository) FindLatestDeliveredToVersionID(configFileID uint
 	}
 	return &versionIDs[0], nil
 }
+
+// —— 配置灰度 (文件, 作用域) 冲突守卫（ADR-0071 决策5）——
+
+// ConfigScopeKey 是一个 config_change 项的「文件 × 作用域」定位键：
+// config_file_id 经 config_to_version_id 关联版本表解出（防两单并发灰度同一配置作用域经 head 互泄）。
+type ConfigScopeKey struct {
+	ConfigFileID uint   `gorm:"column:config_file_id"`
+	ScopeKind    string `gorm:"column:scope_kind"`
+	ScopeID      uint   `gorm:"column:scope_id"`
+}
+
+// configScopeKeyProjection 是 (文件, 作用域) 键投影列（JOIN 版本表把 config_to_version_id 解成 config_file_id）。
+const configScopeKeyProjection = "clv.config_file_id AS config_file_id, coi.config_scope_kind AS scope_kind, coi.config_scope_id AS scope_id"
+
+// ListConfigScopeKeysForOrder 取某单全部 config_change 项的 (文件, 作用域) 键集（冲突守卫求本单键）。
+func (r *ChangeOrderRepository) ListConfigScopeKeysForOrder(orderID uint) ([]ConfigScopeKey, error) {
+	var keys []ConfigScopeKey
+	err := r.db.Table("change_order_item AS coi").
+		Joins("JOIN config_layer_version AS clv ON clv.id = coi.config_to_version_id").
+		Where("coi.order_id = ? AND coi.kind = ?", orderID, model.ChangeItemKindConfigChange).
+		Select(configScopeKeyProjection).Scan(&keys).Error
+	return keys, err
+}
+
+// ListActiveConfigScopeKeys 取同 namespace 内、除 excludeOrderID 外、状态在 statuses 内的活动单的
+// config_change (文件, 作用域) 键集（冲突守卫求他单键；statuses 为空返回空集）。
+func (r *ChangeOrderRepository) ListActiveConfigScopeKeys(namespaceID, excludeOrderID uint, statuses []string) ([]ConfigScopeKey, error) {
+	var keys []ConfigScopeKey
+	if len(statuses) == 0 {
+		return keys, nil
+	}
+	err := r.db.Table("change_order_item AS coi").
+		Joins("JOIN change_order AS o ON o.id = coi.order_id").
+		Joins("JOIN config_layer_version AS clv ON clv.id = coi.config_to_version_id").
+		Where("coi.kind = ?", model.ChangeItemKindConfigChange).
+		Where("o.namespace_id = ? AND o.id <> ? AND o.status IN ?", namespaceID, excludeOrderID, statuses).
+		Select(configScopeKeyProjection).Scan(&keys).Error
+	return keys, err
+}
