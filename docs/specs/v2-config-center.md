@@ -160,6 +160,7 @@ namespace → bc_cluster → region → zone → server
 
 ### 4.6 版本不可变链、回退与撤销
 
+- **head = 最新定稿版本，非「当前生效版本」**：链 head 只代表最新定稿；线上「生效版本」由 P9 变更单域持有，配置中心不追踪生效态、无 agent 下发通道（§2）。任何 save（新增 / 编辑 / 回退 / 撤销）都只改定稿、对线上无即时影响，生效必须由变更单引用版本并走灰度编排（模型见 [ADR-0071](../adr/0071-config-gray-effectuation-model.md)）。
 - **不可变链**：版本只追加；无任何修改 / 删除单版本的端点。`based_on_version_id` 串起编辑 / 回退谱系。
 - **回退 = 基于历史版本生成新版本**：对链内任一历史版本执行 rollback → 在同链追加一个新版本，`content` 取该历史版本内容、`based_on_version_id` 指向它、`remark` 自动注明「回退自 v<N>」。回退同样过 §4.2 全部校验（含 schema——schema 可能已收紧，历史内容不再合法时回退被阻断并明示原因）。内容与当前 head 相同时拒绝（`CONFIG_NO_CHANGE`）。
 - **撤销层贡献**：对某链执行撤销 → 追加一个 `is_removal=true`、内容为空的版本；此后该层不参与合并。head 已是 removal 时拒绝重复撤销。恢复贡献 = 对该链任一历史版本 rollback。

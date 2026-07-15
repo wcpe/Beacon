@@ -970,12 +970,12 @@ agent 面：
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/admin/v2/change-orders` | 创建 draft 变更单 |
+| POST | `/admin/v2/change-orders` | 创建 draft 变更单（含扫描目录范围 scanDir） |
 | GET | `/admin/v2/change-orders` | 变更单列表 |
 | GET | `/admin/v2/change-orders/{id}` | 详情（单 + items + 批次概要） |
 | PATCH | `/admin/v2/change-orders/{id}` | 编辑（approved 编辑触发回 draft） |
 | DELETE | `/admin/v2/change-orders/{id}` | 删除 draft 单（高风险确认） |
-| POST | `/admin/v2/change-orders/{id}/diff-scan` | 触发模板源重扫并重算差异 |
+| POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新快照重算差异返回 items；重扫另设（复用文件资产域 asset-rescan） |
 | GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页） |
 | POST | `/admin/v2/change-orders/{id}/submit` | 提交审批 |
 | POST | `/admin/v2/change-orders/{id}/withdraw` | 创建人撤回 |
@@ -991,9 +991,9 @@ agent 面：
 | GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（批次 / 状态过滤） |
 | GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（健康 / TPS / 告警） |
 | GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度 |
-| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（before/after，供向导与详情预览）※ |
+| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（before/after；`?serverId` 选目标、`?reason` 敏感放行） |
 
-> ※ 该端点为 P2 全量 mock 管理台（FR-172）交付引导向导「预览文件内容」评审需求新增，当前仅 mock 层实现。文件内容预览的真实数据面归 FR-164（文件内容预览与安全边界，P8）：接真时须并入文件资产 V2 的安全预览通道（敏感路径保护 + 查看审计），并将本端点契约（请求 / 响应体、错误码）正式化进 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.1 或 file-assets 规格。
+> file-diff 走文件资产 V2 安全预览通道（FR-164：敏感路径保护 + `asset.preview` 查看审计 + agent 现取），响应 `{path, changeType, before, after, truncated, binary, serverId}`；正式契约（请求 / 响应 / 错误码）见 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.1「file-diff 端点契约」。
 
 agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）：
 

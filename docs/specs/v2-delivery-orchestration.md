@@ -50,6 +50,7 @@ Legacy 把「配置发布」「文件同步」做成了两套灰度编排，真�
 | title | VARCHAR(128) | 标题 |
 | description | TEXT | 说明（可空） |
 | source_server_id | VARCHAR(64) 可空 | 黄金模板源 serverId；纯配置变更单可空 |
+| scan_dir | VARCHAR(512) 可空 | 差异扫描的服务器根内相对目录范围（如 `plugins/`）；重扫 / 重算用同一范围 |
 | status | VARCHAR(32) | 单状态机（§4.1），索引 |
 | pause_kind | VARCHAR(16) 可空 | `manual` / `circuit_break` / `prepare_failed` |
 | pause_reason | VARCHAR(512) 可空 | 暂停 / 熔断原因（脱敏文案） |
@@ -153,7 +154,7 @@ completed / paused / cancelled ──rollback──→ rolling_back → rolled_b
 | pending_approval | approved | 审批通过 | 审批权限；审批人 ≠ 创建人（§4.7） |
 | approved | draft | 创建人撤回；或任何对 items / selector / 批次策略 / 生效策略的编辑 | **approved 后改单 = 审批自动作废回 draft**，重新走审批，作废动作入审计 |
 | draft / pending_approval / approved | cancelled | 放弃整单 | 未执行过任何目标 |
-| approved | rolling | 启动 | 执行权限 + 二次确认；目标快照固化落 `change_target`；**冲突守卫**：目标集与其他活动单（rolling / paused / rolling_back）的目标集有交集则拒绝启动 |
+| approved | rolling | 启动 | 执行权限 + 二次确认；目标快照固化落 `change_target`；**冲突守卫**：目标集与其他活动单（rolling / paused / rolling_back）的目标集有交集，或本单 config_change 的 `(config_file, scope)` 与其他活动单重叠，则拒绝启动（[ADR-0071](../adr/0071-config-gray-effectuation-model.md)） |
 | rolling | paused | 人工暂停 / 自动熔断（§4.4.4）/ payload 准备失败 | pause_kind 区分三种来源 |
 | paused | rolling | 继续 | 熔断暂停与准备失败需填原因 + 二次确认；mode 见 §4.4.5 |
 | rolling | completed | 末批推进门人工确认 | 确认时执行配置正式切版（§4.6.2） |
@@ -198,9 +199,9 @@ skipped    failed               failed
 #### 4.2.1 组单流程
 
 1. 创建 draft 单：选定 namespace、（可选）黄金模板源子服（须为已确认绑定、在线的 backend 子服）、扫描目录范围（服务器根内相对目录，如 `plugins/`）。
-2. 差异扫描：控制面读取**文件资产最新快照**（`v2-file-assets.md` 权威，路径 / sha256 / 大小 / mtime），计算模板源清单 vs 目标集清单差异；快照时间落 `diff_snapshot_at` 并在前端明示。可触发「重扫」：向模板源 agent 下发资产重扫命令（文件资产域既有能力），完成后重算。
-3. 选择文件集：运维在差异结果中勾选纳入本单的文件（默认全选差异项），落 `change_order_item(kind=file_diff)`。`delete` 项 = 模板源已删除而目标仍存在的文件，勾选后目标侧将删除（覆盖前备份保护）。
-4. 关联配置版本（可选）：从配置中心 V2 选择一个或多个作用域的待发布版本，落 `change_order_item(kind=config_change)`，同时快照该作用域当前生效版本为 `config_from_version_id`。
+2. 差异扫描（`POST .../diff-scan`，**同步**）：控制面读取**文件资产最新快照**（`v2-file-assets.md` 权威，路径 / sha256 / 大小 / mtime），在 `scan_dir` 范围内计算模板源清单 vs 目标集清单差异并**同步返回 items**；快照时间落 `diff_snapshot_at` 并在前端明示。对照目标集：selector 已设按 selector 解析；**未设时回退 namespace 内全部合格目标（除源）**——适配向导「先扫差异、后定范围」步序，组单差异为指示性、执行期按目标本地清单逐服重判（§4.2.3）。**「重扫」是单独动作**：需刷新模板源清单时，先经文件资产域既有 `asset-rescan` 命令异步重扫，完成后前端再调 `/diff-scan` 读新快照重算——`/diff-scan` 本身不下发重扫、不设异步任务态。
+3. 文件集入单：差异项默认全部纳入本单（子集勾选非本版范围），落 `change_order_item(kind=file_diff)`；重扫 / 重算即整组替换 file_diff 项。`delete` 项 = 模板源已删除而目标仍存在的文件，纳入后目标侧将删除（覆盖前备份保护）。
+4. 关联配置版本（可选）：从配置中心 V2 选择一个或多个作用域的待发布版本（= `config_to_version_id`），落 `change_order_item(kind=config_change)`，同时快照 `config_from_version_id` = 该作用域**上一交付版本**（交付域自持：最近一个 completed 单在该作用域交付的版本；从无交付则为空，回滚走撤销层贡献）。**不取「配置中心当前 head」**——运维连编多版后 head 的 `based_on` 可能指向从未交付过的版本，致 from 锚点错位（灰度模型见 [ADR-0071](../adr/0071-config-gray-effectuation-model.md)）。
 5. 目标筛选 + 批次规划 + 生效策略（§4.3、§4.4、§4.6）→ 影响预览 → 提交审批。
 
 纯配置变更单（无模板源、只有 config_change 项）与纯文件变更单（无配置项）均合法——引擎载荷无关。
@@ -325,11 +326,13 @@ skipped    failed               failed
 
 #### 4.6.2 配置变更的灰度生效与正式切版
 
-配置作用域是层级共享的，灰度期间同一作用域需要在「批内已生效目标」与「其余服」呈现不同版本。机制：
+配置作用域是层级共享的，灰度期间同一作用域需要在「批内已生效目标」与「其余服」呈现不同版本。机制（模型 A，详见 [ADR-0071](../adr/0071-config-gray-effectuation-model.md)）：
 
-1. **版本指派（pin）**：单进入 rolling 后，对每个 config_change 项建立「orderId × 目标集 → to_version」指派；配置中心解析某目标服有效配置时，若该服在某活动单的**已 activated 集合**内，则该作用域按 to_version 解析，否则按当前正式版本。指派事实由本域持有（查询接口见 §6），解析逻辑归配置域。
-2. **正式切版**：末批推进门人工确认（单 → completed）时，控制面在同一事务内把各 config_change 作用域的当前生效版本正式切至 to_version 并清除 pin；此后新接入 / 不在目标集内的服也解析到新版本。
-3. **未完成即回滚 / 终止**：清除 pin 即可，已 activated 目标经回滚流程重新生效回旧版本。
+> 前提：配置中心 head = **最新定稿**、非生效；线上生效版本由本域持有。本域始终以显式版本渲染目标载荷，**config-center head 从不直接下发给线上服**。
+
+1. **版本指派（pin）+ 冻结渲染**：单进入 rolling 后，本域为每个 config_change 项在**本单目标集**上按目标 activation 态选版本——**已 activated 目标该作用域取 to_version、未 activated 取 from_version**——经进程内 `EffectivePlaintext(fileID, {server}, pins)` 一次性传入 pin 渲染，载荷冻结为 content-addressed blob 逐批推（pin 只作版本选择器用一次，同单内 head 漂移不影响已冻结载荷）。pin 事实（orderId × 目标集 → to_version）由本域持有，渲染合并逻辑归配置域。
+2. **正式切版**：末批推进门人工确认（单 → completed）时，控制面同一事务内**清除本单 pin** + 本域记「该作用域已交付版本 = to_version」。head 自然已 = to_version，故**无需移动 head、不调回退原语**（head 内容已 = to 会撞 `CONFIG_NO_CHANGE`）。
+3. **未完成即回滚 / 终止**：清除 pin 即可；已 activated 目标经回滚流程重新生效回 from（§4.7.2，配置回退 `RollbackVersion(from)` 撞 `CONFIG_NO_CHANGE` 当幂等成功）。
 
 #### 4.6.3 观察窗数据
 
@@ -342,10 +345,12 @@ skipped    failed               failed
 覆盖 / 删除任何文件前，agent 在自身数据目录生成本单备份：
 
 ```text
-plugins/Beacon/delivery-backups/<orderId>/
+<agent dataFolder()>/delivery-backups/<orderId>/   # dataFolder()= plugins/<agent 插件名>（如 BeaconAgent / BeaconAgentProxy），非 plugins/Beacon
   manifest.json          # 备份清单：[{path, action, sha256(旧), size}]；add 项记 path+action（回滚时删除该文件）
   files/<原相对路径>      # 被覆盖 / 删除文件的原内容，按原相对路径存放
 ```
+
+> 备份必须落在 agent 自身 `dataFolder()` 之下——否则会被文件资产扫描的「自身目录排除」逻辑漏掉、反被纳入资产清单造成自我指涉不收敛（[ADR-0070](../adr/0070-agent-graceful-shutdown-primitive.md) 同批探明）。
 
 - 备份成功后才开始覆盖；备份失败则该目标 `failed`，不动原文件。
 - 保留策略：每服最多保留 5 个变更单备份且最长 30 天，超限按最旧清理（agent 本地周期执行）。
@@ -400,7 +405,7 @@ plugins/Beacon/delivery-backups/<orderId>/
 | GET | `/admin/v2/change-orders/{id}` | 详情：单 + items + 批次概要 + 计数 |
 | PATCH | `/admin/v2/change-orders/{id}` | 编辑（draft；approved 编辑触发回 draft） |
 | DELETE | `/admin/v2/change-orders/{id}` | 删除 draft 单（高风险：原因 + 二次确认） |
-| POST | `/admin/v2/change-orders/{id}/diff-scan` | 触发模板源重扫并重算差异（返回任务态，完成后 diff_snapshot_at 更新） |
+| POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新文件资产快照算模板源 vs 目标集差异并返回 items（更新 diff_snapshot_at）；模板源重扫为单独动作（复用文件资产域 `asset-rescan`，完成后重新 /diff-scan） |
 | GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页，§4.2.2） |
 | POST | `/admin/v2/change-orders/{id}/submit` | 提交审批 |
 | POST | `/admin/v2/change-orders/{id}/withdraw` | 创建人撤回（pending_approval / approved → draft） |
@@ -416,9 +421,17 @@ plugins/Beacon/delivery-backups/<orderId>/
 | GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（batch / status / serverId 过滤） |
 | GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（逐目标健康分 / 等级 / TPS / 告警序列） |
 | GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度（单 / 批 / 目标状态变更事件） |
-| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（file_diff 项返回 before/after 文本 + changeType + truncated）※ |
+| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（正式契约见下） |
 
-> ※ 由 P2 全量 mock 管理台（FR-172）交付引导向导「预览文件内容」评审需求新增，当前仅 mock 实现。文件内容预览的真实数据面依赖 FR-164（P8 文件资产 V2 安全预览），接真时须走文件资产 V2 的敏感路径保护 + 查看审计通道，并在此处正式定稿请求 / 响应体与错误码。
+#### file-diff 端点契约（变更项文件内容预览）
+
+`GET /admin/v2/change-orders/{id}/items/{itemId}/file-diff?serverId=<可选>&reason=<可选>`
+
+- **数据面**：复用文件资产 V2 安全预览通道（FR-164）——控制面不存文件内容，经 `asset-read` 命令向 agent 现取（单侧上限 512 KiB、超限截断），敏感路径保护与查看审计（`asset.preview`）随通道生效。
+- **请求**：`serverId` 指定对比目标（须在本单目标集内），缺省取 selector 解析后按字典序第一个与源存在差异的目标（add=缺该文件 / update=hash 异 / delete=仍有该文件），无差异目标退回首个目标；`reason` 为敏感路径放行原因（命中敏感规则且缺原因 → 403）。
+- **响应**：`{path, changeType: 'added'|'modified'|'removed', before: string|null, after: string|null, truncated: boolean, binary: boolean, serverId: string|null}`。语义：`after` = 模板源内容、`before` = 目标内容；delete 项 `after=null`、add 项 `before=null`；`serverId` 回填实际所用目标（无可用目标为 null）。快照 `is_text=false` 或 agent 回传二进制的项不取内容，直接 `binary:true`、前后皆 null。
+- **错误码**：`change_order_not_found` / `item_not_found`（404，含非 file_diff 项）、`invalid_param`（400，serverId 不在目标集内）、`asset_sensitive_path`（403）、`asset_not_found`（404，快照漂移源已无此文件）、`asset_agent_offline` / `asset_preview_timeout`（504）、`asset_read_failed`（502）。
+- **权限**：GET 带写副作用（建命令 / 唤醒 agent / 记查看审计），readonly 密钥 403（挡在路由）。
 
 ### 5.2 agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发，此处为配套拉取 / 回执接口）
 

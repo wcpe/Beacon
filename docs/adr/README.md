@@ -71,6 +71,10 @@
 | [0065](0065-message-broadcast-addressing.md) | 跨服消息新增广播寻址（namespace / zone 级 fan-out），复活 topic 门面 | 已接受 |
 | [0066](0066-hot-cold-archive-dual-connection.md) | 热冷数据归档采用独立 database 双连接 + 应用层搬运 | 已接受 |
 | [0067](0067-default-entry-v2-authority.md) | 小区默认入口真源收敛 v2 server.is_default_entry（取代 ADR-0031 存储决策） | 已接受 |
+| [0068](0068-asset-manifest-sync-protocol.md) | 文件资产清单上报协议（增量 delta + 摘要校准 + 全量分片兜底） | 已接受 |
+| [0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) | 交付数据面：控制面 sha256 内容寻址 blob 中转 + agent 流式传输端口（扩展 ADR-0005） | 已接受 |
+| [0070](0070-agent-graceful-shutdown-primitive.md) | agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理） | 已接受 |
+| [0071](0071-config-gray-effectuation-model.md) | 变更单配置变更的灰度生效语义模型（模型 A：head=定稿非生效、pin 落后者到 from、配置域零改动） | 已接受 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
