@@ -94,6 +94,7 @@ func newOrchestratorHarness(t *testing.T) *orchestratorHarness {
 		repository.NewConfigLayerVersionRepository(env.db), auditRepo)
 	blobSvc.SetConfigRenderer(configSvc, repository.NewConfigLayerVersionRepository(env.db), repository.NewConfigFileRepository(env.db))
 	orch := NewDeliveryOrchestrator(env.db, repo, blobSvc, cmdRepo, auditRepo, env.health, metricwindow.New(0), nil)
+	orch.SetConfigRollbacker(configSvc, repository.NewConfigLayerVersionRepository(env.db))
 	blobSvc.SetProgressWaker(orch)
 	env.orders.SetObserveProvider(orch)
 	h := &orchestratorHarness{env: env, f: f, orch: orch, blob: blobSvc, clock: time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)}
@@ -915,5 +916,168 @@ func TestOrchestratorRestartHealthBreaksAfterWarmup(t *testing.T) {
 	}
 	if countAudit(t, h.env.db, model.ActionDeliveryOrderCircuitBreak) != 1 {
 		t.Fatal("健康恶化熔断应记 1 条系统熔断审计")
+	}
+}
+
+// —— 整单回滚（FR-167，spec §4.7.2）——
+
+// completedPushOnlyOrder 走完整 push_only 脊柱到 completed（目标 activated + pushed_at + backup_present）。
+func (h *orchestratorHarness) completedPushOnlyOrder(t *testing.T) *model.ChangeOrder {
+	t.Helper()
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick() // pushed→activated（push_only），批 observing
+	h.advance(6 * time.Second)
+	h.tick() // observing→awaiting_confirm
+	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	return h.reload(order.ID)
+}
+
+// completedRestartOrder 走完整 restart 脊柱到 completed（心跳回归 activated）。
+func (h *orchestratorHarness) completedRestartOrder(t *testing.T) *model.ChangeOrder {
+	t.Helper()
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick() // → activating
+	h.advance(3 * time.Second)
+	h.seedHeartbeat("t-1", h.clock.UnixMilli())
+	h.seedHeartbeat("t-2", h.clock.UnixMilli())
+	h.tick() // 心跳回归 → activated，批 observing
+	h.advance(6 * time.Second)
+	h.tick() // observing→awaiting_confirm
+	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	return h.reload(order.ID)
+}
+
+// completeAllRollbacks 把某单全部目标的回滚命令置指定终态（模拟 agent 还原备份回执）。
+func (h *orchestratorHarness) completeAllRollbacks(t *testing.T, orderID uint, status string) {
+	t.Helper()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
+	for _, tg := range targets {
+		completeDeliveryCommand(t, h.env.db, orderID, tg.ServerID, model.CommandTypeDeliveryRollback, status, "")
+	}
+}
+
+// TestOrchestratorRollbackPushOnlyHappyPath push_only 整单回滚：completed→rolling_back→下发回滚→还原回执→rolled_back。
+func TestOrchestratorRollbackPushOnlyHappyPath(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	if order.Status != model.ChangeOrderStatusCompleted {
+		t.Fatalf("前置应 completed: %s", order.Status)
+	}
+	if _, err := h.orch.Rollback(order.ID, "回退变更", "ops", "ip"); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("应 rolling_back: %s", got.Status)
+	}
+	h.tick() // 下发 delivery_rollback，rollback_status pending→running
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick() // 还原回执 done → rolled_back → 单自动 rolled_back
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("push_only 回滚应 rolled_back: %s", got.Status)
+	}
+	if countAudit(t, h.env.db, model.ActionDeliveryOrderRollback) != 1 {
+		t.Fatal("应记 1 条回滚审计")
+	}
+}
+
+// TestOrchestratorRollbackRestartHeartbeatReturn restart 回滚：还原后 agent 关服，心跳回归才判 rolled_back。
+func TestOrchestratorRollbackRestartHeartbeatReturn(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedRestartOrder(t)
+	if _, err := h.orch.Rollback(order.ID, "回退", "ops", "ip"); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	h.tick() // 下发回滚
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick() // 还原 done → 重置回滚重启锚点（首次），仍 running 等心跳
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("重置锚点后应仍 rolling_back（等心跳）: %s", got.Status)
+	}
+	// 心跳回归 → rolled_back。
+	h.advance(3 * time.Second)
+	h.seedHeartbeat("t-1", h.clock.UnixMilli())
+	h.seedHeartbeat("t-2", h.clock.UnixMilli())
+	h.tick()
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("restart 回滚心跳回归应 rolled_back: %s", got.Status)
+	}
+}
+
+// TestOrchestratorRollbackRejects 回滚入参 / 状态校验：原因必填、非法态拒绝。
+func TestOrchestratorRollbackRejects(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	if _, err := h.orch.Rollback(order.ID, "  ", "ops", "ip"); err == nil {
+		t.Fatal("空原因应拒绝")
+	}
+	draft := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
+	if _, err := h.orch.Rollback(draft.ID, "回退", "ops", "ip"); err == nil {
+		t.Fatal("approved（未曾推送）单回滚应拒绝非法态")
+	}
+}
+
+// TestOrchestratorRollbackBackupMissingFails 备份缺失目标预检直接 failed，其余正常回滚；有 failed 停待人工 FinishRollback。
+func TestOrchestratorRollbackBackupMissingFails(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.completedPushOnlyOrder(t)
+	// 人为让 t-1 备份缺失（保留策略清理场景）。
+	if err := h.env.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND server_id = ?", order.ID, "t-1").
+		Update("backup_present", false).Error; err != nil {
+		t.Fatalf("置备份缺失失败: %v", err)
+	}
+	if _, err := h.orch.Rollback(order.ID, "回退", "ops", "ip"); err != nil {
+		t.Fatalf("回滚失败: %v", err)
+	}
+	h.tick()
+	h.completeAllRollbacks(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	byID := map[string]model.ChangeTarget{}
+	for _, tg := range targets {
+		byID[tg.ServerID] = tg
+	}
+	if byID["t-1"].RollbackStatus != model.RollbackStatusFailed {
+		t.Fatalf("备份缺失目标应 failed: %s", byID["t-1"].RollbackStatus)
+	}
+	if byID["t-2"].RollbackStatus != model.RollbackStatusRolledBack {
+		t.Fatalf("有备份目标应 rolled_back: %s", byID["t-2"].RollbackStatus)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRollingBack {
+		t.Fatalf("有 failed 应停 rolling_back 待人工: %s", got.Status)
+	}
+	// 人工结束回滚。
+	if _, err := h.orch.FinishRollback(order.ID, "ops", "ip"); err != nil {
+		t.Fatalf("结束回滚失败: %v", err)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {
+		t.Fatalf("结束回滚后应 rolled_back: %s", got.Status)
+	}
+}
+
+// TestConfigRollbackIdempotent 配置回退幂等判定（ADR-0071 决策6）：ErrConfigNoChange 与撤销层「无可撤销」INVALID_PARAM 当成功吞。
+func TestConfigRollbackIdempotent(t *testing.T) {
+	if !isConfigRollbackIdempotent(apperr.ErrConfigNoChange) {
+		t.Fatal("ErrConfigNoChange 应判幂等")
+	}
+	if !isConfigRollbackIdempotent(apperr.New(400, "INVALID_PARAM", "该层无可撤销的贡献")) {
+		t.Fatal("撤销层无可撤销 INVALID_PARAM 应判幂等")
+	}
+	if isConfigRollbackIdempotent(apperr.ErrChangeConfigVersionInvalid) {
+		t.Fatal("其他错误不应判幂等")
 	}
 }

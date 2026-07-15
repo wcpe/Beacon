@@ -75,7 +75,7 @@ func (s *DeliveryOrchestrator) reconcileRollback(rt *orderRuntime, t *model.Chan
 	}
 	switch cmd.Status {
 	case model.CommandStatusDone:
-		s.completeRollback(rt, t, cmd)
+		s.completeRollback(rt, t)
 	case model.CommandStatusFailed:
 		s.failRollback(rt, t, targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "回滚失败"))
 	case model.CommandStatusExpired:
@@ -89,13 +89,13 @@ func (s *DeliveryOrchestrator) reconcileRollback(rt *orderRuntime, t *model.Chan
 //   - push_only / hot_reload：还原即够（随目标下次自然重启读盘），直接 rolled_back。
 //   - restart：agent 还原后已 gracefulShutdown，须重置回滚重启锚点（首次 done、锚点尚为正推旧值）后判心跳回归；
 //     心跳回归→rolled_back，activate_timeout 内未回归→failed（「关了没起来」，与正推 restart 同构）。
-func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.ChangeTarget, cmd *model.AgentCommand) {
+func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.ChangeTarget) {
 	if rt.order.ActivationMethod != model.ActivationMethodRestart {
 		s.casRollback(rt, t, model.RollbackStatusRolledBack, nil)
 		return
 	}
-	// 首次读到 done 时锚点仍为正推旧值（早于回滚命令）→ 重置为 now 作回滚重启心跳锚点，等新心跳回归。
-	if t.ActivatingStartedAt == nil || t.ActivatingStartedAt.Before(cmd.CreatedAt) {
+	// 首次读到 done 时锚点仍为正推旧值（早于回滚触发）→ 重置为 now 作回滚重启心跳锚点，等新心跳回归。
+	if !s.rollbackAnchorReset(rt.order, t) {
 		now := s.now()
 		if s.casRollbackAnchor(t, now) {
 			t.ActivatingStartedAt = &now
@@ -107,6 +107,18 @@ func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.Chang
 		return
 	}
 	s.rollbackRestartTimeout(rt, t)
+}
+
+// rollbackAnchorReset 判目标回滚重启心跳锚点是否已重置（activating_started_at 已 ≥ 回滚触发时刻）：
+// 正推遗留的锚点早于回滚触发时刻，据此区分「首次 done 需重置锚点」与「已重置、等心跳回归」。
+func (s *DeliveryOrchestrator) rollbackAnchorReset(order *model.ChangeOrder, t *model.ChangeTarget) bool {
+	if t.ActivatingStartedAt == nil {
+		return false
+	}
+	if order.RollbackAt == nil {
+		return true // 回滚触发时刻缺失（异常）：保守认为已重置，避免重置死循环
+	}
+	return !t.ActivatingStartedAt.Before(*order.RollbackAt)
 }
 
 // rollbackOnTimeout 回滚命令仍在途（pending/fetched）时按 activateTimeoutSec 判超时：超时置 failed 并尽力过期命令。
