@@ -669,6 +669,8 @@ const (
 	TargetTypeEnv = "env"
 	// 交付编排变更单（FR-162/168）的审计对象类型（TargetRef=orderId）
 	TargetTypeChangeOrder = "change-order"
+	// 交付数据面中转 blob（FR-165）的审计对象类型（清理器系统审计用，TargetRef=sweep）
+	TargetTypeDeliveryBlob = "delivery-blob"
 )
 
 // OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，

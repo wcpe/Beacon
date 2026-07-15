@@ -141,8 +141,9 @@ func TestListCoversAllHotKeys(t *testing.T) {
 	// + FR-116 新增 undo.window-hours（配置操作可撤回时间窗）+ FR-151 新增 13 个 archive.* 策略键（见 ADR-0066）
 	// + FR-177 新增 identity.conflict-window-sec（并发身份冲突检测窗口）
 	// + FR-162 新增 delivery.approver-separation-enabled（变更单审批职责分离开关）。
-	if len(views) != 32 {
-		t.Fatalf("热改白名单应为 32 项，实际 %d", len(views))
+	// + FR-165 新增 5 项交付数据面参数（blob 保留 / 容量 / 上传下载并发 / 清理间隔）。
+	if len(views) != 37 {
+		t.Fatalf("热改白名单应为 37 项，实际 %d", len(views))
 	}
 	for _, v := range views {
 		if v.IsStartup {

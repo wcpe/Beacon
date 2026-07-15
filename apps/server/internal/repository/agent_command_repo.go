@@ -115,6 +115,17 @@ func (r *AgentCommandRepository) FindLatestByType(ns, serverID, cmdType string) 
 	return &c, nil
 }
 
+// ListFetchedByType 取某目标实例某类型全部 fetched 态命令（id 倒序）。
+// 交付回执（FR-165，spec §5.2）按 payload 内 orderId 在应用层匹配具体命令——payload 为 TEXT JSON，
+// 不用 SQL JSON 函数（DB 可移植）；单服在途交付命令量级为个位数，全取无压力。
+func (r *AgentCommandRepository) ListFetchedByType(ns, serverID, cmdType string) ([]model.AgentCommand, error) {
+	var cmds []model.AgentCommand
+	err := r.db.Where("namespace = ? AND server_id = ? AND type = ? AND status = ?",
+		ns, serverID, cmdType, model.CommandStatusFetched).
+		Order("id desc").Find(&cmds).Error
+	return cmds, err
+}
+
 // CountActiveByType 统计某目标实例某类型处「进行中」（pending/fetched）的命令条数（FR-88 单活跃限速用）。
 func (r *AgentCommandRepository) CountActiveByType(ns, serverID, cmdType string) (int64, error) {
 	var n int64

@@ -25,6 +25,8 @@ type Handlers struct {
 	V2ConfigCenter    *handler.V2ConfigCenterHandler
 	V2Assets          *handler.V2AssetsHandler
 	Delivery          *handler.DeliveryAdminHandler
+	DeliveryStream    *handler.DeliveryStreamHandler
+	DeliveryAgent     *handler.DeliveryAgentHandler
 	SchedDecision     *handler.SchedDecisionAdminHandler
 	Config            *handler.ConfigHandler
 	File              *handler.FileHandler
@@ -152,7 +154,12 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 与采集面同挂 token↔namespace + identity 鉴权中间件（未确认 403），归属以注入的权威身份为准；
 			// 内容转存内存中继唤醒等待的 admin，**绝不落库**。与其它 agent 面端点一致无条件注册（assetHandler 恒构造）。
 			r.With(agentV2ReportMiddleware(h.V2)).Post("/assets/content", h.Asset.ReceiveContent)
+			// P9 M2 挂载点：交付数据面 agent 面清单拉取 / 阶段回执（FR-165，spec §5.2）：同挂鉴权中间件。
+			registerV2DeliveryAgentRoutes(r, h)
 		})
+
+		// P9 M2：交付流式数据面（FR-165，spec §5.3），抽函数注册以免累加 v2 agent 组嵌套复杂度。
+		registerV2DeliveryStreamRoutes(r, h)
 	}
 
 	// 管理台登录：签发令牌，自身不挂令牌中间件
@@ -525,6 +532,31 @@ func registerV2AssetsAdminRoutes(r chi.Router, h Handlers) {
 	r.Get("/assets/scan-status", h.V2Assets.ScanStatus)
 	r.Get("/assets/compare", h.V2Assets.Compare)
 	r.Post("/assets/rescan", h.V2Assets.Rescan)
+}
+
+// registerV2DeliveryStreamRoutes 注册交付流式数据面（FR-165，spec §5.3）：sha256 内容寻址 blob 的
+// HEAD/PUT/GET+Range，同挂 agent 双 header 鉴权中间件注入权威身份；blob 归属校验在服务层。未装配则跳过。
+func registerV2DeliveryStreamRoutes(r chi.Router, h Handlers) {
+	if h.DeliveryStream == nil || h.V2 == nil {
+		return
+	}
+	r.Route("/beacon/v2/stream/delivery", func(r chi.Router) {
+		r.Use(agentV2ReportMiddleware(h.V2))
+		r.Head("/blobs/{sha256}", h.DeliveryStream.Head)
+		r.Put("/blobs/{sha256}", h.DeliveryStream.Upload)
+		r.Get("/blobs/{sha256}", h.DeliveryStream.Download)
+	})
+}
+
+// registerV2DeliveryAgentRoutes 注册交付数据面 agent 面端点（FR-165，spec §5.2）：清单拉取 / 阶段回执；
+// 同挂 token↔namespace + identity 鉴权中间件（未确认 403），归属校验在服务层。DeliveryAgent 未装配则跳过。
+func registerV2DeliveryAgentRoutes(r chi.Router, h Handlers) {
+	if h.DeliveryAgent == nil {
+		return
+	}
+	r.With(agentV2ReportMiddleware(h.V2)).Get("/delivery/orders/{id}/upload-manifest", h.DeliveryAgent.UploadManifest)
+	r.With(agentV2ReportMiddleware(h.V2)).Get("/delivery/orders/{id}/manifest", h.DeliveryAgent.Manifest)
+	r.With(agentV2ReportMiddleware(h.V2)).Post("/delivery/orders/{id}/result", h.DeliveryAgent.Result)
 }
 
 // registerV2DeliveryAdminRoutes 注册交付编排变更单管理面端点（FR-162，spec §5.1 的 M1 子集）；

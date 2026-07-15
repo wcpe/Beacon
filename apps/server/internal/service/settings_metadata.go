@@ -33,6 +33,13 @@ const (
 	// 交付编排审批职责分离（FR-162/168，spec v2-delivery-orchestration.md §4.8.1）：
 	// 开启时变更单审批人不得是创建人；单管理员小规模部署可关闭（关闭动作走 settings.update 审计）。
 	SettingDeliveryApproverSeparationEnabled = "delivery.approver-separation-enabled"
+	// 交付数据面资源约束键（FR-165，见 ADR-0069 决策 4）：blob 保留期 / 磁盘容量 / 上传下载并发 / 清理周期，
+	// 均无 config.yml 对应项、纯设置 store 项，走热更（消费点每轮 / 每请求重读）。
+	SettingDeliveryBlobRetentionDays      = "delivery.blob-retention-days"
+	SettingDeliveryBlobCapacityBytes      = "delivery.blob-capacity-bytes"
+	SettingDeliveryUploadConcurrency      = "delivery.upload-concurrency"
+	SettingDeliveryDownloadConcurrency    = "delivery.download-concurrency"
+	SettingDeliveryCleanupIntervalMinutes = "delivery.cleanup-interval-minutes"
 	// 热冷归档策略键（FR-151，见 ADR-0066）：各域热库保留天数（≥7 守卫）+ 调度 / 批量 / 校验 / 冷查询参数。
 	SettingArchiveRetentionMetricSample   = "archive.retention-days.metric-sample"
 	SettingArchiveRetentionHealthSnapshot = "archive.retention-days.health-snapshot"
@@ -71,6 +78,19 @@ const (
 
 // 并发身份冲突检测窗口默认值（FR-177，spec §4.5）：默认 10 分钟；无 config.yml 对应项、纯设置 store 项。
 const identityDefaultConflictWindowSec = 600
+
+// 交付数据面资源约束默认值（FR-165，spec §8 #4，见 ADR-0069）：初始值按 ADR 拍板，需按真机带宽 / 磁盘实测校准。
+// 容量按字节计（20 GiB），要求 64 位 int（控制面仅构建 amd64/arm64 目标）。
+const (
+	deliveryDefaultBlobRetentionDays      = 7
+	deliveryDefaultBlobCapacityBytes      = 21474836480 // 20 GiB
+	deliveryDefaultUploadConcurrency      = 4
+	deliveryDefaultDownloadConcurrency    = 64
+	deliveryDefaultCleanupIntervalMinutes = 60
+	// 容量上限的可配上界（1 TiB）与下界（1 MiB）：防误配 0 / 负值当场拒绝所有上传。
+	deliveryBlobCapacityMinBytes = 1048576
+	deliveryBlobCapacityMaxBytes = 1099511627776
+)
 
 // updateChannels 是 update.channel 的合法枚举集（stable=正式版线、prerelease=滚动预发布线，FR-117/ADR-0052）。
 var updateChannels = map[string]struct{}{
@@ -210,6 +230,32 @@ var settingsWhitelist = map[string]settingMeta{
 	SettingDeliveryApproverSeparationEnabled: {
 		valueType: model.SettingValueTypeBool, desc: "变更单审批职责分离：开启时审批人不得是创建人；单管理员部署可关闭（关闭动作入审计）",
 		defaultFromConfig: func(config.Config) string { return strconv.FormatBool(true) },
+	},
+	// 交付数据面资源约束（FR-165，见 ADR-0069 决策 4）：清理器 / 流式端点每轮 / 每请求热读。
+	SettingDeliveryBlobRetentionDays: {
+		valueType: model.SettingValueTypeInt, desc: "交付中转 blob 保留天数：引用它的变更单全部终结且超此天数未被引用才清理",
+		min: 1, max: 3650,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(deliveryDefaultBlobRetentionDays) },
+	},
+	SettingDeliveryBlobCapacityBytes: {
+		valueType: model.SettingValueTypeInt, desc: "交付中转存储容量上限（字节）：已存量 + 新上传声明大小超限即拒绝新上传",
+		min: deliveryBlobCapacityMinBytes, max: deliveryBlobCapacityMaxBytes,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(deliveryDefaultBlobCapacityBytes) },
+	},
+	SettingDeliveryUploadConcurrency: {
+		valueType: model.SettingValueTypeInt, desc: "交付流式上传全局并发上限（同时进行的 PUT 流数），超限新上传返回 429",
+		min: 1, max: 64,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(deliveryDefaultUploadConcurrency) },
+	},
+	SettingDeliveryDownloadConcurrency: {
+		valueType: model.SettingValueTypeInt, desc: "交付流式下载全局并发上限（同时进行的 GET 流数），超限新下载返回 429",
+		min: 1, max: 512,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(deliveryDefaultDownloadConcurrency) },
+	},
+	SettingDeliveryCleanupIntervalMinutes: {
+		valueType: model.SettingValueTypeInt, desc: "交付中转 blob 后台清理周期（分钟）",
+		min: 5, max: 10080,
+		defaultFromConfig: func(config.Config) string { return strconv.Itoa(deliveryDefaultCleanupIntervalMinutes) },
 	},
 	// 热冷归档保留期（FR-151，见 ADR-0066）：各域热库保留天数，下限 7（防误配当天删光）、上限 3650（约 10 年）。
 	SettingArchiveRetentionMetricSample: {

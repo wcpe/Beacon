@@ -261,6 +261,43 @@ func (r *ChangeOrderRepository) groupTargetCounts(orderID uint, column, extraWhe
 	return counts, nil
 }
 
+// —— 交付数据面归属 / 清理反查（FR-165，spec §5.3/§4.5.4）——
+
+// ListOrdersReferencingSHA 取某 namespace 内文件项引用了指定 sha256、且单状态在给定集合内的变更单
+// （blob 归属校验用：模板源可上传 / 目标可下载的判定基础）。子查询 IN 一次取齐（免 JOIN 去重），禁循环查库。
+func (r *ChangeOrderRepository) ListOrdersReferencingSHA(namespaceID uint, sha string, statuses []string) ([]model.ChangeOrder, error) {
+	var orders []model.ChangeOrder
+	err := r.db.Where("namespace_id = ? AND status IN ?", namespaceID, statuses).
+		Where("id IN (?)", r.db.Model(&model.ChangeOrderItem{}).Select("order_id").
+			Where("kind = ? AND sha256 = ?", model.ChangeItemKindFileDiff, sha)).
+		Order("id asc").
+		Find(&orders).Error
+	return orders, err
+}
+
+// ListSHAsReferencedByStatusNotIn 取给定 sha 集合中仍被「状态不在 excluded 集合内的变更单」引用的子集
+// （blob 清理阻断判定：命中即不可删；入参为空返回空集）。
+func (r *ChangeOrderRepository) ListSHAsReferencedByStatusNotIn(shas []string, excluded []string) (map[string]struct{}, error) {
+	blocked := make(map[string]struct{}, len(shas))
+	if len(shas) == 0 {
+		return blocked, nil
+	}
+	var rows []string
+	err := r.db.Model(&model.ChangeOrderItem{}).
+		Distinct().
+		Joins("JOIN change_order AS o ON o.id = change_order_item.order_id").
+		Where("change_order_item.kind = ? AND change_order_item.sha256 IN ?", model.ChangeItemKindFileDiff, shas).
+		Where("o.status NOT IN ?", excluded).
+		Pluck("change_order_item.sha256", &rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, sha := range rows {
+		blocked[sha] = struct{}{}
+	}
+	return blocked, nil
+}
+
 // —— from 锚点反查（ADR-0071）——
 
 // FindLatestDeliveredToVersionID 查某 (config_file, scope) 最近一次已 completed 变更单交付的目标版本 id：

@@ -410,6 +410,13 @@ func run() error {
 		repository.NewFileAssetRepository(db), auditRepo, assetPreviewService, healthViewStore)
 	deliveryHandler := handler.NewDeliveryAdminHandler(deliveryOrderService, deliveryDiffService)
 
+	// P9 M2 交付数据面装配（FR-165，见 ADR-0069）：全局 sha256 内容寻址 blob 中转存储 + 流式 / agent 面端点 + 后台清理器。
+	deliveryBlobRepo := repository.NewDeliveryBlobRepository(db)
+	deliveryBlobService := service.NewDeliveryBlobService(db, deliveryBlobRepo, changeOrderRepo, commandRepo, settingsService)
+	deliveryStreamHandler := handler.NewDeliveryStreamHandler(deliveryBlobService)
+	deliveryAgentHandler := handler.NewDeliveryAgentHandler(deliveryBlobService)
+	deliveryBlobCleaner := service.NewDeliveryBlobCleaner(deliveryBlobService, auditRepo)
+
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
@@ -535,7 +542,7 @@ func run() error {
 		return err
 	}
 	router := server.NewRouter(server.Handlers{
-		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
+		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
 		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
@@ -593,6 +600,8 @@ func run() error {
 
 	// 启动陈旧可逆账目清理器（FR-116）：常驻 hygiene，把超可撤回窗口仍 reversible 的账目标 expired 并清空反向快照瞬态，随关停信号退出
 	go reversibleOpSweeper.Run(ctx)
+	// P9 M2：交付中转 blob 清理器（FR-165，spec §4.5.4）：周期清终态超保留期 blob 与上传残留。
+	go deliveryBlobCleaner.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

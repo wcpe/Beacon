@@ -296,6 +296,24 @@ var (
 	// ErrChangeNotCreator 仅创建人可撤回变更单（spec §4.1）。
 	ErrChangeNotCreator = New(http.StatusForbidden, "not_creator", "仅创建人可撤回变更单")
 
+	// —— 交付数据面（FR-165，spec §4.5/§5.3，见 ADR-0069；code 沿用 agent 面小写下划线约定）——
+	// ErrDeliveryBlobNotFound 中转 blob 不存在或未就绪（HEAD/GET 未命中，uploading 视同不存在）。
+	ErrDeliveryBlobNotFound = New(http.StatusNotFound, "blob_not_found", "blob 不存在或未就绪")
+	// ErrDeliveryBlobHashMismatch 上传内容实算 sha256 与 URL 声明不符，已丢弃（spec §4.5.2）。
+	ErrDeliveryBlobHashMismatch = New(http.StatusUnprocessableEntity, "blob_hash_mismatch", "上传内容 sha256 与声明不符，已丢弃")
+	// ErrDeliveryBlobForbidden 请求身份不持有该 blob 的传输授权（不属于引用它的活动 / 已审批变更单的源或目标，spec §5.3）。
+	ErrDeliveryBlobForbidden = New(http.StatusForbidden, "blob_forbidden", "当前身份不持有该 blob 的传输授权")
+	// ErrDeliveryLengthRequired 流式上传必须携带 Content-Length（spec §4.5.2）。
+	ErrDeliveryLengthRequired = New(http.StatusLengthRequired, "length_required", "流式上传必须携带 Content-Length")
+	// ErrDeliveryUploadBusy 上传并发已达上限（运维设置 delivery.upload-concurrency），agent 稍后重试（ADR-0069）。
+	ErrDeliveryUploadBusy = New(http.StatusTooManyRequests, "delivery_upload_busy", "上传并发已达上限，请稍后重试")
+	// ErrDeliveryDownloadBusy 下载并发已达上限（运维设置 delivery.download-concurrency），agent 稍后重试（ADR-0069）。
+	ErrDeliveryDownloadBusy = New(http.StatusTooManyRequests, "delivery_download_busy", "下载并发已达上限，请稍后重试")
+	// ErrDeliveryNotSource 仅本单模板源可执行该动作（拉上传清单 / 上传回执，spec §5.2）。
+	ErrDeliveryNotSource = New(http.StatusForbidden, "not_source", "仅本单模板源可执行该操作")
+	// ErrDeliveryNotTarget 仅本单目标服可执行该动作（拉差异清单 / 推送与生效回执，spec §5.2）。
+	ErrDeliveryNotTarget = New(http.StatusForbidden, "not_target", "仅本单目标服可执行该操作")
+
 	// ErrAssetNotFound 文件资产在该服最新清单中不存在（预览 / diff 目标缺失，FR-164，spec §5.2；code 对齐 devmock）。
 	ErrAssetNotFound = New(http.StatusNotFound, "asset_not_found", "该服清单中不存在此文件")
 	// ErrAssetAgentOffline 预览 / diff 目标 agent 离线，无法实时读取文件内容（FR-164，spec §4.5；code 对齐 devmock）。
