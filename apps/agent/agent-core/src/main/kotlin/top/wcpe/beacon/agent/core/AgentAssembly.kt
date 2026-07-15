@@ -9,6 +9,13 @@ import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.command.ReverseFetchExecutor
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.delivery.DeliveryBackupManager
+import top.wcpe.beacon.agent.core.delivery.DeliveryCommandExecutor
+import top.wcpe.beacon.agent.core.delivery.DeliveryDownloader
+import top.wcpe.beacon.agent.core.delivery.DeliveryOverwriter
+import top.wcpe.beacon.agent.core.delivery.DeliveryPipeline
+import top.wcpe.beacon.agent.core.delivery.DeliveryTargetResolver
+import top.wcpe.beacon.agent.core.delivery.DeliveryUploader
 import top.wcpe.beacon.agent.core.filetree.AppliedFileManifestStore
 import top.wcpe.beacon.agent.core.filetree.AssetManifestStore
 import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
@@ -39,6 +46,7 @@ import top.wcpe.beacon.agent.core.scheduling.SchedulingView
 import top.wcpe.beacon.agent.core.scheduling.SelfHealthHolder
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
+import top.wcpe.beacon.agent.core.transport.BlobStreamTransport
 import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import top.wcpe.beacon.agent.core.transport.StreamTransport
@@ -80,6 +88,9 @@ object AgentAssembly {
         // 流式传输（SSE 推送，FR-24）：壳层注入 OkHttpStreamTransport 即启用单条流取代三条长轮询；
         // 为 null 时退回长轮询（迁移期兼容，见 ADR-0015 决策 8）。
         streamTransport: StreamTransport? = null,
+        // 交付 blob 流式传输（FR-165，见 ADR-0069）：壳层注入 OkHttpBlobStreamTransport 即启用交付数据面
+        // （上传 / 下载 blob）。为 null 时不响应 delivery_* 命令（数据面未启用，向后兼容）。
+        blobStreamTransport: BlobStreamTransport? = null,
         // 运行指标供给（FR-32）：壳层注入平台采集实现（人数 / TPS + JVM 内存 / CPU）以上报真值；
         // 默认零指标（未注入时向后兼容旧行为）。
         metricsProvider: RuntimeMetricsProvider = { RuntimeMetrics.ZERO },
@@ -186,11 +197,34 @@ object AgentAssembly {
                 null
             }
 
+        // 交付命令执行器（FR-165，见 ADR-0069）：注入了 blob 流式传输且 plugins 基目录有效（能定位服务器根）时装配。
+        // 服务器根 = pluginsBase 的父目录（交付相对路径相对服务器根）；备份 / 临时目录落 agent 自身 dataFolder 之下
+        // （spec §4.7.1，避免被资产扫描漏掉致自我指涉）。blobUrl 由 sha256 拼流式端点，authHeaders 复用 apiClient 鉴权真源。
+        val deliveryExecutor: DeliveryCommandExecutor? =
+            if (blobStreamTransport != null && pluginsBaseValid) {
+                val serverRoot = pluginsBase.parentFile ?: pluginsBase
+                val resolver = DeliveryTargetResolver(serverRoot, adapter.dataFolder())
+                val blobUrl: (String) -> String = { sha -> "${settings.primaryEndpoint()}/beacon/v2/stream/delivery/blobs/$sha" }
+                val authHeaders: () -> Map<String, String> = { apiClient.agentAuthHeaders(identity) }
+                val pipeline =
+                    DeliveryPipeline(
+                        uploader = DeliveryUploader(blobStreamTransport, resolver, blobUrl, authHeaders, adapter),
+                        downloader = DeliveryDownloader(blobStreamTransport, blobUrl, authHeaders, adapter),
+                        backupManager = DeliveryBackupManager(File(adapter.dataFolder(), DELIVERY_BACKUPS_DIR), resolver, codec, adapter),
+                        overwriter = DeliveryOverwriter(resolver),
+                        tempRoot = File(adapter.dataFolder(), DELIVERY_TMP_DIR),
+                    )
+                DeliveryCommandExecutor(identity, apiClient, adapter, pipeline)
+            } else {
+                null
+            }
+
         // 反向抓取执行器（FR-39，见 ADR-0027）：仅在 plugins 基目录有效时装配（与文件树同一 fail-closed 守卫，
         // 避免从错误目录读盘上传）。读盘委托 adapter.readPluginsTree（壳层实现 FS 级路径安全）。
         // 取日志（FR-88）/ 强制重同步（FR-91）/ 文件资产重扫（FR-163）不依赖 plugins 基目录有效性；故执行器始终装配以响应这些命令。
         // 反向抓取（读盘）仍受 pluginsBaseValid fail-closed 守卫：基目录无效时禁读盘上传（避免从错误目录读），
         // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config / asset-rescan 不受影响。各命令复用同一命令通路与单飞排空。
+        // 交付命令（FR-165）同经此单一拉取点委派给 deliveryExecutor 执行（避免另起拉取循环与命令队列争抢）。
         val reverseFetchExecutor =
             ReverseFetchExecutor(
                 identity,
@@ -201,6 +235,8 @@ object AgentAssembly {
                 reverseFetchEnabled = pluginsBaseValid,
                 // 文件资产重扫回调（FR-163）：协调器存在（assets 启用且基目录有效）才派发，否则回 false（命令回传 ok=false）。
                 onAssetRescan = { force -> assetScanCoordinator?.forceScanNow(force) ?: false },
+                // 交付命令执行器（FR-165）：注入了 blob 流式传输时委派，否则 null（收到 delivery_* 仅 warn 忽略）。
+                deliveryExecutor = deliveryExecutor,
             )
 
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
@@ -293,4 +329,10 @@ object AgentAssembly {
 
     /** 候选快照落盘文件名（FR-148，落 agent 数据目录，与配置快照平行）。 */
     private const val CANDIDATES_SNAPSHOT_FILE = "candidates-snapshot.json"
+
+    /** 交付本地备份区目录名（FR-165，spec §4.7.1；落 agent 自身 dataFolder 之下）。 */
+    private const val DELIVERY_BACKUPS_DIR = "delivery-backups"
+
+    /** 交付下载临时目录名（FR-165，spec §4.5.3；落 agent 自身 dataFolder 之下，校验齐全才覆盖）。 */
+    private const val DELIVERY_TMP_DIR = "delivery-tmp"
 }

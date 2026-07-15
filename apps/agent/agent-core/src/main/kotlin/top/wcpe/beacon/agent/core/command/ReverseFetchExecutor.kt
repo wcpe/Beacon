@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.command
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.delivery.DeliveryCommandExecutor
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.log.AgentLogBuffer
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -40,6 +41,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @param onAssetRescan       文件资产重扫回调（FR-163，可选；为 null 时不响应 asset-rescan，按未知能力忽略）。
  *                            入参 force（忽略 mtime 缓存全部重哈希），由装配方注入扫描协调器 forceScanNow 闭包。
  *                            返回 true=已派发；false=未启用 / 内部失败（runAssetRescan 据此回传 ok=false，不误报 done）。
+ * @param deliveryExecutor    交付命令执行器（FR-165，可选；为 null 时不响应 delivery_* 命令，按未知能力忽略）。
+ *                            交付命令统一从本执行器这**单一拉取点**委派给它执行（避免另起拉取循环与命令队列争抢）。
  */
 class ReverseFetchExecutor(
     private val identity: AgentIdentity,
@@ -49,6 +52,7 @@ class ReverseFetchExecutor(
     private val onResyncConfig: (() -> Boolean)? = null,
     private val reverseFetchEnabled: Boolean = true,
     private val onAssetRescan: ((Boolean) -> Boolean)? = null,
+    private val deliveryExecutor: DeliveryCommandExecutor? = null,
 ) {
     /** 单飞门：任意时刻只允许一条抓取流在跑（command-pending 与 READY 并发触发时去重）。 */
     private val running = AtomicBoolean(false)
@@ -105,6 +109,11 @@ class ReverseFetchExecutor(
         // 文件资产内容读取命令（FR-164）：读单文件内容 + 二进制 / 截断标记回传供预览 / diff，纯只读、不写盘。
         if (command.type == AgentCommand.TYPE_ASSET_READ) {
             runAssetRead(command)
+            return true
+        }
+        // 交付命令（FR-165，见 ADR-0069）：单一拉取点委派给交付执行器执行（上传 / 推送 / 生效 / 回滚）。
+        if (AgentCommand.isDeliveryType(command.type)) {
+            runDelivery(command)
             return true
         }
         if (command.type != AgentCommand.TYPE_INGEST_PLUGINS) {
@@ -379,6 +388,21 @@ class ReverseFetchExecutor(
         } else {
             adapter.warn("文件资产内容回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
+    }
+
+    /**
+     * 交付命令阶段（FR-165，见 ADR-0069）：委派给 [deliveryExecutor] 执行上传 / 推送 / 生效 / 回滚全流程，
+     * 回执由交付执行器内部经交付回执端点上报（不复用反向抓取的命令结果端点）。
+     *
+     * 未注入交付执行器（数据面未启用 / 旧装配 / 测试桩）→ 记 warn 忽略（控制面按命令超时清理），与未知命令等效。
+     */
+    private fun runDelivery(command: AgentCommand) {
+        val executor = deliveryExecutor
+        if (executor == null) {
+            adapter.warn("收到交付命令但交付数据面未启用（忽略）：id=${command.id}，type=${command.type}")
+            return
+        }
+        executor.execute(command)
     }
 
     /** 把列目录结果映射为可序列化 Map（FR-110；键名与控制面代理透传给前端的形状一致）。 */

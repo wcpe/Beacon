@@ -12,6 +12,7 @@ import taboolib.common.platform.function.submitAsync
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
+import top.wcpe.beacon.agent.adapters.OkHttpBlobStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
@@ -165,6 +166,8 @@ object BeaconAgentBukkit : Plugin() {
                     effectiveConfigView = view,
                     // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
                     streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                    // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
+                    blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
                     // 运行指标供给（FR-32 / FR-144）：内存 / CPU 现采，在线 / TPS 取自主线程原子埋点（不在采样线程调 Bukkit API）。
                     metricsProvider = { BukkitMetricsCollector.sample(instrumentation.currentTps(), instrumentation.onlineCount()) },
                     // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把

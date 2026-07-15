@@ -3,12 +3,18 @@ package top.wcpe.beacon.agent.core.client
 import top.wcpe.beacon.agent.core.browse.AssetContent
 import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.command.AssetEntry
+import top.wcpe.beacon.agent.core.command.DeliveryCommandPayload
 import top.wcpe.beacon.agent.core.command.IngestCommandPayload
 import top.wcpe.beacon.agent.core.command.IngestFile
 import top.wcpe.beacon.agent.core.command.ScanFile
 import top.wcpe.beacon.agent.core.config.ConfigItem
 import top.wcpe.beacon.agent.core.config.EffectiveResult
 import top.wcpe.beacon.agent.core.connection.ConnectionEvent
+import top.wcpe.beacon.agent.core.delivery.DeliveryManifestFile
+import top.wcpe.beacon.agent.core.delivery.DeliveryStageReport
+import top.wcpe.beacon.agent.core.delivery.DeliveryTargetManifest
+import top.wcpe.beacon.agent.core.delivery.DeliveryUploadItem
+import top.wcpe.beacon.agent.core.delivery.DeliveryUploadManifest
 import top.wcpe.beacon.agent.core.filetree.FileContent
 import top.wcpe.beacon.agent.core.filetree.FileManifest
 import top.wcpe.beacon.agent.core.filetree.FileManifestEntry
@@ -1189,6 +1195,133 @@ class BeaconApiClient(
     }
 
     /**
+     * agent 面鉴权头（X-Beacon-Token + v2 X-Beacon-Identity / X-Beacon-Boot），供交付流式数据面
+     * （[top.wcpe.beacon.agent.core.transport.BlobStreamTransport]）复用同一鉴权真源（FR-165，见 ADR-0069）。
+     *
+     * 不含 Content-Type：blob PUT 的内容类型由流式适配器按 octet-stream 设置，本头只承载鉴权。
+     */
+    fun agentAuthHeaders(identity: AgentIdentity): Map<String, String> = headers(withBody = false, identity = identity)
+
+    /**
+     * 拉取模板源待上传 blob 清单：GET /beacon/v2/agent/delivery/orders/{id}/upload-manifest（FR-165，spec §5.2）。
+     * 同步调用，请在异步线程使用。
+     *
+     * 200 返回待上传项（path/sha256/size，已就绪 blob 不在列）；其它（403 非模板源 / 404 单不存在 / 连接失败）返回 null
+     * （交付上传流程据此回执 failed）。
+     */
+    fun fetchDeliveryUploadManifest(
+        identity: AgentIdentity,
+        orderId: Long,
+    ): DeliveryUploadManifest? {
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = "$base/beacon/v2/agent/delivery/orders/$orderId/upload-manifest",
+                    headers = headers(withBody = false, identity = identity),
+                    body = null,
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return null
+        if (resp.statusCode != 200) return null
+        return parseDeliveryUploadManifest(resp.body)
+    }
+
+    /**
+     * 拉取目标本服差异清单：GET /beacon/v2/agent/delivery/orders/{id}/manifest（FR-165，spec §5.2）。
+     * 同步调用，请在异步线程使用。
+     *
+     * 200 返回文件差异项（path/action/sha256/size）与生效方式（配置项摘要 M4 消费，本期不解析）；
+     * 其它（403 非目标 / 404 / 连接失败）返回 null（推送流程据此回执 failed）。
+     */
+    fun fetchDeliveryManifest(
+        identity: AgentIdentity,
+        orderId: Long,
+    ): DeliveryTargetManifest? {
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "GET",
+                    url = "$base/beacon/v2/agent/delivery/orders/$orderId/manifest",
+                    headers = headers(withBody = false, identity = identity),
+                    body = null,
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return null
+        if (resp.statusCode != 200) return null
+        return parseDeliveryManifest(resp.body)
+    }
+
+    /**
+     * 回执交付阶段结果：POST /beacon/v2/agent/delivery/orders/{id}/result（FR-165，spec §5.2）。
+     * 同步调用，请在异步线程使用。
+     *
+     * 报文字段（phase / status / 计数 / backupPresent / 脱敏 error）打包在 [report] 中。
+     * 204 视作成功；其它（命令态不符 / 连接失败）返回 false（best-effort，控制面按命令超时清理兜底）。
+     */
+    fun postDeliveryResult(
+        identity: AgentIdentity,
+        orderId: Long,
+        report: DeliveryStageReport,
+    ): Boolean {
+        val body =
+            buildMap<String, Any?> {
+                put("phase", report.phase)
+                put("status", report.status)
+                put("changedFileCount", report.changedFileCount)
+                put("skippedFileCount", report.skippedFileCount)
+                put("backupPresent", report.backupPresent)
+                put("error", report.error)
+            }
+        val resp =
+            exec(
+                HttpRequest(
+                    method = "POST",
+                    url = "$base/beacon/v2/agent/delivery/orders/$orderId/result",
+                    headers = headers(withBody = true, identity = identity),
+                    body = codec.encode(body),
+                    readTimeoutMs = settings.requestTimeoutMs,
+                ),
+            ) ?: return false
+        return resp.statusCode == 204
+    }
+
+    /** 解析待上传清单响应（orderId + items[path/sha256/size]，camelCase 键，缺失项按空 / 0 兜底）。 */
+    private fun parseDeliveryUploadManifest(jsonBody: String): DeliveryUploadManifest {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        val items =
+            JsonTree.asList(obj["items"]).map { raw ->
+                val itemObj = JsonTree.asObject(raw)
+                DeliveryUploadItem(
+                    path = JsonTree.strOr(itemObj, "path", ""),
+                    sha256 = JsonTree.strOr(itemObj, "sha256", ""),
+                    sizeBytes = JsonTree.longOr(itemObj, "size", 0L),
+                )
+            }
+        return DeliveryUploadManifest(orderId = JsonTree.longOr(obj, "orderId", 0L), items = items)
+    }
+
+    /** 解析目标差异清单响应（orderId + activationMethod + files[path/action/sha256/size]；configs 归 M4，不解析）。 */
+    private fun parseDeliveryManifest(jsonBody: String): DeliveryTargetManifest {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        val files =
+            JsonTree.asList(obj["files"]).map { raw ->
+                val fileObj = JsonTree.asObject(raw)
+                DeliveryManifestFile(
+                    path = JsonTree.strOr(fileObj, "path", ""),
+                    action = JsonTree.strOr(fileObj, "action", ""),
+                    sha256 = JsonTree.strOr(fileObj, "sha256", ""),
+                    sizeBytes = JsonTree.longOr(fileObj, "size", 0L),
+                )
+            }
+        return DeliveryTargetManifest(
+            orderId = JsonTree.longOr(obj, "orderId", 0L),
+            activationMethod = JsonTree.strOr(obj, "activationMethod", ""),
+            files = files,
+        )
+    }
+
+    /**
      * 执行请求；连接级异常统一吞为 null（由上层转 Failed/退避）。
      *
      * 吞异常前把"类名 + 消息"记入 [lastConnectFailure]，调用方可经 [connectFailReason]
@@ -1299,9 +1432,14 @@ class BeaconApiClient(
     private fun parsePendingCommand(jsonBody: String): AgentCommand {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
         val payloadObj = JsonTree.asObject(obj["payload"])
+        val type = JsonTree.strOr(obj, "type", "")
+        // 交付命令（FR-165）：payload 只含 orderId，解析到独立的 DeliveryCommandPayload（不膨胀 IngestCommandPayload）。
+        val deliveryPayload =
+            if (AgentCommand.isDeliveryType(type)) DeliveryCommandPayload(orderId = JsonTree.longOr(payloadObj, "orderId", 0L)) else null
         return AgentCommand(
             id = JsonTree.longOr(obj, "id", 0L),
-            type = JsonTree.strOr(obj, "type", ""),
+            type = type,
+            deliveryPayload = deliveryPayload,
             payload =
                 IngestCommandPayload(
                     scope = JsonTree.strOr(payloadObj, "scope", ""),

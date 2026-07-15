@@ -9,14 +9,20 @@ package top.wcpe.beacon.agent.core.command
  * tail-logs（读 agent 自身日志环形缓冲快照回传，FR-88）、
  * resync-config（重拉控制面权威的有效配置/文件树/覆盖集并 apply，FR-91）。
  *
+ * 交付编排（FR-165，见 ADR-0069）新增四类命令（delivery_upload / delivery_push / delivery_activate /
+ * delivery_rollback）：其 payload 只含 orderId（控制信息，绝不含文件内容），解析到 [deliveryPayload]，
+ * 与 [IngestCommandPayload] 分离、不互相膨胀。
+ *
  * @param id      命令 id（回传结果时带回引用）
- * @param type    命令类型（ingest-plugins / tail-logs / resync-config）
+ * @param type    命令类型（ingest-plugins / tail-logs / resync-config / delivery_*）
  * @param payload 载荷（scope / group / target，见 [IngestCommandPayload]）
+ * @param deliveryPayload 交付命令专用载荷（仅 delivery_* 类型非空，见 [DeliveryCommandPayload]）
  */
 data class AgentCommand(
     val id: Long,
     val type: String,
     val payload: IngestCommandPayload,
+    val deliveryPayload: DeliveryCommandPayload? = null,
 ) {
     companion object {
         /** 反向抓取命令类型：抓取 plugins 文本配置回传 ingest（FR-39，见 ADR-0027）。 */
@@ -36,8 +42,38 @@ data class AgentCommand(
 
         /** 文件资产内容读取命令类型：读单文本文件回传供预览 / diff（FR-164，见 v2-file-assets.md §4.5；纯只读、不写盘）。 */
         const val TYPE_ASSET_READ = "asset-read"
+
+        /** 交付上传命令类型：模板源流式上传缺失 blob 到控制面中转存储（FR-165，见 ADR-0069 §4.5.2；snake_case 与控制面 enums 对齐）。 */
+        const val TYPE_DELIVERY_UPLOAD = "delivery_upload"
+
+        /** 交付推送命令类型：目标拉清单、覆盖前备份、流式下载 blob 后落盘覆盖（FR-165，见 §4.5.3）。 */
+        const val TYPE_DELIVERY_PUSH = "delivery_push"
+
+        /** 交付生效命令类型：目标按 activation_method 生效（FR-171，见 §4.6.1；M4 实现，M2 仅回执骨架）。 */
+        const val TYPE_DELIVERY_ACTIVATE = "delivery_activate"
+
+        /** 交付回滚命令类型：目标按备份 manifest 还原被覆盖 / 删除文件（FR-167，见 §4.7.2；M5 实现，M2 仅回执骨架）。 */
+        const val TYPE_DELIVERY_ROLLBACK = "delivery_rollback"
+
+        /** 判断某命令类型是否为交付命令（据此在解析时构建 [DeliveryCommandPayload]）。 */
+        fun isDeliveryType(type: String): Boolean =
+            type == TYPE_DELIVERY_UPLOAD ||
+                type == TYPE_DELIVERY_PUSH ||
+                type == TYPE_DELIVERY_ACTIVATE ||
+                type == TYPE_DELIVERY_ROLLBACK
     }
 }
+
+/**
+ * 交付命令专用载荷（FR-165，见 ADR-0069 §4.5.1）：payload 只含控制信息，**绝不含文件内容**。
+ *
+ * M2 仅含 orderId（完整清单经 agent 面 GET 拉取）；刻意不塞进 [IngestCommandPayload] 以免两个载荷互相膨胀。
+ *
+ * @param orderId 变更单 id（拉取清单 / 回执时引用）
+ */
+data class DeliveryCommandPayload(
+    val orderId: Long,
+)
 
 /**
  * ingest-plugins 命令载荷：ingest 落到哪个覆盖层 + 两段式抓取模式（FR-58，见 ADR-0037）。

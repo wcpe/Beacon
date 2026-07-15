@@ -12,6 +12,7 @@ import taboolib.common.platform.function.submitAsync
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
+import top.wcpe.beacon.agent.adapters.OkHttpBlobStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
@@ -175,6 +176,8 @@ object BeaconAgentBungee : Plugin() {
                     effectiveConfigView = view,
                     // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
                     streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                    // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
+                    blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
                     // 运行指标供给（FR-32）：上报时采代理在线人数 + JVM 内存 / CPU 真值（代理无 TPS，恒 0）。
                     metricsProvider = { BungeeMetricsCollector.sample() },
                     // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。

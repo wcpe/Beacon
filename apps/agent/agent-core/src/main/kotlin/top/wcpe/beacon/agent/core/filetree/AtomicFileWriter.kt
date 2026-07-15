@@ -65,6 +65,22 @@ object AtomicFileWriter {
     }
 
     /**
+     * 把已在盘上的源文件 [source] 原子移入 [target]（流式落盘变体，FR-165）：源已落盘（如下载临时文件），
+     * 不经内存、复用 [moveWithRetry] 重命名内核 + [fsyncDir]。父目录不存在则创建；重试耗尽仍失败抛 [IOException]。
+     *
+     * 与 [write] 的区别：[write] 接收字节数组（小文件 / 配置），本方法接收已存在的大文件、避免整读入内存。
+     */
+    fun moveInto(
+        source: File,
+        target: File,
+    ) {
+        val parent = target.parentFile
+        ensureParentDir(parent)
+        moveWithRetry(source.toPath(), target.toPath())
+        fsyncDir(parent)
+    }
+
+    /**
      * 确保父目录存在：不存在则尝试创建。创建失败后再复检一次——容忍并发线程已抢先把目录建好（mkdirs 返回 false 但目录确已存在）。
      * 仍缺失才抛 [IOException]。parent 为 null（target 无父路径）直接放行。
      */
