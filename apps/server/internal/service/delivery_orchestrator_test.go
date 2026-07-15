@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -524,6 +525,66 @@ func TestPrepareConfigBlobsDedupsPerTarget(t *testing.T) {
 	h.env.db.Model(&model.DeliveryBlob{}).Where("state = ?", model.DeliveryBlobStateReady).Count(&count)
 	if count != 1 {
 		t.Fatalf("同作用域两目标渲染相同明文应去重为 1 个 blob，实际 %d", count)
+	}
+}
+
+// TestOrchestratorConfigBlobDownloadAuthorized 配置灰度冻结工件下载授权端到端（ADR-0071，修复 push 阶段 config blob 恒 403）：
+// 含配置项单启动即落工件 → 目标可授权拉取渲染 config blob（含 HEAD），非目标 403，单转终态后不再授权。
+func TestOrchestratorConfigBlobDownloadAuthorized(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+	order := h.createApprovedConfigOrder(t, "配置灰度授权", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+		t.Fatalf("配置灰度单启动失败: %v", err)
+	}
+	// 从目标清单取渲染 config 文件项的 sha（即 agent push 阶段要下载的 blob）。
+	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	manifest, err := h.blob.TargetManifest(target, order)
+	if err != nil {
+		t.Fatalf("拉目标清单失败: %v", err)
+	}
+	var sha string
+	for i := range manifest.Files {
+		if manifest.Files[i].Path == "plugins/Gray/config.yml" {
+			sha = manifest.Files[i].SHA256
+		}
+	}
+	if sha == "" {
+		t.Fatalf("清单应含渲染 config 文件项: %+v", manifest.Files)
+	}
+	// 目标可授权下载（修复前此处恒 blob_forbidden）。
+	if err := h.blob.AuthorizeBlobDownload(target, sha); err != nil {
+		t.Fatalf("目标应可授权下载 config blob: %v", err)
+	}
+	// HEAD 经下载侧委派同样放行。
+	if err := h.blob.AuthorizeBlobHead(target, sha); err != nil {
+		t.Fatalf("目标应可授权 HEAD config blob: %v", err)
+	}
+	// 非目标 t-2 不授权。
+	nonTarget := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-2", Kind: model.ServerKindBackend}
+	if err := h.blob.AuthorizeBlobDownload(nonTarget, sha); !errors.Is(err, apperr.ErrDeliveryBlobForbidden) {
+		t.Fatalf("非目标应 blob_forbidden，实际 %v", err)
+	}
+	// 单转终态（completed 非活动）后不再授权（保留期由清理护栏另管）。
+	setOrderStatus(t, h.env.db, order, model.ChangeOrderStatusCompleted)
+	if err := h.blob.AuthorizeBlobDownload(target, sha); !errors.Is(err, apperr.ErrDeliveryBlobForbidden) {
+		t.Fatalf("单转终态后应 blob_forbidden，实际 %v", err)
+	}
+}
+
+// TestOrchestratorConfigManifestMissingArtifact 含配置项但工件未准备时清单明确报错（ADR-0071，不静默漏发配置）。
+// 直接固化目标（使 isOrderTarget 走快照命中）但不跑 PrepareConfigBlobs，模拟 payload 准备缺口。
+func TestOrchestratorConfigManifestMissingArtifact(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+	order := h.createApprovedConfigOrder(t, "工件未准备", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	mustCreate(t, h.env.db, &model.ChangeTarget{
+		OrderID: order, BatchID: 1, ServerID: "t-1", Status: model.ChangeTargetStatusPending,
+	})
+
+	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	if _, err := h.blob.TargetManifest(target, order); !errors.Is(err, apperr.ErrDeliveryConfigArtifactMissing) {
+		t.Fatalf("工件未准备应返回 config_artifact_missing，实际 %v", err)
 	}
 }
 

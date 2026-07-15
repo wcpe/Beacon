@@ -181,6 +181,37 @@ func TestDeliveryBlobCleanerTerminalAndProtect(t *testing.T) {
 	}
 }
 
+// TestDeliveryBlobCleanerProtectsConfigArtifact 清理器保护被非终态单以 config 工件引用的 blob（ADR-0071）：
+// 即便 config 项 sha 不落 change_order_item，其冻结工件也把该 blob 纳入保留期保护，不被误删。
+func TestDeliveryBlobCleanerProtectsConfigArtifact(t *testing.T) {
+	svc, db := newBlobTestSvc(t, looseBlobSettings())
+	cleaner := NewDeliveryBlobCleaner(svc, repository.NewAuditLogRepository(db))
+
+	content := []byte("rendered-config-plaintext")
+	sha := shaOf(content)
+	mustStore(t, svc, sha, content)
+	order := model.ChangeOrder{NamespaceID: 1, Title: "cfg", Status: model.ChangeOrderStatusRolling}
+	if err := db.Create(&order).Error; err != nil {
+		t.Fatalf("建活动单失败: %v", err)
+	}
+	if err := db.Create(&model.DeliveryConfigArtifact{
+		OrderID: order.ID, ServerID: "t-1", Path: "plugins/Gray/config.yml", SHA256: sha, SizeBytes: int64(len(content)),
+	}).Error; err != nil {
+		t.Fatalf("落配置工件失败: %v", err)
+	}
+	// 引用时间推到保留期外，若无护栏则会被清理。
+	old := time.Now().UTC().Add(-30 * 24 * time.Hour)
+	if err := db.Model(&model.DeliveryBlob{}).Where("1 = 1").Update("last_referenced_at", old).Error; err != nil {
+		t.Fatalf("回拨引用时间失败: %v", err)
+	}
+
+	cleaner.SweepOnce()
+
+	if _, err := svc.Head(sha); err != nil {
+		t.Fatalf("活动单 config 工件引用的 blob 应被保护，实际被删 %v", err)
+	}
+}
+
 // deleteBlobFile 删除 blob 的磁盘文件（模拟元数据与磁盘不一致）。
 func deleteBlobFile(svc *DeliveryBlobService, sha string) error {
 	return os.Remove(svc.blobPath(sha))

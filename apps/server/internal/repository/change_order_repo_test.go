@@ -24,12 +24,12 @@ func newDeliveryTestDB(t *testing.T) *gorm.DB {
 	}
 	if err := db.AutoMigrate(
 		&model.ChangeOrder{}, &model.ChangeOrderItem{},
-		&model.ChangeBatch{}, &model.ChangeTarget{}, &model.DeliveryBlob{},
+		&model.ChangeBatch{}, &model.ChangeTarget{}, &model.DeliveryBlob{}, &model.DeliveryConfigArtifact{},
 	); err != nil {
 		t.Fatalf("迁移交付编排表失败: %v", err)
 	}
 	// 清表隔离（shared cache 下多测试共享同一内存库）。
-	for _, tbl := range []string{"change_order", "change_order_item", "change_batch", "change_target", "delivery_blob"} {
+	for _, tbl := range []string{"change_order", "change_order_item", "change_batch", "change_target", "delivery_blob", "delivery_config_artifact"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
