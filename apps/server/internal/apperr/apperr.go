@@ -296,6 +296,14 @@ var (
 	// ErrChangeNotCreator 仅创建人可撤回变更单（spec §4.1）。
 	ErrChangeNotCreator = New(http.StatusForbidden, "not_creator", "仅创建人可撤回变更单")
 
+	// —— M3 灰度编排（FR-166，spec §4.1/§4.4，见 ADR-0071）——
+	// ErrChangeBatchNotFound 批次不存在（推进门确认引用了不存在的批次号）。
+	ErrChangeBatchNotFound = New(http.StatusNotFound, "batch_not_found", "批次不存在")
+	// ErrChangeResumeModeRequired 熔断 / 准备失败暂停继续时必须指定恢复模式与原因（spec §4.4.5）。
+	ErrChangeResumeModeRequired = New(http.StatusBadRequest, "resume_mode_required", "继续熔断 / 准备失败暂停必须指定 mode（retry_failed / skip_failed）与原因")
+	// ErrChangeConfigGrayUnsupported M3 暂不支持含配置变更项的变更单启动（配置灰度 pin 与正式切版为 M4 交付，spec §4.6.2 / ADR-0071）。
+	ErrChangeConfigGrayUnsupported = New(http.StatusConflict, "config_gray_unsupported", "本版暂不支持含配置变更项的变更单启动（配置灰度切版为后续交付）")
+
 	// —— 交付数据面（FR-165，spec §4.5/§5.3，见 ADR-0069；code 沿用 agent 面小写下划线约定）——
 	// ErrDeliveryBlobNotFound 中转 blob 不存在或未就绪（HEAD/GET 未命中，uploading 视同不存在）。
 	ErrDeliveryBlobNotFound = New(http.StatusNotFound, "blob_not_found", "blob 不存在或未就绪")

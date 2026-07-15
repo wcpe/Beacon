@@ -35,6 +35,12 @@ type deliverySettings interface {
 	GetBool(key string) bool
 }
 
+// changeObserveProvider 是观察窗实时序列的窄依赖（由 DeliveryOrchestrator 实现，可选注入；
+// 未注入即返回空形态——M1 读端点契约不变）。M3 装配后 /observe 由推进器内存缓冲接真。
+type changeObserveProvider interface {
+	ObserveSeries(orderID uint) *ChangeObserveView
+}
+
 // ChangeConfigInput 是配置变更项输入（PATCH configChanges 整组替换；from 锚点由服务端按 ADR-0071 计算，
 // 客户端携带的 configFromVersionId 不采信）。
 type ChangeConfigInput struct {
@@ -71,6 +77,8 @@ type DeliveryOrderService struct {
 	auditRepo *repository.AuditLogRepository
 	settings  deliverySettings
 	health    *healthview.Store
+	// observe 观察窗实时序列提供方（M3 装配 DeliveryOrchestrator；未注入则 /observe 返回空形态）。
+	observe changeObserveProvider
 }
 
 // NewDeliveryOrderService 构造服务。
@@ -80,6 +88,9 @@ func NewDeliveryOrderService(db *gorm.DB, repo *repository.ChangeOrderRepository
 	return &DeliveryOrderService{db: db, repo: repo, versions: versions, auditRepo: auditRepo,
 		settings: settings, health: health}
 }
+
+// SetObserveProvider 注入观察窗实时序列提供方（M3 启动时装配推进器；未注入则 /observe 恒空形态）。
+func (s *DeliveryOrderService) SetObserveProvider(p changeObserveProvider) { s.observe = p }
 
 // changeIllegalState 构造状态机非法迁移错误（409，message 对齐 devmock）。
 func changeIllegalState(current, action string) *apperr.Error {
@@ -428,22 +439,30 @@ func (s *DeliveryOrderService) Targets(id uint, q repository.ChangeTargetQuery) 
 	return &ChangeTargetPageView{Items: changeTargetViews(targets, batchNoByID), Total: total}, nil
 }
 
-// Observe 当前批观察窗数据（GET .../observe）：M1 无执行批次，恒返回空形态；M3 接真实观察窗内存序列。
+// Observe 当前批观察窗数据（GET .../observe）：装配推进器后由其内存缓冲接真（当前批逐目标健康 / TPS / 告警序列，
+// spec §4.6.3）；未装配（M1 读端点契约）或无活动批返回空形态（数组非 null）。
 func (s *DeliveryOrderService) Observe(id uint) (*ChangeObserveView, error) {
 	if _, err := s.requireOrder(id); err != nil {
 		return nil, err
 	}
+	if s.observe != nil {
+		return s.observe.ObserveSeries(id), nil
+	}
 	return &ChangeObserveView{BatchNo: nil, ObserveStartedAt: nil, Targets: []ChangeObserveTargetSeries{}}, nil
 }
 
-// Events 进度事件（GET .../events）：M1 由单生命周期字段确定性派生 order_status 事件
-// （只反映真实时间戳，不造假数据）；M3 换真实事件流 + SSE。
+// Events 进度事件（GET .../events，轮询形态）：由单生命周期 + 批次时间戳确定性派生（只反映真实时间戳，不造假数据）；
+// 逐目标实时事件走 SSE 流（/events 的 text/event-stream 协商，见 handler），此处不含（1000+ 目标会撑爆时间线）。
 func (s *DeliveryOrderService) Events(id uint) (*ChangeEventsView, error) {
 	order, err := s.requireOrder(id)
 	if err != nil {
 		return nil, err
 	}
-	return &ChangeEventsView{Events: deriveChangeOrderEvents(order)}, nil
+	batches, err := s.repo.ListBatches(id)
+	if err != nil {
+		return nil, err
+	}
+	return &ChangeEventsView{Events: deriveChangeEventsFull(order, batches)}, nil
 }
 
 // deriveChangeOrderEvents 按生命周期字段派生事件序列（seq 从 1 递增；参考 devmock seedEvents 派生法）。

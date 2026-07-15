@@ -188,6 +188,12 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/change-orders/{id}/withdraw":  {},
 	"POST /admin/v2/change-orders/{id}/approve":   {},
 	"POST /admin/v2/change-orders/{id}/reject":    {},
+	// M3 灰度编排控制操作：各在 service 层写专项审计（start/pause/resume/cancel/batch_confirm），兜底跳过防双记。
+	"POST /admin/v2/change-orders/{id}/start":                     {},
+	"POST /admin/v2/change-orders/{id}/pause":                     {},
+	"POST /admin/v2/change-orders/{id}/resume":                    {},
+	"POST /admin/v2/change-orders/{id}/cancel":                    {},
+	"POST /admin/v2/change-orders/{id}/batches/{batchNo}/confirm": {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

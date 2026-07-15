@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
@@ -11,18 +13,20 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-// DeliveryAdminHandler 处理交付编排 V2 变更单管理面端点（FR-162，spec §5.1，M1：
-// 组单 CRUD / 差异扫描 / 影响预览 / 审批链路 / targets / observe / events / file-diff）。
+// DeliveryAdminHandler 处理交付编排 V2 变更单管理面端点（FR-162/166/171，spec §5.1）：
+// 组单 CRUD / 差异扫描 / 影响预览 / 审批链路 / 启动 / 暂停 / 继续 / 终止 / 批次推进门 / targets / observe / events / file-diff。
 // 薄 handler——只解析请求、调 service、经 render 统一写出；响应视图逐字对齐 contracts delivery.ts。
-// M3+ 的 start / pause / resume / cancel / batches confirm / rollback 端点本切片不建路由。
+// M5 的整单回滚（rollback / rollback/finish）端点本版不建路由。
 type DeliveryAdminHandler struct {
 	orders *service.DeliveryOrderService
 	diff   *service.DeliveryDiffService
+	orch   *service.DeliveryOrchestrator
 }
 
-// NewDeliveryAdminHandler 构造处理器。
-func NewDeliveryAdminHandler(orders *service.DeliveryOrderService, diff *service.DeliveryDiffService) *DeliveryAdminHandler {
-	return &DeliveryAdminHandler{orders: orders, diff: diff}
+// NewDeliveryAdminHandler 构造处理器（orch 为 M3 灰度编排推进器，承载 start / pause / resume / cancel / confirm 与 SSE）。
+func NewDeliveryAdminHandler(orders *service.DeliveryOrderService, diff *service.DeliveryDiffService,
+	orch *service.DeliveryOrchestrator) *DeliveryAdminHandler {
+	return &DeliveryAdminHandler{orders: orders, diff: diff, orch: orch}
 }
 
 // optionalString 区分 JSON 字段「缺省」与「显式 null / 值」：缺省时 set=false；显式 null 视同空串（清空语义）。
@@ -258,6 +262,62 @@ func (h *DeliveryAdminHandler) lifecycle(w http.ResponseWriter, r *http.Request,
 	render.WriteJSON(w, http.StatusOK, view)
 }
 
+// Start 处理 POST /admin/v2/change-orders/{id}/start：启动灰度（二次确认原因可选，冲突守卫 + 目标固化 + payload 准备）。
+func (h *DeliveryAdminHandler) Start(w http.ResponseWriter, r *http.Request) {
+	reason := decodeReason(r)
+	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
+		return h.orch.Start(id, reason, operator, ip)
+	})
+}
+
+// Pause 处理 POST /admin/v2/change-orders/{id}/pause：人工暂停（不打断在途目标）。
+func (h *DeliveryAdminHandler) Pause(w http.ResponseWriter, r *http.Request) {
+	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
+		return h.orch.Pause(id, operator, ip)
+	})
+}
+
+// resumeBody 是继续请求体（mode / reason；熔断与准备失败场景由 service 校验必填）。
+type resumeBody struct {
+	Mode   string `json:"mode"`
+	Reason string `json:"reason"`
+}
+
+// Resume 处理 POST /admin/v2/change-orders/{id}/resume：继续暂停单（熔断 / 准备失败需 mode / reason）。
+func (h *DeliveryAdminHandler) Resume(w http.ResponseWriter, r *http.Request) {
+	var body resumeBody
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
+		return h.orch.Resume(id, body.Mode, body.Reason, operator, ip)
+	})
+}
+
+// Cancel 处理 POST /admin/v2/change-orders/{id}/cancel：紧急终止（原因必填 + 二次确认）。
+func (h *DeliveryAdminHandler) Cancel(w http.ResponseWriter, r *http.Request) {
+	reason := decodeReason(r)
+	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
+		return h.orch.Cancel(id, reason, operator, ip)
+	})
+}
+
+// ConfirmBatch 处理 POST /admin/v2/change-orders/{id}/batches/{batchNo}/confirm：推进门放行（末批确认即完成整单）。
+func (h *DeliveryAdminHandler) ConfirmBatch(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	batchNo, ok := parseUintParam(w, r, "batchNo")
+	if !ok {
+		return
+	}
+	view, err := h.orch.ConfirmBatch(id, int(batchNo), auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
+}
+
 // Targets 处理 GET /admin/v2/change-orders/{id}/targets：目标分页（batch / status / serverId 过滤；未启动为空页）。
 func (h *DeliveryAdminHandler) Targets(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")
@@ -293,10 +353,16 @@ func (h *DeliveryAdminHandler) Observe(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, view)
 }
 
-// Events 处理 GET /admin/v2/change-orders/{id}/events：进度事件（M1 生命周期字段确定性派生，轮询形态）。
+// Events 处理 GET /admin/v2/change-orders/{id}/events：进度事件。
+// 按 Accept 内容协商：text/event-stream → 真 SSE 实时推流（推进器事件 Hub）；否则回 JSON 派生快照（断线回退轮询形态）。
+// SSE 分支先校验单存在（设 SSE 头前返 404 JSON），再补发派生快照 + 流式实时事件直到断连。
 func (h *DeliveryAdminHandler) Events(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
+		return
+	}
+	if h.orch != nil && wantsEventStream(r) {
+		h.streamEvents(w, r, id)
 		return
 	}
 	view, err := h.orders.Events(id)
@@ -305,6 +371,65 @@ func (h *DeliveryAdminHandler) Events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, view)
+}
+
+// streamEvents 以 SSE 推送某单实时进度：先校验存在与流式支持，再交推进器补发快照 + 流实时事件。
+func (h *DeliveryAdminHandler) streamEvents(w http.ResponseWriter, r *http.Request, id uint) {
+	if _, err := h.orders.Get(id); err != nil { // 设 SSE 头前校验存在，404 走 JSON 错误出口
+		render.WriteError(w, r, err)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		render.WriteError(w, r, apperr.ErrStreamingUnsupported)
+		return
+	}
+	writeDeliverySSEHeaders(w)
+	flusher.Flush()
+	_ = h.orch.StreamEvents(r.Context(), id, &deliverySSESink{w: w, flusher: flusher})
+}
+
+// wantsEventStream 判客户端是否请求 SSE（Accept 含 text/event-stream）。
+func wantsEventStream(r *http.Request) bool {
+	return strings.Contains(r.Header.Get("Accept"), "text/event-stream")
+}
+
+// writeDeliverySSEHeaders 写 SSE 响应头（禁缓存 / keep-alive / 关代理缓冲）。
+func writeDeliverySSEHeaders(w http.ResponseWriter) {
+	hd := w.Header()
+	hd.Set("Content-Type", "text/event-stream; charset=utf-8")
+	hd.Set("Cache-Control", "no-cache")
+	hd.Set("Connection", "keep-alive")
+	hd.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+}
+
+// deliverySSESink 是交付进度 SSE 输出汇（写事件帧与保活注释）。
+type deliverySSESink struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+// Send 写一条 SSE 事件帧（event: 类型 / data: JSON）。
+func (s *deliverySSESink) Send(evt service.ChangeOrderEventView) error {
+	raw, err := json.Marshal(evt)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", evt.Type, raw); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}
+
+// Ping 写一条 SSE 保活注释（穿透代理缓冲、保持连接）。
+func (s *deliverySSESink) Ping() error {
+	if _, err := fmt.Fprint(s.w, ": keepalive\n\n"); err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
 }
 
 // FileDiff 处理 GET /admin/v2/change-orders/{id}/items/{itemId}/file-diff：

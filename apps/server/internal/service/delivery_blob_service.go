@@ -30,6 +30,12 @@ type deliveryBlobSettings interface {
 	GetInt(key string) int
 }
 
+// deliveryProgressWaker 是编排推进器唤醒的窄依赖（由 DeliveryOrchestrator 实现，M3 可选注入）：
+// agent 阶段回执落定后即时唤醒推进器重扫，由推进器单一驱动源推进 change_target / 批次（避免回执并发改状态）。
+type deliveryProgressWaker interface {
+	WakeOrder(orderID uint)
+}
+
 // flowLimiter 是热读上限的进程内计数信号量：每次 tryAcquire 按当前设置值判定，改设置即热生效。
 // 满则拒绝（由调用方回 429 让 agent 稍后重试），不排队挂起——与既有采集面背压（ingest busy）口径一致。
 type flowLimiter struct {
@@ -67,6 +73,8 @@ type DeliveryBlobService struct {
 	root      string
 	uploads   *flowLimiter
 	downloads *flowLimiter
+	// waker 编排推进器唤醒器（M3 可选注入；未注入则回执后不主动唤醒，靠推进器 ticker 兜底）。
+	waker deliveryProgressWaker
 }
 
 // NewDeliveryBlobService 构造服务（存储根默认 .beacon/delivery，可 SetRoot 覆盖）。
@@ -78,6 +86,9 @@ func NewDeliveryBlobService(db *gorm.DB, blobs *repository.DeliveryBlobRepositor
 		root: filepath.Clean(defaultDeliveryBlobRoot), uploads: &flowLimiter{}, downloads: &flowLimiter{},
 	}
 }
+
+// SetProgressWaker 注入编排推进器唤醒器（M3 启动时装配；未注入则回执后不主动唤醒）。
+func (s *DeliveryBlobService) SetProgressWaker(w deliveryProgressWaker) { s.waker = w }
 
 // SetRoot 覆盖中转存储根目录（主要供测试隔离；空串忽略）。
 func (s *DeliveryBlobService) SetRoot(root string) {

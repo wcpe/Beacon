@@ -303,28 +303,12 @@ func impactSummary(order *model.ChangeOrder, items []model.ChangeOrderItem, targ
 	return summary
 }
 
-// planImpactBatches 批次划分预览（spec §4.4.1）：percent 逐批向上取整、count 逐批固定台数，
-// 均不超过剩余；剩余全部进末批。同输入必同输出（可复现）。
+// planImpactBatches 批次划分预览（spec §4.4.1）：复用 planBatchCounts 切批（与启动固化落库同源，可复现）。
 func planImpactBatches(mode string, sizes []int, targetTotal int) []ChangeImpactBatchView {
-	result := make([]ChangeImpactBatchView, 0, len(sizes)+1)
-	remaining := targetTotal
-	for _, size := range sizes {
-		if remaining <= 0 {
-			break
-		}
-		raw := size
-		if mode == model.BatchModePercent {
-			raw = (targetTotal*size + 99) / 100
-		}
-		count := min(raw, remaining)
-		if count <= 0 {
-			continue
-		}
-		remaining -= count
-		result = append(result, ChangeImpactBatchView{BatchNo: len(result) + 1, Count: count})
-	}
-	if remaining > 0 {
-		result = append(result, ChangeImpactBatchView{BatchNo: len(result) + 1, Count: remaining})
+	counts := planBatchCounts(mode, sizes, targetTotal)
+	result := make([]ChangeImpactBatchView, 0, len(counts))
+	for i, count := range counts {
+		result = append(result, ChangeImpactBatchView{BatchNo: i + 1, Count: count})
 	}
 	return result
 }

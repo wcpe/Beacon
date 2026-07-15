@@ -296,7 +296,13 @@ func (s *DeliveryBlobService) ReceiveResult(id agentauth.Identity, orderID uint,
 		return errOrCommand(err)
 	}
 	if input.Phase == DeliveryPhaseUpload && input.Status == DeliveryResultSuccess {
-		return s.TouchReferences(order.ID) // 上传落定：刷新引用保护新 blob 不被保留期清理误删
+		if e := s.TouchReferences(order.ID); e != nil { // 上传落定：刷新引用保护新 blob 不被保留期清理误删
+			return e
+		}
+	}
+	// 命令落定后即时唤醒推进器：由其单一驱动源读命令终态推进 payload 准备 / change_target 状态机（M3）。
+	if s.waker != nil {
+		s.waker.WakeOrder(order.ID)
 	}
 	return nil
 }

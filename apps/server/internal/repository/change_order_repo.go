@@ -189,6 +189,129 @@ func (r *ChangeOrderRepository) ListBatches(orderID uint) ([]model.ChangeBatch, 
 	return batches, nil
 }
 
+// —— M3 编排推进写（FR-166，spec §4.1/§4.4；启动固化 + 批次 / 目标状态机 CAS 迁移）——
+
+// ListActiveOrders 取状态在给定集合内的全部变更单（编排推进器 drainActive 装载 rolling / paused 用；id 升序稳定）。
+func (r *ChangeOrderRepository) ListActiveOrders(statuses []string) ([]model.ChangeOrder, error) {
+	var orders []model.ChangeOrder
+	if err := r.db.Where("status IN ?", statuses).Order("id asc").Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
+}
+
+// CreateBatches 批量插入批次行（启动时一次性生成、执行中不重划，spec §4.4.1）。
+func (r *ChangeOrderRepository) CreateBatches(batches []model.ChangeBatch) error {
+	if len(batches) == 0 {
+		return nil
+	}
+	return r.db.CreateInBatches(&batches, 200).Error
+}
+
+// CreateTargets 批量插入目标行（启动时按 selector 解析固化快照，spec §4.3.1）。
+func (r *ChangeOrderRepository) CreateTargets(targets []model.ChangeTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
+	return r.db.CreateInBatches(&targets, 500).Error
+}
+
+// FindBatchByNo 按 (orderID, batchNo) 查批次；不存在返回 (nil, nil)。
+func (r *ChangeOrderRepository) FindBatchByNo(orderID uint, batchNo int) (*model.ChangeBatch, error) {
+	var batch model.ChangeBatch
+	err := r.db.Where("order_id = ? AND batch_no = ?", orderID, batchNo).First(&batch).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}
+
+// ListTargetsByOrder 取某单全部目标行（server_id 升序，编排推进逐服判定用；未启动恒为空集，无分页）。
+func (r *ChangeOrderRepository) ListTargetsByOrder(orderID uint) ([]model.ChangeTarget, error) {
+	var targets []model.ChangeTarget
+	if err := r.db.Where("order_id = ?", orderID).Order("server_id ASC").Find(&targets).Error; err != nil {
+		return nil, err
+	}
+	return targets, nil
+}
+
+// UpdateTargetCAS 按前置状态集合 CAS 迁移目标主状态与随迁字段：命中返回 true，前态不符返回 false。
+// updates 内须含 "status" 新值；并发推进靠 WHERE status IN 前态兜底（单一驱动源仍是推进器，此为幂等护栏）。
+func (r *ChangeOrderRepository) UpdateTargetCAS(id uint, from []string, updates map[string]any) (bool, error) {
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("id = ? AND status IN ?", id, from).
+		Updates(updates)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// UpdateBatchCAS 按前置状态集合 CAS 迁移批状态与随迁字段：命中返回 true，前态不符返回 false。
+func (r *ChangeOrderRepository) UpdateBatchCAS(id uint, from []string, updates map[string]any) (bool, error) {
+	res := r.db.Model(&model.ChangeBatch{}).
+		Where("id = ? AND status IN ?", id, from).
+		Updates(updates)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// UpdateBatchColumns 无条件更新批次列（计数刷新，按目标终态重算后幂等写回）。
+func (r *ChangeOrderRepository) UpdateBatchColumns(id uint, updates map[string]any) error {
+	return r.db.Model(&model.ChangeBatch{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// BulkUpdateTargetStatusByBatch 把某批内主状态在 from 集合内的目标批量改为 updates（熔断 / resume 重置用）；返回受影响数。
+func (r *ChangeOrderRepository) BulkUpdateTargetStatusByBatch(batchID uint, from []string, updates map[string]any) (int64, error) {
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("batch_id = ? AND status IN ?", batchID, from).
+		Updates(updates)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// BulkUpdateTargetStatusByOrder 把某单内主状态在 from 集合内的目标批量改为 updates（紧急终止把未开始目标置 skipped 用）；返回受影响数。
+func (r *ChangeOrderRepository) BulkUpdateTargetStatusByOrder(orderID uint, from []string, updates map[string]any) (int64, error) {
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND status IN ?", orderID, from).
+		Updates(updates)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// BulkUpdateBatchStatusByOrder 把某单内状态在 from 集合内的批次批量改为 updates（紧急终止把未开始批置 skipped 用）；返回受影响数。
+func (r *ChangeOrderRepository) BulkUpdateBatchStatusByOrder(orderID uint, from []string, updates map[string]any) (int64, error) {
+	res := r.db.Model(&model.ChangeBatch{}).
+		Where("order_id = ? AND status IN ?", orderID, from).
+		Updates(updates)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// ListActiveTargetServerIDs 取本 namespace 内「其他活动单（状态在 statuses 内、id ≠ excludeOrderID）」的全部目标 serverId
+// （启动冲突守卫：同一目标服同时只允许被一个活动单覆盖，ADR-0071 §4.1）。子查询 IN 一次取齐、禁循环查库。
+func (r *ChangeOrderRepository) ListActiveTargetServerIDs(namespaceID, excludeOrderID uint, statuses []string) ([]string, error) {
+	var ids []string
+	err := r.db.Model(&model.ChangeTarget{}).
+		Distinct().
+		Where("order_id IN (?)", r.db.Model(&model.ChangeOrder{}).Select("id").
+			Where("namespace_id = ? AND id <> ? AND status IN ?", namespaceID, excludeOrderID, statuses)).
+		Order("server_id asc").
+		Pluck("server_id", &ids).Error
+	return ids, err
+}
+
 // ListTargets 按批次 / 状态 / serverId 子串过滤分页取目标（server_id 升序），返回当页与总数。
 // 批次过滤按业务批次号经 change_batch 子查询映射到 batch_id（目标行不冗余 batch_no）。
 func (r *ChangeOrderRepository) ListTargets(orderID uint, q ChangeTargetQuery) ([]model.ChangeTarget, int64, error) {

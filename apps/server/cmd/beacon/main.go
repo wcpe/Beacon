@@ -408,7 +408,6 @@ func run() error {
 		repository.NewConfigLayerVersionRepository(db), auditRepo, settingsService, healthViewStore)
 	deliveryDiffService := service.NewDeliveryDiffService(db, changeOrderRepo,
 		repository.NewFileAssetRepository(db), auditRepo, assetPreviewService, healthViewStore)
-	deliveryHandler := handler.NewDeliveryAdminHandler(deliveryOrderService, deliveryDiffService)
 
 	// P9 M2 交付数据面装配（FR-165，见 ADR-0069）：全局 sha256 内容寻址 blob 中转存储 + 流式 / agent 面端点 + 后台清理器。
 	deliveryBlobRepo := repository.NewDeliveryBlobRepository(db)
@@ -416,6 +415,15 @@ func run() error {
 	deliveryStreamHandler := handler.NewDeliveryStreamHandler(deliveryBlobService)
 	deliveryAgentHandler := handler.NewDeliveryAgentHandler(deliveryBlobService)
 	deliveryBlobCleaner := service.NewDeliveryBlobCleaner(deliveryBlobService, auditRepo)
+
+	// P9 M3 灰度编排推进器装配（FR-166/171，见 v2-delivery-orchestration.md §4.1/§4.4/§4.6）：
+	// 进程内单 goroutine 驱动 rolling 单批次推进 → 命令下发 → 回执驱动三层状态机 → 熔断 / 推进门 → 完成；
+	// 回执经 blob 服务 SetProgressWaker 即时唤醒推进器（单一驱动源）、观察窗序列经 SetObserveProvider 供 /observe 接真。
+	deliveryOrchestrator := service.NewDeliveryOrchestrator(db, changeOrderRepo, deliveryBlobService,
+		commandRepo, auditRepo, healthViewStore, metricWindow, notifier)
+	deliveryBlobService.SetProgressWaker(deliveryOrchestrator)
+	deliveryOrderService.SetObserveProvider(deliveryOrchestrator)
+	deliveryHandler := handler.NewDeliveryAdminHandler(deliveryOrderService, deliveryDiffService, deliveryOrchestrator)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。
@@ -602,6 +610,8 @@ func run() error {
 	go reversibleOpSweeper.Run(ctx)
 	// P9 M2：交付中转 blob 清理器（FR-165，spec §4.5.4）：周期清终态超保留期 blob 与上传残留。
 	go deliveryBlobCleaner.Run(ctx)
+	// P9 M3：交付灰度编排推进器（FR-166，spec §4.1）：启动先按库内状态恢复 rolling / paused 单，再 ticker + 回执唤醒双驱动推进。
+	go deliveryOrchestrator.Run(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

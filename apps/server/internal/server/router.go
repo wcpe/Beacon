@@ -577,6 +577,12 @@ func registerV2DeliveryAdminRoutes(r chi.Router, h Handlers) {
 	r.Post("/change-orders/{id}/withdraw", h.Delivery.Withdraw)
 	r.Post("/change-orders/{id}/approve", h.Delivery.Approve)
 	r.Post("/change-orders/{id}/reject", h.Delivery.Reject)
+	// M3 灰度编排高风险操作（spec §4.8.1 高级：权限 + 原因 + 二次确认）：显式挂 requireFullRole 挡 readonly。
+	r.With(requireFullRole).Post("/change-orders/{id}/start", h.Delivery.Start)
+	r.With(requireFullRole).Post("/change-orders/{id}/pause", h.Delivery.Pause)
+	r.With(requireFullRole).Post("/change-orders/{id}/resume", h.Delivery.Resume)
+	r.With(requireFullRole).Post("/change-orders/{id}/cancel", h.Delivery.Cancel)
+	r.With(requireFullRole).Post("/change-orders/{id}/batches/{batchNo}/confirm", h.Delivery.ConfirmBatch)
 	r.Get("/change-orders/{id}/targets", h.Delivery.Targets)
 	r.Get("/change-orders/{id}/observe", h.Delivery.Observe)
 	r.Get("/change-orders/{id}/events", h.Delivery.Events)
