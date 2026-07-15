@@ -279,10 +279,15 @@ func (s *DeliveryOrchestrator) persistConfirm(order *model.ChangeOrder, batch *m
 			return errOrSkip(e, ok)
 		}
 		if last {
-			// 末批确认即单 completed。含 config_change 项的正式切版（清 pin + 记已交付版本，ADR-0071 §4.6.2）
-			// 是 M4 接缝——本版含配置项单已在启动被拒，此处纯文件单无切版动作。
+			// 末批确认即单 completed。含 config_change 项的正式切版（ADR-0071 决策4）：单 completed 后
+			// 「该作用域已交付版本 = to_version」由 FindLatestDeliveredToVersionID 从 completed 单历史反查、
+			// 无需另写版本指针；pin 清除 = 单不再活动自然清（灰度渲染只在活动期按 to_version 冻结一次）。
+			// 此处仅补一条配置切版审计供运维观测切了哪些作用域到哪个版本。
 			if _, e := repoTx.UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusRolling},
 				map[string]any{"status": model.ChangeOrderStatusCompleted, "finished_at": now}); e != nil {
+				return e
+			}
+			if e := s.auditConfigSwitch(tx, repoTx, order, nsCode, operator, clientIP); e != nil {
 				return e
 			}
 		} else if next := batchByNo(batches, batch.BatchNo+1); next != nil {
@@ -294,6 +299,33 @@ func (s *DeliveryOrchestrator) persistConfirm(order *model.ChangeOrder, batch *m
 		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderBatchConfirm, order.ID,
 			map[string]any{"orderId": order.ID, "batchNo": batch.BatchNo, "last": last})
 	})
+}
+
+// auditConfigSwitch 末批确认后为含配置项单记一条配置正式切版审计（ADR-0071 决策4）：
+// detail 列出各作用域的 from→to 版本指针（版本 id，绝不含配置明文，spec §4.8.2）；无配置项则空操作。
+func (s *DeliveryOrchestrator) auditConfigSwitch(tx *gorm.DB, repoTx *repository.ChangeOrderRepository,
+	order *model.ChangeOrder, nsCode, operator, clientIP string) error {
+	items, err := repoTx.ListItems(order.ID)
+	if err != nil {
+		return err
+	}
+	switches := make([]map[string]any, 0)
+	for i := range items {
+		if items[i].Kind != model.ChangeItemKindConfigChange {
+			continue
+		}
+		switches = append(switches, map[string]any{
+			"scopeKind":     derefString(items[i].ConfigScopeKind),
+			"scopeId":       items[i].ConfigScopeID,       // *uint（配置项非空）
+			"fromVersionId": items[i].ConfigFromVersionID, // *uint，可空 → null（首次交付无锚点）
+			"toVersionId":   items[i].ConfigToVersionID,   // *uint，正式切到的版本
+		})
+	}
+	if len(switches) == 0 {
+		return nil
+	}
+	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderConfigSwitch, order.ID,
+		map[string]any{"orderId": order.ID, "configSwitches": switches})
 }
 
 // —— 小工具 ——

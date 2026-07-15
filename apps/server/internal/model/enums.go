@@ -610,6 +610,8 @@ const (
 	ActionDeliveryOrderResume = "delivery.order.resume"
 	// 推进门放行确认
 	ActionDeliveryOrderBatchConfirm = "delivery.order.batch_confirm"
+	// 配置正式切版（末批确认后含配置项单的作用域 from→to 切版，绝不含配置明文，ADR-0071）
+	ActionDeliveryOrderConfigSwitch = "delivery.order.config_switch"
 	// 紧急终止
 	ActionDeliveryOrderCancel = "delivery.order.cancel"
 	// 整单回滚

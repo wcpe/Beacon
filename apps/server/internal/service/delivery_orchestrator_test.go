@@ -527,6 +527,41 @@ func TestPrepareConfigBlobsDedupsPerTarget(t *testing.T) {
 	}
 }
 
+// TestOrchestratorConfigSwitchOnLastBatch 末批切版记账 + 审计（ADR-0071 决策4）：含配置项单末批确认即 completed，
+// 记一条配置切版审计，且「已交付版本」经 completed 单历史反查得到本单 to_version（下一单 from 锚点来源）。
+func TestOrchestratorConfigSwitchOnLastBatch(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	fileID, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+	order := h.createApprovedConfigOrder(t, "配置灰度切版", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	// push_only + 短观察窗便于驱动到末批完成（切版记账与生效方式无关）。
+	h.env.db.Model(&model.ChangeOrder{}).Where("id = ?", order).Updates(map[string]any{
+		"activation_method": model.ActivationMethodPushOnly, "observe_window_sec": 5, "batch_sizes": encodeBatchSizes([]int{100}),
+	})
+
+	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order)
+	h.tick()
+	h.advance(6 * time.Second)
+	h.tick()
+	if _, err := h.orch.ConfirmBatch(order, 1, "ops", "ip"); err != nil {
+		t.Fatalf("确认末批失败: %v", err)
+	}
+	if h.reload(order).Status != model.ChangeOrderStatusCompleted {
+		t.Fatalf("确认末批后单应 completed: %s", h.reload(order).Status)
+	}
+	if got := countAudit(t, h.env.db, model.ActionDeliveryOrderConfigSwitch); got != 1 {
+		t.Fatalf("应记 1 条配置切版审计，实际 %d", got)
+	}
+	// 末批 completed 后「已交付版本」= 本单 to_version（下一单 from 锚点来源，ADR-0071 决策3）。
+	delivered, err := repository.NewChangeOrderRepository(h.env.db).FindLatestDeliveredToVersionID(fileID, model.ConfigScopeZone, h.f.zone1ID)
+	if err != nil || delivered == nil || *delivered != versionID {
+		t.Fatalf("末批完成后应查到已交付版本 = %d，实际 %v（err=%v）", versionID, delivered, err)
+	}
+}
+
 // TestOrchestratorStartConflict 目标集与其他活动单相交时拒绝启动（ADR-0071 §4.1）。
 func TestOrchestratorStartConflict(t *testing.T) {
 	h := newOrchestratorHarness(t)
