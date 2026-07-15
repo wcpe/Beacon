@@ -2,7 +2,6 @@ package repository
 
 import (
 	"errors"
-	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -80,16 +79,17 @@ type AssetSearchQuery struct {
 
 // Search 按组合条件分页搜索资产行并回总数（规格 §4.4）。
 // 各条件左锚定 / 相等尽量走 (namespace_id, *) 复合索引；name 为兜底子串条件（调用方保证与至少一个索引条件组合）。
+// 转义符用 '#'（见 escapeLikeHash）：`ESCAPE '\'` 在 MySQL 是语法错误（字符串字面量消费反斜杠）。
 func (r *FileAssetRepository) Search(q AssetSearchQuery) ([]model.FileAsset, int64, error) {
 	query := r.db.Model(&model.FileAsset{}).Where("namespace_id = ?", q.NamespaceID)
 	if q.ServerID != 0 {
 		query = query.Where("server_id = ?", q.ServerID)
 	}
 	if q.PathPrefix != "" {
-		query = query.Where("path LIKE ? ESCAPE '\\'", escapeLike(q.PathPrefix)+"%")
+		query = query.Where("path LIKE ? ESCAPE '#'", escapeLikeHash(q.PathPrefix)+"%")
 	}
 	if q.Name != "" {
-		query = query.Where("path LIKE ? ESCAPE '\\'", "%"+escapeLike(q.Name)+"%")
+		query = query.Where("path LIKE ? ESCAPE '#'", "%"+escapeLikeHash(q.Name)+"%")
 	}
 	if q.Ext != "" {
 		query = query.Where("ext = ?", q.Ext)
@@ -180,11 +180,3 @@ func (r *FileAssetRepository) DeleteAllByServer(serverID uint) error {
 
 // assetUpsertBatchSize 是批量 upsert 的分批大小（单请求条目已限 2000，分批控制单条 SQL 参数量）。
 const assetUpsertBatchSize = 500
-
-// escapeLike 转义 LIKE 通配元字符（`\` `%` `_`），配合 `ESCAPE '\'` 使 path 前缀 / 子串按字面匹配。
-func escapeLike(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, "%", `\%`)
-	s = strings.ReplaceAll(s, "_", `\_`)
-	return s
-}
