@@ -4,8 +4,17 @@
 
 ## 未发布
 
+## 0.29.0（2026-07-15）
+
+### 新增
+- 交付编排 V2 变更单模型：组单 / 影响预览 / 审批链后端接真（FR-162，P9 首个增量，规格 [v2-delivery-orchestration.md](docs/specs/v2-delivery-orchestration.md) §3/§4.1-4.3/§5.1）。交付域五表落地（`change_order` / `change_order_item` / `change_batch` / `change_target` / `delivery_blob`，枚举 VARCHAR + JSON 落 TEXT 可移植）；`/admin/v2/change-orders` 15 端点接真：draft 增删改查（`scan_dir` 扫描目录范围随单持久化）、**同步差异扫描**（读文件资产最新快照按目标集并集语义算差异，update 胜 add、scanDir 前缀过滤、≤100 服分块查询；selector 未设时对照集回退 namespace 内全部合格目标，适配向导「先扫差异、后定范围」步序）、selector 解析（全量 / 大区 / 小区 / 单服并集减 excludes、合格性过滤、模板源自动排除、**跨 namespace 引用拒绝**）、影响预览（批次划分 / 去重传输量汇总 + 逐目标在线 / 健康 / 新增更新删除跳过计数 / 配置作用域命中 from→to）、提交 / 撤回 / 审批 / 驳回（CAS 状态迁移、**approved 后任何编辑自动作废审批回 draft**、审批职责分离默认开且审批人≠创建人、驳回原因必填）、变更项文件内容预览接真（复用文件资产安全通道：敏感路径 403+原因放行入审计、agent 离线 504、二进制仅元数据、双侧真实内容 + 实际对比目标回填）。配置变更项 from 锚点按 ADR-0071 三分支（上一交付版本 → based_on 兜底 → 链首空）。全生命周期写动作事务内自记审计（detail 恒含 orderId，`/audits` 按单号可追溯完整链路）。新增运维热改项 `delivery.approver-separation-enabled`（单管理员部署可关闭，关闭动作入审计）。
+- 交付编排三项架构决策（ADR-0069/0070/0071）：交付数据面（控制面 sha256 内容寻址 blob 中转 + agent `BlobStreamTransport` 流式端口，扩展 ADR-0005，随 M2 实现）、agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理，随 M4 实现）、变更单配置灰度生效语义模型（模型 A：配置中心 head=最新定稿非生效、灰度 pin 落后者到 from、末批清 pin 即切版、配置域代码零改动）。
+- `/changes` 变更单页从演示 mock 接真（前端接缝）：引导创建向导「扫描目录范围」输入（默认 `plugins/`，改范围作废已扫差异）、文件预览三形态（文本双侧 diff + 对比目标标签 / 二进制仅元数据 / 敏感 403 内联填原因重取）、影响预览逐目标「配置命中」列、`/changes?order=<id>` 深链自动选中打开详情（交付历史「在变更单中打开」跳转生效）；`/audits` 页补 action→中文映射机制与 16 个交付审计动作文案（未映射动作回退原文）。契约定稿：`FileDiffResponse` 增 `binary` / `serverId` 字段并转正原「仅 mock」端点，影响预览逐目标增 `configScopes`。
+
 ### 修复
 - 修复资产搜索 `GET /admin/v2/assets` 带 `pathPrefix` / `name` 过滤在 MySQL 8 报 SQL 1064、接口 500 的问题：原 LIKE 转义用 `ESCAPE '\'`（MySQL 字符串字面量消费反斜杠成语法错误，sqlite 单测无感），改用与交付域一致的 `#` 转义符（三方言行为一致），并新增真 MySQL 集成回归覆盖前缀 / 子串过滤与 `_` 通配符字面匹配。
+
+> 验证（v0.29.0 整体）：后端 `go test ./...` 全绿（含交付域 19 单测：状态机穷举 / selector / 并集差异 / from 锚点 / 契约形状）+ 真 MySQL 集成实跑（组单→差异→提审→审批全链 + file-diff 契约）+ `make lint` 0 issue；前端 `build` / `lint` / `test` 全绿（devmock 81 + web 246 vitest）；agent 本版零改动（jar 与 0.28.0 相同）。真机验收（prod2，lobby-1 模板源 + 新部署 lobby-2 目标）：向导五步组单、真资产快照差异扫描（新增 3 / 修改 1、同哈希 567 文件正确跳过）、文件预览三形态、影响预览真健康数据、审批分离拒自批→设置热关→审批通过、删除草稿高风险确认、`?order=` 深链、审计链按 orderId 完整追溯，全项通过（记录 `.tmp/acceptance-p9-m1-2026-07-15.md`）。真机验收期间发现并修复「diff-scan 未设 selector 恒 0 项」缺陷（对照集回退，随本版）。执行 / 灰度批次 / 生效 / 回滚（FR-165/166/167/168/171）随 P9 后续增量交付。
 
 ## 0.28.0（2026-07-15）
 
