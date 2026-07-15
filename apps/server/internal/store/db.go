@@ -97,6 +97,9 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.ChangeBatch{},
 		&model.ChangeTarget{},
 		&model.DeliveryBlob{},
+		// 配置灰度冻结渲染工件（FR-171，见 ADR-0071）：config_change 项 per-(项, 目标) 渲染 sha 无法落
+		// change_order_item，单独冻结持久化，供 manifest / 下载授权 / 清理护栏读取，不再重渲染
+		&model.DeliveryConfigArtifact{},
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
