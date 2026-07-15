@@ -548,6 +548,11 @@ export const delivery = {
           countOver: '台数合计 {{sum}} 台，比目标多 {{diff}} 台',
         },
         batchNote: '分批推进时，每批生效并确认后才放行下一批；失败率超阈值会自动暂停整单。',
+        activationLabel: '生效方式',
+        activationPushOnly: '仅推送',
+        activationPushOnlyHint: '文件推送到位、随子服下次自然重启生效；最保守，不打断在线玩家。',
+        activationRestart: '推送后重启',
+        activationRestartHint: '推送后优雅关服、靠宿主自启拉起立即生效；含 jar 变更推荐，需宿主已配进程自启。',
       },
       // 第 5 步：预览与提交（简单 / 详细两种概要模式）
       review: {

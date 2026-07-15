@@ -41,6 +41,9 @@ export interface WizardBatch {
   rows: number[]
 }
 
+/** 第 4 步：生效方式（当前开放 push_only / restart；hot_reload 随配置灰度迭代开放） */
+export type WizardActivation = 'push_only' | 'restart'
+
 /** 批次编排校验结论：null = 通过 */
 export type BatchIssue = 'invalid_row' | 'percent_sum' | 'count_short' | 'count_over' | null
 

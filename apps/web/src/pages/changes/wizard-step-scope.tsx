@@ -15,6 +15,7 @@ import {
   batchIssue,
   planBatchRows,
   recommendedBatch,
+  type WizardActivation,
   type WizardBatch,
   type WizardScope,
 } from './wizard-state'
@@ -25,6 +26,8 @@ interface StepScopeProps {
   onScopeChange: (scope: WizardScope) => void
   batch: WizardBatch
   onBatchChange: (batch: WizardBatch) => void
+  activation: WizardActivation
+  onActivationChange: (activation: WizardActivation) => void
   // 按当前范围估算的目标台数（null = 结构树未就绪，未知）
   targetEstimate: number | null
 }
@@ -37,6 +40,8 @@ export default function WizardStepScope({
   onScopeChange,
   batch,
   onBatchChange,
+  activation,
+  onActivationChange,
   targetEstimate,
 }: StepScopeProps) {
   const { t } = useTranslation()
@@ -176,6 +181,29 @@ export default function WizardStepScope({
           <BatchPlanEditor batch={batch} onBatchChange={onBatchChange} targetEstimate={targetEstimate} />
         )}
         <p className="text-xs text-ink-3">{t('delivery.changes.wizard.scope.batchNote')}</p>
+      </div>
+
+      {/* 生效方式（当前开放仅推送 / 重启；配置热重载随后续迭代开放） */}
+      <div className="grid gap-2">
+        <span className="text-[13px] font-semibold text-ink-2">{t('delivery.changes.wizard.scope.activationLabel')}</span>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <ModeCard
+            title={t('delivery.changes.wizard.scope.activationPushOnly')}
+            hint={t('delivery.changes.wizard.scope.activationPushOnlyHint')}
+            selected={activation === 'push_only'}
+            onClick={() => {
+              onActivationChange('push_only')
+            }}
+          />
+          <ModeCard
+            title={t('delivery.changes.wizard.scope.activationRestart')}
+            hint={t('delivery.changes.wizard.scope.activationRestartHint')}
+            selected={activation === 'restart'}
+            onClick={() => {
+              onActivationChange('restart')
+            }}
+          />
+        </div>
       </div>
     </div>
   )

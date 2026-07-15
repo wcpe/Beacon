@@ -38,6 +38,7 @@ import {
   recommendedBatch,
   scopeReady,
   toConfigChanges,
+  type WizardActivation,
   type WizardBatch,
   type WizardConfigPick,
   type WizardContent,
@@ -78,6 +79,7 @@ export default function GuidedWizard({
   const [picks, setPicks] = useState<WizardConfigPick[]>([])
   const [scope, setScope] = useState<WizardScope>({ mode: 'all', regions: [], zones: [], servers: [] })
   const [batch, setBatch] = useState<WizardBatch>(() => recommendedBatch(null))
+  const [activation, setActivation] = useState<WizardActivation>('push_only')
   const [title, setTitle] = useState('')
   const [prepared, setPrepared] = useState(0)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -180,9 +182,7 @@ export default function GuidedWizard({
         scanDir: includesFiles(content) ? scanDir : '',
         selector: buildSelector(scope),
         ...buildBatch(batch),
-        // 本期生效方式固定「仅推送」：文件 / 配置推送到位、随子服下次自然重启生效；
-        // 即时重启（restart）/ 热重载（hot_reload）生效随后续里程碑开放（agent 侧生效动作与配置灰度切版）。
-        activationMethod: 'push_only',
+        activationMethod: activation,
         configChanges: includesConfigs(content) ? toConfigChanges(picks) : [],
       })
       return id
@@ -336,6 +336,8 @@ export default function GuidedWizard({
               batch={batch}
               onBatchChange={setBatch}
               targetEstimate={targetEstimate}
+              activation={activation}
+              onActivationChange={setActivation}
             />
           )}
           {current === 'review' && (
