@@ -319,6 +319,9 @@ var (
 	ErrDeliveryNotSource = New(http.StatusForbidden, "not_source", "仅本单模板源可执行该操作")
 	// ErrDeliveryNotTarget 仅本单目标服可执行该动作（拉差异清单 / 推送与生效回执，spec §5.2）。
 	ErrDeliveryNotTarget = New(http.StatusForbidden, "not_target", "仅本单目标服可执行该操作")
+	// ErrDeliveryConfigArtifactMissing 单含配置项但该目标的冻结渲染工件缺失（payload 未准备，见 ADR-0071）：
+	// 明确报错而非静默漏发配置，运维据此重试 / 重启变更单。
+	ErrDeliveryConfigArtifactMissing = New(http.StatusConflict, "config_artifact_missing", "配置渲染工件未就绪（payload 未准备），请重试或重新启动变更单")
 
 	// ErrAssetNotFound 文件资产在该服最新清单中不存在（预览 / diff 目标缺失，FR-164，spec §5.2；code 对齐 devmock）。
 	ErrAssetNotFound = New(http.StatusNotFound, "asset_not_found", "该服清单中不存在此文件")

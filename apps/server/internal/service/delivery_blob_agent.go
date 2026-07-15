@@ -64,11 +64,21 @@ func (s *DeliveryBlobService) AuthorizeBlobDownload(id agentauth.Identity, sha s
 			return nil
 		}
 	}
+	// 配置灰度冻结渲染工件（ADR-0071）：config blob 由控制面渲染、sha 不落 change_order_item，
+	// 经工件表 (单, 目标, sha) 反查——命中「活动 / 已审批单内本目标」的工件即放行，严格到该单该目标该 blob。
+	authorized, err := s.artifacts.ExistsAuthorizedSHA(id.NamespaceID, id.ServerID, sha, deliveryBlobOrderStatuses)
+	if err != nil {
+		return err
+	}
+	if authorized {
+		return nil
+	}
 	return apperr.ErrDeliveryBlobForbidden
 }
 
 // AuthorizeBlobHead 校验存在性查询归属（HEAD，spec §5.3）：上传方（去重判断）与下载方（断点判断）
-// 都要 HEAD，故放行「可上传或可下载」任一侧。
+// 都要 HEAD，故放行「可上传或可下载」任一侧。config blob 的 HEAD 走下载侧（经 AuthorizeBlobDownload
+// 的工件分支覆盖），无需在此另加分支。
 func (s *DeliveryBlobService) AuthorizeBlobHead(id agentauth.Identity, sha string) error {
 	if err := s.AuthorizeBlobUpload(id, sha); err == nil {
 		return nil
@@ -198,38 +208,51 @@ func (s *DeliveryBlobService) TargetManifest(id agentauth.Identity, orderID uint
 		OrderID: order.ID, ActivationMethod: order.ActivationMethod,
 		Files: make([]DeliveryManifestFileView, 0, len(items)), Configs: make([]DeliveryManifestConfigView, 0),
 	}
+	hasConfig := false
 	for i := range items {
-		if err := s.appendManifestItem(view, &items[i], id.ServerID); err != nil {
-			return nil, err
+		switch items[i].Kind {
+		case model.ChangeItemKindFileDiff:
+			view.Files = append(view.Files, fileManifestView(&items[i]))
+		case model.ChangeItemKindConfigChange:
+			hasConfig = true
 		}
+	}
+	// config_change 项归一为冻结渲染工件文件项（ADR-0071）：读工件表、不重渲染，消除 head 漂移竞态。
+	if err := s.appendConfigArtifacts(view, order.ID, id.ServerID, hasConfig); err != nil {
+		return nil, err
 	}
 	return view, nil
 }
 
-// appendManifestItem 把一条变更项映射进目标清单视图：file_diff 直接进 Files；config_change 按目标渲染灰度
-// 生效明文后作为文件项进 Files（数据面归一为文件，agent 复用文件下载落盘 + restart 读盘生效，ADR-0071）。
-// 渲染出的 blob 已在 payload 准备期由控制面写入（PrepareConfigBlobs），此处只据渲染结果补清单文件项。
-func (s *DeliveryBlobService) appendManifestItem(view *DeliveryTargetManifestView, item *model.ChangeOrderItem, serverID string) error {
-	switch item.Kind {
-	case model.ChangeItemKindFileDiff:
-		file := DeliveryManifestFileView{Path: derefString(item.Path), Action: derefString(item.Action)}
-		if item.SHA256 != nil {
-			file.SHA256 = *item.SHA256
-		}
-		if item.SizeBytes != nil {
-			file.Size = *item.SizeBytes
-		}
-		view.Files = append(view.Files, file)
-	case model.ChangeItemKindConfigChange:
-		if s.configRenderer == nil {
-			return nil // 未装配渲染器（M2 数据面兼容路径）：配置项不下发
-		}
-		rendered, err := s.configRenderer.render(item, serverID)
-		if err != nil {
-			return err
-		}
+// fileManifestView 把一条 file_diff 变更项映射为清单文件项（delete 项 sha/size 为空）。
+func fileManifestView(item *model.ChangeOrderItem) DeliveryManifestFileView {
+	file := DeliveryManifestFileView{Path: derefString(item.Path), Action: derefString(item.Action)}
+	if item.SHA256 != nil {
+		file.SHA256 = *item.SHA256
+	}
+	if item.SizeBytes != nil {
+		file.Size = *item.SizeBytes
+	}
+	return file
+}
+
+// appendConfigArtifacts 把本单为该目标冻结的配置渲染工件（ADR-0071）作为文件项补进清单：读工件表、不重渲染
+// （渲染已在 payload 准备期由 PrepareConfigBlobs 落工件 + 写 blob）。未装配渲染器（M2 数据面路径）跳过；
+// 有 config_change 项却查不到工件（payload 未准备）→ 明确报错，不静默漏发配置。
+func (s *DeliveryBlobService) appendConfigArtifacts(view *DeliveryTargetManifestView, orderID uint, serverID string, hasConfig bool) error {
+	if s.configRenderer == nil {
+		return nil
+	}
+	arts, err := s.artifacts.ListByOrderServer(orderID, serverID)
+	if err != nil {
+		return err
+	}
+	if hasConfig && len(arts) == 0 {
+		return apperr.ErrDeliveryConfigArtifactMissing
+	}
+	for i := range arts {
 		view.Files = append(view.Files, DeliveryManifestFileView{
-			Path: rendered.Path, Action: model.ChangeItemActionUpdate, SHA256: rendered.SHA256, Size: rendered.Size,
+			Path: arts[i].Path, Action: model.ChangeItemActionUpdate, SHA256: arts[i].SHA256, Size: arts[i].SizeBytes,
 		})
 	}
 	return nil

@@ -68,6 +68,7 @@ type DeliveryBlobService struct {
 	db        *gorm.DB
 	blobs     *repository.DeliveryBlobRepository
 	orders    *repository.ChangeOrderRepository
+	artifacts *repository.DeliveryConfigArtifactRepository
 	cmdRepo   *repository.AgentCommandRepository
 	settings  deliveryBlobSettings
 	root      string
@@ -85,7 +86,9 @@ func NewDeliveryBlobService(db *gorm.DB, blobs *repository.DeliveryBlobRepositor
 	orders *repository.ChangeOrderRepository, cmdRepo *repository.AgentCommandRepository,
 	settings deliveryBlobSettings) *DeliveryBlobService {
 	return &DeliveryBlobService{
-		db: db, blobs: blobs, orders: orders, cmdRepo: cmdRepo, settings: settings,
+		db: db, blobs: blobs, orders: orders,
+		artifacts: repository.NewDeliveryConfigArtifactRepository(db),
+		cmdRepo:   cmdRepo, settings: settings,
 		root: filepath.Clean(defaultDeliveryBlobRoot), uploads: &flowLimiter{}, downloads: &flowLimiter{},
 	}
 }
@@ -360,7 +363,9 @@ func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []strin
 	if err != nil {
 		return err
 	}
-	written := make(map[string]struct{}) // 已落 blob 的 sha（跨目标去重，省重复落盘往返）
+	written := make(map[string]struct{}) // 已落盘 blob 的 sha（跨目标去重，省重复落盘往返）
+	artifactIdx := make(map[string]int)  // (目标, 路径) → artifacts 下标，同键后项覆盖（防批量 upsert 跨方言重复键）
+	artifacts := make([]model.DeliveryConfigArtifact, 0)
 	for i := range items {
 		if items[i].Kind != model.ChangeItemKindConfigChange {
 			continue
@@ -370,6 +375,19 @@ func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []strin
 			if err != nil {
 				return err
 			}
+			// 每个 (项, 目标) 都冻结一条工件（授权与 manifest 按目标反查，不随 blob 去重）；
+			artifact := model.DeliveryConfigArtifact{
+				OrderID: orderID, ServerID: serverID,
+				Path: rendered.Path, SHA256: rendered.SHA256, SizeBytes: rendered.Size,
+			}
+			key := serverID + "\x00" + rendered.Path
+			if idx, dup := artifactIdx[key]; dup {
+				artifacts[idx] = artifact
+			} else {
+				artifactIdx[key] = len(artifacts)
+				artifacts = append(artifacts, artifact)
+			}
+			// 而 blob 落盘按内容 sha 去重（同作用域多目标渲染相同明文只落一个 blob）。
 			if _, dup := written[rendered.SHA256]; dup {
 				continue
 			}
@@ -379,7 +397,7 @@ func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []strin
 			written[rendered.SHA256] = struct{}{}
 		}
 	}
-	return nil
+	return s.artifacts.UpsertBatch(artifacts)
 }
 
 // TouchReferences 刷新某变更单全部文件项引用 blob 的 last_referenced_at（清理保护）。
@@ -400,6 +418,18 @@ func (s *DeliveryBlobService) TouchReferences(orderID uint) error {
 		}
 		seen[*item.SHA256] = struct{}{}
 		shas = append(shas, *item.SHA256)
+	}
+	// 配置冻结渲染工件 sha（ADR-0071）一并刷新引用，防保留期清理误删 config blob。
+	cfgSHAs, err := s.artifacts.ListSHAsByOrder(orderID)
+	if err != nil {
+		return err
+	}
+	for _, sha := range cfgSHAs {
+		if _, dup := seen[sha]; dup {
+			continue
+		}
+		seen[sha] = struct{}{}
+		shas = append(shas, sha)
 	}
 	return s.blobs.TouchAll(shas, time.Now().UTC())
 }

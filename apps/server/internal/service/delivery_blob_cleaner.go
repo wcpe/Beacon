@@ -83,10 +83,18 @@ func (c *DeliveryBlobCleaner) purgeTerminalBlobs() (int, int64) {
 	for i := range candidates {
 		shas[i] = candidates[i].SHA256
 	}
-	// 被非终态单（含活动单与未执行完的 draft/pending/approved）引用的 sha 受保护，不删。
+	// 被非终态单（含活动单与未执行完的 draft/pending/approved）以文件项引用的 sha 受保护，不删。
 	protected, err := c.svc.orders.ListSHAsReferencedByStatusNotIn(shas, changeOrderTerminalStatuses)
 	if err != nil {
 		return 0, 0
+	}
+	// 配置冻结渲染工件 sha 同受非终态单保护（ADR-0071）：并入受保护集合，防误删活动单 config blob。
+	cfgProtected, err := c.svc.artifacts.ListSHAsReferencedByStatusNotIn(shas, changeOrderTerminalStatuses)
+	if err != nil {
+		return 0, 0
+	}
+	for sha := range cfgProtected {
+		protected[sha] = struct{}{}
 	}
 	var deleted int
 	var freed int64

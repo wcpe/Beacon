@@ -60,9 +60,9 @@ func newBlobTestSvc(t *testing.T, settings *fakeBlobSettings) (*DeliveryBlobServ
 	}
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.DeliveryBlob{}, &model.ChangeOrder{}, &model.ChangeOrderItem{},
-		&model.ChangeTarget{}, &model.AgentCommand{}, &model.Server{}, &model.AgentIdentity{},
-		&model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.DeliveryBlob{}, &model.DeliveryConfigArtifact{}, &model.ChangeOrder{},
+		&model.ChangeOrderItem{}, &model.ChangeTarget{}, &model.AgentCommand{}, &model.Server{},
+		&model.AgentIdentity{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	svc := NewDeliveryBlobService(db, repository.NewDeliveryBlobRepository(db),

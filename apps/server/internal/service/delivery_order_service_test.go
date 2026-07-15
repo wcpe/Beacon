@@ -47,7 +47,8 @@ func newDeliveryTestEnv(t *testing.T) *deliveryTestEnv {
 	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{},
 		&model.Server{}, &model.AgentIdentity{}, &model.ChangeOrder{}, &model.ChangeOrderItem{},
-		&model.ChangeBatch{}, &model.ChangeTarget{}, &model.DeliveryBlob{}, &model.FileAsset{}, &model.FileAssetScan{},
+		&model.ChangeBatch{}, &model.ChangeTarget{}, &model.DeliveryBlob{}, &model.DeliveryConfigArtifact{},
+		&model.FileAsset{}, &model.FileAssetScan{},
 		&model.AgentCommand{}, &model.Setting{}, &model.AuditLog{},
 		&model.ConfigFile{}, &model.ConfigLayerVersion{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
