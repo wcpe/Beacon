@@ -583,6 +583,9 @@ func registerV2DeliveryAdminRoutes(r chi.Router, h Handlers) {
 	r.With(requireFullRole).Post("/change-orders/{id}/resume", h.Delivery.Resume)
 	r.With(requireFullRole).Post("/change-orders/{id}/cancel", h.Delivery.Cancel)
 	r.With(requireFullRole).Post("/change-orders/{id}/batches/{batchNo}/confirm", h.Delivery.ConfirmBatch)
+	// 整单回滚（FR-167，spec §4.8.1 高级：权限 + 原因 + 高摩擦确认）：显式挂 requireFullRole 挡 readonly。
+	r.With(requireFullRole).Post("/change-orders/{id}/rollback", h.Delivery.Rollback)
+	r.With(requireFullRole).Post("/change-orders/{id}/rollback/finish", h.Delivery.RollbackFinish)
 	r.Get("/change-orders/{id}/targets", h.Delivery.Targets)
 	r.Get("/change-orders/{id}/observe", h.Delivery.Observe)
 	r.Get("/change-orders/{id}/events", h.Delivery.Events)

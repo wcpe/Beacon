@@ -286,6 +286,8 @@ var (
 	ErrChangeNoItems = New(http.StatusBadRequest, "no_items", "变更单没有任何变更项，无法提交审批")
 	// ErrChangeNoTarget selector 未解析出任何合格目标。
 	ErrChangeNoTarget = New(http.StatusBadRequest, "no_target", "selector 未解析出任何合格目标")
+	// ErrChangeNoRollbackTarget 整单回滚时单内无曾推送（pushed_at 非空）目标可回滚（FR-167）。
+	ErrChangeNoRollbackTarget = New(http.StatusBadRequest, "no_rollback_target", "单内无曾推送的目标可回滚")
 	// ErrChangeSelectorCrossNamespace selector 引用了异 namespace 或不存在的实体（FR-162 跨 namespace 拒绝；
 	// 具体冲突实体经 service 用同码 New 携带在 message 中）。
 	ErrChangeSelectorCrossNamespace = New(http.StatusBadRequest, "selector_cross_namespace", "selector 引用了不属于本环境的实体")

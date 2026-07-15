@@ -288,6 +288,49 @@ func (r *ChangeOrderRepository) BulkUpdateTargetStatusByOrder(orderID uint, from
 	return res.RowsAffected, nil
 }
 
+// CountTargetsToRollback 统计单内曾推送（pushed_at 非空 = 曾覆盖磁盘）的目标数（整单回滚目标集，spec §4.7.2）。
+func (r *ChangeOrderRepository) CountTargetsToRollback(orderID uint) (int64, error) {
+	var n int64
+	err := r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND pushed_at IS NOT NULL", orderID).Count(&n).Error
+	return n, err
+}
+
+// InitTargetRollbackByOrder 置单内曾推送目标的回滚初态（spec §4.7.2 step1 预检）：
+// 有备份 → rollback_status=pending 待还原；无备份 → 直接 failed（备份不存在无法文件回滚）。
+func (r *ChangeOrderRepository) InitTargetRollbackByOrder(orderID uint, backupMissingReason string) error {
+	if err := r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND pushed_at IS NOT NULL AND backup_present = ?", orderID, true).
+		Update("rollback_status", model.RollbackStatusPending).Error; err != nil {
+		return err
+	}
+	return r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND pushed_at IS NOT NULL AND backup_present = ?", orderID, false).
+		Updates(map[string]any{"rollback_status": model.RollbackStatusFailed, "rollback_error": backupMissingReason}).Error
+}
+
+// UpdateTargetRollbackCAS 按前置回滚状态集合 CAS 迁移目标 rollback_status 与随迁字段：命中 true，前态不符 false。
+func (r *ChangeOrderRepository) UpdateTargetRollbackCAS(id uint, from []string, updates map[string]any) (bool, error) {
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("id = ? AND rollback_status IN ?", id, from).
+		Updates(updates)
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
+}
+
+// ResetFailedRollbackToPending 把单内回滚失败的目标重置 pending（回滚重试，spec §5.1）；返回重置数。
+func (r *ChangeOrderRepository) ResetFailedRollbackToPending(orderID uint) (int64, error) {
+	res := r.db.Model(&model.ChangeTarget{}).
+		Where("order_id = ? AND rollback_status = ?", orderID, model.RollbackStatusFailed).
+		Updates(map[string]any{"rollback_status": model.RollbackStatusPending, "rollback_error": ""})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
 // BulkUpdateBatchStatusByOrder 把某单内状态在 from 集合内的批次批量改为 updates（紧急终止把未开始批置 skipped 用）；返回受影响数。
 func (r *ChangeOrderRepository) BulkUpdateBatchStatusByOrder(orderID uint, from []string, updates map[string]any) (int64, error) {
 	res := r.db.Model(&model.ChangeBatch{}).

@@ -218,6 +218,163 @@ func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string
 	return s.detailView(order.ID)
 }
 
+// Rollback 整单回滚（POST .../rollback，spec §4.7.2）：原因必填；completed/paused/cancelled→rolling_back，
+// 曾推送目标（pushed_at 非空）置回滚初态（备份缺失直接 failed）；首次进入做 config 版本回退记账（幂等）。
+// 已 rolling_back 单再调 = 重试：仅把 failed 目标重置 pending，不重做 config 回退（避免污染不可变链）。
+func (s *DeliveryOrchestrator) Rollback(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, apperr.New(http.StatusBadRequest, "missing_reason", "整单回滚原因必填")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, err := requireChangeOrder(s.repo, id)
+	if err != nil {
+		return nil, err
+	}
+	// 重试语义：已在回滚中，仅重置失败目标重推（不重做 config 版本回退）。
+	if order.Status == model.ChangeOrderStatusRollingBack {
+		if _, e := s.repo.ResetFailedRollbackToPending(order.ID); e != nil {
+			return nil, e
+		}
+		s.wake()
+		return s.detailView(order.ID)
+	}
+	if order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused &&
+		order.Status != model.ChangeOrderStatusCancelled {
+		return nil, changeIllegalState(order.Status, "整单回滚")
+	}
+	n, err := s.repo.CountTargetsToRollback(order.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, apperr.ErrChangeNoRollbackTarget
+	}
+	nsCode, err := changeNamespaceCode(s.db, order.NamespaceID)
+	if err != nil {
+		return nil, err
+	}
+	// 首次进入：config 版本回退（各自独立事务、幂等吞 NO_CHANGE，无法并入编排事务，ADR-0071 决策6）。
+	if err := s.rollbackConfigVersions(order, reason, operator, clientIP); err != nil {
+		return nil, err
+	}
+	now := s.now()
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		repoTx := s.repo.WithTx(tx)
+		ok, e := repoTx.UpdateStatusCAS(order.ID,
+			[]string{model.ChangeOrderStatusCompleted, model.ChangeOrderStatusPaused, model.ChangeOrderStatusCancelled},
+			map[string]any{"status": model.ChangeOrderStatusRollingBack, "rollback_by": operator,
+				"rollback_reason": reason, "rollback_at": now})
+		if e != nil || !ok {
+			return errOrSkip(e, ok)
+		}
+		if e := repoTx.InitTargetRollbackByOrder(order.ID, "覆盖前备份不存在，无法文件回滚"); e != nil {
+			return e
+		}
+		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderRollback, order.ID,
+			map[string]any{"orderId": order.ID, "reason": reason, "targetCount": n})
+	})
+	if err != nil {
+		return nil, mapCASConflict(err, order.Status, "整单回滚")
+	}
+	s.wake()
+	return s.detailView(order.ID)
+}
+
+// FinishRollback 结束回滚（POST .../rollback/finish，spec §4.7.2）：rolling_back→rolled_back（残留 failed 目标保留记录）。
+func (s *DeliveryOrchestrator) FinishRollback(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order, err := requireChangeOrder(s.repo, id)
+	if err != nil {
+		return nil, err
+	}
+	if order.Status != model.ChangeOrderStatusRollingBack {
+		return nil, changeIllegalState(order.Status, "结束回滚")
+	}
+	nsCode, err := changeNamespaceCode(s.db, order.NamespaceID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		ok, e := s.repo.WithTx(tx).UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusRollingBack},
+			map[string]any{"status": model.ChangeOrderStatusRolledBack, "finished_at": now})
+		if e != nil || !ok {
+			return errOrSkip(e, ok)
+		}
+		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderRollbackFinish, order.ID,
+			map[string]any{"orderId": order.ID})
+	})
+	if err != nil {
+		return nil, mapCASConflict(err, order.Status, "结束回滚")
+	}
+	return s.detailView(order.ID)
+}
+
+// rollbackConfigVersions 逐 config_change 项做版本回退记账（只首次进入回滚时调，spec §4.7.2 / ADR-0071 决策6）：
+// from!=nil→RollbackVersion(from) 使 head 回 from；from==nil→RemoveScopeContribution 撤销该层贡献；
+// 均幂等——撞 ErrConfigNoChange（head 已=from）或「无可撤销贡献」当成功（回滚重试 / 已对齐）。未装配 config 则跳过。
+func (s *DeliveryOrchestrator) rollbackConfigVersions(order *model.ChangeOrder, reason, operator, clientIP string) error {
+	if s.config == nil {
+		return nil
+	}
+	items, err := s.repo.ListItems(order.ID)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		it := &items[i]
+		if it.Kind != model.ChangeItemKindConfigChange {
+			continue
+		}
+		if it.ConfigFromVersionID != nil {
+			if _, e := s.config.RollbackVersion(*it.ConfigFromVersionID, reason, operator, clientIP); e != nil &&
+				!errors.Is(e, apperr.ErrConfigNoChange) {
+				return e
+			}
+			continue
+		}
+		fileID, e := s.configFileIDOf(it)
+		if e != nil {
+			return e
+		}
+		if _, e := s.config.RemoveScopeContribution(fileID, derefString(it.ConfigScopeKind), derefUint(it.ConfigScopeID),
+			reason, operator, clientIP); e != nil && !isConfigRollbackIdempotent(e) {
+			return e
+		}
+	}
+	return nil
+}
+
+// configFileIDOf 反查 config_change 项对应配置文件 id（经 to_version → 版本行 → configFileID）。
+func (s *DeliveryOrchestrator) configFileIDOf(it *model.ChangeOrderItem) (uint, error) {
+	if s.cfgVers == nil || it.ConfigToVersionID == nil {
+		return 0, apperr.ErrChangeConfigVersionInvalid
+	}
+	v, err := s.cfgVers.FindByID(*it.ConfigToVersionID)
+	if err != nil {
+		return 0, err
+	}
+	if v == nil {
+		return 0, apperr.ErrChangeConfigVersionInvalid
+	}
+	return v.ConfigFileID, nil
+}
+
+// isConfigRollbackIdempotent 判 config 回退错误是否为可幂等吞掉的「已对齐」态（ADR-0071 决策6）：
+// RollbackVersion 撞 ErrConfigNoChange（head 已=from）、RemoveScopeContribution 撞「无可撤销贡献」(INVALID_PARAM)。
+func isConfigRollbackIdempotent(err error) bool {
+	if errors.Is(err, apperr.ErrConfigNoChange) {
+		return true
+	}
+	var ae *apperr.Error
+	if errors.As(err, &ae) && ae.Code == "INVALID_PARAM" {
+		return true
+	}
+	return false
+}
+
 // ConfirmBatch 推进门放行（POST .../batches/{batchNo}/confirm，spec §4.4.3）：
 // awaiting_confirm→completed，触发下一批 pending→running；末批确认即单 completed。
 func (s *DeliveryOrchestrator) ConfirmBatch(id uint, batchNo int, operator, clientIP string) (*ChangeOrderDetailView, error) {

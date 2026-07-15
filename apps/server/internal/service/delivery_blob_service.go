@@ -441,3 +441,11 @@ func derefString(v *string) string {
 	}
 	return *v
 }
+
+// derefUint 安全解引用 uint 指针（nil 返回 0）。
+func derefUint(v *uint) uint {
+	if v == nil {
+		return 0
+	}
+	return *v
+}

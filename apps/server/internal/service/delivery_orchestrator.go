@@ -49,9 +49,9 @@ const (
 )
 
 // deliveryActiveOrderStatuses 是推进器每轮装载并推进的单状态集（spec §4.1 恢复语义）：
-// rolling 全量推进；paused 仅收口在途目标（不下发新目标 / 新批）。rolling_back 归 M5，本版不推进。
+// rolling 全量推进；paused 仅收口在途目标（不下发新目标 / 新批）；rolling_back 一次性全量推进回滚（FR-167）。
 var deliveryActiveOrderStatuses = []string{
-	model.ChangeOrderStatusRolling, model.ChangeOrderStatusPaused,
+	model.ChangeOrderStatusRolling, model.ChangeOrderStatusPaused, model.ChangeOrderStatusRollingBack,
 }
 
 // DeliveryOrchestrator 是交付编排 M3 灰度推进引擎（FR-166，spec §4.1/§4.4/§4.6）：
@@ -78,6 +78,23 @@ type DeliveryOrchestrator struct {
 	// observeMu 独立保护观察窗内存缓冲（推进器采样写、Observe/SSE 读），与 mu 有序嵌套（mu→observeMu，不反向）。
 	observeMu      sync.RWMutex
 	observeByOrder map[uint]*observeState
+	// config 配置版本回退能力（整单回滚记账用，ConfigCenterService 实现；未装配则跳过 config 回退，测试兼容）
+	config configRollbacker
+	// cfgVers 配置版本仓库（回滚 from==nil 项撤销贡献时反查 configFileID）
+	cfgVers *repository.ConfigLayerVersionRepository
+}
+
+// configRollbacker 交付域对配置版本回退的窄依赖（整单回滚记账用，由 ConfigCenterService 实现）：
+// from!=nil 项回退到 from 版本、from==nil 项撤销该作用域贡献，使 config-center head 与磁盘还原对齐（ADR-0071 决策6）。
+type configRollbacker interface {
+	RollbackVersion(versionID uint, remark, operator, clientIP string) (*ConfigSaveResultView, error)
+	RemoveScopeContribution(fileID uint, scopeLevel string, scopeRefID uint, reason, operator, clientIP string) (*ConfigRevokeResultView, error)
+}
+
+// SetConfigRollbacker 注入配置版本回退能力与版本仓库（整单回滚装配时调用，FR-167）：未注入则回滚跳过 config 记账。
+func (s *DeliveryOrchestrator) SetConfigRollbacker(config configRollbacker, cfgVers *repository.ConfigLayerVersionRepository) {
+	s.config = config
+	s.cfgVers = cfgVers
 }
 
 // NewDeliveryOrchestrator 构造编排推进器。
@@ -188,6 +205,8 @@ func (s *DeliveryOrchestrator) advanceOrder(rt *orderRuntime) {
 		// 暂停：已在 pushing / activating 的目标继续走到终态（不制造半截覆盖，spec §4.4.5），但不下发新目标 / 新批。
 		s.reconcileInFlightTargets(rt)
 		s.refreshAllBatchCounts(rt)
+	case model.ChangeOrderStatusRollingBack:
+		s.advanceRollingBack(rt)
 	}
 }
 

@@ -194,6 +194,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/change-orders/{id}/resume":                    {},
 	"POST /admin/v2/change-orders/{id}/cancel":                    {},
 	"POST /admin/v2/change-orders/{id}/batches/{batchNo}/confirm": {},
+	"POST /admin/v2/change-orders/{id}/rollback":                  {},
+	"POST /admin/v2/change-orders/{id}/rollback/finish":           {},
 }
 
 // specialActionVerbs 是 RoutePattern 末段静态词到审计动词的特例映射；

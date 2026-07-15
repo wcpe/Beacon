@@ -300,6 +300,21 @@ func (h *DeliveryAdminHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Rollback 处理 POST /admin/v2/change-orders/{id}/rollback：整单回滚（原因必填 + 高摩擦确认，FR-167）。
+func (h *DeliveryAdminHandler) Rollback(w http.ResponseWriter, r *http.Request) {
+	reason := decodeReason(r)
+	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
+		return h.orch.Rollback(id, reason, operator, ip)
+	})
+}
+
+// RollbackFinish 处理 POST /admin/v2/change-orders/{id}/rollback/finish：结束回滚（残留失败目标时人工收单，FR-167）。
+func (h *DeliveryAdminHandler) RollbackFinish(w http.ResponseWriter, r *http.Request) {
+	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
+		return h.orch.FinishRollback(id, operator, ip)
+	})
+}
+
 // ConfirmBatch 处理 POST /admin/v2/change-orders/{id}/batches/{batchNo}/confirm：推进门放行（末批确认即完成整单）。
 func (h *DeliveryAdminHandler) ConfirmBatch(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")

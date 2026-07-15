@@ -427,6 +427,9 @@ func run() error {
 		commandRepo, auditRepo, healthViewStore, metricWindow, notifier)
 	deliveryBlobService.SetProgressWaker(deliveryOrchestrator)
 	deliveryOrderService.SetObserveProvider(deliveryOrchestrator)
+	// 整单回滚配置版本回退装配（FR-167，ADR-0071 决策6）：回滚时经 config 中心把 head 记账回退到 from（幂等吞 NO_CHANGE），
+	// 与 agent 备份还原（磁盘反转）对齐；cfgVers 供 from==nil 项撤销贡献时反查 configFileID。
+	deliveryOrchestrator.SetConfigRollbacker(configCenterService, repository.NewConfigLayerVersionRepository(db))
 	deliveryHandler := handler.NewDeliveryAdminHandler(deliveryOrderService, deliveryDiffService, deliveryOrchestrator)
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
