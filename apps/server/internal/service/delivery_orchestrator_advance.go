@@ -285,7 +285,8 @@ func (s *DeliveryOrchestrator) dispatchPending(rt *orderRuntime, batch *model.Ch
 	}
 }
 
-// manifestSummary 求某单文件项的清单摘要（文件数 / 总字节）：写入 delivery_push 命令载荷，仅摘要绝不含内容。
+// manifestSummary 求某单清单摘要（文件数 / 总字节）：写入 delivery_push 命令载荷，仅摘要绝不含内容。
+// 配置项渲染后作为文件项下发，计入文件数（字节数按目标而定，不并入 order 级总量摘要）。
 func (s *DeliveryOrchestrator) manifestSummary(orderID uint) (int, int64) {
 	items, err := s.repo.ListItems(orderID)
 	if err != nil {
@@ -294,12 +295,14 @@ func (s *DeliveryOrchestrator) manifestSummary(orderID uint) (int, int64) {
 	count := 0
 	var total int64
 	for i := range items {
-		if items[i].Kind != model.ChangeItemKindFileDiff {
-			continue
-		}
-		count++
-		if items[i].SizeBytes != nil {
-			total += *items[i].SizeBytes
+		switch items[i].Kind {
+		case model.ChangeItemKindFileDiff:
+			count++
+			if items[i].SizeBytes != nil {
+				total += *items[i].SizeBytes
+			}
+		case model.ChangeItemKindConfigChange:
+			count++
 		}
 	}
 	return count, total

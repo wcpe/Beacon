@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -68,15 +69,16 @@ func TestPlanBatchMembersStable(t *testing.T) {
 
 // —— 推进器端到端 push_only 脊柱 ——
 
-// orchestratorHarness 打包推进器 + 可控时钟 + 内存指标，驱动同步 tick。
+// orchestratorHarness 打包推进器 + 数据面 + 可控时钟 + 内存指标，驱动同步 tick。
 type orchestratorHarness struct {
 	env   *deliveryTestEnv
 	f     *deliveryFixture
 	orch  *DeliveryOrchestrator
+	blob  *DeliveryBlobService
 	clock time.Time
 }
 
-// newOrchestratorHarness 装配推进器（复用交付测试库 + 夹具），注入可控时钟与观察窗提供方。
+// newOrchestratorHarness 装配推进器（复用交付测试库 + 夹具），注入可控时钟、观察窗提供方与配置灰度渲染器。
 func newOrchestratorHarness(t *testing.T) *orchestratorHarness {
 	t.Helper()
 	env := newDeliveryTestEnv(t)
@@ -86,10 +88,14 @@ func newOrchestratorHarness(t *testing.T) *orchestratorHarness {
 	cmdRepo := repository.NewAgentCommandRepository(env.db)
 	auditRepo := repository.NewAuditLogRepository(env.db)
 	blobSvc := NewDeliveryBlobService(env.db, blobRepo, repo, cmdRepo, &fakeBlobSettings{upload: 4, download: 64, capacity: 1 << 30})
+	blobSvc.SetRoot(t.TempDir()) // 配置灰度渲染写真 blob 文件，隔离到临时根避免污染 CWD
+	configSvc := NewConfigCenterService(env.db, repository.NewConfigFileRepository(env.db),
+		repository.NewConfigLayerVersionRepository(env.db), auditRepo)
+	blobSvc.SetConfigRenderer(configSvc, repository.NewConfigLayerVersionRepository(env.db), repository.NewConfigFileRepository(env.db))
 	orch := NewDeliveryOrchestrator(env.db, repo, blobSvc, cmdRepo, auditRepo, env.health, metricwindow.New(0), nil)
 	blobSvc.SetProgressWaker(orch)
 	env.orders.SetObserveProvider(orch)
-	h := &orchestratorHarness{env: env, f: f, orch: orch, clock: time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)}
+	h := &orchestratorHarness{env: env, f: f, orch: orch, blob: blobSvc, clock: time.Date(2026, 7, 16, 8, 0, 0, 0, time.UTC)}
 	orch.now = func() time.Time { return h.clock }
 	return h
 }
@@ -460,6 +466,64 @@ func TestOrchestratorConfigScopeConflict(t *testing.T) {
 	}
 	if ae, ok := err.(*apperr.Error); !ok || ae.Code != "config_scope_conflict" {
 		t.Fatalf("应为 config_scope_conflict: %v", err)
+	}
+}
+
+// TestOrchestratorConfigGrayRendersBlobAndManifest 配置灰度渲染 + blob 生成 + 清单归一（ADR-0071 决策1/2）：
+// 启动即由控制面渲染配置明文写入就绪 blob；目标拉清单时配置项归一为文件项进 Files（sha 指向就绪 blob），Configs 空。
+func TestOrchestratorConfigGrayRendersBlobAndManifest(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+	order := h.createApprovedConfigOrder(t, "配置灰度落盘", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+
+	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+		t.Fatalf("配置灰度单启动失败: %v", err)
+	}
+	var readyCount int64
+	h.env.db.Model(&model.DeliveryBlob{}).Where("state = ?", model.DeliveryBlobStateReady).Count(&readyCount)
+	if readyCount == 0 {
+		t.Fatal("配置灰度启动后应已写入至少一个就绪 blob")
+	}
+
+	id := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	manifest, err := h.blob.TargetManifest(id, order)
+	if err != nil {
+		t.Fatalf("拉目标清单失败: %v", err)
+	}
+	if len(manifest.Configs) != 0 {
+		t.Fatalf("配置项应归一进 Files、Configs 为空，实际 %d", len(manifest.Configs))
+	}
+	var cfg *DeliveryManifestFileView
+	for i := range manifest.Files {
+		if manifest.Files[i].Path == "plugins/Gray/config.yml" {
+			cfg = &manifest.Files[i]
+		}
+	}
+	if cfg == nil {
+		t.Fatalf("清单 Files 应含渲染后的配置文件: %+v", manifest.Files)
+	}
+	if cfg.Action != model.ChangeItemActionUpdate || cfg.SHA256 == "" || cfg.Size == 0 {
+		t.Fatalf("配置文件项字段不符: %+v", cfg)
+	}
+	if _, err := h.blob.Head(cfg.SHA256); err != nil {
+		t.Fatalf("清单配置文件项的 blob 应已就绪: %v", err)
+	}
+}
+
+// TestPrepareConfigBlobsDedupsPerTarget per-target 渲染同作用域层去重（content-addressed）：
+// namespace 层灰度时 t-1 / t-2 链上只有 namespace 层有贡献 → 渲染相同明文 → 同 sha 只落一个 blob。
+func TestPrepareConfigBlobsDedupsPerTarget(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeNamespace, h.f.nsID, "shared: true")
+	order := h.createApprovedConfigOrder(t, "命名空间层灰度", []string{"t-1", "t-2"}, model.ConfigScopeNamespace, h.f.nsID, versionID)
+
+	if err := h.blob.PrepareConfigBlobs(order, []string{"t-1", "t-2"}); err != nil {
+		t.Fatalf("准备配置 blob 失败: %v", err)
+	}
+	var count int64
+	h.env.db.Model(&model.DeliveryBlob{}).Where("state = ?", model.DeliveryBlobStateReady).Count(&count)
+	if count != 1 {
+		t.Fatalf("同作用域两目标渲染相同明文应去重为 1 个 blob，实际 %d", count)
 	}
 }
 

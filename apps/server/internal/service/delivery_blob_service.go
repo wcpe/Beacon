@@ -75,6 +75,9 @@ type DeliveryBlobService struct {
 	downloads *flowLimiter
 	// waker 编排推进器唤醒器（M3 可选注入；未注入则回执后不主动唤醒，靠推进器 ticker 兜底）。
 	waker deliveryProgressWaker
+	// configRenderer 配置灰度渲染器（可选注入，ADR-0071）：把 config_change 项按目标渲染为生效明文文件。
+	// 未注入（M2 数据面路径）则配置项不参与 blob 准备与清单下发。
+	configRenderer *deliveryConfigRenderer
 }
 
 // NewDeliveryBlobService 构造服务（存储根默认 .beacon/delivery，可 SetRoot 覆盖）。
@@ -89,6 +92,12 @@ func NewDeliveryBlobService(db *gorm.DB, blobs *repository.DeliveryBlobRepositor
 
 // SetProgressWaker 注入编排推进器唤醒器（M3 启动时装配；未注入则回执后不主动唤醒）。
 func (s *DeliveryBlobService) SetProgressWaker(w deliveryProgressWaker) { s.waker = w }
+
+// SetConfigRenderer 注入配置灰度渲染器（配置灰度装配时调用，ADR-0071）：内部据配置中心 + 版本 / 文件仓库构造。
+func (s *DeliveryBlobService) SetConfigRenderer(config *ConfigCenterService,
+	versions *repository.ConfigLayerVersionRepository, files *repository.ConfigFileRepository) {
+	s.configRenderer = newDeliveryConfigRenderer(config, versions, files)
+}
 
 // SetRoot 覆盖中转存储根目录（主要供测试隔离；空串忽略）。
 func (s *DeliveryBlobService) SetRoot(root string) {
@@ -123,9 +132,24 @@ func deliveryBlobCapacityExceeded(used, incoming, capacity int64) *apperr.Error 
 		fmt.Sprintf("中转存储容量不足：已用 %d + 本次 %d 字节超出上限 %d 字节，请清理或调大 delivery.blob-capacity-bytes", used, incoming, capacity))
 }
 
-// Store 流式写入一个 blob（PUT 语义，spec §4.5.2）：并发限流 → 秒传去重 → 容量预检 → 占位落账 →
-// 临时文件边收边算 sha256 → 与声明比对（不符 422 丢弃）→ 原子 rename 进 blobs → 元数据置 ready。
+// Store 流式写入一个 blob（PUT 语义，agent 上传，spec §4.5.2）：受上传并发限流保护，核心写入委托 persistBlob。
 func (s *DeliveryBlobService) Store(sha string, contentLength int64, reader io.Reader) error {
+	if !s.uploads.tryAcquire(s.settings.GetInt(SettingDeliveryUploadConcurrency)) {
+		return apperr.ErrDeliveryUploadBusy
+	}
+	defer s.uploads.release()
+	return s.persistBlob(sha, contentLength, reader)
+}
+
+// StoreInternal 控制面内部写入一个 blob（配置灰度渲染明文落盘，ADR-0071）：不占 agent 上传并发额度
+// （非外部上传、不是限流针对的背压面），其余（秒传去重 / 容量预检 / 边收边校验 sha / 原子落位）与 Store 一致。
+func (s *DeliveryBlobService) StoreInternal(sha string, contentLength int64, reader io.Reader) error {
+	return s.persistBlob(sha, contentLength, reader)
+}
+
+// persistBlob 内容寻址写入核心（Store / StoreInternal 共用）：归一校验 sha → 秒传去重 → 容量预检 →
+// 占位落账 → 临时文件边收边算 sha256 → 与声明比对（不符 422 丢弃）→ 原子 rename 进 blobs → 元数据置 ready。
+func (s *DeliveryBlobService) persistBlob(sha string, contentLength int64, reader io.Reader) error {
 	sha, err := normalizeBlobSHA(sha)
 	if err != nil {
 		return err
@@ -133,10 +157,6 @@ func (s *DeliveryBlobService) Store(sha string, contentLength int64, reader io.R
 	if contentLength < 0 {
 		return apperr.ErrDeliveryLengthRequired
 	}
-	if !s.uploads.tryAcquire(s.settings.GetInt(SettingDeliveryUploadConcurrency)) {
-		return apperr.ErrDeliveryUploadBusy
-	}
-	defer s.uploads.release()
 	if ready, e := s.isReady(sha); e != nil {
 		return e
 	} else if ready {
@@ -326,6 +346,40 @@ func (s *DeliveryBlobService) MissingBlobs(orderID uint) ([]DeliveryBlobRequirem
 		}
 	}
 	return missing, nil
+}
+
+// PrepareConfigBlobs 控制面在启动 payload 准备期为本单每个 config_change 项按每个目标渲染灰度生效明文并写入
+// 内容寻址 blob（restart 读盘生效依据，ADR-0071 决策2）：区别于文件项由模板源 agent 上传中转——配置明文由
+// 控制面主动渲染写入。per-target 渲染经 content-addressed sha256 天然去重（同作用域层多目标渲染相同明文只落
+// 一个 blob）。无配置项 / 无目标 / 未装配渲染器则空操作。渲染失败原样上抛（由调用方脱敏展示，ADR-0057）。
+func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []string) error {
+	if s.configRenderer == nil || len(serverIDs) == 0 {
+		return nil
+	}
+	items, err := s.orders.ListItems(orderID)
+	if err != nil {
+		return err
+	}
+	written := make(map[string]struct{}) // 已落 blob 的 sha（跨目标去重，省重复落盘往返）
+	for i := range items {
+		if items[i].Kind != model.ChangeItemKindConfigChange {
+			continue
+		}
+		for _, serverID := range serverIDs {
+			rendered, err := s.configRenderer.render(&items[i], serverID)
+			if err != nil {
+				return err
+			}
+			if _, dup := written[rendered.SHA256]; dup {
+				continue
+			}
+			if err := s.StoreInternal(rendered.SHA256, rendered.Size, strings.NewReader(rendered.Content)); err != nil {
+				return err
+			}
+			written[rendered.SHA256] = struct{}{}
+		}
+	}
+	return nil
 }
 
 // TouchReferences 刷新某变更单全部文件项引用 blob 的 last_referenced_at（清理保护）。

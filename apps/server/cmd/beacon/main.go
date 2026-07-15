@@ -412,6 +412,10 @@ func run() error {
 	// P9 M2 交付数据面装配（FR-165，见 ADR-0069）：全局 sha256 内容寻址 blob 中转存储 + 流式 / agent 面端点 + 后台清理器。
 	deliveryBlobRepo := repository.NewDeliveryBlobRepository(db)
 	deliveryBlobService := service.NewDeliveryBlobService(db, deliveryBlobRepo, changeOrderRepo, commandRepo, settingsService)
+	// 配置灰度渲染器装配（ADR-0071）：把 config_change 项按目标渲染为生效明文文件（控制面写内容寻址 blob、
+	// restart 读盘生效），只读调用配置中心 EffectivePlaintext 接缝、配置域代码零改动。
+	deliveryBlobService.SetConfigRenderer(configCenterService,
+		repository.NewConfigLayerVersionRepository(db), repository.NewConfigFileRepository(db))
 	deliveryStreamHandler := handler.NewDeliveryStreamHandler(deliveryBlobService)
 	deliveryAgentHandler := handler.NewDeliveryAgentHandler(deliveryBlobService)
 	deliveryBlobCleaner := service.NewDeliveryBlobCleaner(deliveryBlobService, auditRepo)

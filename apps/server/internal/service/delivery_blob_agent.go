@@ -152,7 +152,8 @@ type DeliveryManifestFileView struct {
 	Size int64 `json:"size,omitempty"`
 }
 
-// DeliveryManifestConfigView 是目标差异清单的配置项摘要（M2 只给 scope / 版本指针，载荷渲染归 M4）。
+// DeliveryManifestConfigView 目标差异清单的配置项摘要（历史契约字段）。配置灰度落地后 config_change 项
+// 已归一为渲染后的文件项进 Files（ADR-0071），本字段恒为空数组、仅为响应契约向后兼容保留（agent 不消费）。
 type DeliveryManifestConfigView struct {
 	// 作用域层级（五层之一）
 	ScopeKind string `json:"scopeKind"`
@@ -195,16 +196,20 @@ func (s *DeliveryBlobService) TargetManifest(id agentauth.Identity, orderID uint
 	}
 	view := &DeliveryTargetManifestView{
 		OrderID: order.ID, ActivationMethod: order.ActivationMethod,
-		Files: make([]DeliveryManifestFileView, 0, len(items)), Configs: make([]DeliveryManifestConfigView, 0, 4),
+		Files: make([]DeliveryManifestFileView, 0, len(items)), Configs: make([]DeliveryManifestConfigView, 0),
 	}
 	for i := range items {
-		appendManifestItem(view, &items[i])
+		if err := s.appendManifestItem(view, &items[i], id.ServerID); err != nil {
+			return nil, err
+		}
 	}
 	return view, nil
 }
 
-// appendManifestItem 把一条变更项映射进目标清单视图（file_diff 进 Files、config_change 进 Configs）。
-func appendManifestItem(view *DeliveryTargetManifestView, item *model.ChangeOrderItem) {
+// appendManifestItem 把一条变更项映射进目标清单视图：file_diff 直接进 Files；config_change 按目标渲染灰度
+// 生效明文后作为文件项进 Files（数据面归一为文件，agent 复用文件下载落盘 + restart 读盘生效，ADR-0071）。
+// 渲染出的 blob 已在 payload 准备期由控制面写入（PrepareConfigBlobs），此处只据渲染结果补清单文件项。
+func (s *DeliveryBlobService) appendManifestItem(view *DeliveryTargetManifestView, item *model.ChangeOrderItem, serverID string) error {
 	switch item.Kind {
 	case model.ChangeItemKindFileDiff:
 		file := DeliveryManifestFileView{Path: derefString(item.Path), Action: derefString(item.Action)}
@@ -216,11 +221,18 @@ func appendManifestItem(view *DeliveryTargetManifestView, item *model.ChangeOrde
 		}
 		view.Files = append(view.Files, file)
 	case model.ChangeItemKindConfigChange:
-		view.Configs = append(view.Configs, DeliveryManifestConfigView{
-			ScopeKind: derefString(item.ConfigScopeKind), ScopeID: derefUint(item.ConfigScopeID),
-			FromVersionID: item.ConfigFromVersionID, ToVersionID: item.ConfigToVersionID,
+		if s.configRenderer == nil {
+			return nil // 未装配渲染器（M2 数据面兼容路径）：配置项不下发
+		}
+		rendered, err := s.configRenderer.render(item, serverID)
+		if err != nil {
+			return err
+		}
+		view.Files = append(view.Files, DeliveryManifestFileView{
+			Path: rendered.Path, Action: model.ChangeItemActionUpdate, SHA256: rendered.SHA256, Size: rendered.Size,
 		})
 	}
+	return nil
 }
 
 // 交付阶段回执 phase 取值（spec §5.2）。
@@ -353,14 +365,6 @@ func deliveryResultDetail(orderID uint, input DeliveryResultInput) string {
 	}
 	raw, _ := json.Marshal(detail)
 	return string(raw)
-}
-
-// derefUint 安全解引用 uint 指针（nil 返回 0）。
-func derefUint(v *uint) uint {
-	if v == nil {
-		return 0
-	}
-	return *v
 }
 
 // deliveryBlobSweepRef 是清理审计的 TargetRef 固定值（清理是全局 sweep，无单一对象定位）。
