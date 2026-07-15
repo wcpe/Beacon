@@ -123,6 +123,102 @@ class DeliveryCommandExecutorTest {
         assertTrue(body.contains("status=failed"), "hot_reload 现回执 failed（暂未支持）：$body")
     }
 
+    @Test
+    fun `restart 回滚还原备份后回执并优雅关服`() {
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray()) // 模拟正推覆盖
+
+        executorWith(backupManager).execute(rollbackCommand("restart"))
+
+        assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText(), "回滚应从备份还原旧内容")
+        val body = resultBody.get() ?: error("未回执")
+        assertTrue(body.contains("phase=rollback"), "应回执 rollback 阶段：$body")
+        assertTrue(body.contains("status=success"), "还原成功先回执 success：$body")
+        assertEquals(0, adapter.shutdownReasons.size, "回执后、延迟任务前不应已关服")
+        assertEquals(1, adapter.delayedCount(), "restart 回滚应调度一个延迟优雅关服")
+        adapter.drainOne()
+        assertEquals(1, adapter.shutdownReasons.size, "延迟任务执行后应优雅关服一次")
+    }
+
+    @Test
+    fun `push_only 回滚还原不关服`() {
+        val backupManager = seededBackup()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW".toByteArray())
+
+        executorWith(backupManager).execute(rollbackCommand("push_only"))
+
+        assertEquals("OLD", File(serverRoot, "plugins/upd.txt").readText())
+        assertEquals(0, adapter.delayedCount(), "push_only 回滚不关服")
+        assertTrue(resultBody.get()!!.contains("status=success"))
+    }
+
+    @Test
+    fun `回滚备份缺失回执 failed 不关服`() {
+        val backupManager =
+            DeliveryBackupManager(
+                File(dataDir, "delivery-backups-empty"),
+                DeliveryTargetResolver(serverRoot, dataDir),
+                RollbackRoundTripCodec(),
+                adapter,
+            )
+
+        executorWith(backupManager).execute(rollbackCommand("restart"))
+
+        val body = resultBody.get() ?: error("未回执")
+        assertTrue(body.contains("status=failed"), "备份缺失应回执 failed：$body")
+        assertEquals(0, adapter.shutdownReasons.size, "备份缺失不关服")
+    }
+
+    /** 造一份 update 项备份（旧内容 OLD），返回其 backupManager 供回滚测试复用（往返 codec）。 */
+    private fun seededBackup(): DeliveryBackupManager {
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
+        val backupManager =
+            DeliveryBackupManager(
+                File(dataDir, "delivery-backups"),
+                DeliveryTargetResolver(serverRoot, dataDir),
+                RollbackRoundTripCodec(),
+                adapter,
+            )
+        backupManager.backup(1L, listOf(DeliveryFileOp("plugins/upd.txt", DeliveryFileOp.Kind.UPDATE, "", 0L)))
+        return backupManager
+    }
+
+    /** 用给定 backupManager 构造执行器（回滚测试复用同一备份实例的往返 codec）。 */
+    private fun executorWith(backupManager: DeliveryBackupManager): DeliveryCommandExecutor {
+        val resolver = DeliveryTargetResolver(serverRoot, dataDir)
+        val apiClient = BeaconApiClient(RoutingTransport(resultBody), ManifestCodec(manifestTree()), settings())
+        val pipeline =
+            DeliveryPipeline(
+                uploader = DeliveryUploader(blob, resolver, { it }, { emptyMap() }, adapter),
+                downloader = DeliveryDownloader(blob, { it }, { emptyMap() }, adapter),
+                backupManager = backupManager,
+                overwriter = DeliveryOverwriter(resolver),
+                tempRoot = File(dataDir, "delivery-tmp"),
+            )
+        return DeliveryCommandExecutor(identity(), apiClient, adapter, pipeline)
+    }
+
+    /** 构造一条 delivery_rollback 命令（携指定生效方式，orderId=1）。 */
+    private fun rollbackCommand(activationMethod: String): AgentCommand =
+        AgentCommand(
+            id = 7L,
+            type = AgentCommand.TYPE_DELIVERY_ROLLBACK,
+            payload = IngestCommandPayload("", "", ""),
+            deliveryPayload = DeliveryCommandPayload(orderId = 1L, activationMethod = activationMethod),
+        )
+
+    /** 往返 codec：encode 记住入参、decode 返回它，供 backup→restore 往返（回滚测试用）。 */
+    private class RollbackRoundTripCodec : JsonCodec {
+        private var last: Any? = null
+
+        override fun encode(value: Any?): String {
+            last = value
+            return "rt"
+        }
+
+        override fun decode(json: String): Any? = last
+    }
+
     /** 铺设模板目标现状：upd 将被覆盖、skip 同 hash 跳过、del 将删除、new 尚不存在。 */
     private fun seedServerRoot() {
         DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())

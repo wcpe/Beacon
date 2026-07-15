@@ -89,6 +89,59 @@ class DeliveryBackupManager(
     ): Map<String, Any?> = mapOf("path" to path, "action" to action, "sha256" to sha256, "size" to size)
 
     /**
+     * 按备份 manifest 还原本单磁盘变更（整单回滚，spec §4.7.2）：读 manifest.json 逐条反转——
+     * update / delete 项从 `files/<path>` 备份还原到目标（覆盖前原内容 / 被删文件），add 项删除该新增文件。
+     * 返回还原的文件数。manifest / 备份内容缺失抛 [IOException]（调用方据此回执 failed「备份不存在」）。
+     */
+    fun restore(orderId: Long): Int {
+        val orderDir = File(backupRoot, orderId.toString())
+        val manifestFile = File(orderDir, MANIFEST_NAME)
+        if (!manifestFile.exists()) {
+            throw IOException("回滚备份不存在：orderId=$orderId，位置=${orderDir.absolutePath}")
+        }
+        val filesDir = File(orderDir, FILES_SUBDIR)
+        val entries = decodeManifest(manifestFile)
+        for (entry in entries) {
+            restoreOne(entry, filesDir)
+        }
+        adapter.info("交付回滚还原完成：orderId=$orderId，还原=${entries.size}，来源=${orderDir.absolutePath}")
+        return entries.size
+    }
+
+    /** 解析备份 manifest（[{path, action, sha256, size}]）；结构非法抛 [IOException]。 */
+    @Suppress("UNCHECKED_CAST")
+    private fun decodeManifest(manifestFile: File): List<Map<String, Any?>> {
+        val decoded = codec.decode(manifestFile.readText(StandardCharsets.UTF_8))
+        if (decoded !is List<*>) {
+            throw IOException("回滚备份 manifest 格式非法：${manifestFile.absolutePath}")
+        }
+        return decoded.map { it as? Map<String, Any?> ?: throw IOException("回滚备份 manifest 条目非法") }
+    }
+
+    /** 还原单条：add 项删目标文件（还原为不存在）；update / delete 项从备份复制旧内容回目标（经 resolver 路径校验）。 */
+    @Suppress("ThrowsCount") // 还原每步校验（path/action/目标路径/备份内容）失败均须 IOException 上抛，供调用方回执 failed
+    private fun restoreOne(
+        entry: Map<String, Any?>,
+        filesDir: File,
+    ) {
+        val path = entry["path"] as? String ?: throw IOException("回滚备份条目缺 path")
+        val action = entry["action"] as? String ?: throw IOException("回滚备份条目缺 action")
+        val target = resolver.resolve(path) ?: throw IOException("回滚目标路径非法：$path")
+        if (action == DeliveryManifestFile.ACTION_ADD) {
+            if (target.exists() && !target.delete()) {
+                throw IOException("回滚删除新增文件失败：$path")
+            }
+            return
+        }
+        val backupFile = File(filesDir, path)
+        if (!backupFile.exists()) {
+            throw IOException("回滚备份内容缺失：$path")
+        }
+        target.parentFile?.mkdirs()
+        Files.copy(backupFile.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
+
+    /**
      * 保留清理（spec §4.7.1）：删除超 [RETENTION_DAYS] 天的备份单，再把超 [MAX_BACKUPS] 个的最旧删除。
      *
      * 本地周期执行——由交付执行器在每次成功备份后机会式调用（新增备份时顺带修剪），无需另起调度循环。

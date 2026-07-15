@@ -3,11 +3,13 @@ package top.wcpe.beacon.agent.core.delivery
 import top.wcpe.beacon.agent.core.testsupport.ManualAsyncAdapter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
+import java.io.IOException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -60,6 +62,41 @@ class DeliveryBackupManagerTest {
         val manager = DeliveryBackupManager(backupRoot, resolver, codec, adapter)
         assertFalse(manager.backup(9L, emptyList()))
         assertFalse(File(backupRoot, "9").exists())
+    }
+
+    @Test
+    fun `回滚还原update复原del复原add删除`() {
+        val roundTrip = RoundTripCodec()
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD-UPD".toByteArray())
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/del.txt", "OLD-DEL".toByteArray())
+        val manager = DeliveryBackupManager(backupRoot, resolver, roundTrip, adapter)
+        // 覆盖前备份工作集。
+        manager.backup(
+            1L,
+            listOf(
+                op("plugins/upd.txt", DeliveryFileOp.Kind.UPDATE),
+                op("plugins/del.txt", DeliveryFileOp.Kind.DELETE),
+                op("plugins/add.txt", DeliveryFileOp.Kind.ADD),
+            ),
+        )
+        // 模拟正推覆盖：upd 改新内容、del 删除、add 新增。
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "NEW-UPD".toByteArray())
+        assertTrue(File(serverRoot, "plugins/del.txt").delete())
+        DeliveryTestSupport.writeFile(serverRoot, "plugins/add.txt", "NEW-ADD".toByteArray())
+
+        val restored = manager.restore(1L)
+
+        assertEquals(3, restored)
+        assertEquals("OLD-UPD", File(serverRoot, "plugins/upd.txt").readText(), "update 项应复原旧内容")
+        assertTrue(File(serverRoot, "plugins/del.txt").exists(), "delete 项应复原")
+        assertEquals("OLD-DEL", File(serverRoot, "plugins/del.txt").readText())
+        assertFalse(File(serverRoot, "plugins/add.txt").exists(), "add 项应删除还原为不存在")
+    }
+
+    @Test
+    fun `回滚备份缺失抛异常`() {
+        val manager = DeliveryBackupManager(backupRoot, resolver, RoundTripCodec(), adapter)
+        assertFailsWith<IOException> { manager.restore(999L) }
     }
 
     @Test
@@ -128,6 +165,18 @@ class DeliveryBackupManagerTest {
         }
 
         override fun decode(json: String): Any? = emptyMap<String, Any?>()
+    }
+
+    /** 往返 codec：encode 记住入参、decode 返回它，免真 JSON 编解码即可测 backup→restore 往返。 */
+    private class RoundTripCodec : JsonCodec {
+        private var last: Any? = null
+
+        override fun encode(value: Any?): String {
+            last = value
+            return "round-trip"
+        }
+
+        override fun decode(json: String): Any? = last
     }
 
     private companion object {

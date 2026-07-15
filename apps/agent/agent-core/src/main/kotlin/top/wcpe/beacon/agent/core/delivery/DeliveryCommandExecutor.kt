@@ -43,6 +43,7 @@ data class DeliveryPipeline(
  * @param adapter   平台日志
  * @param pipeline  交付执行机器
  */
+@Suppress("TooManyFunctions") // 交付编排类天然多阶段方法：上传 / 推送 / 生效 / 回滚各一编排入口 + 私有步骤方法
 class DeliveryCommandExecutor(
     private val identity: AgentIdentity,
     private val apiClient: BeaconApiClient,
@@ -75,7 +76,7 @@ class DeliveryCommandExecutor(
             AgentCommand.TYPE_DELIVERY_UPLOAD -> runUpload(orderId)
             AgentCommand.TYPE_DELIVERY_PUSH -> runPush(orderId)
             AgentCommand.TYPE_DELIVERY_ACTIVATE -> runActivate(orderId, command.deliveryPayload?.activationMethod ?: "")
-            AgentCommand.TYPE_DELIVERY_ROLLBACK -> runUnsupportedSkeleton(orderId, PHASE_ROLLBACK, "整单回滚（M5）")
+            AgentCommand.TYPE_DELIVERY_ROLLBACK -> runRollback(orderId, command.deliveryPayload?.activationMethod ?: "")
             else -> adapter.warn("非交付命令类型错入交付执行器（忽略）：id=${command.id}，type=${command.type}")
         }
     }
@@ -186,6 +187,45 @@ class DeliveryCommandExecutor(
             ACTIVATION_HOT_RELOAD -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "配置热更生效（hot_reload，M4.x）")
             else -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "未知生效方式「$activationMethod」")
         }
+    }
+
+    /**
+     * 整单回滚（FR-167，spec §4.7.2）：从覆盖前备份还原磁盘（update / delete 复原、add 删除），回执 rollback；
+     * 生效方式复用正推语义——restart 还原后优雅关服（宿主自启拉起、控制面观测心跳回归判 rolled_back），
+     * push_only 只还原不关服（随下次自然重启读盘）；hot_reload 配置热更回滚留下一迭代（仍诚实回执 failed）。
+     * 备份缺失 / 还原 IO 失败 → 回执 failed（脱敏），控制面据此判该目标回滚 failed。
+     */
+    private fun runRollback(
+        orderId: Long,
+        activationMethod: String,
+    ) {
+        // hot_reload 回滚（配置热更）与正推 hot_reload 同留下一迭代：诚实回执 failed，不误报。
+        if (activationMethod == ACTIVATION_HOT_RELOAD) {
+            runUnsupportedSkeleton(orderId, PHASE_ROLLBACK, "配置热更回滚（hot_reload，M4.x）")
+            return
+        }
+        val restored =
+            try {
+                pipeline.backupManager.restore(orderId)
+            } catch (e: IOException) {
+                return failResult(orderId, PHASE_ROLLBACK, "备份还原失败：${reasonOf(e)}")
+            }
+        if (activationMethod == ACTIVATION_RESTART) {
+            adapter.info("交付 restart 回滚：还原备份后回执并优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId，还原=$restored")
+            // 与正推 restart 同构：关服前先同步回执成功（关服后进程消失便发不出），再极短延迟后关服。
+            postResult(orderId, DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, ""))
+            adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
+                try {
+                    adapter.gracefulShutdown("交付变更单 #$orderId 回滚后重启生效")
+                } catch (e: Exception) {
+                    failResult(orderId, PHASE_ROLLBACK, "回滚后优雅关服失败：${reasonOf(e)}")
+                }
+            }
+            return
+        }
+        // push_only（及其它非 restart）：还原即够，随目标下次自然重启读盘。
+        postResult(orderId, DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, ""))
+        adapter.info("交付回滚完成（还原即生效，随下次自然重启读盘）：orderId=$orderId，还原=$restored")
     }
 
     /** 生效（hot_reload/未知）/ 回滚接缝骨架（M4.x / M5）：诚实回执 failed，不误报 done。 */
