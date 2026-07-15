@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.adapters
 import top.wcpe.beacon.agent.adapters.testutil.FakeHttpTransport
 import top.wcpe.beacon.agent.adapters.testutil.TestFixtures
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.delivery.DeliveryStageReport
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.transport.HttpResponse
@@ -87,6 +88,25 @@ class BeaconApiClientDeliveryTest {
         assertEquals(3L, sent["changedFileCount"])
         assertEquals(1L, sent["skippedFileCount"])
         assertEquals(true, sent["backupPresent"])
+    }
+
+    @Test
+    fun `解析 delivery_activate 命令携 activationMethod 与 orderId`() {
+        // 控制面 delivery_activate 命令载荷（camelCase，见 server deliveryActivatePayload）：orderId + activationMethod (+ restart 超时)。
+        val transport =
+            FakeHttpTransport().enqueue(
+                HttpResponse(
+                    200,
+                    """{"id":9,"type":"delivery_activate","payload":{"orderId":7,"activationMethod":"restart","activateTimeoutSec":300}}""",
+                ),
+            )
+        val client = BeaconApiClient(transport, codec, TestFixtures.settings())
+
+        val cmd = assertNotNull(client.fetchPendingCommand(identity()))
+
+        assertEquals(AgentCommand.TYPE_DELIVERY_ACTIVATE, cmd.type)
+        assertEquals(7L, cmd.deliveryPayload?.orderId)
+        assertEquals("restart", cmd.deliveryPayload?.activationMethod, "activate 命令应解析出生效方式供 M4 分派")
     }
 
     @Test

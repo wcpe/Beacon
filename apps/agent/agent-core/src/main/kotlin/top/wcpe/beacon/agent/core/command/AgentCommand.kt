@@ -67,12 +67,16 @@ data class AgentCommand(
 /**
  * 交付命令专用载荷（FR-165，见 ADR-0069 §4.5.1）：payload 只含控制信息，**绝不含文件内容**。
  *
- * M2 仅含 orderId（完整清单经 agent 面 GET 拉取）；刻意不塞进 [IngestCommandPayload] 以免两个载荷互相膨胀。
+ * orderId 对全部 delivery_* 命令有效（完整清单经 agent 面 GET 拉取）；activationMethod 仅 delivery_activate
+ * 命令携带（restart / hot_reload，由控制面按单级配置下发，spec §4.6.1），据此在生效阶段分派——其它 delivery
+ * 命令缺省空串。刻意不塞进 [IngestCommandPayload] 以免两个载荷互相膨胀。
  *
- * @param orderId 变更单 id（拉取清单 / 回执时引用）
+ * @param orderId          变更单 id（拉取清单 / 回执时引用）
+ * @param activationMethod 生效方式（仅 delivery_activate 携带：restart / hot_reload；其它 delivery 命令为空串）
  */
 data class DeliveryCommandPayload(
     val orderId: Long,
+    val activationMethod: String = "",
 )
 
 /**

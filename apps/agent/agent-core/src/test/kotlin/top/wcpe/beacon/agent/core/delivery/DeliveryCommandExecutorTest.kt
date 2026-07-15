@@ -74,6 +74,55 @@ class DeliveryCommandExecutorTest {
         assertTrue(body.contains("备份失败"), "失败原因应指明备份失败：$body")
     }
 
+    @Test
+    fun `restart 生效先同步回执开始生效再优雅关服`() {
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        exec.execute(activateCommand("restart"))
+
+        // 关服前：已同步回执 activate success「开始生效」（postResult 阻塞至送达）。
+        val body = resultBody.get() ?: error("未回执")
+        assertTrue(body.contains("phase=activate"), "应回执 activate 阶段：$body")
+        assertTrue(body.contains("status=success"), "restart 先回执 success「开始生效」：$body")
+        // 时序关键：回执已发但关服尚未执行——关服被排入延迟队列、还没触发。
+        assertEquals(0, adapter.shutdownReasons.size, "回执后、延迟任务执行前绝不应已关服")
+        assertEquals(1, adapter.delayedCount(), "应恰好调度一个延迟优雅关服任务")
+
+        // 推进延迟任务 → 真正触发优雅关服。
+        adapter.drainOne()
+        assertEquals(1, adapter.shutdownReasons.size, "延迟任务执行后应优雅关服一次")
+        assertTrue(adapter.shutdownReasons.first().contains("#1"), "关服原因应含 orderId：${adapter.shutdownReasons.first()}")
+    }
+
+    @Test
+    fun `restart 关服原语抛异常回执 failed`() {
+        adapter.shutdownError = RuntimeException("调度器不可用")
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        exec.execute(activateCommand("restart"))
+
+        // 先回执了 success「开始生效」，关服延迟任务入队。
+        assertEquals(1, adapter.delayedCount())
+        // 执行关服 → 原语抛异常 → 捕获后回执 activate failed（控制面据「关服指令回执失败」判 failed 熔断止血）。
+        adapter.drainOne()
+        assertEquals(1, adapter.shutdownReasons.size, "关服原语已被尝试")
+        val body = resultBody.get() ?: error("未回执")
+        assertTrue(body.contains("phase=activate"), "失败回执仍为 activate 阶段：$body")
+        assertTrue(body.contains("status=failed"), "关服抛异常应回执 failed：$body")
+        assertTrue(body.contains("优雅关服失败"), "失败原因应指明关服失败：$body")
+    }
+
+    @Test
+    fun `hot_reload 生效不触发关服仍回执 failed`() {
+        val exec = executor(backupRoot = File(dataDir, "delivery-backups"))
+        exec.execute(activateCommand("hot_reload"))
+
+        // hot_reload 配置热更留下一迭代（M4.x 接缝）：绝不误触发关服，诚实回执 failed。
+        assertEquals(0, adapter.shutdownReasons.size, "hot_reload 不应触发关服")
+        assertEquals(0, adapter.delayedCount(), "hot_reload 不应调度关服任务")
+        val body = resultBody.get() ?: error("未回执")
+        assertTrue(body.contains("phase=activate"))
+        assertTrue(body.contains("status=failed"), "hot_reload 现回执 failed（暂未支持）：$body")
+    }
+
     /** 铺设模板目标现状：upd 将被覆盖、skip 同 hash 跳过、del 将删除、new 尚不存在。 */
     private fun seedServerRoot() {
         DeliveryTestSupport.writeFile(serverRoot, "plugins/upd.txt", "OLD".toByteArray())
@@ -137,6 +186,15 @@ class DeliveryCommandExecutorTest {
             type = AgentCommand.TYPE_DELIVERY_PUSH,
             payload = IngestCommandPayload("", "", ""),
             deliveryPayload = DeliveryCommandPayload(orderId = 1L),
+        )
+
+    /** 构造一条 delivery_activate 命令（携指定生效方式，orderId=1）。 */
+    private fun activateCommand(activationMethod: String): AgentCommand =
+        AgentCommand(
+            id = 6L,
+            type = AgentCommand.TYPE_DELIVERY_ACTIVATE,
+            payload = IngestCommandPayload("", "", ""),
+            deliveryPayload = DeliveryCommandPayload(orderId = 1L, activationMethod = activationMethod),
         )
 
     private fun identity(): AgentIdentity =

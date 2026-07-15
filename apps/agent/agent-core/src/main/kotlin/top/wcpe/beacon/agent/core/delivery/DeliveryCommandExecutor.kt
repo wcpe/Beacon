@@ -32,8 +32,9 @@ data class DeliveryPipeline(
  * delivery 类型委派本执行器执行——避免另起拉取循环与既有命令队列争抢（双拉取竞争）。本类只执行已拉到的命令，
  * 不自拉命令。[running] 单飞门为纵深防御：正常路径下委派方已串行化，本门兜底杜绝并发覆盖同一目标。
  *
- * 生效（activate，M4）/ 回滚（rollback，M5）本期仅建回执骨架：诚实回执 failed「暂未支持」，不误报 done，
- * 待后续里程碑实现（接缝见 [runUnsupportedSkeleton] 调用点）。
+ * 生效（activate，FR-171/M4）：restart 已真生效（[runActivate]：回执「开始生效」→ 优雅关服 → 宿主自启拉起 →
+ * 心跳回归由控制面判 activated）；hot_reload 配置热更 + 配置应用留下一迭代（M4.x 接缝，仍诚实回执 failed）。
+ * 回滚（rollback，M5）本期仍仅建回执骨架：诚实回执 failed「暂未支持」，不误报 done（接缝见 [runUnsupportedSkeleton] 调用点）。
  *
  * 全程 async、流式、不整读大文件入内存；备份失败绝不动原文件（时序由 [executePush] 保证）。
  *
@@ -73,7 +74,7 @@ class DeliveryCommandExecutor(
         when (command.type) {
             AgentCommand.TYPE_DELIVERY_UPLOAD -> runUpload(orderId)
             AgentCommand.TYPE_DELIVERY_PUSH -> runPush(orderId)
-            AgentCommand.TYPE_DELIVERY_ACTIVATE -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "生效编排（M4）")
+            AgentCommand.TYPE_DELIVERY_ACTIVATE -> runActivate(orderId, command.deliveryPayload?.activationMethod ?: "")
             AgentCommand.TYPE_DELIVERY_ROLLBACK -> runUnsupportedSkeleton(orderId, PHASE_ROLLBACK, "整单回滚（M5）")
             else -> adapter.warn("非交付命令类型错入交付执行器（忽略）：id=${command.id}，type=${command.type}")
         }
@@ -152,7 +153,42 @@ class DeliveryCommandExecutor(
             throw DeliveryPushException("备份失败，未改动原文件：${reasonOf(e)}")
         }
 
-    /** 生效 / 回滚接缝骨架（M4 / M5）：诚实回执 failed，不误报 done。 */
+    /**
+     * 生效编排（FR-171，M4，见 ADR-0070 / spec §4.6.1）：按 activation_method 分派。
+     *
+     * - **restart**（真生效）：**先同步回执 activate success「开始生效」**（语义 = 我要关服了、非生效完成）→ 极短延迟后
+     *   切平台原语优雅关服 → 宿主自启拉起 → agent 随进程重启重新注册 / 心跳回归。
+     *   关服前必须先把回执发出（关服后进程没了就发不出）：[postResult] 同步阻塞至控制面收到才返回，保证送达在关服前；
+     *   activated 由控制面观测心跳回归判定、**非本回执成功**（决策 3，注册 / 健康真源 = Go 进程内存）；
+     *   关服原语调用本身抛异常（极少见）→ 回执 activate failed，让控制面据「关服指令回执失败」判 failed 并熔断止血。
+     * - **hot_reload**：配置热更 + 配置应用留下一迭代（M4.x 接缝），现诚实回执 failed「暂未支持」，不误报 done。
+     * - 其它（push_only 控制面侧立即 activated、不下发 activate；空 / 未知值）：诚实回执 failed，暴露非预期。
+     */
+    private fun runActivate(
+        orderId: Long,
+        activationMethod: String,
+    ) {
+        when (activationMethod) {
+            ACTIVATION_RESTART -> {
+                adapter.info("交付 restart 生效：回执「开始生效」后将优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId")
+                // 关服前先同步回执「开始生效」：postResult 阻塞至送达，返回即已抵达控制面（关服后进程消失便发不出）。
+                postResult(orderId, DeliveryStageReport(PHASE_ACTIVATE, STATUS_SUCCESS, 0, 0, false, ""))
+                // 极短延迟后关服：让本命令执行调用栈（单飞门释放 / 委派方）先解开，再触发关服原语（平台原语内部切主线程执行）。
+                adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
+                    try {
+                        adapter.gracefulShutdown("交付变更单 #$orderId restart 生效")
+                    } catch (e: Exception) {
+                        failResult(orderId, PHASE_ACTIVATE, "优雅关服失败：${reasonOf(e)}")
+                    }
+                }
+            }
+            // hot_reload 配置热更 + 配置应用留下一迭代（M4.x 接缝）：现诚实回执 failed，不误报 done。
+            ACTIVATION_HOT_RELOAD -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "配置热更生效（hot_reload，M4.x）")
+            else -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "未知生效方式「$activationMethod」")
+        }
+    }
+
+    /** 生效（hot_reload/未知）/ 回滚接缝骨架（M4.x / M5）：诚实回执 failed，不误报 done。 */
     private fun runUnsupportedSkeleton(
         orderId: Long,
         phase: String,
@@ -191,6 +227,17 @@ class DeliveryCommandExecutor(
         /** 阶段回执 status 取值。 */
         const val STATUS_SUCCESS = "success"
         const val STATUS_FAILED = "failed"
+
+        /** 生效方式取值（与控制面 activation_method 下发值对齐，spec §4.6.1）。 */
+        const val ACTIVATION_RESTART = "restart"
+        const val ACTIVATION_HOT_RELOAD = "hot_reload"
+
+        /**
+         * restart 回执「开始生效」后到触发优雅关服的极短延迟（毫秒）。
+         *
+         * 仅用于让本命令执行调用栈（单飞门释放 / 委派方）先行解开再关服，非契约、无需外置配置。
+         */
+        private const val RESTART_SHUTDOWN_DELAY_MS = 200L
     }
 }
 

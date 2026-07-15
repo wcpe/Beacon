@@ -70,6 +70,10 @@ class BufferingPlatformAdapter(
 
     override fun dispatchConsoleCommand(command: String) = delegate.dispatchConsoleCommand(command)
 
+    // 优雅关服（restart 生效，FR-171/ADR-0070）：必须显式委托——漏委托会落到接口默认空实现，
+    // 生产装配（本装饰器包裹壳层 adapter）下壳层的真实关服永不可达、restart 生效静默失效（同 browse* 漏委托坑）。
+    override fun gracefulShutdown(reason: String) = delegate.gracefulShutdown(reason)
+
     // ===== 只读浏览（FR-109/110）：原样透传委托 =====
     // 修复：装饰器此前漏委托 browse*，致经本装饰器时落到 PlatformAdapter 默认 null 实现、
     // 壳层（Bukkit/Bungee）的真实委托永不可达——真机浏览全部返回 null（结果=false）。

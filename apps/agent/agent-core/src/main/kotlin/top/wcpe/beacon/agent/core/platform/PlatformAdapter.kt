@@ -134,6 +134,23 @@ interface PlatformAdapter {
         // 默认不动作：命令派发是 FR-15 的高风险能力，未显式实现的平台不开放。
     }
 
+    /**
+     * 优雅关服（restart 生效方式的平台原语，FR-171，见 ADR-0070）。
+     *
+     * 语义：广播关服提示 + 存档落盘后停止本进程，交由宿主自启脚本（docker `--restart` / systemd `Restart=` /
+     * 面板守护）重新拉起——**agent 只负责关服、绝不自重启**：core 与适配器一律不引入任何进程 / shell 执行 API
+     * （无 `Runtime.exec` / `ProcessBuilder`），物理上无法落到 OS shell（ADR-0011 决策 2 铁律不放开）。
+     * 生效判定归控制面观测心跳回归（注册 / 健康真源 = Go 进程内存），非本次关服回执成功（ADR-0070 决策 3）。
+     *
+     * 关服须在平台主线程执行（存档落盘、`Bukkit.shutdown()` 均要求主线程）：壳层经 [runSync] 切主线程后调平台原语。
+     * 默认空实现：未实现关服的平台 / 测试桩不动作（restart 生效能力不上线），与 [dispatchConsoleCommand] 同构。
+     *
+     * @param reason 关服原因（广播文案 / 日志用，便于运维在服务器日志看清是 Beacon 交付生效触发的重启）
+     */
+    fun gracefulShutdown(reason: String) {
+        // 默认不动作：优雅关服是 restart 生效的高风险平台能力，未显式实现的平台不开放（同 dispatchConsoleCommand）。
+    }
+
     /** INFO 级日志。 */
     fun info(msg: String)
 

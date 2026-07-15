@@ -12,6 +12,12 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     val infos = mutableListOf<String>()
     val warns = mutableListOf<String>()
 
+    /** 记录每次优雅关服（restart 生效，FR-171/ADR-0070）的原因，供时序断言（回执在前、关服在后）。 */
+    val shutdownReasons = mutableListOf<String>()
+
+    /** 注入关服原语失败：非 null 时 [gracefulShutdown] 记录后抛出，用于「关服抛异常 → 回执 failed」断言。 */
+    var shutdownError: RuntimeException? = null
+
     override fun runAsync(task: () -> Unit) {
         task()
     }
@@ -25,6 +31,11 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
 
     override fun runSync(task: () -> Unit) {
         task()
+    }
+
+    override fun gracefulShutdown(reason: String) {
+        shutdownReasons.add(reason)
+        shutdownError?.let { throw it }
     }
 
     override fun dataFolder(): File = folder

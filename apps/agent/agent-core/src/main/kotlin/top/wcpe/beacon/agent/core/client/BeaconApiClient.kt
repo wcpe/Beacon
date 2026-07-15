@@ -1433,9 +1433,17 @@ class BeaconApiClient(
         val obj = JsonTree.asObject(codec.decode(jsonBody))
         val payloadObj = JsonTree.asObject(obj["payload"])
         val type = JsonTree.strOr(obj, "type", "")
-        // 交付命令（FR-165）：payload 只含 orderId，解析到独立的 DeliveryCommandPayload（不膨胀 IngestCommandPayload）。
+        // 交付命令（FR-165）：payload 只含控制信息，解析到独立的 DeliveryCommandPayload（不膨胀 IngestCommandPayload）。
+        // activationMethod 仅 delivery_activate 携带（restart / hot_reload，FR-171 §4.6.1）；其它 delivery 命令缺省空串。
         val deliveryPayload =
-            if (AgentCommand.isDeliveryType(type)) DeliveryCommandPayload(orderId = JsonTree.longOr(payloadObj, "orderId", 0L)) else null
+            if (AgentCommand.isDeliveryType(type)) {
+                DeliveryCommandPayload(
+                    orderId = JsonTree.longOr(payloadObj, "orderId", 0L),
+                    activationMethod = JsonTree.strOr(payloadObj, "activationMethod", ""),
+                )
+            } else {
+                null
+            }
         return AgentCommand(
             id = JsonTree.longOr(obj, "id", 0L),
             type = type,
