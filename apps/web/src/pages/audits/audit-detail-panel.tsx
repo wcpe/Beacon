@@ -15,7 +15,12 @@ export default function AuditDetailPanel({ item }: AuditDetailPanelProps) {
   const { t } = useTranslation()
   return (
     <div className="grid gap-3 text-sm">
-      <Field label={t('observability.audits.columns.action')} value={item.action} mono />
+      {/* 动作：中文标签（未映射经 defaultValue 回退原始枚举） */}
+      <Field
+        label={t('observability.audits.columns.action')}
+        value={t(`observability.audits.action.${item.action}`, { defaultValue: item.action })}
+        mono
+      />
       <Field label={t('observability.audits.columns.time')} value={new Date(item.createdAt).toLocaleString()} />
       <Field label={t('observability.audits.columns.operator')} value={item.operator} />
       <Field label={t('observability.audits.columns.targetType')} value={item.targetType} />

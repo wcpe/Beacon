@@ -4,7 +4,7 @@
 // 连接消息查询面等页的互跳链接（FR-157，含 action=message.payload.view 定位 payload 查看审计）；
 // 页内变更筛选不回写 URL（最简策略）。
 
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
@@ -85,6 +85,11 @@ interface AuditListProps {
 
 export default function AuditList({ onView, selectedId }: AuditListProps) {
   const { t } = useTranslation()
+  // 审计动作中文标签：有映射用中文，未映射经 defaultValue 回退原始枚举（防裸 key 同时不挡未知动作）
+  const actionLabel = useCallback(
+    (action: string): string => t(`observability.audits.action.${action}`, { defaultValue: action }),
+    [t],
+  )
   // 互跳承接：以 URL 查询参数为筛选初值（仅初始化，页内变更不回写 URL）
   const [searchParams] = useSearchParams()
   const [operator, setOperator] = useState(() => initialParam(searchParams, 'operator'))
@@ -143,7 +148,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       { header: t('observability.audits.columns.operator'), cell: (row) => <span className="text-ink-2">{row.operator}</span> },
       {
         header: t('observability.audits.columns.action'),
-        cell: (row) => <span className="font-mono text-xs text-ink-2">{row.action}</span>,
+        cell: (row) => <span className="font-mono text-xs text-ink-2">{actionLabel(row.action)}</span>,
       },
       { header: t('observability.audits.columns.targetType'), cell: (row) => <span className="text-ink-3">{row.targetType}</span> },
       {
@@ -159,7 +164,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         ),
       },
     ],
-    [t],
+    [t, actionLabel],
   )
 
   const toolbar = (
@@ -220,7 +225,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         <FilterSelect
           label={t('observability.audits.filterAction')}
           value={action}
-          options={withCurrent(ACTIONS, action).map((v) => ({ value: v, label: v }))}
+          options={withCurrent(ACTIONS, action).map((v) => ({ value: v, label: actionLabel(v) }))}
           onChange={(value) => {
             setAction(value)
             resetPaging()

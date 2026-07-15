@@ -23,7 +23,7 @@ import type {
   Paged,
 } from '@beacon/contracts'
 import { jsonError, mockDelete, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
-import { getClusterState, type ClusterState } from '../data/cluster'
+import { getClusterState, type ClusterState, type ServerRow } from '../data/cluster'
 import type { MockScenario } from '../scenario'
 import { defineScenarioStore } from '../store'
 import { createRng, hashString, isoOffset, pseudoSha256 } from '../support'
@@ -103,12 +103,13 @@ function seedEvents(order: OrderState): void {
 
 function fileItems(orderId: number, count: number): ChangeOrderItem[] {
   const rng = createRng(orderId * 31)
+  // .jar 为二进制形态样本（file-diff 只回元数据）；database-password.yml 命中敏感规则（无原因 403）
   const paths = [
     'plugins/Essentials.jar',
     'plugins/Essentials/config.yml',
     'plugins/Quests.jar',
     'plugins/Quests/config.yml',
-    'plugins/Lodestone/config.yml',
+    'plugins/Economy/database-password.yml',
     'plugins/Economy.jar',
     'plugins/OldAddon.jar',
   ]
@@ -133,6 +134,31 @@ function fileItems(orderId: number, count: number): ChangeOrderItem[] {
 
 // 大文件截断阈值（字节）：超过即只回前若干行并置 truncated
 const FILE_DIFF_TRUNCATE_BYTES = 512_000
+
+// 二进制扩展名：file-diff 不回内容、只回元数据（与文件资产域口径一致）
+const FILE_DIFF_BINARY_EXTS = new Set(['jar', 'zip', 'png', 'gz'])
+
+// 判文件差异项是否二进制（按扩展名）
+function isBinaryPath(path: string): boolean {
+  const dot = path.lastIndexOf('.')
+  return dot >= 0 && FILE_DIFF_BINARY_EXTS.has(path.slice(dot + 1).toLowerCase())
+}
+
+// 判路径是否命中敏感规则（对齐文件资产域默认清单的关键词形态；无原因预览 → 403）
+function isSensitivePath(path: string): boolean {
+  return /password|secret|credential/i.test(path)
+}
+
+/** 解析 file-diff 的 before 侧目标服：优先取显式 serverId，否则取本单首个在线目标（无目标回 null） */
+function resolveBeforeServer(order: OrderState, cluster: ClusterState, requested: string | null): string | null {
+  if (requested !== null) {
+    return requested
+  }
+  const candidates =
+    order.targets.length > 0 ? order.targets.map((t) => t.serverId) : resolveSelectorTargets(order, cluster)
+  const online = candidates.find((serverId) => cluster.servers.find((s) => s.serverId === serverId)?.online === true)
+  return online ?? (candidates.length > 0 ? candidates[0] : null)
+}
 
 /**
  * 生成确定性文件文本内容（仿 server.properties / config.yml 片段），供文件内容预览。
@@ -263,6 +289,7 @@ function makeOrder(
     title,
     description: `${title}（mock 演示数据）`,
     sourceServerId: options.configOnly ? null : (options.sourceServerId ?? 'lobby-1'),
+    scanDir: options.configOnly ? '' : 'plugins/',
     status,
     pauseKind: status === 'paused' ? (options.pauseKind ?? 'circuit_break') : null,
     pauseReason: status === 'paused' ? '批内失败率超过阈值，自动熔断' : null,
@@ -336,6 +363,54 @@ function resolveSelectorTargets(order: OrderState, cluster: ClusterState): strin
     .filter((s) => !order.selector.excludes.includes(s.serverId) && s.serverId !== order.sourceServerId)
     .map((s) => s.serverId)
     .sort()
+}
+
+/** 判 config_change 作用域是否覆盖某目标服（mock 以集群归属关系近似控制面语义） */
+function scopeCoversServer(cluster: ClusterState, server: ServerRow, kind: string | null, id: number | null): boolean {
+  if (kind === null || id === null) {
+    return false
+  }
+  const zone = cluster.zones.find((z) => z.id === server.zoneId)
+  switch (kind) {
+    case 'namespace':
+      return server.namespaceId === id
+    case 'bc_cluster':
+      return cluster.regions.find((r) => r.id === zone?.regionId)?.bcClusterId === id
+    case 'region':
+      return zone?.regionId === id
+    case 'zone':
+      return server.zoneId === id
+    case 'server':
+      return server.id === id
+    default:
+      return false
+  }
+}
+
+/** 影响预览逐目标行的配置命中：本单 config_change 项中作用域覆盖该目标的部分 */
+function configScopesFor(
+  order: OrderState,
+  cluster: ClusterState,
+  serverId: string,
+): { scopeKind: string; scopeId: number; fromVersionId: number | null; toVersionId: number }[] {
+  const server = cluster.servers.find((s) => s.serverId === serverId)
+  if (server === undefined) {
+    return []
+  }
+  return order.items
+    .filter(
+      (item) =>
+        item.kind === 'config_change' &&
+        item.configToVersionId !== null &&
+        scopeCoversServer(cluster, server, item.configScopeKind, item.configScopeId),
+    )
+    .map((item) => ({
+      scopeKind: item.configScopeKind ?? '',
+      scopeId: item.configScopeId ?? 0,
+      fromVersionId: item.configFromVersionId,
+      // 上方过滤已保证非空，此处兜底 0
+      toVersionId: item.configToVersionId ?? 0,
+    }))
 }
 
 /** 批次划分预览（§4.4.1）：percent 逐批向上取整、count 逐批固定台数，均不超过剩余；剩余进末批。 */
@@ -470,6 +545,7 @@ interface CreateOrderBody {
   title?: string
   description?: string
   sourceServerId?: string | null
+  scanDir?: string
   selector?: Partial<ChangeSelector>
   batchMode?: 'percent' | 'count'
   batchSizes?: number[]
@@ -495,6 +571,7 @@ export const deliveryHandlers: HttpHandler[] = [
       title: body.title,
       description: body.description ?? '',
       sourceServerId: body.sourceServerId ?? null,
+      scanDir: body.scanDir ?? '',
       status: 'draft',
       pauseKind: null,
       pauseReason: null,
@@ -602,6 +679,7 @@ export const deliveryHandlers: HttpHandler[] = [
       updateCount: fileItemsOnly.filter((i) => i.action === 'update').length,
       deleteCount: fileItemsOnly.filter((i) => i.action === 'delete').length,
       skipCount: Math.floor(rng() * 3),
+      configScopes: configScopesFor(order, cluster, serverId),
     }))
     const paged = paginate(targetRows, url)
     const response: ChangeImpactResponse = {
@@ -958,7 +1036,8 @@ export const deliveryHandlers: HttpHandler[] = [
     return HttpResponse.json({ events: order.events })
   }),
 
-  // 变更项文件内容预览（mock 临时能力，见 FileDiffResponse 注释）：按变更项 id 回文件前后内容
+  // 变更项文件内容预览（定稿契约，见 FileDiffResponse 注释）：按变更项 id 回文件前后内容。
+  // query serverId 指定 before 侧目标（离线 → 504）、reason 放行敏感路径（缺失 → 403）。
   mockGet('/admin/v2/change-orders/:id/items/:itemId/file-diff', (info) => {
     const order = findOrder(info)
     if (!order) {
@@ -969,10 +1048,21 @@ export const deliveryHandlers: HttpHandler[] = [
     if (item?.path == null || item.action === null) {
       return jsonError(404, 'item_not_found', '文件差异项不存在')
     }
+    const url = new URL(info.request.url)
+    if (isSensitivePath(item.path) && queryStr(url, 'reason') === null) {
+      return jsonError(403, 'sensitive_path', '命中敏感路径规则，查看内容必须填写原因', { sensitive: true })
+    }
+    const cluster = getClusterState()
+    const beforeServer = resolveBeforeServer(order, cluster, queryStr(url, 'serverId'))
+    const beforeRow = cluster.servers.find((s) => s.serverId === beforeServer)
+    if (beforeRow !== undefined && !beforeRow.online) {
+      return jsonError(504, 'agent_offline', `对比目标 ${beforeRow.serverId} 的 agent 离线，无法读取文件内容`)
+    }
+    const binary = isBinaryPath(item.path)
     const seed = hashString(`file-diff:${String(order.id)}:${item.path}`)
-    const truncated = (item.sizeBytes ?? 0) > FILE_DIFF_TRUNCATE_BYTES
-    const beforeRaw = item.action === 'add' ? null : fileDiffText(item.path, seed, 'before')
-    const afterRaw = item.action === 'delete' ? null : fileDiffText(item.path, seed, 'after')
+    const truncated = !binary && (item.sizeBytes ?? 0) > FILE_DIFF_TRUNCATE_BYTES
+    const beforeRaw = binary || item.action === 'add' ? null : fileDiffText(item.path, seed, 'before')
+    const afterRaw = binary || item.action === 'delete' ? null : fileDiffText(item.path, seed, 'after')
     const changeType: FileDiffResponse['changeType'] =
       item.action === 'add' ? 'added' : item.action === 'delete' ? 'removed' : 'modified'
     const response: FileDiffResponse = {
@@ -981,6 +1071,8 @@ export const deliveryHandlers: HttpHandler[] = [
       before: truncated ? truncateContent(beforeRaw) : beforeRaw,
       after: truncated ? truncateContent(afterRaw) : afterRaw,
       truncated,
+      binary,
+      serverId: beforeServer,
     }
     return HttpResponse.json(response)
   }),
@@ -1019,6 +1111,9 @@ export const deliveryHandlers: HttpHandler[] = [
     }
     if (body.sourceServerId !== undefined) {
       order.sourceServerId = body.sourceServerId
+    }
+    if (body.scanDir !== undefined) {
+      order.scanDir = body.scanDir
     }
     if (body.selector !== undefined) {
       order.selector = { ...emptySelector(), ...body.selector }

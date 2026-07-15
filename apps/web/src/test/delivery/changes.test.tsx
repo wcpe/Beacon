@@ -150,13 +150,17 @@ describe('/changes 变更单页', () => {
     expect(await screen.findByText('文件差异清单（6 项）')).toBeInTheDocument()
     expect(screen.getByText('配置变更清单（1 项）')).toBeInTheDocument()
 
-    // 影响预览 Tab：共享编排预览（范围 / 批次 / 生效方式 / 影响面）+ 逐目标表
+    // 影响预览 Tab：共享编排预览（范围 / 批次 / 生效方式 / 影响面）+ 逐目标表（含配置命中列）
     await user.click(screen.getByRole('tab', { name: '影响预览' }))
     expect(await screen.findByText('目标范围')).toBeInTheDocument()
     expect(screen.getByText('批次规划')).toBeInTheDocument()
     expect(screen.getByText('生效方式')).toBeInTheDocument()
     expect(screen.getByText('影响面汇总')).toBeInTheDocument()
     expect(screen.getByText('逐目标')).toBeInTheDocument()
+    // 配置命中列：种子配置项 zone:30（#9001→#9002）命中 zone 30 的目标，未命中目标显示 —
+    expect(screen.getByRole('columnheader', { name: '配置命中' })).toBeInTheDocument()
+    expect((await screen.findAllByText('zone:30 #9001→#9002')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0)
 
     // 观察窗 Tab：观察说明 + 当前批标注 + 汇总条 + 逐台表 + 手动刷新
     await user.click(screen.getByRole('tab', { name: '观察窗' }))
@@ -189,7 +193,7 @@ describe('/changes 变更单页', () => {
     expect(await eventsPanel.findByText('变更单 · 灰度中')).toBeInTheDocument()
   }, 20_000)
 
-  it('变更项 Tab 文件行可点开预览文件内容（懒加载）', async () => {
+  it('变更项 Tab 文件行可点开预览文件内容（懒加载）：文本出内容、二进制仅元数据', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -205,10 +209,50 @@ describe('/changes 变更单页', () => {
     const previews = await screen.findAllByRole('button', { name: '预览' })
     expect(previews.length).toBeGreaterThan(0)
 
-    // 点开首个文件行 → 文件内容出现（生成内容含 max-players 行；modified 出双栏 diff）
-    await user.click(previews[0])
-    expect((await screen.findAllByText(/max-players/)).length).toBeGreaterThan(0)
+    // 文本行（config.yml）→ 文件内容出现（含 max-players 行）+ 对比目标标签。
+    // 注意同名文本可能同时出现在配置变更清单（反查出的配置文件名），取带「预览」按钮的文件差异行
+    const textRow = screen
+      .getAllByText('plugins/Essentials/config.yml')
+      .map((el) => el.closest('li'))
+      .find((li): li is HTMLLIElement => li !== null && within(li).queryByRole('button', { name: '预览' }) !== null)
+    if (!textRow) {
+      throw new Error('未找到文本差异项所在行')
+    }
+    await user.click(within(textRow).getByRole('button', { name: '预览' }))
+    expect((await within(textRow).findAllByText(/max-players/)).length).toBeGreaterThan(0)
+    expect(within(textRow).getByText(/对比目标：/)).toBeInTheDocument()
+
+    // 二进制行（.jar）→ 不出内容，仅元数据提示
+    const jarRow = screen.getByText('plugins/Essentials.jar').closest('li')
+    if (!jarRow) {
+      throw new Error('未找到二进制差异项所在行')
+    }
+    await user.click(within(jarRow).getByRole('button', { name: '预览' }))
+    expect(
+      await within(jarRow).findByText('二进制文件不支持内容对比，仅展示元数据'),
+    ).toBeInTheDocument()
+    expect(within(jarRow).queryByText(/max-players/)).not.toBeInTheDocument()
   }, 20_000)
+
+  it('?order= 深链自动选中该单并打开详情面板', async () => {
+    useScenario('normal')
+    renderPage(<ChangesPage />, ['/changes?order=5002'])
+
+    // 免点击：右侧非模态详情面板自动打开（经济系统配置调优，待审批）
+    await screen.findByRole('button', { name: '返回列表' })
+    expect((await screen.findAllByText('经济系统配置调优')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
+  })
+
+  it('?order= 深链目标不存在：脱敏真因内联展示，列表仍可用', async () => {
+    useScenario('normal')
+    renderPage(<ChangesPage />, ['/changes?order=999999'])
+
+    // 加载失败提示（后端 message：变更单不存在），不静默吞掉；列表照常渲染
+    expect(await screen.findByText(/打开变更单 #999999 失败/)).toBeInTheDocument()
+    expect(await screen.findByText('大厅插件升级 v2.4')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '返回列表' })).not.toBeInTheDocument()
+  })
 
   it('作用域选择走组件库 Select（可展开命名空间选项）', async () => {
     useScenario('normal')

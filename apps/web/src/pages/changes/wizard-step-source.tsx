@@ -24,6 +24,9 @@ interface StepSourceProps {
   namespaceId: number
   source: string
   onSourceChange: (serverId: string) => void
+  // 差异扫描的目录范围（服务器根内相对目录，如 plugins/）；改动即作废已扫差异
+  scanDir: string
+  onScanDirChange: (scanDir: string) => void
   scan: ScanResult | null
   scanning: boolean
   onScan: () => void
@@ -39,6 +42,8 @@ export default function WizardStepSource({
   namespaceId,
   source,
   onSourceChange,
+  scanDir,
+  onScanDirChange,
   scan,
   scanning,
   onScan,
@@ -74,7 +79,7 @@ export default function WizardStepSource({
     <div className="grid gap-3">
       <p className="text-sm text-muted-foreground">{t('delivery.changes.wizard.source.lead')}</p>
 
-      {/* 搜索框 + 扫描按钮 */}
+      {/* 搜索框 + 扫描目录范围 + 扫描按钮 */}
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('delivery.changes.wizard.source.filter')}
@@ -85,6 +90,18 @@ export default function WizardStepSource({
           }}
           className="h-9 w-64"
         />
+        <label className="flex items-center gap-1.5 text-xs text-ink-3">
+          {t('delivery.changes.wizard.source.scanDirLabel')}
+          <Input
+            aria-label={t('delivery.changes.wizard.source.scanDirLabel')}
+            placeholder="plugins/"
+            value={scanDir}
+            onChange={(e) => {
+              onScanDirChange(e.target.value)
+            }}
+            className="h-9 w-32 font-mono text-xs"
+          />
+        </label>
         <Button size="sm" disabled={source === '' || scanning} onClick={onScan}>
           <ScanSearch className="size-4" />
           {scanning

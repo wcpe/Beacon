@@ -55,6 +55,9 @@ interface GuidedWizardProps {
   onCreated: (detail: ChangeOrderDetail) => void
 }
 
+// 扫描目录范围默认值（最常见交付载荷所在目录）
+const DEFAULT_SCAN_DIR = 'plugins/'
+
 export default function GuidedWizard({
   open,
   onOpenChange,
@@ -69,6 +72,8 @@ export default function GuidedWizard({
   const [stepIndex, setStepIndex] = useState(0)
   const [orderId, setOrderId] = useState<number | null>(null)
   const [source, setSource] = useState('')
+  // 差异扫描的目录范围（服务器根内相对目录），重扫 / 重算沿用同一范围
+  const [scanDir, setScanDir] = useState(DEFAULT_SCAN_DIR)
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [picks, setPicks] = useState<WizardConfigPick[]>([])
   const [scope, setScope] = useState<WizardScope>({ mode: 'all', regions: [], zones: [], servers: [] })
@@ -86,6 +91,7 @@ export default function GuidedWizard({
       setStepIndex(0)
       setOrderId(null)
       setSource('')
+      setScanDir(DEFAULT_SCAN_DIR)
       setScan(null)
       setPicks([])
       setScope({ mode: 'all', regions: [], zones: [], servers: [] })
@@ -132,15 +138,20 @@ export default function GuidedWizard({
       .then(() => invalidateList())
   }
 
-  // 第 2 步「扫描差异」：懒建 draft（或回填模板源）后调 diff-scan
+  // 第 2 步「扫描差异」：懒建 draft（或回填模板源与扫描范围）后调 diff-scan
   const scanMutation = useMutation({
     mutationFn: async () => {
       let id = orderId
       if (id === null) {
-        const created = await createChangeOrder({ namespaceId, title: resolvedTitle(), sourceServerId: source })
+        const created = await createChangeOrder({
+          namespaceId,
+          title: resolvedTitle(),
+          sourceServerId: source,
+          scanDir,
+        })
         id = created.id
       } else {
-        await updateChangeOrder(id, { sourceServerId: source })
+        await updateChangeOrder(id, { sourceServerId: source, scanDir })
       }
       const result = await diffScanChangeOrder(id)
       return { id, result }
@@ -165,6 +176,8 @@ export default function GuidedWizard({
       await updateChangeOrder(id, {
         title: resolvedTitle(),
         sourceServerId: includesFiles(content) && source !== '' ? source : null,
+        // 含文件载荷时随单落扫描范围；纯配置单为空串（与契约默认一致）
+        scanDir: includesFiles(content) ? scanDir : '',
         selector: buildSelector(scope),
         ...buildBatch(batch),
         activationMethod: includesFiles(content) ? 'restart' : 'hot_reload',
@@ -280,6 +293,12 @@ export default function GuidedWizard({
               source={source}
               onSourceChange={(next) => {
                 setSource(next)
+                setScan(null)
+              }}
+              scanDir={scanDir}
+              onScanDirChange={(next) => {
+                // 改扫描范围即作废已扫差异（须按新范围重扫）
+                setScanDir(next)
                 setScan(null)
               }}
               scan={scan}

@@ -372,6 +372,8 @@ export const delivery = {
   changes: {
     mission: '发：变更单创建、影响预览、审批、灰度批次、生效观察',
     title: '变更单',
+    // ?order= 深链（历史页「在变更单中打开」）加载失败提示
+    deepLinkError: '打开变更单 #{{id}} 失败：{{message}}',
     // 列表
     list: {
       title: '变更单列表',
@@ -458,6 +460,7 @@ export const delivery = {
         scan: '扫描差异',
         rescan: '重新扫描',
         scanning: '扫描中…',
+        scanDirLabel: '扫描目录范围',
         snapshotAt: '差异快照：{{at}}',
         empty: '选好模板源后点「扫描差异」，差异清单会显示在这里',
         addCount: '新增 {{count}}',
@@ -679,6 +682,7 @@ export const delivery = {
           update: '更新',
           delete: '删除',
           skip: '跳过',
+          configScopes: '配置命中',
         },
         online: '在线',
         offline: '离线',
@@ -811,6 +815,18 @@ export const delivery = {
       addedLabel: '新增文件内容',
       removedLabel: '删除前内容',
       truncated: '文件较大，仅预览前若干行',
+      // before 侧实际对比目标标签
+      target: '对比目标：{{serverId}}',
+      // 二进制形态：仅元数据
+      binaryOnly: '二进制文件不支持内容对比，仅展示元数据',
+      binaryMeta: '大小 {{size}} · 哈希 {{hash}}',
+      // 敏感路径（403）：填原因单次放行
+      sensitiveHint: '该路径命中敏感规则，查看内容需填写原因（将记入审计）',
+      reasonLabel: '查看原因',
+      reasonPlaceholder: '例如：核对新版插件配置差异',
+      sensitiveConfirm: '填写原因后查看',
+      // agent 离线（504）：可重试
+      retry: '重试',
     },
     // 批次状态机可视化（batch-flow）
     batchFlow: {

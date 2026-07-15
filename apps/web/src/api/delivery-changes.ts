@@ -24,7 +24,9 @@ export type {
   ActivationMethod,
   ChangeBatch,
   ChangeBatchStatus,
+  ChangeImpactConfigScope,
   ChangeImpactResponse,
+  ChangeImpactTarget,
   ChangeObserveResponse,
   ChangeOrderDetail,
   ChangeOrderEvent,
@@ -45,7 +47,7 @@ export interface ChangeEventsResponse {
   events: ChangeOrderEvent[]
 }
 
-/** 差异重扫响应：含本次扫描出的文件差异清单 */
+/** 差异扫描响应：同步读最新文件资产快照算出的文件差异清单（重扫为单独动作，见 spec §4.2.1） */
 export interface DiffScanResponse {
   status: string
   diffSnapshotAt: string | null
@@ -74,6 +76,8 @@ export interface ChangeOrderInput {
   title?: string
   description?: string
   sourceServerId?: string | null
+  /** 差异扫描的服务器根内相对目录范围（如 plugins/）；重扫 / 重算用同一范围 */
+  scanDir?: string
   selector?: ChangeSelector
   batchMode?: 'percent' | 'count'
   batchSizes?: number[]
@@ -110,11 +114,23 @@ export function diffScanChangeOrder(id: number): Promise<DiffScanResponse> {
   return request('POST', `/admin/v2/change-orders/${String(id)}/diff-scan`)
 }
 
-// ---- 变更项文件内容预览（mock 临时能力）----
-// 说明：本端点超出 docs/API.md v2 草案（草案未定义变更项文件内容查询），当前仅由 devmock 支撑
-// 前端「点开预览文件内容」；后端接真时需正式化契约。属管理面查询，不经命令通道 / 审计。
-export function fetchChangeItemFileDiff(id: number, itemId: number): Promise<FileDiffResponse> {
-  return request('GET', `/admin/v2/change-orders/${String(id)}/items/${String(itemId)}/file-diff`)
+// ---- 变更项文件内容预览 ----
+
+/** 文件内容预览可选参数：before 侧目标服 + 敏感路径放行原因（无原因预览敏感项 → 403） */
+export interface FileDiffQuery {
+  serverId?: string
+  reason?: string
+}
+
+export function fetchChangeItemFileDiff(
+  id: number,
+  itemId: number,
+  query?: FileDiffQuery,
+): Promise<FileDiffResponse> {
+  return request(
+    'GET',
+    `/admin/v2/change-orders/${String(id)}/items/${String(itemId)}/file-diff${buildQuery({ ...query })}`,
+  )
 }
 
 // ---- 影响预览 ----

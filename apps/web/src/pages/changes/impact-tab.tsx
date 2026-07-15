@@ -6,7 +6,12 @@ import { useTranslation } from 'react-i18next'
 
 import { AsyncSection, Badge, DataTable, type DataTableColumn } from '@beacon/ui'
 
-import { fetchChangeImpact, type ChangeOrderDetail } from '../../api/delivery-changes'
+import {
+  fetchChangeImpact,
+  type ChangeImpactConfigScope,
+  type ChangeImpactTarget,
+  type ChangeOrderDetail,
+} from '../../api/delivery-changes'
 import OrderOrchestration from '../../features/delivery/order-orchestration'
 import Pager from '../../features/delivery/pager'
 
@@ -16,14 +21,13 @@ interface ImpactTabProps {
   order: ChangeOrderDetail
 }
 
-interface TargetRow {
-  serverId: string
-  online: boolean
-  level: string
-  addCount: number
-  updateCount: number
-  deleteCount: number
-  skipCount: number
+// 配置命中紧凑展示：作用域 + from→to 版本 id（无来源版本 = 首次下发）
+function configScopeText(scope: ChangeImpactConfigScope): string {
+  const range =
+    scope.fromVersionId === null
+      ? `→#${String(scope.toVersionId)}`
+      : `#${String(scope.fromVersionId)}→#${String(scope.toVersionId)}`
+  return `${scope.scopeKind}:${String(scope.scopeId)} ${range}`
 }
 
 export default function ImpactTab({ order }: ImpactTabProps) {
@@ -38,7 +42,7 @@ export default function ImpactTab({ order }: ImpactTabProps) {
 
   const summary = query.data?.summary
 
-  const columns = useMemo<DataTableColumn<TargetRow>[]>(
+  const columns = useMemo<DataTableColumn<ChangeImpactTarget>[]>(
     () => [
       {
         header: t('delivery.changes.detail.impact.columns.serverId'),
@@ -64,6 +68,21 @@ export default function ImpactTab({ order }: ImpactTabProps) {
       { header: t('delivery.changes.detail.impact.columns.update'), cell: (row) => row.updateCount },
       { header: t('delivery.changes.detail.impact.columns.delete'), cell: (row) => row.deleteCount },
       { header: t('delivery.changes.detail.impact.columns.skip'), cell: (row) => row.skipCount },
+      {
+        header: t('delivery.changes.detail.impact.columns.configScopes'),
+        cell: (row) =>
+          row.configScopes.length === 0 ? (
+            <span className="text-ink-3">—</span>
+          ) : (
+            <div className="grid gap-0.5">
+              {row.configScopes.map((scope) => (
+                <span key={configScopeText(scope)} className="tnum font-mono text-xs text-ink-2">
+                  {configScopeText(scope)}
+                </span>
+              ))}
+            </div>
+          ),
+      },
     ],
     [t],
   )

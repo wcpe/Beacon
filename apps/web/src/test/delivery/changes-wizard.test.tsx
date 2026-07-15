@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ChangesPage from '../../pages/changes'
+import { fetchChangeOrders } from '../../api/delivery-changes'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
@@ -98,10 +99,55 @@ describe('/changes 引导创建向导', () => {
     await user.click(within(dialog).getByRole('button', { name: '下一步' }))
     await pickSourceAndScan(user, dialog)
 
-    // 差异行「预览」→ 懒加载文件内容出现（内联展开，不叠模态）
-    const previews = await within(dialog).findAllByRole('button', { name: '预览' })
-    await user.click(previews[0])
-    expect((await within(dialog).findAllByText(/max-players/)).length).toBeGreaterThan(0)
+    // 文本差异行「预览」→ 懒加载文件内容出现（内联展开，不叠模态）
+    const textRow = within(dialog).getByText('plugins/Essentials/config.yml').closest('li')
+    if (!textRow) {
+      throw new Error('未找到文本差异项所在行')
+    }
+    await user.click(within(textRow).getByRole('button', { name: '预览' }))
+    expect((await within(textRow).findAllByText(/max-players/)).length).toBeGreaterThan(0)
+
+    // 二进制差异行（.jar）→ 仅元数据提示
+    const jarRow = within(dialog).getByText('plugins/Essentials.jar').closest('li')
+    if (!jarRow) {
+      throw new Error('未找到二进制差异项所在行')
+    }
+    await user.click(within(jarRow).getByRole('button', { name: '预览' }))
+    expect(
+      await within(jarRow).findByText('二进制文件不支持内容对比，仅展示元数据'),
+    ).toBeInTheDocument()
+  })
+
+  it('扫描目录范围：默认 plugins/，改动作废已扫差异，成单后随单落库', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+
+    // 默认扫描范围 plugins/；改为 mods/ 后扫描
+    const scanDirInput = await within(dialog).findByLabelText('扫描目录范围')
+    expect(scanDirInput).toHaveValue('plugins/')
+    await user.clear(scanDirInput)
+    await user.type(scanDirInput, 'mods/')
+    await pickSourceAndScan(user, dialog)
+
+    // 改扫描范围 → 已扫差异作废（下一步禁用，须按新范围重扫）
+    await user.type(scanDirInput, 'x')
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeDisabled()
+    await user.clear(scanDirInput)
+    await user.type(scanDirInput, 'mods/')
+    await user.click(within(dialog).getByRole('button', { name: /扫描差异/ }))
+    await within(dialog).findByText(/新增 \d+/)
+
+    // 成单后：scanDir 随单落库（列表行契约字段可直接断言）
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await throughScopeToReview(user, dialog)
+    await submitAndAssert(user, dialog)
+    const list = await fetchChangeOrders({ keyword: '文件更新' })
+    const created = list.items.find((row) => row.title.startsWith('文件更新'))
+    expect(created?.scanDir).toBe('mods/')
   })
 
   it('纯配置路径：跳过模板源，选配置版本 → 成单', { timeout: WIZARD_TEST_TIMEOUT }, async () => {

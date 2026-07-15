@@ -80,6 +80,8 @@ export interface ChangeOrderSummary {
   title: string
   description: string
   sourceServerId: string | null
+  /** 差异扫描的服务器根内相对目录范围（如 plugins/），纯配置单为空串 */
+  scanDir: string
   status: ChangeOrderStatus
   pauseKind: 'manual' | 'circuit_break' | 'prepare_failed' | null
   pauseReason: string | null
@@ -119,6 +121,27 @@ export interface ChangeOrderDetail extends ChangeOrderSummary {
 
 export type ChangeOrderListResponse = Paged<ChangeOrderSummary>
 
+/** 影响预览逐目标行命中的配置作用域（该目标将应用的 config_change 项 from→to 版本） */
+export interface ChangeImpactConfigScope {
+  scopeKind: string
+  scopeId: number
+  fromVersionId: number | null
+  toVersionId: number
+}
+
+/** 影响预览逐目标行 */
+export interface ChangeImpactTarget {
+  serverId: string
+  online: boolean
+  level: string
+  addCount: number
+  updateCount: number
+  deleteCount: number
+  skipCount: number
+  /** 命中的配置作用域清单，空数组 = 本单配置变更不覆盖该目标 */
+  configScopes: ChangeImpactConfigScope[]
+}
+
 /** 影响预览 */
 export interface ChangeImpactResponse {
   summary: {
@@ -130,15 +153,7 @@ export interface ChangeImpactResponse {
     configScopeCount: number
     snapshotAt: string | null
   }
-  targets: Paged<{
-    serverId: string
-    online: boolean
-    level: string
-    addCount: number
-    updateCount: number
-    deleteCount: number
-    skipCount: number
-  }>
+  targets: Paged<ChangeImpactTarget>
 }
 
 /** 观察窗数据（当前批逐目标健康序列） */
@@ -160,16 +175,22 @@ export interface ChangeOrderEvent {
 }
 
 /**
- * 变更项文件内容预览响应（mock 临时能力）。
- * 说明：本端点超出 docs/API.md v2 草案（草案未定义变更项文件内容查询），仅为 mock 支撑
- * 「点开预览文件内容」的前端评审；后端接真时需正式化契约（响应形状 / 截断阈值 / 二进制处理）。
+ * 变更项文件内容预览响应（GET /change-orders/{id}/items/{itemId}/file-diff，定稿契约）。
+ * 可选 query：serverId（before 侧目标服）、reason（敏感路径放行原因）。
+ * 错误形态：403 = 命中敏感路径需填写原因；504 = before 侧 agent 离线。
  */
 export interface FileDiffResponse {
   path: string
   changeType: 'added' | 'modified' | 'removed'
+  /** add 项 before 恒为 null */
   before: string | null
+  /** delete 项 after 恒为 null */
   after: string | null
   truncated: boolean
+  /** 二进制项内容前后皆 null，仅展示元数据 */
+  binary: boolean
+  /** 实际所用的 before 侧目标服（无可用目标时为 null） */
+  serverId: string | null
 }
 
 /** 配置变更项输入（PATCH configChanges，整组替换 config_change 项） */
