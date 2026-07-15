@@ -72,8 +72,7 @@ func (s *DeliveryOrchestrator) reconcilePushing(rt *orderRuntime, t *model.Chang
 }
 
 // activateTarget 接续生效：push_only 推送落盘即 activated；restart / hot_reload 下发 delivery_activate 转 activating。
-// M3 只做 push_only 完整；restart / hot_reload 的 agent 生效实现（含 restart 心跳回归判定）是 M4 接缝——
-// 本版下发 delivery_activate、由回执驱动 activating→activated/failed（agent 现回 failed 即落 failed）。
+// 进入 activating 时记 activating_started_at 锚点（restart 心跳回归判定用），与命令下发同事务原子落库。
 func (s *DeliveryOrchestrator) activateTarget(rt *orderRuntime, t *model.ChangeTarget) {
 	if rt.order.ActivationMethod == model.ActivationMethodPushOnly {
 		s.casTarget(rt, t, []string{model.ChangeTargetStatusPushed}, model.ChangeTargetStatusActivated,
@@ -85,9 +84,10 @@ func (s *DeliveryOrchestrator) activateTarget(rt *orderRuntime, t *model.ChangeT
 		payload.ActivateTimeoutSec = rt.order.ActivateTimeoutSec
 	}
 	cmd := newDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, payload)
+	startedAt := s.now() // activating 起始锚点：restart 只认此刻之后接收的心跳批为回归（排除关服前残留）
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		ok, e := s.repo.WithTx(tx).UpdateTargetCAS(t.ID, []string{model.ChangeTargetStatusPushed},
-			map[string]any{"status": model.ChangeTargetStatusActivating})
+			map[string]any{"status": model.ChangeTargetStatusActivating, "activating_started_at": startedAt})
 		if e != nil || !ok {
 			return errOrSkip(e, ok)
 		}
@@ -100,12 +100,53 @@ func (s *DeliveryOrchestrator) activateTarget(rt *orderRuntime, t *model.ChangeT
 		return
 	}
 	t.Status = model.ChangeTargetStatusActivating
+	t.ActivatingStartedAt = &startedAt
 	s.notifyAgent(rt.nsCode, t.ServerID)
 	s.emitTargetEvent(rt, t)
 }
 
-// reconcileActivating 判生效阶段命令终态：done→activated；failed/expired/超时→failed。
+// reconcileActivating 判 activating 目标生效终态，按生效方式分野（spec §4.6.1）：
+//   - push_only 不入此路径（activateTarget 已直接置 activated，不下发 activate 命令）。
+//   - restart 走心跳回归观测（reconcileActivatingRestart）：进程已关，agent 无法可靠回执「起来了」，
+//     activated 由控制面观测 identity 心跳回归判定（注册 / 健康真源 = Go 进程内存，ADR-0070）。
+//   - hot_reload 仍按 agent 回执驱动（reconcileActivatingByAck，下一迭代精化为配置热更回调确认）。
 func (s *DeliveryOrchestrator) reconcileActivating(rt *orderRuntime, t *model.ChangeTarget) {
+	if rt.order.ActivationMethod == model.ActivationMethodRestart {
+		s.reconcileActivatingRestart(rt, t)
+		return
+	}
+	s.reconcileActivatingByAck(rt, t)
+}
+
+// reconcileActivatingRestart 判 restart 生效（spec §4.6.1 / ADR-0070）：
+//   - agent 回执 activate failed（关服指令本身失败）→ 直接 failed，不等心跳回归。
+//   - 观测该 identity 心跳回归（起始之后有新指标批且当前 online）→ activated。
+//   - activate_timeout_sec 内未回归 → failed（「关了没起来」安全阀，计入熔断失败率）。
+//
+// 注意：agent 回执 activate success 只表示「已开始关服」，**不**直接判 activated——进程已关，需真心跳回归才算数。
+func (s *DeliveryOrchestrator) reconcileActivatingRestart(rt *orderRuntime, t *model.ChangeTarget) {
+	cmd, err := s.latestDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, rt.order.ID)
+	if err != nil {
+		return
+	}
+	// 关服指令回执失败 → 直接 failed（spec §4.6.1 failed 判据之一）。
+	if cmd != nil && cmd.Status == model.CommandStatusFailed {
+		s.failTarget(rt, t, model.ChangeTargetStatusActivating,
+			targetErrorOr(parseDeliveryCmdResult(cmd.ResultDetail).Error, "关服指令回执失败"))
+		return
+	}
+	// 心跳回归即 activated；否则按 activate_timeout_sec 从 activating 起始计时判超时。
+	if s.heartbeatReturned(rt.order.NamespaceID, t.ServerID, t.ActivatingStartedAt) {
+		s.casTarget(rt, t, []string{model.ChangeTargetStatusActivating}, model.ChangeTargetStatusActivated,
+			map[string]any{"activated_at": s.now()})
+		return
+	}
+	s.failRestartOnTimeout(rt, t)
+}
+
+// reconcileActivatingByAck 判 hot_reload 生效（回执驱动，本迭代沿用 M3 现状，下一迭代精化）：
+// done→activated；failed/expired/超时→failed（超时从命令创建计时）。
+func (s *DeliveryOrchestrator) reconcileActivatingByAck(rt *orderRuntime, t *model.ChangeTarget) {
 	cmd, err := s.latestDeliveryCommand(rt.nsCode, t.ServerID, model.CommandTypeDeliveryActivate, rt.order.ID)
 	if err != nil || cmd == nil {
 		return
@@ -121,6 +162,33 @@ func (s *DeliveryOrchestrator) reconcileActivating(rt *orderRuntime, t *model.Ch
 	default:
 		s.failOnTimeout(rt, t, cmd, model.ChangeTargetStatusActivating, "生效超时（agent 未在 activateTimeoutSec 内回执）")
 	}
+}
+
+// heartbeatReturned 判目标 identity 心跳是否已回归（restart 生效判据，spec §4.6.1）：
+// 只认 activating 起始之后接收的指标批（ReceivedAtMs > 起始 ms，排除关服前残留心跳误判），
+// 且当前仍新鲜（online，新鲜度 ≤ healthLostAfterMs，与健康域在线口径一致）。注册 / 健康真源 = Go 进程内存。
+func (s *DeliveryOrchestrator) heartbeatReturned(nsID uint, serverID string, startedAt *time.Time) bool {
+	if startedAt == nil {
+		return false // 无起始锚点无法判「起始之后」，保守判未回归（防旧心跳误判）
+	}
+	latest, ok := s.metrics.Latest(nsID, serverID)
+	if !ok {
+		return false
+	}
+	nowMs := s.now().UnixMilli()
+	return latest.ReceivedAtMs > startedAt.UnixMilli() && nowMs-latest.ReceivedAtMs <= healthLostAfterMs
+}
+
+// failRestartOnTimeout restart 生效超时判定：从 activating 起始计满 activate_timeout_sec 仍未心跳回归
+// → failed（「关了没起来」安全阀，计入熔断失败率，spec §4.6.1 / ADR-0070）。起始锚点缺失（异常）保守判超时。
+// 不动 activate 命令终态：agent 回执「已开始关服」(done) 与「关了没起来」(target failed) 是两回事，各自留痕。
+func (s *DeliveryOrchestrator) failRestartOnTimeout(rt *orderRuntime, t *model.ChangeTarget) {
+	timeout := time.Duration(rt.order.ActivateTimeoutSec) * time.Second
+	if t.ActivatingStartedAt != nil && s.now().Sub(*t.ActivatingStartedAt) < timeout {
+		return // 未到超时，继续等待心跳回归
+	}
+	s.failTarget(rt, t, model.ChangeTargetStatusActivating,
+		"生效超时（关服后 activateTimeoutSec 内心跳未回归；宿主未拉起进程或启动过慢）")
 }
 
 // failOnTimeout 命令仍在途（pending/fetched）时按 activateTimeoutSec 判超时：超时则目标 failed 并尽力过期命令。

@@ -19,6 +19,9 @@ type ChangeTarget struct {
 	Status string `gorm:"column:status;size:32;not null"`
 	// 推送完成时间（可空）
 	PushedAt *time.Time `gorm:"column:pushed_at"`
+	// 进入 activating 的起始时刻（可空）：restart 心跳回归判定的锚点——只认此刻之后接收的指标批为回归，
+	// 排除关服前的残留心跳误判；控制面自持（s.now() UTC），与指标窗口 ReceivedAtMs 同为 UTC 毫秒可直接比较。
+	ActivatingStartedAt *time.Time `gorm:"column:activating_started_at"`
 	// 生效完成时间（可空）
 	ActivatedAt *time.Time `gorm:"column:activated_at"`
 	// agent 回执的实际变更文件数

@@ -168,6 +168,24 @@ func (h *orchestratorHarness) completeAllPushes(t *testing.T, orderID uint) {
 	}
 }
 
+// completeAllActivates 把某单全部目标的生效命令置指定终态（模拟 agent 回执，如 restart 的「已开始关服」done）。
+func (h *orchestratorHarness) completeAllActivates(t *testing.T, orderID uint, status string) {
+	t.Helper()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(orderID)
+	for _, tg := range targets {
+		completeDeliveryCommand(t, h.env.db, orderID, tg.ServerID, model.CommandTypeDeliveryActivate, status, "")
+	}
+}
+
+// seedHeartbeat 向内存指标窗口注入一条目标 identity 的接收批（模拟心跳回归 / 残留，restart 生效判定用）。
+// BucketStartMs 取 receivedAtMs 使各批唯一；ReceivedAtMs 即控制面接收时刻（UTC 毫秒），与 activating 起始锚点同口径比较。
+func (h *orchestratorHarness) seedHeartbeat(serverID string, receivedAtMs int64) {
+	h.orch.metrics.Upsert(metricwindow.Sample{
+		NamespaceID: h.f.nsID, ServerID: serverID, Kind: model.ServerKindBackend,
+		BucketStartMs: receivedAtMs, ReceivedAtMs: receivedAtMs,
+	})
+}
+
 // targetStatuses 取某单目标状态计数。
 func (h *orchestratorHarness) targetStatuses(orderID uint) map[string]int64 {
 	counts, _ := repository.NewChangeOrderRepository(h.env.db).CountTargetsByStatus(orderID)
@@ -466,5 +484,146 @@ func TestOrchestratorRecoveryAfterRestart(t *testing.T) {
 	fresh.advanceActiveOrders(context.Background())
 	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivated] != 2 {
 		t.Fatalf("重启后应续推至 activated: %v", c)
+	}
+}
+
+// —— restart 生效判定 = 心跳回归观测（M4，spec §4.6.1 / ADR-0070）——
+
+// TestOrchestratorRestartHeartbeatReturnActivates restart 生效脊柱：
+// 推送落定转 activating（不直接 activated）→ agent 回执「已开始关服」仍不判 activated →
+// 心跳回归（起始后新指标批）才判 activated → observing → 确认 → completed。
+func TestOrchestratorRestartHeartbeatReturnActivates(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+	if _, err := h.orch.Start(order.ID, "重启大厅", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick() // 下发 2 目标 pushing
+	h.completeAllPushes(t, order.ID)
+	h.tick() // pushing→pushed→activating（restart 下发 delivery_activate，不直接 activated）
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("restart 推送落定后应 activating（等心跳回归）: %v", c)
+	}
+
+	// agent 回执「已开始关服」(done) 不代表 activated——进程已关，需真心跳回归才算数。
+	h.completeAllActivates(t, order.ID, model.CommandStatusDone)
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("回执「已开始关服」不应直接判 activated: %v", c)
+	}
+
+	// 心跳回归：起始时刻之后接收的新指标批 → activated。
+	h.advance(3 * time.Second)
+	h.seedHeartbeat("t-1", h.clock.UnixMilli())
+	h.seedHeartbeat("t-2", h.clock.UnixMilli())
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivated] != 2 {
+		t.Fatalf("心跳回归后应 2 目标 activated: %v", c)
+	}
+	batches, _ := repository.NewChangeOrderRepository(h.env.db).ListBatches(order.ID)
+	if batches[0].Status != model.ChangeBatchStatusObserving {
+		t.Fatalf("全 activated 后批应 observing: %s", batches[0].Status)
+	}
+
+	// 观察窗到点 → awaiting_confirm → 确认 → completed。
+	h.advance(6 * time.Second)
+	h.tick()
+	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
+		t.Fatalf("确认末批后单应 completed: %s", got.Status)
+	}
+}
+
+// TestOrchestratorRestartOnlyPostStartHeartbeat 只认起始时刻之后的心跳批：
+// 起始之前的残留心跳（虽新鲜）不得误判回归；起始之后的新批才判 activated。
+func TestOrchestratorRestartOnlyPostStartHeartbeat(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick() // → activating，activating_started_at = 当前 clock（记为 T0）
+	startMs := h.clock.UnixMilli()
+
+	// 关服前残留心跳：起始之前接收的批（新鲜但在锚点之前）——不得误判回归。
+	h.seedHeartbeat("t-1", startMs-3000)
+	h.seedHeartbeat("t-2", startMs-3000)
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("起始前的残留心跳不得误判回归，应仍 activating: %v", c)
+	}
+
+	// 起始之后的新心跳批 → 判回归 activated。
+	h.advance(2 * time.Second)
+	h.seedHeartbeat("t-1", h.clock.UnixMilli())
+	h.seedHeartbeat("t-2", h.clock.UnixMilli())
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivated] != 2 {
+		t.Fatalf("起始后的新心跳应判 activated: %v", c)
+	}
+}
+
+// TestOrchestratorRestartTimeoutFailsAndBreaks 「关了没起来」安全阀：
+// activate_timeout_sec 内心跳未回归 → 全 failed 并计入失败率熔断。
+func TestOrchestratorRestartTimeoutFailsAndBreaks(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 50) // 失败率阈值 50%
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick() // → activating（activate_timeout_sec=60）
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivating] != 2 {
+		t.Fatalf("应 activating: %v", c)
+	}
+
+	// 关了没起来：超 activate_timeout_sec 仍无心跳回归 → 全 failed 并触发失败率熔断。
+	h.advance(61 * time.Second)
+	h.tick()
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusFailed] != 2 {
+		t.Fatalf("超时未回归应 2 目标 failed: %v", c)
+	}
+	got := h.reload(order.ID)
+	if got.Status != model.ChangeOrderStatusPaused || got.PauseKind != model.PauseKindCircuitBreak {
+		t.Fatalf("超时 failed 应计入熔断（circuit_break 暂停）: %+v", got)
+	}
+	if countAudit(t, h.env.db, model.ActionDeliveryOrderCircuitBreak) != 1 {
+		t.Fatal("应记 1 条系统熔断审计")
+	}
+}
+
+// TestOrchestratorRestartAckFailedFailsImmediately 关服指令回执 failed → 直接 failed（不等心跳回归 / 超时）。
+func TestOrchestratorRestartAckFailedFailsImmediately(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick() // → activating
+
+	// t-1 关服指令回执 failed → 直接 failed；t-2 未回执且无心跳 → 仍 activating（等回归 / 超时）。
+	completeDeliveryCommand(t, h.env.db, order.ID, "t-1", model.CommandTypeDeliveryActivate,
+		model.CommandStatusFailed, `{"error":"关服广播失败"}`)
+	h.tick()
+	targets, _ := repository.NewChangeOrderRepository(h.env.db).ListTargetsByOrder(order.ID)
+	byID := map[string]model.ChangeTarget{}
+	for _, tg := range targets {
+		byID[tg.ServerID] = tg
+	}
+	if byID["t-1"].Status != model.ChangeTargetStatusFailed {
+		t.Fatalf("t-1 关服回执 failed 应直接 failed: %s", byID["t-1"].Status)
+	}
+	if byID["t-1"].Error == "" {
+		t.Fatal("t-1 failed 应带脱敏原因")
+	}
+	if byID["t-2"].Status != model.ChangeTargetStatusActivating {
+		t.Fatalf("t-2 未回执应仍 activating（等心跳回归 / 超时）: %s", byID["t-2"].Status)
 	}
 }
