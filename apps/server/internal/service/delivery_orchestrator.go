@@ -40,6 +40,12 @@ const (
 	deliveryTickInterval = 2 * time.Second
 	// deliveryObserveBucketMs 观察窗采样去重桶（5s 粒度，spec §4.6.3）。
 	deliveryObserveBucketMs = 5000
+	// restartHealthWarmup 是 restart 生效目标的重启预热宽限：activated（心跳回归）后此段时间内，
+	// 服务器仍在冷启动、健康评分尚未从关服断供（lost，score=0/unhealthy）或样本不足的低分恢复，
+	// 该目标被排除出健康恶化熔断评估——避免把「重启固有的短暂不健康」误判为「生效导致的健康恶化」。
+	// 取 90s 覆盖健康计算轮恢复节律（5s 一轮 + 60s 聚合窗 + 余量），且短于默认观察窗 120s，
+	// 预热后仍留窗口评估真实健康恶化。仅 restart 适用——push_only/hot_reload 不重启服务器，无冷启动预热期。
+	restartHealthWarmup = 90 * time.Second
 )
 
 // deliveryActiveOrderStatuses 是推进器每轮装载并推进的单状态集（spec §4.1 恢复语义）：

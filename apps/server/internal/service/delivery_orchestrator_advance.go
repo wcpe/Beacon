@@ -445,6 +445,7 @@ func (s *DeliveryOrchestrator) evalFailureRate(order *model.ChangeOrder, batch *
 }
 
 // evalHealthDegradation 健康恶化熔断：批内 activated 目标中健康等级 unhealthy 占比 ≥ 阈值（0=关闭）；健康读内存真源。
+// restart 生效目标在重启预热宽限期内整体排除评估（不计分母 / 分子）——冷启动健康未定型，不参与健康恶化判定。
 func (s *DeliveryOrchestrator) evalHealthDegradation(order *model.ChangeOrder, members []*model.ChangeTarget) (string, bool) {
 	threshold := order.UnhealthyRateThresholdPercent
 	if threshold <= 0 {
@@ -455,6 +456,9 @@ func (s *DeliveryOrchestrator) evalHealthDegradation(order *model.ChangeOrder, m
 		if t.Status != model.ChangeTargetStatusActivated {
 			continue
 		}
+		if s.inRestartWarmup(order, t) {
+			continue // 重启预热期内健康未定型，排除健康恶化评估
+		}
 		activated++
 		if view, ok := s.health.Get(order.NamespaceID, t.ServerID); ok && view.Level == healthLevelUnhealthy {
 			unhealthy++
@@ -464,6 +468,17 @@ func (s *DeliveryOrchestrator) evalHealthDegradation(order *model.ChangeOrder, m
 		return breakReason("健康恶化", unhealthy, threshold, activated), true
 	}
 	return "", false
+}
+
+// inRestartWarmup 判目标是否处于 restart 重启预热期（activated 后 restartHealthWarmup 内）。
+// restart 生效必然重启服务器，冷启动期间健康评分未预热（关服断供 lost → 恢复后样本不足的低分），
+// 健康状态未定型；此期间把该目标排除出健康恶化熔断评估，避免重启固有的短暂不健康被误判为生效导致的健康恶化。
+// 仅 restart 适用——push_only/hot_reload 不重启服务器，无冷启动预热期，activated 即处稳定运行态。
+func (s *DeliveryOrchestrator) inRestartWarmup(order *model.ChangeOrder, t *model.ChangeTarget) bool {
+	if order.ActivationMethod != model.ActivationMethodRestart || t.ActivatedAt == nil {
+		return false
+	}
+	return s.now().Sub(*t.ActivatedAt) < restartHealthWarmup
 }
 
 // tripBreaker 执行熔断（系统动作，spec §4.4.4）：批 failed + 单 paused(circuit_break) + 批内未下发目标 skipped + 系统审计。
@@ -517,6 +532,13 @@ func (s *DeliveryOrchestrator) casTarget(rt *orderRuntime, t *model.ChangeTarget
 		return false
 	}
 	t.Status = to
+	// 就地同步 activated_at 到内存快照（同 casBatch 处理 observe_started_at）：
+	// restart 预热宽限判定读 t.ActivatedAt，若只写库不更新内存则恒为 nil、宽限失效。
+	if v, has := updates["activated_at"]; has {
+		if ts, okc := v.(time.Time); okc {
+			t.ActivatedAt = &ts
+		}
+	}
 	s.emitTargetEvent(rt, t)
 	return true
 }

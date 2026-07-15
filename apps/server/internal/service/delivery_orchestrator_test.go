@@ -12,6 +12,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
 )
 
@@ -184,6 +185,18 @@ func (h *orchestratorHarness) seedHeartbeat(serverID string, receivedAtMs int64)
 		NamespaceID: h.f.nsID, ServerID: serverID, Kind: model.ServerKindBackend,
 		BucketStartMs: receivedAtMs, ReceivedAtMs: receivedAtMs,
 	})
+}
+
+// seedHealthUnhealthy 向内存健康视图注入指定目标为 unhealthy（模拟 restart 后冷启动的健康态）。
+func (h *orchestratorHarness) seedHealthUnhealthy(serverIDs ...string) {
+	views := make([]healthview.View, 0, len(serverIDs))
+	for _, sid := range serverIDs {
+		views = append(views, healthview.View{
+			NamespaceID: h.f.nsID, ServerID: sid, Kind: model.ServerKindBackend,
+			Score: 0, Level: healthview.LevelUnhealthy,
+		})
+	}
+	h.env.health.ReplaceAll(views)
 }
 
 // targetStatuses 取某单目标状态计数。
@@ -625,5 +638,76 @@ func TestOrchestratorRestartAckFailedFailsImmediately(t *testing.T) {
 	}
 	if byID["t-2"].Status != model.ChangeTargetStatusActivating {
 		t.Fatalf("t-2 未回执应仍 activating（等心跳回归 / 超时）: %s", byID["t-2"].Status)
+	}
+}
+
+// —— restart 重启预热宽限：冷启动 unhealthy 不误熔断（真机逮，push_only 不重启故测不出）——
+
+// restartWarmupObserveOrder 建一张 restart 单并放长观察窗（> 预热宽限），走到全 activated + observing。
+// 返回 order；调用方随后 seedHealthUnhealthy 注入冷启动健康态再断言熔断行为。
+func (h *orchestratorHarness) restartWarmupObserveOrder(t *testing.T) *model.ChangeOrder {
+	t.Helper()
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0) // 失败率阈值 0（关闭），只验健康恶化
+	// 观察窗放长到 200s（> 预热宽限 90s），使「预热期内不熔断」与「预热后才熔断」两阶段都落在观察窗内可观测。
+	if err := h.env.db.Model(&model.ChangeOrder{}).Where("id = ?", order.ID).Update("observe_window_sec", 200).Error; err != nil {
+		t.Fatalf("放长观察窗失败: %v", err)
+	}
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick() // → activating
+	h.advance(3 * time.Second)
+	h.seedHeartbeat("t-1", h.clock.UnixMilli())
+	h.seedHeartbeat("t-2", h.clock.UnixMilli())
+	h.tick() // 心跳回归 → activated，批 observing
+	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivated] != 2 {
+		t.Fatalf("心跳回归后应 2 目标 activated: %v", c)
+	}
+	return order
+}
+
+// TestOrchestratorRestartWarmupSkipsHealthBreak restart 目标 activated 后冷启动 unhealthy：
+// 预热宽限期内（< 90s）健康恶化不得熔断——重启固有的短暂不健康不是「生效导致的健康恶化」。
+func TestOrchestratorRestartWarmupSkipsHealthBreak(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.restartWarmupObserveOrder(t)
+
+	// 冷启动健康：两目标 unhealthy（模拟 restart 重启后健康评分未预热）。
+	h.seedHealthUnhealthy("t-1", "t-2")
+
+	// 预热宽限期内（30s < 90s）推进：不得熔断。
+	h.advance(30 * time.Second)
+	h.tick()
+	batches, _ := repository.NewChangeOrderRepository(h.env.db).ListBatches(order.ID)
+	if batches[0].Status != model.ChangeBatchStatusObserving {
+		t.Fatalf("重启预热期内 unhealthy 不应熔断，批应仍 observing: %s", batches[0].Status)
+	}
+	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolling {
+		t.Fatalf("重启预热期内不应熔断暂停，单应仍 rolling: %s", got.Status)
+	}
+}
+
+// TestOrchestratorRestartHealthBreaksAfterWarmup restart 目标预热宽限期后仍 unhealthy：
+// 视为真实健康恶化 → 熔断（预热保护只挡冷启动瞬态，不放过真不健康）。
+func TestOrchestratorRestartHealthBreaksAfterWarmup(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.restartWarmupObserveOrder(t)
+	h.seedHealthUnhealthy("t-1", "t-2")
+
+	// 预热宽限期后（95s > 90s）仍 unhealthy，观察窗（200s）未到：真实健康恶化 → 熔断。
+	h.advance(95 * time.Second)
+	h.tick()
+	got := h.reload(order.ID)
+	if got.Status != model.ChangeOrderStatusPaused || got.PauseKind != model.PauseKindCircuitBreak {
+		t.Fatalf("预热后仍 unhealthy 应熔断暂停（circuit_break）: %+v", got)
+	}
+	batches, _ := repository.NewChangeOrderRepository(h.env.db).ListBatches(order.ID)
+	if batches[0].Status != model.ChangeBatchStatusFailed {
+		t.Fatalf("预热后健康恶化批应 failed: %s", batches[0].Status)
+	}
+	if countAudit(t, h.env.db, model.ActionDeliveryOrderCircuitBreak) != 1 {
+		t.Fatal("健康恶化熔断应记 1 条系统熔断审计")
 	}
 }
