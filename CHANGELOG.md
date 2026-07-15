@@ -4,6 +4,19 @@
 
 ## 未发布
 
+## 0.29.1（2026-07-16）
+
+### 新增
+- 交付数据面（FR-165，P9 数据承载层，规格 [v2-delivery-orchestration.md](docs/specs/v2-delivery-orchestration.md) §4.5/§5.2/§5.3，[ADR-0069](docs/adr/0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md)）：控制面全局 sha256 内容寻址 blob 中转存储（TeeReader 边收边算哈希 + 临时文件 + 原子入位、同 sha 全局去重秒传、上传 / 下载并发限流与容量预检）；流式数据面 `/beacon/v2/stream/delivery/blobs/{sha256}`（HEAD 就绪查询 / PUT 流式上传内容哈希不符 422 丢弃 / GET 流式下载 Range 断点续传），挂 agent 双 header 鉴权 + blob 归属校验（模板源仅上传本单待传 sha、目标仅下载本单清单 sha）；agent 面 `/beacon/v2/agent/delivery`（upload-manifest / manifest 拉取 + result 阶段回执）；后台清理器周期删「终态超保留期且不被非终态单引用」的 blob 与上传残留（入系统审计）；5 项数据面运维热改项（blob 保留期 / 容量 / 上传下载并发 / 清理间隔）。agent 侧新增 core 流式端口 `BlobStreamTransport`（OkHttp 实现落适配器，守 ADR-0005 core 零 HTTP 库）+ 上传器（HEAD 去重 + PUT 重试）+ 下载器（Range 续传 + sha256 校验 + 重试，先全下临时目录校验齐全再应用）+ 备份管理器（覆盖前逐文件备份 + manifest.json，落 `dataFolder()/delivery-backups/<orderId>/`，保留每服 5 单 / 30 天）+ 覆盖器（本地 sha256 相同跳过 + 路径守卫 + 原子入位）。
+- 灰度编排引擎（FR-166，规格 §4.1/§4.3/§4.4/§4.6.3/§5.1）：编排推进器 goroutine 单一驱动源（启动 `drainActive` 恢复活动单 + ticker + 回执 wakeCh 即时唤醒，控制面重启按库内状态续推 fail-static）；`POST .../start`（approved→rolling，冲突守卫、selector 固化落 `change_target`、批次规划 percent / count 稳定切批、payload 准备下发 `delivery_upload`）；三层状态机 CAS 推进（目标 pending→pushing→pushed→activating→activated，push_only 立即生效；批 running→observing→awaiting_confirm；命令超时 / 离线 / 回执 failed 判 failed）；自动熔断（失败率 + 观察窗健康恶化占比任一超阈→批 failed + 单 paused + 未下发 skipped + 系统审计）；控制操作 `/pause`（不打断在途）`/resume`（retry_failed / skip_failed）`/cancel`（未开始置 skipped）`/batches/{n}/confirm`（推进门放行、末批即完成）；`GET .../events` 真 SSE（Accept 内容协商，逐目标事件走流、JSON 轮询回退）+ `/observe` 观察窗内存缓冲接真（5s 桶健康分 / TPS / 告警）。`/changes` 执行视图（灰度批次 / 观察窗 / 进度时间线）从演示 mock 接真。
+
+### 修复
+- 交付向导生效方式默认改「仅推送」（push_only）：原对文件单硬编码 `restart` / 配置单 `hot_reload`，但 agent 侧 restart / hot_reload 生效动作尚未实现，启动会判失败；改为固定 push_only（推送到位、随子服下次自然重启生效），与已实现的生效方式一致。
+
+> 验证（v0.29.1 整体）：server `go build`/`vet`/`make lint`/`go test`（27 包无 FAIL，含数据面 blob 去重 / 哈希守卫 / 容量 / 清理器单测 + 编排引擎 12 组单测：批次切分 / push_only 全生命周期 / 熔断 + retry / 暂停保在途 / 终止 skipped / 含配置拒 / 冲突守卫 / payload 准备 / 重启恢复）；前端 `build`/`lint`/`test`（246 vitest）；agent `gradlew ktlintCheck detekt build`（流式传输 / 下载续传 / 备份保留 / 覆盖跳过 / push 编排单测）。真机端到端验收（prod2，lobby-1 模板源 → 新部署 lobby-2 目标，push_only）：组单→差异→审批→启动→payload 上传→流式推送→覆盖前备份→文件覆盖→push_only 立即生效→观察窗→推进门确认→单 completed；文件真从 lobby-1 经 blob 中转流式传到 lobby-2（含敏感名 + 二进制），备份 manifest 完好，审计按 orderId 完整贯通（create→diffScan→submit→approve→start→batch_confirm）。
+>
+> 后续里程碑待做：restart / hot_reload 生效动作（agent 侧优雅关服 / 配置热更 + 控制面心跳回归判定，[ADR-0070](docs/adr/0070-agent-graceful-shutdown-primitive.md)）、配置灰度 pin 冻结渲染与末批正式切版（[ADR-0071](docs/adr/0071-config-gray-effectuation-model.md)，当前含配置项变更单启动被拒）、整单回滚（文件备份还原 + 配置版本回退 + 重新生效，FR-167，回滚 UI 已就位、端点待实现）、交付能力统一权限风险分级与贯通审计（FR-168）。
+
 ## 0.29.0（2026-07-15）
 
 ### 新增
