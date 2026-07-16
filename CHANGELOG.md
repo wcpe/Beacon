@@ -4,6 +4,22 @@
 
 ## 未发布
 
+## 0.29.2（2026-07-17）
+
+### 新增
+- 生效编排 restart 生效（FR-171 部分交付 restart-only，规格 [v2-delivery-orchestration.md](docs/specs/v2-delivery-orchestration.md) §4.6.1，[ADR-0070](docs/adr/0070-agent-graceful-shutdown-primitive.md)）：交付向导批次生效方式选择器（仅推送 push_only / 重启 restart）；restart 经 agent 优雅关服平台原语 `gracefulShutdown`（Bukkit 反射 save-all + 关服 / Bungee ProxyServer.stop）+ 宿主自启拉起，控制面观测 identity 心跳回归判 activated（注册 / 健康真源 = Go 进程内存，agent 回执「已开始关服」不直接判生效）；关服后 `activate_timeout_sec` 内未回归判生效失败并计入熔断；观察窗采健康分 / TPS / 告警。
+- 配置灰度 restart-only 生效与正式切版（FR-171 配置维度，[ADR-0071](docs/adr/0071-config-gray-effectuation-model.md) Model A）：解禁含配置项变更单启动；控制面按每个目标渲染配置明文（`EffectivePlaintext` 把灰度作用域 pin 到 to_version、稳定键序冻结渲染）写内容寻址 blob + 持久化冻结渲染工件表，config 项归一为清单文件项经数据面下发落盘、restart 读盘生效；末批推进门确认时正式切版（清 pin + 记该作用域已交付版本，config-center head 自然对齐 to、零配置域调用）；`(config_file, scope)` 冲突守卫防两单并发灰度同作用域经 head 互泄；from 锚点三分支（上一交付版本 / based_on / 链首空）。**配置域代码零改动**，仅调用 `EffectivePlaintext` / `RollbackVersion` / `RemoveScopeContribution` 现有原语。
+- 整单回滚（FR-167，规格 §4.7.2）：`POST .../rollback` + `.../rollback/finish` 端点 + 推进器 `rolling_back` 一次性全量回滚分支；agent `DeliveryBackupManager.restore` 按备份 manifest 反转还原磁盘（update / delete 从备份复原、add 删除新增文件）；config 项经配置中心 `RollbackVersion(from)` / `RemoveScopeContribution` 使 head 记账回退、与 agent 磁盘还原对齐（幂等吞 `CONFIG_NO_CHANGE` 与「无可撤销贡献」）；restart 生效方式还原后优雅关服、控制面心跳回归判 `rolled_back`（回滚重启锚点以 `rollback_at` 为基准重置）；备份缺失目标预检直接 failed；重复调用仅重置失败目标重试；回滚全动作（`delivery.order.rollback` / `rollback_finish` + `config.version.rollback`）入审计。
+- 统一权限与审计（FR-168，规格 §4.8）：删除 draft 单补高风险原因入审计（spec §4.8.1「权限 + 原因 + 二次确认」，路由显式挂 `requireFullRole`，前端删除对话框要求填原因、向导自动丢弃草稿传系统原因）。交付高风险端点（审批 / 驳回 / 启动 / 推进门 / 暂停继续 / 紧急终止 / 整单回滚 / 删除 draft）统一 full 角色 + 二次确认 + 原因；`delivery.order.*` 全 15 动作审计 detail 含 `orderId`，`/audits` 按单号贯通变更单从创建到回滚完整链路。
+
+### 修复
+- restart 生效冷启动健康被误判熔断（真机逮，push_only / 单测测不出）：restart 必然重启目标，冷启动期健康评分未从关服断供（lost，score=0 / unhealthy）或样本不足的低分恢复，观察窗立即评估把这段重启固有的短暂不健康误判「生效导致健康恶化」触发熔断，致目标已成功生效（心跳回归 / 文件落盘 / 备份就绪）后仍被暂停；修复 = restart 目标 activated 后给 90s 重启预热宽限、宽限内排除该目标出健康恶化评估（`casTarget` 同步内存 `activated_at`），预热后仍 unhealthy 正常熔断。
+- 配置渲染 blob 下载授权恒 403（真机逮，授权路径零测试覆盖）：下载授权仅按 `kind='file_diff'` 项的 sha256 反查单，config 渲染项 sha256 为 NULL 匹配不到任何单致目标拉取 config blob 恒 403、agent 报「流式下载 / 校验失败」熔断；修复 = 新增配置灰度冻结渲染工件表持久化 `{order, server, path, sha}`，清单 / 下载授权 / 清理护栏三处读工件不重渲染（`ExistsAuthorizedSHA` 严格到「该单该目标该 blob」放行），一并消除 manifest 重渲染的 head 漂移竞态 + config blob 漏清理保护。
+
+> 验证（v0.29.2 整体）：server `go test ./...` 无 FAIL（含回滚 5 单测 + config-gray 授权真链路 + delete reason 审计 + restart 预热）+ `make lint`（golangci 0 issues）；agent `gradle ktlintCheck detekt build`（restore / runRollback 单测）；前端 `build` + 34 files / 246 vitest。真机验收（prod2，lobby-1 → lobby-2）：restart 生效（优雅关服 → 宿主自启 → 心跳回归 activated + 超时熔断 + 冷启动预热保护）、config-gray restart（渲染落盘 v2 + 覆盖备份 → restart → completed → 末批切版 → 下一单 from 前移）、整单回滚（order 7 rolled_back：config head 回退 + 磁盘还原 + restart 再生效 + 审计三条链贯通 + 终态双拒）、delete reason 真机入审计。
+>
+> 后续待做：`hot_reload` 免重启配置热更生效（FR-171 剩余）——需打通 V2 配置渲染（层版本链 `EffectivePlaintext`）→ agent 配置应用（`EffectiveService` / `ConfigApplier` onChange）两套独立系统；用户拍板 restart-only MVP 先行绕开此鸿沟，agent 侧对 hot_reload 诚实回执 failed、前端选择器暂不开放。
+
 ## 0.29.1（2026-07-16）
 
 ### 新增
