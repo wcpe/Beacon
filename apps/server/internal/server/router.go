@@ -570,7 +570,9 @@ func registerV2DeliveryAdminRoutes(r chi.Router, h Handlers) {
 	r.Post("/change-orders", h.Delivery.Create)
 	r.Get("/change-orders/{id}", h.Delivery.Get)
 	r.Patch("/change-orders/{id}", h.Delivery.Patch)
-	r.Delete("/change-orders/{id}", h.Delivery.Delete)
+	// 删除 draft 单为高风险（spec §4.8.1：权限 + 原因 + 二次确认）：显式挂 requireFullRole 表达 full-only
+	// （DELETE 写方法本已被 readonlyWriteGuard 挡 readonly，此处与 start / cancel / rollback 一致显式声明高风险）。
+	r.With(requireFullRole).Delete("/change-orders/{id}", h.Delivery.Delete)
 	r.Post("/change-orders/{id}/diff-scan", h.Delivery.DiffScan)
 	r.Get("/change-orders/{id}/impact", h.Delivery.Impact)
 	r.Post("/change-orders/{id}/submit", h.Delivery.Submit)

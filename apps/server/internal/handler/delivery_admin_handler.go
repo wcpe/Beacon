@@ -169,7 +169,8 @@ func (h *DeliveryAdminHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.orders.Delete(id, auth.Operator(r.Context()), clientIP(r)); err != nil {
+	reason := decodeReason(r)
+	if err := h.orders.Delete(id, reason, auth.Operator(r.Context()), clientIP(r)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

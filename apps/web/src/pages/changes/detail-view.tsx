@@ -73,7 +73,7 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
         case 'submit':
           return submitChangeOrder(orderId)
         case 'delete':
-          return deleteChangeOrder(orderId)
+          return deleteChangeOrder(orderId, result.reason)
         case 'withdraw':
           return withdrawChangeOrder(orderId)
         case 'approve':
@@ -242,7 +242,8 @@ function availableActions(status: ChangeOrderDetail['status']): ActionKind[] {
 
 // 需要填写原因的动作：驳回 / 终止
 function needsReason(kind: ActionKind): boolean {
-  return kind === 'reject' || kind === 'cancel'
+  // 高风险操作填原因入审计（spec §4.8.1）：驳回 / 紧急终止 / 删除 draft 单。
+  return kind === 'reject' || kind === 'cancel' || kind === 'delete'
 }
 
 function confirmConfig(

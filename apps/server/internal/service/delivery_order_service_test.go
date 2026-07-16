@@ -330,7 +330,7 @@ func TestChangeOrderStateMachineIllegalTransitions(t *testing.T) {
 			_, err := env.orders.Update(id, ChangeOrderInput{Title: strPtr("改标题")}, "ops-chen", "")
 			return err
 		case "delete":
-			return env.orders.Delete(id, "ops-chen", "")
+			return env.orders.Delete(id, "清理", "ops-chen", "")
 		default: // diff-scan
 			_, err := env.diff.DiffScan(id, "ops-chen", "")
 			return err
@@ -517,7 +517,7 @@ func TestChangeOrderDeleteDraftCascades(t *testing.T) {
 	order := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, order.ID)
 
-	if err := env.orders.Delete(order.ID, "ops-chen", ""); err != nil {
+	if err := env.orders.Delete(order.ID, "不再需要该草稿", "ops-chen", ""); err != nil {
 		t.Fatalf("删除失败: %v", err)
 	}
 	if _, err := env.orders.Get(order.ID); err == nil {
@@ -529,6 +529,10 @@ func TestChangeOrderDeleteDraftCascades(t *testing.T) {
 	}
 	if got := countAudit(t, env.db, model.ActionDeliveryOrderDelete); got != 1 {
 		t.Fatalf("应记 1 条 delete 审计，实际 %d", got)
+	}
+	// 高风险删除原因入审计（spec §4.8.1）。
+	if !auditDetailContains(t, env.db, model.ActionDeliveryOrderDelete, "不再需要该草稿") {
+		t.Fatal("delete 审计 detail 应含删除原因")
 	}
 }
 

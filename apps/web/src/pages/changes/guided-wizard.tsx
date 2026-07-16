@@ -135,7 +135,7 @@ export default function GuidedWizard({
 
   // 丢弃已建 draft（取消 / 改交付内容时）：失败仅残留可见草稿，列表中可手动删除
   const discardDraft = (id: number): void => {
-    void deleteChangeOrder(id)
+    void deleteChangeOrder(id, '向导放弃草稿')
       .catch(() => undefined)
       .then(() => invalidateList())
   }

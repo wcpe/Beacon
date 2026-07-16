@@ -246,7 +246,9 @@ func editableOrderColumns(order *model.ChangeOrder) map[string]any {
 }
 
 // Delete 物理删除 draft 单（DELETE /admin/v2/change-orders/{id}，spec §4.1：单 + items 级联 + 审计）。
-func (s *DeliveryOrderService) Delete(id uint, operator, clientIP string) error {
+// Delete 删除 draft 单（高风险，spec §4.8.1：权限 + 原因 + 二次确认）：原因入审计，供运维追溯谁为何删单。
+// reason 由前端人工删除填写；向导自动丢弃草稿传系统原因。后端不强制非空（自动清理场景允许系统原因）。
+func (s *DeliveryOrderService) Delete(id uint, reason, operator, clientIP string) error {
 	order, err := s.requireOrder(id)
 	if err != nil {
 		return err
@@ -258,6 +260,10 @@ func (s *DeliveryOrderService) Delete(id uint, operator, clientIP string) error 
 	if err != nil {
 		return err
 	}
+	detail := map[string]any{"orderId": order.ID, "title": order.Title}
+	if strings.TrimSpace(reason) != "" {
+		detail["reason"] = reason
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
 		if e := repoTx.DeleteItemsByOrder(order.ID); e != nil {
@@ -266,8 +272,7 @@ func (s *DeliveryOrderService) Delete(id uint, operator, clientIP string) error 
 		if e := repoTx.DeleteOrder(order.ID); e != nil {
 			return e
 		}
-		return s.writeAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderDelete, order.ID,
-			map[string]any{"orderId": order.ID, "title": order.Title})
+		return s.writeAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderDelete, order.ID, detail)
 	})
 }
 

@@ -98,8 +98,8 @@ export function updateChangeOrder(id: number, body: ChangeOrderInput): Promise<C
   return request('PATCH', `/admin/v2/change-orders/${String(id)}`, body)
 }
 
-export function deleteChangeOrder(id: number): Promise<undefined> {
-  return request('DELETE', `/admin/v2/change-orders/${String(id)}`)
+export function deleteChangeOrder(id: number, reason: string): Promise<undefined> {
+  return request('DELETE', `/admin/v2/change-orders/${String(id)}`, { reason })
 }
 
 // ---- 详情 ----
