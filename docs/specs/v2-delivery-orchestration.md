@@ -317,10 +317,11 @@ skipped    failed               failed
 | 方式 | agent 动作 | activated 判据 | failed 判据 |
 |---|---|---|---|
 | `restart` | 回执「开始生效」→ 优雅关服（广播、save-all、shutdown）→ 依赖宿主自启脚本拉起 → agent 随进程重启后重新注册 / 心跳回归 | 控制面在 `activate_timeout_sec` 内观测到该 identity 心跳回归且状态 online（注册 / 健康真源 = Go 进程内存） | 超时未回归；或关服指令回执失败 |
-| `hot_reload` | 文件项已在推送阶段落盘；配置项拉取并应用关联版本、触发 agent 配置热更回调；完成后回执 | agent 回执成功 | agent 回执失败；或 `activate_timeout_sec` 内无回执 |
+| `hot_reload` | 普通文件与 V2 配置冻结工件均已在推送阶段落盘；生效阶段重拉 manifest，仅收集 `sourceKind=config_artifact` 的路径并触发一次 agent 配置变更回调，摘要按回调时磁盘实际状态确定；无配置工件则成功 no-op | `delivery_activate` 成功回执使命令进入 `done`，控制面据此将目标置 `activated` | manifest 拉取失败、回调抛错或失败回执使命令进入 `failed`；命令已 `expired`；或命令仍为 `pending` / `fetched` 且超过 `activate_timeout_sec`（控制面将目标置 `failed`，并尽力把在途命令置 `expired`） |
 | `push_only` | 无生效动作 | pushed 后立即置 activated（语义 = 随目标下次自然重启生效） | —— |
 
 - **边界声明**：`hot_reload` 不保证 jar 被插件框架真正重载——Beacon 只负责落盘与配置热更；含 jar 替换的变更单应选 `restart`。前端在组单时对「含 .jar 文件项 + hot_reload」组合给出显式警告。
+- `hot_reload` 回滚必须先成功还原备份，再以同一批配置工件路径触发回调；摘要按还原后的磁盘状态计算，确保与正向生效通知可区分。备份还原失败时不触发回调。
 - 重启依赖宿主机自启脚本拉起进程；Beacon 不做进程管理。「关了没起来」即超时判失败，计入熔断（本设计的关键安全阀）。
 - 批内生效整批并发（批大小即爆炸半径，由批次规划控制）；推送阶段受全局下载并发上限约束。
 
@@ -330,7 +331,7 @@ skipped    failed               failed
 
 > 前提：配置中心 head = **最新定稿**、非生效；线上生效版本由本域持有。本域始终以显式版本渲染目标载荷，**config-center head 从不直接下发给线上服**。
 
-1. **版本指派（pin）+ 冻结渲染**：单进入 rolling 后，本域为每个 config_change 项在**本单目标集**上按目标 activation 态选版本——**已 activated 目标该作用域取 to_version、未 activated 取 from_version**——经进程内 `EffectivePlaintext(fileID, {server}, pins)` 一次性传入 pin 渲染，载荷冻结为 content-addressed blob 逐批推（pin 只作版本选择器用一次，同单内 head 漂移不影响已冻结载荷）。pin 事实（orderId × 目标集 → to_version）由本域持有，渲染合并逻辑归配置域。
+1. **版本指派（pin）+ 冻结渲染**：单进入 rolling 后，本域为每个 config_change 项在**本单目标集**上按目标 activation 态选版本——**已 activated 目标该作用域取 to_version、未 activated 取 from_version**。同一配置文件在本单内的全部作用域项先按 `config_file` 聚合，再经进程内 `EffectivePlaintext(fileID, {server}, pins)` 一次性传入完整 pin 集合，载荷冻结为 content-addressed blob 逐批推；禁止逐项渲染后按路径覆盖（pin 只作版本选择器用一次，同单内 head 漂移不影响已冻结载荷）。payload 准备重跑时原子替换该单全部冻结工件，清除已移除路径与目标的旧记录。pin 事实（orderId × 目标集 → to_version）由本域持有，渲染合并逻辑归配置域。
 2. **正式切版**：末批推进门人工确认（单 → completed）时，控制面同一事务内**清除本单 pin** + 本域记「该作用域已交付版本 = to_version」。head 自然已 = to_version，故**无需移动 head、不调回退原语**（head 内容已 = to 会撞 `CONFIG_NO_CHANGE`）。
 3. **未完成即回滚 / 终止**：清除 pin 即可；已 activated 目标经回滚流程重新生效回 from（§4.7.2，配置回退 `RollbackVersion(from)` 撞 `CONFIG_NO_CHANGE` 当幂等成功）。
 
@@ -438,8 +439,8 @@ skipped    failed               failed
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/beacon/v2/agent/delivery/orders/{id}/upload-manifest` | 模板源拉取待上传 blob 清单（path / sha256 / size） |
-| GET | `/beacon/v2/agent/delivery/orders/{id}/manifest` | 目标拉取本服专属差异清单（path / action / sha256 / size）与配置项摘要 |
-| POST | `/beacon/v2/agent/delivery/orders/{id}/result` | 阶段回执：`{phase: "upload"|"push"|"activate"|"rollback", status, changedFileCount, skippedFileCount, backupPresent, error}`（restart 的 activate 由控制面按心跳回归判定，agent 只回执「开始生效」） |
+| GET | `/beacon/v2/agent/delivery/orders/{id}/manifest` | 目标拉取本服专属清单：`files[]` 每项为 `{sourceKind, path, action, sha256?, size?}`，`sourceKind` 取 `file_diff`（普通文件差异）/ `config_artifact`（配置冻结渲染工件）；字段缺失兼容为 `file_diff`，未知值由 Agent fail-closed；历史字段 `configs` 恒为空数组；含配置项但目标冻结工件路径集合不完整时返回 `409 config_artifact_missing`；混合单同路径冲突时 `config_artifact` 覆盖 `file_diff` |
+| POST | `/beacon/v2/agent/delivery/orders/{id}/result` | 阶段回执：`{phase: "upload"|"push"|"activate"|"rollback", status: "success"|"failed", changedFileCount, skippedFileCount, backupPresent, error}`（restart 的 activate 由控制面按心跳回归判定，agent 只回执「开始生效」；hot_reload 的 success / failed 分别推进命令 done / failed，命令 expired 或等待超时由控制面收口目标 failed） |
 
 ### 5.3 流式数据面 `/beacon/v2/stream/delivery`
 

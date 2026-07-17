@@ -1000,8 +1000,10 @@ agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）�
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/beacon/v2/agent/delivery/orders/{id}/upload-manifest` | 模板源拉取待上传 blob 清单 |
-| GET | `/beacon/v2/agent/delivery/orders/{id}/manifest` | 目标拉取本服差异清单与配置摘要 |
+| GET | `/beacon/v2/agent/delivery/orders/{id}/manifest` | 目标拉取本服文件清单（含普通文件差异与配置冻结工件） |
 | POST | `/beacon/v2/agent/delivery/orders/{id}/result` | 阶段回执（upload / push / activate / rollback） |
+
+> 目标 manifest 的 `files[]` additive 字段 `sourceKind` 取 `file_diff` / `config_artifact`，分别标记普通文件差异与配置冻结渲染工件；旧 Agent 对缺失字段按 `file_diff` 兼容，当前 Agent 对未知值 fail-closed。`configs` 保留为历史兼容字段且恒为空数组。含配置项时，控制面会校验预期配置路径集合与该目标冻结工件完全一致，缺任一工件返回 `409 config_artifact_missing`，不下发残缺清单；混合单同一路径同时出现普通文件差异与配置工件时，以 `config_artifact` 为准，保证每路径只下发一次。`hot_reload` 仅把 `config_artifact` 路径集合交给 Agent 既有配置变更回调，回调摘要按通知时磁盘实际状态确定；无配置工件成功 no-op，普通文件与 JAR 仅落盘。其 activate 回执状态机固定为：success→命令 `done`→目标 `activated`，failed→命令 `failed`→目标 `failed`，命令 `expired`→目标 `failed`，`pending` / `fetched` 超过 `activateTimeoutSec`→目标 `failed` 且控制面尽力将命令置 `expired`。
 
 流式数据面 `/beacon/v2/stream/delivery`：
 

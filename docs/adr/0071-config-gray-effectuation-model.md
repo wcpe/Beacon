@@ -17,9 +17,9 @@ FR-162 / FR-171 要把「配置变更」纳入变更单的统一灰度编排：�
 
 采用 **模型 A（pin 落后者到 from、head 自然停在 to）+ 冻结渲染**，配置域代码零改动，仅用上述两个接缝：
 
-1. **灰度渲染（pin 覆盖）**：单进入 rolling 后，交付域为每个 config_change 项在**本单目标集**上按目标 activation 态选版本：**已 activated 目标该作用域取 to_version、未 activated 取 from_version**。渲染经 `EffectivePlaintext(fileID, {server}, pins)` 一次性传入 pin。**config-center head 从不直接渲染给线上服**——交付域始终以显式版本选择渲染。
+1. **灰度渲染（pin 覆盖）**：单进入 rolling 后，交付域为每个 config_change 项在**本单目标集**上按目标 activation 态选版本：**已 activated 目标该作用域取 to_version、未 activated 取 from_version**。同一配置文件在本单内的全部作用域项先按 `config_file` 聚合，再经 `EffectivePlaintext(fileID, {server}, pins)` 一次性传入完整 pin 集合，禁止逐项渲染后按路径覆盖。**config-center head 从不直接渲染给线上服**——交付域始终以显式版本选择渲染。
 
-2. **冻结渲染（content-addressed）**：组单 / 推送时把每个目标的载荷（含配置项渲染出的明文）冻结为 sha256 内容寻址 blob（见 [ADR-0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md)）逐批推；pin 只在渲染时作「版本选择器」用一次，载荷冻结后同单内 head 漂移不影响已冻结载荷。
+2. **冻结渲染（content-addressed）**：组单 / 推送时把每个目标按配置文件聚合后的载荷冻结为 sha256 内容寻址 blob（见 [ADR-0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md)）逐批推；pin 只在渲染时作「版本选择器」用一次，载荷冻结后同单内 head 漂移不影响已冻结载荷。payload 准备重跑时原子替换该单全部工件集合，清除已移除路径与目标的旧授权。
 
 3. **from 锚点 = 交付域「上一交付版本」**：`change_order_item.config_from_version_id`（回滚基准）取「该作用域最近一次真正交付到服上的版本」——交付域自持事实（= 最近一个 completed 单在该作用域的 `config_to_version_id`；从无交付则该层为 nil，回滚走撤销层贡献）。**不简单取当前 head**：运维在配置中心连编多版（v5→v6→v7）后发 v7 时，head 的 `based_on` 指向可能从未交付过的 v6，会致 from 锚点错位；取「上一交付版本」才正确。（首次交付且需 from 时以 `based_on_version_id` 兜底。）
 

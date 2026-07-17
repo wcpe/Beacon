@@ -93,7 +93,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-168 | 交付能力统一权限与审计：配置、预览、变更单、payload 查看统一风险分级 | P9 | 0.29.x | 高风险操作需要权限、原因和二次确认；审计能串起配置编辑、文件预览、变更单发布、生效与回滚 | 已交付@v0.29.2 |
 | FR-169 | RC 与 GA 准入：兼容性冻结、验收证据、迁移说明、1.0.0 发布门 | P10 RC | 0.30.x | 核心 FR 验收完成；升级 / 回滚 / 数据迁移有证据；进入 1.0.0 前契约冻结 | 计划 |
 | FR-170 | 「交付」大分类信息架构：与集群、系统并列的导航大域，聚合文件资产、配置中心、变更单与交付历史 | P2 | 0.22.x | 侧栏出现「交付」大分类；文件资产、配置中心、变更单、交付历史页面有明确挂载位；维护态旧入口不回流 | 已交付@v0.22.0 |
-| FR-171 | 生效编排：批次内触发子服重启 / 插件热重载，采集生效结果与观察窗健康数据 | P9 | 0.29.x | 批次可配置生效方式（重启 / 热重载 / 仅推送）；关服后超时未回归判生效失败并计入熔断；观察窗展示健康分、TPS、告警 | 部分交付@v0.29.2（restart / push_only + 观察窗 + 超时熔断已交付；hot_reload 免重启热更留后续，用户拍板 restart-only MVP）|
+| FR-171 | 生效编排：批次内触发子服重启 / 插件热重载，采集生效结果与观察窗健康数据 | P9 | 0.30.x | 批次可配置生效方式（重启 / 热重载 / 仅推送）；关服后超时未回归判生效失败并计入熔断；观察窗展示健康分、TPS、告警 | 开发中（基于 v0.29.3：restart / push_only + 观察窗 + 超时熔断已交付；hot_reload 免重启配置热更实现与验证完成，待随 0.30.x 发布）|
 | FR-172 | 全量 mock 管理台：`docs/UX.md` 全部页面以演示模式实现并逐页评审拍板 | P2 | 0.22.x | UX.md §2 所有页面在 mock 数据下可点击、可演示；每页过 mockup 评审门并拍板留档；mock 覆盖空态 / 常规 / 超大量 / 异常；只依赖 API 契约草案，不接真后端 | 已交付@v0.22.0 |
 | FR-173 | monorepo 工程化：pnpm workspace + Turborepo，`apps/`（server / agent / web / ui-wiki）+ `packages/`（ui / devmock / eslint-config / typescript-config）布局迁移 | P1 | 0.21.x | Go 迁 `apps/server` 且 go:embed、Makefile、CI、脚本全部打通；agent 迁 `apps/agent` 构建绿；`turbo run lint / test / build` 全仓一键；配套 monorepo 与前端栈 ADR 落地 | 已交付@v0.21.0 |
 | FR-174 | 第二版 web 脚手架：`apps/web` 新建（Vite + React Router + TanStack Query + Zustand + react-i18next + MSW） | P1 | 0.21.x | 新台骨架可跑（路由 / 布局 / 主题 / i18n）；MSW 经 `packages/devmock` 双端可用（浏览器 + 测试共享 handlers）；服务器状态归 TanStack Query、客户端状态归 Zustand 的边界写入规范 | 已交付@v0.21.0 |
