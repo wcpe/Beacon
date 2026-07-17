@@ -4,6 +4,17 @@
 
 ## 未发布
 
+## 0.29.3（2026-07-17）
+
+### 修复
+- 稳定拓扑失败率标签回归：改用常规场景并注入单条 100% 失败率的可解析异常边，避免超大量场景在完整 Vitest 套件中触发默认超时，同时保留 SVG 标签的精确断言。
+- 修复 Windows Git Bash 下 `make agent` / `make package` 无法进入 agent 目录及调用 Gradle wrapper 的问题：统一使用 `apps/agent` 与 `./gradlew.bat`，Linux / macOS 分支保持不变。
+
+### 安全
+- 将正式 pnpm 工作区的 Vitest 从 3.2.4 升级到 3.2.6，并同步根锁文件；`pnpm audit --audit-level high` 无已知漏洞。
+
+> 验证（v0.29.3 整体）：前端 `check:ui-wiki` / `typecheck` / `lint` / `test` / `build` 全绿（devmock 81 + web 246 vitest，拓扑目标用例 5 次复核通过）；server `go test ./...` + `golangci-lint run ./...` 通过；agent `gradlew.bat ktlintCheck detekt test build` 与 `make agent` 通过；`make package` 完成前端、server 与 agent 打包；`pnpm audit --audit-level high` 无已知漏洞。
+
 ## 0.29.2（2026-07-17）
 
 ### 新增
