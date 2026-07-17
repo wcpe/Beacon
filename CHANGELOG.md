@@ -4,8 +4,13 @@
 
 ## 未发布
 
+## 0.30.0（2026-07-17）
+
 ### 新增
 - 补齐 FR-171 `hot_reload` 免重启配置热更：交付清单区分普通文件与 V2 配置冻结工件，Agent 在生效与回滚阶段仅对配置工件触发既有配置变更回调并据结果回执；管理台开放热更生效选项，并对含 `.jar` 的组合显式提示 JAR 仅落盘、仍应使用重启生效。
+- 新增真实 Paper 端到端验收：隔离 SQLite 控制面、BeaconAgent 与 BeaconE2E 业务插件经生产变更单链路验证配置热更正向生效、整单回滚、业务回调失败回执，以及失败后 Paper 与 Agent 持续在线。
+
+> 验证（v0.30.0 整体）：server `go test ./...` 全绿、`golangci-lint run ./...` 0 issues、gofmt/goimports 通过；agent `gradlew.bat ktlintCheck detekt test build --no-daemon` 成功；前端 `check:ui-wiki` / `typecheck` / `lint` / `test` / `build` 全绿（devmock 81 + web 248 vitest）；FR-171 真机 `TestDeliveryHotReloadE2E` 复核通过（169.31 秒），覆盖 activated、rolled_back、failed 与失败后存活三重证据；`make package` 以 0.30.0 完成控制面与 Bukkit / Bungee Agent 正式制品构建。
 
 ## 0.29.3（2026-07-17）
 
