@@ -76,8 +76,8 @@ type DeliveryBlobService struct {
 	downloads *flowLimiter
 	// waker 编排推进器唤醒器（M3 可选注入；未注入则回执后不主动唤醒，靠推进器 ticker 兜底）。
 	waker deliveryProgressWaker
-	// configRenderer 配置灰度渲染器（可选注入，ADR-0071）：把 config_change 项按目标渲染为生效明文文件。
-	// 未注入（M2 数据面路径）则配置项不参与 blob 准备与清单下发。
+	// configRenderer 配置灰度渲染器（ADR-0071）：把 config_change 按目标与配置文件聚合渲染为生效明文。
+	// 纯文件数据面可不注入；含配置项时未注入将 fail-closed。
 	configRenderer *deliveryConfigRenderer
 }
 
@@ -351,43 +351,46 @@ func (s *DeliveryBlobService) MissingBlobs(orderID uint) ([]DeliveryBlobRequirem
 	return missing, nil
 }
 
-// PrepareConfigBlobs 控制面在启动 payload 准备期为本单每个 config_change 项按每个目标渲染灰度生效明文并写入
-// 内容寻址 blob（restart 读盘生效依据，ADR-0071 决策2）：区别于文件项由模板源 agent 上传中转——配置明文由
-// 控制面主动渲染写入。per-target 渲染经 content-addressed sha256 天然去重（同作用域层多目标渲染相同明文只落
-// 一个 blob）。无配置项 / 无目标 / 未装配渲染器则空操作。渲染失败原样上抛（由调用方脱敏展示，ADR-0057）。
+// PrepareConfigBlobs 控制面在启动 payload 准备期按「配置文件 × 目标」聚合本单全部作用域 pin，渲染灰度生效明文并写入
+// 内容寻址 blob（restart / hot_reload 的落盘依据，ADR-0071 决策2）：区别于文件项由模板源 agent 上传中转——配置明文由
+// 控制面主动渲染写入。per-target 渲染经 content-addressed sha256 天然去重（多目标渲染相同明文只落一个 blob）。
+// 无配置项 / 无目标则空操作；含配置项但未装配渲染器时 fail-closed。渲染失败原样上抛（由调用方脱敏展示，ADR-0057）。
 func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []string) error {
-	if s.configRenderer == nil || len(serverIDs) == 0 {
+	if len(serverIDs) == 0 {
 		return nil
 	}
 	items, err := s.orders.ListItems(orderID)
 	if err != nil {
 		return err
 	}
-	written := make(map[string]struct{}) // 已落盘 blob 的 sha（跨目标去重，省重复落盘往返）
-	artifactIdx := make(map[string]int)  // (目标, 路径) → artifacts 下标，同键后项覆盖（防批量 upsert 跨方言重复键）
-	artifacts := make([]model.DeliveryConfigArtifact, 0)
+	hasConfig := false
 	for i := range items {
-		if items[i].Kind != model.ChangeItemKindConfigChange {
-			continue
+		if items[i].Kind == model.ChangeItemKindConfigChange {
+			hasConfig = true
+			break
 		}
-		for _, serverID := range serverIDs {
-			rendered, err := s.configRenderer.render(&items[i], serverID)
-			if err != nil {
-				return err
-			}
-			// 每个 (项, 目标) 都冻结一条工件（授权与 manifest 按目标反查，不随 blob 去重）；
-			artifact := model.DeliveryConfigArtifact{
+	}
+	if !hasConfig {
+		return nil
+	}
+	if s.configRenderer == nil {
+		return apperr.ErrDeliveryConfigArtifactMissing
+	}
+	written := make(map[string]struct{}) // 已落盘 blob 的 sha（跨目标去重，省重复落盘往返）
+	artifacts := make([]model.DeliveryConfigArtifact, 0)
+	for _, serverID := range serverIDs {
+		renderedFiles, err := s.configRenderer.renderAll(items, serverID)
+		if err != nil {
+			return err
+		}
+		for i := range renderedFiles {
+			rendered := &renderedFiles[i]
+			// 每个 (配置文件, 目标) 冻结一条聚合本单全部作用域 pin 的工件。
+			artifacts = append(artifacts, model.DeliveryConfigArtifact{
 				OrderID: orderID, ServerID: serverID,
 				Path: rendered.Path, SHA256: rendered.SHA256, SizeBytes: rendered.Size,
-			}
-			key := serverID + "\x00" + rendered.Path
-			if idx, dup := artifactIdx[key]; dup {
-				artifacts[idx] = artifact
-			} else {
-				artifactIdx[key] = len(artifacts)
-				artifacts = append(artifacts, artifact)
-			}
-			// 而 blob 落盘按内容 sha 去重（同作用域多目标渲染相同明文只落一个 blob）。
+			})
+			// blob 落盘按内容 sha 去重（同配置多目标渲染相同明文只落一个 blob）。
 			if _, dup := written[rendered.SHA256]; dup {
 				continue
 			}
@@ -397,7 +400,7 @@ func (s *DeliveryBlobService) PrepareConfigBlobs(orderID uint, serverIDs []strin
 			written[rendered.SHA256] = struct{}{}
 		}
 	}
-	return s.artifacts.UpsertBatch(artifacts)
+	return s.artifacts.ReplaceOrderBatch(orderID, artifacts)
 }
 
 // TouchReferences 刷新某变更单全部文件项引用 blob 的 last_referenced_at（清理保护）。

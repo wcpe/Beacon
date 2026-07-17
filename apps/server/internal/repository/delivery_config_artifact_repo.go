@@ -35,6 +35,16 @@ func (r *DeliveryConfigArtifactRepository) UpsertBatch(artifacts []model.Deliver
 	}).CreateInBatches(&artifacts, 500).Error
 }
 
+// ReplaceOrderBatch 原子替换某变更单的全部冻结工件，清除重跑准备遗留的旧路径与旧目标授权。
+func (r *DeliveryConfigArtifactRepository) ReplaceOrderBatch(orderID uint, artifacts []model.DeliveryConfigArtifact) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("order_id = ?", orderID).Delete(&model.DeliveryConfigArtifact{}).Error; err != nil {
+			return err
+		}
+		return r.WithTx(tx).UpsertBatch(artifacts)
+	})
+}
+
 // ListByOrderServer 取某单为某目标冻结的全部工件（manifest 归一为文件项用；path 升序稳定）。
 func (r *DeliveryConfigArtifactRepository) ListByOrderServer(orderID uint, serverID string) ([]model.DeliveryConfigArtifact, error) {
 	var arts []model.DeliveryConfigArtifact

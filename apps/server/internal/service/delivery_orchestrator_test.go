@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,10 +416,16 @@ func TestOrchestratorCancelRequiresReason(t *testing.T) {
 	}
 }
 
-// seedGrayConfigFile 建一个配置文件 + 指定作用域链上的一个定稿版本，返回 (fileID, versionID)（配置灰度测试用）。
+// seedGrayConfigFile 建一个默认路径配置文件 + 指定作用域链上的一个定稿版本。
 func seedGrayConfigFile(t *testing.T, db *gorm.DB, nsID uint, scopeKind string, scopeRefID uint, content string) (uint, uint) {
 	t.Helper()
-	file := model.ConfigFile{NamespaceID: nsID, Name: "plugins/Gray/config.yml", Format: "yaml"}
+	return seedGrayConfigFileAtPath(t, db, nsID, "plugins/Gray/config.yml", scopeKind, scopeRefID, content)
+}
+
+// seedGrayConfigFileAtPath 建一个指定路径配置文件 + 指定作用域链上的一个定稿版本。
+func seedGrayConfigFileAtPath(t *testing.T, db *gorm.DB, nsID uint, path, scopeKind string, scopeRefID uint, content string) (uint, uint) {
+	t.Helper()
+	file := model.ConfigFile{NamespaceID: nsID, Name: path, Format: "yaml"}
 	mustCreate(t, db, &file)
 	v := model.ConfigLayerVersion{
 		ConfigFileID: file.ID, ScopeLevel: scopeKind, ScopeRefID: scopeRefID,
@@ -471,6 +479,26 @@ func TestOrchestratorConfigScopeConflict(t *testing.T) {
 	}
 }
 
+// TestOrchestratorFileManifestSourceKind 普通文件项在目标清单中显式标记 file_diff 来源。
+func TestOrchestratorFileManifestSourceKind(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	manifest, err := h.blob.TargetManifest(target, order.ID)
+	if err != nil {
+		t.Fatalf("拉目标清单失败: %v", err)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].SourceKind != "file_diff" {
+		t.Fatalf("普通文件项 sourceKind 应为 file_diff: %+v", manifest.Files)
+	}
+	if len(manifest.Configs) != 0 {
+		t.Fatalf("Configs 应恒为空，实际 %d", len(manifest.Configs))
+	}
+}
+
 // TestOrchestratorConfigGrayRendersBlobAndManifest 配置灰度渲染 + blob 生成 + 清单归一（ADR-0071 决策1/2）：
 // 启动即由控制面渲染配置明文写入就绪 blob；目标拉清单时配置项归一为文件项进 Files（sha 指向就绪 blob），Configs 空。
 func TestOrchestratorConfigGrayRendersBlobAndManifest(t *testing.T) {
@@ -507,8 +535,91 @@ func TestOrchestratorConfigGrayRendersBlobAndManifest(t *testing.T) {
 	if cfg.Action != model.ChangeItemActionUpdate || cfg.SHA256 == "" || cfg.Size == 0 {
 		t.Fatalf("配置文件项字段不符: %+v", cfg)
 	}
+	if cfg.SourceKind != "config_artifact" {
+		t.Fatalf("配置冻结工件 sourceKind 应为 config_artifact: %+v", cfg)
+	}
 	if _, err := h.blob.Head(cfg.SHA256); err != nil {
 		t.Fatalf("清单配置文件项的 blob 应已就绪: %v", err)
+	}
+}
+
+// TestConfigArtifactOverridesSamePathFileDiff 同一路径同时出现文件差异与配置工件时，清单只保留配置工件。
+func TestConfigArtifactOverridesSamePathFileDiff(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+	order := h.createApprovedConfigOrder(t, "同路径配置优先", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动配置单失败: %v", err)
+	}
+	path, action, sha, size := "plugins/Gray/config.yml", model.ChangeItemActionUpdate, strings.Repeat("a", 64), int64(1)
+	mustCreate(t, h.env.db, &model.ChangeOrderItem{
+		OrderID: order, Kind: model.ChangeItemKindFileDiff,
+		Path: &path, Action: &action, SHA256: &sha, SizeBytes: &size,
+	})
+
+	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	manifest, err := h.blob.TargetManifest(target, order)
+	if err != nil {
+		t.Fatalf("拉目标清单失败: %v", err)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != path || manifest.Files[0].SourceKind != DeliveryManifestSourceConfigArtifact {
+		t.Fatalf("同路径冲突应由配置工件覆盖普通文件差异: %+v", manifest.Files)
+	}
+}
+
+// TestPrepareConfigBlobsCombinesPinsPerFile 同一配置文件的多作用域变更必须合并全部 pin 后只冻结一次。
+func TestPrepareConfigBlobsCombinesPinsPerFile(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	file := model.ConfigFile{NamespaceID: h.f.nsID, Name: "plugins/Multi/config.yml", Format: "yaml"}
+	mustCreate(t, h.env.db, &file)
+	versions := []model.ConfigLayerVersion{
+		{ConfigFileID: file.ID, ScopeLevel: model.ConfigScopeNamespace, ScopeRefID: h.f.nsID, VersionNo: 1, Content: "base: selected"},
+		{ConfigFileID: file.ID, ScopeLevel: model.ConfigScopeNamespace, ScopeRefID: h.f.nsID, VersionNo: 2, Content: "base: drift"},
+		{ConfigFileID: file.ID, ScopeLevel: model.ConfigScopeZone, ScopeRefID: h.f.zone1ID, VersionNo: 1, Content: "zone: selected"},
+		{ConfigFileID: file.ID, ScopeLevel: model.ConfigScopeZone, ScopeRefID: h.f.zone1ID, VersionNo: 2, Content: "zone: drift"},
+	}
+	for i := range versions {
+		mustCreate(t, h.env.db, &versions[i])
+	}
+	detail, err := h.env.orders.Create(h.f.nsID, ChangeOrderInput{
+		Title: strPtr("同文件多作用域"), Selector: &ChangeSelector{Servers: []string{"t-1"}},
+	}, "ops-chen", "10.0.0.1")
+	if err != nil {
+		t.Fatalf("建配置单失败: %v", err)
+	}
+	changes := []ChangeConfigInput{
+		{ConfigScopeKind: model.ConfigScopeNamespace, ConfigScopeID: h.f.nsID, ConfigToVersionID: versions[0].ID},
+		{ConfigScopeKind: model.ConfigScopeZone, ConfigScopeID: h.f.zone1ID, ConfigToVersionID: versions[2].ID},
+	}
+	if _, err := h.env.orders.Update(detail.ID, ChangeOrderInput{ConfigChanges: &changes}, "ops-chen", ""); err != nil {
+		t.Fatalf("挂配置版本失败: %v", err)
+	}
+	setOrderStatus(t, h.env.db, detail.ID, model.ChangeOrderStatusApproved)
+	if _, err := h.orch.Start(detail.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动配置单失败: %v", err)
+	}
+
+	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	manifest, err := h.blob.TargetManifest(target, detail.ID)
+	if err != nil {
+		t.Fatalf("拉目标清单失败: %v", err)
+	}
+	if len(manifest.Files) != 1 || manifest.Files[0].SourceKind != DeliveryManifestSourceConfigArtifact {
+		t.Fatalf("同文件多作用域应只冻结一个配置工件: %+v", manifest.Files)
+	}
+	reader, _, release, err := h.blob.Open(manifest.Files[0].SHA256)
+	if err != nil {
+		t.Fatalf("打开配置工件失败: %v", err)
+	}
+	content, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	release()
+	if readErr != nil {
+		t.Fatalf("读取配置工件失败: %v", readErr)
+	}
+	plain := string(content)
+	if !strings.Contains(plain, "base: selected") || !strings.Contains(plain, "zone: selected") || strings.Contains(plain, "drift") {
+		t.Fatalf("配置工件应同时固定两个选中版本且不受 head 漂移影响: %s", plain)
 	}
 }
 
@@ -526,6 +637,27 @@ func TestPrepareConfigBlobsDedupsPerTarget(t *testing.T) {
 	h.env.db.Model(&model.DeliveryBlob{}).Where("state = ?", model.DeliveryBlobStateReady).Count(&count)
 	if count != 1 {
 		t.Fatalf("同作用域两目标渲染相同明文应去重为 1 个 blob，实际 %d", count)
+	}
+}
+
+// TestPrepareConfigBlobsReplacesStaleArtifacts 重跑准备时应原子替换本单旧工件，清除已移除路径与目标授权。
+func TestPrepareConfigBlobsReplacesStaleArtifacts(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
+	order := h.createApprovedConfigOrder(t, "替换旧工件", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
+	mustCreate(t, h.env.db, &model.DeliveryConfigArtifact{
+		OrderID: order, ServerID: "t-2", Path: "plugins/Stale/config.yml", SHA256: strings.Repeat("f", 64), SizeBytes: 1,
+	})
+
+	if err := h.blob.PrepareConfigBlobs(order, []string{"t-1"}); err != nil {
+		t.Fatalf("准备配置 blob 失败: %v", err)
+	}
+	var arts []model.DeliveryConfigArtifact
+	if err := h.env.db.Where("order_id = ?", order).Find(&arts).Error; err != nil {
+		t.Fatalf("查询配置工件失败: %v", err)
+	}
+	if len(arts) != 1 || arts[0].ServerID != "t-1" || arts[0].Path != "plugins/Gray/config.yml" {
+		t.Fatalf("重跑准备后应只保留当前目标与路径的工件: %+v", arts)
 	}
 }
 
@@ -586,6 +718,39 @@ func TestOrchestratorConfigManifestMissingArtifact(t *testing.T) {
 	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
 	if _, err := h.blob.TargetManifest(target, order); !errors.Is(err, apperr.ErrDeliveryConfigArtifactMissing) {
 		t.Fatalf("工件未准备应返回 config_artifact_missing，实际 %v", err)
+	}
+}
+
+// TestOrchestratorConfigManifestPartialArtifactMissing 多配置单仅缺部分工件时也必须 fail-closed，不能下发残缺清单。
+func TestOrchestratorConfigManifestPartialArtifactMissing(t *testing.T) {
+	h := newOrchestratorHarness(t)
+	_, zoneVersion := seedGrayConfigFileAtPath(t, h.env.db, h.f.nsID, "plugins/Gray/config.yml", model.ConfigScopeZone, h.f.zone1ID, "zone: true")
+	_, namespaceVersion := seedGrayConfigFileAtPath(t, h.env.db, h.f.nsID, "plugins/Other/config.yml", model.ConfigScopeNamespace, h.f.nsID, "namespace: true")
+	detail, err := h.env.orders.Create(h.f.nsID, ChangeOrderInput{
+		Title: strPtr("部分工件缺失"), Selector: &ChangeSelector{Servers: []string{"t-1"}},
+	}, "ops-chen", "10.0.0.1")
+	if err != nil {
+		t.Fatalf("建配置单失败: %v", err)
+	}
+	changes := []ChangeConfigInput{
+		{ConfigScopeKind: model.ConfigScopeZone, ConfigScopeID: h.f.zone1ID, ConfigToVersionID: zoneVersion},
+		{ConfigScopeKind: model.ConfigScopeNamespace, ConfigScopeID: h.f.nsID, ConfigToVersionID: namespaceVersion},
+	}
+	if _, err := h.env.orders.Update(detail.ID, ChangeOrderInput{ConfigChanges: &changes}, "ops-chen", ""); err != nil {
+		t.Fatalf("挂配置版本失败: %v", err)
+	}
+	setOrderStatus(t, h.env.db, detail.ID, model.ChangeOrderStatusApproved)
+	if _, err := h.orch.Start(detail.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动配置单失败: %v", err)
+	}
+	if err := h.env.db.Where("order_id = ? AND server_id = ? AND path = ?", detail.ID, "t-1", "plugins/Other/config.yml").
+		Delete(&model.DeliveryConfigArtifact{}).Error; err != nil {
+		t.Fatalf("删除一条工件失败: %v", err)
+	}
+
+	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
+	if _, err := h.blob.TargetManifest(target, detail.ID); !errors.Is(err, apperr.ErrDeliveryConfigArtifactMissing) {
+		t.Fatalf("部分工件缺失应返回 config_artifact_missing，实际 %v", err)
 	}
 }
 
@@ -704,6 +869,74 @@ func TestOrchestratorRecoveryAfterRestart(t *testing.T) {
 	fresh.advanceActiveOrders(context.Background())
 	if c := h.targetStatuses(order.ID); c[model.ChangeTargetStatusActivated] != 2 {
 		t.Fatalf("重启后应续推至 activated: %v", c)
+	}
+}
+
+// prepareHotReloadActivatingOrder 建立已进入 activating 的 hot_reload 单。
+func prepareHotReloadActivatingOrder(t *testing.T) (*orchestratorHarness, *model.ChangeOrder) {
+	t.Helper()
+	h := newOrchestratorHarness(t)
+	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodHotReload, 0)
+	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+		t.Fatalf("启动失败: %v", err)
+	}
+	h.tick()
+	h.completeAllPushes(t, order.ID)
+	h.tick()
+	if got := h.targetStatuses(order.ID)[model.ChangeTargetStatusActivating]; got != 2 {
+		t.Fatalf("hot_reload 推送后应有 2 个 activating 目标，实际 %d", got)
+	}
+	return h, order
+}
+
+// ageActivateCommands 把本单生效命令创建时间移到给定时刻，供超时测试使用。
+func ageActivateCommands(t *testing.T, h *orchestratorHarness, orderID uint, createdAt time.Time) {
+	t.Helper()
+	var commands []model.AgentCommand
+	if err := h.env.db.Where("type = ?", model.CommandTypeDeliveryActivate).Find(&commands).Error; err != nil {
+		t.Fatalf("查询生效命令失败: %v", err)
+	}
+	for i := range commands {
+		var payload deliveryCommandPayload
+		if json.Unmarshal([]byte(commands[i].Payload), &payload) == nil && payload.OrderID == orderID {
+			if err := h.env.db.Model(&model.AgentCommand{}).Where("id = ?", commands[i].ID).Update("created_at", createdAt).Error; err != nil {
+				t.Fatalf("调整生效命令时间失败: %v", err)
+			}
+		}
+	}
+}
+
+// TestOrchestratorHotReloadAckStateMachine 锁定 hot_reload 控制面回执推进：成功、失败、过期与超时。
+func TestOrchestratorHotReloadAckStateMachine(t *testing.T) {
+	cases := []struct {
+		name, commandStatus, targetStatus string
+		timeout                           bool
+	}{
+		{name: "成功回执", commandStatus: model.CommandStatusDone, targetStatus: model.ChangeTargetStatusActivated},
+		{name: "失败回执", commandStatus: model.CommandStatusFailed, targetStatus: model.ChangeTargetStatusFailed},
+		{name: "命令过期", commandStatus: model.CommandStatusExpired, targetStatus: model.ChangeTargetStatusFailed},
+		{name: "等待超时", commandStatus: model.CommandStatusPending, targetStatus: model.ChangeTargetStatusFailed, timeout: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, order := prepareHotReloadActivatingOrder(t)
+			if tc.timeout {
+				ageActivateCommands(t, h, order.ID, h.clock.Add(-61*time.Second))
+			} else {
+				h.completeAllActivates(t, order.ID, tc.commandStatus)
+			}
+			h.tick()
+			if got := h.targetStatuses(order.ID)[tc.targetStatus]; got != 2 {
+				t.Fatalf("目标状态 %s 应有 2 个，实际 %d", tc.targetStatus, got)
+			}
+			if tc.timeout {
+				var expired int64
+				h.env.db.Model(&model.AgentCommand{}).Where("type = ? AND status = ?", model.CommandTypeDeliveryActivate, model.CommandStatusExpired).Count(&expired)
+				if expired != 2 {
+					t.Fatalf("超时后生效命令应有 2 个 expired，实际 %d", expired)
+				}
+			}
+		})
 	}
 }
 

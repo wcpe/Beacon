@@ -150,8 +150,16 @@ func (s *DeliveryBlobService) UploadManifest(id agentauth.Identity, orderID uint
 	return &DeliveryUploadManifestView{OrderID: order.ID, Items: missing}, nil
 }
 
-// DeliveryManifestFileView 是目标差异清单的文件项（path/action/sha256/size；delete 项无 sha/size）。
+// 目标清单文件项来源类型。
+const (
+	DeliveryManifestSourceFileDiff       = "file_diff"
+	DeliveryManifestSourceConfigArtifact = "config_artifact"
+)
+
+// DeliveryManifestFileView 是目标差异清单的文件项（delete 项无 sha/size）。
 type DeliveryManifestFileView struct {
+	// 来源：普通文件差异 / 配置冻结工件
+	SourceKind string `json:"sourceKind"`
 	// 服务器根内相对路径
 	Path string `json:"path"`
 	// add / update / delete（相对目标语义由 agent 按本地清单重判，spec §4.2.3）
@@ -218,15 +226,20 @@ func (s *DeliveryBlobService) TargetManifest(id agentauth.Identity, orderID uint
 		}
 	}
 	// config_change 项归一为冻结渲染工件文件项（ADR-0071）：读工件表、不重渲染，消除 head 漂移竞态。
-	if err := s.appendConfigArtifacts(view, order.ID, id.ServerID, hasConfig); err != nil {
+	if err := s.appendConfigArtifacts(view, items, order.ID, id.ServerID, hasConfig); err != nil {
 		return nil, err
 	}
+	view.Files = preferConfigArtifacts(view.Files)
 	return view, nil
 }
 
 // fileManifestView 把一条 file_diff 变更项映射为清单文件项（delete 项 sha/size 为空）。
 func fileManifestView(item *model.ChangeOrderItem) DeliveryManifestFileView {
-	file := DeliveryManifestFileView{Path: derefString(item.Path), Action: derefString(item.Action)}
+	file := DeliveryManifestFileView{
+		SourceKind: DeliveryManifestSourceFileDiff,
+		Path:       derefString(item.Path),
+		Action:     derefString(item.Action),
+	}
 	if item.SHA256 != nil {
 		file.SHA256 = *item.SHA256
 	}
@@ -236,26 +249,73 @@ func fileManifestView(item *model.ChangeOrderItem) DeliveryManifestFileView {
 	return file
 }
 
-// appendConfigArtifacts 把本单为该目标冻结的配置渲染工件（ADR-0071）作为文件项补进清单：读工件表、不重渲染
-// （渲染已在 payload 准备期由 PrepareConfigBlobs 落工件 + 写 blob）。未装配渲染器（M2 数据面路径）跳过；
-// 有 config_change 项却查不到工件（payload 未准备）→ 明确报错，不静默漏发配置。
-func (s *DeliveryBlobService) appendConfigArtifacts(view *DeliveryTargetManifestView, orderID uint, serverID string, hasConfig bool) error {
-	if s.configRenderer == nil {
+// appendConfigArtifacts 把本单为该目标冻结的配置渲染工件（ADR-0071）作为文件项补进清单：读工件表、不重渲染。
+// 含配置项时必须校验预期路径集合与工件表完全一致，任一缺失或异常均 fail-closed，不下发残缺清单。
+func (s *DeliveryBlobService) appendConfigArtifacts(view *DeliveryTargetManifestView, items []model.ChangeOrderItem,
+	orderID uint, serverID string, hasConfig bool) error {
+	if !hasConfig {
 		return nil
+	}
+	if s.configRenderer == nil {
+		return apperr.ErrDeliveryConfigArtifactMissing
+	}
+	expected, err := s.configRenderer.expectedPaths(items)
+	if err != nil {
+		return err
 	}
 	arts, err := s.artifacts.ListByOrderServer(orderID, serverID)
 	if err != nil {
 		return err
 	}
-	if hasConfig && len(arts) == 0 {
+	if !configArtifactsComplete(expected, arts) {
 		return apperr.ErrDeliveryConfigArtifactMissing
 	}
 	for i := range arts {
 		view.Files = append(view.Files, DeliveryManifestFileView{
-			Path: arts[i].Path, Action: model.ChangeItemActionUpdate, SHA256: arts[i].SHA256, Size: arts[i].SizeBytes,
+			SourceKind: DeliveryManifestSourceConfigArtifact,
+			Path:       arts[i].Path,
+			Action:     model.ChangeItemActionUpdate,
+			SHA256:     arts[i].SHA256,
+			Size:       arts[i].SizeBytes,
 		})
 	}
 	return nil
+}
+
+// configArtifactsComplete 校验冻结工件路径与预期集合一一对应。
+func configArtifactsComplete(expected map[string]struct{}, arts []model.DeliveryConfigArtifact) bool {
+	if len(expected) != len(arts) {
+		return false
+	}
+	for i := range arts {
+		if _, ok := expected[arts[i].Path]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// preferConfigArtifacts 解决混合单同路径冲突：配置冻结工件覆盖普通文件差异，保证 Agent 每路径仅执行一次。
+func preferConfigArtifacts(files []DeliveryManifestFileView) []DeliveryManifestFileView {
+	configPaths := make(map[string]struct{})
+	for i := range files {
+		if files[i].SourceKind == DeliveryManifestSourceConfigArtifact {
+			configPaths[files[i].Path] = struct{}{}
+		}
+	}
+	if len(configPaths) == 0 {
+		return files
+	}
+	merged := make([]DeliveryManifestFileView, 0, len(files))
+	for i := range files {
+		if files[i].SourceKind == DeliveryManifestSourceFileDiff {
+			if _, conflict := configPaths[files[i].Path]; conflict {
+				continue
+			}
+		}
+		merged = append(merged, files[i])
+	}
+	return merged
 }
 
 // 交付阶段回执 phase 取值（spec §5.2）。

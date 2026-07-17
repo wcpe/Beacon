@@ -85,8 +85,9 @@ func (s *DeliveryOrchestrator) reconcileRollback(rt *orderRuntime, t *model.Chan
 	}
 }
 
-// completeRollback 处理回滚命令 done（agent 已还原备份）：
-//   - push_only / hot_reload：还原即够（随目标下次自然重启读盘），直接 rolled_back。
+// completeRollback 处理回滚命令 done（agent 已完成对应回滚动作）：
+//   - push_only：备份还原完成后直接 rolled_back，随目标下次自然重启读盘。
+//   - hot_reload：备份还原与配置变更回调均成功后直接 rolled_back。
 //   - restart：agent 还原后已 gracefulShutdown，须重置回滚重启锚点（首次 done、锚点尚为正推旧值）后判心跳回归；
 //     心跳回归→rolled_back，activate_timeout 内未回归→failed（「关了没起来」，与正推 restart 同构）。
 func (s *DeliveryOrchestrator) completeRollback(rt *orderRuntime, t *model.ChangeTarget) {

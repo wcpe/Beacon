@@ -80,6 +80,23 @@ func looseBlobSettings() *fakeBlobSettings {
 	return &fakeBlobSettings{capacity: 1 << 30, upload: 8, download: 64, retentionDays: 7, cleanupMin: 60}
 }
 
+// TestPrepareConfigBlobsRequiresRendererForConfigOrder 含配置项但未装配渲染器时必须 fail-closed。
+func TestPrepareConfigBlobsRequiresRendererForConfigOrder(t *testing.T) {
+	svc, db := newBlobTestSvc(t, looseBlobSettings())
+	order := model.ChangeOrder{NamespaceID: 1, Title: "config", Status: model.ChangeOrderStatusApproved}
+	mustCreate(t, db, &order)
+	scopeKind := model.ConfigScopeNamespace
+	scopeID, versionID := uint(1), uint(1)
+	mustCreate(t, db, &model.ChangeOrderItem{
+		OrderID: order.ID, Kind: model.ChangeItemKindConfigChange,
+		ConfigScopeKind: &scopeKind, ConfigScopeID: &scopeID, ConfigToVersionID: &versionID,
+	})
+
+	if err := svc.PrepareConfigBlobs(order.ID, []string{"t-1"}); !errors.Is(err, apperr.ErrDeliveryConfigArtifactMissing) {
+		t.Fatalf("未装配配置渲染器应返回 config_artifact_missing，实际 %v", err)
+	}
+}
+
 // TestDeliveryBlobStoreDedupAndHashGuard 存储去重幂等 + 内容哈希守卫（spec §4.5.2）。
 func TestDeliveryBlobStoreDedupAndHashGuard(t *testing.T) {
 	svc, _ := newBlobTestSvc(t, looseBlobSettings())
