@@ -73,12 +73,16 @@ object BeaconE2EBukkit : Plugin() {
 
         // 启动 FR-149 跨服消息探针（经门面走 send/call/on 真收发，观测 wire 与落库；由 BEACON_E2E_MESSAGING 门控）。
         MessagingE2EProbe.start()
+
+        // 启动 FR-171 hot_reload 业务插件探针，观测真实 onChange、失败回执与进程存活。
+        DeliveryHotReloadE2EProbe.start()
     }
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
         handle?.remove()
         handle = null
+        DeliveryHotReloadE2EProbe.stop()
     }
 
     /** 注册 onChange 监听；agent 尚未就绪时静默跳过，由轮询兜底重试注册。 */

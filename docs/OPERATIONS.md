@@ -224,6 +224,29 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/schedagent
 - **fail-static（杀控制面）**：`cp.Stop()` 后真门面下一轮仍经本地快照返回候选 `source=LOCAL_FALLBACK` 选中该服、不阻断、无 `ACQUIRE_ERROR` 观测（探针持续产观测即 agent 未崩、玩家链路不阻断的活性证明）。
 - **恢复**：重启控制面（同库）后 agent 自动回 `source=CONTROL_PLANE`；降级期本地决策经 `report-local` 补报入库可查 `source=local_fallback`。
 
+### 7.7 FR-171 `hot_reload` 真机 E2E（配置工件热更 / 回滚 / 失败回执）
+
+本用例由纯 Go 测试自起隔离 SQLite 控制面与真实 Paper，加载真实 BeaconAgent 和 BeaconE2E 业务插件，经管理 API 驱动变更单状态机；不依赖固定服务器目录，也不以 mock 回调代替平台链路。
+
+前置同 §7.1：本机有 Go、JDK21、CGO 编译器和已构建前端，首次运行需联网下载 Paper。必填 `E2E_ADMIN_PASS` / `E2E_AUTH_SECRET`；可选 `E2E_BEACON_URL` 覆盖默认控制面地址。
+
+运行：
+
+```powershell
+$env:E2E_ADMIN_PASS='<临时管理员口令>'; $env:E2E_AUTH_SECRET='<临时签名密钥>'
+go test -tags=e2e -timeout=30m ./apps/server/test/e2e/hotreload -run '^TestDeliveryHotReloadE2E$' -v -count=1
+```
+
+测试在同一真实 Paper 进程中依次断言：
+
+- **正向生效**：V2 配置冻结工件经数据面落盘，BeaconE2E 业务插件通过 `BeaconAgentProvider.config().onChange` 收到固定路径通知并读到新内容；控制面目标进入 `activated`，覆盖前备份存在。
+- **整单回滚**：先还原备份，再触发同一路径配置回调；目标与变更单均进入 `rolled_back`，磁盘内容恢复为交付前值。
+- **失败回执**：失败专用路径的业务插件监听器留证后抛出受控异常；Agent 回执失败、目标进入 `failed`，随后通过新的存活观测、Minecraft TCP 端口与 Agent online 状态共同证明没有误走重启。
+
+证据位置：控制面日志 `.tmp/beacon-hotreload.{out,err}.log`，Paper 日志 `.tmp/paper-hotreload.{out,err}.log`，业务插件观测 `apps/.tmp/e2e-run/bukkit/plugins/BeaconE2E/e2e-delivery-hot-reload.log`，交付备份 `apps/.tmp/e2e-run/bukkit/plugins/BeaconAgent/delivery-backups/<orderId>/`。
+
+边界：本用例只证明 V2 配置工件免重启热更。普通文件与 JAR 在 `hot_reload` 下仅落盘，不触发插件框架重载；含 JAR 的变更必须依据管理台警告改用 `restart` 才能声明新 JAR 已生效。
+
 ## 8. 测试运行方式（单元 / 集成）
 
 - **单元测试**（无外部依赖、快）：`go test ./...`。集成用例带 `//go:build integration` 标记、默认**不编译**，故此命令只跑纯逻辑单测——`apps/server/internal/service` / `apps/server/internal/server` 显示 `no test files` 属正常（其用例全为集成）。
