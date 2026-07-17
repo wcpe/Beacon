@@ -25,6 +25,13 @@ class DeliveryOverwriter(
      */
     fun plan(files: List<DeliveryManifestFile>): List<DeliveryFileOp> = files.map { classify(it) }
 
+    /** 读取当前目标文件 sha256；文件不存在返回 null，存在但读取失败则抛异常。 */
+    fun currentSha256(path: String): String? {
+        val target = resolver.resolve(path) ?: throw DeliveryPathException(path)
+        if (!target.exists()) return null
+        return DeliverySha256.ofFile(target) ?: throw IOException("交付目标文件摘要读取失败：$path")
+    }
+
     /** 单文件重判：delete 项按目标存在性、非 delete 项按本地哈希异同分类。 */
     private fun classify(file: DeliveryManifestFile): DeliveryFileOp {
         val target = resolver.resolve(file.path) ?: throw DeliveryPathException(file.path)

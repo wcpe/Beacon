@@ -18,6 +18,12 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     /** 注入关服原语失败：非 null 时 [gracefulShutdown] 记录后抛出，用于「关服抛异常 → 回执 failed」断言。 */
     var shutdownError: RuntimeException? = null
 
+    /** 记录配置变更通知的路径集合与摘要，供热更新编排断言。 */
+    val configChanges = mutableListOf<Pair<Set<String>, String>>()
+
+    /** 注入配置变更通知失败：非 null 时记录调用后抛出。 */
+    var configChangeError: RuntimeException? = null
+
     override fun runAsync(task: () -> Unit) {
         task()
     }
@@ -43,7 +49,10 @@ class ManualAsyncAdapter(private val folder: File = File(".")) : PlatformAdapter
     override fun publishConfigChanged(
         changed: Set<String>,
         newMd5: String,
-    ) = Unit
+    ) {
+        configChanges.add(changed to newMd5)
+        configChangeError?.let { throw it }
+    }
 
     override fun info(msg: String) {
         infos.add(msg)

@@ -1231,8 +1231,8 @@ class BeaconApiClient(
      * 拉取目标本服差异清单：GET /beacon/v2/agent/delivery/orders/{id}/manifest（FR-165，spec §5.2）。
      * 同步调用，请在异步线程使用。
      *
-     * 200 返回文件差异项（path/action/sha256/size）与生效方式（配置项摘要 M4 消费，本期不解析）；
-     * 其它（403 非目标 / 404 / 连接失败）返回 null（推送流程据此回执 failed）。
+     * 200 返回文件项（sourceKind/path/action/sha256/size）与生效方式；普通文件差异和配置冻结工件统一在 files 中。
+     * 其它（403 非目标 / 404 / 连接失败）返回 null（推送或生效流程据此回执 failed）。
      */
     fun fetchDeliveryManifest(
         identity: AgentIdentity,
@@ -1301,7 +1301,7 @@ class BeaconApiClient(
         return DeliveryUploadManifest(orderId = JsonTree.longOr(obj, "orderId", 0L), items = items)
     }
 
-    /** 解析目标差异清单响应（orderId + activationMethod + files[path/action/sha256/size]；configs 归 M4，不解析）。 */
+    /** 解析目标差异清单响应；files.sourceKind 缺失时兼容为 file_diff。 */
     private fun parseDeliveryManifest(jsonBody: String): DeliveryTargetManifest {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
         val files =
@@ -1312,6 +1312,12 @@ class BeaconApiClient(
                     action = JsonTree.strOr(fileObj, "action", ""),
                     sha256 = JsonTree.strOr(fileObj, "sha256", ""),
                     sizeBytes = JsonTree.longOr(fileObj, "size", 0L),
+                    sourceKind =
+                        if (fileObj.containsKey("sourceKind")) {
+                            JsonTree.str(fileObj, "sourceKind") ?: ""
+                        } else {
+                            DeliveryManifestFile.SOURCE_KIND_FILE_DIFF
+                        },
                 )
             }
         return DeliveryTargetManifest(

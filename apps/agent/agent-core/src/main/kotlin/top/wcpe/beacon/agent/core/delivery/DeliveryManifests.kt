@@ -34,11 +34,11 @@ data class DeliveryUploadItem(
 /**
  * 目标本服差异清单（GET .../manifest，spec §5.2）。
  *
- * 配置项摘要（configs）归 M4 生效编排消费，M2 数据面只落文件项，故此处不建模 configs。
+ * 普通文件差异与 V2 配置冻结工件统一承载于 files，并由 sourceKind 区分；历史 configs 字段不建模。
  *
  * @param orderId          变更单 id
- * @param activationMethod 生效方式（restart / hot_reload / push_only；M2 推送阶段不消费，仅可预知）
- * @param files            文件差异项全集（agent 按本地清单重判相对目标语义并对同 hash 文件跳过）
+ * @param activationMethod 生效方式（restart / hot_reload / push_only）
+ * @param files            普通文件差异与配置冻结工件全集（推送阶段统一按本地状态重判）
  */
 data class DeliveryTargetManifest(
     val orderId: Long,
@@ -49,16 +49,18 @@ data class DeliveryTargetManifest(
 /**
  * 一条文件差异项。
  *
- * @param path      服务器根内相对路径
- * @param action    add / update / delete（相对目标语义由 agent 按本地清单重判，spec §4.2.3）
- * @param sha256    模板源侧内容哈希（delete 项为空）
- * @param sizeBytes 字节数（delete 项为 0）
+ * @param path       服务器根内相对路径
+ * @param action     add / update / delete（相对目标语义由 agent 按本地清单重判，spec §4.2.3）
+ * @param sha256     模板源侧内容哈希（delete 项为空）
+ * @param sizeBytes  字节数（delete 项为 0）
+ * @param sourceKind 来源类型：file_diff / config_artifact；旧清单缺字段时兼容为 file_diff
  */
 data class DeliveryManifestFile(
     val path: String,
     val action: String,
     val sha256: String,
     val sizeBytes: Long,
+    val sourceKind: String = SOURCE_KIND_FILE_DIFF,
 ) {
     companion object {
         /** 新增：模板源有、目标无。 */
@@ -69,6 +71,12 @@ data class DeliveryManifestFile(
 
         /** 删除：模板源已删、目标仍存在。 */
         const val ACTION_DELETE = "delete"
+
+        /** 普通文件差异；旧清单缺 sourceKind 时的兼容默认值。 */
+        const val SOURCE_KIND_FILE_DIFF = "file_diff"
+
+        /** V2 配置工件；仅用于交付 hot_reload 配置变更通知。 */
+        const val SOURCE_KIND_CONFIG_ARTIFACT = "config_artifact"
     }
 }
 

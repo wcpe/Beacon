@@ -6,6 +6,8 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.io.File
 import java.io.IOException
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -32,9 +34,8 @@ data class DeliveryPipeline(
  * delivery 类型委派本执行器执行——避免另起拉取循环与既有命令队列争抢（双拉取竞争）。本类只执行已拉到的命令，
  * 不自拉命令。[running] 单飞门为纵深防御：正常路径下委派方已串行化，本门兜底杜绝并发覆盖同一目标。
  *
- * 生效（activate，FR-171/M4）：restart 已真生效（[runActivate]：回执「开始生效」→ 优雅关服 → 宿主自启拉起 →
- * 心跳回归由控制面判 activated）；hot_reload 配置热更 + 配置应用留下一迭代（M4.x 接缝，仍诚实回执 failed）。
- * 回滚（rollback，M5）本期仍仅建回执骨架：诚实回执 failed「暂未支持」，不误报 done（接缝见 [runUnsupportedSkeleton] 调用点）。
+ * 生效（activate，FR-171/M4）：restart 回执后优雅关服；hot_reload 重拉 V2 清单并直接派发配置工件变更通知。
+ * 回滚（rollback，M5）：备份还原成功后按生效方式重启、通知配置或仅回执，不把 V2 配置喂入 Legacy 配置链路。
  *
  * 全程 async、流式、不整读大文件入内存；备份失败绝不动原文件（时序由 [executePush] 保证）。
  *
@@ -104,6 +105,18 @@ class DeliveryCommandExecutor(
         val manifest =
             apiClient.fetchDeliveryManifest(identity, orderId)
                 ?: return failResult(orderId, PHASE_PUSH, "拉取差异清单失败（控制面不可达 / 命令态不符）")
+        if (hasUnsupportedSourceKind(manifest.files)) {
+            failResult(orderId, PHASE_PUSH, "差异清单包含当前 Agent 不支持的 sourceKind")
+        } else {
+            runPushManifest(orderId, manifest)
+        }
+    }
+
+    /** 校验来源类型后的推送流程：本地重判 → 下载 → 备份 → 覆盖 → 回执。 */
+    private fun runPushManifest(
+        orderId: Long,
+        manifest: DeliveryTargetManifest,
+    ) {
         val plan =
             try {
                 pipeline.overwriter.plan(manifest.files)
@@ -162,7 +175,7 @@ class DeliveryCommandExecutor(
      *   关服前必须先把回执发出（关服后进程没了就发不出）：[postResult] 同步阻塞至控制面收到才返回，保证送达在关服前；
      *   activated 由控制面观测心跳回归判定、**非本回执成功**（决策 3，注册 / 健康真源 = Go 进程内存）；
      *   关服原语调用本身抛异常（极少见）→ 回执 activate failed，让控制面据「关服指令回执失败」判 failed 并熔断止血。
-     * - **hot_reload**：配置热更 + 配置应用留下一迭代（M4.x 接缝），现诚实回执 failed「暂未支持」，不误报 done。
+     * - **hot_reload**：重拉差异清单，仅提取 config_artifact，直接派发平台配置变更通知后回执 success；无配置工件成功 no-op。
      * - 其它（push_only 控制面侧立即 activated、不下发 activate；空 / 未知值）：诚实回执 failed，暴露非预期。
      */
     private fun runActivate(
@@ -183,8 +196,7 @@ class DeliveryCommandExecutor(
                     }
                 }
             }
-            // hot_reload 配置热更 + 配置应用留下一迭代（M4.x 接缝）：现诚实回执 failed，不误报 done。
-            ACTIVATION_HOT_RELOAD -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "配置热更生效（hot_reload，M4.x）")
+            ACTIVATION_HOT_RELOAD -> runHotReload(orderId, PHASE_ACTIVATE, 0, false)
             else -> runUnsupportedSkeleton(orderId, PHASE_ACTIVATE, "未知生效方式「$activationMethod」")
         }
     }
@@ -192,43 +204,131 @@ class DeliveryCommandExecutor(
     /**
      * 整单回滚（FR-167，spec §4.7.2）：从覆盖前备份还原磁盘（update / delete 复原、add 删除），回执 rollback；
      * 生效方式复用正推语义——restart 还原后优雅关服（宿主自启拉起、控制面观测心跳回归判 rolled_back），
-     * push_only 只还原不关服（随下次自然重启读盘）；hot_reload 配置热更回滚留下一迭代（仍诚实回执 failed）。
-     * 备份缺失 / 还原 IO 失败 → 回执 failed（脱敏），控制面据此判该目标回滚 failed。
+     * push_only 只还原不关服（随下次自然重启读盘）；hot_reload 还原后重拉清单并通知配置工件路径。
+     * 备份缺失 / 还原 IO 失败 → 回执 failed 且不通知；清单拉取 / 通知失败同样回执 failed。
      */
     private fun runRollback(
         orderId: Long,
         activationMethod: String,
     ) {
-        // hot_reload 回滚（配置热更）与正推 hot_reload 同留下一迭代：诚实回执 failed，不误报。
-        if (activationMethod == ACTIVATION_HOT_RELOAD) {
-            runUnsupportedSkeleton(orderId, PHASE_ROLLBACK, "配置热更回滚（hot_reload，M4.x）")
-            return
-        }
         val restored =
             try {
                 pipeline.backupManager.restore(orderId)
             } catch (e: IOException) {
                 return failResult(orderId, PHASE_ROLLBACK, "备份还原失败：${reasonOf(e)}")
             }
-        if (activationMethod == ACTIVATION_RESTART) {
-            adapter.info("交付 restart 回滚：还原备份后回执并优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId，还原=$restored")
-            // 与正推 restart 同构：关服前先同步回执成功（关服后进程消失便发不出），再极短延迟后关服。
-            postResult(orderId, DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, ""))
-            adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
-                try {
-                    adapter.gracefulShutdown("交付变更单 #$orderId 回滚后重启生效")
-                } catch (e: Exception) {
-                    failResult(orderId, PHASE_ROLLBACK, "回滚后优雅关服失败：${reasonOf(e)}")
-                }
-            }
-            return
+        when (activationMethod) {
+            ACTIVATION_HOT_RELOAD -> runHotReload(orderId, PHASE_ROLLBACK, restored, true)
+            ACTIVATION_RESTART -> restartAfterRollback(orderId, restored)
+            else -> finishPushOnlyRollback(orderId, restored)
         }
-        // push_only（及其它非 restart）：还原即够，随目标下次自然重启读盘。
+    }
+
+    /** restart 回滚：先回执，再延迟触发优雅关服。 */
+    private fun restartAfterRollback(
+        orderId: Long,
+        restored: Int,
+    ) {
+        adapter.info("交付 restart 回滚：还原备份后回执并优雅关服，等宿主自启拉起并心跳回归：orderId=$orderId，还原=$restored")
+        postResult(orderId, DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, ""))
+        adapter.runAsyncDelayed(RESTART_SHUTDOWN_DELAY_MS) {
+            try {
+                adapter.gracefulShutdown("交付变更单 #$orderId 回滚后重启生效")
+            } catch (e: Exception) {
+                failResult(orderId, PHASE_ROLLBACK, "回滚后优雅关服失败：${reasonOf(e)}")
+            }
+        }
+    }
+
+    /** push_only（及其它非 restart）回滚：还原即够，随目标下次自然重启读盘。 */
+    private fun finishPushOnlyRollback(
+        orderId: Long,
+        restored: Int,
+    ) {
         postResult(orderId, DeliveryStageReport(PHASE_ROLLBACK, STATUS_SUCCESS, restored, 0, true, ""))
         adapter.info("交付回滚完成（还原即生效，随下次自然重启读盘）：orderId=$orderId，还原=$restored")
     }
 
-    /** 生效（hot_reload/未知）/ 回滚接缝骨架（M4.x / M5）：诚实回执 failed，不误报 done。 */
+    /** hot_reload：重拉 V2 清单并直接通知配置工件路径，不经过 Legacy ConfigApplier / EffectiveConfigStore。 */
+    private fun runHotReload(
+        orderId: Long,
+        phase: String,
+        changedFileCount: Int,
+        backupPresent: Boolean,
+    ) {
+        val manifest = fetchHotReloadManifest(orderId, phase) ?: return
+        if (hasUnsupportedSourceKind(manifest.files)) {
+            failResult(orderId, phase, "差异清单包含当前 Agent 不支持的 sourceKind")
+            return
+        }
+        val configFiles = normalizedConfigFiles(manifest.files)
+        if (publishConfigChanged(orderId, phase, configFiles)) {
+            postResult(orderId, DeliveryStageReport(phase, STATUS_SUCCESS, changedFileCount, 0, backupPresent, ""))
+            adapter.info("交付 hot_reload 完成：orderId=$orderId，phase=$phase，配置工件=${configFiles.size}")
+        }
+    }
+
+    /** 拉取 hot_reload 清单；连接、命令态或解析失败均在此统一回执 failed。 */
+    private fun fetchHotReloadManifest(
+        orderId: Long,
+        phase: String,
+    ): DeliveryTargetManifest? =
+        try {
+            apiClient.fetchDeliveryManifest(identity, orderId).also {
+                if (it == null) failResult(orderId, phase, "重新拉取差异清单失败（控制面不可达 / 命令态不符）")
+            }
+        } catch (e: Exception) {
+            failResult(orderId, phase, "重新拉取差异清单异常：${reasonOf(e)}")
+            null
+        }
+
+    /** 是否包含当前 Agent 不认识的来源类型；未知类型必须 fail-closed，不能静默 no-op。 */
+    private fun hasUnsupportedSourceKind(files: List<DeliveryManifestFile>): Boolean =
+        files.any {
+            it.sourceKind != DeliveryManifestFile.SOURCE_KIND_FILE_DIFF &&
+                it.sourceKind != DeliveryManifestFile.SOURCE_KIND_CONFIG_ARTIFACT
+        }
+
+    /** 配置工件按 path + sha256 稳定排序，并按 path 去重。 */
+    private fun normalizedConfigFiles(files: List<DeliveryManifestFile>): List<DeliveryManifestFile> =
+        files
+            .filter { it.sourceKind == DeliveryManifestFile.SOURCE_KIND_CONFIG_ARTIFACT }
+            .sortedWith(compareBy<DeliveryManifestFile> { it.path }.thenBy { it.sha256 })
+            .distinctBy { it.path }
+
+    /** 有配置工件时派发一次通知；无配置工件成功 no-op。 */
+    private fun publishConfigChanged(
+        orderId: Long,
+        phase: String,
+        configFiles: List<DeliveryManifestFile>,
+    ): Boolean {
+        if (configFiles.isEmpty()) return true
+        val changed = configFiles.mapTo(linkedSetOf()) { it.path }
+        return try {
+            adapter.publishConfigChanged(changed, configArtifactMd5(configFiles))
+            true
+        } catch (e: Exception) {
+            failResult(orderId, phase, "配置变更通知失败：${reasonOf(e)}")
+            false
+        }
+    }
+
+    /** 按通知时磁盘实际状态计算小写 md5；回滚后摘要会随还原内容变化。 */
+    private fun configArtifactMd5(configFiles: List<DeliveryManifestFile>): String {
+        val canonical =
+            buildString {
+                for (file in configFiles) {
+                    val currentSha256 = pipeline.overwriter.currentSha256(file.path) ?: MISSING_FILE_MARKER
+                    append(file.path).append('\n').append(currentSha256).append('\n')
+                }
+            }
+        return MessageDigest
+            .getInstance("MD5")
+            .digest(canonical.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /** 未知生效方式接缝骨架：诚实回执 failed，不误报 done。 */
     private fun runUnsupportedSkeleton(
         orderId: Long,
         phase: String,
@@ -271,6 +371,9 @@ class DeliveryCommandExecutor(
         /** 生效方式取值（与控制面 activation_method 下发值对齐，spec §4.6.1）。 */
         const val ACTIVATION_RESTART = "restart"
         const val ACTIVATION_HOT_RELOAD = "hot_reload"
+
+        /** 配置工件被回滚为不存在时参与通知摘要的稳定标记。 */
+        private const val MISSING_FILE_MARKER = "<missing>"
 
         /**
          * restart 回执「开始生效」后到触发优雅关服的极短延迟（毫秒）。
