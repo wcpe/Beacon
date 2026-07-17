@@ -103,7 +103,7 @@ export default function WizardStepReview({
   const renderFileDiff = (item: ChangeOrderItem): ReactNode =>
     orderId === null ? null : <FileDiffPreview orderId={orderId} item={item} />
 
-  // 本期生效方式固定「仅推送」（push_only）；详情已回显则以详情为准（后续里程碑开放 restart / hot_reload 选择）。
+  // 生效方式以已同步的草稿详情为准，详情未就绪时沿用向导默认值「仅推送」。
   const activationMethod = detailQuery.data?.activationMethod ?? 'push_only'
 
   const kpiItems: SummaryItem[] = summary

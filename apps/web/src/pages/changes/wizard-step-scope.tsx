@@ -6,7 +6,7 @@ import { useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { Plus, Sparkles, X } from 'lucide-react'
+import { Plus, Sparkles, TriangleAlert, X } from 'lucide-react'
 
 import { Button, Checkbox, Input, cn } from '@beacon/ui'
 
@@ -27,6 +27,7 @@ interface StepScopeProps {
   batch: WizardBatch
   onBatchChange: (batch: WizardBatch) => void
   activation: WizardActivation
+  hasJar: boolean
   onActivationChange: (activation: WizardActivation) => void
   // 按当前范围估算的目标台数（null = 结构树未就绪，未知）
   targetEstimate: number | null
@@ -41,6 +42,7 @@ export default function WizardStepScope({
   batch,
   onBatchChange,
   activation,
+  hasJar,
   onActivationChange,
   targetEstimate,
 }: StepScopeProps) {
@@ -183,16 +185,24 @@ export default function WizardStepScope({
         <p className="text-xs text-ink-3">{t('delivery.changes.wizard.scope.batchNote')}</p>
       </div>
 
-      {/* 生效方式（当前开放仅推送 / 重启；配置热重载随后续迭代开放） */}
+      {/* 生效方式 */}
       <div className="grid gap-2">
         <span className="text-[13px] font-semibold text-ink-2">{t('delivery.changes.wizard.scope.activationLabel')}</span>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           <ModeCard
             title={t('delivery.changes.wizard.scope.activationPushOnly')}
             hint={t('delivery.changes.wizard.scope.activationPushOnlyHint')}
             selected={activation === 'push_only'}
             onClick={() => {
               onActivationChange('push_only')
+            }}
+          />
+          <ModeCard
+            title={t('delivery.changes.wizard.scope.activationHotReload')}
+            hint={t('delivery.changes.wizard.scope.activationHotReloadHint')}
+            selected={activation === 'hot_reload'}
+            onClick={() => {
+              onActivationChange('hot_reload')
             }}
           />
           <ModeCard
@@ -204,6 +214,15 @@ export default function WizardStepScope({
             }}
           />
         </div>
+        {activation === 'hot_reload' && hasJar && (
+          <p
+            className="flex items-start gap-2 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs leading-relaxed text-ink-2"
+            role="alert"
+          >
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden />
+            {t('delivery.changes.wizard.scope.activationJarWarning')}
+          </p>
+        )}
       </div>
     </div>
   )

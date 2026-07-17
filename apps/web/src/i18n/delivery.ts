@@ -551,8 +551,11 @@ export const delivery = {
         activationLabel: '生效方式',
         activationPushOnly: '仅推送',
         activationPushOnlyHint: '文件推送到位、随子服下次自然重启生效；最保守，不打断在线玩家。',
+        activationHotReload: '配置热重载',
+        activationHotReloadHint: '仅 config_artifact 触发生效回调；JAR 与普通文件只落盘。',
         activationRestart: '推送后重启',
-        activationRestartHint: '推送后优雅关服、靠宿主自启拉起立即生效；含 jar 变更推荐，需宿主已配进程自启。',
+        activationRestartHint: '推送后优雅关服、靠宿主自启拉起立即生效；含 JAR 变更推荐，需宿主已配进程自启。',
+        activationJarWarning: '已扫描到 .jar 文件：热重载仅对 config_artifact 触发回调，JAR 与普通文件只会落盘，不会执行热重载。',
       },
       // 第 5 步：预览与提交（简单 / 详细两种概要模式）
       review: {

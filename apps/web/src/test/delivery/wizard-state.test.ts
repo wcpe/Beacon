@@ -6,6 +6,7 @@ import {
   buildBatch,
   estimateTargetTotal,
   flattenZoneCounts,
+  hasJarDiff,
   planBatchRows,
   recommendedBatch,
   type WizardBatch,
@@ -44,6 +45,15 @@ describe('recommendedBatch 推荐批次', () => {
       const sum = recommendedBatch(total).rows.reduce((acc, size) => acc + size, 0)
       expect(sum).toBe(total)
     }
+  })
+})
+
+describe('hasJarDiff JAR 差异识别', () => {
+  it('仅识别文件差异中的大小写不敏感 .jar 后缀', () => {
+    expect(hasJarDiff([{ kind: 'file_diff', path: 'plugins/Beacon.JAR' }])).toBe(true)
+    expect(hasJarDiff([{ kind: 'file_diff', path: 'plugins/Beacon.jar.disabled' }])).toBe(false)
+    expect(hasJarDiff([{ kind: 'config_change', path: 'plugins/Beacon.jar' }])).toBe(false)
+    expect(hasJarDiff([{ kind: 'file_diff', path: null }])).toBe(false)
   })
 })
 

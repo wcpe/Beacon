@@ -1,7 +1,7 @@
 // 引导创建向导的共享类型与纯函数：步骤编排、范围 / 批次到契约字段的换算。
 // 状态本体放在 guided-wizard.tsx，本文件不含任何 React 依赖，便于单测与复用。
 
-import type { ChangeSelector, ConfigChangeInput } from '../../api/delivery-changes'
+import type { ChangeOrderItem, ChangeSelector, ConfigChangeInput } from '../../api/delivery-changes'
 
 /** 交付内容类型：决定向导保留哪些步骤 */
 export type WizardContent = 'files' | 'configs' | 'both'
@@ -41,8 +41,8 @@ export interface WizardBatch {
   rows: number[]
 }
 
-/** 第 4 步：生效方式（当前开放 push_only / restart；hot_reload 随配置灰度迭代开放） */
-export type WizardActivation = 'push_only' | 'restart'
+/** 第 4 步：生效方式 */
+export type WizardActivation = 'push_only' | 'hot_reload' | 'restart'
 
 /** 批次编排校验结论：null = 通过 */
 export type BatchIssue = 'invalid_row' | 'percent_sum' | 'count_short' | 'count_over' | null
@@ -75,6 +75,11 @@ export function includesFiles(content: WizardContent): boolean {
 /** 内容类型是否含配置载荷 */
 export function includesConfigs(content: WizardContent): boolean {
   return content === 'configs' || content === 'both'
+}
+
+/** 已扫描的文件差异中是否包含大小写不敏感的 .jar 后缀 */
+export function hasJarDiff(items: Pick<ChangeOrderItem, 'kind' | 'path'>[]): boolean {
+  return items.some((item) => item.kind === 'file_diff' && item.path?.toLowerCase().endsWith('.jar') === true)
 }
 
 /** 当前内容类型下实际要走的步骤序列 */

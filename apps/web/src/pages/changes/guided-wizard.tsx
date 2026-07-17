@@ -33,6 +33,7 @@ import {
   buildSelector,
   estimateTargetTotal,
   flattenZoneCounts,
+  hasJarDiff,
   includesConfigs,
   includesFiles,
   recommendedBatch,
@@ -98,6 +99,7 @@ export default function GuidedWizard({
       setPicks([])
       setScope({ mode: 'all', regions: [], zones: [], servers: [] })
       setBatch(recommendedBatch(null))
+      setActivation('push_only')
       setTitle('')
       setPrepared(0)
       setErrorText(null)
@@ -337,6 +339,7 @@ export default function GuidedWizard({
               onBatchChange={setBatch}
               targetEstimate={targetEstimate}
               activation={activation}
+              hasJar={hasJarDiff(scan?.items ?? [])}
               onActivationChange={setActivation}
             />
           )}

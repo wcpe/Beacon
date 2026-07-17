@@ -358,6 +358,45 @@ describe('/changes 引导创建向导', () => {
     expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
   })
 
+  it('生效方式：三卡默认仅推送，热重载遇 JAR 警告但可提交并落库', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ChangesPage />)
+
+    const dialog = await openWizard(user)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await pickSourceAndScan(user, dialog)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await within(dialog).findByText('交付范围')
+
+    const pushOnly = within(dialog).getByRole('button', { name: /仅推送/ })
+    const hotReload = within(dialog).getByRole('button', { name: /配置热重载/ })
+    const restart = within(dialog).getByRole('button', { name: /推送后重启/ })
+    expect(pushOnly).toHaveAttribute('aria-pressed', 'true')
+    expect(hotReload).toHaveAttribute('aria-pressed', 'false')
+    expect(restart).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(hotReload)
+    expect(
+      within(dialog).getByText(/热重载仅对 config_artifact 触发回调，JAR 与普通文件只会落盘/),
+    ).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '下一步' })).toBeEnabled()
+
+    await user.click(restart)
+    expect(
+      within(dialog).queryByText(/热重载仅对 config_artifact 触发回调，JAR 与普通文件只会落盘/),
+    ).not.toBeInTheDocument()
+
+    await user.click(hotReload)
+    await user.click(within(dialog).getByRole('button', { name: '下一步' }))
+    await within(dialog).findByLabelText('变更单标题')
+    await submitAndAssert(user, dialog)
+
+    const list = await fetchChangeOrders({ keyword: '文件更新' })
+    const created = list.items.find((row) => row.title.startsWith('文件更新'))
+    expect(created?.activationMethod).toBe('hot_reload')
+  })
+
   it('第五步：简单 / 详细概要切换，详细模式出两个完整预览控件', { timeout: WIZARD_TEST_TIMEOUT }, async () => {
     useScenario('normal')
     const user = userEvent.setup()
