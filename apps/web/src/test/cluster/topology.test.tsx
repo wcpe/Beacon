@@ -39,9 +39,27 @@ describe('/topology 拓扑页', () => {
   })
 
   it('异常聚合链路失败率标签直显在图上（红色加粗边旁）', async () => {
-    // normal 场景下 prod 域内可解析链路恰好全部健康（异常边集中在跨域 / 未解析目标），
-    // 用 huge 场景断言：其消息量大、聚合失败率超阈值的链路必然存在
-    useScenario('huge')
+    useScenario('normal')
+    // 注入一条两端均可解析的异常边，避免依赖超大量场景生成失败链路
+    server.use(
+      http.get('/admin/v2/messages/stats', () =>
+        HttpResponse.json({
+          edges: [
+            {
+              sourceServerId: 'game-1',
+              resolvedServerId: 'game-3',
+              total: 1,
+              failed: 1,
+              expired: 0,
+              failRatePercent: 100,
+              p95DurationMs: 1,
+              topFailReasons: [],
+              sampleMessageIds: [],
+            },
+          ],
+        }),
+      ),
+    )
     const { container } = renderPage(<TopologyPage />)
 
     await screen.findByText('BC-子服链路')
@@ -51,10 +69,8 @@ describe('/topology 拓扑页', () => {
     await waitFor(() => {
       const graphSvg = container.querySelector('svg[role="img"]')
       expect(graphSvg).not.toBeNull()
-      const labels = [...(graphSvg as SVGElement).querySelectorAll('text')].filter((el) =>
-        /%\s*失败率/.test(el.textContent ?? ''),
-      )
-      expect(labels.length).toBeGreaterThan(0)
+      const labels = [...(graphSvg as SVGElement).querySelectorAll('text')].map((el) => el.textContent)
+      expect(labels).toContain('100% 失败率')
     })
   })
 

@@ -33,8 +33,8 @@ MKDIR_DIST := powershell -NoProfile -Command "New-Item -ItemType Directory -Forc
 COPY_TO_DIST = powershell -NoProfile -Command "Copy-Item -LiteralPath '$(1)' -Destination '$(DIST)' -Force"
 LIST_DIST := powershell -NoProfile -Command "Get-ChildItem -LiteralPath '$(DIST)'"
 REMOVE_DIST := powershell -NoProfile -Command "if (Test-Path -LiteralPath '$(DIST)') { Remove-Item -LiteralPath '$(DIST)' -Recurse -Force }"
-GRADLE_BUILD := cd apps\agent && gradlew.bat clean build
-GRADLE_CLEAN := cd apps\agent && gradlew.bat clean
+GRADLE_BUILD := cd apps/agent && ./gradlew.bat clean build
+GRADLE_CLEAN := cd apps/agent && ./gradlew.bat clean
 else
 GO_FORMAT_CHECK := bash scripts/check-go-format.sh $(GOIMPORTS_LOCAL)
 MKDIR_DIST := mkdir -p $(DIST)
