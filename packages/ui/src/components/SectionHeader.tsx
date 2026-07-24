@@ -33,23 +33,42 @@ export default function SectionHeader({
   size = 'base',
   className,
 }: SectionHeaderProps) {
+  const isLg = size === 'lg'
   return (
-    <div className={cn('flex items-center gap-3 border-b pb-2', className)}>
+    <div
+      className={cn(
+        'flex items-center gap-3 border-b border-border',
+        isLg ? 'pb-2.5' : 'pb-2',
+        className,
+      )}
+    >
       <h2
         className={cn(
-          'flex items-center gap-2 font-semibold',
-          size === 'lg' ? 'text-lg' : 'text-base',
+          'flex min-w-0 items-center gap-2 font-semibold tracking-tight text-ink-1',
+          isLg ? 'text-lg' : 'text-[13px]',
         )}
       >
-        {icon && (
-          <span aria-hidden className="text-muted-foreground">
+        {icon != null && (
+          <span
+            aria-hidden
+            className={cn(
+              'grid shrink-0 place-items-center text-brand',
+              isLg
+                ? 'size-8 rounded-lg bg-brand-50 shadow-[inset_0_0_0_1px_var(--brand-100)] [&_svg]:size-4'
+                : 'text-ink-4 [&_svg]:size-4',
+            )}
+          >
             {icon}
           </span>
         )}
-        {title}
+        <span className="truncate">{title}</span>
       </h2>
-      {count != null && <span className="text-sm text-muted-foreground">{count}</span>}
-      {actions != null && <div className="ml-auto flex items-center gap-2">{actions}</div>}
+      {count != null && (
+        <span className="min-w-0 truncate text-sm text-ink-3">{count}</span>
+      )}
+      {actions != null && (
+        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
+      )}
     </div>
   )
 }

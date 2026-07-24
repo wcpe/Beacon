@@ -3,7 +3,7 @@
 // system/status、system/observability、update-check、update 进度 / 触发 / 取消、rollback、proxy-test、
 // api-keys 列表 / 创建 / 吊销 / 重置、settings 列表 / 单项修改。
 
-import { HttpResponse, type HttpHandler } from 'msw'
+import { http, HttpResponse, type HttpHandler } from 'msw'
 import type {
   ApiKeyItem,
   SettingItem,
@@ -27,7 +27,7 @@ interface SystemState {
 
 const DAY = 86_400_000
 
-// Legacy 热改项白名单（docs/API.md 运维设置 16 项）
+// Legacy 热改项白名单（docs/API.md 运维设置 37 项）
 const SETTING_SEEDS: [string, string, SettingItem['valueType'], string][] = [
   ['health.degraded-after-sec', '15', 'int', '超过多少秒未心跳降级 degraded'],
   ['health.ttl-sec', '30', 'int', '超过多少秒未心跳判失联'],
@@ -42,9 +42,17 @@ const SETTING_SEEDS: [string, string, SettingItem['valueType'], string][] = [
   ['log.level', 'INFO', 'string', '日志级别（ERROR|WARN|INFO|DEBUG）'],
   ['reverse-fetch.max-file-bytes', '1048576', 'int', '反向抓取单文件上限（字节）'],
   ['update.proxy-url', '', 'string', '更新出站代理（含凭据回显脱敏）'],
-  ['update.channel', 'stable', 'string', '更新渠道（stable|prerelease）'],
+  ['update.channel', 'stable', 'string', '更新渠道（stable，仅合法 GA）'],
   ['update.auto-check-enabled', 'true', 'bool', '是否自动检查更新'],
   ['update.check-interval-hours', '6', 'int', '自动检查更新周期（小时）'],
+  ['undo.window-hours', '24', 'int', '配置操作可撤回时间窗（小时）'],
+  ['identity.conflict-window-sec', '600', 'int', '并发身份冲突检测窗口（秒）'],
+  ['delivery.approver-separation-enabled', 'true', 'bool', '是否启用变更单审批职责分离'],
+  ['delivery.blob-retention-days', '7', 'int', '交付中转 blob 保留天数'],
+  ['delivery.blob-capacity-bytes', '21474836480', 'int', '交付中转存储容量上限（字节）'],
+  ['delivery.upload-concurrency', '4', 'int', '交付流式上传全局并发上限'],
+  ['delivery.download-concurrency', '64', 'int', '交付流式下载全局并发上限'],
+  ['delivery.cleanup-interval-minutes', '60', 'int', '交付中转 blob 后台清理周期（分钟）'],
   ['archive.retention-days.metric-sample', '14', 'int', '指标采样热库保留天数（超期归档，下限 7）'],
   ['archive.retention-days.health-snapshot', '30', 'int', '健康快照热库保留天数（下限 7）'],
   ['archive.retention-days.sched-decision', '60', 'int', '调度决策热库保留天数（下限 7）'],
@@ -174,19 +182,22 @@ export const systemHandlers: HttpHandler[] = [
     return HttpResponse.json(observability)
   }),
 
-  // 检查有无可用更新（normal/huge 有新版本，empty 无）
-  mockGet('/admin/v1/system/update-check', () => {
-    const hasUpdate = getMockScenario() !== 'empty'
+  // 更新检查自行把 error 场景降级为 200，因此不走 mockGet 的统一 500 包装。
+  http.get('*/admin/v1/system/update-check', () => {
+    const scenario = getMockScenario()
+    const failed = scenario === 'error'
+    const hasUpdate = !failed && scenario !== 'empty'
     const check: UpdateCheck = {
-      status: 'ok',
+      status: failed ? 'check-failed' : 'ok',
+      failureReason: failed ? '查 release 列表失败: proxyconnect tcp 10.0.0.5:7890: connection refused' : undefined,
       currentVersion: 'v0.21.0',
       channel: 'stable',
       hasUpdate,
       isDevBuild: false,
-      latestVersion: hasUpdate ? 'v0.22.0' : 'v0.21.0',
+      latestVersion: failed ? '' : hasUpdate ? 'v0.22.0' : 'v0.21.0',
       releaseNotes: hasUpdate ? '## 变更\n- 第二版管理台 mock 全量上线\n- 修复若干问题' : '',
       releaseUrl: hasUpdate ? 'https://github.com/wcpe/Beacon/releases/tag/v0.22.0' : '',
-      publishedAt: isoOffset(-2 * DAY),
+      publishedAt: failed ? '' : isoOffset(-2 * DAY),
       checkedAt: isoOffset(0),
       cacheExpiresAt: isoOffset(6 * 3_600_000),
     }

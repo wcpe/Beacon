@@ -375,7 +375,8 @@ export const metricsHealthHandlers: HttpHandler[] = [
     const rows = state.servers
       .map((s) => healthItemOf(state, s))
       .filter((item) => {
-        if (namespaceId !== null && String(item.namespaceId) !== namespaceId) {
+        // 与真后端对齐：namespaceId 缺省或 0 = 全量
+        if (namespaceId !== null && namespaceId !== '0' && String(item.namespaceId) !== namespaceId) {
           return false
         }
         if (zone !== null && item.zoneName !== zone) {
@@ -458,7 +459,8 @@ export const metricsHealthHandlers: HttpHandler[] = [
     const toMs = queryTimeMs(url, 'to')
     const rows = getDecisionState()
       .decisions.filter((d) => {
-        if (namespaceId !== null && String(d.namespaceId) !== namespaceId) {
+        // 与真后端对齐：namespaceId 缺省或 0 = 全量
+        if (namespaceId !== null && namespaceId !== '0' && String(d.namespaceId) !== namespaceId) {
           return false
         }
         if (zone !== null && d.zoneName !== zone) {

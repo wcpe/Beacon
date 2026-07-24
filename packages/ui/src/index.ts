@@ -4,6 +4,7 @@ export { default as DataTable, type DataTableColumn } from './components/DataTab
 export { default as DestructiveConfirmDialog } from './components/DestructiveConfirmDialog'
 export { default as MarkdownLite } from './components/MarkdownLite'
 export { default as SectionHeader } from './components/SectionHeader'
+export { default as PageHeader } from './components/PageHeader'
 export { default as SummaryStrip, type SummaryItem, type SummaryTone } from './components/SummaryStrip'
 export { CardGridSkeleton, TableSkeleton, TileGridSkeleton } from './components/skeletons'
 export { default as GaugeRing } from './components/dashboard/GaugeRing'

@@ -227,7 +227,8 @@ export const observabilityHandlers: HttpHandler[] = [
       if (targetType !== null && row.targetType !== targetType) {
         return false
       }
-      if (targetRef !== null && row.targetRef !== targetRef) {
+      // 与真后端一致：targetRef 子串匹配（lobby-1 可命中 realhost/lobby-1）
+      if (targetRef !== null && !row.targetRef.includes(targetRef)) {
         return false
       }
       if (detailKeyword !== null && !row.detail.includes(detailKeyword)) {

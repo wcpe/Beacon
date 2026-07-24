@@ -101,6 +101,30 @@ describe('场景切换与重置', () => {
   })
 })
 
+describe('Legacy 运维设置契约', () => {
+  it('返回服务端白名单对应的 37 项设置并包含新增 8 项', async () => {
+    const { status, json } = await callJson('GET', '/admin/v1/settings')
+    const items = (json as { items: { key: string }[] }).items
+    const keys = new Set(items.map((item) => item.key))
+    const newlySyncedKeys = [
+      'undo.window-hours',
+      'identity.conflict-window-sec',
+      'delivery.approver-separation-enabled',
+      'delivery.blob-retention-days',
+      'delivery.blob-capacity-bytes',
+      'delivery.upload-concurrency',
+      'delivery.download-concurrency',
+      'delivery.cleanup-interval-minutes',
+    ]
+
+    expect(status).toBe(200)
+    expect(items).toHaveLength(37)
+    for (const key of newlySyncedKeys) {
+      expect(keys.has(key), `缺少设置项 ${key}`).toBe(true)
+    }
+  })
+})
+
 describe('变更单生命周期闭环', () => {
   it('创建 → 提审 → 审批 → 启动 → 批次放行 → 完成 → 整单回滚', async () => {
     const created = await callJson('POST', '/admin/v2/change-orders', {

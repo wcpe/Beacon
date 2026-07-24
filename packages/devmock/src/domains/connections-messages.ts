@@ -1,6 +1,6 @@
 // 连接明细与跨服消息域 mock（/admin/v2/connections*、/admin/v2/messages*）。
 // 契约真源：docs/specs/v2-connection-message-storage.md §5.2；
-// 查询防护 §4.3（精确 ID 直查，否则必须带 serverId/playerUuid + 时间范围 ≤168h）；
+// 查询防护：精确 ID 直查豁免；否则须显式时间范围 ≤168h（selector 可选，对齐后端全局近期）；
 // payload 查看 §4.4（原因必填 + 先审计后返回）。
 
 import { HttpResponse, type HttpHandler } from 'msw'
@@ -145,16 +145,11 @@ const getConnMsgState: () => ConnMsgState = defineScenarioStore(buildState)
 
 const MAX_RANGE_MS = 168 * 3_600_000
 
-/** 查询防护：精确 ID 直查豁免；否则必须 serverId/playerUuid + from&to（≤168h） */
+/** 查询防护：精确 ID 直查豁免；否则须显式有序时间范围 ≤168h（无 selector 时允许全局近期）。 */
 function guardError(url: URL): Response | null {
-  const hasServer = queryStr(url, 'serverId') !== null
-  const hasPlayer = queryStr(url, 'playerUuid') !== null
   const fromMs = queryTimeMs(url, 'from')
   const toMs = queryTimeMs(url, 'to')
-  if (!hasServer && !hasPlayer) {
-    return jsonError(400, 'query_guard_violation', '缺少精确 ID 时必须携带 serverId 或 playerUuid 过滤')
-  }
-  if (fromMs === null || toMs === null) {
+  if (fromMs === null || toMs === null || fromMs > toMs) {
     return jsonError(400, 'query_guard_violation', '必须携带显式时间范围 from/to')
   }
   if (toMs - fromMs > MAX_RANGE_MS) {

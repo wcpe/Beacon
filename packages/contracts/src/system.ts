@@ -33,8 +33,9 @@ export interface SystemObservability {
 /** GET /admin/v1/system/update-check 响应（Legacy 形状） */
 export interface UpdateCheck {
   status: 'ok' | 'check-failed'
+  failureReason?: string
   currentVersion: string
-  channel: 'stable' | 'prerelease'
+  channel: 'stable'
   hasUpdate: boolean
   isDevBuild: boolean
   latestVersion: string

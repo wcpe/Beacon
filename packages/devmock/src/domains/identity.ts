@@ -74,7 +74,8 @@ export const identityHandlers: HttpHandler[] = [
         if (status !== null && row.status !== status) {
           return false
         }
-        if (namespaceId !== null && String(row.namespaceId) !== namespaceId) {
+        // 与真后端对齐：namespaceId 缺省或 0 = 全量
+        if (namespaceId !== null && namespaceId !== '0' && String(row.namespaceId) !== namespaceId) {
           return false
         }
         if (
@@ -261,6 +262,15 @@ export const identityHandlers: HttpHandler[] = [
     row.statusChangedAt = isoOffset(0)
     row.conflictReason = null
     row.conflictPeers = null
+    // 与真后端一致：解绑时清空 server 区服归属，避免树里仍挂着已解绑服
+    const server = getClusterState().servers.find(
+      (s) => s.serverId === row.serverId && s.namespaceId === row.namespaceId,
+    )
+    if (server) {
+      server.zoneId = null
+      server.bcClusterId = null
+      server.isDefaultEntry = false
+    }
     return HttpResponse.json(toDetail(row))
   }),
 

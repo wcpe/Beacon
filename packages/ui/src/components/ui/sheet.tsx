@@ -44,14 +44,17 @@ function SheetContent({
   children,
   side = 'right',
   showCloseButton = true,
+  // 默认有遮罩；主从详情等「列表可继续点选」场景可关遮罩（配合 modal={false}）
+  showOverlay = true,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
   showCloseButton?: boolean
+  showOverlay?: boolean
 }) {
   return (
     <SheetPortal>
-      <SheetOverlay />
+      {showOverlay ? <SheetOverlay /> : null}
       <SheetPrimitive.Content
         data-slot="sheet-content"
         data-side={side}

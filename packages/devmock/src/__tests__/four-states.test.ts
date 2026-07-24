@@ -198,6 +198,16 @@ describe('error 场景：统一错误体', () => {
     expect(body.traceId).toBe(MOCK_TRACE_ID)
   })
 
+  it('更新检查在 error 场景降级为带原因的 200 响应', async () => {
+    setMockScenario('error')
+    const { status, json } = await callJson('GET', '/admin/v1/system/update-check')
+    const check = json as { status: string; failureReason?: string; hasUpdate: boolean }
+    expect(status).toBe(200)
+    expect(check.status).toBe('check-failed')
+    expect(check.failureReason).toContain('connection refused')
+    expect(check.hasUpdate).toBe(false)
+  })
+
   it('写端点在 error 场景同样返回统一错误体', async () => {
     setMockScenario('error')
     const { status, json } = await callJson('POST', '/admin/v2/namespaces', { name: 'x' })

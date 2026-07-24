@@ -225,7 +225,8 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
     const keyword = queryStr(url, 'keyword')?.toLowerCase() ?? null
     const rows = state.servers
       .filter((row) => {
-        if (namespaceId !== null && String(row.namespaceId) !== namespaceId) {
+        // 与真后端 ListServers 对齐：namespaceId 缺省或 0 = 全量（不按 ns 过滤）
+        if (namespaceId !== null && namespaceId !== '0' && String(row.namespaceId) !== namespaceId) {
           return false
         }
         if (kind !== null && row.kind !== kind) {

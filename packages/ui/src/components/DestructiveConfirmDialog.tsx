@@ -3,6 +3,7 @@
 // 标题 + 破坏性动作描述 + 影响摘要（脱链哪层 / 影响哪些服，调用方传入）+ 确认 / 取消。
 // 可选「需输入复述」高摩擦档（参考 FR-71 改派手输 serverId）：传 confirmPhrase 时
 // 须手输 === confirmPhrase 才启用确认按钮，防误触。纯前端摩擦，后端守卫才是安全边界。
+// 异步失败：错误仅走独立 errorText 区，禁止拼进 description/impacts 造成文字叠加。
 
 import { useEffect, useState } from 'react'
 
@@ -41,8 +42,11 @@ interface DestructiveConfirmDialogProps {
   confirmPhrase?: string
   // 提交进行中（禁用确认按钮）
   pending?: boolean
-  // 确认回调：交由调用页触发既有写操作
-  onConfirm: () => void
+  // 弹窗内错误区（异步失败 / 业务拒绝）；独立渲染，勿塞进 description
+  errorText?: string | null
+  // 确认回调：交由调用页触发既有写操作。
+  // 返回 false 时阻止对话框关闭（用于校验失败 / 异步结果尚未出、需保留弹窗看错误）。
+  onConfirm: () => void | boolean | Promise<void | boolean>
 }
 
 export default function DestructiveConfirmDialog({
@@ -57,6 +61,7 @@ export default function DestructiveConfirmDialog({
   impacts,
   confirmPhrase,
   pending = false,
+  errorText = null,
   onConfirm,
 }: DestructiveConfirmDialogProps) {
   // 手输复述草稿：每次打开时清空，避免残留上次输入
@@ -106,9 +111,38 @@ export default function DestructiveConfirmDialog({
           </div>
         )}
 
+        {/* 写失败 / 业务拒绝：独立错误区，不叠 description/impacts */}
+        {errorText ? (
+          <p
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            {errorText}
+          </p>
+        ) : null}
+
         <AlertDialogFooter>
           <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={!canConfirm} onClick={onConfirm}>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={!canConfirm}
+            onClick={(e) => {
+              // Radix Action 默认点确认即关；调用方返回 false 时阻止关闭以展示错误。
+              const result = onConfirm()
+              if (result === false) {
+                e.preventDefault()
+                return
+              }
+              if (result != null && typeof (result as Promise<unknown>).then === 'function') {
+                e.preventDefault()
+                void (result as Promise<void | boolean>).then((keep) => {
+                  if (keep !== false) {
+                    onOpenChange(false)
+                  }
+                })
+              }
+            }}
+          >
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
