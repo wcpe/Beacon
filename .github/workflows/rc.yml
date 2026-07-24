@@ -42,9 +42,9 @@ jobs:
           set -eu
           test "$GITHUB_REF" = "refs/heads/master"
           commit="$DISPATCH_SHA"
-          test "$(git rev-parse HEAD^{commit})" = "$commit"
+          test "$(git rev-parse "HEAD^{commit}")" = "$commit"
           git fetch --tags origin master:refs/remotes/origin/master
-          remote_master="$(git rev-parse refs/remotes/origin/master^{commit})"
+          remote_master="$(git rev-parse "refs/remotes/origin/master^{commit}")"
           if test "$remote_master" != "$commit"; then
             echo "::error::远端 master 已从 dispatch 源提交漂移，拒绝继续发布"
             exit 1
@@ -225,7 +225,7 @@ jobs:
         run: |
           set -eu
           git fetch --tags origin
-          test "$(git rev-parse HEAD^{commit})" = "$SOURCE_COMMIT"
+          test "$(git rev-parse "HEAD^{commit}")" = "$SOURCE_COMMIT"
           prefix="v${VERSION}-rc."
           for existing_tag in $(git tag --list "${prefix}*"); do
             if test "$(git rev-parse "${existing_tag}^{commit}")" = "$SOURCE_COMMIT" \

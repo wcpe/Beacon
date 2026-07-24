@@ -36,8 +36,8 @@ jobs:
           test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
           test "$GITHUB_REF" = "refs/heads/master"
           git fetch --no-tags origin master:refs/remotes/origin/master
-          master_commit="$(git rev-parse refs/remotes/origin/master^{commit})"
-          test "$(git rev-parse HEAD^{commit})" = "$master_commit"
+          master_commit="$(git rev-parse "refs/remotes/origin/master^{commit}")"
+          test "$(git rev-parse "HEAD^{commit}")" = "$master_commit"
           git fetch --force --no-tags origin "+refs/tags/${RC_TAG}:refs/tags/${RC_TAG}"
           rc_commit="$(git rev-parse "refs/tags/${RC_TAG}^{commit}")"
           version="$(git show "${rc_commit}:VERSION" | tr -d '\r\n')"
@@ -63,7 +63,7 @@ jobs:
         run: |
           set -eu
           git checkout --detach "$RC_COMMIT"
-          test "$(git rev-parse HEAD^{commit})" = "$RC_COMMIT"
+          test "$(git rev-parse "HEAD^{commit}")" = "$RC_COMMIT"
           test "$(tr -d '\r\n' < VERSION)" = "$VERSION"
       - name: 下载并复验 RC 资产
         shell: sh

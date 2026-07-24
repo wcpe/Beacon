@@ -38,7 +38,7 @@ jobs:
             --version-file VERSION \
             --rc-tag "$CANDIDATE_TAG" \
             --ga-tag "v$version"
-          commit="$(git rev-parse HEAD^{commit})"
+          commit="$(git rev-parse "HEAD^{commit}")"
           test "$(git rev-parse "${CANDIDATE_TAG}^{commit}")" = "$commit"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
