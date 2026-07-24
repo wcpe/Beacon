@@ -137,12 +137,22 @@ func TestCheckAndAutoRollbackUnderThreshold(t *testing.T) {
 		t.Fatalf("计数应累加到 1，实际 %+v ok=%v", st, ok)
 	}
 	// 验证期后：确认成功，sentinel 与 .old 均被清理。
-	time.Sleep(80 * time.Millisecond)
-	if _, ok := readSentinel(run); ok {
-		t.Fatal("验证期后 sentinel 应被清理")
-	}
-	if _, err := os.Stat(run + oldSuffix); !os.IsNotExist(err) {
-		t.Fatal("验证期后 .old 应被清理")
+	// CI 机器调度抖动下固定 sleep 不够稳，改为轮询到验证期清理完成。
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, sentinelOK := readSentinel(run)
+		_, oldErr := os.Stat(run + oldSuffix)
+		oldGone := os.IsNotExist(oldErr)
+		if !sentinelOK && oldGone {
+			break
+		}
+		if time.Now().After(deadline) {
+			if sentinelOK {
+				t.Fatal("验证期后 sentinel 应被清理")
+			}
+			t.Fatal("验证期后 .old 应被清理")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
