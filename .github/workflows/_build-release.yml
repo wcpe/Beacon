@@ -40,9 +40,11 @@ jobs:
             --ga-tag "v$version"
           commit="$(git rev-parse "HEAD^{commit}")"
           test "$(git rev-parse "${CANDIDATE_TAG}^{commit}")" = "$commit"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "tag=$CANDIDATE_TAG"
+            echo "commit=$commit"
+          } >> "$GITHUB_OUTPUT"
 
   web:
     name: 前端构建

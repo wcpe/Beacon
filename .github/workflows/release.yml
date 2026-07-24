@@ -52,9 +52,11 @@ jobs:
           test "$(gh release view "$RC_TAG" --json isPrerelease --jq '.isPrerelease')" = "true"
           test "$(gh release view "$RC_TAG" --json publishedAt --jq '.publishedAt // ""')" != ""
           ga_tag="v${version}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "rc_commit=$rc_commit" >> "$GITHUB_OUTPUT"
-          echo "ga_tag=$ga_tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "rc_commit=$rc_commit"
+            echo "ga_tag=$ga_tag"
+          } >> "$GITHUB_OUTPUT"
       - name: 切换到 RC 提交
         shell: sh
         env:
