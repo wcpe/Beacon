@@ -37,23 +37,45 @@
   `systemctl daemon-reload && systemctl enable --now beacon` 后即托管；崩溃 3 秒后自动重启。
 - **裸跑无任何监督**：进程崩溃即停、需手动启动；此时换版后「新版起不来」的自动回退要到下次手动启动才触发（可接受，但不建议生产如此部署）。
 
-## 2. 升级
-- **升级前先备份 MySQL**（见 §4）。
-- 控制面：拉新镜像 → `docker compose up -d beacon`（mysql 数据卷不动）。AutoMigrate 只增不删；删列 / 改类型等复杂变更它不处理，需要时再引入迁移工具并另立 ADR。
-- agent：替换 jar 重启子服。控制面与 agent 应同次发布、版本号一致（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。
-- **发布产物平台覆盖（FR-102）**：每个正式 tag 由 CI 在原生 runner 上 CGO=1 构建（非交叉编译，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 个平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每个平台产出单一主二进制 `beacon-<ver>-<target>[.exe]`，并由 `SHA256SUMS.txt` 校验。双端 agent jar 与平台无关、各发布只构建一次。
+## 2. 升级与发布
+- **升级前先备份 MySQL 与 Agent 本地状态**（见 §4）。
+- 控制面：拉取已核验的 GA 产品资产，再重启服务；数据库迁移只允许 expand / 可重入回填，回滚不依赖 down migration。
+- agent：按批替换 Bukkit/Bungee JAR 并重启节点，保留 `plugins/Beacon/` 本地身份、配置快照、流位置与幂等账本。控制面与 agent 的产品版本必须一致。
+- 产品资产发布前使用 `SHA256SUMS.txt` 校验；平台是否发布由本次 RC 的实际资产决定，不额外引入阶段专属平台准入。
 
-### 2.2 滚动预发布渠道（FR-117，[ADR-0052](adr/0052-rolling-prerelease-channel.md)，取代 [ADR-0046](adr/0046-rc-prerelease-channel.md) 的 rc 模型）
-渠道收敛为**正式版（stable）/ 滚动预发布（prerelease）两条**，预发布随 master 自动滚动刷新，便于试用最新并喂 in-app 在线更新使更新功能可测：
+### 2.1 开发构建、发布准备与 RC/GA 流程（FR-182，[ADR-0074](adr/0074-simple-rc-ga-release-flow.md)）
 
-- **正式版触发（不变）**：打**无后缀**正式 tag `vX.Y.Z`（如 `git tag v0.17.0 && git push origin v0.17.0`），CI 的 `release.yml` 触发、`prerelease=false`，行为同前；tag↔VERSION 严格校验（tag 去 `v` == 根 `VERSION`）。
-- **滚动预发布触发**：**推 master 即自动发布**。CI 的 `prerelease.yml` 由 master push 触发，调用同一套构建（5 平台原生矩阵单一主二进制 + 双端 jar + `SHA256SUMS.txt`），以**固定移动 tag `dev`** force-update **覆盖发布同一个** prerelease Release（`prerelease=true`，**只留最新一份、不堆 Release 列表**）；**版本号由 CI 自算 = `<最新正式 tag 基线，不 +1>-dev.<提交距离>.g<7 位 sha>`**（计算收敛到 `scripts/dev-version.sh`、CI 与本地共用、与 `VERSION` 解耦，[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)；如最新正式 0.17.0 → 滚动预发布 `0.17.0-dev.3.g6b6dd71`，**每次 push 提交距离 +1**；提交距离为 0 即主干无新提交则跳过发布），不参与 tag↔VERSION 校验。release notes **从 `CHANGELOG.md` 的「## 未发布」段提取** + 前置中文警示头「⚠ 滚动预发布版本…勿用于生产」。
-- **渠道判定（按版本号）**：控制面在线自更新（FR-99/FR-100）的「正式（stable）」渠道按 GitHub API 最新**非 prerelease** release 判定，「预发布（prerelease）」渠道按最新 **prerelease** release 判定；**是否有更新按基线 `X.Y.Z` 比较 + 提交距离序号**（[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)）——先比 `X.Y.Z` 基线，远端基线高即提示、低即否；基线相同时：都 dev 比提交距离序号（远端序号大才提示）、正式↔dev 视为有更新。于是**每次 push（提交距离 +1）预发布渠道都提示更新，便于反复验证在线更新**（FR-119/120 的换版 / 自动回退 / 手动回滚需反复真机触发），而无新提交（提交距离不变）不误报；**正式渠道仍按纯 `X.Y.Z`**（无 `-dev` 后缀）。滚动预发布的版本号取 Release 标题（CI 自算的 `v<基线>-dev.<提交距离>.g<sha>`，[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)），因其 tag 为移动标签 `dev` 非语义版本。
-- **用途**：给运维 / 试用方装预发布产物先验，并让 in-app 更新 / 切渠道功能有真实 Release 可检可更可测；确认无误后打无后缀正式 tag 发版。
-- **回退**：预发布仅供试用、不进生产；发现问题直接弃用、修后随下次 master push 自动覆盖刷新即可，无需特殊回滚。生产升级一律以**正式 Release** 为准。
-- **注意**：全局技能 `sdd-publish-snapshot` 基于旧快照 / rc 模型，与本节滚动预发布模型方向趋同但仍属全局插件；本仓库预发布以本节流程（ADR-0052）为准。
+- **PR 只过质量门**：pull request 运行现有质量任务，不执行 `make package`，也不上传可下载产品包。
+- **`master` 临时开发构建**：质量任务全部成功后，CI 才运行现有 `make package` 并上传短期 Actions Artifact。该 Artifact 仅用于开发验证，不能直接晋级为 RC 或 GA。
+- **发布准备**：发布准备只更新根 `VERSION` 与 `CHANGELOG.md`，版本由根 `VERSION` 唯一确定。
+- **RC**：按目标版本创建 `vX.Y.Z-rc.N`，固定一个 commit 和一次构建出的产品资产；候选发布后不可移动、覆盖或补传。`release-verify-rc` 必须从仓库中的真实 RC tag 解析 peeled commit，并与 workflow 锁定的 40 位提交身份一致，手工传入任意 SHA 不能替代真实 tag。
+- **GA**：最终 RC 与 GA 必须指向同一 commit。GA 先把最终 RC 资产原样复制到独立目录，再以 RC 下载目录为不可变基准运行 `release-verify-ga`；创建前与公开回拉后都逐项比较名称、字节大小和 SHA-256。GA 不重新编译、打包、重建、重签或替换资产。
+- **在线更新**：只自动消费严格 `vX.Y.Z` 的 GA，RC 和开发 Artifact 必须显式安装。
 
-### 2.1 单进程自替换 + 自动回滚（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）
+通用校验入口：
+
+```sh
+# 只校验 VERSION、RC/GA tag 格式和 GA workflow；不要求 tag 已存在。
+make release-check RELEASE_RC_TAG=v1.0.0-rc.1
+
+# RC tag 必须真实存在，且 peeled commit 必须与锁定身份一致。
+make release-verify-rc \
+  RELEASE_RC_TAG=v1.0.0-rc.1 \
+  RELEASE_ASSETS_DIR=rc-assets \
+  RELEASE_RC_COMMIT=<RC_COMMIT>
+
+# RC/GA tag 均须真实存在；GA 目录必须与独立 RC 基准目录逐项一致。
+make release-verify-ga \
+  RELEASE_RC_TAG=v1.0.0-rc.1 \
+  RELEASE_RC_ASSETS_DIR=rc-assets \
+  RELEASE_ASSETS_DIR=ga-assets \
+  RELEASE_RC_COMMIT=<RC_COMMIT> \
+  RELEASE_GA_COMMIT=<GA_COMMIT>
+```
+
+两个资产目录都必须是封闭集合：除 `SHA256SUMS.txt` 外只能包含当前版本规定的产品文件，清单必须覆盖每个产品文件且不得校验自身。随后 GA 校验会把 `SHA256SUMS.txt` 本身也作为 RC/GA 对比项，核对其文件名、字节大小和 SHA-256；因此不能通过同时修改 GA 产品文件及其自带清单来制造一套彼此自洽但已偏离 RC 的资产。
+
+### 2.2 单进程自替换 + 自动回滚（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）
 控制面是**单一 `beacon[.exe]`**——在线更新由主进程在自身进程内完成自我替换，无独立监督进程、无退出码交接。换版机制：
 - **自替换换版**：在线更新（FR-97）下载校验落位 `beacon.new[.exe]`（运行二进制同目录同卷）后，主进程**优雅关停释放端口** → `rename` 让位三步（`beacon`→`beacon.old`、`beacon.new`→`beacon`）→ spawn 新进程（继承命令行参数 / 环境变量 / 工作目录 / 标准流）→ 旧进程正常退出。Windows 同样允许 rename 运行中的 exe（重命名只改目录项、已打开句柄仍指向原映像），故让位可行；换二进制失败则就地回退、以旧版重启兜底。其间有**亚秒级**端口不可用窗口，agent 按本地快照继续（fail-static），玩家进服不受影响。
 - **自动回滚（崩溃循环闭合）**：换二进制成功后写 sentinel 标记（运行二进制同目录小文件，记崩溃计数 `attempt` + 目标版本）。新版**启动早期**（HTTP 起之前）自检——稳定运行**过验证期 10 秒**或收到正常关停信号（如 `Ctrl+C` / `docker stop`，视为新版已起来被操作）即判定成功，删 sentinel + 删 `.old` 清理备份；若换版后**反复起不来**（崩溃计数达阈值，默认 3）则在启动早期自动 rename 回退 `.old` 并重启旧版，最终以旧版稳定运行——**不依赖任何外部进程**。坏新版归档为 `beacon.failed[.exe]` 便于事后排查。
@@ -82,8 +104,10 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **恢复演练**：上线前至少完整演练一次恢复（导出 → 空库导入 → 起 beacon 校验配置仍在），确认备份真能用。
 
 ## 5. 回滚
-- **控制面版本回滚**：部署上一个稳定镜像 tag（见 GitHub Releases）。
-- **业务配置回滚**：用管理台的配置版本回滚——这是 Beacon 自带能力，**不需重新部署**。
+- **RC 回滚**：未晋级候选直接停止使用；不得覆盖原 RC 资产。修复后从新 commit 创建 `vX.Y.Z-rc.(N+1)`，重新构建并校验完整资产。
+- **GA 运行回滚**：使用上一版已核验的 GA 产品资产和升级前备份。若 schema 不兼容，必须先停写并恢复备份，禁止执行未经验证的 down migration。
+- **产品资产**：已发布版本的文件不得覆盖；发现缺陷必须发布新的 RC/GA 版本。
+- **业务配置回滚**：使用管理台配置版本回滚，不需重新部署。
 - **代码层回滚**：见 `sdd-rollback-change` 技能。
 
 ## 6. 排障
@@ -93,18 +117,23 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **控制面短暂不可用时不要重启子服**：agent 会按本地快照 fail-static 继续，控制面恢复后自动重连。
 
 ## 7. 端到端验收（agent 真机接入联调）
-用 `apps/agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」，全程由 gradle（jpenilla run-task 的 run-paper/run-waterfall 插件）自动下载并运行服务端，无需手工准备 MC 服。
+用 `apps/agent/` 下的验收模块在真机 Bukkit/Bungee 上自检「首次接入 + 发布热更 + 审计可查」。Gradle 统一使用 `mc-testkit 0.5.0` 自动下载并编排 Paper 1.20.4 与原生 BungeeCord，无需手工准备 MC 服，也不再使用 jpenilla run-task 或 Waterfall 代验。
 
-> **本地前置（工具链）**：下面的手动联调与 §7.1–7.3 的 Go E2E 都需在本机构建控制面二进制并经 gradle 起真机服务端，跑前先就位：
-> - **JDK21**：跑 gradle 与 MC 服务端（Paper 1.20.4 / Waterfall 1.20 需 Java 17+）。Windows 上若 `JAVA_HOME` 路径含 `!` 等特殊字符，`gradlew.bat` 可能回退到 PATH 上的旧 JDK；E2E 经 harness 调 `./apps/agent/gradlew` 继承环境，跑前把 `JAVA_HOME` 显式指向干净路径的 JDK21。
+> **本地前置（工具链）**：下面的手动联调与 §7.1–7.3 的 Go E2E 都需在本机构建控制面二进制并经 Gradle 起真机服务端，跑前先就位：
+> - **JDK21**：运行 Gradle、Paper 与 BungeeCord。Windows 上若 `JAVA_HOME` 路径含 `!` 等特殊字符，`gradlew.bat` 可能回退到 PATH 上的旧 JDK；E2E 经 harness 调 `./apps/agent/gradlew` 继承环境，跑前把 `JAVA_HOME` 显式指向干净路径的 JDK21。
 > - **C 编译器（CGO）**：控制面默认 sqlite 驱动为 `mattn/go-sqlite3`（CGO），需 `CGO_ENABLED=1` 且 PATH 上有 gcc/clang，否则 `go build ./apps/server/cmd/beacon` 编不出（即便走 `E2E_DB_DRIVER=mysql` 也一样——编译期已静态 import sqlite 驱动）。
 > - **已构建前端**：控制面 `go:embed apps/web/dist`，跑前先 `make web`（或根目录 `pnpm --filter @beacon/web build`），否则只会内嵌占位目录。
+> - **mc-testkit 0.5.0**：默认精确从 `maven.wcpe.top` 解析正式版；不设置 `MC_TESTKIT_INCLUDE_BUILD` 即使用 Maven 工件。仅在开发 mc-testkit 插件本身、需要联调其未发布源码改动时，才可选设置该变量指向本地 mc-testkit 源码目录。
 
-- 先起控制面：`docker compose up -d`（或本地 `go run ./apps/server/cmd/beacon`），确保 `GET /admin/v1/namespaces` 可达。
-- 经 REST/管理台建一条全局配置（如 dataId `beacon-e2e.yml`）。
-- Bukkit 端：`cd apps/agent && ./gradlew :agent-e2e:runServer` —— run-paper 自动下载 Paper、加载 BeaconAgent 与验收插件，agent 注册→拉配置→apply。
-- Bungee 端：`./gradlew :agent-e2e-bungee:runBungee` —— run-waterfall 自动下载 Waterfall，加载 BeaconAgentProxy 与验收插件。
-- 验证：`GET /admin/v1/instances` 看 serverId online；改配置发布后看验收插件数据目录的 `e2e-observations.log` 是否出现新值（业务插件经 agent Java 只读 API 读到热更）；`GET /admin/v1/audits` 查发布记录。
+`agent-e2e` 统一声明三个入口：
+
+- `:agent-e2e:servePaper`：一个 Paper 后端，注入 `BeaconAgent` 与 `BeaconE2E`。
+- `:agent-e2e:serveDirectory`：同一生命周期内启动 Paper 后端 + 原生 BungeeCord，双端分别注入 Agent 与探针；BungeeCord 静态路由名固定为 `backend`。
+- `:agent-e2e:serveProxy`：为代理连接探针启动原生 BungeeCord；mc-testkit 同时启动仅用于路由就绪的伴随 Paper 后端。
+
+Go harness 通过环境变量向节点传递 endpoint、bootstrap token、namespace、serverId/address、命令白名单与探针开关；动态凭据不得改放 Gradle `-P` 参数。手动执行时使用 `cd apps/agent && ./gradlew :agent-e2e:<任务名> --no-daemon`，Windows 对应 `gradlew.bat`，并自行提供与 harness 相同的 `BEACON_AGENT_*` 环境变量。
+
+运行证据统一位于：Paper 运行目录 `apps/agent/agent-e2e/build/mc-testkit/run/`、BungeeCord 运行目录 `apps/agent/agent-e2e/build/mc-testkit/run-proxy/`、编排结果与 pid `apps/agent/agent-e2e/build/mc-testkit/results/`、Go harness stdout/stderr `.tmp/*.out.log` 与 `.tmp/*.err.log`。E2E workflow 无论成功、失败或取消都会先扫描完全相同的归档候选路径，检查本轮唯一哨兵、管理员口令、签名密钥、数据库 DSN、bootstrap token、PostgreSQL 密码及全部动态 access token。固定口令和签名密钥在写入 `GITHUB_ENV` 前先注册 Actions 掩码；动态 access token 由 harness 在创建响应返回给测试前先原子写入共享指纹状态文件，记录格式仅为 `<SHA-256> <明文字节长度>`，并在对应 E2E 的私有生成状态文件追加一条 `generated` 记录，两个状态文件在非 Windows 上都必须为 `0600`。只有指纹持久化成功后 harness 才输出 `::add-mask::` 注册日志掩码；不得把动态 token 明文追加到 `GITHUB_ENV` 或另写明文 token 文件。后续独立的归档扫描步骤先校验启动标记、生成记录数、指纹数量、格式、去重和文件权限，再按记录的字节长度滑窗计算 SHA-256 检查候选文件；状态缺失或损坏时 fail closed。扫描只报告命中文件相对路径和敏感键名或“动态凭据指纹”，不回显原值。仅扫描成功才上传日志和结果；命中泄漏时 job 失败且禁止上传含密文件。
 
 ### 7.1 FR-15 三方覆盖 + 受限重载命令真机 E2E（RCE 面，启用命令白名单前必跑）
 
@@ -147,9 +176,9 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/override
 
 校验「在线 `role=bukkit` 子服按 `serverId` 注入 Bungee 目录」在真机成立。控制面用 **SQLite 开发模式**（无需 Docker/MySQL）。`agent-e2e-bungee` 的 `DirectoryE2EProbe` 周期把 Bungee `ServerInfo` 目录与 `beacon` 命令注册状态覆写到 `plugins/BeaconE2EProxy/e2e-directory-latest.txt`，供 Go 驱动断言。
 
-入口为纯 Go 测试、**真跨平台**，由测试自管控制面 + 真 Paper 子服 + 真 Waterfall 代理生命周期，逐相位收口；最适合 CI（见 `.github/workflows/e2e.yml`）。
+入口为纯 Go 测试、**真跨平台**，由测试自管控制面，并通过单个 `serveDirectory` 生命周期启动真 Paper 子服 + 原生 BungeeCord 代理，逐相位收口；最适合 CI（见 `.github/workflows/e2e.yml`）。
 
-前置：本机有 Go / JDK21 + 联网（首跑下载 Paper/Waterfall）。**默认 sqlite、无需 docker/MySQL**。必填 `E2E_ADMIN_PASS` / `E2E_AUTH_SECRET`；可选 `E2E_DB_DRIVER`（默认 `sqlite`）、`E2E_DB_DSN`（driver=mysql 时）、`E2E_BEACON_URL`（默认 `http://localhost:8848`）。运行（PowerShell；Bash 把赋值换成 `export` 即可）：
+前置：本机有 Go / JDK21 + 联网（首跑下载 Paper/BungeeCord）。**默认 sqlite、无需 docker/MySQL**。必填 `E2E_ADMIN_PASS` / `E2E_AUTH_SECRET`；可选 `E2E_DB_DRIVER`（默认 `sqlite`）、`E2E_DB_DSN`（driver=mysql 时）、`E2E_BEACON_URL`（默认 `http://localhost:8848`）。运行（PowerShell；Bash 把赋值换成 `export` 即可）：
 
 ```powershell
 $env:E2E_ADMIN_PASS='<管理员口令>'; $env:E2E_AUTH_SECRET='<令牌签名密钥>'
@@ -158,7 +187,7 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/directory
 
 测试依次跑两相位（任一 FAIL 即测试失败）：
 
-- **directory**：在线 `role=bukkit` 子服按 `serverId` 注入 Bungee 目录（地址含子服端口）、手工服务器（Waterfall 默认 `lobby`）保留不被覆盖、`beacon` 命令已注册。
+- **directory**：在线 `role=bukkit` 子服按 `serverId` 注入 Bungee 目录（地址含子服端口）、mc-testkit 固定静态路由 `backend` 保留不被覆盖、运行时实现标识精确为 `BungeeCord`、`beacon` 命令已注册。
 - **failstatic**：杀控制面后已注入目录与手工服**不被清空**（fail-static）。
 
 ### 7.3 FR-32 可观测看板真机 E2E（指标上报 → 采样落库 → 端点返真值）

@@ -1,6 +1,6 @@
 # ADR-0056：滚动预发布版本号改 `<基线>-dev.<提交距离>.g<sha>` + 提交距离序号判新（取代 ADR-0055）
 
-**状态**：已接受（取代 [ADR-0055](0055-rolling-prerelease-dev-sha-version.md) 全部；将 [ADR-0054](0054-rolling-prerelease-version-ci-computed.md) 的「基线 = 最新正式 minor+1」取代为「基线 = 最新正式 tag 不 +1」，其 CI 自算 / 与 VERSION 解耦仍有效；[ADR-0052](0052-rolling-prerelease-channel.md) 除已被前序取代的决策外其余仍有效）
+**状态**：已被 [ADR-0073](0073-standard-rc-ga-release-lifecycle.md) 完全取代（移动 `dev` tag、提交距离开发版本及对应判新规则均不再是当前发布流程；正文保留用于历史追溯）
 
 ## 背景
 

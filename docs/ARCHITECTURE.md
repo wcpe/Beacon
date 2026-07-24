@@ -120,7 +120,9 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 | 配置中心 V2（五层作用域、版本、校验） | P7 · 0.27.x |
 | 文件资产 V2（清单索引、预览、安全审计） | P8 · 0.28.x |
 | 交付编排 V2（变更单、流式数据面、灰度生效、整单回滚） | P9 · 0.29.x |
-| 契约冻结、RC 验收、GA 准入 | P10 · 0.30.x → GA 1.0.0 |
+| 通用 RC/GA 发布、同 commit 原样晋级 | 按目标版本执行 `vX.Y.Z-rc.N → vX.Y.Z` |
+
+发布流程遵循 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)：RC 是不可变 prerelease，固定一个目标 commit 和一次构建出的产品资产；资产或候选内容变化时必须创建新的 RC。GA 只从最终 RC 原样复制产品资产，先逐项核对文件名、大小和 SHA-256，再创建正式 tag；GA 不重新编译、打包或替换资产。在线更新只自动消费严格匹配 `vX.Y.Z` 的 GA，RC 和开发产物须显式安装。发布检查统一通过 `make release-test`、`make release-check`、`make release-verify-rc` 与 `make release-verify-ga` 执行。
 
 ## 9. 关键裁决与不做项
 

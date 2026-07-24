@@ -73,10 +73,10 @@ Beacon 控制面是单二进制，裸跑形态（FR-25 开箱即跑）下进程�
 - **包** `internal/update/`：
   - `semver.go`：自写最小 semver 比较器（`vX.Y.Z` + 可选 `-rc.N`），纯函数无副作用、不引第三方库；`dev` 哨兵视为未知。
   - `progress.go`：线程安全进度态（`idle`/`checking`/`downloading`/`verifying`/`staging`/`ready-restart`/`failed` + 百分比 + 目标版本 + 错误），进程内瞬态、不落库。
-  - `github.go`：GitHub Releases API 客户端（按渠道取最新非 prerelease / prerelease release），出站经 `internal/httpx` 工厂（带代理 + 超时）。
+  - `github.go`：GitHub Releases API 客户端；`stable` 取非 prerelease，普通 `prerelease` 只接受 `tag_name=dev` 且名称符合 `<基线>-dev.<距离>.g<sha>`，显式排除 RC；出站经 `internal/httpx` 工厂（带代理 + 超时）。
   - `service.go`：编排 `CheckForUpdate`（查→比对，返回有无可用更新）与 `ApplyUpdate`（下载→校验→落位→请求重启）；审计经 `audit_log`。
-- **渠道**：`stable` / `rc` 作入参（不读 store；store 渠道项 FR-101 加、FR-99 后续批传入）。
-- **资产命名**：`beacon-<ver>-<os>-<arch>[.exe]`，5 平台 linux-amd64/arm64·windows-amd64·darwin-amd64/arm64；本平台按 `runtime.GOOS/GOARCH` 选，无对应资产即失败。
+- **渠道**：`stable` / `prerelease` 作入参；`v1.0.0-rc.N` 只能按显式 tag/manifest/digest 安装，不进入普通在线更新。
+- **资产命名**：`beacon-<ver>-<os>-<arch>[.exe]`；P10 `1.0.0` 支持 linux-amd64/arm64、windows-amd64、darwin-arm64 四个平台，本平台无对应资产即失败。
 - **下载护栏**：超时（client 级）+ 大小上限（`io.LimitReader` + 实读字节校验）+ 任何失败 `os.Remove` 临时文件（资源泄露禁令）。
 - **SHA256 校验**：下载 `SHA256SUMS.txt`，解析「`<hex>␣␣<filename>`」行取目标资产期望哈希，与实算二进制 SHA256 比对；不符即中止、删临时文件、状态 `failed`、不替换、进程不退。
 - **原子落位**：校验通过的临时文件 `rename` 到 pending 路径（运行二进制同目录同卷 `beacon.new[.exe]`）。pending 路径由 update 服务据运行二进制目录推导（FR-119 后由自替换模块据同一约定消费，[ADR-0053](../adr/0053-single-binary-self-replace.md)）。

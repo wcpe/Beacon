@@ -1,6 +1,6 @@
 # ADR-0044：控制面在线自更新核心（按渠道查 Release → 下载 → SHA256 → 原子落位 → 退出码交还 launcher → 回滚）
 
-**状态**：已接受（决策 5/6/7 中「以退出码 70 交还 launcher 换二进制重启 / 换了起不来由 launcher 兜底」的 launcher 交接部分被 [ADR-0053](0053-single-binary-self-replace.md) 取代为主进程单进程自替换 + 自动回滚；查 Release / 下载 / SHA256 校验 / 原子落位 / 进度内存态 / 审计等其余决策不变）
+**状态**：已接受（决策 3 的发布平台矩阵由 [ADR-0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) 收紧并取代为四平台，明确不发布 `darwin/amd64`；决策 5/6/7 中「以退出码 70 交还 launcher 换二进制重启 / 换了起不来由 launcher 兜底」的 launcher 交接部分被 [ADR-0053](0053-single-binary-self-replace.md) 取代为主进程单进程自替换 + 自动回滚；查 Release / 下载 / SHA256 校验 / 原子落位 / 进度内存态 / 审计等其余决策不变）
 
 ## 背景
 
@@ -12,7 +12,7 @@ Beacon 控制面是单二进制（Go + 内嵌前端，[ADR-0002](0002-go-react-e
 
 1. **按渠道查 Release**：渠道（`stable` / `rc`）作**入参**传入更新服务（不在本核心读 store——store 渠道项由 FR-101 加、由 FR-99 在后续批读后传入），查 GitHub Releases API（仓库 **wcpe/Beacon**，仓址做可配项默认此值）：`stable` 取最新非 prerelease release、`rc` 取最新 prerelease。与当前 `internal/version.Version` 比较，**仅当远端严格高于当前**才视为有可用更新。
 2. **自写最小 semver 比较器**（不引第三方 semver 库）：解析 `vX.Y.Z` 与可选 `-rc.N` 预发布段，按主/次/补丁数字序比较，预发布版本低于同主次补丁的正式版（`1.2.0-rc.1 < 1.2.0`），`-rc.N` 间按 N 数字序。当前版本为 `dev` 哨兵（未经打包构建）→视为未知、不提示更新。
-3. **下载资产**：按本进程 `runtime.GOOS`/`GOARCH` 选 release 资产 `beacon-<ver>-<os>-<arch>[.exe]`（资产集 **5 平台**：linux-amd64/arm64、windows-amd64、darwin-amd64/arm64，仅已发布平台可自更新；本平台无对应资产即失败）。下载到临时文件，**必有超时 + 大小上限 + 任何失败清理临时文件**（资源泄露禁令）。出站**经 `internal/httpx` 工厂**（[ADR-0047](0047-update-outbound-proxy-and-secret-redaction.md)）构造 client，支持代理入参，不裸用 `net/http`。
+3. **下载资产**：按本进程 `runtime.GOOS`/`GOARCH` 选 release 资产 `beacon-<ver>-<os>-<arch>[.exe]`（资产集 **4 平台**：linux-amd64/arm64、windows-amd64、darwin-arm64，仅已发布平台可自更新；`darwin/amd64` 不发布，本平台无对应资产即失败）。该平台结论由 [ADR-0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) 收紧并取代。下载到临时文件，**必有超时 + 大小上限 + 任何失败清理临时文件**（资源泄露禁令）。出站**经 `internal/httpx` 工厂**（[ADR-0047](0047-update-outbound-proxy-and-secret-redaction.md)）构造 client，支持代理入参，不裸用 `net/http`。
 4. **SHA256 校验**：下载 release 的 `SHA256SUMS.txt`，比对所下载二进制实算 SHA256；不通过即中止、删临时文件、状态 `failed`、不替换、进程不退。
 5. **原子落位**：校验通过的新二进制 `rename` 到 launcher 约定的 pending 路径（与运行二进制**同目录、同卷**，名为 `beacon.new[.exe]`，[ADR-0045](0045-builtin-launcher-supervisor.md) 约定），同卷 rename 原子。
 6. **退出码交还 launcher**：落位 pending 成功后，更新服务经注入回调请求主进程以 `exitcode.RequestUpdateRestart`（`70`）退出（`cmd/beacon` 的 `run()` 返回既有哨兵 `errRequestUpdateRestart`，`main()` 既有 `errors.Is` 已映射到退出码 `70`）。launcher 据约定换二进制后重启。

@@ -81,7 +81,7 @@ proxy 宕机产生的「孤儿 open 行」：proxy agent 重启后首次上报�
 | `message_id` | VARCHAR(36) PK | 源 agent 发送时生成的 UUIDv7 |
 | `namespace_id` | BIGINT | 来源 namespace |
 | `source_server_id` | VARCHAR(64) | 来源 serverId |
-| `msg_type` | VARCHAR(64) | 业务消息类型（业务插件定义） |
+| `msg_type` | VARCHAR(64) | 业务消息类型（业务插件定义）；非空且 UTF-8 编码 ≤64 字节，冒号始终是合法字符（如 `lodestone:roster`） |
 | `target_kind` | VARCHAR(16) | `server` / `player` / `broadcast`（FR-180） |
 | `target_server_id` | VARCHAR(64) NULL | 定向目标（target_kind=server） |
 | `target_player` | VARCHAR(36) NULL | 按玩家寻址的玩家 UUID |
@@ -127,12 +127,12 @@ proxy 宕机产生的「孤儿 open 行」：proxy agent 重启后首次上报�
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `message_id` | VARCHAR(36) PK | 同 `msg_trace.message_id` |
-| `payload` | TEXT | 原文（业务序列化后的字符串） |
-| `sha256` | VARCHAR(64) | payload 摘要，供归档校验与完整性核对 |
-| `size` | INT | 字节数 |
+| `payload` | TEXT | 中转 / 保存文本：JSON string 保存业务原文且不含额外 JSON 引号；object / array / number / boolean 保存对应 JSON 文本 |
+| `sha256` | VARCHAR(64) | 中转 / 保存文本摘要，供归档校验与完整性核对 |
+| `size` | INT | 中转 / 保存文本的 UTF-8 字节数 |
 | `created_at` | DATETIME(3) | 写入时间 |
 
-payload 上限默认 64KB：超限的发送请求被 agent 面直接拒绝（400，错误码 `payload_too_large`），不截断存半截。payload 永不写日志、不进审计 detail、不出现在任何列表接口。
+HTTP wire 的 payload 接受任意 JSON 值：object / array / string / number / boolean / null。string 的中转 / 保存文本就是业务原文，不做二次 JSON 编码；object / array / number / boolean 以 JSON 文本中转并保存，poll 下发时还原为原 JSON 类型；null 表示无 payload，不写 `msg_payload` 行。空字符串在 poll 中仍保持空字符串，但因保存文本大小为 0，与 null 一样不写 `msg_payload` 行。payload 上限默认 64KB：Agent 先按 payload 的 JSON 编码文本 UTF-8 字节数做前置校验，控制面再按上述中转 / 保存文本的 UTF-8 字节数做硬校验；因此含大量转义字符的 string 可能被 Agent 更早拒绝。任一校验超限都拒绝发送，不截断存半截。payload 永不写日志、不进审计 detail、不出现在任何列表接口。
 
 ## 4. 机制与状态机
 
@@ -213,8 +213,8 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 | 方法 | 路径 | 请求要点 | 响应要点 |
 |---|---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 专用；`{bootId, droppedCount, events:[{kind: open\|close, connId, playerUuid, playerName, clientIp?, protocolVersion?, openedAt, closedAt?, closeKind?, closeReason?, firstBackend?, lastBackend?, backendSwitchCount?}]}`，单批 ≤500 | `202 {accepted, duplicated}`；队列满 `429` 带退避提示 |
-| POST | `/beacon/v2/agent/messages/send` | `{messageId, msgType, targetKind: server\|player\|broadcast, targetServerId?, targetPlayerUuid?, targetZone?, correlationId?, payload, sentAt}`（broadcast 时 targetZone 可选做 zone 级定向，FR-180） | `200 {messageId, status}`；跨域无信任 / 跨域广播 `403`；payload 超限 `400 payload_too_large`；目标无效 `200 status=failed` 带原因 |
-| POST | `/beacon/v2/agent/messages/poll` | `{waitSec ≤25, max ≤50}` 长轮询取本服待投消息 | `200 {messages:[{messageId, msgType, sourceServerId, correlationId?, broadcast?, payload, createdAt}]}`（`broadcast: true` 为广播投递标记，agent 据此路由 topic 订阅分发，FR-180）；无消息超时 `204` |
+| POST | `/beacon/v2/agent/messages/send` | `{messageId, msgType, targetKind: server\|player\|broadcast, targetServerId?, targetPlayerUuid?, targetZone?, correlationId?, payload, sentAt}`；`msgType` 非空且 UTF-8 编码 ≤64 字节，冒号合法；payload 为任意 JSON 值（object / array / string / number / boolean / null），broadcast 时 targetZone 可选做 zone 级定向（FR-180） | `200 {messageId, status}`；跨域无信任 / 跨域广播 `403`；Agent 按 JSON 编码文本、控制面按中转 / 保存文本分别执行 64KB 校验，控制面超限返回 `400 payload_too_large`；目标无效 `200 status=failed` 带原因 |
+| POST | `/beacon/v2/agent/messages/poll` | `{waitSec ≤25, max ≤50}` 长轮询取本服待投消息 | `200 {messages:[{messageId, msgType, sourceServerId, correlationId?, broadcast?, payload, createdAt}]}`；payload 保持 send 时的 JSON 类型，string 保持业务原文且不被二次 JSON 编码，null 表示无 payload（`broadcast: true` 为广播投递标记，agent 据此路由 topic 订阅分发，FR-180）；无消息超时 `204` |
 | POST | `/beacon/v2/agent/messages/ack` | `{results:[{messageId, status: delivered\|failed, reason?, deliveredAt, handlerCostMs?}]}` 批量回执 | `200 {applied}`；未知 messageId 忽略计入 `ignored` |
 
 业务插件不感知以上端点，只调本机 agent-api 的 `send(target, type, payload)` / `call(...) → Future` / `on(type, handler)` / `isAvailable()`；agent-api 与降级语义的宿主约束（不阻塞主线程、HTTP/JSON 只在适配器）随 `v2-metrics-health-scheduling.md` 的 agent-api 章节统一收口。
@@ -254,7 +254,7 @@ accepted ──目标 agent 长轮询取走──▶ dispatched ──目标回�
 1. **连接采集闭环**（FR-145）：真机 proxy 上玩家登入 / 登出后，`conn_detail_当日` 出现对应会话行，close 后 `duration_ms`、`close_kind`、`last_backend`、`backend_switch_count` 正确；上报与采集不在 BC 主线程（代码审查 + 压测无主线程卡顿）。
 2. **分表与定位**（FR-145）：跨日保持的连接（open 于 D 日、close 于 D+1 日）行留在 D 日表且被正确 close；不存在任何 `PARTITION` 语法；控制面在 MySQL 与 sqlite（E2E）下建表、写入、查询行为一致。
 3. **查询防护**（FR-145 / PRD §3）：不带精确 ID 且缺服务器/玩家过滤或缺时间范围的列表请求返回 400；时间范围 >168h 返回 400；`connId` 直查免时间范围可命中任意日表。
-4. **消息链路可追踪**（FR-149）：真机 A 服 `send`/`call` B 服，能按 messageId 查到 `hops` 完整链路（sent→received→dispatched→delivered）、`duration_ms`、`hop_count=1`；按来源 / 目标 / 时间 / correlationId 均可检索到该消息。
+4. **消息链路可追踪**（FR-149）：真机 A 服以 string 与结构化 object / array payload `send`/`call` B 服，目标 handler 收到的 JSON 类型与内容不变；能按 messageId 查到 `hops` 完整链路（sent→received→dispatched→delivered）、`duration_ms`、`hop_count=1`，并按来源 / 目标 / 时间 / correlationId 检索。自动契约测试须覆盖 object / array / string / number / boolean / null 往返及带冒号 `msgType`。
 5. **失败有原因**（FR-149）：目标离线 → `expired`；玩家不在线 → `failed(player_not_online)`；跨域无信任 → 拒绝且记 `failed`；ACK 超时重投 2 次后 → `failed(ack_timeout)`——各状态 `fail_reason` 非空且前端可见。
 6. **payload 受控**（FR-150）：消息列表与详情接口响应体中不出现 payload 字段（契约测试断言）；无 `message.payload.view` 权限查看返回 403；缺原因返回 400；成功查看后 `/audits` 出现含原因、操作者、messageId 的审计条目且不含 payload 内容。
 7. **元数据 / payload 分离**（FR-150）：`msg_trace` 与 `msg_payload` 分表且同事务写入；杀掉 payload 表（模拟归档后）不影响元数据与链路查询。

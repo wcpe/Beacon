@@ -626,7 +626,7 @@ data: {}
 
 ### 控制面在线更新（FR-99，见 [ADR-0044](adr/0044-control-plane-online-self-update.md)）
 
-把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`prerelease`，ADR-0052）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。判新 = 基线比较 + 提交距离序号（先比 `X.Y.Z` 基线，远端基线高即报、低即否；基线相同时都 dev 比提交距离序号、远端序号大才报，正式↔dev 视为有更新，FR-117，[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)）。**一份端点契约真源（FR-100 前端消费）。**
+把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。按 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)，标准在线更新只使用 `stable`：候选必须是非 draft、非 prerelease 且 tag 严格匹配 `vX.Y.Z` 的 GA Release，各数字段除 `0` 外不得有前导零；RC、开发产物、build metadata、Release name 回退均不进入候选。选择器使用 GitHub `page`/`per_page=100` 协议逐页扫描全部候选并取最高语义版本，不依赖返回顺序；遇短页停止，持续满页超过 100 页则失败，且每页保留响应大小限制。版本判新只比较正式 `X.Y.Z` 三段。历史 `update.channel=prerelease` 或其他旧值在读取 / 首次种子时自动持久化归一为 `stable`，响应 `channel` 继续保留并固定为 `stable`。出站代理从设置 store 读取并热生效（`update.proxy-url`，FR-98），经 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理与超时。**一份端点契约真源（FR-100 前端消费）。**
 
 | 端点 | 说明 |
 |---|---|
@@ -636,7 +636,7 @@ data: {}
 | `POST /admin/v1/system/update` | 触发应用更新（写方法，readonly→`403`，入审计 `system.update-apply`/`system.update-failed`） |
 | `POST /admin/v1/system/update/cancel` | 取消进行中的更新下载（写方法，readonly→`403`，下载中断记 `system.update-cancel`，FR-125） |
 
-`GET /admin/v1/system/update-check`：按 store 当前渠道查 `wcpe/Beacon` 最新 release 与当前版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（FR-101），缓存未过期且渠道未变则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时仅回显 `currentVersion`/`channel`/时间字段，其余为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。返回：
+`GET /admin/v1/system/update-check`：按固定 `stable` 渠道查 `wcpe/Beacon` 最新合法 GA Release 与当前正式版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（`int [1,168]`，默认 6），缓存未过期则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。管理台仅在 `update.auto-check-enabled=true` 时按该周期低频轮询，关闭后不轮询；手动“立即检查”始终使用 `force=true`。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时可选字段 `failureReason` 返回经 `internal/redact` 脱敏的真实原因，代理 URL userinfo、token 等凭据不得明文返回；`currentVersion`/`channel`/时间字段继续回显，其余业务字段为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。检查状态与下载 / 校验 / 落位进度隔离，检查请求不会覆盖进行中的更新进度。返回：
 ```json
 {
   "status": "ok",
@@ -652,7 +652,7 @@ data: {}
   "cacheExpiresAt": "2026-06-25T16:00:00Z"
 }
 ```
-`status ∈ {ok, check-failed}`。`releaseNotes` 为 release 正文原文（前端须安全渲染）；`publishedAt`/`checkedAt`/`cacheExpiresAt` 为 RFC3339（UTC）。
+`status ∈ {ok, check-failed}`。`failureReason?: string` 仅在 `check-failed` 时返回脱敏后的检查失败原因；成功响应省略该字段。`releaseNotes` 为 release 正文原文（前端须安全渲染）；`publishedAt`/`checkedAt`/`cacheExpiresAt` 为 RFC3339（UTC）。
 
 `GET /admin/v1/system/update`：读更新核心进度快照（进程内瞬态、不落库）。返回：
 ```json
@@ -676,7 +676,21 @@ data: {}
 | `GET /admin/v1/settings` | 列全部热改项当前值 + 类型 + 默认 + 说明：`{ items: [{ key, value, valueType, default, desc, isStartup }] }`。`valueType ∈ {int,bool,string}`；`isStartup` 恒 `false`（白名单内皆热改项）。读对 full / readonly 都开。**含凭据项（`update.proxy-url`）的 `value` 回显脱敏**：userinfo 段掩为 `***`（如 `http://***:***@h:port`），落库存原值仅供运行（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)） |
 | `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>" }` → `{ ok: true }`。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。每次改入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**；含凭据项的新值脱敏后再记，FR-98）。**含凭据项「未改密码」语义**：若提交的 `value` 仍是当前值的脱敏占位（如原样回传 `http://***:***@h`），后端**保留原值不覆盖**、不入审计 |
 
-热改 key 白名单（16 项）：`health.degraded-after-sec` / `health.ttl-sec` / `health.offline-grace-sec` / `health.scan-interval-sec`、`metric.enabled` / `metric.sample-interval-sec` / `metric.retention-hours`、`longpoll.max-hold-ms`、`alert.webhook-url` / `alert.webhook-timeout-ms`、`log.level`（枚举 `ERROR|WARN|INFO|DEBUG`）、`reverse-fetch.max-file-bytes`（反向抓取单文件上限，默认 1MB；控制面据此 + agent 上报 size 重算 `overThreshold`，不信 agent 标记）、`update.proxy-url`（更新出站代理，`http(s)://host:port` 可含 `user:pass`，空=直连；仅作用于控制面更新检查/下载出站、不影响 webhook；含凭据故回显/审计/日志脱敏，FR-98 见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）、`update.channel`（更新渠道枚举 `stable|prerelease`，默认 `stable`，FR-117/ADR-0052）、`update.auto-check-enabled`（是否自动检查更新，bool，默认 `true`，FR-101）、`update.check-interval-hours`（自动检查周期小时，`int [1,168]`，默认 6，FR-101）。`config.yml` 对这些项仅作**首启种子**：store 缺该 key 时才用文件值填，已 seed 后改文件不影响运行值。
+热改 key 白名单共 **37 项**，以服务端 `settingsWhitelist` 为契约真源，完整清单如下：
+
+- 健康判定（4）：`health.degraded-after-sec`、`health.ttl-sec`、`health.offline-grace-sec`、`health.scan-interval-sec`。
+- 指标采样（3）：`metric.enabled`、`metric.sample-interval-sec`、`metric.retention-hours`。
+- 长轮询（1）：`longpoll.max-hold-ms`。
+- 告警 webhook（2）：`alert.webhook-url`、`alert.webhook-timeout-ms`。
+- 日志（1）：`log.level`，枚举 `ERROR|WARN|INFO|DEBUG`。
+- 反向抓取（1）：`reverse-fetch.max-file-bytes`，默认 1 MiB；控制面据此结合 agent 上报 size 重算 `overThreshold`，不信任 agent 标记。
+- 在线更新（4）：`update.proxy-url`、`update.channel`、`update.auto-check-enabled`、`update.check-interval-hours`。`update.proxy-url` 接受含可选 `user:pass` 的 `http(s)://host:port`，空值表示直连，仅作用于控制面更新检查 / 下载出站，凭据在回显、审计和日志中脱敏（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）；`update.channel` 为兼容保留字段，唯一合法值与响应值均为 `stable`，历史 `prerelease` / 非法旧值启动时自动持久化归一为 `stable`（FR-185，见 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)）；`update.auto-check-enabled` 默认 `true`；`update.check-interval-hours` 为 `int [1,168]`，默认 6。
+- 配置撤回（1）：`undo.window-hours`，默认 24 小时。
+- 身份冲突（1）：`identity.conflict-window-sec`，默认 600 秒。
+- 交付编排与数据面（6）：`delivery.approver-separation-enabled`、`delivery.blob-retention-days`、`delivery.blob-capacity-bytes`、`delivery.upload-concurrency`、`delivery.download-concurrency`、`delivery.cleanup-interval-minutes`。
+- 热冷归档（13）：`archive.retention-days.metric-sample`、`archive.retention-days.health-snapshot`、`archive.retention-days.sched-decision`、`archive.retention-days.conn-detail`、`archive.retention-days.msg-trace`、`archive.retention-days.msg-payload`、`archive.retention-days.audit`、`archive.auto-enabled`、`archive.schedule-hour-utc`、`archive.batch-rows`、`archive.batch-interval-ms`、`archive.verify-sample-size`、`archive.cold-query-max-days`。
+
+`config.yml` 仅为有对应配置项的设置提供**首启种子**；纯 store 设置使用服务端默认值。store 缺 key 时才写入默认值，已 seed 后修改配置文件不影响运行值。
 
 ### 审计与环境
 | 端点 | 说明 |
@@ -887,8 +901,8 @@ agent 面：
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
-| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向） **【已实现·FR-149/180】** |
-| POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204） **【已实现·FR-149】** |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法） **【已实现·FR-149/180】** |
+| POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204）；payload 往返保持 JSON 类型，string 保持业务原文且不做二次 JSON 编码，object / array / number / boolean 以 JSON 文本中转，null 表示无 payload **【已实现·FR-149】** |
 | POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |
 
 管理面：
