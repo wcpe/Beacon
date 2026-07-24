@@ -217,19 +217,28 @@ jobs:
         run: |
           set -eu
           mkdir artifacts
+          # 控制面产物在 artifact 根；Agent/Maven 上传保留 dist/ 前缀
           for name in \
             "beacon-${VERSION}-linux-amd64" \
             "beacon-${VERSION}-linux-arm64" \
             "beacon-${VERSION}-windows-amd64.exe" \
-            "beacon-${VERSION}-darwin-arm64" \
-            "BeaconAgent-${VERSION}.jar" \
-            "BeaconAgentProxy-${VERSION}.jar" \
-            "beacon-maven-${VERSION}.zip"
+            "beacon-${VERSION}-darwin-arm64"
           do
             source="downloaded/$name"
             test -f "$source"
             cp "$source" "artifacts/$name"
           done
+          for name in \
+            "BeaconAgent-${VERSION}.jar" \
+            "BeaconAgentProxy-${VERSION}.jar"
+          do
+            source="downloaded/dist/$name"
+            test -f "$source"
+            cp "$source" "artifacts/$name"
+          done
+          source="downloaded/beacon-maven-${VERSION}.zip"
+          test -f "$source"
+          cp "$source" "artifacts/beacon-maven-${VERSION}.zip"
           (
             cd artifacts
             sha256sum \
