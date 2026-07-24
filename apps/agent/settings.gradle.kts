@@ -3,9 +3,16 @@
 // 集中声明插件版本（pluginManagement），子模块 apply 时不再带版本号，避免在根 plugins{}
 // 同时声明多个 Kotlin 插件触发的 projectsEvaluated 评估期冲突。
 pluginManagement {
+    val mcTestkitIncludeBuild = System.getenv("MC_TESTKIT_INCLUDE_BUILD").orEmpty().trim()
+    if (mcTestkitIncludeBuild.isNotEmpty()) {
+        // 仅联调未发布版本时替换插件解析；默认仍消费 maven.wcpe.top 的正式工件。
+        includeBuild(mcTestkitIncludeBuild)
+    }
     repositories {
         gradlePluginPortal()
         mavenCentral()
+        // mc-testkit 0.5.0 与其它 WCPE Gradle 插件的正式解析仓库。
+        maven("https://maven.wcpe.top/repository/maven-public/")
         // TabooLib 官方发布仓库（解析 io.izzel.taboolib gradle 插件）。
         maven("https://repo.tabooproject.org/repository/releases")
     }
@@ -17,12 +24,8 @@ pluginManagement {
         id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
         // detekt 官方静态检查插件：结构 / 复杂度 / 坏味道检查（兼容 Kotlin 1.9.x 的固定版本）。
         id("io.gitlab.arturbosch.detekt") version "1.23.6"
-        // jpenilla run-task：为 e2e 模块提供 runServer(Paper)/runWaterfall(Waterfall) 自动下载并运行
-        // MC 服务端/代理的任务，取代手写的 PrepareMinecraftServerEnvTask 下载 + JavaExec 启动。
-        // 锁定 2.3.1：run-task 3.0.x 起在发布元数据声明 plugin-api-version=8.14.3、要求 Gradle ≥ 8.14.3，
-        // 而本构建用 Gradle 8.5；2.3.1 是最后一个不带该门槛、兼容 8.5 的版本（run-paper/run-waterfall API 与 3.0.x 一致）。
-        id("xyz.jpenilla.run-paper") version "2.3.1"
-        id("xyz.jpenilla.run-waterfall") version "2.3.1"
+        // 真实 Paper/BungeeCord E2E 的统一拓扑编排插件。
+        id("top.wcpe.mc-testkit") version "0.5.0"
     }
 }
 
@@ -35,8 +38,8 @@ rootProject.name = "beacon-agent"
 // agent-adapters OkHttp + kotlinx.serialization 适配器（唯一碰具体库的模块）
 // agent-bukkit   Bukkit 子服插件壳，产出 BeaconAgent.jar
 // agent-bungee   BungeeCord 代理插件壳，产出 BeaconAgentProxy.jar
-// agent-e2e       M6 端到端验收用 TabooLib Bukkit 业务插件（compileOnly agent-api），并提供 runServer 任务
-// agent-e2e-bungee 同上的 BungeeCord 验收插件，并提供 runBungee 任务
+// agent-e2e       M6 端到端验收用 TabooLib Bukkit 业务插件，并统一声明 mc-testkit serve 拓扑
+// agent-e2e-bungee 同上的 BungeeCord 验收插件，由 agent-e2e 的代理节点注入
 include("agent-api")
 include("agent-kit")
 include("agent-core")

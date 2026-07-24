@@ -5,6 +5,9 @@ import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.info
 import taboolib.common.platform.function.submit
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * 子服目录注入端到端验收探针（BungeeCord 壳）。
@@ -12,7 +15,8 @@ import java.io.File
  * 周期快照当前 Bungee ServerInfo 目录与 beacon 命令注册状态，覆写到数据目录下
  * e2e-directory-latest.txt（每轮覆写、只反映「当前」状态），供外部 Go 驱动断言：
  *  - ① BeaconAgentProxy 是否把在线 role=bukkit 子服按 serverId 注入目录（出现 `SERVER <serverId> ...`）；
- *  - ② 手工服务器（Waterfall 默认 lobby）是否被保留（Beacon 只管自己创建的条目、不动手工配置）；
+ *  - ② mc-testkit 固定手工路由是否被保留（Beacon 只管自己创建的条目、不动手工配置）；
+ *  - ③ 运行时代理实现是否为原生 BungeeCord（IMPLEMENTATION=BungeeCord）；
  *  - ④ beacon 主命令是否已在代理注册（COMMAND_BEACON=true）。
  *
  * 只读快照目录与命令注册状态，不发起任何传送动作。
@@ -41,6 +45,7 @@ object DirectoryE2EProbe {
         submit(async = true, delay = POLL_INTERVAL_TICKS, period = POLL_INTERVAL_TICKS) {
             val proxy = ProxyServer.getInstance() ?: return@submit
             val sb = StringBuilder()
+            sb.append("IMPLEMENTATION=").append(proxy.name).append('\n')
             sb.append("COMMAND_BEACON=").append(beaconCommandRegistered(proxy)).append('\n')
             // ServerInfo 目录快照：每个条目一行「SERVER <名称> <socketAddress>」。
             for ((name, server) in proxy.servers) {
@@ -59,10 +64,21 @@ object DirectoryE2EProbe {
         }
     }
 
+    /** 先写同目录临时文件再原子替换，避免外部 Go 驱动读到空文件或半份快照。 */
     @Synchronized
     private fun writeSnapshot(content: String) {
-        val file = File(getDataFolder(), SNAPSHOT_FILE)
-        file.parentFile?.mkdirs()
-        file.writeText(content, Charsets.UTF_8)
+        val target = File(getDataFolder(), SNAPSHOT_FILE).toPath()
+        Files.createDirectories(target.parent)
+        val temp = Files.createTempFile(target.parent, ".$SNAPSHOT_FILE.", ".tmp")
+        try {
+            Files.write(temp, content.toByteArray(Charsets.UTF_8))
+            try {
+                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(temp)
+        }
     }
 }

@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.proxy
 
 import top.wcpe.beacon.agent.api.ServiceInstance
+import top.wcpe.beacon.agent.core.client.DiscoveryFetchResult
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -10,7 +11,7 @@ class ProxyServerDirectorySyncerTest {
     @Test
     fun `syncOnce 注入在线 Bukkit 子服`() {
         val directory = FakeDirectory()
-        val syncer = ProxyServerDirectorySyncer(directory) { listOf(instance("lobby-1", "10.0.0.7:25565")) }
+        val syncer = ProxyServerDirectorySyncer(directory) { success(instance("lobby-1", "10.0.0.7:25565")) }
 
         syncer.syncOnce()
 
@@ -19,32 +20,78 @@ class ProxyServerDirectorySyncerTest {
     }
 
     @Test
-    fun `syncOnce 跳过同名手工服务器`() {
+    fun `syncOnce 接管同名手工服务器`() {
         val directory = FakeDirectory(manual = mutableSetOf("lobby-1"))
-        val warnings = mutableListOf<String>()
+        val infos = mutableListOf<String>()
         val syncer =
-            ProxyServerDirectorySyncer(directory, warn = warnings::add) {
-                listOf(instance("lobby-1", "10.0.0.7:25565"))
+            ProxyServerDirectorySyncer(directory, info = infos::add) {
+                success(instance("lobby-1", "10.0.0.7:25565"))
             }
 
         syncer.syncOnce()
 
-        assertTrue(!directory.managed.contains("lobby-1"))
-        // 跳过同名手工服务器会告警；本测未配 home-zone 故另有一条「不设默认服」WARN，这里只校验前者。
-        assertTrue(warnings.any { it.contains("lobby-1") })
+        assertTrue(directory.managed.contains("lobby-1"))
+        assertEquals("10.0.0.7:25565", directory.addresses["lobby-1"])
+        assertTrue(infos.any { it.contains("接管") && it.contains("lobby-1") })
     }
 
     @Test
-    fun `syncOnce 移除已消失的受管服务器`() {
-        val current = mutableListOf(instance("lobby-1", "10.0.0.7:25565"))
+    fun `syncOnce 成功空列表会移除已消失的受管服务器`() {
+        var result: DiscoveryFetchResult<ServiceInstance> = success(instance("lobby-1", "10.0.0.7:25565"))
         val directory = FakeDirectory()
-        val syncer = ProxyServerDirectorySyncer(directory) { current.toList() }
+        val syncer = ProxyServerDirectorySyncer(directory) { result }
         syncer.syncOnce()
 
-        current.clear()
+        result = success()
         syncer.syncOnce()
 
         assertTrue(!directory.managed.contains("lobby-1"))
+        assertEquals(listOf("lobby-1"), directory.removed)
+    }
+
+    @Test
+    fun `syncOnce 发现失败会保留受管目录与默认服`() {
+        var result: DiscoveryFetchResult<ServiceInstance> =
+            success(instance("lobby-1", "10.0.0.7:25565", defaultEntry = true))
+        val directory = FakeDirectory()
+        val warnings = mutableListOf<String>()
+        val syncer =
+            ProxyServerDirectorySyncer(
+                directory = directory,
+                homeGroup = "area1",
+                homeZone = "zoneA",
+                warn = warnings::add,
+            ) { result }
+        syncer.syncOnce()
+        val upsertCalls = directory.upsertCalls
+        val defaultCalls = directory.setDefaultCalls
+
+        result = DiscoveryFetchResult.Failed("发现请求失败")
+        syncer.syncOnce()
+
+        assertEquals(setOf("lobby-1"), directory.managed)
+        assertEquals(upsertCalls, directory.upsertCalls)
+        assertTrue(directory.removed.isEmpty())
+        assertEquals(defaultCalls, directory.setDefaultCalls)
+        assertEquals("lobby-1", directory.capturedDefault)
+        assertTrue(warnings.single().contains("发现请求失败"))
+    }
+
+    @Test
+    fun `syncOnce 记录失败原因前会脱敏`() {
+        val warnings = mutableListOf<String>()
+        val syncer =
+            ProxyServerDirectorySyncer(FakeDirectory(), warn = warnings::add) {
+                DiscoveryFetchResult.Failed("token=plain-token Authorization: Bearer plain-authorization")
+            }
+
+        syncer.syncOnce()
+
+        val warning = warnings.single()
+        assertTrue(warning.contains("token=***"))
+        assertTrue(warning.contains("Authorization: Bearer ***"))
+        assertTrue(!warning.contains("plain-token"))
+        assertTrue(!warning.contains("plain-authorization"))
     }
 
     @Test
@@ -52,7 +99,7 @@ class ProxyServerDirectorySyncerTest {
         val directory = FakeDirectory()
         val syncer =
             ProxyServerDirectorySyncer(directory) {
-                listOf(
+                success(
                     instance("lobby-1", "10.0.0.7:25565", role = "bukkit", status = "online"),
                     instance("proxy-2", "10.0.0.8:25577", role = "bungee", status = "online"),
                     instance("lost-1", "10.0.0.9:25565", role = "bukkit", status = "lost"),
@@ -75,7 +122,7 @@ class ProxyServerDirectorySyncerTest {
                 homeZone = "zoneA",
                 warn = warnings::add,
             ) {
-                listOf(
+                success(
                     instance("lobby-1", "10.0.0.7:25565", defaultEntry = false),
                     instance("lobby-2", "10.0.0.8:25565", defaultEntry = true),
                 )
@@ -94,7 +141,7 @@ class ProxyServerDirectorySyncerTest {
         val warnings = mutableListOf<String>()
         val syncer =
             ProxyServerDirectorySyncer(directory, warn = warnings::add) {
-                listOf(
+                success(
                     instance("lobby-1", "10.0.0.7:25565", defaultEntry = false),
                     instance("lobby-2", "10.0.0.8:25565", defaultEntry = true),
                 )
@@ -120,7 +167,7 @@ class ProxyServerDirectorySyncerTest {
                 warn = warnings::add,
             ) {
                 // 在线 bukkit 命中 home-zone 但均未被标默认入口
-                listOf(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
+                success(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
             }
 
         syncer.syncOnce()
@@ -141,7 +188,7 @@ class ProxyServerDirectorySyncerTest {
                 homeZone = "zoneA",
                 warn = warnings::add,
             ) {
-                listOf(instance("lobby-1", "10.0.0.7:25565", status = "lost", defaultEntry = true))
+                success(instance("lobby-1", "10.0.0.7:25565", status = "lost", defaultEntry = true))
             }
 
         syncer.syncOnce()
@@ -157,7 +204,7 @@ class ProxyServerDirectorySyncerTest {
         val warnings = mutableListOf<String>()
         val syncer =
             ProxyServerDirectorySyncer(directory, warn = warnings::add) {
-                listOf(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
+                success(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
             }
 
         syncer.syncOnce()
@@ -173,7 +220,7 @@ class ProxyServerDirectorySyncerTest {
         val directory = FakeDirectory()
         val syncer =
             ProxyServerDirectorySyncer(directory, homeGroup = "area1", homeZone = "zoneA") {
-                listOf(instance("lobby-1", "10.0.0.7:25565", defaultEntry = true))
+                success(instance("lobby-1", "10.0.0.7:25565", defaultEntry = true))
             }
 
         syncer.syncOnce()
@@ -183,6 +230,9 @@ class ProxyServerDirectorySyncerTest {
         assertEquals(1, directory.setDefaultCalls)
         assertEquals("lobby-1", directory.capturedDefault)
     }
+
+    private fun success(vararg instances: ServiceInstance): DiscoveryFetchResult<ServiceInstance> =
+        DiscoveryFetchResult.Success(instances.toList())
 
     private fun instance(
         serverId: String,
@@ -199,6 +249,8 @@ class ProxyServerDirectorySyncerTest {
     ) : ProxyServerDirectory {
         val managed: MutableSet<String> = mutableSetOf()
         val addresses: MutableMap<String, String> = mutableMapOf()
+        val removed: MutableList<String> = mutableListOf()
+        var upsertCalls: Int = 0
         var capturedDefault: String? = null
         var setDefaultCalls: Int = 0
 
@@ -207,13 +259,16 @@ class ProxyServerDirectorySyncerTest {
         override fun isManaged(serverId: String): Boolean = managed.contains(serverId)
 
         override fun upsertManaged(instance: ServiceInstance): Boolean {
-            if (manual.contains(instance.serverId())) return false
+            upsertCalls++
+            // 与 Bungee 实现一致：同名手工服可被接管
+            manual.remove(instance.serverId())
             managed.add(instance.serverId())
             addresses[instance.serverId()] = instance.address()
             return true
         }
 
         override fun removeManaged(serverId: String) {
+            removed.add(serverId)
             managed.remove(serverId)
             addresses.remove(serverId)
         }

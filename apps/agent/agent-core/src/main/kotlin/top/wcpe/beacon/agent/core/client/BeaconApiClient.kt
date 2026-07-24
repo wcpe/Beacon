@@ -740,18 +740,29 @@ class BeaconApiClient(
     fun discover(
         filters: DiscoveryFilters,
         identity: AgentIdentity? = null,
-    ): List<Map<String, Any?>> {
+    ): List<Map<String, Any?>> =
+        when (val result = discoverResult(filters, identity)) {
+            is DiscoveryFetchResult.Success -> result.instances
+            is DiscoveryFetchResult.Failed -> emptyList()
+        }
+
+    /**
+     * 显式区分权威成功快照与发现失败，供需要 fail-static 的内部同步器消费。
+     * 旧 [discover] 仍把失败安全降级为空列表，保持公开 Discovery.query() 既有语义。
+     */
+    fun discoverResult(
+        filters: DiscoveryFilters,
+        identity: AgentIdentity? = null,
+    ): DiscoveryFetchResult<Map<String, Any?>> {
         val params = StringBuilder()
         appendParam(params, "namespace", filters.namespace)
         appendParam(params, "group", filters.group)
         appendParam(params, "zone", filters.zone)
         appendParam(params, "role", filters.role)
-        // 自定义元数据过滤：每个键拼为 tag.<key>=<value>，控制面按 metadata 键值匹配。
-        for ((k, v) in filters.tags) {
-            appendParam(params, "tag.$k", v)
+        for ((key, value) in filters.tags) {
+            appendParam(params, "tag.$key", value)
         }
         val url = "$base/beacon/v1/agent/discovery" + if (params.isEmpty()) "" else "?$params"
-
         val resp =
             exec(
                 HttpRequest(
@@ -762,12 +773,37 @@ class BeaconApiClient(
                     readTimeoutMs = settings.requestTimeoutMs,
                 ),
             )
-        return if (resp?.statusCode == 200) {
-            val obj = JsonTree.asObject(codec.decode(resp.body))
-            JsonTree.asList(obj["instances"]).map { JsonTree.asObject(it) }
-        } else {
-            emptyList()
+        return when {
+            resp == null -> DiscoveryFetchResult.Failed(DISCOVERY_REQUEST_FAILED)
+            resp.statusCode != 200 -> DiscoveryFetchResult.Failed("非预期状态码 ${resp.statusCode}")
+            else -> parseDiscoveryResponse(resp.body)
         }
+    }
+
+    private fun parseDiscoveryResponse(body: String): DiscoveryFetchResult<Map<String, Any?>> =
+        try {
+            parseDecodedDiscovery(codec.decode(body))
+        } catch (_: Exception) {
+            DiscoveryFetchResult.Failed(DISCOVERY_DECODE_FAILED)
+        }
+
+    private fun parseDecodedDiscovery(decoded: Any?): DiscoveryFetchResult<Map<String, Any?>> {
+        val response = strictJsonObject(decoded) ?: return DiscoveryFetchResult.Failed(DISCOVERY_STRUCTURE_INVALID)
+        if (!response.containsKey("instances")) return DiscoveryFetchResult.Failed(DISCOVERY_STRUCTURE_INVALID)
+        val rawInstances = response["instances"] as? List<*> ?: return DiscoveryFetchResult.Failed(DISCOVERY_STRUCTURE_INVALID)
+        val instances = ArrayList<Map<String, Any?>>(rawInstances.size)
+        for (rawInstance in rawInstances) {
+            val instance = strictJsonObject(rawInstance) ?: return DiscoveryFetchResult.Failed(DISCOVERY_STRUCTURE_INVALID)
+            instances.add(instance)
+        }
+        return DiscoveryFetchResult.Success(instances)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun strictJsonObject(value: Any?): Map<String, Any?>? {
+        val obj = value as? Map<*, *> ?: return null
+        if (obj.keys.any { it !is String }) return null
+        return obj as Map<String, Any?>
     }
 
     /**
@@ -1740,6 +1776,10 @@ class BeaconApiClient(
     private fun v2Kind(role: String): String = if (role == "bungee") "proxy" else "backend"
 
     companion object {
+        private const val DISCOVERY_REQUEST_FAILED = "发现请求失败"
+        private const val DISCOVERY_DECODE_FAILED = "发现响应解码失败"
+        private const val DISCOVERY_STRUCTURE_INVALID = "发现响应结构无效"
+
         /**
          * decide 决策读超时（毫秒，FR-148 §4.6 / §8 待定 13）：玩家链路不容久等，超时即由上层降级本地决策。
          * 工程默认值，非契约。

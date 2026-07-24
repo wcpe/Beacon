@@ -16,9 +16,10 @@ import top.wcpe.beacon.agent.adapters.OkHttpBlobStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
-import top.wcpe.beacon.agent.api.DiscoveryQuery
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.api.mapDiscoveryResult
+import top.wcpe.beacon.agent.core.client.DiscoveryFilters
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
 import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
@@ -26,11 +27,11 @@ import top.wcpe.beacon.agent.core.connection.ProxyConnectionTracker
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
+import top.wcpe.beacon.agent.core.proxy.DirectorySyncLoopGate
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * BungeeCord 代理侧 Beacon agent 插件主类（object + @Awake，不继承 Plugin 基类外的内容）。
@@ -106,8 +107,8 @@ object BeaconAgentBungee : Plugin() {
     /** 当前生命周期；null 表示因身份缺失未启动。 */
     private var lifecycle: AgentLifecycle? = null
 
-    /** Proxy 服务器目录同步循环开关；disable 时关闭，避免卸载后继续调度。 */
-    private val directorySyncRunning = AtomicBoolean(false)
+    /** Proxy 服务器目录同步递归链单飞代际门；disable 时失效当前代际。 */
+    private val directorySyncLoopGate = DirectorySyncLoopGate()
 
     /** BC 专属指标缓存（FR-144）；null 表示未装配。 */
     private var proxyMetricsCache: BungeeProxyMetricsCache? = null
@@ -207,16 +208,22 @@ object BeaconAgentBungee : Plugin() {
                     warn = { adapter.warn(it) },
                     info = { adapter.info(it) },
                 ) {
-                    assembled.beaconAgent.discovery().query(
-                        DiscoveryQuery.builder()
-                            .namespace(identity.namespace)
-                            .role("bukkit")
-                            .build(),
+                    mapDiscoveryResult(
+                        assembled.apiClient.discoverResult(
+                            DiscoveryFilters(
+                                namespace = identity.namespace,
+                                group = null,
+                                zone = null,
+                                role = "bukkit",
+                            ),
+                            identity = identity,
+                        ),
                     )
                 }
-            directorySyncRunning.set(true)
             assembled.lifecycle.onRegistered {
-                adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer) }
+                directorySyncLoopGate.start { generation ->
+                    adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer, generation) }
+                }
             }
 
             // 玩家位置名册引导（FR-26）：据下发 Redis 配置维护「玩家→所在子服」，供子服按玩家寻址解析。
@@ -281,21 +288,25 @@ object BeaconAgentBungee : Plugin() {
     private fun syncDirectoryLoop(
         adapter: BungeePlatformAdapter,
         syncer: ProxyServerDirectorySyncer,
+        generation: DirectorySyncLoopGate.Generation,
     ) {
-        if (!directorySyncRunning.get()) return
+        if (!directorySyncLoopGate.isCurrent(generation)) return
         try {
             syncer.syncOnce()
-        } catch (e: Exception) {
-            adapter.warn("同步 Beacon 子服目录失败：${e.message}")
+        } catch (_: Exception) {
+            adapter.warn("同步 Beacon 子服目录失败")
         }
+        if (!directorySyncLoopGate.isCurrent(generation)) return
         adapter.runAsyncDelayed(DIRECTORY_SYNC_INTERVAL_MS) {
-            syncDirectoryLoop(adapter, syncer)
+            if (directorySyncLoopGate.isCurrent(generation)) {
+                syncDirectoryLoop(adapter, syncer, generation)
+            }
         }
     }
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
-        directorySyncRunning.set(false)
+        directorySyncLoopGate.stop()
         BungeeRosterListener.bootstrap = null
         BungeeConnectionListener.tracker = null
         connectionReporter?.stop()

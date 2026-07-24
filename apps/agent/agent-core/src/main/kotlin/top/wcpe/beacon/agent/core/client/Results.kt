@@ -44,6 +44,15 @@ data class ReportedChannelMd5(
     val topology: String = "",
 )
 
+/** 服务发现拉取结果：成功空列表是权威快照，失败则调用方必须保留既有状态。 */
+sealed class DiscoveryFetchResult<out T> {
+    /** 200：成功取得权威实例快照，列表可为空。 */
+    data class Success<T>(val instances: List<T>) : DiscoveryFetchResult<T>()
+
+    /** 连接级失败或非 200：不得把失败误当权威空快照。 */
+    data class Failed(val reason: String) : DiscoveryFetchResult<Nothing>()
+}
+
 /** 长轮询有效配置的结果。 */
 sealed class PollResult {
     /** 200：有变更，携带新有效配置。 */

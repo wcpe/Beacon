@@ -11,8 +11,9 @@ plugins {
 java {
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
-    // 一并产出 sources jar，便于下游 IDE 跳转。
+    // Central Portal 要求同时提供源码与文档产物。
     withSourcesJar()
+    withJavadocJar()
 }
 
 dependencies {
@@ -37,6 +38,29 @@ publishing {
             groupId = "top.wcpe.beacon"
             artifactId = "beacon-agent-kit"
             from(components["java"])
+            pom {
+                name.set("Beacon Agent Kit")
+                description.set("Beacon 业务插件便捷接入层")
+                url.set("https://github.com/wcpe/Beacon")
+                licenses {
+                    license {
+                        name.set("MIT License")
+                        url.set("https://opensource.org/license/mit")
+                        distribution.set("repo")
+                    }
+                }
+                developers {
+                    developer {
+                        id.set("wcpe")
+                        name.set("wcpe")
+                    }
+                }
+                scm {
+                    connection.set("scm:git:https://github.com/wcpe/Beacon.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/wcpe/Beacon.git")
+                    url.set("https://github.com/wcpe/Beacon")
+                }
+            }
         }
     }
 }

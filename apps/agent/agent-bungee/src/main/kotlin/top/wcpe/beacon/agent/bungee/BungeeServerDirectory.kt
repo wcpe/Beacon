@@ -16,17 +16,28 @@ class BungeeServerDirectory : ProxyServerDirectory {
     override fun isManaged(serverId: String): Boolean = managed.contains(serverId)
 
     override fun upsertManaged(instance: ServiceInstance): Boolean {
-        if (hasServer(instance.serverId()) && !isManaged(instance.serverId())) return false
+        // 同名手工服也允许接管：覆盖 ServerInfo 地址并记入 managed（启动占位项可被 discovery 接管）
         val address = parseAddress(instance.address()) ?: return false
+        val id = instance.serverId()
+        // 已受管且地址未变：幂等，不重写、不刷 INFO
+        if (isManaged(id)) {
+            val existing = ProxyServer.getInstance().servers[id]?.socketAddress
+            if (existing is InetSocketAddress &&
+                existing.hostString == address.hostString &&
+                existing.port == address.port
+            ) {
+                return false
+            }
+        }
         val info =
             ProxyServer.getInstance().constructServerInfo(
-                instance.serverId(),
+                id,
                 address,
-                "Beacon 管理子服 ${instance.serverId()}",
+                "Beacon 管理子服 $id",
                 false,
             )
-        ProxyServer.getInstance().servers[instance.serverId()] = info
-        managed.add(instance.serverId())
+        ProxyServer.getInstance().servers[id] = info
+        managed.add(id)
         return true
     }
 

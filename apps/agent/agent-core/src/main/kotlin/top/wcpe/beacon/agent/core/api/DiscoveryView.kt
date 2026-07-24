@@ -6,6 +6,7 @@ import top.wcpe.beacon.agent.api.ListenerHandle
 import top.wcpe.beacon.agent.api.ServiceInstance
 import top.wcpe.beacon.agent.api.TopologyListener
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.DiscoveryFetchResult
 import top.wcpe.beacon.agent.core.client.DiscoveryFilters
 import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
@@ -90,21 +91,28 @@ class DiscoveryView(
         // 回退态返回的不可用句柄：remove 安全可重复调用、无副作用。
         private val UNAVAILABLE_HANDLE = ListenerHandle { /* 无监听器注册，注销无操作 */ }
     }
+}
 
-    private fun toInstance(obj: Map<String, Any?>): ServiceInstance {
-        return ServiceInstance(
-            JsonTree.strOr(obj, "serverId", ""),
-            JsonTree.strOr(obj, "role", ""),
-            JsonTree.strOr(obj, "group", ""),
-            JsonTree.strOr(obj, "zone", ""),
-            JsonTree.strOr(obj, "address", ""),
-            JsonTree.strOr(obj, "version", ""),
-            JsonTree.strOr(obj, "status", ""),
-            JsonTree.intOr(obj, "playerCount", 0),
-            JsonTree.intOr(obj, "capacity", 0),
-            JsonTree.intOr(obj, "weight", 0),
-            // 小区默认入口标志（FR-48）：旧控制面缺键解析为 false，向后兼容。
-            JsonTree.boolOr(obj, "zoneDefaultEntry", false),
-        )
+/** 把显式发现结果映射为 agent-api 值对象，保留成功/失败边界供目录同步器判断。 */
+fun mapDiscoveryResult(result: DiscoveryFetchResult<Map<String, Any?>>): DiscoveryFetchResult<ServiceInstance> =
+    when (result) {
+        is DiscoveryFetchResult.Success -> DiscoveryFetchResult.Success(result.instances.map(::toInstance))
+        is DiscoveryFetchResult.Failed -> result
     }
+
+private fun toInstance(obj: Map<String, Any?>): ServiceInstance {
+    return ServiceInstance(
+        JsonTree.strOr(obj, "serverId", ""),
+        JsonTree.strOr(obj, "role", ""),
+        JsonTree.strOr(obj, "group", ""),
+        JsonTree.strOr(obj, "zone", ""),
+        JsonTree.strOr(obj, "address", ""),
+        JsonTree.strOr(obj, "version", ""),
+        JsonTree.strOr(obj, "status", ""),
+        JsonTree.intOr(obj, "playerCount", 0),
+        JsonTree.intOr(obj, "capacity", 0),
+        JsonTree.intOr(obj, "weight", 0),
+        // 小区默认入口标志（FR-48）：旧控制面缺键解析为 false，向后兼容。
+        JsonTree.boolOr(obj, "zoneDefaultEntry", false),
+    )
 }

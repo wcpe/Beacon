@@ -106,6 +106,22 @@ class DiscoveryViewTest {
     }
 
     @Test
+    fun `query 发现失败仍兼容返回空列表`() {
+        val transport =
+            object : HttpTransport {
+                override fun execute(request: HttpRequest): HttpResponse {
+                    error("连接失败 token=plain-token")
+                }
+            }
+        val apiClient = BeaconApiClient(transport, FixedCodec(), settings(), NoopStreamTransport())
+        val view = DiscoveryView(apiClient, TopologyWatchHub(), RosterDirectoryHolder())
+
+        val instances = view.query(DiscoveryQuery.builder().namespace("prod").build())
+
+        assertTrue(instances.isEmpty())
+    }
+
+    @Test
     fun `watch 注入流时回调 hub 注销后不再回调`() {
         val hub = TopologyWatchHub()
         val apiClient = BeaconApiClient(CapturingTransport(), FixedCodec(), settings(), NoopStreamTransport())

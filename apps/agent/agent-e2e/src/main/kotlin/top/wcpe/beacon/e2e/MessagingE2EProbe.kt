@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  - 广播 publish/subscribe（FR-180）：控制面按在线服集合 fan-out（含发送者自身）→ 本机 subscribe 收到自身广播 →
  *    回执 delivered，一条广播只落一行聚合 msg_trace（target_kind=broadcast）。
  *
- * 由环境变量 `BEACON_E2E_MESSAGING` 门控（非空才启用；随消息模块开关 messaging.enabled 一并由 runServer 注入）。
+ * 由环境变量 `BEACON_E2E_MESSAGING` 门控（非空才启用；随消息模块开关 messaging.enabled 一并由 servePaper 注入）。
  * 全程 async 线程，绝不上 MC 主线程；send/call 前置判 isAvailable 优雅降级。
  *
  * 时序稳健性：agent 注册成功即 isAvailable=true，但此刻身份可能尚未 approve，上行会被控制面 403 丢弃。
