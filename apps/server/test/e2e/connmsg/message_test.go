@@ -14,6 +14,7 @@
 package connmsg_e2e
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ import (
 
 const (
 	msgNamespace = "p5msg"
-	// 与 runServer 默认 serverId 对齐。
+	// 与 servePaper 默认 serverId 对齐。
 	msgServerID = "e2e-bukkit-1"
 	// MC 监听端口：避让 25565/25566/25568/25569/25570 已占用，本用例用 25571。
 	msgMCPort = "25571"
@@ -81,7 +82,7 @@ func TestMessageWireE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	defer cp.Stop()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(base, adminUser, adminPass)
 	if err != nil {
@@ -91,48 +92,46 @@ func TestMessageWireE2E(t *testing.T) {
 	t.Logf("已建 v2 namespace id=%d", ns.ID)
 
 	t.Log("== 起 Paper 子服 + 真 BeaconAgent（messaging.enabled=true + 消息探针）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+	paperEnv := harness.AgentGradleEnv(base, ns.AccessToken, msgNamespace, msgServerID, "127.0.0.1:"+msgMCPort)
+	paperEnv["BEACON_AGENT_MESSAGING_ENABLED"] = "true"
+	paperEnv["BEACON_E2E_MESSAGING"] = "1"
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + msgMCPort,
-		"-Pe2eBeaconEndpoint=" + base,
-		"-Pe2eBootstrapToken=" + ns.AccessToken,
-		"-Pe2eNamespace=" + msgNamespace,
-		"-Pe2eServerId=" + msgServerID,
-		"-Pe2eMessaging",
-	}, msgLogPrefixMC)
+	}, paperEnv, msgLogPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
-	defer paper.Stop()
+	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等真 agent v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, msgServerID, msgPendingWait)
+	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, msgServerID, msgPendingWait, paper)
 	t.Logf("观测到 pending 身份 identityId=%s", identityID)
 
 	t.Log("== approve 使身份 active 并等 online ==")
-	approveIdentity(t, base, adminToken, identityID)
-	waitIdentityStatus(t, base, adminToken, ns.ID, msgServerID, "active", msgPendingWait)
-	if err := harness.WaitInstanceOnline(base, adminToken, msgNamespace, msgServerID, msgOnlineWait); err != nil {
+	approveIdentity(t, base, adminToken, identityID, paper)
+	waitIdentityStatus(t, base, adminToken, ns.ID, msgServerID, "active", msgPendingWait, paper)
+	if err := harness.WaitInstanceOnline(base, adminToken, msgNamespace, msgServerID, msgOnlineWait, paper); err != nil {
 		t.Fatalf("active 后应衔接 legacy 数据面 online（见 .tmp/%s.out.log）：%v", msgLogPrefixMC, err)
 	}
 
-	obsPath := filepath.Join(repoRoot, ".tmp", "e2e-run", "bukkit", "plugins", "BeaconE2E", "e2e-messaging.log")
+	obsPath := filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconE2E", "e2e-messaging.log")
 
-	t.Run("directed_delivered", func(t *testing.T) { runDirectedDelivered(t, obsPath, sqliteDB) })
-	t.Run("rpc_roundtrip", func(t *testing.T) { runRPCRoundtrip(t, obsPath, sqliteDB) })
-	t.Run("player_not_online", func(t *testing.T) { runPlayerNotOnline(t, obsPath, sqliteDB) })
-	t.Run("broadcast_delivered", func(t *testing.T) { runBroadcastDelivered(t, obsPath, sqliteDB) })
+	t.Run("directed_delivered", func(t *testing.T) { runDirectedDelivered(t, obsPath, sqliteDB, paper) })
+	t.Run("rpc_roundtrip", func(t *testing.T) { runRPCRoundtrip(t, obsPath, sqliteDB, paper) })
+	t.Run("player_not_online", func(t *testing.T) { runPlayerNotOnline(t, obsPath, sqliteDB, paper) })
+	t.Run("broadcast_delivered", func(t *testing.T) { runBroadcastDelivered(t, obsPath, sqliteDB, paper) })
 }
 
 // runDirectedDelivered 断言定向 send 自寻址端到端 delivered：本机 on 收到 + msg_trace/msg_payload 落库。
-func runDirectedDelivered(t *testing.T, obsPath, sqliteDB string) {
+func runDirectedDelivered(t *testing.T, obsPath, sqliteDB string, guard *harness.GradleProc) {
 	// ① 探针本机 on 处理器已收到自寻址的定向消息（wire 收发闭环 API 侧证据）。
-	obs := waitMarkSource(t, obsPath, "MSG_RECEIVED", msgObsWait, "本机 on 收到自寻址定向消息")
+	obs := waitMarkSource(t, obsPath, "MSG_RECEIVED", msgObsWait, "本机 on 收到自寻址定向消息", guard)
 	t.Logf("PASS on 收到定向消息：%s", obs.rest)
 
 	// ② 直读 msg_trace 当日表：定向（target_kind=server）终态 delivered、单跳、链路完整、payload 落库。
 	db := openE2EDB(t, sqliteDB)
 	var row msgTraceRow
-	ok := waitUntil(msgPersistWait, func() bool {
+	err := waitUntil(msgPersistWait, guard, func(context.Context) bool {
 		rows := queryTraces(db, typeMsg, "server")
 		for _, r := range rows {
 			if r.Status == model.MsgStatusDelivered {
@@ -142,8 +141,8 @@ func runDirectedDelivered(t *testing.T, obsPath, sqliteDB string) {
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=server status=delivered 的行", msgPersistWait, typeMsg)
+	if err != nil {
+		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=server status=delivered 的行：%v", msgPersistWait, typeMsg, err)
 	}
 	if row.SourceServerID != msgServerID || row.ResolvedServerID != msgServerID {
 		t.Fatalf("定向自寻址应 source=resolved=%s，实际 source=%s resolved=%s", msgServerID, row.SourceServerID, row.ResolvedServerID)
@@ -166,13 +165,13 @@ func runDirectedDelivered(t *testing.T, obsPath, sqliteDB string) {
 }
 
 // runRPCRoundtrip 断言 RPC call 自寻址往返：Future 完成 + msg_trace 请求/响应两行经 correlationId 关联、均 delivered。
-func runRPCRoundtrip(t *testing.T, obsPath, sqliteDB string) {
-	obs := waitMarkSource(t, obsPath, "RPC_REPLY", msgObsWait, "RPC call Future 往返完成")
+func runRPCRoundtrip(t *testing.T, obsPath, sqliteDB string, guard *harness.GradleProc) {
+	obs := waitMarkSource(t, obsPath, "RPC_REPLY", msgObsWait, "RPC call Future 往返完成", guard)
 	t.Logf("PASS RPC Future 完成：%s", obs.rest)
 
 	db := openE2EDB(t, sqliteDB)
 	var request, response msgTraceRow
-	ok := waitUntil(msgPersistWait, func() bool {
+	err := waitUntil(msgPersistWait, guard, func(context.Context) bool {
 		rows := queryTraces(db, typeRPC, "")
 		var req, resp msgTraceRow
 		var haveReq, haveResp bool
@@ -192,8 +191,8 @@ func runRPCRoundtrip(t *testing.T, obsPath, sqliteDB string) {
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("msg_trace 未在 %s 内出现 RPC 请求(自引用)+响应(回填请求 messageId) 两行且均 delivered（type=%s）", msgPersistWait, typeRPC)
+	if err != nil {
+		t.Fatalf("msg_trace 未在 %s 内出现 RPC 请求(自引用)+响应(回填请求 messageId) 两行且均 delivered（type=%s）：%v", msgPersistWait, typeRPC, err)
 	}
 	if request.HopCount != 1 || response.HopCount != 1 {
 		t.Fatalf("RPC 两条均应单跳 hop_count=1，实际 请求=%d 响应=%d", request.HopCount, response.HopCount)
@@ -203,13 +202,13 @@ func runRPCRoundtrip(t *testing.T, obsPath, sqliteDB string) {
 }
 
 // runPlayerNotOnline 断言玩家寻址落空：随机 UUID 名册无此人 → msg_trace failed(player_not_online)。
-func runPlayerNotOnline(t *testing.T, obsPath, sqliteDB string) {
-	obs := waitMarkSource(t, obsPath, "PLAYER_MISS_SENT", msgObsWait, "玩家寻址落空已发送")
+func runPlayerNotOnline(t *testing.T, obsPath, sqliteDB string, guard *harness.GradleProc) {
+	obs := waitMarkSource(t, obsPath, "PLAYER_MISS_SENT", msgObsWait, "玩家寻址落空已发送", guard)
 	t.Logf("PASS 玩家寻址落空已发送：%s", obs.rest)
 
 	db := openE2EDB(t, sqliteDB)
 	var row msgTraceRow
-	ok := waitUntil(msgPersistWait, func() bool {
+	err := waitUntil(msgPersistWait, guard, func(context.Context) bool {
 		rows := queryTraces(db, typeMiss, "player")
 		for _, r := range rows {
 			if r.Status == model.MsgStatusFailed {
@@ -219,8 +218,8 @@ func runPlayerNotOnline(t *testing.T, obsPath, sqliteDB string) {
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=player status=failed 的行", msgPersistWait, typeMiss)
+	if err != nil {
+		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=player status=failed 的行：%v", msgPersistWait, typeMiss, err)
 	}
 	if row.FailReason != model.MsgFailPlayerNotOnline {
 		t.Fatalf("玩家寻址落空 fail_reason 应为 %q，实际 %q", model.MsgFailPlayerNotOnline, row.FailReason)
@@ -231,15 +230,15 @@ func runPlayerNotOnline(t *testing.T, obsPath, sqliteDB string) {
 // runBroadcastDelivered 断言广播 publish 含自身语义端到端 delivered（FR-180 / ADR-0065）：
 // 本机 subscribe 收到经控制面 fan-out 回投的自身广播 + msg_trace 落「一行」聚合广播行
 // （target_kind=broadcast、无 zone、单机在线集合仅本服 → fanout_total=1/delivered_count=1）。
-func runBroadcastDelivered(t *testing.T, obsPath, sqliteDB string) {
+func runBroadcastDelivered(t *testing.T, obsPath, sqliteDB string, guard *harness.GradleProc) {
 	// ① 探针本机 subscribe 处理器已收到自身广播（广播收发闭环 + 含自身语义 API 侧证据）。
-	obs := waitMarkSource(t, obsPath, "BCAST_RECEIVED", msgObsWait, "本机 subscribe 收到自身广播")
+	obs := waitMarkSource(t, obsPath, "BCAST_RECEIVED", msgObsWait, "本机 subscribe 收到自身广播", guard)
 	t.Logf("PASS subscribe 收到广播：%s", obs.rest)
 
 	// ② 直读 msg_trace 当日表：广播（target_kind=broadcast）终态 delivered 的聚合行。
 	db := openE2EDB(t, sqliteDB)
 	var row msgTraceRow
-	ok := waitUntil(msgPersistWait, func() bool {
+	err := waitUntil(msgPersistWait, guard, func(context.Context) bool {
 		for _, r := range queryTraces(db, typeBcast, "broadcast") {
 			if r.Status == model.MsgStatusDelivered {
 				row = r
@@ -248,8 +247,8 @@ func runBroadcastDelivered(t *testing.T, obsPath, sqliteDB string) {
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=broadcast status=delivered 的行", msgPersistWait, typeBcast)
+	if err != nil {
+		t.Fatalf("msg_trace 未在 %s 内出现 msg_type=%s target_kind=broadcast status=delivered 的行：%v", msgPersistWait, typeBcast, err)
 	}
 
 	if row.SourceServerID != msgServerID {

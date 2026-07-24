@@ -1,6 +1,6 @@
 //go:build e2e
 
-// FR-145 连接明细采集 wire 端到端：真 Waterfall + BeaconAgentProxy(role=bungee) 上，连接采集探针直接驱动
+// FR-145 连接明细采集 wire 端到端：真 BungeeCord + BeaconAgentProxy(role=bungee) 上，连接采集探针直接驱动
 // agent 已装配的真采集入口 BungeeConnectionListener.tracker 喂 open/换服/close，走真有界缓冲 →
 // 真 ConnectionReportCoordinator → 真 BeaconApiClient.reportConnectionsBatch → 真控制面 /connections/batch，
 // 端到端验证连接采集的 wire 与 conn_detail 会话行落库（open 插入、close 更新同行、时长/断因/首末后端/换服数正确）。
@@ -8,11 +8,12 @@
 // 除「真玩家登入触发 BC 事件」这一段（harness 无真玩家，留真机）外，wire 与落库全由真实代码路径覆盖。
 // 队列满 429 / 未确认 403 / 孤儿 open 经新 bootId 补 close 见文末「留真机 / 已由单测集成覆盖」说明。
 //
-// 编排相位：build → namespace → agent(真 Waterfall，role=bungee + 连接采集探针) → approve → online →
+// 编排相位：build → namespace → agent(真 BungeeCord，role=bungee + 连接采集探针) → approve → online →
 // 等探针注入 + 直读 conn_detail 日表断言 open→closed。
 package connmsg_e2e
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -26,11 +27,11 @@ import (
 
 const (
 	connNamespace = "p5conn"
-	// 与 runBungee 默认 serverId 对齐。
+	// 与 serveProxy 默认 serverId 对齐。
 	connServerID = "e2e-bungee-1"
 
 	connLogPrefixCP = "beacon-connmsg-conn"
-	connLogPrefixMC = "waterfall-connmsg-conn"
+	connLogPrefixMC = "bungeecord-connmsg-conn"
 	connSQLiteDB    = "beacon-e2e-connmsg-conn.db"
 
 	// 与 ConnectionInjectE2EProbe 中常量一致（Go 侧按此 player_uuid 查会话行）。
@@ -76,7 +77,7 @@ func TestConnectionWireE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	defer cp.Stop()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(base, adminUser, adminPass)
 	if err != nil {
@@ -85,40 +86,36 @@ func TestConnectionWireE2E(t *testing.T) {
 	ns := createNamespace(t, base, adminToken, connNamespace, "FR-145 连接采集 wire e2e")
 	t.Logf("已建 v2 namespace id=%d", ns.ID)
 
-	t.Log("== 起 Waterfall 代理 + 真 BeaconAgentProxy（role=bungee + 连接采集探针）==")
-	bungee, err := harness.StartGradleTask(repoRoot, ":agent-e2e-bungee:runBungee", []string{
-		"-Pe2eBeaconEndpoint=" + base,
-		"-Pe2eBootstrapToken=" + ns.AccessToken,
-		"-Pe2eNamespace=" + connNamespace,
-		"-Pe2eServerId=" + connServerID,
-		"-Pe2eConnInject",
-	}, connLogPrefixMC)
+	t.Log("== 起 BungeeCord 代理 + 真 BeaconAgentProxy（role=bungee + 连接采集探针）==")
+	proxyEnv := harness.AgentGradleEnv(base, ns.AccessToken, connNamespace, connServerID, "127.0.0.1:25577")
+	proxyEnv["BEACON_E2E_CONNINJECT"] = "1"
+	bungee, err := harness.StartGradleTask(repoRoot, ":agent-e2e:serveProxy", nil, proxyEnv, connLogPrefixMC)
 	if err != nil {
-		t.Fatalf("起 Waterfall 失败：%v", err)
+		t.Fatalf("起 BungeeCord 失败：%v", err)
 	}
-	defer bungee.Stop()
+	harness.CleanupGradle(t, bungee)
 
 	t.Log("== 等真 agent(proxy) v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, connServerID, connPendingWait)
+	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, connServerID, connPendingWait, bungee)
 	t.Logf("观测到 pending 身份 identityId=%s", identityID)
 
 	t.Log("== approve 使身份 active 并等 online ==")
-	approveIdentity(t, base, adminToken, identityID)
-	waitIdentityStatus(t, base, adminToken, ns.ID, connServerID, "active", connPendingWait)
-	if err := harness.WaitInstanceOnline(base, adminToken, connNamespace, connServerID, connOnlineWait); err != nil {
+	approveIdentity(t, base, adminToken, identityID, bungee)
+	waitIdentityStatus(t, base, adminToken, ns.ID, connServerID, "active", connPendingWait, bungee)
+	if err := harness.WaitInstanceOnline(base, adminToken, connNamespace, connServerID, connOnlineWait, bungee); err != nil {
 		t.Fatalf("active 后代理应 online（见 .tmp/%s.out.log）：%v", connLogPrefixMC, err)
 	}
 
-	obsPath := filepath.Join(repoRoot, ".tmp", "e2e-run", "bungee", "plugins", "BeaconE2EProxy", "e2e-conninject.log")
+	obsPath := filepath.Join(harness.ProxyRunDir(repoRoot), "plugins", "BeaconE2EProxy", "e2e-conninject.log")
 
 	// ① 探针注入活性：真采集入口就绪并喂了 open。
-	obs := waitMarkSource(t, obsPath, "INJECTED_OPEN", connInjectWait, "连接采集探针注入 open 事件")
+	obs := waitMarkSource(t, obsPath, "INJECTED_OPEN", connInjectWait, "连接采集探针注入 open 事件", bungee)
 	t.Logf("PASS 探针注入 open：%s", obs.rest)
 
 	// ② 直读 conn_detail 当日表：会话行最终 closed，时长/断因/首末后端/换服数正确、归属该 proxy。
 	db := openE2EDB(t, sqliteDB)
 	var row connDetailRow
-	ok := waitUntil(connPersistWait, func() bool {
+	err = waitUntil(connPersistWait, bungee, func(context.Context) bool {
 		r, found := queryConnByPlayer(db, connPlayerUUID)
 		if found && r.Status == model.ConnStatusClosed {
 			row = r
@@ -126,8 +123,8 @@ func TestConnectionWireE2E(t *testing.T) {
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("conn_detail 未在 %s 内出现 player_uuid=%s 的 closed 会话行", connPersistWait, connPlayerUUID)
+	if err != nil {
+		t.Fatalf("conn_detail 未在 %s 内出现 player_uuid=%s 的 closed 会话行：%v", connPersistWait, connPlayerUUID, err)
 	}
 	if row.ProxyServerID != connServerID {
 		t.Fatalf("会话行归属 proxy 应为 %s，实际 %s", connServerID, row.ProxyServerID)

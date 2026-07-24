@@ -20,6 +20,7 @@ package schedagent_e2e
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -30,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -42,12 +43,12 @@ const (
 	adminUser = "admin"
 	// v2 namespace 名。
 	namespace = "p4schedagent"
-	// 与 runServer 默认 serverId 对齐。
+	// 与 servePaper 默认 serverId 对齐。
 	serverID = "e2e-bukkit-1"
 	// MC 监听端口：避让 25565(p1v2)/25566(metrics)/25568(metricsv2)/25569(schedhealth)，本用例用 25570。
 	mcPort = "25570"
 
-	// 区服权威结构夹具（agent 探针以 zoneName 为决策入参，经 -Pe2eSchedZone 注入其环境）。
+	// 区服权威结构夹具（agent 探针以 zoneName 为决策入参，经 BEACON_E2E_SCHED_ZONE 注入其环境）。
 	clusterName = "bc-schedagent"
 	regionName  = "r-schedagent"
 	zoneName    = "z-schedagent"
@@ -117,12 +118,7 @@ func TestSchedAgentFailStaticE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	cpStopped := false
-	defer func() {
-		if !cpStopped && cp != nil {
-			cp.Stop()
-		}
-	}()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(base, adminUser, adminPass)
 	if err != nil {
@@ -131,51 +127,54 @@ func TestSchedAgentFailStaticE2E(t *testing.T) {
 	ns := createNamespace(t, base, adminToken)
 	t.Logf("已建 v2 namespace id=%d", ns.ID)
 
-	t.Log("== 起 Paper 子服 + 真 BeaconAgent（注入目标小区 -Pe2eSchedZone）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+	t.Log("== 起 Paper 子服 + 真 BeaconAgent（注入目标小区）==")
+	paperEnv := harness.AgentGradleEnv(base, ns.AccessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	paperEnv["BEACON_E2E_SCHED_ZONE"] = zoneName
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + mcPort,
-		"-Pe2eBeaconEndpoint=" + base,
-		"-Pe2eBootstrapToken=" + ns.AccessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + serverID,
-		"-Pe2eSchedZone=" + zoneName,
-	}, logPrefixMC)
+	}, paperEnv, logPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
-	defer paper.Stop()
+	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等真 agent v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, pendingWait)
+	identityID, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "pending", pendingWait, paper)
+	if err != nil {
+		t.Fatalf("等待 pending 身份失败：%v", err)
+	}
 	t.Logf("观测到 pending 身份 identityId=%s", identityID)
 
 	t.Log("== approve 使身份 active 并等 online ==")
-	approveIdentity(t, base, adminToken, identityID)
-	waitIdentityStatus(t, base, adminToken, ns.ID, "active", pendingWait)
-	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait); err != nil {
+	approveIdentity(t, base, adminToken, identityID, paper)
+	if _, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "active", pendingWait, paper); err != nil {
+		t.Fatalf("等待 active 身份失败：%v", err)
+	}
+	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait, paper); err != nil {
 		t.Fatalf("active 后应衔接 legacy 数据面 online（见 .tmp/%s.out.log）：%v", logPrefixMC, err)
 	}
 
 	t.Log("== 建区服结构并首次分配（backend 落区后才 schedulable）==")
-	setupZoneAndAssign(t, base, adminToken, ns.ID)
-	waitSchedulable(t, base, adminToken)
+	setupZoneAndAssign(t, base, adminToken, ns.ID, paper)
+	waitSchedulable(t, base, adminToken, paper)
 
 	obsPath := obsFile(repoRoot)
 
 	t.Log("== 正常路径：等真门面观测到 source=CONTROL_PLANE 且选中该服、候选快照就绪 ==")
-	waitObservation(t, obsPath, 0, cpObsWait, func(o observation) bool {
+	waitObservation(t, obsPath, 0, cpObsWait, paper, func(o observation) bool {
 		return o.source == "CONTROL_PLANE" && o.chosen == serverID && o.candidates >= 1
 	}, "CONTROL_PLANE 选中该服且候选快照就绪")
-	assertDecisionInDB(t, sqliteDB, model.SchedSourceControlPlane, persistWait)
+	assertDecisionInDB(t, sqliteDB, model.SchedSourceControlPlane, persistWait, paper)
 	t.Log("PASS 正常：真门面 acquireCandidate 走控制面在线决策、选中该服、决策落库 source=control_plane")
 
 	// 记录杀 CP 前的观测行数，之后只认更新的观测（确保是杀 CP 之后的降级证据）。
 	beforeKill := len(readObservations(obsPath))
 
 	t.Log("== fail-static：杀控制面，验真门面仍经本地快照返回候选（LOCAL_FALLBACK）、不阻断、无未捕获异常 ==")
-	cp.Stop()
-	cpStopped = true
-	failIdx := waitObservation(t, obsPath, beforeKill, failStaticWait, func(o observation) bool {
+	if err := cp.StopE(); err != nil {
+		t.Fatalf("fail-static 前停止控制面失败：%v", err)
+	}
+	failIdx := waitObservation(t, obsPath, beforeKill, failStaticWait, paper, func(o observation) bool {
 		return o.source == "LOCAL_FALLBACK" && o.chosen == serverID
 	}, "杀 CP 后 LOCAL_FALLBACK 仍选中该服")
 	// 杀 CP 后不得出现门面未捕获异常观测（fail-static 契约）。
@@ -190,12 +189,12 @@ func TestSchedAgentFailStaticE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("重启控制面失败：%v", err)
 	}
-	defer cp2.Stop()
+	harness.CleanupControlPlane(t, cp2)
 
-	waitObservation(t, obsPath, beforeRecover, recoverWait, func(o observation) bool {
+	waitObservation(t, obsPath, beforeRecover, recoverWait, paper, func(o observation) bool {
 		return o.source == "CONTROL_PLANE" && o.chosen == serverID
 	}, "恢复后自动回 CONTROL_PLANE")
-	assertDecisionInDB(t, sqliteDB, model.SchedSourceLocalFallback, recoverWait)
+	assertDecisionInDB(t, sqliteDB, model.SchedSourceLocalFallback, recoverWait, paper)
 	t.Logf("PASS 恢复：agent 自动回 CONTROL_PLANE；降级期本地决策经 report-local 补报入库 source=local_fallback")
 }
 
@@ -210,40 +209,14 @@ type observation struct {
 	raw        string
 }
 
-// obsFile 返回 BeaconE2E 调度探针观测文件路径：兼容 runDir 落在 <repo>/.tmp 或 <repo>/apps/.tmp 两种解析。
+// obsFile 返回 mc-testkit Paper 运行目录中的调度探针观测文件。
 func obsFile(repoRoot string) string {
-	candidates := []string{
-		filepath.Join(repoRoot, ".tmp", "e2e-run", "bukkit", "plugins", "BeaconE2E", "e2e-scheduling.log"),
-		filepath.Join(repoRoot, "apps", ".tmp", "e2e-run", "bukkit", "plugins", "BeaconE2E", "e2e-scheduling.log"),
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-	return candidates[0]
+	return filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconE2E", "e2e-scheduling.log")
 }
 
-// readObservations 读观测文件全部行（文件不存在返回空）；再次尝试另一候选路径以兼容 runDir 差异。
+// readObservations 读取观测文件全部行，文件不存在时返回空。
 func readObservations(path string) []observation {
-	obs := parseObservations(path)
-	if len(obs) > 0 {
-		return obs
-	}
-	// 首选路径尚无内容时，探测另一候选目录。
-	alt := altObsPath(path)
-	if alt != "" {
-		return parseObservations(alt)
-	}
-	return obs
-}
-
-// altObsPath 返回另一候选观测路径（.tmp ↔ apps/.tmp 切换）。
-func altObsPath(path string) string {
-	if strings.Contains(path, filepath.Join("apps", ".tmp")) {
-		return strings.Replace(path, filepath.Join("apps", ".tmp"), ".tmp", 1)
-	}
-	return strings.Replace(path, filepath.Join(string(filepath.Separator), ".tmp"), filepath.Join(string(filepath.Separator), "apps", ".tmp"), 1)
+	return parseObservations(path)
 }
 
 // parseObservations 按行解析观测文件（每行 5 段以 | 分隔）。
@@ -287,11 +260,11 @@ func extractCandidates(raw string) int {
 }
 
 // waitObservation 轮询观测文件，直到「索引 ≥ fromIdx」的某行满足 match，返回其行索引（1 基）。
-func waitObservation(t *testing.T, path string, fromIdx int, timeout time.Duration, match func(observation) bool, desc string) int {
+func waitObservation(t *testing.T, path string, fromIdx int, timeout time.Duration, guard *harness.GradleProc, match func(observation) bool, desc string) int {
 	t.Helper()
 	var last []observation
 	hitIdx := 0
-	ok := waitUntil(timeout, func() bool {
+	err := waitUntil(timeout, guard, func(context.Context) bool {
 		last = readObservations(path)
 		for i := fromIdx; i < len(last); i++ {
 			if match(last[i]) {
@@ -301,8 +274,8 @@ func waitObservation(t *testing.T, path string, fromIdx int, timeout time.Durati
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("等待观测「%s」超时（%s）；观测文件=%s，当前 %d 行（fromIdx=%d）", desc, timeout, path, len(last), fromIdx)
+	if err != nil {
+		t.Fatalf("等待观测「%s」失败（%s）；观测文件=%s，当前 %d 行（fromIdx=%d）：%v", desc, timeout, path, len(last), fromIdx, err)
 	}
 	return hitIdx
 }
@@ -320,11 +293,11 @@ func assertNoAcquireError(t *testing.T, obs []observation) {
 // ---- DB 直读断言 ----
 
 // assertDecisionInDB 轮询当日 sched_decision 日表，直到出现指定 source 且选中该服的决策行。
-func assertDecisionInDB(t *testing.T, sqliteDB, source string, timeout time.Duration) {
+func assertDecisionInDB(t *testing.T, sqliteDB, source string, timeout time.Duration, guard *harness.GradleProc) {
 	t.Helper()
 	db := openE2EDB(t, sqliteDB)
 	dailyName := store.DailyTableName("sched_decision", time.Now().UTC())
-	ok := waitUntil(timeout, func() bool {
+	err := waitUntil(timeout, guard, func(context.Context) bool {
 		if !db.Migrator().HasTable(dailyName) {
 			return false
 		}
@@ -336,8 +309,8 @@ func assertDecisionInDB(t *testing.T, sqliteDB, source string, timeout time.Dura
 		}
 		return count > 0
 	})
-	if !ok {
-		t.Fatalf("日表 %s 未在 %s 内出现 source=%q 且 chosen=%s 的决策行", dailyName, timeout, source, serverID)
+	if err != nil {
+		t.Fatalf("日表 %s 未在 %s 内出现 source=%q 且 chosen=%s 的决策行：%v", dailyName, timeout, source, serverID, err)
 	}
 }
 
@@ -357,22 +330,19 @@ type identityView struct {
 
 func createNamespace(t *testing.T, base, token string) namespaceView {
 	t.Helper()
-	var ns namespaceView
-	doAdminJSON(t, base, http.MethodPost, "/admin/v2/namespaces", token, map[string]any{
-		"name": namespace, "description": "FR-148 真门面 fail-static e2e",
-	}, http.StatusCreated, &ns)
-	if ns.ID == 0 || ns.AccessToken == "" {
-		t.Fatalf("建 namespace 响应缺 id/accessToken：%+v", ns)
+	id, accessToken, err := harness.CreateV2Namespace(base, token, namespace, "FR-148 真门面 fail-static e2e")
+	if err != nil {
+		t.Fatalf("建 namespace 失败：%v", err)
 	}
-	return ns
+	return namespaceView{ID: id, AccessToken: accessToken}
 }
 
-func createNode(t *testing.T, base, token, path string, body map[string]any) uint {
+func createNode(t *testing.T, base, token, path string, body map[string]any, guard harness.ProcessGuard) uint {
 	t.Helper()
 	var out struct {
 		ID uint `json:"id"`
 	}
-	doAdminJSON(t, base, http.MethodPost, "/admin/v2"+path, token, body, http.StatusCreated, &out)
+	doAdminJSON(t, base, http.MethodPost, "/admin/v2"+path, token, body, http.StatusCreated, &out, guard)
 	if out.ID == 0 {
 		t.Fatalf("建 %s 应返回数字 id，实际 %+v", path, out)
 	}
@@ -380,38 +350,38 @@ func createNode(t *testing.T, base, token, path string, body map[string]any) uin
 }
 
 // setupZoneAndAssign 建 bc 集群 → 大区 → 小区，并把该 server 首次分配到小区。
-func setupZoneAndAssign(t *testing.T, base, token string, nsID uint) {
+func setupZoneAndAssign(t *testing.T, base, token string, nsID uint, guard harness.ProcessGuard) {
 	t.Helper()
-	clusterID := createNode(t, base, token, "/bc-clusters", map[string]any{"namespaceId": nsID, "name": clusterName})
-	regionID := createNode(t, base, token, "/regions", map[string]any{"bcClusterId": clusterID, "name": regionName})
-	zoneID := createNode(t, base, token, "/zones", map[string]any{"regionId": regionID, "name": zoneName})
-	rowID := serverRowID(t, base, token, nsID)
+	clusterID := createNode(t, base, token, "/bc-clusters", map[string]any{"namespaceId": nsID, "name": clusterName}, guard)
+	regionID := createNode(t, base, token, "/regions", map[string]any{"bcClusterId": clusterID, "name": regionName}, guard)
+	zoneID := createNode(t, base, token, "/zones", map[string]any{"regionId": regionID, "name": zoneName}, guard)
+	rowID := serverRowID(t, base, token, nsID, guard)
 	doAdminJSON(t, base, http.MethodPost, "/admin/v2/server-assignments", token, map[string]any{
 		"serverIds": []uint{rowID}, "target": map[string]any{"kind": "zone", "id": zoneID},
 		"isDefaultEntry": false, "reason": "e2e 首次分配",
-	}, http.StatusOK, nil)
+	}, http.StatusOK, nil, guard)
 	t.Logf("已把 %s 分配到 zone=%s（id=%d）", serverID, zoneName, zoneID)
 }
 
 // waitSchedulable 等健康计算轮吸收分配事实：/admin/v2/health/{serverId} 转 schedulable=true。
-func waitSchedulable(t *testing.T, base, token string) {
+func waitSchedulable(t *testing.T, base, token string, guard *harness.GradleProc) {
 	t.Helper()
 	var detail struct {
 		Schedulable bool `json:"schedulable"`
 	}
-	ok := waitUntil(schedulableWait, func() bool {
+	err := waitUntil(schedulableWait, guard, func(ctx context.Context) bool {
 		detail.Schedulable = false
-		if !tryGet(base+"/admin/v2/health/"+url.PathEscape(serverID), token, &detail) {
+		if !tryGet(ctx, base+"/admin/v2/health/"+url.PathEscape(serverID), token, &detail, guard) {
 			return false
 		}
 		return detail.Schedulable
 	})
-	if !ok {
-		t.Fatalf("等待 %s 分配后转 schedulable=true 超时（%s）", serverID, schedulableWait)
+	if err != nil {
+		t.Fatalf("等待 %s 分配后转 schedulable=true 失败（%s）：%v", serverID, schedulableWait, err)
 	}
 }
 
-func serverRowID(t *testing.T, base, token string, nsID uint) uint {
+func serverRowID(t *testing.T, base, token string, nsID uint, guard harness.ProcessGuard) uint {
 	t.Helper()
 	var out struct {
 		Items []struct {
@@ -419,7 +389,7 @@ func serverRowID(t *testing.T, base, token string, nsID uint) uint {
 			ServerID string `json:"serverId"`
 		} `json:"items"`
 	}
-	doAdminJSON(t, base, http.MethodGet, "/admin/v2/servers?namespaceId="+utoa(nsID), token, nil, http.StatusOK, &out)
+	doAdminJSON(t, base, http.MethodGet, "/admin/v2/servers?namespaceId="+utoa(nsID), token, nil, http.StatusOK, &out, guard)
 	for _, it := range out.Items {
 		if it.ServerID == serverID {
 			return it.ID
@@ -429,59 +399,16 @@ func serverRowID(t *testing.T, base, token string, nsID uint) uint {
 	return 0
 }
 
-func waitPendingIdentity(t *testing.T, base, token string, namespaceID uint, timeout time.Duration) string {
+func approveIdentity(t *testing.T, base, token, identityID string, guard *harness.GradleProc) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if it, found := findIdentity(t, base, token, namespaceID); found && it.Status == "pending" {
-			return it.IdentityID
-		}
-		time.Sleep(2 * time.Second)
-	}
-	t.Fatalf("等待 %s 的 pending 身份超时（见 .tmp/%s.out.log）", serverID, logPrefixMC)
-	return ""
-}
-
-func waitIdentityStatus(t *testing.T, base, token string, namespaceID uint, status string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if it, found := findIdentity(t, base, token, namespaceID); found && it.Status == status {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	t.Fatalf("等待 %s 身份进入 %s 超时", serverID, status)
-}
-
-func findIdentity(t *testing.T, base, token string, namespaceID uint) (identityView, bool) {
-	t.Helper()
-	var resp struct {
-		Items []identityView `json:"items"`
-	}
-	doAdminJSON(t, base, http.MethodGet, "/admin/v2/agent-identities?namespaceId="+utoa(namespaceID), token, nil, http.StatusOK, &resp)
-	for _, it := range resp.Items {
-		if it.ServerID == serverID {
-			return it, true
-		}
-	}
-	return identityView{}, false
-}
-
-func approveIdentity(t *testing.T, base, token, identityID string) {
-	t.Helper()
-	var ident identityView
-	doAdminJSON(t, base, http.MethodPost,
-		"/admin/v2/agent-identities/"+url.PathEscape(identityID)+"/approve", token,
-		map[string]any{"forceUnbindOccupier": false}, http.StatusOK, &ident)
-	if ident.Status != "active" {
-		t.Fatalf("approve 后身份应 active，实际 %+v", ident)
+	if err := harness.ApproveIdentityWithGuard(base, token, identityID, guard); err != nil {
+		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }
 
 // ---- HTTP / DB / 小工具 ----
 
-func doAdminJSON(t *testing.T, base, method, path, token string, body any, wantStatus int, out any) {
+func doAdminJSON(t *testing.T, base, method, path, token string, body any, wantStatus int, out any, guard harness.ProcessGuard) {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -499,30 +426,35 @@ func doAdminJSON(t *testing.T, base, method, path, token string, body any, wantS
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
 		t.Fatalf("%s %s 请求失败：%v", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("%s %s 期望 HTTP %d，得 %d：%s", method, path, wantStatus, resp.StatusCode, string(raw))
+		t.Fatalf("%s %s 期望 HTTP %d，得 %d", method, path, wantStatus, resp.StatusCode)
 	}
-	if out != nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析 %s 响应失败：%v（%s）", path, err, string(raw))
+	if out != nil {
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			t.Fatalf("读取 %s 响应失败：%v", path, readErr)
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, out); err != nil {
+				t.Fatalf("解析 %s 响应失败：%v", path, err)
+			}
 		}
 	}
 }
 
 // tryGet 发一个带 Bearer 的 admin GET，仅在 200 且能解析时返回 true（轮询用，不报错）。
-func tryGet(u, token string, out any) bool {
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+func tryGet(ctx context.Context, u, token string, out any, guard harness.ProcessGuard) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
 		return false
 	}
@@ -547,15 +479,8 @@ func openE2EDB(t *testing.T, sqliteDB string) *gorm.DB {
 	return db
 }
 
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return cond()
+func waitUntil(timeout time.Duration, guard *harness.GradleProc, cond func(context.Context) bool) error {
+	return harness.WaitForCondition(timeout, time.Second, guard, cond)
 }
 
 func requireEnv(t *testing.T, key string) string {

@@ -88,6 +88,7 @@ const (
 	fr155IdentityA = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 	fr155IdentityB = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
 	fr155IdentityP = "cccccccc-3333-4333-8333-cccccccccccc"
+	fr155IdentityC = "dddddddd-4444-4444-8444-dddddddddddd"
 )
 
 func (f fr155Fixture) assign(t *testing.T, rowID uint, kind string, targetID uint, defaultEntry bool) {
@@ -202,6 +203,40 @@ func TestV2DefaultEntryRequiresAssignment(t *testing.T) {
 	}
 	if f.auditCount(t, model.ActionZoneSetDefaultEntry) != 1 || f.auditCount(t, model.ActionZoneClearDefaultEntry) != 1 {
 		t.Fatalf("默认入口 set/clear 各应记 1 条审计")
+	}
+}
+
+// TestV2DefaultEntryOnePerZone 同小区至多一台默认入口：后设自动顶替先前。
+func TestV2DefaultEntryOnePerZone(t *testing.T) {
+	f := setupFR155Cluster(t)
+	rowA := f.approveServer(t, fr155IdentityA, "lobby-a", model.ServerKindBackend)
+	rowB := f.approveServer(t, fr155IdentityB, "lobby-b", model.ServerKindBackend)
+	f.assign(t, rowA, model.AssignmentTargetZone, f.zoneA.ID, false)
+	f.assign(t, rowB, model.AssignmentTargetZone, f.zoneA.ID, false)
+
+	if _, err := f.svc.SetServerDefaultEntry(SetServerDefaultEntryParams{ServerRowID: rowA, Value: true, Operator: "admin"}); err != nil {
+		t.Fatalf("A 置默认入口失败: %v", err)
+	}
+	if !f.reloadServer(t, rowA).IsDefaultEntry {
+		t.Fatalf("A 置后应为默认入口")
+	}
+	if _, err := f.svc.SetServerDefaultEntry(SetServerDefaultEntryParams{ServerRowID: rowB, Value: true, Operator: "admin"}); err != nil {
+		t.Fatalf("B 置默认入口失败: %v", err)
+	}
+	if f.reloadServer(t, rowA).IsDefaultEntry {
+		t.Fatalf("B 置默认后 A 应被清掉")
+	}
+	if !f.reloadServer(t, rowB).IsDefaultEntry {
+		t.Fatalf("B 应是唯一默认入口")
+	}
+	// 不同小区互不影响
+	rowC := f.approveServer(t, fr155IdentityC, "lobby-c", model.ServerKindBackend)
+	f.assign(t, rowC, model.AssignmentTargetZone, f.zoneB.ID, false)
+	if _, err := f.svc.SetServerDefaultEntry(SetServerDefaultEntryParams{ServerRowID: rowC, Value: true, Operator: "admin"}); err != nil {
+		t.Fatalf("C 在另一小区置默认失败: %v", err)
+	}
+	if !f.reloadServer(t, rowB).IsDefaultEntry || !f.reloadServer(t, rowC).IsDefaultEntry {
+		t.Fatalf("不同小区应各自保留默认入口，B=%v C=%v", f.reloadServer(t, rowB).IsDefaultEntry, f.reloadServer(t, rowC).IsDefaultEntry)
 	}
 }
 

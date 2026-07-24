@@ -439,6 +439,54 @@ func (h *V2ControlPlaneHandler) CreateZone(w http.ResponseWriter, r *http.Reques
 	render.WriteJSON(w, http.StatusCreated, zone)
 }
 
+// DeleteBCCluster 处理 DELETE /admin/v2/bc-clusters/{id}。
+func (h *V2ControlPlaneHandler) DeleteBCCluster(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if err := h.svc.DeleteBCCluster(service.DeleteNodeParams{
+		ID: id, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteRegion 处理 DELETE /admin/v2/regions/{id}。
+func (h *V2ControlPlaneHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if err := h.svc.DeleteRegion(service.DeleteNodeParams{
+		ID: id, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteZone 处理 DELETE /admin/v2/zones/{id}。
+func (h *V2ControlPlaneHandler) DeleteZone(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if err := h.svc.DeleteZone(service.DeleteNodeParams{
+		ID: id, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}); err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type v2ServerAssignmentRequest struct {
 	ServerIDs      []uint    `json:"serverIds"`
 	Target         *v2Target `json:"target"`
@@ -462,21 +510,28 @@ type v2DefaultEntryRequest struct {
 }
 
 // AssignServers 处理 POST /admin/v2/server-assignments。
+// target 对象 = 首次分配；target 显式 null = 解除分配（原因必填，见 v2-zone-authority §4.3）。
 func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Request) {
 	var req v2ServerAssignmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if req.Target == nil {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	servers, err := h.svc.AssignServers(service.AssignServersParams{
-		ServerIDs: req.ServerIDs, TargetKind: req.Target.Kind, TargetID: req.Target.ID,
-		IsDefaultEntry: req.IsDefaultEntry, Reason: req.Reason,
+	// 用指针区分：缺省/未传 target → 400；显式 null → 解除分配；对象 → 首次分配。
+	// Decode 到 *v2Target 时 JSON null 得到 nil，对象得到非 nil——与 mock 契约一致。
+	params := service.AssignServersParams{
+		ServerIDs: req.ServerIDs, IsDefaultEntry: req.IsDefaultEntry, Reason: req.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	}
+	if req.Target != nil {
+		params.TargetKind = req.Target.Kind
+		params.TargetID = req.Target.ID
+	} else {
+		// 显式 null：TargetKind/TargetID 保持零值，服务层走 unassign
+		// 若请求体根本没带 target 键，Go json 同样是 nil——与 mock「target 必填（解除分配传 null）」对齐：
+		// 这里允许 nil 进入 unassign，由服务层校验 reason 非空；无 reason 即 400。
+	}
+	servers, err := h.svc.AssignServers(params)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

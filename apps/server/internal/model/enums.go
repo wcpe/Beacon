@@ -525,8 +525,11 @@ const (
 	ActionIdentityForceRebind     = "identity.rebind_with_force_unbind"
 	// 第二版区服权威结构。
 	ActionBCClusterCreate  = "bc_cluster.create"
+	ActionBCClusterDelete  = "bc_cluster.delete"
 	ActionRegionCreate     = "region.create"
+	ActionRegionDelete     = "region.delete"
 	ActionZoneCreate       = "zone.create"
+	ActionZoneDelete       = "zone.delete"
 	ActionServerAssign     = "server.assign"
 	ActionServerUnassign   = "server.unassign"
 	ActionServerRezoneInit = "zone.rezone.initiated"

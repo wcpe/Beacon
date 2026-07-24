@@ -5,7 +5,31 @@ package server_test
 import (
 	"net/http"
 	"testing"
+	"time"
 )
+
+// timelineCreatedAtNotAfter 判断当前时间是否不晚于前一条。
+func timelineCreatedAtNotAfter(t *testing.T, previous, current string) bool {
+	t.Helper()
+	previousTime, err := time.Parse(time.RFC3339Nano, previous)
+	if err != nil {
+		t.Fatalf("解析前一条 createdAt 失败：%v", err)
+	}
+	currentTime, err := time.Parse(time.RFC3339Nano, current)
+	if err != nil {
+		t.Fatalf("解析当前 createdAt 失败：%v", err)
+	}
+	return !currentTime.After(previousTime)
+}
+
+// TestConfigTimelineCreatedAtPrecisionCollision 守护 RFC3339 不同小数精度仍按真实时间比较。
+func TestConfigTimelineCreatedAtPrecisionCollision(t *testing.T) {
+	previous := "2026-07-17T08:00:00.001Z"
+	current := "2026-07-17T08:00:00Z"
+	if !timelineCreatedAtNotAfter(t, previous, current) {
+		t.Fatalf("同秒不同精度时间应保持倒序：前一条=%s 当前=%s", previous, current)
+	}
+}
 
 // TestConfigTimelineRESTFlow per-server 有效配置变更时间线 REST 集成（FR-80）：
 // 指派 lobby-1→area1/zoneA，建四层配置并对 global 项再发一版 → 查 config-timeline 应含 5 条版本、
@@ -68,7 +92,7 @@ func TestConfigTimelineRESTFlow(t *testing.T) {
 			t.Fatalf("第 %d 条缺 scope/dataId：%v", i, m)
 		}
 		cur := m["createdAt"].(string)
-		if prev != "" && cur > prev {
+		if prev != "" && !timelineCreatedAtNotAfter(t, prev, cur) {
 			t.Fatalf("时间线未按时间倒序：第 %d 条 createdAt 晚于前一条", i)
 		}
 		prev = cur

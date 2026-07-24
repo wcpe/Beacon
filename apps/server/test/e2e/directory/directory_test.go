@@ -2,16 +2,16 @@
 
 // Proxy 目录注入（FR-4 服务发现延伸出口）的真机端到端测试，纯 Go 原生 go test -tags=e2e。
 //
-// 本测试自起服务端：先构建并起控制面（SQLite 开发模式，无需 Docker/MySQL），再起真 Paper +
-// BeaconAgent（role=bukkit 目标子服）+ 真 Waterfall + BeaconAgentProxy（role=bungee，跑目录同步器）
-// + BeaconE2EProxy 目录探针，本测试只读探针快照做断言。相位生命周期全在测试内（不悬挂）：
+// 本测试自起服务端：先构建并起控制面（SQLite 开发模式，无需 Docker/MySQL），再以单个
+// serveDirectory 启动真 Paper 后端、原生 BungeeCord 代理、双端 Agent 与目录探针；测试只读快照断言：
 //
-//	directory  控制面 UP、Paper+Waterfall UP：断言「在线 role=bukkit 子服按 serverId 注入 Bungee 目录、
-//	           手工 lobby 保留、beacon 命令已注册」。
+//	directory  控制面 UP、Directory 拓扑 UP：断言「在线 backend 按 serverId 注入 Bungee 目录、
+//	           mc-testkit 固定手工路由 backend 保留、代理实现为 BungeeCord、beacon 命令已注册」。
 //	failstatic 控制面 DOWN：断言「已注入目录不被清空」（fail-static）。
 package directory_e2e
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,7 +25,7 @@ import (
 // 控制面地址：默认 http://localhost:8848，可经 E2E_BEACON_URL 覆盖（本地避端口争用）。
 var beaconURL = harness.BeaconURL()
 
-// 服务端编排相关常量（与 runServer/runBungee gradle 任务的约定一致）。
+// 服务端编排相关常量（与 serveDirectory 任务的约定一致）。
 const (
 	adminUser      = "admin"
 	namespace      = "e2e-directory"
@@ -33,20 +33,24 @@ const (
 	bungeeServerID = "e2e-bungee-1"
 	bukkitPort     = "25566"
 	bungeePort     = "25577"
-	manualServer   = "lobby"
+	manualServer   = "backend"
 	bootstrap      = "beacon-bootstrap-2026"
-	onlineWait     = 12 * time.Minute // 首跑含下载 Paper/Waterfall + 构建 jar，给足时间
+	onlineWait     = 12 * time.Minute // 首跑含下载 Paper/BungeeCord + 构建 jar，给足时间
 	sqliteDBName   = "beacon-e2e-directory.db"
+
+	// Agent 目录同步周期为 10 秒；连续观察 12 秒，完整跨过一轮并留 2 秒裕量。
+	failStaticObserve = 12 * time.Second
 )
 
 // snapshot 探针覆写的最新快照。
 type snapshot struct {
-	beaconCommand bool
-	servers       map[string]string // 服务器名 → socketAddress
+	implementation string
+	beaconCommand  bool
+	servers        map[string]string // 服务器名 → socketAddress
 }
 
-// TestDirectoryE2E 按相位顺序编排整套 FR-4 目录注入真机端到端：构建 → 起控制面(SQLite) →
-// 起 Paper + Waterfall → 等两端 online → directory → 杀控制面 → failstatic。defer 收口杀全部进程。
+// TestDirectoryE2E 编排整套目录注入真机端到端：构建 → 起控制面 → 单进程起 Directory 拓扑 →
+// 等两端 online → directory → 杀控制面 → failstatic。defer 收口杀全部进程。
 func TestDirectoryE2E(t *testing.T) {
 	adminPass := requireEnv(t, "E2E_ADMIN_PASS")
 	authSecret := requireEnv(t, "E2E_AUTH_SECRET")
@@ -55,9 +59,10 @@ func TestDirectoryE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("定位仓库根失败：%v", err)
 	}
-	// Gradle runDirectory 位于 apps/.tmp；启动前清掉旧快照，避免历史观测造成假绿。
-	bungeeRunDir := filepath.Join(repoRoot, "apps", ".tmp", "e2e-run", "bungee")
-	snapshotPath := filepath.Join(bungeeRunDir, "plugins", "BeaconE2EProxy", "e2e-directory-latest.txt")
+	// 启动前清掉代理运行目录中的旧快照，避免历史观测造成假绿。
+	snapshotPath := filepath.Join(
+		harness.ProxyRunDir(repoRoot), "plugins", "BeaconE2EProxy", "e2e-directory-latest.txt",
+	)
 	if err := os.Remove(snapshotPath); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("清理旧目录快照失败：%v", err)
 	}
@@ -85,12 +90,7 @@ func TestDirectoryE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	cpStopped := false
-	defer func() {
-		if !cpStopped {
-			cp.Stop()
-		}
-	}()
+	harness.CleanupControlPlane(t, cp)
 
 	token, err := harness.Login(beaconURL, adminUser, adminPass)
 	if err != nil {
@@ -102,107 +102,115 @@ func TestDirectoryE2E(t *testing.T) {
 	}
 	t.Logf("已建 v2 namespace id=%d", namespaceID)
 
-	t.Log("== 起 Paper 子服（25566）+ Waterfall 代理（25577）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
-		"-Pe2eMcPort=" + bukkitPort,
-		harness.BeaconEndpointProp(),
-		"-Pe2eBootstrapToken=" + accessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + bukkitServerID,
-	}, "paper")
+	t.Log("== 单进程起 Paper 后端（25566）+ 原生 BungeeCord 代理（25577）==")
+	directoryEnv := harness.DirectoryGradleEnv(
+		beaconURL, accessToken, namespace,
+		bukkitServerID, "127.0.0.1:"+bukkitPort,
+		bungeeServerID, "127.0.0.1:"+bungeePort,
+	)
+	directoryProc, err := harness.StartGradleTask(
+		repoRoot, ":agent-e2e:serveDirectory", nil, directoryEnv, "directory",
+	)
 	if err != nil {
-		t.Fatalf("起 Paper 失败：%v", err)
+		t.Fatalf("起 Directory 拓扑失败：%v", err)
 	}
-	defer paper.Stop()
-	bungee, err := harness.StartGradleTask(repoRoot, ":agent-e2e-bungee:runBungee", []string{
-		harness.BeaconEndpointProp(),
-		"-Pe2eBootstrapToken=" + accessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + bungeeServerID,
-	}, "bungee")
-	if err != nil {
-		t.Fatalf("起 Waterfall 失败：%v", err)
-	}
-	defer bungee.Stop()
+	harness.CleanupGradle(t, directoryProc)
 
 	t.Log("== 等子服与代理 identity pending，批准后继续等 legacy online ==")
-	bukkitIdentityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bukkitServerID, "pending", onlineWait)
+	bukkitIdentityID, err := harness.WaitIdentityStatus(
+		beaconURL, token, namespaceID, bukkitServerID, "pending", onlineWait, directoryProc,
+	)
 	if err != nil {
-		t.Fatalf("等 %s identity pending 超时（见 .tmp/paper.out.log）：%v", bukkitServerID, err)
+		t.Fatalf("等 %s identity pending 失败：%v", bukkitServerID, err)
 	}
-	if err := harness.ApproveIdentity(beaconURL, token, bukkitIdentityID); err != nil {
+	if err := harness.ApproveIdentityWithGuard(beaconURL, token, bukkitIdentityID, directoryProc); err != nil {
 		t.Fatalf("批准 %s identity 失败：%v", bukkitServerID, err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bukkitServerID, "active", onlineWait); err != nil {
-		t.Fatalf("等 %s identity active 超时：%v", bukkitServerID, err)
+	if _, err := harness.WaitIdentityStatus(
+		beaconURL, token, namespaceID, bukkitServerID, "active", onlineWait, directoryProc,
+	); err != nil {
+		t.Fatalf("等 %s identity active 失败：%v", bukkitServerID, err)
 	}
-	bungeeIdentityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bungeeServerID, "pending", onlineWait)
+	bungeeIdentityID, err := harness.WaitIdentityStatus(
+		beaconURL, token, namespaceID, bungeeServerID, "pending", onlineWait, directoryProc,
+	)
 	if err != nil {
-		t.Fatalf("等 %s identity pending 超时（见 .tmp/bungee.out.log）：%v", bungeeServerID, err)
+		t.Fatalf("等 %s identity pending 失败：%v", bungeeServerID, err)
 	}
-	if err := harness.ApproveIdentity(beaconURL, token, bungeeIdentityID); err != nil {
+	if err := harness.ApproveIdentityWithGuard(beaconURL, token, bungeeIdentityID, directoryProc); err != nil {
 		t.Fatalf("批准 %s identity 失败：%v", bungeeServerID, err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, bungeeServerID, "active", onlineWait); err != nil {
-		t.Fatalf("等 %s identity active 超时：%v", bungeeServerID, err)
+	if _, err := harness.WaitIdentityStatus(
+		beaconURL, token, namespaceID, bungeeServerID, "active", onlineWait, directoryProc,
+	); err != nil {
+		t.Fatalf("等 %s identity active 失败：%v", bungeeServerID, err)
 	}
-	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, bukkitServerID, onlineWait); err != nil {
-		t.Fatalf("等 %s online 超时（见 .tmp/paper.out.log）：%v", bukkitServerID, err)
+	if err := harness.WaitInstanceOnline(
+		beaconURL, token, namespace, bukkitServerID, onlineWait, directoryProc,
+	); err != nil {
+		t.Fatalf("等 %s online 失败：%v", bukkitServerID, err)
 	}
-	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, bungeeServerID, onlineWait); err != nil {
-		t.Fatalf("等 %s online 超时（见 .tmp/bungee.out.log）：%v", bungeeServerID, err)
+	if err := harness.WaitInstanceOnline(
+		beaconURL, token, namespace, bungeeServerID, onlineWait, directoryProc,
+	); err != nil {
+		t.Fatalf("等 %s online 失败：%v", bungeeServerID, err)
 	}
 	t.Log("子服与代理均 active + online")
 
-	t.Run("directory", func(t *testing.T) { runDirectory(t, snapshotPath) })
+	t.Run("directory", func(t *testing.T) { runDirectory(t, snapshotPath, directoryProc) })
 
 	t.Log("== 相位 failstatic（杀控制面，目录不清空）==")
-	cp.Stop()
-	cpStopped = true
-	time.Sleep(3 * time.Second)
-	t.Run("failstatic", func(t *testing.T) { runFailStatic(t, snapshotPath) })
+	if err := cp.StopE(); err != nil {
+		t.Fatalf("fail-static 前停止控制面失败：%v", err)
+	}
+	t.Run("failstatic", func(t *testing.T) { runFailStatic(t, snapshotPath, directoryProc) })
 }
 
 // ---- 相位实现（断言逻辑自原 main.go 搬入，fatalf→t.Fatalf、pass/logf→t.Log）----
 
-// runDirectory：断言目录注入、手工服保留、beacon 命令注册（headless 维度）。
-func runDirectory(t *testing.T, snapshotPath string) {
-	// ① 等代理把在线 bukkit 子服按 serverId 注入 Bungee 目录，地址含子服监听端口。
-	if !waitUntil(40*time.Second, func() bool {
+// runDirectory 断言目录注入、固定手工路由、原生实现与 beacon 命令注册。
+func runDirectory(t *testing.T, snapshotPath string, guard *harness.GradleProc) {
+	err := harness.WaitForCondition(40*time.Second, time.Second, guard, func(context.Context) bool {
 		s := readSnapshot(snapshotPath)
 		addr, ok := s.servers[bukkitServerID]
 		return ok && strings.Contains(addr, bukkitPort)
-	}) {
-		t.Fatalf("directory：超时未观测到 bukkit 子服 %s 被注入 Bungee 目录（端口 %s）；当前快照=%v",
-			bukkitServerID, bukkitPort, readSnapshot(snapshotPath).servers)
+	})
+	if err != nil {
+		t.Fatalf("directory：未观测到 backend %s 注入 Bungee 目录：%v；当前快照=%v",
+			bukkitServerID, err, readSnapshot(snapshotPath).servers)
 	}
 	s := readSnapshot(snapshotPath)
-	t.Logf("directory：bukkit 子服 %s 已注入，地址=%s", bukkitServerID, s.servers[bukkitServerID])
+	t.Logf("directory：backend %s 已注入，地址=%s", bukkitServerID, s.servers[bukkitServerID])
 
-	// ② 手工服务器（Waterfall 默认 lobby）应被保留：Beacon 只管自己创建的条目、不动手工配置。
 	if _, ok := s.servers[manualServer]; !ok {
-		t.Fatalf("directory：手工服务器 %s 不应被移除，却已从目录消失（当前=%v）", manualServer, s.servers)
+		t.Fatalf("directory：mc-testkit 固定路由 %s 不应被移除，当前=%v", manualServer, s.servers)
 	}
-	// ③ beacon 主命令应已在代理注册。
+	if s.implementation != "BungeeCord" {
+		t.Fatalf("directory：代理实现必须为原生 BungeeCord，实际=%q", s.implementation)
+	}
 	if !s.beaconCommand {
-		t.Fatalf("directory：beacon 主命令应已在代理注册，但 COMMAND_BEACON=false")
+		t.Fatal("directory：beacon 主命令应已在代理注册，但 COMMAND_BEACON=false")
 	}
-	t.Log(fmt.Sprintf("PASS directory：bukkit 子服按 serverId 注入目录、手工服 %s 保留、beacon 命令已注册", manualServer))
+	t.Logf("PASS directory：backend 按 serverId 注入、固定路由 %s 保留、实现为 BungeeCord、beacon 命令已注册", manualServer)
 }
 
-// runFailStatic：控制面已被外部编排杀掉后，断言「已注入目录不被清空」（fail-static）。
-func runFailStatic(t *testing.T, snapshotPath string) {
-	// fail-static：代理目录同步器不因控制面失联而清空已注入条目。
-	if !waitUntil(15*time.Second, func() bool {
+// runFailStatic 在控制面下线后持续断言已注入目录与固定手工路由都不被清空。
+func runFailStatic(t *testing.T, snapshotPath string, guard *harness.GradleProc) {
+	t.Logf("failstatic：控制面已下线，连续观察 %s", failStaticObserve)
+	err := harness.ObserveFor(failStaticObserve, time.Second, guard, func(context.Context) error {
 		s := readSnapshot(snapshotPath)
-		_, bukkit := s.servers[bukkitServerID]
-		_, manual := s.servers[manualServer]
-		return bukkit && manual
-	}) {
-		t.Fatalf("failstatic：控制面下线后已注入的 %s 与手工服 %s 不应消失，当前快照=%v",
-			bukkitServerID, manualServer, readSnapshot(snapshotPath).servers)
+		if _, ok := s.servers[bukkitServerID]; !ok {
+			return fmt.Errorf("动态目录条目 %s 消失，当前快照=%v", bukkitServerID, s.servers)
+		}
+		if _, ok := s.servers[manualServer]; !ok {
+			return fmt.Errorf("固定手工路由 %s 消失，当前快照=%v", manualServer, s.servers)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failstatic：持续观察失败：%v", err)
 	}
-	t.Log("PASS failstatic：控制面下线期间已注入目录与手工服保留（fail-static 成立）")
+	t.Logf("PASS failstatic：控制面下线后连续 %s 动态目录与固定路由均保留（完整覆盖 10 秒同步周期）", failStaticObserve)
 }
 
 // ---- 探针快照解析 ----
@@ -219,6 +227,8 @@ func readSnapshot(path string) snapshot {
 		switch {
 		case line == "":
 			continue
+		case strings.HasPrefix(line, "IMPLEMENTATION="):
+			out.implementation = strings.TrimPrefix(line, "IMPLEMENTATION=")
 		case strings.HasPrefix(line, "COMMAND_BEACON="):
 			out.beaconCommand = strings.TrimPrefix(line, "COMMAND_BEACON=") == "true"
 		case strings.HasPrefix(line, "SERVER "):
@@ -233,17 +243,6 @@ func readSnapshot(path string) snapshot {
 }
 
 // ---- 小工具 ----
-
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return cond()
-}
 
 // requireEnv 取必填 env，缺失即 t.Skip（让普通 go test ./... 不因缺密钥失败）。
 func requireEnv(t *testing.T, key string) string {

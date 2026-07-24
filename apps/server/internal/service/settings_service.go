@@ -38,9 +38,28 @@ func NewSettingsService(db *gorm.DB, repo *repository.SettingRepository, auditRe
 		return nil, err
 	}
 	for _, item := range all {
-		s.cache[item.Key] = item.Value
+		value := item.Value
+		if item.Key == SettingUpdateChannel {
+			normalized, changed := normalizeUpdateChannel(value)
+			if changed {
+				if _, err := repo.Upsert(item.Key, normalized, model.SettingValueTypeString); err != nil {
+					return nil, err
+				}
+				value = normalized
+				slog.Info("历史在线更新渠道已迁移为稳定版", "key", item.Key)
+			}
+		}
+		s.cache[item.Key] = value
 	}
 	return s, nil
+}
+
+// normalizeUpdateChannel 按当前合法渠道契约归一历史值，预发布或非法旧值统一迁移为 stable。
+func normalizeUpdateChannel(value string) (string, bool) {
+	if _, ok := updateChannels[value]; ok {
+		return value, false
+	}
+	return "stable", true
 }
 
 // GetInt 取 int 型设置值（走缓存，缺 / 解析失败则用白名单默认）。
@@ -172,6 +191,9 @@ func (s *SettingsService) SeedFromConfig(cfg config.Config) error {
 		}
 		meta := settingsWhitelist[key]
 		value := meta.defaultFromConfig(cfg)
+		if key == SettingUpdateChannel {
+			value, _ = normalizeUpdateChannel(value)
+		}
 		if _, err := s.repo.Upsert(key, value, meta.valueType); err != nil {
 			return err
 		}

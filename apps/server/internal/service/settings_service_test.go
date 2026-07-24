@@ -32,7 +32,8 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingMetricEnabled, "yesno"},          // bool 解析失败
 		{SettingLogLevel, "TRACE"},               // 枚举外
 		{SettingReverseFetchMaxFileBytes, "0"},   // 低于下界（1KB）
-		{SettingUpdateChannel, "beta"},           // 渠道枚举外（仅 stable/prerelease）
+		{SettingUpdateChannel, "beta"},           // 渠道枚举外（仅 stable）
+		{SettingUpdateChannel, "prerelease"},     // 历史值仅可启动迁移，运行期不得再写入
 		{SettingUpdateAutoCheckEnabled, "on"},    // bool 解析失败
 		{SettingUpdateCheckIntervalHours, "0"},   // 低于下界（1）
 		{SettingUpdateCheckIntervalHours, "169"}, // 高于上界（168）
@@ -47,7 +48,7 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingMetricEnabled, "false"},
 		{SettingLogLevel, "DEBUG"},
 		{SettingAlertWebhookURL, ""},             // URL 允许空（动态停用 webhook）
-		{SettingUpdateChannel, "prerelease"},     // 渠道枚举内（ADR-0052：stable / prerelease）
+		{SettingUpdateChannel, "stable"},         // 稳定版在线更新唯一允许的渠道
 		{SettingUpdateAutoCheckEnabled, "false"}, // bool 合法
 		{SettingUpdateCheckIntervalHours, "1"},   // 下界
 		{SettingUpdateCheckIntervalHours, "168"}, // 上界
@@ -130,6 +131,39 @@ func TestSeedFromConfigOnlyFillsMissing(t *testing.T) {
 	}
 }
 
+// TestSeedFromConfigNormalizesLegacyUpdateChannel 首次种子即将旧更新渠道归一为 stable，并同步缓存、API 视图与持久化值。
+func TestSeedFromConfigNormalizesLegacyUpdateChannel(t *testing.T) {
+	svc, db := newTestSettingsService(t)
+	cfg := config.Default()
+	cfg.Update.Channel = "prerelease"
+
+	if err := svc.SeedFromConfig(cfg); err != nil {
+		t.Fatalf("首次种子失败: %v", err)
+	}
+	if got := svc.GetString(SettingUpdateChannel); got != "stable" {
+		t.Fatalf("首次种子后内存渠道应为 stable，实际 %q", got)
+	}
+
+	var apiValue string
+	for _, view := range svc.List() {
+		if view.Key == SettingUpdateChannel {
+			apiValue = view.Value
+			break
+		}
+	}
+	if apiValue != "stable" {
+		t.Fatalf("首次种子后 API 渠道应为 stable，实际 %q", apiValue)
+	}
+
+	row, err := repository.NewSettingRepository(db).Get(SettingUpdateChannel)
+	if err != nil {
+		t.Fatalf("查询首次种子渠道失败: %v", err)
+	}
+	if row.Value != "stable" {
+		t.Fatalf("首次种子渠道必须持久化为 stable，实际 %q", row.Value)
+	}
+}
+
 // TestListCoversAllHotKeys List 列出全部热改项，isStartup 恒 false、带默认 + 说明。
 func TestListCoversAllHotKeys(t *testing.T) {
 	svc, _ := newTestSettingsService(t)
@@ -152,6 +186,65 @@ func TestListCoversAllHotKeys(t *testing.T) {
 		if v.Desc == "" || v.ValueType == "" {
 			t.Fatalf("热改项 %s 应带类型与说明", v.Key)
 		}
+	}
+}
+
+// TestLegacyUpdateChannelMigratesPersistently 启动时将预发布或非法旧渠道写回 stable，后续重启不再消费非正式渠道。
+func TestLegacyUpdateChannelMigratesPersistently(t *testing.T) {
+	for _, legacyChannel := range []string{"prerelease", "nightly"} {
+		t.Run(legacyChannel, func(t *testing.T) {
+			db := newTestSettingsDB(t)
+			repo := repository.NewSettingRepository(db)
+			auditRepo := repository.NewAuditLogRepository(db)
+			if _, err := repo.Upsert(SettingUpdateChannel, legacyChannel, model.SettingValueTypeString); err != nil {
+				t.Fatalf("预置旧渠道失败: %v", err)
+			}
+
+			svc, err := NewSettingsService(db, repo, auditRepo)
+			if err != nil {
+				t.Fatalf("装配设置服务失败: %v", err)
+			}
+			if got := svc.GetString(SettingUpdateChannel); got != "stable" {
+				t.Fatalf("内存渠道应迁移为 stable，实际 %q", got)
+			}
+			row, err := repo.Get(SettingUpdateChannel)
+			if err != nil {
+				t.Fatalf("查询迁移后的渠道失败: %v", err)
+			}
+			if row.Value != "stable" {
+				t.Fatalf("迁移必须持久化为 stable，实际 %q", row.Value)
+			}
+		})
+	}
+}
+
+// TestAutoCheckDisabledPersistsForPollingConsumer 验证关闭自动检查后，缓存、API 视图与重启读取均保持 false，供前端停止轮询。
+func TestAutoCheckDisabledPersistsForPollingConsumer(t *testing.T) {
+	svc, db := newTestSettingsService(t)
+	if err := svc.Update(SettingUpdateAutoCheckEnabled, "false", "admin", ""); err != nil {
+		t.Fatalf("关闭自动检查失败: %v", err)
+	}
+	if svc.GetBool(SettingUpdateAutoCheckEnabled) {
+		t.Fatal("关闭后缓存值应为 false")
+	}
+
+	var apiValue string
+	for _, view := range svc.List() {
+		if view.Key == SettingUpdateAutoCheckEnabled {
+			apiValue = view.Value
+			break
+		}
+	}
+	if apiValue != "false" {
+		t.Fatalf("关闭后 API 值应为 false，实际 %q", apiValue)
+	}
+
+	reloaded, err := NewSettingsService(db, repository.NewSettingRepository(db), repository.NewAuditLogRepository(db))
+	if err != nil {
+		t.Fatalf("重载设置服务失败: %v", err)
+	}
+	if reloaded.GetBool(SettingUpdateAutoCheckEnabled) {
+		t.Fatal("重启读取后自动检查仍应关闭")
 	}
 }
 

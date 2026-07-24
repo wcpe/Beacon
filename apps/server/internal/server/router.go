@@ -211,8 +211,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			}
 
 			r.Post("/bc-clusters", h.V2.CreateBCCluster)
+			r.Delete("/bc-clusters/{id}", h.V2.DeleteBCCluster)
 			r.Post("/regions", h.V2.CreateRegion)
+			r.Delete("/regions/{id}", h.V2.DeleteRegion)
 			r.Post("/zones", h.V2.CreateZone)
+			r.Delete("/zones/{id}", h.V2.DeleteZone)
 			// 区服结构树只读聚合（FR-155）
 			r.Get("/zone-tree", h.V2.ZoneTree)
 			r.Get("/servers", h.V2.ListServers)

@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -55,35 +54,41 @@ func main() {
 	}
 }
 
-// run 完成配置加载、依赖装配与服务启动，返回首个致命错误。
-func run() error {
-	// 进程启动时间：供控制面自身状态页眉计算运行时长（FR-33）。在 run 入口记录，尽量贴近真实启动点。
-	startedAt := time.Now().UTC()
-
-	// 换版后启动自检 + 自动回滚（FR-119，见 ADR-0053）：新版反复起不来则自动回退上一版本。
-	// 须在 HTTP 起之前尽早执行；自身路径解析失败则跳过自检与后续自替换（极罕见，退化为无自动回滚）。
-	selfPath, selfErr := os.Executable()
+// prepareStartup 完成服务装配前的自替换检查、首启配置释放与环境加载。
+func prepareStartup(cfgPath, selfPath string, selfErr error) error {
 	if selfErr != nil {
 		slog.Warn("解析自身可执行路径失败，跳过换版自检与自替换", "错误", selfErr)
 	} else {
 		update.CheckAndAutoRollback(selfPath)
 	}
 
-	var cfgPath string
-	flag.StringVar(&cfgPath, "config", "config.yml", "配置文件路径")
-	flag.Parse()
-
-	// 首启脚手架：把配置模板释放为 config.yml 并就地填入随机强鉴权凭据（开箱即跑、config.yml 即真源；
-	// 已存在则跳过，绝不覆盖用户文件，FR-25）。凭据不再走自动生成的 .env——避免 .env 静默盖掉 config.yml。
-	if released, err := config.EnsureConfigFile(cfgPath, beacon.ConfigExampleYAML); err != nil {
+	released, err := config.EnsureConfigFile(cfgPath, beacon.ConfigExampleYAML)
+	if err != nil {
 		return err
-	} else if released {
+	}
+	if released {
 		slog.Warn("首次启动：已释放 config.yml（含随机管理员口令与签名密钥，sqlite 可直接运行），请打开它查看 auth.password 后登录管理台", "文件", cfgPath)
 	}
+	return config.LoadDotEnv(".env")
+}
 
-	// 从当前目录 .env 加载环境变量（仅填补未设置项，真实环境变量优先）；.env 非自动生成，
-	// 仅当运维手动放置时生效，供既有 applyEnv 覆盖链消费（FR-25）
-	if err := config.LoadDotEnv(".env"); err != nil {
+// run 完成配置加载、依赖装配与服务启动，返回首个致命错误。
+func run() error {
+	options, err := parseCLI(os.Args[1:], os.Stderr)
+	if err != nil {
+		return err
+	}
+	if options.showVersion {
+		_, err = fmt.Fprintln(os.Stdout, version.Version)
+		return err
+	}
+
+	// 进程启动时间：供控制面自身状态页眉计算运行时长（FR-33）。在 run 入口记录，尽量贴近真实启动点。
+	startedAt := time.Now().UTC()
+
+	cfgPath := options.configPath
+	selfPath, selfErr := os.Executable()
+	if err := prepareStartup(cfgPath, selfPath, selfErr); err != nil {
 		return err
 	}
 

@@ -10,7 +10,7 @@
 //
 //	build     构建控制面二进制（SQLite），起临时控制面。
 //	namespace 经 admin 建 v2 namespace，取一次性 accessToken（作 agent 的 X-Beacon-Token）。
-//	agent     经 gradle :agent-e2e:runServer 起真 Paper + 真 BeaconAgent（默认已开启 v2 指标采样）。
+//	agent     经 gradle :agent-e2e:servePaper 起真 Paper + 真 BeaconAgent（默认已开启 v2 指标采样）。
 //	approve   真 agent v2 注册进 pending → e2e 经 admin approve 使其 active（上报要求 active，否则 403）。
 //	health    等健康计算轮消化真实指标批后断管理面真值：/admin/v2/health 条目 score∈[0,100]、level 合法、
 //	          未分配阶段 reasons 含 unassigned；详情 factors 非空、weightsRev≥1、cpu 因子合法
@@ -25,6 +25,7 @@ package schedhealth_e2e
 
 import (
 	"bytes"
+	"context"
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -41,12 +42,12 @@ import (
 	"github.com/wcpe/Beacon/apps/server/test/e2e/harness"
 )
 
-// 服务端编排相关常量（与 :agent-e2e:runServer 的默认约定一致）。
+// 服务端编排相关常量（与 :agent-e2e:servePaper 的默认约定一致）。
 const (
 	adminUser = "admin"
 	// v2 namespace 名（同时用作 v1 instances 查询的 namespace code；两者同值，与 metricsv2 一致）。
 	namespace = "p4sched"
-	// 与 runServer 默认 serverId 对齐（显式传 -Pe2eServerId 以免默认漂移）。
+	// 与 servePaper 默认 serverId 对齐，并通过进程环境显式注入以免默认漂移。
 	serverID = "e2e-bukkit-1"
 	// MC 监听端口：避让 25565(p1v2)/25566(metrics)/25568(metricsv2)，本用例用 25569。
 	mcPort = "25569"
@@ -117,7 +118,7 @@ func TestSchedHealthE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	defer cp.Stop()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(base, adminUser, adminPass)
 	if err != nil {
@@ -129,39 +130,41 @@ func TestSchedHealthE2E(t *testing.T) {
 	t.Logf("已建 v2 namespace id=%d", ns.ID)
 
 	t.Log("== 起 Paper 子服 + 真 BeaconAgent（agent-e2e 壳，默认已开启 v2 指标采样）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+	paperEnv := harness.AgentGradleEnv(base, ns.AccessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + mcPort,
-		"-Pe2eBeaconEndpoint=" + base,
-		"-Pe2eBootstrapToken=" + ns.AccessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + serverID,
-	}, logPrefixMC)
+	}, paperEnv, logPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
-	defer paper.Stop()
+	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等真 agent v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, pendingWait)
+	identityID, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "pending", pendingWait, paper)
+	if err != nil {
+		t.Fatalf("等待 pending 身份失败：%v", err)
+	}
 	t.Logf("观测到 pending 身份 identityId=%s（serverId=%s）", identityID, serverID)
 
 	t.Log("== approve 使身份 active（上报 / 调度端点要求 active，否则 403）==")
-	approveIdentity(t, base, adminToken, identityID)
-	waitIdentityStatus(t, base, adminToken, ns.ID, "active", pendingWait)
-	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait); err != nil {
+	approveIdentity(t, base, adminToken, identityID, paper)
+	if _, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "active", pendingWait, paper); err != nil {
+		t.Fatalf("等待 active 身份失败：%v", err)
+	}
+	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait, paper); err != nil {
 		t.Fatalf("active 后应衔接 legacy 数据面 online（见 .tmp/%s.out.log）：%v", logPrefixMC, err)
 	}
 	t.Log("agent 已 active + online")
 
 	t.Log("== 健康真值断言（FR-147）==")
-	assertHealthTruth(t, base, adminToken)
+	assertHealthTruth(t, base, adminToken, paper)
 
 	t.Log("== 建区服结构并首次分配（backend 落区后才 schedulable，§4.5）==")
-	setupZoneAndAssign(t, base, adminToken, ns.ID)
-	waitSchedulable(t, base, adminToken)
+	setupZoneAndAssign(t, base, adminToken, ns.ID, paper)
+	waitSchedulable(t, base, adminToken, paper)
 
 	t.Log("== 调度决策闭环断言（FR-146）==")
-	assertSchedulingChain(t, base, adminToken, ns.AccessToken, identityID)
+	assertSchedulingChain(t, base, adminToken, ns.AccessToken, identityID, paper)
 }
 
 // ---- 健康真值相位（FR-147）----
@@ -169,22 +172,22 @@ func TestSchedHealthE2E(t *testing.T) {
 // assertHealthTruth 等健康计算轮基于真实指标批产出健康真值后逐项断言管理面端点：
 // 列表条目合法（score∈[0,100]、level 枚举、kind=backend）、未分配阶段 reasons 含 unassigned、
 // 详情 factors 非空且 weightsRev≥1、cpu 因子合法（观察项记日志）、metrics/summary 实例计数 ≥1。
-func assertHealthTruth(t *testing.T, base, token string) {
+func assertHealthTruth(t *testing.T, base, token string, guard *harness.GradleProc) {
 	t.Helper()
 	// 等详情出现非空 factors：fresh 计算路径产物（lost 视图 factors 为空），即「指标批已被计算轮消化」。
 	var detail healthDetailView
-	ok := waitUntil(healthWait, func() bool {
+	err := waitUntil(healthWait, guard, func(ctx context.Context) bool {
 		detail = healthDetailView{}
-		if !tryReq(http.MethodGet, base+"/admin/v2/health/"+url.PathEscape(serverID), adminHeader(token), nil, &detail) {
+		if !tryReq(ctx, http.MethodGet, base+"/admin/v2/health/"+url.PathEscape(serverID), adminHeader(token), nil, &detail, guard) {
 			return false
 		}
 		return len(detail.Factors) > 0
 	})
-	if !ok {
-		t.Fatalf("等待 %s 健康详情出现非空 factors 超时（%s）；最后视图 %+v", serverID, healthWait, detail)
+	if err != nil {
+		t.Fatalf("等待 %s 健康详情出现非空 factors 失败（%s）；最后视图 %+v：%v", serverID, healthWait, detail, err)
 	}
 
-	item := findHealthItem(t, base, token)
+	item := findHealthItem(t, base, token, guard)
 	if item.Score < 0 || item.Score > 100 {
 		t.Fatalf("健康条目 score=%d 应在 [0,100]", item.Score)
 	}
@@ -202,7 +205,7 @@ func assertHealthTruth(t *testing.T, base, token string) {
 		t.Fatalf("健康详情 weightsRev=%d 应 ≥1（种子 rev=1）", detail.WeightsRev)
 	}
 	assertCPUFactor(t, detail.Factors)
-	assertMetricsSummary(t, base, token)
+	assertMetricsSummary(t, base, token, guard)
 	t.Logf("PASS health：score=%d level=%s schedulable=%v reasons=%v weightsRev=%d factors=%d 项",
 		item.Score, item.Level, item.Schedulable, item.Reasons, detail.WeightsRev, len(detail.Factors))
 }
@@ -229,7 +232,7 @@ func assertCPUFactor(t *testing.T, factors []healthFactorView) {
 }
 
 // assertMetricsSummary 断集群聚合概览的 backend 实例计数 ≥1 且在线 ≥1（该 agent 指标批持续在报）。
-func assertMetricsSummary(t *testing.T, base, token string) {
+func assertMetricsSummary(t *testing.T, base, token string, guard harness.ProcessGuard) {
 	t.Helper()
 	var sum struct {
 		ByKind struct {
@@ -239,20 +242,20 @@ func assertMetricsSummary(t *testing.T, base, token string) {
 			} `json:"backend"`
 		} `json:"byKind"`
 	}
-	doAdminJSON(t, http.MethodGet, base+"/admin/v2/metrics/summary", token, nil, http.StatusOK, &sum)
+	doAdminJSON(t, http.MethodGet, base+"/admin/v2/metrics/summary", token, nil, http.StatusOK, &sum, guard)
 	if sum.ByKind.Backend.Total < 1 || sum.ByKind.Backend.Online < 1 {
 		t.Fatalf("metrics/summary backend 计数应 total≥1 且 online≥1，实际 %+v", sum.ByKind.Backend)
 	}
 }
 
 // findHealthItem 从健康列表端点取目标 serverId 条目（缺失即 fatal）。
-func findHealthItem(t *testing.T, base, token string) healthItemView {
+func findHealthItem(t *testing.T, base, token string, guard harness.ProcessGuard) healthItemView {
 	t.Helper()
 	var resp struct {
 		Items []healthItemView `json:"items"`
 		Total int              `json:"total"`
 	}
-	doAdminJSON(t, http.MethodGet, base+"/admin/v2/health", token, nil, http.StatusOK, &resp)
+	doAdminJSON(t, http.MethodGet, base+"/admin/v2/health", token, nil, http.StatusOK, &resp, guard)
 	for _, it := range resp.Items {
 		if it.ServerID == serverID {
 			return it
@@ -270,38 +273,38 @@ func validLevel(level string) bool {
 // ---- 建区分配相位 ----
 
 // setupZoneAndAssign 建 bc 集群 → 大区 → 小区，并把该 server 首次分配到小区（zone 归属由控制面权威指派）。
-func setupZoneAndAssign(t *testing.T, base, token string, nsID uint) {
+func setupZoneAndAssign(t *testing.T, base, token string, nsID uint, guard harness.ProcessGuard) {
 	t.Helper()
-	clusterID := createNode(t, base, token, "/bc-clusters", map[string]any{"namespaceId": nsID, "name": clusterName})
-	regionID := createNode(t, base, token, "/regions", map[string]any{"bcClusterId": clusterID, "name": regionName})
-	zoneID := createNode(t, base, token, "/zones", map[string]any{"regionId": regionID, "name": zoneName})
-	rowID := serverRowID(t, base, token, nsID)
+	clusterID := createNode(t, base, token, "/bc-clusters", map[string]any{"namespaceId": nsID, "name": clusterName}, guard)
+	regionID := createNode(t, base, token, "/regions", map[string]any{"bcClusterId": clusterID, "name": regionName}, guard)
+	zoneID := createNode(t, base, token, "/zones", map[string]any{"regionId": regionID, "name": zoneName}, guard)
+	rowID := serverRowID(t, base, token, nsID, guard)
 	doAdminJSON(t, http.MethodPost, base+"/admin/v2/server-assignments", token, map[string]any{
 		"serverIds": []uint{rowID}, "target": map[string]any{"kind": "zone", "id": zoneID},
 		"isDefaultEntry": false, "reason": "e2e 首次分配",
-	}, http.StatusOK, nil)
+	}, http.StatusOK, nil, guard)
 	t.Logf("已把 %s 分配到 zone=%s（id=%d）", serverID, zoneName, zoneID)
 }
 
 // waitSchedulable 等健康计算轮吸收分配事实：详情 zoneName=目标小区 且 schedulable=true。
-func waitSchedulable(t *testing.T, base, token string) {
+func waitSchedulable(t *testing.T, base, token string, guard *harness.GradleProc) {
 	t.Helper()
 	var detail healthDetailView
-	ok := waitUntil(viewWait, func() bool {
+	err := waitUntil(viewWait, guard, func(ctx context.Context) bool {
 		detail = healthDetailView{}
-		if !tryReq(http.MethodGet, base+"/admin/v2/health/"+url.PathEscape(serverID), adminHeader(token), nil, &detail) {
+		if !tryReq(ctx, http.MethodGet, base+"/admin/v2/health/"+url.PathEscape(serverID), adminHeader(token), nil, &detail, guard) {
 			return false
 		}
 		return detail.ZoneName != nil && *detail.ZoneName == zoneName && detail.Schedulable
 	})
-	if !ok {
-		t.Fatalf("等待 %s 分配后转 schedulable=true 超时（%s）；最后视图 %+v", serverID, viewWait, detail)
+	if err != nil {
+		t.Fatalf("等待 %s 分配后转 schedulable=true 失败（%s）；最后视图 %+v：%v", serverID, viewWait, detail, err)
 	}
 	t.Logf("分配已生效：zone=%s schedulable=true score=%d level=%s", zoneName, detail.Score, detail.Level)
 }
 
 // serverRowID 取该 namespace 下目标 serverId 的 server 行数字 id（分配端点以行 id 定位）。
-func serverRowID(t *testing.T, base, token string, nsID uint) uint {
+func serverRowID(t *testing.T, base, token string, nsID uint, guard harness.ProcessGuard) uint {
 	t.Helper()
 	var out struct {
 		Items []struct {
@@ -309,7 +312,7 @@ func serverRowID(t *testing.T, base, token string, nsID uint) uint {
 			ServerID string `json:"serverId"`
 		} `json:"items"`
 	}
-	doAdminJSON(t, http.MethodGet, base+"/admin/v2/servers?namespaceId="+utoa(nsID), token, nil, http.StatusOK, &out)
+	doAdminJSON(t, http.MethodGet, base+"/admin/v2/servers?namespaceId="+utoa(nsID), token, nil, http.StatusOK, &out, guard)
 	for _, it := range out.Items {
 		if it.ServerID == serverID {
 			return it.ID
@@ -323,14 +326,14 @@ func serverRowID(t *testing.T, base, token string, nsID uint) uint {
 
 // assertSchedulingChain 以 Go HTTP 客户端模拟 agent 面完成调度闭环：candidates → decide →
 // 管理面按 traceId 查决策（详情 / 列表 / summary）→ report-local 补报降级决策再查详情。
-func assertSchedulingChain(t *testing.T, base, adminToken, nsToken, identityID string) {
+func assertSchedulingChain(t *testing.T, base, adminToken, nsToken, identityID string, guard *harness.GradleProc) {
 	t.Helper()
 	fromMs := time.Now().UTC().Add(-time.Hour).UnixMilli()
 
-	waitCandidates(t, base, nsToken, identityID)
-	traceID := decideAndAssert(t, base, nsToken, identityID)
+	waitCandidates(t, base, nsToken, identityID, guard)
+	traceID := decideAndAssert(t, base, nsToken, identityID, guard)
 
-	detail := waitDecisionDetail(t, base, adminToken, traceID)
+	detail := waitDecisionDetail(t, base, adminToken, traceID, guard)
 	if detail.Source != model.SchedSourceControlPlane {
 		t.Fatalf("决策 %s source=%q 应为 %q", traceID, detail.Source, model.SchedSourceControlPlane)
 	}
@@ -343,11 +346,11 @@ func assertSchedulingChain(t *testing.T, base, adminToken, nsToken, identityID s
 	if detail.RequesterServerID != serverID {
 		t.Fatalf("决策 %s requesterServerId 应为权威身份 %s，实际 %q", traceID, serverID, detail.RequesterServerID)
 	}
-	assertDecisionList(t, base, adminToken, traceID, fromMs)
-	assertDecisionSummary(t, base, adminToken)
+	assertDecisionList(t, base, adminToken, traceID, fromMs, guard)
+	assertDecisionSummary(t, base, adminToken, guard)
 
-	localTrace := reportLocalAndAssert(t, base, nsToken, identityID)
-	localDetail := waitDecisionDetail(t, base, adminToken, localTrace)
+	localTrace := reportLocalAndAssert(t, base, nsToken, identityID, guard)
+	localDetail := waitDecisionDetail(t, base, adminToken, localTrace, guard)
 	if localDetail.Source != model.SchedSourceLocalFallback {
 		t.Fatalf("补报决策 %s source=%q 应为 %q", localTrace, localDetail.Source, model.SchedSourceLocalFallback)
 	}
@@ -359,18 +362,18 @@ func assertSchedulingChain(t *testing.T, base, adminToken, nsToken, identityID s
 }
 
 // waitCandidates 轮询 agent 面候选快照，直到目标 zone 出现且候选含该 server；再断快照时间戳合法。
-func waitCandidates(t *testing.T, base, nsToken, identityID string) {
+func waitCandidates(t *testing.T, base, nsToken, identityID string, guard *harness.GradleProc) {
 	t.Helper()
 	var resp candidatesView
-	ok := waitUntil(viewWait, func() bool {
+	err := waitUntil(viewWait, guard, func(ctx context.Context) bool {
 		resp = candidatesView{}
-		if !tryReq(http.MethodGet, base+"/beacon/v2/agent/schedule/candidates", agentHeader(nsToken, identityID), nil, &resp) {
+		if !tryReq(ctx, http.MethodGet, base+"/beacon/v2/agent/schedule/candidates", agentHeader(nsToken, identityID), nil, &resp, guard) {
 			return false
 		}
 		return candidateHit(resp)
 	})
-	if !ok {
-		t.Fatalf("等待候选快照出现 zone=%s 且含 %s 超时（%s）；最后响应 %+v", zoneName, serverID, viewWait, resp)
+	if err != nil {
+		t.Fatalf("等待候选快照出现 zone=%s 且含 %s 失败（%s）；最后响应 %+v：%v", zoneName, serverID, viewWait, resp, err)
 	}
 	if resp.GeneratedAtMs <= 0 {
 		t.Fatalf("候选快照 generatedAtMs=%d 应为正", resp.GeneratedAtMs)
@@ -393,11 +396,11 @@ func candidateHit(resp candidatesView) bool {
 }
 
 // decideAndAssert 发一次 decide 并断言选中该服（唯一候选），返回 traceId。
-func decideAndAssert(t *testing.T, base, nsToken, identityID string) string {
+func decideAndAssert(t *testing.T, base, nsToken, identityID string, guard harness.ProcessGuard) string {
 	t.Helper()
 	var resp decideView
 	doAgentJSON(t, http.MethodPost, base+"/beacon/v2/agent/schedule/decide", nsToken, identityID,
-		map[string]any{"zone": zoneName}, http.StatusOK, &resp)
+		map[string]any{"zone": zoneName}, http.StatusOK, &resp, guard)
 	if resp.TraceID == "" {
 		t.Fatalf("decide 响应 traceId 应非空：%+v", resp)
 	}
@@ -415,22 +418,22 @@ func decideAndAssert(t *testing.T, base, nsToken, identityID string) string {
 }
 
 // waitDecisionDetail 轮询管理面决策详情直到该 traceId 入库（异步写入通道 500ms 攒批 flush）。
-func waitDecisionDetail(t *testing.T, base, token, traceID string) decisionDetailView {
+func waitDecisionDetail(t *testing.T, base, token, traceID string, guard *harness.GradleProc) decisionDetailView {
 	t.Helper()
 	var detail decisionDetailView
-	ok := waitUntil(persistWait, func() bool {
+	err := waitUntil(persistWait, guard, func(ctx context.Context) bool {
 		detail = decisionDetailView{}
-		return tryReq(http.MethodGet, base+"/admin/v2/sched-decisions/"+url.PathEscape(traceID),
-			adminHeader(token), nil, &detail)
+		return tryReq(ctx, http.MethodGet, base+"/admin/v2/sched-decisions/"+url.PathEscape(traceID),
+			adminHeader(token), nil, &detail, guard)
 	})
-	if !ok {
-		t.Fatalf("等待决策 %s 异步入库超时（%s）", traceID, persistWait)
+	if err != nil {
+		t.Fatalf("等待决策 %s 异步入库失败（%s）：%v", traceID, persistWait, err)
 	}
 	return detail
 }
 
 // assertDecisionList 断列表查询（from/to 必填毫秒时间戳）含该 traceId。
-func assertDecisionList(t *testing.T, base, token, traceID string, fromMs int64) {
+func assertDecisionList(t *testing.T, base, token, traceID string, fromMs int64, guard harness.ProcessGuard) {
 	t.Helper()
 	toMs := time.Now().UTC().Add(time.Minute).UnixMilli()
 	var resp struct {
@@ -438,7 +441,7 @@ func assertDecisionList(t *testing.T, base, token, traceID string, fromMs int64)
 		Total int64                `json:"total"`
 	}
 	u := fmt.Sprintf("%s/admin/v2/sched-decisions?from=%d&to=%d", base, fromMs, toMs)
-	doAdminJSON(t, http.MethodGet, u, token, nil, http.StatusOK, &resp)
+	doAdminJSON(t, http.MethodGet, u, token, nil, http.StatusOK, &resp, guard)
 	for _, it := range resp.Items {
 		if it.TraceID == traceID {
 			return
@@ -448,20 +451,20 @@ func assertDecisionList(t *testing.T, base, token, traceID string, fromMs int64)
 }
 
 // assertDecisionSummary 断概览聚合 total ≥1（1h 窗口内刚产生过决策）。
-func assertDecisionSummary(t *testing.T, base, token string) {
+func assertDecisionSummary(t *testing.T, base, token string, guard harness.ProcessGuard) {
 	t.Helper()
 	var sum struct {
 		Window string `json:"window"`
 		Total  int64  `json:"total"`
 	}
-	doAdminJSON(t, http.MethodGet, base+"/admin/v2/sched-decisions/summary?window=1h", token, nil, http.StatusOK, &sum)
+	doAdminJSON(t, http.MethodGet, base+"/admin/v2/sched-decisions/summary?window=1h", token, nil, http.StatusOK, &sum, guard)
 	if sum.Total < 1 {
 		t.Fatalf("决策概览（window=%s）total=%d 应 ≥1", sum.Window, sum.Total)
 	}
 }
 
 // reportLocalAndAssert 补报 1 条降级期本地决策（localTraceId 自造 UUID）并断 202 accepted=1，返回 localTraceId。
-func reportLocalAndAssert(t *testing.T, base, nsToken, identityID string) string {
+func reportLocalAndAssert(t *testing.T, base, nsToken, identityID string, guard harness.ProcessGuard) string {
 	t.Helper()
 	localTrace := newUUIDv4()
 	var resp struct {
@@ -474,7 +477,7 @@ func reportLocalAndAssert(t *testing.T, base, nsToken, identityID string) string
 			"zone": zoneName, "plugin": "e2e", "purpose": "降级补报演练",
 			"candidateCount": 1, "excluded": []any{},
 			"chosenServerId": serverID, "failReason": "",
-		}}}, http.StatusAccepted, &resp)
+		}}}, http.StatusAccepted, &resp, guard)
 	if resp.Accepted != 1 || resp.Deduplicated != 0 {
 		t.Fatalf("补报应 accepted=1 / deduplicated=0，实际 %+v", resp)
 	}
@@ -500,84 +503,31 @@ type identityView struct {
 // createNamespace 经 admin 建 v2 namespace 并取一次性明文 accessToken。
 func createNamespace(t *testing.T, base, token string) namespaceView {
 	t.Helper()
-	var ns namespaceView
-	doAdminJSON(t, http.MethodPost, base+"/admin/v2/namespaces", token, map[string]any{
-		"name": namespace, "description": "健康值与调度决策 e2e",
-	}, http.StatusCreated, &ns)
-	if ns.ID == 0 || ns.AccessToken == "" {
-		t.Fatalf("建 namespace 响应缺 id/accessToken：%+v", ns)
+	id, accessToken, err := harness.CreateV2Namespace(base, token, namespace, "健康值与调度决策 e2e")
+	if err != nil {
+		t.Fatalf("建 namespace 失败：%v", err)
 	}
-	return ns
+	return namespaceView{ID: id, AccessToken: accessToken}
 }
 
 // createNode 建区服权威节点（bc-cluster / region / zone），返回其数字 id。
-func createNode(t *testing.T, base, token, path string, body map[string]any) uint {
+func createNode(t *testing.T, base, token, path string, body map[string]any, guard harness.ProcessGuard) uint {
 	t.Helper()
 	var out struct {
 		ID uint `json:"id"`
 	}
-	doAdminJSON(t, http.MethodPost, base+"/admin/v2"+path, token, body, http.StatusCreated, &out)
+	doAdminJSON(t, http.MethodPost, base+"/admin/v2"+path, token, body, http.StatusCreated, &out, guard)
 	if out.ID == 0 {
 		t.Fatalf("建 %s 应返回数字 id，实际 %+v", path, out)
 	}
 	return out.ID
 }
 
-// waitPendingIdentity 轮询身份列表，直到目标 serverId 的 pending 身份出现，返回其 identityId。
-func waitPendingIdentity(t *testing.T, base, token string, namespaceID uint, timeout time.Duration) string {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if it, found := findIdentity(t, base, token, namespaceID); found && it.Status == "pending" {
-			if it.Kind != model.ServerKindBackend {
-				t.Fatalf("pending 身份 kind=%q 应为 %q（bukkit → backend）", it.Kind, model.ServerKindBackend)
-			}
-			return it.IdentityID
-		}
-		time.Sleep(2 * time.Second)
-	}
-	t.Fatalf("等待 %s 的 pending 身份超时（见 .tmp/%s.out.log）", serverID, logPrefixMC)
-	return ""
-}
-
-// waitIdentityStatus 轮询身份列表，直到目标 serverId 的身份进入期望状态。
-func waitIdentityStatus(t *testing.T, base, token string, namespaceID uint, status string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if it, found := findIdentity(t, base, token, namespaceID); found && it.Status == status {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	t.Fatalf("等待 %s 身份进入 %s 超时", serverID, status)
-}
-
-// findIdentity 查该 namespace 下匹配 serverId 的身份项（存在返回并置 true）。
-func findIdentity(t *testing.T, base, token string, namespaceID uint) (identityView, bool) {
-	t.Helper()
-	var resp struct {
-		Items []identityView `json:"items"`
-	}
-	doAdminJSON(t, http.MethodGet, base+"/admin/v2/agent-identities?namespaceId="+utoa(namespaceID),
-		token, nil, http.StatusOK, &resp)
-	for _, it := range resp.Items {
-		if it.ServerID == serverID {
-			return it, true
-		}
-	}
-	return identityView{}, false
-}
-
 // approveIdentity 首次确认身份（无 target：确认但暂不分配区服），断响应状态 active。
-func approveIdentity(t *testing.T, base, token, identityID string) {
+func approveIdentity(t *testing.T, base, token, identityID string, guard *harness.GradleProc) {
 	t.Helper()
-	var ident identityView
-	doAdminJSON(t, http.MethodPost,
-		base+"/admin/v2/agent-identities/"+url.PathEscape(identityID)+"/approve", token,
-		map[string]any{"forceUnbindOccupier": false}, http.StatusOK, &ident)
-	if ident.Status != "active" {
-		t.Fatalf("approve 后身份应 active，实际 %+v", ident)
+	if err := harness.ApproveIdentityWithGuard(base, token, identityID, guard); err != nil {
+		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }
 
@@ -649,46 +599,80 @@ type decisionDetailView struct {
 // ---- HTTP 与小工具 ----
 
 // doAdminJSON 发一个带管理面 Bearer 的请求，校验期望状态码并解析响应体。失败即 fatal。
-func doAdminJSON(t *testing.T, method, u, token string, body any, wantStatus int, out any) {
+func doAdminJSON(
+	t *testing.T,
+	method, u, token string,
+	body any,
+	wantStatus int,
+	out any,
+	guard harness.ProcessGuard,
+) {
 	t.Helper()
-	doReq(t, method, u, adminHeader(token), body, wantStatus, out)
+	doReq(t, method, u, adminHeader(token), body, wantStatus, out, guard)
 }
 
 // doAgentJSON 发一个带 agent 面鉴权头（X-Beacon-Token + X-Beacon-Identity）的请求，
 // 校验期望状态码并解析响应体。失败即 fatal。
-func doAgentJSON(t *testing.T, method, u, nsToken, identityID string, body any, wantStatus int, out any) {
+func doAgentJSON(
+	t *testing.T,
+	method, u, nsToken, identityID string,
+	body any,
+	wantStatus int,
+	out any,
+	guard harness.ProcessGuard,
+) {
 	t.Helper()
-	doReq(t, method, u, agentHeader(nsToken, identityID), body, wantStatus, out)
+	doReq(t, method, u, agentHeader(nsToken, identityID), body, wantStatus, out, guard)
 }
 
 // doReq 发一个 JSON 请求：设置给定请求头、校验期望状态码，并（若 out 非 nil）解析响应体。失败即 fatal。
-func doReq(t *testing.T, method, u string, headers map[string]string, body any, wantStatus int, out any) {
+func doReq(
+	t *testing.T,
+	method, u string,
+	headers map[string]string,
+	body any,
+	wantStatus int,
+	out any,
+	guard harness.ProcessGuard,
+) {
 	t.Helper()
-	status, raw, err := rawReq(method, u, headers, body)
+	status, raw, err := rawReq(context.Background(), method, u, headers, body, guard)
 	if err != nil {
 		t.Fatalf("%s %s 请求失败：%v", method, u, err)
 	}
 	if status != wantStatus {
-		t.Fatalf("%s %s 期望 HTTP %d，得 %d：%s", method, u, wantStatus, status, string(raw))
+		t.Fatalf("%s %s 期望 HTTP %d，得 %d", method, u, wantStatus, status)
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析 %s 响应失败：%v（%s）", u, err, string(raw))
+			t.Fatalf("解析 %s 响应失败：%v", u, err)
 		}
 	}
 }
 
 // tryReq 轮询版请求：仅在 200 且能解析时返回 true，任何失败静默返回 false（供 waitUntil 重试）。
-func tryReq(method, u string, headers map[string]string, body, out any) bool {
-	status, raw, err := rawReq(method, u, headers, body)
+func tryReq(
+	ctx context.Context,
+	method, u string,
+	headers map[string]string,
+	body, out any,
+	guard harness.ProcessGuard,
+) bool {
+	status, raw, err := rawReq(ctx, method, u, headers, body, guard)
 	if err != nil || status != http.StatusOK {
 		return false
 	}
 	return json.Unmarshal(raw, out) == nil
 }
 
-// rawReq 构造并发送一次 JSON 请求，返回状态码与已读完的响应体。
-func rawReq(method, u string, headers map[string]string, body any) (int, []byte, error) {
+// rawReq 构造并发送一次带 deadline 与进程 guard 的 JSON 请求，返回状态码与已读完的响应体。
+func rawReq(
+	ctx context.Context,
+	method, u string,
+	headers map[string]string,
+	body any,
+	guard harness.ProcessGuard,
+) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -697,22 +681,25 @@ func rawReq(method, u string, headers map[string]string, body any) (int, []byte,
 		}
 		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequest(method, u, reader)
+	req, err := http.NewRequestWithContext(ctx, method, u, reader)
 	if err != nil {
 		return 0, nil, err
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("读取响应失败：%w", err)
+	}
 	return resp.StatusCode, raw, nil
 }
 
@@ -726,16 +713,9 @@ func agentHeader(nsToken, identityID string) map[string]string {
 	return map[string]string{"X-Beacon-Token": nsToken, "X-Beacon-Identity": identityID}
 }
 
-// waitUntil 在超时内每秒重试 cond，命中即返回 true。
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return cond()
+// waitUntil 在超时内每秒重试条件，并在全程检查 Gradle 生命周期。
+func waitUntil(timeout time.Duration, guard *harness.GradleProc, cond func(context.Context) bool) error {
+	return harness.WaitForCondition(timeout, time.Second, guard, cond)
 }
 
 // requireEnv 取必填 env，缺失即 t.Skip（让普通 go test ./... 不因缺密钥失败）。

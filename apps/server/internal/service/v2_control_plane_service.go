@@ -505,6 +505,11 @@ func (s *V2ControlPlaneService) transitionIdentity(identityID string, allowed []
 		}
 		if nextStatus == model.AgentIdentityStatusUnbound {
 			ident.ConflictReason = ""
+			// 解绑同时清 server 归属（zone / bc_cluster / 默认入口），使树与资产列表即时反映「无可信 agent」
+			// （规格：无 active 绑定的服不可调度；归属残留会导致区服树仍挂着已解绑服）。
+			if err := clearServerAssignmentByIdentity(tx, ident); err != nil {
+				return err
+			}
 		}
 		if err := tx.Save(ident).Error; err != nil {
 			return err
@@ -529,6 +534,21 @@ func (s *V2ControlPlaneService) transitionIdentity(identityID string, allowed []
 		s.bootRegistry.Forget(identityID)
 	}
 	return &out, nil
+}
+
+// clearServerAssignmentByIdentity 按身份定位 server 行并清空区服归属（解绑联动）。
+func clearServerAssignmentByIdentity(tx *gorm.DB, ident *model.AgentIdentity) error {
+	server, err := findServerRow(tx, ident.NamespaceID, ident.ServerID)
+	if err != nil {
+		return err
+	}
+	if server == nil {
+		return nil
+	}
+	server.ZoneID = nil
+	server.BCClusterID = nil
+	server.IsDefaultEntry = false
+	return tx.Save(server).Error
 }
 
 func stringIn(value string, allowed []string) bool {
@@ -850,6 +870,104 @@ func (s *V2ControlPlaneService) CreateZone(p CreateZoneParams) (*model.Zone, err
 	return zone, err
 }
 
+// DeleteNodeParams 删除结构节点的公共参数。
+type DeleteNodeParams struct {
+	ID       uint
+	Operator string
+	ClientIP string
+}
+
+// DeleteBCCluster 删除空的 BC 集群：无大区、无已分配代理。
+func (s *V2ControlPlaneService) DeleteBCCluster(p DeleteNodeParams) error {
+	if p.ID == 0 {
+		return apperr.ErrInvalidParam
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var cluster model.BCCluster
+		if err := tx.First(&cluster, p.ID).Error; err != nil {
+			return apperr.ErrBCClusterNotFound
+		}
+		var regionCount int64
+		if err := tx.Model(&model.Region{}).Where("bc_cluster_id = ?", p.ID).Count(&regionCount).Error; err != nil {
+			return err
+		}
+		if regionCount > 0 {
+			return apperr.ErrBCClusterHasRegions
+		}
+		var proxyCount int64
+		if err := tx.Model(&model.Server{}).Where("bc_cluster_id = ?", p.ID).Count(&proxyCount).Error; err != nil {
+			return err
+		}
+		if proxyCount > 0 {
+			return apperr.ErrBCClusterHasProxies
+		}
+		if err := tx.Delete(&cluster).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{
+			Operator: operatorOrSystem(p.Operator), Action: model.ActionBCClusterDelete,
+			TargetType: model.TargetTypeBCCluster, TargetRef: fmt.Sprintf("%d", p.ID),
+			Detail: cluster.Name, Result: model.ResultOK, ClientIP: p.ClientIP,
+		})
+	})
+}
+
+// DeleteRegion 删除空的大区：无小区。
+func (s *V2ControlPlaneService) DeleteRegion(p DeleteNodeParams) error {
+	if p.ID == 0 {
+		return apperr.ErrInvalidParam
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var region model.Region
+		if err := tx.First(&region, p.ID).Error; err != nil {
+			return apperr.ErrRegionNotFound
+		}
+		var zoneCount int64
+		if err := tx.Model(&model.Zone{}).Where("region_id = ?", p.ID).Count(&zoneCount).Error; err != nil {
+			return err
+		}
+		if zoneCount > 0 {
+			return apperr.ErrRegionHasZones
+		}
+		if err := tx.Delete(&region).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{
+			Operator: operatorOrSystem(p.Operator), Action: model.ActionRegionDelete,
+			TargetType: model.TargetTypeRegion, TargetRef: fmt.Sprintf("%d", p.ID),
+			Detail: region.Name, Result: model.ResultOK, ClientIP: p.ClientIP,
+		})
+	})
+}
+
+// DeleteZone 删除空的小区：无已分配子服。
+func (s *V2ControlPlaneService) DeleteZone(p DeleteNodeParams) error {
+	if p.ID == 0 {
+		return apperr.ErrInvalidParam
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var zone model.Zone
+		if err := tx.First(&zone, p.ID).Error; err != nil {
+			return apperr.ErrZoneNotFound
+		}
+		var serverCount int64
+		if err := tx.Model(&model.Server{}).Where("zone_id = ?", p.ID).Count(&serverCount).Error; err != nil {
+			return err
+		}
+		if serverCount > 0 {
+			return apperr.ErrZoneHasServers
+		}
+		if err := tx.Delete(&zone).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{
+			Operator: operatorOrSystem(p.Operator), Action: model.ActionZoneDelete,
+			TargetType: model.TargetTypeZone, TargetRef: fmt.Sprintf("%d", p.ID),
+			Detail: zone.Name, Result: model.ResultOK, ClientIP: p.ClientIP,
+		})
+	})
+}
+
 type AssignServersParams struct {
 	ServerIDs      []uint
 	TargetKind     string
@@ -860,9 +978,16 @@ type AssignServersParams struct {
 	ClientIP       string
 }
 
-// AssignServers 批量首次分配未分配 server。
+// AssignServers 批量首次分配未分配 server；TargetKind 为空且 TargetID=0 时表示解除分配（target:null）。
 func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Server, error) {
-	if len(p.ServerIDs) == 0 || p.TargetID == 0 {
+	if len(p.ServerIDs) == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	// 解除分配：target 显式 null 时 TargetKind/TargetID 均为零值
+	if p.TargetKind == "" && p.TargetID == 0 {
+		return s.unassignServers(p)
+	}
+	if p.TargetID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
 	var out []model.Server
@@ -878,16 +1003,67 @@ func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Se
 		if len(servers) != len(p.ServerIDs) {
 			return apperr.ErrInstanceNotFound
 		}
+		// 批量分配勾选默认入口时，同区只允许一台：先清目标小区其它默认入口
+		if p.IsDefaultEntry && targetKind == model.AssignmentTargetZone {
+			if err := clearOtherDefaultEntriesInZone(tx, p.TargetID, 0); err != nil {
+				return err
+			}
+		}
+		// 本批多台同时勾默认入口：仅首台 backend 保留，避免一区多入口
+		defaultGranted := false
 		for i := range servers {
 			if err := validateAssignableServer(&servers[i], targetNS, targetKind); err != nil {
 				return err
 			}
-			applyAssignment(&servers[i], targetKind, p.TargetID, p.IsDefaultEntry)
+			wantDefault := p.IsDefaultEntry
+			if wantDefault && targetKind == model.AssignmentTargetZone {
+				if defaultGranted {
+					wantDefault = false
+				} else {
+					defaultGranted = true
+				}
+			}
+			applyAssignment(&servers[i], targetKind, p.TargetID, wantDefault)
 			if err := tx.Save(&servers[i]).Error; err != nil {
 				return err
 			}
 			if err := createAudit(tx, model.AuditLog{
 				Operator: operatorOrSystem(p.Operator), Action: model.ActionServerAssign,
+				TargetType: model.TargetTypeServer, TargetRef: fmt.Sprintf("%d", servers[i].ID),
+				Detail: p.Reason, Result: model.ResultOK, ClientIP: p.ClientIP,
+			}); err != nil {
+				return err
+			}
+		}
+		out = servers
+		return nil
+	})
+	return out, err
+}
+
+// unassignServers 批量解除分配：清空 zone_id / bc_cluster_id / 默认入口，原因必填。
+func (s *V2ControlPlaneService) unassignServers(p AssignServersParams) ([]model.Server, error) {
+	if p.Reason == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	var out []model.Server
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var servers []model.Server
+		if err := tx.Where("id IN ?", p.ServerIDs).Find(&servers).Error; err != nil {
+			return err
+		}
+		if len(servers) != len(p.ServerIDs) {
+			return apperr.ErrInstanceNotFound
+		}
+		for i := range servers {
+			servers[i].ZoneID = nil
+			servers[i].BCClusterID = nil
+			servers[i].IsDefaultEntry = false
+			if err := tx.Save(&servers[i]).Error; err != nil {
+				return err
+			}
+			if err := createAudit(tx, model.AuditLog{
+				Operator: operatorOrSystem(p.Operator), Action: model.ActionServerUnassign,
 				TargetType: model.TargetTypeServer, TargetRef: fmt.Sprintf("%d", servers[i].ID),
 				Detail: p.Reason, Result: model.ResultOK, ClientIP: p.ClientIP,
 			}); err != nil {
@@ -1149,7 +1325,9 @@ type SetServerDefaultEntryParams struct {
 	ClientIP    string
 }
 
-// SetServerDefaultEntry 更新 server 默认入口标记；未分配小区（zone_id 为空）置默认入口一律 409，单事务 + 审计，返回富化视图。
+// SetServerDefaultEntry 更新 server 默认入口标记；未分配小区（zone_id 为空）置默认入口一律 409。
+// 同一小区至多一台默认入口：置 true 时先清掉同 zone 其他服的标记，再写本机。
+// 单事务 + 审计，返回富化视图。
 func (s *V2ControlPlaneService) SetServerDefaultEntry(p SetServerDefaultEntryParams) (*ServerView, error) {
 	if p.ServerRowID == 0 {
 		return nil, apperr.ErrInvalidParam
@@ -1165,6 +1343,12 @@ func (s *V2ControlPlaneService) SetServerDefaultEntry(p SetServerDefaultEntryPar
 		}
 		if server.ZoneID == nil {
 			return apperr.ErrDefaultEntryNotAssigned
+		}
+		// 置为默认入口：同小区其它服一律清掉，保证一区一台
+		if p.Value {
+			if err := clearOtherDefaultEntriesInZone(tx, *server.ZoneID, server.ID); err != nil {
+				return err
+			}
 		}
 		server.IsDefaultEntry = p.Value
 		if err := tx.Save(&server).Error; err != nil {
@@ -1192,6 +1376,13 @@ func (s *V2ControlPlaneService) SetServerDefaultEntry(p SetServerDefaultEntryPar
 		return nil, err
 	}
 	return view, nil
+}
+
+// clearOtherDefaultEntriesInZone 将某小区内除 excludeID 外的默认入口标记全部清零。
+func clearOtherDefaultEntriesInZone(tx *gorm.DB, zoneID, excludeID uint) error {
+	return tx.Model(&model.Server{}).
+		Where("zone_id = ? AND id <> ? AND is_default_entry = ?", zoneID, excludeID, true).
+		Update("is_default_entry", false).Error
 }
 
 // enrichSingleServer 富化单台 server 为视图。

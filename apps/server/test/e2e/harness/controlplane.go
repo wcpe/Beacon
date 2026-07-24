@@ -3,12 +3,15 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"testing"
 	"time"
 )
 
@@ -28,11 +31,35 @@ type ControlPlaneConfig struct {
 	ExtraEnv map[string]string
 }
 
-// ControlPlane 持有控制面子进程与日志句柄，提供启动就绪等待与整树停止。
+type controlPlaneState uint8
+
+const (
+	controlPlaneRunning controlPlaneState = iota
+	controlPlaneExited
+	controlPlaneStopping
+	controlPlaneStopped
+
+	defaultControlPlaneStopTimeout = 10 * time.Second
+)
+
+// ControlPlane 持有控制面子进程的唯一 waiter、日志证据与并发幂等停止状态。
 type ControlPlane struct {
-	cmd     *exec.Cmd
-	outFile *os.File
-	errFile *os.File
+	cmd             *exec.Cmd
+	outFile         *os.File
+	errFile         *os.File
+	stdoutPath      string
+	stderrPath      string
+	done            chan struct{}
+	stopDone        chan struct{}
+	stopOnce        sync.Once
+	mu              sync.Mutex
+	state           controlPlaneState
+	waitErr         error
+	stopErr         error
+	killTreeFn      func(*exec.Cmd) error
+	killRootFn      func(*os.Process) error
+	stopWaitTimeout time.Duration
+	repoRoot        string
 }
 
 // StartControlPlane 设置环境变量起控制面，重定向日志到 .tmp/<prefix>.{out,err}.log，
@@ -70,40 +97,163 @@ func StartControlPlane(cfg ControlPlaneConfig) (*ControlPlane, error) {
 	if err != nil {
 		return nil, err
 	}
-	cp := &ControlPlane{cmd: cmd, outFile: outFile, errFile: errFile}
+	cp := newControlPlane(cmd, outFile, errFile, outLog, errLog, cfg.RepoRoot)
 
-	// 轮询就绪：登录端点能给出任何 HTTP 响应即说明 HTTP 服务已起（不在意状态码）。
-	loginURL := strings.TrimRight(cfg.BaseURL, "/") + "/admin/v1/auth/login"
-	if !waitReady(30*time.Second, func() bool {
-		resp, err := http.Post(loginURL, "application/json", strings.NewReader("{}"))
+	// 轮询就绪：登录端点能给出任何 HTTP 响应即说明 HTTP 服务已起（不在意状态码）；
+	// 启动期进程早退会立即取消请求并返回 stdout/stderr 证据，而不是继续等满 30 秒。
+	if err := waitControlPlaneReady(cfg.BaseURL, cp); err != nil {
+		if stopErr := cp.StopE(); stopErr != nil {
+			return nil, fmt.Errorf("控制面启动失败：%v；且停止失败：%w", err, stopErr)
+		}
+		return nil, fmt.Errorf("控制面启动失败：%w", err)
+	}
+	return cp, nil
+}
+
+func newControlPlane(cmd *exec.Cmd, outFile, errFile *os.File, outLog, errLog, repoRoot string) *ControlPlane {
+	cp := &ControlPlane{
+		cmd: cmd, outFile: outFile, errFile: errFile,
+		stdoutPath: outLog, stderrPath: errLog, repoRoot: repoRoot,
+		done: make(chan struct{}), stopDone: make(chan struct{}), state: controlPlaneRunning,
+		killTreeFn: killTree, killRootFn: killRootProcess, stopWaitTimeout: defaultControlPlaneStopTimeout,
+	}
+	go cp.wait()
+	return cp
+}
+
+// Done 返回唯一 waiter 完成后关闭的只读信号。
+func (c *ControlPlane) Done() <-chan struct{} {
+	if c == nil {
+		return nil
+	}
+	return c.done
+}
+
+// LogPaths 返回控制面的 stdout/stderr 证据路径。
+func (c *ControlPlane) LogPaths() (string, string) {
+	if c == nil {
+		return "", ""
+	}
+	return c.stdoutPath, c.stderrPath
+}
+
+// CheckEarlyExit 在控制面未进入主动收尾却已退出时返回带日志路径的诊断。
+func (c *ControlPlane) CheckEarlyExit() error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != controlPlaneExited {
+		return nil
+	}
+	return fmt.Errorf(
+		"控制面进程意外早退：退出结果=%s；stdout=%s；stderr=%s",
+		exitResult(c.waitErr), c.stdoutPath, c.stderrPath,
+	)
+}
+
+func waitControlPlaneReady(baseURL string, controlPlane *ControlPlane) error {
+	loginURL := strings.TrimRight(baseURL, "/") + "/admin/v1/auth/login"
+	return WaitForCondition(30*time.Second, time.Second, controlPlane, func(ctx context.Context) bool {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader("{}"))
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := DoRequestWithGuard(req, time.Second, controlPlane)
 		if err != nil {
 			return false
 		}
 		_ = resp.Body.Close()
 		return true
-	}) {
-		cp.Stop()
-		return nil, fmt.Errorf("控制面未在预期时间内就绪（见 %s）", errLog)
-	}
-	return cp, nil
+	})
 }
 
-// Stop 整树击杀控制面并回收日志句柄。
+// Stop 保留既有无返回值调用兼容性；需要检查阻断错误的主路径应调用 StopE。
 func (c *ControlPlane) Stop() {
-	if c == nil {
-		return
-	}
-	stopProc(c.cmd, c.outFile, c.errFile)
+	_ = c.StopE()
 }
 
-// waitReady 在超时内每秒重试 cond，命中即返回 true。
-func waitReady(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
+// CleanupControlPlane 注册可报告停止错误的测试清理。
+func CleanupControlPlane(t testing.TB, controlPlane *ControlPlane) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := finalizeControlPlane(controlPlane); err != nil {
+			t.Errorf("停止控制面或扫描 E2E 归档敏感内容失败：%v", err)
 		}
-		time.Sleep(1 * time.Second)
+	})
+}
+
+func finalizeControlPlane(controlPlane *ControlPlane) error {
+	stopErr := controlPlane.StopE()
+	scanErr := scanRegisteredArtifactSecrets(controlPlane.repoRoot)
+	if stopErr == nil {
+		return scanErr
 	}
-	return cond()
+	if scanErr == nil {
+		return stopErr
+	}
+	return fmt.Errorf("停止控制面失败：%v；归档敏感内容扫描失败：%w", stopErr, scanErr)
+}
+
+// StopE 并发幂等地整树终止控制面，并有界等待唯一 waiter 回收进程与日志句柄。
+func (c *ControlPlane) StopE() error {
+	if c == nil {
+		return nil
+	}
+	c.stopOnce.Do(func() {
+		shouldKill := c.beginStop()
+		treeErr, rootErr, timedOut := stopProc(
+			c.cmd, c.done, shouldKill, c.stopWaitTimeout, c.killTreeFn, c.killRootFn,
+		)
+		var err error
+		switch {
+		case timedOut:
+			err = c.stopDiagnostic("等待进程退出超时", treeErr, rootErr)
+		case treeErr != nil:
+			err = c.stopDiagnostic("整树终止失败，已尝试终止根进程", treeErr, rootErr)
+		}
+		c.mu.Lock()
+		c.stopErr = err
+		c.mu.Unlock()
+		close(c.stopDone)
+	})
+	<-c.stopDone
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stopErr
+}
+
+func (c *ControlPlane) beginStop() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	shouldKill := c.state == controlPlaneRunning
+	if c.state != controlPlaneStopped {
+		c.state = controlPlaneStopping
+	}
+	return shouldKill
+}
+
+func (c *ControlPlane) stopDiagnostic(reason string, treeErr, rootErr error) error {
+	return fmt.Errorf(
+		"停止控制面失败：%s；整树终止=%s；根进程回退=%s；等待上限=%s；stdout=%s；stderr=%s",
+		reason, errorResult(treeErr), errorResult(rootErr), c.stopWaitTimeout, c.stdoutPath, c.stderrPath,
+	)
+}
+
+func (c *ControlPlane) wait() {
+	err := c.cmd.Wait()
+	_ = c.outFile.Close()
+	_ = c.errFile.Close()
+
+	c.mu.Lock()
+	c.waitErr = err
+	if c.state == controlPlaneStopping {
+		c.state = controlPlaneStopped
+	} else {
+		c.state = controlPlaneExited
+	}
+	c.mu.Unlock()
+	close(c.done)
 }

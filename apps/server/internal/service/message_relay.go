@@ -87,6 +87,7 @@ type IncomingMessage struct {
 	Resolved            bool // 是否按玩家寻址解析（决定是否记 resolved hop）
 	CorrelationID       string
 	Payload             string
+	PayloadRaw          bool // 仅内存中转使用：true 表示非字符串 JSON；空值表示无 payload
 	PayloadSize         int
 	SentAtMs            int64 // 源 agent 发出时刻
 	CreatedAtMs         int64 // 控制面接收时刻
@@ -279,6 +280,7 @@ type DispatchedMessage struct {
 	SourceServerID string
 	CorrelationID  string
 	Payload        string
+	PayloadRaw     bool
 	CreatedAtMs    int64
 	Broadcast      bool // 广播投递标记（additive 键，FR-180）：agent 据此路由 topic 订阅分发
 }
@@ -333,7 +335,7 @@ func (r *MessageRelay) drain(key serverKey, limit int) []DispatchedMessage {
 			out = append(out, DispatchedMessage{
 				MessageID: msg.meta.MessageID, MsgType: msg.meta.MsgType,
 				SourceServerID: msg.meta.SourceServerID, CorrelationID: msg.meta.CorrelationID,
-				Payload: msg.meta.Payload, CreatedAtMs: msg.meta.CreatedAtMs,
+				Payload: msg.meta.Payload, PayloadRaw: msg.meta.PayloadRaw, CreatedAtMs: msg.meta.CreatedAtMs,
 				Broadcast: msg.agg != nil,
 			})
 		}

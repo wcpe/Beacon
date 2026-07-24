@@ -64,7 +64,7 @@ func TestWriteError_内部错误脱敏凭据(t *testing.T) {
 	WriteError(rr, req, fmt.Errorf(`构造出站客户端失败: proxy "http://admin:s3cr3t@10.0.0.5:7890" 不可达`))
 
 	eb := decodeErrBody(t, rr.Body.Bytes())
-	if want := `构造出站客户端失败: proxy "http://admin:***@10.0.0.5:7890" 不可达`; eb.Message != want {
+	if want := `构造出站客户端失败: proxy "http://***:***@10.0.0.5:7890" 不可达`; eb.Message != want {
 		t.Fatalf("凭据未脱敏\n  得到 %q\n  期望 %q", eb.Message, want)
 	}
 }

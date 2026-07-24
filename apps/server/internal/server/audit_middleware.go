@@ -142,10 +142,13 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/agent-identities/{identityId}/enable":           {},
 	"POST /admin/v2/agent-identities/{identityId}/unbind":           {},
 	"POST /admin/v2/agent-identities/{identityId}/resolve-conflict": {},
-	// 区服权威节点创建（bc-cluster.create / region.create / zone.create）
-	"POST /admin/v2/bc-clusters": {},
-	"POST /admin/v2/regions":     {},
-	"POST /admin/v2/zones":       {},
+	// 区服权威节点创建 / 删除（bc-cluster.create/delete、region.create/delete、zone.create/delete）
+	"POST /admin/v2/bc-clusters":       {},
+	"DELETE /admin/v2/bc-clusters/{id}": {},
+	"POST /admin/v2/regions":           {},
+	"DELETE /admin/v2/regions/{id}":    {},
+	"POST /admin/v2/zones":             {},
+	"DELETE /admin/v2/zones/{id}":      {},
 	// 区服归属编排（server-assignment.assign / rezone、server draining / default-entry）
 	"POST /admin/v2/server-assignments":               {},
 	"POST /admin/v2/server-rezones":                   {},

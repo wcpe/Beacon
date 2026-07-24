@@ -34,9 +34,3 @@ func HTTPAddrFromURL(url string) string {
 	}
 	return ":" + port
 }
-
-// BeaconEndpointProp 返回透传给 gradle 任务的 -Pe2eBeaconEndpoint 属性，
-// 让真机 agent（runServer/runBungee）连到与测试一致的控制面地址。
-func BeaconEndpointProp() string {
-	return "-Pe2eBeaconEndpoint=" + BeaconURL()
-}

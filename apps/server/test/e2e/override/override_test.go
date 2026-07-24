@@ -6,10 +6,10 @@
 // 验收插件，经 admin REST 建/发布/回滚覆盖集、经数据层挂成员（控制面尚无成员挂载 API，沿用集成
 // 测试既有做法），再读验收插件写出的观测标记文件做断言。相位生命周期全在测试内（不悬挂）：
 //
-//	inert      控制面 UP、Paper(空白名单) UP：建集 + 挂成员 + 发布带命令 → 断言「文件被覆盖、命令一条不发」。
+//	inert      控制面 UP、第一轮 Paper(空白名单) UP：建集 + 挂成员 + 发布带命令 → 断言「文件被覆盖、命令一条不发」。
 //	filetree   同上服务端：发布文件树文件 → 断言 agent 镜像落盘到插件数据目录（FR-14）。
-//	ordering   控制面 UP、Paper(放行白名单) UP：断言「先备份原文件→落盘新内容→落盘成功后才派发命令」次序；
-//	           再回滚到无命令版本 → 断言「回滚只还原事实、不重放命令」。
+//	ordering   第二轮独立 Paper(放行白名单) UP：mc-testkit 重建运行目录后重新审批新 identity，
+//	           再断言「先备份原文件→落盘新内容→落盘成功后才派发命令」及「回滚只还原事实、不重放命令」。
 //	failstatic 控制面 DOWN、Paper UP：断言「控制面挂了文件不动、命令不发」（fail-static）。
 //
 // 铁律：本测试只读盘 + 调既有 API，绝不旁路或弱化任一 ADR-0011 安全约束来「让断言通过」。
@@ -17,6 +17,7 @@ package override_e2e
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -31,7 +32,7 @@ import (
 	"time"
 
 	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -59,16 +60,21 @@ var beaconURL = harness.BeaconURL()
 // namespace 每个测试进程生成一次唯一值，进程内所有控制面与数据层操作稳定复用。
 var namespace = fmt.Sprintf("e2e-override-%d", time.Now().UnixNano())
 
-// 服务端编排相关常量（与 runServer gradle 任务的约定一致）。
+// 服务端编排相关常量（与 servePaper 任务的约定一致）。
 const (
-	adminUser    = "admin"
-	serverID     = "e2e-bukkit-1"
-	mcPort       = "25566"
-	bootstrap    = "beacon-bootstrap-2026"
-	onlineWait   = 12 * time.Minute // 首跑含下载 Paper + 构建 jar，给足时间
-	logPrefixCP  = "beacon-override"
-	logPrefixMC  = "paper"
-	sqliteDBName = "beacon-e2e-override.db"
+	adminUser           = "admin"
+	serverID            = "e2e-bukkit-1"
+	mcPort              = "25566"
+	bootstrap           = "beacon-bootstrap-2026"
+	onlineWait          = 12 * time.Minute // 首跑含下载 Paper + 构建 jar，给足时间
+	logPrefixCP         = "beacon-override"
+	logPrefixMCInert    = "paper-override-inert"
+	logPrefixMCOrdering = "paper-override-ordering"
+	sqliteDBName        = "beacon-e2e-override.db"
+
+	// Agent 配置与覆盖集长轮询默认挂起 30 秒；故 fail-static 连续观察 35 秒，完整跨过一轮并留 5 秒裕量。
+	failStaticObserve = 35 * time.Second
+	shortObserve      = 8 * time.Second
 )
 
 // 一条观测记录（验收插件标记文件的一行：时间|来源|path|md5|内容）。
@@ -106,8 +112,8 @@ func TestOverrideE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("定位仓库根失败：%v", err)
 	}
-	// Gradle runDirectory 位于 apps/.tmp，观测与受管文件均从实际运行目录读取。
-	runDir := filepath.Join(repoRoot, "apps", ".tmp", "e2e-run", "bukkit")
+	// 观测与受管文件统一从 mc-testkit Paper 运行目录读取。
+	runDir := harness.BackendRunDir(repoRoot)
 	paths := runPaths(runDir)
 
 	// 数据库 DSN：sqlite 用 .tmp 下独立文件并起前删除（等价 Reset-Db 的干净库）；mysql 用 E2E_DB_DSN 并 TRUNCATE。
@@ -129,12 +135,7 @@ func TestOverrideE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	cpStopped := false
-	defer func() {
-		if !cpStopped {
-			cp.Stop()
-		}
-	}()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(beaconURL, adminUser, adminPass)
 	if err != nil {
@@ -152,40 +153,33 @@ func TestOverrideE2E(t *testing.T) {
 	resetRunDirMirror(t, runDir)
 
 	t.Log("== 相位 inert（空白名单）+ filetree（FR-14 文件树镜像落盘）==")
-	paper := startPaper(t, repoRoot, accessToken, "")
-	paperStopped := false
-	defer func() {
-		if !paperStopped {
-			paper.Stop()
-		}
-	}()
-	identityID, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "pending", onlineWait)
+	paper := startPaper(t, repoRoot, accessToken, "", logPrefixMCInert)
+	harness.CleanupGradle(t, paper)
+	identityID, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "pending", onlineWait, paper)
 	if err != nil {
-		t.Fatalf("inert：agent identity 未进入 pending（见 .tmp/paper.out.log）：%v", err)
+		t.Fatalf("inert：agent identity 未进入 pending：%v", err)
 	}
-	if err := harness.ApproveIdentity(beaconURL, adminToken, identityID); err != nil {
+	if err := harness.ApproveIdentityWithGuard(beaconURL, adminToken, identityID, paper); err != nil {
 		t.Fatalf("inert：批准 agent identity 失败：%v", err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait); err != nil {
+	if _, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait, paper); err != nil {
 		t.Fatalf("inert：agent identity 未进入 active：%v", err)
 	}
-	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait); err != nil {
-		t.Fatalf("inert：agent 未 online（见 .tmp/paper.out.log）：%v", err)
+	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait, paper); err != nil {
+		t.Fatalf("inert：agent 未 online：%v", err)
 	}
 
-	t.Run("inert", func(t *testing.T) { runInert(t, adminPass, dbDriver, dbDSN, paths) })
-	t.Run("filetree", func(t *testing.T) { runFileTree(t, adminPass, paths) })
+	t.Run("inert", func(t *testing.T) { runInert(t, adminPass, dbDriver, dbDSN, paths, paper) })
+	t.Run("filetree", func(t *testing.T) { runFileTree(t, adminPass, paths, paper) })
 
-	paper.Stop()
-	paperStopped = true
+	if err := paper.Stop(); err != nil {
+		t.Fatalf("ordering 前停止第一轮 Paper 失败：%v", err)
+	}
 
-	// 强制把 inert 相位的实例标记下线，消除「陈旧 online」竞态：
-	// Paper 杀掉后控制面健康 TTL 未过期仍显示 e2e-bukkit-1 online，会让下面 ordering 的
-	// WaitInstanceOnline 看到残留 online 而提前返回，使 ordering 时钟在 Paper2 全新注册前空跑
-	// （Paper2 经 gradle --no-daemon 重建较慢，且 CoreLib.onEnable 在主线程等首次注册才放行 BeaconE2E，
-	// 故必须等到 Paper2 的全新注册，而非残留 online）。
-	// FR-49 后「下线」是粘性拒绝态：下线只为清掉陈旧 online 条目，须随即「取消下线」清掉拒绝表，
-	// 否则 Paper2 的全新注册会被 403 INSTANCE_OFFLINE_REJECTED 拒、永不 online。两步均是重启前置条件，失败即终止。
+	// 强制下线只用于清除第一轮残留的陈旧 online，避免 ordering 的 WaitInstanceOnline 提前命中旧实例。
+	// FR-49「下线」同时会写入粘性拒绝态，因此必须随即取消下线，允许第二轮 Paper 重新注册。
+	// mc-testkit 下一次 servePaper 会清理并重建 backend 运行目录，不保留 BeaconAgent 本地 identity；
+	// 这两步不承担 identity 复用，第二轮的新 identity 仍须单独等待 pending 并重新审批。
 	if err := harness.OfflineInstance(beaconURL, adminToken, namespace, serverID); err != nil {
 		t.Fatalf("ordering 前强制下线失败：%v", err)
 	}
@@ -195,45 +189,53 @@ func TestOverrideE2E(t *testing.T) {
 
 	t.Log("== 相位 ordering（放行白名单：次序 + 回滚不重放）==")
 	resetRunDirMirror(t, runDir) // 复位 managed.yml 为 A；DB 覆盖集保留（含命令）
-	paper2 := startPaper(t, repoRoot, accessToken, reloadCmd)
-	paper2Stopped := false
-	defer func() {
-		if !paper2Stopped {
-			paper2.Stop()
-		}
-	}()
-	if _, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait); err != nil {
-		t.Fatalf("ordering：复用的 agent identity 不再 active：%v", err)
+	paper2 := startPaper(t, repoRoot, accessToken, reloadCmd, logPrefixMCOrdering)
+	harness.CleanupGradle(t, paper2)
+	identityID2, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "pending", onlineWait, paper2)
+	if err != nil {
+		t.Fatalf("ordering：本轮新 agent identity 未进入 pending：%v", err)
 	}
-	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait); err != nil {
-		t.Fatalf("ordering：agent 未 online：%v", err)
+	if identityID2 == identityID {
+		t.Fatalf("ordering：mc-testkit 重建运行目录后应生成新 identity，实际仍命中第一轮 %s", identityID)
 	}
-	t.Run("ordering", func(t *testing.T) { runOrdering(t, adminPass, paths) })
+	if err := harness.ApproveIdentityWithGuard(beaconURL, adminToken, identityID2, paper2, true); err != nil {
+		t.Fatalf("ordering：批准本轮新 agent identity 失败：%v", err)
+	}
+	activeIdentityID, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait, paper2)
+	if err != nil {
+		t.Fatalf("ordering：本轮新 agent identity 未进入 active：%v", err)
+	}
+	if activeIdentityID != identityID2 {
+		t.Fatalf("ordering：active identity 应为本轮新 identity %s，实际 %s", identityID2, activeIdentityID)
+	}
+	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait, paper2); err != nil {
+		t.Fatalf("ordering：本轮新 agent 未 online：%v", err)
+	}
+	t.Run("ordering", func(t *testing.T) { runOrdering(t, adminPass, paths, paper2) })
 
 	t.Log("== 相位 failstatic（杀控制面，文件不动命令不发）==")
-	cp.Stop()
-	cpStopped = true
-	time.Sleep(3 * time.Second)
-	t.Run("failstatic", func(t *testing.T) { runFailStatic(t, paths) })
+	if err := cp.StopE(); err != nil {
+		t.Fatalf("failstatic 前停止控制面失败：%v", err)
+	}
+	t.Run("failstatic", func(t *testing.T) { runFailStatic(t, paths, paper2) })
 
-	paper2.Stop()
-	paper2Stopped = true
+	if err := paper2.Stop(); err != nil {
+		t.Fatalf("测试结束停止第二轮 Paper 失败：%v", err)
+	}
 }
 
-// startPaper 起 Paper，并显式注入 v2 namespace token；whitelist 为空时保持默认 inert。
-func startPaper(t *testing.T, repoRoot, accessToken, whitelist string) *harness.GradleProc {
+// startPaper 起 Paper，并通过进程环境注入 v2 namespace token；whitelist 为空时保持默认 inert。
+func startPaper(t *testing.T, repoRoot, accessToken, whitelist, logPrefix string) *harness.GradleProc {
 	t.Helper()
-	props := []string{
-		"-Pe2eMcPort=" + mcPort,
-		harness.BeaconEndpointProp(),
-		"-Pe2eBootstrapToken=" + accessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + serverID,
-	}
+	paperEnv := harness.AgentGradleEnv(
+		beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort,
+	)
 	if whitelist != "" {
-		props = append(props, "-Pe2eCommandWhitelist="+whitelist)
+		paperEnv["BEACON_AGENT_OVERRIDE_COMMAND_WHITELIST"] = whitelist
 	}
-	p, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", props, logPrefixMC)
+	p, err := harness.StartGradleTask(
+		repoRoot, ":agent-e2e:servePaper", []string{"-Pe2eMcPort=" + mcPort}, paperEnv, logPrefix,
+	)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
@@ -244,40 +246,42 @@ func startPaper(t *testing.T, repoRoot, accessToken, whitelist string) *harness.
 
 // runInert：空白名单下，覆盖集发布后文件被覆盖、但命令一条都不派发（ADR-0011 默认 inert）。
 // 本相位同时承担「建集 + 挂成员 + 发布带命令」的初始化（后续 ordering 相位复用同一覆盖集）。
-func runInert(t *testing.T, password, dbDriver, dbDSN string, p pathSet) {
-	token := login(t, password)
+func runInert(t *testing.T, password, dbDriver, dbDSN string, p pathSet, guard *harness.GradleProc) {
+	token := login(t, password, guard)
 
-	id := ensureSet(t, token)
+	id := ensureSet(t, token, guard)
 	ensureMember(t, dbDriver, dbDSN, id)
-	publishSet(t, token, id, reloadCmd)
+	publishSet(t, token, id, reloadCmd, guard)
 	t.Logf("已建/发布覆盖集 id=%d（targetRoot=%s，命令=%s）", id, targetRoot, reloadCmd)
 
 	// 等文件被覆盖为 B（agent 应用覆盖集）。
-	if !waitUntil(35*time.Second, func() bool {
+	if err := harness.WaitForCondition(35*time.Second, time.Second, guard, func(context.Context) bool {
 		return hasChangedTo(readObs(p.obsLog), contentB)
-	}) {
-		t.Fatalf("inert：超时未观测到 managed.yml 被覆盖为新内容（FILE_CHANGED=B）")
+	}); err != nil {
+		t.Fatalf("inert：超时未观测到 managed.yml 被覆盖为新内容（FILE_CHANGED=B）：%v", err)
 	}
-	// 再多等一会，确保「即便文件覆盖了，命令也始终不派发」。
-	time.Sleep(8 * time.Second)
-
-	records := readObs(p.obsLog)
-	if n := count(records, "COMMAND_RECEIVED"); n != 0 {
-		t.Fatalf("inert：空白名单下不应派发任何命令，却观测到 %d 条 COMMAND_RECEIVED", n)
+	// 文件收敛后持续观察，确保空白名单下命令始终不派发且 Gradle 全程存活。
+	if err := harness.ObserveFor(shortObserve, time.Second, guard, func(context.Context) error {
+		if n := count(readObs(p.obsLog), "COMMAND_RECEIVED"); n != 0 {
+			return fmt.Errorf("空白名单下不应派发任何命令，却观测到 %d 条 COMMAND_RECEIVED", n)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("inert：持续观察失败：%v", err)
 	}
 	t.Log("PASS inert：空白名单下文件已被覆盖为 B、受限重载命令一条未派发（默认 inert 成立）")
 }
 
 // runOrdering：放行白名单下，验证「备份原文件→落盘新内容→落盘成功后才派发命令」次序，再验回滚不重放命令。
-func runOrdering(t *testing.T, password string, p pathSet) {
-	token := login(t, password)
+func runOrdering(t *testing.T, password string, p pathSet, guard *harness.GradleProc) {
+	token := login(t, password, guard)
 
 	// 等到「文件被覆盖为 B」且「命令已收到」都出现。
-	if !waitUntil(35*time.Second, func() bool {
+	if err := harness.WaitForCondition(35*time.Second, time.Second, guard, func(context.Context) bool {
 		r := readObs(p.obsLog)
 		return hasChangedTo(r, contentB) && count(r, "COMMAND_RECEIVED") >= 1
-	}) {
-		t.Fatalf("ordering：超时未同时观测到 FILE_CHANGED=B 与 COMMAND_RECEIVED")
+	}); err != nil {
+		t.Fatalf("ordering：超时未同时观测到 FILE_CHANGED=B 与 COMMAND_RECEIVED：%v", err)
 	}
 	records := readObs(p.obsLog)
 
@@ -303,52 +307,57 @@ func runOrdering(t *testing.T, password string, p pathSet) {
 
 	// 回滚验证：回滚到 v1（无命令版本）后，agent 向目标态收敛——还原事实但绝不重放命令。
 	cmdBefore := count(records, "COMMAND_RECEIVED")
-	id := mustFindSet(t, token)
-	rollbackSet(t, token, id, 1)
+	id := mustFindSet(t, token, guard)
+	rollbackSet(t, token, id, 1, guard)
 	t.Logf("ordering：已回滚覆盖集 id=%d 到 v1（无命令版本）", id)
-	time.Sleep(8 * time.Second)
-
-	after := readObs(p.obsLog)
-	if n := count(after, "COMMAND_RECEIVED"); n != cmdBefore {
-		t.Fatalf("ordering：回滚不应重放命令，命令数由 %d 变为 %d", cmdBefore, n)
-	}
-	if got := readFile(p.managed); got != contentB {
-		t.Fatalf("ordering：回滚后受管文件仍应在位（B），实际=%q", got)
+	if err := harness.ObserveFor(shortObserve, time.Second, guard, func(context.Context) error {
+		after := readObs(p.obsLog)
+		if n := count(after, "COMMAND_RECEIVED"); n != cmdBefore {
+			return fmt.Errorf("回滚不应重放命令，命令数由 %d 变为 %d", cmdBefore, n)
+		}
+		if got := readFile(p.managed); got != contentB {
+			return fmt.Errorf("回滚后受管文件仍应在位（B），实际=%q", got)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("ordering：回滚持续观察失败：%v", err)
 	}
 	t.Logf("PASS ordering：次序正确，且回滚只还原事实、未重放任何重载命令（命令数仍为 %d）", cmdBefore)
 }
 
 // runFailStatic：控制面已被外部编排杀掉后，断言文件不动、命令不发（agent fail-static）。
-func runFailStatic(t *testing.T, p pathSet) {
+func runFailStatic(t *testing.T, p pathSet, guard *harness.GradleProc) {
 	before := readObs(p.obsLog)
 	baseCmd := count(before, "COMMAND_RECEIVED")
 	baseMd5 := md5File(p.managed)
-	t.Logf("failstatic：控制面应已下线，基线 命令数=%d managed.md5=%s，观察 9 秒", baseCmd, baseMd5)
+	t.Logf("failstatic：控制面应已下线，基线 命令数=%d managed.md5=%s，连续观察 %s", baseCmd, baseMd5, failStaticObserve)
 
-	time.Sleep(9 * time.Second)
-
-	after := readObs(p.obsLog)
-	if n := count(after, "COMMAND_RECEIVED"); n != baseCmd {
-		t.Fatalf("failstatic：控制面挂掉后不应有新命令，命令数由 %d 变为 %d", baseCmd, n)
+	if err := harness.ObserveFor(failStaticObserve, time.Second, guard, func(context.Context) error {
+		if n := count(readObs(p.obsLog), "COMMAND_RECEIVED"); n != baseCmd {
+			return fmt.Errorf("控制面挂掉后不应有新命令，命令数由 %d 变为 %d", baseCmd, n)
+		}
+		if m := md5File(p.managed); m != baseMd5 {
+			return fmt.Errorf("控制面挂掉后受管文件不应变动，md5 由 %s 变为 %s", baseMd5, m)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("failstatic：持续观察失败：%v", err)
 	}
-	if m := md5File(p.managed); m != baseMd5 {
-		t.Fatalf("failstatic：控制面挂掉后受管文件不应变动，md5 由 %s 变为 %s", baseMd5, m)
-	}
-	t.Log("PASS failstatic：控制面下线期间受管文件未变、命令未派发（fail-static 成立）")
+	t.Logf("PASS failstatic：控制面下线后连续 %s 受管文件未变、命令未派发（完整覆盖 30 秒长轮询周期）", failStaticObserve)
 }
 
 // runFileTree：发布一个文件树文件 → 断言 agent 镜像落盘到插件真实数据目录、验收插件读到镜像内容（FR-14）。
-func runFileTree(t *testing.T, password string, p pathSet) {
-	token := login(t, password)
+func runFileTree(t *testing.T, password string, p pathSet, guard *harness.GradleProc) {
+	token := login(t, password, guard)
 
-	publishTreeFile(t, token)
+	publishTreeFile(t, token, guard)
 	t.Logf("已发布文件树文件 path=%s（应镜像落盘到插件数据目录）", treeFilePath)
 
 	// 等验收插件观测到镜像文件内容为发布内容（agent 已镜像落盘到 plugins/BeaconE2E/tree-managed.yml）。
-	if !waitUntil(35*time.Second, func() bool {
+	if err := harness.WaitForCondition(35*time.Second, time.Second, guard, func(context.Context) bool {
 		return hasMirrored(readObs(p.filetreeObs), treeContent)
-	}) {
-		t.Fatalf("filetree：超时未观测到文件树文件被镜像落盘到插件数据目录（FILE_TREE_MIRRORED=C）")
+	}); err != nil {
+		t.Fatalf("filetree：超时未观测到文件树文件被镜像落盘到插件数据目录（FILE_TREE_MIRRORED=C）：%v", err)
 	}
 	// 双保险：直接核对镜像文件确实落在插件真实数据目录、内容正确。
 	if got := readFile(p.treeMirror); got != treeContent {
@@ -360,8 +369,8 @@ func runFileTree(t *testing.T, password string, p pathSet) {
 // ---- 覆盖集 REST ----
 
 // ensureSet 查到则复用、查不到则新建（空命令、global 层）覆盖集，返回其 id。
-func ensureSet(t *testing.T, token string) uint {
-	if id, ok := findSet(t, token); ok {
+func ensureSet(t *testing.T, token string, guard harness.ProcessGuard) uint {
+	if id, ok := findSet(t, token, guard); ok {
 		return id
 	}
 	body := map[string]any{
@@ -372,19 +381,19 @@ func ensureSet(t *testing.T, token string) uint {
 	var resp struct {
 		ID uint `json:"id"`
 	}
-	doAdmin(t, http.MethodPost, "/admin/v1/override-sets", token, body, http.StatusCreated, &resp)
+	doAdmin(t, http.MethodPost, "/admin/v1/override-sets", token, body, http.StatusCreated, &resp, guard)
 	return resp.ID
 }
 
 // findSet 按名查覆盖集 id。
-func findSet(t *testing.T, token string) (uint, bool) {
+func findSet(t *testing.T, token string, guard harness.ProcessGuard) (uint, bool) {
 	var resp struct {
 		Items []struct {
 			ID   uint   `json:"id"`
 			Name string `json:"name"`
 		} `json:"items"`
 	}
-	doAdmin(t, http.MethodGet, "/admin/v1/override-sets?namespace="+namespace, token, nil, http.StatusOK, &resp)
+	doAdmin(t, http.MethodGet, "/admin/v1/override-sets?namespace="+namespace, token, nil, http.StatusOK, &resp, guard)
 	for _, it := range resp.Items {
 		if it.Name == setName {
 			return it.ID, true
@@ -393,8 +402,8 @@ func findSet(t *testing.T, token string) (uint, bool) {
 	return 0, false
 }
 
-func mustFindSet(t *testing.T, token string) uint {
-	if id, ok := findSet(t, token); ok {
+func mustFindSet(t *testing.T, token string, guard harness.ProcessGuard) uint {
+	if id, ok := findSet(t, token, guard); ok {
 		return id
 	}
 	t.Fatalf("未找到覆盖集 %s", setName)
@@ -402,25 +411,25 @@ func mustFindSet(t *testing.T, token string) uint {
 }
 
 // publishSet 发布新版本：设定目标根 + 受限重载命令。
-func publishSet(t *testing.T, token string, id uint, cmd string) {
+func publishSet(t *testing.T, token string, id uint, cmd string, guard harness.ProcessGuard) {
 	body := map[string]any{"targetRoot": targetRoot, "reloadCommand": cmd, "comment": "e2e 发布命令"}
-	doAdmin(t, http.MethodPut, fmt.Sprintf("/admin/v1/override-sets/%d", id), token, body, http.StatusOK, nil)
+	doAdmin(t, http.MethodPut, fmt.Sprintf("/admin/v1/override-sets/%d", id), token, body, http.StatusOK, nil, guard)
 }
 
 // rollbackSet 回滚到目标版本（新版本 = 当前 +1，只还原事实）。
-func rollbackSet(t *testing.T, token string, id uint, toVersion int) {
+func rollbackSet(t *testing.T, token string, id uint, toVersion int, guard harness.ProcessGuard) {
 	body := map[string]any{"toVersion": toVersion, "comment": "e2e 回滚验证"}
-	doAdmin(t, http.MethodPost, fmt.Sprintf("/admin/v1/override-sets/%d/rollback", id), token, body, http.StatusOK, nil)
+	doAdmin(t, http.MethodPost, fmt.Sprintf("/admin/v1/override-sets/%d/rollback", id), token, body, http.StatusOK, nil, guard)
 }
 
 // publishTreeFile 经 admin REST 建一个文件树文件（global 层），触发 agent 文件树镜像落盘（FR-14）。
-func publishTreeFile(t *testing.T, token string) {
+func publishTreeFile(t *testing.T, token string, guard harness.ProcessGuard) {
 	body := map[string]any{
 		"namespace": namespace, "group": model.GlobalGroupCode, "path": treeFilePath,
 		"scopeLevel": model.ScopeGlobal, "scopeTarget": "",
 		"content": treeContent, "comment": "e2e 文件树镜像验收",
 	}
-	doAdmin(t, http.MethodPost, "/admin/v1/files", token, body, http.StatusCreated, nil)
+	doAdmin(t, http.MethodPost, "/admin/v1/files", token, body, http.StatusCreated, nil, guard)
 }
 
 // ensureMember 经数据层把成员文件 managed.yml=B 挂到覆盖集（控制面无成员挂载 API，沿用集成测试做法）。
@@ -501,9 +510,9 @@ func truncateOverrideTables(t *testing.T, dbDriver, dbDSN string) {
 
 // ---- 鉴权 ----
 
-// login 用管理员口令换登录令牌（FR-11）；编排阶段（等 online）与相位内取令牌共用。
-func login(t *testing.T, pass string) string {
-	token, err := harness.Login(beaconURL, adminUser, pass)
+// login 用管理员口令换登录令牌（FR-11），并在相位内绑定当前 Gradle 生命周期。
+func login(t *testing.T, pass string, guard harness.ProcessGuard) string {
+	token, err := harness.Login(beaconURL, adminUser, pass, guard)
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
@@ -513,7 +522,7 @@ func login(t *testing.T, pass string) string {
 // ---- HTTP 工具 ----
 
 // doAdmin 发一个带 Bearer 的 admin 请求，校验期望状态码，并（若 out 非 nil）解析响应体。失败即 fatal。
-func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int, out any) {
+func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int, out any, guard harness.ProcessGuard) {
 	var reader io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -527,18 +536,21 @@ func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
 		t.Fatalf("请求 %s %s 失败：%v", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("%s %s 期望 HTTP %d，得 %d：%s", method, path, wantStatus, resp.StatusCode, string(raw))
+		t.Fatalf("%s %s 期望 HTTP %d，得 %d", method, path, wantStatus, resp.StatusCode)
 	}
 	if out != nil {
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			t.Fatalf("读取 %s 响应失败：%v", path, readErr)
+		}
 		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析 %s 响应失败：%v（%s）", path, err, string(raw))
+			t.Fatalf("解析 %s 响应失败：%v", path, err)
 		}
 	}
 }
@@ -658,17 +670,6 @@ func md5File(path string) string {
 	}
 	sum := md5.Sum(raw)
 	return hex.EncodeToString(sum[:])
-}
-
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return cond()
 }
 
 // requireEnv 取必填 env，缺失即 t.Skip（让普通 go test ./... 不因缺密钥失败）。

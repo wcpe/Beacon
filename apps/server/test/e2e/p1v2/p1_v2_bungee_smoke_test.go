@@ -4,6 +4,7 @@ package p1v2_e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,7 +122,7 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("启动控制面失败：%v", err)
 	}
-	defer cp.Stop()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(testBeaconURL(), adminUser, adminPass)
 	if err != nil {
@@ -130,47 +132,47 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 
 	t.Log("== 启动真实 BungeeCord，等待 v2 pending ==")
 	bungee := startBungee(t, repoRoot, bungeeDir, ns.AccessToken)
-	defer bungee.Stop()
+	cleanupBungee(t, bungee)
 
 	identityPath := filepath.Join(bungeeDir, "plugins", "BeaconAgentProxy", "identity.yml")
-	identityID := waitIdentityFile(t, identityPath, pendingWait)
-	pending := waitIdentityStatus(t, adminToken, identityID, "pending", pendingWait)
+	identityID := waitIdentityFile(t, identityPath, pendingWait, bungee)
+	pending := waitIdentityStatus(t, adminToken, identityID, "pending", pendingWait, bungee)
 	if pending.ServerID != serverID || pending.NamespaceID != ns.ID || pending.Kind != "proxy" {
 		t.Fatalf("pending 身份归属不符合预期：%+v namespace=%d", pending, ns.ID)
 	}
 
 	t.Log("== approve 后等待 active 与 legacy v1 online ==")
-	approveIdentity(t, adminToken, identityID)
-	waitIdentityStatus(t, adminToken, identityID, "active", pendingWait)
-	if err := harness.WaitInstanceOnline(testBeaconURL(), adminToken, namespace, serverID, onlineWait); err != nil {
+	approveIdentity(t, adminToken, identityID, bungee)
+	waitIdentityStatus(t, adminToken, identityID, "active", pendingWait, bungee)
+	if err := harness.WaitInstanceOnline(testBeaconURL(), adminToken, namespace, serverID, onlineWait, bungee); err != nil {
 		t.Fatalf("v2 active 后应衔接 legacy 数据面 online：%v", err)
 	}
 
 	t.Log("== 验证 approve 只创建未分配 server，再做首次 BC 集群分配 ==")
-	server := requireUnassignedServer(t, adminToken, ns.ID)
-	cluster := createBCCluster(t, adminToken, ns.ID)
-	assigned := assignServerToBCCluster(t, adminToken, ns.ID, server.ID, cluster.ID)
+	server := requireUnassignedServer(t, adminToken, ns.ID, bungee)
+	cluster := createBCCluster(t, adminToken, ns.ID, bungee)
+	assigned := assignServerToBCCluster(t, adminToken, ns.ID, server.ID, cluster.ID, bungee)
 	if assigned.BCClusterID == nil || *assigned.BCClusterID != cluster.ID || assigned.ZoneID != nil || !assigned.Assigned {
 		t.Fatalf("server 首次分配结果不符合预期：server=%+v cluster=%+v", assigned, cluster)
 	}
 
 	t.Log("== 重启真实 BungeeCord，验证 identityId 持久不变 ==")
-	bungee.Stop()
+	stopBungee(t, bungee)
 	bungee = startBungee(t, repoRoot, bungeeDir, ns.AccessToken)
-	defer bungee.Stop()
-	if got := waitIdentityFile(t, identityPath, pendingWait); got != identityID {
+	cleanupBungee(t, bungee)
+	if got := waitIdentityFile(t, identityPath, pendingWait, bungee); got != identityID {
 		t.Fatalf("重启后 identityId 应保持不变：want=%s got=%s", identityID, got)
 	}
-	waitIdentityStatus(t, adminToken, identityID, "active", pendingWait)
+	waitIdentityStatus(t, adminToken, identityID, "active", pendingWait, bungee)
 
 	t.Log("== 损坏 identity.yml 后启动，验证不静默重生成 ==")
-	bungee.Stop()
+	stopBungee(t, bungee)
 	corrupt := []byte("format-version: 1\nidentity-id: not-a-uuid\ncreated-at: \"2026-07-07T00:00:00Z\"\n")
 	if err := os.WriteFile(identityPath, corrupt, 0o644); err != nil {
 		t.Fatalf("写入损坏 identity.yml 失败：%v", err)
 	}
 	bungee = startBungee(t, repoRoot, bungeeDir, ns.AccessToken)
-	defer bungee.Stop()
+	cleanupBungee(t, bungee)
 	time.Sleep(15 * time.Second)
 	after, err := os.ReadFile(identityPath)
 	if err != nil {
@@ -178,6 +180,29 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	}
 	if !bytes.Equal(bytes.TrimSpace(after), bytes.TrimSpace(corrupt)) {
 		t.Fatalf("损坏 identity.yml 不应被静默重生成，实际内容：\n%s", string(after))
+	}
+}
+
+func TestBungeeStopIgnoresTerminationRaceAfterProcessExit(t *testing.T) {
+	done := make(chan struct{})
+	proc := &bungeeProc{
+		done: done, stopDone: make(chan struct{}), state: bungeeProcRunning,
+	}
+	killCalled := false
+	proc.killFn = func(*exec.Cmd) (error, error) {
+		killCalled = true
+		proc.mu.Lock()
+		proc.state = bungeeProcStopped
+		proc.mu.Unlock()
+		close(done)
+		return fmt.Errorf("整树终止返回访问被拒绝"), fmt.Errorf("根进程终止返回访问被拒绝")
+	}
+
+	if err := proc.StopE(); err != nil {
+		t.Fatalf("进程已确认退出时不应把并发终止错误误报为清理失败：%v", err)
+	}
+	if !killCalled {
+		t.Fatal("测试未覆盖并发终止命令失败路径")
 	}
 }
 
@@ -190,32 +215,25 @@ func testBeaconURL() string {
 
 func createNamespace(t *testing.T, token string) namespaceView {
 	t.Helper()
-	var ns namespaceView
-	doAdminJSON(t, http.MethodPost, "/admin/v2/namespaces", token, map[string]any{
-		"name": namespace, "description": "P1 v2 真机 smoke",
-	}, http.StatusCreated, &ns)
-	if ns.ID == 0 || ns.AccessToken == "" {
-		t.Fatalf("创建 namespace 响应缺少 ID/token：%+v", ns)
+	id, accessToken, err := harness.CreateV2Namespace(testBeaconURL(), token, namespace, "P1 v2 真机 smoke")
+	if err != nil {
+		t.Fatalf("创建 namespace 失败：%v", err)
 	}
-	return ns
+	return namespaceView{ID: id, AccessToken: accessToken}
 }
 
-func approveIdentity(t *testing.T, token, identityID string) {
+func approveIdentity(t *testing.T, token, identityID string, guard harness.ProcessGuard) {
 	t.Helper()
-	var ident identityView
-	doAdminJSON(t, http.MethodPost, "/admin/v2/agent-identities/"+url.PathEscape(identityID)+"/approve", token, map[string]any{
-		"forceUnbindOccupier": false,
-	}, http.StatusOK, &ident)
-	if ident.Status != "active" {
-		t.Fatalf("approve 后身份应 active，实际 %+v", ident)
+	if err := harness.ApproveIdentityWithGuard(testBeaconURL(), token, identityID, guard); err != nil {
+		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }
 
-func requireUnassignedServer(t *testing.T, token string, namespaceID uint) serverView {
+func requireUnassignedServer(t *testing.T, token string, namespaceID uint, guard harness.ProcessGuard) serverView {
 	t.Helper()
 	var resp listResponse[serverView]
 	path := fmt.Sprintf("/admin/v2/servers?namespaceId=%d&assigned=false&keyword=%s", namespaceID, url.QueryEscape(serverID))
-	doAdminJSON(t, http.MethodGet, path, token, nil, http.StatusOK, &resp)
+	doAdminJSON(t, http.MethodGet, path, token, nil, http.StatusOK, &resp, guard)
 	for _, item := range resp.Items {
 		if item.ServerID == serverID && item.Kind == "proxy" && item.BCClusterID == nil && item.ZoneID == nil {
 			return item
@@ -225,19 +243,19 @@ func requireUnassignedServer(t *testing.T, token string, namespaceID uint) serve
 	return serverView{}
 }
 
-func createBCCluster(t *testing.T, token string, namespaceID uint) bcClusterView {
+func createBCCluster(t *testing.T, token string, namespaceID uint, guard harness.ProcessGuard) bcClusterView {
 	t.Helper()
 	var cluster bcClusterView
 	doAdminJSON(t, http.MethodPost, "/admin/v2/bc-clusters", token, map[string]any{
 		"namespaceId": namespaceID, "name": "p1-v2-bc", "description": "P1 v2 smoke 集群",
-	}, http.StatusCreated, &cluster)
+	}, http.StatusCreated, &cluster, guard)
 	if cluster.ID == 0 || cluster.NamespaceID != namespaceID {
 		t.Fatalf("BC 集群创建响应不符合预期：%+v", cluster)
 	}
 	return cluster
 }
 
-func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowID, clusterID uint) serverView {
+func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowID, clusterID uint, guard harness.ProcessGuard) serverView {
 	t.Helper()
 	var assignmentResp assignmentResponseView
 	doAdminJSON(t, http.MethodPost, "/admin/v2/server-assignments", token, map[string]any{
@@ -247,7 +265,7 @@ func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowI
 			"id":   clusterID,
 		},
 		"reason": "P1 v2 真机 smoke 首次分配",
-	}, http.StatusOK, &assignmentResp)
+	}, http.StatusOK, &assignmentResp, guard)
 	if len(assignmentResp.Results) != 1 {
 		t.Fatalf("server 分配响应应返回 1 项，实际 %+v", assignmentResp)
 	}
@@ -258,7 +276,7 @@ func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowI
 
 	var servers listResponse[serverView]
 	path := fmt.Sprintf("/admin/v2/servers?namespaceId=%d&assigned=true&keyword=%s", namespaceID, url.QueryEscape(serverID))
-	doAdminJSON(t, http.MethodGet, path, token, nil, http.StatusOK, &servers)
+	doAdminJSON(t, http.MethodGet, path, token, nil, http.StatusOK, &servers, guard)
 	for _, item := range servers.Items {
 		if item.ID == serverRowID && item.ServerID == serverID {
 			return item
@@ -268,36 +286,46 @@ func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowI
 	return serverView{}
 }
 
-func waitIdentityStatus(t *testing.T, token, identityID, status string, timeout time.Duration) identityView {
+func waitIdentityStatus(
+	t *testing.T,
+	token, identityID, status string,
+	timeout time.Duration,
+	guard harness.ProcessGuard,
+) identityView {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	var matched identityView
+	err := harness.WaitForCondition(timeout, time.Second, guard, func(ctx context.Context) bool {
 		var resp listResponse[identityView]
 		path := "/admin/v2/agent-identities?keyword=" + url.QueryEscape(identityID)
-		doAdminJSON(t, http.MethodGet, path, token, nil, http.StatusOK, &resp)
+		if err := requestAdminJSON(ctx, http.MethodGet, path, token, nil, http.StatusOK, &resp, guard); err != nil {
+			return false
+		}
 		for _, item := range resp.Items {
 			if item.IdentityID == identityID && item.Status == status {
-				return item
+				matched = item
+				return true
 			}
 		}
-		time.Sleep(time.Second)
+		return false
+	})
+	if err != nil {
+		t.Fatalf("等待 identity=%s 进入 %s 失败：%v", identityID, status, err)
 	}
-	t.Fatalf("等待 identity=%s 进入 %s 超时", identityID, status)
-	return identityView{}
+	return matched
 }
 
-func waitIdentityFile(t *testing.T, path string, timeout time.Duration) string {
+func waitIdentityFile(t *testing.T, path string, timeout time.Duration, guard harness.ProcessGuard) string {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		identityID, err := readIdentityID(path)
-		if err == nil && identityID != "" {
-			return identityID
-		}
-		time.Sleep(time.Second)
+	var identityID string
+	err := harness.WaitForCondition(timeout, time.Second, guard, func(context.Context) bool {
+		var err error
+		identityID, err = readIdentityID(path)
+		return err == nil && identityID != ""
+	})
+	if err != nil {
+		t.Fatalf("等待 identity.yml 生成失败：%s：%v", path, err)
 	}
-	t.Fatalf("等待 identity.yml 生成超时：%s", path)
-	return ""
+	return identityID
 }
 
 func readIdentityID(path string) (string, error) {
@@ -314,38 +342,48 @@ func readIdentityID(path string) (string, error) {
 	return "", fmt.Errorf("identity.yml 缺少 identity-id")
 }
 
-func doAdminJSON(t *testing.T, method, path, token string, body any, want int, out any) {
+func doAdminJSON(t *testing.T, method, path, token string, body any, want int, out any, guard harness.ProcessGuard) {
 	t.Helper()
+	if err := requestAdminJSON(context.Background(), method, path, token, body, want, out, guard); err != nil {
+		t.Fatalf("%s %s 请求失败：%v", method, path, err)
+	}
+}
+
+func requestAdminJSON(ctx context.Context, method, path, token string, body any, want int, out any, guard harness.ProcessGuard) error {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			t.Fatalf("编码请求体失败：%v", err)
+			return fmt.Errorf("编码请求体失败：%w", err)
 		}
 		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequest(method, strings.TrimRight(testBeaconURL(), "/")+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(testBeaconURL(), "/")+path, reader)
 	if err != nil {
-		t.Fatalf("构造请求失败：%v", err)
+		return fmt.Errorf("构造请求失败：%w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
-		t.Fatalf("%s %s 请求失败：%v", method, path, err)
+		return err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取响应失败：%w", err)
+	}
 	if resp.StatusCode != want {
-		t.Fatalf("%s %s 应返回 %d，实际 %d：%s", method, path, want, resp.StatusCode, string(raw))
+		return fmt.Errorf("应返回 %d，实际 %d", want, resp.StatusCode)
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析响应失败：%v\n%s", err, string(raw))
+			return fmt.Errorf("解析响应失败：%w", err)
 		}
 	}
+	return nil
 }
 
 func buildAgentBungeeJar(t *testing.T, repoRoot string) string {
@@ -489,11 +527,31 @@ func copyFileNoFatal(src, dst string) error {
 	return out.Close()
 }
 
+type bungeeProcState uint8
+
+const (
+	bungeeProcRunning bungeeProcState = iota
+	bungeeProcExited
+	bungeeProcStopping
+	bungeeProcStopped
+
+	bungeeStopTimeout = 10 * time.Second
+)
+
 type bungeeProc struct {
-	cmd     *exec.Cmd
-	outFile *os.File
-	errFile *os.File
-	stopped bool
+	cmd        *exec.Cmd
+	outFile    *os.File
+	errFile    *os.File
+	stdoutPath string
+	stderrPath string
+	done       chan struct{}
+	stopDone   chan struct{}
+	stopOnce   sync.Once
+	mu         sync.Mutex
+	state      bungeeProcState
+	waitErr    error
+	stopErr    error
+	killFn     func(*exec.Cmd) (error, error)
 }
 
 func startBungee(t *testing.T, repoRoot, bungeeDir, namespaceToken string) *bungeeProc {
@@ -526,31 +584,149 @@ func startBungee(t *testing.T, repoRoot, bungeeDir, namespaceToken string) *bung
 		_ = errFile.Close()
 		t.Fatalf("启动 BungeeCord 失败：%v", err)
 	}
-	return &bungeeProc{cmd: cmd, outFile: outFile, errFile: errFile}
+	proc := &bungeeProc{
+		cmd: cmd, outFile: outFile, errFile: errFile,
+		stdoutPath: outLog, stderrPath: errLog,
+		done: make(chan struct{}), stopDone: make(chan struct{}), state: bungeeProcRunning,
+		killFn: killBungee,
+	}
+	go proc.wait()
+	return proc
+}
+
+func (p *bungeeProc) Done() <-chan struct{} {
+	if p == nil {
+		return nil
+	}
+	return p.done
+}
+
+func (p *bungeeProc) LogPaths() (string, string) {
+	if p == nil {
+		return "", ""
+	}
+	return p.stdoutPath, p.stderrPath
+}
+
+func (p *bungeeProc) CheckEarlyExit() error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.state != bungeeProcExited {
+		return nil
+	}
+	return fmt.Errorf(
+		"BungeeCord 意外早退：退出结果=%s；stdout=%s；stderr=%s",
+		exitResult(p.waitErr), p.stdoutPath, p.stderrPath,
+	)
 }
 
 func (p *bungeeProc) Stop() {
+	_ = p.StopE()
+}
+
+func (p *bungeeProc) StopE() error {
 	if p == nil {
-		return
+		return nil
 	}
-	if p.stopped {
-		return
-	}
-	p.stopped = true
-	if p.cmd != nil && p.cmd.Process != nil {
-		if runtime.GOOS == "windows" {
-			_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(p.cmd.Process.Pid)).Run()
-		} else {
-			_ = p.cmd.Process.Kill()
+	p.stopOnce.Do(func() {
+		shouldKill := p.beginStop()
+		var treeErr, rootErr error
+		if shouldKill {
+			killFn := p.killFn
+			if killFn == nil {
+				killFn = killBungee
+			}
+			treeErr, rootErr = killFn(p.cmd)
 		}
-		_ = p.cmd.Wait()
+		select {
+		case <-p.done:
+			// 已确认进程退出即完成收尾；Windows 下进程并发自退时 taskkill 可能返回假失败。
+		case <-time.After(bungeeStopTimeout):
+			p.stopErr = p.stopDiagnostic("等待进程退出超时", treeErr, rootErr)
+		}
+		close(p.stopDone)
+	})
+	<-p.stopDone
+	return p.stopErr
+}
+
+func (p *bungeeProc) beginStop() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	shouldKill := p.state == bungeeProcRunning
+	if p.state != bungeeProcStopped {
+		p.state = bungeeProcStopping
 	}
-	if p.outFile != nil {
-		_ = p.outFile.Close()
+	return shouldKill
+}
+
+func (p *bungeeProc) stopDiagnostic(reason string, treeErr, rootErr error) error {
+	return fmt.Errorf(
+		"停止 BungeeCord 失败：%s；整树终止=%s；根进程回退=%s；等待上限=%s；stdout=%s；stderr=%s",
+		reason, localErrorResult(treeErr), localErrorResult(rootErr), bungeeStopTimeout, p.stdoutPath, p.stderrPath,
+	)
+}
+
+func (p *bungeeProc) wait() {
+	err := p.cmd.Wait()
+	_ = p.outFile.Close()
+	_ = p.errFile.Close()
+	p.mu.Lock()
+	p.waitErr = err
+	if p.state == bungeeProcStopping {
+		p.state = bungeeProcStopped
+	} else {
+		p.state = bungeeProcExited
 	}
-	if p.errFile != nil {
-		_ = p.errFile.Close()
+	p.mu.Unlock()
+	close(p.done)
+}
+
+func killBungee(cmd *exec.Cmd) (treeErr, rootErr error) {
+	if cmd == nil || cmd.Process == nil {
+		return nil, nil
 	}
+	if runtime.GOOS == "windows" {
+		treeErr = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+		if treeErr != nil {
+			rootErr = cmd.Process.Kill()
+		}
+		return treeErr, rootErr
+	}
+	return cmd.Process.Kill(), nil
+}
+
+func cleanupBungee(t *testing.T, proc *bungeeProc) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := proc.StopE(); err != nil {
+			t.Errorf("清理 BungeeCord 失败：%v", err)
+		}
+	})
+}
+
+func stopBungee(t *testing.T, proc *bungeeProc) {
+	t.Helper()
+	if err := proc.StopE(); err != nil {
+		t.Fatalf("停止 BungeeCord 失败：%v", err)
+	}
+}
+
+func exitResult(err error) string {
+	if err == nil {
+		return "退出码 0"
+	}
+	return err.Error()
+}
+
+func localErrorResult(err error) string {
+	if err == nil {
+		return "无错误"
+	}
+	return err.Error()
 }
 
 func javaPath() string {

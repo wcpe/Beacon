@@ -72,6 +72,7 @@ type MessageSendParams struct {
 	TargetZone       string // 广播 zone 级定向（仅 targetKind=broadcast 时可选，FR-180）
 	CorrelationID    string
 	Payload          string
+	PayloadRaw       bool
 	SentAtMs         int64
 }
 
@@ -99,7 +100,7 @@ func (s *MessageService) Send(p MessageSendParams) (MessageSendResult, error) {
 		MessageID: p.MessageID, NamespaceID: p.Identity.NamespaceID, SourceServerID: p.Identity.ServerID,
 		MsgType: p.MsgType, TargetKind: p.TargetKind, TargetServerID: p.TargetServerID,
 		TargetPlayer: p.TargetPlayerUUID, TargetZone: p.TargetZone, CorrelationID: p.CorrelationID,
-		Payload: p.Payload, PayloadSize: len(p.Payload),
+		Payload: p.Payload, PayloadRaw: p.PayloadRaw, PayloadSize: len(p.Payload),
 		SentAtMs: sentAtMs, CreatedAtMs: nowMs,
 	}
 	if p.TargetKind == model.MsgTargetKindBroadcast {

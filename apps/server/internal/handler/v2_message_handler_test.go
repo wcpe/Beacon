@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,6 +39,67 @@ func msgAgentRequest(serverID string, body any) *http.Request {
 	return req.WithContext(agentauth.WithIdentity(req.Context(), id))
 }
 
+// TestMsgHandlerStructuredPayloadRoundTrip 校验任意 JSON payload 经 send / poll 往返保持类型与内容。
+func TestMsgHandlerStructuredPayloadRoundTrip(t *testing.T) {
+	nowMs := time.Now().UTC().UnixMilli()
+	tests := []struct {
+		name    string
+		suffix  string
+		payload any
+	}{
+		{
+			name:   "嵌套对象",
+			suffix: "o1",
+			payload: map[string]any{
+				"servers": []any{"game-1", "game-2"},
+				"online":  true,
+				"count":   2,
+				"meta":    map[string]any{"region": nil},
+			},
+		},
+		{name: "顶层数组", suffix: "a1", payload: []any{map[string]any{"id": "game-1"}, false}},
+		{name: "顶层数字", suffix: "d1", payload: 42},
+		{name: "顶层布尔", suffix: "b1", payload: true},
+		{name: "转义字符串", suffix: "s1", payload: "引号\"反斜杠\\换行\n"},
+		{name: "空字符串", suffix: "e1", payload: ""},
+		{name: "空值", suffix: "n1", payload: nil},
+	}
+
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newMsgHandlerForTest(nil)
+			rec := httptest.NewRecorder()
+			h.Send(rec, msgAgentRequest("game-1", map[string]any{
+				"messageId": uuidV7AtHandler(nowMs+int64(i), tc.suffix),
+				"msgType":   "lodestone:roster", "targetKind": "server",
+				"targetServerId": "game-2", "payload": tc.payload,
+			}))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("结构化 payload send 应 200，实际 %d：%s", rec.Code, rec.Body.String())
+			}
+
+			pollRec := httptest.NewRecorder()
+			h.Poll(pollRec, msgAgentRequest("game-2", map[string]any{"waitSec": 0, "max": 1}))
+			var pollResp struct {
+				Messages []struct {
+					MsgType string `json:"msgType"`
+					Payload any    `json:"payload"`
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(pollRec.Body.Bytes(), &pollResp); err != nil || len(pollResp.Messages) != 1 {
+				t.Fatalf("poll 应取到 1 条消息，实际 %s err=%v", pollRec.Body.String(), err)
+			}
+			var want any
+			raw, _ := json.Marshal(tc.payload)
+			_ = json.Unmarshal(raw, &want)
+			got := pollResp.Messages[0]
+			if got.MsgType != "lodestone:roster" || !reflect.DeepEqual(got.Payload, want) {
+				t.Fatalf("payload 类型或内容未保持，got=%#v want=%#v", got, want)
+			}
+		})
+	}
+}
+
 // TestMsgHandlerSendBroadcastAndPollFlag 校验广播 wire：send 接受 targetKind=broadcast + targetZone、
 // poll 下发消息体带 broadcast:true（定向消息不带该键）。
 func TestMsgHandlerSendBroadcastAndPollFlag(t *testing.T) {
@@ -51,8 +113,9 @@ func TestMsgHandlerSendBroadcastAndPollFlag(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.Send(rec, msgAgentRequest("game-1", map[string]any{
 		"messageId": uuidV7AtHandler(nowMs, "b1"), "msgType": "announce",
-		"targetKind": "broadcast", "targetZone": "z1", "payload": "hello",
+		"targetKind": "broadcast", "targetZone": "z1", "payload": map[string]any{"text": "hello"},
 	}))
+
 	if rec.Code != http.StatusOK {
 		t.Fatalf("广播 send 应 200，实际 %d：%s", rec.Code, rec.Body.String())
 	}
@@ -89,6 +152,10 @@ func TestMsgHandlerSendBroadcastAndPollFlag(t *testing.T) {
 		case "announce":
 			if m["broadcast"] != true {
 				t.Fatalf("广播下发应带 broadcast:true，实际 %v", m)
+			}
+			payload, ok := m["payload"].(map[string]any)
+			if !ok || payload["text"] != "hello" {
+				t.Fatalf("广播结构化 payload 应保持对象类型，实际 %v", m["payload"])
 			}
 		case "chat":
 			if _, has := m["broadcast"]; has {

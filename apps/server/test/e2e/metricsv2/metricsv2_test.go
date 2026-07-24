@@ -10,7 +10,7 @@
 //
 //	build     构建控制面二进制（SQLite），起临时控制面。
 //	namespace 经 admin 建 v2 namespace，取一次性 accessToken（作 agent 的 X-Beacon-Token）。
-//	agent     经 gradle :agent-e2e:runServer 起真 Paper + 真 BeaconAgent（agent-bukkit 壳默认已开启 v2 指标采样）。
+//	agent     经 gradle :agent-e2e:servePaper 起真 Paper + 真 BeaconAgent（agent-bukkit 壳默认已开启 v2 指标采样）。
 //	approve   真 agent v2 注册进 pending → e2e 经 admin approve 使其 active（指标上报要求身份 active，否则 403）。
 //	ingest    等 active + online 后，GORM 直读当日 metric_sample_YYYYMMDD，断出现带真实负载值（内存/TPS
 //	          真实非零、CPU 为真实使用率或不可用哨兵）的 spec 合规行，且 server_id/kind 与真 agent 一致、
@@ -22,18 +22,14 @@
 package metricsv2_e2e
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/url"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -41,12 +37,12 @@ import (
 	"github.com/wcpe/Beacon/apps/server/test/e2e/harness"
 )
 
-// 服务端编排相关常量（与 :agent-e2e:runServer 的默认约定一致）。
+// 服务端编排相关常量（与 :agent-e2e:servePaper 的默认约定一致）。
 const (
 	adminUser = "admin"
 	// v2 namespace 名（同时用作 v1 instances 查询的 namespace code；两者同值，与 p1v2 一致）。
 	namespace = "p4metrics"
-	// 与 runServer 默认 serverId 对齐（显式传 -Pe2eServerId 以免默认漂移）。
+	// 与 servePaper 默认 serverId 对齐，并通过进程环境显式注入以免默认漂移。
 	serverID = "e2e-bukkit-1"
 	// MC 监听端口：避让 25565(p1v2)/25566(metrics)，本用例用 25568。
 	mcPort = "25568"
@@ -76,15 +72,6 @@ func beaconURL() string {
 type namespaceView struct {
 	ID          uint   `json:"id"`
 	AccessToken string `json:"accessToken"`
-}
-
-// identityView 是 agent 身份列表项中本用例关心的字段。
-type identityView struct {
-	IdentityID  string `json:"identityId"`
-	NamespaceID uint   `json:"namespaceId"`
-	ServerID    string `json:"serverId"`
-	Kind        string `json:"kind"`
-	Status      string `json:"status"`
 }
 
 // TestMetricsV2IngestE2E 按相位编排 FR-144 采样入库真机端到端：
@@ -124,7 +111,7 @@ func TestMetricsV2IngestE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	defer cp.Stop()
+	harness.CleanupControlPlane(t, cp)
 
 	adminToken, err := harness.Login(base, adminUser, adminPass)
 	if err != nil {
@@ -136,34 +123,34 @@ func TestMetricsV2IngestE2E(t *testing.T) {
 	t.Logf("已建 v2 namespace id=%d", ns.ID)
 
 	t.Log("== 起 Paper 子服 + 真 BeaconAgent（agent-e2e 壳，默认已开启 v2 指标采样）==")
-	// runServer 部署真 agent-bukkit jar（其 enable() 已无条件 enableMetricsSampling()），
-	// 经 -P 属性注入控制面地址 / v2 namespace 令牌 / namespace / serverId / 端口。
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+	paperEnv := harness.AgentGradleEnv(base, ns.AccessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + mcPort,
-		"-Pe2eBeaconEndpoint=" + base,
-		"-Pe2eBootstrapToken=" + ns.AccessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + serverID,
-	}, logPrefixMC)
+	}, paperEnv, logPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
-	defer paper.Stop()
+	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等真 agent v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, pendingWait)
+	identityID, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "pending", pendingWait, paper)
+	if err != nil {
+		t.Fatalf("等待 pending 身份失败：%v", err)
+	}
 	t.Logf("观测到 pending 身份 identityId=%s（serverId=%s）", identityID, serverID)
 
 	t.Log("== approve 使身份 active（指标上报要求 active，否则 403）==")
-	approveIdentity(t, base, adminToken, identityID)
-	waitIdentityStatus(t, base, adminToken, ns.ID, "active", pendingWait)
-	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait); err != nil {
+	approveIdentity(t, base, adminToken, identityID, paper)
+	if _, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "active", pendingWait, paper); err != nil {
+		t.Fatalf("等待 active 身份失败：%v", err)
+	}
+	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait, paper); err != nil {
 		t.Fatalf("active 后应衔接 legacy 数据面 online（见 .tmp/%s.out.log）：%v", logPrefixMC, err)
 	}
 	t.Log("agent 已 active + online")
 
 	// 核心断言：等当日日表出现带真实采样值的行并逐字段校验。
-	assertDailyIngest(t, sqliteDB, ingestWait)
+	assertDailyIngest(t, sqliteDB, ingestWait, paper)
 }
 
 // assertDailyIngest 轮询当日 metric_sample_YYYYMMDD 直到出现「带真实负载值且 spec 合规」的代表行，
@@ -173,7 +160,7 @@ func TestMetricsV2IngestE2E(t *testing.T) {
 // 采样 → 5s 批上报 → 异步入库整条链路把真值落进了日表。CPU 不入必过判据——某些宿主（如本机）
 // getProcessCpuLoad 因 OS 性能计数器不可用恒返 -1（哨兵，agent 已按 fail-static 正确归一），
 // 属环境限制而非链路缺陷；故对 CPU 只断「为真实使用率(>0) 或不可用哨兵(-1)」这一合法性。
-func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration) {
+func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration, guard *harness.GradleProc) {
 	t.Helper()
 	db := openE2EDB(t, sqliteDB)
 	// 日表名按 bucket_start_ms 的 UTC 当日切分；agent 实时采样，桶落当日，故取「今日 UTC」表。
@@ -181,7 +168,7 @@ func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration) {
 
 	var rows []model.MetricSampleV2
 	var chosen model.MetricSampleV2
-	ok := waitUntil(timeout, func() bool {
+	err := waitUntil(timeout, guard, func(context.Context) bool {
 		// 首次写入前日表尚不存在，视作 0 行继续等（避免查不存在表报错）。
 		if !db.Migrator().HasTable(dailyName) {
 			return false
@@ -200,9 +187,9 @@ func assertDailyIngest(t *testing.T, sqliteDB string, timeout time.Duration) {
 		}
 		return false
 	})
-	if !ok {
-		t.Fatalf("日表 %s 未在 %s 内出现带真实负载值(mem>0 且 tps>0)的 spec 合规采样行；当前该服行数=%d",
-			dailyName, timeout, len(rows))
+	if err != nil {
+		t.Fatalf("日表 %s 未在 %s 内出现带真实负载值(mem>0 且 tps>0)的 spec 合规采样行；当前该服行数=%d：%v",
+			dailyName, timeout, len(rows), err)
 	}
 
 	// 代表行强断言：归属一致、真实负载、桶 5s 对齐、样本数标称 1~5、CPU 合法值。
@@ -280,110 +267,22 @@ func assertRowSound(t *testing.T, r model.MetricSampleV2) {
 // createNamespace 经 admin 建 v2 namespace 并取一次性明文 accessToken。
 func createNamespace(t *testing.T, base, token string) namespaceView {
 	t.Helper()
-	var ns namespaceView
-	doAdminJSON(t, base, http.MethodPost, "/admin/v2/namespaces", token, map[string]any{
-		"name": namespace, "description": "P4a v2 指标采样入库 e2e",
-	}, http.StatusCreated, &ns)
-	if ns.ID == 0 || ns.AccessToken == "" {
-		t.Fatalf("建 namespace 响应缺 id/accessToken：%+v", ns)
+	id, accessToken, err := harness.CreateV2Namespace(base, token, namespace, "P4a v2 指标采样入库 e2e")
+	if err != nil {
+		t.Fatalf("建 namespace 失败：%v", err)
 	}
-	return ns
-}
-
-// waitPendingIdentity 轮询身份列表，直到目标 serverId 的 pending 身份出现，返回其 identityId。
-func waitPendingIdentity(t *testing.T, base, token string, namespaceID uint, timeout time.Duration) string {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if it, found := findIdentity(t, base, token, namespaceID); found && it.Status == "pending" {
-			if it.Kind != model.ServerKindBackend {
-				t.Fatalf("pending 身份 kind=%q 应为 %q（bukkit → backend）", it.Kind, model.ServerKindBackend)
-			}
-			return it.IdentityID
-		}
-		time.Sleep(2 * time.Second)
-	}
-	t.Fatalf("等待 %s 的 pending 身份超时（见 .tmp/%s.out.log）", serverID, logPrefixMC)
-	return ""
-}
-
-// waitIdentityStatus 轮询身份列表，直到目标 serverId 的身份进入期望状态。
-func waitIdentityStatus(t *testing.T, base, token string, namespaceID uint, status string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if it, found := findIdentity(t, base, token, namespaceID); found && it.Status == status {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	t.Fatalf("等待 %s 身份进入 %s 超时", serverID, status)
-}
-
-// findIdentity 查该 namespace 下匹配 serverId 的身份项（存在返回并置 true）。
-func findIdentity(t *testing.T, base, token string, namespaceID uint) (identityView, bool) {
-	t.Helper()
-	var resp struct {
-		Items []identityView `json:"items"`
-	}
-	path := "/admin/v2/agent-identities?namespaceId=" + itoa(namespaceID)
-	doAdminJSON(t, base, http.MethodGet, path, token, nil, http.StatusOK, &resp)
-	for _, it := range resp.Items {
-		if it.ServerID == serverID {
-			return it, true
-		}
-	}
-	return identityView{}, false
+	return namespaceView{ID: id, AccessToken: accessToken}
 }
 
 // approveIdentity 首次确认身份（无 target：确认但暂不分配区服），断响应状态 active。
-func approveIdentity(t *testing.T, base, token, identityID string) {
+func approveIdentity(t *testing.T, base, token, identityID string, guard *harness.GradleProc) {
 	t.Helper()
-	var ident identityView
-	doAdminJSON(t, base, http.MethodPost,
-		"/admin/v2/agent-identities/"+url.PathEscape(identityID)+"/approve", token,
-		map[string]any{"forceUnbindOccupier": false}, http.StatusOK, &ident)
-	if ident.Status != "active" {
-		t.Fatalf("approve 后身份应 active，实际 %+v", ident)
+	if err := harness.ApproveIdentityWithGuard(base, token, identityID, guard); err != nil {
+		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }
 
-// ---- HTTP / DB / 小工具 ----
-
-// doAdminJSON 发一个带 Bearer 的 admin 请求，校验期望状态码，并（若 out 非 nil）解析响应体。失败即 fatal。
-func doAdminJSON(t *testing.T, base, method, path, token string, body any, wantStatus int, out any) {
-	t.Helper()
-	var reader io.Reader
-	if body != nil {
-		raw, err := json.Marshal(body)
-		if err != nil {
-			t.Fatalf("编码请求体失败：%v", err)
-		}
-		reader = bytes.NewReader(raw)
-	}
-	req, err := http.NewRequest(method, strings.TrimRight(base, "/")+path, reader)
-	if err != nil {
-		t.Fatalf("构造请求失败：%v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s 请求失败：%v", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != wantStatus {
-		t.Fatalf("%s %s 期望 HTTP %d，得 %d：%s", method, path, wantStatus, resp.StatusCode, string(raw))
-	}
-	if out != nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析 %s 响应失败：%v（%s）", path, err, string(raw))
-		}
-	}
-}
+// ---- DB / 小工具 ----
 
 // openE2EDB 按 sqlite 打开与控制面同一份数据（加 _busy_timeout 缓解共享文件写锁竞争）。
 func openE2EDB(t *testing.T, sqliteDB string) *gorm.DB {
@@ -399,16 +298,9 @@ func openE2EDB(t *testing.T, sqliteDB string) *gorm.DB {
 	return db
 }
 
-// waitUntil 在超时内每秒重试 cond，命中即返回 true。
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return cond()
+// waitUntil 在超时内每秒重试条件，并在全程检查 Gradle 生命周期。
+func waitUntil(timeout time.Duration, guard *harness.GradleProc, cond func(context.Context) bool) error {
+	return harness.WaitForCondition(timeout, time.Second, guard, cond)
 }
 
 // requireEnv 取必填 env，缺失即 t.Skip（让普通 go test ./... 不因缺密钥失败）。

@@ -200,6 +200,10 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
+	return s.publish(id, content, operator, comment, clientIP, true)
+}
+
+func (s *ConfigService) publish(id uint, content, operator, comment, clientIP string, retryRollback bool) (*model.ConfigItem, error) {
 	item, err := s.Get(id)
 	if err != nil {
 		return nil, err
@@ -223,18 +227,54 @@ func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP st
 			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP); err != nil {
 			return err
 		}
-		// 同事务记可逆账目（FR-116）：撤回 = 回滚到发布前版本 preVersion。首次发布（preVersion=0）无可回滚版本、不记账。
 		return s.recordReversible(tx, item, model.ReversibleOpPublish, preVersion, operator)
 	})
 	if err != nil {
-		// 并发对同一 item 发布同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
-		return nil, mapDuplicateKey(err)
+		return s.handlePublishConflict(err, id, preVersion, content, operator, comment, clientIP, retryRollback)
 	}
 	slog.Info("发布配置", "id", id, "version", newVersion)
 	s.recordPublish()
 	s.notify(item)
 	s.exportGit(item, model.ActionConfigPublish, operator)
 	return item, nil
+}
+
+// handlePublishConflict 仅对并发回滚占用下一版本号的冲突重试一次。
+func (s *ConfigService) handlePublishConflict(
+	publishErr error,
+	id uint,
+	preVersion int64,
+	content, operator, comment, clientIP string,
+	retryRollback bool,
+) (*model.ConfigItem, error) {
+	mapped := mapDuplicateKey(publishErr)
+	if !retryRollback || !errors.Is(mapped, apperr.ErrConfigConflict) {
+		return nil, mapped
+	}
+	retry, err := s.shouldRetryAfterRollback(id, preVersion)
+	if err != nil {
+		return nil, err
+	}
+	if !retry {
+		return nil, mapped
+	}
+	return s.publish(id, content, operator, comment, clientIP, false)
+}
+
+// shouldRetryAfterRollback 仅识别并发回滚占用下一版本号；普通并发发布仍保持冲突语义。
+func (s *ConfigService) shouldRetryAfterRollback(id uint, staleVersion int64) (bool, error) {
+	latest, err := s.Get(id)
+	if err != nil {
+		return false, err
+	}
+	if latest.Version <= staleVersion {
+		return false, nil
+	}
+	rev, err := s.revRepo.FindByItemAndVersion(id, latest.Version)
+	if err != nil {
+		return false, err
+	}
+	return rev != nil && rev.SourceRevision != nil, nil
 }
 
 // Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。

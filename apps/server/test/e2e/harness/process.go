@@ -1,7 +1,7 @@
 //go:build e2e
 
 // Package harness 封装真机 E2E 的跨平台进程与服务生命周期编排：
-// 推导仓库根、构建控制面二进制、起停控制面、起停 gradle 服务端（Paper/Waterfall）、
+// 推导仓库根、构建控制面二进制、起停控制面、起停 Gradle 服务端（Paper/BungeeCord）、
 // 以及登录与等实例 online 等 HTTP 助手。所有进程用进程组/进程树方式整树击杀，
 // 配合 gradle 的 --no-daemon 让 fork 出的 JVM 落在同一棵树，杀得干净（无需按端口杀）。
 package harness
@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 // spawn 在指定工作目录起一个子进程，stdout/stderr 重定向到日志文件、stdin 不继承，
@@ -43,17 +44,31 @@ func spawn(workDir, name string, args []string, env []string, outLog, errLog str
 	return cmd, outFile, errFile, nil
 }
 
-// stopProc 整树击杀进程并回收日志文件句柄；进程已退出等错误被容忍。
-func stopProc(cmd *exec.Cmd, files ...*os.File) {
-	if cmd != nil {
-		_ = killTree(cmd)
-		// 回收僵尸：等待进程被系统收掉（已 kill，忽略返回错误）。
-		_ = cmd.Wait()
-	}
-	for _, f := range files {
-		if f != nil {
-			_ = f.Close()
+// stopProc 只负责发出终止信号并有界等待唯一 waiter；不得直接调用 Cmd.Wait。
+func stopProc(
+	cmd *exec.Cmd,
+	done <-chan struct{},
+	shouldKill bool,
+	timeout time.Duration,
+	killTreeFn func(*exec.Cmd) error,
+	killRootFn func(*os.Process) error,
+) (treeErr, rootErr error, timedOut bool) {
+	if shouldKill && cmd != nil {
+		treeErr = killTreeFn(cmd)
+		if treeErr != nil && cmd.Process != nil {
+			rootErr = killRootFn(cmd.Process)
 		}
+	}
+	if done == nil {
+		return treeErr, rootErr, true
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return treeErr, rootErr, false
+	case <-timer.C:
+		return treeErr, rootErr, true
 	}
 }
 

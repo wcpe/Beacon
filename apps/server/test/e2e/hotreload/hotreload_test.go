@@ -5,6 +5,7 @@ package hotreload_e2e
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -86,7 +87,6 @@ type observation struct {
 // TestDeliveryHotReloadE2E 验证 activated、rolled_back、failed 三种真实执行结果，且失败回调不终止 Paper。
 func TestDeliveryHotReloadE2E(t *testing.T) {
 	env := startEnvironment(t)
-	defer env.stop()
 
 	waitProbeReady(t, env)
 	runPositiveAndRollback(t, env)
@@ -105,10 +105,12 @@ func startEnvironment(t *testing.T) *testEnv {
 		t.Fatalf("构建控制面失败：%v", err)
 	}
 	env.cp = startControlPlane(t, env, bin, adminPass, authSecret)
+	harness.CleanupControlPlane(t, env.cp)
 	env.adminToken = login(t, adminPass)
 	env.namespaceID, env.paper = provisionPaper(t, env)
+	harness.CleanupGradle(t, env.paper)
 	env.db = openDB(t, env.dbPath)
-	disableApproverSeparation(t, env.adminToken)
+	disableApproverSeparation(t, env.adminToken, env.paper)
 	approveAndWaitAgent(t, env)
 	setupZoneAndAssign(t, env)
 	return env
@@ -121,7 +123,7 @@ func prepareEnvironment(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatalf("定位仓库根失败：%v", err)
 	}
-	runDir := filepath.Join(repoRoot, "apps", ".tmp", "e2e-run", "bukkit")
+	runDir := harness.BackendRunDir(repoRoot)
 	if err := os.RemoveAll(runDir); err != nil {
 		t.Fatalf("清理 Paper 运行目录失败：%v", err)
 	}
@@ -154,11 +156,9 @@ func provisionPaper(t *testing.T, env *testEnv) (uint, *harness.GradleProc) {
 	if err != nil {
 		t.Fatalf("创建 namespace 失败：%v", err)
 	}
-	props := []string{
-		"-Pe2eMcPort=" + mcPort, harness.BeaconEndpointProp(), "-Pe2eBootstrapToken=" + accessToken,
-		"-Pe2eNamespace=" + namespace, "-Pe2eServerId=" + serverID,
-	}
-	paper, err := harness.StartGradleTask(env.repoRoot, ":agent-e2e:runServer", props, "paper-hotreload")
+	args := []string{"-Pe2eMcPort=" + mcPort}
+	paperEnv := harness.AgentGradleEnv(beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	paper, err := harness.StartGradleTask(env.repoRoot, ":agent-e2e:servePaper", args, paperEnv, "paper-hotreload")
 	if err != nil {
 		t.Fatalf("启动 Paper 失败：%v", err)
 	}
@@ -168,17 +168,17 @@ func provisionPaper(t *testing.T, env *testEnv) (uint, *harness.GradleProc) {
 // approveAndWaitAgent 批准首次 pending 身份，并等待真实实例 online。
 func approveAndWaitAgent(t *testing.T, env *testEnv) {
 	t.Helper()
-	identityID, err := harness.WaitIdentityStatus(beaconURL, env.adminToken, env.namespaceID, serverID, "pending", onlineWait)
+	identityID, err := harness.WaitIdentityStatus(beaconURL, env.adminToken, env.namespaceID, serverID, "pending", onlineWait, env.paper)
 	if err != nil {
 		t.Fatalf("等待 Agent pending 超时：%v", err)
 	}
-	if err := harness.ApproveIdentity(beaconURL, env.adminToken, identityID); err != nil {
+	if err := harness.ApproveIdentityWithGuard(beaconURL, env.adminToken, identityID, env.paper); err != nil {
 		t.Fatalf("批准 Agent 身份失败：%v", err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, env.adminToken, env.namespaceID, serverID, "active", onlineWait); err != nil {
+	if _, err := harness.WaitIdentityStatus(beaconURL, env.adminToken, env.namespaceID, serverID, "active", onlineWait, env.paper); err != nil {
 		t.Fatalf("等待 Agent active 超时：%v", err)
 	}
-	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, onlineWait); err != nil {
+	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, onlineWait, env.paper); err != nil {
 		t.Fatalf("等待 Agent online 超时：%v", err)
 	}
 }
@@ -200,7 +200,7 @@ func setupZoneAndAssign(t *testing.T, env *testEnv) {
 		"target":         map[string]any{"kind": "zone", "id": zoneID},
 		"isDefaultEntry": false, "reason": "FR-171 E2E 首次分配",
 	}
-	doAdmin(t, http.MethodPost, "/admin/v2/server-assignments", env.adminToken, body, http.StatusOK, nil)
+	doAdmin(t, http.MethodPost, "/admin/v2/server-assignments", env.adminToken, body, http.StatusOK, nil, env.paper)
 }
 
 // createNode 通过管理 API 创建区服权威节点并返回主键。
@@ -209,7 +209,7 @@ func createNode(t *testing.T, env *testEnv, path string, body map[string]any) ui
 	var out struct {
 		ID uint `json:"id"`
 	}
-	doAdmin(t, http.MethodPost, path, env.adminToken, body, http.StatusCreated, &out)
+	doAdmin(t, http.MethodPost, path, env.adminToken, body, http.StatusCreated, &out, env.paper)
 	return out.ID
 }
 
@@ -223,7 +223,7 @@ func serverRowID(t *testing.T, env *testEnv) uint {
 		} `json:"items"`
 	}
 	path := "/admin/v2/servers?namespaceId=" + strconv.FormatUint(uint64(env.namespaceID), 10)
-	doAdmin(t, http.MethodGet, path, env.adminToken, nil, http.StatusOK, &out)
+	doAdmin(t, http.MethodGet, path, env.adminToken, nil, http.StatusOK, &out, env.paper)
 	for _, item := range out.Items {
 		if item.ServerID == serverID {
 			return item.ID
@@ -236,10 +236,10 @@ func serverRowID(t *testing.T, env *testEnv) uint {
 // waitProbeReady 等业务插件已通过 BeaconAgentProvider 注册真实 onChange 监听。
 func waitProbeReady(t *testing.T, env *testEnv) {
 	t.Helper()
-	if _, ok := waitObservation(env.probeLog(), 30*time.Second, func(o observation) bool {
+	if _, err := waitObservation(env.probeLog(), 30*time.Second, env.paper, func(o observation) bool {
 		return o.source == "LISTENER_READY"
-	}); !ok {
-		t.Fatalf("业务插件 hot_reload 监听未就绪，观测文件=%s", env.probeLog())
+	}); err != nil {
+		t.Fatalf("业务插件 hot_reload 监听未就绪，观测文件=%s：%v", env.probeLog(), err)
 	}
 }
 
@@ -263,10 +263,10 @@ func assertActivated(t *testing.T, env *testEnv, orderID uint, content string) {
 	if !target.BackupPresent {
 		t.Fatal("正向目标 activated 时应存在覆盖前备份")
 	}
-	if _, ok := waitObservation(env.probeLog(), phaseWait, func(o observation) bool {
+	if _, err := waitObservation(env.probeLog(), phaseWait, env.paper, func(o observation) bool {
 		return o.source == "ON_CHANGE" && o.path == successPath && strings.Contains(o.raw, strings.TrimSpace(content))
-	}); !ok {
-		t.Fatal("业务插件未在正向 onChange 中读到新磁盘内容")
+	}); err != nil {
+		t.Fatalf("业务插件未在正向 onChange 中读到新磁盘内容：%v", err)
 	}
 	assertFileContains(t, env.target(successPath), strings.TrimSpace(content))
 	backup := filepath.Join(env.runDir, "plugins", "BeaconAgent", "delivery-backups", strconv.FormatUint(uint64(orderID), 10), "files", filepath.FromSlash(successPath))
@@ -279,7 +279,7 @@ func completeOrder(t *testing.T, env *testEnv, orderID uint) {
 	waitBatchStatus(t, env, orderID, model.ChangeBatchStatusAwaitingConfirm)
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/batches/1/confirm", orderID)
 	var detail orderDetail
-	doAdmin(t, http.MethodPost, path, env.adminToken, nil, http.StatusOK, &detail)
+	doAdmin(t, http.MethodPost, path, env.adminToken, nil, http.StatusOK, &detail, env.paper)
 	if detail.Status != model.ChangeOrderStatusCompleted {
 		t.Fatalf("末批确认后单状态应为 completed，实际=%s", detail.Status)
 	}
@@ -290,16 +290,16 @@ func assertRollback(t *testing.T, env *testEnv, orderID uint) {
 	t.Helper()
 	before := countObservation(env.probeLog(), "ON_CHANGE", successPath)
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/rollback", orderID)
-	doAdmin(t, http.MethodPost, path, env.adminToken, map[string]string{"reason": "FR-171 E2E 验证回滚"}, http.StatusOK, nil)
+	doAdmin(t, http.MethodPost, path, env.adminToken, map[string]string{"reason": "FR-171 E2E 验证回滚"}, http.StatusOK, nil, env.paper)
 
 	waitTarget(t, env, orderID, func(v targetView) bool {
 		return v.RollbackStatus != nil && *v.RollbackStatus == model.RollbackStatusRolledBack
 	})
 	waitOrderStatus(t, env, orderID, model.ChangeOrderStatusRolledBack)
-	if !waitUntil(phaseWait, func() bool {
+	if err := waitUntil(phaseWait, env.paper, func(context.Context) bool {
 		return countObservation(env.probeLog(), "ON_CHANGE", successPath) > before && fileContent(env.target(successPath)) == initialContent
-	}) {
-		t.Fatal("回滚后业务回调或磁盘内容未恢复到原始值")
+	}); err != nil {
+		t.Fatalf("回滚后业务回调或磁盘内容未恢复到原始值：%v", err)
 	}
 }
 
@@ -315,11 +315,11 @@ func runFailure(t *testing.T, env *testEnv) {
 	if target.Error == nil || !strings.Contains(*target.Error, "配置变更通知失败") {
 		t.Fatalf("失败目标应携带业务回调失败摘要，实际=%v", target.Error)
 	}
-	failedIndex, ok := waitObservation(env.probeLog(), phaseWait, func(o observation) bool {
+	failedIndex, err := waitObservation(env.probeLog(), phaseWait, env.paper, func(o observation) bool {
 		return o.source == "CALLBACK_FAILED" && o.path == failurePath
 	})
-	if !ok {
-		t.Fatal("未观测到业务插件 onChange 主动失败记录")
+	if err != nil {
+		t.Fatalf("业务插件未记录 CALLBACK_FAILED 观测：%v", err)
 	}
 	assertFileContains(t, env.target(failurePath), strings.TrimSpace(failedContent))
 	assertPaperAliveAfter(t, env, failedIndex)
@@ -328,7 +328,7 @@ func runFailure(t *testing.T, env *testEnv) {
 // assertPaperAliveAfter 以失败记录之后的新存活观测、Minecraft 端口和控制面在线视图三重证明 Paper 未退出。
 func assertPaperAliveAfter(t *testing.T, env *testEnv, failedIndex int) {
 	t.Helper()
-	if !waitUntil(30*time.Second, func() bool {
+	if err := waitUntil(30*time.Second, env.paper, func(context.Context) bool {
 		records := readObservations(env.probeLog())
 		for i := failedIndex + 1; i < len(records); i++ {
 			if records[i].source == "PROBE_ALIVE" {
@@ -336,15 +336,15 @@ func assertPaperAliveAfter(t *testing.T, env *testEnv, failedIndex int) {
 			}
 		}
 		return false
-	}) {
-		t.Fatal("回调失败后未出现新的业务插件存活观测")
+	}); err != nil {
+		t.Fatalf("回调失败后未出现新的业务插件存活观测：%v", err)
 	}
 	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+mcPort, 3*time.Second)
 	if err != nil {
 		t.Fatalf("回调失败后 Paper 端口不可达：%v", err)
 	}
 	_ = conn.Close()
-	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, 15*time.Second); err != nil {
+	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, 15*time.Second, env.paper); err != nil {
 		t.Fatalf("回调失败后 Agent 不再 online：%v", err)
 	}
 }
@@ -379,7 +379,7 @@ func createApprovedOrder(t *testing.T, env *testEnv, title string, versionID uin
 		"failureRateThresholdPercent": 0, "unhealthyRateThresholdPercent": 0,
 	}
 	var detail orderDetail
-	doAdmin(t, http.MethodPost, "/admin/v2/change-orders", env.adminToken, body, http.StatusCreated, &detail)
+	doAdmin(t, http.MethodPost, "/admin/v2/change-orders", env.adminToken, body, http.StatusCreated, &detail, env.paper)
 	patchOrderConfig(t, env, detail.ID, versionID)
 	transitionOrder(t, env, detail.ID, "submit")
 	transitionOrder(t, env, detail.ID, "approve")
@@ -394,29 +394,33 @@ func patchOrderConfig(t *testing.T, env *testEnv, orderID, versionID uint) {
 		"configScopeId":   env.namespaceID, "configToVersionId": versionID,
 	}}}
 	path := fmt.Sprintf("/admin/v2/change-orders/%d", orderID)
-	doAdmin(t, http.MethodPatch, path, env.adminToken, body, http.StatusOK, nil)
+	doAdmin(t, http.MethodPatch, path, env.adminToken, body, http.StatusOK, nil, env.paper)
 }
 
 // transitionOrder 调用无额外参数的变更单生命周期端点。
 func transitionOrder(t *testing.T, env *testEnv, orderID uint, action string) {
 	t.Helper()
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/%s", orderID, action)
-	doAdmin(t, http.MethodPost, path, env.adminToken, nil, http.StatusOK, nil)
+	doAdmin(t, http.MethodPost, path, env.adminToken, nil, http.StatusOK, nil, env.paper)
 }
 
 // startOrder 仅经生产 start 端点启动执行状态机。
 func startOrder(t *testing.T, env *testEnv, orderID uint) {
 	t.Helper()
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/start", orderID)
-	doAdmin(t, http.MethodPost, path, env.adminToken, map[string]string{"reason": "FR-171 E2E"}, http.StatusOK, nil)
+	doAdmin(t, http.MethodPost, path, env.adminToken, map[string]string{"reason": "FR-171 E2E"}, http.StatusOK, nil, env.paper)
 }
 
 // waitTarget 等目标满足谓词，超时输出最后事实。
 func waitTarget(t *testing.T, env *testEnv, orderID uint, predicate func(targetView) bool) targetView {
 	t.Helper()
 	var last targetView
-	if waitUntil(phaseWait, func() bool {
-		for _, item := range getTargets(t, env, orderID) {
+	if err := waitUntil(phaseWait, env.paper, func(ctx context.Context) bool {
+		items, ok := getTargets(ctx, env, orderID)
+		if !ok {
+			return false
+		}
+		for _, item := range items {
 			if item.ServerID != serverID {
 				continue
 			}
@@ -424,54 +428,66 @@ func waitTarget(t *testing.T, env *testEnv, orderID uint, predicate func(targetV
 			return predicate(last)
 		}
 		return false
-	}) {
+	}); err == nil {
 		return last
+	} else {
+		t.Fatalf("等待目标状态失败，最后事实=%+v：%v", last, err)
 	}
-	t.Fatalf("等待目标状态超时，最后事实=%+v", last)
 	return targetView{}
 }
 
 // getTargets 读取生产 targets 端点。
-func getTargets(t *testing.T, env *testEnv, orderID uint) []targetView {
-	t.Helper()
+func getTargets(ctx context.Context, env *testEnv, orderID uint) ([]targetView, bool) {
 	var page struct {
 		Items []targetView `json:"items"`
 	}
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/targets?pageSize=10", orderID)
-	doAdmin(t, http.MethodGet, path, env.adminToken, nil, http.StatusOK, &page)
-	return page.Items
+	if !tryAdminGet(ctx, path, env.adminToken, &page, env.paper) {
+		return nil, false
+	}
+	return page.Items, true
 }
 
 // waitBatchStatus 等第一批进入指定状态。
 func waitBatchStatus(t *testing.T, env *testEnv, orderID uint, status string) {
 	t.Helper()
-	if !waitUntil(phaseWait, func() bool {
-		detail := getOrder(t, env, orderID)
-		return len(detail.Batches) == 1 && detail.Batches[0].Status == status
-	}) {
-		t.Fatalf("等待批次状态 %s 超时", status)
+	if err := waitUntil(phaseWait, env.paper, func(ctx context.Context) bool {
+		detail, ok := getOrder(ctx, env, orderID)
+		return ok && len(detail.Batches) == 1 && detail.Batches[0].Status == status
+	}); err != nil {
+		t.Fatalf("等待批次状态 %s 失败：%v", status, err)
 	}
 }
 
 // waitOrderStatus 等变更单进入指定状态。
 func waitOrderStatus(t *testing.T, env *testEnv, orderID uint, status string) {
 	t.Helper()
-	if !waitUntil(phaseWait, func() bool { return getOrder(t, env, orderID).Status == status }) {
-		t.Fatalf("等待变更单状态 %s 超时", status)
+	if err := waitUntil(phaseWait, env.paper, func(ctx context.Context) bool {
+		detail, ok := getOrder(ctx, env, orderID)
+		return ok && detail.Status == status
+	}); err != nil {
+		t.Fatalf("等待变更单状态 %s 失败：%v", status, err)
 	}
 }
 
 // getOrder 读取生产变更单详情端点。
-func getOrder(t *testing.T, env *testEnv, orderID uint) orderDetail {
-	t.Helper()
+func getOrder(ctx context.Context, env *testEnv, orderID uint) (orderDetail, bool) {
 	var detail orderDetail
 	path := fmt.Sprintf("/admin/v2/change-orders/%d", orderID)
-	doAdmin(t, http.MethodGet, path, env.adminToken, nil, http.StatusOK, &detail)
-	return detail
+	ok := tryAdminGet(ctx, path, env.adminToken, &detail, env.paper)
+	return detail, ok
 }
 
 // doAdmin 发管理请求并严格校验状态码与响应 JSON。
-func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int, out any) {
+func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int, out any, guards ...harness.ProcessGuard) {
+	var guard harness.ProcessGuard
+	if len(guards) > 0 {
+		guard = guards[0]
+	}
+	doAdminContext(context.Background(), t, method, path, token, body, wantStatus, out, guard)
+}
+
+func doAdminContext(ctx context.Context, t *testing.T, method, path, token string, body any, wantStatus int, out any, guard harness.ProcessGuard) {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -481,7 +497,7 @@ func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int,
 		}
 		reader = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequest(method, strings.TrimRight(beaconURL, "/")+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(beaconURL, "/")+path, reader)
 	if err != nil {
 		t.Fatalf("构造管理请求失败：%v", err)
 	}
@@ -489,27 +505,50 @@ func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
 		t.Fatalf("管理请求 %s %s 失败：%v", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("管理请求 %s %s 期望 HTTP %d，实际 %d：%s", method, path, wantStatus, resp.StatusCode, string(raw))
+		t.Fatalf("管理请求 %s %s 期望 HTTP %d，实际 %d", method, path, wantStatus, resp.StatusCode)
 	}
-	if out != nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析管理响应失败：%v，响应=%s", err, string(raw))
+	if out != nil {
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			t.Fatalf("读取管理响应失败：%v", readErr)
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, out); err != nil {
+				t.Fatalf("解析管理响应失败：%v", err)
+			}
 		}
 	}
 }
 
+// tryAdminGet 执行一轮带上下文的管理面 GET；请求失败、非 200 或解析失败都返回 false 供轮询重试。
+func tryAdminGet(ctx context.Context, path, token string, out any, guard harness.ProcessGuard) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(beaconURL, "/")+path, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	return json.NewDecoder(resp.Body).Decode(out) == nil
+}
+
 // disableApproverSeparation 仅设置测试前置，使单管理员也能走真实 submit→approve API。
-func disableApproverSeparation(t *testing.T, token string) {
+func disableApproverSeparation(t *testing.T, token string, guard harness.ProcessGuard) {
 	t.Helper()
 	body := map[string]any{"value": "false"}
-	doAdmin(t, http.MethodPut, "/admin/v1/settings/delivery.approver-separation-enabled", token, body, http.StatusOK, nil)
+	doAdmin(t, http.MethodPut, "/admin/v1/settings/delivery.approver-separation-enabled", token, body, http.StatusOK, nil, guard)
 }
 
 // readObservations 解析业务插件单行观测文件；忽略并发写入中的不完整末行。
@@ -530,9 +569,9 @@ func readObservations(path string) []observation {
 }
 
 // waitObservation 等第一条命中观测并返回其行索引。
-func waitObservation(path string, timeout time.Duration, predicate func(observation) bool) (int, bool) {
+func waitObservation(path string, timeout time.Duration, guard *harness.GradleProc, predicate func(observation) bool) (int, error) {
 	index := -1
-	ok := waitUntil(timeout, func() bool {
+	err := waitUntil(timeout, guard, func(context.Context) bool {
 		for i, item := range readObservations(path) {
 			if predicate(item) {
 				index = i
@@ -541,7 +580,7 @@ func waitObservation(path string, timeout time.Duration, predicate func(observat
 		}
 		return false
 	})
-	return index, ok
+	return index, err
 }
 
 // countObservation 统计指定来源与路径的观测数。
@@ -555,16 +594,9 @@ func countObservation(path, source, targetPath string) int {
 	return count
 }
 
-// waitUntil 以固定短周期等待异步系统事实收敛。
-func waitUntil(timeout time.Duration, predicate func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if predicate() {
-			return true
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	return predicate()
+// waitUntil 以固定短周期等待异步系统事实收敛，并在全程检查 Gradle 生命周期。
+func waitUntil(timeout time.Duration, guard *harness.GradleProc, predicate func(context.Context) bool) error {
+	return harness.WaitForCondition(timeout, 500*time.Millisecond, guard, predicate)
 }
 
 // assertFileContains 断言文件存在且包含目标标记。
@@ -650,14 +682,4 @@ func (e *testEnv) probeLog() string {
 // target 把固定服务器根相对路径映射到 Paper 运行目录。
 func (e *testEnv) target(path string) string {
 	return filepath.Join(e.runDir, filepath.FromSlash(path))
-}
-
-// stop 逆序停止 Paper 与控制面。
-func (e *testEnv) stop() {
-	if e.paper != nil {
-		e.paper.Stop()
-	}
-	if e.cp != nil {
-		e.cp.Stop()
-	}
 }

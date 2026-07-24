@@ -145,8 +145,8 @@ func newTestUpdateService(core *fakeUpdateCore, settings *fakeSettingsReader, no
 	return s
 }
 
-// TestCheckReportsNewerFromStoreChannel 检查按 store 渠道走、报有更新、回填字段。
-func TestCheckReportsNewerFromStoreChannel(t *testing.T) {
+// TestCheckNormalizesLegacyPrereleaseChannel 历史 prerelease 设置被防御性归一为 stable，并且响应与核心参数均不得再暴露 prerelease。
+func TestCheckNormalizesLegacyPrereleaseChannel(t *testing.T) {
 	core := &fakeUpdateCore{result: update.CheckResult{
 		CurrentVersion: "v1.0.0", LatestVersion: "v2.0.0", HasUpdate: true,
 		ReleaseNotes: "说明", ReleaseURL: "https://x/r", PublishedAt: "2026-06-20T00:00:00Z",
@@ -161,11 +161,11 @@ func TestCheckReportsNewerFromStoreChannel(t *testing.T) {
 	if !v.HasUpdate || v.LatestVersion != "v2.0.0" {
 		t.Fatalf("应报有更新且最新 v2.0.0，实际 %+v", v)
 	}
-	if v.Channel != "prerelease" {
-		t.Fatalf("渠道应取 store 的 prerelease，实际 %q", v.Channel)
+	if v.Channel != "stable" {
+		t.Fatalf("历史渠道应归一为 stable，实际 %q", v.Channel)
 	}
-	if core.lastChannel != update.Channel("prerelease") || core.lastProxy != "http://p:8080" {
-		t.Fatalf("应把 store 渠道 / 代理透传给核心，实际 ch=%q proxy=%q", core.lastChannel, core.lastProxy)
+	if core.lastChannel != update.ChannelStable || core.lastProxy != "http://p:8080" {
+		t.Fatalf("核心必须只收到 stable / 原代理，实际 ch=%q proxy=%q", core.lastChannel, core.lastProxy)
 	}
 	if core.lastOperator != "tester" || core.lastClientIP != "1.2.3.4" {
 		t.Fatalf("应把 operator/clientIP 透传，实际 op=%q ip=%q", core.lastOperator, core.lastClientIP)
@@ -218,24 +218,24 @@ func TestCheckCacheExpiresByTTL(t *testing.T) {
 	}
 }
 
-// TestCheckChannelChangeInvalidatesCache 渠道变更使缓存失效（重新打 GitHub）。
-func TestCheckChannelChangeInvalidatesCache(t *testing.T) {
+// TestCheckLegacyChannelUsesStableCache 历史 prerelease 与 stable 是同一规范化渠道，不得制造第二条缓存或再次请求远端。
+func TestCheckLegacyChannelUsesStableCache(t *testing.T) {
 	core := &fakeUpdateCore{result: update.CheckResult{CurrentVersion: "v1.0.0", LatestVersion: "v1.0.0"}}
 	settings := &fakeSettingsReader{channel: "stable", intervalHours: 6}
 	fixed := time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC)
 	svc := newTestUpdateService(core, settings, func() time.Time { return fixed })
 
 	_ = svc.Check(context.Background(), false, "a", "")
-	settings.channel = "prerelease" // 渠道改了
+	settings.channel = "prerelease"
 	_ = svc.Check(context.Background(), false, "a", "")
-	if core.checkCalls != 2 {
-		t.Fatalf("渠道变更应使缓存失效、重新打 GitHub，实际 %d 次", core.checkCalls)
+	if core.checkCalls != 1 {
+		t.Fatalf("归一化后应复用 stable 缓存，实际请求 %d 次", core.checkCalls)
 	}
 }
 
 // TestCheckFailedDegradesNot5xx GitHub 不可达 → status=check-failed、无 panic、对外不报错（由 handler 200 回）。
 func TestCheckFailedDegradesNot5xx(t *testing.T) {
-	core := &fakeUpdateCore{checkErr: errors.New("dial tcp: connection refused")}
+	core := &fakeUpdateCore{checkErr: errors.New("代理请求失败: http://admin:s3cr3t@10.0.0.5:7890 token=abc123")}
 	settings := &fakeSettingsReader{channel: "stable", intervalHours: 6}
 	svc := newTestUpdateService(core, settings, time.Now)
 
@@ -248,6 +248,10 @@ func TestCheckFailedDegradesNot5xx(t *testing.T) {
 	}
 	if v.Channel != "stable" {
 		t.Fatalf("check-failed 仍应回显渠道，实际 %q", v.Channel)
+	}
+	wantReason := "代理请求失败: http://***:***@10.0.0.5:7890 token=***"
+	if v.FailureReason != wantReason {
+		t.Fatalf("check-failed 应返回脱敏原因 %q，实际 %q", wantReason, v.FailureReason)
 	}
 }
 
@@ -299,8 +303,8 @@ func TestProxyTestUsesStoreProxy(t *testing.T) {
 	}
 }
 
-// TestApplyUsesStoreChannelAndProxy 触发应用：从 store 读渠道 / 代理透传给核心（fix-1：异步，经 started 信号同步后断言）。
-func TestApplyUsesStoreChannelAndProxy(t *testing.T) {
+// TestApplyNormalizesLegacyChannel 触发应用时也必须把历史 prerelease 归一为 stable，避免下载 RC 或开发对象。
+func TestApplyNormalizesLegacyChannel(t *testing.T) {
 	core := &fakeUpdateCore{applyStarted: make(chan struct{}, 1)}
 	settings := &fakeSettingsReader{channel: "prerelease", proxy: "http://p:9090"}
 	svc := NewUpdateService(core, settings)
@@ -312,8 +316,8 @@ func TestApplyUsesStoreChannelAndProxy(t *testing.T) {
 	if core.applyCalls != 1 {
 		t.Fatalf("应调一次核心 ApplyUpdate，实际 %d", core.applyCalls)
 	}
-	if core.lastChannel != update.Channel("prerelease") || core.lastProxy != "http://p:9090" {
-		t.Fatalf("应把 store 渠道 / 代理透传，实际 ch=%q proxy=%q", core.lastChannel, core.lastProxy)
+	if core.lastChannel != update.ChannelStable || core.lastProxy != "http://p:9090" {
+		t.Fatalf("应用更新必须只传 stable / 原代理，实际 ch=%q proxy=%q", core.lastChannel, core.lastProxy)
 	}
 }
 

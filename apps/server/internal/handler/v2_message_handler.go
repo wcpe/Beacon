@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -25,15 +26,15 @@ func NewV2MessageHandler(svc *service.MessageService) *V2MessageHandler {
 // msgSendRequest 是 POST /beacon/v2/agent/messages/send 的请求体（camelCase，对齐 spec §5.1；
 // targetZone 为广播 zone 级定向的 additive 键，FR-180）。
 type msgSendRequest struct {
-	MessageID        string `json:"messageId"`
-	MsgType          string `json:"msgType"`
-	TargetKind       string `json:"targetKind"`
-	TargetServerID   string `json:"targetServerId"`
-	TargetPlayerUUID string `json:"targetPlayerUuid"`
-	TargetZone       string `json:"targetZone"`
-	CorrelationID    string `json:"correlationId"`
-	Payload          string `json:"payload"`
-	SentAt           string `json:"sentAt"`
+	MessageID        string          `json:"messageId"`
+	MsgType          string          `json:"msgType"`
+	TargetKind       string          `json:"targetKind"`
+	TargetServerID   string          `json:"targetServerId"`
+	TargetPlayerUUID string          `json:"targetPlayerUuid"`
+	TargetZone       string          `json:"targetZone"`
+	CorrelationID    string          `json:"correlationId"`
+	Payload          json.RawMessage `json:"payload"`
+	SentAt           string          `json:"sentAt"`
 }
 
 // Send 处理 POST /beacon/v2/agent/messages/send：上行一条跨服消息。
@@ -49,12 +50,17 @@ func (h *V2MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	payload, payloadRaw, err := decodeMessagePayload(req.Payload)
+	if err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
 	result, err := h.svc.Send(service.MessageSendParams{
 		Identity: identity, MessageID: req.MessageID, MsgType: req.MsgType,
 		TargetKind: req.TargetKind, TargetServerID: req.TargetServerID,
 		TargetPlayerUUID: req.TargetPlayerUUID, TargetZone: req.TargetZone,
 		CorrelationID: req.CorrelationID,
-		Payload:       req.Payload, SentAtMs: parseISOms(req.SentAt),
+		Payload:       payload, PayloadRaw: payloadRaw, SentAtMs: parseISOms(req.SentAt),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -64,6 +70,24 @@ func (h *V2MessageHandler) Send(w http.ResponseWriter, r *http.Request) {
 		"messageId": result.MessageID,
 		"status":    result.Status,
 	})
+}
+
+// decodeMessagePayload 将 JSON 字符串还原为业务字符串，其它非空值保留原始 JSON；null/缺省按无 payload 处理。
+func decodeMessagePayload(raw json.RawMessage) (payload string, payloadRaw bool, err error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return "", true, nil
+	}
+	if !json.Valid(raw) {
+		return "", false, apperr.ErrInvalidParam
+	}
+	if trimmed[0] != '"' {
+		return string(raw), true, nil
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return "", false, err
+	}
+	return payload, false, nil
 }
 
 // msgPollRequest 是 POST /beacon/v2/agent/messages/poll 的请求体。
@@ -96,7 +120,7 @@ func (h *V2MessageHandler) Poll(w http.ResponseWriter, r *http.Request) {
 			"messageId":      m.MessageID,
 			"msgType":        m.MsgType,
 			"sourceServerId": m.SourceServerID,
-			"payload":        m.Payload,
+			"payload":        pollMessagePayload(m),
 			"createdAt":      isoFromMs(m.CreatedAtMs),
 		}
 		if m.CorrelationID != "" {
@@ -109,6 +133,17 @@ func (h *V2MessageHandler) Poll(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"messages": out})
+}
+
+// pollMessagePayload 按发送时的 JSON 类型恢复 payload；无 payload 输出 null。
+func pollMessagePayload(m service.DispatchedMessage) any {
+	if !m.PayloadRaw {
+		return m.Payload
+	}
+	if m.Payload == "" {
+		return nil
+	}
+	return json.RawMessage(m.Payload)
 }
 
 // msgAckRequest 是 POST /beacon/v2/agent/messages/ack 的请求体。

@@ -9,7 +9,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
-// TestValidateRangeFilter 条件查询防护：缺选择性过滤 / 缺范围 / 倒置 / 超 168h 均拒；合法放行。
+// TestValidateRangeFilter 条件查询防护：缺范围 / 倒置 / 超 168h 均拒；无 selector 但有合法时间窗放行（全局近期）。
 func TestValidateRangeFilter(t *testing.T) {
 	const hour = int64(3_600_000)
 	cases := []struct {
@@ -18,13 +18,14 @@ func TestValidateRangeFilter(t *testing.T) {
 		from, to    int64
 		wantErr     bool
 	}{
-		{"缺过滤", false, 1, 2, true},
+		{"无 selector 有时间窗（全局近期）", false, 1, 1 + hour, false},
 		{"缺 from", true, 0, 100, true},
 		{"缺 to", true, 100, 0, true},
 		{"倒置", true, 200, 100, true},
 		{"超 168h", true, 1, 1 + 169*hour, true},
 		{"恰 168h 合法", true, 1, 1 + 168*hour, false},
 		{"正常 1h", true, 1, 1 + hour, false},
+		{"无 selector 缺时间窗", false, 0, 0, true},
 	}
 	for _, c := range cases {
 		err := validateRangeFilter(c.hasSelector, c.from, c.to)

@@ -1,16 +1,20 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +42,13 @@ func (f *fakeAudit) actions() []string {
 // directClient 是测试用直连 client 工厂（忽略代理，超时短）。
 func directClient(_ string, timeout time.Duration) (*http.Client, error) {
 	return &http.Client{Timeout: timeout}, nil
+}
+
+// roundTripFunc 把函数适配为测试用 HTTP 传输器。
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 // newMockReleaseServer 起一个 mock，提供 /repos/<repo>/releases、二进制资产、SHA256SUMS.txt。
@@ -85,6 +96,36 @@ func currentAssetName(t *testing.T, tag string) string {
 		t.Skipf("本平台 %s/%s 非已发布平台，跳过资产相关用例", runtime.GOOS, runtime.GOARCH)
 	}
 	return name
+}
+
+// TestAssetNameSupportsOnlyReleasePlatforms 锁定 1.0.0 的四平台资产矩阵，防止 Darwin amd64 回流。
+func TestAssetNameSupportsOnlyReleasePlatforms(t *testing.T) {
+	cases := []struct {
+		name     string
+		goos     string
+		goarch   string
+		wantName string
+		wantOK   bool
+	}{
+		{name: "Linux amd64", goos: "linux", goarch: "amd64", wantName: "beacon-1.0.0-linux-amd64", wantOK: true},
+		{name: "Linux arm64", goos: "linux", goarch: "arm64", wantName: "beacon-1.0.0-linux-arm64", wantOK: true},
+		{name: "Windows amd64", goos: "windows", goarch: "amd64", wantName: "beacon-1.0.0-windows-amd64.exe", wantOK: true},
+		{name: "Darwin arm64", goos: "darwin", goarch: "arm64", wantName: "beacon-1.0.0-darwin-arm64", wantOK: true},
+		{name: "Darwin amd64 已移除", goos: "darwin", goarch: "amd64", wantOK: false},
+		{name: "Windows arm64 未支持", goos: "windows", goarch: "arm64", wantOK: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotName, gotOK := assetNameFor("v1.0.0", tc.goos, tc.goarch)
+			if gotOK != tc.wantOK {
+				t.Fatalf("支持状态错误：got=%v want=%v", gotOK, tc.wantOK)
+			}
+			if gotName != tc.wantName {
+				t.Fatalf("资产名错误：got=%q want=%q", gotName, tc.wantName)
+			}
+		})
+	}
 }
 
 // TestApplyUpdateHappyPath 完整链路：查 → 下载 → 校验 → 落位 → 请求重启。
@@ -280,6 +321,72 @@ func TestApplyUpdateDownloadHTTPError(t *testing.T) {
 	assertNoTempLeak(t, dir)
 }
 
+// TestApplyUpdateRedactsPresignedDownloadFailure 回归预签名下载 URL 泄露：
+// GitHub 下载 URL 与对象存储跳转 URL 中的凭据不得进入返回错误、进度、审计或日志，非敏感诊断仍须保留。
+func TestApplyUpdateRedactsPresignedDownloadFailure(t *testing.T) {
+	const tag = "v9.9.9"
+	binName := currentAssetName(t, tag)
+	githubURL := "https://github.com/wcpe/Beacon/releases/download/v9.9.9/" + binName +
+		"?token=github-token-raw&Password=github-password-raw&SECRET=github-secret-raw&API_KEY=github-api-key-raw&download=1"
+	objectURL := "https://objects.githubusercontent.com/releases/download/v9.9.9/" + binName +
+		"?X-Amz-Algorithm=AWS4-HMAC-SHA256&x-AmZ-SiGnAtUrE=amz-signature-raw&X-AMZ-CREDENTIAL=amz-credential-raw" +
+		"&x-amz-security-token=amz-session-raw&response-content-disposition=attachment"
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]ghRelease{{
+			TagName: tag,
+			Name:    tag,
+			Assets: []ghAsset{
+				{ID: 1, Name: binName, URL: githubURL},
+				{ID: 2, Name: "SHA256SUMS.txt", URL: srv.URL + "/dl/sums"},
+			},
+		}})
+	})
+
+	audit := &fakeAudit{}
+	var logBuf bytes.Buffer
+	originalLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, nil)))
+	defer slog.SetDefault(originalLogger)
+
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0",
+		APIBase:        srv.URL,
+		PendingPath:    filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: func(_ string, timeout time.Duration) (*http.Client, error) {
+			return &http.Client{
+				Timeout: timeout,
+				Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if req.URL.Host == "github.com" {
+						return nil, fmt.Errorf("GitHub 跳转对象存储 %s 失败: %w", objectURL, errors.New("连接被重置"))
+					}
+					return http.DefaultTransport.RoundTrip(req)
+				}),
+			}, nil
+		},
+		RequestRestart: func() {},
+		Audit:          audit,
+	})
+
+	err := svc.ApplyUpdate(context.Background(), ChannelStable, "", "tester", "1.2.3.4")
+	if err == nil {
+		t.Fatal("预签名下载失败应返回错误")
+	}
+	if len(audit.entries) == 0 {
+		t.Fatal("下载失败应写入审计")
+	}
+	observations := map[string]string{
+		"返回错误": err.Error(),
+		"进度记录": svc.Snapshot().Error,
+		"审计详情": audit.entries[len(audit.entries)-1].Detail,
+		"日志输出": logBuf.String(),
+	}
+	assertPresignedFailureRedacted(t, observations)
+}
+
 // TestCheckForUpdateReportsNewer 检查端点：远端更高报有更新，记 check 审计。
 func TestCheckForUpdateReportsNewer(t *testing.T) {
 	const tag = "v2.0.0"
@@ -324,6 +431,28 @@ func TestCheckForUpdateCarriesCurrentVersionOnError(t *testing.T) {
 	}
 	if res.CurrentVersion != "1.0.0" {
 		t.Fatalf("check-failed 时应回显当前版本 1.0.0，实际 %q", res.CurrentVersion)
+	}
+}
+
+// TestCheckForUpdatePreservesDownloadProgress 检查是只读操作，不能覆盖正在下载的进度、目标版本或失败信息。
+func TestCheckForUpdatePreservesDownloadProgress(t *testing.T) {
+	const tag = "v2.0.0"
+	binName := currentAssetName(t, tag)
+	srv := newMockReleaseServer(t, tag, binName, "x", fmt.Sprintf("%s  %s\n", sha256hex("x"), binName))
+	svc := NewService(Config{
+		CurrentVersion: "1.0.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
+	})
+	svc.progress.reset("v1.5.0")
+	svc.progress.setPhase(PhaseDownloading, "v1.5.0")
+	svc.progress.setPercent(42)
+	before := svc.Snapshot()
+
+	if _, err := svc.CheckForUpdate(context.Background(), ChannelStable, "", "tester", ""); err != nil {
+		t.Fatalf("检查应成功: %v", err)
+	}
+	if after := svc.Snapshot(); after != before {
+		t.Fatalf("检查不得写下载进度：before=%+v after=%+v", before, after)
 	}
 }
 
@@ -381,57 +510,67 @@ func TestCheckForUpdateDevBuildMarked(t *testing.T) {
 	}
 }
 
-// TestCheckForUpdateRollingPrereleaseUsesNameVersion 滚动预发布渠道：tag=prerelease 非 semver，
-// 版本取 Release name（v<VERSION>）；跨号则报有更新（ADR-0052 滚动路径）。
-func TestCheckForUpdateRollingPrereleaseUsesNameVersion(t *testing.T) {
+// TestApplyUpdateRevalidatesGAReleaseBeforeDownload 首次选择 GA 后，下载前若公开列表只剩 RC，必须在下载前失败。
+func TestApplyUpdateRevalidatesGAReleaseBeforeDownload(t *testing.T) {
+	var calls int
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
-		releases := []ghRelease{{
-			TagName:    "prerelease", // 移动标签，非 semver
-			Name:       "v0.17.0",    // 版本号在 name
-			Prerelease: true,
-			Body:       "滚动预发布说明",
-			HTMLURL:    "https://example.invalid/pre",
-		}}
-		_ = json.NewEncoder(w).Encode(releases)
+		calls++
+		if calls == 1 {
+			_ = json.NewEncoder(w).Encode([]ghRelease{{TagName: "v1.0.0", Name: "v1.0.0", Prerelease: false}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]ghRelease{{TagName: "v1.0.1-rc.1", Name: "v1.0.1-rc.1", Prerelease: true}})
 	})
+
 	svc := NewService(Config{
-		CurrentVersion: "0.16.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		CurrentVersion: "0.29.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
 		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
 	})
-	res, err := svc.CheckForUpdate(context.Background(), ChannelPrerelease, "", "tester", "")
-	if err != nil {
-		t.Fatalf("检查应成功: %v", err)
+	err := svc.ApplyUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err == nil || !strings.Contains(err.Error(), "下载前复验 GA release 失败") {
+		t.Fatalf("下载前 GA 漂移应中止，实际错误：%v", err)
 	}
-	if res.LatestVersion != "v0.17.0" {
-		t.Fatalf("滚动预发布最新版本应取自 name=v0.17.0，实际 %q", res.LatestVersion)
-	}
-	if !res.HasUpdate {
-		t.Fatal("0.16.0 → 0.17.0 跨号应报有更新")
+	if calls != 2 {
+		t.Fatalf("下载前应查询两次，实际 %d 次", calls)
 	}
 }
 
-// TestCheckForUpdateSameVersionNoUpdate 同 X.Y.Z 滚动覆盖不提示更新（ADR-0052 决策 5）。
-func TestCheckForUpdateSameVersionNoUpdate(t *testing.T) {
+// TestApplyUpdateRejectsChangedGAAssetBeforeDownload 二次查询同 tag 但目标资产被替换时必须中止。
+func TestApplyUpdateRejectsChangedGAAssetBeforeDownload(t *testing.T) {
+	binName := currentAssetName(t, "v1.0.0")
+	var calls int
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	mux.HandleFunc("/repos/wcpe/Beacon/releases", func(w http.ResponseWriter, _ *http.Request) {
-		releases := []ghRelease{{TagName: "prerelease", Name: "v0.16.0", Prerelease: true}}
-		_ = json.NewEncoder(w).Encode(releases)
+		calls++
+		assetID := int64(1)
+		if calls == 2 {
+			assetID = 2
+		}
+		_ = json.NewEncoder(w).Encode([]ghRelease{{
+			TagName: "v1.0.0",
+			Name:    "v1.0.0",
+			Assets: []ghAsset{
+				{ID: assetID, Name: binName, URL: "https://example.invalid/beacon"},
+				{ID: 3, Name: "SHA256SUMS.txt", URL: "https://example.invalid/sums"},
+			},
+		}})
 	})
+
 	svc := NewService(Config{
-		CurrentVersion: "0.16.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
+		CurrentVersion: "0.29.0", APIBase: srv.URL, PendingPath: filepath.Join(t.TempDir(), "beacon.new"),
 		NewHTTPClient: directClient, RequestRestart: func() {}, Audit: &fakeAudit{},
 	})
-	res, err := svc.CheckForUpdate(context.Background(), ChannelPrerelease, "", "tester", "")
-	if err != nil {
-		t.Fatalf("检查应成功: %v", err)
+	err := svc.ApplyUpdate(context.Background(), ChannelStable, "", "tester", "")
+	if err == nil || !strings.Contains(err.Error(), "GA 资产已变化") {
+		t.Fatalf("资产漂移应在下载前中止，实际错误：%v", err)
 	}
-	if res.HasUpdate {
-		t.Fatal("同号 0.16.0 不应报有更新")
+	if calls != 2 {
+		t.Fatalf("下载前应查询两次，实际 %d 次", calls)
 	}
 }
 
@@ -543,6 +682,30 @@ func TestRollbackNoBackupRejected(t *testing.T) {
 	}
 	if rolledBack {
 		t.Fatal("无 .old 不应触发回调")
+	}
+}
+
+func assertPresignedFailureRedacted(t *testing.T, observations map[string]string) {
+	t.Helper()
+	secrets := []string{
+		"github-token-raw", "github-password-raw", "github-secret-raw", "github-api-key-raw",
+		"amz-signature-raw", "amz-credential-raw", "amz-session-raw",
+	}
+	diagnostics := []string{
+		"下载资产失败", "连接被重置", "github.com/wcpe/Beacon/releases/download",
+		"objects.githubusercontent.com/releases/download", "download=1", "response-content-disposition=attachment",
+	}
+	for name, value := range observations {
+		for _, secret := range secrets {
+			if strings.Contains(value, secret) {
+				t.Errorf("%s 泄露凭据 %q：%s", name, secret, value)
+			}
+		}
+		for _, diagnostic := range diagnostics {
+			if !strings.Contains(value, diagnostic) {
+				t.Errorf("%s 丢失正常失败诊断 %q：%s", name, diagnostic, value)
+			}
+		}
 	}
 }
 

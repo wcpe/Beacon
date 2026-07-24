@@ -12,11 +12,11 @@ import "regexp"
 const masked = "***"
 
 var (
-	// URL 里的 user:pass@host → user:***@host：打码密码段，保留 scheme 与用户名便于辨识。
-	urlCredRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^:/@\s]+):[^@/\s]+@`)
-	// 键值形式的凭据：token=xxx / password=xxx / secret=xxx / pwd=xxx / api-key=xxx 等（大小写不敏感）。
+	// URL 里的 userinfo 整段打码：user:pass@host 或 user@host 均不得对外暴露。
+	urlCredRe = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/\s]+@`)
+	// 键值形式的凭据：预签名 URL 的 x-amz-* 授权参数及 token / password / secret / api-key 等（大小写不敏感）。
 	// 不含 authorization——其常见形态「Authorization: Bearer xxx」由 schemeTokenRe 处理，避免部分匹配漏码。
-	kvSecretRe = regexp.MustCompile(`(?i)\b(token|password|passwd|pwd|secret|api[_-]?key|access[_-]?key)([=:]\s*)("?)[^"&\s]+`)
+	kvSecretRe = regexp.MustCompile(`(?i)\b(x-amz-(?:signature|credential|security-token)|token|password|passwd|pwd|secret|api[_-]?key|access[_-]?key)([=:]\s*)("?)[^"&\s]+`)
 	// Bearer / Basic 令牌：Bearer <token> → Bearer ***（保留 scheme 关键字大小写）。
 	schemeTokenRe = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._\-+/=]+`)
 )
@@ -24,7 +24,7 @@ var (
 // Desensitize 把文本中的常见凭据片段打码（best-effort），用于把错误安全地展示到前端。
 // 非凭据（内网地址 / 主机名 / 路径 / 业务标识）原样保留。新增凭据形态时扩规则并补单测。
 func Desensitize(s string) string {
-	s = urlCredRe.ReplaceAllString(s, `$1:`+masked+`@`)
+	s = urlCredRe.ReplaceAllString(s, `$1`+masked+`:`+masked+`@`)
 	s = kvSecretRe.ReplaceAllString(s, `${1}${2}${3}`+masked)
 	s = schemeTokenRe.ReplaceAllString(s, `$1 `+masked)
 	return s

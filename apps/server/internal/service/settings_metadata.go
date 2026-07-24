@@ -92,9 +92,9 @@ const (
 	deliveryBlobCapacityMaxBytes = 1099511627776
 )
 
-// updateChannels 是 update.channel 的合法枚举集（stable=正式版线、prerelease=滚动预发布线，FR-117/ADR-0052）。
+// updateChannels 是 update.channel 的合法枚举集：标准在线更新只消费 stable GA（FR-185）。
 var updateChannels = map[string]struct{}{
-	"stable": {}, "prerelease": {},
+	"stable": {},
 }
 
 // proxyURLValid 校验 update.proxy-url：空串=直连合法；非空须为 http/https 且 host:port 合法（FR-98，见 ADR-0047）。
@@ -201,7 +201,7 @@ var settingsWhitelist = map[string]settingMeta{
 		defaultFromConfig: func(c config.Config) string { return c.Update.ProxyURL },
 	},
 	SettingUpdateChannel: {
-		valueType: model.SettingValueTypeString, desc: "更新渠道：stable（正式版）/ prerelease（滚动预发布版）",
+		valueType: model.SettingValueTypeString, desc: "更新渠道：stable（仅合法 GA 正式版）",
 		enumOK: func(v string) bool {
 			_, ok := updateChannels[v]
 			return ok

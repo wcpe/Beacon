@@ -91,7 +91,9 @@ func applyFilter(q *gorm.DB, f AuditFilter) *gorm.DB {
 		q = q.Where("target_type = ?", f.TargetType)
 	}
 	if f.TargetRef != "" {
-		q = q.Where("target_ref = ?", f.TargetRef)
+		// target_ref 子串匹配：真值常为「纯 serverId」或「namespace/serverId」等复合形态；
+		// 精确等值会导致输入 lobby-1 筛不到 realhost/lobby-1。转义后 LIKE，% / _ 当字面字符。
+		q = q.Where("target_ref LIKE ? ESCAPE ?", "%"+likeEscape(f.TargetRef)+"%", likeEscapeChar)
 	}
 	if f.DetailKeyword != "" {
 		// detail 子串检索：转义后 LIKE，ESCAPE 用占位符（驱动按方言安全引用），使 % / _ 当字面字符匹配

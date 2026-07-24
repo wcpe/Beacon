@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -237,6 +237,109 @@ func TestV2ServerAssignmentRequiresUnassignedServer(t *testing.T) {
 	}
 }
 
+// TestV2ServerUnassignViaTargetNull target 零值（对应 API target:null）解除分配并清空默认入口。
+func TestV2ServerUnassignViaTargetNull(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: "55555555-5555-4555-8555-555555555555",
+		ServerID: "lobby-u", Kind: model.ServerKindBackend, BootID: "boot-u",
+	}); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity("55555555-5555-4555-8555-555555555555", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-u", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 BC 集群失败: %v", err)
+	}
+	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Name: "r-u", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建大区失败: %v", err)
+	}
+	zone, err := svc.CreateZone(CreateZoneParams{RegionID: region.ID, Name: "z-u", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建小区失败: %v", err)
+	}
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{1}, TargetKind: model.AssignmentTargetZone, TargetID: zone.ID,
+		IsDefaultEntry: true, Reason: "首次分配", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("首次分配应成功: %v", err)
+	}
+	// 解除分配：TargetKind/TargetID 零值
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{1}, Reason: "下线维护", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("target 零值解除分配应成功: %v", err)
+	}
+	var server model.Server
+	if err := db.First(&server, 1).Error; err != nil {
+		t.Fatalf("读 server 失败: %v", err)
+	}
+	if server.ZoneID != nil || server.BCClusterID != nil || server.IsDefaultEntry {
+		t.Fatalf("解除分配后应清空归属与默认入口，实际 zone=%v bc=%v default=%v", server.ZoneID, server.BCClusterID, server.IsDefaultEntry)
+	}
+}
+
+// TestV2UnbindClearsServerAssignment 解绑身份时同步清空 server 区服归属。
+func TestV2UnbindClearsServerAssignment(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	identityID := "66666666-6666-4666-8666-666666666666"
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID,
+		ServerID: "lobby-ub", Kind: model.ServerKindBackend, BootID: "boot-ub",
+	}); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-ub", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 BC 集群失败: %v", err)
+	}
+	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Name: "r-ub", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建大区失败: %v", err)
+	}
+	zone, err := svc.CreateZone(CreateZoneParams{RegionID: region.ID, Name: "z-ub", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建小区失败: %v", err)
+	}
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{1}, TargetKind: model.AssignmentTargetZone, TargetID: zone.ID,
+		IsDefaultEntry: true, Reason: "首次分配", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("首次分配应成功: %v", err)
+	}
+	if _, err := svc.UnbindAgentIdentity(identityID, IdentityTransitionParams{Reason: "退役", Operator: "admin"}); err != nil {
+		t.Fatalf("解绑应成功: %v", err)
+	}
+	var server model.Server
+	if err := db.First(&server, 1).Error; err != nil {
+		t.Fatalf("读 server 失败: %v", err)
+	}
+	if server.ZoneID != nil || server.IsDefaultEntry {
+		t.Fatalf("解绑后应清空归属，实际 zone=%v default=%v", server.ZoneID, server.IsDefaultEntry)
+	}
+	var ident model.AgentIdentity
+	if err := db.Where("identity_id = ?", identityID).First(&ident).Error; err != nil {
+		t.Fatalf("读 identity 失败: %v", err)
+	}
+	if ident.Status != model.AgentIdentityStatusUnbound {
+		t.Fatalf("身份状态应为 unbound，实际 %s", ident.Status)
+	}
+}
+
 func TestV2ApproveDoesNotAssignServerDirectly(t *testing.T) {
 	_, svc := newV2ControlPlaneTestService(t)
 	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
@@ -279,6 +382,172 @@ func TestV2AuthorityCreationValidatesParents(t *testing.T) {
 	}
 	if _, err := svc.CreateZone(CreateZoneParams{RegionID: 404, Name: "z-a", Operator: "admin"}); !errors.Is(err, apperr.ErrInstanceNotFound) {
 		t.Fatalf("不存在大区不应创建小区，实际 %v", err)
+	}
+}
+
+// TestV2AuthorityNodeDeleteGuards 空节点可删；有子节点 / 已分配服时 409。
+func TestV2AuthorityNodeDeleteGuards(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-del", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 BC 集群失败: %v", err)
+	}
+	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Name: "r-del", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建大区失败: %v", err)
+	}
+	zone, err := svc.CreateZone(CreateZoneParams{RegionID: region.ID, Name: "z-del", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建小区失败: %v", err)
+	}
+
+	// 有大区的集群不可删
+	if err := svc.DeleteBCCluster(DeleteNodeParams{ID: cluster.ID, Operator: "admin"}); !errors.Is(err, apperr.ErrBCClusterHasRegions) {
+		t.Fatalf("有大区的集群删除应 BC_CLUSTER_HAS_REGIONS，实际 %v", err)
+	}
+	// 有小区的大区不可删
+	if err := svc.DeleteRegion(DeleteNodeParams{ID: region.ID, Operator: "admin"}); !errors.Is(err, apperr.ErrRegionHasZones) {
+		t.Fatalf("有小区的大区删除应 REGION_HAS_ZONES，实际 %v", err)
+	}
+
+	// 注册并分配子服后小区不可删
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: "d0100000-0000-4000-8000-000000000001",
+		ServerID: "lobby-del", Kind: model.ServerKindBackend, BootID: "boot-del",
+	}); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity("d0100000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	var server model.Server
+	if err := db.Where("server_id = ?", "lobby-del").First(&server).Error; err != nil {
+		t.Fatalf("取 server 失败: %v", err)
+	}
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{server.ID}, TargetKind: model.AssignmentTargetZone, TargetID: zone.ID,
+		Reason: "测删", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("分配失败: %v", err)
+	}
+	if err := svc.DeleteZone(DeleteNodeParams{ID: zone.ID, Operator: "admin"}); !errors.Is(err, apperr.ErrZoneHasServers) {
+		t.Fatalf("有子服的小区删除应 ZONE_HAS_SERVERS，实际 %v", err)
+	}
+
+	// 解除分配后：小区 → 大区 → 集群 可依次删空
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{server.ID}, Reason: "解除以便删除", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("解除分配失败: %v", err)
+	}
+	if err := svc.DeleteZone(DeleteNodeParams{ID: zone.ID, Operator: "admin"}); err != nil {
+		t.Fatalf("空小区应可删: %v", err)
+	}
+	if err := svc.DeleteRegion(DeleteNodeParams{ID: region.ID, Operator: "admin"}); err != nil {
+		t.Fatalf("空大区应可删: %v", err)
+	}
+	// 代理分配后集群不可删
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: "d0100000-0000-4000-8000-000000000002",
+		ServerID: "proxy-del", Kind: model.ServerKindProxy, BootID: "boot-proxy-del",
+	}); err != nil {
+		t.Fatalf("代理注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity("d0100000-0000-4000-8000-000000000002", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+		t.Fatalf("代理确认失败: %v", err)
+	}
+	var proxy model.Server
+	if err := db.Where("server_id = ?", "proxy-del").First(&proxy).Error; err != nil {
+		t.Fatalf("取 proxy 失败: %v", err)
+	}
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{proxy.ID}, TargetKind: model.AssignmentTargetBCCluster, TargetID: cluster.ID,
+		Reason: "测代理删", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("代理分配失败: %v", err)
+	}
+	if err := svc.DeleteBCCluster(DeleteNodeParams{ID: cluster.ID, Operator: "admin"}); !errors.Is(err, apperr.ErrBCClusterHasProxies) {
+		t.Fatalf("有代理的集群删除应 BC_CLUSTER_HAS_PROXIES，实际 %v", err)
+	}
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{proxy.ID}, Reason: "解除代理", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("解除代理失败: %v", err)
+	}
+	if err := svc.DeleteBCCluster(DeleteNodeParams{ID: cluster.ID, Operator: "admin"}); err != nil {
+		t.Fatalf("空集群应可删: %v", err)
+	}
+	// 不存在
+	if err := svc.DeleteZone(DeleteNodeParams{ID: 404, Operator: "admin"}); !errors.Is(err, apperr.ErrZoneNotFound) {
+		t.Fatalf("不存在小区应 ZONE_NOT_FOUND，实际 %v", err)
+	}
+}
+
+// TestV2ZoneTreeCountsAssignedServers 分配后 zone-tree 计数与 ListServers 归属一致。
+func TestV2ZoneTreeCountsAssignedServers(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-tree", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 BC 集群失败: %v", err)
+	}
+	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Name: "r-tree", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建大区失败: %v", err)
+	}
+	zone, err := svc.CreateZone(CreateZoneParams{RegionID: region.ID, Name: "z-tree", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建小区失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: "a1ee0000-0000-4000-8000-000000000001",
+		ServerID: "lobby-tree", Kind: model.ServerKindBackend, BootID: "boot-tree",
+	}); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity("a1ee0000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	var server model.Server
+	if err := db.Where("server_id = ?", "lobby-tree").First(&server).Error; err != nil {
+		t.Fatalf("取 server 失败: %v", err)
+	}
+	if _, err := svc.AssignServers(AssignServersParams{
+		ServerIDs: []uint{server.ID}, TargetKind: model.AssignmentTargetZone, TargetID: zone.ID,
+		IsDefaultEntry: true, Reason: "测树计数", Operator: "admin",
+	}); err != nil {
+		t.Fatalf("分配失败: %v", err)
+	}
+	tree, err := svc.ZoneTree(ns.ID)
+	if err != nil {
+		t.Fatalf("zone-tree 失败: %v", err)
+	}
+	if len(tree.Clusters) != 1 || tree.Clusters[0].ProxyCount != 0 {
+		t.Fatalf("树应 1 集群 0 代理，实际 %+v", tree.Clusters)
+	}
+	if len(tree.Clusters[0].Regions) != 1 || len(tree.Clusters[0].Regions[0].Zones) != 1 {
+		t.Fatalf("树应有 1 大区 1 小区，实际 %+v", tree.Clusters[0])
+	}
+	z := tree.Clusters[0].Regions[0].Zones[0]
+	if z.ServerCount != 1 || z.DefaultEntryCount != 1 {
+		t.Fatalf("分配后 serverCount/defaultEntry 应为 1，实际 %+v", z)
+	}
+	if tree.UnassignedCount != 0 {
+		t.Fatalf("分配后 unassigned 应为 0，实际 %d", tree.UnassignedCount)
+	}
+	views, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 50})
+	if err != nil || total != 1 {
+		t.Fatalf("ListServers 应 1 台，total=%d err=%v", total, err)
+	}
+	if views[0].ZoneID == nil || *views[0].ZoneID != zone.ID || !views[0].Assigned {
+		t.Fatalf("ListServers 应带 zone 且 assigned，实际 %+v", views[0])
 	}
 }
 

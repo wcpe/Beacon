@@ -16,12 +16,10 @@ const (
 	maxQueryLimit     = 200
 )
 
-// validateRangeFilter 校验条件查询防护（无精确 ID 时）：须至少一个选择性过滤（serverId/playerUuid）
-// + 显式有序时间范围且跨度 ≤168h，任一不满足即 ErrQueryGuardViolation（400，spec §4.3）。
-func validateRangeFilter(hasSelector bool, fromMs, toMs int64) error {
-	if !hasSelector {
-		return apperr.ErrQueryGuardViolation
-	}
+// validateRangeFilter 校验条件查询防护（无精确 ID 时）：须显式有序时间范围且跨度 ≤168h。
+// 选择性过滤（serverId/playerUuid）可选——无 selector 时允许「时间窗内全局近期」列表（管理台默认进页）。
+// 仍禁止无时间窗的全表扫；超 168h 或倒置范围一律 ErrQueryGuardViolation（400）。
+func validateRangeFilter(_ bool, fromMs, toMs int64) error {
 	if fromMs <= 0 || toMs <= 0 || fromMs > toMs {
 		return apperr.ErrQueryGuardViolation
 	}

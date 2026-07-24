@@ -8,11 +8,11 @@ func TestDesensitize(t *testing.T) {
 		in   string
 		want string
 	}{
-		// URL 里的 user:pass@ 密码段打码（保留用户名便于辨识）
+		// URL 里的 userinfo 整段打码，用户名与口令均不得对外暴露
 		{
 			name: "URL 凭据打码",
 			in:   `下载失败: Get "http://admin:s3cr3t@10.0.0.5:7890": connection refused`,
-			want: `下载失败: Get "http://admin:***@10.0.0.5:7890": connection refused`,
+			want: `下载失败: Get "http://***:***@10.0.0.5:7890": connection refused`,
 		},
 		// token=xxx 键值打码
 		{
@@ -31,6 +31,12 @@ func TestDesensitize(t *testing.T) {
 			name: "secret 与 api-key 打码",
 			in:   `secret=topsecret api_key=KEY-999`,
 			want: `secret=*** api_key=***`,
+		},
+		// 对象存储预签名 URL 的 AWS 查询凭据打码，非敏感参数保持不变
+		{
+			name: "预签名 URL 查询凭据打码",
+			in:   `Get "https://objects.example.invalid/release?X-Amz-Algorithm=AWS4-HMAC-SHA256&x-AmZ-SiGnAtUrE=signature-raw&X-AMZ-CREDENTIAL=credential-raw&x-amz-security-token=session-raw&download=1"`,
+			want: `Get "https://objects.example.invalid/release?X-Amz-Algorithm=AWS4-HMAC-SHA256&x-AmZ-SiGnAtUrE=***&X-AMZ-CREDENTIAL=***&x-amz-security-token=***&download=1"`,
 		},
 		// Bearer 令牌打码
 		{

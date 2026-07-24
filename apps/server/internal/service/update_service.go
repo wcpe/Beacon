@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/redact"
 	"github.com/wcpe/Beacon/apps/server/internal/update"
 )
 
@@ -40,9 +41,11 @@ type updateSettingsReader interface {
 type UpdateCheckView struct {
 	// 检查状态：ok=查到结果、check-failed=GitHub 不可达 / 限流 / 解析失败（降级、非错误）
 	Status string `json:"status"`
+	// 检查失败原因；仅 check-failed 返回，且已脱敏凭据
+	FailureReason string `json:"failureReason,omitempty"`
 	// 当前运行版本（dev 构建为 "dev"）
 	CurrentVersion string `json:"currentVersion"`
-	// 当前更新渠道（stable / rc，从 store 读）
+	// 当前更新渠道（兼容保留字段，固定为 stable）
 	Channel string `json:"channel"`
 	// 是否有可用更新（远端严格高于当前；dev 构建恒 false）
 	HasUpdate bool `json:"hasUpdate"`
@@ -98,11 +101,11 @@ func NewUpdateService(core updateCore, settings updateSettingsReader) *UpdateSer
 // Check 执行 / 复用一次更新检查（FR-99）：
 //   - 非 force 且缓存未过期、渠道未变 → 直接返回缓存（不打 GitHub）；
 //   - force 或缓存失效 → 调更新核心查 release，结果与失败均缓存（TTL 取 store 的检查周期小时）；
-//   - GitHub 不可达 / 解析失败 → 返回 status=check-failed 视图（无 error、由 handler 以 200 回，不阻断页面）。
+//   - GitHub 不可达 / 解析失败 → 返回 status=check-failed 与脱敏原因（由 handler 以 200 回，不阻断页面）。
 //
 // 缓存与渠道读取均在本服务，handler 不碰 store、不构造 http.Client。
 func (s *UpdateService) Check(ctx context.Context, force bool, operator, clientIP string) UpdateCheckView {
-	channel := s.settings.GetString(SettingUpdateChannel)
+	channel := stableUpdateChannel(s.settings.GetString(SettingUpdateChannel))
 	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
 
 	now := s.now().UTC()
@@ -123,6 +126,7 @@ func (s *UpdateService) Check(ctx context.Context, force bool, operator, clientI
 		// GitHub 不可达 / 限流 / 解析失败：降级为 check-failed，不报 5xx、不阻断页面（FR-99）。
 		view = UpdateCheckView{
 			Status:         updateCheckStatusFailed,
+			FailureReason:  redact.DesensitizeErr(err),
 			CurrentVersion: s.currentVersionFor(res),
 			IsDevBuild:     res.IsDevBuild,
 			Channel:        channel,
@@ -169,7 +173,7 @@ func (s *UpdateService) Apply(operator, clientIP string) error {
 	if !s.applying.CompareAndSwap(false, true) {
 		return apperr.ErrUpdateInProgress
 	}
-	channel := s.settings.GetString(SettingUpdateChannel)
+	channel := stableUpdateChannel(s.settings.GetString(SettingUpdateChannel))
 	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
 	// 可取消 context（fix-b / FR-125）：派生自 baseCtx（进程信号 ctx）——Ctrl+C / 关停即取消下载，
 	// 不再用 context.Background() 致下载脱离进程生命周期、关不掉；存 cancel 供手动取消（CancelApply）。
@@ -231,6 +235,9 @@ func (s *UpdateService) Rollback(operator, clientIP string) error {
 	}
 	return s.core.Rollback(operator, clientIP)
 }
+
+// stableUpdateChannel 将历史值和非法值防御性归一为 stable；持久化迁移由 SettingsService 在启动时完成。
+func stableUpdateChannel(string) string { return string(update.ChannelStable) }
 
 // cacheTTL 取检查结果缓存时长：store 的 update.check-interval-hours（小时）转 Duration。
 func (s *UpdateService) cacheTTL() time.Duration {

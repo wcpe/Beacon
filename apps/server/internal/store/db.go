@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/config"
@@ -139,6 +139,7 @@ func Close(db *gorm.DB) {
 }
 
 // newDialector 根据配置中的 driver 字段返回对应的 GORM Dialector。
+// sqlite 使用纯 Go 实现（glebarez/modernc），无需 CGO。
 func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	switch cfg.Driver {
 	case "mysql":

@@ -20,6 +20,7 @@ package metrics_e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -29,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/merge"
@@ -40,7 +41,7 @@ import (
 // 控制面地址：默认 http://localhost:8848，可经 E2E_BEACON_URL 覆盖（本地避端口争用）。
 var beaconURL = harness.BeaconURL()
 
-// 服务端编排相关常量（与 runServer gradle 任务的约定一致）。
+// 服务端编排相关常量（与 servePaper gradle 任务的约定一致）。
 const (
 	adminUser    = "admin"
 	serverID     = "e2e-bukkit-1"
@@ -99,7 +100,7 @@ func TestMetricsE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("起控制面失败：%v", err)
 	}
-	defer cp.Stop()
+	harness.CleanupControlPlane(t, cp)
 
 	token, err := harness.Login(beaconURL, adminUser, adminPass)
 	if err != nil {
@@ -112,41 +113,38 @@ func TestMetricsE2E(t *testing.T) {
 	t.Logf("已建 v2 namespace id=%d", namespaceID)
 
 	t.Log("== 起 Paper 子服（" + mcPort + "）==")
-	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:runServer", []string{
+	paperEnv := harness.AgentGradleEnv(beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + mcPort,
-		harness.BeaconEndpointProp(),
-		"-Pe2eBootstrapToken=" + accessToken,
-		"-Pe2eNamespace=" + namespace,
-		"-Pe2eServerId=" + serverID,
-	}, logPrefixMC)
+	}, paperEnv, logPrefixMC)
 	if err != nil {
 		t.Fatalf("起 Paper 失败：%v", err)
 	}
-	defer paper.Stop()
+	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等 agent identity pending，批准后继续等 legacy online ==")
-	identityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "pending", onlineWait)
+	identityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "pending", onlineWait, paper)
 	if err != nil {
 		t.Fatalf("等 %s identity pending 超时（见 .tmp/paper.out.log）：%v", serverID, err)
 	}
-	if err := harness.ApproveIdentity(beaconURL, token, identityID); err != nil {
+	if err := harness.ApproveIdentityWithGuard(beaconURL, token, identityID, paper); err != nil {
 		t.Fatalf("批准 %s identity 失败：%v", serverID, err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "active", onlineWait); err != nil {
+	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "active", onlineWait, paper); err != nil {
 		t.Fatalf("等 %s identity active 超时：%v", serverID, err)
 	}
-	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, serverID, onlineWait); err != nil {
+	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, serverID, onlineWait, paper); err != nil {
 		t.Fatalf("等 %s online 超时（见 .tmp/paper.out.log）：%v", serverID, err)
 	}
 	t.Log("agent 已 active + online")
 
 	// 触发一次「配置 apply → 上报指标」，使注册表里 e2e-bukkit-1 带上真 JVM 负载（供 summary 出真值）。
-	runReport(t, token)
+	runReport(t, token, paper)
 
-	t.Run("summary", func(t *testing.T) { runSummary(t, token) })
-	t.Run("trend", func(t *testing.T) { runTrend(t, token) })
+	t.Run("summary", func(t *testing.T) { runSummary(t, token, paper) })
+	t.Run("trend", func(t *testing.T) { runTrend(t, token, paper) })
 	t.Run("persist", func(t *testing.T) { runPersist(t, sqliteDB) })
-	t.Run("boundary", func(t *testing.T) { runBoundary(t, token) })
+	t.Run("boundary", func(t *testing.T) { runBoundary(t, token, paper) })
 }
 
 // runReport 触发一次 agent 指标上报：经 admin REST 建一条 global 层最小配置。
@@ -154,21 +152,25 @@ func TestMetricsE2E(t *testing.T) {
 // 为何用「发布配置」做触发器：agent 仅在配置 apply（pollEffective 返回 Changed）时调 report 携带指标，
 // 心跳不带指标（见 AgentLifecycle.reportApplied 仅由 pollTick 的 Changed 分支调用）。建 global 层配置
 // 会经长轮询唤醒下发到该 namespace 全部在线实例 → agent apply → 上报真 JVM 负载到注册表，供 summary 取真值。
-func runReport(t *testing.T, token string) {
+func runReport(t *testing.T, token string, guard *harness.GradleProc) {
 	body := map[string]any{
 		"namespace": namespace, "group": model.GlobalGroupCode, "dataId": triggerDataID,
 		"scopeLevel": model.ScopeGlobal, "scopeTarget": "",
 		"format": triggerFormat, "content": triggerContent, "comment": "e2e 指标上报触发器",
 	}
-	doAdmin(t, http.MethodPost, "/admin/v1/configs", token, body, http.StatusCreated, nil)
+	doAdmin(t, http.MethodPost, "/admin/v1/configs", token, body, http.StatusCreated, nil, guard)
 	t.Logf("已建 global 层触发配置 dataId=%s（应经长轮询下发触发 agent apply→report）", triggerDataID)
 }
 
 // runSummary 轮询 summary 端点，断在线服含目标子服且上报了真 JVM 内存（avgMemMax>0）。
-func runSummary(t *testing.T, token string) {
+func runSummary(t *testing.T, token string, guard *harness.GradleProc) {
 	var last summaryView
-	if !waitUntil(40*time.Second, func() bool {
-		last = getSummary(t, token)
+	if err := waitUntil(40*time.Second, guard, func(ctx context.Context) bool {
+		view, ok := getSummary(ctx, token, guard)
+		if !ok {
+			return false
+		}
+		last = view
 		if last.OnlineServers < 1 || last.AvgMemMax <= 0 {
 			return false
 		}
@@ -178,27 +180,31 @@ func runSummary(t *testing.T, token string) {
 			}
 		}
 		return false
-	}) {
-		t.Fatalf("summary：超时未观测到目标子服 %s 在线且上报真 JVM 内存（avgMemMax>0）；当前=%+v", serverID, last)
+	}); err != nil {
+		t.Fatalf("summary：超时未观测到目标子服 %s 在线且上报真 JVM 内存（avgMemMax>0）；当前=%+v：%v", serverID, last, err)
 	}
 	t.Logf("PASS summary：在线服=%d，含 %s，avgMemMax=%d 字节（真 JVM 最大堆），totalPlayers=%d（headless 无真人属正常）",
 		last.OnlineServers, serverID, last.AvgMemMax, last.TotalPlayers)
 }
 
 // runTrend 等采样器跑若干轮后，断趋势端点返回非空时间序列、字段为真值（avgMemMax>0）。
-func runTrend(t *testing.T, token string) {
+func runTrend(t *testing.T, token string, guard *harness.GradleProc) {
 	var points []trendPointView
-	// 采样间隔 2s，等 ~8 轮足够积累多个样本（给足余量到 25s）。
-	if !waitUntil(25*time.Second, func() bool {
-		points = getTrend(t, token)
+	// 采样间隔 2s，等约 8 轮足够积累多个样本（给足余量到 25s）。
+	if err := waitUntil(25*time.Second, guard, func(ctx context.Context) bool {
+		view, ok := getTrend(ctx, token, guard)
+		if !ok {
+			return false
+		}
+		points = view
 		for _, p := range points {
 			if p.AvgMemMax > 0 {
 				return true // 至少一个点带真 JVM 内存，证明采样器把真值落进了趋势
 			}
 		}
 		return false
-	}) {
-		t.Fatalf("trend：超时未观测到带真值（avgMemMax>0）的趋势点；当前点数=%d", len(points))
+	}); err != nil {
+		t.Fatalf("trend：超时未观测到带真值（avgMemMax>0）的趋势点；当前点数=%d：%v", len(points), err)
 	}
 	t.Logf("PASS trend：趋势序列 %d 点，含真 JVM 内存样本（采样器已把负载真值落进历史趋势）", len(points))
 }
@@ -219,9 +225,9 @@ func runPersist(t *testing.T, sqliteDB string) {
 }
 
 // runBoundary 断 summary/trend 原始响应均不含玩家名单 / 身份字段（守 ADR-0023 边界：只指标不名单）。
-func runBoundary(t *testing.T, token string) {
-	assertNoRosterFields(t, getRaw(t, http.MethodGet, "/admin/v1/metrics/summary?namespace="+namespace, token))
-	assertNoRosterFields(t, getRaw(t, http.MethodGet, "/admin/v1/metrics/trend?namespace="+namespace+"&window=1h", token))
+func runBoundary(t *testing.T, token string, guard *harness.GradleProc) {
+	assertNoRosterFields(t, getRaw(t, http.MethodGet, "/admin/v1/metrics/summary?namespace="+namespace, token, guard))
+	assertNoRosterFields(t, getRaw(t, http.MethodGet, "/admin/v1/metrics/trend?namespace="+namespace+"&window=1h", token, guard))
 	t.Log("PASS boundary：summary/trend 响应均不含玩家名单 / 身份字段（只指标不名单成立）")
 }
 
@@ -247,19 +253,21 @@ type trendPointView struct {
 }
 
 // getSummary 取 summary 端点并解析为视图。
-func getSummary(t *testing.T, token string) summaryView {
+func getSummary(ctx context.Context, token string, guard harness.ProcessGuard) (summaryView, bool) {
 	var out summaryView
-	doAdmin(t, http.MethodGet, "/admin/v1/metrics/summary?namespace="+namespace, token, nil, http.StatusOK, &out)
-	return out
+	ok := tryAdminGet(ctx, "/admin/v1/metrics/summary?namespace="+namespace, token, &out, guard)
+	return out, ok
 }
 
 // getTrend 取 trend 端点（近 1h 窗）并解析出时间序列点。
-func getTrend(t *testing.T, token string) []trendPointView {
+func getTrend(ctx context.Context, token string, guard harness.ProcessGuard) ([]trendPointView, bool) {
 	var out struct {
 		Points []trendPointView `json:"points"`
 	}
-	doAdmin(t, http.MethodGet, "/admin/v1/metrics/trend?namespace="+namespace+"&window=1h", token, nil, http.StatusOK, &out)
-	return out.Points
+	if !tryAdminGet(ctx, "/admin/v1/metrics/trend?namespace="+namespace+"&window=1h", token, &out, guard) {
+		return nil, false
+	}
+	return out.Points, true
 }
 
 // ---- 边界守护 ----
@@ -293,13 +301,21 @@ func openE2EDB(t *testing.T, sqliteDB string) *gorm.DB {
 // ---- HTTP 工具 ----
 
 // doAdmin 发一个带 Bearer 的 admin 请求，校验期望状态码，并（若 out 非 nil）解析响应体。失败即 fatal。
-func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int, out any) {
+func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int, out any, guards ...harness.ProcessGuard) {
+	var guard harness.ProcessGuard
+	if len(guards) > 0 {
+		guard = guards[0]
+	}
+	doAdminContext(context.Background(), t, method, path, token, body, wantStatus, out, guard)
+}
+
+func doAdminContext(ctx context.Context, t *testing.T, method, path, token string, body any, wantStatus int, out any, guard harness.ProcessGuard) {
 	var reader io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		reader = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, beaconURL+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, beaconURL+path, reader)
 	if err != nil {
 		t.Fatalf("构造请求失败：%v", err)
 	}
@@ -307,40 +323,54 @@ func doAdmin(t *testing.T, method, path, token string, body any, wantStatus int,
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
 	if err != nil {
 		t.Fatalf("请求 %s %s 失败：%v", method, path, err)
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != wantStatus {
-		t.Fatalf("%s %s 期望 HTTP %d，得 %d：%s", method, path, wantStatus, resp.StatusCode, string(raw))
+		t.Fatalf("%s %s 期望 HTTP %d，得 %d", method, path, wantStatus, resp.StatusCode)
 	}
 	if out != nil {
+		raw, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			t.Fatalf("读取 %s 响应失败：%v", path, readErr)
+		}
 		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("解析 %s 响应失败：%v（%s）", path, err, string(raw))
+			t.Fatalf("解析 %s 响应失败：%v", path, err)
 		}
 	}
 }
 
+// tryAdminGet 执行一轮带上下文的管理面 GET；请求失败、非 200 或解析失败都返回 false 供轮询重试。
+func tryAdminGet(ctx context.Context, path, token string, out any, guard harness.ProcessGuard) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, beaconURL+path, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := harness.DoRequestWithGuard(req, 0, guard)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	return json.NewDecoder(resp.Body).Decode(out) == nil
+}
+
 // getRaw 取一个 admin GET 的原始 JSON 对象（供边界守护逐键检查名单字段）。
-func getRaw(t *testing.T, method, path, token string) map[string]any {
+func getRaw(t *testing.T, method, path, token string, guard harness.ProcessGuard) map[string]any {
 	var out map[string]any
-	doAdmin(t, method, path, token, nil, http.StatusOK, &out)
+	doAdmin(t, method, path, token, nil, http.StatusOK, &out, guard)
 	return out
 }
 
 // ---- 小工具 ----
 
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(1 * time.Second)
-	}
-	return cond()
+func waitUntil(timeout time.Duration, guard *harness.GradleProc, cond func(context.Context) bool) error {
+	return harness.WaitForCondition(timeout, time.Second, guard, cond)
 }
 
 // requireEnv 取必填 env，缺失即 t.Skip（让普通 go test ./... 不因缺密钥失败）。

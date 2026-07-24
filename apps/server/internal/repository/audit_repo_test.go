@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -103,6 +103,46 @@ func TestAuditListFilterByDetailKeyword(t *testing.T) {
 	}
 	if us != 0 {
 		t.Fatalf("detailKeyword=l_yml 转义后应 0 条，实际 %d", us)
+	}
+}
+
+// TestAuditListFilterByTargetRefSubstring 验证 target_ref 子串匹配：
+// 输入 lobby-1 可命中 pure "lobby-1" 与复合 "realhost/lobby-1"；% / _ 转义为字面。
+func TestAuditListFilterByTargetRefSubstring(t *testing.T) {
+	r := NewAuditLogRepository(newAuditTestDB(t))
+	base := time.Date(2026, 6, 19, 10, 0, 0, 0, time.UTC)
+	seedTargetRef(t, r, "lobby-1", base)
+	seedTargetRef(t, r, "realhost/lobby-1", base.Add(time.Minute))
+	seedTargetRef(t, r, "game-1", base.Add(2*time.Minute))
+	seedTargetRef(t, r, "realhost/lobby_1", base.Add(3*time.Minute)) // 下划线字面，不应被 _ 通配误伤
+
+	items, total, err := r.List(AuditFilter{TargetRef: "lobby-1", Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if total != 2 || len(items) != 2 {
+		t.Fatalf("targetRef=lobby-1 应命中 2 条（含 ns 前缀），实际 total=%d len=%d", total, len(items))
+	}
+
+	// 下划线字面：搜 lobby_1 只命中带下划线那条，不被当成单字符通配
+	_, us, err := r.List(AuditFilter{TargetRef: "lobby_1", Page: 1, Size: 20})
+	if err != nil {
+		t.Fatalf("下划线查询失败: %v", err)
+	}
+	if us != 1 {
+		t.Fatalf("targetRef=lobby_1 转义后应 1 条，实际 %d", us)
+	}
+}
+
+// seedTargetRef 追加一条指定 target_ref 的审计。
+func seedTargetRef(t *testing.T, r *AuditLogRepository, targetRef string, at time.Time) {
+	t.Helper()
+	if err := r.Create(&model.AuditLog{
+		NamespaceCode: "realhost", Operator: "agent", Action: model.ActionInstanceRegister,
+		TargetType: "instance", TargetRef: targetRef,
+		Result: model.ResultOK, CreatedAt: at,
+	}); err != nil {
+		t.Fatalf("写审计失败: %v", err)
 	}
 }
 

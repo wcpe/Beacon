@@ -42,6 +42,21 @@ var (
 	// ErrNamespaceHasOverrideSets 环境下仍有覆盖集（FR-15），禁删（FR-53 删除守卫⑤）。
 	ErrNamespaceHasOverrideSets = New(http.StatusConflict, "NAMESPACE_HAS_OVERRIDE_SETS", "环境下仍有覆盖集，请先删除覆盖集后再删除")
 
+	// ErrBCClusterNotFound BC 集群不存在。
+	ErrBCClusterNotFound = New(http.StatusNotFound, "BC_CLUSTER_NOT_FOUND", "BC 集群不存在")
+	// ErrBCClusterHasRegions 集群下仍有大区，禁删。
+	ErrBCClusterHasRegions = New(http.StatusConflict, "BC_CLUSTER_HAS_REGIONS", "该 BC 集群下仍有大区，请先删除大区后再删除集群")
+	// ErrBCClusterHasProxies 集群下仍有已分配代理，禁删。
+	ErrBCClusterHasProxies = New(http.StatusConflict, "BC_CLUSTER_HAS_PROXIES", "该 BC 集群下仍有已分配的代理服，请先解除分配后再删除")
+	// ErrRegionNotFound 大区不存在。
+	ErrRegionNotFound = New(http.StatusNotFound, "REGION_NOT_FOUND", "大区不存在")
+	// ErrRegionHasZones 大区下仍有小区，禁删。
+	ErrRegionHasZones = New(http.StatusConflict, "REGION_HAS_ZONES", "该大区下仍有小区，请先删除小区后再删除大区")
+	// ErrZoneNotFound 小区不存在。
+	ErrZoneNotFound = New(http.StatusNotFound, "ZONE_NOT_FOUND", "小区不存在")
+	// ErrZoneHasServers 小区下仍有已分配子服，禁删。
+	ErrZoneHasServers = New(http.StatusConflict, "ZONE_HAS_SERVERS", "该小区下仍有已分配的子服，请先解除分配后再删除")
+
 	// ErrInvalidScope 覆盖层或其目标键不合法。
 	ErrInvalidScope = New(http.StatusBadRequest, "INVALID_SCOPE", "覆盖层或目标键不合法")
 	// ErrConfigNotFound 配置项不存在。

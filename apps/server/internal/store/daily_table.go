@@ -12,8 +12,15 @@ import (
 // 全仓统一用 UTC 日期切表，避免时区导致的跨日归属歧义（基座 §1、可移植约束）。
 const dailyTableSuffixLayout = "20060102"
 
+// dailyTableCacheKey 直接持有数据库连接身份，避免把指针格式化成字符串后丢失强引用：连接关闭并被回收时，
+// 新连接可能复用旧地址，若只缓存地址字符串会误命中旧库日表。不同热库 / 归档库连接仍按 *gorm.DB 隔离。
+type dailyTableCacheKey struct {
+	db    *gorm.DB
+	table string
+}
+
 // ensuredDailyTables 缓存进程内「已确认存在」的日表名，避免每次写入都探测 information_schema。
-// 首次写入某日表时判存 / 建表并登记；之后同名直接命中缓存跳过 DDL 探测（sync.Map 并发安全）。
+// 首次写入某日表时判存 / 建表并登记；之后同一数据库的同名表直接命中缓存（sync.Map 并发安全）。
 var ensuredDailyTables sync.Map
 
 // tableNamer 是「模型可自报基表名」的窄约束：所有 GORM 实体都实现 TableName()。
@@ -46,9 +53,8 @@ func EnsureDailyTable(db *gorm.DB, model any, day time.Time) (string, error) {
 		return "", fmt.Errorf("日表模型 %T 未实现 TableName()，无法推导基表名", model)
 	}
 	name := DailyTableName(namer.TableName(), day)
-	// 缓存键带 db 身份：同名日表在不同库（如多套测试库）需各自建；只按表名缓存会让 A 库建过后
-	// B 库误判已存在而跳过建表、随后写入失败。生产仅一个 db、键即稳定。
-	cacheKey := fmt.Sprintf("%p|%s", db, name)
+	// 缓存键直接持有 db 身份：既隔离热库 / 归档库，也防已关闭连接的地址被新连接复用后误命中旧缓存。
+	cacheKey := dailyTableCacheKey{db: db, table: name}
 	if _, cached := ensuredDailyTables.Load(cacheKey); cached {
 		return name, nil
 	}

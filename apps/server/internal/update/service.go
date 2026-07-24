@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/redact"
 )
 
 const (
@@ -128,23 +129,24 @@ func (s *Service) Rollback(operator, clientIP string) error {
 }
 
 // assetName 返回本平台二进制资产名 beacon-<ver>-<os>-<arch>[.exe]。
-// version 去前导 "v" 与 CI 产物命名同口径（CI 用 ${GITHUB_REF_NAME#v} / 根 VERSION，均无 v 前缀）。
-// 仅 5 个已发布平台返回名 + true：linux-amd64/arm64、windows-amd64、darwin-amd64/arm64；其余返回 false（不可自更新）。
 func assetName(version string) (string, bool) {
+	return assetNameFor(version, runtime.GOOS, runtime.GOARCH)
+}
+
+// assetNameFor 按目标平台生成资产名；仅支持 P10 发布矩阵中的四个平台。
+func assetNameFor(version, goos, goarch string) (string, bool) {
 	supported := map[string]bool{
 		"linux/amd64":   true,
 		"linux/arm64":   true,
 		"windows/amd64": true,
-		"darwin/amd64":  true,
 		"darwin/arm64":  true,
 	}
-	key := runtime.GOOS + "/" + runtime.GOARCH
-	if !supported[key] {
+	if !supported[goos+"/"+goarch] {
 		return "", false
 	}
 	ver := strings.TrimPrefix(version, "v")
-	name := fmt.Sprintf("beacon-%s-%s-%s", ver, runtime.GOOS, runtime.GOARCH)
-	if runtime.GOOS == "windows" {
+	name := fmt.Sprintf("beacon-%s-%s-%s", ver, goos, goarch)
+	if goos == "windows" {
 		name += ".exe"
 	}
 	return name, true
@@ -153,7 +155,7 @@ func assetName(version string) (string, bool) {
 // CheckForUpdate 按渠道查最新 release 并与当前版本比对（只读、不下载、不落位）。
 // 记一条 system.update-check 审计（detail 含渠道 / 当前 / 最新 / 有无更新，不含敏感）。
 func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, operator, clientIP string) (CheckResult, error) {
-	s.progress.setPhase(PhaseChecking, "")
+	// 检查是只读操作：不得覆盖正在下载、校验或落位的独立进度态。
 	// check-failed 也回显当前版本（本地恒已知），使前端模态框「当前版本」始终有值（FR-99 修复）。
 	failRes := CheckResult{
 		Channel:        ch,
@@ -162,20 +164,15 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 	}
 	client, err := s.newHTTPClient(proxyURL, downloadTimeout)
 	if err != nil {
-		s.progress.fail(fmt.Sprintf("构造出站客户端失败: %v", err))
 		return failRes, err
 	}
 	rc := newReleaseClient(client, s.apiBase, s.repo)
 	rel, err := rc.latestForChannel(ctx, ch)
 	if err != nil {
-		s.progress.fail(fmt.Sprintf("查 release 失败: %v", err))
 		return failRes, err
 	}
-	// 解析语义版本（tag 优先、滚动预发布回退 name，ADR-0052）；解析失败按未知 / 无更新处理。
-	latest, verErr := releaseVersion(rel)
-	if verErr != nil {
-		slog.Warn("解析远端 release 版本失败，按无可用更新处理", "tag", rel.TagName, "name", rel.Name, "错误", verErr)
-	}
+	// 选择器已保证 tag 为严格 GA，版本比较不读取 Release name。
+	latest := rel.TagName
 	hasUpdate, cmpErr := IsNewer(s.currentVersion, latest)
 	if cmpErr != nil {
 		// 版本无法比较（远端版本非法 / 当前 dev）：不报 5xx 语义，按「无更新」返回，错误仅记日志。
@@ -191,7 +188,6 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 		ReleaseURL:     rel.HTMLURL,
 		PublishedAt:    rel.PublishedAt,
 	}
-	s.progress.setPhase(PhaseIdle, "")
 	s.writeAudit(model.ActionSystemUpdateCheck, latest, model.ResultOK,
 		fmt.Sprintf("渠道=%s 当前=%s 最新=%s 有更新=%v", ch, s.currentVersion, latest, hasUpdate),
 		operator, clientIP)
@@ -210,14 +206,26 @@ func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operato
 	}
 	rc := newReleaseClient(client, s.apiBase, s.repo)
 
+	initial, err := rc.latestForChannel(ctx, ch)
+	if err != nil {
+		return s.failApply("", fmt.Errorf("查 GA release 失败: %w", err), operator, clientIP)
+	}
+	// 选择器已保证目标 tag 为严格 GA；该 tag 同时用于判新与本平台资产名。
+	target := initial.TagName
+	binName, ok := assetName(target)
+	if !ok {
+		return s.failApply(target, fmt.Errorf("本平台 %s/%s 无可自更新资产", runtime.GOOS, runtime.GOARCH), operator, clientIP)
+	}
+	// 下载前重新查询并复验 GA 元数据及目标资产，防止检查与下载之间引用漂移。
 	rel, err := rc.latestForChannel(ctx, ch)
 	if err != nil {
-		return s.failApply("", fmt.Errorf("查 release 失败: %w", err), operator, clientIP)
+		return s.failApply("", fmt.Errorf("下载前复验 GA release 失败: %w", err), operator, clientIP)
 	}
-	// 目标版本取语义版本（tag 优先、滚动预发布回退 name，ADR-0052），同时用于判新与本平台资产名。
-	target, verErr := releaseVersion(rel)
-	if verErr != nil {
-		return s.failApply("", fmt.Errorf("解析远端 release 版本失败: %w", verErr), operator, clientIP)
+	if rel.Draft || rel.Prerelease || !isGATag(rel.TagName) {
+		return s.failApply("", fmt.Errorf("下载前复验失败: 非法 GA tag=%q", rel.TagName), operator, clientIP)
+	}
+	if err := validateRevalidatedGARelease(initial, rel, binName); err != nil {
+		return s.failApply(target, fmt.Errorf("下载前复验失败: %w", err), operator, clientIP)
 	}
 	s.progress.reset(target)
 
@@ -230,10 +238,6 @@ func (s *Service) ApplyUpdate(ctx context.Context, ch Channel, proxyURL, operato
 	}
 
 	// 选本平台资产。
-	binName, ok := assetName(target)
-	if !ok {
-		return s.failApply(target, fmt.Errorf("本平台 %s/%s 无可自更新资产", runtime.GOOS, runtime.GOARCH), operator, clientIP)
-	}
 	binAsset, ok := findAsset(rel, binName)
 	if !ok {
 		return s.failApply(target, fmt.Errorf("release 缺本平台资产 %s", binName), operator, clientIP)
@@ -409,16 +413,17 @@ func parseSums(content, binName string) (string, bool) {
 // 例外（FR-125）：ctx 被取消（运维主动停止下载 / 进程关停）不是失败——进度回 idle、记 system.update-cancel 审计，
 // 留干净可重试态而非「失败」。
 func (s *Service) failApply(target string, err error, operator, clientIP string) error {
+	safeErr := errors.New(redact.DesensitizeErr(err))
 	if errors.Is(err, context.Canceled) {
 		s.progress.setPhase(PhaseIdle, "")
 		s.writeAudit(model.ActionSystemUpdateCancel, target, model.ResultOK, "更新下载已取消", operator, clientIP)
 		slog.Info("控制面在线更新已取消（下载中断）", "目标版本", target)
-		return err
+		return safeErr
 	}
-	s.progress.fail(err.Error())
-	s.writeAudit(model.ActionSystemUpdateFailed, target, model.ResultFail, err.Error(), operator, clientIP)
-	slog.Error("控制面在线更新失败，保留旧二进制继续运行", "目标版本", target, "错误", err)
-	return err
+	s.progress.fail(safeErr.Error())
+	s.writeAudit(model.ActionSystemUpdateFailed, target, model.ResultFail, safeErr.Error(), operator, clientIP)
+	slog.Error("控制面在线更新失败，保留旧二进制继续运行", "目标版本", target, "错误", safeErr)
+	return safeErr
 }
 
 // writeAudit 写一条更新审计（best-effort：落库失败仅 WARN，不影响更新流程主结论）。

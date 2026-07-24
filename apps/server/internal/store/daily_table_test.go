@@ -89,6 +89,32 @@ func TestEnsureDailyTableIsolatesByDB(t *testing.T) {
 	}
 }
 
+// TestEnsureDailyTableCacheRetainsDBIdentity 校验缓存键强持有数据库身份，而非仅保存可被复用的指针地址字符串。
+// 这是关闭旧连接、打开新库后仍能正确建表的前提；多 DB / 归档隔离由上一个用例验证。
+func TestEnsureDailyTableCacheRetainsDBIdentity(t *testing.T) {
+	resetDailyTableCacheForTest()
+	t.Cleanup(resetDailyTableCacheForTest)
+	db := openMemSQLite(t, "daily_identity")
+	day := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+
+	name, err := EnsureDailyTable(db, &model.MetricSampleV2{}, day)
+	if err != nil {
+		t.Fatalf("建日表失败: %v", err)
+	}
+	found := false
+	ensuredDailyTables.Range(func(key, _ any) bool {
+		cacheKey, ok := key.(dailyTableCacheKey)
+		if ok && cacheKey.db == db && cacheKey.table == name {
+			found = true
+			return false
+		}
+		return true
+	})
+	if !found {
+		t.Fatalf("日表缓存键应强持有数据库连接身份")
+	}
+}
+
 // dailyProbeV1 模拟旧版模型（列较少）；与 dailyProbeV2 共用同一基表名，供加列迁移测试。
 type dailyProbeV1 struct {
 	ID string `gorm:"column:id;size:36;primaryKey"`
