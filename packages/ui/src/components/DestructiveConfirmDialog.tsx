@@ -46,7 +46,8 @@ interface DestructiveConfirmDialogProps {
   errorText?: string | null
   // 确认回调：交由调用页触发既有写操作。
   // 返回 false 时阻止对话框关闭（用于校验失败 / 异步结果尚未出、需保留弹窗看错误）。
-  onConfirm: () => void | boolean | Promise<void | boolean>
+  // 用 unknown 兼容同步 void / boolean 与 Promise，避免 void 进联合类型触发 no-invalid-void-type。
+  onConfirm: () => unknown
 }
 
 export default function DestructiveConfirmDialog({
@@ -133,9 +134,9 @@ export default function DestructiveConfirmDialog({
                 e.preventDefault()
                 return
               }
-              if (result != null && typeof (result as Promise<unknown>).then === 'function') {
+              if (result != null && typeof (result as PromiseLike<unknown>).then === 'function') {
                 e.preventDefault()
-                void (result as Promise<void | boolean>).then((keep) => {
+                void Promise.resolve(result).then((keep) => {
                   if (keep !== false) {
                     onOpenChange(false)
                   }
