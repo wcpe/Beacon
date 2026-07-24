@@ -1,36 +1,46 @@
 # Beacon
 
-> 面向 Minecraft 多群组服务器的自研中间件控制面 —— 集群调度 · 区服治理 · 可观测审计。
+> 面向 Minecraft 多群组服务器的集群调度中间件控制面  
+> 区服治理 · 健康调度 · 跨服消息 · 可观测审计 · 配置与交付
 
-[![version](https://img.shields.io/badge/version-v0.21.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.0--rc-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
 
-Beacon 是一个独立的后端控制面：用 **Go** 提供 API、内嵌 **React** 管理台、编译为**单个二进制**（管理台与 API 同端口）；Minecraft 的 BungeeCord 代理与 Bukkit / Paper 子服各跑一个轻量 **Kotlin/TabooLib agent** 接入。第二版聚焦把多个 BC + 子服串成可治理的集群调度中间件，用 Web 管理 namespace、BC 集群、大区、小区、子服身份、健康调度、跨服消息、审计与告警。
+Beacon 把多个 **BungeeCord / Velocity 代理** 与 **Bukkit / Paper 子服** 串成可治理的集群：用独立 **Go 控制面**（内嵌 React 管理台，**单二进制同端口**）统一做身份绑定、区服分配、健康调度、跨服消息追踪、审计告警与灰度交付；游戏服只跑轻量 **Kotlin / TabooLib Agent**，业务插件只依赖本机 `agent-api`，禁止直连控制面。
 
-**控制面挂 ≠ 数据面挂**：agent 持本地配置快照 fail-static，控制面不可用时按快照继续运行，绝不阻断玩家进服。
+**控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-## 核心特性
+> **发布状态**：仓库正准备 **`v1.0.0` 首个 RC**（根 `VERSION=1.0.0` 表示目标 GA 号）。在 GitHub 上出现真实 `v1.0.0-rc.N` / `v1.0.0` tag 与 Release 之前，**不得视为已正式发布**。在线更新只消费严格 `vX.Y.Z` GA。
 
-- **Agent 自连接与身份绑定**：agent 通过 Beacon 地址、token、namespace、serverId 自连接；首启生成 `identityId` 并在后台人工确认后绑定，避免误改 serverId 造成区数据隔离错误。
-- **namespace 强隔离**：namespace 默认禁止跨域调度、消息和 Agent 操作；跨 namespace 互通必须后台显式配置互通信任关系，并额外审计。
-- **区服治理**：后台统一管理环境、BC 集群、大区、小区、子服和默认入口，未确认 / 未分配的 agent 不可调度。
-- **健康调度**：基于 TPS、CPU、在线人数、连接、告警、容量和延迟生成健康值，业务插件通过本机 `agent-api` 获取健康服务器，禁止直接 HTTP 调 Beacon。
-- **连接与消息可观测**：采集玩家流、连接流、调度决策、跨服消息与异常链路；payload 可存储但查看必须填写原因并写审计。
-- **热冷数据生命周期**：近期数据留热库，2 个月以上默认归档到同实例独立 database / schema；预留独立归档 DSN，支持冷查询与归档清理。
-- **高密度管理台**：面向 1000+ 子服的运维总览、服务器资产、区分配、集群拓扑、可观测和系统设置页面。
-- **配置与文件能力 V2**：第一版配置中心、文件同步、文件树预览先进入维护态；第二版按配置中心 V2、文件树预览 V2、文件同步 V2 分阶段重建。
-- **在线自更新**：单二进制自我替换（下载校验 → rename 让位 → 重启），无需第二监督进程；换版失败自动回退、可手动回滚到上一版本；正式 / 滚动预发布双渠道。
-- **鉴权**：管理面 Bearer 登录令牌；运行时 API 密钥（full / readonly 两级角色，只读密钥对任何写端点一律 403）。
-- **数据面 agent**：Kotlin/TabooLib 双端（Bukkit / Bungee），fail-static、env 覆盖配置、内置可选跨服消息中间件；并提供只读 SDK 供业务插件接入。
-- **简单优先**：面向约 50 服规模，单节点 + REST/SSE，**不引入 Redis / MQ / DI 框架**（见 [ADR-0003](docs/adr/0003-no-redis-in-mvp.md)）；数据库经 GORM 抽象，MySQL / SQLite，可切 Postgres。
+---
 
-> 完整功能需求与验收见 [docs/PRD.md](docs/PRD.md)，第二版路线见 [docs/ROADMAP.md](docs/ROADMAP.md)，逐版变更见 [CHANGELOG.md](CHANGELOG.md)。
+## 为什么用 Beacon
 
-## 为什么是独立服务而非代理插件
+| 痛点 | Beacon 的做法 |
+|------|----------------|
+| 多 BC + 上百子服靠配置硬维护 | Web 管理 namespace / BC 集群 / 大区 / 小区 / 子服与默认入口 |
+| 误改 serverId 导致区数据串 | 首启 `identityId` 绑定，后台确认后才可调度 |
+| 业务插件直连中控难降级 | 只走本机 Agent API；中控挂了可本地快照 |
+| 跨服消息、选服失败难查 | 调度决策、消息链路、连接明细与审计可追踪 |
+| 插件与配置发布靠手工 | 变更单 + 流式数据面 + 灰度批次与整单回滚 |
 
-代理（BC）是玩家入口（数据面）；控制面是管理面。二者**故障域必须隔离**：控制面崩溃绝不能拖垮玩家入口，玩家入口崩溃时控制面仍能改配置 / 回滚。因此 Beacon 是独立进程，BC / Bukkit 仅跑轻量 agent，并持本地快照 fail-static。
+---
+
+## 核心能力
+
+- **Agent 自连接与身份绑定** — 地址 / token / namespace / serverId 接入；pending → 人工确认 → active  
+- **namespace 强隔离** — 默认禁止跨域调度与消息；跨域须后台显式信任并额外审计  
+- **区服治理** — 环境、BC 集群、大区、小区、默认入口、排空（draining）  
+- **健康调度** — TPS / CPU / 在线 / 连接 / 告警等综合评分；业务插件 `scheduling()` 取候选  
+- **跨服消息** — 定向、RPC、主题广播、按玩家寻址；控制面存元数据与受控 payload（非业务库）  
+- **可观测** — 运维总览、服务分析、拓扑、命令 / 审计 / 告警、连接与消息链路  
+- **配置与交付 V2** — 作用域配置、文件资产、变更单灰度、热重载 / 重启生效、整单回滚  
+- **热冷数据** — 近期热库；过期归档与冷查询；清理前必归档  
+- **在线自更新（GA only）** — 单二进制自我替换；只发现正式 GA，不把 RC 当自动更新源  
+
+---
 
 ## 架构一览
 
@@ -38,121 +48,123 @@ Beacon 是一个独立的后端控制面：用 **Go** 提供 API、内嵌 **Reac
                  浏览器 ──HTTP──┐
                                ▼
    ┌──────────────────────────────────────────────┐
-   │  Beacon 控制面（单 Go 二进制 + 内嵌 React）       │  单节点
-   │  /admin/v1 管理台 API      /beacon/v1 agent API  │
-   │  内存真源：在线连接 + 健康 TTL + SSE waiters       │  ← 在线态
-   │  MySQL 真源：身份 / 分配 / 审计 / 指标 / 归档索引   │  ← 治理权威
+   │  Beacon 控制面（Go 单二进制 + 内嵌 React）       │
+   │  /admin/* 管理台 API    /beacon/* agent API     │
+   │  内存：在线连接 · 健康 TTL · SSE               │
+   │  MySQL：身份 · 区服 · 审计 · 指标 · 归档索引    │
    └──────────────────────────────────────────────┘
-        ▲ REST 注册/心跳/拉配置/上报 · SSE 变更推送
+        ▲ REST 注册/心跳/拉配置/上报 · SSE 推送
         │
   ┌─────┴───────┬───────────────┐
   ▼             ▼               ▼
-agent          agent           agent     （Kotlin/TabooLib，identityId 绑定 serverId）
-Bukkit 子服    Bukkit 子服     Bungee 代理   本地快照 fail-static
+ Agent         Agent           Agent     （Kotlin / TabooLib）
+ Bukkit        Bukkit          Bungee     本地快照 fail-static
 ```
 
-- **真源切分**：在线连接与健康 TTL 在 Go 进程内存；身份绑定、区服分配、审计、指标和归档索引在 MySQL。二者互不阻塞。
-- 设计细节与决策见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [docs/adr/](docs/adr/)。
+设计细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [docs/adr/](docs/adr/)。
+
+---
 
 ## 快速开始
 
-### 部署控制面
+### 1. 部署控制面
 
 ```bash
-cp .env.example .env      # 填 MySQL 密码、agent token、管理台账号口令、令牌签名密钥
-docker compose up -d      # 起 beacon + mysql；mysql 就绪后自动建表(AutoMigrate)+预置 prod/test 两环境
-# 管理台与 API 同端口： http://localhost:8848
+cp .env.example .env      # 填 MySQL、管理台账号、令牌签名密钥等
+docker compose up -d      # beacon + mysql；就绪后 AutoMigrate
+# 管理台与 API：http://localhost:8848
 ```
 
-浏览器打开 `http://localhost:8848`，用 `BEACON_ADMIN_USERNAME`（默认 `admin`）+ `BEACON_ADMIN_PASSWORD` 登录（自 v0.2.0 起 `/admin/v1/*` 需登录令牌）。
+浏览器打开 `http://localhost:8848`，使用 `BEACON_ADMIN_USERNAME` / `BEACON_ADMIN_PASSWORD` 登录。
 
-> 也可单二进制直接运行（默认 SQLite、首启自动释放 `config.yml`，开箱即跑）。部署、升级、备份恢复与排障见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
+也可直接跑单二进制（默认 SQLite、首启释放 `config.yml`）。运维见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
-### 从源码构建
+### 2. 接入 Agent
 
-```bash
-make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
-# 或分别构建： make web（前端） · make build（控制面，含前端） · make agent（agent jar）
-```
+将对应版本的 **BeaconAgent（Bukkit）** / **BeaconAgentProxy（Bungee）** 放入插件目录，配置控制面地址、namespace token 与 serverId。首次注册后在管理台 **服务器 → 待确认** 中确认并分配区服。
 
-> 需 Go 1.26+、Node + pnpm（构建前端）、JDK 21（构建 agent）。
-
-### 业务插件接入 agent
-
-业务插件不直连控制面，而是 `compileOnly` 依赖只读 SDK、运行期由 `BeaconAgent` 提供：
+### 3. 业务插件（compileOnly）
 
 ```kotlin
-repositories { mavenLocal() /* 或贵方私有远程仓库 */ }
+repositories { mavenLocal() /* 或贵方私有仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:0.21.0") // 只读契约
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:0.21.0") // 便捷门面（推荐）
+    compileOnly("top.wcpe.beacon:beacon-agent-api:1.0.0") // 与正式 GA / 对齐的 RC 坐标一致
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:1.0.0")
 }
 ```
 
-接入步骤、最小示例与回退判据见 [docs/SDK.md](docs/SDK.md)。
+调度、消息、配置读取示例见 [docs/SDK.md](docs/SDK.md)。  
+**运行期版本**：部署的 Agent ≥ 编译所用 api/kit 版本。
+
+### 4. 从源码构建
+
+```bash
+make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
+# 或：make web · make build · make agent
+```
+
+需要 Go 1.26+、Node + pnpm、JDK 21。
+
+---
+
+## 发布与版本
+
+| 阶段 | 标记 | 说明 |
+|------|------|------|
+| 开发产物 | Actions Artifact | master 质量门通过后上传，保留约 7 天；**非**正式发布 |
+| RC | `v1.0.0-rc.N` | 不可变 prerelease；固定 commit 与一次构建资产 |
+| GA | `v1.0.0` | 从最终 RC **原样复制**资产并核验 SHA-256，禁止 rebuild |
+
+- 根目录 `VERSION` 是目标正式版本真源。  
+- 规则与脚本：`docs/adr/0073-standard-rc-ga-release-lifecycle.md`、`scripts/release/`、`.github/workflows/rc.yml` / `release.yml`。  
+- 变更记录：[CHANGELOG.md](CHANGELOG.md)
+
+---
 
 ## 仓库结构
 
 ```
 Beacon/
-├── apps/server/cmd/beacon/  # Go 控制面入口
-├── apps/server/internal/    # 控制面实现：server / handler / service / repository /
-│                            #   runtime / merge / model / store / sse / metrics / secret …（单向分层）
-├── apps/web/            # 第二版 React(Vite+TS) 管理台，dist/ 被 go:embed 内嵌
-├── web/                 # Legacy React(Vite+TS) 管理台，冻结保留
-├── apps/agent/          # Kotlin/TabooLib：agent-core / -api / -kit / -bukkit / -bungee / -adapters
-├── apps/ui-wiki/        # UI 控件博物馆
-├── packages/devmock/    # 第二版前端开发期 mock 数据
-├── packages/eslint-config/      # 根级前端共享 ESLint 配置
-├── packages/typescript-config/  # 根级前端共享 TypeScript 配置
-├── packages/ui/         # 管理台共享 UI 包
-├── apps/server/test/e2e/ # 跨平台 Go E2E（自管控制面 + 真 Paper/Waterfall）
-├── docs/                # 入库文档：PRD / ARCHITECTURE / API / ADR / OPERATIONS …
-├── Dockerfile  docker-compose.yml  Makefile
-└── .tmp/                # 过程文档（不入库）
+├── apps/server/     # Go 控制面
+├── apps/web/        # 第二版 React 管理台（go:embed）
+├── apps/agent/      # Kotlin Agent（bukkit / bungee / api / kit）
+├── apps/ui-wiki/    # UI 控件博物馆
+├── packages/        # ui · devmock · contracts · 共享配置
+├── docs/            # PRD · ROADMAP · ARCHITECTURE · API · ADR · SDK · OPERATIONS
+├── scripts/release/ # RC/GA 校验与晋级脚本
+├── Dockerfile · docker-compose.yml · Makefile
+└── web/             # Legacy 管理台（冻结，不进第二版产物）
 ```
 
-## 文档导航
+---
+
+## 文档
 
 | 文档 | 说明 |
-|---|---|
-| [docs/PRD.md](docs/PRD.md) | 产品需求（目标 / 角色 / 功能需求 / 验收） |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 第二版路线图（版本线 / 阶段目标 / GA 准入） |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构设计：控制面/数据面、数据模型、机制、部署 |
-| [docs/API.md](docs/API.md) | REST 契约（agent 侧 + admin 侧） |
-| [docs/SDK.md](docs/SDK.md) | 业务插件接入指南 |
-| [docs/adr/](docs/adr/) | 架构决策记录（为什么自研、为什么 Go、为什么去 Redis …） |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 运维手册（部署 / 升级 / 备份恢复 / 排障 / 测试运行） |
-| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | 演进与维护指南（文档随代码更新、防漂移、分支模型） |
-| [SECURITY.md](SECURITY.md) | 安全说明（信任模型、密钥、鉴权边界） |
+|------|------|
+| [docs/PRD.md](docs/PRD.md) | 产品需求与 FR 状态 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 第二版阶段与 1.0.0 RC/GA 路线 |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构 |
+| [docs/API.md](docs/API.md) | REST 契约 |
+| [docs/SDK.md](docs/SDK.md) | 业务插件接入 |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | 部署 / 升级 / 备份 / 排障 |
+| [docs/adr/](docs/adr/) | 架构决策 |
+| [SECURITY.md](SECURITY.md) | 安全边界 |
 | [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
 
-## 技术栈
+---
 
-后端 Go + chi + GORM（MySQL / SQLite，可切 Postgres）；前端 React(Vite + TS) + shadcn-ui，经 `go:embed` 内嵌为单二进制同端口；agent Kotlin + TabooLib（Gradle）。
+## 第二版路线（摘要）
 
-## 第二版路线
+- **Legacy 0.1–0.19** — 探索期，冻结  
+- **P0–P9（0.20–0.30）** — 规格、工程化、集群、调度、消息、归档、配置、资产、交付编排  
+- **0.31 对齐中间版** — 管理台壳层（侧栏 / 页眉 / 指标 / 搜索语言通知刷新）  
+- **P10 `v1.0.0-rc.N` → GA `v1.0.0`** — 不可变 RC，原样晋级 GA  
 
-- **Legacy（0.1.0 - 0.19.x）**：第一版探索期，历史冻结，不再作为第二版验收基准。
-- **P0（0.20.x）**：规格冻结、旧入口维护态、第二版 PRD / 路线图对齐。
-- **P1（0.21.x）**：Agent 身份、注册确认、namespace 隔离、区服权威模型。
-- **P2（0.22.x）**：采样、健康值、调度决策、本机 agent-api。
-- **P3（0.23.x）**：每连接明细、跨服消息、payload 审计、拓扑链路。
-- **P4（0.24.x）**：热冷归档、冷查询、归档清理。
-- **P5（0.25.x）**：核心集群管理页面重做。
-- **P6（0.26.x）**：可观测、系统设置、演示模式。
-- **P7（0.27.x）**：配置中心 V2。
-- **P8（0.28.x）**：文件树预览 V2。
-- **P9（0.29.x）**：文件同步 V2。
-- **P10 RC（0.30.x）**：RC 稳定、兼容性冻结、GA 准入。
+细节以 [docs/ROADMAP.md](docs/ROADMAP.md) 为准。
 
-> 版本线细节以 [docs/ROADMAP.md](docs/ROADMAP.md) 为准，各 FR 的状态与验收标准以 [docs/PRD.md](docs/PRD.md) 为准。
-
-## 约定
-
-- 所有注释、日志、提交信息**使用简体中文**（见 [.claude/rules/](.claude/rules/)）。
-- 简单优先：不引入无明确收益的重型件；第二版面向 1000+ 子服规模时优先采用分页、批处理、流式处理和可审计的后台任务。
+---
 
 ## 许可
 
-本项目采用 [MIT 许可证](LICENSE)。
+[MIT License](LICENSE) · Copyright (c) wcpe
