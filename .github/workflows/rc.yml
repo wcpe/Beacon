@@ -226,6 +226,9 @@ jobs:
           set -eu
           git fetch --tags origin
           test "$(git rev-parse "HEAD^{commit}")" = "$SOURCE_COMMIT"
+          # 注释 tag 需要提交者身份；使用 GitHub Actions bot 身份（仅本仓库）
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           prefix="v${VERSION}-rc."
           for existing_tag in $(git tag --list "${prefix}*"); do
             if test "$(git rev-parse "${existing_tag}^{commit}")" = "$SOURCE_COMMIT" \
