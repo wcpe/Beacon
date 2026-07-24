@@ -1,7 +1,4 @@
-# Beacon 持续集成轻量门禁。
-# 触发：向 master 的 PR、推送到 master。只跑 PR/push 必过的快速检查
-# （控制面构建 + 单测、Go 静态检查、agent 单测、前端构建）。
-# 重型 E2E（需 JDK21 + 下载 Paper/Waterfall，约 12 分钟）不在此处，见 e2e.yml。
+# Beacon 持续集成门禁：PR 只执行质量任务，master 全绿后生成短期开发产物。
 name: CI
 
 on:
@@ -10,16 +7,18 @@ on:
   pull_request:
     branches: [master]
 
-# 同一分支新推送自动取消旧的在跑流水线，省 CI 资源。
+# 同一分支新推送自动取消旧的在跑流水线，节省 CI 资源。
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  # 控制面（Go）：构建 + 单元测试。
-  # sqlite 经 go-sqlite3 需 CGO，ubuntu-latest 自带 gcc，故显式开 CGO。
-  go:
-    name: 控制面构建与单测
+  # Go 构建、单测与静态检查合并为一个必需质量任务。
+  lint:
+    name: Go 构建、测试与静态检查
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: "1"
@@ -28,35 +27,19 @@ jobs:
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
-          # 版本取自仓库根 go.mod 的 go 指令，避免漂移
           go-version-file: go.mod
           cache: true
       - name: 构建全部包
         run: go build ./...
       - name: 运行单元测试
-        # 不带 integration/e2e 标记，只跑纯逻辑单测（集成/E2E 各有独立入口）
         run: go test ./...
-
-  # Go 静态检查：golangci-lint（配置见根 .golangci.yml）+ gofmt/goimports 格式校验。
-  lint:
-    name: Go 静态检查
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 安装 Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: golangci-lint
+      - name: 运行 golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          # 版本固定，避免不同机器规则不一致；golangci-lint v2 需 action v7+（配置见 .golangci.yml version: "2"）
           version: v2.12.2
-          # 显式分析全模块；裸 run 在部分环境会只看仓库根包上下文。
           args: ./...
-      - name: gofmt 格式校验
-        # gofmt -l 列出未格式化文件；有输出即判失败
+      - name: 校验 gofmt 格式
+        shell: bash
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
@@ -64,7 +47,8 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
-      - name: goimports 导入分组校验
+      - name: 校验 goimports 导入分组
+        shell: bash
         run: |
           go install golang.org/x/tools/cmd/goimports@latest
           unsorted=$("$(go env GOPATH)/bin/goimports" -l .)
@@ -74,9 +58,57 @@ jobs:
             exit 1
           fi
 
-  # 数据面 agent（Kotlin/TabooLib）：JDK21 + Gradle wrapper 跑全模块单测。
+  # 两套前端工作区及假后端 E2E 统一纳入 Web 质量任务。
+  web:
+    name: Web 静态检查、测试与构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            web/pnpm-lock.yaml
+      - name: 安装根工作区依赖
+        run: pnpm install --frozen-lockfile
+      - name: 校验 UI 控件博物馆覆盖率
+        run: pnpm run check:ui-wiki
+      - name: 运行根工作区静态检查、测试与构建
+        run: |
+          pnpm run lint
+          pnpm run test
+          pnpm run build
+      - name: 安装旧版前端依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: 运行旧版前端静态检查
+        working-directory: web
+        run: pnpm lint
+      - name: 校验旧版前端格式
+        working-directory: web
+        run: pnpm format:check
+      - name: 运行旧版前端测试与覆盖率门禁
+        working-directory: web
+        run: pnpm test:coverage
+      - name: 构建内嵌前端
+        run: make web
+      - name: 安装 Playwright 浏览器
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: 运行假后端前端 E2E
+        working-directory: web
+        run: pnpm test:e2e
+
+  # Agent 格式、静态检查与单测保持为独立必需质量任务。
   agent:
-    name: agent 单测
+    name: Agent 静态检查与测试
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,118 +117,91 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: 准备 Gradle（含依赖缓存）
+      - name: 准备 Gradle
         uses: gradle/actions/setup-gradle@v4
-      - name: ktlint 格式检查
-        # 与测试同级门禁：格式违规未过不允许合并（配置见各模块 ktlint 插件，版本固定）
-        run: ./apps/agent/gradlew -p apps/agent ktlintCheck
-      - name: detekt 静态检查
-        # 与测试同级门禁：静态问题未过不允许合并（规则见 apps/agent/config/detekt/detekt.yml；
-        # 存量经评估挂在 apps/agent/config/detekt/baseline.xml，规则对新代码仍生效——新增 finding 即挡合并）
-        run: ./apps/agent/gradlew -p apps/agent detekt
-      - name: 运行 agent 单测
-        # Linux 用 wrapper；-p 指定 agent 子工程根
-        run: ./apps/agent/gradlew -p apps/agent test
+      - name: 运行 Agent 格式、静态检查与测试
+        run: ./apps/agent/gradlew -p apps/agent ktlintCheck detekt test --no-daemon
 
-  # 前端（React/Vite/TS）：经 Makefile 的 web 目标安装依赖 + 构建（构建逻辑与本地一键打包同源）。
-  web:
-    name: 前端构建
+  # 使用真实 MySQL 与 Redis 验证控制面和 Agent 的集成路径。
+  integration:
+    name: 真实 MySQL 与 Redis 集成测试
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          # 版本对齐 web/package.json 的 packageManager 字段
-          version: "10.32.1"
-      - name: 安装 Node（启用 pnpm store 缓存）
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - name: 安装前端依赖
-        # lint / format 检查需 node_modules；make web 内部虽会装依赖，但其前置的检查步骤须先就绪
-        working-directory: web
-        run: pnpm install --frozen-lockfile
-      - name: ESLint 静态检查
-        # 与 Go 静态检查同级门禁：未过不允许合并
-        working-directory: web
-        run: pnpm lint
-      - name: Prettier 格式校验
-        # prettier --check：有未格式化文件即判失败
-        working-directory: web
-        run: pnpm format:check
-      - name: 前端单元测试 + 覆盖率门禁
-        # vitest run --coverage：跑全部前端单测并校验覆盖率阈值（70%），未达标即判失败
-        working-directory: web
-        run: pnpm test:coverage
-      - name: 构建第二版前端（make web）
-        # 构建逻辑单一来源于 Makefile：根工作区安装依赖后构建 apps/web
-        # ubuntu runner 自带 make；从仓库根调用
-        run: make web
-
-  # 根级前端工作区：校验 @beacon/ui 与 UI 控件博物馆提升后的 monorepo 构建入口。
-  frontend-workspace:
-    name: 前端工作区构建
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: "10.32.1"
-      - name: 安装 Node（启用根工作区 pnpm store 缓存）
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: 安装根工作区依赖
-        run: pnpm install --frozen-lockfile
-      - name: UI 控件博物馆覆盖率门禁
-        run: pnpm run check:ui-wiki
-      - name: 根工作区 lint / test / build
-        run: |
-          pnpm run lint
-          pnpm run test
-          pnpm run build
-
-  # 前端 E2E（假后端）：Playwright 对 mock 模式跑关键业务流（登录 / 主页面可达 /
-  # 配置发布回滚 / 文件树 / 命令观测 / 密钥闭环）。无需真后端、最稳，纳入 PR 必跑门禁。
-  # 真后端 E2E 较重（需构建内嵌前端的 Go 二进制 + 浏览器），见 e2e.yml 手动/定时触发。
-  web-e2e:
-    name: 前端 E2E（假后端）
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: "10.32.1"
-      - name: 安装 Node（启用 pnpm store 缓存）
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - name: 安装前端依赖
-        working-directory: web
-        run: pnpm install --frozen-lockfile
-      - name: 安装 Playwright 浏览器（chromium）
-        working-directory: web
-        run: pnpm exec playwright install --with-deps chromium
-      - name: 假后端 E2E（pnpm test:e2e）
-        working-directory: web
-        run: pnpm test:e2e
-
-  # 一键打包验证 + 产物上传：经 Makefile 完整构建控制面（原生二进制，内嵌前端 + 版本注入）+ 双端 agent jar，
-  # 与本地 make package、release.yml 同一构建路径（Makefile 单一来源）。产物上传供 PR/push 后下载验证（临时）。
-  package:
-    name: 一键打包（make package）
-    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: beacon
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
     env:
-      # 控制面 sqlite 经 go-sqlite3 需 CGO；ubuntu 自带 gcc
+      CGO_ENABLED: "1"
+      BEACON_REDIS_TEST_HOST: 127.0.0.1
+      BEACON_REDIS_TEST_PORT: "6379"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 安装 JDK21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: 准备 Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: 配置临时 MySQL 测试连接
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'BEACON_TEST_DSN=root:@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true' >> "$GITHUB_ENV"
+      - name: 运行真实 MySQL 集成测试
+        run: >-
+          go test -tags=integration
+          ./apps/server/internal/handler
+          ./apps/server/internal/repository
+          ./apps/server/internal/server
+          ./apps/server/internal/service
+          -count=1
+      - name: 运行真实 Redis 集成测试
+        run: ./apps/agent/gradlew -p apps/agent test --no-daemon
+      - name: 确认真实 Redis 测试未跳过
+        run: >-
+          python scripts/release/assert_test_gate.py junit
+          --glob 'apps/agent/**/build/test-results/test/TEST-*.xml'
+          --expected-class 'top.wcpe.beacon.agent.adapters.messaging.RedisMessageTransportIntegrationTest'
+
+  # master 的四个质量任务全部成功后，按原生平台运行现有一键打包入口。
+  package:
+    name: 临时开发打包（${{ matrix.target }}）
+    needs: [lint, web, agent, integration]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-amd64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { os: windows-latest, target: windows-amd64 }
+          - { os: macos-14, target: darwin-arm64 }
+    env:
       CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v4
@@ -210,24 +215,79 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: 准备 Gradle（含依赖缓存）
+      - name: 准备 Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: 安装 pnpm
         uses: pnpm/action-setup@v4
         with:
           version: "10.32.1"
-      - name: 安装 Node（启用 pnpm store 缓存）
+      - name: 安装 Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: 安装 Windows GNU Make
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: choco install make --no-progress -y
       - name: 一键打包
+        shell: bash
         run: make package
-      - name: 上传产物
+      - name: 上传临时开发产物
         uses: actions/upload-artifact@v4
         with:
-          name: beacon-package
+          name: beacon-ci-${{ github.sha }}-${{ matrix.target }}
           path: dist/
-          if-no-files-found: error
           retention-days: 7
+          if-no-files-found: error
+
+  # 最终门禁明确区分 PR 的跳过打包与 master 的完整打包成功。
+  quality-gate:
+    name: 最终质量门禁
+    needs: [lint, web, agent, integration, package]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 校验质量任务与打包结果
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_REF: ${{ github.ref }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+          AGENT_RESULT: ${{ needs.agent.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+        run: |
+          set -euo pipefail
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              echo "::error::${name} 未成功，实际结果为 ${result}"
+              exit 1
+            fi
+          }
+
+          require_success "Go 质量任务" "$LINT_RESULT"
+          require_success "Web 质量任务" "$WEB_RESULT"
+          require_success "Agent 质量任务" "$AGENT_RESULT"
+          require_success "集成质量任务" "$INTEGRATION_RESULT"
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if [ "$PACKAGE_RESULT" != "skipped" ]; then
+              echo "::error::PR 的打包任务必须跳过，实际结果为 ${PACKAGE_RESULT}"
+              exit 1
+            fi
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "push" ] && [ "$SOURCE_REF" = "refs/heads/master" ]; then
+            require_success "四平台打包任务" "$PACKAGE_RESULT"
+            exit 0
+          fi
+
+          echo "::error::不支持的 CI 事件：${EVENT_NAME} ${SOURCE_REF}"
+          exit 1

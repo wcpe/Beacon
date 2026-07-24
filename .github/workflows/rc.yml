@@ -1,0 +1,265 @@
+# 不可变 RC：全部质量门与真实 MySQL/Redis 门通过后，才允许一次构建候选资产。
+name: Release Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: "已通过发布准备 PR 的目标版本"
+        required: true
+        type: string
+
+concurrency:
+  group: rc-${{ inputs.expected_version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: 锁定 master 发布提交
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: 验证发布源、目标版本与同提交 CI
+        id: source
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_SHA: ${{ github.sha }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          set -eu
+          test "$GITHUB_REF" = "refs/heads/master"
+          commit="$DISPATCH_SHA"
+          test "$(git rev-parse HEAD^{commit})" = "$commit"
+          git fetch --tags origin master:refs/remotes/origin/master
+          remote_master="$(git rev-parse refs/remotes/origin/master^{commit})"
+          if test "$remote_master" != "$commit"; then
+            echo "::error::远端 master 已从 dispatch 源提交漂移，拒绝继续发布"
+            exit 1
+          fi
+          version="$(tr -d '\r\n' < VERSION)"
+          test "$version" = "$EXPECTED_VERSION"
+          ci_run_id="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=master&event=push&status=success&per_page=100" \
+            --jq ".workflow_runs | map(select(.head_sha == \"$commit\" and .conclusion == \"success\")) | if length == 1 then .[0].id else error(\"必须存在唯一同提交成功 master CI run\") end")"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/jobs?per_page=100" \
+            --jq 'if any(.jobs[]; .name == "最终质量门禁" and .conclusion == "success") then empty else error("同提交 CI 未通过最终质量门禁") end'
+          artifact_count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ci_run_id}/artifacts?per_page=100" \
+            --jq "[.artifacts[] | select(.expired == false and (.name == \"beacon-ci-${commit}-linux-amd64\" or .name == \"beacon-ci-${commit}-linux-arm64\" or .name == \"beacon-ci-${commit}-windows-amd64\" or .name == \"beacon-ci-${commit}-darwin-arm64\")) | .name] | unique | length")"
+          if test "$artifact_count" -ne 4; then
+            echo "::error::同提交 CI 缺少完整四平台开发 Artifact"
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  go-gate:
+    name: Go 与真实 MySQL 门
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          # 该明文仅供本 job 的临时 service 容器，不是生产凭据或受保护 secret。
+          MYSQL_ROOT_PASSWORD: beacon-ci-local-only
+          MYSQL_DATABASE: beacon
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pbeacon-ci-local-only"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 在 job 内组装临时 MySQL DSN
+        shell: sh
+        run: |
+          set -eu
+          printf '%s\n' 'BEACON_TEST_DSN=root:beacon-ci-local-only@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true' >> "$GITHUB_ENV"
+      - name: Go 单元测试
+        run: go test ./... -count=1
+      - name: Go 静态检查
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+          args: ./...
+      - name: 全量真实 MySQL 集成测试
+        run: |
+          go test -tags=integration \
+            ./apps/server/internal/handler \
+            ./apps/server/internal/repository \
+            ./apps/server/internal/server \
+            ./apps/server/internal/service \
+            -count=1
+      - name: P9 交付域真实 MySQL 集成测试
+        run: |
+          go test -tags=integration ./apps/server/internal/service \
+            -run '^(TestP9DeliveryOrderFullChain|TestP9DeliveryFileDiffContract)$' \
+            -count=1
+
+  web-gate:
+    name: Web 全量门
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: UI wiki、类型、静态检查、测试与构建
+        run: |
+          pnpm run check:ui-wiki
+          pnpm run typecheck
+          pnpm run lint
+          pnpm run test
+          pnpm run build
+
+  agent-gate:
+    name: Agent 与真实 Redis 门
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      BEACON_REDIS_TEST_HOST: 127.0.0.1
+      BEACON_REDIS_TEST_PORT: "6379"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Agent 静态检查、测试与构建
+        run: ./apps/agent/gradlew -p apps/agent ktlintCheck detekt test build --no-daemon
+
+  release-contract-gate:
+    name: 发布契约门
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 发布校验回归测试
+        shell: sh
+        run: make release-test
+      - name: GA 工作流静态审计
+        shell: sh
+        run: |
+          set -eu
+          version="$(tr -d '\r\n' < VERSION)"
+          make release-check RELEASE_RC_TAG="v${version}-rc.1"
+      - name: 更新选择器回归测试
+        run: go test ./apps/server/internal/update -count=1
+      - name: 工作流语法检查
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+  create-tag:
+    name: 门禁后创建唯一 RC tag
+    needs: [prepare, go-gate, web-gate, agent-gate, release-contract-gate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.candidate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          fetch-depth: 0
+      - name: 创建当前提交的唯一候选 tag
+        id: candidate
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ needs.prepare.outputs.commit }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -eu
+          git fetch --tags origin
+          test "$(git rev-parse HEAD^{commit})" = "$SOURCE_COMMIT"
+          prefix="v${VERSION}-rc."
+          for existing_tag in $(git tag --list "${prefix}*"); do
+            if test "$(git rev-parse "${existing_tag}^{commit}")" = "$SOURCE_COMMIT" \
+              && gh release view "$existing_tag" >/dev/null 2>&1; then
+              echo "::error::当前提交已有已发布 RC，拒绝重建候选：${existing_tag}"
+              exit 1
+            fi
+          done
+          last="$(
+            for existing_tag in $(git tag --list "${prefix}*"); do
+              sequence=${existing_tag#"$prefix"}
+              case "$sequence" in
+                ''|*[!0-9]*|0|0*) continue ;;
+              esac
+              printf '%s\n' "$sequence"
+            done | sort -n | tail -n 1
+          )"
+          last=${last:-0}
+          tag="${prefix}$((last + 1))"
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            echo "::error::候选 tag 已存在，拒绝重建候选：${tag}"
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::候选 Release 已存在，拒绝重建候选：${tag}"
+            exit 1
+          fi
+          git tag -a "$tag" "$SOURCE_COMMIT" -m "发布候选 ${tag}"
+          git push origin "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  call:
+    name: 不可变 RC 一次构建
+    needs: [create-tag]
+    uses: ./.github/workflows/_build-release.yml
+    permissions:
+      contents: write
+    with:
+      candidate_tag: ${{ needs.create-tag.outputs.tag }}

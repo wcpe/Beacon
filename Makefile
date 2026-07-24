@@ -19,7 +19,7 @@ CMD := ./apps/server/cmd/beacon
 # 产物输出目录（不入库）
 DIST := dist
 # 当前平台可执行后缀（Windows 为 .exe，其余为空）
-GOEXE := $(shell go env GOEXE)
+GOEXE := $(shell command -v go >/dev/null 2>&1 && go env GOEXE)
 
 # 双端 agent 部署插件 jar（库模块 agent-api/core/kit/adapters 与 E2E 插件不入包）
 BUKKIT_JAR := apps/agent/agent-bukkit/build/libs/BeaconAgent-$(VERSION).jar
@@ -44,8 +44,20 @@ REMOVE_DIST := rm -rf $(DIST)
 GRADLE_BUILD := cd apps/agent && ./gradlew clean build
 GRADLE_CLEAN := cd apps/agent && ./gradlew clean
 endif
+# 发布校验参数由调用方显式传入，VERSION 仍是唯一版本来源。
+RELEASE_CHECK := scripts/release/release_check.sh
+RELEASE_TEST := scripts/release/test_release_check.sh
+RELEASE_PROMOTE_TEST := scripts/release/test_promote_ga.sh
+RELEASE_VERSION_FILE ?= VERSION
+RELEASE_RC_TAG ?=
+RELEASE_GA_TAG ?= v$(VERSION)
+RELEASE_ASSETS_DIR ?= $(DIST)
+RELEASE_RC_ASSETS_DIR ?=
+RELEASE_RC_COMMIT ?=
+RELEASE_GA_COMMIT ?=
+
 .DEFAULT_GOAL := help
-.PHONY: help version lint web build agent package clean
+.PHONY: help version lint web build agent package clean release-test release-check release-verify-rc release-verify-ga
 
 # 列出可用目标
 help:
@@ -55,6 +67,10 @@ help:
 	@echo "  make agent     both agent plugin jars only (gradle clean build)"
 	@echo "  make web       build apps/web/dist only (embedded into control-plane)"
 	@echo "  make lint      Go static checks: gofmt + goimports + golangci-lint (CRLF-safe, mirrors CI)"
+	@echo "  make release-test       run release shell contract tests"
+	@echo "  make release-check      statically validate VERSION, tag formats and GA workflow"
+	@echo "  make release-verify-rc  validate real RC tag identity and closed asset set"
+	@echo "  make release-verify-ga  compare GA assets to RC baseline and validate real tags"
 	@echo "  make clean     remove $(DIST)/ and agent build outputs"
 
 # 打印当前版本号
@@ -70,6 +86,20 @@ lint:
 	golangci-lint run ./...
 	@$(GO_FORMAT_CHECK)
 	@echo "==== Go 静态检查全部通过 ===="
+
+# 发布校验全部委托给 POSIX sh 脚本，避免依赖 Python 或 jq。
+release-test:
+	sh $(RELEASE_TEST)
+	sh $(RELEASE_PROMOTE_TEST)
+
+release-check:
+	sh $(RELEASE_CHECK) check --version-file "$(RELEASE_VERSION_FILE)" --version "$(VERSION)" --rc-tag "$(RELEASE_RC_TAG)" --ga-tag "$(RELEASE_GA_TAG)" --workflow .github/workflows/release.yml
+
+release-verify-rc:
+	sh $(RELEASE_CHECK) verify-rc --version-file "$(RELEASE_VERSION_FILE)" --version "$(VERSION)" --rc-tag "$(RELEASE_RC_TAG)" --ga-tag "$(RELEASE_GA_TAG)" --assets-dir "$(RELEASE_ASSETS_DIR)" --rc-commit "$(RELEASE_RC_COMMIT)"
+
+release-verify-ga:
+	sh $(RELEASE_CHECK) verify-ga --version-file "$(RELEASE_VERSION_FILE)" --version "$(VERSION)" --rc-tag "$(RELEASE_RC_TAG)" --ga-tag "$(RELEASE_GA_TAG)" --rc-assets-dir "$(RELEASE_RC_ASSETS_DIR)" --assets-dir "$(RELEASE_ASSETS_DIR)" --rc-commit "$(RELEASE_RC_COMMIT)" --ga-commit "$(RELEASE_GA_COMMIT)"
 
 # 前端构建产物 apps/web/dist（被控制面 go:embed 内嵌；必须先于 build）
 web:

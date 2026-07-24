@@ -1,295 +1,275 @@
-# Beacon 可复用发布构建 workflow（FR-103/FR-117，ADR-0046/ADR-0052）：被 release.yml（正式版）与
-# prerelease.yml（滚动预发布）经 workflow_call 调用，单点维护「web 构建 / 多平台原生矩阵 / 双端 jar /
-# 汇总 SHA256 / 建 Release」。本 workflow 不自带 on.push 触发，触发由两个薄壳负责。
-#
-# 两种模式（由 inputs.rolling 区分）：
-#   - 正式版（rolling=false，tag 触发）：版本取触发 tag 去 v 前缀；tag↔VERSION 严格校验；Release 据 tag 建、不移动 tag。
-#   - 滚动预发布（rolling=true，master push）：版本 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>（CI 自算、与 VERSION 解耦，
-#     收敛到 scripts/dev-version.sh，FR-117）；以移动 tag（rolling-tag）force-update 覆盖同一 Release。
-#     提交距离为 0（主干无新提交）时 meta 置 skip=true，后续构建 / 发布 job 据此跳过。
-#
-# 为什么矩阵原生而非交叉编译：控制面 sqlite 经 go-sqlite3 需 CGO，交叉编译会自动关闭 CGO
-# 导致 sqlite 不可用（默认开箱即跑的库）。故各平台二进制在对应原生 runner 上以 CGO=1 构建。
+# Beacon 可复用 RC 构建：只构建并发布 GitHub 产品资产。
 name: 可复用发布构建
 
 on:
   workflow_call:
     inputs:
-      prerelease:
-        # 是否标记为预发布（GitHub Release 的 prerelease 标志）：正式渠道传 false、预发布渠道传 true
-        description: "是否预发布"
+      candidate_tag:
+        description: "门禁后创建的不可变 RC tag"
         required: true
-        type: boolean
-      rolling:
-        # 是否滚动模式（FR-117）：true=master push 滚动预发布（版本 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>、CI 自算、移动 tag 覆盖同一 Release）；
-        # false=正式版（tag 触发、版本取 tag、tag↔VERSION 严格校验）。缺省 false 兼容 release.yml。
-        description: "是否滚动预发布（master push）"
-        required: false
-        default: false
-        type: boolean
-      rolling-tag:
-        # 滚动模式的固定移动 tag 名（仅 rolling=true 用），如 dev。
-        description: "滚动预发布移动 tag 名"
-        required: false
-        default: ""
         type: string
 
-permissions:
-  # 创建 Release 并上传附件需要写 contents
-  contents: write
+permissions: {}
 
 jobs:
-  # 版本号 / tag / Release 名单点计算：滚动预发布取 <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>
-  # （收敛到 scripts/dev-version.sh、与 VERSION 解耦，FR-117），正式版取触发 tag 去 v 并做 tag↔VERSION 严格校验。
-  # 各构建 / 发布 job 共用本 job 输出保证全程一致；skip=true 时（主干无新提交）后续 job 跳过。
   meta:
-    name: 解析版本号
+    name: 解析发布元数据
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.calc.outputs.version }}
       tag: ${{ steps.calc.outputs.tag }}
-      name: ${{ steps.calc.outputs.name }}
-      skip: ${{ steps.calc.outputs.skip }}
+      commit: ${{ steps.calc.outputs.commit }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # 取全部 tag 与历史供 scripts/dev-version.sh 用 git describe / rev-list 推导基线与提交距离；默认浅克隆不含 tag。
+          ref: ${{ inputs.candidate_tag }}
           fetch-depth: 0
-      - name: 计算版本号 / tag / Release 名
+      - name: 校验版本、RC tag 与提交
         id: calc
-        shell: bash
+        shell: sh
         env:
-          ROLLING: ${{ inputs.rolling }}
-          ROLLING_TAG: ${{ inputs.rolling-tag }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
         run: |
-          if [ "$ROLLING" = "true" ]; then
-            # 滚动预发布：版本号 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>，由 scripts/dev-version.sh 单点计算
-            # （基线取最新正式 tag 不 +1、提交距离作序号，FR-117）。脚本退出码非 0（提交距离为 0、主干无新提交）时
-            # 置 skip=true 并不写版本号，后续 build / jars / release job 据此跳过，避免凭空滚动出更高的 dev。
-            if ver="$(bash scripts/dev-version.sh)"; then
-              echo "滚动预发布版本号：ver=[${ver}]"
-              echo "version=${ver}" >> "$GITHUB_OUTPUT"
-              echo "tag=${ROLLING_TAG}" >> "$GITHUB_OUTPUT"
-              # Release 名 = v<版本号>（如 v0.17.0-dev.3.g6b6dd71）。必须保持可被 parseSemver 解析：
-              # in-app 预发布渠道的 releaseVersion（internal/update/github.go）在 tag 为移动标签 dev（非 semver）时
-              # 回退解析 name 取远端版本号；若改成「开发预览（…）」式自由文案会令解析失败、判新功能失效。
-              echo "name=v${ver}" >> "$GITHUB_OUTPUT"
-              echo "skip=false" >> "$GITHUB_OUTPUT"
-            else
-              echo "主干自上个正式版起无新提交，跳过 dev 预发布。"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-            fi
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            # 正式版：取触发 tag 去 v 前缀，并与根 VERSION 严格校验一致（ADR-0052 决策 3/6）。
-            base="${GITHUB_REF_NAME#v}"
-            ver="$(cat VERSION)"
-            if [ "$base" != "$ver" ]; then
-              echo "::error::tag ${GITHUB_REF_NAME} 去前缀得 ${base}，与仓库 VERSION(${ver}) 不一致，拒绝发布"
-              exit 1
-            fi
-            echo "version=${base}" >> "$GITHUB_OUTPUT"
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
+          set -eu
+          version="$(tr -d '\r\n' < VERSION)"
+          sh scripts/release/release_check.sh check \
+            --version-file VERSION \
+            --rc-tag "$CANDIDATE_TAG" \
+            --ga-tag "v$version"
+          commit="$(git rev-parse HEAD^{commit})"
+          test "$(git rev-parse "${CANDIDATE_TAG}^{commit}")" = "$commit"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$CANDIDATE_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
-  # 第二版前端构建一次，作为 artifact 供各平台二进制 go:embed 复用（免每个 runner 重复装 Node 构建）。
   web:
     name: 前端构建
     needs: [meta]
-    # 滚动预发布主干无新提交（meta.skip=true）时跳过，避免空转构建。
-    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
+        with:
+          ref: ${{ needs.meta.outputs.commit }}
+      - uses: pnpm/action-setup@v4
         with:
           version: "10.32.1"
-      - name: 安装 Node（启用 pnpm store 缓存）
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - name: 构建前端（make web）
+      - name: 构建内嵌 Web
         run: make web
-      - name: 上传前端产物
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: web-dist
           path: apps/web/dist/
           if-no-files-found: error
 
-  # 各平台原生构建控制面二进制 beacon。
-  # CGO=1 原生构建（sqlite 可用）；beacon go:embed 复用上一步的 apps/web/dist。
-  # 直接 go build（非 make build）：矩阵需原生 CGO + 复用预构建前端，且 windows runner 无 make；
-  # 链接参数与 Makefile build 目标一致（-trimpath + 注入 version.Version）。
-  # 4 平台原生矩阵（含 linux-arm64 用 GitHub 原生 arm64 runner，仍非交叉编译）；
-  # 不含 windows-arm64，也不含 darwin-amd64（无 Intel macOS runner，构建不起来已移除）。
-  # 版本注入用 tag 去 v 后的完整串（含 -rc.N），故 rc 产物文件名与版本号自带 rc 标识。
   binaries:
     name: 控制面 ${{ matrix.target }}
     needs: [meta, web]
-    # 滚动预发布主干无新提交（meta.skip=true）时跳过。
-    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest,    target: linux-amd64,   ext: "" }
-          - { os: ubuntu-24.04-arm, target: linux-arm64,   ext: "" }
-          - { os: windows-latest,   target: windows-amd64, ext: ".exe" }
-          - { os: macos-14,         target: darwin-arm64,  ext: "" }
+          - { os: ubuntu-latest, target: linux-amd64, ext: "" }
+          - { os: ubuntu-24.04-arm, target: linux-arm64, ext: "" }
+          - { os: windows-latest, target: windows-amd64, ext: ".exe" }
+          - { os: macos-14, target: darwin-arm64, ext: "" }
     env:
-      # 各平台 runner 自带原生 C 工具链（gcc/clang/mingw），sqlite 经 CGO 可用
       CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: 安装 Go
-        uses: actions/setup-go@v5
+        with:
+          ref: ${{ needs.meta.outputs.commit }}
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - name: 取回前端产物到 apps/web/dist
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: web-dist
           path: apps/web/dist
-      - name: 原生构建控制面二进制
-        shell: bash
+      - name: 构建控制面
+        shell: sh
         env:
-          # 版本号由 meta job 单点计算（滚动 = <最新正式 tag 基线>-dev.<提交距离>.g<短SHA>、正式 = tag），各平台共用保证一致。
           VER: ${{ needs.meta.outputs.version }}
         run: |
+          set -eu
           ldflags="-s -w -X github.com/wcpe/Beacon/apps/server/internal/version.Version=${VER}"
           out="beacon-${VER}-${{ matrix.target }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "${ldflags}" -o "${out}" ./apps/server/cmd/beacon
-          echo "已构建 ${out}"
-      - name: 上传二进制
-        uses: actions/upload-artifact@v4
+          go build -trimpath -ldflags "$ldflags" -o "$out" ./apps/server/cmd/beacon
+          test "$("./$out" --version)" = "$VER"
+      - uses: actions/upload-artifact@v4
         with:
           name: beacon-${{ matrix.target }}
           path: beacon-*
           if-no-files-found: error
 
-  # 双端 agent 插件 jar（JVM、平台无关，构建一次；gradle 读根 VERSION 注入版本）。
-  jars:
-    name: agent jar
+  java:
+    name: Agent 与 Maven 产品
     needs: [meta]
-    # 滚动预发布主干无新提交（meta.skip=true）时跳过。
-    if: ${{ needs.meta.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: 安装 JDK21
-        uses: actions/setup-java@v4
+        with:
+          ref: ${{ needs.meta.outputs.commit }}
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-      - name: 准备 Gradle（含依赖缓存）
-        uses: gradle/actions/setup-gradle@v4
-      - name: 构建 agent jar（make agent）
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 构建 Agent 产品
+        shell: sh
         env:
-          # agent jar 版本须与 beacon 一致（ADR-0007 三组件同版本）：滚动预发布版本号由 meta 单点计算
-          # （非根 VERSION），故临时把 VERSION 覆盖为该版本号供 gradle 读（CI 内、不提交）。
-          # 正式版时 meta.version == 根 VERSION，覆盖为同值、无副作用。
-          VER: ${{ needs.meta.outputs.version }}
+          PAYLOAD_VERSION: ${{ needs.meta.outputs.version }}
         run: |
-          printf '%s\n' "$VER" > VERSION
+          set -eu
           make agent
-      - name: 上传 jar
-        uses: actions/upload-artifact@v4
+          test -s "dist/BeaconAgent-${PAYLOAD_VERSION}.jar"
+          test -s "dist/BeaconAgentProxy-${PAYLOAD_VERSION}.jar"
+      - name: 组装 Maven 产品 ZIP
+        shell: sh
+        env:
+          PAYLOAD_VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -eu
+          if ! command -v zip >/dev/null 2>&1; then
+            echo "::error::缺少 zip 命令，无法组装 Maven 产品 ZIP"
+            exit 1
+          fi
+          stage="$GITHUB_WORKSPACE/maven-staging"
+          bundle="$GITHUB_WORKSPACE/beacon-maven-${PAYLOAD_VERSION}.zip"
+          mkdir -p "$stage"
+          export BEACON_PUBLISH_URL="file://${stage}"
+          (
+            cd apps/agent
+            ./gradlew \
+              :agent-api:publishMavenPublicationToBeaconRemoteRepository \
+              :agent-kit:publishMavenPublicationToBeaconRemoteRepository \
+              --no-daemon
+          )
+          if test -z "$(find "$stage" -type f -print -quit)"; then
+            echo "::error::Maven 暂存目录为空，拒绝生成产品 ZIP"
+            exit 1
+          fi
+          (
+            cd "$stage"
+            zip -q -r "$bundle" .
+          )
+          test -s "$bundle"
+      - uses: actions/upload-artifact@v4
         with:
-          name: beacon-agent-jars
+          name: beacon-java-products
           path: |
-            dist/BeaconAgent-*.jar
-            dist/BeaconAgentProxy-*.jar
+            dist/BeaconAgent-${{ needs.meta.outputs.version }}.jar
+            dist/BeaconAgentProxy-${{ needs.meta.outputs.version }}.jar
+            beacon-maven-${{ needs.meta.outputs.version }}.zip
           if-no-files-found: error
 
-  # 汇集全部产物、生成 SHA256 校验和、创建 / 覆盖 GitHub Release。
-  # prerelease 标志由调用方经 inputs.prerelease 传入：正式渠道 false、预发布渠道 true。
-  # 滚动模式（inputs.rolling=true）以移动 tag（rolling-tag）force-update 覆盖同一 Release，只留最新一份。
   release:
-    name: 发布 GitHub Release
-    needs: [meta, binaries, jars]
-    # 滚动预发布主干无新提交（meta.skip=true）时跳过。
-    if: ${{ needs.meta.outputs.skip != 'true' }}
+    name: 汇总并发布 RC
+    needs: [meta, binaries, java]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: 检出仓库（供读 CHANGELOG 提取 Release 正文）
-        uses: actions/checkout@v4
-      - name: 汇集发布产物（仅 beacon-* 二进制 / jar）
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
         with:
-          path: artifacts
-          # 只取 beacon-* 命名的 artifact（各平台二进制 / agent jar），扁平合并到 artifacts/。
-          # 排除前端 web-dist：它仅供二进制 go:embed、不进 Release，且其 assets/ 子目录会让下一步 sha256sum * 报「Is a directory」而失败。
-          pattern: beacon-*
-          merge-multiple: true
-      - name: 生成 SHA256 校验和
-        shell: bash
-        run: |
-          cd artifacts
-          sha256sum * > SHA256SUMS.txt
-          echo "==== 发布产物校验和 ===="
-          cat SHA256SUMS.txt
-      - name: 从 CHANGELOG 提取本版更新日志作 Release 正文
-        # Bug 修复：原先用 generate_release_notes（GitHub 自动 commit 流水）、从不读 CHANGELOG。
-        # 改为正式版取「## X.Y.Z」段、滚动预发布取「## 未发布」段；预发布前置中文警示头。
-        # 提取为空则占位（极少见，CHANGELOG 应随发布定稿），保证 body 非空、可读。
-        id: notes
-        shell: bash
+          ref: ${{ needs.meta.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: beacon-linux-amd64
+          path: downloaded
+      - uses: actions/download-artifact@v4
+        with:
+          name: beacon-linux-arm64
+          path: downloaded
+      - uses: actions/download-artifact@v4
+        with:
+          name: beacon-windows-amd64
+          path: downloaded
+      - uses: actions/download-artifact@v4
+        with:
+          name: beacon-darwin-arm64
+          path: downloaded
+      - uses: actions/download-artifact@v4
+        with:
+          name: beacon-java-products
+          path: downloaded
+      - name: 固化产品资产
+        shell: sh
         env:
-          ROLLING: ${{ inputs.rolling }}
-          VER: ${{ needs.meta.outputs.version }}
+          VERSION: ${{ needs.meta.outputs.version }}
         run: |
-          if [ "$ROLLING" = "true" ]; then
-            heading="未发布"
-          else
-            heading="$VER"
-          fi
-          # 转义版本号中的点，避免正则把 . 当任意字符；匹配「## <标题>」行（其后接空格 / 括号 / 行尾）到下一个「## 」前。
-          esc="$(printf '%s' "$heading" | sed 's/[.]/\\./g')"
-          section="$(awk -v h="$esc" '
-            $0 ~ "^## " h "($|[^0-9.])" { found=1; next }
-            found && /^## / { exit }
-            found { print }
-          ' CHANGELOG.md)"
+          set -eu
+          mkdir artifacts
+          for name in \
+            "beacon-${VERSION}-linux-amd64" \
+            "beacon-${VERSION}-linux-arm64" \
+            "beacon-${VERSION}-windows-amd64.exe" \
+            "beacon-${VERSION}-darwin-arm64" \
+            "BeaconAgent-${VERSION}.jar" \
+            "BeaconAgentProxy-${VERSION}.jar" \
+            "beacon-maven-${VERSION}.zip"
+          do
+            source="downloaded/$name"
+            test -f "$source"
+            cp "$source" "artifacts/$name"
+          done
+          (
+            cd artifacts
+            sha256sum \
+              "beacon-${VERSION}-linux-amd64" \
+              "beacon-${VERSION}-linux-arm64" \
+              "beacon-${VERSION}-windows-amd64.exe" \
+              "beacon-${VERSION}-darwin-arm64" \
+              "BeaconAgent-${VERSION}.jar" \
+              "BeaconAgentProxy-${VERSION}.jar" \
+              "beacon-maven-${VERSION}.zip" \
+              > SHA256SUMS.txt
+          )
+      - name: 校验 RC 产品
+        shell: sh
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          RC_TAG: ${{ needs.meta.outputs.tag }}
+          RC_COMMIT: ${{ needs.meta.outputs.commit }}
+        run: |
+          set -eu
+          make release-verify-rc \
+            RELEASE_RC_TAG="$RC_TAG" \
+            RELEASE_GA_TAG="v$VERSION" \
+            RELEASE_ASSETS_DIR=artifacts \
+            RELEASE_RC_COMMIT="$RC_COMMIT"
+      - name: 生成 RC 发布正文
+        shell: sh
+        env:
+          RC_TAG: ${{ needs.meta.outputs.tag }}
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -eu
           {
-            if [ "${{ inputs.prerelease }}" = "true" ]; then
-              echo "⚠ 滚动预发布版本：随 master 自动覆盖更新，用于试用验证 / 喂在线更新，可能不稳定，勿用于生产。"
-              echo ""
-            fi
-            if [ -n "$section" ]; then
-              echo "$section"
-            else
-              echo "_本版未在 CHANGELOG 找到对应段（heading: ${heading}）。_"
-            fi
+            printf 'Beacon %s RC。\n\n' "$VERSION"
+            printf '%s 指向同一 master 提交，资产由 SHA256SUMS.txt 严格校验。\n' "$RC_TAG"
           } > release-body.md
-          echo "==== Release 正文 ===="
-          cat release-body.md
-      - name: 滚动模式先删旧预发布 Release + tag（清累积旧 assets、移 tag 到当前 commit）
-        # softprops/action-gh-release 只上传新 assets、不删 release 上已有的旧 assets，也不移动已存在的 tag——
-        # 多次滚动会累积多版本二进制（旧 0.1.0 / 0.17.0 / launcher）、tag 停在旧 commit。滚动模式发布前删旧
-        # release + tag，让下一步用同名 tag 在当前 commit 重建、只留本次产物（ADR-0052「只留最新一份」）。
-        if: ${{ inputs.rolling }}
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete "${{ inputs.rolling-tag }}" --cleanup-tag --yes 2>/dev/null \
-            && echo "已删旧预发布 release + tag，将在当前 commit 重建" \
-            || echo "无旧预发布 release（首次），跳过"
-      - name: 创建 / 覆盖 Release 并上传产物
+      - name: 创建 RC Release
         uses: softprops/action-gh-release@v2
         with:
-          # 正式版：tag 已由 push 提供；滚动：显式传移动 tag，action 会 force-update tag 并覆盖同一 Release
           tag_name: ${{ needs.meta.outputs.tag }}
-          name: ${{ needs.meta.outputs.name }}
+          name: ${{ needs.meta.outputs.tag }}
           files: artifacts/*
-          prerelease: ${{ inputs.prerelease }}
-          # 正文取自 CHANGELOG 本版段（预发布含警示头）；不再用 generate_release_notes 的 commit 流水
+          prerelease: true
           body_path: release-body.md
           fail_on_unmatched_files: true

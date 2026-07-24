@@ -1,0 +1,14 @@
+.git/
+.tmp/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+.gradle/
+**/.gradle/
+coverage/
+**/coverage/
+*.log
+**/*.log

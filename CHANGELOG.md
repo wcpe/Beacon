@@ -4,6 +4,43 @@
 
 ## 未发布
 
+### 新增
+- 规划 0.31.x 对齐中间版管理台壳层重做（FR-186～FR-189）：侧栏图标轨折叠动画、双段页眉与身份收敛、全局运维指标真数据、小屏抽屉；规格见 `docs/specs/admin-shell-redesign-0.31.md`。
+- 页眉全局搜索命令面板 MVP（FR-193）：Ctrl/Cmd+K 与页眉入口唤起；导航分组可键盘选择并跳转；可选服务器关键词 / 审计动作深链；规格见 `docs/specs/header-command-palette-mvp.md`。
+- 页眉语言切换骨架（FR-194）：中/英 + localStorage 持久；en 仅壳层文案，缺键 fallback 到 zh-CN。
+- 页眉通知入口（FR-195）：未处理告警角标 + 只读下拉摘要，跳转 `/alert-events`。
+- 页眉刷新当前页（FR-196）：按路由 queryKey 前缀 invalidate，不整页 reload。
+- 新增适用于全部 SemVer 版本的不可变 RC / GA 发布入口：RC 使用 `vX.Y.Z-rc.N` 固定真实 tag、peeled commit 与一次构建出的产品资产；GA 使用 `vX.Y.Z`，只从最终 RC 原样复制资产，不重新编译、打包、重建或重签。
+- 新增通用发布校验：`release-check` 只做版本、tag 格式与 GA workflow 静态审计，不要求真实 tag；`release-verify-rc` / `release-verify-ga` 必须从真实 tag 解析 peeled commit 并核对调用方给定身份，不能用手工 SHA 绕过。
+- GA 校验新增 RC 基准资产目录：RC 与 GA 目录各自先校验完整资产集合和 `SHA256SUMS.txt`，再逐项比较文件名、字节大小与 SHA-256，并把校验和文件本身纳入 RC/GA 字节一致性检查。
+
+### 变更
+- 开发构建与发布准备流程标准化（FR-182）：移除移动 `dev` tag、开发 GitHub Release 与 `<基线>-dev.<提交距离>.g<sha>` 开发发布版本，临时开发产物改由 GitHub Actions Artifact 承载。
+- pull request 只运行 Go、Web、Agent 与真实集成质量门，不执行产品打包，也不上传产品 Artifact。
+- `master` 仅在全部质量任务成功后按 `linux-amd64`、`linux-arm64`、`windows-amd64`、`darwin-arm64` 四个平台打包；Artifact 按 source commit 与平台命名、保留 7 天，且只有最终状态成功的 run 可供开发验证。
+- RC workflow 在写候选 tag 前强制运行发布契约测试、GA workflow 禁构建/打包/重签静态审计和既有质量门；GA workflow 解析最终 RC commit 后切换到该提交执行校验，并在创建前和公开回拉后都与同一 RC 资产目录比较。
+- 本轮发布流程调整不改变 REST API、`agent-api`、Agent 协议、序列化格式或 GA-only 在线更新语义；历史 `prerelease` 更新设置继续归一为 `stable`，RC 与 Actions Artifact 仍需显式安装。
+- 升级兼容继续采用 forward-only expand / 可重入回填；升级前须备份 MySQL 与 Agent 本地状态，若目标版本无法读取当前 schema 或本地状态，应停写并从同一协调备份恢复，而不是执行未经验证的 down migration。
+- Agent 真机 E2E 编排从 jpenilla run-task 迁移到 Maven 正式版 `mc-testkit 0.5.0`：统一 `servePaper` / `serveDirectory` / `serveProxy`，代理改用原生 BungeeCord 与固定 `backend` 路由；动态 access token 在 harness 内先持久化不可逆 SHA-256 + 字节长度指纹，再注册 Actions 掩码，归档前按指纹扫描且不写明文 token 文件。
+
+### 修复
+- 贯通 FR-178 环境过滤器到运维主路径：选「全部环境」默认可见全量；选具体 env 收窄仪表盘/服务器/区服/拓扑/告警/命令/审计/服务分析/变更单等有 ns 维度的列表；mock 对 `namespaceId=0` 与真后端「全量」语义对齐。
+- 解绑身份时同步清空服务器区服归属，并支持 `target:null` 解除分配；资产列表身份优选 active/disabled/conflict，避免解绑命中历史 unbound 行。
+- 扩充审计动作中文映射与筛选候选；命令 `resultDetail` 支持 JSON 键值可视化。
+- 拓扑侧栏展示真实 serverId 列表；区服/拓扑在全部环境下默认「全部命名空间」，有服小区默认展开。
+- 开源协议页版权声明统一为 `wcpe`，清单收紧为运行时依赖。
+- 修复 Gradle serve 子进程早退仍等待业务超时的问题：harness 统一持有 Wait/Stop 生命周期，提前报告任务退出结果与 stdout/stderr 证据路径。
+- 修复 directory fail-static 将请求失败误当权威空目录的问题；仅控制面成功返回的空集合才清空动态目录，失败时保留既有目录。
+- 修复 override 第二轮复用旧 identity 的验收漂移；每轮独立 Paper 生命周期均重新等待 pending、解绑旧占用并审批本轮 identity。
+- 修复 Linux 远端 E2E 无法执行 Gradle Wrapper 的文件权限，并在导出随机测试口令与签名密钥前注册日志遮蔽，避免临时凭证出现在 Actions 日志中。
+- 修复结构化消息 payload 被错误限制为字符串的问题：send / poll 现按任意 JSON 值契约往返，`lodestone:roster` 等带冒号 `msgType` 始终合法，原错误来自 payload 类型契约。
+- 修复配置发布与旧操作撤回在真实 MySQL 并发时，撤回先占用下一版本号会让新发布错误返回 `CONFIG_CONFLICT`；现在仅对并发回滚造成的版本竞争重读后重试，普通并发发布仍保持冲突语义。
+- 修复配置时间线 MySQL 集成测试对 RFC3339 时间字符串直接做字典序比较导致的偶发误判；改为解析真实时间后校验倒序，并覆盖同秒不同小数精度碰撞。
+
+### 已知问题
+- 截至 2026-07-20，仓库尚未创建真实 `v1.0.0-rc.N`、`v1.0.0` tag 或 GitHub Release；在正式 GA tag / Release 实际公开前，任何本地校验、workflow 文件或未发布记录都不代表真实 GA。
+- `release-check` 只证明格式和 GA workflow 静态约束，不能替代针对真实 tag 与下载资产目录执行 `release-verify-rc` / `release-verify-ga`。
+
 ## 0.30.0（2026-07-17）
 
 ### 新增
