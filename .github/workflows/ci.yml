@@ -139,7 +139,6 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
-          --command --max_connections=500
       redis:
         image: redis:7.4-alpine
         ports:
@@ -171,10 +170,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # 提高连接上限，避免并行集成包累计连接触发 Error 1040
+          mysqladmin --protocol=TCP -h 127.0.0.1 -P 3306 -u root ping --silent
+          mysql --protocol=TCP -h 127.0.0.1 -P 3306 -u root -e "SET GLOBAL max_connections = 500;"
           printf '%s\n' 'BEACON_TEST_DSN=root:@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true' >> "$GITHUB_ENV"
       - name: 运行真实 MySQL 集成测试
         run: >-
-          go test -tags=integration
+          go test -tags=integration -p 1
           ./apps/server/internal/handler
           ./apps/server/internal/repository
           ./apps/server/internal/server

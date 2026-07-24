@@ -83,7 +83,6 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
-          --command --max_connections=500
     env:
       CGO_ENABLED: "1"
     steps:
@@ -98,6 +97,8 @@ jobs:
         shell: sh
         run: |
           set -eu
+          mysqladmin --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbeacon-ci-local-only ping --silent
+          mysql --protocol=TCP -h 127.0.0.1 -P 3306 -uroot -pbeacon-ci-local-only -e "SET GLOBAL max_connections = 500;"
           printf '%s\n' 'BEACON_TEST_DSN=root:beacon-ci-local-only@tcp(127.0.0.1:3306)/beacon?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true' >> "$GITHUB_ENV"
       - name: Go 单元测试
         run: go test ./... -count=1
@@ -108,7 +109,7 @@ jobs:
           args: ./...
       - name: 全量真实 MySQL 集成测试
         run: |
-          go test -tags=integration \
+          go test -tags=integration -p 1 \
             ./apps/server/internal/handler \
             ./apps/server/internal/repository \
             ./apps/server/internal/server \
