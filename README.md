@@ -12,45 +12,36 @@ Beacon 把多个 **BungeeCord / Velocity 代理** 与 **Bukkit / Paper 子服** 
 
 **控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-> **发布状态**：正式 GA 以 GitHub Release **`v1.0.0`** 为准（原样晋级自最终 RC）。在线更新只消费严格 `vX.Y.Z` GA。
+> **发布状态**：正式 GA 以 GitHub Release **`v1.0.0`** 为准。在线更新只消费严格 `vX.Y.Z` GA。
 
 ---
 
 ## 界面预览
 
-演示数据来自管理台 **mock 演示模式**（`pnpm --filter @beacon/web dev`，场景 `normal`）；截图均在 **KPI / 列表 / 拓扑数据加载完成** 后拍摄，不是骨架屏。
+管理台演示模式截图（数据加载完成后）：
 
-### 运维总览
+<p align="center">
+  <img src="docs/images/dashboard-demo.png" alt="运维总览" width="48%" />
+  <img src="docs/images/servers-demo.png" alt="服务器资产" width="48%" />
+</p>
 
-![运维总览（演示模式）](docs/images/dashboard-demo.png)
+<p align="center">
+  <img src="docs/images/topology-demo.png" alt="集群拓扑" width="48%" />
+  <img src="docs/images/ui-wiki.png" alt="UI 控件博物馆" width="48%" />
+</p>
 
-一屏看全局：可调度服务器、代理 / 子服在线、玩家与 TPS、健康等级分布、服务器状态墙与连接流。
-
-### 服务器资产
-
-![服务器资产（演示模式）](docs/images/servers-demo.png)
-
-注册待确认、身份与健康、默认入口 / 排空等资产运维入口。
-
-### 集群拓扑
-
-![集群拓扑（演示模式）](docs/images/topology-demo.png)
-
-BC 代理 → 小区放射链路，异常边与失败率直标。
-
-### UI 控件博物馆
-
-![UI 控件博物馆](docs/images/ui-wiki.png)
-
-`@beacon/ui` 导出控件的开发期展示与覆盖率门禁入口，见 [docs/UI-WIKI.md](docs/UI-WIKI.md)。
-
-本地复现：
+| 图 | 说明 |
+|---|---|
+| 运维总览 | 健康 KPI、服务器状态墙、连接流、告警与调度概览 |
+| 服务器资产 | 注册待确认、身份 / 健康与资产运维 |
+| 集群拓扑 | BC → 小区放射链路与异常边 |
+| UI 控件博物馆 | `@beacon/ui` 控件展示，见 [docs/UI-WIKI.md](docs/UI-WIKI.md) |
 
 ```bash
-# 管理台演示模式（免登录 + MSW，顶栏可切换 empty/normal/huge/error）
+# 管理台演示（免登录 + mock）
 pnpm --filter @beacon/web dev
 
-# UI 控件博物馆（不请求后端）
+# UI 控件博物馆
 pnpm --filter @beacon/ui-wiki dev
 ```
 
@@ -101,8 +92,6 @@ pnpm --filter @beacon/ui-wiki dev
  Bukkit        Bukkit          Bungee     本地快照 fail-static
 ```
 
-设计细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [docs/adr/](docs/adr/)。
-
 ---
 
 ## 快速开始
@@ -128,7 +117,7 @@ docker compose up -d      # beacon + mysql；就绪后 AutoMigrate
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:1.0.0") // 与正式 GA / 对齐的 RC 坐标一致
+    compileOnly("top.wcpe.beacon:beacon-agent-api:1.0.0")
     compileOnly("top.wcpe.beacon:beacon-agent-kit:1.0.0")
 }
 ```
@@ -147,63 +136,17 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
 
 ---
 
-## 发布与版本
-
-| 阶段 | 标记 | 说明 |
-|------|------|------|
-| 开发产物 | Actions Artifact | master 质量门通过后上传，保留约 7 天；**非**正式发布 |
-| RC | `v1.0.0-rc.N` | 不可变 prerelease；固定 commit 与一次构建资产 |
-| GA | `v1.0.0` | 从最终 RC **原样复制**资产并核验 SHA-256，禁止 rebuild |
-
-- 根目录 `VERSION` 是目标正式版本真源。  
-- 规则与脚本：`docs/adr/0073-standard-rc-ga-release-lifecycle.md`、`scripts/release/`、`.github/workflows/rc.yml` / `release.yml`。  
-- 变更记录：[CHANGELOG.md](CHANGELOG.md)
-
----
-
-## 仓库结构
-
-```
-Beacon/
-├── apps/server/     # Go 控制面
-├── apps/web/        # 第二版 React 管理台（go:embed）
-├── apps/agent/      # Kotlin Agent（bukkit / bungee / api / kit）
-├── apps/ui-wiki/    # UI 控件博物馆
-├── packages/        # ui · devmock · contracts · 共享配置
-├── docs/            # PRD · ROADMAP · ARCHITECTURE · API · ADR · SDK · OPERATIONS
-├── scripts/release/ # RC/GA 校验与晋级脚本
-├── Dockerfile · docker-compose.yml · Makefile
-└── web/             # Legacy 管理台（冻结，不进第二版产物）
-```
-
----
-
 ## 文档
+
+面向使用与接入（不含内部需求 / 路线图 / ADR）：
 
 | 文档 | 说明 |
 |------|------|
-| [docs/PRD.md](docs/PRD.md) | 产品需求与 FR 状态 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | 第二版阶段与 1.0.0 RC/GA 路线 |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构 |
-| [docs/API.md](docs/API.md) | REST 契约 |
-| [docs/SDK.md](docs/SDK.md) | 业务插件接入 |
+| [docs/UI-WIKI.md](docs/UI-WIKI.md) | UI 控件博物馆：启动、覆盖率门禁、新增控件流程 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 部署 / 升级 / 备份 / 排障 |
-| [docs/UI-WIKI.md](docs/UI-WIKI.md) | UI 控件博物馆启动与覆盖率门禁 |
-| [docs/UX.md](docs/UX.md) | 前端信息架构与交互契约 |
-| [docs/adr/](docs/adr/) | 架构决策 |
+| [docs/SDK.md](docs/SDK.md) | 业务插件接入 Agent API |
 | [SECURITY.md](SECURITY.md) | 安全边界 |
 | [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
-
----
-
-## 第二版路线（摘要）
-
-- **Legacy 0.1–0.19** — 探索期，冻结  
-- **P0–P9（0.20–0.30）** — 规格、工程化、集群、调度、消息、归档、配置、资产、交付编排  
-- **0.31 对齐中间版** — 管理台壳层（侧栏 / 页眉 / 指标 / 搜索语言通知刷新）  
-- **P10 `v1.0.0-rc.N` → GA `v1.0.0`** — 不可变 RC，原样晋级 GA  
-
-细节以 [docs/ROADMAP.md](docs/ROADMAP.md) 为准。
 
 ---
 

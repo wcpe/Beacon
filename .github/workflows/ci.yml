@@ -1,11 +1,26 @@
 # Beacon 持续集成门禁：PR 只执行质量任务，master 全绿后生成短期开发产物。
+# 纯文档 / 展示资源变更不触发构建与打包（paths-ignore 命中且无其它改动时整条流水线跳过）。
 name: CI
 
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
   pull_request:
     branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.editorconfig'
+      - '.gitattributes'
+      - '.gitignore'
 
 # 同一分支新推送自动取消旧的在跑流水线，节省 CI 资源。
 concurrency:
