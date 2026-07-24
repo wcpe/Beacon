@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/glebarez/sqlite"
+	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
