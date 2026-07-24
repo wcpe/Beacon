@@ -139,6 +139,7 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
+          --command --max_connections=500
       redis:
         image: redis:7.4-alpine
         ports:

@@ -47,12 +47,15 @@ func OpenTestDB(t *testing.T, suffix string) *gorm.DB {
 	}
 
 	cfg.DBName = target
+	// 集成套件在 CI 上会并行打开多个包库；池宜小、生命周期短，避免 MySQL 151 连接上限被 idle 占满。
 	db, err := store.Open(config.DatabaseConfig{
-		Driver: "mysql", DSN: cfg.FormatDSN(), MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetimeSec: 300,
+		Driver: "mysql", DSN: cfg.FormatDSN(), MaxOpenConns: 2, MaxIdleConns: 1, ConnMaxLifetimeSec: 60,
 	})
 	if err != nil {
 		t.Fatalf("连接测试库失败: %v", err)
 	}
+	// 用例结束必须关池：否则并行 package 测试会累积连接直至 Error 1040。
+	t.Cleanup(func() { store.Close(db) })
 	for _, tbl := range resetTables {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
