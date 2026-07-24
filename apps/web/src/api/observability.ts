@@ -22,6 +22,9 @@ export interface CommandQuery {
   serverId?: string
   type?: string
   status?: string
+  // 时间范围（RFC3339）；不传则全表分页（最新在前）
+  from?: string
+  to?: string
   page?: number
   size?: number
 }
@@ -75,9 +78,52 @@ export function fetchAuditAnalytics(): Promise<AuditAnalytics> {
   return request('GET', '/admin/v1/audits/analytics')
 }
 
-/** 审计导出 URL（CSV / JSON），mock 下由浏览器直接下载 */
-export function auditExportUrl(format: 'csv' | 'json'): string {
-  return `/admin/v1/audits/export${buildQuery({ format })}`
+/**
+ * 审计导出（CSV / JSON）：必须带 Authorization Bearer，不能用 a 标签直链（否则 401 ADMIN_UNAUTHORIZED）。
+ * 过滤口径与列表一致；成功后触发浏览器下载。
+ */
+export async function exportAudits(format: 'csv' | 'json', query: AuditQuery = {}): Promise<void> {
+  // 导出不带分页游标；与 List 同口径过滤字段
+  const { includeArchived: _cold, cursor: _cursor, page: _page, size: _size, ...filters } = query
+  const path = `/admin/v1/audits/export${buildQuery({ format, ...filters })}`
+  const { clearAuth, currentToken, notifyUnauthorized } = await import('../state/auth')
+  const { ApiClientError } = await import('./cluster')
+  const headers: Record<string, string> = {}
+  const token = currentToken()
+  if (token !== '') {
+    headers.Authorization = `Bearer ${token}`
+  }
+  const response = await fetch(path, { method: 'GET', headers })
+  if (response.status === 401) {
+    clearAuth()
+    notifyUnauthorized()
+    throw new ApiClientError(401, 'ADMIN_UNAUTHORIZED', '缺少或非法的登录令牌')
+  }
+  if (!response.ok) {
+    const text = await response.text()
+    let message = `导出失败（HTTP ${String(response.status)}）`
+    try {
+      const parsed = JSON.parse(text) as { message?: string }
+      if (typeof parsed.message === 'string' && parsed.message !== '') {
+        message = parsed.message
+      }
+    } catch {
+      // 非 JSON 体保持通用文案
+    }
+    throw new ApiClientError(response.status, 'export_failed', message)
+  }
+  const blob = await response.blob()
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const match = /filename="?([^";]+)"?/i.exec(disposition)
+  const filename = match?.[1] ?? `audit-export.${format}`
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }
 
 // ---- 告警事件（/alert-events）----

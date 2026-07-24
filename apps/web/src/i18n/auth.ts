@@ -19,7 +19,7 @@ export const auth = {
     // 兜底登录失败文案（非结构化错误时使用；结构化错误优先展示后端脱敏 message）
     failed: '登录失败，请稍后重试',
     // 卡片底部环境副文案
-    envHint: '第二版管理台 · 演示环境',
+    envHint: 'Beacon 跨服控制面',
   },
   logout: {
     // 页眉登出按钮

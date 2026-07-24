@@ -92,7 +92,9 @@ export default function DecisionDetail({ traceId }: DecisionDetailProps) {
                     className="flex items-center justify-between gap-2 rounded-lg bg-secondary/60 px-2.5 py-1.5"
                   >
                     <span className="font-mono text-xs text-ink-2">{row.serverId}</span>
-                    <Badge variant="off">{row.reason}</Badge>
+                    <Badge variant="off">
+                      {t(`cluster.servers.schedReason.${row.reason}`, { defaultValue: row.reason })}
+                    </Badge>
                   </li>
                 ))}
               </ul>

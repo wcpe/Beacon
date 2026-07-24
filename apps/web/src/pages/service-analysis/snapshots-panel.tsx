@@ -176,7 +176,10 @@ function SnapshotCard({ serverId, points }: { serverId: string; points: HealthSn
             </div>
             {latest.reasons.length > 0 && (
               <p className="rounded-lg bg-warn-50/60 px-2.5 py-1.5 text-xs text-warn-800">
-                {t('observability.serviceAnalysis.snapshots.latestReasons')}：{latest.reasons.join('、')}
+                {t('observability.serviceAnalysis.snapshots.latestReasons')}：
+                {latest.reasons
+                  .map((r) => t(`cluster.servers.schedReason.${r}`, { defaultValue: r }))
+                  .join('、')}
               </p>
             )}
           </>

@@ -1,8 +1,7 @@
 // 消息链路页（/messages，FR-181）：跨服消息链路检索与逐跳追踪。元数据永不含 payload；
 // payload 仅经受控查看弹窗（原因必填 + 先审计后返回）按需获取。
-// 查询防护（spec §4.3）：精确 messageId / correlationId 直查；否则必须 serverId / 玩家 UUID +
-// 时间范围（≤168h），未满足条件时不发请求、展示引导空态。游标分页；「包含归档」冷查询（FR-152）。
-// 行点击右侧详情面板（详情端点补 hops 逐跳链路 + 关联消息）。
+// 查询防护：精确 messageId / correlationId 直查；热查询可仅时间窗（全局近期）；冷查询仍须 selector。
+// 进页默认 committed 近 1h 全局查询。游标分页；「包含归档」冷查询（FR-152）。行点击右侧详情面板。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -15,7 +14,7 @@ import {
   Checkbox,
   DataTable,
   Input,
-  SectionHeader,
+  PageHeader,
   Skeleton,
   TableSkeleton,
   type DataTableColumn,
@@ -72,13 +71,15 @@ export default function MessagesPage() {
   const [targetKind, setTargetKind] = useState('all')
   const [windowKey, setWindowKey] = useState<WindowKey>('1h')
   const [cold, setCold] = useState(false)
-  const [committed, setCommitted] = useState<Committed | null>(null)
+  // 进页默认近 1h 全局热查询（无需 selector）
+  const [committed, setCommitted] = useState<Committed>(() => ({ windowKey: '1h', cold: false }))
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const cursor = useCursorStack()
 
-  // 查询防护前置判定：精确 ID（messageId / correlationId）或至少一个选择性过滤
+  // 查询防护：精确 ID 始终可查；热查询有时间窗即可；冷查询仍须 serverId / playerUuid
   const exactMode = messageId.trim() !== '' || correlationId.trim() !== ''
-  const canSearch = exactMode || serverId.trim() !== '' || playerUuid.trim() !== ''
+  const hasSelector = serverId.trim() !== '' || playerUuid.trim() !== ''
+  const canSearch = exactMode || !cold || hasSelector
 
   const submit = () => {
     cursor.reset()
@@ -97,12 +98,7 @@ export default function MessagesPage() {
 
   const query = useQuery({
     queryKey: ['messages', 'list', committed, cursor.cursor],
-    enabled: committed !== null,
     queryFn: () => {
-      // enabled 已保证非空；此守卫仅为类型收窄（不可达）
-      if (committed === null) {
-        return Promise.reject(new Error('查询条件未提交'))
-      }
       const c = committed
       const q: MessagesQuery = {
         messageId: c.messageId,
@@ -131,10 +127,9 @@ export default function MessagesPage() {
   const selected = rows.find((r) => r.messageId === selectedId) ?? null
   const dash = t('observability.messages.dash')
 
-  // 详情面板打开时收起次要列（寻址 / 耗时在详情内均可见），避免主表被挤出横向滚动
-  const detailOpen = selected !== null
-  const columns = useMemo<DataTableColumn<MessageItem>[]>(() => {
-    const all: (DataTableColumn<MessageItem> & { secondary?: boolean })[] = [
+  // 详情为固定层抽屉，主表宽度恒定，列集不再随选中态裁剪
+  const columns = useMemo<DataTableColumn<MessageItem>[]>(
+    () => [
       {
         header: t('observability.messages.columns.createdAt'),
         cell: (row) => (
@@ -155,7 +150,6 @@ export default function MessagesPage() {
       },
       {
         header: t('observability.messages.columns.targetKind'),
-        secondary: true,
         cell: (row) => (
           <Badge variant={row.targetKind === 'broadcast' ? 'brand' : 'secondary'}>
             {t(`observability.messages.targetKind.${row.targetKind}`)}
@@ -170,16 +164,15 @@ export default function MessagesPage() {
       },
       {
         header: t('observability.messages.columns.duration'),
-        secondary: true,
         cell: (row) => (
           <span className="tabular-nums text-xs text-ink-3">
             {row.durationMs === null ? dash : t('observability.messages.durationMs', { count: row.durationMs })}
           </span>
         ),
       },
-    ]
-    return detailOpen ? all.filter((col) => col.secondary !== true) : all
-  }, [t, dash, detailOpen])
+    ],
+    [t, dash],
+  )
 
   const toolbar = (
     <div className="grid gap-2.5">
@@ -282,18 +275,17 @@ export default function MessagesPage() {
 
   return (
     <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
+      <PageHeader
         icon={<MessagesSquare className="size-5" />}
         title={t('nav.messages')}
-        count={t('observability.messages.mission')}
+        description={t('observability.messages.mission')}
       />
       <MasterDetail
         master={
           <ListCard
             toolbar={toolbar}
             footer={
-              committed !== null && (nextCursor !== null || cursor.canPrev) ? (
+              nextCursor !== null || cursor.canPrev ? (
                 <CursorPager
                   pageIndex={cursor.pageIndex}
                   canPrev={cursor.canPrev}
@@ -309,30 +301,24 @@ export default function MessagesPage() {
               ) : undefined
             }
           >
-            {committed === null ? (
-              <p className="rounded-xl border border-dashed border-border bg-card/60 px-4 py-10 text-center text-sm text-ink-3">
-                {t('observability.messages.guardEmpty')}
-              </p>
-            ) : (
-              <AsyncSection
-                isLoading={query.isLoading}
-                isError={query.isError}
-                error={query.error}
-                skeleton={<TableSkeleton columns={columns.length} rows={8} />}
-              >
-                <DataTable
-                  columns={columns}
-                  rows={rows}
-                  rowKey={(row) => row.messageId}
-                  emptyText={t('observability.messages.listEmpty')}
-                  density="compact"
-                  onRowClick={(row) => {
-                    setSelectedId(row.messageId)
-                  }}
-                  rowClassName={(row) => (row.messageId === selectedId ? 'bg-brand-50/60' : undefined)}
-                />
-              </AsyncSection>
-            )}
+            <AsyncSection
+              isLoading={query.isLoading}
+              isError={query.isError}
+              error={query.error}
+              skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+            >
+              <DataTable
+                columns={columns}
+                rows={rows}
+                rowKey={(row) => row.messageId}
+                emptyText={t('observability.messages.listEmpty')}
+                density="compact"
+                onRowClick={(row) => {
+                  setSelectedId(row.messageId)
+                }}
+                rowClassName={(row) => (row.messageId === selectedId ? 'bg-brand-50/60' : undefined)}
+              />
+            </AsyncSection>
           </ListCard>
         }
         detail={selected === null ? null : <MessageDetailPanel row={selected} />}
@@ -371,7 +357,12 @@ function MessageDetailPanel({ row }: { row: MessageItem }) {
             ['source', row.sourceServerId],
             ['target', row.targetServerId ?? row.targetPlayer ?? dash],
             ['resolved', row.resolvedServerId ?? dash],
-            ['crossNamespace', row.crossNamespace ? '是' : '否'],
+            [
+              'crossNamespace',
+              row.crossNamespace
+                ? t('observability.serviceAnalysis.yes')
+                : t('observability.serviceAnalysis.no'),
+            ],
             ['failReason', row.failReason ?? dash],
             ['createdAt', new Date(row.createdAt).toLocaleString()],
             ['dispatchedAt', row.dispatchedAt === null ? dash : new Date(row.dispatchedAt).toLocaleString()],

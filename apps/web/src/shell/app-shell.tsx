@@ -5,7 +5,7 @@
 // 内容区按宽度自适应缩放（见 useFitToWidth）：内容超出可视宽度时整体等比缩小到刚好放下，
 // 因此 100% 浏览器缩放下只会有纵向滚动，绝不出现横向滚动条、也不会裁掉右侧内容。
 // 订阅 mock 场景切换（FR-159），场景变化时全量失效查询让所有页面重取数据。
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -13,10 +13,11 @@ import { useTranslation } from 'react-i18next'
 import { subscribeMockScenario } from '@beacon/devmock/scenario'
 import { useQueryClient } from '@tanstack/react-query'
 
+import LicensePage from '../pages/license'
 import { ALL_PAGES } from '../routes'
 import { useShellStore } from '../store'
 import Header from './header'
-import Sidebar from './sidebar'
+import Sidebar, { SIDEBAR_WIDTH_COLLAPSED, SIDEBAR_WIDTH_EXPANDED } from './sidebar'
 
 /** 内容再窄也不缩到看不清，缩放下限 */
 const MIN_FIT_ZOOM = 0.6
@@ -99,6 +100,8 @@ export default function AppShell() {
   const { t } = useTranslation()
   const sidebarCollapsed = useShellStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useShellStore((state) => state.toggleSidebar)
+  const mobileNavOpen = useShellStore((state) => state.mobileNavOpen)
+  const closeMobileNav = useShellStore((state) => state.closeMobileNav)
   const queryClient = useQueryClient()
   const location = useLocation()
   const toggleLabel = sidebarCollapsed ? t('common.sidebar.expand') : t('common.sidebar.collapse')
@@ -113,22 +116,43 @@ export default function AppShell() {
     })
   }, [queryClient])
 
+  // 路由变化时关闭小屏抽屉，避免遮挡新页（FR-189）
+  useEffect(() => {
+    closeMobileNav()
+  }, [location.pathname, closeMobileNav])
+
+  const sidebarWidth = sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH_EXPANDED
+  // 折叠钮 24px：中心对准侧栏右缘（交接点）；纵向对齐品牌区底缘（约 58px）
+  const toggleLeft = sidebarWidth - 12
+  const toggleTop = 58
+
   return (
     <div className="app-bg h-screen overflow-hidden text-foreground">
       <Sidebar />
 
-      {/* 折叠触发器：浮于侧栏右缘、页眉与内容区交界线上的小圆按钮 */}
+      {/* 小屏遮罩：点按关闭抽屉 */}
+      {mobileNavOpen ? (
+        <button
+          type="button"
+          aria-label={t('common.sidebar.closeMobileOverlay')}
+          className="fixed inset-0 z-30 bg-ink-1/40 md:hidden"
+          onClick={closeMobileNav}
+        />
+      ) : null}
+
+      {/* 折叠触发器：侧栏右缘 × 品牌底缘交接点（FR-186）；仅桌面 */}
       <button
         aria-label={toggleLabel}
         title={toggleLabel}
         type="button"
         onClick={toggleSidebar}
         className={[
-          'fixed top-14 z-30 hidden size-6 -translate-y-1/2 place-items-center rounded-full',
-          'border border-border bg-card text-ink-3 shadow-card transition',
+          'fixed z-30 hidden size-6 -translate-x-0 -translate-y-1/2 place-items-center rounded-full',
+          'border border-border bg-card text-ink-3 shadow-card',
+          'transition-[left,top,color,border-color] duration-200 ease-out',
           'hover:border-border-strong hover:text-ink-1 md:grid',
-          sidebarCollapsed ? 'left-2' : 'left-[220px]',
         ].join(' ')}
+        style={{ left: toggleLeft, top: toggleTop }}
       >
         {sidebarCollapsed ? (
           <ChevronRight className="size-3.5" />
@@ -137,7 +161,10 @@ export default function AppShell() {
         )}
       </button>
 
-      <div className={['flex h-screen flex-col', sidebarCollapsed ? '' : 'md:pl-[232px]'].join(' ')}>
+      <div
+        className="flex h-screen flex-col transition-[padding-left] duration-200 ease-out md:pl-[var(--shell-sidebar-width)]"
+        style={{ ['--shell-sidebar-width' as string]: `${sidebarWidth}px` } as CSSProperties}
+      >
         <Header />
         {/* 内容区只纵向滚动；超宽内容由 useFitToWidth 等比缩小放下，不裁切、不横滚 */}
         <main
@@ -147,6 +174,8 @@ export default function AppShell() {
           <div ref={contentRef} className="grid gap-5 p-4 sm:px-[22px] sm:py-[18px]">
             <Routes>
               <Route element={<Navigate replace to="/dashboard" />} path="/" />
+              {/* FR-190：开源许可页仅底栏入口，不进主导航 ALL_PAGES */}
+              <Route element={<LicensePage />} path="/license" />
               {ALL_PAGES.map((page) => (
                 <Route element={<page.Component />} key={page.path} path={page.path} />
               ))}

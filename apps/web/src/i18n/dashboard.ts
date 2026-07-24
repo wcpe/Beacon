@@ -20,6 +20,8 @@ export const dashboard = {
     levelHealthy: '健康',
     levelDegraded: '亚健康',
     levelUnhealthy: '不健康',
+    // SVG 图例无障碍标签
+    distributionAria: '健康等级分布',
   },
   // 服务器状态墙
   wall: {
@@ -93,6 +95,7 @@ export const dashboard = {
     localFallback: '本地降级占比',
     failTop: '失败原因 Top',
     empty: '当前时间窗内无调度决策',
+    emptyHint: '近 1 小时控制面未收到玩家路由决策记录；有玩家经代理选服后会出现在此。不是页面故障。',
     viewAnalysis: '前往服务分析',
     viewAlerts: '前往告警事件',
   },

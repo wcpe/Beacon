@@ -1,6 +1,6 @@
 // 连接明细页（/connections，FR-181）：连接会话明细查询与追溯。
-// 查询防护（spec §4.3）：精确 connId 直查；否则必须 serverId / 玩家 UUID + 时间范围（≤168h），
-// 未满足条件时不发请求、展示引导空态。游标分页（热 / 冷原生 CursorPage）；「包含归档」冷查询（FR-152）。
+// 查询防护：精确 connId 直查；热查询可仅时间窗（全局近期）；冷查询仍须 serverId / 玩家 UUID。
+// 进页默认 committed 近 1h 全局查询。游标分页（热 / 冷原生 CursorPage）；「包含归档」冷查询（FR-152）。
 // 行点击右侧非模态详情面板（行数据自足，无需二次请求）。
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
@@ -14,7 +14,7 @@ import {
   Checkbox,
   DataTable,
   Input,
-  SectionHeader,
+  PageHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -53,13 +53,15 @@ export default function ConnectionsPage() {
   const [closeKind, setCloseKind] = useState('all')
   const [windowKey, setWindowKey] = useState<WindowKey>('1h')
   const [cold, setCold] = useState(false)
-  const [committed, setCommitted] = useState<Committed | null>(null)
+  // 进页默认近 1h 全局热查询（无需 selector）
+  const [committed, setCommitted] = useState<Committed>(() => ({ windowKey: '1h', cold: false }))
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const cursor = useCursorStack()
 
-  // 查询防护前置判定：精确 connId 或至少一个选择性过滤（serverId / playerUuid）
+  // 查询防护：精确 connId 始终可查；热查询有时间窗即可；冷查询仍须 serverId / playerUuid
   const exactMode = connId.trim() !== ''
-  const canSearch = exactMode || serverId.trim() !== '' || playerUuid.trim() !== ''
+  const hasSelector = serverId.trim() !== '' || playerUuid.trim() !== ''
+  const canSearch = exactMode || !cold || hasSelector
 
   const submit = () => {
     cursor.reset()
@@ -77,12 +79,7 @@ export default function ConnectionsPage() {
 
   const query = useQuery({
     queryKey: ['connections', 'list', committed, cursor.cursor],
-    enabled: committed !== null,
     queryFn: () => {
-      // enabled 已保证非空；此守卫仅为类型收窄（不可达）
-      if (committed === null) {
-        return Promise.reject(new Error('查询条件未提交'))
-      }
       const c = committed
       const q: ConnectionsQuery = {
         connId: c.connId,
@@ -110,10 +107,9 @@ export default function ConnectionsPage() {
   const selected = rows.find((r) => r.connId === selectedId) ?? null
   const dash = t('observability.connections.dash')
 
-  // 详情面板打开时收起次要列（后端路径 / 时长 / 断开类别在详情内均可见），避免主表被挤出横向滚动
-  const detailOpen = selected !== null
-  const columns = useMemo<DataTableColumn<ConnectionItem>[]>(() => {
-    const all: (DataTableColumn<ConnectionItem> & { secondary?: boolean })[] = [
+  // 详情为固定层抽屉，主表宽度恒定，列集不再随选中态裁剪
+  const columns = useMemo<DataTableColumn<ConnectionItem>[]>(
+    () => [
       {
         header: t('observability.connections.columns.openedAt'),
         cell: (row) => (
@@ -130,7 +126,6 @@ export default function ConnectionsPage() {
       },
       {
         header: t('observability.connections.columns.backendPath'),
-        secondary: true,
         cell: (row) => (
           <span className="font-mono text-xs text-ink-2">
             {row.firstBackendServerId ?? dash}
@@ -140,7 +135,6 @@ export default function ConnectionsPage() {
       },
       {
         header: t('observability.connections.columns.duration'),
-        secondary: true,
         cell: (row) => (
           <span className="tabular-nums text-xs text-ink-3">
             {row.durationMs === null
@@ -159,7 +153,6 @@ export default function ConnectionsPage() {
       },
       {
         header: t('observability.connections.columns.closeKind'),
-        secondary: true,
         cell: (row) =>
           row.closeKind === null ? (
             <span className="text-xs text-ink-4">{dash}</span>
@@ -169,9 +162,9 @@ export default function ConnectionsPage() {
             </Badge>
           ),
       },
-    ]
-    return detailOpen ? all.filter((col) => col.secondary !== true) : all
-  }, [t, dash, detailOpen])
+    ],
+    [t, dash],
+  )
 
   const toolbar = (
     <div className="grid gap-2.5">
@@ -263,18 +256,17 @@ export default function ConnectionsPage() {
 
   return (
     <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
+      <PageHeader
         icon={<Cable className="size-5" />}
         title={t('nav.connections')}
-        count={t('observability.connections.mission')}
+        description={t('observability.connections.mission')}
       />
       <MasterDetail
         master={
           <ListCard
             toolbar={toolbar}
             footer={
-              committed !== null && (nextCursor !== null || cursor.canPrev) ? (
+              nextCursor !== null || cursor.canPrev ? (
                 <CursorPager
                   pageIndex={cursor.pageIndex}
                   canPrev={cursor.canPrev}
@@ -290,30 +282,24 @@ export default function ConnectionsPage() {
               ) : undefined
             }
           >
-            {committed === null ? (
-              <p className="rounded-xl border border-dashed border-border bg-card/60 px-4 py-10 text-center text-sm text-ink-3">
-                {t('observability.connections.guardEmpty')}
-              </p>
-            ) : (
-              <AsyncSection
-                isLoading={query.isLoading}
-                isError={query.isError}
-                error={query.error}
-                skeleton={<TableSkeleton columns={columns.length} rows={8} />}
-              >
-                <DataTable
-                  columns={columns}
-                  rows={rows}
-                  rowKey={(row) => row.connId}
-                  emptyText={t('observability.connections.listEmpty')}
-                  density="compact"
-                  onRowClick={(row) => {
-                    setSelectedId(row.connId)
-                  }}
-                  rowClassName={(row) => (row.connId === selectedId ? 'bg-brand-50/60' : undefined)}
-                />
-              </AsyncSection>
-            )}
+            <AsyncSection
+              isLoading={query.isLoading}
+              isError={query.isError}
+              error={query.error}
+              skeleton={<TableSkeleton columns={columns.length} rows={8} />}
+            >
+              <DataTable
+                columns={columns}
+                rows={rows}
+                rowKey={(row) => row.connId}
+                emptyText={t('observability.connections.listEmpty')}
+                density="compact"
+                onRowClick={(row) => {
+                  setSelectedId(row.connId)
+                }}
+                rowClassName={(row) => (row.connId === selectedId ? 'bg-brand-50/60' : undefined)}
+              />
+            </AsyncSection>
           </ListCard>
         }
         detail={selected === null ? null : <ConnDetailPanel row={selected} />}

@@ -38,6 +38,7 @@ function DistributionRing({
   degraded: number
   unhealthy: number
 }) {
+  const { t } = useTranslation()
   const total = healthy + degraded + unhealthy
   // 各段占周长百分比（总周长按 100 计），依次首尾相接。
   const segs =
@@ -50,7 +51,14 @@ function DistributionRing({
         ]
   let offset = 25 // 从 12 点方向起画（dashoffset 25 = 顶部）
   return (
-    <svg width="86" height="86" viewBox="0 0 42 42" className="shrink-0" role="img" aria-label="健康等级分布">
+    <svg
+      width="86"
+      height="86"
+      viewBox="0 0 42 42"
+      className="shrink-0"
+      role="img"
+      aria-label={t('dashboard.kpi.distributionAria')}
+    >
       <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--muted)" strokeWidth="6" />
       {segs.map((s, i) => {
         const dash = `${String(s.pct)} ${String(100 - s.pct)}`

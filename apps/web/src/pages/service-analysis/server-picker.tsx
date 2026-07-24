@@ -16,6 +16,12 @@ import {
 import type { ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
+import {
+  filterItemsByEnvScope,
+  needsClientEnvFilter,
+  resolveApiNamespaceId,
+  useEnvNamespaceScope,
+} from '../../features/env/use-env-scope'
 
 interface ServerPickerProps {
   // 已选 serverId 集合
@@ -27,16 +33,28 @@ interface ServerPickerProps {
 export default function ServerPicker({ selected, onToggle, onClear }: ServerPickerProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
+  // FR-178：选服列表跟随顶栏 env
+  const envScope = useEnvNamespaceScope()
+  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
+  const clientFilter = needsClientEnvFilter(envScope)
 
-  // 拉全部子服，客户端筛在线（指标时序仅对在线子服有意义）
+  // 拉子服，客户端筛在线（指标时序仅对在线子服有意义）
   const query = useQuery({
-    queryKey: ['service-analysis', 'servers'],
-    queryFn: () => fetchServers({ kind: 'backend', pageSize: 200 }),
+    queryKey: ['service-analysis', 'servers', apiNamespaceId, envScope],
+    queryFn: () => fetchServers({ kind: 'backend', namespaceId: apiNamespaceId, pageSize: 200 }),
   })
 
-  const online = useMemo<ServerItem[]>(
-    () => (query.data?.items ?? []).filter((s) => s.online),
-    [query.data],
+  const online = useMemo<ServerItem[]>(() => {
+    const items = query.data?.items ?? []
+    const scoped = clientFilter ? filterItemsByEnvScope(items, envScope) : items
+    return scoped.filter((s) => s.online)
+  }, [query.data, clientFilter, envScope])
+
+  // 已选但当前列表不存在的幽灵项（历史 localStorage / 已下线 / 换 ns 后残留）
+  const onlineIds = useMemo(() => new Set(online.map((s) => s.serverId)), [online])
+  const ghostSelected = useMemo(
+    () => [...selected].filter((id) => !onlineIds.has(id)),
+    [selected, onlineIds],
   )
 
   // 关键词过滤（按 serverId）
@@ -97,6 +115,41 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
           error={query.error}
           skeleton={<CardGridSkeleton count={4} />}
         >
+          {/* 幽灵选中：历史持久化 / 已下线 / 不在当前 env，必须可见并可点掉 */}
+          {ghostSelected.length > 0 && (
+            <div className="mb-2 grid gap-1 rounded-lg border border-warn-bd bg-warn-bg/40 p-2">
+              <p className="px-0.5 text-[11px] font-medium text-warn">
+                {t('observability.serviceAnalysis.ghostSelected', { count: ghostSelected.length })}
+              </p>
+              {ghostSelected.map((id) => (
+                <button
+                  key={`ghost-${id}`}
+                  type="button"
+                  aria-label={t('observability.serviceAnalysis.removeGhost', { id })}
+                  onClick={() => {
+                    onToggle(id)
+                  }}
+                  className="flex items-center gap-2 rounded-md border border-warn-bd/60 bg-card px-2.5 py-1.5 text-left hover:bg-warn-bg/50"
+                >
+                  <ServerOff className="size-3.5 shrink-0 text-warn" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-2">{id}</span>
+                  <span className="text-[10px] text-ink-4">{t('observability.serviceAnalysis.ghostHint')}</span>
+                </button>
+              ))}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 justify-start px-1 text-xs text-warn"
+                onClick={() => {
+                  for (const id of ghostSelected) {
+                    onToggle(id)
+                  }
+                }}
+              >
+                {t('observability.serviceAnalysis.clearGhosts')}
+              </Button>
+            </div>
+          )}
           {online.length === 0 ? (
             <div className="flex items-center gap-2 px-2 py-6 text-xs text-ink-3">
               <ServerOff className="size-4 shrink-0 text-ink-4" />

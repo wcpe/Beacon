@@ -40,8 +40,10 @@ describe('/alert-events 告警事件页', () => {
     renderPage(<AlertEventsPage />)
 
     expect(await screen.findByText('告警总数')).toBeInTheDocument()
-    // 出现健康流转告警摘要
-    expect((await screen.findAllByText(/状态 (lost → offline|online → degraded)/)).length).toBeGreaterThan(0)
+    // 健康流转摘要已 i18n：亚健康/失联/在线 等中文态 + 箭头
+    expect(
+      (await screen.findAllByText(/亚健康\s*→\s*失联|在线\s*→\s*亚健康|失联\s*→\s*离线|在线\s*→\s*失联/)).length,
+    ).toBeGreaterThan(0)
   })
 
   it('空态给出无记录提示', async () => {
@@ -65,12 +67,13 @@ describe('/alert-events 告警事件页', () => {
       row = tr
     })
 
-    // 点行 → 右侧非模态详情面板出现（不产生模态遮罩层）
+    // 点行 → 固定层详情出现（非 dialog，主表不 reflow）
     await user.click(row as unknown as HTMLElement)
     await waitFor(() => {
       expect(screen.getByText('告警详情')).toBeInTheDocument()
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
 
     // 面板内点「确认」完成写闭环
     await user.click(screen.getByRole('button', { name: '确认' }))

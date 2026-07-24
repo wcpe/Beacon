@@ -83,7 +83,7 @@ describe('/changes 变更单页', () => {
     }
     await user.click(row)
 
-    // 详情面板出现（关闭按钮 + 待审批徽标，列表主列仍在故可能多处出现）且未产生模态遮罩
+    // 详情为固定层抽屉（返回列表 + 待审批）；列表主列仍在、无 dialog
     await screen.findByRole('button', { name: '返回列表' })
     expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

@@ -141,7 +141,7 @@ describe('/servers 服务器页', () => {
     // 初始能看到 lobby-1 与 mall-1
     expect(await screen.findByText('lobby-1')).toBeInTheDocument()
 
-    const searchBox = screen.getByLabelText('搜索 serverId')
+    const searchBox = screen.getByLabelText('搜索服务器 ID')
     await user.type(searchBox, 'mall')
 
     await waitFor(() => {

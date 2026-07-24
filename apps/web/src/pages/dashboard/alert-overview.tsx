@@ -11,6 +11,11 @@ import { AsyncSection, Badge, CardGridSkeleton, cn } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { fetchAlertEvents } from '../../api/observability'
+import {
+  filterItemsByEnvCodes,
+  useEnvNamespaceCodes,
+} from '../../features/env/use-env-scope'
+import { alertSubtitle } from '../../features/observability/alert-transition'
 
 // 告警等级 → 图标框样式 + 图标。
 const SEV_META: Record<
@@ -28,11 +33,21 @@ function sevMeta(level: string) {
 
 export default function AlertOverview() {
   const { t } = useTranslation()
+  // FR-178：告警概览跟随顶栏 env（namespace 字符串维度）
+  const envCodes = useEnvNamespaceCodes()
+  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
   const query = useQuery({
-    queryKey: ['dashboard', 'alerts'],
-    queryFn: () => fetchAlertEvents({ page: 1, size: 100 }),
+    queryKey: ['dashboard', 'alerts', apiNamespace, envCodes],
+    queryFn: () => fetchAlertEvents({ page: 1, size: 100, namespace: apiNamespace }),
   })
-  const items = useMemo(() => query.data?.items ?? [], [query.data])
+  const items = useMemo(() => {
+    const raw = query.data?.items ?? []
+    // 单 ns 已走 API；多 ns / 空映射客户端再滤；全部环境不过滤
+    if (envCodes === null || envCodes.length === 1) {
+      return raw
+    }
+    return filterItemsByEnvCodes(raw, envCodes)
+  }, [query.data, envCodes])
 
   const openItems = items.filter((i) => i.status === 'open')
   const criticalOpen = openItems.filter((i) => i.level === 'critical').length
@@ -86,7 +101,7 @@ export default function AlertOverview() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[12.5px] text-ink-2">
                         <span className="font-semibold text-brand-600">{item.serverId}</span> ·{' '}
-                        {item.message}
+                        {alertSubtitle(item, t)}
                       </div>
                     </div>
                   </li>

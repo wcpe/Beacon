@@ -1,5 +1,6 @@
 // 告警详情面板内容（非模态右侧列）：单条告警全字段 + 处理写闭环（确认 / 标记已处理）在面板内完成。
 // 待处理态展示确认 / 标记已处理表单（resolved 备注必填），已处理态展示处理人 / 时间 / 备注 + 互跳。
+// message 为人读摘要；detail 用 JsonDetail 键值可视化（非 JSON 则原文）。
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -7,6 +8,12 @@ import { ArrowUpRight } from 'lucide-react'
 
 import { Badge, Button, Label, Textarea } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
+
+import {
+  healthStatusLabel,
+  parseHealthTransition,
+} from '../../features/observability/alert-transition'
+import JsonDetail from '../../features/observability/json-detail'
 
 // 处理意图：确认或标记已处理
 export type HandleIntent = 'acknowledged' | 'resolved'
@@ -66,10 +73,47 @@ export default function AlertDetailPanel({ item, pending, errorText, onHandle }:
       <Field label={t('observability.alertEvents.columns.time')} value={new Date(item.createdAt).toLocaleString()} />
       <Field label={t('observability.alertEvents.columns.type')} value={t(`observability.alertEvents.type.${item.type}`)} />
       <Field label={t('observability.alertEvents.columns.serverId')} value={item.serverId} mono />
+      {/* 状态流转：detail JSON / message 解析后 i18n 展示，不再甩英文枚举 */}
+      {(() => {
+        const tr = parseHealthTransition(item)
+        if (tr === null) {
+          return null
+        }
+        return (
+          <div className="grid gap-1">
+            <span className="text-xs text-ink-4">{t('observability.alertEvents.columns.transition')}</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="off">{healthStatusLabel(t, tr.from)}</Badge>
+              <span className="text-ink-4">→</span>
+              <Badge variant={item.level === 'critical' ? 'crit' : 'warn'}>
+                {healthStatusLabel(t, tr.to)}
+              </Badge>
+            </div>
+          </div>
+        )
+      })()}
+      {/* 人读摘要：健康流转用 i18n 副标题，其它类型保留 message */}
       <div className="grid gap-1">
         <span className="text-xs text-ink-4">{t('observability.alertEvents.columns.message')}</span>
-        <p className="rounded-lg bg-secondary/60 px-2.5 py-2 text-xs text-ink-2">{item.detail || item.message}</p>
+        <p className="rounded-lg bg-secondary/60 px-2.5 py-2 text-xs text-ink-2">
+          {(() => {
+            const tr = parseHealthTransition(item)
+            if (tr !== null) {
+              return t('observability.alertEvents.transitionArrow', {
+                from: healthStatusLabel(t, tr.from),
+                to: healthStatusLabel(t, tr.to),
+              })
+            }
+            return item.message || '—'
+          })()}
+        </p>
       </div>
+      {/* detail JSON 键值可视化；非 JSON / 空则组件内降级 */}
+      <JsonDetail
+        raw={item.detail ?? ''}
+        title={t('observability.alertEvents.columns.detail')}
+        keyPrefix="observability.alertEvents.detailKeys"
+      />
 
       {/* 已处理 / 已确认态：展示处理人 / 时间 / 备注 */}
       {item.handledBy !== null && (

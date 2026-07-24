@@ -2,10 +2,12 @@ import React, { useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes, useNavigate } from 'react-router-dom'
+import { Toaster } from '@beacon/ui'
 import '@beacon/ui/styles.css'
 import './styles.css'
 import './i18n'
 import AppShell from './shell/app-shell'
+import DocumentTitle from './shell/document-title'
 import RequireAuth from './shell/require-auth'
 import LoginPage from './pages/login'
 import { isDemoMode } from './demo-mode'
@@ -25,19 +27,23 @@ function AppRoutes() {
   }, [navigate])
 
   return (
-    <Routes>
-      {/* 登录页公开、全屏、独立于 AppShell（无侧栏无页眉） */}
-      <Route element={<LoginPage />} path="/login" />
-      {/* 其余路径进管理台 Shell，经路由守卫：无令牌且非 demo → 跳登录；demo 免登录放行 */}
-      <Route
-        element={
-          <RequireAuth>
-            <AppShell />
-          </RequireAuth>
-        }
-        path="/*"
-      />
-    </Routes>
+    <>
+      {/* 须在 BrowserRouter 内：随路由切换 document.title = "Beacon - 当前页面" */}
+      <DocumentTitle />
+      <Routes>
+        {/* 登录页公开、全屏、独立于 AppShell（无侧栏无页眉） */}
+        <Route element={<LoginPage />} path="/login" />
+        {/* 其余路径进管理台 Shell，经路由守卫：无令牌且非 demo → 跳登录；demo 免登录放行 */}
+        <Route
+          element={
+            <RequireAuth>
+              <AppShell />
+            </RequireAuth>
+          }
+          path="/*"
+        />
+      </Routes>
+    </>
   )
 }
 
@@ -59,6 +65,8 @@ async function bootstrap() {
         <BrowserRouter>
           <AppRoutes />
         </BrowserRouter>
+        {/* 写操作成功/失败 toast 挂载点；勿用页内横幅挤布局 */}
+        <Toaster position="top-center" richColors closeButton />
       </QueryClientProvider>
     </React.StrictMode>,
   )

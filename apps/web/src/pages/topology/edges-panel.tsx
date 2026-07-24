@@ -1,11 +1,12 @@
 // 消息异常链路：messages/stats 边聚合，异常边（失败/过期）高亮；点击看明细（样本消息 + 主要失败原因）。
 // 明细支持与 /commands、/audits 互跳（FR-157）。
+// 边为空时拉 groupBy=type：广播等不进 edge（ADR-0065），用类型汇总说明「有流量但无点对点边」。
 
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
-import { ArrowRight, ArrowRightLeft, ExternalLink, GitCompareArrows } from 'lucide-react'
+import { ArrowRight, ArrowRightLeft, ExternalLink, GitCompareArrows, Info } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -17,7 +18,7 @@ import {
 } from '@beacon/ui'
 import type { MessageEdgeStat } from '@beacon/contracts'
 
-import { fetchMessageEdges } from '../../api/cluster'
+import { fetchMessageEdges, fetchMessageTypeStats } from '../../api/cluster'
 import SampleMessages from './sample-messages'
 
 // 边的失败率阈值：超过即视为异常边高亮
@@ -33,6 +34,17 @@ export default function EdgesPanel() {
     () => [...(query.data?.edges ?? [])].sort((a, b) => b.failRatePercent - a.failRatePercent),
     [query.data],
   )
+  // 边为空时再查类型汇总：区分「真无流量」与「仅有广播不进边表」
+  const typeQuery = useQuery({
+    queryKey: ['message-type-stats'],
+    queryFn: fetchMessageTypeStats,
+    enabled: !query.isLoading && !query.isError && edges.length === 0,
+  })
+  const typeStats = typeQuery.data?.types ?? []
+  const typeMessageTotal = useMemo(
+    () => typeStats.reduce((sum, item) => sum + item.total, 0),
+    [typeStats],
+  )
   // 异常边计数：给标题旁的危急徽标
   const abnormalCount = useMemo(
     () => edges.filter((edge) => edge.failRatePercent >= ABNORMAL_RATE).length,
@@ -40,12 +52,14 @@ export default function EdgesPanel() {
   )
 
   // 数据剖析聚合指标：总链路 / 总消息 / 异常边 / 最高失败率 / 最高 P95。
+  // 边为空时总消息改用 type 汇总，避免 KPI 全 0 误导成「无消息」。
   const aggregates = useMemo(() => {
-    const totalMessages = edges.reduce((sum, e) => sum + e.total, 0)
+    const edgeMessages = edges.reduce((sum, e) => sum + e.total, 0)
+    const totalMessages = edges.length > 0 ? edgeMessages : typeMessageTotal
     const maxFailRate = edges.reduce((m, e) => Math.max(m, e.failRatePercent), 0)
     const maxP95 = edges.reduce((m, e) => Math.max(m, e.p95DurationMs), 0)
     return { totalMessages, maxFailRate, maxP95 }
-  }, [edges])
+  }, [edges, typeMessageTotal])
 
   const edgeKey = (edge: MessageEdgeStat) => `${edge.sourceServerId}→${edge.resolvedServerId}`
   const selected = useMemo(
@@ -80,6 +94,8 @@ export default function EdgesPanel() {
     ],
     [t],
   )
+
+  const emptyIsBroadcastOnly = edges.length === 0 && typeMessageTotal > 0
 
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
@@ -118,6 +134,40 @@ export default function EdgesPanel() {
         ]}
       />
       <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
+        {/* 仅广播等非点对点流量：明示边表口径 + 类型汇总，避免「没数据」误判 */}
+        {emptyIsBroadcastOnly ? (
+          <div className="grid gap-3 rounded-lg border border-border bg-surface-2 p-3 text-sm">
+            <p className="flex items-start gap-2 text-ink-2">
+              <Info className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
+              <span>{t('cluster.topology.edges.emptyBroadcastOnly')}</span>
+            </p>
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                {t('cluster.topology.data.typeBreakdown')}
+              </p>
+              <ul className="flex flex-wrap gap-1.5">
+                {typeStats.map((item) => (
+                  <li key={item.msgType}>
+                    <Badge variant="secondary" className="gap-1.5 font-mono tnum">
+                      <span>{item.msgType}</span>
+                      <span>
+                        {item.total}
+                        {t('cluster.topology.data.typeTotal')}
+                      </span>
+                      {item.failed > 0 ? (
+                        <span className="text-crit">
+                          {t('cluster.topology.data.typeFailed')} {item.failed}
+                        </span>
+                      ) : null}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <p className="text-xs text-ink-4">{t('cluster.topology.edges.emptyHint')}</p>
+          </div>
+        ) : null}
+
         {/* 主从布局：链路表占主区，选中明细进右侧固定侧面板（不落页面底部、不 reflow 主区） */}
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">

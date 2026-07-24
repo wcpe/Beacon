@@ -23,6 +23,12 @@ import {
 import type { AgentIdentityItem } from '@beacon/contracts'
 
 import { ApiClientError, approveIdentity, fetchIdentities, rejectIdentity } from '../../api/cluster'
+import {
+  filterItemsByEnvScope,
+  needsClientEnvFilter,
+  resolveApiNamespaceId,
+  useEnvNamespaceScope,
+} from '../../features/env/use-env-scope'
 import ReasonDialog from './reason-dialog'
 
 // 当前操作意图：approve 或 reject
@@ -38,15 +44,23 @@ interface PendingSheetProps {
 export default function PendingSheet({ namespaceId, open, onOpenChange }: PendingSheetProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  // FR-178：待确认列表跟随顶栏 env
+  const envScope = useEnvNamespaceScope()
+  const apiNamespaceId = resolveApiNamespaceId(namespaceId, envScope)
+  const clientFilter = needsClientEnvFilter(envScope)
   const [action, setAction] = useState<PendingAction | null>(null)
   // Q3 占用冲突强制解绑勾选
   const [forceUnbind, setForceUnbind] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
 
   const query = useQuery({
-    queryKey: ['identities', 'pending', namespaceId],
-    queryFn: () => fetchIdentities({ status: 'pending', namespaceId, pageSize: 100 }),
+    queryKey: ['identities', 'pending', apiNamespaceId, envScope],
+    queryFn: () => fetchIdentities({ status: 'pending', namespaceId: apiNamespaceId, pageSize: 100 }),
   })
+  const pendingRows = useMemo(() => {
+    const items = query.data?.items ?? []
+    return clientFilter ? filterItemsByEnvScope(items, envScope) : items
+  }, [query.data, clientFilter, envScope])
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['identities'] })
@@ -173,7 +187,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
           <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
-              rows={query.data?.items}
+              rows={pendingRows}
               rowKey={(row) => row.identityId}
               emptyText={t('cluster.servers.pending.empty')}
               density="compact"

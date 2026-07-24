@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { HeartPulse } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
+import { AsyncSection, CardGridSkeleton, PageHeader } from '@beacon/ui'
 
 import { fetchSystemObservability, fetchSystemStatus } from '../api/system'
 import RuntimeCard from './system/runtime-card'
@@ -29,7 +29,7 @@ export default function SystemPage() {
 
   return (
     <section className="grid gap-6">
-      <SectionHeader size="lg" icon={<HeartPulse className="size-5" />} title={t('nav.system')} />
+      <PageHeader icon={<HeartPulse className="size-5" />} title={t('nav.system')} />
 
       <AsyncSection
         isLoading={statusQuery.isLoading}

@@ -25,9 +25,17 @@ import {
 import type { HealthItem } from '@beacon/contracts'
 
 import { fetchHealthList } from '../../api/metrics'
+import {
+  filterItemsByEnvScope,
+  needsClientEnvFilter,
+  resolveApiNamespaceId,
+  useEnvNamespaceScope,
+} from '../../features/env/use-env-scope'
 
 // 展示上限：状态墙只列前若干台，全量在 /servers。
+// env 多 ns 时先多拉再客户端收窄，保证墙内仍有足够行可展示。
 const WALL_LIMIT = 12
+const WALL_FETCH = 48
 
 // 健康等级（mock 的 healthy/degraded/unhealthy）→ 设计语言等级 + 药丸变体 + 文案键。
 const LEVEL_META: Record<
@@ -41,11 +49,23 @@ const LEVEL_META: Record<
 
 export default function ServerWall() {
   const { t } = useTranslation()
+  // FR-178：状态墙跟随顶栏 env
+  const envScope = useEnvNamespaceScope()
+  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
+  const clientFilter = needsClientEnvFilter(envScope)
   const query = useQuery({
-    queryKey: ['dashboard', 'health-list'],
-    queryFn: () => fetchHealthList({ pageSize: WALL_LIMIT }),
+    queryKey: ['dashboard', 'health-list', apiNamespaceId, envScope],
+    queryFn: () =>
+      fetchHealthList({
+        namespaceId: apiNamespaceId,
+        pageSize: clientFilter ? WALL_FETCH : WALL_LIMIT,
+      }),
   })
-  const items = useMemo(() => query.data?.items ?? [], [query.data])
+  const items = useMemo(() => {
+    const raw = query.data?.items ?? []
+    const scoped = clientFilter ? filterItemsByEnvScope(raw, envScope) : raw
+    return scoped.slice(0, WALL_LIMIT)
+  }, [query.data, clientFilter, envScope])
 
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">

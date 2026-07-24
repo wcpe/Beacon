@@ -4,7 +4,7 @@
 // 提供（卡内降级占位），告警卡消费既有 /admin/v1/alert-events。
 import { useTranslation } from 'react-i18next'
 
-import { SectionHeader } from '@beacon/ui'
+import { PageHeader } from '@beacon/ui'
 
 import AlertOverview from './dashboard/alert-overview'
 import FlowOverview from './dashboard/flow-overview'
@@ -17,7 +17,7 @@ export default function DashboardPage() {
   return (
     <div className="grid gap-3.5">
       {/* 页标题（纯标题，非面包屑，与其余页面一致） */}
-      <SectionHeader size="lg" title={t('nav.dashboard')} />
+      <PageHeader title={t('nav.dashboard')} />
       {/* 顶部 KPI 指标带（含区段标题与健康分布环） */}
       <HealthOverview />
       {/* 中区：服务器状态墙（宽）+ 玩家流 / 连接流趋势 */}

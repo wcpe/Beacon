@@ -14,7 +14,7 @@ import {
   DataTable,
   DestructiveConfirmDialog,
   Input,
-  SectionHeader,
+  PageHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -228,7 +228,7 @@ export default function EnvsPage() {
 
   return (
     <section className="grid gap-4">
-      <SectionHeader size="lg" icon={<Layers className="size-5" />} title={t('nav.envs')} />
+      <PageHeader icon={<Layers className="size-5" />} title={t('nav.envs')} />
       {/* env 定位提示：品牌浅底，突出「纯展示 / 过滤维度、不动权威数据」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
         <Layers className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />

@@ -96,7 +96,10 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
 
   return (
     // 布局内的右侧窄栏（非模态、无 overlay），主区树仍完全可见可交互
-    <aside className="flex w-[280px] shrink-0 flex-col self-start rounded-xl border border-border bg-card shadow-card">
+    <aside
+      data-slot="unassigned-basket"
+      className="flex w-[280px] shrink-0 flex-col self-start rounded-xl border border-border bg-card shadow-card"
+    >
       <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
         <Inbox className="size-4 text-brand" />
         <h2 className="text-[12.5px] font-semibold text-ink-1">{t('cluster.zones.basket.title')}</h2>
@@ -157,7 +160,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
                         onCheckedChange={() => {
                           toggle(row)
                         }}
-                        aria-label={`选择 ${row.serverId}`}
+                        aria-label={t('common.selectRow', { id: row.serverId })}
                       />
                       <GripVertical className="size-3.5 shrink-0 text-ink-4" aria-hidden />
                       <span

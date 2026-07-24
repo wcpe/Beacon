@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TerminalSquare } from 'lucide-react'
 
-import { SectionHeader } from '@beacon/ui'
+import { PageHeader } from '@beacon/ui'
 import type { CommandItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -21,11 +21,10 @@ export default function CommandsPage() {
 
   return (
     <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
+      <PageHeader
         icon={<TerminalSquare className="size-5" />}
         title={t('nav.commands')}
-        count={t('observability.commands.mission')}
+        description={t('observability.commands.mission')}
       />
       <CommandKpi />
       <MasterDetail

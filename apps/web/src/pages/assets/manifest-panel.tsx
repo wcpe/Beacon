@@ -106,7 +106,7 @@ export default function ManifestPanel({ namespaceId }: { namespaceId: number }) 
               onCheckedChange={() => {
                 toggleRow(row.serverId)
               }}
-              aria-label={`选择 ${row.serverId}`}
+              aria-label={t('common.selectRow', { id: row.serverId })}
             />
           </span>
         ),

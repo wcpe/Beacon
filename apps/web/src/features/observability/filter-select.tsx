@@ -26,7 +26,7 @@ export default function FilterSelect({ label, value, options, onChange }: Filter
   const { t } = useTranslation()
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-9 w-40" aria-label={label}>
+      <SelectTrigger className="w-40" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

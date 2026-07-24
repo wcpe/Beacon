@@ -1,0 +1,2169 @@
+{
+  "generatedAt": "2026-07-22",
+  "project": {
+    "name": "Beacon",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 wcpe",
+    "spdx": "MIT",
+    "repository": "https://github.com/wcpe/Beacon"
+  },
+  "runtime": [
+    {
+      "name": "@babel/runtime",
+      "version": "7.29.7",
+      "license": "MIT",
+      "author": "The Babel Team",
+      "homepage": "https://babel.dev/docs/en/next/babel-runtime",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "@remix-run/router",
+      "version": "1.23.3",
+      "license": "MIT",
+      "author": "Remix Software",
+      "homepage": "https://github.com/remix-run/react-router#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "@tanstack/query-core",
+      "version": "5.62.7",
+      "license": "MIT",
+      "author": "tannerlinsley",
+      "homepage": "https://tanstack.com/query",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "@tanstack/react-query",
+      "version": "5.62.7",
+      "license": "MIT",
+      "author": "tannerlinsley",
+      "homepage": "https://tanstack.com/query",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "csstype",
+      "version": "3.2.3",
+      "license": "MIT",
+      "author": "Fredrik Nicol",
+      "homepage": "https://github.com/frenic/csstype#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "cyphar.com/go-pathrs",
+      "version": "v0.2.1",
+      "license": "MPL-2.0",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "dario.cat/mergo",
+      "version": "v1.0.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "filippo.io/edwards25519",
+      "version": "v1.1.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/alecthomas/kingpin/v2",
+      "version": "v2.4.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/alecthomas/kingpin/v2",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/alecthomas/units",
+      "version": "v0.0.0-20211218093645-b94a6e3cc137",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/alecthomas/units",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/anmitsu/go-shlex",
+      "version": "v0.0.0-20200514113438-38f4b401e2be",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/anmitsu/go-shlex",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/armon/go-socks5",
+      "version": "v0.0.0-20160902184237-e75332964ef5",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/armon/go-socks5",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/beorn7/perks",
+      "version": "v1.0.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/beorn7/perks",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/bwesterb/go-ristretto",
+      "version": "v1.2.3",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/bwesterb/go-ristretto",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/cespare/xxhash/v2",
+      "version": "v2.3.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/cespare/xxhash/v2",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/cloudflare/circl",
+      "version": "v1.6.3",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/cloudflare/circl",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/cyphar/filepath-securejoin",
+      "version": "v0.6.1",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/cyphar/filepath-securejoin",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/davecgh/go-spew",
+      "version": "v1.1.1",
+      "license": "ISC",
+      "author": "—",
+      "homepage": "https://github.com/davecgh/go-spew",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/dlclark/regexp2",
+      "version": "v1.11.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/dlclark/regexp2",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/dustin/go-humanize",
+      "version": "v1.0.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/dustin/go-humanize",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/ebitengine/purego",
+      "version": "v0.10.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/ebitengine/purego",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/elazarl/goproxy",
+      "version": "v1.7.2",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/elazarl/goproxy",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/emirpasic/gods",
+      "version": "v1.18.1",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "https://github.com/emirpasic/gods",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/glebarez/go-sqlite",
+      "version": "v1.21.2",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/glebarez/go-sqlite",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/glebarez/sqlite",
+      "version": "v1.11.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/glebarez/sqlite",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/gliderlabs/ssh",
+      "version": "v0.3.8",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/gliderlabs/ssh",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-chi/chi/v5",
+      "version": "v5.3.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/go-chi/chi/v5",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-git/gcfg",
+      "version": "v1.5.1-0.20230307220236-3a3c6141e376",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/go-git/gcfg",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-git/go-billy/v5",
+      "version": "v5.9.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/go-git/go-billy/v5",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-git/go-git-fixtures/v4",
+      "version": "v4.3.2-0.20231010084843-55a94097c399",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/go-git/go-git-fixtures/v4",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-git/go-git/v5",
+      "version": "v5.19.1",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/go-git/go-git/v5",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-ole/go-ole",
+      "version": "v1.2.6",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/go-ole/go-ole",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/go-sql-driver/mysql",
+      "version": "v1.8.1",
+      "license": "MPL-2.0",
+      "author": "—",
+      "homepage": "https://github.com/go-sql-driver/mysql",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/golang/groupcache",
+      "version": "v0.0.0-20241129210726-2c02b8208cf8",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/golang/groupcache",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/golang/protobuf",
+      "version": "v1.5.4",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/golang/protobuf",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/google/go-cmp",
+      "version": "v0.7.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/google/go-cmp",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/google/pprof",
+      "version": "v0.0.0-20221118152302-e6195bd50e26",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/google/pprof",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/google/uuid",
+      "version": "v1.3.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/google/uuid",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/jbenet/go-context",
+      "version": "v0.0.0-20150711004518-d14ea06fba99",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/jbenet/go-context",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/jinzhu/inflection",
+      "version": "v1.0.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/jinzhu/inflection",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/jinzhu/now",
+      "version": "v1.1.5",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/jinzhu/now",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/jpillora/backoff",
+      "version": "v1.0.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/jpillora/backoff",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/json-iterator/go",
+      "version": "v1.1.12",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/json-iterator/go",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/julienschmidt/httprouter",
+      "version": "v1.3.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/julienschmidt/httprouter",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/kballard/go-shellquote",
+      "version": "v0.0.0-20180428030007-95032a82bc51",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/kballard/go-shellquote",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/kevinburke/ssh_config",
+      "version": "v1.2.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/kevinburke/ssh_config",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/klauspost/compress",
+      "version": "v1.18.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/klauspost/compress",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/klauspost/cpuid/v2",
+      "version": "v2.3.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/klauspost/cpuid/v2",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/kr/pretty",
+      "version": "v0.3.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/kr/pretty",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/kr/pty",
+      "version": "v1.1.1",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "https://github.com/kr/pty",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/kr/text",
+      "version": "v0.2.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/kr/text",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/kylelemons/godebug",
+      "version": "v1.1.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/kylelemons/godebug",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/lufia/plan9stats",
+      "version": "v0.0.0-20211012122336-39d0f177ccd0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/lufia/plan9stats",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/mattn/go-isatty",
+      "version": "v0.0.17",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/mattn/go-isatty",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/mattn/go-sqlite3",
+      "version": "v1.14.22",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/mattn/go-sqlite3",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/Microsoft/go-winio",
+      "version": "v0.6.2",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/Microsoft/go-winio",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/modern-go/concurrent",
+      "version": "v0.0.0-20180306012644-bacd9c7ef1dd",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/modern-go/concurrent",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/modern-go/reflect2",
+      "version": "v1.0.2",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/modern-go/reflect2",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/munnerz/goautoneg",
+      "version": "v0.0.0-20191010083416-a7dc8b61c822",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/munnerz/goautoneg",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/mwitkow/go-conntrack",
+      "version": "v0.0.0-20190716064945-2f068394615f",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/mwitkow/go-conntrack",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/onsi/gomega",
+      "version": "v1.34.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/onsi/gomega",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/pjbgf/sha1cd",
+      "version": "v0.6.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/pjbgf/sha1cd",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/pkg/errors",
+      "version": "v0.9.1",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "https://github.com/pkg/errors",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/pmezard/go-difflib",
+      "version": "v1.0.0",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "https://github.com/pmezard/go-difflib",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/power-devops/perfstat",
+      "version": "v0.0.0-20240221224432-82ca36839d55",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/power-devops/perfstat",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/prometheus/client_golang",
+      "version": "v1.23.2",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/prometheus/client_golang",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/prometheus/client_model",
+      "version": "v0.6.2",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/prometheus/client_model",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/prometheus/common",
+      "version": "v0.66.1",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/prometheus/common",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/prometheus/procfs",
+      "version": "v0.16.1",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/prometheus/procfs",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/ProtonMail/go-crypto",
+      "version": "v1.1.6",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/ProtonMail/go-crypto",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/remyoudompheng/bigfft",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/rogpeppe/go-internal",
+      "version": "v1.14.1",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/rogpeppe/go-internal",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/santhosh-tekuri/jsonschema/v6",
+      "version": "v6.0.2",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/santhosh-tekuri/jsonschema/v6",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/sergi/go-diff",
+      "version": "v1.3.2-0.20230802210424-5b0b94c5c0d3",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/sergi/go-diff",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/shirou/gopsutil/v4",
+      "version": "v4.26.5",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/shirou/gopsutil/v4",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/sirupsen/logrus",
+      "version": "v1.9.3",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/sirupsen/logrus",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/skeema/knownhosts",
+      "version": "v1.3.1",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/skeema/knownhosts",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/stretchr/objx",
+      "version": "v0.1.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/stretchr/objx",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/stretchr/testify",
+      "version": "v1.11.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/stretchr/testify",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/tklauser/go-sysconf",
+      "version": "v0.3.16",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/tklauser/go-sysconf",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/tklauser/numcpus",
+      "version": "v0.11.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/tklauser/numcpus",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/xanzy/ssh-agent",
+      "version": "v0.3.3",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "https://github.com/xanzy/ssh-agent",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/xhit/go-str2duration/v2",
+      "version": "v2.1.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "https://github.com/xhit/go-str2duration/v2",
+      "ecosystem": "go"
+    },
+    {
+      "name": "github.com/yusufpapurcu/wmi",
+      "version": "v1.2.4",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/yusufpapurcu/wmi",
+      "ecosystem": "go"
+    },
+    {
+      "name": "go.uber.org/goleak",
+      "version": "v1.3.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "go.yaml.in/yaml/v2",
+      "version": "v2.4.2",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/crypto",
+      "version": "v0.52.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/exp",
+      "version": "v0.0.0-20260410095643-746e56fc9e2f",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/mod",
+      "version": "v0.35.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/net",
+      "version": "v0.54.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/oauth2",
+      "version": "v0.30.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/sync",
+      "version": "v0.20.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/sys",
+      "version": "v0.45.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/term",
+      "version": "v0.43.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/text",
+      "version": "v0.37.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/tools",
+      "version": "v0.44.0",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "golang.org/x/xerrors",
+      "version": "v0.0.0-20200804184101-5ec99f83aff1",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "google.golang.org/protobuf",
+      "version": "v1.36.8",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gopkg.in/check.v1",
+      "version": "v1.0.0-20201130134442-10cb98267c6c",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gopkg.in/warnings.v0",
+      "version": "v0.1.2",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gopkg.in/yaml.v2",
+      "version": "v2.4.0",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gopkg.in/yaml.v3",
+      "version": "v3.0.1",
+      "license": "Apache-2.0",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gorm.io/driver/mysql",
+      "version": "v1.6.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gorm.io/driver/sqlite",
+      "version": "v1.6.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "gorm.io/gorm",
+      "version": "v1.31.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "html-parse-stringify",
+      "version": "3.0.1",
+      "license": "MIT",
+      "author": "Henrik Joreteg",
+      "homepage": "https://github.com/henrikjoreteg/html-parse-stringify",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "i18next",
+      "version": "26.3.4",
+      "license": "MIT",
+      "author": "Jan Mühlemann",
+      "homepage": "https://www.i18next.com",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "immer",
+      "version": "11.1.11",
+      "license": "MIT",
+      "author": "Michel Weststrate",
+      "homepage": "https://github.com/immerjs/immer#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "js-tokens",
+      "version": "4.0.0",
+      "license": "MIT",
+      "author": "Simon Lydell",
+      "homepage": "https://github.com/lydell/js-tokens#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "loose-envify",
+      "version": "1.4.0",
+      "license": "MIT",
+      "author": "Andres Suarez",
+      "homepage": "https://github.com/zertosh/loose-envify",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "lucide-react",
+      "version": "1.23.0",
+      "license": "ISC",
+      "author": "Eric Fennis",
+      "homepage": "https://lucide.dev",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "lukechampine.com/uint128",
+      "version": "v1.2.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/cc/v3",
+      "version": "v3.40.0",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/ccgo/v3",
+      "version": "v3.16.13",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/httpfs",
+      "version": "v1.0.6",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/libc",
+      "version": "v1.22.5",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/mathutil",
+      "version": "v1.5.0",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/memory",
+      "version": "v1.5.0",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/opt",
+      "version": "v0.1.3",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/sqlite",
+      "version": "v1.23.1",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/strutil",
+      "version": "v1.1.3",
+      "license": "SEE-LICENSE-FILE",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/tcl",
+      "version": "v1.15.2",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/token",
+      "version": "v1.0.1",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "modernc.org/z",
+      "version": "v1.7.3",
+      "license": "BSD-3-Clause",
+      "author": "—",
+      "homepage": "",
+      "ecosystem": "go"
+    },
+    {
+      "name": "react",
+      "version": "18.3.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://reactjs.org/",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "react-dom",
+      "version": "18.3.1",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://reactjs.org/",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "react-i18next",
+      "version": "17.0.8",
+      "license": "MIT",
+      "author": "Jan Mühlemann",
+      "homepage": "https://github.com/i18next/react-i18next",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "react-router",
+      "version": "6.30.4",
+      "license": "MIT",
+      "author": "Remix Software",
+      "homepage": "https://github.com/remix-run/react-router#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "react-router-dom",
+      "version": "6.30.4",
+      "license": "MIT",
+      "author": "Remix Software",
+      "homepage": "https://github.com/remix-run/react-router#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "scheduler",
+      "version": "0.23.2",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://reactjs.org/",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "typescript",
+      "version": "5.6.3",
+      "license": "Apache-2.0",
+      "author": "Microsoft Corp.",
+      "homepage": "https://www.typescriptlang.org/",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "use-sync-external-store",
+      "version": "1.6.0",
+      "license": "MIT",
+      "author": "—",
+      "homepage": "https://github.com/facebook/react#readme",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "void-elements",
+      "version": "3.1.0",
+      "license": "MIT",
+      "author": "hemanth.hm",
+      "homepage": "https://github.com/jadejs/void-elements",
+      "ecosystem": "npm"
+    },
+    {
+      "name": "zustand",
+      "version": "5.0.14",
+      "license": "MIT",
+      "author": "Paul Henschel",
+      "homepage": "https://github.com/pmndrs/zustand",
+      "ecosystem": "npm"
+    }
+  ],
+  "groups": [
+    {
+      "id": "runtime",
+      "titleKey": "common.license.groupRuntime",
+      "items": [
+        {
+          "name": "@babel/runtime",
+          "version": "7.29.7",
+          "license": "MIT",
+          "author": "The Babel Team",
+          "homepage": "https://babel.dev/docs/en/next/babel-runtime",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "@remix-run/router",
+          "version": "1.23.3",
+          "license": "MIT",
+          "author": "Remix Software",
+          "homepage": "https://github.com/remix-run/react-router#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "@tanstack/query-core",
+          "version": "5.62.7",
+          "license": "MIT",
+          "author": "tannerlinsley",
+          "homepage": "https://tanstack.com/query",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "@tanstack/react-query",
+          "version": "5.62.7",
+          "license": "MIT",
+          "author": "tannerlinsley",
+          "homepage": "https://tanstack.com/query",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "csstype",
+          "version": "3.2.3",
+          "license": "MIT",
+          "author": "Fredrik Nicol",
+          "homepage": "https://github.com/frenic/csstype#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "cyphar.com/go-pathrs",
+          "version": "v0.2.1",
+          "license": "MPL-2.0",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "dario.cat/mergo",
+          "version": "v1.0.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "filippo.io/edwards25519",
+          "version": "v1.1.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/alecthomas/kingpin/v2",
+          "version": "v2.4.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/alecthomas/kingpin/v2",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/alecthomas/units",
+          "version": "v0.0.0-20211218093645-b94a6e3cc137",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/alecthomas/units",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/anmitsu/go-shlex",
+          "version": "v0.0.0-20200514113438-38f4b401e2be",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/anmitsu/go-shlex",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/armon/go-socks5",
+          "version": "v0.0.0-20160902184237-e75332964ef5",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/armon/go-socks5",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/beorn7/perks",
+          "version": "v1.0.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/beorn7/perks",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/bwesterb/go-ristretto",
+          "version": "v1.2.3",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/bwesterb/go-ristretto",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/cespare/xxhash/v2",
+          "version": "v2.3.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/cespare/xxhash/v2",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/cloudflare/circl",
+          "version": "v1.6.3",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/cloudflare/circl",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/cyphar/filepath-securejoin",
+          "version": "v0.6.1",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/cyphar/filepath-securejoin",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/davecgh/go-spew",
+          "version": "v1.1.1",
+          "license": "ISC",
+          "author": "—",
+          "homepage": "https://github.com/davecgh/go-spew",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/dlclark/regexp2",
+          "version": "v1.11.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/dlclark/regexp2",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/dustin/go-humanize",
+          "version": "v1.0.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/dustin/go-humanize",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/ebitengine/purego",
+          "version": "v0.10.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/ebitengine/purego",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/elazarl/goproxy",
+          "version": "v1.7.2",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/elazarl/goproxy",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/emirpasic/gods",
+          "version": "v1.18.1",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "https://github.com/emirpasic/gods",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/glebarez/go-sqlite",
+          "version": "v1.21.2",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/glebarez/go-sqlite",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/glebarez/sqlite",
+          "version": "v1.11.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/glebarez/sqlite",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/gliderlabs/ssh",
+          "version": "v0.3.8",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/gliderlabs/ssh",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-chi/chi/v5",
+          "version": "v5.3.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/go-chi/chi/v5",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-git/gcfg",
+          "version": "v1.5.1-0.20230307220236-3a3c6141e376",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/go-git/gcfg",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-git/go-billy/v5",
+          "version": "v5.9.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/go-git/go-billy/v5",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-git/go-git-fixtures/v4",
+          "version": "v4.3.2-0.20231010084843-55a94097c399",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/go-git/go-git-fixtures/v4",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-git/go-git/v5",
+          "version": "v5.19.1",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/go-git/go-git/v5",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-ole/go-ole",
+          "version": "v1.2.6",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/go-ole/go-ole",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/go-sql-driver/mysql",
+          "version": "v1.8.1",
+          "license": "MPL-2.0",
+          "author": "—",
+          "homepage": "https://github.com/go-sql-driver/mysql",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/golang/groupcache",
+          "version": "v0.0.0-20241129210726-2c02b8208cf8",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/golang/groupcache",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/golang/protobuf",
+          "version": "v1.5.4",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/golang/protobuf",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/google/go-cmp",
+          "version": "v0.7.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/google/go-cmp",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/google/pprof",
+          "version": "v0.0.0-20221118152302-e6195bd50e26",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/google/pprof",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/google/uuid",
+          "version": "v1.3.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/google/uuid",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/jbenet/go-context",
+          "version": "v0.0.0-20150711004518-d14ea06fba99",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/jbenet/go-context",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/jinzhu/inflection",
+          "version": "v1.0.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/jinzhu/inflection",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/jinzhu/now",
+          "version": "v1.1.5",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/jinzhu/now",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/jpillora/backoff",
+          "version": "v1.0.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/jpillora/backoff",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/json-iterator/go",
+          "version": "v1.1.12",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/json-iterator/go",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/julienschmidt/httprouter",
+          "version": "v1.3.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/julienschmidt/httprouter",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/kballard/go-shellquote",
+          "version": "v0.0.0-20180428030007-95032a82bc51",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/kballard/go-shellquote",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/kevinburke/ssh_config",
+          "version": "v1.2.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/kevinburke/ssh_config",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/klauspost/compress",
+          "version": "v1.18.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/klauspost/compress",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/klauspost/cpuid/v2",
+          "version": "v2.3.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/klauspost/cpuid/v2",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/kr/pretty",
+          "version": "v0.3.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/kr/pretty",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/kr/pty",
+          "version": "v1.1.1",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "https://github.com/kr/pty",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/kr/text",
+          "version": "v0.2.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/kr/text",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/kylelemons/godebug",
+          "version": "v1.1.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/kylelemons/godebug",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/lufia/plan9stats",
+          "version": "v0.0.0-20211012122336-39d0f177ccd0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/lufia/plan9stats",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/mattn/go-isatty",
+          "version": "v0.0.17",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/mattn/go-isatty",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/mattn/go-sqlite3",
+          "version": "v1.14.22",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/mattn/go-sqlite3",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/Microsoft/go-winio",
+          "version": "v0.6.2",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/Microsoft/go-winio",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/modern-go/concurrent",
+          "version": "v0.0.0-20180306012644-bacd9c7ef1dd",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/modern-go/concurrent",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/modern-go/reflect2",
+          "version": "v1.0.2",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/modern-go/reflect2",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/munnerz/goautoneg",
+          "version": "v0.0.0-20191010083416-a7dc8b61c822",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/munnerz/goautoneg",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/mwitkow/go-conntrack",
+          "version": "v0.0.0-20190716064945-2f068394615f",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/mwitkow/go-conntrack",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/onsi/gomega",
+          "version": "v1.34.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/onsi/gomega",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/pjbgf/sha1cd",
+          "version": "v0.6.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/pjbgf/sha1cd",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/pkg/errors",
+          "version": "v0.9.1",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "https://github.com/pkg/errors",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/pmezard/go-difflib",
+          "version": "v1.0.0",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "https://github.com/pmezard/go-difflib",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/power-devops/perfstat",
+          "version": "v0.0.0-20240221224432-82ca36839d55",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/power-devops/perfstat",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/prometheus/client_golang",
+          "version": "v1.23.2",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/prometheus/client_golang",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/prometheus/client_model",
+          "version": "v0.6.2",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/prometheus/client_model",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/prometheus/common",
+          "version": "v0.66.1",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/prometheus/common",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/prometheus/procfs",
+          "version": "v0.16.1",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/prometheus/procfs",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/ProtonMail/go-crypto",
+          "version": "v1.1.6",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/ProtonMail/go-crypto",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/remyoudompheng/bigfft",
+          "version": "v0.0.0-20230129092748-24d4a6f8daec",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/remyoudompheng/bigfft",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/rogpeppe/go-internal",
+          "version": "v1.14.1",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/rogpeppe/go-internal",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/santhosh-tekuri/jsonschema/v6",
+          "version": "v6.0.2",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/santhosh-tekuri/jsonschema/v6",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/sergi/go-diff",
+          "version": "v1.3.2-0.20230802210424-5b0b94c5c0d3",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/sergi/go-diff",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/shirou/gopsutil/v4",
+          "version": "v4.26.5",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/shirou/gopsutil/v4",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/sirupsen/logrus",
+          "version": "v1.9.3",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/sirupsen/logrus",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/skeema/knownhosts",
+          "version": "v1.3.1",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/skeema/knownhosts",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/stretchr/objx",
+          "version": "v0.1.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/stretchr/objx",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/stretchr/testify",
+          "version": "v1.11.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/stretchr/testify",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/tklauser/go-sysconf",
+          "version": "v0.3.16",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/tklauser/go-sysconf",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/tklauser/numcpus",
+          "version": "v0.11.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/tklauser/numcpus",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/xanzy/ssh-agent",
+          "version": "v0.3.3",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "https://github.com/xanzy/ssh-agent",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/xhit/go-str2duration/v2",
+          "version": "v2.1.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "https://github.com/xhit/go-str2duration/v2",
+          "ecosystem": "go"
+        },
+        {
+          "name": "github.com/yusufpapurcu/wmi",
+          "version": "v1.2.4",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/yusufpapurcu/wmi",
+          "ecosystem": "go"
+        },
+        {
+          "name": "go.uber.org/goleak",
+          "version": "v1.3.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "go.yaml.in/yaml/v2",
+          "version": "v2.4.2",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/crypto",
+          "version": "v0.52.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/exp",
+          "version": "v0.0.0-20260410095643-746e56fc9e2f",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/mod",
+          "version": "v0.35.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/net",
+          "version": "v0.54.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/oauth2",
+          "version": "v0.30.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/sync",
+          "version": "v0.20.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/sys",
+          "version": "v0.45.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/term",
+          "version": "v0.43.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/text",
+          "version": "v0.37.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/tools",
+          "version": "v0.44.0",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "golang.org/x/xerrors",
+          "version": "v0.0.0-20200804184101-5ec99f83aff1",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "google.golang.org/protobuf",
+          "version": "v1.36.8",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gopkg.in/check.v1",
+          "version": "v1.0.0-20201130134442-10cb98267c6c",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gopkg.in/warnings.v0",
+          "version": "v0.1.2",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gopkg.in/yaml.v2",
+          "version": "v2.4.0",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gopkg.in/yaml.v3",
+          "version": "v3.0.1",
+          "license": "Apache-2.0",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gorm.io/driver/mysql",
+          "version": "v1.6.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gorm.io/driver/sqlite",
+          "version": "v1.6.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "gorm.io/gorm",
+          "version": "v1.31.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "html-parse-stringify",
+          "version": "3.0.1",
+          "license": "MIT",
+          "author": "Henrik Joreteg",
+          "homepage": "https://github.com/henrikjoreteg/html-parse-stringify",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "i18next",
+          "version": "26.3.4",
+          "license": "MIT",
+          "author": "Jan Mühlemann",
+          "homepage": "https://www.i18next.com",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "immer",
+          "version": "11.1.11",
+          "license": "MIT",
+          "author": "Michel Weststrate",
+          "homepage": "https://github.com/immerjs/immer#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "js-tokens",
+          "version": "4.0.0",
+          "license": "MIT",
+          "author": "Simon Lydell",
+          "homepage": "https://github.com/lydell/js-tokens#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "loose-envify",
+          "version": "1.4.0",
+          "license": "MIT",
+          "author": "Andres Suarez",
+          "homepage": "https://github.com/zertosh/loose-envify",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "lucide-react",
+          "version": "1.23.0",
+          "license": "ISC",
+          "author": "Eric Fennis",
+          "homepage": "https://lucide.dev",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "lukechampine.com/uint128",
+          "version": "v1.2.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/cc/v3",
+          "version": "v3.40.0",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/ccgo/v3",
+          "version": "v3.16.13",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/httpfs",
+          "version": "v1.0.6",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/libc",
+          "version": "v1.22.5",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/mathutil",
+          "version": "v1.5.0",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/memory",
+          "version": "v1.5.0",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/opt",
+          "version": "v0.1.3",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/sqlite",
+          "version": "v1.23.1",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/strutil",
+          "version": "v1.1.3",
+          "license": "SEE-LICENSE-FILE",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/tcl",
+          "version": "v1.15.2",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/token",
+          "version": "v1.0.1",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "modernc.org/z",
+          "version": "v1.7.3",
+          "license": "BSD-3-Clause",
+          "author": "—",
+          "homepage": "",
+          "ecosystem": "go"
+        },
+        {
+          "name": "react",
+          "version": "18.3.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://reactjs.org/",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "react-dom",
+          "version": "18.3.1",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://reactjs.org/",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "react-i18next",
+          "version": "17.0.8",
+          "license": "MIT",
+          "author": "Jan Mühlemann",
+          "homepage": "https://github.com/i18next/react-i18next",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "react-router",
+          "version": "6.30.4",
+          "license": "MIT",
+          "author": "Remix Software",
+          "homepage": "https://github.com/remix-run/react-router#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "react-router-dom",
+          "version": "6.30.4",
+          "license": "MIT",
+          "author": "Remix Software",
+          "homepage": "https://github.com/remix-run/react-router#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "scheduler",
+          "version": "0.23.2",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://reactjs.org/",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "typescript",
+          "version": "5.6.3",
+          "license": "Apache-2.0",
+          "author": "Microsoft Corp.",
+          "homepage": "https://www.typescriptlang.org/",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "use-sync-external-store",
+          "version": "1.6.0",
+          "license": "MIT",
+          "author": "—",
+          "homepage": "https://github.com/facebook/react#readme",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "void-elements",
+          "version": "3.1.0",
+          "license": "MIT",
+          "author": "hemanth.hm",
+          "homepage": "https://github.com/jadejs/void-elements",
+          "ecosystem": "npm"
+        },
+        {
+          "name": "zustand",
+          "version": "5.0.14",
+          "license": "MIT",
+          "author": "Paul Henschel",
+          "homepage": "https://github.com/pmndrs/zustand",
+          "ecosystem": "npm"
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "npm": 21,
+    "go": 113,
+    "total": 134
+  }
+}

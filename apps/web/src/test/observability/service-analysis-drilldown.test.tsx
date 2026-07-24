@@ -45,7 +45,7 @@ describe('/service-analysis 调度决策下钻板块', () => {
 
     // 时间窗 / serverId / 结果筛选齐备，devmock 固定种子 48 条 → 服务端分页
     expect(await screen.findByLabelText('时间范围')).toBeInTheDocument()
-    expect(screen.getByLabelText('搜索 serverId（发起方或选中）')).toBeInTheDocument()
+    expect(screen.getByLabelText('搜索服务器 ID（发起方或选中）')).toBeInTheDocument()
     expect(screen.getByLabelText('结果')).toBeInTheDocument()
     expect((await screen.findAllByText(/共 48 条/)).length).toBeGreaterThan(0)
     // 列表表头（原因摘要列）出现

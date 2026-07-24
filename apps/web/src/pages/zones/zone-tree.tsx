@@ -9,15 +9,18 @@ import {
   Boxes,
   ChevronDown,
   ChevronRight,
+  DoorOpen,
   Layers,
   Link2Off,
   MapPin,
   Network,
   Plus,
   Server,
+  ShieldAlert,
+  Trash2,
 } from 'lucide-react'
 
-import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
+import { AsyncSection, Badge, Button, cn, DestructiveConfirmDialog } from '@beacon/ui'
 import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import {
@@ -25,12 +28,21 @@ import {
   createBcCluster,
   createRegion,
   createZone,
+  deleteBcCluster,
+  deleteRegion,
+  deleteZone,
+  fetchIdentities,
   fetchServers,
   fetchZoneTree,
   rezoneServers,
+  setDefaultEntry,
+  setDraining,
+  unbindIdentity,
 } from '../../api/cluster'
 import { readAssignDrag, writeAssignDrag, type AssignDragPayload } from '../../features/cluster/assign-drag'
 import { messageOf as assignMessageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
+import { notifyError, notifySuccess } from '../../lib/notify'
+import ReasonDialog from '../servers/reason-dialog'
 import CreateNodeDialog from './create-node-dialog'
 import DragConfirmDialog, { type PendingDrop } from './drag-confirm-dialog'
 import RezoneDialog from './rezone-dialog'
@@ -44,6 +56,12 @@ type CreateIntent =
   | { level: 'cluster' }
   | { level: 'region'; bcClusterId: number }
   | { level: 'zone'; regionId: number }
+
+// 删除意图：空节点才允许（后端守卫；前端按计数禁点并二次确认）
+type DeleteIntent =
+  | { level: 'cluster'; id: number; name: string; canDelete: boolean }
+  | { level: 'region'; id: number; name: string; canDelete: boolean }
+  | { level: 'zone'; id: number; name: string; canDelete: boolean }
 
 // 树节点展开集合的键（按层级 + id 唯一）
 type NodeKey = string
@@ -111,6 +129,7 @@ export default function ZoneTree({
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
+    await queryClient.invalidateQueries({ queryKey: ['servers'] })
   }
 
   const createMutation = useMutation({
@@ -119,6 +138,10 @@ export default function ZoneTree({
         return Promise.reject(new Error('无新建意图'))
       }
       if (intent.level === 'cluster') {
+        // namespaceId=0 表示「全部命名空间」，创建必须落到具体 namespace，否则后端返回参数错误
+        if (namespaceId <= 0) {
+          return Promise.reject(new Error(t('cluster.zones.create.needNamespace')))
+        }
         return createBcCluster({ namespaceId, name, description })
       }
       if (intent.level === 'region') {
@@ -134,6 +157,74 @@ export default function ZoneTree({
       setErrorText(messageOf(error))
     },
   })
+
+  // 待删除节点（空节点才可删；后端仍做子节点 / 已分配服守卫）
+  const [deleting, setDeleting] = useState<DeleteIntent | null>(null)
+  // 删除失败仅弹窗内 errorText + toast，不塞 impacts、不插页内横幅
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const deleteMutation = useMutation({
+    mutationFn: (target: DeleteIntent) => {
+      if (target.level === 'cluster') {
+        return deleteBcCluster(target.id)
+      }
+      if (target.level === 'region') {
+        return deleteRegion(target.id)
+      }
+      return deleteZone(target.id)
+    },
+    onSuccess: async (_data, target) => {
+      await invalidate()
+      setDeleting(null)
+      setDeleteError(null)
+      notifySuccess(t('cluster.zones.tree.deleteOk', { name: target.name }))
+    },
+    onError: (error) => {
+      const text = messageOf(error)
+      setDeleteError(text)
+      notifyError(text)
+    },
+  })
+
+  // 树内默认入口 / 排空（维护）：与 /servers 同一 API；失败 toast，排空确认框可再看 errorText
+  const [treeOpError, setTreeOpError] = useState<string | null>(null)
+  const defaultEntryMutation = useMutation({
+    mutationFn: ({ row, next }: { row: ServerItem; next: boolean }) => setDefaultEntry(row.id, next),
+    onSuccess: async (_data, vars) => {
+      await invalidate()
+      setTreeOpError(null)
+      notifySuccess(
+        vars.next
+          ? t('cluster.servers.actions.setDefaultEntry')
+          : t('cluster.servers.actions.clearDefaultEntry'),
+      )
+    },
+    onError: (error) => {
+      const text = messageOf(error)
+      setTreeOpError(text)
+      notifyError(text)
+    },
+  })
+  const drainingMutation = useMutation({
+    mutationFn: ({ row, next, reason }: { row: ServerItem; next: boolean; reason: string }) =>
+      setDraining(row.serverId, next, reason),
+    onSuccess: async (_data, vars) => {
+      await invalidate()
+      setTreeOpError(null)
+      setDrainingServer(null)
+      notifySuccess(
+        vars.next
+          ? t('cluster.servers.actions.startDraining')
+          : t('cluster.servers.actions.stopDraining'),
+      )
+    },
+    onError: (error) => {
+      const text = messageOf(error)
+      setTreeOpError(text)
+      notifyError(text)
+    },
+  })
+  // 排空需原因确认
+  const [drainingServer, setDrainingServer] = useState<{ row: ServerItem; next: boolean } | null>(null)
 
   // 拖拽落区：当前 drag-over 的目标键（高亮）与最近一次落区错误/结果反馈
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
@@ -270,6 +361,46 @@ export default function ZoneTree({
   // 「改派到…」目标选择弹窗的当前服务器
   const [rezoneServer, setRezoneServer] = useState<ServerItem | null>(null)
   const [rezoneError, setRezoneError] = useState<string | null>(null)
+  // 树内解绑：原因确认弹窗目标服
+  const [unbindServer, setUnbindServer] = useState<ServerItem | null>(null)
+  const [unbindError, setUnbindError] = useState<string | null>(null)
+
+  // 身份表：serverId → 可解绑 identityId（优先 active/disabled/conflict）
+  const identitiesQuery = useQuery({
+    queryKey: ['identities', 'by-server', namespaceId],
+    queryFn: () => fetchIdentities({ namespaceId, pageSize: 1000 }),
+  })
+  const identityIdOf = (server: ServerItem): string | null => {
+    const matches =
+      identitiesQuery.data?.items.filter(
+        (item) => item.serverId === server.serverId && item.namespaceId === server.namespaceId,
+      ) ?? []
+    const preferred =
+      matches.find((item) => item.status === 'active') ??
+      matches.find((item) => item.status === 'disabled') ??
+      matches.find((item) => item.status === 'conflict') ??
+      matches[0]
+    return preferred?.identityId ?? null
+  }
+  const unbindMutation = useMutation({
+    mutationFn: ({ server, reason }: { server: ServerItem; reason: string }) => {
+      const identityId = identityIdOf(server)
+      if (identityId === null) {
+        return Promise.reject(new ApiClientError(404, 'identity_not_found', '未找到该服务器的绑定身份'))
+      }
+      return unbindIdentity(identityId, reason)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
+      await queryClient.invalidateQueries({ queryKey: ['servers'] })
+      await queryClient.invalidateQueries({ queryKey: ['identities'] })
+      setUnbindServer(null)
+      setUnbindError(null)
+    },
+    onError: (error) => {
+      setUnbindError(messageOf(error))
+    },
+  })
 
   const openContextMenu = (e: React.MouseEvent, server: ServerItem) => {
     e.preventDefault()
@@ -297,7 +428,7 @@ export default function ZoneTree({
     )
   }
 
-  // 构造某服务器行的右键菜单项：已分配可改派 + 查看健康详情（跳 /servers）
+  // 构造某服务器行的右键菜单项：改派 / 默认入口 / 排空（维护）/ 健康详情 / 解绑
   const menuItemsFor = (server: ServerItem): ContextMenuItem[] => {
     const items: ContextMenuItem[] = []
     if (server.assigned) {
@@ -308,6 +439,31 @@ export default function ZoneTree({
         onSelect: () => {
           setRezoneError(null)
           setRezoneServer(server)
+        },
+      })
+    }
+    // 仅已分配 backend 可设默认入口 / 排空（与 /servers 资产表一致）
+    if (server.kind === 'backend' && server.assigned) {
+      items.push({
+        key: 'defaultEntry',
+        label: server.isDefaultEntry
+          ? t('cluster.servers.actions.clearDefaultEntry')
+          : t('cluster.servers.actions.setDefaultEntry'),
+        icon: <DoorOpen className="size-3.5" />,
+        onSelect: () => {
+          setTreeOpError(null)
+          defaultEntryMutation.mutate({ row: server, next: !server.isDefaultEntry })
+        },
+      })
+      items.push({
+        key: 'draining',
+        label: server.draining
+          ? t('cluster.servers.actions.stopDraining')
+          : t('cluster.servers.actions.startDraining'),
+        icon: <ShieldAlert className="size-3.5" />,
+        onSelect: () => {
+          setTreeOpError(null)
+          setDrainingServer({ row: server, next: !server.draining })
         },
       })
     }
@@ -325,7 +481,8 @@ export default function ZoneTree({
       icon: <Link2Off className="size-3.5" />,
       tone: 'danger',
       onSelect: () => {
-        navigate(`/servers?keyword=${encodeURIComponent(server.serverId)}`)
+        setUnbindError(null)
+        setUnbindServer(server)
       },
     })
     return items
@@ -357,13 +514,18 @@ export default function ZoneTree({
     }
   }
 
-  // 首帧自动展开集群 + 大区
+  // 首帧自动展开集群 + 大区 + 有服小区，让真机已分配服务器默认可见
   if (tree && !autoExpanded) {
     const next = new Set<NodeKey>()
     for (const cluster of tree.clusters) {
       next.add(`cluster:${String(cluster.id)}`)
       for (const region of cluster.regions) {
         next.add(`region:${String(region.id)}`)
+        for (const zone of region.zones) {
+          if (zone.serverCount > 0) {
+            next.add(`zone:${String(zone.id)}`)
+          }
+        }
       }
     }
     setExpanded(next)
@@ -400,7 +562,13 @@ export default function ZoneTree({
         <Button
           size="sm"
           className="ml-auto gap-1"
+          disabled={namespaceId <= 0}
+          title={namespaceId <= 0 ? t('cluster.zones.create.needNamespace') : undefined}
           onClick={() => {
+            if (namespaceId <= 0) {
+              setErrorText(t('cluster.zones.create.needNamespace'))
+              return
+            }
             setErrorText(null)
             setIntent({ level: 'cluster' })
           }}
@@ -477,6 +645,24 @@ export default function ZoneTree({
                             <Plus className="size-3.5" />
                             {t('cluster.zones.tree.newRegion')}
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="gap-1 text-crit hover:text-crit"
+                            title={t('cluster.zones.tree.deleteCluster')}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setDeleteError(null)
+                              setDeleting({
+                                level: 'cluster',
+                                id: cluster.id,
+                                name: cluster.name,
+                                canDelete: cluster.regions.length === 0 && cluster.proxyCount === 0,
+                              })
+                            }}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
                         </>
                       }
                     />
@@ -509,19 +695,39 @@ export default function ZoneTree({
                                 label={region.name}
                                 tone="region"
                                 trailing={
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="gap-1"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setErrorText(null)
-                                      setIntent({ level: 'zone', regionId: region.id })
-                                    }}
-                                  >
-                                    <Plus className="size-3.5" />
-                                    {t('cluster.zones.tree.newZone')}
-                                  </Button>
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="gap-1"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setErrorText(null)
+                                        setIntent({ level: 'zone', regionId: region.id })
+                                      }}
+                                    >
+                                      <Plus className="size-3.5" />
+                                      {t('cluster.zones.tree.newZone')}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="gap-1 text-crit hover:text-crit"
+                                      title={t('cluster.zones.tree.deleteRegion')}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        setDeleteError(null)
+                                        setDeleting({
+                                          level: 'region',
+                                          id: region.id,
+                                          name: region.name,
+                                          canDelete: region.zones.length === 0,
+                                        })
+                                      }}
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </Button>
+                                  </>
                                 }
                               />
                               {regionOpen && (
@@ -556,6 +762,24 @@ export default function ZoneTree({
                                               {zone.defaultEntryCount > 0 && (
                                                 <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>
                                               )}
+                                              <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                className="gap-1 text-crit hover:text-crit"
+                                                title={t('cluster.zones.tree.deleteZone')}
+                                                onClick={(e) => {
+                                                  e.stopPropagation()
+                                                  setDeleteError(null)
+                                                  setDeleting({
+                                                    level: 'zone',
+                                                    id: zone.id,
+                                                    name: zone.name,
+                                                    canDelete: zone.serverCount === 0,
+                                                  })
+                                                }}
+                                              >
+                                                <Trash2 className="size-3.5" />
+                                              </Button>
                                             </>
                                           }
                                         />
@@ -656,6 +880,113 @@ export default function ZoneTree({
           setMenu(null)
         }}
       />
+
+      {/* 树内解绑：原因确认 → 真调用 unbind，并清归属 */}
+      {unbindServer !== null && (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setUnbindServer(null)
+              setUnbindError(null)
+            }
+          }}
+          title={t('cluster.servers.confirm.unbindTitle')}
+          description={t('cluster.servers.confirm.unbindDesc')}
+          confirmLabel={t('cluster.servers.actions.unbind')}
+          impacts={[`serverId ${unbindServer.serverId}`]}
+          pending={unbindMutation.isPending}
+          errorText={unbindError}
+          onConfirm={(reason) => {
+            unbindMutation.mutate({ server: unbindServer, reason })
+          }}
+        />
+      )}
+
+      {/* 删除空节点：二次确认；失败仅 errorText + toast，不叠 impacts、不插页内横幅 */}
+      <DestructiveConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleting(null)
+            setDeleteError(null)
+          }
+        }}
+        title={
+          deleting?.level === 'cluster'
+            ? t('cluster.zones.tree.deleteClusterTitle', { name: deleting.name })
+            : deleting?.level === 'region'
+              ? t('cluster.zones.tree.deleteRegionTitle', { name: deleting.name })
+              : t('cluster.zones.tree.deleteZoneTitle', { name: deleting?.name ?? '' })
+        }
+        description={
+          deleting?.level === 'cluster'
+            ? t('cluster.zones.tree.deleteClusterDesc')
+            : deleting?.level === 'region'
+              ? t('cluster.zones.tree.deleteRegionDesc')
+              : t('cluster.zones.tree.deleteZoneDesc')
+        }
+        confirmLabel={t('cluster.zones.tree.deleteConfirm')}
+        cancelLabel={t('cluster.zones.drag.cancel')}
+        impacts={[
+          deleting?.canDelete
+            ? t('cluster.zones.tree.deleteImpactEmpty')
+            : t('cluster.zones.tree.deleteImpactHasChildren'),
+        ]}
+        confirmPhrase={deleting?.name}
+        pending={deleteMutation.isPending}
+        errorText={deleteError}
+        onConfirm={() => {
+          if (deleting === null) {
+            return false
+          }
+          if (!deleting.canDelete) {
+            const text = t('cluster.zones.tree.deleteImpactHasChildren')
+            setDeleteError(text)
+            notifyError(text)
+            // 阻止关窗：错误只在弹窗 errorText + toast
+            return false
+          }
+          setDeleteError(null)
+          deleteMutation.mutate(deleting)
+          // 异步结果：成功 onSuccess 关窗；失败 onError 留 errorText，弹窗仍开着
+          return false
+        }}
+      />
+
+      {/* 树内排空（维护模式）：原因必填 */}
+      {drainingServer !== null && (
+        <ReasonDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setDrainingServer(null)
+              setTreeOpError(null)
+            }
+          }}
+          title={
+            drainingServer.next
+              ? t('cluster.servers.confirm.drainingTitle')
+              : t('cluster.servers.actions.stopDraining')
+          }
+          description={t('cluster.servers.confirm.drainingDesc')}
+          confirmLabel={
+            drainingServer.next
+              ? t('cluster.servers.actions.startDraining')
+              : t('cluster.servers.actions.stopDraining')
+          }
+          impacts={[`serverId ${drainingServer.row.serverId}`]}
+          pending={drainingMutation.isPending}
+          errorText={treeOpError}
+          onConfirm={(reason) => {
+            drainingMutation.mutate({
+              row: drainingServer.row,
+              next: drainingServer.next,
+              reason,
+            })
+          }}
+        />
+      )}
     </section>
   )
 }
@@ -785,6 +1116,7 @@ function TreeLeaf({
     onContextMenu: (e: React.MouseEvent) => void
   }
 }) {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -807,7 +1139,7 @@ function TreeLeaf({
       {extra}
       <span
         className={cn('ml-auto size-1.5 rounded-full', online ? 'bg-ok' : 'bg-crit')}
-        aria-label={online ? '在线' : '失联'}
+        aria-label={online ? t('cluster.servers.summary.online') : t('cluster.servers.health.lost')}
       />
     </div>
   )

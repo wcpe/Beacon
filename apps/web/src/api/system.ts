@@ -39,8 +39,8 @@ export function fetchSystemObservability(): Promise<SystemObservability> {
 
 // ---- /system/version 版本与更新（Legacy 形状）----
 
-export function fetchUpdateCheck(): Promise<UpdateCheck> {
-  return request('GET', '/admin/v1/system/update-check')
+export function fetchUpdateCheck(force = false): Promise<UpdateCheck> {
+  return request('GET', `/admin/v1/system/update-check${force ? '?force=true' : ''}`)
 }
 
 export function fetchUpdateProgress(): Promise<UpdateProgress> {

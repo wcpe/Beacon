@@ -18,7 +18,7 @@ import {
   DialogTitle,
   Input,
   Label,
-  SectionHeader,
+  PageHeader,
   TableSkeleton,
   Textarea,
   type DataTableColumn,
@@ -248,7 +248,7 @@ export default function NamespacesPage() {
 
   return (
     <section className="grid gap-4">
-      <SectionHeader size="lg" icon={<ShieldCheck className="size-5" />} title={t('nav.namespaces')} />
+      <PageHeader icon={<ShieldCheck className="size-5" />} title={t('nav.namespaces')} />
       {/* 隔离原则提示：品牌浅底 + 盾牌图标，突出「默认强隔离、显式授予放通」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />

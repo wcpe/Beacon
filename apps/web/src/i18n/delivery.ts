@@ -317,7 +317,7 @@ export const delivery = {
     // 作用域实体选择器（首层贡献 / 预览目标 / diff 目标共用）
     scopePicker: {
       pickLabel: '选择作用域实体',
-      searchServer: '搜索 serverId',
+      searchServer: '搜索服务器 ID',
       empty: '无可选实体',
       serverEmpty: '无匹配服务器',
     },
@@ -429,6 +429,8 @@ export const delivery = {
       cancel: '取消',
       submit: '提交审批',
       preparing: '正在保存草稿并计算影响面…',
+      // 放弃已建草稿时写入 delete 接口的原因（审计用，可 i18n）
+      discardDraftReason: '向导放弃草稿',
       // 第 1 步：选交付内容
       content: {
         lead: '第一步，告诉系统这次要交付什么。选好类型后，向导只保留需要的步骤。',
@@ -453,7 +455,7 @@ export const delivery = {
         lead: '黄金模板源 = 已装好新版本并经人工验证的样板服务器。系统将扫描它与线上标准的文件差异，作为本单的交付载荷。',
         pickLabel: '模板源服务器',
         filter: '搜索模板源',
-        filterPlaceholder: '输入 serverId 或大区 / 小区名过滤',
+        filterPlaceholder: '输入服务器 ID 或大区 / 小区名过滤',
         noMatch: '没有匹配的子服，换个关键字试试',
         picked: '已选：{{serverId}}',
         noServer: '当前命名空间下没有运行中的子服',

@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { FileCog, Info } from 'lucide-react'
 
-import { Button, SectionHeader } from '@beacon/ui'
+import { Button, PageHeader } from '@beacon/ui'
 import type { ConfigFileItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -25,22 +25,21 @@ export default function ConfigsPage() {
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader
-          size="lg"
-          icon={<FileCog className="size-4" />}
-          title={t('delivery.configs.title')}
-        />
-        <NamespacePicker
-          value={namespaceId}
-          onChange={(id) => {
-            setNamespaceId(id)
-            // 切换 namespace 复位视图与选中，避免残留其他 ns 的详情
-            setTrashOpen(false)
-            setSelected(null)
-          }}
-        />
-      </div>
+      <PageHeader
+        icon={<FileCog className="size-4" />}
+        title={t('delivery.configs.title')}
+        actions={
+          <NamespacePicker
+            value={namespaceId}
+            onChange={(id) => {
+              setNamespaceId(id)
+              // 切换 namespace 复位视图与选中，避免残留其他 ns 的详情
+              setTrashOpen(false)
+              setSelected(null)
+            }}
+          />
+        }
+      />
 
       {/* 下发走变更单的显眼提示 + 跳转入口（B 版 warn 提示条） */}
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warn-bd bg-warn-bg px-4 py-2.5 text-sm text-warn">

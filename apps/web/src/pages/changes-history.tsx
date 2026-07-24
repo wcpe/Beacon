@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { SectionHeader } from '@beacon/ui'
+import { PageHeader } from '@beacon/ui'
 import type { ChangeOrderSummary } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -20,16 +20,18 @@ export default function ChangesHistoryPage() {
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" title={t('delivery.changesHistory.title')} />
-        <NamespacePicker
-          value={namespaceId}
-          onChange={(id) => {
-            setNamespaceId(id)
-            setSelected(null)
-          }}
-        />
-      </div>
+      <PageHeader
+        title={t('delivery.changesHistory.title')}
+        actions={
+          <NamespacePicker
+            value={namespaceId}
+            onChange={(id) => {
+              setNamespaceId(id)
+              setSelected(null)
+            }}
+          />
+        }
+      />
 
       <MasterDetail
         master={

@@ -72,7 +72,7 @@ describe('/configs 配置中心页', () => {
     }
     await user.click(row)
 
-    // 详情面板出现（作用域概览 Tab）且不产生模态遮罩
+    // 详情为固定层抽屉（非 dialog）；作用域概览 Tab 可见
     expect(await screen.findByRole('tab', { name: '作用域概览' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 

@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Archive, Gauge, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
-import { SectionHeader, cn } from '@beacon/ui'
+import { PageHeader, cn } from '@beacon/ui'
 
 import ArchiveBlock from './settings/archive-block'
 import SettingsBlock from './settings/settings-block'
@@ -25,7 +25,7 @@ export default function SettingsPage() {
 
   return (
     <section className="grid gap-4">
-      <SectionHeader size="lg" icon={<SlidersHorizontal className="size-5" />} title={t('nav.settings')} />
+      <PageHeader icon={<SlidersHorizontal className="size-5" />} title={t('nav.settings')} />
       <div className="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">
         {/* 左侧吸顶分区导航：切换分区只换右侧内容，不滚长页 */}
         <nav

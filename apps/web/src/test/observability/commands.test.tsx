@@ -72,12 +72,13 @@ describe('/commands 命令观测页', () => {
     })
     await user.click(row as unknown as HTMLElement)
 
-    // 右侧详情面板出现（命令详情标题 + 生命周期字段），且不产生模态遮罩层
+    // 固定层详情出现（命令详情 + 生命周期）；非 dialog，主表仍在
     await waitFor(() => {
       expect(screen.getByText('命令详情')).toBeInTheDocument()
     })
     expect(screen.getByText('生命周期')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('table').length).toBeGreaterThan(0)
   })
 
   it('URL 查询参数初始化筛选：serverId 落进搜索框并驱动服务端过滤（互跳承接，FR-157）', async () => {
@@ -85,7 +86,7 @@ describe('/commands 命令观测页', () => {
     renderPage(<CommandsPage />, ['/commands?serverId=srv-none&status=failed'])
 
     // serverId 搜索框以 URL 参数为初值
-    expect(await screen.findByLabelText('搜索 serverId')).toHaveValue('srv-none')
+    expect(await screen.findByLabelText('搜索服务器 ID')).toHaveValue('srv-none')
     // 不存在的 serverId → 服务端过滤后历史列表为空
     expect(await screen.findByText('当前筛选条件下无命令记录')).toBeInTheDocument()
   })

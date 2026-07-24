@@ -768,6 +768,33 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
   }, [links, selection])
   const selectedNode = selection?.kind === 'node' ? (nodeById.get(selection.id) ?? null) : null
   const selectedNodeHealth = selectedNode ? (healthOfNode.get(selectedNode.id) ?? null) : null
+  // 侧栏真实服务器列表：展开态 = 该小区子服；折叠态 = 该大区下全部小区的子服
+  const selectedNodeServers = useMemo(() => {
+    if (!selectedNode) {
+      return [] as { serverId: string; online: boolean; kind: string }[]
+    }
+    const zoneIds = new Set<number>()
+    if (collapsed) {
+      for (const cluster of tree?.clusters ?? []) {
+        for (const region of cluster.regions) {
+          if (region.id === selectedNode.id) {
+            for (const zone of region.zones) {
+              zoneIds.add(zone.id)
+            }
+          }
+        }
+      }
+    } else {
+      zoneIds.add(selectedNode.id)
+    }
+    const list: { serverId: string; online: boolean; kind: string }[] = []
+    for (const s of serversQuery.data?.items ?? []) {
+      if (s.kind === 'backend' && s.zoneId !== null && zoneIds.has(s.zoneId)) {
+        list.push({ serverId: s.serverId, online: s.online, kind: s.kind })
+      }
+    }
+    return list.sort((a, b) => a.serverId.localeCompare(b.serverId))
+  }, [selectedNode, collapsed, tree, serversQuery.data])
 
   // 健康占比说明文字的四段配置（节点下方 caption 与侧面板健康分布共用）
   const healthParts = (health: NodeHealth) =>
@@ -1272,6 +1299,38 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                           </li>
                         ))}
                       </ul>
+                    </div>
+                    {/* 真实服务器清单：按 serverId 列出，在线态点缀 */}
+                    <div>
+                      <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                        {t('cluster.topology.graph.nodeServerList')}
+                      </p>
+                      {selectedNodeServers.length === 0 ? (
+                        <p className="mt-1 text-xs text-ink-4">{t('cluster.topology.graph.nodeServerEmpty')}</p>
+                      ) : (
+                        <ul className="mt-1 grid max-h-48 gap-1 overflow-y-auto">
+                          {selectedNodeServers.map((s) => (
+                            <li
+                              key={s.serverId}
+                              className="flex items-center gap-1.5 rounded-md bg-card px-2 py-1 font-mono text-[11px] text-ink-2"
+                            >
+                              <i
+                                className="size-1.5 shrink-0 rounded-full"
+                                style={{
+                                  background: s.online ? 'var(--color-ok)' : 'var(--color-off)',
+                                }}
+                                aria-hidden
+                              />
+                              <span className="min-w-0 truncate">{s.serverId}</span>
+                              <Badge variant={s.kind === 'proxy' ? 'brand' : 'secondary'} className="ml-auto h-4 px-1 text-[9px]">
+                                {s.kind === 'proxy'
+                                  ? t('cluster.servers.kind.proxy')
+                                  : t('cluster.servers.kind.backend')}
+                              </Badge>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                   </div>
                 ) : (

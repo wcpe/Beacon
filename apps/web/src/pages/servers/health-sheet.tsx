@@ -100,7 +100,7 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
                         <li key={reason}>
                           <Badge variant="crit" className="gap-1.5">
                             <span className="size-1.5 rounded-full bg-current" />
-                            {reason}
+                            {t(`cluster.servers.schedReason.${reason}`, { defaultValue: reason })}
                           </Badge>
                         </li>
                       ))}

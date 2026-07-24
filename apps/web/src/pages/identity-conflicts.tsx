@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Copy, ShieldCheck } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
+import { AsyncSection, CardGridSkeleton, PageHeader } from '@beacon/ui'
 
 import { fetchIdentities, fetchNamespaces } from '../api/cluster'
 import ConflictCard from './identity-conflicts/conflict-card'
@@ -32,11 +32,10 @@ export default function IdentityConflictsPage() {
 
   return (
     <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
+      <PageHeader
         icon={<Copy className="size-5" />}
         title={t('nav.identityConflicts')}
-        count={t('cluster.identityConflicts.mission')}
+        description={t('cluster.identityConflicts.mission')}
       />
       <AsyncSection
         isLoading={query.isLoading}

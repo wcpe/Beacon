@@ -61,14 +61,14 @@ describe('/namespaces 页', () => {
     const user = userEvent.setup()
     renderPage(<NamespacesPage />)
 
-    // 初始无详情面板、无模态遮罩
+    // 初始无详情、无 dialog
     expect(screen.queryByText('命名空间 详情')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     // 选中 test 域（种子含出向生效信任 test → prod）
     await user.click(await screen.findByText('test'))
 
-    // 详情面板出现且是布局内列（非 role=dialog 遮罩）
+    // 固定层详情出现（非 role=dialog）
     expect(await screen.findByText('命名空间 详情')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // 面板内出现互通信任关系区与授予入口

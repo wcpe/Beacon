@@ -26,8 +26,8 @@ describe('/audits 审计页', () => {
     renderPage(<AuditsPage />)
 
     expect(await screen.findByText('审计总数')).toBeInTheDocument()
-    // 出现已知审计动作
-    expect((await screen.findAllByText(/identity.approved|zone.rezone.initiated/)).length).toBeGreaterThan(0)
+    // 出现已知审计动作中文标签（observability.audits.action 映射）
+    expect((await screen.findAllByText(/确认接入身份|发起换区|启动变更单灰度/)).length).toBeGreaterThan(0)
   })
 
   it('空态给出无记录提示', async () => {
@@ -77,21 +77,22 @@ describe('/audits 审计页', () => {
     const user = userEvent.setup()
     renderPage(<AuditsPage />)
 
-    // 等待表格行渲染（排除筛选下拉的同名 option，只取有 tr 祖先的动作单元格）
+    // 等待表格行渲染（中文动作标签；排除筛选下拉 option，只取有 tr 祖先的动作单元格）
     let row: HTMLElement | null = null
     await waitFor(() => {
-      const cells = screen.getAllByText(/identity.approved|zone.rezone.initiated/)
+      const cells = screen.getAllByText(/确认接入身份|发起换区|启动变更单灰度/)
       row = cells.map((el) => el.closest('tr')).find((tr): tr is HTMLTableRowElement => tr !== null) ?? null
       expect(row).not.toBeNull()
     })
     await user.click(row as unknown as HTMLElement)
 
-    // 右侧非模态详情面板出现（含来源 IP 字段），且不产生模态遮罩层
+    // 固定层详情出现（含来源 IP）；非 dialog，主表仍在
     await waitFor(() => {
       expect(screen.getByText('审计详情')).toBeInTheDocument()
     })
-    expect(screen.getByText('来源 IP')).toBeInTheDocument()
+    expect(screen.getByText(/来源 IP|sourceIp|IP/i)).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
   })
 
   it('URL 查询参数初始化筛选：targetRef 落进输入框并驱动服务端过滤（互跳承接，FR-157）', async () => {
@@ -99,7 +100,7 @@ describe('/audits 审计页', () => {
     renderPage(<AuditsPage />, ['/audits?targetRef=srv-none'])
 
     // 目标输入框以 URL 参数为初值
-    expect(await screen.findByLabelText('目标（targetRef）')).toHaveValue('srv-none')
+    expect(await screen.findByLabelText('目标（支持服务器 ID 子串）')).toHaveValue('srv-none')
     // 不存在的 targetRef → 服务端过滤后列表为空
     expect(await screen.findByText('当前筛选条件下无审计记录')).toBeInTheDocument()
   })
@@ -108,14 +109,14 @@ describe('/audits 审计页', () => {
     useScenario('normal')
     renderPage(<AuditsPage />, ['/audits?action=message.payload.view'])
 
-    // 列表出现该动作的行（服务端过滤生效），其余动作不再出现
+    // 列表出现该动作的中文标签行（服务端按英文枚举过滤），其余动作中文不再出现
     await waitFor(() => {
       const cells = screen
-        .getAllByText('message.payload.view')
+        .getAllByText('查看消息载荷')
         .filter((el) => el.closest('tr') !== null)
       expect(cells.length).toBeGreaterThan(0)
     })
-    expect(screen.queryByText('identity.approved')).not.toBeInTheDocument()
+    expect(screen.queryByText('确认接入身份')).not.toBeInTheDocument()
   })
 
   it('审计详情互跳命令观测：URL 带 serverId 且落位页筛选初始化生效（FR-157 贯通）', async () => {
@@ -132,7 +133,7 @@ describe('/audits 审计页', () => {
     // 点开首条审计详情
     let row: HTMLElement | null = null
     await waitFor(() => {
-      const cells = screen.getAllByText(/identity.approved|zone.rezone.initiated/)
+      const cells = screen.getAllByText(/确认接入身份|发起换区|启动变更单灰度/)
       row = cells.map((el) => el.closest('tr')).find((tr): tr is HTMLTableRowElement => tr !== null) ?? null
       expect(row).not.toBeNull()
     })
@@ -147,6 +148,6 @@ describe('/audits 审计页', () => {
     // 点击互跳 → 命令观测页挂载，serverId 搜索框以链接参数为初值（链路真正生效）
     await user.click(link)
     expect(await screen.findByText('命令历史')).toBeInTheDocument()
-    expect(await screen.findByLabelText('搜索 serverId')).toHaveValue(serverId)
+    expect(await screen.findByLabelText('搜索服务器 ID')).toHaveValue(serverId)
   })
 })

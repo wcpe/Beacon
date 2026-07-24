@@ -50,7 +50,10 @@ export default function SchedOverview() {
         skeleton={<CardGridSkeleton count={3} />}
       >
         {!data || data.total === 0 ? (
-          <p className="text-sm text-ink-3">{t('dashboard.sched.empty')}</p>
+          <div className="grid gap-1.5">
+            <p className="text-sm text-ink-3">{t('dashboard.sched.empty')}</p>
+            <p className="text-[11.5px] leading-relaxed text-ink-4">{t('dashboard.sched.emptyHint')}</p>
+          </div>
         ) : (
           <div className="grid gap-3.5">
             {/* 大号成功率 + KV */}

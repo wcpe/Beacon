@@ -290,7 +290,7 @@ describe('/configs 有效预览目标选择器', () => {
     // 目标类型切「按服务器」→ 服务端搜索选 lobby-1
     await user.click(await screen.findByRole('combobox', { name: '目标类型' }))
     await user.click(await screen.findByRole('option', { name: '按服务器' }))
-    await user.type(screen.getByLabelText('搜索 serverId'), 'lobby')
+    await user.type(screen.getByLabelText('搜索服务器 ID'), 'lobby')
     await user.click(await screen.findByRole('option', { name: 'lobby-1' }))
     await user.click(screen.getByRole('button', { name: '查询' }))
 

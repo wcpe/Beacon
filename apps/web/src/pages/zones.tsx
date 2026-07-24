@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Boxes, Inbox } from 'lucide-react'
 
-import { Badge, Button, SectionHeader } from '@beacon/ui'
+import { Badge, Button, PageHeader } from '@beacon/ui'
 
 import { fetchZoneTree } from '../api/cluster'
 import NamespaceSelect from '../features/cluster/namespace-select'
@@ -33,29 +33,32 @@ export default function ZonesPage() {
 
   return (
     <section className="grid gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" icon={<Boxes className="size-5" />} title={t('nav.zones')} className="border-b-0 pb-0" />
-        <div className="flex items-center gap-3">
-          <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
-          {/* 未分配入口：开合右侧非模态窄栏 */}
-          <Button
-            variant={basketOpen ? 'default' : 'outline'}
-            size="sm"
-            className="gap-1.5"
-            onClick={() => {
-              setBasketOpen((v) => !v)
-            }}
-          >
-            <Inbox className="size-3.5" />
-            {t('cluster.zones.basket.title')}
-            {unassignedCount > 0 && (
-              <Badge variant="warn" className="tnum">
-                {unassignedCount}
-              </Badge>
-            )}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        icon={<Boxes className="size-5" />}
+        title={t('nav.zones')}
+        actions={
+          <>
+            <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
+            {/* 未分配入口：开合右侧非模态窄栏 */}
+            <Button
+              variant={basketOpen ? 'default' : 'outline'}
+              size="sm"
+              className="gap-1.5"
+              onClick={() => {
+                setBasketOpen((v) => !v)
+              }}
+            >
+              <Inbox className="size-3.5" />
+              {t('cluster.zones.basket.title')}
+              {unassignedCount > 0 && (
+                <Badge variant="warn" className="tnum">
+                  {unassignedCount}
+                </Badge>
+              )}
+            </Button>
+          </>
+        }
+      />
       {/* 主从布局：结构树占主区，未分配窄栏（非模态）在右侧共存，不遮罩、不 reflow 主区 */}
       <div className="flex items-start gap-3.5">
         <div className="min-w-0 flex-1">

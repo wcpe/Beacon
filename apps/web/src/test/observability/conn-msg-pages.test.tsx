@@ -1,4 +1,4 @@
-// /connections 与 /messages 页测试（FR-181）：查询防护引导空态 / 条件检索出行 / 详情面板 /
+// /connections 与 /messages 页测试（FR-181）：默认全局近期 / 条件收窄检索 / 详情面板 /
 // 游标分页文案 / payload 受控查看入口。数据走 devmock（查询防护与游标切片在 mock 内真实生效）。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -20,32 +20,42 @@ afterAll(() => {
   server.close()
 })
 
+/** 等 DataTable 真实数据行（带 onRowClick → cursor-pointer），避开骨架屏假行 */
+async function waitForDataRows(): Promise<HTMLElement[]> {
+  return waitFor(() => {
+    const rows = screen
+      .getAllByRole('row')
+      .filter((r) => r.classList.contains('cursor-pointer')) as HTMLElement[]
+    expect(rows.length).toBeGreaterThan(0)
+    return rows
+  })
+}
+
 describe('/connections 连接明细页', () => {
-  it('初始为查询引导空态，条件不满足防护时查询按钮禁用', async () => {
+  it('进页默认全局近期：查询按钮可用并直接出连接行', async () => {
     useScenario('normal')
     renderPage(<ConnectionsPage />)
 
-    expect(
-      await screen.findByText('输入查询条件后开始检索：精确 connId，或 serverId / 玩家 UUID + 时间范围'),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '查询' })).toBeDisabled()
+    // 热查询默认 committed 近 1h，无需 selector
+    expect(screen.getByRole('button', { name: '查询' })).toBeEnabled()
+    await waitForDataRows()
   })
 
-  it('按 serverId + 时间范围检索出连接行，点行开详情面板', async () => {
+  it('按服务器 ID 收窄后点行开详情面板', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ConnectionsPage />)
 
-    await user.type(screen.getByLabelText('serverId（代理或后端）'), 'proxy-1')
+    await waitForDataRows()
+
+    await user.clear(screen.getByLabelText('服务器 ID（代理或后端）'))
+    await user.type(screen.getByLabelText('服务器 ID（代理或后端）'), 'proxy-1')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
-    // 出数据行（常规场景单页装得下，分页器隐藏）
-    await waitFor(() => {
-      expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
-    })
+    const rows = await waitForDataRows()
 
     // 点首个数据行 → 右侧详情面板出 connId / 客户端 IP 字段
-    await user.click(screen.getAllByRole('row')[1])
+    await user.click(rows[0])
     await waitFor(() => {
       expect(screen.getByText('连接详情')).toBeInTheDocument()
     })
@@ -58,8 +68,8 @@ describe('/connections 连接明细页', () => {
     const user = userEvent.setup()
     renderPage(<ConnectionsPage />)
 
-    // huge 场景代理命名带补零（proxy-01..proxy-12）
-    await user.type(screen.getByLabelText('serverId（代理或后端）'), 'proxy-01')
+    // huge 场景代理命名带补零（proxy-01..proxy-12）；收窄到单代理保证分页稳定
+    await user.type(screen.getByLabelText('服务器 ID（代理或后端）'), 'proxy-01')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
     expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
@@ -69,69 +79,58 @@ describe('/connections 连接明细页', () => {
     expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
   })
 
-  it('空态场景检索返回空列表提示', async () => {
+  it('空态场景默认查询返回空列表提示', async () => {
     useScenario('empty')
-    const user = userEvent.setup()
     renderPage(<ConnectionsPage />)
-
-    await user.type(screen.getByLabelText('serverId（代理或后端）'), 'proxy-1')
-    await user.click(screen.getByRole('button', { name: '查询' }))
 
     expect(await screen.findByText('当前条件下无连接记录')).toBeInTheDocument()
   })
 
-  it('可点击行键盘可达：Tab 聚焦 + Enter 打开详情，详情打开后次要列收起', async () => {
+  it('可点击行键盘可达：Tab 聚焦 + Enter 打开详情，主表列集保持完整', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ConnectionsPage />)
 
-    await user.type(screen.getByLabelText('serverId（代理或后端）'), 'proxy-1')
-    await user.click(screen.getByRole('button', { name: '查询' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
-    })
-
-    // 数据行可聚焦（tabindex=0），Enter 触发与点击等价
-    const firstRow = screen.getAllByRole('row')[1]
-    expect(firstRow).toHaveAttribute('tabindex', '0')
+    const rows = await waitForDataRows()
+    const firstRow = rows[0]
+    // 可聚焦：DOM tabIndex 属性或 HTMLElement.tabIndex 皆可
+    expect(firstRow.tabIndex).toBe(0)
     firstRow.focus()
     await user.keyboard('{Enter}')
     await waitFor(() => {
       expect(screen.getByText('连接详情')).toBeInTheDocument()
     })
-    // 详情打开后次要列（后端路径 / 时长 / 断开类别）收起，避免主表横向滚动
-    expect(screen.queryByText('后端路径')).not.toBeInTheDocument()
-    expect(screen.queryByText('时长')).not.toBeInTheDocument()
+    // 详情为固定层抽屉，主表宽度不变，次要列始终保留
+    expect(screen.getByText('后端路径')).toBeInTheDocument()
+    expect(screen.getByText('时长')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
 
 describe('/messages 消息链路页', () => {
-  it('初始为查询引导空态', async () => {
+  it('进页默认全局近期：查询按钮可用并直接出消息行', async () => {
     useScenario('normal')
     renderPage(<MessagesPage />)
 
-    expect(
-      await screen.findByText(
-        '输入查询条件后开始检索：精确 messageId / correlationId，或 serverId / 玩家 UUID + 时间范围',
-      ),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '查询' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '查询' })).toBeEnabled()
+    await waitForDataRows()
   })
 
-  it('按 serverId 检索出消息行，详情面板含逐跳链路与 payload 查看入口', async () => {
+  it('按服务器 ID 收窄后详情面板含逐跳链路与 payload 查看入口', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<MessagesPage />)
 
-    await user.type(screen.getByLabelText('serverId（来源或目标）'), 'lobby-1')
+    await waitForDataRows()
+
+    await user.clear(screen.getByLabelText('服务器 ID（来源或目标）'))
+    await user.type(screen.getByLabelText('服务器 ID（来源或目标）'), 'lobby-1')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
-    await waitFor(() => {
-      expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
-    })
+    const rows = await waitForDataRows()
 
     // 点首个数据行 → 详情面板：逐跳链路 + payload 受控查看入口（mock 全部 payloadStored）
-    await user.click(screen.getAllByRole('row')[1])
+    await user.click(rows[0])
     await waitFor(() => {
       expect(screen.getByText('逐跳链路')).toBeInTheDocument()
     })
@@ -147,8 +146,8 @@ describe('/messages 消息链路页', () => {
     const user = userEvent.setup()
     renderPage(<MessagesPage />)
 
-    // huge 场景后端命名带补零（game-0001..1200）；消息集中于前 8 台，任一头部后端可出分页
-    await user.type(screen.getByLabelText('serverId（来源或目标）'), 'game-0001')
+    // huge 场景后端命名带补零（game-0001..1200）；消息集中于前 8 台
+    await user.type(screen.getByLabelText('服务器 ID（来源或目标）'), 'game-0001')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
     expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
@@ -163,15 +162,12 @@ describe('/messages 消息链路页', () => {
     const user = userEvent.setup()
     renderPage(<MessagesPage />)
 
-    await user.type(screen.getByLabelText('serverId（来源或目标）'), 'lobby-1')
-    await user.click(screen.getByRole('button', { name: '查询' }))
-    await waitFor(() => {
-      expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
-    })
-    await user.click(screen.getAllByRole('row')[1])
+    const rows = await waitForDataRows()
+    await user.click(rows[0])
+    // 等详情就绪后再点 payload 入口（勿点骨架行）
     await user.click(await screen.findByRole('button', { name: '查看 payload' }))
 
-    // 弹窗内填原因并提交（复用 /topology 的受控查看弹窗）
+    // payload 弹窗：详情已非 dialog，唯一 dialog 即为受控查看框
     const dialog = await screen.findByRole('dialog')
     const reasonBox = within(dialog).getByRole('textbox')
     await user.type(reasonBox, '排查跨服传送失败')

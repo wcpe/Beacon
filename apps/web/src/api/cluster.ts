@@ -221,6 +221,21 @@ export function createZone(body: CreateZoneBody): Promise<unknown> {
   return request('POST', '/admin/v2/zones', body)
 }
 
+/** 删除空的 BC 集群（无大区、无已分配代理）。 */
+export function deleteBcCluster(id: number): Promise<void> {
+  return request('DELETE', `/admin/v2/bc-clusters/${String(id)}`)
+}
+
+/** 删除空的大区（无小区）。 */
+export function deleteRegion(id: number): Promise<void> {
+  return request('DELETE', `/admin/v2/regions/${String(id)}`)
+}
+
+/** 删除空的小区（无已分配子服）。 */
+export function deleteZone(id: number): Promise<void> {
+  return request('DELETE', `/admin/v2/zones/${String(id)}`)
+}
+
 export interface AssignmentBody {
   serverIds: number[]
   target: { kind: 'zone' | 'bc_cluster'; id: number } | null
@@ -256,12 +271,27 @@ export function fetchHealthDetail(serverId: string): Promise<HealthDetail> {
   return request('GET', `/admin/v2/health/${serverId}`)
 }
 
-// ---- 连接消息域（拓扑异常链路）----
+// ---- 连接消息域（拓扑异常链路 / 类型汇总）----
 
 export interface MessageEdgeResponse {
   edges: MessageEdgeStat[]
 }
 
+/** 按类型聚合（groupBy=type）；广播等不进 edge 时用于数据剖析空态说明 */
+export interface MessageTypeStat {
+  msgType: string
+  total: number
+  failed: number
+}
+
+export interface MessageTypeStatsResponse {
+  types: MessageTypeStat[]
+}
+
 export function fetchMessageEdges(): Promise<MessageEdgeResponse> {
   return request('GET', '/admin/v2/messages/stats?groupBy=edge')
+}
+
+export function fetchMessageTypeStats(): Promise<MessageTypeStatsResponse> {
+  return request('GET', '/admin/v2/messages/stats?groupBy=type')
 }

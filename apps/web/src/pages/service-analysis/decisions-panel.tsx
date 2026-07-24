@@ -10,6 +10,12 @@ import { AsyncSection, Badge, Checkbox, DataTable, Input, TableSkeleton, type Da
 import type { SchedDecisionItem } from '@beacon/contracts'
 
 import { fetchSchedDecisions } from '../../api/metrics'
+import {
+  filterItemsByEnvScope,
+  needsClientEnvFilter,
+  resolveApiNamespaceId,
+  useEnvNamespaceScope,
+} from '../../features/env/use-env-scope'
 import FilterSelect from '../../features/observability/filter-select'
 import Pager from '../../features/observability/pager'
 import CursorPager from '../../features/observability/cursor-pager'
@@ -25,6 +31,10 @@ const RESULTS = ['success', 'failed'] as const
 
 export default function DecisionsPanel() {
   const { t } = useTranslation()
+  // FR-178：调度决策跟随顶栏 env（namespaceId 维度）
+  const envScope = useEnvNamespaceScope()
+  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
+  const clientFilter = needsClientEnvFilter(envScope)
   const [windowKey, setWindowKey] = useState<WindowKey>('1h')
   const [keyword, setKeyword] = useState('')
   const [result, setResult] = useState('all')
@@ -42,7 +52,17 @@ export default function DecisionsPanel() {
   }
 
   const query = useQuery({
-    queryKey: ['service-analysis', 'sched-decisions', windowKey, keyword, result, cold, cold ? cursor.cursor : String(page)],
+    queryKey: [
+      'service-analysis',
+      'sched-decisions',
+      windowKey,
+      keyword,
+      result,
+      cold,
+      cold ? cursor.cursor : String(page),
+      apiNamespaceId,
+      envScope,
+    ],
     queryFn: () => {
       // 时间范围必填：按预设时间窗自「现在」往前推（毫秒时间戳，对齐后端 from/to 必填约束）
       const to = Date.now()
@@ -53,6 +73,7 @@ export default function DecisionsPanel() {
         return fetchSchedDecisions({
           from,
           to,
+          namespaceId: apiNamespaceId,
           serverId,
           result: resultFilter,
           includeArchived: true,
@@ -60,10 +81,24 @@ export default function DecisionsPanel() {
           pageSize: PAGE_SIZE,
         })
       }
-      return fetchSchedDecisions({ from, to, serverId, result: resultFilter, page, pageSize: PAGE_SIZE })
+      return fetchSchedDecisions({
+        from,
+        to,
+        namespaceId: apiNamespaceId,
+        serverId,
+        result: resultFilter,
+        page,
+        pageSize: PAGE_SIZE,
+      })
     },
     placeholderData: keepPreviousData,
   })
+
+  // env 多 ns 时 API 只能传单 id，对当前页结果再收窄
+  const decisionRows = useMemo(() => {
+    const items = query.data?.items ?? []
+    return clientFilter ? filterItemsByEnvScope(items, envScope) : items
+  }, [query.data, clientFilter, envScope])
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -208,7 +243,7 @@ export default function DecisionsPanel() {
           >
             <DataTable
               columns={columns}
-              rows={query.data?.items}
+              rows={decisionRows}
               rowKey={(row) => row.traceId}
               emptyText={t('observability.serviceAnalysis.decisions.empty')}
               density="compact"

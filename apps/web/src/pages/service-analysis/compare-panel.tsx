@@ -116,7 +116,12 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
         numeric: false,
         cells: serverIds.map((id) => {
           const s = healthMap.get(id)
-          const text = s && s.reasons.length > 0 ? s.reasons.join('、') : t('observability.serviceAnalysis.none')
+          const text =
+            s && s.reasons.length > 0
+              ? s.reasons
+                  .map((r) => t(`cluster.servers.schedReason.${r}`, { defaultValue: r }))
+                  .join('、')
+              : t('observability.serviceAnalysis.none')
           return { text: s ? text : dash, num: null }
         }),
       },

@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
 import { CircleHelp } from 'lucide-react'
 
-import { Button, SectionHeader } from '@beacon/ui'
+import { Button, PageHeader } from '@beacon/ui'
 import type { ChangeOrderSummary } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/delivery'
@@ -55,28 +55,30 @@ export default function ChangesPage() {
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <SectionHeader size="lg" title={t('delivery.changes.title')} />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setHelpOpen((prev) => !prev)
-            }}
-          >
-            <CircleHelp className="size-4" />
-            {t('delivery.changes.flow.open')}
-          </Button>
-        </div>
-        <NamespacePicker
-          value={namespaceId}
-          onChange={(id) => {
-            setNamespaceId(id)
-            setSelected(null)
-          }}
-        />
-      </div>
+      <PageHeader
+        title={t('delivery.changes.title')}
+        actions={
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setHelpOpen((prev) => !prev)
+              }}
+            >
+              <CircleHelp className="size-4" />
+              {t('delivery.changes.flow.open')}
+            </Button>
+            <NamespacePicker
+              value={namespaceId}
+              onChange={(id) => {
+                setNamespaceId(id)
+                setSelected(null)
+              }}
+            />
+          </>
+        }
+      />
 
       {/* 深链目标加载失败：脱敏真因内联展示，不静默吞掉（列表仍可正常使用） */}
       {deepLinkQuery.isError && (

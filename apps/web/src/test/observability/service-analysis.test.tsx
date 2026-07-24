@@ -112,7 +112,7 @@ describe('/service-analysis 服务分析页', () => {
     expect(screen.getByRole('checkbox', { name: 'game-1' })).toBeInTheDocument()
 
     // 搜索 lobby 后仅剩 lobby-* 候选
-    await user.type(screen.getByLabelText('搜索 serverId'), 'lobby')
+    await user.type(screen.getByLabelText('搜索服务器 ID'), 'lobby')
     await waitFor(() => {
       expect(screen.queryByRole('checkbox', { name: 'game-1' })).not.toBeInTheDocument()
     })

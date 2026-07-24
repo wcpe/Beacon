@@ -2,7 +2,7 @@
 // 各页面 agent 用真实内容替换所在页面文件时移除本组件的引用。
 import { useTranslation } from 'react-i18next'
 
-import { Badge, SectionHeader } from '@beacon/ui'
+import { Badge, PageHeader } from '@beacon/ui'
 
 interface PageScaffoldProps {
   // 页面标题的 i18n 键（nav 域，与侧栏共用）
@@ -15,8 +15,7 @@ export default function PageScaffold({ titleKey, missionKey }: PageScaffoldProps
   const { t } = useTranslation()
   return (
     <section className="grid gap-3">
-      <SectionHeader size="lg" title={t(titleKey)} />
-      <p className="text-sm text-muted-foreground">{t(missionKey)}</p>
+      <PageHeader title={t(titleKey)} description={t(missionKey)} />
       <div>
         <Badge variant="outline">{t('common.mockBuilding')}</Badge>
       </div>

@@ -51,8 +51,8 @@ describe('/zones 区服分配页', () => {
     useScenario('normal')
     renderPage(<ZonesPage />)
 
-    // 集群头带「代理 · N」角色徽标（代理服明确标注）
-    expect(await screen.findByText(/代理 · \d/)).toBeInTheDocument()
+    // 集群头带「代理 · N」角色徽标；「全部命名空间」下可能有多集群，取至少一处即可
+    expect((await screen.findAllByText(/代理 · \d/)).length).toBeGreaterThan(0)
   })
 
   it('空态给出建集群引导', async () => {
@@ -82,15 +82,18 @@ describe('/zones 区服分配页', () => {
     await user.click(screen.getByRole('button', { name: '分配到…' }))
 
     // 目标选择器为可搜索树：搜索 area 过滤，再点小区叶 area-1
+    // 名称用 ^area-1 锚定，避免「全部命名空间」下 test-area-1 被 /area-1/ 误命中
     const dialog = await screen.findByRole('dialog')
     const search = within(dialog).getByLabelText('搜索目标（按名称过滤）')
     await user.type(search, 'area-1')
-    await user.click(await within(dialog).findByRole('treeitem', { name: /area-1/ }))
+    await user.click(await within(dialog).findByRole('treeitem', { name: /^area-1/ }))
     await user.click(within(dialog).getByRole('button', { name: '确认分配' }))
 
-    // build-1 从未分配窄栏消失
+    // build-1 从未分配窄栏消失（分配后会挂到树上，故只断言窄栏内不再出现）
     await waitFor(() => {
-      expect(screen.queryByText('build-1')).not.toBeInTheDocument()
+      const basket = document.querySelector('[data-slot="unassigned-basket"]')
+      expect(basket).not.toBeNull()
+      expect(within(basket as HTMLElement).queryByText('build-1')).not.toBeInTheDocument()
     })
   })
 
@@ -110,10 +113,10 @@ describe('/zones 区服分配页', () => {
     // 搜索一个不存在的名称 → 空匹配提示
     await user.type(search, 'zzz-none')
     expect(await within(dialog).findByText('无匹配的目标节点')).toBeInTheDocument()
-    // 改搜 area-1 → 命中叶出现
+    // 改搜 area-1 → 命中叶出现（锚定开头，避免误匹配 test-area-1）
     await user.clear(search)
     await user.type(search, 'area-1')
-    expect(await within(dialog).findByRole('treeitem', { name: /area-1/ })).toBeInTheDocument()
+    expect(await within(dialog).findByRole('treeitem', { name: /^area-1/ })).toBeInTheDocument()
   })
 
   it('从窄栏拖拽 build-1 落到小区 area-1 弹二次确认，确认后完成分配（原生 HTML5 拖拽 + 二次确认）', async () => {
@@ -146,9 +149,11 @@ describe('/zones 区服分配页', () => {
     // 点确认才真正分配
     await user.click(within(dialog).getByRole('button', { name: '确认' }))
 
-    // 分配成功后 build-1 从未分配窄栏消失（写闭环失效缓存）
+    // 分配成功后 build-1 从未分配窄栏消失（可能已出现在树上，故只断言窄栏）
     await waitFor(() => {
-      expect(screen.queryByText('build-1')).not.toBeInTheDocument()
+      const basket = document.querySelector('[data-slot="unassigned-basket"]')
+      expect(basket).not.toBeNull()
+      expect(within(basket as HTMLElement).queryByText('build-1')).not.toBeInTheDocument()
     })
   })
 
@@ -182,13 +187,8 @@ describe('/zones 区服分配页', () => {
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
-    // 展开华南大区下 area-2（含 game-3），先定位其树行叶。华东/华南默认展开，小区默认收起需点开。
+    // 有服小区默认自动展开，game-3 应直接可见（勿再点 area-2，否则会折叠）
     await screen.findByText('bc-main')
-    // 点开 area-2（game-3 归属小区 id 31）
-    const area2Row = (await screen.findByText('area-2')).closest('[role="button"]')
-    await user.click(area2Row as HTMLElement)
-
-    // 定位已分配叶 game-3（可拖起）
     const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
     expect(leaf).not.toBeNull()
 
@@ -217,14 +217,10 @@ describe('/zones 区服分配页', () => {
 
   it('已分配子服右键弹操作菜单（改派 / 查看详情 / 解绑）', async () => {
     useScenario('normal')
-    const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
     await screen.findByText('bc-main')
-    const area2Row = (await screen.findByText('area-2')).closest('[role="button"]')
-    await user.click(area2Row as HTMLElement)
-
-    // 右键 game-3 叶行
+    // 有服小区默认自动展开，直接右键 game-3 叶行
     const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
     fireEvent.contextMenu(leaf as HTMLElement)
 

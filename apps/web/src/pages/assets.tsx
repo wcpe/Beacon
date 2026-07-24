@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { FolderTree, Info, ShieldAlert } from 'lucide-react'
 
-import { Button, SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
+import { Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
 import NamespacePicker from '../features/delivery/namespace-picker'
 import ScanPanel from './assets/scan-panel'
@@ -24,27 +24,26 @@ export default function AssetsPage() {
 
   return (
     <section className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader
-          size="lg"
-          icon={<FolderTree className="size-5" aria-hidden />}
-          title={t('delivery.assets.title')}
-        />
-        <div className="flex items-center gap-2">
-          {/* 敏感路径规则编辑（FR-164，非结构性小面板）：命中 glob 的文件预览 / diff 需原因放行 */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setRulesOpen(true)
-            }}
-          >
-            <ShieldAlert className="size-4" aria-hidden />
-            {t('delivery.assets.sensitiveRules.manage')}
-          </Button>
-          <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
-        </div>
-      </div>
+      <PageHeader
+        icon={<FolderTree className="size-5" aria-hidden />}
+        title={t('delivery.assets.title')}
+        actions={
+          <>
+            {/* 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因放行 */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setRulesOpen(true)
+              }}
+            >
+              <ShieldAlert className="size-4" aria-hidden />
+              {t('delivery.assets.sensitiveRules.manage')}
+            </Button>
+            <NamespacePicker value={namespaceId} onChange={setNamespaceId} />
+          </>
+        }
+      />
 
       <SensitiveRulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
 

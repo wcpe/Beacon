@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Inbox,
+  MoreHorizontal,
   Network,
   Search,
   Server,
@@ -22,6 +23,11 @@ import {
   Checkbox,
   DataTable,
   DestructiveConfirmDialog,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   Input,
   Select,
   SelectContent,
@@ -45,6 +51,13 @@ import {
   unbindIdentity,
 } from '../../api/cluster'
 import { fetchHealthList, fetchMetricsSeries } from '../../api/metrics'
+import {
+  filterItemsByEnvScope,
+  needsClientEnvFilter,
+  resolveApiNamespaceId,
+  useEnvNamespaceScope,
+} from '../../features/env/use-env-scope'
+import { notifyError, notifySuccess } from '../../lib/notify'
 import { LEVEL_META, badgeOf } from './health-level'
 import ReasonDialog from './reason-dialog'
 
@@ -65,25 +78,39 @@ interface AssetsPanelProps {
   onOpenPending: () => void
   // 待确认数（吸顶入口徽标）
   pendingCount: number
+  // URL / 互跳预填搜索（如 ?keyword=lobby）
+  initialKeyword?: string
 }
 
-export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, pendingCount }: AssetsPanelProps) {
+export default function AssetsPanel({
+  namespaceId,
+  onViewHealth,
+  onOpenPending,
+  pendingCount,
+  initialKeyword = '',
+}: AssetsPanelProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  // FR-178：顶栏 env 作用域与页内 namespace 合成 API 参数；多 ns 时客户端二次过滤
+  const envScope = useEnvNamespaceScope()
+  const apiNamespaceId = resolveApiNamespaceId(namespaceId, envScope)
+  const clientFilter = needsClientEnvFilter(envScope)
 
-  const [keyword, setKeyword] = useState('')
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [kind, setKind] = useState<string>('all')
   const [assigned, setAssigned] = useState<string>('all')
+  // 身份维：all | active（有可迁绑定）| residual（无活跃身份的遗留行）
+  const [identityFilter, setIdentityFilter] = useState<string>('all')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [action, setAction] = useState<RowAction | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
 
   const query = useQuery({
-    queryKey: ['servers', 'assets', namespaceId, keyword, kind, assigned, page],
+    queryKey: ['servers', 'assets', apiNamespaceId, envScope, keyword, kind, assigned, page],
     queryFn: () =>
       fetchServers({
-        namespaceId,
+        namespaceId: apiNamespaceId,
         keyword: keyword.trim() === '' ? undefined : keyword.trim(),
         kind: kind === 'all' ? undefined : kind,
         assigned: assigned === 'all' ? undefined : assigned === 'yes',
@@ -95,33 +122,70 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
 
   // 身份端点按 identityId 定位，server 列表只给 serverId，故拉一份身份表建 serverId→identityId 映射。
   const identitiesQuery = useQuery({
-    queryKey: ['identities', 'by-server', namespaceId],
-    queryFn: () => fetchIdentities({ namespaceId, pageSize: 1000 }),
+    queryKey: ['identities', 'by-server', apiNamespaceId, envScope],
+    queryFn: () => fetchIdentities({ namespaceId: apiNamespaceId, pageSize: 1000 }),
   })
-  const identityIdOf = (row: ServerItem): string | null =>
-    identitiesQuery.data?.items.find(
+  // 同一 serverId 可能有多条历史身份（unbound/rejected/active）；解绑/禁用只对可迁状态生效，
+  // 优先 active → disabled → conflict，避免命中已 unbound 的旧行导致 409 illegal_state。
+  // 注意：仅有 unbound/rejected 历史时仍可能返回旧行——调用方可迁操作前必须再看 status。
+  const identityMatchesOf = (row: ServerItem) =>
+    identitiesQuery.data?.items.filter(
       (item) => item.serverId === row.serverId && item.namespaceId === row.namespaceId,
-    )?.identityId ?? null
+    ) ?? []
+  const actionableIdentityOf = (row: ServerItem) => {
+    const matches = identityMatchesOf(row)
+    return (
+      matches.find((item) => item.status === 'active') ??
+      matches.find((item) => item.status === 'disabled') ??
+      matches.find((item) => item.status === 'conflict') ??
+      null
+    )
+  }
+  const identityIdOf = (row: ServerItem): string | null => actionableIdentityOf(row)?.identityId ?? null
+  // 展示用：可操作身份优先，否则取任意历史行 status（如 unbound/rejected），无则 none
+  const identityStatusOf = (row: ServerItem): string => {
+    const actionable = actionableIdentityOf(row)
+    if (actionable !== null) {
+      return actionable.status
+    }
+    return identityMatchesOf(row)[0]?.status ?? 'none'
+  }
+  // 解绑/禁用仅 active|disabled|conflict 可迁；已解绑/已拒绝/无身份时隐藏按钮，避免 409 假死
+  const canTransitionIdentity = (row: ServerItem): boolean => actionableIdentityOf(row) !== null
 
   // 健康视图列表：serverId → 健康分/等级/可调度/不可调度原因，供列表行直显基础健康信息（一眼可见，不必点开详情）。
   // 一次全量拉取（huge 场景 1200+ 台仍在单页上限内），避免逐行查详情的 N+1。
   const healthQuery = useQuery({
-    queryKey: ['health', 'list', namespaceId],
-    queryFn: () => fetchHealthList({ namespaceId, pageSize: 2000 }),
+    queryKey: ['health', 'list', apiNamespaceId, envScope],
+    queryFn: () => fetchHealthList({ namespaceId: apiNamespaceId, pageSize: 2000 }),
   })
   const healthByServer = useMemo(() => {
     const map = new Map<string, HealthItem>()
-    for (const item of healthQuery.data?.items ?? []) {
+    const healthItems = clientFilter
+      ? filterItemsByEnvScope(healthQuery.data?.items ?? [], envScope)
+      : (healthQuery.data?.items ?? [])
+    for (const item of healthItems) {
       map.set(item.serverId, item)
     }
     return map
-  }, [healthQuery.data])
+  }, [healthQuery.data, clientFilter, envScope])
+
+  // env 多 ns 时 API 无法一次传多个 id，对当前页结果再收窄；身份维再收窄（遗留/有绑定）
+  // 分页 total 仍为服务端值，身份筛选仅作用于当前页（与 env 客户端过滤同一局限）
+  const rows = useMemo(() => {
+    const items = query.data?.items ?? []
+    const scoped = clientFilter ? filterItemsByEnvScope(items, envScope) : items
+    if (identityFilter === 'all') {
+      return scoped
+    }
+    return scoped.filter((row) => {
+      const residual = !canTransitionIdentity(row)
+      return identityFilter === 'residual' ? residual : !residual
+    })
+  }, [query.data, clientFilter, envScope, identityFilter, identitiesQuery.data])
 
   // 当前页各服的最新指标点（TPS / CPU / 在线人数）：一次请求带上整页 serverId，避免逐行 N+1。
-  const pageServerIds = useMemo(
-    () => (query.data?.items ?? []).map((row) => row.serverId).join(','),
-    [query.data],
-  )
+  const pageServerIds = useMemo(() => rows.map((row) => row.serverId).join(','), [rows])
   const seriesQuery = useQuery({
     queryKey: ['servers', 'latest-metrics', pageServerIds],
     queryFn: () => fetchMetricsSeries({ serverId: pageServerIds, step: 60 }),
@@ -154,9 +218,13 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
     onSuccess: async () => {
       await invalidate()
       setAction(null)
+      setErrorText(null)
+      notifySuccess(t('cluster.servers.actions.disable'))
     },
     onError: (error) => {
-      setErrorText(messageOf(error))
+      const text = messageOf(error)
+      setErrorText(text)
+      notifyError(text)
     },
   })
   const unbindMutation = useMutation({
@@ -169,32 +237,54 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
     },
     onSuccess: async () => {
       await invalidate()
+      await queryClient.invalidateQueries({ queryKey: ['identities'] })
+      await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
       setAction(null)
+      setErrorText(null)
+      notifySuccess(t('cluster.servers.actions.unbind'))
     },
     onError: (error) => {
-      setErrorText(messageOf(error))
+      const text = messageOf(error)
+      setErrorText(text)
+      notifyError(text)
     },
   })
   const drainingMutation = useMutation({
     mutationFn: ({ row, reason, next }: { row: ServerItem; reason: string; next: boolean }) =>
       setDraining(row.serverId, next, reason),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await invalidate()
       setAction(null)
+      setErrorText(null)
+      notifySuccess(
+        vars.next
+          ? t('cluster.servers.actions.startDraining')
+          : t('cluster.servers.actions.stopDraining'),
+      )
     },
     onError: (error) => {
-      setErrorText(messageOf(error))
+      const text = messageOf(error)
+      setErrorText(text)
+      notifyError(text)
     },
   })
-  // 默认入口 toggle（FR-48/ADR-0067）：v2 端点按行数字 id 定位、仅收 value，设置即热下发 BC 注入。
+  // 默认入口 toggle（FR-48/ADR-0067）：v2 端点按行数字 id 定位、仅收 value；同区后设顶替先前。
   const defaultEntryMutation = useMutation({
     mutationFn: ({ row, next }: { row: ServerItem; next: boolean }) => setDefaultEntry(row.id, next),
-    onSuccess: async () => {
+    onSuccess: async (_data, vars) => {
       await invalidate()
       setAction(null)
+      setErrorText(null)
+      notifySuccess(
+        vars.next
+          ? t('cluster.servers.actions.setDefaultEntry')
+          : t('cluster.servers.actions.clearDefaultEntry'),
+      )
     },
     onError: (error) => {
-      setErrorText(messageOf(error))
+      const text = messageOf(error)
+      setErrorText(text)
+      notifyError(text)
     },
   })
 
@@ -221,7 +311,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
             onCheckedChange={() => {
               toggleRow(row.serverId)
             }}
-            aria-label={`选择 ${row.serverId}`}
+            aria-label={t('common.selectRow', { id: row.serverId })}
             // 行整体点击已用于打开详情，勾选框自己吞掉事件避免误触发详情
             onClick={(e) => {
               e.stopPropagation()
@@ -233,18 +323,38 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         header: t('cluster.servers.columns.serverId'),
         cell: (row) => {
           const isProxy = row.kind === 'proxy'
+          const residual = !canTransitionIdentity(row)
           return (
-            <span className="flex items-center gap-2 font-mono font-semibold text-ink-1">
+            <span
+              className={cn(
+                'flex flex-wrap items-center gap-2 font-mono font-semibold',
+                residual ? 'text-ink-4' : 'text-ink-1',
+              )}
+            >
               <span
                 className={cn(
                   'grid size-5 place-items-center rounded-md',
-                  isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                  residual
+                    ? 'bg-muted text-ink-4'
+                    : isProxy
+                      ? 'bg-brand-100 text-brand-600'
+                      : 'bg-brand-50 text-brand',
                 )}
                 aria-hidden
               >
                 {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
               </span>
               {row.serverId}
+              {residual && (
+                <Badge variant="off" title={t('cluster.servers.assets.residualHint')}>
+                  {t('cluster.servers.assets.residualBadge')}
+                </Badge>
+              )}
+              {residual && (
+                <Badge variant="secondary" title={t('cluster.servers.actions.unbindUnavailableHint')}>
+                  {t(`cluster.servers.identityStatus.${identityStatusOf(row)}`)}
+                </Badge>
+              )}
               {row.isDefaultEntry && <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>}
               {row.draining && <Badge variant="warn">{t('cluster.zones.tree.draining')}</Badge>}
             </span>
@@ -278,11 +388,17 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         cell: (row) => {
           const health = healthByServer.get(row.serverId)
           const level = health ? (LEVEL_META[health.level] ?? 'warn') : 'warn'
-          // 不可调度原因摘要：取首条原因码译文，多条时补「+N」
-          const reasonSummary =
+          // 不可调度原因摘要：取首条原因码译文，多条时补「+N」；title 用全部译文 join
+          const reasonLabels =
             health && health.reasons.length > 0
-              ? t(`cluster.servers.schedReason.${health.reasons[0]}`, health.reasons[0]) +
-                (health.reasons.length > 1 ? ` +${String(health.reasons.length - 1)}` : '')
+              ? health.reasons.map((r) =>
+                  t(`cluster.servers.schedReason.${r}`, { defaultValue: r }),
+                )
+              : []
+          const reasonSummary =
+            reasonLabels.length > 0
+              ? reasonLabels[0] +
+                (reasonLabels.length > 1 ? ` +${String(reasonLabels.length - 1)}` : '')
               : null
           return (
             <div className="flex flex-wrap items-center gap-1.5">
@@ -309,7 +425,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
               )}
               {/* 可调度状态按例外呈现：仅不可调度时直显原因摘要，可调度不加多余药丸 */}
               {health && !health.schedulable && (
-                <Badge variant="warn" title={health.reasons.join(', ')}>
+                <Badge variant="warn" title={reasonLabels.join('、')}>
                   {t('cluster.servers.health.notSchedulable')}
                   {reasonSummary != null && ` · ${reasonSummary}`}
                 </Badge>
@@ -350,70 +466,97 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         header: t('cluster.servers.columns.actions'),
         headClassName: 'text-right',
         className: 'text-right',
-        cell: (row) => (
-          <div className="flex flex-wrap justify-end gap-1.5" onClick={(e) => { e.stopPropagation() }}>
-            <Button size="sm" variant="ghost" onClick={() => { onViewHealth(row.serverId) }}>
-              {t('cluster.servers.actions.viewHealth')}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setErrorText(null)
-                setAction({ kind: 'disable', row })
-              }}
-            >
-              {t('cluster.servers.actions.disable')}
-            </Button>
-            {row.kind === 'backend' && row.assigned && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setErrorText(null)
-                  setAction({ kind: 'draining', row, next: !row.draining })
-                }}
-              >
-                {row.draining
-                  ? t('cluster.servers.actions.stopDraining')
-                  : t('cluster.servers.actions.startDraining')}
+        cell: (row) => {
+          const canOps = canTransitionIdentity(row)
+          const isBackendAssigned = row.kind === 'backend' && row.assigned
+          return (
+            <div className="flex flex-wrap items-center justify-end gap-1" onClick={(e) => { e.stopPropagation() }}>
+              <Button size="sm" variant="ghost" onClick={() => { onViewHealth(row.serverId) }}>
+                {t('cluster.servers.actions.viewHealth')}
               </Button>
-            )}
-            {row.kind === 'backend' && row.assigned && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setErrorText(null)
-                  setAction({ kind: 'defaultEntry', row, next: !row.isDefaultEntry })
-                }}
-              >
-                {row.isDefaultEntry
-                  ? t('cluster.servers.actions.clearDefaultEntry')
-                  : t('cluster.servers.actions.setDefaultEntry')}
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setErrorText(null)
-                setAction({ kind: 'unbind', row })
-              }}
-            >
-              {t('cluster.servers.actions.unbind')}
-            </Button>
-          </div>
-        ),
+              {/* 次要运维收进菜单：默认入口 / 排空 / 禁用 / 解绑，避免操作列刷屏 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="px-2"
+                    aria-label={t('cluster.servers.columns.actions')}
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[10.5rem]">
+                  {isBackendAssigned && (
+                    <>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setErrorText(null)
+                          setAction({ kind: 'defaultEntry', row, next: !row.isDefaultEntry })
+                        }}
+                      >
+                        {row.isDefaultEntry
+                          ? t('cluster.servers.actions.clearDefaultEntry')
+                          : t('cluster.servers.actions.setDefaultEntry')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setErrorText(null)
+                          setAction({ kind: 'draining', row, next: !row.draining })
+                        }}
+                      >
+                        {row.draining
+                          ? t('cluster.servers.actions.stopDraining')
+                          : t('cluster.servers.actions.startDraining')}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+                  {canOps ? (
+                    <>
+                      <DropdownMenuItem
+                        onSelect={() => {
+                          setErrorText(null)
+                          setAction({ kind: 'disable', row })
+                        }}
+                      >
+                        {t('cluster.servers.actions.disable')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-crit focus:text-crit"
+                        onSelect={() => {
+                          setErrorText(null)
+                          setAction({ kind: 'unbind', row })
+                        }}
+                      >
+                        {t('cluster.servers.actions.unbind')}
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    <DropdownMenuItem disabled title={t('cluster.servers.actions.unbindUnavailableHint')}>
+                      {t(`cluster.servers.identityStatus.${identityStatusOf(row)}`)}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )
+        },
       },
     ],
-    [t, selected, onViewHealth, healthByServer, latestMetricsByServer],
+    [t, selected, onViewHealth, healthByServer, latestMetricsByServer, identitiesQuery.data],
   )
 
   const active = action?.row ?? null
   const dialogConfig = action && action.kind !== 'defaultEntry' ? dialogConfigOf(action, t) : null
 
-  // 紧凑 KPI 一行：总数 / 未分配 / 待确认（不占大块，语义色提示）
+  // 当前页遗留行计数（无活跃身份）；用于 KPI 提示试验代理等残留
+  const residualOnPage = useMemo(
+    () => (query.data?.items ?? []).filter((row) => !canTransitionIdentity(row)).length,
+    [query.data, identitiesQuery.data],
+  )
+
+  // 紧凑 KPI 一行：总数 / 待确认 / 本页遗留（不占大块，语义色提示）
   const summaryItems = useMemo(
     () => [
       { label: t('cluster.servers.summary.total'), value: total, tone: 'default' as const },
@@ -422,8 +565,13 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         value: pendingCount,
         tone: pendingCount > 0 ? ('warning' as const) : ('muted' as const),
       },
+      {
+        label: t('cluster.servers.summary.residual'),
+        value: residualOnPage,
+        tone: residualOnPage > 0 ? ('warning' as const) : ('muted' as const),
+      },
     ],
-    [t, total, pendingCount],
+    [t, total, pendingCount, residualOnPage],
   )
 
   return (
@@ -484,6 +632,22 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
               <SelectItem value="no">{t('cluster.servers.assets.assignedNo')}</SelectItem>
             </SelectContent>
           </Select>
+          <Select
+            value={identityFilter}
+            onValueChange={(value) => {
+              setIdentityFilter(value)
+              setPage(1)
+            }}
+          >
+            <SelectTrigger className="w-36" aria-label={t('cluster.servers.assets.filterIdentity')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('cluster.servers.assets.filterIdentityAll')}</SelectItem>
+              <SelectItem value="active">{t('cluster.servers.assets.filterIdentityActive')}</SelectItem>
+              <SelectItem value="residual">{t('cluster.servers.assets.filterIdentityResidual')}</SelectItem>
+            </SelectContent>
+          </Select>
 
           {/* 待确认入口：收敛到吸顶条，点开在抽屉里处理，不占主列表版面 */}
           <Button variant="outline" size="sm" className="ml-auto gap-1.5" onClick={onOpenPending}>
@@ -520,11 +684,15 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
           <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
-              rows={query.data?.items}
+              rows={rows}
               rowKey={(row) => String(row.id)}
               emptyText={t('cluster.servers.assets.empty')}
               density="compact"
-              onRowClick={(row) => { onViewHealth(row.serverId) }}
+              onRowClick={(row) => {
+                onViewHealth(row.serverId)
+              }}
+              // 遗留行（无活跃身份）整行淡化，与正常在线资产一眼区分
+              rowClassName={(row) => (!canTransitionIdentity(row) ? 'opacity-60' : undefined)}
             />
           </AsyncSection>
         </div>
@@ -533,7 +701,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         {total > PAGE_SIZE && (
           <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2 text-[12px] text-ink-3">
             <span className="tnum">
-              第 {page} / {pageCount} 页 · 共 {total} 台
+              {t('cluster.servers.pager.pageInfo', { page, pages: pageCount, total })}
             </span>
             <Button
               size="sm"
@@ -545,7 +713,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
               }}
             >
               <ChevronLeft className="size-3" />
-              上一页
+              {t('cluster.servers.pager.prev')}
             </Button>
             <Button
               size="sm"
@@ -556,7 +724,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
                 setPage((p) => Math.min(pageCount, p + 1))
               }}
             >
-              下一页
+              {t('cluster.servers.pager.next')}
               <ChevronRight className="size-3" />
             </Button>
           </div>
@@ -591,13 +759,14 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
         />
       )}
 
-      {/* 默认入口 toggle 确认（无原因字段：v2 端点仅收 value，操作人入审计） */}
+      {/* 默认入口 toggle 确认：失败走 errorText + toast，不拼进 description */}
       {action?.kind === 'defaultEntry' && active && (
         <DestructiveConfirmDialog
           open
           onOpenChange={(open) => {
             if (!open) {
               setAction(null)
+              setErrorText(null)
             }
           }}
           title={
@@ -609,7 +778,7 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
             action.next
               ? t('cluster.servers.confirm.setDefaultEntryDesc')
               : t('cluster.servers.confirm.clearDefaultEntryDesc')
-          }${errorText === null ? '' : `（${errorText}）`}`}
+          }`}
           confirmLabel={
             action.next
               ? t('cluster.servers.actions.setDefaultEntry')
@@ -617,8 +786,11 @@ export default function AssetsPanel({ namespaceId, onViewHealth, onOpenPending, 
           }
           cancelLabel={t('cluster.servers.confirm.cancel')}
           pending={defaultEntryMutation.isPending}
+          errorText={errorText}
           onConfirm={() => {
+            // 异步结果：成功关窗；失败留 errorText，不关窗
             defaultEntryMutation.mutate({ row: action.row, next: action.next })
+            return false
           }}
         />
       )}

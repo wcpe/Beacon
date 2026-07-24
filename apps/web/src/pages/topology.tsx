@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Network, Table2 } from 'lucide-react'
 
-import { SectionHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
+import { PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
 import NamespaceSelect from '../features/cluster/namespace-select'
 import EdgesPanel from './topology/edges-panel'
@@ -22,10 +22,11 @@ export default function TopologyPage() {
 
   return (
     <section className="grid gap-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <SectionHeader size="lg" icon={<Network className="size-5" />} title={t('nav.topology')} className="border-b-0 pb-0" />
-        <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />
-      </div>
+      <PageHeader
+        icon={<Network className="size-5" />}
+        title={t('nav.topology')}
+        actions={<NamespaceSelect value={namespaceId} onChange={setNamespaceId} />}
+      />
 
       <Tabs value={mode} onValueChange={setMode}>
         <TabsList>

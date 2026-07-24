@@ -159,7 +159,7 @@ export default function SettingsBlock() {
                           </div>
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
-                          {item.desc}
+                          {t(`system.settings.descs.${item.key}`, { defaultValue: item.desc })}
                           {item.isStartup && (
                             <Badge variant="warn" className="ml-1">
                               {t('system.settings.table.startup')}

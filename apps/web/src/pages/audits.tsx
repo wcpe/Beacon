@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollText } from 'lucide-react'
 
-import { SectionHeader } from '@beacon/ui'
+import { PageHeader } from '@beacon/ui'
 import type { AuditItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -19,11 +19,10 @@ export default function AuditsPage() {
 
   return (
     <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
+      <PageHeader
         icon={<ScrollText className="size-5" />}
         title={t('nav.audits')}
-        count={t('observability.audits.mission')}
+        description={t('observability.audits.mission')}
       />
       <AuditKpi />
       <MasterDetail

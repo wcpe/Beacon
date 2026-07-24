@@ -22,7 +22,17 @@ import {
 } from '@beacon/ui'
 import type { AuditItem } from '@beacon/contracts'
 
-import { auditExportUrl, fetchAudits } from '../../api/observability'
+import { ApiClientError } from '../../api/cluster'
+import { exportAudits, fetchAudits } from '../../api/observability'
+import {
+  filterItemsByEnvCodes,
+  useEnvNamespaceCodes,
+} from '../../features/env/use-env-scope'
+
+// 错误文案：API 错误用脱敏 message，其它异常 stringify
+function messageOf(error: unknown): string {
+  return error instanceof ApiClientError ? error.message : String(error)
+}
 import FilterSelect from '../../features/observability/filter-select'
 import ListCard from '../../features/shared/list-card'
 import Pager from '../../features/observability/pager'
@@ -39,9 +49,26 @@ const AUDIT_WINDOW_MS: Record<string, number> = {
 const OPERATORS = ['admin', 'ops-chen', 'ops-wang', 'system'] as const
 // 与 devmock AUDIT_ACTIONS 对齐（动作 / 目标类型枚举）
 const ACTIONS = [
+  'auth.login',
+  'auth.logout',
   'identity.approved',
   'identity.rejected',
+  'identity.unbound',
+  'identity.disabled',
+  'identity.enabled',
+  'bc_cluster.create',
+  'bc_cluster.delete',
+  'region.create',
+  'region.delete',
+  'zone.create',
+  'zone.delete',
+  'server.assign',
+  'server.unassign',
   'zone.rezone.initiated',
+  'zone.rezone.completed',
+  'server.set-draining',
+  'zone.set-default-entry',
+  'zone.clear-default-entry',
   'config.file.trash',
   'delivery.order.start',
   'delivery.order.batch_confirm',
@@ -50,16 +77,34 @@ const ACTIONS = [
   'asset.preview',
   'settings.update',
   'namespace_trust.grant',
+  'alert-event.acknowledge',
+  'alert-event.resolve',
+  'archive.job-create',
+  'archive.job-complete',
+  'system.update-check',
+  'instance.register',
+  'instance.offline',
+  'instance.online',
 ] as const
 const TARGET_TYPES = [
+  'auth',
   'agent-identity',
   'server',
+  'zone',
+  'region',
+  'bc-cluster',
+  'namespace',
+  'namespace-trust',
+  'env',
   'config-file',
   'change-order',
-  'namespace-trust',
   'message',
   'file-asset',
   'setting',
+  'instance',
+  'apikey',
+  'command',
+  'alert-event',
 ] as const
 
 // 从 URL 查询参数取下拉筛选初值：非空即采纳（审计动作 / 目标类型随后端演进，未知值也按原样过滤），
@@ -85,9 +130,18 @@ interface AuditListProps {
 
 export default function AuditList({ onView, selectedId }: AuditListProps) {
   const { t } = useTranslation()
+  // FR-178：审计列表跟随顶栏 env（namespace 字符串；单 ns 走 API，多 ns 客户端滤）
+  const envCodes = useEnvNamespaceCodes()
+  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
   // 审计动作中文标签：有映射用中文，未映射经 defaultValue 回退原始枚举（防裸 key 同时不挡未知动作）
   const actionLabel = useCallback(
     (action: string): string => t(`observability.audits.action.${action}`, { defaultValue: action }),
+    [t],
+  )
+  // 目标类型中文标签：有映射用中文，未映射回退原文
+  const targetTypeLabel = useCallback(
+    (targetType: string): string =>
+      t(`observability.audits.targetTypeLabel.${targetType}`, { defaultValue: targetType }),
     [t],
   )
   // 互跳承接：以 URL 查询参数为筛选初值（仅初始化，页内变更不回写 URL）
@@ -101,6 +155,8 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
   // 时间范围预设（'all' = 不限时间，保持原有全量行为）与冷查询开关（FR-152）
   const [windowKey, setWindowKey] = useState('all')
   const [cold, setCold] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
   const cursor = useCursorStack()
 
   // 切换过滤 / 时间窗 / 冷查询开关时回到首页（热重置页码、冷重置游标栈）
@@ -109,13 +165,55 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
     cursor.reset()
   }
 
+  // 与列表同口径的过滤（导出必须带 Bearer，不能 a 标签直链）
+  const buildExportQuery = useCallback(() => {
+    const span = windowKey === 'all' ? undefined : AUDIT_WINDOW_MS[windowKey]
+    const to = Date.now()
+    return {
+      namespace: apiNamespace,
+      operator: operator === 'all' ? undefined : operator,
+      action: action === 'all' ? undefined : action,
+      targetType: targetType === 'all' ? undefined : targetType,
+      targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
+      detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
+      from: span === undefined ? undefined : new Date(to - span).toISOString(),
+      to: span === undefined ? undefined : new Date(to).toISOString(),
+    }
+  }, [apiNamespace, operator, action, targetType, targetRef, keyword, windowKey])
+
+  const onExport = async (format: 'csv' | 'json') => {
+    setExportError(null)
+    setExporting(true)
+    try {
+      await exportAudits(format, buildExportQuery())
+    } catch (error) {
+      setExportError(messageOf(error))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const query = useQuery({
-    queryKey: ['audits', 'list', operator, action, targetType, targetRef, keyword, windowKey, cold, cold ? cursor.cursor : String(page)],
+    queryKey: [
+      'audits',
+      'list',
+      operator,
+      action,
+      targetType,
+      targetRef,
+      keyword,
+      windowKey,
+      cold,
+      cold ? cursor.cursor : String(page),
+      apiNamespace,
+      envCodes,
+    ],
     queryFn: () => {
       // 时间范围按预设窗口自「现在」往前推（RFC3339）；'all' 不带 from/to（仅热查询可达）
       const span = windowKey === 'all' ? undefined : AUDIT_WINDOW_MS[windowKey]
       const to = Date.now()
       return fetchAudits({
+        namespace: apiNamespace,
         operator: operator === 'all' ? undefined : operator,
         action: action === 'all' ? undefined : action,
         // 目标类型 / 目标为真后端原生查询参数（audit_handler.go List），走服务端过滤
@@ -133,7 +231,14 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
     placeholderData: keepPreviousData,
   })
 
-  const rows = query.data?.items ?? []
+  // 单 ns 已走 API；多 ns / 空映射客户端再滤；全部环境不过滤
+  const rows = useMemo(() => {
+    const items = query.data?.items ?? []
+    if (envCodes === null || envCodes.length === 1) {
+      return items
+    }
+    return filterItemsByEnvCodes(items, envCodes)
+  }, [query.data, envCodes])
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -148,9 +253,12 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       { header: t('observability.audits.columns.operator'), cell: (row) => <span className="text-ink-2">{row.operator}</span> },
       {
         header: t('observability.audits.columns.action'),
-        cell: (row) => <span className="font-mono text-xs text-ink-2">{actionLabel(row.action)}</span>,
+        cell: (row) => <span className="text-xs font-medium text-ink-2">{actionLabel(row.action)}</span>,
       },
-      { header: t('observability.audits.columns.targetType'), cell: (row) => <span className="text-ink-3">{row.targetType}</span> },
+      {
+        header: t('observability.audits.columns.targetType'),
+        cell: (row) => <span className="text-ink-3">{targetTypeLabel(row.targetType)}</span>,
+      },
       {
         header: t('observability.audits.columns.targetRef'),
         cell: (row) => <span className="font-mono text-xs text-ink-2">{row.targetRef}</span>,
@@ -159,12 +267,12 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         header: t('observability.audits.columns.result'),
         cell: (row) => (
           <Badge variant={row.result === 'ok' ? 'ok' : 'crit'}>
-            {t(`observability.audits.result.${row.result}`)}
+            {t(`observability.audits.result.${row.result}`, { defaultValue: row.result })}
           </Badge>
         ),
       },
     ],
-    [t, actionLabel],
+    [t, actionLabel, targetTypeLabel],
   )
 
   const toolbar = (
@@ -178,20 +286,35 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         </span>
         {total > 0 && <span className="text-xs text-ink-3">{t('observability.common.total', { count: total })}</span>}
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" asChild>
-            <a href={auditExportUrl('csv')} download>
-              <Download className="size-3.5" />
-              {t('observability.audits.exportCsv')}
-            </a>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting}
+            onClick={() => {
+              void onExport('csv')
+            }}
+          >
+            <Download className="size-3.5" />
+            {exporting ? t('observability.audits.exporting') : t('observability.audits.exportCsv')}
           </Button>
-          <Button size="sm" variant="outline" asChild>
-            <a href={auditExportUrl('json')} download>
-              <Download className="size-3.5" />
-              {t('observability.audits.exportJson')}
-            </a>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={exporting}
+            onClick={() => {
+              void onExport('json')
+            }}
+          >
+            <Download className="size-3.5" />
+            {exporting ? t('observability.audits.exporting') : t('observability.audits.exportJson')}
           </Button>
         </div>
       </div>
+      {exportError !== null && (
+        <p className="text-xs text-crit" role="alert">
+          {exportError}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Input
           aria-label={t('observability.audits.filterKeyword')}
@@ -225,7 +348,10 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         <FilterSelect
           label={t('observability.audits.filterAction')}
           value={action}
-          options={withCurrent(ACTIONS, action).map((v) => ({ value: v, label: actionLabel(v) }))}
+          options={withCurrent(ACTIONS, action).map((v) => ({
+            value: v,
+            label: actionLabel(v),
+          }))}
           onChange={(value) => {
             setAction(value)
             resetPaging()
@@ -234,7 +360,22 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
         <FilterSelect
           label={t('observability.audits.filterTargetType')}
           value={targetType}
-          options={withCurrent(TARGET_TYPES, targetType).map((v) => ({ value: v, label: v }))}
+          options={withCurrent(TARGET_TYPES, targetType).map((v) => ({
+            value: v,
+            label: targetTypeLabel(v),
+          }))}
+          onChange={(value) => {
+            setTargetType(value)
+            resetPaging()
+          }}
+        />
+        <FilterSelect
+          label={t('observability.audits.filterTargetType')}
+          value={targetType}
+          options={withCurrent(TARGET_TYPES, targetType).map((v) => ({
+            value: v,
+            label: targetTypeLabel(v),
+          }))}
           onChange={(value) => {
             setTargetType(value)
             resetPaging()

@@ -1,14 +1,24 @@
 // 服务分析页（/service-analysis）：左右分栏——左侧吸顶服务器选择列（可搜索多选，固定不随右侧滚），
 // 右侧主区分「指标时序 / 数据对比 / 调度决策 / 健康快照」板块（吸顶切换常驻）。指标时序 / 数据对比 /
 // 健康快照选服即时出图；调度决策自带时间窗与筛选、不依赖左侧选服。支持 ?view= 定位板块
-//（dashboard 调度概览下钻入口）。
-import { useState, type ReactNode } from 'react'
+//（dashboard 调度概览下钻入口）。选中服务器经 localStorage 持久化，刷新恢复。
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
 import { GitCompareArrows, History, LineChart, MousePointerClick, TrendingUp, Workflow } from 'lucide-react'
 
-import { SectionHeader, cn } from '@beacon/ui'
+import { PageHeader, cn } from '@beacon/ui'
 
+import { fetchServers } from '../api/cluster'
+import {
+  resolveApiNamespaceId,
+  useEnvNamespaceScope,
+} from '../features/env/use-env-scope'
+import {
+  setServiceAnalysisSelected,
+  useServiceAnalysisSelected,
+} from '../state/service-analysis-selection'
 import ComparePanel from './service-analysis/compare-panel'
 import DecisionsPanel from './service-analysis/decisions-panel'
 import ServerPicker from './service-analysis/server-picker'
@@ -28,7 +38,9 @@ function isPanelTab(value: string | null): value is PanelTab {
 export default function ServiceAnalysisPage() {
   const { t } = useTranslation()
   const [searchParams] = useSearchParams()
-  const [selected, setSelected] = useState<Set<string>>(new Set())
+  // 从持久化恢复上次选中；toggle/clear 同步写回 localStorage
+  const persistedIds = useServiceAnalysisSelected()
+  const selected = useMemo(() => new Set(persistedIds), [persistedIds])
   const [metric, setMetric] = useState<MetricKey>('cpu')
   const [step, setStep] = useState(60)
   // 初始板块可由 ?view= 指定（如 dashboard 调度概览下钻到调度决策）
@@ -37,37 +49,61 @@ export default function ServiceAnalysisPage() {
     return isPanelTab(view) ? view : 'series'
   })
 
+  // 在线子服列表：用于剪掉 localStorage 里已不存在 / 已下线的幽灵选中（避免右侧卡旧 game1）
+  const envScope = useEnvNamespaceScope()
+  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
+  const serversQuery = useQuery({
+    queryKey: ['service-analysis', 'servers', apiNamespaceId, envScope],
+    queryFn: () => fetchServers({ kind: 'backend', namespaceId: apiNamespaceId, pageSize: 200 }),
+  })
+  useEffect(() => {
+    if (!serversQuery.isSuccess || persistedIds.length === 0) {
+      return
+    }
+    const onlineIds = new Set(
+      (serversQuery.data?.items ?? []).filter((s) => s.online).map((s) => s.serverId),
+    )
+    // 只保留仍在线的；若全部失效则清空，避免分析区卡在已下线 id
+    const kept = persistedIds.filter((id) => onlineIds.has(id))
+    if (kept.length !== persistedIds.length) {
+      setServiceAnalysisSelected(kept)
+    }
+  }, [serversQuery.isSuccess, serversQuery.data, persistedIds])
+
   const toggle = (serverId: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(serverId)) {
-        next.delete(serverId)
-      } else {
-        next.add(serverId)
-      }
-      return next
-    })
+    const next = new Set(selected)
+    if (next.has(serverId)) {
+      next.delete(serverId)
+    } else {
+      next.add(serverId)
+    }
+    setServiceAnalysisSelected(next)
   }
 
-  const serverIds = [...selected]
+  const clearSelected = () => {
+    setServiceAnalysisSelected([])
+  }
+
+  // 右侧分析仅用仍在线的选中，避免幽灵 id 触发空/错图
+  const onlineIdSet = useMemo(
+    () => new Set((serversQuery.data?.items ?? []).filter((s) => s.online).map((s) => s.serverId)),
+    [serversQuery.data],
+  )
+  const serverIds = useMemo(
+    () => persistedIds.filter((id) => onlineIdSet.has(id)),
+    [persistedIds, onlineIdSet],
+  )
 
   return (
     <section className="grid gap-5">
-      <SectionHeader
-        size="lg"
+      <PageHeader
         icon={<LineChart className="size-5" />}
         title={t('nav.serviceAnalysis')}
-        count={t('observability.serviceAnalysis.mission')}
+        description={t('observability.serviceAnalysis.mission')}
       />
       {/* 左侧选择列（固定宽度吸顶）+ 右侧主区（占剩余宽度） */}
       <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[19rem_minmax(0,1fr)]">
-        <ServerPicker
-          selected={selected}
-          onToggle={toggle}
-          onClear={() => {
-            setSelected(new Set())
-          }}
-        />
+        <ServerPicker selected={selected} onToggle={toggle} onClear={clearSelected} />
         <div className="min-w-0">
           <div className="grid gap-3">
             {/* 板块切换（吸顶常驻）：调度决策不依赖选服，未选服也可直达 */}

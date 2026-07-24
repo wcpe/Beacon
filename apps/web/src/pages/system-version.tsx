@@ -10,12 +10,14 @@ import {
   Badge,
   Button,
   MarkdownLite,
+  PageHeader,
   SectionHeader,
 } from '@beacon/ui'
 
 import {
   ApiClientError,
   cancelUpdate,
+  fetchSettings,
   fetchUpdateCheck,
   fetchUpdateProgress,
   rollbackUpdate,
@@ -30,6 +32,12 @@ function messageOf(error: unknown): string {
   return error instanceof ApiClientError ? error.message : String(error)
 }
 
+function updateCheckIntervalMs(items: { key: string; value: string }[] | undefined): number | false {
+  const enabled = items?.find((item) => item.key === 'update.auto-check-enabled')?.value === 'true'
+  const hours = Number(items?.find((item) => item.key === 'update.check-interval-hours')?.value)
+  return enabled && Number.isFinite(hours) && hours >= 1 ? hours * 60 * 60 * 1000 : false
+}
+
 export default function SystemVersionPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -39,9 +47,21 @@ export default function SystemVersionPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [proxyResult, setProxyResult] = useState<{ ok: boolean; message: string } | null>(null)
 
+  const settingsQuery = useQuery({
+    queryKey: ['settings'],
+    queryFn: fetchSettings,
+  })
+  const autoCheckEnabled =
+    settingsQuery.isSuccess &&
+    settingsQuery.data.items.find((item) => item.key === 'update.auto-check-enabled')?.value === 'true'
+  const checkInterval = autoCheckEnabled ? updateCheckIntervalMs(settingsQuery.data.items) : false
+
   const checkQuery = useQuery({
     queryKey: ['update-check'],
-    queryFn: fetchUpdateCheck,
+    queryFn: () => fetchUpdateCheck(),
+    enabled: autoCheckEnabled,
+    // 登录后的低频检查由运维开关和小时周期控制；手动检查另走 force=true。
+    refetchInterval: checkInterval,
   })
 
   const progressQuery = useQuery({
@@ -55,6 +75,13 @@ export default function SystemVersionPage() {
   })
 
   const invalidateProgress = () => queryClient.invalidateQueries({ queryKey: ['update-progress'] })
+
+  const checkMutation = useMutation({
+    mutationFn: () => fetchUpdateCheck(true),
+    onSuccess: (result) => {
+      queryClient.setQueryData(['update-check'], result)
+    },
+  })
 
   const triggerMutation = useMutation({
     mutationFn: triggerUpdate,
@@ -104,75 +131,90 @@ export default function SystemVersionPage() {
 
   return (
     <section className="grid gap-5">
-      <SectionHeader size="lg" icon={<PackageCheck className="size-5" />} title={t('nav.systemVersion')} />
+      <PageHeader icon={<PackageCheck className="size-5" />} title={t('nav.systemVersion')} />
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
       <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>
-        {check && (
-          <section className="grid gap-3">
-            <SectionHeader icon={<Rocket className="size-4" />} title={t('system.version.sections.info')} />
-            <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
-              {/* 当前版本主行：图标框 + 大版本号 + 渠道 / 状态药丸 + 检查更新 */}
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand" aria-hidden>
-                  <Rocket className="size-5" />
-                </span>
-                <div className="min-w-0">
-                  <div className="text-[11.5px] font-medium text-ink-3">{t('system.version.current')}</div>
-                  <div className="text-[22px] leading-none font-bold tracking-[-0.5px] text-ink-1 tnum">
-                    {check.currentVersion}
+        <section className="grid gap-3">
+          <SectionHeader icon={<Rocket className="size-4" />} title={t('system.version.sections.info')} />
+          <div className="grid gap-4 rounded-xl border border-border bg-card p-5 shadow-card">
+            {/* 当前版本主行：图标框 + 大版本号 + 渠道 / 状态药丸 + 检查更新 */}
+            <div className="flex flex-wrap items-center gap-3">
+              {check && (
+                <>
+                  <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand" aria-hidden>
+                    <Rocket className="size-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[11.5px] font-medium text-ink-3">{t('system.version.current')}</div>
+                    <div className="text-[22px] leading-none font-bold tracking-[-0.5px] text-ink-1 tnum">
+                      {check.currentVersion}
+                    </div>
                   </div>
-                </div>
-                <Badge variant="off" className="ml-1">
-                  {check.channel === 'prerelease'
-                    ? t('system.version.channelPrerelease')
-                    : t('system.version.channelStable')}
-                </Badge>
-                {check.isDevBuild ? (
-                  <Badge variant="brand">{t('system.version.devBuild')}</Badge>
-                ) : check.hasUpdate ? (
-                  <Badge variant="warn" className="gap-1.5">
-                    <span className="size-1.5 rounded-full bg-current" />
-                    {t('system.version.hasUpdate')}: {check.latestVersion}
+                  <Badge variant="off" className="ml-1">
+                    {t('system.version.channelStable')}
                   </Badge>
-                ) : (
-                  <Badge variant="ok" className="gap-1.5">
-                    <CheckCircle2 className="size-3" />
-                    {t('system.version.upToDate')}
-                  </Badge>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="ml-auto"
-                  disabled={checkQuery.isFetching}
-                  onClick={() => {
-                    void checkQuery.refetch()
-                  }}
-                >
-                  {checkQuery.isFetching ? t('system.version.checking') : t('system.version.check')}
-                </Button>
-              </div>
-
-              <p className="text-xs text-ink-4">
-                {t('system.version.checkedAt')}: {formatIso(check.checkedAt)}
-              </p>
-
-              {check.hasUpdate && check.releaseNotes !== '' && (
-                <div className="rounded-lg border border-border bg-surface-2 p-4 text-sm">
-                  <p className="mb-1.5 flex items-center gap-1.5 font-semibold text-ink-1">
-                    <Cloud className="size-4 text-brand" />
-                    {t('system.version.releaseNotes')} · {check.latestVersion}
-                  </p>
-                  <MarkdownLite source={check.releaseNotes} />
-                  <p className="mt-2 text-xs text-ink-4">
-                    {t('system.version.publishedAt')}: {formatIso(check.publishedAt)}
-                  </p>
-                </div>
+                  {check.status === 'check-failed' ? (
+                    <Badge variant="warn" className="gap-1.5">
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {t('system.version.checkFail')}
+                    </Badge>
+                  ) : check.isDevBuild ? (
+                    <Badge variant="brand">{t('system.version.devBuild')}</Badge>
+                  ) : check.hasUpdate ? (
+                    <Badge variant="warn" className="gap-1.5">
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {t('system.version.hasUpdate')}: {check.latestVersion}
+                    </Badge>
+                  ) : (
+                    <Badge variant="ok" className="gap-1.5">
+                      <CheckCircle2 className="size-3" />
+                      {t('system.version.upToDate')}
+                    </Badge>
+                  )}
+                </>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-auto"
+                disabled={checkQuery.isFetching || checkMutation.isPending}
+                onClick={() => {
+                  checkMutation.mutate()
+                }}
+              >
+                {checkQuery.isFetching || checkMutation.isPending ? t('system.version.checking') : t('system.version.check')}
+              </Button>
             </div>
-          </section>
-        )}
+
+            {check && (
+              <>
+                <p className="text-xs text-ink-4">
+                  {t('system.version.checkedAt')}: {formatIso(check.checkedAt)}
+                </p>
+
+                {check.status === 'check-failed' && check.failureReason && (
+                  <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    {check.failureReason}
+                  </p>
+                )}
+
+                {check.status === 'ok' && check.hasUpdate && check.releaseNotes !== '' && (
+                  <div className="rounded-lg border border-border bg-surface-2 p-4 text-sm">
+                    <p className="mb-1.5 flex items-center gap-1.5 font-semibold text-ink-1">
+                      <Cloud className="size-4 text-brand" />
+                      {t('system.version.releaseNotes')} · {check.latestVersion}
+                    </p>
+                    <MarkdownLite source={check.releaseNotes} />
+                    <p className="mt-2 text-xs text-ink-4">
+                      {t('system.version.publishedAt')}: {formatIso(check.publishedAt)}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </section>
       </AsyncSection>
 
       {/* 更新与渠道 / 维护操作：紧凑双栏，避免长页堆叠 */}
@@ -182,7 +224,7 @@ export default function SystemVersionPage() {
           <SectionHeader icon={<DownloadCloud className="size-4" />} title={t('system.version.sections.update')} />
           <div className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
             <Button
-              disabled={!check || !check.hasUpdate || check.isDevBuild}
+              disabled={!check || check.status === 'check-failed' || !check.hasUpdate || check.isDevBuild}
               onClick={() => {
                 setActionError(null)
                 setTriggerOpen(true)

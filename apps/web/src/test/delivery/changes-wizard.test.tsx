@@ -61,7 +61,7 @@ async function submitAndAssert(user: ReturnType<typeof userEvent.setup>, dialog:
   await waitFor(() => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
-  // 成单后选中该单打开右侧详情面板（非模态）
+  // 成单后选中该单打开固定层详情（非 dialog）
   await screen.findByRole('button', { name: '返回列表' })
   expect((await screen.findAllByText('待审批')).length).toBeGreaterThan(0)
 }

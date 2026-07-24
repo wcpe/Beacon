@@ -59,13 +59,13 @@ describe('/api-keys 密钥页', () => {
     const user = userEvent.setup()
     renderPage(<ApiKeysPage />)
 
-    // 初始无详情面板、无任何模态遮罩
+    // 初始无详情、无 dialog
     expect(screen.queryByText('密钥详情')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     await user.click(await screen.findByText('业务管理后端'))
 
-    // 详情面板出现且是布局内列（非 role=dialog 遮罩）
+    // 固定层详情出现（非 role=dialog）
     expect(await screen.findByText('密钥详情')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // 详情面板内出现吊销 / 重置操作

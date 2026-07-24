@@ -35,7 +35,7 @@ export default function WindowSelect({ value, keys, onChange }: WindowSelectProp
         onChange(next as WindowKey)
       }}
     >
-      <SelectTrigger className="h-9 w-32" aria-label={t('observability.serviceAnalysis.window')}>
+      <SelectTrigger className="w-32" aria-label={t('observability.serviceAnalysis.window')}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

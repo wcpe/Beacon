@@ -1,7 +1,7 @@
 // 集群域文案（/servers /zones /topology）：由集群域页面 agent 维护，其他域勿改
 export const cluster = {
-  servers: {
-    mission: '服务器资产：注册待确认、身份绑定、禁用 / 解绑 / 换区、健康详情',
+    servers: {
+    mission: '接入确认、资产运维、健康与排空 / 默认入口',
     pending: {
       title: '注册待确认',
       sheetDesc: '新 agent 首次接入后在此确认或拒绝；确认后可到区服分配页落区。',
@@ -9,8 +9,8 @@ export const cluster = {
       approve: '确认接入',
       reject: '拒绝',
       rezoneHint: '换区重确认',
-      conflictOccupied: 'serverId 占用冲突',
-      forceUnbind: '强制解绑占用该 serverId 的旧身份',
+      conflictOccupied: '服务器 ID 占用冲突',
+      forceUnbind: '强制解绑占用该服务器 ID 的旧身份',
       approveTitle: '确认接入服务器',
       approveDesc: '确认后该身份进入已绑定，可被分配区服与调度。',
       rejectTitle: '拒绝接入',
@@ -19,15 +19,23 @@ export const cluster = {
     assets: {
       title: '服务器资产',
       empty: '当前筛选条件下无服务器',
-      keyword: '搜索 serverId',
+      keyword: '搜索服务器 ID',
       filterKind: '类型',
       filterAssigned: '分配状态',
+      filterIdentity: '身份',
       filterZone: '小区',
       assignedYes: '已分配',
       assignedNo: '未分配',
+      // 无活跃绑定的残留 server 行（试验代理/已解绑），与正常在线资产区分
+      residualBadge: '遗留资产',
+      residualHint:
+        '无活跃身份绑定（已解绑 / 已拒绝 / 无身份）。解绑不会删除 server 行；可忽略或等后续清理能力。',
+      filterIdentityAll: '全部身份',
+      filterIdentityActive: '有活跃绑定',
+      filterIdentityResidual: '仅遗留（无活跃身份）',
     },
     columns: {
-      serverId: 'serverId',
+      serverId: '服务器 ID',
       kind: '类型',
       namespace: '命名空间',
       zone: '大区 / 小区',
@@ -45,6 +53,9 @@ export const cluster = {
       disable: '禁用',
       enable: '启用',
       unbind: '解绑',
+      // 身份已是 unbound/rejected/none 时不可再解绑（会 409）；server 资产行仍可能残留
+      unbindUnavailableHint:
+        '当前无活跃绑定身份（已解绑 / 已拒绝 / 无身份），解绑不可再执行。server 资产行会保留，不表示卡死。',
       rezone: '换区',
       startDraining: '置为排空',
       stopDraining: '取消排空',
@@ -56,11 +67,12 @@ export const cluster = {
       disableTitle: '禁用服务器',
       disableDesc: '禁用后摘除调度与指令下发，绑定保留，可随时启用。',
       unbindTitle: '解绑服务器身份',
-      unbindDesc: '解绑后该 serverId 释放，agent 需重新申请接入。这是换 serverId / 命名空间 的前置。',
+      unbindDesc:
+        '解绑后该服务器 ID 释放，并清空区服归属（转入未分配）；agent 需重新申请接入。这是换服务器 ID / 命名空间 的前置。',
       drainingTitle: '切换排空标记',
       drainingDesc: '排空后不再作为调度落点，已在场玩家不受影响。',
       setDefaultEntryTitle: '设为小区默认入口？',
-      setDefaultEntryDesc: '新玩家经 BC 代理进入该小区时将落到此服务器（同步下发给代理 fallback 注入）。',
+      setDefaultEntryDesc: '新玩家经 BC 代理进入该小区时将落到此服务器。同一小区仅一台默认入口，设置后自动顶替该区原有默认入口。',
       clearDefaultEntryTitle: '取消小区默认入口？',
       clearDefaultEntryDesc: '取消后该小区无默认入口，BC 代理将不设默认服（新玩家进入报无默认服，直到重新指定）。',
       cancel: '取消',
@@ -125,6 +137,13 @@ export const cluster = {
       online: '在线',
       unassigned: '未分配',
       pending: '待确认',
+      residual: '遗留无身份',
+    },
+    // 资产表分页
+    pager: {
+      pageInfo: '第 {{page}} / {{pages}} 页 · 共 {{total}} 台',
+      prev: '上一页',
+      next: '下一页',
     },
   },
   zones: {
@@ -140,6 +159,20 @@ export const cluster = {
       newCluster: '新建集群',
       newRegion: '新建大区',
       newZone: '新建小区',
+      deleteCluster: '删除集群',
+      deleteRegion: '删除大区',
+      deleteZone: '删除小区',
+      deleteClusterTitle: '删除 BC 集群「{{name}}」？',
+      deleteRegionTitle: '删除大区「{{name}}」？',
+      deleteZoneTitle: '删除小区「{{name}}」？',
+      deleteClusterDesc: '仅允许删除空集群（无大区、无已分配代理）。此操作不可恢复。',
+      deleteRegionDesc: '仅允许删除空大区（无小区）。此操作不可恢复。',
+      deleteZoneDesc: '仅允许删除空小区（无已分配子服）。此操作不可恢复。',
+      deleteConfirm: '确认删除',
+      deleteImpactEmpty: '当前节点下无子节点与已分配服务器，可安全删除',
+      deleteImpactHasChildren: '节点下仍有子节点或已分配服务器，删除会被拒绝',
+      deleteOk: '已删除「{{name}}」',
+      deleteFail: '删除失败：{{message}}',
     },
     basket: {
       title: '未分配',
@@ -185,6 +218,8 @@ export const cluster = {
       submit: '创建',
       cancel: '取消',
       namePlaceholder: '填写名称',
+      // 顶栏命名空间为「全部」时不允许建集群：后端要求明确 namespaceId
+      needNamespace: '请先在右上角选择具体命名空间（不能选「全部命名空间」），再新建 BC 集群',
     },
     assign: {
       title: '批量首次分配',
@@ -249,6 +284,8 @@ export const cluster = {
       nodeZoneTitle: '小区概要',
       nodeRegionTitle: '大区概要',
       nodeServers: '子服数',
+      nodeServerList: '服务器列表',
+      nodeServerEmpty: '该节点下暂无服务器',
       healthBreakdown: '健康分布',
       linkAgg: '聚合自 {{count}} 条服务器间链路',
       // 画布缩放控件（右下角悬浮）
@@ -261,10 +298,17 @@ export const cluster = {
       totalMessages: '消息总量',
       maxFailRate: '最高失败率',
       maxP95: '最高 P95',
+      typeBreakdown: '按消息类型',
+      typeTotal: '条',
+      typeFailed: '失败',
     },
     edges: {
       title: '消息异常链路',
-      empty: '当前无跨服消息链路',
+      empty: '当前无点对点跨服消息链路',
+      // 仅有广播 / 玩家寻址时 edge 聚合故意为空（ADR-0065）；用类型汇总说明「不是没数据」
+      emptyBroadcastOnly:
+        '最近窗口内仅有广播 / 非点对点消息，不计入 source→目标 边聚合。下方为按类型汇总；点对点 send/call 产生后会出现链路行。',
+      emptyHint: '拓扑「数据剖析」只聚合点对点消息边；广播名册同步等不会出现在链路表。',
       source: '源服务器',
       target: '目标服务器',
       total: '消息数',
@@ -291,23 +335,23 @@ export const cluster = {
     },
     filter: {
       namespace: '命名空间',
-      allNamespace: '全部 命名空间',
+      allNamespaces: '全部命名空间',
     },
   },
   // 身份冲突页（/identity-conflicts，FR-177）：复制整服目录导致的同 identityId 并发双实例，卡片平铺处置
   identityConflicts: {
-    mission: '复制整服目录导致的同 identityId 并发双实例：一眼看清冲突双方，保留一方或解绑',
+    mission: '复制整服目录导致的同身份标识并发双实例：一眼看清冲突双方，保留一方或解绑',
     empty: '当前没有身份冲突',
-    emptyHint: '一切正常——每个 identityId 只有一个活跃实例。复制整服目录起第二份实例时，冲突会在此出现待处置。',
+    emptyHint: '一切正常——每个身份标识当前只有一个活跃实例。复制整服目录起第二份实例时，冲突会在此出现待处置。',
     reason: {
-      duplicateBootId: '并发双实例 · bootId 往复活跃',
+      duplicateBootId: '并发双实例 · 启动标识往复活跃',
       fallback: '身份冲突',
     },
     // 卡片：卡头 + 左右两栏冲突双方明细 + 操作
     card: {
       instance: '实例 {{label}}',
       current: '当前绑定',
-      bootId: 'bootId',
+      bootId: '启动标识',
       lastAddr: '来源地址',
       lastSeen: '最后活跃',
       keep: '保留实例 {{label}}',
@@ -324,7 +368,7 @@ export const cluster = {
     // 解绑二次确认
     unbind: {
       title: '解绑冲突身份？',
-      desc: '解绑后该 serverId 释放，双方实例都需重新申请接入。',
+      desc: '解绑后该服务器 ID 释放，双方实例都需重新申请接入。',
       confirm: '解绑',
     },
   },

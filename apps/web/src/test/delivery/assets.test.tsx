@@ -58,7 +58,7 @@ describe('/assets 文件资产页', () => {
     }
     await user.click(row)
 
-    // 详情面板出现元数据分区，且不产生模态遮罩
+    // 详情为固定层抽屉（非 role=dialog），主表不 reflow
     expect(await screen.findByText('元数据')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })

@@ -159,7 +159,16 @@ export default function SeriesPanel({
               const values = s.points.map((p) => valueOf(p, metric))
               const latest = values.at(-1) ?? 0
               const avg = values.length === 0 ? 0 : values.reduce((sum, v) => sum + v, 0) / values.length
-              const peak = values.length === 0 ? 0 : Math.max(...values)
+              // 在线峰值用 onlineMax 更贴「峰值」；其它指标仍用序列 max
+              const peak =
+                values.length === 0
+                  ? 0
+                  : metric === 'online'
+                    ? Math.max(...s.points.map((p) => p.onlineMax))
+                    : Math.max(...values)
+              const latestOnline = s.points.at(-1)?.onlineAvg ?? 0
+              const peakOnline =
+                s.points.length === 0 ? 0 : Math.max(...s.points.map((p) => p.onlineMax))
               return (
                 <Card key={s.serverId}>
                   <CardContent className="grid gap-3">
@@ -191,6 +200,17 @@ export default function SeriesPanel({
                         label={t('observability.serviceAnalysis.peak')}
                         value={peak.toFixed(1)}
                       />
+                      {/* 主指标非在线时仍固定展示在线快照，便于运维一眼看到人数 */}
+                      {metric !== 'online' && (
+                        <IconStat
+                          icon={<Users className="size-4" />}
+                          label={t('observability.serviceAnalysis.metricOnline')}
+                          value={String(Math.round(latestOnline))}
+                          hint={t('observability.serviceAnalysis.onlinePeak', {
+                            count: Math.round(peakOnline),
+                          })}
+                        />
+                      )}
                     </div>
                   </CardContent>
                 </Card>
