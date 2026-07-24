@@ -91,6 +91,7 @@ import {
   SheetTrigger,
   Skeleton,
   SectionHeader,
+  PageHeader,
   SummaryStrip,
   Table,
   TableBody,
@@ -172,6 +173,7 @@ function ButtonPreview() {
           <Play />
           小按钮
         </Button>
+        <Button size="lg">大按钮</Button>
         <Button size="icon" aria-label="暂停">
           <Pause />
         </Button>
@@ -196,6 +198,56 @@ function ButtonPreview() {
           离线
         </Badge>
         <Badge variant="brand">品牌</Badge>
+      </div>
+    </ComponentShell>
+  )
+}
+
+function PageHeaderPreview() {
+  return (
+    <ComponentShell>
+      <div className="space-y-5">
+        <PageHeader
+          icon={<Server className="size-4" />}
+          title="服务器资产"
+          description="查看健康、待确认接入与资产清单"
+          actions={
+            <>
+              <Button variant="outline" size="sm">
+                导出
+              </Button>
+              <Button size="sm">接入新服</Button>
+            </>
+          }
+        />
+        <PageHeader
+          icon={<Terminal className="size-4" />}
+          title="命令观测"
+          description="在途队列与历史命令生命周期"
+          actions={
+            <Select defaultValue="1h">
+              <SelectTrigger className="w-28">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1h">近 1 小时</SelectItem>
+                <SelectItem value="24h">近 24 小时</SelectItem>
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SectionHeader
+          icon={<ListChecks className="size-4" />}
+          title="区段标题 base"
+          count="12 项"
+          actions={<Button variant="ghost" size="sm">刷新</Button>}
+        />
+        <SectionHeader
+          size="lg"
+          icon={<Gauge className="size-4" />}
+          title="区段标题 lg"
+          count="页内主区段"
+        />
       </div>
     </ComponentShell>
   )
@@ -376,6 +428,7 @@ function LayoutPreview() {
       <Tabs defaultValue="card">
         <TabsList>
           <TabsTrigger value="card">Card</TabsTrigger>
+          <TabsTrigger value="line">Line Tab</TabsTrigger>
           <TabsTrigger value="rail">Anchor</TabsTrigger>
           <TabsTrigger value="scroll">ScrollArea</TabsTrigger>
         </TabsList>
@@ -392,6 +445,24 @@ function LayoutPreview() {
               <Button size="sm">查看详情</Button>
             </CardFooter>
           </Card>
+        </TabsContent>
+        <TabsContent value="line" className="pt-3">
+          <Tabs defaultValue="a">
+            <TabsList variant="line">
+              <TabsTrigger value="a">清单</TabsTrigger>
+              <TabsTrigger value="b">扫描</TabsTrigger>
+              <TabsTrigger value="c">比对</TabsTrigger>
+            </TabsList>
+            <TabsContent value="a" className="pt-3 text-sm text-muted-foreground">
+              下划线变体适合内容区二级导航。
+            </TabsContent>
+            <TabsContent value="b" className="pt-3 text-sm text-muted-foreground">
+              扫描结果区。
+            </TabsContent>
+            <TabsContent value="c" className="pt-3 text-sm text-muted-foreground">
+              跨服比对区。
+            </TabsContent>
+          </Tabs>
         </TabsContent>
         <TabsContent value="rail" className="h-64 pt-3">
           <AnchorRailLayout sections={sectionItems} ariaLabel="控件分区">
@@ -727,12 +798,21 @@ const items: MuseumItem[] = [
     preview: <DashboardPreview />,
   },
   {
+    id: 'page-header',
+    title: '二阶页眉',
+    group: '展示组件',
+    description: '业务页顶栏：图标徽章 + 标题/副文案 + 右侧操作槽；区段标题 base/lg 对照。',
+    exports: ['PageHeader', 'SectionHeader'],
+    states: ['with actions', 'with description', 'section base', 'section lg'],
+    preview: <PageHeaderPreview />,
+  },
+  {
     id: 'text',
     title: '文本与区段',
     group: '展示组件',
     description: '展示区段标题和轻量 Markdown 渲染。',
-    exports: ['SectionHeader', 'MarkdownLite'],
-    states: ['with icon', 'with count', 'heading', 'list', 'bold'],
+    exports: ['MarkdownLite'],
+    states: ['heading', 'list', 'bold'],
     preview: <TextPreview />,
   },
   {
