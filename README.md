@@ -3,7 +3,7 @@
 > 面向 Minecraft 多群组服务器的集群调度中间件控制面  
 > 区服治理 · 健康调度 · 跨服消息 · 可观测审计 · 配置与交付
 
-[![version](https://img.shields.io/badge/version-1.0.0--rc-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.0.0-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
@@ -12,7 +12,47 @@ Beacon 把多个 **BungeeCord / Velocity 代理** 与 **Bukkit / Paper 子服** 
 
 **控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-> **发布状态**：仓库正准备 **`v1.0.0` 首个 RC**（根 `VERSION=1.0.0` 表示目标 GA 号）。在 GitHub 上出现真实 `v1.0.0-rc.N` / `v1.0.0` tag 与 Release 之前，**不得视为已正式发布**。在线更新只消费严格 `vX.Y.Z` GA。
+> **发布状态**：正式 GA 以 GitHub Release **`v1.0.0`** 为准（原样晋级自最终 RC）。在线更新只消费严格 `vX.Y.Z` GA。
+
+---
+
+## 界面预览
+
+演示数据来自管理台 **mock 演示模式**（`pnpm --filter @beacon/web dev`，场景 `normal`）；截图均在 **KPI / 列表 / 拓扑数据加载完成** 后拍摄，不是骨架屏。
+
+### 运维总览
+
+![运维总览（演示模式）](docs/images/dashboard-demo.png)
+
+一屏看全局：可调度服务器、代理 / 子服在线、玩家与 TPS、健康等级分布、服务器状态墙与连接流。
+
+### 服务器资产
+
+![服务器资产（演示模式）](docs/images/servers-demo.png)
+
+注册待确认、身份与健康、默认入口 / 排空等资产运维入口。
+
+### 集群拓扑
+
+![集群拓扑（演示模式）](docs/images/topology-demo.png)
+
+BC 代理 → 小区放射链路，异常边与失败率直标。
+
+### UI 控件博物馆
+
+![UI 控件博物馆](docs/images/ui-wiki.png)
+
+`@beacon/ui` 导出控件的开发期展示与覆盖率门禁入口，见 [docs/UI-WIKI.md](docs/UI-WIKI.md)。
+
+本地复现：
+
+```bash
+# 管理台演示模式（免登录 + MSW，顶栏可切换 empty/normal/huge/error）
+pnpm --filter @beacon/web dev
+
+# UI 控件博物馆（不请求后端）
+pnpm --filter @beacon/ui-wiki dev
+```
 
 ---
 
@@ -148,6 +188,8 @@ Beacon/
 | [docs/API.md](docs/API.md) | REST 契约 |
 | [docs/SDK.md](docs/SDK.md) | 业务插件接入 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 部署 / 升级 / 备份 / 排障 |
+| [docs/UI-WIKI.md](docs/UI-WIKI.md) | UI 控件博物馆启动与覆盖率门禁 |
+| [docs/UX.md](docs/UX.md) | 前端信息架构与交互契约 |
 | [docs/adr/](docs/adr/) | 架构决策 |
 | [SECURITY.md](SECURITY.md) | 安全边界 |
 | [CHANGELOG.md](CHANGELOG.md) | 更新日志 |

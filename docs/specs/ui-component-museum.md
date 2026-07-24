@@ -1,6 +1,6 @@
 # 功能规格：UI 控件博物馆 wiki 子项目
 
-> 状态：开发中 · 关联 PRD：FR-175 · 分支：当前工作区
+> 状态：已交付 · 关联 PRD：FR-175 · 使用说明见 [docs/UI-WIKI.md](../UI-WIKI.md)
 
 ## 1. 背景与目标
 
@@ -43,10 +43,10 @@
 ## 4. 任务拆分
 
 - [x] 提升 `packages/ui` 并定义公开导出入口。
-- [ ] `apps/web` 改为从 UI 包消费通用组件，业务壳组件保留在 `apps/web/src`。
+- [x] `apps/web` 改为从 UI 包消费通用组件，业务壳组件保留在 `apps/web/src`。
 - [x] 提升 `apps/ui-wiki`，完成组件目录、示例区块与静态示例数据。
 - [x] 补充根级 wiki 覆盖校验，确保 UI 包公开导出都有展示或解释。
-- [ ] 文档同步：PRD 状态、ARCHITECTURE、开发文档、CHANGELOG。
+- [x] 文档同步：PRD 状态、ARCHITECTURE、[UI-WIKI.md](../UI-WIKI.md)、CHANGELOG。
 
 ## 5. 验收标准
 

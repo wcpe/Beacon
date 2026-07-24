@@ -5,6 +5,8 @@
 ## 未发布
 
 ### 新增
+- 补齐 UI 控件博物馆开发文档 `docs/UI-WIKI.md`：启动命令、覆盖率门禁、新增控件流程，以及与管理台演示模式的边界说明。
+- README 增加管理台演示截图（运维总览 / 服务器 / 拓扑）与 UI 控件博物馆截图；截图取自 mock `normal` 场景数据加载完成后的页面。
 - 规划 0.31.x 对齐中间版管理台壳层重做（FR-186～FR-189）：侧栏图标轨折叠动画、双段页眉与身份收敛、全局运维指标真数据、小屏抽屉；规格见 `docs/specs/admin-shell-redesign-0.31.md`。
 - 页眉全局搜索命令面板 MVP（FR-193）：Ctrl/Cmd+K 与页眉入口唤起；导航分组可键盘选择并跳转；可选服务器关键词 / 审计动作深链；规格见 `docs/specs/header-command-palette-mvp.md`。
 - 页眉语言切换骨架（FR-194）：中/英 + localStorage 持久；en 仅壳层文案，缺键 fallback 到 zh-CN。
@@ -22,6 +24,7 @@
 - 本轮发布流程调整不改变 REST API、`agent-api`、Agent 协议、序列化格式或 GA-only 在线更新语义；历史 `prerelease` 更新设置继续归一为 `stable`，RC 与 Actions Artifact 仍需显式安装。
 - 升级兼容继续采用 forward-only expand / 可重入回填；升级前须备份 MySQL 与 Agent 本地状态，若目标版本无法读取当前 schema 或本地状态，应停写并从同一协调备份恢复，而不是执行未经验证的 down migration。
 - Agent 真机 E2E 编排从 jpenilla run-task 迁移到 Maven 正式版 `mc-testkit 0.5.0`：统一 `servePaper` / `serveDirectory` / `serveProxy`，代理改用原生 BungeeCord 与固定 `backend` 路由；动态 access token 在 harness 内先持久化不可逆 SHA-256 + 字节长度指纹，再注册 Actions 掩码，归档前按指纹扫描且不写明文 token 文件。
+- `docs/specs/ui-component-museum.md` 状态对齐为已交付，并补齐文档同步任务勾选。
 
 ### 修复
 - 贯通 FR-178 环境过滤器到运维主路径：选「全部环境」默认可见全量；选具体 env 收窄仪表盘/服务器/区服/拓扑/告警/命令/审计/服务分析/变更单等有 ns 维度的列表；mock 对 `namespaceId=0` 与真后端「全量」语义对齐。

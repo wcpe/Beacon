@@ -95,9 +95,9 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 ## 6. 前端架构（apps/web，随 P1 建立）
 
 - **技术栈**：Vite + React Router + TanStack Query（服务器状态）+ Zustand（客户端状态）+ react-i18next + MSW（经 `packages/devmock`，浏览器与测试共享 handlers）。服务器态 / 客户端态归属边界写入规范（FR-174）。
-- **UI 供给**：组件一律取自 `packages/ui`（@beacon/ui）；每个导出控件在 apps/ui-wiki 有展示页，覆盖率检查进 CI 门禁（FR-175）。
+- **UI 供给**：组件一律取自 `packages/ui`（@beacon/ui）；每个导出控件在 apps/ui-wiki 有展示页，覆盖率检查进 CI 门禁（FR-175）。开发期启动 / 覆盖率 / 新增控件流程见 [UI-WIKI.md](UI-WIKI.md)。
 - **契约类型独立**：对外响应契约类型（各域 HTTP 响应形状 + 枚举构件 + 通用壳 `Paged` / `MockErrorBody`）的真源在 `packages/contracts`（@beacon/contracts，纯 type-only、无运行时依赖）；`apps/web` 生产代码只 `import type` 自 contracts、不再类型层依赖 mock 包，`packages/devmock` 反向依赖 contracts 并以 handler 的 `satisfies XxxResponse` 锚定契约防漂移。依赖方向与迁移决策见 [ADR-0062](adr/0062-frontend-contract-types-package.md)（FR-155 前置）。
-- **mock-first 交付**：P2 以演示模式做出全量 mock 管理台（FR-159 / FR-172），页面数据形状只依赖 API 契约草案、mock 覆盖空态 / 常规 / 超大量 / 异常四形态、逐页过 mockup 评审门拍板；P3 起后端按域落地时**同阶段把对应页面从 mock 切真并真机验收**，禁止攒到最后统一联调（[ROADMAP](ROADMAP.md) §4）。
+- **mock-first 交付**：P2 以演示模式做出全量 mock 管理台（FR-159 / FR-172），页面数据形状只依赖 API 契约草案、mock 覆盖空态 / 常规 / 超大量 / 异常四形态、逐页过 mockup 评审门拍板；P3 起后端按域落地时**同阶段把对应页面从 mock 切真并真机验收**，禁止攒到最后统一联调（[ROADMAP](ROADMAP.md) §4）。开发期 `pnpm --filter @beacon/web dev` 恒为演示模式（免登录 + MSW）；常规 `vite build` 不注册 mock。
 - **信息架构**：顶层总览 + 集群 / 可观测 / 交付 / 系统四大域，页面清单、唯一职责与全局交互契约以 [UX.md](UX.md) §2 / §4 为真源；评审门规则见 [.claude/rules/ux-spec.md](../.claude/rules/ux-spec.md)。
 
 ## 7. 关键时序（简要）
