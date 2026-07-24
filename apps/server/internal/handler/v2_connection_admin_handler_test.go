@@ -136,19 +136,24 @@ func TestConnAdminConnIdDirect(t *testing.T) {
 	}
 }
 
-// TestConnAdminGuard400 无精确 ID 时：缺 serverId/playerUuid、缺时间范围、范围超 168h 均 400。
+// TestConnAdminGuard400 无精确 ID 时：缺时间范围、范围超 168h 均 400。
+// 有时间窗但无 serverId/playerUuid 允许「全局近期」列表（管理台默认进页），不应 400。
 func TestConnAdminGuard400(t *testing.T) {
 	r, _ := newConnAdminRouter(t, "conn_adm_guard")
 	now := time.Now().UTC().UnixMilli()
 	for name, target := range map[string]string{
 		"缺过滤缺范围":   "/admin/v2/connections",
 		"有过滤缺范围":   "/admin/v2/connections?serverId=proxy-1",
-		"有范围缺过滤":   fmt.Sprintf("/admin/v2/connections?from=%s&to=%s", isoOf(now-1000), isoOf(now)),
 		"范围超 168h": fmt.Sprintf("/admin/v2/connections?serverId=proxy-1&from=%s&to=%s", isoOf(now-200*time.Hour.Milliseconds()), isoOf(now)),
 	} {
 		if code, body := getJSON(t, r, target); code != http.StatusBadRequest || body["code"] != "query_guard_violation" {
 			t.Fatalf("%s 应 400 query_guard_violation，实际 %d %v", name, code, body)
 		}
+	}
+	// 仅时间窗：允许空过滤，返回 200（可能 0 条）
+	code, body := getJSON(t, r, fmt.Sprintf("/admin/v2/connections?from=%s&to=%s", isoOf(now-1000), isoOf(now)))
+	if code != http.StatusOK {
+		t.Fatalf("有范围缺过滤应 200（全局近期），实际 %d %v", code, body)
 	}
 }
 

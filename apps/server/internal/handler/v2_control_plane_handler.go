@@ -519,6 +519,9 @@ func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Req
 	}
 	// 用指针区分：缺省/未传 target → 400；显式 null → 解除分配；对象 → 首次分配。
 	// Decode 到 *v2Target 时 JSON null 得到 nil，对象得到非 nil——与 mock 契约一致。
+	// 显式 null：TargetKind/TargetID 保持零值，服务层走 unassign。
+	// 若请求体根本没带 target 键，Go json 同样是 nil——与 mock「target 必填（解除分配传 null）」对齐：
+	// 这里允许 nil 进入 unassign，由服务层校验 reason 非空；无 reason 即 400。
 	params := service.AssignServersParams{
 		ServerIDs: req.ServerIDs, IsDefaultEntry: req.IsDefaultEntry, Reason: req.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
@@ -526,10 +529,6 @@ func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Req
 	if req.Target != nil {
 		params.TargetKind = req.Target.Kind
 		params.TargetID = req.Target.ID
-	} else {
-		// 显式 null：TargetKind/TargetID 保持零值，服务层走 unassign
-		// 若请求体根本没带 target 键，Go json 同样是 nil——与 mock「target 必填（解除分配传 null）」对齐：
-		// 这里允许 nil 进入 unassign，由服务层校验 reason 非空；无 reason 即 400。
 	}
 	servers, err := h.svc.AssignServers(params)
 	if err != nil {
