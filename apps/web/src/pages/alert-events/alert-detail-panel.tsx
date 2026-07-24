@@ -110,7 +110,7 @@ export default function AlertDetailPanel({ item, pending, errorText, onHandle }:
       </div>
       {/* detail JSON 键值可视化；非 JSON / 空则组件内降级 */}
       <JsonDetail
-        raw={item.detail ?? ''}
+        raw={item.detail}
         title={t('observability.alertEvents.columns.detail')}
         keyPrefix="observability.alertEvents.detailKeys"
       />

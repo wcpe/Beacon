@@ -323,8 +323,6 @@ export default function AlertEventsPage() {
         ),
       },
     ],
-    // checkedIds / open 选择态驱动表头与行勾选；t 变化时重建
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- toggle 闭包用最新 setState，无需入 dep
     [t, checkedIds, allOpenChecked, someOpenChecked, openIds.length, batchPending],
   )
 

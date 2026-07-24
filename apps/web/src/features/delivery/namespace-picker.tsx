@@ -37,7 +37,7 @@ export default function NamespacePicker({ value, onChange }: NamespacePickerProp
       return
     }
     // 优先有服的 ns，否则第一个
-    const withServers = items.find((ns) => (ns.serverCount ?? 0) > 0)
+    const withServers = items.find((ns) => ns.serverCount > 0)
     onChange(withServers?.id ?? items[0].id)
   }, [value, items, onChange, query.isLoading])
 

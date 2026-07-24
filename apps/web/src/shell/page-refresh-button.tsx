@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router-dom'
 import { RefreshCw } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { Button } from '@beacon/ui'
 
@@ -11,7 +11,7 @@ import { Button } from '@beacon/ui'
  * 当前路径 → 应失效的 queryKey 前缀列表。
  * 匹配页面内 useQuery 的主 key，尽量保留 URL/筛选（筛选在组件 state，invalidate 只重拉数据）。
  */
-export function queryKeysForPath(pathname: string): (string | readonly unknown[])[] {
+export function queryKeysForPath(pathname: string): string[][] {
   if (pathname.startsWith('/dashboard')) {
     return [['dashboard'], ['shell', 'metrics']]
   }
@@ -69,6 +69,15 @@ export default function PageRefreshButton() {
   const queryClient = useQueryClient()
   const location = useLocation()
   const [spinning, setSpinning] = useState(false)
+  // 卸载时清掉旋转定时器，避免测试 teardown 后 setState
+  const spinTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    return () => {
+      if (spinTimer.current !== null) {
+        clearTimeout(spinTimer.current)
+      }
+    }
+  }, [])
 
   const refresh = async () => {
     setSpinning(true)
@@ -78,17 +87,17 @@ export default function PageRefreshButton() {
         await queryClient.invalidateQueries()
       } else {
         await Promise.all(
-          keys.map((key) =>
-            queryClient.invalidateQueries({
-              queryKey: Array.isArray(key) ? [...key] : [key],
-            }),
-          ),
+          keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
         )
       }
     } finally {
       // 短延迟让旋转可见
-      window.setTimeout(() => {
+      if (spinTimer.current !== null) {
+        clearTimeout(spinTimer.current)
+      }
+      spinTimer.current = setTimeout(() => {
         setSpinning(false)
+        spinTimer.current = null
       }, 400)
     }
   }

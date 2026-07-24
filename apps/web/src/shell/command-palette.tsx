@@ -61,8 +61,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
 
   const flatItems = useMemo(
     () => buildPaletteItems(query, resolveTitle),
-    // resolveTitle 依赖 t；query 变化时重建
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- t 稳定时足够
+    // resolveTitle 依赖 t；query / 语言变化时重建
     [query, t],
   )
   const groups = useMemo(() => groupItems(flatItems), [flatItems])
@@ -129,10 +128,10 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
     }
     if (e.key === 'Enter') {
       e.preventDefault()
-      const item = flatItems[activeIndex]
-      if (item !== undefined) {
-        runItem(item)
+      if (flatItems.length === 0) {
+        return
       }
+      runItem(flatItems[activeIndex])
     }
   }
 

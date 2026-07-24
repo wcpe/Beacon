@@ -18,7 +18,7 @@ interface JsonDetailProps {
 }
 
 /** 尝试解析 JSON；非对象/数组形态或解析失败返回 null */
-export function tryParseJson(raw: string): unknown | null {
+export function tryParseJson(raw: string): unknown {
   const trimmed = raw.trim()
   if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) {
     return null
@@ -63,6 +63,9 @@ export function defaultJsonValueLabel(t: TFunction, key: string, value: unknown)
   }
   if (typeof value === 'object') {
     return JSON.stringify(value)
+  }
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return '—'
   }
   const raw = String(value)
   // 健康流转常见状态值

@@ -54,6 +54,11 @@ export function setServiceAnalysisSelected(ids: Iterable<string>): void {
   persist([...ids])
 }
 
+/** 测试用：清空选中与持久化，避免跨用例串状态 */
+export function resetServiceAnalysisSelectedForTests(): void {
+  persist([])
+}
+
 /** 读取当前选中 serverId 列表 */
 export function getServiceAnalysisSelected(): string[] {
   return snapshot

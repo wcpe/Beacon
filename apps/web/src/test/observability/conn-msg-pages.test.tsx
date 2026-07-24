@@ -25,7 +25,7 @@ async function waitForDataRows(): Promise<HTMLElement[]> {
   return waitFor(() => {
     const rows = screen
       .getAllByRole('row')
-      .filter((r) => r.classList.contains('cursor-pointer')) as HTMLElement[]
+      .filter((r): r is HTMLElement => r.classList.contains('cursor-pointer'))
     expect(rows.length).toBeGreaterThan(0)
     return rows
   })

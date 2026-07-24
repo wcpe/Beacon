@@ -378,9 +378,11 @@ export default function ZoneTree({
     const preferred =
       matches.find((item) => item.status === 'active') ??
       matches.find((item) => item.status === 'disabled') ??
-      matches.find((item) => item.status === 'conflict') ??
-      matches[0]
-    return preferred?.identityId ?? null
+      matches.find((item) => item.status === 'conflict')
+    if (preferred) {
+      return preferred.identityId
+    }
+    return matches.length > 0 ? matches[0].identityId : null
   }
   const unbindMutation = useMutation({
     mutationFn: ({ server, reason }: { server: ServerItem; reason: string }) => {

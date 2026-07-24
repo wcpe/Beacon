@@ -145,7 +145,7 @@ function ResultDetailView({ raw }: { raw: string }) {
   )
 }
 
-function tryParseJson(raw: string): unknown | null {
+function tryParseJson(raw: string): unknown {
   const trimmed = raw.trim()
   if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) {
     return null

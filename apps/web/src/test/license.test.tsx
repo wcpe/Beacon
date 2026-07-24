@@ -48,9 +48,12 @@ describe('开源协议页（FR-190）', () => {
       screen.getByText(new RegExp(`运行时依赖（${String(licenseData.counts.total)}）`)),
     ).toBeInTheDocument()
     expect(screen.getByLabelText('搜索软件包…')).toBeInTheDocument()
-    const first = licenseData.groups[0]?.items[0]?.name
-    expect(first).toBeTruthy()
-    expect(screen.getByText(first!)).toBeInTheDocument()
+    const firstName = licenseData.groups[0]?.items[0]?.name
+    expect(typeof firstName).toBe('string')
+    if (typeof firstName !== 'string') {
+      throw new Error('license 依赖清单缺少首个软件包名')
+    }
+    expect(screen.getByText(firstName)).toBeInTheDocument()
     // 不应出现纯类型包
     expect(screen.queryByText('@types/react')).not.toBeInTheDocument()
     expect(document.title).toBe('Beacon - 开源协议')
@@ -59,12 +62,15 @@ describe('开源协议页（FR-190）', () => {
   it('搜索可过滤依赖表', async () => {
     const user = userEvent.setup()
     renderAt('/license')
-    const first = licenseData.groups[0]?.items[0]
-    expect(first).toBeTruthy()
+    const firstName = licenseData.groups[0]?.items[0]?.name
+    expect(typeof firstName).toBe('string')
+    if (typeof firstName !== 'string') {
+      throw new Error('license 依赖清单缺少首个软件包名')
+    }
     const search = screen.getByLabelText('搜索软件包…')
     await user.clear(search)
-    await user.type(search, first!.name)
-    expect(screen.getByText(first!.name)).toBeInTheDocument()
+    await user.type(search, firstName)
+    expect(screen.getByText(firstName)).toBeInTheDocument()
     // 搜一个不存在的串
     await user.clear(search)
     await user.type(search, '___no_such_package_xyz___')

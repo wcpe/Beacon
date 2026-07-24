@@ -81,9 +81,7 @@ export function buildServerSearchItem(query: string): CommandItem | null {
   }
 }
 
-export interface ResolveTitle {
-  (item: CommandItem): string
-}
+export type ResolveTitle = (item: CommandItem) => string
 
 /**
  * 过滤：空 query 只返回导航（避免噪声）；非空时匹配 title / titleKey 解析后的文案 / subtitle / to。

@@ -9,6 +9,7 @@ import { setupServer } from 'msw/node'
 
 import { allHandlers, resetMockData, setMockScenario, type MockScenario } from '@beacon/devmock'
 
+import { resetServiceAnalysisSelectedForTests } from '../../state/service-analysis-selection'
 import '../../i18n'
 
 /** 为单个测试文件创建独立的 mock 服务端（全量 handlers） */
@@ -20,6 +21,8 @@ export function createTestServer(): ReturnType<typeof setupServer> {
 export function useScenario(scenario: MockScenario): void {
   setMockScenario(scenario)
   resetMockData()
+  // 同步清掉服务分析选服（内存快照 + localStorage），避免跨用例串状态
+  resetServiceAnalysisSelectedForTests()
 }
 
 /**

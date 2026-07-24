@@ -79,33 +79,36 @@ export function useGlobalOpsMetrics(): {
   const [statusQ, serversQ, pendingQ, alertsQ, changesQ] = results
 
   let controlPlaneOnline: boolean | null = null
-  if (statusQ.isSuccess && statusQ.data) {
+  if (statusQ.isSuccess) {
     controlPlaneOnline = statusQ.data.db.connected
   } else if (statusQ.isError) {
     controlPlaneOnline = false
   }
 
   let agentOnline: number | null = null
-  if (statusQ.isSuccess && statusQ.data) {
+  if (statusQ.isSuccess) {
     agentOnline = asCount(statusQ.data.onlineInstances)
-  } else if (serversQ.isSuccess && serversQ.data) {
+  } else if (serversQ.isSuccess) {
     agentOnline = serversQ.data.items.filter((s) => s.online).length
   } else if (serversQ.isError && statusQ.isError) {
     agentOnline = null
   }
 
-  const pendingRegistrations =
-    pendingQ.isSuccess && pendingQ.data ? asCount(pendingQ.data.total) : pendingQ.isError ? null : null
+  const pendingRegistrations = pendingQ.isSuccess
+    ? asCount(pendingQ.data.total)
+    : pendingQ.isError
+      ? null
+      : null
 
   let openAlerts: number | null = null
-  if (alertsQ.isSuccess && alertsQ.data) {
+  if (alertsQ.isSuccess) {
     openAlerts = alertsQ.data.items.filter((a) => a.status === 'open').length
   } else if (alertsQ.isError) {
     openAlerts = null
   }
 
   let activeChanges: number | null = null
-  if (changesQ.isSuccess && changesQ.data) {
+  if (changesQ.isSuccess) {
     activeChanges = changesQ.data.items.filter((c) => ACTIVE_CHANGE_STATUSES.has(c.status)).length
   } else if (changesQ.isError) {
     activeChanges = null

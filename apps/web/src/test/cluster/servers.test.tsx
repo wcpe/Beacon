@@ -69,13 +69,15 @@ describe('/servers 服务器页', () => {
     const user = userEvent.setup()
     renderPage(<ServersPage />)
 
-    // lobby-1 在 mock 中为已分配默认入口：行内带「默认入口」徽标与「取消默认入口」操作
+    // lobby-1 在 mock 中为已分配默认入口：行内带「默认入口」徽标；操作收进「…」菜单
     const row = (await screen.findByText('lobby-1')).closest('tr')
     expect(row).not.toBeNull()
     expect(within(row as HTMLElement).getByText('默认入口')).toBeInTheDocument()
-    await user.click(within(row as HTMLElement).getByRole('button', { name: '取消默认入口' }))
+    // 打开行内操作菜单再点「取消默认入口」
+    await user.click(within(row as HTMLElement).getByRole('button', { name: '操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '取消默认入口' }))
 
-    // 无原因确认框：确认后徽标消失、操作文案翻转
+    // 无原因确认框：确认后徽标消失、菜单项翻转
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '取消默认入口' }))
     await waitFor(() => {
@@ -83,7 +85,8 @@ describe('/servers 服务器页', () => {
       expect(within(fresh as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
     })
     const fresh = screen.getByText('lobby-1').closest('tr')
-    expect(within(fresh as HTMLElement).getByRole('button', { name: '设为默认入口' })).toBeInTheDocument()
+    await user.click(within(fresh as HTMLElement).getByRole('button', { name: '操作' }))
+    expect(await screen.findByRole('menuitem', { name: '设为默认入口' })).toBeInTheDocument()
   })
 
   it('列表行直显健康分/等级/实时指标与不可调度原因摘要', async () => {

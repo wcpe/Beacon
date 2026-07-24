@@ -163,7 +163,7 @@ export default function AppShell() {
 
       <div
         className="flex h-screen flex-col transition-[padding-left] duration-200 ease-out md:pl-[var(--shell-sidebar-width)]"
-        style={{ ['--shell-sidebar-width' as string]: `${sidebarWidth}px` } as CSSProperties}
+        style={{ '--shell-sidebar-width': `${String(sidebarWidth)}px` } as CSSProperties}
       >
         <Header />
         {/* 内容区只纵向滚动；超宽内容由 useFitToWidth 等比缩小放下，不裁切、不横滚 */}

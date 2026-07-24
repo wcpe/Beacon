@@ -36,7 +36,7 @@ describe('/namespaces 页', () => {
     renderPage(<NamespacesPage />)
 
     expect(
-      await screen.findByText('暂无 命名空间，点击「创建 namespace」新增第一个'),
+      await screen.findByText('暂无命名空间，点击「创建命名空间」新增第一个'),
     ).toBeInTheDocument()
   })
 
@@ -45,12 +45,12 @@ describe('/namespaces 页', () => {
     const user = userEvent.setup()
     renderPage(<NamespacesPage />)
 
-    await user.click(await screen.findByRole('button', { name: '创建 命名空间' }))
+    await user.click(await screen.findByRole('button', { name: '创建命名空间' }))
     const dialog = await screen.findByRole('dialog')
     await user.type(within(dialog).getByLabelText('名称'), 'game-new')
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
-    expect(await screen.findByText('命名空间 已创建')).toBeInTheDocument()
+    expect(await screen.findByText('命名空间已创建')).toBeInTheDocument()
     // 一次性明文接入 token 以 nstk_ 前缀
     const tokenDialog = screen.getByRole('dialog')
     expect(within(tokenDialog).getByText(/^nstk_/)).toBeInTheDocument()
@@ -62,14 +62,14 @@ describe('/namespaces 页', () => {
     renderPage(<NamespacesPage />)
 
     // 初始无详情、无 dialog
-    expect(screen.queryByText('命名空间 详情')).not.toBeInTheDocument()
+    expect(screen.queryByText('命名空间详情')).not.toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     // 选中 test 域（种子含出向生效信任 test → prod）
     await user.click(await screen.findByText('test'))
 
     // 固定层详情出现（非 role=dialog）
-    expect(await screen.findByText('命名空间 详情')).toBeInTheDocument()
+    expect(await screen.findByText('命名空间详情')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     // 面板内出现互通信任关系区与授予入口
     expect(screen.getByText('互通信任关系')).toBeInTheDocument()

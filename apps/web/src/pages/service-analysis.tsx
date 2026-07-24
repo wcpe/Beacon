@@ -61,7 +61,7 @@ export default function ServiceAnalysisPage() {
       return
     }
     const onlineIds = new Set(
-      (serversQuery.data?.items ?? []).filter((s) => s.online).map((s) => s.serverId),
+      serversQuery.data.items.filter((s) => s.online).map((s) => s.serverId),
     )
     // 只保留仍在线的；若全部失效则清空，避免分析区卡在已下线 id
     const kept = persistedIds.filter((id) => onlineIds.has(id))

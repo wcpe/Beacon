@@ -10,7 +10,7 @@ export interface HealthTransition {
 
 /** 解析健康流转 from→to；detail JSON 优先，其次 message 内箭头。 */
 export function parseHealthTransition(item: AlertEventItem): HealthTransition | null {
-  const raw = item.detail?.trim() ?? ''
+  const raw = item.detail.trim()
   if (raw.startsWith('{')) {
     try {
       const obj = JSON.parse(raw) as Record<string, unknown>
@@ -31,8 +31,8 @@ export function parseHealthTransition(item: AlertEventItem): HealthTransition | 
       // 非 JSON 走 message
     }
   }
-  const match = item.message.match(
-    /([A-Za-z_\u4e00-\u9fff]+)\s*(?:→|->)\s*([A-Za-z_\u4e00-\u9fff]+)/,
+  const match = /([A-Za-z_\u4e00-\u9fff]+)\s*(?:→|->)\s*([A-Za-z_\u4e00-\u9fff]+)/.exec(
+    item.message,
   )
   if (match) {
     return { from: match[1], to: match[2] }

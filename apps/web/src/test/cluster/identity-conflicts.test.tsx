@@ -31,7 +31,7 @@ describe('/identity-conflicts 身份冲突页', () => {
 
     // 卡头 serverId 与冲突原因徽标（用徽标完整文案，避开页眉 mission 里的「并发双实例」）
     expect(await screen.findByText('game-6')).toBeInTheDocument()
-    expect(screen.getByText('并发双实例 · bootId 往复活跃')).toBeInTheDocument()
+    expect(screen.getByText('并发双实例 · 启动标识往复活跃')).toBeInTheDocument()
     // 左右两栏平铺冲突双方（实例 A / 实例 B）
     expect(await screen.findByText('实例 A')).toBeInTheDocument()
     expect(screen.getByText('实例 B')).toBeInTheDocument()

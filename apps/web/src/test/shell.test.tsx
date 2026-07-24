@@ -144,7 +144,7 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     const aside = document.querySelector('[data-slot="desktop-sidebar"]')
     expect(aside).not.toBeNull()
     expect(aside).toHaveAttribute('data-collapsed', 'false')
-    expect(aside).toHaveStyle({ width: `${SIDEBAR_WIDTH_EXPANDED}px` })
+    expect(aside).toHaveStyle({ width: `${String(SIDEBAR_WIDTH_EXPANDED)}px` })
     // 品牌无副标题
     expect(aside?.textContent ?? '').not.toContain('管理台')
     // 身份只在页眉
@@ -180,7 +180,7 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     await user.click(screen.getByRole('button', { name: '收起导航' }))
     const aside = document.querySelector('[data-slot="desktop-sidebar"]')
     expect(aside).toHaveAttribute('data-collapsed', 'true')
-    expect(aside).toHaveStyle({ width: `${SIDEBAR_WIDTH_COLLAPSED}px` })
+    expect(aside).toHaveStyle({ width: `${String(SIDEBAR_WIDTH_COLLAPSED)}px` })
     // 折叠后分组标题隐藏，但链接仍以 aria-label 可达
     const nav = desktopSidebar()
     expect(nav.getByRole('link', { name: '配置中心' })).toBeInTheDocument()
@@ -190,7 +190,7 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     // 可再展开
     await user.click(screen.getByRole('button', { name: '展开导航' }))
     expect(aside).toHaveAttribute('data-collapsed', 'false')
-    expect(aside).toHaveStyle({ width: `${SIDEBAR_WIDTH_EXPANDED}px` })
+    expect(aside).toHaveStyle({ width: `${String(SIDEBAR_WIDTH_EXPANDED)}px` })
   })
 })
 

@@ -84,7 +84,17 @@ export function fetchAuditAnalytics(): Promise<AuditAnalytics> {
  */
 export async function exportAudits(format: 'csv' | 'json', query: AuditQuery = {}): Promise<void> {
   // 导出不带分页游标；与 List 同口径过滤字段
-  const { includeArchived: _cold, cursor: _cursor, page: _page, size: _size, ...filters } = query
+  const {
+    includeArchived: _includeArchived,
+    cursor: _cursor,
+    page: _page,
+    size: _size,
+    ...filters
+  } = query
+  void _includeArchived
+  void _cursor
+  void _page
+  void _size
   const path = `/admin/v1/audits/export${buildQuery({ format, ...filters })}`
   const { clearAuth, currentToken, notifyUnauthorized } = await import('../state/auth')
   const { ApiClientError } = await import('./cluster')

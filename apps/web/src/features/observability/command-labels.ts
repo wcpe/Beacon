@@ -44,17 +44,20 @@ export function commandResultValueLabel(t: TFunction, key: string, value: unknow
       ? t('observability.serviceAnalysis.yes', { defaultValue: '是' })
       : t('observability.serviceAnalysis.no', { defaultValue: '否' })
   }
-  const raw = String(value)
-  if (key === 'phase') {
-    return t(`observability.commands.resultPhase.${raw}`, { defaultValue: raw })
-  }
-  if (key === 'status') {
-    return t(`observability.commands.resultStatus.${raw}`, { defaultValue: raw })
-  }
   if (typeof value === 'object') {
     return JSON.stringify(value)
   }
-  return raw
+  if (typeof value === 'string' || typeof value === 'number') {
+    const raw = String(value)
+    if (key === 'phase') {
+      return t(`observability.commands.resultPhase.${raw}`, { defaultValue: raw })
+    }
+    if (key === 'status') {
+      return t(`observability.commands.resultStatus.${raw}`, { defaultValue: raw })
+    }
+    return raw
+  }
+  return '—'
 }
 
 /**

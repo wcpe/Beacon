@@ -58,7 +58,7 @@ export default function NamespaceSelect({ value, onChange, allowAll = true }: Na
       return
     }
     // 具体 env：优先有服的 ns，否则第一个
-    const withServers = items.find((ns) => (ns.serverCount ?? 0) > 0)
+    const withServers = items.find((ns) => ns.serverCount > 0)
     if (withServers) {
       onChange(withServers.id)
       return
@@ -69,7 +69,11 @@ export default function NamespaceSelect({ value, onChange, allowAll = true }: Na
   }, [value, items, onChange, showAllOption, envScope, query.isLoading])
 
   const selectValue =
-    value === null ? '' : value === ALL_NAMESPACES && showAllOption ? String(ALL_NAMESPACES) : String(value ?? '')
+    value === null
+      ? ''
+      : value === ALL_NAMESPACES && showAllOption
+        ? String(ALL_NAMESPACES)
+        : String(value)
 
   return (
     <div className="flex items-center gap-2">
