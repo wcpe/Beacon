@@ -7,6 +7,7 @@ Thumbs.db
 
 # 过程性文档与临时文件（不入库，遵 .claude/rules/git-commit）
 /.tmp/
+apps/.tmp/
 .narrafork/
 package-lock.json
 
@@ -24,15 +25,34 @@ package-lock.json
 
 # 前端 React / Vite
 /web/node_modules/
-# 忽略 dist 内构建产物，但保留占位 .gitkeep（供后端 go:embed all:web/dist 在未构建前端时仍可编译）
+/apps/*/.turbo/
+/apps/*/dist/*
+!/apps/*/dist/.gitkeep
+/packages/*/.turbo/
+/packages/*/dist/
+# Turborepo 本地缓存（由 turbo run 生成，不入库）
+/.turbo/
+# 忽略 dist 内构建产物，但保留占位 .gitkeep（供后端 go:embed all:apps/web/dist 在未构建前端时仍可编译）
 # 注意：须忽略目录内容（/web/dist/*）而非目录本身，否则父目录被排除会使下面的 .gitkeep 例外失效
 /web/dist/*
 !/web/dist/.gitkeep
+/web/apps/*/dist/
+/web/packages/*/dist/
+# vendored Monaco 编辑器资产（scripts/vendor-monaco.mjs 由 node_modules 重生成，dev/build 前自动跑，不入库二进制）
+/web/public/monaco/
+# MSW worker 由 apps/web/vite.config.ts 从已锁定依赖复制生成，不直接入库。
+/apps/web/public/mockServiceWorker.js
+# 前端测试覆盖率报告（vitest --coverage 产物，不入库）
+/web/coverage/
+# Playwright E2E 产物（报告 / 结果 / 真后端运行目录），不入库
+/web/test-results/
+/web/playwright-report/
+/web/.e2e-real-run/
 
 # Kotlin / Gradle agent
-/agent/.gradle/
-/agent/**/build/
-/agent/**/.gradle/
+/apps/agent/.gradle/
+/apps/agent/**/build/
+/apps/agent/**/.gradle/
 
 
 /config.yaml
@@ -41,3 +61,6 @@ package-lock.json
 # 首启运行时生成的控制面配置（embed 源为 config.example.yml），不入库
 /config.yml
 /.playwright-cli/
+node_modules
+**/node_modules
+node_modules/**

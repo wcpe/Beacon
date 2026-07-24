@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 
 import { effectiveFiles, listInstances } from '../api/client'
-import { Button } from '@/components/ui/button'
+import { Button } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
 import FileEffectivePreview from './filepreview/FileEffectivePreview'
 import FileFullPreview from './filepreview/FileFullPreview'

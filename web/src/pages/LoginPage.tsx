@@ -6,13 +6,14 @@ import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { login } from '../api/client'
+import { enableDemoMode } from '../api/mock'
 import { setAuth, useAuth } from '../state/auth'
 import { useMessage } from '../components/useMessage'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Card, CardContent, CardHeader, CardTitle } from '@beacon/ui'
 
 // 路由守卫重定向时塞进 location.state 的来访信息
 interface FromState {
@@ -58,6 +59,14 @@ export default function LoginPage() {
     loginMut.mutate()
   }
 
+  // 演示模式：开启假后端（mock）并以演示身份直接进入，无需真后端 / 真凭据。
+  // 任何人点此即可体验完整可交互的管理台（数据仅存内存，刷新重置）。
+  function onDemo() {
+    enableDemoMode()
+    setAuth('demo-token', 'demo')
+    navigate(target, { replace: true })
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm">
@@ -89,6 +98,16 @@ export default function LoginPage() {
               {loginMut.isPending ? t('login.submitting') : t('login.submit')}
             </Button>
           </form>
+
+          {/* 演示模式：开启假后端、免真凭据直接体验（数据仅存内存，刷新重置） */}
+          <div className="mt-4 border-t pt-4">
+            <Button type="button" variant="outline" className="w-full" onClick={onDemo}>
+              {t('login.demoMode')}
+            </Button>
+            <p className="text-muted-foreground mt-2 text-center text-xs">
+              {t('login.demoModeHint')}
+            </p>
+          </div>
         </CardContent>
       </Card>
     </div>

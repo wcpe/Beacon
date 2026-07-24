@@ -9,10 +9,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createConfig } from '../../api/client'
 import type { CreateConfigParams } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Combobox, type ComboboxOption } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 
 // 覆盖层选项（与后端 scopeLevel 约定一致）
 const SCOPE_LEVELS = ['global', 'group', 'zone', 'server'] as const

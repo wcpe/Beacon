@@ -29,6 +29,10 @@ export interface ManagedNode {
   modifiedAt?: string
   // 文件专属：后端文件对象 id（编辑器 / 历史按此拉真内容；无 id 表示纯展示节点）
   fileId?: number
+  // 文件专属：后端原始覆盖层 / 大区 / 目标键（发布影响面需按真实 scope+group 算受影响在线服，FR-128）
+  scopeLevel?: string
+  group?: string
+  scopeTarget?: string
   children?: ManagedNode[]
 }
 
@@ -78,6 +82,8 @@ export interface ServerOption {
   serverId: string
   label: string
   online: boolean
+  // 该实例所属组：抓取 / 实例层覆盖解析 scopeTarget 对应的 group 需用（serverId→group 映射）
+  group: string
 }
 
 // 编辑器文件内容 + 历史修订（按受管文件 key 索引）
@@ -137,6 +143,8 @@ export interface IngestScanItem {
   ignored: boolean
   // 默认是否勾选纳管（已存在/文本配置默认勾，忽略项默认不勾）
   defaultPick: boolean
+  // 是否超阈值（提交选定集若含超阈值项须 confirmOverThreshold=true）；与 ignored 区分用
+  overThreshold: boolean
 }
 
 // 拓印审核 diff：期望合并值 ⟷ 服务器现状

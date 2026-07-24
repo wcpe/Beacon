@@ -1,0 +1,715 @@
+package model
+
+// 覆盖层枚举（落 VARCHAR + 应用层校验，不绑方言）。
+const (
+	ScopeGlobal = "global" // 全局层：跨大区默认
+	ScopeGroup  = "group"  // 大区层
+	ScopeZone   = "zone"   // 小区层
+	ScopeServer = "server" // 子服层
+)
+
+// GlobalGroupCode 是 global 层 group_code 的占位保留字。
+const GlobalGroupCode = "__GLOBAL__"
+
+// IsValidScopeLevel 校验覆盖层取值。
+func IsValidScopeLevel(level string) bool {
+	switch level {
+	case ScopeGlobal, ScopeGroup, ScopeZone, ScopeServer:
+		return true
+	default:
+		return false
+	}
+}
+
+// 配置中心 V2 的五层作用域（FR-160，落 VARCHAR + 应用层校验；低 → 高覆盖顺序见 ConfigScopeLevelsLowToHigh）。
+const (
+	ConfigScopeNamespace = "namespace"  // namespace 基线层
+	ConfigScopeBCCluster = "bc_cluster" // BC 集群层
+	ConfigScopeRegion    = "region"     // 大区层
+	ConfigScopeZone      = "zone"       // 小区层
+	ConfigScopeServer    = "server"     // 子服层
+)
+
+// ConfigScopeLevelsLowToHigh 是五层作用域的覆盖顺序（低 → 高，高层覆盖低层，规格 §4.1）。
+var ConfigScopeLevelsLowToHigh = []string{
+	ConfigScopeNamespace, ConfigScopeBCCluster, ConfigScopeRegion, ConfigScopeZone, ConfigScopeServer,
+}
+
+// IsValidConfigScopeLevel 校验配置中心 V2 作用域层取值。
+func IsValidConfigScopeLevel(level string) bool {
+	switch level {
+	case ConfigScopeNamespace, ConfigScopeBCCluster, ConfigScopeRegion, ConfigScopeZone, ConfigScopeServer:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 server 类型。
+const (
+	ServerKindProxy   = "proxy"
+	ServerKindBackend = "backend"
+)
+
+func IsValidServerKind(kind string) bool {
+	switch kind {
+	case ServerKindProxy, ServerKindBackend:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 agent 身份状态。
+const (
+	AgentIdentityStatusPending  = "pending"
+	AgentIdentityStatusActive   = "active"
+	AgentIdentityStatusRejected = "rejected"
+	AgentIdentityStatusExpired  = "expired"
+	AgentIdentityStatusDisabled = "disabled"
+	AgentIdentityStatusConflict = "conflict"
+	AgentIdentityStatusUnbound  = "unbound"
+)
+
+func IsActiveAgentIdentityStatus(status string) bool {
+	switch status {
+	case AgentIdentityStatusPending, AgentIdentityStatusActive, AgentIdentityStatusDisabled, AgentIdentityStatusConflict:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 namespace 信任能力。
+const (
+	NamespaceTrustCapabilitySchedule = "schedule"
+	NamespaceTrustCapabilityMessage  = "message"
+	NamespaceTrustCapabilityAgentOps = "agent_ops"
+)
+
+func IsValidNamespaceTrustCapability(capability string) bool {
+	switch capability {
+	case NamespaceTrustCapabilitySchedule, NamespaceTrustCapabilityMessage, NamespaceTrustCapabilityAgentOps:
+		return true
+	default:
+		return false
+	}
+}
+
+// v2 namespace 信任状态。
+const (
+	NamespaceTrustStatusActive  = "active"
+	NamespaceTrustStatusRevoked = "revoked"
+)
+
+// v2 server 分配目标。
+const (
+	AssignmentTargetZone      = "zone"
+	AssignmentTargetBCCluster = "bc_cluster"
+)
+
+// IsValidAssignmentTarget 校验 server 分配 / 换区目标类型取值。
+func IsValidAssignmentTarget(kind string) bool {
+	switch kind {
+	case AssignmentTargetZone, AssignmentTargetBCCluster:
+		return true
+	default:
+		return false
+	}
+}
+
+// 管理面角色（落 VARCHAR + 应用层校验，不绑方言；FR-42，见 ADR-0026）。
+const (
+	RoleFull     = "full"     // 读写：等同现操作者，可访问全部 admin 端点
+	RoleReadonly = "readonly" // 只读：仅可访问读端点（GET），任何写端点一律 403
+)
+
+// IsValidRole 校验角色取值。
+func IsValidRole(role string) bool {
+	switch role {
+	case RoleFull, RoleReadonly:
+		return true
+	default:
+		return false
+	}
+}
+
+// agent 命令类型（落 VARCHAR + 应用层校验，见 ADR-0027 / ADR-0040）。
+// FR-46 拓印复用 ingest-plugins 类型（agent 零改动、仍读整棵 plugins 树回传），落库 vs 转存待审由载荷 mode 区分。
+const (
+	CommandTypeIngestPlugins = "ingest-plugins"
+	// CommandTypeTailLogs 取日志：令 agent 读自身日志环形缓冲快照回传（FR-88，见 ADR-0040；不读任意磁盘文件）。
+	CommandTypeTailLogs = "tail-logs"
+	// CommandTypeResyncConfig 强制重同步：令 agent 重新拉取控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、不新增 ADR）。
+	CommandTypeResyncConfig = "resync-config"
+	// CommandTypeFsBrowse 只读文件浏览：令 agent 列目录 / 读子树 / 读单文件回传（FR-110，见 ADR-0049 决策 9；纯只读、不写盘）。
+	CommandTypeFsBrowse = "fs-browse"
+	// CommandTypeFileSyncSource 文件同步源扫描：令源 agent 扫描目录并通过数据面上传 blob。
+	CommandTypeFileSyncSource = "file-sync-source"
+	// CommandTypeFileSyncApply 文件同步目标应用：令目标 agent 拉取清单与变更 blob 后备份并覆盖。
+	CommandTypeFileSyncApply = "file-sync-apply"
+	// CommandTypeFileSyncRollback 文件同步回滚：令目标 agent 按备份点恢复目录。
+	CommandTypeFileSyncRollback = "file-sync-rollback"
+	// CommandTypeAssetRescan 文件资产重扫：令 agent 立即重扫本机文件清单并上报（FR-163，见 v2-file-assets.md §4.2；
+	// payload 的 force=true 时忽略本地 mtime 缓存全部重哈希）。
+	CommandTypeAssetRescan = "asset-rescan"
+	// CommandTypeAssetRead 文件资产内容读取：令 agent 读单个文本文件回传供预览 / diff（FR-164，见 §4.5；
+	// payload 含 path、maxBytes；纯只读、不写盘，内容瞬态不落库）。
+	CommandTypeAssetRead = "asset-read"
+	// CommandTypeDeliveryUpload 交付上传：令模板源 agent 流式上传缺失 blob 到控制面中转存储（FR-165，见 §4.5.2；payload 只含控制信息，绝不含文件内容）。
+	CommandTypeDeliveryUpload = "delivery_upload"
+	// CommandTypeDeliveryPush 交付推送：令目标 agent 拉本服清单、覆盖前备份、流式下载 blob 后落盘覆盖（FR-165，见 §4.5.3）。
+	CommandTypeDeliveryPush = "delivery_push"
+	// CommandTypeDeliveryActivate 交付生效：令目标 agent 按 activation_method 生效（restart / hot_reload / push_only，FR-171，见 §4.6.1）。
+	CommandTypeDeliveryActivate = "delivery_activate"
+	// CommandTypeDeliveryRollback 交付回滚：令目标 agent 按备份 manifest 还原被覆盖 / 删除文件（FR-167，见 §4.7.2）。
+	CommandTypeDeliveryRollback = "delivery_rollback"
+)
+
+// 文件浏览操作（FR-110，落 command payload 的 op 字段 + 应用层校验，见 ADR-0049）。
+const (
+	BrowseOpList = "list" // 懒列某目录的直接子项（分页）
+	BrowseOpTree = "tree" // 按需展开某子树（逐层有界）
+	BrowseOpFile = "file" // 读单文本文件内容（受单文件上限）
+)
+
+// IsValidBrowseOp 校验文件浏览操作取值（FR-110）。
+func IsValidBrowseOp(op string) bool {
+	switch op {
+	case BrowseOpList, BrowseOpTree, BrowseOpFile:
+		return true
+	default:
+		return false
+	}
+}
+
+// agent 命令载荷 mode（FR-46 / FR-58）：区分 FR-39 直接落库、FR-46 拓印转存待审、FR-58 两段式扫描 / 提交。
+const (
+	IngestModeLand    = "land"    // 直接 ingest 落库（FR-39，空值同义，向后兼容）
+	IngestModeImprint = "imprint" // 拓印转存待审，不落库、待单人自审确认（FR-46）
+	IngestModeScan    = "scan"    // 受管任务两段式·扫描：agent 只列元信息清单、不读内容、永不失败（FR-58）
+	IngestModeSubmit  = "submit"  // 受管任务两段式·提交：agent 仅读选定 path 子集内容回传（FR-58）
+)
+
+// 反向抓取受管任务生命周期状态（FR-58，落 VARCHAR + 应用层校验，见 ADR-0037）。
+// 非终态（scanning/pending-review/fetching/ingesting）受单实例互斥约束；旁出 failed/cancelled/expired 为终态。
+const (
+	ReverseFetchTaskScanning       = "scanning"        // 已下发 scan 命令、待 agent 回清单
+	ReverseFetchTaskPendingReview  = "pending-review"  // 清单已到、待人工审核选定
+	ReverseFetchTaskFetching       = "fetching"        // 已下发 submit 命令、待 agent 回选定内容
+	ReverseFetchTaskConflictReview = "conflict-review" // 选定内容已到但与目标已有版本冲突、暂存待人工 diff 确认（FR-59）
+	ReverseFetchTaskIngesting      = "ingesting"       // 选定内容已到、落库中
+	ReverseFetchTaskDone           = "done"            // 选定集 ingest 落库成功（终态）
+	ReverseFetchTaskFailed         = "failed"          // 任一阶段失败（终态）
+	ReverseFetchTaskCancelled      = "cancelled"       // 人工取消（终态）
+	ReverseFetchTaskExpired        = "expired"         // 超时未完成，清单瞬态已清空（终态）
+)
+
+// IsReverseFetchTaskTerminal 判断任务状态是否为终态（终态不受互斥约束、不可再迁移）。
+func IsReverseFetchTaskTerminal(status string) bool {
+	switch status {
+	case ReverseFetchTaskDone, ReverseFetchTaskFailed, ReverseFetchTaskCancelled, ReverseFetchTaskExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// agent 命令生命周期状态（FR-39 / FR-46）。
+const (
+	CommandStatusPending = "pending" // 已建、待目标 agent 拉取
+	CommandStatusFetched = "fetched" // 已被 agent 拉取、执行中
+	CommandStatusReady   = "ready"   // 拓印已抓取、待单人自审确认（FR-46，仅 imprint 模式）
+	CommandStatusDone    = "done"    // 回传并 ingest 成功 / 拓印确认落库成功
+	CommandStatusFailed  = "failed"  // 执行 / 回传 / 入库失败
+	CommandStatusExpired = "expired" // 超时未完成（agent 离线等）
+)
+
+// IsValidCommandStatus 校验命令生命周期状态取值（FR-104 命令观测过滤校验用）。
+func IsValidCommandStatus(s string) bool {
+	switch s {
+	case CommandStatusPending, CommandStatusFetched, CommandStatusReady,
+		CommandStatusDone, CommandStatusFailed, CommandStatusExpired:
+		return true
+	default:
+		return false
+	}
+}
+
+// 文件同步任务状态（FR-129/FR-131，落 VARCHAR + 应用层校验）。
+const (
+	FileSyncTaskStatusDraft         = "draft"
+	FileSyncTaskStatusScanning      = "scanning"
+	FileSyncTaskStatusCached        = "cached"
+	FileSyncTaskStatusPlanned       = "planned"
+	FileSyncTaskStatusRunning       = "running"
+	FileSyncTaskStatusPaused        = "paused"
+	FileSyncTaskStatusSucceeded     = "succeeded"
+	FileSyncTaskStatusFailed        = "failed"
+	FileSyncTaskStatusTerminated    = "terminated"
+	FileSyncTaskStatusCircuitBroken = "circuit-broken"
+)
+
+// IsFileSyncTaskTerminal 判断文件同步任务是否已终结。
+func IsFileSyncTaskTerminal(status string) bool {
+	switch status {
+	case FileSyncTaskStatusSucceeded, FileSyncTaskStatusFailed,
+		FileSyncTaskStatusTerminated, FileSyncTaskStatusCircuitBroken:
+		return true
+	default:
+		return false
+	}
+}
+
+// 文件同步批次状态（FR-131，落 VARCHAR）。
+const (
+	FileSyncBatchStatusPending   = "pending"
+	FileSyncBatchStatusRunning   = "running"
+	FileSyncBatchStatusSucceeded = "succeeded"
+	FileSyncBatchStatusFailed    = "failed"
+	FileSyncBatchStatusSkipped   = "skipped"
+)
+
+// 文件同步目标状态（FR-131，落 VARCHAR）。
+const (
+	FileSyncTargetStatusPending      = "pending"
+	FileSyncTargetStatusManifesting  = "manifesting"
+	FileSyncTargetStatusBackingUp    = "backing-up"
+	FileSyncTargetStatusTransferring = "transferring"
+	FileSyncTargetStatusApplying     = "applying"
+	FileSyncTargetStatusSucceeded    = "succeeded"
+	FileSyncTargetStatusFailed       = "failed"
+	FileSyncTargetStatusSkipped      = "skipped"
+)
+
+// 文件同步日志级别（FR-129，落 VARCHAR）。
+const (
+	FileSyncLogLevelInfo  = "info"
+	FileSyncLogLevelWarn  = "warn"
+	FileSyncLogLevelError = "error"
+)
+
+// 交付编排 V2 变更单状态机（FR-162，规格 v2-delivery-orchestration.md §4.1，落 VARCHAR + 应用层校验）。
+const (
+	// 草稿：可编辑、可物理删除
+	ChangeOrderStatusDraft = "draft"
+	// 待审批
+	ChangeOrderStatusPendingApproval = "pending_approval"
+	// 审批通过、待启动
+	ChangeOrderStatusApproved = "approved"
+	// 灰度执行中
+	ChangeOrderStatusRolling = "rolling"
+	// 全部批次完成（非严格终态，仍可回滚）
+	ChangeOrderStatusCompleted = "completed"
+	// 已暂停（人工 / 熔断 / 准备失败，由 pause_kind 区分）
+	ChangeOrderStatusPaused = "paused"
+	// 紧急终止（非严格终态，仍可回滚）
+	ChangeOrderStatusCancelled = "cancelled"
+	// 整单回滚中
+	ChangeOrderStatusRollingBack = "rolling_back"
+	// 已回滚（终态）
+	ChangeOrderStatusRolledBack = "rolled_back"
+)
+
+// 交付编排批次状态机（规格 §4.1，落 VARCHAR + 应用层校验）。
+const (
+	// 待启动
+	ChangeBatchStatusPending = "pending"
+	// 批内目标并行推进中
+	ChangeBatchStatusRunning = "running"
+	// 观察窗计时中
+	ChangeBatchStatusObserving = "observing"
+	// 观察窗结束、待推进门人工确认
+	ChangeBatchStatusAwaitingConfirm = "awaiting_confirm"
+	// 已确认完成
+	ChangeBatchStatusCompleted = "completed"
+	// 未开始即被紧急终止跳过
+	ChangeBatchStatusSkipped = "skipped"
+	// 熔断失败
+	ChangeBatchStatusFailed = "failed"
+)
+
+// 交付编排目标服状态机（规格 §4.1，落 VARCHAR + 应用层校验）。
+const (
+	// 待下发
+	ChangeTargetStatusPending = "pending"
+	// 推送中（已下发 delivery_push）
+	ChangeTargetStatusPushing = "pushing"
+	// 推送完成、待生效
+	ChangeTargetStatusPushed = "pushed"
+	// 生效中（已下发 delivery_activate）
+	ChangeTargetStatusActivating = "activating"
+	// 已生效
+	ChangeTargetStatusActivated = "activated"
+	// 紧急终止跳过
+	ChangeTargetStatusSkipped = "skipped"
+	// 失败
+	ChangeTargetStatusFailed = "failed"
+)
+
+// 变更单生效方式 activation_method（规格 §3.1/§4.6.1，单级配置、全批继承）。
+const (
+	// 重启：agent 优雅关服 + 宿主自启拉起，心跳回归即生效
+	ActivationMethodRestart = "restart"
+	// 热重载：落盘 + 配置热更回调，回执驱动状态
+	ActivationMethodHotReload = "hot_reload"
+	// 仅推送：推送落盘即生效，无生效动作
+	ActivationMethodPushOnly = "push_only"
+)
+
+// 变更单 blob 就绪度 payload_state（规格 §3.1/§4.4.2）。
+const (
+	// 待准备
+	PayloadStatePending = "pending"
+	// 上传中
+	PayloadStateUploading = "uploading"
+	// 就绪
+	PayloadStateReady = "ready"
+	// 准备失败
+	PayloadStateFailed = "failed"
+)
+
+// 变更单暂停来源 pause_kind（规格 §3.1/§4.1）。
+const (
+	// 人工暂停
+	PauseKindManual = "manual"
+	// 自动熔断暂停
+	PauseKindCircuitBreak = "circuit_break"
+	// payload 准备失败暂停
+	PauseKindPrepareFailed = "prepare_failed"
+)
+
+// 变更单批次规划模式 batch_mode（规格 §3.1/§4.4.1）。
+const (
+	// 按目标总数百分比切批
+	BatchModePercent = "percent"
+	// 按固定台数切批
+	BatchModeCount = "count"
+)
+
+// 变更项载荷类型 kind（规格 §3.2）。
+const (
+	// 文件差异项
+	ChangeItemKindFileDiff = "file_diff"
+	// 配置变更项
+	ChangeItemKindConfigChange = "config_change"
+)
+
+// 文件变更项动作 action（规格 §3.2，执行期按目标本地清单重判）。
+const (
+	// 新增
+	ChangeItemActionAdd = "add"
+	// 覆盖
+	ChangeItemActionUpdate = "update"
+	// 删除
+	ChangeItemActionDelete = "delete"
+)
+
+// 目标回滚状态 rollback_status（规格 §3.4，独立于目标主状态）。
+const (
+	// 待回滚
+	RollbackStatusPending = "pending"
+	// 回滚中
+	RollbackStatusRunning = "running"
+	// 已回滚
+	RollbackStatusRolledBack = "rolled_back"
+	// 回滚失败
+	RollbackStatusFailed = "failed"
+)
+
+// 中转 blob 就绪度 state（规格 §3.5，仅两态；与变更单 payload_state 分立）。
+const (
+	// 上传中
+	DeliveryBlobStateUploading = "uploading"
+	// 就绪
+	DeliveryBlobStateReady = "ready"
+)
+
+// 审计动作（动词点分命名）。
+const (
+	ActionConfigCreate   = "config.create"
+	ActionConfigPublish  = "config.publish"
+	ActionConfigRollback = "config.rollback"
+	ActionConfigDelete   = "config.delete"
+	// 批量禁用 / 启用（FR-74）：批量置 enabled，单事务内逐项各记一条
+	ActionConfigDisable = "config.disable"
+	ActionConfigEnable  = "config.enable"
+	// 配置灰度 / Beta（FR-9，cohort 名单按版本选择层叠加，见 ADR-0021）
+	ActionConfigGrayPublish = "config.gray-publish"
+	ActionConfigGrayPromote = "config.gray-promote"
+	ActionConfigGrayAbort   = "config.gray-abort"
+	ActionInstanceRegister  = "instance.register"
+	ActionInstanceOffline   = "instance.offline"
+	// 取消主动下线（FR-49，清除 server_offline 拒绝态使实例可重新接入）
+	ActionInstanceOnline = "instance.online"
+	ActionZoneAssign     = "zone.assign"
+	ActionZoneMove       = "zone.move"
+	ActionZoneUnassign   = "zone.unassign"
+	// 小区默认入口（FR-48，每 zone 唯一指定默认入口 serverId，供 BC 设默认/fallback 服）
+	ActionZoneSetDefaultEntry   = "zone.set-default-entry"
+	ActionZoneClearDefaultEntry = "zone.clear-default-entry"
+	ActionFileCreate            = "file.create"
+	ActionFilePublish           = "file.publish"
+	ActionFileRollback          = "file.rollback"
+	ActionFileDelete            = "file.delete"
+	// 批量禁用 / 启用（FR-74）：批量置 enabled，单事务内逐项各记一条
+	ActionFileDisable = "file.disable"
+	ActionFileEnable  = "file.enable"
+	// 配置导入（FR-38，通道B 之上批量上传整文件到组，一次导入记一条审计）
+	ActionFileImport = "file.import"
+	// 在线实例反向抓取触发（FR-39，见 ADR-0027；ingest 落盘复用上面的 file.import 审计）
+	ActionFileReverseFetch = "file.reverse-fetch"
+	// 反向抓取受管任务·扫描（FR-58）：建任务并下发 scan 命令，令在线实例只回元信息清单（见 ADR-0037）
+	ActionFileReverseFetchScan = "file.reverse-fetch-scan"
+	// 反向抓取受管任务·提交（FR-58）：审核选定后下发 submit 命令，令实例仅回选定 path 内容
+	ActionFileReverseFetchSubmit = "file.reverse-fetch-submit"
+	// 反向抓取受管任务·入库（FR-58）：选定内容到、复用 FileService.Import 落库（detail 不含文件内容）
+	ActionFileReverseFetchIngest = "file.reverse-fetch-ingest"
+	// 反向抓取受管任务·取消（FR-58）：人工取消非终态任务
+	ActionFileReverseFetchCancel = "file.reverse-fetch-cancel"
+	// 反向抓取受管任务·错误回传（FR-87）：agent 执行 scan/submit 读盘失败回传错误，任务转 failed 记 lastError（detail 不含文件内容）
+	ActionFileReverseFetchError = "file.reverse-fetch-error"
+	// 反向抓取持久忽略规则·新增 / 删除（FR-59）：登记 / 撤销下次扫描该排除的文件 / 目录
+	ActionReverseFetchIgnoreRuleAdd    = "reverse-fetch.ignore-rule-add"
+	ActionReverseFetchIgnoreRuleRemove = "reverse-fetch.ignore-rule-remove"
+	// 按需拓印触发（FR-46）：命令在线实例回传某文件磁盘内容、转存待审（不落库）
+	ActionFileImprintFetch = "file.imprint-fetch"
+	// 按需拓印确认落库（FR-46）：单人自审通过后落为某层文件覆盖（detail 不含文件内容）
+	ActionFileImprint = "file.imprint"
+	// 取 agent 日志（FR-88，见 ADR-0040）：admin 触发命令在线实例回传自身脱敏日志（detail 仅 commandId/serverId，不含日志内容）
+	ActionInstanceTailLogs = "instance.tail-logs"
+	// 强制重同步（FR-91）：admin 触发命令在线实例重拉有效配置/文件树/覆盖集（detail 仅 commandId/serverId，无内容）
+	ActionInstanceResync = "instance.resync"
+	// 文件浏览（FR-110，见 ADR-0049）：admin 触发命令在线实例列目录 / 读子树 / 读单文件（detail 仅 commandId/op/path，绝不含文件内容）
+	ActionFileBrowse = "file.browse"
+	// 文件资产内容预览 / diff / 敏感规则修改（FR-164，见 v2-file-assets.md §4.7）：
+	// preview/diff 的 detail 记 serverId/path/truncated/binary/sensitiveOverride/reason，**绝不含文件内容**；
+	// sensitive_rule_update 记规则前后差异（glob 清单，非凭据）。
+	ActionAssetPreview             = "asset.preview"
+	ActionAssetDiff                = "asset.diff"
+	ActionAssetSensitiveRuleUpdate = "asset.sensitive_rule_update"
+	// 多级灰度文件同步（FR-129/FR-131）：detail 仅记任务 / 批次 / 目标摘要，不含文件内容
+	ActionFileSyncCreate    = "file-sync.create"
+	ActionFileSyncPlan      = "file-sync.plan"
+	ActionFileSyncStart     = "file-sync.start"
+	ActionFileSyncPause     = "file-sync.pause"
+	ActionFileSyncResume    = "file-sync.resume"
+	ActionFileSyncTerminate = "file-sync.terminate"
+	// 三方插件文件覆盖兼容（FR-15，通道B 之上叠备份 + 受限重载命令，见 ADR-0011）
+	ActionOverrideSetCreate   = "override-set.create"
+	ActionOverrideSetPublish  = "override-set.publish"
+	ActionOverrideSetRollback = "override-set.rollback"
+	ActionOverrideSetDelete   = "override-set.delete"
+	// 流量调度（FR-10，drain 排空 / 维护标记，见 ADR-0017）
+	ActionSchedulingDrain   = "scheduling.drain"
+	ActionSchedulingUndrain = "scheduling.undrain"
+	// 环境（namespace）写操作（FR-7/FR-30；改名 / 删除补全见 FR-53）
+	ActionNamespaceCreate = "namespace.create"
+	ActionNamespaceUpdate = "namespace.update"
+	ActionNamespaceDelete = "namespace.delete"
+	// 第二版 namespace 互通信任。
+	ActionNamespaceTrustGrant  = "namespace_trust.grant"
+	ActionNamespaceTrustRevoke = "namespace_trust.revoke"
+	// 第二版 agent 身份状态机。
+	ActionIdentityRegistered      = "identity.registered"
+	ActionIdentityApproved        = "identity.approved"
+	ActionIdentityRejected        = "identity.rejected"
+	ActionIdentityExpired         = "identity.expired"
+	ActionIdentityDisabled        = "identity.disabled"
+	ActionIdentityEnabled         = "identity.enabled"
+	ActionIdentityUnbound         = "identity.unbound"
+	ActionIdentityConflict        = "identity.conflict_detected"
+	ActionIdentityConflictResolve = "identity.conflict_resolved"
+	ActionIdentityAddressChanged  = "identity.address_changed"
+	ActionIdentityReapplyAllowed  = "identity.reapply_allowed"
+	ActionIdentityForceRebind     = "identity.rebind_with_force_unbind"
+	// 第二版区服权威结构。
+	ActionBCClusterCreate  = "bc_cluster.create"
+	ActionBCClusterDelete  = "bc_cluster.delete"
+	ActionRegionCreate     = "region.create"
+	ActionRegionDelete     = "region.delete"
+	ActionZoneCreate       = "zone.create"
+	ActionZoneDelete       = "zone.delete"
+	ActionServerAssign     = "server.assign"
+	ActionServerUnassign   = "server.unassign"
+	ActionServerRezoneInit = "zone.rezone.initiated"
+	ActionServerRezoneDone = "zone.rezone.completed"
+	// 第二版 server 排空标记切换（区服权威域，收编自调度域；消费方为调度 schedulable 判定）
+	ActionServerSetDraining = "server.set-draining"
+	// 第二版 env 展示维度（FR-178，见 v2-zone-authority.md §3.4/§4.1）：env 增删改与整体替换 env→namespace 映射。
+	// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；detail 仅记 env 名 / 映射 namespace id 列表。
+	ActionEnvCreate        = "env.create"
+	ActionEnvUpdate        = "env.update"
+	ActionEnvDelete        = "env.delete"
+	ActionEnvSetNamespaces = "env.set-namespaces"
+	// 管理面登录 / 登出（FR-7/FR-30，operator 取认证身份，detail 不含口令 / 令牌）
+	ActionAuthLogin  = "auth.login"
+	ActionAuthLogout = "auth.logout"
+	// 管理面 API 密钥（FR-42，运行时创建/吊销/重置，明文不入审计 detail，见 ADR-0026）
+	ActionAPIKeyCreate = "apikey.create"
+	ActionAPIKeyRevoke = "apikey.revoke"
+	ActionAPIKeyReset  = "apikey.reset"
+	// 运维设置更新（FR-61，热改项真源由 config.yml 移到 DB store，detail 仅记 key + 新值、绝不含密钥，见 ADR-0038）
+	ActionSettingsUpdate = "settings.update"
+	// 配置操作级撤回（FR-116，见 ADR-0051）：撤回下发 / 发布 / 反向抓取 ingest，detail 仅记可逆操作 id / 类型 / scope（不含文件内容）
+	ActionConfigUndoPush    = "config.undo-push"
+	ActionConfigUndoPublish = "config.undo-publish"
+	ActionConfigUndoFetch   = "config.undo-fetch"
+	// 控制面在线更新·检查（FR-97，见 ADR-0044）：按渠道查 Release 比对当前版本，detail 含渠道 / 目标版本 / 有无可用更新
+	ActionSystemUpdateCheck = "system.update-check"
+	// 控制面在线更新·应用（FR-97/FR-119）：下载 + 校验 + 落位 pending 成功，请求主进程自替换换二进制重启，detail 含目标版本
+	ActionSystemUpdateApply = "system.update-apply"
+	// 控制面在线更新·失败（FR-97）：任一阶段失败保留旧二进制不退，detail 含目标版本 / 失败原因（不含敏感）
+	ActionSystemUpdateFailed = "system.update-failed"
+	// 控制面手动回滚（FR-120）：回退到上一版本（.old），detail 记请求回退
+	ActionSystemUpdateRollback = "system.update-rollback"
+	// 控制面在线更新·取消（FR-125）：运维主动中断进行中的下载（或关停取消），detail 记目标版本 / 已取消
+	ActionSystemUpdateCancel = "system.update-cancel"
+	// 健康权重配置热更（FR-147，spec §4.4）：detail 记新配置 json（不含任何凭据）
+	ActionHealthWeightsUpdate = "health-weights.update"
+	// 消息 payload 查看（FR-150，spec §4.4）：高风险受控查看，先审计后返回；detail 记 messageId/类型/来源目标/原因原文，绝不含 payload 内容
+	ActionMessagePayloadView = "message.payload.view"
+	// 告警事件处理（FR-157，见 ADR-0064）：确认 / 标记已处理，detail 记事件 id / 动作 / 处置说明（不含凭据）
+	ActionAlertEventAcknowledge = "alert-event.acknowledge"
+	ActionAlertEventResolve     = "alert-event.resolve"
+	// 热冷归档任务（FR-151，见 ADR-0066）：创建（含 dry-run）/ 完成 / 失败 / 重试 / 取消，detail 记任务 id / 模式 / 域（不含数据内容）
+	ActionArchiveJobCreate   = "archive.job-create"
+	ActionArchiveJobComplete = "archive.job-complete"
+	ActionArchiveJobFailed   = "archive.job-failed"
+	ActionArchiveJobRetry    = "archive.job-retry"
+	ActionArchiveJobCancel   = "archive.job-cancel"
+	// 配置中心 V2（FR-160/161，spec §4.7/§4.9）：detail 只落键路径级摘要，敏感路径只记「值已变更」，任何位置不落明文
+	ActionConfigFileCreate      = "config.file.create"
+	ActionConfigFileUpdate      = "config.file.update"
+	ActionConfigFileTrash       = "config.file.trash"
+	ActionConfigFileRestore     = "config.file.restore"
+	ActionConfigFilePurge       = "config.file.purge"
+	ActionConfigVersionSave     = "config.version.save"
+	ActionConfigVersionRollback = "config.version.rollback"
+	ActionConfigScopeRemove     = "config.scope.remove"
+	// 文件资产重扫下发（FR-163，spec §4.7）：批量对目标服下发 asset-rescan 命令，detail 记目标 serverId 列表 + force（不含文件内容）
+	ActionAssetRescan = "asset.rescan"
+	// 交付编排变更单全生命周期审计（FR-168，spec §4.8.2）：每条 detail 必含 orderId（批 / 目标级动作再含 batchNo / serverId），
+	// 绝不落文件内容 / 配置明文 / blob 数据，错误文案经脱敏（ADR-0057）；按 orderId 过滤即得一条变更单完整链路。
+	// 创建 draft 单
+	ActionDeliveryOrderCreate = "delivery.order.create"
+	// 编辑变更单（approved 后编辑触发回 draft）
+	ActionDeliveryOrderUpdate = "delivery.order.update"
+	// 删除 draft 单
+	ActionDeliveryOrderDelete = "delivery.order.delete"
+	// 提交审批
+	ActionDeliveryOrderSubmit = "delivery.order.submit"
+	// 创建人撤回
+	ActionDeliveryOrderWithdraw = "delivery.order.withdraw"
+	// 审批通过
+	ActionDeliveryOrderApprove = "delivery.order.approve"
+	// 审批驳回
+	ActionDeliveryOrderReject = "delivery.order.reject"
+	// 启动
+	ActionDeliveryOrderStart = "delivery.order.start"
+	// 人工暂停
+	ActionDeliveryOrderPause = "delivery.order.pause"
+	// 继续
+	ActionDeliveryOrderResume = "delivery.order.resume"
+	// 推进门放行确认
+	ActionDeliveryOrderBatchConfirm = "delivery.order.batch_confirm"
+	// 配置正式切版（末批确认后含配置项单的作用域 from→to 切版，绝不含配置明文，ADR-0071）
+	ActionDeliveryOrderConfigSwitch = "delivery.order.config_switch"
+	// 紧急终止
+	ActionDeliveryOrderCancel = "delivery.order.cancel"
+	// 整单回滚
+	ActionDeliveryOrderRollback = "delivery.order.rollback"
+	// 人工结束回滚
+	ActionDeliveryOrderRollbackFinish = "delivery.order.rollback_finish"
+	// 自动熔断（系统动作，actor=system）
+	ActionDeliveryOrderCircuitBreak = "delivery.order.circuit_break"
+	// blob 清理（系统动作，actor=system，含清理数量与释放字节）
+	ActionDeliveryOrderBlobCleanup = "delivery.order.blob_cleanup"
+)
+
+// 审计对象类型。
+const (
+	TargetTypeConfig         = "config"
+	TargetTypeInstance       = "instance"
+	TargetTypeZone           = "zone"
+	TargetTypeFile           = "file"
+	TargetTypeOverrideSet    = "override-set"
+	TargetTypeNamespace      = "namespace"
+	TargetTypeNamespaceTrust = "namespace-trust"
+	TargetTypeIdentity       = "agent-identity"
+	TargetTypeServer         = "server"
+	TargetTypeBCCluster      = "bc-cluster"
+	TargetTypeRegion         = "region"
+	// 认证会话（登录 / 登出）的审计对象类型
+	TargetTypeAuth = "auth"
+	// 管理面 API 密钥的审计对象类型
+	TargetTypeAPIKey = "apikey"
+	// agent 命令（FR-39 反向抓取）的审计对象类型
+	TargetTypeCommand = "command"
+	// 多级灰度文件同步任务（FR-129/FR-131）的审计对象类型
+	TargetTypeFileSyncTask = "file-sync-task"
+	// 反向抓取受管任务（FR-58）的审计对象类型
+	TargetTypeReverseFetchTask = "reverse-fetch-task"
+	// 反向抓取持久忽略规则（FR-59）的审计对象类型
+	TargetTypeReverseFetchIgnoreRule = "reverse-fetch-ignore-rule"
+	// 运维设置（FR-61）的审计对象类型
+	TargetTypeSettings = "settings"
+	// 控制面在线更新（FR-97）的审计对象类型：目标是控制面自身二进制，见 ADR-0044
+	TargetTypeSystem = "system"
+	// 配置操作级撤回（FR-116）的审计对象类型：目标是一条可逆操作账目，见 ADR-0051
+	TargetTypeReversibleOp = "reversible-op"
+	// 健康权重配置（FR-147）的审计对象类型
+	TargetTypeHealthWeights = "health-weights"
+	// 跨服消息（FR-150 payload 查看）的审计对象类型
+	TargetTypeMessage = "message"
+	// 告警事件（FR-157）处理工作流的审计对象类型
+	TargetTypeAlertEvent = "alert-event"
+	// 热冷归档任务（FR-151）的审计对象类型
+	TargetTypeArchiveJob = "archive-job"
+	// 配置中心 V2 配置文件（FR-160/161）的审计对象类型
+	TargetTypeConfigFile = "config-file"
+	// 文件资产内容预览 / diff（FR-164）的审计对象类型（TargetRef=serverId，path 记入 detail）
+	TargetTypeAsset = "asset"
+	// env 展示维度（FR-178）的审计对象类型
+	TargetTypeEnv = "env"
+	// 交付编排变更单（FR-162/168）的审计对象类型（TargetRef=orderId）
+	TargetTypeChangeOrder = "change-order"
+	// 交付数据面中转 blob（FR-165）的审计对象类型（清理器系统审计用，TargetRef=sweep）
+	TargetTypeDeliveryBlob = "delivery-blob"
+)
+
+// OverrideModeFileOverride 是覆盖集模式的唯一取值（落 VARCHAR；FR-15 锁死为"文件覆盖"，
+// 不开放 jar 替换 / 进程重启等 P3 发布编排能力，见 ADR-0011 决策 2）。
+const OverrideModeFileOverride = "file-override"
+
+// 审计结果。
+const (
+	ResultOK   = "ok"
+	ResultFail = "fail"
+)
+
+// 告警事件类型（FR-89，落 VARCHAR + 应用层校验，见 ADR-0041）。
+// 当前唯一真实触发点为健康流转；publish-fail / backend-unreachable 预置为枚举取值，
+// 供将来在对应发生处接入告警扇出时复用，本期不凭空制造这两类触发（守范围纪律）。
+const (
+	AlertEventTypeHealthTransition   = "health-transition"   // 实例健康状态异常转移（degraded/lost/offline）
+	AlertEventTypeIdentityConflict   = "identity-conflict"   // 并发身份冲突（Q4，FR-177）：同 identityId 交替 bootId 判并发双实例，转 conflict 冻结
+	AlertEventTypePublishFail        = "publish-fail"        // 配置/文件发布失败（预留枚举，当前无触发点）
+	AlertEventTypeBackendUnreachable = "backend-unreachable" // 后端不可达（预留枚举，当前无触发点）
+)
+
+// 告警事件严重级别（FR-89，落 VARCHAR + 应用层校验，见 ADR-0041）。
+const (
+	AlertLevelInfo     = "info"
+	AlertLevelWarning  = "warning"
+	AlertLevelCritical = "critical"
+)
+
+// 告警事件处理状态（FR-157，落 VARCHAR + 应用层校验，见 ADR-0064）。
+// open=待处理（新告警默认，计入健康 activeAlerts）；acknowledged=已确认；resolved=已处理（终态）。
+// 存量加列前的历史行由启动迁移回填 resolved（属过去已闭事件，不计入当前活跃）。
+const (
+	AlertEventStatusOpen         = "open"
+	AlertEventStatusAcknowledged = "acknowledged"
+	AlertEventStatusResolved     = "resolved"
+)

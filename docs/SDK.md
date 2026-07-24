@@ -16,9 +16,12 @@
 ## 2. 发布坐标与版本对齐
 
 - **坐标**：`top.wcpe.beacon:beacon-agent-api:<版本>`、`top.wcpe.beacon:beacon-agent-kit:<版本>`。
-- **版本**：跟随仓库根 `VERSION`，与控制面 / 两个 agent jar **三组件恒一致**（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。1.0.0 之前为 `0.y.z`，**接口不承诺向后兼容**（破坏性在 CHANGELOG 标明）。
-- **发布仓库**：默认只发 `mavenLocal()`；远程仓库可选，URL/凭据走 gradle property（`beaconPublishUrl` / `beaconPublishUsername` / `beaconPublishPassword`）或同名大写 env 注入，缺省即只本机。命令：`./gradlew publishToMavenLocal`。
+- **版本**：跟随仓库根 `VERSION`，与控制面 / 两个 agent jar **三组件恒一致**（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。`1.0.0` 起按 SemVer 管理公开契约。
+- **本地开发**：默认可发 `mavenLocal()`；命令为 `./gradlew publishToMavenLocal`。可选私有远程仓库仍由 `beaconPublishUrl` / `beaconPublishUsername` / `beaconPublishPassword` 或对应环境变量注入。
+- **正式发布**：RC 固定目标版本、候选 tag、commit 和一次构建出的产品资产；GA 只从最终 RC 原样复制同一组资产，并逐项核验文件名、大小和 SHA-256。GA 不重新运行会生成产品字节的构建或发布任务。
 - **版本对齐矩阵（硬约束）**：**部署的 BeaconAgent 版本必须 ≥ 下游编译所用 agent-api/kit 版本**（运行期提供方不得旧于编译期契约），否则可能 `NoSuchMethodError`。
+
+RC/GA 的通用检查入口为 `make release-test`、`make release-check`、`make release-verify-rc` 和 `make release-verify-ga`；这些入口校验正式版本、RC/GA 标签、产品资产闭集、SHA-256 以及 RC/GA commit 一致性。
 
 ### 2.1 发布到私有远程仓库（Nexus / Artifactory）
 
@@ -31,7 +34,7 @@ export BEACON_PUBLISH_URL='https://nexus.example.com/repository/maven-releases/'
 export BEACON_PUBLISH_USERNAME='<仓库账号>'
 export BEACON_PUBLISH_PASSWORD='<仓库口令或令牌>'
 
-cd agent
+cd apps/agent
 # 仅发远程仓库：
 ./gradlew :agent-api:publishAllPublicationsToBeaconRemoteRepository \
           :agent-kit:publishAllPublicationsToBeaconRemoteRepository

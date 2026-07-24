@@ -13,8 +13,26 @@ import BatchReviewOverlay from './BatchReviewOverlay'
 import type { SyncQueueRow } from './types'
 
 const ROWS: SyncQueueRow[] = [
-  { id: 'q4', name: 'motd.yml', direction: 'push', status: 'pending-imprint', scopeTarget: '实例 lobby-1', sourcePath: 'prod/motd.yml', targetPath: 'lobby-1:/motd.yml', time: '14:30' },
-  { id: 'q3', name: 'WorldGuard/regions.yml', direction: 'fetch', status: 'pending-ingest', scopeTarget: '组 main', sourcePath: 'lobby-1:/regions.yml', targetPath: 'prod/regions.yml', time: '14:33' },
+  {
+    id: 'q4',
+    name: 'motd.yml',
+    direction: 'push',
+    status: 'pending-imprint',
+    scopeTarget: '实例 lobby-1',
+    sourcePath: 'prod/motd.yml',
+    targetPath: 'lobby-1:/motd.yml',
+    time: '14:30',
+  },
+  {
+    id: 'q3',
+    name: 'WorldGuard/regions.yml',
+    direction: 'fetch',
+    status: 'pending-ingest',
+    scopeTarget: '组 main',
+    sourcePath: 'lobby-1:/regions.yml',
+    targetPath: 'prod/regions.yml',
+    time: '14:33',
+  },
 ]
 
 describe('BatchReviewOverlay（FR-115）', () => {
@@ -35,7 +53,9 @@ describe('BatchReviewOverlay（FR-115）', () => {
   it('切到 fetch 项：详情区显纳管清单提示（非 diff）', async () => {
     render(<BatchReviewOverlay rows={ROWS} onConfirm={vi.fn()} onCancel={vi.fn()} />)
     await userEvent.click(screen.getByText('WorldGuard/regions.yml'))
-    expect(screen.getByText('此项为反向抓取待纳管，可在队列中单独点开逐项勾选纳管清单。')).toBeInTheDocument()
+    expect(
+      screen.getByText('此项为反向抓取待纳管，可在队列中单独点开逐项勾选纳管清单。'),
+    ).toBeInTheDocument()
     expect(screen.queryByTestId('diff-editor')).not.toBeInTheDocument()
   })
 

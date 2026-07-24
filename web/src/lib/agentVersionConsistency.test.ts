@@ -59,10 +59,7 @@ describe('buildMajorityVersions', () => {
   })
 
   it('空版本不参与统计', () => {
-    const maj = buildMajorityVersions([
-      inst('prod', ''),
-      inst('prod', '0.12.0'),
-    ])
+    const maj = buildMajorityVersions([inst('prod', ''), inst('prod', '0.12.0')])
     expect(maj.get('prod')).toBe('0.12.0')
   })
 
@@ -72,10 +69,7 @@ describe('buildMajorityVersions', () => {
   })
 
   it('计数并列时取字典序较小版本（确定性）', () => {
-    const maj = buildMajorityVersions([
-      inst('prod', '0.12.0'),
-      inst('prod', '0.11.0'),
-    ])
+    const maj = buildMajorityVersions([inst('prod', '0.12.0'), inst('prod', '0.11.0')])
     expect(maj.get('prod')).toBe('0.11.0')
   })
 })
@@ -88,11 +82,15 @@ describe('isAgentVersionMismatch', () => {
   ])
 
   it('与多数版本不同 → 不一致', () => {
-    expect(isAgentVersionMismatch({ namespace: 'prod', agentVersion: '0.11.0' }, majority)).toBe(true)
+    expect(isAgentVersionMismatch({ namespace: 'prod', agentVersion: '0.11.0' }, majority)).toBe(
+      true,
+    )
   })
 
   it('与多数版本相同 → 一致', () => {
-    expect(isAgentVersionMismatch({ namespace: 'prod', agentVersion: '0.12.0' }, majority)).toBe(false)
+    expect(isAgentVersionMismatch({ namespace: 'prod', agentVersion: '0.12.0' }, majority)).toBe(
+      false,
+    )
   })
 
   it('空版本（旧 agent 未上报）→ 不标不一致', () => {
@@ -101,6 +99,8 @@ describe('isAgentVersionMismatch', () => {
 
   it('环境无多数条目（全空）→ 不标不一致', () => {
     const emptyMaj = buildMajorityVersions([inst('test', '')])
-    expect(isAgentVersionMismatch({ namespace: 'test', agentVersion: '0.12.0' }, emptyMaj)).toBe(false)
+    expect(isAgentVersionMismatch({ namespace: 'test', agentVersion: '0.12.0' }, emptyMaj)).toBe(
+      false,
+    )
   })
 })

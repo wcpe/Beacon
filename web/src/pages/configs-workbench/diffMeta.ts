@@ -27,10 +27,22 @@ export interface DotMeta {
 // 受管侧同步状态四态（改进 2，色球→图标）：
 // 已同步一致(✓绿) / 有差异待下发(✗琥珀) / 仅受管未下发(↑蓝) / 服务器已删(✗红)
 export const SYNC_META: Record<SyncStatus, DotMeta> = {
-  synced: { icon: CircleCheck, iconClass: 'text-emerald-500', labelKey: 'configs.workbench.syncSynced' },
+  synced: {
+    icon: CircleCheck,
+    iconClass: 'text-emerald-500',
+    labelKey: 'configs.workbench.syncSynced',
+  },
   drift: { icon: CircleX, iconClass: 'text-amber-500', labelKey: 'configs.workbench.syncDrift' },
-  'managed-only': { icon: CloudUpload, iconClass: 'text-sky-500', labelKey: 'configs.workbench.syncManagedOnly' },
-  'server-gone': { icon: CircleX, iconClass: 'text-destructive', labelKey: 'configs.workbench.syncServerGone' },
+  'managed-only': {
+    icon: CloudUpload,
+    iconClass: 'text-sky-500',
+    labelKey: 'configs.workbench.syncManagedOnly',
+  },
+  'server-gone': {
+    icon: CircleX,
+    iconClass: 'text-destructive',
+    labelKey: 'configs.workbench.syncServerGone',
+  },
 }
 
 // 同步中态（改进 2）：发布 / 下发进行中的瞬态，图例单列展示（数据态由队列承载，不在树固定态里）
@@ -52,14 +64,35 @@ export const SYNC_LEGEND_META: DotMeta[] = [
 
 // 服务器侧纳管标记（右面板行首图标）：已纳管一致(✓绿) / 有差异(⚠琥珀) / 未纳管(○灰)
 export const SERVER_MARK_META: Record<ServerMark, DotMeta> = {
-  tracked: { icon: CircleCheck, iconClass: 'text-emerald-500', labelKey: 'configs.workbench.markTracked' },
-  drift: { icon: AlertTriangle, iconClass: 'text-amber-500', labelKey: 'configs.workbench.markDrift' },
-  untracked: { icon: CircleX, iconClass: 'text-muted-foreground/50', labelKey: 'configs.workbench.markUntracked' },
+  tracked: {
+    icon: CircleCheck,
+    iconClass: 'text-emerald-500',
+    labelKey: 'configs.workbench.markTracked',
+  },
+  drift: {
+    icon: AlertTriangle,
+    iconClass: 'text-amber-500',
+    labelKey: 'configs.workbench.markDrift',
+  },
+  untracked: {
+    icon: CircleX,
+    iconClass: 'text-muted-foreground/50',
+    labelKey: 'configs.workbench.markUntracked',
+  },
 }
 
 // 覆盖层 → badge 着色语义（全局蓝 / 组琥珀 / 实例灰）+ 文案键
 export const SCOPE_META: Record<string, { badgeClass: string; labelKey: string }> = {
-  global: { badgeClass: 'border-sky-500/40 text-sky-600 dark:text-sky-400', labelKey: 'configs.workbench.scopeGlobal' },
-  group: { badgeClass: 'border-amber-500/40 text-amber-600 dark:text-amber-400', labelKey: 'configs.workbench.scopeGroup' },
-  server: { badgeClass: 'border-muted-foreground/40 text-muted-foreground', labelKey: 'configs.workbench.scopeServer' },
+  global: {
+    badgeClass: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
+    labelKey: 'configs.workbench.scopeGlobal',
+  },
+  group: {
+    badgeClass: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
+    labelKey: 'configs.workbench.scopeGroup',
+  },
+  server: {
+    badgeClass: 'border-muted-foreground/40 text-muted-foreground',
+    labelKey: 'configs.workbench.scopeServer',
+  },
 }

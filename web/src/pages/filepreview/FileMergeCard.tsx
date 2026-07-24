@@ -2,7 +2,7 @@
 // 由 FileEffectivePreview（有效树整列）与 FileFullPreview（全量预览中点开的追踪文件，FR-68）共用，避免重复。
 
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@beacon/ui'
 import type { EffectiveFileItem } from '../../api/client'
 
 export default function FileMergeCard({ file }: { file: EffectiveFileItem }) {

@@ -4,16 +4,19 @@
 // 纯只读——不含任何操作入口（无下线 / drain / 改派 / 编辑 / 筛选），守 FR-92 大屏只读边界；
 // 固定深色 NOC（本页强制 dark 视觉，不跟随主题）。复用现有只读查询，零新增后端端点；聚合全部环境。
 
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { CircleCheck, CircleX, TriangleAlert, Users, Zap } from 'lucide-react'
 import { listInstances, metricsSummary, metricsTrend } from '../api/client'
 import TrendChart from './dashboard/TrendChart'
 import StatusTile from '@/components/dashboard/StatusTile'
-import AsyncSection from '@/components/AsyncSection'
+import { AsyncSection } from '@beacon/ui'
+import { getVisibleWindow, prioritizeInstances } from '@/lib/instanceFiltering'
 
 // 大屏快照刷新周期（毫秒）：与看板一致，短周期实时反映当前负载
 const WALLBOARD_REFETCH_MS = 5000
+const WALLBOARD_TILE_LIMIT = 180
 
 // 大屏顶部一格巨号指标：图标 + 巨号数值 + 标签（远观可读）。
 function BigStat({
@@ -32,7 +35,9 @@ function BigStat({
       <span aria-hidden className={className ?? 'text-slate-300'}>
         {icon}
       </span>
-      <div className={`text-5xl font-bold tabular-nums ${className ?? 'text-slate-100'}`}>{value}</div>
+      <div className={`text-5xl font-bold tabular-nums ${className ?? 'text-slate-100'}`}>
+        {value}
+      </div>
       <div className="text-sm text-slate-400">{label}</div>
     </div>
   )
@@ -65,7 +70,11 @@ export default function WallboardPage() {
   const summary = summaryQuery.data
 
   // 健康分布计数：在册实例按 status 计数。
-  const instances = instancesQuery.data ?? []
+  const instances = useMemo(() => instancesQuery.data ?? [], [instancesQuery.data])
+  const visibleInstances = useMemo(
+    () => getVisibleWindow(prioritizeInstances(instances), WALLBOARD_TILE_LIMIT),
+    [instances],
+  )
   const healthOnline = instances.filter((i) => i.status === 'online').length
   const healthDegraded = instances.filter((i) => i.status === 'degraded').length
   const healthLost = instances.filter((i) => i.status === 'lost').length
@@ -110,17 +119,22 @@ export default function WallboardPage() {
       {/* ② 服务器状态墙：放大版瓷砖，健康色明显，远看哪台红/黄一目了然 */}
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold text-slate-200">{t('dashboard.statusWallTitle')}</h2>
+        <div className="text-sm text-slate-400">
+          展示 {visibleInstances.items.length} / {visibleInstances.total}
+        </div>
         <AsyncSection
           isLoading={instancesQuery.isLoading}
           isError={instancesQuery.isError}
           error={instancesQuery.error}
         >
           {instances.length === 0 ? (
-            <div className="rounded-lg bg-white/5 p-6 text-slate-400">{t('dashboard.statusWallEmpty')}</div>
+            <div className="rounded-lg bg-white/5 p-6 text-slate-400">
+              {t('dashboard.statusWallEmpty')}
+            </div>
           ) : (
             // 暗底下瓷砖用深色变体：覆盖 StatusTile 的卡片底/描边以贴合 NOC 暗底（[&_…] 任意值选择器，不改组件）。
             <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-3 [&_[class*='bg-card']]:bg-white/5 [&_[class*='ring-foreground']]:ring-white/10">
-              {instances.map((inst) => (
+              {visibleInstances.items.map((inst) => (
                 <StatusTile key={`${inst.namespace}/${inst.serverId}`} instance={inst} large />
               ))}
             </div>
@@ -132,7 +146,11 @@ export default function WallboardPage() {
       <section className="space-y-3">
         <h2 className="text-2xl font-semibold text-slate-200">{t('dashboard.chartPlayers')}</h2>
         <div className="rounded-lg bg-white/5 p-4 ring-1 ring-white/10">
-          <AsyncSection isLoading={trendQuery.isLoading} isError={trendQuery.isError} error={trendQuery.error}>
+          <AsyncSection
+            isLoading={trendQuery.isLoading}
+            isError={trendQuery.isError}
+            error={trendQuery.error}
+          >
             <div className="h-64">
               <TrendChart
                 title={t('dashboard.chartPlayers')}

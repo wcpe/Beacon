@@ -1,6 +1,12 @@
-# Beacon REST 契约（第一期）
+# Beacon REST 契约
 
-> 各端对齐的硬契约。Base：`/beacon/v1`（agent 侧）、`/admin/v1`（admin/UI 侧）。内容类型 `application/json; charset=utf-8`。
+> 本文档分两部分：**Legacy 契约（第一版，维护态）**与**[第二版契约草案（0.20+）](#第二版契约草案020)**。Legacy 契约（`/beacon/v1`、`/admin/v1` 等）对应仍在运行的第一版代码，随第一版进入**维护态冻结**（只修缺陷、不扩能力），并随第二版 P3-P9 各域接真被 v2 契约逐步取代（阶段与版本线见 [ROADMAP](ROADMAP.md)）。
+
+---
+
+# Legacy 契约（第一版，维护态）
+
+> 各端对齐的硬契约。Base：`/beacon/v1`（agent 侧）、`/admin/v1`（admin/UI 侧）。内容类型 `application/json; charset=utf-8`。以下各节（通用约定 ～ 三、字段对齐速查）均属 Legacy 契约。
 
 ## 通用约定
 
@@ -217,6 +223,7 @@ data: {}
 - **写操作审计兜底（FR-72，增强 FR-7）**：`/admin/v1/*` 下所有写方法（POST/PUT/DELETE）经一道兜底审计中间件——对**尚无专项审计**的写端点统一补记一条 `audit_log`（`operator` 取认证态、`action`/`targetType`/`targetRef` 由路由模式与路径参数推导、`result` 按响应状态 2xx=ok 否则 fail、`clientIp` 取来源 IP）。已带专项审计的端点（配置/文件/zone/实例/环境/密钥/调度等）**不重复双记**；兜底审计 `detail` **绝不含请求体**（敏感豁免）；审计落库失败不阻断主响应（旁路）。意义在于"任何写操作都有迹可循"是结构性保证，新增写端点即使忘补专项审计也会被自动兜底。
 - 令牌有效期由配置 `auth.token-ttl-sec` 决定（默认 86400 秒）；过期需重新登录。
 - 登录操作者恒为 `full`（读写）角色。
+- **消费方**：Legacy `web/` 与第二版管理台 `apps/web`（自 FR-179 起）均消费本组端点——登录存令牌、请求注入 `Authorization: Bearer`、任意 `/admin/*` 遇 `401` 清令牌跳登录、登出清本地令牌。第二版无 API-key 登录 / RBAC / 记住我 / 2FA；demo 模式免登录（前端路由守卫放行，不发这些请求）。
 
 ### 管理面 API 密钥与只读角色（FR-42，见 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）
 
@@ -347,7 +354,8 @@ data: {}
 | `POST /admin/v1/instances/{serverId}/resync?namespace=` | **触发该 agent 强制重同步**（FR-91，写操作 readonly→403，复用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) 命令队列、不新增 ADR）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `resync-config` 命令（`pending`，空载荷）+ `instance.resync` 审计（detail 仅 commandId/serverId、无内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§15）。agent 重拉有效配置/文件树/覆盖集并 apply（幂等，已是最新则 no-op），回传命令结果。返回 `202` + 命令视图。见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md) |
 | `GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=` | **只读浏览该在线服真实 `plugins/`**（FR-110，见 [ADR-0049](adr/0049-agent-fs-browse.md)）。`op ∈ {list, tree, file}`：`list` 懒列 `path` 目录直接子项（`offset`/`limit` 分页）、`tree` 按需展开 `path` 子树（`maxDepth` 逐层有界）、`file` 读 `path` 单文本文件内容。方法是 GET 但有写副作用（建命令 / 唤醒 agent / 入审计），故 **`full` 角色才可触发、`readonly`→`403 FORBIDDEN`**（扩展 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）。流程：校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `fs-browse` 命令（`pending`）+ `file.browse` 审计（detail 仅 `commandId`/`op`/`path`、**绝不含文件内容**）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§16）→ **阻塞等待** agent 回传结果（转存命令瞬态后唤醒本请求）→ 把结果 JSON 原文代理给前端。`op` 非法→`400 INVALID_PARAM`；目标越权 / 非目录 / 非文本→`404 BROWSE_TARGET_NOT_FOUND`；agent 离线 / 未在限期内回传→`504 BROWSE_TIMEOUT`。返回 `200` + 浏览结果（形状见 agent §16 `result`）。是 FR-111 配置工作台双面板右侧实时浏览的底座。见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md) |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
-| `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt }]`。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
+| `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt, status, handledBy, handledAt, handleNote }]`（status 族为处理工作流字段，FR-157 见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；未处理时 handled* 为 `null`）。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
+| `POST /admin/v1/alert-events/{id}/handle` | **告警事件处理**（FR-157，见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；写操作 readonly→403）：入参 `{status: acknowledged\|resolved, note?}`（兼容等价措辞 `{action, handleNote}`），更新处理状态 / 处理人（取登录身份）/ 处理时刻 / 处置说明并**写审计**（`alert-event.acknowledge` / `alert-event.resolve`）。事件不存在 `404`、动作非法 `400`。健康分 `alert` 因子按当前 `status=open` 计数取真值（activeAlerts） |
 
 错误：实例不存在 `404 INSTANCE_NOT_FOUND`。
 
@@ -386,6 +394,37 @@ data: {}
 | `DELETE /admin/v1/reverse-fetch/ignore-rules/{id}` | 软删规则（写操作 readonly→403）：不存在 / 已删→`404 CONFIG_NOT_FOUND`。记 `reverse-fetch.ignore-rule-remove` 审计。软删哨兵释放唯一键占位，同标识可再建。返回 `200` |
 
 - 作用域叠加：`scope=server` 任务的扫描清单同时受**该大区 group 层规则**与**本实例 server 层规则**约束；`scope=group` 任务仅受 group 层规则约束。
+
+### 多级灰度文件同步中心（FR-129 / FR-131，见 [ADR-0058](adr/0058-controlled-large-file-sync-channel.md)）
+
+本模块把文件同步任务、批次、目标和日志作为 DB 真源：选择在线 `role=bukkit` 源服 + 服务器根内相对目录，规划一组在线 bukkit 目标，执行开始 / 暂停 / 继续 / 终止等控制动作，并通过管理台 SSE 回放持久日志与实时状态。管理台 `/file-sync` 是 5 步向导：源与目录 → 目标范围 → 灰度策略 → 安全检查 → 预览与启动；本轮“预览”指启动前的规划预览（源清单状态、目标集合、批次与风险摘要），由 `create + plan` 持久化后展示，确认后才调用 `start`。本轮不实现目标端 dry-run 扫描协议或文件级差异分页接口。`agent_command` 只承载 taskId / batchId / targetId / directory 等编排控制；文件内容通过 agent 侧流式 HTTP 上传到控制面本地 blob 缓存，再由目标 agent 流式下载。文件内容不得进入审计 detail、命令 payload 或 JSON ingest。
+
+**任务详情视图字段**：`{ id, namespace, sourceServerId, directory, status, sourceReady, sourceFileCount, sourceTotalBytes, batchSize, intervalSec, failureThresholdPercent, operator, totalTargets, plannedTargets, succeededTargets, failedTargets, skippedTargets, currentBatch, totalBatches, lastError, batches, logs, targets, createdAt, updatedAt, startedAt, finishedAt }`。`sourceReady` 表示源清单和可启动所需缓存已就绪；`sourceFileCount` / `sourceTotalBytes` 来自源 manifest 汇总，用于刷新后恢复规划预览。`batches` 元素为 `{ id, taskId, batchNo, status, plannedCount, successCount, failedCount }`；`logs` 元素为 `{ id, taskId, batchNo, serverId, level, message, createdAt }`；`targets` 元素为 `{ taskId, batchNo, serverId, namespace, group, zone, status, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone, error, updatedAt }`。
+
+| 端点 | 说明 |
+|---|---|
+| `POST /admin/v1/file-sync/tasks` | 创建文件同步任务（写操作 readonly→403）。body `{namespace,sourceServerId,directory,batchSize,intervalSec,failureThresholdPercent}`。源实例必须在线且 `role=bukkit`，`directory` 必须是服务器根内相对目录（拒绝空、`..`、绝对路径、盘符 / UNC、反斜杠、Windows 保留名）。成功后任务为 `scanning`，事务内写 `file-sync.create` 审计 / 持久日志，并下发源扫描命令。返回 `201` + 任务视图。 |
+| `GET /admin/v1/file-sync/tasks?namespace=&status=` | 列同步任务历史（最新在前）：`{ items: [任务视图] }`。 |
+| `GET /admin/v1/file-sync/tasks/{id}` | 查询任务详情，返回任务详情视图（含源清单就绪字段、批次、已规划 targets 与日志尾部）。不存在→`404 FILE_SYNC_TASK_NOT_FOUND`。 |
+| `POST /admin/v1/file-sync/tasks/{id}/plan` | 规划目标（写操作 readonly→403）。body `{targetServerIds:[string...]}`；服务端去重、排除源服、逐个校验在线 bukkit，空目标→`400 FILE_SYNC_NO_TARGETS`，非 bukkit / 离线目标→`400 FILE_SYNC_TARGET_INVALID`。按任务 `batchSize` 写入批次和目标，任务转 `planned`，旧规划会被重建。返回任务详情视图，作为 `/file-sync` 最后一步的持久规划预览。 |
+| `POST /admin/v1/file-sync/tasks/{id}/start` | 启动任务控制态：`planned → running`，要求已完成规划预览且 `sourceReady=true`；写 `startedAt`、审计 `file-sync.start`、持久日志并推 SSE，随后按当前 / 首个 pending 批次向目标下发 apply 命令。 |
+| `POST /admin/v1/file-sync/tasks/{id}/pause` | 暂停后续批次：`running → paused`，不影响已完成目标。 |
+| `POST /admin/v1/file-sync/tasks/{id}/resume` | 继续后续批次：`paused → running`。 |
+| `POST /admin/v1/file-sync/tasks/{id}/terminate` | 紧急终止：`draft/scanning/cached/planned/running/paused → terminated`，写 `finishedAt`。 |
+| `GET /admin/v1/file-sync/tasks/{id}/events?afterLogId=` | 管理台 SSE。连接先按 `afterLogId` 回放持久日志尾部，随后推送 `task` / `log` 事件；浏览器可用 `fetch + ReadableStream` 携带 Authorization 订阅，禁止短轮询替代实时进度。 |
+
+**批次推进语义**：批次内所有目标回执后，控制面先更新目标与批次计数；若失败率达到熔断阈值，任务进入 `circuit-broken` 并保持后续目标不再下发。未熔断且仍有 pending 批次时，按任务 `intervalSec` 调度下一批；没有后续 pending 批次时任务进入 `succeeded`。`pause` 只阻止下一批启动，不回滚已完成目标；`resume` 从下一批 pending 批次继续。
+
+**agent 侧数据面端点（均挂 `/beacon/v1/agent` + `X-Beacon-Token`）**：
+
+| 端点 | 说明 |
+|---|---|
+| `POST /file-sync/{taskId}/manifest` | 源 agent 回传扫描清单。body `{ commandId, files:[{path,size,hash}] }`；控制面校验命令状态与 path/hash 后写 `file_sync_file`，任务进入可规划 / 可启动状态。 |
+| `PUT /file-sync/{taskId}/blobs/{sha256}` | 源 agent 流式上传某文件 blob。请求体为 `application/octet-stream`；控制面边读边算 sha256，摘要不匹配拒绝，匹配后落本地 blob 缓存。 |
+| `GET /file-sync/{taskId}/blobs/{sha256}` | 目标 agent 流式下载某文件 blob。响应 `application/octet-stream` + `Content-Length`，不把内容包进 JSON。 |
+| `POST /file-sync/{taskId}/targets/result` | 目标 agent 回传执行结果。body `{ commandId, ok, reason, backupPath, currentFileCount, changedFileCount, skippedFileCount, bytesTotal, bytesDone }`；控制面推进目标、批次和熔断状态。 |
+
+错误：任务不存在 `404 FILE_SYNC_TASK_NOT_FOUND`；状态不符 `409 FILE_SYNC_TASK_STATE`；源非法 `400 FILE_SYNC_SOURCE_INVALID`；目标非法 `400 FILE_SYNC_TARGET_INVALID`；目标为空 `400 FILE_SYNC_NO_TARGETS`；路径非法 `400 INVALID_PATH`。
 
 ### 配置操作级撤回（FR-116，见 [ADR-0051](adr/0051-config-operation-undo.md) 与 [docs/specs/config-operation-undo.md](specs/config-operation-undo.md)）
 
@@ -458,15 +497,13 @@ data: {}
 
 #### 小区默认入口（FR-48）
 
-每个小区 `(group, zone)` 唯一指定一个「默认入口」serverId（指向已指派该 zone 的在线 bukkit），经发现下发给该 zone 下的 BC agent 设为 BungeeCord 默认/fallback 服（修复「动态注入子服但无默认服 → 玩家加入报 Could not connect to a default or fallback server」）。默认入口归属由控制面 DB 权威（[ADR-0031](adr/0031-zone-default-entry-and-bc-injection.md)）。
+每个小区唯一指定一个「默认入口」serverId（指向已分配该小区的 bukkit），经发现下发给该 zone 下的 BC agent 设为 BungeeCord 默认/fallback 服（修复「动态注入子服但无默认服 → 玩家加入报 Could not connect to a default or fallback server」）。**真源为 v2 `server.is_default_entry` 列**（[ADR-0067](adr/0067-default-entry-v2-authority.md) 取代 ADR-0031 的存储决策）：写操作走 v2 分配勾选（`POST /admin/v2/server-assignments` 的 `isDefaultEntry`）与 `PUT /admin/v2/servers/{id}/default-entry`；v1 写端点（原 `PUT/DELETE /admin/v1/zones/default-entry`）**已移除**（从未有 UI 调用者，写的 `zone_default_entry` 表无人消费即静默失效陷阱，该表已一并删除）。
 
 | 端点 | 说明 |
 |---|---|
-| `GET /admin/v1/zones/default-entry?namespace=&group=` | 列出小区默认入口：`{ items: [{ namespace, group, zone, defaultServerId, updatedAt }] }` |
-| `PUT /admin/v1/zones/default-entry` | 设置/覆盖：`{ namespace, group, zone, defaultServerId }`（operator 由认证态派生）；提交后唤醒拓扑 watch |
-| `DELETE /admin/v1/zones/default-entry?namespace=&group=&zone=` | 清除该小区默认入口（operator 由认证态派生） |
+| `GET /admin/v1/zones/default-entry?namespace=&group=` | 列出小区默认入口（只读，Legacy 消费；由 v2 真源解析，`group`/`zone` 取大区名/小区名）：`{ items: [{ namespace, group, zone, defaultServerId, updatedAt }] }` |
 
-校验：`defaultServerId` 必须是当前已指派到该 `(group, zone)` 的 serverId，否则 `400 DEFAULT_ENTRY_SERVER_NOT_IN_ZONE`；清除时该小区无默认入口返回 `404 DEFAULT_ENTRY_NOT_FOUND`。写端点 readonly 角色经 `readonlyWriteGuard` 一律 403。审计动作 `zone.set-default-entry` / `zone.clear-default-entry`。
+校验与审计在 v2 写端点：未分配小区置默认入口 `409 not_assigned`；审计动作 `zone.set-default-entry` / `zone.clear-default-entry`（v2 service 事务内自记）。
 
 下发：发现（`GET /beacon/v1/agent/discovery`）与实例视图（`GET /admin/v1/instances`、`.../instances/{serverId}`）的每个 bukkit 实例新增布尔字段 `zoneDefaultEntry`（被指定为其小区默认入口为 true，其余 false；bungee 恒 false；旧 agent 忽略未知字段，向后兼容）。BC agent 用自身 `config.yml` 的 `proxy.home-group` / `proxy.home-zone`（数据面路由配置，非 zone 归属声明）挑出命中 home-zone 的在线默认入口设默认服；未配 / 该 zone 未设默认入口 / 默认入口不在线时**不设任何默认服 + 打一条 WARN**，绝不回退到任意在线 bukkit（避免静默把玩家落到非大厅服）。
 
@@ -589,7 +626,7 @@ data: {}
 
 ### 控制面在线更新（FR-99，见 [ADR-0044](adr/0044-control-plane-online-self-update.md)）
 
-把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。渠道（`stable`/`prerelease`，ADR-0052）与出站代理从设置 store 读、热生效（`update.channel` / `update.proxy-url`，FR-101/FR-98）；出站经 [FR-98](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理 + 超时。判新 = 基线比较 + 提交距离序号（先比 `X.Y.Z` 基线，远端基线高即报、低即否；基线相同时都 dev 比提交距离序号、远端序号大才报，正式↔dev 视为有更新，FR-117，[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)）。**一份端点契约真源（FR-100 前端消费）。**
+把控制面在线自更新核心（FR-97）接到 admin HTTP 面：检查有无可用更新（只读、服务端缓存）/ 读更新进度 / 触发应用更新。按 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)，标准在线更新只使用 `stable`：候选必须是非 draft、非 prerelease 且 tag 严格匹配 `vX.Y.Z` 的 GA Release，各数字段除 `0` 外不得有前导零；RC、开发产物、build metadata、Release name 回退均不进入候选。选择器使用 GitHub `page`/`per_page=100` 协议逐页扫描全部候选并取最高语义版本，不依赖返回顺序；遇短页停止，持续满页超过 100 页则失败，且每页保留响应大小限制。版本判新只比较正式 `X.Y.Z` 三段。历史 `update.channel=prerelease` 或其他旧值在读取 / 首次种子时自动持久化归一为 `stable`，响应 `channel` 继续保留并固定为 `stable`。出站代理从设置 store 读取并热生效（`update.proxy-url`，FR-98），经 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md) 工厂带代理与超时。**一份端点契约真源（FR-100 前端消费）。**
 
 | 端点 | 说明 |
 |---|---|
@@ -599,7 +636,7 @@ data: {}
 | `POST /admin/v1/system/update` | 触发应用更新（写方法，readonly→`403`，入审计 `system.update-apply`/`system.update-failed`） |
 | `POST /admin/v1/system/update/cancel` | 取消进行中的更新下载（写方法，readonly→`403`，下载中断记 `system.update-cancel`，FR-125） |
 
-`GET /admin/v1/system/update-check`：按 store 当前渠道查 `wcpe/Beacon` 最新 release 与当前版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（FR-101），缓存未过期且渠道未变则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时仅回显 `currentVersion`/`channel`/时间字段，其余为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。返回：
+`GET /admin/v1/system/update-check`：按固定 `stable` 渠道查 `wcpe/Beacon` 最新合法 GA Release 与当前正式版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（`int [1,168]`，默认 6），缓存未过期则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。管理台仅在 `update.auto-check-enabled=true` 时按该周期低频轮询，关闭后不轮询；手动“立即检查”始终使用 `force=true`。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时可选字段 `failureReason` 返回经 `internal/redact` 脱敏的真实原因，代理 URL userinfo、token 等凭据不得明文返回；`currentVersion`/`channel`/时间字段继续回显，其余业务字段为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。检查状态与下载 / 校验 / 落位进度隔离，检查请求不会覆盖进行中的更新进度。返回：
 ```json
 {
   "status": "ok",
@@ -615,7 +652,7 @@ data: {}
   "cacheExpiresAt": "2026-06-25T16:00:00Z"
 }
 ```
-`status ∈ {ok, check-failed}`。`releaseNotes` 为 release 正文原文（前端须安全渲染）；`publishedAt`/`checkedAt`/`cacheExpiresAt` 为 RFC3339（UTC）。
+`status ∈ {ok, check-failed}`。`failureReason?: string` 仅在 `check-failed` 时返回脱敏后的检查失败原因；成功响应省略该字段。`releaseNotes` 为 release 正文原文（前端须安全渲染）；`publishedAt`/`checkedAt`/`cacheExpiresAt` 为 RFC3339（UTC）。
 
 `GET /admin/v1/system/update`：读更新核心进度快照（进程内瞬态、不落库）。返回：
 ```json
@@ -639,7 +676,21 @@ data: {}
 | `GET /admin/v1/settings` | 列全部热改项当前值 + 类型 + 默认 + 说明：`{ items: [{ key, value, valueType, default, desc, isStartup }] }`。`valueType ∈ {int,bool,string}`；`isStartup` 恒 `false`（白名单内皆热改项）。读对 full / readonly 都开。**含凭据项（`update.proxy-url`）的 `value` 回显脱敏**：userinfo 段掩为 `***`（如 `http://***:***@h:port`），落库存原值仅供运行（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)） |
 | `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>" }` → `{ ok: true }`。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。每次改入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**；含凭据项的新值脱敏后再记，FR-98）。**含凭据项「未改密码」语义**：若提交的 `value` 仍是当前值的脱敏占位（如原样回传 `http://***:***@h`），后端**保留原值不覆盖**、不入审计 |
 
-热改 key 白名单（16 项）：`health.degraded-after-sec` / `health.ttl-sec` / `health.offline-grace-sec` / `health.scan-interval-sec`、`metric.enabled` / `metric.sample-interval-sec` / `metric.retention-hours`、`longpoll.max-hold-ms`、`alert.webhook-url` / `alert.webhook-timeout-ms`、`log.level`（枚举 `ERROR|WARN|INFO|DEBUG`）、`reverse-fetch.max-file-bytes`（反向抓取单文件上限，默认 1MB；控制面据此 + agent 上报 size 重算 `overThreshold`，不信 agent 标记）、`update.proxy-url`（更新出站代理，`http(s)://host:port` 可含 `user:pass`，空=直连；仅作用于控制面更新检查/下载出站、不影响 webhook；含凭据故回显/审计/日志脱敏，FR-98 见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）、`update.channel`（更新渠道枚举 `stable|prerelease`，默认 `stable`，FR-117/ADR-0052）、`update.auto-check-enabled`（是否自动检查更新，bool，默认 `true`，FR-101）、`update.check-interval-hours`（自动检查周期小时，`int [1,168]`，默认 6，FR-101）。`config.yml` 对这些项仅作**首启种子**：store 缺该 key 时才用文件值填，已 seed 后改文件不影响运行值。
+热改 key 白名单共 **37 项**，以服务端 `settingsWhitelist` 为契约真源，完整清单如下：
+
+- 健康判定（4）：`health.degraded-after-sec`、`health.ttl-sec`、`health.offline-grace-sec`、`health.scan-interval-sec`。
+- 指标采样（3）：`metric.enabled`、`metric.sample-interval-sec`、`metric.retention-hours`。
+- 长轮询（1）：`longpoll.max-hold-ms`。
+- 告警 webhook（2）：`alert.webhook-url`、`alert.webhook-timeout-ms`。
+- 日志（1）：`log.level`，枚举 `ERROR|WARN|INFO|DEBUG`。
+- 反向抓取（1）：`reverse-fetch.max-file-bytes`，默认 1 MiB；控制面据此结合 agent 上报 size 重算 `overThreshold`，不信任 agent 标记。
+- 在线更新（4）：`update.proxy-url`、`update.channel`、`update.auto-check-enabled`、`update.check-interval-hours`。`update.proxy-url` 接受含可选 `user:pass` 的 `http(s)://host:port`，空值表示直连，仅作用于控制面更新检查 / 下载出站，凭据在回显、审计和日志中脱敏（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）；`update.channel` 为兼容保留字段，唯一合法值与响应值均为 `stable`，历史 `prerelease` / 非法旧值启动时自动持久化归一为 `stable`（FR-185，见 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)）；`update.auto-check-enabled` 默认 `true`；`update.check-interval-hours` 为 `int [1,168]`，默认 6。
+- 配置撤回（1）：`undo.window-hours`，默认 24 小时。
+- 身份冲突（1）：`identity.conflict-window-sec`，默认 600 秒。
+- 交付编排与数据面（6）：`delivery.approver-separation-enabled`、`delivery.blob-retention-days`、`delivery.blob-capacity-bytes`、`delivery.upload-concurrency`、`delivery.download-concurrency`、`delivery.cleanup-interval-minutes`。
+- 热冷归档（13）：`archive.retention-days.metric-sample`、`archive.retention-days.health-snapshot`、`archive.retention-days.sched-decision`、`archive.retention-days.conn-detail`、`archive.retention-days.msg-trace`、`archive.retention-days.msg-payload`、`archive.retention-days.audit`、`archive.auto-enabled`、`archive.schedule-hour-utc`、`archive.batch-rows`、`archive.batch-interval-ms`、`archive.verify-sample-size`、`archive.cold-query-max-days`。
+
+`config.yml` 仅为有对应配置项的设置提供**首启种子**；纯 store 设置使用服务端默认值。store 缺 key 时才写入默认值，已 seed 后修改配置文件不影响运行值。
 
 ### 审计与环境
 | 端点 | 说明 |
@@ -675,3 +726,310 @@ data: {}
 | 版本 | `version` | int64 | 单调递增，回滚也 +1 |
 | 角色 | `role` | string | bukkit / bungee |
 | 健康 | `status` | string | online / degraded / lost / offline |
+
+---
+
+# 第二版契约草案（0.20+）
+
+> P0 冻结的第二版 REST 与 agent-api 契约草案（[ROADMAP](ROADMAP.md) §5 最后一项）。**端点明细契约（请求 / 响应体、状态机、错误码）的单一真源在各 `docs/specs/v2-*.md` 规格的「§5 API 契约」章节，本章不复制**——本章只承载三样：跨域通用约定（本章为权威真源）、按域端点索引（方法 / 路径 / 一句话用途 + 指回权威规格）、契约治理规则。
+
+## 通用约定（本章为权威真源）
+
+各 v2 规格的端点必须遵守以下约定；规格与本章冲突时以本章裁决为准并回改规格（见文末「契约治理」）。
+
+### base path 分面
+
+| 面 | base path | 说明 |
+|---|---|---|
+| 管理面 | `/admin/v2/*` | 管理台 / 脚本 / 外部服务；归档域挂 `/admin/v2/archive/*` |
+| agent 面 | `/beacon/v2/agent/*` | agent 控制通道（注册 / 上报 / 调度 / 消息 / 资产 / 交付回执），沿用 Legacy `/beacon/v1/agent` 前缀惯例 |
+| 流式数据面 | `/beacon/v2/stream/*` | 大文件流式传输（不过命令通道），当前仅交付域 `/beacon/v2/stream/delivery/*`（[v2-delivery-orchestration](specs/v2-delivery-orchestration.md) §5.3） |
+
+### 认证
+
+- **管理面**：沿用第一版机制——登录令牌（`Authorization: Bearer`）或 API 密钥（`bk_` 前缀，`full` / `readonly` 两级角色，readonly 拒写）。
+- **agent 面**：namespace 级接入 token 头 `X-Beacon-Token`（token↔namespace 一致性校验，规则见 [v2-namespace-isolation](specs/v2-namespace-isolation.md)）+ 绑定身份头 `X-Beacon-Identity`（注册期另带 `X-Beacon-Boot`）；身份确认前 agent 仅可调 register / registration 两端点，其余端点一律 403（细则见 [v2-agent-identity](specs/v2-agent-identity.md) §5.1）。
+- **流式数据面**：同 agent 面双 header，另校验请求身份属于持有该 blob 引用的活动变更单（模板源仅可上传、目标仅可下载本单清单内 sha256）。
+
+### 错误体 / 时间 / 状态码惯例
+
+- 统一错误体 `{ "code": "...", "message": "...", "traceId": "..." }`；`message` 为脱敏后的真实原因（打码凭据、保留运维上下文），沿用 [ADR-0057](adr/0057-surface-desensitized-errors.md)。
+- 时间一律 UTC（ISO-8601）；毫秒时间戳字段以 `...Ms` 后缀显式标注。
+- 惯例状态码：批量异步上报受理 `202`（入队即回，写入队列满 `429` + 退避提示）；状态类长轮询无变化 `304`、队列类长轮询无消息 `204`；非法状态迁移 / 占用冲突 `409`；批量操作逐条结果用 207 风格（HTTP 200/207 + 响应体逐条 ok/code）。
+
+### 分页
+
+- 列表端点统一 query `page` / `pageSize`（+ 可选 `keyword`），响应 `{ "items": [...], "total": N }`。
+- 例外：连接 / 消息明细查日期分表，用**游标分页 + 强制时间范围或精确 ID**（查询防护，[v2-connection-message-storage](specs/v2-connection-message-storage.md) §5.2）。
+- 冷查询跨域参数 `includeArchived` / `from` / `to` 挂在各查询域自己的端点上，契约见 [v2-hot-cold-archive](specs/v2-hot-cold-archive.md) §4.4。
+
+### 长轮询 / SSE / 命令通道
+
+- **状态长轮询**（agent 面）：`GET /beacon/v2/agent/registration?wait=<sec>`，状态无变化超时 `304`（身份域）。
+- **队列长轮询**（agent 面）：`POST /beacon/v2/agent/messages/poll`（`waitSec`），无消息超时 `204`（消息域）。挂起时长参数命名以各域规格为准。
+- **SSE**（管理面实时进度）：`GET /admin/v2/change-orders/{id}/events`（交付域），断线后轮询可恢复。
+- **agent 命令下发**沿用既有长轮询命令通道机制（ADR-0006 一脉），v2 各域只登记新命令类型（如 `asset-rescan` / `asset-read`），不另建通道；命令 payload 与审计 detail 不携带文件内容。
+
+### 命名风格（含裁决记录）
+
+- **路径**：kebab-case 复数资源名（`agent-identities`、`change-orders`、`config-files`）；子动作用 `/{id}/<动词>` 路径段（`/approve`、`/rollback`、`/token/rotate`），**不用 `:verb` 冒号风格**。
+- **query 参数与 JSON 字段**：一律 camelCase（`namespaceId`、`pageSize`、`includeArchived`）。
+- **枚举值 / 错误码等字段值**：snake_case 小写（`pending_approval`、`zone_not_found`、`cross_namespace`），不受 camelCase 约束；审计事件名用点分小写（`identity.approve`、`cross_namespace.*`）。
+- **管理面 namespace 过滤参数**：统一 `namespaceId`（值为 namespace 主键）。
+- **内容指纹**：v2 统一 `sha256`（全新通道，不沿用 Legacy md5）。
+
+> 裁决记录：以上为各规格收口时的**多数派**用法。起草期少数规格用了 snake_case 参数（zone-authority / namespace-isolation / config-center 的 §5 表、hot-cold 的 `include_archived`）、`:verb` 冒号路径（namespace-isolation 的 `token:rotate` / `{id}:revoke`）与 `namespace` 过滤参数（metrics 的 sched-decisions、file-assets 管理面），均已按本裁决回改对应规格；**DB 列名仍为 snake_case，不受本约定约束**。
+
+### agent-api（业务插件本机接口）
+
+业务插件**禁止直连 Beacon HTTP**（直连不作为契约、随时可变），唯一入口是 agent 本机 `BeaconAgentApi` 门面（Kotlin；HTTP / JSON 只存在于适配器，[ADR-0005](adr/0005-agent-transport-codec-abstraction.md) 延续；fail-static 降级语义随门面，绝不阻塞 MC 主线程）：
+
+- 调度 / 健康门面 `BeaconScheduling`（`acquireCandidate` / `candidatesInZone` / `healthOf` / `selfHealth` / `dataSource`）：真源 [v2-metrics-health-scheduling](specs/v2-metrics-health-scheduling.md) §5.3。
+- 消息门面（`send` / `call` / `on` / `isAvailable`）：真源 [v2-connection-message-storage](specs/v2-connection-message-storage.md) §5.1。
+
+## 端点索引（按域）
+
+> 每域一表，只列方法 / 路径 / 一句话用途；请求响应体、错误码、状态机**以「权威规格」列为准，不在此复制**。阶段与版本线对齐 [ROADMAP](ROADMAP.md) §1 与 [PRD](PRD.md) §4 FR 表。P1 行仅列当前基础闭环已接端点，完整规格剩余端点在 P3 接真深化补齐。
+
+| 域 | 阶段 | 对应 FR | 权威规格 | 端点数 |
+|---|---|---|---|---|
+| Agent 身份 | P1 · 0.21.x | FR-139/140/141 | [v2-agent-identity.md](specs/v2-agent-identity.md) §5 | 9 |
+| namespace 隔离 | P1 · 0.21.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 5 |
+| 区服权威 | P1 · 0.21.x | FR-142/143 | [v2-zone-authority.md](specs/v2-zone-authority.md) §5 | 5 |
+| 指标健康调度 | P4 · 0.24.x | FR-144/146/147/148 | [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5 | 14 |
+| 连接消息存储 | P5 · 0.25.x | FR-145/149/150 | [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5 | 11 |
+| 热冷归档 | P6 · 0.26.x | FR-151/152/153 | [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5 | 6 |
+| 配置中心 V2 | P7 · 0.27.x | FR-160/161 | [v2-config-center.md](specs/v2-config-center.md) §5 | 17 |
+| 文件资产 V2 | P8 · 0.28.x | FR-163/164 | [v2-file-assets.md](specs/v2-file-assets.md) §5 | 10 |
+| 交付编排 V2 | P9 · 0.29.x | FR-162/165/166/167/168/171 | [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5 | 27 |
+
+当前表内合计 104 个端点；其中 P1 基础已接 19 个，第二版全量规划仍以各规格为准。
+
+### Agent 身份（P1 · 0.21.x，真源 [v2-agent-identity.md](specs/v2-agent-identity.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/register` | 携 identityId 注册 / 重注册，返回绑定状态 |
+| GET | `/beacon/v2/agent/registration` | 长轮询当前身份状态（确认 / 拒绝秒级感知） |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/agent-identities` | 身份分页列表（状态 / namespace / 关键字筛选） |
+| GET | `/admin/v2/agent-identities/{identityId}` | 单条身份详情（附 `conflictPeers` 与换区 `rezonePrefill` 预填目标） |
+| POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；首次确认只创建未分配 server；换区中按预填 / 指定 `target` 落区或 `target:null` 暂不分配） |
+| POST | `/admin/v2/agent-identities/{identityId}/reject` | 拒绝接入（原因必填） |
+| POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 允许被拒身份重新申请 |
+| POST | `/admin/v2/agent-identities/{identityId}/disable` | 禁用（摘除调度与指令下发） |
+| POST | `/admin/v2/agent-identities/{identityId}/enable` | 恢复禁用身份 |
+| POST | `/admin/v2/agent-identities/{identityId}/unbind` | 解绑（换 serverId / namespace 的前置） |
+| POST | `/admin/v2/agent-identities/{identityId}/resolve-conflict` | 并发身份冲突处置（FR-177）：body `keepBootId`（保留哪个实例）+ `reason`（必填）；保留方恢复 active、落败方后续持续 409 并指引；非 conflict → 409、`keepBootId` 不在冲突双方 → 400 |
+
+### namespace 隔离（P1 · 0.21.x，真源 [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/namespaces` | namespace 列表 |
+| POST | `/admin/v2/namespaces` | 创建 namespace（返回一次性明文接入 token） |
+| GET | `/admin/v2/namespace-trusts` | 互通信任行列表 |
+| POST | `/admin/v2/namespace-trusts` | 授予单向信任（新增或复活，原因必填） |
+| POST | `/admin/v2/namespace-trusts/{id}/revoke` | 收回信任（原因必填，即时生效） |
+
+### 区服权威（P1 · 0.21.x，真源 [v2-zone-authority.md](specs/v2-zone-authority.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/admin/v2/bc-clusters` | 新建 BC 集群 |
+| POST | `/admin/v2/regions` | 新建大区 |
+| POST | `/admin/v2/zones` | 新建小区 |
+| GET | `/admin/v2/zone-tree?namespaceId=` | 区服结构树只读聚合（BC 集群 → 大区 → 小区，各节点带计数，附未分配计数） |
+| GET | `/admin/v2/servers` | server 分页列表（富化视图：含归属名 / 默认入口 / 在线摘要；`assigned=false` 即未分配篮） |
+| POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server），响应 `{results:[{id,serverId,ok,code?}]}`；已分配服改归属须走换区工单 |
+| POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配、同 namespace 同 kind）：单事务解绑清归属 + 写预填目标 + 身份重入 pending；未分配台 400 `not_assigned`，整批原子回滚 |
+| PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（路径为业务 serverId），写审计，返回富化视图 |
+| PUT | `/admin/v2/servers/{id}/default-entry` | 更新默认入口标记（路径为 server 行 id）；未分配小区 → 409 `not_assigned` |
+
+env 展示维度（FR-178 · P8 · 0.28.x）：纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；映射整体替换、一个 namespace 至多属一个 env。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/envs` | env 列表（含映射的 namespace 摘要） |
+| POST | `/admin/v2/envs` | 创建 env（name 全局唯一，撞名 409 `ENV_CONFLICT`） |
+| PATCH | `/admin/v2/envs/{id}` | 改 env 名 / 描述（局部更新；撞名 409，不存在 404 `ENV_NOT_FOUND`） |
+| DELETE | `/admin/v2/envs/{id}` | 删 env（映射级联删除，204；只影响过滤视图、不动权威数据） |
+| PUT | `/admin/v2/envs/{id}/namespaces` | 整体替换 env→namespace 映射（幂等；被其他 env 占用的 namespace → 409 `ENV_NAMESPACE_CONFLICT` 指明冲突方；不存在 namespace → 400 `ENV_NAMESPACE_NOT_FOUND`） |
+
+### 指标健康调度（P4 · 0.24.x，真源 [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/metrics/report` | 5s 批量上报 5s 桶聚合指标（兼活性信号，顺带回传自身健康）**【已实现·FR-144，`self` 已接真实健康视图·FR-147】** |
+| GET | `/beacon/v2/agent/schedule/candidates` | 拉取本 namespace 各 zone 调度候选快照 **【已实现·FR-146 服务端】** |
+| POST | `/beacon/v2/agent/schedule/decide` | 请求控制面做一次调度决策（产生 traceId）**【已实现·FR-146 服务端】** |
+| POST | `/beacon/v2/agent/schedule/report-local` | 降级期本地决策恢复后补报（幂等）**【已实现·FR-146 服务端】** |
+
+> **FR-144 采样入库已实现**：`POST /beacon/v2/agent/metrics/report` 挂 token↔namespace + identity 鉴权中间件（未确认身份 403），接收端只做校验 + 更 60s 内存窗口 + 非阻塞入队即回 `202 {accepted, deduplicated, self}`（请求 goroutine 不碰 DB），后台写入池攒批事务批插当日 `metric_sample_YYYYMMDD` 日表（唯一键 `(server_id,bucket_start_ms)` 幂等去重、跨日自动拆表、队列满回 `429 metrics_ingest_busy`、时钟偏移 >5min 回 `400 clock_skew_too_large`）。`samples[]` 为 agent 端已按 5s 桶聚合的批（含 `bucketStartMs`/`sampleCount`/各 `*Avg`/`*Max`/`*Min` 字段）。
+>
+> **FR-147 健康值模型已实现**：`self` 回传 `{score, level, schedulable, reasons[]}`（无视图时仍 `null`）；健康计算轮每 5s 锁外读 DB 事实 + 聚合 60s 内存窗口整批替换健康视图，>30s 无批判 `lost`；每 30s 全量视图经异步通道落 `health_snapshot_YYYYMMDD`。**FR-146 调度决策服务端已实现**：`decide` 在健康视图上纯内存 highest_score 决策（同分优先容量占用率低者再随机）、决策行异步落 `sched_decision_YYYYMMDD`（trace_id 唯一键幂等）；`report-local` 按 localTraceId 幂等补报（≤100 条/批）；候选与决策全程请求 goroutine 零 DB。**agent 侧客户端与 `BeaconScheduling` 门面（FR-148）已实现**：agent-api 纯 Java 8 门面 + core `SchedulingView`（连接级失败走本地快照 highest_score 降级、future 不异常完成不阻塞玩家链路）+ `SchedulingRefresher`（10s 拉候选刷缓存 + 原子落盘 `candidates-snapshot.json`、恢复后 report-local 补报）+ `selfHealth` 消费 metrics 响应 self 段；真机 fail-static e2e 见 [OPERATIONS](OPERATIONS.md) §7.6。
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/metrics/summary` | 集群聚合概览（分角色 / level 分布 / schedulable 计数）**【已实现·FR-147】** |
+| GET | `/admin/v2/metrics/series` | 单服 / 多服指标时序（服务端聚合，serverId 必填、跨日并表）**【已实现·FR-147】** |
+| GET | `/admin/v2/health` | 全部服务器当前健康列表（内存实时）**【已实现·FR-147】** |
+| GET | `/admin/v2/health/{serverId}` | 单服健康详情（因子分解 + 权重版本）**【已实现·FR-147】** |
+| GET | `/admin/v2/health/snapshots` | 健康快照回放（查询侧不隐式建日表）**【已实现·FR-147】** |
+| GET | `/admin/v2/sched-decisions` | 调度决策记录分页查询（from/to 必填、跨日并表）**【已实现·FR-146】** |
+| GET | `/admin/v2/sched-decisions/{traceId}` | 单条决策详情（候选 / 排除原因 / 选择）**【已实现·FR-146】** |
+| GET | `/admin/v2/sched-decisions/summary` | 决策概览（成功率 / 失败原因 Top / 降级占比）**【已实现·FR-146】** |
+| GET | `/admin/v2/settings/health-weights` | 当前健康权重配置 + 历史 rev **【已实现·FR-147】** |
+| PUT | `/admin/v2/settings/health-weights` | 全量替换健康权重（校验 → 镜像 + 新 rev + 审计 → 热更下轮生效）**【已实现·FR-147】** |
+
+> agent-api 本机接口（`BeaconScheduling`）见其 §5.3；排空切换端点已收编至区服权威域（上表 `/servers/{serverId}/draining`），不重复。
+
+### 连接消息存储（P5 · 0.25.x，真源 [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/connections/batch` | proxy 批量上报连接 open / close 事件 **【已实现·FR-145】** |
+| POST | `/beacon/v2/agent/messages/send` | 发送跨服消息（server / player / **broadcast** 寻址，广播可选 `targetZone` 做 zone 级定向）；payload 接受 object / array / string / number / boolean / null；Agent 先按 JSON 编码后的 UTF-8 字节数执行 64KB 前置校验，控制面再按中转 / 保存文本执行 64KB 硬校验；`msgType` 非空且 UTF-8 编码 ≤64 字节（冒号合法） **【已实现·FR-149/180】** |
+| POST | `/beacon/v2/agent/messages/poll` | 长轮询拉取本服待投消息（无消息 204）；payload 往返保持 JSON 类型，string 保持业务原文且不做二次 JSON 编码，object / array / number / boolean 以 JSON 文本中转，null 表示无 payload **【已实现·FR-149】** |
+| POST | `/beacon/v2/agent/messages/ack` | 批量回执投递结果 **【已实现·FR-149/150】** |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/connections` | 连接明细查询（强制精确 ID 或过滤 + 时间范围） **【已实现·FR-145】** |
+| GET | `/admin/v2/connections/{connId}` | 单连接详情 **【已实现·FR-145】** |
+| GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
+| GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`） **【已实现·FR-149/180】** |
+| GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
+| POST | `/admin/v2/messages/{messageId}/payload` | 查看 payload（权限 + 原因必填 + 先审计后返回） **【已实现·FR-150】** |
+| GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
+
+### 热冷归档（P6 · 0.26.x，真源 [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/archive/overview` | 归档总览（目标库 / 各域水位与保留期） **【已实现·FR-151/153】** |
+| POST | `/admin/v2/archive/jobs` | 创建归档任务（dry-run / 执行；有 running 409） **【已实现·FR-153】** |
+| GET | `/admin/v2/archive/jobs` | 任务列表（status/mode/trigger 过滤 + 分页） **【已实现·FR-153】** |
+| GET | `/admin/v2/archive/jobs/{id}` | 任务详情（逐域 item 进度与校验结果） **【已实现·FR-153】** |
+| POST | `/admin/v2/archive/jobs/{id}/retry` | 失败任务断点续跑（仅 failed 否则 409） **【已实现·FR-153】** |
+| POST | `/admin/v2/archive/jobs/{id}/cancel` | 取消任务（仅 pending/running 否则 409） **【已实现·FR-153】** |
+
+> 保留期等设置走运维设置域端点（`archive.*` 键已入 `/admin/v1/settings` 白名单，≥7 天守卫，**【已实现·FR-151】**）；冷查询参数 `includeArchived=true`（强制时间范围 ≤ `archive.cold-query-max-days` 默认 31、归档不可达 503、应用层归并去重保热侧）已挂各查询域端点 `/audits`、`/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}`（§4.4 跨域契约，**【已实现·FR-152】**），均不在 `/archive/*` 下。归档到同实例独立 database `beacon_archive`（或独立 DSN）走双连接应用层搬运 + sha256 校验门（[ADR-0066](adr/0066-hot-cold-archive-dual-connection.md)）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
+
+### 配置中心 V2（P7 · 0.27.x，真源 [v2-config-center.md](specs/v2-config-center.md) §5）
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/config-files` | 配置文件分页列表 **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files` | 创建配置文件（格式 / schema / 敏感路径） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}` | 文件元数据 + 各层覆盖概览 **【已实现·FR-160/161】** |
+| PATCH | `/admin/v2/config-files/{id}` | 更新描述 / schema / 敏感路径 **【已实现·FR-160/161】** |
+| DELETE | `/admin/v2/config-files/{id}` | 移入回收站（软删除，版本链保留） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/trash` | 回收站分页列表 **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/restore` | 从回收站恢复（名称被占用 409） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/purge` | 彻底删除（物理删除连带版本链，原因必填） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/scopes` | 各层贡献链概览 **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/versions` | 某链版本列表 **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-versions/{versionId}` | 版本详情（内容脱敏） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/versions` | 保存新版本（语法 / schema 校验 + 并发守卫） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-versions/{versionId}/rollback` | 回退（生成内容等于历史版本的新版本） **【已实现·FR-160/161】** |
+| DELETE | `/admin/v2/config-files/{id}/scopes/{scopeLevel}/{scopeRefId}` | 撤销某层贡献（生成 removal 版本） **【已实现·FR-160/161】** |
+| POST | `/admin/v2/config-files/{id}/validate` | 只读校验（不落库不审计） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/effective` | 有效配置预览（五层合并 + 逐键来源） **【已实现·FR-160/161】** |
+| GET | `/admin/v2/config-files/{id}/diff` | 版本间 / 层间 / 目标间键级 diff **【已实现·FR-160/161】** |
+
+> 本域**无 agent 面端点**：配置下发 / 生效 / 灰度全部归交付编排域（变更单）。合并语义为键级深合并（标量覆盖 / map 深合并 / list 整替 / null 删键，spec §4.1）；schema 用 JSON Schema Draft 2020-12 子集（`santhosh-tekuri/jsonschema/v6`）做部分校验（required 仅 namespace 基线层强制）；敏感值 write-only（读出口统一 `__BEACON_MASKED__`、保存占位符回填 head 明文）；`/configs` 页面接真随 0.27.1。
+
+### 文件资产 V2（P8 · 0.28.x，真源 [v2-file-assets.md](specs/v2-file-assets.md) §5）
+
+agent 面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/beacon/v2/agent/assets/manifest` | 上报文件清单（增量 / 全量分片，摘要校准） |
+| POST | `/beacon/v2/agent/assets/content` | 回传单文件内容（响应 `asset-read` 命令） |
+
+管理面：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/admin/v2/assets` | 资产搜索分页（路径 / 扩展名 / 哈希组合条件） |
+| GET | `/admin/v2/assets/scan-status` | 每服扫描概要（摘要 / 文件数 / 耗时） |
+| GET | `/admin/v2/assets/compare` | 跨服同路径哈希分组比对 + 缺失服列表 |
+| POST | `/admin/v2/assets/rescan` | 批量下发重扫命令 |
+| POST | `/admin/v2/assets/preview` | 文本文件安全预览（敏感命中须填原因） |
+| POST | `/admin/v2/assets/diff` | 两侧文件内容 diff（二进制 / 超限拒绝） |
+| GET | `/admin/v2/assets/sensitive-rules` | 敏感路径规则清单 |
+| PUT | `/admin/v2/assets/sensitive-rules` | 整体替换敏感路径规则（审计） |
+
+> 下行命令 `asset-rescan` / `asset-read` 经既有长轮询命令通道，非独立端点。
+
+### 交付编排 V2（P9 · 0.29.x，真源 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5）
+
+管理面 `/admin/v2/change-orders`：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| POST | `/admin/v2/change-orders` | 创建 draft 变更单（含扫描目录范围 scanDir） |
+| GET | `/admin/v2/change-orders` | 变更单列表 |
+| GET | `/admin/v2/change-orders/{id}` | 详情（单 + items + 批次概要） |
+| PATCH | `/admin/v2/change-orders/{id}` | 编辑（approved 编辑触发回 draft） |
+| DELETE | `/admin/v2/change-orders/{id}` | 删除 draft 单（高风险确认） |
+| POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新快照重算差异返回 items；重扫另设（复用文件资产域 asset-rescan） |
+| GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页） |
+| POST | `/admin/v2/change-orders/{id}/submit` | 提交审批 |
+| POST | `/admin/v2/change-orders/{id}/withdraw` | 创建人撤回 |
+| POST | `/admin/v2/change-orders/{id}/approve` | 审批通过 |
+| POST | `/admin/v2/change-orders/{id}/reject` | 驳回（原因必填） |
+| POST | `/admin/v2/change-orders/{id}/start` | 启动（冲突守卫 + payload 准备） |
+| POST | `/admin/v2/change-orders/{id}/pause` | 人工暂停 |
+| POST | `/admin/v2/change-orders/{id}/resume` | 继续（retry_failed / skip_failed） |
+| POST | `/admin/v2/change-orders/{id}/cancel` | 紧急终止（原因必填） |
+| POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 批次推进门放行（末批确认即完成） |
+| POST | `/admin/v2/change-orders/{id}/rollback` | 整单回滚（重复调用重试 failed 目标） |
+| POST | `/admin/v2/change-orders/{id}/rollback/finish` | 残留失败时人工结束回滚 |
+| GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（批次 / 状态过滤） |
+| GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（健康 / TPS / 告警） |
+| GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度 |
+| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（before/after；`?serverId` 选目标、`?reason` 敏感放行） |
+
+> file-diff 走文件资产 V2 安全预览通道（FR-164：敏感路径保护 + `asset.preview` 查看审计 + agent 现取），响应 `{path, changeType, before, after, truncated, binary, serverId}`；正式契约（请求 / 响应 / 错误码）见 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.1「file-diff 端点契约」。
+
+agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/beacon/v2/agent/delivery/orders/{id}/upload-manifest` | 模板源拉取待上传 blob 清单 |
+| GET | `/beacon/v2/agent/delivery/orders/{id}/manifest` | 目标拉取本服文件清单（含普通文件差异与配置冻结工件） |
+| POST | `/beacon/v2/agent/delivery/orders/{id}/result` | 阶段回执（upload / push / activate / rollback） |
+
+> 目标 manifest 的 `files[]` additive 字段 `sourceKind` 取 `file_diff` / `config_artifact`，分别标记普通文件差异与配置冻结渲染工件；旧 Agent 对缺失字段按 `file_diff` 兼容，当前 Agent 对未知值 fail-closed。`configs` 保留为历史兼容字段且恒为空数组。含配置项时，控制面会校验预期配置路径集合与该目标冻结工件完全一致，缺任一工件返回 `409 config_artifact_missing`，不下发残缺清单；混合单同一路径同时出现普通文件差异与配置工件时，以 `config_artifact` 为准，保证每路径只下发一次。`hot_reload` 仅把 `config_artifact` 路径集合交给 Agent 既有配置变更回调，回调摘要按通知时磁盘实际状态确定；无配置工件成功 no-op，普通文件与 JAR 仅落盘。其 activate 回执状态机固定为：success→命令 `done`→目标 `activated`，failed→命令 `failed`→目标 `failed`，命令 `expired`→目标 `failed`，`pending` / `fetched` 超过 `activateTimeoutSec`→目标 `failed` 且控制面尽力将命令置 `expired`。
+
+流式数据面 `/beacon/v2/stream/delivery`：
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| HEAD | `/beacon/v2/stream/delivery/blobs/{sha256}` | blob 存在性 / 就绪查询（去重与断点判断） |
+| PUT | `/beacon/v2/stream/delivery/blobs/{sha256}` | 模板源流式上传（服务端校验 sha256） |
+| GET | `/beacon/v2/stream/delivery/blobs/{sha256}` | 目标流式下载（Range 断点续传） |
+
+## 契约治理
+
+- **P0 冻结**：本章通用约定 + 各 v2 规格 §5 端点表构成第二版契约草案基线，随 P0 出口冻结（[ROADMAP](ROADMAP.md) §3 / §5）。
+- **P2 mock 只依赖本草案**：全量 mock 管理台（FR-172）的页面数据形状只依赖本草案（含各规格 §5 的请求 / 响应形状），不接真后端。
+- **此后契约变更按 ADR 管理**：改语义、删字段、改路径、改错误码等破坏性变更，**必须**先写新 ADR 决策，并**同步已拍板的 mock 页面**；纯新增端点 / 新增可选字段类小改可不立 ADR，但仍须同一变更内更新对应规格 §5 与本章索引（doc-sync）。**禁止后端实现随手改契约**（ROADMAP §5 尾部约定）。
+- **漂移处置**：端点索引与规格 §5 不一致时，以规格为准并回补本章索引；通用约定与规格冲突时，以本章裁决为准并回改规格。

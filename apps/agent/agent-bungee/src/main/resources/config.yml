@@ -1,0 +1,109 @@
+# Beacon agent 本地引导配置（BungeeCord 代理）。由插件 ENABLE 阶段加载。
+# 本文件是 agent 的「出生证」，仅含连接控制面与本机身份的最小信息。
+# 注意：zone（小区）不在这里配置——zone 由 Beacon 控制面权威指派。
+# 环境变量覆盖（FR-33）：每个标量 / 列表项都可被 BEACON_AGENT_<点分路径大写、点与连字符转下划线> 覆盖，
+# env 优先于本文件（如 identity.server-id → BEACON_AGENT_IDENTITY_SERVER_ID）；动态键 metadata 仅本文件。
+
+beacon:
+  # 控制面地址列表（Go 后端 API 与 UI 同端口）。MVP 取首个；多个用于后续容灾轮询。
+  endpoints:
+    - "http://127.0.0.1:8848"
+  # 最低限度区分用的共享令牌，置于请求头 X-Beacon-Token。非安全边界，仅防误连。
+  # 必须与控制面 config.yml 的 agent-token 一致（默认同为 beacon-bootstrap-token，开箱即匹配）。
+  bootstrap-token: "beacon-bootstrap-token"
+
+identity:
+  # 环境（namespace）：prod / test，必须与控制面 namespace 一致。
+  namespace: "prod"
+  # 本机唯一身份，环境内唯一。必须显式配置，禁止自动生成；重复将被控制面拒绝。
+  server-id: "proxy-1"
+  # 大区提示：仅在「该 serverId 尚未被控制面分配 zone」时作为兜底 group 使用。
+  group-hint: "area1"
+  # 对外可达地址 ip:port，用于注册上报与服务发现展示。
+  address: "127.0.0.1:25577"
+  # 本服业务版本（标签，用于发现过滤），可留空。
+  version: "1.0.0"
+  # 容量（一等字段，发现过滤维度）。
+  capacity: 1000
+  # 权重（一等字段，发现过滤维度）。
+  weight: 100
+  # 自定义注册元数据：仅 string→string 键值对。
+  metadata:
+    region: "cn-east"
+
+timing:
+  # 长轮询客户端期望挂起上限（毫秒）。服务端会取 min(本值, 服务端上限)。
+  poll-timeout-ms: 30000
+  # 注册 / 心跳 / 上报普通请求的连接与读超时（毫秒）。
+  request-timeout-ms: 5000
+  # 心跳周期兜底值（毫秒）。实际以注册响应的 heartbeatIntervalSec 为准，本值仅在拿到响应前过渡。
+  heartbeat-fallback-ms: 10000
+
+backoff:
+  # 指数退避初始等待（毫秒）。
+  initial-ms: 1000
+  # 指数退避等待上限（毫秒）。
+  max-ms: 30000
+  # 每次退避的倍率。
+  multiplier: 2.0
+  # 退避抖动比例（±），避免大量实例同时重连惊群。
+  jitter-ratio: 0.2
+
+snapshot:
+  # 是否启用本地快照 fail-static（控制面不可用时按快照继续）。
+  enabled: true
+  # 快照文件名（落 agent 数据目录）。
+  file-name: "effective-config.snapshot.json"
+
+file-tree:
+  # 是否启用文件树托管同步（通道B）。关闭则只跑配置中心、不拉取/不落盘任何文件。
+  enabled: true
+  # 镜像落盘目标子目录（相对本代理 plugins 基目录）。留空表示直接落 plugins 根，
+  # 让各插件文件按相对 path 落到自己的目录，三方插件零改动从磁盘读取。
+  target-sub-dir: ""
+  # 本地「已落盘文件清单」文件名（落 agent 数据目录），记录本地镜像已是哪一版，用于增量比对与崩溃恢复。
+  applied-manifest-file-name: "file-tree.applied.json"
+
+# 文件资产索引（FR-163）：周期扫描本机 plugins 目录与服务器根目录顶层配置文件，生成清单
+# （路径 / sha256 / 大小 / mtime）增量上报控制面，供后台按服搜索、跨服比对与内容预览。纯只读、不改任何文件。
+assets:
+  # 是否启用文件资产索引。关闭则不扫描、不上报清单（配置中心与文件树托管不受影响）。
+  enabled: true
+  # 周期扫描间隔（秒），默认 1800（30 分钟）。下限 300 秒：低于 300 会被自动收口到 300，避免过频扫描踩踏。
+  scan-interval-sec: 1800
+  # 本地清单缓存文件名（落 agent 数据目录），记录上次成功上报的清单与控制面确认摘要，用于增量比对与重启续传。
+  manifest-file-name: "asset-manifest.json"
+
+# 三方插件文件覆盖兼容（FR-15）的本地参数。命令白名单只在本地配置，控制面无权下发——
+# 即便控制面被攻破，也无法越过本地白名单让 agent 执行任意命令。
+override:
+  # 受限重载命令的「首 token」白名单，默认空。空表示不允许 agent 派发任何重载命令（命令执行能力关闭）。
+  # 只有命令第一个词命中本列表（不区分大小写）才放行，例如填 ["lp"] 才允许 "lp sync"。
+  # 命令必须是单条控制台命令，含 ; & | > < $ 等元字符或换行一律被拒（防注入）。
+  command-whitelist: []
+  # 覆盖前备份区的目录名（落在 agent 数据目录下，与镜像目标分离），用于回滚还原被改/删的原文件。
+  backup-dir-name: "override-backup"
+
+# 跨服消息中间件（FR-26 / ADR-0016）的本地行为参数。proxy 侧据此维护玩家位置名册。
+# 注意：Redis 连接（host/port/db/password）不在这里——由 Beacon 配置中心下发（密码不入本地 yaml）。
+messaging:
+  # 是否启用跨服消息模块（含 proxy 维护玩家名册）。默认关。
+  enabled: false
+  # RPC（请求-响应）默认超时（毫秒）。
+  rpc-timeout-ms: 5000
+  # 每条收件流的近似 MAXLEN 上限（条）：旧消息自动淘汰，防止 Redis 内存无限增长。
+  stream-max-len: 10000
+  # 消费组内本消费者名（同服多进程场景区分；单进程留空即用默认）。
+  consumer-name: "default"
+
+# BC 代理路由参数（FR-48）。声明「本代理服务哪个小区的玩家」，据此挑该小区在 Beacon 配置的默认入口子服
+# 设为 BungeeCord 默认/fallback 服（玩家加入的落点）。这是本代理的路由意图，不是 zone 归属声明
+# （zone 归属仍由控制面权威，BC 不进 zone 指派）。多台 BC 配同一 home-zone 即共享同一默认入口。
+# 注意：未配 home-group/home-zone、或所配小区在 Beacon 未设默认入口、或默认入口当前不在线时，
+# 本代理不设任何默认服并打一条 WARN——玩家加入会遇 BungeeCord 原生「无默认服」拒绝（请去 Beacon
+# 为该小区配置默认入口），绝不把玩家静默落到非大厅子服。
+proxy:
+  # 本代理服务的大区编码。留空表示未配——此时不设默认服并告警（须去 Beacon 为该小区配默认入口）。
+  home-group: ""
+  # 本代理服务的小区（zone）编码。留空表示未配（同上不设默认服并告警）。home-group 与 home-zone 须同时配才生效。
+  home-zone: ""

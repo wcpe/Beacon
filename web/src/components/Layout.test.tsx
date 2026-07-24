@@ -68,7 +68,7 @@ function renderLayout(initialPath = '/') {
 
 // 改进 1：侧栏默认折叠（w-14、仅图标）。state/ui 的内存快照在模块加载时一次性读取，
 // 故测试须经 setSidebarCollapsed 设置（同时更新内存快照 + localStorage），不能仅写 localStorage。
-// 多数既有断言基于展开态结构（w-56、操作人信息块等），渲染前置展开态；折叠态另起一组断言锁定。
+// 多数既有断言基于展开态结构（w-52、操作人信息块等），渲染前置展开态；折叠态另起一组断言锁定。
 
 beforeEach(() => {
   localStorage.clear()
@@ -82,12 +82,12 @@ describe('Layout 顶栏化（FR-105 真机打磨：品牌上移整宽顶栏 + �
   it('品牌标题渲染在整宽顶栏内（已上移，不在侧边栏内）', () => {
     renderLayout()
     const brand = screen.getByText('Beacon')
-    // 品牌已上移至顶栏：不再落在侧边栏（aside）内，而在顶栏 header 内、宽度对齐侧栏（w-56）
+    // 品牌已上移至顶栏：不再落在侧边栏（aside）内，而在顶栏 header 内、宽度对齐侧栏（w-52）
     expect(brand.closest('aside')).toBeNull()
     const brandBtn = brand.closest('button')
     expect(brandBtn).not.toBeNull()
-    // FR-121：宽度（w-56）移到品牌区容器（button 父级），button 自身为内容宽
-    expect(brandBtn?.parentElement?.classList.contains('w-56')).toBe(true)
+    // FR-121：宽度（w-52）移到品牌区容器（button 父级），button 自身为内容宽
+    expect(brandBtn?.parentElement?.classList.contains('w-52')).toBe(true)
     expect(brandBtn?.closest('header')).not.toBeNull()
   })
 
@@ -180,7 +180,9 @@ describe('Layout 品牌区可点跳可观测看板', () => {
     const logo = brand.querySelector('img[src="/logo.svg"]')
     expect(logo).not.toBeNull()
     // 连接小灯已移除（FR-123，不再在品牌区；连接态由顶栏药丸显示）
-    const dot = brand.querySelector('span.rounded-full[aria-label^="控制面"], span.rounded-full[aria-label^="正在连接"]')
+    const dot = brand.querySelector(
+      'span.rounded-full[aria-label^="控制面"], span.rounded-full[aria-label^="正在连接"]',
+    )
     expect(dot).toBeNull()
   })
 
@@ -194,7 +196,7 @@ describe('Layout 品牌区可点跳可观测看板', () => {
   it('双击品牌区切换侧栏折叠/展开且不触发跳转（FR-121）', async () => {
     setSidebarCollapsed(false)
     renderLayout('/servers')
-    expect(document.querySelector('aside')?.classList.contains('w-56')).toBe(true)
+    expect(document.querySelector('aside')?.classList.contains('w-52')).toBe(true)
     await userEvent.dblClick(screen.getByRole('button', { name: '前往可观测看板' }))
     // 双击折叠 → w-14
     expect(document.querySelector('aside')?.classList.contains('w-14')).toBe(true)
@@ -225,9 +227,9 @@ describe('Layout 侧栏导航分组常驻（FR-93 方案 A）', () => {
   })
 
   it('叶子常驻显示（不折叠）：未命中路由的组其叶子也直接可见', () => {
-    // 当前在 /servers，概览组未命中，但其叶子「可观测看板」仍常驻可见（无折叠）
+    // 当前在 /servers，概览组未命中，但其叶子「运维总览」仍常驻可见（无折叠）
     renderLayout('/servers')
-    expect(screen.getByText('可观测看板')).toBeInTheDocument()
+    expect(screen.getByText('运维总览')).toBeInTheDocument()
     // 「服务器」此时出现两处：侧栏导航叶子 + 第二层页眉的当前页标题（FR-105），故用 getAllByText 断言至少一处
     expect(screen.getAllByText('服务器').length).toBeGreaterThan(0)
     // 不再使用 details/summary 折叠容器
@@ -280,7 +282,7 @@ describe('Layout 侧栏可折叠图标条（改进 1）', () => {
     renderLayout()
     const aside = document.querySelector('aside')
     expect(aside?.classList.contains('w-14')).toBe(true)
-    expect(aside?.classList.contains('w-56')).toBe(false)
+    expect(aside?.classList.contains('w-52')).toBe(false)
     // 品牌区容器窄化为 w-14（FR-121：w-14 在 button 父级）、品牌文案不显
     const brandBtn = screen.getByRole('button', { name: '前往可观测看板' })
     expect(brandBtn.parentElement?.classList.contains('w-14')).toBe(true)
@@ -303,9 +305,9 @@ describe('Layout 侧栏可折叠图标条（改进 1）', () => {
     renderLayout()
     // 初始折叠
     expect(document.querySelector('aside')?.classList.contains('w-14')).toBe(true)
-    // 点「展开侧栏」按钮 → 变 w-56
+    // 点「展开侧栏」按钮 → 变 w-52
     await userEvent.click(screen.getByRole('button', { name: '展开侧栏' }))
-    expect(document.querySelector('aside')?.classList.contains('w-56')).toBe(true)
+    expect(document.querySelector('aside')?.classList.contains('w-52')).toBe(true)
     // 持久化到 localStorage
     expect(localStorage.getItem('beacon.ui')).toContain('"sidebarCollapsed":false')
   })

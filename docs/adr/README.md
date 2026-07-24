@@ -34,7 +34,7 @@
 | [0028](0028-allow-hosting-agent-self-dir.md) | 放开控制面对 agent 自身目录的托管拦截，自我保护下沉到 agent observe-only（FR-38/FR-39 归真） | 已接受 |
 | [0029](0029-file-tree-structured-deep-merge.md) | 文件树结构化文件跨层深合并、可按文件豁免（取代 ADR-0010 决策1） | 已接受（合并语义不变；**「值归一化可接受」一条被 [0034](0034-file-tree-lossless-merge.md) 取代**） |
 | [0030](0030-git-export-mirror.md) | git 单向导出镜像（派生备份 / 灾备 / 外部可见，不作第二真源；推荐 go-git） | 已接受 |
-| [0031](0031-zone-default-entry-and-bc-injection.md) | 小区默认入口（DB 权威）+ BC 注入 BungeeCord 默认/fallback 服（home-zone 为数据面路由配置，不违反 ADR-0004） | 已接受 |
+| [0031](0031-zone-default-entry-and-bc-injection.md) | 小区默认入口（DB 权威）+ BC 注入 BungeeCord 默认/fallback 服（home-zone 为数据面路由配置，不违反 ADR-0004） | 存储决策被 [0067](0067-default-entry-v2-authority.md) 取代，注入机制仍有效 |
 | [0032](0032-instance-active-offline-state.md) | 实例主动下线态：落 DB 拒绝接入，区别于 drain 与健康 TTL（显式扩展 ADR-0017 范围） | 已接受 |
 | [0033](0033-web-i18n-framework.md) | 管理台引入 react-i18next 国际化框架：zh-CN 先行、全站文案 key 化、审计 action 经 i18n 映射、等值迁移 | 已接受 |
 | [0034](0034-file-tree-lossless-merge.md) | 文件树通道改无损深合并（保标量原文 / 精度 / 注释），配置中心维持有损（取代 ADR-0029「值归一化可接受」一条） | 已接受 |
@@ -55,12 +55,29 @@
 | [0049](0049-agent-fs-browse.md) | agent 只读交互式文件浏览（懒列目录 / 读文件树 / 读单文件）：限 plugins 根 + path traversal 强校验 + 纯只读 + async 不碰主线程 + 大目录分页惰加载 + fail-static；控制面侧（FR-110）复用 ADR-0027/0037 命令通道 + FR-104 生命周期代理浏览（区别于 FR-58 一次性 scan） | 已接受 |
 | [0050](0050-config-xftp-workspace.md) | 配置中心双面板 Xftp 工作台（左受管树 ↔ 右在线服实时浏览 plugins）：**前端改接已有分散端点、不新造 /workbench/* 聚合 BFF**（原型 mock 退场）；FR-112 真详情多标签编辑器、FR-113 三页合一 IA + 退役 ConfigsPage，反抓/拓印后端复用不变 | 已接受 |
 | [0051](0051-config-operation-undo.md) | 配置操作级撤回子系统：新增可移植 `reversible_operation` 表对 push/publish/fetch 记可逆账目，撤回复用既有版本回滚 + 长轮询重推 + 反抓软删，多表写事务原子（提交后才唤醒）+ status 幂等闸 + 行/乐观锁并发安全 + 时间窗/被覆盖双闸防脏撤回，agent 零改 | 已接受 |
-| [0052](0052-rolling-prerelease-channel.md) | 滚动预发布渠道 + 版本号判新（取代 ADR-0046 的 rc 模型）：渠道收敛为「正式/预发布」两条、去 rc；推 master 自动覆盖发布滚动 prerelease（移动 tag、版本=VERSION）；in-app 更新按语义版本号 X.Y.Z 比较判新（同号不提示、跨号才提示）；渠道仍用 GitHub prerelease 布尔区分、复用 _build-release.yml | 决策 2 被 [0054](0054-rolling-prerelease-version-ci-computed.md) 取代、决策 4/5 被 [0055](0055-rolling-prerelease-dev-sha-version.md) 取代、余仍有效 |
+| [0052](0052-rolling-prerelease-channel.md) | 滚动预发布渠道 + 版本号判新（取代 ADR-0046 的 rc 模型） | 滚动 prerelease、移动 `dev` 与双渠道决策已被 [0073](0073-standard-rc-ga-release-lifecycle.md) 取代；当前 RC/GA 流程以 [0074](0074-simple-rc-ga-release-flow.md) 为准 |
 | [0053](0053-single-binary-self-replace.md) | 控制面单进程二进制自替换 + 自动回滚（取代 [0045](0045-builtin-launcher-supervisor.md)、部分取代 [0044](0044-control-plane-online-self-update.md) 决策 5/6/7）：Windows 可 rename 运行中 exe（证伪「主进程自换必败」），主进程 rename 让位三步自替换 + sentinel 启动自检 + 崩 N 次自动回退 .old；删 beacon-launcher 与 exitcode，崩溃自启交外部 docker/systemd | 已接受 |
 | [0054](0054-rolling-prerelease-version-ci-computed.md) | 滚动预发布版本号由 CI 自算（取代 [0052](0052-rolling-prerelease-channel.md) 决策 2 版本取 VERSION）：CI 取最新正式 release minor+1、与 VERSION 解耦自动领先，根除「发版后忘 bump VERSION 致预发布与正式版同号」 | CI 自算 / 与 VERSION 解耦仍有效；基线 minor+1 与「纯 X.Y.Z」均被 [0056](0056-rolling-prerelease-dev-distance-version.md) 取代 |
 | [0055](0055-rolling-prerelease-dev-sha-version.md) | 滚动预发布版本号带 -dev.&lt;sha&gt; + 同基线标识变即提示更新（取代 [0052](0052-rolling-prerelease-channel.md) 决策 4/5 与 [0054](0054-rolling-prerelease-version-ci-computed.md) 纯 X.Y.Z）：版本号 = minor+1 基线 + -dev.&lt;7位 commit sha&gt;（如 0.18.0-dev.715989a），in-app 判新改基线比较 + 同基线 dev.sha 标识变即更新，使每次 push 真机可反复检测触发、验证在线更新；正式渠道仍纯 X.Y.Z | 已被 [0056](0056-rolling-prerelease-dev-distance-version.md) 取代 |
-| [0056](0056-rolling-prerelease-dev-distance-version.md) | 滚动预发布版本号改 &lt;基线&gt;-dev.&lt;提交距离&gt;.g&lt;sha&gt; + 提交距离序号判新（取代 [0055](0055-rolling-prerelease-dev-sha-version.md) 全部、[0054](0054-rolling-prerelease-version-ci-computed.md) 基线 minor+1）：基线 = 最新正式 tag 不 +1、提交距离作有序序号、收敛 scripts/dev-version.sh、移动 tag prerelease→dev；in-app 判新改「基线比较 + 提交距离序号」，无新提交不误报、有新提交必触发；正式渠道仍纯 X.Y.Z | 已接受 |
+| [0056](0056-rolling-prerelease-dev-distance-version.md) | 滚动开发版本与提交距离判新 | 已被 [0073](0073-standard-rc-ga-release-lifecycle.md) 取代；当前开发产物与 RC/GA 边界以 [0074](0074-simple-rc-ga-release-flow.md) 为准 |
 | [0057](0057-surface-desensitized-errors.md) | 操作错误脱敏后展示前端（反转「一律藏内部错误」）：新增 `internal/redact.Desensitize` 打码凭据（URL 账密 / token / password / secret / api-key / Bearer·Basic），`render.WriteError` 对内部错误返回脱敏真因（非笼统「内部错误」、仍记完整日志 + traceId），前端 MutationCache 全局兜底 toast；内网地址 / 路径等运维上下文不打码。让运维看得见失败原因又不泄露凭据（FR-122） | 已接受 |
+| [0058](0058-controlled-large-file-sync-channel.md) | 受控大文件同步通道：`agent_command` 只做编排控制，大文件经 agent 出站流式 HTTP 上传到控制面缓存、目标分批流式拉取；本通道允许 jar / 地图 / 资源包等二进制，目录限服务器根内相对路径，目标仅 bukkit，管理台进度走独立 SSE | 已接受 |
+| [0059](0059-internal-ui-package-and-component-museum.md) | 管理台通用 UI 包与控件博物馆：通用 UI / 展示组件迁入 `web/packages/ui` 内部包，业务壳组件留主应用；新增独立 `web/apps/ui-wiki` 开发期控件博物馆展示全部导出组件，不进主后台生产路由 | 已接受 |
+| [0060](0060-monorepo-layout-and-v2-frontend-stack.md) | monorepo 工作区布局与第二版前端栈（部分取代 ADR-0002 布局约定） | 已接受 |
+| [0061](0061-strictest-static-analysis-three-lines.md) | 静态检查最严档三线 | 已接受 |
+| [0062](0062-frontend-contract-types-package.md) | 前端响应契约类型独立成包（devmock 反向依赖 contracts） | 已接受 |
+| [0063](0063-cross-server-message-control-plane-relay.md) | 跨服消息通道改控制面 HTTP 单跳中转（取代 ADR-0016 传输层与 Redis 决策） | 已接受（决策 2 寻址范围与决策 7 topic no-op 被 [0065](0065-message-broadcast-addressing.md) 取代） |
+| [0064](0064-alert-event-handling-workflow.md) | 告警事件处理工作流（status/ack/resolve）与健康 activeAlerts 因子接真 | 已接受 |
+| [0065](0065-message-broadcast-addressing.md) | 跨服消息新增广播寻址（namespace / zone 级 fan-out），复活 topic 门面 | 已接受 |
+| [0066](0066-hot-cold-archive-dual-connection.md) | 热冷数据归档采用独立 database 双连接 + 应用层搬运 | 已接受 |
+| [0067](0067-default-entry-v2-authority.md) | 小区默认入口真源收敛 v2 server.is_default_entry（取代 ADR-0031 存储决策） | 已接受 |
+| [0068](0068-asset-manifest-sync-protocol.md) | 文件资产清单上报协议（增量 delta + 摘要校准 + 全量分片兜底） | 已接受 |
+| [0069](0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md) | 交付数据面：控制面 sha256 内容寻址 blob 中转 + agent 流式传输端口（扩展 ADR-0005） | 已接受 |
+| [0070](0070-agent-graceful-shutdown-primitive.md) | agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理） | 已接受 |
+| [0071](0071-config-gray-effectuation-model.md) | 变更单配置变更的灰度生效语义模型（模型 A：head=定稿非生效、pin 落后者到 from、配置域零改动） | 已接受 |
+| [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
+| [0073](0073-standard-rc-ga-release-lifecycle.md) | 通用 RC/GA 生命周期与 GA-only 在线更新背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
+| [0074](0074-simple-rc-ga-release-flow.md) | 简化 RC/GA 发布：不可变 RC、同 commit 原样晋级、SHA-256 校验与 GA-only 更新 | 已接受；取代 ADR-0072/0073 中 P10 专属准入、审批、Central/OCI、manifest 与证据链要求 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

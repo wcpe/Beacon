@@ -27,15 +27,22 @@ import {
 } from 'lucide-react'
 import { systemObservability, systemStatus } from '@/api/client'
 import { formatBytes, formatDuration } from '@/api/format'
-import AsyncSection from '@/components/AsyncSection'
+import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
-import AnchorRailLayout, { AnchorSectionBlock, type AnchorSection } from '@/components/AnchorRailLayout'
-import { CardGridSkeleton } from '@/components/skeletons'
-import { Skeleton } from '@/components/ui/skeleton'
-import GaugeRing from '@/components/dashboard/GaugeRing'
-import { countLevel, levelSolid, levelText, ratioLevel, statusLevel, type HealthLevel } from '@/components/dashboard/health'
+import { AnchorRailLayout, AnchorSectionBlock, type AnchorSection } from '@beacon/ui'
+import { CardGridSkeleton } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import { GaugeRing } from '@beacon/ui'
+import {
+  countLevel,
+  levelSolid,
+  levelText,
+  ratioLevel,
+  statusLevel,
+  type HealthLevel,
+} from '@beacon/ui'
 import { cn } from '@/lib/utils'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@beacon/ui'
 
 // 自观测快照刷新周期（毫秒）：本页打开时短周期轮询，反映控制面当前内部态（不进 FR-33 页眉高频轮询）。
 const OBS_REFETCH_MS = 5000
@@ -101,7 +108,9 @@ function MetricRow({
           {hint && <div className="mt-0.5 text-xs text-muted-foreground">{hint}</div>}
         </div>
       </div>
-      <div className={cn('text-sm font-medium tabular-nums', level && levelText(level))}>{value}</div>
+      <div className={cn('text-sm font-medium tabular-nums', level && levelText(level))}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -123,9 +132,16 @@ export default function SystemObservabilityPage() {
 
   // ===== 仪表环总览行派生：占比 / 等级 =====
   // DB 连接池占用率：已建 / 上限（上限 0 表无限，占比不可算 → null）。
-  const dbRatio = data && data.dbPool.maxOpenConnections > 0 ? data.dbPool.openConnections / data.dbPool.maxOpenConnections : null
+  const dbRatio =
+    data && data.dbPool.maxOpenConnections > 0
+      ? data.dbPool.openConnections / data.dbPool.maxOpenConnections
+      : null
   // 等待次数 > 0 即标注意（连接池有过排队）。
-  const dbLevel: HealthLevel = data ? (data.dbPool.waitCount > 0 ? 'warn' : ratioLevel(dbRatio ?? 0)) : 'muted'
+  const dbLevel: HealthLevel = data
+    ? data.dbPool.waitCount > 0
+      ? 'warn'
+      : ratioLevel(dbRatio ?? 0)
+    : 'muted'
   // 长轮询挂起：无固定上限，仅作计数环（满灰底，等级恒正常——挂起是常态）。
   const longpollLevel: HealthLevel = 'ok'
   // 命令队列：失败 / 过期 > 0 标危险，待拉取积压标注意。
@@ -135,17 +151,39 @@ export default function SystemObservabilityPage() {
   // 注册表：失联 + 离线 > 0 标危险，亚健康 > 0 标注意。
   const regLost = (data?.registryByStatus.lost ?? 0) + (data?.registryByStatus.offline ?? 0)
   const regDegraded = data?.registryByStatus.degraded ?? 0
-  const regLevel: HealthLevel = data ? (regLost > 0 ? 'danger' : regDegraded > 0 ? 'warn' : 'ok') : 'muted'
+  const regLevel: HealthLevel = data
+    ? regLost > 0
+      ? 'danger'
+      : regDegraded > 0
+        ? 'warn'
+        : 'ok'
+    : 'muted'
   // 进程运行时分区无聚合阈值，进程在跑即正常（数据缺失时中性）。
   const runtimeLevel: HealthLevel = data ? 'ok' : 'muted'
 
   // 锚点 rail 分区（FR-108）：5 分区带状态色点，与下方 AnchorSectionBlock 的 id 一一对应。
   const railSections: AnchorSection[] = [
-    { id: SECTION_RUNTIME, label: t('observability.runtimeTitle'), dot: <RailDot level={runtimeLevel} /> },
+    {
+      id: SECTION_RUNTIME,
+      label: t('observability.runtimeTitle'),
+      dot: <RailDot level={runtimeLevel} />,
+    },
     { id: SECTION_DB, label: t('observability.dbPoolTitle'), dot: <RailDot level={dbLevel} /> },
-    { id: SECTION_LONGPOLL, label: t('observability.longpollTitle'), dot: <RailDot level={longpollLevel} /> },
-    { id: SECTION_REGISTRY, label: t('observability.registryTitle'), dot: <RailDot level={regLevel} /> },
-    { id: SECTION_COMMAND, label: t('observability.commandTitle'), dot: <RailDot level={cmdLevel} /> },
+    {
+      id: SECTION_LONGPOLL,
+      label: t('observability.longpollTitle'),
+      dot: <RailDot level={longpollLevel} />,
+    },
+    {
+      id: SECTION_REGISTRY,
+      label: t('observability.registryTitle'),
+      dot: <RailDot level={regLevel} />,
+    },
+    {
+      id: SECTION_COMMAND,
+      label: t('observability.commandTitle'),
+      dot: <RailDot level={cmdLevel} />,
+    },
   ]
 
   // 页眉（FR-105）：标题 + 副标题，系统页非环境范围；刷新中提示并入副标题（短暂）
@@ -165,7 +203,11 @@ export default function SystemObservabilityPage() {
           // 仪表环总览行 + 详细明细卡占位：贴近「1 总览卡 + 6 明细卡」布局
           <div className="space-y-4">
             <Skeleton className="h-32 w-full rounded-xl" />
-            <CardGridSkeleton count={6} heightClass="h-64" gridClass="grid grid-cols-1 gap-4 xl:grid-cols-2" />
+            <CardGridSkeleton
+              count={6}
+              heightClass="h-64"
+              gridClass="grid grid-cols-1 gap-4 xl:grid-cols-2"
+            />
           </div>
         }
       >
@@ -184,7 +226,11 @@ export default function SystemObservabilityPage() {
                     level={dbLevel}
                     label={t('observability.gaugeDbPool')}
                     valueText={`${data.dbPool.openConnections} / ${data.dbPool.maxOpenConnections > 0 ? data.dbPool.maxOpenConnections : '∞'}`}
-                    hint={dbRatio === null ? t('observability.gaugeNoLimit') : t('dashboard.bcReachPercent', { percent: Math.round(dbRatio * 100) })}
+                    hint={
+                      dbRatio === null
+                        ? t('observability.gaugeNoLimit')
+                        : t('dashboard.bcReachPercent', { percent: Math.round(dbRatio * 100) })
+                    }
                   />
                   <GaugeRing
                     icon={<Hourglass className="size-6" />}
@@ -201,7 +247,11 @@ export default function SystemObservabilityPage() {
                     valueText={String(
                       COMMAND_ORDER.reduce((sum, s) => sum + (data.commandByStatus[s] ?? 0), 0),
                     )}
-                    hint={cmdFailed > 0 ? t('observability.gaugeCmdFailed', { count: cmdFailed }) : undefined}
+                    hint={
+                      cmdFailed > 0
+                        ? t('observability.gaugeCmdFailed', { count: cmdFailed })
+                        : undefined
+                    }
                   />
                   <GaugeRing
                     icon={<Layers className="size-6" />}
@@ -209,7 +259,9 @@ export default function SystemObservabilityPage() {
                     level={regLevel}
                     label={t('observability.gaugeRegistry')}
                     valueText={String(data.registryTotal)}
-                    hint={regLost > 0 ? t('observability.gaugeRegLost', { count: regLost }) : undefined}
+                    hint={
+                      regLost > 0 ? t('observability.gaugeRegLost', { count: regLost }) : undefined
+                    }
                   />
                 </div>
               </CardContent>
@@ -255,7 +307,9 @@ export default function SystemObservabilityPage() {
                     icon={<HardDrive className="size-4" />}
                     label={t('observability.runtimeHeap')}
                     value={
-                      status ? `${formatBytes(status.runtime.heapAlloc)} / ${formatBytes(status.runtime.heapSys)}` : '-'
+                      status
+                        ? `${formatBytes(status.runtime.heapAlloc)} / ${formatBytes(status.runtime.heapSys)}`
+                        : '-'
                     }
                     hint={t('observability.runtimeHeapHint')}
                   />
@@ -264,7 +318,11 @@ export default function SystemObservabilityPage() {
                     label={t('observability.runtimeCpu')}
                     // cpuAvailable=false 表示采集失败，降级为「不可用」（gopsutil 容器内常见）
                     value={
-                      status ? (status.cpuAvailable ? `${status.cpuPercent.toFixed(1)}%` : t('systemHeader.unavailable')) : '-'
+                      status
+                        ? status.cpuAvailable
+                          ? `${status.cpuPercent.toFixed(1)}%`
+                          : t('systemHeader.unavailable')
+                        : '-'
                     }
                     hint={t('observability.runtimeCpuHint')}
                   />
@@ -284,7 +342,9 @@ export default function SystemObservabilityPage() {
                     icon={<Database className="size-4" />}
                     label={t('observability.dbMaxLabel')}
                     // maxOpenConnections=0 表示无限（database/sql 约定）
-                    value={data.dbPool.maxOpenConnections > 0 ? data.dbPool.maxOpenConnections : '∞'}
+                    value={
+                      data.dbPool.maxOpenConnections > 0 ? data.dbPool.maxOpenConnections : '∞'
+                    }
                     hint={t('observability.dbMaxHint')}
                   />
                   <MetricRow
@@ -326,10 +386,26 @@ export default function SystemObservabilityPage() {
                     value={data.longpoll.total}
                     hint={t('observability.longpollTotalHint')}
                   />
-                  <MetricRow icon={<Tag className="size-4" />} label={t('observability.longpollConfig')} value={data.longpoll.config} />
-                  <MetricRow icon={<HardDrive className="size-4" />} label={t('observability.longpollFile')} value={data.longpoll.file} />
-                  <MetricRow icon={<Layers className="size-4" />} label={t('observability.longpollTopology')} value={data.longpoll.topology} />
-                  <MetricRow icon={<Send className="size-4" />} label={t('observability.longpollCommand')} value={data.longpoll.command} />
+                  <MetricRow
+                    icon={<Tag className="size-4" />}
+                    label={t('observability.longpollConfig')}
+                    value={data.longpoll.config}
+                  />
+                  <MetricRow
+                    icon={<HardDrive className="size-4" />}
+                    label={t('observability.longpollFile')}
+                    value={data.longpoll.file}
+                  />
+                  <MetricRow
+                    icon={<Layers className="size-4" />}
+                    label={t('observability.longpollTopology')}
+                    value={data.longpoll.topology}
+                  />
+                  <MetricRow
+                    icon={<Send className="size-4" />}
+                    label={t('observability.longpollCommand')}
+                    value={data.longpoll.command}
+                  />
                 </div>
               </AnchorSectionBlock>
 

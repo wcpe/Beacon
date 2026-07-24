@@ -36,16 +36,42 @@ export default function CommandTrendChart({ points }: CommandTrendChartProps) {
   }
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <LineChart data={points as CommandDayCount[]} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+      <LineChart
+        data={points as CommandDayCount[]}
+        margin={{ top: 8, right: 16, bottom: 0, left: 8 }}
+      >
         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
         <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
         <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={40} />
-        <Tooltip formatter={(value, name) => [String(value), labels[String(name)] ?? String(name)]} />
+        <Tooltip
+          formatter={(value, name) => [String(value), labels[String(name)] ?? String(name)]}
+        />
         <Legend formatter={(value) => labels[String(value)] ?? String(value)} />
         {/* 下发=蓝 / 完成=绿 / 失败=红，与健康色语义一致 */}
-        <Line type="monotone" dataKey="issued" stroke="#2563eb" strokeWidth={2} dot={false} isAnimationActive={false} />
-        <Line type="monotone" dataKey="done" stroke="#16a34a" strokeWidth={2} dot={false} isAnimationActive={false} />
-        <Line type="monotone" dataKey="failed" stroke="#dc2626" strokeWidth={2} dot={false} isAnimationActive={false} />
+        <Line
+          type="monotone"
+          dataKey="issued"
+          stroke="#2563eb"
+          strokeWidth={2}
+          dot={false}
+          isAnimationActive={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="done"
+          stroke="#16a34a"
+          strokeWidth={2}
+          dot={false}
+          isAnimationActive={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="failed"
+          stroke="#dc2626"
+          strokeWidth={2}
+          dot={false}
+          isAnimationActive={false}
+        />
       </LineChart>
     </ResponsiveContainer>
   )

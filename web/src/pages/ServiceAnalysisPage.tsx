@@ -12,12 +12,12 @@ import StatCard from './dashboard/StatCard'
 import DayTrendChart from './service-analysis/DayTrendChart'
 import ActionRankChart from './service-analysis/ActionRankChart'
 import type { ActionRankItem } from './service-analysis/ActionRankChart'
-import AsyncSection from '@/components/AsyncSection'
+import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import { CardGridSkeleton } from '@/components/skeletons'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { CardGridSkeleton } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import { Tabs, TabsList, TabsTrigger } from '@beacon/ui'
 
 // 时间窗预设（天数）：本地算 from/to 传 RFC3339；窗口上限 92 天内，故 7/30 天均合法。
 type AnalyticsWindow = '7d' | '30d'
@@ -69,7 +69,12 @@ export default function ServiceAnalysisPage() {
 
   // 按动作排行：后端已降序，前端原样透传并映射中文标签喂图。
   const rankItems: ActionRankItem[] = useMemo(
-    () => (data?.byAction ?? []).map((a) => ({ action: a.action, label: actionLabel(a.action), count: a.count })),
+    () =>
+      (data?.byAction ?? []).map((a) => ({
+        action: a.action,
+        label: actionLabel(a.action),
+        count: a.count,
+      })),
     // actionLabel 闭包稳定（依赖 t），按 data 变更重算即可
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data],
@@ -144,13 +149,17 @@ export default function ServiceAnalysisPage() {
         <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
           {/* 按动作分布排行（降序柱状） */}
           <section className="space-y-3">
-            <h2 className="border-b pb-1.5 text-base font-medium">{t('serviceAnalysis.byActionTitle')}</h2>
+            <h2 className="border-b pb-1.5 text-base font-medium">
+              {t('serviceAnalysis.byActionTitle')}
+            </h2>
             <ActionRankChart items={rankItems} />
           </section>
 
           {/* 每日趋势折线 */}
           <section className="space-y-3">
-            <h2 className="border-b pb-1.5 text-base font-medium">{t('serviceAnalysis.byDayTitle')}</h2>
+            <h2 className="border-b pb-1.5 text-base font-medium">
+              {t('serviceAnalysis.byDayTitle')}
+            </h2>
             <DayTrendChart points={dayPoints} />
           </section>
         </div>

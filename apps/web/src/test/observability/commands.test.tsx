@@ -1,0 +1,104 @@
+// /commands 命令观测页测试：KPI + 历史列表渲染、空态、状态筛选交互。
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+
+import CommandsPage from '../../pages/commands'
+import { createTestServer, renderPage, useScenario } from './harness'
+
+const server = createTestServer()
+
+beforeAll(() => {
+  server.listen({ onUnhandledRequest: 'error' })
+})
+afterEach(() => {
+  server.resetHandlers()
+})
+afterAll(() => {
+  server.close()
+})
+
+describe('/commands 命令观测页', () => {
+  it('常规态渲染 KPI 与命令历史', async () => {
+    useScenario('normal')
+    renderPage(<CommandsPage />)
+
+    // KPI 命令总数标签出现
+    expect(await screen.findByText('命令总数')).toBeInTheDocument()
+    // 历史区块标题
+    expect(await screen.findByText('命令历史')).toBeInTheDocument()
+    // 历史列表出现已知命令类型（devmock COMMAND_TYPES 之一）
+    expect((await screen.findAllByText(/asset_rescan|resync-config|tail-logs/)).length).toBeGreaterThan(0)
+  })
+
+  it('空态给出无记录提示', async () => {
+    useScenario('empty')
+    renderPage(<CommandsPage />)
+
+    expect(await screen.findByText('当前筛选条件下无命令记录')).toBeInTheDocument()
+  })
+
+  it('按状态筛选失败后列表出现失败结果', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<CommandsPage />)
+
+    // 等待首屏历史列表
+    await screen.findByText('命令历史')
+
+    // 选择状态=失败：组件库 Select 需先展开触发器再点选项
+    await user.click(screen.getByLabelText('状态'))
+    await user.click(await screen.findByRole('option', { name: '失败' }))
+
+    // 列表内出现失败结果文案（devmock failed 行 resultDetail），且筛选后仅剩失败命令
+    await waitFor(() => {
+      expect(screen.getAllByText('执行失败：agent 回执超时').length).toBeGreaterThan(0)
+    })
+  })
+
+  it('点击命令历史行打开右侧非模态详情面板', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<CommandsPage />)
+
+    await screen.findByText('命令历史')
+
+    // 取命令历史列表首行（有 tr 祖先的命令类型单元格）
+    let row: HTMLTableRowElement | null = null
+    await waitFor(() => {
+      const cells = screen.getAllByText(/asset_rescan|resync-config|tail-logs/)
+      row = cells.map((el) => el.closest('tr')).find((tr): tr is HTMLTableRowElement => tr !== null) ?? null
+      expect(row).not.toBeNull()
+    })
+    await user.click(row as unknown as HTMLElement)
+
+    // 固定层详情出现（命令详情 + 生命周期）；非 dialog，主表仍在
+    await waitFor(() => {
+      expect(screen.getByText('命令详情')).toBeInTheDocument()
+    })
+    expect(screen.getByText('生命周期')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('table').length).toBeGreaterThan(0)
+  })
+
+  it('URL 查询参数初始化筛选：serverId 落进搜索框并驱动服务端过滤（互跳承接，FR-157）', async () => {
+    useScenario('normal')
+    renderPage(<CommandsPage />, ['/commands?serverId=srv-none&status=failed'])
+
+    // serverId 搜索框以 URL 参数为初值
+    expect(await screen.findByLabelText('搜索服务器 ID')).toHaveValue('srv-none')
+    // 不存在的 serverId → 服务端过滤后历史列表为空
+    expect(await screen.findByText('当前筛选条件下无命令记录')).toBeInTheDocument()
+  })
+
+  it('URL status=failed 免交互直达失败命令列表（FR-157）', async () => {
+    useScenario('normal')
+    renderPage(<CommandsPage />, ['/commands?status=failed'])
+
+    await screen.findByText('命令历史')
+    // 无需任何 UI 交互，历史列表即为失败命令（devmock failed 行 resultDetail）
+    await waitFor(() => {
+      expect(screen.getAllByText('执行失败：agent 回执超时').length).toBeGreaterThan(0)
+    })
+  })
+})

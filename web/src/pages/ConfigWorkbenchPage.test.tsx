@@ -19,13 +19,44 @@ import type { ReactElement } from 'react'
 // ---- 替身：Monaco 编辑器 / toast 消息 ----
 vi.mock('@/components/CodeEditor', () => ({
   default: (props: { value?: string; onChange?: (v: string) => void }) => (
-    <textarea data-testid="code-editor" value={props.value ?? ''} onChange={(e) => props.onChange?.(e.target.value)} />
+    <textarea
+      data-testid="code-editor"
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange?.(e.target.value)}
+    />
   ),
 }))
 
 const toastSuccess = vi.fn()
+const toastError = vi.fn()
 vi.mock('@/components/useMessage', () => ({
-  useMessage: () => ({ showSuccess: toastSuccess, showError: vi.fn() }),
+  useMessage: () => ({ showSuccess: toastSuccess, showError: toastError }),
+}))
+
+// ---- 替身：真后端 client（FR-111 写操作接线）。各写函数替身化以断言真调用而不打网络。 ----
+const createFileMock = vi.fn()
+const deleteFileMock = vi.fn()
+const publishFileMock = vi.fn()
+const getFileMock = vi.fn()
+const createScanTaskMock = vi.fn()
+const getReverseFetchTaskMock = vi.fn()
+const submitReverseFetchTaskMock = vi.fn()
+const listConflictsMock = vi.fn()
+const conflictDiffMock = vi.fn()
+const resolveConflictsMock = vi.fn()
+vi.mock('@/api/client', () => ({
+  createFile: (...a: unknown[]) => createFileMock(...a),
+  deleteFile: (...a: unknown[]) => deleteFileMock(...a),
+  publishFile: (...a: unknown[]) => publishFileMock(...a),
+  getFile: (...a: unknown[]) => getFileMock(...a),
+  createScanTask: (...a: unknown[]) => createScanTaskMock(...a),
+  getReverseFetchTask: (...a: unknown[]) => getReverseFetchTaskMock(...a),
+  submitReverseFetchTask: (...a: unknown[]) => submitReverseFetchTaskMock(...a),
+  listConflicts: (...a: unknown[]) => listConflictsMock(...a),
+  conflictDiff: (...a: unknown[]) => conflictDiffMock(...a),
+  resolveConflicts: (...a: unknown[]) => resolveConflictsMock(...a),
+  // 撤回端点（操作日志真撤回，已有测试覆盖逻辑，这里仅替身化避免打网络）
+  undoReversibleOperation: vi.fn().mockResolvedValue({}),
 }))
 
 // ---- 替身：工作台数据 hook（注入受控 mock 数据，规避 fetch/MSW）----
@@ -39,6 +70,15 @@ vi.mock('./configs-workbench/useWorkbenchData', () => ({
   useIngestScanList: vi.fn(),
   useEffectivePreview: vi.fn(),
   usePublishImpact: vi.fn(),
+}))
+
+// ---- 替身：全局环境固定为 prod ----
+// 工作台是环境范围页：空环境（「全部环境」）下渲染「请选择具体环境」引导态而非双面板。
+// 测试覆盖的是有具体环境时的工作台闭环，故固定 prod。
+vi.mock('@/state/environment', () => ({
+  useEnvironment: () => 'prod',
+  setEnvironment: vi.fn(),
+  currentEnvironment: () => 'prod',
 }))
 
 import ConfigWorkbenchPage from './ConfigWorkbenchPage'
@@ -61,8 +101,26 @@ const MANAGED: ManagedNode[] = [
     type: 'folder',
     sync: 'drift',
     children: [
-      { key: 'plugins/spawn.yml', name: 'spawn.yml', type: 'file', sync: 'drift', scope: 'group', version: 4, modifiedAt: '今天' },
-      { key: 'plugins/motd.yml', name: 'motd.yml', type: 'file', sync: 'synced', scope: 'global', version: 2, modifiedAt: '3 天前' },
+      {
+        key: 'plugins/spawn.yml',
+        name: 'spawn.yml',
+        type: 'file',
+        sync: 'drift',
+        scope: 'group',
+        version: 4,
+        modifiedAt: '今天',
+        fileId: 7,
+      },
+      {
+        key: 'plugins/motd.yml',
+        name: 'motd.yml',
+        type: 'file',
+        sync: 'synced',
+        scope: 'global',
+        version: 2,
+        modifiedAt: '3 天前',
+        fileId: 8,
+      },
     ],
   },
 ]
@@ -73,36 +131,83 @@ const SERVER: ServerNode[] = [
     type: 'folder',
     mark: 'drift',
     children: [
-      { key: 'srv/plugins/regions.yml', name: 'regions.yml', type: 'file', mark: 'untracked', size: '88 KB', fileType: 'YAML', modifiedAt: '今天' },
+      {
+        key: 'srv/plugins/regions.yml',
+        name: 'regions.yml',
+        type: 'file',
+        mark: 'untracked',
+        size: '88 KB',
+        fileType: 'YAML',
+        modifiedAt: '今天',
+      },
     ],
   },
 ]
 const QUEUE_SEED: SyncQueueRow[] = [
-  { id: 'q-ing', name: 'WorldGuard/regions.yml', direction: 'fetch', status: 'pending-ingest', scopeTarget: '组 main', sourcePath: 'a', targetPath: 'b', time: '14:33' },
-  { id: 'q-imp', name: 'motd.yml', direction: 'push', status: 'pending-imprint', scopeTarget: '实例 lobby-1', sourcePath: 'c', targetPath: 'd', time: '14:30' },
+  {
+    id: 'q-ing',
+    name: 'WorldGuard/regions.yml',
+    direction: 'fetch',
+    status: 'pending-ingest',
+    scopeTarget: '组 main',
+    sourcePath: 'a',
+    targetPath: 'b',
+    time: '14:33',
+  },
+  {
+    id: 'q-imp',
+    name: 'motd.yml',
+    direction: 'push',
+    status: 'pending-imprint',
+    scopeTarget: '实例 lobby-1',
+    sourcePath: 'c',
+    targetPath: 'd',
+    time: '14:30',
+  },
 ]
 const LOG_SEED: OpLogEntry[] = [
-  { id: 'log-seed-1', time: '14:33', action: 'push', operator: 'admin', files: ['spawn.yml'], target: '实例 lobby-1', detail: '下发 spawn.yml', undone: false },
+  {
+    id: 'log-seed-1',
+    time: '14:33',
+    action: 'push',
+    operator: 'admin',
+    files: ['spawn.yml'],
+    target: '实例 lobby-1',
+    detail: '下发 spawn.yml',
+    undone: false,
+  },
 ]
 const OPTIONS = {
   scopes: [
     { value: 'global', label: '全局', scope: 'global' as const },
     { value: 'group:main', label: '组 main', scope: 'group' as const },
   ],
-  servers: [{ serverId: 'lobby-1', label: 'lobby-1', online: true }],
+  servers: [{ serverId: 'lobby-1', label: 'lobby-1', online: true, group: 'main' }],
 }
 const EFFECTIVE: EffectiveFile[] = [
   {
     name: 'spawn.yml',
     keys: [
       { key: 'world', chain: [{ scope: 'global', value: 'world' }] },
-      { key: 'x', chain: [{ scope: 'global', value: '120' }, { scope: 'group', value: '128' }] },
+      {
+        key: 'x',
+        chain: [
+          { scope: 'global', value: '120' },
+          { scope: 'group', value: '128' },
+        ],
+      },
     ],
   },
 ]
 const PUBLISH_IMPACT: PublishImpact = {
   files: [{ name: 'spawn.yml', scope: 'group', fromVersion: 4, toVersion: 5 }],
-  groups: [{ scope: 'group', label: '组 main', servers: [{ serverId: 'lobby-1', online: true, changed: true }] }],
+  groups: [
+    {
+      scope: 'group',
+      label: '组 main',
+      servers: [{ serverId: 'lobby-1', online: true, changed: true }],
+    },
+  ],
   driftCount: 1,
 }
 const FILE: WorkbenchFile = {
@@ -134,7 +239,19 @@ function installDefaults() {
   vi.mocked(wb.useWorkbenchOptions).mockReturnValue(q(OPTIONS))
   vi.mocked(wb.useWorkbenchFile).mockReturnValue(q(FILE))
   vi.mocked(wb.useIngestScanList).mockReturnValue(
-    q({ items: [{ path: 'regions.yml', size: '88 KB', ignored: false, defaultPick: true }], ignoreRules: ['*.db'] }),
+    q({
+      status: 'pending-review',
+      items: [
+        {
+          path: 'regions.yml',
+          size: '88 KB',
+          ignored: false,
+          defaultPick: true,
+          overThreshold: false,
+        },
+      ],
+      ignoreRules: ['*.db'],
+    }),
   )
   vi.mocked(wb.useEffectivePreview).mockReturnValue(q(EFFECTIVE))
   vi.mocked(wb.usePublishImpact).mockReturnValue(q(PUBLISH_IMPACT))
@@ -167,7 +284,19 @@ function renderPage(ui: ReactElement = <ConfigWorkbenchPage />, path = '/configs
 describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
   beforeEach(() => {
     toastSuccess.mockClear()
+    toastError.mockClear()
     vi.clearAllMocks()
+    // 真 client 写函数默认成功解析（各用例按需覆盖返回值）
+    createFileMock.mockResolvedValue({ id: 9, path: 'plugins/new.yml' })
+    deleteFileMock.mockResolvedValue(undefined)
+    publishFileMock.mockResolvedValue({ version: 5 })
+    getFileMock.mockResolvedValue({ content: 'a: 1\n' })
+    createScanTaskMock.mockResolvedValue({ id: 42, status: 'scanning' })
+    getReverseFetchTaskMock.mockResolvedValue({ id: 42, status: 'done', files: [], lastError: '' })
+    submitReverseFetchTaskMock.mockResolvedValue({ id: 42, status: 'done' })
+    listConflictsMock.mockResolvedValue([])
+    conflictDiffMock.mockResolvedValue({ fetchedMd5: 'm1' })
+    resolveConflictsMock.mockResolvedValue({ created: 1, updated: 0 })
     installDefaults()
   })
 
@@ -188,7 +317,7 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     expect(title.closest('.overflow-x-auto')).not.toBeNull()
   })
 
-  it('① 选中受管文件 → 发布面板 → 确认发布：toast 含已发布 + 队列出现「按覆盖层热推」完成行', async () => {
+  it('① 选中受管文件 → 发布面板 → 确认发布：调真 publishFile + toast 含已发布', async () => {
     renderPage()
     // 勾选 spawn.yml（受管侧复选框）
     fireEvent.click(screen.getByRole('checkbox', { name: 'spawn.yml' }))
@@ -200,15 +329,32 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     // driftCount=1 → 勾审阅闸再发布
     await userEvent.click(screen.getByLabelText('我已审阅全部 diff'))
     await userEvent.click(screen.getByRole('button', { name: '发布并热推（1 台）' }))
+    // 真发布：先 getFile 拿内容再 publishFile（fileId=2，spawn.yml 在 MANAGED 的真 fileId）
+    await waitFor(() => expect(publishFileMock).toHaveBeenCalled())
+    expect(getFileMock).toHaveBeenCalled()
     // 发布 toast
     await waitFor(() =>
       expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已发布 1 项')),
     )
-    // 队列里出现发布行（覆盖层·目标列文案「按覆盖层热推」）
-    expect(screen.getByText('按覆盖层热推')).toBeInTheDocument()
   })
 
-  it('② 选中服务器文件 → 抓取 → 二次确认 → 入队 + fetch toast', async () => {
+  it('② 选中服务器文件 → 抓取 → 二次确认 → 调真 createScanTask 并打开审核浮层', async () => {
+    // 抓取需扫描中→浮层显「扫描中」；这里让任务停在 pending-review 直接显清单
+    vi.mocked(wb.useIngestScanList).mockReturnValue(
+      q({
+        status: 'pending-review',
+        items: [
+          {
+            path: 'regions.yml',
+            size: '88 KB',
+            ignored: false,
+            defaultPick: true,
+            overThreshold: false,
+          },
+        ],
+        ignoreRules: ['*.db'],
+      }),
+    )
     renderPage()
     fireEvent.click(screen.getByRole('checkbox', { name: 'regions.yml' }))
     const fetchBtn = await screen.findByRole('button', { name: /抓取选中 1 项/ })
@@ -216,17 +362,31 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     // 二次确认弹窗
     expect(await screen.findByText('抓取 1 项到受管？')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '确认抓取' }))
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已加入抓取队列')))
+    // 真扫描任务（源 lobby-1 / 组 main / server 层定向覆盖随当前 scope）
+    await waitFor(() => expect(createScanTaskMock).toHaveBeenCalled())
+    // 审核浮层打开（真任务 #42）
+    expect(await screen.findByText('反向抓取 · 审核纳管清单')).toBeInTheDocument()
   })
 
-  it('③ 队列待审 ingest 行点开 → ingest 审核浮层 → 确认转完成', async () => {
+  it('③ 反向抓取审核浮层确认 → 调真 submitReverseFetchTask + 纳管 toast', async () => {
     renderPage()
-    // 队列 tab 默认显示；点开 fetch 待审行（名字 WorldGuard/regions.yml）
-    await userEvent.click(screen.getByText('WorldGuard/regions.yml'))
+    // 选中服务器侧文件 → 抓取 → 二次确认 → 真扫描任务 → 审核浮层（页眉「反向抓取」按钮由 Layout 渲染，
+    // 测试未挂 PageHeader，故经选中驱动状态栏的抓取入口触发同一条 scanMut 链路）
+    fireEvent.click(screen.getByRole('checkbox', { name: 'regions.yml' }))
+    await userEvent.click(await screen.findByRole('button', { name: /抓取选中 1 项/ }))
+    await userEvent.click(await screen.findByRole('button', { name: '确认抓取' }))
+    await waitFor(() => expect(createScanTaskMock).toHaveBeenCalled())
     expect(await screen.findByText('反向抓取 · 审核纳管清单')).toBeInTheDocument()
+    // 勾选项默认已选（defaultPick），点确认纳管 → 提交
     await userEvent.click(screen.getByRole('button', { name: /确认纳管/ }))
-    // 浮层关闭
-    await waitFor(() => expect(screen.queryByText('反向抓取 · 审核纳管清单')).not.toBeInTheDocument())
+    await waitFor(() => expect(submitReverseFetchTaskMock).toHaveBeenCalled())
+    // 任务 done（无冲突）→ 纳管 toast + 浮层关闭
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已纳管')),
+    )
+    await waitFor(() =>
+      expect(screen.queryByText('反向抓取 · 审核纳管清单')).not.toBeInTheDocument(),
+    )
   })
 
   it('③b 队列待审 imprint 行点开 → 拓印审核浮层（含审阅闸）→ 确认', async () => {
@@ -241,7 +401,9 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     // 审阅闸：勾选后确认
     await userEvent.click(screen.getByLabelText('我已审阅此 diff'))
     await userEvent.click(screen.getByRole('button', { name: '确认下发' }))
-    await waitFor(() => expect(screen.queryByText('拓印审核 · 期望值 ⟷ 服务器现状')).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.queryByText('拓印审核 · 期望值 ⟷ 服务器现状')).not.toBeInTheDocument(),
+    )
   })
 
   it('④ 逐条撤回：操作日志中种子 push 项撤回 → 标记「已撤回」 + toast', async () => {
@@ -251,7 +413,9 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     expect(screen.getByText('下发 spawn.yml')).toBeInTheDocument()
     // 逐条撤回（行内「撤回」钮；状态栏的是「撤回上一步」，用精确名区分）
     await userEvent.click(screen.getByRole('button', { name: '撤回' }))
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')))
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')),
+    )
     expect(screen.getByText('已撤回')).toBeInTheDocument()
   })
 
@@ -261,7 +425,9 @@ describe('ConfigWorkbenchPage 关键流程（FR-115）', () => {
     // 勾选未撤回项复选框
     await userEvent.click(screen.getByRole('checkbox', { name: '下发 spawn.yml' }))
     await userEvent.click(screen.getByRole('button', { name: /批量撤回 1 项/ }))
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')))
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('已撤回')),
+    )
   })
 
   it('⑤ 生效预览：切到「生效预览」视图，断言覆盖面计数与定制计数', async () => {

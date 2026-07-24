@@ -8,16 +8,10 @@ import { useQuery } from '@tanstack/react-query'
 
 import { impactPreview } from '../../api/client'
 import CodeEditor from '../../components/CodeEditor'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@beacon/ui'
 
 export default function ConfigSaveConfirmDialog({
   open,
@@ -85,7 +79,12 @@ export default function ConfigSaveConfirmDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel() }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onCancel()
+      }}
+    >
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t('configs.saveConfirmTitle')}</DialogTitle>
@@ -118,11 +117,7 @@ export default function ConfigSaveConfirmDialog({
 
         {/* diff：左上一保存版本、右当前编辑态 */}
         <div className="h-72 rounded border border-border overflow-hidden">
-          <CodeEditor
-            original={originalContent}
-            modified={currentContent}
-            language={format}
-          />
+          <CodeEditor original={originalContent} modified={currentContent} language={format} />
         </div>
 
         {/* 备注输入 */}

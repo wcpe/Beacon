@@ -89,14 +89,22 @@ describe('VersionBadge', () => {
   })
 
   it('check-failed 时不叠红点', async () => {
-    vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, status: 'check-failed', hasUpdate: false })
+    vi.mocked(checkUpdate).mockResolvedValue({
+      ...UPDATE_HAS,
+      status: 'check-failed',
+      hasUpdate: false,
+    })
     renderBadge()
     expect(await screen.findByRole('button', { name: /点击查看更新/ })).toBeInTheDocument()
     expect(screen.queryByRole('status', { name: '有可用更新' })).toBeNull()
   })
 
   it('dev 构建时不叠红点（即使后端误回 hasUpdate=true）', async () => {
-    vi.mocked(checkUpdate).mockResolvedValue({ ...UPDATE_HAS, isDevBuild: true, currentVersion: 'dev' })
+    vi.mocked(checkUpdate).mockResolvedValue({
+      ...UPDATE_HAS,
+      isDevBuild: true,
+      currentVersion: 'dev',
+    })
     renderBadge()
     expect(await screen.findByRole('button', { name: /点击查看更新/ })).toBeInTheDocument()
     expect(screen.queryByRole('status', { name: '有可用更新' })).toBeNull()

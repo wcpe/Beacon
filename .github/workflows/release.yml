@@ -1,24 +1,94 @@
-# Beacon 稳定发布触发壳（ADR-0007 稳定渠道）：推送正式语义化版本 tag vX.Y.Z 时，
-# 调用可复用 workflow _build-release.yml 做多平台原生构建 + 双端 jar + SHA256 + 建正式 Release。
-# 本文件极薄、只管触发与传参；构建逻辑单点维护在 _build-release.yml（FR-103）。
+# Beacon GA 发布：将公开 RC 的产品资产原样复制为同提交 GA。
 name: Release
 
 on:
-  push:
-    tags:
-      # 仅正式语义化版本 tag 触发（rc 预发布走 prerelease.yml，glob 与此互斥不重叠）
-      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      rc_tag:
+        description: "待晋级的公开 RC tag"
+        required: true
+        type: string
+
+concurrency:
+  group: ga-${{ inputs.rc_tag }}
+  cancel-in-progress: false
 
 permissions:
-  # 创建 Release 并上传附件需要写 contents
   contents: write
 
 jobs:
-  call:
-    name: 稳定发布构建
-    uses: ./.github/workflows/_build-release.yml
-    permissions:
-      contents: write
-    with:
-      # 稳定渠道：非预发布
-      prerelease: false
+  release:
+    name: 晋级 RC 为 GA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: 校验 master 与 RC 身份
+        id: identity
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_TAG: ${{ inputs.rc_tag }}
+        run: |
+          set -eu
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/master"
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          master_commit="$(git rev-parse refs/remotes/origin/master^{commit})"
+          test "$(git rev-parse HEAD^{commit})" = "$master_commit"
+          git fetch --force --no-tags origin "+refs/tags/${RC_TAG}:refs/tags/${RC_TAG}"
+          rc_commit="$(git rev-parse "refs/tags/${RC_TAG}^{commit}")"
+          version="$(git show "${rc_commit}:VERSION" | tr -d '\r\n')"
+          prefix="v${version}-rc."
+          sequence=${RC_TAG#"$prefix"}
+          test "$RC_TAG" = "${prefix}${sequence}"
+          case "$sequence" in
+            ''|*[!0-9]*|0|0*) exit 1 ;;
+          esac
+          test "$(gh release view "$RC_TAG" --json tagName --jq '.tagName')" = "$RC_TAG"
+          test "$(gh release view "$RC_TAG" --json isDraft --jq '.isDraft')" = "false"
+          test "$(gh release view "$RC_TAG" --json isPrerelease --jq '.isPrerelease')" = "true"
+          test "$(gh release view "$RC_TAG" --json publishedAt --jq '.publishedAt // ""')" != ""
+          ga_tag="v${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "rc_commit=$rc_commit" >> "$GITHUB_OUTPUT"
+          echo "ga_tag=$ga_tag" >> "$GITHUB_OUTPUT"
+      - name: 切换到 RC 提交
+        shell: sh
+        env:
+          RC_COMMIT: ${{ steps.identity.outputs.rc_commit }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -eu
+          git checkout --detach "$RC_COMMIT"
+          test "$(git rev-parse HEAD^{commit})" = "$RC_COMMIT"
+          test "$(tr -d '\r\n' < VERSION)" = "$VERSION"
+      - name: 下载并复验 RC 资产
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_TAG: ${{ inputs.rc_tag }}
+          RC_COMMIT: ${{ steps.identity.outputs.rc_commit }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: |
+          set -eu
+          mkdir rc-assets
+          gh release download "$RC_TAG" --dir rc-assets
+          make release-verify-rc \
+            VERSION="$VERSION" \
+            RELEASE_VERSION_FILE=VERSION \
+            RELEASE_RC_TAG="$RC_TAG" \
+            RELEASE_GA_TAG="v$VERSION" \
+            RELEASE_ASSETS_DIR=rc-assets \
+            RELEASE_RC_COMMIT="$RC_COMMIT"
+      - name: 恢复、公开并复验 GA
+        shell: sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC_TAG: ${{ inputs.rc_tag }}
+          GA_TAG: ${{ steps.identity.outputs.ga_tag }}
+          RC_COMMIT: ${{ steps.identity.outputs.rc_commit }}
+          VERSION: ${{ steps.identity.outputs.version }}
+        run: sh scripts/release/promote_ga.sh

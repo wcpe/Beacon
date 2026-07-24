@@ -1,7 +1,7 @@
 // 通用展示格式化工具。
 
 import type { NamespaceView } from './types'
-import type { ComboboxOption } from '@/components/ui/combobox'
+import type { ComboboxOption } from '@beacon/ui'
 
 // 把环境列表派生为「值/显示分离」的下拉候选（FR-70）：value=code（真实值，供过滤 / 上报 / API），
 // label=「编码 · 名称」（名称为空时仅显示编码）。各页 namespace 下拉统一用此显示编码与名称。
@@ -23,7 +23,8 @@ export function formatTime(iso: string | undefined | null): string {
 // 把秒数格式化为人类可读运行时长（天/时/分/秒，最多取两个量级）。
 // 负数或非有限值回退为 '-'；0 显示 '0 秒'。
 export function formatDuration(seconds: number | undefined | null): string {
-  if (seconds === undefined || seconds === null || !Number.isFinite(seconds) || seconds < 0) return '-'
+  if (seconds === undefined || seconds === null || !Number.isFinite(seconds) || seconds < 0)
+    return '-'
   if (seconds < 1) return '0 秒'
   const total = Math.floor(seconds)
   const days = Math.floor(total / 86400)

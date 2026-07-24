@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import { systemStatus } from '@/api/client'
+import { isMockEnabled } from '@/api/mock'
 import { formatDuration } from '@/api/format'
 import { cn } from '@/lib/utils'
 import HeaderControls from '@/components/HeaderControls'
@@ -48,12 +49,17 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
   // 首次加载（无数据且无错误）显示骨架，不闪 '-'
   const showSkeleton = isLoading && !data && !isError
 
+  // 演示模式（mock 假后端）：顶栏醒目标记，避免把假数据误当真后端（mock 启用后整会话不变，render 期直接读即可）
+  const mock = isMockEnabled()
+
   return (
     // 只渲染状态条内容（不含 header 外壳）：由顶栏容器统一边框/内边距。
     // fix-A：改 flex-nowrap（不换行）+ min-w-0，避免固定高 h-10 顶栏内换行被裁；次要项按断点渐进收起。
     <div className="flex w-full min-w-0 flex-nowrap items-center gap-x-3 lg:gap-x-6">
       {/* 控制面状态条标题（次要标识）：窄屏隐藏，xl 及以上显示。版本徽章已移至品牌区 logo 右侧（FR-121） */}
-      <span className="hidden shrink-0 text-sm font-semibold xl:inline">{t('systemHeader.title')}</span>
+      <span className="hidden shrink-0 text-sm font-semibold xl:inline">
+        {t('systemHeader.title')}
+      </span>
 
       {/* 连接态药丸：绿底绿字=已连接、红底红字=已断开 / 不可达；语义色类、不硬编码 */}
       {showSkeleton ? (
@@ -70,9 +76,26 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
         >
           <span
             aria-hidden
-            className={cn('inline-block size-1.5 rounded-full', dbConnected ? 'bg-green-600' : 'bg-red-600')}
+            className={cn(
+              'inline-block size-1.5 rounded-full',
+              dbConnected ? 'bg-green-600' : 'bg-red-600',
+            )}
           />
           {connLabel}
+        </span>
+      )}
+
+      {/* 演示模式标记（mock 假后端）：紧随连接态药丸、橙色醒目、始终显示不收缩，一眼区分假数据/真后端 */}
+      {mock && (
+        <span
+          title={t('systemHeader.mockBadgeTitle')}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-500/40 dark:text-amber-400"
+        >
+          <span
+            aria-hidden
+            className="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"
+          />
+          {t('systemHeader.mockBadge')}
         </span>
       )}
 
@@ -99,7 +122,7 @@ export default function SystemHeader({ onOpenSearch }: SystemHeaderProps) {
           type="button"
           onClick={onOpenSearch}
           aria-label={t('commandPalette.trigger')}
-          className="flex items-center gap-2 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+          className="flex h-8 min-w-[18rem] items-center justify-start gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <Search aria-hidden className="size-4 shrink-0" />
           {/* fix-A：搜索文案与快捷键提示窄屏隐藏，仅留图标；按钮无障碍名仍由 aria-label 保证 */}

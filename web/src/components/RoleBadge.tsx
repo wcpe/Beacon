@@ -2,7 +2,7 @@
 // bungee 紫、bukkit 蓝，与集群拓扑图（FR-37）的角色配色一致，便于跨页面对应。
 
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
+import { Badge } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 
 // 角色到配色的映射（未知角色走默认 Badge 样式并原样显示）；显示名经 i18n（role.<role>）。

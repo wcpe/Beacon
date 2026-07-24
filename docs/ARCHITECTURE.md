@@ -1,264 +1,133 @@
-# Beacon 架构设计
+# Beacon 架构设计（第二版）
 
-> 面向 MC 集群的自研控制面：配置中心 + 服务发现 + 健康检查。本文是第一期（MVP）的架构真源，与 [API.md](API.md)、[adr/](adr/) 配套。
+> 本文是**第二版（0.20.x 起）架构真源**：面向 MC 集群的调度中间件控制面「怎么建」的总览与导航，与 [PRD.md](PRD.md)（要什么）、[ROADMAP.md](ROADMAP.md)（何时建）、[UX.md](UX.md)（前端交互）、[API.md](API.md)（REST 契约）、[specs/](specs/)（各域权威规格）、[adr/](adr/)（决策）配套。细节一律引用规格 / ADR，不在此复制表结构、端点表与状态机正文。
+>
+> **Legacy 边界**：`v0.1.0` – `v0.19.x` 为第一版探索期，实现冻结在仓库中（`web/` 与现有 Go 代码在 P1 迁移 / 冻结前仍是物理现状）；其第一版架构描述以 git 历史与 Legacy ADR 追溯，本文不再维护第一版细节。
 
 ## 1. 定位与边界
 
-Beacon 是**控制面（control plane）**：集中存储"事实"（配置、拓扑、注册/健康）并对外提供查询/下发，**不写任何游戏逻辑**。Minecraft 的代理与子服是**数据面（data plane）**：跑玩家与游戏逻辑，各接一个轻量 agent。
+Beacon 是**集群调度中间件的控制面（control plane）**：集中存储"事实"（身份、区服权威、健康、调度决策、消息追踪、配置与交付编排、审计），对外提供查询 / 下发与编排，**不写任何游戏逻辑**。BungeeCord 代理与 Bukkit / Paper 子服是**数据面（data plane）**：跑玩家与游戏逻辑，各接一个轻量 agent。
 
-| | 控制面（Beacon） | 数据面（BC/Bukkit + agent） |
+| | 控制面（Beacon） | 数据面（BC / Bukkit + agent） |
 |---|---|---|
-| 职责 | 配置中心、版本/回滚、服务发现、健康、zone 指派、审计 | 跑游戏、路由玩家、应用配置 |
-| 变更频率 | 低频（分钟级） | 高频（秒级） |
-| 形态 | 独立 Go 进程 + 内嵌 React | Kotlin/TabooLib 插件 |
-| 故障影响 | 管理暂不可用，**玩家照常进服**（agent fail-static） | 玩家受影响（真正的入口单点） |
+| 职责 | 身份确认、区服权威、健康值与调度决策、消息单跳中转、配置 / 文件资产 / 变更单编排、审计告警 | 跑游戏、采样上报、执行交付与生效、向业务插件提供本机 agent-api |
+| 变更频率 | 低频（分钟级管理操作） | 高频（秒级采样与玩家行为） |
+| 形态 | 独立 Go 进程 + 内嵌 React 管理台，单二进制 | Kotlin/TabooLib 插件 |
+| 故障影响 | 管理与调度决策暂不可用，**玩家照常进服**（agent fail-static） | 玩家受影响（真正的入口单点） |
 
-**核心原则：控制面挂 ≠ 数据面挂。** agent 持本地配置快照，控制面不可用时按快照继续运行，绝不阻断玩家。
+四条硬边界（PRD §3，违反即架构漂移，见 [.claude/rules/architecture-invariants.md](../.claude/rules/architecture-invariants.md)）：
 
-分小区 / 虚拟大区 / 合区**不是专门引擎**，而是数据 + 下游解释：
-- **分小区** = Beacon 权威记录"哪台服属于哪个 zone"（`zone_assignment`）+ 发现按 zone 过滤。
-- **虚拟大区 / 合区** = 一份普通配置对象（如 `topology/merge = {大区A:[zone1,zone2]}`），版本化、可热推；下游业务插件订阅后自己实现跨服行为。Beacon MVP 不做运行时玩家数据通道。
+- **fail-static**：agent 持本地快照（候选缓存、配置、身份），控制面不可用时按快照降级继续，绝不阻断玩家进服、绝不阻塞 MC 主线程。
+- **业务插件只走本机 agent-api**：调度候选、健康事实、跨服消息一律经 agent 本机门面获取；直连 Beacon HTTP 不作为契约、随时可变（[API.md](API.md)「agent-api」节）。
+- **namespace 强隔离**：注册 / 调度 / 消息 / Agent 操作 / 配置 / 变更单六个面默认禁止跨 namespace，跨域仅经后台显式单向信任关系（capability 级）开放并额外审计；配置与变更单绝对禁止跨域（[v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §4）。
+- **首次接入人工确认**：新 agent 注册后处于待确认态，未确认、未分配区服前不可调度（[v2-agent-identity.md](specs/v2-agent-identity.md)）。
 
-## 2. 模块与依赖
+## 2. 仓库布局与模块
 
-控制面单 Go module、单二进制，分层 `router → handler → service → repository`，依赖单向向下；进程内运行态单列 `runtime` 域。
+### 2.1 monorepo 工作区布局（随 P1 · 0.21.x 落地，FR-173）
+
+pnpm workspace + Turborepo，`turbo run lint / test / build` 全仓一键：
 
 ```
-cmd/beacon/main.go                 # 装配 + 启动
-internal/
-  config/      Beacon 自身配置（yaml + env 覆盖）
-  server/      router / 中间件（中文日志、recover、traceId、agent token、管理面登录令牌）
-  auth/        管理面鉴权叶子包：凭据校验 + 无状态 HMAC 签名令牌签发/校验 + 操作者/角色上下文（见 ADR-0009、ADR-0026）
-  apikey/      API 密钥叶子包：明文生成（bk_ 前缀 + 随机串）+ SHA-256 哈希纯函数（仅 stdlib，FR-42，见 ADR-0026）
-  secret/      敏感配置加解密叶子包：AES-256-GCM 原语，密钥由调用方从 env 注入（见 ADR-0018）
-  render/      统一响应体与错误体写出 + traceId 上下文（handler 与 server 共用的叶子包）
-  apperr/      带业务码与 HTTP 状态的领域错误（叶子包，供各层共用，避免反向依赖）
-  embedweb/    服务内嵌前端 + SPA 回退处理器（内嵌指令 //go:embed all:web/dist 置于根包 embed.go，因 Go embed 不能跨上级目录）
-  handler/     仅请求编解码 → 调 service（无业务逻辑）
-  service/     事务、规则校验、触发长轮询唤醒、写审计
-  repository/  各表纯 GORM CRUD
-  runtime/     registry.go(内存注册) health.go(TTL扫描) longpoll/hub.go(waiter 注册 + 唤醒)
-  sse/         event.go(SSE 事件编码纯函数，server→agent 推送 FR-24，与 merge 平级)
-  metrics/     Prometheus 指标：独立 registry + 注册/健康 gauge collector(抓取时读内存注册表) + 发布/推送 counter + /metrics handler(见 ADR-0020)
-  merge/       merge.go(深合并) codec.go(yaml/json/properties) digest.go(md5)
-  filetree/    resolve.go(通道B 整文件覆盖 + manifest + fileTreeMd5，纯函数，与 merge 平级)
-  gitexport/   snapshot.go(源层→快照 + 目录布局 + 敏感排除) commit.go(commit message) repo.go(GitRepo 端口 + NopGitRepo)——git 单向导出纯逻辑，与 merge 平级(见 ADR-0030)
-  model/       GORM 实体 + enums
-  store/       db.go(GORM 连接 + AutoMigrate) logger.go
-  pkg/log/     中文分级日志
-web/           React(Vite+TS) + shadcn-ui（Tailwind v4，默认 neutral 主题，组件源码入库 src/components/ui/）+ Monaco 编辑器（`@monaco-editor/react`，配置中心页面使用 VS Code 风格布局：左侧资源管理器树 + 右侧 Monaco 编辑器 + 底部历史修订面板），dist/ 被内嵌（设计系统见 ADR-0012；配置中心为单页面固定布局 `h-screen overflow-hidden`，详情用独立路由页/Sheet/Dialog，不内联展开）；新增 Dashboard 页（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）：总览卡片（总玩家数 / 平均 TPS·内存·CPU）+ 每服明细 + 趋势图（近 1h / 6h / 24h），复用既有 React / shadcn 栈；zone 分配页采用看板式归派（FR-35，纯 UI 增强 FR-8）：左侧未指派 server 卡片池 + 右侧按大区分桶的 zone 容器，拖卡指派/改派、拖回未指派取消（@dnd-kit 拖放，复用既有 `PUT/DELETE /zones/assignments`、后端零改动；onDragEnd 落点解析为纯函数 `resolveDragAction`）；新增集群拓扑页（FR-37）：用 **ECharts** graph 画真实 bc→bukkit 连线、按角色 / 大区 / zone 区分聚合，复用 React Query 轮询刷新（数据源 `GET /admin/v1/topology`，见 §7）；全站文案经 **react-i18next** 国际化（FR-50，[ADR-0033](adr/0033-web-i18n-framework.md)）：`src/i18n/`（同步初始化 + 资源内联，`lng`/`fallbackLng` 均 `zh-CN`）下 `locales/zh-CN.ts` 为前端文案单一真源，组件经 `t('key')` 取用、不再硬编码中文，审计 action 经 `audit.action.<枚举>` 映射成中文（后端仍返英文枚举），本期只交付 zh-CN、加语言只需补资源文件
-agent/         Kotlin/TabooLib，五模块（实现 ADR-0005 抽象层）：
-                 agent-api（纯 Java8 只读契约，业务插件 compileOnly）/ agent-core（平台无关核心，零具体库依赖：
-                 transport·codec 接口 + BeaconApiClient + 生命周期 + 快照 + applier + 退避）/
-                 agent-adapters（OkHttp + kotlinx 适配器，唯一碰具体库）/
-                 agent-bukkit（打包 BeaconAgent jar）/ agent-bungee（打包 BeaconAgentProxy jar）
+apps/
+  server/      Go 控制面（cmd/ + internal/ 已迁入；go:embed、Makefile、CI、脚本同步适配）
+  agent/       Kotlin/TabooLib agent
+  web/         第二版管理台（新建，栈见 §6；发布二进制只嵌它）
+  ui-wiki/     UI 控件博物馆（每个 @beacon/ui 导出控件必有展示页，覆盖率进 CI 门禁，FR-175）
+packages/
+  ui/          @beacon/ui 通用控件包（新管理台组件一律取自此，禁止页面私建通用控件）
+  contracts/   @beacon/contracts 对外响应契约类型（纯 type-only，无运行时依赖；apps/web 与 devmock 共同依赖）
+  devmock/     MSW handlers 按 API 域组织，浏览器与测试双端共享（P2 全量 mock 底座）；反向依赖 contracts
+  eslint-config/ typescript-config/   共享工程配置（静态检查最严档三线，FR-176）
 ```
 
-`runtime` 是唯一持有可变全局态的域，由 `main.go` 装配后注入 service（依赖注入，不手写有状态单例）。`merge` 全为无副作用纯函数，便于穷举单测。
+当前物理现状：Go 控制面在 `apps/server/`，agent 在 `apps/agent/`，UI 包与控件博物馆已提升到 `packages/ui` 与 `apps/ui-wiki`；Legacy 前端仍在 `web/`（P1 起整体冻结不演进，FR-138）。布局与栈的决策见 [ADR-0060](adr/0060-monorepo-layout-and-v2-frontend-stack.md)（monorepo 与第二版前端栈）、[ADR-0061](adr/0061-strictest-static-analysis-three-lines.md)（静态检查最严档三线）。
 
-## 3. 数据模型（MySQL / GORM）
+### 2.2 控制面（Go）分层原则（沿用）
 
-通用约定：`id BIGINT PK`（GORM `autoIncrement`）、`created_at/updated_at`、软删 `deleted_at`；时间统一 UTC；**禁用 MySQL 专有特性**（枚举落 `VARCHAR`+应用层校验、json 落 `TEXT`、不写 `gorm:"type:..."` 方言类型），切 Postgres 仅改 driver + DSN。
+单 Go module、单二进制，分层 `router → handler → service → repository` 依赖单向向下；handler 不碰 GORM 与内存结构；进程内可变运行态单列 `runtime` 域（注册表 / 健康 / 长轮询 hub 等），由 main 装配注入 service，锁独立不嵌套、DB IO 一律在锁外；合并 / 校验 / 脱敏等纯逻辑做成无副作用叶子包便于穷举单测。多表写在 DB 事务内原子完成，**事务提交成功后**才触发长轮询 / SSE 唤醒。
 
-| 表 | 职责 | 要点 |
+### 2.3 agent（Kotlin）五模块抽象（沿用 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）
+
+`agent-api`（纯 Java8 只读契约，业务插件 compileOnly）/ `agent-core`（平台无关核心，零具体库依赖，transport·codec 只依赖接口）/ `agent-adapters`（OkHttp + kotlinx 适配器，唯一碰具体库）/ `agent-bukkit` / `agent-bungee`（双端打包）。agent 自管身份文件，不依赖 CoreLib；阻塞 IO 一律 TabooLib async，绝不上 MC 主线程。
+
+## 3. 领域模型（概览）
+
+权威表结构统一定义在 [v2-zone-authority.md](specs/v2-zone-authority.md) §3（**全仓建表约定 + 权威实体表**），其余规格按表名 / 字段引用、不得复制另定。
+
+**建表约定要点**（zone-authority §3.1）：表名单数 snake_case（GORM 显式 `TableName()`）；主键 `id` BIGINT 自增经 GORM 抽象；**不建 DB 级外键**，引用完整性由 service 层事务校验；枚举落 VARCHAR + 应用层校验、json 落 TEXT、时间 UTC；禁 MySQL 专有特性（ENUM/SET/JSON 列、分区表语法），必须可切 Postgres；v2 内容指纹统一 sha256。
+
+| 实体 | 一句话职责 | 状态机 / 枚举权威 |
 |---|---|---|
-| `namespace` | 环境隔离（prod/test） | `code` 唯一 |
-| `config_item` | 配置项标识 + scope 维度 + 当前版本指针 | 见下 |
-| `config_revision` | 每次发布的不可变快照（append-only） | 回滚 = 读旧版内容作新版发布，`source_revision` 记来源 |
-| `config_gray` | 配置灰度 / Beta（FR-9）：某 `config_item` 的临时灰度版本 + cohort 名单 | 一个 item 至多一个未软删灰度；promote 把内容并入 `config_revision` 后软删、abort 直接软删（[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)） |
-| `file_object` | 文件树托管（通道B）整文件 blob + scope 维度 + 当前版本指针 | 见下；与 `config_item` 平行但**整文件覆盖、不深合并**（[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)） |
-| `file_revision` | 文件每次发布的不可变快照（append-only） | 与 `config_revision` 同款回滚思路 |
-| `file_override_set` | 三方插件文件覆盖集（FR-15）：目标插件目录 + 成员文件 + 一条受限重载命令 | scope 维度同 `file_object`；命令执行已接入运行期、随 agent 本地白名单生效（见 [ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md) 与 §8） |
-| `file_override_set_revision` | 覆盖集每次发布的不可变快照（append-only） | 同款回滚思路 |
-| `zone_assignment` | serverId → (group, zone) 权威指派 | `(namespace, server_id)` 唯一，换区改这一行 |
-| `zone_default_entry` | 小区默认入口：(group, zone) → 默认 serverId（FR-48） | `(namespace, group, zone)` 唯一，指向已指派该 zone 的在线 bukkit；供 BC 设默认/fallback 服 |
-| `audit_log` | 审计（append-only） | `operator/action/target/detail(json文本)/result`；记**人对平台的操作** |
-| `alert_event` | 告警事件留痕（append-only，FR-89）：健康流转等系统健康事件，供管理台「事件」页历史信息流 | `type`/`level` 落 `VARCHAR`+应用层校验、`detail` 落 `TEXT`、`created_at` UTC；记**系统健康事件**（与 audit_log 维度正交），真源属 DB（[ADR-0041](adr/0041-alert-event-persistence.md)） |
-| `instance` | 注册元数据镜像 | **MVP 不建**，运行态以内存为准，仅注册写一条 audit |
-| `metric_sample` | 指标时序样本（FR-32）：按间隔采在线实例的负载快照 | 时序表，与配置/版本/审计等事实表并列、真源属 DB；带保留期滚动清理，见 §7.1 与 [ADR-0023](adr/0023-control-plane-observability-dashboard.md) |
-| `api_key` | 管理面 API 密钥（FR-42）：运行时签发给外部服务的访问凭据 | 见下；**只存哈希**、软删即吊销、角色 `VARCHAR`，真源属 DB（[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)） |
-| `agent_command` | server→agent 命令（FR-39 反向抓取 / FR-46 按需拓印 / FR-58 受管任务两段式 / FR-88 取日志 / FR-91 强制重同步 / FR-110 文件浏览）：`ingest-plugins` / `tail-logs` / `resync-config` / `fs-browse` 待办 + 生命周期 + 载荷（FR-46 加 `mode=imprint`/`path`、`ready` 态与瞬态 `imprint_content`；FR-58 加 `mode=scan`/`submit` + `selectedPaths`；FR-88 加 `tail-logs` 类型与瞬态 `log_content`；FR-110 加 `fs-browse` 类型、载荷 `op`/`path`/`offset`/`limit`/`maxDepth` 与瞬态 `browse_result`） | 见下；`type`/`status` 落 `VARCHAR`、`payload`/`result_detail`/`imprint_content`/`log_content`/`browse_result` 落 `TEXT`，真源属 DB（需持久/可审计/跨 SSE 断连重拉，[ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) / [ADR-0040](adr/0040-agent-readonly-log-tail.md) / [ADR-0049](adr/0049-agent-fs-browse.md)） |
-| `reverse_fetch_task` | 反向抓取受管任务（FR-58 / FR-59）：状态机 + 扫描清单 + 选定集 + 计数 + 命令引用，单实例互斥；FR-59 加 `conflict-review` 态与瞬态 `submit_content`（冲突暂存） | 见下；`status`/`scope` 落 `VARCHAR`、`manifest`/`selected_paths`/`submit_content` 落 `TEXT`，活跃唯一以软删哨兵唯一键，真源属 DB（[ADR-0037](adr/0037-reverse-fetch-managed-task.md)） |
-| `reverse_fetch_ignore_rule` | 反向抓取持久忽略规则（FR-59）：ns/大区/实例维度的 exact/prefix 规则，扫描清单标 `ignoredByRule` | 见下；`scope`/`rule_type` 落 `VARCHAR`、软删哨兵唯一键（取消即软删、同标识可再建），真源属 DB（[ADR-0037](adr/0037-reverse-fetch-managed-task.md)） |
-| `setting` | 运维设置 store（FR-61）：热改项 key-value（健康阈值 / 采样 / 长轮询 / 告警 webhook / 日志级别 / 反向抓取上限），真源由 `config.yml` 移入 DB | 见下；`key` 唯一、`value`/`value_type` 落 `VARCHAR` + 应用层校验、`version` 乐观锁、无软删，真源属 DB（[ADR-0038](adr/0038-ops-settings-store-hot-reload.md)） |
-| `reversible_operation` | 配置操作级撤回账目（FR-116）：每次大操作（下发 push / 发布 publish / 反向抓取 fetch）落地时连同反向快照记一条，撤回 = 读这条按反向指令把真源改回操作前 | 见下；`op_type`/`status`/`scope` 落 `VARCHAR` + 应用层校验、`inverse_payload` 反向快照落 `TEXT`、`status` 兼作幂等 / 过期 / 被覆盖三闸，真源属 DB（[ADR-0051](adr/0051-config-operation-undo.md)） |
-
-`config_item` 关键字段：`(namespace_code, group_code, data_id, scope_level, scope_target)` 唯一定位覆盖链中的一格；`content` + `content_md5` 冗余在行上（热路径直读）；`current_revision`、`version`（单调递增，回滚也 +1）、`enabled`；`sensitive`（为真则 `content` 加密落库，at-rest，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）；`gray_version`（灰度发布乐观锁版本，发布前以其做 CAS 串行化同一 item 的并发灰度发布、从源头消除「先软删后建」在 `uk_gray_item` 上的死锁，FR-9，内部令牌不外泄）。`scope_level ∈ {global, group, zone, server}`；global 层 `group_code='__GLOBAL__'`（保留字）。`content_md5` 始终基于**明文**（敏感项解密后再算），`config_revision` 同步带 `sensitive` 并对敏感快照同样加密。
-
-`file_object` 关键字段：`(namespace_code, group_code, path, scope_level, scope_target)` 唯一定位覆盖链中的一格（唯一键含 `path`）；`content`（整文件文本，落 `TEXT` 经 GORM size 抽象不绑方言）+ `content_md5` 冗余在行上；`current_revision`、`version`、`enabled`。同 `config_item` 的 scope 维度，但解析为**整文件覆盖**（取覆盖链上拥有该 `path` 的最高层那份，见 §5.1）。`sensitive_excluded`（为真则该文件**不导出到 git 镜像**——库内保留、下发不变、仅 git 排除，防反向抓取来的第三方插件明文密码落 git，FR-47，见 [ADR-0030](adr/0030-git-export-mirror.md)；基础布尔、零方言、AutoMigrate 加列、既有行默认 false）。
-
-`config_gray` 关键字段：`config_item_id`（关联所属配置项，进唯一键 + 软删哨兵 → 一个 item 至多一个未软删灰度）；`namespace_code`（供按 ns 批量取活跃灰度，避免 N+1）；`content` + `content_md5`（灰度内容，敏感项与所属 item 镜像加密，md5 按明文算）；`cohort`（目标 serverId 名单，**JSON 数组文本落 `TEXT`**，可移植可读）；`format`/`sensitive`/`operator`/`comment`。灰度作用在"版本选择"层而非新增覆盖层（见 §5、[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）。
-
-`metric_sample` 关键字段：`id`、`namespace`、`server_id`、`role`（`bukkit`/`bungee`，落 `VARCHAR`）、`sampled_at`（采样时刻 UTC）、`player_count`、`tps`、`mem_used`、`mem_max`、`cpu_load`，以及 **bc（bungee 代理）专属可空列**（FR-34，[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)）：`proxy_conn`（代理连接数 INT）、`thread_count`（JVM 线程数 INT）、`uptime_ms`（运行时长 BIGINT）、`backend_up`/`backend_total`（后端可达/总数 INT）、`backend_avg_latency_ms`（后端平均延迟浮点，`-1`=不可用）。**全部基础类型**（计数 / 浮点 / 时间），枚举如 `role` 落 `VARCHAR` + 应用层校验，**禁 JSON/ENUM 列与方言专有 SQL**、经 GORM 抽象（守 DB 可移植，可切 Postgres）；BC 列 `NOT NULL DEFAULT`，AutoMigrate 加列对既有行兼容、bukkit 行恒为默认值。它是**时序样本表**（与 §7.1 采样器配套），与配置 / 版本 / 审计等事实表并列、真源属 DB；趋势端点（§4）按时间窗 + 聚合粒度查询本表，保留期到期样本被滚动清理（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）。趋势降采样与 summary 的**平均 TPS / 平均 CPU 仅统计 `role=bukkit`**（bungee 作纯代理 tps 恒为 0，不进这两个平均的分母）；总玩家数 / 平均内存仍计全部样本；summary 的 `bc` 维度聚合**仅统计 `role=bungee`**（代理数 / 连接 / 线程 / 后端可达性·延迟），与 bukkit 聚合分流互不影响（FR-34）。网络吞吐入/出字节本期不采（BungeeCord 无干净 Netty 注入点，标待定，见 ADR-0025）。
-
-`api_key` 关键字段（FR-42，[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）：`id`、`name`（人类可读标签）、`key_hash`（明文的 **SHA-256** 十六进制摘要，64 hex，进唯一键 + 软删哨兵；**库内只存哈希、绝不存明文**）、`key_prefix`（非机密前缀片段如 `bk_AbC123`，仅供列表识别）、`role`（`full`/`readonly`，落 `VARCHAR` + 应用层校验）、`expires_at`（可空，NULL = 永不过期）、`last_used_at`（可空，认证成功时节流更新，至多每分钟一次）、`deleted_at`（软删哨兵，**吊销 = 软删**，沿用 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。明文 = `bk_` + 256-bit 随机串，仅创建 / 重置时一次性返回、**不可二次读取**（丢失只能 `reset` 轮换）；明文不入库 / 日志 / 审计 detail。**全部基础类型**、无 `ENUM/SET/JSON` 列与方言专有 SQL（可切 Postgres）。
-
-`agent_command` 关键字段（FR-39，[ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)）：`id`、`namespace` + `server_id`（目标 agent，进查询索引）、`type`（`ingest-plugins`，落 `VARCHAR` + 应用层校验）、`payload`（命令载荷 JSON 文本落 `TEXT`：反向抓取记目标 `scope`/`group`/`target`；FR-58 受管任务两段式加 `mode=scan`/`submit` 与 submit 的 `selectedPaths`）、`status`（`pending`/`fetched`/`done`/`failed`/`expired`，落 `VARCHAR`，经 **CAS 迁移**：建即 `pending`、agent 拉走转 `fetched`、ingest 成功 `done`、校验/落库失败 `failed`、超时清理 `expired`）、`result_detail`（结果摘要 JSON 文本，无敏感内容）、`operator`（触发者）。**全部基础类型 + `TEXT`**，无 `ENUM/SET/JSON` 列与方言专有 SQL（可切 Postgres）。命令**真源属 DB**（区别于注册/健康的内存事实——命令需持久、可审计、跨 SSE 断连重拉）；建命令与审计同事务原子落地、**提交后才**经 SSE `command-pending` 唤醒目标 agent（agent 经 agent §10 拉详情回传）。
-
-**按需拓印分流（FR-46，沿用 ADR-0027 通道 + [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)/[ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 合并与来源，未引入新 ADR）**：`agent_command` 复用同一 `ingest-plugins` 类型承载「拓印」（**agent 零改动**，仍读整棵 `plugins/` 树回传），由 `payload.mode` 区分落库 vs 转存待审——`mode` 空/`land` = FR-39 直接 `Import` 落库；`mode=imprint` + `path` = FR-46 拓印转存待审。新增 `status=ready`（拓印已抓取、待单人自审确认）与瞬态列 `imprint_content`（`TEXT`，回传后转存的**单个目标文件磁盘原文**，仅供审核 diff 与确认落库，**确认/失败/过期即清空**，与绝不含文件内容的 `result_detail` 分立；AutoMigrate 加列、既有行默认空）。生命周期：`pending → fetched →（imprint 回传转存）ready →（确认）done /（自审失败仍 ready 可重确认）/（超时）expired`。控制面收到 `mode=imprint` 回传时**不落 `file_object`、不记 `file.import`**，同口径再校验后从回传树取 `payload.path` 转存命令瞬态列、CAS `fetched→ready`（指定 path 不在回传树中→`failed`）。`AgentCommandService` 经构造注入 `FileEffectiveService`（service 间依赖、不经 handler）：`ImprintDiff` 调 `ResolveWithProvenance` 按 admin 选的并入层视角解出该 path 的**期望合并值**（拓印源未指派 zone 时以 admin 选的 `group`/`zone` 作 hint 兜底），与命令转存的**本地实际值**组装 diff；`ConfirmImprint` 过**单人自审门**（`reviewedMd5` 须等于命令转存内容 md5，否则 `ErrImprintReviewMismatch` 412）后复用 `FileService.Create`/`Publish` 落该层整文件覆盖（FileService 内部事务 + `file.imprint` 审计 + 下发唤醒）、再 CAS `ready→done` 清空瞬态。**控制面零新增下发路径**——落库后即走通道B 既有长轮询 / SSE。审计：触发 `file.imprint-fetch`、确认落库 `file.imprint`（detail 均不含文件内容，沿 ADR-0027 决策7）。前端管理台新增「拓印审核台」页（`/imprint`），复用 FR-23 `CodeEditor` diff 模式与 FR-45 逐键来源徽标。**守边界**：不退化为全自动 / 后台双向同步（改动必经控制面人确认，守架构不变量 #1）、不引入多人审批 / 变更请求实体（单人自审门即可）、不抓运行时数据文件（沿 FR-39 安全面）。
-
-**反向抓取受管任务 + 两段式（FR-58，[ADR-0037](adr/0037-reverse-fetch-managed-task.md)，取代 ADR-0027 决策5、扩展决策1）**：把 FR-39「一次性整批抓取、超限整批失败」升级为**受管任务 + 两段式**——真机暴露整批失败会被运行时垃圾（>1MB `.jsonl` 等）击穿致 100% 失败，治根是「先扫清单、人工挑、只抓选定」。新表 `reverse_fetch_task` 关键字段：`id`、`namespace_code` + `server_id`（进 `idx_rft_ns_server` 索引）、`scope`(`group`/`server`)/`group_code`/`scope_target`（落库覆盖层，沿 FR-39 语义）、`status`（状态机 `scanning → pending-review → fetching → ingesting → done`，旁出 `failed`/`cancelled`/`expired`，落 `VARCHAR` + 应用层校验、CAS 迁移）、`scan_command_id`/`submit_command_id`（引用 `agent_command.id`，任务一对多命令）、`manifest`（扫描清单 JSON 落 `TEXT`：`{totalFiles,totalBytes,skipped,files:[{path,size,isText,overThreshold}]}`，过期/终结清空瞬态）、`selected_paths`（选定 path JSON 数组落 `TEXT`）、`total_files`/`selected_count`/`over_threshold_count`/`skipped_count`（进度计数 INT）、`operator`/`note`/时间戳、`active_at`（**互斥哨兵**：非终态为软删哨兵值、终结置真实时间，纳入 `uk_rft_active(namespace_code, server_id, active_at)` 唯一键 → 每实例至多一个非终态任务、历史任务并存，复用 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md) 哨兵范式）。**全部基础类型 + `TEXT`**，无 `ENUM/SET/JSON` 列与方言专有 SQL（可切 Postgres）。`ReverseFetchTaskService` 编排：建任务（事务内互斥查 + 任务/scan 命令/审计原子落地、提交后唤醒）→ `ReceiveScan`（agent 经新端点 `/files/scan` 回元信息清单，**scan 永不失败**、存 manifest+计数、任务转 `pending-review`、scan 命令转 `done`）→ `Submit`（任务须 `pending-review`，校验选定 path 在清单内、超单文件阈值文件须 `confirmOverThreshold` 才纳入——**只拒该文件不拒整批**、文件数/总量作兜底，下发 `mode=submit`+`selectedPaths` 命令、任务转 `fetching`）→ `ReceiveSubmitIngest`（agent 复用 `/files/ingest` 回选定内容，控制面据命令 `mode=submit` 经 `AgentCommandService.ReceiveIngest` 转交任务编排——任务转 `ingesting`、复用 `FileService.Import` 仅落选定集、任务转 `done`、命令转 `done`）→ 旁路 `Cancel`（非终态转 `cancelled`、清空清单瞬态）与 `ExpireStale`（陈旧非终态转 `expired`、清空清单、解互斥，由 `ReverseFetchTaskSweeper` 后台周期触发，参照 `CommandSweeper`）。审计（detail 不含文件内容，沿 ADR-0027 决策7）：`file.reverse-fetch-scan`/`-submit`/`-ingest`/`-cancel`。**安全边界一条不松**：限 `plugins/`、排除 `.jar`/二进制、相对 path 安全、full 角色 + 审计（ADR-0027 决策2/3/4/6/7/8 保留）。`POST /admin/v1/instances/{serverId}/reverse-fetch` 由 FR-39 一次性 ingest **重定义**为建扫描任务（旧一次性行为由受管任务取代）。
-
-**反向抓取审核：持久忽略规则 + 冲突 diff 确认（FR-59，沿用 [ADR-0037](adr/0037-reverse-fetch-managed-task.md)，`conflict-review` 为其状态机的 spec 级扩展、复用 FR-46 拓印 diff/自审范式，未引入新 ADR）**：在 FR-58 受管任务底座上加**审核**两件事。① **持久忽略规则**：新表 `reverse_fetch_ignore_rule` 关键字段：`id`、`namespace_code`、`scope`(`group`/`server`)、`group_code`、`scope_target`（`scope=server` 时的 serverId，`group` 层留空）、`rule_type`(`exact`/`prefix`，落 `VARCHAR` + 应用层校验)、`pattern`（exact 为完整相对 path、prefix 归一为以 `/` 结尾的目录前缀）、`comment`/`operator`/时间戳、`deleted_at`（软删哨兵，纳入 `uk_ignore_rule(namespace_code, scope, group_code, scope_target, rule_type, pattern, deleted_at)` 唯一键 + `idx_ignore_ns_group` 索引，复用 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md) 哨兵范式）。`ReverseFetchIgnoreRuleService` 管 Create/List/SoftDelete + 审计（`reverse-fetch.ignore-rule-add`/`-remove`）；`GET tasks/{id}` 返回任务详情时按任务 `(ns, scope, group, scopeTarget)` 查活跃规则（`MatchActive`：group 层规则对该大区任意实例生效、server 作用域任务额外叠加本实例 server 层规则），对 manifest 每文件即时算 `ignoredByRule`（`IgnoredByRules` 纯函数：exact `path==pattern`、prefix `HasPrefix`）——**纯展示标记、不改 manifest 存储**。② **冲突 diff 确认（conflict-review）**：`reverse_fetch_task` 加状态 `conflict-review`（介于 `fetching` 与 `ingesting`）+ 瞬态列 `submit_content`（`TEXT`，conflict-review 期暂存 submit 回传的全部选定内容信封 `{files:{path→content}, conflicts:[path]}`，resolve/取消/过期清空，同 `imprint_content` 范式；AutoMigrate 加列、既有行默认空）。`ReceiveSubmitIngest` 收 submit 回传后逐文件 `FindByIdentity` 判冲突：**无冲突**沿原路 `ingesting → Import 落库 → done`；**有冲突**暂存全部回传内容到 `submit_content` + 记冲突 path 集、任务转 `conflict-review`（**不落库**，命令仍转 `done`）。新增 `Conflicts`（冲突清单）/`ConflictDiff`（抓取值取暂存、目标已有版本实时取 `file_object` 当前版本）/`Resolve`（body `decisions:[{path,action:overwrite|keep,reviewedMd5?}]`：每 `overwrite` 过**自审门** `reviewedMd5`=该文件抓取 md5 否则 `ErrReverseFetchReviewMismatch` 412、冲突集每项须有决定；**CAS 认领** `conflict-review → ingesting` 防并发双 resolve，复用 `FileService.Import` 一事务原子落非冲突集 + 确认覆盖集、跳过 keep，任务转 `done`、清 `submit_content`、记 `file.reverse-fetch-ingest` 审计）。`conflict-review` 仍占活跃（互斥）、亦由 `ReverseFetchTaskSweeper` 一并过期清瞬态。**守边界**：忽略规则只管持久（临时忽略 / 审核台 UI / diff 面板属 FR-60）、不做通配符 / 正则（exact+prefix 足够，YAGNI）、agent 零改动（内容已在 submit 回传）、ADR-0027 安全边界一条不松。
-
-**agent 只读日志回传（FR-88，[ADR-0040](adr/0040-agent-readonly-log-tail.md)）**：让运维在管理台「服务器详情」直接拉某在线 agent 的最近 N 行日志（脱敏后）排障免上机。agent 是嵌在 MC 进程的插件、**无 HTTP server**，故复用 ADR-0027/0037 的「命令-回传」通路（不给 agent 开端口、控制面不直连 agent）。**agent 侧**：agent-core 装配时用 `BufferingPlatformAdapter` 包裹壳层 `PlatformAdapter`（壳日志实现零改动），所有经 core 的 `info/warn/error` 旁路进 `AgentLogBuffer`——线程安全、有界（默认 300 行、满挤出最旧）的内存环形缓冲，**落缓冲那一刻即经 `LogRedactor` 脱敏**（token/password/secret/authorization/bootstrap-token 等键值掩码，纯函数、可穷举单测），缓冲里存的就已是脱敏文本。`ReverseFetchExecutor`（复用同一命令排空通路）拉到 `tail-logs` 命令即读缓冲快照经 `/beacon/v1/agent/logs` 回传——**绝不读任何磁盘日志文件**（不读 server `logs/latest.log`、不读 plugins 树），读快照 + HTTP 仍只在 async 线程（不上 MC 主线程）。**控制面侧**：`agent_command` 加 `tail-logs` 类型与瞬态列 `log_content`（`TEXT`，与 `imprint_content` 平行）；`AgentLogService` 编排——`RequestTailLogs`（**单活跃限速**：该实例已有进行中 tail-logs 命令→`409 AGENT_LOG_ACTIVE`，事务内建 pending 命令 + `instance.tail-logs` 审计 detail 不含日志内容、提交后唤醒）→ `ReceiveLogs`（agent 回传脱敏行 JSON 存 `log_content`、CAS `fetched→done`）→ `GetLatest`（admin 取最近一条 tail-logs 命令状态 + done 则解出脱敏行）。瞬态取一次后随命令过期由 `ExpireStale` 清空 `log_content`（一并清 `imprint_content`），**不落持久真源、不进审计 detail、不导出 git**。admin 端点 `POST/GET /admin/v1/instances/{serverId}/logs`（触发写 readonly→403 + 查询读）。**守边界（ADR-0040）**：只 agent 自身日志、不读任意文件、落缓冲即脱敏、行数有界、限速、agentToken 信任面——即便控制面被攻破也只能看到 agent 自己脱敏后的近期日志。前端「服务器详情」Sheet `LogsSection` 触发→轮询→展示（按级别着色），复用拓印「触发→轮询→取结果」交互范式。
-
-**服务器行快捷操作 + 强制重同步（FR-91，复用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) 命令队列，未引入新 ADR）**：服务器页（FR-65）行操作收进单个「⋯」下拉菜单，并补 agent 详情 / 查看日志（复用 FR-86/FR-88，打开服务器详情 Sheet、「查看日志」入口直达其日志区）与**强制重同步**三入口。强制重同步令在线 agent 立即重拉控制面权威的有效配置/文件树/覆盖集并 apply（免等长轮询、免上机），是 `agent_command` 命令队列既有模式的**第三个命令类型**（与 `ingest-plugins`/`tail-logs` 并列）：`type=resync-config`、**空载荷**、无内容回传。`AgentCommandService.RequestResync` 事务内建 pending 命令 + `instance.resync` 审计（detail 仅 commandId/serverId）、提交后唤醒；agent 侧 `ReverseFetchExecutor` 拉到 `resync-config` 即调注入的重同步回调（`AgentLifecycle.forceResyncNow`，依次复用既有 `fetchAndApply{Config,FileTree,Override}Once` 三条「以本地 md5 拉一次 → applier 幂等 apply」路径，已是最新则合法 no-op、**不读 plugins 树**），经新端点 `POST /beacon/v1/agent/commands/result` 回传结果，控制面 `ReceiveResyncResult` CAS `fetched→done`（成功）/`failed`（回调抛异常）。装配以延迟持有者打破 executor 先于 lifecycle 的构造顺序。**守边界**：忠实「重拉有效配置」语义、不做绕过幂等守卫的 force-apply（不镀金）；不开放远程改配置 / 重启进程；复用命令通路与单飞排空，不新增命令通路或 ADR。
-
-**运维设置 store + 热生效（FR-61，[ADR-0038](adr/0038-ops-settings-store-hot-reload.md)，扩展 FR-25「config.yml 即真源」为分层真源）**：把控制面热改项（**纯运维调参、与启动 / 安全无关**）的真源从 `config.yml`（启动期一次性读）移到 DB `setting` 表，加设置 API（full 角色 + 审计），各消费者运行期从 store 读并**热生效**、免重启。新表 `setting` 单 key-value（不按域分多表）：`key`(VARCHAR 128 唯一)/`value`(VARCHAR 1024 字符串化值)/`value_type`(`int`/`bool`/`string`，应用层反序列化提示)/`version`(乐观锁 CAS)，无软删（固定白名单 upsert、不删），GORM 可移植（VARCHAR + 应用层校验、不绑方言）。**热改项与启动 / 安全项分层**：进 store 的 16 项热改 key（`health.degraded-after-sec`/`ttl-sec`/`offline-grace-sec`/`scan-interval-sec`、`metric.enabled`/`sample-interval-sec`/`retention-hours`、`longpoll.max-hold-ms`、`alert.webhook-url`/`webhook-timeout-ms`、`log.level`、`reverse-fetch.max-file-bytes`、`update.proxy-url`[更新出站代理，FR-98 见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)]、`update.channel`/`update.auto-check-enabled`/`update.check-interval-hours`[更新渠道 stable/prerelease（FR-117/ADR-0052）/ 自动检查开关 / 检查周期小时，FR-101，被 FR-99 消费]）；留文件的启动 / 安全项（`http-addr`/`database.*`/`auth.*`/`agent-token`/`git-export.*`）**绝不进 store、绝不出现在设置 API / UI**（口令 / 密钥 / agent-token 是安全边界）。**含凭据项脱敏（FR-98，扩展 ADR-0038「value 可明文记」前提）**：`update.proxy-url` 是 store 首个含凭据项，其 value 落库存原值供运行，但审计 detail / 日志 / 前端回显三处一律经 `httpx.RedactURLCredentials` 掩去 userinfo 段（宁严勿松、解析失败整体掩 `***`）；前端「未改密码」语义=提交脱敏占位则后端保留原值不覆盖。`SettingsService` 持白名单元数据常量表（key/类型/默认/校验范围或枚举/config 路径/中文说明）+ 进程内内存缓存（启动 `GetAll` 载入、RWMutex）：`GetInt`/`GetBool`/`GetString` 走缓存缺则默认；`Update` 白名单 + 类型 / 范围 / 枚举校验 → `Upsert`(CAS version+1) → 刷缓存 → 审计 `settings.update`（detail 仅 `key`+新值，**绝不含密钥**）→ `key==log.level` 调日志原子级别 setter；`SeedFromConfig` 首启种子（store 缺该 key 才用 `config.yml` 值填，已有以 store 为准）；`List` 列全部热改项供前端。**热生效机制：消费者「按需从 store 读」+ 缓存，不引事件总线**（守"禁 MQ / 重型件"）——健康扫描每轮读阈值 / 扫描周期（`scan-interval` 变则重置 ticker）、指标采样每轮读 `enabled`/间隔 / 保留期（`enabled=false` 跳过本轮、间隔变重置 ticker、采样器恒常驻不再启动期决定起不起）、长轮询每请求读 `max-hold-ms`（agent/file 挂起点 + SSE 保活间隔）、告警 webhook 每分发读 url/timeout（url 空跳过、动态启停、通道恒挂载）、日志级别经 `internal/pkg/log` 的 atomic-level slog handler `SetLevel` 即时改（不重建 logger、不破坏中文格式）。**反向抓取上限热生效不改 agent**：`ReverseFetchTaskService.ReceiveScan` 存 manifest 时用 `reverse-fetch.max-file-bytes` + agent 上报 size **重算 `overThreshold`**（不信 agent 的标记），submit 超阈值确认门据重算后的 manifest 标记裁决。`config.yml` 对热改项**降为首启种子**：改文件这些项只在 store 还没该 key 时（首启）生效，已 seed 后改文件不影响运行值（要改走设置 API）。设置变更全程审计、可追溯；单进程内存缓存 + Update 即刷新，控制面单节点够用。
-
-**配置操作级撤回子系统（FR-116，[ADR-0051](adr/0051-config-operation-undo.md)，见 [docs/specs/config-operation-undo.md](specs/config-operation-undo.md)）**：把工作台「撤回 / 回滚 / 操作日志」从原型 UX（FR-114）落成真实后端能力——清单内三类大操作（下发 push / 发布 publish / 反向抓取 ingest fetch）支持**事务级撤回**。新表 `reversible_operation` 关键字段：`id`、`namespace_code` + `op_type`(`push`/`publish`/`fetch`)/`scope`(`global`/`group`/`zone`/`server`)/`scope_target`（进 `idx_revop_scope` 索引）、`forward_ref`（被操作对象标识引用，供同 scope 被覆盖判定）、`status`（`reversible`/`reversed`/`expired`/`superseded`，落 `VARCHAR` + 应用层校验，**兼作幂等 / 过期 / 被覆盖三闸**，进 `idx_revop_status`）、`inverse_payload`（**反向快照** JSON 落 `TEXT`：publish/push 记 `{itemId,preVersion}`、fetch 记 `{taskId,created:[id...],updated:[{id,preVersion}]}`，过期 / 撤回后清空瞬态）、`summary`（无敏感人类可读摘要）、`operator`/`reversed_by`/`reversed_at`/时间戳、`deleted_at`（哨兵软删，本表不软删账目、仅为范式留位）。**全部基础类型 + `TEXT`**，无 `ENUM/SET/JSON` 列与方言专有 SQL（可切 Postgres）。**记账与正向写同事务**（`RecordPublishInTx` 在发布 / 下发事务内连同正向写一并落账目，不存在"操作成功但没记账→无法撤回"窗口；fetch 反向快照在 ingest 落库后才齐全，故 `RecordFetch` 在 `ReverseFetchTaskService.ReceiveSubmitIngest` 落库事务后 best-effort 补记、失败仅 WARN 不损正向结果），落账目时把同 `forward_ref` 上旧 `reversible` 账目置 `superseded`（防脏撤回）。`ReversibleOperationService` 编排撤回（**只编排、不重造回滚**）：`Undo` 单事务内 —— 先按 `status` 快速短路（已 `reversed` 幂等返回成功、`expired`/`superseded` 明确报错）→ CAS 抢占 `reversible→reversed`（**幂等闸 + 并发串行化**同一行的并发撤回、杜绝双撤回）→ 按类型执行反向回滚：**undo publish/push** 复用 `ConfigService.RollbackInTx`/`FileService.RollbackInTx` 把 config_item / file_object 回滚到操作前版本指针；**undo fetch** 软删被该次 ingest 新建的受管项（哨兵软删允许同标识重建）+ 把被覆盖更新的受管项回滚到 ingest 前版本（不删磁盘文件，agent 纯读）→ 写 `config.undo-push`/`-publish`/`-fetch` 审计（detail 仅记可逆操作 id / 类型 / scope、不含文件内容）。**事务内不做任何下发 IO**；**提交成功后**才经 `UndoNotifier` 唤醒受影响长轮询（复用既有「唤醒即重算比对 md5」，仅有效 md5 真变才下发，不另建推送通道）。陈旧账目由 `ReversibleOperationSweeper` 后台周期把创建超可撤回窗口（`undo.window-hours` 设置项，默认 24h，经 store 热改、承 ADR-0038）仍 `reversible` 的账目 `ExpireStale` 置 `expired` 并清空反向快照瞬态（参照 `CommandSweeper`/`ReverseFetchTaskSweeper`）。撤回端点 `GET /admin/v1/reversible-operations`（读，列账目供工作台操作日志）+ `POST /admin/v1/reversible-operations/{id}/undo`（写，full 角色经 `requireFullRole` 挡 readonly→403、幂等、入审计）。**守边界**：撤回只改"事实"（版本指针 / 覆盖项 / 纳管记录）不写游戏逻辑、不引 Redis/MQ/事件溯源、**agent 零改动**（撤回全在控制面完成、无新命令、无 jar 重建）；分层 `router→handler→service→repository` 单向，handler 不碰 GORM；视图层**绝不返回 `inverse_payload` 反向快照瞬态**。
-
-**软删唯一键**：`deleted_at` 默认值用**固定哨兵** `1970-01-01 00:00:00`（非 NULL）并纳入唯一键，软删时填真实时间——避免 NULL 不参与唯一比较导致"未删重复挡不住"，且 MySQL/Postgres 行为一致（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。`file_object` 同款哨兵软删。`reverse_fetch_task.active_at` 同款哨兵保活跃唯一（FR-58）。`reverse_fetch_ignore_rule.deleted_at` 同款哨兵软删保规则唯一（FR-59）。`setting` 表无软删（固定白名单 upsert，FR-61）。`reversible_operation.deleted_at` 同款哨兵（本表当前不软删账目，仅为可移植范式留位、保持与全表一致，FR-116）。
-
-## 4. REST 接口（概览，详见 [API.md](API.md)）
-
-- **agent 侧 `/beacon/v1/agent/*`**：`register`（只报 serverId，Beacon 解析回填 group/zone）、`heartbeat`、`stream`（FR-24 单条 SSE 推送流，合并三通道变更通知 + 连接即对账）、`config/effective`/`files/manifest`/`files/content`（通道B 文件树）、`override-sets`/`override-sets/content`（FR-15 三方覆盖集投递；后三组退化为 SSE 通知后的"按 md5 取内容"端点）、`report`、`discovery`。
-- **admin 侧 `/admin/v1/*`**：登录 / 登出（`auth/login` / `auth/logout`，各记一条 `auth.login` / `auth.logout` 审计；登出仅留审计痕迹，令牌无状态不可吊销）、配置 CRUD/发布/回滚/diff/历史、文件树托管 CRUD/发布/回滚/历史 + **配置导入**（`files/import`：`multipart` 把一份目录批量上传到某组，复用通道B 整文件覆盖，多文件事务内原子落地 + 一条 `file.import` 审计，FR-38）、实例与健康、zone 分配、审计（含按操作者过滤，FR-30）、namespace（建环境记 `namespace.create` 审计）、指标看板（`metrics/summary` 聚合快照 + `metrics/trend` 历史趋势，FR-32）、控制面自身状态（`system/status`：版本/运行时长/DB 连通/在线实例数/采样器状态 + Go 运行时资源，供页眉展示，区别于 FR-32 的 agent 网络聚合，FR-33）、API 密钥（`api-keys` 创建/列出/吊销/重置，FR-42）、运维设置（`settings` 列全部热改项 + `settings/{key}` 改单项，热改即生效、入 `settings.update` 审计；启动 / 安全项不在此暴露，FR-61）。
-- **运维侧 `/metrics`**：Prometheus 文本格式运行指标（注册数/健康分布/配置发布与推送累计），与 agent 端点同属内网信任面、不挂管理台鉴权（FR-30，见 [ADR-0020](adr/0020-prometheus-metrics-observability.md)）。
-- 统一错误体 `{code, message, traceId}`；agent 端 `X-Beacon-Token` 仅防误连（非安全边界，语义不变）。
-- **管理面鉴权**（自 P2 前移本批，见 [ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）：单操作者登录换无状态 HMAC 签名令牌，`/admin/v1/*`（登录除外）经令牌中间件校验，认证操作者注入 context；写操作 `operator` 以认证身份为准入审计，取代前端手填值。凭据/密钥走 env、不落库（不引 Redis/会话存储，遵简单优先）。
-- **写操作审计兜底**（FR-72，增强 FR-7）：admin 组在鉴权 + `readonlyWriteGuard` **之后**挂一道兜底审计中间件（`auditWriteMiddleware`），对 `/admin/v1` 下**尚无专项审计**的写方法（POST/PUT/DELETE）补记一条 `audit_log`——`operator` 取认证态、`action`/`targetType`/`targetRef` 由 chi RoutePattern + 路径参数推导、`result` 按响应状态、`clientIp` 取来源 IP，`detail` 绝不含请求体（敏感豁免）。中间件维护一份「已被专项审计覆盖的写路由」集中清单，命中即跳过、**不与既有专项审计双记**；落库失败只记 WARN、**不阻断主响应**（旁路）。意义：写操作"有迹可循"由逐处自觉升为结构性兜底，新增写端点忘补专项审计也不漏审。
-- **只读角色 + 运行时 API 密钥**（FR-42，[ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）：在登录令牌之外，鉴权中间件再认两类 API 密钥凭据——独立头 `X-Beacon-Api-Key: <bk_...>` 或 `Authorization: Bearer <bk_...>`（以 `bk_` 前缀与登录令牌区分）。密钥**真源在库**（`api_key` 表，只存 SHA-256 哈希），中间件经 `ApiKeyVerifier` 接口查库比对哈希、校验未吊销未过期、解析角色注入 context；登录令牌恒为 `full` 角色。随后一道 `readonlyWriteGuard` 中间件**统一裁决只读拒写**：`readonly` 角色访问写方法（POST/PUT/PATCH/DELETE）一律 403 FORBIDDEN、GET 放行，handler 不碰角色判断。密钥经认证身份记 `operator=apikey:<名称>` 入审计；创建/吊销/重置写 `audit_log`（明文不入 detail）。密钥 CRUD 端点本身也在守卫内（readonly 不能管密钥）。`internal/auth` 仍是 stdlib 叶子，DB 校验在 `service`（守分层与简单优先，不引会话存储）。
-- **敏感配置 at-rest 加密**（FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）：标记 `sensitive` 的配置项 `content` 以 AES-256-GCM（标准库）加密落库（`config_item`/`config_revision` 的 `content` 列存 `enc:v1:` 前缀的 base64 密文），加解密只在 `internal/repository` 两个配置仓库的写/读边界发生——**service 层始终只见明文**，md5 / scope 合并 / 发布前 schema 校验零改。密钥仅从 env `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取，绝不入库 / 不入仓 / 不打日志；库中已有敏感项却无密钥 → 控制面 fail-fast 拒绝启动。解密后下发明文到 agent（数据面内网可信不变，agent 不持密钥）。是 FR-26 经 Beacon 下发 Redis 密码的前置。
-
-## 5. 有效配置解析（scope 覆盖链）
-
-agent 只给 `(namespace, serverId)`，服务端按 `zone_assignment` 解析出 `(group, zone)`，拉 global/group/zone/server 四层候选，**按 dataId 键级深合并**：
-
-- 优先级 `global < group < zone < server`，高层覆盖低层。
-- 标量覆盖、map 递归深合并、**list 整体替换**、**高层显式 `null` = 删键**。
-- 仅对结构化格式（yaml/json）做键级合并；properties 按整 key 覆盖。
-- 序列化键序固定，保证相同输入恒得相同 md5（长轮询比对依赖此幂等）。
-- **整体 md5 = `md5(concat(dataId + ":" + 单dataId_md5))`**，把 dataId 名纳入哈希，避免集合碰撞误判（见 [ADR-0008](adr/0008-config-soft-delete-and-effective-md5.md)）。
-- 发布时做结构化 parse 校验（坏 yaml/json 拒绝发布，不推爆全网）；同一 dataId 跨层 format 必须一致。
-- 发布前再做 schema/类型校验（FR-27）：非空内容顶层必须是键值映射（拒裸标量/列表根，否则深合并会整体冲掉其它层）、键必须非空（递归），不通过返 `CONTENT_SCHEMA_INVALID`。校验为 `merge.ValidateSchema` 纯函数、由 service 层 `validateContent` 统一接入（`Create`/`Publish`/`Rollback` 三条写路径全覆盖），handler 不碰校验细节；规则刻意保守，不引入按 dataId 的字段级 schema 注册表。
-
-agent 收到的是**已合并的有效配置文本**，不感知覆盖链。
-
-**admin 有效预览（FR-22，[ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md)）**：`GET /admin/v1/configs/effective` 复用同一解析，额外给出**逐键来源层 provenance**（每个叶子键最终来自 global/group/zone/server 的哪层、哪些键被 `null` 减量删除），供管理台「服务器视角 / 文件覆盖矩阵」展示"这台最终生效什么、每个值来自哪层"。provenance 经 `merge` 包的**平行纯函数** `MergeDataIDWithProvenance` 计算，**不改 `DeepMerge`/`MergeDataID` 这条 agent 热路径**，并以"合并结果与 `MergeDataID` 逐一致"的交叉测试防双实现漂移。只读、不挂长轮询、不强制注册。
-
-**配置灰度叠加（FR-9，[ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）**：灰度作用在"某 dataId 用哪个版本的内容"这一**版本选择**层，与 scope 覆盖链**正交叠加**——不新增覆盖层、不改 `merge` 纯函数。解析时拉完四层候选后，按 `namespace + 候选项集合`**一次性**取活跃灰度（`config_gray`，Map 命中、**无 N+1**），对"该 config_item 存在灰度且当前 `serverId` 在其 cohort 名单内"的候选项，把参与合并的 `content` 临时替换为灰度内容；其余层、合并算法、md5 计算全不变——**名单外 `serverId` 的解析结果与无灰度时逐字节相同**。admin 预览与 agent 热路径共用同一叠加逻辑，保证 cohort 内预览与下发一致。操作侧：`promote` 把灰度内容作为新稳定版本发布（version+1，走既有发布路径，过 FR-27 校验 / FR-20 加密）并软删灰度；`abort` 直接软删灰度。两者事务内写表 + 审计原子完成，**提交后按受影响 `serverId` 唤醒**（发布 / abort 唤醒 cohort 名单、promote 唤醒 item scope ∪ cohort 名单），复用既有长轮询 / SSE 唤醒集合，绝不全量盲唤醒。
-
-### 5.1 有效文件树解析（通道B：结构化深合并 + 整文件兜底，FR-44）
-
-文件树托管（通道B，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）与配置中心平行，按 `path` 后缀**分流**解析（[ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 取代 ADR-0010 决策1「绝不深合并」）：
-
-- 同 `(namespace, serverId)` 解析路径，拉 global/group/zone/server 四层候选文件，**按 `path` 分桶**；每个 path：
-  - **结构化文件**（`.yml`/`.yaml`/`.json`/`.properties`）**有 ≥2 层贡献时**跨四层**按键深合并**，**且为无损**（[ADR-0034](adr/0034-file-tree-lossless-merge.md)，取代 ADR-0029「值归一化可接受」一条）：合并语义与通道A 同一套（标量覆盖 / map 深合并 / list 整替 / 高层 `null` 删键 / 确定性键序与 md5 幂等），但**保叶子标量原文 token 与注释**（`007` 保 `007`、`1.10` 保 `1.10`、日期保原样、JSON 大整数不失精度）。filetree 调 `merge.MergeDataIDLossless`（YAML 走 `yaml.Node` 节点级合并、JSON 走 `json.Number`、properties 行式保注释），**与配置中心 `MergeDataID`（有损、类型化）隔离**——只改文件树通道保真度、通道A 不变。**单层贡献则字节原样透传**（不入合并路径）。
-  - **非结构化文件**（其余后缀）取覆盖链**层级最高的那一整份**（整文件覆盖，绝不深合并）。
-  - **按文件豁免（path 级）**：**任一层** `WholeFileOverride=true` 即整 path 走整文件覆盖（取最高层、保注释、不重渲染），不由 winner 单层独断；合并模式由 层数 + 任一层标记 + 后缀决定，与遍历顺序无关。
-  - **坏内容防线**：结构化文件发布期 `merge.Parse` 校验拒坏语法入库（ADR-0029 决策6）；运行期某层仍解析失败 → 该 path 回退整文件取 winner（`Resolve` 纯函数、一坏不拖垮整树，决策5 兜底）。
-  - 控制面渲染合并后整文件，`EffectiveFile.MD5 = md5(合并后整文件)`；agent 镜像落盘逻辑零改（哑镜像、原子写、fail-static）。
-- 服务端算出 `manifest`（path→md5，md5 为合并后整文件的指纹）+ 独立的 `fileTreeMd5`；`fileTreeMd5 = md5(concat(path + ":" + 单文件md5))`，把 `path` 名纳入哈希防集合碰撞（沿用 ADR-0008 思路）。
-- `fileTreeMd5` 与有效配置 md5 **相互独立**，各自长轮询唤醒集合分开（见 §6），互不触发无谓重算。
-- agent 比对本地已落盘 manifest，仅取/删变更文件，镜像落盘到插件真实 dataFolder（原子写，见 §8）。
-- 解析逻辑落 `internal/filetree` 纯函数包（与 `merge` 平级、无副作用），便于穷举单测。
-
-**admin 有效文件树只读预览 + 逐文件/逐键来源（FR-45，沿用 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式）**：admin 侧新增只读端点 `GET /admin/v1/files/effective`（形参对齐通道A 的 `configs/effective`），预览某 `(namespace, serverId)` 合并后的有效文件树——逐文件给出合并 `content`/`md5` + **来源**：结构化非豁免文件按 `merge.MergeDataIDWithProvenance` 产出**逐叶子键最终来源层**（global/大区/小区/单服）与被高层 `null` 减量删除且最终不存在的键；非结构化/豁免/坏内容文件标 `wholeFile=true`、来源为**单条空路径 = winner 层**。provenance 走 `filetree.ResolveWithProvenance` **平行纯函数**（与 `Resolve` 同一套 per-path 分桶 + winner + 分流判定），**绝不改 `Resolve`/`merge` 这条 agent 下发热路径**；以「每个 path 的 `content`/`md5` 对任意候选集恒等于 `Resolve`」交叉测试钉死、防双实现漂移。端点**不挂长轮询、不强制注册**（同 FR-22 克制），作为后续 FR-46 审核台 diff「期望合并值」一侧的数据源。
-
-## 6. 动态热更：REST 长轮询（"唤醒即重算比对"）
-
-无 Redis/MQ，纯进程内通知：
-
-1. agent 带当前有效配置 md5 发起 `GET .../config/effective`。
-2. 服务端**先注册 waiter，再算当前 md5**：不等则立即返回新配置（摘除 waiter）；相等才 `select` 挂起（含超时与客户端断连）。此顺序消除"注册前发布丢唤醒"窗口（P0 修正）。
-3. 管理台发布/回滚/改派，**事务提交成功后**按 scope 算**最小受影响 serverId 集合**（global→该 ns 全部、group→该 group、zone→反查 DB `zone_assignment`、server/改派→单 serverId），仅唤醒集合内 waiter。
-4. 被唤醒的 goroutine **重跑解析比对 md5**：真变才 200 下发，未变（被高层覆盖）则继续挂起。
-5. 无变更到超时 → 304，agent 立即续杯。
-
-内存结构：`waiters map[ns+serverId][]*Waiter`，每 waiter 一个缓冲为 1 的 notify channel；Registry / Hub / Health **三锁独立不嵌套**，DB IO 全在锁外，结构上杜绝死锁。
-
-文件树托管（通道B）复用同一 `longpoll.Hub` 实现，但**另起一个独立 Hub 实例**：agent 走 `GET .../files/manifest` 带 `fileTreeMd5` 长轮询，文件发布只唤醒文件 Hub 的 waiter、配置发布只唤醒配置 Hub 的 waiter（唤醒集合独立）；唯 zone 改派同时影响两通道归属，故同时唤醒两 Hub。被唤醒返回的是 `manifest`（path→md5，不含内容），agent 再据差异逐个 `GET .../files/content` 取整文件。
-
-### 6.1 单条 SSE 推送流（FR-24，[ADR-0015](adr/0015-sse-server-push-transport.md)，取代 [ADR-0006](adr/0006-rest-long-poll-push.md)）
-
-把 配置/文件树/覆盖集 三条 server→agent 长轮询**合并为一条 SSE 推送流** `GET .../stream`（每 agent 往外连接由 ~4 降到 ~2：1 条 SSE + 心跳）：
-
-- **流只发"变更通知"、不搬数据**：事件是轻量 JSON（`config-changed`/`file-changed`/`override-changed` + 新 md5），agent 收到后**用现有 `config/effective`、`files/manifest`、`override-sets` 端点取内容并应用**（取数据-应用逻辑不变，改的只是"如何得知有变更"）。blob/文件内容仍走 HTTP GET，不进流。
-- **连接即对账，绝不丢更新**：agent 建流时上报各通道当前 md5（`configMd5`/`fileMd5`/`overrideMd5`），控制面 `StreamService` **先注册两 Hub 的 waiter（先注册后算，消除注册前发布丢唤醒窗口）→ 比对上报 md5 与当前 md5、对落后通道立即补发 `*-changed`（补齐断线期间落下的增量）→ 发 `ready` → 转直播**。直播阶段复用上面的"最小受影响 serverId 集合"唤醒（`cfgWaiter`/`fileWaiter` 的 `NotifyChan()` 在 `select` 中多路等待），被唤醒即重算比对、真变才发通知。这替代了长轮询天然自愈（每轮带 md5 比对）的能力。
-- **健康判活独立于流活性**：online/lost/offline（§7）仍由独立心跳 + TTL 判定，**不**用"SSE 断开"判失联（抖动断流但服务器健在 → 误杀）。两者解耦。
-- **fail-static 不破**：流断 → agent 按本地快照继续、玩家无感，带退避重连、重连即对账。
-- **传输抽象（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md) / 不变量 #5）**：core 新增 `StreamTransport`/`StreamEvent` 端口与纯逻辑 `SseFrameParser`（按空行分帧、注释行心跳忽略），SSE 客户端实现 `OkHttpStreamTransport`（纯 HTTP 读流、无 netty/无重型件）只在适配器。控制面 SSE 事件编码为纯函数 `internal/sse`，保活发 SSE 注释行（`: ping`），响应头带 `X-Accel-Buffering: no` 关反代缓冲。
-- **迁移期兼容**：注入 `streamTransport` 时 agent 以单条 SSE 流取代三条长轮询循环；未注入则退回三条长轮询（[ADR-0015](adr/0015-sse-server-push-transport.md) 决策 8）。远程命令、[FR-29](PRD.md) 拓扑 watch 作为消费者复用本流（各自独立 FR）。
-- **拓扑 watch（FR-29）接入本流**：新增 `topology-changed` 事件类型与一个 namespace 级唤醒 Hub（`topologyHub`，与配置/文件 Hub 同构、独立锁）。`StreamService` 在每条流上额外注册一个拓扑 waiter 并维护 namespace **拓扑摘要**（`runtime.TopologyDigest`：对"可用集合"按 `serverId|role|group|zone|status|address` 排序后取 md5，运行指标如 playerCount/tps 不入摘要）；实例上线/下线（注册 / 手动下线 / 健康转 lost·offline）/ 改派 zone 四处变更点经 `ChangeNotifier.NotifyTopologyChange(ns)` 唤醒该 namespace 全部拓扑 waiter，被唤醒即重算摘要、**真变才推**（摘要未变不推）。事件 `data` 仅携新摘要、不搬实例数据——agent 收到 `topology-changed` 后重查 `discovery` 端点取最新拓扑（守控制面/数据面边界：控制面只发"拓扑事实变更通知"）。
-
-### 6.2 git 单向导出镜像（FR-47，[ADR-0030](adr/0030-git-export-mirror.md)）
-
-把配置 / 文件树的**源层**（global / 大区 / 小区 / 单服 各层原始内容，**非合并后的有效配置**）按目录结构**单向导出**成一个 git 仓——备份 / 灾备 / 外部可见、可 `git log` 翻历史。**git 仓是单向派生镜像、绝不作第二真源**：数据只从 MySQL 单向流向 git，永不回灌、不参与 agent 下发或有效配置解析（守[不变量 #3 真源切分](../.claude/rules/architecture-invariants.md)）。
-
-- **触发时机（提交后、与唤醒并列）**：`ConfigService` / `FileService` / `ZoneService` 的写路径在 DB 事务**提交成功后**、与 `ChangeNotifier` 长轮询唤醒**并列**调 `GitExporter.ExportAsync(meta)`——可选注入（`SetGitExporter`，未注入即 no-op，与 `SetNotifier` 同构），二者各自独立、互不阻塞。
-- **异步 best-effort 非阻塞**：`ExportAsync` 只投递信号立即返回（绝不在发布请求线程做 git IO，守[性能约束](../.claude/rules/architecture-invariants.md)）；`service.GitExportService` 以**单 worker goroutine 串行**消费信号（git 工作区单写资源，信号 channel 缓冲 1、满即丢——每次导出全量快照、丢信号不丢数据），读全量源层 → `gitexport.BuildSnapshot` 组装快照 → `GitRepo.Commit`。任一步失败**仅 WARN，绝不回滚发布、绝不阻断主流程、绝不影响下发**（与 [ADR-0019](adr/0019-health-alert-channel-abstraction.md) 告警逐通道兜错同精神）。
-- **源层读取不解密、保密文**：`repository.ExportSourceRepository` 直读 `config_item` / `file_object` 原始行（只读、与发布事务无关、唯一新增 DB 读路径），**不经配置仓库的解密**——敏感配置项库内 `content` 即 `enc:v1:` 密文，原样导出正是 FR-47 所需（解密反泄明文，[ADR-0018](adr/0018-config-encryption-at-rest.md)）；密钥不入 git。
-- **敏感处理**：配置项 FR-20 标 `sensitive` 的导**密文**；文件树新增 `file_object.sensitive_excluded` path 级标记，置真则该文件**整体不导出**到 git（防反向抓取来的第三方插件明文密码落 git）。远程推送**凭据走 env**（`BEACON_GIT_EXPORT_REMOTE_TOKEN`）、不入库 yaml。
-- **纯逻辑与 git 实现解耦**：`internal/gitexport` 为无副作用纯逻辑包（`SourceLayer` / `Snapshot` / `BuildPath` 目录布局 / `BuildSnapshot` 敏感排除 / `BuildCommitMessage`，与 `merge`/`filetree` 平级、可穷举单测）；真正读写 git 仓经 `GitRepo` 端口接口隔离（与 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md) 让 core 依赖 `HttpTransport` 端口同构），实现**推荐 go-git**（纯 Go、契合单二进制 alpine、免装 git；备选 git CLI 需改 Dockerfile）。未启用导出用 `NopGitRepo` 空实现。灾备恢复 = 手动 / 脚本化重导入（保持单向、不引入入站同步 / 自动 restore）。
-
-## 7. 服务注册 / 发现 / 健康
-
-- **注册**：agent 只报 serverId + 元数据标签（`role/version/capacity/weight` + 自定义 metadata，**capacity/weight 为一等字段，metadata 仅 `map<string,string>`**，无 canary —— 对应 P0 修正）。Beacon 按 `zone_assignment` 解析回填 group/zone 写入内存注册表。
-- **agent 自报构建版本事实**（FR-86，[ADR-0039](adr/0039-agent-self-reported-version.md)）：`runtime.Instance` 增 `AgentVersion string` 字段——agent 注册时自报其**自身构建版本**（壳层 bukkit/bungee 经 TabooLib `pluginVersion` 注入 `AgentIdentity`，core 不碰平台守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)；与业务 `version` 语义不同）。注册 payload 附加可选 `agentVersion`（仅非空拼键、旧 agent 缺键 → 控制面存空串，向后兼容），控制面**只存内存事实、随注册刷新、不落 DB**（与注册/健康真源同源）。实例视图输出 `agentVersion` 供管理台逐台展示 + **集群版本不一致黄标**（前端按环境聚合多数版本展示派生）。控制面只展示该事实、不据它做任何决策（守「只存事实」边界）。
-- **bc 后端归属事实**（FR-36，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）：`runtime.Instance` 增 `backends []string` 字段——**仅 bc（bungee）非空**，存其当前代理的后端子服 serverId 集合（取自 agent 侧 `ProxyServerDirectory`，含 Beacon 注入 + 手工子服）。agent 经 register / report 附加可选 `backends` 上报（仅 bc 填、bukkit 恒空、旧 agent 缺键向后兼容；report 用「缺键不动 / 显式才刷新」区分），控制面**只存内存事实、随注册/上报刷新、不落 DB**（与注册/健康真源同源），经 `Registry` 锁内深拷贝更新、不涉 DB IO。实例视图（§实例与健康）输出 `backends` 供拓扑 bc→bukkit 连线消费（FR-37）。控制面只展示该事实、不据它做任何调度 / 连接决策（守「只存事实」边界）。
-- **重复 serverId 守卫**：按 `lastHeartbeat` 新鲜度判定 —— 旧条目超心跳周期未续约视为僵尸，允许新 address 顶替并告警；仍新鲜的不同 address 才拒绝（409）。避免故障换机被误杀（P0 修正）。
-- **健康**：单后台 goroutine 定期扫描，按心跳陈旧度推进 `online → degraded → lost → offline`（阈值 `degraded-after-sec < ttl-sec < offline-grace-sec` 可配，FR-28）；收到心跳即从任意异常态回 online。offline 条目保留不移除（管理台可见历史），主动下线（FR-49）才移出内存。注意此处健康 `offline`（心跳老化到极限的自动观测态）与 FR-49「主动下线」（运维按死、落 `server_offline`）**同名不同义**。
-- **健康告警**（FR-28，[ADR-0019](adr/0019-health-alert-channel-abstraction.md)）：实例**进入异常态**（degraded/lost/offline）时主动告警，恢复 online 不告警。告警出口抽象为 `Alerter` 接口，`Dispatcher` 扇出到多个通道并**逐通道兜错**（某通道失败仅 WARN、不阻断扫描），第一版实现**站内信**（`InboxAlerter`，进程内环形缓存、独立锁不嵌套、管理台经 `GET /admin/v1/instances`… 同前缀的 `/admin/v1/alerts` 只读）与 **webhook**（`WebhookAlerter`，HTTP POST 告警 JSON，IO 在扫描循环里、不持注册表锁）；新增通道只实现 `Alerter` 接入。**FR-89 增 `PersistAlerter` 通道**（[ADR-0041](adr/0041-alert-event-persistence.md)）：把每条告警额外落 `alert_event` 表作历史留痕，供管理台「事件」页信息流跨重启回看——通道仍不持健康真源、落库失败仅 WARN 不阻断扫描，与既有逐通道兜错同精神；站内信 / webhook 语义不变（前者进程内重启清零、后者往外推）。**出站 HTTP 收口（FR-98，[ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)）**：控制面「更新相关出站」（FR-97/FR-99 的更新检查 / 下载）经单一小工厂 `internal/httpx.NewClient(proxyURL, timeout)` 构造可配代理（`update.proxy-url` 非空→`http.Transport{Proxy}`、空→直连，仅 http/https 代理、不引新依赖、不照搬 ADR-0005 的 agent transport 抽象）；**作用域仅更新出站——webhook 维持现状裸连、不经此工厂**（向后兼容）。
-- **发现**：按标签（zone/group/role/status + 自定义元数据 `tag.<key>`，多 tag 取交集，FR-29）过滤实例；agent 侧 `discovery` 返回**可用集合**（`online`+`degraded`），管理台 `/admin/v1/instances` 可按 status 任意过滤。agent 侧走 `/beacon/v1/agent/discovery`（归 agent 前缀 + token，P0 修正）。要实时感知拓扑变化订阅 §6.1 SSE 流的 `topology-changed` 事件（SDK `discovery().watch(listener)`），不必轮询。
-- **集群拓扑可视化（FR-37）**：管理台 `GET /admin/v1/topology?namespace=` 读**内存注册表快照**组装拓扑——节点（可用集合 `online`+`degraded` 的各实例）+ 边（bc→其 `backends` 中**当前在册可用**的 bukkit，**拓扑来源 = 注册表 + FR-36 backends 事实**，[ADR-0024](adr/0024-bc-backend-membership-as-fact.md)）+ 按 `(group, zone)` 分组信息。落 `service.TopologyService` 纯组装（无 DB IO、无副作用，handler 不碰 `runtime` 内存结构细节，经 service 暴露领域结构）。**只展示事实、不据它做任何调度 / 连接决策**（守「只存事实」边界）、不落 DB、不挂长轮询；前端独立 `/topology` 页用 ECharts graph 画真实 bc→bukkit 连线、按角色 / 大区 / zone 区分聚合，复用 React Query 轮询刷新（要实时可订阅 §6.1 SSE 流 `topology-changed`，FR-29）。实例与健康页仅加角色徽标区分 BC / 子服。
-- **Proxy 目录注入（服务发现延伸出口）**：BeaconAgentProxy 注册成功后周期调用 `discovery` 同步同 namespace 下 `role=bukkit` 且在线的实例，以 `serverId` 作为 Bungee `ServerInfo` 名称、以 agent 上报 `address` 作为连接地址，自动创建/更新**仅由 Beacon 管理**的服务器条目；若同名条目已由手工 Bungee 配置存在，则 WARN 并跳过、不覆盖手工配置。控制面只提供发现事实，不操作玩家连接，不引入持久化任务队列；控制面失联时按本地已注入目录继续（fail-static）。
-- **流量调度（FR-10，落位均衡 / drain，[ADR-0017](adr/0017-traffic-scheduling-decision-vs-execution.md)）**：控制面**只给调度决策（query-only），不执行玩家连接**。`SchedulingService` 提供两件事：① **落位建议**——给定 `(namespace, group?, zone)`，读内存注册表（在线实例）+ DB drain 集合，经无副作用纯函数 `RankPlacement` 仅纳入 `online` 且未 drain 的实例、按 `weight` 降序 → `capacity` 降序 → `serverId` 升序确定性排序，返回候选事实（serverId/address/weight/capacity）供数据面据此落位；**不读** agent 上报的 `playerCount`/`tps`（二者仅展示、不参与决策），活跃负载精排归数据面。② **drain（排空 / 维护标记）**——运维决策，须跨控制面重启存活、要审计，故落 DB `server_drain` 表（与 `zone_assignment` 同源类别、同软删模式），事务内写表 + 审计原子完成，读落位时叠加剔除候选。注册/健康仍以进程内存为真源，drain 不改变有效配置 / 文件树归属、不触发长轮询唤醒。**canary 引流不做**（范围外，见 ADR-0017）。
-- **实例主动下线态（FR-49，[ADR 实例主动下线态]）**：运维主动「下线」某实例 = **运维决策态**，与健康 TTL（自动衰退）、drain（排空、仍可连）三者职责分离、互不混用。下线落 DB `server_offline` 表（与 `server_drain` 同构、同软删模式、可移植），`InstanceService` 持 `db` + `offlineRepo`：① **下线**（`POST …/offline`）事务内写 `server_offline` + `instance.offline` 审计，提交后移出内存可用集 + 唤醒拓扑 watch；② **取消下线**（`DELETE …/offline`）软删 + `instance.online` 审计；③ **注册拦截**——`Register` 写注册表前查 `server_offline`，命中返 `403 INSTANCE_OFFLINE_REJECTED`（区别于 `404 NOT_REGISTERED` / `409 DUPLICATE_SERVER_ID`，重复 serverId 守卫不受影响）。**心跳热路径不查库**：下线在线实例时同步移出内存，其心跳 `404` → agent 重注册 → 在 register 处被拒，下线态只需一次 register 查库即收敛（无每跳 DB IO）。agent 收 `403` 进 `OFFLINE` 生命周期态、停止退避猛打、改按大间隔降频探测重注册、仅首次进入 WARN 一次不刷屏；**fail-static 不变**（被拒 ≠ 控制面挂，不清快照、不阻断玩家），`OFFLINE` 与 `DEGRADED`（控制面不可用）严格区分。取消下线后下一次降频探测即恢复 RUNNING（运维亦可 reconnect 立即拉起）。
-- **指标聚合（FR-32，[ADR-0023](adr/0023-control-plane-observability-dashboard.md)）**：`runtime.Instance` 在 `playerCount`/`tps` 之外新增**内存 / CPU** 字段（agent 上报，**与 playerCount/tps 同列健康事实、仅展示不参与决策**，report handler 解析向后兼容旧 agent——缺内存字段缺省 0、缺 `cpuLoad` 缺省 -1.0 哨兵即"不可用"、聚合时剔除不计入平均）。聚合端点（§4）**从内存注册表实时计算**当前快照统计——全集群总玩家数、每服人数、平均 / 分服 TPS·内存·CPU，与发现 / 健康同走读内存真源、不落库、写路径零侵入。**平均 TPS·内存·CPU 三者口径统一为仅统计 `role=bukkit`**（bungee 作纯代理、tps 恒 0 且 bc 堆字节口径与子服不可比，计入会失真，FR-43；总玩家数 / 在线服数仍计全部）；趋势 `Downsample` 桶内内存均值同此口径；每服人数明细带 `role` 字段供管理台按角色拆「子服(bukkit)/BC 代理」两大区块分组展示。bc（bungee）维度另有专属聚合（连接 / 线程 / 后端可达性·延迟，仅 `role=bungee`，FR-34，[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)）。
-
-### 7.1 指标采样器（FR-32，时序落 MySQL）
-
-为支撑历史趋势（注册/健康只有"此刻"，见 [ADR-0023](adr/0023-control-plane-observability-dashboard.md)），控制面起一个**指标采样器**：按固定间隔（可配，如 15~30s）取**在线**实例的负载快照（role/playerCount/tps/内存/CPU + bc 专属 proxy 字段）批量写 `metric_sample` 表（`role` 取自注册表 `Instance.Role`，供趋势降采样区分 bukkit/bungee），**DB IO 在运行态三锁之外**（守锁外 IO 约定）；并按**保留期**（可配，如 24h / 7d）滚动清理过期样本，使表体量受上界约束、不无界增长。采样为派生健康事实落库，**不引 TSDB / Redis**（本规模 MySQL 单表 + 保留期清理足够，守简单优先与 DB 可移植）。bc（bungee）实例额外采**代理专属负载指标**（连接 / 线程 / 运行时长 / 后端可达性·延迟，FR-34）经 report `proxy` 子对象上报，落 `metric_sample` BC 列；bukkit 实例 BC 列恒为默认值，采样器照写不特判（[ADR-0025](adr/0025-bc-proxy-metrics-and-netty-traffic.md)）。
-- **与 `/metrics` 的关系（FR-30 vs FR-32）**：`/metrics`（[ADR-0020](adr/0020-prometheus-metrics-observability.md)）供**外部**监控系统（Prometheus/Grafana）pull 抓取、不持久化；本看板的采样 + 趋势是 **Beacon 内自带**的可视化与历史（采样持久化到 MySQL、管理台直接看图）。二者面向不同消费者，**并存不冲突、互不取代**。
-
-## 8. agent（数据面接入）
-
-`agent-core` 依赖**抽象接口**而非具体库（见 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）：`HttpTransport`（默认 OkHttp 适配器，可换）+ `JsonCodec`（默认 kotlinx.serialization 适配器，可换），由 `BeaconApiClient` 收口五个 REST 语义调用。
-
-生命周期：读 bootstrap（控制面地址 + serverId + env/group 提示 + token + 超时）→ 注册 → 心跳循环 + **单条 SSE 推送流循环**（FR-24，注入 `streamTransport` 时取代配置/文件树/覆盖集三条长轮询循环；未注入则退回三条长轮询）→ 收到 `*-changed` 事件即取内容 → **先写本地快照** → TabooLib reload apply（异步线程，**不阻塞 MC 主线程**）→ `report` 回报 → 流断指数退避重连、重连即对账。控制面不可用时用本地快照继续（接入方业务插件须自带内置默认以防首启无快照）。对同服业务插件暴露 **Java 8 只读 API**（读有效配置 + 查发现/拓扑）。SSE 流细节见 §6.1。
-
-**本地配置 env 覆盖（FR-33，见 [docs/specs/agent-config-env-override.md](specs/agent-config-env-override.md)）**：bootstrap 配置经 `EnvOverridingConfigReader` 装饰 `ConfigReader`——每个标量 / 列表项可被 `BEACON_AGENT_<点分路径大写、点与连字符转下划线>` 环境变量覆盖（env 优先于 `config.yml`，如 `identity.server-id` → `BEACON_AGENT_IDENTITY_SERVER_ID`），与控制面 env 覆盖（§9）对齐、便于容器化注入；`identity.metadata` 动态键 map 仅本地文件。core 仍不依赖具体环境读取（env 以函数注入），守 TabooLib-free。
-
-zone 由控制面权威指派（[ADR-0004](adr/0004-zone-authority-control-plane.md)），agent 不声明 zone，从注册/拉取响应得到自己的归属；换区只改 `zone_assignment` 一行，agent 零改动。
-
-**区分配排空门（FR-71，[ADR-0036](adr/0036-zone-reassign-safety-drain-gate.md)）**：改派会热更该服有效配置覆盖链、扰动在场玩家，故 `ZoneService.Assign`/`Unassign` 在落库前加一道后端纵深硬闸——目标服在内存注册表 `Status==online` 且 `PlayerCount>0`，而本次操作（首次指派 / 改到不同区 / 取消指派）会改变其区归属解析时，一律拒为 `409 ZONE_SERVER_ONLINE_NONEMPTY`（不落库 / 不审计 / 不唤醒），运维须先 drain 排空后再操作；指派到与现有完全相同的 `(group, zone)` 为同值 no-op（先于排空门，幂等返回不落库不审计）。判据只读既有注册态（在线态 + agent 上报玩家数），不查库、不碰 agent、不动 `zone_assignment` 表与唤醒机制；前端高摩擦确认只是第一道 UX 防线，后端硬闸是唯一安全权威。
-
-**小区默认入口 + BC 默认服注入（FR-48，[ADR-0031](adr/0031-zone-default-entry-and-bc-injection.md)）**：每个小区 `(group, zone)` 在 `zone_default_entry` 表唯一指定一个默认入口 serverId（DB 权威，应用层校验须为已指派该 zone 的子服）。该事实不进注册态内存，而在发现 / 实例视图**渲染时**由 `ZoneService.DefaultEntryServerIDs` 读 DB、给命中的 bukkit 实例标 `zoneDefaultEntry`（`InstanceService` 经注入的解析器回调获取，handler 不碰仓库，守分层）。BC agent 既有「同步子服目录」async 循环（`ProxyServerDirectorySyncer`）注入子服 `ServerInfo` 后，按纯逻辑 `DefaultEntrySelector` **只**据本代理 `config.yml` 配的 `home-zone`（数据面路由配置，声明「本代理服务哪个小区」，非 zone 归属，不违反 ADR-0004）命中的在线默认入口选默认服，再经 `ProxyServerDirectory.setDefaultServer` 把它置于每个 BungeeCord 监听器 `server-priority` 列表首位（公开 API、幂等去重、不反射）。**未配 home-zone / 该 zone 未设默认入口 / 默认入口当前不在线 → 不设任何默认服 + 一条去重 WARN**（含 group/zone 上下文，告知运维去 Beacon 配默认入口）；**绝不**回退到「首个在线 bukkit」——静默把玩家落到非大厅服、跳过大厅有风险，宁可让玩家遇 BungeeCord 原生「无默认服」拒绝这一明确信号。多台 BC 配同一 home-zone = 共享同一默认入口。注入子服与设默认服打 INFO、选不出默认服打 WARN 中文日志。
-
-**文件树同步（通道B，FR-14，[ADR-0010](adr/0010-file-tree-hosting-blob-channel.md)）**：注册成功后，agent 在配置长轮询循环之外**并行**启一条文件树长轮询循环（各自 `gen` / 退避，唤醒集合独立）。每轮带本地已落盘清单（`AppliedFileManifestStore`，落 agent 数据目录的 `fileTreeMd5`）发 `GET .../files/manifest`：200 拿到新 `manifest`（path→md5，不含内容）→ `FileSyncer` 纯差分算增/改/删 → 仅对增/改 `GET .../files/content` 取整文件 → `FileMirrorWriter` **原子写**镜像到插件 `plugins` 基目录（临时文件 → `FileChannel.force` 含父目录 fsync → `ATOMIC_MOVE`，补 `SnapshotStore` 未做 fsync 的缺口），删除目标已无的 path，**全部落盘成功后才写已落盘清单**（先文件后清单，崩溃可恢复）；304 续杯；连接失败退避。落盘相对 path 经 `RelativePathGuard` 校验，拒绝绝对/`..`穿越/反斜杠逃逸目标根。**fail-static 比配置更保守**：任一变更文件取内容失败（控制面不可用）即**整轮放弃**——不删任何既有文件、不写清单，下一轮重试，绝不臆测；首启无目标态时同样不动任何已落盘文件。全程经 `adapter.runAsync` 不上 MC 主线程；HTTP/JSON 仅在适配器、core 依 `HttpTransport`/`JsonCodec` 接口（[ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）。
-
-**三方覆盖集命令执行（FR-15，[ADR-0011](adr/0011-third-party-file-override-and-restricted-reload-command.md)）**：覆盖集是通道B 的一个 profile（在镜像落盘之上多做"覆盖前备份 + 覆盖后执行管理台预设的受限重载命令"），仅在文件树托管启用时接线。控制面 `OverrideEffectiveService` 按 scope 覆盖链解析某 server 适用的覆盖集（同名取最高层那份），经 agent-facing 端点 `GET .../override-sets`（长轮询带 `overrideMd5`——指纹含目标根 / 受限重载命令 / 成员 path 清单 **+ 各成员内容指纹**（复用 `file_object.content_md5`、按字节算），故成员「内容只改、不变 path」也改变 `overrideMd5`、触发 agent 重取落盘；复用文件 Hub 唤醒集合，但 md5 维度独立）投递"目标根 + 受限重载命令 + 成员 path"（成员内容指纹仅参与 md5、不投递），成员内容经 `GET .../override-sets/content` 取；覆盖集成员（`file_object.override_set_id>0`）从通用文件树清单排除，避免同 path 双写到错误根。agent 注册成功后并行启 override 长轮询循环（独立 gen/退避、复用单飞），`OverrideSyncApplier` 逐集编排：取齐成员 → `TargetRootSecurity`（agent 侧最终校验目标根落在 `plugins/<plugin>/` 内，防控制面被攻破下发逃逸目标根）→ `OverrideApplier`（`BackupManager` 备份 → `OverridePathSecurity` 成员路径 Path 级校验 → `FileMirrorWriter` 原子覆盖 → `ManagedFileTracker` 受管标记防震荡环）→ 全量落盘成功且命中 `CommandWhitelist`（**agent 本地白名单、默认空、控制面不下发**）才经 `ReloadCommandExecutor` 派发为控制台命令（**禁 shell**：core/适配器无任何进程执行 API，经 `PlatformAdapter.dispatchConsoleCommand`，不上 MC 主线程同步等结果）。**fail-static**：控制面不可用 / 取成员失败 / 目标根非法一律不动既有、不派发命令、不更新基准，下轮向控制面目标态收敛重做（幂等）；**回滚只还原文件、绝不重放重载命令**（命令本身可能就是失败根因）。命令执行 gate 在管理面鉴权之后（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）。
-
-**跨服消息中间件（FR-26，[ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md)）**：agent 内**独立可开关模块**（`messaging.enabled` 默认关），与配置同步/心跳**故障域隔离**（独立 Redis 连接 + 独立线程，Redis 挂不连累配置命脉、玩家照常进服游玩）。为③层业务插件提供与内容无关的通用服务器间传输，四种模式：定向发送（fire-and-forget）/ 请求-响应（RPC，关联ID + 超时）/ 主题发布订阅 / 按玩家所在服寻址。`agent-core` 的 `messaging/` 只依赖**抽象端口**（延续 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）：消息信封 `Message`（type/version/correlationId/replyTo/source，演进「只增不改」保新老插件混跑兼容）、传输端口 `MessageTransport`、路由分发 + RPC `CompletableFuture`/超时引擎 `MessageBus`、玩家寻址端口 `PlayerLocator`，**core 不 import Jedis**。Redis 实现 `RedisMessageTransport` 只在 `agent-adapters`：可靠送达走 **Redis Streams + 每服消费组**（`beacon:msg:{serverId}`，目标离线留存、上线经消费组补消费、至少送达一次 + 业务侧幂等，`MAXLEN` 近似裁剪防内存无限增长）；主题与 RPC 回信走 **pub/sub**（`beacon:topic:{topic}` / `beacon:reply:{serverId}`，回信不持久化、靠 RPC 层超时兜底）。**Jedis 经 TabooLib `@RuntimeDependencies` 运行期下载、relocate 到 `top.wcpe.beacon.agent.lib.*`、不 shade、绝不经 CoreLib**（守不变量 #5，决策 14）。Redis 连接（host/port/db/password）由 **Beacon 配置中心下发**（约定 dataId 随有效配置，密码依赖 FR-20 加密先行），双端壳层据下发配置启停/重连，冷启动未取得配置时模块保持降级（`DisabledMessaging`，`isAvailable()=false` 供业务侧优雅降级）。**按玩家寻址依赖玩家位置名册**：BC 上的 beacon-proxy 经 Bungee 进服/换服/退出事件维护 `beacon:player-loc`（hash：玩家→所在子服，换服误删保护 + 重启全量重建），子服 agent 解析后走定向发送；解析落空走「找不到目标」兜底。消息只在 `agent ↔ Redis ↔ agent` 间流动，**控制面永不在消息路径上**；对③层经 `BeaconAgent.messaging()` 暴露 `Messaging` Java API（send/call/publish/subscribe/sendToPlayer/on + isAvailable）。仅通用传输，匹配/对战/存储/排行等**业务功能不在范围**（属③层独立业务插件）。
-
-**玩家位置名册只读查询（FR-31，[ADR-0022](adr/0022-agent-roster-read-api.md)）**：把 FR-26 已躺在 agent 侧 Redis `beacon:player-loc`（玩家名→所在子服）里的「谁在哪个服」**位置事实**，经 agent-api `Discovery` 门面只读暴露给③层业务插件（如跨服看人做总览/人数/Tab 补全）——`roster()` 返回全量名册 `Map<玩家名, serverId>`（单一全局名册 `beacon:player-loc`，不按 namespace 分区，单 BC 前提下即全量），`rosterInZone(group, zone)` 返回某 zone 过滤后名册。`agent-core` 新增**只读端口 `RosterDirectory`**（单一职责「全表读名册」），与既有 `PlayerLocator`（单个解析）分立、不合并，**core 不 import Jedis**（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）；`DiscoveryView` 组合实现两方法——`roster()` = `RosterDirectory` 全表读，`rosterInZone(group, zone)` = `instancesInZone` 解出该 zone 的 serverId 集合（**zone 归属权威来自控制面 DB**，[ADR-0004](adr/0004-zone-authority-control-plane.md)）∩ 全表名册，**名册本身不臆造 zone**（Redis hash 无 zone 维度，只能由控制面发现结果反查交集）。`RosterDirectory` 的 Redis 实现走 `HGETALL beacon:player-loc` 藏在 `agent-adapters`、复用 FR-26 messaging 模块的连接与线程不另起连接。依赖流向：业务插件 → agent-api `Discovery.roster()/rosterInZone()` → agent-core `DiscoveryView` + `RosterDirectory` → adapters Redis，**控制面不在此路径上**（零改动、不连 Redis、不持有名册）。messaging 模块未开 / Redis 未连上 / 名册为空时返回**空 Map**（非抛异常、非 null）优雅降级。仍只暴露**名册事实**，「看人」业务（聚合/分组/展示/补全/传送）归③层业务插件——事实暴露 ≠ 业务实现（与控制面只读暴露 instances 事实同构）。
-
-**本地运维命令（FR-17，仅本地）**：双端壳注册根命令 `/beacon`（权限 `beacon.admin`）——`status`（打印生命周期状态 / 是否连上 / 有效配置 md5 / 心跳周期 / endpoint）、`reload`（`forcePollNow`：md5=null 强制立刻重拉一次有效配置并经 `ConfigApplier` 幂等守卫 apply，不等长轮询超时）、`reconnect`（`reconnectNow`：重置退避并重新接入，**不清空 store / 快照**以守 fail-static）。`resync`（`forceSyncFileTreeNow`：以 `fileTreeMd5=null` 旁路文件树长轮询 304 强制立刻重拉一次清单并由 `FileTreeApplier` 幂等差分落盘，不接管长轮询主循环、不改其代标识；仅在文件树托管启用（`file-tree.enabled`，FR-14）时生效，未启用则回提示）。命令体经 `adapter.runAsync` 落异步线程，core 控制方法不碰 Bukkit/Bungee（守 [ADR-0005](adr/0005-agent-transport-codec-abstraction.md)）；远程下发依赖鉴权（FR-11），本期不做。**命令帮助与友好提示（FR-54，增强 FR-17，见 [docs/specs/beacon-command-help.md](specs/beacon-command-help.md)）**：补 `help` 子命令（含权限提示的标题 + 用法首行 + 各子命令一行用法）、无参打印完整用法、未知子命令 / 错参经 TabooLib 内置 `incorrectCommand` 回调回中文提示（回显出错片段 + 用法，取代默认中英双语 generic 文案），各子命令注册带 `description` 提升可发现性；全部帮助 / 提示文案仍单一收敛在 core 的 `OpsCommandText`（`Subcommand` 权威清单派生 `USAGE_LINES`/`HELP_LINES`，双端壳共用、防文案漂移），只补帮助 UX、不加任何运维能力。**注册单飞不变量**：注册有多触发点（心跳 404 / 长轮询 404 / 退避重试 / `reconnectNow`），由 `AtomicBoolean` 单飞门 + 注册「代」标识收口，保证**任意时刻只有一条 register→loops 在飞**，杜绝瞬时双注册、双循环。
-
-**agent 只读交互式文件浏览（FR-109，[ADR-0049](adr/0049-agent-fs-browse.md)，见 [docs/specs/agent-fs-browse.md](specs/agent-fs-browse.md)）**：为配置工作台（FR-111）双面板右侧「实时浏览在线服 `plugins/`」提供底座——agent-core 新增三个**只读惰加载**浏览原语（`browse/` 包，与 FR-39/FR-58 反向抓取「一次性整批 scan」语义不同：浏览是「点开才读」、按需、不入库的临时查看）：① **懒列目录** `FsBrowseReader.listDir`（列某目录直接子项 + 名称/大小/是否目录/是否文本，不递归整树，大目录 offset/limit **分页**带 total/hasMore）；② **读文件树** `readTree`（按需展开某子树，受深度上限 `MAX_TREE_DEPTH` + 节点上限 `MAX_TREE_NODES` **逐层有界**，超界目录标 `truncated` 供前端继续懒列）；③ **读单文件内容** `readFile`（读单文本文件，受单文件上限 `MAX_FILE_BYTES`=反向抓取同口径 1MB，超限截断标 `truncated`，排除 `.jar` 与二进制[NUL/非法 UTF-8]）。**安全口径与 `PluginsTreeReader` 同源**（ADR-0049 决策 2-3）：读取根限死 `plugins/` 根（`pluginsBaseFolder`）；path traversal **双保险**——字符串级前置闸 `PluginsPathGuard`（拒 `..`/绝对/反斜杠/冒号/UNC/保留名/段尾点空格）+ Path 级 `normalize().startsWith(rootReal)` + 解析符号链接真实路径后**仍 startsWith rootReal**（禁符号链接逃逸），任一不过即拒（列得 null、读得 null、不读不回传）。**纯只读不写盘**、**仅在 async 线程调用**（壳层经 `runAsync` 委托，绝不上 MC 主线程）、**fail-static**（浏览是旁路运维能力，失败即失败、不阻断玩家进服）。文本/二进制按名启发判定收敛在共用纯函数 `TextFileHeuristic`（与反向抓取 scan 同口径，不复制扩展名集）。`PlatformAdapter` 新增三个默认 null 方法（桩不开放），bukkit/bungee 各覆盖委托 `FsBrowseReader`，根 = `pluginsBaseFolder()`。**本能力是被调用的原语**——浏览由控制面命令触发（FR-110，复用 `agent_command` 通道）属另条，agent 自身不自调度浏览。**守 ADR-0005**：FS 边界用 java.nio（非平台 API），core 不碰平台 IO，浏览不涉 HTTP/JSON。
-
-**控制面文件浏览代理（FR-110，[ADR-0049](adr/0049-agent-fs-browse.md) 决策 9，见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md)）**：把 FR-109 的 agent 只读浏览原语接进命令通道两端，控制面新增 admin 只读端点代理浏览。**不新增传输、不直连 agent**——复用 ADR-0027/0037 的 SSE 唤醒 + `agent_command` 生命周期（FR-104 `pending → fetched → done/failed/expired`）。浏览是**请求 / 响应**语义（admin 要拿结果代理给前端），区别于反向抓取的 fire-and-forget，故采**控制面侧阻塞等待**：`AgentCommandService.RequestBrowse`（`browse_service.go`）**先注册结果 waiter**（消除注册前回传丢唤醒）→ 事务内建 pending `fs-browse` 命令 + `file.browse` 审计（detail 仅 `commandId`/`op`/`path`、**绝不含文件内容**）→ 提交后 `NotifyCommand` 唤醒该 agent SSE → 阻塞等待 → agent 拉命令、按 `op` async 调 `browseListDir`/`browseReadTree`/`browseReadFile` 读盘、经 `POST /beacon/v1/agent/files/browse-result` 回传 → 控制面 `ReceiveBrowseResult` 把结果转存命令瞬态列 `browse_result`（与 `imprint_content`/`log_content` 平行的受控瞬态，CAS `fetched→done`，`ok=false`→`failed`）并 `NotifyBrowse` 唤醒等待中的 admin → admin 被唤醒后读出瞬态结果代理给前端（`done` 取结果、`failed`→`404 BROWSE_TARGET_NOT_FOUND`、超时→`504 BROWSE_TIMEOUT`）。结果等待用**独立 `browseHub`**（与命令待办 `commandHub` 分立——后者唤醒 agent 拉命令、前者唤醒 admin 取结果，信号互不干扰）。**鉴权**：端点是 GET 但有写副作用（建命令 / 唤醒 / 入审计），故路由显式挂 `requireFullRole` 守卫（`readonly`→`403`，扩展 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)；`readonlyWriteGuard` 只拦写方法、放过 GET，故须显式守卫）。瞬态 `browse_result` 取一次即用、命令过期由 `ExpireStale` 一并清空，**不落持久真源、不进审计 detail、不导出 git**。**agent 侧**：`ReverseFetchExecutor` 增 `fs-browse` 分支（与 `tail-logs`/`resync-config` 平行、不受反向抓取 fail-closed 守卫影响），原语返回 null（越权 / 非目录 / 非文本 / 未启用浏览）→ 回 `ok=false`，旧 agent 收 `fs-browse` 按未知类型忽略（向后兼容）。是 FR-111 配置工作台双面板右侧实时浏览的控制面底座。**守边界**：纯只读代理、不开写盘旁路、不新增传输 / ADR、agent fail-static。
-
-**配置工作台真链路（FR-111，[ADR-0050](adr/0050-config-xftp-workspace.md)，见 [docs/specs/config-xftp-workspace.md](specs/config-xftp-workspace.md)）**：配置中心双面板 Xftp 工作台（FR-114 原型）从 mock `/admin/v1/workbench/*` 假端点改接**既有真实端点**——前端在客户端做薄编排 / 适配，**不新造聚合 BFF、不改后端契约**（除 FR-110 浏览端点）。映射（ADR-0050 决策 2）：左受管树←`GET /files`、右实时浏览←FR-110 `GET /instances/{serverId}/browse`、生效预览←`GET /files/effective`（逐键来源）、受管文件 + 历史←`GET /files/{id}[/revisions]`、scope/server 候选←`GET /instances`、同步队列←`GET /commands`（FR-104 命令生命周期）、ingest 清单←`GET /reverse-fetch/tasks/{id}`、发布影响面←`GET /configs/impact`（FR-79）。`useWorkbenchData` 的真链路 hook 把各端点响应适配成工作台视图形状（组件契约不变），原型 mock 退场（`mock/workbench.ts` 删除、`/admin/v1/workbench/*` mock 路由移除）。操作日志 / 撤回真后端属 FR-116（[ADR-0051](adr/0051-config-operation-undo.md)），本条不含。**守边界**：前端编排既有只读查询 + 既有受管写工作流，控制面不增「工作台」业务态聚合层。
-
-**配置 IA 三页合一（FR-113，[ADR-0050](adr/0050-config-xftp-workspace.md) 决策 4，见 [docs/specs/config-xftp-workspace.md](specs/config-xftp-workspace.md) §8）**：纯前端 IA 收敛——反向抓取（`/reverse-fetch`）、按需拓印（`/imprint`）两条独立页与已孤立的旧单面板 `ConfigsPage` 一并退役，能力收进双面板工作台**单入口**（拖拽 + ingest / 拓印审核浮层 + 底部同步队列在工作台内闭环）。侧栏配置组从 4 叶子收敛为 2 叶子（工作台 + 文件树预览），导航单一真源 `navModel` 收敛、CommandPalette 因消费 `NAV_LEAVES` 随之自动收敛；旧链 `/imprint`、`/reverse-fetch` 重定向 `/configs`（不留死链）。删页连带清理其专属子组件 / 测试 / 孤立 i18n 键。**反抓 / 拓印后端契约（FR-46 / FR-58~60 端点）一字不改**——仅前端入口从独立页迁进工作台；`api/client.ts` 镜像这些端点的客户端函数保留（生产构建 tree-shaking 自动剔除未引用项）。**守边界**：纯前端入口收敛，不改后端、不动 FR-116 撤回 / FR-112 编辑器。
-
-## 9. 部署
-
-docker-compose 仅两容器：`beacon`（单二进制，API 与 UI 同端口）+ `mysql`（mysql healthcheck + beacon `depends_on: service_healthy` + 命名卷持久化）。多阶段 Dockerfile：node 构建前端 dist → `go build` 内嵌（`//go:embed all:dist`）→ alpine 极小镜像、非 root、`CGO_ENABLED=0` 静态链接。构建阶段只产出单一 `beacon`（置于 `/usr/local/bin`），镜像 **`ENTRYPOINT` 为 `beacon`**；进程崩溃自启交由容器 `restart` 策略（compose `restart: unless-stopped`），无需独立监督进程（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）。容器内在线更新换二进制临时有效，镜像不可变故生产升级以重拉镜像为准。前端以相对路径 `/admin/v1` 同源访问（无 CORS）；非 API、非静态文件的路径回退 `index.html`（SPA history）。敏感项（DB 密码、token）走 env，不入库。
-
-**发布产物与平台矩阵（FR-102，[ADR-0007](adr/0007-versioning-and-release-channels.md) 原生矩阵）**：正式 tag 由 CI 在原生 runner 上 CGO=1 构建（**非交叉编译**，因 sqlite 经 go-sqlite3 需 CGO），覆盖 **5 平台**——`linux-amd64`、`linux-arm64`（GitHub 原生 arm64 runner `ubuntu-24.04-arm`）、`windows-amd64`、`darwin-amd64`、`darwin-arm64`（明确不含 windows-arm64）。每平台产出单一主二进制 `beacon-<ver>-<target>[.exe]`，统一 `SHA256SUMS.txt` 校验；双端 agent jar 与平台无关、各发布只构建一次。本地 `make package` 则按当前单平台产出 `beacon` + 双端 jar。
-
-**配置加载（`internal/config`，FR-25）**：生效优先级 真实环境变量 > 当前目录 `.env` > `config.yml`（`-config` 指定）> 内置默认。`cmd/beacon` 启动时把内置模板 `config.yml`（默认 sqlite，零依赖可跑，经根包 `//go:embed` 内嵌）释放到当前目录，**释放时把模板里留空的 `auth.password` / `auth.secret` 就地填入 `crypto/rand` 随机强值**（文件 0600、口令不入日志；agent 共享令牌用固定默认 `beacon-bootstrap-token`——仅防误连、非安全边界，与 agent 样例开箱匹配），**已存在则跳过、不覆盖**；随后读当前目录 `.env`（仅注入未设置的键、真实 env 优先），最后 `BEACON_*` 覆盖并校验。**不自动生成 `.env`**——凭据落在 `config.yml`（即真源），避免自动生成的 `.env` 因优先级更高而静默盖掉用户对 `config.yml` 的修改；`.env` 仅当运维手动放置时生效，用手写最小解析、不引第三方库。鉴权仍强制（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)）——由 fail-fast 改为首启自助生成 `config.yml` 内的**强随机**凭据（非固定弱默认），使单二进制开箱即跑。
-
-**进程模型（单进程自替换，FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）**：控制面回归**单一 `beacon[.exe]`**——在线更新由主进程在自身进程内完成自我替换，不再发布独立监督进程、不再走退出码交还。换版时序：主进程优雅关停 HTTP 释放端口 → `rename` 让位三步（`beacon`→`beacon.old`、`beacon.new`→`beacon`；Windows 同样允许 rename 运行中的 exe——重命名只改目录项、已打开句柄仍指向原映像，故让位可行，失败则就地回退）→ spawn 新进程（继承参数 / 环境 / 工作目录 / 标准流）→ 旧进程退出（`exit 0`，不再使用退出码 `70`）。**自动回滚**：换二进制成功后写 sentinel 标记（记 `attempt` 计数 + 目标版本）；新版**启动早期**（HTTP 起之前）自检——稳定运行过验证期（`10s`）或收到正常关停信号即判定成功，删 sentinel + 删 `.old`；若换版后**反复起不来**（崩溃计数达阈值，默认 3）则在启动早期自动 rename 回退 `.old` 并重启旧版，闭合崩溃循环。**崩溃自启交外部监督**：进程崩溃由 docker `restart: unless-stopped` / systemd `Restart=on-failure` 拉起，自动回滚依赖此重启累加 attempt 至阈值；**裸跑 `beacon` 仍完全可用**，仅退化为无自动重启（崩溃后需手动启动，下次启动仍会触发自检回退）。
-
-**在线更新核心（FR-97/FR-117，[ADR-0044](adr/0044-control-plane-online-self-update.md)/[ADR-0052](adr/0052-rolling-prerelease-channel.md)/[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)）**：主进程侧 `internal/update` 按渠道（stable/prerelease 作入参，GitHub `prerelease` 布尔区分）查 wcpe/Beacon GitHub Release，**判新 = 基线比较 + 提交距离序号**（先比 `X.Y.Z` 基线，远端基线高即提示、低即否；基线相同时都 dev 比提交距离序号、远端序号大才提示，正式↔dev 视为有更新，ADR-0056）。滚动预发布版本号为 `<基线>-dev.<提交距离>.g<sha>`（基线 = 最新正式 tag 不 +1、计算收敛 `scripts/dev-version.sh`，如 `0.17.0-dev.3.g6b6dd71`，[ADR-0056](adr/0056-rolling-prerelease-dev-distance-version.md)），故**每次 push（提交距离 +1）真机都能检测到更新、反复触发**（供 FR-119/120 反复验证在线更新），无新提交不误报；`dev → 正式`（同基线）也判更新。**正式渠道不变**——正式版仍纯 `X.Y.Z`、tag↔VERSION 校验、无 `-dev` 后缀。版本号取 Release 标题（解析 tag 优先、回退 name）→ 选本平台资产 `beacon-<ver>-<os>-<arch>[.exe]`（5 平台，ver 去前导 v 与 CI 产物命名同口径）下载到临时文件（超时 + 大小上限 + 失败清理）→ 下载 `SHA256SUMS.txt` 比对实算 SHA256 → 校验通过即原子 `rename` 落位 pending 路径（运行二进制同目录同卷 `beacon.new[.exe]`）→ 经进程内信号触发优雅关停 → 主进程自替换（`rename` 让位三步）+ spawn 重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）。任何阶段失败保留旧二进制、进程不退、状态 `failed`。更新进度为进程内瞬态（不建表），仅审计落库（`system.update-*` action）；出站经 `internal/httpx` 工厂（带代理 + 超时，FR-98）。HTTP 触发入口（检查 / 状态 / 应用端点）属 FR-99。
-
-## 10. 关键裁决与不做项
-
-**关键裁决**：自研而非用 Nacos · Go + 内嵌 React 单二进制 · MVP 去 Redis（REST 长轮询）· zone 由控制面 DB 权威指派 · agent 传输/序列化抽象层 · 长轮询"唤醒即重算" · 管理台设计系统用 shadcn-ui + Tailwind（ADR-0012）。每条的背景与理由见 [adr/](adr/)。
-
-**第一期不做（P2/P3）**：配置灰度/Beta、流量调度（落位均衡/canary 引流/drain）、版本发布编排（蓝绿/滚动换 jar）、完整虚拟合区运行时玩家通道、跨服传送/看人/共享经济等运行时玩家数据通道、鉴权/加密、控制面 HA、Redis。玩家状态同步、跨服数据通道与控制面 HA 均按后续 P3 能力处理。
+| `namespace` | 强隔离边界；持接入 token 哈希（明文仅创建 / 轮换时一次性返回） | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) |
+| `namespace_trust` | 单向互通信任行（from → to + capability），收回 / 复活复用同一行 | capability / status 枚举归 namespace-isolation §3 |
+| `env` + `env_namespace` | 纯展示 / 过滤维度，一 env 映射 1..N namespace；不参与隔离、调度与作用域链 | zone-authority §4.1 |
+| `bc_cluster` / `region` / `zone` | 区服结构三层（BC 集群 → 大区 → 小区）；zone 是调度单元，名在 namespace 内唯一 | zone-authority §4.6 |
+| `server` | 子服 / BC 节点；kind 双挂归属（proxy→bc_cluster、backend→zone），含默认入口与排空标记；**归属只由控制面指派**（[ADR-0004](adr/0004-zone-authority-control-plane.md) 延续，agent 不声明 zone） | zone-authority §3.6 / §4 |
+| `agent_identity` | agent 首启身份与 `namespace + serverId` 的绑定；列形态锁在 zone-authority，状态机在身份域 | [v2-agent-identity.md](specs/v2-agent-identity.md) §4.3 |
+
+配置作用域链与之完全同构：`namespace → bc_cluster → region → zone → server` 五层低到高覆盖（[v2-config-center.md](specs/v2-config-center.md) §4.1）。其余各域实体（指标批 / 健康快照 / 调度决策、连接 / 消息、归档任务、配置文件 / 层版本、文件资产、变更单三层）由各自规格 §3 权威定义。
+
+## 4. 存储架构
+
+- **MySQL + GORM 可移植**（沿用）：遵 §3 建表约定，禁一切方言专有；MySQL 与 sqlite（E2E 基线）行为一致，可切 Postgres。
+- **热库 / 归档库双 database**（[v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md)）：热库存近期数据；到保留期由进程内归档器（goroutine 定时器，无外部调度组件）**先归档、行数 + 抽样哈希校验通过后、才删热库**。归档落同 MySQL 实例独立 database `beacon_archive`（同名同构建表），配置预留独立归档 DSN 可迁出；归档库不可达仅降级归档能力、不阻断控制面启动。冷查询默认只查热库，显式 `includeArchived=true` 才跨热 / 冷合并（挂各查询域端点）。
+- **日期后缀分表**：大流量时序数据一律 `<基名>_YYYYMMDD` 日表、首写当日按需建表（禁分区表语法）——指标域 `metric_sample` / `health_snapshot` / `sched_decision`（[v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §3），连接消息域 `conn_detail` / `msg_trace` / `msg_payload`（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §3.1，payload 与元数据分表、可按不同保留期归档）。跨表查询映射为日表集合逐表游标合并，强制时间窗 / 精确 ID 防全量扫描；配置版本等低频小表不分表、不归档。
+- **真源切分**（沿用）：注册 / 在线 / 健康实时态的真源 = Go 进程内存（健康周期快照另入库仅供回放）；身份、区服权威、指标批、调度决策、连接消息、配置、变更单、审计等事实真源 = MySQL。两者不互为权威、不互相阻塞。
+- **写入纪律**：agent 批量上报走「请求线程只校验入有界内存队列即回 202、后台 worker 批量入库」，队列满 429 退避；禁请求主线程长耗时（PRD NFR）。
+
+## 5. 通信架构
+
+base path 分面与跨域通用约定（认证、错误体、分页、命名风格）的权威真源在 [API.md](API.md)「第二版契约草案 · 通用约定」，端点明细在各规格 §5（全域索引亦见 API.md）：
+
+| 面 | base path | 机制基调 |
+|---|---|---|
+| 管理面 | `/admin/v2/*` | 登录令牌 / API 密钥（full / readonly）；实时进度用 SSE（如变更单 events） |
+| agent 面 | `/beacon/v2/agent/*` | `X-Beacon-Token`（namespace 级）+ `X-Beacon-Identity`（注册期另带 `X-Beacon-Boot`）；身份确认前仅可调 register / registration |
+| 流式数据面 | `/beacon/v2/stream/*` | 同 agent 面双 header + blob 归属校验；当前仅交付域 |
+
+- **agent 面 REST + 长轮询基调**（沿用 [ADR-0006](adr/0006-rest-long-poll-push.md)）：状态长轮询无变化 304（身份 registration）、队列长轮询无消息 204（消息 poll）；agent 命令下发沿用既有长轮询命令通道，v2 各域只登记新命令类型（如 `asset-rescan` / `asset-read`）、不另建通道，命令 payload 与审计 detail 绝不携带文件内容。
+- **跨服消息经控制面单跳中转**（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）：上行 REST `messages/send`、下行长轮询 `messages/poll` + `ack` 回执，不引入 Redis / MQ。此决策由 **[ADR-0063](adr/0063-cross-server-message-control-plane-relay.md) 取代 Legacy [ADR-0016](adr/0016-agent-cross-server-messaging-middleware.md)**（其 Redis 通道与第二版禁 Redis 冲突）落地；玩家名册权威随之迁至控制面 `conn_detail` 内存快照。
+- **交付数据面：流式 HTTP + 控制面中转 blob**（[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.3）：命令通道只做编排；文件内容由模板源 agent 流式 PUT 到控制面 blob 存储（sha256 寻址去重）、目标 agent 流式 GET（Range 断点续传），HEAD 判存在性与断点。V2 配置按「配置文件 × 目标」聚合同单全部作用域 pin 后一次冻结为工件；目标 manifest 把普通文件差异与配置冻结渲染工件统一放入 `files[]`，以 additive `sourceKind=file_diff|config_artifact` 区分来源，历史 `configs` 字段恒为空数组。
+- **交付生效回执由控制面收口**：`hot_reload` 成功回执令命令 `done` 并推进目标 `activated`；失败回执、命令过期或超过 `activateTimeoutSec` 未回执均推进目标 `failed`，其中超时路径尽力把在途命令置 `expired`。`restart` 仍以心跳回归为 activated 判据，不因本规则改变。
+- **控制面不直连 agent**：管理面一切对 agent 的动作（重扫、取内容、交付回执）经命令通道 + agent 面回传端点完成，agent 不开端口、控制面不反向连接。
+
+## 6. 前端架构（apps/web，随 P1 建立）
+
+- **技术栈**：Vite + React Router + TanStack Query（服务器状态）+ Zustand（客户端状态）+ react-i18next + MSW（经 `packages/devmock`，浏览器与测试共享 handlers）。服务器态 / 客户端态归属边界写入规范（FR-174）。
+- **UI 供给**：组件一律取自 `packages/ui`（@beacon/ui）；每个导出控件在 apps/ui-wiki 有展示页，覆盖率检查进 CI 门禁（FR-175）。
+- **契约类型独立**：对外响应契约类型（各域 HTTP 响应形状 + 枚举构件 + 通用壳 `Paged` / `MockErrorBody`）的真源在 `packages/contracts`（@beacon/contracts，纯 type-only、无运行时依赖）；`apps/web` 生产代码只 `import type` 自 contracts、不再类型层依赖 mock 包，`packages/devmock` 反向依赖 contracts 并以 handler 的 `satisfies XxxResponse` 锚定契约防漂移。依赖方向与迁移决策见 [ADR-0062](adr/0062-frontend-contract-types-package.md)（FR-155 前置）。
+- **mock-first 交付**：P2 以演示模式做出全量 mock 管理台（FR-159 / FR-172），页面数据形状只依赖 API 契约草案、mock 覆盖空态 / 常规 / 超大量 / 异常四形态、逐页过 mockup 评审门拍板；P3 起后端按域落地时**同阶段把对应页面从 mock 切真并真机验收**，禁止攒到最后统一联调（[ROADMAP](ROADMAP.md) §4）。
+- **信息架构**：顶层总览 + 集群 / 可观测 / 交付 / 系统四大域，页面清单、唯一职责与全局交互契约以 [UX.md](UX.md) §2 / §4 为真源；评审门规则见 [.claude/rules/ux-spec.md](../.claude/rules/ux-spec.md)。
+
+## 7. 关键时序（简要）
+
+- **agent 首次接入（人工确认）**：agent 首启生成并持久化身份文件 → 携 token + identityId 注册 → 控制面落待确认、出现在 `/servers` 待确认列表 → 管理员 approve（可同时落区）/ reject → agent 经 registration 长轮询秒级感知 → 确认且分配后方可调度。冲突 / 禁用 / 解绑同一状态机（[v2-agent-identity.md](specs/v2-agent-identity.md) §4）。
+- **换区工单**：已分配服改归属必须解绑 + 重新人工确认——`server-rezones` 整批事务解绑、清归属、记预填目标 → agent 自动重入待确认（换区中不可调度）→ 管理员重确认按预填落区 → 调度候选 / 配置作用域 / 拓扑按分配变更契约重算（[v2-zone-authority.md](specs/v2-zone-authority.md) §4.7 / §4.5）。
+- **配置发布经变更单灰度生效**：配置中心只管编辑 / 校验 / 版本，保存不下发（[v2-config-center.md](specs/v2-config-center.md)）→ 变更单把模板源文件差异 + 配置版本绑成一单 → 影响预览 → 审批 → 启动后按批次推进：流式 blob 推送 → 生效（restart / hot_reload / push_only）→ 观察窗 → 人工放行下一批；失败率 / 健康恶化自动熔断，支持暂停 / 紧急终止与整单回滚（文件备份还原 + 配置版本回退 + 重新生效，[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §4）。
+- **消息追踪链路**：业务插件经 agent-api `send` / `call` → agent 面上行 → 控制面内存中转维护状态机与 hops（请求 goroutine 不碰 DB）→ 目标 agent 长轮询取走、`ack` 回执 → 终态（delivered/failed/expired）时同事务一次性写 `msg_trace`（+ 可选 `msg_payload`）→ 管理台按 messageId 追链路；payload 查看必须权限 + 填原因 + 先审计（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）。
+
+## 8. 架构块 → 阶段映射（对齐 [ROADMAP.md](ROADMAP.md) §1）
+
+| 架构块 | 阶段 · 版本线 |
+|---|---|
+| §2.1 monorepo 布局、apps/web 脚手架、UI 博物馆、静态检查三线、Legacy 前端冻结；§3 权威实体落库 + 身份确认 / namespace 隔离 / 区服权威基础闭环 | P1 · 0.21.x |
+| §6 全量 mock 管理台（四大域 IA + 演示模式，逐页拍板） | P2 · 0.22.x |
+| 集群管理页接真深化：`/servers` `/zones` `/namespaces` 接入 P1 v2 API，补齐换区工单、冲突处置、zone-tree 与 env 映射体验 | P3 · 0.23.x |
+| 指标采样入库、健康值、调度决策、本机 agent-api（接真 `/dashboard` `/service-analysis`） | P4 · 0.24.x |
+| §5 消息单跳中转（[ADR-0063](adr/0063-cross-server-message-control-plane-relay.md) 取代 ADR-0016）、连接明细日表、payload 审计（接真 `/topology` 与可观测页） | P5 · 0.25.x |
+| §4 热冷归档双库、冷查询、归档清理（接真系统设置页） | P6 · 0.26.x |
+| 配置中心 V2（五层作用域、版本、校验） | P7 · 0.27.x |
+| 文件资产 V2（清单索引、预览、安全审计） | P8 · 0.28.x |
+| 交付编排 V2（变更单、流式数据面、灰度生效、整单回滚） | P9 · 0.29.x |
+| 通用 RC/GA 发布、同 commit 原样晋级 | 按目标版本执行 `vX.Y.Z-rc.N → vX.Y.Z` |
+
+发布流程遵循 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)：RC 是不可变 prerelease，固定一个目标 commit 和一次构建出的产品资产；资产或候选内容变化时必须创建新的 RC。GA 只从最终 RC 原样复制产品资产，先逐项核对文件名、大小和 SHA-256，再创建正式 tag；GA 不重新编译、打包或替换资产。在线更新只自动消费严格匹配 `vX.Y.Z` 的 GA，RC 和开发产物须显式安装。发布检查统一通过 `make release-test`、`make release-check`、`make release-verify-rc` 与 `make release-verify-ga` 执行。
+
+## 9. 关键裁决与不做项
+
+- 不引入 Redis / MQ / DI 框架 / 分布式一致性组件（[ADR-0003](adr/0003-no-redis-in-mvp.md) 精神延续）；编排推进由控制面进程内驱动 + 状态落 MySQL。
+- 不建插件制品库，变更单载荷只来自黄金模板源与配置中心；不做自动依赖解析与蓝绿切换（PRD §1.3）。
+- 不用命令通道传大文件；不做跨 namespace 的配置与变更单。
+- 控制面不实现游戏玩法（经济 / 匹配 / 传送 / 跨服看人 UI），只做决策、编排与事实存储。
+- 技术栈锁定：Go + chi + GORM、React（Vite + TS）内嵌单二进制、agent Kotlin/TabooLib；换栈 / 换框架走新 ADR（[ADR-0002](adr/0002-go-react-embedded-stack.md) 延续）。

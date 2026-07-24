@@ -1,7 +1,7 @@
 # Beacon 跨平台端到端验收（headless）。
-# 重型：需 JDK21 + 联网首跑下载 Paper/Waterfall（约 12 分钟），故不进 PR 必跑门禁，
+# 重型：需 JDK21 + 联网首跑下载 Paper/BungeeCord（约 12 分钟），故不进 PR 必跑门禁，
 # 仅手动触发或每日定时跑。E2E 默认 sqlite，无需 docker/MySQL。
-# 入口为纯 Go：go test -tags=e2e ./test/e2e/{directory,override}。
+# Go 驱动通过 mc-testkit 的 servePaper/serveDirectory 拉起真 Paper 与原生 BungeeCord。
 name: E2E
 
 on:
@@ -31,6 +31,10 @@ jobs:
       CGO_ENABLED: "1"
       # E2E 默认 sqlite，无需 docker/MySQL
       E2E_DB_DRIVER: sqlite
+      # 动态 access token 只把不可逆 SHA-256 与字节长度写入该文件，供取消/强杀后的独立扫描使用。
+      BEACON_E2E_SECRET_FINGERPRINT_FILE: .tmp/e2e-secret-fingerprints
+      # 每个 workflow run 唯一的泄漏检测哨兵，由 Gradle 与其子进程继承。
+      BEACON_E2E_SECRET_SENTINEL: beacon-e2e-secret-sentinel-${{ github.run_id }}-${{ github.run_attempt }}
       # 敏感项：优先取 workflow_dispatch 输入，否则取 secrets，二者皆空则下一步随机生成。
       # 绝不在文件里硬编码真实密钥。
       E2E_ADMIN_PASS: ${{ github.event.inputs.admin-pass || secrets.E2E_ADMIN_PASS }}
@@ -47,18 +51,233 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: 补齐缺省口令/密钥
-        # 输入与 secrets 皆空时运行时随机生成，保证 E2E 必填 env 始终就位且不外泄
+      - name: 补齐并遮蔽缺省口令/密钥
+        # 输入与 secrets 皆空时运行时随机生成；写入后续步骤环境前先注册日志遮蔽。
         run: |
-          if [ -z "$E2E_ADMIN_PASS" ]; then
-            echo "E2E_ADMIN_PASS=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          admin_pass="$E2E_ADMIN_PASS"
+          if [ -z "$admin_pass" ]; then
+            admin_pass="$(openssl rand -hex 16)"
           fi
-          if [ -z "$E2E_AUTH_SECRET" ]; then
-            echo "E2E_AUTH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "::add-mask::${admin_pass}"
+          echo "E2E_ADMIN_PASS=${admin_pass}" >> "$GITHUB_ENV"
+
+          auth_secret="$E2E_AUTH_SECRET"
+          if [ -z "$auth_secret" ]; then
+            auth_secret="$(openssl rand -hex 32)"
           fi
+          echo "::add-mask::${auth_secret}"
+          echo "E2E_AUTH_SECRET=${auth_secret}" >> "$GITHUB_ENV"
       - name: 目录注入 E2E（FR-4，默认 sqlite、无需 docker）
-        run: go test -tags=e2e -timeout=30m ./test/e2e/directory
+        id: directory
+        env:
+          BEACON_E2E_SECRET_GENERATED_FILE: .tmp/e2e-directory-secret-generated
+        run: |
+          mkdir -p .tmp
+          printf 'started\n' > .tmp/e2e-directory-started
+          chmod 600 .tmp/e2e-directory-started
+          go test -tags=e2e -timeout=30m ./apps/server/test/e2e/directory
       - name: 三方覆盖 E2E（FR-15，默认 sqlite）
+        id: override
         # 与目录用例相互独立；目录失败也照跑，便于一次拿全两条相位结论
         if: always()
-        run: go test -tags=e2e -timeout=30m ./test/e2e/override
+        env:
+          BEACON_E2E_SECRET_GENERATED_FILE: .tmp/e2e-override-secret-generated
+        run: |
+          mkdir -p .tmp
+          printf 'started\n' > .tmp/e2e-override-started
+          chmod 600 .tmp/e2e-override-started
+          go test -tags=e2e -timeout=30m ./apps/server/test/e2e/override
+      - name: 扫描归档候选文件中的敏感值
+        id: scan_e2e_artifacts
+        if: always()
+        run: |
+          python - <<'PY'
+          import glob
+          import hashlib
+          import os
+          import re
+          import stat
+          from pathlib import Path
+
+          fingerprint_pattern = re.compile(rb"([0-9a-f]{64}) ([1-9][0-9]*)\n")
+          started_markers = (
+              Path(".tmp/e2e-directory-started"),
+              Path(".tmp/e2e-override-started"),
+          )
+          generated_markers = (
+              Path(".tmp/e2e-directory-secret-generated"),
+              Path(".tmp/e2e-override-secret-generated"),
+          )
+
+          def fail_dynamic_state():
+              print("动态凭据指纹状态无效")
+              raise SystemExit(1)
+
+          def read_private_state(path):
+              try:
+                  info = path.lstat()
+              except FileNotFoundError:
+                  return None
+              except OSError:
+                  fail_dynamic_state()
+              if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                  fail_dynamic_state()
+              if os.name != "nt" and stat.S_IMODE(info.st_mode) != 0o600:
+                  fail_dynamic_state()
+              try:
+                  return path.read_bytes()
+              except OSError:
+                  fail_dynamic_state()
+
+          def generated_record_count():
+              started = []
+              for path in started_markers:
+                  raw = read_private_state(path)
+                  if raw not in (None, b"started\n"):
+                      fail_dynamic_state()
+                  started.append(raw is not None)
+              count = 0
+              record = b"generated\n"
+              for index, path in enumerate(generated_markers):
+                  raw = read_private_state(path)
+                  if raw is None:
+                      continue
+                  if not started[index] or not raw or len(raw) % len(record) or raw != record * (len(raw) // len(record)):
+                      fail_dynamic_state()
+                  count += len(raw) // len(record)
+              return count
+
+          def read_dynamic_fingerprints(path, generated_count):
+              raw = read_private_state(path)
+              if raw is None or raw == b"":
+                  if generated_count:
+                      fail_dynamic_state()
+                  return ()
+              records = []
+              seen = set()
+              offset = 0
+              while offset < len(raw):
+                  match = fingerprint_pattern.match(raw, offset)
+                  if match is None:
+                      fail_dynamic_state()
+                  record = (bytes.fromhex(match.group(1).decode("ascii")), int(match.group(2)))
+                  if record in seen:
+                      fail_dynamic_state()
+                  seen.add(record)
+                  records.append(record)
+                  offset = match.end()
+              if len(records) != generated_count:
+                  fail_dynamic_state()
+              return tuple(records)
+
+          def contains_dynamic_fingerprint(content, fingerprints):
+              digests_by_length = {}
+              for digest, length in fingerprints:
+                  digests_by_length.setdefault(length, set()).add(digest)
+              view = memoryview(content)
+              for length, digests in digests_by_length.items():
+                  for start in range(0, len(content) - length + 1):
+                      if hashlib.sha256(view[start:start + length]).digest() in digests:
+                          return True
+              return False
+
+          if Path(".tmp/e2e-artifact-secret-leak").exists():
+              print("动态凭据扫描已阻断归档")
+              raise SystemExit(1)
+
+          fingerprint_value = os.environ.get("BEACON_E2E_SECRET_FINGERPRINT_FILE", "")
+          if not fingerprint_value:
+              fail_dynamic_state()
+          fingerprints = read_dynamic_fingerprints(Path(fingerprint_value), generated_record_count())
+          patterns = (
+              ".tmp/*.log",
+              "apps/agent/agent-e2e/build/mc-testkit/**/*.log",
+              "apps/agent/agent-e2e/build/mc-testkit/results/**",
+          )
+          fixed_sensitive_keys = {
+              "BEACON_E2E_SECRET_SENTINEL",
+              "BEACON_E2E_ACCESS_TOKEN",
+              "BEACON_AGENT_BEACON_BOOTSTRAP_TOKEN",
+              "BEACON_BOOTSTRAP_TOKEN",
+              "POSTGRES_PASSWORD",
+              "E2E_ADMIN_PASS",
+              "E2E_AUTH_SECRET",
+              "E2E_DB_DSN",
+          }
+          sensitive_values = {
+              key: value.encode()
+              for key, value in os.environ.items()
+              if value and key in fixed_sensitive_keys
+          }
+          candidates = {
+              Path(path)
+              for pattern in patterns
+              for path in glob.glob(pattern, recursive=True)
+              if Path(path).is_file()
+          }
+          matches = []
+          for path in sorted(candidates):
+              content = path.read_bytes()
+              for key, value in sensitive_values.items():
+                  if value in content:
+                      matches.append((path.as_posix(), key))
+              if contains_dynamic_fingerprint(content, fingerprints):
+                  matches.append((path.as_posix(), "动态凭据指纹"))
+          for path, key in matches:
+              print(f"敏感内容命中：{path} [{key}]")
+          if matches:
+              raise SystemExit(1)
+          print(f"敏感内容扫描通过：已检查 {len(candidates)} 个归档候选文件")
+          PY
+      - name: 归档 Agent E2E 日志与 mc-testkit 结果
+        if: always() && steps.directory.outcome == 'success' && steps.override.outcome == 'success' && steps.scan_e2e_artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-e2e-${{ runner.os }}-directory-override-${{ github.run_id }}
+          path: |
+            .tmp/*.log
+            apps/agent/agent-e2e/build/mc-testkit/**/*.log
+            apps/agent/agent-e2e/build/mc-testkit/results/**
+          retention-days: 7
+          if-no-files-found: warn
+
+  # 前端真后端 E2E：起真控制面（sqlite + 固定本地测试凭据，见 web/playwright.config.ts）
+  # + Playwright 真 admin 登录跑关键链路（页面可达 + 密钥增删改查闭环）。重型（构建内嵌
+  # 前端的 Go 二进制 + 下载浏览器），与上面 Go E2E 同属手动 / 定时触发、不进 PR 门禁。
+  # 假后端 E2E 轻量、已在 ci.yml 作 PR 必跑门禁。
+  web-e2e-real:
+    name: 前端真后端 E2E（sqlite）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # 控制面 sqlite 经 go-sqlite3 需 CGO；ubuntu 自带 gcc
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "10.32.1"
+      - name: 安装 Node（启用 pnpm store 缓存）
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            pnpm-lock.yaml
+      - name: 安装前端依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: 安装 Playwright 浏览器（chromium）
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: 真后端 E2E（pnpm test:e2e:real）
+        # build-real.mjs 先出内嵌前端的 sqlite 版控制面二进制，Playwright 起它跑真 admin 登录链路
+        working-directory: web
+        run: pnpm test:e2e:real

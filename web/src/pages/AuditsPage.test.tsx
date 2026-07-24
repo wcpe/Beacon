@@ -131,7 +131,10 @@ describe('AuditsPage 审计动作 i18n 映射', () => {
   })
 
   it('未知动作回退展示原文英文枚举', async () => {
-    vi.mocked(listAudits).mockResolvedValue({ total: 1, items: [auditRow('custom.unknown-action')] })
+    vi.mocked(listAudits).mockResolvedValue({
+      total: 1,
+      items: [auditRow('custom.unknown-action')],
+    })
     renderPage(<AuditsPage />)
     expect(await screen.findByText('custom.unknown-action')).toBeInTheDocument()
   })

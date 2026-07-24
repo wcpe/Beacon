@@ -1,0 +1,15 @@
+{
+  "name": "@beacon/eslint-config",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./base.js",
+    "./base": "./base.js"
+  },
+  "dependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint-config-prettier": "10.1.8",
+    "typescript-eslint": "8.62.0"
+  }
+}

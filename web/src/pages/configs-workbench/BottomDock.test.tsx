@@ -9,11 +9,38 @@ import BottomDock from './BottomDock'
 import type { OpLogEntry, SyncQueueRow } from './types'
 
 const QUEUE: SyncQueueRow[] = [
-  { id: 'q1', name: 'config.yml', direction: 'fetch', status: 'done', scopeTarget: '组 main', sourcePath: 'a', targetPath: 'b', time: '14:32' },
-  { id: 'q3', name: 'regions.yml', direction: 'fetch', status: 'pending-ingest', scopeTarget: '组 main', sourcePath: 'e', targetPath: 'f', time: '14:33' },
+  {
+    id: 'q1',
+    name: 'config.yml',
+    direction: 'fetch',
+    status: 'done',
+    scopeTarget: '组 main',
+    sourcePath: 'a',
+    targetPath: 'b',
+    time: '14:32',
+  },
+  {
+    id: 'q3',
+    name: 'regions.yml',
+    direction: 'fetch',
+    status: 'pending-ingest',
+    scopeTarget: '组 main',
+    sourcePath: 'e',
+    targetPath: 'f',
+    time: '14:33',
+  },
 ]
 const LOG: OpLogEntry[] = [
-  { id: 'e1', time: '14:33', action: 'push', operator: 'admin', files: ['spawn.yml'], target: '实例 lobby-1', detail: '下发 spawn.yml', undone: false },
+  {
+    id: 'e1',
+    time: '14:33',
+    action: 'push',
+    operator: 'admin',
+    files: ['spawn.yml'],
+    target: '实例 lobby-1',
+    detail: '下发 spawn.yml',
+    undone: false,
+  },
 ]
 
 function setup(over: Partial<Parameters<typeof BottomDock>[0]> = {}) {

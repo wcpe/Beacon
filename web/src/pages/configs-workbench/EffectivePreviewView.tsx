@@ -7,8 +7,8 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import { SCOPE_META } from './diffMeta'
 import { useEffectivePreview } from './useWorkbenchData'
@@ -59,11 +59,19 @@ export default function EffectivePreviewView({ serverId }: { serverId: string })
     <div className="py-1">
       {/* 总览条：本实例覆盖面一眼判断 */}
       <div className="mx-2 mb-1 flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-1.5 text-[0.7rem]">
-        <span className="font-medium text-foreground">{t('configs.workbench.effectiveTargetLabelShort', { server: serverId })}</span>
+        <span className="font-medium text-foreground">
+          {t('configs.workbench.effectiveTargetLabelShort', { server: serverId })}
+        </span>
         <Badge variant="outline" className="h-4 border-primary/40 px-1 text-[0.6rem] text-primary">
-          {t('configs.workbench.effectiveDiffSummary', { count: summary.custom, files: summary.touched, total: summary.total })}
+          {t('configs.workbench.effectiveDiffSummary', {
+            count: summary.custom,
+            files: summary.touched,
+            total: summary.total,
+          })}
         </Badge>
-        <span className="ml-auto text-[0.6rem] text-muted-foreground/70">{t('configs.workbench.effectiveChainLegend')}</span>
+        <span className="ml-auto text-[0.6rem] text-muted-foreground/70">
+          {t('configs.workbench.effectiveChainLegend')}
+        </span>
       </div>
 
       {files.map((f) => {
@@ -74,22 +82,32 @@ export default function EffectivePreviewView({ serverId }: { serverId: string })
             <div className="flex items-center gap-2 px-2 py-1 text-xs font-medium text-foreground">
               <span className="truncate">{f.name}</span>
               {s.custom > 0 ? (
-                <Badge variant="outline" className="h-4 shrink-0 border-amber-500/40 px-1 text-[0.55rem] text-amber-600 dark:text-amber-400">
+                <Badge
+                  variant="outline"
+                  className="h-4 shrink-0 border-amber-500/40 px-1 text-[0.55rem] text-amber-600 dark:text-amber-400"
+                >
                   {t('configs.workbench.effectiveDiffFileCustom', { count: s.custom })}
                 </Badge>
               ) : (
-                <Badge variant="outline" className="h-4 shrink-0 border-muted-foreground/30 px-1 text-[0.55rem] text-muted-foreground/70">
+                <Badge
+                  variant="outline"
+                  className="h-4 shrink-0 border-muted-foreground/30 px-1 text-[0.55rem] text-muted-foreground/70"
+                >
                   {t('configs.workbench.effectiveDiffNoCustom')}
                 </Badge>
               )}
-              <span className="shrink-0 text-[0.55rem] text-muted-foreground/60">{t('configs.workbench.effectiveDiffFileKeys', { count: s.total })}</span>
+              <span className="shrink-0 text-[0.55rem] text-muted-foreground/60">
+                {t('configs.workbench.effectiveDiffFileKeys', { count: s.total })}
+              </span>
             </div>
 
             {/* 并排 diff：左 全局基线 / 右 本实例生效 */}
             <div className="mx-2 overflow-hidden rounded-md border border-border">
               {/* 两栏列头 */}
               <div className="grid grid-cols-2 border-b border-border bg-muted/30 text-[0.6rem] font-medium text-muted-foreground">
-                <div className="border-r border-border px-2 py-0.5">{t('configs.workbench.effectiveDiffBaseCol')}</div>
+                <div className="border-r border-border px-2 py-0.5">
+                  {t('configs.workbench.effectiveDiffBaseCol')}
+                </div>
                 <div className="px-2 py-0.5">{t('configs.workbench.effectiveDiffEffCol')}</div>
               </div>
               {/* 逐键行 */}
@@ -112,10 +130,18 @@ export default function EffectivePreviewView({ serverId }: { serverId: string })
                         changed ? 'bg-red-500/10' : 'bg-transparent',
                       )}
                     >
-                      <span className="w-5 shrink-0 select-none text-right text-muted-foreground/40">{idx + 1}</span>
+                      <span className="w-5 shrink-0 select-none text-right text-muted-foreground/40">
+                        {idx + 1}
+                      </span>
                       <span className="min-w-0 flex-1 truncate">
                         <span className="text-muted-foreground/70">{k.key}: </span>
-                        <span className={cn(changed ? 'text-red-600 line-through dark:text-red-400' : 'text-muted-foreground')}>
+                        <span
+                          className={cn(
+                            changed
+                              ? 'text-red-600 line-through dark:text-red-400'
+                              : 'text-muted-foreground',
+                          )}
+                        >
                           {baseValue}
                         </span>
                       </span>
@@ -127,15 +153,26 @@ export default function EffectivePreviewView({ serverId }: { serverId: string })
                         changed ? 'bg-emerald-500/10' : 'bg-transparent',
                       )}
                     >
-                      <span className="w-5 shrink-0 select-none text-right text-muted-foreground/40">{idx + 1}</span>
+                      <span className="w-5 shrink-0 select-none text-right text-muted-foreground/40">
+                        {idx + 1}
+                      </span>
                       <span className="min-w-0 flex-1 truncate">
                         <span className="text-muted-foreground/70">{k.key}: </span>
-                        <span className={cn(changed ? 'font-medium text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
+                        <span
+                          className={cn(
+                            changed
+                              ? 'font-medium text-emerald-700 dark:text-emerald-400'
+                              : 'text-muted-foreground',
+                          )}
+                        >
                           {effLayer.value}
                         </span>
                       </span>
                       {changed && (
-                        <Badge variant="outline" className={cn('h-4 shrink-0 px-1 text-[0.5rem]', meta.badgeClass)}>
+                        <Badge
+                          variant="outline"
+                          className={cn('h-4 shrink-0 px-1 text-[0.5rem]', meta.badgeClass)}
+                        >
                           {t(meta.labelKey)}
                         </Badge>
                       )}

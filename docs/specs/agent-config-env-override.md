@@ -21,7 +21,7 @@ agent（数据面，TabooLib 插件）当前只能从 `config.yml` 读配置；�
   - keys（动态键 map）：直接委托 delegate（metadata 不支持 env 覆盖）。
   - env 查找以函数注入，core 不依赖具体环境读取、便于单测。
 - 两端壳 `BeaconAgentBukkit` / `BeaconAgentBungee` 构造 reader 时包一层：`EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)`。
-- E2E（`agent-e2e` / `agent-e2e-bungee`）：删除 `agentConfigYaml` 手写 YAML，改在 run-task 的 run 任务上 `environment(...)` 注入 E2E 专属字段（endpoints / namespace / server-id / address / bootstrap-token / command-whitelist），其余走出厂 `config.yml` 默认。
+- E2E（`agent-e2e` / `agent-e2e-bungee`）：删除 `agentConfigYaml` 手写 YAML，改由 `mc-testkit 0.5.0` 在 backend / proxy 节点上通过 `env(...)` 注入 E2E 专属字段（endpoints / namespace / server-id / address / bootstrap-token / command-whitelist），并通过 `templateDirectory(...)` 注入节点模板；Go harness 分别调用 `servePaper` / `serveDirectory` / `serveProxy`，其余配置仍走出厂 `config.yml` 默认。
 - 无新 ADR：配置加载增强，不推翻任何已接受决策；core 仍 TabooLib-free（env 用注入 lambda）。
 
 ## 4. 任务拆分
@@ -37,8 +37,8 @@ agent（数据面，TabooLib 插件）当前只能从 `config.yml` 读配置；�
 ## 5. 验收标准
 
 - 单测：env 覆盖 string/int/long/double/boolean/stringList；env 缺失或空 → 文件值；env 解析失败 → 文件值；命名映射正确；`keys()` 始终委托文件。
-- E2E：agent 经 env 注入接入控制面（不写 `config.yml`），`go test -tags=e2e ./test/e2e/{directory,override,metrics}` 三套件全绿（注册 / 热更 / 目录注入 / override / metrics 均成立）。
-- 受影响组件测试绿：`./gradlew -p agent test`。
+- E2E：agent 经 env 注入接入控制面（不写 `config.yml`），`go test -tags=e2e ./apps/server/test/e2e/{directory,override,metrics}` 三套件全绿（注册 / 热更 / 目录注入 / override / metrics 均成立）。
+- 受影响组件测试绿：`./apps/agent/gradlew -p apps/agent test`。
 
 ## 6. 风险 / 待定
 

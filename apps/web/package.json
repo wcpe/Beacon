@@ -1,0 +1,46 @@
+{
+  "name": "@beacon/web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "build:demo": "tsc -p tsconfig.json --noEmit && vite build --mode demo",
+    "lint": "eslint src vite.config.ts vitest.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@beacon/contracts": "workspace:*",
+    "@beacon/devmock": "workspace:*",
+    "@beacon/ui": "workspace:*",
+    "@tanstack/react-query": "5.62.7",
+    "i18next": "^26.3.1",
+    "lucide-react": "^1.20.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-i18next": "^17.0.8",
+    "react-router-dom": "6.30.4",
+    "sonner": "^2.0.7",
+    "zustand": "5.0.14"
+  },
+  "devDependencies": {
+    "@beacon/eslint-config": "workspace:*",
+    "@beacon/typescript-config": "workspace:*",
+    "@tailwindcss/vite": "^4.3.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^25.9.3",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "jsdom": "^25.0.1",
+    "msw": "2.14.6",
+    "typescript": "5.6.3",
+    "vite": "6.4.3",
+    "vitest": "3.2.6"
+  }
+}

@@ -1,0 +1,290 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
+
+/* 显式把 @beacon/ui 组件源纳入 Tailwind 内容扫描：
+   consumer（apps/web / ui-wiki）的 vite 自动检测以各自 cwd 为根、不含本包，
+   导致组件里独有的工具类（复合变体 / 任意值阴影等）不被生成、静默失效。
+   路径相对本样式文件所在目录（packages/ui/src）解析。 */
+@source './components';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+  /* B 版设计语言扩展令牌：次面 / 强边框 / 四级墨阶 / 双层阴影 / 状态浅底描边。
+     统一由页面与组件引用（如 bg-surface-2 / text-ink-3 / shadow-card / border-ok-bd），禁止各处硬编码 hex。 */
+  --color-surface-2: var(--surface-2);
+  --color-border-strong: var(--border-strong);
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-brand: var(--brand);
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-600: var(--brand-600);
+  /* 状态语义色 + 浅底 + 描边（仅用于状态药丸 / 告警等级 / KPI 图标角标） */
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-bd: var(--ok-bd);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-bd: var(--warn-bd);
+  --color-crit: var(--crit);
+  --color-crit-bg: var(--crit-bg);
+  --color-crit-bd: var(--crit-bd);
+  --color-off: var(--off);
+  --color-off-bg: var(--off-bg);
+  --color-off-bd: var(--off-bd);
+  /* 卡片与弹层双层软阴影（映射自 B 的 --sh-card / --sh-pop） */
+  --shadow-card: var(--sh-card);
+  --shadow-pop: var(--sh-pop);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* 亮色主题：明亮现代 SaaS（对齐 B 版 mockup dashboard-saas.html）。
+     底 #f7f8fa / 面 #fff / 靛蓝品牌 #4f46e5；hex→oklch 取近似，以肉眼贴合 B 为准。 */
+  /* 底 #f7f8fa（冷灰微着，非纯白，衬出卡片浮起） */
+  --background: oklch(0.977 0.0015 264);
+  /* 标题墨 #0f1729 */
+  --foreground: oklch(0.203 0.03 266);
+  /* 卡面 #ffffff */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.203 0.03 266);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.203 0.03 266);
+  /* 品牌靛蓝 #4f46e5：主操作按钮 / 链接 / 选中 / 图表主线 */
+  --primary: oklch(0.511 0.234 277);
+  --primary-foreground: oklch(0.985 0 0);
+  /* 次面 #fbfbfd 作 secondary 底；secondary 文字用正文墨 #3d4657 */
+  --secondary: oklch(0.988 0.0012 277);
+  --secondary-foreground: oklch(0.375 0.025 264);
+  /* muted 底 = 次面偏浅冷灰；muted 文字 = 次要墨 #6b7385 */
+  --muted: oklch(0.968 0.0025 264);
+  --muted-foreground: oklch(0.52 0.022 266);
+  /* 浅靛蓝 #eef0fe（brand-50）：hover / 选中底色；其上文字用 brand-600 #4338ca */
+  --accent: oklch(0.958 0.021 282);
+  --accent-foreground: oklch(0.455 0.238 277);
+  --destructive: oklch(0.577 0.245 27.325);
+  /* 细边框 #eceef2 */
+  --border: oklch(0.938 0.003 264);
+  --input: oklch(0.905 0.005 264);
+  /* focus ring：靛蓝（≈ indigo-500） */
+  --ring: oklch(0.585 0.22 277);
+  /* 图表分类色板：靛蓝主线 + 蓝 / 紫 / 青 / 天蓝 */
+  --chart-1: oklch(0.511 0.234 277);
+  --chart-2: oklch(0.62 0.18 250);
+  --chart-3: oklch(0.6 0.22 305);
+  --chart-4: oklch(0.7 0.13 195);
+  --chart-5: oklch(0.68 0.15 230);
+  --radius: 0.75rem;
+
+  /* ---- B 版扩展原始令牌（供 @theme inline 映射为 Tailwind 工具类） ---- */
+  /* 次面 #fbfbfd：搜索框 / 表格斑马 / 区域标签底 */
+  --surface-2: oklch(0.988 0.0012 277);
+  /* 强边框 #e2e5ea：搜索框 / 分隔更清晰处 */
+  --border-strong: oklch(0.905 0.005 264);
+  /* 四级墨阶：标题 #0f1729 / 正文 #3d4657 / 次要 #6b7385 / 弱标签 #9aa1b0 */
+  --ink-1: oklch(0.203 0.03 266);
+  --ink-2: oklch(0.375 0.025 264);
+  --ink-3: oklch(0.52 0.022 266);
+  --ink-4: oklch(0.685 0.018 266);
+  /* 靛蓝品牌四档 #4f46e5 / #4338ca / #eef0fe / #e0e2fb */
+  --brand: oklch(0.511 0.234 277);
+  --brand-600: oklch(0.455 0.238 277);
+  --brand-50: oklch(0.958 0.021 282);
+  --brand-100: oklch(0.915 0.035 282);
+  /* 状态语义色：ok #16a34a / warn #d97706 / crit #dc2626 / off #94a3b8，各配浅底 + 描边 */
+  --ok: oklch(0.627 0.176 149);
+  --ok-bg: oklch(0.975 0.03 155);
+  --ok-bd: oklch(0.905 0.06 152);
+  --warn: oklch(0.667 0.163 58);
+  --warn-bg: oklch(0.978 0.03 78);
+  --warn-bd: oklch(0.9 0.07 72);
+  --crit: oklch(0.577 0.222 27);
+  --crit-bg: oklch(0.972 0.017 20);
+  --crit-bd: oklch(0.895 0.05 22);
+  --off: oklch(0.705 0.028 258);
+  --off-bg: oklch(0.968 0.003 264);
+  --off-bd: oklch(0.925 0.004 264);
+  /* 双层软阴影（对齐 B）：卡片浮起 + 弹层更深 */
+  --sh-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.03);
+  --sh-pop: 0 6px 20px rgba(16, 24, 40, 0.1), 0 2px 6px rgba(16, 24, 40, 0.06);
+
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.375 0.025 264);
+  --sidebar-primary: oklch(0.511 0.234 277);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  /* 侧栏选中项：浅靛蓝底 #eef0fe + 靛蓝文字 #4338ca */
+  --sidebar-accent: oklch(0.958 0.021 282);
+  --sidebar-accent-foreground: oklch(0.455 0.238 277);
+  --sidebar-border: oklch(0.938 0.003 264);
+  --sidebar-ring: oklch(0.585 0.22 277);
+}
+
+.dark {
+  /* 暗色主题：靛蓝品牌（略提亮以适配深底）+ 中性微着冷色相；非本轮重点，保持不塌陷。 */
+  --background: oklch(0.17 0.01 277);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.215 0.012 277);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.215 0.012 277);
+  --popover-foreground: oklch(0.985 0 0);
+  /* 品牌靛蓝（暗底提亮）：主操作 / 链接 / 选中 */
+  --primary: oklch(0.62 0.2 277);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.28 0.02 277);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.28 0.02 277);
+  --muted-foreground: oklch(0.7 0.02 277);
+  /* 深靛蓝：hover / 选中底色与其上文字 */
+  --accent: oklch(0.3 0.05 277);
+  --accent-foreground: oklch(0.92 0.03 277);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.55 0.18 277);
+  --chart-1: oklch(0.62 0.2 277);
+  --chart-2: oklch(0.65 0.16 250);
+  --chart-3: oklch(0.64 0.2 305);
+  --chart-4: oklch(0.72 0.13 195);
+  --chart-5: oklch(0.7 0.15 230);
+
+  /* ---- 暗色下的 B 版扩展令牌（保持语义一致、深底适配） ---- */
+  --surface-2: oklch(0.24 0.014 277);
+  --border-strong: oklch(1 0 0 / 16%);
+  --ink-1: oklch(0.985 0 0);
+  --ink-2: oklch(0.88 0.01 277);
+  --ink-3: oklch(0.72 0.02 277);
+  --ink-4: oklch(0.6 0.02 277);
+  --brand: oklch(0.62 0.2 277);
+  --brand-600: oklch(0.55 0.2 277);
+  --brand-50: oklch(0.3 0.05 277);
+  --brand-100: oklch(0.34 0.06 277);
+  --ok: oklch(0.72 0.16 150);
+  --ok-bg: oklch(0.32 0.07 152);
+  --ok-bd: oklch(0.42 0.09 152);
+  --warn: oklch(0.78 0.15 70);
+  --warn-bg: oklch(0.34 0.07 72);
+  --warn-bd: oklch(0.44 0.09 72);
+  --crit: oklch(0.7 0.19 22);
+  --crit-bg: oklch(0.32 0.09 22);
+  --crit-bd: oklch(0.42 0.12 22);
+  --off: oklch(0.65 0.02 258);
+  --off-bg: oklch(0.28 0.01 264);
+  --off-bd: oklch(0.36 0.01 264);
+  --sh-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --sh-pop: 0 6px 20px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+
+  --sidebar: oklch(0.2 0.012 277);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.62 0.2 277);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.3 0.05 277);
+  --sidebar-accent-foreground: oklch(0.92 0.03 277);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.55 0.18 277);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+  /* 所有数字默认等宽（tabular-nums），对齐 B 的 KPI / 表格数值排列。 */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+}
+
+@layer utilities {
+  /* 隐藏滚动条但保留滚动功能：侧栏导航 / 主内容滚动区用，去掉视觉滚动条更清爽。 */
+  .scrollbar-hide {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 应用背景：给整屏加层次与品牌微光（消除「平灰」，衬白卡片浮起）。
+     左上靛蓝光晕 + 右上蓝紫光晕 + 顶部提亮渐变，固定不随滚动，克制不喧宾夺主。 */
+  .app-bg {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(
+        1000px 520px at 8% -10%,
+        color-mix(in oklch, var(--brand) 12%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 460px at 98% -8%,
+        color-mix(in oklch, var(--chart-3) 9%, transparent),
+        transparent 56%
+      ),
+      linear-gradient(180deg, oklch(0.995 0.004 264), transparent 40%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+  }
+  .dark .app-bg {
+    background-image:
+      radial-gradient(
+        1000px 520px at 8% -10%,
+        color-mix(in oklch, var(--brand) 22%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        900px 460px at 98% -8%,
+        color-mix(in oklch, var(--chart-3) 16%, transparent),
+        transparent 56%
+      ),
+      linear-gradient(180deg, oklch(0.22 0.02 277), transparent 42%);
+  }
+}

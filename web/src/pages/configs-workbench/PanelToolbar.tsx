@@ -64,7 +64,15 @@ export default function PanelToolbar({
 }
 
 // 工具栏小图标按钮
-function IconBtn({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function IconBtn({
+  label,
+  onClick,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  children: React.ReactNode
+}) {
   return (
     <button
       type="button"

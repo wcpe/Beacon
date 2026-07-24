@@ -3,11 +3,12 @@
 // 复用 FR-22 配置有效预览（EffectivePreview）的展示模式。
 
 import { useTranslation } from 'react-i18next'
-import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@beacon/ui'
+import { ScrollArea } from '@beacon/ui'
 import type { EffectiveFileTreeView } from '../../api/client'
 import type { InstanceView } from '../../api/types'
 import FileMergeCard from './FileMergeCard'
+import { Combobox } from '@beacon/ui'
 
 export default function FileEffectivePreview({
   instances,
@@ -28,11 +29,10 @@ export default function FileEffectivePreview({
       {/* 预览目标选择 */}
       <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-border bg-muted/20">
         <span className="text-xs text-muted-foreground">{t('filePreview.targetLabel')}</span>
-        <select
-          className="h-7 rounded border border-input bg-background px-2 text-xs"
+        <Combobox
+          className="w-72"
           value={target.serverId ?? target.group ?? ''}
-          onChange={(e) => {
-            const val = e.target.value
+          onChange={(val) => {
             if (!val) {
               onTargetChange({})
             } else {
@@ -40,14 +40,13 @@ export default function FileEffectivePreview({
               onTargetChange({ serverId: val })
             }
           }}
-        >
-          <option value="">{t('filePreview.selectPlaceholder')}</option>
-          {instances.map((inst) => (
-            <option key={inst.serverId} value={inst.serverId}>
-              {inst.serverId} ({inst.group}/{inst.zone})
-            </option>
-          ))}
-        </select>
+          options={instances.map((inst) => ({
+            value: inst.serverId,
+            label: `${inst.serverId} (${inst.group}/${inst.zone ?? '-'})`,
+          }))}
+          allowCustom={false}
+          placeholder={t('filePreview.selectPlaceholder')}
+        />
         {data && (
           <Badge variant="outline" className="text-xs">
             fileTreeMd5: {data.fileTreeMd5.slice(0, 8)}
@@ -56,7 +55,9 @@ export default function FileEffectivePreview({
       </div>
       {/* 预览内容 */}
       {isLoading ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">{t('filePreview.loading')}</div>
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          {t('filePreview.loading')}
+        </div>
       ) : data ? (
         data.files.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">

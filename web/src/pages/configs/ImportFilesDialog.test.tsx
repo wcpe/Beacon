@@ -64,14 +64,10 @@ describe('ImportFilesDialog', () => {
     await userEvent.click(screen.getByRole('button', { name: '确认导入' }))
 
     await waitFor(() => {
-      expect(vi.mocked(importFiles)).toHaveBeenCalledWith(
-        'prod',
-        'bw',
-        [
-          expect.objectContaining({ path: 'config.yml' }),
-          expect.objectContaining({ path: 'zh.yml' }),
-        ],
-      )
+      expect(vi.mocked(importFiles)).toHaveBeenCalledWith('prod', 'bw', [
+        expect.objectContaining({ path: 'config.yml' }),
+        expect.objectContaining({ path: 'zh.yml' }),
+      ])
     })
   })
 
@@ -113,7 +109,9 @@ describe('ImportFilesDialog', () => {
     await userEvent.click(screen.getByLabelText('目标组'))
     await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
     const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
-    await userEvent.upload(fileInput, [new File(['port: 25565\n'], 'cfg.yml', { type: 'text/yaml' })])
+    await userEvent.upload(fileInput, [
+      new File(['port: 25565\n'], 'cfg.yml', { type: 'text/yaml' }),
+    ])
 
     await userEvent.click(screen.getByRole('button', { name: '预览' }))
     await screen.findByText('上传预览审批')
@@ -129,7 +127,9 @@ describe('ImportFilesDialog', () => {
     await userEvent.click(within(await screen.findByRole('listbox')).getByText('bw'))
     const fileInput = dialog.querySelector('#imp-files') as HTMLInputElement
     // .bin 无文本后缀、application/octet-stream → 判二进制
-    const bin = new File([new Uint8Array([0, 1, 2, 3])], 'data.bin', { type: 'application/octet-stream' })
+    const bin = new File([new Uint8Array([0, 1, 2, 3])], 'data.bin', {
+      type: 'application/octet-stream',
+    })
     await userEvent.upload(fileInput, [bin])
 
     await userEvent.click(screen.getByRole('button', { name: '预览' }))

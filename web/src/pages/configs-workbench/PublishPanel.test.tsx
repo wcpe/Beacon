@@ -41,12 +41,20 @@ const IMPACT_DRIFT: PublishImpact = {
 // 无差异影响面：driftCount=0 → 无拓印门
 const IMPACT_CLEAN: PublishImpact = {
   files: [{ name: 'kits.yml', scope: 'global', fromVersion: 3, toVersion: 4 }],
-  groups: [{ scope: 'global', label: '全局', servers: [{ serverId: 'lobby-1', online: true, changed: false }] }],
+  groups: [
+    {
+      scope: 'global',
+      label: '全局',
+      servers: [{ serverId: 'lobby-1', online: true, changed: false }],
+    },
+  ],
   driftCount: 0,
 }
 
 function mockImpact(over: Partial<ReturnType<typeof usePublishImpact>>) {
-  mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<typeof usePublishImpact>)
+  mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<
+    typeof usePublishImpact
+  >)
 }
 
 describe('PublishPanel（FR-115）', () => {

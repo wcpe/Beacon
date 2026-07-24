@@ -6,8 +6,8 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, ClipboardCheck, FileSearch, GitCompare, X } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
 import CodeEditor from '@/components/CodeEditor'
 import { cn } from '@/lib/utils'
 import { imprintDiffs } from './sampleData'
@@ -36,16 +36,26 @@ export default function BatchReviewOverlay({
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center p-6">
       {/* 半透明遮罩 */}
-      <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onCancel} aria-hidden />
+      <div
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        onClick={onCancel}
+        aria-hidden
+      />
       {/* 浮层卡 */}
       <div className="relative flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
         {/* 头 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-4 py-3">
           <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
           <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">{t('configs.workbench.batchReviewTitle')}</div>
+            <div className="text-sm font-medium text-foreground">
+              {t('configs.workbench.batchReviewTitle')}
+            </div>
             <div className="text-[0.65rem] text-muted-foreground">
-              {t('configs.workbench.batchReviewSubtitle', { count: rows.length, fetch: fetchCount, push: pushCount })}
+              {t('configs.workbench.batchReviewSubtitle', {
+                count: rows.length,
+                fetch: fetchCount,
+                push: pushCount,
+              })}
             </div>
           </div>
           <button
@@ -145,7 +155,9 @@ function ReviewDetail({ row }: { row: SyncQueueRow }) {
       <Badge variant="secondary" className="h-4 px-1.5 text-[0.6rem]">
         {t('configs.workbench.statusPendingIngest')}
       </Badge>
-      <p className="max-w-xs text-xs text-muted-foreground">{t('configs.workbench.batchReviewIngestHint')}</p>
+      <p className="max-w-xs text-xs text-muted-foreground">
+        {t('configs.workbench.batchReviewIngestHint')}
+      </p>
       <p className="font-mono text-[0.65rem] text-muted-foreground/70">{row.sourcePath}</p>
     </div>
   )

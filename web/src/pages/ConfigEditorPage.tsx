@@ -18,8 +18,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, History, RefreshCw, Save, X } from 'lucide-react'
 
 import { publishFile } from '@/api/client'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
 import { useMessage } from '@/components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
 import { cn } from '@/lib/utils'
@@ -65,7 +65,9 @@ export default function ConfigEditorPage() {
   useEffect(() => {
     if (!activeKey) return
     const name = activeKey.split('/').pop() ?? activeKey
-    setTabs((prev) => (prev.some((p) => p.key === activeKey) ? prev : [...prev, { key: activeKey, name }]))
+    setTabs((prev) =>
+      prev.some((p) => p.key === activeKey) ? prev : [...prev, { key: activeKey, name }],
+    )
   }, [activeKey])
 
   // 活跃文件加载完成 → 回灌编辑器内容（切文件 / 刷新后回到编辑模式）
@@ -109,7 +111,8 @@ export default function ConfigEditorPage() {
       queryClient.invalidateQueries({ queryKey: ['wb-file'] })
       msg.showSuccess(t('configs.editorRoute.toastSaved'))
     },
-    onError: (e) => msg.showError(e instanceof Error ? e.message : t('configs.editorRoute.saveFailed')),
+    onError: (e) =>
+      msg.showError(e instanceof Error ? e.message : t('configs.editorRoute.saveFailed')),
   })
 
   // 点保存：不直接发布，先弹保存确认（看 diff + 填备注，FR-67）
@@ -164,7 +167,12 @@ export default function ConfigEditorPage() {
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-card">
       {/* ===== 工具栏：保存 / 刷新 + 历史折叠（历史常驻右栏） ===== */}
       <div className="flex shrink-0 items-center gap-0.5 border-b border-border px-2 py-1">
-        <TbBtn label={t('configs.editorRoute.save')} onClick={openSaveConfirm} primary disabled={!file.data}>
+        <TbBtn
+          label={t('configs.editorRoute.save')}
+          onClick={openSaveConfirm}
+          primary
+          disabled={!file.data}
+        >
           <Save className="h-3.5 w-3.5" />
           <span className="ml-1 text-xs">{t('configs.editorRoute.save')}</span>
         </TbBtn>
@@ -199,7 +207,12 @@ export default function ConfigEditorPage() {
                   : 'bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
               )}
             >
-              {tabDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" title={t('configs.editorRoute.dirty')} />}
+              {tabDirty && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500"
+                  title={t('configs.editorRoute.dirty')}
+                />
+              )}
               <span className="max-w-[160px] truncate">{tab.name}</span>
               <span
                 className="ml-0.5 shrink-0 cursor-pointer text-muted-foreground/60 hover:text-destructive"
@@ -309,7 +322,11 @@ function StatusBar({ file, dirty }: { file: WorkbenchFile; dirty: boolean }) {
       <span className="truncate font-mono">
         {file.namespace}/{file.group}/{file.dataId}
       </span>
-      {dirty && <span className="shrink-0 text-amber-600 dark:text-amber-400">●{t('configs.editorRoute.dirty')}</span>}
+      {dirty && (
+        <span className="shrink-0 text-amber-600 dark:text-amber-400">
+          ●{t('configs.editorRoute.dirty')}
+        </span>
+      )}
       <span className="ml-auto flex shrink-0 items-center gap-3">
         <Badge variant="outline" className={cn('h-4 px-1 text-[0.6rem]', meta.badgeClass)}>
           {t(meta.labelKey)}
@@ -337,7 +354,9 @@ function HistoryPanel({
     <div className="flex w-56 shrink-0 flex-col overflow-hidden border-l border-border bg-card">
       <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/30 px-3 py-2">
         <History className="h-4 w-4 text-muted-foreground" />
-        <span className="text-xs font-medium text-foreground">{t('configs.editorRoute.historyTitle')}</span>
+        <span className="text-xs font-medium text-foreground">
+          {t('configs.editorRoute.historyTitle')}
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide p-1.5">
         {revisions.map((r, idx) => (
@@ -347,7 +366,9 @@ function HistoryPanel({
             onClick={() => onPick(diffVersion === r.version ? null : r.version)}
             className={cn(
               'mb-1 block w-full rounded-md border px-2 py-1.5 text-left text-xs transition-colors',
-              diffVersion === r.version ? 'border-primary/50 bg-primary/5' : 'border-transparent hover:border-border hover:bg-muted/50',
+              diffVersion === r.version
+                ? 'border-primary/50 bg-primary/5'
+                : 'border-transparent hover:border-border hover:bg-muted/50',
             )}
           >
             <div className="flex items-center gap-1.5">
@@ -395,7 +416,9 @@ function TbBtn({
       disabled={disabled}
       className={cn(
         'flex h-6 items-center gap-0.5 rounded px-1.5 text-xs transition-colors disabled:opacity-40',
-        primary ? 'text-primary hover:bg-primary/10' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+        primary
+          ? 'text-primary hover:bg-primary/10'
+          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
       )}
     >
       {children}

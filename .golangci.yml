@@ -1,16 +1,88 @@
 # Beacon 控制面 Go 静态检查配置（golangci-lint v2）。
 # CI 门禁：未过不允许合并。规则见 .claude/rules/static-analysis.md。
-# v2 默认已启用 standard 集（errcheck / govet / ineffassign / staticcheck / unused，
-# 其中原 gosimple 规则已并入 staticcheck），故下方 enable 只补充额外 linter。
 version: "2"
 
 linters:
-  # 在 v2 standard 默认集之外额外启用的 linter
-  enable:
-    - bodyclose      # http response body 是否关闭（防资源泄露）
-    - misspell       # 拼写
-    - revive         # 风格与最佳实践
-    - sqlclosecheck  # rows/stmt 是否关闭
+  # FR-176：以 all 档为基线，禁用项集中声明并说明原因。
+  default: all
+  disable:
+    # 与本仓中文注释 / 中文测试名 / 运维中文文案冲突。
+    - asciicheck
+    - godot
+    - gosmopolitan
+    - misspell
+
+    # 主观格式 / 排版类规则：本仓格式由 gofmt + goimports + CRLF 安全脚本单一负责。
+    - decorder
+    - dogsled
+    - embeddedstructfieldcheck
+    - funcorder
+    - goheader
+    - grouper
+    - lll
+    - nlreturn
+    - tagalign
+    - whitespace
+    - wsl
+    - wsl_v5
+
+    # 与现有架构取舍冲突或要求大面积重构 Legacy 存量代码。
+    - containedctx
+    - contextcheck
+    - cyclop
+    - depguard
+    - dupl
+    - err113
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exhaustruct
+    - forcetypeassert
+    - funlen
+    - gochecknoglobals
+    - gocognit
+    - goconst
+    - godoclint
+    - iface
+    - inamedparam
+    - interfacebloat
+    - ireturn
+    - nolintlint
+    - maintidx
+    - mnd
+    - musttag
+    - nilnil
+    - noinlineerr
+    - noctx
+    - nonamedreturns
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - recvcheck
+    - tagliatelle
+    - testpackage
+    - unparam
+    - varnamelen
+    - wastedassign
+    - wrapcheck
+
+    # 不适用于当前技术栈或已有更窄的本地门禁覆盖。
+    - arangolint
+    - clickhouselint
+    - ginkgolinter
+    - gomodguard
+    - gomodguard_v2
+    - gosec
+    - intrange
+    - loggercheck
+    - modernize
+    - protogetter
+    - sloglint
+    - spancheck
+    - testifylint
+    - zerologlint
+
   # 排除规则：沿用 v2 迁移默认（生成文件宽松匹配 + 若干预置误报豁免）
   exclusions:
     generated: lax
@@ -36,14 +108,4 @@ issues:
   # 相同问题不折叠（0 = 不限）
   max-same-issues: 0
 
-# v2 把格式化器独立为 formatters，不再放在 linters.enable 下
-formatters:
-  enable:
-    - gofmt          # 格式
-    - goimports      # import 分组与排序
-  exclusions:
-    generated: lax
-    paths:
-      - third_party$
-      - builtin$
-      - examples$
+# Go 格式化由 CI 的 gofmt/goimports 步骤与本地 `make lint` 的 CRLF 安全脚本负责。

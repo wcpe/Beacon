@@ -7,16 +7,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { listSettings, updateSetting } from '../../api/client'
 import type { SettingView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Checkbox } from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 
 // log.level 的合法枚举（硬编码，后端白名单同此集合）。
 const LOG_LEVELS = ['ERROR', 'WARN', 'INFO', 'DEBUG'] as const
@@ -57,8 +51,7 @@ export function useSettingsDraft() {
     })
   }, [data])
 
-  const setDraft = (key: string, value: string) =>
-    setDrafts((prev) => ({ ...prev, [key]: value }))
+  const setDraft = (key: string, value: string) => setDrafts((prev) => ({ ...prev, [key]: value }))
 
   const items = data ?? []
   const draftOf = (item: SettingView) => drafts[item.key] ?? item.value
@@ -216,9 +209,7 @@ export function SettingControl({
 
   // log.level 特例：固定枚举下拉
   if (item.key === 'log.level') {
-    return (
-      <EnumSelect options={LOG_LEVELS} draft={draft} onChange={onChange} width="w-32" />
-    )
+    return <EnumSelect options={LOG_LEVELS} draft={draft} onChange={onChange} width="w-32" />
   }
 
   if (item.valueType === 'bool') {
@@ -249,12 +240,7 @@ export function SettingControl({
 
   // string（log.level 以外）：普通文本输入
   return (
-    <Input
-      type="text"
-      className="w-56"
-      value={draft}
-      onChange={(e) => onChange(e.target.value)}
-    />
+    <Input type="text" className="w-56" value={draft} onChange={(e) => onChange(e.target.value)} />
   )
 }
 

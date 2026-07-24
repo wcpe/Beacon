@@ -1,12 +1,14 @@
 # 功能规格：CI 推 master 自动发滚动 prerelease + in-app 两渠道按版本号判新
 
-> 状态：开发中　·　关联 PRD：FR-117　·　分支：feature/fr-117-rolling-prerelease
+> 状态：已被 [ADR-0073](../adr/0073-standard-rc-ga-release-lifecycle.md) / [FR-182](fr-182-development-build-and-release-preparation.md) 取代（历史实现规格）　·　原关联 PRD：FR-117
+>
+> **当前不再创建或维护 `dev` tag、开发 GitHub Release / prerelease，也不再把普通 prerelease 作为在线更新主流程。** 开发验证改用成功 `master` run 保留 7 天的 Actions Artifact；下文关于滚动 tag、双渠道、开发版本和 selector 的描述仅用于历史追溯，不表示当前行为。通用 RC/GA 与 GA-only 在线更新分别由 FR-183/FR-184、FR-185 落地。
 
 ## 1. 背景与目标
 in-app 在线更新（FR-99/100）与「切渠道」功能需要一条**平时就存在、随 master 滚动刷新**的预发布 Release 才能被检查到、被更新、被验证。旧 rc 模型（[ADR-0046](../adr/0046-rc-prerelease-channel.md)）要求显式打 `vX.Y.Z-rc.N` tag 才有预发布，平时根本没有较新 Release，更新功能无从验证。[ADR-0052](../adr/0052-rolling-prerelease-channel.md) 取代之：渠道收敛为「正式 / 预发布」两条、推 master 自动覆盖发布滚动 prerelease、按语义版本号判新。属第二期（P2）运维体验。
 
 ## 2. 需求（要什么）
-- 推 master → CI 构建并**覆盖发布同一个滚动 prerelease Release**（移动 tag、只留最新一份），`prerelease=true`，版本 = 根 `VERSION`。复用 `_build-release.yml`（5 平台二进制 + launcher + 双端 jar + SHA256）。
+- 推 master → CI 构建并**覆盖发布同一个滚动 prerelease Release**（移动 tag、只留最新一份），`prerelease=true`，版本 = 根 `VERSION`。复用 `_build-release.yml`（linux-amd64、linux-arm64、windows-amd64、darwin-arm64 四平台二进制 + 双端 jar + SHA256）。
 - 打无后缀正式 tag `vX.Y.Z` → stable Release，行为**不变**（`release.yml` 不动）。
 - in-app 更新渠道收敛为 `stable` / `prerelease`（去 `rc`）；判新改为语义版本号 `X.Y.Z` 比较：渠道版 > 运行版才提示，**同号不提示、跨号才提示**。渠道区分仍用 GitHub `prerelease` 布尔。
 - 范围内：`.github/workflows/{prerelease,_build-release}.yml`；`internal/update/*`（渠道枚举、版本解析、判新）；`internal/service/settings_metadata.go`（`update.channel` 取值）；前端 `update.channel` 下拉枚举（与后端同口径，否则下拉给出 `rc` 后端拒）；文档（OPERATIONS §2.2 / API.md / CHANGELOG）。
@@ -50,7 +52,7 @@ in-app 在线更新（FR-99/100）与「切渠道」功能需要一条**平时�
 ## 5. 验收标准
 - `go test ./internal/update/... ./internal/service/...` 全绿，新测覆盖：同 `X.Y.Z` 不提示、跨号提示、stable/prerelease 渠道选取、releaseVersion tag/name 回退。
 - workflow YAML 语法有效、与现有结构一致；`release.yml` 未改。
-- 推 master → CI 发出/覆盖滚动 prerelease（5 平台 + SHA256）、管理台预发布渠道「立即检查」能发现它——**需 push + GitHub Actions 真验**（本地无法验，如实标待验）。
+- 推 master → CI 发出/覆盖滚动 prerelease（linux-amd64、linux-arm64、windows-amd64、darwin-arm64 四平台 + SHA256）、管理台预发布渠道「立即检查」能发现它——**需 push + GitHub Actions 真验**（本地无法验，如实标待验）。
 
 ## 6. 风险 / 待定
 - 滚动 tag 名定为 `prerelease`（ADR-0052 未硬性指定，留 FR-117）；若后续要改名，仅改 `prerelease.yml` 的入参 + 文档。

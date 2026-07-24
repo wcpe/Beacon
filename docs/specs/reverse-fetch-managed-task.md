@@ -86,7 +86,7 @@
 - 一实例已有活跃任务时再触发 → 409 REVERSE_FETCH_TASK_ACTIVE。
 - 状态机 scanning→pending-review→fetching→ingesting→done 正确流转、可查进度；取消→cancelled、超时→expired。
 - submit 仅落选定集；超阈值文件未确认被拒（仅该文件，不整批）；确认后可入。
-- 受影响组件测试全绿（`go build/test/vet ./...`；`cd agent && ./gradlew test`）。
+- 受影响组件测试全绿（`go build/test/vet ./...`；`cd apps/agent && ./gradlew test`）。
 - **真机**：对 lobby-1 扫描不再整批失败、列出清单（含超限运行时文件红标）；选定小配置提交后落库；任务状态/进度可查。
 
 ## 6. 风险 / 待定

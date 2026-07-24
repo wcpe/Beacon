@@ -8,16 +8,10 @@ import { useTranslation } from 'react-i18next'
 
 import type { ImportFileEntry } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { ScrollArea } from '@beacon/ui'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@beacon/ui'
 
 // 文本预览截断上限（字节）：超过只读前 N 字节并标记截断，防大文件卡渲染。
 const TEXT_PREVIEW_LIMIT = 2000
@@ -33,8 +27,21 @@ function humanSize(bytes: number): string {
 
 // 按 MIME 与后缀粗判是否文本文件：text/* 与常见文本配置后缀算文本，余者按二进制处理（不读内容）。
 const TEXT_EXTS = [
-  '.yml', '.yaml', '.json', '.properties', '.txt', '.conf', '.cfg',
-  '.ini', '.toml', '.xml', '.md', '.csv', '.env', '.sql', '.log',
+  '.yml',
+  '.yaml',
+  '.json',
+  '.properties',
+  '.txt',
+  '.conf',
+  '.cfg',
+  '.ini',
+  '.toml',
+  '.xml',
+  '.md',
+  '.csv',
+  '.env',
+  '.sql',
+  '.log',
 ]
 function isTextFile(file: File): boolean {
   if (file.type.startsWith('text/')) return true
@@ -101,7 +108,9 @@ export default function ImportPreviewModal({
   // 当前选中查看内容的文件 path
   const [selectedPath, setSelectedPath] = useState<string>('')
   // 已读出的文本内容缓存：path → { content, truncated }
-  const [contents, setContents] = useState<Record<string, { content: string; truncated: boolean }>>({})
+  const [contents, setContents] = useState<Record<string, { content: string; truncated: boolean }>>(
+    {},
+  )
   // 当前选中文件正在读取
   const [reading, setReading] = useState(false)
   // 审阅闸：勾选才放行确认
@@ -163,7 +172,12 @@ export default function ImportPreviewModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onCancel() }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onCancel()
+      }}
+    >
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{t('configs.importPreviewTitle')}</DialogTitle>
@@ -171,9 +185,13 @@ export default function ImportPreviewModal({
 
         {/* 概要：目标 + 总数 + 总大小 */}
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-mono">{namespace} / {group || '—'}</span>
+          <span className="font-mono">
+            {namespace} / {group || '—'}
+          </span>
           <span>·</span>
-          <span>{t('configs.importPreviewSummary', { count: items.length, size: humanSize(totalSize) })}</span>
+          <span>
+            {t('configs.importPreviewSummary', { count: items.length, size: humanSize(totalSize) })}
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-3 min-h-0">

@@ -1,0 +1,182 @@
+// 交付历史列表（主从布局主列）：ListCard 吸顶工具条（标题 / 状态筛选 / 标题搜索）+ 自区滚列表 + 吸底分页。
+// 点行选中（右侧非模态详情面板打开）；行「在变更单中打开」跳 /changes。
+import { useMemo, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
+
+import { History } from 'lucide-react'
+
+import {
+  AsyncSection,
+  Button,
+  DataTable,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  TableSkeleton,
+  type DataTableColumn,
+} from '@beacon/ui'
+
+import ListCard from '../../features/shared/list-card'
+import Pager from '../../features/delivery/pager'
+import {
+  fetchChangeOrders,
+  type ChangeOrderStatus,
+  type ChangeOrderSummary,
+} from '../../api/delivery-changes'
+import StatusBadge from './status-badge'
+import { formatTime } from './format'
+
+const PAGE_SIZE = 15
+
+// 历史页聚焦已终态的单，但也允许查看进行中的（回滚场景）
+const STATUS_OPTIONS: ChangeOrderStatus[] = [
+  'completed',
+  'rolled_back',
+  'cancelled',
+  'rolling_back',
+  'paused',
+  'rolling',
+]
+
+interface ListViewProps {
+  namespaceId: number
+  selectedId: number | null
+  onView: (order: ChangeOrderSummary) => void
+}
+
+export default function ListView({ namespaceId, selectedId, onView }: ListViewProps) {
+  const { t } = useTranslation()
+  const [keyword, setKeyword] = useState('')
+  const [status, setStatus] = useState('all')
+  const [page, setPage] = useState(1)
+
+  const query = useQuery({
+    queryKey: ['change-orders', 'history', namespaceId, keyword, status, page],
+    queryFn: () =>
+      fetchChangeOrders({
+        namespaceId,
+        keyword: keyword.trim() === '' ? undefined : keyword.trim(),
+        status: status === 'all' ? undefined : status,
+        page,
+        pageSize: PAGE_SIZE,
+      }),
+    placeholderData: keepPreviousData,
+    enabled: namespaceId > 0,
+  })
+
+  const total = query.data?.total ?? 0
+
+  const columns = useMemo<DataTableColumn<ChangeOrderSummary>[]>(
+    () => [
+      {
+        header: t('delivery.changesHistory.list.columns.id'),
+        cell: (row) => <span className="tnum text-xs text-ink-3">#{String(row.id)}</span>,
+      },
+      { header: t('delivery.changesHistory.list.columns.title'), cell: (row) => row.title },
+      {
+        header: t('delivery.changesHistory.list.columns.status'),
+        cell: (row) => <StatusBadge status={row.status} />,
+      },
+      {
+        header: t('delivery.changesHistory.list.columns.finishedAt'),
+        cell: (row) => <span className="tnum text-xs text-ink-3">{formatTime(row.finishedAt)}</span>,
+      },
+      { header: t('delivery.changesHistory.list.columns.createdBy'), cell: (row) => row.createdBy },
+      {
+        header: '',
+        cell: (row) => (
+          <div className="flex justify-end">
+            <Button size="sm" variant="ghost" asChild>
+              <Link
+                to={`/changes?order=${String(row.id)}`}
+                onClick={(e) => {
+                  // 阻止冒泡到行点击（行点击用于打开详情面板）
+                  e.stopPropagation()
+                }}
+              >
+                {t('delivery.changesHistory.list.openInChanges')}
+              </Link>
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [t],
+  )
+
+  const toolbar = (
+    <div className="grid gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-2 text-[13px] font-semibold text-ink-1">
+          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
+            <History className="size-[15px]" />
+          </span>
+          {t('delivery.changesHistory.list.title')}
+          {total > 0 && <span className="text-xs font-normal text-ink-3">{total}</span>}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          aria-label={t('delivery.changesHistory.list.keyword')}
+          placeholder={t('delivery.changesHistory.list.keyword')}
+          value={keyword}
+          onChange={(e) => {
+            setKeyword(e.target.value)
+            setPage(1)
+          }}
+          className="w-52"
+        />
+        <Select
+          value={status}
+          onValueChange={(value) => {
+            setStatus(value)
+            setPage(1)
+          }}
+        >
+          <SelectTrigger className="w-40" aria-label={t('delivery.changesHistory.list.filterStatus')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('delivery.changesHistory.list.allStatus')}</SelectItem>
+            {STATUS_OPTIONS.map((s) => (
+              <SelectItem key={s} value={s}>
+                {t(`delivery.changes.status.${s}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
+
+  return (
+    <ListCard
+      toolbar={toolbar}
+      footer={total > PAGE_SIZE ? <Pager page={page} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} /> : undefined}
+    >
+      <AsyncSection
+        isLoading={query.isLoading}
+        isError={query.isError}
+        error={query.error}
+        skeleton={<TableSkeleton columns={6} rows={6} />}
+      >
+        <DataTable
+          columns={columns}
+          rows={query.data?.items}
+          rowKey={(row) => String(row.id)}
+          emptyText={t('delivery.changesHistory.list.empty')}
+          density="compact"
+          onRowClick={(row) => {
+            onView(row)
+          }}
+          rowClassName={(row) => (row.id === selectedId ? 'bg-brand-50/60' : undefined)}
+        />
+      </AsyncSection>
+    </ListCard>
+  )
+}

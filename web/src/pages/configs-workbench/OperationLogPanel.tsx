@@ -5,8 +5,8 @@
 
 import { useTranslation } from 'react-i18next'
 import { Undo2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import type { OpAction, OpLogEntry } from './types'
 
@@ -22,13 +22,25 @@ const COLS = {
 
 // 操作类型 → 文案键 + 着色
 const OP_META: Record<OpAction, { labelKey: string; cls: string }> = {
-  fetch: { labelKey: 'configs.workbench.dirFetch', cls: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400' },
-  push: { labelKey: 'configs.workbench.dirPush', cls: 'border-sky-500/40 text-sky-600 dark:text-sky-400' },
+  fetch: {
+    labelKey: 'configs.workbench.dirFetch',
+    cls: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
+  },
+  push: {
+    labelKey: 'configs.workbench.dirPush',
+    cls: 'border-sky-500/40 text-sky-600 dark:text-sky-400',
+  },
   publish: { labelKey: 'configs.workbench.opPublish', cls: 'border-primary/40 text-primary' },
   delete: { labelKey: 'configs.workbench.opDelete', cls: 'border-destructive/40 text-destructive' },
-  rename: { labelKey: 'configs.workbench.opRename', cls: 'border-amber-500/40 text-amber-600 dark:text-amber-400' },
+  rename: {
+    labelKey: 'configs.workbench.opRename',
+    cls: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
+  },
   new: { labelKey: 'configs.workbench.opNew', cls: 'border-border text-foreground' },
-  move: { labelKey: 'configs.workbench.opMove', cls: 'border-amber-500/40 text-amber-600 dark:text-amber-400' },
+  move: {
+    labelKey: 'configs.workbench.opMove',
+    cls: 'border-amber-500/40 text-amber-600 dark:text-amber-400',
+  },
 }
 
 export function OperationLogList({
@@ -52,17 +64,29 @@ export function OperationLogList({
         <span className="min-w-0 flex-1">{t('configs.workbench.logColFiles')}</span>
         <span className={cn('shrink-0', COLS.target)}>{t('configs.workbench.logColTarget')}</span>
         <span className={cn('min-w-0', COLS.detail)}>{t('configs.workbench.logColDetail')}</span>
-        <span className={cn('shrink-0', COLS.operator)}>{t('configs.workbench.logColOperator')}</span>
-        <span className={cn('shrink-0 text-right', COLS.time)}>{t('configs.workbench.logColTime')}</span>
+        <span className={cn('shrink-0', COLS.operator)}>
+          {t('configs.workbench.logColOperator')}
+        </span>
+        <span className={cn('shrink-0 text-right', COLS.time)}>
+          {t('configs.workbench.logColTime')}
+        </span>
         <span className={cn('shrink-0 text-right', COLS.undo)} />
       </div>
       {/* 列表（内部滚） */}
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hide">
         {entries.length === 0 ? (
-          <div className="px-3 py-4 text-center text-xs text-muted-foreground">{t('configs.workbench.logEmpty')}</div>
+          <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+            {t('configs.workbench.logEmpty')}
+          </div>
         ) : (
           entries.map((e) => (
-            <LogRow key={e.id} entry={e} selected={selected.has(e.id)} onToggleSelect={onToggleSelect} onUndo={onUndo} />
+            <LogRow
+              key={e.id}
+              entry={e}
+              selected={selected.has(e.id)}
+              onToggleSelect={onToggleSelect}
+              onUndo={onUndo}
+            />
           ))
         )}
       </div>
@@ -109,23 +133,37 @@ function LogRow({
         </Badge>
       </span>
       {/* 文件（mono，多文件以、连接） */}
-      <span className="min-w-0 flex-1 truncate font-mono text-foreground" title={entry.files.join('、')}>
+      <span
+        className="min-w-0 flex-1 truncate font-mono text-foreground"
+        title={entry.files.join('、')}
+      >
         {entry.files.join('、')}
       </span>
       {/* 覆盖层·目标 */}
-      <span className={cn('shrink-0 truncate text-muted-foreground', COLS.target)}>{entry.target}</span>
+      <span className={cn('shrink-0 truncate text-muted-foreground', COLS.target)}>
+        {entry.target}
+      </span>
       {/* 详情 */}
-      <span className={cn('min-w-0 truncate text-muted-foreground/80', COLS.detail)} title={entry.detail}>
+      <span
+        className={cn('min-w-0 truncate text-muted-foreground/80', COLS.detail)}
+        title={entry.detail}
+      >
         {entry.detail}
       </span>
       {/* 操作人 */}
-      <span className={cn('shrink-0 truncate text-muted-foreground', COLS.operator)}>{entry.operator}</span>
+      <span className={cn('shrink-0 truncate text-muted-foreground', COLS.operator)}>
+        {entry.operator}
+      </span>
       {/* 时间 */}
-      <span className={cn('shrink-0 text-right tabular-nums text-muted-foreground/70', COLS.time)}>{entry.time}</span>
+      <span className={cn('shrink-0 text-right tabular-nums text-muted-foreground/70', COLS.time)}>
+        {entry.time}
+      </span>
       {/* 撤回 / 已撤回 */}
       <span className={cn('flex shrink-0 justify-end', COLS.undo)}>
         {entry.undone ? (
-          <span className="text-[0.65rem] text-muted-foreground/60">{t('configs.workbench.logUndone')}</span>
+          <span className="text-[0.65rem] text-muted-foreground/60">
+            {t('configs.workbench.logUndone')}
+          </span>
         ) : (
           <Button
             variant="ghost"

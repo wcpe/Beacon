@@ -5,7 +5,13 @@ import { NAV_GROUPS, NAV_LEAVES } from './navModel'
 describe('navModel 分组结构', () => {
   it('恰为 5 组，顺序为 概览/配置管理/集群/可观测/系统', () => {
     expect(NAV_GROUPS).toHaveLength(5)
-    expect(NAV_GROUPS.map((g) => g.id)).toEqual(['overview', 'config', 'cluster', 'observability', 'system'])
+    expect(NAV_GROUPS.map((g) => g.id)).toEqual([
+      'overview',
+      'config',
+      'cluster',
+      'observability',
+      'system',
+    ])
   })
 
   it('扁平叶子覆盖各组全部路由且不丢项', () => {
@@ -15,17 +21,18 @@ describe('navModel 分组结构', () => {
     const tos = NAV_LEAVES.map((l) => l.to)
     expect(tos).toContain('/dashboard')
     expect(tos).toContain('/configs')
+    expect(tos).toContain('/file-sync')
     expect(tos).toContain('/servers')
     expect(tos).toContain('/service-analysis')
     expect(tos).toContain('/settings')
   })
 
-  it('三页合一后（FR-113）配置组只剩工作台 + 文件树预览，无拓印 / 反向抓取叶子', () => {
+  it('三页合一后（FR-113）配置组保留工作台 / 文件同步中心 / 文件树预览，无拓印 / 反向抓取叶子', () => {
     const tos = NAV_LEAVES.map((l) => l.to)
     expect(tos).not.toContain('/imprint')
     expect(tos).not.toContain('/reverse-fetch')
     const config = NAV_GROUPS.find((g) => g.id === 'config')!
-    expect(config.leaves.map((l) => l.to)).toEqual(['/configs', '/file-preview'])
+    expect(config.leaves.map((l) => l.to)).toEqual(['/configs', '/file-sync', '/file-preview'])
   })
 
   it('每个叶子都配了语义图标（方案 A）', () => {

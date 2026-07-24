@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import AnchorRailLayout, { AnchorSectionBlock, type AnchorSection } from './AnchorRailLayout'
+import { AnchorRailLayout, AnchorSectionBlock, type AnchorSection } from '@beacon/ui'
 
 const SECTIONS: AnchorSection[] = [
   { id: 'runtime', label: '进程运行时' },
@@ -41,7 +41,10 @@ describe('AnchorRailLayout（FR-108）', () => {
 
   it('默认高亮首个分区（aria-current）', () => {
     renderLayout()
-    expect(screen.getByRole('button', { name: '进程运行时' })).toHaveAttribute('aria-current', 'true')
+    expect(screen.getByRole('button', { name: '进程运行时' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
     expect(screen.getByRole('button', { name: '数据库' })).not.toHaveAttribute('aria-current')
   })
 

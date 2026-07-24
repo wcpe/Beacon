@@ -190,9 +190,7 @@ describe('SettingsPage 逐项保存（FR-62）', () => {
     const listbox = await screen.findByRole('listbox')
     await userEvent.click(within(listbox).getByRole('option', { name: 'DEBUG' }))
     await userEvent.click(within(row).getByRole('button', { name: '保存' }))
-    await waitFor(() =>
-      expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('log.level', 'DEBUG'),
-    )
+    await waitFor(() => expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('log.level', 'DEBUG'))
   })
 
   it('值未变时保存按钮禁用', async () => {
@@ -261,7 +259,10 @@ describe('SettingsPage 批量保存 + 改动摘要（FR-77）', () => {
 
     await waitFor(() => {
       expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('health.ttl-sec', '45')
-      expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('reverse-fetch.max-file-bytes', '2097152')
+      expect(vi.mocked(updateSetting)).toHaveBeenCalledWith(
+        'reverse-fetch.max-file-bytes',
+        '2097152',
+      )
     })
     expect(vi.mocked(updateSetting)).toHaveBeenCalledTimes(2)
     await waitFor(() => expect(showSuccess).toHaveBeenCalled())

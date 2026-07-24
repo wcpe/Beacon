@@ -30,8 +30,12 @@ import type { ImpactView } from '../../api/types'
 
 beforeEach(() => {
   vi.mocked(impactPreview).mockResolvedValue({
-    namespace: 'prod', scopeLevel: 'group', group: 'gA', scopeTarget: '',
-    affected: ['s1', 's2'], total: 2,
+    namespace: 'prod',
+    scopeLevel: 'group',
+    group: 'gA',
+    scopeTarget: '',
+    affected: ['s1', 's2'],
+    total: 2,
   } satisfies ImpactView)
 })
 
@@ -83,8 +87,12 @@ describe('ConfigSaveConfirmDialog', () => {
 
   it('影响面为 0 台时给「无在线子服受影响」提示（FR-79）', async () => {
     vi.mocked(impactPreview).mockResolvedValue({
-      namespace: 'prod', scopeLevel: 'server', group: 'gA', scopeTarget: 's404',
-      affected: [], total: 0,
+      namespace: 'prod',
+      scopeLevel: 'server',
+      group: 'gA',
+      scopeTarget: 's404',
+      affected: [],
+      total: 0,
     } satisfies ImpactView)
     setup({ scopeLevel: 'server', scopeTarget: 's404' })
     expect(await screen.findByText('当前无在线子服会受本次发布影响')).toBeInTheDocument()

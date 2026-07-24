@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Globe } from 'lucide-react'
 import { listNamespaces } from '@/api/client'
 import { namespaceOptions } from '@/api/format'
-import { Combobox } from '@/components/ui/combobox'
+import { Combobox } from '@beacon/ui'
 import { useEnvironment, setEnvironment } from '@/state/environment'
 
 export default function EnvSelector() {
@@ -20,7 +20,10 @@ export default function EnvSelector() {
 
   // 候选首项固定为「全部环境」（值为空串），其后接各环境；严格下拉，只在已知候选中选。
   const options = useMemo(
-    () => [{ value: '', label: t('pageHeader.allEnvironments') }, ...namespaceOptions(namespacesQuery.data)],
+    () => [
+      { value: '', label: t('pageHeader.allEnvironments') },
+      ...namespaceOptions(namespacesQuery.data),
+    ],
     [namespacesQuery.data, t],
   )
 

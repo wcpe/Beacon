@@ -1,0 +1,123 @@
+// 指标健康调度域数据获取（/dashboard /service-analysis）：走真实 /admin/v2/metrics*、/health*、
+// /sched-decisions*（FR-146/147 已实现，形状对齐 @beacon/contracts）。读端点用于 useQuery；
+// 错误按脱敏 message 抛出（ADR-0057）。
+
+import type {
+  CursorPage,
+  HealthDetail,
+  HealthItem,
+  HealthSnapshotsResponse,
+  MetricsSeriesResponse,
+  MetricsSummary,
+  Paged,
+  SchedDecisionDetail,
+  SchedDecisionItem,
+  SchedDecisionSummary,
+} from '@beacon/contracts'
+
+import { buildQuery, request, type ColdListResult } from './http'
+
+/** 集群聚合概览（dashboard 健康 / 调度总览） */
+export function fetchMetricsSummary(): Promise<MetricsSummary> {
+  return request('GET', '/admin/v2/metrics/summary')
+}
+
+export interface HealthListQuery {
+  namespaceId?: number
+  zone?: string
+  level?: string
+  schedulable?: boolean
+  keyword?: string
+  page?: number
+  pageSize?: number
+}
+
+/** 集群健康列表（dashboard 服务器状态墙）：逐服健康分 / 等级 / 可调度。 */
+export function fetchHealthList(query: HealthListQuery = {}): Promise<Paged<HealthItem>> {
+  return request('GET', `/admin/v2/health${buildQuery({ ...query })}`)
+}
+
+export interface MetricsSeriesQuery {
+  // 逗号分隔的 serverId（必填，禁止全量扫描）
+  serverId: string
+  // 聚合步长（秒）
+  step?: number
+  // 时间窗（RFC3339），缺省服务端按最近 1h；冷查询强制必填且跨度 ≤ 冷查询上限
+  from?: string
+  to?: string
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表聚合（无分页，响应形状不变）
+  includeArchived?: boolean
+}
+
+/** 单服 / 多服指标时序（service-analysis 多指标趋势与多服对比） */
+export function fetchMetricsSeries(query: MetricsSeriesQuery): Promise<MetricsSeriesResponse> {
+  return request('GET', `/admin/v2/metrics/series${buildQuery({ ...query })}`)
+}
+
+/** 单服健康详情（因子分解 + 权重版本） */
+export function fetchHealthDetail(serverId: string): Promise<HealthDetail> {
+  return request('GET', `/admin/v2/health/${serverId}`)
+}
+
+/** 调度决策概览（成功率 / 失败原因 Top / 降级占比） */
+export function fetchSchedSummary(window: string): Promise<SchedDecisionSummary> {
+  return request('GET', `/admin/v2/sched-decisions/summary${buildQuery({ window })}`)
+}
+
+export interface SchedDecisionsQuery {
+  // 起止毫秒时间戳（后端必填，范围 ≤60 天；冷查询收紧到 ≤archive.cold-query-max-days）
+  from: number
+  to: number
+  namespaceId?: number
+  zone?: string
+  // 匹配发起方或选中目标 serverId
+  serverId?: string
+  // 结果过滤：success / failed
+  result?: string
+  page?: number
+  pageSize?: number
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表，分页改 keyset 游标（忽略 page，用 cursor）
+  includeArchived?: boolean
+  // 冷查询 keyset 游标（首页空串 / 省略）
+  cursor?: string
+}
+
+/**
+ * 调度决策记录查询（service-analysis 调度决策下钻）：默认热库 page/pageSize 分页；
+ * includeArchived=true 时走冷查询 keyset 游标并表，两种形状归一为 ColdListResult。
+ */
+export async function fetchSchedDecisions(query: SchedDecisionsQuery): Promise<ColdListResult<SchedDecisionItem>> {
+  const { from, to, namespaceId, zone, serverId, result, page, pageSize, includeArchived, cursor } = query
+  if (includeArchived === true) {
+    const cold = await request<CursorPage<SchedDecisionItem>>(
+      'GET',
+      `/admin/v2/sched-decisions${buildQuery({ from, to, namespaceId, zone, serverId, result, pageSize, cursor, includeArchived: true })}`,
+    )
+    return { items: cold.items, total: null, nextCursor: cold.nextCursor }
+  }
+  const hot = await request<Paged<SchedDecisionItem>>(
+    'GET',
+    `/admin/v2/sched-decisions${buildQuery({ from, to, namespaceId, zone, serverId, result, page, pageSize })}`,
+  )
+  return { items: hot.items, total: hot.total, nextCursor: null }
+}
+
+/** 单条调度决策详情（含逐台排除原因，可解释「为什么没选某台」） */
+export function fetchSchedDecisionDetail(traceId: string): Promise<SchedDecisionDetail> {
+  return request('GET', `/admin/v2/sched-decisions/${traceId}`)
+}
+
+export interface HealthSnapshotsQuery {
+  // 目标服务器（必填）
+  serverId: string
+  // 时间窗（RFC3339），缺省服务端按最近 1h；冷查询强制必填且跨度 ≤ 冷查询上限
+  from?: string
+  to?: string
+  // 冷查询（FR-152）：为 true 时跨热 / 冷并表回放（无分页，响应形状不变）
+  includeArchived?: boolean
+}
+
+/** 健康快照回放（service-analysis 健康快照下钻：分数 / 等级随时间变化） */
+export function fetchHealthSnapshots(query: HealthSnapshotsQuery): Promise<HealthSnapshotsResponse> {
+  return request('GET', `/admin/v2/health/snapshots${buildQuery({ ...query })}`)
+}

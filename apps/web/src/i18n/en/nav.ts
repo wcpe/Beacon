@@ -1,0 +1,32 @@
+// English mirror — nav domain copy (sidebar group titles & page titles).
+// Source of truth: docs/UX.md §2; align with enNav in en-common.ts.
+export const nav = {
+  groups: {
+    ops: 'Ops',
+    cluster: 'Cluster',
+    observability: 'Observability',
+    delivery: 'Delivery',
+    system: 'System',
+  },
+  dashboard: 'Dashboard',
+  servers: 'Servers',
+  identityConflicts: 'Identity conflicts',
+  zones: 'Zones',
+  topology: 'Topology',
+  serviceAnalysis: 'Service analysis',
+  connections: 'Connections',
+  messages: 'Messages',
+  commands: 'Commands',
+  audits: 'Audits',
+  alertEvents: 'Alert events',
+  assets: 'File assets',
+  configs: 'Config center',
+  changes: 'Change orders',
+  changesHistory: 'Delivery history',
+  settings: 'Ops settings',
+  system: 'Control plane health',
+  systemVersion: 'Version & updates',
+  apiKeys: 'API keys',
+  namespaces: 'Namespaces',
+  envs: 'Environments',
+} as const

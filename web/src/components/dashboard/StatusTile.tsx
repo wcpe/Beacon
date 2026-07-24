@@ -5,7 +5,7 @@
 import { useTranslation } from 'react-i18next'
 import { Router, Server } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { levelSolid, levelText, statusLevel } from './health'
+import { levelSolid, levelText, statusLevel } from '@beacon/ui'
 import type { InstanceView } from '@/api/types'
 
 // 角色编码（与后端 metric_aggregate role 约定一致）：bungee 进 BC，其余按子服。
@@ -22,8 +22,12 @@ interface StatusTileProps {
 function TileMetric({ label, value, large }: { label: string; value: string; large?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className={cn('truncate text-muted-foreground', large ? 'text-xs' : 'text-[11px]')}>{label}</div>
-      <div className={cn('tabular-nums', large ? 'text-lg font-semibold' : 'text-sm font-medium')}>{value}</div>
+      <div className={cn('truncate text-muted-foreground', large ? 'text-xs' : 'text-[11px]')}>
+        {label}
+      </div>
+      <div className={cn('tabular-nums', large ? 'text-lg font-semibold' : 'text-sm font-medium')}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -53,14 +57,17 @@ export default function StatusTile({ instance, large }: StatusTileProps) {
   return (
     <div
       className={cn(
-        'relative flex flex-col gap-2 overflow-hidden rounded-lg bg-card ring-1 ring-foreground/10',
-        large ? 'p-4' : 'p-3',
+        'relative flex flex-col overflow-hidden rounded-md bg-card ring-1 ring-foreground/10',
+        large ? 'gap-2 p-4' : 'gap-1.5 p-2.5',
       )}
     >
       {/* 左侧健康色条：按状态等级上色，远观即知该台健康。 */}
       <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1', levelSolid(level))} />
       <div className={cn('flex items-center gap-2', large ? 'pl-2' : 'pl-1.5')}>
-        <RoleIcon aria-hidden className={cn('shrink-0 text-muted-foreground', large ? 'size-5' : 'size-4')} />
+        <RoleIcon
+          aria-hidden
+          className={cn('shrink-0 text-muted-foreground', large ? 'size-5' : 'size-4')}
+        />
         <span
           className={cn('truncate font-medium', large ? 'text-base' : 'text-sm')}
           title={instance.serverId}
@@ -71,14 +78,18 @@ export default function StatusTile({ instance, large }: StatusTileProps) {
         <span className="ml-auto flex items-center gap-1.5">
           <span
             aria-hidden
-            className={cn('inline-block rounded-full', large ? 'size-2.5' : 'size-2', levelSolid(level))}
+            className={cn(
+              'inline-block rounded-full',
+              large ? 'size-2.5' : 'size-2',
+              levelSolid(level),
+            )}
           />
           <span className={cn('font-medium', large ? 'text-sm' : 'text-xs', levelText(level))}>
             {t(`status.${instance.status}`, { defaultValue: instance.status })}
           </span>
         </span>
       </div>
-      <div className={cn('grid grid-cols-2 gap-2', large ? 'pl-2' : 'pl-1.5')}>
+      <div className={cn('grid grid-cols-2', large ? 'gap-2 pl-2' : 'gap-1.5 pl-1.5')}>
         {metrics.map((m) => (
           <TileMetric key={m.label} label={m.label} value={m.value} large={large} />
         ))}

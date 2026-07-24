@@ -17,8 +17,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { batchConfigs, getConfig, type BatchAction } from '../../api/client'
 import type { ConfigView } from '../../api/types'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Button } from '@beacon/ui'
+import { Checkbox } from '@beacon/ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +28,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+} from '@beacon/ui'
 
 export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
   const { t } = useTranslation()
@@ -58,12 +58,15 @@ export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
 
   // 全选 / 取消全选
   const toggleAll = useCallback(() => {
-    setSelected((prev) => (prev.size === configs.length ? new Set() : new Set(configs.map((c) => c.id))))
+    setSelected((prev) =>
+      prev.size === configs.length ? new Set() : new Set(configs.map((c) => c.id)),
+    )
   }, [configs])
 
   // 批量删除 / 禁用 / 启用 mutation（一事务原子，后端 batch 端点）
   const batchMut = useMutation({
-    mutationFn: ({ action, ids }: { action: BatchAction; ids: number[] }) => batchConfigs(action, ids),
+    mutationFn: ({ action, ids }: { action: BatchAction; ids: number[] }) =>
+      batchConfigs(action, ids),
     onSuccess: (r) => {
       const key =
         r.action === 'delete'
@@ -97,8 +100,11 @@ export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
       const failed = results.length - items.length
       // 全失败：不下载，按首个失败原因报错
       if (items.length === 0) {
-        const first = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined
-        msg.showError((first?.reason as Error)?.message ?? t('configs.batchMsgExportFailed', { count: failed }))
+        const first = results.find((r) => r.status === 'rejected') as
+          PromiseRejectedResult | undefined
+        msg.showError(
+          (first?.reason as Error)?.message ?? t('configs.batchMsgExportFailed', { count: failed }),
+        )
         return
       }
       const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json' })
@@ -154,7 +160,12 @@ export default function BatchOpsPanel({ configs }: { configs: ConfigView[] }) {
         >
           {t('configs.batchEnable')}
         </Button>
-        <Button size="sm" variant="outline" disabled={!hasSelection || exporting} onClick={exportSelected}>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!hasSelection || exporting}
+          onClick={exportSelected}
+        >
           {t('configs.batchExport')}
         </Button>
       </div>

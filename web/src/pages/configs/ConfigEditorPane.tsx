@@ -2,7 +2,7 @@
 
 import { useTranslation } from 'react-i18next'
 import CodeEditor from '../../components/CodeEditor'
-import { Button } from '@/components/ui/button'
+import { Button } from '@beacon/ui'
 import { cn } from '@/lib/utils'
 import type { DiffView, InstanceView, RevisionView } from '../../api/types'
 import type { EffectiveConfigView } from '../../api/client'

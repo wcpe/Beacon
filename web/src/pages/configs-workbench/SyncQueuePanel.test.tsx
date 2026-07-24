@@ -9,10 +9,47 @@ import { QueueList, isPendingReview, countPendingSelected } from './SyncQueuePan
 import type { SyncQueueRow } from './types'
 
 const ROWS: SyncQueueRow[] = [
-  { id: 'q1', name: 'config.yml', direction: 'fetch', status: 'done', scopeTarget: '组 main', sourcePath: 'a', targetPath: 'b', time: '14:32:10' },
-  { id: 'q2', name: 'spawn.yml', direction: 'push', status: 'running', progress: 62, scopeTarget: '实例 lobby-1', sourcePath: 'c', targetPath: 'd', time: '14:33:01' },
-  { id: 'q3', name: 'regions.yml', direction: 'fetch', status: 'pending-ingest', scopeTarget: '组 main', sourcePath: 'e', targetPath: 'f', time: '14:33:20' },
-  { id: 'q4', name: 'motd.yml', direction: 'push', status: 'pending-imprint', scopeTarget: '实例 lobby-1', sourcePath: 'g', targetPath: 'h', time: '14:30:55' },
+  {
+    id: 'q1',
+    name: 'config.yml',
+    direction: 'fetch',
+    status: 'done',
+    scopeTarget: '组 main',
+    sourcePath: 'a',
+    targetPath: 'b',
+    time: '14:32:10',
+  },
+  {
+    id: 'q2',
+    name: 'spawn.yml',
+    direction: 'push',
+    status: 'running',
+    progress: 62,
+    scopeTarget: '实例 lobby-1',
+    sourcePath: 'c',
+    targetPath: 'd',
+    time: '14:33:01',
+  },
+  {
+    id: 'q3',
+    name: 'regions.yml',
+    direction: 'fetch',
+    status: 'pending-ingest',
+    scopeTarget: '组 main',
+    sourcePath: 'e',
+    targetPath: 'f',
+    time: '14:33:20',
+  },
+  {
+    id: 'q4',
+    name: 'motd.yml',
+    direction: 'push',
+    status: 'pending-imprint',
+    scopeTarget: '实例 lobby-1',
+    sourcePath: 'g',
+    targetPath: 'h',
+    time: '14:30:55',
+  },
 ]
 
 describe('QueueList（FR-115）', () => {
@@ -22,7 +59,9 @@ describe('QueueList（FR-115）', () => {
   })
 
   it('四种状态各自渲染对应文案', () => {
-    render(<QueueList rows={ROWS} onReview={vi.fn()} selected={new Set()} onToggleSelect={vi.fn()} />)
+    render(
+      <QueueList rows={ROWS} onReview={vi.fn()} selected={new Set()} onToggleSelect={vi.fn()} />,
+    )
     expect(screen.getByText('已完成')).toBeInTheDocument()
     expect(screen.getByText('进行中')).toBeInTheDocument()
     expect(screen.getByText('待审核·ingest')).toBeInTheDocument()
@@ -33,7 +72,9 @@ describe('QueueList（FR-115）', () => {
 
   it('待审核行可点开触发 onReview', async () => {
     const onReview = vi.fn()
-    render(<QueueList rows={ROWS} onReview={onReview} selected={new Set()} onToggleSelect={vi.fn()} />)
+    render(
+      <QueueList rows={ROWS} onReview={onReview} selected={new Set()} onToggleSelect={vi.fn()} />,
+    )
     await userEvent.click(screen.getByText('regions.yml'))
     expect(onReview).toHaveBeenCalledTimes(1)
     expect(onReview.mock.calls[0][0].id).toBe('q3')
@@ -41,7 +82,14 @@ describe('QueueList（FR-115）', () => {
 
   it('仅待审核行有复选框，勾选触发 onToggleSelect', async () => {
     const onToggleSelect = vi.fn()
-    render(<QueueList rows={ROWS} onReview={vi.fn()} selected={new Set()} onToggleSelect={onToggleSelect} />)
+    render(
+      <QueueList
+        rows={ROWS}
+        onReview={vi.fn()}
+        selected={new Set()}
+        onToggleSelect={onToggleSelect}
+      />,
+    )
     // 两条待审（q3/q4）→ 两个复选框
     const boxes = screen.getAllByRole('checkbox')
     expect(boxes).toHaveLength(2)

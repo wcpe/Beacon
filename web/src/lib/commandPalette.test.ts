@@ -1,12 +1,7 @@
 // 命令面板纯逻辑单测（FR-83）：穷举 buildItems / filterItems / groupItems 的归一、过滤、分组行为。
 import { describe, it, expect } from 'vitest'
 import type { ConfigView, FileView, InstanceView } from '@/api/types'
-import {
-  buildItems,
-  filterItems,
-  groupItems,
-  type BuildSources,
-} from './commandPalette'
+import { buildItems, filterItems, groupItems, type BuildSources } from './commandPalette'
 
 // 最小可用的视图样例工厂（仅填命令面板用到的字段）
 function cfg(id: number, dataId: string, namespace = 'prod', group = 'g1'): ConfigView {

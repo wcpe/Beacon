@@ -10,19 +10,14 @@ import { formatTime } from '../api/format'
 import { useMessage } from '@/components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import AsyncSection from '@/components/AsyncSection'
-import { TableSkeleton } from '@/components/skeletons'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { AsyncSection } from '@beacon/ui'
+import { TableSkeleton } from '@beacon/ui'
+import { DataTable, type DataTableColumn } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@beacon/ui'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20
@@ -142,10 +137,22 @@ export default function AuditsPage() {
     // 导出按钮：按当前已生效过滤条件全量下载（FR-84）
     actions: (
       <div className="flex gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('csv')}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={exporting}
+          onClick={() => onExport('csv')}
+        >
           {t('audit.exportCsv')}
         </Button>
-        <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => onExport('json')}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={exporting}
+          onClick={() => onExport('json')}
+        >
           {t('audit.exportJson')}
         </Button>
       </div>
@@ -264,7 +271,10 @@ export default function AuditsPage() {
       </AsyncSection>
 
       {/* 审计详情 Dialog：展示完整 detail 与上下文字段 */}
-      <Dialog open={selectedAudit !== null} onOpenChange={(open) => !open && setSelectedAudit(null)}>
+      <Dialog
+        open={selectedAudit !== null}
+        onOpenChange={(open) => !open && setSelectedAudit(null)}
+      >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{t('audit.detailTitle')}</DialogTitle>

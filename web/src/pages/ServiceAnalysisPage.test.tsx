@@ -105,7 +105,7 @@ describe('ServiceAnalysisPage', () => {
     const rank = await screen.findByTestId('action-rank')
     expect(rank.getAttribute('data-count')).toBe('2')
     // 计数保持降序（后端已降序，前端原样透传）
-    expect(JSON.parse(rank.getAttribute('data-counts') ?? '[]')) .toEqual([40, 22])
+    expect(JSON.parse(rank.getAttribute('data-counts') ?? '[]')).toEqual([40, 22])
     // action 经既有审计 i18n 映射为中文
     expect(JSON.parse(rank.getAttribute('data-labels') ?? '[]')).toEqual(['发布配置', '指派区'])
   })

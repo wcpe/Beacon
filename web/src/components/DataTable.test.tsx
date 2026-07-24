@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import DataTable, { type DataTableColumn } from './DataTable'
+import { DataTable, type DataTableColumn } from '@beacon/ui'
 
 interface Row {
   id: number
@@ -54,5 +54,22 @@ describe('DataTable', () => {
     )
     await userEvent.click(screen.getByText('甲'))
     expect(onRowClick).toHaveBeenCalledWith(rows[0])
+  })
+
+  it('设置 pageSize 后只渲染当前页并可翻页', async () => {
+    const rows: Row[] = [
+      { id: 1, name: '甲' },
+      { id: 2, name: '乙' },
+      { id: 3, name: '丙' },
+    ]
+    render(<DataTable columns={columns} rows={rows} rowKey={(r) => String(r.id)} pageSize={2} />)
+
+    expect(screen.getByText('甲')).toBeInTheDocument()
+    expect(screen.getByText('乙')).toBeInTheDocument()
+    expect(screen.queryByText('丙')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '下一页' }))
+    expect(screen.queryByText('甲')).not.toBeInTheDocument()
+    expect(screen.getByText('丙')).toBeInTheDocument()
   })
 })

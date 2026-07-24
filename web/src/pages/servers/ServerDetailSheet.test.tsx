@@ -6,15 +6,24 @@ import { render, screen } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
 
-import type { ConfigTimelineView, InstanceView } from '../../api/types'
+import type {
+  BrowseListResult,
+  CommandPage,
+  ConfigTimelineView,
+  InstanceView,
+} from '../../api/types'
 
 // mock 时间线端点（FR-80），由各用例注入数据
 vi.mock('../../api/client', () => ({
   serverConfigTimeline: vi.fn(),
+  browse: vi.fn(),
+  listCommands: vi.fn(),
+  getAgentLogs: vi.fn(),
+  requestAgentLogs: vi.fn(),
 }))
 
 import ServerDetailSheet from './ServerDetailSheet'
-import { serverConfigTimeline } from '../../api/client'
+import { browse, listCommands, serverConfigTimeline } from '../../api/client'
 
 // 最小 bukkit 实例（仅本测试关心的字段，其余给零值）
 function inst(overrides: Partial<InstanceView> = {}): InstanceView {
@@ -59,6 +68,17 @@ function renderSheet(ui: ReactElement) {
 
 beforeEach(() => {
   vi.mocked(serverConfigTimeline).mockReset()
+  vi.mocked(browse).mockReset()
+  vi.mocked(listCommands).mockReset()
+  vi.mocked(browse).mockResolvedValue({
+    path: '',
+    entries: [],
+    offset: 0,
+    limit: 50,
+    total: 0,
+    hasMore: false,
+  } satisfies BrowseListResult)
+  vi.mocked(listCommands).mockResolvedValue({ total: 0, items: [] } satisfies CommandPage)
 })
 
 describe('ServerDetailSheet 变更历史（FR-80）', () => {
@@ -128,5 +148,79 @@ describe('ServerDetailSheet 变更历史（FR-80）', () => {
     renderSheet(<ServerDetailSheet instance={inst()} onOpenChange={() => {}} />)
 
     expect(await screen.findByText('该服覆盖链暂无配置变更记录')).toBeInTheDocument()
+  })
+
+  it('详情模态框展示概览、健康、变更、日志、文件浏览、命令记录六个区块', async () => {
+    vi.mocked(serverConfigTimeline).mockResolvedValue({
+      namespace: 'prod',
+      serverId: 'lobby-1',
+      group: 'area1',
+      zone: 'zoneA',
+      items: [],
+    } satisfies ConfigTimelineView)
+
+    renderSheet(<ServerDetailSheet instance={inst()} onOpenChange={() => {}} />)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toBeInTheDocument()
+    expect(await screen.findByText('概览')).toBeInTheDocument()
+    expect(screen.getByText('健康')).toBeInTheDocument()
+    expect(screen.getByText('变更历史')).toBeInTheDocument()
+    expect(screen.getByText('agent 日志')).toBeInTheDocument()
+    expect(screen.getByText('文件浏览')).toBeInTheDocument()
+    expect(screen.getByText('命令记录')).toBeInTheDocument()
+  })
+
+  it('文件浏览列出 plugins 子项，命令记录列出最近命令状态', async () => {
+    vi.mocked(serverConfigTimeline).mockResolvedValue({
+      namespace: 'prod',
+      serverId: 'lobby-1',
+      group: 'area1',
+      zone: 'zoneA',
+      items: [],
+    } satisfies ConfigTimelineView)
+    vi.mocked(browse).mockResolvedValue({
+      path: '',
+      entries: [
+        { name: 'plugins.yml', dir: false, size: 42, isText: true, overThreshold: false },
+        { name: 'WorldGuard', dir: true, size: 0, isText: false, overThreshold: false },
+      ],
+      offset: 0,
+      limit: 50,
+      total: 2,
+      hasMore: false,
+    } satisfies BrowseListResult)
+    vi.mocked(listCommands).mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          commandId: 7,
+          namespace: 'prod',
+          serverId: 'lobby-1',
+          type: 'resync-config',
+          status: 'done',
+          resultDetail: '',
+          operator: 'admin',
+          createdAt: '2026-06-20T10:00:00Z',
+          updatedAt: '2026-06-20T10:00:01Z',
+          ageSeconds: 1,
+        },
+      ],
+    } satisfies CommandPage)
+
+    renderSheet(<ServerDetailSheet instance={inst()} onOpenChange={() => {}} />)
+
+    expect(await screen.findByText('plugins.yml')).toBeInTheDocument()
+    expect(screen.getByText('WorldGuard')).toBeInTheDocument()
+    expect(await screen.findByText('#7')).toBeInTheDocument()
+    expect(screen.getByText('resync-config')).toBeInTheDocument()
+    expect(screen.getByText('done')).toBeInTheDocument()
+    expect(browse).toHaveBeenCalledWith('lobby-1', 'prod', { op: 'list', path: '', limit: 50 })
+    expect(listCommands).toHaveBeenCalledWith({
+      namespace: 'prod',
+      serverId: 'lobby-1',
+      page: 1,
+      size: 6,
+    })
   })
 })

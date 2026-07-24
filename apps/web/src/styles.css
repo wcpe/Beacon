@@ -1,0 +1,13 @@
+html {
+  background: hsl(var(--background));
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family:
+    Geist Variable,
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}

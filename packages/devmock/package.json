@@ -1,0 +1,36 @@
+{
+  "name": "@beacon/devmock",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./scenario": {
+      "types": "./src/scenario.ts",
+      "import": "./src/scenario.ts"
+    },
+    "./support": {
+      "types": "./src/support.ts",
+      "import": "./src/support.ts"
+    }
+  },
+  "scripts": {
+    "build": "pnpm run typecheck",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@beacon/eslint-config": "workspace:*",
+    "@beacon/typescript-config": "workspace:*",
+    "typescript": "5.6.3",
+    "vitest": "3.2.6"
+  },
+  "dependencies": {
+    "@beacon/contracts": "workspace:*",
+    "msw": "2.14.6"
+  }
+}

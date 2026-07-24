@@ -9,7 +9,11 @@ import userEvent from '@testing-library/user-event'
 
 vi.mock('@/components/CodeEditor', () => ({
   default: (props: { value?: string; onChange?: (v: string) => void }) => (
-    <textarea data-testid="code-editor" value={props.value ?? ''} onChange={(e) => props.onChange?.(e.target.value)} />
+    <textarea
+      data-testid="code-editor"
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange?.(e.target.value)}
+    />
   ),
 }))
 
@@ -50,7 +54,12 @@ const TABS = [
 ]
 
 function mockFileHook(over: Partial<ReturnType<typeof useWorkbenchFile>> = {}) {
-  mockedFile.mockReturnValue({ data: FILE, isLoading: false, refetch: vi.fn(), ...over } as ReturnType<typeof useWorkbenchFile>)
+  mockedFile.mockReturnValue({
+    data: FILE,
+    isLoading: false,
+    refetch: vi.fn(),
+    ...over,
+  } as ReturnType<typeof useWorkbenchFile>)
 }
 
 function renderOverlay(over: Partial<Parameters<typeof EditorOverlay>[0]> = {}) {

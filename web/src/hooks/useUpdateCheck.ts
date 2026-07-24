@@ -34,7 +34,8 @@ export function deriveAutoCheckEnabled(settings: SettingView[] | undefined): boo
 export function deriveIntervalMs(settings: SettingView[] | undefined): number {
   const raw = settingValue(settings, 'update.check-interval-hours')
   const parsed = raw === undefined ? NaN : Number(raw)
-  const hours = Number.isFinite(parsed) && parsed >= MIN_INTERVAL_HOURS ? parsed : DEFAULT_INTERVAL_HOURS
+  const hours =
+    Number.isFinite(parsed) && parsed >= MIN_INTERVAL_HOURS ? parsed : DEFAULT_INTERVAL_HOURS
   return hours * HOUR_MS
 }
 

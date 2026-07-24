@@ -34,6 +34,8 @@ interface TrendChartProps {
   color: string
   // Y 轴 / tooltip 数值格式化（如字节人类可读、TPS 保留一位）
   formatValue: (v: number) => string
+  // 图表高度：高密度首页可压低，默认保持原尺寸
+  height?: number
 }
 
 // 把 RFC3339 时间格式化为简短的本地「时:分」标签（X 轴用）
@@ -43,7 +45,15 @@ function shortTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-export default function TrendChart({ title, icon, points, metric, color, formatValue }: TrendChartProps) {
+export default function TrendChart({
+  title,
+  icon,
+  points,
+  metric,
+  color,
+  formatValue,
+  height = 192,
+}: TrendChartProps) {
   const { t } = useTranslation()
   return (
     <div className="space-y-2">
@@ -57,11 +67,14 @@ export default function TrendChart({ title, icon, points, metric, color, formatV
         {title}
       </div>
       {points.length === 0 ? (
-        <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+        <div
+          className="flex items-center justify-center text-sm text-muted-foreground"
+          style={{ height }}
+        >
           {t('dashboard.trendNoSample')}
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={192}>
+        <ResponsiveContainer width="100%" height={height}>
           <LineChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
             <XAxis

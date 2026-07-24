@@ -1,6 +1,6 @@
 // 命令面板组件单测（FR-83）：锁定唤起渲染 / 即时过滤 / 分组 / 键盘上下回车跳转 / 数据源失败降级。
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -135,7 +135,7 @@ describe('CommandPalette 全局命令面板（FR-83）', () => {
     const user = userEvent.setup()
     renderPalette()
     await screen.findByText('导航')
-    // 空 query 下导航首项为「可观测看板」(/dashboard)，下移一格到「配置中心」(/configs)
+    // 空 query 下导航首项为「运维总览」(/dashboard)，下移一格到「配置中心」(/configs)
     await user.keyboard('{ArrowDown}')
     await user.keyboard('{Enter}')
     expect(navigateSpy).toHaveBeenCalledWith('/configs')
@@ -144,7 +144,7 @@ describe('CommandPalette 全局命令面板（FR-83）', () => {
   it('点击结果项跳转', async () => {
     const user = userEvent.setup()
     renderPalette()
-    const opt = await screen.findByRole('option', { name: /可观测看板/ })
+    const opt = await screen.findByRole('option', { name: /运维总览/ })
     await user.click(opt)
     expect(navigateSpy).toHaveBeenCalledWith('/dashboard')
   })

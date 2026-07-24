@@ -309,13 +309,7 @@ export interface UpdateCheckView {
 // 更新进度阶段（对齐 GET /admin/v1/system/update 的 phase）：
 // idle（未开始）/ checking / downloading（percent 有意义）/ verifying / staging / ready-restart（已落位待重启）/ failed
 export type UpdatePhase =
-  | 'idle'
-  | 'checking'
-  | 'downloading'
-  | 'verifying'
-  | 'staging'
-  | 'ready-restart'
-  | 'failed'
+  'idle' | 'checking' | 'downloading' | 'verifying' | 'staging' | 'ready-restart' | 'failed'
 
 // 更新进度视图（进程内瞬态，对齐 GET /admin/v1/system/update）。
 export interface UpdateProgressView {
@@ -750,6 +744,117 @@ export interface CommandAnalytics {
   byType: CommandTypeCount[]
   byServer: CommandServerCount[]
   byDay: CommandDayCount[]
+}
+
+// ===== 多级灰度配置同步中心（file-sync）=====
+
+export type FileSyncTaskStatus =
+  | 'draft'
+  | 'scanning'
+  | 'cached'
+  | 'planned'
+  | 'running'
+  | 'paused'
+  | 'succeeded'
+  | 'failed'
+  | 'terminated'
+  | 'circuit-broken'
+
+export type FileSyncTargetStatus =
+  | 'pending'
+  | 'manifesting'
+  | 'backing-up'
+  | 'transferring'
+  | 'applying'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+
+export type FileSyncLogLevel = 'INFO' | 'WARN' | 'ERROR' | 'DEBUG'
+
+export interface FileSyncLogView {
+  id?: number
+  taskId: string
+  batchNo: number
+  serverId: string
+  level: FileSyncLogLevel
+  message: string
+  createdAt: string
+}
+
+export interface FileSyncTargetView {
+  taskId: string
+  batchNo: number
+  serverId: string
+  namespace: string
+  group: string
+  zone: string
+  status: FileSyncTargetStatus
+  backupPath: string
+  currentFileCount: number
+  changedFileCount: number
+  skippedFileCount: number
+  bytesTotal: number
+  bytesDone: number
+  error: string
+  updatedAt: string
+}
+
+export interface FileSyncBatchView {
+  id?: number
+  taskId: number
+  batchNo: number
+  status: string
+  plannedCount: number
+  successCount: number
+  failedCount: number
+  startedAt?: string
+  finishedAt?: string
+}
+
+export interface FileSyncTaskView {
+  id: string
+  namespace: string
+  sourceServerId: string
+  directory: string
+  status: FileSyncTaskStatus
+  batchSize: number
+  intervalSec: number
+  failureThresholdPercent: number
+  operator: string
+  sourceReady: boolean
+  sourceFileCount: number
+  sourceTotalBytes: number
+  totalTargets: number
+  plannedTargets: number
+  succeededTargets: number
+  failedTargets: number
+  skippedTargets: number
+  currentBatch: number
+  totalBatches: number
+  batches: FileSyncBatchView[]
+  lastError: string
+  logs: FileSyncLogView[]
+  targets: FileSyncTargetView[]
+  createdAt: string
+  updatedAt: string
+  startedAt: string
+  finishedAt: string
+}
+
+export interface FileSyncEvent {
+  type: 'task' | 'target' | 'log' | 'error'
+  taskId?: number
+  status?: FileSyncTaskStatus
+  logId?: number
+  batchId?: number
+  serverId?: string
+  level?: string
+  createdAt?: string
+  task?: Partial<FileSyncTaskView>
+  target?: Partial<FileSyncTargetView>
+  log?: Partial<FileSyncLogView>
+  message?: string
 }
 
 // ===== 运维设置（FR-62，消费 FR-61 设置端点）=====

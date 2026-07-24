@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": "../..",
+    "paths": {
+      "@beacon/ui": ["./packages/ui/src/index.ts"],
+      "@beacon/ui/styles.css": ["./packages/ui/src/styles.css"]
+    },
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.ui-wiki.tsbuildinfo"
+  },
+  "include": ["src"]
+}

@@ -1,6 +1,6 @@
 # ADR-0046：rc 预发布渠道（语义化 rc 号 + prerelease 标志）
 
-**状态**：已接受（**rc 语义号 / 只做 rc 不滚动 / rc 渠道有序判定 三条被 [ADR-0052](0052-rolling-prerelease-channel.md) 取代**——改用「正式 / 预发布」两渠道 + master-push 滚动预发布 + 按版本号判新；**仍有效**：GitHub `prerelease` 布尔区分渠道、`release.yml`/`prerelease.yml` 复用 `_build-release.yml` 的 DRY 构建）
+**状态**：已接受（**rc 语义号 / 只做 rc 不滚动 / rc 渠道有序判定 三条被 [ADR-0052](0052-rolling-prerelease-channel.md) 取代**——改用「正式 / 预发布」两渠道 + master-push 滚动预发布 + 按版本号判新；发布平台矩阵与不可变 RC/GA 晋级规则由 [ADR-0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) 收紧；**仍有效**：GitHub `prerelease` 布尔区分渠道、`release.yml`/`prerelease.yml` 复用 `_build-release.yml` 的 DRY 构建）
 
 ## 背景
 
@@ -22,7 +22,7 @@
 ### 触发与命名（CI）
 
 - `prerelease.yml` 触发 glob `v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+`，与 `release.yml` 的正式三段 glob `v[0-9]+.[0-9]+.[0-9]+` **互斥不重叠**（正式 glob 不含连字符后缀，rc glob 必带 `-rc.<数字>`）。
-- 推送 rc tag → 复用与正式版同一套构建（5 平台原生矩阵含 linux-arm64、双端 jar、汇总 SHA256），经 `softprops/action-gh-release` 置 `prerelease: true`。
+- 推送 rc tag → 复用与正式版同一套构建（当前平台矩阵由 ADR-0072 收紧为 linux-amd64、linux-arm64、windows-amd64、darwin-arm64 四个平台，另含双端 jar 与汇总 SHA256），经 `softprops/action-gh-release` 置 `prerelease: true`。
 - 版本注入 `-ldflags` 用 **tag 去 v 后的完整串（含 `-rc.N`）**，故 rc 产物文件名与内嵌版本号自带 rc 标识、与正式版可区分。
 
 ### tag↔VERSION 校验放宽

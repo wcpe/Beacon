@@ -10,13 +10,13 @@ const UI_STATE_KEY = 'beacon.ui'
 
 // 界面布局状态快照
 export interface UiState {
-  // 侧栏是否折叠为窄图标条（true=折叠 w-14；false=展开 w-56）
+  // 侧栏是否折叠为窄图标条（true=折叠 w-14；false=展开 w-52）
   sidebarCollapsed: boolean
 }
 
-// 默认折叠：首次进入即窄图标条（按本批改进 1 约定）。
+// 默认展开：贴合后台管理系统默认信息架构，用户仍可手动折叠为窄图标条。
 const DEFAULT_UI_STATE: UiState = {
-  sidebarCollapsed: true,
+  sidebarCollapsed: false,
 }
 
 // 订阅者集合：状态变化时通知所有使用方重渲染

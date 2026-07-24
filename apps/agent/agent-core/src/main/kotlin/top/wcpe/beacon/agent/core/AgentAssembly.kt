@@ -1,0 +1,338 @@
+package top.wcpe.beacon.agent.core
+
+import top.wcpe.beacon.agent.api.BeaconAgent
+import top.wcpe.beacon.agent.core.api.BeaconAgentImpl
+import top.wcpe.beacon.agent.core.api.DiscoveryView
+import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.api.TopologyWatchHub
+import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.command.ReverseFetchExecutor
+import top.wcpe.beacon.agent.core.config.ConfigApplier
+import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.delivery.DeliveryBackupManager
+import top.wcpe.beacon.agent.core.delivery.DeliveryCommandExecutor
+import top.wcpe.beacon.agent.core.delivery.DeliveryDownloader
+import top.wcpe.beacon.agent.core.delivery.DeliveryOverwriter
+import top.wcpe.beacon.agent.core.delivery.DeliveryPipeline
+import top.wcpe.beacon.agent.core.delivery.DeliveryTargetResolver
+import top.wcpe.beacon.agent.core.delivery.DeliveryUploader
+import top.wcpe.beacon.agent.core.filetree.AppliedFileManifestStore
+import top.wcpe.beacon.agent.core.filetree.AssetManifestStore
+import top.wcpe.beacon.agent.core.filetree.FileMirrorWriter
+import top.wcpe.beacon.agent.core.filetree.FileTreeApplier
+import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.lifecycle.AssetScanCoordinator
+import top.wcpe.beacon.agent.core.lifecycle.AssetScanScope
+import top.wcpe.beacon.agent.core.log.AgentLogBuffer
+import top.wcpe.beacon.agent.core.log.BufferingPlatformAdapter
+import top.wcpe.beacon.agent.core.messaging.HttpMessageTransport
+import top.wcpe.beacon.agent.core.messaging.MessageBus
+import top.wcpe.beacon.agent.core.messaging.MessagePollCoordinator
+import top.wcpe.beacon.agent.core.messaging.MessagingHolder
+import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
+import top.wcpe.beacon.agent.core.messaging.RosterDirectoryHolder
+import top.wcpe.beacon.agent.core.metrics.ProxyMetricsProvider
+import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics
+import top.wcpe.beacon.agent.core.metrics.RuntimeMetricsProvider
+import top.wcpe.beacon.agent.core.override.CommandWhitelist
+import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
+import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import top.wcpe.beacon.agent.core.scheduling.LocalDecisionReportQueue
+import top.wcpe.beacon.agent.core.scheduling.SchedulingCache
+import top.wcpe.beacon.agent.core.scheduling.SchedulingRefresher
+import top.wcpe.beacon.agent.core.scheduling.SchedulingSnapshotStore
+import top.wcpe.beacon.agent.core.scheduling.SchedulingView
+import top.wcpe.beacon.agent.core.scheduling.SelfHealthHolder
+import top.wcpe.beacon.agent.core.settings.AgentSettings
+import top.wcpe.beacon.agent.core.snapshot.SnapshotStore
+import top.wcpe.beacon.agent.core.transport.BlobStreamTransport
+import top.wcpe.beacon.agent.core.transport.HttpTransport
+import top.wcpe.beacon.agent.core.transport.JsonCodec
+import top.wcpe.beacon.agent.core.transport.StreamTransport
+import java.io.File
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * 装配产物：把 lifecycle 与对外门面交回壳层。
+ */
+class AssembledAgent(
+    val lifecycle: AgentLifecycle,
+    val beaconAgent: BeaconAgent,
+    val apiClient: BeaconApiClient,
+    // 跨服消息门面持有者（FR-26）：默认 DisabledMessaging；壳层在消息模块启动成功后 set 活跃门面。
+    val messagingHolder: MessagingHolder,
+    // 玩家位置名册只读端口持有者（FR-31）：默认空名册；壳层在消息模块启动成功后 set 活跃实现、停止时 reset。
+    val rosterDirectoryHolder: RosterDirectoryHolder,
+    // 跨服消息模块运行时（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered）；壳层在 DISABLE 调 stop()。
+    val messagingRuntime: MessagingRuntime,
+)
+
+/**
+ * core 侧统一装配：用 transport/codec/adapter/settings/identity 组装出 lifecycle + 门面，
+ * 两个平台壳共用，杜绝重复装配代码。
+ *
+ * 注意：EffectiveConfigView 在装配时创建并经 store 暴露，壳层需让自己的 PlatformAdapter
+ * 在 publishConfigChanged 时调用 view.fireChanged（派发 API 监听器）。为此本装配返回前
+ * 不持有 adapter→view 的引用，由壳层在创建 adapter 时注入 view（见各壳）。
+ */
+object AgentAssembly {
+    fun assemble(
+        identity: AgentIdentity,
+        settings: AgentSettings,
+        rawAdapter: PlatformAdapter,
+        transport: HttpTransport,
+        codec: JsonCodec,
+        store: EffectiveConfigStore,
+        effectiveConfigView: EffectiveConfigView,
+        // 流式传输（SSE 推送，FR-24）：壳层注入 OkHttpStreamTransport 即启用单条流取代三条长轮询；
+        // 为 null 时退回长轮询（迁移期兼容，见 ADR-0015 决策 8）。
+        streamTransport: StreamTransport? = null,
+        // 交付 blob 流式传输（FR-165，见 ADR-0069）：壳层注入 OkHttpBlobStreamTransport 即启用交付数据面
+        // （上传 / 下载 blob）。为 null 时不响应 delivery_* 命令（数据面未启用，向后兼容）。
+        blobStreamTransport: BlobStreamTransport? = null,
+        // 运行指标供给（FR-32）：壳层注入平台采集实现（人数 / TPS + JVM 内存 / CPU）以上报真值；
+        // 默认零指标（未注入时向后兼容旧行为）。
+        metricsProvider: RuntimeMetricsProvider = { RuntimeMetrics.ZERO },
+        // 后端归属供给（FR-36）：bungee 壳层注入 ProxyServerDirectory 读取「当前代理的后端 serverId 集合」；
+        // 默认空集（bukkit / 未注入时不上报 backends，向后兼容）。
+        backendsProvider: () -> List<String> = { emptyList() },
+        // BC 专属指标供给（FR-34）：bungee 壳层注入平台采集实现（连接 / 线程 / 运行时长 / 后端可达性·延迟）；
+        // 默认 null（bukkit / 未注入时不上报 proxy 段，向后兼容）。
+        proxyMetricsProvider: ProxyMetricsProvider = { null },
+        // agent 自身 dataFolder 顶段名集合（如 `BeaconAgent` / `BeaconAgentProxy`）：壳层注入自身 plugin 名，
+        // 文件树 applier 据此跳过命中顶段的 path，防止运维误把 agent 自管文件经 FR-14/FR-38 塞进有效树后污染自身。
+        // 默认空集（未注入时回到旧语义，向后兼容），core 不硬编码任何 plugin 名（守 ADR-0005）。
+        selfPluginDirNames: Set<String> = emptySet(),
+    ): AssembledAgent {
+        // agent 自身日志环形缓冲（FR-88，见 ADR-0040）：包裹壳层 adapter，使所有经 core 的日志旁路进缓冲（落缓冲即脱敏），
+        // 供 tail-logs 命令读快照回传。绝不读任何磁盘日志文件。壳层日志实现零改动。
+        val logBuffer = AgentLogBuffer(capacity = LOG_BUFFER_CAPACITY)
+        val adapter: PlatformAdapter = BufferingPlatformAdapter(rawAdapter, logBuffer)
+
+        val apiClient = BeaconApiClient(transport, codec, settings, streamTransport)
+
+        val snapshotStore: SnapshotStore? =
+            if (settings.snapshotEnabled) {
+                SnapshotStore(File(adapter.dataFolder(), settings.snapshotFileName), codec)
+            } else {
+                null
+            }
+
+        val applier = ConfigApplier(store, snapshotStore, adapter)
+
+        // 镜像落盘根 = plugins 基目录（FR-14 文件树 / FR-15 覆盖落盘与 ADR-0011 路径限定共用）。
+        // fail-closed 守卫：若解析出的基目录名不是 "plugins"（getDataFolder 异常 / agent 未装在 plugins/<自身> 下），
+        // 关闭文件树与三方覆盖落盘——宁可不落，也不把文件落到错误目录（该类路径解析意外正是本次 E2E 暴露的缺陷根源）。
+        val pluginsBase = adapter.pluginsBaseFolder()
+        val pluginsBaseValid = pluginsBase.name.equals("plugins", ignoreCase = true)
+        if (settings.fileTree.enabled && !pluginsBaseValid) {
+            adapter.error(
+                "plugins 基目录解析异常（期望目录名为 plugins，实得 '${pluginsBase.name}'，路径=${pluginsBase.absolutePath}）：" +
+                    "fail-closed 关闭文件树与三方覆盖落盘，避免落到错误目录",
+                null,
+            )
+        }
+        val mirrorEnabled = settings.fileTree.enabled && pluginsBaseValid
+
+        // 文件树托管（通道B）：启用且基目录有效时装配镜像落盘 + 已落盘清单 + 编排器（取内容委托 apiClient）。
+        val fileTreeApplier: FileTreeApplier? =
+            if (mirrorEnabled) {
+                val root =
+                    if (settings.fileTree.targetSubDir.isBlank()) {
+                        pluginsBase
+                    } else {
+                        File(pluginsBase, settings.fileTree.targetSubDir)
+                    }
+                FileTreeApplier(
+                    mirrorWriter = FileMirrorWriter(root),
+                    appliedStore =
+                        AppliedFileManifestStore(
+                            File(adapter.dataFolder(), settings.fileTree.appliedManifestFileName),
+                            codec,
+                        ),
+                    adapter = adapter,
+                    fetchContent = { path -> apiClient.fetchFileContent(identity, path) },
+                    protectedSegments = selfPluginDirNames,
+                )
+            } else {
+                null
+            }
+
+        // 三方覆盖集接线（FR-15）：仅在文件树启用且基目录有效时装配（覆盖集是通道B 的一个 profile，依赖镜像落盘能力）。
+        // 命令白名单本地配置、默认空（控制面不下发；空即命令派发能力关闭，见 ADR-0011 决策 3）。
+        val overrideApplier: OverrideSyncApplier? =
+            if (mirrorEnabled) {
+                OverrideSyncApplier(
+                    pluginsBaseFolder = pluginsBase,
+                    backupRoot = File(adapter.dataFolder(), settings.override.backupDirName),
+                    whitelist = CommandWhitelist(settings.override.commandWhitelist),
+                    adapter = adapter,
+                    fetchMember = { setName, path -> apiClient.fetchOverrideMember(identity, setName, path) },
+                )
+            } else {
+                null
+            }
+
+        // 强制重同步回调（FR-91）的延迟持有者：executor 先于 lifecycle 构造，回调命令期才触发，
+        // 故用可变引用打破构造顺序——lifecycle 建好后回填，命令到达时再解引用调用。
+        val lifecycleRef = AtomicReference<AgentLifecycle?>(null)
+
+        // 文件资产索引周期扫描协调器（FR-163，见 ADR asset-manifest-sync-protocol）：启用且 plugins 基目录有效时装配。
+        // 扫描根 = 服务器工作目录（pluginsBase 的父目录）；纯 java.nio 读盘 + 分块哈希在 async 线程，绝不上主线程（fail-static）。
+        // 与文件树 / 反向抓取同一 pluginsBaseValid fail-closed 守卫：基目录解析异常时不扫描（避免从错误目录读出误导性清单）。
+        val assetScanCoordinator: AssetScanCoordinator? =
+            if (settings.assets.enabled && pluginsBaseValid) {
+                AssetScanCoordinator(
+                    adapter = adapter,
+                    apiClient = apiClient,
+                    identity = identity,
+                    store = AssetManifestStore(File(adapter.dataFolder(), settings.assets.manifestFileName), codec),
+                    // 扫描根 = 服务器工作目录（pluginsBase 的父目录）；agent 自身数据目录整棵排除出扫描：
+                    // 其内自写缓存 / 快照（asset-manifest / candidates-snapshot 等）每周期变，纳入清单会自我指涉致永不收敛。
+                    scope = AssetScanScope(serverRoot = { pluginsBase.parentFile ?: pluginsBase }, selfDataDir = adapter.dataFolder()),
+                    intervalMs = settings.assets.scanIntervalSec * 1000L,
+                )
+            } else {
+                null
+            }
+
+        // 交付命令执行器（FR-165，见 ADR-0069）：注入了 blob 流式传输且 plugins 基目录有效（能定位服务器根）时装配。
+        // 服务器根 = pluginsBase 的父目录（交付相对路径相对服务器根）；备份 / 临时目录落 agent 自身 dataFolder 之下
+        // （spec §4.7.1，避免被资产扫描漏掉致自我指涉）。blobUrl 由 sha256 拼流式端点，authHeaders 复用 apiClient 鉴权真源。
+        val deliveryExecutor: DeliveryCommandExecutor? =
+            if (blobStreamTransport != null && pluginsBaseValid) {
+                val serverRoot = pluginsBase.parentFile ?: pluginsBase
+                val resolver = DeliveryTargetResolver(serverRoot, adapter.dataFolder())
+                val blobUrl: (String) -> String = { sha -> "${settings.primaryEndpoint()}/beacon/v2/stream/delivery/blobs/$sha" }
+                val authHeaders: () -> Map<String, String> = { apiClient.agentAuthHeaders(identity) }
+                val pipeline =
+                    DeliveryPipeline(
+                        uploader = DeliveryUploader(blobStreamTransport, resolver, blobUrl, authHeaders, adapter),
+                        downloader = DeliveryDownloader(blobStreamTransport, blobUrl, authHeaders, adapter),
+                        backupManager = DeliveryBackupManager(File(adapter.dataFolder(), DELIVERY_BACKUPS_DIR), resolver, codec, adapter),
+                        overwriter = DeliveryOverwriter(resolver),
+                        tempRoot = File(adapter.dataFolder(), DELIVERY_TMP_DIR),
+                    )
+                DeliveryCommandExecutor(identity, apiClient, adapter, pipeline)
+            } else {
+                null
+            }
+
+        // 反向抓取执行器（FR-39，见 ADR-0027）：仅在 plugins 基目录有效时装配（与文件树同一 fail-closed 守卫，
+        // 避免从错误目录读盘上传）。读盘委托 adapter.readPluginsTree（壳层实现 FS 级路径安全）。
+        // 取日志（FR-88）/ 强制重同步（FR-91）/ 文件资产重扫（FR-163）不依赖 plugins 基目录有效性；故执行器始终装配以响应这些命令。
+        // 反向抓取（读盘）仍受 pluginsBaseValid fail-closed 守卫：基目录无效时禁读盘上传（避免从错误目录读），
+        // 由 reverseFetchEnabled 关闭该路径——tail-logs / resync-config / asset-rescan 不受影响。各命令复用同一命令通路与单飞排空。
+        // 交付命令（FR-165）同经此单一拉取点委派给 deliveryExecutor 执行（避免另起拉取循环与命令队列争抢）。
+        val reverseFetchExecutor =
+            ReverseFetchExecutor(
+                identity,
+                apiClient,
+                adapter,
+                logBuffer,
+                onResyncConfig = { lifecycleRef.get()?.forceResyncNow() ?: false },
+                reverseFetchEnabled = pluginsBaseValid,
+                // 文件资产重扫回调（FR-163）：协调器存在（assets 启用且基目录有效）才派发，否则回 false（命令回传 ok=false）。
+                onAssetRescan = { force -> assetScanCoordinator?.forceScanNow(force) ?: false },
+                // 交付命令执行器（FR-165）：注入了 blob 流式传输时委派，否则 null（收到 delivery_* 仅 warn 忽略）。
+                deliveryExecutor = deliveryExecutor,
+            )
+
+        // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
+        val topologyWatchHub = TopologyWatchHub()
+
+        // 调度门面与 fail-static 降级（FR-148）：自身健康持有者（指标上报响应刷新）、候选缓存、补报队列、
+        // 候选落盘（与配置快照同受 snapshotEnabled 门控）、门面视图（只读 + 单次决策）、刷新循环（10s 拉候选 + 补报）。
+        val selfHealthHolder = SelfHealthHolder()
+        val schedulingCache = SchedulingCache()
+        val reportQueue = LocalDecisionReportQueue()
+        val schedulingSnapshotStore: SchedulingSnapshotStore? =
+            if (settings.snapshotEnabled) {
+                SchedulingSnapshotStore(File(adapter.dataFolder(), CANDIDATES_SNAPSHOT_FILE), codec)
+            } else {
+                null
+            }
+        val schedulingView = SchedulingView(apiClient, identity, adapter, schedulingCache, reportQueue, selfHealthHolder)
+        val schedulingRefresher =
+            SchedulingRefresher(apiClient, identity, adapter, schedulingCache, schedulingSnapshotStore, reportQueue)
+
+        // 跨服消息模块（HTTP 中转，ADR-0063）：holder 早建（供 MessagingRuntime 与 BeaconAgentImpl 共用）。
+        // 上行经 HttpMessageTransport→apiClient.sendMessage；下行由 MessagePollCoordinator 长轮询取回后交 MessageBus 分发。
+        // 按玩家寻址不注入本地 PlayerLocator（名册权威在控制面，ADR-0063 §4）。随注册启停，未启用则保持降级。
+        val messagingHolder = MessagingHolder()
+        val messageBus =
+            MessageBus(
+                transport = HttpMessageTransport(apiClient, identity, codec, warn = adapter::warn),
+                codec = codec,
+                selfServerId = identity.serverId,
+                settings = settings.messaging,
+                playerLocator = null,
+                scheduleTimeout = adapter::runAsyncDelayed,
+                warn = adapter::warn,
+            )
+        val messagingRuntime =
+            MessagingRuntime(
+                settings = settings.messaging,
+                holder = messagingHolder,
+                bus = messageBus,
+                poll = MessagePollCoordinator(apiClient, identity, adapter, messageBus),
+                info = adapter::info,
+                error = adapter::error,
+            )
+
+        val lifecycle =
+            AgentLifecycle(
+                identity = identity,
+                settings = settings,
+                adapter = adapter,
+                apiClient = apiClient,
+                store = store,
+                applier = applier,
+                snapshotStore = snapshotStore,
+                fileTreeApplier = fileTreeApplier,
+                overrideApplier = overrideApplier,
+                // 拓扑变更事件 → 扇出到 watch 监听器（业务侧据此重查发现端点）。
+                topologyListener = { topologyWatchHub.fireTopologyChanged() },
+                // 运行指标供给（FR-32）：上报时取当前一帧负载指标。
+                metricsProvider = metricsProvider,
+                // 后端归属供给（FR-36）：注册/上报时取当前代理的后端 serverId 集合。
+                backendsProvider = backendsProvider,
+                // BC 专属指标供给（FR-34）：上报时取当前一帧代理负载指标（仅 bc 注入）。
+                proxyMetricsProvider = proxyMetricsProvider,
+                // 反向抓取执行器（FR-39）：收到 SSE command-pending / READY 时触发拉命令→读 plugins→回传。
+                reverseFetchExecutor = reverseFetchExecutor,
+                // 调度候选刷新循环（FR-148）：随注册成功 start、停机 stop、启动时从落盘快照恢复。
+                schedulingRuntime = schedulingRefresher,
+                // 自身健康回传 sink（FR-148）：把指标上报 202 响应内 self 刷进 selfHealth 数据源。
+                selfHealthSink = selfHealthHolder::set,
+                // 文件资产索引周期扫描协调器（FR-163）：随注册成功 start、停机 stop；null=未启用（assets 关闭 / 基目录无效）。
+                assetScan = assetScanCoordinator,
+            )
+        // 跨服消息模块随注册成功启动（幂等，重注册不重启）；停止由壳层在 DISABLE 调 messagingRuntime.stop()（与连接采集同）。
+        lifecycle.onRegistered { messagingRuntime.start() }
+        // 回填强制重同步回调持有者（FR-91）：lifecycle 已建好，命令期 onResyncConfig 经此解引用调用 forceResyncNow。
+        lifecycleRef.set(lifecycle)
+
+        // 玩家位置名册只读端口持有者（FR-31）：装配期即建（早于消息模块启动），默认空名册降级；
+        // 壳层在消息模块就绪后注入 Redis 实现。
+        val rosterDirectoryHolder = RosterDirectoryHolder(warn = adapter::warn)
+        val discoveryView = DiscoveryView(apiClient, topologyWatchHub, rosterDirectoryHolder, identity)
+        val beaconAgent =
+            BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder, schedulingView)
+
+        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder, messagingRuntime)
+    }
+
+    /** agent 自身日志环形缓冲容量（FR-88，见 ADR-0040）：最近 N 行，够排障、内存可忽略；有界不溢出。 */
+    private const val LOG_BUFFER_CAPACITY = 300
+
+    /** 候选快照落盘文件名（FR-148，落 agent 数据目录，与配置快照平行）。 */
+    private const val CANDIDATES_SNAPSHOT_FILE = "candidates-snapshot.json"
+
+    /** 交付本地备份区目录名（FR-165，spec §4.7.1；落 agent 自身 dataFolder 之下）。 */
+    private const val DELIVERY_BACKUPS_DIR = "delivery-backups"
+
+    /** 交付下载临时目录名（FR-165，spec §4.5.3；落 agent 自身 dataFolder 之下，校验齐全才覆盖）。 */
+    private const val DELIVERY_TMP_DIR = "delivery-tmp"
+}

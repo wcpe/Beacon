@@ -7,20 +7,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { assignZone, listInstances } from '../../api/client'
-import type { ComboboxOption } from '@/components/ui/combobox'
+import type { ComboboxOption } from '@beacon/ui'
 import { buildOnboardingSnippets } from '@/lib/agentOnboarding'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Combobox } from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -28,7 +22,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 
 // bukkit 角色编码（与后端 role 约定一致）；bungee 代理不进 zone 指派（FR-8/FR-35/FR-71）。
 const ROLE_BUKKIT = 'bukkit'
@@ -195,7 +189,10 @@ export default function AddServerWizard({
               {/* serverId 环境内查重提示（实时 + 点下一步兜底） */}
               {(dupError || isDuplicate) && serverId.trim() !== '' && (
                 <p className="text-xs text-destructive">
-                  {t('servers.wizardServerIdDuplicate', { serverId: serverId.trim(), namespace: ns })}
+                  {t('servers.wizardServerIdDuplicate', {
+                    serverId: serverId.trim(),
+                    namespace: ns,
+                  })}
                 </p>
               )}
             </div>

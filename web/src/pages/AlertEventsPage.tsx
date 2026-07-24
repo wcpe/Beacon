@@ -8,27 +8,16 @@ import { listAlertEvents } from '../api/client'
 import type { AlertEventFilter } from '../api/client'
 import type { AlertEventView } from '../api/types'
 import { formatTime } from '../api/format'
-import AsyncSection from '@/components/AsyncSection'
+import { AsyncSection } from '@beacon/ui'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { SummaryStrip, type SummaryItem } from '@beacon/ui'
+import { Skeleton } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@beacon/ui'
 
 // 单页条数（固定，运维场景无需可配）
 const PAGE_SIZE = 20
@@ -234,7 +223,11 @@ export default function AlertEventsPage() {
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                   <span>{formatTime(ev.createdAt)}</span>
-                  {ev.namespace && <span>{t('alertEvent.colNamespace')}: {ev.namespace}</span>}
+                  {ev.namespace && (
+                    <span>
+                      {t('alertEvent.colNamespace')}: {ev.namespace}
+                    </span>
+                  )}
                   {ev.serverId && <span className="font-mono">{ev.serverId}</span>}
                   <Button
                     type="button"
@@ -296,7 +289,9 @@ export default function AlertEventsPage() {
                 <div>
                   <dt className="text-muted-foreground">{t('alertEvent.colLevel')}</dt>
                   <dd>
-                    <Badge variant={levelVariant(selected.level)}>{levelLabel(selected.level)}</Badge>
+                    <Badge variant={levelVariant(selected.level)}>
+                      {levelLabel(selected.level)}
+                    </Badge>
                   </dd>
                 </div>
                 <div>

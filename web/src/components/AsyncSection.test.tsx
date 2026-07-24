@@ -1,7 +1,7 @@
 // AsyncSection 单测：加载/错误/内容三态。
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import AsyncSection from './AsyncSection'
+import { AsyncSection } from '@beacon/ui'
 
 describe('AsyncSection', () => {
   it('加载中只显示加载文案，不渲染内容', () => {

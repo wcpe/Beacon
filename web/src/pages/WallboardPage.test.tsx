@@ -49,8 +49,22 @@ const SUMMARY: MetricsSummary = {
 
 const TREND: MetricsTrend = {
   points: [
-    { sampledAt: '2026-06-20T08:00:00Z', totalPlayers: 40, avgTps: 19.8, avgMemUsed: 1024, avgMemMax: 2048, avgCpuLoad: 0.2 },
-    { sampledAt: '2026-06-20T08:05:00Z', totalPlayers: 42, avgTps: 19.9, avgMemUsed: 1024, avgMemMax: 2048, avgCpuLoad: 0.25 },
+    {
+      sampledAt: '2026-06-20T08:00:00Z',
+      totalPlayers: 40,
+      avgTps: 19.8,
+      avgMemUsed: 1024,
+      avgMemMax: 2048,
+      avgCpuLoad: 0.2,
+    },
+    {
+      sampledAt: '2026-06-20T08:05:00Z',
+      totalPlayers: 42,
+      avgTps: 19.9,
+      avgMemUsed: 1024,
+      avgMemMax: 2048,
+      avgCpuLoad: 0.25,
+    },
   ],
 }
 
@@ -78,7 +92,14 @@ function inst(overrides: Partial<InstanceView>): InstanceView {
     tps: 20,
     backends: [],
     zoneDefaultEntry: false,
-    proxy: { onlineConnections: 0, threadCount: 0, uptimeMs: 0, backendUp: 0, backendTotal: 0, backendAvgLatencyMs: -1 },
+    proxy: {
+      onlineConnections: 0,
+      threadCount: 0,
+      uptimeMs: 0,
+      backendUp: 0,
+      backendTotal: 0,
+      backendAvgLatencyMs: -1,
+    },
     registeredAt: '',
     ...overrides,
   }

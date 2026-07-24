@@ -20,7 +20,13 @@ const FILES: EffectiveFile[] = [
     name: 'Essentials/config.yml',
     keys: [
       { key: 'ops-name-color', chain: [{ scope: 'global', value: "'c'" }] },
-      { key: 'teleport-cooldown', chain: [{ scope: 'global', value: '3' }, { scope: 'group', value: '0' }] },
+      {
+        key: 'teleport-cooldown',
+        chain: [
+          { scope: 'global', value: '3' },
+          { scope: 'group', value: '0' },
+        ],
+      },
     ],
   },
   {
@@ -30,7 +36,9 @@ const FILES: EffectiveFile[] = [
 ]
 
 function mockHook(over: Partial<ReturnType<typeof useEffectivePreview>>) {
-  mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<typeof useEffectivePreview>)
+  mockedHook.mockReturnValue({ data: undefined, isLoading: false, ...over } as ReturnType<
+    typeof useEffectivePreview
+  >)
 }
 
 describe('EffectivePreviewView（FR-115）', () => {

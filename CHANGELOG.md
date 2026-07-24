@@ -5,6 +5,314 @@
 ## 未发布
 
 ### 新增
+- 规划 0.31.x 对齐中间版管理台壳层重做（FR-186～FR-189）：侧栏图标轨折叠动画、双段页眉与身份收敛、全局运维指标真数据、小屏抽屉；规格见 `docs/specs/admin-shell-redesign-0.31.md`。
+- 页眉全局搜索命令面板 MVP（FR-193）：Ctrl/Cmd+K 与页眉入口唤起；导航分组可键盘选择并跳转；可选服务器关键词 / 审计动作深链；规格见 `docs/specs/header-command-palette-mvp.md`。
+- 页眉语言切换骨架（FR-194）：中/英 + localStorage 持久；en 仅壳层文案，缺键 fallback 到 zh-CN。
+- 页眉通知入口（FR-195）：未处理告警角标 + 只读下拉摘要，跳转 `/alert-events`。
+- 页眉刷新当前页（FR-196）：按路由 queryKey 前缀 invalidate，不整页 reload。
+- 新增适用于全部 SemVer 版本的不可变 RC / GA 发布入口：RC 使用 `vX.Y.Z-rc.N` 固定真实 tag、peeled commit 与一次构建出的产品资产；GA 使用 `vX.Y.Z`，只从最终 RC 原样复制资产，不重新编译、打包、重建或重签。
+- 新增通用发布校验：`release-check` 只做版本、tag 格式与 GA workflow 静态审计，不要求真实 tag；`release-verify-rc` / `release-verify-ga` 必须从真实 tag 解析 peeled commit 并核对调用方给定身份，不能用手工 SHA 绕过。
+- GA 校验新增 RC 基准资产目录：RC 与 GA 目录各自先校验完整资产集合和 `SHA256SUMS.txt`，再逐项比较文件名、字节大小与 SHA-256，并把校验和文件本身纳入 RC/GA 字节一致性检查。
+
+### 变更
+- 开发构建与发布准备流程标准化（FR-182）：移除移动 `dev` tag、开发 GitHub Release 与 `<基线>-dev.<提交距离>.g<sha>` 开发发布版本，临时开发产物改由 GitHub Actions Artifact 承载。
+- pull request 只运行 Go、Web、Agent 与真实集成质量门，不执行产品打包，也不上传产品 Artifact。
+- `master` 仅在全部质量任务成功后按 `linux-amd64`、`linux-arm64`、`windows-amd64`、`darwin-arm64` 四个平台打包；Artifact 按 source commit 与平台命名、保留 7 天，且只有最终状态成功的 run 可供开发验证。
+- RC workflow 在写候选 tag 前强制运行发布契约测试、GA workflow 禁构建/打包/重签静态审计和既有质量门；GA workflow 解析最终 RC commit 后切换到该提交执行校验，并在创建前和公开回拉后都与同一 RC 资产目录比较。
+- 本轮发布流程调整不改变 REST API、`agent-api`、Agent 协议、序列化格式或 GA-only 在线更新语义；历史 `prerelease` 更新设置继续归一为 `stable`，RC 与 Actions Artifact 仍需显式安装。
+- 升级兼容继续采用 forward-only expand / 可重入回填；升级前须备份 MySQL 与 Agent 本地状态，若目标版本无法读取当前 schema 或本地状态，应停写并从同一协调备份恢复，而不是执行未经验证的 down migration。
+- Agent 真机 E2E 编排从 jpenilla run-task 迁移到 Maven 正式版 `mc-testkit 0.5.0`：统一 `servePaper` / `serveDirectory` / `serveProxy`，代理改用原生 BungeeCord 与固定 `backend` 路由；动态 access token 在 harness 内先持久化不可逆 SHA-256 + 字节长度指纹，再注册 Actions 掩码，归档前按指纹扫描且不写明文 token 文件。
+
+### 修复
+- 贯通 FR-178 环境过滤器到运维主路径：选「全部环境」默认可见全量；选具体 env 收窄仪表盘/服务器/区服/拓扑/告警/命令/审计/服务分析/变更单等有 ns 维度的列表；mock 对 `namespaceId=0` 与真后端「全量」语义对齐。
+- 解绑身份时同步清空服务器区服归属，并支持 `target:null` 解除分配；资产列表身份优选 active/disabled/conflict，避免解绑命中历史 unbound 行。
+- 扩充审计动作中文映射与筛选候选；命令 `resultDetail` 支持 JSON 键值可视化。
+- 拓扑侧栏展示真实 serverId 列表；区服/拓扑在全部环境下默认「全部命名空间」，有服小区默认展开。
+- 开源协议页版权声明统一为 `wcpe`，清单收紧为运行时依赖。
+- 修复 Gradle serve 子进程早退仍等待业务超时的问题：harness 统一持有 Wait/Stop 生命周期，提前报告任务退出结果与 stdout/stderr 证据路径。
+- 修复 directory fail-static 将请求失败误当权威空目录的问题；仅控制面成功返回的空集合才清空动态目录，失败时保留既有目录。
+- 修复 override 第二轮复用旧 identity 的验收漂移；每轮独立 Paper 生命周期均重新等待 pending、解绑旧占用并审批本轮 identity。
+- 修复 Linux 远端 E2E 无法执行 Gradle Wrapper 的文件权限，并在导出随机测试口令与签名密钥前注册日志遮蔽，避免临时凭证出现在 Actions 日志中。
+- 修复结构化消息 payload 被错误限制为字符串的问题：send / poll 现按任意 JSON 值契约往返，`lodestone:roster` 等带冒号 `msgType` 始终合法，原错误来自 payload 类型契约。
+- 修复配置发布与旧操作撤回在真实 MySQL 并发时，撤回先占用下一版本号会让新发布错误返回 `CONFIG_CONFLICT`；现在仅对并发回滚造成的版本竞争重读后重试，普通并发发布仍保持冲突语义。
+- 修复配置时间线 MySQL 集成测试对 RFC3339 时间字符串直接做字典序比较导致的偶发误判；改为解析真实时间后校验倒序，并覆盖同秒不同小数精度碰撞。
+
+### 已知问题
+- 截至 2026-07-20，仓库尚未创建真实 `v1.0.0-rc.N`、`v1.0.0` tag 或 GitHub Release；在正式 GA tag / Release 实际公开前，任何本地校验、workflow 文件或未发布记录都不代表真实 GA。
+- `release-check` 只证明格式和 GA workflow 静态约束，不能替代针对真实 tag 与下载资产目录执行 `release-verify-rc` / `release-verify-ga`。
+
+## 0.30.0（2026-07-17）
+
+### 新增
+- 补齐 FR-171 `hot_reload` 免重启配置热更：交付清单区分普通文件与 V2 配置冻结工件，Agent 在生效与回滚阶段仅对配置工件触发既有配置变更回调并据结果回执；管理台开放热更生效选项，并对含 `.jar` 的组合显式提示 JAR 仅落盘、仍应使用重启生效。
+- 新增真实 Paper 端到端验收：隔离 SQLite 控制面、BeaconAgent 与 BeaconE2E 业务插件经生产变更单链路验证配置热更正向生效、整单回滚、业务回调失败回执，以及失败后 Paper 与 Agent 持续在线。
+
+> 验证（v0.30.0 整体）：server `go test ./...` 全绿、`golangci-lint run ./...` 0 issues、gofmt/goimports 通过；agent `gradlew.bat ktlintCheck detekt test build --no-daemon` 成功；前端 `check:ui-wiki` / `typecheck` / `lint` / `test` / `build` 全绿（devmock 81 + web 248 vitest）；FR-171 真机 `TestDeliveryHotReloadE2E` 复核通过（169.31 秒），覆盖 activated、rolled_back、failed 与失败后存活三重证据；`make package` 以 0.30.0 完成控制面与 Bukkit / Bungee Agent 正式制品构建。
+
+## 0.29.3（2026-07-17）
+
+### 修复
+- 稳定拓扑失败率标签回归：改用常规场景并注入单条 100% 失败率的可解析异常边，避免超大量场景在完整 Vitest 套件中触发默认超时，同时保留 SVG 标签的精确断言。
+- 修复 Windows Git Bash 下 `make agent` / `make package` 无法进入 agent 目录及调用 Gradle wrapper 的问题：统一使用 `apps/agent` 与 `./gradlew.bat`，Linux / macOS 分支保持不变。
+
+### 安全
+- 将正式 pnpm 工作区的 Vitest 从 3.2.4 升级到 3.2.6，并同步根锁文件；`pnpm audit --audit-level high` 无已知漏洞。
+
+> 验证（v0.29.3 整体）：前端 `check:ui-wiki` / `typecheck` / `lint` / `test` / `build` 全绿（devmock 81 + web 246 vitest，拓扑目标用例 5 次复核通过）；server `go test ./...` + `golangci-lint run ./...` 通过；agent `gradlew.bat ktlintCheck detekt test build` 与 `make agent` 通过；`make package` 完成前端、server 与 agent 打包；`pnpm audit --audit-level high` 无已知漏洞。
+
+## 0.29.2（2026-07-17）
+
+### 新增
+- 生效编排 restart 生效（FR-171 部分交付 restart-only，规格 [v2-delivery-orchestration.md](docs/specs/v2-delivery-orchestration.md) §4.6.1，[ADR-0070](docs/adr/0070-agent-graceful-shutdown-primitive.md)）：交付向导批次生效方式选择器（仅推送 push_only / 重启 restart）；restart 经 agent 优雅关服平台原语 `gracefulShutdown`（Bukkit 反射 save-all + 关服 / Bungee ProxyServer.stop）+ 宿主自启拉起，控制面观测 identity 心跳回归判 activated（注册 / 健康真源 = Go 进程内存，agent 回执「已开始关服」不直接判生效）；关服后 `activate_timeout_sec` 内未回归判生效失败并计入熔断；观察窗采健康分 / TPS / 告警。
+- 配置灰度 restart-only 生效与正式切版（FR-171 配置维度，[ADR-0071](docs/adr/0071-config-gray-effectuation-model.md) Model A）：解禁含配置项变更单启动；控制面按每个目标渲染配置明文（`EffectivePlaintext` 把灰度作用域 pin 到 to_version、稳定键序冻结渲染）写内容寻址 blob + 持久化冻结渲染工件表，config 项归一为清单文件项经数据面下发落盘、restart 读盘生效；末批推进门确认时正式切版（清 pin + 记该作用域已交付版本，config-center head 自然对齐 to、零配置域调用）；`(config_file, scope)` 冲突守卫防两单并发灰度同作用域经 head 互泄；from 锚点三分支（上一交付版本 / based_on / 链首空）。**配置域代码零改动**，仅调用 `EffectivePlaintext` / `RollbackVersion` / `RemoveScopeContribution` 现有原语。
+- 整单回滚（FR-167，规格 §4.7.2）：`POST .../rollback` + `.../rollback/finish` 端点 + 推进器 `rolling_back` 一次性全量回滚分支；agent `DeliveryBackupManager.restore` 按备份 manifest 反转还原磁盘（update / delete 从备份复原、add 删除新增文件）；config 项经配置中心 `RollbackVersion(from)` / `RemoveScopeContribution` 使 head 记账回退、与 agent 磁盘还原对齐（幂等吞 `CONFIG_NO_CHANGE` 与「无可撤销贡献」）；restart 生效方式还原后优雅关服、控制面心跳回归判 `rolled_back`（回滚重启锚点以 `rollback_at` 为基准重置）；备份缺失目标预检直接 failed；重复调用仅重置失败目标重试；回滚全动作（`delivery.order.rollback` / `rollback_finish` + `config.version.rollback`）入审计。
+- 统一权限与审计（FR-168，规格 §4.8）：删除 draft 单补高风险原因入审计（spec §4.8.1「权限 + 原因 + 二次确认」，路由显式挂 `requireFullRole`，前端删除对话框要求填原因、向导自动丢弃草稿传系统原因）。交付高风险端点（审批 / 驳回 / 启动 / 推进门 / 暂停继续 / 紧急终止 / 整单回滚 / 删除 draft）统一 full 角色 + 二次确认 + 原因；`delivery.order.*` 全 15 动作审计 detail 含 `orderId`，`/audits` 按单号贯通变更单从创建到回滚完整链路。
+
+### 修复
+- restart 生效冷启动健康被误判熔断（真机逮，push_only / 单测测不出）：restart 必然重启目标，冷启动期健康评分未从关服断供（lost，score=0 / unhealthy）或样本不足的低分恢复，观察窗立即评估把这段重启固有的短暂不健康误判「生效导致健康恶化」触发熔断，致目标已成功生效（心跳回归 / 文件落盘 / 备份就绪）后仍被暂停；修复 = restart 目标 activated 后给 90s 重启预热宽限、宽限内排除该目标出健康恶化评估（`casTarget` 同步内存 `activated_at`），预热后仍 unhealthy 正常熔断。
+- 配置渲染 blob 下载授权恒 403（真机逮，授权路径零测试覆盖）：下载授权仅按 `kind='file_diff'` 项的 sha256 反查单，config 渲染项 sha256 为 NULL 匹配不到任何单致目标拉取 config blob 恒 403、agent 报「流式下载 / 校验失败」熔断；修复 = 新增配置灰度冻结渲染工件表持久化 `{order, server, path, sha}`，清单 / 下载授权 / 清理护栏三处读工件不重渲染（`ExistsAuthorizedSHA` 严格到「该单该目标该 blob」放行），一并消除 manifest 重渲染的 head 漂移竞态 + config blob 漏清理保护。
+
+> 验证（v0.29.2 整体）：server `go test ./...` 无 FAIL（含回滚 5 单测 + config-gray 授权真链路 + delete reason 审计 + restart 预热）+ `make lint`（golangci 0 issues）；agent `gradle ktlintCheck detekt build`（restore / runRollback 单测）；前端 `build` + 34 files / 246 vitest。真机验收（prod2，lobby-1 → lobby-2）：restart 生效（优雅关服 → 宿主自启 → 心跳回归 activated + 超时熔断 + 冷启动预热保护）、config-gray restart（渲染落盘 v2 + 覆盖备份 → restart → completed → 末批切版 → 下一单 from 前移）、整单回滚（order 7 rolled_back：config head 回退 + 磁盘还原 + restart 再生效 + 审计三条链贯通 + 终态双拒）、delete reason 真机入审计。
+>
+> 后续待做：`hot_reload` 免重启配置热更生效（FR-171 剩余）——需打通 V2 配置渲染（层版本链 `EffectivePlaintext`）→ agent 配置应用（`EffectiveService` / `ConfigApplier` onChange）两套独立系统；用户拍板 restart-only MVP 先行绕开此鸿沟，agent 侧对 hot_reload 诚实回执 failed、前端选择器暂不开放。
+
+## 0.29.1（2026-07-16）
+
+### 新增
+- 交付数据面（FR-165，P9 数据承载层，规格 [v2-delivery-orchestration.md](docs/specs/v2-delivery-orchestration.md) §4.5/§5.2/§5.3，[ADR-0069](docs/adr/0069-delivery-data-plane-blob-relay-and-agent-stream-transport.md)）：控制面全局 sha256 内容寻址 blob 中转存储（TeeReader 边收边算哈希 + 临时文件 + 原子入位、同 sha 全局去重秒传、上传 / 下载并发限流与容量预检）；流式数据面 `/beacon/v2/stream/delivery/blobs/{sha256}`（HEAD 就绪查询 / PUT 流式上传内容哈希不符 422 丢弃 / GET 流式下载 Range 断点续传），挂 agent 双 header 鉴权 + blob 归属校验（模板源仅上传本单待传 sha、目标仅下载本单清单 sha）；agent 面 `/beacon/v2/agent/delivery`（upload-manifest / manifest 拉取 + result 阶段回执）；后台清理器周期删「终态超保留期且不被非终态单引用」的 blob 与上传残留（入系统审计）；5 项数据面运维热改项（blob 保留期 / 容量 / 上传下载并发 / 清理间隔）。agent 侧新增 core 流式端口 `BlobStreamTransport`（OkHttp 实现落适配器，守 ADR-0005 core 零 HTTP 库）+ 上传器（HEAD 去重 + PUT 重试）+ 下载器（Range 续传 + sha256 校验 + 重试，先全下临时目录校验齐全再应用）+ 备份管理器（覆盖前逐文件备份 + manifest.json，落 `dataFolder()/delivery-backups/<orderId>/`，保留每服 5 单 / 30 天）+ 覆盖器（本地 sha256 相同跳过 + 路径守卫 + 原子入位）。
+- 灰度编排引擎（FR-166，规格 §4.1/§4.3/§4.4/§4.6.3/§5.1）：编排推进器 goroutine 单一驱动源（启动 `drainActive` 恢复活动单 + ticker + 回执 wakeCh 即时唤醒，控制面重启按库内状态续推 fail-static）；`POST .../start`（approved→rolling，冲突守卫、selector 固化落 `change_target`、批次规划 percent / count 稳定切批、payload 准备下发 `delivery_upload`）；三层状态机 CAS 推进（目标 pending→pushing→pushed→activating→activated，push_only 立即生效；批 running→observing→awaiting_confirm；命令超时 / 离线 / 回执 failed 判 failed）；自动熔断（失败率 + 观察窗健康恶化占比任一超阈→批 failed + 单 paused + 未下发 skipped + 系统审计）；控制操作 `/pause`（不打断在途）`/resume`（retry_failed / skip_failed）`/cancel`（未开始置 skipped）`/batches/{n}/confirm`（推进门放行、末批即完成）；`GET .../events` 真 SSE（Accept 内容协商，逐目标事件走流、JSON 轮询回退）+ `/observe` 观察窗内存缓冲接真（5s 桶健康分 / TPS / 告警）。`/changes` 执行视图（灰度批次 / 观察窗 / 进度时间线）从演示 mock 接真。
+
+### 修复
+- 交付向导生效方式默认改「仅推送」（push_only）：原对文件单硬编码 `restart` / 配置单 `hot_reload`，但 agent 侧 restart / hot_reload 生效动作尚未实现，启动会判失败；改为固定 push_only（推送到位、随子服下次自然重启生效），与已实现的生效方式一致。
+
+> 验证（v0.29.1 整体）：server `go build`/`vet`/`make lint`/`go test`（27 包无 FAIL，含数据面 blob 去重 / 哈希守卫 / 容量 / 清理器单测 + 编排引擎 12 组单测：批次切分 / push_only 全生命周期 / 熔断 + retry / 暂停保在途 / 终止 skipped / 含配置拒 / 冲突守卫 / payload 准备 / 重启恢复）；前端 `build`/`lint`/`test`（246 vitest）；agent `gradlew ktlintCheck detekt build`（流式传输 / 下载续传 / 备份保留 / 覆盖跳过 / push 编排单测）。真机端到端验收（prod2，lobby-1 模板源 → 新部署 lobby-2 目标，push_only）：组单→差异→审批→启动→payload 上传→流式推送→覆盖前备份→文件覆盖→push_only 立即生效→观察窗→推进门确认→单 completed；文件真从 lobby-1 经 blob 中转流式传到 lobby-2（含敏感名 + 二进制），备份 manifest 完好，审计按 orderId 完整贯通（create→diffScan→submit→approve→start→batch_confirm）。
+>
+> 后续里程碑待做：restart / hot_reload 生效动作（agent 侧优雅关服 / 配置热更 + 控制面心跳回归判定，[ADR-0070](docs/adr/0070-agent-graceful-shutdown-primitive.md)）、配置灰度 pin 冻结渲染与末批正式切版（[ADR-0071](docs/adr/0071-config-gray-effectuation-model.md)，当前含配置项变更单启动被拒）、整单回滚（文件备份还原 + 配置版本回退 + 重新生效，FR-167，回滚 UI 已就位、端点待实现）、交付能力统一权限风险分级与贯通审计（FR-168）。
+
+## 0.29.0（2026-07-15）
+
+### 新增
+- 交付编排 V2 变更单模型：组单 / 影响预览 / 审批链后端接真（FR-162，P9 首个增量，规格 [v2-delivery-orchestration.md](docs/specs/v2-delivery-orchestration.md) §3/§4.1-4.3/§5.1）。交付域五表落地（`change_order` / `change_order_item` / `change_batch` / `change_target` / `delivery_blob`，枚举 VARCHAR + JSON 落 TEXT 可移植）；`/admin/v2/change-orders` 15 端点接真：draft 增删改查（`scan_dir` 扫描目录范围随单持久化）、**同步差异扫描**（读文件资产最新快照按目标集并集语义算差异，update 胜 add、scanDir 前缀过滤、≤100 服分块查询；selector 未设时对照集回退 namespace 内全部合格目标，适配向导「先扫差异、后定范围」步序）、selector 解析（全量 / 大区 / 小区 / 单服并集减 excludes、合格性过滤、模板源自动排除、**跨 namespace 引用拒绝**）、影响预览（批次划分 / 去重传输量汇总 + 逐目标在线 / 健康 / 新增更新删除跳过计数 / 配置作用域命中 from→to）、提交 / 撤回 / 审批 / 驳回（CAS 状态迁移、**approved 后任何编辑自动作废审批回 draft**、审批职责分离默认开且审批人≠创建人、驳回原因必填）、变更项文件内容预览接真（复用文件资产安全通道：敏感路径 403+原因放行入审计、agent 离线 504、二进制仅元数据、双侧真实内容 + 实际对比目标回填）。配置变更项 from 锚点按 ADR-0071 三分支（上一交付版本 → based_on 兜底 → 链首空）。全生命周期写动作事务内自记审计（detail 恒含 orderId，`/audits` 按单号可追溯完整链路）。新增运维热改项 `delivery.approver-separation-enabled`（单管理员部署可关闭，关闭动作入审计）。
+- 交付编排三项架构决策（ADR-0069/0070/0071）：交付数据面（控制面 sha256 内容寻址 blob 中转 + agent `BlobStreamTransport` 流式端口，扩展 ADR-0005，随 M2 实现）、agent 优雅关服平台原语（restart 生效靠宿主自启拉起，重申 ADR-0011 禁进程管理，随 M4 实现）、变更单配置灰度生效语义模型（模型 A：配置中心 head=最新定稿非生效、灰度 pin 落后者到 from、末批清 pin 即切版、配置域代码零改动）。
+- `/changes` 变更单页从演示 mock 接真（前端接缝）：引导创建向导「扫描目录范围」输入（默认 `plugins/`，改范围作废已扫差异）、文件预览三形态（文本双侧 diff + 对比目标标签 / 二进制仅元数据 / 敏感 403 内联填原因重取）、影响预览逐目标「配置命中」列、`/changes?order=<id>` 深链自动选中打开详情（交付历史「在变更单中打开」跳转生效）；`/audits` 页补 action→中文映射机制与 16 个交付审计动作文案（未映射动作回退原文）。契约定稿：`FileDiffResponse` 增 `binary` / `serverId` 字段并转正原「仅 mock」端点，影响预览逐目标增 `configScopes`。
+
+### 修复
+- 修复资产搜索 `GET /admin/v2/assets` 带 `pathPrefix` / `name` 过滤在 MySQL 8 报 SQL 1064、接口 500 的问题：原 LIKE 转义用 `ESCAPE '\'`（MySQL 字符串字面量消费反斜杠成语法错误，sqlite 单测无感），改用与交付域一致的 `#` 转义符（三方言行为一致），并新增真 MySQL 集成回归覆盖前缀 / 子串过滤与 `_` 通配符字面匹配。
+
+> 验证（v0.29.0 整体）：后端 `go test ./...` 全绿（含交付域 19 单测：状态机穷举 / selector / 并集差异 / from 锚点 / 契约形状）+ 真 MySQL 集成实跑（组单→差异→提审→审批全链 + file-diff 契约）+ `make lint` 0 issue；前端 `build` / `lint` / `test` 全绿（devmock 81 + web 246 vitest）；agent 本版零改动（jar 与 0.28.0 相同）。真机验收（prod2，lobby-1 模板源 + 新部署 lobby-2 目标）：向导五步组单、真资产快照差异扫描（新增 3 / 修改 1、同哈希 567 文件正确跳过）、文件预览三形态、影响预览真健康数据、审批分离拒自批→设置热关→审批通过、删除草稿高风险确认、`?order=` 深链、审计链按 orderId 完整追溯，全项通过（记录 `.tmp/acceptance-p9-m1-2026-07-15.md`）。真机验收期间发现并修复「diff-scan 未设 selector 恒 0 项」缺陷（对照集回退，随本版）。执行 / 灰度批次 / 生效 / 回滚（FR-165/166/167/168/171）随 P9 后续增量交付。
+
+## 0.28.0（2026-07-15）
+
+### 新增
+- 文件资产 V2 索引后端（FR-163，规格 [v2-file-assets.md](docs/specs/v2-file-assets.md)，上报协议见新增 ADR《文件资产清单上报协议》）：agent 周期扫描本机 `plugins/` 与根配置白名单，把每文件「路径 / sha256 / 大小 / mtime」清单**只读**上报控制面（对目标文件系统零写入）。上报走**增量 diff + 摘要校准 + 全量分片兜底**协议：清单摘要两侧同源，增量携 `baseDigest` 单事务应用、基线失配返回 409 `asset_manifest_out_of_sync` 令 agent 退全量自愈；全量 >2000 文件分片、5 分钟内按 `uploadId`/`seq`/`eof` 收齐后单事务原子整体替换该服全部行（替换期查询不见半截清单）。控制面新增端点：`POST /beacon/v2/agent/assets/manifest`（agent 面清单上报，挂 token↔namespace + identity 鉴权，未确认 403）、`GET /admin/v2/assets`（按服务器 / 路径前缀 / 扩展名 / 哈希组合搜索分页，`namespaceId` 必填、裸文件名查询拒绝、`pageSize≤200`）、`GET /admin/v2/assets/scan-status`（每服扫描概要）、`GET /admin/v2/assets/compare`（跨服同路径哈希分组比对 + 缺失服列表，多数派在前）、`POST /admin/v2/assets/rescan`（批量下发 `asset-rescan` 命令走既有长轮询命令通道，在线服建命令、离线服标记不阻断整批，`force` 忽略 agent mtime 缓存全重哈希）。重扫记 `asset.rescan` 专项审计（detail 仅目标 serverId 列表 + force，无文件内容）。`/assets` 页面（清单 / 概要 / 比对 / 重扫）从演示 mock 接入真实后端。
+- 文件资产内容预览与安全边界（FR-164，P8，规格 [v2-file-assets.md](docs/specs/v2-file-assets.md) §4.5/§4.6/§4.7）：`/assets` 页文本文件可实时预览与两侧 diff、二进制只展示元数据、命中敏感路径默认禁止查看。**控制面不存文件内容**——预览经 `asset-read` 命令下发 + agent 读盘回传 + 控制面内存中继同步透传（10s 等待上限），内容瞬态不落库、不进审计 detail、不缓存；响应 sha256/size 取清单（`file_asset`）权威值（二进制全文哈希，agent 侧只读前缀无法算全文哈希）。敏感路径规则持久化为运维设置项 `assets.sensitive-path-patterns`（glob 清单，控制面匹配、agent 不感知敏感语义），默认清单覆盖 `**/*secret*` / `**/*password*` / `**/*.pem` / `**/.env` / `plugins/Beacon/**` 等；命中的预览 / diff 须带非空原因单次放行（无原因 403 `asset_sensitive_path`），放行审计标 `sensitiveOverride` + 原因原文。管理面新增 `POST /admin/v2/assets/preview`、`POST /admin/v2/assets/diff`（两侧清单哈希相同短路 `identical` 不取内容、二进制或超 512 KiB 拒绝 `asset_diff_unsupported`）、`GET/PUT /admin/v2/assets/sensitive-rules`（整体替换、写审计，`/settings` 不重复暴露）；agent 面新增 `POST /beacon/v2/agent/assets/content`（凭鉴权身份归属、防跨 agent 越权投递）。审计登记 `asset.preview` / `asset.diff` / `asset.sensitive_rule_update`，detail 绝不含文件内容。前端 `/assets` 预览 / diff 面板接真（敏感 403 后原因输入重试、二进制只显元数据、截断提示、identical 短路提示）+ 新增敏感路径规则编辑弹窗（页内非结构性小面板）。错误按 ADR-0057 脱敏展示：agent 离线 `asset_agent_offline`、预览超时 `asset_preview_timeout`。agent 复用文件浏览只读安全口径（路径遍历 + 符号链接不逃逸），二进制按 NUL / 非法 UTF-8 权威判定。
+- 并发身份冲突可视化闭环（FR-177，P8，规格 [v2-agent-identity.md](docs/specs/v2-agent-identity.md) §4.4-4.7/§5）：复制整服目录导致的**并发双实例**（同 identityId 交替 bootId）现可在冲突窗口内被检测并冻结。控制面新增进程内 `bootwatch` 注册表（map+锁，注册/健康类真源在内存、不引中间件）追踪每 identityId 的 bootId 往复轨迹——**注册往复**（被顶替过的旧 boot 重新登顶，A→B→A）判为并发双实例、转 `conflict`（T12），写 `conflict_reason=duplicate-boot-id` + 持久化冲突双方 `conflict_peers`（`{bootId,lastAddr,lastSeenAt}` JSON 落 TEXT，DB 可移植）+ system 审计（`identity.conflict_detected`）+ 告警（新增 `identity-conflict` 告警类型，落告警事件供管理台可见）；**单向切换**（故障换机 / 正常重启，含旧机拖尾上报）绝不误判。冲突态下双实例数据面请求一律 409、不可调度。新增 `POST /admin/v2/agent-identities/{identityId}/resolve-conflict`（`keepBootId` + 必填 `reason`）：保留指定实例恢复 active、清冲突字段、写 `identity.conflict_resolved` 审计，落败方后续请求持续 409 并附「删除本目录 identity.yml 重新接入或下线本实例」指引；非 conflict → 409、`keepBootId` 不在冲突双方 → 400。身份详情端点回显 `conflictPeers` 冲突双方明细。检测窗口经新增运维热改项 `identity.conflict-window-sec`（默认 600 秒）配置。数据面上报鉴权（指标 / 调度 / 连接 / 消息 / 心跳）补 bootId 感知：陈旧 boot 返 **404** `agent_stale_reregister` 促 agent 重注册喂养往复检测——复用 agent 既有「404→重注册」路径（v1 数据面中间件透传该真实状态、不吞成固定 401，否则 agent 心跳收不到 404 无法重注册、真实并发双实例潜伏不被检测）；未带 `X-Beacon-Boot` 头时兼容旧行为不变。前端新增独立「身份冲突」页 `/identity-conflicts`（挂侧栏「集群」组、有冲突时侧栏红点计数）：冲突卡片平铺，卡头 serverId · namespace + 冲突原因徽标，卡体左右两栏平铺冲突双方 bootId/来源地址/最后活跃（差异高亮），就地「保留实例 A/B」（唯一高风险模态：原因必填 + 落败方 409 指引）或「解绑此身份」；空态友好非警示，演示模式可点击、四态齐备。**真机验收**：复制整服目录起第二实例，两真实 agent 经心跳陈旧 404 自动重注册往复、在冲突窗口内**自动**转 conflict（conflictPeers 回显真实双方 bootId），resolve 保留一方恢复 active、落败方持续 409、conflict_detected/resolved 审计闭环全过。
+- env 展示维度体验（FR-178，P8，规格 [v2-zone-authority.md](docs/specs/v2-zone-authority.md) §3.4/§4.1/§5）：env 是纯展示 / 过滤维度，不参与隔离判定 / 调度 / 配置作用域链。新增 env 增删改与「整体替换 env→namespace 映射」全套 Go 后端（`repository/env_repo.go` + `service/env_service.go` + `handler/env_handler.go`，5 端点 `GET`/`POST` `/admin/v2/envs`、`PATCH`/`DELETE` `/admin/v2/envs/{id}`、`PUT /admin/v2/envs/{id}/namespaces`）：映射 PUT 幂等、事务内先删后插，被其他 env 占用的 namespace 报 409 `ENV_NAMESPACE_CONFLICT` 并指明冲突方（namespace 名 + 占用 env 名），删 env 级联删除其映射行；env 增删改与设置映射均在事务内自记专项审计（`env.create` / `update` / `delete` / `set-namespaces`，已登记 FR-72 兜底覆盖集免双记）；「一个 namespace 至多属一个 env」由 `env_namespace.namespace_id` 唯一索引 + 应用层预检双重兜底。契约 `@beacon/contracts` 新增 env 类型、`@beacon/devmock` 新增 env 域全套 mock（空 / 常规 / 超大量 / 异常四态齐备）。前端演示模式管理台新增「环境」页（`/envs`，系统组）——env 列表 + 创建 / 编辑 / 删除 + 映射编辑器（勾选 namespace、就地标注占用方，保存冲突内联展示脱敏 409 文案）；顶栏新增 **env 过滤器**（全局作用域、选中态持久化、切换即失效重取），经共享 namespace 作用域选择器把 `/zones`、`/topology` 视图按选中 env 的 namespace 集合收窄。前端经 mockup 评审门拍板（`/envs` 独立页 + 顶栏过滤止于 zones+topology）后接真：`/envs` 页显示真控制面 env 数据、顶栏 env 过滤器可用、后端 env CRUD + 冲突 409 真机验过。
+
+> 验证（v0.28.0 整体）：后端 `go test ./...` 全绿（33 包，含文件资产 / 冲突检测 / env 服务单测 + 真 MySQL 集成 + 审计覆盖守护）+ `make lint` 0 issue；前端工作区 `build` / `lint` / `test` 全绿（devmock 81 + web 215+ vitest）；agent `gradlew build`（ktlint + detekt + test）绿。四条 FR 均真机验收：文件资产 preview/diff/敏感放行/审计/compare/rescan、身份冲突**真机自动检测**（复制整服目录起第二实例，两真实 agent 心跳陈旧 404 自动重注册往复 → 冲突窗口内自动转 conflict + resolve 闭环）、env 前端接真。真机联调逮 3 个单测 / 前端测不出的 bug 已修复：FR-164 asset-read 根不一致（用 plugins 根而非父服务器根）+ BufferingPlatformAdapter 漏委托、FR-177 陈旧 boot 应返 404 而非 401（agent 只认 404 重注册、v1 中间件曾吞 404 成 401）。
+
+## 0.27.2（2026-07-14）
+
+### 变更
+- 将 Vitest 从 2.1.9 升级到 3.2.4，与 Vite 6 保持兼容；根工作区与 legacy `web/` 的测试、覆盖率、Playwright 与构建门禁均通过。
+
+### 修复
+- 修复控制面启动统计敏感配置时在 MySQL 8.0 生成 `WHERE sensitive = true`，因 `sensitive` 保留字触发 SQL 1064、阻断启动的问题；改用 GORM 方言感知列引用，并新增真 MySQL 回归覆盖空表与单条敏感配置。
+- 修复 legacy `web/` 的 Prettier 门禁：将自动生成的 `public/monaco/` 明确排除，只格式化受管源码，避免第三方 Monaco 资产进入格式化改动。
+- 修复真机 Go E2E 与第二版 agent 契约漂移：旧目录、指标与覆盖集用例改用 namespace access token 完成 pending → active → legacy online；同步 server 分配 `{results}` 响应断言，并修正 Gradle 实际运行目录与残留观测假绿。
+
+### 安全
+- 将 Go 工具链从 1.26.4 升级到 1.26.5，修复 `crypto/tls` 的 GO-2026-5856；`govulncheck` 对当前调用链报告 0 个漏洞。
+- 将 Vite 从 5.4.21 升级到 6.4.3，修复 GHSA-fx2h-pf6j-xcff；发布所用根工作区 `pnpm audit` 无已知漏洞。
+
+## 0.27.1（2026-07-14）
+
+### 新增
+- 配置中心 V2 页面交互增强（FR-161 前端侧，P7）：`/configs` 详情补**文件元数据编辑**（PATCH 描述 / JSON Schema / 敏感键路径，改敏感路径走高风险二次确认 + 原因必填）；作用域概览**五层全显**（无贡献层标识 + 五层色点），空层「添加本层配置」完成首次贡献（namespace 直开空白编辑器，bc_cluster / region / zone 结构树选实体，server 服务端搜索分页不卡 1000+）；有效预览**目标五选一**（仅 namespace 基线 / bc_cluster / region / zone 假想目标 / server 真目标）+ 逐键来源改**五层五色色块与图例** + 被删除键标执行删除层；diff 补全**三种侧描述符**任意组合（层 head / 历史版本 / 有效结果，覆盖版本间 / 层间 / 目标间对比）；编辑器**实时校验**（内容变更 500ms 去抖调 validate，语法 / schema 违例逐条 `{path,message}` 内联）+ 敏感占位符说明条（`__BEACON_MASKED__` 保持不变即沿用旧值、替换新值保存后不可再查看明文）；回退 / 撤销确认框固定提示「此操作不影响线上，生效需走变更单」。契约收敛：8 个散落响应类型迁入 `@beacon/contracts`、mock 全端点 `satisfies` 锚定、`ConfigDeletedKey` 补 `scopeName`、api client 补 PATCH 端点。演示模式 devmock 换**真语义嵌套合并引擎**（json 全语义 / yaml 缩进简版 / properties 扁平；标量覆盖 / map 深合并 / list 整替 / null 删键 + 递归叶子 provenance + 嵌套敏感路径脱敏与占位符回填）与 **JSON Schema 九关键字子集校验器**（部分校验 + required 仅 namespace 层 + null 跳过），validate 与保存端点共用同一引擎、保存按规格 §4.2 顺序执行。
+
+> 验证：devmock 74 测试（新增合并引擎 / schema 校验穷举 23 例）+ web 214 vitest（新增 /configs 增强 10 例：五层首贡 / 保存 409 冲突 / 实时校验与 schema 阻断 / diff 三描述符 / 回退撤销固定提示 / 回收站恢复与彻底删除 / 敏感脱敏与占位符回填 / 目标选择器 / 元数据高风险确认）+ 工作区 typecheck / lint / build 绿。
+
+## 0.27.0（2026-07-14）
+
+### 新增
+- 配置中心 V2 完整 Go 后端（FR-160/161，规格 [v2-config-center.md](docs/specs/v2-config-center.md)）：以**文件**为一等公民重建配置中心，作用域与第二版区服权威模型五层完全一致（namespace→bc_cluster→region→zone→server，低→高键级深合并覆盖：标量覆盖 / map 深合并 / list 整替 / null 删键；未分配 zone 的 server 只受 namespace + server 两层影响）。新表 `config_file`（可空 `deleted_at` 回收站软删）+ `config_layer_version`（文件 × 作用域**不可变追加链**，唯一索引兜底并发插入，内容 sha256）。管理面 `/admin/v2/config-files*`、`/admin/v2/config-versions*` 全 17 端点：文件 CRUD / 回收站（软删屏蔽 404、恢复重名 409、purge 原因必填并连带删链 + 审计摘要记各链最终版本号与 hash）/ **保存即定稿**七步流水线（scope 校验→1 MiB 上限→语法门→敏感回填→schema 校验→乐观并发 `basedOnVersionId`（旧基线 409）→归一化判无变化→事务内 max+1 插入 + 审计）/ 回退（基于历史版本生成新版本、过当前 schema 可被收紧阻断）/ 撤销层贡献（removal 版本）/ 编辑器实时 validate（与保存同引擎，不落库不审计）/ 有效预览（`effectiveContent` 脱敏 + `effectiveHash` 基于明文 + 逐键 provenance `{path,scopeLevel,scopeRefId,scopeName,versionNo}` + `deletedKeys` + 层摘要，假想目标支持 zone / region / bc_cluster / 仅 namespace）/ 统一 diff（`version:` / `scope:` / `effective:` 三描述符任意组合）。**schema 校验**引入 `santhosh-tekuri/jsonschema/v6`（Draft 2020-12 子集，经确认新增依赖）：保存 schema 先过元 schema 自校验，内容按**部分校验**执行（只校验出现的键、`required` 仅 namespace 基线层强制、显式 null 删键指令跳过类型校验、properties 格式按扁平键名校验 pattern/enum），违例逐条 `{path,message}` 返回并阻断落库。**敏感值 write-only 全链脱敏**：`sensitive_paths` 精确路径命中的叶子值在版本详情 / 有效预览 / diff / 审计 detail 一律 `__BEACON_MASKED__`，保存提交占位符自动回填链 head 明文（回填后 hash 与直接提交明文一致），审计 detail 只落键路径级摘要、任何位置不落明文。跨 namespace 写入 / 解析一律 `CONFIG_SCOPE_MISMATCH`。为 P9 变更单预留**进程内明文有效渲染接口**（支持 scope→versionId 版本指派覆盖参数，不经任何 HTTP 端点）。本域只产出「已定稿的配置版本」，无 agent 面端点、无下发 / 灰度链路（归 P9 变更单）；`/configs` 页面接真随 0.27.1。
+
+> 验证：go 全量单测（schema 九关键字穷举 / 敏感脱敏回填哨兵值 / 保存流水线纯函数）+ 真 MySQL 集成 6 用例 `-count=2` 全绿（五层覆盖顺序与 provenance、跨 ns 拒绝、版本链回退撤销 409、敏感全链脱敏 + 日志无明文、回收站闭环含 purge 连带删链、schema 阻断与 validate 一致性）+ `make lint` 0 issue + 审计覆盖守护测试（17 端点写路由全登记）。
+
+## 0.26.3（2026-07-14）
+
+### 新增
+- 连接明细与消息链路查询页（FR-181）：可观测组新增 `/connections` 与 `/messages` 两页，接真 `/admin/v2/connections*`、`/admin/v2/messages*`。**查询防护**对齐 spec §4.3——精确 ID（connId / messageId / correlationId）直查免时间范围，否则必须 serverId 或玩家 UUID + 时间范围（≤168h），条件不满足不发请求、查询按钮禁用并给引导空态；点「查询」才提交。**原生游标分页**（无总数，「上一页 / 下一页」+ 页序）。**冷查询**「包含归档」勾选（FR-152）。连接详情面板行数据直显 14 字段；消息详情正文行数据直显 + **逐跳链路时间线 / 关联消息**异步增强区（独立骨架与错误态、永不空白）+ 广播 fan-out 聚合计数（FR-180）+ **payload 受控查看**（复用原因必填 + 先审计后返回弹窗）。详情面板打开时自动收起次要列避免主表横向滚动；查询控件带持续可见字段标签；数据表可点击行全站支持键盘操作（tabindex + Enter / 空格 + 可见焦点态）。演示模式 devmock 超大量场景消息集中于头部后端以稳定演示游标翻页。
+
+> 验证：mockup 门两轮用户浏览器评审（首轮 2 阻断 4 建议全数修复）+ 9 条页面 vitest（防护空态 / 检索 / 详情 / 游标往返 / 键盘激活 / payload 闭环）+ 204 web 全量 + 51 devmock + typecheck / lint / build 绿 + **prod2 真机真数据验收**（真 bot 连接会话 3 条与全字段详情、FR-180 真广播消息含「目标 2 · 送达 2」聚合与真 4 跳链路、payload 受控查看取回真原文 + SHA-256 且 message.payload.view 审计落库、冷查询勾选真归档库归并返回）。
+
+## 0.26.2（2026-07-14）
+
+### 修复
+- 修复小区默认入口 v1/v2 双真源断层，真源收敛 v2 `server.is_default_entry`（[ADR-0067](docs/adr/0067-default-entry-v2-authority.md) 取代 ADR-0031 存储决策）：此前管理台唯一可写的 v2 默认入口列**无任何下发链路消费**、BC fallback 注入读的 v1 `zone_default_entry` 表**写端点从未有 UI 调用者**（表恒空、动态默认服注入从未激活）——管理台改默认入口 BC 永远看不到。现发现 / 实例视图的 `zoneDefaultEntry` 标志改由 v2 列解析（管理台勾选 / toggle 即下发 BC）；v1 只读列表 `GET /admin/v1/zones/default-entry` 改 v2 背书（形状不变，Legacy 兼容）；**v1 写端点 `PUT/DELETE /admin/v1/zones/default-entry` 与 `zone_default_entry` 表移除**（无调用者的静默失效陷阱）。管理台 /servers 行操作补「设为 / 取消默认入口」toggle（补 PRD P3「default-entry 页内可操作」缺口）。e2e 新增贯通断言（v2 置默认入口 → v1 发现打标 + v1 列表可见）。已知边界：实例 zone 解析仍走 v1 zone_assignment（v1/v2 拓扑真源分裂为独立事项，见 ADR-0067）。
+- 修复集成测试共享库残留日表污染行数敏感断言（`TestSchedDecisionQueryMySQL` 三天查询窗撞上历史固定日期种子表误报 6 行）：`testsupport.OpenTestDB` 清表阶段用跨方言 `Migrator.GetTables` 枚举、凡带 `_YYYYMMDD` 日期后缀的残留日表一律 Drop；删除各测试分散的按天点名 drop 绕行 helper。
+
+> 验证：TDD 复现测试 + go 全量单测 25 包 + 真 MySQL 集成 + rezone e2e 贯通断言（v2 置默认入口 → v1 发现打标）+ 195 vitest + **prod2 真机全链实证**（管理台 v2 写 → v1 发现下发 → BC 日志「设置 BungeeCord 默认/fallback 服为 lobby-1」，对照修复前历史「未设默认服」告警）。
+
+## 0.26.1（2026-07-14）
+
+### 新增
+- 管理台归档与冷查询前端接真（FR-152/153/158 前端，P6 收口）：**冷查询「包含归档」勾选**落地四处已有页面——审计 `/audits`（补「全部 / 近 24 小时 / 近 7 天 / 近 30 天」时间范围预设，勾选后自动收敛 30 天、选回全部时间自动退出冷查询，避免强制范围 400 死角）、服务分析调度决策（时间窗现成）、指标时序（补时间窗控件并新增「近 30 天」档——热采样保留 14 天，更早走归档）、健康快照回放。列表类（审计 / 调度决策）冷查询分页从页码切 **keyset 游标**（后端不回 total，「上一页 / 下一页」+「第 N 页（含归档）」），聚合类（时序 / 快照）无分页并表、响应形状不变；api 层把热 `{items,total}` 与冷 `{items,nextCursor}` 归一为统一 shape，抽共享游标翻页控件与游标栈。**归档任务进行中自动轮询**：归档清理块列表 / 水位与详情面板在存在非终态任务（排队 / 进行 / 取消中）时 5 秒轮询刷新进度、全部终态即停。**设置页归档策略分组**：13 个 `archive.*` 键（保留期 / 调度 / 批量 / 校验 / 冷查询跨度）在 `/settings` 运行参数下按「归档策略」分组逐行编辑热更。演示模式 devmock 同步补齐冷查询分支（强制时间范围 ≤31 天 400 + 游标切片）与 `archive.*` settings 种子。
+
+> 验证：194 vitest（新增审计 / 决策 / 时序 / 快照冷查询用例）+ 51 devmock 测试 + 全工作区 typecheck/lint/build 绿 + demo 浏览器实测（审计冷查询游标翻页往返、请求参数契约核对、时序 30 天冷查询、设置页归档分组 13 键）。
+
+## 0.26.0（2026-07-14）
+
+### 新增
+- 热冷数据归档核心、管理面 API 与冷查询后端（FR-151/152/153 后端，[ADR-0066](docs/adr/0066-hot-cold-archive-dual-connection.md)）：控制面新增归档库**第二个独立连接**（同实例独立 database `beacon_archive` 或独立 `archive.dsn`，`store.OpenArchive` 复用方言、不可达仅 WARN 降级不阻断启动），进程内**单例后台工作器**（goroutine + 每日 `archive.schedule-hour-utc` 触发、单飞 409）把到期数据分域搬迁：`copying`（主键升序分批、`OnConflict` 主键自赋值幂等、cursor 断点续跑）→ `verifying`（行数 + sha256 抽样**删除前置校验门**，`verify_passed=true` 才删）→ `deleting`（日表整表 `DropTable` / audit 单表 `DELETE ... IN`），全程**应用层搬运、禁跨库 JOIN/UNION/`INSERT...SELECT`/`DELETE LIMIT`**，两库无分布式事务靠幂等补偿收敛。7 域（metric_sample/health_snapshot/sched_decision/conn_detail/msg_trace/msg_payload 日表 + audit 单表）保留期默认 14/30/60/60/60/30/180 天。管理面 `/admin/v2/archive/*` 六端点（overview / jobs 创建[dry_run｜execute]、列表、详情、retry 断点续跑、cancel，全程写审计）。冷查询：`/audits` 与 `/admin/v2/{metrics/series,sched-decisions,health/snapshots,connections,messages}` 六端点接受 `includeArchived=true`——热 / 归档双连接同构查询 + 应用层有序归并取前 N + **主键去重保热侧**，强制时间范围 ≤ `archive.cold-query-max-days`（默认 31，违反 400）、归档不可达 503（绝不静默只返热库）、namespace 隔离不绕过；默认查询零回归只走热库。13 个 `archive.*` 策略键（保留期 7 项 + auto-enabled/schedule-hour-utc/batch-rows/batch-interval-ms/verify-sample-size/cold-query-max-days）入 `/admin/v1/settings` 白名单（保留期 ≥7 守卫、热更下一次任务与冷查询生效）。前端页面接真（归档清理块 / 冷查询「包含归档」勾选 / 设置页归档策略）随后续版本。
+
+> 验证：go 全量单测 + 真 MySQL 双库集成（归档搬迁 / sha256 校验门 / 幂等重跑收敛 / 冷查询跨库归并去重，`-count=2`，逮修一处 `OnConflict{DoNothing}` 对 `[]map`+动态表名在 MySQL 生成空 `ON DUPLICATE KEY UPDATE` 的可移植 bug）+ 真控制面 archive Go e2e（overview→dry_run→execute 真搬运 + 校验门通过后删热库 + retry/cancel 守卫 + readonly 403）+ `make lint` 全绿。
+
+### 修复
+- `/admin/v2` 全体写端点兜底审计「双记」（内部缺陷）：兜底写审计中间件 `auditWriteMiddleware` 同挂 `/admin/v1` 与 `/admin/v2` 两鉴权组，但资源词推导硬编码只剥 `/admin/v1/` 前缀——对 `/admin/v2/...` 的 RoutePattern 前缀未剥净、资源词解析为空，落出 `action=".create"`、`targetType=""` 的垃圾兜底行。而 v2 各域写端点（环境创建 / 信任、身份状态机、bc-cluster / region / zone、server 分配 / 换区 / draining / 默认入口、健康权重 PUT、消息 payload 查看）均已在 service 事务内自记专项审计，故每次写产生「专项 1 条 + 垃圾 1 条」双记、污染审计台。修复：前缀剥离与防漂移守护统一支持 `/admin/v1` 与 `/admin/v2`（改为 `adminAPIPrefixes` 前缀集合），把 18 个 v2 自审写端点登记进兜底覆盖集使其跳过；守护测试 `TestAuditCoveredRoutesMatchRegisteredWriteRoutes` 扩展枚举 v2 写路由，此后任一新增 v2 写端点未登记即测试失败，同缺陷不再复发。
+
+> 验证：go 全量单测 + 真 MySQL 集成（含 v2 自审端点端到端断言恰 1 条专项审计、无 `.create` 垃圾行）+ `make lint` 全绿。
+
+## 0.25.3（2026-07-13）
+
+### 新增
+- 跨服消息广播寻址与 topic 门面复活（FR-180，[ADR-0065](docs/adr/0065-message-broadcast-addressing.md)）：`messages/send` 新增 `targetKind=broadcast`（可选 `targetZone` 做 zone 级定向），控制面按当前在线服集合 fan-out——无 zone 即发送者 namespace 全部在线服（含自身）、有 zone 即该 zone 在线服；**可丢语义**（只投在线、离线不补、TTL 过期即弃）、跨 namespace 广播拒绝、无订阅状态表（不撞禁 MQ 红线）。**一条广播只落一行 `msg_trace`**（`target_kind=broadcast` + 可空聚合列 `target_zone`/`fanout_total`/`delivered_count`/`failed_count`/`expired_count`，防 ×N 写放大），payload 只存一份，广播行不入拓扑 edge 聚合；管理面 `/admin/v2/messages` 支持 `targetKind` 过滤并输出聚合字段（payload 照旧不出列表）。agent 侧 `Messaging.publish(topic, payload)` / `subscribe(topic, handler)` 从 no-op **复活为真实广播**（业务插件零改动，topic 落 `msgType`、本地 topic 分发表与定向 `on(type)` 隔离），新增 `publish(topic, payload, zone)` 重载做 zone 定向（接口只增不改、纯 Java 8 二进制兼容）。契约 `MessageItem` 补 `broadcast` 与聚合字段。真 Paper e2e 验证 `publish → subscribe` 闭环与单行聚合落库。修复：poll 协调器构建入站信封漏传 `broadcast` 标记致广播被误判定向、订阅者不触发（e2e 真联调逮出，单测因绕过协调器漏检，已补协调器回归单测）。
+
+> 验证：Go build/vet/test + `make lint` + 真 MySQL 集成 `-count=2`（含广播加列迁移）+ agent gradle test/ktlint/detekt + 真 Paper e2e（`broadcast_delivered` 子用例验 subscribe 收到与单行聚合 `fanout_total=1/delivered_count=1` 落库、directed/rpc/player 零回归）全绿；前端 lint/build + vitest 190（契约扩展 broadcast union 与聚合字段不破）。广播端到端由真 agent-api e2e 证（真机等价）；prod2 双端重部与 Lodestone 广播接入随其上线时连同 lobby 端 messaging 开关一并现场落地。
+
+## 0.25.2（2026-07-12）
+
+### 新增
+- `/topology` 与可观测页贯通接真（FR-156/157，`/dashboard` 流与告警补全收口 FR-154）：拓扑页消息流 / 异常链路消费真后端 `messages/stats(groupBy=edge)`，消息样本新增 **payload 受控查看弹窗**（必填原因 ≤255 → `POST /admin/v2/messages/{messageId}/payload` → 展示原文 + SHA-256，403/400 内联脱敏展示；payload 仅弹窗内存持有、不写日志不落列表）；`/dashboard` 玩家流 / 连接流卡随 `connections/stats` 就位自动接真，告警卡 `status==='open'` 过滤对真数据生效。`/commands`、`/audits`、`/alert-events` 三页 API 层与 devmock 对齐真后端形状（audits `targetType` 改服务端过滤、删无效 `actionPrefix`、告警处理空备注落 `null`）；**互跳链接消费 URL 查询参数**（`/commands`、`/audits` 经 `useSearchParams` 初始化筛选，command↔audit↔alert 互跳真正落位，audits 支持按 action 定位 `message.payload.view` 审计）；告警处理闭环（acknowledge / resolve + 备注）接真。`/service-analysis` 页内新增**调度决策下钻**（时间窗 + 过滤 + 分页 + 逐台 excluded 排除原因详情面板）与**健康快照回放**（按服分数时序 / 等级分布 / 权重 rev / 不可调度原因）两个子视图，`?view=` 直达，dashboard 调度概览入口可达。前端测试：vitest 190 例（新增 21）、Playwright 真后端套件 31 例全绿（新增 topology / observability / drilldown 三 spec，契约交叉校验 + 互跳真点击）。
+
+> 验证：根 lint / build 5/5 + vitest 190 + Playwright 真后端 31 例全绿；Go / agent 自 0.25.1 零改动、门槛沿用。prod2 真机回归：控制面与双端 agent 全量重部，真玩家机器人经代理登入登出产出 `conn_detail` 会话行（时长 / 断开分类 / 首末后端正确）并经管理面查询命中；dashboard 连接流卡真数据渲染；告警存量回填 resolved 精确、处理闭环（resolve + 备注 → 状态翻转 + 审计落库）；`/audits`、`/commands` URL 互跳过滤生效；`/topology` 放射图真集群渲染、消息剖析真端点空态；服务分析下钻健康快照回放 120 个真实点、`?view=` 直达。
+
+## 0.25.1（2026-07-12）
+
+### 新增
+- 连接与消息管理面查询（FR-145/149 查询侧）：`/admin/v2` 新增 `connections`（列表 / 单连接详情 / 时间桶聚合 stats）与 `messages`（列表**永不含 payload** / 详情含 `hops` 链路与 `correlated` 关联摘要 / stats 异常链路聚合 `groupBy=edge|type` 供 `/topology`）七端点，响应键逐字对齐 `packages/contracts`。查询防护落地（spec §4.3）：无精确 ID（connId / messageId / correlationId 直查免时间范围）必须带 serverId / playerUuid + 显式时间范围（≤168h / 8 张日表），违反回 400 `query_guard_violation`；游标分页（默认 50 / 上限 200）+ 逐日表倒序短路，禁全量扫描。
+- 消息 payload 受控查看审计门（FR-150）：`POST /admin/v2/messages/{messageId}/payload` 原因必填（≤255 字）、readonly 角色 403（full 即具备 `message.payload.view`，P9 FR-168 统一收编风险分级）、**先写审计后返回内容**（同请求内审计写入失败则整个请求失败）；审计条目含原因原文 / 操作者 / messageId，**绝不含 payload 内容**；列表与详情响应体经契约测试断言不出现 payload 字段。
+- 告警事件处理工作流与健康告警因子接真（FR-157，[ADR-0064](docs/adr/0064-alert-event-handling-workflow.md)）：`alert_event` 表加 `status`（open / acknowledged / resolved，VARCHAR + 应用层校验）/ `handled_by` / `handled_at` / `handle_note` 列，存量历史行幂等回填 `resolved`；新增 `POST /admin/v1/alert-events/{id}/handle`（readonly 403、写审计 `alert-event.acknowledge|resolve`），列表响应补齐 status 族字段、消除前端 mock 契约超集漂移。健康分 `alert` 因子（`100 − activeAlerts × alertPenalty`）的 `activeAlerts` 由恒 0 接真为「当前 `status=open` 计数」——健康计算轮开始时一条分组查询批量取全量、逐实例零查库（fail-static：取数失败按 0 计不阻断计算轮）。
+
+> 验证：go 全量单测 + 全量真 MySQL 集成 + `make lint` + 连接/消息 wire e2e 双例（真 Paper / Waterfall + 真双端 agent）在集成态全绿；agent 与前端自 0.25.0 零改动、门槛结果沿用。版本验收报告全项通过（查询防护 400 边界 / payload 不出列表 / 先审计后返回 / activeAlerts 每轮批量取一次均有测试锁死）。页面接真与 prod2 真机验收随后续版本收口。
+
+## 0.25.0（2026-07-12）
+
+### 新增
+- 跨服连接明细与消息追踪数据面（FR-145/149/150 数据侧，[ADR-0063](docs/adr/0063-cross-server-message-control-plane-relay.md) / [ADR-0064](docs/adr/0064-alert-event-handling-workflow.md)）：控制面新增 `conn_detail` / `msg_trace` / `msg_payload` 三张 UTC 日期后缀日表（复用 `EnsureDailyTable` 按需建表、零方言、禁 `PARTITION`，跨日查询逐表游标合并，主键 UUIDv7 内嵌时间戳定位日表），经 `AsyncDailyWriter` 异步批量入库（请求 goroutine 不碰 DB、队列满 429）。proxy 侧 agent 采集每玩家连接 open / close 会话行（有界内存缓冲 + 5s 或 200 条批量上报、fail-static 本地缓冲补报、`bootId` 孤儿会话对账），控制面据连接明细在内存维护 `player_uuid → 所在服` 名册供按玩家寻址解析。跨服消息由 Redis 数据面直连改为**控制面 HTTP 单跳中转**（ADR-0063 取代 Legacy ADR-0016）：agent 面新增 `connections/batch`、`messages/send`、`messages/poll`（长轮询无消息 204）、`messages/ack` 四端点；消息状态机（accepted → dispatched → delivered / failed / expired，TTL 30s、重投 2 次、每服投递队列 1000）在控制面内存演进、终态时同一事务一次性写 `msg_trace` + `msg_payload`；agent 侧 `Message` 信封扩展 `messageId`(UUIDv7) / `hops`、`MessageBus` 底层换 HTTP 传输并保留门面向后兼容（topic 发布订阅按 v2 边界下线为 no-op）。payload 默认不出列表、上限 64KB 超限拒发。查询端点与前端接真随后续版本补齐。
+
+> 验证：go 全量单测 + 全量真 MySQL 集成 + Go e2e（真 Paper / Waterfall + 真双端 agent jar + 真控制面 wire 联调，连接采集落库与消息 send/RPC/失败链路全绿）+ agent gradle test / ktlint / detekt 全绿。因本片纯数据面、无用户可见面且无玩家 / 业务插件触发新路径，功能由真 agent e2e 证；prod2 真机重部待后续切片重部点补验回归。
+
+## 0.24.4（2026-07-12）
+
+### 新增
+- `/dashboard` 与 `/service-analysis` 接真（FR-154 本期部分）：运维总览的健康与调度概览、服务分析的指标时序与数据对比从 mock 切到真实后端——集群健康总览（分角色实例数 / 在线合计 / 平均 TPS·CPU / 健康等级分布 / 可调度计数）、服务器状态墙、调度概览（决策总数 / 成功率 / 降级占比）消费 `/admin/v2/metrics/summary`、`/health`、`/sched-decisions/summary`；服务分析消费 `/admin/v2/metrics/series`（步长桶聚合时序）与 `/health/{serverId}`（因子对比）。玩家流 / 连接流卡在其端点（连接明细域）就位前显示中性占位「连接流数据暂未开放」，不再显示误导性错误文案；告警卡走既有 `/admin/v1/alert-events`。`flow-overview` 解除对 `@beacon/devmock` 的生产耦合（时间基准改本地时钟，生产代码只依赖 `@beacon/contracts`）；契约包补 `HealthSnapshotsResponse` 包装类型并给 devmock 快照 handler 加 satisfies 锚定。新增真后端 Playwright 用例（dashboard 各卡可达与契约交叉校验、service-analysis 可达）。真机浏览器验收：真控制面 + 真双端 agent 下五卡全真数据渲染。
+
+### 修复
+- Agent 进程 CPU 采样在现代 JVM 上恒不可用（-1）：`readProcessCpuLoad` 原按实现类反射调 `getProcessCpuLoad`——JDK 9+ 模块化下实现类所在内部包未导出，反射被模块封装拦截（`InaccessibleObjectException`），导致 GraalVM 17 / JDK 21 等一切现代 JVM 上 CPU 采样恒回退哨兵 -1（真机与 e2e 观测到的 `cpu_pct_avg=-1` 根因即此，非宿主性能计数器问题）。改经已导出的扩展接口 `com.sun.management.OperatingSystemMXBean` 查方法调用，无需 `setAccessible`；接口缺失的异构 JVM 仍回退哨兵。修复后真机双端 CPU 落真值并参与健康 cpu 因子计算。
+
+## 0.24.3（2026-07-12）
+
+### 新增
+- 本机 agent-api 调度接口与 fail-static 降级（FR-148）：agent-core 新增 `BeaconScheduling` 门面（业务插件经 `BeaconAgent.scheduling()` 获取，纯 Java 8 只读契约、仅本 JVM，直连 Beacon HTTP 不作为契约）：`acquireCandidate(zone[, purpose])` 异步取一台可调度候选，`candidatesInZone` / `healthOf` / `selfHealth` / `dataSource` 读本地缓存快照（O(1)、可主线程调用）。正常路径经控制面在线决策（`POST /beacon/v2/agent/schedule/decide`，读超时 800ms）；`SchedulingView` 每 10s 拉候选（`GET /schedule/candidates`）刷新 `@Volatile` 快照并原子落盘 `candidates-snapshot.json`（重启恢复）。**fail-static**：控制面不可用时（网络 / 5xx / 超时）自动用本地快照在目标 zone 内 `highest_score` 本地决策（`source=LOCAL_FALLBACK`、本地 traceId），玩家链路不等待、不阻断、**绝不抛因控制面不可达的异常**；降级期决策记入内存补报队列（容量 512、满丢最旧），控制面恢复后经 `POST /schedule/report-local` 批量补报入库（`source=local_fallback`、按 localTraceId 幂等）；快照超龄 >10 分钟仍继续使用但数据源标 `STALE`（fail-static 优先可用性）。指标上报 202 响应内 `self` 健康字段解析后供 `selfHealth()` 返回（约 5s 新鲜度）。HTTP / JSON 实现只在适配器（延续 ADR-0005，core 依赖 `HttpTransport` / `JsonCodec` 接口）；门面对业务插件只读、无改配置 / 改 zone 旁路（架构不变量 §1 / §5）。
+
+## 0.24.2（2026-07-12）
+
+### 新增
+- 健康值模型（FR-147）：控制面新增健康计算轮，每 5s 对全部已确认实例重算——锁外读 DB 事实（v2 `server` 的 zone 归属 / `draining` / kind、`agent_identity.status`）+ 读每实例 60s 指标内存窗口（cpu / tps 用 avg、容量 / 连接用 max 取保守值、延迟按 kind 取上报 RTT 或后端探测 RTT），把 TPS / CPU / 容量 / 连接 / 延迟 / 告警六因子各归一到 0~100 后加权求综合分（**仅对适用因子求和、权重自动重归一**：proxy 无 tps / capacity、backend 无 conn、RTT 缺失剔除 latency，不因角色差异失真），输出 `score`(0-100) / `level`(healthy / degraded / unhealthy) / `schedulable` / `reasons` / `factors` 并整批原子替换内存健康视图（独立锁、单一真源，调度决策与管理面共读）；窗口无数据沿用上一轮结果 ≤30s、超 30s 判 `lost`。告警因子 P4 期恒 0（输入源随 P5 告警事件域接入）。`schedulable` 七类原因（`kind_not_schedulable` / `pending_confirm` / `unassigned` / `disabled` / `draining` / `lost` / `unhealthy`）可叠加，**degraded 仍可调度**（仅排序劣势）。每 30s 把全量视图（含 factors 明细与 weightsRev）经异步写入通道批量落 `health_snapshot_YYYYMMDD` 日表供回放。
+- 健康权重版本化配置与热更（FR-147）：新增 `health_weights_rev` 表与专用配置服务（`RWMutex` 缓存整块 + 指针原子替换），`GET|PUT /admin/v2/settings/health-weights`——PUT 校验（权重非负、good / bad 边界有序、`0<degradedMin<healthyMin≤100`，非法回 `400 invalid_health_weights`）后**事务内**写设置镜像 + 插入新 rev + 写审计，提交后内存原子替换、下一轮计算生效；快照与决策记录带 `weightsRev`，配合历史 rev 可精确回放解释任一历史分数。权重对象独立存储、不进运维设置标量白名单。
+- 健康与指标管理查询端点（FR-147）：`GET /admin/v2/health`（内存实时、分页 + namespace / zone / level / schedulable 筛选）、`/health/{serverId}`（含 factors 因子分解与 weightsRev）、`/health/snapshots`（健康快照回放、查询侧不隐式建表）、`/metrics/summary`（集群聚合概览、内存实时）、`/metrics/series`（单 / 多服时序，serverId 必填**禁全量扫**、step 服务端桶聚合、跨日自动并表）。指标上报响应 `self` 字段从占位 `null` 改为回填真实健康视图（score / level / schedulable / reasons），供本机 agent-api `selfHealth` 消费（P4c）。
+- 调度决策记录（FR-146）：控制面新增调度决策服务，在健康视图内存真源上**纯内存决策（全程无 DB 读、目标 <5ms）**——按请求方 namespace + zone 名圈定候选，逐台按 `schedulable` 判定记入 `excluded[{serverId, reason}]`，剩余按 `highest_score` 策略择优（分数最高者胜、同分优先容量占用率低者、再同随机），无候选 `no_candidate` / zone 不存在 `zone_not_found`。每次决策生成唯一 `traceId`，把请求方 / zone / 策略 / 候选数 / 逐台排除原因 / 最终选择 / 失败原因 / 耗时经异步写入通道落 `sched_decision_YYYYMMDD` 日表（`trace_id` 唯一键幂等、跨日拆表），请求 goroutine 不落库。新增 agent 面 `GET /schedule/candidates`（候选快照）、`POST /schedule/decide`（在线决策）、`POST /schedule/report-local`（降级期本地决策批量补报，≤100 条 / 批、按 `localTraceId` 幂等、`source=local_fallback`），均挂 token↔namespace + identity 鉴权（未确认 `403`）。新增管理面 `GET /admin/v2/sched-decisions`（跨日并表分页、时间范围必填）、`/{traceId}`（详情可解释「为什么选 / 不选某台」）、`/summary`（总数 / 成功率 / 失败原因 Top / 降级补报占比），决策可追溯排查。健康快照与调度决策日表复用 P4a 的异步写入通道（泛化为多表路由，共享背压与批量语义）。
+
+### 修复
+- 采样启动期指标桶样本数超额（FR-144）：修复 agent 采样协调器 `start()` 非幂等的缺陷——启动爬坡期多个触发点（心跳 / 长轮询 404 重注册 / 断连恢复）各补打一帧立即样本，叠加旧采样代循环退出前的重叠窗口，导致 >5 个 1s 样本挤进同一个 5s 桶（规格标称 1~5）。改 `start()` 幂等（仅「未激活→激活」转变时补立即帧，重复调用不补帧、不重启现有循环），并在批内聚合端对每桶封顶 ≤5 条（取最新 5 条计算 avg / max / min）作防御性兜底；端到端桶样本数断言随之收紧回 `1..5`。
+
+## 0.24.1（2026-07-11）
+
+### 新增
+- 指标采样入库·控制面接收端（FR-144 后端半边）：新增 agent 面 `POST /beacon/v2/agent/metrics/report`，接收双端 agent 每 5s 批量上报的 5s 桶聚合指标（TPS / CPU / 内存 / 在线 / 连接摘要）。端点挂 token↔namespace + identity 鉴权中间件（未人工确认的身份 `403 agent_not_confirmed`、token / 身份非法 `401`），把权威 namespace / serverId / kind 注入上下文、绝不信任请求体自报身份。接收路径**请求 goroutine 不碰 DB**——只做时钟偏移校验（>5min 回 `400 clock_skew_too_large`）+ 更新每实例 60s 内存窗口（独立锁、12 批环形、供后续健康计算与 dashboard 实时读）+ 非阻塞入队即回 `202 {accepted, deduplicated, self}`；有界队列满回 `429 metrics_ingest_busy` 背压 agent（数据不丢在 agent 侧）。后台写入协程池攒批（200 行 / 500ms）事务批插到当日 `metric_sample_YYYYMMDD` 日表——全仓首个日表基建：`store.EnsureDailyTable` 经 GORM Migrator 按需建表 + 进程内表名缓存、UTC 日期后缀、零方言可移植；唯一键 `(server_id, bucket_start_ms)` 幂等去重（重放 / 补报安全，回报 `deduplicated`）、跨日批自动拆表；写入多次重试仍失败则丢弃并累计计数暴露到 `/system` 自观测（错误不静默，ADR-0057）。`self`（自身健康）字段暂占位 `null`——健康值模型（FR-147）属 P4b。调度候选 / 决策 / 补报（FR-146/148）、管理面查询与页面接真尚待实现。
+- Agent 侧指标采样与批量上报（FR-144，agent 半边）：双端 agent 以 1s 粒度采样基础指标（backend：TPS / CPU / 内存 / 在线 / 容量；proxy：连接数 / 后端可达性·RTT / CPU / 内存）入有界环形缓冲（600 条 / 10 分钟，写满覆盖最旧并计丢弃数），每 5s 批内按 5s 桶聚合（avg / max / min）后批量上报 `POST /beacon/v2/agent/metrics/report`（信封与 samples 元素键全 camelCase，与控制面接收结构体一致）。断连（网络错 / 5xx / 429）保留缓冲、固定 5s 节奏重试，恢复后一次批补报积压的多个已闭合桶、样本零丢失，`droppedSinceLast` 随首个成功批上报使「丢了多少」可见。**核心改造**：采样与上报全程不在 MC 主线程——bukkit 子服改由主线程每 tick 零成本原子埋点（tick 计数 + 在线 volatile），采样线程只读原子值推算 TPS / 在线，替换旧「async 线程反射调线程不安全的 `Bukkit.getOnlinePlayers()` / `getTPS()`」；proxy 后端可达性 TCP 探测慢刷缓存、1s 采样只读缓存不被阻塞。控制面接收 / 入库端与 `/dashboard`·`/service-analysis` 接真为 FR-144 控制面半边，另行交付。
+
+## 0.24.0（2026-07-11）
+
+### 新增
+- 管理台登录鉴权（FR-179）：第二版管理台 `apps/web` 建立完整登录鉴权闭环，作为 P3-P10 全站接真的前置。登录页 `/login` 接真——真实 `POST /admin/v1/auth/login`，成功把令牌存 localStorage（持久，刷新恢复登录态）、回跳来访页或首页，失败内联展示后端脱敏文案（ADR-0057）；登录页视觉沿用阶段 A 拍板 mockup，仅换提交行为。所有 `/admin/*` 请求统一注入 `Authorization: Bearer <令牌>`（四处重复的请求封装收敛为集群域单一实现，鉴权注入与 401 行为一致）；任意 `/admin/*` 遇 `401` 即清令牌 + 跳 `/login`（后端无 refresh，不自动续期）。受保护路由加路由守卫——无令牌跳登录并记住来访路径、登录后回跳；**demo 模式（FR-159）免登录**，守卫放行、演示门控不回归。页眉操作人区新增登出入口——`POST /admin/v1/auth/logout`（记审计）+ 清本地令牌 → `/login`。单 admin，不含 API-key 登录 / RBAC / 记住我 / 2FA。
+
+### 变更
+- 真后端 Playwright E2E 套件（`smoke` / `apikeys-crud` / `cluster-fr155`）迁移到内嵌 `apps/web` 形状：登录改走真实 `/login`（`loginRealAdmin`），页面对象与 heading 对齐 `apps/web` i18n；真后端另立 `web/e2e/real/pages.ts`，与假后端共享 `shared/pages.ts` 隔离，收口 FR-155 切内嵌前端时遗留的真后端套件错配。
+
+## 0.23.0（2026-07-11）
+
+### 新增
+- 集群管理页接真数据面（FR-155）：`/servers`、`/zones`、`/namespaces` 三页从演示 mock 接入真实 v2 控制面 API——注册确认 / 身份绑定 / 区服分配 / namespace 信任 / zone-tree 结构树 / 换区工单 / 排空 / 默认入口。后端补齐缺口端点：`GET /admin/v2/zone-tree`（BC 集群 → 大区 → 小区 + 未分配计数，一次拉四表拼树）、`GET /admin/v2/agent-identities/{identityId}`（单条身份详情附换区预填）、`POST /admin/v2/server-rezones`（换区工单：已分配服解绑清归属 + 写预填 + 身份重入 pending，单事务原子，**禁后台直接改派**）、`PUT /admin/v2/servers/{serverId}/draining`、`PUT /admin/v2/servers/{id}/default-entry`（未分配 → 409）；`GET /admin/v2/servers` 改返富化视图（camelCase + 归属名 / 默认入口 / 在线摘要），`POST /admin/v2/server-assignments` 响应改 `{results}`，`GET /admin/v2/namespaces`、`GET /admin/v2/namespace-trusts` 补计数 / 双方名摘要，`approve` 放开换区重确认按预填 / 指定目标落区或暂不分配。写操作单事务原子 + 审计。经真 MySQL 集成、Go `-tags=e2e` 换区→draining 链路、Playwright 真后端三页链路三重验证。
+  > 接真前置：`apps/web` 管理台登录 / 鉴权（`Authorization: Bearer` 注入）尚未建（单立 FR-179），控制面 `adminAuthMiddleware` 要求令牌——本版交付**接真数据面**，浏览器真机直用待 FR-179 落地。
+
+### 变更
+- 前端响应契约类型独立成 `packages/contracts`（`@beacon/contracts`，纯 type-only、无运行时依赖）：`apps/web` 生产代码不再在类型层依赖演示 mock 包 `@beacon/devmock`，`import type` 一律改指向 contracts；devmock 反向依赖 contracts，其 handler 仍以 `satisfies XxxResponse` 锚定契约防漂移。纯类型搬迁、零行为变更，演示 mock 构建隔离不变（ADR-0062）。
+
+### 修复
+- 修复 `SheetOverlay` 未用 `forwardRef` 导致的 ref 警告。
+
+## 0.22.0（2026-07-10）
+
+### 新增
+- P2 全量 mock 管理台（FR-172）：`apps/web` 第二版管理台按 `docs/UX.md` §2 落地全部 17 个页面的可点击、可演示 mock——运维总览、集群（服务器 / 区服分配 / 拓扑）、可观测（服务分析 / 命令观测 / 审计 / 告警事件）、交付（文件资产 / 配置中心 / 变更单 / 交付历史）、系统（运维设置 / 控制面健康 / 版本与更新 / 密钥 / namespace）。页面数据形状只依赖 `docs/API.md` 第二版契约草案，不接真后端；写操作（注册确认 / 区服分配 / 变更单灰度推进 / 整单回滚 / 密钥轮换 / 信任收回等）走 mock 内存闭环，操作后状态即时可见。
+- P2 「交付」大分类 IA（FR-170）：侧栏在集群、可观测、系统之外新增「交付」大域，挂载文件资产、配置中心、变更单、交付历史四页，明确「看 / 改 / 发 / 溯」职责边界；全站导航按 UX.md §2 顶层总览 + 四大域重构。
+- P2 演示模式（FR-159）：前端产物内置 `@beacon/devmock` 全域 MSW handlers 与四态数据集（空态 / 常规 / 超大量 1000+ 子服 / 异常），页眉常驻「演示模式」徽标与场景切换器，切换即全量刷新页面数据，无需后端即可演示与评审全站运维链路。
+- 管理台设计语言（FR-172 评审门迭代）：`@beacon/ui` 固化明亮现代 SaaS 视觉（靛蓝品牌、四级墨阶、双层软阴影、状态药丸、高密度表格），全站 17 页统一交互定稿模式——详情一律非模态侧面板（不遮罩 / 不模糊 / 不顶动布局）、列表主从 + 吸顶筛选 + 行内前置关键信息 + 列表自区滚与吸底分页；模态仅保留创建与高风险确认。
+- 交付引导（FR-172 评审门迭代）：变更单新增「引导创建」五步向导（选交付内容 → 选黄金模板源扫差异 → 挂配置变更 → 交付范围与批次编排 → 影响预览与提交），配置与范围支持搜索、多选、Shift 连选、全选反选，批次编排窗口支持推荐批次与自定义并校验总和；文件差异与配置变更均可展开预览内容（新增 / 修改行级 diff / 删除）。变更单详情与交付历史复用同一套变更内容预览与编排预览控件，覆盖影响范围、灰度批次手动推进、观察窗、进度时间线（可视化 / 详细双模式）与整单回滚追溯。
+- 集群拓扑可视化（FR-172 评审门迭代）：`/topology` 采用放射网络拓扑画法（代理节点放射连小区聚合节点、大区淡色分区、节点健康着色、异常链路红色加粗并直标失败率、数据流动画），画布支持滚轮缩放与拖拽平移、「适应视图」为 100% 基准；超大量场景按小区 → 大区两级聚合并明示截断，实测 1200 台规模流畅无卡死。
+
+### 修复
+- 修复内容区超出可视宽度时右侧内容被裁切、无法查看的问题：改为整体等比缩小到刚好放下，100% 浏览器缩放下只保留纵向滚动。
+- 修复 Tailwind 内容扫描未覆盖 `packages/ui/src`，导致组件内独有工具类（复合变体 / 任意值阴影 / 模态遮罩底色等）静默不生成、质感失真的问题。
+- 修复模态框内滚动容器裁切卡片左侧阴影的问题（`overflow-y-auto` 会连带裁切横向溢出）。
+- 修复演示模式下请求未被 mock 拦截时落到 SPA 返回 HTML、被当作 JSON 解析而崩溃的问题。
+- 修复演示 mock 未与生产构建隔离的问题：门控收敛到 `isDemoMode()`（dev 与 `vite build --mode demo` 开启），常规发布构建不注册 Service Worker、不产出 `mockServiceWorker.js`、mock handlers 与 msw 运行时不进入产物，避免拦截真实 `/admin/*` 使控制面后端不可达。
+- 界面文案 `namespace` 统一改为「命名空间」；全站残余原生 `<select>` 替换为组件库 `Select`。
+
+## 0.21.0（2026-07-07）
+
+### 新增
+- P1 v2 控制面基础闭环：新增 agent `identity.yml` 首启生成 / 损坏 fail-closed、v2 注册 pending→approve→active 确认流、namespace token 哈希与 trust 快照、区服权威表（namespace_trust/env/bc_cluster/region/zone/server/agent_identity）迁移、admin v2 身份迁移与未分配 server 首次分配端点；agent v2 active 后继续衔接 legacy 数据面注册，保持既有配置 / 心跳链路可用。
+- P1 v2 真机 Bungee smoke/E2E：新增 `go test -tags=e2e ./apps/server/test/e2e/p1v2`，在真实 BungeeCord 目录验证 `identity.yml` 首启、pending→approve→active、legacy v1 online 衔接、approve 后未分配 server、首次分配到 BC 集群、重启身份持久与损坏身份 fail-closed。
+- P1 monorepo 根级前端工作区：新增根级 `pnpm-workspace.yaml`、`turbo.json` 与根 `package.json`，并把 `@beacon/ui` 与 UI 控件博物馆提升到 `packages/ui`、`apps/ui-wiki`；新增根级 `scripts/check-ui-wiki-coverage.mjs`，校验 ui-wiki 覆盖全部 UI 包导出。
+- P1 第二版前端基建包：新增 `packages/devmock`、`packages/eslint-config`、`packages/typescript-config`，`packages/devmock` 提供 MSW handlers 与浏览器 worker 启动入口，`apps/web` 使用 TanStack Query 承载服务器状态、Zustand 承载客户端 shell 状态，根级 `pnpm run lint` 通过 Turborepo 覆盖第二版前端工作区的 strict typed ESLint。
+- P1 Go 静态检查档位提升：`.golangci.yml` 切到 `default: all` 基线，集中声明 Legacy / 主观格式 / 不适用栈的禁用清单，`golangci-lint run` 作为 CI 与本地 Go linter 真源。
+- P1 monorepo `apps/agent` 迁移：把 Kotlin/TabooLib agent 从仓库根 `agent/` 迁入 `apps/agent/`，同步 Gradle 版本读取、Makefile、CI、E2E harness 与运维文档中的路径。
+- P1 monorepo `apps/server` 迁移：把 Go 控制面入口与 `internal/` 分层迁入 `apps/server/`，同步控制面构建入口、版本注入路径、Dockerfile、Release/E2E workflow 与 Go E2E 包路径。
+
+### 修复
+- 修复未装配 v2 控制面处理器时错误 agent token 触发空指针 panic 的问题，legacy agent 数据面仍按预期返回 401。
+- 修复可逆操作账目在 MySQL 8 严格模式下把未撤回时间写成零值时间的问题，未撤回记录改以 NULL 表示。
+- 修复撤回旧发布与同对象新发布并发竞争时 MySQL deadlock 原样透出的问题，事务回滚后按账目最终状态返回已覆盖结果。
+- 修复 Windows 本地 `make package` 把 `mkdir -p` 误当目录名的问题，打包目录创建、复制、清理与 Gradle 调用改为平台分支命令。
+
+## 0.20.0（2026-07-07）
+
+> 第二版起点：本版为纯文档发布——第二版规格基线全部冻结，无运行时代码变更。此后按 [docs/ROADMAP.md](docs/ROADMAP.md) 版本线推进：工程化基建（0.21.x）→ 全量 mock 管理台（0.22.x）→ 后端按域接真（0.23.x-0.29.x）→ RC（0.30.x）→ 1.0.0。
+
+### 新增
+- 第二版 PRD 基线（[docs/PRD.md](docs/PRD.md)）：集群调度中间件控制面定位、核心约束（namespace 强隔离 / 首次接入人工确认 / 业务插件只走本机 agent-api / payload 查看填原因）、FR-138~FR-176 共 35 条功能需求与阶段验收表。
+- 第二版路线图真源（[docs/ROADMAP.md](docs/ROADMAP.md)）：0.20.x → 1.0.0 版本线、阶段目标与退出条件、规格清单。
+- 前端交互真源（[docs/UX.md](docs/UX.md)）与 mockup 评审门规则（`.claude/rules/ux-spec.md`）：导航四大域信息架构、页面唯一职责、全局交互契约；新页面 / 结构性大改先过 mock 评审拍板。
+- 九份第二版域规格（`docs/specs/v2-*.md`）：agent 身份、namespace 隔离、区服权威（含全仓建表约定）、采样健康调度、连接消息存储、热冷归档、配置中心、文件资产、交付编排（变更单统一灰度生效）。
+- 第二版 REST 契约草案（[docs/API.md](docs/API.md)）：跨域通用约定（权威）+ 按域 126 端点索引 + 契约治理规则（草案冻结、破坏性变更走新 ADR）。
+- ADR-0060（monorepo 工作区布局与第二版前端栈：pnpm + Turborepo + apps / packages，Vite / React Router / TanStack Query / Zustand / react-i18next / MSW）、ADR-0061（静态检查最严档三线：TS strictTypeChecked / Go golangci 全量启用档 / Kotlin detekt 全规则）。
+
+### 变更
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 重写为第二版架构真源：控制面 / 数据面硬边界、monorepo 目标布局、领域模型、热冷双库与日期分表、通信三分面、mock 先行前端架构、阶段映射。
+- 原 REST 契约整体归入 [docs/API.md](docs/API.md) 的 Legacy 维护态章节（正文不动，随各域接真被 v2 契约取代）。
+- Legacy（v0.1.0 - v0.19.x）冻结策略落文档：旧功能需求、旧页面原型不再驱动开发，需要的能力在第二版重新立项、重写规格、重新验收。
+
+## 0.19.0（2026-07-07）
+
+> Legacy（第一版）收尾版：本版为 v0.1.0 起第一版探索期的最后一个功能版本；自下一版（0.20.x）起进入第二版路线（见 [docs/ROADMAP.md](docs/ROADMAP.md)），第一版功能进入维护态冻结。
+
+### 新增
+- 管理台中间件高密度运维视觉重构（FR-137）：按已确认的简洁中间件后台方向收口 `/dashboard`、`/file-sync`、`/servers`、`/zones`、`/topology` 五页。可观测看板改为 KPI 矩阵 + 集群健康矩阵 / 实时任务 / 最近异常 + 服务器明细表；文件同步中心改为 5 步向导（源与目录 → 目标范围 → 灰度策略 → 安全检查 → 预览与启动），最后一步先通过 `create + plan` 展示源清单、目标集合、批次、熔断参数与风险摘要，确认后才允许启动；任务详情响应同步补 `sourceReady` / `sourceFileCount` / `sourceTotalBytes` / `batches`，用于刷新后恢复规划预览与批次进度。服务器页固定为摘要 / 筛选 / 密表 + 右侧明细，行点击只切详情；服务器详情改为宽模态框，补「概览 / 健康 / 变更历史 / agent 日志 / 文件浏览 / 命令记录」六区块，文件浏览和命令记录复用既有真实端点；排空 / 取消排空 / 取消下线 / 强制重同步改为二次确认后提交，重同步成功提示命令 ID，并补 resync + browse + commands 的服务器页后端集成回归用例。区分配改为指标卡 + 筛选工具条 + 区树 / 容量矩阵 / 风险详情 / 最近指派记录；集群拓扑改为指标卡 + 图层列表 / 分层拓扑画布 / 节点诊断 / 异常链路表。全程不新增依赖；本轮不包含目标端 dry-run 扫描协议或文件级差异分页接口。
+- 管理台通用 UI 组件包与控件博物馆（FR-134~FR-136，见 [ADR-0059](docs/adr/0059-internal-ui-package-and-component-museum.md)）：新增内部包 `web/packages/ui`，承载 shadcn 基元与通用展示组件；主后台 Web 改为通过 `@beacon/ui` 消费，`Layout` / `SystemHeader` / `CommandPalette` / `EnvSelector` / `useMessage` 等业务壳组件继续留在主应用。新增独立开发期 wiki 子项目 `web/apps/ui-wiki`，展示 UI 包公开导出的组件 / variants / sizes / states，不注册到主后台生产路由；新增 `scripts/check-ui-wiki-coverage.mjs` 校验 wiki 覆盖全部 UI 包导出，并补 `web/README.md` 说明导入规范、wiki 命令与新增控件展示约束。
+- 顶栏醒目标记演示模式（mock 假后端）（`web/src/components/SystemHeader.tsx`）：演示模式（登录页「演示模式」入口或构建期 `VITE_USE_MOCK`）下，所有数据是浏览器内存里的假数据、非真实控制面，但此前界面与真后端几乎无差别，极易把假数据误当真后端排查（例：以为「配置中心拉不到数据」是真后端坏了，实则在 mock 演示的空环境）。修复体验：`isMockEnabled()` 为真时在顶栏「已连接」药丸后显示橙色「演示模式」徽章（脉冲点 + 悬浮说明「数据为假、刷新即重置」），一眼区分假数据 / 真后端。双面板工作台此前所有写操作（新建 / 反向抓取 / 下发发布 / 删除）均为纯前端 mock toast（FR-114 原型留桩），仅读链路（受管树 `listFiles` / 服务器树 `browse` / 同步队列 / 操作日志）接真后端。本批把写操作全部接到既有真实端点——① 新建配置 → `createFile`（覆盖层由当前 scope chip 推导，path 相对 plugins/ 根、自动去 `plugins/` 前缀防树内双层）；② 反向抓取 → `createScanTask` 建受管任务 + 审核浮层轮询真扫描清单 + `submitReverseFetchTask` 提交选定 + 冲突逐文件 `conflictDiff`/`resolveConflicts`（复用 FR-58~60）；③ 发布选中 → `getFile`+`publishFile` 触发区内在线服秒级热更（复用 FR-2）；④ 删除 → `deleteFile`；写成功统一失效 `wb-managed-tree`/`wb-sync-queue` 重拉真相，mutation `onError` 脱敏 toast（复用 FR-122）。同步队列行名由 `resultDetail` 原始 JSON 改类型友好中文标签（反向抓取 / 浏览文件 / 热更下发 @ 实例）。导入到组留 P2 待接。新增 `WbCreateFileDialog`、改 `IngestReviewOverlay`（轮询扫描 + 新 onConfirm 提交契约 + 扫描/提交态）、`useWorkbenchData`（队列友好标签 + server 选项带 group + 扫描轮询 refetchInterval），补 / 改 vitest。真机：新建端到端过、反抓 `createScanTask` → agent 真扫 28 文件回传 pending-review 过（ingest / 热更后半程需稳定 agent）。
 - 页眉视觉调整（FR-126，增强 FR-121/123 品牌区，纯前端，mockup 经用户确认）：① 品牌区 logo 放大（`size-5`→`size-7`）+「Beacon」名放大（`text-base`）置于 logo 右；② 控制面版本徽章从品牌区移到顶栏状态条「已连接」连接药丸之后（仍可点进版本页 + 有更新红点），品牌区不再含版本；版本徽章随状态条常驻（不再随侧栏折叠隐藏）。
 - 网络代理连通测试（FR-124）：「版本与更新 → 高级设置 → 网络代理」加「测试连通」按钮——后端 `GET /admin/v1/system/proxy-test` 用已保存的 `update.proxy-url` 构造出站 client 发一个轻量 GitHub release 请求，连通且 2xx → `{ok:true}`、失败 → `{ok:false, message:<脱敏原因>}`（不泄露代理账密）；前端行内 toast 回显「可连通 / 测试失败：原因」（有未保存改动时禁用、提示先保存——测的是已保存值）。让运维配代理后即时验证能否连通 GitHub，而非等更新时才发现卡住。注：在线更新仅用显式 `update.proxy-url`、**不读系统 `*_PROXY` 环境变量**（[ADR-0047](docs/adr/0047-update-outbound-proxy.md) 既定决策）——proxy 提示文案已补此说明。
 - 在线更新下载取消（FR-125，依赖 fix-b 可取消 context）：更新下载进行中加「停止」按钮——后端 `POST /admin/v1/system/update/cancel` 取消异步 apply 的可取消 context（中断下载）；核心把 `ctx.Canceled` 的下载失败按**已取消**处理（进度回 `idle` 非 `failed`、记 `system.update-cancel` 审计、清临时文件），留干净可重试态；前端 `VersionUpdatePage` 下载进行中显「停止」按钮，点击 `cancelUpdate` → 后端中断 + 回到可重试态。让运维卡住时能主动中断、不必杀进程。补核心取消单测（`ctx.Canceled`→idle+cancel 审计）+ 前端停止按钮用例。
@@ -12,6 +320,13 @@
 - 全局错误脱敏展示（FR-122，见 [ADR-0057](docs/adr/0057-surface-desensitized-errors.md) 与 [.claude/rules/error-surfacing.md](.claude/rules/error-surfacing.md)）：此前后端 `render.WriteError` 对非预期内部错误**一律对外返回笼统「内部错误」、真因只进日志**，运维在前端看不到失败原因、问题被静默隐藏。改为反转姿态——**操作出错时把脱敏后的真实原因展示到前端**：① 新增叶子包 `internal/redact.Desensitize` 打码凭据类敏感片段（URL 里 `user:pass@` 密码段、`token=`/`password=`/`secret=`/`pwd=`/`api-key=` 键值、`Bearer`/`Basic` 令牌），内网地址 / 主机名 / 路径等运维上下文**不打码**（非凭据、是定位关键）；② `render.WriteError` 对内部错误返回 `redact.Desensitize(err)` 真因（仍记完整日志 + `traceId` 可对账）；③ 前端 react-query `MutationCache` 全局兜底 onError——未自带 `onError` 的写操作失败也 toast 出该脱敏错误，杜绝静默失败。配套新增防漂移规则 `.claude/rules/error-surfacing.md`、同步 `docs/API.md` 错误响应描述。
 
 ### 修复
+- agent filesync 遗留静态检查违例（`FileSyncPathGuard` ReturnCount 超限、`FileSyncBackupManager` 函数签名格式），agent gradle build 恢复全绿。
+- 区分配页仍与设计稿交互不一致（`web/src/pages/ZonesPage.tsx`）：1000+ 子服时区树 / 详情会把页面撑长，中间容量矩阵还保留“操作”列，必须点行尾按钮才切详情。修复：区树、容量矩阵、分配详情三块改为视口内滚动列表；容量矩阵移除“操作”列，点击整行或键盘 Enter/Space 直接切换右侧详情，保持一屏高密度运维布局。
+- 配置中心服务器面板「只有 plugins、点不进去」（`web/src/pages/configs-workbench/useWorkbenchData.ts`）：`useServerTree` 调浏览端点 `op=tree` 时未带 `maxDepth`，而后端不带 maxDepth 时只回根节点（`children` 空 + `truncated`），故右侧服务器文件树恒只显示一个空 plugins 根、无法展开看真实文件。修复：浏览改带 `maxDepth=4`（覆盖 plugins/插件/子目录/文件常见深度，更深由 agent 硬上限收口），服务器树即返回完整子树（实测 s1-1 返回 47 节点、各插件目录与 jar 齐全）。
+- 配置中心在「全部环境」下拉不到配置、新建报「参数错误」（`web/src/pages/ConfigWorkbenchPage.tsx`）：全局环境选择器含「全部环境」选项（namespace 空串），而配置工作台按**单一环境**管理配置——空环境下受管树查询被 `enabled:!!namespace` 禁用故左面板恒空（看似「拉不到配置文件」），且新建 / 抓取等写操作把空 namespace 发给后端被 400「参数错误」（看似「无法新建 / 编辑」）。全新用户 / 清了 localStorage 环境即落到空环境，正中此坑。修复：工作台在 namespace 为空时改显明确引导态「请先在右上角选择一个具体环境（如 prod / test）」并隐藏主操作按钮（新建 / 反向抓取 / 导入），不再渲染会静默失败的空面板；选择具体环境后恢复正常双面板。
+- 演示模式（mock 假后端）配置中心在 test 环境拉不到受管配置、看似无效（`web/src/api/mock/data.ts`）：mock 仅为 `prod` 环境 seed 了受管文件，而演示默认落在 `test` 环境（mock 有 test-01 服务器却无 test 受管配置），故配置中心左面板（受管配置）恒空、误以为「拉不到配置文件 / 无法编辑」（实际新建 / 抓取等写操作正常）。修复：为 `test` 环境补 seed 受管配置（Essentials/WorldGuard 等，path 按真后端约定相对 plugins/ 根、不带前缀避免树内双层），使演示模式两环境配置中心开箱即有内容。
+- 配置工作台「发布选中」影响面恒 0 台、发布按钮禁用（FR-128 发布路径修复，`PublishPanel` / `ConfigWorkbenchPage` / `useWorkbenchData` / `ManagedNode`）：发布面板用默认 `group=空` 查影响面端点，后端 `400 INVALID_PARAM` → 受影响在线服恒 0 台 → 「发布并热推」按钮被禁用、组级受管文件永远发不出去。根因：受管树节点丢了文件的真实 `scopeLevel`/`group`，发布面板无从按真实覆盖层算影响面。修复：`ManagedNode` 保留后端原始 `scopeLevel`/`group`/`scopeTarget`，工作台取首个选中文件的真实覆盖层 + 大区透传给 `PublishPanel` → 影响面按真实 scope 算（如组 area1 → lobby-2/s1-1 共 2 台）。真机验：组级文件发布面板正确显「热推到 2 台」+ 发布成功（版本 v1→v2）。
+- 全新集群无法创建首个区（`web/src/pages/ZonesPage.tsx`）：「区分配 → 新增 区 / 指派」对话框的「小区」字段校验闸要求其值须落在 API 拉来的候选内、且 Combobox `allowCustom={false}`，但全新集群尚无任何区、候选恒空，导致「指派首个 server 即创建该区」的首个区永远建不出来（提交报「非法值」）。修复：小区是**待新建的区名**、应允许候选外新值——校验闸去掉对小区的「须在候选内」限制（仅环境 / serverId / 大区仍严格校验防越界提交），「小区」Combobox 改 `allowCustom`。
 - 更新中切到别的页进度丢 + 重复点击更新（fix-c / fix-d，`web/src/pages/VersionUpdatePage.tsx`）：`applying` 是页面本地态、离开即丢（后端异步其实在跑），切走再回来看不到进度、且可能重复触发。修复：进行中态改从**后端进度派生**——`inProgress = applying（本会话）|| 后端 phase ∈ {checking/downloading/verifying/staging/ready-restart}`，进度区显示、进度轮询、按钮禁用、「停止」按钮均据 `inProgress`，故切走再回来仍持续看到进度；「立即更新」按钮在 `inProgress` 时禁用、`handleConfirm*` 进行中直接忽略（防重复触发，后端 `409 UPDATE_IN_PROGRESS` 为最终兜底）。
 - Ctrl+C / 关停关不掉 beacon + 异步下载不随关停取消（fix-b，`cmd/beacon/main.go` / `internal/service/update_service.go`）：根因——① 异步在线更新下载（fix-1）用 `context.Background()`，与进程信号 ctx 脱钩，Ctrl+C 时下载不取消、脱离生命周期；② HTTP `srv` 未设 `BaseContext`，SSE / 长轮询等长连接不随关停取消，`srv.Shutdown` 干等到 35s 超时才返回（"关不掉"观感）。修复：① `srv.BaseContext` 设为进程信号 ctx——Ctrl+C / SIGTERM 时取消所有在途请求，长连接据 `r.Context()` 即时退出、连接 drain，Shutdown 不再干等；② 异步 apply 改用派生自信号 ctx 的可取消 context（关停即取消下载）+ 存 cancel 供手动取消（`CancelApply`，FR-125 复用）。补 `CancelApply` 取消进行中下载的单测（含 race）。
 - 在线更新判新方向反——dev 构建被提示「更新回」同基线正式版（fix-a，`internal/update/semver.go`）：当前运行滚动 dev 构建（如 `0.18.0-dev.8.g…`，是 v0.18.0 之后 N 个提交=更新的代码），正式版渠道却提示「可更新到 v0.18.0」——把更旧的同基线正式版当更新推。根因：`IsNewer` 在「同基线 + 一正式一 dev」分支无条件 `return true`、不分方向。按 [ADR-0056](docs/adr/0056-rolling-prerelease-dev-distance-version.md) 语义 `dev.<N>` 是基线后 N 个提交，故改为按方向判（`return rem.isPre`）：远端是 dev（当前正式）→ dev 更新 → 提示；远端是同基线正式版（当前 dev）→ 正式是更旧基线 → 不提示。补 semver 单测（dev→同基线正式 = 不更新、真机 `0.18.0-dev.8`→`0.18.0` = 不更新）。

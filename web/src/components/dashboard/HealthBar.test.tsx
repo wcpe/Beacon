@@ -1,7 +1,7 @@
 // HealthBar 单测：分段健康条按各段计数占比排宽 + 按等级上色 + 总数为 0 时空态轨道。
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import HealthBar, { type HealthSegment } from './HealthBar'
+import { HealthBar, type HealthSegment } from '@beacon/ui'
 
 const SEGMENTS: HealthSegment[] = [
   { label: '在线', count: 3, level: 'ok' },

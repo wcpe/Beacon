@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { useState } from 'react'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Combobox, type ComboboxOption } from './combobox'
+import { Combobox, type ComboboxOption } from '@beacon/ui'
 
 // 受控包装：把内部 value 暴露到 data 属性，便于断言上报值。
 function Harness({
@@ -94,9 +94,7 @@ describe('Combobox（FR-51）', () => {
   it('onChange 透传所选值给上层', async () => {
     const onChange = vi.fn()
     function Plain() {
-      return (
-        <Combobox aria-label="维度" value="" onChange={onChange} options={OPTS} allowCustom />
-      )
+      return <Combobox aria-label="维度" value="" onChange={onChange} options={OPTS} allowCustom />
     }
     render(<Plain />)
     await userEvent.click(screen.getByLabelText('维度'))

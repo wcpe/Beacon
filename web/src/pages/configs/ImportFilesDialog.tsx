@@ -8,9 +8,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { importFiles } from '../../api/client'
 import type { ImportFileEntry } from '../../api/client'
 import { useMessage } from '../../components/useMessage'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
+import { Button } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Combobox, type ComboboxOption } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 import ImportPreviewModal from './ImportPreviewModal'
 
 // webkitdirectory 属性非标准 DOM 类型，单独声明以便在 input 上使用而不触发 TS 报错。
@@ -68,7 +68,9 @@ export default function ImportFilesDialog({
   const importMut = useMutation({
     mutationFn: () => importFiles(namespace, group, entries),
     onSuccess: (r) => {
-      msg.showSuccess(t('configs.msgImported', { files: r.files, created: r.created, updated: r.updated }))
+      msg.showSuccess(
+        t('configs.msgImported', { files: r.files, created: r.created, updated: r.updated }),
+      )
       setPreviewOpen(false)
       setOpen(false)
       // 失效文件相关缓存，刷新文件树
@@ -153,7 +155,9 @@ export default function ImportFilesDialog({
             />
           </div>
           {entries.length > 0 && (
-            <p className="col-span-2 text-xs text-muted-foreground">{t('configs.importSelected', { count: entries.length })}</p>
+            <p className="col-span-2 text-xs text-muted-foreground">
+              {t('configs.importSelected', { count: entries.length })}
+            </p>
           )}
         </form>
         <DialogFooter>

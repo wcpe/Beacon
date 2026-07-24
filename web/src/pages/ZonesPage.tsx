@@ -5,10 +5,20 @@
 // 保留「新增 区 / 指派」表单入口（用于建空区的首次指派）+ 区维度汇总。
 // 指派表单的环境 / serverId / 大区 / 小区为从 API 拉取的下拉（serverId 仅列 bukkit 子服）并加非法值校验（增强 FR-40/FR-51）；备注仍为自由文本。
 
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Filter, LayoutGrid, ListTree } from 'lucide-react'
+import {
+  AlertTriangle,
+  Boxes,
+  CheckCircle2,
+  Clock3,
+  LayoutGrid,
+  ListTree,
+  MoveRight,
+  Server,
+  ShieldCheck,
+} from 'lucide-react'
 import {
   ApiClientError,
   assignZone,
@@ -20,17 +30,18 @@ import {
 } from '../api/client'
 import type { AssignParams } from '../api/client'
 import { namespaceOptions } from '../api/format'
-import type { InstanceView } from '../api/types'
+import type { AssignmentView, InstanceView, ZoneStatView } from '../api/types'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
 import { useEnvironment } from '@/state/environment'
-import AsyncSection from '@/components/AsyncSection'
-import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import SectionHeader from '@/components/SectionHeader'
-import { Combobox } from '@/components/ui/combobox'
+import { AsyncSection } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Checkbox } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { SectionHeader } from '@beacon/ui'
+import { Combobox } from '@beacon/ui'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,7 +52,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
+} from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -49,17 +60,15 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
-import {
-  buildKanbanModel,
-  noteForServer,
-  type ZoneBucket,
-} from './zones/kanbanModel'
+} from '@beacon/ui'
+import { buildKanbanModel, noteForServer, type ZoneBucket } from './zones/kanbanModel'
 import { buildSummaryTree } from './zones/summaryTree'
 import ServerCard from './zones/ServerCard'
 import DropBucket from './zones/DropBucket'
 import ReassignDialog from './zones/ReassignDialog'
 import ZoneSummaryTree from './zones/ZoneSummaryTree'
+import { filterInstancesByKeyword, getVisibleWindow } from '@/lib/instanceFiltering'
+import { cn } from '@/lib/utils'
 
 // 指派/汇总共用的过滤条件
 interface ZoneFilter {
@@ -70,9 +79,81 @@ interface ZoneFilter {
 
 // 新增 zone / 指派表单初值
 const EMPTY_FORM = { namespace: '', serverId: '', group: '', zone: '', note: '' }
+const ZONE_BUCKET_LIMIT = 30
+const ZONE_SEARCH_LIMIT = 120
+const SUMMARY_TREE_LIMIT = 8
+const ZONE_CAPACITY_BASE = 128
 
 // 排空门错误码（与后端 apperr.ErrZoneServerOnlineNonempty 一致，FR-71/ADR-0036）
 const ERR_ZONE_SERVER_ONLINE_NONEMPTY = 'ZONE_SERVER_ONLINE_NONEMPTY'
+
+interface ZoneMatrixRow {
+  key: string
+  group: string
+  zone: string
+  serverCount: number
+  onlineCount: number
+  utilization: number
+  bucket: ZoneBucket
+}
+
+function zoneKey(group: string, zone: string): string {
+  return `${group}\n${zone}`
+}
+
+function buildZoneRows(
+  model: { groups: Array<{ zones: ZoneBucket[] }> },
+  summary: ZoneStatView[],
+): ZoneMatrixRow[] {
+  const statMap = new Map(summary.map((s) => [zoneKey(s.group, s.zone), s]))
+  return model.groups.flatMap((group) =>
+    group.zones.map((bucket) => {
+      const stat = statMap.get(zoneKey(bucket.group, bucket.zone))
+      const serverCount = stat?.serverCount ?? bucket.instances.length
+      const onlineCount =
+        stat?.onlineCount ?? bucket.instances.filter((i) => i.status === 'online').length
+      return {
+        key: zoneKey(bucket.group, bucket.zone),
+        group: bucket.group,
+        zone: bucket.zone,
+        serverCount,
+        onlineCount,
+        utilization: serverCount > 0 ? onlineCount / serverCount : 0,
+        bucket,
+      }
+    }),
+  )
+}
+
+function ZoneMetricTile({
+  label,
+  value,
+  icon,
+  tone = 'default',
+}: {
+  label: string
+  value: string | number
+  icon: ReactNode
+  tone?: 'default' | 'danger' | 'success'
+}) {
+  return (
+    <div className="rounded-md border bg-background p-3 shadow-sm">
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{label}</span>
+        <span
+          className={cn(
+            'text-primary',
+            tone === 'danger' && 'text-orange-600',
+            tone === 'success' && 'text-green-600',
+          )}
+        >
+          {icon}
+        </span>
+      </div>
+      <div className="mt-2 text-2xl font-semibold tracking-normal">{value}</div>
+    </div>
+  )
+}
 
 export default function ZonesPage() {
   const { t } = useTranslation()
@@ -85,6 +166,8 @@ export default function ZonesPage() {
   // 过滤草稿与生效值（不含 namespace；namespace 由全局环境合并）
   const [fGroup, setFGroup] = useState('')
   const [fZone, setFZone] = useState('')
+  const [serverKeyword, setServerKeyword] = useState('')
+  const deferredServerKeyword = useDeferredValue(serverKeyword)
   const [filter, setFilter] = useState<ZoneFilter>({})
 
   // 生效过滤 = 页内大区/小区筛选 + 全局环境（空串＝全部环境）。全局环境变化即重算 → 各查询 queryKey 含其 namespace → 自动重查。
@@ -99,6 +182,7 @@ export default function ZonesPage() {
 
   // 看板默认只读（FR-71）：解锁后才出逐卡改派 / 取消指派入口
   const [unlocked, setUnlocked] = useState(false)
+  const [selectedZoneKey, setSelectedZoneKey] = useState('')
   // 当前正在改派的实例（null 表示改派对话框关闭）
   const [reassignTarget, setReassignTarget] = useState<InstanceView | null>(null)
 
@@ -114,7 +198,8 @@ export default function ZonesPage() {
 
   const assignments = useQuery({
     queryKey: ['assignments', effectiveFilter],
-    queryFn: () => listAssignments(effectiveFilter.namespace, effectiveFilter.group, effectiveFilter.zone),
+    queryFn: () =>
+      listAssignments(effectiveFilter.namespace, effectiveFilter.group, effectiveFilter.zone),
   })
 
   const summary = useQuery({
@@ -132,10 +217,7 @@ export default function ZonesPage() {
   const allSummary = useQuery({ queryKey: ['zone-summary', 'all'], queryFn: () => zoneSummary() })
 
   // 环境候选：来自 listNamespaces。下拉显示「编码 · 名称」（FR-70）；校验仍用纯 code 集合。
-  const nsOptions = useMemo(
-    () => namespaceOptions(namespacesQuery.data),
-    [namespacesQuery.data],
-  )
+  const nsOptions = useMemo(() => namespaceOptions(namespacesQuery.data), [namespacesQuery.data])
   const namespaceCodes = useMemo(
     () => (namespacesQuery.data ?? []).map((n) => n.code),
     [namespacesQuery.data],
@@ -202,15 +284,40 @@ export default function ZonesPage() {
   }
 
   // 由三个查询结果派生看板模型（纯函数，结果稳定排序）
+  const kanbanInstances = useMemo(
+    () => filterInstancesByKeyword(instances.data ?? [], deferredServerKeyword),
+    [deferredServerKeyword, instances.data],
+  )
   const model = useMemo(
-    () => buildKanbanModel(instances.data ?? [], summary.data ?? []),
-    [instances.data, summary.data],
+    () => buildKanbanModel(kanbanInstances, summary.data ?? []),
+    [kanbanInstances, summary.data],
+  )
+  const zoneBucketLimit = deferredServerKeyword.trim() ? ZONE_SEARCH_LIMIT : ZONE_BUCKET_LIMIT
+  const unassignedWindow = useMemo(
+    () => getVisibleWindow(model.unassigned, zoneBucketLimit),
+    [model.unassigned, zoneBucketLimit],
   )
 
   // 由 summary + 看板模型派生汇总树（大区→小区→子服；计数取自 summary，与原表口径一致，FR-55）
   const summaryTreeModel = useMemo(
     () => buildSummaryTree(summary.data ?? [], model),
     [summary.data, model],
+  )
+  const zoneRows = useMemo(() => buildZoneRows(model, summary.data ?? []), [model, summary.data])
+  const activeZoneKey = zoneRows.some((row) => row.key === selectedZoneKey)
+    ? selectedZoneKey
+    : zoneRows[0]?.key || ''
+  const selectedZoneRow = zoneRows.find((row) => row.key === activeZoneKey) ?? zoneRows[0] ?? null
+  const totalZoneCount = zoneRows.length
+  const onlineServers = zoneRows.reduce((sum, row) => sum + row.onlineCount, 0)
+  const totalServers = zoneRows.reduce((sum, row) => sum + row.serverCount, 0)
+  const riskZones = zoneRows.filter((row) => row.utilization >= 0.8 || row.serverCount === 0).length
+  const recentAssignments = useMemo(
+    () =>
+      [...(assignments.data ?? [])]
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, 5),
+    [assignments.data],
   )
 
   function onSearch(e: React.FormEvent) {
@@ -228,12 +335,12 @@ export default function ZonesPage() {
       msg.showError(t('zones.requiredFields'))
       return
     }
-    // 非法值拦截：所选项须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）
+    // 非法值拦截：环境 / serverId / 大区须落在 API 拉来的候选内（防手改 DOM 或脏缓存提交越界值）。
+    // 小区（zone）例外：它是要新建的区名，允许候选外新值，否则全新集群无任何区时无法创建首个区。
     if (
       !namespaceCodes.includes(form.namespace) ||
       !serverOptions.includes(form.serverId) ||
-      !groupOptions.includes(form.group) ||
-      !zoneOptions.includes(form.zone)
+      !groupOptions.includes(form.group)
     ) {
       msg.showError(t('zones.invalidValues'))
       return
@@ -260,9 +367,7 @@ export default function ZonesPage() {
           <DialogHeader>
             <DialogTitle>{t('zones.addAssign')}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {t('zones.assignDialogDesc')}
-          </p>
+          <p className="text-sm text-muted-foreground">{t('zones.assignDialogDesc')}</p>
           <form id="assign-zone" onSubmit={onAssign} className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label htmlFor="a-namespace">{t('common.namespace')}</Label>
@@ -304,13 +409,15 @@ export default function ZonesPage() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="a-zone">{t('common.zone')}</Label>
+              {/* 可编辑：小区是要新建的区名，须允许键入候选外的新值——否则全新集群无任何区、
+                  候选恒空，「指派首个 server 即创建该区」无从落地（修复首个区无法创建）。 */}
               <Combobox
                 id="a-zone"
                 aria-label={t('common.zone')}
                 value={form.zone}
                 onChange={(v) => setForm({ ...form, zone: v })}
                 options={zoneOptions}
-                allowCustom={false}
+                allowCustom
                 placeholder={t('common.pleaseSelect')}
               />
             </div>
@@ -334,126 +441,248 @@ export default function ZonesPage() {
   })
 
   return (
-    <div className="space-y-6">
-      {/* 筛选条（FR-107 卡片降级）：区段标题 + 细线轻分隔，替代原筛选 Card 外壳 */}
-      <section className="space-y-3">
-        <SectionHeader icon={<Filter className="size-4" />} title={t('common.filter')} />
-        <form onSubmit={onSearch} className="flex flex-wrap items-end gap-3">
-          {/* 环境收口（FR-105 真机打磨）：原页内环境筛选已移除，看板/汇总环境改读页眉全局环境槽。 */}
-          <div className="space-y-1.5">
-            <Label htmlFor="f-group">{t('common.group')}</Label>
-            <Combobox
-              id="f-group"
-              aria-label={t('common.group')}
-              className="w-40"
-              value={fGroup}
-              onChange={setFGroup}
-              options={groupOptions}
-              allowCustom
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="f-zone">{t('common.zone')}</Label>
-            <Combobox
-              id="f-zone"
-              aria-label={t('common.zone')}
-              className="w-40"
-              value={fZone}
-              onChange={setFZone}
-              options={zoneOptions}
-              allowCustom
-            />
-          </div>
-          <Button type="submit">{t('common.query')}</Button>
-        </form>
-      </section>
-
-      {/* zone 汇总树（大区→小区→子服）：上移至看板之上，替代原底部扁平表格（FR-55）。
-          FR-107：外层 Card 降级为区段标题 + 轻分隔，汇总树本身不动。 */}
-      <section className="space-y-3">
-        <SectionHeader icon={<ListTree className="size-4" />} title={t('zones.summaryTitle')} />
-        <AsyncSection
-          isLoading={summary.isLoading || instances.isLoading}
-          isError={summary.isError || instances.isError}
-          error={summary.error ?? instances.error}
-        >
-          <ZoneSummaryTree tree={summaryTreeModel} />
-        </AsyncSection>
-      </section>
-
-      {/* 归派看板（FR-35 + 安全化 FR-71）：FR-107 外层 Card 降级为区段标题 + 轻分隔；
-          解锁改派开关挪到区段标题右槽，看板未指派池 / 分组容器 / 磁贴密度保留。 */}
-      <section className="space-y-3">
-        <SectionHeader
-          icon={<LayoutGrid className="size-4" />}
-          title={t('zones.kanbanTitle')}
-          actions={
-            <>
-              <p className="text-sm text-muted-foreground">{t('zones.kanbanHint')}</p>
-              {/* 解锁改派开关（FR-71）：默认只读，解锁后逐卡才出改派 / 取消入口 */}
-              <Label
-                htmlFor="unlock-reassign"
-                className="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <Checkbox
-                  id="unlock-reassign"
-                  aria-label={t('zones.unlockLabel')}
-                  checked={unlocked}
-                  onCheckedChange={(v) => setUnlocked(v === true)}
-                />
-                {t('zones.unlockLabel')}
-              </Label>
-            </>
-          }
+    <div className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-3 overflow-hidden">
+      <form
+        onSubmit={onSearch}
+        className="flex shrink-0 flex-wrap items-center gap-2 rounded-md border bg-background p-3 shadow-sm"
+      >
+        <Combobox
+          id="f-group"
+          aria-label={t('common.group')}
+          className="w-40"
+          value={fGroup}
+          onChange={setFGroup}
+          options={groupOptions}
+          allowCustom
+          placeholder={t('common.group')}
         />
+        <Combobox
+          id="f-zone"
+          aria-label={t('common.zone')}
+          className="w-40"
+          value={fZone}
+          onChange={setFZone}
+          options={zoneOptions}
+          allowCustom
+          placeholder={t('common.zone')}
+        />
+        <Input
+          id="f-server"
+          aria-label={t('zones.searchServer')}
+          className="w-52"
+          value={serverKeyword}
+          placeholder={t('zones.searchServerPlaceholder')}
+          onChange={(e) => setServerKeyword(e.target.value)}
+        />
+        <span className="text-sm tabular-nums text-muted-foreground">
+          {t('zones.visibleCount', {
+            visible: kanbanInstances.length,
+            total: instances.data?.length ?? 0,
+          })}
+        </span>
+        <Button type="submit">{t('common.query')}</Button>
+        <div className="ml-auto flex items-center gap-2">
+          <Button type="button" variant="outline" onClick={invalidate}>
+            {t('zones.refresh')}
+          </Button>
+        </div>
+      </form>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <ZoneMetricTile
+          label={t('zones.metricZones')}
+          value={totalZoneCount}
+          icon={<Boxes className="size-4" />}
+        />
+        <ZoneMetricTile
+          label={t('zones.metricOnline')}
+          value={onlineServers}
+          icon={<CheckCircle2 className="size-4" />}
+          tone="success"
+        />
+        <ZoneMetricTile
+          label={t('zones.metricTotalServers')}
+          value={totalServers}
+          icon={<Server className="size-4" />}
+        />
+        <ZoneMetricTile
+          label={t('zones.metricUnassigned')}
+          value={model.unassigned.length}
+          icon={<AlertTriangle className="size-4" />}
+          tone={model.unassigned.length > 0 ? 'danger' : 'success'}
+        />
+        <ZoneMetricTile
+          label={t('zones.metricRisk')}
+          value={riskZones}
+          icon={<ShieldCheck className="size-4" />}
+          tone={riskZones > 0 ? 'danger' : 'success'}
+        />
+        <ZoneMetricTile
+          label={t('zones.metricRecent')}
+          value={recentAssignments[0]?.updatedAt ? t('zones.recentUpdated') : '-'}
+          icon={<Clock3 className="size-4" />}
+        />
+      </div>
+
+      <div className="grid min-h-0 grid-cols-[20rem_minmax(0,1fr)_24rem] grid-rows-[minmax(0,1fr)_8.5rem] gap-3 overflow-hidden">
         <AsyncSection
           isLoading={instances.isLoading || summary.isLoading}
           isError={instances.isError || summary.isError}
           error={instances.error ?? summary.error}
         >
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
-              {/* 左侧未指派池 */}
-              <DropBucket
-                title={t('zones.unassignedTitle')}
-                meta={t('zones.unitServers', { count: model.unassigned.length })}
-              >
-                {model.unassigned.length === 0 ? (
-                  <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.noUnassigned')}</p>
-                ) : (
-                  model.unassigned.map((i) => (
+          <aside
+            role="region"
+            aria-label={t('zones.summaryScrollRegion')}
+            className="h-full min-h-0 space-y-3 overflow-y-auto rounded-md border bg-background p-3 shadow-sm"
+          >
+            <div className="flex items-center gap-2">
+              <ListTree className="size-4 text-primary" />
+              <h2 className="text-sm font-semibold">{t('zones.summaryTitle')}</h2>
+            </div>
+            <ZoneSummaryTree tree={summaryTreeModel} serverLimitPerZone={SUMMARY_TREE_LIMIT} />
+            <DropBucket
+              title={t('zones.unassignedTitle')}
+              meta={t('zones.unitServers', { count: model.unassigned.length })}
+            >
+              {model.unassigned.length === 0 ? (
+                <p className="px-0.5 py-2 text-xs text-muted-foreground">
+                  {t('zones.noUnassigned')}
+                </p>
+              ) : (
+                <>
+                  {unassignedWindow.items.map((i) => (
                     <ServerCard key={`${i.namespace}/${i.serverId}`} instance={i} />
-                  ))
-                )}
-              </DropBucket>
+                  ))}
+                  {unassignedWindow.hidden > 0 && (
+                    <p className="px-0.5 py-1 text-xs text-muted-foreground">
+                      {t('zones.moreServers', { count: unassignedWindow.hidden })}
+                    </p>
+                  )}
+                </>
+              )}
+            </DropBucket>
+          </aside>
 
-              {/* 右侧按大区分组的 zone 桶 */}
-              <div className="space-y-4">
-                {model.groups.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {t('zones.noZones')}
-                  </p>
-                ) : (
-                  model.groups.map((col) => (
-                    <div key={col.group} className="space-y-2">
-                      <div className="text-sm font-semibold">{t('zones.groupLabel', { group: col.group })}</div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {col.zones.map((bucket) => (
-                          <ZoneBucketView
-                            key={`${bucket.group}/${bucket.zone}`}
-                            bucket={bucket}
-                            unlocked={unlocked}
-                            onReassign={setReassignTarget}
-                            onUnassign={(ns, sid) => unassignMut.mutate({ namespace: ns, serverId: sid })}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                )}
+          <div
+            role="region"
+            aria-label={t('zones.matrixScrollRegion')}
+            className="flex h-full min-h-0 flex-col overflow-hidden rounded-md border bg-background shadow-sm"
+          >
+            <div className="flex h-9 shrink-0 items-center gap-3 border-b px-3">
+              <LayoutGrid className="size-4 text-primary" />
+              <h2 className="text-sm font-semibold">{t('zones.allocationTitle')}</h2>
+              <div className="ml-auto flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">{t('zones.kanbanHint')}</span>
+                <Label
+                  htmlFor="unlock-reassign"
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <Checkbox
+                    id="unlock-reassign"
+                    aria-label={t('zones.unlockLabel')}
+                    checked={unlocked}
+                    onCheckedChange={(v) => setUnlocked(v === true)}
+                  />
+                  {t('zones.unlockLabel')}
+                </Label>
               </div>
             </div>
-          </AsyncSection>
-      </section>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead className="sticky top-0 z-10 border-b bg-muted/40 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left">{t('common.group')}</th>
+                    <th className="px-3 py-2 text-left">{t('common.zone')}</th>
+                    <th className="px-3 py-2 text-left">{t('zones.colCapacity')}</th>
+                    <th className="px-3 py-2 text-left">{t('zones.colOnline')}</th>
+                    <th className="px-3 py-2 text-left">{t('zones.colRisk')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {zoneRows.map((row) => (
+                    <tr
+                      key={row.key}
+                      role="button"
+                      tabIndex={0}
+                      aria-current={row.key === activeZoneKey ? 'true' : undefined}
+                      aria-label={t('zones.selectZoneRow', { group: row.group, zone: row.zone })}
+                      onClick={() => setSelectedZoneKey(row.key)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault()
+                        setSelectedZoneKey(row.key)
+                      }}
+                      className={cn(
+                        'cursor-pointer border-b outline-none last:border-0 hover:bg-muted/40 focus-visible:bg-muted/60',
+                        row.key === activeZoneKey && 'bg-primary/5',
+                      )}
+                    >
+                      <td className="px-3 py-2">{row.group}</td>
+                      <td className="px-3 py-2 font-medium">{row.zone}</td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-12 font-mono">{ZONE_CAPACITY_BASE}/s</span>
+                          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+                            <span
+                              className="block h-full rounded-full bg-primary"
+                              style={{ width: `${Math.min(100, row.utilization * 100)}%` }}
+                            />
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.onlineCount} / {row.serverCount}
+                      </td>
+                      <td className="px-3 py-2">
+                        <Badge
+                          variant={
+                            row.utilization >= 0.8 || row.serverCount === 0
+                              ? 'destructive'
+                              : 'secondary'
+                          }
+                        >
+                          {row.utilization >= 0.8 || row.serverCount === 0
+                            ? t('zones.riskWarn')
+                            : t('zones.riskGood')}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                  {zoneRows.length === 0 && (
+                    <tr>
+                      <td className="px-3 py-8 text-center text-muted-foreground" colSpan={5}>
+                        {t('zones.noZones')}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside
+            role="region"
+            aria-label={t('zones.detailScrollRegion')}
+            className="row-span-2 h-full min-h-0 overflow-y-auto rounded-md border bg-background p-3 shadow-sm"
+          >
+            <ZoneDetailPanel
+              row={selectedZoneRow}
+              unlocked={unlocked}
+              limit={zoneBucketLimit}
+              onReassign={setReassignTarget}
+              onUnassign={(ns, sid) => unassignMut.mutate({ namespace: ns, serverId: sid })}
+            />
+          </aside>
+        </AsyncSection>
+
+        <section className="col-span-2 flex min-h-0 flex-col gap-2 overflow-hidden">
+          <SectionHeader
+            icon={<MoveRight className="size-4" />}
+            title={t('zones.recentAssignmentsTitle')}
+          />
+          <RecentAssignmentTable rows={recentAssignments} />
+        </section>
+      </div>
 
       {/* 改派对话框（FR-71）：手输 serverId 复述确认；提交调既有 assignZone */}
       <ReassignDialog
@@ -464,7 +693,11 @@ export default function ZonesPage() {
         instance={reassignTarget}
         currentNote={
           reassignTarget
-            ? noteForServer(assignments.data ?? [], reassignTarget.namespace, reassignTarget.serverId)
+            ? noteForServer(
+                assignments.data ?? [],
+                reassignTarget.namespace,
+                reassignTarget.serverId,
+              )
             : ''
         }
         groupOptions={groupOptions}
@@ -476,19 +709,118 @@ export default function ZonesPage() {
   )
 }
 
+function ZoneDetailPanel({
+  row,
+  unlocked,
+  onReassign,
+  onUnassign,
+  limit,
+}: {
+  row: ZoneMatrixRow | null
+  unlocked: boolean
+  limit: number
+  onReassign: (instance: InstanceView) => void
+  onUnassign: (namespace: string, serverId: string) => void
+}) {
+  const { t } = useTranslation()
+  if (!row) {
+    return <p className="text-sm text-muted-foreground">{t('zones.noZones')}</p>
+  }
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold">
+            {row.group} / {row.zone}
+          </h2>
+          <Badge
+            variant={row.utilization >= 0.8 || row.serverCount === 0 ? 'destructive' : 'secondary'}
+          >
+            {row.utilization >= 0.8 || row.serverCount === 0
+              ? t('zones.riskWarn')
+              : t('zones.riskGood')}
+          </Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{t('zones.detailSubtitle')}</p>
+      </div>
+      <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
+        <dt className="text-muted-foreground">{t('zones.colCapacity')}</dt>
+        <dd>{ZONE_CAPACITY_BASE}/s</dd>
+        <dt className="text-muted-foreground">{t('zones.colOnline')}</dt>
+        <dd>
+          {row.onlineCount} / {row.serverCount}
+        </dd>
+        <dt className="text-muted-foreground">{t('zones.detailUtilization')}</dt>
+        <dd>{Math.round(row.utilization * 100)}%</dd>
+        <dt className="text-muted-foreground">{t('zones.detailServers')}</dt>
+        <dd>{row.bucket.instances.length}</dd>
+      </dl>
+      <ZoneBucketView
+        bucket={row.bucket}
+        unlocked={unlocked}
+        limit={limit}
+        onReassign={onReassign}
+        onUnassign={onUnassign}
+      />
+    </div>
+  )
+}
+
+function RecentAssignmentTable({ rows }: { rows: AssignmentView[] }) {
+  const { t } = useTranslation()
+  return (
+    <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-background shadow-sm">
+      <table className="w-full min-w-[720px] text-sm">
+        <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2 text-left">{t('common.serverId')}</th>
+            <th className="px-3 py-2 text-left">{t('common.namespace')}</th>
+            <th className="px-3 py-2 text-left">{t('common.group')}</th>
+            <th className="px-3 py-2 text-left">{t('common.zone')}</th>
+            <th className="px-3 py-2 text-left">{t('common.note')}</th>
+            <th className="px-3 py-2 text-left">{t('zones.colUpdatedAt')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.namespace}/${row.serverId}`} className="border-b last:border-0">
+              <td className="px-3 py-2 font-mono">{row.serverId}</td>
+              <td className="px-3 py-2">{row.namespace}</td>
+              <td className="px-3 py-2">{row.group}</td>
+              <td className="px-3 py-2">{row.zone}</td>
+              <td className="px-3 py-2">{row.note || '-'}</td>
+              <td className="px-3 py-2">{row.updatedAt || '-'}</td>
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td className="px-3 py-6 text-center text-muted-foreground" colSpan={6}>
+                {t('zones.noRecentAssignments')}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // 单个 zone 桶视图：标题为小区名 + 实例数，内含其卡片；解锁后逐卡注入改派 / 取消指派入口（FR-71）。
 function ZoneBucketView({
   bucket,
   unlocked,
   onReassign,
   onUnassign,
+  limit,
 }: {
   bucket: ZoneBucket
   unlocked: boolean
+  limit: number
   onReassign: (instance: InstanceView) => void
   onUnassign: (namespace: string, serverId: string) => void
 }) {
   const { t } = useTranslation()
+  const visible = getVisibleWindow(bucket.instances, limit)
   return (
     <DropBucket
       title={bucket.zone}
@@ -497,45 +829,50 @@ function ZoneBucketView({
       {bucket.instances.length === 0 ? (
         <p className="px-0.5 py-2 text-xs text-muted-foreground">{t('zones.dropHere')}</p>
       ) : (
-        bucket.instances.map((i) => (
-          <ServerCard
-            key={`${i.namespace}/${i.serverId}`}
-            instance={i}
-            actions={
-              unlocked ? (
-                <div className="flex items-center gap-1">
-                  <Button variant="outline" size="sm" onClick={() => onReassign(i)}>
-                    {t('zones.reassignBtn')}
-                  </Button>
-                  {/* 取消指派：显式二次确认后才调 unassignZone（FR-71） */}
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="sm">
-                        {t('zones.unassignBtn')}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          {t('zones.unassignConfirmTitle', { serverId: i.serverId })}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {t('zones.unassignConfirmDesc')}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => onUnassign(i.namespace, i.serverId)}>
-                          {t('zones.unassignConfirmAction')}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </div>
-              ) : undefined
-            }
-          />
-        ))
+        <>
+          {visible.items.map((i) => (
+            <ServerCard
+              key={`${i.namespace}/${i.serverId}`}
+              instance={i}
+              actions={
+                unlocked ? (
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" onClick={() => onReassign(i)}>
+                      {t('zones.reassignBtn')}
+                    </Button>
+                    {/* 取消指派：显式二次确认后才调 unassignZone（FR-71） */}
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="sm">
+                          {t('zones.unassignBtn')}
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            {t('zones.unassignConfirmTitle', { serverId: i.serverId })}
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {t('zones.unassignConfirmDesc')}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => onUnassign(i.namespace, i.serverId)}>
+                            {t('zones.unassignConfirmAction')}
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                ) : undefined
+              }
+            />
+          ))}
+          {visible.hidden > 0 && (
+            <p className="px-0.5 py-1 text-xs text-muted-foreground">还有 {visible.hidden} 台</p>
+          )}
+        </>
       )}
     </DropBucket>
   )

@@ -31,9 +31,13 @@ vi.mock('@/api/client', async () => {
     triggerUpdate: vi.fn(),
     cancelUpdate: vi.fn(),
     rollbackUpdate: vi.fn(),
-    updateProgress: vi
-      .fn()
-      .mockResolvedValue({ phase: 'idle', percent: 0, targetVersion: '', error: '', rollbackAvailable: false }),
+    updateProgress: vi.fn().mockResolvedValue({
+      phase: 'idle',
+      percent: 0,
+      targetVersion: '',
+      error: '',
+      rollbackAvailable: false,
+    }),
     // useConnectionStatus 复用 systemStatus 心跳
     systemStatus: vi.fn().mockResolvedValue({}),
   }
@@ -63,10 +67,38 @@ if (!HTMLElement.prototype.scrollIntoView) {
 }
 
 const SETTINGS: SettingView[] = [
-  { key: 'update.channel', value: 'stable', valueType: 'string', default: 'stable', desc: '更新渠道', isStartup: false },
-  { key: 'update.proxy-url', value: '', valueType: 'string', default: '', desc: '出站代理', isStartup: false },
-  { key: 'update.auto-check-enabled', value: 'true', valueType: 'bool', default: 'true', desc: '自动检查', isStartup: false },
-  { key: 'update.check-interval-hours', value: '6', valueType: 'int', default: '6', desc: '检查周期', isStartup: false },
+  {
+    key: 'update.channel',
+    value: 'stable',
+    valueType: 'string',
+    default: 'stable',
+    desc: '更新渠道',
+    isStartup: false,
+  },
+  {
+    key: 'update.proxy-url',
+    value: '',
+    valueType: 'string',
+    default: '',
+    desc: '出站代理',
+    isStartup: false,
+  },
+  {
+    key: 'update.auto-check-enabled',
+    value: 'true',
+    valueType: 'bool',
+    default: 'true',
+    desc: '自动检查',
+    isStartup: false,
+  },
+  {
+    key: 'update.check-interval-hours',
+    value: '6',
+    valueType: 'int',
+    default: '6',
+    desc: '检查周期',
+    isStartup: false,
+  },
 ]
 
 const UPDATE_NONE: UpdateCheckView = {
@@ -141,7 +173,9 @@ describe('VersionUpdatePage 版本信息 + 渠道（FR-100）', () => {
   it('切换渠道（点测试版段）写 update.channel 并触发强制重查', async () => {
     renderPage(<VersionUpdatePage />)
     await userEvent.click(await screen.findByRole('tab', { name: '测试版' }))
-    await waitFor(() => expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.channel', 'prerelease'))
+    await waitFor(() =>
+      expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.channel', 'prerelease'),
+    )
     // 切渠道后强制重查（force=true）
     await waitFor(() => expect(vi.mocked(checkUpdate)).toHaveBeenCalledWith(true))
   })
@@ -169,7 +203,14 @@ describe('VersionUpdatePage 状态徽标', () => {
 
   it('预发布渠道显示「预发布」徽标', async () => {
     vi.mocked(listSettings).mockResolvedValue([
-      { key: 'update.channel', value: 'prerelease', valueType: 'string', default: 'stable', desc: '更新渠道', isStartup: false },
+      {
+        key: 'update.channel',
+        value: 'prerelease',
+        valueType: 'string',
+        default: 'stable',
+        desc: '更新渠道',
+        isStartup: false,
+      },
       ...SETTINGS.slice(1),
     ])
     renderPage(<VersionUpdatePage />)
@@ -239,7 +280,9 @@ describe('VersionUpdatePage 有更新（FR-100）', () => {
 
   // fix-1：触发被拒（如 409 已有更新进行中）→ 错误经 toast 展示，不静默；按钮不被锁死。
   it('触发更新返回 409 进行中 → toast 出错误（不静默）', async () => {
-    vi.mocked(triggerUpdate).mockRejectedValue(new ApiClientError('已有更新正在进行中', 'UPDATE_IN_PROGRESS'))
+    vi.mocked(triggerUpdate).mockRejectedValue(
+      new ApiClientError('已有更新正在进行中', 'UPDATE_IN_PROGRESS'),
+    )
     renderPage(<VersionUpdatePage />)
     await userEvent.click(await screen.findByRole('button', { name: '立即更新并重启' }))
     await userEvent.click(await screen.findByRole('button', { name: '确认更新' }))
@@ -323,7 +366,10 @@ describe('VersionUpdatePage 高级设置-网络代理（FR-98）', () => {
     expect(saveBtn).toBeEnabled()
     await userEvent.click(saveBtn)
     await waitFor(() =>
-      expect(vi.mocked(updateSetting)).toHaveBeenCalledWith('update.proxy-url', 'http://127.0.0.1:7890'),
+      expect(vi.mocked(updateSetting)).toHaveBeenCalledWith(
+        'update.proxy-url',
+        'http://127.0.0.1:7890',
+      ),
     )
   })
 

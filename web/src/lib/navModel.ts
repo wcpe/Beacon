@@ -48,7 +48,9 @@ export const NAV_GROUPS: NavGroup[] = [
     id: 'overview',
     labelKey: 'nav.groupOverview',
     // 环境范围页（FR-105）：看板按环境聚合，标 envScoped 在第二层页眉渲染环境选择器。
-    leaves: [{ to: '/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, envScoped: true }],
+    leaves: [
+      { to: '/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, envScoped: true },
+    ],
   },
   {
     id: 'config',
@@ -56,6 +58,7 @@ export const NAV_GROUPS: NavGroup[] = [
     // 三页合一后（FR-113，ADR-0050 决策 4）：拓印 / 反向抓取并入工作台，侧栏只留工作台 + 文件树预览 2 叶子。
     leaves: [
       { to: '/configs', labelKey: 'nav.configs', icon: SlidersHorizontal, envScoped: true },
+      { to: '/file-sync', labelKey: 'nav.fileSync', icon: RefreshCw, envScoped: true },
       { to: '/file-preview', labelKey: 'nav.filePreview', icon: FolderTree, envScoped: true },
     ],
   },
@@ -74,7 +77,12 @@ export const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.groupObservability',
     // 可观测 4 页均按环境组织，标 envScoped（FR-105）。
     leaves: [
-      { to: '/service-analysis', labelKey: 'nav.serviceAnalysis', icon: ChartLine, envScoped: true },
+      {
+        to: '/service-analysis',
+        labelKey: 'nav.serviceAnalysis',
+        icon: ChartLine,
+        envScoped: true,
+      },
       { to: '/commands', labelKey: 'nav.commandObservability', icon: Terminal, envScoped: true },
       { to: '/audits', labelKey: 'nav.audits', icon: ScrollText, envScoped: true },
       { to: '/alert-events', labelKey: 'nav.alertEvents', icon: Bell, envScoped: true },

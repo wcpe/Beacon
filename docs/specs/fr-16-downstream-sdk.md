@@ -34,7 +34,7 @@
 
 ## 3. 设计（怎么做）
 
-新增模块 `agent/agent-kit`（`java-library`，纯 Java 8，依赖 `api(project(":agent-api"))`）。
+新增模块 `apps/agent/agent-kit`（`java-library`，纯 Java 8，依赖 `api(project(":agent-api"))`）。
 
 `BeaconAccess`（实例化门面，非静态单例）：
 - 构造无参，内部不持有 agent 引用——每次调用都现取 `BeaconAgentProvider`，避免缓存到一个可能已注销的实例。

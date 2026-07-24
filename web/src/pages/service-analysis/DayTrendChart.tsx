@@ -29,7 +29,10 @@ export default function DayTrendChart({ points }: DayTrendChartProps) {
   }
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <LineChart data={points as AuditDayCount[]} margin={{ top: 8, right: 16, bottom: 0, left: 8 }}>
+      <LineChart
+        data={points as AuditDayCount[]}
+        margin={{ top: 8, right: 16, bottom: 0, left: 8 }}
+      >
         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
         <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={24} />
         <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={40} />

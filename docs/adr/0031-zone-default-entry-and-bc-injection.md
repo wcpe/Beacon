@@ -1,7 +1,7 @@
 # ADR-0031：小区默认入口（DB 权威）+ BC 注入 BungeeCord 默认/fallback 服
 
 
-**状态**：已接受
+**状态**：部分被 [ADR-0067](0067-default-entry-v2-authority.md) 取代——决策 1 的存储（`zone_default_entry` 表）与 v1 写端点已废弃，真源收敛到 v2 `server.is_default_entry`；决策 2/3/4 的注入机制（discovery `zoneDefaultEntry` 标志 + agent 选择器 + 选不出不设）仍有效
 
 ## 背景
 

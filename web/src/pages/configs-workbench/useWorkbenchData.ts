@@ -77,7 +77,13 @@ export function useManagedTree() {
 
 // 由扁平文件清单构建受管树：以 path 段建文件夹层级，文件挂叶子。
 function buildManagedTree(files: FileView[]): ManagedNode[] {
-  const root: ManagedNode = { key: 'plugins', name: 'plugins', type: 'folder', sync: 'managed-only', children: [] }
+  const root: ManagedNode = {
+    key: 'plugins',
+    name: 'plugins',
+    type: 'folder',
+    sync: 'managed-only',
+    children: [],
+  }
   const folderByPath = new Map<string, ManagedNode>([['plugins', root]])
   for (const f of files) {
     const segs = f.path.split('/').filter(Boolean)
@@ -86,7 +92,13 @@ function buildManagedTree(files: FileView[]): ManagedNode[] {
     for (let i = 0; i < segs.length - 1; i++) {
       const key = `${parentKey}/${segs[i]}`
       if (!folderByPath.has(key)) {
-        const node: ManagedNode = { key, name: segs[i], type: 'folder', sync: 'managed-only', children: [] }
+        const node: ManagedNode = {
+          key,
+          name: segs[i],
+          type: 'folder',
+          sync: 'managed-only',
+          children: [],
+        }
         folderByPath.get(parentKey)!.children!.push(node)
         folderByPath.set(key, node)
       }
@@ -103,19 +115,28 @@ function buildManagedTree(files: FileView[]): ManagedNode[] {
       version: f.version,
       modifiedAt: clockTime(f.updatedAt),
       fileId: f.id,
+      // 保留后端原始 scope/group/target，供发布影响面按真实层级算受影响在线服（FR-128）
+      scopeLevel: f.scopeLevel,
+      group: f.group,
+      scopeTarget: f.scopeTarget,
     })
   }
   return [root]
 }
 
 // ---- 服务器实时 plugins 树 ← FR-110 浏览端点（op=tree）----
-// 选定某在线服后懒展开其真实 plugins 子树；映射成 ServerNode（纳管标记默认 untracked，与受管交叉判断为 partial）。
+// 选定某在线服后展开其真实 plugins 子树；映射成 ServerNode（纳管标记默认 untracked，与受管交叉判断为 partial）。
+// 注意：op=tree 不带 maxDepth 时后端只回根节点（children 空、truncated）——必须显式带 maxDepth 才返回子树，
+// 否则服务器面板「只有 plugins、点不进去」。覆盖 plugins/插件/子目录/文件 的常见深度（4 层），更深由 agent 硬上限收口。
+const SERVER_TREE_MAX_DEPTH = 4
 export function useServerTree(serverId: string | undefined) {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-server-tree', namespace, serverId],
     queryFn: () =>
-      browse(serverId!, namespace, { op: 'tree' }).then((r) => browseTreeToServerNodes(r as BrowseTreeResult)),
+      browse(serverId!, namespace, { op: 'tree', maxDepth: SERVER_TREE_MAX_DEPTH }).then((r) =>
+        browseTreeToServerNodes(r as BrowseTreeResult),
+      ),
     enabled: !!namespace && !!serverId,
   })
 }
@@ -157,7 +178,13 @@ function browseEntryToServerNode(entry: BrowseEntry, parentKey: string): ServerN
 // 文件类型标签（Xftp 风「类型」列）：按扩展名给中文标签
 function fileTypeLabel(name: string): string {
   const ext = name.includes('.') ? name.split('.').pop()!.toLowerCase() : ''
-  const map: Record<string, string> = { yml: 'YAML 文件', yaml: 'YAML 文件', json: 'JSON 文件', properties: '属性文件', txt: '文本文件' }
+  const map: Record<string, string> = {
+    yml: 'YAML 文件',
+    yaml: 'YAML 文件',
+    json: 'JSON 文件',
+    properties: '属性文件',
+    txt: '文本文件',
+  }
   return map[ext] ?? '文件'
 }
 
@@ -167,9 +194,32 @@ export function useSyncQueue() {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-sync-queue', namespace],
-    queryFn: () => listCommands({ namespace, page: 1, size: 50 }).then((r) => r.items.map(commandToQueueRow)),
+    queryFn: () =>
+      listCommands({ namespace, page: 1, size: 50 }).then((r) => r.items.map(commandToQueueRow)),
     enabled: !!namespace,
   })
+}
+
+// 命令类型 → 友好中文名（队列行展示用）：避免把 resultDetail 原始 JSON（如 {"taskId":1,"files":28}）直接抛到行名。
+const COMMAND_TYPE_LABEL: Record<string, string> = {
+  'ingest-plugins': '反向抓取',
+  'fs-browse': '浏览文件',
+  reload: '热更下发',
+}
+
+// 命令 → 队列行名：类型友好标签 + 实例；反向抓取若详情含文件数则附带（N 文件）。
+function commandRowName(c: CommandMetaView): string {
+  const label = COMMAND_TYPE_LABEL[c.type] ?? c.type
+  // resultDetail 可能是结构化 JSON（反向抓取回 {taskId,files}）：能解析出文件数则友好附带，非 JSON 不展示原文
+  if (c.resultDetail && c.resultDetail.trim().startsWith('{')) {
+    try {
+      const d = JSON.parse(c.resultDetail) as { files?: number }
+      if (typeof d.files === 'number') return `${label} @ ${c.serverId}（${d.files} 文件）`
+    } catch {
+      // 详情非合法 JSON：忽略附带，回落到「类型 @ 实例」
+    }
+  }
+  return `${label} @ ${c.serverId}`
 }
 
 // agent 命令 → 同步队列行：状态收口到队列四态。
@@ -178,7 +228,7 @@ function commandToQueueRow(c: CommandMetaView): SyncQueueRow {
   const direction: 'fetch' | 'push' = c.type === 'ingest-plugins' ? 'fetch' : 'push'
   return {
     id: String(c.commandId),
-    name: c.resultDetail || `${c.type} @ ${c.serverId}`,
+    name: commandRowName(c),
     direction,
     status: commandStatusToQueueStatus(c.status, direction),
     scopeTarget: c.serverId,
@@ -206,7 +256,10 @@ export function useOperationLog() {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-operation-log', namespace],
-    queryFn: () => listReversibleOperations({ namespace, limit: 100 }).then((ops) => ops.map(reversibleOpToLogEntry)),
+    queryFn: () =>
+      listReversibleOperations({ namespace, limit: 100 }).then((ops) =>
+        ops.map(reversibleOpToLogEntry),
+      ),
     enabled: !!namespace,
   })
 }
@@ -238,7 +291,12 @@ export function useWorkbenchOptions() {
 }
 
 function buildOptions(insts: InstanceView[]): { scopes: ScopeOption[]; servers: ServerOption[] } {
-  const servers: ServerOption[] = insts.map((i) => ({ serverId: i.serverId, label: i.serverId, online: true }))
+  const servers: ServerOption[] = insts.map((i) => ({
+    serverId: i.serverId,
+    label: i.serverId,
+    online: true,
+    group: i.group,
+  }))
   // 覆盖层候选：全局 + 各唯一组 + 各实例（实例层定向覆盖）
   const scopes: ScopeOption[] = [{ value: 'global', label: '全局', scope: 'global' }]
   const seenGroups = new Set<string>()
@@ -248,7 +306,8 @@ function buildOptions(insts: InstanceView[]): { scopes: ScopeOption[]; servers: 
       scopes.push({ value: `group:${i.group}`, label: `组 ${i.group}`, scope: 'group' })
     }
   }
-  for (const i of insts) scopes.push({ value: `server:${i.serverId}`, label: `实例 ${i.serverId}`, scope: 'server' })
+  for (const i of insts)
+    scopes.push({ value: `server:${i.serverId}`, label: `实例 ${i.serverId}`, scope: 'server' })
   return { scopes, servers }
 }
 
@@ -294,26 +353,45 @@ async function loadWorkbenchFile(namespace: string, key: string): Promise<Workbe
 // 由 path 扩展名推编辑器语言（文件树对象无独立 format 字段）
 function formatFromPath(path: string): string {
   const ext = path.includes('.') ? path.split('.').pop()!.toLowerCase() : ''
-  const map: Record<string, string> = { yml: 'yaml', yaml: 'yaml', json: 'json', properties: 'properties', txt: 'text' }
+  const map: Record<string, string> = {
+    yml: 'yaml',
+    yaml: 'yaml',
+    json: 'json',
+    properties: 'properties',
+    txt: 'text',
+  }
   return map[ext] ?? 'yaml'
 }
 
+// 扫描清单轮询终止状态：清单已到（pending-review）或任务终态。
+const INGEST_SCAN_DONE = new Set(['pending-review', 'failed', 'cancelled', 'expired'])
+
 // ---- 反向抓取扫描清单 ← getReverseFetchTask（FR-58~60）----
 // 取某受管任务的扫描清单映射成 ingest 审核项；无任务 id 时返回空（审核浮层据此空态）。
+// 扫描未达终止状态（pending/scanning）时每 2s 轮询，直到 pending-review 拿到全量清单或落终态；
+// 额外回传 status（浮层据此区分「扫描中」与「待审」）。
 export function useIngestScanList(taskId: number | undefined) {
   return useQuery({
     queryKey: ['wb-ingest-scan', taskId],
     queryFn: () =>
       getReverseFetchTask(taskId!).then((task) => ({
+        status: task.status,
         items: task.files.map<IngestScanItem>((f) => ({
           path: f.path,
           size: humanSize(f.size),
           ignored: f.ignoredByRule || f.overThreshold,
           defaultPick: !f.ignoredByRule && !f.overThreshold,
+          overThreshold: f.overThreshold,
         })),
         ignoreRules: [] as string[],
       })),
     enabled: !!taskId,
+    // 扫描中（非终止态）每 2s 轮询；清单到位 / 终态停轮询
+    refetchInterval: (q) => {
+      const s = q.state.data?.status
+      if (s && INGEST_SCAN_DONE.has(s)) return false
+      return 2000
+    },
   })
 }
 
@@ -323,7 +401,8 @@ export function useEffectivePreview(serverId: string | undefined) {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-effective', namespace, serverId],
-    queryFn: () => effectiveFiles({ namespace, serverId }).then((tree) => tree.files.map(effectiveFileToView)),
+    queryFn: () =>
+      effectiveFiles({ namespace, serverId }).then((tree) => tree.files.map(effectiveFileToView)),
     enabled: !!namespace && !!serverId,
   })
 }
@@ -360,12 +439,19 @@ function layersFor(scope: OverrideScope): EffectiveLayer[] {
 
 // ---- 发布影响面 ← impactPreview（FR-79）----
 // 按选中文件解析受影响在线服清单；本 FR 以首个选中文件的覆盖层算一组影响面（多文件按需扩展）。
-export function usePublishImpact(names: string[], enabled: boolean, scopeLevel = 'group', group?: string) {
+export function usePublishImpact(
+  names: string[],
+  enabled: boolean,
+  scopeLevel = 'group',
+  group?: string,
+) {
   const namespace = useEnvironment()
   return useQuery({
     queryKey: ['wb-publish-impact', namespace, names, scopeLevel, group],
     queryFn: () =>
-      impactPreview({ namespace, scopeLevel, group }).then((impact) => impactToView(names, impact, scopeLevel)),
+      impactPreview({ namespace, scopeLevel, group }).then((impact) =>
+        impactToView(names, impact, scopeLevel),
+      ),
     enabled: enabled && !!namespace && names.length > 0,
   })
 }

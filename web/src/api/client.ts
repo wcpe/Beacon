@@ -23,6 +23,8 @@ import type {
   DefaultEntryView,
   DiffView,
   FileRevisionView,
+  FileSyncEvent,
+  FileSyncTaskView,
   FileView,
   IgnoreRuleType,
   IgnoreRuleView,
@@ -398,11 +400,17 @@ export interface OfflineMarker {
 
 // 列出当前主动下线标记（FR-49）。namespace 可选过滤。
 export function listOfflineInstances(namespace?: string): Promise<OfflineMarker[]> {
-  return request<ItemsResponse<OfflineMarker>>(`/instances/offline${qs({ namespace })}`).then((r) => r.items)
+  return request<ItemsResponse<OfflineMarker>>(`/instances/offline${qs({ namespace })}`).then(
+    (r) => r.items,
+  )
 }
 
 // 主动下线某实例（FR-49）：落 DB 拒绝态 + 移出可用集。namespace 取自该行实例（不再强制先筛环境）。
-export function offlineInstance(serverId: string, namespace: string, reason?: string): Promise<void> {
+export function offlineInstance(
+  serverId: string,
+  namespace: string,
+  reason?: string,
+): Promise<void> {
   return request<void>(`/instances/${encodeURIComponent(serverId)}/offline${qs({ namespace })}`, {
     method: 'POST',
     body: JSON.stringify({ reason: reason ?? '' }),
@@ -428,12 +436,18 @@ export interface DrainMarker {
 
 // 列当前 drain 标记（GET /scheduling/drains?namespace=）：后端响应 { items: [] }，取 items。
 export function listDrains(namespace?: string): Promise<DrainMarker[]> {
-  return request<ItemsResponse<DrainMarker>>(`/scheduling/drains${qs({ namespace })}`).then((r) => r.items)
+  return request<ItemsResponse<DrainMarker>>(`/scheduling/drains${qs({ namespace })}`).then(
+    (r) => r.items,
+  )
 }
 
 // 标记某实例排空（PUT /scheduling/drains）：namespace/serverId 走请求体（与后端 drainRequest 一致）。
 // 写操作需 full 角色（readonly → 403）。
-export function drainInstance(serverId: string, namespace: string, reason?: string): Promise<DrainMarker> {
+export function drainInstance(
+  serverId: string,
+  namespace: string,
+  reason?: string,
+): Promise<DrainMarker> {
   return request<DrainMarker>('/scheduling/drains', {
     method: 'PUT',
     body: JSON.stringify({ namespace, serverId, reason: reason ?? '' }),
@@ -579,9 +593,9 @@ export function listAssignments(
   group?: string,
   zone?: string,
 ): Promise<AssignmentView[]> {
-  return request<ItemsResponse<AssignmentView>>(`/zones/assignments${qs({ namespace, group, zone })}`).then(
-    (r) => r.items,
-  )
+  return request<ItemsResponse<AssignmentView>>(
+    `/zones/assignments${qs({ namespace, group, zone })}`,
+  ).then((r) => r.items)
 }
 
 // 新增/改派参数
@@ -608,15 +622,20 @@ export function unassignZone(namespace: string, serverId: string): Promise<void>
 }
 
 export function zoneSummary(namespace?: string, group?: string): Promise<ZoneStatView[]> {
-  return request<ItemsResponse<ZoneStatView>>(`/zones${qs({ namespace, group })}`).then((r) => r.items)
+  return request<ItemsResponse<ZoneStatView>>(`/zones${qs({ namespace, group })}`).then(
+    (r) => r.items,
+  )
 }
 
 // ===== 小区默认入口（FR-48）=====
 // 只读列出某环境（可选某大区）各小区的默认入口 serverId；供代理服管理页按 BC 所属小区展示默认入口（FR-52）。
-export function listDefaultEntries(namespace?: string, group?: string): Promise<DefaultEntryView[]> {
-  return request<ItemsResponse<DefaultEntryView>>(`/zones/default-entry${qs({ namespace, group })}`).then(
-    (r) => r.items,
-  )
+export function listDefaultEntries(
+  namespace?: string,
+  group?: string,
+): Promise<DefaultEntryView[]> {
+  return request<ItemsResponse<DefaultEntryView>>(
+    `/zones/default-entry${qs({ namespace, group })}`,
+  ).then((r) => r.items)
 }
 
 // ===== 审计 =====
@@ -664,7 +683,9 @@ export async function exportAudits(filter: AuditFilter, format: AuditExportForma
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filenameFromDisposition(resp.headers.get('Content-Disposition')) ?? `audit-export-${Date.now()}.${format}`
+  a.download =
+    filenameFromDisposition(resp.headers.get('Content-Disposition')) ??
+    `audit-export-${Date.now()}.${format}`
   a.click()
   // 延后释放更稳：避免极少数浏览器在 click 触发下载前就回收 url
   setTimeout(() => URL.revokeObjectURL(url), 0)
@@ -816,11 +837,7 @@ export function createFile(params: CreateFileParams): Promise<FileView> {
   })
 }
 
-export function publishFile(
-  id: number,
-  content: string,
-  comment: string,
-): Promise<PublishResult> {
+export function publishFile(id: number, content: string, comment: string): Promise<PublishResult> {
   return request<PublishResult>(`/files/${id}`, {
     method: 'PUT',
     body: JSON.stringify({ content, comment }),
@@ -988,7 +1005,10 @@ export interface ImprintDiffParams {
 }
 
 // 拉拓印 diff：命令须 ready；返回本地实际值 ⟷ 按并入层视角解出的期望合并值（含逐键来源）。
-export function imprintDiff(commandId: number, params: ImprintDiffParams): Promise<ImprintDiffView> {
+export function imprintDiff(
+  commandId: number,
+  params: ImprintDiffParams,
+): Promise<ImprintDiffView> {
   return request<ImprintDiffView>(`/imprints/${commandId}/diff${qs(params)}`)
 }
 
@@ -1018,9 +1038,12 @@ export function confirmImprint(
 // 触发取某在线实例的自身脱敏日志：建 pending tail-logs 命令并唤醒 agent，返回命令视图（202）。
 // namespace 走查询参数；写操作需 full 角色（readonly → 403）；该实例已有进行中取日志命令 → 409 AGENT_LOG_ACTIVE。
 export function requestAgentLogs(serverId: string, namespace: string): Promise<AgentLogView> {
-  return request<AgentLogView>(`/instances/${encodeURIComponent(serverId)}/logs${qs({ namespace })}`, {
-    method: 'POST',
-  })
+  return request<AgentLogView>(
+    `/instances/${encodeURIComponent(serverId)}/logs${qs({ namespace })}`,
+    {
+      method: 'POST',
+    },
+  )
 }
 
 // 查询某实例最近一次取日志结果：done 则附脱敏日志行；从无取日志命令 → 204（返回 undefined，调用方按需处理）。
@@ -1179,10 +1202,7 @@ export function conflictDiff(id: number, path: string): Promise<ConflictDiffView
 }
 
 // 冲突审核落库（FR-59）：逐冲突文件 overwrite（须自审 reviewedMd5）/ keep；写操作需 full 角色。
-export function resolveConflicts(
-  id: number,
-  decisions: ResolveDecision[],
-): Promise<ResolveResult> {
+export function resolveConflicts(id: number, decisions: ResolveDecision[]): Promise<ResolveResult> {
   return request<ResolveResult>(`/reverse-fetch/tasks/${id}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ decisions }),
@@ -1199,9 +1219,9 @@ export interface IgnoreRuleFilter {
 
 // 列活跃忽略规则（FR-59）。
 export function listIgnoreRules(filter: IgnoreRuleFilter): Promise<IgnoreRuleView[]> {
-  return request<ItemsResponse<IgnoreRuleView>>(
-    `/reverse-fetch/ignore-rules${qs(filter)}`,
-  ).then((r) => r.items)
+  return request<ItemsResponse<IgnoreRuleView>>(`/reverse-fetch/ignore-rules${qs(filter)}`).then(
+    (r) => r.items,
+  )
 }
 
 // 建忽略规则参数（FR-59）：ruleType 取值 exact（单文件）/ prefix（目录前缀）。
@@ -1256,11 +1276,138 @@ export interface ReversibleOpFilter {
 
 // 列可逆操作账目（FR-116）：后端响应 { items: [] }，取 items；最新在前。供工作台操作日志。
 export function listReversibleOperations(filter: ReversibleOpFilter): Promise<ReversibleOpView[]> {
-  return request<ItemsResponse<ReversibleOpView>>(`/reversible-operations${qs(filter)}`).then((r) => r.items)
+  return request<ItemsResponse<ReversibleOpView>>(`/reversible-operations${qs(filter)}`).then(
+    (r) => r.items,
+  )
 }
 
 // 撤回一条可逆操作（FR-116，幂等）：回滚配置 / 文件版本指针或撤销 ingest 纳管 + 按需重推。
 // 写操作需 full 角色（readonly→403）；过期 / 被覆盖 → 409；重复撤回返回幂等成功（status=reversed）。
 export function undoReversibleOperation(id: number): Promise<ReversibleOpView> {
   return request<ReversibleOpView>(`/reversible-operations/${id}/undo`, { method: 'POST' })
+}
+
+// ===== 多级灰度配置同步中心（file-sync）=====
+
+export interface CreateFileSyncTaskParams {
+  namespace: string
+  sourceServerId: string
+  directory: string
+  batchSize: number
+  intervalSec: number
+  failureThresholdPercent: number
+}
+
+export interface FileSyncTaskFilter {
+  namespace?: string
+  status?: string
+}
+
+export interface PlanFileSyncTaskParams {
+  targetServerIds: string[]
+}
+
+export interface StreamFileSyncEventsOptions {
+  signal?: AbortSignal
+  afterLogId?: number
+}
+
+export function createFileSyncTask(params: CreateFileSyncTaskParams): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>('/file-sync/tasks', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+export function listFileSyncTasks(filter: FileSyncTaskFilter = {}): Promise<FileSyncTaskView[]> {
+  return request<ItemsResponse<FileSyncTaskView>>(`/file-sync/tasks${qs(filter)}`).then(
+    (r) => r.items,
+  )
+}
+
+export function getFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>(`/file-sync/tasks/${encodeURIComponent(id)}`)
+}
+
+export function planFileSyncTask(
+  id: string,
+  params: PlanFileSyncTaskParams,
+): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>(`/file-sync/tasks/${encodeURIComponent(id)}/plan`, {
+    method: 'POST',
+    body: JSON.stringify(params),
+  })
+}
+
+function fileSyncAction(id: string, action: string): Promise<FileSyncTaskView> {
+  return request<FileSyncTaskView>(`/file-sync/tasks/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+  })
+}
+
+export function startFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'start')
+}
+
+export function pauseFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'pause')
+}
+
+export function resumeFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'resume')
+}
+
+export function terminateFileSyncTask(id: string): Promise<FileSyncTaskView> {
+  return fileSyncAction(id, 'terminate')
+}
+
+export async function streamFileSyncTaskEvents(
+  id: string,
+  onEvent: (event: FileSyncEvent) => void,
+  options: StreamFileSyncEventsOptions = {},
+): Promise<void> {
+  const token = currentToken()
+  const query = qs({ afterLogId: options.afterLogId })
+  const resp = await fetch(`${BASE}/file-sync/tasks/${encodeURIComponent(id)}/events${query}`, {
+    headers: {
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal: options.signal,
+  })
+  if (resp.status === 401) {
+    clearAuth()
+    if (unauthorizedHandler) unauthorizedHandler()
+    throw await toError(resp)
+  }
+  if (!resp.ok) throw await toError(resp)
+  if (!resp.body) return
+
+  const reader = resp.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const consume = (frame: string) => {
+    const data = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).trimStart())
+      .join('\n')
+    if (!data) return
+    onEvent(JSON.parse(data) as FileSyncEvent)
+  }
+
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    buffer = buffer.replace(/\r\n/g, '\n')
+    let sep = buffer.indexOf('\n\n')
+    while (sep >= 0) {
+      consume(buffer.slice(0, sep))
+      buffer = buffer.slice(sep + 2)
+      sep = buffer.indexOf('\n\n')
+    }
+    if (done) break
+  }
+  if (buffer.trim()) consume(buffer)
 }

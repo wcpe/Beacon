@@ -20,7 +20,14 @@ import type { ObservabilityView, SystemStatusView } from '../api/types'
 
 // 各计数取互不相同的值，避免 getByText 因重复文本歧义抛错。
 const OBS: ObservabilityView = {
-  dbPool: { maxOpenConnections: 20, openConnections: 5, inUse: 12, idle: 13, waitCount: 7, waitDurationMs: 250 },
+  dbPool: {
+    maxOpenConnections: 20,
+    openConnections: 5,
+    inUse: 12,
+    idle: 13,
+    waitCount: 7,
+    waitDurationMs: 250,
+  },
   longpoll: { config: 22, file: 11, topology: 0, command: 33, total: 66 },
   registryByStatus: { online: 41, degraded: 14, lost: 23 },
   registryTotal: 78,

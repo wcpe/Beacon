@@ -7,10 +7,10 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { InstanceView } from '../../api/types'
 import type { AssignParams } from '../../api/client'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Combobox } from '@/components/ui/combobox'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
+import { Combobox } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from '@beacon/ui'
 
 interface ReassignDialogProps {
   open: boolean

@@ -11,21 +11,15 @@ import { formatTime } from '../api/format'
 import { apiBaseFromLocation, buildApiKeyCurl } from '@/lib/curlCommand'
 import { useMessage } from '../components/useMessage'
 import { usePageHeader } from '@/components/PageHeader'
-import AsyncSection from '@/components/AsyncSection'
-import DataTable, { type DataTableColumn } from '@/components/DataTable'
-import SummaryStrip, { type SummaryItem } from '@/components/SummaryStrip'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { AsyncSection } from '@beacon/ui'
+import { DataTable, type DataTableColumn } from '@beacon/ui'
+import { SummaryStrip, type SummaryItem } from '@beacon/ui'
+import { Badge } from '@beacon/ui'
+import { Button } from '@beacon/ui'
+import { Input } from '@beacon/ui'
+import { Label } from '@beacon/ui'
 import { cn } from '@/lib/utils'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 import {
   Dialog,
   DialogContent,
@@ -34,8 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog'
-import DestructiveConfirmDialog from '@/components/DestructiveConfirmDialog'
+} from '@beacon/ui'
+import { DestructiveConfirmDialog } from '@beacon/ui'
 
 // 状态徽标配色：active 绿 / expired 琥珀 / revoked 灰
 const STATUS_COLOR: Record<string, string> = {
@@ -173,7 +167,10 @@ export default function ApiKeysPage() {
     },
     { header: t('apikeys.colCreatedAt'), cell: (k) => formatTime(k.createdAt) },
     { header: t('apikeys.colLastUsed'), cell: (k) => formatTime(k.lastUsedAt) },
-    { header: t('apikeys.colExpiresAt'), cell: (k) => (k.expiresAt ? formatTime(k.expiresAt) : t('apikeys.expiresNever')) },
+    {
+      header: t('apikeys.colExpiresAt'),
+      cell: (k) => (k.expiresAt ? formatTime(k.expiresAt) : t('apikeys.expiresNever')),
+    },
     {
       header: t('apikeys.colActions'),
       cell: (k) =>
@@ -216,9 +213,7 @@ export default function ApiKeysPage() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t('apikeys.createTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('apikeys.createDesc')}
-            </DialogDescription>
+            <DialogDescription>{t('apikeys.createDesc')}</DialogDescription>
           </DialogHeader>
           <form id="create-api-key" onSubmit={onCreate} className="space-y-4">
             <div className="space-y-1.5">
@@ -301,8 +296,11 @@ export default function ApiKeysPage() {
                 </pre>
               </div>
               <p className="text-xs text-muted-foreground">
-                {t('apikeys.revealUsageBefore')}<code className="font-mono">X-Beacon-Api-Key</code>{t('apikeys.revealUsageOr')}
-                <code className="font-mono">{t('apikeys.revealUsageBearer')}</code>{t('apikeys.revealUsageAfter')}
+                {t('apikeys.revealUsageBefore')}
+                <code className="font-mono">X-Beacon-Api-Key</code>
+                {t('apikeys.revealUsageOr')}
+                <code className="font-mono">{t('apikeys.revealUsageBearer')}</code>
+                {t('apikeys.revealUsageAfter')}
               </p>
             </div>
           )}

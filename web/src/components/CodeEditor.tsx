@@ -32,15 +32,21 @@ interface CodeEditorProps {
   onMount?: () => void
   // 客户端格式校验结果回调（FR-75）：合法上抛 null，非法上抛首个错误。仅编辑模式触发。
   onValidate?: (error: LintError | null) => void
+  // diff 模式强制左右并排：默认（false）窄区时 Monaco 会自动回退成行内堆叠（旧行为不变）；
+  // 传 true 关闭该回退，无论宽窄都保持左右两栏对比。
+  sideBySide?: boolean
 }
 
 // ---- 语言映射 ----
 
 function mapLanguage(format: string): string {
   switch (format) {
-    case 'yaml': return 'yaml'
-    case 'json': return 'json'
-    default: return 'plaintext'
+    case 'yaml':
+      return 'yaml'
+    case 'json':
+      return 'json'
+    default:
+      return 'plaintext'
   }
 }
 
@@ -54,6 +60,7 @@ export default function CodeEditor({
   onChange,
   onMount,
   onValidate,
+  sideBySide = false,
 }: CodeEditorProps) {
   const { t } = useTranslation()
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
@@ -90,30 +97,43 @@ export default function CodeEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isDiff, validateError?.line, validateError?.message])
 
-  const handleEditorMount: OnMount = useCallback((ed) => {
-    editorRef.current = ed
-    ed.onKeyDown((e) => {
-      if ((e.ctrlKey || e.metaKey) && e.keyCode === 49) {
-        e.preventDefault()
-        window.dispatchEvent(new KeyboardEvent('keydown', {
-          key: 's', code: 'KeyS', keyCode: 49, ctrlKey: true, bubbles: true,
-        }))
-      }
-    })
+  const handleEditorMount: OnMount = useCallback(
+    (ed) => {
+      editorRef.current = ed
+      ed.onKeyDown((e) => {
+        if ((e.ctrlKey || e.metaKey) && e.keyCode === 49) {
+          e.preventDefault()
+          window.dispatchEvent(
+            new KeyboardEvent('keydown', {
+              key: 's',
+              code: 'KeyS',
+              keyCode: 49,
+              ctrlKey: true,
+              bubbles: true,
+            }),
+          )
+        }
+      })
+      onMount?.()
+    },
+    [onMount],
+  )
+
+  const handleDiffMount = useCallback(() => {
     onMount?.()
   }, [onMount])
 
-  const handleDiffMount = useCallback(() => { onMount?.() }, [onMount])
-
   const monacoLang = mapLanguage(language)
 
-  // 编辑模式配置
-  const editOptions = {
+  // 编辑模式配置（标注 monaco 选项类型，使字符串字面量按其联合类型收窄，无需在用处 as any）
+  const editOptions: editor.IStandaloneEditorConstructionOptions = {
     fontSize: 13,
     fontFamily: 'var(--font-mono)',
     minimap: { enabled: false },
     scrollBeyondLastLine: false,
     automaticLayout: true,
+    // 浮窗/查找/悬浮等 overflow 小部件渲染到 body，避免被 overflow-hidden 容器裁切导致闪烁、无法点关闭
+    fixedOverflowWidgets: true,
     tabSize: 2,
     padding: { top: 8 },
     scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
@@ -149,11 +169,13 @@ export default function CodeEditor({
     },
   }
 
-  // Diff 模式配置
-  const diffOptions = {
+  // Diff 模式配置（同上标注 diff 选项类型）
+  const diffOptions: editor.IStandaloneDiffEditorConstructionOptions = {
     ...editOptions,
     readOnly: false,
     renderSideBySide: true,
+    // sideBySide=true 时关闭「窄区自动回退行内」，保证始终左右两栏（默认保持原行为）
+    useInlineViewWhenSpaceIsLimited: !sideBySide,
     renderOverviewRuler: true,
     overviewRulerBorder: false,
     lineDecorationsWidth: 8,
@@ -168,7 +190,7 @@ export default function CodeEditor({
         modified={modified || value}
         language={monacoLang}
         theme="vs"
-        options={diffOptions as any}
+        options={diffOptions}
         onMount={handleDiffMount}
         loading={<EditorLoading />}
       />
@@ -184,7 +206,7 @@ export default function CodeEditor({
           theme="vs"
           onChange={(v) => onChange?.(v ?? '')}
           onMount={handleEditorMount}
-          options={editOptions as any}
+          options={editOptions}
           loading={<EditorLoading />}
         />
       </div>

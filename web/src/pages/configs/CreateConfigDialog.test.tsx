@@ -66,7 +66,9 @@ describe('CreateConfigDialog', () => {
   it('环境/大区下拉来自传入数据，无硬编码示例', async () => {
     renderDialog(<CreateConfigDialog {...baseProps} open onOpenChange={() => {}} />)
     const nsList = await openCombobox('环境')
-    const nsOptions = within(nsList).getAllByRole('option').map((o) => o.textContent)
+    const nsOptions = within(nsList)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
     // 候选显示「编码 · 名称」（FR-70）
     expect(nsOptions).toEqual(NAMESPACES.map((n) => n.label))
     // 旧硬编码大区示例不应再出现
@@ -82,7 +84,9 @@ describe('CreateConfigDialog', () => {
     await userEvent.selectOptions(screen.getByLabelText('覆盖层'), 'server')
     await screen.findByLabelText('覆盖目标')
     const list = await openCombobox('覆盖目标')
-    const opts = within(list).getAllByRole('option').map((o) => o.textContent)
+    const opts = within(list)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
     expect(opts).toContain('srv-1')
     expect(opts).toContain('srv-2')
   })
@@ -92,7 +96,9 @@ describe('CreateConfigDialog', () => {
     await userEvent.selectOptions(screen.getByLabelText('覆盖层'), 'group')
     await screen.findByLabelText('覆盖目标')
     const list = await openCombobox('覆盖目标')
-    const opts = within(list).getAllByRole('option').map((o) => o.textContent)
+    const opts = within(list)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
     expect(opts).toContain('gA')
     expect(opts).toContain('gB')
   })
