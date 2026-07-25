@@ -101,18 +101,20 @@ export default function LoginPage() {
               />
             </div>
 
-            {/* 失败提示区（脱敏文案样式：crit 浅底 + 同色描边，只显脱敏后的安全文案） */}
-            {error !== null && (
-              <div
-                className="flex items-start gap-2 rounded-lg border border-crit-bd bg-crit-bg px-3 py-2 text-[13px] text-crit"
-                role="alert"
-              >
-                <TriangleAlert className="mt-px size-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
+            {/* 失败提示区固定高度占位，避免错误出现时卡片高度抖动 */}
+            <div className="min-h-[40px]" aria-live="polite">
+              {error !== null && (
+                <div
+                  className="flex items-start gap-2 rounded-lg border border-crit-bd bg-crit-bg px-3 py-2 text-[13px] text-crit"
+                  role="alert"
+                >
+                  <TriangleAlert className="mt-px size-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
 
-            <Button className="mt-0.5 w-full" disabled={loading} type="submit">
+            <Button className="mt-0.5 h-10 w-full rounded-lg" disabled={loading} type="submit">
               {loading ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />

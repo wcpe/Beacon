@@ -42,11 +42,20 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
   const level = detail ? (LEVEL_META[detail.level] ?? 'warn') : 'warn'
 
   return (
-    <Sheet open={serverId !== null} onOpenChange={onOpenChange}>
+    <Sheet
+      open={serverId !== null}
+      onOpenChange={onOpenChange}
+      // 与主从详情一致：不锁列表交互；点遮罩 / Esc 仍可关（Radix 默认）
+      modal={false}
+    >
       {/* 加宽健康详情面板到 32rem（窄屏不超 90vw），让因子分解表从容展开。
           必须用与组件默认值同变体栈的 data-[side=right]:sm: 前缀，tailwind-merge 才会
-          去重掉默认 data-[side=right]:sm:max-w-sm（裸 sm:max-w-* 会输在选择器特异性上）。 */}
-      <SheetContent className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[min(32rem,90vw)]">
+          去重掉默认 data-[side=right]:sm:max-w-sm（裸 sm:max-w-* 会输在选择器特异性上）。
+          关遮罩：列表可继续点选换行；点外部仍由 modal=false 的 outside 交互关闭。 */}
+      <SheetContent
+        showOverlay={false}
+        className="w-full gap-0 overflow-y-auto data-[side=right]:sm:max-w-[min(32rem,90vw)]"
+      >
         <SheetHeader>
           <SheetTitle>{t('cluster.servers.health.title')}</SheetTitle>
           <SheetDescription className="font-mono">{serverId}</SheetDescription>

@@ -127,9 +127,13 @@ export default function ServerWall() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="rounded-md border border-border-strong bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-3">
-                        {item.zoneName ?? t('dashboard.wall.unassigned')}
-                      </span>
+                      {item.zoneName ? (
+                        <span className="rounded-md border border-border-strong bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-3">
+                          {item.zoneName}
+                        </span>
+                      ) : (
+                        <Badge variant="off">{t('dashboard.wall.unassigned')}</Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant={meta.variant} className="gap-1.5">

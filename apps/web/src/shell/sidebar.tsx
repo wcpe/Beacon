@@ -154,11 +154,11 @@ function SidebarBody({
           <div key={group.titleKey}>
             {/* 折叠时不再画分隔线，与侧栏视觉打通 */}
             {!collapsed && (
-              <div className="px-2.5 pt-3 pb-1.5 text-[10.5px] font-semibold tracking-[0.6px] text-ink-4 uppercase">
+              <div className="px-2.5 pt-3.5 pb-1.5 text-[11px] font-semibold tracking-[0.04em] text-ink-3">
                 {t(group.titleKey)}
               </div>
             )}
-            <div className={['grid gap-px', collapsed ? 'mt-1' : ''].join(' ')}>
+            <div className={['grid gap-0.5', collapsed ? 'mt-1.5' : ''].join(' ')}>
               {group.pages.map((page) => (
                 <SidebarNavItem
                   collapsed={collapsed}

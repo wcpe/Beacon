@@ -388,7 +388,7 @@ export default function AssetsPanel({
         cell: (row) => {
           const health = healthByServer.get(row.serverId)
           const level = health ? (LEVEL_META[health.level] ?? 'warn') : 'warn'
-          // 不可调度原因摘要：取首条原因码译文，多条时补「+N」；title 用全部译文 join
+          // 不可调度原因：不叠第三颗药丸，改弱文案 + title 全量原因
           const reasonLabels =
             health && health.reasons.length > 0
               ? health.reasons.map((r) =>
@@ -401,34 +401,43 @@ export default function AssetsPanel({
                 (reasonLabels.length > 1 ? ` +${String(reasonLabels.length - 1)}` : '')
               : null
           return (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* 在线 / 失联 */}
-              {row.online ? (
-                <Badge variant="ok" className="gap-1.5">
-                  <span className="size-1.5 rounded-full bg-current" />
-                  {t('cluster.servers.summary.online')}
-                </Badge>
-              ) : (
-                <Badge variant="crit" className="gap-1.5">
-                  <span className="size-1.5 rounded-full bg-current" />
-                  {t('cluster.servers.health.lost')}
-                </Badge>
-              )}
-              {/* 健康分 + 等级（一眼可见，不必点开详情） */}
-              {health && (
-                <span className="flex items-center gap-1">
-                  <span className={cn('text-[12px] font-semibold tnum', levelText(level))}>{health.score}</span>
-                  <Badge variant={badgeOf(level)} className="gap-1">
-                    {t(`cluster.servers.health.level_${health.level}`)}
+            <div className="flex min-w-0 flex-col gap-0.5">
+              {/* 主信号 ≤2：在线态 + 健康分/等级 */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {row.online ? (
+                  <Badge variant="ok" className="gap-1.5">
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {t('cluster.servers.summary.online')}
                   </Badge>
-                </span>
-              )}
-              {/* 可调度状态按例外呈现：仅不可调度时直显原因摘要，可调度不加多余药丸 */}
+                ) : (
+                  <Badge variant="crit" className="gap-1.5">
+                    <span className="size-1.5 rounded-full bg-current" />
+                    {t('cluster.servers.health.lost')}
+                  </Badge>
+                )}
+                {health && (
+                  <span className="flex items-center gap-1">
+                    <span className={cn('text-[12px] font-semibold tnum', levelText(level))}>
+                      {health.score}
+                    </span>
+                    <Badge variant={badgeOf(level)} className="gap-1">
+                      {t(`cluster.servers.health.level_${health.level}`)}
+                    </Badge>
+                  </span>
+                )}
+              </div>
               {health && !health.schedulable && (
-                <Badge variant="warn" title={reasonLabels.join('、')}>
+                <span
+                  className="max-w-[14rem] truncate text-[11px] text-ink-4"
+                  title={
+                    reasonLabels.length > 0
+                      ? reasonLabels.join('、')
+                      : t('cluster.servers.health.notSchedulable')
+                  }
+                >
                   {t('cluster.servers.health.notSchedulable')}
-                  {reasonSummary != null && ` · ${reasonSummary}`}
-                </Badge>
+                  {reasonSummary != null ? ` · ${reasonSummary}` : ''}
+                </span>
               )}
             </div>
           )

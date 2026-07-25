@@ -1,6 +1,6 @@
 // 区服结构树：BC 集群 → 大区 → 小区 → 子服，真正的层级树形（缩进 + 连线 + 展开折叠）。
 // 各层可新建。代理服（BC/bungee，kind=proxy）用清晰角色标签与图标区分于子服（bukkit，kind=backend）。
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
@@ -86,10 +86,13 @@ export default function ZoneTree({
   const queryClient = useQueryClient()
   const [intent, setIntent] = useState<CreateIntent | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
-  // 展开的节点键集合；默认全部集群与大区展开、小区收起（子服按需展开避免一次渲染上千行）
+  // 展开的节点键集合；默认只展开集群 + 大区，小区默认收起（huge 1200+ 子服时禁止首屏全量挂叶子）
   const [expanded, setExpanded] = useState<Set<NodeKey>>(new Set())
   // 首次数据到达后自动展开集群 + 大区一层（只做一次，之后尊重用户手动折叠）
   const [autoExpanded, setAutoExpanded] = useState(false)
+  // 小区叶子「再显示」上限：单区超过此数需点「展开全部」才挂全量 DOM
+  const [zoneLeafLimit, setZoneLeafLimit] = useState<Record<string, number>>({})
+  const DEFAULT_ZONE_LEAF_LIMIT = 40
 
   const query = useQuery({
     queryKey: ['zone-tree', namespaceId],
@@ -98,11 +101,30 @@ export default function ZoneTree({
     placeholderData: keepPreviousData,
   })
 
-  // 该 namespace 下全量 server（用于小区展开时列出子服 + 代理标注），按需一次拉取。
+  // 切换 namespace 时清空展开态与叶子上限，避免旧树键串到新 ns、也避免 huge 下沿用「全展开」
+  useEffect(() => {
+    setExpanded(new Set())
+    setAutoExpanded(false)
+    setZoneLeafLimit({})
+  }, [namespaceId])
+
+  // 仅当存在已展开的小区时再拉 server 列表（代理层始终需要，故有任意 cluster 展开即拉）
+  const needsServerList = useMemo(() => {
+    for (const key of expanded) {
+      if (key.startsWith('cluster:') || key.startsWith('zone:')) {
+        return true
+      }
+    }
+    // 首帧 auto-expand 前也允许预取，避免展开后空白一帧；huge 下数据重但只拉一次
+    return autoExpanded
+  }, [expanded, autoExpanded])
+
+  // 该 namespace 下 server 列表：小区展开时列子服 + 集群下列代理。pageSize 顶到 2000 覆盖 huge。
   const serversQuery = useQuery({
     queryKey: ['servers', 'tree', namespaceId],
     queryFn: () => fetchServers({ namespaceId, pageSize: 2000 }),
     placeholderData: keepPreviousData,
+    enabled: needsServerList || query.isSuccess,
   })
   const serversByZone = useMemo(() => {
     const map = new Map<number, ServerItem[]>()
@@ -516,23 +538,21 @@ export default function ZoneTree({
     }
   }
 
-  // 首帧自动展开集群 + 大区 + 有服小区，让真机已分配服务器默认可见
-  if (tree && !autoExpanded) {
+  // 首帧只自动展开集群 + 大区；小区保持收起，子服按需展开（huge 下避免一次挂 1200+ 叶子）
+  useEffect(() => {
+    if (!tree || autoExpanded) {
+      return
+    }
     const next = new Set<NodeKey>()
     for (const cluster of tree.clusters) {
       next.add(`cluster:${String(cluster.id)}`)
       for (const region of cluster.regions) {
         next.add(`region:${String(region.id)}`)
-        for (const zone of region.zones) {
-          if (zone.serverCount > 0) {
-            next.add(`zone:${String(zone.id)}`)
-          }
-        }
       }
     }
     setExpanded(next)
     setAutoExpanded(true)
-  }
+  }, [tree, autoExpanded])
 
   const toggle = (key: NodeKey) => {
     setExpanded((prev) => {
@@ -787,29 +807,63 @@ export default function ZoneTree({
                                         />
                                         {zoneOpen && (
                                           <ul role="group">
-                                            {zoneServers.map((s) => (
-                                              <li key={s.id}>
-                                                <TreeLeaf
-                                                  depth={3}
-                                                  icon={<Server className="size-3 text-ink-3" />}
-                                                  label={s.serverId}
-                                                  role={t('cluster.servers.kind.backend')}
-                                                  roleTone="secondary"
-                                                  online={s.online}
-                                                  interactions={leafInteractions(s)}
-                                                  extra={
-                                                    <>
-                                                      {s.isDefaultEntry && (
-                                                        <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>
-                                                      )}
-                                                      {s.draining && (
-                                                        <Badge variant="warn">{t('cluster.zones.tree.draining')}</Badge>
-                                                      )}
-                                                    </>
-                                                  }
-                                                />
-                                              </li>
-                                            ))}
+                                            {(() => {
+                                              const limit =
+                                                zoneLeafLimit[zoneKey] ?? DEFAULT_ZONE_LEAF_LIMIT
+                                              const visible = zoneServers.slice(0, limit)
+                                              const rest = zoneServers.length - visible.length
+                                              return (
+                                                <>
+                                                  {visible.map((s) => (
+                                                    <li key={s.id}>
+                                                      <TreeLeaf
+                                                        depth={3}
+                                                        icon={<Server className="size-3 text-ink-3" />}
+                                                        label={s.serverId}
+                                                        role={t('cluster.servers.kind.backend')}
+                                                        roleTone="secondary"
+                                                        online={s.online}
+                                                        interactions={leafInteractions(s)}
+                                                        extra={
+                                                          <>
+                                                            {s.isDefaultEntry && (
+                                                              <Badge variant="brand">
+                                                                {t('cluster.zones.tree.defaultEntry')}
+                                                              </Badge>
+                                                            )}
+                                                            {s.draining && (
+                                                              <Badge variant="warn">
+                                                                {t('cluster.zones.tree.draining')}
+                                                              </Badge>
+                                                            )}
+                                                          </>
+                                                        }
+                                                      />
+                                                    </li>
+                                                  ))}
+                                                  {rest > 0 && (
+                                                    <li className="px-2 py-1" style={{ paddingLeft: `${(3 + 1) * 14}px` }}>
+                                                      <Button
+                                                        size="sm"
+                                                        variant="ghost"
+                                                        className="h-7 text-[11.5px] text-ink-3"
+                                                        onClick={() => {
+                                                          setZoneLeafLimit((prev) => ({
+                                                            ...prev,
+                                                            [zoneKey]: zoneServers.length,
+                                                          }))
+                                                        }}
+                                                      >
+                                                        {t('cluster.zones.tree.showMoreServers', {
+                                                          count: rest,
+                                                          defaultValue: `再显示 ${String(rest)} 台`,
+                                                        })}
+                                                      </Button>
+                                                    </li>
+                                                  )}
+                                                </>
+                                              )
+                                            })()}
                                           </ul>
                                         )}
                                       </li>

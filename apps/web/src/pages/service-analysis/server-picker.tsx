@@ -38,7 +38,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
   const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
   const clientFilter = needsClientEnvFilter(envScope)
 
-  // 拉子服，客户端筛在线（指标时序仅对在线子服有意义）
+  // 拉在线子服：huge 下上千台时只取前 200 供选择（搜索仍可在本页结果内过滤；全量选服靠关键词 + 分页更合适，本页先保交互流畅）
   const query = useQuery({
     queryKey: ['service-analysis', 'servers', apiNamespaceId, envScope],
     queryFn: () => fetchServers({ kind: 'backend', namespaceId: apiNamespaceId, pageSize: 200 }),
@@ -57,7 +57,8 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
     [selected, onlineIds],
   )
 
-  // 关键词过滤（按 serverId）
+  // 关键词过滤（按 serverId）+ 列表展示上限（超限给「已截断」提示，避免 huge 一次挂上千按钮）
+  const PICKER_RENDER_LIMIT = 80
   const servers = useMemo<ServerItem[]>(() => {
     const kw = keyword.trim().toLowerCase()
     if (kw === '') {
@@ -65,6 +66,11 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
     }
     return online.filter((s) => s.serverId.toLowerCase().includes(kw))
   }, [online, keyword])
+  const visibleServers = useMemo(
+    () => servers.slice(0, PICKER_RENDER_LIMIT),
+    [servers],
+  )
+  const hiddenCount = servers.length - visibleServers.length
 
   return (
     <div className="lg:sticky lg:top-0 grid max-h-[calc(100vh-9rem)] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-xl border border-border bg-card shadow-card">
@@ -159,7 +165,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
             <p className="px-2 py-6 text-xs text-ink-3">{t('observability.serviceAnalysis.searchEmpty')}</p>
           ) : (
             <div className="grid gap-1">
-              {servers.map((s) => {
+              {visibleServers.map((s) => {
                 const checked = selected.has(s.serverId)
                 return (
                   <button
@@ -193,6 +199,14 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
                   </button>
                 )
               })}
+              {hiddenCount > 0 && (
+                <p className="px-2 py-2 text-[11px] text-ink-4">
+                  {t('observability.serviceAnalysis.listTruncated', {
+                    count: hiddenCount,
+                    defaultValue: `另有 ${String(hiddenCount)} 台未列出，请用上方搜索缩小范围`,
+                  })}
+                </p>
+              )}
             </div>
           )}
         </AsyncSection>

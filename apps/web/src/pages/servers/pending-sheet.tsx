@@ -174,8 +174,8 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   const occupied = approving?.conflictReason === 'server-id-occupied'
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
+    <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
+      <SheetContent showOverlay={false} className="w-full gap-0 overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <UserPlus className="size-4 text-brand" />

@@ -187,8 +187,11 @@ describe('/zones 区服分配页', () => {
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
-    // 有服小区默认自动展开，game-3 应直接可见（勿再点 area-2，否则会折叠）
+    // 小区默认收起（huge 性能）：先展开 area-2 露出 game-3
     await screen.findByText('bc-main')
+    const sourceZone = (await screen.findByText('area-2')).closest('[role="button"]')
+    expect(sourceZone).not.toBeNull()
+    await user.click(sourceZone as HTMLElement)
     const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
     expect(leaf).not.toBeNull()
 
@@ -217,10 +220,13 @@ describe('/zones 区服分配页', () => {
 
   it('已分配子服右键弹操作菜单（改派 / 查看详情 / 解绑）', async () => {
     useScenario('normal')
+    const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
     await screen.findByText('bc-main')
-    // 有服小区默认自动展开，直接右键 game-3 叶行
+    // 小区默认收起：先展开 area-2 再右键 game-3
+    const sourceZone = (await screen.findByText('area-2')).closest('[role="button"]')
+    await user.click(sourceZone as HTMLElement)
     const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
     fireEvent.contextMenu(leaf as HTMLElement)
 

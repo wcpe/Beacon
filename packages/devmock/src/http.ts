@@ -73,13 +73,31 @@ export function mockDelete(path: string, resolver: MockResolver): HttpHandler {
 }
 
 /**
- * 兜底 handler：未被任何真实 handler 命中的 /admin | /beacon 请求返回明确 JSON 404，
+ * 兜底 handler：未被任何真实 handler 命中的 /admin | /beacon **路径** 返回明确 JSON 404，
  * 避免 onUnhandledRequest:'bypass' 让请求落到 SPA 返回 index.html、前端 JSON.parse 崩
  * 「Unexpected token '<'」。必须置于全部真实 handler 之后（MSW 按顺序首个命中优先）。
+ *
+ * 注意：不能用 `*\/beacon\/*` 这类全 URL 子串匹配——Vite `@fs` 字体等资源路径含项目目录名
+ * `.../Projects/Beacon/...`，会被误伤成 404，导致 Geist 等字体加载失败。
  */
+function isControlPlaneApiPath(request: Request): boolean {
+  try {
+    const { pathname } = new URL(request.url)
+    return (
+      pathname === '/admin' ||
+      pathname.startsWith('/admin/') ||
+      pathname === '/beacon' ||
+      pathname.startsWith('/beacon/')
+    )
+  } catch {
+    return false
+  }
+}
+
 export const fallbackHandlers: HttpHandler[] = [
-  http.all('*/admin/*', () => jsonError(404, 'not_implemented', '演示模式未实现该端点')),
-  http.all('*/beacon/*', () => jsonError(404, 'not_implemented', '演示模式未实现该端点')),
+  http.all(({ request }) => isControlPlaneApiPath(request), () =>
+    jsonError(404, 'not_implemented', '演示模式未实现该端点'),
+  ),
 ]
 
 /** 读取路径参数（msw params 值可能是数组，统一取首个） */

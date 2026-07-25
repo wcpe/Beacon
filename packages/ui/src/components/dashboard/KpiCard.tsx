@@ -48,10 +48,11 @@ export default function KpiCard({ label, value, unit, icon, tone = 'brand', meta
       </div>
       <div className="text-[26px] leading-none font-bold tracking-[-0.5px] text-ink-1 tnum">
         {value}
-        {unit != null && <span className="text-[14px] font-semibold tracking-normal text-ink-4">{unit}</span>}
+        {unit != null && <span className="text-[13px] font-medium tracking-normal text-ink-4">{unit}</span>}
       </div>
       {visual}
-      {meta != null && <div className="flex items-center gap-1.5 text-[11px] text-ink-3">{meta}</div>}
+      {/* 副文案再压一级，避免与主数抢视线 */}
+      {meta != null && <div className="flex items-center gap-1.5 text-[10.5px] leading-snug text-ink-4">{meta}</div>}
     </div>
   )
 }
