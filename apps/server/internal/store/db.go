@@ -4,6 +4,7 @@ package store
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -145,8 +146,30 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	case "mysql":
 		return mysql.Open(cfg.DSN), nil
 	case "sqlite":
-		return sqlite.Open(cfg.DSN), nil
+		return sqlite.Open(applySQLitePragmas(cfg.DSN)), nil
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动 %q（支持 mysql / sqlite）", cfg.Driver)
 	}
+}
+
+// applySQLitePragmas 为 sqlite DSN 追加崩溃韧性相关的 journal_mode pragma。
+//
+// 缺陷背景：sqlite 默认回滚日志（DELETE）模式下，进程被强杀（如 Ctrl+C）会在写入事务
+// 中途留下热 beacon.db-journal；下次启动 sqlite 检测到热日志后必须先写主库做回滚恢复，
+// 一旦该写因文件暂不可写（杀软占用、句柄未释放等）失败，即返回 SQLITE_READONLY(8)
+// 直接卡死控制面启动——AutoMigrate 仅在读已有 schema 时不写库，回填 UPDATE 作为首个
+// 写入触发该只读恢复失败。
+//
+// 修复：切到 WAL 后主库始终一致，强杀只留 -wal/-shm 旁车，下次启动自动重放、不再触发
+// 只读恢复。WAL 为持久化设置（写入库头），仅对本地 sqlite 生效；mysql 路径不受影响。
+// 若 DSN 已显式指定 journal_mode（含 file: URI 形式），尊重用户配置不再覆盖。
+func applySQLitePragmas(dsn string) string {
+	if strings.Contains(strings.ToLower(dsn), "journal_mode") {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "_pragma=journal_mode(WAL)"
 }
