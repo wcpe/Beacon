@@ -1,19 +1,20 @@
 # Beacon 运维手册
 
-> 面向部署与运维 Beacon 控制面。前置：docker-compose（beacon + mysql）。架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+> 面向部署与运维 Beacon 控制面。`docker-compose` 形态为单 Beacon 容器加 SQLite 持久卷；生产 MySQL 为自行提供的外置数据库。架构见 [ARCHITECTURE.md](ARCHITECTURE.md)，从零搭建集群见 [wiki/build-a-cluster.md](wiki/build-a-cluster.md)。
 
 ## 1. 部署
-- 复制 `.env.example` → `.env`，填 MySQL 密码与 `BEACON_BOOTSTRAP_TOKEN`。
-- `docker compose up -d`；待 mysql healthcheck 通过后 beacon 自动建表（GORM AutoMigrate）+ 预置 namespace（prod/test）。
+- 默认直接执行 `docker compose up -d`；Compose 启动 Beacon 并把 SQLite 数据保存在持久卷中。
+- 如需覆盖监听、认证或数据库设置，再按 `.env.example` 设置对应环境变量；不要把 namespace token、口令或数据库凭据提交进仓库。
+- 使用生产 MySQL 时，先独立部署并备份数据库，再在 Beacon 配置中提供外置连接信息；不要等待不存在的 Compose MySQL healthcheck，也不会自动预置业务 namespace。
 - 管理台与 API 同端口（默认 8848）。
 
 ### 1.1 单二进制免容器首启（FR-25）
 直接跑 `beacon` 二进制时**首次启动自动脚手架、开箱即跑**：在当前目录释放 `config.yml`（默认 sqlite、零依赖可跑），**释放时把留空的 `auth.password` / `auth.secret` 就地填入随机强值（文件 0600）**，随即直接启动（sqlite 落 `beacon.db`），无需手工 `export` 或填值（`config.yml` 已存在则不覆盖）。**不再自动生成 `.env`**——凭据就在 `config.yml`，避免 `.env`（优先级更高）静默盖掉你对 `config.yml` 的改动。上手：
 - 运行 `beacon` → 直接起服（控制台 WARN 提示已释放 `config.yml`）。
 - 打开当前目录 `config.yml`，取 `auth.password` 登录管理台（`http://本机IP:8848`，用户名 `auth.username`，默认 `admin`）；按需改 `config.yml`（切 mysql 改 `database` 段、改口令 / 端口 / token 等）后重启即生效。
-- **接 agent**：agent 的 `bootstrap-token` 用固定默认 `beacon-bootstrap-token` 即与控制面开箱匹配（仅防误连）；若改了控制面 `config.yml` 的 `agent-token`，各 agent 也要同步改。
+- **接 Agent**：先在管理台创建 namespace 与该 namespace 的接入 token；Agent 最小配置只填控制面 endpoint 列表和这个 token，首次注册后在「服务器 → 待确认」批准身份并分配 serverId/拓扑。不要依赖历史全局 bootstrap token。
 - 如需经环境变量覆盖（如容器内、CI、临时改口令），真实环境变量与手动放置的 `.env` 仍生效，优先级 `真实 env > .env > config.yml`。
-- 管理员口令 / 签名密钥强随机、不入库（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)，非固定弱默认口令）；生产 MySQL 仍走上面的 compose 路径。
+- 管理员口令 / 签名密钥强随机、不入库（[ADR-0009](adr/0009-control-plane-auth-pulled-forward.md)，非固定弱默认口令）；生产 MySQL 按外置数据库方式部署。
 
 ### 1.2 进程监督与崩溃自启（systemd / docker restart 推荐）
 控制面是单进程，**进程崩溃自启交外部监督**（[ADR-0053](adr/0053-single-binary-self-replace.md)）——Beacon 自身不再带常驻监督进程。在线更新的「换版自替换 + 自动回滚」依赖外部监督在崩溃后重新拉起进程来累加重试计数、触发回退（见 [§2.1](#21-单进程自替换--自动回滚fr-119adr-0053)），故**生产部署务必启用以下任一监督**：
@@ -38,7 +39,7 @@
 - **裸跑无任何监督**：进程崩溃即停、需手动启动；此时换版后「新版起不来」的自动回退要到下次手动启动才触发（可接受，但不建议生产如此部署）。
 
 ## 2. 升级与发布
-- **升级前先备份 MySQL 与 Agent 本地状态**（见 §4）。
+- **升级前先备份数据库（SQLite 文件/持久卷或外置 MySQL）与 Agent 本地状态**（见 §4）。
 - 控制面：拉取已核验的 GA 产品资产，再重启服务；数据库迁移只允许 expand / 可重入回填，回滚不依赖 down migration。
 - agent：按批替换 Bukkit/Bungee JAR 并重启节点，保留 `plugins/Beacon/` 本地身份、配置快照、流位置与幂等账本。控制面与 agent 的产品版本必须一致。
 - 产品资产发布前使用 `SHA256SUMS.txt` 校验；平台是否发布由本次 RC 的实际资产决定，不额外引入阶段专属平台准入。
@@ -95,13 +96,13 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **Docker 网络**：沿用现有"agent 能直连 beacon 地址"的可达约束，无新增端口；SSE 走与 API 同一端口（默认 8848）。
 - **断流不影响判活**：健康 online/lost/offline 仍由独立心跳 + TTL 决定，SSE 抖动断流不会误判失联；agent 流断按本地快照继续、自动退避重连并对账（fail-static）。
 
-## 4. MySQL 备份与恢复（关键）
-> MySQL 是**配置权威库**——丢了等于全集群配置全没。务必定期备份。
-- 备份：`docker exec beacon-mysql mysqldump -u root -p<密码> beacon > beacon-$(date +%F).sql`
-- 恢复：`docker exec -i beacon-mysql mysql -u root -p<密码> beacon < beacon-backup.sql`
-- 数据卷 `beacon-mysql-data` 持久化；迁移机器时连卷一起搬。
-- **常态化**：建议 cron 每日 dump + 保留近 N 天 + 异机各存一份（别与 MySQL 同机）。
-- **恢复演练**：上线前至少完整演练一次恢复（导出 → 空库导入 → 起 beacon 校验配置仍在），确认备份真能用。
+## 4. 数据库备份与恢复（关键）
+> 数据库是**配置权威库**——丢失会导致全集群配置不可恢复。务必定期备份，并在隔离环境演练恢复。
+
+- **Compose 默认 SQLite**：先正常停止 Beacon，再备份其持久卷中的 SQLite 数据库；恢复时保持 Beacon 停止，替换数据库后再启动。不要在运行中的 SQLite 文件上直接复制。
+- **外置 MySQL**：由数据库平台或受控的 `mysqldump`/恢复流程备份和恢复；命令通过安全的凭据注入方式执行，不在 shell 历史、文档或日志中拼接明文密码。
+- **常态化**：至少每日备份、保留满足恢复目标的版本，并保留一份异机副本。
+- **恢复演练**：导出后恢复到隔离环境，启动 Beacon 并核对 namespace、身份、拓扑与审计的完整性；确认无误后才把该备份视为可用。
 
 ## 5. 回滚
 - **RC 回滚**：未晋级候选直接停止使用；不得覆盖原 RC 资产。修复后从新 commit 创建 `vX.Y.Z-rc.(N+1)`，重新构建并校验完整资产。
@@ -111,7 +112,7 @@ agent↔控制面用单条 SSE 流 `GET /beacon/v1/agent/stream` 做 server→ag
 - **代码层回滚**：见 `sdd-rollback-change` 技能。
 
 ## 6. 排障
-- beacon 起不来：看日志是否连不上 MySQL（DSN / 网络 / healthcheck 未过）。
+- beacon 起不来：先看日志与配置校验；SQLite 检查数据卷挂载、路径和权限，外置 MySQL 再检查 DSN、网络和数据库可用性。
 - agent 连不上：核对控制面地址、`X-Beacon-Token`、网络连通。
 - 配置不热更：看 agent 长轮询是否在连、控制面是否唤醒了受影响集合、有效配置 md5 是否真变。
 - **控制面短暂不可用时不要重启子服**：agent 会按本地快照 fail-static 继续，控制面恢复后自动重连。

@@ -12,7 +12,7 @@ Beacon 把多个 **BungeeCord / Velocity 代理** 与 **Bukkit / Paper 子服** 
 
 **控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-> **发布状态**：正式 GA 以 GitHub Release **`v1.0.0`** 为准。在线更新只消费严格 `vX.Y.Z` GA。
+> **发布状态**：当前变更仍处于未发布的 RC 收口阶段；正式 GA 以实际创建的 GitHub Release `vX.Y.Z` 为准。在线更新只消费严格 `vX.Y.Z` GA。
 
 ---
 
@@ -99,18 +99,17 @@ pnpm --filter @beacon/ui-wiki dev
 ### 1. 部署控制面
 
 ```bash
-cp .env.example .env      # 填 MySQL、管理台账号、令牌签名密钥等
-docker compose up -d      # beacon + mysql；就绪后 AutoMigrate
+docker compose up -d      # 单 Beacon 容器 + SQLite 持久卷
 # 管理台与 API：http://localhost:8848
 ```
 
 浏览器打开 `http://localhost:8848`，使用 `BEACON_ADMIN_USERNAME` / `BEACON_ADMIN_PASSWORD` 登录。
 
-也可直接跑单二进制（默认 SQLite、首启释放 `config.yml`）。运维见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
+也可直接跑单二进制（默认 SQLite、首启释放 `config.yml`）。生产若使用 MySQL，应自行提供外置数据库并在控制面配置中填写连接信息；Compose 不会创建 MySQL。完整的单机入门、集群搭建与功能教程见 [docs/wiki/](docs/wiki/README.md)，日常运维见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
 ### 2. 接入 Agent
 
-将对应版本的 **BeaconAgent（Bukkit）** / **BeaconAgentProxy（Bungee）** 放入插件目录，配置控制面地址、namespace token 与 serverId。首次注册后在管理台 **服务器 → 待确认** 中确认并分配区服。
+将对应版本的 **BeaconAgent（Bukkit）** / **BeaconAgentProxy（Bungee）** 放入插件目录，仅配置控制面 endpoint 列表与 namespace token。首次注册后在管理台 **服务器 → 待确认** 中批准身份、分配 serverId 与拓扑归属。
 
 ### 3. 业务插件（compileOnly）
 
@@ -143,6 +142,7 @@ make package    # 控制面单二进制（内嵌前端）+ 双端 agent jar
 | 文档 | 说明 |
 |------|------|
 | [docs/UI-WIKI.md](docs/UI-WIKI.md) | UI 控件博物馆：启动、覆盖率门禁、新增控件流程 |
+| [docs/wiki/](docs/wiki/README.md) | 运维使用 Wiki：全局大厅、BC 与 Agent 接入及玩家验收 |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | 部署 / 升级 / 备份 / 排障 |
 | [docs/SDK.md](docs/SDK.md) | 业务插件接入 Agent API |
 | [SECURITY.md](SECURITY.md) | 安全边界 |
