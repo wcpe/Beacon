@@ -1,6 +1,6 @@
 # ADR-0026：运行时 API 密钥与管理面只读角色（落库只存哈希，扩展 ADR-0009）
 
-**状态**：已接受
+**状态**：已接受；两级角色、纯 HTTP 方法判权与拒绝细粒度能力的结论被 [ADR-0079](0079-principal-capability-and-dangerous-operation-approval.md) 部分取代；“不使用 OAuth”仅在 MCP 范围被 [ADR-0080](0080-builtin-mcp-oauth-client-credentials.md) 部分取代，其余 API key 生命周期决定保持有效
 
 ## 背景
 

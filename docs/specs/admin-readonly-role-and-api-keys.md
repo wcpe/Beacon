@@ -1,6 +1,8 @@
 # 功能规格：管理面只读角色 + 运行时 API 密钥
 
 > 状态：开发中　·　关联 PRD：FR-42　·　分支：feature/admin-readonly-role-and-api-keys
+>
+> **后续演进（2026-07-29）**：密钥哈希、一次性明文、吊销与审计继续有效；两级角色和按 HTTP 方法拒写由 FR-206/[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md) 的 Principal + 语义 capability 部分取代。API key 属机器主体，任何 bundle 均不得获得审批能力。
 
 ## 1. 背景与目标
 

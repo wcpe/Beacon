@@ -47,7 +47,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 
 - **namespace 是强隔离边界**：默认禁止跨 namespace 调度、消息、Agent 操作。跨 namespace 互通必须后台显式配置，并额外审计。
 - **首次接入必须人工确认**：新 agent 注册后只能处于待确认状态，未确认、未分配区服前不可调度。
-- **identityId 绑定 serverId**：agent 首启生成唯一身份文件，首次注册时与 namespace + serverId 绑定。换区或换 serverId 必须后台解绑。
+- **identityId 绑定稳定 serverId**：agent 首启生成唯一身份文件，namespace 由接入 token 推导，serverId 由控制面在首次确认时分配并绑定。换区必须走后台受控流程；FR-205 交付后 serverId 不允许原地修改。
 - **业务插件只走本机 agent-api**：业务插件不得直接 HTTP 调 Beacon。agent 负责缓存、降级、限流与控制面隔离。
 - **控制面 / 数据面分离**：Beacon 做编排、审计、调度决策和事实存储；游戏服继续承担玩家入口与业务执行。
 - **连接与 payload 查询可控**：连接明细和 payload 可查，但默认不做大范围慢查询；payload 查看必须填写原因并写审计。
@@ -100,7 +100,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-175 | UI 博物馆：`@beacon/ui` 提升 `packages/ui`，ui-wiki 提升 `apps/ui-wiki`，控件展示覆盖率门禁 | P1 | 0.21.x | 每个 `@beacon/ui` 导出控件在 ui-wiki 有展示页（覆盖率检查纳入 CI 必过）；新管理台组件一律取自 `packages/ui`，不允许页面内私建通用控件 | 已交付@v0.21.0 |
 | FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 已交付@v0.21.0 |
 | FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | P8 | 0.28.x | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 已交付@v0.28.0 |
-| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | P8 | 0.28.x | env 可增删改；整体替换 env→namespace 映射且 namespace 至多属一个 env（冲突 409）；顶栏按 env 过滤视图；env 变更入审计 | 已交付@v0.28.0 |
+| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | P8 | 0.28.x | env 增删改、整体替换 env→namespace 映射与审计已落地；页眉 env 过滤当前仍非权威观测范围，必须由 FR-213/214 补齐服务端作用域与 env→namespace 级联后再验收 | 开发中（观测范围待归真） |
 | FR-179 | 管理台登录鉴权：登录页、令牌注入、401 处理、登出 | P4 | 0.24.x | 登录页（新 SaaS 设计，过 mockup 评审门）用户名/口令换 `/admin/v1/auth/login` 令牌，存 localStorage 持久；所有 `/admin/*` 带 `Authorization: Bearer`；路由守卫未登录跳登录页并登录后回跳原路径；任意 401 / 令牌过期清令牌跳登录（无自动 refresh）；登出 `/admin/v1/auth/logout` 清令牌；真机浏览器登录后 FR-155 接真页真数据可用、登出回登录页。单 admin 凭据，不含 API-key 登录 / RBAC / 记住我 / 2FA。全站接真页真机可用前置 | 已交付@v0.24.0 |
 | FR-180 | 跨服消息广播寻址（namespace / zone 级 fan-out）与 agent topic 门面复活 | P5 | 0.25.x | `publish` / `subscribe` 原接口真实可用（业务插件零改动）；本 namespace 全部在线服与 zone 级定向 fan-out；可丢语义（只投在线、离线不补、TTL 过期）；广播追踪行含聚合送达 / 失败计数、列表可按广播过滤且不含 payload；跨 namespace 广播拒绝；真机广播场景可用 | 已交付@v0.25.3 |
 | FR-181 | 连接明细与消息链路查询页（/connections、/messages） | P6 | 0.26.x | 两页挂可观测组；查询防护同 spec §4.3（精确 ID 直查，否则 serverId / playerUuid + 时间范围 ≤168h，未满足不发请求给引导空态）；游标分页；「包含归档」冷查询（FR-152）；消息详情含逐跳链路 / 关联消息 / payload 受控查看（原因必填先审计）；四态齐备；mockup 经用户浏览器评审后接真 | 已交付@v0.26.3 |
@@ -127,6 +127,22 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-202 | BC 受管服务器查询命令 | P10 RC | v1.0.0-rc.N | `/beacon servers [页码]` 分页查询受管目录，`/beacon server <serverId>` 查询单服详情；显示大厅/大区/小区归属、在线、健康、可调度与同步摘要；规格见 [bc-managed-server-query-command](specs/bc-managed-server-query-command.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
 | FR-203 | Agent 极简身份接入与既有绑定兼容迁移 | P10 RC | v1.0.0-rc.N | 新安装本地必填仅 Beacon 地址与 namespace token；namespace 由 token 推导、角色自动识别、serverId 待确认时分配；旧 Agent 自动导入匹配绑定并保持 active；规格见 [agent-minimal-bootstrap-and-identity-migration](specs/agent-minimal-bootstrap-and-identity-migration.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
 | FR-204 | Agent 地址探测、BC 多 listener 与面板覆盖 | P10 RC | v1.0.0-rc.N | Bukkit 保留单地址；BC 上报全部 listener 并保留首个有效地址兼容旧契约；控制面生成探测地址，管理台支持逐 listener 覆盖并展示探测/覆盖/生效来源；规格见 [agent-address-detection-and-proxy-listeners](specs/agent-address-detection-and-proxy-listeners.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
+| FR-205 | 稳定业务标识与可变显示名称 | 待排期 | 待排期 | namespace、env、BC 集群、大区、小区与服务器均具备不可修改的业务 code/serverId 和可重复的 displayName；旧技术名称原值冻结迁移；规格见 [stable-business-identifiers-and-display-names](specs/stable-business-identifiers-and-display-names.md) | 计划 |
+| FR-206 | 人类与机器主体及语义能力授权 | 待排期 | 待排期 | 登录用户、API key 与 MCP client 统一映射主体；人类可提交并审批自己的请求，所有机器主体在服务层永久禁止审批；规格见 [human-and-machine-principals-and-capability-authorization](specs/human-and-machine-principals-and-capability-authorization.md) | 计划 |
+| FR-207 | 危险操作统一审批核心 | 待排期 | 待排期 | 高危操作先形成不可变审批请求，人类“批准并执行”，数据库持久化执行器可靠执行；固定 24 小时过期、全链路留档、失败关闭；规格见 [dangerous-operation-approval-core](specs/dangerous-operation-approval-core.md) | 计划 |
+| FR-208 | 身份、凭据、信任与拓扑危险操作适配 | 待排期 | 待排期 | 身份解绑/禁用、凭据与信任授予、拓扑迁移等按后果接入统一审批；撤销信任/凭据、禁用身份等止损动作可直接执行并强审计；规格见 [identity-credential-trust-and-topology-dangerous-operations](specs/identity-credential-trust-and-topology-dangerous-operations.md) | 计划 |
+| FR-209 | Agent 命令与敏感内容访问审批 | 待排期 | 待排期 | 任意 Agent 命令、实时日志、文件内容、敏感明文与 payload 访问必须经批准的执行许可，结果与证据完整留档；规格见 [agent-command-and-sensitive-content-approval](specs/agent-command-and-sensitive-content-approval.md) | 计划 |
+| FR-210 | 控制面升级、回滚与系统设置审批 | 待排期 | 待排期 | 控制面升级/回滚和影响运行安全的系统设置变更统一走审批执行，预览、结果和失败证据可追溯；规格见 [control-plane-upgrade-rollback-and-settings-approval](specs/control-plane-upgrade-rollback-and-settings-approval.md) | 计划 |
+| FR-211 | 配置、文件、覆盖集与交付审批适配 | 待排期 | 待排期 | 配置/文件写入、覆盖、删除、投递、灰度与回滚复用既有变更单状态机，通过统一审批内核发放单次执行许可，不发生双重审批；规格见 [config-file-override-set-and-delivery-approval](specs/config-file-override-set-and-delivery-approval.md) | 计划 |
+| FR-212 | 全局审批中心 | 待排期 | 待排期 | 顶级 `/approvals` 页面集中查看、筛选、批准并执行、驳回和追溯危险操作；审批中心不受页眉观测筛选影响；规格见 [approval-center](specs/approval-center.md) | 计划 |
+| FR-213 | 权威观测范围契约 | 待排期 | 待排期 | env/namespace 观测范围由服务端查询契约权威执行，所有列表、汇总、订阅与导出一致；失效或无权范围失败关闭且不改变写目标；规格见 [authoritative-observation-scope-contract](specs/authoritative-observation-scope-contract.md) | 计划 |
+| FR-214 | 页眉 env→namespace 级联筛选 | 待排期 | 待排期 | 页眉先选 env 再选 namespace，可只观测线上或灰度资源；选项、URL 与刷新一致，非法保存范围失败关闭；规格见 [header-env-namespace-cascade-filter](specs/header-env-namespace-cascade-filter.md) | 计划 |
+| FR-215 | 服务器归档与恢复 | 待排期 | 待排期 | 服务器可归档并从默认观测/调度移除，保留身份绑定与 BC/小区归属；恢复复用原事实且归档/恢复均按危险操作审批；规格见 [server-archive-and-restore](specs/server-archive-and-restore.md) | 计划 |
+| FR-216 | namespace 归档与恢复 | 待排期 | 待排期 | namespace 归档后对整棵子树产生有效停用而不改写子资源自身状态，恢复后按原状态重现；两步均审批并留档；规格见 [namespace-archive-and-restore](specs/namespace-archive-and-restore.md) | 计划 |
+| FR-217 | 服务器永久删除与墓碑 | 待排期 | 待排期 | 归档服务器经批准后执行逻辑永久删除，保留不可复用 serverId、审计与历史关联墓碑，不提供冷却期或复活；规格见 [server-permanent-deletion-and-tombstone](specs/server-permanent-deletion-and-tombstone.md) | 计划 |
+| FR-218 | namespace 永久删除与子树墓碑 | 待排期 | 待排期 | 归档 namespace 无额外冷却期，经批准后在单次原子操作中墓碑化权威子树；预览完整影响范围，所有业务标识永久不可复用；规格见 [namespace-permanent-deletion-and-tombstone](specs/namespace-permanent-deletion-and-tombstone.md) | 计划 |
+| FR-219 | 内置 `/admin/v2/mcp` 与 OAuth Client Credentials | 待排期 | 待排期 | Beacon 进程内提供远程 Streamable HTTP MCP，公网仅经 TLS 反代访问；独立 OAuth 客户端短令牌、受众绑定、撤销/轮换可用；规格见 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) | 计划 |
+| FR-220 | MCP 显式领域工具与审批交接 | 待排期 | 待排期 | MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求但无任何审批工具；规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) | 计划 |
 
 ## 5. 非功能需求（NFR）
 
@@ -153,7 +169,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | P7 | 0.27.x | 配置中心 V2 权威模型、编辑校验、版本管理接真完成 |
 | P8 | 0.28.x | 文件资产 V2 资产索引、内容预览与安全审计接真完成；同期收编 P3 延后项 Q4 身份冲突可视化闭环（FR-177）与 env 映射体验（FR-178） |
 | P9 | 0.29.x → v0.30.0 | 交付编排 V2 变更单、数据面、灰度生效编排、整单回滚与统一审计接真完成；v0.30.0 完成 FR-171 配置热重载发布验收并收口 P9 |
-| 对齐中间版 | 0.31.x | 1.0.0 前管理台壳层完整修复与对齐：侧栏图标轨折叠动画（FR-186）、双段页眉与身份收敛（FR-187）、全局运维指标真数据（FR-188）、小屏抽屉（FR-189）、页眉搜索/语言/通知/刷新（FR-193～196）与 FR-178 环境过滤归真；**代码已合入待打 `v1.0.0-rc.N` 后视为壳层阶段收口**；规格见 `docs/specs/admin-shell-redesign-0.31.md` |
+| 对齐中间版 | 0.31.x | 1.0.0 前管理台壳层完整修复与对齐：侧栏图标轨折叠动画（FR-186）、双段页眉与身份收敛（FR-187）、全局运维指标真数据（FR-188）、小屏抽屉（FR-189）、页眉搜索/语言/通知/刷新（FR-193～196）以及 FR-178 的环境筛选交互已合入；壳层代码待打 `v1.0.0-rc.N`，但 FR-178 的权威观测范围尚未收口，必须由 FR-213/214 完成服务端范围与 env→namespace 级联后另行验收；规格见 `docs/specs/admin-shell-redesign-0.31.md` |
 | P10 RC | v1.0.0-rc.N | 根 `VERSION=1.0.0`；完成 FR-199～204 的大厅落脚、BC 运维与 Agent 极简接入闭环；发布不可变 prerelease 候选，固定 commit 与产品资产；失败或资产变化切换新 RC；**在真实 tag/Release 公开前不得宣称已发布** |
 | GA | v1.0.0 | 从最终 RC 同 commit 原样复制产品资产，逐项核验文件名、大小和 SHA-256，禁止 rebuild/repack/替换资产；本地验证或本地预备不等于 GA；正式稳定版继续严格 SemVer |
 
@@ -165,6 +181,25 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 - **FR-202**：受管服务器列表必须分页且不输出无界全量；摘要与单服详情准确反映 BC 当前目录、拓扑归属、在线、健康、可调度和最近同步状态；无权限与未知 serverId 返回明确错误。
 - **FR-203**：新 Agent 仅凭 Beacon 地址与有效 namespace token 进入 pending；无须本地填写 namespace、serverId 或 address；管理员分配 serverId 后转 active；既有 Agent 升级时导入原绑定且 identityId 匹配则不重新审批；机器相关设置仍可使用安全默认与可选本地覆盖。
 - **FR-204**：Bukkit 单地址与旧 API 保持兼容；BC 的全部 listener 可查询，首个有效 listener 回填兼容 address；每个 listener 可独立覆盖，未覆盖项使用请求来源 IP 与上报端口；待确认流程和服务器详情可区分探测值、覆盖值、生效值及来源。
+
+### 6.2 待排期能力验收
+
+- **FR-205**：新增资源与历史资源迁移后均同时具备内部数值 id、不可变 code/serverId 与可变 displayName；各层 code 按约定作用域唯一，displayName 可重复，运行寻址不依赖 displayName。
+- **FR-206**：每次调用均可还原为唯一 human/api_key/mcp/system 主体与能力快照；人类可自提自批，任何机器主体调用审批接口均由服务层稳定拒绝并审计。
+- **FR-207**：高危调用不直接产生业务副作用；批准动作原子签发一次性执行许可并可靠调度，重复提交不重放；24 小时过期、撤回、驳回、执行失败和证据均可查询。
+- **FR-208**：危险目录覆盖身份、凭据、信任和拓扑动作且有自动覆盖检查；授权/启用/迁移走审批，撤销/禁用等止损动作直接执行并留下强审计。
+- **FR-209**：Agent 命令、实时日志、文件内容、敏感明文和 payload 的所有入口在没有匹配执行许可时失败关闭；审批快照与实际目标、参数、结果完全可核对。
+- **FR-210**：升级、回滚与高影响系统设置均可预览影响并由统一审批执行；失败不被误报为成功，审批记录可关联升级任务或设置版本。
+- **FR-211**：既有变更单继续持有领域状态，统一审批只负责授权执行；创建人可自批，批准并执行不再要求二次启动，也不会叠加旧审批门。
+- **FR-212**：`/approvals` 覆盖空态、常规、超大量与异常态，列表和详情可按状态/风险/来源/申请人/时间筛选；批准并执行、驳回、审计追溯经浏览器 mockup 评审后接真。
+- **FR-213**：同一观测范围在列表、计数、趋势、SSE 与导出中得到一致结果；无效、越权或已删除范围返回明确错误，不回落全局，也不成为写操作目标。
+- **FR-214**：env→namespace 级联选项只显示有权范围；刷新、深链和跨页保持选择，失效保存值触发失败关闭；切换观测范围不改写任何命令或表单的目标。
+- **FR-215**：归档服务器立即停止调度并从默认列表隐藏，身份绑定与拓扑放置保持；经审批恢复后回到原事实，历史指标、审计和引用不断链。
+- **FR-216**：归档 namespace 后所有后代有效停用但各自状态未被覆盖；恢复后只恢复此前可用的资源，归档/恢复预览和审批证据完整。
+- **FR-217**：仅归档服务器可申请永久删除；批准后落不可逆墓碑，原 serverId 永久拒绝复用，所有历史引用仍能解析到删除摘要。
+- **FR-218**：仅归档 namespace 可申请永久删除且无额外冷却期；批准前预览整棵权威子树，执行要么全部墓碑化要么全部不变，所有受影响 code/serverId 永久不可复用。
+- **FR-219**：标准 MCP 客户端可在 `/admin/v2/mcp` 完成初始化、工具发现与调用；OAuth 客户端凭据不落明文，短令牌受众固定，撤销/轮换即时阻断后续换令牌，后端直连被部署门禁拒绝。
+- **FR-220**：工具清单不存在通用 HTTP/SQL/文件代理；observer 只读，automation 低风险直执；每个高危工具只返回 approvalRequestId 并可轮询或撤回自己的请求，服务端无机器审批通路。
 
 ## 7. Legacy 策略
 

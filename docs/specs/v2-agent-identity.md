@@ -1,6 +1,8 @@
 # 规格：Agent 身份与注册绑定（第二版）
 
 > 状态：已实现（P1 基础闭环） · 关联 FR：FR-139, FR-140, FR-141 · 阶段：P1（0.21.x）
+>
+> **后续演进（2026-07-29）**：本文记录 P1 身份状态机。FR-203/[ADR-0076](../adr/0076-control-plane-identity-bootstrap.md) 已将新 Agent 改为 token 推导 namespace、控制面待确认时分配 serverId；FR-205 进一步规定已分配 serverId 为不可变业务标识。正文中“agent 自报/换 serverId”仅用于历史追溯，不得驱动新实现；换区仍走受控拓扑流程，改 serverId 需建立新资源而非原地改名。
 
 ## 1. 背景与目标
 

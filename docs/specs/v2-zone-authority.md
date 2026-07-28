@@ -1,12 +1,14 @@
 # 规格：区服权威模型与未分配 Agent 分配（第二版）
 
 > 状态：已实现（P1 基础闭环） · 关联 FR：FR-142, FR-143 · 阶段：P1（0.21.x）
+>
+> **后续演进（2026-07-29）**：本文记录 P1 表结构与当期接口；身份接入以 FR-203/[ADR-0076](../adr/0076-control-plane-identity-bootstrap.md) 的控制面分配为当前真源。FR-205 将各级技术 `name` 演进为不可变作用域唯一 `code` + 可变可重复 `displayName`，FR-215～218 只为 namespace/server 增加归档与墓碑生命周期；交付前不得用 displayName 寻址或补建物理直删。
 
 ## 1. 背景与目标
 
 第一版的环境 / 集群 / 区 / 服关系靠配置文件硬维护，扩区换区不可审计。第二版要建立清晰的 namespace / 环境 / BC 集群 / 大区 / 小区 / 子服权威模型（PRD §1.2、FR-142），并让未分配 agent 在后台可见、可批量分配到区服结构中（FR-143）。
 
-本规格是**基座 §3 全部核心实体的权威表结构定义**：其余 v2 规格引用本文的表名与字段，不得复制或另定。zone 归属由控制面 DB 权威指派、serverId 由 agent 上报（ADR-0004 延续，见 `.claude/rules/architecture-invariants.md` §6）。
+本规格是**基座 §3 全部核心实体的权威表结构定义**：其余 v2 规格引用本文的表名与字段，不得复制或另定。zone 归属由控制面 DB 权威指派；serverId 的当前分配与绑定流程由 FR-203/[ADR-0076](../adr/0076-control-plane-identity-bootstrap.md) 取代早期 agent 自报语义。
 
 ## 2. 范围
 

@@ -29,7 +29,7 @@
 | [0023](0023-control-plane-observability-dashboard.md) | 控制面自带可观测看板（指标 + 历史趋势），时序落 MySQL metric_sample | 已接受 |
 | [0024](0024-bc-backend-membership-as-fact.md) | bc 上报自身后端归属作为控制面只读事实（仅内存、随注册/心跳更新） | 已接受 |
 | [0025](0025-bc-proxy-metrics-and-netty-traffic.md) | bc 代理专属负载指标采集集合与角色分流展示（扩展 ADR-0023；Netty 吞吐无干净注入点本期不采、不留占位） | 已接受（后端可达性探测机制被 [0035](0035-backend-reachability-tcp-connect.md) 修订） |
-| [0026](0026-runtime-api-keys-and-readonly-role.md) | 运行时 API 密钥 + 管理面只读角色（落库只存哈希，扩展 ADR-0009） | 已接受 |
+| [0026](0026-runtime-api-keys-and-readonly-role.md) | 运行时 API 密钥 + 管理面只读角色（落库只存哈希，扩展 ADR-0009） | 已接受；角色/判权被 [0079](0079-principal-capability-and-dangerous-operation-approval.md) 部分取代，MCP OAuth 边界被 [0080](0080-builtin-mcp-oauth-client-credentials.md) 部分取代 |
 | [0027](0027-reverse-fetch-channel-and-security.md) | 在线实例反向抓取的命令通道（复用 SSE）与安全边界（限 plugins/ 内、排除 jar、上限、双校验、鉴权审计） | 已接受 |
 | [0028](0028-allow-hosting-agent-self-dir.md) | 放开控制面对 agent 自身目录的托管拦截，自我保护下沉到 agent observe-only（FR-38/FR-39 归真） | 已接受 |
 | [0029](0029-file-tree-structured-deep-merge.md) | 文件树结构化文件跨层深合并、可按文件豁免（取代 ADR-0010 决策1） | 已接受（合并语义不变；**「值归一化可接受」一条被 [0034](0034-file-tree-lossless-merge.md) 取代**） |
@@ -81,6 +81,9 @@
 | [0075](0075-lobby-cluster-and-bc-first-entry.md) | 独立 LobbyCluster 与 BC namespace 首次大厅落脚 | 已接受；取代 ADR-0031/0067 中 BC 基于 Zone 默认入口注入 priority/fallback 的消费范围，保留 Zone 默认入口模型与兼容字段 |
 | [0076](0076-control-plane-identity-bootstrap.md) | 控制面身份分配、Bootstrap/Active Runtime 分层与绑定快照 fail-static | 已接受；部分取代 ADR-0004 本地 serverId bootstrap 与 ADR-0014 首次必须在线取得身份的结论 |
 | [0077](0077-agent-endpoint-address-authority.md) | Agent 角色化 endpoint 地址权威与 BC 多 listener | 已接受；保持 ADR-0005 core/平台壳层边界 |
+| [0078](0078-stable-resource-identity-and-lifecycle-tombstones.md) | 资源稳定业务标识、可变显示名称与不可复用墓碑 | 已接受 |
+| [0079](0079-principal-capability-and-dangerous-operation-approval.md) | 统一管理主体、语义能力与危险操作审批执行模型 | 已接受；部分取代 ADR-0026 的角色与判权模型 |
+| [0080](0080-builtin-mcp-oauth-client-credentials.md) | 内置公网 MCP Streamable HTTP 与 OAuth Client Credentials 边界 | 已接受；在 MCP OAuth 范围部分取代 ADR-0026 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
