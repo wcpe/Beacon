@@ -13,6 +13,27 @@ type staleV2AuthStub struct{ err error }
 
 func (s staleV2AuthStub) AuthenticateAgentV2(_, _, _ string) error { return s.err }
 
+// TestAgentTokenMiddlewareRejectsAnonymousWhenGlobalTokenEmpty 验证空全局 token 不得让匿名请求绕过鉴权。
+func TestAgentTokenMiddlewareRejectsAnonymousWhenGlobalTokenEmpty(t *testing.T) {
+	mw := agentTokenMiddleware("", nil)
+	served := false
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/beacon/v1/agent/heartbeat", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("空全局 token 的匿名请求应返回 401，实际 %d", rec.Code)
+	}
+	if served {
+		t.Fatal("空全局 token 的匿名请求不应放行到 next handler")
+	}
+}
+
 // TestAgentTokenMiddlewarePreservesStaleReregister 回归（FR-177 真机缺口）：
 // v1 数据面中间件在 agent token 不匹配、转 v2 兼容鉴权失败时，必须透传 v2 的真实错误状态
 // （陈旧 boot → 404 促重注册），不得吞成固定 401——否则 agent 心跳收不到 404、

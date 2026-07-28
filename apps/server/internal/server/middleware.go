@@ -59,12 +59,12 @@ func agentV2ReportMiddleware(authn AgentV2ReportAuthenticator) func(http.Handler
 }
 
 // agentTokenMiddleware 校验 agent 端共享 token（仅防误连，非安全边界）。
-// token 为空表示停用校验（开发场景）。
+// 全局 token 为空时仅接受成功的 v2 兼容鉴权，避免匿名请求绕过校验。
 func agentTokenMiddleware(token string, v2 AgentV2Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawToken := r.Header.Get("X-Beacon-Token")
-			if token == "" || rawToken == token {
+			if token != "" && rawToken == token {
 				next.ServeHTTP(w, r)
 				return
 			}
