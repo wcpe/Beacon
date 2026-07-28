@@ -16,6 +16,7 @@ import {
   History,
   KeyRound,
   Layers,
+  DoorOpen,
   LayoutDashboard,
   MessagesSquare,
   RefreshCw,
@@ -40,6 +41,7 @@ import MessagesPage from './pages/messages'
 import ConfigsPage from './pages/configs'
 import DashboardPage from './pages/dashboard'
 import IdentityConflictsPage from './pages/identity-conflicts'
+import LobbyClustersPage from './pages/lobby-clusters'
 import EnvsPage from './pages/envs'
 import NamespacesPage from './pages/namespaces'
 import ServersPage from './pages/servers'
@@ -92,6 +94,7 @@ export const NAV_GROUPS: NavGroup[] = [
         Badge: ConflictNavBadge,
       },
       { path: '/zones', titleKey: 'nav.zones', icon: Boxes, Component: ZonesPage },
+      { path: '/lobby-clusters', titleKey: 'nav.lobbyClusters', icon: DoorOpen, Component: LobbyClustersPage },
       { path: '/topology', titleKey: 'nav.topology', icon: Workflow, Component: TopologyPage },
     ],
   },

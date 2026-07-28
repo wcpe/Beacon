@@ -12,25 +12,6 @@ beacon:
   # 必须与控制面 config.yml 的 agent-token 一致（默认同为 beacon-bootstrap-token，开箱即匹配）。
   bootstrap-token: "beacon-bootstrap-token"
 
-identity:
-  # 环境（namespace）：prod / test，必须与控制面 namespace 一致。
-  namespace: "prod"
-  # 本机唯一身份，环境内唯一。必须显式配置，禁止自动生成；重复将被控制面拒绝。
-  server-id: "proxy-1"
-  # 大区提示：仅在「该 serverId 尚未被控制面分配 zone」时作为兜底 group 使用。
-  group-hint: "area1"
-  # 对外可达地址 ip:port，用于注册上报与服务发现展示。
-  address: "127.0.0.1:25577"
-  # 本服业务版本（标签，用于发现过滤），可留空。
-  version: "1.0.0"
-  # 容量（一等字段，发现过滤维度）。
-  capacity: 1000
-  # 权重（一等字段，发现过滤维度）。
-  weight: 100
-  # 自定义注册元数据：仅 string→string 键值对。
-  metadata:
-    region: "cn-east"
-
 timing:
   # 长轮询客户端期望挂起上限（毫秒）。服务端会取 min(本值, 服务端上限)。
   poll-timeout-ms: 30000

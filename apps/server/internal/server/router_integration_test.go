@@ -96,9 +96,11 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileSvc, auditRepo)
 	commandService.SetNotifier(notifier)
+	v2Svc.SetDirectoryResyncCommandPort(commandRepo, notifier)
 	commandService.SetBrowseResultHub(browseHub)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
+	commandHandler.SetReportAuthenticator(v2Svc)
 	browseHandler := handler.NewBrowseHandler(commandService, instSvc)
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
 	// P8 文件资产索引（FR-163）：清单上报 + 搜索 / 概要 / 比对 / 重扫；复用同一 commandRepo 下发 asset-rescan。

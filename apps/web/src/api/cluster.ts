@@ -3,9 +3,14 @@
 
 import type {
   AgentIdentityDetail,
+  AgentEndpoint,
   AgentIdentityListResponse,
   AssignmentResponse,
   HealthDetail,
+  LobbyClusterDetail,
+  LobbyClusterListResponse,
+  ServerPlacementTarget,
+  ServerPlacementTransferResponse,
   MessageEdgeStat,
   NamespaceListResponse,
   ServerItem,
@@ -137,6 +142,8 @@ export function fetchIdentityDetail(identityId: string): Promise<AgentIdentityDe
 }
 
 export interface ApproveBody {
+  /** 管理端显式分配的 serverId；pending 候选值只能作为输入提示。 */
+  serverId: string
   forceUnbindOccupier?: boolean
   target?: { kind: 'zone' | 'bc_cluster'; id: number } | null
 }
@@ -189,6 +196,36 @@ export function fetchServers(query: ServerQuery): Promise<ServerListResponse> {
 
 export function fetchZoneTree(namespaceId: number): Promise<ZoneTreeResponse> {
   return request('GET', `/admin/v2/zone-tree${buildQuery({ namespaceId })}`)
+}
+
+export function setIdentityEndpointOverride(
+  identityId: string,
+  endpointKey: string,
+  overrideAddress: string | null,
+  reason: string,
+): Promise<AgentEndpoint> {
+  return request('PUT', `/admin/v2/agent-identities/${identityId}/endpoints/${encodeURIComponent(endpointKey)}`, {
+    overrideAddress,
+    reason,
+  })
+}
+
+// ---- 大厅集群（独立于 zone-tree）----
+
+export function fetchLobbyClusters(namespaceId: number): Promise<LobbyClusterListResponse> {
+  return request('GET', `/admin/v2/lobby-clusters${buildQuery({ namespaceId, pageSize: 1 })}`)
+}
+
+export function fetchLobbyClusterDetail(lobbyClusterId: number): Promise<LobbyClusterDetail> {
+  return request('GET', `/admin/v2/lobby-clusters/${String(lobbyClusterId)}${buildQuery({ memberPageSize: 100 })}`)
+}
+
+export function transferServerPlacement(
+  serverId: string,
+  target: ServerPlacementTarget,
+  reason: string,
+): Promise<ServerPlacementTransferResponse> {
+  return request('POST', '/admin/v2/server-placement-transfers', { serverId, target, reason })
 }
 
 export interface CreateClusterBody {

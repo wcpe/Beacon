@@ -5,6 +5,7 @@
 
 export * from './common'
 export * from './cluster'
+export * from './lobby-cluster'
 export * from './identity'
 export * from './namespace'
 export * from './env'

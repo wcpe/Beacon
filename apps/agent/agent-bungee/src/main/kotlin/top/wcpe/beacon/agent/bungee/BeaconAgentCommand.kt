@@ -3,8 +3,10 @@ package top.wcpe.beacon.agent.bungee
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.command
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.lifecycle.BcDirectoryCommandText
 import top.wcpe.beacon.agent.core.lifecycle.OpsCommandText
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
+import top.wcpe.beacon.agent.core.proxy.ManagedDirectorySnapshot
 
 /**
  * agent 本地运维命令 /beacon（权限 beacon.admin）：status / reload / reconnect / resync / help。
@@ -20,14 +22,40 @@ object BeaconAgentCommand {
     fun register(
         lifecycle: AgentLifecycle,
         adapter: PlatformAdapter,
+        directorySnapshot: () -> ManagedDirectorySnapshot,
     ) {
         command("beacon", permission = "beacon.admin") {
             literal("status", description = "查看 agent 接入与有效配置状态") {
                 execute<ProxyCommandSender> { sender, _, _ ->
-                    // status 读内存快照，开销极小，可直接回；为统一仍下沉异步。
+                    val snapshot = directorySnapshot()
                     adapter.runAsync {
                         OpsCommandText.statusLines(lifecycle.snapshot()).forEach { sender.sendMessage(it) }
+                        BcDirectoryCommandText.statusLines(snapshot).forEach { sender.sendMessage(it) }
                     }
+                }
+            }
+            literal("servers", description = "分页查看 Beacon 受管服务器目录") {
+                execute<ProxyCommandSender> { sender, _, _ ->
+                    val snapshot = directorySnapshot()
+                    adapter.runAsync { BcDirectoryCommandText.serversLines(snapshot, null).forEach(sender::sendMessage) }
+                }
+                dynamic("page", optional = true) {
+                    execute<ProxyCommandSender> { sender, _, argument ->
+                        val snapshot = directorySnapshot()
+                        adapter.runAsync { BcDirectoryCommandText.serversLines(snapshot, argument).forEach(sender::sendMessage) }
+                    }
+                }
+            }
+            literal("server", description = "查看指定 Beacon 受管服务器详情") {
+                dynamic("serverId") {
+                    execute<ProxyCommandSender> { sender, _, argument ->
+                        val snapshot = directorySnapshot()
+                        adapter.runAsync { BcDirectoryCommandText.serverLines(snapshot, argument).forEach(sender::sendMessage) }
+                    }
+                }
+                execute<ProxyCommandSender> { sender, _, _ ->
+                    val snapshot = directorySnapshot()
+                    adapter.runAsync { BcDirectoryCommandText.serverLines(snapshot, null).forEach(sender::sendMessage) }
                 }
             }
             literal("reload", description = "强制立刻重拉有效配置并应用") {
@@ -51,18 +79,23 @@ object BeaconAgentCommand {
             }
             literal("help", description = "查看各子命令用法") {
                 execute<ProxyCommandSender> { sender, _, _ ->
-                    OpsCommandText.HELP_LINES.forEach { sender.sendMessage(it) }
+                    BcDirectoryCommandText.HELP_LINES.forEach { sender.sendMessage(it) }
                 }
             }
             // 无子命令：打印用法。
             execute<ProxyCommandSender> { sender, _, _ ->
-                OpsCommandText.USAGE_LINES.forEach { sender.sendMessage(it) }
+                BcDirectoryCommandText.USAGE_LINES.forEach { sender.sendMessage(it) }
             }
             // 未知子命令 / 错参：回中文用法（带未知片段回显），取代 TabooLib 默认中英双语 generic 提示。
             // 取触发失配的输入片段经 self()（公共入口）；极端边界取不到则只给用法、不强求回显。
             incorrectCommand { sender, context, _, _ ->
                 val input = runCatching { context.self() }.getOrNull()
-                OpsCommandText.incorrectInputLines(input).forEach { sender.sendMessage(it) }
+                if (input.isNullOrBlank()) {
+                    BcDirectoryCommandText.USAGE_LINES.forEach(sender::sendMessage)
+                } else {
+                    sender.sendMessage("未知子命令：$input")
+                    BcDirectoryCommandText.USAGE_LINES.forEach(sender::sendMessage)
+                }
             }
         }
     }

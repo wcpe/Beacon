@@ -71,21 +71,23 @@ describe('normal 场景：真实感中文运维数据', () => {
 
   it('身份列表覆盖状态机枚举值且形状符合契约', async () => {
     const { json } = await callJson('GET', '/admin/v2/agent-identities?pageSize=100')
-    const paged = asPaged(json) as { items: { identityId: string; serverId: string; status: string }[]; total: number }
+    const paged = asPaged(json) as { items: { identityId: string; serverId: string | null; status: string }[]; total: number }
     const statuses = new Set(paged.items.map((item) => item.status))
     for (const expected of ['pending', 'active', 'rejected', 'expired', 'disabled', 'conflict', 'unbound']) {
       expect(statuses).toContain(expected)
     }
     const first = paged.items[0]
     expect(typeof first.identityId).toBe('string')
-    expect(typeof first.serverId).toBe('string')
+    expect(['string', 'object']).toContain(typeof first.serverId)
+    expect(paged.items.some((item) => item.serverId === null)).toBe(true)
   })
 
   it('keyword 筛选在服务端真实生效', async () => {
     const { json } = await callJson('GET', '/admin/v2/agent-identities?keyword=lobby&pageSize=100')
-    const paged = asPaged(json) as { items: { serverId: string }[] }
+    const paged = asPaged(json) as { items: { serverId: string | null }[] }
     expect(paged.items.length).toBeGreaterThan(0)
     for (const item of paged.items) {
+      expect(item.serverId).not.toBeNull()
       expect(item.serverId).toContain('lobby')
     }
   })
@@ -112,7 +114,7 @@ describe('normal 场景：真实感中文运维数据', () => {
     }
     const file = files.items.find((f) => f.name === 'plugins/Essentials/config.yml')
     expect(file).toBeDefined()
-    const { json } = await callJson('GET', `/admin/v2/config-files/${String(file?.id ?? 0)}/effective?serverId=lobby-1`)
+    const { json } = await callJson('GET', `/admin/v2/config-files/${String(file?.id ?? 0)}/effective?serverId=game-1`)
     const effective = json as {
       effectiveContent: string
       provenance: { path: string; scopeLevel: string }[]

@@ -20,6 +20,7 @@ type ServerView struct {
 	Kind            string    `json:"kind"`
 	BCClusterID     *uint     `json:"bcClusterId"`
 	BCClusterName   *string   `json:"bcClusterName"`
+	LobbyClusterID  *uint     `json:"lobbyClusterId"`
 	ZoneID          *uint     `json:"zoneId"`
 	ZoneName        *string   `json:"zoneName"`
 	RegionName      *string   `json:"regionName"`
@@ -38,12 +39,9 @@ type onlineKey struct {
 	serverID    string
 }
 
-// isServerAssigned 判断 server 是否已分配（backend 看 zone_id、proxy 看 bc_cluster_id）。
+// isServerAssigned 判断 server 是否已有任一权威归属。
 func isServerAssigned(s *model.Server) bool {
-	if s.Kind == model.ServerKindBackend {
-		return s.ZoneID != nil
-	}
-	return s.BCClusterID != nil
+	return s.ZoneID != nil || s.BCClusterID != nil || s.LobbyClusterID != nil
 }
 
 // enrichServers 把 server 行批量富化为视图：一次性批量取名与在线态，禁循环内查库（N+1）。
@@ -143,7 +141,9 @@ func loadOnlineServerKeys(db *gorm.DB, serverIDs []string) (map[onlineKey]struct
 		return nil, err
 	}
 	for i := range idents {
-		keys[onlineKey{namespaceID: idents[i].NamespaceID, serverID: idents[i].ServerID}] = struct{}{}
+		if idents[i].ServerID.Assigned() {
+			keys[onlineKey{namespaceID: idents[i].NamespaceID, serverID: string(idents[i].ServerID)}] = struct{}{}
+		}
 	}
 	return keys, nil
 }
@@ -152,7 +152,8 @@ func loadOnlineServerKeys(db *gorm.DB, serverIDs []string) (map[onlineKey]struct
 func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameByID, bcNameByID map[uint]string, online map[onlineKey]struct{}) ServerView {
 	view := ServerView{
 		ID: s.ID, NamespaceID: s.NamespaceID, ServerID: s.ServerID, Kind: s.Kind,
-		BCClusterID: s.BCClusterID, ZoneID: s.ZoneID, PendingZoneID: s.PendingZoneID,
+		BCClusterID: s.BCClusterID, LobbyClusterID: s.LobbyClusterID,
+		ZoneID: s.ZoneID, PendingZoneID: s.PendingZoneID,
 		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining,
 		Assigned: isServerAssigned(s), CreatedAt: s.CreatedAt,
 	}
@@ -483,6 +484,46 @@ type RezonePrefillView struct {
 	TargetName string `json:"targetName"`
 }
 
+// AgentIdentityReadView 是管理面身份查询的绑定事实视图；指纹只由服务层权威快照生成。
+type AgentIdentityReadView struct {
+	Identity           model.AgentIdentity
+	BindingFingerprint *string
+	MigrationState     string
+	Address            string
+	Endpoints          []AgentEndpointView
+}
+
+// enrichAgentIdentityReadViews 批量补齐身份的 namespace code、迁移状态与绑定指纹，禁循环内查库。
+func enrichAgentIdentityReadViews(db *gorm.DB, identities []model.AgentIdentity) ([]AgentIdentityReadView, error) {
+	views := make([]AgentIdentityReadView, 0, len(identities))
+	if len(identities) == 0 {
+		return views, nil
+	}
+	namespaceIDs := map[uint]struct{}{}
+	for i := range identities {
+		namespaceIDs[identities[i].NamespaceID] = struct{}{}
+	}
+	var namespaces []model.Namespace
+	if err := db.Select("id", "code").Where("id IN ?", uintKeys(namespaceIDs)).Find(&namespaces).Error; err != nil {
+		return nil, err
+	}
+	codeByID := make(map[uint]string, len(namespaces))
+	for i := range namespaces {
+		codeByID[namespaces[i].ID] = namespaces[i].Code
+	}
+	if len(codeByID) != len(namespaceIDs) {
+		return nil, apperr.ErrIllegalState
+	}
+	for i := range identities {
+		ident := &identities[i]
+		_, fingerprint := agentBindingSnapshot(ident, codeByID[ident.NamespaceID])
+		views = append(views, AgentIdentityReadView{
+			Identity: *ident, BindingFingerprint: fingerprint, MigrationState: agentMigrationState(ident),
+		})
+	}
+	return views, nil
+}
+
 // GetAgentIdentity 只读取单条身份详情，附换区预填目标（若该 server 正处于换区中）。
 func (s *V2ControlPlaneService) GetAgentIdentity(identityID string) (*model.AgentIdentity, *RezonePrefillView, error) {
 	if !validUUID(identityID) {
@@ -502,9 +543,31 @@ func (s *V2ControlPlaneService) GetAgentIdentity(identityID string) (*model.Agen
 	return ident, prefill, nil
 }
 
+// GetAgentIdentityReadView 返回单条身份详情及服务端生成的绑定事实。
+func (s *V2ControlPlaneService) GetAgentIdentityReadView(identityID string) (*AgentIdentityReadView, *RezonePrefillView, error) {
+	ident, prefill, err := s.GetAgentIdentity(identityID)
+	if err != nil {
+		return nil, nil, err
+	}
+	views, err := enrichAgentIdentityReadViews(s.db, []model.AgentIdentity{*ident})
+	if err != nil {
+		return nil, nil, err
+	}
+	endpoints, err := agentEndpointViews(s.db, ident.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	views[0].Address = ident.LastAddr
+	views[0].Endpoints = endpoints
+	return &views[0], prefill, nil
+}
+
 // rezonePrefillFor 若身份对应 server 处于换区中（pending 归属非空），返回其预填目标名称，否则返回 nil。
 func (s *V2ControlPlaneService) rezonePrefillFor(ident *model.AgentIdentity) (*RezonePrefillView, error) {
-	server, err := findServerRow(s.db, ident.NamespaceID, ident.ServerID)
+	if !ident.ServerID.Assigned() {
+		return nil, nil
+	}
+	server, err := findServerRow(s.db, ident.NamespaceID, string(ident.ServerID))
 	if err != nil || server == nil {
 		return nil, err
 	}

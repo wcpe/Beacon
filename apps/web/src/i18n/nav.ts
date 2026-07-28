@@ -12,6 +12,7 @@ export const nav = {
   servers: '服务器',
   identityConflicts: '身份冲突',
   zones: '区服分配',
+  lobbyClusters: '大厅集群',
   topology: '拓扑',
   serviceAnalysis: '服务分析',
   connections: '连接明细',

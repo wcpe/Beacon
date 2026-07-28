@@ -5,7 +5,9 @@ import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ServersPage from '../../pages/servers'
+import IdentityDetailSheet from '../../pages/servers/identity-detail-sheet'
 import { createTestServer, renderPage, useScenario } from './harness'
+import { uuidFrom } from '@beacon/devmock/support'
 
 // 本文件独享 mock 服务端实例
 const server = createTestServer()
@@ -64,13 +66,46 @@ describe('/servers 服务器页', () => {
     })
   })
 
+  it('待分配身份要求显式填写服务器 ID，并展示绑定详情', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    await user.click(await screen.findByRole('button', { name: /注册待确认/ }))
+    const pendingRow = (await screen.findByText('待分配服务器 ID')).closest('tr')
+    expect(pendingRow).not.toBeNull()
+
+    await user.click(within(pendingRow as HTMLElement).getByRole('button', { name: '确认接入' }))
+    const approveDialog = await screen.findByRole('alertdialog')
+    const confirm = within(approveDialog).getByRole('button', { name: '确认接入' })
+    expect(confirm).toBeDisabled()
+
+    const serverId = within(approveDialog).getByLabelText('服务器 ID')
+    await user.type(serverId, 'bad id')
+    expect(await within(approveDialog).findByText('服务器 ID 不能包含空白字符')).toBeInTheDocument()
+    expect(confirm).toBeDisabled()
+
+    await user.clear(serverId)
+    await user.type(serverId, 'lobby-new-1')
+    expect(confirm).toBeEnabled()
+    await user.click(within(approveDialog).getByRole('button', { name: '取消' }))
+
+    await user.click(within(pendingRow as HTMLElement).getByRole('button', { name: '查看身份详情' }))
+    const detailTitle = await screen.findByText('身份详情')
+    const detailSheet = detailTitle.closest('[data-slot="sheet-content"]')
+    expect(detailSheet).not.toBeNull()
+    expect(within(detailSheet as HTMLElement).getByText('待分配服务器 ID')).toBeInTheDocument()
+    expect(within(detailSheet as HTMLElement).getByText('管理端分配')).toBeInTheDocument()
+    expect(within(detailSheet as HTMLElement).getAllByText('未提供').length).toBeGreaterThan(0)
+  })
+
   it('行操作切换默认入口：取消后该行徽标消失（FR-48/ADR-0067 写闭环）', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ServersPage />)
 
-    // lobby-1 在 mock 中为已分配默认入口：行内带「默认入口」徽标；操作收进「…」菜单
-    const row = (await screen.findByText('lobby-1')).closest('tr')
+    // game-1 在 mock 中为小区默认入口：行内带「默认入口」徽标；操作收进「…」菜单
+    const row = (await screen.findByText('game-1')).closest('tr')
     expect(row).not.toBeNull()
     expect(within(row as HTMLElement).getByText('默认入口')).toBeInTheDocument()
     // 打开行内操作菜单再点「取消默认入口」
@@ -81,10 +116,10 @@ describe('/servers 服务器页', () => {
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '取消默认入口' }))
     await waitFor(() => {
-      const fresh = screen.getByText('lobby-1').closest('tr')
+      const fresh = screen.getByText('game-1').closest('tr')
       expect(within(fresh as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
     })
-    const fresh = screen.getByText('lobby-1').closest('tr')
+    const fresh = screen.getByText('game-1').closest('tr')
     await user.click(within(fresh as HTMLElement).getByRole('button', { name: '操作' }))
     expect(await screen.findByRole('menuitem', { name: '设为默认入口' })).toBeInTheDocument()
   })
@@ -93,10 +128,13 @@ describe('/servers 服务器页', () => {
     useScenario('normal')
     renderPage(<ServersPage />)
 
-    // lobby-1（健康可调度子服）：行内直显健康分 87 + 等级「健康」+ TPS/CPU/在线人数
+    // lobby-1 是独立大厅成员：资产页只展示归属，不复用小区默认入口或未分配摘要。
     const lobbyCell = await screen.findByText('lobby-1')
     const lobbyRow = lobbyCell.closest('tr')
     expect(lobbyRow).not.toBeNull()
+    expect(within(lobbyRow as HTMLElement).getByText('大厅成员')).toBeInTheDocument()
+    expect(within(lobbyRow as HTMLElement).queryByText('- / -')).not.toBeInTheDocument()
+    expect(within(lobbyRow as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
     await waitFor(() => {
       expect(within(lobbyRow as HTMLElement).getByText('87')).toBeInTheDocument()
     })
@@ -151,5 +189,38 @@ describe('/servers 服务器页', () => {
       expect(screen.getByText('mall-1')).toBeInTheDocument()
       expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
     })
+  })
+
+  it('身份详情按平台代理展示地址列表，并可填写原因设置与清除覆盖', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<IdentityDetailSheet identityId={uuidFrom('identity:1:proxy-1')} onOpenChange={() => undefined} />)
+
+    expect(await screen.findByText('监听地址（2）')).toBeInTheDocument()
+    expect(screen.getByText('BC listener 1')).toBeInTheDocument()
+    expect(screen.getAllByText('自动探测地址').length).toBeGreaterThan(0)
+    await user.click(screen.getAllByRole('button', { name: '设置覆盖' })[0])
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByLabelText('覆盖地址'), '198.51.100.20:25577')
+    await user.type(within(dialog).getByLabelText('原因'), '公网入口地址修正')
+    await user.click(within(dialog).getByRole('button', { name: '保存覆盖' }))
+    expect((await screen.findAllByText('198.51.100.20:25577')).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: '清除覆盖' }))
+    const clearDialog = await screen.findByRole('alertdialog')
+    await user.type(within(clearDialog).getByLabelText('原因'), '恢复自动探测地址')
+    await user.click(within(clearDialog).getByRole('button', { name: '清除覆盖' }))
+    expect((await screen.findAllByText('自动探测地址')).length).toBeGreaterThan(0)
+  })
+
+  it('失活 listener 默认折叠，但仍显示最后上报时间并可展开详情', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<IdentityDetailSheet identityId={uuidFrom('identity:1:proxy-2')} onOpenChange={() => undefined} />)
+
+    expect(await screen.findByText('已失活')).toBeInTheDocument()
+    expect(screen.getAllByText('最后上报时间')).toHaveLength(2)
+    expect(screen.getAllByText('上报监听')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: '展开已失活监听' }))
+    expect(screen.getAllByText('上报监听')).toHaveLength(2)
   })
 })

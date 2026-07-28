@@ -49,7 +49,7 @@ func seedServer(t *testing.T, db *gorm.DB, namespaceID uint, serverID string, on
 	}
 	if online {
 		if err := db.Create(&model.AgentIdentity{
-			IdentityID: "id-" + serverID, NamespaceID: namespaceID, ServerID: serverID,
+			IdentityID: "id-" + serverID, NamespaceID: namespaceID, ServerID: model.NullableServerID(serverID),
 			Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, StatusChangedAt: time.Now().UTC(),
 		}).Error; err != nil {
 			t.Fatalf("建 active 身份失败: %v", err)

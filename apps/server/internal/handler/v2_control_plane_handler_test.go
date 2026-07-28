@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -15,6 +17,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
@@ -33,8 +36,10 @@ func newV2HandlerTestService(t *testing.T) (*gorm.DB, *service.V2ControlPlaneSer
 		&model.BCCluster{},
 		&model.Region{},
 		&model.Zone{},
+		&model.LobbyCluster{},
 		&model.Server{},
 		&model.AgentIdentity{},
+		&model.AgentEndpoint{},
 		&model.AuditLog{},
 	); err != nil {
 		t.Fatalf("迁移 v2 表失败: %v", err)
@@ -43,8 +48,8 @@ func newV2HandlerTestService(t *testing.T) (*gorm.DB, *service.V2ControlPlaneSer
 	return db, svc, NewV2ControlPlaneHandler(svc)
 }
 
-func TestV2AgentRegisterHTTPPendingThenActive(t *testing.T) {
-	_, svc, h := newV2HandlerTestService(t)
+func TestFR203AgentRegisterHTTPPendingThenActive(t *testing.T) {
+	db, svc, h := newV2HandlerTestService(t)
 	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
 	if err != nil {
 		t.Fatalf("创建 namespace 失败: %v", err)
@@ -52,7 +57,6 @@ func TestV2AgentRegisterHTTPPendingThenActive(t *testing.T) {
 
 	body := map[string]any{
 		"identityId":   "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-		"serverId":     "lobby-1",
 		"kind":         model.ServerKindBackend,
 		"bootId":       "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 		"agentVersion": "0.21.0",
@@ -61,8 +65,11 @@ func TestV2AgentRegisterHTTPPendingThenActive(t *testing.T) {
 	if code != http.StatusAccepted || parsed["status"] != model.AgentIdentityStatusPending {
 		t.Fatalf("首次注册应 202 pending，实际 %d：%v", code, parsed)
 	}
-	if parsed["namespace"] != "prod" || parsed["serverId"] != "lobby-1" {
-		t.Fatalf("注册响应应带 token 归属 namespace 与 serverId，实际 %v", parsed)
+	if parsed["namespace"] != "prod" || parsed["serverId"] != nil {
+		t.Fatalf("pending 注册响应应带 token 归属 namespace 且 serverId 为 null，实际 %v", parsed)
+	}
+	if parsed["boundAt"] != nil || parsed["bindingFingerprint"] != nil {
+		t.Fatalf("pending 注册不得伪造绑定快照，实际 %v", parsed)
 	}
 
 	approveCode, approveBody := invokeJSONWithParam(
@@ -74,13 +81,261 @@ func TestV2AgentRegisterHTTPPendingThenActive(t *testing.T) {
 		"identityId",
 		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 	)
-	if approveCode != http.StatusOK || approveBody["status"] != model.AgentIdentityStatusActive {
+	if approveCode != http.StatusBadRequest {
+		t.Fatalf("审批请求缺 serverId 应 400，实际 %d：%v", approveCode, approveBody)
+	}
+
+	approveCode, approveBody = invokeJSONWithParam(
+		h.ApproveAgentIdentity,
+		http.MethodPost,
+		"/admin/v2/agent-identities/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/approve",
+		"",
+		map[string]any{"serverId": "lobby-203-http", "forceUnbindOccupier": false},
+		"identityId",
+		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+	)
+	if approveCode != http.StatusOK || approveBody["status"] != model.AgentIdentityStatusActive || approveBody["serverId"] != "lobby-203-http" {
 		t.Fatalf("确认身份应 200 active，实际 %d：%v", approveCode, approveBody)
 	}
 
 	code, parsed = invokeJSON(h.AgentRegister, http.MethodPost, "/beacon/v2/agent/register", token, body)
-	if code != http.StatusOK || parsed["status"] != model.AgentIdentityStatusActive {
+	if code != http.StatusOK || parsed["status"] != model.AgentIdentityStatusActive || parsed["serverId"] != "lobby-203-http" {
 		t.Fatalf("已确认身份再次注册应 200 active，实际 %d：%v", code, parsed)
+	}
+	if _, ok := parsed["boundAt"].(string); !ok {
+		t.Fatalf("active 注册必须返回服务端权威 boundAt，实际 %v", parsed)
+	}
+	fingerprint, ok := parsed["bindingFingerprint"].(string)
+	if !ok || len(fingerprint) != 64 {
+		t.Fatalf("active 注册必须返回 SHA-256 绑定指纹，实际 %v", parsed)
+	}
+
+	pollCode, poll := invokeJSON(h.AgentRegistration, http.MethodGet,
+		"/beacon/v2/agent/registration?identityId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", token, nil)
+	if pollCode != http.StatusOK || poll["boundAt"] != parsed["boundAt"] || poll["bindingFingerprint"] != fingerprint {
+		t.Fatalf("active 轮询必须复用同一权威绑定快照，实际 %d：%v", pollCode, poll)
+	}
+	if err := db.Model(&model.AgentIdentity{}).
+		Where("identity_id = ?", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").Update("bound_at", nil).Error; err != nil {
+		t.Fatalf("构造缺 boundAt 的 active 脏数据失败: %v", err)
+	}
+	pollCode, poll = invokeJSON(h.AgentRegistration, http.MethodGet,
+		"/beacon/v2/agent/registration?identityId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", token, nil)
+	if pollCode != http.StatusOK || poll["boundAt"] != nil || poll["bindingFingerprint"] != nil {
+		t.Fatalf("字段缺失时 HTTP 契约必须显式返回 null 且不得伪造，实际 %d：%v", pollCode, poll)
+	}
+}
+
+func TestFR204AgentRegisterHTTPUsesTCPRemoteAddress(t *testing.T) {
+	db, svc, h := newV2HandlerTestService(t)
+	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	body := map[string]any{
+		"identityId": "20400000-0000-4000-8000-000000000011", "kind": model.ServerKindProxy, "bootId": "boot-204-http",
+		"listeners": []map[string]any{{"bindHost": "0.0.0.0", "port": 25577, "ordinal": 0}, {"bindHost": "::", "port": 25578, "ordinal": 1}},
+	}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/beacon/v2/agent/register", bytes.NewReader(raw))
+	req.RemoteAddr = "203.0.113.20:46321"
+	req.Header.Set("X-Beacon-Token", token)
+	req.Header.Set("X-Forwarded-For", "198.51.100.99")
+	req.Header.Set("X-Real-IP", "198.51.100.98")
+	rr := httptest.NewRecorder()
+	h.AgentRegister(rr, req)
+	code, response := decodeRecorder(rr)
+	if code != http.StatusAccepted || response["address"] != "203.0.113.20:25577" {
+		t.Fatalf("注册响应必须投影 TCP 对端地址，实际 %d：%v", code, response)
+	}
+	endpoints, ok := response["endpoints"].([]any)
+	if !ok || len(endpoints) != 2 {
+		t.Fatalf("BC 注册响应必须返回完整 listener 列表，实际 %v", response)
+	}
+	var ident model.AgentIdentity
+	if err := db.Where("identity_id = ?", body["identityId"]).First(&ident).Error; err != nil {
+		t.Fatalf("读取身份失败: %v", err)
+	}
+	var endpoint model.AgentEndpoint
+	if err := db.Where("agent_identity_id = ? AND ordinal = ?", ident.ID, 0).First(&endpoint).Error; err != nil {
+		t.Fatalf("读取首个 endpoint 失败: %v", err)
+	}
+	if endpoint.DetectedAddress != "203.0.113.20:25577" || endpoint.DetectedAddress == "198.51.100.99:25577" {
+		t.Fatalf("探测地址不得信任代理头，实际 %+v", endpoint)
+	}
+	invalid := httptest.NewRequest(http.MethodPost, "/beacon/v2/agent/register", bytes.NewBufferString(`{"identityId":"20400000-0000-4000-8000-000000000012","kind":"proxy","bootId":"boot-204-null","listeners":null}`))
+	invalid.RemoteAddr = "203.0.113.20:46322"
+	invalid.Header.Set("X-Beacon-Token", token)
+	invalidRecorder := httptest.NewRecorder()
+	h.AgentRegister(invalidRecorder, invalid)
+	if invalidRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("显式 null listeners 必须拒绝，实际 %d：%s", invalidRecorder.Code, invalidRecorder.Body.String())
+	}
+}
+
+func TestFR204EndpointOverrideAuditRecordsBindingAndTrace(t *testing.T) {
+	db, svc, h := newV2HandlerTestService(t)
+	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	identityID := "20400000-0000-4000-8000-000000000013"
+	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindProxy, BootID: "boot-204-endpoint",
+		DetectedHost: "203.0.113.21", ListenersProvided: true,
+		Listeners: []service.AgentEndpointReport{{BindHost: "0.0.0.0", Port: 25577, Ordinal: 0}},
+	}); err != nil {
+		t.Fatalf("注册 endpoint 身份失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity(identityID, service.ApproveAgentIdentityParams{Operator: "admin", ServerID: "bc-endpoint"}); err != nil {
+		t.Fatalf("审批 endpoint 身份失败: %v", err)
+	}
+	var endpoint model.AgentEndpoint
+	if err := db.Joins("JOIN agent_identity ON agent_identity.id = agent_endpoint.agent_identity_id").
+		Where("agent_identity.identity_id = ?", identityID).First(&endpoint).Error; err != nil {
+		t.Fatalf("读取 endpoint 失败: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/admin/v2/agent-identities/"+identityID+"/endpoints/"+endpoint.EndpointKey,
+		bytes.NewBufferString(`{"overrideAddress":"proxy.example.com:25577","reason":"公网 NAT 映射"}`))
+	ctx := render.WithTraceID(req.Context(), "handler-trace-204")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("identityId", identityID)
+	rctx.URLParams.Add("endpointKey", endpoint.EndpointKey)
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	rr := httptest.NewRecorder()
+	h.SetAgentEndpointOverride(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("设置 endpoint 覆盖应成功，实际 %d：%s", rr.Code, rr.Body.String())
+	}
+	var audit model.AuditLog
+	if err := db.Where("action = ?", "identity.endpoint_override_changed").First(&audit).Error; err != nil {
+		t.Fatalf("读取 endpoint 覆盖审计失败: %v", err)
+	}
+	var detail struct {
+		ServerID *string `json:"serverId"`
+		TraceID  string  `json:"traceId"`
+	}
+	if err := json.Unmarshal([]byte(audit.Detail), &detail); err != nil {
+		t.Fatalf("解析 endpoint 覆盖审计详情失败: %v", err)
+	}
+	if detail.ServerID == nil || *detail.ServerID != "bc-endpoint" || detail.TraceID != "handler-trace-204" {
+		t.Fatalf("审计必须保存操作时绑定 serverId 与请求 traceId，实际 %+v", detail)
+	}
+	if strings.Contains(audit.Detail, "proxy.example.com:25577") {
+		t.Fatalf("审计不得回显 endpoint 地址，实际 %s", audit.Detail)
+	}
+}
+
+// TestFR199ListServersHTTPProjectsNullableLobbyClusterID 锁定 GET servers 的大厅归属 JSON 契约。
+func TestFR199ListServersHTTPProjectsNullableLobbyClusterID(t *testing.T) {
+	db, svc, h := newV2HandlerTestService(t)
+	ns, _, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	var lobby model.LobbyCluster
+	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
+		t.Fatalf("读取大厅集群失败: %v", err)
+	}
+	if err := db.Create(&model.Server{NamespaceID: ns.ID, ServerID: "lobby-http", Kind: model.ServerKindBackend, LobbyClusterID: &lobby.ID}).Error; err != nil {
+		t.Fatalf("创建大厅成员失败: %v", err)
+	}
+	if err := db.Create(&model.Server{NamespaceID: ns.ID, ServerID: "regular-http", Kind: model.ServerKindBackend}).Error; err != nil {
+		t.Fatalf("创建普通服务器失败: %v", err)
+	}
+
+	code, response := invokeJSON(h.ListServers, http.MethodGet, "/admin/v2/servers?namespaceId="+fmt.Sprint(ns.ID), "", nil)
+	if code != http.StatusOK {
+		t.Fatalf("读取 server 列表应成功，实际 %d：%v", code, response)
+	}
+	rawItems, ok := response["items"].([]any)
+	if !ok || len(rawItems) != 2 {
+		t.Fatalf("响应应含两台服务器，实际 %v", response)
+	}
+	items := map[string]map[string]any{}
+	for _, raw := range rawItems {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("列表项应为对象，实际 %T", raw)
+		}
+		items[item["serverId"].(string)] = item
+	}
+	if item := items["lobby-http"]; item["lobbyClusterId"] != float64(lobby.ID) || item["assigned"] != true {
+		t.Fatalf("大厅成员 JSON 应带 lobbyClusterId 且 assigned=true，实际 %v", item)
+	}
+	if item := items["regular-http"]; item["lobbyClusterId"] != nil || item["assigned"] != false {
+		t.Fatalf("普通服务器 JSON 应带 lobbyClusterId=null 且 assigned=false，实际 %v", item)
+	}
+}
+
+func TestFR203AgentIdentityListAndDetailExposeBindingFacts(t *testing.T) {
+	_, svc, h := newV2HandlerTestService(t)
+	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	pendingID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+		Token: token, IdentityID: pendingID, Kind: model.ServerKindBackend, BootID: "boot-list-detail-pending",
+	}); err != nil {
+		t.Fatalf("注册待确认身份失败: %v", err)
+	}
+	identityID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, ServerID: "legacy-lobby", Kind: model.ServerKindBackend, BootID: "boot-list-detail",
+	}); err != nil {
+		t.Fatalf("注册 legacy 身份失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity(identityID, service.ApproveAgentIdentityParams{
+		Operator: "admin", ServerID: "legacy-lobby",
+	}); err != nil {
+		t.Fatalf("审批 legacy 身份失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-list-detail-migrated",
+	}); err != nil {
+		t.Fatalf("触发 legacy 迁移失败: %v", err)
+	}
+
+	listCode, items := invokeJSONList(h.ListAgentIdentities, http.MethodGet, "/admin/v2/agent-identities", nil)
+	if listCode != http.StatusOK || len(items) != 2 {
+		t.Fatalf("身份列表应返回两个项目，实际 %d：%v", listCode, items)
+	}
+	item, pendingItem := identityListItem(items, identityID), identityListItem(items, pendingID)
+	if item == nil || pendingItem == nil {
+		t.Fatalf("身份列表缺少预期项目，实际 %v", items)
+	}
+	if item["serverId"] != "legacy-lobby" || item["bindingSource"] != model.AgentIdentityBindingSourceLegacyLocal ||
+		item["migrationState"] != "completed" || item["legacyMigratedAt"] == nil || item["boundAt"] == nil {
+		t.Fatalf("列表应返回完整绑定事实，实际 %v", item)
+	}
+	if _, exists := item["bindingFingerprint"]; exists {
+		t.Fatalf("列表不得暴露仅详情需要的绑定指纹，实际 %v", item)
+	}
+	if pendingItem["serverId"] != nil || pendingItem["boundAt"] != nil || pendingItem["legacyMigratedAt"] != nil ||
+		pendingItem["bindingSource"] != model.AgentIdentityBindingSourceAdminAssigned || pendingItem["migrationState"] != "not_required" {
+		t.Fatalf("待确认身份的缺失绑定事实必须显式为 null，实际 %v", pendingItem)
+	}
+
+	detailCode, detail := invokeJSONWithParam(
+		h.GetAgentIdentity, http.MethodGet, "/admin/v2/agent-identities/"+identityID, "", nil, "identityId", identityID,
+	)
+	if detailCode != http.StatusOK || detail["serverId"] != item["serverId"] ||
+		detail["bindingSource"] != item["bindingSource"] || detail["migrationState"] != item["migrationState"] ||
+		detail["legacyMigratedAt"] != item["legacyMigratedAt"] || detail["boundAt"] != item["boundAt"] {
+		t.Fatalf("详情必须复用列表的绑定事实，实际 %d：%v", detailCode, detail)
+	}
+	fingerprint, ok := detail["bindingFingerprint"].(string)
+	if !ok || len(fingerprint) != 64 {
+		t.Fatalf("详情必须返回服务端权威绑定指纹，实际 %v", detail)
+	}
+	pendingDetailCode, pendingDetail := invokeJSONWithParam(
+		h.GetAgentIdentity, http.MethodGet, "/admin/v2/agent-identities/"+pendingID, "", nil, "identityId", pendingID,
+	)
+	if pendingDetailCode != http.StatusOK || pendingDetail["serverId"] != nil || pendingDetail["boundAt"] != nil ||
+		pendingDetail["bindingFingerprint"] != nil || pendingDetail["legacyMigratedAt"] != nil ||
+		pendingDetail["migrationState"] != "not_required" {
+		t.Fatalf("待确认详情的缺失绑定事实必须显式为 null，实际 %d：%v", pendingDetailCode, pendingDetail)
 	}
 }
 
@@ -135,6 +390,30 @@ func invokeJSONWithParam(handler http.HandlerFunc, method, path, token string, b
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 	return decodeRecorder(rr)
+}
+
+func invokeJSONList(handler http.HandlerFunc, method, path string, body any) (int, []map[string]any) {
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest(method, path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	var parsed struct {
+		Items []map[string]any `json:"items"`
+	}
+	if rr.Body.Len() > 0 {
+		_ = json.Unmarshal(rr.Body.Bytes(), &parsed)
+	}
+	return rr.Code, parsed.Items
+}
+
+func identityListItem(items []map[string]any, identityID string) map[string]any {
+	for _, item := range items {
+		if item["identityId"] == identityID {
+			return item
+		}
+	}
+	return nil
 }
 
 func decodeRecorder(rr *httptest.ResponseRecorder) (int, map[string]any) {

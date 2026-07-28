@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/bootwatch"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
 
 const (
@@ -32,10 +36,16 @@ type trustKey struct {
 
 // V2ControlPlaneService 承载第二版身份、namespace 隔离与区服权威写模型。
 type V2ControlPlaneService struct {
-	db         *gorm.DB
-	registerMu sync.Mutex
-	trustMu    sync.RWMutex
-	trustSet   map[trustKey]struct{}
+	db                      *gorm.DB
+	runtime                 *runtime.Registry
+	healthViews             *healthview.Store
+	notifier                *ChangeNotifier
+	registerMu              sync.Mutex
+	directoryResyncMu       sync.Mutex
+	directoryResyncRepo     *repository.AgentCommandRepository
+	directoryResyncNotifier CommandNotifier
+	trustMu                 sync.RWMutex
+	trustSet                map[trustKey]struct{}
 	// 并发身份冲突检测（FR-177，spec §4.5）：bootId 活跃注册表（进程内真源）+ 冲突窗口取值 + 告警留痕出口。
 	// 未装配（nil）时检测禁用——保持旧构造 NewV2ControlPlaneService(db) 与既有测试行为不变。
 	bootRegistry   *bootwatch.Registry
@@ -76,6 +86,9 @@ func (s *V2ControlPlaneService) CreateV2Namespace(p CreateV2NamespaceParams) (*m
 		if err := tx.Create(ns).Error; err != nil {
 			return err
 		}
+		if err := tx.Create(&model.LobbyCluster{NamespaceID: ns.ID}).Error; err != nil {
+			return err
+		}
 		return createAudit(tx, model.AuditLog{
 			NamespaceCode: ns.Code,
 			Operator:      operatorOrSystem(p.Operator),
@@ -96,33 +109,47 @@ func (s *V2ControlPlaneService) CreateV2Namespace(p CreateV2NamespaceParams) (*m
 }
 
 type AgentRegisterV2Params struct {
-	Token        string
-	IdentityID   string
-	ServerID     string
-	Kind         string
-	BootID       string
-	AgentVersion string
-	Addr         string
-	ClientIP     string
+	Token             string
+	IdentityID        string
+	ServerID          string
+	Kind              string
+	BootID            string
+	AgentVersion      string
+	Addr              string
+	DetectedHost      string
+	ListenPort        *int
+	Listeners         []AgentEndpointReport
+	ListenersProvided bool
+	ClientIP          string
 }
 
 type AgentRegisterV2Result struct {
-	Status    string
-	ExpiresAt *time.Time
-	Namespace string
-	ServerID  string
+	Status             string
+	ExpiresAt          *time.Time
+	Namespace          string
+	ServerID           *string
+	BoundAt            *time.Time
+	BindingFingerprint *string
+	BindingSource      string
+	MigrationState     string
+	Address            string
+	Endpoints          []AgentEndpointView
 }
 
 type AgentRegistrationV2Status struct {
-	Status    string
-	Namespace string
-	ServerID  string
-	Reason    string
+	Status             string
+	Namespace          string
+	ServerID           *string
+	BoundAt            *time.Time
+	BindingFingerprint *string
+	Reason             string
+	Address            string
+	Endpoints          []AgentEndpointView
 }
 
 // RegisterAgentV2 处理 v2 agent 注册与待确认状态机入口。
 func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*AgentRegisterV2Result, error) {
-	if !validUUID(p.IdentityID) || p.ServerID == "" || !model.IsValidServerKind(p.Kind) || p.BootID == "" {
+	if !validUUID(p.IdentityID) || !model.IsValidServerKind(p.Kind) || p.BootID == "" {
 		return nil, apperr.ErrInvalidParam
 	}
 	ns, err := s.namespaceByToken(p.Token)
@@ -145,26 +172,44 @@ func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*Agent
 			return err
 		}
 		if current == nil {
-			if err := ensureServerIDAvailableForRegister(tx, ns.ID, p.ServerID); err != nil {
-				return err
-			}
-			conflictReason, err := occupiedServerConflictReason(tx, ns.ID, p.ServerID, p.IdentityID)
-			if err != nil {
-				return err
-			}
 			ident := &model.AgentIdentity{
-				IdentityID: p.IdentityID, NamespaceID: ns.ID, ServerID: p.ServerID,
+				IdentityID: p.IdentityID, NamespaceID: ns.ID, ServerID: model.NullableServerID(p.ServerID),
 				Kind: p.Kind, Status: model.AgentIdentityStatusPending,
 				BootID: p.BootID, LastAddr: p.Addr, AgentVersion: p.AgentVersion,
-				PendingExpiresAt: &expiresAt, StatusChangedAt: now, ConflictReason: conflictReason,
+				PendingExpiresAt: &expiresAt, StatusChangedAt: now,
+				BindingSource: identityBindingSourceForRegistration(p.ServerID),
+			}
+			if ident.ServerID.Assigned() {
+				if err := ensureServerIDAvailableForRegister(tx, ns.ID, string(ident.ServerID)); err != nil {
+					return err
+				}
+				conflictReason, err := occupiedServerConflictReason(tx, ns.ID, string(ident.ServerID), p.IdentityID)
+				if err != nil {
+					return err
+				}
+				ident.ConflictReason = conflictReason
 			}
 			if err := tx.Create(ident).Error; err != nil {
 				return err
 			}
-			out = AgentRegisterV2Result{Status: ident.Status, ExpiresAt: ident.PendingExpiresAt, Namespace: ns.Code, ServerID: ident.ServerID}
+			endpoints, err := syncAgentEndpoints(tx, ident, p, now)
+			if err != nil {
+				return err
+			}
+			out = newAgentRegisterV2Result(ident, ns.Code)
+			out.Address, out.Endpoints = ident.LastAddr, endpoints
 			return auditIdentity(tx, ns, ident, model.ActionIdentityRegistered, "agent", model.ResultOK, p.ClientIP)
 		}
-		return s.registerExistingIdentity(tx, ns, current, p, now, expiresAt, &out)
+		if err := s.registerExistingIdentity(tx, ns, current, p, now, expiresAt, &out); err != nil {
+			return err
+		}
+		endpoints, err := syncAgentEndpoints(tx, current, p, now)
+		if err != nil {
+			return err
+		}
+		out = newAgentRegisterV2Result(current, ns.Code)
+		out.Address, out.Endpoints = current.LastAddr, endpoints
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -198,7 +243,7 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 			return apperr.ErrIdentityConflictLoser
 		}
 	}
-	if ident.Status != model.AgentIdentityStatusActive {
+	if ident.Status != model.AgentIdentityStatusActive || !ident.ServerID.Assigned() {
 		return apperr.ErrUnauthorized
 	}
 	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 404 促其重注册，复用 agent「404→重注册」路径喂养往复检测（spec §4.5）。
@@ -240,7 +285,7 @@ func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID, bootI
 			return agentauth.Identity{}, apperr.ErrIdentityConflictLoser
 		}
 	}
-	if ident.Status != model.AgentIdentityStatusActive {
+	if ident.Status != model.AgentIdentityStatusActive || !ident.ServerID.Assigned() {
 		return agentauth.Identity{}, apperr.ErrAgentNotConfirmed
 	}
 	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 404 促其重注册，复用 agent「404→重注册」路径喂养往复检测（spec §4.5）。
@@ -250,7 +295,7 @@ func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID, bootI
 		return agentauth.Identity{}, apperr.ErrAgentStaleReregister
 	}
 	return agentauth.Identity{
-		NamespaceID: ns.ID, Namespace: ns.Code, ServerID: ident.ServerID,
+		NamespaceID: ns.ID, Namespace: ns.Code, ServerID: string(ident.ServerID),
 		Kind: ident.Kind, IdentityID: ident.IdentityID,
 	}, nil
 }
@@ -274,13 +319,23 @@ func (s *V2ControlPlaneService) GetAgentRegistrationV2(token, identityID string)
 	if ident.NamespaceID != ns.ID {
 		return nil, apperr.ErrUnauthorized
 	}
+	boundAt, fingerprint := agentBindingSnapshot(ident, ns.Code)
+	endpoints, err := agentEndpointViews(s.db, ident.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &AgentRegistrationV2Status{
-		Status: ident.Status, Namespace: ns.Code, ServerID: ident.ServerID, Reason: ident.ConflictReason,
+		Status: ident.Status, Namespace: ns.Code, ServerID: optionalIdentityServerID(ident),
+		BoundAt: boundAt, BindingFingerprint: fingerprint, Reason: ident.ConflictReason,
+		Address: ident.LastAddr, Endpoints: endpoints,
 	}, nil
 }
 
 func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.Namespace, current *model.AgentIdentity, p AgentRegisterV2Params, now, expiresAt time.Time, out *AgentRegisterV2Result) error {
-	sameBinding := current.NamespaceID == ns.ID && current.ServerID == p.ServerID && current.Kind == p.Kind
+	if !model.IsValidAgentIdentityBindingSource(current.BindingSource) {
+		return apperr.ErrIllegalState
+	}
+	sameBinding := current.NamespaceID == ns.ID && current.Kind == p.Kind && (!current.ServerID.Assigned() || p.ServerID == "" || string(current.ServerID) == p.ServerID)
 	if !sameBinding && current.Status != model.AgentIdentityStatusUnbound && current.Status != model.AgentIdentityStatusExpired {
 		return apperr.ErrIdentityBindingMismatch
 	}
@@ -294,19 +349,25 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 		current.AgentVersion = p.AgentVersion
 		current.PendingExpiresAt = &expiresAt
 	case model.AgentIdentityStatusExpired, model.AgentIdentityStatusUnbound:
-		if err := ensureServerIDAvailableForRegister(tx, ns.ID, p.ServerID); err != nil {
-			return err
+		if p.ServerID != "" {
+			if err := ensureServerIDAvailableForRegister(tx, ns.ID, p.ServerID); err != nil {
+				return err
+			}
 		}
 		current.NamespaceID = ns.ID
-		current.ServerID = p.ServerID
+		current.ServerID = model.NullableServerID(p.ServerID)
 		current.Kind = p.Kind
 		current.Status = model.AgentIdentityStatusPending
+		current.BindingSource = identityBindingSourceForRegistration(p.ServerID)
 		current.BootID = p.BootID
 		current.LastAddr = p.Addr
 		current.AgentVersion = p.AgentVersion
 		current.PendingExpiresAt = &expiresAt
 		current.StatusChangedAt = now
 	case model.AgentIdentityStatusActive, model.AgentIdentityStatusDisabled:
+		if !current.ServerID.Assigned() {
+			return apperr.ErrIdentityBindingMismatch
+		}
 		if !sameBinding {
 			return apperr.ErrIdentityBindingMismatch
 		}
@@ -323,11 +384,23 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 	if err := tx.Save(current).Error; err != nil {
 		return err
 	}
-	*out = AgentRegisterV2Result{Status: current.Status, ExpiresAt: current.PendingExpiresAt, Namespace: ns.Code, ServerID: current.ServerID}
+	if current.BindingSource == model.AgentIdentityBindingSourceLegacyLocal && current.LegacyMigratedAt == nil && p.ServerID == "" &&
+		(current.Status == model.AgentIdentityStatusActive || current.Status == model.AgentIdentityStatusDisabled) {
+		migratedAt := now
+		current.LegacyMigratedAt = &migratedAt
+		if err := tx.Save(current).Error; err != nil {
+			return err
+		}
+		if err := auditIdentity(tx, ns, current, model.ActionIdentityLegacyMigrated, "agent", model.ResultOK, p.ClientIP); err != nil {
+			return err
+		}
+	}
+	*out = newAgentRegisterV2Result(current, ns.Code)
 	return nil
 }
 
 type ApproveAgentIdentityParams struct {
+	ServerID            string
 	Operator            string
 	ClientIP            string
 	ForceUnbindOccupier bool
@@ -338,7 +411,7 @@ type ApproveAgentIdentityParams struct {
 	TargetID   *uint
 }
 
-// ApproveAgentIdentity 确认待确认身份。首次确认只创建未分配 server 行；
+// ApproveAgentIdentity 确认待确认身份。首次确认必须分配 serverId；
 // 若该 server 正处于换区中（pending 归属非空），则按预填 / 指定目标落区（或暂不分配），并清 pending + 记换区完成审计。
 func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
 	now := time.Now().UTC()
@@ -353,6 +426,14 @@ func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p Approv
 		}
 		if ident.Status != model.AgentIdentityStatusPending {
 			return apperr.ErrIllegalState
+		}
+		serverID, err := resolveApprovedServerID(p.ServerID)
+		if err != nil {
+			return err
+		}
+		ident.ServerID = model.NullableServerID(serverID)
+		if err := ensureServerIDAvailableForApprove(tx, ident.NamespaceID, serverID, ident.IdentityID); err != nil {
+			return err
 		}
 		ns, err := findNamespaceByID(tx, ident.NamespaceID)
 		if err != nil {
@@ -382,7 +463,7 @@ func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p Approv
 
 // applyApproveBinding 处理确认时的 server 落绑定：换区中走重确认落区、否则首次确认只建未分配 server 行。
 func (s *V2ControlPlaneService) applyApproveBinding(tx *gorm.DB, ns *model.Namespace, ident *model.AgentIdentity, p ApproveAgentIdentityParams) error {
-	server, err := findServerRow(tx, ident.NamespaceID, ident.ServerID)
+	server, err := findServerRow(tx, ident.NamespaceID, string(ident.ServerID))
 	if err != nil {
 		return err
 	}
@@ -392,7 +473,7 @@ func (s *V2ControlPlaneService) applyApproveBinding(tx *gorm.DB, ns *model.Names
 	if p.TargetID != nil {
 		return apperr.ErrInvalidParam // 非换区中不允许指定落区目标
 	}
-	_, err = ensureServerRow(tx, ident.NamespaceID, ident.ServerID, ident.Kind)
+	_, err = ensureServerRow(tx, ident.NamespaceID, string(ident.ServerID), ident.Kind)
 	return err
 }
 
@@ -536,9 +617,12 @@ func (s *V2ControlPlaneService) transitionIdentity(identityID string, allowed []
 	return &out, nil
 }
 
-// clearServerAssignmentByIdentity 按身份定位 server 行并清空区服归属（解绑联动）。
+// clearServerAssignmentByIdentity 按身份定位 server 行并清空全部归属（解绑联动）。
 func clearServerAssignmentByIdentity(tx *gorm.DB, ident *model.AgentIdentity) error {
-	server, err := findServerRow(tx, ident.NamespaceID, ident.ServerID)
+	if !ident.ServerID.Assigned() {
+		return apperr.ErrIllegalState
+	}
+	server, err := findServerRow(tx, ident.NamespaceID, string(ident.ServerID))
 	if err != nil {
 		return err
 	}
@@ -547,6 +631,7 @@ func clearServerAssignmentByIdentity(tx *gorm.DB, ident *model.AgentIdentity) er
 	}
 	server.ZoneID = nil
 	server.BCClusterID = nil
+	server.LobbyClusterID = nil
 	server.IsDefaultEntry = false
 	return tx.Save(server).Error
 }
@@ -590,6 +675,19 @@ func (s *V2ControlPlaneService) ListAgentIdentities(p ListAgentIdentitiesParams)
 	return items, total, err
 }
 
+// ListAgentIdentityReadViews 分页查询身份列表并补齐只读绑定事实，避免 handler 另造指纹。
+func (s *V2ControlPlaneService) ListAgentIdentityReadViews(p ListAgentIdentitiesParams) ([]AgentIdentityReadView, int64, error) {
+	items, total, err := s.ListAgentIdentities(p)
+	if err != nil {
+		return nil, 0, err
+	}
+	views, err := enrichAgentIdentityReadViews(s.db, items)
+	if err != nil {
+		return nil, 0, err
+	}
+	return views, total, nil
+}
+
 type ListServersParams struct {
 	NamespaceID uint
 	Kind        string
@@ -610,9 +708,9 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, 
 	}
 	if p.Assigned != nil {
 		if *p.Assigned {
-			q = q.Where("zone_id IS NOT NULL OR bc_cluster_id IS NOT NULL")
+			q = q.Where("zone_id IS NOT NULL OR bc_cluster_id IS NOT NULL OR lobby_cluster_id IS NOT NULL")
 		} else {
-			q = q.Where("zone_id IS NULL AND bc_cluster_id IS NULL")
+			q = q.Where("zone_id IS NULL AND bc_cluster_id IS NULL AND lobby_cluster_id IS NULL")
 		}
 	}
 	if p.Keyword != "" {
@@ -659,7 +757,7 @@ func pageOffset(page, size int) int {
 }
 
 func (s *V2ControlPlaneService) resolveOccupierForApprove(tx *gorm.DB, ident *model.AgentIdentity, p ApproveAgentIdentityParams) error {
-	occupier, err := findActiveIdentityByServer(tx, ident.NamespaceID, ident.ServerID, ident.IdentityID)
+	occupier, err := findActiveIdentityByServer(tx, ident.NamespaceID, string(ident.ServerID), ident.IdentityID)
 	if err != nil || occupier == nil {
 		return err
 	}
@@ -1041,7 +1139,7 @@ func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Se
 	return out, err
 }
 
-// unassignServers 批量解除分配：清空 zone_id / bc_cluster_id / 默认入口，原因必填。
+// unassignServers 批量解除分配：清空 zone_id / bc_cluster_id / lobby_cluster_id / 默认入口，原因必填。
 func (s *V2ControlPlaneService) unassignServers(p AssignServersParams) ([]model.Server, error) {
 	if p.Reason == "" {
 		return nil, apperr.ErrInvalidParam
@@ -1058,6 +1156,7 @@ func (s *V2ControlPlaneService) unassignServers(p AssignServersParams) ([]model.
 		for i := range servers {
 			servers[i].ZoneID = nil
 			servers[i].BCClusterID = nil
+			servers[i].LobbyClusterID = nil
 			servers[i].IsDefaultEntry = false
 			if err := tx.Save(&servers[i]).Error; err != nil {
 				return err
@@ -1080,9 +1179,13 @@ func (s *V2ControlPlaneService) unassignServers(p AssignServersParams) ([]model.
 func applyAssignment(server *model.Server, targetKind string, targetID uint, isDefaultEntry bool) {
 	id := targetID
 	if targetKind == model.AssignmentTargetZone {
+		server.BCClusterID = nil
+		server.LobbyClusterID = nil
 		server.ZoneID = &id
 		server.IsDefaultEntry = isDefaultEntry
 	} else {
+		server.ZoneID = nil
+		server.LobbyClusterID = nil
 		server.BCClusterID = &id
 		server.IsDefaultEntry = false
 	}
@@ -1092,7 +1195,7 @@ func validateAssignableServer(server *model.Server, targetNS uint, targetKind st
 	if server.NamespaceID != targetNS {
 		return apperr.ErrForbidden
 	}
-	if server.ZoneID != nil || server.BCClusterID != nil {
+	if isServerAssigned(server) {
 		return apperr.ErrRezoneRequired
 	}
 	if targetKind == model.AssignmentTargetZone && server.Kind != model.ServerKindBackend {
@@ -1199,11 +1302,12 @@ func (s *V2ControlPlaneService) RezoneServers(p RezoneServersParams) ([]Assignme
 	return results, nil
 }
 
-// initRezone 对单台已分配 server 发起换区：解绑清归属（含默认入口）+ 写预填目标 + 驱动身份重入 pending + 审计。
+// initRezone 对单台已分配 server 发起换区：解绑清全部归属（含默认入口）+ 写预填目标 + 驱动身份重入 pending + 审计。
 func (s *V2ControlPlaneService) initRezone(tx *gorm.DB, server *model.Server, p RezoneServersParams, targetKind string, now, expiresAt time.Time) error {
 	id := p.TargetID
 	server.ZoneID = nil
 	server.BCClusterID = nil
+	server.LobbyClusterID = nil
 	server.IsDefaultEntry = false
 	if targetKind == model.AssignmentTargetZone {
 		server.PendingZoneID = &id
@@ -1241,6 +1345,9 @@ func driveIdentityPending(tx *gorm.DB, namespaceID uint, serverID string, now, e
 func validateRezonableServer(server *model.Server, targetNS uint, targetKind string) error {
 	if !isServerAssigned(server) {
 		return apperr.ErrRezoneNotAssigned
+	}
+	if server.LobbyClusterID != nil && server.ZoneID == nil && server.BCClusterID == nil {
+		return apperr.ErrIllegalState
 	}
 	if server.NamespaceID != targetNS {
 		return apperr.ErrForbidden
@@ -1431,6 +1538,81 @@ func ensureServerIDAvailableForRegister(tx *gorm.DB, namespaceID uint, serverID 
 		return err
 	}
 	return nil
+}
+
+func ensureServerIDAvailableForApprove(tx *gorm.DB, namespaceID uint, serverID, identityID string) error {
+	var pending model.AgentIdentity
+	err := tx.Where("namespace_id = ? AND server_id = ? AND identity_id <> ? AND status = ?", namespaceID, serverID, identityID, model.AgentIdentityStatusPending).First(&pending).Error
+	if err == nil {
+		return apperr.ErrServerIDPendingElsewhere
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	return err
+}
+
+// resolveApprovedServerID 只接受审批请求显式指定的 serverId。
+// pending 行遗留的 serverId 仅供界面提示，不能作为服务端回退来源。
+func resolveApprovedServerID(supplied string) (string, error) {
+	serverID := strings.TrimSpace(supplied)
+	if serverID == "" || len(serverID) > 64 || strings.ContainsAny(serverID, " \t\r\n") {
+		return "", apperr.ErrInvalidParam
+	}
+	return serverID, nil
+}
+
+func optionalIdentityServerID(ident *model.AgentIdentity) *string {
+	if !ident.ServerID.Assigned() {
+		return nil
+	}
+	serverID := string(ident.ServerID)
+	return &serverID
+}
+
+func identityBindingSourceForRegistration(serverID string) string {
+	if serverID == "" {
+		return model.AgentIdentityBindingSourceAdminAssigned
+	}
+	return model.AgentIdentityBindingSourceLegacyLocal
+}
+
+func newAgentRegisterV2Result(ident *model.AgentIdentity, namespace string) AgentRegisterV2Result {
+	boundAt, fingerprint := agentBindingSnapshot(ident, namespace)
+	return AgentRegisterV2Result{
+		Status: ident.Status, ExpiresAt: ident.PendingExpiresAt, Namespace: namespace,
+		ServerID: optionalIdentityServerID(ident), BoundAt: boundAt, BindingFingerprint: fingerprint,
+		BindingSource: ident.BindingSource, MigrationState: agentMigrationState(ident),
+	}
+}
+
+// agentMigrationState 按 FR-203 的 legacy 迁移事实归纳管理面状态。
+func agentMigrationState(ident *model.AgentIdentity) string {
+	if ident.BindingSource != model.AgentIdentityBindingSourceLegacyLocal {
+		return "not_required"
+	}
+	if ident.LegacyMigratedAt == nil {
+		return "pending"
+	}
+	return "completed"
+}
+
+// agentBindingSnapshot 只从已持久化的激活绑定生成快照；事实不完整时返回空值，禁止使用本地时钟补造。
+func agentBindingSnapshot(ident *model.AgentIdentity, namespace string) (*time.Time, *string) {
+	if (ident.Status != model.AgentIdentityStatusActive && ident.Status != model.AgentIdentityStatusDisabled) ||
+		!ident.ServerID.Assigned() || ident.BoundAt == nil {
+		return nil, nil
+	}
+	fingerprint := agentBindingFingerprint(ident.IdentityID, namespace, string(ident.ServerID), ident.Kind, *ident.BoundAt)
+	return ident.BoundAt, &fingerprint
+}
+
+// agentBindingFingerprint 使用版本前缀和换行分隔的稳定字段顺序，摘要中绝不包含 token 或密钥。
+func agentBindingFingerprint(identityID, namespace, serverID, kind string, boundAt time.Time) string {
+	payload := strings.Join([]string{
+		"beacon-binding-v1", identityID, namespace, serverID, kind, boundAt.UTC().Format(time.RFC3339Nano),
+	}, "\n")
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
 }
 
 func occupiedServerConflictReason(tx *gorm.DB, namespaceID uint, serverID, identityID string) (string, error) {

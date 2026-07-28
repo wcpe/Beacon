@@ -26,6 +26,7 @@ export const cluster = {
       filterZone: 'Zone',
       assignedYes: 'Assigned',
       assignedNo: 'Unassigned',
+      lobbyMember: 'Lobby member',
       // Residual server rows without an active binding (lab proxy / unbound), distinct from live assets
       residualBadge: 'Residual asset',
       residualHint:

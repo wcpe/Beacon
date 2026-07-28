@@ -1,6 +1,8 @@
 package top.wcpe.beacon.agent.core.client
 
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.identity.EndpointReport
+import top.wcpe.beacon.agent.core.identity.ProxyListenerEndpoint
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
@@ -28,7 +30,15 @@ class BeaconApiClientV2RegisterTest {
         override fun decode(json: String): Any? =
             when (json) {
                 "v2-pending" -> mapOf("status" to "pending", "namespace" to "prod", "serverId" to "lobby-1")
-                "v2-active" -> mapOf("status" to "active", "namespace" to "prod", "serverId" to "lobby-1")
+                "v2-active" ->
+                    mapOf(
+                        "status" to "active",
+                        "namespace" to "prod",
+                        "serverId" to "lobby-1",
+                        "boundAt" to "2026-07-28T12:00:00Z",
+                        "bindingFingerprint" to "a".repeat(64),
+                        "address" to "203.0.113.10:25565",
+                    )
                 "legacy-ok" ->
                     mapOf(
                         "instanceKey" to "prod/lobby-1",
@@ -100,6 +110,93 @@ class BeaconApiClientV2RegisterTest {
         assertEquals("backend", body["kind"])
     }
 
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `新引导注册不发送本地 serverId 且从 active 响应采用权威绑定`() {
+        val codec = CapturingCodec()
+        val transport =
+            ScriptedTransport(
+                ArrayDeque(
+                    listOf(
+                        HttpResponse(200, "v2-active"),
+                        HttpResponse(200, "legacy-ok"),
+                    ),
+                ),
+            )
+        val bootstrapIdentity = identity().copy(namespace = "", serverId = "")
+
+        BeaconApiClient(transport, codec, settings()).register(bootstrapIdentity)
+
+        val v2Body = codec.encoded.first() as Map<String, Any?>
+        assertTrue("serverId" !in v2Body)
+        assertEquals("prod", bootstrapIdentity.namespace)
+        assertEquals("lobby-1", bootstrapIdentity.serverId)
+        assertEquals("203.0.113.10:25565", bootstrapIdentity.address)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `Bukkit 注册只上报监听端口且不发送本地地址`() {
+        val codec = CapturingCodec()
+        val transport = ScriptedTransport(ArrayDeque(listOf(HttpResponse(202, "v2-pending"))))
+        val identity = identity().copy(address = "10.0.0.8:25565", endpointReport = EndpointReport(backendListenPort = 25565))
+
+        BeaconApiClient(transport, codec, settings()).register(identity)
+
+        val body = codec.encoded.single() as Map<String, Any?>
+        assertEquals(25565, body["listenPort"])
+        assertTrue("addr" !in body)
+        assertTrue("address" !in body)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `BC 注册上报全部 listener 并保持 ordinal 顺序`() {
+        val codec = CapturingCodec()
+        val transport = ScriptedTransport(ArrayDeque(listOf(HttpResponse(202, "v2-pending"))))
+        val identity = identity().copy(
+            role = "bungee",
+            endpointReport = EndpointReport(
+                proxyListeners = listOf(
+                    ProxyListenerEndpoint("127.0.0.1", 25577, 1),
+                    ProxyListenerEndpoint("0.0.0.0", 25565, 0),
+                ),
+            ),
+        )
+
+        BeaconApiClient(transport, codec, settings()).register(identity)
+
+        val body = codec.encoded.single() as Map<String, Any?>
+        val listeners = body["listeners"] as List<Map<String, Any?>>
+        assertEquals(listOf(0, 1), listeners.map { it["ordinal"] })
+        assertEquals(listOf(25565, 25577), listeners.map { it["port"] })
+        assertTrue("addr" !in body)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `BC 缺少 listener 时仍显式上报空列表供控制面拒绝`() {
+        val codec = CapturingCodec()
+        val transport = ScriptedTransport(ArrayDeque(listOf(HttpResponse(202, "v2-pending"))))
+
+        BeaconApiClient(transport, codec, settings()).register(identity().copy(role = "bungee"))
+
+        val body = codec.encoded.single() as Map<String, Any?>
+        assertEquals(emptyList<Any>(), body["listeners"])
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test
+    fun `Bukkit 缺少监听端口时仍显式上报无效值供控制面拒绝`() {
+        val codec = CapturingCodec()
+        val transport = ScriptedTransport(ArrayDeque(listOf(HttpResponse(202, "v2-pending"))))
+
+        BeaconApiClient(transport, codec, settings()).register(identity().copy(endpointReport = EndpointReport()))
+
+        val body = codec.encoded.single() as Map<String, Any?>
+        assertEquals(0, body["listenPort"])
+    }
+
     @Test
     fun `v2 active 后衔接 legacy 数据面注册`() {
         val codec = CapturingCodec()
@@ -139,5 +236,16 @@ class BeaconApiClientV2RegisterTest {
         val req = lastRequest.get()
         assertTrue(req.url.contains("/beacon/v2/agent/registration?wait=1"))
         assertEquals(identity().identityId, req.headers["X-Beacon-Identity"])
+    }
+
+    @Test
+    fun `心跳 403 或 409 必须回查 v2 权威身份而非当作网络失败`() {
+        listOf(403, 409).forEach { statusCode ->
+            val transport = ScriptedTransport(ArrayDeque(listOf(HttpResponse(statusCode, "rejected"))))
+
+            val outcome = BeaconApiClient(transport, CapturingCodec(), settings()).heartbeat(identity())
+
+            assertIs<HeartbeatOutcome.AuthorityRefreshRequired>(outcome)
+        }
     }
 }

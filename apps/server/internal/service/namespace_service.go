@@ -78,6 +78,9 @@ func (s *NamespaceService) Create(code, name, operator, clientIP string) (*model
 		if err := s.repo.WithTx(tx).Create(ns); err != nil {
 			return err
 		}
+		if err := tx.Create(&model.LobbyCluster{NamespaceID: ns.ID}).Error; err != nil {
+			return err
+		}
 		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns.Code,
 			Operator:      operator,
@@ -143,6 +146,9 @@ func (s *NamespaceService) Delete(code, operator, clientIP string) error {
 		return err
 	}
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("namespace_id = ?", exist.ID).Delete(&model.LobbyCluster{}).Error; err != nil {
+			return err
+		}
 		if _, err := s.repo.WithTx(tx).DeleteByCode(code); err != nil {
 			return err
 		}
@@ -214,7 +220,12 @@ func (s *NamespaceService) SeedDefaults() error {
 		{Code: "test", Name: "测试环境"},
 	}
 	for i := range defaults {
-		if err := s.repo.Create(&defaults[i]); err != nil {
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			if err := s.repo.WithTx(tx).Create(&defaults[i]); err != nil {
+				return err
+			}
+			return tx.Create(&model.LobbyCluster{NamespaceID: defaults[i].ID}).Error
+		}); err != nil {
 			return err
 		}
 		slog.Info("预置环境", "code", defaults[i].Code, "name", defaults[i].Name)

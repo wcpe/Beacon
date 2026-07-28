@@ -6,6 +6,7 @@ import { http, HttpResponse, type HttpHandler } from 'msw'
 import { identityHandlers } from './domains/identity'
 import { namespaceHandlers } from './domains/namespace'
 import { zoneAuthorityHandlers } from './domains/zone-authority'
+import { lobbyClusterHandlers } from './domains/lobby-cluster'
 import { metricsHealthHandlers } from './domains/metrics-health'
 import { connectionsMessagesHandlers } from './domains/connections-messages'
 import { archiveHandlers } from './domains/archive'
@@ -36,6 +37,7 @@ export * from './data/cluster'
 export * from './domains/identity'
 export * from './domains/namespace'
 export * from './domains/zone-authority'
+export * from './domains/lobby-cluster'
 export * from './domains/metrics-health'
 export * from './domains/connections-messages'
 export * from './domains/archive'
@@ -72,6 +74,7 @@ export const domainHandlers = {
   identity: identityHandlers,
   namespace: namespaceHandlers,
   zoneAuthority: zoneAuthorityHandlers,
+  lobbyCluster: lobbyClusterHandlers,
   metricsHealth: metricsHealthHandlers,
   connectionsMessages: connectionsMessagesHandlers,
   archive: archiveHandlers,

@@ -40,7 +40,15 @@ type schedZoneJS struct {
 // schedCandidatesResponse 是 GET /beacon/v2/agent/schedule/candidates 的响应体。
 type schedCandidatesResponse struct {
 	GeneratedAtMs int64         `json:"generatedAtMs"`
+	Lobby         schedLobbyJS  `json:"lobby"`
 	Zones         []schedZoneJS `json:"zones"`
+}
+
+// schedLobbyJS 是 namespace 大厅候选集；空集仍返回 ready=false，避免与协议缺失混淆。
+type schedLobbyJS struct {
+	ClusterID  uint               `json:"clusterId"`
+	Ready      bool               `json:"ready"`
+	Candidates []schedCandidateJS `json:"candidates"`
 }
 
 // Candidates 处理 GET /beacon/v2/agent/schedule/candidates：按请求方 namespace 圈定，
@@ -63,11 +71,22 @@ func (h *V2SchedHandler) Candidates(w http.ResponseWriter, r *http.Request) {
 		}
 		zones = append(zones, schedZoneJS{Zone: z.Zone, Candidates: candidates})
 	}
-	render.WriteJSON(w, http.StatusOK, schedCandidatesResponse{GeneratedAtMs: result.GeneratedAtMs, Zones: zones})
+	lobbyCandidates := make([]schedCandidateJS, 0, len(result.Lobby.Candidates))
+	for _, c := range result.Lobby.Candidates {
+		lobbyCandidates = append(lobbyCandidates, schedCandidateJS{
+			ServerID: c.ServerID, Score: c.Score, Level: c.Level, Schedulable: c.Schedulable,
+			OnlineCount: c.OnlineCount, MaxOnline: c.MaxOnline,
+		})
+	}
+	render.WriteJSON(w, http.StatusOK, schedCandidatesResponse{
+		GeneratedAtMs: result.GeneratedAtMs, Zones: zones,
+		Lobby: schedLobbyJS{ClusterID: result.Lobby.ClusterID, Ready: result.Lobby.Ready, Candidates: lobbyCandidates},
+	})
 }
 
 // schedDecideRequest 是 POST /beacon/v2/agent/schedule/decide 的请求体（§5.1：purpose/plugin 可空）。
 type schedDecideRequest struct {
+	Scope   string `json:"scope"`
 	Zone    string `json:"zone"`
 	Purpose string `json:"purpose"`
 	Plugin  string `json:"plugin"`
@@ -101,7 +120,11 @@ func (h *V2SchedHandler) Decide(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	outcome, err := h.svc.Decide(identity, req.Zone, req.Purpose, req.Plugin)
+	scope := req.Scope
+	if scope == "" {
+		scope = service.SchedScopeZone
+	}
+	outcome, err := h.svc.DecideScoped(identity, scope, req.Zone, req.Purpose, req.Plugin)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

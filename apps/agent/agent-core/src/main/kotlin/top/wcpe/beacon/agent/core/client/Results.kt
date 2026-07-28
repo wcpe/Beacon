@@ -24,6 +24,15 @@ data class RegisterResult(
     val assigned: Boolean,
 )
 
+/** 控制面确认的运行期绑定。 */
+data class ActiveBinding(
+    val namespace: String,
+    val serverId: String,
+    val boundAt: String,
+    val bindingFingerprint: String,
+    val compatAddress: String,
+)
+
 /** 心跳结果（对应 heartbeat 200 响应）。 */
 data class HeartbeatResult(
     val ttlSec: Int,
@@ -106,6 +115,9 @@ sealed class RegisterOutcome {
     /** 202：v2 身份已进入待人工确认。 */
     data class PendingApproval(val serverId: String, val namespace: String) : RegisterOutcome()
 
+    /** 控制面已确认的绑定；Bootstrap 只消费此结果，不触发数据面注册。 */
+    data class ActiveBindingConfirmed(val binding: ActiveBinding) : RegisterOutcome()
+
     /** 200：v2 身份已确认但被禁用。 */
     object Disabled : RegisterOutcome()
 
@@ -114,6 +126,9 @@ sealed class RegisterOutcome {
 
     /** 409：v2 身份处于冲突态，等待后台处置。 */
     object IdentityConflict : RegisterOutcome()
+
+    /** 控制面已解除身份绑定，旧运行身份不得继续使用。 */
+    object Unbound : RegisterOutcome()
 
     /** 409：重复 serverId。 */
     object DuplicateServerId : RegisterOutcome()
@@ -163,7 +178,7 @@ sealed class MetricsReportOutcome {
 /** v2 registration 长轮询结果。 */
 sealed class RegistrationPollResult {
     /** 身份已确认可继续注册数据面。 */
-    object Active : RegistrationPollResult()
+    data class Active(val binding: ActiveBinding) : RegistrationPollResult()
 
     /** 仍在等待人工确认。 */
     object Pending : RegistrationPollResult()
@@ -176,6 +191,9 @@ sealed class RegistrationPollResult {
 
     /** 身份冲突。 */
     object Conflict : RegistrationPollResult()
+
+    /** 控制面已解除绑定，旧快照不得继续使用。 */
+    object Unbound : RegistrationPollResult()
 
     /** 304：本轮无状态变化。 */
     object NotModified : RegistrationPollResult()
@@ -204,6 +222,7 @@ data class CandidateEntry(
     val schedulable: Boolean,
     val onlineCount: Int,
     val maxOnline: Int,
+    val reasons: List<String> = emptyList(),
 )
 
 /** 某小区的候选集（candidates 响应 zones 元素）。 */
@@ -212,10 +231,18 @@ data class ZoneCandidates(
     val candidates: List<CandidateEntry>,
 )
 
+/** namespace 全局大厅的可选候选段；缺失表示旧控制面尚未提供大厅模型。 */
+data class LobbyCandidates(
+    val clusterId: Long,
+    val ready: Boolean,
+    val candidates: List<CandidateEntry>,
+)
+
 /** candidates 200 响应体（生成时刻 + 各 zone 候选）。 */
 data class SchedCandidates(
     val generatedAtMs: Long,
     val zones: List<ZoneCandidates>,
+    val lobby: LobbyCandidates? = null,
 )
 
 /** 拉取候选快照的结果。 */

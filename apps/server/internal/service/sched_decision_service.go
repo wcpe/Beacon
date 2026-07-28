@@ -50,6 +50,10 @@ const (
 	SchedFailNoCandidate = "no_candidate"
 	// SchedFailZoneNotFound 请求方 namespace 内无该 zone 名（HTTP 404，决策行仍落库可查）。
 	SchedFailZoneNotFound = "zone_not_found"
+	// SchedScopeZone 保持既有按小区调度的缺省作用域。
+	SchedScopeZone = "zone"
+	// SchedScopeLobby 是 namespace 唯一大厅集群的调度作用域。
+	SchedScopeLobby = "lobby"
 )
 
 // 请求字段长度上限（与 spec §3.4 列宽一致；超限 400 拒绝，防止坏行毒化异步 flush 批）。
@@ -132,7 +136,13 @@ func NewSchedulingV2Service(views *healthview.Store, rng *rand.Rand) *Scheduling
 // ns 内无该 zone 名 → ErrSchedZoneNotFound（决策行仍产出可查）；候选全被排除 → 成功返回但
 // failReason=no_candidate。产出的 outcome 同时是响应数据与决策日表行的内存形态。
 func (s *SchedulingV2Service) Decide(id agentauth.Identity, zone, purpose, plugin string) (SchedDecisionOutcome, error) {
-	if err := validateDecideParams(zone, purpose, plugin); err != nil {
+	return s.DecideScoped(id, SchedScopeZone, zone, purpose, plugin)
+}
+
+// DecideScoped 在 zone 或 lobby 作用域内执行一次 highest_score 调度决策。
+// 空 scope 仅在 handler 层归一为 zone；服务层调用必须显式给出有效 scope。
+func (s *SchedulingV2Service) DecideScoped(id agentauth.Identity, scope, zone, purpose, plugin string) (SchedDecisionOutcome, error) {
+	if err := validateScopedDecideParams(scope, zone, purpose, plugin); err != nil {
 		return SchedDecisionOutcome{}, err
 	}
 	started := s.now()
@@ -149,18 +159,20 @@ func (s *SchedulingV2Service) Decide(id agentauth.Identity, zone, purpose, plugi
 		Excluded:          []SchedExcluded{},
 		ChosenScore:       -1,
 	}
-	zoneViews := s.zoneViews(id.NamespaceID, zone)
-	if len(zoneViews) == 0 {
+	views, found := s.scopedViews(id.NamespaceID, scope, zone)
+	if !found {
 		outcome.FailReason = SchedFailZoneNotFound
 		s.finish(&outcome, started)
 		return outcome, apperr.ErrSchedZoneNotFound
 	}
-	eligible, excluded := partitionSchedulable(zoneViews)
-	outcome.CandidateCount = len(zoneViews)
+	eligible, excluded := partitionSchedulable(views)
+	outcome.CandidateCount = len(views)
 	outcome.Excluded = excluded
 	if len(eligible) == 0 {
 		outcome.FailReason = SchedFailNoCandidate
-		outcome.WeightsRev = zoneViews[0].WeightsRev
+		if len(views) > 0 {
+			outcome.WeightsRev = views[0].WeightsRev
+		}
 		s.finish(&outcome, started)
 		return outcome, nil
 	}
@@ -221,11 +233,64 @@ func toSchedDecisionRow(o SchedDecisionOutcome) model.SchedDecisionV2 {
 
 // validateDecideParams 校验决策请求字段：zone 必填且各字段不超日表列宽（防坏行毒化异步 flush 批）。
 func validateDecideParams(zone, purpose, plugin string) error {
-	if zone == "" || len(zone) > schedZoneNameMaxLen ||
-		len(purpose) > schedPurposeMaxLen || len(plugin) > schedPluginMaxLen {
+	return validateScopedDecideParams(SchedScopeZone, zone, purpose, plugin)
+}
+
+// validateScopedDecideParams 校验 scope 与其目标字段形状；lobby 不接受非空 zone。
+func validateScopedDecideParams(scope, zone, purpose, plugin string) error {
+	if len(purpose) > schedPurposeMaxLen || len(plugin) > schedPluginMaxLen {
+		return apperr.ErrInvalidParam
+	}
+	switch scope {
+	case SchedScopeZone:
+		if zone == "" || len(zone) > schedZoneNameMaxLen {
+			return apperr.ErrInvalidParam
+		}
+	case SchedScopeLobby:
+		if zone != "" {
+			return apperr.ErrInvalidParam
+		}
+	default:
 		return apperr.ErrInvalidParam
 	}
 	return nil
+}
+
+// scopedViews 返回目标作用域的健康视图。lobby 即使没有成员也视为有效作用域并返回空集，
+// 让调用方以 no_candidate 表达业务结果；只有 zone 才使用 zone_not_found。
+func (s *SchedulingV2Service) scopedViews(namespaceID uint, scope, zone string) ([]healthview.View, bool) {
+	if scope == SchedScopeLobby {
+		return s.lobbyViews(namespaceID), true
+	}
+	views := s.zoneViews(namespaceID, zone)
+	return views, len(views) > 0
+}
+
+// lobbyViews 仅从本 namespace 同一大厅集群的健康视图取候选，不触达 DB。
+func (s *SchedulingV2Service) lobbyViews(namespaceID uint) []healthview.View {
+	all := s.views.List()
+	clusterID := namespaceLobbyClusterID(all, namespaceID)
+	if clusterID == 0 {
+		return []healthview.View{}
+	}
+	out := make([]healthview.View, 0)
+	for _, v := range all {
+		if v.NamespaceID == namespaceID && v.LobbyClusterID == clusterID {
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ServerID < out[j].ServerID })
+	return out
+}
+
+// namespaceLobbyClusterID 从健康快照取 namespace 权威大厅集群 ID。
+func namespaceLobbyClusterID(views []healthview.View, namespaceID uint) uint {
+	for _, v := range views {
+		if v.NamespaceID == namespaceID && v.NamespaceLobbyClusterID != 0 {
+			return v.NamespaceLobbyClusterID
+		}
+	}
+	return 0
 }
 
 // zoneViews 取请求方 namespace 内目标 zone 的全部健康视图，按 serverId 排序（确定枚举序）。
@@ -291,38 +356,66 @@ type SchedZoneCandidates struct {
 	Candidates []SchedCandidate
 }
 
+// SchedLobbyCandidates 是 namespace 大厅集群的候选快照。
+type SchedLobbyCandidates struct {
+	ClusterID  uint
+	Ready      bool
+	Candidates []SchedCandidate
+}
+
 // SchedCandidatesResult 是候选快照结果（对齐 §5.1 candidates 响应）。
 type SchedCandidatesResult struct {
 	GeneratedAtMs int64
+	Lobby         SchedLobbyCandidates
 	Zones         []SchedZoneCandidates
 }
 
-// Candidates 返回请求方 namespace 内全部 zone 的当前可调度候选快照（纯内存，零 DB）：
-// 仅含 Schedulable==true 候选（degraded 且可调度者含入），仅列出有候选的 zone；
-// zone 按名、候选按分数降序（同分按 serverId）排序，输出确定。
+// Candidates 返回请求方 namespace 内全部 zone 与大厅的当前可调度候选快照（纯内存，零 DB）。
+// lobby 即使无候选也返回 ready=false 的空段，避免 Agent 把模型缺失和暂无候选混淆。
 func (s *SchedulingV2Service) Candidates(id agentauth.Identity) SchedCandidatesResult {
+	all := s.views.List()
 	byZone := map[string][]SchedCandidate{}
-	for _, v := range s.views.List() {
+	for _, v := range all {
 		if v.NamespaceID != id.NamespaceID || v.ZoneName == "" || !v.Schedulable {
 			continue
 		}
-		byZone[v.ZoneName] = append(byZone[v.ZoneName], SchedCandidate{
-			ServerID: v.ServerID, Score: v.Score, Level: v.Level, Schedulable: v.Schedulable,
-			OnlineCount: v.OnlineCount, MaxOnline: v.MaxOnline,
-		})
+		byZone[v.ZoneName] = append(byZone[v.ZoneName], schedCandidateOf(v))
 	}
 	zones := make([]SchedZoneCandidates, 0, len(byZone))
 	for zone, candidates := range byZone {
-		sort.Slice(candidates, func(i, j int) bool {
-			if candidates[i].Score != candidates[j].Score {
-				return candidates[i].Score > candidates[j].Score
-			}
-			return candidates[i].ServerID < candidates[j].ServerID
-		})
+		sortSchedCandidates(candidates)
 		zones = append(zones, SchedZoneCandidates{Zone: zone, Candidates: candidates})
 	}
 	sort.Slice(zones, func(i, j int) bool { return zones[i].Zone < zones[j].Zone })
-	return SchedCandidatesResult{GeneratedAtMs: s.now().UnixMilli(), Zones: zones}
+
+	clusterID := namespaceLobbyClusterID(all, id.NamespaceID)
+	lobbyCandidates := make([]SchedCandidate, 0)
+	if clusterID != 0 {
+		for _, v := range all {
+			if v.NamespaceID == id.NamespaceID && v.LobbyClusterID == clusterID && v.Schedulable {
+				lobbyCandidates = append(lobbyCandidates, schedCandidateOf(v))
+			}
+		}
+	}
+	sortSchedCandidates(lobbyCandidates)
+	return SchedCandidatesResult{
+		GeneratedAtMs: s.now().UnixMilli(), Zones: zones,
+		Lobby: SchedLobbyCandidates{ClusterID: clusterID, Ready: len(lobbyCandidates) > 0, Candidates: lobbyCandidates},
+	}
+}
+
+func schedCandidateOf(v healthview.View) SchedCandidate {
+	return SchedCandidate{ServerID: v.ServerID, Score: v.Score, Level: v.Level, Schedulable: v.Schedulable,
+		OnlineCount: v.OnlineCount, MaxOnline: v.MaxOnline}
+}
+
+func sortSchedCandidates(candidates []SchedCandidate) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Score != candidates[j].Score {
+			return candidates[i].Score > candidates[j].Score
+		}
+		return candidates[i].ServerID < candidates[j].ServerID
+	})
 }
 
 // occupancyRate 计算容量占用率 onlineCount/maxOnline；maxOnline≤0 视为占满（1.0），排序自然靠后。

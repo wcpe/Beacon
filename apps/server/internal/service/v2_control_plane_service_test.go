@@ -1,9 +1,13 @@
 package service
 
 import (
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -30,8 +34,10 @@ func newV2ControlPlaneTestService(t *testing.T) (*gorm.DB, *V2ControlPlaneServic
 		&model.BCCluster{},
 		&model.Region{},
 		&model.Zone{},
+		&model.LobbyCluster{},
 		&model.Server{},
 		&model.AgentIdentity{},
+		&model.AgentEndpoint{},
 		&model.AuditLog{},
 	); err != nil {
 		t.Fatalf("迁移 v2 表失败: %v", err)
@@ -61,7 +67,7 @@ func TestV2AgentRegisterApproveCreatesUnassignedServer(t *testing.T) {
 	}
 
 	ident, err := svc.ApproveAgentIdentity("11111111-1111-4111-8111-111111111111", ApproveAgentIdentityParams{
-		Operator: "admin",
+		Operator: "admin", ServerID: "lobby-1",
 	})
 	if err != nil {
 		t.Fatalf("确认身份失败: %v", err)
@@ -76,6 +82,240 @@ func TestV2AgentRegisterApproveCreatesUnassignedServer(t *testing.T) {
 	}
 	if server.ZoneID != nil || server.BCClusterID != nil || server.IsDefaultEntry {
 		t.Fatalf("首次确认后的 server 应保持未分配，实际 %+v", server)
+	}
+}
+
+// approveFR203Identity 以真实强类型审批契约分配 serverId。
+func approveFR203Identity(t *testing.T, svc *V2ControlPlaneService, identityID, serverID string) (*model.AgentIdentity, error) {
+	t.Helper()
+	return svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin", ServerID: serverID})
+}
+
+func TestFR203NewIdentityWithoutServerIDEntersPending(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	_, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	identityID := "20300000-0000-4000-8000-000000000001"
+
+	registration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-pending",
+	})
+	if err != nil {
+		t.Fatalf("新身份无 serverId 注册应进入 pending，实际失败: %v", err)
+	}
+	if registration.Status != model.AgentIdentityStatusPending {
+		t.Fatalf("新身份无 serverId 应为 pending，实际 %s", registration.Status)
+	}
+
+	var row struct {
+		ServerID *string `gorm:"column:server_id"`
+	}
+	if err := db.Model(&model.AgentIdentity{}).Select("server_id").Where("identity_id = ?", identityID).Scan(&row).Error; err != nil {
+		t.Fatalf("读取待确认身份失败: %v", err)
+	}
+	if row.ServerID != nil {
+		t.Fatalf("pending 身份的 serverId 应为 NULL，实际 %q", *row.ServerID)
+	}
+}
+
+func TestFR203ApproveRequiresExplicitServerIDAndCommitsBindingAtomically(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	identityID := "20300000-0000-4000-8000-000000000002"
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, ServerID: "legacy-pending-203",
+		Kind: model.ServerKindBackend, BootID: "boot-approve",
+	}); err != nil {
+		t.Fatalf("新身份注册失败: %v", err)
+	}
+
+	if _, err := svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin"}); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("即使 pending 行有旧 serverId，未显式分配 serverId 的审批也应被拒绝，实际 %v", err)
+	}
+	var pending model.AgentIdentity
+	if err := db.Where("identity_id = ?", identityID).First(&pending).Error; err != nil {
+		t.Fatalf("读取待确认身份失败: %v", err)
+	}
+	if pending.Status != model.AgentIdentityStatusPending || pending.ServerID != "legacy-pending-203" {
+		t.Fatalf("失败审批不得改变 pending 绑定，实际 %+v", pending)
+	}
+	var serverCount int64
+	if err := db.Model(&model.Server{}).Where("namespace_id = ?", ns.ID).Count(&serverCount).Error; err != nil {
+		t.Fatalf("统计 server 失败: %v", err)
+	}
+	if serverCount != 0 {
+		t.Fatalf("失败审批不得创建 server 行，实际 %d", serverCount)
+	}
+
+	identity, err := approveFR203Identity(t, svc, identityID, "lobby-203")
+	if err != nil {
+		t.Fatalf("显式分配 serverId 的审批应成功: %v", err)
+	}
+	if identity.Status != model.AgentIdentityStatusActive || identity.ServerID != "lobby-203" || identity.BoundAt == nil {
+		t.Fatalf("审批成功后应原子写入 active 绑定，实际 %+v", identity)
+	}
+	var server model.Server
+	if err := db.Where("namespace_id = ? AND server_id = ?", ns.ID, "lobby-203").First(&server).Error; err != nil {
+		t.Fatalf("审批成功后应创建权威 server 行: %v", err)
+	}
+	var auditCount int64
+	if err := db.Model(&model.AuditLog{}).Where("action = ? AND target_ref = ?", model.ActionIdentityApproved, identityID).Count(&auditCount).Error; err != nil {
+		t.Fatalf("统计审批审计失败: %v", err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("审批成功后应在同一事务写一条审批审计，实际 %d", auditCount)
+	}
+}
+
+func TestFR203ExistingIdentityAutoKeepsBindingAndMismatchesFailClosed(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	_, prodToken, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 prod namespace 失败: %v", err)
+	}
+	_, otherToken, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "other", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 other namespace 失败: %v", err)
+	}
+	identityID := "20300000-0000-4000-8000-000000000003"
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: prodToken, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-first",
+	}); err != nil {
+		t.Fatalf("首次注册失败: %v", err)
+	}
+	if _, err := approveFR203Identity(t, svc, identityID, "legacy-203"); err != nil {
+		t.Fatalf("首次审批失败: %v", err)
+	}
+
+	registration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: prodToken, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-upgrade",
+	})
+	if err != nil {
+		t.Fatalf("既有匹配身份应自动保持 active，实际失败: %v", err)
+	}
+	if registration.Status != model.AgentIdentityStatusActive || registration.ServerID == nil || *registration.ServerID != "legacy-203" {
+		t.Fatalf("既有匹配身份应沿用权威绑定，实际 %+v", registration)
+	}
+
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).Update("server_id", nil).Error; err != nil {
+		t.Fatalf("构造缺 serverId 的活跃脏数据失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: prodToken, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-invalid-active",
+	}); !errors.Is(err, apperr.ErrIdentityBindingMismatch) {
+		t.Fatalf("活跃身份缺 serverId 必须 fail-closed，实际 %v", err)
+	}
+	if _, err := svc.AuthenticateAgentReport(prodToken, identityID, "", ""); !errors.Is(err, apperr.ErrAgentNotConfirmed) {
+		t.Fatalf("活跃身份缺 serverId 的数据面必须 fail-closed，实际 %v", err)
+	}
+
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: prodToken, IdentityID: identityID, Kind: model.ServerKindProxy, BootID: "boot-kind-mismatch",
+	}); !errors.Is(err, apperr.ErrIdentityBindingMismatch) {
+		t.Fatalf("角色不匹配必须 fail-closed，实际 %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: otherToken, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-namespace-mismatch",
+	}); !errors.Is(err, apperr.ErrIdentityBindingMismatch) {
+		t.Fatalf("token namespace 不匹配必须 fail-closed，实际 %v", err)
+	}
+}
+
+func TestFR203ActiveBindingSnapshotUsesAuthorityAndFailsClosedWhenIncomplete(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	_, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	identityID := "20300000-0000-4000-8000-000000000004"
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding",
+	}); err != nil {
+		t.Fatalf("创建待确认身份失败: %v", err)
+	}
+	if _, err := approveFR203Identity(t, svc, identityID, "lobby-binding"); err != nil {
+		t.Fatalf("审批身份失败: %v", err)
+	}
+	boundAt := time.Date(2026, time.July, 28, 9, 30, 0, 123456789, time.UTC)
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).Update("bound_at", boundAt).Error; err != nil {
+		t.Fatalf("写入固定权威 boundAt 失败: %v", err)
+	}
+
+	poll, err := svc.GetAgentRegistrationV2(token, identityID)
+	if err != nil {
+		t.Fatalf("轮询身份状态失败: %v", err)
+	}
+	if poll.BoundAt == nil || !poll.BoundAt.Equal(boundAt) || poll.BindingFingerprint == nil {
+		t.Fatalf("active 轮询必须返回权威绑定快照，实际 %+v", poll)
+	}
+	expected := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join([]string{
+		"beacon-binding-v1", identityID, "prod", "lobby-binding", model.ServerKindBackend,
+		boundAt.Format(time.RFC3339Nano),
+	}, "\n"))))
+	if *poll.BindingFingerprint != expected {
+		t.Fatalf("绑定指纹必须使用稳定权威字段摘要，期望 %s，实际 %s", expected, *poll.BindingFingerprint)
+	}
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).
+		Update("status", model.AgentIdentityStatusDisabled).Error; err != nil {
+		t.Fatalf("构造 disabled 身份失败: %v", err)
+	}
+	disabled, err := svc.GetAgentRegistrationV2(token, identityID)
+	if err != nil {
+		t.Fatalf("disabled 身份轮询失败: %v", err)
+	}
+	if disabled.BoundAt == nil || disabled.BindingFingerprint == nil ||
+		!disabled.BoundAt.Equal(*poll.BoundAt) || *disabled.BindingFingerprint != *poll.BindingFingerprint {
+		t.Fatalf("disabled 身份也必须返回原有权威绑定快照，实际 %+v", disabled)
+	}
+	disabledRegistration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-disabled",
+	})
+	if err != nil {
+		t.Fatalf("disabled 身份重注册失败: %v", err)
+	}
+	if disabledRegistration.BoundAt == nil || disabledRegistration.BindingFingerprint == nil ||
+		!disabledRegistration.BoundAt.Equal(*disabled.BoundAt) || *disabledRegistration.BindingFingerprint != *disabled.BindingFingerprint {
+		t.Fatalf("disabled 注册也必须返回原有权威绑定快照，实际 %+v", disabledRegistration)
+	}
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).
+		Update("status", model.AgentIdentityStatusActive).Error; err != nil {
+		t.Fatalf("恢复 active 身份失败: %v", err)
+	}
+
+	registration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-reregister",
+	})
+	if err != nil {
+		t.Fatalf("active 身份重注册失败: %v", err)
+	}
+	if registration.BoundAt == nil || registration.BindingFingerprint == nil ||
+		!registration.BoundAt.Equal(*poll.BoundAt) || *registration.BindingFingerprint != *poll.BindingFingerprint {
+		t.Fatalf("active 注册与轮询必须返回同一绑定快照，注册=%+v 轮询=%+v", registration, poll)
+	}
+
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).Update("bound_at", nil).Error; err != nil {
+		t.Fatalf("构造缺 boundAt 的 active 脏数据失败: %v", err)
+	}
+	poll, err = svc.GetAgentRegistrationV2(token, identityID)
+	if err != nil {
+		t.Fatalf("缺 boundAt 身份轮询失败: %v", err)
+	}
+	if poll.BoundAt != nil || poll.BindingFingerprint != nil {
+		t.Fatalf("active 身份缺任一绑定事实时不得伪造快照，实际 %+v", poll)
+	}
+	registration, err = svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-incomplete",
+	})
+	if err != nil {
+		t.Fatalf("缺 boundAt 身份重注册失败: %v", err)
+	}
+	if registration.BoundAt != nil || registration.BindingFingerprint != nil {
+		t.Fatalf("注册响应缺任一绑定事实时不得生成本地快照，实际 %+v", registration)
 	}
 }
 
@@ -144,7 +384,7 @@ func TestV2ActiveIdentityAuthenticatesLegacyDataPlane(t *testing.T) {
 	if err := svc.AuthenticateAgentV2(token, identityID, bootID); !errors.Is(err, apperr.ErrUnauthorized) {
 		t.Fatalf("pending 身份不应通过 legacy 数据面鉴权，实际 %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	if err := svc.AuthenticateAgentV2(token, identityID, bootID); err != nil {
@@ -201,7 +441,7 @@ func TestV2ServerAssignmentRequiresUnassignedServer(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("44444444-4444-4444-8444-444444444444", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("44444444-4444-4444-8444-444444444444", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-a", Operator: "admin"})
@@ -250,7 +490,7 @@ func TestV2ServerUnassignViaTargetNull(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("55555555-5555-4555-8555-555555555555", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("55555555-5555-4555-8555-555555555555", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-u"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-u", Operator: "admin"})
@@ -271,6 +511,13 @@ func TestV2ServerUnassignViaTargetNull(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("首次分配应成功: %v", err)
 	}
+	var lobby model.LobbyCluster
+	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
+		t.Fatalf("读取大厅集群失败: %v", err)
+	}
+	if err := db.Model(&model.Server{}).Where("id = ?", 1).Update("lobby_cluster_id", lobby.ID).Error; err != nil {
+		t.Fatalf("构造历史双挂数据失败: %v", err)
+	}
 	// 解除分配：TargetKind/TargetID 零值
 	if _, err := svc.AssignServers(AssignServersParams{
 		ServerIDs: []uint{1}, Reason: "下线维护", Operator: "admin",
@@ -281,8 +528,8 @@ func TestV2ServerUnassignViaTargetNull(t *testing.T) {
 	if err := db.First(&server, 1).Error; err != nil {
 		t.Fatalf("读 server 失败: %v", err)
 	}
-	if server.ZoneID != nil || server.BCClusterID != nil || server.IsDefaultEntry {
-		t.Fatalf("解除分配后应清空归属与默认入口，实际 zone=%v bc=%v default=%v", server.ZoneID, server.BCClusterID, server.IsDefaultEntry)
+	if server.ZoneID != nil || server.BCClusterID != nil || server.LobbyClusterID != nil || server.IsDefaultEntry {
+		t.Fatalf("解除分配后应清空归属与默认入口，实际 zone=%v bc=%v lobby=%v default=%v", server.ZoneID, server.BCClusterID, server.LobbyClusterID, server.IsDefaultEntry)
 	}
 }
 
@@ -300,7 +547,7 @@ func TestV2UnbindClearsServerAssignment(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-ub"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc-ub", Operator: "admin"})
@@ -321,6 +568,13 @@ func TestV2UnbindClearsServerAssignment(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("首次分配应成功: %v", err)
 	}
+	var lobby model.LobbyCluster
+	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
+		t.Fatalf("读取大厅集群失败: %v", err)
+	}
+	if err := db.Model(&model.Server{}).Where("id = ?", 1).Update("lobby_cluster_id", lobby.ID).Error; err != nil {
+		t.Fatalf("构造历史双挂数据失败: %v", err)
+	}
 	if _, err := svc.UnbindAgentIdentity(identityID, IdentityTransitionParams{Reason: "退役", Operator: "admin"}); err != nil {
 		t.Fatalf("解绑应成功: %v", err)
 	}
@@ -328,8 +582,8 @@ func TestV2UnbindClearsServerAssignment(t *testing.T) {
 	if err := db.First(&server, 1).Error; err != nil {
 		t.Fatalf("读 server 失败: %v", err)
 	}
-	if server.ZoneID != nil || server.IsDefaultEntry {
-		t.Fatalf("解绑后应清空归属，实际 zone=%v default=%v", server.ZoneID, server.IsDefaultEntry)
+	if server.ZoneID != nil || server.BCClusterID != nil || server.LobbyClusterID != nil || server.IsDefaultEntry {
+		t.Fatalf("解绑后应清空全部归属，实际 zone=%v bc=%v lobby=%v default=%v", server.ZoneID, server.BCClusterID, server.LobbyClusterID, server.IsDefaultEntry)
 	}
 	var ident model.AgentIdentity
 	if err := db.Where("identity_id = ?", identityID).First(&ident).Error; err != nil {
@@ -337,6 +591,125 @@ func TestV2UnbindClearsServerAssignment(t *testing.T) {
 	}
 	if ident.Status != model.AgentIdentityStatusUnbound {
 		t.Fatalf("身份状态应为 unbound，实际 %s", ident.Status)
+	}
+}
+
+// TestFR199LobbyMembershipCountsAsAssigned 锁定大厅成员也属于已分配资产，普通分配不得跨越大厅归属。
+func TestFR199LobbyMembershipCountsAsAssigned(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	var lobby model.LobbyCluster
+	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
+		t.Fatalf("读取大厅集群失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: "lobby-only", Kind: model.ServerKindBackend, LobbyClusterID: &lobby.ID}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("创建大厅成员 server 失败: %v", err)
+	}
+	assigned := true
+	views, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, Assigned: &assigned})
+	if err != nil {
+		t.Fatalf("查询已分配 server 失败: %v", err)
+	}
+	if total != 1 || len(views) != 1 || !views[0].Assigned {
+		t.Fatalf("大厅成员必须计为已分配，实际 total=%d views=%+v", total, views)
+	}
+	if err := validateAssignableServer(&server, ns.ID, model.AssignmentTargetZone); !errors.Is(err, apperr.ErrRezoneRequired) {
+		t.Fatalf("大厅成员不得走普通分配，实际 %v", err)
+	}
+	applyAssignment(&server, model.AssignmentTargetZone, 77, true)
+	if server.LobbyClusterID != nil || server.ZoneID == nil || *server.ZoneID != 77 {
+		t.Fatalf("普通归属写入必须清理大厅归属，实际 %+v", server)
+	}
+}
+
+// TestFR199ServerViewProjectsNullableLobbyClusterID 锁定大厅归属在列表与单条读视图中一致投影。
+func TestFR199ServerViewProjectsNullableLobbyClusterID(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	var lobby model.LobbyCluster
+	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
+		t.Fatalf("读取大厅集群失败: %v", err)
+	}
+	lobbyServer := model.Server{NamespaceID: ns.ID, ServerID: "lobby-view", Kind: model.ServerKindBackend, LobbyClusterID: &lobby.ID}
+	regularServer := model.Server{NamespaceID: ns.ID, ServerID: "regular-view", Kind: model.ServerKindBackend}
+	if err := db.Create(&lobbyServer).Error; err != nil {
+		t.Fatalf("创建大厅成员失败: %v", err)
+	}
+	if err := db.Create(&regularServer).Error; err != nil {
+		t.Fatalf("创建普通服务器失败: %v", err)
+	}
+
+	items, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+	if err != nil || total != 2 || len(items) != 2 {
+		t.Fatalf("读取 server 列表失败: total=%d items=%d err=%v", total, len(items), err)
+	}
+	views := map[string]ServerView{}
+	for _, item := range items {
+		views[item.ServerID] = item
+	}
+	if view := views[lobbyServer.ServerID]; view.LobbyClusterID == nil || *view.LobbyClusterID != lobby.ID || !view.Assigned {
+		t.Fatalf("大厅成员应投影 lobbyClusterId 且 assigned=true，实际 %+v", view)
+	}
+	if view := views[regularServer.ServerID]; view.LobbyClusterID != nil || view.Assigned {
+		t.Fatalf("普通服务器应投影 lobbyClusterId=null 且 assigned=false，实际 %+v", view)
+	}
+
+	single, err := enrichSingleServer(db, lobbyServer)
+	if err != nil || single.LobbyClusterID == nil || *single.LobbyClusterID != lobby.ID || !single.Assigned {
+		t.Fatalf("单条富化读应与列表保持大厅归属一致，view=%+v err=%v", single, err)
+	}
+}
+
+// TestFR199RezoneClearsStaleLobbyMembership 锁定历史双挂数据走既有换区链时，不能残留大厅归属。
+func TestFR199RezoneClearsStaleLobbyMembership(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Name: "bc", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 BC 集群失败: %v", err)
+	}
+	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Name: "r", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建大区失败: %v", err)
+	}
+	from, err := svc.CreateZone(CreateZoneParams{RegionID: region.ID, Name: "from", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建源小区失败: %v", err)
+	}
+	to, err := svc.CreateZone(CreateZoneParams{RegionID: region.ID, Name: "to", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建目标小区失败: %v", err)
+	}
+	var lobby model.LobbyCluster
+	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
+		t.Fatalf("读取大厅集群失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: "legacy-double", Kind: model.ServerKindBackend, ZoneID: &from.ID, LobbyClusterID: &lobby.ID}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("创建历史双挂 server 失败: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return svc.initRezone(tx, &server, RezoneServersParams{TargetID: to.ID, Reason: "迁移"}, model.AssignmentTargetZone, now, now.Add(time.Hour))
+	}); err != nil {
+		t.Fatalf("历史双挂 server 发起换区应成功，实际 %v", err)
+	}
+	var got model.Server
+	if err := db.First(&got, server.ID).Error; err != nil {
+		t.Fatalf("读取换区后的 server 失败: %v", err)
+	}
+	if got.ZoneID != nil || got.BCClusterID != nil || got.LobbyClusterID != nil || got.PendingZoneID == nil || *got.PendingZoneID != to.ID {
+		t.Fatalf("换区必须清空全部当前归属并保留目标预填，实际 %+v", got)
 	}
 }
 
@@ -365,7 +738,7 @@ func TestV2ApproveDoesNotAssignServerDirectly(t *testing.T) {
 		t.Fatalf("注册失败: %v", err)
 	}
 	_, err = svc.ApproveAgentIdentity("15151515-1515-4515-8515-151515151515", ApproveAgentIdentityParams{
-		Operator: "admin", TargetKind: model.AssignmentTargetZone, TargetID: &zone.ID,
+		Operator: "admin", ServerID: "lobby-1", TargetKind: model.AssignmentTargetZone, TargetID: &zone.ID,
 	})
 	if !errors.Is(err, apperr.ErrInvalidParam) {
 		t.Fatalf("P1 确认身份不应直接分配 server，实际 %v", err)
@@ -421,7 +794,7 @@ func TestV2AuthorityNodeDeleteGuards(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("d0100000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("d0100000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-del"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	var server model.Server
@@ -457,7 +830,7 @@ func TestV2AuthorityNodeDeleteGuards(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("代理注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("d0100000-0000-4000-8000-000000000002", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("d0100000-0000-4000-8000-000000000002", ApproveAgentIdentityParams{Operator: "admin", ServerID: "proxy-del"}); err != nil {
 		t.Fatalf("代理确认失败: %v", err)
 	}
 	var proxy model.Server
@@ -512,7 +885,7 @@ func TestV2ZoneTreeCountsAssignedServers(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("a1ee0000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("a1ee0000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-tree"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	var server model.Server
@@ -563,7 +936,7 @@ func TestV2Q3ServerIDOccupiedRequiresForceUnbind(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("旧身份注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("55555555-5555-4555-8555-555555555555", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("55555555-5555-4555-8555-555555555555", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1"}); err != nil {
 		t.Fatalf("旧身份确认失败: %v", err)
 	}
 
@@ -585,12 +958,12 @@ func TestV2Q3ServerIDOccupiedRequiresForceUnbind(t *testing.T) {
 		t.Fatalf("Q3 pending 应带占用冲突原因，实际 %q", pending.ConflictReason)
 	}
 
-	_, err = svc.ApproveAgentIdentity("66666666-6666-4666-8666-666666666666", ApproveAgentIdentityParams{Operator: "admin"})
+	_, err = svc.ApproveAgentIdentity("66666666-6666-4666-8666-666666666666", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1"})
 	if !errors.Is(err, apperr.ErrServerIDOccupied) {
 		t.Fatalf("未强制解绑旧身份时确认应失败，实际 %v", err)
 	}
 	if _, err = svc.ApproveAgentIdentity("66666666-6666-4666-8666-666666666666", ApproveAgentIdentityParams{
-		Operator: "admin", ForceUnbindOccupier: true,
+		Operator: "admin", ServerID: "lobby-1", ForceUnbindOccupier: true,
 	}); err != nil {
 		t.Fatalf("强制解绑后确认新身份应成功: %v", err)
 	}
@@ -641,7 +1014,7 @@ func TestV2IdentityDisableEnableUnbind(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity("88888888-8888-4888-8888-888888888888", ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity("88888888-8888-4888-8888-888888888888", ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1"}); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	disabled, err := svc.DisableAgentIdentity("88888888-8888-4888-8888-888888888888", IdentityTransitionParams{

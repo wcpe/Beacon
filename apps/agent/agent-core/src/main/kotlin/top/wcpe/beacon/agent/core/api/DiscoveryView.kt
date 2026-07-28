@@ -114,5 +114,7 @@ private fun toInstance(obj: Map<String, Any?>): ServiceInstance {
         JsonTree.intOr(obj, "weight", 0),
         // 小区默认入口标志（FR-48）：旧控制面缺键解析为 false，向后兼容。
         JsonTree.boolOr(obj, "zoneDefaultEntry", false),
+        // 全局大厅归属（FR-200）：与健康候选独立，旧控制面缺键解析为 false。
+        JsonTree.boolOr(obj, "lobbyClusterMember", false),
     )
 }

@@ -99,7 +99,15 @@ func TestSchedCandidatesResponseShape(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("响应非 json: %v", err)
 	}
-	assertKeys(t, body, "generatedAtMs", "zones")
+	assertKeys(t, body, "generatedAtMs", "lobby", "zones")
+	lobby, ok := body["lobby"].(map[string]any)
+	if !ok {
+		t.Fatalf("缺少大厅成员时 lobby 仍应为对象，实际 %v", body["lobby"])
+	}
+	assertKeys(t, lobby, "candidates", "clusterId", "ready")
+	if lobby["ready"] != false {
+		t.Fatalf("无大厅候选时 ready 应为 false，实际 %v", lobby)
+	}
 	zones, _ := body["zones"].([]any)
 	if len(zones) != 1 {
 		t.Fatalf("仅 area-1 有候选、应 1 个 zone，实际 %d：%v", len(zones), zones)
@@ -117,6 +125,22 @@ func TestSchedCandidatesResponseShape(t *testing.T) {
 	assertKeys(t, first, "serverId", "score", "level", "schedulable", "onlineCount", "maxOnline")
 	if first["serverId"] != "s-a" || first["score"] != float64(90) || first["schedulable"] != true {
 		t.Fatalf("候选按分数降序、首台应 s-a(90)，实际 %v", first)
+	}
+}
+
+// TestSchedDecideLobbyRequestShape 锁定 scope=lobby 不带 zone 的兼容扩展与空大厅 no_candidate 形状。
+func TestSchedDecideLobbyRequestShape(t *testing.T) {
+	h := newSchedHandlerForTest(schedTestViews())
+	rec := httptest.NewRecorder()
+	h.Decide(rec, schedAgentRequest(http.MethodPost, "/beacon/v2/agent/schedule/decide",
+		map[string]any{"scope": "lobby", "purpose": "proxy-initial-entry"}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("lobby decide 应 200，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["chosen"] != nil || body["failReason"] != "no_candidate" {
+		t.Fatalf("空大厅应 no_candidate，实际 %v", body)
 	}
 }
 

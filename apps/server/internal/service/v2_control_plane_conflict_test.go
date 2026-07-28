@@ -42,7 +42,7 @@ func registerApproveActive(t *testing.T, svc *V2ControlPlaneService, token, serv
 	}); err != nil {
 		t.Fatalf("首次注册失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity(conflictTestIdentity, ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := svc.ApproveAgentIdentity(conflictTestIdentity, ApproveAgentIdentityParams{Operator: "admin", ServerID: serverID}); err != nil {
 		t.Fatalf("确认身份失败: %v", err)
 	}
 }

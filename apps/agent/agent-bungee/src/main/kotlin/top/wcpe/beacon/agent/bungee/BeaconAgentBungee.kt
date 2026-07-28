@@ -20,18 +20,29 @@ import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.api.mapDiscoveryResult
 import top.wcpe.beacon.agent.core.client.DiscoveryFilters
+import top.wcpe.beacon.agent.core.client.ActiveBinding
+import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
 import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
 import top.wcpe.beacon.agent.core.connection.ProxyConnectionTracker
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
+import top.wcpe.beacon.agent.core.identity.EndpointReport
+import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
+import top.wcpe.beacon.agent.core.identity.ProxyListenerEndpoint
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.proxy.DirectorySyncLoopGate
+import top.wcpe.beacon.agent.core.proxy.InitialLobbyRouter
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
+import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import java.util.UUID
+import java.io.File
+import java.util.concurrent.atomic.AtomicReference
+import net.md_5.bungee.api.ProxyServer
 
 /**
  * BungeeCord 代理侧 Beacon agent 插件主类（object + @Awake，不继承 Plugin 基类外的内容）。
@@ -107,6 +118,15 @@ object BeaconAgentBungee : Plugin() {
     /** 当前生命周期；null 表示因身份缺失未启动。 */
     private var lifecycle: AgentLifecycle? = null
 
+    /** pending 阶段唯一运行的最小身份引导器。 */
+    private var bootstrapRuntime: BootstrapRuntime? = null
+
+    /** 仅存活于本进程、且只能来自控制面 active 响应的绑定。 */
+    private var confirmedBinding: ActiveBinding? = null
+
+    /** 本轮 active runtime 创建的 BC 目录；停止时必须撤回接管状态。 */
+    private var serverDirectory: BungeeServerDirectory? = null
+
     /** Proxy 服务器目录同步递归链单飞代际门；disable 时失效当前代际。 */
     private val directorySyncLoopGate = DirectorySyncLoopGate()
 
@@ -122,26 +142,38 @@ object BeaconAgentBungee : Plugin() {
     /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
     private var messagingRuntime: MessagingRuntime? = null
 
+    /** 旧小区默认入口配置只兼容读取一次，不再参与 BC 首次大厅落脚。 */
+    @Volatile
+    private var legacyProxyWarningLogged = false
+
     @Awake(LifeCycle.ENABLE)
     fun enable() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
         val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
         val settings = AgentBootstrap.readSettings(reader)
+        val endpointReport =
+            EndpointReport(
+                proxyListeners =
+                    ProxyServer.getInstance().config.listeners.mapIndexed { ordinal, listener ->
+                        val host = listener.host
+                        ProxyListenerEndpoint(host.hostString, host.port, ordinal)
+                    },
+            )
         submitAsync {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
             // 角色按壳固定为 bungee；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
                 AgentBootstrap.readIdentity(reader, role = "bungee", agentVersion = pluginVersion)
-                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString())
+                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
+
+            confirmedBinding?.takeIf { it.namespace.isNotBlank() && it.serverId.isNotBlank() }?.let {
+                identity.bind(it.namespace, it.serverId)
+            }
 
             // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断代理，仅 agent 不接入）。
             var canConnect = true
             if (!storedIdentity.isValid) {
                 severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
-                canConnect = false
-            }
-            if (canConnect && !identity.isValid()) {
-                severe("身份缺失：identity.server-id 与 identity.namespace 必须显式配置，Beacon agent 不接入控制面")
                 canConnect = false
             }
             if (canConnect && (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank())) {
@@ -156,11 +188,37 @@ object BeaconAgentBungee : Plugin() {
             val store = EffectiveConfigStore()
             val view = EffectiveConfigView(store)
             val adapter = BungeePlatformAdapter(view)
+            warnLegacyProxySettings(adapter, settings)
+            val codec = KotlinxJsonCodec()
+            val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
+            if (confirmedBinding == null) {
+                val bootstrap =
+                    BootstrapRuntime(
+                        identity = identity,
+                        settings = settings,
+                        adapter = adapter,
+                        apiClient = BeaconApiClient(OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs), codec, settings),
+                        snapshots = bindingSnapshot,
+                        onActive = { _, binding ->
+                            confirmedBinding = binding
+                            enable()
+                        },
+                        onTerminal = {
+                            bindingSnapshot.invalidate()
+                            stopActiveRuntime()
+                        },
+                    )
+                bootstrapRuntime = bootstrap
+                bootstrap.start()
+                return@submitAsync
+            }
             // 单一代理目录实例：同时供目录同步（注入子服）与后端归属上报（读当前后端集合，FR-36）。
             val serverDirectory = BungeeServerDirectory()
+            BeaconAgentBungee.serverDirectory = serverDirectory
+            // 装配期先留空，目录同步器创建后回填；lifecycle 在回填后才启动，命令不会命中空引用。
+            val directorySyncerRef = AtomicReference<ProxyServerDirectorySyncer?>(null)
             // BC 专属指标缓存（FR-144）：慢刷后端可达性，使 1s 采样只读缓存不被阻塞探测拖住。
             val proxyCache = BungeeProxyMetricsCache(adapter)
-            proxyCache.start()
             proxyMetricsCache = proxyCache
             val assembled =
                 AgentAssembly.assemble(
@@ -169,7 +227,7 @@ object BeaconAgentBungee : Plugin() {
                     // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
                     rawAdapter = adapter,
                     transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    codec = KotlinxJsonCodec(),
+                    codec = codec,
                     store = store,
                     effectiveConfigView = view,
                     // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
@@ -185,25 +243,30 @@ object BeaconAgentBungee : Plugin() {
                     // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
                     // plugins/BeaconAgentProxy/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
                     selfPluginDirNames = setOf("BeaconAgentProxy"),
+                    onBcDirectoryResync = { directorySyncerRef.get()?.syncOnce() ?: false },
+                    authorityInvalidated = {
+                        bindingSnapshot.invalidate()
+                        stopActiveRuntime()
+                    },
                 )
             lifecycle = assembled.lifecycle
             // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
             messagingRuntime = assembled.messagingRuntime
+            assembled.lifecycle.onRegistered {
+                val binding = confirmedBinding ?: return@onRegistered
+                bindingSnapshot.write(identity, binding)
+            }
+            assembled.lifecycle.onRegistered { proxyCache.start() }
 
             // 对外注册门面，供同进程业务插件读取。
             BeaconAgentProvider.register(assembled.beaconAgent)
 
-            // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
-            BeaconAgentCommand.register(assembled.lifecycle, adapter)
-
             val directorySyncer =
                 ProxyServerDirectorySyncer(
                     directory = serverDirectory,
-                    // BC 服务的 home-zone（FR-48）：据此选小区默认入口；未配 / 无命中则不设默认服并告警，不静默落任意服。
-                    homeGroup = settings.proxy.homeGroup,
-                    homeZone = settings.proxy.homeZone,
                     warn = { adapter.warn(it) },
                     info = { adapter.info(it) },
+                    lobbySnapshot = assembled.lobbySnapshotProvider,
                 ) {
                     mapDiscoveryResult(
                         assembled.apiClient.discoverResult(
@@ -217,6 +280,13 @@ object BeaconAgentBungee : Plugin() {
                         ),
                     )
                 }
+            directorySyncerRef.set(directorySyncer)
+            // BC 的本地查询命令只读取目录同步器已原子发布的内存快照。
+            BeaconAgentCommand.register(assembled.lifecycle, adapter, directorySyncer::snapshot)
+            BungeeInitialLobbyListener.start(
+                router = InitialLobbyRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider),
+                directory = serverDirectory,
+            )
             assembled.lifecycle.onRegistered {
                 directorySyncLoopGate.start { generation ->
                     adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer, generation) }
@@ -287,15 +357,41 @@ object BeaconAgentBungee : Plugin() {
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
+        bootstrapRuntime?.shutdown()
+        stopActiveRuntime()
+    }
+
+    /** 控制面撤销与插件卸载共用的 active 资源停止入口。 */
+    private fun stopActiveRuntime() {
         directorySyncLoopGate.stop()
+        BungeeInitialLobbyListener.stop()
+        serverDirectory?.resetManaged()
+        serverDirectory = null
         BungeeRosterListener.bootstrap = null
         BungeeConnectionListener.tracker = null
         connectionReporter?.stop()
+        connectionReporter = null
         messagingRuntime?.stop()
+        messagingRuntime = null
         rosterBootstrap?.stop()
+        rosterBootstrap = null
         proxyMetricsCache?.stop()
+        proxyMetricsCache = null
         lifecycle?.shutdown()
+        lifecycle = null
+        bootstrapRuntime?.shutdown()
+        bootstrapRuntime = null
+        confirmedBinding = null
         BeaconAgentProvider.unregister()
+    }
+
+    private fun warnLegacyProxySettings(
+        adapter: BungeePlatformAdapter,
+        settings: AgentSettings,
+    ) {
+        if (legacyProxyWarningLogged || (settings.proxy.homeGroup.isBlank() && settings.proxy.homeZone.isBlank())) return
+        legacyProxyWarningLogged = true
+        adapter.warn("proxy.home-group/home-zone 已废弃并被忽略；首次入服由控制面大厅集群决定")
     }
 
     private const val DIRECTORY_SYNC_INTERVAL_MS = 10_000L

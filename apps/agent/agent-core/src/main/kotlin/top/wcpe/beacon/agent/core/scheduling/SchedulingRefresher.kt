@@ -7,6 +7,8 @@ import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * 调度候选刷新循环（FR-148 §4.6 降级路径 step 1/3）：单条自续杯「代」循环，每 10s 拉一次候选快照刷新
@@ -27,6 +29,7 @@ class SchedulingRefresher(
 ) : SchedulingRuntime {
     private val active = AtomicBoolean(false)
     private val refreshGen = AtomicReference(0)
+    private val refreshLock = ReentrantLock()
 
     /** 刷新周期（毫秒）：默认生产值，[configure] 可覆盖（供测试加速）。 */
     @Volatile
@@ -83,17 +86,23 @@ class SchedulingRefresher(
         scheduleRefresh(gen, refreshIntervalMs)
     }
 
-    private fun refreshOnce() {
+    /** 立即刷新一帧候选并在成功持久化后发布；供 BC 目录重同步串行复用。 */
+    fun refreshNow(): Boolean = refreshOnce()
+
+    private fun refreshOnce(): Boolean = refreshLock.withLock {
         when (val outcome = apiClient.scheduleCandidates(identity)) {
             is SchedCandidatesOutcome.Success -> {
                 val snap = outcome.candidates.toSnapshot(now())
+                if (!persist(snap)) {
+                    return false
+                }
                 cache.set(snap, live = true)
-                persist(snap)
                 if (!healthy) {
                     healthy = true
                     adapter.info("调度候选刷新已恢复")
                 }
                 drainReports()
+                true
             }
 
             is SchedCandidatesOutcome.Failed -> {
@@ -102,17 +111,20 @@ class SchedulingRefresher(
                     healthy = false
                     adapter.warn("拉取调度候选失败（${outcome.reason}），按本地快照 fail-static 降级；后续同类失败不再刷屏")
                 }
+                false
             }
         }
     }
 
     /** 原子落盘候选快照；失败仅 WARN、保留内存快照（fail-static，绝不抛到调度器）。 */
-    private fun persist(snapshot: CandidateSnapshot) {
-        val store = snapshotStore ?: return
+    private fun persist(snapshot: CandidateSnapshot): Boolean {
+        val store = snapshotStore ?: return true
         try {
             store.write(snapshot)
+            return true
         } catch (t: Throwable) {
             adapter.warn("落盘候选快照失败（保留内存快照）：${t.message}")
+            return false
         }
     }
 

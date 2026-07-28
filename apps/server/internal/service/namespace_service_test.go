@@ -37,7 +37,7 @@ func newNamespaceTestDB(t *testing.T) *gorm.DB {
 	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(
 		&model.Namespace{}, &model.AuditLog{}, &model.ZoneAssignment{}, &model.ConfigItem{},
-		&model.FileObject{}, &model.FileOverrideSet{},
+		&model.FileObject{}, &model.FileOverrideSet{}, &model.LobbyCluster{},
 	); err != nil {
 		t.Fatalf("迁移表结构失败: %v", err)
 	}
@@ -140,6 +140,63 @@ func TestNamespaceDeleteEmptyAllowed(t *testing.T) {
 	}
 	if c := auditCount(t, db, model.ActionNamespaceDelete); c != 1 {
 		t.Fatalf("应有 1 条 namespace.delete 审计，实际 %d", c)
+	}
+}
+
+// TestFR199LegacyNamespaceLifecycleMaintainsLobbyCluster 锁定旧环境服务与大厅集群在同一事务内成对创建、删除。
+func TestFR199LegacyNamespaceLifecycleMaintainsLobbyCluster(t *testing.T) {
+	db := newNamespaceTestDB(t)
+	svc := newNamespaceService(db, emptyCounter())
+
+	ns, err := svc.Create("lobby", "大厅环境", "alice", "203.0.113.9")
+	if err != nil {
+		t.Fatalf("创建环境应成功，实际 %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.LobbyCluster{}).Where("namespace_id = ?", ns.ID).Count(&count).Error; err != nil {
+		t.Fatalf("统计大厅集群失败: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("创建环境必须同时创建唯一大厅集群，实际 %d", count)
+	}
+
+	if err := svc.Delete(ns.Code, "alice", "203.0.113.9"); err != nil {
+		t.Fatalf("删除空环境应成功，实际 %v", err)
+	}
+	if err := db.Model(&model.LobbyCluster{}).Where("namespace_id = ?", ns.ID).Count(&count).Error; err != nil {
+		t.Fatalf("统计删除后的大厅集群失败: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("删除环境必须同时删除大厅集群，实际残留 %d", count)
+	}
+}
+
+// TestFR199SeedDefaultsCreatesLobbyClusters 锁定预置环境不得绕过 namespace 与大厅集群的一对一契约。
+func TestFR199SeedDefaultsCreatesLobbyClusters(t *testing.T) {
+	db := newNamespaceTestDB(t)
+	svc := newNamespaceService(db, emptyCounter())
+
+	if err := svc.SeedDefaults(); err != nil {
+		t.Fatalf("预置默认环境应成功，实际 %v", err)
+	}
+	var namespaces []model.Namespace
+	if err := db.Order("id").Find(&namespaces).Error; err != nil {
+		t.Fatalf("读取预置环境失败: %v", err)
+	}
+	if len(namespaces) != 2 {
+		t.Fatalf("应预置两个环境，实际 %d", len(namespaces))
+	}
+	for _, ns := range namespaces {
+		var count int64
+		if err := db.Model(&model.LobbyCluster{}).Where("namespace_id = ?", ns.ID).Count(&count).Error; err != nil {
+			t.Fatalf("统计环境 %q 的大厅集群失败: %v", ns.Code, err)
+		}
+		if count != 1 {
+			t.Fatalf("环境 %q 必须恰有一个大厅集群，实际 %d", ns.Code, count)
+		}
+	}
+	if err := svc.SeedDefaults(); err != nil {
+		t.Fatalf("重复预置默认环境应幂等成功，实际 %v", err)
 	}
 }
 

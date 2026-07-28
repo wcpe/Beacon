@@ -14,8 +14,12 @@ type HealthFact struct {
 	ServerID    string
 	Kind        string // proxy / backend
 	ZoneName    string // v2 zone 名，未分配为空
-	Unassigned  bool   // backend 且 zone_id 为空（§4.5 unassigned 输入）
-	Draining    bool   // server.draining（v2-zone-authority §3.6 权威）
+	// LobbyClusterID 是该 server 的大厅归属；0 表示不是大厅成员。
+	LobbyClusterID uint
+	// NamespaceLobbyClusterID 是该 namespace 唯一大厅集群，供空大厅候选快照保留 clusterId。
+	NamespaceLobbyClusterID uint
+	Unassigned              bool // backend 且未归属 zone / lobby_cluster（§4.5 unassigned 输入）
+	Draining                bool // server.draining（v2-zone-authority §3.6 权威）
 	// IdentityStatus 当前 agent 身份状态（agent_identity.status 权威）；无身份行为空串。
 	IdentityStatus string
 }
@@ -44,6 +48,10 @@ func (r *HealthFactsRepository) ListAll() ([]HealthFact, error) {
 	if err != nil {
 		return nil, err
 	}
+	lobbyByNamespaceID, err := r.loadLobbyClusterIDs()
+	if err != nil {
+		return nil, err
+	}
 	nsCodeByID, err := r.loadNamespaceCodes()
 	if err != nil {
 		return nil, err
@@ -58,11 +66,15 @@ func (r *HealthFactsRepository) ListAll() ([]HealthFact, error) {
 		fact := HealthFact{
 			NamespaceID: s.NamespaceID, Namespace: nsCodeByID[s.NamespaceID],
 			ServerID: s.ServerID, Kind: s.Kind,
-			Unassigned: s.Kind == model.ServerKindBackend && s.ZoneID == nil,
-			Draining:   s.Draining,
+			NamespaceLobbyClusterID: lobbyByNamespaceID[s.NamespaceID],
+			Unassigned:              s.Kind == model.ServerKindBackend && s.ZoneID == nil && s.LobbyClusterID == nil,
+			Draining:                s.Draining,
 			IdentityStatus: statusByKey[healthFactKey{
 				namespaceID: s.NamespaceID, serverID: s.ServerID,
 			}],
+		}
+		if s.LobbyClusterID != nil {
+			fact.LobbyClusterID = *s.LobbyClusterID
 		}
 		if s.ZoneID != nil {
 			fact.ZoneName = zoneNameByID[*s.ZoneID]
@@ -70,6 +82,19 @@ func (r *HealthFactsRepository) ListAll() ([]HealthFact, error) {
 		facts = append(facts, fact)
 	}
 	return facts, nil
+}
+
+// loadLobbyClusterIDs 一次读取 namespace 唯一大厅集群，避免健康计算中逐实例查库。
+func (r *HealthFactsRepository) loadLobbyClusterIDs() (map[uint]uint, error) {
+	var clusters []model.LobbyCluster
+	if err := r.db.Select("id", "namespace_id").Find(&clusters).Error; err != nil {
+		return nil, err
+	}
+	byNamespaceID := make(map[uint]uint, len(clusters))
+	for i := range clusters {
+		byNamespaceID[clusters[i].NamespaceID] = clusters[i].ID
+	}
+	return byNamespaceID, nil
 }
 
 // healthFactKey 按 (namespace, serverId) 定位身份状态（serverId 仅 namespace 内唯一）。
@@ -127,7 +152,9 @@ func (r *HealthFactsRepository) loadIdentityStatuses() (map[healthFactKey]string
 	byKey := make(map[healthFactKey]string, len(idents))
 	for i := range idents {
 		// 升序遍历后写覆盖先写 → 留下 status_changed_at 最新的状态。
-		byKey[healthFactKey{namespaceID: idents[i].NamespaceID, serverID: idents[i].ServerID}] = idents[i].Status
+		if idents[i].ServerID.Assigned() {
+			byKey[healthFactKey{namespaceID: idents[i].NamespaceID, serverID: string(idents[i].ServerID)}] = idents[i].Status
+		}
 	}
 	return byKey, nil
 }

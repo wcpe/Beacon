@@ -40,6 +40,7 @@ function zoneName(state: ClusterState, zoneId: number | null): string | null {
 function toServerItem(state: ClusterState, row: ServerRow): ServerItem {
   const zone = row.zoneId === null ? null : (state.zones.find((z) => z.id === row.zoneId) ?? null)
   const region = zone === null ? null : (state.regions.find((r) => r.id === zone.regionId) ?? null)
+  const lobby = state.lobbyClusters.find((item) => item.namespaceId === row.lobbyClusterNamespaceId) ?? null
   return {
     id: row.id,
     namespaceId: row.namespaceId,
@@ -53,6 +54,7 @@ function toServerItem(state: ClusterState, row: ServerRow): ServerItem {
     zoneId: row.zoneId,
     zoneName: zone?.name ?? null,
     regionName: region?.name ?? null,
+    lobbyClusterId: lobby?.id ?? null,
     pendingZoneId: row.pendingZoneId,
     pendingZoneName: zoneName(state, row.pendingZoneId),
     isDefaultEntry: row.isDefaultEntry,
@@ -283,6 +285,7 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
       const results: AssignmentResult[] = rows.map((row) => {
         row.zoneId = null
         row.bcClusterId = null
+        row.lobbyClusterNamespaceId = null
         row.isDefaultEntry = false
         return { id: row.id, serverId: row.serverId, ok: true }
       })
@@ -315,9 +318,11 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
     }
     const results: AssignmentResult[] = rows.map((row) => {
       if (target.kind === 'zone') {
+        row.lobbyClusterNamespaceId = null
         row.zoneId = target.id
         row.isDefaultEntry = body.isDefaultEntry === true
       } else {
+        row.lobbyClusterNamespaceId = null
         row.bcClusterId = target.id
       }
       row.pendingZoneId = null
@@ -356,6 +361,7 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
       // 解除归属 + 记预填目标
       row.zoneId = null
       row.bcClusterId = null
+      row.lobbyClusterNamespaceId = null
       row.isDefaultEntry = false
       if (target.kind === 'zone') {
         row.pendingZoneId = target.id

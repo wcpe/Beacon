@@ -45,6 +45,29 @@ func (s *V2ControlPlaneService) DefaultEntryServerIDs(ns string) (map[string]boo
 	return out, nil
 }
 
+// LobbyClusterMemberServerIDs 解析某 namespace 的大厅成员集合，供 v1 discovery 投影。
+// 一次查询取全集，禁止按注册实例逐条读取；未找到 namespace 时按空集兼容返回。
+func (s *V2ControlPlaneService) LobbyClusterMemberServerIDs(ns string) (map[string]bool, error) {
+	nsRow, err := s.namespaceByCode(ns)
+	if err != nil {
+		return nil, err
+	}
+	if nsRow == nil {
+		return map[string]bool{}, nil
+	}
+	var ids []string
+	if err := s.db.Model(&model.Server{}).
+		Where("namespace_id = ? AND lobby_cluster_id IS NOT NULL", nsRow.ID).
+		Pluck("server_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
+}
+
 // ListDefaultEntries 列出某 namespace（可选按大区名过滤）的小区默认入口（v1 列表端点兼容）。
 func (s *V2ControlPlaneService) ListDefaultEntries(ns, group string) ([]DefaultEntryItem, error) {
 	nsRow, err := s.namespaceByCode(ns)

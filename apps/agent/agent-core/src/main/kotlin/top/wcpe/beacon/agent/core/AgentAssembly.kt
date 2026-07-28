@@ -39,6 +39,7 @@ import top.wcpe.beacon.agent.core.override.CommandWhitelist
 import top.wcpe.beacon.agent.core.override.OverrideSyncApplier
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.scheduling.LocalDecisionReportQueue
+import top.wcpe.beacon.agent.core.scheduling.CandidateSnapshot
 import top.wcpe.beacon.agent.core.scheduling.SchedulingCache
 import top.wcpe.beacon.agent.core.scheduling.SchedulingRefresher
 import top.wcpe.beacon.agent.core.scheduling.SchedulingSnapshotStore
@@ -66,6 +67,8 @@ class AssembledAgent(
     val rosterDirectoryHolder: RosterDirectoryHolder,
     // 跨服消息模块运行时（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered）；壳层在 DISABLE 调 stop()。
     val messagingRuntime: MessagingRuntime,
+    /** 供 BC 壳层只读大厅候选快照；不得通过此引用修改调度缓存。 */
+    val lobbySnapshotProvider: () -> CandidateSnapshot?,
 )
 
 /**
@@ -104,6 +107,9 @@ object AgentAssembly {
         // 文件树 applier 据此跳过命中顶段的 path，防止运维误把 agent 自管文件经 FR-14/FR-38 塞进有效树后污染自身。
         // 默认空集（未注入时回到旧语义，向后兼容），core 不硬编码任何 plugin 名（守 ADR-0005）。
         selfPluginDirNames: Set<String> = emptySet(),
+        // BC 目录立即重同步（FR-201）：Bungee 注入 FR-200 唯一目录同步入口；Bukkit 保持 null 并由命令执行器明确回报不支持。
+        onBcDirectoryResync: (() -> Boolean)? = null,
+        authorityInvalidated: () -> Unit = {},
     ): AssembledAgent {
         // agent 自身日志环形缓冲（FR-88，见 ADR-0040）：包裹壳层 adapter，使所有经 core 的日志旁路进缓冲（落缓冲即脱敏），
         // 供 tail-logs 命令读快照回传。绝不读任何磁盘日志文件。壳层日志实现零改动。
@@ -177,6 +183,7 @@ object AgentAssembly {
         // 强制重同步回调（FR-91）的延迟持有者：executor 先于 lifecycle 构造，回调命令期才触发，
         // 故用可变引用打破构造顺序——lifecycle 建好后回填，命令到达时再解引用调用。
         val lifecycleRef = AtomicReference<AgentLifecycle?>(null)
+        val schedulingRefresherRef = AtomicReference<SchedulingRefresher?>(null)
 
         // 文件资产索引周期扫描协调器（FR-163，见 ADR asset-manifest-sync-protocol）：启用且 plugins 基目录有效时装配。
         // 扫描根 = 服务器工作目录（pluginsBase 的父目录）；纯 java.nio 读盘 + 分块哈希在 async 线程，绝不上主线程（fail-static）。
@@ -237,6 +244,11 @@ object AgentAssembly {
                 onAssetRescan = { force -> assetScanCoordinator?.forceScanNow(force) ?: false },
                 // 交付命令执行器（FR-165）：注入了 blob 流式传输时委派，否则 null（收到 delivery_* 仅 warn 忽略）。
                 deliveryExecutor = deliveryExecutor,
+                // BC 目录重同步（FR-201）：先拉取并原子持久化大厅候选，再由 Bungee 应用同帧受管目录。
+                onBcDirectoryResync =
+                    onBcDirectoryResync?.let { syncDirectory ->
+                        { schedulingRefresherRef.get()?.refreshNow() == true && syncDirectory() }
+                    },
             )
 
         // 拓扑 watch 监听器表（FR-29）：DiscoveryView.watch 注册、AgentLifecycle 收到 topology-changed 事件后扇出。
@@ -256,6 +268,7 @@ object AgentAssembly {
         val schedulingView = SchedulingView(apiClient, identity, adapter, schedulingCache, reportQueue, selfHealthHolder)
         val schedulingRefresher =
             SchedulingRefresher(apiClient, identity, adapter, schedulingCache, schedulingSnapshotStore, reportQueue)
+        schedulingRefresherRef.set(schedulingRefresher)
 
         // 跨服消息模块（HTTP 中转，ADR-0063）：holder 早建（供 MessagingRuntime 与 BeaconAgentImpl 共用）。
         // 上行经 HttpMessageTransport→apiClient.sendMessage；下行由 MessagePollCoordinator 长轮询取回后交 MessageBus 分发。
@@ -308,6 +321,7 @@ object AgentAssembly {
                 selfHealthSink = selfHealthHolder::set,
                 // 文件资产索引周期扫描协调器（FR-163）：随注册成功 start、停机 stop；null=未启用（assets 关闭 / 基目录无效）。
                 assetScan = assetScanCoordinator,
+                authorityInvalidated = authorityInvalidated,
             )
         // 跨服消息模块随注册成功启动（幂等，重注册不重启）；停止由壳层在 DISABLE 调 messagingRuntime.stop()（与连接采集同）。
         lifecycle.onRegistered { messagingRuntime.start() }
@@ -321,7 +335,15 @@ object AgentAssembly {
         val beaconAgent =
             BeaconAgentImpl(identity, store, lifecycle, effectiveConfigView, discoveryView, messagingHolder, schedulingView)
 
-        return AssembledAgent(lifecycle, beaconAgent, apiClient, messagingHolder, rosterDirectoryHolder, messagingRuntime)
+        return AssembledAgent(
+            lifecycle,
+            beaconAgent,
+            apiClient,
+            messagingHolder,
+            rosterDirectoryHolder,
+            messagingRuntime,
+            schedulingCache::current,
+        )
     }
 
     /** agent 自身日志环形缓冲容量（FR-88，见 ADR-0040）：最近 N 行，够排障、内存可忽略；有界不溢出。 */

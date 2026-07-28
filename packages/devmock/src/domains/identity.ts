@@ -7,7 +7,7 @@ import type {
   AgentIdentityItem,
   AgentIdentityListResponse,
 } from '@beacon/contracts'
-import { jsonError, mockGet, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
+import { jsonError, mockGet, mockPost, mockPut, paginate, pathParam, queryStr, readBody } from '../http'
 import { allocId, getClusterState, type IdentityRow } from '../data/cluster'
 import { isoOffset, uuidFrom } from '../support'
 
@@ -23,13 +23,22 @@ function toItem(row: IdentityRow): AgentIdentityItem {
     agentVersion: row.agentVersion,
     pendingExpiresAt: row.pendingExpiresAt,
     boundAt: row.boundAt,
+    bindingSource: row.bindingSource,
+    migrationState: row.migrationState,
+    legacyMigratedAt: row.legacyMigratedAt,
     statusChangedAt: row.statusChangedAt,
     conflictReason: row.conflictReason,
   }
 }
 
 function toDetail(row: IdentityRow): AgentIdentityDetail {
-  return { ...toItem(row), conflictPeers: row.conflictPeers, rezonePrefill: row.rezonePrefill }
+  return {
+    ...toItem(row),
+    bindingFingerprint: row.bindingFingerprint,
+    conflictPeers: row.conflictPeers,
+    rezonePrefill: row.rezonePrefill,
+    endpoints: row.endpoints,
+  }
 }
 
 function findIdentity(identityId: string): IdentityRow | undefined {
@@ -49,12 +58,17 @@ function missingReason(): Response {
 }
 
 interface ApproveBody {
+  serverId?: string
   forceUnbindOccupier?: boolean
   target?: { kind: 'zone' | 'bc_cluster'; id: number } | null
 }
 
 interface ReasonBody {
   reason?: string
+}
+
+interface EndpointOverrideBody extends ReasonBody {
+  overrideAddress?: string | null
 }
 
 interface ResolveConflictBody {
@@ -80,7 +94,7 @@ export const identityHandlers: HttpHandler[] = [
         }
         if (
           keyword !== null &&
-          !row.serverId.toLowerCase().includes(keyword) &&
+          !(row.serverId?.toLowerCase().includes(keyword) ?? false) &&
           !row.identityId.toLowerCase().includes(keyword)
         ) {
           return false
@@ -101,6 +115,33 @@ export const identityHandlers: HttpHandler[] = [
     return HttpResponse.json(toDetail(row))
   }),
 
+  // 地址覆盖只允许逐 endpoint 写入；inactive endpoint 仅可清除已有覆盖。
+  mockPut('/admin/v2/agent-identities/:identityId/endpoints/:endpointKey', async (info) => {
+    const row = findIdentity(pathParam(info, 'identityId'))
+    if (!row) {
+      return notFound()
+    }
+    const endpoint = row.endpoints.find((item) => item.endpointKey === pathParam(info, 'endpointKey'))
+    if (!endpoint) {
+      return jsonError(404, 'endpoint_not_found', '监听地址不存在')
+    }
+    const body = await readBody<EndpointOverrideBody>(info.request)
+    if (!body.reason?.trim()) {
+      return missingReason()
+    }
+    if (body.overrideAddress === undefined || (body.overrideAddress !== null && body.overrideAddress.trim() === '')) {
+      return jsonError(400, 'invalid_param', '覆盖地址必须为地址或 null')
+    }
+    if (!endpoint.active && body.overrideAddress !== null) {
+      return illegalState('endpoint_inactive')
+    }
+    endpoint.overrideAddress = body.overrideAddress
+    endpoint.effectiveAddress = body.overrideAddress ?? endpoint.detectedAddress
+    endpoint.source = body.overrideAddress === null ? 'detected' : 'override'
+    row.lastAddr = row.endpoints.find((item) => item.active)?.effectiveAddress ?? null
+    return HttpResponse.json(endpoint)
+  }),
+
   // 确认接入：Q3 占用冲突须显式强制解绑；换区重确认按预填/传入目标落区
   mockPost('/admin/v2/agent-identities/:identityId/approve', async (info) => {
     const row = findIdentity(pathParam(info, 'identityId'))
@@ -111,6 +152,10 @@ export const identityHandlers: HttpHandler[] = [
       return illegalState(row.status)
     }
     const body = await readBody<ApproveBody>(info.request)
+    const serverId = body.serverId?.trim() ?? ''
+    if (serverId === '' || serverId.length > 64 || /\s/.test(serverId)) {
+      return jsonError(400, 'invalid_param', '服务器 ID 格式无效')
+    }
     if (body.target !== undefined && body.target !== null && row.rezonePrefill === null) {
       return jsonError(400, 'target_not_allowed', '仅换区重确认允许指定落区目标')
     }
@@ -123,7 +168,7 @@ export const identityHandlers: HttpHandler[] = [
         (other) =>
           other.identityId !== row.identityId &&
           other.namespaceId === row.namespaceId &&
-          other.serverId === row.serverId &&
+          other.serverId === serverId &&
           (other.status === 'active' || other.status === 'disabled'),
       )
       if (occupier) {
@@ -133,16 +178,17 @@ export const identityHandlers: HttpHandler[] = [
     }
     // 确认落绑定：server 行不存在则创建（未分配）
     let server = state.servers.find(
-      (candidate) => candidate.namespaceId === row.namespaceId && candidate.serverId === row.serverId,
+      (candidate) => candidate.namespaceId === row.namespaceId && candidate.serverId === serverId,
     )
     if (!server) {
       server = {
         id: allocId(state),
         namespaceId: row.namespaceId,
-        serverId: row.serverId,
+        serverId,
         kind: row.kind,
         bcClusterId: null,
         zoneId: null,
+        lobbyClusterNamespaceId: null,
         pendingZoneId: null,
         pendingBcClusterId: null,
         isDefaultEntry: false,
@@ -152,6 +198,7 @@ export const identityHandlers: HttpHandler[] = [
       }
       state.servers.push(server)
     }
+    row.serverId = serverId
     // 换区重确认：缺省取预填目标，显式 target:null 表示暂不分配
     if (row.rezonePrefill !== null) {
       const target = body.target === undefined ? row.rezonePrefill : body.target
@@ -269,6 +316,7 @@ export const identityHandlers: HttpHandler[] = [
     if (server) {
       server.zoneId = null
       server.bcClusterId = null
+      server.lobbyClusterNamespaceId = null
       server.isDefaultEntry = false
     }
     return HttpResponse.json(toDetail(row))

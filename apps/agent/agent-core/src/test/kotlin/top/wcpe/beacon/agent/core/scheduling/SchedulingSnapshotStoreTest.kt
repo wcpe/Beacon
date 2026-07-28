@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.core.scheduling
 
+import top.wcpe.beacon.agent.core.client.LobbyCandidates
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -27,6 +28,7 @@ class SchedulingSnapshotStoreTest {
                         "z-a" to listOf(candidateEntry("lobby-1", 90, "healthy", true, 3, 100)),
                         "z-b" to listOf(candidateEntry("lobby-9", 55, "degraded", true, 1, 50)),
                     ),
+                lobby = LobbyCandidates(12L, true, listOf(candidateEntry("lobby-1", 90, "healthy", true, 3, 100))),
             )
         store.write(snapshot)
 
@@ -39,6 +41,8 @@ class SchedulingSnapshotStoreTest {
         assertEquals(90, a?.score)
         assertEquals("healthy", a?.level)
         assertEquals(100, a?.maxOnline)
+        assertEquals(12L, loaded?.lobby?.clusterId)
+        assertEquals("lobby-1", loaded?.lobby?.candidates?.single()?.serverId)
     }
 
     @Test

@@ -71,6 +71,22 @@ const (
 	AgentIdentityStatusUnbound  = "unbound"
 )
 
+// agent 身份绑定来源。
+const (
+	AgentIdentityBindingSourceLegacyLocal   = "legacy_local"
+	AgentIdentityBindingSourceAdminAssigned = "admin_assigned"
+)
+
+// IsValidAgentIdentityBindingSource 判断身份绑定来源是否属于受支持枚举。
+func IsValidAgentIdentityBindingSource(source string) bool {
+	switch source {
+	case AgentIdentityBindingSourceLegacyLocal, AgentIdentityBindingSourceAdminAssigned:
+		return true
+	default:
+		return false
+	}
+}
+
 func IsActiveAgentIdentityStatus(status string) bool {
 	switch status {
 	case AgentIdentityStatusPending, AgentIdentityStatusActive, AgentIdentityStatusDisabled, AgentIdentityStatusConflict:
@@ -142,6 +158,8 @@ const (
 	CommandTypeTailLogs = "tail-logs"
 	// CommandTypeResyncConfig 强制重同步：令 agent 重新拉取控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、不新增 ADR）。
 	CommandTypeResyncConfig = "resync-config"
+	// CommandTypeBCDirectoryResync 令 BC 重新拉取受管 Bukkit 目录与大厅候选快照（FR-201）。
+	CommandTypeBCDirectoryResync = "bc-directory-resync"
 	// CommandTypeFsBrowse 只读文件浏览：令 agent 列目录 / 读子树 / 读单文件回传（FR-110，见 ADR-0049 决策 9；纯只读、不写盘）。
 	CommandTypeFsBrowse = "fs-browse"
 	// CommandTypeFileSyncSource 文件同步源扫描：令源 agent 扫描目录并通过数据面上传 blob。
@@ -480,6 +498,9 @@ const (
 	ActionInstanceTailLogs = "instance.tail-logs"
 	// 强制重同步（FR-91）：admin 触发命令在线实例重拉有效配置/文件树/覆盖集（detail 仅 commandId/serverId，无内容）
 	ActionInstanceResync = "instance.resync"
+	// BC 受管目录立即重同步（FR-201）：单 BC 与 namespace 两种触发作用域。
+	ActionInstanceBCDirectoryResync  = "instance.bc-directory-resync"
+	ActionNamespaceBCDirectoryResync = "namespace.bc-directory-resync"
 	// 文件浏览（FR-110，见 ADR-0049）：admin 触发命令在线实例列目录 / 读子树 / 读单文件（detail 仅 commandId/op/path，绝不含文件内容）
 	ActionFileBrowse = "file.browse"
 	// 文件资产内容预览 / diff / 敏感规则修改（FR-164，见 v2-file-assets.md §4.7）：
@@ -523,6 +544,7 @@ const (
 	ActionIdentityAddressChanged  = "identity.address_changed"
 	ActionIdentityReapplyAllowed  = "identity.reapply_allowed"
 	ActionIdentityForceRebind     = "identity.rebind_with_force_unbind"
+	ActionIdentityLegacyMigrated  = "identity.legacy_migrated"
 	// 第二版区服权威结构。
 	ActionBCClusterCreate  = "bc_cluster.create"
 	ActionBCClusterDelete  = "bc_cluster.delete"

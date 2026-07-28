@@ -30,8 +30,11 @@ internal class PendingRegistrationController(
     fun waitForApproval(outcome: RegisterOutcome.PendingApproval) {
         runtime.state.set(AgentState.PENDING_APPROVAL)
         adapter.info("身份已提交待确认：namespace=${outcome.namespace}，serverId=${outcome.serverId}")
-        when (apiClient.pollRegistration(identity, waitSeconds = 55)) {
-            RegistrationPollResult.Active -> actions.registerNow()
+        when (val result = apiClient.pollRegistration(identity, waitSeconds = 55)) {
+            is RegistrationPollResult.Active -> {
+                identity.bind(result.binding.namespace, result.binding.serverId)
+                actions.registerNow()
+            }
             RegistrationPollResult.Pending,
             RegistrationPollResult.NotModified,
             -> retryPendingApproval()
@@ -39,6 +42,7 @@ internal class PendingRegistrationController(
             RegistrationPollResult.Disabled -> stopWithDegraded("身份确认后被禁用：${identity.serverId}，保持本地快照")
             RegistrationPollResult.Rejected -> stopWithDegraded("身份申请被拒绝：${identity.serverId}，停止自动重试")
             RegistrationPollResult.Conflict -> stopWithDegraded("身份确认等待期间进入冲突态：${identity.serverId}，等待后台处置")
+            RegistrationPollResult.Unbound -> stopWithDegraded("身份确认等待期间已解绑，停止自动重试")
             is RegistrationPollResult.Failed -> retryPendingApproval()
         }
     }

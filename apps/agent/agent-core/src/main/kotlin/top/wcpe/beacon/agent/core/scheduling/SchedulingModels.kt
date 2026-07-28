@@ -4,6 +4,7 @@ import top.wcpe.beacon.agent.api.CandidateView
 import top.wcpe.beacon.agent.api.HealthLevel
 import top.wcpe.beacon.agent.api.HealthView
 import top.wcpe.beacon.agent.core.client.CandidateEntry
+import top.wcpe.beacon.agent.core.client.LobbyCandidates
 import top.wcpe.beacon.agent.core.client.SchedCandidates
 import top.wcpe.beacon.agent.core.client.SelfHealth
 import java.util.UUID
@@ -19,6 +20,7 @@ data class CandidateSnapshot(
     val generatedAtMs: Long,
     val savedAtMs: Long,
     val zones: Map<String, List<CandidateEntry>>,
+    val lobby: LobbyCandidates? = null,
 )
 
 /** 带接收时刻的自身健康视图（selfHealth 的 sampledAtMs 取此时刻）。 */
@@ -54,9 +56,9 @@ internal fun mapLevel(wire: String): HealthLevel =
 internal fun CandidateEntry.toCandidateView(zone: String): CandidateView =
     CandidateView(serverId, zone, score, mapLevel(level), onlineCount, maxOnline)
 
-/** 候选 wire 条目 → API 健康视图（候选快照不含 reasons，故为空表；schedulable 取快照标记）。 */
+/** 候选 wire 条目 → API 健康视图（控制面可选下发 reasons；旧响应缺失时为空表）。 */
 internal fun CandidateEntry.toHealthView(sampledAtMs: Long): HealthView =
-    HealthView(serverId, score, mapLevel(level), schedulable, emptyList(), sampledAtMs)
+    HealthView(serverId, score, mapLevel(level), schedulable, reasons, sampledAtMs)
 
 /** 自身健康 wire → API 健康视图。 */
 internal fun SelfHealth.toHealthView(
@@ -70,7 +72,7 @@ internal fun SchedCandidates.toSnapshot(nowMs: Long): CandidateSnapshot {
     for (zone in zones) {
         map[zone.zone] = zone.candidates
     }
-    return CandidateSnapshot(generatedAtMs = generatedAtMs, savedAtMs = nowMs, zones = map)
+    return CandidateSnapshot(generatedAtMs = generatedAtMs, savedAtMs = nowMs, zones = map, lobby = lobby)
 }
 
 /** 生成本地决策 traceId（UUID，与控制面 traceId 同形，供降级期决策 / 补报幂等键）。 */

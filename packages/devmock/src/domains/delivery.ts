@@ -452,7 +452,7 @@ function buildDelivery(scenario: MockScenario): DeliveryState {
   // rolling 与 paused 各占一段目标，留出未被活动单占用的服（冲突守卫演示 / 新单可启动）
   makeOrder(state, 1, 'Quests 插件灰度 v1.9', 'rolling', { serverIds: smallSet.slice(0, 6), ageDays: 0 })
   makeOrder(state, 1, '全网核心配置基线对齐', 'completed', { configOnly: true, serverIds: smallSet, ageDays: 5 })
-  makeOrder(state, 1, 'PVP 平衡性补丁', 'paused', { serverIds: smallSet.slice(6, 9), ageDays: 3 })
+  makeOrder(state, 1, 'PVP 平衡性补丁', 'paused', { serverIds: smallSet.slice(6, 7), ageDays: 3 })
   makeOrder(state, 1, '坏更新整单回滚示例', 'rolled_back', { serverIds: smallSet, ageDays: 8 })
   // 首目标缺失备份的完成单：整单回滚会留下残留失败，用于演示「结束回滚」人工收尾路径
   makeOrder(state, 1, '排行榜插件升级 v3.1', 'completed', { serverIds: smallSet.slice(9, 12), ageDays: 6, missingBackup: true })

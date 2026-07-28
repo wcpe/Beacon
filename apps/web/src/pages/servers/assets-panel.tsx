@@ -355,7 +355,9 @@ export default function AssetsPanel({
                   {t(`cluster.servers.identityStatus.${identityStatusOf(row)}`)}
                 </Badge>
               )}
-              {row.isDefaultEntry && <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>}
+              {row.zoneId !== null && row.isDefaultEntry && (
+                <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>
+              )}
               {row.draining && <Badge variant="warn">{t('cluster.zones.tree.draining')}</Badge>}
             </span>
           )
@@ -373,7 +375,9 @@ export default function AssetsPanel({
       {
         header: t('cluster.servers.columns.zone'),
         cell: (row) =>
-          row.assigned ? (
+          row.lobbyClusterId !== null ? (
+            <Badge variant="secondary">{t('cluster.servers.assets.lobbyMember')}</Badge>
+          ) : row.assigned ? (
             <span className="rounded-md border border-border-strong bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-3">
               {row.kind === 'backend'
                 ? `${row.regionName ?? '-'} / ${row.zoneName ?? '-'}`
@@ -477,7 +481,7 @@ export default function AssetsPanel({
         className: 'text-right',
         cell: (row) => {
           const canOps = canTransitionIdentity(row)
-          const isBackendAssigned = row.kind === 'backend' && row.assigned
+          const isBackendAssigned = row.kind === 'backend' && row.zoneId !== null
           return (
             <div className="flex flex-wrap items-center justify-end gap-1" onClick={(e) => { e.stopPropagation() }}>
               <Button size="sm" variant="ghost" onClick={() => { onViewHealth(row.serverId) }}>

@@ -13,6 +13,14 @@ interface ProxyServerDirectory {
     fun removeManaged(serverId: String)
 
     /**
+     * 撤回本轮由 Beacon 接管的目录项，并恢复代理原有的默认服优先级。
+     * 默认不动作：仅 BC 代理目录具备可恢复的运行期目录状态。
+     */
+    fun resetManaged() {
+        // 默认不动作：仅 BC 代理目录维护运行期接管状态。
+    }
+
+    /**
      * 把 [serverId] 设为 BungeeCord 默认/fallback 服（FR-48）：置于每个监听器 server-priority 列表首位，
      * 让玩家加入时优先落到它。serverId 须已在服务器目录中（先 upsert 注入再设默认才有效）。
      * 实现须幂等去重（重复设同一服不重复添加）、不删运维原有 priority 条目。

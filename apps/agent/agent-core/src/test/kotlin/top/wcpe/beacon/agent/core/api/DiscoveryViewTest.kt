@@ -81,8 +81,8 @@ class DiscoveryViewTest {
     }
 
     @Test
-    fun `query 解析 zoneDefaultEntry 标志`() {
-        // codec 返回一条标了 zoneDefaultEntry 的 bukkit 实例与一条未标的。
+    fun `query 解析默认入口与大厅归属标志`() {
+        // codec 返回一条标了默认入口和大厅归属的 bukkit 实例与一条未标的。
         val codec =
             object : JsonCodec {
                 override fun encode(value: Any?): String = "{}"
@@ -91,7 +91,7 @@ class DiscoveryViewTest {
                     mapOf(
                         "instances" to
                             listOf(
-                                mapOf("serverId" to "lobby-1", "role" to "bukkit", "status" to "online", "zoneDefaultEntry" to true),
+                                mapOf("serverId" to "lobby-1", "role" to "bukkit", "status" to "online", "zoneDefaultEntry" to true, "lobbyClusterMember" to true),
                                 mapOf("serverId" to "lobby-2", "role" to "bukkit", "status" to "online"),
                             ),
                     )
@@ -103,6 +103,8 @@ class DiscoveryViewTest {
         assertEquals(2, instances.size)
         assertTrue(instances[0].zoneDefaultEntry(), "标了 zoneDefaultEntry 的实例应解析为 true")
         assertTrue(!instances[1].zoneDefaultEntry(), "未标的实例应解析为 false（向后兼容）")
+        assertTrue(instances[0].lobbyClusterMember(), "标了 lobbyClusterMember 的实例应解析为 true")
+        assertTrue(!instances[1].lobbyClusterMember(), "未标的大厅归属应解析为 false（向后兼容）")
     }
 
     @Test

@@ -36,7 +36,7 @@ func TestRegisterRequestBackwardCompatNoAgentVersion(t *testing.T) {
 func TestInstanceViewOutputsAgentVersion(t *testing.T) {
 	view := toInstanceView(&runtime.Instance{
 		Namespace: "prod", ServerID: "lobby-1", Role: "bukkit", AgentVersion: "0.12.0",
-	}, nil, zeroHealthCtx)
+	}, nil, nil, zeroHealthCtx)
 	if view.AgentVersion != "0.12.0" {
 		t.Fatalf("实例视图 agentVersion 应为 0.12.0，实际 %q", view.AgentVersion)
 	}
@@ -51,7 +51,7 @@ func TestInstanceViewOutputsAgentVersion(t *testing.T) {
 
 // TestInstanceViewAgentVersionEmptyForOldAgent 验证旧 agent（未上报版本）实例视图 agentVersion 为空串。
 func TestInstanceViewAgentVersionEmptyForOldAgent(t *testing.T) {
-	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil, zeroHealthCtx)
+	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil, nil, zeroHealthCtx)
 	if view.AgentVersion != "" {
 		t.Fatalf("旧 agent 实例视图 agentVersion 应为空串，实际 %q", view.AgentVersion)
 	}

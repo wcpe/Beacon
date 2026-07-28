@@ -185,6 +185,18 @@ func (s *AgentCommandService) ReceiveResyncResult(commandID uint, ok bool, reaso
 	return nil
 }
 
+// ResultCommandType 返回命令结果回传所对应的类型；不存在或未拉取的命令统一按不存在处理。
+func (s *AgentCommandService) ResultCommandType(commandID uint) (string, error) {
+	cmd, err := s.repo.FindByID(commandID)
+	if err != nil {
+		return "", err
+	}
+	if cmd == nil || cmd.Status != model.CommandStatusFetched {
+		return "", apperr.ErrCommandNotFound
+	}
+	return cmd.Type, nil
+}
+
 // FetchPending 取某 agent 最早一条 pending 命令并 CAS 迁移 fetched（供 agent 拉取）。
 // 无 pending 或被并发取走返回 (nil, nil)。
 func (s *AgentCommandService) FetchPending(ns, serverID string) (*model.AgentCommand, error) {

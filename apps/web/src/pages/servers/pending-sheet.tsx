@@ -11,6 +11,7 @@ import {
   Button,
   Checkbox,
   DataTable,
+  Input,
   Label,
   Sheet,
   SheetContent,
@@ -30,6 +31,7 @@ import {
   useEnvNamespaceScope,
 } from '../../features/env/use-env-scope'
 import ReasonDialog from './reason-dialog'
+import IdentityDetailSheet from './identity-detail-sheet'
 
 // 当前操作意图：approve 或 reject
 type PendingAction = { kind: 'approve'; row: AgentIdentityItem } | { kind: 'reject'; row: AgentIdentityItem }
@@ -52,6 +54,8 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   // Q3 占用冲突强制解绑勾选
   const [forceUnbind, setForceUnbind] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [serverIdDraft, setServerIdDraft] = useState('')
+  const [detailIdentityId, setDetailIdentityId] = useState<string | null>(null)
 
   const query = useQuery({
     queryKey: ['identities', 'pending', apiNamespaceId, envScope],
@@ -70,6 +74,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   const approveMutation = useMutation({
     mutationFn: (row: AgentIdentityItem) =>
       approveIdentity(row.identityId, {
+        serverId: serverIdDraft.trim(),
         forceUnbindOccupier: row.conflictReason === 'server-id-occupied' ? forceUnbind : undefined,
       }),
     onSuccess: async () => {
@@ -110,7 +115,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
               >
                 {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
               </span>
-              {row.serverId}
+              {row.serverId ?? '待分配服务器 ID'}
             </div>
           )
         },
@@ -147,6 +152,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
               onClick={() => {
                 setErrorText(null)
                 setForceUnbind(false)
+                setServerIdDraft(row.serverId ?? '')
                 setAction({ kind: 'approve', row })
               }}
             >
@@ -162,6 +168,15 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
             >
               {t('cluster.servers.pending.reject')}
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setDetailIdentityId(row.identityId)
+              }}
+            >
+              查看身份详情
+            </Button>
           </div>
         ),
       },
@@ -172,6 +187,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   const approving = action?.kind === 'approve' ? action.row : null
   const rejecting = action?.kind === 'reject' ? action.row : null
   const occupied = approving?.conflictReason === 'server-id-occupied'
+  const serverIdValidationError = validateServerId(serverIdDraft)
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
@@ -209,13 +225,29 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
           requireReason={false}
           pending={approveMutation.isPending}
           errorText={errorText}
-          impacts={approving ? [`serverId ${approving.serverId}`] : undefined}
+          confirmDisabled={serverIdValidationError !== null}
+          impacts={approving ? [`serverId ${approving.serverId ?? '待分配服务器 ID'}`] : undefined}
           onConfirm={() => {
             if (approving) {
               approveMutation.mutate(approving)
             }
           }}
         >
+          <div className="grid gap-1.5">
+            <Label htmlFor="pending-identity-server-id">服务器 ID</Label>
+            <Input
+              id="pending-identity-server-id"
+              aria-label="服务器 ID"
+              value={serverIdDraft}
+              aria-invalid={serverIdValidationError !== null}
+              onChange={(event) => {
+                setServerIdDraft(event.target.value)
+                setErrorText(null)
+              }}
+              placeholder="例如 lobby-1"
+            />
+            {serverIdValidationError && <p className="text-sm text-destructive">{serverIdValidationError}</p>}
+          </div>
           {occupied && (
             <label className="flex items-start gap-2 rounded-md border border-crit-bd bg-crit-bg px-3 py-2 text-sm text-crit">
               <Checkbox
@@ -251,7 +283,30 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
             }
           }}
         />
+        <IdentityDetailSheet
+          identityId={detailIdentityId}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) {
+              setDetailIdentityId(null)
+            }
+          }}
+        />
       </SheetContent>
     </Sheet>
   )
+}
+
+// 与控制面 resolveApprovedServerID 对齐：去首尾空白后非空、最多 64 字符、不得含任意空白。
+function validateServerId(value: string): string | null {
+  const serverId = value.trim()
+  if (serverId === '') {
+    return '请填写服务器 ID'
+  }
+  if (serverId.length > 64) {
+    return '服务器 ID 最多 64 个字符'
+  }
+  if (/\s/.test(serverId)) {
+    return '服务器 ID 不能包含空白字符'
+  }
+  return null
 }

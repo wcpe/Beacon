@@ -71,6 +71,8 @@ class AgentLifecycle(
     // 文件资产索引周期扫描协调器（FR-163，见 ADR asset-manifest-sync-protocol）：注册成功时 start、停机时 stop；
     // 为 null 时不启用（assets 关闭 / 基目录无效 / 既有测试向后兼容），由 AgentAssembly 按 settings.assets.enabled 装配。
     private val assetScan: AssetScanCoordinator? = null,
+    // 权威身份被控制面禁用、拒绝、冲突或解绑时通知壳层撤销 Active runtime 对外门面。
+    private val authorityInvalidated: () -> Unit = {},
 ) {
     private val state = AtomicReference(AgentState.BOOTSTRAP)
 
@@ -399,6 +401,9 @@ class AgentLifecycle(
         when (val outcome = apiClient.register(identity, currentBackends())) {
             is RegisterOutcome.Success -> onRegisterSuccess(outcome.result)
             is RegisterOutcome.PendingApproval -> pendingRegistration.waitForApproval(outcome)
+            is RegisterOutcome.ActiveBindingConfirmed -> {
+                stopForAuthority("active runtime 收到未完成的数据面绑定结果")
+            }
             is RegisterOutcome.DuplicateServerId -> {
                 adapter.error("注册被拒：重复的 serverId（${identity.serverId}），请检查部署是否冲突", null)
                 degradeAndRetryRegister()
@@ -407,22 +412,18 @@ class AgentLifecycle(
             is RegisterOutcome.OfflineRejected -> enterOfflineAndProbe()
 
             is RegisterOutcome.Disabled -> {
-                adapter.warn("身份已确认但被后台禁用：${identity.serverId}，保持本地快照并等待启用")
-                state.set(AgentState.DEGRADED)
-                registering.set(false)
+                stopForAuthority("身份已确认但被后台禁用：${identity.serverId}")
             }
 
             is RegisterOutcome.Rejected -> {
-                adapter.warn("身份申请已被后台拒绝：${identity.serverId}，停止自动重试")
-                state.set(AgentState.DEGRADED)
-                registering.set(false)
+                stopForAuthority("身份申请已被后台拒绝：${identity.serverId}")
             }
 
             is RegisterOutcome.IdentityConflict -> {
-                adapter.warn("身份处于冲突态：${identity.serverId}，等待后台处置")
-                state.set(AgentState.DEGRADED)
-                registering.set(false)
+                stopForAuthority("身份处于冲突态：${identity.serverId}")
             }
+
+            is RegisterOutcome.Unbound -> stopForAuthority("身份绑定已被控制面解除：${identity.serverId}")
 
             is RegisterOutcome.Unauthorized -> {
                 adapter.error("注册被拒：X-Beacon-Token 缺失或错误", null)
@@ -494,6 +495,12 @@ class AgentLifecycle(
         adapter.runAsyncDelayed(delay) { beginRegister(gen) }
     }
 
+    private fun stopForAuthority(message: String) {
+        adapter.warn("$message，停止 active runtime")
+        shutdown()
+        authorityInvalidated()
+    }
+
     /**
      * 被控制面主动下线（FR-49）：进 OFFLINE 态，停止退避猛打，改按大间隔降频探测重注册。
      *
@@ -538,6 +545,11 @@ class AgentLifecycle(
             is HeartbeatOutcome.NotRegistered -> {
                 adapter.warn("心跳返回未注册，触发重新注册")
                 // 重新注册会重启两条循环，本代心跳到此为止；经单飞门，与其它触发点互斥。
+                triggerReregister()
+            }
+
+            is HeartbeatOutcome.AuthorityRefreshRequired -> {
+                adapter.warn("心跳被控制面拒绝，回查 v2 权威身份状态")
                 triggerReregister()
             }
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,34 @@ type V2ControlPlaneHandler struct {
 	svc *service.V2ControlPlaneService
 }
 
+// NamespaceDirectoryResync 处理 POST /admin/v2/namespaces/{id}/bc-directory-resyncs。
+func (h *V2ControlPlaneHandler) NamespaceDirectoryResync(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	result, err := h.svc.RequestNamespaceDirectoryResync(id, auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, result)
+}
+
+// ServerDirectoryResync 处理 POST /admin/v2/servers/{id}/bc-directory-resyncs。
+func (h *V2ControlPlaneHandler) ServerDirectoryResync(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	result, err := h.svc.RequestServerDirectoryResync(id, auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, result)
+}
+
 // NewV2ControlPlaneHandler 构造第二版控制面处理器。
 func NewV2ControlPlaneHandler(svc *service.V2ControlPlaneService) *V2ControlPlaneHandler {
 	return &V2ControlPlaneHandler{svc: svc}
@@ -42,19 +71,34 @@ func (h *V2ControlPlaneHandler) AuthenticateAgentReport(token, identityID, bootI
 }
 
 type v2AgentRegisterRequest struct {
-	IdentityID   string `json:"identityId"`
-	ServerID     string `json:"serverId"`
-	Kind         string `json:"kind"`
-	BootID       string `json:"bootId"`
-	AgentVersion string `json:"agentVersion"`
-	Addr         string `json:"addr"`
+	IdentityID   string          `json:"identityId"`
+	ServerID     string          `json:"serverId"`
+	Kind         string          `json:"kind"`
+	BootID       string          `json:"bootId"`
+	AgentVersion string          `json:"agentVersion"`
+	Addr         string          `json:"addr"`
+	Address      string          `json:"address"`
+	ListenPort   *int            `json:"listenPort"`
+	Listeners    json.RawMessage `json:"listeners"`
+}
+
+type v2AgentListener struct {
+	BindHost string `json:"bindHost"`
+	Port     int    `json:"port"`
+	Ordinal  int    `json:"ordinal"`
 }
 
 type v2AgentRegistrationView struct {
-	Status    string     `json:"status"`
-	Namespace string     `json:"namespace"`
-	ServerID  string     `json:"serverId"`
-	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	Status             string                      `json:"status"`
+	Namespace          string                      `json:"namespace"`
+	ServerID           *string                     `json:"serverId"`
+	ExpiresAt          *time.Time                  `json:"expiresAt,omitempty"`
+	BoundAt            *time.Time                  `json:"boundAt"`
+	BindingFingerprint *string                     `json:"bindingFingerprint"`
+	BindingSource      string                      `json:"bindingSource"`
+	MigrationState     string                      `json:"migrationState"`
+	Address            string                      `json:"address"`
+	Endpoints          []service.AgentEndpointView `json:"endpoints"`
 }
 
 // AgentRegister 处理 POST /beacon/v2/agent/register。
@@ -64,10 +108,34 @@ func (h *V2ControlPlaneHandler) AgentRegister(w http.ResponseWriter, r *http.Req
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	detectedHost, err := tcpRemoteHost(r)
+	if err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	addr := req.Addr
+	if addr == "" {
+		addr = req.Address
+	}
+	listeners, listenersProvided := []service.AgentEndpointReport(nil), len(req.Listeners) > 0
+	if listenersProvided {
+		var reported []v2AgentListener
+		if err := json.Unmarshal(req.Listeners, &reported); err != nil {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+		listeners = make([]service.AgentEndpointReport, 0, len(reported))
+		for _, listener := range reported {
+			listeners = append(listeners, service.AgentEndpointReport{
+				BindHost: listener.BindHost, Port: listener.Port, Ordinal: listener.Ordinal,
+			})
+		}
+	}
 	res, err := h.svc.RegisterAgentV2(service.AgentRegisterV2Params{
 		Token: r.Header.Get(beaconTokenHeader), IdentityID: req.IdentityID, ServerID: req.ServerID,
 		Kind: req.Kind, BootID: req.BootID, AgentVersion: req.AgentVersion,
-		Addr: addrOrClientIP(req.Addr, r), ClientIP: clientIP(r),
+		Addr: addr, DetectedHost: detectedHost, ListenPort: req.ListenPort,
+		Listeners: listeners, ListenersProvided: listenersProvided, ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -79,7 +147,19 @@ func (h *V2ControlPlaneHandler) AgentRegister(w http.ResponseWriter, r *http.Req
 	}
 	render.WriteJSON(w, status, v2AgentRegistrationView{
 		Status: res.Status, Namespace: res.Namespace, ServerID: res.ServerID, ExpiresAt: res.ExpiresAt,
+		BoundAt: res.BoundAt, BindingFingerprint: res.BindingFingerprint,
+		BindingSource: res.BindingSource, MigrationState: res.MigrationState,
+		Address: res.Address, Endpoints: res.Endpoints,
 	})
+}
+
+// tcpRemoteHost 仅从 HTTP 原始 TCP 对端提取探测 host，禁止混入 X-Forwarded-For 等审计口径。
+func tcpRemoteHost(r *http.Request) (string, error) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || host == "" {
+		return "", apperr.ErrInvalidParam
+	}
+	return host, nil
 }
 
 // AgentRegistration 处理 GET /beacon/v2/agent/registration。
@@ -94,7 +174,9 @@ func (h *V2ControlPlaneHandler) AgentRegistration(w http.ResponseWriter, r *http
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{
-		"status": res.Status, "namespace": res.Namespace, "serverId": res.ServerID, "reason": res.Reason,
+		"status": res.Status, "namespace": res.Namespace, "serverId": res.ServerID,
+		"boundAt": res.BoundAt, "bindingFingerprint": res.BindingFingerprint, "reason": res.Reason,
+		"address": res.Address, "endpoints": res.Endpoints,
 	})
 }
 
@@ -205,9 +287,46 @@ func (h *V2ControlPlaneHandler) RevokeNamespaceTrust(w http.ResponseWriter, r *h
 }
 
 type v2ApproveIdentityRequest struct {
-	ForceUnbindOccupier bool `json:"forceUnbindOccupier"`
+	ServerID            string `json:"serverId"`
+	ForceUnbindOccupier bool   `json:"forceUnbindOccupier"`
 	// Target 用 RawMessage 承接以区分三态：缺省（无键）/ 显式 null（换区确认但暂不分配）/ 对象目标（换区落区）。
 	Target json.RawMessage `json:"target"`
+}
+
+type v2EndpointOverrideRequest struct {
+	OverrideAddress json.RawMessage `json:"overrideAddress"`
+	Reason          string          `json:"reason"`
+}
+
+// SetAgentEndpointOverride 处理 PUT /admin/v2/agent-identities/{identityId}/endpoints/{endpointKey}。
+func (h *V2ControlPlaneHandler) SetAgentEndpointOverride(w http.ResponseWriter, r *http.Request) {
+	var req v2EndpointOverrideRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if len(req.OverrideAddress) == 0 {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	var overrideAddress *string
+	if strings.TrimSpace(string(req.OverrideAddress)) != "null" {
+		var value string
+		if err := json.Unmarshal(req.OverrideAddress, &value); err != nil {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+		overrideAddress = &value
+	}
+	view, err := h.svc.SetAgentEndpointOverride(chi.URLParam(r, "identityId"), chi.URLParam(r, "endpointKey"), service.AgentEndpointOverrideParams{
+		OverrideAddress: overrideAddress, Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+		TraceID: render.TraceID(r.Context()),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 type v2Target struct {
@@ -224,6 +343,7 @@ func (h *V2ControlPlaneHandler) ApproveAgentIdentity(w http.ResponseWriter, r *h
 	}
 	params := service.ApproveAgentIdentityParams{
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+		ServerID:            req.ServerID,
 		ForceUnbindOccupier: req.ForceUnbindOccupier,
 	}
 	if err := applyApproveTarget(&params, req.Target); err != nil {
@@ -260,12 +380,12 @@ func applyApproveTarget(params *service.ApproveAgentIdentityParams, raw json.Raw
 
 // GetAgentIdentity 处理 GET /admin/v2/agent-identities/{identityId}（只读单条详情，附换区预填目标）。
 func (h *V2ControlPlaneHandler) GetAgentIdentity(w http.ResponseWriter, r *http.Request) {
-	ident, prefill, err := h.svc.GetAgentIdentity(chi.URLParam(r, "identityId"))
+	ident, prefill, err := h.svc.GetAgentIdentityReadView(chi.URLParam(r, "identityId"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, agentIdentityDetailView(ident, prefill))
+	render.WriteJSON(w, http.StatusOK, agentIdentityDetailReadView(ident, prefill))
 }
 
 type v2ReasonRequest struct {
@@ -280,7 +400,7 @@ func (h *V2ControlPlaneHandler) ListAgentIdentities(w http.ResponseWriter, r *ht
 		render.WriteError(w, r, err)
 		return
 	}
-	items, total, err := h.svc.ListAgentIdentities(service.ListAgentIdentitiesParams{
+	items, total, err := h.svc.ListAgentIdentityReadViews(service.ListAgentIdentitiesParams{
 		NamespaceID: namespaceID, Status: q.Get("status"), Keyword: q.Get("keyword"),
 		Page: intQuery(q.Get("page")), PageSize: intQuery(q.Get("pageSize")),
 	})
@@ -290,7 +410,7 @@ func (h *V2ControlPlaneHandler) ListAgentIdentities(w http.ResponseWriter, r *ht
 	}
 	views := make([]map[string]any, 0, len(items))
 	for i := range items {
-		views = append(views, agentIdentityView(&items[i]))
+		views = append(views, agentIdentityReadView(&items[i]))
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": views, "total": total})
 }
@@ -509,6 +629,12 @@ type v2DefaultEntryRequest struct {
 	Value bool `json:"value"`
 }
 
+type v2ServerPlacementTransferRequest struct {
+	ServerID string          `json:"serverId"`
+	Target   json.RawMessage `json:"target"`
+	Reason   string          `json:"reason"`
+}
+
 // AssignServers 处理 POST /admin/v2/server-assignments。
 // target 对象 = 首次分配；target 显式 null = 解除分配（原因必填，见 v2-zone-authority §4.3）。
 func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Request) {
@@ -577,6 +703,99 @@ func (h *V2ControlPlaneHandler) ZoneTree(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, tree)
+}
+
+// ListLobbyClusters 处理 GET /admin/v2/lobby-clusters（大厅摘要服务端分页）。
+func (h *V2ControlPlaneHandler) ListLobbyClusters(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	namespaceID, err := optionalUintQuery(q.Get("namespaceId"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	ready, err := optionalBoolQuery(q.Get("ready"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	page, err := nonNegativeIntQuery(q.Get("page"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	pageSize, err := nonNegativeIntQuery(q.Get("pageSize"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	result, err := h.svc.ListLobbyClusters(service.ListLobbyClustersParams{
+		NamespaceID: namespaceID, Ready: ready, Page: page, PageSize: pageSize,
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, result)
+}
+
+// GetLobbyCluster 处理 GET /admin/v2/lobby-clusters/{id}（成员服务端分页）。
+func (h *V2ControlPlaneHandler) GetLobbyCluster(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	memberPage, err := nonNegativeIntQuery(q.Get("memberPage"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	memberPageSize, err := nonNegativeIntQuery(q.Get("memberPageSize"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	status := q.Get("status")
+	if status != "" && status != "online" && status != "offline" && status != "schedulable" && status != "unschedulable" {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	detail, err := h.svc.GetLobbyCluster(id, service.LobbyClusterDetailParams{
+		MemberPage: memberPage, MemberPageSize: memberPageSize, Keyword: q.Get("keyword"), Status: status,
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, detail)
+}
+
+// TransferServerPlacement 处理 POST /admin/v2/server-placement-transfers。
+func (h *V2ControlPlaneHandler) TransferServerPlacement(w http.ResponseWriter, r *http.Request) {
+	var req v2ServerPlacementTransferRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Target) == 0 {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	params := service.ServerPlacementTransferParams{
+		ServerID: req.ServerID, Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}
+	if strings.TrimSpace(string(req.Target)) != "null" {
+		var target v2Target
+		if err := json.Unmarshal(req.Target, &target); err != nil {
+			render.WriteError(w, r, apperr.ErrInvalidParam)
+			return
+		}
+		params.TargetKind = target.Kind
+		params.TargetID = target.ID
+	}
+	view, err := h.svc.TransferServerPlacement(params)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 // SetServerDraining 处理 PUT /admin/v2/servers/{serverRef}/draining（切换排空标记，路径为业务 serverId）。
@@ -664,11 +883,28 @@ func v2NamespaceStatView(stat service.NamespaceStat) v2NamespaceView {
 func agentIdentityView(ident *model.AgentIdentity) map[string]any {
 	return map[string]any{
 		"id": ident.ID, "identityId": ident.IdentityID, "namespaceId": ident.NamespaceID,
-		"serverId": ident.ServerID, "kind": ident.Kind, "status": ident.Status,
+		"serverId": optionalAgentIdentityServerID(ident), "kind": ident.Kind, "status": ident.Status,
 		"bootId": ident.BootID, "lastAddr": ident.LastAddr, "agentVersion": ident.AgentVersion,
 		"pendingExpiresAt": ident.PendingExpiresAt, "boundAt": ident.BoundAt,
 		"statusChangedAt": ident.StatusChangedAt, "conflictReason": ident.ConflictReason,
+		"bindingSource": ident.BindingSource, "legacyMigratedAt": ident.LegacyMigratedAt,
 	}
+}
+
+// agentIdentityReadView 补管理面查询契约的迁移状态；绑定指纹仅在详情返回。
+func agentIdentityReadView(ident *service.AgentIdentityReadView) map[string]any {
+	view := agentIdentityView(&ident.Identity)
+	view["migrationState"] = ident.MigrationState
+	return view
+}
+
+// optionalAgentIdentityServerID 把未分配身份的零值映射为 JSON null，禁止以空串伪装未分配。
+func optionalAgentIdentityServerID(ident *model.AgentIdentity) *string {
+	if !ident.ServerID.Assigned() {
+		return nil
+	}
+	serverID := string(ident.ServerID)
+	return &serverID
 }
 
 // agentIdentityDetailView 在身份基础视图上补详情字段：conflictPeers（Q4 冲突双方 boot 明细，FR-177）与换区预填目标。
@@ -684,11 +920,14 @@ func agentIdentityDetailView(ident *model.AgentIdentity, prefill *service.Rezone
 	return view
 }
 
-func addrOrClientIP(addr string, r *http.Request) string {
-	if addr != "" {
-		return addr
-	}
-	return clientIP(r)
+// agentIdentityDetailReadView 在查询基础视图上追加服务端权威绑定指纹。
+func agentIdentityDetailReadView(ident *service.AgentIdentityReadView, prefill *service.RezonePrefillView) map[string]any {
+	view := agentIdentityDetailView(&ident.Identity, prefill)
+	view["migrationState"] = ident.MigrationState
+	view["bindingFingerprint"] = ident.BindingFingerprint
+	view["address"] = ident.Address
+	view["endpoints"] = ident.Endpoints
+	return view
 }
 
 func uintURLParam(r *http.Request, name string) (uint, error) {
@@ -725,4 +964,15 @@ func optionalBoolQuery(raw string) (*bool, error) {
 func intQuery(raw string) int {
 	value, _ := strconv.Atoi(raw)
 	return value
+}
+
+func nonNegativeIntQuery(raw string) (int, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0, apperr.ErrInvalidParam
+	}
+	return value, nil
 }

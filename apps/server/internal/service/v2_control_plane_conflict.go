@@ -107,7 +107,10 @@ func (s *V2ControlPlaneService) markIdentityConflict(identityID string, peers []
 		if err := tx.Save(ident).Error; err != nil {
 			return err
 		}
-		marked, nsCode, serverID = true, ns.Code, ident.ServerID
+		if !ident.ServerID.Assigned() {
+			return apperr.ErrIllegalState
+		}
+		marked, nsCode, serverID = true, ns.Code, string(ident.ServerID)
 		return auditIdentity(tx, ns, ident, model.ActionIdentityConflict, "system", model.ResultOK, "")
 	})
 	if err != nil {

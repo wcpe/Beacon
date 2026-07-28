@@ -25,6 +25,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 强制重同步命令（FR-91）同样复用此通路：resync-config 命令拉到后调 [onResyncConfig] 回调
  * （重拉有效配置/文件树/覆盖集并 apply），再经命令结果端点回传 done/failed，**不读 plugins 树**。
  *
+ * BC 目录重同步命令（FR-201）也复用此通路：bc-directory-resync 只调用 [onBcDirectoryResync]，
+ * 由 BC 壳层接入受管目录与大厅候选的唯一同步入口；Bukkit 不注入该回调并明确回传不支持。
+ *
  * 只读文件浏览命令（FR-110，见 ADR-0049）也复用此通路：fs-browse 命令拉到后按 op 调
  * [PlatformAdapter] 只读浏览原语（列目录 / 读子树 / 读单文件，根限定 + path traversal 校验由原语负责），
  * 结果经浏览回传端点回传，**纯只读、不写盘**；原语拒读 / 异常 → 回 ok=false（fail-static、不崩）。
@@ -43,6 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *                            返回 true=已派发；false=未启用 / 内部失败（runAssetRescan 据此回传 ok=false，不误报 done）。
  * @param deliveryExecutor    交付命令执行器（FR-165，可选；为 null 时不响应 delivery_* 命令，按未知能力忽略）。
  *                            交付命令统一从本执行器这**单一拉取点**委派给它执行（避免另起拉取循环与命令队列争抢）。
+ * @param onBcDirectoryResync BC 目录重同步回调（FR-201，仅 BC 注入）。返回 true 仅表示目录与大厅候选已成功应用并持久化。
  */
 class ReverseFetchExecutor(
     private val identity: AgentIdentity,
@@ -53,6 +57,7 @@ class ReverseFetchExecutor(
     private val reverseFetchEnabled: Boolean = true,
     private val onAssetRescan: ((Boolean) -> Boolean)? = null,
     private val deliveryExecutor: DeliveryCommandExecutor? = null,
+    private val onBcDirectoryResync: (() -> Boolean)? = null,
 ) {
     /** 单飞门：任意时刻只允许一条抓取流在跑（command-pending 与 READY 并发触发时去重）。 */
     private val running = AtomicBoolean(false)
@@ -94,6 +99,11 @@ class ReverseFetchExecutor(
         // 强制重同步命令（FR-91）：调重同步回调重拉有效配置/文件树/覆盖集，回传命令结果，不读 plugins 树。
         if (command.type == AgentCommand.TYPE_RESYNC_CONFIG) {
             runResync(command)
+            return true
+        }
+        // BC 目录重同步（FR-201）：只走 BC 注入的唯一目录同步入口，绝不复用配置/文件树重同步。
+        if (command.type == AgentCommand.TYPE_BC_DIRECTORY_RESYNC) {
+            runBcDirectoryResync(command)
             return true
         }
         // 只读文件浏览命令（FR-110）：按 op 列目录 / 读子树 / 读单文件回传，纯只读、不写盘。
@@ -278,6 +288,44 @@ class ReverseFetchExecutor(
             adapter.info("强制重同步完成并回传：id=${command.id}")
         } else {
             adapter.warn("强制重同步完成结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    /**
+     * BC 目录重同步（FR-201）：回调成功才回 done；失败保留旧目录和候选快照并回传脱敏中文摘要。
+     * Bukkit 不注入回调时不能静默忽略，否则 fetched 命令会悬挂。
+     */
+    private fun runBcDirectoryResync(command: AgentCommand) {
+        val callback = onBcDirectoryResync
+        if (callback == null) {
+            reportBcDirectoryResult(command, ok = false, reason = "当前 Agent 角色不支持 BC 目录重同步")
+            return
+        }
+        val applied =
+            try {
+                callback()
+            } catch (e: Exception) {
+                adapter.error("BC 目录重同步执行异常：id=${command.id}", e)
+                reportBcDirectoryResult(command, ok = false, reason = "BC 目录重同步执行异常，已保留最后有效快照")
+                return
+            }
+        if (!applied) {
+            reportBcDirectoryResult(command, ok = false, reason = "拉取、校验、应用或候选快照持久化失败，已保留最后有效快照")
+            return
+        }
+        reportBcDirectoryResult(command, ok = true, reason = "")
+    }
+
+    private fun reportBcDirectoryResult(
+        command: AgentCommand,
+        ok: Boolean,
+        reason: String,
+    ) {
+        val reported = apiClient.uploadCommandResult(command.id, ok = ok, reason = reason, identity = identity)
+        if (reported) {
+            adapter.info("BC 目录重同步结果已回传：id=${command.id}，ok=$ok")
+        } else {
+            adapter.warn("BC 目录重同步结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 

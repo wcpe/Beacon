@@ -20,11 +20,11 @@ package top.wcpe.beacon.agent.core.identity
  * @param bootId     本次进程启动标识；只存内存，随 v2 注册上报。
  */
 data class AgentIdentity(
-    val namespace: String,
-    val serverId: String,
+    var namespace: String,
+    var serverId: String,
     val role: String,
     val groupHint: String,
-    val address: String,
+    var address: String,
     val version: String,
     val capacity: Int,
     val weight: Int,
@@ -32,8 +32,16 @@ data class AgentIdentity(
     val agentVersion: String = "",
     val identityId: String = "",
     val bootId: String = "",
+    val endpointReport: EndpointReport = EndpointReport(),
 ) {
-    /** 身份是否合法（serverId / namespace 非空）。 */
+    /** 写入控制面确认的运行期绑定。 */
+    fun bind(namespace: String, serverId: String, compatAddress: String = address) {
+        this.namespace = namespace
+        this.serverId = serverId
+        this.address = compatAddress
+    }
+
+    /** 身份是否合法（仅用于已确认的数据面身份）。 */
     fun isValid(): Boolean = serverId.isNotBlank() && namespace.isNotBlank()
 
     /** 是否已具备 v2 身份注册所需的运行期身份。 */

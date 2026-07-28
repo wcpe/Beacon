@@ -77,6 +77,8 @@ export interface ServerItem {
   zoneId: number | null
   zoneName: string | null
   regionName: string | null
+  /** 独立大厅归属；非成员为 null，不能据此推导小区默认入口。 */
+  lobbyClusterId: number | null
   pendingZoneId: number | null
   pendingZoneName: string | null
   isDefaultEntry: boolean

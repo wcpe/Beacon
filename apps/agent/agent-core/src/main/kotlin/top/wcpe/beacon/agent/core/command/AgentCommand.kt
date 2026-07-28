@@ -34,6 +34,9 @@ data class AgentCommand(
         /** 强制重同步命令类型：重拉控制面权威的有效配置/文件树/覆盖集并 apply（FR-91，复用命令队列、无业务载荷）。 */
         const val TYPE_RESYNC_CONFIG = "resync-config"
 
+        /** BC 目录重同步命令类型：刷新受管 Bukkit 目录与大厅候选快照（FR-201）。 */
+        const val TYPE_BC_DIRECTORY_RESYNC = "bc-directory-resync"
+
         /** 只读文件浏览命令类型：列目录 / 读子树 / 读单文件回传（FR-110，见 ADR-0049；纯只读、不写盘）。 */
         const val TYPE_FS_BROWSE = "fs-browse"
 

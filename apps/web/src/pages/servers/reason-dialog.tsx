@@ -30,6 +30,8 @@ interface ReasonDialogProps {
   pending: boolean
   // 展示的脱敏错误文案（提交失败时）
   errorText?: string | null
+  // 外部业务校验未通过时禁用确认（例如确认接入必须填写 serverId）。
+  confirmDisabled?: boolean
   // 额外内容（如占用冲突强制解绑勾选），渲染在原因输入之上
   children?: ReactNode
   // 确认回调：把原因回传给调用方触发写操作
@@ -46,6 +48,7 @@ export default function ReasonDialog({
   requireReason = true,
   pending,
   errorText,
+  confirmDisabled = false,
   children,
   onConfirm,
 }: ReasonDialogProps) {
@@ -60,7 +63,7 @@ export default function ReasonDialog({
   }, [open])
 
   const reasonOk = !requireReason || reason.trim() !== ''
-  const canConfirm = reasonOk && !pending
+  const canConfirm = reasonOk && !pending && !confirmDisabled
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>

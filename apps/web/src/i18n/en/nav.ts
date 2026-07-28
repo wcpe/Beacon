@@ -12,6 +12,7 @@ export const nav = {
   servers: 'Servers',
   identityConflicts: 'Identity conflicts',
   zones: 'Zones',
+  lobbyClusters: 'Lobby clusters',
   topology: 'Topology',
   serviceAnalysis: 'Service analysis',
   connections: 'Connections',

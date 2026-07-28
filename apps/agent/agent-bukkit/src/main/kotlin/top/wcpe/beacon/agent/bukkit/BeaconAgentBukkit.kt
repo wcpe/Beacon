@@ -9,6 +9,7 @@ import taboolib.common.platform.function.getDataFolder
 import taboolib.common.platform.function.pluginVersion
 import taboolib.common.platform.function.severe
 import taboolib.common.platform.function.submitAsync
+import taboolib.common.platform.function.warning
 import taboolib.module.configuration.Config
 import taboolib.module.configuration.Configuration
 import top.wcpe.beacon.agent.adapters.KotlinxJsonCodec
@@ -19,12 +20,17 @@ import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
+import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
+import top.wcpe.beacon.agent.core.identity.EndpointReport
+import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
+import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import java.util.UUID
+import java.io.File
 
 /**
  * Bukkit 子服侧 Beacon agent 插件主类（object + @Awake，不继承 JavaPlugin）。
@@ -73,6 +79,9 @@ object BeaconAgentBukkit : Plugin() {
     /** 当前生命周期；null 表示因身份缺失未启动。 */
     private var lifecycle: AgentLifecycle? = null
 
+    /** 待确认阶段仅运行此最小引导器，绝不提前创建数据面组件。 */
+    private var bootstrapRuntime: BootstrapRuntime? = null
+
     /** 主线程指标埋点（FR-144）；null 表示未启动（身份缺失等）。 */
     private var tickInstrumentation: BukkitTickInstrumentation? = null
 
@@ -84,21 +93,18 @@ object BeaconAgentBukkit : Plugin() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
         val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
         val settings = AgentBootstrap.readSettings(reader)
+        val endpointReport = EndpointReport(backendListenPort = readListenPort())
         submitAsync {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
             // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
                 AgentBootstrap.readIdentity(reader, role = "bukkit", agentVersion = pluginVersion)
-                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString())
+                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
 
             // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
             var canConnect = true
             if (!storedIdentity.isValid) {
                 severe("身份文件损坏：${storedIdentity.error}，Beacon agent 不接入控制面")
-                canConnect = false
-            }
-            if (canConnect && !identity.isValid()) {
-                severe("身份缺失：identity.serverId 与 identity.namespace 必须显式配置，Beacon agent 不接入控制面")
                 canConnect = false
             }
             if (canConnect && (settings.endpoints.isEmpty() || settings.bootstrapToken.isBlank())) {
@@ -112,21 +118,64 @@ object BeaconAgentBukkit : Plugin() {
             // 主线程指标埋点（FR-144）：MC 主线程每 tick 零成本埋点（tick 计数 / 在线 volatile），
             // 采样 / 上报线程只读 volatile 推算，绝不在别的线程调线程不安全的 Bukkit API。
             val instrumentation = BukkitTickInstrumentation()
-            instrumentation.start()
             tickInstrumentation = instrumentation
 
             // 装配：先建 store + view，再用 view 构 adapter（adapter 在变更时回调 view 派发 API 监听器）。
             val store = EffectiveConfigStore()
             val view = EffectiveConfigView(store)
             val adapter = BukkitPlatformAdapter(view)
-            val assembled =
-                AgentAssembly.assemble(
+            val codec = KotlinxJsonCodec()
+            val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
+            val bootstrapClient = BeaconApiClient(OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs), codec, settings)
+            val bootstrap =
+                BootstrapRuntime(
+                    identity = identity,
+                    settings = settings,
+                    adapter = adapter,
+                    apiClient = bootstrapClient,
+                    snapshots = bindingSnapshot,
+                    onActive = { activeIdentity, binding ->
+                        startActiveRuntime(
+                            identity = activeIdentity,
+                            binding = binding,
+                            settings = settings,
+                            adapter = adapter,
+                            codec = codec,
+                            store = store,
+                            view = view,
+                            instrumentation = instrumentation,
+                            snapshots = bindingSnapshot,
+                        )
+                    },
+                    onTerminal = {
+                        bindingSnapshot.invalidate()
+                        stopActiveRuntime()
+                    },
+                )
+            bootstrapRuntime = bootstrap
+            bootstrap.start()
+        }
+    }
+
+    private fun startActiveRuntime(
+        identity: top.wcpe.beacon.agent.core.identity.AgentIdentity,
+        binding: top.wcpe.beacon.agent.core.client.ActiveBinding,
+        settings: top.wcpe.beacon.agent.core.settings.AgentSettings,
+        adapter: BukkitPlatformAdapter,
+        codec: KotlinxJsonCodec,
+        store: EffectiveConfigStore,
+        view: EffectiveConfigView,
+        instrumentation: BukkitTickInstrumentation,
+        snapshots: IdentityBindingSnapshotStore,
+    ) {
+        val assembled =
+            AgentAssembly.assemble(
                     identity = identity,
                     settings = settings,
                     // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
                     rawAdapter = adapter,
                     transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    codec = KotlinxJsonCodec(),
+                    codec = codec,
                     store = store,
                     effectiveConfigView = view,
                     // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
@@ -138,10 +187,16 @@ object BeaconAgentBukkit : Plugin() {
                     // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
                     // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
                     selfPluginDirNames = setOf("BeaconAgent"),
+                    authorityInvalidated = {
+                        snapshots.invalidate()
+                        stopActiveRuntime()
+                    },
                 )
             lifecycle = assembled.lifecycle
             // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
             messagingRuntime = assembled.messagingRuntime
+            assembled.lifecycle.onRegistered { snapshots.write(identity, binding) }
+            assembled.lifecycle.onRegistered { instrumentation.start() }
 
             // 对外注册门面，供同进程业务插件读取。
             BeaconAgentProvider.register(assembled.beaconAgent)
@@ -153,15 +208,34 @@ object BeaconAgentBukkit : Plugin() {
             assembled.lifecycle.enableMetricsSampling()
 
             // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
-            assembled.lifecycle.bootstrapWithSnapshotThenConnect()
-        }
+        assembled.lifecycle.bootstrapWithSnapshotThenConnect()
     }
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
+        bootstrapRuntime?.shutdown()
+        stopActiveRuntime()
+    }
+
+    /** 控制面撤销与插件卸载共用的 active 资源停止入口。 */
+    private fun stopActiveRuntime() {
         messagingRuntime?.stop()
+        messagingRuntime = null
         lifecycle?.shutdown()
+        lifecycle = null
         tickInstrumentation?.stop()
+        tickInstrumentation = null
+        bootstrapRuntime?.shutdown()
+        bootstrapRuntime = null
         BeaconAgentProvider.unregister()
     }
+
+    /** 本壳不硬链 Bukkit API，读取导出静态 API 的唯一实际监听端口。 */
+    private fun readListenPort(): Int? =
+        try {
+            (Class.forName("org.bukkit.Bukkit").getMethod("getPort").invoke(null) as? Number)?.toInt()
+        } catch (e: ReflectiveOperationException) {
+            warning("读取 Bukkit 监听端口失败，等待控制面按连接事实补全：${e.message}")
+            null
+        }
 }

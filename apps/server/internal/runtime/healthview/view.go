@@ -47,20 +47,24 @@ type Factor struct {
 
 // View 单实例当前健康视图（内存真源；快照表仅回放副本）
 type View struct {
-	NamespaceID  uint
-	Namespace    string // namespace code
-	ServerID     string
-	Kind         string // proxy / backend
-	ZoneName     string // v2 zone 名，未分配为空
-	Score        int    // 0-100
-	Level        string // healthy / degraded / unhealthy
-	Schedulable  bool
-	Reasons      []string // §4.5 原因码，可叠加
-	Factors      []Factor
-	WeightsRev   int
-	OnlineCount  int
-	MaxOnline    int
-	ComputedAtMs int64
+	NamespaceID uint
+	Namespace   string // namespace code
+	ServerID    string
+	Kind        string // proxy / backend
+	ZoneName    string // v2 zone 名，未分配为空
+	// LobbyClusterID 是该 server 的大厅归属；0 表示不是大厅成员。
+	LobbyClusterID uint
+	// NamespaceLobbyClusterID 是该 namespace 唯一大厅集群，供空大厅快照保留权威集群标识。
+	NamespaceLobbyClusterID uint
+	Score                   int    // 0-100
+	Level                   string // healthy / degraded / unhealthy
+	Schedulable             bool
+	Reasons                 []string // §4.5 原因码，可叠加
+	Factors                 []Factor
+	WeightsRev              int
+	OnlineCount             int
+	MaxOnline               int
+	ComputedAtMs            int64
 }
 
 // serverKey 是视图按 (namespace, server) 定位的键（serverId 仅 namespace 内唯一，跨 ns 须带 ns 区分）。

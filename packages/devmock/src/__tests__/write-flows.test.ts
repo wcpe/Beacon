@@ -6,7 +6,7 @@ import { callJson, resetMockWorld, server } from './msw-server'
 
 interface IdentityItem {
   identityId: string
-  serverId: string
+  serverId: string | null
   status: string
 }
 
@@ -37,7 +37,9 @@ describe('身份确认闭环（approve）', () => {
     }
     expect(before.items.some((s) => s.serverId === 'game-new-1')).toBe(false)
 
-    const approve = await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, {})
+    const approve = await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, {
+      serverId: 'game-new-1',
+    })
     expect(approve.status).toBe(200)
 
     const after = await findIdentity('game-new-1')
@@ -69,10 +71,13 @@ describe('身份确认闭环（approve）', () => {
     const paged = json as { items: (IdentityItem & { conflictReason: string | null })[] }
     const occupied = paged.items.find((item) => item.conflictReason === 'server-id-occupied')
     expect(occupied).toBeDefined()
-    const denied = await callJson('POST', `/admin/v2/agent-identities/${occupied?.identityId ?? ''}/approve`, {})
+    const denied = await callJson('POST', `/admin/v2/agent-identities/${occupied?.identityId ?? ''}/approve`, {
+      serverId: 'lobby-2',
+    })
     expect(denied.status).toBe(409)
     expect((denied.json as { code: string }).code).toBe('server_id_occupied')
     const forced = await callJson('POST', `/admin/v2/agent-identities/${occupied?.identityId ?? ''}/approve`, {
+      serverId: 'lobby-2',
       forceUnbindOccupier: true,
     })
     expect(forced.status).toBe(200)
@@ -82,10 +87,62 @@ describe('身份确认闭环（approve）', () => {
   })
 })
 
+describe('身份地址覆盖闭环（FR-204）', () => {
+  it('仅 active endpoint 可设置覆盖；原因必填，清除覆盖恢复自动探测', async () => {
+    const identity = await findIdentity('proxy-1')
+    const detail = await callJson('GET', `/admin/v2/agent-identities/${identity?.identityId ?? ''}`)
+    const endpoints = (detail.json as { endpoints: { endpointKey: string }[] }).endpoints
+    expect(endpoints).toHaveLength(2)
+
+    const missing = await callJson(
+      'PUT',
+      `/admin/v2/agent-identities/${identity?.identityId ?? ''}/endpoints/${encodeURIComponent(endpoints[0].endpointKey)}`,
+      { overrideAddress: '198.51.100.20:25577' },
+    )
+    expect(missing.status).toBe(400)
+    expect((missing.json as { code: string }).code).toBe('missing_reason')
+
+    const updated = await callJson(
+      'PUT',
+      `/admin/v2/agent-identities/${identity?.identityId ?? ''}/endpoints/${encodeURIComponent(endpoints[0].endpointKey)}`,
+      { overrideAddress: '198.51.100.20:25577', reason: '公网入口地址修正' },
+    )
+    expect(updated.status).toBe(200)
+    expect((updated.json as { effectiveAddress: string; source: string }).effectiveAddress).toBe('198.51.100.20:25577')
+    expect((updated.json as { source: string }).source).toBe('override')
+
+    const cleared = await callJson(
+      'PUT',
+      `/admin/v2/agent-identities/${identity?.identityId ?? ''}/endpoints/${encodeURIComponent(endpoints[0].endpointKey)}`,
+      { overrideAddress: null, reason: '恢复自动探测地址' },
+    )
+    expect(cleared.status).toBe(200)
+    expect((cleared.json as { source: string }).source).toBe('detected')
+
+    const inactiveIdentity = await findIdentity('proxy-2')
+    const inactiveDetail = await callJson('GET', `/admin/v2/agent-identities/${inactiveIdentity?.identityId ?? ''}`)
+    const inactive = (inactiveDetail.json as { endpoints: { endpointKey: string; active: boolean }[] }).endpoints.find(
+      (endpoint) => !endpoint.active,
+    )
+    const denied = await callJson(
+      'PUT',
+      `/admin/v2/agent-identities/${inactiveIdentity?.identityId ?? ''}/endpoints/${encodeURIComponent(inactive?.endpointKey ?? '')}`,
+      { overrideAddress: '198.51.100.20:25578', reason: '不得修改失活监听' },
+    )
+    expect(denied.status).toBe(409)
+    const inactiveClear = await callJson(
+      'PUT',
+      `/admin/v2/agent-identities/${inactiveIdentity?.identityId ?? ''}/endpoints/${encodeURIComponent(inactive?.endpointKey ?? '')}`,
+      { overrideAddress: null, reason: '清除失活监听残留覆盖' },
+    )
+    expect(inactiveClear.status).toBe(200)
+  })
+})
+
 describe('场景切换与重置', () => {
   it('切换场景后数据集重置：approve 的变更不残留', async () => {
     const pending = await findIdentity('game-new-1')
-    await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, {})
+    await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, { serverId: 'game-new-1' })
     expect((await findIdentity('game-new-1'))?.status).toBe('active')
 
     setMockScenario('huge')
@@ -95,9 +152,19 @@ describe('场景切换与重置', () => {
 
   it('resetMockData 直接重建当前场景数据', async () => {
     const pending = await findIdentity('game-new-1')
-    await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, {})
+    await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, { serverId: 'game-new-1' })
     resetMockData()
     expect((await findIdentity('game-new-1'))?.status).toBe('pending')
+  })
+
+  it('未分配身份必须在 approve 请求中显式提供 serverId', async () => {
+    const { json } = await callJson('GET', '/admin/v2/agent-identities?status=pending&pageSize=100')
+    const pending = (json as { items: IdentityItem[] }).items.find((item) => item.serverId === null)
+    expect(pending).toBeDefined()
+
+    const missing = await callJson('POST', `/admin/v2/agent-identities/${pending?.identityId ?? ''}/approve`, {})
+    expect(missing.status).toBe(400)
+    expect((missing.json as { code: string }).code).toBe('invalid_param')
   })
 })
 
@@ -130,6 +197,7 @@ describe('变更单生命周期闭环', () => {
     const created = await callJson('POST', '/admin/v2/change-orders', {
       namespaceId: 1,
       title: '测试专用小流量变更',
+      sourceServerId: 'game-1',
       selector: { servers: ['pvp-1'] },
     })
     expect(created.status).toBe(201)

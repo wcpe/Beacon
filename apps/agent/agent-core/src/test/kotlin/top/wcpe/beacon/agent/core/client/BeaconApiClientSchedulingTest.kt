@@ -132,6 +132,40 @@ class BeaconApiClientSchedulingTest {
     }
 
     @Test
+    fun `candidates 200 解析可选大厅段`() {
+        val codec =
+            CapturingCodec {
+                mapOf(
+                    "generatedAtMs" to 1_700_000_000_000L,
+                    "zones" to emptyList<Any>(),
+                    "lobby" to
+                        mapOf(
+                            "clusterId" to 12L,
+                            "ready" to true,
+                            "candidates" to
+                                listOf(
+                                    mapOf(
+                                        "serverId" to "lobby-1",
+                                        "score" to 92,
+                                        "level" to "healthy",
+                                        "schedulable" to true,
+                                        "onlineCount" to 8,
+                                        "maxOnline" to 300,
+                                    ),
+                                ),
+                        ),
+                )
+            }
+
+        val outcome = BeaconApiClient(StatusTransport(200, "body"), codec, settings()).scheduleCandidates(identity())
+
+        val lobby = assertIs<SchedCandidatesOutcome.Success>(outcome).candidates.lobby
+        assertEquals(12L, lobby?.clusterId)
+        assertTrue(lobby?.ready == true)
+        assertEquals("lobby-1", lobby?.candidates?.single()?.serverId)
+    }
+
+    @Test
     fun `candidates 非 200 降级为 Failed`() {
         val codec = CapturingCodec { emptyMap<String, Any?>() }
         val outcome = BeaconApiClient(StatusTransport(500), codec, settings()).scheduleCandidates(identity())

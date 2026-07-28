@@ -146,6 +146,12 @@ class BeaconApiClient(
         return registerLegacy(identity, backends)
     }
 
+    /** Bootstrap 阶段仅观察 v2 身份状态，绝不发起 legacy 数据面注册。 */
+    fun bootstrapRegister(identity: AgentIdentity): RegisterOutcome {
+        if (!identity.hasV2Identity()) return RegisterOutcome.IdentityRequired
+        return registerV2Status(identity)
+    }
+
     private fun registerLegacy(
         identity: AgentIdentity,
         backends: List<String> = emptyList(),
@@ -193,14 +199,24 @@ class BeaconApiClient(
         identity: AgentIdentity,
         backends: List<String>,
     ): RegisterOutcome {
+        return when (val outcome = registerV2Status(identity)) {
+            is RegisterOutcome.ActiveBindingConfirmed -> {
+                identity.bind(outcome.binding.namespace, outcome.binding.serverId, outcome.binding.compatAddress)
+                registerLegacy(identity, backends)
+            }
+            else -> outcome
+        }
+    }
+
+    private fun registerV2Status(identity: AgentIdentity): RegisterOutcome {
         val body =
             buildMap {
                 put("identityId", identity.identityId)
-                put("serverId", identity.serverId)
                 put("kind", v2Kind(identity.role))
                 put("bootId", identity.bootId)
+                // serverId 仅由控制面分配；旧本地键只留作 agent 侧迁移提示，绝不上传。
                 if (identity.agentVersion.isNotBlank()) put("agentVersion", identity.agentVersion)
-                if (identity.address.isNotBlank()) put("addr", identity.address)
+                appendEndpointReport(this, identity)
             }
         val resp =
             exec(
@@ -214,7 +230,7 @@ class BeaconApiClient(
             ) ?: return RegisterOutcome.Failed(connectFailReason())
 
         return when (resp.statusCode) {
-            200 -> activeRegisterOutcome(resp.body, identity, backends)
+            200 -> activeRegisterOutcome(resp.body)
             202 -> pendingApprovalOutcome(resp.body, identity)
             401 -> RegisterOutcome.Unauthorized
             403 -> RegisterOutcome.Rejected
@@ -226,15 +242,18 @@ class BeaconApiClient(
 
     private fun activeRegisterOutcome(
         body: String,
-        identity: AgentIdentity,
-        backends: List<String>,
-    ): RegisterOutcome =
-        when (parseRegistrationStatus(body)) {
-            "active" -> registerLegacy(identity, backends)
+    ): RegisterOutcome {
+        return when (parseRegistrationStatus(body)) {
+            "active" -> {
+                val binding = parseActiveBinding(body) ?: return RegisterOutcome.Failed("控制面未返回权威绑定")
+                RegisterOutcome.ActiveBindingConfirmed(binding)
+            }
             "disabled" -> RegisterOutcome.Disabled
             "conflict" -> RegisterOutcome.IdentityConflict
+            "unbound" -> RegisterOutcome.Unbound
             else -> RegisterOutcome.Failed("非预期注册状态")
         }
+    }
 
     private fun pendingApprovalOutcome(
         body: String,
@@ -242,7 +261,7 @@ class BeaconApiClient(
     ): RegisterOutcome.PendingApproval {
         val obj = JsonTree.asObject(codec.decode(body))
         return RegisterOutcome.PendingApproval(
-            serverId = JsonTree.strOr(obj, "serverId", identity.serverId),
+            serverId = JsonTree.strOr(obj, "serverId", ""),
             namespace = JsonTree.strOr(obj, "namespace", identity.namespace),
         )
     }
@@ -266,11 +285,16 @@ class BeaconApiClient(
         return when (resp.statusCode) {
             200 ->
                 when (parseRegistrationStatus(resp.body)) {
-                    "active" -> RegistrationPollResult.Active
+                    "active" -> {
+                        val binding = parseActiveBinding(resp.body)
+                            ?: return RegistrationPollResult.Failed("控制面未返回权威绑定")
+                        RegistrationPollResult.Active(binding)
+                    }
                     "pending" -> RegistrationPollResult.Pending
                     "disabled" -> RegistrationPollResult.Disabled
                     "rejected" -> RegistrationPollResult.Rejected
                     "conflict" -> RegistrationPollResult.Conflict
+                    "unbound" -> RegistrationPollResult.Unbound
                     else -> RegistrationPollResult.Failed("非预期注册状态")
                 }
 
@@ -309,6 +333,7 @@ class BeaconApiClient(
             }
 
             404 -> HeartbeatOutcome.NotRegistered
+            403, 409 -> HeartbeatOutcome.AuthorityRefreshRequired
             else -> HeartbeatOutcome.Failed("非预期状态码 ${resp.statusCode}")
         }
     }
@@ -1401,6 +1426,33 @@ class BeaconApiClient(
         return JsonTree.strOr(obj, "status", "")
     }
 
+    private fun parseActiveBinding(jsonBody: String): ActiveBinding? {
+        val obj = JsonTree.asObject(codec.decode(jsonBody))
+        val namespace = JsonTree.strOr(obj, "namespace", "")
+        val serverId = JsonTree.strOr(obj, "serverId", "")
+        val boundAt = JsonTree.strOr(obj, "boundAt", "")
+        val fingerprint = JsonTree.strOr(obj, "bindingFingerprint", "")
+        val compatAddress = JsonTree.strOr(obj, "address", JsonTree.strOr(obj, "addr", ""))
+        return if (namespace.isBlank() || serverId.isBlank() || boundAt.isBlank() || compatAddress.isBlank() || !FINGERPRINT.matches(fingerprint)) {
+            null
+        } else {
+            ActiveBinding(namespace, serverId, boundAt, fingerprint, compatAddress)
+        }
+    }
+
+    private fun appendEndpointReport(
+        body: MutableMap<String, Any?>,
+        identity: AgentIdentity,
+    ) {
+        if (identity.role == "bungee") {
+            body["listeners"] = identity.endpointReport.proxyListenersForReport().map { listener ->
+                mapOf("bindHost" to listener.bindHost, "port" to listener.port, "ordinal" to listener.ordinal)
+            }
+            return
+        }
+        body["listenPort"] = identity.endpointReport.backendPortForReport()
+    }
+
     private fun parseEffective(jsonBody: String): EffectiveResult {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
         val items =
@@ -1587,7 +1639,7 @@ class BeaconApiClient(
         )
     }
 
-    /** 解析 candidates 200 响应（generatedAtMs + 各 zone 候选）。 */
+    /** 解析 candidates 200 响应（generatedAtMs + 各 zone 候选 + 可选大厅候选）。 */
     private fun parseCandidates(jsonBody: String): SchedCandidates {
         val obj = JsonTree.asObject(codec.decode(jsonBody))
         val zones =
@@ -1598,19 +1650,32 @@ class BeaconApiClient(
                     candidates =
                         JsonTree.asList(zoneObj["candidates"]).map { rawCand ->
                             val c = JsonTree.asObject(rawCand)
-                            CandidateEntry(
-                                serverId = JsonTree.strOr(c, "serverId", ""),
-                                score = JsonTree.intOr(c, "score", 0),
-                                level = JsonTree.strOr(c, "level", ""),
-                                schedulable = JsonTree.boolOr(c, "schedulable", true),
-                                onlineCount = JsonTree.intOr(c, "onlineCount", 0),
-                                maxOnline = JsonTree.intOr(c, "maxOnline", 0),
-                            )
+                            parseCandidate(c)
                         },
                 )
             }
-        return SchedCandidates(generatedAtMs = JsonTree.longOr(obj, "generatedAtMs", 0L), zones = zones)
+        val lobby =
+            (obj["lobby"] as? Map<*, *>)?.let { rawLobby ->
+                val lobbyObj = JsonTree.asObject(rawLobby)
+                LobbyCandidates(
+                    clusterId = JsonTree.longOr(lobbyObj, "clusterId", 0L),
+                    ready = JsonTree.boolOr(lobbyObj, "ready", false),
+                    candidates = JsonTree.asList(lobbyObj["candidates"]).map { raw -> parseCandidate(JsonTree.asObject(raw)) },
+                )
+            }
+        return SchedCandidates(generatedAtMs = JsonTree.longOr(obj, "generatedAtMs", 0L), zones = zones, lobby = lobby)
     }
+
+    private fun parseCandidate(obj: Map<String, Any?>): CandidateEntry =
+        CandidateEntry(
+            serverId = JsonTree.strOr(obj, "serverId", ""),
+            score = JsonTree.intOr(obj, "score", 0),
+            level = JsonTree.strOr(obj, "level", ""),
+            schedulable = JsonTree.boolOr(obj, "schedulable", true),
+            onlineCount = JsonTree.intOr(obj, "onlineCount", 0),
+            maxOnline = JsonTree.intOr(obj, "maxOnline", 0),
+            reasons = JsonTree.asList(obj["reasons"]).map(JsonTree::asString),
+        )
 
     /** 解析 decide 200 响应（chosen 可空、failReason 可空）。 */
     private fun parseDecide(jsonBody: String): SchedDecideOutcome.Decided {
@@ -1776,6 +1841,7 @@ class BeaconApiClient(
     private fun v2Kind(role: String): String = if (role == "bungee") "proxy" else "backend"
 
     companion object {
+        private val FINGERPRINT = Regex("[0-9a-f]{64}")
         private const val DISCOVERY_REQUEST_FAILED = "发现请求失败"
         private const val DISCOVERY_DECODE_FAILED = "发现响应解码失败"
         private const val DISCOVERY_STRUCTURE_INVALID = "发现响应结构无效"
@@ -1804,6 +1870,9 @@ sealed class HeartbeatOutcome {
 
     /** 404：未注册，需重新注册。 */
     object NotRegistered : HeartbeatOutcome()
+
+    /** v1 数据面拒绝，必须回查 v2 权威身份状态。 */
+    object AuthorityRefreshRequired : HeartbeatOutcome()
 
     /** 连接级失败/其它非预期状态。 */
     data class Failed(val reason: String) : HeartbeatOutcome()

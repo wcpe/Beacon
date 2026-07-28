@@ -4,6 +4,7 @@
 // 实体字段以 docs/specs/v2-zone-authority.md §3 与 v2-agent-identity.md §3/§5 为真源。
 
 import type {
+  AgentEndpoint,
   ConflictPeer,
   IdentityStatus,
   RezonePrefill,
@@ -70,6 +71,12 @@ export interface ZoneRow {
   createdAt: string
 }
 
+/** 命名空间内唯一大厅集群；独立于 BC→大区→小区结构树。 */
+export interface LobbyClusterRow {
+  id: number
+  namespaceId: number
+}
+
 export interface ServerRow {
   id: number
   namespaceId: number
@@ -79,6 +86,8 @@ export interface ServerRow {
   bcClusterId: number | null
   /** 仅 backend：归属小区，空 = 未分配 */
   zoneId: number | null
+  /** 仅 backend：归属独立大厅集群，空 = 非大厅成员。 */
+  lobbyClusterNamespaceId?: number | null
   /** 换区工单预填目标小区（backend） */
   pendingZoneId: number | null
   /** 换集群工单预填目标集群（proxy） */
@@ -93,7 +102,7 @@ export interface ServerRow {
 export interface IdentityRow {
   identityId: string
   namespaceId: number
-  serverId: string
+  serverId: string | null
   kind: ServerKind
   status: IdentityStatus
   bootId: string | null
@@ -101,12 +110,17 @@ export interface IdentityRow {
   agentVersion: string | null
   pendingExpiresAt: string | null
   boundAt: string | null
+  bindingSource: string | null
+  migrationState: string | null
+  legacyMigratedAt: string | null
+  bindingFingerprint: string | null
   statusChangedAt: string
   conflictReason: string | null
   /** conflict 状态时的冲突双方明细（详情端点返回） */
   conflictPeers: ConflictPeer[] | null
   /** 换区工单重确认时的预填目标（待确认列表"换区中"提示） */
   rezonePrefill: RezonePrefill | null
+  endpoints: AgentEndpoint[]
 }
 
 export interface ClusterState {
@@ -116,6 +130,7 @@ export interface ClusterState {
   bcClusters: BcClusterRow[]
   regions: RegionRow[]
   zones: ZoneRow[]
+  lobbyClusters: LobbyClusterRow[]
   servers: ServerRow[]
   identities: IdentityRow[]
   /** 全局自增 id 分配器（mock 各表共享 id 空间即可） */
@@ -135,34 +150,60 @@ const DAY = 24 * HOUR
 
 function makeIdentity(
   namespaceId: number,
-  serverId: string,
+  serverId: string | null,
   kind: ServerKind,
   status: IdentityStatus,
   overrides?: Partial<IdentityRow>,
 ): IdentityRow {
+  const identitySeed = serverId ?? 'unassigned'
+  const endpoints = status === 'pending' ? [] : makeEndpoints(kind, identitySeed)
   return {
-    identityId: uuidFrom(`identity:${String(namespaceId)}:${serverId}`),
+    identityId: uuidFrom(`identity:${String(namespaceId)}:${identitySeed}`),
     namespaceId,
     serverId,
     kind,
     status,
-    bootId: uuidFrom(`boot:${serverId}`),
-    lastAddr: `10.30.${String(namespaceId)}.${String((Math.abs(serverId.length * 7) % 200) + 10)}:25565`,
+    bootId: uuidFrom(`boot:${identitySeed}`),
+    lastAddr: endpoints.find((endpoint) => endpoint.active)?.effectiveAddress ?? null,
     agentVersion: AGENT_VERSION,
     pendingExpiresAt: status === 'pending' ? isoOffset(48 * HOUR) : null,
     boundAt: status === 'active' || status === 'disabled' ? isoOffset(-20 * DAY) : null,
+    bindingSource: serverId === null ? 'admin_assigned' : 'legacy_local',
+    migrationState: serverId === null ? 'not_required' : 'completed',
+    legacyMigratedAt: serverId === null ? null : isoOffset(-19 * DAY),
+    bindingFingerprint:
+      status === 'active' || status === 'disabled' ? `sha256:${uuidFrom(`fingerprint:${identitySeed}`).replaceAll('-', '')}` : null,
     statusChangedAt: isoOffset(-6 * HOUR),
     conflictReason: null,
     conflictPeers: null,
     rezonePrefill: null,
+    endpoints,
     ...overrides,
   }
+}
+
+function makeEndpoints(kind: ServerKind, seed: string): AgentEndpoint[] {
+  const detectedHost = `203.0.113.${String((Math.abs(seed.length * 11) % 200) + 10)}`
+  const ports = kind === 'proxy' ? [25565, 25566] : [25565]
+  return ports.map((port, ordinal) => ({
+    endpointKey: kind === 'proxy' ? `listener-${String(ordinal + 1)}` : 'primary',
+    ordinal,
+    reportedBindHost: kind === 'proxy' ? (ordinal === 0 ? '0.0.0.0' : '::') : '0.0.0.0',
+    reportedPort: port,
+    detectedAddress: `${detectedHost}:${String(port)}`,
+    overrideAddress: null,
+    effectiveAddress: `${detectedHost}:${String(port)}`,
+    source: 'detected',
+    active: !(seed === 'proxy-2' && ordinal === 1),
+    lastSeenAt: isoOffset(-5 * 60_000),
+  }))
 }
 
 interface ServerSeed {
   serverId: string
   kind: ServerKind
   zoneId?: number | null
+  lobbyClusterNamespaceId?: number | null
   bcClusterId?: number | null
   isDefaultEntry?: boolean
   draining?: boolean
@@ -178,6 +219,7 @@ function makeServer(state: ClusterState, namespaceId: number, seed: ServerSeed):
     kind: seed.kind,
     bcClusterId: seed.bcClusterId ?? null,
     zoneId: seed.zoneId ?? null,
+    lobbyClusterNamespaceId: seed.lobbyClusterNamespaceId ?? null,
     pendingZoneId: seed.pendingZoneId ?? null,
     pendingBcClusterId: null,
     isDefaultEntry: seed.isDefaultEntry ?? false,
@@ -197,6 +239,7 @@ function emptyState(): ClusterState {
     bcClusters: [],
     regions: [],
     zones: [],
+    lobbyClusters: [],
     servers: [],
     identities: [],
     nextId: 1,
@@ -266,13 +309,14 @@ function buildNormal(): ClusterState {
     { id: 33, regionId: 21, name: 'survival-1', description: '生存专区', createdAt: isoOffset(-65 * DAY) },
     { id: 34, regionId: 22, name: 'test-area-1', description: '测试一区', createdAt: isoOffset(-55 * DAY) },
   )
+  state.lobbyClusters.push({ id: 901, namespaceId: 1 }, { id: 902, namespaceId: 2 })
 
   // prod 域：代理 + 各小区子服（多数在线健康，穿插禁用 / 排空 / 失联样本）
   makeServer(state, 1, { serverId: 'proxy-1', kind: 'proxy', bcClusterId: 10 })
   makeServer(state, 1, { serverId: 'proxy-2', kind: 'proxy', bcClusterId: 10 })
-  makeServer(state, 1, { serverId: 'lobby-1', kind: 'backend', zoneId: 30, isDefaultEntry: true })
-  makeServer(state, 1, { serverId: 'lobby-2', kind: 'backend', zoneId: 30 })
-  makeServer(state, 1, { serverId: 'game-1', kind: 'backend', zoneId: 30 })
+  makeServer(state, 1, { serverId: 'lobby-1', kind: 'backend', lobbyClusterNamespaceId: 1 })
+  makeServer(state, 1, { serverId: 'lobby-2', kind: 'backend', lobbyClusterNamespaceId: 1, draining: true })
+  makeServer(state, 1, { serverId: 'game-1', kind: 'backend', zoneId: 30, isDefaultEntry: true })
   makeServer(state, 1, { serverId: 'game-2', kind: 'backend', zoneId: 30 })
   makeServer(state, 1, { serverId: 'game-3', kind: 'backend', zoneId: 31 })
   makeServer(state, 1, { serverId: 'game-4', kind: 'backend', zoneId: 31, online: false })
@@ -289,7 +333,7 @@ function buildNormal(): ClusterState {
 
   // test 域
   makeServer(state, 2, { serverId: 'test-proxy-1', kind: 'proxy', bcClusterId: 11 })
-  makeServer(state, 2, { serverId: 'test-lobby-1', kind: 'backend', zoneId: 34, isDefaultEntry: true })
+  makeServer(state, 2, { serverId: 'test-lobby-1', kind: 'backend', lobbyClusterNamespaceId: 2 })
   makeServer(state, 2, { serverId: 'test-game-1', kind: 'backend', zoneId: 34 })
 
   // 已有 server 行的服务器 → active 身份（mall-1 为 disabled、game-6 为 conflict 样本）
@@ -339,6 +383,10 @@ function buildNormal(): ClusterState {
     makeIdentity(1, 'game-old-1', 'backend', 'expired', { statusChangedAt: isoOffset(-4 * DAY) }),
     makeIdentity(1, 'retired-1', 'backend', 'unbound', { statusChangedAt: isoOffset(-15 * DAY) }),
     makeIdentity(2, 'test-game-new', 'backend', 'pending', { statusChangedAt: isoOffset(-40 * 60_000) }),
+    makeIdentity(1, null, 'backend', 'pending', {
+      identityId: uuidFrom('identity:1:pending-unassigned'),
+      statusChangedAt: isoOffset(-20 * 60_000),
+    }),
   )
 
   return state
@@ -503,5 +551,8 @@ export function namespaceOfZone(state: ClusterState, zoneId: number): number | n
 
 /** server 是否已分配（backend 看 zoneId，proxy 看 bcClusterId） */
 export function isAssigned(server: ServerRow): boolean {
-  return server.kind === 'backend' ? server.zoneId !== null : server.bcClusterId !== null
+  return server.kind === 'backend'
+    ? server.zoneId !== null ||
+        (server.lobbyClusterNamespaceId !== undefined && server.lobbyClusterNamespaceId !== null)
+    : server.bcClusterId !== null
 }

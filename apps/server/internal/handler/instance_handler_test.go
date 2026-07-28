@@ -45,7 +45,7 @@ func TestToInstanceViewHealthReason(t *testing.T) {
 				Namespace: "prod", ServerID: "a", Status: c.status,
 				LastHeartbeat: now.Add(-c.hbAgo),
 			}
-			v := toInstanceView(inst, map[string]bool{}, h.renderCtx())
+			v := toInstanceView(inst, map[string]bool{}, map[string]bool{}, h.renderCtx())
 			if v.LastHeartbeatAgeSec != c.wantAgeSec {
 				t.Fatalf("lastHeartbeatAgeSec = %d，期望 %d", v.LastHeartbeatAgeSec, c.wantAgeSec)
 			}
@@ -64,7 +64,7 @@ func TestToInstanceViewAgeNeverNegative(t *testing.T) {
 		Namespace: "prod", ServerID: "a", Status: runtime.StatusOnline,
 		LastHeartbeat: now.Add(3 * time.Second), // 未来时刻
 	}
-	v := toInstanceView(inst, map[string]bool{}, h.renderCtx())
+	v := toInstanceView(inst, map[string]bool{}, map[string]bool{}, h.renderCtx())
 	if v.LastHeartbeatAgeSec != 0 {
 		t.Fatalf("时钟回拨时 age 应归零，实际 %d", v.LastHeartbeatAgeSec)
 	}

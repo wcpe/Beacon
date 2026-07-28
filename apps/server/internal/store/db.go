@@ -79,8 +79,10 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.BCCluster{},
 		&model.Region{},
 		&model.Zone{},
+		&model.LobbyCluster{},
 		&model.Server{},
 		&model.AgentIdentity{},
+		&model.AgentEndpoint{},
 		&model.HealthWeightsRev{},
 		// 热冷归档任务表（FR-151，见 ADR-0066）：落热库、控制面事实，不随数据归档
 		&model.ArchiveJob{},
@@ -104,6 +106,12 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
+	if err := backfillLobbyClusters(db); err != nil {
+		return nil, err
+	}
+	if err := backfillLegacyIdentityBindingSources(db); err != nil {
+		return nil, err
+	}
 
 	// 告警处理状态存量回填（FR-157，见 ADR-0064）：加列前的 append-only 历史行属过去已闭事件，
 	// 回填为终态 resolved，避免把当前健康 activeAlerts 撑爆。幂等一次性——只命中空串 / NULL 的旧行，
@@ -112,6 +120,36 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// backfillLobbyClusters 为升级前已有的 namespace 补建唯一空大厅集群。
+// 不推断成员；重复启动仅命中已有行，保持幂等。
+func backfillLobbyClusters(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		var namespaceIDs []uint
+		if err := tx.Model(&model.Namespace{}).Pluck("id", &namespaceIDs).Error; err != nil {
+			return fmt.Errorf("查询 namespace 以回填大厅集群失败: %w", err)
+		}
+		for _, namespaceID := range namespaceIDs {
+			cluster := model.LobbyCluster{NamespaceID: namespaceID}
+			if err := tx.Where("namespace_id = ?", namespaceID).FirstOrCreate(&cluster).Error; err != nil {
+				return fmt.Errorf("回填 namespace %d 的大厅集群失败: %w", namespaceID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// backfillLegacyIdentityBindingSources 为升级前没有来源字段的身份绑定补上 legacy_local。
+// 只命中空值，重复启动不覆盖新身份的 admin_assigned 来源。
+func backfillLegacyIdentityBindingSources(db *gorm.DB) error {
+	res := db.Model(&model.AgentIdentity{}).
+		Where("binding_source = ? OR binding_source IS NULL", "").
+		Update("binding_source", model.AgentIdentityBindingSourceLegacyLocal)
+	if res.Error != nil {
+		return fmt.Errorf("回填存量身份绑定来源失败: %w", res.Error)
+	}
+	return nil
 }
 
 // backfillLegacyAlertStatus 把加列前的存量告警历史行（status 为空串 / NULL）回填为终态 resolved。

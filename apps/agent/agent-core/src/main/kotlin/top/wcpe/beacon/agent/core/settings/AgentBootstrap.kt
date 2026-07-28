@@ -77,20 +77,17 @@ object AgentBootstrap {
         role: String,
         agentVersion: String = "",
     ): AgentIdentity {
-        val metadata = LinkedHashMap<String, String>()
-        for (key in reader.keys("identity.metadata")) {
-            metadata[key] = reader.string("identity.metadata.$key", "")
-        }
         return AgentIdentity(
-            namespace = reader.string("identity.namespace", ""),
-            serverId = reader.string("identity.server-id", ""),
+            // namespace / serverId 只接受控制面确认；旧键仅供迁移兼容，不能覆盖运行期绑定。
+            namespace = "",
+            serverId = "",
             role = role,
-            groupHint = reader.string("identity.group-hint", ""),
-            address = reader.string("identity.address", ""),
-            version = reader.string("identity.version", ""),
-            capacity = reader.int("identity.capacity", 0),
-            weight = reader.int("identity.weight", 0),
-            metadata = metadata,
+            groupHint = "",
+            address = "",
+            version = "",
+            capacity = 0,
+            weight = 0,
+            metadata = emptyMap(),
             agentVersion = agentVersion,
         )
     }

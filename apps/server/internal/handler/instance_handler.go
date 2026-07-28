@@ -75,6 +75,8 @@ type instanceView struct {
 	Backends []string `json:"backends"`
 	// ZoneDefaultEntry 标记该 bukkit 子服是否被指定为其小区的默认入口（FR-48）；BC agent 据此设 BungeeCord 默认/fallback 服。
 	ZoneDefaultEntry bool `json:"zoneDefaultEntry"`
+	// LobbyClusterMember 标记该受管实例是否属于 namespace 大厅集群；仅用于 BC 目录投影。
+	LobbyClusterMember bool `json:"lobbyClusterMember"`
 	// Proxy 是 bc（bungee 代理）专属负载指标（FR-34，仅 bc 非零、bukkit 恒零）；供代理服管理页逐台展示底层参数（FR-52）。
 	// 这是控制面已持有的内存事实补暴露在逐实例视图上（此前仅在 metrics/summary 聚合暴露），加法且向后兼容。
 	Proxy        proxyMetricsView `json:"proxy"`
@@ -124,7 +126,7 @@ func newHealthRenderCtx(now time.Time, health healthThresholds) healthRenderCtx 
 
 // toInstanceView 渲染单实例视图；defaultEntries 为该环境的默认入口 serverId 集合（命中即标 zoneDefaultEntry，FR-48）。
 // hc 提供渲染时刻与阈值，按之算 lastHeartbeatAgeSec / healthReason（FR-81，纯内存派生不落 DB）。
-func toInstanceView(i *runtime.Instance, defaultEntries map[string]bool, hc healthRenderCtx) instanceView {
+func toInstanceView(i *runtime.Instance, defaultEntries, lobbyMembers map[string]bool, hc healthRenderCtx) instanceView {
 	age := hc.now.Sub(i.LastHeartbeat)
 	if age < 0 {
 		age = 0 // 时钟回拨防御：不出负秒数
@@ -138,15 +140,15 @@ func toInstanceView(i *runtime.Instance, defaultEntries map[string]bool, hc heal
 		LastHeartbeatAgeSec: int(age.Seconds()),
 		HealthReason:        runtime.HealthReason(age, hc.degradedAfter, hc.ttl, hc.offlineGrace, i.Status),
 		AppliedMD5:          i.AppliedMD5, PlayerCount: i.PlayerCount,
-		TPS: i.TPS, Backends: i.Backends, ZoneDefaultEntry: defaultEntries[i.ServerID],
+		TPS: i.TPS, Backends: i.Backends, ZoneDefaultEntry: defaultEntries[i.ServerID], LobbyClusterMember: lobbyMembers[i.ServerID],
 		Proxy: toProxyMetricsView(i.Proxy), RegisteredAt: i.RegisteredAt,
 	}
 }
 
-func toInstanceViews(insts []*runtime.Instance, defaultEntries map[string]bool, hc healthRenderCtx) []instanceView {
+func toInstanceViews(insts []*runtime.Instance, defaultEntries, lobbyMembers map[string]bool, hc healthRenderCtx) []instanceView {
 	views := make([]instanceView, 0, len(insts))
 	for _, i := range insts {
-		views = append(views, toInstanceView(i, defaultEntries, hc))
+		views = append(views, toInstanceView(i, defaultEntries, lobbyMembers, hc))
 	}
 	return views
 }
@@ -164,7 +166,7 @@ func (h *InstanceHandler) List(w http.ResponseWriter, r *http.Request) {
 		Namespace: ns, Group: q.Get("group"), Zone: q.Get("zone"),
 		Role: q.Get("role"), Status: q.Get("status"),
 	})
-	render.WriteJSON(w, http.StatusOK, map[string]any{"items": toInstanceViews(insts, h.svc.DefaultEntrySet(ns), h.renderCtx())})
+	render.WriteJSON(w, http.StatusOK, map[string]any{"items": toInstanceViews(insts, h.svc.DefaultEntrySet(ns), h.svc.LobbyClusterMemberSet(ns), h.renderCtx())})
 }
 
 // Get 处理 GET /admin/v1/instances/{serverId}?namespace=。
@@ -180,7 +182,7 @@ func (h *InstanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, toInstanceView(inst, h.svc.DefaultEntrySet(ns), h.renderCtx()))
+	render.WriteJSON(w, http.StatusOK, toInstanceView(inst, h.svc.DefaultEntrySet(ns), h.svc.LobbyClusterMemberSet(ns), h.renderCtx()))
 }
 
 // offlineRequest 是主动下线请求体（reason 可选自由文本，FR-49）。

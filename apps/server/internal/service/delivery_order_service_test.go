@@ -123,7 +123,7 @@ func seedDeliveryServer(t *testing.T, db *gorm.DB, nsID uint, serverID, kind str
 	mustCreate(t, db, &srv)
 	if identityStatus != "" {
 		mustCreate(t, db, &model.AgentIdentity{
-			IdentityID: "idn-" + serverID, NamespaceID: nsID, ServerID: serverID,
+			IdentityID: "idn-" + serverID, NamespaceID: nsID, ServerID: model.NullableServerID(serverID),
 			Kind: kind, Status: identityStatus, StatusChangedAt: time.Now().UTC(),
 		})
 	}

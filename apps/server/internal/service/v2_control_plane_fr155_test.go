@@ -56,7 +56,7 @@ func (f fr155Fixture) approveServer(t *testing.T, identityID, serverID, kind str
 	}); err != nil {
 		t.Fatalf("注册 %s 失败: %v", serverID, err)
 	}
-	if _, err := f.svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := f.svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin", ServerID: serverID}); err != nil {
 		t.Fatalf("确认 %s 失败: %v", serverID, err)
 	}
 	var server model.Server
@@ -136,7 +136,7 @@ func TestV2RezoneServersInitAndReapprove(t *testing.T) {
 	}
 
 	// 重确认：缺省取预填目标落区
-	if _, err := f.svc.ApproveAgentIdentity(fr155IdentityA, ApproveAgentIdentityParams{Operator: "admin"}); err != nil {
+	if _, err := f.svc.ApproveAgentIdentity(fr155IdentityA, ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1"}); err != nil {
 		t.Fatalf("换区重确认应成功: %v", err)
 	}
 	server = f.reloadServer(t, rowID)
@@ -270,7 +270,7 @@ func TestV2ApproveExplicitNullDuringRezoneKeepsUnassigned(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("发起换区失败: %v", err)
 	}
-	if _, err := f.svc.ApproveAgentIdentity(fr155IdentityA, ApproveAgentIdentityParams{Operator: "admin", TargetExplicitNull: true}); err != nil {
+	if _, err := f.svc.ApproveAgentIdentity(fr155IdentityA, ApproveAgentIdentityParams{Operator: "admin", ServerID: "lobby-1", TargetExplicitNull: true}); err != nil {
 		t.Fatalf("换区确认（暂不分配）应成功: %v", err)
 	}
 	server := f.reloadServer(t, rowID)
@@ -291,7 +291,7 @@ func TestV2ApproveExplicitTargetDuringRezoneOverridesPrefill(t *testing.T) {
 	}
 	target := f.zoneA.ID
 	if _, err := f.svc.ApproveAgentIdentity(fr155IdentityA, ApproveAgentIdentityParams{
-		Operator: "admin", TargetKind: model.AssignmentTargetZone, TargetID: &target,
+		Operator: "admin", ServerID: "lobby-1", TargetKind: model.AssignmentTargetZone, TargetID: &target,
 	}); err != nil {
 		t.Fatalf("换区确认（显式目标）应成功: %v", err)
 	}

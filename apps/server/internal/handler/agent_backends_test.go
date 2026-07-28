@@ -66,7 +66,7 @@ func TestInstanceViewOutputsBackends(t *testing.T) {
 	view := toInstanceView(&runtime.Instance{
 		Namespace: "prod", ServerID: "bc-1", Role: "bungee",
 		Backends: []string{"lobby-1", "lobby-2"},
-	}, nil, zeroHealthCtx)
+	}, nil, nil, zeroHealthCtx)
 	out, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
@@ -84,7 +84,7 @@ func TestInstanceViewOutputsProxyMetrics(t *testing.T) {
 			OnlineConnections: 312, ThreadCount: 48, UptimeMs: 3_600_000,
 			BackendUp: 3, BackendTotal: 4, BackendAvgLatencyMs: 12.5,
 		},
-	}, nil, zeroHealthCtx)
+	}, nil, nil, zeroHealthCtx)
 	out, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
@@ -101,7 +101,7 @@ func TestInstanceViewOutputsProxyMetrics(t *testing.T) {
 
 // TestInstanceViewBukkitProxyZero 验证 bukkit 实例视图 proxy 各字段恒为零值（仅 bc 非零）。
 func TestInstanceViewBukkitProxyZero(t *testing.T) {
-	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil, zeroHealthCtx)
+	view := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil, nil, zeroHealthCtx)
 	if view.Proxy.OnlineConnections != 0 || view.Proxy.ThreadCount != 0 || view.Proxy.UptimeMs != 0 ||
 		view.Proxy.BackendUp != 0 || view.Proxy.BackendTotal != 0 || view.Proxy.BackendAvgLatencyMs != 0 {
 		t.Fatalf("bukkit 实例 proxy 应恒为零值，实际 %+v", view.Proxy)
@@ -112,12 +112,12 @@ func TestInstanceViewBukkitProxyZero(t *testing.T) {
 func TestInstanceViewMarksZoneDefaultEntry(t *testing.T) {
 	defaults := map[string]bool{"lobby-1": true}
 	// 命中默认入口集合的 bukkit → true
-	hit := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, defaults, zeroHealthCtx)
+	hit := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, defaults, nil, zeroHealthCtx)
 	if !hit.ZoneDefaultEntry {
 		t.Fatalf("命中默认入口集合的实例应标 zoneDefaultEntry=true")
 	}
 	// 未命中 → false
-	miss := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-2", Role: "bukkit"}, defaults, zeroHealthCtx)
+	miss := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-2", Role: "bukkit"}, defaults, nil, zeroHealthCtx)
 	if miss.ZoneDefaultEntry {
 		t.Fatalf("未命中默认入口集合的实例应标 zoneDefaultEntry=false")
 	}
@@ -128,5 +128,18 @@ func TestInstanceViewMarksZoneDefaultEntry(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"zoneDefaultEntry":true`) {
 		t.Fatalf("实例视图应输出 zoneDefaultEntry，实际 %s", out)
+	}
+}
+
+// TestInstanceViewMarksLobbyClusterMember 验证发现目录投影大厅成员标记，不改变既有小区默认入口语义。
+func TestInstanceViewMarksLobbyClusterMember(t *testing.T) {
+	members := map[string]bool{"lobby-1": true}
+	hit := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "lobby-1", Role: "bukkit"}, nil, members, zeroHealthCtx)
+	if !hit.LobbyClusterMember {
+		t.Fatal("大厅成员应输出 lobbyClusterMember=true")
+	}
+	miss := toInstanceView(&runtime.Instance{Namespace: "prod", ServerID: "zone-1", Role: "bukkit"}, nil, members, zeroHealthCtx)
+	if miss.LobbyClusterMember {
+		t.Fatal("非大厅成员不应被标记为大厅成员")
 	}
 }

@@ -1,13 +1,16 @@
 package top.wcpe.beacon.agent.bungee
 
 import net.md_5.bungee.api.ProxyServer
+import net.md_5.bungee.api.config.ServerInfo
 import top.wcpe.beacon.agent.api.ServiceInstance
 import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectory
 import java.net.InetSocketAddress
+import java.util.concurrent.ConcurrentHashMap
 
 /** BungeeCord ServerInfo 目录实现，只管理 Beacon 创建过的条目。 */
 class BungeeServerDirectory : ProxyServerDirectory {
-    private val managed: MutableSet<String> = linkedSetOf()
+    private val managed: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val replaced: MutableMap<String, ServerInfo> = ConcurrentHashMap()
 
     override fun hasServer(serverId: String): Boolean {
         return ProxyServer.getInstance().servers.containsKey(serverId)
@@ -36,6 +39,7 @@ class BungeeServerDirectory : ProxyServerDirectory {
                 "Beacon 管理子服 $id",
                 false,
             )
+        ProxyServer.getInstance().servers[id]?.let { replaced.putIfAbsent(id, it) }
         ProxyServer.getInstance().servers[id] = info
         managed.add(id)
         return true
@@ -43,24 +47,18 @@ class BungeeServerDirectory : ProxyServerDirectory {
 
     override fun removeManaged(serverId: String) {
         if (!managed.remove(serverId)) return
-        ProxyServer.getInstance().servers.remove(serverId)
+        restoreServer(serverId)
     }
 
-    /**
-     * 把 [serverId] 设为 BungeeCord 默认/fallback 服（FR-48）：置于每个监听器 server-priority 列表首位。
-     *
-     * BungeeCord 的默认/fallback 服由各监听器 `ListenerInfo.getServerPriority()` 列表决定——玩家加入按列表
-     * 顺序挑首个可达服。这里用公开 API、不反射、不碰非公开实现 jar：从每个监听器拿到可变 priority 列表，
-     * 先移除同名条目再插到首位（幂等去重），不删运维原有的其它 priority 条目。serverId 须已在 servers 中
-     * （由 upsertManaged 注入）才会真正可达。
-     */
-    override fun setDefaultServer(serverId: String) {
-        for (listener in ProxyServer.getInstance().config.listeners) {
-            val priorities = listener.serverPriority
-            // 去重：先移除已有同名条目（避免重复添加），再置首位。
-            priorities.remove(serverId)
-            priorities.add(0, serverId)
-        }
+    override fun resetManaged() {
+        managed.toList().forEach(::restoreServer)
+        managed.clear()
+    }
+
+    /** 仅返回本轮 Beacon 接管的后端，避免首次大厅路由落到同名手工配置。 */
+    fun managedServerInfo(serverId: String): ServerInfo? {
+        if (!managed.contains(serverId)) return null
+        return ProxyServer.getInstance().servers[serverId]
     }
 
     /**
@@ -70,6 +68,15 @@ class BungeeServerDirectory : ProxyServerDirectory {
      */
     override fun backendServerIds(): Set<String> {
         return ProxyServer.getInstance().servers.keys.toSet()
+    }
+
+    private fun restoreServer(serverId: String) {
+        val original = replaced.remove(serverId)
+        if (original == null) {
+            ProxyServer.getInstance().servers.remove(serverId)
+        } else {
+            ProxyServer.getInstance().servers[serverId] = original
+        }
     }
 
     private fun parseAddress(raw: String): InetSocketAddress? {

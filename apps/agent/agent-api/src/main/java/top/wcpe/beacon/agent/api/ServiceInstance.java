@@ -18,15 +18,23 @@ public final class ServiceInstance {
     private final int capacity;
     private final int weight;
     private final boolean zoneDefaultEntry;
+    private final boolean lobbyClusterMember;
 
     public ServiceInstance(String serverId, String role, String group, String zone, String address,
                            String version, String status, int playerCount, int capacity, int weight) {
-        this(serverId, role, group, zone, address, version, status, playerCount, capacity, weight, false);
+        this(serverId, role, group, zone, address, version, status, playerCount, capacity, weight, false, false);
     }
 
     public ServiceInstance(String serverId, String role, String group, String zone, String address,
                            String version, String status, int playerCount, int capacity, int weight,
                            boolean zoneDefaultEntry) {
+        this(serverId, role, group, zone, address, version, status, playerCount, capacity, weight,
+                zoneDefaultEntry, false);
+    }
+
+    public ServiceInstance(String serverId, String role, String group, String zone, String address,
+                           String version, String status, int playerCount, int capacity, int weight,
+                           boolean zoneDefaultEntry, boolean lobbyClusterMember) {
         this.serverId = serverId;
         this.role = role;
         this.group = group;
@@ -38,6 +46,7 @@ public final class ServiceInstance {
         this.capacity = capacity;
         this.weight = weight;
         this.zoneDefaultEntry = zoneDefaultEntry;
+        this.lobbyClusterMember = lobbyClusterMember;
     }
 
     public String serverId() {
@@ -90,5 +99,15 @@ public final class ServiceInstance {
      */
     public boolean zoneDefaultEntry() {
         return zoneDefaultEntry;
+    }
+
+    /**
+     * 该子服是否属于 namespace 全局 LobbyCluster。
+     *
+     * <p>这是控制面发现快照的权威归属事实，与“当前可调度大厅候选”不同；后者受健康、容量和排水状态影响。
+     * 旧控制面不返回该字段时解析为 false（向后兼容）。</p>
+     */
+    public boolean lobbyClusterMember() {
+        return lobbyClusterMember;
     }
 }

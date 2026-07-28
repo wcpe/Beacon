@@ -126,6 +126,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	// —— /admin/v2 控制面：各域写端点一律在 service 事务内自记专项审计，登记于此使兜底跳过、避免双记 ——
 	// 环境创建（namespace.create）
 	"POST /admin/v2/namespaces": {},
+	// BC 受管目录立即重同步（namespace / instance.bc-directory-resync）
+	"POST /admin/v2/namespaces/{id}/bc-directory-resyncs": {},
 	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）
 	"POST /admin/v2/namespace-trusts":             {},
 	"POST /admin/v2/namespace-trusts/{id}/revoke": {},
@@ -142,6 +144,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/agent-identities/{identityId}/enable":           {},
 	"POST /admin/v2/agent-identities/{identityId}/unbind":           {},
 	"POST /admin/v2/agent-identities/{identityId}/resolve-conflict": {},
+	// endpoint 覆盖（identity.endpoint_override_changed）
+	"PUT /admin/v2/agent-identities/{identityId}/endpoints/{endpointKey}": {},
 	// 区服权威节点创建 / 删除（bc-cluster.create/delete、region.create/delete、zone.create/delete）
 	"POST /admin/v2/bc-clusters":        {},
 	"DELETE /admin/v2/bc-clusters/{id}": {},
@@ -150,10 +154,13 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/zones":              {},
 	"DELETE /admin/v2/zones/{id}":       {},
 	// 区服归属编排（server-assignment.assign / rezone、server draining / default-entry）
-	"POST /admin/v2/server-assignments":               {},
-	"POST /admin/v2/server-rezones":                   {},
-	"PUT /admin/v2/servers/{serverRef}/draining":      {},
-	"PUT /admin/v2/servers/{serverRef}/default-entry": {},
+	"POST /admin/v2/server-assignments":                {},
+	"POST /admin/v2/server-rezones":                    {},
+	"PUT /admin/v2/servers/{serverRef}/draining":       {},
+	"PUT /admin/v2/servers/{serverRef}/default-entry":  {},
+	"POST /admin/v2/servers/{id}/bc-directory-resyncs": {},
+	// 大厅成员迁移（lobby_cluster.member.assign / move_in / move_out / unassign）
+	"POST /admin/v2/server-placement-transfers": {},
 	// 健康权重版本化配置全量替换（health-weights.update，service 在事务内自记专项审计）
 	"PUT /admin/v2/settings/health-weights": {},
 	// 跨服消息 payload 受控查看（message.payload.view，POST 属写方法，service 先审计后返回，detail 不含 payload）

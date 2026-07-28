@@ -173,6 +173,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 			r.Get("/namespaces", h.V2.ListNamespaces)
 			r.Post("/namespaces", h.V2.CreateNamespace)
+			r.Post("/namespaces/{id}/bc-directory-resyncs", h.V2.NamespaceDirectoryResync)
 			r.Get("/namespace-trusts", h.V2.ListNamespaceTrusts)
 			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
 			r.Post("/namespace-trusts/{id}/revoke", h.V2.RevokeNamespaceTrust)
@@ -188,6 +189,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Put("/envs/{id}/namespaces", h.Env.SetNamespaces)
 			r.Get("/agent-identities", h.V2.ListAgentIdentities)
 			r.Get("/agent-identities/{identityId}", h.V2.GetAgentIdentity)
+			r.With(requireFullRole).Put("/agent-identities/{identityId}/endpoints/{endpointKey}", h.V2.SetAgentEndpointOverride)
 			r.Post("/agent-identities/{identityId}/approve", h.V2.ApproveAgentIdentity)
 			r.Post("/agent-identities/{identityId}/reject", h.V2.RejectAgentIdentity)
 			r.Post("/agent-identities/{identityId}/allow-reapply", h.V2.AllowAgentIdentityReapply)
@@ -219,6 +221,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 区服结构树只读聚合（FR-155）
 			r.Get("/zone-tree", h.V2.ZoneTree)
 			r.Get("/servers", h.V2.ListServers)
+			r.Post("/servers/{id}/bc-directory-resyncs", h.V2.ServerDirectoryResync)
+			// 大厅集群独立于大区 / 小区；成员迁移由专用端点原子完成。
+			r.Get("/lobby-clusters", h.V2.ListLobbyClusters)
+			r.Get("/lobby-clusters/{id}", h.V2.GetLobbyCluster)
+			r.Post("/server-placement-transfers", h.V2.TransferServerPlacement)
 			r.Post("/server-assignments", h.V2.AssignServers)
 			// 换区工单（FR-155）：已分配 server 改归属，解绑重确认编排
 			r.Post("/server-rezones", h.V2.RezoneServers)

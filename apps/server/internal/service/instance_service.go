@@ -45,6 +45,10 @@ type RegisterResult struct {
 // 由 ZoneService 注入（避免 InstanceService / handler 直接碰默认入口仓库，守分层单向）。
 type DefaultEntryResolver func(ns string) (map[string]bool, error)
 
+// LobbyClusterMemberResolver 解析某 namespace 下大厅成员的 serverId 集合。
+// 由控制面 DB 权威投影，发现响应不把归属复制进运行态注册表。
+type LobbyClusterMemberResolver func(ns string) (map[string]bool, error)
+
 // InstanceService 编排实例注册/心跳/上报/下线/发现（操作内存注册表 + 解析归属 + 审计）。
 // 主动下线拒绝态（FR-49）落 DB（offlineRepo），与内存注册/健康真源解耦：注册前查拒绝表、下线/取消下线在事务内写库。
 type InstanceService struct {
@@ -57,6 +61,7 @@ type InstanceService struct {
 	ttl                  time.Duration
 	notifier             *ChangeNotifier      // 可选，注册/下线后唤醒拓扑 watch（FR-29）
 	defaultEntryResolver DefaultEntryResolver // 可选，发现/实例视图标 zoneDefaultEntry（FR-48）；nil 时恒空集
+	lobbyMemberResolver  LobbyClusterMemberResolver
 }
 
 // NewInstanceService 构造服务。
@@ -77,6 +82,11 @@ func (s *InstanceService) SetDefaultEntryResolver(r DefaultEntryResolver) {
 	s.defaultEntryResolver = r
 }
 
+// SetLobbyClusterMemberResolver 注入大厅成员解析器（启动时装配；未注入则大厅标记恒为 false）。
+func (s *InstanceService) SetLobbyClusterMemberResolver(r LobbyClusterMemberResolver) {
+	s.lobbyMemberResolver = r
+}
+
 // DefaultEntrySet 返回某环境下被指定为小区默认入口的 serverId 集合（FR-48）。
 // 供 handler 渲染实例/发现视图标 zoneDefaultEntry；未注入解析器或解析出错时返回空集（不阻断发现）。
 func (s *InstanceService) DefaultEntrySet(ns string) map[string]bool {
@@ -86,6 +96,19 @@ func (s *InstanceService) DefaultEntrySet(ns string) map[string]bool {
 	set, err := s.defaultEntryResolver(ns)
 	if err != nil {
 		slog.Warn("解析小区默认入口集合失败，本次发现不标默认入口", "namespace", ns, "错误", err)
+		return map[string]bool{}
+	}
+	return set
+}
+
+// LobbyClusterMemberSet 返回某 namespace 下大厅成员的 serverId 集合。
+func (s *InstanceService) LobbyClusterMemberSet(ns string) map[string]bool {
+	if s.lobbyMemberResolver == nil {
+		return map[string]bool{}
+	}
+	set, err := s.lobbyMemberResolver(ns)
+	if err != nil {
+		slog.Warn("解析大厅成员集合失败，本次发现不标大厅成员", "namespace", ns, "错误", err)
 		return map[string]bool{}
 	}
 	return set

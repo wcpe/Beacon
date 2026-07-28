@@ -196,6 +196,7 @@ func run() error {
 	}
 	nsHandler := handler.NewNamespaceHandler(nsService)
 	v2ControlPlaneService := service.NewV2ControlPlaneService(db)
+	v2ControlPlaneService.SetRuntimeRegistry(registry)
 	v2ControlPlaneHandler := handler.NewV2ControlPlaneHandler(v2ControlPlaneService)
 
 	// env 展示维度（FR-178，见 v2-zone-authority.md §3.4/§4.1）：env 增删改 + 整体替换 env→namespace 映射。
@@ -237,6 +238,7 @@ func run() error {
 	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：真源为 v2 server.is_default_entry（ADR-0067），
 	// 管理台分配勾选 / toggle 的默认入口经此下发给 BC fallback 注入。
 	instanceService.SetDefaultEntryResolver(v2ControlPlaneService.DefaultEntryServerIDs)
+	instanceService.SetLobbyClusterMemberResolver(v2ControlPlaneService.LobbyClusterMemberServerIDs)
 
 	// 负载指标看板（FR-32，ADR-0023）：metric_sample 仓库 + 服务（聚合实时读注册表、趋势查库降采样）
 	metricRepo := repository.NewMetricSampleRepository(db)
@@ -283,6 +285,7 @@ func run() error {
 	overrideEffectiveService := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
 	notifier.SetMetrics(metricsSet)
+	v2ControlPlaneService.SetChangeNotifier(notifier)
 	configService.SetNotifier(notifier)
 	configService.SetMetrics(metricsSet)
 	// 灰度发布 / promote / abort 提交后按受影响 serverId 唤醒（复用配置通道 Hub，FR-9）
@@ -329,6 +332,8 @@ func run() error {
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
+	v2ControlPlaneService.SetDirectoryResyncCommandPort(commandRepo, notifier)
+	commandHandler.SetReportAuthenticator(v2ControlPlaneService)
 
 	// 只读文件浏览（FR-110，见 ADR-0049 决策 9）：复用同一 commandService（fs-browse 类型）经命令生命周期代理。
 	// 注入 browseHub 供 admin 请求注册结果 waiter、agent 回传后唤醒；命令提交后经 notifier 唤醒目标 agent。
@@ -393,6 +398,7 @@ func run() error {
 	// 整批替换全实例视图；每 6 轮（30s）把全量视图转快照行经异步写入通道落 health_snapshot 日表
 	// （flusher 注册必须先于 asyncDailyWriter.Start）。计算轮 goroutine 在下方随关停信号统一启动。
 	healthViewStore := healthview.NewStore()
+	v2ControlPlaneService.SetHealthViews(healthViewStore)
 	healthSnapshotRepo := repository.NewHealthSnapshotRepository(db)
 	service.RegisterFlusher(asyncDailyWriter, service.RouteKindHealthSnapshot, healthSnapshotRepo.FlushDaily)
 	healthComputeService := service.NewHealthComputeService(repository.NewHealthFactsRepository(db),

@@ -26,6 +26,7 @@ export const cluster = {
       filterZone: '小区',
       assignedYes: '已分配',
       assignedNo: '未分配',
+      lobbyMember: '大厅成员',
       // 无活跃绑定的残留 server 行（试验代理/已解绑），与正常在线资产区分
       residualBadge: '遗留资产',
       residualHint:

@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.scheduling
 
 import top.wcpe.beacon.agent.core.client.CandidateEntry
+import top.wcpe.beacon.agent.core.client.LobbyCandidates
 import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.filetree.AtomicFileWriter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
@@ -33,6 +34,14 @@ class SchedulingSnapshotStore(
                     "candidates" to candidates.map { candidateTree(it) },
                 )
             }
+        snapshot.lobby?.let { lobby ->
+            tree["lobby"] =
+                linkedMapOf<String, Any?>(
+                    "clusterId" to lobby.clusterId,
+                    "ready" to lobby.ready,
+                    "candidates" to lobby.candidates.map { candidateTree(it) },
+                )
+        }
         AtomicFileWriter.write(file, codec.encode(tree).toByteArray(StandardCharsets.UTF_8))
     }
 
@@ -52,10 +61,20 @@ class SchedulingSnapshotStore(
                 }
                 zones[zone] = JsonTree.asList(zoneObj["candidates"]).map { parseCandidate(it) }
             }
+            val lobby =
+                (obj["lobby"] as? Map<*, *>)?.let { rawLobby ->
+                    val lobbyObj = JsonTree.asObject(rawLobby)
+                    LobbyCandidates(
+                        clusterId = JsonTree.longOr(lobbyObj, "clusterId", 0L),
+                        ready = JsonTree.boolOr(lobbyObj, "ready", false),
+                        candidates = JsonTree.asList(lobbyObj["candidates"]).map { parseCandidate(it) },
+                    )
+                }
             CandidateSnapshot(
                 generatedAtMs = JsonTree.longOr(obj, "generatedAtMs", 0L),
                 savedAtMs = JsonTree.longOr(obj, "savedAt", 0L),
                 zones = zones,
+                lobby = lobby,
             )
         } catch (e: Exception) {
             null
@@ -70,6 +89,7 @@ class SchedulingSnapshotStore(
             "schedulable" to entry.schedulable,
             "onlineCount" to entry.onlineCount,
             "maxOnline" to entry.maxOnline,
+            "reasons" to entry.reasons,
         )
 
     private fun parseCandidate(raw: Any?): CandidateEntry {
@@ -81,6 +101,7 @@ class SchedulingSnapshotStore(
             schedulable = JsonTree.boolOr(obj, "schedulable", true),
             onlineCount = JsonTree.intOr(obj, "onlineCount", 0),
             maxOnline = JsonTree.intOr(obj, "maxOnline", 0),
+            reasons = JsonTree.asList(obj["reasons"]).map(JsonTree::asString),
         )
     }
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/merge"
@@ -19,13 +20,24 @@ import (
 // CommandHandler 处理 server→agent 命令（FR-39，见 ADR-0027）：
 // admin 触发反向抓取 + agent 拉待办命令 + agent 回传 ingest 结果。
 type CommandHandler struct {
-	svc     *service.AgentCommandService
-	instSvc *service.InstanceService
+	svc        *service.AgentCommandService
+	instSvc    *service.InstanceService
+	reportAuth commandReportAuthenticator
+}
+
+type commandReportAuthenticator interface {
+	AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error)
+	ReceiveDirectoryResyncResult(identity agentauth.Identity, commandID uint, ok bool, reason string) error
 }
 
 // NewCommandHandler 构造处理器（instSvc 供反向抓取前校验目标在线）。
 func NewCommandHandler(svc *service.AgentCommandService, instSvc *service.InstanceService) *CommandHandler {
 	return &CommandHandler{svc: svc, instSvc: instSvc}
+}
+
+// SetReportAuthenticator 注入 v2 目录重同步回执的权威身份校验器。
+func (h *CommandHandler) SetReportAuthenticator(authn commandReportAuthenticator) {
+	h.reportAuth = authn
 }
 
 // commandView 是命令对外视图（不含 payload / 结果细节，对齐前端 AgentCommandView）。
@@ -123,7 +135,26 @@ func (h *CommandHandler) ReportResult(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.ReceiveResyncResult(req.CommandID, req.OK, req.Reason); err != nil {
+	commandType, err := h.svc.ResultCommandType(req.CommandID)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if commandType == model.CommandTypeBCDirectoryResync {
+		if h.reportAuth == nil {
+			render.WriteError(w, r, apperr.ErrCommandNotFound)
+			return
+		}
+		identity, err := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
+		if err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+		err = h.reportAuth.ReceiveDirectoryResyncResult(identity, req.CommandID, req.OK, req.Reason)
+	} else {
+		err = h.svc.ReceiveResyncResult(req.CommandID, req.OK, req.Reason)
+	}
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}

@@ -167,6 +167,13 @@ class ReverseFetchExecutorTest {
                         "payload" to emptyMap<String, Any?>(),
                     )
 
+                CMD_BC_DIRECTORY_RESYNC ->
+                    mapOf(
+                        "id" to 18,
+                        "type" to "bc-directory-resync",
+                        "payload" to emptyMap<String, Any?>(),
+                    )
+
                 CMD_BROWSE_LIST ->
                     mapOf(
                         "id" to 13,
@@ -383,6 +390,16 @@ class ReverseFetchExecutorTest {
     ): ReverseFetchExecutor {
         val client = BeaconApiClient(transport, FakeCodec(), settings())
         return ReverseFetchExecutor(identity(), client, adapter, onAssetRescan = onAssetRescan)
+    }
+
+    /** 带 BC 目录重同步回调的执行器（FR-201：成功后才允许回执完成）。 */
+    private fun bcDirectoryExecutor(
+        transport: FakeTransport,
+        adapter: StubAdapter,
+        onBcDirectoryResync: () -> Boolean,
+    ): ReverseFetchExecutor {
+        val client = BeaconApiClient(transport, FakeCodec(), settings())
+        return ReverseFetchExecutor(identity(), client, adapter, onBcDirectoryResync = onBcDirectoryResync)
     }
 
     @Test
@@ -633,6 +650,41 @@ class ReverseFetchExecutorTest {
     }
 
     @Test
+    fun `BC 目录重同步成功后回传 done 且不读 plugins`() {
+        val transport = FakeTransport(pendingBody = CMD_BC_DIRECTORY_RESYNC)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+        val syncCalls = AtomicInteger(0)
+
+        bcDirectoryExecutor(transport, adapter) {
+            syncCalls.incrementAndGet()
+            true
+        }.trigger()
+
+        assertEquals(1, syncCalls.get(), "应只调用 BC 目录同步入口一次")
+        assertEquals(0, adapter.readCalls.get(), "BC 目录重同步不得读 plugins")
+        assertEquals(0, adapter.metadataCalls.get(), "BC 目录重同步不得扫描 plugins")
+        assertEquals(1, transport.resultCalls.get(), "应回传一次命令结果")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("commandId=18"), "结果回传应携命令 id：$body")
+        assertTrue(body.contains("ok=true"), "同步成功才允许回传 ok=true：$body")
+    }
+
+    @Test
+    fun `非 BC Agent 收到目录重同步应回传不支持失败`() {
+        val transport = FakeTransport(pendingBody = CMD_BC_DIRECTORY_RESYNC)
+        val adapter = StubAdapter(mapOf("config.yml" to b("k: v")))
+
+        executor(transport, adapter).trigger()
+
+        assertEquals(0, adapter.readCalls.get(), "不支持的目录重同步不得读 plugins")
+        assertEquals(1, transport.resultCalls.get(), "不支持也必须回传一次失败结果")
+        val body = transport.lastResultBody.get()!!
+        assertTrue(body.contains("commandId=18"), "结果回传应携命令 id：$body")
+        assertTrue(body.contains("ok=false"), "不支持必须回传 ok=false：$body")
+        assertTrue(body.contains("当前 Agent 角色不支持 BC 目录重同步"), "失败原因应为中文角色提示：$body")
+    }
+
+    @Test
     fun `浏览列目录命令调原语回传结果到 browse-result 端点`() {
         // FR-110：fs-browse op=list → 调 browseListDir → 回传结果，绝不读 plugins 树 / 不走 ingest。
         val transport = FakeTransport(pendingBody = CMD_BROWSE_LIST)
@@ -771,6 +823,7 @@ class ReverseFetchExecutorTest {
         private const val CMD_SUBMIT = "cmd-submit"
         private const val CMD_TAIL_LOGS = "cmd-tail-logs"
         private const val CMD_RESYNC = "cmd-resync"
+        private const val CMD_BC_DIRECTORY_RESYNC = "cmd-bc-directory-resync"
         private const val CMD_BROWSE_LIST = "cmd-browse-list"
         private const val CMD_BROWSE_FILE = "cmd-browse-file"
         private const val CMD_BROWSE_DENIED = "cmd-browse-denied"

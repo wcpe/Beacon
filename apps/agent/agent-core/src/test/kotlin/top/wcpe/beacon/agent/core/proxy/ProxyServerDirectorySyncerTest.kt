@@ -1,7 +1,10 @@
 package top.wcpe.beacon.agent.core.proxy
 
 import top.wcpe.beacon.agent.api.ServiceInstance
+import top.wcpe.beacon.agent.core.client.CandidateEntry
 import top.wcpe.beacon.agent.core.client.DiscoveryFetchResult
+import top.wcpe.beacon.agent.core.client.LobbyCandidates
+import top.wcpe.beacon.agent.core.scheduling.CandidateSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -47,10 +50,107 @@ class ProxyServerDirectorySyncerTest {
 
         assertTrue(!directory.managed.contains("lobby-1"))
         assertEquals(listOf("lobby-1"), directory.removed)
+        assertTrue(syncer.snapshot().entries.isEmpty())
+        assertTrue(syncer.snapshot().lobby.candidates.isEmpty())
     }
 
     @Test
-    fun `syncOnce 发现失败会保留受管目录与默认服`() {
+    fun `syncOnce 权威空目录清除旧大厅候选`() {
+        var result: DiscoveryFetchResult<ServiceInstance> = success(instance("lobby-1", "10.0.0.7:25565"))
+        val lobby = LobbyCandidates(12L, true, listOf(CandidateEntry("lobby-1", 90, "healthy", true, 3, 100)))
+        val syncer =
+            ProxyServerDirectorySyncer(
+                directory = FakeDirectory(),
+                lobbySnapshot = { CandidateSnapshot(1L, 2L, emptyMap(), lobby) },
+            ) { result }
+        syncer.syncOnce()
+
+        result = success()
+        syncer.syncOnce()
+
+        assertTrue(syncer.snapshot().entries.isEmpty())
+        assertTrue(syncer.snapshot().lobby.candidates.isEmpty())
+        assertEquals("no_candidate", syncer.snapshot().lobby.reason)
+    }
+
+    @Test
+    fun `syncOnce 成功帧发布目录与大厅候选`() {
+        val lobby =
+            LobbyCandidates(
+                12L,
+                true,
+                listOf(CandidateEntry("lobby-1", 90, "healthy", true, 3, 100)),
+            )
+        val syncer =
+            ProxyServerDirectorySyncer(
+                directory = FakeDirectory(),
+                discover = { success(instance("lobby-1", "10.0.0.7:25565")) },
+                lobbySnapshot = { CandidateSnapshot(1L, 2L, emptyMap(), lobby) },
+                now = { 3L },
+            )
+
+        syncer.syncOnce()
+
+        val published = syncer.snapshot()
+        assertEquals(1L, published.version)
+        assertEquals(3L, published.lastSuccessAtMs)
+        assertTrue(published.firstSync)
+        assertEquals(setOf("lobby-1"), published.byServerId.keys)
+        assertEquals(lobby.candidates, published.lobby.candidates)
+    }
+
+    @Test
+    fun `syncOnce 同帧发布每台受管服的健康事实或未上报状态`() {
+        val lobby =
+            LobbyCandidates(
+                12L,
+                true,
+                listOf(CandidateEntry("lobby-1", 90, "healthy", true, 3, 100, listOf("capacity_ok"))),
+            )
+        val syncer =
+            ProxyServerDirectorySyncer(
+                directory = FakeDirectory(),
+                discover =
+                    {
+                        success(
+                            instance("lobby-1", "10.0.0.7:25565"),
+                            instance("ordinary-1", "10.0.0.8:25565"),
+                        )
+                    },
+                lobbySnapshot = { CandidateSnapshot(1L, 2L, emptyMap(), lobby) },
+            )
+
+        syncer.syncOnce()
+
+        val reported = syncer.snapshot().healthByServerId.getValue("lobby-1")
+        assertEquals(ManagedHealthFactState.REPORTED, reported.state)
+        assertEquals("healthy", reported.level)
+        assertEquals(true, reported.schedulable)
+        assertEquals(90, reported.score)
+        assertEquals(3, reported.onlineCount)
+        assertEquals(100, reported.maxOnline)
+        assertEquals(listOf("capacity_ok"), reported.reasons)
+        assertEquals(ManagedHealthFactState.NOT_REPORTED, syncer.snapshot().healthByServerId.getValue("ordinary-1").state)
+    }
+
+    @Test
+    fun `syncOnce 不可候选大厅成员仍保留权威大厅归属`() {
+        val syncer =
+            ProxyServerDirectorySyncer(
+                directory = FakeDirectory(),
+                discover = { success(instance("lobby-draining", "10.0.0.7:25565", lobbyMember = true)) },
+                lobbySnapshot = { CandidateSnapshot(1L, 2L, emptyMap(), LobbyCandidates(12L, false, emptyList())) },
+            )
+
+        syncer.syncOnce()
+
+        assertEquals(setOf("lobby-draining"), syncer.snapshot().lobbyMemberIds)
+        assertTrue(syncer.snapshot().lobby.candidates.isEmpty())
+        assertEquals(ManagedHealthFactState.NOT_REPORTED, syncer.snapshot().healthOf("lobby-draining").state)
+    }
+
+    @Test
+    fun `syncOnce 发现失败会保留受管目录与已发布快照`() {
         var result: DiscoveryFetchResult<ServiceInstance> =
             success(instance("lobby-1", "10.0.0.7:25565", defaultEntry = true))
         val directory = FakeDirectory()
@@ -64,7 +164,7 @@ class ProxyServerDirectorySyncerTest {
             ) { result }
         syncer.syncOnce()
         val upsertCalls = directory.upsertCalls
-        val defaultCalls = directory.setDefaultCalls
+        val published = syncer.snapshot()
 
         result = DiscoveryFetchResult.Failed("发现请求失败")
         syncer.syncOnce()
@@ -72,8 +172,8 @@ class ProxyServerDirectorySyncerTest {
         assertEquals(setOf("lobby-1"), directory.managed)
         assertEquals(upsertCalls, directory.upsertCalls)
         assertTrue(directory.removed.isEmpty())
-        assertEquals(defaultCalls, directory.setDefaultCalls)
-        assertEquals("lobby-1", directory.capturedDefault)
+        assertEquals(0, directory.setDefaultCalls)
+        assertEquals(published, syncer.snapshot())
         assertTrue(warnings.single().contains("发现请求失败"))
     }
 
@@ -95,12 +195,13 @@ class ProxyServerDirectorySyncerTest {
     }
 
     @Test
-    fun `syncOnce 只同步在线 bukkit 实例`() {
+    fun `syncOnce 同步在线和降级 bukkit 实例`() {
         val directory = FakeDirectory()
         val syncer =
             ProxyServerDirectorySyncer(directory) {
                 success(
                     instance("lobby-1", "10.0.0.7:25565", role = "bukkit", status = "online"),
+                    instance("lobby-2", "10.0.0.10:25565", role = "bukkit", status = "degraded"),
                     instance("proxy-2", "10.0.0.8:25577", role = "bungee", status = "online"),
                     instance("lost-1", "10.0.0.9:25565", role = "bukkit", status = "lost"),
                 )
@@ -108,11 +209,11 @@ class ProxyServerDirectorySyncerTest {
 
         syncer.syncOnce()
 
-        assertEquals(setOf("lobby-1"), directory.managed)
+        assertEquals(setOf("lobby-1", "lobby-2"), directory.managed)
     }
 
     @Test
-    fun `syncOnce 据 home-zone 命中默认入口设默认服`() {
+    fun `syncOnce 不再据 home-zone 写默认优先级`() {
         val directory = FakeDirectory()
         val warnings = mutableListOf<String>()
         val syncer =
@@ -130,13 +231,13 @@ class ProxyServerDirectorySyncerTest {
 
         syncer.syncOnce()
 
-        // 命中 home-zone 的默认入口 lobby-2 被设为默认服，不告警
-        assertEquals("lobby-2", directory.capturedDefault)
+        assertNull(directory.capturedDefault)
+        assertEquals(0, directory.setDefaultCalls)
         assertTrue(warnings.isEmpty())
     }
 
     @Test
-    fun `syncOnce 未配 home-zone 时不设默认服并告警`() {
+    fun `syncOnce 未配 home-zone 时不推断默认服`() {
         val directory = FakeDirectory()
         val warnings = mutableListOf<String>()
         val syncer =
@@ -149,14 +250,14 @@ class ProxyServerDirectorySyncerTest {
 
         syncer.syncOnce()
 
-        // 未配 home-zone：绝不回退到任意在线 bukkit，不设默认服 + 打一条 WARN
+        // 旧字段不参与新路径；由 Bungee 壳层按滚动升级策略提示一次。
         assertNull(directory.capturedDefault)
         assertEquals(0, directory.setDefaultCalls)
-        assertTrue(warnings.single().contains("未配"))
+        assertTrue(warnings.isEmpty())
     }
 
     @Test
-    fun `syncOnce 配了 home-zone 但该 zone 无默认入口时不设默认服并告警`() {
+    fun `syncOnce 配了 home-zone 但该 zone 无默认入口也不写优先级`() {
         val directory = FakeDirectory()
         val warnings = mutableListOf<String>()
         val syncer =
@@ -166,7 +267,7 @@ class ProxyServerDirectorySyncerTest {
                 homeZone = "zoneA",
                 warn = warnings::add,
             ) {
-                // 在线 bukkit 命中 home-zone 但均未被标默认入口
+                // 新路径不读取小区默认入口标记。
                 success(instance("lobby-1", "10.0.0.7:25565", defaultEntry = false))
             }
 
@@ -174,11 +275,11 @@ class ProxyServerDirectorySyncerTest {
 
         assertNull(directory.capturedDefault)
         assertEquals(0, directory.setDefaultCalls)
-        assertTrue(warnings.single().contains("area1/zoneA"))
+        assertTrue(warnings.isEmpty())
     }
 
     @Test
-    fun `syncOnce 默认入口离线时不设默认服并告警`() {
+    fun `syncOnce 默认入口离线时不写优先级`() {
         val directory = FakeDirectory()
         val warnings = mutableListOf<String>()
         val syncer =
@@ -193,13 +294,13 @@ class ProxyServerDirectorySyncerTest {
 
         syncer.syncOnce()
 
-        // 默认入口虽配但当前 lost（不在线）：不设默认服 + 告警
+        // 默认入口虽配但当前 lost；新路径不读取小区默认入口。
         assertNull(directory.capturedDefault)
-        assertTrue(warnings.single().contains("area1/zoneA"))
+        assertTrue(warnings.isEmpty())
     }
 
     @Test
-    fun `syncOnce 选不出默认服时多轮只告警一次`() {
+    fun `syncOnce 不为旧默认入口链路写告警`() {
         val directory = FakeDirectory()
         val warnings = mutableListOf<String>()
         val syncer =
@@ -211,12 +312,11 @@ class ProxyServerDirectorySyncerTest {
         syncer.syncOnce()
         syncer.syncOnce()
 
-        // 连续选不出默认服：WARN 去重、不每轮刷屏
-        assertEquals(1, warnings.size)
+        assertTrue(warnings.isEmpty())
     }
 
     @Test
-    fun `syncOnce 默认服不变时不重复设置`() {
+    fun `syncOnce 不调用默认优先级接口`() {
         val directory = FakeDirectory()
         val syncer =
             ProxyServerDirectorySyncer(directory, homeGroup = "area1", homeZone = "zoneA") {
@@ -226,9 +326,8 @@ class ProxyServerDirectorySyncerTest {
         syncer.syncOnce()
         syncer.syncOnce()
 
-        // 两轮选出的默认服相同，只设一次（去重）
-        assertEquals(1, directory.setDefaultCalls)
-        assertEquals("lobby-1", directory.capturedDefault)
+        assertEquals(0, directory.setDefaultCalls)
+        assertNull(directory.capturedDefault)
     }
 
     private fun success(vararg instances: ServiceInstance): DiscoveryFetchResult<ServiceInstance> =
@@ -240,8 +339,9 @@ class ProxyServerDirectorySyncerTest {
         role: String = "bukkit",
         status: String = "online",
         defaultEntry: Boolean = false,
+        lobbyMember: Boolean = false,
     ): ServiceInstance {
-        return ServiceInstance(serverId, role, "area1", "zoneA", address, "1.0", status, 0, 200, 100, defaultEntry)
+        return ServiceInstance(serverId, role, "area1", "zoneA", address, "1.0", status, 0, 200, 100, defaultEntry, lobbyMember)
     }
 
     private class FakeDirectory(

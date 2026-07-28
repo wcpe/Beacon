@@ -121,7 +121,7 @@ function reasonsOf(state: ClusterState, server: ServerRow, level: HealthLevel): 
   if (identity?.status === 'disabled') {
     reasons.push('disabled')
   }
-  if (server.kind === 'backend' && server.zoneId === null) {
+  if (server.kind === 'backend' && server.zoneId === null && (server.lobbyClusterNamespaceId ?? null) === null) {
     reasons.push('unassigned')
   }
   if (server.draining) {

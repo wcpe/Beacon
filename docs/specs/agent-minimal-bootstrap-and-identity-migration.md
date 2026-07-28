@@ -153,6 +153,7 @@ beacon:
 - pending 时 `serverId` 可为 null；active / disabled 时必须为非空字符串。
 - `migrationState`：`pending` / `completed` / `not_required`。
 - 旧响应字段只增不改；旧 Agent 收到其兼容 pending 时仍返回暂存的 serverId。
+- active / disabled 响应必须额外返回控制面权威 `boundAt` 与 `bindingFingerprint`；后者由控制面对 `identityId`、namespace、serverId、kind、boundAt 生成稳定 SHA-256 十六进制摘要，不含 token 或密钥。pending 等非活跃状态不得伪造这两个字段。
 
 ### 5.4 管理端确认
 
@@ -169,8 +170,7 @@ beacon:
 
 规则：
 
-- 对 serverId=NULL 的 pending，`serverId` 必填。
-- 对旧 Agent 已带候选 serverId 的 pending，旧客户端省略该字段时可沿用候选值；新管理台始终显式提交。
+- 任一 pending 身份的 `serverId` 均为必填；旧 Agent 已带候选值时，候选值仅可作为管理端输入提示，服务端不得在请求省略该字段时回退沿用。
 - serverId 去首尾空白后校验长度、字符集与 namespace 内占用；非法返回 400，已占用返回 409。
 - Q3 强制解绑、换区重确认的目标处理继续沿用既有事务语义。
 - 非 pending 调用返回 409 `illegal_state`。
@@ -200,7 +200,7 @@ Bootstrap Runtime 不得启动依赖 serverId 的 MessageBus、调度视图、�
 
 ### 6.3 绑定快照与 fail-static
 
-快照至少包含 identityId、namespace、serverId、kind、boundAt、控制面确认摘要与格式版本，不含 token。
+快照至少包含 identityId、namespace、serverId、kind、boundAt、控制面返回的 `bindingFingerprint` 与格式版本，不含 token。Agent 只接受格式匹配且字段完整的控制面确认值，不得以本地时间或响应哈希替代。
 
 - 全新 Agent 无有效快照且控制面不可用：保持 bootstrap/degraded，不启动 Active Runtime。
 - 已有有效快照且 identityId、kind 与本机一致：可用最后确认的 namespace/serverId 启动 fail-static Active Runtime，同时后台重连对账。

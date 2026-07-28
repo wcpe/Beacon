@@ -78,6 +78,9 @@
 | [0072](0072-immutable-rc-ga-promotion-and-n-minus-one.md) | 不可变 RC、GA 同 commit/同字节晋级与 N-1 背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
 | [0073](0073-standard-rc-ga-release-lifecycle.md) | 通用 RC/GA 生命周期与 GA-only 在线更新背景 | 已接受，发布流程部分被 [0074](0074-simple-rc-ga-release-flow.md) 取代；原文保留作历史记录 |
 | [0074](0074-simple-rc-ga-release-flow.md) | 简化 RC/GA 发布：不可变 RC、同 commit 原样晋级、SHA-256 校验与 GA-only 更新 | 已接受；取代 ADR-0072/0073 中 P10 专属准入、审批、Central/OCI、manifest 与证据链要求 |
+| [0075](0075-lobby-cluster-and-bc-first-entry.md) | 独立 LobbyCluster 与 BC namespace 首次大厅落脚 | 已接受；取代 ADR-0031/0067 中 BC 基于 Zone 默认入口注入 priority/fallback 的消费范围，保留 Zone 默认入口模型与兼容字段 |
+| [0076](0076-control-plane-identity-bootstrap.md) | 控制面身份分配、Bootstrap/Active Runtime 分层与绑定快照 fail-static | 已接受；部分取代 ADR-0004 本地 serverId bootstrap 与 ADR-0014 首次必须在线取得身份的结论 |
+| [0077](0077-agent-endpoint-address-authority.md) | Agent 角色化 endpoint 地址权威与 BC 多 listener | 已接受；保持 ADR-0005 core/平台壳层边界 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

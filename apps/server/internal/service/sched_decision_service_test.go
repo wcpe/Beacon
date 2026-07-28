@@ -51,6 +51,18 @@ func excludedView(serverID, zone string, reasons ...string) healthview.View {
 	return v
 }
 
+// lobbyView 构造带大厅归属的 backend 健康视图。
+func lobbyView(serverID string, clusterID uint, score int, schedulable bool) healthview.View {
+	v := backendView(serverID, "", score, 10, 100)
+	v.LobbyClusterID = clusterID
+	v.NamespaceLobbyClusterID = clusterID
+	v.Schedulable = schedulable
+	if !schedulable {
+		v.Reasons = []string{healthview.ReasonDraining}
+	}
+	return v
+}
+
 // TestDecideHighestScoreWins 分数最高者胜；候选数 / 排除数 / traceId / 耗时字段齐全。
 func TestDecideHighestScoreWins(t *testing.T) {
 	store := healthview.NewStore()
@@ -224,6 +236,81 @@ func TestDecideNoCandidate(t *testing.T) {
 	}
 	if out.WeightsRev != 3 {
 		t.Fatalf("无选中时 weightsRev 应取候选视图值 3，实际 %d", out.WeightsRev)
+	}
+}
+
+// TestDecideLobbyOnlyUsesLobbyMembers 锁定 scope=lobby 只消费本 namespace 大厅成员；小区与普通未分配服不得混入。
+func TestDecideLobbyOnlyUsesLobbyMembers(t *testing.T) {
+	store := healthview.NewStore()
+	zone := backendView("zone-1", "area-1", 99, 0, 100)
+	unassigned := backendView("unassigned-1", "", 98, 0, 100)
+	store.ReplaceAll([]healthview.View{
+		lobbyView("lobby-1", 12, 90, true),
+		lobbyView("lobby-draining", 12, 95, false),
+		zone,
+		unassigned,
+	})
+	svc := newSchedServiceForTest(store, 1)
+
+	out, err := svc.DecideScoped(schedTestIdentity(), "lobby", "", "proxy-initial-entry", "")
+	if err != nil {
+		t.Fatalf("大厅决策不应出错: %v", err)
+	}
+	if out.ChosenServerID != "lobby-1" || out.CandidateCount != 2 {
+		t.Fatalf("大厅决策只能评估大厅成员，实际 %+v", out)
+	}
+	if len(out.Excluded) != 1 || out.Excluded[0].ServerID != "lobby-draining" {
+		t.Fatalf("大厅不可调度成员应保留排除解释，实际 %+v", out.Excluded)
+	}
+}
+
+// TestDecideLobbyEmptyReturnsNoCandidate 锁定空大厅是业务失败而非 zone_not_found。
+func TestDecideLobbyEmptyReturnsNoCandidate(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{backendView("zone-1", "area-1", 90, 0, 100)})
+	svc := newSchedServiceForTest(store, 1)
+
+	out, err := svc.DecideScoped(schedTestIdentity(), "lobby", "", "", "")
+	if err != nil || out.FailReason != SchedFailNoCandidate || out.CandidateCount != 0 {
+		t.Fatalf("空大厅应返回 no_candidate，实际 err=%v outcome=%+v", err, out)
+	}
+}
+
+// TestDecideScopedKeepsDefaultZoneCompatibility 锁定原 Decide 仍等价 scope=zone。
+func TestDecideScopedKeepsDefaultZoneCompatibility(t *testing.T) {
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{backendView("zone-1", "area-1", 90, 0, 100), lobbyView("lobby-1", 12, 99, true)})
+	svc := newSchedServiceForTest(store, 1)
+
+	out, err := svc.Decide(schedTestIdentity(), "area-1", "", "")
+	if err != nil || out.ChosenServerID != "zone-1" {
+		t.Fatalf("旧 Decide 必须仍只走 zone，实际 err=%v outcome=%+v", err, out)
+	}
+	if _, err := svc.DecideScoped(schedTestIdentity(), "lobby", "area-1", "", ""); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("scope=lobby 携带非空 zone 应拒绝，实际 %v", err)
+	}
+}
+
+// TestCandidatesLobbyFiltersNamespaceAndPlacement 锁定大厅候选快照只包含同 namespace 的可调度大厅成员。
+func TestCandidatesLobbyFiltersNamespaceAndPlacement(t *testing.T) {
+	store := healthview.NewStore()
+	otherNamespace := lobbyView("other-lobby", 21, 99, true)
+	otherNamespace.NamespaceID = 2
+	otherNamespace.NamespaceLobbyClusterID = 21
+	store.ReplaceAll([]healthview.View{
+		lobbyView("lobby-1", 12, 90, true),
+		lobbyView("lobby-draining", 12, 95, false),
+		backendView("zone-1", "area-1", 99, 0, 100),
+		otherNamespace,
+	})
+	svc := newSchedServiceForTest(store, 1)
+
+	result := svc.Candidates(schedTestIdentity())
+	if result.Lobby.ClusterID != 12 || !result.Lobby.Ready || len(result.Lobby.Candidates) != 1 {
+		t.Fatalf("大厅候选应只含同 namespace 可调度成员，实际 %+v", result.Lobby)
+	}
+	if result.Lobby.Candidates[0].ServerID != "lobby-1" {
+		t.Fatalf("大厅候选不应混入小区、不可调度或跨 namespace 服务器，实际 %+v", result.Lobby.Candidates)
 	}
 }
 

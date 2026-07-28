@@ -208,6 +208,7 @@ func freshView(fact repository.HealthFact, fresh []metricwindow.Sample, activeAl
 	return healthview.View{
 		NamespaceID: fact.NamespaceID, Namespace: fact.Namespace,
 		ServerID: fact.ServerID, Kind: fact.Kind, ZoneName: fact.ZoneName,
+		LobbyClusterID: fact.LobbyClusterID, NamespaceLobbyClusterID: fact.NamespaceLobbyClusterID,
 		Score: score, Level: level,
 		Schedulable: len(reasons) == 0, Reasons: reasons, Factors: factors,
 		WeightsRev: weights.Rev, OnlineCount: online, MaxOnline: maxOnline,
@@ -222,6 +223,7 @@ func carriedView(fact repository.HealthFact, prev *healthview.View) healthview.V
 	return healthview.View{
 		NamespaceID: fact.NamespaceID, Namespace: fact.Namespace,
 		ServerID: fact.ServerID, Kind: fact.Kind, ZoneName: fact.ZoneName,
+		LobbyClusterID: fact.LobbyClusterID, NamespaceLobbyClusterID: fact.NamespaceLobbyClusterID,
 		Score: prev.Score, Level: prev.Level,
 		Schedulable: len(reasons) == 0, Reasons: reasons, Factors: prev.Factors,
 		WeightsRev: prev.WeightsRev, OnlineCount: prev.OnlineCount, MaxOnline: prev.MaxOnline,
@@ -235,6 +237,7 @@ func lostView(fact repository.HealthFact, nowMs int64, weightsRev int) healthvie
 	return healthview.View{
 		NamespaceID: fact.NamespaceID, Namespace: fact.Namespace,
 		ServerID: fact.ServerID, Kind: fact.Kind, ZoneName: fact.ZoneName,
+		LobbyClusterID: fact.LobbyClusterID, NamespaceLobbyClusterID: fact.NamespaceLobbyClusterID,
 		Score: 0, Level: healthview.LevelUnhealthy,
 		Schedulable: false, Reasons: reasons, Factors: []healthview.Factor{},
 		WeightsRev: weightsRev, ComputedAtMs: nowMs,
