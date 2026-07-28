@@ -64,6 +64,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.AlertEvent{},
 		&model.MetricSample{},
 		&model.APIKey{},
+		&model.ApprovalRequest{},
 		&model.AgentCommand{},
 		&model.ReverseFetchTask{},
 		&model.ReverseFetchIgnoreRule{},

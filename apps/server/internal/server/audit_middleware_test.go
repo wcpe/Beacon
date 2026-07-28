@@ -300,6 +300,7 @@ func TestAuditCoveredRoutesMatchRegisteredWriteRoutes(t *testing.T) {
 		V2MessageAdmin: &handler.V2MessageAdminHandler{},
 		V2Assets:       &handler.V2AssetsHandler{},
 		Delivery:       &handler.DeliveryAdminHandler{},
+		Approval:       &handler.ApprovalHandler{},
 	}
 	routes, ok := NewRouter(h, "", nil, nil, nil).(chi.Routes)
 	if !ok {

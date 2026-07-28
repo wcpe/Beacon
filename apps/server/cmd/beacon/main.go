@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -22,6 +24,7 @@ import (
 	beacon "github.com/wcpe/Beacon"
 
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/config"
 	"github.com/wcpe/Beacon/apps/server/internal/embedweb"
 	"github.com/wcpe/Beacon/apps/server/internal/gitexport"
@@ -324,6 +327,11 @@ func run() error {
 	apiKeyService := service.NewAPIKeyService(db, apiKeyRepo, auditRepo)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 
+	// 统一审批核心（FR-206/207）：先落审批请求与审计，再由注册表按 operationKind 调用受控执行适配器。
+	approvalRegistry := authz.NewApprovalRegistry()
+	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), auditRepo, approvalRegistry)
+	approvalHandler := handler.NewApprovalHandler(approvalService)
+
 	// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：命令仓库 + 服务（建命令 / 拉取 / ingest 复用 FileService.Import）+ 处理器。
 	// 建命令提交后经 notifier 唤醒目标 agent 的 SSE 流发 command-pending。
 	commandRepo := repository.NewAgentCommandRepository(db)
@@ -417,6 +425,18 @@ func run() error {
 	changeOrderRepo := repository.NewChangeOrderRepository(db)
 	deliveryOrderService := service.NewDeliveryOrderService(db, changeOrderRepo,
 		repository.NewConfigLayerVersionRepository(db), auditRepo, settingsService, healthViewStore)
+	approvalRegistry.Register(authz.OperationDeliveryApprove, authz.AdapterFunc(func(req authz.ApprovalRequest, permit authz.Permit) error {
+		orderID, err := strconv.ParseUint(req.Operation.ResourceID, 10, 64)
+		if err != nil {
+			return err
+		}
+		var payload struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(req.Payload, &payload)
+		_, err = deliveryOrderService.Approve(uint(orderID), payload.Reason, req.Actor, "")
+		return err
+	}))
 	deliveryDiffService := service.NewDeliveryDiffService(db, changeOrderRepo,
 		repository.NewFileAssetRepository(db), auditRepo, assetPreviewService, healthViewStore)
 
@@ -570,7 +590,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

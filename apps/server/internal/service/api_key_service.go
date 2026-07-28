@@ -3,12 +3,14 @@ package service
 import (
 	"encoding/json"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apikey"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -139,20 +141,20 @@ func (s *APIKeyService) List() ([]model.APIKey, error) {
 	return s.repo.List()
 }
 
-// Verify 校验明文密钥并返回认证身份与角色（实现 server.APIKeyVerifier）。
+// Verify 校验明文密钥并返回认证主体（实现 server.APIKeyVerifier）。
 // 查库未软删行比对哈希（真源在库、吊销即时生效）→ 校验未过期 → 节流更新最近使用。
 // 失败返回 ErrAdminUnauthorized（缺失 / 错误 / 过期 / 吊销一律 401）；DB 故障返回原始错误（→500）。
-func (s *APIKeyService) Verify(rawKey string) (string, string, error) {
+func (s *APIKeyService) Verify(rawKey string) (auth.Principal, error) {
 	key, err := s.repo.FindActiveByHash(apikey.Hash(rawKey))
 	if err != nil {
-		return "", "", err
+		return auth.Principal{}, err
 	}
 	if key == nil {
-		return "", "", apperr.ErrAdminUnauthorized
+		return auth.Principal{}, apperr.ErrAdminUnauthorized
 	}
 	now := time.Now().UTC()
 	if key.ExpiresAt != nil && now.After(*key.ExpiresAt) {
-		return "", "", apperr.ErrAdminUnauthorized
+		return auth.Principal{}, apperr.ErrAdminUnauthorized
 	}
 	// 节流更新最近使用：best-effort，失败仅告警、不阻断认证
 	if key.LastUsedAt == nil || now.Sub(*key.LastUsedAt) >= lastUsedThrottle {
@@ -160,7 +162,9 @@ func (s *APIKeyService) Verify(rawKey string) (string, string, error) {
 			slog.Warn("更新 API 密钥最近使用失败", "名称", key.Name, "原因", e)
 		}
 	}
-	return apiKeyPrincipalPrefix + key.Name, key.Role, nil
+	principal := auth.APIKeyPrincipal(strconv.FormatUint(uint64(key.ID), 10), key.Name, key.Role, key.KeyPrefix)
+	principal.Operator = apiKeyPrincipalPrefix + key.Name
+	return principal, nil
 }
 
 // keyAuditDetail 组装审计 detail（json 文本）：仅元数据，**绝不含明文 / 哈希**。

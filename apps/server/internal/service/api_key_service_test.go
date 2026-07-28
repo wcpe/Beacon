@@ -12,6 +12,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/apikey"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -67,12 +68,15 @@ func TestAPIKeyCreateVerify(t *testing.T) {
 		t.Fatal("返回记录与库内记录应一致")
 	}
 	// Verify 通过 → 身份为 apikey:<名称>、角色 readonly
-	principal, role, err := svc.Verify(plaintext)
+	principal, err := svc.Verify(plaintext)
 	if err != nil {
 		t.Fatalf("Verify 合法密钥应通过，实际 %v", err)
 	}
-	if principal != "apikey:ci-backend" || role != model.RoleReadonly {
-		t.Fatalf("身份/角色不符：principal=%q role=%q", principal, role)
+	if principal.Operator != "apikey:ci-backend" || principal.Role != model.RoleReadonly || principal.Source != auth.SourceAPIKey {
+		t.Fatalf("身份/角色不符：principal=%+v", principal)
+	}
+	if principal.HasCapability(auth.CapabilityDeliveryApprove) {
+		t.Fatal("readonly API key 不应具备审批能力")
 	}
 	// 最近使用被更新
 	stored, _ = repo.FindActiveByHash(apikey.Hash(plaintext))
@@ -92,7 +96,7 @@ func TestAPIKeyVerifyRejectsExpired(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("插入过期密钥失败: %v", err)
 	}
-	if _, _, err := svc.Verify(plaintext); !errors.Is(err, apperr.ErrAdminUnauthorized) {
+	if _, err := svc.Verify(plaintext); !errors.Is(err, apperr.ErrAdminUnauthorized) {
 		t.Fatalf("过期密钥应 ErrAdminUnauthorized，实际 %v", err)
 	}
 }
@@ -107,7 +111,7 @@ func TestAPIKeyVerifyRejectsRevoked(t *testing.T) {
 	if err := svc.Revoke(key.ID, "admin", "127.0.0.1"); err != nil {
 		t.Fatalf("吊销失败: %v", err)
 	}
-	if _, _, err := svc.Verify(plaintext); !errors.Is(err, apperr.ErrAdminUnauthorized) {
+	if _, err := svc.Verify(plaintext); !errors.Is(err, apperr.ErrAdminUnauthorized) {
 		t.Fatalf("吊销密钥应 ErrAdminUnauthorized，实际 %v", err)
 	}
 	// 二次吊销不存在 → API_KEY_NOT_FOUND
@@ -130,10 +134,10 @@ func TestAPIKeyResetRotates(t *testing.T) {
 	if fresh == old {
 		t.Fatal("重置应换出新明文")
 	}
-	if _, _, err := svc.Verify(old); !errors.Is(err, apperr.ErrAdminUnauthorized) {
+	if _, err := svc.Verify(old); !errors.Is(err, apperr.ErrAdminUnauthorized) {
 		t.Fatalf("重置后旧明文应失效，实际 %v", err)
 	}
-	if _, _, err := svc.Verify(fresh); err != nil {
+	if _, err := svc.Verify(fresh); err != nil {
 		t.Fatalf("重置后新明文应生效，实际 %v", err)
 	}
 	// 重置已吊销 / 不存在的密钥 → API_KEY_NOT_FOUND

@@ -571,6 +571,10 @@ const (
 	ActionAPIKeyCreate = "apikey.create"
 	ActionAPIKeyRevoke = "apikey.revoke"
 	ActionAPIKeyReset  = "apikey.reset"
+	// 统一审批请求（FR-206）：提审 / 通过 / 驳回 / 执行失败全链路审计，detail 仅记元数据与原因。
+	ActionApprovalRequest = "approval.request"
+	ActionApprovalApprove = "approval.approve"
+	ActionApprovalReject  = "approval.reject"
 	// 运维设置更新（FR-61，热改项真源由 config.yml 移到 DB store，detail 仅记 key + 新值、绝不含密钥，见 ADR-0038）
 	ActionSettingsUpdate = "settings.update"
 	// 配置操作级撤回（FR-116，见 ADR-0051）：撤回下发 / 发布 / 反向抓取 ingest，detail 仅记可逆操作 id / 类型 / scope（不含文件内容）
@@ -666,6 +670,8 @@ const (
 	TargetTypeAuth = "auth"
 	// 管理面 API 密钥的审计对象类型
 	TargetTypeAPIKey = "apikey"
+	// 统一审批请求的审计对象类型
+	TargetTypeApprovalRequest = "approval-request"
 	// agent 命令（FR-39 反向抓取）的审计对象类型
 	TargetTypeCommand = "command"
 	// 多级灰度文件同步任务（FR-129/FR-131）的审计对象类型

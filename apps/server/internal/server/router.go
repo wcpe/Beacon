@@ -47,6 +47,7 @@ type Handlers struct {
 	Update            *handler.UpdateHandler
 	Auth              *handler.AuthHandler
 	APIKey            *handler.APIKeyHandler
+	Approval          *handler.ApprovalHandler
 	Command           *handler.CommandHandler
 	Browse            *handler.BrowseHandler
 	Asset             *handler.AssetHandler
@@ -178,6 +179,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Get("/namespace-trusts", h.V2.ListNamespaceTrusts)
 			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
 			r.Post("/namespace-trusts/{id}/revoke", h.V2.RevokeNamespaceTrust)
+			registerApprovalRoutes(r, h)
 
 			// env 展示维度（FR-178，见 v2-zone-authority.md §5）：env 增删改 + 整体替换 env→namespace 映射。
 			// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；写端点由 EnvService 在事务内自记专项审计

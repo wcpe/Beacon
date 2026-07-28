@@ -132,6 +132,15 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）
 	"POST /admin/v2/namespace-trusts":             {},
 	"POST /admin/v2/namespace-trusts/{id}/revoke": {},
+	// 统一审批请求（FR-206/207）：提审 / 批准 / 驳回 / 撤回均由 ApprovalService 自记专项审计。
+	"POST /admin/v2/approval-requests":                      {},
+	"POST /admin/v2/approval-requests/{requestId}/approve":  {},
+	"POST /admin/v2/approval-requests/{requestId}/reject":   {},
+	"POST /admin/v2/approval-requests/{requestId}/withdraw": {},
+	"POST /admin/v2/approvals":                              {},
+	"POST /admin/v2/approvals/{id}/approve":                 {},
+	"POST /admin/v2/approvals/{id}/reject":                  {},
+	"POST /admin/v2/approvals/{id}/withdraw":                {},
 	// env 展示维度增删改 + 整体替换映射（FR-178：env.create / update / delete / set-namespaces，service 事务内自记专项审计）
 	"POST /admin/v2/envs":                {},
 	"PATCH /admin/v2/envs/{id}":          {},

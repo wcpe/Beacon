@@ -183,6 +183,20 @@ var (
 	ErrServerIDOccupied = New(http.StatusConflict, "server_id_occupied", "该 serverId 已被其他身份占用")
 	// ErrIllegalState 当前状态不允许该操作。
 	ErrIllegalState = New(http.StatusConflict, "illegal_state", "当前状态不允许该操作")
+	// ErrApprovalNotFound 审批请求不存在。
+	ErrApprovalNotFound = New(http.StatusNotFound, "approval_not_found", "审批请求不存在")
+	// ErrApprovalExpired 审批请求已过期。
+	ErrApprovalExpired = New(http.StatusConflict, "approval_expired", "审批请求已过期")
+	// ErrApprovalNotOwner 仅申请主体可撤回审批请求。
+	ErrApprovalNotOwner = New(http.StatusForbidden, "approval_not_owner", "仅申请主体可撤回该审批请求")
+	// ErrApprovalTerminal 审批请求已终结，不允许撤回或再次决策。
+	ErrApprovalTerminal = New(http.StatusConflict, "approval_terminal", "审批请求已终结")
+	// ErrApprovalReasonRequired 审批申请或拒绝必须填写原因。
+	ErrApprovalReasonRequired = New(http.StatusBadRequest, "missing_reason", "审批原因不能为空")
+	// ErrMachinePrincipalCannotDecide 机器主体不能批准或拒绝审批请求。
+	ErrMachinePrincipalCannotDecide = New(http.StatusForbidden, "machine_principal_cannot_decide", "机器主体不能批准或拒绝审批请求")
+	// ErrIdempotencyKeyReused 幂等键被不同冻结载荷复用。
+	ErrIdempotencyKeyReused = New(http.StatusConflict, "idempotency_key_reused", "幂等键已被不同申请内容使用")
 	// ErrRezoneRequired 已分配 server 改归属必须走换区工单。
 	ErrRezoneRequired = New(http.StatusConflict, "rezone_required", "已分配 server 改归属必须走换区工单")
 	// ErrRezoneNotAssigned 换区工单选中未分配 server（应走首次分配，FR-155）。

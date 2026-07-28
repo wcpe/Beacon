@@ -15,11 +15,11 @@ import (
 // namespaceDeleteAPIKeyVerifier 是旧删除路由测试的固定角色鉴权替身。
 type namespaceDeleteAPIKeyVerifier struct{}
 
-func (namespaceDeleteAPIKeyVerifier) Verify(rawKey string) (string, string, error) {
+func (namespaceDeleteAPIKeyVerifier) Verify(rawKey string) (auth.Principal, error) {
 	if rawKey == "readonly" {
-		return "readonly-user", model.RoleReadonly, nil
+		return auth.Principal{ID: "readonly-user", Operator: "readonly-user", Source: auth.SourceAPIKey, Role: model.RoleReadonly}, nil
 	}
-	return "full-user", model.RoleFull, nil
+	return auth.Principal{ID: "full-user", Operator: "full-user", Source: auth.SourceAPIKey, Role: model.RoleFull}, nil
 }
 
 // TestLegacyNamespaceDeleteRoutesMigrated 验证 V1/V2 旧删除路由返回迁移错误、不会产生兜底审计，且 readonly 仍由原有守卫拒绝。

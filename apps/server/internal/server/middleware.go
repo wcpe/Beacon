@@ -23,10 +23,10 @@ const bearerPrefix = "Bearer "
 // apiKeyHeader 是 API 密钥的独立请求头（与 Authorization: Bearer <bk_...> 二选一，FR-42）。
 const apiKeyHeader = "X-Beacon-Api-Key"
 
-// APIKeyVerifier 校验明文 API 密钥并返回认证身份与角色（由 service 实现，中间件依赖此接口）。
+// APIKeyVerifier 校验明文 API 密钥并返回认证主体（由 service 实现，中间件依赖此接口）。
 // 失败返回错误：ErrAdminUnauthorized（缺失 / 错误 / 过期 / 吊销）→401，DB 故障 → 500。
 type APIKeyVerifier interface {
-	Verify(rawKey string) (principal string, role string, err error)
+	Verify(rawKey string) (auth.Principal, error)
 }
 
 // AgentV2Authenticator 校验已确认 v2 身份对 legacy v1 数据面的兼容访问。
@@ -91,13 +91,18 @@ func agentTokenMiddleware(token string, v2 AgentV2Authenticator) func(http.Handl
 func adminAuthMiddleware(authn *auth.Authenticator, apiKeys APIKeyVerifier) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// ① 独立密钥头优先
-			if raw := strings.TrimSpace(r.Header.Get(apiKeyHeader)); raw != "" {
-				authenticateAPIKey(w, r, next, apiKeys, raw)
+			header := r.Header.Get("Authorization")
+			apiKeyRaw := strings.TrimSpace(r.Header.Get(apiKeyHeader))
+			if apiKeyRaw != "" && strings.HasPrefix(header, bearerPrefix) {
+				render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+				return
+			}
+			// ① 独立密钥头
+			if apiKeyRaw != "" {
+				authenticateAPIKey(w, r, next, apiKeys, apiKeyRaw)
 				return
 			}
 			// ② Authorization: Bearer <凭据>
-			header := r.Header.Get("Authorization")
 			if !strings.HasPrefix(header, bearerPrefix) {
 				render.WriteError(w, r, apperr.ErrAdminUnauthorized)
 				return
@@ -114,23 +119,21 @@ func adminAuthMiddleware(authn *auth.Authenticator, apiKeys APIKeyVerifier) func
 				render.WriteError(w, r, apperr.ErrAdminUnauthorized)
 				return
 			}
-			// 登录操作者恒为 full 角色（等同现操作者）
-			ctx := auth.WithRole(auth.WithOperator(r.Context(), operator), model.RoleFull)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			principal := auth.HumanPrincipal(operator)
+			next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 		})
 	}
 }
 
 // authenticateAPIKey 校验 API 密钥并注入身份 + 角色；失败按 Verify 返回的错误响应（401/500）。
 func authenticateAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler, apiKeys APIKeyVerifier, raw string) {
-	principal, role, err := apiKeys.Verify(raw)
+	principal, err := apiKeys.Verify(raw)
 	if err != nil {
 		slog.Warn("管理台 API 密钥校验失败", "路径", r.URL.Path, "原因", err, "traceId", render.TraceID(r.Context()))
 		render.WriteError(w, r, err)
 		return
 	}
-	ctx := auth.WithRole(auth.WithOperator(r.Context(), principal), role)
-	next.ServeHTTP(w, r.WithContext(ctx))
+	next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 }
 
 // readonlyWriteGuard 统一裁决"只读拒写"：readonly 角色访问写方法端点一律 403（FR-42）。

@@ -8,6 +8,7 @@ type ctxKey int
 const (
 	operatorKey ctxKey = iota
 	roleKey
+	principalKey
 )
 
 // WithOperator 把认证后的操作者身份放入 context（由鉴权中间件调用）。
