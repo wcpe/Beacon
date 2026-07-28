@@ -182,12 +182,16 @@ func (h *V2ControlPlaneHandler) AgentRegistration(w http.ResponseWriter, r *http
 
 type v2CreateNamespaceRequest struct {
 	Name        string `json:"name"`
+	Code        string `json:"code"`
+	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 }
 
 type v2NamespaceView struct {
 	ID               uint      `json:"id"`
 	Name             string    `json:"name"`
+	Code             string    `json:"code"`
+	DisplayName      string    `json:"displayName"`
 	Description      string    `json:"description"`
 	ServerCount      int64     `json:"serverCount"`
 	BCClusterCount   int64     `json:"bcClusterCount"`
@@ -205,7 +209,8 @@ func (h *V2ControlPlaneHandler) CreateNamespace(w http.ResponseWriter, r *http.R
 		return
 	}
 	ns, token, err := h.svc.CreateV2Namespace(service.CreateV2NamespaceParams{
-		Name: req.Name, Description: req.Description, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+		Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -238,6 +243,7 @@ type v2GrantTrustRequest struct {
 	ToNamespaceID   uint   `json:"toNamespaceId"`
 	Capability      string `json:"capability"`
 	Note            string `json:"note"`
+	Reason          string `json:"reason"`
 }
 
 // GrantNamespaceTrust 处理 POST /admin/v2/namespace-trusts。
@@ -247,15 +253,15 @@ func (h *V2ControlPlaneHandler) GrantNamespaceTrust(w http.ResponseWriter, r *ht
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	trust, err := h.svc.GrantNamespaceTrust(service.GrantNamespaceTrustParams{
+	ticket, err := h.svc.RequestGrantNamespaceTrust(service.GrantNamespaceTrustParams{
 		FromNamespaceID: req.FromNamespaceID, ToNamespaceID: req.ToNamespaceID,
-		Capability: req.Capability, Note: req.Note, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+		Capability: req.Capability, Note: req.Note, Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusCreated, trust)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ListNamespaceTrusts 处理 GET /admin/v2/namespace-trusts。
@@ -294,6 +300,7 @@ func (h *V2ControlPlaneHandler) RevokeNamespaceTrust(w http.ResponseWriter, r *h
 type v2ApproveIdentityRequest struct {
 	ServerID            string `json:"serverId"`
 	ForceUnbindOccupier bool   `json:"forceUnbindOccupier"`
+	Reason              string `json:"reason"`
 	// Target 用 RawMessage 承接以区分三态：缺省（无键）/ 显式 null（换区确认但暂不分配）/ 对象目标（换区落区）。
 	Target json.RawMessage `json:"target"`
 }
@@ -347,7 +354,7 @@ func (h *V2ControlPlaneHandler) ApproveAgentIdentity(w http.ResponseWriter, r *h
 		return
 	}
 	params := service.ApproveAgentIdentityParams{
-		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r), Reason: req.Reason,
 		ServerID:            req.ServerID,
 		ForceUnbindOccupier: req.ForceUnbindOccupier,
 	}
@@ -355,12 +362,12 @@ func (h *V2ControlPlaneHandler) ApproveAgentIdentity(w http.ResponseWriter, r *h
 		render.WriteError(w, r, err)
 		return
 	}
-	ident, err := h.svc.ApproveAgentIdentity(chi.URLParam(r, "identityId"), params)
+	ticket, err := h.svc.RequestApproveAgentIdentity(chi.URLParam(r, "identityId"), params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, agentIdentityView(ident))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // applyApproveTarget 解析 approve 请求的 target 三态并落到 service 参数：
@@ -437,19 +444,36 @@ func (h *V2ControlPlaneHandler) DisableAgentIdentity(w http.ResponseWriter, r *h
 
 // EnableAgentIdentity 处理 POST /admin/v2/agent-identities/{identityId}/enable。
 func (h *V2ControlPlaneHandler) EnableAgentIdentity(w http.ResponseWriter, r *http.Request) {
-	ident, err := h.svc.EnableAgentIdentity(chi.URLParam(r, "identityId"), service.IdentityTransitionParams{
-		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	var req v2ReasonRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ticket, err := h.svc.RequestEnableAgentIdentity(chi.URLParam(r, "identityId"), service.IdentityTransitionParams{
+		Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, agentIdentityView(ident))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // UnbindAgentIdentity 处理 POST /admin/v2/agent-identities/{identityId}/unbind。
 func (h *V2ControlPlaneHandler) UnbindAgentIdentity(w http.ResponseWriter, r *http.Request) {
-	h.transitionIdentity(w, r, h.svc.UnbindAgentIdentity)
+	var req v2ReasonRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ticket, err := h.svc.RequestUnbindAgentIdentity(chi.URLParam(r, "identityId"), service.IdentityTransitionParams{
+		Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 type v2ResolveConflictRequest struct {
@@ -465,15 +489,15 @@ func (h *V2ControlPlaneHandler) ResolveAgentIdentityConflict(w http.ResponseWrit
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	ident, err := h.svc.ResolveAgentIdentityConflict(chi.URLParam(r, "identityId"), service.ResolveConflictParams{
+	ticket, err := h.svc.RequestResolveAgentIdentityConflict(chi.URLParam(r, "identityId"), service.ResolveConflictParams{
 		KeepBootID: req.KeepBootID, Reason: req.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, agentIdentityView(ident))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 func (h *V2ControlPlaneHandler) transitionIdentity(w http.ResponseWriter, r *http.Request, fn func(string, service.IdentityTransitionParams) (*model.AgentIdentity, error)) {
@@ -495,6 +519,8 @@ func (h *V2ControlPlaneHandler) transitionIdentity(w http.ResponseWriter, r *htt
 type v2CreateBCClusterRequest struct {
 	NamespaceID uint   `json:"namespaceId"`
 	Name        string `json:"name"`
+	Code        string `json:"code"`
+	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 }
 
@@ -506,7 +532,7 @@ func (h *V2ControlPlaneHandler) CreateBCCluster(w http.ResponseWriter, r *http.R
 		return
 	}
 	cluster, err := h.svc.CreateBCCluster(service.CreateBCClusterParams{
-		NamespaceID: req.NamespaceID, Name: req.Name, Description: req.Description,
+		NamespaceID: req.NamespaceID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
@@ -519,6 +545,8 @@ func (h *V2ControlPlaneHandler) CreateBCCluster(w http.ResponseWriter, r *http.R
 type v2CreateRegionRequest struct {
 	BCClusterID uint   `json:"bcClusterId"`
 	Name        string `json:"name"`
+	Code        string `json:"code"`
+	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 }
 
@@ -530,7 +558,7 @@ func (h *V2ControlPlaneHandler) CreateRegion(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	region, err := h.svc.CreateRegion(service.CreateRegionParams{
-		BCClusterID: req.BCClusterID, Name: req.Name, Description: req.Description,
+		BCClusterID: req.BCClusterID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
@@ -543,6 +571,8 @@ func (h *V2ControlPlaneHandler) CreateRegion(w http.ResponseWriter, r *http.Requ
 type v2CreateZoneRequest struct {
 	RegionID    uint   `json:"regionId"`
 	Name        string `json:"name"`
+	Code        string `json:"code"`
+	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 }
 
@@ -554,7 +584,7 @@ func (h *V2ControlPlaneHandler) CreateZone(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	zone, err := h.svc.CreateZone(service.CreateZoneParams{
-		RegionID: req.RegionID, Name: req.Name, Description: req.Description,
+		RegionID: req.RegionID, Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
 	})
 	if err != nil {
@@ -562,6 +592,78 @@ func (h *V2ControlPlaneHandler) CreateZone(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	render.WriteJSON(w, http.StatusCreated, zone)
+}
+
+type v2UpdateDisplayRequest struct {
+	Name        *string `json:"name"`
+	Code        *string `json:"code"`
+	DisplayName *string `json:"displayName"`
+	Description *string `json:"description"`
+}
+
+type v2UpdateServerRequest struct {
+	ServerID    *string `json:"serverId"`
+	DisplayName *string `json:"displayName"`
+}
+
+func (h *V2ControlPlaneHandler) UpdateNamespace(w http.ResponseWriter, r *http.Request) {
+	h.updateDisplay(w, r, func(p service.UpdateDisplayResourceParams) (any, error) { return h.svc.UpdateNamespace(p) })
+}
+
+func (h *V2ControlPlaneHandler) UpdateBCCluster(w http.ResponseWriter, r *http.Request) {
+	h.updateDisplay(w, r, func(p service.UpdateDisplayResourceParams) (any, error) { return h.svc.UpdateBCCluster(p) })
+}
+
+func (h *V2ControlPlaneHandler) UpdateRegion(w http.ResponseWriter, r *http.Request) {
+	h.updateDisplay(w, r, func(p service.UpdateDisplayResourceParams) (any, error) { return h.svc.UpdateRegion(p) })
+}
+
+func (h *V2ControlPlaneHandler) UpdateZone(w http.ResponseWriter, r *http.Request) {
+	h.updateDisplay(w, r, func(p service.UpdateDisplayResourceParams) (any, error) { return h.svc.UpdateZone(p) })
+}
+
+func (h *V2ControlPlaneHandler) updateDisplay(w http.ResponseWriter, r *http.Request, fn func(service.UpdateDisplayResourceParams) (any, error)) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req v2UpdateDisplayRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	view, err := fn(service.UpdateDisplayResourceParams{
+		ID: id, Code: req.Code, Name: req.Name, DisplayName: req.DisplayName, Description: req.Description,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
+}
+
+func (h *V2ControlPlaneHandler) UpdateServer(w http.ResponseWriter, r *http.Request) {
+	id, err := uintURLParam(r, "id")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var req v2UpdateServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	view, err := h.svc.UpdateServerDisplayName(service.UpdateServerDisplayNameParams{
+		ID: id, ServerID: req.ServerID, DisplayName: req.DisplayName,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 // DeleteBCCluster 处理 DELETE /admin/v2/bc-clusters/{id}。
@@ -631,7 +733,8 @@ type v2DrainingRequest struct {
 }
 
 type v2DefaultEntryRequest struct {
-	Value bool `json:"value"`
+	Value  bool   `json:"value"`
+	Reason string `json:"reason"`
 }
 
 type v2ServerPlacementTransferRequest struct {
@@ -661,16 +764,12 @@ func (h *V2ControlPlaneHandler) AssignServers(w http.ResponseWriter, r *http.Req
 		params.TargetKind = req.Target.Kind
 		params.TargetID = req.Target.ID
 	}
-	servers, err := h.svc.AssignServers(params)
+	ticket, err := h.svc.RequestAssignServers(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	results := make([]service.AssignmentResult, 0, len(servers))
-	for i := range servers {
-		results = append(results, service.AssignmentResult{ID: servers[i].ID, ServerID: servers[i].ServerID, Ok: true})
-	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"results": results})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // RezoneServers 处理 POST /admin/v2/server-rezones（批量发起换区工单）。
@@ -684,15 +783,15 @@ func (h *V2ControlPlaneHandler) RezoneServers(w http.ResponseWriter, r *http.Req
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	results, err := h.svc.RezoneServers(service.RezoneServersParams{
+	ticket, err := h.svc.RequestRezoneServers(service.RezoneServersParams{
 		ServerIDs: req.ServerIDs, TargetKind: req.Target.Kind, TargetID: req.Target.ID,
 		Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"results": results})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ZoneTree 处理 GET /admin/v2/zone-tree?namespaceId=（区服结构树只读聚合）。
@@ -795,12 +894,12 @@ func (h *V2ControlPlaneHandler) TransferServerPlacement(w http.ResponseWriter, r
 		params.TargetKind = target.Kind
 		params.TargetID = target.ID
 	}
-	view, err := h.svc.TransferServerPlacement(params)
+	ticket, err := h.svc.RequestTransferServerPlacement(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, view)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // SetServerDraining 处理 PUT /admin/v2/servers/{serverRef}/draining（切换排空标记，路径为业务 serverId）。
@@ -810,15 +909,25 @@ func (h *V2ControlPlaneHandler) SetServerDraining(w http.ResponseWriter, r *http
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	view, err := h.svc.SetServerDraining(service.SetServerDrainingParams{
+	params := service.SetServerDrainingParams{
 		ServerID: chi.URLParam(r, "serverRef"), Draining: req.Draining, Reason: req.Reason,
 		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	}
+	if req.Draining {
+		view, err := h.svc.SetServerDraining(params)
+		if err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+		render.WriteJSON(w, http.StatusOK, view)
+		return
+	}
+	ticket, err := h.svc.RequestDisableServerDraining(params, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, view)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // SetServerDefaultEntry 处理 PUT /admin/v2/servers/{serverRef}/default-entry（路径为 server 行数字 id）。
@@ -833,14 +942,14 @@ func (h *V2ControlPlaneHandler) SetServerDefaultEntry(w http.ResponseWriter, r *
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	view, err := h.svc.SetServerDefaultEntry(service.SetServerDefaultEntryParams{
-		ServerRowID: id, Value: req.Value, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	ticket, err := h.svc.RequestSetServerDefaultEntry(service.SetServerDefaultEntryParams{
+		ServerRowID: id, Value: req.Value, Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, view)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ListServers 处理 GET /admin/v2/servers。
@@ -870,7 +979,7 @@ func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Reque
 // v2NamespaceResponse 构造 namespace 创建响应（新建 namespace 计数恒为 0）。
 func v2NamespaceResponse(ns *model.Namespace, token string) v2NamespaceView {
 	return v2NamespaceView{
-		ID: ns.ID, Name: ns.Code, Description: ns.Description,
+		ID: ns.ID, Name: ns.Code, Code: ns.Code, DisplayName: ns.Name, Description: ns.Description,
 		AccessToken: token, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
 	}
 }
@@ -879,7 +988,7 @@ func v2NamespaceResponse(ns *model.Namespace, token string) v2NamespaceView {
 func v2NamespaceStatView(stat service.NamespaceStat) v2NamespaceView {
 	ns := stat.Namespace
 	return v2NamespaceView{
-		ID: ns.ID, Name: ns.Code, Description: ns.Description,
+		ID: ns.ID, Name: ns.Code, Code: ns.Code, DisplayName: ns.Name, Description: ns.Description,
 		ServerCount: stat.ServerCount, BCClusterCount: stat.BCClusterCount,
 		ActiveTrustCount: stat.ActiveTrustCount, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
 	}
@@ -933,6 +1042,13 @@ func agentIdentityDetailReadView(ident *service.AgentIdentityReadView, prefill *
 	view["address"] = ident.Address
 	view["endpoints"] = ident.Endpoints
 	return view
+}
+
+func requestPrincipal(r *http.Request) auth.Principal {
+	if principal, ok := auth.FromContext(r.Context()); ok {
+		return principal
+	}
+	return auth.HumanPrincipal(auth.Operator(r.Context()))
 }
 
 func uintURLParam(r *http.Request, name string) (uint, error) {

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -25,6 +26,11 @@ import (
 const (
 	defaultPendingTTL = 72 * time.Hour
 )
+
+func auditJSON(v any) string {
+	raw, _ := json.Marshal(v)
+	return string(raw)
+}
 
 var uuidV4Pattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
@@ -51,6 +57,7 @@ type V2ControlPlaneService struct {
 	bootRegistry   *bootwatch.Registry
 	conflictWindow func() time.Duration
 	alertSink      AlertSink
+	approval       *ApprovalService
 }
 
 // NewV2ControlPlaneService 构造第二版控制面服务。
@@ -62,6 +69,8 @@ func NewV2ControlPlaneService(db *gorm.DB) *V2ControlPlaneService {
 
 type CreateV2NamespaceParams struct {
 	Name        string
+	Code        string
+	DisplayName string
 	Description string
 	Operator    string
 	ClientIP    string
@@ -69,19 +78,21 @@ type CreateV2NamespaceParams struct {
 
 // CreateV2Namespace 创建 namespace，并返回一次性明文 token。
 func (s *V2ControlPlaneService) CreateV2Namespace(p CreateV2NamespaceParams) (*model.Namespace, string, error) {
-	if p.Name == "" {
-		return nil, "", apperr.ErrInvalidParam
+	code, displayName, err := normalizeStableName(p.Name, p.Code, p.DisplayName)
+	if err != nil {
+		return nil, "", err
 	}
 	token, err := newAccessToken()
 	if err != nil {
 		return nil, "", err
 	}
 	ns := &model.Namespace{
-		Code:            p.Name,
-		Name:            p.Name,
+		Code:            code,
+		Name:            displayName,
 		Description:     p.Description,
 		AccessTokenHash: tokenHash(token),
 	}
+	detail := auditJSON(map[string]string{"code": code, "displayName": displayName})
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(ns).Error; err != nil {
 			return err
@@ -95,6 +106,7 @@ func (s *V2ControlPlaneService) CreateV2Namespace(p CreateV2NamespaceParams) (*m
 			Action:        model.ActionNamespaceCreate,
 			TargetType:    model.TargetTypeNamespace,
 			TargetRef:     ns.Code,
+			Detail:        detail,
 			Result:        model.ResultOK,
 			ClientIP:      p.ClientIP,
 		})
@@ -401,6 +413,7 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 
 type ApproveAgentIdentityParams struct {
 	ServerID            string
+	Reason              string
 	Operator            string
 	ClientIP            string
 	ForceUnbindOccupier bool
@@ -697,6 +710,53 @@ type ListServersParams struct {
 	PageSize    int
 }
 
+type UpdateServerDisplayNameParams struct {
+	ID          uint
+	ServerID    *string
+	DisplayName *string
+	Operator    string
+	ClientIP    string
+}
+
+func (s *V2ControlPlaneService) UpdateServerDisplayName(p UpdateServerDisplayNameParams) (*ServerView, error) {
+	if p.ID == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	var server model.Server
+	if err := s.db.First(&server, p.ID).Error; err != nil {
+		return nil, apperr.ErrInstanceNotFound
+	}
+	if p.ServerID != nil && strings.TrimSpace(*p.ServerID) != server.ServerID {
+		return nil, apperr.ErrImmutableIdentifier
+	}
+	oldDisplayName := server.DisplayName
+	if oldDisplayName == "" {
+		oldDisplayName = server.ServerID
+		server.DisplayName = server.ServerID
+	}
+	if p.DisplayName != nil {
+		next := strings.TrimSpace(*p.DisplayName)
+		if next == "" {
+			return nil, apperr.ErrInvalidParam
+		}
+		server.DisplayName = next
+	}
+	detail := auditJSON(map[string]string{"serverId": server.ServerID, "oldDisplayName": oldDisplayName, "newDisplayName": server.DisplayName})
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&server).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{Operator: operatorOrSystem(p.Operator), Action: model.ActionServerUpdate, TargetType: model.TargetTypeServer, TargetRef: server.ServerID, Detail: detail, Result: model.ResultOK, ClientIP: p.ClientIP})
+	}); err != nil {
+		return nil, err
+	}
+	views, err := enrichServers(s.db, []model.Server{server})
+	if err != nil {
+		return nil, err
+	}
+	return &views[0], nil
+}
+
 // ListServers 分页查询 v2 server 资产列表，返回富化视图（含归属名 / 默认入口 / 在线摘要）。
 func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, int64, error) {
 	q := s.db.Model(&model.Server{})
@@ -714,7 +774,8 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, 
 		}
 	}
 	if p.Keyword != "" {
-		q = q.Where("server_id LIKE ?", "%"+p.Keyword+"%")
+		like := "%" + p.Keyword + "%"
+		q = q.Where("server_id LIKE ? OR display_name LIKE ?", like, like)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
@@ -781,6 +842,7 @@ type GrantNamespaceTrustParams struct {
 	ToNamespaceID   uint
 	Capability      string
 	Note            string
+	Reason          string
 	Operator        string
 	ClientIP        string
 }
@@ -884,26 +946,43 @@ func (s *V2ControlPlaneService) NamespaceTrustAllowed(from, to uint, capability 
 type CreateBCClusterParams struct {
 	NamespaceID uint
 	Name        string
+	Code        string
+	DisplayName string
 	Description string
 	Operator    string
 	ClientIP    string
 }
 
 func (s *V2ControlPlaneService) CreateBCCluster(p CreateBCClusterParams) (*model.BCCluster, error) {
-	if p.NamespaceID == 0 || p.Name == "" {
+	code, displayName, err := normalizeStableName(p.Name, p.Code, p.DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	if p.NamespaceID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
-	cluster := &model.BCCluster{NamespaceID: p.NamespaceID, Name: p.Name, Description: p.Description}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	cluster := &model.BCCluster{NamespaceID: p.NamespaceID, Code: code, Name: displayName, Description: p.Description}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := ensureNamespacesExist(tx, p.NamespaceID); err != nil {
 			return err
 		}
+		var count int64
+		if err := tx.Model(&model.BCCluster{}).Where("namespace_id = ? AND code = ?", p.NamespaceID, code).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return apperr.ErrBCClusterConflict
+		}
 		if err := tx.Create(cluster).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return apperr.ErrBCClusterConflict
+			}
 			return err
 		}
 		return createAudit(tx, model.AuditLog{
 			Operator: operatorOrSystem(p.Operator), Action: model.ActionBCClusterCreate,
 			TargetType: model.TargetTypeBCCluster, TargetRef: fmt.Sprintf("%d", cluster.ID),
+			Detail: auditJSON(map[string]string{"code": code, "displayName": displayName}),
 			Result: model.ResultOK, ClientIP: p.ClientIP,
 		})
 	})
@@ -913,26 +992,44 @@ func (s *V2ControlPlaneService) CreateBCCluster(p CreateBCClusterParams) (*model
 type CreateRegionParams struct {
 	BCClusterID uint
 	Name        string
+	Code        string
+	DisplayName string
 	Description string
 	Operator    string
 	ClientIP    string
 }
 
 func (s *V2ControlPlaneService) CreateRegion(p CreateRegionParams) (*model.Region, error) {
-	if p.BCClusterID == 0 || p.Name == "" {
+	code, displayName, err := normalizeStableName(p.Name, p.Code, p.DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	if p.BCClusterID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
-	region := &model.Region{BCClusterID: p.BCClusterID, Name: p.Name, Description: p.Description}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	region := &model.Region{BCClusterID: p.BCClusterID, Code: code, Name: displayName, Description: p.Description}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := ensureBCClusterExists(tx, p.BCClusterID); err != nil {
 			return err
 		}
+		var count int64
+		if err := tx.Model(&model.Region{}).Where("bc_cluster_id = ? AND code = ?", p.BCClusterID, code).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return apperr.ErrRegionConflict
+		}
 		if err := tx.Create(region).Error; err != nil {
+
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return apperr.ErrRegionConflict
+			}
 			return err
 		}
 		return createAudit(tx, model.AuditLog{
 			Operator: operatorOrSystem(p.Operator), Action: model.ActionRegionCreate,
 			TargetType: model.TargetTypeRegion, TargetRef: fmt.Sprintf("%d", region.ID),
+			Detail: auditJSON(map[string]string{"code": code, "displayName": displayName}),
 			Result: model.ResultOK, ClientIP: p.ClientIP,
 		})
 	})
@@ -942,30 +1039,190 @@ func (s *V2ControlPlaneService) CreateRegion(p CreateRegionParams) (*model.Regio
 type CreateZoneParams struct {
 	RegionID    uint
 	Name        string
+	Code        string
+	DisplayName string
 	Description string
 	Operator    string
 	ClientIP    string
 }
 
 func (s *V2ControlPlaneService) CreateZone(p CreateZoneParams) (*model.Zone, error) {
-	if p.RegionID == 0 || p.Name == "" {
+	code, displayName, err := normalizeStableName(p.Name, p.Code, p.DisplayName)
+	if err != nil {
+		return nil, err
+	}
+	if p.RegionID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
-	zone := &model.Zone{RegionID: p.RegionID, Name: p.Name, Description: p.Description}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
+	zone := &model.Zone{RegionID: p.RegionID, Code: code, Name: displayName, Description: p.Description}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := ensureRegionExists(tx, p.RegionID); err != nil {
 			return err
 		}
+		var count int64
+		if err := tx.Model(&model.Zone{}).Where("region_id = ? AND code = ?", p.RegionID, code).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return apperr.ErrZoneConflict
+		}
 		if err := tx.Create(zone).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return apperr.ErrZoneConflict
+			}
 			return err
 		}
 		return createAudit(tx, model.AuditLog{
 			Operator: operatorOrSystem(p.Operator), Action: model.ActionZoneCreate,
 			TargetType: model.TargetTypeZone, TargetRef: fmt.Sprintf("%d", zone.ID),
+			Detail: auditJSON(map[string]string{"code": code, "displayName": displayName}),
 			Result: model.ResultOK, ClientIP: p.ClientIP,
 		})
 	})
 	return zone, err
+}
+
+type UpdateDisplayResourceParams struct {
+	ID          uint
+	Code        *string
+	Name        *string
+	DisplayName *string
+	Description *string
+	Operator    string
+	ClientIP    string
+}
+
+func (s *V2ControlPlaneService) UpdateNamespace(p UpdateDisplayResourceParams) (*model.Namespace, error) {
+	if p.ID == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	var ns model.Namespace
+	if err := s.db.First(&ns, p.ID).Error; err != nil {
+		return nil, apperr.ErrNamespaceNotFound
+	}
+	if err := rejectCodeChange(p.Code, ns.Code); err != nil {
+		return nil, err
+	}
+	oldName := ns.Name
+	if next, changed, err := normalizeDisplayNamePatch(ns.Code, ns.Name, p.Name, p.DisplayName); err != nil {
+		return nil, err
+	} else if changed {
+		ns.Name = next
+	}
+	if p.Description != nil {
+		ns.Description = *p.Description
+	}
+	detail := auditJSON(map[string]string{"code": ns.Code, "oldDisplayName": oldName, "newDisplayName": ns.Name})
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&ns).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{NamespaceCode: ns.Code, Operator: operatorOrSystem(p.Operator), Action: model.ActionNamespaceUpdate, TargetType: model.TargetTypeNamespace, TargetRef: ns.Code, Detail: detail, Result: model.ResultOK, ClientIP: p.ClientIP})
+	}); err != nil {
+		return nil, err
+	}
+	return &ns, nil
+}
+
+func (s *V2ControlPlaneService) UpdateBCCluster(p UpdateDisplayResourceParams) (*model.BCCluster, error) {
+	var item model.BCCluster
+	if err := loadForDisplayUpdate(s.db, p.ID, &item, apperr.ErrBCClusterNotFound); err != nil {
+		return nil, err
+	}
+	if err := rejectCodeChange(p.Code, item.Code); err != nil {
+		return nil, err
+	}
+	oldName := item.Name
+	if err := applyDisplayPatch(item.Code, &item.Name, p.Name, p.DisplayName); err != nil {
+		return nil, err
+	}
+	if p.Description != nil {
+		item.Description = *p.Description
+	}
+	if err := s.saveDisplayAudit(&item, model.ActionBCClusterUpdate, model.TargetTypeBCCluster, p.Operator, p.ClientIP, item.Code, oldName, item.Name); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *V2ControlPlaneService) UpdateRegion(p UpdateDisplayResourceParams) (*model.Region, error) {
+	var item model.Region
+	if err := loadForDisplayUpdate(s.db, p.ID, &item, apperr.ErrRegionNotFound); err != nil {
+		return nil, err
+	}
+	if err := rejectCodeChange(p.Code, item.Code); err != nil {
+		return nil, err
+	}
+	oldName := item.Name
+	if err := applyDisplayPatch(item.Code, &item.Name, p.Name, p.DisplayName); err != nil {
+		return nil, err
+	}
+	if p.Description != nil {
+		item.Description = *p.Description
+	}
+	if err := s.saveDisplayAudit(&item, model.ActionRegionUpdate, model.TargetTypeRegion, p.Operator, p.ClientIP, item.Code, oldName, item.Name); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *V2ControlPlaneService) UpdateZone(p UpdateDisplayResourceParams) (*model.Zone, error) {
+	var item model.Zone
+	if err := loadForDisplayUpdate(s.db, p.ID, &item, apperr.ErrZoneNotFound); err != nil {
+		return nil, err
+	}
+	if err := rejectCodeChange(p.Code, item.Code); err != nil {
+		return nil, err
+	}
+	oldName := item.Name
+	if err := applyDisplayPatch(item.Code, &item.Name, p.Name, p.DisplayName); err != nil {
+		return nil, err
+	}
+	if p.Description != nil {
+		item.Description = *p.Description
+	}
+	if err := s.saveDisplayAudit(&item, model.ActionZoneUpdate, model.TargetTypeZone, p.Operator, p.ClientIP, item.Code, oldName, item.Name); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func loadForDisplayUpdate(db *gorm.DB, id uint, out any, notFound error) error {
+	if id == 0 {
+		return apperr.ErrInvalidParam
+	}
+	if err := db.First(out, id).Error; err != nil {
+		return notFound
+	}
+	return nil
+}
+
+func rejectCodeChange(code *string, current string) error {
+	if code != nil && strings.TrimSpace(*code) != current {
+		return apperr.ErrImmutableIdentifier
+	}
+	return nil
+}
+
+func applyDisplayPatch(code string, current *string, name, displayName *string) error {
+	next, changed, err := normalizeDisplayNamePatch(code, *current, name, displayName)
+	if err != nil {
+		return err
+	}
+	if changed {
+		*current = next
+	}
+	return nil
+}
+
+func (s *V2ControlPlaneService) saveDisplayAudit(value any, action, targetType, operator, clientIP, code, oldDisplayName, newDisplayName string) error {
+	detail := auditJSON(map[string]string{"code": code, "oldDisplayName": oldDisplayName, "newDisplayName": newDisplayName})
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(value).Error; err != nil {
+			return err
+		}
+		return createAudit(tx, model.AuditLog{Operator: operatorOrSystem(operator), Action: action, TargetType: targetType, TargetRef: code, Detail: detail, Result: model.ResultOK, ClientIP: clientIP})
+	})
 }
 
 // DeleteNodeParams 删除结构节点的公共参数。
@@ -1428,6 +1685,7 @@ func (s *V2ControlPlaneService) SetServerDraining(p SetServerDrainingParams) (*S
 type SetServerDefaultEntryParams struct {
 	ServerRowID uint
 	Value       bool
+	Reason      string
 	Operator    string
 	ClientIP    string
 }

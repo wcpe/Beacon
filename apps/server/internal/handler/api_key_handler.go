@@ -81,9 +81,14 @@ type createAPIKeyRequest struct {
 	Role string `json:"role"`
 	// 可选过期时刻（RFC3339）；为空表示永不过期
 	ExpiresAt string `json:"expiresAt"`
+	Reason    string `json:"reason"`
 }
 
-// Create 处理 POST /admin/v1/api-keys：创建密钥，明文仅此响应一次返回。
+type resetAPIKeyRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Create 处理 POST /admin/v1/api-keys：创建密钥审批，提审响应不返回明文。
 func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createAPIKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -95,12 +100,12 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	plaintext, key, err := h.svc.Create(req.Name, req.Role, expiresAt, auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestCreate(req.Name, req.Role, expiresAt, req.Reason, auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusCreated, apiKeyCreatedView{apiKeyView: toAPIKeyView(key), Key: plaintext})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Revoke 处理 DELETE /admin/v1/api-keys/{id}：吊销密钥（软删）。
@@ -117,19 +122,24 @@ func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// Reset 处理 POST /admin/v1/api-keys/{id}/reset：重置（轮换）密钥明文，旧明文立即失效。
+// Reset 处理 POST /admin/v1/api-keys/{id}/reset：重置（轮换）密钥审批，提审响应不返回明文。
 func (h *APIKeyHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	plaintext, key, err := h.svc.Reset(id, auth.Operator(r.Context()), clientIP(r))
+	var req resetAPIKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ticket, err := h.svc.RequestReset(id, req.Reason, auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, apiKeyCreatedView{apiKeyView: toAPIKeyView(key), Key: plaintext})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // parseOptionalRFC3339 解析可选的 RFC3339 时间：空串→(nil,true)；合法→(*t,true)；非法→(nil,false)。

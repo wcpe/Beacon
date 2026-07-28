@@ -110,6 +110,38 @@ func TestEnvCreateAndList(t *testing.T) {
 	}
 }
 
+// TestEnvCreateStableIdentifierCompatibility 覆盖 code/displayName 创建、旧 name 兼容与歧义拒绝。
+func TestEnvCreateStableIdentifierCompatibility(t *testing.T) {
+	db := newEnvTestDB(t)
+	svc := newEnvService(db)
+
+	view, err := svc.CreateWithParams(CreateEnvParams{Code: "prod", DisplayName: "生产", Operator: "alice"})
+	if err != nil {
+		t.Fatalf("code/displayName 创建应成功，实际 %v", err)
+	}
+	if view.Name != "prod" || view.Code != "prod" || view.DisplayName != "生产" {
+		t.Fatalf("code/displayName 视图不符：%+v", view)
+	}
+	legacy, err := svc.Create("test", "", "alice", "10.0.0.1")
+	if err != nil {
+		t.Fatalf("旧 name 创建应兼容，实际 %v", err)
+	}
+	if legacy.Name != "test" || legacy.DisplayName != "test" {
+		t.Fatalf("旧 name 兼容视图不符：%+v", legacy)
+	}
+	if _, err := svc.CreateWithParams(CreateEnvParams{Name: "old", Code: "new", Operator: "alice"}); err == nil {
+		t.Fatal("name/code 不一致应返回歧义错误")
+	} else {
+		_ = mustAppErr(t, err, apperr.ErrAmbiguousIdentifier.Code, 400)
+	}
+	changedCode := "test-new"
+	if _, err := svc.UpdateWithParams(legacy.ID, &changedCode, nil, nil, nil, "alice", "10.0.0.1"); err == nil {
+		t.Fatal("修改 code 应返回不可变标识错误")
+	} else {
+		_ = mustAppErr(t, err, apperr.ErrImmutableIdentifier.Code, 400)
+	}
+}
+
 // TestEnvCreateEmptyNameRejected 边界：名为空返回参数错误、不落审计。
 func TestEnvCreateEmptyNameRejected(t *testing.T) {
 	db := newEnvTestDB(t)
@@ -163,7 +195,7 @@ func TestEnvUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("更新 env 应成功，实际 %v", err)
 	}
-	if updated.Name != "预发布" || updated.Description != "新描述" {
+	if updated.Name != "测试" || updated.Code != "测试" || updated.DisplayName != "预发布" || updated.Description != "新描述" {
 		t.Fatalf("更新结果不符：%+v", updated)
 	}
 	if n := countAudits(t, db, model.ActionEnvUpdate); n != 1 {
@@ -176,7 +208,7 @@ func TestEnvUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("仅改描述应成功，实际 %v", err)
 	}
-	if partial.Name != "预发布" || partial.Description != "仅改描述" {
+	if partial.Name != "测试" || partial.DisplayName != "预发布" || partial.Description != "仅改描述" {
 		t.Fatalf("仅改描述结果不符：%+v", partial)
 	}
 
@@ -187,12 +219,14 @@ func TestEnvUpdate(t *testing.T) {
 		_ = mustAppErr(t, err, apperr.ErrEnvNotFound.Code, 404)
 	}
 
-	// 撞另一个 env 的名
+	// displayName 可与另一个 env 重复；code 才是不可变唯一标识。
 	conflictName := "生产"
-	if _, err := svc.Update(created.ID, &conflictName, nil, "bob", "10.0.0.2"); err == nil {
-		t.Fatal("改名撞名应 409")
-	} else {
-		_ = mustAppErr(t, err, apperr.ErrEnvConflict.Code, 409)
+	duplicatedDisplayName, err := svc.Update(created.ID, &conflictName, nil, "bob", "10.0.0.2")
+	if err != nil {
+		t.Fatalf("displayName 重复应允许，实际 %v", err)
+	}
+	if duplicatedDisplayName.Name != "测试" || duplicatedDisplayName.DisplayName != "生产" {
+		t.Fatalf("重复 displayName 更新结果不符：%+v", duplicatedDisplayName)
 	}
 	_ = other
 }

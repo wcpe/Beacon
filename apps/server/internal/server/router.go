@@ -174,6 +174,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 			r.Get("/namespaces", h.V2.ListNamespaces)
 			r.Post("/namespaces", h.V2.CreateNamespace)
+			r.Patch("/namespaces/{id}", h.V2.UpdateNamespace)
 			r.Delete("/namespaces/{id}", h.V2.DeleteNamespace)
 			r.Post("/namespaces/{id}/bc-directory-resyncs", h.V2.NamespaceDirectoryResync)
 			r.Get("/namespace-trusts", h.V2.ListNamespaceTrusts)
@@ -216,14 +217,18 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			}
 
 			r.Post("/bc-clusters", h.V2.CreateBCCluster)
+			r.Patch("/bc-clusters/{id}", h.V2.UpdateBCCluster)
 			r.Delete("/bc-clusters/{id}", h.V2.DeleteBCCluster)
 			r.Post("/regions", h.V2.CreateRegion)
+			r.Patch("/regions/{id}", h.V2.UpdateRegion)
 			r.Delete("/regions/{id}", h.V2.DeleteRegion)
 			r.Post("/zones", h.V2.CreateZone)
+			r.Patch("/zones/{id}", h.V2.UpdateZone)
 			r.Delete("/zones/{id}", h.V2.DeleteZone)
 			// 区服结构树只读聚合（FR-155）
 			r.Get("/zone-tree", h.V2.ZoneTree)
 			r.Get("/servers", h.V2.ListServers)
+			r.Patch("/servers/{id}", h.V2.UpdateServer)
 			r.Post("/servers/{id}/bc-directory-resyncs", h.V2.ServerDirectoryResync)
 			// 大厅集群独立于大区 / 小区；成员迁移由专用端点原子完成。
 			r.Get("/lobby-clusters", h.V2.ListLobbyClusters)

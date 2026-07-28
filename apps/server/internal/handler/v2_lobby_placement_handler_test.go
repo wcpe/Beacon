@@ -33,8 +33,11 @@ func TestFR199LobbyPlacementHTTPAndReadShape(t *testing.T) {
 	code, body := invokeJSON(h.TransferServerPlacement, http.MethodPost, "/admin/v2/server-placement-transfers", "", map[string]any{
 		"serverId": "lobby-http", "target": map[string]any{"kind": "lobby_cluster", "id": lobby.ID}, "reason": "设置首次大厅",
 	})
-	if code != http.StatusOK || body["placementKind"] != "lobby_cluster" || body["lobbyClusterId"] != float64(lobby.ID) {
-		t.Fatalf("迁入大厅 HTTP 响应不符，实际 %d：%v", code, body)
+	if code != http.StatusAccepted || body["status"] != model.ApprovalStatusPending {
+		t.Fatalf("迁入大厅应创建审批请求，实际 %d：%v", code, body)
+	}
+	if _, err := svc.TransferServerPlacement(service.ServerPlacementTransferParams{ServerID: "lobby-http", TargetKind: "lobby_cluster", TargetID: lobby.ID, Reason: "设置首次大厅", Operator: "admin"}); err != nil {
+		t.Fatalf("迁入大厅失败: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v2/lobby-clusters?namespaceId="+lobbyUintText(ns.ID), nil)

@@ -28,6 +28,7 @@ type APIKeyService struct {
 	db        *gorm.DB
 	repo      *repository.APIKeyRepository
 	auditRepo *repository.AuditLogRepository
+	approval  *ApprovalService
 }
 
 // NewAPIKeyService 构造服务。

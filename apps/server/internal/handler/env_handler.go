@@ -33,6 +33,8 @@ func (h *EnvHandler) List(w http.ResponseWriter, r *http.Request) {
 
 type envCreateRequest struct {
 	Name        string `json:"name"`
+	Code        string `json:"code"`
+	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 }
 
@@ -43,7 +45,10 @@ func (h *EnvHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	view, err := h.svc.Create(req.Name, req.Description, auth.Operator(r.Context()), clientIP(r))
+	view, err := h.svc.CreateWithParams(service.CreateEnvParams{
+		Name: req.Name, Code: req.Code, DisplayName: req.DisplayName, Description: req.Description,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -54,6 +59,8 @@ func (h *EnvHandler) Create(w http.ResponseWriter, r *http.Request) {
 // envUpdateRequest 用指针区分「未传该字段」与「传空值」（PATCH 局部更新语义）。
 type envUpdateRequest struct {
 	Name        *string `json:"name"`
+	Code        *string `json:"code"`
+	DisplayName *string `json:"displayName"`
 	Description *string `json:"description"`
 }
 
@@ -69,7 +76,7 @@ func (h *EnvHandler) Update(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	view, err := h.svc.Update(id, req.Name, req.Description, auth.Operator(r.Context()), clientIP(r))
+	view, err := h.svc.UpdateWithParams(id, req.Code, req.Name, req.DisplayName, req.Description, auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

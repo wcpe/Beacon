@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
 // seedConflictIdentity 直接落一个 conflict 态身份（含 namespace 与 conflict_peers JSON），供 HTTP 层测试冲突详情 / 处置端点。
@@ -52,7 +53,7 @@ func TestV2IdentityDetailReturnsConflictPeers(t *testing.T) {
 
 // TestV2ResolveConflictHTTP 验证冲突处置端点：keepBootId 不在双方 → 400、有效 → 200 active、非 conflict → 409。
 func TestV2ResolveConflictHTTP(t *testing.T) {
-	db, _, h := newV2HandlerTestService(t)
+	db, svc, h := newV2HandlerTestService(t)
 	id := seedConflictIdentity(t, db)
 
 	// keepBootId 不在冲突双方 → 400。
@@ -67,8 +68,11 @@ func TestV2ResolveConflictHTTP(t *testing.T) {
 	code, parsed := invokeJSONWithParam(h.ResolveAgentIdentityConflict, http.MethodPost,
 		"/admin/v2/agent-identities/"+id+"/resolve-conflict", "",
 		map[string]any{"keepBootId": "boot-A", "reason": "保留原主实例"}, "identityId", id)
-	if code != http.StatusOK || parsed["status"] != model.AgentIdentityStatusActive {
-		t.Fatalf("有效处置应 200 active，实际 %d：%v", code, parsed)
+	if code != http.StatusAccepted || parsed["status"] != model.ApprovalStatusPending {
+		t.Fatalf("有效处置应创建审批请求，实际 %d：%v", code, parsed)
+	}
+	if _, err := svc.ResolveAgentIdentityConflict(id, service.ResolveConflictParams{KeepBootID: "boot-A", Reason: "保留原主实例", Operator: "admin"}); err != nil {
+		t.Fatalf("处置冲突失败: %v", err)
 	}
 
 	// 已恢复 active，再次处置 → 409。

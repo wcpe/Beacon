@@ -126,6 +126,7 @@ var coveredWriteRoutes = map[string]struct{}{
 	// —— /admin/v2 控制面：各域写端点一律在 service 事务内自记专项审计，登记于此使兜底跳过、避免双记 ——
 	// 环境创建与已迁移的删除端点（namespace.create；删除不产生审计）
 	"POST /admin/v2/namespaces":        {},
+	"PATCH /admin/v2/namespaces/{id}":  {},
 	"DELETE /admin/v2/namespaces/{id}": {},
 	// BC 受管目录立即重同步（namespace / instance.bc-directory-resync）
 	"POST /admin/v2/namespaces/{id}/bc-directory-resyncs": {},
@@ -158,14 +159,18 @@ var coveredWriteRoutes = map[string]struct{}{
 	"PUT /admin/v2/agent-identities/{identityId}/endpoints/{endpointKey}": {},
 	// 区服权威节点创建 / 删除（bc-cluster.create/delete、region.create/delete、zone.create/delete）
 	"POST /admin/v2/bc-clusters":        {},
+	"PATCH /admin/v2/bc-clusters/{id}":  {},
 	"DELETE /admin/v2/bc-clusters/{id}": {},
 	"POST /admin/v2/regions":            {},
+	"PATCH /admin/v2/regions/{id}":      {},
 	"DELETE /admin/v2/regions/{id}":     {},
 	"POST /admin/v2/zones":              {},
+	"PATCH /admin/v2/zones/{id}":        {},
 	"DELETE /admin/v2/zones/{id}":       {},
 	// 区服归属编排（server-assignment.assign / rezone、server draining / default-entry）
 	"POST /admin/v2/server-assignments":                {},
 	"POST /admin/v2/server-rezones":                    {},
+	"PATCH /admin/v2/servers/{id}":                     {},
 	"PUT /admin/v2/servers/{serverRef}/draining":       {},
 	"PUT /admin/v2/servers/{serverRef}/default-entry":  {},
 	"POST /admin/v2/servers/{id}/bc-directory-resyncs": {},

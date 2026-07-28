@@ -107,6 +107,12 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	); err != nil {
 		return nil, fmt.Errorf("自动迁移表结构失败: %w", err)
 	}
+	if err := backfillStableBusinessNames(db); err != nil {
+		return nil, err
+	}
+	if err := dropLegacyDisplayNameUniqueIndexes(db); err != nil {
+		return nil, err
+	}
 	if err := backfillLobbyClusters(db); err != nil {
 		return nil, err
 	}
@@ -121,6 +127,51 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+// backfillStableBusinessNames 为新增稳定标识 / 展示名字段做可重入回填。
+func backfillStableBusinessNames(db *gorm.DB) error {
+	updates := []struct {
+		model  any
+		field  string
+		source string
+		errMsg string
+	}{
+		{&model.Env{}, "code", "name", "回填 env code 失败"},
+		{&model.BCCluster{}, "code", "name", "回填 BC 集群 code 失败"},
+		{&model.Region{}, "code", "name", "回填大区 code 失败"},
+		{&model.Zone{}, "code", "name", "回填小区 code 失败"},
+		{&model.Server{}, "display_name", "server_id", "回填 server 展示名失败"},
+		{&model.Namespace{}, "name", "code", "回填 namespace 展示名失败"},
+	}
+	for _, item := range updates {
+		res := db.Model(item.model).Where(item.field+" = ? OR "+item.field+" IS NULL", "").Update(item.field, gorm.Expr(item.source))
+		if res.Error != nil {
+			return fmt.Errorf("%s: %w", item.errMsg, res.Error)
+		}
+	}
+	return nil
+}
+
+// dropLegacyDisplayNameUniqueIndexes 移除旧 name 唯一索引，让 displayName 可重复。
+func dropLegacyDisplayNameUniqueIndexes(db *gorm.DB) error {
+	indexes := []struct {
+		model any
+		name  string
+	}{
+		{&model.Env{}, "idx_env_name"},
+		{&model.BCCluster{}, "uk_bc_cluster_name"},
+		{&model.Region{}, "uk_region_name"},
+		{&model.Zone{}, "uk_zone_name"},
+	}
+	for _, idx := range indexes {
+		if db.Migrator().HasIndex(idx.model, idx.name) {
+			if err := db.Migrator().DropIndex(idx.model, idx.name); err != nil {
+				return fmt.Errorf("移除旧展示名唯一索引 %s 失败: %w", idx.name, err)
+			}
+		}
+	}
+	return nil
 }
 
 // backfillLobbyClusters 为升级前已有的 namespace 补建唯一空大厅集群。

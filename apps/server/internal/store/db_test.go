@@ -262,3 +262,141 @@ func assertLobbyClusterCount(t *testing.T, db *gorm.DB, namespaceID uint, want i
 		t.Fatalf("namespace %d 的大厅集群数应为 %d，实际 %d", namespaceID, want, got)
 	}
 }
+
+// legacyEnv 是 FR-205 前的 env 表结构，用于验证 code 回填。
+type legacyEnv struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	Name        string `gorm:"column:name;size:64;not null;uniqueIndex"`
+	Description string `gorm:"column:description;size:255"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (legacyEnv) TableName() string { return "env" }
+
+type legacyBCCluster struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	NamespaceID uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_bc_cluster_name,priority:1;index"`
+	Name        string `gorm:"column:name;size:64;not null;uniqueIndex:uk_bc_cluster_name,priority:2"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (legacyBCCluster) TableName() string { return "bc_cluster" }
+
+type legacyRegion struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	BCClusterID uint   `gorm:"column:bc_cluster_id;not null;uniqueIndex:uk_region_name,priority:1;index"`
+	Name        string `gorm:"column:name;size:64;not null;uniqueIndex:uk_region_name,priority:2"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (legacyRegion) TableName() string { return "region" }
+
+type legacyZone struct {
+	ID        uint   `gorm:"primaryKey;autoIncrement"`
+	RegionID  uint   `gorm:"column:region_id;not null;uniqueIndex:uk_zone_name,priority:1;index"`
+	Name      string `gorm:"column:name;size:64;not null;uniqueIndex:uk_zone_name,priority:2"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (legacyZone) TableName() string { return "zone" }
+
+type legacyServer struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	NamespaceID uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_server_id,priority:1;index"`
+	ServerID    string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2"`
+	Kind        string `gorm:"column:kind;size:16;not null"`
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+func (legacyServer) TableName() string { return "server" }
+
+// TestOpenBackfillsStableBusinessNames 锁定 FR-205 新列回填、幂等以及 displayName 可重复。
+func TestOpenBackfillsStableBusinessNames(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "legacy-stable-names.db")
+	legacy, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("打开升级前 sqlite 失败: %v", err)
+	}
+	if err := legacy.AutoMigrate(&model.Namespace{}, &legacyEnv{}, &legacyBCCluster{}, &legacyRegion{}, &legacyZone{}, &legacyServer{}); err != nil {
+		t.Fatalf("创建升级前稳定名称表失败: %v", err)
+	}
+	ns := &model.Namespace{Code: "legacy", Name: "历史环境"}
+	if err := legacy.Create(ns).Error; err != nil {
+		t.Fatalf("写入升级前 namespace 失败: %v", err)
+	}
+	env := &legacyEnv{Name: "历史Env"}
+	cluster := &legacyBCCluster{NamespaceID: ns.ID, Name: "历史BC"}
+	if err := legacy.Create(env).Error; err != nil {
+		t.Fatalf("写入升级前 env 失败: %v", err)
+	}
+	if err := legacy.Create(cluster).Error; err != nil {
+		t.Fatalf("写入升级前 BC 集群失败: %v", err)
+	}
+	region := &legacyRegion{BCClusterID: cluster.ID, Name: "历史大区"}
+	if err := legacy.Create(region).Error; err != nil {
+		t.Fatalf("写入升级前大区失败: %v", err)
+	}
+	zone := &legacyZone{RegionID: region.ID, Name: "历史小区"}
+	if err := legacy.Create(zone).Error; err != nil {
+		t.Fatalf("写入升级前小区失败: %v", err)
+	}
+	server := &legacyServer{NamespaceID: ns.ID, ServerID: "lobby-1", Kind: model.ServerKindBackend}
+	if err := legacy.Create(server).Error; err != nil {
+		t.Fatalf("写入升级前 server 失败: %v", err)
+	}
+	legacySQL, err := legacy.DB()
+	if err != nil {
+		t.Fatalf("获取升级前 sqlite 连接失败: %v", err)
+	}
+	if err := legacySQL.Close(); err != nil {
+		t.Fatalf("关闭升级前 sqlite 连接失败: %v", err)
+	}
+
+	cfg := config.DatabaseConfig{Driver: "sqlite", DSN: dsn, MaxOpenConns: 1, MaxIdleConns: 1, ConnMaxLifetimeSec: 60}
+	db, err := Open(cfg)
+	if err != nil {
+		t.Fatalf("升级打开数据库失败: %v", err)
+	}
+	assertStableNameBackfill(t, db)
+	if err := db.Create(&model.BCCluster{NamespaceID: ns.ID, Code: "bc-2", Name: "历史BC"}).Error; err != nil {
+		t.Fatalf("旧 name 唯一索引应移除以允许 displayName 重复: %v", err)
+	}
+	Close(db)
+
+	db, err = Open(cfg)
+	if err != nil {
+		t.Fatalf("重复升级打开数据库失败: %v", err)
+	}
+	t.Cleanup(func() { Close(db) })
+	assertStableNameBackfill(t, db)
+}
+
+func assertStableNameBackfill(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	var env model.Env
+	if err := db.First(&env, "name = ?", "历史Env").Error; err != nil {
+		t.Fatalf("读取升级后 env 失败: %v", err)
+	}
+	if env.Code != "历史Env" {
+		t.Fatalf("env code 应由 name 回填，实际 %+v", env)
+	}
+	var zone model.Zone
+	if err := db.First(&zone, "name = ?", "历史小区").Error; err != nil {
+		t.Fatalf("读取升级后小区失败: %v", err)
+	}
+	if zone.Code != "历史小区" {
+		t.Fatalf("zone code 应由 name 回填，实际 %+v", zone)
+	}
+	var server model.Server
+	if err := db.First(&server, "server_id = ?", "lobby-1").Error; err != nil {
+		t.Fatalf("读取升级后 server 失败: %v", err)
+	}
+	if server.DisplayName != "lobby-1" {
+		t.Fatalf("server displayName 应由 serverId 回填，实际 %+v", server)
+	}
+}

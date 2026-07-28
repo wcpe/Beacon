@@ -17,6 +17,7 @@ type ServerView struct {
 	ID              uint      `json:"id"`
 	NamespaceID     uint      `json:"namespaceId"`
 	ServerID        string    `json:"serverId"`
+	DisplayName     string    `json:"displayName"`
 	Kind            string    `json:"kind"`
 	BCClusterID     *uint     `json:"bcClusterId"`
 	BCClusterName   *string   `json:"bcClusterName"`
@@ -107,7 +108,7 @@ func loadZoneRegionNames(db *gorm.DB, zoneIDs []uint) (map[uint]model.Zone, map[
 		return nil, nil, err
 	}
 	for i := range regions {
-		regionNameByID[regions[i].ID] = regions[i].Name
+		regionNameByID[regions[i].ID] = regions[i].Code
 	}
 	return zoneByID, regionNameByID, nil
 }
@@ -123,7 +124,7 @@ func loadBCClusterNames(db *gorm.DB, bcIDs []uint) (map[uint]string, error) {
 		return nil, err
 	}
 	for i := range clusters {
-		byID[clusters[i].ID] = clusters[i].Name
+		byID[clusters[i].ID] = clusters[i].Code
 	}
 	return byID, nil
 }
@@ -150,8 +151,12 @@ func loadOnlineServerKeys(db *gorm.DB, serverIDs []string) (map[onlineKey]struct
 
 // buildServerView 组装单台 server 视图（纯内存，名称来自已批量取的映射）。
 func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameByID, bcNameByID map[uint]string, online map[onlineKey]struct{}) ServerView {
+	displayName := s.DisplayName
+	if displayName == "" {
+		displayName = s.ServerID
+	}
 	view := ServerView{
-		ID: s.ID, NamespaceID: s.NamespaceID, ServerID: s.ServerID, Kind: s.Kind,
+		ID: s.ID, NamespaceID: s.NamespaceID, ServerID: s.ServerID, DisplayName: displayName, Kind: s.Kind,
 		BCClusterID: s.BCClusterID, LobbyClusterID: s.LobbyClusterID,
 		ZoneID: s.ZoneID, PendingZoneID: s.PendingZoneID,
 		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining,
@@ -164,7 +169,7 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 	}
 	if s.ZoneID != nil {
 		if zone, ok := zoneByID[*s.ZoneID]; ok {
-			zoneName := zone.Name
+			zoneName := zone.Code
 			view.ZoneName = &zoneName
 			if regionName, ok := regionNameByID[zone.RegionID]; ok {
 				view.RegionName = &regionName
@@ -173,7 +178,7 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 	}
 	if s.PendingZoneID != nil {
 		if zone, ok := zoneByID[*s.PendingZoneID]; ok {
-			pendingName := zone.Name
+			pendingName := zone.Code
 			view.PendingZoneName = &pendingName
 		}
 	}
@@ -185,6 +190,8 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 type ZoneTreeZone struct {
 	ID                uint   `json:"id"`
 	Name              string `json:"name"`
+	Code              string `json:"code"`
+	DisplayName       string `json:"displayName"`
 	Description       string `json:"description"`
 	ServerCount       int    `json:"serverCount"`
 	DefaultEntryCount int    `json:"defaultEntryCount"`
@@ -194,6 +201,8 @@ type ZoneTreeZone struct {
 type ZoneTreeRegion struct {
 	ID          uint           `json:"id"`
 	Name        string         `json:"name"`
+	Code        string         `json:"code"`
+	DisplayName string         `json:"displayName"`
 	Description string         `json:"description"`
 	Zones       []ZoneTreeZone `json:"zones"`
 }
@@ -202,6 +211,8 @@ type ZoneTreeRegion struct {
 type ZoneTreeCluster struct {
 	ID          uint             `json:"id"`
 	Name        string           `json:"name"`
+	Code        string           `json:"code"`
+	DisplayName string           `json:"displayName"`
 	Description string           `json:"description"`
 	ProxyCount  int              `json:"proxyCount"`
 	Regions     []ZoneTreeRegion `json:"regions"`
@@ -278,7 +289,7 @@ func buildZoneTree(namespaceID uint, clusters []model.BCCluster, regions []model
 	for i := range zones {
 		zone := &zones[i]
 		zonesByRegion[zone.RegionID] = append(zonesByRegion[zone.RegionID], ZoneTreeZone{
-			ID: zone.ID, Name: zone.Name, Description: zone.Description,
+			ID: zone.ID, Name: zone.Code, Code: zone.Code, DisplayName: zone.Name, Description: zone.Description,
 			ServerCount: serverByZone[zone.ID], DefaultEntryCount: defaultEntryByZone[zone.ID],
 		})
 	}
@@ -286,7 +297,7 @@ func buildZoneTree(namespaceID uint, clusters []model.BCCluster, regions []model
 	for i := range regions {
 		region := &regions[i]
 		regionsByCluster[region.BCClusterID] = append(regionsByCluster[region.BCClusterID], ZoneTreeRegion{
-			ID: region.ID, Name: region.Name, Description: region.Description,
+			ID: region.ID, Name: region.Code, Code: region.Code, DisplayName: region.Name, Description: region.Description,
 			Zones: orEmptyZones(zonesByRegion[region.ID]),
 		})
 	}
@@ -294,7 +305,7 @@ func buildZoneTree(namespaceID uint, clusters []model.BCCluster, regions []model
 	for i := range clusters {
 		cluster := &clusters[i]
 		out.Clusters = append(out.Clusters, ZoneTreeCluster{
-			ID: cluster.ID, Name: cluster.Name, Description: cluster.Description,
+			ID: cluster.ID, Name: cluster.Code, Code: cluster.Code, DisplayName: cluster.Name, Description: cluster.Description,
 			ProxyCount: proxyByCluster[cluster.ID], Regions: orEmptyRegions(regionsByCluster[cluster.ID]),
 		})
 	}
@@ -576,14 +587,14 @@ func (s *V2ControlPlaneService) rezonePrefillFor(ident *model.AgentIdentity) (*R
 		if err := s.db.First(&zone, *server.PendingZoneID).Error; err != nil {
 			return nil, err
 		}
-		return &RezonePrefillView{TargetKind: model.AssignmentTargetZone, TargetID: zone.ID, TargetName: zone.Name}, nil
+		return &RezonePrefillView{TargetKind: model.AssignmentTargetZone, TargetID: zone.ID, TargetName: zone.Code}, nil
 	}
 	if server.PendingBCClusterID != nil {
 		var cluster model.BCCluster
 		if err := s.db.First(&cluster, *server.PendingBCClusterID).Error; err != nil {
 			return nil, err
 		}
-		return &RezonePrefillView{TargetKind: model.AssignmentTargetBCCluster, TargetID: cluster.ID, TargetName: cluster.Name}, nil
+		return &RezonePrefillView{TargetKind: model.AssignmentTargetBCCluster, TargetID: cluster.ID, TargetName: cluster.Code}, nil
 	}
 	return nil, nil
 }

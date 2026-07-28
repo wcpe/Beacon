@@ -46,10 +46,23 @@ func (r *EnvRepository) FindByID(id uint) (*model.Env, error) {
 	return &env, nil
 }
 
-// FindByName 按名查 env（撞名判定用）；不存在返回 (nil, nil)。
+// FindByName 按显示名查 env；不存在返回 (nil, nil)。
 func (r *EnvRepository) FindByName(name string) (*model.Env, error) {
 	var env model.Env
 	err := r.db.Where("name = ?", name).First(&env).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// FindByCode 按稳定 code 查 env；不存在返回 (nil, nil)。
+func (r *EnvRepository) FindByCode(code string) (*model.Env, error) {
+	var env model.Env
+	err := r.db.Where("code = ?", code).First(&env).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

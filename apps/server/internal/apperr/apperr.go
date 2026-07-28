@@ -27,6 +27,10 @@ func New(status int, code, message string) *Error {
 var (
 	// ErrInvalidParam 参数错误。
 	ErrInvalidParam = New(http.StatusBadRequest, "INVALID_PARAM", "参数错误")
+	// ErrAmbiguousIdentifier 请求同时给出不一致的旧 name 与新 code。
+	ErrAmbiguousIdentifier = New(http.StatusBadRequest, "AMBIGUOUS_IDENTIFIER", "name 与 code 不一致")
+	// ErrImmutableIdentifier 稳定业务标识不允许修改。
+	ErrImmutableIdentifier = New(http.StatusBadRequest, "IMMUTABLE_IDENTIFIER", "稳定业务标识不允许修改")
 	// ErrNamespaceConflict 同名环境已存在。
 	ErrNamespaceConflict = New(http.StatusConflict, "NAMESPACE_CONFLICT", "同名环境已存在")
 	// ErrNamespaceNotFound 环境不存在（改名 / 删除目标缺失，FR-53）。
@@ -44,16 +48,22 @@ var (
 	// ErrNamespaceDeleteMigrated 旧 namespace 删除端点已迁移，禁止硬删。
 	ErrNamespaceDeleteMigrated = New(http.StatusGone, "namespace_delete_migrated", "环境删除端点已迁移")
 
+	// ErrBCClusterConflict 同范围 BC 集群 code 已存在。
+	ErrBCClusterConflict = New(http.StatusConflict, "BC_CLUSTER_CONFLICT", "同范围 BC 集群标识已存在")
 	// ErrBCClusterNotFound BC 集群不存在。
 	ErrBCClusterNotFound = New(http.StatusNotFound, "BC_CLUSTER_NOT_FOUND", "BC 集群不存在")
 	// ErrBCClusterHasRegions 集群下仍有大区，禁删。
 	ErrBCClusterHasRegions = New(http.StatusConflict, "BC_CLUSTER_HAS_REGIONS", "该 BC 集群下仍有大区，请先删除大区后再删除集群")
 	// ErrBCClusterHasProxies 集群下仍有已分配代理，禁删。
 	ErrBCClusterHasProxies = New(http.StatusConflict, "BC_CLUSTER_HAS_PROXIES", "该 BC 集群下仍有已分配的代理服，请先解除分配后再删除")
+	// ErrRegionConflict 同范围大区 code 已存在。
+	ErrRegionConflict = New(http.StatusConflict, "REGION_CONFLICT", "同范围大区标识已存在")
 	// ErrRegionNotFound 大区不存在。
 	ErrRegionNotFound = New(http.StatusNotFound, "REGION_NOT_FOUND", "大区不存在")
 	// ErrRegionHasZones 大区下仍有小区，禁删。
 	ErrRegionHasZones = New(http.StatusConflict, "REGION_HAS_ZONES", "该大区下仍有小区，请先删除小区后再删除大区")
+	// ErrZoneConflict 同范围小区 code 已存在。
+	ErrZoneConflict = New(http.StatusConflict, "ZONE_CONFLICT", "同范围小区标识已存在")
 	// ErrZoneNotFound 小区不存在。
 	ErrZoneNotFound = New(http.StatusNotFound, "ZONE_NOT_FOUND", "小区不存在")
 	// ErrZoneHasServers 小区下仍有已分配子服，禁删。
@@ -192,7 +202,11 @@ var (
 	// ErrApprovalTerminal 审批请求已终结，不允许撤回或再次决策。
 	ErrApprovalTerminal = New(http.StatusConflict, "approval_terminal", "审批请求已终结")
 	// ErrApprovalReasonRequired 审批申请或拒绝必须填写原因。
-	ErrApprovalReasonRequired = New(http.StatusBadRequest, "missing_reason", "审批原因不能为空")
+	ErrApprovalReasonRequired = New(http.StatusBadRequest, "approval_reason_required", "审批原因不能为空")
+	// ErrApprovalTargetChanged 审批冻结目标已变化。
+	ErrApprovalTargetChanged = New(http.StatusConflict, "approval_target_changed", "审批目标已变化，请重新提审")
+	// ErrTopologyTargetChanged 拓扑审批冻结目标已变化。
+	ErrTopologyTargetChanged = New(http.StatusConflict, "topology_target_changed", "拓扑目标已变化，请重新提审")
 	// ErrMachinePrincipalCannotDecide 机器主体不能批准或拒绝审批请求。
 	ErrMachinePrincipalCannotDecide = New(http.StatusForbidden, "machine_principal_cannot_decide", "机器主体不能批准或拒绝审批请求")
 	// ErrIdempotencyKeyReused 幂等键被不同冻结载荷复用。

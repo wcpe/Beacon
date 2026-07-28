@@ -3,7 +3,11 @@
 // json 落 TEXT、不写方言专有 gorm type），保证可切 Postgres。
 package model
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Namespace 表示一个环境隔离单元（如 prod / test）。
 type Namespace struct {
@@ -25,3 +29,13 @@ type Namespace struct {
 
 // TableName 固定表名为 namespace。
 func (Namespace) TableName() string { return "namespace" }
+
+func (n *Namespace) BeforeSave(*gorm.DB) error {
+	if n.Code == "" {
+		n.Code = n.Name
+	}
+	if n.Name == "" {
+		n.Name = n.Code
+	}
+	return nil
+}

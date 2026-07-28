@@ -330,6 +330,10 @@ func run() error {
 	// 统一审批核心（FR-206/207）：先落审批请求与审计，再由注册表按 operationKind 调用受控执行适配器。
 	approvalRegistry := authz.NewApprovalRegistry()
 	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), auditRepo, approvalRegistry)
+	v2ControlPlaneService.SetApprovalService(approvalService)
+	apiKeyService.SetApprovalService(approvalService)
+	service.RegisterV2ControlPlaneApprovalAdapters(approvalRegistry, v2ControlPlaneService)
+	service.RegisterAPIKeyApprovalAdapters(approvalRegistry, apiKeyService)
 	approvalHandler := handler.NewApprovalHandler(approvalService)
 
 	// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：命令仓库 + 服务（建命令 / 拉取 / ingest 复用 FileService.Import）+ 处理器。

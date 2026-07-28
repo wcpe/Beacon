@@ -1040,3 +1040,87 @@ func TestV2IdentityDisableEnableUnbind(t *testing.T) {
 		t.Fatalf("unbound 再禁用应 illegal_state，实际 %v", err)
 	}
 }
+
+func TestFR205StableNamesCreateAndPatch(t *testing.T) {
+	_, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Code: "prod", DisplayName: "生产", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("code/displayName 创建 namespace 应成功: %v", err)
+	}
+	if ns.Code != "prod" || ns.Name != "生产" {
+		t.Fatalf("namespace 双名称不符：%+v", ns)
+	}
+	if _, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "old", Code: "new", Operator: "admin"}); !errors.Is(err, apperr.ErrAmbiguousIdentifier) {
+		t.Fatalf("name/code 不一致应返回 AMBIGUOUS_IDENTIFIER，实际 %v", err)
+	}
+
+	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Code: "bc", DisplayName: "代理", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 BC 集群失败: %v", err)
+	}
+	if _, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Code: "bc-2", DisplayName: "代理", Operator: "admin"}); err != nil {
+		t.Fatalf("displayName 重复应允许，实际 %v", err)
+	}
+	if _, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Code: "bc", DisplayName: "另一个", Operator: "admin"}); !errors.Is(err, apperr.ErrBCClusterConflict) {
+		t.Fatalf("同 namespace 下 code 重复应冲突，实际 %v", err)
+	}
+
+	nextDisplay := "代理新名"
+	updated, err := svc.UpdateBCCluster(UpdateDisplayResourceParams{ID: cluster.ID, DisplayName: &nextDisplay, Operator: "admin"})
+	if err != nil {
+		t.Fatalf("更新 displayName 应成功: %v", err)
+	}
+	if updated.Code != "bc" || updated.Name != "代理新名" {
+		t.Fatalf("更新后 code 不应变化，实际 %+v", updated)
+	}
+	changedCode := "bc-new"
+	if _, err := svc.UpdateBCCluster(UpdateDisplayResourceParams{ID: cluster.ID, Code: &changedCode, Operator: "admin"}); !errors.Is(err, apperr.ErrImmutableIdentifier) {
+		t.Fatalf("修改 code 应返回 IMMUTABLE_IDENTIFIER，实际 %v", err)
+	}
+
+	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Code: "region", DisplayName: "大区", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建大区失败: %v", err)
+	}
+	_, err = svc.CreateZone(CreateZoneParams{RegionID: region.ID, Code: "zone", DisplayName: "小区", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建小区失败: %v", err)
+	}
+	tree, err := svc.ZoneTree(ns.ID)
+	if err != nil {
+		t.Fatalf("读取 zone-tree 失败: %v", err)
+	}
+	gotZone := tree.Clusters[0].Regions[0].Zones[0]
+	if tree.Clusters[0].Name != "bc" || tree.Clusters[0].DisplayName != "代理新名" || gotZone.Name != "zone" || gotZone.DisplayName != "小区" {
+		t.Fatalf("zone-tree 双名称不符：%+v", tree)
+	}
+}
+
+func TestFR205ServerDisplayNameUpdateAndKeyword(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := &model.Server{NamespaceID: ns.ID, ServerID: "lobby-1", DisplayName: "大厅一", Kind: model.ServerKindBackend}
+	if err := db.Create(server).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+
+	views, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, Keyword: "大厅", PageSize: 20})
+	if err != nil || total != 1 || len(views) != 1 || views[0].DisplayName != "大厅一" {
+		t.Fatalf("keyword 应匹配 displayName，total=%d views=%+v err=%v", total, views, err)
+	}
+	next := "大厅新名"
+	updated, err := svc.UpdateServerDisplayName(UpdateServerDisplayNameParams{ID: server.ID, DisplayName: &next, Operator: "admin"})
+	if err != nil {
+		t.Fatalf("更新 server displayName 失败: %v", err)
+	}
+	if updated.ServerID != "lobby-1" || updated.DisplayName != "大厅新名" {
+		t.Fatalf("server 更新视图不符：%+v", updated)
+	}
+	changedServerID := "lobby-2"
+	if _, err := svc.UpdateServerDisplayName(UpdateServerDisplayNameParams{ID: server.ID, ServerID: &changedServerID, Operator: "admin"}); !errors.Is(err, apperr.ErrImmutableIdentifier) {
+		t.Fatalf("修改 serverId 应返回 IMMUTABLE_IDENTIFIER，实际 %v", err)
+	}
+}

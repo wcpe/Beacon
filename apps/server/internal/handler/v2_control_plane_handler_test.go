@@ -16,8 +16,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
@@ -40,11 +42,15 @@ func newV2HandlerTestService(t *testing.T) (*gorm.DB, *service.V2ControlPlaneSer
 		&model.Server{},
 		&model.AgentIdentity{},
 		&model.AgentEndpoint{},
+		&model.ApprovalRequest{},
 		&model.AuditLog{},
 	); err != nil {
 		t.Fatalf("迁移 v2 表失败: %v", err)
 	}
 	svc := service.NewV2ControlPlaneService(db)
+	approvalRegistry := authz.NewApprovalRegistry()
+	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), approvalRegistry)
+	svc.SetApprovalService(approvalService)
 	return db, svc, NewV2ControlPlaneHandler(svc)
 }
 
@@ -90,12 +96,15 @@ func TestFR203AgentRegisterHTTPPendingThenActive(t *testing.T) {
 		http.MethodPost,
 		"/admin/v2/agent-identities/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/approve",
 		"",
-		map[string]any{"serverId": "lobby-203-http", "forceUnbindOccupier": false},
+		map[string]any{"serverId": "lobby-203-http", "forceUnbindOccupier": false, "reason": "确认身份"},
 		"identityId",
 		"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 	)
-	if approveCode != http.StatusOK || approveBody["status"] != model.AgentIdentityStatusActive || approveBody["serverId"] != "lobby-203-http" {
-		t.Fatalf("确认身份应 200 active，实际 %d：%v", approveCode, approveBody)
+	if approveCode != http.StatusAccepted || approveBody["status"] != model.ApprovalStatusPending {
+		t.Fatalf("确认身份应创建审批请求，实际 %d：%v", approveCode, approveBody)
+	}
+	if _, err := svc.ApproveAgentIdentity("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", service.ApproveAgentIdentityParams{ServerID: "lobby-203-http", Operator: "admin"}); err != nil {
+		t.Fatalf("确认身份失败: %v", err)
 	}
 
 	code, parsed = invokeJSON(h.AgentRegister, http.MethodPost, "/beacon/v2/agent/register", token, body)

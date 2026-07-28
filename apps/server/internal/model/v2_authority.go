@@ -2,8 +2,11 @@ package model
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // NamespaceTrust 是 namespace 单向互通信任关系。
@@ -27,14 +30,26 @@ func (NamespaceTrust) TableName() string { return "namespace_trust" }
 
 // Env 是展示维度，不参与隔离与调度。
 type Env struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	Name        string `gorm:"column:name;size:64;not null;uniqueIndex"`
-	Description string `gorm:"column:description;size:255"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Code        string    `gorm:"column:code;size:64;uniqueIndex" json:"code"`
+	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	DisplayName string    `gorm:"-" json:"displayName"`
+	Description string    `gorm:"column:description;size:255" json:"description"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (Env) TableName() string { return "env" }
+
+func (e *Env) BeforeSave(*gorm.DB) error {
+	if e.Code == "" {
+		e.Code = e.Name
+	}
+	if e.Name == "" {
+		e.Name = e.Code
+	}
+	return nil
+}
 
 // EnvNamespace 是 env 到 namespace 的映射。
 type EnvNamespace struct {
@@ -49,8 +64,10 @@ func (EnvNamespace) TableName() string { return "env_namespace" }
 // BCCluster 是 BC 代理集群。
 type BCCluster struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	NamespaceID uint      `gorm:"column:namespace_id;not null;uniqueIndex:uk_bc_cluster_name,priority:1;index" json:"namespaceId"`
-	Name        string    `gorm:"column:name;size:64;not null;uniqueIndex:uk_bc_cluster_name,priority:2" json:"name"`
+	NamespaceID uint      `gorm:"column:namespace_id;not null;uniqueIndex:uk_bc_cluster_code,priority:1;index" json:"namespaceId"`
+	Code        string    `gorm:"column:code;size:64;uniqueIndex:uk_bc_cluster_code,priority:2" json:"code"`
+	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	DisplayName string    `gorm:"-" json:"displayName"`
 	Description string    `gorm:"column:description;size:255" json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
@@ -58,11 +75,37 @@ type BCCluster struct {
 
 func (BCCluster) TableName() string { return "bc_cluster" }
 
+func (c *BCCluster) BeforeSave(*gorm.DB) error {
+	if c.Code == "" {
+		c.Code = c.Name
+	}
+	if c.Name == "" {
+		c.Name = c.Code
+	}
+	return nil
+}
+
+func (c BCCluster) MarshalJSON() ([]byte, error) {
+	type view struct {
+		ID          uint      `json:"id"`
+		NamespaceID uint      `json:"namespaceId"`
+		Name        string    `json:"name"`
+		Code        string    `json:"code"`
+		DisplayName string    `json:"displayName"`
+		Description string    `json:"description"`
+		CreatedAt   time.Time `json:"createdAt"`
+		UpdatedAt   time.Time `json:"updatedAt"`
+	}
+	return json.Marshal(view{ID: c.ID, NamespaceID: c.NamespaceID, Name: c.Code, Code: c.Code, DisplayName: c.Name, Description: c.Description, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt})
+}
+
 // Region 是大区，隶属于一个 BC 集群。
 type Region struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	BCClusterID uint      `gorm:"column:bc_cluster_id;not null;uniqueIndex:uk_region_name,priority:1;index" json:"bcClusterId"`
-	Name        string    `gorm:"column:name;size:64;not null;uniqueIndex:uk_region_name,priority:2" json:"name"`
+	BCClusterID uint      `gorm:"column:bc_cluster_id;not null;uniqueIndex:uk_region_code,priority:1;index" json:"bcClusterId"`
+	Code        string    `gorm:"column:code;size:64;uniqueIndex:uk_region_code,priority:2" json:"code"`
+	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	DisplayName string    `gorm:"-" json:"displayName"`
 	Description string    `gorm:"column:description;size:255" json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
@@ -70,17 +113,67 @@ type Region struct {
 
 func (Region) TableName() string { return "region" }
 
+func (r *Region) BeforeSave(*gorm.DB) error {
+	if r.Code == "" {
+		r.Code = r.Name
+	}
+	if r.Name == "" {
+		r.Name = r.Code
+	}
+	return nil
+}
+
+func (r Region) MarshalJSON() ([]byte, error) {
+	type view struct {
+		ID          uint      `json:"id"`
+		BCClusterID uint      `json:"bcClusterId"`
+		Name        string    `json:"name"`
+		Code        string    `json:"code"`
+		DisplayName string    `json:"displayName"`
+		Description string    `json:"description"`
+		CreatedAt   time.Time `json:"createdAt"`
+		UpdatedAt   time.Time `json:"updatedAt"`
+	}
+	return json.Marshal(view{ID: r.ID, BCClusterID: r.BCClusterID, Name: r.Code, Code: r.Code, DisplayName: r.Name, Description: r.Description, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt})
+}
+
 // Zone 是小区，隶属于一个大区。
 type Zone struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	RegionID    uint      `gorm:"column:region_id;not null;uniqueIndex:uk_zone_name,priority:1;index" json:"regionId"`
-	Name        string    `gorm:"column:name;size:64;not null;uniqueIndex:uk_zone_name,priority:2" json:"name"`
+	RegionID    uint      `gorm:"column:region_id;not null;uniqueIndex:uk_zone_code,priority:1;index" json:"regionId"`
+	Code        string    `gorm:"column:code;size:64;uniqueIndex:uk_zone_code,priority:2" json:"code"`
+	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	DisplayName string    `gorm:"-" json:"displayName"`
 	Description string    `gorm:"column:description;size:255" json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 func (Zone) TableName() string { return "zone" }
+
+func (z *Zone) BeforeSave(*gorm.DB) error {
+	if z.Code == "" {
+		z.Code = z.Name
+	}
+	if z.Name == "" {
+		z.Name = z.Code
+	}
+	return nil
+}
+
+func (z Zone) MarshalJSON() ([]byte, error) {
+	type view struct {
+		ID          uint      `json:"id"`
+		RegionID    uint      `json:"regionId"`
+		Name        string    `json:"name"`
+		Code        string    `json:"code"`
+		DisplayName string    `json:"displayName"`
+		Description string    `json:"description"`
+		CreatedAt   time.Time `json:"createdAt"`
+		UpdatedAt   time.Time `json:"updatedAt"`
+	}
+	return json.Marshal(view{ID: z.ID, RegionID: z.RegionID, Name: z.Code, Code: z.Code, DisplayName: z.Name, Description: z.Description, CreatedAt: z.CreatedAt, UpdatedAt: z.UpdatedAt})
+}
 
 // LobbyCluster 是 namespace 唯一的全局大厅集群。
 // 成员由 Server.LobbyClusterID 表达；不建立外键，归属完整性由事务 service 校验。
@@ -98,6 +191,7 @@ type Server struct {
 	ID                 uint   `gorm:"primaryKey;autoIncrement"`
 	NamespaceID        uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_server_id,priority:1;index"`
 	ServerID           string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2"`
+	DisplayName        string `gorm:"column:display_name;size:64"`
 	Kind               string `gorm:"column:kind;size:16;not null"`
 	BCClusterID        *uint  `gorm:"column:bc_cluster_id;index"`
 	ZoneID             *uint  `gorm:"column:zone_id;index"`
@@ -111,6 +205,13 @@ type Server struct {
 }
 
 func (Server) TableName() string { return "server" }
+
+func (s *Server) BeforeSave(*gorm.DB) error {
+	if s.DisplayName == "" {
+		s.DisplayName = s.ServerID
+	}
+	return nil
+}
 
 // AgentIdentity 是 v2 agent 身份绑定事实。
 type AgentIdentity struct {

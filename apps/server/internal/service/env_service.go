@@ -47,6 +47,8 @@ type EnvNamespaceRef struct {
 type EnvView struct {
 	ID             uint              `json:"id"`
 	Name           string            `json:"name"`
+	Code           string            `json:"code"`
+	DisplayName    string            `json:"displayName"`
 	Description    string            `json:"description"`
 	Namespaces     []EnvNamespaceRef `json:"namespaces"`
 	NamespaceCount int               `json:"namespaceCount"`
@@ -76,33 +78,51 @@ func (s *EnvService) List() ([]EnvView, error) {
 	return views, nil
 }
 
-// Create 新建 env；名为空返回参数错误，同名返回冲突。写入与审计在同一事务内原子完成。
+type CreateEnvParams struct {
+	Name        string
+	Code        string
+	DisplayName string
+	Description string
+	Operator    string
+	ClientIP    string
+}
+
+// Create 新建 env；兼容旧 name 创建，code 为稳定标识，name 列存 displayName。
 func (s *EnvService) Create(name, description, operator, clientIP string) (*EnvView, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	exist, err := s.repo.FindByName(name)
+	return s.CreateWithParams(CreateEnvParams{Name: name, Description: description, Operator: operator, ClientIP: clientIP})
+}
+
+func (s *EnvService) CreateWithParams(p CreateEnvParams) (*EnvView, error) {
+	code, displayName, err := normalizeStableName(p.Name, p.Code, p.DisplayName)
 	if err != nil {
 		return nil, err
 	}
-	if exist != nil {
-		return nil, apperr.ErrEnvConflict
-	}
-	env := &model.Env{Name: name, Description: description}
-	detail, _ := json.Marshal(map[string]string{"name": name})
+	env := &model.Env{Code: code, Name: displayName, Description: p.Description}
+	detail, _ := json.Marshal(map[string]string{"code": code, "displayName": displayName})
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.repo.WithTx(tx).Create(env); err != nil {
+		exist, err := s.repo.WithTx(tx).FindByCode(code)
+		if err != nil {
 			return err
 		}
-		return s.writeAudit(tx, model.ActionEnvCreate, env.ID, string(detail), operator, clientIP)
+		if exist != nil {
+			return apperr.ErrEnvConflict
+		}
+		if err := s.repo.WithTx(tx).Create(env); err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return apperr.ErrEnvConflict
+			}
+			return err
+		}
+		return s.writeAudit(tx, model.ActionEnvCreate, env.ID, string(detail), p.Operator, p.ClientIP)
 	}); err != nil {
 		return nil, err
 	}
-	slog.Info("新建 env", "id", env.ID, "name", name, "operator", operatorOrSystem(operator))
-	return &EnvView{ID: env.ID, Name: env.Name, Description: env.Description, Namespaces: []EnvNamespaceRef{}, CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt}, nil
+	slog.Info("新建 env", "id", env.ID, "code", code, "operator", operatorOrSystem(p.Operator))
+	view := buildEnvView(env, []EnvNamespaceRef{})
+	return &view, nil
 }
 
-// Update 改 env 名 / 描述（PATCH 语义，name / description 均可选，nil 表示不改）；env 不存在返回 NOT_FOUND，改名撞名返回冲突。
+// Update 改 env 显示名 / 描述（PATCH 语义，name 作为旧 displayName 兼容；code 不可变）。
 func (s *EnvService) Update(id uint, name, description *string, operator, clientIP string) (*EnvView, error) {
 	if id == 0 {
 		return nil, apperr.ErrInvalidParam
@@ -114,13 +134,14 @@ func (s *EnvService) Update(id uint, name, description *string, operator, client
 	if env == nil {
 		return nil, apperr.ErrEnvNotFound
 	}
-	if err := s.applyEnvNameChange(env, name); err != nil {
+	oldDisplayName := env.Name
+	if err := s.applyEnvDisplayNameChange(env, name, nil); err != nil {
 		return nil, err
 	}
 	if description != nil {
 		env.Description = *description
 	}
-	detail, _ := json.Marshal(map[string]string{"name": env.Name, "description": env.Description})
+	detail, _ := json.Marshal(map[string]string{"code": env.Code, "oldDisplayName": oldDisplayName, "newDisplayName": env.Name, "description": env.Description})
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.repo.WithTx(tx).Save(env); err != nil {
 			return err
@@ -129,31 +150,103 @@ func (s *EnvService) Update(id uint, name, description *string, operator, client
 	}); err != nil {
 		return nil, err
 	}
-	slog.Info("更新 env", "id", env.ID, "name", env.Name, "operator", operatorOrSystem(operator))
+	slog.Info("更新 env", "id", env.ID, "code", env.Code, "operator", operatorOrSystem(operator))
 	return s.viewOf(env)
 }
 
-// applyEnvNameChange 处理改名：nil 或空白不改；改为新值前校验撞名（唯一）。
-func (s *EnvService) applyEnvNameChange(env *model.Env, name *string) error {
-	if name == nil {
-		return nil
+func (s *EnvService) UpdateWithParams(id uint, code, name, displayName, description *string, operator, clientIP string) (*EnvView, error) {
+	if id == 0 {
+		return nil, apperr.ErrInvalidParam
 	}
-	trimmed := strings.TrimSpace(*name)
-	if trimmed == "" {
-		return apperr.ErrInvalidParam
+	env, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
 	}
-	if trimmed == env.Name {
-		return nil
+	if env == nil {
+		return nil, apperr.ErrEnvNotFound
 	}
-	other, err := s.repo.FindByName(trimmed)
+	if code != nil && strings.TrimSpace(*code) != env.Code {
+		return nil, apperr.ErrImmutableIdentifier
+	}
+	oldDisplayName := env.Name
+	if err := s.applyEnvDisplayNameChange(env, name, displayName); err != nil {
+		return nil, err
+	}
+	if description != nil {
+		env.Description = *description
+	}
+	detail, _ := json.Marshal(map[string]string{"code": env.Code, "oldDisplayName": oldDisplayName, "newDisplayName": env.Name, "description": env.Description})
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.WithTx(tx).Save(env); err != nil {
+			return err
+		}
+		return s.writeAudit(tx, model.ActionEnvUpdate, env.ID, string(detail), operator, clientIP)
+	}); err != nil {
+		return nil, err
+	}
+	slog.Info("更新 env", "id", env.ID, "code", env.Code, "operator", operatorOrSystem(operator))
+	return s.viewOf(env)
+}
+
+func (s *EnvService) applyEnvDisplayNameChange(env *model.Env, name, displayName *string) error {
+	next, changed, err := normalizeDisplayNamePatch(env.Code, env.Name, name, displayName)
 	if err != nil {
 		return err
 	}
-	if other != nil && other.ID != env.ID {
-		return apperr.ErrEnvConflict
+	if changed {
+		env.Name = next
 	}
-	env.Name = trimmed
 	return nil
+}
+func normalizeStableName(name, code, displayName string) (string, string, error) {
+	trimmedName := strings.TrimSpace(name)
+	trimmedCode := strings.TrimSpace(code)
+	trimmedDisplay := strings.TrimSpace(displayName)
+	if trimmedCode == "" && trimmedName == "" {
+		return "", "", apperr.ErrInvalidParam
+	}
+	if trimmedCode != "" && trimmedName != "" && trimmedName != trimmedCode {
+		return "", "", apperr.ErrAmbiguousIdentifier
+	}
+	if trimmedCode == "" {
+		trimmedCode = trimmedName
+	}
+	if trimmedDisplay == "" {
+		trimmedDisplay = trimmedCode
+	}
+	return trimmedCode, trimmedDisplay, nil
+}
+
+func normalizeDisplayNamePatch(code, current string, name, displayName *string) (string, bool, error) {
+	if name == nil && displayName == nil {
+		return current, false, nil
+	}
+	var next string
+	if displayName != nil {
+		next = strings.TrimSpace(*displayName)
+	}
+	if name != nil {
+		trimmed := strings.TrimSpace(*name)
+		if next == "" {
+			next = trimmed
+		} else if trimmed != "" && trimmed != next && trimmed != code {
+			return "", false, apperr.ErrAmbiguousIdentifier
+		}
+	}
+	if next == "" {
+		if name != nil {
+			next = strings.TrimSpace(*name)
+		} else {
+			next = current
+		}
+	}
+	if next == "" {
+		return "", false, apperr.ErrInvalidParam
+	}
+	if next == current {
+		return current, false, nil
+	}
+	return next, true, nil
 }
 
 // Delete 删 env（硬删）；env 不存在返回 NOT_FOUND。删 env 不受映射保护——映射行级联删除、
@@ -169,7 +262,7 @@ func (s *EnvService) Delete(id uint, operator, clientIP string) error {
 	if env == nil {
 		return apperr.ErrEnvNotFound
 	}
-	detail, _ := json.Marshal(map[string]string{"name": env.Name})
+	detail, _ := json.Marshal(map[string]string{"code": env.Code, "displayName": env.Name})
 	if err := s.db.Transaction(func(tx *gorm.DB) error {
 		txRepo := s.repo.WithTx(tx)
 		if err := txRepo.DeleteMappingsByEnv(id); err != nil {
@@ -232,7 +325,8 @@ func (s *EnvService) SetNamespaces(id uint, namespaceIDs []uint, operator, clien
 	for _, nsID := range wanted {
 		refs = append(refs, EnvNamespaceRef{ID: nsID, Name: nameByID[nsID]})
 	}
-	return &EnvView{ID: env.ID, Name: env.Name, Description: env.Description, Namespaces: refs, NamespaceCount: len(refs), CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt}, nil
+	view := buildEnvView(env, refs)
+	return &view, nil
 }
 
 // ensureNoEnvConflict 校验待映射 namespace 未被其他 env 占用；命中则构造同码 409 错误并指明冲突方（namespace 名 + 占用 env 名）。
@@ -281,7 +375,7 @@ func (s *EnvService) envNamesByID() (map[uint]string, error) {
 	}
 	nameByID := make(map[uint]string, len(envs))
 	for i := range envs {
-		nameByID[envs[i].ID] = envs[i].Name
+		nameByID[envs[i].ID] = envs[i].Code
 	}
 	return nameByID, nil
 }
@@ -323,7 +417,7 @@ func buildEnvView(env *model.Env, refs []EnvNamespaceRef) EnvView {
 		refs = []EnvNamespaceRef{}
 	}
 	return EnvView{
-		ID: env.ID, Name: env.Name, Description: env.Description,
+		ID: env.ID, Name: env.Code, Code: env.Code, DisplayName: env.Name, Description: env.Description,
 		Namespaces: refs, NamespaceCount: len(refs),
 		CreatedAt: env.CreatedAt, UpdatedAt: env.UpdatedAt,
 	}

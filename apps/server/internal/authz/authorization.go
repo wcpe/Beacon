@@ -13,7 +13,31 @@ import (
 const (
 	OperationDeliveryApprove  = "delivery.approve"
 	OperationDeliveryRollback = "delivery.rollback"
+
+	OperationIdentityApprove         = "identity.approve"
+	OperationIdentityUnbind          = "identity.unbind"
+	OperationIdentityResolveConflict = "identity.resolve_conflict"
+	OperationIdentityEnable          = "identity.enable"
+
+	OperationCredentialCreate = "credential.create"
+	OperationCredentialRotate = "credential.rotate"
+
+	OperationNamespaceTrustGrant = "namespace_trust.grant"
+
+	OperationTopologyServerAssign       = "topology.server_assign"
+	OperationTopologyServerRezone       = "topology.server_rezone"
+	OperationTopologyDefaultEntryChange = "topology.default_entry.change"
+	OperationTopologyLobbyMemberMove    = "topology.lobby_member.move"
+	OperationTopologyDrainingDisable    = "topology.draining.disable"
 )
+
+// OperationDescriptor 描述 operation 的授权分类与冻结参数版本。
+type OperationDescriptor struct {
+	Key           string
+	SchemaVersion int
+	Capability    string
+	RiskLevel     string
+}
 
 // Operation 描述一次待授权 / 待审批的业务动作。
 type Operation struct {
@@ -37,7 +61,19 @@ func Authorize(principal auth.Principal, op Operation) error {
 
 func capabilityFor(kind string) string {
 	switch kind {
-	case OperationDeliveryApprove:
+	case OperationDeliveryApprove,
+		OperationIdentityApprove,
+		OperationIdentityUnbind,
+		OperationIdentityResolveConflict,
+		OperationIdentityEnable,
+		OperationCredentialCreate,
+		OperationCredentialRotate,
+		OperationNamespaceTrustGrant,
+		OperationTopologyServerAssign,
+		OperationTopologyServerRezone,
+		OperationTopologyDefaultEntryChange,
+		OperationTopologyLobbyMemberMove,
+		OperationTopologyDrainingDisable:
 		return auth.CapabilityApprovalRequest
 	case OperationDeliveryRollback:
 		return auth.CapabilityManagementDirect
