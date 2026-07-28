@@ -1,6 +1,6 @@
 // Package auth 提供管理面操作者认证：凭据校验与无状态签名令牌的签发/校验。
-// 它是叶子包（仅依赖标准库），供 server 中间件与 handler 共用。
-// 令牌用 HMAC-SHA256 签名、不落库、不引第三方件，遵"简单优先"架构不变量。
+// 它是叶子包，仅依赖标准库与 bcrypt，供 server 中间件与 handler 共用。
+// 口令启动时生成 bcrypt 哈希；令牌用 HMAC-SHA256 签名且不落库。
 package auth
 
 import (
@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // 认证相关错误（叶子错误，由上层映射为 401）。
@@ -34,10 +36,10 @@ const payloadSep = "|"
 // Authenticator 持有单操作者凭据与签名密钥，签发/校验无状态令牌。
 // 凭据与密钥由配置注入（口令/密钥走 env），不在代码中硬编码。
 type Authenticator struct {
-	username string
-	password string
-	secret   []byte
-	tokenTTL time.Duration
+	username     string
+	passwordHash []byte
+	secret       []byte
+	tokenTTL     time.Duration
 }
 
 // New 构造认证器；用户名/口令/密钥任一为空即构造失败（fail-fast，禁空凭据空跑）。
@@ -51,19 +53,23 @@ func New(username, password, secret string, tokenTTL time.Duration) (*Authentica
 	if secret == "" {
 		return nil, fmt.Errorf("鉴权配置无效: 令牌签名密钥不能为空")
 	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("鉴权配置无效: 操作者口令无法生成哈希")
+	}
 	return &Authenticator{
-		username: username,
-		password: password,
-		secret:   []byte(secret),
-		tokenTTL: tokenTTL,
+		username:     username,
+		passwordHash: passwordHash,
+		secret:       []byte(secret),
+		tokenTTL:     tokenTTL,
 	}, nil
 }
 
 // Login 校验凭据并签发令牌；凭据不匹配返回 ErrBadCredentials。
-// 用恒定时间比较避免按字符短路的计时侧信道。
+// 用户名使用恒定时间比较，口令交由 bcrypt 校验启动时生成的哈希。
 func (a *Authenticator) Login(username, password string) (string, error) {
 	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(a.username)) == 1
-	passOK := subtle.ConstantTimeCompare([]byte(password), []byte(a.password)) == 1
+	passOK := bcrypt.CompareHashAndPassword(a.passwordHash, []byte(password)) == nil
 	if !userOK || !passOK {
 		return "", ErrBadCredentials
 	}

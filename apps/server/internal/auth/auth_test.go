@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // newTestAuthenticator 构造一个固定凭据/密钥的认证器，令牌有效期 1 小时。
@@ -14,6 +16,23 @@ func newTestAuthenticator(t *testing.T) *Authenticator {
 		t.Fatalf("构造认证器失败: %v", err)
 	}
 	return a
+}
+
+// TestAuthenticatorHashesPassword 验证认证器仅保存可校验的 bcrypt 哈希，且登录契约保持不变。
+func TestAuthenticatorHashesPassword(t *testing.T) {
+	a := newTestAuthenticator(t)
+	if string(a.passwordHash) == "s3cret" {
+		t.Fatal("认证器不得保存明文口令")
+	}
+	if err := bcrypt.CompareHashAndPassword(a.passwordHash, []byte("s3cret")); err != nil {
+		t.Fatalf("存储值应为原口令的 bcrypt 哈希: %v", err)
+	}
+	if _, err := a.Login("admin", "s3cret"); err != nil {
+		t.Fatalf("正确凭据登录应成功，实际: %v", err)
+	}
+	if _, err := a.Login("admin", "wrong"); !errors.Is(err, ErrBadCredentials) {
+		t.Fatalf("错误口令应返回 ErrBadCredentials，实际 %v", err)
+	}
 }
 
 // TestLoginSuccess 正确凭据登录得到可校验令牌，校验后还原操作者身份。
