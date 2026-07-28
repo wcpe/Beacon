@@ -116,9 +116,6 @@ object BeaconAgentBungee : Plugin() {
     /** 玩家位置名册引导（FR-26）；null 表示未装配。 */
     private var rosterBootstrap: BungeePlayerRosterBootstrap? = null
 
-    /** 跨服消息模块引导（FR-26）；null 表示未装配。 */
-    private var messagingBootstrap: BungeeMessagingBootstrap? = null
-
     /** 连接明细批上报协调器（FR-145）；null 表示未装配。 */
     private var connectionReporter: ConnectionReportCoordinator? = null
 
@@ -241,21 +238,6 @@ object BeaconAgentBungee : Plugin() {
             // 配置变更后据下发 Redis 配置重建名册引导。
             view.onChange { _, _ -> roster.sync() }
 
-            // 跨服消息模块引导（FR-26）：据下发 Redis 配置启动代理的消息收发（消费收件流 + on 分发 + publish/subscribe），
-            // 使代理成为消息对等参与方（跨服编排控制层需接收业务消息并发布广播等）。与名册引导各持独立连接、互不影响。
-            val messaging =
-                BungeeMessagingBootstrap(
-                    identity = identity,
-                    settings = settings,
-                    store = store,
-                    codec = KotlinxJsonCodec(),
-                    holder = assembled.messagingHolder,
-                    adapter = adapter,
-                )
-            messagingBootstrap = messaging
-            // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
-            view.onChange { _, _ -> messaging.sync() }
-
             // 连接明细采集（FR-145，proxy 专用）：登入/换服/登出 → 会话追踪 → 有界缓冲 → 每 5s 或满 200 条批上报。
             // 采集埋点零成本、上报走 async，绝不阻塞 BC 主线程；fail-static：控制面不可用照常缓冲、玩家进出服不受影响。
             val connectionBuffer = ConnectionEventBuffer()
@@ -279,9 +261,8 @@ object BeaconAgentBungee : Plugin() {
 
             // 先点亮快照再异步接入，不阻塞主线程。
             assembled.lifecycle.bootstrapWithSnapshotThenConnect()
-            // 快照可能已含 Redis 配置：立即尝试一次（缺失则空闲，待配置下发再起）。
+            // 快照可能已含 Redis 名册配置：立即尝试一次（缺失则空闲，待配置下发再起）。
             roster.sync()
-            messaging.sync()
         }
     }
 
@@ -311,7 +292,6 @@ object BeaconAgentBungee : Plugin() {
         BungeeConnectionListener.tracker = null
         connectionReporter?.stop()
         messagingRuntime?.stop()
-        messagingBootstrap?.stop()
         rosterBootstrap?.stop()
         proxyMetricsCache?.stop()
         lifecycle?.shutdown()

@@ -17,15 +17,12 @@ import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
-import top.wcpe.beacon.agent.core.AssembledAgent
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
-import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
-import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
 import java.util.UUID
 
@@ -67,35 +64,6 @@ import java.util.UUID
         relocate = ["!kotlinx.serialization", "!top.wcpe.beacon.agent.lib.kotlinx.serialization", "!kotlin", "!kotlin1922"],
         transitive = false,
     ),
-    // Redis 客户端（FR-26 跨服消息中间件）：运行期下载、relocate 到隔离命名空间、不打包、不经 CoreLib。
-    // Jedis 是纯 Java 库，传递依赖（commons-pool2 / gson / slf4j）手动列全（transitive=false）。
-    // 关键：TabooLib 的 relocate 按依赖各自的 jar 生效，故 jedis 这条必须把它内部引用、且被本工程同样 relocate 的
-    // 传递依赖（commons-pool2 / gson）一并声明 relocate，否则下载并重定位后的 jedis 仍引用原始包名
-    // org.apache.commons.pool2.* / com.google.gson.*，而类路径只有重定位副本（lib.*）→ 运行期
-    // NoClassDefFoundError（如 JedisPoolConfig 继承 org.apache.commons.pool2.impl.GenericObjectPoolConfig）。
-    // slf4j 不在此列：由平台（Paper/Bungee）提供，保持原始包名解析，不重定位。
-    RuntimeDependency(
-        "!redis.clients:jedis:4.2.3",
-        test = "!top.wcpe.beacon.agent.lib.redis.clients.jedis.Jedis",
-        relocate = [
-            "!redis.clients.jedis", "!top.wcpe.beacon.agent.lib.redis.clients.jedis",
-            "!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2",
-            "!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson",
-        ],
-        transitive = false,
-    ),
-    RuntimeDependency(
-        "!org.apache.commons:commons-pool2:2.11.1",
-        test = "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2.ObjectPool",
-        relocate = ["!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2"],
-        transitive = false,
-    ),
-    RuntimeDependency(
-        "!com.google.code.gson:gson:2.10.1",
-        test = "!top.wcpe.beacon.agent.lib.com.google.gson.Gson",
-        relocate = ["!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson"],
-        transitive = false,
-    ),
 )
 object BeaconAgentBukkit : Plugin() {
     /** agent 引导配置（资源 config.yml 随 jar 释放到数据目录）。 */
@@ -107,9 +75,6 @@ object BeaconAgentBukkit : Plugin() {
 
     /** 主线程指标埋点（FR-144）；null 表示未启动（身份缺失等）。 */
     private var tickInstrumentation: BukkitTickInstrumentation? = null
-
-    /** 跨服消息模块引导（FR-26）；null 表示未装配（身份缺失等）。 */
-    private var messagingBootstrap: BukkitMessagingBootstrap? = null
 
     /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
     private var messagingRuntime: MessagingRuntime? = null
@@ -184,44 +149,17 @@ object BeaconAgentBukkit : Plugin() {
             // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
             BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
-            // 跨服消息模块引导（FR-26）：据下发的 Redis 配置启停 / 重连。
-            val bootstrap = createMessaging(identity, settings, store, assembled, adapter)
-            messagingBootstrap = bootstrap
-            // 配置变更后重算消息模块状态（Redis 连接随有效配置下发，决策 15）。
-            view.onChange { _, _ -> bootstrap.sync() }
-
             // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
             assembled.lifecycle.enableMetricsSampling()
 
             // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
             assembled.lifecycle.bootstrapWithSnapshotThenConnect()
-            // 快照可能已含 Redis 配置：立即尝试一次（缺失则保持降级，待配置下发再起）。
-            bootstrap.sync()
         }
     }
-
-    /** 构造跨服消息模块引导（FR-26）：抽出以精简 enable 主流程；名册只读端口持有者随之注入（FR-31）。 */
-    private fun createMessaging(
-        identity: AgentIdentity,
-        settings: AgentSettings,
-        store: EffectiveConfigStore,
-        assembled: AssembledAgent,
-        adapter: BukkitPlatformAdapter,
-    ): BukkitMessagingBootstrap =
-        BukkitMessagingBootstrap(
-            identity = identity,
-            settings = settings,
-            store = store,
-            codec = KotlinxJsonCodec(),
-            holder = assembled.messagingHolder,
-            rosterHolder = assembled.rosterDirectoryHolder,
-            adapter = adapter,
-        )
 
     @Awake(LifeCycle.DISABLE)
     fun disable() {
         messagingRuntime?.stop()
-        messagingBootstrap?.stop()
         lifecycle?.shutdown()
         tickInstrumentation?.stop()
         BeaconAgentProvider.unregister()
