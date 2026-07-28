@@ -21,7 +21,7 @@
 
 ### 2.2 只影响观测查询
 
-- 观测页把 `envId? + namespaceId?` 放入 query key 和 API query，完全消费 FR-213；不再用 `filterItemsByEnvScope/filterItemsByEnvCodes` 在分页结果后丢行。
+- 观测页把 `envId? + namespaceId?` 放入 query key 和 API query，完全消费 FR-213；当前前端临时实现已移除 `filterItemsByEnvScope/filterItemsByEnvCodes`，但最终权威仍应由服务端查询契约执行，不得在分页结果后丢行。
 - scope 变化时取消/失效旧观测 query、清游标并从第一页查询；旧详情若不在新范围内关闭或显示“超出当前观测范围”。
 - mutation 的 namespace/target 必须来自显式领域表单、当前实体或 URL 主键，不得读取页眉 store、不得自动选首个 namespace、不得因 scope 改变而重写。
 - 配置/文件/覆盖集/交付创建器继续使用独立、明确的 namespace 控件；可展示当前观测范围提示，但不能用它作为默认写目标。

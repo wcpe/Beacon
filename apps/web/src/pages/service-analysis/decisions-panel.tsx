@@ -10,12 +10,7 @@ import { AsyncSection, Badge, Checkbox, DataTable, Input, TableSkeleton, type Da
 import type { SchedDecisionItem } from '@beacon/contracts'
 
 import { fetchSchedDecisions } from '../../api/metrics'
-import {
-  filterItemsByEnvScope,
-  needsClientEnvFilter,
-  resolveApiNamespaceId,
-  useEnvNamespaceScope,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
 import FilterSelect from '../../features/observability/filter-select'
 import Pager from '../../features/observability/pager'
 import CursorPager from '../../features/observability/cursor-pager'
@@ -33,8 +28,6 @@ export default function DecisionsPanel() {
   const { t } = useTranslation()
   // FR-178：调度决策跟随顶栏 env（namespaceId 维度）
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
-  const clientFilter = needsClientEnvFilter(envScope)
   const [windowKey, setWindowKey] = useState<WindowKey>('1h')
   const [keyword, setKeyword] = useState('')
   const [result, setResult] = useState('all')
@@ -60,7 +53,6 @@ export default function DecisionsPanel() {
       result,
       cold,
       cold ? cursor.cursor : String(page),
-      apiNamespaceId,
       envScope,
     ],
     queryFn: () => {
@@ -69,36 +61,41 @@ export default function DecisionsPanel() {
       const from = to - WINDOW_MS[windowKey]
       const serverId = keyword.trim() === '' ? undefined : keyword.trim()
       const resultFilter = result === 'all' ? undefined : result
-      if (cold) {
-        return fetchSchedDecisions({
-          from,
-          to,
-          namespaceId: apiNamespaceId,
-          serverId,
-          result: resultFilter,
-          includeArchived: true,
-          cursor: cursor.cursor,
-          pageSize: PAGE_SIZE,
-        })
+      if (cold && envScope !== null && envScope.length !== 1) {
+        return { items: [], total: 0, nextCursor: null }
       }
-      return fetchSchedDecisions({
-        from,
-        to,
-        namespaceId: apiNamespaceId,
-        serverId,
-        result: resultFilter,
-        page,
-        pageSize: PAGE_SIZE,
-      })
+      return fetchPagedItemsByEnvScope(
+        envScope,
+        (namespaceId, pageRequest) => {
+          if (cold) {
+            return fetchSchedDecisions({
+              from,
+              to,
+              namespaceId,
+              serverId,
+              result: resultFilter,
+              includeArchived: true,
+              cursor: cursor.cursor,
+              pageSize: PAGE_SIZE,
+            })
+          }
+          return fetchSchedDecisions({
+            from,
+            to,
+            namespaceId,
+            serverId,
+            result: resultFilter,
+            page: pageRequest?.page ?? page,
+            pageSize: pageRequest?.pageSize ?? PAGE_SIZE,
+          })
+        },
+        { page, pageSize: PAGE_SIZE, compare: (left, right) => right.tsMs - left.tsMs },
+      )
     },
     placeholderData: keepPreviousData,
   })
 
-  // env 多 ns 时 API 只能传单 id，对当前页结果再收窄
-  const decisionRows = useMemo(() => {
-    const items = query.data?.items ?? []
-    return clientFilter ? filterItemsByEnvScope(items, envScope) : items
-  }, [query.data, clientFilter, envScope])
+  const decisionRows = useMemo(() => query.data?.items ?? [], [query.data])
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))

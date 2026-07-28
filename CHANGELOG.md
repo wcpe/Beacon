@@ -28,6 +28,8 @@
 - `docs/specs/ui-component-museum.md` 状态对齐为已交付，并补齐文档同步任务勾选。
 
 ### 修复
+- 旧 V1/V2 namespace DELETE 已迁移为 `410 namespace_delete_migrated`，不再触发硬删、副作用或隐式审批；readonly API key 仍由写守卫优先拒绝为 403。
+- 页眉 env scope 的临时前端过滤改为 fail-closed：失效 env 与空映射不再回退全量，多 namespace 改为逐个受限请求，等待 FR-213/214 服务端权威观测范围归真。
 - 对齐 ADR-0063：Bukkit/Bungee v2 壳层不再装配 Legacy Redis 消息引导，HTTP relay 成为业务插件消息门面的唯一写入者，避免 Legacy 停止复位仍在运行的 HTTP 门面。
 - Redis 下发连接配置改为严格 fail-closed 解析：拒绝错误类型、非精确整数与越界值，连接表示固定脱敏 password，避免错误降级为无密码连接或日志泄露。
 - 空全局 Agent token 不再匿名放行；无有效全局 token 时必须通过 v2 身份鉴权。

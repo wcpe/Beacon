@@ -25,17 +25,11 @@ import {
 import type { HealthItem } from '@beacon/contracts'
 
 import { fetchHealthList } from '../../api/metrics'
-import {
-  filterItemsByEnvScope,
-  needsClientEnvFilter,
-  resolveApiNamespaceId,
-  useEnvNamespaceScope,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
 
 // 展示上限：状态墙只列前若干台，全量在 /servers。
-// env 多 ns 时先多拉再客户端收窄，保证墙内仍有足够行可展示。
+// 多命名空间分别受限请求后合并，保证不依赖客户端后过滤。
 const WALL_LIMIT = 12
-const WALL_FETCH = 48
 
 // 健康等级（mock 的 healthy/degraded/unhealthy）→ 设计语言等级 + 药丸变体 + 文案键。
 const LEVEL_META: Record<
@@ -51,21 +45,21 @@ export default function ServerWall() {
   const { t } = useTranslation()
   // FR-178：状态墙跟随顶栏 env
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
-  const clientFilter = needsClientEnvFilter(envScope)
   const query = useQuery({
-    queryKey: ['dashboard', 'health-list', apiNamespaceId, envScope],
+    queryKey: ['dashboard', 'health-list', envScope],
     queryFn: () =>
-      fetchHealthList({
-        namespaceId: apiNamespaceId,
-        pageSize: clientFilter ? WALL_FETCH : WALL_LIMIT,
-      }),
+      fetchPagedItemsByEnvScope(
+        envScope,
+        (namespaceId, pageRequest) => fetchHealthList({ namespaceId, pageSize: pageRequest?.pageSize ?? WALL_LIMIT }),
+        {
+          page: 1,
+          pageSize: WALL_LIMIT,
+          compare: (left, right) =>
+            left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId),
+        },
+      ),
   })
-  const items = useMemo(() => {
-    const raw = query.data?.items ?? []
-    const scoped = clientFilter ? filterItemsByEnvScope(raw, envScope) : raw
-    return scoped.slice(0, WALL_LIMIT)
-  }, [query.data, clientFilter, envScope])
+  const items = useMemo(() => (query.data?.items ?? []).slice(0, WALL_LIMIT), [query.data])
 
   return (
     <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">

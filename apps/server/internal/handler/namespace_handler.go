@@ -85,12 +85,7 @@ func (h *NamespaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, namespaceView{Code: ns.Code, Name: ns.Name})
 }
 
-// Delete 处理 DELETE /admin/v1/namespaces/{code}：删环境（带删除守卫，FR-53）。
+// Delete 处理 DELETE /admin/v1/namespaces/{code}：旧删除端点已迁移，禁止硬删。
 func (h *NamespaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	code := chi.URLParam(r, "code")
-	if err := h.svc.Delete(code, auth.Operator(r.Context()), clientIP(r)); err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	render.WriteError(w, r, apperr.ErrNamespaceDeleteMigrated)
 }

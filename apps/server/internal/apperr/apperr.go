@@ -41,6 +41,8 @@ var (
 	ErrNamespaceHasFiles = New(http.StatusConflict, "NAMESPACE_HAS_FILES", "环境下仍有文件树，请先删除文件后再删除")
 	// ErrNamespaceHasOverrideSets 环境下仍有覆盖集（FR-15），禁删（FR-53 删除守卫⑤）。
 	ErrNamespaceHasOverrideSets = New(http.StatusConflict, "NAMESPACE_HAS_OVERRIDE_SETS", "环境下仍有覆盖集，请先删除覆盖集后再删除")
+	// ErrNamespaceDeleteMigrated 旧 namespace 删除端点已迁移，禁止硬删。
+	ErrNamespaceDeleteMigrated = New(http.StatusGone, "namespace_delete_migrated", "环境删除端点已迁移")
 
 	// ErrBCClusterNotFound BC 集群不存在。
 	ErrBCClusterNotFound = New(http.StatusNotFound, "BC_CLUSTER_NOT_FOUND", "BC 集群不存在")

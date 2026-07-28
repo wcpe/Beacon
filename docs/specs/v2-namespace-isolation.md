@@ -105,7 +105,7 @@ agent 面的可见性同规则：`/beacon/v2/agent/*` 的名册 / 发现 / 拓�
 - **创建**：name 全局唯一；创建成功即生成接入 token，明文**仅在创建响应中返回一次**，库中只存 sha256（v2-zone-authority.md §3.2）。不预置默认 namespace，首个由管理台创建（见 §8）。
 - **改名**：不支持。name 是 agent 配置携带的接入标识，改名会使全域 agent 静默失联；需要更名走「建新域 + 迁移 + 删旧域」。
 - **token 轮换**：`token/rotate` 生成新 token 并立即使旧 token 失效（新明文仅返回一次）；该域所有 agent 在换用新 token 前请求将 401——轮换属高风险操作，需二次确认并在响应中明示影响（见 §8）。
-- **删除**：存在 server、bc_cluster 或任意方向的 `active` 信任行 → 409 拒绝并列出阻断原因；删除入审计。
+- **删除**：直接 DELETE 语义已迁移，旧 `/admin/v1/namespaces/{code}` 与历史 `/admin/v2/namespaces/{id}` DELETE 统一返回 `410 namespace_delete_migrated`，不触发硬删、副作用或隐式审批；后续清理能力改走 FR-216/218。
 
 ## 5. API 契约（管理面 `/admin/v2/*`）
 
@@ -116,7 +116,7 @@ agent 面的可见性同规则：`/beacon/v2/agent/*` 的名册 / 发现 / 拓�
 | GET | /admin/v2/namespaces | keyword?, page | 列表：id、name、description、server 数、bc_cluster 数、生效信任数（双向）、createdAt |
 | POST | /admin/v2/namespaces | name, description | 新 namespace + **一次性明文 token** |
 | PATCH | /admin/v2/namespaces/{id} | description | 更新后 namespace（name 不可改，§4.5） |
-| DELETE | /admin/v2/namespaces/{id} | — | 204；有 server / 集群 / 生效信任 → 409（列出阻断原因） |
+| DELETE | /admin/v2/namespaces/{id} | — | `410 namespace_delete_migrated`；不硬删、不隐式创建审批请求、不产生领域副作用 |
 | POST | /admin/v2/namespaces/{id}/token/rotate | — （二次确认由前端承载） | 新一次性明文 token；旧 token 即时失效 |
 | GET | /admin/v2/namespace-trusts | fromNamespaceId?, toNamespaceId?, capability?, status?, page | 信任行列表（含授予 / 收回人、时间、原因） |
 | POST | /admin/v2/namespace-trusts | fromNamespaceId, toNamespaceId, capability, note（必填） | 新增或复活信任行（`active`）；重复 → 409 |
@@ -143,7 +143,7 @@ agent 面的可见性同规则：`/beacon/v2/agent/*` 的名册 / 发现 / 拓�
 4. 每次跨域能力行使产生 `cross_namespace.*` 前缀审计条目（含 from_ns / to_ns / capability / trust id），`/audits` 可按前缀过滤。
 5. 收回信任后新请求立即被拒（无需重启控制面）；收回行保留 revoked_by / revoked_at / revoke_reason；重新授予复用同行置回 `active`。
 6. 授予 / 收回均要求原因必填并入审计；`/namespaces` 页可完成创建域、轮换 token（明文只显示一次）、建立 / 收回信任全流程。
-7. 删除有 server / 集群 / 生效信任的 namespace 返回 409 并列出阻断原因。
+7. 旧 namespace DELETE 返回 `410 namespace_delete_migrated`，不执行硬删、不隐式创建审批请求；readonly API key 仍由管理面写守卫优先拒绝。
 8. 控制面重启后信任快照从 DB 正确重建，隔离行为与重启前一致。
 
 ## 8. 风险 / 待定（默认决定待拍板）

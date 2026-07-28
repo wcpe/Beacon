@@ -73,7 +73,7 @@ operation 固定为 `namespace.archive`、`namespace.restore`，schemaVersion �
 | POST | `/admin/v2/approval-requests` | `{operationKey:"namespace.archive"|"namespace.restore", parameters:{namespaceId:id}, reason}` + `Idempotency-Key`；由对应 adapter 冻结并创建统一申请 |
 | GET | `/admin/v2/namespaces` | 增加 `lifecycleStatus=active|archived|all` 与 effective 状态摘要 |
 
-申请响应、状态与幂等规则完全复用 FR-207，不另造领域审批 API。常见领域错误：404 `namespace_not_found`；409 `namespace_not_active`、`namespace_not_archived`、`approval_target_changed`、`lifecycle_operation_conflict`；403 `capability_denied`；422 `reason_required`。旧 `/admin/v1/namespaces/{id}` 与历史 `/admin/v2/namespaces/{id}` DELETE 统一返回 410 `namespace_delete_migrated`，指引显式归档/永久删除申请；不得物理删除、隐式创建申请或成为跳过 ApprovalRequest 的别名。
+申请响应、状态与幂等规则完全复用 FR-207，不另造领域审批 API。常见领域错误：404 `namespace_not_found`；409 `namespace_not_active`、`namespace_not_archived`、`approval_target_changed`、`lifecycle_operation_conflict`；403 `capability_denied`；422 `reason_required`。旧 `/admin/v1/namespaces/{code}` 与历史 `/admin/v2/namespaces/{id}` DELETE 统一返回 410 `namespace_delete_migrated`，指引显式归档/永久删除申请；不得物理删除、隐式创建申请或成为跳过 ApprovalRequest 的别名。
 
 ## 4 UX / 交互
 

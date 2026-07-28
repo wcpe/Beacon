@@ -2,9 +2,9 @@
 // 供各运维主路径页按 env 收窄取数。env 是纯展示 / 过滤维度：只影响前端视图，不改权威数据。
 //
 // 语义：
-// - useEnvNamespaceScope() === null →「全部环境」，不按 env 收窄
-// - 返回 number[]（可为空）→ 仅这些 namespace id 可见
-
+// - null →「全部环境」，允许不带 namespace 参数请求；
+// - 返回数组 → 仅可请求数组内的 namespace；空数组表示作用域无效或空映射，必须停止请求。
+//
 import type { EnvItem } from '@beacon/contracts'
 import { useQuery } from '@tanstack/react-query'
 
@@ -20,102 +20,118 @@ export function useEnvOptions(): EnvItem[] {
   return query.data?.items ?? []
 }
 
-/**
- * 当前 env 过滤器对应的 namespace id 集合：
- * - 返回 null 表示「全部环境」（不收窄）；
- * - 返回数组表示选中 env 映射的 namespace id 列表（可能为空 = 该 env 未映射任何 namespace）。
- */
+/** 将选中的 env id 解析为 namespace id 作用域；失效选项和空映射均停止查询。 */
+export function resolveEnvNamespaceScope(
+  envId: number,
+  envs: readonly Pick<EnvItem, 'id' | 'namespaces'>[],
+): number[] | null {
+  if (envId === ALL_ENVS) {
+    return null
+  }
+  return envs.find((item) => item.id === envId)?.namespaces.map((namespace) => namespace.id) ?? []
+}
+
+/** 当前 env 过滤器对应的 namespace id 集合。 */
 export function useEnvNamespaceScope(): number[] | null {
-  const envId = useEnvFilter()
-  const envs = useEnvOptions()
+  return resolveEnvNamespaceScope(useEnvFilter(), useEnvOptions())
+}
+
+/** 将选中的 env id 解析为 namespace 名称作用域；失效选项和空映射均停止查询。 */
+export function resolveEnvNamespaceCodes(
+  envId: number,
+  envs: readonly Pick<EnvItem, 'id' | 'namespaces'>[],
+): string[] | null {
   if (envId === ALL_ENVS) {
     return null
   }
-  const env = envs.find((item) => item.id === envId)
-  // 选中的 env 尚未加载到（或已被删除）时按「不收窄」处理，避免瞬时把所有页面清空
-  if (!env) {
-    return null
-  }
-  return env.namespaces.map((ns) => ns.id)
+  return envs.find((item) => item.id === envId)?.namespaces.map((namespace) => namespace.name) ?? []
 }
 
-/**
- * 当前 env 映射的 namespace 名称（code）集合；「全部环境」返回 null。
- * 供审计 / 命令等以 namespace 字符串过滤的端点使用。
- */
+/** 当前 env 映射的 namespace 名称集合。 */
 export function useEnvNamespaceCodes(): string[] | null {
-  const envId = useEnvFilter()
-  const envs = useEnvOptions()
-  if (envId === ALL_ENVS) {
-    return null
-  }
-  const env = envs.find((item) => item.id === envId)
-  if (!env) {
-    return null
-  }
-  return env.namespaces.map((ns) => ns.name)
+  return resolveEnvNamespaceCodes(useEnvFilter(), useEnvOptions())
 }
 
-/**
- * 按 env 作用域过滤带 namespaceId 的列表项。
- * scope === null 时原样返回；否则只保留 id 落在 scope 内的行。
- */
-export function filterItemsByEnvScope<T extends { namespaceId: number }>(
-  items: readonly T[],
-  scope: number[] | null,
-): T[] {
+/** 带分页元数据的受限请求结果。多 namespace 不提供跨 namespace 游标。 */
+export interface EnvScopePage<T> {
+  items: T[]
+  total: number | null
+  nextCursor?: string | null
+}
+
+interface EnvScopePageRequest {
+  page?: number
+  pageSize?: number
+}
+
+interface EnvScopePageOptions<T> extends EnvScopePageRequest {
+  compare?: (left: T, right: T) => number
+}
+
+/** 按作用域聚合分页响应，保留全部环境/单 namespace 的游标；多 namespace 拉足前缀后归并裁剪。 */
+export async function fetchPagedItemsByEnvScope<T, TNamespace extends string | number>(
+  scope: readonly TNamespace[] | null,
+  fetchPage: (namespace: TNamespace | undefined, pageRequest?: EnvScopePageRequest) => Promise<EnvScopePage<T>>,
+  options: EnvScopePageOptions<T> = {},
+): Promise<EnvScopePage<T>> {
+  const page = options.page ?? 1
+  const pageSize = options.pageSize
+  const pageRequest = pageSize === undefined ? undefined : { page, pageSize }
   if (scope === null) {
-    return [...items]
+    return pageRequest === undefined ? fetchPage(undefined) : fetchPage(undefined, pageRequest)
   }
   if (scope.length === 0) {
-    return []
+    return { items: [], total: 0, nextCursor: null }
   }
-  const allowed = new Set(scope)
-  return items.filter((item) => allowed.has(item.namespaceId))
+  if (scope.length === 1) {
+    return pageRequest === undefined ? fetchPage(scope[0]) : fetchPage(scope[0], pageRequest)
+  }
+  const mergedRequest = pageSize === undefined ? undefined : { page: 1, pageSize: page * pageSize }
+  const pages = await Promise.all(
+    scope.map((namespace) =>
+      mergedRequest === undefined ? fetchPage(namespace) : fetchPage(namespace, mergedRequest),
+    ),
+  )
+  const items = pages.flatMap((current) => current.items)
+  if (options.compare) {
+    items.sort(options.compare)
+  }
+  return {
+    items: pageSize === undefined ? items : items.slice((page - 1) * pageSize, page * pageSize),
+    total: pages.every((current) => current.total !== null)
+      ? pages.reduce((total, current) => total + (current.total ?? 0), 0)
+      : null,
+    nextCursor: null,
+  }
+}
+
+/** 将页内 namespace 选择与 env 作用域合成受限请求范围。 */
+export function resolveRequestNamespaceScope(
+  selected: number | null | undefined,
+  envScope: number[] | null,
+): number[] | null {
+  if (selected === null || selected === undefined || selected <= 0) {
+    return envScope
+  }
+  if (envScope === null) {
+    return [selected]
+  }
+  return envScope.includes(selected) ? [selected] : []
 }
 
 /**
- * 按 env 作用域过滤带 namespace 字符串（code）的列表项。
- */
-export function filterItemsByEnvCodes<T extends { namespace: string }>(
-  items: readonly T[],
-  codes: string[] | null,
-): T[] {
-  if (codes === null) {
-    return [...items]
-  }
-  if (codes.length === 0) {
-    return []
-  }
-  const allowed = new Set(codes)
-  return items.filter((item) => allowed.has(item.namespace))
-}
-
-/**
- * 将页内 namespace 选择与 env 作用域合成 API 用的 namespaceId：
- * - selected === 0 或 null 且 env 为全部 → undefined（后端不传 = 全量）
- * - selected > 0 → 该 id
- * - env 收窄且仅 1 个 ns、未选手动选择 → 该唯一 id
+ * 将页内 namespace 选择合成为单值 API 参数：
+ * - undefined 仅表示全部环境；
+ * - null 表示需要停止该单值请求（多 namespace、空映射或无效选择）；
+ * - 数字表示可安全传给单值 API。
  */
 export function resolveApiNamespaceId(
   selected: number | null | undefined,
   envScope: number[] | null,
-): number | undefined {
-  if (selected !== null && selected !== undefined && selected > 0) {
-    // 若 env 已收窄，选中的 ns 必须在范围内
-    if (envScope !== null && !envScope.includes(selected)) {
-      return envScope.length === 1 ? envScope[0] : undefined
-    }
-    return selected
+): number | null | undefined {
+  const scope = resolveRequestNamespaceScope(selected, envScope)
+  if (scope === null) {
+    return undefined
   }
-  if (envScope !== null && envScope.length === 1) {
-    return envScope[0]
-  }
-  // 全部环境或 env 多 ns：不传 namespaceId，拉全量后客户端再滤（多 ns 时）
-  return undefined
-}
-
-/** 是否需要在客户端按 envScope 二次过滤（env 映射多个 ns 时 API 单 id 不够）。 */
-export function needsClientEnvFilter(envScope: number[] | null): boolean {
-  return envScope !== null && envScope.length !== 1
+  return scope.length === 1 ? scope[0] : null
 }

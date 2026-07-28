@@ -67,6 +67,8 @@ func newAuditMiddlewareRouter(creator auditCreator) http.Handler {
 	r.Put("/admin/v2/gadgets/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	// v2 前缀·已在覆盖集合内的端点（专项审计已记，中间件不应重复补记）。
 	r.Post("/admin/v2/namespaces", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
+	// 已迁移的 namespace 删除端点不应产生兜底审计。
+	r.Delete("/admin/v2/namespaces/{id}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusGone) })
 
 	return r
 }
@@ -191,8 +193,7 @@ func TestAuditMiddlewareV2PrefixDerivation(t *testing.T) {
 	}
 }
 
-// TestAuditMiddlewareSkipsCoveredV2 守护本缺陷核心症状：/admin/v2 下已自带专项审计的写端点（如 namespace 创建）
-// 必须登记进 coveredWriteRoutes 并被兜底中间件跳过，否则与专项审计双记。
+// TestAuditMiddlewareSkipsCoveredV2 守护 V2 namespace 创建及已迁移删除端点均不触发兜底审计。
 func TestAuditMiddlewareSkipsCoveredV2(t *testing.T) {
 	creator := &recordingAuditCreator{}
 	h := newAuditMiddlewareRouter(creator)
@@ -200,8 +201,11 @@ func TestAuditMiddlewareSkipsCoveredV2(t *testing.T) {
 	if code := doReq(t, h, http.MethodPost, "/admin/v2/namespaces", `{"name":"x"}`); code != http.StatusCreated {
 		t.Fatalf("POST v2 namespaces 应 201，实际 %d", code)
 	}
+	if code := doReq(t, h, http.MethodDelete, "/admin/v2/namespaces/1", ""); code != http.StatusGone {
+		t.Fatalf("DELETE v2 namespaces 应 410，实际 %d", code)
+	}
 	if n := len(creator.all()); n != 0 {
-		t.Fatalf("v2 已覆盖端点不应兜底补记，实际 %d 条（会与专项审计双记）", n)
+		t.Fatalf("V2 namespace 创建或旧删除端点不应兜底补记，实际 %d 条", n)
 	}
 }
 

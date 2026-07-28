@@ -51,7 +51,7 @@ type auditCreator interface {
 var coveredWriteRoutes = map[string]struct{}{
 	// 登出（auth.logout）
 	"POST /admin/v1/auth/logout": {},
-	// 环境 CRUD（namespace.create / update / delete）
+	// 环境创建 / 更新与已迁移的删除端点（namespace.create / update；删除不产生审计）
 	"POST /admin/v1/namespaces":          {},
 	"PUT /admin/v1/namespaces/{code}":    {},
 	"DELETE /admin/v1/namespaces/{code}": {},
@@ -124,8 +124,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/alert-events/{id}/handle": {},
 
 	// —— /admin/v2 控制面：各域写端点一律在 service 事务内自记专项审计，登记于此使兜底跳过、避免双记 ——
-	// 环境创建（namespace.create）
-	"POST /admin/v2/namespaces": {},
+	// 环境创建与已迁移的删除端点（namespace.create；删除不产生审计）
+	"POST /admin/v2/namespaces":        {},
+	"DELETE /admin/v2/namespaces/{id}": {},
 	// BC 受管目录立即重同步（namespace / instance.bc-directory-resync）
 	"POST /admin/v2/namespaces/{id}/bc-directory-resyncs": {},
 	// 环境信任授予 / 撤销（namespace-trust.grant / revoke）

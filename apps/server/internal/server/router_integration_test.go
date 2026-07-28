@@ -92,6 +92,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	}
 	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
 	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, commandHub, settingsSvc)
+	v2Svc := service.NewV2ControlPlaneService(db)
 	// 反向抓取命令通道（FR-39）：命令仓库 + 服务（复用 fileSvc.Import 落组/实例覆盖）+ 处理器（校验目标在线）。
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileSvc, auditRepo)
@@ -100,6 +101,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	commandService.SetBrowseResultHub(browseHub)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
+	commandHandler := handler.NewCommandHandler(commandService, instSvc)
 	commandHandler.SetReportAuthenticator(v2Svc)
 	browseHandler := handler.NewBrowseHandler(commandService, instSvc)
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
@@ -123,7 +125,6 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	if err != nil {
 		t.Fatalf("构造测试认证器失败: %v", err)
 	}
-	v2Svc := service.NewV2ControlPlaneService(db)
 	v2Handler := handler.NewV2ControlPlaneHandler(v2Svc)
 	// env 展示维度（FR-178）：env 增删改 + 整体替换 env→namespace 映射，与 main.go 装配一致。
 	envHandler := handler.NewEnvHandler(service.NewEnvService(db, repository.NewEnvRepository(db), repository.NewNamespaceRepository(db), auditRepo))
@@ -159,7 +160,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Metric:           handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
-		Command:          handler.NewCommandHandler(commandService, instSvc),
+		Command:          commandHandler,
 		CommandObserve:   commandObserveHandler,
 		Browse:           browseHandler,
 		FileSync:         handler.NewFileSyncHandler(fileSyncSvc),

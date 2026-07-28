@@ -59,9 +59,9 @@ packages/
 
 | 实体 | 一句话职责 | 状态机 / 枚举权威 |
 |---|---|---|
-| `namespace` | 强隔离边界；持接入 token 哈希（明文仅创建 / 轮换时一次性返回） | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) |
+| `namespace` | 强隔离边界；持接入 token 哈希（明文仅创建 / 轮换时一次性返回）；旧 DELETE 已迁移为 `namespace_delete_migrated`，不再提供硬删旁路 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) |
 | `namespace_trust` | 单向互通信任行（from → to + capability），收回 / 复活复用同一行 | capability / status 枚举归 namespace-isolation §3 |
-| `env` + `env_namespace` | 纯展示 / 过滤维度，一 env 映射 1..N namespace；不参与隔离、调度与作用域链 | zone-authority §4.1 |
+| `env` + `env_namespace` | 纯展示 / 过滤维度，一 env 映射 1..N namespace；不参与隔离、调度与作用域链；失效 scope 必须 fail-closed，不得回退全量 | zone-authority §4.1 |
 | `bc_cluster` / `region` / `zone` | 区服结构三层（BC 集群 → 大区 → 小区）；zone 是调度单元，名在 namespace 内唯一 | zone-authority §4.6 |
 | `server` | 子服 / BC 节点；kind 双挂归属（proxy→bc_cluster、backend→zone），含默认入口与排空标记；**归属只由控制面指派**（[ADR-0004](adr/0004-zone-authority-control-plane.md) 延续，agent 不声明 zone） | zone-authority §3.6 / §4 |
 | `agent_identity` | agent 首启身份与 `namespace + serverId` 的绑定；列形态锁在 zone-authority，状态机在身份域 | [v2-agent-identity.md](specs/v2-agent-identity.md) §4.3 |

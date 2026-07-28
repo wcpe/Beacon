@@ -11,10 +11,7 @@ import { GitCompareArrows, History, LineChart, MousePointerClick, TrendingUp, Wo
 import { PageHeader, cn } from '@beacon/ui'
 
 import { fetchServers } from '../api/cluster'
-import {
-  resolveApiNamespaceId,
-  useEnvNamespaceScope,
-} from '../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../features/env/use-env-scope'
 import {
   setServiceAnalysisSelected,
   useServiceAnalysisSelected,
@@ -51,10 +48,15 @@ export default function ServiceAnalysisPage() {
 
   // 在线子服列表：用于剪掉 localStorage 里已不存在 / 已下线的幽灵选中（避免右侧卡旧 game1）
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
   const serversQuery = useQuery({
-    queryKey: ['service-analysis', 'servers', apiNamespaceId, envScope],
-    queryFn: () => fetchServers({ kind: 'backend', namespaceId: apiNamespaceId, pageSize: 200 }),
+    queryKey: ['service-analysis', 'servers', envScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(
+        envScope,
+        (namespaceId, pageRequest) =>
+          fetchServers({ kind: 'backend', namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
+        { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
+      ),
   })
   useEffect(() => {
     if (!serversQuery.isSuccess || persistedIds.length === 0) {

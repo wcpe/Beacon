@@ -93,7 +93,7 @@
 ## 5. 验收标准
 
 1. env 映射多个 namespace 时，列表 items/total、KPI、趋势、详情和导出均只包含该集合，且分页前已过滤。
-2. env 空映射返回空/零；失效、删除或不匹配 scope 返回 fail-closed 错误，绝不回退全量。
+2. env 空映射返回空/零；失效、删除或不匹配 scope 返回 fail-closed 错误，绝不回退全量；FR-178 当前前端实现仅作临时收窄，最终权威由服务端查询契约执行。
 3. 仅传旧 `namespaceId` 或 namespace code 的调用保持单 namespace 语义；未传 scope 的旧调用保持全量语义。
 4. 热库、归档库、跨日表、内存健康快照与 scoped 订阅使用同一范围，域外详情/事件不可见；archived namespace 历史可读而实时视图为空。
 5. 四个首批聚合端点及完整矩阵都有红→绿测试；查询计数证明未按 namespace 产生 N+1。

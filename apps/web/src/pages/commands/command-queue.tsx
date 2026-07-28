@@ -17,10 +17,7 @@ import {
 import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
-import {
-  filterItemsByEnvCodes,
-  useEnvNamespaceCodes,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
 import { commandTypeLabel } from '../../features/observability/command-labels'
 
 const REFETCH_MS = 5000
@@ -34,28 +31,31 @@ interface CommandQueueProps {
 
 export default function CommandQueue({ onView, selectedId }: CommandQueueProps) {
   const { t } = useTranslation()
-  // FR-178：在途队列跟随顶栏 env
+  // FR-178：在途队列按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
-  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
 
   // 分别拉 pending / fetched（Legacy 端点单值 status 过滤），合并成在途队列
   const pendingQuery = useQuery({
-    queryKey: ['commands', 'queue', 'pending', apiNamespace, envCodes],
-    queryFn: () => fetchCommands({ status: 'pending', namespace: apiNamespace, size: 50 }),
+    queryKey: ['commands', 'queue', 'pending', envCodes],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(envCodes, (namespace) =>
+        fetchCommands({ status: 'pending', namespace, size: 50 }),
+      ),
     refetchInterval: REFETCH_MS,
   })
   const fetchedQuery = useQuery({
-    queryKey: ['commands', 'queue', 'fetched', apiNamespace, envCodes],
-    queryFn: () => fetchCommands({ status: 'fetched', namespace: apiNamespace, size: 50 }),
+    queryKey: ['commands', 'queue', 'fetched', envCodes],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(envCodes, (namespace) =>
+        fetchCommands({ status: 'fetched', namespace, size: 50 }),
+      ),
     refetchInterval: REFETCH_MS,
   })
 
   const rows = useMemo<CommandItem[]>(() => {
     const merged = [...(pendingQuery.data?.items ?? []), ...(fetchedQuery.data?.items ?? [])]
-    const scoped =
-      envCodes === null || envCodes.length === 1 ? merged : filterItemsByEnvCodes(merged, envCodes)
-    return scoped.sort((a, b) => b.ageSeconds - a.ageSeconds)
-  }, [pendingQuery.data, fetchedQuery.data, envCodes])
+    return merged.sort((a, b) => b.ageSeconds - a.ageSeconds)
+  }, [pendingQuery.data, fetchedQuery.data])
 
   const columns = useMemo<DataTableColumn<CommandItem>[]>(
     () => [

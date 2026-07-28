@@ -24,12 +24,7 @@ import {
 import type { AgentIdentityItem } from '@beacon/contracts'
 
 import { ApiClientError, approveIdentity, fetchIdentities, rejectIdentity } from '../../api/cluster'
-import {
-  filterItemsByEnvScope,
-  needsClientEnvFilter,
-  resolveApiNamespaceId,
-  useEnvNamespaceScope,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, resolveRequestNamespaceScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
 import ReasonDialog from './reason-dialog'
 import IdentityDetailSheet from './identity-detail-sheet'
 
@@ -48,8 +43,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   const queryClient = useQueryClient()
   // FR-178：待确认列表跟随顶栏 env
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(namespaceId, envScope)
-  const clientFilter = needsClientEnvFilter(envScope)
+  const requestScope = resolveRequestNamespaceScope(namespaceId, envScope)
   const [action, setAction] = useState<PendingAction | null>(null)
   // Q3 占用冲突强制解绑勾选
   const [forceUnbind, setForceUnbind] = useState(false)
@@ -58,13 +52,13 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   const [detailIdentityId, setDetailIdentityId] = useState<string | null>(null)
 
   const query = useQuery({
-    queryKey: ['identities', 'pending', apiNamespaceId, envScope],
-    queryFn: () => fetchIdentities({ status: 'pending', namespaceId: apiNamespaceId, pageSize: 100 }),
+    queryKey: ['identities', 'pending', requestScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(requestScope, (namespaceId) =>
+        fetchIdentities({ status: 'pending', namespaceId, pageSize: 100 }),
+      ),
   })
-  const pendingRows = useMemo(() => {
-    const items = query.data?.items ?? []
-    return clientFilter ? filterItemsByEnvScope(items, envScope) : items
-  }, [query.data, clientFilter, envScope])
+  const pendingRows = useMemo(() => query.data?.items ?? [], [query.data])
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['identities'] })

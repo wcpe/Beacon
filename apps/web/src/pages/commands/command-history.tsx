@@ -21,10 +21,7 @@ import {
 import type { CommandItem } from '@beacon/contracts'
 
 import { fetchCommands } from '../../api/observability'
-import {
-  filterItemsByEnvCodes,
-  useEnvNamespaceCodes,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
 import {
   COMMAND_TYPES,
   commandResultSummary,
@@ -64,9 +61,8 @@ interface CommandHistoryProps {
 
 export default function CommandHistory({ onView, selectedId }: CommandHistoryProps) {
   const { t } = useTranslation()
-  // FR-178：命令历史跟随顶栏 env
+  // FR-178：命令历史按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
-  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
   // 互跳承接：以 URL 查询参数为筛选初值（仅初始化，页内变更不回写 URL）
   const [searchParams] = useSearchParams()
   const [keyword, setKeyword] = useState(() => searchParams.get('serverId') ?? '')
@@ -77,31 +73,30 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
   const [page, setPage] = useState(1)
 
   const query = useQuery({
-    queryKey: ['commands', 'history', keyword, type, status, page, apiNamespace, envCodes, windowKey],
+    queryKey: ['commands', 'history', keyword, type, status, page, envCodes, windowKey],
     queryFn: () => {
       const to = Date.now()
       const span = windowKey === 'all' ? undefined : WINDOW_MS[windowKey]
-      return fetchCommands({
-        namespace: apiNamespace,
-        serverId: keyword.trim() === '' ? undefined : keyword.trim(),
-        type: type === 'all' ? undefined : type,
-        status: status === 'all' ? undefined : status,
-        from: span === undefined ? undefined : new Date(to - span).toISOString(),
-        to: span === undefined ? undefined : new Date(to).toISOString(),
-        page,
-        size: PAGE_SIZE,
-      })
+      return fetchPagedItemsByEnvScope(
+        envCodes,
+        (namespace, pageRequest) =>
+          fetchCommands({
+            namespace,
+            serverId: keyword.trim() === '' ? undefined : keyword.trim(),
+            type: type === 'all' ? undefined : type,
+            status: status === 'all' ? undefined : status,
+            from: span === undefined ? undefined : new Date(to - span).toISOString(),
+            to: span === undefined ? undefined : new Date(to).toISOString(),
+            page: pageRequest?.page ?? page,
+            size: pageRequest?.pageSize ?? PAGE_SIZE,
+          }),
+        { page, pageSize: PAGE_SIZE, compare: (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) },
+      )
     },
     placeholderData: keepPreviousData,
   })
 
-  const rows = useMemo(() => {
-    const items = query.data?.items ?? []
-    if (envCodes === null || envCodes.length === 1) {
-      return items
-    }
-    return filterItemsByEnvCodes(items, envCodes)
-  }, [query.data, envCodes])
+  const rows = useMemo(() => query.data?.items ?? [], [query.data])
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))

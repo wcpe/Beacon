@@ -16,12 +16,7 @@ import {
 import type { ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
-import {
-  filterItemsByEnvScope,
-  needsClientEnvFilter,
-  resolveApiNamespaceId,
-  useEnvNamespaceScope,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
 
 interface ServerPickerProps {
   // 已选 serverId 集合
@@ -35,20 +30,23 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
   const [keyword, setKeyword] = useState('')
   // FR-178：选服列表跟随顶栏 env
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
-  const clientFilter = needsClientEnvFilter(envScope)
 
-  // 拉在线子服：huge 下上千台时只取前 200 供选择（搜索仍可在本页结果内过滤；全量选服靠关键词 + 分页更合适，本页先保交互流畅）
+  // 每个命名空间单独受限请求，避免多命名空间时全量拉取后过滤。
   const query = useQuery({
-    queryKey: ['service-analysis', 'servers', apiNamespaceId, envScope],
-    queryFn: () => fetchServers({ kind: 'backend', namespaceId: apiNamespaceId, pageSize: 200 }),
+    queryKey: ['service-analysis', 'servers', envScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(
+        envScope,
+        (namespaceId, pageRequest) =>
+          fetchServers({ kind: 'backend', namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
+        { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
+      ),
   })
 
-  const online = useMemo<ServerItem[]>(() => {
-    const items = query.data?.items ?? []
-    const scoped = clientFilter ? filterItemsByEnvScope(items, envScope) : items
-    return scoped.filter((s) => s.online)
-  }, [query.data, clientFilter, envScope])
+  const online = useMemo<ServerItem[]>(
+    () => (query.data?.items ?? []).filter((server) => server.online),
+    [query.data],
+  )
 
   // 已选但当前列表不存在的幽灵项（历史 localStorage / 已下线 / 换 ns 后残留）
   const onlineIds = useMemo(() => new Set(online.map((s) => s.serverId)), [online])

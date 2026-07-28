@@ -11,10 +11,7 @@ import { AsyncSection, Badge, CardGridSkeleton, cn } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { fetchAlertEvents } from '../../api/observability'
-import {
-  filterItemsByEnvCodes,
-  useEnvNamespaceCodes,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
 import { alertSubtitle } from '../../features/observability/alert-transition'
 
 // 告警等级 → 图标框样式 + 图标。
@@ -33,21 +30,18 @@ function sevMeta(level: string) {
 
 export default function AlertOverview() {
   const { t } = useTranslation()
-  // FR-178：告警概览跟随顶栏 env（namespace 字符串维度）
+  // FR-178：告警概览按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
-  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
   const query = useQuery({
-    queryKey: ['dashboard', 'alerts', apiNamespace, envCodes],
-    queryFn: () => fetchAlertEvents({ page: 1, size: 100, namespace: apiNamespace }),
+    queryKey: ['dashboard', 'alerts', envCodes],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(
+        envCodes,
+        (namespace, pageRequest) => fetchAlertEvents({ page: 1, size: pageRequest?.pageSize ?? 100, namespace }),
+        { page: 1, pageSize: 100, compare: (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) },
+      ),
   })
-  const items = useMemo(() => {
-    const raw = query.data?.items ?? []
-    // 单 ns 已走 API；多 ns / 空映射客户端再滤；全部环境不过滤
-    if (envCodes === null || envCodes.length === 1) {
-      return raw
-    }
-    return filterItemsByEnvCodes(raw, envCodes)
-  }, [query.data, envCodes])
+  const items = useMemo(() => query.data?.items ?? [], [query.data])
 
   const openItems = items.filter((i) => i.status === 'open')
   const criticalOpen = openItems.filter((i) => i.level === 'critical').length

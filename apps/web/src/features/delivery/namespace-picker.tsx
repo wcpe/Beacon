@@ -1,13 +1,12 @@
-// 交付大域作用域选择器：拉 namespace 列表，走组件库 Select 统一设计语言。
-// FR-178：顶栏 env 收窄可选集合；全部环境下默认首个 ns（交付写操作必须绑定具体 ns）。
-import { useEffect, useMemo } from 'react'
+// 交付大域写目标选择器：拉 namespace 列表，走组件库 Select 统一设计语言。
+// FR-178：顶栏 env 只影响观测视图，交付写目标必须由本控件显式选择。
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
 import { Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@beacon/ui'
 
 import { fetchNamespaces } from '../../api/delivery'
-import { useEnvNamespaceScope } from '../env/use-env-scope'
 
 interface NamespacePickerProps {
   value: number | null
@@ -17,13 +16,7 @@ interface NamespacePickerProps {
 export default function NamespacePicker({ value, onChange }: NamespacePickerProps) {
   const { t } = useTranslation()
   const query = useQuery({ queryKey: ['namespaces'], queryFn: fetchNamespaces })
-  const envScope = useEnvNamespaceScope()
-  const allItems = query.data?.items ?? []
-  // env 收窄：仅列出该 env 映射的 namespace；「全部环境」不收窄
-  const items = useMemo(
-    () => (envScope === null ? allItems : allItems.filter((ns) => envScope.includes(ns.id))),
-    [allItems, envScope],
-  )
+  const items = query.data?.items ?? []
 
   // 数据到达 / env 变化后校准选中值（交付写操作必须绑定具体 ns，无「全部命名空间」）
   useEffect(() => {

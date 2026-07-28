@@ -52,9 +52,8 @@ import {
 } from '../../api/cluster'
 import { fetchHealthList, fetchMetricsSeries } from '../../api/metrics'
 import {
-  filterItemsByEnvScope,
-  needsClientEnvFilter,
-  resolveApiNamespaceId,
+  fetchPagedItemsByEnvScope,
+  resolveRequestNamespaceScope,
   useEnvNamespaceScope,
 } from '../../features/env/use-env-scope'
 import { notifyError, notifySuccess } from '../../lib/notify'
@@ -91,10 +90,9 @@ export default function AssetsPanel({
 }: AssetsPanelProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  // FR-178：顶栏 env 作用域与页内 namespace 合成 API 参数；多 ns 时客户端二次过滤
+  // FR-178：顶栏 env 作用域与页内命名空间合成受限请求范围。
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(namespaceId, envScope)
-  const clientFilter = needsClientEnvFilter(envScope)
+  const requestScope = resolveRequestNamespaceScope(namespaceId, envScope)
 
   const [keyword, setKeyword] = useState(initialKeyword)
   const [kind, setKind] = useState<string>('all')
@@ -107,23 +105,35 @@ export default function AssetsPanel({
   const [errorText, setErrorText] = useState<string | null>(null)
 
   const query = useQuery({
-    queryKey: ['servers', 'assets', apiNamespaceId, envScope, keyword, kind, assigned, page],
+    queryKey: ['servers', 'assets', requestScope, keyword, kind, assigned, page],
     queryFn: () =>
-      fetchServers({
-        namespaceId: apiNamespaceId,
-        keyword: keyword.trim() === '' ? undefined : keyword.trim(),
-        kind: kind === 'all' ? undefined : kind,
-        assigned: assigned === 'all' ? undefined : assigned === 'yes',
-        page,
-        pageSize: PAGE_SIZE,
-      }),
+      fetchPagedItemsByEnvScope(
+        requestScope,
+        (namespaceId, pageRequest) =>
+          fetchServers({
+            namespaceId,
+            keyword: keyword.trim() === '' ? undefined : keyword.trim(),
+            kind: kind === 'all' ? undefined : kind,
+            assigned: assigned === 'all' ? undefined : assigned === 'yes',
+            page: pageRequest?.page ?? page,
+            pageSize: pageRequest?.pageSize ?? PAGE_SIZE,
+          }),
+        {
+          page,
+          pageSize: PAGE_SIZE,
+          compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId),
+        },
+      ),
     placeholderData: keepPreviousData,
   })
 
   // 身份端点按 identityId 定位，server 列表只给 serverId，故拉一份身份表建 serverId→identityId 映射。
   const identitiesQuery = useQuery({
-    queryKey: ['identities', 'by-server', apiNamespaceId, envScope],
-    queryFn: () => fetchIdentities({ namespaceId: apiNamespaceId, pageSize: 1000 }),
+    queryKey: ['identities', 'by-server', requestScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(requestScope, (namespaceId) =>
+        fetchIdentities({ namespaceId, pageSize: 1000 }),
+      ),
   })
   // 同一 serverId 可能有多条历史身份（unbound/rejected/active）；解绑/禁用只对可迁状态生效，
   // 优先 active → disabled → conflict，避免命中已 unbound 的旧行导致 409 illegal_state。
@@ -154,35 +164,33 @@ export default function AssetsPanel({
   const canTransitionIdentity = (row: ServerItem): boolean => actionableIdentityOf(row) !== null
 
   // 健康视图列表：serverId → 健康分/等级/可调度/不可调度原因，供列表行直显基础健康信息（一眼可见，不必点开详情）。
-  // 一次全量拉取（huge 场景 1200+ 台仍在单页上限内），避免逐行查详情的 N+1。
+  // 每个命名空间最多一次健康请求，避免逐行查详情的 N+1。
   const healthQuery = useQuery({
-    queryKey: ['health', 'list', apiNamespaceId, envScope],
-    queryFn: () => fetchHealthList({ namespaceId: apiNamespaceId, pageSize: 2000 }),
+    queryKey: ['health', 'list', requestScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(requestScope, (namespaceId) =>
+        fetchHealthList({ namespaceId, pageSize: 2000 }),
+      ),
   })
   const healthByServer = useMemo(() => {
     const map = new Map<string, HealthItem>()
-    const healthItems = clientFilter
-      ? filterItemsByEnvScope(healthQuery.data?.items ?? [], envScope)
-      : (healthQuery.data?.items ?? [])
-    for (const item of healthItems) {
+    for (const item of healthQuery.data?.items ?? []) {
       map.set(item.serverId, item)
     }
     return map
-  }, [healthQuery.data, clientFilter, envScope])
+  }, [healthQuery.data])
 
-  // env 多 ns 时 API 无法一次传多个 id，对当前页结果再收窄；身份维再收窄（遗留/有绑定）
-  // 分页 total 仍为服务端值，身份筛选仅作用于当前页（与 env 客户端过滤同一局限）
+  // 身份维仅作用于当前页。
   const rows = useMemo(() => {
     const items = query.data?.items ?? []
-    const scoped = clientFilter ? filterItemsByEnvScope(items, envScope) : items
     if (identityFilter === 'all') {
-      return scoped
+      return items
     }
-    return scoped.filter((row) => {
+    return items.filter((row) => {
       const residual = !canTransitionIdentity(row)
       return identityFilter === 'residual' ? residual : !residual
     })
-  }, [query.data, clientFilter, envScope, identityFilter, identitiesQuery.data])
+  }, [query.data, identityFilter, identitiesQuery.data])
 
   // 当前页各服的最新指标点（TPS / CPU / 在线人数）：一次请求带上整页 serverId，避免逐行 N+1。
   const pageServerIds = useMemo(() => rows.map((row) => row.serverId).join(','), [rows])

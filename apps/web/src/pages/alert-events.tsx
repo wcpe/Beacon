@@ -21,10 +21,7 @@ import type { AlertEventItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/http'
 import { fetchAlertEvents, handleAlertEvent } from '../api/observability'
-import {
-  filterItemsByEnvCodes,
-  useEnvNamespaceCodes,
-} from '../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../features/env/use-env-scope'
 import {
   alertSubtitle,
   healthStatusLabel,
@@ -69,9 +66,8 @@ function statusBadgeVariant(status: AlertEventItem['status']): 'crit' | 'ok' | '
 export default function AlertEventsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  // FR-178：列表跟随顶栏 env（namespace 字符串；单 ns 走 API，多 ns 客户端滤）
+  // FR-178：列表按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
-  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
 
   const [level, setLevel] = useState('all')
   const [type, setType] = useState('all')
@@ -90,29 +86,28 @@ export default function AlertEventsPage() {
   const [batchErrorText, setBatchErrorText] = useState<string | null>(null)
 
   const query = useQuery({
-    queryKey: ['alert-events', level, type, status, page, apiNamespace, envCodes],
+    queryKey: ['alert-events', level, type, status, page, envCodes],
     queryFn: () =>
-      fetchAlertEvents({
-        level: level === 'all' ? undefined : level,
-        type: type === 'all' ? undefined : type,
-        namespace: apiNamespace,
-        page,
-        size: PAGE_SIZE,
-      }),
+      fetchPagedItemsByEnvScope(
+        envCodes,
+        (namespace, pageRequest) =>
+          fetchAlertEvents({
+            level: level === 'all' ? undefined : level,
+            type: type === 'all' ? undefined : type,
+            namespace,
+            page: pageRequest?.page ?? page,
+            size: pageRequest?.pageSize ?? PAGE_SIZE,
+          }),
+        { page, pageSize: PAGE_SIZE, compare: (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) },
+      ),
     placeholderData: keepPreviousData,
   })
 
-  // 处理状态无独立后端参数，客户端二次过滤；env 多 ns 时再按 code 收窄
+  // 处理状态无独立后端参数，仅保留该维度的页内过滤。
   const rows = useMemo(() => {
-    let items = query.data?.items ?? []
-    if (envCodes !== null && envCodes.length !== 1) {
-      items = filterItemsByEnvCodes(items, envCodes)
-    }
-    if (status === 'all') {
-      return items
-    }
-    return items.filter((row) => row.status === status)
-  }, [query.data, status, envCodes])
+    const items = query.data?.items ?? []
+    return status === 'all' ? items : items.filter((row) => row.status === status)
+  }, [query.data, status])
 
   // 选中行从最新数据派生，写操作后状态即时反映到详情面板
   const selected = useMemo(

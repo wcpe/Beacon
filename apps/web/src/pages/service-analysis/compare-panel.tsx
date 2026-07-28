@@ -12,6 +12,7 @@ import type { HealthDetail, HealthItem, HealthLevel, ServerItem } from '@beacon/
 
 import { fetchServers } from '../../api/cluster'
 import { fetchHealthDetail, fetchHealthList } from '../../api/metrics'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
 
 interface ComparePanelProps {
   // 已选 serverId（顺序稳定）
@@ -36,24 +37,42 @@ interface CompareRow {
 
 export default function ComparePanel({ serverIds }: ComparePanelProps) {
   const { t } = useTranslation()
+  const envScope = useEnvNamespaceScope()
 
-  // 复用 picker 的 servers 缓存（同 queryKey），拿基础属性
+  // 复用 picker 的 env scope：按 namespace 受限拉取基础属性，避免多命名空间时回退全量。
   const serversQuery = useQuery({
-    queryKey: ['service-analysis', 'servers'],
-    queryFn: () => fetchServers({ kind: 'backend', pageSize: 200 }),
+    queryKey: ['service-analysis', 'servers', envScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(
+        envScope,
+        (namespaceId, pageRequest) =>
+          fetchServers({ kind: 'backend', namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
+        { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
+      ),
   })
 
-  // 一次拉全量健康列表（单次请求，非逐服 N+1），拿健康分 / 等级 / 可调度 / 原因
+  // 一次拉 scope 内健康列表（单次/每命名空间一次请求，非逐服 N+1），拿健康分 / 等级 / 可调度 / 原因
   const healthQuery = useQuery({
-    queryKey: ['service-analysis', 'health-list'],
-    queryFn: () => fetchHealthList({ pageSize: 200 }),
+    queryKey: ['service-analysis', 'health-list', envScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(
+        envScope,
+        (namespaceId, pageRequest) => fetchHealthList({ namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
+        { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
+      ),
   })
 
-  // 逐台拉健康因子分解（仅所选少量服务器，受选择数上限约束，非无界循环）
+  const scopedServerIds = useMemo(
+    () => new Set((serversQuery.data?.items ?? []).map((server) => server.serverId)),
+    [serversQuery.data],
+  )
+
+  // 逐台拉健康因子分解（仅所选且仍在当前 scope 内的少量服务器，受选择数上限约束，非无界循环）
   const detailQueries = useQueries({
     queries: serverIds.map((serverId) => ({
-      queryKey: ['service-analysis', 'health-detail', serverId],
+      queryKey: ['service-analysis', 'health-detail', envScope, serverId],
       queryFn: () => fetchHealthDetail(serverId),
+      enabled: scopedServerIds.has(serverId),
     })),
   })
 

@@ -24,10 +24,7 @@ import type { AuditItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../../api/cluster'
 import { exportAudits, fetchAudits } from '../../api/observability'
-import {
-  filterItemsByEnvCodes,
-  useEnvNamespaceCodes,
-} from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
 
 // 错误文案：API 错误用脱敏 message，其它异常 stringify
 function messageOf(error: unknown): string {
@@ -130,9 +127,8 @@ interface AuditListProps {
 
 export default function AuditList({ onView, selectedId }: AuditListProps) {
   const { t } = useTranslation()
-  // FR-178：审计列表跟随顶栏 env（namespace 字符串；单 ns 走 API，多 ns 客户端滤）
+  // FR-178：审计列表按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
-  const apiNamespace = envCodes !== null && envCodes.length === 1 ? envCodes[0] : undefined
   // 审计动作中文标签：有映射用中文，未映射经 defaultValue 回退原始枚举（防裸 key 同时不挡未知动作）
   const actionLabel = useCallback(
     (action: string): string => t(`observability.audits.action.${action}`, { defaultValue: action }),
@@ -165,12 +161,11 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
     cursor.reset()
   }
 
-  // 与列表同口径的过滤（导出必须带 Bearer，不能 a 标签直链）
+  // 与列表同口径的过滤（导出必须带 Bearer，不能 a 标签直链）。namespace 在导出时按 env scope 单独补入。
   const buildExportQuery = useCallback(() => {
     const span = windowKey === 'all' ? undefined : AUDIT_WINDOW_MS[windowKey]
     const to = Date.now()
     return {
-      namespace: apiNamespace,
       operator: operator === 'all' ? undefined : operator,
       action: action === 'all' ? undefined : action,
       targetType: targetType === 'all' ? undefined : targetType,
@@ -179,13 +174,20 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       from: span === undefined ? undefined : new Date(to - span).toISOString(),
       to: span === undefined ? undefined : new Date(to).toISOString(),
     }
-  }, [apiNamespace, operator, action, targetType, targetRef, keyword, windowKey])
+  }, [operator, action, targetType, targetRef, keyword, windowKey])
 
   const onExport = async (format: 'csv' | 'json') => {
     setExportError(null)
+    if (envCodes !== null && envCodes.length !== 1) {
+      setExportError('当前环境导出暂仅支持单命名空间范围')
+      return
+    }
     setExporting(true)
     try {
-      await exportAudits(format, buildExportQuery())
+      await exportAudits(format, {
+        ...buildExportQuery(),
+        namespace: envCodes === null ? undefined : envCodes[0],
+      })
     } catch (error) {
       setExportError(messageOf(error))
     } finally {
@@ -205,40 +207,40 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
       windowKey,
       cold,
       cold ? cursor.cursor : String(page),
-      apiNamespace,
       envCodes,
     ],
     queryFn: () => {
       // 时间范围按预设窗口自「现在」往前推（RFC3339）；'all' 不带 from/to（仅热查询可达）
       const span = windowKey === 'all' ? undefined : AUDIT_WINDOW_MS[windowKey]
       const to = Date.now()
-      return fetchAudits({
-        namespace: apiNamespace,
-        operator: operator === 'all' ? undefined : operator,
-        action: action === 'all' ? undefined : action,
-        // 目标类型 / 目标为真后端原生查询参数（audit_handler.go List），走服务端过滤
-        targetType: targetType === 'all' ? undefined : targetType,
-        targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
-        detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
-        from: span === undefined ? undefined : new Date(to - span).toISOString(),
-        to: span === undefined ? undefined : new Date(to).toISOString(),
-        page,
-        size: PAGE_SIZE,
-        includeArchived: cold ? true : undefined,
-        cursor: cold ? cursor.cursor : undefined,
-      })
+      if (cold && envCodes !== null && envCodes.length !== 1) {
+        return { items: [], total: 0, nextCursor: null }
+      }
+      return fetchPagedItemsByEnvScope(
+        envCodes,
+        (namespace, pageRequest) =>
+          fetchAudits({
+            namespace,
+            operator: operator === 'all' ? undefined : operator,
+            action: action === 'all' ? undefined : action,
+            // 目标类型 / 目标为真后端原生查询参数（audit_handler.go List），走服务端过滤
+            targetType: targetType === 'all' ? undefined : targetType,
+            targetRef: targetRef.trim() === '' ? undefined : targetRef.trim(),
+            detailKeyword: keyword.trim() === '' ? undefined : keyword.trim(),
+            from: span === undefined ? undefined : new Date(to - span).toISOString(),
+            to: span === undefined ? undefined : new Date(to).toISOString(),
+            page: pageRequest?.page ?? page,
+            size: pageRequest?.pageSize ?? PAGE_SIZE,
+            includeArchived: cold ? true : undefined,
+            cursor: cold ? cursor.cursor : undefined,
+          }),
+        { page, pageSize: PAGE_SIZE, compare: (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) },
+      )
     },
     placeholderData: keepPreviousData,
   })
 
-  // 单 ns 已走 API；多 ns / 空映射客户端再滤；全部环境不过滤
-  const rows = useMemo(() => {
-    const items = query.data?.items ?? []
-    if (envCodes === null || envCodes.length === 1) {
-      return items
-    }
-    return filterItemsByEnvCodes(items, envCodes)
-  }, [query.data, envCodes])
+  const rows = useMemo(() => query.data?.items ?? [], [query.data])
 
   const total = query.data?.total ?? 0
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -289,7 +291,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           <Button
             size="sm"
             variant="outline"
-            disabled={exporting}
+            disabled={exporting || (envCodes !== null && envCodes.length !== 1)}
             onClick={() => {
               void onExport('csv')
             }}
@@ -300,7 +302,7 @@ export default function AuditList({ onView, selectedId }: AuditListProps) {
           <Button
             size="sm"
             variant="outline"
-            disabled={exporting}
+            disabled={exporting || (envCodes !== null && envCodes.length !== 1)}
             onClick={() => {
               void onExport('json')
             }}

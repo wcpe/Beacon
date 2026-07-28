@@ -214,6 +214,11 @@ func (h *V2ControlPlaneHandler) CreateNamespace(w http.ResponseWriter, r *http.R
 	render.WriteJSON(w, http.StatusCreated, v2NamespaceResponse(ns, token))
 }
 
+// DeleteNamespace 处理 DELETE /admin/v2/namespaces/{id}：旧删除端点已迁移，禁止硬删。
+func (h *V2ControlPlaneHandler) DeleteNamespace(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrNamespaceDeleteMigrated)
+}
+
 // ListNamespaces 处理 GET /admin/v2/namespaces（附 server 数 / BC 集群数 / 生效信任数摘要）。
 func (h *V2ControlPlaneHandler) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.svc.ListNamespacesWithStats()

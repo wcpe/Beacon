@@ -12,12 +12,7 @@ import { Server } from 'lucide-react'
 import { PageHeader } from '@beacon/ui'
 
 import { fetchIdentities } from '../api/cluster'
-import {
-  filterItemsByEnvScope,
-  needsClientEnvFilter,
-  resolveApiNamespaceId,
-  useEnvNamespaceScope,
-} from '../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../features/env/use-env-scope'
 import AssetsPanel from './servers/assets-panel'
 import HealthSheet from './servers/health-sheet'
 import PendingSheet from './servers/pending-sheet'
@@ -32,18 +27,16 @@ export default function ServersPage() {
   // 注册待确认抽屉开关
   const [pendingOpen, setPendingOpen] = useState(false)
   const envScope = useEnvNamespaceScope()
-  const apiNamespaceId = resolveApiNamespaceId(undefined, envScope)
-  const clientFilter = needsClientEnvFilter(envScope)
 
-  // 待确认数：吸顶入口徽标用（列表主体不再为它让版面）；按 env 收窄
+  // 待确认数：按每个命名空间受限请求并汇总，绝不拉全量后过滤。
   const pendingQuery = useQuery({
-    queryKey: ['identities', 'pending', apiNamespaceId, envScope],
-    queryFn: () => fetchIdentities({ status: 'pending', namespaceId: apiNamespaceId, pageSize: 100 }),
+    queryKey: ['identities', 'pending', envScope],
+    queryFn: () =>
+      fetchPagedItemsByEnvScope(envScope, (namespaceId) =>
+        fetchIdentities({ status: 'pending', namespaceId, pageSize: 100 }),
+      ),
   })
-  const pendingCount = useMemo(() => {
-    const items = pendingQuery.data?.items ?? []
-    return clientFilter ? filterItemsByEnvScope(items, envScope).length : items.length
-  }, [pendingQuery.data, clientFilter, envScope])
+  const pendingCount = useMemo(() => pendingQuery.data?.items.length ?? 0, [pendingQuery.data])
 
   return (
     <section className="grid gap-3.5">

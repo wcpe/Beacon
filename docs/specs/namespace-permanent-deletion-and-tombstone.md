@@ -80,7 +80,7 @@ operation 为 `namespace.permanent_delete`，schemaVersion 从 1 开始，requir
 | GET | `/admin/v2/namespaces` | 生命周期筛选扩展 `tombstoned|all`；普通上下文选择不返回墓碑 |
 | GET | `/admin/v2/namespaces/{id}` | 墓碑详情只读，显示子树摘要、审批和历史入口 |
 
-不存在直接执行的 namespace DELETE。旧 `/admin/v1/namespaces/{id}` 与历史 `/admin/v2/namespaces/{id}` DELETE 统一返回 410 `namespace_delete_migrated`，指引使用显式归档/永久删除申请；不得隐式创建申请。任何 service/repository hard-delete 必须移除或封死。
+不存在直接执行的 namespace DELETE。旧 `/admin/v1/namespaces/{code}` 与历史 `/admin/v2/namespaces/{id}` DELETE 统一返回 410 `namespace_delete_migrated`，指引使用显式归档/永久删除申请；不得隐式创建申请。任何 service/repository hard-delete 必须移除或封死。
 
 申请响应、状态与幂等规则完全复用 FR-207。常见领域错误：404 `namespace_not_found`；409 `namespace_not_archived`、`namespace_already_tombstoned`、`approval_target_changed`、`lifecycle_operation_conflict`；422 `reason_required`、`confirmation_mismatch`；复用/恢复为 409 `namespace_code_tombstoned`。
 

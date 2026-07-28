@@ -700,7 +700,7 @@ data: {}
 | `GET /admin/v1/audits/analytics?namespace=&from=&to=` | 窗口内审计活动聚合（FR-73）：`namespace` 可空（全部环境）；`from`/`to` 为 RFC3339，缺省 `to`=当前、`from`=`to`-30 天，**窗口上限 92 天**（超出 `400 INVALID_PARAM`）。返回 `{from, to, total, okCount, failCount, byAction:[{action,count}]按 count 降序, byDay:[{date:"YYYY-MM-DD",count}]按 UTC 日升序}`；空窗口各数组为 `[]`。日聚合在 Go 侧做（不用方言日期函数，保 Postgres 可移植） |
 | `GET /admin/v1/namespaces` / `POST /admin/v1/namespaces` | 环境列表 / 新建（建环境记一条 `namespace.create` 审计，operator 由认证态派生） |
 | `PUT /admin/v1/namespaces/{code}` | 改环境显示名（请求体 `{ "name": "新显示名" }`，`code` 不可变；记 `namespace.update` 审计；环境不存在 `404 NAMESPACE_NOT_FOUND`；写方法 readonly→403，FR-53） |
-| `DELETE /admin/v1/namespaces/{code}` | 删环境（硬删，成功 `204`；删除守卫：环境下有已注册实例→`409 NAMESPACE_HAS_INSTANCES`、有已指派 zone→`409 NAMESPACE_HAS_ASSIGNMENTS`、有配置→`409 NAMESPACE_HAS_CONFIGS`、有文件树→`409 NAMESPACE_HAS_FILES`、有覆盖集→`409 NAMESPACE_HAS_OVERRIDE_SETS`，命中即禁删不审计；可删时记 `namespace.delete` 审计；环境不存在 `404 NAMESPACE_NOT_FOUND`；写方法 readonly→403，FR-53） |
+| `DELETE /admin/v1/namespaces/{code}` | 旧删除入口已迁移，统一返回 `410 namespace_delete_migrated`，不触发任何硬删、副作用或隐式审批；readonly API key 仍先由 `readonlyWriteGuard` 拒绝为 `403` |
 
 ### 运维指标
 | 端点 | 说明 |
@@ -794,7 +794,7 @@ data: {}
 | 域 | 阶段 | 对应 FR | 权威规格 | 端点数 |
 |---|---|---|---|---|
 | Agent 身份 | P1 · 0.21.x | FR-139/140/141 | [v2-agent-identity.md](specs/v2-agent-identity.md) §5 | 9 |
-| namespace 隔离 | P1 · 0.21.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 5 |
+| namespace 隔离 | P1 · 0.21.x | FR-142 | [v2-namespace-isolation.md](specs/v2-namespace-isolation.md) §5 | 6 |
 | 区服权威 | P1 · 0.21.x | FR-142/143 | [v2-zone-authority.md](specs/v2-zone-authority.md) §5 | 5 |
 | 指标健康调度 | P4 · 0.24.x | FR-144/146/147/148 | [v2-metrics-health-scheduling.md](specs/v2-metrics-health-scheduling.md) §5 | 14 |
 | 连接消息存储 | P5 · 0.25.x | FR-145/149/150 | [v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §5 | 11 |
@@ -803,7 +803,7 @@ data: {}
 | 文件资产 V2 | P8 · 0.28.x | FR-163/164 | [v2-file-assets.md](specs/v2-file-assets.md) §5 | 10 |
 | 交付编排 V2 | P9 · 0.29.x | FR-162/165/166/167/168/171 | [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5 | 27 |
 
-当前表内合计 104 个端点；其中 P1 基础已接 19 个，第二版全量规划仍以各规格为准。
+当前表内合计 105 个端点；其中 P1 基础已接 20 个，第二版全量规划仍以各规格为准。
 
 ### Agent 身份（P1 · 0.21.x，真源 [v2-agent-identity.md](specs/v2-agent-identity.md) §5）
 
@@ -834,6 +834,7 @@ agent 面：
 |---|---|---|
 | GET | `/admin/v2/namespaces` | namespace 列表 |
 | POST | `/admin/v2/namespaces` | 创建 namespace（返回一次性明文接入 token） |
+| DELETE | `/admin/v2/namespaces/{id}` | 旧删除入口已迁移，统一返回 `410 namespace_delete_migrated`，不触发任何硬删、副作用或隐式审批 |
 | GET | `/admin/v2/namespace-trusts` | 互通信任行列表 |
 | POST | `/admin/v2/namespace-trusts` | 授予单向信任（新增或复活，原因必填） |
 | POST | `/admin/v2/namespace-trusts/{id}/revoke` | 收回信任（原因必填，即时生效） |
