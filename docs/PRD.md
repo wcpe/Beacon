@@ -15,7 +15,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 ### 1.2 目标
 
 - 建立清晰的环境 / namespace / BC 集群 / 大区 / 小区 / 子服权威模型。
-- 让 BC 与 Bukkit agent 只靠 Beacon 地址、token、namespace、serverId 自连接中控。
+- 让 BC 与 Bukkit agent 只靠 Beacon 地址与 namespace token 自连接中控；namespace 由 token 推导，serverId 在待确认流程中分配。
 - 通过 agent 首启身份文件绑定真实服务器，避免运维误改 serverId 导致区数据隔离出错。
 - 让首次注册、换区、解绑、身份冲突都必须在后台可见、可审计、可人工确认。
 - 让业务插件只依赖本机 `agent-api`，禁止直接 HTTP 调 Beacon。
@@ -121,13 +121,19 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-196 | 页眉刷新当前页：仅失效当前路由相关查询 | 对齐中间版 | 0.31.x | 刷新按钮可点；不整页 reload；按当前页 queryKey 重拉；URL/筛选尽量保留；换路由后作用域跟随 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
 | FR-197 | 管理台视觉打磨：列表健康列收敛、焦点环克制、字体加载稳定、总览页眉补齐、表格/KPI/侧栏/登录细节统一 | 对齐中间版 | 0.31.x | 服务器健康列主信号 ≤2 个，不可调度改弱文案/tooltip；Input/Select/Textarea focus 为 ring-2 且透明度降低；demo 下 Geist 正常加载不被 MSW 误拦；运维总览 PageHeader 有 icon+职责说明；表头弱化+行 hover 更轻；KPI 副文案降一级；侧栏分组标签更清晰；状态墙「未分配」为 off 弱标；登录错误区固定高度不抖；ui-wiki 与 mock 管理台可目视验收 | 开发中 |
 | FR-198 | 管理台交互与超大量性能：主从详情点外部关闭；区服树 huge 默认不展开叶子；选服列表截断；huge 场景可 benchmark | 对齐中间版 | 0.31.x | 列表详情抽屉点外部/Esc 关闭（内层 dialog 不抢关）；健康/待确认 Sheet 无遮罩可点外部关闭；区服树默认仅展开集群+大区，小区叶子默认上限 40 且切 ns 重置展开；服务分析选服列表渲染上限 80；huge 场景区服首屏 DOM 与切 ns 可交互；zones/servers 相关 vitest 绿 | 开发中 |
+| FR-199 | LobbyCluster 权威模型与独立管理台 | P10 RC | v1.0.0-rc.N | 每个 namespace 唯一一个独立 LobbyCluster；大厅成员仅限同 namespace Bukkit 且与大区/小区归属互斥；迁移受 drain 门保护；`/lobby-clusters` 先过 mockup 评审再接真；规格见 [lobby-cluster-authority](specs/lobby-cluster-authority.md) | 计划 |
+| FR-200 | BC 全 namespace 受管目录与玩家首次大厅落脚 | P10 RC | v1.0.0-rc.N | BC 注册 namespace 内全部受管后端；玩家首次进入只从 LobbyCluster 复用现有健康/容量调度器选择大厅；不拦截后续业务切服；控制面不可用时按最后有效快照降级；规格见 [bc-namespace-directory-and-lobby-entry](specs/bc-namespace-directory-and-lobby-entry.md) | 计划 |
+| FR-201 | BC 受管目录立即重同步 | P10 RC | v1.0.0-rc.N | 支持 namespace 全量与单 BC 重试；仅在线 BC 可执行；重建受管目录与大厅候选快照；命令状态、失败原因和审计可见；规格见 [bc-managed-directory-resync](specs/bc-managed-directory-resync.md) | 计划 |
+| FR-202 | BC 受管服务器查询命令 | P10 RC | v1.0.0-rc.N | `/beacon servers [页码]` 分页查询受管目录，`/beacon server <serverId>` 查询单服详情；显示大厅/大区/小区归属、在线、健康、可调度与同步摘要；规格见 [bc-managed-server-query-command](specs/bc-managed-server-query-command.md) | 计划 |
+| FR-203 | Agent 极简身份接入与既有绑定兼容迁移 | P10 RC | v1.0.0-rc.N | 新安装本地必填仅 Beacon 地址与 namespace token；namespace 由 token 推导、角色自动识别、serverId 待确认时分配；旧 Agent 自动导入匹配绑定并保持 active；规格见 [agent-minimal-bootstrap-and-identity-migration](specs/agent-minimal-bootstrap-and-identity-migration.md) | 计划 |
+| FR-204 | Agent 地址探测、BC 多 listener 与面板覆盖 | P10 RC | v1.0.0-rc.N | Bukkit 保留单地址；BC 上报全部 listener 并保留首个有效地址兼容旧契约；控制面生成探测地址，管理台支持逐 listener 覆盖并展示探测/覆盖/生效来源；规格见 [agent-address-detection-and-proxy-listeners](specs/agent-address-detection-and-proxy-listeners.md) | 计划 |
 
 ## 5. 非功能需求（NFR）
 
 - **规模**：面向 1000+ 子服、多个 BC 集群、固定大区 + 多小区结构；所有列表默认分页 / 筛选 / 虚拟化。
 - **性能**：Agent 1s 采样，Beacon 5s 批量入库；写入与归档采用批处理，禁止请求主线程执行长耗时任务。
 - **安全**：token、密码、payload 不写日志；payload 查看必须填原因；跨 namespace 行为必须有单独审计。
-- **可用性**：控制面不可用时 agent 保留本地缓存与降级能力，不阻断玩家入口。
+- **可用性**：控制面不可用时 agent 保留本地缓存与降级能力；存在最后有效大厅候选快照时不因控制面断连阻断玩家入口，未配置或无可用大厅候选时明确拒绝且不回退普通区服。
 - **可审计**：注册确认、解绑、换区、调度、命令、payload 查看、跨域操作、归档清理都可追踪。
 - **存储**：热库与归档库默认同 MySQL 实例不同 database / schema；配置预留独立归档 DSN，后续可迁出。
 - **UI**：浏览器 100% 缩放、1920x1080 下优先保证单页高密度操作；不做大屏装饰、地图装饰或游戏化外观。
@@ -148,8 +154,17 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | P8 | 0.28.x | 文件资产 V2 资产索引、内容预览与安全审计接真完成；同期收编 P3 延后项 Q4 身份冲突可视化闭环（FR-177）与 env 映射体验（FR-178） |
 | P9 | 0.29.x → v0.30.0 | 交付编排 V2 变更单、数据面、灰度生效编排、整单回滚与统一审计接真完成；v0.30.0 完成 FR-171 配置热重载发布验收并收口 P9 |
 | 对齐中间版 | 0.31.x | 1.0.0 前管理台壳层完整修复与对齐：侧栏图标轨折叠动画（FR-186）、双段页眉与身份收敛（FR-187）、全局运维指标真数据（FR-188）、小屏抽屉（FR-189）、页眉搜索/语言/通知/刷新（FR-193～196）与 FR-178 环境过滤归真；**代码已合入待打 `v1.0.0-rc.N` 后视为壳层阶段收口**；规格见 `docs/specs/admin-shell-redesign-0.31.md` |
-| P10 RC | v1.0.0-rc.N | 根 `VERSION=1.0.0`；发布不可变 prerelease 候选，固定 commit 与产品资产；失败或资产变化切换新 RC；**在真实 tag/Release 公开前不得宣称已发布** |
+| P10 RC | v1.0.0-rc.N | 根 `VERSION=1.0.0`；完成 FR-199～204 的大厅落脚、BC 运维与 Agent 极简接入闭环；发布不可变 prerelease 候选，固定 commit 与产品资产；失败或资产变化切换新 RC；**在真实 tag/Release 公开前不得宣称已发布** |
 | GA | v1.0.0 | 从最终 RC 同 commit 原样复制产品资产，逐项核验文件名、大小和 SHA-256，禁止 rebuild/repack/替换资产；本地验证或本地预备不等于 GA；正式稳定版继续严格 SemVer |
+
+### 6.1 P10 RC 新增能力验收
+
+- **FR-199**：升级后每个 namespace 自动创建空 LobbyCluster，不从小区默认入口推断成员；空集群明确显示未就绪；成员新增、移除与互斥归属校验可验证，在线迁移未通过 drain 时返回 409；`/lobby-clusters` 覆盖空、常规、超大量、异常四态并经浏览器 mockup 评审。
+- **FR-200**：真实环境至少启动 1 个 BC、2 个大厅服和 1 个普通区服；首次连接只落入健康且有容量的大厅候选，指标刷新周期内允许短暂倾斜；后续业务插件切服不被拦截；控制面断连继续使用最后有效快照，无候选时拒绝进入并记录中文 WARN；小区默认入口仍对外保留但不再决定 BC 首次落脚。
+- **FR-201**：namespace 级操作只触发其全部在线 BC，单 BC 操作可定点重试；离线目标明确失败且不积压命令；执行后 BC 受管目录与大厅候选快照收敛，管理台可查询命令结果与审计。
+- **FR-202**：受管服务器列表必须分页且不输出无界全量；摘要与单服详情准确反映 BC 当前目录、拓扑归属、在线、健康、可调度和最近同步状态；无权限与未知 serverId 返回明确错误。
+- **FR-203**：新 Agent 仅凭 Beacon 地址与有效 namespace token 进入 pending；无须本地填写 namespace、serverId 或 address；管理员分配 serverId 后转 active；既有 Agent 升级时导入原绑定且 identityId 匹配则不重新审批；机器相关设置仍可使用安全默认与可选本地覆盖。
+- **FR-204**：Bukkit 单地址与旧 API 保持兼容；BC 的全部 listener 可查询，首个有效 listener 回填兼容 address；每个 listener 可独立覆盖，未覆盖项使用请求来源 IP 与上报端口；待确认流程和服务器详情可区分探测值、覆盖值、生效值及来源。
 
 ## 7. Legacy 策略
 
