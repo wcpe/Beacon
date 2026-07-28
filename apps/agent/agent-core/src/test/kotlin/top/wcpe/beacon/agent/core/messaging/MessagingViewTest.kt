@@ -1,6 +1,8 @@
 package top.wcpe.beacon.agent.core.messaging
 
 import top.wcpe.beacon.agent.api.IncomingMessage
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -121,6 +123,30 @@ class MessagingViewTest {
     }
 
     @Test
+    fun `Legacy MessagingModule 停止会复位 HTTP 门面 因此壳层不得同时接线`() {
+        val net = FakeNetwork()
+        val holder = MessagingHolder()
+        val receiver = newBus(net, "B").also { it.start() }
+        var received: Any? = null
+        receiver.on("probe") { message -> received = message.payload() }
+
+        val httpBus = newBus(net, "A").also { it.start() }
+        holder.set(MessagingView(httpBus))
+        holder.get().send("B", "probe", "before-legacy")
+        assertEquals("before-legacy", received)
+
+        val legacy = newModule(net, "A", holder)
+        assertTrue(legacy.start())
+        legacy.stop()
+        assertFalse(holder.get().isAvailable(), "Legacy 停止会把仍存活的 HTTP 门面复位")
+        MessagingView(httpBus).send("B", "probe", "after-legacy")
+        assertEquals("after-legacy", received, "HTTP 总线仍可用，仅共享 holder 被错误复位")
+
+        assertFalse(readShellSource("agent-bukkit", "BeaconAgentBukkit.kt").contains("BukkitMessagingBootstrap"))
+        assertFalse(readShellSource("agent-bungee", "BeaconAgentBungee.kt").contains("BungeeMessagingBootstrap"))
+    }
+
+    @Test
     fun `MessagingModule 未启用时不启动 保持降级`() {
         val net = FakeNetwork()
         val holder = MessagingHolder()
@@ -150,6 +176,31 @@ class MessagingViewTest {
         // start 内部捕获异常并降级，返回 false，不抛。
         assertFalse(module.start())
         assertFalse(holder.get().isAvailable())
+    }
+
+    private fun newModule(
+        net: FakeNetwork,
+        serverId: String,
+        holder: MessagingHolder,
+    ): MessagingModule =
+        MessagingModule(
+            transport = FakeMessageTransport(net, serverId),
+            codec = FakeJsonCodec(),
+            selfServerId = serverId,
+            settings = settings,
+            holder = holder,
+        )
+
+    private fun readShellSource(
+        module: String,
+        fileName: String,
+    ): String {
+        val agentRoot =
+            generateSequence(Path.of(System.getProperty("user.dir")).toAbsolutePath()) { it.parent }
+                .firstOrNull { Files.isDirectory(it.resolve("agent-core")) && Files.isDirectory(it.resolve(module)) }
+                ?: error("无法定位 agent Gradle 工程根目录")
+        val packagePath = "src/main/kotlin/top/wcpe/beacon/agent/${module.removePrefix("agent-")}/$fileName"
+        return Files.readString(agentRoot.resolve(module).resolve(packagePath))
     }
 
     private fun newBus(

@@ -33,6 +33,17 @@ class HttpMessageTransport(
     @Volatile
     private var connected = false
 
+    private val sendMessage: (OutboundMessage, String) -> MessageSendOutcome = { outbound, messageType ->
+        try {
+            apiClient.sendMessage(identity, outbound)
+        } catch (t: Throwable) {
+            connected = false
+            val reason = "跨服消息发送失败：${t.message ?: "无错误信息"}，type=$messageType（实时消息不本地缓冲重发）"
+            warn(reason)
+            throw IllegalStateException(reason, t)
+        }
+    }
+
     override fun start() {
         connected = true
     }
@@ -44,20 +55,24 @@ class HttpMessageTransport(
     override fun isConnected(): Boolean = connected
 
     /**
-     * 上行发送：解信封 → 组 wire → [BeaconApiClient.sendMessage]。解码失败 / 缺 messageId 丢弃。
-     * 失败仅告警，不本地缓冲重发（ADR-0063 §8）。目标从信封 targetKind/targetId 取（serverId 参数在 HTTP 下不用）。
+     * 上行发送：解信封 → 组 wire → [BeaconApiClient.sendMessage]。解码失败关闭通道并抛错，缺 messageId 丢弃。
+     * 控制面失联时标记不可用并抛错，不本地缓冲重发（ADR-0063 §8）；请求被拒亦抛错但不误判连接失效。
+     * 目标从信封 targetKind/targetId 取（serverId 参数在 HTTP 下不用）。
      */
     override fun sendToServer(
         serverId: String,
         rawJson: String,
     ) {
+        check(connected) { "跨服消息控制面通道不可用" }
         val message =
             try {
-                Message.fromMap(codec.decode(rawJson))
+                Message.fromMap(codec.decode(rawJson)) ?: throw IllegalArgumentException("出站信封结构非法")
             } catch (t: Throwable) {
-                warn("出站信封解码失败：${t.message}")
-                null
-            } ?: return
+                connected = false
+                val reason = "出站信封解码失败：${t.message ?: "无错误信息"}"
+                warn(reason)
+                throw IllegalStateException(reason, t)
+            }
         val messageId = message.messageId
         if (messageId == null) {
             warn("出站消息缺 messageId，丢弃 type=${message.type}")
@@ -77,16 +92,26 @@ class HttpMessageTransport(
                 // 广播 zone 级定向：信封 targetId 兼载可选 zone 名（FR-180）。
                 targetZone = if (kind == Message.TARGET_BROADCAST) message.targetId else null,
             )
-        when (val outcome = apiClient.sendMessage(identity, outbound)) {
-            is MessageSendOutcome.Ok -> Unit
-            is MessageSendOutcome.Forbidden ->
-                warn("跨服消息被拒：跨 namespace 无信任，type=${message.type} target=${message.targetId}")
+        when (val outcome = sendMessage(outbound, message.type)) {
+            is MessageSendOutcome.Ok -> connected = true
+            is MessageSendOutcome.Forbidden -> {
+                val reason = "跨服消息被拒：跨 namespace 无信任，type=${message.type} target=${message.targetId}"
+                warn(reason)
+                throw IllegalStateException(reason)
+            }
 
-            is MessageSendOutcome.Rejected ->
-                warn("跨服消息被拒：${outcome.reason}，type=${message.type}")
+            is MessageSendOutcome.Rejected -> {
+                val reason = "跨服消息被拒：${outcome.reason}，type=${message.type}"
+                warn(reason)
+                throw IllegalStateException(reason)
+            }
 
-            is MessageSendOutcome.Failed ->
-                warn("跨服消息发送失败：${outcome.reason}，type=${message.type}（实时消息不本地缓冲重发）")
+            is MessageSendOutcome.Failed -> {
+                connected = false
+                val reason = "跨服消息发送失败：${outcome.reason}，type=${message.type}（实时消息不本地缓冲重发）"
+                warn(reason)
+                throw IllegalStateException(reason)
+            }
         }
     }
 

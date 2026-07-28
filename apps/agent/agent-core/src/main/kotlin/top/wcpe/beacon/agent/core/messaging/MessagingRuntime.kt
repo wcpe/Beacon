@@ -22,9 +22,15 @@ class MessagingRuntime(
     private val info: (String) -> Unit = {},
     private val error: (String, Throwable?) -> Unit = { _, _ -> },
 ) {
+    private val view = MessagingView(bus)
+
+    init {
+        poll.connectionStateListener = ::onConnectionStateChanged
+    }
+
     /**
-     * 启动：连 transport、置活跃门面、起下行长轮询。幂等（bus.start / poll.start 各自可重复调用）。
-     * 未启用则保持降级；失败仅降级不抛。
+     * 启动下行轮询；首轮零等待探测成功后才启动总线并置活跃门面。
+     * 幂等（poll.start / bus.start 各自可重复调用），未启用则保持降级；失败仅降级不抛。
      */
     fun start() {
         if (!settings.enabled) {
@@ -32,24 +38,46 @@ class MessagingRuntime(
             return
         }
         try {
-            bus.start()
-            holder.set(MessagingView(bus))
+            holder.set(view)
             poll.start()
-            info("跨服消息模块已启动（HTTP 中转，serverId 经身份注入）")
+            info("跨服消息模块轮询已启动（HTTP 中转，首轮探测通过后开放门面）")
         } catch (t: Throwable) {
             error("跨服消息模块启动失败，降级（不影响配置同步与玩家游玩）", t)
-            holder.reset()
+            rollbackStart()
         }
     }
 
     /** 停止：停长轮询、复位门面、关总线（挂起 RPC 异常完成）。幂等。 */
     fun stop() {
         poll.stop()
+        deactivate("停止跨服消息模块异常")
+    }
+
+    private fun onConnectionStateChanged(connected: Boolean) {
+        if (!connected) {
+            deactivate("跨服消息通道失联清理异常")
+            return
+        }
+        try {
+            if (!bus.isAvailable()) bus.start()
+            holder.set(view)
+        } catch (t: Throwable) {
+            deactivate("跨服消息通道恢复回滚异常")
+            throw t
+        }
+    }
+
+    private fun rollbackStart() {
+        poll.stop()
+        deactivate("跨服消息模块启动回滚异常")
+    }
+
+    private fun deactivate(errorMessage: String) {
         holder.reset()
         try {
             bus.close()
         } catch (t: Throwable) {
-            error("停止跨服消息模块异常", t)
+            error(errorMessage, t)
         }
     }
 }

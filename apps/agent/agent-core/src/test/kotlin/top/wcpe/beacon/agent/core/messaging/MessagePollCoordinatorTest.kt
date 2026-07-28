@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.messaging
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
+import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.BackoffSettings
 import top.wcpe.beacon.agent.core.settings.FileTreeSettings
@@ -11,6 +12,8 @@ import top.wcpe.beacon.agent.core.transport.HttpRequest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
 import top.wcpe.beacon.agent.core.transport.HttpTransport
 import top.wcpe.beacon.agent.core.transport.JsonCodec
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
@@ -49,6 +52,47 @@ class MessagePollCoordinatorTest {
 
                 else -> HttpResponse(404, "")
             }
+    }
+
+    /** 阻塞首轮 poll，供测试在线程已进入请求后再 stop。 */
+    private class BlockingPollTransport : HttpTransport {
+        val pollStarted = CountDownLatch(1)
+        val releasePoll = CountDownLatch(1)
+        val ackCalls = AtomicInteger(0)
+
+        override fun execute(request: HttpRequest): HttpResponse =
+            when {
+                request.url.endsWith("/messages/poll") -> {
+                    pollStarted.countDown()
+                    check(releasePoll.await(2, TimeUnit.SECONDS)) { "测试未及时释放 poll" }
+                    HttpResponse(200, "poll-msgs")
+                }
+
+                request.url.endsWith("/messages/ack") -> {
+                    ackCalls.incrementAndGet()
+                    HttpResponse(200, "ack-ok")
+                }
+
+                else -> HttpResponse(404, "")
+            }
+    }
+
+    /** 仅把立即异步任务放到独立线程，便于主测试线程控制在途 poll。 */
+    private class ThreadedAdapter(
+        private val delegate: ManualAsyncAdapter = ManualAsyncAdapter(),
+    ) : PlatformAdapter by delegate {
+        private val threads = mutableListOf<Thread>()
+
+        override fun runAsync(task: () -> Unit) {
+            Thread(task, "消息轮询停止测试").also { thread ->
+                threads.add(thread)
+                thread.start()
+            }
+        }
+
+        fun awaitTasks() {
+            threads.toList().forEach { it.join(2_000L) }
+        }
     }
 
     /** 捕获 ack 报文、按 body 返回预置树的 codec；broadcast=true 时 poll 消息携带广播标记（FR-180）。 */
@@ -155,6 +199,26 @@ class MessagePollCoordinatorTest {
         val results = codec.lastAck.get()!!["results"] as List<Map<String, Any?>>
         assertEquals("failed", results[0]["status"])
         assertEquals("no_handler_for_type", results[0]["reason"])
+    }
+
+    @Test
+    fun `stop 后在途 poll 响应不得投递或回执`() {
+        val transport = BlockingPollTransport()
+        val codec = MsgCodec(msgType = "evt", correlationId = null)
+        val bus = bus(codec)
+        val threadedAdapter = ThreadedAdapter()
+        val handled = AtomicInteger(0)
+        bus.on("evt") { handled.incrementAndGet() }
+        val coord = MessagePollCoordinator(BeaconApiClient(transport, codec, settings()), identity(), threadedAdapter, bus)
+
+        coord.start()
+        assertTrue(transport.pollStarted.await(2, TimeUnit.SECONDS), "首轮 poll 应已进入在途状态")
+        coord.stop()
+        transport.releasePoll.countDown()
+        threadedAdapter.awaitTasks()
+
+        assertEquals(0, handled.get(), "stop 后返回的在途响应不得执行 handler")
+        assertEquals(0, transport.ackCalls.get(), "stop 后返回的在途响应不得 ack")
     }
 
     private fun identity(): AgentIdentity =
