@@ -27,6 +27,13 @@
 - `docs/specs/ui-component-museum.md` 状态对齐为已交付，并补齐文档同步任务勾选。
 
 ### 修复
+- 对齐 ADR-0063：Bukkit/Bungee v2 壳层不再装配 Legacy Redis 消息引导，HTTP relay 成为业务插件消息门面的唯一写入者，避免 Legacy 停止复位仍在运行的 HTTP 门面。
+- Redis 下发连接配置改为严格 fail-closed 解析：拒绝错误类型、非精确整数与越界值，连接表示固定脱敏 password，避免错误降级为无密码连接或日志泄露。
+- 空全局 Agent token 不再匿名放行；无有效全局 token 时必须通过 v2 身份鉴权。
+- 管理口令在认证器构造时转为 bcrypt 哈希，进程内不再保存明文口令。
+- 修正全局 CSS 对完整背景 token 的错误包裹及带空格字体族的无效写法。
+- HTTP 消息运行时 fail-closed：send/poll/ack 与出站信封解析异常会清零可用性、停用当前轮询代；`stop()` 后在途回包不再投递/ack；`poll.start()` 失败回滚 bus/holder 并可重启。
+- Bukkit 壳层移除遗留 Jedis/commons-pool/Gson 运行时下载依赖，避免 v2 仍拉取 Redis 客户端。
 - 贯通 FR-178 环境过滤器到运维主路径：选「全部环境」默认可见全量；选具体 env 收窄仪表盘/服务器/区服/拓扑/告警/命令/审计/服务分析/变更单等有 ns 维度的列表；mock 对 `namespaceId=0` 与真后端「全量」语义对齐。
 - 解绑身份时同步清空服务器区服归属，并支持 `target:null` 解除分配；资产列表身份优选 active/disabled/conflict，避免解绑命中历史 unbound 行。
 - 扩充审计动作中文映射与筛选候选；命令 `resultDetail` 支持 JSON 键值可视化。

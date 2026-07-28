@@ -22,7 +22,7 @@ P5 需要让跨服通信真正可用（第二版消息面此前随 Redis 一并�
 
 5. **信封只增不改**：消息信封新增 `messageId`(UUIDv7)、发送时间戳、`hops`（链路事件数组）等字段，沿用 ADR-0016 §13「只增不改」演进规约，保证集群内新老插件混跑向后兼容。
 
-6. **传输抽象仍遵 [ADR-0005](0005-agent-transport-codec-abstraction.md)**：agent core 依赖 `MessageTransport` / `HttpTransport` / `JsonCodec` 接口，HTTP 客户端与 JSON 库只在适配器。`MessageTransport` 的实现由 Redis 换为基于 `BeaconApiClient` 的 HTTP 实现；ADR-0016 的 `RedisMessageTransport` 及 Jedis 依赖退役为孤儿（Legacy 代码保留、v2 不激活，按精准修改不做扩散式删除）。
+6. **传输抽象仍遵 [ADR-0005](0005-agent-transport-codec-abstraction.md)**：agent core 依赖 `MessageTransport` / `HttpTransport` / `JsonCodec` 接口，HTTP 客户端与 JSON 库只在适配器。`MessageTransport` 的实现由 Redis 换为基于 `BeaconApiClient` 的 HTTP 实现；ADR-0016 的 `RedisMessageTransport` 及 Jedis 依赖退役为孤儿。Bukkit/Bungee v2 壳层不得创建或同步 Legacy Redis 消息引导，HTTP `MessagingRuntime` 是对外 `MessagingHolder` 的唯一写入者；Legacy 代码保留，按精准修改不做扩散式删除。
 
 7. **agent-api 门面对③层业务插件保持只读、契约稳定**：`Messaging` 门面保留 `send` / `call` / `on`(订阅本机投递) / `isAvailable`；`publish` / `subscribe`(topic) 保留接口签名但底层 no-op（`isAvailable()` 语义下快速失败），守向后兼容、不破坏已依赖该接口的业务插件编译。链路查询是**管理面**能力（`/admin/v2/messages/*`），不经 agent-api 暴露。
 
@@ -39,7 +39,7 @@ P5 需要让跨服通信真正可用（第二版消息面此前随 Redis 一并�
 
 - **取代 [ADR-0016](0016-agent-cross-server-messaging-middleware.md)** 的传输层（§2 数据面直连 / §3 Redis Streams·pub/sub / §5 Redis 名册 / §12 Streams 裁剪 / §14-15 Jedis·Redis 配置下发）与"消息不经控制面"的核心决策；ADR-0016 状态改为"已被 ADR-0063 取代"。ADR-0016 的分层思想（§1 ①②③三层、②对③只提供与内容无关的传输）与信封演进规约（§13）予以承继。
 - **消息可靠性降级**：由"至少送达一次 + 离线补消费"降为"在线尽力送达 + TTL 过期即弃"。业务插件须按 `messageId` 幂等，并接受离线目标消息丢失。这是与 ADR-0016 的实质差异，须让③层业务插件知晓。
-- **孤儿代码**：`RedisMessageTransport` / Jedis 依赖 / Redis 名册实现成为 v2 非激活的 Legacy 代码，保留不删（后续如彻底下线 Legacy 再单独清理）。
+- **孤儿代码**：`RedisMessageTransport` / Jedis 依赖 / Redis 名册实现成为 v2 非激活的 Legacy 代码，保留不删（后续如彻底下线 Legacy 再单独清理）；两种平台壳层不再装配 Redis 消息 bootstrap，Redis 名册的独立迁移不在本 ADR 的本轮实施范围内。
 - **控制面新增**：`msg_trace` / `msg_payload` 日表与消息中转端点（数据面事实存储 + 传输编排，非调度 / 连接决策，符合 [architecture-invariants](../../.claude/rules/architecture-invariants.md) §1「只存事实」）。
 - **不与 [ADR-0003](0003-no-redis-in-mvp.md) 冲突**：本 ADR 令消息面也回到"无 Redis"，与 ADR-0003 同向收紧，不再依赖 ADR-0016 的"数据面 Redis 例外"论证。
 
