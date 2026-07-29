@@ -205,6 +205,12 @@ var (
 	ErrApprovalReasonRequired = New(http.StatusBadRequest, "approval_reason_required", "审批原因不能为空")
 	// ErrApprovalTargetChanged 审批冻结目标已变化。
 	ErrApprovalTargetChanged = New(http.StatusConflict, "approval_target_changed", "审批目标已变化，请重新提审")
+	// ErrServerNotActive 归档目标不是 active 状态。
+	ErrServerNotActive = New(http.StatusConflict, "server_not_active", "server 当前不是 active 状态")
+	// ErrServerNotArchived 恢复目标不是 archived 状态。
+	ErrServerNotArchived = New(http.StatusConflict, "server_not_archived", "server 当前不是 archived 状态")
+	// ErrServerArchived 服务器已归档，不能参与运行路径。
+	ErrServerArchived = New(http.StatusConflict, "server_archived", "服务器已归档，暂不可参与运行")
 	// ErrTopologyTargetChanged 拓扑审批冻结目标已变化。
 	ErrTopologyTargetChanged = New(http.StatusConflict, "topology_target_changed", "拓扑目标已变化，请重新提审")
 	// ErrMachinePrincipalCannotDecide 机器主体不能批准或拒绝审批请求。

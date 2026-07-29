@@ -80,7 +80,7 @@ describe('fetchPagedItemsByEnvScope', () => {
   })
 
   it('多 namespace 分页先按命名空间拉足前缀，再统一排序裁剪', async () => {
-    const fetchPage = vi.fn((namespaceId: number | undefined, _pageRequest?: { page?: number; pageSize?: number }) =>
+    const fetchPage = vi.fn((namespaceId: number | undefined) =>
       Promise.resolve({
         items: namespaceId === 11 ? [9, 5] : [8, 4],
         total: 2,

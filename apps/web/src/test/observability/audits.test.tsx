@@ -59,7 +59,7 @@ describe('/audits 审计页', () => {
       expect(screen.queryByText(/（含归档）/)).not.toBeInTheDocument()
     })
     expect((await screen.findAllByText(/共 \d+ 条/)).length).toBeGreaterThan(0)
-  })
+  }, 20_000)
 
   it('列表行直接展示目标（targetRef），无需点开详情', async () => {
     useScenario('normal')

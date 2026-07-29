@@ -1,11 +1,13 @@
 package service
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
@@ -119,6 +121,53 @@ func TestFR201DirectoryResyncSingleFlightAndReportBinding(t *testing.T) {
 	}
 	if strings.ContainsRune(got.ResultDetail, '\x00') || len([]rune(got.ResultDetail)) > 512 {
 		t.Fatalf("失败原因必须清洗并截断: %q", got.ResultDetail)
+	}
+}
+
+// TestDirectoryResyncRejectsArchivedServer 验证归档 BC 即使仍残留 active identity 与运行态记录，也不可再创建命令。
+func TestDirectoryResyncRejectsArchivedServer(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	if err := db.AutoMigrate(&model.AgentCommand{}); err != nil {
+		t.Fatal(err)
+	}
+	ns := &model.Namespace{Code: "archived-resync", Name: "archived-resync"}
+	if err := db.Create(ns).Error; err != nil {
+		t.Fatal(err)
+	}
+	cluster := &model.BCCluster{NamespaceID: ns.ID, Name: "bc"}
+	if err := db.Create(cluster).Error; err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{
+		NamespaceID: ns.ID, ServerID: "bc-archived", Kind: model.ServerKindProxy,
+		BCClusterID: &cluster.ID, Lifecycle: model.ServerLifecycleArchived,
+	}
+	if err := db.Create(server).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.AgentIdentity{
+		IdentityID: "20133333-3333-4333-8333-333333333333", NamespaceID: ns.ID,
+		ServerID: model.NullableServerID(server.ServerID), Kind: model.ServerKindProxy, Status: model.AgentIdentityStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	if _, err := reg.Register(&runtime.Instance{Namespace: ns.Code, ServerID: server.ServerID}, 0, nowForFR201()); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetRuntimeRegistry(reg)
+	svc.SetDirectoryResyncCommandPort(repository.NewAgentCommandRepository(db), nil)
+
+	_, err := svc.RequestServerDirectoryResync(server.ID, "admin", "")
+	if !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("归档 BC 重同步应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.AgentCommand{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("归档 BC 不应创建重同步命令，实际 %d 条", count)
 	}
 }
 

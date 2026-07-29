@@ -80,11 +80,11 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
                           <button
                             type="button"
                             className="mt-2 rounded-md border border-border px-2.5 py-1 text-xs"
-                            onClick={() =>
+                            onClick={() => {
                               setExpandedInactiveEndpoints((keys) =>
                                 expanded ? keys.filter((key) => key !== endpoint.endpointKey) : [...keys, endpoint.endpointKey],
                               )
-                            }
+                            }}
                           >
                             {expanded ? '收起已失活监听' : '展开已失活监听'}
                           </button>
@@ -112,7 +112,9 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
                             <button
                               type="button"
                               className="rounded-md border border-border px-2.5 py-1 text-xs"
-                              onClick={() => setEditing({ endpointKey: endpoint.endpointKey, clear: true })}
+                              onClick={() => {
+                                setEditing({ endpointKey: endpoint.endpointKey, clear: true })
+                              }}
                             >
                               清除覆盖
                             </button>
@@ -159,7 +161,9 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
               aria-label="覆盖地址"
               className="h-9 rounded-md border border-input bg-background px-3 font-mono text-sm"
               value={overrideAddress}
-              onChange={(event) => setOverrideAddress(event.target.value)}
+              onChange={(event) => {
+                setOverrideAddress(event.target.value)
+              }}
               placeholder="例如 203.0.113.20:25565"
             />
           </label>

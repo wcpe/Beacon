@@ -277,7 +277,8 @@ func TestFR199ListServersHTTPProjectsNullableLobbyClusterID(t *testing.T) {
 	}
 }
 
-func TestFR203AgentIdentityListAndDetailExposeBindingFacts(t *testing.T) {
+func arrangeFR203AgentIdentityBindingFacts(t *testing.T) (*V2ControlPlaneHandler, string, string) {
+	t.Helper()
 	_, svc, h := newV2HandlerTestService(t)
 	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
 	if err != nil {
@@ -305,7 +306,11 @@ func TestFR203AgentIdentityListAndDetailExposeBindingFacts(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("触发 legacy 迁移失败: %v", err)
 	}
+	return h, identityID, pendingID
+}
 
+func TestFR203AgentIdentityListExposesBindingFacts(t *testing.T) {
+	h, identityID, pendingID := arrangeFR203AgentIdentityBindingFacts(t)
 	listCode, items := invokeJSONList(h.ListAgentIdentities, http.MethodGet, "/admin/v2/agent-identities", nil)
 	if listCode != http.StatusOK || len(items) != 2 {
 		t.Fatalf("身份列表应返回两个项目，实际 %d：%v", listCode, items)
@@ -325,6 +330,18 @@ func TestFR203AgentIdentityListAndDetailExposeBindingFacts(t *testing.T) {
 		pendingItem["bindingSource"] != model.AgentIdentityBindingSourceAdminAssigned || pendingItem["migrationState"] != "not_required" {
 		t.Fatalf("待确认身份的缺失绑定事实必须显式为 null，实际 %v", pendingItem)
 	}
+}
+
+func TestFR203AgentIdentityDetailReusesListBindingFacts(t *testing.T) {
+	h, identityID, pendingID := arrangeFR203AgentIdentityBindingFacts(t)
+	listCode, items := invokeJSONList(h.ListAgentIdentities, http.MethodGet, "/admin/v2/agent-identities", nil)
+	if listCode != http.StatusOK || len(items) != 2 {
+		t.Fatalf("身份列表应返回两个项目，实际 %d：%v", listCode, items)
+	}
+	item, pendingItem := identityListItem(items, identityID), identityListItem(items, pendingID)
+	if item == nil || pendingItem == nil {
+		t.Fatalf("身份列表缺少预期项目，实际 %v", items)
+	}
 
 	detailCode, detail := invokeJSONWithParam(
 		h.GetAgentIdentity, http.MethodGet, "/admin/v2/agent-identities/"+identityID, "", nil, "identityId", identityID,
@@ -341,10 +358,10 @@ func TestFR203AgentIdentityListAndDetailExposeBindingFacts(t *testing.T) {
 	pendingDetailCode, pendingDetail := invokeJSONWithParam(
 		h.GetAgentIdentity, http.MethodGet, "/admin/v2/agent-identities/"+pendingID, "", nil, "identityId", pendingID,
 	)
-	if pendingDetailCode != http.StatusOK || pendingDetail["serverId"] != nil || pendingDetail["boundAt"] != nil ||
-		pendingDetail["bindingFingerprint"] != nil || pendingDetail["legacyMigratedAt"] != nil ||
-		pendingDetail["migrationState"] != "not_required" {
-		t.Fatalf("待确认详情的缺失绑定事实必须显式为 null，实际 %d：%v", pendingDetailCode, pendingDetail)
+	if pendingDetailCode != http.StatusOK || pendingDetail["serverId"] != pendingItem["serverId"] ||
+		pendingDetail["boundAt"] != pendingItem["boundAt"] || pendingDetail["legacyMigratedAt"] != pendingItem["legacyMigratedAt"] ||
+		pendingDetail["bindingFingerprint"] != nil || pendingDetail["migrationState"] != pendingItem["migrationState"] {
+		t.Fatalf("待确认详情的缺失绑定事实必须显式为 null 并复用列表，实际 %d：%v", pendingDetailCode, pendingDetail)
 	}
 }
 

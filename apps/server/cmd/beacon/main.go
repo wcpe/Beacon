@@ -429,7 +429,7 @@ func run() error {
 	changeOrderRepo := repository.NewChangeOrderRepository(db)
 	deliveryOrderService := service.NewDeliveryOrderService(db, changeOrderRepo,
 		repository.NewConfigLayerVersionRepository(db), auditRepo, settingsService, healthViewStore)
-	approvalRegistry.Register(authz.OperationDeliveryApprove, authz.AdapterFunc(func(req authz.ApprovalRequest, permit authz.Permit) error {
+	approvalRegistry.Register(authz.OperationDeliveryApprove, authz.AdapterFunc(func(req authz.ApprovalRequest, _ authz.Permit) error {
 		orderID, err := strconv.ParseUint(req.Operation.ResourceID, 10, 64)
 		if err != nil {
 			return err

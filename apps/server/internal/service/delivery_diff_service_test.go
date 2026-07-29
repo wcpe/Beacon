@@ -38,6 +38,10 @@ func TestResolveChangeTargetsSelectorSemantics(t *testing.T) {
 	seedDeliveryServer(t, env.db, f.nsID, "unassigned-1", model.ServerKindBackend, nil, model.AgentIdentityStatusActive)
 	seedDeliveryServer(t, env.db, f.nsID, "pending-1", model.ServerKindBackend, &f.zone1ID, model.AgentIdentityStatusPending)
 	seedDeliveryServer(t, env.db, f.nsID, "disabled-1", model.ServerKindBackend, &f.zone1ID, model.AgentIdentityStatusDisabled)
+	archivedID := seedDeliveryServer(t, env.db, f.nsID, "archived-1", model.ServerKindBackend, &f.zone1ID, model.AgentIdentityStatusActive)
+	if err := env.db.Model(&model.Server{}).Where("id = ?", archivedID).Update("lifecycle", model.ServerLifecycleArchived).Error; err != nil {
+		t.Fatalf("归档交付目标失败: %v", err)
+	}
 
 	ids := func(selector ChangeSelector, source string) []string {
 		t.Helper()
@@ -69,8 +73,8 @@ func TestResolveChangeTargetsSelectorSemantics(t *testing.T) {
 		t.Fatalf("并集减 excludes 应只剩 t-1，实际 %v", got)
 	}
 	// 点名不合格候选：被合格性过滤静默滤除（不报错）。
-	if got := ids(ChangeSelector{Servers: []string{"proxy-1", "unassigned-1", "pending-1", "disabled-1", "t-1"}}, ""); strings.Join(got, ",") != "t-1" {
-		t.Fatalf("不合格候选应被滤除，实际 %v", got)
+	if got := ids(ChangeSelector{Servers: []string{"proxy-1", "unassigned-1", "pending-1", "disabled-1", "archived-1", "t-1"}}, ""); strings.Join(got, ",") != "t-1" {
+		t.Fatalf("不合格或归档候选应被滤除，实际 %v", got)
 	}
 }
 

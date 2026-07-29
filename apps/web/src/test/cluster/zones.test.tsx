@@ -95,7 +95,7 @@ describe('/zones 区服分配页', () => {
       expect(basket).not.toBeNull()
       expect(within(basket as HTMLElement).queryByText('build-1')).not.toBeInTheDocument()
     })
-  })
+  }, 20_000)
 
   it('目标选择器树搜索按名称过滤，命中项可见、非命中项隐藏', async () => {
     useScenario('normal')

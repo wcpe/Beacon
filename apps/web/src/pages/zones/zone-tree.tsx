@@ -842,7 +842,7 @@ export default function ZoneTree({
                                                     </li>
                                                   ))}
                                                   {rest > 0 && (
-                                                    <li className="px-2 py-1" style={{ paddingLeft: `${(3 + 1) * 14}px` }}>
+                                                    <li className="px-2 py-1" style={{ paddingLeft: `${String((3 + 1) * 14)}px` }}>
                                                       <Button
                                                         size="sm"
                                                         variant="ghost"

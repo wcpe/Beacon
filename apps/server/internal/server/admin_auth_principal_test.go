@@ -16,7 +16,7 @@ type principalVerifierStub struct {
 	err       error
 }
 
-func (s principalVerifierStub) Verify(rawKey string) (auth.Principal, error) {
+func (s principalVerifierStub) Verify(_ string) (auth.Principal, error) {
 	return s.principal, s.err
 }
 

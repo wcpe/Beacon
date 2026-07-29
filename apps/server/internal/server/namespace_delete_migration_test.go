@@ -36,7 +36,7 @@ func TestLegacyNamespaceDeleteRoutesMigrated(t *testing.T) {
 	router := NewRouter(Handlers{
 		Namespace: &handler.NamespaceHandler{},
 		V2:        &handler.V2ControlPlaneHandler{},
-		Web:       http.HandlerFunc(http.NotFound),
+		Web:       http.NotFoundHandler(),
 	}, "", authn, namespaceDeleteAPIKeyVerifier{}, audit)
 
 	for _, path := range []string{"/admin/v1/namespaces/legacy", "/admin/v2/namespaces/1"} {

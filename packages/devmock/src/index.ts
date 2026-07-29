@@ -13,6 +13,7 @@ import { archiveHandlers } from './domains/archive'
 import { configCenterHandlers } from './domains/config-center'
 import { fileAssetsHandlers } from './domains/file-assets'
 import { deliveryHandlers } from './domains/delivery'
+import { approvalHandlers } from './domains/approval'
 import { systemHandlers } from './domains/system'
 import { observabilityHandlers } from './domains/observability'
 import { envHandlers } from './domains/env'
@@ -46,6 +47,7 @@ export * from './domains/config-engine'
 export * from './domains/config-schema'
 export * from './domains/file-assets'
 export * from './domains/delivery'
+export * from './domains/approval'
 export * from './domains/system'
 export * from './domains/observability'
 export * from './domains/env'
@@ -81,6 +83,7 @@ export const domainHandlers = {
   configCenter: configCenterHandlers,
   fileAssets: fileAssetsHandlers,
   delivery: deliveryHandlers,
+  approval: approvalHandlers,
   system: systemHandlers,
   observability: observabilityHandlers,
   env: envHandlers,

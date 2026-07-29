@@ -76,13 +76,14 @@ func syncAgentEndpoints(tx *gorm.DB, ident *model.AgentIdentity, p AgentRegister
 		}
 		var existing model.AgentEndpoint
 		err := tx.Where("agent_identity_id = ? AND endpoint_key = ?", ident.ID, report.key).First(&existing).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
 			if err := tx.Create(&endpoint).Error; err != nil {
 				return nil, err
 			}
-		} else if err != nil {
+		case err != nil:
 			return nil, err
-		} else {
+		default:
 			existing.Ordinal = endpoint.Ordinal
 			existing.ReportedBindHost = endpoint.ReportedBindHost
 			existing.ReportedPort = endpoint.ReportedPort

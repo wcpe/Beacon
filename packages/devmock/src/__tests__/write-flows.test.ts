@@ -87,6 +87,24 @@ describe('身份确认闭环（approve）', () => {
   })
 })
 
+describe('审批申请写闭环', () => {
+  it('批准待审批申请时按路径参数定位并记录 executing 时间线', async () => {
+    const requestId = 'apr_change_9101'
+    const detail = await callJson('GET', `/admin/v2/approval-requests/${requestId}`)
+    expect(detail.status).toBe(200)
+
+    const approved = await callJson('POST', `/admin/v2/approval-requests/${requestId}/approve`, {
+      decisionNote: '演示批准',
+    })
+    expect(approved.status).toBe(202)
+    expect((approved.json as { status: string }).status).toBe('executing')
+
+    const after = await callJson('GET', `/admin/v2/approval-requests/${requestId}`)
+    const timeline = (after.json as { timeline: { type: string }[] }).timeline
+    expect(timeline.at(-1)?.type).toBe('executing')
+  })
+})
+
 describe('身份地址覆盖闭环（FR-204）', () => {
   it('仅 active endpoint 可设置覆盖；原因必填，清除覆盖恢复自动探测', async () => {
     const identity = await findIdentity('proxy-1')

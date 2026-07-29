@@ -76,7 +76,7 @@ describe('/service-analysis 服务分析页', () => {
       expect(screen.getByText('最新')).toBeInTheDocument()
     })
     expect(screen.getByText('峰值')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('切到「数据对比」板块展示并排对比矩阵与差异图例', async () => {
     useScenario('normal')

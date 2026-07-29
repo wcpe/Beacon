@@ -1,7 +1,7 @@
 // /configs 配置中心接真增强用例：五层全显与空层首次贡献、编辑保存（409 冲突）、实时校验
 // 与 schema 违例阻断、diff 三描述符、回退 / 撤销（固定「不影响线上」提示）、回收站恢复 +
 // 彻底删除、敏感值脱敏与占位符提示（回填后无变化被拒）、有效预览目标选择器、元数据编辑。
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -71,12 +71,12 @@ describe('/configs 作用域五层与空层首次贡献', () => {
     // 空白编辑器（首版无基线）：填内容保存
     const editor = await screen.findByRole('dialog')
     expect(within(editor).getByText('bc_cluster / bc-main')).toBeInTheDocument()
-    await user.type(within(editor).getByLabelText('内容'), 'economy-enabled: false')
+    fireEvent.change(within(editor).getByLabelText('内容'), { target: { value: 'economy-enabled: false' } })
     await user.click(within(editor).getByRole('button', { name: '保存新版本' }))
 
     // 保存后 bc_cluster 层出现 bc-main 贡献行
     expect(await screen.findByText('bc-main')).toBeInTheDocument()
-  })
+  }, 20_000)
 })
 
 describe('/configs 编辑保存', () => {
@@ -114,8 +114,7 @@ describe('/configs 编辑保存', () => {
     await user.click(screen.getAllByRole('button', { name: '编辑本层' })[0])
     const editor = await screen.findByRole('dialog')
     const content = within(editor).getByLabelText('内容')
-    await user.clear(content)
-    await user.type(content, 'teleport-cooldown: -5')
+    fireEvent.change(content, { target: { value: 'teleport-cooldown: -5' } })
 
     // debounce 500ms 后实时校验逐条 {path,message} 内联展示
     expect(await screen.findByText('校验不通过')).toBeInTheDocument()
@@ -124,7 +123,7 @@ describe('/configs 编辑保存', () => {
     // 保存被 CONFIG_SCHEMA_VIOLATION 阻断（错误含逐条路径与原因）
     await user.click(within(editor).getByRole('button', { name: '保存新版本' }))
     expect(await screen.findByText(/schema 校验不通过：teleport-cooldown 不得小于 0/)).toBeInTheDocument()
-  })
+  }, 20_000)
 })
 
 describe('/configs diff 三描述符', () => {

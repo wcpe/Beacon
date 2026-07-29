@@ -29,6 +29,7 @@ type ServerView struct {
 	PendingZoneName *string   `json:"pendingZoneName"`
 	IsDefaultEntry  bool      `json:"isDefaultEntry"`
 	Draining        bool      `json:"draining"`
+	Lifecycle       string    `json:"lifecycle"`
 	Online          bool      `json:"online"`
 	Assigned        bool      `json:"assigned"`
 	CreatedAt       time.Time `json:"createdAt"`
@@ -159,7 +160,7 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 		ID: s.ID, NamespaceID: s.NamespaceID, ServerID: s.ServerID, DisplayName: displayName, Kind: s.Kind,
 		BCClusterID: s.BCClusterID, LobbyClusterID: s.LobbyClusterID,
 		ZoneID: s.ZoneID, PendingZoneID: s.PendingZoneID,
-		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining,
+		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining, Lifecycle: serverLifecycleValue(s),
 		Assigned: isServerAssigned(s), CreatedAt: s.CreatedAt,
 	}
 	if s.BCClusterID != nil {
@@ -182,7 +183,9 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 			view.PendingZoneName = &pendingName
 		}
 	}
-	_, view.Online = online[onlineKey{namespaceID: s.NamespaceID, serverID: s.ServerID}]
+	if isServerActive(s) {
+		_, view.Online = online[onlineKey{namespaceID: s.NamespaceID, serverID: s.ServerID}]
+	}
 	return view
 }
 

@@ -210,7 +210,7 @@ export default function ConflictCard({ identity, namespaceName }: ConflictCardPr
         confirmLabel={t('cluster.identityConflicts.unbind.confirm')}
         pending={unbindMutation.isPending}
         errorText={errorText}
-        impacts={[`serverId ${identity.serverId}`]}
+        impacts={[`serverId ${String(identity.serverId)}`]}
         onConfirm={(reason) => {
           unbindMutation.mutate(reason)
         }}

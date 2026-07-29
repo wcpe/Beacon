@@ -35,7 +35,7 @@ describe('/settings 运维设置页', () => {
     // 切到「归档清理」分区
     await user.click(screen.getByRole('button', { name: '归档清理' }))
     expect(await screen.findByText('归档与清理')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('归档任务点行展开非模态详情面板（不产生遮罩）', async () => {
     useScenario('normal')

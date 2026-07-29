@@ -35,10 +35,10 @@ func NewHealthFactsRepository(db *gorm.DB) *HealthFactsRepository {
 	return &HealthFactsRepository{db: db}
 }
 
-// ListAll 返回全部在册 server 的健康判定事实（§3.2「全量在册实例」口径 = v2 server 表全部行）。
+// ListAll 返回 active 在册 server 的健康判定事实；归档记录保留在 DB，但不参与健康计算。
 func (r *HealthFactsRepository) ListAll() ([]HealthFact, error) {
 	var servers []model.Server
-	if err := r.db.Find(&servers).Error; err != nil {
+	if err := r.db.Where("lifecycle = ?", model.ServerLifecycleActive).Find(&servers).Error; err != nil {
 		return nil, err
 	}
 	if len(servers) == 0 {

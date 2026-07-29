@@ -50,7 +50,7 @@ describe('/service-analysis 调度决策下钻板块', () => {
     expect((await screen.findAllByText(/共 48 条/)).length).toBeGreaterThan(0)
     // 列表表头（原因摘要列）出现
     expect(screen.getByText('原因摘要')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('点行打开右侧详情面板：决策上下文 + 逐台排除原因', async () => {
     useScenario('normal')

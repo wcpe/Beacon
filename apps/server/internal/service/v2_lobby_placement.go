@@ -403,7 +403,7 @@ func (s *V2ControlPlaneService) lobbySummaries(lobbies []model.LobbyCluster) ([]
 		namespaceNames[namespaces[i].ID] = namespaces[i].Code
 	}
 	var members []model.Server
-	if err := s.db.Where("lobby_cluster_id IN ?", ids).Find(&members).Error; err != nil {
+	if err := s.db.Where("lobby_cluster_id IN ? AND lifecycle = ?", ids, model.ServerLifecycleActive).Find(&members).Error; err != nil {
 		return nil, err
 	}
 	memberCount := map[uint]int{}
@@ -478,7 +478,7 @@ func (s *V2ControlPlaneService) GetLobbyCluster(id uint, p LobbyClusterDetailPar
 }
 
 func (s *V2ControlPlaneService) listLobbyMembers(lobbyID uint, namespace string, p LobbyClusterDetailParams) ([]LobbyMemberView, int, error) {
-	query := s.db.Where("lobby_cluster_id = ?", lobbyID)
+	query := s.db.Where("lobby_cluster_id = ? AND lifecycle = ?", lobbyID, model.ServerLifecycleActive)
 	if p.Keyword != "" {
 		query = query.Where("server_id LIKE ?", "%"+p.Keyword+"%")
 	}

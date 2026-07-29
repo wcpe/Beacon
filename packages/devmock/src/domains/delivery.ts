@@ -455,7 +455,7 @@ function buildDelivery(scenario: MockScenario): DeliveryState {
   makeOrder(state, 1, 'PVP 平衡性补丁', 'paused', { serverIds: smallSet.slice(6, 7), ageDays: 3 })
   makeOrder(state, 1, '坏更新整单回滚示例', 'rolled_back', { serverIds: smallSet, ageDays: 8 })
   // 首目标缺失备份的完成单：整单回滚会留下残留失败，用于演示「结束回滚」人工收尾路径
-  makeOrder(state, 1, '排行榜插件升级 v3.1', 'completed', { serverIds: smallSet.slice(9, 12), ageDays: 6, missingBackup: true })
+  makeOrder(state, 1, '排行榜插件升级 v3.1', 'completed', { serverIds: smallSet.slice(7, 10), ageDays: 6, missingBackup: true })
   if (scenario === 'huge') {
     // 1200 目标的滚动大单 + 批量历史单
     makeOrder(state, 1, '全网 Essentials 大版本升级', 'rolling', { serverIds: backends, ageDays: 0 })

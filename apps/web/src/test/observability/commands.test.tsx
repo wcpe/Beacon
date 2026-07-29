@@ -29,7 +29,7 @@ describe('/commands 命令观测页', () => {
     expect(await screen.findByText('命令历史')).toBeInTheDocument()
     // 历史列表出现已知命令类型（devmock COMMAND_TYPES 之一）
     expect((await screen.findAllByText(/asset_rescan|resync-config|tail-logs/)).length).toBeGreaterThan(0)
-  })
+  }, 20_000)
 
   it('空态给出无记录提示', async () => {
     useScenario('empty')

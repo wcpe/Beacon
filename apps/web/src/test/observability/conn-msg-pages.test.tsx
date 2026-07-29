@@ -21,12 +21,15 @@ afterAll(() => {
 })
 
 /** 等 DataTable 真实数据行（带 onRowClick → cursor-pointer），避开骨架屏假行 */
-async function waitForDataRows(): Promise<HTMLElement[]> {
+async function waitForDataRows(serverId?: string): Promise<HTMLElement[]> {
   return waitFor(() => {
     const rows = screen
       .getAllByRole('row')
       .filter((r): r is HTMLElement => r.classList.contains('cursor-pointer'))
     expect(rows.length).toBeGreaterThan(0)
+    if (serverId) {
+      expect(rows.every((row) => row.textContent?.includes(serverId))).toBe(true)
+    }
     return rows
   })
 }
@@ -124,10 +127,10 @@ describe('/messages 消息链路页', () => {
     await waitForDataRows()
 
     await user.clear(screen.getByLabelText('服务器 ID（来源或目标）'))
-    await user.type(screen.getByLabelText('服务器 ID（来源或目标）'), 'lobby-1')
+    await user.type(screen.getByLabelText('服务器 ID（来源或目标）'), 'game-1')
     await user.click(screen.getByRole('button', { name: '查询' }))
 
-    const rows = await waitForDataRows()
+    const rows = await waitForDataRows('game-1')
 
     // 点首个数据行 → 详情面板：逐跳链路 + payload 受控查看入口（mock 全部 payloadStored）
     await user.click(rows[0])

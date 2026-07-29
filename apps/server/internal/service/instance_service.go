@@ -126,6 +126,9 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	if p.Namespace == "" || p.ServerID == "" {
 		return nil, apperr.ErrIdentityRequired
 	}
+	if err := ensureServerActiveForNamespace(s.db, p.Namespace, p.ServerID); err != nil {
+		return nil, err
+	}
 	// 主动下线拒绝态（FR-49）：注册前查拒绝表，命中则拒绝接入（专门错误码，区别于自然 lost/offline 与重复 serverId）。
 	// 仅在低频的注册路径查库（心跳热路径不查），下线收敛靠"移出内存→心跳 404→重注册被拒"。
 	off, err := s.offlineRepo.FindByServer(p.Namespace, p.ServerID)

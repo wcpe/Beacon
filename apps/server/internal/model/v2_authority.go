@@ -200,8 +200,16 @@ type Server struct {
 	PendingBCClusterID *uint  `gorm:"column:pending_bc_cluster_id"`
 	IsDefaultEntry     bool   `gorm:"column:is_default_entry;not null;default:false"`
 	Draining           bool   `gorm:"column:draining;not null;default:false"`
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// 生命周期状态：active / archived；tombstoned 为后续预留。
+	Lifecycle string `gorm:"column:lifecycle;size:16;not null;default:active;index"`
+	// 归档时间；仅 archived 状态有值。
+	ArchivedAt *time.Time `gorm:"column:archived_at"`
+	// 发起归档的审批申请人。
+	ArchivedBy string `gorm:"column:archived_by;size:128"`
+	// 归档审批原因。
+	ArchiveReason string `gorm:"column:archive_reason;size:255"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func (Server) TableName() string { return "server" }
@@ -209,6 +217,9 @@ func (Server) TableName() string { return "server" }
 func (s *Server) BeforeSave(*gorm.DB) error {
 	if s.DisplayName == "" {
 		s.DisplayName = s.ServerID
+	}
+	if s.Lifecycle == "" {
+		s.Lifecycle = ServerLifecycleActive
 	}
 	return nil
 }

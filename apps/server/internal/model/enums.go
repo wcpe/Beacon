@@ -562,6 +562,9 @@ const (
 	ActionServerRezoneDone = "zone.rezone.completed"
 	// 第二版 server 排空标记切换（区服权威域，收编自调度域；消费方为调度 schedulable 判定）
 	ActionServerSetDraining = "server.set-draining"
+	// server 生命周期归档与恢复（FR-215）。
+	ActionServerArchive = "server.archive"
+	ActionServerRestore = "server.restore"
 	// 第二版 env 展示维度（FR-178，见 v2-zone-authority.md §3.4/§4.1）：env 增删改与整体替换 env→namespace 映射。
 	// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；detail 仅记 env 名 / 映射 namespace id 列表。
 	ActionEnvCreate        = "env.create"
@@ -655,6 +658,13 @@ const (
 	ActionDeliveryOrderCircuitBreak = "delivery.order.circuit_break"
 	// blob 清理（系统动作，actor=system，含清理数量与释放字节）
 	ActionDeliveryOrderBlobCleanup = "delivery.order.blob_cleanup"
+)
+
+// Server 生命周期状态。
+const (
+	ServerLifecycleActive     = "active"
+	ServerLifecycleArchived   = "archived"
+	ServerLifecycleTombstoned = "tombstoned"
 )
 
 // 审计对象类型。

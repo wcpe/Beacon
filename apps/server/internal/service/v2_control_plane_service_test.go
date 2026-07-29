@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -226,7 +227,93 @@ func TestFR203ExistingIdentityAutoKeepsBindingAndMismatchesFailClosed(t *testing
 	}
 }
 
-func TestFR203ActiveBindingSnapshotUsesAuthorityAndFailsClosedWhenIncomplete(t *testing.T) {
+func TestFR203ActiveBindingSnapshotUsesAuthority(t *testing.T) {
+	_, svc, token, identityID, boundAt := arrangeFR203BindingSnapshot(t)
+
+	poll, err := svc.GetAgentRegistrationV2(token, identityID)
+	if err != nil {
+		t.Fatalf("轮询身份状态失败: %v", err)
+	}
+	if poll.BoundAt == nil || !poll.BoundAt.Equal(boundAt) || poll.BindingFingerprint == nil {
+		t.Fatalf("active 轮询必须返回权威绑定快照，实际 %+v", poll)
+	}
+	expected := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join([]string{
+		"beacon-binding-v1", identityID, "prod", "lobby-binding", model.ServerKindBackend,
+		boundAt.Format(time.RFC3339Nano),
+	}, "\n"))))
+	if *poll.BindingFingerprint != expected {
+		t.Fatalf("绑定指纹必须使用稳定权威字段摘要，期望 %s，实际 %s", expected, *poll.BindingFingerprint)
+	}
+}
+
+func TestFR203DisabledAndReregisteredBindingSnapshotsUseAuthority(t *testing.T) {
+	db, svc, token, identityID, boundAt := arrangeFR203BindingSnapshot(t)
+	expected := agentBindingFingerprint(identityID, "prod", "lobby-binding", model.ServerKindBackend, boundAt)
+
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).
+		Update("status", model.AgentIdentityStatusDisabled).Error; err != nil {
+		t.Fatalf("构造 disabled 身份失败: %v", err)
+	}
+	disabled, err := svc.GetAgentRegistrationV2(token, identityID)
+	if err != nil {
+		t.Fatalf("disabled 身份轮询失败: %v", err)
+	}
+	if disabled.BoundAt == nil || disabled.BindingFingerprint == nil ||
+		!disabled.BoundAt.Equal(boundAt) || *disabled.BindingFingerprint != expected {
+		t.Fatalf("disabled 身份也必须返回原有权威绑定快照，实际 %+v", disabled)
+	}
+	disabledRegistration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-disabled",
+	})
+	if err != nil {
+		t.Fatalf("disabled 身份重注册失败: %v", err)
+	}
+	if disabledRegistration.BoundAt == nil || disabledRegistration.BindingFingerprint == nil ||
+		!disabledRegistration.BoundAt.Equal(boundAt) || *disabledRegistration.BindingFingerprint != expected {
+		t.Fatalf("disabled 注册也必须返回原有权威绑定快照，实际 %+v", disabledRegistration)
+	}
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).
+		Update("status", model.AgentIdentityStatusActive).Error; err != nil {
+		t.Fatalf("恢复 active 身份失败: %v", err)
+	}
+	registration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-reregister",
+	})
+	if err != nil {
+		t.Fatalf("active 身份重注册失败: %v", err)
+	}
+	if registration.BoundAt == nil || registration.BindingFingerprint == nil ||
+		!registration.BoundAt.Equal(boundAt) || *registration.BindingFingerprint != expected {
+		t.Fatalf("active 重注册必须返回同一绑定快照，实际 %+v", registration)
+	}
+}
+
+func TestFR203BindingSnapshotFailsClosedWhenBoundAtMissing(t *testing.T) {
+	db, svc, token, identityID, _ := arrangeFR203BindingSnapshot(t)
+
+	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).Update("bound_at", nil).Error; err != nil {
+		t.Fatalf("构造缺 boundAt 的 active 脏数据失败: %v", err)
+	}
+	poll, err := svc.GetAgentRegistrationV2(token, identityID)
+	if err != nil {
+		t.Fatalf("缺 boundAt 身份轮询失败: %v", err)
+	}
+	if poll.BoundAt != nil || poll.BindingFingerprint != nil {
+		t.Fatalf("active 身份缺任一绑定事实时不得伪造快照，实际 %+v", poll)
+	}
+	registration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-incomplete",
+	})
+	if err != nil {
+		t.Fatalf("缺 boundAt 身份重注册失败: %v", err)
+	}
+	if registration.BoundAt != nil || registration.BindingFingerprint != nil {
+		t.Fatalf("注册响应缺任一绑定事实时不得生成本地快照，实际 %+v", registration)
+	}
+}
+
+func arrangeFR203BindingSnapshot(t *testing.T) (*gorm.DB, *V2ControlPlaneService, string, string, time.Time) {
+	t.Helper()
 	db, svc := newV2ControlPlaneTestService(t)
 	_, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
 	if err != nil {
@@ -245,78 +332,7 @@ func TestFR203ActiveBindingSnapshotUsesAuthorityAndFailsClosedWhenIncomplete(t *
 	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).Update("bound_at", boundAt).Error; err != nil {
 		t.Fatalf("写入固定权威 boundAt 失败: %v", err)
 	}
-
-	poll, err := svc.GetAgentRegistrationV2(token, identityID)
-	if err != nil {
-		t.Fatalf("轮询身份状态失败: %v", err)
-	}
-	if poll.BoundAt == nil || !poll.BoundAt.Equal(boundAt) || poll.BindingFingerprint == nil {
-		t.Fatalf("active 轮询必须返回权威绑定快照，实际 %+v", poll)
-	}
-	expected := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join([]string{
-		"beacon-binding-v1", identityID, "prod", "lobby-binding", model.ServerKindBackend,
-		boundAt.Format(time.RFC3339Nano),
-	}, "\n"))))
-	if *poll.BindingFingerprint != expected {
-		t.Fatalf("绑定指纹必须使用稳定权威字段摘要，期望 %s，实际 %s", expected, *poll.BindingFingerprint)
-	}
-	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).
-		Update("status", model.AgentIdentityStatusDisabled).Error; err != nil {
-		t.Fatalf("构造 disabled 身份失败: %v", err)
-	}
-	disabled, err := svc.GetAgentRegistrationV2(token, identityID)
-	if err != nil {
-		t.Fatalf("disabled 身份轮询失败: %v", err)
-	}
-	if disabled.BoundAt == nil || disabled.BindingFingerprint == nil ||
-		!disabled.BoundAt.Equal(*poll.BoundAt) || *disabled.BindingFingerprint != *poll.BindingFingerprint {
-		t.Fatalf("disabled 身份也必须返回原有权威绑定快照，实际 %+v", disabled)
-	}
-	disabledRegistration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
-		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-disabled",
-	})
-	if err != nil {
-		t.Fatalf("disabled 身份重注册失败: %v", err)
-	}
-	if disabledRegistration.BoundAt == nil || disabledRegistration.BindingFingerprint == nil ||
-		!disabledRegistration.BoundAt.Equal(*disabled.BoundAt) || *disabledRegistration.BindingFingerprint != *disabled.BindingFingerprint {
-		t.Fatalf("disabled 注册也必须返回原有权威绑定快照，实际 %+v", disabledRegistration)
-	}
-	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).
-		Update("status", model.AgentIdentityStatusActive).Error; err != nil {
-		t.Fatalf("恢复 active 身份失败: %v", err)
-	}
-
-	registration, err := svc.RegisterAgentV2(AgentRegisterV2Params{
-		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-reregister",
-	})
-	if err != nil {
-		t.Fatalf("active 身份重注册失败: %v", err)
-	}
-	if registration.BoundAt == nil || registration.BindingFingerprint == nil ||
-		!registration.BoundAt.Equal(*poll.BoundAt) || *registration.BindingFingerprint != *poll.BindingFingerprint {
-		t.Fatalf("active 注册与轮询必须返回同一绑定快照，注册=%+v 轮询=%+v", registration, poll)
-	}
-
-	if err := db.Model(&model.AgentIdentity{}).Where("identity_id = ?", identityID).Update("bound_at", nil).Error; err != nil {
-		t.Fatalf("构造缺 boundAt 的 active 脏数据失败: %v", err)
-	}
-	poll, err = svc.GetAgentRegistrationV2(token, identityID)
-	if err != nil {
-		t.Fatalf("缺 boundAt 身份轮询失败: %v", err)
-	}
-	if poll.BoundAt != nil || poll.BindingFingerprint != nil {
-		t.Fatalf("active 身份缺任一绑定事实时不得伪造快照，实际 %+v", poll)
-	}
-	registration, err = svc.RegisterAgentV2(AgentRegisterV2Params{
-		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-binding-incomplete",
-	})
-	if err != nil {
-		t.Fatalf("缺 boundAt 身份重注册失败: %v", err)
-	}
-	if registration.BoundAt != nil || registration.BindingFingerprint != nil {
-		t.Fatalf("注册响应缺任一绑定事实时不得生成本地快照，实际 %+v", registration)
-	}
+	return db, svc, token, identityID, boundAt
 }
 
 func TestV2NamespaceIsolationAllowsSameServerIDInDifferentNamespaces(t *testing.T) {
@@ -1122,5 +1138,111 @@ func TestFR205ServerDisplayNameUpdateAndKeyword(t *testing.T) {
 	changedServerID := "lobby-2"
 	if _, err := svc.UpdateServerDisplayName(UpdateServerDisplayNameParams{ID: server.ID, ServerID: &changedServerID, Operator: "admin"}); !errors.Is(err, apperr.ErrImmutableIdentifier) {
 		t.Fatalf("修改 serverId 应返回 IMMUTABLE_IDENTIFIER，实际 %v", err)
+	}
+}
+
+// TestArchivedServerRejectsAgentIdentityRuntimePaths 验证归档 server 不可被注册、审批绑定或运行鉴权重新激活。
+func TestArchivedServerRejectsAgentIdentityRuntimePaths(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "archived-runtime", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := &model.Server{NamespaceID: ns.ID, ServerID: "archived-1", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleArchived}
+	if err := db.Create(server).Error; err != nil {
+		t.Fatalf("创建归档 server 失败: %v", err)
+	}
+	now := time.Now().UTC()
+	active := &model.AgentIdentity{
+		IdentityID: "a0010000-0000-4000-8000-000000000001", NamespaceID: ns.ID, ServerID: model.NullableServerID(server.ServerID),
+		Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, BootID: "b0010000-0000-4000-8000-000000000001", StatusChangedAt: now,
+	}
+	if err := db.Create(active).Error; err != nil {
+		t.Fatalf("创建归档 server 的活跃身份失败: %v", err)
+	}
+
+	_, err = svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: active.IdentityID, Kind: active.Kind, BootID: active.BootID, Addr: "127.0.0.1:25565",
+	})
+	if !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("归档 server 的既有身份注册应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+	if err := svc.AuthenticateAgentV2(token, active.IdentityID, active.BootID); !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("归档 server 的运行鉴权应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+	if _, err := svc.AuthenticateAgentReport(token, active.IdentityID, active.BootID, active.LastAddr); !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("归档 server 的上报鉴权应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+
+	pendingID := "a0010000-0000-4000-8000-000000000002"
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: pendingID, Kind: model.ServerKindBackend, BootID: "b0010000-0000-4000-8000-000000000002",
+	}); err != nil {
+		t.Fatalf("创建待确认身份失败: %v", err)
+	}
+	if _, err := svc.RequestApproveAgentIdentity(pendingID, ApproveAgentIdentityParams{ServerID: server.ServerID, Operator: "admin"}, auth.HumanPrincipal("admin"), "archived-approval"); !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("身份审批请求绑定归档 server 应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+	_, err = svc.ApproveAgentIdentity(pendingID, ApproveAgentIdentityParams{ServerID: server.ServerID, Operator: "admin"})
+	if !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("身份最终执行绑定归档 server 应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+	var pending model.AgentIdentity
+	if err := db.Where("identity_id = ?", pendingID).First(&pending).Error; err != nil {
+		t.Fatalf("读取审批失败后的身份失败: %v", err)
+	}
+	if pending.Status != model.AgentIdentityStatusPending || pending.ServerID.Assigned() {
+		t.Fatalf("审批失败后应保留待确认未绑定状态，实际 status=%s serverId=%q", pending.Status, string(pending.ServerID))
+	}
+
+	activeServer := &model.Server{NamespaceID: ns.ID, ServerID: "active-1", Kind: model.ServerKindBackend}
+	if err := db.Create(activeServer).Error; err != nil {
+		t.Fatalf("创建 active server 失败: %v", err)
+	}
+	activeIdentity := &model.AgentIdentity{
+		IdentityID: "a0010000-0000-4000-8000-000000000003", NamespaceID: ns.ID, ServerID: model.NullableServerID(activeServer.ServerID),
+		Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, BootID: "b0010000-0000-4000-8000-000000000003", StatusChangedAt: now,
+	}
+	if err := db.Create(activeIdentity).Error; err != nil {
+		t.Fatalf("创建 active server 的身份失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: "a0010000-0000-4000-8000-000000000004", ServerID: activeServer.ServerID,
+		Kind: model.ServerKindBackend, BootID: "b0010000-0000-4000-8000-000000000004",
+	}); err != nil {
+		t.Fatalf("active server 注册应保持可用，实际 %v", err)
+	}
+	if err := svc.AuthenticateAgentV2(token, activeIdentity.IdentityID, activeIdentity.BootID); err != nil {
+		t.Fatalf("active server 的运行鉴权应保持可用，实际 %v", err)
+	}
+	if _, err := svc.AuthenticateAgentReport(token, activeIdentity.IdentityID, activeIdentity.BootID, ""); err != nil {
+		t.Fatalf("active server 的上报鉴权应保持可用，实际 %v", err)
+	}
+}
+
+// TestListServerViewsArchivedAlwaysOffline 验证归档 server 保留生命周期展示，但不会因 active identity 被标成在线。
+func TestListServerViewsArchivedAlwaysOffline(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "archived-view", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := &model.Server{NamespaceID: ns.ID, ServerID: "archived-view-1", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleArchived}
+	if err := db.Create(server).Error; err != nil {
+		t.Fatalf("创建归档 server 失败: %v", err)
+	}
+	if err := db.Create(&model.AgentIdentity{
+		IdentityID: "a0020000-0000-4000-8000-000000000001", NamespaceID: ns.ID, ServerID: model.NullableServerID(server.ServerID),
+		Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, StatusChangedAt: time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatalf("创建活跃身份失败: %v", err)
+	}
+
+	views, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+	if err != nil {
+		t.Fatalf("列出 server 视图失败: %v", err)
+	}
+	if total != 1 || len(views) != 1 || views[0].Lifecycle != model.ServerLifecycleArchived || views[0].Online {
+		t.Fatalf("归档 server 应展示 archived 且 online=false，实际 total=%d views=%+v", total, views)
 	}
 }

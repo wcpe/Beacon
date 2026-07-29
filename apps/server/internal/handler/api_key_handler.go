@@ -35,12 +35,6 @@ type apiKeyView struct {
 	LastUsedAt *time.Time `json:"lastUsedAt"`
 }
 
-// apiKeyCreatedView 是创建 / 重置的响应：在元数据之外**一次性**附带明文 `key`（之后不可再得）。
-type apiKeyCreatedView struct {
-	apiKeyView
-	Key string `json:"key"`
-}
-
 // toAPIKeyView 把模型转为对外视图（派生 status，剥离明文 / 哈希）。
 func toAPIKeyView(k *model.APIKey) apiKeyView {
 	return apiKeyView{

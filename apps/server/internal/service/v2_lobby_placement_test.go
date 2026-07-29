@@ -5,12 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
-	"gorm.io/gorm"
 )
 
 func TestFR199TransferServerPlacementAtomicallyMovesZoneAndLobby(t *testing.T) {
@@ -151,6 +152,41 @@ func TestFR199LobbyReadUsesHealthViewAndNoopDoesNotAudit(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("同值请求不得新增审计，实际 %d", count)
+	}
+}
+
+func TestFR215LobbyMembersExcludeArchivedServers(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	active := approveLobbyBackend(t, svc, token, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "lobby-active")
+	archived := approveLobbyBackend(t, svc, token, "abababab-abab-4bab-8bab-abababababab", "lobby-archived")
+	lobby := lobbyForNamespace(t, db, ns.ID)
+	for _, server := range []*model.Server{active, archived} {
+		if _, err := svc.TransferServerPlacement(ServerPlacementTransferParams{
+			ServerID: server.ServerID, TargetKind: LobbyPlacementKind, TargetID: lobby.ID,
+			Reason: "配置大厅成员", Operator: "admin",
+		}); err != nil {
+			t.Fatalf("迁入大厅失败: %v", err)
+		}
+	}
+	if err := db.Model(&model.Server{}).Where("id = ?", archived.ID).
+		Update("lifecycle", model.ServerLifecycleArchived).Error; err != nil {
+		t.Fatalf("归档大厅成员失败: %v", err)
+	}
+
+	members, total, err := svc.listLobbyMembers(lobby.ID, ns.Code, LobbyClusterDetailParams{})
+	if err != nil {
+		t.Fatalf("读取大厅成员失败: %v", err)
+	}
+	if total != 1 || len(members) != 1 || members[0].ServerID != active.ServerID {
+		t.Fatalf("大厅成员查询应仅保留 active server，实际 total=%d members=%+v", total, members)
+	}
+	summary, err := svc.ListLobbyClusters(ListLobbyClustersParams{NamespaceID: ns.ID})
+	if err != nil || summary.Total != 1 || summary.Items[0].MemberCount != 1 || summary.Items[0].Ready {
+		t.Fatalf("大厅摘要应排除归档成员，实际 %+v err=%v", summary, err)
 	}
 }
 

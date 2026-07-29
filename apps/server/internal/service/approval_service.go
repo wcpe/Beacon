@@ -30,17 +30,28 @@ type ApprovalListFilter struct {
 	RequesterID   string
 }
 
+// ApprovalRequestPreparer 在冻结前补充服务端权威审批目标。
+type ApprovalRequestPreparer interface {
+	PrepareApprovalRequest(authz.Operation, map[string]any, auth.Principal, string) (authz.Operation, map[string]any, error)
+}
+
 // ApprovalService 编排统一审批请求。
 type ApprovalService struct {
 	db       *gorm.DB
 	repo     *repository.ApprovalRequestRepository
 	audit    *repository.AuditLogRepository
 	registry *authz.ApprovalRegistry
+	preparer ApprovalRequestPreparer
 }
 
 // NewApprovalService 构造审批服务。
 func NewApprovalService(db *gorm.DB, repo *repository.ApprovalRequestRepository, audit *repository.AuditLogRepository, registry *authz.ApprovalRegistry) *ApprovalService {
 	return &ApprovalService{db: db, repo: repo, audit: audit, registry: registry}
+}
+
+// SetApprovalRequestPreparer 注入可选的审批请求冻结器。
+func (s *ApprovalService) SetApprovalRequestPreparer(preparer ApprovalRequestPreparer) {
+	s.preparer = preparer
 }
 
 // Request 创建或复用幂等审批请求。
@@ -57,6 +68,13 @@ func (s *ApprovalService) Request(op authz.Operation, payload map[string]any, pr
 	}
 	if err := authz.Authorize(principal, op); err != nil {
 		return model.ApprovalRequest{}, err
+	}
+	if s.preparer != nil {
+		var err error
+		op, payload, err = s.preparer.PrepareApprovalRequest(op, payload, principal, clientIP)
+		if err != nil {
+			return model.ApprovalRequest{}, err
+		}
 	}
 	body, hash, err := freezePayload(payload)
 	if err != nil {

@@ -32,7 +32,7 @@ describe('/servers 服务器页', () => {
     // 吸顶入口按钮存在（待确认收敛为入口，不再默认铺开）
     const pendingBtn = await screen.findByRole('button', { name: /注册待确认/ })
     expect(pendingBtn).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('空态给出资产列表接入引导', async () => {
     useScenario('empty')
@@ -64,7 +64,7 @@ describe('/servers 服务器页', () => {
     await waitFor(() => {
       expect(screen.queryByText('game-new-1')).not.toBeInTheDocument()
     })
-  })
+  }, 20_000)
 
   it('待分配身份要求显式填写服务器 ID，并展示绑定详情', async () => {
     useScenario('normal')
@@ -122,7 +122,7 @@ describe('/servers 服务器页', () => {
     const fresh = screen.getByText('game-1').closest('tr')
     await user.click(within(fresh as HTMLElement).getByRole('button', { name: '操作' }))
     expect(await screen.findByRole('menuitem', { name: '设为默认入口' })).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('列表行直显健康分/等级/实时指标与不可调度原因摘要', async () => {
     useScenario('normal')

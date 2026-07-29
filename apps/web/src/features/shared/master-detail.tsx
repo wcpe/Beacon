@@ -75,7 +75,7 @@ export default function MasterDetail({
         }
       }
       const drawer = drawerRef.current
-      if (drawer && drawer.contains(target)) {
+      if (drawer?.contains(target)) {
         return
       }
       onClose()

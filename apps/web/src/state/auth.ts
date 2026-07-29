@@ -21,6 +21,8 @@ let snapshot: AuthState = readFromStorage()
 let unauthorizedHandler: (() => void) | null = null
 
 // 登录态：令牌 + 操作者；未登录时 token 为空串
+export type PrincipalType = 'human' | 'api_key' | 'mcp' | 'system'
+
 export interface AuthState {
   token: string
   operator: string
@@ -81,6 +83,15 @@ export function currentToken(): string {
 // 是否已登录（供路由守卫判定）
 export function isAuthenticated(): boolean {
   return snapshot.token !== ''
+}
+
+// 当前主体类型：登录响应暂只有 operator，先按稳定前缀识别机器主体，其他均视为 human。
+export function principalTypeOf(operator: string): PrincipalType {
+  const normalized = operator.trim().toLowerCase()
+  if (normalized.startsWith('api-key:') || normalized.startsWith('api_key:')) return 'api_key'
+  if (normalized.startsWith('mcp:')) return 'mcp'
+  if (normalized.startsWith('system:')) return 'system'
+  return 'human'
 }
 
 // 注册 401 处理器：任意 /admin/* 请求遇 401 时触发（请求层已清登录态，处理器负责跳登录）。

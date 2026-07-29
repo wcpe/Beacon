@@ -34,7 +34,7 @@ func (s *V2ControlPlaneService) DefaultEntryServerIDs(ns string) (map[string]boo
 	}
 	var ids []string
 	if err := s.db.Model(&model.Server{}).
-		Where("namespace_id = ? AND is_default_entry = ?", nsRow.ID, true).
+		Where("namespace_id = ? AND is_default_entry = ? AND lifecycle = ?", nsRow.ID, true, model.ServerLifecycleActive).
 		Pluck("server_id", &ids).Error; err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (s *V2ControlPlaneService) LobbyClusterMemberServerIDs(ns string) (map[stri
 	}
 	var ids []string
 	if err := s.db.Model(&model.Server{}).
-		Where("namespace_id = ? AND lobby_cluster_id IS NOT NULL", nsRow.ID).
+		Where("namespace_id = ? AND lobby_cluster_id IS NOT NULL AND lifecycle = ?", nsRow.ID, model.ServerLifecycleActive).
 		Pluck("server_id", &ids).Error; err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (s *V2ControlPlaneService) ListDefaultEntries(ns, group string) ([]DefaultE
 	}
 	var servers []model.Server
 	if err := s.db.
-		Where("namespace_id = ? AND is_default_entry = ? AND zone_id IS NOT NULL", nsRow.ID, true).
+		Where("namespace_id = ? AND is_default_entry = ? AND zone_id IS NOT NULL AND lifecycle = ?", nsRow.ID, true, model.ServerLifecycleActive).
 		Order("server_id ASC").Find(&servers).Error; err != nil {
 		return nil, err
 	}

@@ -162,7 +162,7 @@ export const identityHandlers: HttpHandler[] = [
     const state = getClusterState()
     if (row.conflictReason === 'server-id-occupied') {
       if (body.forceUnbindOccupier !== true) {
-        return jsonError(409, 'server_id_occupied', `serverId ${row.serverId} 已被其他身份绑定，须显式勾选强制解绑`)
+        return jsonError(409, 'server_id_occupied', `serverId ${serverId} 已被其他身份绑定，须显式勾选强制解绑`)
       }
       const occupier = state.identities.find(
         (other) =>

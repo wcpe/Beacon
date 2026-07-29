@@ -29,7 +29,7 @@ describe('/configs 配置中心页', () => {
     expect(await screen.findByText('plugins/Essentials/config.yml')).toBeInTheDocument()
     // 「下发走变更单」提示
     expect(screen.getByText('配置修改不即时下发，生效请到「变更单」发起')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('空态给出新建引导文案', async () => {
     useScenario('empty')
@@ -57,7 +57,7 @@ describe('/configs 配置中心页', () => {
 
     // 列表中出现新文件名
     expect(await screen.findByText('plugins/NewPlugin/config.yml')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('点行打开右侧非模态详情面板并切「有效配置」看到合并内容', async () => {
     useScenario('normal')

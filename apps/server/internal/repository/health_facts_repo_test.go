@@ -6,6 +6,30 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
+// TestHealthFactsListAllExcludesArchivedServers 确保健康事实只投影 active server。
+func TestHealthFactsListAllExcludesArchivedServers(t *testing.T) {
+	db := openRepoSQLite(t, "health_facts_active_servers")
+	namespace := &model.Namespace{Code: "prod", Name: "生产"}
+	if err := db.Create(namespace).Error; err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	servers := []model.Server{
+		{NamespaceID: namespace.ID, ServerID: "active-1", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleActive},
+		{NamespaceID: namespace.ID, ServerID: "archived-1", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleArchived},
+	}
+	if err := db.Create(&servers).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+
+	facts, err := NewHealthFactsRepository(db).ListAll()
+	if err != nil {
+		t.Fatalf("读取健康事实失败: %v", err)
+	}
+	if len(facts) != 1 || facts[0].ServerID != "active-1" {
+		t.Fatalf("健康事实应仅投影 active server，实际 %+v", facts)
+	}
+}
+
 // TestHealthFactsLobbyMemberIsAssigned 确保大厅成员不被健康计算误判为未分配 backend。
 func TestHealthFactsLobbyMemberIsAssigned(t *testing.T) {
 	db := openRepoSQLite(t, "health_facts_lobby_member")

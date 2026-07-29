@@ -22,30 +22,30 @@ type approvalServiceStub struct {
 	withdrawn string
 }
 
-func (s *approvalServiceStub) Request(op authz.Operation, payload map[string]any, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
+func (s *approvalServiceStub) Request(op authz.Operation, _ map[string]any, _ auth.Principal, _ string) (model.ApprovalRequest, error) {
 	s.requested = op
 	return model.ApprovalRequest{ID: 7, RequestID: "apr_test", OperationKey: op.Kind, OperationKind: op.Kind, ResourceType: op.Resource, ResourceID: op.ResourceID, Status: model.ApprovalStatusPending}, nil
 }
 
-func (s *approvalServiceStub) List(filter service.ApprovalListFilter, principal auth.Principal) ([]model.ApprovalRequest, error) {
+func (s *approvalServiceStub) List(_ service.ApprovalListFilter, _ auth.Principal) ([]model.ApprovalRequest, error) {
 	return []model.ApprovalRequest{{ID: 7, RequestID: "apr_test", Status: model.ApprovalStatusPending}}, nil
 }
 
-func (s *approvalServiceStub) Detail(ref string, principal auth.Principal) (model.ApprovalRequest, error) {
+func (s *approvalServiceStub) Detail(ref string, _ auth.Principal) (model.ApprovalRequest, error) {
 	return model.ApprovalRequest{ID: 7, RequestID: ref, Status: model.ApprovalStatusPending}, nil
 }
 
-func (s *approvalServiceStub) Approve(ref string, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
+func (s *approvalServiceStub) Approve(ref string, _ auth.Principal, _ string) (model.ApprovalRequest, error) {
 	s.approved = ref
 	return model.ApprovalRequest{ID: 7, RequestID: ref, Status: model.ApprovalStatusSucceeded}, nil
 }
 
-func (s *approvalServiceStub) Reject(ref string, principal auth.Principal, clientIP, reason string) (model.ApprovalRequest, error) {
+func (s *approvalServiceStub) Reject(ref string, _ auth.Principal, _ string, reason string) (model.ApprovalRequest, error) {
 	s.rejected = ref
 	return model.ApprovalRequest{ID: 7, RequestID: ref, Status: model.ApprovalStatusRejected, RejectReason: reason}, nil
 }
 
-func (s *approvalServiceStub) Withdraw(ref string, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
+func (s *approvalServiceStub) Withdraw(ref string, _ auth.Principal, _ string) (model.ApprovalRequest, error) {
 	s.withdrawn = ref
 	return model.ApprovalRequest{ID: 7, RequestID: ref, Status: model.ApprovalStatusWithdrawn}, nil
 }

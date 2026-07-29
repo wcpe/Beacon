@@ -24,7 +24,7 @@ func TestAuthorizeOperationRequiresCapability(t *testing.T) {
 // TestApprovalAdapterExecutesOnlyExecutingRequest 验证适配器只执行 executing 请求，并收到内核签发的许可。
 func TestApprovalAdapterExecutesOnlyExecutingRequest(t *testing.T) {
 	called := false
-	adapter := AdapterFunc(func(req ApprovalRequest, permit Permit) error {
+	adapter := AdapterFunc(func(_ ApprovalRequest, permit Permit) error {
 		called = true
 		if permit.RequestID() != "apr_test" || permit.Operation() != OperationDeliveryApprove || permit.PayloadHash() != "hash" {
 			t.Fatalf("执行许可绑定信息不符：%+v", permit)

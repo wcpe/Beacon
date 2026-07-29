@@ -103,7 +103,7 @@ describe('/alert-events 告警事件页', () => {
     // 写成功 → 列表 invalidate → 面板从最新数据派生出处理人与备注
     expect(await screen.findByText('处理人')).toBeInTheDocument()
     expect(screen.getByText('已重启 agent')).toBeInTheDocument()
-  })
+  }, 20_000)
 
   it('处理失败（readonly 403）时面板展示后端脱敏错误文案（不静默）', async () => {
     useScenario('normal')

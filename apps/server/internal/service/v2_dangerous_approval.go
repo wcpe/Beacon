@@ -28,6 +28,9 @@ type ApprovalTicketView struct {
 // SetApprovalService 注入 FR-207 统一审批核心。
 func (s *V2ControlPlaneService) SetApprovalService(approval *ApprovalService) {
 	s.approval = approval
+	if approval != nil {
+		approval.SetApprovalRequestPreparer(s)
+	}
 }
 
 // RegisterV2ControlPlaneApprovalAdapters 注册 V2 控制面危险操作执行适配器。
@@ -46,6 +49,8 @@ func RegisterV2ControlPlaneApprovalAdapters(registry *authz.ApprovalRegistry, sv
 		authz.OperationTopologyDefaultEntryChange,
 		authz.OperationTopologyLobbyMemberMove,
 		authz.OperationTopologyDrainingDisable,
+		authz.OperationServerArchive,
+		authz.OperationServerRestore,
 	} {
 		registry.Register(kind, authz.AdapterFunc(svc.executeApprovedV2Operation))
 	}
@@ -113,6 +118,18 @@ func (s *V2ControlPlaneService) executeApprovedV2Operation(req authz.ApprovalReq
 			return err
 		}
 		return s.drainingDisableApproved(p, permit)
+	case authz.OperationServerArchive:
+		var p serverLifecyclePayload
+		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
+			return err
+		}
+		return s.archiveServerApproved(p, permit)
+	case authz.OperationServerRestore:
+		var p serverLifecyclePayload
+		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
+			return err
+		}
+		return s.restoreServerApproved(p, permit)
 	default:
 		return apperr.ErrInvalidParam
 	}
@@ -157,17 +174,24 @@ func baseApprovalPayload(kind, operator, clientIP string) map[string]any {
 }
 
 func (s *V2ControlPlaneService) RequestApproveAgentIdentity(identityID string, p ApproveAgentIdentityParams, principal auth.Principal, idempotencyKey string) (ApprovalTicketView, error) {
-	if _, err := resolveApprovedServerID(p.ServerID); err != nil {
+	serverID, err := resolveApprovedServerID(p.ServerID)
+	if err != nil {
 		return ApprovalTicketView{}, err
 	}
-	status, err := s.identityStatus(identityID)
+	ident, err := findIdentityByID(s.db, identityID)
 	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	if ident == nil {
+		return ApprovalTicketView{}, apperr.ErrInstanceNotFound
+	}
+	if err := ensureServerActive(s.db, ident.NamespaceID, serverID); err != nil {
 		return ApprovalTicketView{}, err
 	}
 	payload := baseApprovalPayload(authz.OperationIdentityApprove, p.Operator, p.ClientIP)
 	payload["identityId"] = identityID
-	payload["expectedStatus"] = status
-	payload["serverId"] = p.ServerID
+	payload["expectedStatus"] = ident.Status
+	payload["serverId"] = serverID
 	payload["forceUnbindOccupier"] = p.ForceUnbindOccupier
 	payload["targetExplicitNull"] = p.TargetExplicitNull
 	payload["targetKind"] = p.TargetKind

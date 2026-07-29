@@ -231,11 +231,6 @@ func toSchedDecisionRow(o SchedDecisionOutcome) model.SchedDecisionV2 {
 	}
 }
 
-// validateDecideParams 校验决策请求字段：zone 必填且各字段不超日表列宽（防坏行毒化异步 flush 批）。
-func validateDecideParams(zone, purpose, plugin string) error {
-	return validateScopedDecideParams(SchedScopeZone, zone, purpose, plugin)
-}
-
 // validateScopedDecideParams 校验 scope 与其目标字段形状；lobby 不接受非空 zone。
 func validateScopedDecideParams(scope, zone, purpose, plugin string) error {
 	if len(purpose) > schedPurposeMaxLen || len(plugin) > schedPluginMaxLen {

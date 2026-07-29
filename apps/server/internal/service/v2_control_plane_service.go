@@ -183,45 +183,48 @@ func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*Agent
 		if err != nil {
 			return err
 		}
-		if current == nil {
-			ident := &model.AgentIdentity{
-				IdentityID: p.IdentityID, NamespaceID: ns.ID, ServerID: model.NullableServerID(p.ServerID),
-				Kind: p.Kind, Status: model.AgentIdentityStatusPending,
-				BootID: p.BootID, LastAddr: p.Addr, AgentVersion: p.AgentVersion,
-				PendingExpiresAt: &expiresAt, StatusChangedAt: now,
-				BindingSource: identityBindingSourceForRegistration(p.ServerID),
-			}
-			if ident.ServerID.Assigned() {
-				if err := ensureServerIDAvailableForRegister(tx, ns.ID, string(ident.ServerID)); err != nil {
-					return err
-				}
-				conflictReason, err := occupiedServerConflictReason(tx, ns.ID, string(ident.ServerID), p.IdentityID)
-				if err != nil {
-					return err
-				}
-				ident.ConflictReason = conflictReason
-			}
-			if err := tx.Create(ident).Error; err != nil {
+		if err := ensureRegistrationServerActive(tx, ns.ID, current, p.ServerID); err != nil {
+			return err
+		}
+		if current != nil {
+			if err := s.registerExistingIdentity(tx, ns, current, p, now, expiresAt, &out); err != nil {
 				return err
 			}
-			endpoints, err := syncAgentEndpoints(tx, ident, p, now)
+			endpoints, err := syncAgentEndpoints(tx, current, p, now)
 			if err != nil {
 				return err
 			}
-			out = newAgentRegisterV2Result(ident, ns.Code)
-			out.Address, out.Endpoints = ident.LastAddr, endpoints
-			return auditIdentity(tx, ns, ident, model.ActionIdentityRegistered, "agent", model.ResultOK, p.ClientIP)
+			out = newAgentRegisterV2Result(current, ns.Code)
+			out.Address, out.Endpoints = current.LastAddr, endpoints
+			return nil
 		}
-		if err := s.registerExistingIdentity(tx, ns, current, p, now, expiresAt, &out); err != nil {
+		ident := &model.AgentIdentity{
+			IdentityID: p.IdentityID, NamespaceID: ns.ID, ServerID: model.NullableServerID(p.ServerID),
+			Kind: p.Kind, Status: model.AgentIdentityStatusPending,
+			BootID: p.BootID, LastAddr: p.Addr, AgentVersion: p.AgentVersion,
+			PendingExpiresAt: &expiresAt, StatusChangedAt: now,
+			BindingSource: identityBindingSourceForRegistration(p.ServerID),
+		}
+		if ident.ServerID.Assigned() {
+			if err := ensureServerIDAvailableForRegister(tx, ns.ID, string(ident.ServerID)); err != nil {
+				return err
+			}
+			conflictReason, err := occupiedServerConflictReason(tx, ns.ID, string(ident.ServerID), p.IdentityID)
+			if err != nil {
+				return err
+			}
+			ident.ConflictReason = conflictReason
+		}
+		if err := tx.Create(ident).Error; err != nil {
 			return err
 		}
-		endpoints, err := syncAgentEndpoints(tx, current, p, now)
+		endpoints, err := syncAgentEndpoints(tx, ident, p, now)
 		if err != nil {
 			return err
 		}
-		out = newAgentRegisterV2Result(current, ns.Code)
-		out.Address, out.Endpoints = current.LastAddr, endpoints
-		return nil
+		out = newAgentRegisterV2Result(ident, ns.Code)
+		out.Address, out.Endpoints = ident.LastAddr, endpoints
+		return auditIdentity(tx, ns, ident, model.ActionIdentityRegistered, "agent", model.ResultOK, p.ClientIP)
 	})
 	if err != nil {
 		return nil, err
@@ -257,6 +260,9 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 	}
 	if ident.Status != model.AgentIdentityStatusActive || !ident.ServerID.Assigned() {
 		return apperr.ErrUnauthorized
+	}
+	if err := ensureServerActive(s.db, ident.NamespaceID, string(ident.ServerID)); err != nil {
+		return err
 	}
 	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 404 促其重注册，复用 agent「404→重注册」路径喂养往复检测（spec §4.5）。
 	// 选 404 而非 401：agent 只把 404 识别为「未注册需重注册」，401 仅退避重试同 boot（真机双实例不触发的根因）。
@@ -299,6 +305,9 @@ func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID, bootI
 	}
 	if ident.Status != model.AgentIdentityStatusActive || !ident.ServerID.Assigned() {
 		return agentauth.Identity{}, apperr.ErrAgentNotConfirmed
+	}
+	if err := ensureServerActive(s.db, ident.NamespaceID, string(ident.ServerID)); err != nil {
+		return agentauth.Identity{}, err
 	}
 	// 陈旧 boot（与 DB 权威 boot_id 不一致）→ 404 促其重注册，复用 agent「404→重注册」路径喂养往复检测（spec §4.5）。
 	// 选 404 而非 401：agent 只把 404 识别为「未注册需重注册」，401 仅退避重试同 boot（真机双实例不触发的根因）。
@@ -411,6 +420,21 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 	return nil
 }
 
+func ensureRegistrationServerActive(tx *gorm.DB, namespaceID uint, current *model.AgentIdentity, suppliedServerID string) error {
+	if current == nil {
+		return ensureServerActive(tx, namespaceID, suppliedServerID)
+	}
+	switch current.Status {
+	case model.AgentIdentityStatusPending, model.AgentIdentityStatusActive, model.AgentIdentityStatusDisabled:
+		if current.NamespaceID == namespaceID && current.ServerID.Assigned() {
+			return ensureServerActive(tx, namespaceID, string(current.ServerID))
+		}
+	case model.AgentIdentityStatusExpired, model.AgentIdentityStatusUnbound:
+		return ensureServerActive(tx, namespaceID, suppliedServerID)
+	}
+	return nil
+}
+
 type ApproveAgentIdentityParams struct {
 	ServerID            string
 	Reason              string
@@ -442,6 +466,9 @@ func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p Approv
 		}
 		serverID, err := resolveApprovedServerID(p.ServerID)
 		if err != nil {
+			return err
+		}
+		if err := ensureServerActive(tx, ident.NamespaceID, serverID); err != nil {
 			return err
 		}
 		ident.ServerID = model.NullableServerID(serverID)

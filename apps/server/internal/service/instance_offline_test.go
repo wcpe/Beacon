@@ -24,7 +24,7 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ServerOffline{}, &model.ServerDrain{}, &model.ZoneAssignment{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerOffline{}, &model.ServerDrain{}, &model.ZoneAssignment{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -32,7 +32,7 @@ func newOfflineTestStack(t *testing.T) (*InstanceService, *runtime.Registry, *go
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"server_offline", "server_drain", "zone_assignment", "audit_log"} {
+	for _, tbl := range []string{"server", "namespace", "server_offline", "server_drain", "zone_assignment", "audit_log"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
@@ -51,6 +51,27 @@ func regParams(serverID string) RegisterParams {
 	return RegisterParams{
 		Namespace: "prod", ServerID: serverID, Role: "bukkit", GroupHint: "area1",
 		Address: serverID + ":25565", ClientIP: "127.0.0.1",
+	}
+}
+
+// TestInstanceRegisterRejectsArchivedServer 验证 V1 运行态注册不会把已归档 server 放回在线注册表。
+func TestInstanceRegisterRejectsArchivedServer(t *testing.T) {
+	svc, reg, db := newOfflineTestStack(t)
+	ns := &model.Namespace{Code: "archived-register", Name: "归档注册"}
+	if err := db.Create(ns).Error; err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := &model.Server{NamespaceID: ns.ID, ServerID: "archived-1", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleArchived}
+	if err := db.Create(server).Error; err != nil {
+		t.Fatalf("创建归档 server 失败: %v", err)
+	}
+
+	_, err := svc.Register(RegisterParams{Namespace: ns.Code, ServerID: server.ServerID, Address: "127.0.0.1:25565"})
+	if !errors.Is(err, apperr.ErrServerArchived) {
+		t.Fatalf("归档 server 注册应返回 SERVER_ARCHIVED，实际 %v", err)
+	}
+	if got := reg.Get(ns.Code, server.ServerID); got != nil {
+		t.Fatalf("归档 server 不应进入运行态注册表，实际 %#v", got)
 	}
 }
 

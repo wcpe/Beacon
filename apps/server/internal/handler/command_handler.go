@@ -145,9 +145,9 @@ func (h *CommandHandler) ReportResult(w http.ResponseWriter, r *http.Request) {
 			render.WriteError(w, r, apperr.ErrCommandNotFound)
 			return
 		}
-		identity, err := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
-		if err != nil {
-			render.WriteError(w, r, err)
+		identity, authErr := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
+		if authErr != nil {
+			render.WriteError(w, r, authErr)
 			return
 		}
 		err = h.reportAuth.ReceiveDirectoryResyncResult(identity, req.CommandID, req.OK, req.Reason)

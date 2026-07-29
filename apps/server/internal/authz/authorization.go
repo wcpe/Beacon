@@ -29,6 +29,9 @@ const (
 	OperationTopologyDefaultEntryChange = "topology.default_entry.change"
 	OperationTopologyLobbyMemberMove    = "topology.lobby_member.move"
 	OperationTopologyDrainingDisable    = "topology.draining.disable"
+
+	OperationServerArchive = "server.archive"
+	OperationServerRestore = "server.restore"
 )
 
 // OperationDescriptor 描述 operation 的授权分类与冻结参数版本。
@@ -73,7 +76,9 @@ func capabilityFor(kind string) string {
 		OperationTopologyServerRezone,
 		OperationTopologyDefaultEntryChange,
 		OperationTopologyLobbyMemberMove,
-		OperationTopologyDrainingDisable:
+		OperationTopologyDrainingDisable,
+		OperationServerArchive,
+		OperationServerRestore:
 		return auth.CapabilityApprovalRequest
 	case OperationDeliveryRollback:
 		return auth.CapabilityManagementDirect

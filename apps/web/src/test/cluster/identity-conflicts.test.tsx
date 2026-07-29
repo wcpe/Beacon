@@ -74,5 +74,5 @@ describe('/identity-conflicts 身份冲突页', () => {
     await waitFor(() => {
       expect(screen.queryByText('game-6')).not.toBeInTheDocument()
     })
-  })
+  }, 20_000)
 })

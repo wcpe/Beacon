@@ -158,7 +158,7 @@ func selectorMatches(selector ChangeSelector, pickedZones map[uint]struct{}, nam
 
 // eligibleChangeTarget 判定合格目标：backend + 已分配 zone + 身份已确认绑定（spec §4.3.1）。
 func eligibleChangeTarget(topo *deliveryTopology, srv *model.Server) bool {
-	if srv.Kind != model.ServerKindBackend || srv.ZoneID == nil {
+	if !isServerActive(srv) || srv.Kind != model.ServerKindBackend || srv.ZoneID == nil {
 		return false
 	}
 	_, bound := topo.activeServerIDs[srv.ServerID]
