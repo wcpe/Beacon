@@ -18,8 +18,9 @@ import java.util.concurrent.TimeoutException
  * 只依赖抽象：[MessageTransport]（搬运原始 json）、[JsonCodec]（编解码）、[PlayerLocator]（本地名册寻址，仅 Redis 通道用）。
  * 不 import 任何具体库（Redis/okhttp/kotlinx），守 ADR-0005/0016 边界。
  *
- * 线程：发送方法可在任意线程调用（内部仅编码 + 委托 transport）。入站消息由长轮询 / 订阅后台线程回调，
- * handler 在该后台线程同步执行（绝不上 MC 主线程；handler 自行切回平台线程）。
+ * 线程：发送方法可在任意线程调用，**上行 transport 调用经 [outboundExecutor] 丢到异步线程，绝不阻塞调用者
+ * （含 MC 主线程）**。入站消息由长轮询 / 订阅后台线程回调，handler 在该后台线程同步执行
+ * （绝不上 MC 主线程；handler 自行切回平台线程）。
  *
  * @param transport     传输端口（HTTP 适配器注入；测试注入假实现）
  * @param codec         信封 json 编解码
@@ -27,6 +28,8 @@ import java.util.concurrent.TimeoutException
  * @param settings      运行参数（RPC 超时等）
  * @param playerLocator 玩家位置解析（仅 Redis 通道注入；HTTP 中转下为 null，按玩家寻址交控制面解析）
  * @param scheduleTimeout 延迟调度（RPC 超时清理用）：默认 daemon 线程，壳层可注入平台 runAsyncDelayed
+ * @param outboundExecutor 出站执行器：把 transport 阻塞调用（send/publish/reply）丢到异步线程，
+ *   绝不阻塞调用者（含 MC 主线程）；默认同步执行器（测试向后兼容），生产由壳层注入 adapter::runAsync
  * @param warn          告警日志（无法配对的回信、非法消息等）
  */
 class MessageBus(
@@ -36,6 +39,7 @@ class MessageBus(
     private val settings: MessagingSettings,
     private val playerLocator: PlayerLocator? = null,
     private val scheduleTimeout: (delayMs: Long, task: () -> Unit) -> Unit = DEFAULT_SCHEDULER,
+    private val outboundExecutor: (task: () -> Unit) -> Unit = { it() },
     private val warn: (String) -> Unit = {},
 ) {
     /** 按消息类型注册的处理器：type → handler。非 RPC 收消息后回调，返回值忽略。 */
@@ -84,6 +88,8 @@ class MessageBus(
     /**
      * 定向发送（fire-and-forget）：向目标子服投递一条单向消息。
      *
+     * 上行经 [outboundExecutor] 异步执行，绝不阻塞调用者（含 MC 主线程）；发送失败仅 warn 日志。
+     *
      * @throws IllegalStateException 模块不可用
      * @throws IllegalArgumentException payload 超过上限（本地前置拒绝，不发无谓请求）
      */
@@ -94,13 +100,16 @@ class MessageBus(
     ) {
         requireAvailable()
         checkPayloadSize(payload)
-        dispatchOutbound(Message.TARGET_SERVER, targetServerId, type, payload)
+        submitOutbound { dispatchOutbound(Message.TARGET_SERVER, targetServerId, type, payload) }
     }
 
     /**
-     * 请求-响应（RPC）：发请求并返回 Future，目标回信后完成；超时则 Future 异常完成。
+     * 请求-响应（RPC）：发请求并立即返回 Future，目标回信后完成；超时则 Future 异常完成
+     * （{@link java.util.concurrent.TimeoutException}）。
      *
-     * @return 完成值为目标返回的 payload（泛型树）；超时抛 [TimeoutException]
+     * 上行经 [outboundExecutor] 异步执行，绝不阻塞调用者（含 MC 主线程）；发送失败异步 completeExceptionally。
+     *
+     * @return 完成值为目标返回的 payload（泛型树）
      * @throws IllegalStateException 模块不可用
      * @throws IllegalArgumentException payload 超过上限
      */
@@ -128,13 +137,14 @@ class MessageBus(
                 targetKind = Message.TARGET_SERVER,
                 targetId = targetServerId,
             )
-        try {
-            transport.sendToServer(targetServerId, encode(request))
-        } catch (t: Throwable) {
-            // 发送失败立刻清理，不留悬挂 Future。
-            pending.remove(messageId)
-            future.completeExceptionally(t)
-            return future
+        // 上行发送丢异步线程，绝不阻塞调用者；发送失败异步 completeExceptionally 并清理 pending。
+        outboundExecutor {
+            try {
+                transport.sendToServer(targetServerId, encode(request))
+            } catch (t: Throwable) {
+                pending.remove(messageId)
+                future.completeExceptionally(t)
+            }
         }
 
         // 超时兜底：到点仍未完成则异常完成并清理（响应过期即弃）。
@@ -152,6 +162,8 @@ class MessageBus(
     /**
      * 主题发布（可丢广播，FR-180 / ADR-0065 复活 ADR-0063 §7 的 no-op 条款）：topic 落 msg_type，
      * HTTP 中转经控制面按当前在线服集合 fan-out（含发送者自身；离线不补投）；Redis 通道仍走原 pub/sub。
+     *
+     * 上行经 [outboundExecutor] 异步执行，绝不阻塞调用者（含 MC 主线程）；发送失败仅 warn 日志。
      *
      * @param zone 可选 zone 级定向：非空只投该 zone 当前在线服（仅 HTTP 中转生效，Redis 通道无 zone 概念）
      * @throws IllegalStateException 模块不可用
@@ -175,7 +187,8 @@ class MessageBus(
                 targetId = zone,
                 broadcast = true,
             )
-        transport.publishTopic(topic, encode(message))
+        val encoded = encode(message)
+        submitOutbound { transport.publishTopic(topic, encoded) }
     }
 
     /**
@@ -205,6 +218,8 @@ class MessageBus(
      * - 注入了 [PlayerLocator]（Redis 通道）：本地名册解析所在服后定向发送。
      * - 未注入（HTTP 中转，ADR-0063 §4 名册权威在控制面）：发一条按玩家寻址消息，由控制面据名册快照解析目标服。
      *
+     * 上行经 [outboundExecutor] 异步执行，绝不阻塞调用者（含 MC 主线程）。
+     *
      * @return Redis 通道：true=已解析投递，false=名册无此玩家；HTTP 中转：恒 true（是否在线由控制面回执/状态判定）
      * @throws IllegalStateException 模块不可用
      * @throws IllegalArgumentException payload 超过上限
@@ -219,13 +234,13 @@ class MessageBus(
         val locator = playerLocator
         // HTTP 中转：不注入本地名册，发按玩家寻址消息，交控制面按连接明细名册快照解析（玩家不在线 → 控制面记 failed）。
         if (locator == null) {
-            dispatchOutbound(Message.TARGET_PLAYER, playerName, type, payload)
+            submitOutbound { dispatchOutbound(Message.TARGET_PLAYER, playerName, type, payload) }
             return true
         }
-        // Redis 通道：本地名册解析所在服后定向。
+        // Redis 通道：本地名册解析所在服（内存操作，不阻塞）后定向。
         val serverId = locator.resolveServerId(playerName)
         if (serverId != null) {
-            dispatchOutbound(Message.TARGET_SERVER, serverId, type, payload)
+            submitOutbound { dispatchOutbound(Message.TARGET_SERVER, serverId, type, payload) }
         } else {
             warn("按玩家寻址落空：玩家 $playerName 不在名册（可能已换服/离线），丢弃 type=$type")
         }
@@ -331,7 +346,8 @@ class MessageBus(
         }
     }
 
-    /** 由 [MessageContext.reply] 调用：把响应发回请求方。Redis 走回信通道，HTTP 中转按 source 定向发一条带 correlationId 的消息。 */
+    /** 由 [MessageContext.reply] 调用：把响应发回请求方。Redis 走回信通道，HTTP 中转按 source 定向发一条带 correlationId 的消息。
+     *  上行经 [outboundExecutor] 异步执行，绝不阻塞调用者（含 MC 主线程）。 */
     internal fun reply(
         request: Message,
         payload: Any?,
@@ -346,13 +362,15 @@ class MessageBus(
                 sentAt = System.currentTimeMillis(),
             )
         val replyTo = request.replyTo
+        val encoded = encode(response)
         if (replyTo != null) {
-            transport.sendReply(replyTo, encode(response))
+            submitOutbound { transport.sendReply(replyTo, encoded) }
             return
         }
         val target = request.source ?: return
         val outbound = response.copy(targetKind = Message.TARGET_SERVER, targetId = target)
-        transport.sendToServer(target, encode(outbound))
+        val outboundEncoded = encode(outbound)
+        submitOutbound { transport.sendToServer(target, outboundEncoded) }
     }
 
     private fun dispatchOutbound(
@@ -373,6 +391,20 @@ class MessageBus(
             )
         // targetId 兼作 transport 的目标参数：Redis 用它选收件流；HTTP 适配器改读信封 targetKind/targetId 建 wire 目标。
         transport.sendToServer(targetId, encode(message))
+    }
+
+    /**
+     * 把出站阻塞调用（transport.send/publish/reply）丢到 [outboundExecutor] 异步线程，
+     * 绝不阻塞调用者（含 MC 主线程）；fire-and-forget 语义下发送失败仅 warn 日志。
+     */
+    private fun submitOutbound(task: () -> Unit) {
+        outboundExecutor {
+            try {
+                task()
+            } catch (t: Throwable) {
+                warn("跨服消息出站发送失败：${t.message ?: "无错误信息"}")
+            }
+        }
     }
 
     private fun requireAvailable() {

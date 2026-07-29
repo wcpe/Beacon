@@ -282,6 +282,7 @@ object AgentAssembly {
                 settings = settings.messaging,
                 playerLocator = null,
                 scheduleTimeout = adapter::runAsyncDelayed,
+                outboundExecutor = adapter::runAsync,
                 warn = adapter::warn,
             )
         val messagingRuntime =
