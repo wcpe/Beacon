@@ -190,7 +190,7 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 	}
 }
 
-// applySQLitePragmas 为 sqlite DSN 追加崩溃韧性相关的 journal_mode pragma。
+// applySQLitePragmas 为 sqlite DSN 追加崩溃韧性与并发相关的 pragma。
 //
 // 缺陷背景：sqlite 默认回滚日志（DELETE）模式下，进程被强杀（如 Ctrl+C）会在写入事务
 // 中途留下热 beacon.db-journal；下次启动 sqlite 检测到热日志后必须先写主库做回滚恢复，
@@ -201,6 +201,9 @@ func newDialector(cfg config.DatabaseConfig) (gorm.Dialector, error) {
 // 修复：切到 WAL 后主库始终一致，强杀只留 -wal/-shm 旁车，下次启动自动重放、不再触发
 // 只读恢复。WAL 为持久化设置（写入库头），仅对本地 sqlite 生效；mysql 路径不受影响。
 // 若 DSN 已显式指定 journal_mode（含 file: URI 形式），尊重用户配置不再覆盖。
+//
+// busy_timeout(5000)：多连接并发时写操作遇锁等待最多 5s 而非立即返回 SQLITE_BUSY 失败，
+// 配合 WAL 的并发读 + 单写模型，使 MaxOpenConns>1 时写操作不会因瞬态锁竞争失败。
 func applySQLitePragmas(dsn string) string {
 	if strings.Contains(strings.ToLower(dsn), "journal_mode") {
 		return dsn
@@ -209,5 +212,5 @@ func applySQLitePragmas(dsn string) string {
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	return dsn + sep + "_pragma=journal_mode(WAL)"
+	return dsn + sep + "_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 }

@@ -90,6 +90,13 @@ func CheckAndAutoRollback(runPath string) {
 	slog.Info("换版后首启自检：进入验证期，稳定运行后确认更新成功",
 		"启动尝试次数", st.Attempt, "验证期秒", int(verifyDuration.Seconds()), "目标版本", st.Version)
 	go func() {
+		// recover 兜底：ConfirmUpdateSuccess 内部 os.Remove 在文件系统异常时可能 panic，
+		// 此 goroutine 无 recover 会让 panic 带崩整个进程（验证期已是新版在跑）。
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("更新验证定时器 panic，已兜底未带崩进程", "错误", r)
+			}
+		}()
 		time.Sleep(verifyDuration)
 		ConfirmUpdateSuccess(runPath)
 		slog.Info("新版已稳定运行，更新确认成功，已清理备份", "目标版本", st.Version)

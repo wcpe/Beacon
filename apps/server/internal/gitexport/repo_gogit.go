@@ -1,6 +1,7 @@
 package gitexport
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -34,6 +35,9 @@ type GoGitRepo struct {
 func NewGoGitRepo(cfg GoGitRepoConfig) *GoGitRepo {
 	return &GoGitRepo{cfg: cfg}
 }
+
+// pushTimeout 远程推送超时：远程不可达 / 网络挂起时兜底释放导出 worker，避免永久卡死。
+const pushTimeout = 5 * time.Minute
 
 // Commit 全量覆盖工作区 → add → 有变更才 commit；配置了远程则 push。失败返回 error，调用方降级为 WARN。
 func (r *GoGitRepo) Commit(snapshot Snapshot, message string) error {
@@ -114,6 +118,9 @@ func (r *GoGitRepo) overwriteWorktree(snapshot Snapshot) error {
 }
 
 // push 把当前 HEAD 强推到远程分支（单向镜像，force 覆盖远程）；未配远程即跳过。
+// 带超时 context：远程不可达 / 网络挂起时 go-git Push 默认无超时会永久阻塞，
+// 而本方法跑在 git 导出单 worker goroutine 内，永久卡死会令后续所有导出信号无法消费。
+// 超时后 Push 返回错误，worker 继续消费下一信号（best-effort，丢一次推送不影响下次全量快照）。
 func (r *GoGitRepo) push(repo *git.Repository) error {
 	if r.cfg.RemoteURL == "" {
 		return nil
@@ -125,6 +132,11 @@ func (r *GoGitRepo) push(repo *git.Repository) error {
 	if branch == "" {
 		branch = "master"
 	}
+	// pushTimeout 远程推送超时：远程不可达 / 网络挂起时兜底释放导出 worker，避免永久卡死。
+	// go-git v5 的 PushOptions 无 Context 字段，无法直接取消底层 IO，故用 goroutine + select 兜底：
+	// 超时后本方法返回错误、worker 继续消费下一信号；被放弃的 Push goroutine 在 OS TCP 超时后自然退出。
+	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+	defer cancel()
 	opts := &git.PushOptions{
 		RemoteName: "origin",
 		RefSpecs:   []gitconfig.RefSpec{gitconfig.RefSpec(fmt.Sprintf("+HEAD:refs/heads/%s", branch))},
@@ -133,8 +145,24 @@ func (r *GoGitRepo) push(repo *git.Repository) error {
 	if r.cfg.RemoteToken != "" {
 		opts.Auth = &githttp.BasicAuth{Username: "beacon", Password: r.cfg.RemoteToken}
 	}
-	if err := repo.Push(opts); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return fmt.Errorf("git push 失败: %w", err)
+	type pushResult struct{ err error }
+	resultCh := make(chan pushResult, 1)
+	go func() {
+		defer func() {
+			// recover 兜底：Push 内部 panic 不应带崩进程，且本 goroutine 可能超时后被遗弃。
+			if r := recover(); r != nil {
+				resultCh <- pushResult{err: fmt.Errorf("git push panic: %v", r)}
+			}
+		}()
+		resultCh <- pushResult{err: repo.Push(opts)}
+	}()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("git push 超时（远程不可达或网络挂起）: %w", ctx.Err())
+	case res := <-resultCh:
+		if res.err != nil && !errors.Is(res.err, git.NoErrAlreadyUpToDate) {
+			return fmt.Errorf("git push 失败: %w", res.err)
+		}
 	}
 	return nil
 }

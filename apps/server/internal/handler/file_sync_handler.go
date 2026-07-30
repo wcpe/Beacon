@@ -13,6 +13,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/httpx"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -304,7 +305,11 @@ func (h *FileSyncHandler) DownloadBlob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, file)
+	// 防慢客户端写阻塞：agent 下载 blob 时若接收极慢，无写超时会永久挂起 goroutine（FD 耗尽）。
+	// StallWriter 按单次写 stall 兜底，持续在写不受限，仅客户端彻底卡住才中断。
+	sw := httpx.NewStallWriter(w, httpx.DefaultWriteStall)
+	defer sw.Release()
+	_, _ = io.Copy(sw, file)
 }
 
 // TargetResult 处理目标 agent 的同步结果回传。

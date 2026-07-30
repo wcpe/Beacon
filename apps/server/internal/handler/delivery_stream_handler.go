@@ -9,6 +9,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/httpx"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
@@ -92,5 +93,9 @@ func (h *DeliveryStreamHandler) Download(w http.ResponseWriter, r *http.Request)
 	defer release()    // 归还下载并发额度（LIFO 后执行）
 	defer file.Close() // 先关文件句柄再归还额度（Open 的 release 只管额度、不关 file）
 	w.Header().Set("Content-Type", "application/octet-stream")
-	http.ServeContent(w, r, "", time.Time{}, file)
+	// 防慢客户端写阻塞：目标 agent 下载 blob 时若接收极慢，无写超时会永久挂起 goroutine（FD 耗尽）。
+	// StallWriter 按单次写 stall 兜底，持续在写不受限，仅客户端彻底卡住才中断；ServeContent 走 Write 循环生效。
+	sw := httpx.NewStallWriter(w, httpx.DefaultWriteStall)
+	defer sw.Release()
+	http.ServeContent(sw, r, "", time.Time{}, file)
 }

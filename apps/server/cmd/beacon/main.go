@@ -577,6 +577,12 @@ func run() error {
 		Addr:              cfg.HTTPAddr,
 		Handler:           router,
 		ReadHeaderTimeout: 10 * time.Second,
+		// ReadTimeout 限制客户端读取请求体的总时间，防止慢速客户端（slowloris）长时间占用连接导致 FD 耗尽。
+		// SSE / 长轮询端点无请求体（GET），不受此超时影响。
+		ReadTimeout: 30 * time.Second,
+		// IdleTimeout 限制 keep-alive 空闲连接的存活时间，防止空闲连接不释放导致连接耗尽。
+		// 不设 WriteTimeout：SSE 长连接与长轮询需要无限写时间，全局 WriteTimeout 会误杀这些连接。
+		IdleTimeout: 120 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

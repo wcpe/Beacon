@@ -187,6 +187,11 @@ func (s *UpdateService) Apply(operator, clientIP string) error {
 	s.mu.Unlock()
 	go func() {
 		defer func() {
+			// recover 兜底：ApplyUpdate 内部下载 / 校验 / 落位在文件系统异常时可能 panic，
+			// 此后台 goroutine 无 recover 会让 panic 带崩整个进程（更新是异步后台任务，不应拖垮服务）。
+			if r := recover(); r != nil {
+				slog.Error("在线更新后台任务 panic，已兜底未带崩进程", "错误", r)
+			}
 			s.mu.Lock()
 			s.applyCancel = nil
 			s.mu.Unlock()

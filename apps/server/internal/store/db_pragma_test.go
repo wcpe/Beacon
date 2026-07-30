@@ -2,8 +2,8 @@ package store
 
 import "testing"
 
-// TestApplySQLitePragmas 守护 sqlite DSN 的 WAL 崩溃韧性注入：
-// 默认 DSN 追加 journal_mode(WAL)；已显式指定 journal_mode 的 DSN 不覆盖；
+// TestApplySQLitePragmas 守护 sqlite DSN 的 WAL 崩溃韧性注入与 busy_timeout 并发写保护：
+// 默认 DSN 追加 journal_mode(WAL) + busy_timeout(5000)；已显式指定 journal_mode 的 DSN 不覆盖；
 // 带 ? 的 DSN 用 & 拼接、不带 ? 的用 ? 拼接。
 func TestApplySQLitePragmas(t *testing.T) {
 	cases := []struct {
@@ -11,10 +11,10 @@ func TestApplySQLitePragmas(t *testing.T) {
 		dsn  string
 		want string
 	}{
-		{"裸文件名", "beacon.db", "beacon.db?_pragma=journal_mode(WAL)"},
-		{"已有查询参数", "beacon.db?cache=shared", "beacon.db?cache=shared&_pragma=journal_mode(WAL)"},
-		{"file URI 无参数", "file:beacon.db", "file:beacon.db?_pragma=journal_mode(WAL)"},
-		{"file URI 有参数", "file:beacon.db?cache=shared", "file:beacon.db?cache=shared&_pragma=journal_mode(WAL)"},
+		{"裸文件名", "beacon.db", "beacon.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"},
+		{"已有查询参数", "beacon.db?cache=shared", "beacon.db?cache=shared&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"},
+		{"file URI 无参数", "file:beacon.db", "file:beacon.db?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"},
+		{"file URI 有参数", "file:beacon.db?cache=shared", "file:beacon.db?cache=shared&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"},
 		{"已显式 WAL 不覆盖", "beacon.db?_pragma=journal_mode(WAL)", "beacon.db?_pragma=journal_mode(WAL)"},
 		{"已显式 DELETE 不覆盖", "beacon.db?_pragma=journal_mode(DELETE)", "beacon.db?_pragma=journal_mode(DELETE)"},
 		{"journal_mode 大小写不敏感不覆盖", "beacon.db?_pragma=JOURNAL_MODE(WAL)", "beacon.db?_pragma=JOURNAL_MODE(WAL)"},

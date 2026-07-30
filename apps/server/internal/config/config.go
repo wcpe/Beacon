@@ -162,8 +162,8 @@ func Default() Config {
 		Database: DatabaseConfig{
 			Driver:             "sqlite",
 			DSN:                "beacon.db",
-			MaxOpenConns:       1,
-			MaxIdleConns:       1,
+			MaxOpenConns:       4,
+			MaxIdleConns:       2,
 			ConnMaxLifetimeSec: 1800,
 		},
 		// 归档库默认同实例模式（dsn 留空）、库名 beacon_archive（FR-151，见 ADR-0066）。
