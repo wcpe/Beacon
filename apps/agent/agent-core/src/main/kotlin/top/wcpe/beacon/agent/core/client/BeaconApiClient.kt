@@ -240,9 +240,7 @@ class BeaconApiClient(
         }
     }
 
-    private fun activeRegisterOutcome(
-        body: String,
-    ): RegisterOutcome {
+    private fun activeRegisterOutcome(body: String): RegisterOutcome {
         return when (parseRegistrationStatus(body)) {
             "active" -> {
                 val binding = parseActiveBinding(body) ?: return RegisterOutcome.Failed("控制面未返回权威绑定")
@@ -286,8 +284,9 @@ class BeaconApiClient(
             200 ->
                 when (parseRegistrationStatus(resp.body)) {
                     "active" -> {
-                        val binding = parseActiveBinding(resp.body)
-                            ?: return RegistrationPollResult.Failed("控制面未返回权威绑定")
+                        val binding =
+                            parseActiveBinding(resp.body)
+                                ?: return RegistrationPollResult.Failed("控制面未返回权威绑定")
                         RegistrationPollResult.Active(binding)
                     }
                     "pending" -> RegistrationPollResult.Pending
@@ -1433,7 +1432,11 @@ class BeaconApiClient(
         val boundAt = JsonTree.strOr(obj, "boundAt", "")
         val fingerprint = JsonTree.strOr(obj, "bindingFingerprint", "")
         val compatAddress = JsonTree.strOr(obj, "address", JsonTree.strOr(obj, "addr", ""))
-        return if (namespace.isBlank() || serverId.isBlank() || boundAt.isBlank() || compatAddress.isBlank() || !FINGERPRINT.matches(fingerprint)) {
+        return if (namespace.isBlank() || serverId.isBlank() || boundAt.isBlank() || compatAddress.isBlank() ||
+            !FINGERPRINT.matches(
+                fingerprint,
+            )
+        ) {
             null
         } else {
             ActiveBinding(namespace, serverId, boundAt, fingerprint, compatAddress)
@@ -1445,9 +1448,10 @@ class BeaconApiClient(
         identity: AgentIdentity,
     ) {
         if (identity.role == "bungee") {
-            body["listeners"] = identity.endpointReport.proxyListenersForReport().map { listener ->
-                mapOf("bindHost" to listener.bindHost, "port" to listener.port, "ordinal" to listener.ordinal)
-            }
+            body["listeners"] =
+                identity.endpointReport.proxyListenersForReport().map { listener ->
+                    mapOf("bindHost" to listener.bindHost, "port" to listener.port, "ordinal" to listener.ordinal)
+                }
             return
         }
         body["listenPort"] = identity.endpointReport.backendPortForReport()

@@ -1,7 +1,7 @@
 package top.wcpe.beacon.agent.core.identity
 
-import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.client.ActiveBinding
+import top.wcpe.beacon.agent.core.client.JsonTree
 import top.wcpe.beacon.agent.core.filetree.AtomicFileWriter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File
@@ -12,7 +12,10 @@ class IdentityBindingSnapshotStore(
     private val file: File,
     private val codec: JsonCodec,
 ) {
-    fun write(identity: AgentIdentity, binding: ActiveBinding) {
+    fun write(
+        identity: AgentIdentity,
+        binding: ActiveBinding,
+    ) {
         if (!identity.hasV2Identity() || binding.namespace.isBlank() || binding.serverId.isBlank()) return
         val content =
             linkedMapOf<String, Any?>(
@@ -43,8 +46,11 @@ class IdentityBindingSnapshotStore(
             ) {
                 null
             } else {
-                if (boundAt.isBlank() || compatAddress.isBlank() || !FINGERPRINT.matches(fingerprint)) null
-                else ActiveBinding(namespace, serverId, boundAt, fingerprint, compatAddress)
+                if (boundAt.isBlank() || compatAddress.isBlank() || !FINGERPRINT.matches(fingerprint)) {
+                    null
+                } else {
+                    ActiveBinding(namespace, serverId, boundAt, fingerprint, compatAddress)
+                }
             }
         } catch (_: Exception) {
             null
@@ -57,6 +63,7 @@ class IdentityBindingSnapshotStore(
             // 快照残留时仍会因身份/命名空间校验 fail-closed，不把删除失败当作可用快照。
         }
     }
+
     private companion object {
         const val FORMAT_VERSION = 1
         val FINGERPRINT = Regex("[0-9a-f]{64}")

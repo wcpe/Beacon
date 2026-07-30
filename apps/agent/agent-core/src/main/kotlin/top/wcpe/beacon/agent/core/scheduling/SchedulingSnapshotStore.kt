@@ -1,8 +1,8 @@
 package top.wcpe.beacon.agent.core.scheduling
 
 import top.wcpe.beacon.agent.core.client.CandidateEntry
-import top.wcpe.beacon.agent.core.client.LobbyCandidates
 import top.wcpe.beacon.agent.core.client.JsonTree
+import top.wcpe.beacon.agent.core.client.LobbyCandidates
 import top.wcpe.beacon.agent.core.filetree.AtomicFileWriter
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.io.File

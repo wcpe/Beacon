@@ -1,11 +1,11 @@
 package top.wcpe.beacon.agent.core.lifecycle
 
-import java.time.Instant
-import java.time.format.DateTimeFormatter
 import top.wcpe.beacon.agent.api.ServiceInstance
 import top.wcpe.beacon.agent.core.proxy.ManagedDirectorySnapshot
 import top.wcpe.beacon.agent.core.proxy.ManagedHealthFactState
 import top.wcpe.beacon.agent.core.proxy.ManagedServerHealth
+import java.time.Instant
+import java.time.format.DateTimeFormatter
 
 /** BC 受管目录本地查询的纯文本渲染；只消费一次已捕获的不可变快照。 */
 object BcDirectoryCommandText {
@@ -37,7 +37,10 @@ object BcDirectoryCommandText {
         )
     }
 
-    fun serversLines(snapshot: ManagedDirectorySnapshot, rawPage: String?): List<String> {
+    fun serversLines(
+        snapshot: ManagedDirectorySnapshot,
+        rawPage: String?,
+    ): List<String> {
         val page = rawPage?.toIntOrNull()
         if (rawPage != null && (page == null || page < 1)) {
             return listOf("页码必须是大于等于 1 的整数", "用法：/beacon servers [页码]")
@@ -61,7 +64,10 @@ object BcDirectoryCommandText {
         }
     }
 
-    fun serverLines(snapshot: ManagedDirectorySnapshot, rawServerId: String?): List<String> {
+    fun serverLines(
+        snapshot: ManagedDirectorySnapshot,
+        rawServerId: String?,
+    ): List<String> {
         if (!synced(snapshot)) return listOf("受管目录尚未完成首次同步，暂不可查询单服详情")
         val serverId = rawServerId?.trim().orEmpty()
         if (serverId.isEmpty()) return listOf("serverId 不能为空", "用法：/beacon server <serverId>")
@@ -96,14 +102,20 @@ object BcDirectoryCommandText {
         )
     }
 
-    private fun ownership(entry: ServiceInstance, snapshot: ManagedDirectorySnapshot): String =
+    private fun ownership(
+        entry: ServiceInstance,
+        snapshot: ManagedDirectorySnapshot,
+    ): String =
         when {
             entry.serverId() in snapshot.lobbyMemberIds -> "全局大厅"
             entry.group().isNotBlank() && entry.zone().isNotBlank() -> "${field(entry.group())}/${field(entry.zone())}"
             else -> "未分配"
         }
 
-    private fun detailOwnership(entry: ServiceInstance, snapshot: ManagedDirectorySnapshot): String =
+    private fun detailOwnership(
+        entry: ServiceInstance,
+        snapshot: ManagedDirectorySnapshot,
+    ): String =
         when (ownership(entry, snapshot)) {
             "全局大厅" -> "全局大厅"
             "未分配" -> "未分配"

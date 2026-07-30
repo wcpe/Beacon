@@ -19,8 +19,8 @@ import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
-import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
 import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
@@ -29,8 +29,8 @@ import top.wcpe.beacon.agent.core.lifecycle.BootstrapRuntime
 import top.wcpe.beacon.agent.core.messaging.MessagingRuntime
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
-import java.util.UUID
 import java.io.File
+import java.util.UUID
 
 /**
  * Bukkit 子服侧 Beacon agent 插件主类（object + @Awake，不继承 JavaPlugin）。
@@ -170,44 +170,44 @@ object BeaconAgentBukkit : Plugin() {
     ) {
         val assembled =
             AgentAssembly.assemble(
-                    identity = identity,
-                    settings = settings,
-                    // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
-                    rawAdapter = adapter,
-                    transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    codec = codec,
-                    store = store,
-                    effectiveConfigView = view,
-                    // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
-                    streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
-                    blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    // 运行指标供给（FR-32 / FR-144）：内存 / CPU 现采，在线 / TPS 取自主线程原子埋点（不在采样线程调 Bukkit API）。
-                    metricsProvider = { BukkitMetricsCollector.sample(instrumentation.currentTps(), instrumentation.onlineCount()) },
-                    // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
-                    // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
-                    selfPluginDirNames = setOf("BeaconAgent"),
-                    authorityInvalidated = {
-                        snapshots.invalidate()
-                        stopActiveRuntime()
-                    },
-                )
-            lifecycle = assembled.lifecycle
-            // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
-            messagingRuntime = assembled.messagingRuntime
-            assembled.lifecycle.onRegistered { snapshots.write(identity, binding) }
-            assembled.lifecycle.onRegistered { instrumentation.start() }
+                identity = identity,
+                settings = settings,
+                // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
+                rawAdapter = adapter,
+                transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                codec = codec,
+                store = store,
+                effectiveConfigView = view,
+                // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
+                streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
+                blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                // 运行指标供给（FR-32 / FR-144）：内存 / CPU 现采，在线 / TPS 取自主线程原子埋点（不在采样线程调 Bukkit API）。
+                metricsProvider = { BukkitMetricsCollector.sample(instrumentation.currentTps(), instrumentation.onlineCount()) },
+                // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+                // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+                selfPluginDirNames = setOf("BeaconAgent"),
+                authorityInvalidated = {
+                    snapshots.invalidate()
+                    stopActiveRuntime()
+                },
+            )
+        lifecycle = assembled.lifecycle
+        // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
+        messagingRuntime = assembled.messagingRuntime
+        assembled.lifecycle.onRegistered { snapshots.write(identity, binding) }
+        assembled.lifecycle.onRegistered { instrumentation.start() }
 
-            // 对外注册门面，供同进程业务插件读取。
-            BeaconAgentProvider.register(assembled.beaconAgent)
+        // 对外注册门面，供同进程业务插件读取。
+        BeaconAgentProvider.register(assembled.beaconAgent)
 
-            // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
-            BeaconAgentCommand.register(assembled.lifecycle, adapter)
+        // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
+        BeaconAgentCommand.register(assembled.lifecycle, adapter)
 
-            // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
-            assembled.lifecycle.enableMetricsSampling()
+        // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
+        assembled.lifecycle.enableMetricsSampling()
 
-            // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
+        // 先点亮快照再异步接入，不阻塞主线程，不阻断玩家进服。
         assembled.lifecycle.bootstrapWithSnapshotThenConnect()
     }
 

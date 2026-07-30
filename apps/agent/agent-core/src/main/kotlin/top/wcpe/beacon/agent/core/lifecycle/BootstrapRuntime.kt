@@ -104,7 +104,10 @@ class BootstrapRuntime(
         onActive(activeIdentity, binding)
     }
 
-    private fun sameAuthorityBinding(left: ActiveBinding, right: ActiveBinding): Boolean =
+    private fun sameAuthorityBinding(
+        left: ActiveBinding,
+        right: ActiveBinding,
+    ): Boolean =
         left.namespace == right.namespace &&
             left.serverId == right.serverId &&
             left.boundAt == right.boundAt &&

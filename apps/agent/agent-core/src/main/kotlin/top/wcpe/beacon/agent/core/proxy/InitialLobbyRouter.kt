@@ -47,11 +47,12 @@ class InitialLobbyRouter(
         if (latestLobbySnapshot == null) directory.lobby else ManagedLobbySnapshot(null, false, emptyList(), NO_SNAPSHOT)
 
     private fun top.wcpe.beacon.agent.core.client.LobbyCandidates.toManagedLobby(): ManagedLobbySnapshot {
-        val reason = when {
-            candidates.isNotEmpty() -> null
-            !ready -> NOT_READY
-            else -> NO_CANDIDATE
-        }
+        val reason =
+            when {
+                candidates.isNotEmpty() -> null
+                !ready -> NOT_READY
+                else -> NO_CANDIDATE
+            }
         return ManagedLobbySnapshot(clusterId, ready, candidates, reason)
     }
 

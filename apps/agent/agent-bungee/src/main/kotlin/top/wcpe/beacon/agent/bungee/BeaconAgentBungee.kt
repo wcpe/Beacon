@@ -1,5 +1,6 @@
 package top.wcpe.beacon.agent.bungee
 
+import net.md_5.bungee.api.ProxyServer
 import taboolib.common.LifeCycle
 import taboolib.common.env.RuntimeDependencies
 import taboolib.common.env.RuntimeDependency
@@ -19,9 +20,9 @@ import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.api.mapDiscoveryResult
-import top.wcpe.beacon.agent.core.client.DiscoveryFilters
 import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.DiscoveryFilters
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
 import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
@@ -39,10 +40,9 @@ import top.wcpe.beacon.agent.core.proxy.ProxyServerDirectorySyncer
 import top.wcpe.beacon.agent.core.settings.AgentBootstrap
 import top.wcpe.beacon.agent.core.settings.AgentSettings
 import top.wcpe.beacon.agent.core.settings.EnvOverridingConfigReader
-import java.util.UUID
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
-import net.md_5.bungee.api.ProxyServer
 
 /**
  * BungeeCord 代理侧 Beacon agent 插件主类（object + @Awake，不继承 Plugin 基类外的内容）。

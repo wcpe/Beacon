@@ -154,15 +154,18 @@ class BeaconApiClientV2RegisterTest {
     fun `BC 注册上报全部 listener 并保持 ordinal 顺序`() {
         val codec = CapturingCodec()
         val transport = ScriptedTransport(ArrayDeque(listOf(HttpResponse(202, "v2-pending"))))
-        val identity = identity().copy(
-            role = "bungee",
-            endpointReport = EndpointReport(
-                proxyListeners = listOf(
-                    ProxyListenerEndpoint("127.0.0.1", 25577, 1),
-                    ProxyListenerEndpoint("0.0.0.0", 25565, 0),
-                ),
-            ),
-        )
+        val identity =
+            identity().copy(
+                role = "bungee",
+                endpointReport =
+                    EndpointReport(
+                        proxyListeners =
+                            listOf(
+                                ProxyListenerEndpoint("127.0.0.1", 25577, 1),
+                                ProxyListenerEndpoint("0.0.0.0", 25565, 0),
+                            ),
+                    ),
+            )
 
         BeaconApiClient(transport, codec, settings()).register(identity)
 

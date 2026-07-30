@@ -91,7 +91,13 @@ class DiscoveryViewTest {
                     mapOf(
                         "instances" to
                             listOf(
-                                mapOf("serverId" to "lobby-1", "role" to "bukkit", "status" to "online", "zoneDefaultEntry" to true, "lobbyClusterMember" to true),
+                                mapOf(
+                                    "serverId" to "lobby-1",
+                                    "role" to "bukkit",
+                                    "status" to "online",
+                                    "zoneDefaultEntry" to true,
+                                    "lobbyClusterMember" to true,
+                                ),
                                 mapOf("serverId" to "lobby-2", "role" to "bukkit", "status" to "online"),
                             ),
                     )

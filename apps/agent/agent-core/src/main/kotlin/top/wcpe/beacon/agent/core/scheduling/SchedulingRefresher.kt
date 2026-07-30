@@ -89,32 +89,33 @@ class SchedulingRefresher(
     /** 立即刷新一帧候选并在成功持久化后发布；供 BC 目录重同步串行复用。 */
     fun refreshNow(): Boolean = refreshOnce()
 
-    private fun refreshOnce(): Boolean = refreshLock.withLock {
-        when (val outcome = apiClient.scheduleCandidates(identity)) {
-            is SchedCandidatesOutcome.Success -> {
-                val snap = outcome.candidates.toSnapshot(now())
-                if (!persist(snap)) {
-                    return false
+    private fun refreshOnce(): Boolean =
+        refreshLock.withLock {
+            when (val outcome = apiClient.scheduleCandidates(identity)) {
+                is SchedCandidatesOutcome.Success -> {
+                    val snap = outcome.candidates.toSnapshot(now())
+                    if (!persist(snap)) {
+                        return false
+                    }
+                    cache.set(snap, live = true)
+                    if (!healthy) {
+                        healthy = true
+                        adapter.info("调度候选刷新已恢复")
+                    }
+                    drainReports()
+                    true
                 }
-                cache.set(snap, live = true)
-                if (!healthy) {
-                    healthy = true
-                    adapter.info("调度候选刷新已恢复")
-                }
-                drainReports()
-                true
-            }
 
-            is SchedCandidatesOutcome.Failed -> {
-                cache.markStale()
-                if (healthy) {
-                    healthy = false
-                    adapter.warn("拉取调度候选失败（${outcome.reason}），按本地快照 fail-static 降级；后续同类失败不再刷屏")
+                is SchedCandidatesOutcome.Failed -> {
+                    cache.markStale()
+                    if (healthy) {
+                        healthy = false
+                        adapter.warn("拉取调度候选失败（${outcome.reason}），按本地快照 fail-static 降级；后续同类失败不再刷屏")
+                    }
+                    false
                 }
-                false
             }
         }
-    }
 
     /** 原子落盘候选快照；失败仅 WARN、保留内存快照（fail-static，绝不抛到调度器）。 */
     private fun persist(snapshot: CandidateSnapshot): Boolean {

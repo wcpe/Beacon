@@ -1,7 +1,7 @@
 package top.wcpe.beacon.agent.core.proxy
 
-import top.wcpe.beacon.agent.core.client.CandidateEntry
 import top.wcpe.beacon.agent.api.ServiceInstance
+import top.wcpe.beacon.agent.core.client.CandidateEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -188,9 +188,19 @@ class InitialLobbyRouterTest {
             entries = emptyList(),
             byServerId = managedIds.associateWith { serverId -> ServiceInstance(serverId, "bukkit", "", "", "", "", "online", 0, 0, 0) },
             lobbyMemberIds = lobbyMembers,
-            lobby = ManagedLobbySnapshot(clusterId = 12L, ready = ready, candidates = candidates, reason = if (ready) null else "not_ready"),
+            lobby =
+                ManagedLobbySnapshot(
+                    clusterId = 12L,
+                    ready = ready,
+                    candidates = candidates,
+                    reason = if (ready) null else "not_ready",
+                ),
         )
 
-    private fun candidate(serverId: String, score: Int, online: Int, maxOnline: Int = 300): CandidateEntry =
-        CandidateEntry(serverId, score, "healthy", true, online, maxOnline)
+    private fun candidate(
+        serverId: String,
+        score: Int,
+        online: Int,
+        maxOnline: Int = 300,
+    ): CandidateEntry = CandidateEntry(serverId, score, "healthy", true, online, maxOnline)
 }

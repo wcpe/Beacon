@@ -1,13 +1,13 @@
 package top.wcpe.beacon.agent.core.lifecycle
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import top.wcpe.beacon.agent.api.ServiceInstance
 import top.wcpe.beacon.agent.core.client.CandidateEntry
 import top.wcpe.beacon.agent.core.proxy.ManagedDirectorySnapshot
-import top.wcpe.beacon.agent.core.proxy.ManagedServerHealth
 import top.wcpe.beacon.agent.core.proxy.ManagedLobbySnapshot
+import top.wcpe.beacon.agent.core.proxy.ManagedServerHealth
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class BcDirectoryCommandTextTest {
     @Test
@@ -26,7 +26,10 @@ class BcDirectoryCommandTextTest {
 
         assertTrue(lines.first().contains("第 1/2 页，共 12 台，每页 10 台"))
         val ids = lines.drop(1).filter { it.startsWith("  ") }.map { it.substringAfter("  ").substringBefore("｜") }
-        assertEquals(listOf("lobby-a", "lobby-z", "zone-a", "zone-b", "extra-1", "extra-2", "extra-3", "extra-4", "extra-5", "extra-6"), ids)
+        assertEquals(
+            listOf("lobby-a", "lobby-z", "zone-a", "zone-b", "extra-1", "extra-2", "extra-3", "extra-4", "extra-5", "extra-6"),
+            ids,
+        )
     }
 
     @Test
@@ -113,6 +116,9 @@ class BcDirectoryCommandTextTest {
         )
     }
 
-    private fun server(serverId: String, group: String = "", zone: String = ""): ServiceInstance =
-        ServiceInstance(serverId, "bukkit", group, zone, "127.0.0.1:25565", "1.0.0", "online", 1, 100, 1)
+    private fun server(
+        serverId: String,
+        group: String = "",
+        zone: String = "",
+    ): ServiceInstance = ServiceInstance(serverId, "bukkit", group, zone, "127.0.0.1:25565", "1.0.0", "online", 1, 100, 1)
 }

@@ -191,9 +191,10 @@ class BootstrapRuntimeTest {
                         else -> mapOf("status" to json)
                     }
             }
-        val transport = object : HttpTransport {
-            override fun execute(request: HttpRequest): HttpResponse = responseProvider()
-        }
+        val transport =
+            object : HttpTransport {
+                override fun execute(request: HttpRequest): HttpResponse = responseProvider()
+            }
         val identity =
             AgentIdentity(
                 namespace = "",
@@ -214,7 +215,10 @@ class BootstrapRuntimeTest {
             adapter = adapter,
             apiClient = BeaconApiClient(transport, codec, settings()),
             snapshots = IdentityBindingSnapshotStore(snapshotFile.apply { writeText("snapshot") }, codec),
-            onActive = { _, _ -> activeCalls.incrementAndGet(); onActive() },
+            onActive = { _, _ ->
+                activeCalls.incrementAndGet()
+                onActive()
+            },
             onTerminal = { terminated.countDown() },
         )
     }

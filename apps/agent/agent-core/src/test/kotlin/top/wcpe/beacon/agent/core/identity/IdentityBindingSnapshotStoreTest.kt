@@ -1,11 +1,11 @@
 package top.wcpe.beacon.agent.core.identity
 
+import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import top.wcpe.beacon.agent.core.client.ActiveBinding
 
 class IdentityBindingSnapshotStoreTest {
     @Test
@@ -78,15 +78,17 @@ class IdentityBindingSnapshotStoreTest {
 
         override fun decode(json: String): Any? =
             buildMap {
-                putAll(mapOf(
-                "formatVersion" to 1,
-                "identityId" to "identity-a",
-                "kind" to "bukkit",
-                "namespace" to "prod",
-                "serverId" to "lobby-1",
-                "boundAt" to "2026-07-28T12:00:00Z",
-                "bindingFingerprint" to "a".repeat(64),
-                ))
+                putAll(
+                    mapOf(
+                        "formatVersion" to 1,
+                        "identityId" to "identity-a",
+                        "kind" to "bukkit",
+                        "namespace" to "prod",
+                        "serverId" to "lobby-1",
+                        "boundAt" to "2026-07-28T12:00:00Z",
+                        "bindingFingerprint" to "a".repeat(64),
+                    ),
+                )
                 if (includeAddress) put("address", "203.0.113.10:25565")
             }
     }

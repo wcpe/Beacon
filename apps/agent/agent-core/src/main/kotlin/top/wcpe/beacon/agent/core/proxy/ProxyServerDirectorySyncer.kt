@@ -2,8 +2,8 @@ package top.wcpe.beacon.agent.core.proxy
 
 import top.wcpe.beacon.agent.api.ServiceInstance
 import top.wcpe.beacon.agent.core.client.DiscoveryFetchResult
-import top.wcpe.beacon.agent.core.scheduling.CandidateSnapshot
 import top.wcpe.beacon.agent.core.log.LogRedactor
+import top.wcpe.beacon.agent.core.scheduling.CandidateSnapshot
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -32,19 +32,20 @@ class ProxyServerDirectorySyncer(
     fun snapshot(): ManagedDirectorySnapshot = published
 
     /** 周期同步与命令同步共用的串行入口；仅成功完整发布时返回 true。 */
-    fun syncOnce(): Boolean = syncLock.withLock {
-        when (val result = discover()) {
-            is DiscoveryFetchResult.Success -> {
-                syncSuccessfulSnapshot(result.instances)
-                true
-            }
+    fun syncOnce(): Boolean =
+        syncLock.withLock {
+            when (val result = discover()) {
+                is DiscoveryFetchResult.Success -> {
+                    syncSuccessfulSnapshot(result.instances)
+                    true
+                }
 
-            is DiscoveryFetchResult.Failed -> {
-                warn(LogRedactor.redact("发现 Beacon 子服失败，保留现有代理目录：${result.reason}"))
-                false
+                is DiscoveryFetchResult.Failed -> {
+                    warn(LogRedactor.redact("发现 Beacon 子服失败，保留现有代理目录：${result.reason}"))
+                    false
+                }
             }
         }
-    }
 
     private fun syncSuccessfulSnapshot(discovered: List<ServiceInstance>) {
         val instances = discovered.filter { it.role() == ROLE_BUKKIT && it.status() in MANAGED_STATUSES }
@@ -105,11 +106,12 @@ class ProxyServerDirectorySyncer(
     private fun currentLobby(scheduling: CandidateSnapshot?): ManagedLobbySnapshot {
         val lobby = scheduling?.lobby ?: return ManagedLobbySnapshot(null, false, emptyList(), NO_SNAPSHOT)
         val candidates = lobby.candidates.toList()
-        val reason = when {
-            candidates.isNotEmpty() -> null
-            !lobby.ready -> NOT_READY
-            else -> NO_CANDIDATE
-        }
+        val reason =
+            when {
+                candidates.isNotEmpty() -> null
+                !lobby.ready -> NOT_READY
+                else -> NO_CANDIDATE
+            }
         return ManagedLobbySnapshot(lobby.clusterId, lobby.ready, candidates, reason)
     }
 

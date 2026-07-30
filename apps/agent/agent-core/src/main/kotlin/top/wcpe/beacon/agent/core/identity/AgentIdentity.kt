@@ -35,7 +35,11 @@ data class AgentIdentity(
     val endpointReport: EndpointReport = EndpointReport(),
 ) {
     /** 写入控制面确认的运行期绑定。 */
-    fun bind(namespace: String, serverId: String, compatAddress: String = address) {
+    fun bind(
+        namespace: String,
+        serverId: String,
+        compatAddress: String = address,
+    ) {
         this.namespace = namespace
         this.serverId = serverId
         this.address = compatAddress
