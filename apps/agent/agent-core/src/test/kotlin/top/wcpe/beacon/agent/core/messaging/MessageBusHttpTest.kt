@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
  */
 class MessageBusHttpTest {
     private val settings =
-        MessagingSettings(enabled = true, rpcTimeoutMs = 1000, streamMaxLen = 0, consumerName = "t")
+        MessagingSettings(enabled = true, rpcTimeoutMs = 1000)
 
     /** 捕获出站 raw 的假 transport；入站不经此（HTTP 模型由协调器直调 deliverInbound）。 */
     private class CapturingTransport : MessageTransport {

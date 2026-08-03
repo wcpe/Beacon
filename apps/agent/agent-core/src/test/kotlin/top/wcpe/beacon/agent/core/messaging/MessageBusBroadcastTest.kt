@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
  */
 class MessageBusBroadcastTest {
     private val settings =
-        MessagingSettings(enabled = true, rpcTimeoutMs = 1000, streamMaxLen = 0, consumerName = "t")
+        MessagingSettings(enabled = true, rpcTimeoutMs = 1000)
 
     /** 捕获 publishTopic 出站 raw 的假 transport；入站不经此。 */
     private class CapturingBroadcastTransport : MessageTransport {

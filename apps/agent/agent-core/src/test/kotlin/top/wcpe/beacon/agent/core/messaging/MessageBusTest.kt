@@ -16,8 +16,6 @@ class MessageBusTest {
         MessagingSettings(
             enabled = true,
             rpcTimeoutMs = 1000,
-            streamMaxLen = 10000,
-            consumerName = "test",
         )
 
     private fun bus(

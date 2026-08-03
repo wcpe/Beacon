@@ -39,8 +39,6 @@ data class AgentSettings(
         MessagingSettings(
             enabled = false,
             rpcTimeoutMs = 5000,
-            streamMaxLen = 10000,
-            consumerName = "default",
         ),
     // BC 代理路由参数（FR-48）：默认空（未配 → 默认服走兜底首个在线子服）；让既有测试 / bukkit 无需显式构造。
     val proxy: ProxySettings = ProxySettings(homeGroup = "", homeZone = ""),

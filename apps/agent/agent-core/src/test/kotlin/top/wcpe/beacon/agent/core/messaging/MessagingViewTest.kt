@@ -11,7 +11,7 @@ import kotlin.test.assertTrue
 
 /** MessagingView（Java 门面适配）与 DisabledMessaging、MessagingHolder、MessagingModule 单测。 */
 class MessagingViewTest {
-    private val settings = MessagingSettings(enabled = true, rpcTimeoutMs = 1000, streamMaxLen = 1000, consumerName = "t")
+    private val settings = MessagingSettings(enabled = true, rpcTimeoutMs = 1000)
 
     @Test
     fun `DisabledMessaging isAvailable 为 false 且发送抛异常`() {

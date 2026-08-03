@@ -15,7 +15,7 @@ import java.net.InetSocketAddress
  * - [PlayerDisconnectEvent]：断开 → onDisconnect（用同 connId 发 close 事件）。
  *
  * 埋点零成本（tracker 内仅 map + UUID 生成，无阻塞 IO），可在 BC 事件线程直接调用，绝不阻塞 MC/BC 主线程。
- * 与 [BungeeRosterListener]（FR-31 名册）事件源同类但职责不同（连接明细采集 vs 玩家寻址名册），各自独立。
+ * 连接明细采集与玩家寻址名册各自独立。
  *
  * 注意：本监听需真机（BungeeCord）验证；本地无法跑事件链路。
  */

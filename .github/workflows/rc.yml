@@ -1,4 +1,4 @@
-# 不可变 RC：全部质量门与真实 MySQL/Redis 门通过后，才允许一次构建候选资产。
+# 不可变 RC：全部质量门与真实 MySQL 门通过后，才允许一次构建候选资产。
 name: Release Candidate
 
 on:
@@ -148,22 +148,9 @@ jobs:
           pnpm run build
 
   agent-gate:
-    name: Agent 与真实 Redis 门
+    name: Agent 门
     needs: [prepare]
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    env:
-      BEACON_REDIS_TEST_HOST: 127.0.0.1
-      BEACON_REDIS_TEST_PORT: "6379"
     steps:
       - uses: actions/checkout@v4
         with:

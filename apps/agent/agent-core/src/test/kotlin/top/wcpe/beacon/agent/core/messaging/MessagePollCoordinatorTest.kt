@@ -137,7 +137,7 @@ class MessagePollCoordinatorTest {
             transport = NoopMessageTransport(),
             codec = codec,
             selfServerId = "lobby-1",
-            settings = MessagingSettings(enabled = true, rpcTimeoutMs = 1000, streamMaxLen = 0, consumerName = "t"),
+            settings = MessagingSettings(enabled = true, rpcTimeoutMs = 1000),
         ).also { it.start() }
 
     @Test

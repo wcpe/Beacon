@@ -137,9 +137,9 @@ jobs:
       - name: 运行 Agent 格式、静态检查与测试
         run: ./apps/agent/gradlew -p apps/agent ktlintCheck detekt test --no-daemon
 
-  # 使用真实 MySQL 与 Redis 验证控制面和 Agent 的集成路径。
+  # 使用真实 MySQL 验证控制面和 Agent 的集成路径。
   integration:
-    name: 真实 MySQL 与 Redis 集成测试
+    name: 真实 MySQL 集成测试
     runs-on: ubuntu-latest
     services:
       mysql:
@@ -154,19 +154,8 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
     env:
       CGO_ENABLED: "1"
-      BEACON_REDIS_TEST_HOST: 127.0.0.1
-      BEACON_REDIS_TEST_PORT: "6379"
     steps:
       - uses: actions/checkout@v4
       - name: 安装 Go
@@ -197,13 +186,6 @@ jobs:
           ./apps/server/internal/server
           ./apps/server/internal/service
           -count=1
-      - name: 运行真实 Redis 集成测试
-        run: ./apps/agent/gradlew -p apps/agent test --no-daemon
-      - name: 确认真实 Redis 测试未跳过
-        run: >-
-          python scripts/release/assert_test_gate.py junit
-          --glob 'apps/agent/**/build/test-results/test/TEST-*.xml'
-          --expected-class 'top.wcpe.beacon.agent.adapters.messaging.RedisMessageTransportIntegrationTest'
 
   # master 的四个质量任务全部成功后，按原生平台运行现有一键打包入口。
   package:

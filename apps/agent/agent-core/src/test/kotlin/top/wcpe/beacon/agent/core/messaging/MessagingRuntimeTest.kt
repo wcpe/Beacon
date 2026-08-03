@@ -325,8 +325,7 @@ class MessagingRuntimeTest {
             ),
         )
 
-    private fun messagingSettings(): MessagingSettings =
-        MessagingSettings(enabled = true, rpcTimeoutMs = 1000, streamMaxLen = 0, consumerName = "test")
+    private fun messagingSettings(): MessagingSettings = MessagingSettings(enabled = true, rpcTimeoutMs = 1000)
 
     private fun identity(): AgentIdentity =
         AgentIdentity(

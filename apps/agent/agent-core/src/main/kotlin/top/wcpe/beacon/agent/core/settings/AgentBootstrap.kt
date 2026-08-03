@@ -44,8 +44,6 @@ object AgentBootstrap {
                     // 跨服消息模块默认关（ADR-0016 决策 6）；Redis 连接由控制面下发，不在本地。
                     enabled = reader.boolean("messaging.enabled", false),
                     rpcTimeoutMs = reader.long("messaging.rpc-timeout-ms", 5000),
-                    streamMaxLen = reader.long("messaging.stream-max-len", 10000),
-                    consumerName = reader.string("messaging.consumer-name", "default"),
                 ),
             proxy =
                 ProxySettings(
@@ -73,7 +71,6 @@ object AgentBootstrap {
      *                     非从 config.yml 读（构建版本非运维可配）；默认空兼容旧调用点。
      */
     fun readIdentity(
-        reader: ConfigReader,
         role: String,
         agentVersion: String = "",
     ): AgentIdentity {

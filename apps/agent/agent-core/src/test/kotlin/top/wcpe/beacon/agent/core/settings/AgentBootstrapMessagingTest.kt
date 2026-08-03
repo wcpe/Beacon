@@ -12,8 +12,6 @@ class AgentBootstrapMessagingTest {
         val settings = AgentBootstrap.readSettings(MapConfigReader(emptyMap()))
         assertFalse(settings.messaging.enabled)
         assertEquals(5000, settings.messaging.rpcTimeoutMs)
-        assertEquals(10000, settings.messaging.streamMaxLen)
-        assertEquals("default", settings.messaging.consumerName)
     }
 
     @Test
@@ -24,15 +22,11 @@ class AgentBootstrapMessagingTest {
                     "beacon.endpoints" to listOf("http://127.0.0.1:8848"),
                     "messaging.enabled" to true,
                     "messaging.rpc-timeout-ms" to 3000L,
-                    "messaging.stream-max-len" to 5000L,
-                    "messaging.consumer-name" to "node-A",
                 ),
             )
         val settings = AgentBootstrap.readSettings(reader)
         assertTrue(settings.messaging.enabled)
         assertEquals(3000, settings.messaging.rpcTimeoutMs)
-        assertEquals(5000, settings.messaging.streamMaxLen)
-        assertEquals("node-A", settings.messaging.consumerName)
     }
 
     /** 测试用 ConfigReader：从 map 取值，缺失返回默认。 */
