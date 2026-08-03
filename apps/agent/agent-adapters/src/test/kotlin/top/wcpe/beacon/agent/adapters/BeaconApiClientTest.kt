@@ -6,6 +6,10 @@ import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.HeartbeatOutcome
 import top.wcpe.beacon.agent.core.client.PollResult
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
+import top.wcpe.beacon.agent.core.client.discover
+import top.wcpe.beacon.agent.core.client.heartbeat
+import top.wcpe.beacon.agent.core.client.pollEffective
+import top.wcpe.beacon.agent.core.client.register
 import top.wcpe.beacon.agent.core.transport.HttpResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals

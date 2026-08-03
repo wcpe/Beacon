@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.core.lifecycle
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.MetricsReportOutcome
 import top.wcpe.beacon.agent.core.client.SelfHealth
+import top.wcpe.beacon.agent.core.client.reportMetricsBatch
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.metrics.ProxyMetrics
 import top.wcpe.beacon.agent.core.metrics.RuntimeMetrics

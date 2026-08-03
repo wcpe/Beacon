@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.lifecycle
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.fetchFileContent
 import top.wcpe.beacon.agent.core.config.ConfigApplier
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.filetree.AppliedFileManifestStore
@@ -95,7 +96,7 @@ class AgentLifecycleResyncTest {
                 store,
                 applier,
                 null,
-                fileTreeApplier = fileTreeApplier,
+                hooks = AgentLifecycleHooks(fileTreeApplier = fileTreeApplier),
             )
         // 先接入控制面置 running=true（resync 仅在运行期生效）；文件树长轮询循环此后续杯。
         lifecycle.bootstrapWithSnapshotThenConnect()
@@ -133,7 +134,7 @@ class AgentLifecycleResyncTest {
                 store,
                 applier,
                 null,
-                fileTreeApplier = null,
+                hooks = AgentLifecycleHooks(fileTreeApplier = null),
             )
 
         val triggered = lifecycle.forceSyncFileTreeNow()
@@ -294,15 +295,14 @@ private object JsonTreeReader {
                 val key = parseString()
                 skipWs()
                 i++ // :
-                val value = parseValue()
-                map[key] = value
+                map[key] = parseValue()
                 skipWs()
-                if (s[i] == ',') {
-                    i++
-                    continue
+                // 非逗号即闭括号：消费闭括号并结束；否则消费逗号进入下一项。
+                if (s[i] != ',') {
+                    i++ // }
+                    break
                 }
-                i++ // }
-                break
+                i++ // ,
             }
             return map
         }
@@ -318,12 +318,12 @@ private object JsonTreeReader {
             while (true) {
                 list.add(parseValue())
                 skipWs()
-                if (s[i] == ',') {
-                    i++
-                    continue
+                // 非逗号即闭括号：消费闭括号并结束；否则消费逗号进入下一项。
+                if (s[i] != ',') {
+                    i++ // ]
+                    break
                 }
-                i++ // ]
-                break
+                i++ // ,
             }
             return list
         }
@@ -351,10 +351,12 @@ private object JsonTreeReader {
 
         private fun parseNumber(): Any {
             val start = i
-            while (i < s.length && (s[i].isDigit() || s[i] == '-' || s[i] == '.')) i++
+            while (i < s.length && isNumberChar(s[i])) i++
             val text = s.substring(start, i)
             return if (text.contains('.')) text.toDouble() else text.toLong()
         }
+
+        private fun isNumberChar(c: Char): Boolean = c.isDigit() || c == '-' || c == '.'
 
         private fun skipWs() {
             while (i < s.length && s[i].isWhitespace()) i++

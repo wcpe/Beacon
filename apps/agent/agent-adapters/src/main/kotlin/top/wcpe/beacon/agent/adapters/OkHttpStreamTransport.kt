@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.adapters
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import top.wcpe.beacon.agent.core.stream.SseFrameParser
 import top.wcpe.beacon.agent.core.transport.StreamListener
 import top.wcpe.beacon.agent.core.transport.StreamRequest
@@ -47,36 +48,35 @@ class OkHttpStreamTransport(
         var closeError: Throwable? = null
         try {
             perCall.newCall(builder.get().build()).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    listener.onClosed(IllegalStateException("SSE 流非 200：${resp.code}"))
-                    return
-                }
-                val contentType = resp.header("Content-Type") ?: ""
-                if (!contentType.startsWith("text/event-stream")) {
-                    listener.onClosed(IllegalStateException("SSE 流 Content-Type 非 event-stream：$contentType"))
-                    return
-                }
-                listener.onOpen()
-
-                val source =
-                    resp.body?.source() ?: run {
-                        listener.onClosed(IllegalStateException("SSE 流响应体为空"))
-                        return
-                    }
-                val parser = SseFrameParser()
-                // 逐行读取直到流结束（服务端关闭 / 读超时 / 客户端取消 → readUtf8Line 返回 null 或抛异常）。
-                while (true) {
-                    val line = source.readUtf8Line() ?: break
-                    val event = parser.feed(line)
-                    if (event != null) {
-                        listener.onEvent(event)
-                    }
-                }
+                closeError = readSseStream(resp, listener)
             }
         } catch (e: Exception) {
             // 连接级异常（断线 / 读超时 / 取消）：作为断开原因上抛，由生命周期退避重连。
             closeError = e
         }
         listener.onClosed(closeError)
+    }
+
+    /** 读取 SSE 响应流并解析事件；返回非 null 表示流以异常收场（由调用方转 onClosed）。 */
+    private fun readSseStream(
+        resp: Response,
+        listener: StreamListener,
+    ): Throwable? {
+        if (!resp.isSuccessful) return IllegalStateException("SSE 流非 200：${resp.code}")
+        if (resp.body == null) return IllegalStateException("SSE 流响应体为空")
+        val contentType = resp.header("Content-Type") ?: ""
+        if (!contentType.startsWith("text/event-stream")) return IllegalStateException("SSE 流 Content-Type 非 event-stream：$contentType")
+        val source = resp.body!!.source()
+        listener.onOpen()
+        val parser = SseFrameParser()
+        // 逐行读取直到流结束（服务端关闭 / 读超时 / 客户端取消 → readUtf8Line 返回 null 或抛异常）。
+        while (true) {
+            val line = source.readUtf8Line() ?: break
+            val event = parser.feed(line)
+            if (event != null) {
+                listener.onEvent(event)
+            }
+        }
+        return null
     }
 }

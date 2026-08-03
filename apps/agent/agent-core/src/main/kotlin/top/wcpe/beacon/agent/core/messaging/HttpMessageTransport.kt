@@ -3,11 +3,12 @@ package top.wcpe.beacon.agent.core.messaging
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.MessageSendOutcome
 import top.wcpe.beacon.agent.core.client.OutboundMessage
+import top.wcpe.beacon.agent.core.client.sendMessage
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.transport.JsonCodec
 
 /**
- * 跨服消息 HTTP 中转传输（ADR-0063 取代 [RedisMessageTransport][top.wcpe.beacon.agent.adapters.messaging.RedisMessageTransport]）：
+ * 跨服消息 HTTP 中转传输（ADR-0063）：
  * 把 [MessageBus] 的出站原语映射为控制面 REST 上行。
  *
  * - 上行：sendToServer / sendReply / publishTopic → 解信封 → [BeaconApiClient.sendMessage]

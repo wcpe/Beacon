@@ -18,33 +18,12 @@ import taboolib.common.platform.function.severe as tabooSevere
 import taboolib.common.platform.function.warning as tabooWarning
 
 /**
- * BungeeCord 平台适配：调度走 TabooLib submit / submitAsync，事件派发走 API 监听器回调。
- *
- * 所有 HTTP / 文件 IO 经 runAsync / runAsyncDelayed 落异步线程，绝不阻塞主线程。
+ * BungeeCord 平台文件树 / 只读浏览能力的公共基类：把读 plugins 树（FR-39 / FR-58）与只读浏览
+ * （FR-109 / FR-164）这组同构的 FS 委托方法集中到基类，使 [BungeePlatformAdapter] 不再因接口实现数量超阈值。
+ * 各方法体仅委托 core 的 PluginsTreeReader / FsBrowseReader 做 FS 级路径安全，读取根统一取接口默认的
+ * [PlatformAdapter.pluginsBaseFolder]（= dataFolder 的父目录，由子类提供 dataFolder）。
  */
-class BungeePlatformAdapter(
-    private val effectiveConfigView: EffectiveConfigView,
-) : PlatformAdapter {
-    override fun runAsync(task: () -> Unit) {
-        submitAsync { task() }
-    }
-
-    override fun runAsyncDelayed(
-        delayMs: Long,
-        task: () -> Unit,
-    ) {
-        // TabooLib 调度延迟单位为 tick（20 tick/秒）；ms→tick 取整，至少 1 tick。
-        val ticks = (delayMs / 50).coerceAtLeast(1)
-        submit(async = true, delay = ticks) { task() }
-    }
-
-    override fun runSync(task: () -> Unit) {
-        // 代理端无 tick 主线程概念，TabooLib 统一抽象为非异步提交即可。
-        submit(async = false) { task() }
-    }
-
-    override fun dataFolder(): File = getDataFolder()
-
+abstract class BungeeFsBrowseSupport : PlatformAdapter {
     override fun readPluginsTree(): Map<String, ByteArray> {
         // 反向抓取（FR-39）：读真实 plugins 根（dataFolder 的父目录）整棵子树为相对路径→原始字节。
         // 委托 core 的 PluginsTreeReader 做 FS 级路径安全（Path 容纳 + 符号链接逃逸判定）；
@@ -90,6 +69,35 @@ class BungeePlatformAdapter(
         // 否则 preview 传来的清单 path（plugins/xxx、根配置如 bukkit.yml）会拼错根致读失败。
         return FsBrowseReader.readAsset(pluginsBaseFolder().parentFile ?: pluginsBaseFolder(), relPath, maxBytes)
     }
+}
+
+/**
+ * BungeeCord 平台适配：调度走 TabooLib submit / submitAsync，事件派发走 API 监听器回调。
+ *
+ * 所有 HTTP / 文件 IO 经 runAsync / runAsyncDelayed 落异步线程，绝不阻塞主线程。
+ */
+class BungeePlatformAdapter(
+    private val effectiveConfigView: EffectiveConfigView,
+) : BungeeFsBrowseSupport() {
+    override fun runAsync(task: () -> Unit) {
+        submitAsync { task() }
+    }
+
+    override fun runAsyncDelayed(
+        delayMs: Long,
+        task: () -> Unit,
+    ) {
+        // TabooLib 调度延迟单位为 tick（20 tick/秒）；ms→tick 取整，至少 1 tick。
+        val ticks = (delayMs / 50).coerceAtLeast(1)
+        submit(async = true, delay = ticks) { task() }
+    }
+
+    override fun runSync(task: () -> Unit) {
+        // 代理端无 tick 主线程概念，TabooLib 统一抽象为非异步提交即可。
+        submit(async = false) { task() }
+    }
+
+    override fun dataFolder(): File = getDataFolder()
 
     override fun publishConfigChanged(
         changed: Set<String>,

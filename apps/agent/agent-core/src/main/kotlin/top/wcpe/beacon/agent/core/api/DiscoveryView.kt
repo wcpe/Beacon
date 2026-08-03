@@ -9,6 +9,7 @@ import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.DiscoveryFetchResult
 import top.wcpe.beacon.agent.core.client.DiscoveryFilters
 import top.wcpe.beacon.agent.core.client.JsonTree
+import top.wcpe.beacon.agent.core.client.discover
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.messaging.RosterDirectory
 
@@ -75,14 +76,19 @@ class DiscoveryView(
         zone: String,
     ): Map<String, String> {
         val full = rosterDirectory.snapshot()
-        if (full.isEmpty()) {
-            return emptyMap()
-        }
+        if (full.isEmpty()) return emptyMap()
+        return filterRosterByZone(full, group, zone)
+    }
+
+    /** 名册按 zone 内可用 serverId 集过滤；zone 无可用子服时返空（名册不臆造 zone）。 */
+    private fun filterRosterByZone(
+        full: Map<String, String>,
+        group: String,
+        zone: String,
+    ): Map<String, String> {
         // 控制面权威：解出该 zone 的可用 serverId 集（zone 归属来自控制面 DB，ADR-0004）。
         val zoneServerIds = instancesInZone(group, zone).map { it.serverId() }.toSet()
-        if (zoneServerIds.isEmpty()) {
-            return emptyMap()
-        }
+        if (zoneServerIds.isEmpty()) return emptyMap()
         // 名册不臆造 zone：仅取 value 落在该 zone serverId 集内的条目。
         return full.filterValues { it in zoneServerIds }
     }

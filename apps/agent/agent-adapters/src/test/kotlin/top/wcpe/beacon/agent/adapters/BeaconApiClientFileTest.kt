@@ -4,6 +4,8 @@ import top.wcpe.beacon.agent.adapters.testutil.FakeHttpTransport
 import top.wcpe.beacon.agent.adapters.testutil.TestFixtures
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.FileManifestPollResult
+import top.wcpe.beacon.agent.core.client.fetchFileContent
+import top.wcpe.beacon.agent.core.client.pollFileManifest
 import top.wcpe.beacon.agent.core.transport.HttpResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals

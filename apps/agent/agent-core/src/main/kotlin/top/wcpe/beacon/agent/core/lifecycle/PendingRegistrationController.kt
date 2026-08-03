@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.core.lifecycle
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegistrationPollResult
+import top.wcpe.beacon.agent.core.client.pollRegistration
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.settings.AgentSettings

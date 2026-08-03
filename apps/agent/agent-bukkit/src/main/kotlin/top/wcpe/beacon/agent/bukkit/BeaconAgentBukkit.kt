@@ -18,8 +18,13 @@ import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
+import top.wcpe.beacon.agent.core.AssemblyHooks
+import top.wcpe.beacon.agent.core.ConfigContext
+import top.wcpe.beacon.agent.core.TransportConfig
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
+import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.register
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
@@ -88,6 +93,17 @@ object BeaconAgentBukkit : Plugin() {
     /** 跨服消息模块运行时（FR-149，HTTP 中转）；null 表示未装配。随注册自启，DISABLE 时 stop。 */
     private var messagingRuntime: MessagingRuntime? = null
 
+    /** startActiveRuntime 的稳定依赖组（enable 阶段装配一次，随每次 active 接入复用）。 */
+    private data class ActiveRuntimeDeps(
+        val settings: top.wcpe.beacon.agent.core.settings.AgentSettings,
+        val adapter: BukkitPlatformAdapter,
+        val codec: KotlinxJsonCodec,
+        val store: EffectiveConfigStore,
+        val view: EffectiveConfigView,
+        val instrumentation: BukkitTickInstrumentation,
+        val snapshots: IdentityBindingSnapshotStore,
+    )
+
     @Awake(LifeCycle.ENABLE)
     fun enable() {
         // 包一层环境变量覆盖（FR-33）：BEACON_AGENT_<点分路径大写、点/连字符转下划线> 优先于 config.yml。
@@ -98,7 +114,7 @@ object BeaconAgentBukkit : Plugin() {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
             // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
-                AgentBootstrap.readIdentity(reader, role = "bukkit", agentVersion = pluginVersion)
+                AgentBootstrap.readIdentity(role = "bukkit", agentVersion = pluginVersion)
                     .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
 
             // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
@@ -138,13 +154,7 @@ object BeaconAgentBukkit : Plugin() {
                         startActiveRuntime(
                             identity = activeIdentity,
                             binding = binding,
-                            settings = settings,
-                            adapter = adapter,
-                            codec = codec,
-                            store = store,
-                            view = view,
-                            instrumentation = instrumentation,
-                            snapshots = bindingSnapshot,
+                            deps = ActiveRuntimeDeps(settings, adapter, codec, store, view, instrumentation, bindingSnapshot),
                         )
                     },
                     onTerminal = {
@@ -160,49 +170,53 @@ object BeaconAgentBukkit : Plugin() {
     private fun startActiveRuntime(
         identity: top.wcpe.beacon.agent.core.identity.AgentIdentity,
         binding: top.wcpe.beacon.agent.core.client.ActiveBinding,
-        settings: top.wcpe.beacon.agent.core.settings.AgentSettings,
-        adapter: BukkitPlatformAdapter,
-        codec: KotlinxJsonCodec,
-        store: EffectiveConfigStore,
-        view: EffectiveConfigView,
-        instrumentation: BukkitTickInstrumentation,
-        snapshots: IdentityBindingSnapshotStore,
+        deps: ActiveRuntimeDeps,
     ) {
         val assembled =
             AgentAssembly.assemble(
                 identity = identity,
-                settings = settings,
+                settings = deps.settings,
                 // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
-                rawAdapter = adapter,
-                transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                codec = codec,
-                store = store,
-                effectiveConfigView = view,
-                // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
-                streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
-                blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                // 运行指标供给（FR-32 / FR-144）：内存 / CPU 现采，在线 / TPS 取自主线程原子埋点（不在采样线程调 Bukkit API）。
-                metricsProvider = { BukkitMetricsCollector.sample(instrumentation.currentTps(), instrumentation.onlineCount()) },
-                // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
-                // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
-                selfPluginDirNames = setOf("BeaconAgent"),
-                authorityInvalidated = {
-                    snapshots.invalidate()
-                    stopActiveRuntime()
-                },
+                rawAdapter = deps.adapter,
+                transport =
+                    TransportConfig(
+                        transport = OkHttpTransport(connectTimeoutMs = deps.settings.requestTimeoutMs),
+                        codec = deps.codec,
+                        // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
+                        streamTransport = OkHttpStreamTransport(connectTimeoutMs = deps.settings.requestTimeoutMs),
+                        // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
+                        blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = deps.settings.requestTimeoutMs),
+                    ),
+                config = ConfigContext(deps.store, deps.view),
+                hooks =
+                    AssemblyHooks(
+                        // 运行指标供给（FR-32 / FR-144）：内存 / CPU 现采，在线 / TPS 取自主线程原子埋点（不在采样线程调 Bukkit API）。
+                        metricsProvider = {
+                            BukkitMetricsCollector.sample(
+                                deps.instrumentation.currentTps(),
+                                deps.instrumentation.onlineCount(),
+                            )
+                        },
+                        // 自我保护：把本壳 plugin 名注入 applier 作受保护顶段，命中即跳过——杜绝运维误把
+                        // plugins/BeaconAgent/* 经 FR-14 文件树或 FR-38 导入塞进有效树后覆写自身（与 FR-41 env 注入身份呼应）。
+                        selfPluginDirNames = setOf("BeaconAgent"),
+                        authorityInvalidated = {
+                            deps.snapshots.invalidate()
+                            stopActiveRuntime()
+                        },
+                    ),
             )
         lifecycle = assembled.lifecycle
         // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
-        messagingRuntime = assembled.messagingRuntime
-        assembled.lifecycle.onRegistered { snapshots.write(identity, binding) }
-        assembled.lifecycle.onRegistered { instrumentation.start() }
+        messagingRuntime = assembled.messaging.messagingRuntime
+        assembled.lifecycle.onRegistered { deps.snapshots.write(identity, binding) }
+        assembled.lifecycle.onRegistered { deps.instrumentation.start() }
 
         // 对外注册门面，供同进程业务插件读取。
         BeaconAgentProvider.register(assembled.beaconAgent)
 
         // 注册本地运维命令 /beacon（status/reload/reconnect/resync）。
-        BeaconAgentCommand.register(assembled.lifecycle, adapter)
+        BeaconAgentCommand.register(assembled.lifecycle, deps.adapter)
 
         // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
         assembled.lifecycle.enableMetricsSampling()

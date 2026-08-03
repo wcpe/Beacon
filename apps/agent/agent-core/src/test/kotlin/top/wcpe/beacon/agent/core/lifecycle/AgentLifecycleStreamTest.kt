@@ -73,7 +73,7 @@ class AgentLifecycleStreamTest {
             store,
             applier,
             null,
-            topologyListener = onTopologyChanged,
+            hooks = AgentLifecycleHooks(topologyListener = onTopologyChanged),
         )
     }
 

@@ -27,20 +27,24 @@ class CommandWhitelist(
     fun isAllowed(command: String): Boolean {
         val trimmed = command.trim()
         if (trimmed.isEmpty()) return false
+        return isAllowedNonEmpty(trimmed)
+    }
+
+    /** 非空命令的放行判定：过注入字符闸后按首 token 命中白名单（不区分大小写）。 */
+    private fun isAllowedNonEmpty(trimmed: String): Boolean {
         if (containsForbiddenChar(trimmed)) return false
-        val firstToken = trimmed.split(WHITESPACE).firstOrNull()?.lowercase() ?: return false
-        if (firstToken.isEmpty()) return false
+        val firstToken = firstTokenOf(trimmed) ?: return false
         return allowed.contains(firstToken)
     }
 
+    /** 取命令首 token（按空白切分第一段，归一化为小写）；空段返回 null。 */
+    private fun firstTokenOf(trimmed: String): String? = trimmed.split(WHITESPACE).firstOrNull()?.lowercase()?.takeIf { it.isNotEmpty() }
+
     /** 是否含禁止字符：元字符或任何控制字符（ASCII < 0x20 或 0x7F）。 */
-    private fun containsForbiddenChar(s: String): Boolean {
-        for (c in s) {
-            if (c in META_CHARS) return true
-            if (c.code < 0x20 || c.code == 0x7F) return true
-        }
-        return false
-    }
+    private fun containsForbiddenChar(s: String): Boolean = s.any(::charIsForbidden)
+
+    /** 单个字符是否为禁止字符：注入元字符或控制字符（ASCII < 0x20 或 0x7F）。 */
+    private fun charIsForbidden(c: Char): Boolean = c in META_CHARS || c.code < 0x20 || c.code == 0x7F
 
     companion object {
         /** 注入元字符集合（管道 / 重定向 / 变量 / 反引号 / 与或 / 后台）。 */

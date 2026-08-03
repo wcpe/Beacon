@@ -107,11 +107,7 @@ class BeaconApiClientBackendsTest {
             client.report(
                 identity(),
                 appliedMd5 = "m",
-                playerCount = 3,
-                tps = 0.0,
-                memUsed = 1L,
-                memMax = 2L,
-                cpuLoad = 0.1,
+                health = HealthMetrics(3, 0.0, 1L, 2L, 0.1),
                 backends = listOf("lobby-1"),
             )
         assertTrue(ok)
@@ -126,7 +122,7 @@ class BeaconApiClientBackendsTest {
         val client = BeaconApiClient(OkTransport(), codec, settings())
 
         // 默认空 backends（bukkit / 旧行为）。
-        client.report(identity(), "m", 0, 0.0, 1L, 2L, 0.1)
+        client.report(identity(), "m", HealthMetrics(0, 0.0, 1L, 2L, 0.1))
 
         val body = lastBody(codec)
         assertFalse(body.containsKey("backends"), "空 backends 不应拼入 report 报文")

@@ -55,76 +55,83 @@ class FileTreeApplier(
     private fun applyInternal(manifest: FileManifest): Boolean {
         val applied = appliedStore.read()
         // fileTreeMd5 守卫：与已落盘那一版相同则跳过（幂等），避免无谓比对与落盘。
-        if (applied != null && applied.fileTreeMd5 == manifest.fileTreeMd5) {
-            return true
-        }
+        if (applied != null && applied.fileTreeMd5 == manifest.fileTreeMd5) return true
+        return syncToManifest(manifest, applied)
+    }
 
-        val appliedMap = applied?.toMap() ?: emptyMap()
-        val targetMap = manifest.entries.associate { it.path to it.md5 }
-        val plan = FileSyncer.diff(appliedMap, targetMap)
-        if (plan.isEmpty()) {
-            // md5 变了但差分为空（极少见，如仅 group/zone 元数据变）：仅刷新清单记录新 md5。
-            return persistManifest(manifest)
-        }
+    /** 比对已落盘清单与目标清单，按差分执行同步；返回是否已收敛。 */
+    private fun syncToManifest(
+        manifest: FileManifest,
+        applied: AppliedFileManifest?,
+    ): Boolean {
+        val plan = FileSyncer.diff(applied?.toMap() ?: emptyMap(), manifest.entries.associate { it.path to it.md5 })
+        // md5 变了但差分为空（极少见，如仅 group/zone 元数据变）：仅刷新清单记录新 md5。
+        if (plan.isEmpty()) return persistManifest(manifest)
+        return applyPlan(manifest, plan)
+    }
 
-        // 先取齐所有需写入的内容；任一取不到即放弃整轮（fail-static：不动既有文件）。
+    /** 执行单轮同步计划：取内容 + 落盘写入 + 删除移除项 + 持久化清单。 */
+    private fun applyPlan(
+        manifest: FileManifest,
+        plan: FileSyncPlan,
+    ): Boolean {
+        // 卫语句前置：取内容或写入失败即放弃整轮（fail-static：不动既有文件）。
+        if (!fetchAndWrite(plan)) return false
+        deleteRemoved(plan)
+        val persisted = persistManifest(manifest)
+        if (persisted) {
+            adapter.info(
+                "文件树已同步：新增=${plan.toAdd.size}，更新=${plan.toUpdate.size}，删除=${plan.toDelete.size}，" +
+                    "fileTreeMd5=${manifest.fileTreeMd5}",
+            )
+        }
+        return persisted
+    }
+
+    /** 先取齐所有需写入的内容并落盘；任一取不到或写入失败即返回 false（fail-static：不动既有文件）。 */
+    private fun fetchAndWrite(plan: FileSyncPlan): Boolean {
+        val fetched = fetchContents(plan) ?: return false
+        return writeFetched(fetched)
+    }
+
+    /** 取齐所有需写入的内容；任一取不到即返回 null（触发 fail-static 放弃本轮）。 */
+    private fun fetchContents(plan: FileSyncPlan): LinkedHashMap<String, FileContent>? {
         val fetched = LinkedHashMap<String, FileContent>()
         for (path in plan.toFetch()) {
-            if (!RelativePathGuard.isSafe(path)) {
-                adapter.warn("跳过非法文件路径（绝对/穿越/反斜杠），不落盘：$path")
-                continue
-            }
-            if (RelativePathGuard.isReservedSelfPath(path, protectedSegments)) {
-                // 自我保护：path 顶段命中 agent 自身 dataFolder，跳过——不取、不写。
-                adapter.warn("跳过 agent 自身 dataFolder 路径，不落盘：$path（受保护集合：$protectedSegments）")
-                continue
-            }
+            if (!guardPath(path, "文件路径（绝对/穿越/反斜杠），不落盘", "路径，不落盘", adapter, protectedSegments)) continue
             val content = fetchContent(path)
             if (content == null) {
                 adapter.warn("取文件内容失败（path=$path），本轮文件树同步放弃，保留既有镜像不动")
-                return false
+                return null
             }
             fetched[path] = content
         }
+        return fetched
+    }
 
-        // 落盘：先写新增/更新文件（已 fsync），再删除移除项。
-        var writeFailed = false
+    /** 落盘写入已取齐的文件；任一写入失败即返回 false（本轮放弃，保留既有）。 */
+    private fun writeFetched(fetched: Map<String, FileContent>): Boolean {
         for ((path, content) in fetched) {
             try {
                 mirrorWriter.write(path, content.content)
             } catch (e: Exception) {
                 adapter.error("文件落盘失败（path=$path），本轮放弃", e)
-                writeFailed = true
-                break
+                return false
             }
         }
-        if (writeFailed) {
-            return false // 落盘失败：不更新清单，保留既有，下次重试。
-        }
+        return true
+    }
+
+    /** 删除差分中的移除项；非法 / 受保护路径跳过，单条删除失败仅告警不阻断。 */
+    private fun deleteRemoved(plan: FileSyncPlan) {
         for (path in plan.toDelete) {
-            if (!RelativePathGuard.isSafe(path)) {
-                adapter.warn("跳过非法删除路径：$path")
-                continue
-            }
-            if (RelativePathGuard.isReservedSelfPath(path, protectedSegments)) {
-                // 自我保护：受保护顶段永远不删（避免曾被旧版臆测落盘后又被本版主动清理）。
-                adapter.warn("跳过 agent 自身 dataFolder 删除：$path（受保护集合：$protectedSegments）")
-                continue
-            }
+            if (!guardPath(path, "删除路径", "删除", adapter, protectedSegments)) continue
             try {
                 mirrorWriter.delete(path)
             } catch (e: Exception) {
                 adapter.warn("删除本地镜像失败（path=$path），继续：${e.message}")
             }
         }
-
-        // 全部落盘成功后才写清单（先文件后清单）。清单写入失败 fail-static：保留既有、下次重试，不抛到调度器。
-        if (!persistManifest(manifest)) return false
-        adapter.info(
-            "文件树已同步：新增=${plan.toAdd.size}，更新=${plan.toUpdate.size}，删除=${plan.toDelete.size}，" +
-                "fileTreeMd5=${manifest.fileTreeMd5}",
-        )
-        return true
     }
 
     /** 写已落盘清单：失败不抛（fail-static），返回 false 让本轮放弃、下次重试。 */
@@ -137,4 +144,27 @@ class FileTreeApplier(
             false
         }
     }
+}
+
+/**
+ * 路径守卫（文件级私有，不占 [FileTreeApplier] 方法数）：非法（绝对/穿越/反斜杠）或顶段命中 agent 自身
+ * dataFolder（[protectedSegments]）即拒。[unsafeDesc] / [reservedDesc] 为跳过时的中文告警片段，区分写入 / 删除语境。
+ */
+private fun guardPath(
+    path: String,
+    unsafeDesc: String,
+    reservedDesc: String,
+    adapter: PlatformAdapter,
+    protectedSegments: Set<String>,
+): Boolean {
+    if (!RelativePathGuard.isSafe(path)) {
+        adapter.warn("跳过非法$unsafeDesc：$path")
+        return false
+    }
+    if (RelativePathGuard.isReservedSelfPath(path, protectedSegments)) {
+        // 自我保护：受保护顶段既不写也不删（避免运维误塞 / 旧版臆测落盘后被本版清理）。
+        adapter.warn("跳过 agent 自身 dataFolder $reservedDesc：$path（受保护集合：$protectedSegments）")
+        return false
+    }
+    return true
 }

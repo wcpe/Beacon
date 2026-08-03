@@ -29,22 +29,27 @@ class OverridePathSecurity(
     fun isSafe(relativePath: String): Boolean {
         val raw = relativePath.trim()
         if (raw.isEmpty()) return false
+        return isSafeNonEmpty(raw)
+    }
+
+    /** 非空相对路径的 Path 级安全判定。 */
+    private fun isSafeNonEmpty(raw: String): Boolean {
         // 反斜杠 / 冒号（盘符 / ADS）规范化前即拒，避免平台差异绕过。
         if (raw.contains('\\') || raw.contains(':')) return false
         if (raw.startsWith('/')) return false // 绝对路径
-
-        val segments = raw.split('/')
-        for (seg in segments) {
-            if (seg == "..") return false // 任一段穿越即拒（双保险，下方 Path 级再兜底）
-            // 段尾的点 / 空格会被 Windows 落盘剥离（"x.jar."→"x.jar"、"con "→"con"），借此绕过禁覆盖判定，一律拒。
-            if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
-            if (isWindowsReserved(seg)) return false
-        }
+        if (!raw.split('/').all(::segmentIsSafe)) return false
         if (isForbiddenTarget(raw)) return false
-
         // Path 级最终判定：解析到目标根下后规范化，必须仍以目标根为前缀。
         val resolved = rootPath.resolve(raw).normalize()
         return resolved.startsWith(rootPath) && resolved != rootPath
+    }
+
+    /** 单段是否安全：穿越、段尾点 / 空格、Windows 保留设备名一律拒。 */
+    private fun segmentIsSafe(seg: String): Boolean {
+        if (seg == "..") return false // 任一段穿越即拒（双保险，下方 Path 级再兜底）
+        // 段尾的点 / 空格会被 Windows 落盘剥离（"x.jar."→"x.jar"、"con "→"con"），借此绕过禁覆盖判定，一律拒。
+        if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
+        return !isWindowsReserved(seg)
     }
 
     /** 段名是否为 Windows 保留设备名（取点号前主名，不区分大小写）。 */

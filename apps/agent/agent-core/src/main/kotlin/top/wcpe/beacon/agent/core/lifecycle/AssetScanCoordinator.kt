@@ -3,6 +3,7 @@ package top.wcpe.beacon.agent.core.lifecycle
 import top.wcpe.beacon.agent.core.client.AssetManifestMeta
 import top.wcpe.beacon.agent.core.client.AssetManifestOutcome
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.reportAssetManifest
 import top.wcpe.beacon.agent.core.command.AssetEntry
 import top.wcpe.beacon.agent.core.command.AssetIndexLimits
 import top.wcpe.beacon.agent.core.command.AssetIndexReader

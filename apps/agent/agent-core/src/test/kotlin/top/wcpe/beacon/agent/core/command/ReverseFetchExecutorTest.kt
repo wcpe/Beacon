@@ -116,30 +116,30 @@ class ReverseFetchExecutorTest {
     private class FakeCodec : JsonCodec {
         override fun encode(value: Any?): String = value.toString()
 
-        override fun decode(json: String): Any? =
-            when (json) {
-                CMD_INGEST ->
+        override fun decode(json: String): Any? = commandTrees[json] ?: emptyMap<String, Any?>()
+
+        /** 各预置命令体对应的解析树（按 body key 索引；未预置则回空 map）。 */
+        private val commandTrees: Map<String, Any?> =
+            mapOf(
+                CMD_INGEST to
                     mapOf(
                         "id" to 7,
                         "type" to "ingest-plugins",
                         "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
-                    )
-
-                CMD_UNKNOWN ->
+                    ),
+                CMD_UNKNOWN to
                     mapOf(
                         "id" to 8,
                         "type" to "some-future-command",
                         "payload" to mapOf("scope" to "group", "group" to "area1", "target" to ""),
-                    )
-
-                CMD_SCAN ->
+                    ),
+                CMD_SCAN to
                     mapOf(
                         "id" to 9,
                         "type" to "ingest-plugins",
                         "payload" to mapOf("scope" to "group", "group" to "area1", "target" to "", "mode" to "scan"),
-                    )
-
-                CMD_SUBMIT ->
+                    ),
+                CMD_SUBMIT to
                     mapOf(
                         "id" to 10,
                         "type" to "ingest-plugins",
@@ -151,73 +151,62 @@ class ReverseFetchExecutorTest {
                                 "mode" to "submit",
                                 "selectedPaths" to listOf("config.yml", "lang/zh.yml"),
                             ),
-                    )
-
-                CMD_TAIL_LOGS ->
+                    ),
+                CMD_TAIL_LOGS to
                     mapOf(
                         "id" to 11,
                         "type" to "tail-logs",
                         "payload" to emptyMap<String, Any?>(),
-                    )
-
-                CMD_RESYNC ->
+                    ),
+                CMD_RESYNC to
                     mapOf(
                         "id" to 12,
                         "type" to "resync-config",
                         "payload" to emptyMap<String, Any?>(),
-                    )
-
-                CMD_BC_DIRECTORY_RESYNC ->
+                    ),
+                CMD_BC_DIRECTORY_RESYNC to
                     mapOf(
                         "id" to 18,
                         "type" to "bc-directory-resync",
                         "payload" to emptyMap<String, Any?>(),
-                    )
-
-                CMD_BROWSE_LIST ->
+                    ),
+                CMD_BROWSE_LIST to
                     mapOf(
                         "id" to 13,
                         "type" to "fs-browse",
                         "payload" to mapOf("op" to "list", "path" to "AllinCore", "offset" to 0, "limit" to 100),
-                    )
-
-                CMD_BROWSE_FILE ->
+                    ),
+                CMD_BROWSE_FILE to
                     mapOf(
                         "id" to 14,
                         "type" to "fs-browse",
                         "payload" to mapOf("op" to "file", "path" to "AllinCore/config.yml"),
-                    )
-
-                CMD_BROWSE_DENIED ->
+                    ),
+                CMD_BROWSE_DENIED to
                     mapOf(
                         "id" to 15,
                         "type" to "fs-browse",
                         "payload" to mapOf("op" to "file", "path" to "../etc/passwd"),
-                    )
-
-                CMD_ASSET_RESCAN ->
+                    ),
+                CMD_ASSET_RESCAN to
                     mapOf(
                         "id" to 16,
                         "type" to "asset-rescan",
                         "payload" to mapOf("force" to true),
-                    )
-
-                CMD_ASSET_READ ->
+                    ),
+                CMD_ASSET_READ to
                     mapOf(
                         "id" to 16,
                         "type" to "asset-read",
                         "payload" to mapOf("path" to "AllinCore/config.yml", "maxBytes" to 524_288),
-                    )
-
-                CMD_ASSET_READ_DENIED ->
+                    ),
+                CMD_ASSET_READ_DENIED to
                     mapOf(
                         "id" to 17,
                         "type" to "asset-read",
                         "payload" to mapOf("path" to "../etc/passwd", "maxBytes" to 524_288),
-                    )
-
-                else -> emptyMap<String, Any?>()
-            }
+                    ),
+            )
     }
 
     /**

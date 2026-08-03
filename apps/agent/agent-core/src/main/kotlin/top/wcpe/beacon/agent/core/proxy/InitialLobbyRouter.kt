@@ -14,21 +14,29 @@ class InitialLobbyRouter(
         val directory = snapshot()
         val lobby = latestLobbySnapshot?.invoke()?.lobby?.toManagedLobby() ?: latestLobbyUnavailable(directory)
         val candidates = lobby.candidates.filter { it.schedulable }
-        if (candidates.isEmpty()) {
-            val reason = if (lobby.reason == NO_SNAPSHOT) NO_SNAPSHOT else NO_CANDIDATE
-            return InitialLobbyRoute.Rejected(reason)
-        }
-        if (!lobby.ready) {
-            return InitialLobbyRoute.Rejected(lobby.reason ?: NOT_READY)
-        }
+        return resolveLobbyRoute(lobby, candidates, directory)
+    }
+
+    /** 按候选 / 就绪态 / 受管目录 / 大厅成员逐级判定，返回落脚结果。 */
+    private fun resolveLobbyRoute(
+        lobby: ManagedLobbySnapshot,
+        candidates: List<CandidateEntry>,
+        directory: ManagedDirectorySnapshot,
+    ): InitialLobbyRoute {
+        if (candidates.isEmpty()) return InitialLobbyRoute.Rejected(if (lobby.reason == NO_SNAPSHOT) NO_SNAPSHOT else NO_CANDIDATE)
+        if (!lobby.ready) return InitialLobbyRoute.Rejected(lobby.reason ?: NOT_READY)
         val managed = candidates.filter { it.serverId in directory.byServerId }
-        if (managed.isEmpty()) {
-            return InitialLobbyRoute.Rejected(MANAGED_DIRECTORY_MISMATCH)
-        }
+        if (managed.isEmpty()) return InitialLobbyRoute.Rejected(MANAGED_DIRECTORY_MISMATCH)
+        return selectLobbyMember(managed, directory)
+    }
+
+    /** 从受管候选中筛出大厅成员并选择；无大厅成员时明确拒绝。 */
+    private fun selectLobbyMember(
+        managed: List<CandidateEntry>,
+        directory: ManagedDirectorySnapshot,
+    ): InitialLobbyRoute {
         val lobbyMembers = managed.filter { it.serverId in directory.lobbyMemberIds }
-        if (lobbyMembers.isEmpty()) {
-            return InitialLobbyRoute.Rejected(LOBBY_MEMBER_MISMATCH)
-        }
+        if (lobbyMembers.isEmpty()) return InitialLobbyRoute.Rejected(LOBBY_MEMBER_MISMATCH)
         return InitialLobbyRoute.Selected(select(lobbyMembers).serverId)
     }
 

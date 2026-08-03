@@ -78,11 +78,7 @@ class BeaconApiClientReportTest {
             client.report(
                 identity(),
                 appliedMd5 = "md5-x",
-                playerCount = 8,
-                tps = 19.5,
-                memUsed = 123L,
-                memMax = 456L,
-                cpuLoad = 0.25,
+                health = HealthMetrics(8, 19.5, 123L, 456L, 0.25),
             )
         assertTrue(ok, "report 应在 200 时返回 true")
 
@@ -107,11 +103,7 @@ class BeaconApiClientReportTest {
         client.report(
             identity(),
             appliedMd5 = "md5-x",
-            playerCount = 0,
-            tps = 0.0,
-            memUsed = 1L,
-            memMax = 2L,
-            cpuLoad = -1.0,
+            health = HealthMetrics(0, 0.0, 1L, 2L, -1.0),
         )
 
         val body = lastBody(codec)
@@ -123,7 +115,7 @@ class BeaconApiClientReportTest {
         val codec = CapturingCodec()
         val client = BeaconApiClient(OkReportTransport(), codec, settings())
 
-        client.report(identity(), "md5", 1, 20.0, 10L, 20L, 0.5)
+        client.report(identity(), "md5", HealthMetrics(1, 20.0, 10L, 20L, 0.5))
 
         val body = lastBody(codec)
         // 锁定报文键集合，防止漏键 / 多键漂移（与控制面 Go 侧契约对齐）。
@@ -140,7 +132,7 @@ class BeaconApiClientReportTest {
         val client = BeaconApiClient(OkReportTransport(), codec, settings())
 
         // 默认 proxy = null（bukkit / 旧行为）。
-        client.report(identity(), "md5", 1, 20.0, 10L, 20L, 0.5)
+        client.report(identity(), "md5", HealthMetrics(1, 20.0, 10L, 20L, 0.5))
 
         val body = lastBody(codec)
         assertTrue(!body.containsKey("proxy"), "bukkit / 旧行为不应拼入 proxy 子对象")
@@ -154,11 +146,7 @@ class BeaconApiClientReportTest {
         client.report(
             identity(),
             appliedMd5 = "md5",
-            playerCount = 0,
-            tps = 0.0,
-            memUsed = 1L,
-            memMax = 2L,
-            cpuLoad = 0.3,
+            health = HealthMetrics(0, 0.0, 1L, 2L, 0.3),
             proxy =
                 ProxyMetrics(
                     onlineConnections = 128,

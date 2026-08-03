@@ -2,9 +2,13 @@ package top.wcpe.beacon.agent.bungee
 
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.command
+import taboolib.common.platform.command.component.CommandBase
+import top.wcpe.beacon.agent.core.client.sendMessage
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.BcDirectoryCommandText
 import top.wcpe.beacon.agent.core.lifecycle.OpsCommandText
+import top.wcpe.beacon.agent.core.lifecycle.forcePollNow
+import top.wcpe.beacon.agent.core.lifecycle.forceSyncFileTreeNow
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import top.wcpe.beacon.agent.core.proxy.ManagedDirectorySnapshot
 
@@ -25,77 +29,130 @@ object BeaconAgentCommand {
         directorySnapshot: () -> ManagedDirectorySnapshot,
     ) {
         command("beacon", permission = "beacon.admin") {
-            literal("status", description = "查看 agent 接入与有效配置状态") {
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    val snapshot = directorySnapshot()
-                    adapter.runAsync {
-                        OpsCommandText.statusLines(lifecycle.snapshot()).forEach { sender.sendMessage(it) }
-                        BcDirectoryCommandText.statusLines(snapshot).forEach { sender.sendMessage(it) }
-                    }
-                }
-            }
-            literal("servers", description = "分页查看 Beacon 受管服务器目录") {
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    val snapshot = directorySnapshot()
-                    adapter.runAsync { BcDirectoryCommandText.serversLines(snapshot, null).forEach(sender::sendMessage) }
-                }
-                dynamic("page", optional = true) {
-                    execute<ProxyCommandSender> { sender, _, argument ->
-                        val snapshot = directorySnapshot()
-                        adapter.runAsync { BcDirectoryCommandText.serversLines(snapshot, argument).forEach(sender::sendMessage) }
-                    }
-                }
-            }
-            literal("server", description = "查看指定 Beacon 受管服务器详情") {
-                dynamic("serverId") {
-                    execute<ProxyCommandSender> { sender, _, argument ->
-                        val snapshot = directorySnapshot()
-                        adapter.runAsync { BcDirectoryCommandText.serverLines(snapshot, argument).forEach(sender::sendMessage) }
-                    }
-                }
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    val snapshot = directorySnapshot()
-                    adapter.runAsync { BcDirectoryCommandText.serverLines(snapshot, null).forEach(sender::sendMessage) }
-                }
-            }
-            literal("reload", description = "强制立刻重拉有效配置并应用") {
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    lifecycle.forcePollNow()
-                    sender.sendMessage(OpsCommandText.RELOAD_TRIGGERED)
-                }
-            }
-            literal("reconnect", description = "打断退避、重置并重新接入控制面") {
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    lifecycle.reconnectNow()
-                    sender.sendMessage(OpsCommandText.RECONNECT_TRIGGERED)
-                }
-            }
-            literal("resync", description = "强制立刻重新同步文件树（需开启 file-tree.enabled）") {
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    // forceSyncFileTreeNow 内部即转异步，仅返回是否已触发，不阻塞代理主线程。
-                    val triggered = lifecycle.forceSyncFileTreeNow()
-                    sender.sendMessage(OpsCommandText.resyncReply(triggered))
-                }
-            }
-            literal("help", description = "查看各子命令用法") {
-                execute<ProxyCommandSender> { sender, _, _ ->
-                    BcDirectoryCommandText.HELP_LINES.forEach { sender.sendMessage(it) }
-                }
-            }
-            // 无子命令：打印用法。
+            registerStatus(lifecycle, adapter, directorySnapshot)
+            registerServers(adapter, directorySnapshot)
+            registerServer(adapter, directorySnapshot)
+            registerReload(lifecycle)
+            registerReconnect(lifecycle)
+            registerResync(lifecycle)
+            registerHelp()
+            registerDefaultUsage()
+            registerIncorrectCommand()
+        }
+    }
+
+    /** status：查看 agent 接入与有效配置状态。 */
+    private fun CommandBase.registerStatus(
+        lifecycle: AgentLifecycle,
+        adapter: PlatformAdapter,
+        directorySnapshot: () -> ManagedDirectorySnapshot,
+    ) {
+        literal("status", description = "查看 agent 接入与有效配置状态") {
             execute<ProxyCommandSender> { sender, _, _ ->
-                BcDirectoryCommandText.USAGE_LINES.forEach { sender.sendMessage(it) }
-            }
-            // 未知子命令 / 错参：回中文用法（带未知片段回显），取代 TabooLib 默认中英双语 generic 提示。
-            // 取触发失配的输入片段经 self()（公共入口）；极端边界取不到则只给用法、不强求回显。
-            incorrectCommand { sender, context, _, _ ->
-                val input = runCatching { context.self() }.getOrNull()
-                if (input.isNullOrBlank()) {
-                    BcDirectoryCommandText.USAGE_LINES.forEach(sender::sendMessage)
-                } else {
-                    sender.sendMessage("未知子命令：$input")
-                    BcDirectoryCommandText.USAGE_LINES.forEach(sender::sendMessage)
+                val snapshot = directorySnapshot()
+                adapter.runAsync {
+                    OpsCommandText.statusLines(lifecycle.snapshot()).forEach { sender.sendMessage(it) }
+                    BcDirectoryCommandText.statusLines(snapshot).forEach { sender.sendMessage(it) }
                 }
+            }
+        }
+    }
+
+    /** servers：分页查看 Beacon 受管服务器目录。 */
+    private fun CommandBase.registerServers(
+        adapter: PlatformAdapter,
+        directorySnapshot: () -> ManagedDirectorySnapshot,
+    ) {
+        literal("servers", description = "分页查看 Beacon 受管服务器目录") {
+            execute<ProxyCommandSender> { sender, _, _ ->
+                val snapshot = directorySnapshot()
+                adapter.runAsync { BcDirectoryCommandText.serversLines(snapshot, null).forEach(sender::sendMessage) }
+            }
+            dynamic("page", optional = true) {
+                execute<ProxyCommandSender> { sender, _, argument ->
+                    val snapshot = directorySnapshot()
+                    adapter.runAsync { BcDirectoryCommandText.serversLines(snapshot, argument).forEach(sender::sendMessage) }
+                }
+            }
+        }
+    }
+
+    /** server：查看指定 Beacon 受管服务器详情。 */
+    private fun CommandBase.registerServer(
+        adapter: PlatformAdapter,
+        directorySnapshot: () -> ManagedDirectorySnapshot,
+    ) {
+        literal("server", description = "查看指定 Beacon 受管服务器详情") {
+            dynamic("serverId") {
+                execute<ProxyCommandSender> { sender, _, argument ->
+                    val snapshot = directorySnapshot()
+                    adapter.runAsync { BcDirectoryCommandText.serverLines(snapshot, argument).forEach(sender::sendMessage) }
+                }
+            }
+            execute<ProxyCommandSender> { sender, _, _ ->
+                val snapshot = directorySnapshot()
+                adapter.runAsync { BcDirectoryCommandText.serverLines(snapshot, null).forEach(sender::sendMessage) }
+            }
+        }
+    }
+
+    /** reload：强制立刻重拉有效配置并应用。 */
+    private fun CommandBase.registerReload(lifecycle: AgentLifecycle) {
+        literal("reload", description = "强制立刻重拉有效配置并应用") {
+            execute<ProxyCommandSender> { sender, _, _ ->
+                lifecycle.forcePollNow()
+                sender.sendMessage(OpsCommandText.RELOAD_TRIGGERED)
+            }
+        }
+    }
+
+    /** reconnect：打断退避、重置并重新接入控制面。 */
+    private fun CommandBase.registerReconnect(lifecycle: AgentLifecycle) {
+        literal("reconnect", description = "打断退避、重置并重新接入控制面") {
+            execute<ProxyCommandSender> { sender, _, _ ->
+                lifecycle.reconnectNow()
+                sender.sendMessage(OpsCommandText.RECONNECT_TRIGGERED)
+            }
+        }
+    }
+
+    /** resync：强制立刻重新同步文件树（需开启 file-tree.enabled）。 */
+    private fun CommandBase.registerResync(lifecycle: AgentLifecycle) {
+        literal("resync", description = "强制立刻重新同步文件树（需开启 file-tree.enabled）") {
+            execute<ProxyCommandSender> { sender, _, _ ->
+                // forceSyncFileTreeNow 内部即转异步，仅返回是否已触发，不阻塞代理主线程。
+                val triggered = lifecycle.forceSyncFileTreeNow()
+                sender.sendMessage(OpsCommandText.resyncReply(triggered))
+            }
+        }
+    }
+
+    /** help：查看各子命令用法。 */
+    private fun CommandBase.registerHelp() {
+        literal("help", description = "查看各子命令用法") {
+            execute<ProxyCommandSender> { sender, _, _ ->
+                BcDirectoryCommandText.HELP_LINES.forEach { sender.sendMessage(it) }
+            }
+        }
+    }
+
+    /** 无子命令：打印用法。 */
+    private fun CommandBase.registerDefaultUsage() {
+        execute<ProxyCommandSender> { sender, _, _ ->
+            BcDirectoryCommandText.USAGE_LINES.forEach { sender.sendMessage(it) }
+        }
+    }
+
+    /** 未知子命令 / 错参：回中文用法（带未知片段回显），取代 TabooLib 默认中英双语 generic 提示。 */
+    private fun CommandBase.registerIncorrectCommand() {
+        // 取触发失配的输入片段经 self()（公共入口）；极端边界取不到则只给用法、不强求回显。
+        incorrectCommand { sender, context, _, _ ->
+            val input = runCatching { context.self() }.getOrNull()
+            if (input.isNullOrBlank()) {
+                BcDirectoryCommandText.USAGE_LINES.forEach(sender::sendMessage)
+            } else {
+                sender.sendMessage("未知子命令：$input")
+                BcDirectoryCommandText.USAGE_LINES.forEach(sender::sendMessage)
             }
         }
     }

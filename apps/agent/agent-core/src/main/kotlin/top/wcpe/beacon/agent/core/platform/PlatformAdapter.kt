@@ -7,12 +7,9 @@ import top.wcpe.beacon.agent.core.browse.TreeNode
 import java.io.File
 
 /**
- * 平台适配接口：把 TabooLib / Bukkit / Bungee 的调度、数据目录、事件派发、日志能力注入 core。
- *
- * core 定义、壳实现（依赖倒置），打破「core 想用平台能力」的潜在反向依赖。
- * 所有 HTTP / 文件 IO 由 core 经 runAsync / runAsyncDelayed 落到异步线程，绝不阻塞 MC 主线程。
+ * 平台调度能力：异步 / 延迟异步 / 主线程切换。
  */
-interface PlatformAdapter {
+interface PlatformScheduler {
     /** 异步执行任务（后台线程）。 */
     fun runAsync(task: () -> Unit)
 
@@ -24,7 +21,12 @@ interface PlatformAdapter {
 
     /** 切回主线程执行极短任务（仅用于需主线程的事件派发）。 */
     fun runSync(task: () -> Unit)
+}
 
+/**
+ * 平台文件系统访问能力：数据目录、plugins 基目录、反向抓取。
+ */
+interface PlatformFsAccess {
     /** agent 数据目录（快照、有效配置落点）。 */
     fun dataFolder(): File
 
@@ -65,12 +67,17 @@ interface PlatformAdapter {
      * 默认空实现：未实现的平台 / 测试桩返回空映射（scan 能力不上线）。壳层各自实现平台 IO。
      */
     fun readPluginsTreeMetadata(): Map<String, Long> = emptyMap()
+}
 
+/**
+ * 平台只读浏览能力：懒列目录、展开子树、读文本文件、读资产文件。
+ */
+interface PlatformBrowse {
     /**
      * 懒列 `plugins/` 根下 [relPath] 目录的直接子项，分页返回（只读浏览，FR-109，见 ADR-0049 原语①）。
      *
      * [relPath] 为空串表示列 `plugins/` 根。只读、不写盘；**仅在 async 线程调用**（读盘阻塞 IO，绝不上主线程）。
-     * 读取根 = [pluginsBaseFolder]；FS 级安全（Path 容纳 + 符号链接逃逸 + path traversal 校验）由实现委托 core
+     * 读取根 = [PlatformFsAccess.pluginsBaseFolder]；FS 级安全（Path 容纳 + 符号链接逃逸 + path traversal 校验）由实现委托 core
      * [top.wcpe.beacon.agent.core.browse.FsBrowseReader] 负责。越权 / 目标非目录返回 null。
      *
      * 默认 null 实现：未实现浏览的平台 / 测试桩不开放浏览能力。壳层各自委托 core FS 边界。
@@ -84,7 +91,7 @@ interface PlatformAdapter {
     /**
      * 按需展开 `plugins/` 根下 [relPath] 起的子树，逐层有界（只读浏览，FR-109，见 ADR-0049 原语②）。
      *
-     * 只读、async；受深度 / 节点上限约束（非整盘一次拉全）。读取根 = [pluginsBaseFolder]，安全口径同 [browseListDir]。
+     * 只读、async；受深度 / 节点上限约束（非整盘一次拉全）。读取根 = [PlatformFsAccess.pluginsBaseFolder]，安全口径同 [browseListDir]。
      * 越权 / 目标非目录返回 null。默认 null 实现（桩不开放）。
      */
     fun browseReadTree(
@@ -95,7 +102,7 @@ interface PlatformAdapter {
     /**
      * 读 `plugins/` 根下 [relPath] 单文本文件内容（只读浏览，FR-109，见 ADR-0049 原语③）。
      *
-     * 只读、async；受单文件上限约束（超限截断），排除 `.jar` / 二进制。读取根 = [pluginsBaseFolder]，安全口径同 [browseListDir]。
+     * 只读、async；受单文件上限约束（超限截断），排除 `.jar` / 二进制。读取根 = [PlatformFsAccess.pluginsBaseFolder]，安全口径同 [browseListDir]。
      * 越权 / 非普通文件 / jar / 二进制返回 null。默认 null 实现（桩不开放）。
      */
     fun browseReadFile(relPath: String): FileContent? = null
@@ -104,14 +111,19 @@ interface PlatformAdapter {
      * 读 `plugins/` 根下 [relPath] 单文件资产内容供预览 / diff（FR-164，见 v2-file-assets.md §4.5）。
      *
      * 与 [browseReadFile] 的区别：**不排除二进制**——二进制回 [AssetContent.binary]=true + 空内容（前端只展示元数据）。
-     * [maxBytes] 为单文件上限（0=core 默认上限），超限截断。只读、async；读取根 = [pluginsBaseFolder]，安全口径同 [browseReadFile]。
+     * [maxBytes] 为单文件上限（0=core 默认上限），超限截断。只读、async；读取根 = [PlatformFsAccess.pluginsBaseFolder]，安全口径同 [browseReadFile]。
      * 越权 / 非普通文件 / 读失败返回 null。默认 null 实现（桩不开放）。
      */
     fun browseReadAsset(
         relPath: String,
         maxBytes: Int,
     ): AssetContent? = null
+}
 
+/**
+ * 平台控制能力：配置变更广播、命令派发、优雅关服。
+ */
+interface PlatformControl {
     /** 广播「配置已更新」给同进程业务插件（平台各自实现事件派发）。 */
     fun publishConfigChanged(
         changed: Set<String>,
@@ -142,7 +154,7 @@ interface PlatformAdapter {
      * （无 `Runtime.exec` / `ProcessBuilder`），物理上无法落到 OS shell（ADR-0011 决策 2 铁律不放开）。
      * 生效判定归控制面观测心跳回归（注册 / 健康真源 = Go 进程内存），非本次关服回执成功（ADR-0070 决策 3）。
      *
-     * 关服须在平台主线程执行（存档落盘、`Bukkit.shutdown()` 均要求主线程）：壳层经 [runSync] 切主线程后调平台原语。
+     * 关服须在平台主线程执行（存档落盘、`Bukkit.shutdown()` 均要求主线程）：壳层经 [PlatformScheduler.runSync] 切主线程后调平台原语。
      * 默认空实现：未实现关服的平台 / 测试桩不动作（restart 生效能力不上线），与 [dispatchConsoleCommand] 同构。
      *
      * @param reason 关服原因（广播文案 / 日志用，便于运维在服务器日志看清是 Beacon 交付生效触发的重启）
@@ -150,7 +162,12 @@ interface PlatformAdapter {
     fun gracefulShutdown(reason: String) {
         // 默认不动作：优雅关服是 restart 生效的高风险平台能力，未显式实现的平台不开放（同 dispatchConsoleCommand）。
     }
+}
 
+/**
+ * 平台日志能力：INFO / WARN / ERROR 三级日志。
+ */
+interface PlatformLogger {
     /** INFO 级日志。 */
     fun info(msg: String)
 
@@ -163,3 +180,19 @@ interface PlatformAdapter {
         t: Throwable?,
     )
 }
+
+/**
+ * 平台适配接口：把 TabooLib / Bukkit / Bungee 的调度、数据目录、事件派发、日志能力注入 core。
+ *
+ * core 定义、壳实现（依赖倒置），打破「core 想用平台能力」的潜在反向依赖。
+ * 所有 HTTP / 文件 IO 由 core 经 runAsync / runAsyncDelayed 落到异步线程，绝不阻塞 MC 主线程。
+ *
+ * 通过接口隔离拆分为 [PlatformScheduler]、[PlatformFsAccess]、[PlatformBrowse]、[PlatformControl]、[PlatformLogger]
+ * 五个子能力域，壳层只需实现 [PlatformAdapter] 即自动满足全部子接口，无需感知拆分。
+ */
+interface PlatformAdapter :
+    PlatformScheduler,
+    PlatformFsAccess,
+    PlatformBrowse,
+    PlatformControl,
+    PlatformLogger

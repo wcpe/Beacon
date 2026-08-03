@@ -74,15 +74,12 @@ class KotlinxJsonCodec : JsonCodec {
 
     /** JsonPrimitive → String / Boolean / Long / Double。 */
     private fun primitiveToValue(p: JsonPrimitive): Any? {
-        // 带引号即字符串。
+        // 带引号即字符串（卫语句短路）。
         if (p.isString) return p.content
-        // 布尔。
-        p.booleanOrNull?.let { return it }
-        // 整数优先（避免把 200 解析成 200.0）。
-        p.longOrNull?.let { return it }
-        // 浮点。
-        p.doubleOrNull?.let { return it }
-        // 兜底：原文。
-        return p.content
+        // 依次尝试布尔 → 整数（避免把 200 解析成 200.0）→ 浮点 → 兜底原文。
+        return p.booleanOrNull
+            ?: p.longOrNull
+            ?: p.doubleOrNull
+            ?: p.content
     }
 }

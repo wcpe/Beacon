@@ -72,7 +72,7 @@ class AgentLifecycleReverseFetchTest {
             store,
             applier,
             null,
-            reverseFetchExecutor = executor,
+            hooks = AgentLifecycleHooks(reverseFetchExecutor = executor),
         )
     }
 

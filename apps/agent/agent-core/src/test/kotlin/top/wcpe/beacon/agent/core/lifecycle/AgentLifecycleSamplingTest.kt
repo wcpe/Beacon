@@ -64,7 +64,19 @@ class AgentLifecycleSamplingTest {
     private fun newLifecycle(codec: JsonCodec): AgentLifecycle {
         val apiClient = BeaconApiClient(backend, codec, settings())
         val applier = ConfigApplier(store, null, adapter)
-        return AgentLifecycle(identity(), settings(), adapter, apiClient, store, applier, null, metricsProvider = { fixedMetrics })
+        return AgentLifecycle(
+            identity(),
+            settings(),
+            adapter,
+            apiClient,
+            store,
+            applier,
+            null,
+            hooks =
+                AgentLifecycleHooks(metricsProvider = {
+                    fixedMetrics
+                }),
+        )
     }
 
     @AfterTest

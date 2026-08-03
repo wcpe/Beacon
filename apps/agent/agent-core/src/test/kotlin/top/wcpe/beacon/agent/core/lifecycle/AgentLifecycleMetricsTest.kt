@@ -89,7 +89,7 @@ class AgentLifecycleMetricsTest {
                 store,
                 applier,
                 null,
-                metricsProvider = { fixed },
+                hooks = AgentLifecycleHooks(metricsProvider = { fixed }),
             )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
@@ -149,7 +149,7 @@ class AgentLifecycleMetricsTest {
                 store,
                 applier,
                 null,
-                proxyMetricsProvider = { proxy },
+                hooks = AgentLifecycleHooks(proxyMetricsProvider = { proxy }),
             )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
@@ -210,7 +210,7 @@ class AgentLifecycleMetricsTest {
                 store,
                 applier,
                 null,
-                metricsProvider = { fixed },
+                hooks = AgentLifecycleHooks(metricsProvider = { fixed }),
             )
 
         lifecycle.bootstrapWithSnapshotThenConnect()
@@ -243,10 +243,11 @@ class AgentLifecycleMetricsTest {
                 store,
                 applier,
                 null,
-                metricsProvider = {
-                    calls++
-                    RuntimeMetrics.ZERO
-                },
+                hooks =
+                    AgentLifecycleHooks(metricsProvider = {
+                        calls++
+                        RuntimeMetrics.ZERO
+                    }),
             )
 
         lifecycle.bootstrapWithSnapshotThenConnect()

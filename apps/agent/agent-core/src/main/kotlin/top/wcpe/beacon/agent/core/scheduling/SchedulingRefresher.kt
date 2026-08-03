@@ -3,6 +3,8 @@ package top.wcpe.beacon.agent.core.scheduling
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.SchedCandidatesOutcome
 import top.wcpe.beacon.agent.core.client.SchedReportLocalOutcome
+import top.wcpe.beacon.agent.core.client.reportLocalDecisions
+import top.wcpe.beacon.agent.core.client.scheduleCandidates
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.util.concurrent.atomic.AtomicBoolean

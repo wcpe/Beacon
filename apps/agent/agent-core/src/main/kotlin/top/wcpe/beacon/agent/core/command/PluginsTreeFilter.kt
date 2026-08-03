@@ -35,9 +35,7 @@ object PluginsTreeFilter {
         // 稳定顺序遍历（按路径排序）：让单文件超限的报错与回传顺序确定、可复现、便于测试。
         for ((path, bytes) in tree.toSortedMap()) {
             // 1) 排除项：路径不安全 / jar / 二进制——静默剔除，不计入配额、不致整体失败。
-            if (!PluginsPathGuard.isSafe(path)) continue
-            if (isJar(path)) continue
-            val text = decodeUtf8OrNull(bytes) ?: continue // 非合法 UTF-8 → 二进制，剔除
+            val text = filterEntry(path, bytes) ?: continue
 
             // 2) 单文件上限：超限即整体失败（不部分上传）。
             if (bytes.size.toLong() > PluginIngestLimits.MAX_FILE_BYTES) {
@@ -51,13 +49,7 @@ object PluginsTreeFilter {
         }
 
         // 3) 文件数 / 总字节上限：对保留集判，超限即整体失败。
-        if (kept.size > PluginIngestLimits.MAX_FILES) {
-            return FilterOutcome.Rejected("文本文件数 ${kept.size} 超 ${PluginIngestLimits.MAX_FILES} 上限")
-        }
-        if (totalBytes > PluginIngestLimits.MAX_TOTAL_BYTES) {
-            return FilterOutcome.Rejected("聚合字节 $totalBytes 超 ${PluginIngestLimits.MAX_TOTAL_BYTES} 上限")
-        }
-        return FilterOutcome.Accepted(kept)
+        return checkAggregateLimits(kept, totalBytes, "")
     }
 
     /**
@@ -74,8 +66,7 @@ object PluginsTreeFilter {
         val result = ArrayList<ScanFile>(metadata.size)
         for ((path, size) in metadata.toSortedMap()) {
             // 排除项：路径不安全 / jar 静默剔除（与 filter 同口径）；scan 不读内容，故不在此判二进制 NUL。
-            if (!PluginsPathGuard.isSafe(path)) continue
-            if (isJar(path)) continue
+            if (!PluginsPathGuard.isSafe(path) || isJar(path)) continue
             result.add(
                 ScanFile(
                     path = path,
@@ -112,20 +103,37 @@ object PluginsTreeFilter {
             // 只回传选定集内的 path：不在选定集的整树文件直接跳过（submit 的本质——只抓选定）。
             if (path !in selected) continue
             // 安全过滤口径不变（不安全路径 / jar / 二进制剔除）。
-            if (!PluginsPathGuard.isSafe(path)) continue
-            if (isJar(path)) continue
-            val text = decodeUtf8OrNull(bytes) ?: continue // 非合法 UTF-8 → 二进制，剔除
-
-            kept.add(IngestFile(path = path, content = text))
-            totalBytes += bytes.size.toLong()
+            filterEntry(path, bytes)?.let { text ->
+                kept.add(IngestFile(path = path, content = text))
+                totalBytes += bytes.size.toLong()
+            }
         }
 
         // 文件数 / 总字节仅作 submit 兜底（防一次提交异常巨大）；单文件超限不再整批失败（选定集已由控制面确认）。
+        return checkAggregateLimits(kept, totalBytes, "提交")
+    }
+
+    /** 单个条目的排除项判定：路径不安全 / jar / 非合法 UTF-8（二进制）一律剔除返回 null，否则返回解码文本。 */
+    private fun filterEntry(
+        path: String,
+        bytes: ByteArray,
+    ): String? {
+        if (!PluginsPathGuard.isSafe(path)) return null
+        if (isJar(path)) return null
+        return decodeUtf8OrNull(bytes)
+    }
+
+    /** 保留集的文件数 / 总字节上限判定；超限即整体失败（不部分上传）。prefix 用于区分 filter / submit 报文前缀。 */
+    private fun checkAggregateLimits(
+        kept: List<IngestFile>,
+        totalBytes: Long,
+        prefix: String,
+    ): FilterOutcome {
         if (kept.size > PluginIngestLimits.MAX_FILES) {
-            return FilterOutcome.Rejected("提交文本文件数 ${kept.size} 超 ${PluginIngestLimits.MAX_FILES} 上限")
+            return FilterOutcome.Rejected("${prefix}文本文件数 ${kept.size} 超 ${PluginIngestLimits.MAX_FILES} 上限")
         }
         if (totalBytes > PluginIngestLimits.MAX_TOTAL_BYTES) {
-            return FilterOutcome.Rejected("提交聚合字节 $totalBytes 超 ${PluginIngestLimits.MAX_TOTAL_BYTES} 上限")
+            return FilterOutcome.Rejected("${prefix}聚合字节 $totalBytes 超 ${PluginIngestLimits.MAX_TOTAL_BYTES} 上限")
         }
         return FilterOutcome.Accepted(kept)
     }

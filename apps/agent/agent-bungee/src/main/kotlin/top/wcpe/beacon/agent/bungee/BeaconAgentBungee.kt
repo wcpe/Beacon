@@ -18,15 +18,22 @@ import top.wcpe.beacon.agent.adapters.OkHttpStreamTransport
 import top.wcpe.beacon.agent.adapters.OkHttpTransport
 import top.wcpe.beacon.agent.api.BeaconAgentProvider
 import top.wcpe.beacon.agent.core.AgentAssembly
+import top.wcpe.beacon.agent.core.AssembledAgent
+import top.wcpe.beacon.agent.core.AssemblyHooks
+import top.wcpe.beacon.agent.core.ConfigContext
+import top.wcpe.beacon.agent.core.TransportConfig
 import top.wcpe.beacon.agent.core.api.EffectiveConfigView
 import top.wcpe.beacon.agent.core.api.mapDiscoveryResult
 import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.DiscoveryFilters
+import top.wcpe.beacon.agent.core.client.discoverResult
+import top.wcpe.beacon.agent.core.client.register
 import top.wcpe.beacon.agent.core.config.EffectiveConfigStore
 import top.wcpe.beacon.agent.core.connection.ConnectionEventBuffer
 import top.wcpe.beacon.agent.core.connection.ConnectionReportCoordinator
 import top.wcpe.beacon.agent.core.connection.ProxyConnectionTracker
+import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.AgentIdentityStore
 import top.wcpe.beacon.agent.core.identity.EndpointReport
 import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
@@ -82,33 +89,6 @@ import java.util.concurrent.atomic.AtomicReference
         relocate = ["!kotlinx.serialization", "!top.wcpe.beacon.agent.lib.kotlinx.serialization", "!kotlin", "!kotlin1922"],
         transitive = false,
     ),
-    // Redis 客户端（FR-26）：proxy 侧维护玩家位置名册 + 可参与消息。运行期下载、relocate、不打包、不经 CoreLib。
-    // 关键：TabooLib 的 relocate 按依赖各自的 jar 生效，故 jedis 这条必须把它内部引用、且被本工程同样 relocate 的
-    // 传递依赖（commons-pool2 / gson）一并声明 relocate，否则下载并重定位后的 jedis 仍引用原始包名
-    // org.apache.commons.pool2.* / com.google.gson.*，而类路径只有重定位副本（lib.*）→ 运行期 NoClassDefFoundError。
-    // slf4j 不在此列：由平台提供，保持原始包名解析，不重定位。
-    RuntimeDependency(
-        "!redis.clients:jedis:4.2.3",
-        test = "!top.wcpe.beacon.agent.lib.redis.clients.jedis.Jedis",
-        relocate = [
-            "!redis.clients.jedis", "!top.wcpe.beacon.agent.lib.redis.clients.jedis",
-            "!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2",
-            "!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson",
-        ],
-        transitive = false,
-    ),
-    RuntimeDependency(
-        "!org.apache.commons:commons-pool2:2.11.1",
-        test = "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2.ObjectPool",
-        relocate = ["!org.apache.commons.pool2", "!top.wcpe.beacon.agent.lib.org.apache.commons.pool2"],
-        transitive = false,
-    ),
-    RuntimeDependency(
-        "!com.google.code.gson:gson:2.10.1",
-        test = "!top.wcpe.beacon.agent.lib.com.google.gson.Gson",
-        relocate = ["!com.google.gson", "!top.wcpe.beacon.agent.lib.com.google.gson"],
-        transitive = false,
-    ),
 )
 object BeaconAgentBungee : Plugin() {
     /** agent 引导配置（资源 config.yml 随 jar 释放到数据目录）。 */
@@ -132,9 +112,6 @@ object BeaconAgentBungee : Plugin() {
 
     /** BC 专属指标缓存（FR-144）；null 表示未装配。 */
     private var proxyMetricsCache: BungeeProxyMetricsCache? = null
-
-    /** 玩家位置名册引导（FR-26）；null 表示未装配。 */
-    private var rosterBootstrap: BungeePlayerRosterBootstrap? = null
 
     /** 连接明细批上报协调器（FR-145）；null 表示未装配。 */
     private var connectionReporter: ConnectionReportCoordinator? = null
@@ -163,7 +140,7 @@ object BeaconAgentBungee : Plugin() {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
             // 角色按壳固定为 bungee；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
-                AgentBootstrap.readIdentity(reader, role = "bungee", agentVersion = pluginVersion)
+                AgentBootstrap.readIdentity(role = "bungee", agentVersion = pluginVersion)
                     .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
 
             confirmedBinding?.takeIf { it.namespace.isNotBlank() && it.serverId.isNotBlank() }?.let {
@@ -192,48 +169,104 @@ object BeaconAgentBungee : Plugin() {
             val codec = KotlinxJsonCodec()
             val bindingSnapshot = IdentityBindingSnapshotStore(File(getDataFolder(), "identity-binding.snapshot.json"), codec)
             if (confirmedBinding == null) {
-                val bootstrap =
-                    BootstrapRuntime(
-                        identity = identity,
-                        settings = settings,
-                        adapter = adapter,
-                        apiClient = BeaconApiClient(OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs), codec, settings),
-                        snapshots = bindingSnapshot,
-                        onActive = { _, binding ->
-                            confirmedBinding = binding
-                            enable()
-                        },
-                        onTerminal = {
-                            bindingSnapshot.invalidate()
-                            stopActiveRuntime()
-                        },
-                    )
-                bootstrapRuntime = bootstrap
-                bootstrap.start()
+                startBootstrap(identity, settings, adapter, codec, bindingSnapshot)
                 return@submitAsync
             }
-            // 单一代理目录实例：同时供目录同步（注入子服）与后端归属上报（读当前后端集合，FR-36）。
-            val serverDirectory = BungeeServerDirectory()
-            BeaconAgentBungee.serverDirectory = serverDirectory
-            // 装配期先留空，目录同步器创建后回填；lifecycle 在回填后才启动，命令不会命中空引用。
-            val directorySyncerRef = AtomicReference<ProxyServerDirectorySyncer?>(null)
-            // BC 专属指标缓存（FR-144）：慢刷后端可达性，使 1s 采样只读缓存不被阻塞探测拖住。
-            val proxyCache = BungeeProxyMetricsCache(adapter)
-            proxyMetricsCache = proxyCache
-            val assembled =
-                AgentAssembly.assemble(
-                    identity = identity,
-                    settings = settings,
-                    // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
-                    rawAdapter = adapter,
-                    transport = OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs),
-                    codec = codec,
-                    store = store,
-                    effectiveConfigView = view,
+            // 装配一次稳定依赖组，供 active 阶段各私有方法复用，避免长参数列表。
+            val deps = BungeeRuntimeDeps(settings, adapter, codec, store, view, bindingSnapshot)
+            startActiveRuntime(identity, deps)
+        }
+    }
+
+    /** pending 阶段：身份已就绪但尚未获控制面确认绑定时，仅启最小引导器，绝不提前创建数据面组件。 */
+    private fun startBootstrap(
+        identity: AgentIdentity,
+        settings: AgentSettings,
+        adapter: BungeePlatformAdapter,
+        codec: KotlinxJsonCodec,
+        bindingSnapshot: IdentityBindingSnapshotStore,
+    ) {
+        val bootstrap =
+            BootstrapRuntime(
+                identity = identity,
+                settings = settings,
+                adapter = adapter,
+                apiClient = BeaconApiClient(OkHttpTransport(connectTimeoutMs = settings.requestTimeoutMs), codec, settings),
+                snapshots = bindingSnapshot,
+                onActive = { _, binding ->
+                    confirmedBinding = binding
+                    enable()
+                },
+                onTerminal = {
+                    bindingSnapshot.invalidate()
+                    stopActiveRuntime()
+                },
+            )
+        bootstrapRuntime = bootstrap
+        bootstrap.start()
+    }
+
+    /** active 阶段：已获控制面确认绑定，装配完整运行时并接入。 */
+    private fun startActiveRuntime(
+        identity: AgentIdentity,
+        deps: BungeeRuntimeDeps,
+    ) {
+        // 单一代理目录实例：同时供目录同步（注入子服）与后端归属上报（读当前后端集合，FR-36）。
+        val serverDirectory = BungeeServerDirectory()
+        this.serverDirectory = serverDirectory
+        // 装配期先留空，目录同步器创建后回填；lifecycle 在回填后才启动，命令不会命中空引用。
+        val directorySyncerRef = AtomicReference<ProxyServerDirectorySyncer?>(null)
+        // BC 专属指标缓存（FR-144）：慢刷后端可达性，使 1s 采样只读缓存不被阻塞探测拖住。
+        val proxyCache = BungeeProxyMetricsCache(deps.adapter)
+        proxyMetricsCache = proxyCache
+        val assembled = assembleRuntime(identity, deps, serverDirectory, proxyCache, directorySyncerRef)
+        lifecycle = assembled.lifecycle
+        // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
+        messagingRuntime = assembled.messaging.messagingRuntime
+        assembled.lifecycle.onRegistered {
+            val binding = confirmedBinding ?: return@onRegistered
+            deps.bindingSnapshot.write(identity, binding)
+        }
+        assembled.lifecycle.onRegistered { proxyCache.start() }
+
+        // 对外注册门面，供同进程业务插件读取。
+        BeaconAgentProvider.register(assembled.beaconAgent)
+
+        wireDirectorySync(deps.adapter, assembled, serverDirectory, directorySyncerRef, identity)
+        wireRosterAndConnection(identity, deps, assembled)
+
+        // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
+        assembled.lifecycle.enableMetricsSampling()
+
+        // 先点亮快照再异步接入，不阻塞主线程。
+        assembled.lifecycle.bootstrapWithSnapshotThenConnect()
+    }
+
+    /** 装配 core 运行时（AgentAssembly.assemble），集中 assemble 的长参数列表。 */
+    private fun assembleRuntime(
+        identity: AgentIdentity,
+        deps: BungeeRuntimeDeps,
+        serverDirectory: BungeeServerDirectory,
+        proxyCache: BungeeProxyMetricsCache,
+        directorySyncerRef: AtomicReference<ProxyServerDirectorySyncer?>,
+    ): AssembledAgent =
+        AgentAssembly.assemble(
+            identity = identity,
+            settings = deps.settings,
+            // FR-88：传原始 adapter，assemble 内部用 BufferingPlatformAdapter 包裹以旁路采集日志环形缓冲。
+            rawAdapter = deps.adapter,
+            transport =
+                TransportConfig(
+                    transport = OkHttpTransport(connectTimeoutMs = deps.settings.requestTimeoutMs),
+                    codec = deps.codec,
                     // 单条 SSE 推送流（FR-24）：取代配置/文件树/覆盖集三条长轮询，纯 HTTP 读流、无重型依赖。
-                    streamTransport = OkHttpStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                    streamTransport = OkHttpStreamTransport(connectTimeoutMs = deps.settings.requestTimeoutMs),
                     // 交付 blob 流式传输（FR-165，见 ADR-0069）：启用交付数据面（上传 / 下载 blob），流式不整读入内存。
-                    blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = settings.requestTimeoutMs),
+                    blobStreamTransport = OkHttpBlobStreamTransport(connectTimeoutMs = deps.settings.requestTimeoutMs),
+                ),
+            config = ConfigContext(deps.store, deps.view),
+            hooks =
+                AssemblyHooks(
                     // 运行指标供给（FR-32）：上报时采代理在线人数 + JVM 内存 / CPU 真值（代理无 TPS，恒 0）。
                     metricsProvider = { BungeeMetricsCollector.sample() },
                     // 后端归属供给（FR-36）：注册/上报时取本代理当前代理的后端子服 serverId 集合（仅 bc 填）。
@@ -245,95 +278,76 @@ object BeaconAgentBungee : Plugin() {
                     selfPluginDirNames = setOf("BeaconAgentProxy"),
                     onBcDirectoryResync = { directorySyncerRef.get()?.syncOnce() ?: false },
                     authorityInvalidated = {
-                        bindingSnapshot.invalidate()
+                        deps.bindingSnapshot.invalidate()
                         stopActiveRuntime()
                     },
-                )
-            lifecycle = assembled.lifecycle
-            // 跨服消息模块（FR-149，HTTP 中转）：随注册成功自启（AgentAssembly 已挂 onRegistered），此处仅留引用供 DISABLE 停止。
-            messagingRuntime = assembled.messagingRuntime
-            assembled.lifecycle.onRegistered {
-                val binding = confirmedBinding ?: return@onRegistered
-                bindingSnapshot.write(identity, binding)
-            }
-            assembled.lifecycle.onRegistered { proxyCache.start() }
+                ),
+        )
 
-            // 对外注册门面，供同进程业务插件读取。
-            BeaconAgentProvider.register(assembled.beaconAgent)
-
-            val directorySyncer =
-                ProxyServerDirectorySyncer(
-                    directory = serverDirectory,
-                    warn = { adapter.warn(it) },
-                    info = { adapter.info(it) },
-                    lobbySnapshot = assembled.lobbySnapshotProvider,
-                ) {
-                    mapDiscoveryResult(
-                        assembled.apiClient.discoverResult(
-                            DiscoveryFilters(
-                                namespace = identity.namespace,
-                                group = null,
-                                zone = null,
-                                role = "bukkit",
-                            ),
-                            identity = identity,
-                        ),
-                    )
-                }
-            directorySyncerRef.set(directorySyncer)
-            // BC 的本地查询命令只读取目录同步器已原子发布的内存快照。
-            BeaconAgentCommand.register(assembled.lifecycle, adapter, directorySyncer::snapshot)
-            BungeeInitialLobbyListener.start(
-                router = InitialLobbyRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider),
+    /** 装配 BC 子服目录同步器、本地查询命令、首次大厅路由监听与目录同步递归链。 */
+    private fun wireDirectorySync(
+        adapter: BungeePlatformAdapter,
+        assembled: AssembledAgent,
+        serverDirectory: BungeeServerDirectory,
+        directorySyncerRef: AtomicReference<ProxyServerDirectorySyncer?>,
+        identity: AgentIdentity,
+    ) {
+        val directorySyncer =
+            ProxyServerDirectorySyncer(
                 directory = serverDirectory,
-            )
-            assembled.lifecycle.onRegistered {
-                directorySyncLoopGate.start { generation ->
-                    adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer, generation) }
-                }
+                warn = { adapter.warn(it) },
+                info = { adapter.info(it) },
+                lobbySnapshot = assembled.lobbySnapshotProvider,
+            ) {
+                mapDiscoveryResult(
+                    assembled.apiClient.discoverResult(
+                        DiscoveryFilters(
+                            namespace = identity.namespace,
+                            group = null,
+                            zone = null,
+                            role = "bukkit",
+                        ),
+                        identity = identity,
+                    ),
+                )
             }
-
-            // 玩家位置名册引导（FR-26）：据下发 Redis 配置维护「玩家→所在子服」，供子服按玩家寻址解析。
-            val roster =
-                BungeePlayerRosterBootstrap(
-                    settings = settings,
-                    store = store,
-                    codec = KotlinxJsonCodec(),
-                    // 名册只读端口持有者（FR-31）：名册就绪后注入全表读，点亮 proxy 侧 Discovery.roster()/rosterInZone()。
-                    rosterHolder = assembled.rosterDirectoryHolder,
-                    adapter = adapter,
-                )
-            rosterBootstrap = roster
-            BungeeRosterListener.bootstrap = roster
-            // 配置变更后据下发 Redis 配置重建名册引导。
-            view.onChange { _, _ -> roster.sync() }
-
-            // 连接明细采集（FR-145，proxy 专用）：登入/换服/登出 → 会话追踪 → 有界缓冲 → 每 5s 或满 200 条批上报。
-            // 采集埋点零成本、上报走 async，绝不阻塞 BC 主线程；fail-static：控制面不可用照常缓冲、玩家进出服不受影响。
-            val connectionBuffer = ConnectionEventBuffer()
-            val reporter =
-                ConnectionReportCoordinator(
-                    adapter = adapter,
-                    apiClient = assembled.apiClient,
-                    identity = identity,
-                    buffer = connectionBuffer,
-                    bootId = identity.bootId,
-                )
-            connectionReporter = reporter
-            // 缓冲满阈值即触发即时上报（「满 200 条即上报」，单飞去重）。
-            BungeeConnectionListener.tracker =
-                ProxyConnectionTracker(sink = { event -> if (connectionBuffer.add(event)) reporter.flushNow() })
-            // 随注册成功启动上报循环（幂等；未注册前采集照常入缓冲，注册后补报）。
-            assembled.lifecycle.onRegistered { reporter.start() }
-
-            // 启用 v2 指标 1s 采样 + 5s 批上报（FR-144）：须在接入前开启，注册成功即启两条循环。
-            assembled.lifecycle.enableMetricsSampling()
-
-            // 先点亮快照再异步接入，不阻塞主线程。
-            assembled.lifecycle.bootstrapWithSnapshotThenConnect()
-            // 快照可能已含 Redis 名册配置：立即尝试一次（缺失则空闲，待配置下发再起）。
-            roster.sync()
+        directorySyncerRef.set(directorySyncer)
+        // BC 的本地查询命令只读取目录同步器已原子发布的内存快照。
+        BeaconAgentCommand.register(assembled.lifecycle, adapter, directorySyncer::snapshot)
+        BungeeInitialLobbyListener.start(
+            router = InitialLobbyRouter(directorySyncer::snapshot, assembled.lobbySnapshotProvider),
+            directory = serverDirectory,
+        )
+        assembled.lifecycle.onRegistered {
+            directorySyncLoopGate.start { generation ->
+                adapter.runAsync { syncDirectoryLoop(adapter, directorySyncer, generation) }
+            }
         }
+    }
+
+    /** 装配连接明细批上报协调器（FR-145）。 */
+    private fun wireRosterAndConnection(
+        identity: AgentIdentity,
+        deps: BungeeRuntimeDeps,
+        assembled: AssembledAgent,
+    ) {
+        // 连接明细采集（FR-145，proxy 专用）：登入/换服/登出 → 会话追踪 → 有界缓冲 → 每 5s 或满 200 条批上报。
+        // 采集埋点零成本、上报走 async，绝不阻塞 BC 主线程；fail-static：控制面不可用照常缓冲、玩家进出服不受影响。
+        val connectionBuffer = ConnectionEventBuffer()
+        val reporter =
+            ConnectionReportCoordinator(
+                adapter = deps.adapter,
+                apiClient = assembled.apiClient,
+                identity = identity,
+                buffer = connectionBuffer,
+                bootId = identity.bootId,
+            )
+        connectionReporter = reporter
+        // 缓冲满阈值即触发即时上报（「满 200 条即上报」，单飞去重）。
+        BungeeConnectionListener.tracker =
+            ProxyConnectionTracker(sink = { event -> if (connectionBuffer.add(event)) reporter.flushNow() })
+        // 随注册成功启动上报循环（幂等；未注册前采集照常入缓冲，注册后补报）。
+        assembled.lifecycle.onRegistered { reporter.start() }
     }
 
     private fun syncDirectoryLoop(
@@ -367,14 +381,11 @@ object BeaconAgentBungee : Plugin() {
         BungeeInitialLobbyListener.stop()
         serverDirectory?.resetManaged()
         serverDirectory = null
-        BungeeRosterListener.bootstrap = null
         BungeeConnectionListener.tracker = null
         connectionReporter?.stop()
         connectionReporter = null
         messagingRuntime?.stop()
         messagingRuntime = null
-        rosterBootstrap?.stop()
-        rosterBootstrap = null
         proxyMetricsCache?.stop()
         proxyMetricsCache = null
         lifecycle?.shutdown()
@@ -396,3 +407,17 @@ object BeaconAgentBungee : Plugin() {
 
     private const val DIRECTORY_SYNC_INTERVAL_MS = 10_000L
 }
+
+/**
+ * active 阶段各私有方法复用的稳定依赖组（enable 阶段装配一次，随每次 active 接入复用）。
+ * 仅封装在 enable 内一次性创建、且被 startActiveRuntime / assembleRuntime / wireRosterAndConnection 共享的对象，
+ * 各方法特有的临时对象（identity / assembled / serverDirectory / proxyCache / directorySyncerRef）仍作为独立参数传递。
+ */
+private data class BungeeRuntimeDeps(
+    val settings: AgentSettings,
+    val adapter: BungeePlatformAdapter,
+    val codec: KotlinxJsonCodec,
+    val store: EffectiveConfigStore,
+    val view: EffectiveConfigView,
+    val bindingSnapshot: IdentityBindingSnapshotStore,
+)

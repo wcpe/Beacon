@@ -83,8 +83,7 @@ class BungeeServerDirectory : ProxyServerDirectory {
         val idx = raw.lastIndexOf(':')
         if (idx <= 0 || idx == raw.length - 1) return null
         val host = raw.substring(0, idx)
-        val port = raw.substring(idx + 1).toIntOrNull() ?: return null
-        if (port !in 1..65535) return null
-        return InetSocketAddress(host, port)
+        // 合并 null 与越界端口校验为单条链式表达式，避免多出口（detekt ReturnCount 放行顶部卫语句）。
+        return raw.substring(idx + 1).toIntOrNull()?.takeIf { it in 1..65535 }?.let { InetSocketAddress(host, it) }
     }
 }

@@ -4,6 +4,8 @@ import top.wcpe.beacon.agent.core.client.ActiveBinding
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.RegisterOutcome
 import top.wcpe.beacon.agent.core.client.RegistrationPollResult
+import top.wcpe.beacon.agent.core.client.bootstrapRegister
+import top.wcpe.beacon.agent.core.client.pollRegistration
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.identity.IdentityBindingSnapshotStore
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
@@ -20,7 +22,7 @@ class BootstrapRuntime(
     private val apiClient: BeaconApiClient,
     private val snapshots: IdentityBindingSnapshotStore,
     private val onActive: (AgentIdentity, ActiveBinding) -> Unit,
-    private val onTerminal: () -> Unit,
+    private val onTerminal: () -> Unit = {},
 ) {
     private val running = AtomicBoolean(false)
     private val activeStarted = AtomicBoolean(false)
@@ -52,11 +54,11 @@ class BootstrapRuntime(
             RegisterOutcome.DuplicateServerId,
             RegisterOutcome.OfflineRejected,
             is RegisterOutcome.Success,
-            -> retryRegister()
+            -> retryDelayed(::register)
 
             is RegisterOutcome.Failed -> {
                 activateSnapshotIfAvailable()
-                retryRegister()
+                retryDelayed(::register)
             }
         }
     }
@@ -67,7 +69,7 @@ class BootstrapRuntime(
             is RegistrationPollResult.Active -> confirmBinding(result.binding)
             RegistrationPollResult.Pending,
             RegistrationPollResult.NotModified,
-            -> retryPoll()
+            -> retryDelayed(::waitForApproval)
 
             RegistrationPollResult.Disabled,
             RegistrationPollResult.Rejected,
@@ -77,7 +79,7 @@ class BootstrapRuntime(
 
             is RegistrationPollResult.Failed -> {
                 activateSnapshotIfAvailable()
-                retryPoll()
+                retryDelayed(::waitForApproval)
             }
         }
     }
@@ -122,12 +124,8 @@ class BootstrapRuntime(
         onTerminal()
     }
 
-    private fun retryRegister() {
-        if (running.get()) adapter.runAsyncDelayed(settings.requestTimeoutMs, ::register)
-    }
-
-    private fun retryPoll() {
-        if (running.get()) adapter.runAsyncDelayed(settings.requestTimeoutMs, ::waitForApproval)
+    private fun retryDelayed(action: () -> Unit) {
+        if (running.get()) adapter.runAsyncDelayed(settings.requestTimeoutMs, action)
     }
 
     private companion object {

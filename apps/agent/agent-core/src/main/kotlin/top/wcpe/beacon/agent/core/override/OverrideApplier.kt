@@ -91,42 +91,81 @@ class OverrideApplier(
         val records = mutableListOf<BackupRecord>()
         var allWritten = true
         for (file in files) {
-            val rel = file.path
-            if (!pathSecurity.isSafe(rel)) {
-                adapter.warn("跳过非法覆盖路径（穿越 / 绝对 / 盘符 / jar / server 关键文件），不落盘：$rel")
-                allWritten = false
-                continue
-            }
-            val target = File(root, rel)
-            // 反馈环防护：检测外部改动则告警不盲盖。读盘异常（目标是目录占位 / 不可读）按「跳过该文件 + 告警」处理——
-            // 不让单个文件令整个 override 异步循环静默停摆，也绝不盲盖。
-            if (target.exists()) {
-                val diskMd5 =
-                    try {
-                        md5Hex(target.readText(StandardCharsets.UTF_8))
-                    } catch (e: Exception) {
-                        adapter.warn("受管文件现状读盘失败（疑似目录占位 / 不可读），跳过不覆盖：$rel")
-                        allWritten = false
-                        continue
-                    }
-                if (tracker.isExternallyModified(rel, diskMd5)) {
-                    adapter.warn("检测到受管文件被外部改动（疑似插件自身重写），告警而非盲盖，跳过：$rel")
-                    allWritten = false
-                    continue
-                }
-            }
-            // 备份 → 原子覆盖 → 受管标记。
-            try {
-                records.add(backupManager.backup(setId, rel, target))
-                mirrorWriter.write(rel, file.content)
-                tracker.markWritten(rel, file.md5)
-            } catch (e: Exception) {
-                adapter.error("覆盖文件失败（path=$rel），跳过", e)
-                allWritten = false
-            }
+            if (!applyOne(setId, file, records)) allWritten = false
         }
         return records to allWritten
     }
+
+    /** 应用单个覆盖文件：非法路径跳过，否则交由受管文件校验后落盘。返回是否成功覆盖。 */
+    private fun applyOne(
+        setId: String,
+        file: OverrideFile,
+        records: MutableList<BackupRecord>,
+    ): Boolean {
+        val rel = file.path
+        if (!pathSecurity.isSafe(rel)) {
+            adapter.warn("跳过非法覆盖路径（穿越 / 绝对 / 盘符 / jar / server 关键文件），不落盘：$rel")
+            return false
+        }
+        return applyValidFile(setId, file, rel, records)
+    }
+
+    /** 路径已合法的单文件覆盖：受管文件被外部改动则跳过，否则原子覆盖。 */
+    private fun applyValidFile(
+        setId: String,
+        file: OverrideFile,
+        rel: String,
+        records: MutableList<BackupRecord>,
+    ): Boolean {
+        val target = File(root, rel)
+        // 反馈环防护：检测外部改动则告警不盲盖。读盘异常（目标是目录占位 / 不可读）按「跳过该文件 + 告警」处理——
+        // 不让单个文件令整个 override 异步循环静默停摆，也绝不盲盖。
+        if (target.exists() && shouldSkipExisting(rel, target)) return false
+        return writeOne(setId, file, rel, target, records)
+    }
+
+    /** 受管文件是否应跳过：读盘失败或被外部改动均告警跳过（不盲盖）。 */
+    private fun shouldSkipExisting(
+        rel: String,
+        target: File,
+    ): Boolean {
+        val diskMd5 = readDiskMd5OrNull(target)
+        if (diskMd5 == null) {
+            adapter.warn("受管文件现状读盘失败（疑似目录占位 / 不可读），跳过不覆盖：$rel")
+            return true
+        }
+        val externallyModified = tracker.isExternallyModified(rel, diskMd5)
+        if (externallyModified) {
+            adapter.warn("检测到受管文件被外部改动（疑似插件自身重写），告警而非盲盖，跳过：$rel")
+        }
+        return externallyModified
+    }
+
+    /** 读盘算 md5；读盘异常返回 null（由调用方告警跳过）。 */
+    private fun readDiskMd5OrNull(target: File): String? =
+        try {
+            md5Hex(target.readText(StandardCharsets.UTF_8))
+        } catch (_: Exception) {
+            null
+        }
+
+    /** 备份 → 原子覆盖 → 受管标记；任一步异常则告警跳过该文件。 */
+    private fun writeOne(
+        setId: String,
+        file: OverrideFile,
+        rel: String,
+        target: File,
+        records: MutableList<BackupRecord>,
+    ): Boolean =
+        try {
+            records.add(backupManager.backup(setId, rel, target))
+            mirrorWriter.write(rel, file.content)
+            tracker.markWritten(rel, file.md5)
+            true
+        } catch (e: Exception) {
+            adapter.error("覆盖文件失败（path=$rel），跳过", e)
+            false
+        }
 
     /** 按字节算 md5（与控制面一致基准），供反馈环比对磁盘现状。 */
     private fun md5Hex(content: String): String {

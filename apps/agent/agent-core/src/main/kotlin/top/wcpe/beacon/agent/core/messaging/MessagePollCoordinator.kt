@@ -5,6 +5,8 @@ import top.wcpe.beacon.agent.core.client.MessageAck
 import top.wcpe.beacon.agent.core.client.MessageAckOutcome
 import top.wcpe.beacon.agent.core.client.MessagePollOutcome
 import top.wcpe.beacon.agent.core.client.PolledMessage
+import top.wcpe.beacon.agent.core.client.ackMessages
+import top.wcpe.beacon.agent.core.client.pollMessages
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.util.concurrent.atomic.AtomicBoolean

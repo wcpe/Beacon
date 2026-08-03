@@ -2,8 +2,11 @@ package top.wcpe.beacon.agent.bukkit
 
 import taboolib.common.platform.ProxyCommandSender
 import taboolib.common.platform.command.command
+import top.wcpe.beacon.agent.core.client.sendMessage
 import top.wcpe.beacon.agent.core.lifecycle.AgentLifecycle
 import top.wcpe.beacon.agent.core.lifecycle.OpsCommandText
+import top.wcpe.beacon.agent.core.lifecycle.forcePollNow
+import top.wcpe.beacon.agent.core.lifecycle.forceSyncFileTreeNow
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 
 /**

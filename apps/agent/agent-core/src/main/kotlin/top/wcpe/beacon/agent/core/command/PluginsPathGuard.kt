@@ -22,16 +22,17 @@ object PluginsPathGuard {
         // 反斜杠 / 冒号（盘符 / ADS / UNC）规范化前即拒，避免平台差异绕过。
         if (path.contains('\\') || path.contains(':')) return false
         if (path.startsWith('/')) return false // 绝对路径
+        // 逐段校验：连续斜杠 / 穿越 / 段尾点空格 / Windows 保留名任一命中即不安全。
+        return path.split('/').all(::segmentIsSafe)
+    }
 
-        val segments = path.split('/')
-        for (seg in segments) {
-            if (seg.isEmpty()) return false // 连续斜杠 / 末尾斜杠产生空段，拒
-            if (seg == "..") return false // 任一段穿越即拒
-            // 段尾的点 / 空格会被 Windows 落盘剥离（"x.jar."→"x.jar"、"con "→"con"），借此绕过判定，一律拒。
-            if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
-            if (isWindowsReserved(seg)) return false
-        }
-        return true
+    /** 单段是否安全：空段、穿越、段尾点 / 空格、Windows 保留设备名一律拒。 */
+    private fun segmentIsSafe(seg: String): Boolean {
+        if (seg.isEmpty()) return false // 连续斜杠 / 末尾斜杠产生空段，拒
+        if (seg == "..") return false // 任一段穿越即拒
+        // 段尾的点 / 空格会被 Windows 落盘剥离（"x.jar."→"x.jar"、"con "→"con"），借此绕过判定，一律拒。
+        if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
+        return !isWindowsReserved(seg)
     }
 
     /** 段名是否为 Windows 保留设备名（取点号前主名，不区分大小写）。 */

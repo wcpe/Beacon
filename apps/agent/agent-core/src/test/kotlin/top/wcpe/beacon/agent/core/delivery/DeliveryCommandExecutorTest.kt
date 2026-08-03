@@ -1,6 +1,7 @@
 package top.wcpe.beacon.agent.core.delivery
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.fetchDeliveryManifest
 import top.wcpe.beacon.agent.core.command.AgentCommand
 import top.wcpe.beacon.agent.core.command.DeliveryCommandPayload
 import top.wcpe.beacon.agent.core.command.IngestCommandPayload

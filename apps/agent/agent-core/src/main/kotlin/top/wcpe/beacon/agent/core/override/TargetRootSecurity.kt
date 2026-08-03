@@ -30,25 +30,29 @@ class TargetRootSecurity(
      */
     fun isSafe(targetRoot: String): Boolean {
         // 注意：不整体 trim——段尾点 / 空格正是 Windows 落盘会剥离的绕过手段，须逐段拒，不能先 trim 掉。
-        val raw = targetRoot
-        if (raw.isBlank()) return false
+        if (targetRoot.isBlank()) return false
         // 反斜杠 / 冒号（盘符 / ADS）规范化前即拒，避免平台差异绕过。
-        if (raw.contains('\\') || raw.contains(':')) return false
-        if (raw.startsWith('/')) return false // 绝对路径
+        if (targetRoot.contains('\\') || targetRoot.contains(':')) return false
+        if (targetRoot.startsWith('/')) return false // 绝对路径
+        return isSafeRelative(targetRoot)
+    }
 
+    /** 非绝对 targetRoot 的段级与 Path 级安全判定。 */
+    private fun isSafeRelative(raw: String): Boolean {
         val segments = raw.trimEnd('/').split('/')
-        // 必须以 plugins 开头且至少一级插件子目录（不止于 plugins 根本身）。
-        if (segments.size < 2 || segments[0].lowercase() != "plugins") return false
-        for (seg in segments) {
-            if (seg == "..") return false // 任一段穿越即拒（双保险，下方 Path 级再兜底）
-            // 段尾的点 / 空格会被 Windows 落盘剥离，借此绕过判定，一律拒。
-            if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
-            if (isWindowsReserved(seg)) return false
-        }
-
+        // 必须以 plugins 开头且至少一级插件子目录（不止于 plugins 根本身），且逐段安全。
+        if (segments.size < 2 || segments[0].lowercase() != "plugins" || !segments.all(::segmentIsSafe)) return false
         // Path 级最终判定：解析到服务器根下后规范化，必须落在 plugins 基目录之内（且深于 plugins 本身）。
         val resolved = serverRootPath.resolve(raw.trimEnd('/')).normalize()
         return resolved.startsWith(pluginsPath) && resolved != pluginsPath
+    }
+
+    /** 单段是否安全：穿越、段尾点 / 空格、Windows 保留设备名一律拒。 */
+    private fun segmentIsSafe(seg: String): Boolean {
+        if (seg == "..") return false // 任一段穿越即拒（双保险，下方 Path 级再兜底）
+        // 段尾的点 / 空格会被 Windows 落盘剥离，借此绕过判定，一律拒。
+        if (seg != "." && seg.trimEnd(' ', '.') != seg) return false
+        return !isWindowsReserved(seg)
     }
 
     /** 段名是否为 Windows 保留设备名（取点号前主名，不区分大小写）。 */

@@ -2,8 +2,10 @@ package top.wcpe.beacon.agent.core.browse
 
 import top.wcpe.beacon.agent.core.command.PluginsPathGuard
 import top.wcpe.beacon.agent.core.command.TextFileHeuristic
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
@@ -29,9 +31,6 @@ import java.nio.file.Path
  * 任一校验失败即拒该次请求：列目录得 null、读文件得 null、不读不回传。
  */
 object FsBrowseReader {
-    /** 单文件读取上限 + 1 字节：让超限文件读到溢出量即可判 truncated，绝不全载。 */
-    private const val PER_FILE_READ_CAP: Long = FsBrowseLimits.MAX_FILE_BYTES + 1
-
     /**
      * 懒列 [relPath]（相对 root）目录的**直接子项**，分页返回（FR-109 原语①）。
      *
@@ -106,18 +105,14 @@ object FsBrowseReader {
         root: File,
         relPath: String,
     ): FileContent? {
-        if (relPath.isEmpty()) return null // 根不是文件
+        // 卫语句集中前置：空串 / root 无效 / 越权 / 非普通文件 / jar —— 任一不满足即拒。
+        if (relPath.isEmpty()) return null
         val rootReal = realRootOrNull(root) ?: return null
         val target = resolveWithinRoot(rootReal, relPath) ?: return null
-        // 必须是真实普通文件（非目录 / 非目录符号链接 / 非设备文件）。
-        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-            // 允许「指向 root 内普通文件」的符号链接：再按真实路径判普通文件性。
-            if (!Files.isRegularFile(target)) return null
-        }
-        val file = target.toFile()
-        if (file.name.lowercase().endsWith(".jar")) return null // 排除 jar（最大二进制来源）
-
-        val raw = readCapped(file) ?: return null
+        // 必须是真实普通文件（允许指向 root 内普通文件的符号链接：nofollow 不通过则按真实路径再判）。
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(target)) return null
+        if (target.toFile().name.lowercase().endsWith(".jar")) return null // 排除 jar（最大二进制来源）
+        val raw = readCapped(target.toFile()) ?: return null
         val truncated = raw.size.toLong() > FsBrowseLimits.MAX_FILE_BYTES
         // 截断到上限再解码（避免把溢出的 1 字节误判破坏 UTF-8 边界）。
         val effective = if (truncated) raw.copyOf(FsBrowseLimits.MAX_FILE_BYTES.toInt()) else raw
@@ -184,38 +179,14 @@ object FsBrowseReader {
         rootReal: Path,
         relPath: String,
     ): Path? {
-        if (relPath.isEmpty()) return rootReal // 空串 = 列 root 自身
-        // 字符串级前置闸：拒 `..` / 绝对 / 反斜杠 / 冒号 / UNC / 保留名 / 段尾点空格。
+        // 卫语句集中前置：空串列根 / 字符串闸 / 拼接容纳 / 真实路径容纳 —— 任一失败即拒。
+        if (relPath.isEmpty()) return rootReal
         if (!PluginsPathGuard.isSafe(relPath)) return null
-
-        // Path 级拼接 + 规范化容纳（即便字符串闸放过，normalize 后也必须仍在根内）。
-        val resolved =
-            try {
-                rootReal.resolve(relPath).normalize()
-            } catch (e: Exception) {
-                return null
-            }
+        val resolved = runCatching { rootReal.resolve(relPath).normalize() }.getOrNull() ?: return null
         if (!resolved.startsWith(rootReal)) return null
-
-        // 解析真实路径（符号链接）后必须仍在根内——根除符号链接逃逸。
-        // 目标可能尚不存在（理论上不该，浏览读已存在项）：解析失败即拒。
-        val real =
-            try {
-                resolved.toRealPath()
-            } catch (e: IOException) {
-                return null
-            }
+        val real = runCatching { resolved.toRealPath() }.getOrNull() ?: return null
         if (!real.startsWith(rootReal)) return null
         return real
-    }
-
-    /** 相对 root 真实路径的相对路径（正斜杠分隔；root 自身得空串）。 */
-    private fun relativeOf(
-        rootReal: Path,
-        target: Path,
-    ): String {
-        val rel = rootReal.relativize(target)
-        return rel.joinToString("/") { it.toString() }
     }
 
     /** 把一个文件系统子项转为 [BrowseEntry]；逃逸 root 的符号链接被剔除（返回 null）。 */
@@ -223,15 +194,10 @@ object FsBrowseReader {
         rootReal: Path,
         child: File,
     ): BrowseEntry? {
-        val isDir = Files.isDirectory(child.toPath(), LinkOption.NOFOLLOW_LINKS)
-        // 解析真实路径判逃逸：指向 root 外的符号链接（含目录链接）剔除。
-        val real =
-            try {
-                child.toPath().toRealPath()
-            } catch (e: IOException) {
-                return null // 坏链接 / 解析失败 → 不列出
-            }
+        // 卫语句前置：坏链接 / 逃逸 root 的符号链接（含目录链接）剔除。
+        val real = runCatching { child.toPath().toRealPath() }.getOrNull() ?: return null
         if (!real.startsWith(rootReal)) return null
+        val isDir = Files.isDirectory(child.toPath(), LinkOption.NOFOLLOW_LINKS)
         val name = child.name
         return BrowseEntry(
             name = name,
@@ -249,21 +215,9 @@ object FsBrowseReader {
         remainingDepth: Int,
         budget: NodeBudget,
     ): TreeNode {
-        val dirName = dir.fileName?.toString() ?: ""
-        val base =
-            TreeNode(
-                name = dirName,
-                relPath = relativeOf(rootReal, dir),
-                dir = true,
-                size = 0L,
-                text = false,
-                children = emptyList(),
-                truncated = false,
-            )
-        // 深度耗尽：该目录不再展开，标 truncated（前端可继续懒列）。
-        if (remainingDepth <= 0) return base.copy(truncated = true)
-
-        val rawChildren = dir.toFile().listFiles() ?: return base
+        // 卫语句前置：深度耗尽 / 无子项 —— 直接回基座节点（前端可继续懒列）。
+        if (remainingDepth <= 0) return dirNode(rootReal, dir, emptyList(), truncated = true)
+        val rawChildren = dir.toFile().listFiles() ?: return dirNode(rootReal, dir, emptyList(), truncated = false)
         val entries =
             rawChildren
                 .mapNotNull { child -> toEntry(rootReal, child) }
@@ -293,29 +247,16 @@ object FsBrowseReader {
                 )
             }
         }
-        return base.copy(children = children, truncated = truncated)
+        return dirNode(rootReal, dir, children, truncated = truncated)
     }
 
     /** 读文件内容，最多 [PER_FILE_READ_CAP] 字节；读失败返回 null。 */
-    private fun readCapped(file: File): ByteArray? {
-        return try {
-            file.inputStream().use { input ->
-                val buffer = java.io.ByteArrayOutputStream()
-                val chunk = ByteArray(8192)
-                var remaining = PER_FILE_READ_CAP
-                while (remaining > 0) {
-                    val toRead = minOf(chunk.size.toLong(), remaining).toInt()
-                    val n = input.read(chunk, 0, toRead)
-                    if (n < 0) break
-                    buffer.write(chunk, 0, n)
-                    remaining -= n
-                }
-                buffer.toByteArray()
-            }
+    private fun readCapped(file: File): ByteArray? =
+        try {
+            file.inputStream().use { readUpToCap(it) }
         } catch (e: IOException) {
             null
         }
-    }
 
     /** 子树展开的全局节点预算（逐层共享，达上限即停止再收）。 */
     private class NodeBudget(private var remaining: Int) {
@@ -326,6 +267,52 @@ object FsBrowseReader {
             return true
         }
     }
+}
+
+// ---- 文件级私有工具：不占 FsBrowseReader 对象方法数（与 decodeUtf8OrNull 同口径） ----
+
+/** 单文件读取上限 + 1 字节：让超限文件读到溢出量即可判 truncated，绝不全载。 */
+private const val PER_FILE_READ_CAP: Long = FsBrowseLimits.MAX_FILE_BYTES + 1
+
+/** 相对 root 真实路径的相对路径（正斜杠分隔；root 自身得空串）。 */
+private fun relativeOf(
+    rootReal: Path,
+    target: Path,
+): String {
+    val rel = rootReal.relativize(target)
+    return rel.joinToString("/") { it.toString() }
+}
+
+/** 构造一个目录基座节点（name / relPath 由 rootReal+dir 推导，children 与 truncated 由调用方决定）。 */
+private fun dirNode(
+    rootReal: Path,
+    dir: Path,
+    children: List<TreeNode>,
+    truncated: Boolean,
+): TreeNode =
+    TreeNode(
+        name = dir.fileName?.toString() ?: "",
+        relPath = relativeOf(rootReal, dir),
+        dir = true,
+        size = 0L,
+        text = false,
+        children = children,
+        truncated = truncated,
+    )
+
+/** 从 [input] 流式读取最多 [PER_FILE_READ_CAP] 字节；EOF 自然终止，绝不全载超大文件。 */
+private fun readUpToCap(input: InputStream): ByteArray {
+    val buffer = ByteArrayOutputStream()
+    val chunk = ByteArray(8192)
+    var remaining = PER_FILE_READ_CAP
+    while (remaining > 0) {
+        val toRead = minOf(chunk.size.toLong(), remaining).toInt()
+        val n = input.read(chunk, 0, toRead)
+        if (n < 0) break
+        buffer.write(chunk, 0, n)
+        remaining -= n
+    }
+    return buffer.toByteArray()
 }
 
 /**

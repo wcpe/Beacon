@@ -33,57 +33,49 @@ import java.util.concurrent.TimeoutException
  * @param warn          告警日志（无法配对的回信、非法消息等）
  */
 class MessageBus(
-    private val transport: MessageTransport,
-    private val codec: JsonCodec,
-    private val selfServerId: String,
-    private val settings: MessagingSettings,
-    private val playerLocator: PlayerLocator? = null,
-    private val scheduleTimeout: (delayMs: Long, task: () -> Unit) -> Unit = DEFAULT_SCHEDULER,
-    private val outboundExecutor: (task: () -> Unit) -> Unit = { it() },
-    private val warn: (String) -> Unit = {},
+    internal val transport: MessageTransport,
+    internal val codec: JsonCodec,
+    internal val selfServerId: String,
+    internal val settings: MessagingSettings,
+    internal val playerLocator: PlayerLocator? = null,
+    internal val scheduleTimeout: (delayMs: Long, task: () -> Unit) -> Unit = DEFAULT_SCHEDULER,
+    internal val outboundExecutor: (task: () -> Unit) -> Unit = { it() },
+    internal val warn: (String) -> Unit = {},
 ) {
     /** 按消息类型注册的处理器：type → handler。非 RPC 收消息后回调，返回值忽略。 */
-    private val typeHandlers = ConcurrentHashMap<String, (MessageContext) -> Unit>()
+    internal val typeHandlers = ConcurrentHashMap<String, (MessageContext) -> Unit>()
 
     /** 主题处理器：topic → handler。 */
-    private val topicHandlers = ConcurrentHashMap<String, (Message) -> Unit>()
+    internal val topicHandlers = ConcurrentHashMap<String, (Message) -> Unit>()
 
     /** 等待回信的 RPC 请求：请求 messageId → Future。 */
-    private val pending = ConcurrentHashMap<String, CompletableFuture<Any?>>()
+    internal val pending = ConcurrentHashMap<String, CompletableFuture<Any?>>()
 
     /** 本服专属回信通道名（Redis 通道用；HTTP 中转不投递此，回信按 source 定向）。 */
-    private val replyChannel: String = "$REPLY_PREFIX$selfServerId"
+    internal val replyChannel: String = "$REPLY_PREFIX$selfServerId"
 
     @Volatile
-    private var started = false
+    internal var started = false
 
     /**
      * 启动：连 transport、订阅本服收件流与回信通道。失败抛异常由上层降级（isAvailable 仍为 false）。
      */
     fun start() {
         transport.start()
-        transport.subscribeServerInbox { raw -> onInboundRaw(raw) }
-        transport.subscribeReplyInbox(replyChannel) { raw -> onReplyRaw(raw) }
+        transport.subscribeServerInbox { raw -> this.onInboundRaw(raw) }
+        transport.subscribeReplyInbox(replyChannel) { raw -> this.onReplyRaw(raw) }
         started = true
     }
 
     /** 关闭：失败所有挂起 Future、关 transport。 */
     fun close() {
         started = false
-        failAllPending(IllegalStateException("消息总线已关闭"))
+        this.failAllPending(IllegalStateException("消息总线已关闭"))
         transport.close()
     }
 
     /** 模块是否可用（已启动且 transport 已连上）。业务侧据此优雅降级。 */
     fun isAvailable(): Boolean = started && transport.isConnected()
-
-    /** 注册按类型分发的处理器。重复注册同 type 覆盖前者。 */
-    fun on(
-        type: String,
-        handler: (MessageContext) -> Unit,
-    ) {
-        typeHandlers[type] = handler
-    }
 
     /**
      * 定向发送（fire-and-forget）：向目标子服投递一条单向消息。
@@ -98,9 +90,9 @@ class MessageBus(
         type: String,
         payload: Any?,
     ) {
-        requireAvailable()
-        checkPayloadSize(payload)
-        submitOutbound { dispatchOutbound(Message.TARGET_SERVER, targetServerId, type, payload) }
+        this.requireAvailable()
+        this.checkPayloadSize(payload)
+        this.submitOutbound { this.dispatchOutbound(Message.TARGET_SERVER, targetServerId, type, payload) }
     }
 
     /**
@@ -118,8 +110,8 @@ class MessageBus(
         type: String,
         payload: Any?,
     ): CompletableFuture<Any?> {
-        requireAvailable()
-        checkPayloadSize(payload)
+        this.requireAvailable()
+        this.checkPayloadSize(payload)
         // correlationId 自引用 messageId：作为 RPC 请求标记与关联键，响应回填此值（spec §4.2 / §3.3）。
         val messageId = Uuid7.generate()
         val future = CompletableFuture<Any?>()
@@ -140,7 +132,7 @@ class MessageBus(
         // 上行发送丢异步线程，绝不阻塞调用者；发送失败异步 completeExceptionally 并清理 pending。
         outboundExecutor {
             try {
-                transport.sendToServer(targetServerId, encode(request))
+                transport.sendToServer(targetServerId, this.encode(request))
             } catch (t: Throwable) {
                 pending.remove(messageId)
                 future.completeExceptionally(t)
@@ -174,8 +166,8 @@ class MessageBus(
         payload: Any?,
         zone: String? = null,
     ) {
-        requireAvailable()
-        checkPayloadSize(payload)
+        this.requireAvailable()
+        this.checkPayloadSize(payload)
         val message =
             Message(
                 type = topic,
@@ -187,8 +179,8 @@ class MessageBus(
                 targetId = zone,
                 broadcast = true,
             )
-        val encoded = encode(message)
-        submitOutbound { transport.publishTopic(topic, encoded) }
+        val encoded = this.encode(message)
+        this.submitOutbound { transport.publishTopic(topic, encoded) }
     }
 
     /**
@@ -202,9 +194,9 @@ class MessageBus(
         topic: String,
         handler: (Message) -> Unit,
     ) {
-        requireAvailable()
+        this.requireAvailable()
         topicHandlers[topic] = handler
-        transport.subscribeTopic(topic) { raw -> onTopicRaw(topic, raw) }
+        transport.subscribeTopic(topic) { raw -> this.onTopicRaw(topic, raw) }
     }
 
     /** 取消主题订阅。 */
@@ -229,18 +221,18 @@ class MessageBus(
         type: String,
         payload: Any?,
     ): Boolean {
-        requireAvailable()
-        checkPayloadSize(payload)
+        this.requireAvailable()
+        this.checkPayloadSize(payload)
         val locator = playerLocator
         // HTTP 中转：不注入本地名册，发按玩家寻址消息，交控制面按连接明细名册快照解析（玩家不在线 → 控制面记 failed）。
         if (locator == null) {
-            submitOutbound { dispatchOutbound(Message.TARGET_PLAYER, playerName, type, payload) }
+            this.submitOutbound { this.dispatchOutbound(Message.TARGET_PLAYER, playerName, type, payload) }
             return true
         }
         // Redis 通道：本地名册解析所在服（内存操作，不阻塞）后定向。
         val serverId = locator.resolveServerId(playerName)
         if (serverId != null) {
-            submitOutbound { dispatchOutbound(Message.TARGET_SERVER, serverId, type, payload) }
+            this.submitOutbound { this.dispatchOutbound(Message.TARGET_SERVER, serverId, type, payload) }
         } else {
             warn("按玩家寻址落空：玩家 $playerName 不在名册（可能已换服/离线），丢弃 type=$type")
         }
@@ -262,193 +254,19 @@ class MessageBus(
      */
     fun deliverInbound(message: Message): InboundOutcome {
         if (message.broadcast) {
-            return routeToTopicHandler(message)
+            return this.routeToTopicHandler(message)
         }
         val correlationId = message.correlationId
         if (correlationId != null && correlationId != message.messageId) {
-            return completeResponse(correlationId, message)
+            return this.completeResponse(correlationId, message)
         }
-        return routeToHandler(message)
-    }
-
-    /** 收件流入站（Redis 通道回调）：解码后走统一分发。 */
-    private fun onInboundRaw(raw: String) {
-        val message = decode(raw) ?: return
-        deliverInbound(message)
-    }
-
-    /** 回信入站（Redis 回信通道回调）：按 correlationId 唤醒等待的 Future。HTTP 中转不用此路（回信走收件流）。 */
-    private fun onReplyRaw(raw: String) {
-        val message = decode(raw) ?: return
-        val correlationId = message.correlationId
-        if (correlationId == null) {
-            warn("回信缺 correlationId，丢弃 source=${message.source}")
-            return
-        }
-        pending.remove(correlationId)?.complete(message.payload)
-    }
-
-    /** RPC 响应：唤醒挂起 Future；无主（请求已超时清理）则静默受理，绝不 type 路由。 */
-    private fun completeResponse(
-        correlationId: String,
-        message: Message,
-    ): InboundOutcome {
-        pending.remove(correlationId)?.complete(message.payload)
-        return InboundOutcome.delivered(null)
-    }
-
-    /** 路由到按 type 注册的处理器；无处理器告警并回 failed。 */
-    private fun routeToHandler(message: Message): InboundOutcome {
-        val handler = typeHandlers[message.type]
-        if (handler == null) {
-            warn("无处理器的消息类型：type=${message.type} source=${message.source}，丢弃")
-            return InboundOutcome.failed("no_handler_for_type")
-        }
-        val context = MessageContext(message, this)
-        val startNanos = System.nanoTime()
-        return try {
-            handler(context)
-            InboundOutcome.delivered((System.nanoTime() - startNanos) / 1_000_000L)
-        } catch (t: Throwable) {
-            warn("消息处理器抛异常：type=${message.type}，已隔离，错误=${t.message}")
-            InboundOutcome.failed(t.message ?: "handler_error")
-        }
-    }
-
-    /**
-     * 广播入站（FR-180）：按 topic（落信封 type）路由本地订阅分发表，与定向 on(type) 分发表隔离。
-     * 无订阅者回 delivered——广播 fan-out 及本 namespace 全部在线服，订阅与否是各服本地状态，
-     * 不订阅不构成投递失败（pub/sub 可丢语义）；订阅 handler 抛异常回 failed（计入广播聚合 failed_count）。
-     */
-    private fun routeToTopicHandler(message: Message): InboundOutcome {
-        val handler = topicHandlers[message.type] ?: return InboundOutcome.delivered(null)
-        val startNanos = System.nanoTime()
-        return try {
-            handler(message)
-            InboundOutcome.delivered((System.nanoTime() - startNanos) / 1_000_000L)
-        } catch (t: Throwable) {
-            warn("主题处理器抛异常：topic=${message.type}，已隔离，错误=${t.message}")
-            InboundOutcome.failed(t.message ?: "handler_error")
-        }
-    }
-
-    /** 主题入站（Redis 通道订阅回调）：解码 → 回调该 topic 处理器。 */
-    private fun onTopicRaw(
-        topic: String,
-        raw: String,
-    ) {
-        val message = decode(raw) ?: return
-        val handler = topicHandlers[topic] ?: return
-        try {
-            handler(message)
-        } catch (t: Throwable) {
-            warn("主题处理器抛异常：topic=$topic，已隔离，错误=${t.message}")
-        }
-    }
-
-    /** 由 [MessageContext.reply] 调用：把响应发回请求方。Redis 走回信通道，HTTP 中转按 source 定向发一条带 correlationId 的消息。
-     *  上行经 [outboundExecutor] 异步执行，绝不阻塞调用者（含 MC 主线程）。 */
-    internal fun reply(
-        request: Message,
-        payload: Any?,
-    ) {
-        val response =
-            Message(
-                type = request.type,
-                payload = payload,
-                correlationId = request.correlationId,
-                source = selfServerId,
-                messageId = Uuid7.generate(),
-                sentAt = System.currentTimeMillis(),
-            )
-        val replyTo = request.replyTo
-        val encoded = encode(response)
-        if (replyTo != null) {
-            submitOutbound { transport.sendReply(replyTo, encoded) }
-            return
-        }
-        val target = request.source ?: return
-        val outbound = response.copy(targetKind = Message.TARGET_SERVER, targetId = target)
-        val outboundEncoded = encode(outbound)
-        submitOutbound { transport.sendToServer(target, outboundEncoded) }
-    }
-
-    private fun dispatchOutbound(
-        targetKind: String,
-        targetId: String,
-        type: String,
-        payload: Any?,
-    ) {
-        val message =
-            Message(
-                type = type,
-                payload = payload,
-                source = selfServerId,
-                messageId = Uuid7.generate(),
-                sentAt = System.currentTimeMillis(),
-                targetKind = targetKind,
-                targetId = targetId,
-            )
-        // targetId 兼作 transport 的目标参数：Redis 用它选收件流；HTTP 适配器改读信封 targetKind/targetId 建 wire 目标。
-        transport.sendToServer(targetId, encode(message))
-    }
-
-    /**
-     * 把出站阻塞调用（transport.send/publish/reply）丢到 [outboundExecutor] 异步线程，
-     * 绝不阻塞调用者（含 MC 主线程）；fire-and-forget 语义下发送失败仅 warn 日志。
-     */
-    private fun submitOutbound(task: () -> Unit) {
-        outboundExecutor {
-            try {
-                task()
-            } catch (t: Throwable) {
-                warn("跨服消息出站发送失败：${t.message ?: "无错误信息"}")
-            }
-        }
-    }
-
-    private fun requireAvailable() {
-        check(isAvailable()) { "跨服消息模块不可用（未启用或控制面消息通道未就绪）" }
-    }
-
-    /** payload 上限前置校验：超限本地直接失败，不发无谓请求（spec §5.1 / §8-6）。null payload 视作 0 字节直接放行。 */
-    private fun checkPayloadSize(payload: Any?) {
-        if (payload == null) return
-        val bytes = codec.encode(payload).toByteArray(Charsets.UTF_8).size
-        require(bytes <= MAX_PAYLOAD_BYTES) {
-            "跨服消息 payload 超过 $MAX_PAYLOAD_BYTES 字节上限（实际 $bytes 字节），本地拒绝发送"
-        }
-    }
-
-    private fun failAllPending(error: Throwable) {
-        val ids = pending.keys.toList()
-        for (id in ids) {
-            pending.remove(id)?.completeExceptionally(error)
-        }
-    }
-
-    private fun encode(message: Message): String = codec.encode(message.toMap())
-
-    /** 解码原始 json 为信封；非法消息（缺 type / 解析失败）告警并返回 null。 */
-    private fun decode(raw: String): Message? {
-        val message =
-            try {
-                Message.fromMap(codec.decode(raw))
-            } catch (t: Throwable) {
-                warn("消息解码失败，丢弃，错误=${t.message}")
-                return null
-            }
-        if (message == null) {
-            warn("非法消息（缺 type 或非对象），丢弃")
-        }
-        return message
+        return this.routeToHandler(message)
     }
 
     companion object {
         /** 回信通道前缀（Redis 通道用）：本服回信通道 = reply:<serverId>。 */
         private const val REPLY_PREFIX: String = "reply:"
 
-        /** payload 字节上限（默认 64KB，spec §3.4）：超限发送请求本地直接拒绝。 */
         const val MAX_PAYLOAD_BYTES: Int = 64 * 1024
 
         /** 默认超时调度用的 daemon 定时器（单例，全 bus 共享）。 */

@@ -10,6 +10,7 @@ import top.wcpe.beacon.agent.api.ScheduleResult
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.LocalDecisionReport
 import top.wcpe.beacon.agent.core.client.SchedDecideOutcome
+import top.wcpe.beacon.agent.core.client.scheduleDecide
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.util.concurrent.CompletableFuture

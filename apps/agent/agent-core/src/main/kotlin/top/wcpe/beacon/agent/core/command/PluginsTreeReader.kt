@@ -152,23 +152,25 @@ object PluginsTreeReader {
     }
 
     /** 读文件内容，最多 [PER_FILE_READ_CAP] 字节；读失败返回 null（跳过该文件）。 */
-    private fun readCapped(file: File): ByteArray? {
-        return try {
-            file.inputStream().use { input ->
-                val buffer = java.io.ByteArrayOutputStream()
-                val chunk = ByteArray(8192)
-                var remaining = PER_FILE_READ_CAP
-                while (remaining > 0) {
-                    val toRead = minOf(chunk.size.toLong(), remaining).toInt()
-                    val n = input.read(chunk, 0, toRead)
-                    if (n < 0) break
-                    buffer.write(chunk, 0, n)
-                    remaining -= n
-                }
-                buffer.toByteArray()
-            }
+    private fun readCapped(file: File): ByteArray? =
+        try {
+            file.inputStream().use { readCappedFrom(it) }
         } catch (e: IOException) {
             null
         }
+
+    /** 从输入流读最多 [PER_FILE_READ_CAP] 字节到内存缓冲；遇 EOF 提前停止。 */
+    private fun readCappedFrom(input: java.io.InputStream): ByteArray {
+        val buffer = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(8192)
+        var remaining = PER_FILE_READ_CAP
+        while (remaining > 0) {
+            val toRead = minOf(chunk.size.toLong(), remaining).toInt()
+            val n = input.read(chunk, 0, toRead)
+            if (n < 0) break
+            buffer.write(chunk, 0, n)
+            remaining -= n
+        }
+        return buffer.toByteArray()
     }
 }

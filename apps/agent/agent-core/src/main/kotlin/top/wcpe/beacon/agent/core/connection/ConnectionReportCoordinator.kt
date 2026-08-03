@@ -2,6 +2,7 @@ package top.wcpe.beacon.agent.core.connection
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
 import top.wcpe.beacon.agent.core.client.ConnectionsReportOutcome
+import top.wcpe.beacon.agent.core.client.reportConnectionsBatch
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.platform.PlatformAdapter
 import java.util.concurrent.atomic.AtomicBoolean

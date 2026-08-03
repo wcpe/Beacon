@@ -1,6 +1,14 @@
 package top.wcpe.beacon.agent.core.command
 
 import top.wcpe.beacon.agent.core.client.BeaconApiClient
+import top.wcpe.beacon.agent.core.client.fetchPendingCommand
+import top.wcpe.beacon.agent.core.client.postAssetContent
+import top.wcpe.beacon.agent.core.client.uploadBrowseResult
+import top.wcpe.beacon.agent.core.client.uploadCommandResult
+import top.wcpe.beacon.agent.core.client.uploadError
+import top.wcpe.beacon.agent.core.client.uploadIngest
+import top.wcpe.beacon.agent.core.client.uploadLogs
+import top.wcpe.beacon.agent.core.client.uploadScan
 import top.wcpe.beacon.agent.core.delivery.DeliveryCommandExecutor
 import top.wcpe.beacon.agent.core.identity.AgentIdentity
 import top.wcpe.beacon.agent.core.log.AgentLogBuffer
@@ -62,6 +70,12 @@ class ReverseFetchExecutor(
     /** 单飞门：任意时刻只允许一条抓取流在跑（command-pending 与 READY 并发触发时去重）。 */
     private val running = AtomicBoolean(false)
 
+    /** 只读浏览 / 资产读取命令执行器（独立类收敛浏览响应映射，避免主执行器方法数膨胀）。 */
+    private val browseRunner = BrowseCommandRunner(apiClient, adapter, identity)
+
+    /** 强制重同步 / BC 目录重同步命令执行器（独立类收敛重同步回传，避免主执行器方法数膨胀）。 */
+    private val resyncRunner = ResyncCommandRunner(apiClient, adapter, identity, onResyncConfig, onBcDirectoryResync)
+
     /**
      * 触发一次「拉取并执行待办命令」流程。**须在 async 线程调用**（内部读盘 + HTTP 均阻塞 IO）。
      *
@@ -98,17 +112,17 @@ class ReverseFetchExecutor(
         }
         // 强制重同步命令（FR-91）：调重同步回调重拉有效配置/文件树/覆盖集，回传命令结果，不读 plugins 树。
         if (command.type == AgentCommand.TYPE_RESYNC_CONFIG) {
-            runResync(command)
+            resyncRunner.runResync(command)
             return true
         }
         // BC 目录重同步（FR-201）：只走 BC 注入的唯一目录同步入口，绝不复用配置/文件树重同步。
         if (command.type == AgentCommand.TYPE_BC_DIRECTORY_RESYNC) {
-            runBcDirectoryResync(command)
+            resyncRunner.runBcDirectoryResync(command)
             return true
         }
         // 只读文件浏览命令（FR-110）：按 op 列目录 / 读子树 / 读单文件回传，纯只读、不写盘。
         if (command.type == AgentCommand.TYPE_FS_BROWSE) {
-            runBrowse(command)
+            browseRunner.runBrowse(command)
             return true
         }
         // 文件资产重扫命令（FR-163）：调扫描协调器立即扫描本机资产并全量上报，回传命令结果，不读 plugins 树。
@@ -118,7 +132,7 @@ class ReverseFetchExecutor(
         }
         // 文件资产内容读取命令（FR-164）：读单文件内容 + 二进制 / 截断标记回传供预览 / diff，纯只读、不写盘。
         if (command.type == AgentCommand.TYPE_ASSET_READ) {
-            runAssetRead(command)
+            browseRunner.runAssetRead(command)
             return true
         }
         // 交付命令（FR-165，见 ADR-0069）：单一拉取点委派给交付执行器执行（上传 / 推送 / 生效 / 回滚）。
@@ -246,90 +260,6 @@ class ReverseFetchExecutor(
     }
 
     /**
-     * 强制重同步阶段（FR-91）：调 [onResyncConfig] 回调重拉控制面权威的有效配置/文件树/覆盖集并 apply，
-     * 再经命令结果端点回传 done。**绝不读 plugins 树**（重同步语义是重拉权威配置、非反向抓盘）。
-     *
-     * 回调内部各 applier 的 md5 幂等守卫兜底：已是最新则无害 no-op。回调抛异常 → 回传 failed（带原因摘要）。
-     * 回调返回 false（agent 未运行 / 正在停机的极窄窗口跳过了重拉）→ 回传 failed（比误报 done 诚实，控制面 CAS 转 failed）。
-     * 未注入回调（旧装配 / 测试桩）则按未知能力忽略：记 warn、不回传（控制面超时清理）。
-     */
-    private fun runResync(command: AgentCommand) {
-        val callback = onResyncConfig
-        if (callback == null) {
-            adapter.warn("收到强制重同步命令但未启用重同步回调（忽略）：id=${command.id}")
-            return
-        }
-        val executed =
-            try {
-                callback()
-            } catch (e: Exception) {
-                adapter.error("强制重同步执行失败：id=${command.id}", e)
-                val ok =
-                    apiClient.uploadCommandResult(
-                        command.id,
-                        ok = false,
-                        reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}",
-                        identity = identity,
-                    )
-                if (!ok) {
-                    adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
-                }
-                return
-            }
-        // 回调跳过（agent 未运行 / 正在停机）→ 回传 failed，不误报 done（真实未执行重拉）。
-        if (!executed) {
-            adapter.warn("强制重同步被跳过（agent 未运行/正在停机）：id=${command.id}")
-            val ok = apiClient.uploadCommandResult(command.id, ok = false, reason = "agent 未运行/正在停机，跳过强制重同步", identity = identity)
-            if (!ok) adapter.warn("强制重同步跳过结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
-            return
-        }
-        val ok = apiClient.uploadCommandResult(command.id, ok = true, reason = "", identity = identity)
-        if (ok) {
-            adapter.info("强制重同步完成并回传：id=${command.id}")
-        } else {
-            adapter.warn("强制重同步完成结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
-        }
-    }
-
-    /**
-     * BC 目录重同步（FR-201）：回调成功才回 done；失败保留旧目录和候选快照并回传脱敏中文摘要。
-     * Bukkit 不注入回调时不能静默忽略，否则 fetched 命令会悬挂。
-     */
-    private fun runBcDirectoryResync(command: AgentCommand) {
-        val callback = onBcDirectoryResync
-        if (callback == null) {
-            reportBcDirectoryResult(command, ok = false, reason = "当前 Agent 角色不支持 BC 目录重同步")
-            return
-        }
-        val applied =
-            try {
-                callback()
-            } catch (e: Exception) {
-                adapter.error("BC 目录重同步执行异常：id=${command.id}", e)
-                reportBcDirectoryResult(command, ok = false, reason = "BC 目录重同步执行异常，已保留最后有效快照")
-                return
-            }
-        if (!applied) {
-            reportBcDirectoryResult(command, ok = false, reason = "拉取、校验、应用或候选快照持久化失败，已保留最后有效快照")
-            return
-        }
-        reportBcDirectoryResult(command, ok = true, reason = "")
-    }
-
-    private fun reportBcDirectoryResult(
-        command: AgentCommand,
-        ok: Boolean,
-        reason: String,
-    ) {
-        val reported = apiClient.uploadCommandResult(command.id, ok = ok, reason = reason, identity = identity)
-        if (reported) {
-            adapter.info("BC 目录重同步结果已回传：id=${command.id}，ok=$ok")
-        } else {
-            adapter.warn("BC 目录重同步结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
-        }
-    }
-
-    /**
      * 文件资产重扫阶段（FR-163）：调 [onAssetRescan] 回调立即扫描本机资产并全量上报控制面
      * （payload.force=true 忽略本地 mtime 缓存全部重哈希），再经命令结果端点回传结果。**绝不读 plugins 树**。
      *
@@ -368,7 +298,53 @@ class ReverseFetchExecutor(
     }
 
     /**
-     * 只读文件浏览阶段（FR-110，见 ADR-0049 决策 9）：按 op 调 [PlatformAdapter] 只读浏览原语
+     * 交付命令阶段（FR-165，见 ADR-0069）：委派给 [deliveryExecutor] 执行上传 / 推送 / 生效 / 回滚全流程，
+     * 回执由交付执行器内部经交付回执端点上报（不复用反向抓取的命令结果端点）。
+     *
+     * 未注入交付执行器（数据面未启用 / 旧装配 / 测试桩）→ 记 warn 忽略（控制面按命令超时清理），与未知命令等效。
+     */
+    private fun runDelivery(command: AgentCommand) {
+        val executor = deliveryExecutor
+        if (executor == null) {
+            adapter.warn("收到交付命令但交付数据面未启用（忽略）：id=${command.id}，type=${command.type}")
+            return
+        }
+        executor.execute(command)
+    }
+
+    /**
+     * 回传一条执行错误到控制面（FR-87）：best-effort，回传失败仅记 warn、不重试（交控制面超时清理兜底）。
+     */
+    private fun reportError(
+        command: AgentCommand,
+        reason: String,
+    ) {
+        val ok = apiClient.uploadError(command.id, reason, identity)
+        if (ok) {
+            adapter.info("已回传反向抓取执行错误：id=${command.id}")
+        } else {
+            adapter.warn("回传反向抓取执行错误失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
+    }
+
+    companion object {
+        /** 单次 trigger 排空命令的迭代上限（兜底：控制面异常下杜绝无限循环；正常场景待办命令极少）。 */
+        private const val MAX_DRAIN_PER_TRIGGER = 64
+    }
+}
+
+/**
+ * 只读浏览 / 资产读取命令执行器（FR-110 / FR-164）：独立类以收敛浏览响应映射，避免 [ReverseFetchExecutor] 方法数膨胀。
+ *
+ * 纯只读、绝不写盘；原语拒读 / 异常 → 回 ok=false（fail-static、不崩）。
+ */
+private class BrowseCommandRunner(
+    private val apiClient: BeaconApiClient,
+    private val adapter: PlatformAdapter,
+    private val identity: AgentIdentity,
+) {
+    /**
+     * 只读文件浏览（FR-110，见 ADR-0049 决策 9）：按 op 调 [PlatformAdapter] 只读浏览原语
      * （列目录 / 读子树 / 读单文件，FS 级安全 + 根限定 + path traversal 校验由原语负责），结果回传
      * /agent/files/browse-result。**纯只读、绝不写盘**；原语返回 null（越权 / 非目录 / 非文本 / 未启用浏览）
      * → 回传 ok=false（控制面据此 CAS failed、admin 得 404）。读盘异常 → 同样回 ok=false（fail-static，不崩）。
@@ -376,7 +352,7 @@ class ReverseFetchExecutor(
      * 未注入浏览能力（壳层 browse* 默认 null 实现）→ 原语恒 null → 回 ok=false，与未知命令的「忽略」等效：
      * 控制面据此判目标不可读，不影响 agent 主流程。
      */
-    private fun runBrowse(command: AgentCommand) {
+    fun runBrowse(command: AgentCommand) {
         val payload = command.payload
         val result: Map<String, Any?>? =
             try {
@@ -416,12 +392,12 @@ class ReverseFetchExecutor(
     }
 
     /**
-     * 单文件资产读取阶段（FR-164）：读 plugins 根下单文件内容 + 二进制 / 截断标记回传供预览 / diff。
+     * 单文件资产读取（FR-164）：读 plugins 根下单文件内容 + 二进制 / 截断标记回传供预览 / diff。
      *
      * 纯只读、绝不写盘；越权 / 不存在 / 读失败 → 回 ok=false 带脱敏原因（fail-static、不崩）。
      * 二进制文件回 binary=true + 空内容（前端只展示元数据）；超单文件上限回 truncated=true + 前缀。
      */
-    private fun runAssetRead(command: AgentCommand) {
+    fun runAssetRead(command: AgentCommand) {
         val payload = command.payload
         val asset =
             try {
@@ -436,21 +412,6 @@ class ReverseFetchExecutor(
         } else {
             adapter.warn("文件资产内容回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
-    }
-
-    /**
-     * 交付命令阶段（FR-165，见 ADR-0069）：委派给 [deliveryExecutor] 执行上传 / 推送 / 生效 / 回滚全流程，
-     * 回执由交付执行器内部经交付回执端点上报（不复用反向抓取的命令结果端点）。
-     *
-     * 未注入交付执行器（数据面未启用 / 旧装配 / 测试桩）→ 记 warn 忽略（控制面按命令超时清理），与未知命令等效。
-     */
-    private fun runDelivery(command: AgentCommand) {
-        val executor = deliveryExecutor
-        if (executor == null) {
-            adapter.warn("收到交付命令但交付数据面未启用（忽略）：id=${command.id}，type=${command.type}")
-            return
-        }
-        executor.execute(command)
     }
 
     /** 把列目录结果映射为可序列化 Map（FR-110；键名与控制面代理透传给前端的形状一致）。 */
@@ -496,24 +457,99 @@ class ReverseFetchExecutor(
             "size" to entry.size,
             "text" to entry.text,
         )
+}
 
+/**
+ * 强制重同步 / BC 目录重同步命令执行器（FR-91 / FR-201）：独立类收敛重同步回传，避免 [ReverseFetchExecutor] 方法数膨胀。
+ *
+ * - resync-config：调 [onResyncConfig] 重拉有效配置/文件树/覆盖集并 apply，回传 done/failed，**不读 plugins 树**。
+ * - bc-directory-resync：只调 [onBcDirectoryResync]（BC 壳层接入受管目录与大厅候选）；Bukkit 不注入则明确回传不支持。
+ */
+private class ResyncCommandRunner(
+    private val apiClient: BeaconApiClient,
+    private val adapter: PlatformAdapter,
+    private val identity: AgentIdentity,
+    private val onResyncConfig: (() -> Boolean)?,
+    private val onBcDirectoryResync: (() -> Boolean)?,
+) {
     /**
-     * 回传一条执行错误到控制面（FR-87）：best-effort，回传失败仅记 warn、不重试（交控制面超时清理兜底）。
+     * 强制重同步（FR-91）：回调内部各 applier 的 md5 幂等守卫兜底（已是最新则无害 no-op）。
+     * 回调抛异常 → 回传 failed（带原因摘要）；返回 false（agent 未运行 / 正在停机跳过重拉）→ 回传 failed（不误报 done）。
+     * 未注入回调则按未知能力忽略：记 warn、不回传（控制面超时清理）。
      */
-    private fun reportError(
-        command: AgentCommand,
-        reason: String,
-    ) {
-        val ok = apiClient.uploadError(command.id, reason, identity)
+    fun runResync(command: AgentCommand) {
+        val callback = onResyncConfig
+        if (callback == null) {
+            adapter.warn("收到强制重同步命令但未启用重同步回调（忽略）：id=${command.id}")
+            return
+        }
+        val executed =
+            try {
+                callback()
+            } catch (e: Exception) {
+                adapter.error("强制重同步执行失败：id=${command.id}", e)
+                val failOk =
+                    apiClient.uploadCommandResult(
+                        command.id,
+                        ok = false,
+                        reason = "${e.javaClass.simpleName}: ${e.message ?: "无错误信息"}",
+                        identity = identity,
+                    )
+                if (!failOk) {
+                    adapter.warn("强制重同步失败结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+                }
+                return
+            }
+        // 回调跳过（agent 未运行 / 正在停机）→ 回传 failed，不误报 done（真实未执行重拉）。
+        if (!executed) {
+            adapter.warn("强制重同步被跳过（agent 未运行/正在停机）：id=${command.id}")
+        }
+        val ok =
+            apiClient.uploadCommandResult(
+                command.id,
+                ok = executed,
+                reason = if (executed) "" else "agent 未运行/正在停机，跳过强制重同步",
+                identity = identity,
+            )
         if (ok) {
-            adapter.info("已回传反向抓取执行错误：id=${command.id}")
+            if (executed) adapter.info("强制重同步完成并回传：id=${command.id}")
         } else {
-            adapter.warn("回传反向抓取执行错误失败（命令态不符 / 连接失败）：id=${command.id}")
+            adapter.warn("强制重同步${if (executed) "完成" else "跳过"}结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
         }
     }
 
-    companion object {
-        /** 单次 trigger 排空命令的迭代上限（兜底：控制面异常下杜绝无限循环；正常场景待办命令极少）。 */
-        private const val MAX_DRAIN_PER_TRIGGER = 64
+    /**
+     * BC 目录重同步（FR-201）：回调成功才回 done；失败保留旧目录和候选快照并回传脱敏中文摘要。
+     * Bukkit 不注入回调时不能静默忽略，否则 fetched 命令会悬挂。
+     */
+    fun runBcDirectoryResync(command: AgentCommand) {
+        val callback = onBcDirectoryResync
+        if (callback == null) {
+            reportBcDirectoryResult(command, ok = false, reason = "当前 Agent 角色不支持 BC 目录重同步")
+            return
+        }
+        val applied =
+            try {
+                callback()
+            } catch (e: Exception) {
+                adapter.error("BC 目录重同步执行异常：id=${command.id}", e)
+                reportBcDirectoryResult(command, ok = false, reason = "BC 目录重同步执行异常，已保留最后有效快照")
+                return
+            }
+        val reason = if (applied) "" else "拉取、校验、应用或候选快照持久化失败，已保留最后有效快照"
+        reportBcDirectoryResult(command, ok = applied, reason = reason)
+    }
+
+    private fun reportBcDirectoryResult(
+        command: AgentCommand,
+        ok: Boolean,
+        reason: String,
+    ) {
+        val reported = apiClient.uploadCommandResult(command.id, ok = ok, reason = reason, identity = identity)
+        if (reported) {
+            adapter.info("BC 目录重同步结果已回传：id=${command.id}，ok=$ok")
+        } else {
+            adapter.warn("BC 目录重同步结果回传失败（命令态不符 / 连接失败）：id=${command.id}")
+        }
     }
 }

@@ -40,10 +40,8 @@ class IdentityBindingSnapshotStore(
             val boundAt = JsonTree.strOr(data, "boundAt", "")
             val fingerprint = JsonTree.strOr(data, "bindingFingerprint", "")
             val compatAddress = JsonTree.strOr(data, "address", "")
-            if (JsonTree.intOr(data, "formatVersion", 0) != FORMAT_VERSION ||
-                JsonTree.strOr(data, "identityId", "") != identity.identityId ||
-                JsonTree.strOr(data, "kind", "") != identity.role || namespace.isBlank() || serverId.isBlank()
-            ) {
+            // 逐项校验快照一致性：格式版本 / identityId / role / 命名空间 / serverId 任一不符即视为不可用。
+            if (!isMetadataConsistent(data, identity, namespace, serverId)) {
                 null
             } else {
                 if (boundAt.isBlank() || compatAddress.isBlank() || !FINGERPRINT.matches(fingerprint)) {
@@ -62,6 +60,20 @@ class IdentityBindingSnapshotStore(
         if (file.exists() && !file.delete()) {
             // 快照残留时仍会因身份/命名空间校验 fail-closed，不把删除失败当作可用快照。
         }
+    }
+
+    /** 逐项校验快照元数据一致性：格式版本 / identityId / role / 命名空间 / serverId 任一不符即视为不可用。 */
+    private fun isMetadataConsistent(
+        data: Map<String, Any?>,
+        identity: AgentIdentity,
+        namespace: String,
+        serverId: String,
+    ): Boolean {
+        val versionOk = JsonTree.intOr(data, "formatVersion", 0) == FORMAT_VERSION
+        val identityOk = JsonTree.strOr(data, "identityId", "") == identity.identityId
+        val roleOk = JsonTree.strOr(data, "kind", "") == identity.role
+        val bindingFieldsOk = namespace.isNotBlank() && serverId.isNotBlank()
+        return versionOk && identityOk && roleOk && bindingFieldsOk
     }
 
     private companion object {
