@@ -23,7 +23,7 @@ func nowMinus2h() time.Time { return time.Now().Add(-2 * time.Hour) }
 // seedExistingFile 在目标 group 层预置一个已发布文件（制造冲突）。
 func seedExistingFile(t *testing.T, svc *ReverseFetchTaskService, path, content string) {
 	t.Helper()
-	if _, err := svc.fileSvc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(svc.fileSvc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: path, ScopeLevel: model.ScopeGroup,
 		Content: content, Operator: "seed", Comment: "预置",
 	}); err != nil {
@@ -39,7 +39,7 @@ func TestNoConflictGoesStraightToDone(t *testing.T) {
 		{Path: "A/config.yml", Size: 1, IsText: true},
 		{Path: "B/lang.yml", Size: 1, IsText: true},
 	})
-	got, _ := svc.Submit(task.ID, []string{"A/config.yml", "B/lang.yml"}, false, "alice", "")
+	got, _ := applySubmitForTest(svc, task.ID, []string{"A/config.yml", "B/lang.yml"}, false, "alice", "")
 	fetchCmd(t, db, got.SubmitCommandID)
 	res, err := svc.ReceiveSubmitIngest(got.SubmitCommandID, []ImportFile{
 		{Path: "A/config.yml", Content: "k: 1\n"},
@@ -73,7 +73,7 @@ func TestConflictEntersReviewAndStashesNotLanded(t *testing.T) {
 		{Path: "A/config.yml", Size: 1, IsText: true},
 		{Path: "B/new.yml", Size: 1, IsText: true},
 	})
-	got, _ := svc.Submit(task.ID, []string{"A/config.yml", "B/new.yml"}, false, "alice", "")
+	got, _ := applySubmitForTest(svc, task.ID, []string{"A/config.yml", "B/new.yml"}, false, "alice", "")
 	fetchCmd(t, db, got.SubmitCommandID)
 
 	// 回传含冲突文件 A/config.yml（新内容）+ 非冲突 B/new.yml → 应进 conflict-review、不落库
@@ -109,7 +109,7 @@ func TestConflictEntersReviewAndStashesNotLanded(t *testing.T) {
 		t.Fatal("非冲突文件也应待 resolve 才落库，进冲突审核期不落")
 	}
 	// 互斥：conflict-review 仍占活跃，同实例不可再建
-	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err == nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err == nil {
 		t.Fatal("conflict-review 应仍占活跃，互斥应拒新建")
 	}
 }
@@ -122,7 +122,7 @@ func setupConflictReview(t *testing.T, db *gormShared, svc *ReverseFetchTaskServ
 		{Path: "A/config.yml", Size: 1, IsText: true},
 		{Path: "B/new.yml", Size: 1, IsText: true},
 	})
-	got, _ := svc.Submit(task.ID, []string{"A/config.yml", "B/new.yml"}, false, "alice", "")
+	got, _ := applySubmitForTest(svc, task.ID, []string{"A/config.yml", "B/new.yml"}, false, "alice", "")
 	fetchCmd(t, db.db, got.SubmitCommandID)
 	if _, err := svc.ReceiveSubmitIngest(got.SubmitCommandID, []ImportFile{
 		{Path: "A/config.yml", Content: "new: 2\n"},
@@ -322,7 +322,7 @@ func TestExpireClearsSubmitContent(t *testing.T) {
 			got.Status, len(got.SubmitContent), len(got.Manifest))
 	}
 	// 互斥解除：同实例可再建
-	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
 		t.Fatalf("过期后同实例应可再建，实际 %v", err)
 	}
 }

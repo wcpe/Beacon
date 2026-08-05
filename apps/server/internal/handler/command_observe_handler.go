@@ -14,7 +14,13 @@ import (
 // 列表（按 namespace/serverId/type/status/时间过滤 + 分页）+ 聚合（计数 + 趋势）。只读、不写不改命令。
 // 仅请求期解码 / 编码；过滤校验、缺省与上限、Go 侧分桶在 service 层。
 type CommandObserveHandler struct {
-	svc *service.CommandObserveService
+	svc   *service.CommandObserveService
+	scope *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *CommandObserveHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewCommandObserveHandler 构造处理器。
@@ -41,17 +47,23 @@ type commandMetaView struct {
 // List 处理 GET /admin/v1/commands（分页 + 过滤，创建时间倒序）。
 func (h *CommandObserveHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
 	items, total, err := h.svc.List(repository.CommandFilter{
-		Namespace: q.Get("namespace"),
-		ServerID:  q.Get("serverId"),
-		Type:      q.Get("type"),
-		Status:    q.Get("status"),
-		From:      parseRFC3339(q.Get("from")),
-		To:        parseRFC3339(q.Get("to")),
-		Page:      page,
-		Size:      size,
+		Namespace:      q.Get("namespace"),
+		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
+		ServerID: q.Get("serverId"),
+		Type:     q.Get("type"),
+		Status:   q.Get("status"),
+		From:     parseRFC3339(q.Get("from")),
+		To:       parseRFC3339(q.Get("to")),
+		Page:     page,
+		Size:     size,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -123,10 +135,16 @@ type commandAnalyticsView struct {
 // 仅解析 namespace/from/to，缺省与 92 天上限校验在 service 层（超限返 400）。
 func (h *CommandObserveHandler) Analytics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	res, err := h.svc.Analytics(repository.CommandFilter{
-		Namespace: q.Get("namespace"),
-		From:      parseRFC3339(q.Get("from")),
-		To:        parseRFC3339(q.Get("to")),
+		Namespace:      q.Get("namespace"),
+		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
+		From: parseRFC3339(q.Get("from")),
+		To:   parseRFC3339(q.Get("to")),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

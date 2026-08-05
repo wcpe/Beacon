@@ -98,6 +98,9 @@ type ManifestReportResult struct {
 // ApplyManifest 处理一次清单上报：解析权威身份 → 定位 server 行 → 校验条目 → 增量 / 全量应用。
 // 增量基线失配 / 全量分片乱序返回 ErrAssetManifestOutOfSync（409），agent 收到即改发全量自愈。
 func (s *AssetService) ApplyManifest(p ManifestReportParams) (ManifestReportResult, error) {
+	if err := ensureNamespaceRuntimeActiveByID(s.db, p.Identity.NamespaceID); err != nil {
+		return ManifestReportResult{}, err
+	}
 	server, err := findServerRow(s.db, p.Identity.NamespaceID, p.Identity.ServerID)
 	if err != nil {
 		return ManifestReportResult{}, err
@@ -451,6 +454,9 @@ type assetRescanPayload struct {
 func (s *AssetService) Rescan(p RescanParams) (RescanResult, error) {
 	if p.NamespaceID == 0 || len(p.ServerIDs) == 0 || len(p.ServerIDs) > maxRescanServers {
 		return RescanResult{}, apperr.ErrInvalidParam
+	}
+	if err := ensureNamespaceRuntimeActiveByID(s.db, p.NamespaceID); err != nil {
+		return RescanResult{}, err
 	}
 	nsCode, err := s.namespaceCode(p.NamespaceID)
 	if err != nil {

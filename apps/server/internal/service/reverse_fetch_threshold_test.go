@@ -23,7 +23,7 @@ func TestReceiveScanRecomputesOverThresholdFromSetting(t *testing.T) {
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(svc)
 
-	task, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	if err != nil {
 		t.Fatalf("建任务失败: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestSubmitRejectsUnconfirmedOverThreshold(t *testing.T) {
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(svc)
 
-	task, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	if err != nil {
 		t.Fatalf("建任务失败: %v", err)
 	}
@@ -82,11 +82,11 @@ func TestSubmitRejectsUnconfirmedOverThreshold(t *testing.T) {
 	}
 
 	// 未确认提交超阈值文件 → 拒。
-	if _, err := svc.Submit(task.ID, []string{"A/big.yml"}, false, "alice", ""); err == nil {
+	if _, err := applySubmitForTest(svc, task.ID, []string{"A/big.yml"}, false, "alice", ""); err == nil {
 		t.Fatal("未确认提交超阈值文件应被拒")
 	}
 	// 显式确认 → 通过（任务进 fetching）。
-	out, err := svc.Submit(task.ID, []string{"A/big.yml"}, true, "alice", "")
+	out, err := applySubmitForTest(svc, task.ID, []string{"A/big.yml"}, true, "alice", "")
 	if err != nil {
 		t.Fatalf("确认后提交应成功，实际 %v", err)
 	}

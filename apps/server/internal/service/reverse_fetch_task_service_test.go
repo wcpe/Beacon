@@ -10,6 +10,8 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -66,6 +68,35 @@ func newRFTaskSvc(db *gorm.DB) *ReverseFetchTaskService {
 	return svc
 }
 
+// TestReverseFetchApprovalFreezesManifest 验证扫描、提交均只由审批 worker 下发，提交重验冻结清单。
+func TestReverseFetchApprovalFreezesManifest(t *testing.T) {
+	db := newRFTaskTestDB(t)
+	if err := db.AutoMigrate(&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}); err != nil {
+		t.Fatalf("迁移审批表失败: %v", err)
+	}
+	svc := newRFTaskSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	svc.SetApprovalService(approval)
+	RegisterReverseFetchTaskApprovalAdapters(registry, svc)
+	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "g", "", "alice", ""); err != apperr.ErrForbidden {
+		t.Fatalf("公开扫描创建必须拒绝旁路: %v", err)
+	}
+	ticket, err := svc.RequestCreateScanApproval("prod", "lobby-1", model.ScopeGroup, "g", "", "扫描插件目录", "scan-1", "alice", "", auth.HumanPrincipal("alice"))
+	if err != nil { t.Fatalf("创建扫描审批失败: %v", err) }
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil { t.Fatalf("批准扫描失败: %v", err) }
+	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil { t.Fatalf("执行扫描失败: %v", err) }
+	var task model.ReverseFetchTask
+	if err := db.First(&task).Error; err != nil { t.Fatalf("读取扫描任务失败: %v", err) }
+	manifest := `{"files":[{"path":"Demo/config.yml","size":12,"isText":true,"overThreshold":false}]}`
+	if ok, err := repository.NewReverseFetchTaskRepository(db).SaveManifest(task.ID, manifest, 1, 0, 0); err != nil || !ok { t.Fatalf("写入清单失败: %v", err) }
+	submit, err := svc.RequestSubmitApproval(task.ID, []string{"Demo/config.yml"}, false, "提交选定文件", "submit-1", "alice", "", auth.HumanPrincipal("alice"))
+	if err != nil { t.Fatalf("创建提交审批失败: %v", err) }
+	if _, err := approval.Approve(submit.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil { t.Fatalf("批准提交失败: %v", err) }
+	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil { t.Fatalf("执行提交失败: %v", err) }
+	if err := db.First(&task, task.ID).Error; err != nil || task.Status != model.ReverseFetchTaskFetching || task.SubmitCommandID == 0 { t.Fatalf("提交应下发命令并推进任务: %+v err=%v", task, err) }
+}
+
 // fetchCmd 把指定命令从 pending CAS 迁移 fetched（模拟 agent 拉取），返回命令。
 func fetchCmd(t *testing.T, db *gorm.DB, id uint) *model.AgentCommand {
 	t.Helper()
@@ -92,7 +123,7 @@ func TestCreateScanTaskAndMutex(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
 
-	task, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "10.0.0.1")
+	task, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("建任务应成功: %v", err)
 	}
@@ -114,21 +145,21 @@ func TestCreateScanTaskAndMutex(t *testing.T) {
 	}
 
 	// 互斥：同实例再建 → 409 REVERSE_FETCH_TASK_ACTIVE
-	_, err = svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "bob", "")
+	_, err = applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "bob", "")
 	ae, ok := err.(*apperr.Error)
 	if !ok || ae.Code != apperr.ErrReverseFetchTaskActive.Code {
 		t.Fatalf("已有活跃任务应 409 REVERSE_FETCH_TASK_ACTIVE，实际 %v", err)
 	}
 
 	// 另一实例不受互斥影响
-	if _, err := svc.CreateScanTask("prod", "lobby-2", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-2", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
 		t.Fatalf("另一实例建任务应成功: %v", err)
 	}
 	// 缺参 / 非法 scope 拒
-	if _, err := svc.CreateScanTask("prod", "", model.ScopeGroup, "area1", "", "alice", ""); err == nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "", model.ScopeGroup, "area1", "", "alice", ""); err == nil {
 		t.Fatal("缺 serverId 应拒")
 	}
-	if _, err := svc.CreateScanTask("prod", "x", model.ScopeServer, "area1", "", "alice", ""); err == nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "x", model.ScopeServer, "area1", "", "alice", ""); err == nil {
 		t.Fatal("server 层缺 target 应拒")
 	}
 }
@@ -137,7 +168,7 @@ func TestCreateScanTaskAndMutex(t *testing.T) {
 func TestReceiveScanNeverFails(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
-	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	fetchCmd(t, db, task.ScanCommandID)
 
 	// 含一个远超 1MB 上限的运行时垃圾文件（overThreshold=true）——scan 不应因此失败
@@ -171,7 +202,7 @@ func TestReceiveScanNeverFails(t *testing.T) {
 // scanToPendingReview 建任务 + 回扫描清单，把任务推到 pending-review，返回任务。
 func scanToPendingReview(t *testing.T, db *gorm.DB, svc *ReverseFetchTaskService, files []ScanFile) *model.ReverseFetchTask {
 	t.Helper()
-	task, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	if err != nil {
 		t.Fatalf("建任务失败: %v", err)
 	}
@@ -194,7 +225,7 @@ func TestSubmitOnlySelectedLands(t *testing.T) {
 	})
 
 	// 仅选定两个配置文件（不含 data.db）
-	got, err := svc.Submit(task.ID, []string{"AllinCore/config.yml", "Other/lang.yml"}, false, "alice", "")
+	got, err := applySubmitForTest(svc, task.ID, []string{"AllinCore/config.yml", "Other/lang.yml"}, false, "alice", "")
 	if err != nil {
 		t.Fatalf("提交应成功: %v", err)
 	}
@@ -239,7 +270,7 @@ func TestSubmitOnlySelectedLands(t *testing.T) {
 		t.Fatal("应记一条 file.reverse-fetch-ingest 审计")
 	}
 	// 任务终结后互斥解除：同实例可再建任务
-	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
 		t.Fatalf("任务终结后同实例应可再建，实际 %v", err)
 	}
 }
@@ -254,7 +285,7 @@ func TestSubmitOverThresholdNotConfirmed(t *testing.T) {
 	})
 
 	// 选定含超阈值文件但未确认 → 400 OVER_THRESHOLD_NOT_CONFIRMED
-	_, err := svc.Submit(task.ID, []string{"AllinCore/config.yml", "Big/dump.yml"}, false, "alice", "")
+	_, err := applySubmitForTest(svc, task.ID, []string{"AllinCore/config.yml", "Big/dump.yml"}, false, "alice", "")
 	ae, ok := err.(*apperr.Error)
 	if !ok || ae.Code != apperr.ErrOverThresholdNotConfirmed.Code {
 		t.Fatalf("超阈值未确认应 400 OVER_THRESHOLD_NOT_CONFIRMED，实际 %v", err)
@@ -266,7 +297,7 @@ func TestSubmitOverThresholdNotConfirmed(t *testing.T) {
 	}
 
 	// 仅选非超阈值文件（不带确认）→ 成功（只拒超阈值那个、不拒整批）
-	got, err := svc.Submit(task.ID, []string{"AllinCore/config.yml"}, false, "alice", "")
+	got, err := applySubmitForTest(svc, task.ID, []string{"AllinCore/config.yml"}, false, "alice", "")
 	if err != nil {
 		t.Fatalf("仅选非超阈值文件应成功: %v", err)
 	}
@@ -282,7 +313,7 @@ func TestSubmitOverThresholdConfirmed(t *testing.T) {
 	task := scanToPendingReview(t, db, svc, []ScanFile{
 		{Path: "Big/dump.yml", Size: 2 * 1024 * 1024, IsText: true, OverThreshold: true},
 	})
-	got, err := svc.Submit(task.ID, []string{"Big/dump.yml"}, true, "alice", "")
+	got, err := applySubmitForTest(svc, task.ID, []string{"Big/dump.yml"}, true, "alice", "")
 	if err != nil {
 		t.Fatalf("确认后超阈值文件应可纳入: %v", err)
 	}
@@ -296,7 +327,7 @@ func TestSubmitRejectsPathNotInManifest(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
 	task := scanToPendingReview(t, db, svc, []ScanFile{{Path: "A/config.yml", Size: 1, IsText: true}})
-	if _, err := svc.Submit(task.ID, []string{"A/config.yml", "Ghost/x.yml"}, false, "alice", ""); err != apperr.ErrInvalidParam {
+	if _, err := applySubmitForTest(svc, task.ID, []string{"A/config.yml", "Ghost/x.yml"}, false, "alice", ""); err != apperr.ErrInvalidParam {
 		t.Fatalf("含清单外 path 应 ErrInvalidParam，实际 %v", err)
 	}
 }
@@ -305,13 +336,13 @@ func TestSubmitRejectsPathNotInManifest(t *testing.T) {
 func TestStateMachineGuards(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
-	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	// scanning 态直接 submit → 状态不符
-	if _, err := svc.Submit(task.ID, []string{"a.yml"}, false, "alice", ""); err != apperr.ErrReverseFetchTaskState {
+	if _, err := applySubmitForTest(svc, task.ID, []string{"a.yml"}, false, "alice", ""); err != apperr.ErrReverseFetchTaskState {
 		t.Fatalf("scanning 态 submit 应 REVERSE_FETCH_TASK_STATE，实际 %v", err)
 	}
 	// 不存在的任务
-	if _, err := svc.Submit(99999, []string{"a.yml"}, false, "alice", ""); err != apperr.ErrReverseFetchTaskNotFound {
+	if _, err := applySubmitForTest(svc, 99999, []string{"a.yml"}, false, "alice", ""); err != apperr.ErrReverseFetchTaskNotFound {
 		t.Fatalf("不存在任务应 NOT_FOUND，实际 %v", err)
 	}
 }
@@ -320,7 +351,7 @@ func TestStateMachineGuards(t *testing.T) {
 func TestCancel(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
-	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 
 	got, err := svc.Cancel(task.ID, "alice", "")
 	if err != nil {
@@ -337,7 +368,7 @@ func TestCancel(t *testing.T) {
 		t.Fatalf("终态再取消应 REVERSE_FETCH_TASK_STATE，实际 %v", err)
 	}
 	// 互斥解除：同实例可再建
-	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
 		t.Fatalf("取消后同实例应可再建，实际 %v", err)
 	}
 }
@@ -361,7 +392,7 @@ func TestRFTaskExpireStale(t *testing.T) {
 		t.Fatalf("过期后应 expired 且清单已清空，实际 status=%s manifestLen=%d", got.Status, len(got.Manifest))
 	}
 	// 互斥解除：同实例可再建
-	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
 		t.Fatalf("过期后同实例应可再建，实际 %v", err)
 	}
 }
@@ -383,7 +414,7 @@ func TestReceiveIngestDispatchesSubmitMode(t *testing.T) {
 	cmdSvc.SetSubmitIngestReceiver(taskSvc)
 
 	task := scanToPendingReview(t, db, taskSvc, []ScanFile{{Path: "A/config.yml", Size: 1, IsText: true}})
-	got, _ := taskSvc.Submit(task.ID, []string{"A/config.yml"}, false, "alice", "")
+	got, _ := applySubmitForTest(taskSvc, task.ID, []string{"A/config.yml"}, false, "alice", "")
 	fetchCmd(t, db, got.SubmitCommandID)
 
 	// 经命令服务的统一回传入口（生产路径）→ 应转交受管任务落库、任务→done
@@ -405,7 +436,7 @@ func TestSubmitIngestRejectsJar(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
 	task := scanToPendingReview(t, db, svc, []ScanFile{{Path: "A/config.yml", Size: 1, IsText: true}})
-	got, _ := svc.Submit(task.ID, []string{"A/config.yml"}, false, "alice", "")
+	got, _ := applySubmitForTest(svc, task.ID, []string{"A/config.yml"}, false, "alice", "")
 	fetchCmd(t, db, got.SubmitCommandID)
 
 	// agent 回传混入 jar（异常 / 越权）→ 400 INVALID_PATH，任务转 failed
@@ -422,7 +453,7 @@ func TestSubmitIngestRejectsJar(t *testing.T) {
 func TestReceiveErrorScanFailsTask(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
-	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	fetchCmd(t, db, task.ScanCommandID)
 
 	if err := svc.ReceiveError(task.ScanCommandID, "扫描 plugins 目录元信息失败：permission denied", ""); err != nil {
@@ -444,7 +475,7 @@ func TestReceiveErrorScanFailsTask(t *testing.T) {
 		t.Fatal("应记一条 file.reverse-fetch-error 审计")
 	}
 	// 互斥解除：同实例可再建
-	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
+	if _, err := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", ""); err != nil {
 		t.Fatalf("失败终结后同实例应可再建，实际 %v", err)
 	}
 }
@@ -454,7 +485,7 @@ func TestReceiveErrorSubmitFailsTask(t *testing.T) {
 	db := newRFTaskTestDB(t)
 	svc := newRFTaskSvc(db)
 	task := scanToPendingReview(t, db, svc, []ScanFile{{Path: "A/config.yml", Size: 1, IsText: true}})
-	got, _ := svc.Submit(task.ID, []string{"A/config.yml"}, false, "alice", "")
+	got, _ := applySubmitForTest(svc, task.ID, []string{"A/config.yml"}, false, "alice", "")
 	fetchCmd(t, db, got.SubmitCommandID)
 
 	if err := svc.ReceiveError(got.SubmitCommandID, "读 plugins 目录失败：IO error", ""); err != nil {
@@ -477,7 +508,7 @@ func TestReceiveErrorRejectsMismatch(t *testing.T) {
 	}
 
 	// scan 命令未被拉取（仍 pending、非 fetched）→ COMMAND_NOT_FOUND
-	task, _ := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	task, _ := applyCreateScanTaskForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	if err := svc.ReceiveError(task.ScanCommandID, "x", ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("未拉取命令回传应 COMMAND_NOT_FOUND，实际 %v", err)
 	}

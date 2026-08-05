@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -46,6 +49,7 @@ type ReverseFetchTaskService struct {
 	settings   *SettingsService // 单文件上限从设置 store 读、热生效（FR-61）
 	notifier   CommandNotifier
 	reversible FetchReversibleRecorder // 可选，ingest 落库后记 fetch 可逆账目（FR-116，未注入即不可撤回）
+	approval   *ApprovalService
 }
 
 // FetchReversibleRecorder 是"记一条 fetch 可逆账目"的窄接口（由 ReversibleOperationService 实现，可选注入；
@@ -67,9 +71,29 @@ func (s *ReverseFetchTaskService) SetNotifier(n CommandNotifier) { s.notifier = 
 // SetReversibleRecorder 注入 fetch 可逆账目记账器（启动时装配；未注入则 ingest 不可撤回，FR-116）。
 func (s *ReverseFetchTaskService) SetReversibleRecorder(r FetchReversibleRecorder) { s.reversible = r }
 
+// SetApprovalService 注入反向抓取扫描与提交的统一审批入口。
+func (s *ReverseFetchTaskService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
 // CreateScanTask 由 admin 触发受管反向抓取：互斥查 → 事务内建任务(scanning) + 下发 scan 命令(pending) + 审计 →
 // 提交后唤醒目标 agent SSE。已有非终态任务 → ErrReverseFetchTaskActive(409)。返回任务（含 id）。
 func (s *ReverseFetchTaskService) CreateScanTask(ns, serverID, scope, group, target, operator, clientIP string) (*model.ReverseFetchTask, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestCreateScanApproval 冻结扫描目标，批准后才创建受管任务与扫描命令。
+func (s *ReverseFetchTaskService) RequestCreateScanApproval(ns, serverID, scope, group, target, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandReverseScan, Resource: "reverse-fetch-task", ResourceID: ns + "/" + serverID, IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"namespace": ns, "serverId": serverID, "scope": scope, "group": group, "target": target, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// applyCreateScanTaskInTx 仅由审批适配器在领域事务内创建任务、命令与审计。
+func (s *ReverseFetchTaskService) applyCreateScanTaskInTx(tx *gorm.DB, ns, serverID, scope, group, target, operator, clientIP string) (*model.ReverseFetchTask, error) {
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -93,46 +117,33 @@ func (s *ReverseFetchTaskService) CreateScanTask(ns, serverID, scope, group, tar
 		Status: model.CommandStatusPending, Operator: operator,
 	}
 
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		// 互斥（事务内查 + active 哨兵唯一键兜底）：已有非终态任务 → 拒。
-		active, e := s.taskRepo.WithTx(tx).FindActiveByServer(ns, serverID)
-		if e != nil {
-			return e
-		}
-		if active != nil {
-			return reverseFetchActiveErr(active)
-		}
-		if e := s.taskRepo.WithTx(tx).Create(task); e != nil {
-			return e
-		}
-		if e := s.cmdRepo.WithTx(tx).Create(cmd); e != nil {
-			return e
-		}
-		if e := s.taskRepo.WithTx(tx).SetScanCommandID(task.ID, cmd.ID); e != nil {
-			return e
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+	active, err := s.taskRepo.WithTx(tx).FindActiveByServer(ns, serverID)
+	if err != nil {
+		return nil, err
+	}
+	if active != nil {
+		return nil, reverseFetchActiveErr(active)
+	}
+	if err := s.taskRepo.WithTx(tx).Create(task); err != nil {
+		return nil, err
+	}
+	if err := s.cmdRepo.WithTx(tx).Create(cmd); err != nil {
+		return nil, err
+	}
+	if err := s.taskRepo.WithTx(tx).SetScanCommandID(task.ID, cmd.ID); err != nil {
+		return nil, err
+	}
+	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns,
 			Operator:      operator, Action: model.ActionFileReverseFetchScan,
 			TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
 			Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"scope":%q,"group":%q,"target":%q}`,
 				task.ID, cmd.ID, scope, group, target),
 			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
-	if err != nil {
-		// active 哨兵唯一键并发兜底：竞态下 Create 撞唯一约束 → 归一为活跃冲突。
-		if e := s.reloadActiveOnConflict(err, ns, serverID); e != nil {
-			return nil, e
-		}
+	}); err != nil {
 		return nil, err
 	}
 	task.ScanCommandID = cmd.ID
-	if s.notifier != nil {
-		s.notifier.NotifyCommand(ns, serverID)
-	}
-	slog.Info("建反向抓取受管任务并下发扫描命令", "namespace", ns, "serverId", serverID,
-		"taskId", task.ID, "scanCommandId", cmd.ID, "scope", scope, "group", group, "target", target, "operator", operator)
 	return task, nil
 }
 
@@ -185,29 +196,49 @@ func (s *ReverseFetchTaskService) ReceiveScan(commandID uint, files []ScanFile, 
 // Submit 提交选定集（FR-58）：任务须 pending-review；校验选定（超阈值文件须确认、文件数兜底）→
 // 事务内存 selectedPaths + 下发 submit 命令(pending) + 任务→fetching + 审计 → 提交后唤醒。
 func (s *ReverseFetchTaskService) Submit(taskID uint, selectedPaths []string, confirmOverThreshold bool, operator, clientIP string) (*model.ReverseFetchTask, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestSubmitApproval 规范化选定路径并冻结当前 manifest 哈希，批准后才下发提交命令。
+func (s *ReverseFetchTaskService) RequestSubmitApproval(taskID uint, selectedPaths []string, confirmOverThreshold bool, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || taskID == 0 || reason == "" || idempotencyKey == "" || operator == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
+	}
+	task, err := s.requireTask(taskID)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	if task.Status != model.ReverseFetchTaskPendingReview {
+		return ApprovalTicketView{}, apperr.ErrReverseFetchTaskState
+	}
+	clean, err := normalizeReverseFetchSelection(task.Manifest, selectedPaths, confirmOverThreshold)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	manifestHash := fmt.Sprintf("%x", sha256.Sum256([]byte(task.Manifest)))
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandReverseSubmit, Resource: "reverse-fetch-task", ResourceID: fmt.Sprint(taskID), IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"taskId": taskID, "manifestHash": manifestHash, "selectedPaths": clean, "confirmOverThreshold": confirmOverThreshold, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// applySubmitInTx 仅由审批适配器在领域事务内重验冻结清单后下发提交命令。
+func (s *ReverseFetchTaskService) applySubmitInTx(tx *gorm.DB, taskID uint, manifestHash string, selectedPaths []string, confirmOverThreshold bool, operator, clientIP string) (*model.ReverseFetchTask, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
-	task, err := s.requireTask(taskID)
+	task, err := s.taskRepo.WithTx(tx).GetByID(taskID)
 	if err != nil {
 		return nil, err
 	}
 	if task.Status != model.ReverseFetchTaskPendingReview {
 		return nil, apperr.ErrReverseFetchTaskState
 	}
-	if len(selectedPaths) == 0 {
-		return nil, apperr.ErrInvalidParam
+	if fmt.Sprintf("%x", sha256.Sum256([]byte(task.Manifest))) != manifestHash {
+		return nil, apperr.ErrApprovalTargetChanged
 	}
-	if len(selectedPaths) > MaxImportFiles {
-		return nil, apperr.ErrTooManyFiles
-	}
-
-	// 解析清单，校验选定 path：须在清单内、非 jar；超阈值文件须 confirmOverThreshold 才纳入（只拒该文件不拒整批）。
-	manifestByPath, perr := parseManifestByPath(task.Manifest)
-	if perr != nil {
-		return nil, perr
-	}
-	clean, verr := validateSelected(selectedPaths, manifestByPath, confirmOverThreshold)
+	clean, verr := normalizeReverseFetchSelection(task.Manifest, selectedPaths, confirmOverThreshold)
 	if verr != nil {
 		return nil, verr
 	}
@@ -222,37 +253,43 @@ func (s *ReverseFetchTaskService) Submit(taskID uint, selectedPaths []string, co
 		Type: model.CommandTypeIngestPlugins, Payload: string(submitPayload),
 		Status: model.CommandStatusPending, Operator: operator,
 	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if e := s.cmdRepo.WithTx(tx).Create(cmd); e != nil {
-			return e
-		}
-		ok, e := s.taskRepo.WithTx(tx).SaveSelected(task.ID, string(selectedJSON), len(clean), cmd.ID)
-		if e != nil {
-			return e
-		}
-		if !ok {
-			return apperr.ErrReverseFetchTaskState // 并发已迁移，非 pending-review
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+	if err := s.cmdRepo.WithTx(tx).Create(cmd); err != nil {
+		return nil, err
+	}
+	ok, err := s.taskRepo.WithTx(tx).SaveSelected(task.ID, string(selectedJSON), len(clean), cmd.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, apperr.ErrReverseFetchTaskState
+	}
+	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: task.NamespaceCode,
 			Operator:      operator, Action: model.ActionFileReverseFetchSubmit,
 			TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
 			Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"selected":%d}`, task.ID, cmd.ID, len(clean)),
 			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
-	if s.notifier != nil {
-		s.notifier.NotifyCommand(task.NamespaceCode, task.ServerID)
-	}
-	slog.Info("反向抓取受管任务提交选定集并下发抓取命令", "taskId", task.ID, "submitCommandId", cmd.ID,
-		"selected", len(clean), "operator", operator)
 	task.Status = model.ReverseFetchTaskFetching
 	task.SelectedCount = len(clean)
 	task.SubmitCommandID = cmd.ID
 	return task, nil
+}
+
+func normalizeReverseFetchSelection(manifest string, selectedPaths []string, confirmOverThreshold bool) ([]string, error) {
+	if len(selectedPaths) == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	if len(selectedPaths) > MaxImportFiles {
+		return nil, apperr.ErrTooManyFiles
+	}
+	byPath, err := parseManifestByPath(manifest)
+	if err != nil {
+		return nil, err
+	}
+	return validateSelected(selectedPaths, byPath, confirmOverThreshold)
 }
 
 // ReceiveSubmitIngest 接收 agent 回传的选定集内容（mode=submit）：命令须属某 fetching 任务 →
@@ -286,7 +323,7 @@ func (s *ReverseFetchTaskService) ReceiveSubmitIngest(commandID uint, files []Im
 		return nil, apperr.ErrReverseFetchTaskState
 	}
 
-	result, ierr := s.fileSvc.Import(ImportFilesParams{
+	result, ierr := s.fileSvc.applyImport(ImportFilesParams{
 		Namespace: task.NamespaceCode, Group: task.GroupCode,
 		ScopeLevel: task.Scope, ScopeTarget: task.ScopeTarget,
 		Files: files, Operator: cmd.Operator, Comment: reverseFetchTaskComment, ClientIP: clientIP,

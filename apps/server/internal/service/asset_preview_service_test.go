@@ -124,7 +124,7 @@ func TestPreviewSuccess(t *testing.T) {
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
 
-	res, err := svc.Preview(context.Background(), PreviewParams{
+	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{
 		ServerID: "lobby-1", Path: "plugins/Essentials/config.yml", Operator: "alice", ClientIP: "10.0.0.1",
 	})
 	if err != nil {
@@ -166,7 +166,7 @@ func TestPreviewBinary(t *testing.T) {
 	})
 	defer stop()
 
-	res, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "plugins/Essentials.jar", Operator: "a"})
+	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "plugins/Essentials.jar", Operator: "a"})
 	if err != nil {
 		t.Fatalf("二进制预览应成功回元数据: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestPreviewTruncated(t *testing.T) {
 	})
 	defer stop()
 
-	res, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "big.yml", Operator: "a"})
+	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "big.yml", Operator: "a"})
 	if err != nil || !res.Truncated {
 		t.Fatalf("应 truncated=true，实际 res=%+v err=%v", res, err)
 	}
@@ -202,10 +202,10 @@ func TestPreviewNotFound(t *testing.T) {
 	svc := newAssetSvc(db, true)
 	seedPreviewServer(t, db, "prod", "lobby-1")
 
-	if _, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "missing.yml", Operator: "a"}); err != apperr.ErrAssetNotFound {
+	if _, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "missing.yml", Operator: "a"}); err != apperr.ErrAssetNotFound {
 		t.Fatalf("清单缺文件应 asset_not_found，实际 %v", err)
 	}
-	if _, err := svc.Preview(context.Background(), PreviewParams{ServerID: "ghost", Path: "x.yml", Operator: "a"}); err != apperr.ErrAssetNotFound {
+	if _, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "ghost", Path: "x.yml", Operator: "a"}); err != apperr.ErrAssetNotFound {
 		t.Fatalf("未知 server 应 asset_not_found，实际 %v", err)
 	}
 	if len(allCommands(t, db)) != 0 {
@@ -221,7 +221,7 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 	seedAsset(t, db, row, "plugins/Beacon/config.yml", "sec", 10, true) // 命中 plugins/Beacon/**
 
 	// 无 reason → 403，不建命令、不审计。
-	if _, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "plugins/Beacon/config.yml", Operator: "a"}); err != apperr.ErrAssetSensitivePath {
+	if _, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "plugins/Beacon/config.yml", Operator: "a"}); err != apperr.ErrAssetSensitivePath {
 		t.Fatalf("敏感无 reason 应 asset_sensitive_path，实际 %v", err)
 	}
 	if len(allCommands(t, db)) != 0 || countAudit(t, db, model.ActionAssetPreview) != 0 {
@@ -231,7 +231,7 @@ func TestPreviewSensitiveGuard(t *testing.T) {
 	// 填 reason → 放行 + 审计带 sensitiveOverride + 原因。
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
-	res, err := svc.Preview(context.Background(), PreviewParams{
+	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{
 		ServerID: "lobby-1", Path: "plugins/Beacon/config.yml", Reason: "排查登录异常", Operator: "a",
 	})
 	if err != nil || !res.Sensitive {
@@ -249,7 +249,7 @@ func TestPreviewOffline(t *testing.T) {
 	row := seedPreviewServer(t, db, "prod", "lobby-1")
 	seedAsset(t, db, row, "a.yml", "x", 1, true)
 
-	if _, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "a"}); err != apperr.ErrAssetAgentOffline {
+	if _, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "a"}); err != apperr.ErrAssetAgentOffline {
 		t.Fatalf("离线应 asset_agent_offline，实际 %v", err)
 	}
 	if len(allCommands(t, db)) != 0 {
@@ -266,7 +266,7 @@ func TestPreviewTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
-	if _, err := svc.Preview(ctx, PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "a"}); err != apperr.ErrAssetPreviewTimeout {
+	if _, err := svc.applyPreviewForTest(ctx, PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "a"}); err != apperr.ErrAssetPreviewTimeout {
 		t.Fatalf("无回传应 asset_preview_timeout，实际 %v", err)
 	}
 }
@@ -275,8 +275,29 @@ func TestPreviewTimeout(t *testing.T) {
 func TestPreviewInvalidParam(t *testing.T) {
 	db := newAssetSvcTestDB(t)
 	svc := newAssetSvc(db, true)
-	if _, err := svc.Preview(context.Background(), PreviewParams{ServerID: "", Path: "a", Operator: "a"}); err != apperr.ErrInvalidParam {
+	if _, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "", Path: "a", Operator: "a"}); err != apperr.ErrInvalidParam {
 		t.Fatalf("缺 serverId 应 INVALID_PARAM，实际 %v", err)
+	}
+}
+
+// TestAssetContentReadsRequireApprovedGrant 锁定 preview/diff 不得经旧服务直建
+// Agent 命令或返回正文；批准后的 command/grant 消费链路由 FR-209 adapter 接管。
+func TestAssetContentReadsRequireApprovedGrant(t *testing.T) {
+	db := newAssetSvcTestDB(t)
+	svc := newAssetSvc(db, true)
+	left := seedPreviewServer(t, db, "prod", "lobby-1")
+	right := seedPreviewServer(t, db, "prod", "lobby-2")
+	seedAsset(t, db, left, "a.yml", "left", 10, true)
+	seedAsset(t, db, right, "a.yml", "right", 10, true)
+
+	if res, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "a.yml", Operator: "alice"}); err == nil || res != nil {
+		t.Fatalf("未批准的预览不得返回内容：res=%+v err=%v", res, err)
+	}
+	if res, err := svc.Diff(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "alice"}); err == nil || res != nil {
+		t.Fatalf("未批准的 diff 不得返回内容：res=%+v err=%v", res, err)
+	}
+	if len(allCommands(t, db)) != 0 || countAudit(t, db, model.ActionAssetPreview) != 0 || countAudit(t, db, model.ActionAssetDiff) != 0 {
+		t.Fatal("未批准读取不得创建 Agent 命令或写内容查看审计")
 	}
 }
 
@@ -291,7 +312,7 @@ func TestPreviewReadFailed(t *testing.T) {
 	})
 	defer stop()
 
-	if _, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "gone.yml", Operator: "a"}); err != apperr.ErrAssetReadFailed {
+	if _, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "gone.yml", Operator: "a"}); err != apperr.ErrAssetReadFailed {
 		t.Fatalf("agent 读失败应 asset_read_failed，实际 %v", err)
 	}
 	cmds := allCommands(t, db)
@@ -309,7 +330,7 @@ func TestDiffIdentical(t *testing.T) {
 	seedAsset(t, db, l, "a.yml", "same", 10, true)
 	seedAsset(t, db, rr, "a.yml", "same", 10, true)
 
-	res, err := svc.Diff(context.Background(), DiffParams{
+	res, err := svc.applyDiffForTest(context.Background(), DiffParams{
 		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "a",
 	})
 	if err != nil || !res.Identical {
@@ -334,7 +355,7 @@ func TestDiffDifferent(t *testing.T) {
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
 
-	res, err := svc.Diff(context.Background(), DiffParams{
+	res, err := svc.applyDiffForTest(context.Background(), DiffParams{
 		Left: AssetRef{"lobby-1", "a.yml"}, Right: AssetRef{"lobby-2", "a.yml"}, Operator: "a",
 	})
 	if err != nil || res.Identical || res.Left == nil || res.Right == nil {
@@ -353,7 +374,7 @@ func TestDiffUnsupported(t *testing.T) {
 	rr := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, l, "a.jar", "h1", 10, false) // 二进制
 	seedAsset(t, db, rr, "a.jar", "h2", 10, true)
-	if _, err := svc.Diff(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.jar"}, Right: AssetRef{"lobby-2", "a.jar"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
+	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "a.jar"}, Right: AssetRef{"lobby-2", "a.jar"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
 		t.Fatalf("二进制侧应 asset_diff_unsupported，实际 %v", err)
 	}
 
@@ -363,7 +384,7 @@ func TestDiffUnsupported(t *testing.T) {
 	r2 := seedPreviewServer(t, db2, "prod", "s2")
 	seedAsset(t, db2, l2, "big.yml", "h1", 1<<20, true) // 超 512KiB
 	seedAsset(t, db2, r2, "big.yml", "h2", 10, true)
-	if _, err := svc2.Diff(context.Background(), DiffParams{Left: AssetRef{"s1", "big.yml"}, Right: AssetRef{"s2", "big.yml"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
+	if _, err := svc2.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"s1", "big.yml"}, Right: AssetRef{"s2", "big.yml"}, Operator: "a"}); err != apperr.ErrAssetDiffUnsupported {
 		t.Fatalf("超限侧应 asset_diff_unsupported，实际 %v", err)
 	}
 	if len(allCommands(t, db2)) != 0 {
@@ -379,7 +400,7 @@ func TestDiffSensitiveGuard(t *testing.T) {
 	rr := seedPreviewServer(t, db, "prod", "lobby-2")
 	seedAsset(t, db, l, "plugins/Beacon/config.yml", "h1", 10, true) // 敏感
 	seedAsset(t, db, rr, "plugins/Beacon/config.yml", "h2", 10, true)
-	if _, err := svc.Diff(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "plugins/Beacon/config.yml"}, Right: AssetRef{"lobby-2", "plugins/Beacon/config.yml"}, Operator: "a"}); err != apperr.ErrAssetSensitivePath {
+	if _, err := svc.applyDiffForTest(context.Background(), DiffParams{Left: AssetRef{"lobby-1", "plugins/Beacon/config.yml"}, Right: AssetRef{"lobby-2", "plugins/Beacon/config.yml"}, Operator: "a"}); err != apperr.ErrAssetSensitivePath {
 		t.Fatalf("敏感无 reason 应 asset_sensitive_path，实际 %v", err)
 	}
 }
@@ -423,7 +444,7 @@ func TestSensitiveRulesLifecycle(t *testing.T) {
 	seedAsset(t, db, row, "plugins/Beacon/config.yml", "x", 10, true)
 	stop := startAgentSim(t, db, svc, textReply)
 	defer stop()
-	res, err := svc.Preview(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "plugins/Beacon/config.yml", Operator: "a"})
+	res, err := svc.applyPreviewForTest(context.Background(), PreviewParams{ServerID: "lobby-1", Path: "plugins/Beacon/config.yml", Operator: "a"})
 	if err != nil || res.Sensitive {
 		t.Fatalf("清空保护后原敏感路径应可无 reason 预览且 sensitive=false，实际 res=%+v err=%v", res, err)
 	}

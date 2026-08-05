@@ -33,7 +33,7 @@ func TestAuditList(t *testing.T) {
 	if _, err := cfg.Publish(item.ID, "k: 2\n", "bob", "", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
-	if _, err := zone.Assign("prod", "s1", "area1", "zoneA", "carol", "", ""); err != nil {
+	if _, err := zone.applyAssignForTest("prod", "s1", "area1", "zoneA", "carol", "", ""); err != nil {
 		t.Fatalf("指派失败: %v", err)
 	}
 

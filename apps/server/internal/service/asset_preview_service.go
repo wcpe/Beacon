@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
@@ -172,6 +173,14 @@ type AssetPreviewService struct {
 	notifier    CommandNotifier
 	instances   assetInstanceGetter
 	relay       *assetContentRelay
+	approval    *ApprovalService
+	grants      *SensitiveAccessGrantService
+}
+
+// SetSensitiveAccessApproval 注入文件内容读取的审批申请与受控访问授权服务。
+func (s *AssetPreviewService) SetSensitiveAccessApproval(approval *ApprovalService, grants *SensitiveAccessGrantService) {
+	s.approval = approval
+	s.grants = grants
 }
 
 // NewAssetPreviewService 构造服务（hub 供 admin 注册结果 waiter、agent 回传后唤醒；notifier 唤醒目标 agent 拉命令）。
@@ -189,6 +198,11 @@ func NewAssetPreviewService(db *gorm.DB, cmdRepo *repository.AgentCommandReposit
 // 校验 → 存在性（404）→ 敏感规则（无 reason 命中即 403）→ 在线（离线 504）→ 下发 asset-read + 同步等回传 →
 // 先写审计后返回（二进制只回元数据、超限标 truncated）。内容瞬态不落库、不进审计 detail、不缓存。
 func (s *AssetPreviewService) Preview(ctx context.Context, p PreviewParams) (*AssetPreviewResult, error) {
+	return nil, apperr.ErrOperationRequiresApproval
+}
+
+// applyPreview 在已获批准的受控结果消费路径中读取单个文件内容。
+func (s *AssetPreviewService) applyPreview(ctx context.Context, p PreviewParams) (*AssetPreviewResult, error) {
 	if p.ServerID == "" || p.Path == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -237,6 +251,11 @@ func (s *AssetPreviewService) Preview(ctx context.Context, p PreviewParams) (*As
 // 存在性 → 二进制 / 超限早拒（asset_diff_unsupported）→ 敏感规则 → 两侧清单哈希相同则短路 identical（不取内容）→
 // 否则在线校验后并行取两侧内容 → 先写审计后返回。任一侧回传二进制 / 截断亦拒。
 func (s *AssetPreviewService) Diff(ctx context.Context, p DiffParams) (*AssetDiffResult, error) {
+	return nil, apperr.ErrOperationRequiresApproval
+}
+
+// applyDiff 保留原有双文件差异计算，只有受控结果消费路径可调用。
+func (s *AssetPreviewService) applyDiff(ctx context.Context, p DiffParams) (*AssetDiffResult, error) {
 	if p.Left.ServerID == "" || p.Left.Path == "" || p.Right.ServerID == "" || p.Right.Path == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -314,6 +333,9 @@ func (s *AssetPreviewService) diffAssets(leftServerRow uint, leftPath string, ri
 // ReceiveContent 接收 agent 回传的单文件内容（FR-164 §4.5）：命令须存在、type=asset-read、归属回传 agent 且处 fetched。
 // CAS 推进命令 done（读失败则 failed），**内容只进内存中继绝不落库**，唤醒等待中的 admin。
 func (s *AssetPreviewService) ReceiveContent(ns, serverID string, commandID uint, p AssetContentPayload) error {
+	if err := ensureServerActiveForNamespace(s.db, ns, serverID); err != nil {
+		return err
+	}
 	cmd, err := s.cmdRepo.FindByID(commandID)
 	if err != nil {
 		return err
@@ -332,12 +354,36 @@ func (s *AssetPreviewService) ReceiveContent(ns, serverID string, commandID uint
 	if p.Error != "" {
 		next = model.CommandStatusFailed
 	}
-	hit, e := s.cmdRepo.UpdateStatus(commandID, model.CommandStatusFetched, next, "")
-	if e != nil {
-		return e
-	}
-	if !hit {
-		return apperr.ErrCommandNotFound // 被并发终结（前态不符）
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		hit, updateErr := s.cmdRepo.WithTx(tx).UpdateStatus(commandID, model.CommandStatusFetched, next, "")
+		if updateErr != nil {
+			return updateErr
+		}
+		if !hit {
+			return apperr.ErrCommandNotFound
+		}
+		if s.grants == nil {
+			return nil
+		}
+		if p.Error != "" {
+			return s.grants.WithTx(tx).RevokePendingCommand(commandID)
+		}
+		var read assetReadPayload
+		if json.Unmarshal([]byte(cmd.Payload), &read) != nil || read.Path == "" {
+			return apperr.ErrForbidden
+		}
+		var server model.Server
+		if findErr := tx.Where("server_id = ?", cmd.ServerID).First(&server).Error; findErr != nil {
+			return apperr.ErrForbidden
+		}
+		asset, findErr := s.assetRepo.WithTx(tx).FindByServerPath(server.ID, read.Path)
+		if findErr != nil || asset == nil {
+			return apperr.ErrForbidden
+		}
+		return s.grants.WithTx(tx).ActivatePendingCommandFromAgent(commandID, authz.OperationAgentCommandFSBrowse, asset.SHA256, time.Now().UTC())
+	})
+	if err != nil {
+		return err
 	}
 	delivered := s.relay.deposit(commandID, &assetContent{
 		binary: p.Binary, truncated: p.Truncated, content: p.Content, errMsg: p.Error,
@@ -436,13 +482,13 @@ func (s *AssetPreviewService) readPair(ctx context.Context, leftNS string, left 
 // 先注册 waiter，再建命令并 expect 槽、随后才 notify——消除「命令刚建、agent 极速回传、admin 尚未登记」的丢唤醒窗口。
 func (s *AssetPreviewService) dispatchRead(ns, serverID, path, operator string) (*assetReadHandle, error) {
 	waiter := s.hub.Register(ns, serverID)
-	payload, _ := json.Marshal(assetReadPayload{Path: path, MaxBytes: assetPreviewMaxBytes})
-	cmd := &model.AgentCommand{
-		NamespaceCode: ns, ServerID: serverID,
-		Type: model.CommandTypeAssetRead, Payload: string(payload),
-		Status: model.CommandStatusPending, Operator: operator,
-	}
-	if err := s.cmdRepo.Create(cmd); err != nil {
+	var cmd *model.AgentCommand
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var createErr error
+		cmd, createErr = s.createAssetReadCommandInTx(tx, ns, serverID, path, operator)
+		return createErr
+	})
+	if err != nil {
 		s.hub.Deregister(waiter)
 		return nil, err
 	}
@@ -453,6 +499,20 @@ func (s *AssetPreviewService) dispatchRead(ns, serverID, path, operator string) 
 	slog.Info("下发文件资产读取命令", "namespace", ns, "serverId", serverID, "path", path,
 		"commandId", cmd.ID, "operator", operator)
 	return &assetReadHandle{commandID: cmd.ID, waiter: waiter}, nil
+}
+
+// createAssetReadCommandInTx 仅在已获批准的领域事务中写入单文件读取命令。
+func (s *AssetPreviewService) createAssetReadCommandInTx(tx *gorm.DB, ns, serverID, path, operator string) (*model.AgentCommand, error) {
+	if tx == nil || ns == "" || serverID == "" || path == "" {
+		return nil, apperr.ErrInvalidParam
+	}
+	payload, _ := json.Marshal(assetReadPayload{Path: path, MaxBytes: assetPreviewMaxBytes})
+	cmd := &model.AgentCommand{NamespaceCode: ns, ServerID: serverID, Type: model.CommandTypeAssetRead,
+		Payload: string(payload), Status: model.CommandStatusPending, Operator: operator}
+	if err := s.cmdRepo.WithTx(tx).Create(cmd); err != nil {
+		return nil, err
+	}
+	return cmd, nil
 }
 
 // cleanup 摘除 waiter 并丢弃中继槽（每次读取结束 defer 调用，防泄漏）。
@@ -480,8 +540,29 @@ func (s *AssetPreviewService) awaitContent(ctx context.Context, handle *assetRea
 
 // resolveServer 把业务 serverId 解析为 server 行 + 所属 namespace code（契约无 namespaceId，按 serverId 全局解析首条命中）。
 func (s *AssetPreviewService) resolveServer(serverID string) (*model.Server, string, error) {
+	return resolveAssetPreviewServer(s.db, serverID)
+}
+
+// AssetPairDiffSide 是双侧授权消费后允许返回的文件元数据；不含正文。
+type AssetPairDiffSide struct {
+	ServerID string
+	Path     string
+	SHA256   string
+	Size     int64
+}
+
+// AssetPairDiffResult 是非持久化的脱敏差异摘要；任何字段均不携带两侧正文或 diff 片段。
+type AssetPairDiffResult struct {
+	Identical   bool
+	Changed     bool
+	Unsupported bool
+	Left        AssetPairDiffSide
+	Right       AssetPairDiffSide
+}
+
+func resolveAssetPreviewServer(db *gorm.DB, serverID string) (*model.Server, string, error) {
 	var srv model.Server
-	err := s.db.Where("server_id = ?", serverID).First(&srv).Error
+	err := db.Where("server_id = ?", serverID).First(&srv).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, "", apperr.ErrAssetNotFound
 	}
@@ -489,10 +570,13 @@ func (s *AssetPreviewService) resolveServer(serverID string) (*model.Server, str
 		return nil, "", err
 	}
 	var ns model.Namespace
-	if e := s.db.Where("id = ?", srv.NamespaceID).First(&ns).Error; e != nil {
+	if e := db.Where("id = ?", srv.NamespaceID).First(&ns).Error; e != nil {
 		if errors.Is(e, gorm.ErrRecordNotFound) {
 			return nil, "", apperr.ErrAssetNotFound
 		}
+		return nil, "", e
+	}
+	if e := ensureNamespaceRuntimeActive(&ns); e != nil {
 		return nil, "", e
 	}
 	return &srv, ns.Code, nil

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
@@ -23,12 +25,6 @@ func NewAssetHandler(svc *service.AssetPreviewService) *AssetHandler {
 	return &AssetHandler{svc: svc}
 }
 
-// assetRefBody 是 diff 两侧的 (serverId, path)。
-type assetRefBody struct {
-	ServerID string `json:"serverId"`
-	Path     string `json:"path"`
-}
-
 // assetPreviewJS 是预览响应（键对齐 contracts AssetPreviewResponse；二进制时 content 为 null）。
 type assetPreviewJS struct {
 	Content   *string `json:"content"`
@@ -39,75 +35,116 @@ type assetPreviewJS struct {
 	Sensitive bool    `json:"sensitive"`
 }
 
-// assetDiffSideJS / assetDiffJS 是 diff 响应（键对齐 contracts AssetDiffResponse；identical 时两侧省略）。
-type assetDiffSideJS struct {
-	ServerID string `json:"serverId"`
-	Path     string `json:"path"`
-	Content  string `json:"content"`
-	SHA256   string `json:"sha256"`
-}
-
-type assetDiffJS struct {
-	Identical bool             `json:"identical"`
-	Left      *assetDiffSideJS `json:"left,omitempty"`
-	Right     *assetDiffSideJS `json:"right,omitempty"`
-}
-
-// Preview 处理 POST /admin/v2/assets/preview：预览单文件内容（POST 属写方法，readonly 经 readonlyWriteGuard 403）。
-// 命中敏感路径且无 reason → 403 asset_sensitive_path（响应体附 sensitive=true 供前端弹原因框）。
+// Preview 是旧正文直出入口，永久失败关闭。
 func (h *AssetHandler) Preview(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+}
+
+// Diff 是旧双文件正文直出入口，永久失败关闭。
+func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+}
+
+// RequestPreviewApproval 为单文件内容读取创建专用审批申请，冻结文件清单版本而不读取正文。
+func (h *AssetHandler) RequestPreviewApproval(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
+	}
 	var body struct {
 		ServerID string `json:"serverId"`
 		Path     string `json:"path"`
 		Reason   string `json:"reason"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	res, err := h.svc.Preview(r.Context(), service.PreviewParams{
-		ServerID: body.ServerID, Path: body.Path, Reason: body.Reason,
-		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	request, err := h.svc.RequestAccess(body.ServerID, body.Path, body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
 	if err != nil {
 		writeAssetError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, assetPreviewJS{
-		Content: res.Content, Truncated: res.Truncated, Binary: res.Binary,
-		SHA256: res.SHA256, Size: res.Size, Sensitive: res.Sensitive,
-	})
+	render.WriteJSON(w, http.StatusAccepted, map[string]any{"requestId": request.RequestID, "status": request.Status})
 }
 
-// Diff 处理 POST /admin/v2/assets/diff：两侧内容 diff（哈希相同短路 identical；二进制 / 超限拒绝 asset_diff_unsupported）。
-func (h *AssetHandler) Diff(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Left   assetRefBody `json:"left"`
-		Right  assetRefBody `json:"right"`
-		Reason string       `json:"reason"`
+// RequestPairReadApproval 为跨服务器差异读取创建两份独立审批申请；申请中只冻结元数据与哈希。
+func (h *AssetHandler) RequestPairReadApproval(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	var body struct {
+		Left struct {
+			ServerID string `json:"serverId"`
+			Path     string `json:"path"`
+		} `json:"left"`
+		Right struct {
+			ServerID string `json:"serverId"`
+			Path     string `json:"path"`
+		} `json:"right"`
+		Reason string `json:"reason"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	res, err := h.svc.Diff(r.Context(), service.DiffParams{
-		Left:     service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path},
-		Right:    service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path},
-		Reason:   body.Reason,
-		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	left, right, err := h.svc.RequestPairAccess(service.AssetRef{ServerID: body.Left.ServerID, Path: body.Left.Path}, service.AssetRef{ServerID: body.Right.ServerID, Path: body.Right.Path}, body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
 	if err != nil {
 		writeAssetError(w, r, err)
 		return
 	}
-	out := assetDiffJS{Identical: res.Identical}
-	if res.Left != nil {
-		out.Left = &assetDiffSideJS{ServerID: res.Left.ServerID, Path: res.Left.Path, Content: res.Left.Content, SHA256: res.Left.SHA256}
+	render.WriteJSON(w, http.StatusAccepted, map[string]any{"leftRequestId": left.RequestID, "rightRequestId": right.RequestID, "status": "pending"})
+}
+
+// ConsumePreviewGrant 仅允许原申请主体一次性消费 Agent 已回传的文件内容。
+func (h *AssetHandler) ConsumePreviewGrant(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
 	}
-	if res.Right != nil {
-		out.Right = &assetDiffSideJS{ServerID: res.Right.ServerID, Path: res.Right.Path, Content: res.Right.Content, SHA256: res.Right.SHA256}
+	var body struct {
+		CommandID uint `json:"commandId"`
 	}
-	render.WriteJSON(w, http.StatusOK, out)
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	result, err := h.svc.ConsumeApproved(chi.URLParam(r, "grantId"), body.CommandID, principal)
+	if err != nil {
+		writeAssetError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, assetPreviewJS{Content: result.Content, Truncated: result.Truncated, Binary: result.Binary, SHA256: result.SHA256, Size: result.Size})
+}
+
+// ConsumePairReadGrant 原申请人凭任一侧 grant 触发双侧原子消费，只返回脱敏差异摘要。
+func (h *AssetHandler) ConsumePairReadGrant(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
+	}
+	var body struct {
+		CommandID uint `json:"commandId"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	result, err := h.svc.ConsumePairApproved(chi.URLParam(r, "grantId"), body.CommandID, principal)
+	if err != nil {
+		writeAssetError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"identical": result.Identical, "changed": result.Changed, "unsupported": result.Unsupported,
+		"left":  map[string]any{"serverId": result.Left.ServerID, "path": result.Left.Path, "sha256": result.Left.SHA256, "size": result.Left.Size},
+		"right": map[string]any{"serverId": result.Right.ServerID, "path": result.Right.Path, "sha256": result.Right.SHA256, "size": result.Right.Size},
+	})
 }
 
 // GetSensitiveRules 处理 GET /admin/v2/assets/sensitive-rules：读当前敏感路径规则清单（无存储回内置默认）。

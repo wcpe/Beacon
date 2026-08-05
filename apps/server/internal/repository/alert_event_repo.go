@@ -10,13 +10,15 @@ import (
 
 // AlertEventFilter 是告警事件查询的过滤与分页条件（零值字段不过滤；时间零值不设界）。
 type AlertEventFilter struct {
-	Type      string
-	Level     string
-	Namespace string
-	From      time.Time
-	To        time.Time
-	Page      int // 从 1 起
-	Size      int
+	Type           string
+	Level          string
+	Namespace      string
+	NamespaceCodes []string
+	Scoped         bool
+	From           time.Time
+	To             time.Time
+	Page           int // 从 1 起
+	Size           int
 }
 
 // AlertEventRepository 提供 alert_event 表的数据访问（append-only 留痕，FR-89）。
@@ -82,7 +84,12 @@ func applyAlertEventFilter(q *gorm.DB, f AlertEventFilter) *gorm.DB {
 	if f.Level != "" {
 		q = q.Where("level = ?", f.Level)
 	}
-	if f.Namespace != "" {
+	if f.Scoped {
+		if len(f.NamespaceCodes) == 0 {
+			return q.Where("1 = 0")
+		}
+		q = q.Where("namespace IN ?", f.NamespaceCodes)
+	} else if f.Namespace != "" {
 		q = q.Where("namespace = ?", f.Namespace)
 	}
 	if !f.From.IsZero() {

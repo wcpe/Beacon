@@ -89,14 +89,14 @@ func TestBrowseResultHandlerInvalidBody(t *testing.T) {
 	}
 }
 
-// TestBrowseHandlerMissingNamespace admin 浏览缺 namespace → 400（不进在线校验 / 不建命令）。
+// TestBrowseHandlerMissingNamespace 旧浏览入口在参数校验前即审批失败关闭。
 func TestBrowseHandlerMissingNamespace(t *testing.T) {
 	svc, _ := newBrowseTestSvc(t)
 	h := NewBrowseHandler(svc, nil)
 	r := httptest.NewRequest(http.MethodGet, "/admin/v1/instances/lobby-1/browse", nil)
 	w := httptest.NewRecorder()
 	h.Browse(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("缺 namespace 应 400，实际 %d", w.Code)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("旧浏览入口应 409，实际 %d", w.Code)
 	}
 }

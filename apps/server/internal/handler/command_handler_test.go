@@ -2,21 +2,28 @@ package handler
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
@@ -142,4 +149,66 @@ func TestCommandHandlerReportResyncConfigPathUnchanged(t *testing.T) {
 	if got.Status != model.CommandStatusDone {
 		t.Fatalf("普通重同步成功回传应推进 done，实际 %s", got.Status)
 	}
+}
+
+// TestCommandHandlerResyncCreatesApprovalTicket 验证 FR-209 仅受理审批申请，不在 HTTP 请求内下发命令。
+func TestCommandHandlerResyncCreatesApprovalTicket(t *testing.T) {
+	h, db := newResyncApprovalHandler(t)
+	rec := requestResync(h, `{"reason":"需要重拉权威配置"}`, "resync-handler-1")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("重同步申请应返回 202，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	var response service.ApprovalTicketView
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || response.ApprovalRequestID == "" || response.Status != model.ApprovalStatusPending {
+		t.Fatalf("应返回 pending 审批票据，response=%+v err=%v", response, err)
+	}
+	var commands int64
+	if err := db.Model(&model.AgentCommand{}).Count(&commands).Error; err != nil || commands != 0 {
+		t.Fatalf("申请阶段不得下发命令，count=%d err=%v", commands, err)
+	}
+}
+
+// TestCommandHandlerResyncRequiresReasonAndIdempotencyKey 验证审批入口不接受无理由或无幂等键的危险操作。
+func TestCommandHandlerResyncRequiresReasonAndIdempotencyKey(t *testing.T) {
+	h, _ := newResyncApprovalHandler(t)
+	if rec := requestResync(h, `{}`, "resync-handler-missing-reason"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("缺少 reason 应返回 400，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+	if rec := requestResync(h, `{"reason":"需要重拉权威配置"}`, ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("缺少 Idempotency-Key 应返回 400，实际 %d：%s", rec.Code, rec.Body.String())
+	}
+}
+
+func newResyncApprovalHandler(t *testing.T) (*CommandHandler, *gorm.DB) {
+	t.Helper()
+	_, db := newCommandResultHandler(t)
+	if err := db.AutoMigrate(&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.SensitiveAccessGrant{}, &model.AuditLog{}); err != nil {
+		t.Fatalf("迁移重同步审批测试表失败: %v", err)
+	}
+	commandService := service.NewAgentCommandService(db, repository.NewAgentCommandRepository(db), nil, repository.NewAuditLogRepository(db))
+	approvalRegistry := authz.NewApprovalRegistry()
+	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), approvalRegistry)
+	commandService.SetApprovalService(approvalService)
+	service.RegisterAgentCommandApprovalAdapters(approvalRegistry, commandService,
+		service.NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
+	registry := runtime.NewRegistry()
+	if _, err := registry.Register(&runtime.Instance{Namespace: "prod", ServerID: "server-1", Address: "127.0.0.1:25565"}, time.Minute, time.Now().UTC()); err != nil {
+		t.Fatalf("注册在线实例失败: %v", err)
+	}
+	instanceService := service.NewInstanceService(nil, registry, nil, nil, nil, time.Second, time.Minute)
+	return NewCommandHandler(commandService, instanceService), db
+}
+
+func requestResync(h *CommandHandler, body, idempotencyKey string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/instances/server-1/resync?namespace=prod", bytes.NewBufferString(body))
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	ctx := auth.WithPrincipal(req.Context(), auth.HumanPrincipal("alice"))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("serverId", "server-1")
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+	h.Resync(rec, req)
+	return rec
 }

@@ -26,6 +26,7 @@ const MaxBatchIDs = 2000
 type batchRequest struct {
 	Action string `json:"action"`
 	IDs    []uint `json:"ids"`
+	Reason string `json:"reason"`
 }
 
 // decodeBatchRequest 解析并校验批量请求体：非法 JSON / 非法 action / 空 ids / 超 MaxBatchIDs 一律 INVALID_PARAM（400）。

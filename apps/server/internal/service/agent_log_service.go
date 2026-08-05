@@ -1,13 +1,17 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -38,6 +42,8 @@ type AgentLogService struct {
 	repo      *repository.AgentCommandRepository
 	auditRepo *repository.AuditLogRepository
 	notifier  CommandNotifier
+	approval  *ApprovalService
+	grants    *SensitiveAccessGrantService
 }
 
 // NewAgentLogService 构造服务。
@@ -48,9 +54,32 @@ func NewAgentLogService(db *gorm.DB, repo *repository.AgentCommandRepository, au
 // SetNotifier 注入命令待办唤醒器（启动时装配；未注入则建命令后不主动唤醒，留待 agent 重连拉取或超时）。
 func (s *AgentLogService) SetNotifier(n CommandNotifier) { s.notifier = n }
 
+// SetApprovalService 注入实时日志审批入口。
+func (s *AgentLogService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// SetSensitiveAccessGrants 注入日志正文的一次性访问授权服务。
+func (s *AgentLogService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) { s.grants = grants }
+
 // RequestTailLogs 由 admin 触发取某在线实例的自身日志：单活跃限速 → 事务内建 pending tail-logs 命令 + 审计 → 唤醒。
 // 在线校验与 SSE 唤醒触发点在 handler 层（与反向抓取一致）。返回命令（含 id 供查询引用）。
 func (s *AgentLogService) RequestTailLogs(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestTailLogsApproval 创建日志命令审批申请。
+func (s *AgentLogService) RequestTailLogsApproval(ns, serverID, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandTailLogs, Resource: "agent-command", ResourceID: ns + "/" + serverID, IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"namespace": ns, "serverId": serverID, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// applyRequestTailLogsInTx 仅由审批适配器在领域事务内创建日志命令。
+func (s *AgentLogService) applyRequestTailLogsInTx(tx *gorm.DB, ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -67,27 +96,18 @@ func (s *AgentLogService) RequestTailLogs(ns, serverID, operator, clientIP strin
 		Type: model.CommandTypeTailLogs, Payload: "{}",
 		Status: model.CommandStatusPending, Operator: operator,
 	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if e := s.repo.WithTx(tx).Create(cmd); e != nil {
-			return e
-		}
-		// detail 仅命令引用 + 目标（绝不含日志内容，ADR-0040 决策5）。
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+	if e := s.repo.WithTx(tx).Create(cmd); e != nil {
+		return nil, e
+	}
+	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns,
 			Operator:      operator, Action: model.ActionInstanceTailLogs,
 			TargetType: model.TargetTypeInstance, TargetRef: serverID,
 			Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
 			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
-	if err != nil {
-		return nil, err
+	}); e != nil {
+		return nil, e
 	}
-	// 提交成功后唤醒该 agent 的 SSE 流发 command-pending（离线则无 waiter、留待重连拉取或超时）。
-	if s.notifier != nil {
-		s.notifier.NotifyCommand(ns, serverID)
-	}
-	slog.Info("触发取 agent 日志", "namespace", ns, "serverId", serverID, "commandId", cmd.ID, "operator", operator)
 	return cmd, nil
 }
 
@@ -117,8 +137,34 @@ func (s *AgentLogService) ReceiveLogs(commandID uint, lines []AgentLogLine, clie
 	if !ok {
 		return apperr.ErrCommandNotFound // 被并发终结（前态不符）
 	}
+	if s.grants != nil {
+		hash := fmt.Sprintf("%x", sha256.Sum256(content))
+		if err := s.grants.BindAndActivatePendingCommandFromAgent(cmd.ID, authz.OperationAgentCommandTailLogs, hash, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	slog.Info("收到 agent 日志回传", "commandId", cmd.ID, "lines", len(lines), "clientIp", clientIP)
 	return nil
+}
+
+// ConsumeApprovedLogs 仅允许原申请主体一次取得已由 Agent 回传的脱敏日志。
+func (s *AgentLogService) ConsumeApprovedLogs(grantID string, commandID uint, principal auth.Principal) (*AgentLogResult, error) {
+	if s == nil || s.grants == nil || grantID == "" || commandID == 0 {
+		return nil, apperr.ErrForbidden
+	}
+	cmd, err := s.repo.FindByID(commandID)
+	if err != nil || cmd == nil || cmd.Type != model.CommandTypeTailLogs || cmd.Status != model.CommandStatusDone {
+		return nil, apperr.ErrForbidden
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cmd.LogContent)))
+	if err := s.grants.Consume(grantID, principal, authz.OperationAgentCommandTailLogs, fmt.Sprintf("agent-command/%d", commandID), hash, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	var lines []AgentLogLine
+	if json.Unmarshal([]byte(cmd.LogContent), &lines) != nil {
+		return nil, apperr.ErrForbidden
+	}
+	return &AgentLogResult{CommandID: cmd.ID, Status: cmd.Status, Lines: lines}, nil
 }
 
 // GetLatest 取某实例最近一条 tail-logs 命令的状态 + 日志（FR-88，供 admin 查询）。

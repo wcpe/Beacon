@@ -1,15 +1,19 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/filetree"
 	"github.com/wcpe/Beacon/apps/server/internal/merge"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -55,6 +59,27 @@ type ImprintConfirmResult struct {
 // （载荷 mode=imprint + path）+ file.imprint-fetch 审计；提交后唤醒该 agent SSE（agent 仍读整棵
 // plugins 树回传，落库 vs 转存由 mode 区分，agent 零改动）。在线校验与 SSE 唤醒口径同 RequestReverseFetch。
 func (s *AgentCommandService) RequestImprint(ns, serverID, filePath, operator, clientIP string) (*model.AgentCommand, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestImprintApproval 创建拓印审批申请，Agent 命令与内容访问授权由批准事务一并生成。
+func (s *AgentCommandService) RequestImprintApproval(ns, serverID, filePath, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || ns == "" || serverID == "" || filePath == "" || reason == "" || idempotencyKey == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
+	}
+	cleanPath, err := normalizePath(filePath)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandImprint, Resource: "agent-command", ResourceID: ns + "/" + serverID + "/" + cleanPath, IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"namespace": ns, "serverId": serverID, "path": cleanPath, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// applyRequestImprintInTx 仅由审批适配器在领域事务内创建拓印命令。
+func (s *AgentCommandService) applyRequestImprintInTx(tx *gorm.DB, ns, serverID, filePath, operator, clientIP string) (*model.AgentCommand, error) {
 	if ns == "" || serverID == "" || operator == "" || filePath == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -68,26 +93,18 @@ func (s *AgentCommandService) RequestImprint(ns, serverID, filePath, operator, c
 		Type: model.CommandTypeIngestPlugins, Payload: string(payload),
 		Status: model.CommandStatusPending, Operator: operator,
 	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if e := s.repo.WithTx(tx).Create(cmd); e != nil {
-			return e
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+	if e := s.repo.WithTx(tx).Create(cmd); e != nil {
+		return nil, e
+	}
+	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns,
 			Operator:      operator, Action: model.ActionFileImprintFetch,
 			TargetType: model.TargetTypeCommand, TargetRef: serverID,
 			Detail: fmt.Sprintf(`{"commandId":%d,"path":%q}`, cmd.ID, cleanPath),
 			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
-	if err != nil {
-		return nil, err
+	}); e != nil {
+		return nil, e
 	}
-	if s.notifier != nil {
-		s.notifier.NotifyCommand(ns, serverID)
-	}
-	slog.Info("触发按需拓印", "namespace", ns, "serverId", serverID, "path", cleanPath,
-		"commandId", cmd.ID, "operator", operator)
 	return cmd, nil
 }
 
@@ -128,8 +145,30 @@ func (s *AgentCommandService) transferImprint(cmd *model.AgentCommand, targetPat
 	if !ok {
 		return apperr.ErrCommandNotFound // 并发已迁移，非 fetched
 	}
+	if s.grants != nil {
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+		if err := s.grants.BindAndActivatePendingCommandFromAgent(cmd.ID, authz.OperationAgentCommandImprint, hash, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	slog.Info("拓印回传转存待审", "commandId", cmd.ID, "path", clean, "bytes", len(content))
 	return nil
+}
+
+// ConsumeApprovedImprint 仅允许原申请主体一次查看已回传拓印正文。
+func (s *AgentCommandService) ConsumeApprovedImprint(grantID string, commandID uint, scope, group, zone string, principal auth.Principal) (*ImprintDiffResult, error) {
+	if s == nil || s.grants == nil || grantID == "" || commandID == 0 {
+		return nil, apperr.ErrForbidden
+	}
+	cmd, _, err := s.requireReadyImprint(commandID)
+	if err != nil {
+		return nil, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(cmd.ImprintContent)))
+	if err := s.grants.Consume(grantID, principal, authz.OperationAgentCommandImprint, fmt.Sprintf("agent-command/%d", commandID), hash, time.Now().UTC()); err != nil {
+		return nil, err
+	}
+	return s.ImprintDiff(commandID, scope, group, zone)
 }
 
 // ImprintDiff 取拓印 diff（FR-46）：命令须 ready 且 imprint 模式；本地实际值 = 命令转存内容，
@@ -252,7 +291,7 @@ func (s *AgentCommandService) ConfirmImprint(commandID uint, scope, group, zone,
 // scopeTarget 须为归一后的目标键（normalizeScope 产物）——group/global 恒为空，否则 conflict 回退会按
 // 未归一 target 查不中而误 404（见 ConfirmImprint 调用处 F 修正）。
 func (s *AgentCommandService) landImprint(ns, filePath, scope, group, scopeTarget, content, operator, clientIP string) (*model.FileObject, error) {
-	obj, cerr := s.fileSvc.Create(CreateFileParams{
+	obj, cerr := s.fileSvc.applyCreate(CreateFileParams{
 		Namespace: ns, Group: group, Path: filePath,
 		ScopeLevel: scope, ScopeTarget: scopeTarget,
 		Content: content, Operator: operator, Comment: imprintComment, ClientIP: clientIP,
@@ -271,7 +310,7 @@ func (s *AgentCommandService) landImprint(ns, filePath, scope, group, scopeTarge
 	if existing == nil {
 		return nil, apperr.ErrFileNotFound
 	}
-	return s.fileSvc.Publish(existing.ID, content, operator, imprintComment, clientIP)
+	return s.fileSvc.applyPublish(existing.ID, content, operator, imprintComment, clientIP)
 }
 
 // GetImprintCommand 取拓印命令（任意状态，供前端轮询命令状态至 ready，FR-46）。

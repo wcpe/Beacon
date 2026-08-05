@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -61,7 +64,15 @@ type AgentCommandService struct {
 	submitReceiver submitIngestReceiver
 	// 文件浏览结果等待 Hub（FR-110，可选注入；未注入则 RequestBrowse 不可用）。
 	browseHub BrowseResultHub
+	approval  *ApprovalService
+	grants    *SensitiveAccessGrantService
 }
+
+// SetApprovalService 注入命令危险操作的统一审批入口。
+func (s *AgentCommandService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// SetSensitiveAccessGrants 注入拓印正文的一次性访问授权服务。
+func (s *AgentCommandService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) { s.grants = grants }
 
 // NewAgentCommandService 构造服务。
 func NewAgentCommandService(db *gorm.DB, repo *repository.AgentCommandRepository, fileSvc *FileService, auditRepo *repository.AuditLogRepository) *AgentCommandService {
@@ -80,6 +91,24 @@ func (s *AgentCommandService) SetSubmitIngestReceiver(r submitIngestReceiver) { 
 // RequestReverseFetch 由 admin 触发对某在线实例的反向抓取：事务内建 pending 命令 + file.reverse-fetch 审计。
 // 在线校验与 SSE 唤醒在 handler/server 层。返回命令（含 id 供 agent 回传引用）。
 func (s *AgentCommandService) RequestReverseFetch(ns, serverID, scope, group, target, operator, clientIP string) (*model.AgentCommand, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestReverseFetchApproval 创建反向扫描审批申请，命令仅由批准 worker 在同一事务中下发。
+func (s *AgentCommandService) RequestReverseFetchApproval(ns, serverID, scope, group, target, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
+	}
+	payload := map[string]any{"namespace": ns, "serverId": serverID, "scope": scope, "group": group, "target": target, "operator": operator, "clientIP": clientIP}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandReverseScan, Resource: "agent-command", ResourceID: ns + "/" + serverID, IdempotencyKey: idempotencyKey, Reason: reason}, payload, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// applyRequestReverseFetchInTx 仅由审批适配器在领域事务内创建反向抓取命令。
+func (s *AgentCommandService) applyRequestReverseFetchInTx(tx *gorm.DB, ns, serverID, scope, group, target, operator, clientIP string) (*model.AgentCommand, error) {
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -96,28 +125,18 @@ func (s *AgentCommandService) RequestReverseFetch(ns, serverID, scope, group, ta
 		Type: model.CommandTypeIngestPlugins, Payload: string(payload),
 		Status: model.CommandStatusPending, Operator: operator,
 	}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if e := s.repo.WithTx(tx).Create(cmd); e != nil {
-			return e
-		}
-		// Create 后 cmd.ID 已回填，可入审计 detail（无敏感内容）。
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+	if e := s.repo.WithTx(tx).Create(cmd); e != nil {
+		return nil, e
+	}
+	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			NamespaceCode: ns,
 			Operator:      operator, Action: model.ActionFileReverseFetch,
 			TargetType: model.TargetTypeCommand, TargetRef: serverID,
 			Detail: fmt.Sprintf(`{"commandId":%d,"scope":%q,"group":%q,"target":%q}`, cmd.ID, scope, group, target),
 			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
-	if err != nil {
-		return nil, err
+	}); e != nil {
+		return nil, e
 	}
-	// 提交成功后唤醒该 agent 的 SSE 流发 command-pending（agent 离线则无 waiter、留待重连拉取或超时）。
-	if s.notifier != nil {
-		s.notifier.NotifyCommand(ns, serverID)
-	}
-	slog.Info("触发在线实例反向抓取", "namespace", ns, "serverId", serverID, "scope", scope, "group", group,
-		"target", target, "commandId", cmd.ID, "operator", operator)
 	return cmd, nil
 }
 
@@ -125,6 +144,22 @@ func (s *AgentCommandService) RequestReverseFetch(ns, serverID, scope, group, ta
 // 语义为「重拉控制面权威的有效配置/文件树/覆盖集并 apply」，无业务载荷（空 JSON），复用命令队列既有模式（见 ADR-0027）。
 // 在线校验与 SSE 唤醒在 handler/server 层（与取日志一致）。返回命令（含 id 供 agent 回传结果引用）。
 func (s *AgentCommandService) RequestResync(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestResyncApproval 创建强制重同步审批申请，命令仅在批准 worker 内下发。
+func (s *AgentCommandService) RequestResyncApproval(ns, serverID, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || ns == "" || serverID == "" {
+		return ApprovalTicketView{}, apperr.ErrForbidden
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandResync, Resource: "agent-command", ResourceID: ns + "/" + serverID, IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"namespace": ns, "serverId": serverID, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+func (s *AgentCommandService) applyRequestResyncInTx(tx *gorm.DB, ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -133,28 +168,31 @@ func (s *AgentCommandService) RequestResync(ns, serverID, operator, clientIP str
 		Type: model.CommandTypeResyncConfig, Payload: "{}",
 		Status: model.CommandStatusPending, Operator: operator,
 	}
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if e := s.repo.WithTx(tx).Create(cmd); e != nil {
-			return e
-		}
-		// Create 后 cmd.ID 已回填，可入审计 detail（无敏感内容）。
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns,
-			Operator:      operator, Action: model.ActionInstanceResync,
-			TargetType: model.TargetTypeInstance, TargetRef: serverID,
-			Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
-			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
-	if err != nil {
-		return nil, err
+	if e := s.repo.WithTx(tx).Create(cmd); e != nil {
+		return nil, e
 	}
-	// 提交成功后唤醒该 agent 的 SSE 流发 command-pending（agent 离线则无 waiter、留待重连拉取或超时）。
-	if s.notifier != nil {
-		s.notifier.NotifyCommand(ns, serverID)
+	// Create 后 cmd.ID 已回填，可入审计 detail（无敏感内容）。
+	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		NamespaceCode: ns,
+		Operator:      operator, Action: model.ActionInstanceResync,
+		TargetType: model.TargetTypeInstance, TargetRef: serverID,
+		Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
+		Result: model.ResultOK, ClientIP: clientIP,
+	}); e != nil {
+		return nil, e
 	}
-	slog.Info("触发在线实例强制重同步", "namespace", ns, "serverId", serverID, "commandId", cmd.ID, "operator", operator)
 	return cmd, nil
+}
+
+// applyRequestResyncForTest 仅供同包测试验证领域写入；生产路径必须经审批适配器调用 applyRequestResyncInTx。
+func (s *AgentCommandService) applyRequestResyncForTest(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+	var command *model.AgentCommand
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		command, err = s.applyRequestResyncInTx(tx, ns, serverID, operator, clientIP)
+		return err
+	})
+	return command, err
 }
 
 // ReceiveResyncResult 接收 agent 回传的强制重同步执行结果（FR-91）：命令须存在、type=resync-config 且处 fetched。
@@ -169,6 +207,9 @@ func (s *AgentCommandService) ReceiveResyncResult(commandID uint, ok bool, reaso
 	}
 	if cmd.Status != model.CommandStatusFetched {
 		return apperr.ErrCommandNotFound // 已完成 / 失败 / 过期 / 未拉取，均不可回传
+	}
+	if err := s.ensureCommandActive(cmd); err != nil {
+		return err
 	}
 	if ok {
 		hit, e := s.repo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusDone, "")
@@ -194,25 +235,37 @@ func (s *AgentCommandService) ResultCommandType(commandID uint) (string, error) 
 	if cmd == nil || cmd.Status != model.CommandStatusFetched {
 		return "", apperr.ErrCommandNotFound
 	}
+	if err := s.ensureCommandActive(cmd); err != nil {
+		return "", err
+	}
 	return cmd.Type, nil
 }
 
 // FetchPending 取某 agent 最早一条 pending 命令并 CAS 迁移 fetched（供 agent 拉取）。
-// 无 pending 或被并发取走返回 (nil, nil)。
+// 生命周期资格检查、查询和 CAS 领取在同一事务中完成；无 pending 或被并发取走返回 (nil, nil)。
 func (s *AgentCommandService) FetchPending(ns, serverID string) (*model.AgentCommand, error) {
-	cmd, err := s.repo.FindOldestPending(ns, serverID)
-	if err != nil || cmd == nil {
-		return nil, err
-	}
-	ok, err := s.repo.UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, "")
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, nil // 被并发拉走，本次让出
-	}
-	cmd.Status = model.CommandStatusFetched
-	return cmd, nil
+	var claimed *model.AgentCommand
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureServerActiveForNamespace(tx, ns, serverID); err != nil {
+			return err
+		}
+		repo := s.repo.WithTx(tx)
+		cmd, err := repo.FindOldestPending(ns, serverID)
+		if err != nil || cmd == nil {
+			return err
+		}
+		ok, err := repo.UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, "")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		cmd.Status = model.CommandStatusFetched
+		claimed = cmd
+		return nil
+	})
+	return claimed, err
 }
 
 // ReceiveIngest 接收 agent 回传文件集并 ingest（FR-39，见 ADR-0027）。
@@ -230,6 +283,9 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 	if cmd.Status != model.CommandStatusFetched {
 		return nil, apperr.ErrCommandNotFound // 已完成 / 失败 / 过期 / 未拉取，均不可回传
 	}
+	if err := s.ensureCommandActive(cmd); err != nil {
+		return nil, err
+	}
 	var payload ingestPayload
 	if json.Unmarshal([]byte(cmd.Payload), &payload) != nil {
 		s.markFailed(cmd.ID, "载荷不合法")
@@ -239,10 +295,16 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 	// 不套 FR-39 的整批数量 / 总量闸（那是为整批落库设的，会误伤大插件目录下的单文件拓印）；
 	// jar 排除与目标单文件大小由 transferImprint 兜底。返回 (nil, nil) 表示转存成功（无落库结果）。
 	if payload.Mode == model.IngestModeImprint {
+		if err := s.ensureCommandActive(cmd); err != nil {
+			return nil, err
+		}
 		return nil, s.transferImprint(cmd, payload.Path, files)
 	}
 	// FR-58 受管任务 submit 模式：转交受管任务编排（按 task 的 scope/group/target 落库、迁移任务状态）。
 	if payload.Mode == model.IngestModeSubmit {
+		if err := s.ensureCommandActive(cmd); err != nil {
+			return nil, err
+		}
 		if s.submitReceiver == nil {
 			return nil, apperr.ErrInternal // 未装配（编程 / 装配错误）
 		}
@@ -257,7 +319,10 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 		s.markFailed(cmd.ID, "载荷不合法")
 		return nil, apperr.ErrInvalidParam
 	}
-	result, ierr := s.fileSvc.Import(ImportFilesParams{
+	if err := s.ensureCommandActive(cmd); err != nil {
+		return nil, err
+	}
+	result, ierr := s.fileSvc.applyImport(ImportFilesParams{
 		Namespace: cmd.NamespaceCode, Group: payload.Group,
 		ScopeLevel: payload.Scope, ScopeTarget: payload.Target,
 		Files: files, Operator: cmd.Operator, Comment: reverseFetchComment, ClientIP: clientIP,
@@ -278,6 +343,19 @@ func (s *AgentCommandService) ReceiveIngest(commandID uint, files []ImportFile, 
 // ExpireStale 把陈旧（pending/fetched 超时）命令标 expired；由后台周期触发。
 func (s *AgentCommandService) ExpireStale(before time.Time) (int64, error) {
 	return s.repo.ExpireStale(before)
+}
+
+func (s *AgentCommandService) ensureCommandActive(cmd *model.AgentCommand) error {
+	if cmd == nil {
+		return apperr.ErrCommandNotFound
+	}
+	if err := ensureServerActiveForNamespace(s.db, cmd.NamespaceCode, cmd.ServerID); err != nil {
+		if errors.Is(err, apperr.ErrServerArchived) {
+			return apperr.ErrCommandNotFound
+		}
+		return err
+	}
+	return nil
 }
 
 // markFailed 把命令从 fetched 迁移 failed（best-effort，CAS 失败仅告警）。

@@ -158,7 +158,7 @@ func TestReceiveBrowseResultGuards(t *testing.T) {
 		t.Fatalf("不存在命令应 ErrCommandNotFound，实际 %v", err)
 	}
 	// 非 fs-browse 类型（ingest-plugins）回传 → 类型不符拒
-	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "g", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "g", "", "alice", "")
 	ingest, _ := svc.FetchPending("prod", "lobby-1")
 	if err := svc.ReceiveBrowseResult("prod", "lobby-1", ingest.ID, true, "{}", ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("非 fs-browse 类型回传应被拒，实际 %v", err)

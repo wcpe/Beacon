@@ -1,6 +1,8 @@
 package service
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +11,8 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -23,7 +27,8 @@ func newCommandSvcTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.AgentCommand{}, &model.FileObject{}, &model.FileRevision{}, &model.ZoneAssignment{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.AgentCommand{}, &model.FileObject{}, &model.FileRevision{}, &model.ZoneAssignment{}, &model.AuditLog{},
+		&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.SensitiveAccessGrant{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -31,12 +36,159 @@ func newCommandSvcTestDB(t *testing.T) *gorm.DB {
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"agent_command", "file_object", "file_revision", "zone_assignment", "audit_log"} {
+	for _, tbl := range []string{"agent_command", "file_object", "file_revision", "zone_assignment", "audit_log", "approval_request", "approval_execution_receipt", "sensitive_access_grant"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
 	}
 	return db
+}
+
+// TestRequestResyncApprovalOnlyExecutesAfterWorker 验证 FR-209 的申请、批准和异步命令下发闭环。
+func TestRequestResyncApprovalOnlyExecutesAfterWorker(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	commands := newCommandSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	commands.SetApprovalService(approval)
+	RegisterAgentCommandApprovalAdapters(registry, commands, NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
+
+	if _, err := commands.RequestResync("prod", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开 RequestResync 必须拒绝旁路，实际 %v", err)
+	}
+	if err := (agentCommandApprovalAdapter{}).Execute(authz.ApprovalRequest{}, authz.Permit{}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开适配器 Execute 必须拒绝旁路，实际 %v", err)
+	}
+
+	ticket, err := commands.RequestResyncApproval("prod", "lobby-1", "需要重拉权威配置", "resync-approval-1", "alice", "127.0.0.1", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建重同步审批失败: %v", err)
+	}
+	var before int64
+	if err := db.Model(&model.AgentCommand{}).Count(&before).Error; err != nil || before != 0 {
+		t.Fatalf("批准前不得创建命令，count=%d err=%v", before, err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准重同步申请失败: %v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("worker 应执行一条已批准申请，processed=%d err=%v", processed, err)
+	}
+
+	var command model.AgentCommand
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "lobby-1").First(&command).Error; err != nil {
+		t.Fatalf("读取 worker 下发命令失败: %v", err)
+	}
+	if command.Type != model.CommandTypeResyncConfig || command.Status != model.CommandStatusPending {
+		t.Fatalf("worker 应下发 pending resync-config，实际 %+v", command)
+	}
+	var grant model.SensitiveAccessGrant
+	if err := db.Where("approval_request_id = ?", ticket.ApprovalRequestID).First(&grant).Error; err != nil {
+		t.Fatalf("读取审批授权失败: %v", err)
+	}
+	if grant.Status != model.SensitiveAccessGrantStatusActive {
+		t.Fatalf("批准后授权应激活，实际 %s", grant.Status)
+	}
+	var receipt model.ApprovalExecutionReceipt
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&receipt).Error; err != nil {
+		t.Fatalf("读取执行回执失败: %v", err)
+	}
+	if receipt.ResultRef != "agent-command-"+fmt.Sprint(command.ID) {
+		t.Fatalf("回执命令引用不符: %s", receipt.ResultRef)
+	}
+}
+
+// TestTailLogsApprovalGrantFlow 验证日志正文只在 Agent 回传后向原申请主体一次性开放。
+func TestTailLogsApprovalGrantFlow(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	grants := NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
+	logs := NewAgentLogService(db, repository.NewAgentCommandRepository(db), repository.NewAuditLogRepository(db))
+	logs.SetApprovalService(approval)
+	logs.SetSensitiveAccessGrants(grants)
+	RegisterAgentLogApprovalAdapter(registry, logs, grants)
+
+	if _, err := logs.RequestTailLogs("prod", "lobby-1", "alice", "127.0.0.1"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开日志下发必须拒绝旁路，实际 %v", err)
+	}
+	ticket, err := logs.RequestTailLogsApproval("prod", "lobby-1", "排查启动异常", "tail-approval-1", "alice", "127.0.0.1", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建日志审批失败: %v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准日志审批失败: %v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("worker 应执行日志命令，processed=%d err=%v", processed, err)
+	}
+	var cmd model.AgentCommand
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "lobby-1").First(&cmd).Error; err != nil {
+		t.Fatalf("读取日志命令失败: %v", err)
+	}
+	if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
+		t.Fatalf("模拟 agent 领取日志命令失败: ok=%v err=%v", ok, err)
+	}
+	if err := logs.ReceiveLogs(cmd.ID, []AgentLogLine{{Level: "INFO", Text: "已脱敏日志"}}, "127.0.0.1"); err != nil {
+		t.Fatalf("回传日志失败: %v", err)
+	}
+	var grant model.SensitiveAccessGrant
+	if err := db.Where("approval_request_id = ?", ticket.ApprovalRequestID).First(&grant).Error; err != nil {
+		t.Fatalf("读取日志授权失败: %v", err)
+	}
+	if _, err := logs.ConsumeApprovedLogs(grant.GrantID, cmd.ID, auth.HumanPrincipal("mallory")); !errors.Is(err, apperr.ErrSensitiveAccessWrongPrincipal) {
+		t.Fatalf("非原申请主体不得消费，实际 %v", err)
+	}
+	result, err := logs.ConsumeApprovedLogs(grant.GrantID, cmd.ID, auth.HumanPrincipal("alice"))
+	if err != nil || len(result.Lines) != 1 || result.Lines[0].Text != "已脱敏日志" {
+		t.Fatalf("原申请主体应一次消费日志，result=%+v err=%v", result, err)
+	}
+	if _, err := logs.ConsumeApprovedLogs(grant.GrantID, cmd.ID, auth.HumanPrincipal("alice")); !errors.Is(err, apperr.ErrSensitiveAccessConsumed) {
+		t.Fatalf("日志授权必须一次性消费，实际 %v", err)
+	}
+}
+
+// TestImprintApprovalActivatesGrantAfterAgentResult 验证拓印正文不在批准前开放。
+func TestImprintApprovalActivatesGrantAfterAgentResult(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	commands := newCommandSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	grants := NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
+	commands.SetApprovalService(approval)
+	commands.SetSensitiveAccessGrants(grants)
+	RegisterAgentCommandApprovalAdapters(registry, commands, grants)
+
+	if _, err := commands.RequestImprint("prod", "lobby-1", "Demo/config.yml", "alice", ""); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开拓印下发必须拒绝旁路，实际 %v", err)
+	}
+	ticket, err := commands.RequestImprintApproval("prod", "lobby-1", "Demo/config.yml", "核对线上配置", "imprint-approval-1", "alice", "127.0.0.1", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建拓印审批失败: %v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil {
+		t.Fatalf("批准拓印申请失败: %v", err)
+	}
+	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil {
+		t.Fatalf("执行拓印审批失败: %v", err)
+	}
+	var cmd model.AgentCommand
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "lobby-1").First(&cmd).Error; err != nil {
+		t.Fatalf("读取拓印命令失败: %v", err)
+	}
+	if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
+		t.Fatalf("模拟 agent 领取拓印命令失败: ok=%v err=%v", ok, err)
+	}
+	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true"}}, ""); err != nil {
+		t.Fatalf("接收拓印内容失败: %v", err)
+	}
+	var grant model.SensitiveAccessGrant
+	if err := db.Where("approval_request_id = ?", ticket.ApprovalRequestID).First(&grant).Error; err != nil {
+		t.Fatalf("读取拓印授权失败: %v", err)
+	}
+	if grant.Status != model.SensitiveAccessGrantStatusActive || grant.TargetRef != fmt.Sprintf("agent-command/%d", cmd.ID) {
+		t.Fatalf("拓印回传后授权应绑定命令并激活，实际 %+v", grant)
+	}
 }
 
 func newCommandSvc(db *gorm.DB) *AgentCommandService {
@@ -59,7 +211,7 @@ func countAudit(t *testing.T, db *gorm.DB, action string) int64 {
 func TestRequestReverseFetch(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	cmd, err := svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "10.0.0.1")
+	cmd, err := applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("触发反向抓取失败: %v", err)
 	}
@@ -70,11 +222,11 @@ func TestRequestReverseFetch(t *testing.T) {
 		t.Fatal("应记一条 file.reverse-fetch 审计")
 	}
 	// 缺参一律拒
-	if _, err := svc.RequestReverseFetch("prod", "", model.ScopeGroup, "area1", "", "alice", ""); err == nil {
+	if _, err := applyRequestReverseFetchForTest(svc, "prod", "", model.ScopeGroup, "area1", "", "alice", ""); err == nil {
 		t.Fatal("缺 serverId 应拒")
 	}
 	// server 层缺目标 serverId 应拒
-	if _, err := svc.RequestReverseFetch("prod", "lobby-1", model.ScopeServer, "area1", "", "alice", ""); err == nil {
+	if _, err := applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeServer, "area1", "", "alice", ""); err == nil {
 		t.Fatal("server 层缺 target 应拒")
 	}
 }
@@ -83,7 +235,7 @@ func TestRequestReverseFetch(t *testing.T) {
 func TestFetchPending(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 
 	got, err := svc.FetchPending("prod", "lobby-1")
 	if err != nil || got == nil {
@@ -99,11 +251,77 @@ func TestFetchPending(t *testing.T) {
 	}
 }
 
+// TestFetchPendingRejectsArchivedTarget 归档后旧 pending 命令不可再领取。
+func TestFetchPendingRejectsArchivedTarget(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}); err != nil {
+		t.Fatalf("迁移生命周期表失败: %v", err)
+	}
+	ns := model.Namespace{Code: "prod", Name: "生产"}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: "archived", Kind: model.ServerKindBackend}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+	svc := newCommandSvc(db)
+	cmd, err := applyRequestReverseFetchForTest(svc, "prod", "archived", model.ScopeGroup, "area1", "", "alice", "")
+	if err != nil {
+		t.Fatalf("active server 应允许创建命令: %v", err)
+	}
+	if err := db.Model(&model.Server{}).Where("id = ?", server.ID).Update("lifecycle", model.ServerLifecycleArchived).Error; err != nil {
+		t.Fatalf("归档 server 失败: %v", err)
+	}
+	got, err := svc.FetchPending("prod", "archived")
+	if err != apperr.ErrServerArchived || got != nil {
+		t.Fatalf("归档 server 不应领取命令，实际 command=%v err=%v", got, err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.Status != model.CommandStatusPending {
+		t.Fatalf("领取失败不得改变命令状态，实际 command=%+v err=%v", stored, err)
+	}
+}
+
+// TestReceiveResyncResultRejectsArchivedTarget 归档后迟到回传不得推进命令。
+func TestReceiveResyncResultRejectsArchivedTarget(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}); err != nil {
+		t.Fatalf("迁移生命周期表失败: %v", err)
+	}
+	ns := model.Namespace{Code: "prod", Name: "生产"}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: "archived", Kind: model.ServerKindBackend}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+	svc := newCommandSvc(db)
+	cmd, err := svc.applyRequestResyncForTest("prod", "archived", "alice", "")
+	if err != nil {
+		t.Fatalf("创建重同步命令失败: %v", err)
+	}
+	if _, err := svc.FetchPending("prod", "archived"); err != nil {
+		t.Fatalf("领取命令失败: %v", err)
+	}
+	if err := db.Model(&model.Server{}).Where("id = ?", server.ID).Update("lifecycle", model.ServerLifecycleArchived).Error; err != nil {
+		t.Fatalf("归档 server 失败: %v", err)
+	}
+	if err := svc.ReceiveResyncResult(cmd.ID, true, ""); err != apperr.ErrCommandNotFound {
+		t.Fatalf("归档后的迟到回传应按命令失效处理，实际 %v", err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.Status != model.CommandStatusFetched {
+		t.Fatalf("迟到回传不得推进命令，实际 command=%+v err=%v", stored, err)
+	}
+}
+
 // TestReceiveIngestHappy 回传合法文件 → 落组覆盖、命令 done、记 file.import 审计。
 func TestReceiveIngestHappy(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
 
 	files := []ImportFile{
@@ -145,7 +363,7 @@ func TestReceiveIngestRejectsJarAndState(t *testing.T) {
 		t.Fatalf("不存在命令应 ErrCommandNotFound，实际 %v", err)
 	}
 	// pending（未拉取）状态回传 → 不可回传
-	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	pend, _ := cmdRepo.FindOldestPending("prod", "lobby-1")
 	if _, err := svc.ReceiveIngest(pend.ID, []ImportFile{{Path: "a.yml", Content: "x"}}, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("pending 状态回传应被拒，实际 %v", err)
@@ -165,7 +383,7 @@ func TestReceiveIngestRejectsJarAndState(t *testing.T) {
 func TestReceiveIngestServerScope(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeServer, "area1", "lobby-1", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeServer, "area1", "lobby-1", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
 	if _, err := svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, ""); err != nil {
 		t.Fatalf("server 层 ingest 应成功: %v", err)
@@ -190,7 +408,7 @@ func TestReceiveIngestAllowsAgentSelfDir(t *testing.T) {
 	svc := newCommandSvc(db)
 	cmdRepo := repository.NewAgentCommandRepository(db)
 
-	_, _ = svc.RequestReverseFetch("prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "lobby-1", model.ScopeGroup, "area1", "", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
 	if _, err := svc.ReceiveIngest(cmd.ID, []ImportFile{
 		{Path: "BeaconAgent/config.yml", Content: "endpoints: x\n"},
@@ -219,7 +437,7 @@ func TestReceiveIngestAllowsAgentSelfDir(t *testing.T) {
 func TestRequestResync(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	cmd, err := svc.RequestResync("prod", "lobby-1", "alice", "10.0.0.1")
+	cmd, err := svc.applyRequestResyncForTest("prod", "lobby-1", "alice", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("触发重同步失败: %v", err)
 	}
@@ -233,10 +451,10 @@ func TestRequestResync(t *testing.T) {
 		t.Fatal("应记一条 instance.resync 审计")
 	}
 	// 缺参一律拒
-	if _, err := svc.RequestResync("prod", "", "alice", ""); err == nil {
+	if _, err := svc.applyRequestResyncForTest("prod", "", "alice", ""); err == nil {
 		t.Fatal("缺 serverId 应拒")
 	}
-	if _, err := svc.RequestResync("prod", "lobby-1", "", ""); err == nil {
+	if _, err := svc.applyRequestResyncForTest("prod", "lobby-1", "", ""); err == nil {
 		t.Fatal("缺 operator 应拒")
 	}
 }
@@ -246,7 +464,7 @@ func TestReceiveResyncResultHappy(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
 	cmdRepo := repository.NewAgentCommandRepository(db)
-	_, _ = svc.RequestResync("prod", "lobby-1", "alice", "")
+	_, _ = svc.applyRequestResyncForTest("prod", "lobby-1", "alice", "")
 	cmd, _ := svc.FetchPending("prod", "lobby-1")
 
 	if err := svc.ReceiveResyncResult(cmd.ID, true, ""); err != nil {
@@ -269,13 +487,13 @@ func TestReceiveResyncResultFailedAndGuards(t *testing.T) {
 		t.Fatalf("不存在命令应 ErrCommandNotFound，实际 %v", err)
 	}
 	// pending（未拉取）状态回传 → 不可回传
-	_, _ = svc.RequestResync("prod", "lobby-1", "alice", "")
+	_, _ = svc.applyRequestResyncForTest("prod", "lobby-1", "alice", "")
 	pend, _ := cmdRepo.FindOldestPending("prod", "lobby-1")
 	if err := svc.ReceiveResyncResult(pend.ID, true, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("pending 状态回传应被拒，实际 %v", err)
 	}
 	// 非 resync-config 类型命令（ingest-plugins）回传 → 类型不符拒
-	_, _ = svc.RequestReverseFetch("prod", "other-1", model.ScopeGroup, "area1", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "other-1", model.ScopeGroup, "area1", "", "alice", "")
 	ingestCmd, _ := svc.FetchPending("prod", "other-1")
 	if err := svc.ReceiveResyncResult(ingestCmd.ID, true, ""); err != apperr.ErrCommandNotFound {
 		t.Fatalf("非 resync-config 类型回传应被拒，实际 %v", err)
@@ -319,7 +537,7 @@ func TestValidateIngestFiles(t *testing.T) {
 func TestExpireStale(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newCommandSvc(db)
-	_, _ = svc.RequestReverseFetch("prod", "a", model.ScopeGroup, "g", "", "alice", "")
+	_, _ = applyRequestReverseFetchForTest(svc, "prod", "a", model.ScopeGroup, "g", "", "alice", "")
 	if err := db.Model(&model.AgentCommand{}).Where("1 = 1").Update("created_at", time.Now().Add(-2*time.Hour)).Error; err != nil {
 		t.Fatalf("改 created_at 失败: %v", err)
 	}

@@ -119,9 +119,12 @@ type createScanTaskRequest struct {
 	Target string `json:"target"`
 }
 
-// CreateScanTask 处理 POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=（FR-58 重定义）：
-// 先校验目标在线，再互斥建任务(scanning) + 下发 scan 命令 + 唤醒 agent + 审计。返回任务视图（202）。
+// CreateScanTask 创建扫描审批申请；批准后才创建受管任务与命令。
 func (h *ReverseFetchTaskHandler) CreateScanTask(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	serverID := chi.URLParam(r, "serverId")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -138,13 +141,12 @@ func (h *ReverseFetchTaskHandler) CreateScanTask(w http.ResponseWriter, r *http.
 		render.WriteError(w, r, err)
 		return
 	}
-	task, err := h.svc.CreateScanTask(ns, serverID, req.Scope, req.Group, req.Target,
-		auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestCreateScanApproval(ns, serverID, req.Scope, req.Group, req.Target, decodeReason(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, toReverseFetchTaskView(task))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // GetTask 处理 GET /admin/v1/reverse-fetch/tasks/{id}（FR-58）：返回任务详情（状态 / 清单 / 计数 / 命令引用）。
@@ -200,9 +202,12 @@ type submitTaskRequest struct {
 	ConfirmOverThreshold bool     `json:"confirmOverThreshold"`
 }
 
-// SubmitTask 处理 POST /admin/v1/reverse-fetch/tasks/{id}/submit（FR-58）：任务须 pending-review；
-// 校验选定（超阈值须确认）→ 下发 submit 命令 + 任务→fetching + 审计 + 唤醒。返回任务视图（202）。
+// SubmitTask 创建提交审批申请；批准 worker 会重验冻结 manifest 再下发命令。
 func (h *ReverseFetchTaskHandler) SubmitTask(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -212,13 +217,12 @@ func (h *ReverseFetchTaskHandler) SubmitTask(w http.ResponseWriter, r *http.Requ
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	task, err := h.svc.Submit(id, req.SelectedPaths, req.ConfirmOverThreshold,
-		auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestSubmitApproval(id, req.SelectedPaths, req.ConfirmOverThreshold, decodeReason(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, toReverseFetchTaskView(task))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // CancelTask 处理 POST /admin/v1/reverse-fetch/tasks/{id}/cancel（FR-58）：非终态 → cancelled + 审计。
@@ -259,9 +263,11 @@ type conflictDiffView struct {
 	Version         int64  `json:"version"`
 }
 
-// ConflictDiff 处理 GET /admin/v1/reverse-fetch/tasks/{id}/conflicts/diff?path=（FR-59）：
-// 返回该冲突文件的抓取值与目标已有版本 diff（供前端逐文件审）。
+// ConflictDiff 是会返回抓取正文的旧入口；未持 grant 时固定失败关闭。
 func (h *ReverseFetchTaskHandler) ConflictDiff(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+	return
+
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return

@@ -68,10 +68,12 @@ type reverseFetchRequest struct {
 	Target string `json:"target"`
 }
 
-// ReverseFetch 处理 POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=（FR-39）：
-// 先校验目标在线（实例须在注册表中——admin 从在线列表选取，离线 agent 收不到命令），
-// 再建 pending 命令 + 唤醒该 agent + 审计。返回已创建命令（202）。
+// ReverseFetch 创建反向抓取扫描审批申请；批准后才由 worker 下发命令。
 func (h *CommandHandler) ReverseFetch(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	serverID := chi.URLParam(r, "serverId")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -88,13 +90,13 @@ func (h *CommandHandler) ReverseFetch(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	cmd, err := h.svc.RequestReverseFetch(ns, serverID, req.Scope, req.Group, req.Target,
-		auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestReverseFetchApproval(ns, serverID, req.Scope, req.Group, req.Target, decodeReason(r), r.Header.Get("Idempotency-Key"),
+		auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Resync 处理 POST /admin/v1/instances/{serverId}/resync?namespace=（FR-91）：
@@ -112,12 +114,13 @@ func (h *CommandHandler) Resync(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	cmd, err := h.svc.RequestResync(ns, serverID, auth.Operator(r.Context()), clientIP(r))
+	reason := decodeReason(r)
+	ticket, err := h.svc.RequestResyncApproval(ns, serverID, reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // commandResultRequest 是 agent 回传命令执行结果的请求体（FR-91 resync-config）：ok 表示成功，失败时 reason 携原因。
@@ -167,10 +170,12 @@ type imprintRequest struct {
 	Path string `json:"path"`
 }
 
-// Imprint 处理 POST /admin/v1/instances/{serverId}/imprint?namespace=（FR-46）：
-// 先校验目标在线（离线 agent 收不到命令），再建 mode=imprint 的 pending 命令 + 唤醒 agent + 审计。
-// agent 仍读整棵 plugins 树回传，控制面收到后取该 path 转存待审（不落库）。返回已创建命令（202）。
+// Imprint 创建拓印审批申请；批准后才由 worker 下发命令。
 func (h *CommandHandler) Imprint(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	serverID := chi.URLParam(r, "serverId")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -187,12 +192,13 @@ func (h *CommandHandler) Imprint(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	cmd, err := h.svc.RequestImprint(ns, serverID, req.Path, auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestImprintApproval(ns, serverID, req.Path, decodeReason(r), r.Header.Get("Idempotency-Key"),
+		auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, toCommandView(cmd))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ImprintStatus 处理 GET /admin/v1/imprints/{commandId}（FR-46）：返回拓印命令状态视图（供前端轮询至 ready）。
@@ -223,10 +229,11 @@ type imprintDiffView struct {
 	Differs           bool                  `json:"differs"`
 }
 
-// ImprintDiff 处理 GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=（FR-46）：
-// 命令须 ready 且 imprint 模式；返回本地实际内容（命令转存）与按并入层视角解出的期望合并值（复用 FR-45）。
-// 不取 target：期望恒为拓印源服有效视角，与确认落库的目标键无关（见 service.ImprintDiff）。
+// ImprintDiff 是会返回正文的旧拓印入口；未持 grant 时固定失败关闭。
 func (h *CommandHandler) ImprintDiff(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+	return
+
 	id, ok := parseUintParam(w, r, "commandId")
 	if !ok {
 		return
@@ -244,6 +251,27 @@ func (h *CommandHandler) ImprintDiff(w http.ResponseWriter, r *http.Request) {
 		ExpectedWholeFile: res.ExpectedWholeFile,
 		ExpectedSources:   res.ExpectedSources, ExpectedDeletions: res.ExpectedDeletions,
 		Differs: res.Differs,
+	})
+}
+
+// ConsumeApprovedImprint 仅允许原申请主体一次消费已经回传的拓印差异正文。
+func (h *CommandHandler) ConsumeApprovedImprint(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "commandId")
+	if !ok {
+		return
+	}
+	grantID := chi.URLParam(r, "grantId")
+	q := r.URL.Query()
+	res, err := h.svc.ConsumeApprovedImprint(grantID, id, q.Get("scope"), q.Get("group"), q.Get("zone"), requestPrincipal(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, imprintDiffView{
+		Path: res.Path, ActualContent: res.ActualContent, ActualMD5: res.ActualMD5,
+		ExpectedContent: res.ExpectedContent, ExpectedMD5: res.ExpectedMD5,
+		ExpectedWholeFile: res.ExpectedWholeFile, ExpectedSources: res.ExpectedSources,
+		ExpectedDeletions: res.ExpectedDeletions, Differs: res.Differs,
 	})
 }
 

@@ -1,36 +1,34 @@
 package service
 
 import (
-	"encoding/json"
-	"log/slog"
-	"strconv"
+	"crypto/sha256"
+	"fmt"
 	"strings"
-	"unicode/utf8"
+	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
-// maxPayloadViewReasonLen 是 payload 查看原因上限（≤255 字，spec §4.4）。
-const maxPayloadViewReasonLen = 255
-
-// auditWriter 是 payload 查看对审计落库的窄依赖（仅追加一条），由 repository.AuditLogRepository 满足。
-type auditWriter interface {
-	Create(entry *model.AuditLog) error
-}
-
-// MessagePayloadService 是 payload 受控查看服务（FR-150，见 spec §4.4）：
-// 校验原因 → 定位消息 → **先写审计后返回内容**（同请求内审计写失败则整请求失败，不允许「看了没记录」）。
-// 权限点 message.payload.view 由路由中间件裁决（POST 属写方法，readonly 经 readonlyWriteGuard 403）。
+// MessagePayloadService 管理 payload 的审批申请与一次性受控读取。
 type MessagePayloadService struct {
-	repo      *repository.MessageRepository
-	auditRepo auditWriter
+	repo     *repository.MessageRepository
+	approval *ApprovalService
+	grants   *SensitiveAccessGrantService
 }
 
 // NewMessagePayloadService 构造服务。
-func NewMessagePayloadService(repo *repository.MessageRepository, auditRepo auditWriter) *MessagePayloadService {
-	return &MessagePayloadService{repo: repo, auditRepo: auditRepo}
+func NewMessagePayloadService(repo *repository.MessageRepository) *MessagePayloadService {
+	return &MessagePayloadService{repo: repo}
+}
+
+// SetSensitiveAccessApproval 装配 payload 审批申请和一次性授权消费链路。
+func (s *MessagePayloadService) SetSensitiveAccessApproval(approval *ApprovalService, grants *SensitiveAccessGrantService) {
+	s.approval = approval
+	s.grants = grants
 }
 
 // ViewPayloadParams 是一次 payload 查看请求（operator/clientIp/traceId 为鉴权链与请求上下文注入）。
@@ -49,74 +47,56 @@ type PayloadResult struct {
 	Size    int
 }
 
-// View 受控查看某消息 payload：原因必填 ≤255 字 → 消息须存在（404）→ 先写审计后返回内容。
-// 审计写失败整请求失败（返回错误、绝不返回 payload）。payload 未落库时审计照记、返回空内容。
+// View 是旧正文直出入口，现已永久关闭。
 func (s *MessagePayloadService) View(p ViewPayloadParams) (PayloadResult, error) {
-	if strings.TrimSpace(p.Reason) == "" || utf8.RuneCountInString(p.Reason) > maxPayloadViewReasonLen {
-		return PayloadResult{}, apperr.ErrPayloadReasonRequired
+	return PayloadResult{}, apperr.ErrOperationRequiresApproval
+}
+
+// RequestAccess 创建消息 payload 的专用审批申请；冻结消息 ID 与当前正文 SHA-256，绝不冻结正文。
+func (s *MessagePayloadService) RequestAccess(messageID, reason, idempotencyKey string, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
+	if s == nil || s.repo == nil || s.approval == nil || strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
+		return model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
-	trace, err := s.repo.FindByMessageID(p.MessageID)
+	payload, err := s.repo.FindPayload(messageID)
 	if err != nil {
-		return PayloadResult{}, err
+		return model.ApprovalRequest{}, err
 	}
-	if trace == nil {
-		return PayloadResult{}, apperr.ErrMessageNotFound
+	if payload == nil {
+		return model.ApprovalRequest{}, apperr.ErrMessageNotFound
 	}
-	payload, err := s.repo.FindPayload(p.MessageID)
+	contentHash := payloadSHA256(payload.Payload)
+	return s.approval.Request(authz.Operation{
+		Kind: authz.OperationMessagePayloadRead, Resource: "message", ResourceID: messageID,
+		IdempotencyKey: idempotencyKey, Reason: reason,
+	}, map[string]any{"messageId": messageID, "sha256": contentHash}, principal, clientIP)
+}
+
+// Consume 复核当前正文 SHA-256 后，原子消费原申请主体的一次性授权并返回正文。
+func (s *MessagePayloadService) Consume(grantID, messageID string, principal auth.Principal) (PayloadResult, error) {
+	if s == nil || s.repo == nil || s.grants == nil {
+		return PayloadResult{}, apperr.ErrForbidden
+	}
+	payload, err := s.repo.FindPayload(messageID)
 	if err != nil {
-		return PayloadResult{}, err
-	}
-	// 先写审计（含 messageId/类型/来源目标/原因原文/traceId，绝不含 payload 内容）——写失败整请求失败。
-	if err := s.writeViewAudit(trace, p); err != nil {
 		return PayloadResult{}, err
 	}
 	if payload == nil {
-		// payload 未落库（payload_stored=false 或已归档）：审计已记，返回空内容。
-		return PayloadResult{}, nil
+		return PayloadResult{}, apperr.ErrMessageNotFound
 	}
-	return PayloadResult{Payload: payload.Payload, SHA256: payload.SHA256, Size: payload.Size}, nil
+	contentHash := payloadSHA256(payload.Payload)
+	target, err := authz.NewSensitiveAccessTarget("message", messageID, contentHash)
+	if err != nil {
+		return PayloadResult{}, err
+	}
+	if err := s.grants.Consume(grantID, principal, authz.OperationMessagePayloadRead, target.Ref, contentHash, timeNowUTC()); err != nil {
+		return PayloadResult{}, err
+	}
+	return PayloadResult{Payload: payload.Payload, SHA256: contentHash, Size: len(payload.Payload)}, nil
 }
 
-// writeViewAudit 落一条 message.payload.view 审计：detail 记 messageId/类型/来源目标/原因原文/traceId + 跨域标记，绝不含 payload。
-func (s *MessagePayloadService) writeViewAudit(trace *model.MsgTrace, p ViewPayloadParams) error {
-	detail := map[string]any{
-		"messageId":      trace.MessageID,
-		"msgType":        trace.MsgType,
-		"namespaceId":    trace.NamespaceID,
-		"sourceServerId": trace.SourceServerID,
-		"reason":         p.Reason,
-		"traceId":        p.TraceID,
-	}
-	if trace.TargetKind == model.MsgTargetKindPlayer {
-		detail["targetPlayer"] = trace.TargetPlayer
-	} else {
-		detail["targetServerId"] = trace.TargetServerID
-	}
-	if trace.ResolvedServerID != "" {
-		detail["resolvedServerId"] = trace.ResolvedServerID
-	}
-	// 跨域消息的 payload 查看追加 cross_namespace 标记，满足「跨域行为额外审计」（spec §4.4.6）。
-	if trace.CrossNamespace {
-		detail["crossNamespace"] = true
-	}
-	raw, _ := json.Marshal(detail)
-	entry := &model.AuditLog{
-		// 第二版 namespace 为数值 id，audit_log.namespace_code 为字符串码：此处以数值 id 字符串记录，供追溯不误对齐环境码。
-		NamespaceCode: strconv.FormatUint(uint64(trace.NamespaceID), 10),
-		Operator:      p.Operator,
-		Action:        model.ActionMessagePayloadView,
-		TargetType:    model.TargetTypeMessage,
-		TargetRef:     trace.MessageID,
-		Detail:        string(raw),
-		Result:        model.ResultOK,
-		ClientIP:      p.ClientIP,
-	}
-	if err := s.auditRepo.Create(entry); err != nil {
-		slog.Error("payload 查看审计落库失败，拒绝返回内容",
-			"messageId", trace.MessageID, "operator", p.Operator, "traceId", p.TraceID, "原因", err)
-		return err
-	}
-	slog.Info("payload 受控查看", "messageId", trace.MessageID, "msgType", trace.MsgType,
-		"operator", p.Operator, "crossNamespace", trace.CrossNamespace, "traceId", p.TraceID)
-	return nil
+func payloadSHA256(payload string) string {
+	sum := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("%x", sum)
 }
+
+func timeNowUTC() time.Time { return time.Now().UTC() }

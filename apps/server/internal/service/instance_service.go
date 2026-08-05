@@ -130,7 +130,7 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 		return nil, err
 	}
 	// 主动下线拒绝态（FR-49）：注册前查拒绝表，命中则拒绝接入（专门错误码，区别于自然 lost/offline 与重复 serverId）。
-	// 仅在低频的注册路径查库（心跳热路径不查），下线收敛靠"移出内存→心跳 404→重注册被拒"。
+	// 注册与后续心跳/上报均校验运行资格；归档或墓碑后即使残留内存条目也不能恢复在线。
 	off, err := s.offlineRepo.FindByServer(p.Namespace, p.ServerID)
 	if err != nil {
 		return nil, err
@@ -179,6 +179,11 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 
 // Heartbeat 刷新心跳；未注册返回 NOT_REGISTERED。返回 ttlSec。
 func (s *InstanceService) Heartbeat(ns, serverID string) (int, error) {
+	if s.db != nil {
+		if err := ensureServerActiveForNamespace(s.db, ns, serverID); err != nil {
+			return 0, err
+		}
+	}
 	if !s.registry.Heartbeat(ns, serverID, time.Now().UTC()) {
 		return 0, apperr.ErrNotRegistered
 	}
@@ -205,6 +210,11 @@ type ReportParams struct {
 // Report 写入 agent 上报指标（人数 / TPS / 内存 / CPU，仅展示）；bc 附报的后端集合随上报刷新（FR-36）。
 // 未注册返回 NOT_REGISTERED。
 func (s *InstanceService) Report(p ReportParams) error {
+	if s.db != nil {
+		if err := ensureServerActiveForNamespace(s.db, p.Namespace, p.ServerID); err != nil {
+			return err
+		}
+	}
 	if !s.registry.Report(p.Namespace, p.ServerID, p.AppliedMD5, p.PlayerCount, p.TPS, p.MemUsed, p.MemMax, p.CPULoad, p.Proxy) {
 		return apperr.ErrNotRegistered
 	}
@@ -232,6 +242,11 @@ func (s *InstanceService) Get(ns, serverID string) (*runtime.Instance, error) {
 // RequireRegistered 校验实例已注册并返回其 groupHint；未注册返回 NOT_REGISTERED。
 // 供有效配置长轮询入口使用（agent 须先注册）。
 func (s *InstanceService) RequireRegistered(ns, serverID string) (string, error) {
+	if s.db != nil {
+		if err := ensureServerActiveForNamespace(s.db, ns, serverID); err != nil {
+			return "", err
+		}
+	}
 	inst := s.registry.Get(ns, serverID)
 	if inst == nil {
 		return "", apperr.ErrNotRegistered
@@ -299,15 +314,40 @@ func (s *InstanceService) ListOffline(ns string) ([]model.ServerOffline, error) 
 // Discover 服务发现：返回可用实例（online + degraded）。degraded 为心跳陈旧但尚未失联、大概率仍在服务，
 // 保留在发现结果（及由其派生的 BungeeCord 代理目录）中，直到 lost/offline 才摘除，避免亚健康实例被过早剔除。
 func (s *InstanceService) Discover(f runtime.Filter) []*runtime.Instance {
+	activeNamespaces, ok := s.discoverableNamespaces(f.Namespace)
+	if !ok {
+		return []*runtime.Instance{}
+	}
 	f.Status = "" // 不走单值 Status 过滤，下方按“可用”集合（online+degraded）筛
 	all := s.registry.List(f)
 	out := make([]*runtime.Instance, 0, len(all))
 	for _, i := range all {
+		if activeNamespaces != nil && !activeNamespaces[i.Namespace] {
+			continue
+		}
 		if i.Status == runtime.StatusOnline || i.Status == runtime.StatusDegraded {
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+func (s *InstanceService) discoverableNamespaces(namespace string) (map[string]bool, bool) {
+	if s.db == nil || !s.db.Migrator().HasTable(&model.Namespace{}) {
+		return nil, true
+	}
+	if namespace != "" {
+		return nil, ensureNamespaceRuntimeActiveByCode(s.db, namespace) == nil
+	}
+	var codes []string
+	if err := s.db.Model(&model.Namespace{}).Where("lifecycle = ? OR lifecycle = '' OR lifecycle IS NULL", model.NamespaceLifecycleActive).Pluck("code", &codes).Error; err != nil {
+		return nil, false
+	}
+	active := make(map[string]bool, len(codes))
+	for _, code := range codes {
+		active[code] = true
+	}
+	return active, true
 }
 
 // audit 记一条实例审计（best-effort：注册的真源是内存，审计写库失败仅告警，不阻断 agent）。

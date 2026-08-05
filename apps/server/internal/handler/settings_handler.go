@@ -30,7 +30,8 @@ func (h *SettingsHandler) List(w http.ResponseWriter, _ *http.Request) {
 
 // updateSettingRequest 是更新单项的请求体（operator / clientIP 由认证态 / 请求派生，忽略手填）。
 type updateSettingRequest struct {
-	Value string `json:"value"`
+	Value  string `json:"value"`
+	Reason string `json:"reason"`
 }
 
 // Update 处理 PUT /admin/v1/settings/{key}：更新单个热改项（白名单外 key / 非法值拒 400，入审计）。
@@ -43,6 +44,15 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var req updateSettingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	if service.SettingDangerous(key) {
+		ticket, err := h.svc.RequestUpdate(key, req.Value, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
+		if err != nil {
+			render.WriteError(w, r, err)
+			return
+		}
+		render.WriteJSON(w, http.StatusAccepted, ticket)
 		return
 	}
 	if err := h.svc.Update(key, req.Value, auth.Operator(r.Context()), clientIP(r)); err != nil {

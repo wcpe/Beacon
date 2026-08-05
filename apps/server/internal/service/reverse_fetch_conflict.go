@@ -242,7 +242,7 @@ func (s *ReverseFetchTaskService) landResolved(task *model.ReverseFetchTask, env
 	if len(files) == 0 {
 		return &ImportResult{}, nil
 	}
-	return s.fileSvc.Import(ImportFilesParams{
+	return s.fileSvc.applyImport(ImportFilesParams{
 		Namespace: task.NamespaceCode, Group: task.GroupCode,
 		ScopeLevel: task.Scope, ScopeTarget: task.ScopeTarget,
 		Files: files, Operator: operator, Comment: reverseFetchReviewComment, ClientIP: clientIP,

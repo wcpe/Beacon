@@ -42,7 +42,7 @@ func seedGroupFile(t *testing.T, db *gorm.DB, ns, group, path, content string) {
 func TestRequestImprint(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, err := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "10.0.0.1")
+	cmd, err := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "10.0.0.1")
 	if err != nil {
 		t.Fatalf("触发拓印失败: %v", err)
 	}
@@ -53,11 +53,11 @@ func TestRequestImprint(t *testing.T) {
 		t.Fatal("应记一条 file.imprint-fetch 审计")
 	}
 	// 缺 path 应拒
-	if _, err := svc.RequestImprint("prod", "lobby-1", "", "alice", ""); err == nil {
+	if _, err := applyRequestImprintForTest(svc, "prod", "lobby-1", "", "alice", ""); err == nil {
 		t.Fatal("缺 path 应拒")
 	}
 	// 非法 path 应拒
-	if _, err := svc.RequestImprint("prod", "lobby-1", "../escape.yml", "alice", ""); err != apperr.ErrInvalidPath {
+	if _, err := applyRequestImprintForTest(svc, "prod", "lobby-1", "../escape.yml", "alice", ""); err != apperr.ErrInvalidPath {
 		t.Fatalf("非法 path 应 ErrInvalidPath，实际 %v", err)
 	}
 }
@@ -66,7 +66,7 @@ func TestRequestImprint(t *testing.T) {
 func TestImprintReceiveTransfersNotLand(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	got, _ := svc.FetchPending("prod", "lobby-1")
 	if got.ID != cmd.ID {
 		t.Fatalf("应取到刚建命令")
@@ -101,7 +101,7 @@ func TestImprintReceiveTransfersNotLand(t *testing.T) {
 func TestImprintReceiveMissingPathFails(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/missing.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/missing.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, err := svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/other.yml", Content: "x: 1\n"}}, "")
 	if err == nil {
@@ -119,7 +119,7 @@ func TestImprintDiff(t *testing.T) {
 	svc := newImprintSvc(db)
 	// 组级已有该文件 {a:1}，server 实际盘上是 {a:99}
 	seedGroupFile(t, db, "prod", "area1", "AllinCore/config.yml", "a: 1\n")
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 
 	// 未 ready（仍 fetched）→ 拒 diff
@@ -151,7 +151,7 @@ func TestImprintDiff(t *testing.T) {
 func TestConfirmImprintSelfReviewGate(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	actualMD5 := filetree.ContentMD5("a: 99\n")
@@ -199,7 +199,7 @@ func TestConfirmImprintPublishesWhenExists(t *testing.T) {
 	svc := newImprintSvc(db)
 	// 组级已存在该 path
 	seedGroupFile(t, db, "prod", "area1", "AllinCore/config.yml", "a: 1\n")
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
 	md5 := filetree.ContentMD5("a: 2\n")
@@ -224,7 +224,7 @@ func TestConfirmImprintPublishesWhenExists(t *testing.T) {
 func TestConfirmImprintClaimBeforeLand(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	md5 := filetree.ContentMD5("a: 99\n")
@@ -257,7 +257,7 @@ func TestConfirmImprintGroupIgnoresStrayTarget(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
 	seedGroupFile(t, db, "prod", "area1", "AllinCore/config.yml", "a: 1\n") // 组层已存在 → 走 conflict 回退
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 2\n"}}, "")
 	md5 := filetree.ContentMD5("a: 2\n")
@@ -277,7 +277,7 @@ func TestConfirmImprintGroupIgnoresStrayTarget(t *testing.T) {
 func TestConfirmImprintServerTargetMustBeSource(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	md5 := filetree.ContentMD5("a: 99\n")
@@ -303,7 +303,7 @@ func TestConfirmImprintServerTargetMustBeSource(t *testing.T) {
 func TestCommandSweeperExpiresStaleReadyAndClearsContent(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
-	cmd, _ := svc.RequestImprint("prod", "lobby-1", "AllinCore/config.yml", "alice", "")
+	cmd, _ := applyRequestImprintForTest(svc, "prod", "lobby-1", "AllinCore/config.yml", "alice", "")
 	_, _ = svc.FetchPending("prod", "lobby-1")
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	// 前置：ready 且有瞬态明文

@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -26,8 +27,52 @@ func (r *AgentCommandRepository) WithTx(tx *gorm.DB) *AgentCommandRepository {
 }
 
 // Create 追加一条命令（状态由调用方置 pending）。
+// 当 v2 server 表存在时，归档目标拒绝新建命令；无 v2 server 行仍兼容 legacy 命令。
 func (r *AgentCommandRepository) Create(cmd *model.AgentCommand) error {
+	if err := r.ensureTargetActive(cmd.NamespaceCode, cmd.ServerID); err != nil {
+		return err
+	}
 	return r.db.Create(cmd).Error
+}
+
+func (r *AgentCommandRepository) ensureTargetActive(namespaceCode, serverID string) error {
+	if namespaceCode == "" || serverID == "" || !r.db.Migrator().HasTable(&model.Server{}) {
+		return nil
+	}
+	if !r.db.Migrator().HasTable(&model.Namespace{}) {
+		return nil
+	}
+	var namespace model.Namespace
+	if err := r.db.Where("code = ?", namespaceCode).First(&namespace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if namespace.Lifecycle != "" && namespace.Lifecycle != model.NamespaceLifecycleActive {
+		return apperr.ErrNamespaceArchived
+	}
+	var server model.Server
+	if err := r.db.Where("namespace_id = ? AND server_id = ?", namespace.ID, serverID).First(&server).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if server.Lifecycle != "" && server.Lifecycle != model.ServerLifecycleActive {
+		return apperr.ErrServerArchived
+	}
+	return nil
+}
+
+// ensureCommandTargetActive 在推进命令状态或写入回传内容前重验目标运行资格。
+// 归档后的迟到回传必须失败关闭，不能把瞬态内容或执行结果重新写进控制面。
+func (r *AgentCommandRepository) ensureCommandTargetActive(id uint) error {
+	cmd, err := r.FindByID(id)
+	if err != nil || cmd == nil {
+		return err
+	}
+	return r.ensureTargetActive(cmd.NamespaceCode, cmd.ServerID)
 }
 
 // FindByID 按主键查命令；不存在返回 (nil, nil)。
@@ -60,6 +105,9 @@ func (r *AgentCommandRepository) FindOldestPending(ns, serverID string) (*model.
 // UpdateStatus 按期望前态做状态迁移（CAS，幂等）：仅当当前 status=expect 才改为 next。
 // 返回是否命中（前态不符 / 不存在则 false）。result 为结果摘要（无敏感内容），空则不动该列。
 func (r *AgentCommandRepository) UpdateStatus(id uint, expect, next, result string) (bool, error) {
+	if err := r.ensureCommandTargetActive(id); err != nil {
+		return false, err
+	}
 	updates := map[string]any{"status": next}
 	if result != "" {
 		updates["result_detail"] = result
@@ -76,6 +124,9 @@ func (r *AgentCommandRepository) UpdateStatus(id uint, expect, next, result stri
 // UpdateImprintReady 把命令从 fetched CAS 迁移 ready 并转存拓印内容（FR-46）：仅当当前 status=fetched 才迁移。
 // content 即目标文件磁盘原文（瞬态，待确认 / 失败 / 过期清空）。返回是否命中（前态不符 / 不存在则 false）。
 func (r *AgentCommandRepository) UpdateImprintReady(id uint, content string) (bool, error) {
+	if err := r.ensureCommandTargetActive(id); err != nil {
+		return false, err
+	}
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
 		Updates(map[string]any{"status": model.CommandStatusReady, "imprint_content": content})
@@ -88,6 +139,9 @@ func (r *AgentCommandRepository) UpdateImprintReady(id uint, content string) (bo
 // UpdateStatusClearImprint 按期望前态做状态迁移并清空拓印瞬态内容（FR-46 确认落库后）：仅当 status=expect 才迁移。
 // result 为结果摘要（无敏感内容），空则不动该列。返回是否命中。
 func (r *AgentCommandRepository) UpdateStatusClearImprint(id uint, expect, next, result string) (bool, error) {
+	if err := r.ensureCommandTargetActive(id); err != nil {
+		return false, err
+	}
 	updates := map[string]any{"status": next, "imprint_content": ""}
 	if result != "" {
 		updates["result_detail"] = result
@@ -139,6 +193,9 @@ func (r *AgentCommandRepository) CountActiveByType(ns, serverID, cmdType string)
 // UpdateStatusWithLogContent 把命令从 fetched CAS 迁移 done 并存取日志回传内容（FR-88）：仅当当前 status=fetched 才迁移。
 // content 即 agent 回传的脱敏日志行 JSON（瞬态，取一次后由过期清理清空）。返回是否命中（前态不符 / 不存在则 false）。
 func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content string) (bool, error) {
+	if err := r.ensureCommandTargetActive(id); err != nil {
+		return false, err
+	}
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
 		Updates(map[string]any{"status": model.CommandStatusDone, "log_content": content})
@@ -152,6 +209,9 @@ func (r *AgentCommandRepository) UpdateStatusWithLogContent(id uint, content str
 // result 即 agent 回传的浏览结果 JSON（瞬态：目录清单 / 子树 / 文件内容）；等待中的 admin 取一次即用、过期清理一并清空。
 // 返回是否命中（前态不符 / 不存在则 false）。
 func (r *AgentCommandRepository) UpdateStatusWithBrowseResult(id uint, result string) (bool, error) {
+	if err := r.ensureCommandTargetActive(id); err != nil {
+		return false, err
+	}
 	res := r.db.Model(&model.AgentCommand{}).
 		Where("id = ? AND status = ?", id, model.CommandStatusFetched).
 		Updates(map[string]any{"status": model.CommandStatusDone, "browse_result": result})
@@ -184,14 +244,16 @@ func (r *AgentCommandRepository) CountByStatus() (map[string]int, error) {
 
 // CommandFilter 是命令观测查询的过滤与分页条件（FR-104；零值字段不过滤；时间零值不设界）。
 type CommandFilter struct {
-	Namespace string
-	ServerID  string
-	Type      string
-	Status    string
-	From      time.Time
-	To        time.Time
-	Page      int // 从 1 起
-	Size      int
+	Namespace      string
+	NamespaceCodes []string
+	Scoped         bool
+	ServerID       string
+	Type           string
+	Status         string
+	From           time.Time
+	To             time.Time
+	Page           int // 从 1 起
+	Size           int
 }
 
 // CommandMeta 是命令对外观测的元数据投影行（FR-104）：**绝不含** imprint_content / log_content（瞬态敏感）
@@ -216,7 +278,12 @@ var commandMetaColumns = []string{
 // applyCommandFilter 把过滤条件叠加到查询上（List 与 ScanForAnalytics 共用过滤口径）。
 // 仅占位符 + 标准 SQL，不依赖方言函数，保 Postgres 可移植。
 func applyCommandFilter(q *gorm.DB, f CommandFilter) *gorm.DB {
-	if f.Namespace != "" {
+	if f.Scoped {
+		if len(f.NamespaceCodes) == 0 {
+			return q.Where("1 = 0")
+		}
+		q = q.Where("namespace_code IN ?", f.NamespaceCodes)
+	} else if f.Namespace != "" {
 		q = q.Where("namespace = ?", f.Namespace)
 	}
 	if f.ServerID != "" {
@@ -284,6 +351,22 @@ func (r *AgentCommandRepository) ScanForAnalytics(f CommandFilter) ([]CommandAna
 		return nil, err
 	}
 	return rows, nil
+}
+
+// ExpireForTarget 在归档事务内收敛目标命令；done/failed/expired 保持原状。
+// pending/fetched/ready 统一转为已有 expired 终态，并清除所有瞬态回传内容。
+func (r *AgentCommandRepository) ExpireForTarget(namespace, serverID string) (int64, error) {
+	if namespace == "" || serverID == "" || !r.db.Migrator().HasTable(&model.AgentCommand{}) {
+		return 0, nil
+	}
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("namespace = ? AND server_id = ? AND status IN ?", namespace, serverID,
+			[]string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}).
+		Updates(map[string]any{"status": model.CommandStatusExpired, "imprint_content": "", "log_content": "", "browse_result": ""})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
 }
 
 // ExpireStale 把创建早于 before、仍处 pending/fetched/ready 的命令标 expired（超时清理）；返回受影响条数。

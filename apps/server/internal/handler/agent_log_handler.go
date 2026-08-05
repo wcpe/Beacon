@@ -38,10 +38,16 @@ type agentLogView struct {
 	Lines     []agentLogLineView `json:"lines"`
 }
 
-// Request 处理 POST /admin/v1/instances/{serverId}/logs?namespace=（FR-88）：
-// 先校验目标在线（不在注册表即 INSTANCE_NOT_FOUND，不建命令），再单活跃限速 + 建 pending tail-logs 命令 + 唤醒 + 审计。
-// 返回已创建命令（202）；前端据返回 commandId 轮询 Get 取结果。
+type consumeAgentLogRequest struct {
+	CommandID uint `json:"commandId"`
+}
+
+// Request 创建实时日志审批申请；批准后才由 worker 下发命令。
 func (h *AgentLogHandler) Request(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	serverID := chi.URLParam(r, "serverId")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -53,18 +59,19 @@ func (h *AgentLogHandler) Request(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	cmd, err := h.svc.RequestTailLogs(ns, serverID, auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestTailLogsApproval(ns, serverID, decodeReason(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, agentLogView{CommandID: cmd.ID, Status: cmd.Status, Lines: []agentLogLineView{}})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
-// Get 处理 GET /admin/v1/instances/{serverId}/logs?namespace=（FR-88）：
-// 取该实例最近一条取日志命令的状态 + 日志行（done 则附脱敏日志；进行中 / 失败 lines 为空）。
-// 从无取日志命令 → 204（前端据此显示「点按钮拉取」）。
+// Get 是会返回实时日志正文的旧入口；未持 grant 时固定失败关闭。
 func (h *AgentLogHandler) Get(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+	return
+
 	serverID := chi.URLParam(r, "serverId")
 	ns := r.URL.Query().Get("namespace")
 	if ns == "" {
@@ -85,6 +92,26 @@ func (h *AgentLogHandler) Get(w http.ResponseWriter, r *http.Request) {
 		lines[i] = agentLogLineView{Level: l.Level, Text: l.Text}
 	}
 	render.WriteJSON(w, http.StatusOK, agentLogView{CommandID: res.CommandID, Status: res.Status, Lines: lines})
+}
+
+// ConsumeApproved 仅允许审批原申请主体一次消费 Agent 已回传的日志正文。
+func (h *AgentLogHandler) ConsumeApproved(w http.ResponseWriter, r *http.Request) {
+	grantID := chi.URLParam(r, "grantId")
+	var req consumeAgentLogRequest
+	if grantID == "" || json.NewDecoder(r.Body).Decode(&req) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	result, err := h.svc.ConsumeApprovedLogs(grantID, req.CommandID, requestPrincipal(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	lines := make([]agentLogLineView, len(result.Lines))
+	for i, line := range result.Lines {
+		lines[i] = agentLogLineView{Level: line.Level, Text: line.Text}
+	}
+	render.WriteJSON(w, http.StatusOK, agentLogView{CommandID: result.CommandID, Status: result.Status, Lines: lines})
 }
 
 // uploadLogsRequest 是 agent 回传自身日志快照的请求体。

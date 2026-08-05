@@ -16,7 +16,13 @@ import (
 
 // AlertEventHandler 处理告警事件历史查询与处理工作流（FR-89 只读留痕，FR-157 确认 / 标记已处理，见 ADR-0041/ADR-0064）。
 type AlertEventHandler struct {
-	svc *service.AlertEventService
+	svc   *service.AlertEventService
+	scope *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *AlertEventHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewAlertEventHandler 构造处理器。
@@ -64,16 +70,22 @@ func ptrIfNotEmpty(s string) *string {
 // List 处理 GET /admin/v1/alert-events（分页 + 过滤，时间倒序）。
 func (h *AlertEventHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
 	items, total, err := h.svc.List(repository.AlertEventFilter{
-		Type:      q.Get("type"),
-		Level:     q.Get("level"),
-		Namespace: q.Get("namespace"),
-		From:      parseRFC3339(q.Get("from")),
-		To:        parseRFC3339(q.Get("to")),
-		Page:      page,
-		Size:      size,
+		Type:           q.Get("type"),
+		Level:          q.Get("level"),
+		Namespace:      q.Get("namespace"),
+		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
+		From: parseRFC3339(q.Get("from")),
+		To:   parseRFC3339(q.Get("to")),
+		Page: page,
+		Size: size,
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

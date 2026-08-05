@@ -156,6 +156,51 @@ func TestCommandExpireStale(t *testing.T) {
 	}
 }
 
+// TestExpireForTarget 归档目标仅收敛 pending/fetched/ready，清除瞬态且保留其它终态。
+func TestExpireForTarget(t *testing.T) {
+	db := newCommandTestDB(t)
+	repo := NewAgentCommandRepository(db)
+	statuses := []string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady, model.CommandStatusDone, model.CommandStatusFailed, model.CommandStatusExpired}
+	commands := make([]*model.AgentCommand, 0, len(statuses))
+	for _, status := range statuses {
+		cmd := mkPending("prod", "archived")
+		cmd.Status = status
+		cmd.ImprintContent = "imprint"
+		cmd.LogContent = "logs"
+		cmd.BrowseResult = "browse"
+		if err := repo.Create(cmd); err != nil {
+			t.Fatalf("创建 %s 命令失败: %v", status, err)
+		}
+		commands = append(commands, cmd)
+	}
+	changed, err := repo.ExpireForTarget("prod", "archived")
+	if err != nil {
+		t.Fatalf("归档收敛命令失败: %v", err)
+	}
+	if changed != 3 {
+		t.Fatalf("应收敛 3 条命令，实际 %d", changed)
+	}
+	for _, cmd := range commands {
+		got, err := repo.FindByID(cmd.ID)
+		if err != nil {
+			t.Fatalf("读取命令失败: %v", err)
+		}
+		wantStatus := cmd.Status
+		if cmd.Status == model.CommandStatusPending || cmd.Status == model.CommandStatusFetched || cmd.Status == model.CommandStatusReady {
+			wantStatus = model.CommandStatusExpired
+		}
+		if got.Status != wantStatus {
+			t.Fatalf("命令收敛结果不符: before=%s got=%+v", cmd.Status, got)
+		}
+		if cmd.Status == model.CommandStatusPending || cmd.Status == model.CommandStatusFetched || cmd.Status == model.CommandStatusReady {
+			if got.ImprintContent != "" || got.LogContent != "" || got.BrowseResult != "" {
+				t.Fatalf("活跃命令过期后应清除瞬态内容: before=%s got=%+v", cmd.Status, got)
+			}
+		}
+
+	}
+}
+
 // TestCommandCountByStatus 按状态分组计数：跨目标汇总、无某状态则该键缺省（FR-82 自观测命令队列深度）。
 func TestCommandCountByStatus(t *testing.T) {
 	repo := NewAgentCommandRepository(newCommandTestDB(t))

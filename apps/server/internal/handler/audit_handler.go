@@ -18,6 +18,12 @@ import (
 type AuditHandler struct {
 	svc      *service.AuditService
 	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
+	scope    *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *AuditHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewAuditHandler 构造处理器。
@@ -42,24 +48,20 @@ type auditView struct {
 // List 处理 GET /admin/v1/audits（分页 + 过滤，时间倒序）。
 func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	if coldQueryRequested(q) {
-		h.listCold(w, r, q)
+		h.listCold(w, r, q, scope)
 		return
 	}
 	page, _ := strconv.Atoi(q.Get("page"))
 	size, _ := strconv.Atoi(q.Get("size"))
-	items, total, err := h.svc.List(repository.AuditFilter{
-		Namespace:     q.Get("namespace"),
-		Operator:      q.Get("operator"),
-		Action:        q.Get("action"),
-		TargetType:    q.Get("targetType"),
-		TargetRef:     q.Get("targetRef"),
-		DetailKeyword: q.Get("detailKeyword"),
-		From:          parseRFC3339(q.Get("from")),
-		To:            parseRFC3339(q.Get("to")),
-		Page:          page,
-		Size:          size,
-	})
+	filter := auditScopeFilter(q, scope)
+	filter.Page, filter.Size = page, size
+	items, total, err := h.svc.List(filter)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -69,23 +71,16 @@ func (h *AuditHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // listCold 处理审计冷查询（FR-152，spec §4.4）：强制时间范围 + 跨热 / 冷单表 keyset 并表，
 // 响应改游标分页（nextCursor）并带 includeArchived 元信息（不再回 total——归并去重后精确总数需全扫两侧）。
-func (h *AuditHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Values) {
+func (h *AuditHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Values, scope service.ObservationScope) {
 	from, to := parseRFC3339(q.Get("from")), parseRFC3339(q.Get("to"))
 	if err := validateColdQueryRange(timeMs(from), timeMs(to), coldQueryMaxDays(h.settings)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
 	size, _ := strconv.Atoi(q.Get("size"))
-	page, err := h.svc.ListCold(repository.AuditFilter{
-		Namespace:     q.Get("namespace"),
-		Operator:      q.Get("operator"),
-		Action:        q.Get("action"),
-		TargetType:    q.Get("targetType"),
-		TargetRef:     q.Get("targetRef"),
-		DetailKeyword: q.Get("detailKeyword"),
-		From:          from,
-		To:            to,
-	}, q.Get("cursor"), size)
+	filter := auditScopeFilter(q, scope)
+	filter.From, filter.To = from, to
+	page, err := h.svc.ListCold(filter, q.Get("cursor"), size)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -130,10 +125,21 @@ func auditExportFilter(q url.Values) repository.AuditFilter {
 	}
 }
 
+func auditScopeFilter(q url.Values, scope service.ObservationScope) repository.AuditFilter {
+	filter := auditExportFilter(q)
+	filter.NamespaceCodes, filter.Scoped = scope.NamespaceCodes, !scope.All
+	return filter
+}
+
 // Export 处理 GET /admin/v1/audits/export（复用 List 过滤，流式输出 CSV/JSON，FR-84）。
 // format 校验失败在写出响应头前返回 400 统一错误体；流式写出过程中出错只记日志（头已发无法改状态码）。
 func (h *AuditHandler) Export(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	format := q.Get("format")
 	if format == "" {
 		format = "csv"
@@ -147,7 +153,7 @@ func (h *AuditHandler) Export(w http.ResponseWriter, r *http.Request) {
 	filename := "audit-export-" + time.Now().UTC().Format("20060102-150405") + "." + ext
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	if err := h.svc.Export(auditExportFilter(q), format, w); err != nil {
+	if err := h.svc.Export(auditScopeFilter(q, scope), format, w); err != nil {
 		// 响应头已发送，无法再改状态码，仅记录错误日志（旁路）。
 		slog.Error("审计导出写出失败", "格式", format, "错误", err)
 	}
@@ -192,11 +198,14 @@ type auditAnalyticsView struct {
 // 仅解析 namespace/from/to，缺省与 92 天上限校验在 service 层（超限返 400）。
 func (h *AuditHandler) Analytics(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	res, err := h.svc.Analytics(repository.AuditFilter{
-		Namespace: q.Get("namespace"),
-		From:      parseRFC3339(q.Get("from")),
-		To:        parseRFC3339(q.Get("to")),
-	})
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	filter := auditScopeFilter(q, scope)
+	filter.From, filter.To = parseRFC3339(q.Get("from")), parseRFC3339(q.Get("to"))
+	res, err := h.svc.Analytics(filter)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

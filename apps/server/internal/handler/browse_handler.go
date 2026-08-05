@@ -25,12 +25,11 @@ func NewBrowseHandler(svc *service.AgentCommandService, instSvc *service.Instanc
 	return &BrowseHandler{svc: svc, instSvc: instSvc}
 }
 
-// Browse 处理 GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=（FR-110）：
-// 先校验目标在线（离线 agent 收不到命令），再经命令生命周期下发浏览命令、阻塞等待 agent 回传，
-// 把结果 JSON 原文代理给前端（200）。op 非法 → 400；目标不存在 / 不可读 → 404；超时 → 504。
-//
-// 触发浏览有写副作用（建命令 / 唤醒 agent / 入审计），故路由用 requireFullRole 守卫挡 readonly（403）。
+// Browse 是会下发命令并返回正文的旧浏览入口；未实现 typed 审批适配前固定失败关闭。
 func (h *BrowseHandler) Browse(w http.ResponseWriter, r *http.Request) {
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+	return
+
 	serverID := chi.URLParam(r, "serverId")
 	q := r.URL.Query()
 	ns := q.Get("namespace")
