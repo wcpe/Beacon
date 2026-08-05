@@ -45,6 +45,22 @@ func TestMCPPrincipal(t *testing.T) {
 	}
 }
 
+func TestMCPAutomationCapabilitiesAreLimitedAndCannotDecide(t *testing.T) {
+	observer := MCPPrincipal("observer", "观察者", "observer")
+	if observer.HasCapability(CapabilityManagementDirect) || observer.HasCapability(CapabilityApprovalRequest) {
+		t.Fatalf("observer 不应具备写入或审批申请能力：%+v", observer.Capabilities)
+	}
+	automation := MCPPrincipal("automation", "自动化", "automation")
+	for _, capability := range []string{CapabilityManagementRead, CapabilityManagementDirect, CapabilityApprovalRequest, CapabilityApprovalRead, CapabilityApprovalWithdrawOwn} {
+		if !automation.HasCapability(capability) {
+			t.Fatalf("automation 缺少能力 %q：%+v", capability, automation.Capabilities)
+		}
+	}
+	if automation.HasCapability(CapabilityApprovalDecide) {
+		t.Fatalf("MCP automation 永远不能审批：%+v", automation.Capabilities)
+	}
+}
+
 // TestMachinePrincipalsNeverDecide 验证机器主体即使旧角色为 full 也不会得到审批决定能力。
 func TestMachinePrincipalsNeverDecide(t *testing.T) {
 	for _, kind := range []string{PrincipalKindAPIKey, PrincipalKindMCP, PrincipalKindSystem} {
@@ -52,6 +68,23 @@ func TestMachinePrincipalsNeverDecide(t *testing.T) {
 		if p.HasCapability(CapabilityApprovalDecide) {
 			t.Fatalf("%s 主体不应具备审批决定能力：%+v", kind, p.Capabilities)
 		}
+	}
+}
+
+// TestSourceCannotBeRelabeledAsHuman 验证 API key 的可信来源不能被伪装成人类主体。
+func TestSourceCannotBeRelabeledAsHuman(t *testing.T) {
+	p := NormalizePrincipal(Principal{
+		ID: "key-1", Kind: PrincipalKindHuman, Source: SourceAPIKey, AuthMethod: AuthMethodLoginToken, Role: "full",
+		Capabilities: []string{CapabilityApprovalDecide, CapabilityApprovalRequest},
+	})
+	if p.Kind != PrincipalKindAPIKey {
+		t.Fatalf("API key 来源不得被标记为 human，实际 %+v", p)
+	}
+	if p.HasCapability(CapabilityApprovalDecide) {
+		t.Fatalf("API key 伪装后仍不应具备审批决定能力：%+v", p.Capabilities)
+	}
+	if p.AuthMethod != AuthMethodAPIKey {
+		t.Fatalf("API key 来源不得保留登录认证方式，实际 %+v", p)
 	}
 }
 

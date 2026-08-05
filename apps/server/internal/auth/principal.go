@@ -80,6 +80,9 @@ func MCPPrincipal(id, name, role string) Principal {
 
 // CapabilitiesForRole 把旧角色映射为语义能力集合。
 func CapabilitiesForRole(kind, role string) []string {
+	if kind == PrincipalKindMCP {
+		return mcpCapabilities(role)
+	}
 	caps := []string{CapabilityManagementRead}
 	if role != "full" {
 		return append(caps, CapabilityApprovalRead)
@@ -89,6 +92,14 @@ func CapabilitiesForRole(kind, role string) []string {
 		caps = append(caps, CapabilityApprovalDecide)
 	}
 	return caps
+}
+
+func mcpCapabilities(profile string) []string {
+	caps := []string{CapabilityManagementRead, CapabilityApprovalRead}
+	if profile != "automation" {
+		return caps
+	}
+	return append(caps, CapabilityManagementDirect, CapabilityApprovalRequest, CapabilityApprovalWithdrawOwn)
 }
 
 // HasCapability 判断主体是否具备指定能力。
@@ -164,8 +175,9 @@ func FromContext(ctx context.Context) (Principal, bool) {
 }
 
 func normalize(p Principal) Principal {
-	if p.Kind == "" {
-		p.Kind = kindFromSource(p.Source)
+	if sourceKind := kindFromSource(p.Source); sourceKind != "" {
+		p.Kind = sourceKind
+		p.AuthMethod = authMethodFromSource(p.Source)
 	}
 	if p.Kind == "" && p.Operator != "" {
 		p.Kind = PrincipalKindHuman

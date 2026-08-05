@@ -12,11 +12,13 @@ import (
 
 // AuditFilter 是审计查询的过滤与分页条件（零值字段不过滤；时间零值不设界）。
 type AuditFilter struct {
-	Namespace  string
-	Operator   string
-	Action     string
-	TargetType string
-	TargetRef  string
+	Namespace      string
+	NamespaceCodes []string
+	Scoped         bool
+	Operator       string
+	Action         string
+	TargetType     string
+	TargetRef      string
 	// detail 列子串关键字检索（LIKE，FR-84）；空则不过滤
 	DetailKeyword string
 	From          time.Time
@@ -78,7 +80,12 @@ func (r *AuditLogRepository) Create(entry *model.AuditLog) error {
 // applyFilter 把过滤条件叠加到查询上（List 与 Stream 共用，保证两者过滤口径一致）。
 // 仅占位符 + 标准 SQL，不依赖方言函数，保 Postgres 可移植。
 func applyFilter(q *gorm.DB, f AuditFilter) *gorm.DB {
-	if f.Namespace != "" {
+	if f.Scoped {
+		if len(f.NamespaceCodes) == 0 {
+			return q.Where("1 = 0")
+		}
+		q = q.Where("namespace_code IN ?", f.NamespaceCodes)
+	} else if f.Namespace != "" {
 		q = q.Where("namespace_code = ?", f.Namespace)
 	}
 	if f.Operator != "" {
@@ -162,7 +169,12 @@ func auditColdKey(row model.AuditLog) coldCursor {
 // 只复用 Namespace/From/To 过滤，日分桶与计数交由 service 在 Go 侧做（禁方言日期函数，保可移植）。
 func (r *AuditLogRepository) ScanForAnalytics(f AuditFilter) ([]AuditAnalyticsRow, error) {
 	q := r.db.Model(&model.AuditLog{})
-	if f.Namespace != "" {
+	if f.Scoped {
+		if len(f.NamespaceCodes) == 0 {
+			return []AuditAnalyticsRow{}, nil
+		}
+		q = q.Where("namespace_code IN ?", f.NamespaceCodes)
+	} else if f.Namespace != "" {
 		q = q.Where("namespace_code = ?", f.Namespace)
 	}
 	if !f.From.IsZero() {

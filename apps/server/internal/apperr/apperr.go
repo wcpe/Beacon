@@ -27,6 +27,12 @@ func New(status int, code, message string) *Error {
 var (
 	// ErrInvalidParam 参数错误。
 	ErrInvalidParam = New(http.StatusBadRequest, "INVALID_PARAM", "参数错误")
+	// ErrMCPClientNotFound MCP OAuth 客户端不存在或已不可操作。
+	ErrMCPClientNotFound = New(http.StatusNotFound, "MCP_CLIENT_NOT_FOUND", "MCP 客户端不存在")
+	// ErrInvalidObservationScope 观测范围参数不是正整数。
+	ErrInvalidObservationScope = New(http.StatusBadRequest, "invalid_observation_scope", "观测范围参数不合法")
+	// ErrObservationScopeStale 指定的 env/namespace 已失效或二者映射不匹配。
+	ErrObservationScopeStale = New(http.StatusConflict, "observation_scope_stale", "观测范围已失效，请刷新后重试")
 	// ErrAmbiguousIdentifier 请求同时给出不一致的旧 name 与新 code。
 	ErrAmbiguousIdentifier = New(http.StatusBadRequest, "AMBIGUOUS_IDENTIFIER", "name 与 code 不一致")
 	// ErrImmutableIdentifier 稳定业务标识不允许修改。
@@ -47,6 +53,14 @@ var (
 	ErrNamespaceHasOverrideSets = New(http.StatusConflict, "NAMESPACE_HAS_OVERRIDE_SETS", "环境下仍有覆盖集，请先删除覆盖集后再删除")
 	// ErrNamespaceDeleteMigrated 旧 namespace 删除端点已迁移，禁止硬删。
 	ErrNamespaceDeleteMigrated = New(http.StatusGone, "namespace_delete_migrated", "环境删除端点已迁移")
+	// ErrNamespaceNotActive 目标环境不是 active 状态。
+	ErrNamespaceNotActive = New(http.StatusConflict, "namespace_not_active", "环境当前不是 active 状态")
+	// ErrNamespaceNotArchived 目标环境不是 archived 状态。
+	ErrNamespaceNotArchived = New(http.StatusConflict, "namespace_not_archived", "环境当前不是 archived 状态")
+	// ErrNamespaceArchived 环境已归档，不能参与运行路径。
+	ErrNamespaceArchived = New(http.StatusConflict, "namespace_archived", "环境已归档，暂不可参与运行")
+	// ErrNamespaceChildrenNotArchived 永久墓碑前所有子 server 必须先归档。
+	ErrNamespaceChildrenNotArchived = New(http.StatusConflict, "namespace_children_not_archived", "环境下仍有未归档 server，不能永久删除")
 
 	// ErrBCClusterConflict 同范围 BC 集群 code 已存在。
 	ErrBCClusterConflict = New(http.StatusConflict, "BC_CLUSTER_CONFLICT", "同范围 BC 集群标识已存在")
@@ -165,6 +179,8 @@ var (
 	ErrSchedZoneNotFound = New(http.StatusNotFound, "zone_not_found", "目标 zone 不存在")
 	// ErrSchedCrossNamespace 跨 namespace 调度请求默认拒绝（信任放行规则归 namespace 隔离域，FR-146，spec §4.6）。
 	ErrSchedCrossNamespace = New(http.StatusForbidden, "cross_namespace", "禁止跨 namespace 调度请求")
+	// ErrApprovalCrossNamespace 危险批量审批目标跨越 namespace，禁止隐式拆分或创建全局申请。
+	ErrApprovalCrossNamespace = New(http.StatusForbidden, "cross_namespace", "禁止跨 namespace 批量审批请求")
 	// ErrInvalidHealthWeights 健康权重配置校验不通过（权重非负 / good、bad 边界有序 / 等级阈值有序，FR-147，spec §4.4）。
 	ErrInvalidHealthWeights = New(http.StatusBadRequest, "invalid_health_weights", "健康权重配置不合法")
 	// ErrBadCredentials 管理台登录用户名或口令错误。
@@ -211,10 +227,20 @@ var (
 	ErrServerNotArchived = New(http.StatusConflict, "server_not_archived", "server 当前不是 archived 状态")
 	// ErrServerArchived 服务器已归档，不能参与运行路径。
 	ErrServerArchived = New(http.StatusConflict, "server_archived", "服务器已归档，暂不可参与运行")
+	// ErrServerTombstoned 服务器已永久删除，不能参与任何路径。
+	ErrServerTombstoned = New(http.StatusGone, "server_tombstoned", "服务器已永久删除，不能复用或恢复")
 	// ErrTopologyTargetChanged 拓扑审批冻结目标已变化。
 	ErrTopologyTargetChanged = New(http.StatusConflict, "topology_target_changed", "拓扑目标已变化，请重新提审")
 	// ErrMachinePrincipalCannotDecide 机器主体不能批准或拒绝审批请求。
 	ErrMachinePrincipalCannotDecide = New(http.StatusForbidden, "machine_principal_cannot_decide", "机器主体不能批准或拒绝审批请求")
+	// ErrSensitiveAccessExpired 敏感内容访问授权已过期。
+	ErrSensitiveAccessExpired = New(http.StatusGone, "sensitive_access_expired", "敏感内容访问授权已过期")
+	// ErrSensitiveAccessConsumed 敏感内容访问授权已消费。
+	ErrSensitiveAccessConsumed = New(http.StatusGone, "sensitive_access_consumed", "敏感内容访问授权已消费")
+	// ErrSensitiveAccessWrongPrincipal 当前主体不是原申请主体。
+	ErrSensitiveAccessWrongPrincipal = New(http.StatusForbidden, "sensitive_access_wrong_principal", "当前主体不能消费该敏感内容授权")
+	// ErrOperationRequiresApproval 当前操作必须先创建审批申请。
+	ErrOperationRequiresApproval = New(http.StatusConflict, "operation_requires_approval", "该操作必须先提交审批申请")
 	// ErrIdempotencyKeyReused 幂等键被不同冻结载荷复用。
 	ErrIdempotencyKeyReused = New(http.StatusConflict, "idempotency_key_reused", "幂等键已被不同申请内容使用")
 	// ErrRezoneRequired 已分配 server 改归属必须走换区工单。
@@ -225,6 +251,8 @@ var (
 	ErrDefaultEntryNotAssigned = New(http.StatusConflict, "not_assigned", "未分配小区的 server 不能设为默认入口")
 	// ErrAPIKeyNotFound API 密钥不存在（吊销 / 重置目标不存在或已吊销，FR-42）。
 	ErrAPIKeyNotFound = New(http.StatusNotFound, "API_KEY_NOT_FOUND", "API 密钥不存在")
+	// ErrCredentialSecretLost 凭据明文已不可领取（从不透露具体失败原因）。
+	ErrCredentialSecretLost = New(http.StatusGone, "credential_secret_lost", "凭据明文已不可领取")
 	// ErrIdentityRequired 注册缺少必要身份（serverId/namespace）。
 	ErrIdentityRequired = New(http.StatusBadRequest, "IDENTITY_REQUIRED", "缺少必要的身份标识")
 	// ErrDuplicateServerID 同 serverId 已有仍新鲜的不同地址实例在线。

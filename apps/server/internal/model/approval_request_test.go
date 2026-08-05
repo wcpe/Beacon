@@ -7,6 +7,9 @@ func TestApprovalRequestTableAndStatus(t *testing.T) {
 	if got := (ApprovalRequest{}).TableName(); got != "approval_request" {
 		t.Fatalf("审批请求表名应为 approval_request，实际 %q", got)
 	}
+	if got := (ApprovalExecutionReceipt{}).TableName(); got != "approval_execution_receipt" {
+		t.Fatalf("执行回执表名不符，实际 %q", got)
+	}
 	for _, status := range []string{ApprovalStatusWithdrawn, ApprovalStatusRejected, ApprovalStatusExpired, ApprovalStatusSucceeded, ApprovalStatusFailed} {
 		if !IsTerminalApprovalStatus(status) {
 			t.Fatalf("%s 应为审批终态", status)

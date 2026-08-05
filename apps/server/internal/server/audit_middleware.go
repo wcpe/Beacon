@@ -85,9 +85,13 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/instances/{serverId}/imprint":       {},
 	// 取 agent 日志触发（FR-88：instance.tail-logs，service 在事务内自记专项审计，detail 不含日志内容）
 	"POST /admin/v1/instances/{serverId}/logs": {},
+	// 已批准日志正文的一次性消费：grant 原子状态迁移是唯一事实，兜底审计不得记录正文。
+	"POST /admin/v1/instances/{serverId}/logs/grants/{grantId}/consume": {},
 	// 强制重同步触发（FR-91：instance.resync，service 在事务内自记专项审计，detail 不含内容）
 	"POST /admin/v1/instances/{serverId}/resync":  {},
 	"POST /admin/v1/imprints/{commandId}/confirm": {},
+	// 已批准拓印正文的一次性消费：只更新 grant，不向审计写入正文或路径内容。
+	"POST /admin/v1/imprints/{commandId}/diff/grants/{grantId}/consume": {},
 	// 多级灰度文件同步中心（FR-129/FR-131：service 在事务内自记专项审计，detail 不含文件内容）
 	"POST /admin/v1/file-sync/tasks":                {},
 	"POST /admin/v1/file-sync/tasks/{id}/plan":      {},
@@ -134,14 +138,17 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/namespace-trusts":             {},
 	"POST /admin/v2/namespace-trusts/{id}/revoke": {},
 	// 统一审批请求（FR-206/207）：提审 / 批准 / 驳回 / 撤回均由 ApprovalService 自记专项审计。
-	"POST /admin/v2/approval-requests":                      {},
-	"POST /admin/v2/approval-requests/{requestId}/approve":  {},
-	"POST /admin/v2/approval-requests/{requestId}/reject":   {},
-	"POST /admin/v2/approval-requests/{requestId}/withdraw": {},
-	"POST /admin/v2/approvals":                              {},
-	"POST /admin/v2/approvals/{id}/approve":                 {},
-	"POST /admin/v2/approvals/{id}/reject":                  {},
-	"POST /admin/v2/approvals/{id}/withdraw":                {},
+	// 创建端点 POST /admin/v2/approval-requests 经 CreateLifecycleApprovalRequest → requestApproval →
+	// ApprovalService.Request 在事务内自记 ActionApprovalRequest，登记于此使兜底跳过、避免双记。
+	"POST /admin/v2/approval-requests":                                 {},
+	"POST /admin/v2/approval-requests/{requestId}/approve":                  {},
+	"POST /admin/v2/approval-requests/{requestId}/reject":                   {},
+	"POST /admin/v2/approval-requests/{requestId}/withdraw":                 {},
+	"POST /admin/v2/approval-requests/{requestId}/credential-secret/redeem": {},
+	"POST /admin/v2/approvals/{id}/approve":                                 {},
+	"POST /admin/v2/approvals/{id}/reject":                                  {},
+	"POST /admin/v2/approvals/{id}/withdraw":                                {},
+	"POST /admin/v2/approvals/{id}/credential-secret/redeem":                {},
 	// env 展示维度增删改 + 整体替换映射（FR-178：env.create / update / delete / set-namespaces，service 事务内自记专项审计）
 	"POST /admin/v2/envs":                {},
 	"PATCH /admin/v2/envs/{id}":          {},
@@ -178,8 +185,10 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/server-placement-transfers": {},
 	// 健康权重版本化配置全量替换（health-weights.update，service 在事务内自记专项审计）
 	"PUT /admin/v2/settings/health-weights": {},
-	// 跨服消息 payload 受控查看（message.payload.view，POST 属写方法，service 先审计后返回，detail 不含 payload）
-	"POST /admin/v2/messages/{messageId}/payload": {},
+	// 跨服消息 payload：旧正文入口拒绝；申请由 ApprovalService 自记审批审计，消费仅允许由 grant 服务成功一次。
+	"POST /admin/v2/messages/{messageId}/payload":                   {},
+	"POST /admin/v2/messages/{messageId}/payload/approval-requests": {},
+	"POST /admin/v2/sensitive-access-grants/{grantId}/consume":      {},
 	// 归档任务创建 / 重试 / 取消（FR-153，service 事务内自记 archive.job-create/-retry/-cancel 专项审计）
 	"POST /admin/v2/archive/jobs":             {},
 	"POST /admin/v2/archive/jobs/{id}/retry":  {},
@@ -199,10 +208,15 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 文件资产批量重扫（FR-163：asset.rescan，AssetService 在事务内自记专项审计，detail 记目标 serverId + force）
 	"POST /admin/v2/assets/rescan": {},
 	// 文件资产内容预览 / diff / 敏感规则修改（FR-164）：service 内自记 asset.preview / asset.diff /
-	// asset.sensitive_rule_update 专项审计（detail 绝不含文件内容），登记于此使兜底跳过、避免双记
-	"POST /admin/v2/assets/preview":        {},
-	"POST /admin/v2/assets/diff":           {},
-	"PUT /admin/v2/assets/sensitive-rules": {},
+	// asset.sensitive_rule_update 专项审计（detail 绝不含文件内容）。预览申请由 ApprovalService 自记审批审计，
+	// grant 消费与消息 payload 的同类端点一致，作为一次性授权状态变更由专用服务处理；均登记于此避免兜底双记。
+	"POST /admin/v2/assets/preview/approval-requests":          {},
+	"POST /admin/v2/assets/preview/grants/{grantId}/consume":   {},
+	"POST /admin/v2/assets/pair-read/approval-requests":        {},
+	"POST /admin/v2/assets/pair-read/grants/{grantId}/consume": {},
+	"POST /admin/v2/assets/preview":                            {},
+	"POST /admin/v2/assets/diff":                               {},
+	"PUT /admin/v2/assets/sensitive-rules":                     {},
 	// 交付编排变更单 M1（FR-162/168）：写端点由 Delivery 两服务在事务内自记 delivery.order.create /
 	// update / delete / submit / withdraw / approve / reject 专项审计（detail 必含 orderId、绝不含文件内容）
 	"POST /admin/v2/change-orders":                {},
@@ -214,7 +228,6 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v2/change-orders/{id}/approve":   {},
 	"POST /admin/v2/change-orders/{id}/reject":    {},
 	// M3 灰度编排控制操作：各在 service 层写专项审计（start/pause/resume/cancel/batch_confirm），兜底跳过防双记。
-	"POST /admin/v2/change-orders/{id}/start":                     {},
 	"POST /admin/v2/change-orders/{id}/pause":                     {},
 	"POST /admin/v2/change-orders/{id}/resume":                    {},
 	"POST /admin/v2/change-orders/{id}/cancel":                    {},
