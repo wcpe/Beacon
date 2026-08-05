@@ -13,6 +13,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/filetree"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/secret"
 )
 
 // CreateOverrideSetParams 是新建覆盖集（首次发布）的入参（FR-15）。
@@ -59,6 +60,9 @@ type OverrideSetService struct {
 	fileRepo  *repository.FileObjectRepository
 	auditRepo *repository.AuditLogRepository
 	notifier  *ChangeNotifier // 可选，事务提交后唤醒受影响的 override 长轮询（复用 fileHub）
+	approval  *ApprovalService
+	pending   *repository.FilePendingChangeRepository
+	cipher    *secret.Cipher
 }
 
 // NewOverrideSetService 构造服务。
@@ -69,7 +73,7 @@ func NewOverrideSetService(
 	fileRepo *repository.FileObjectRepository,
 	auditRepo *repository.AuditLogRepository,
 ) *OverrideSetService {
-	return &OverrideSetService{db: db, setRepo: setRepo, revRepo: revRepo, fileRepo: fileRepo, auditRepo: auditRepo}
+	return &OverrideSetService{db: db, setRepo: setRepo, revRepo: revRepo, fileRepo: fileRepo, auditRepo: auditRepo, pending: repository.NewFilePendingChangeRepository(db)}
 }
 
 // SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
@@ -162,6 +166,10 @@ func (s *OverrideSetService) Create(p CreateOverrideSetParams) (*model.FileOverr
 
 // Publish 发布覆盖集新版本（version+1）：更新目标根 + 重载命令，快照成员清单。
 func (s *OverrideSetService) Publish(id uint, p PublishOverrideSetParams) (*model.FileOverrideSet, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *OverrideSetService) applyPublish(id uint, p PublishOverrideSetParams) (*model.FileOverrideSet, error) {
 	if p.Operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -205,6 +213,10 @@ func (s *OverrideSetService) Publish(id uint, p PublishOverrideSetParams) (*mode
 // Rollback 回滚覆盖集到目标版本（读取该版本目标根 + 命令作为新版本发布，version+1）。
 // 注意：回滚只还原"覆盖集事实"，绝不触发重放重载命令——命令重放由 agent 侧明令禁止（见 ADR-0011 决策 5）。
 func (s *OverrideSetService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileOverrideSet, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *OverrideSetService) applyRollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileOverrideSet, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -243,6 +255,10 @@ func (s *OverrideSetService) Rollback(id uint, toVersion int64, operator, commen
 
 // Delete 软删覆盖集。
 func (s *OverrideSetService) Delete(id uint, operator, _, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+func (s *OverrideSetService) applyDelete(id uint, operator, _ string, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}

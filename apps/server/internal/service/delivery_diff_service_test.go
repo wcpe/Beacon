@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
@@ -416,7 +418,7 @@ func TestFileDiffContract(t *testing.T) {
 	ctx := context.Background()
 
 	// update：after=源内容、before=目标内容、serverId=t-1（首个差异目标）。
-	upd, err := env.diff.FileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/upd.yml"), "", "", "admin", "")
+	upd, err := env.diff.applyFileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/upd.yml"), "", "", "admin", "")
 	if err != nil {
 		t.Fatalf("update file-diff 失败: %v", err)
 	}
@@ -431,7 +433,7 @@ func TestFileDiffContract(t *testing.T) {
 	}
 
 	// add：before=null、after=源内容；差异目标 = 首个缺该文件的目标（t-1 也缺 → t-1）。
-	add, err := env.diff.FileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/new.yml"), "", "", "admin", "")
+	add, err := env.diff.applyFileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/new.yml"), "", "", "admin", "")
 	if err != nil {
 		t.Fatalf("add file-diff 失败: %v", err)
 	}
@@ -440,7 +442,7 @@ func TestFileDiffContract(t *testing.T) {
 	}
 
 	// delete：after=null、before=目标内容、serverId=仍持有文件的 t-1。
-	del, err := env.diff.FileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/gone.yml"), "", "", "admin", "")
+	del, err := env.diff.applyFileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/gone.yml"), "", "", "admin", "")
 	if err != nil {
 		t.Fatalf("delete file-diff 失败: %v", err)
 	}
@@ -460,10 +462,10 @@ func TestFileDiffContract(t *testing.T) {
 	}
 
 	// 显式 serverId：必须在目标集内。
-	if _, err := env.diff.FileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/upd.yml"), "src-1", "", "admin", ""); err == nil {
+	if _, err := env.diff.applyFileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/upd.yml"), "src-1", "", "admin", ""); err == nil {
 		t.Fatal("目标集外 serverId 应拒绝")
 	}
-	explicit, err := env.diff.FileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/upd.yml"), "t-2", "", "admin", "")
+	explicit, err := env.diff.applyFileDiff(ctx, detail.ID, findItemByPath(t, detail, "plugins/upd.yml"), "t-2", "", "admin", "")
 	if err != nil {
 		t.Fatalf("显式 t-2 应放行: %v", err)
 	}
@@ -489,7 +491,7 @@ func TestFileDiffBinaryAndSensitive(t *testing.T) {
 		t.Fatalf("取详情失败: %v", err)
 	}
 
-	binary, err := env.diff.FileDiff(context.Background(), order.ID, findItemByPath(t, detail, "plugins/Foo.jar"), "", "", "admin", "")
+	binary, err := env.diff.applyFileDiff(context.Background(), order.ID, findItemByPath(t, detail, "plugins/Foo.jar"), "", "", "admin", "")
 	if err != nil {
 		t.Fatalf("二进制 file-diff 失败: %v", err)
 	}
@@ -501,7 +503,7 @@ func TestFileDiffBinaryAndSensitive(t *testing.T) {
 	}
 
 	// 敏感路径（默认规则含 *secret*）无 reason → 403 asset_sensitive_path。
-	_, err = env.diff.FileDiff(context.Background(), order.ID, findItemByPath(t, detail, "plugins/db-secret.yml"), "", "", "admin", "")
+	_, err = env.diff.applyFileDiff(context.Background(), order.ID, findItemByPath(t, detail, "plugins/db-secret.yml"), "", "", "admin", "")
 	_ = mustAppErr(t, err, "asset_sensitive_path", http.StatusForbidden)
 }
 
@@ -517,10 +519,21 @@ func TestFileDiffItemGuards(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err = env.diff.FileDiff(ctx, order.ID, detail.Items[0].ID, "", "", "admin", "")
+	_, err = env.diff.applyFileDiff(ctx, order.ID, detail.Items[0].ID, "", "", "admin", "")
 	_ = mustAppErr(t, err, "item_not_found", http.StatusNotFound)
-	_, err = env.diff.FileDiff(ctx, order.ID, 99999, "", "", "admin", "")
+	_, err = env.diff.applyFileDiff(ctx, order.ID, 99999, "", "", "admin", "")
 	_ = mustAppErr(t, err, "item_not_found", http.StatusNotFound)
-	_, err = env.diff.FileDiff(ctx, 99999, 1, "", "", "admin", "")
+	_, err = env.diff.applyFileDiff(ctx, 99999, 1, "", "", "admin", "")
 	_ = mustAppErr(t, err, "change_order_not_found", http.StatusNotFound)
+}
+
+// TestFileDiffRequiresApproval 验证公开交付文件正文入口不能经旧读取路径下发命令。
+func TestFileDiffRequiresApproval(t *testing.T) {
+	env := newDeliveryTestEnv(t)
+	if view, err := env.diff.FileDiff(context.Background(), 1, 1, "", "", "admin", ""); !errors.Is(err, apperr.ErrOperationRequiresApproval) || view != nil {
+		t.Fatalf("公开 file-diff 必须失败关闭: view=%+v err=%v", view, err)
+	}
+	if cmds := allCommands(t, env.db); len(cmds) != 0 {
+		t.Fatalf("未批准 file-diff 不得创建命令，实际 %d", len(cmds))
+	}
 }

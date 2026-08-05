@@ -80,6 +80,17 @@ func looseBlobSettings() *fakeBlobSettings {
 	return &fakeBlobSettings{capacity: 1 << 30, upload: 8, download: 64, retentionDays: 7, cleanupMin: 60}
 }
 
+func TestDeliveryBlobWithTxAllowsMissingConfigRenderer(t *testing.T) {
+	svc, db := newBlobTestSvc(t, looseBlobSettings())
+	transactional := svc.withTx(db)
+	if transactional == nil || transactional.db != db {
+		t.Fatal("未注入配置渲染器时 withTx 仍应返回绑定事务的服务副本")
+	}
+	if transactional.configRenderer != nil {
+		t.Fatal("未注入配置渲染器时事务副本不应凭空创建渲染器")
+	}
+}
+
 // TestPrepareConfigBlobsRequiresRendererForConfigOrder 含配置项但未装配渲染器时必须 fail-closed。
 func TestPrepareConfigBlobsRequiresRendererForConfigOrder(t *testing.T) {
 	svc, db := newBlobTestSvc(t, looseBlobSettings())

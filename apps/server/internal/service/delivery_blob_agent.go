@@ -25,6 +25,9 @@ var changeOrderTerminalStatuses = []string{
 // AuthorizeBlobUpload 校验流式上传归属（PUT，spec §5.3）：请求身份须是某「引用该 sha 的
 // approved / 活动单」的模板源，否则 403。namespace 隔离由查询天然限定（identity 的 namespace）。
 func (s *DeliveryBlobService) AuthorizeBlobUpload(id agentauth.Identity, sha string) error {
+	if err := ensureNamespaceRuntimeActiveByID(s.db, id.NamespaceID); err != nil {
+		return err
+	}
 	sha, err := normalizeBlobSHA(sha)
 	if err != nil {
 		return err
@@ -44,6 +47,9 @@ func (s *DeliveryBlobService) AuthorizeBlobUpload(id agentauth.Identity, sha str
 // AuthorizeBlobDownload 校验流式下载归属（GET，spec §5.3）：sha 属于某 approved / 活动单的文件项，
 // 且请求身份是该单模板源（M2 简化放行，便于源侧自校验）或在该单目标集内，否则 403。
 func (s *DeliveryBlobService) AuthorizeBlobDownload(id agentauth.Identity, sha string) error {
+	if err := ensureNamespaceRuntimeActiveByID(s.db, id.NamespaceID); err != nil {
+		return err
+	}
 	sha, err := normalizeBlobSHA(sha)
 	if err != nil {
 		return err
@@ -136,6 +142,9 @@ type DeliveryUploadManifestView struct {
 // UploadManifest 模板源拉取待上传 blob 清单（spec §4.5.2 第 1 步的服务器侧）：
 // 仅本单模板源可拉（403）；返回 MissingBlobs 对应项，agent 逐项 HEAD 去重后流式 PUT。
 func (s *DeliveryBlobService) UploadManifest(id agentauth.Identity, orderID uint) (*DeliveryUploadManifestView, error) {
+	if err := ensureNamespaceRuntimeActiveByID(s.db, id.NamespaceID); err != nil {
+		return nil, err
+	}
 	order, err := s.requireOwnOrder(id, orderID)
 	if err != nil {
 		return nil, err
@@ -197,6 +206,9 @@ type DeliveryTargetManifestView struct {
 
 // TargetManifest 目标拉取本服差异清单 + 配置项摘要（spec §4.5.3 的清单侧）：仅本单目标集内身份可拉（403）。
 func (s *DeliveryBlobService) TargetManifest(id agentauth.Identity, orderID uint) (*DeliveryTargetManifestView, error) {
+	if err := ensureNamespaceRuntimeActiveByID(s.db, id.NamespaceID); err != nil {
+		return nil, err
+	}
 	order, err := s.requireOwnOrder(id, orderID)
 	if err != nil {
 		return nil, err
@@ -367,6 +379,9 @@ type deliveryCommandPayload struct {
 // push / activate / rollback 仅落命令账——payload_state 与批次 / 目标状态机推进是 M3/M4 编排器的接缝，
 // 编排器将按命令终态与回执字段（changed/skipped/backupPresent/error）推进 change_target。
 func (s *DeliveryBlobService) ReceiveResult(id agentauth.Identity, orderID uint, input DeliveryResultInput) error {
+	if err := ensureNamespaceRuntimeActiveByID(s.db, id.NamespaceID); err != nil {
+		return err
+	}
 	cmdType, ok := deliveryPhaseCommandTypes[input.Phase]
 	if !ok || (input.Status != DeliveryResultSuccess && input.Status != DeliveryResultFailed) {
 		return apperr.ErrInvalidParam

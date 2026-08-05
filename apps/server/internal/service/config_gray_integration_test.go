@@ -78,7 +78,7 @@ func TestGrayCohortInOutResolution(t *testing.T) {
 	}
 
 	// 对 s1 发布灰度
-	if _, err := gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
 
@@ -100,11 +100,11 @@ func TestGrayCohortInOutResolution(t *testing.T) {
 func TestGrayPromote(t *testing.T) {
 	cfg, gray, eff, _, _ := grayStack(t)
 	item := mkGlobalItem(t, cfg, "app.yml", "v: stable\n")
-	if _, err := gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
 
-	promoted, err := gray.Promote(item.ID, "bob", "晋升", "")
+	promoted, err := service.ApplyGrayPromoteForTest(gray, item.ID, "bob", "晋升", "")
 	if err != nil {
 		t.Fatalf("晋升失败: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestGrayPromote(t *testing.T) {
 	}
 
 	// 灰度清空：再 promote 应 GRAY_NOT_FOUND
-	if _, err := gray.Promote(item.ID, "bob", "再晋升", ""); !errors.Is(err, apperr.ErrGrayNotFound) {
+	if _, err := service.ApplyGrayPromoteForTest(gray, item.ID, "bob", "再晋升", ""); !errors.Is(err, apperr.ErrGrayNotFound) {
 		t.Fatalf("灰度应已清空，再晋升应得 GRAY_NOT_FOUND，实际 %v", err)
 	}
 
@@ -139,7 +139,7 @@ func TestGrayPromote(t *testing.T) {
 func TestGrayAbort(t *testing.T) {
 	cfg, gray, eff, _, _ := grayStack(t)
 	item := mkGlobalItem(t, cfg, "app.yml", "v: stable\n")
-	if _, err := gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
 	// 确认灰度生效
@@ -171,7 +171,7 @@ func TestGrayContentValidation(t *testing.T) {
 	cfg, gray, _, _, db := grayStack(t)
 	item := mkGlobalItem(t, cfg, "app.yml", "v: stable\n")
 
-	g, err := gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", "")
+	g, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", "")
 	if err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
@@ -180,16 +180,16 @@ func TestGrayContentValidation(t *testing.T) {
 	}
 
 	// 非法 yaml 被拒
-	if _, err := gray.Publish(item.ID, "v: : : bad\n", []string{"s1"}, "alice", "坏内容", ""); err == nil {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: : : bad\n", []string{"s1"}, "alice", "坏内容", ""); err == nil {
 		t.Fatalf("非法内容应被拒")
 	}
 	// 空 cohort 被拒
-	if _, err := gray.Publish(item.ID, "v: ok\n", []string{"  ", ""}, "alice", "空名单", ""); !errors.Is(err, apperr.ErrEmptyCohort) {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: ok\n", []string{"  ", ""}, "alice", "空名单", ""); !errors.Is(err, apperr.ErrEmptyCohort) {
 		t.Fatalf("空 cohort 应得 EMPTY_COHORT，实际 %v", err)
 	}
 
 	// 库中始终至多一个活跃灰度（重发覆盖）
-	if _, err := gray.Publish(item.ID, "v: gray2\n", []string{"s9"}, "alice", "重发", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: gray2\n", []string{"s9"}, "alice", "重发", ""); err != nil {
 		t.Fatalf("重发灰度失败: %v", err)
 	}
 	var active int64
@@ -210,7 +210,7 @@ func TestGrayWakeOnlyCohort(t *testing.T) {
 	w2 := hub.Register("prod", "s2")
 	defer hub.Deregister(w2)
 
-	if _, err := gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(gray, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
 
@@ -237,7 +237,7 @@ func TestGrayPublishConcurrentLastWins(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(idx int) {
 			defer wg.Done()
-			_, errs[idx] = gray.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "并发灰度", "")
+			_, errs[idx] = service.ApplyGrayPublishForTest(gray, item.ID, "v: gray\n", []string{"s1"}, "alice", "并发灰度", "")
 		}(i)
 	}
 	wg.Wait()

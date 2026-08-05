@@ -17,7 +17,7 @@ func TestCreatePersistsWholeFileOverride(t *testing.T) {
 	svc := NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), repository.NewAuditLogRepository(db))
 
 	// 全局层：普通结构化文件（默认深合并）
-	if _, err := svc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/config.yml",
 		ScopeLevel: model.ScopeGlobal, Content: "a: 0\nb: 9\n", Operator: "alice",
 	}); err != nil {
@@ -25,7 +25,7 @@ func TestCreatePersistsWholeFileOverride(t *testing.T) {
 	}
 	// 单服层：标豁免（强制整文件覆盖、保注释）
 	winner := "# 注释保留\na: 1\n"
-	if _, err := svc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/config.yml",
 		ScopeLevel: model.ScopeServer, ScopeTarget: "lobby-1",
 		Content: winner, Operator: "alice", WholeFileOverride: true,
@@ -62,35 +62,35 @@ func TestFileStructuredContentValidatedOnPublish(t *testing.T) {
 	svc := NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), repository.NewAuditLogRepository(db))
 
 	// 坏 yaml → 拒
-	if _, err := svc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/bad.yml",
 		ScopeLevel: model.ScopeGlobal, Content: "a: [unterminated\n", Operator: "alice",
 	}); err != apperr.ErrContentSchemaInvalid {
 		t.Fatalf("坏 yaml 应被拒为 CONTENT_SCHEMA_INVALID，实际 %v", err)
 	}
 	// 坏 json → 拒
-	if _, err := svc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/bad.json",
 		ScopeLevel: model.ScopeGlobal, Content: "{not json", Operator: "alice",
 	}); err != apperr.ErrContentSchemaInvalid {
 		t.Fatalf("坏 json 应被拒，实际 %v", err)
 	}
 	// 非结构化（.txt）任意内容 → 放行（不做解析校验）
-	if _, err := svc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/notes.txt",
 		ScopeLevel: model.ScopeGlobal, Content: "a: [unterminated\n", Operator: "alice",
 	}); err != nil {
 		t.Fatalf("非结构化文件不应做解析校验，实际 %v", err)
 	}
 	// 好 yaml → 放行，且 Publish 坏内容被拒
-	obj, err := svc.Create(CreateFileParams{
+	obj, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/ok.yml",
 		ScopeLevel: model.ScopeGlobal, Content: "a: 1\n", Operator: "alice",
 	})
 	if err != nil {
 		t.Fatalf("好 yaml 应放行，实际 %v", err)
 	}
-	if _, err := svc.Publish(obj.ID, "b: [bad\n", "alice", "", ""); err != apperr.ErrContentSchemaInvalid {
+	if _, err := svc.applyPublish(obj.ID, "b: [bad\n", "alice", "", ""); err != apperr.ErrContentSchemaInvalid {
 		t.Fatalf("Publish 坏 yaml 应被拒，实际 %v", err)
 	}
 }

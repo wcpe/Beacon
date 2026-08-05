@@ -1,6 +1,8 @@
 package service
 
 import (
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -31,6 +33,20 @@ type deliveryConfigRenderer struct {
 func newDeliveryConfigRenderer(config *ConfigCenterService, versions *repository.ConfigLayerVersionRepository,
 	files *repository.ConfigFileRepository) *deliveryConfigRenderer {
 	return &deliveryConfigRenderer{config: config, versions: versions, files: files}
+}
+
+// withTx 返回将只读配置查询绑定到审批事务的渲染器副本。
+func (r *deliveryConfigRenderer) withTx(tx *gorm.DB) *deliveryConfigRenderer {
+	if r == nil {
+		return nil
+	}
+	transactionalConfig := *r.config
+	transactionalConfig.db = tx
+	transactionalConfig.files = r.config.files.WithTx(tx)
+	transactionalConfig.versions = r.config.versions.WithTx(tx)
+	return &deliveryConfigRenderer{
+		config: &transactionalConfig, versions: r.versions.WithTx(tx), files: r.files.WithTx(tx),
+	}
 }
 
 // configRenderGroup 是同一配置文件在本单内的全部作用域 pin 聚合。

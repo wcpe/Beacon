@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/merge"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/secret"
 )
 
 // MaxContentBytes 是单条配置内容大小上限（256KB）。
@@ -55,12 +55,23 @@ type ConfigService struct {
 	metrics    PublishRecorder    // 可选，发布计数（见 ADR-0020）
 	exporter   GitExporter        // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
 	reversible ReversibleRecorder // 可选，发布时同事务记可逆账目（FR-116，未注入即不可撤回）
+	approval   *ApprovalService
+	pending    *repository.ConfigPendingChangeRepository
+	cipher     *secret.Cipher
+	gray       *ConfigGrayService
 }
 
 // NewConfigService 构造服务。
 func NewConfigService(db *gorm.DB, configRepo *repository.ConfigItemRepository, revRepo *repository.ConfigRevisionRepository, auditRepo *repository.AuditLogRepository) *ConfigService {
-	return &ConfigService{db: db, configRepo: configRepo, revRepo: revRepo, auditRepo: auditRepo}
+	return &ConfigService{db: db, configRepo: configRepo, revRepo: revRepo, auditRepo: auditRepo, pending: repository.NewConfigPendingChangeRepository(db)}
 }
+
+// SetApprovalService 注入统一审批核心；危险配置发布与回滚只能由审批执行器应用。
+func (s *ConfigService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// SetPendingChangeCipher 注入待审批配置内容的专用加密器。
+func (s *ConfigService) SetPendingChangeCipher(cipher *secret.Cipher) { s.cipher = cipher }
+func (s *ConfigService) SetGrayService(gray *ConfigGrayService)       { s.gray = gray }
 
 // SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
 func (s *ConfigService) SetNotifier(n *ChangeNotifier) {
@@ -197,10 +208,7 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 
 // Publish 发布配置新版本（version+1）。
 func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP string) (*model.ConfigItem, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	return s.publish(id, content, operator, comment, clientIP, true)
+	return nil, apperr.ErrOperationRequiresApproval
 }
 
 func (s *ConfigService) publish(id uint, content, operator, comment, clientIP string, retryRollback bool) (*model.ConfigItem, error) {
@@ -279,47 +287,7 @@ func (s *ConfigService) shouldRetryAfterRollback(id uint, staleVersion int64) (b
 
 // Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。
 func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.ConfigItem, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	item, err := s.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	target, err := s.revRepo.FindByItemAndVersion(id, toVersion)
-	if err != nil {
-		return nil, err
-	}
-	if target == nil {
-		return nil, apperr.ErrRevisionNotFound
-	}
-	// 回滚等同于把历史版本内容作为新版本发布，需同样过发布前 schema 校验，兜底防御历史脏数据。
-	if err := validateContent(item.Format, target.Content); err != nil {
-		return nil, err
-	}
-	newVersion := item.Version + 1
-	src := target.ID
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, target.Content, target.ContentMD5, item.Sensitive, &src, operator, comment)
-		if err != nil {
-			return err
-		}
-		item.Content, item.ContentMD5, item.Version, item.CurrentRevision = target.Content, target.ContentMD5, newVersion, rev.ID
-		if err := s.configRepo.WithTx(tx).Save(item); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, item, operator, model.ActionConfigRollback,
-			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"md5":"%s"}`, newVersion, toVersion, target.ContentMD5), clientIP)
-	})
-	if err != nil {
-		// 并发回滚与发布撞同一目标 version 会撞 uk_revision_version，映射为 409 而非 500
-		return nil, mapDuplicateKey(err)
-	}
-	slog.Info("回滚配置", "id", id, "toVersion", toVersion, "newVersion", newVersion)
-	s.recordPublish()
-	s.notify(item)
-	s.exportGit(item, model.ActionConfigRollback, operator)
-	return item, nil
+	return nil, apperr.ErrOperationRequiresApproval
 }
 
 // GetInTx 在给定事务内按 id 取配置项；不存在返回 CONFIG_NOT_FOUND（撤回子系统事务内取目标用，FR-116）。
@@ -369,49 +337,19 @@ func (s *ConfigService) Notify(item *model.ConfigItem) {
 
 // Delete 软删配置项（该层从合并链脱落）。
 func (s *ConfigService) Delete(id uint, operator, _, clientIP string) error {
-	if operator == "" {
-		return apperr.ErrInvalidParam
-	}
-	item, err := s.Get(id)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.configRepo.WithTx(tx).SoftDelete(id, now); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, item, operator, model.ActionConfigDelete, `{"deleted":true}`, clientIP)
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("软删配置项", "id", id)
-	s.notify(item)
-	s.exportGit(item, model.ActionConfigDelete, operator)
-	return nil
+	return apperr.ErrForbidden
 }
 
 // BatchDelete 在一个事务内批量软删一组配置项（FR-74）：逐项软删 + 各记一条 config.delete 审计，
 // 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒长轮询并触发 git 导出。
 func (s *ConfigService) BatchDelete(ids []uint, operator, clientIP string) error {
-	return s.batchMutate(ids, operator, clientIP, model.ActionConfigDelete, `{"deleted":true}`,
-		func(tx *gorm.DB, id uint) error {
-			return s.configRepo.WithTx(tx).SoftDelete(id, time.Now().UTC())
-		})
+	return apperr.ErrForbidden
 }
 
 // BatchSetEnabled 在一个事务内批量置一组配置项的启用态（FR-74）：逐项置 enabled + 各记一条
 // config.disable / config.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
 func (s *ConfigService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
-	action := model.ActionConfigEnable
-	if !enabled {
-		action = model.ActionConfigDisable
-	}
-	return s.batchMutate(ids, operator, clientIP, action, fmt.Sprintf(`{"enabled":%t}`, enabled),
-		func(tx *gorm.DB, id uint) error {
-			return s.configRepo.WithTx(tx).SetEnabled(id, enabled)
-		})
+	return apperr.ErrForbidden
 }
 
 // dedupIDs 去重保序返回 id 集合：批量端点据去重后数量判存在性，避免重复 id 绕过 404 校验。

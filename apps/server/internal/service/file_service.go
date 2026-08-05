@@ -16,6 +16,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/merge"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/secret"
 )
 
 // MaxFileContentBytes 是单个托管文件内容大小上限（1MB）。
@@ -94,11 +95,14 @@ type FileService struct {
 	notifier   *ChangeNotifier    // 可选，事务提交后唤醒受影响的文件长轮询
 	exporter   GitExporter        // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
 	reversible ReversibleRecorder // 可选，下发时同事务记可逆账目（FR-116，未注入即不可撤回）
+	approval   *ApprovalService
+	pending    *repository.FilePendingChangeRepository
+	cipher     *secret.Cipher
 }
 
 // NewFileService 构造服务。
 func NewFileService(db *gorm.DB, fileRepo *repository.FileObjectRepository, revRepo *repository.FileRevisionRepository, auditRepo *repository.AuditLogRepository) *FileService {
-	return &FileService{db: db, fileRepo: fileRepo, revRepo: revRepo, auditRepo: auditRepo}
+	return &FileService{db: db, fileRepo: fileRepo, revRepo: revRepo, auditRepo: auditRepo, pending: repository.NewFilePendingChangeRepository(db)}
 }
 
 // SetNotifier 注入长轮询唤醒器（启动时装配；未注入则不唤醒）。
@@ -160,6 +164,10 @@ func (s *FileService) Get(id uint) (*model.FileObject, error) {
 
 // Create 新建文件对象并首次发布（version=1）。
 func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *FileService) applyCreate(p CreateFileParams) (*model.FileObject, error) {
 	if p.Namespace == "" || p.Operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -220,6 +228,10 @@ func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
 // 复用通道B 整文件覆盖语义。全部文件在同一事务内原子完成 + 一条 file.import 审计，提交成功后按 scope 唤醒一次。
 // ScopeLevel 空则默认 group（FR-38 正向导入兼容）；FR-39 反向抓取可落 group / server 层。
 func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *FileService) applyImport(p ImportFilesParams) (*ImportResult, error) {
 	if p.Namespace == "" || p.Operator == "" || len(p.Files) == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -317,6 +329,10 @@ func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
 
 // Publish 发布文件新版本（version+1）。
 func (s *FileService) Publish(id uint, content, operator, comment, clientIP string) (*model.FileObject, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *FileService) applyPublish(id uint, content, operator, comment, clientIP string) (*model.FileObject, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -357,6 +373,10 @@ func (s *FileService) Publish(id uint, content, operator, comment, clientIP stri
 
 // Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。
 func (s *FileService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileObject, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *FileService) applyRollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileObject, error) {
 	if operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -442,6 +462,10 @@ func (s *FileService) Notify(obj *model.FileObject) {
 
 // Delete 软删文件对象（该层从覆盖链脱落，下游 agent 据 manifest 比对会删该 path 的镜像）。
 func (s *FileService) Delete(id uint, operator, _, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+func (s *FileService) applyDelete(id uint, operator, _ string, clientIP string) error {
 	if operator == "" {
 		return apperr.ErrInvalidParam
 	}
@@ -468,6 +492,10 @@ func (s *FileService) Delete(id uint, operator, _, clientIP string) error {
 // BatchDelete 在一个事务内批量软删一组文件对象（FR-74）：逐项软删 + 各记一条 file.delete 审计，
 // 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒文件长轮询并触发 git 导出。
 func (s *FileService) BatchDelete(ids []uint, operator, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+func (s *FileService) applyBatchDelete(ids []uint, operator, clientIP string) error {
 	return s.batchMutate(ids, operator, clientIP, model.ActionFileDelete, `{"deleted":true}`,
 		func(tx *gorm.DB, id uint) error {
 			return s.fileRepo.WithTx(tx).SoftDelete(id, time.Now().UTC())
@@ -477,6 +505,10 @@ func (s *FileService) BatchDelete(ids []uint, operator, clientIP string) error {
 // BatchSetEnabled 在一个事务内批量置一组文件对象的启用态（FR-74）：逐项置 enabled + 各记一条
 // file.disable / file.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
 func (s *FileService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+func (s *FileService) applyBatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
 	action := model.ActionFileEnable
 	if !enabled {
 		action = model.ActionFileDisable

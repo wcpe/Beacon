@@ -506,6 +506,12 @@ func loadZoneRegionIndex(db *gorm.DB, zoneIDs []uint) (map[uint]model.Zone, map[
 // 复用文件资产安全通道（敏感路径 403 / agent 离线 504 / 查看审计）；is_text=false 直接 binary、不取内容。
 func (s *DeliveryDiffService) FileDiff(ctx context.Context, orderID, itemID uint,
 	serverIDParam, reason, operator, clientIP string) (*ChangeFileDiffView, error) {
+	return nil, apperr.ErrOperationRequiresApproval
+}
+
+// applyFileDiff 仅供已获批准的受控结果路径读取文件内容。
+func (s *DeliveryDiffService) applyFileDiff(ctx context.Context, orderID, itemID uint,
+	serverIDParam, reason, operator, clientIP string) (*ChangeFileDiffView, error) {
 	order, item, err := s.requireFileDiffItem(orderID, itemID)
 	if err != nil {
 		return nil, err
@@ -679,7 +685,7 @@ func (s *DeliveryDiffService) fetchFileDiffContents(ctx context.Context, facts *
 		if facts.srcAsset == nil {
 			return apperr.ErrAssetNotFound // 源快照已无此文件（组单后漂移），如实报缺
 		}
-		result, err := s.preview.Preview(ctx, PreviewParams{
+		result, err := s.preview.applyPreview(ctx, PreviewParams{
 			ServerID: facts.sourceID, Path: facts.path, Reason: reason, Operator: operator, ClientIP: clientIP,
 		})
 		if err != nil {
@@ -694,7 +700,7 @@ func (s *DeliveryDiffService) fetchFileDiffContents(ctx context.Context, facts *
 		view.Truncated = view.Truncated || result.Truncated
 	}
 	if facts.action != model.ChangeItemActionAdd && facts.chosen != "" && facts.chosenAsset != nil {
-		result, err := s.preview.Preview(ctx, PreviewParams{
+		result, err := s.preview.applyPreview(ctx, PreviewParams{
 			ServerID: facts.chosen, Path: facts.path, Reason: reason, Operator: operator, ClientIP: clientIP,
 		})
 		if err != nil {

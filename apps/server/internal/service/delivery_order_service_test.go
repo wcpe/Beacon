@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
@@ -255,41 +256,43 @@ func TestChangeOrderStateMachineLegalFlow(t *testing.T) {
 	order := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, order.ID)
 
-	submitted, err := env.orders.Submit(order.ID, "ops-chen", "")
+	submitted, err := env.orders.applySubmit(order.ID, "ops-chen", "")
 	if err != nil || submitted.Status != model.ChangeOrderStatusPendingApproval || submitted.SubmittedAt == nil {
 		t.Fatalf("提交失败: %v / %+v", err, submitted)
 	}
-	approved, err := env.orders.Approve(order.ID, "看过影响面", "admin", "")
+	approved, err := env.orders.applyApprove(order.ID, "看过影响面", "admin", "")
 	if err != nil || approved.Status != model.ChangeOrderStatusApproved {
 		t.Fatalf("审批失败: %v", err)
 	}
 	if approved.ApprovedBy == nil || *approved.ApprovedBy != "admin" || approved.ApprovedAt == nil {
 		t.Fatalf("审批人 / 时间未落: %+v", approved)
 	}
-	withdrawn, err := env.orders.Withdraw(order.ID, "ops-chen", "")
-	if err != nil || withdrawn.Status != model.ChangeOrderStatusDraft {
-		t.Fatalf("撤回失败: %v", err)
+	if _, err := env.orders.Withdraw(order.ID, "ops-chen", ""); err != apperr.ErrForbidden {
+		t.Fatalf("旧撤回入口应失败关闭，实际: %v", err)
 	}
-	if withdrawn.ApprovedBy != nil || withdrawn.ApprovedAt != nil {
-		t.Fatalf("撤回应作废审批记录: %+v", withdrawn)
-	}
-	if _, err := env.orders.Submit(order.ID, "ops-chen", ""); err != nil {
-		t.Fatalf("再次提交失败: %v", err)
-	}
-	rejected, err := env.orders.Reject(order.ID, "批次太大", "admin", "")
-	if err != nil || rejected.Status != model.ChangeOrderStatusDraft {
-		t.Fatalf("驳回失败: %v", err)
-	}
-	if rejected.RejectReason == nil || *rejected.RejectReason != "批次太大" {
-		t.Fatalf("驳回原因未落: %+v", rejected)
+	if _, err := env.orders.Reject(order.ID, "批次太大", "admin", ""); err != apperr.ErrForbidden {
+		t.Fatalf("旧驳回入口应失败关闭，实际: %v", err)
 	}
 	for action, want := range map[string]int64{
-		model.ActionDeliveryOrderSubmit: 2, model.ActionDeliveryOrderApprove: 1,
-		model.ActionDeliveryOrderWithdraw: 1, model.ActionDeliveryOrderReject: 1,
+		model.ActionDeliveryOrderSubmit: 1, model.ActionDeliveryOrderApprove: 1,
 	} {
 		if got := countAudit(t, env.db, action); got != want {
 			t.Fatalf("审计 %s 应 %d 条，实际 %d", action, want, got)
 		}
+	}
+}
+
+// TestChangeOrderApproveFailsClosed 确保旧审批服务入口不能绕过统一审批执行器。
+func TestChangeOrderApproveFailsClosed(t *testing.T) {
+	env := newDeliveryTestEnv(t)
+	f := seedDeliveryFixture(t, env)
+	order := createDraftOrder(t, f)
+	seedConfigItem(t, env.db, order.ID)
+	if _, err := env.orders.applySubmit(order.ID, "ops-chen", ""); err != nil {
+		t.Fatalf("提交失败: %v", err)
+	}
+	if _, err := env.orders.Approve(order.ID, "", "api-key", ""); err != apperr.ErrForbidden {
+		t.Fatalf("旧审批入口应失败关闭，实际: %v", err)
 	}
 }
 
@@ -305,9 +308,9 @@ func TestChangeOrderStateMachineIllegalTransitions(t *testing.T) {
 	}
 	legal := map[string]map[string]bool{
 		"submit":    {model.ChangeOrderStatusDraft: true},
-		"withdraw":  {model.ChangeOrderStatusPendingApproval: true, model.ChangeOrderStatusApproved: true},
+		"withdraw":  {},
 		"approve":   {model.ChangeOrderStatusPendingApproval: true},
-		"reject":    {model.ChangeOrderStatusPendingApproval: true},
+		"reject":    {},
 		"patch":     {model.ChangeOrderStatusDraft: true, model.ChangeOrderStatusApproved: true},
 		"delete":    {model.ChangeOrderStatusDraft: true},
 		"diff-scan": {model.ChangeOrderStatusDraft: true},
@@ -315,13 +318,13 @@ func TestChangeOrderStateMachineIllegalTransitions(t *testing.T) {
 	run := func(action string, id uint) error {
 		switch action {
 		case "submit":
-			_, err := env.orders.Submit(id, "ops-chen", "")
+			_, err := env.orders.applySubmit(id, "ops-chen", "")
 			return err
 		case "withdraw":
 			_, err := env.orders.Withdraw(id, "ops-chen", "")
 			return err
 		case "approve":
-			_, err := env.orders.Approve(id, "", "admin", "")
+			_, err := env.orders.applyApprove(id, "", "admin", "")
 			return err
 		case "reject":
 			_, err := env.orders.Reject(id, "原因", "admin", "")
@@ -330,7 +333,7 @@ func TestChangeOrderStateMachineIllegalTransitions(t *testing.T) {
 			_, err := env.orders.Update(id, ChangeOrderInput{Title: strPtr("改标题")}, "ops-chen", "")
 			return err
 		case "delete":
-			return env.orders.Delete(id, "清理", "ops-chen", "")
+			return env.orders.applyDelete(id, "清理", "ops-chen", "")
 		default: // diff-scan
 			_, err := env.diff.DiffScan(id, "ops-chen", "")
 			return err
@@ -345,6 +348,12 @@ func TestChangeOrderStateMachineIllegalTransitions(t *testing.T) {
 			seedConfigItem(t, env.db, order.ID)
 			setOrderStatus(t, env.db, order.ID, status)
 			err := run(action, order.ID)
+			if action == "withdraw" || action == "reject" {
+				if err != apperr.ErrForbidden {
+					t.Fatalf("[%s@%s] 旧入口应失败关闭，实际 %v", action, status, err)
+				}
+				continue
+			}
 			ae := mustAppErr(t, err, "illegal_state", http.StatusConflict)
 			if !strings.Contains(ae.Message, status) {
 				t.Fatalf("[%s@%s] 错误信息应含当前状态，实际 %q", action, status, ae.Message)
@@ -360,7 +369,7 @@ func TestChangeOrderSubmitPreconditions(t *testing.T) {
 
 	// 无变更项 → no_items。
 	empty := createDraftOrder(t, f)
-	_ = mustAppErr(t, mustErr(env.orders.Submit(empty.ID, "ops-chen", "")), "no_items", http.StatusBadRequest)
+	_ = mustAppErr(t, mustErr(env.orders.applySubmit(empty.ID, "ops-chen", "")), "no_items", http.StatusBadRequest)
 
 	// 有项但 selector 解析出 0 目标 → no_target。
 	noTarget, err := env.orders.Create(f.nsID, ChangeOrderInput{Title: strPtr("无目标")}, "ops-chen", "")
@@ -368,7 +377,7 @@ func TestChangeOrderSubmitPreconditions(t *testing.T) {
 		t.Fatalf("建单失败: %v", err)
 	}
 	seedConfigItem(t, env.db, noTarget.ID)
-	_ = mustAppErr(t, mustErr(env.orders.Submit(noTarget.ID, "ops-chen", "")), "no_target", http.StatusBadRequest)
+	_ = mustAppErr(t, mustErr(env.orders.applySubmit(noTarget.ID, "ops-chen", "")), "no_target", http.StatusBadRequest)
 
 	// 含文件项但无模板源 → missing_source。
 	fileNoSource, err := env.orders.Create(f.nsID, ChangeOrderInput{
@@ -381,13 +390,13 @@ func TestChangeOrderSubmitPreconditions(t *testing.T) {
 	size := int64(10)
 	mustCreate(t, env.db, &model.ChangeOrderItem{OrderID: fileNoSource.ID, Kind: model.ChangeItemKindFileDiff,
 		Path: &path, Action: &action, SHA256: &sha, SizeBytes: &size})
-	_ = mustAppErr(t, mustErr(env.orders.Submit(fileNoSource.ID, "ops-chen", "")), "missing_source", http.StatusBadRequest)
+	_ = mustAppErr(t, mustErr(env.orders.applySubmit(fileNoSource.ID, "ops-chen", "")), "missing_source", http.StatusBadRequest)
 
 	// 源离线（健康视图仅目标在线）→ source_invalid。
 	offlineSrc := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, offlineSrc.ID)
 	markDeliveryOnline(env.health, f.nsID, "t-1", "t-2")
-	_ = mustAppErr(t, mustErr(env.orders.Submit(offlineSrc.ID, "ops-chen", "")), "source_invalid", http.StatusBadRequest)
+	_ = mustAppErr(t, mustErr(env.orders.applySubmit(offlineSrc.ID, "ops-chen", "")), "source_invalid", http.StatusBadRequest)
 	markDeliveryOnline(env.health, f.nsID, "src-1", "t-1", "t-2")
 
 	// 源身份未确认绑定 → source_invalid。
@@ -410,7 +419,7 @@ func TestChangeOrderSubmitPreconditions(t *testing.T) {
 		t.Fatalf("建单失败: %v", err)
 	}
 	seedConfigItem(t, env.db, unbound2.ID)
-	_ = mustAppErr(t, mustErr(env.orders.Submit(unbound2.ID, "ops-chen", "")), "source_invalid", http.StatusBadRequest)
+	_ = mustAppErr(t, mustErr(env.orders.applySubmit(unbound2.ID, "ops-chen", "")), "source_invalid", http.StatusBadRequest)
 }
 
 // TestChangeOrderApproverSeparation 审批分离：开启时创建人自批 403；关闭后放行（spec §4.7 / §8#6）。
@@ -419,15 +428,15 @@ func TestChangeOrderApproverSeparation(t *testing.T) {
 	f := seedDeliveryFixture(t, env)
 	order := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, order.ID)
-	if _, err := env.orders.Submit(order.ID, "ops-chen", ""); err != nil {
+	if _, err := env.orders.applySubmit(order.ID, "ops-chen", ""); err != nil {
 		t.Fatalf("提交失败: %v", err)
 	}
 
 	// 默认开启：创建人自批被拒。
-	_ = mustAppErr(t, mustErr(env.orders.Approve(order.ID, "", "ops-chen", "")), "approver_separation", http.StatusForbidden)
+	_ = mustAppErr(t, mustErr(env.orders.applyApprove(order.ID, "", "ops-chen", "")), "approver_separation", http.StatusForbidden)
 	// 关闭开关：创建人自批放行。
 	env.settings.separation = false
-	if _, err := env.orders.Approve(order.ID, "", "ops-chen", ""); err != nil {
+	if _, err := env.orders.applyApprove(order.ID, "", "ops-chen", ""); err != nil {
 		t.Fatalf("关闭分离后创建人自批应放行: %v", err)
 	}
 }
@@ -438,12 +447,11 @@ func TestChangeOrderWithdrawOnlyCreator(t *testing.T) {
 	f := seedDeliveryFixture(t, env)
 	order := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, order.ID)
-	if _, err := env.orders.Submit(order.ID, "ops-chen", ""); err != nil {
+	if _, err := env.orders.applySubmit(order.ID, "ops-chen", ""); err != nil {
 		t.Fatalf("提交失败: %v", err)
 	}
-	_ = mustAppErr(t, mustErr(env.orders.Withdraw(order.ID, "admin", "")), "not_creator", http.StatusForbidden)
-	if _, err := env.orders.Withdraw(order.ID, "ops-chen", ""); err != nil {
-		t.Fatalf("创建人撤回应成功: %v", err)
+	if _, err := env.orders.Withdraw(order.ID, "ops-chen", ""); err != apperr.ErrForbidden {
+		t.Fatalf("旧撤回入口应失败关闭: %v", err)
 	}
 }
 
@@ -452,7 +460,9 @@ func TestChangeOrderRejectRequiresReason(t *testing.T) {
 	env := newDeliveryTestEnv(t)
 	f := seedDeliveryFixture(t, env)
 	order := createDraftOrder(t, f)
-	_ = mustAppErr(t, mustErr(env.orders.Reject(order.ID, "  ", "admin", "")), "missing_reason", http.StatusBadRequest)
+	if _, err := env.orders.Reject(order.ID, "  ", "admin", ""); err != apperr.ErrForbidden {
+		t.Fatalf("旧驳回入口应失败关闭: %v", err)
+	}
 }
 
 // TestChangeOrderPatchApprovedRevokesApproval approved 后任何编辑自动作废审批回 draft 并入审计（spec §4.1）。
@@ -461,10 +471,10 @@ func TestChangeOrderPatchApprovedRevokesApproval(t *testing.T) {
 	f := seedDeliveryFixture(t, env)
 	order := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, order.ID)
-	if _, err := env.orders.Submit(order.ID, "ops-chen", ""); err != nil {
+	if _, err := env.orders.applySubmit(order.ID, "ops-chen", ""); err != nil {
 		t.Fatalf("提交失败: %v", err)
 	}
-	if _, err := env.orders.Approve(order.ID, "", "admin", ""); err != nil {
+	if _, err := env.orders.applyApprove(order.ID, "", "admin", ""); err != nil {
 		t.Fatalf("审批失败: %v", err)
 	}
 
@@ -517,7 +527,7 @@ func TestChangeOrderDeleteDraftCascades(t *testing.T) {
 	order := createDraftOrder(t, f)
 	seedConfigItem(t, env.db, order.ID)
 
-	if err := env.orders.Delete(order.ID, "不再需要该草稿", "ops-chen", ""); err != nil {
+	if err := env.orders.applyDelete(order.ID, "不再需要该草稿", "ops-chen", ""); err != nil {
 		t.Fatalf("删除失败: %v", err)
 	}
 	if _, err := env.orders.Get(order.ID); err == nil {
@@ -624,12 +634,12 @@ func TestChangeOrderEventsDerivation(t *testing.T) {
 		t.Fatalf("draft 单应只有 1 条 draft 事件: %v / %+v", err, events)
 	}
 
-	// 提交 + 驳回：draft → pending_approval → 末条补 draft（与当前状态对齐）。
-	if _, err := env.orders.Submit(order.ID, "ops-chen", ""); err != nil {
+	// 提交后旧驳回入口失败关闭，事件仍保持 pending_approval。
+	if _, err := env.orders.applySubmit(order.ID, "ops-chen", ""); err != nil {
 		t.Fatalf("提交失败: %v", err)
 	}
-	if _, err := env.orders.Reject(order.ID, "重排批次", "admin", ""); err != nil {
-		t.Fatalf("驳回失败: %v", err)
+	if _, err := env.orders.Reject(order.ID, "重排批次", "admin", ""); err != apperr.ErrForbidden {
+		t.Fatalf("旧驳回入口应失败关闭: %v", err)
 	}
 	events, err = env.orders.Events(order.ID)
 	if err != nil {
@@ -642,7 +652,7 @@ func TestChangeOrderEventsDerivation(t *testing.T) {
 		}
 		statuses = append(statuses, evt.Status)
 	}
-	want := []string{model.ChangeOrderStatusDraft, model.ChangeOrderStatusPendingApproval, model.ChangeOrderStatusDraft}
+	want := []string{model.ChangeOrderStatusDraft, model.ChangeOrderStatusPendingApproval}
 	if strings.Join(statuses, ",") != strings.Join(want, ",") {
 		t.Fatalf("事件序列应 %v，实际 %v", want, statuses)
 	}

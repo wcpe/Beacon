@@ -73,7 +73,7 @@ func TestConfigTimelineMultiLayerSortedDesc(t *testing.T) {
 	mkConfig(t, cfg, "area1", model.ScopeZone, "zoneA", "mysql.yml", "nest:\n  a: 1\n", "carol")
 	mkConfig(t, cfg, "area1", model.ScopeServer, "lobby-1", "mysql.yml", "extra: y\n", "dave")
 	// global 层再发一版，制造该项两条历史
-	if _, err := cfg.Publish(g.ID, "pool: 9\n", "eve", "调大池", ""); err != nil {
+	if _, err := ApplyConfigPublishForTest(cfg, g.ID, "pool: 9\n", "eve", "调大池", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
 
@@ -144,10 +144,10 @@ func TestConfigTimelineEmptyWhenNoConfig(t *testing.T) {
 func TestConfigTimelineIncludesRollback(t *testing.T) {
 	cfg, eff, _ := newTimelineTestStack(t)
 	g := mkConfig(t, cfg, model.GlobalGroupCode, model.ScopeGlobal, "", "mysql.yml", "pool: 1\n", "alice")
-	if _, err := cfg.Publish(g.ID, "pool: 2\n", "bob", "v2", ""); err != nil {
+	if _, err := ApplyConfigPublishForTest(cfg, g.ID, "pool: 2\n", "bob", "v2", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
-	if _, err := cfg.Rollback(g.ID, 1, "carol", "回退到 v1", ""); err != nil {
+	if _, err := ApplyConfigRollbackForTest(cfg, g.ID, 1, "carol", "回退到 v1", ""); err != nil {
 		t.Fatalf("回滚失败: %v", err)
 	}
 

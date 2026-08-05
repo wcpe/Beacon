@@ -60,7 +60,6 @@ func TestPlanBatchCounts(t *testing.T) {
 		})
 	}
 }
-
 // TestPlanBatchMembersStable 批成员按字典序稳定切分（同输入必同输出，可复现）。
 func TestPlanBatchMembersStable(t *testing.T) {
 	ids := []string{"a", "b", "c", "d", "e"}
@@ -226,7 +225,7 @@ func TestOrchestratorPushOnlyHappyPath(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
 
-	if _, err := h.orch.Start(order.ID, "上线大厅", "ops", "10.0.0.1"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "上线大厅", "ops", "10.0.0.1"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	got := h.reload(order.ID)
@@ -260,7 +259,7 @@ func TestOrchestratorPushOnlyHappyPath(t *testing.T) {
 	}
 
 	// 末批确认 → 单 completed。
-	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "10.0.0.1"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 1, "ops", "10.0.0.1"); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
@@ -277,7 +276,7 @@ func TestOrchestratorMultiBatchGate(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{50, 50}, model.ActivationMethodPushOnly, 0) // 2 目标切 2 批各 1
 
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	batches, _ := repository.NewChangeOrderRepository(h.env.db).ListBatches(order.ID)
@@ -298,7 +297,7 @@ func TestOrchestratorMultiBatchGate(t *testing.T) {
 	if batches[0].Status != model.ChangeBatchStatusAwaitingConfirm || batches[1].Status != model.ChangeBatchStatusPending {
 		t.Fatalf("首批 awaiting、次批 pending: %+v", batches)
 	}
-	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
 		t.Fatalf("确认首批失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolling {
@@ -306,7 +305,7 @@ func TestOrchestratorMultiBatchGate(t *testing.T) {
 	}
 
 	driveBatchToAwaitConfirm()
-	if _, err := h.orch.ConfirmBatch(order.ID, 2, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 2, "ops", "ip"); err != nil {
 		t.Fatalf("确认末批失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
@@ -319,7 +318,7 @@ func TestOrchestratorCircuitBreakFailureRate(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 50) // 阈值 50%
 
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick() // 下发 2 目标 pushing
@@ -342,7 +341,7 @@ func TestOrchestratorCircuitBreakFailureRate(t *testing.T) {
 	}
 
 	// retry_failed：重置失败目标重推。
-	if _, err := h.orch.Resume(order.ID, resumeModeRetryFailed, "已修复落盘", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyResume(order.ID, resumeModeRetryFailed, "已修复落盘", "ops", "ip"); err != nil {
 		t.Fatalf("继续失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolling {
@@ -356,7 +355,7 @@ func TestOrchestratorCircuitBreakFailureRate(t *testing.T) {
 	h.tick()
 	h.advance(6 * time.Second)
 	h.tick()
-	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
@@ -368,7 +367,7 @@ func TestOrchestratorCircuitBreakFailureRate(t *testing.T) {
 func TestOrchestratorPauseKeepsInFlight(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick() // 下发 2 目标 pushing
@@ -390,7 +389,7 @@ func TestOrchestratorPauseKeepsInFlight(t *testing.T) {
 func TestOrchestratorCancelSkipsPending(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	// 未 tick（未下发），目标皆 pending → 终止应全部 skipped。
@@ -410,7 +409,7 @@ func TestOrchestratorCancelSkipsPending(t *testing.T) {
 func TestOrchestratorCancelRequiresReason(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	_, _ = h.orch.Start(order.ID, "", "ops", "ip")
+	_, _ = h.orch.applyStart(order.ID, "", "ops", "ip")
 	if _, err := h.orch.Cancel(order.ID, "  ", "ops", "ip"); err == nil {
 		t.Fatal("空原因终止应被拒")
 	}
@@ -461,7 +460,7 @@ func TestOrchestratorConfigScopeConflict(t *testing.T) {
 
 	// 首单：灰度 zone1 配置、点名 t-1，正常进 rolling（证明含配置项单不再被拒）。
 	first := h.createApprovedConfigOrder(t, "配置灰度A", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
-	if _, err := h.orch.Start(first, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(first, "", "ops", "ip"); err != nil {
 		t.Fatalf("含配置项单应可启动: %v", err)
 	}
 	if h.reload(first).Status != model.ChangeOrderStatusRolling {
@@ -470,7 +469,7 @@ func TestOrchestratorConfigScopeConflict(t *testing.T) {
 
 	// 次单：灰度同一 (文件, zone1)、点名 t-2（与首单目标不相交排除目标冲突），应被配置作用域冲突拒绝。
 	second := h.createApprovedConfigOrder(t, "配置灰度B", []string{"t-2"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
-	_, err := h.orch.Start(second, "", "ops", "ip")
+	_, err := h.orch.applyStart(second, "", "ops", "ip")
 	if err == nil {
 		t.Fatal("配置作用域相交应拒绝启动")
 	}
@@ -483,7 +482,7 @@ func TestOrchestratorConfigScopeConflict(t *testing.T) {
 func TestOrchestratorFileManifestSourceKind(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	target := agentauth.Identity{NamespaceID: h.f.nsID, Namespace: "prod", ServerID: "t-1", Kind: model.ServerKindBackend}
@@ -506,7 +505,7 @@ func TestOrchestratorConfigGrayRendersBlobAndManifest(t *testing.T) {
 	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
 	order := h.createApprovedConfigOrder(t, "配置灰度落盘", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
 
-	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order, "", "ops", "ip"); err != nil {
 		t.Fatalf("配置灰度单启动失败: %v", err)
 	}
 	var readyCount int64
@@ -548,7 +547,7 @@ func TestConfigArtifactOverridesSamePathFileDiff(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
 	order := h.createApprovedConfigOrder(t, "同路径配置优先", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
-	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动配置单失败: %v", err)
 	}
 	path, action, sha, size := "plugins/Gray/config.yml", model.ChangeItemActionUpdate, strings.Repeat("a", 64), int64(1)
@@ -595,7 +594,7 @@ func TestPrepareConfigBlobsCombinesPinsPerFile(t *testing.T) {
 		t.Fatalf("挂配置版本失败: %v", err)
 	}
 	setOrderStatus(t, h.env.db, detail.ID, model.ChangeOrderStatusApproved)
-	if _, err := h.orch.Start(detail.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(detail.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动配置单失败: %v", err)
 	}
 
@@ -667,7 +666,7 @@ func TestOrchestratorConfigBlobDownloadAuthorized(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	_, versionID := seedGrayConfigFile(t, h.env.db, h.f.nsID, model.ConfigScopeZone, h.f.zone1ID, "a: 1")
 	order := h.createApprovedConfigOrder(t, "配置灰度授权", []string{"t-1"}, model.ConfigScopeZone, h.f.zone1ID, versionID)
-	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order, "", "ops", "ip"); err != nil {
 		t.Fatalf("配置灰度单启动失败: %v", err)
 	}
 	// 从目标清单取渲染 config 文件项的 sha（即 agent push 阶段要下载的 blob）。
@@ -740,7 +739,7 @@ func TestOrchestratorConfigManifestPartialArtifactMissing(t *testing.T) {
 		t.Fatalf("挂配置版本失败: %v", err)
 	}
 	setOrderStatus(t, h.env.db, detail.ID, model.ChangeOrderStatusApproved)
-	if _, err := h.orch.Start(detail.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(detail.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动配置单失败: %v", err)
 	}
 	if err := h.env.db.Where("order_id = ? AND server_id = ? AND path = ?", detail.ID, "t-1", "plugins/Other/config.yml").
@@ -765,7 +764,7 @@ func TestOrchestratorConfigSwitchOnLastBatch(t *testing.T) {
 		"activation_method": model.ActivationMethodPushOnly, "observe_window_sec": 5, "batch_sizes": encodeBatchSizes([]int{100}),
 	})
 
-	if _, err := h.orch.Start(order, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -773,7 +772,7 @@ func TestOrchestratorConfigSwitchOnLastBatch(t *testing.T) {
 	h.tick()
 	h.advance(6 * time.Second)
 	h.tick()
-	if _, err := h.orch.ConfirmBatch(order, 1, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order, 1, "ops", "ip"); err != nil {
 		t.Fatalf("确认末批失败: %v", err)
 	}
 	if h.reload(order).Status != model.ChangeOrderStatusCompleted {
@@ -793,12 +792,12 @@ func TestOrchestratorConfigSwitchOnLastBatch(t *testing.T) {
 func TestOrchestratorStartConflict(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	first := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Start(first.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(first.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("首单启动失败: %v", err)
 	}
 	// 第二单目标集（默认夹具同为 t-1/t-2）与首单相交 → 冲突。
 	second := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	_, err := h.orch.Start(second.ID, "", "ops", "ip")
+	_, err := h.orch.applyStart(second.ID, "", "ops", "ip")
 	if err == nil {
 		t.Fatal("目标相交应拒绝启动")
 	}
@@ -822,7 +821,7 @@ func TestOrchestratorPayloadPrepUploadToReady(t *testing.T) {
 		Updates(map[string]any{"status": model.ChangeOrderStatusApproved, "batch_sizes": encodeBatchSizes([]int{100}),
 			"activation_method": model.ActivationMethodPushOnly})
 
-	if _, err := h.orch.Start(detail.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(detail.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	got := h.reload(detail.ID)
@@ -856,7 +855,7 @@ func TestOrchestratorPayloadPrepUploadToReady(t *testing.T) {
 func TestOrchestratorRecoveryAfterRestart(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick() // 下发 pushing
@@ -877,7 +876,7 @@ func prepareHotReloadActivatingOrder(t *testing.T) (*orchestratorHarness, *model
 	t.Helper()
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodHotReload, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -948,7 +947,7 @@ func TestOrchestratorHotReloadAckStateMachine(t *testing.T) {
 func TestOrchestratorRestartHeartbeatReturnActivates(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
-	if _, err := h.orch.Start(order.ID, "重启大厅", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "重启大厅", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick() // 下发 2 目标 pushing
@@ -981,7 +980,7 @@ func TestOrchestratorRestartHeartbeatReturnActivates(t *testing.T) {
 	// 观察窗到点 → awaiting_confirm → 确认 → completed。
 	h.advance(6 * time.Second)
 	h.tick()
-	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusCompleted {
@@ -994,7 +993,7 @@ func TestOrchestratorRestartHeartbeatReturnActivates(t *testing.T) {
 func TestOrchestratorRestartOnlyPostStartHeartbeat(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -1025,7 +1024,7 @@ func TestOrchestratorRestartOnlyPostStartHeartbeat(t *testing.T) {
 func TestOrchestratorRestartTimeoutFailsAndBreaks(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 50) // 失败率阈值 50%
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -1054,7 +1053,7 @@ func TestOrchestratorRestartTimeoutFailsAndBreaks(t *testing.T) {
 func TestOrchestratorRestartAckFailedFailsImmediately(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -1092,7 +1091,7 @@ func (h *orchestratorHarness) restartWarmupObserveOrder(t *testing.T) *model.Cha
 	if err := h.env.db.Model(&model.ChangeOrder{}).Where("id = ?", order.ID).Update("observe_window_sec", 200).Error; err != nil {
 		t.Fatalf("放长观察窗失败: %v", err)
 	}
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -1158,7 +1157,7 @@ func TestOrchestratorRestartHealthBreaksAfterWarmup(t *testing.T) {
 func (h *orchestratorHarness) completedPushOnlyOrder(t *testing.T) *model.ChangeOrder {
 	t.Helper()
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -1166,7 +1165,7 @@ func (h *orchestratorHarness) completedPushOnlyOrder(t *testing.T) *model.Change
 	h.tick() // pushed→activated（push_only），批 observing
 	h.advance(6 * time.Second)
 	h.tick() // observing→awaiting_confirm
-	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	return h.reload(order.ID)
@@ -1176,7 +1175,7 @@ func (h *orchestratorHarness) completedPushOnlyOrder(t *testing.T) *model.Change
 func (h *orchestratorHarness) completedRestartOrder(t *testing.T) *model.ChangeOrder {
 	t.Helper()
 	order := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodRestart, 0)
-	if _, err := h.orch.Start(order.ID, "", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyStart(order.ID, "", "ops", "ip"); err != nil {
 		t.Fatalf("启动失败: %v", err)
 	}
 	h.tick()
@@ -1188,7 +1187,7 @@ func (h *orchestratorHarness) completedRestartOrder(t *testing.T) *model.ChangeO
 	h.tick() // 心跳回归 → activated，批 observing
 	h.advance(6 * time.Second)
 	h.tick() // observing→awaiting_confirm
-	if _, err := h.orch.ConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyConfirmBatch(order.ID, 1, "ops", "ip"); err != nil {
 		t.Fatalf("确认失败: %v", err)
 	}
 	return h.reload(order.ID)
@@ -1210,7 +1209,7 @@ func TestOrchestratorRollbackPushOnlyHappyPath(t *testing.T) {
 	if order.Status != model.ChangeOrderStatusCompleted {
 		t.Fatalf("前置应 completed: %s", order.Status)
 	}
-	if _, err := h.orch.Rollback(order.ID, "回退变更", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyRollback(order.ID, "回退变更", "ops", "ip"); err != nil {
 		t.Fatalf("回滚失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRollingBack {
@@ -1231,7 +1230,7 @@ func TestOrchestratorRollbackPushOnlyHappyPath(t *testing.T) {
 func TestOrchestratorRollbackRestartHeartbeatReturn(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.completedRestartOrder(t)
-	if _, err := h.orch.Rollback(order.ID, "回退", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyRollback(order.ID, "回退", "ops", "ip"); err != nil {
 		t.Fatalf("回滚失败: %v", err)
 	}
 	h.tick() // 下发回滚
@@ -1254,11 +1253,11 @@ func TestOrchestratorRollbackRestartHeartbeatReturn(t *testing.T) {
 func TestOrchestratorRollbackRejects(t *testing.T) {
 	h := newOrchestratorHarness(t)
 	order := h.completedPushOnlyOrder(t)
-	if _, err := h.orch.Rollback(order.ID, "  ", "ops", "ip"); err == nil {
+	if _, err := h.orch.applyRollback(order.ID, "  ", "ops", "ip"); err == nil {
 		t.Fatal("空原因应拒绝")
 	}
 	draft := h.createApprovedFileOrder(t, []int{100}, model.ActivationMethodPushOnly, 0)
-	if _, err := h.orch.Rollback(draft.ID, "回退", "ops", "ip"); err == nil {
+	if _, err := h.orch.applyRollback(draft.ID, "回退", "ops", "ip"); err == nil {
 		t.Fatal("approved（未曾推送）单回滚应拒绝非法态")
 	}
 }
@@ -1273,7 +1272,7 @@ func TestOrchestratorRollbackBackupMissingFails(t *testing.T) {
 		Update("backup_present", false).Error; err != nil {
 		t.Fatalf("置备份缺失失败: %v", err)
 	}
-	if _, err := h.orch.Rollback(order.ID, "回退", "ops", "ip"); err != nil {
+	if _, err := h.orch.applyRollback(order.ID, "回退", "ops", "ip"); err != nil {
 		t.Fatalf("回滚失败: %v", err)
 	}
 	h.tick()
@@ -1294,7 +1293,7 @@ func TestOrchestratorRollbackBackupMissingFails(t *testing.T) {
 		t.Fatalf("有 failed 应停 rolling_back 待人工: %s", got.Status)
 	}
 	// 人工结束回滚。
-	if _, err := h.orch.FinishRollback(order.ID, "ops", "ip"); err != nil {
+	if _, err := h.orch.applyFinishRollback(order.ID, "ops", "ip"); err != nil {
 		t.Fatalf("结束回滚失败: %v", err)
 	}
 	if got := h.reload(order.ID); got.Status != model.ChangeOrderStatusRolledBack {

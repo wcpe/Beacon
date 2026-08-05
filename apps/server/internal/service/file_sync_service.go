@@ -117,6 +117,9 @@ func (s *FileSyncService) CreateTask(p CreateFileSyncTaskParams) (*model.FileSyn
 		p.BatchSize <= 0 || p.IntervalSec < 0 || p.FailureThresholdPercent < 0 || p.FailureThresholdPercent > 100 {
 		return nil, apperr.ErrInvalidParam
 	}
+	if err := ensureNamespaceRuntimeActiveByCode(s.db, p.Namespace); err != nil {
+		return nil, err
+	}
 	directory, err := NormalizeFileSyncDirectory(p.Directory)
 	if err != nil {
 		return nil, err
@@ -179,6 +182,9 @@ func (s *FileSyncService) PlanTargets(taskID uint, targetServerIDs []string, ope
 	}
 	task, err := s.requireTask(taskID)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensureFileSyncTaskRuntimeActive(s.db, task); err != nil {
 		return nil, err
 	}
 	if task.Status != model.FileSyncTaskStatusScanning && task.Status != model.FileSyncTaskStatusCached &&
@@ -493,6 +499,13 @@ func (s *FileSyncService) requireOnlineBukkit(namespace, serverID string, invali
 		return invalid
 	}
 	return nil
+}
+
+func ensureFileSyncTaskRuntimeActive(db *gorm.DB, task *model.FileSyncTask) error {
+	if task == nil {
+		return apperr.ErrFileSyncTaskNotFound
+	}
+	return ensureNamespaceRuntimeActiveByCode(db, task.NamespaceCode)
 }
 
 func eventFromLog(log model.FileSyncLog) FileSyncEvent {

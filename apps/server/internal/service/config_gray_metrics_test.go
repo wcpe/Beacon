@@ -55,18 +55,17 @@ func TestGrayPromoteIncrementsPublishCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建配置项失败: %v", err)
 	}
-	if _, err := graySvc.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(graySvc, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
 
-	if _, err := graySvc.Promote(item.ID, "bob", "晋升", ""); err != nil {
+	if _, err := service.ApplyGrayPromoteForTest(graySvc, item.ID, "bob", "晋升", ""); err != nil {
 		t.Fatalf("晋升失败: %v", err)
 	}
 	if rec.count != 1 {
 		t.Fatalf("promote 应自增发布计数 1 次，实际 %d", rec.count)
 	}
 }
-
 // TestGrayPromoteWithoutMetricsNoPanic 未注入计数器时 promote 不应 panic（可选注入语义）。
 func TestGrayPromoteWithoutMetricsNoPanic(t *testing.T) {
 	cfgSvc, graySvc := graySqliteStack(t)
@@ -79,10 +78,10 @@ func TestGrayPromoteWithoutMetricsNoPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建配置项失败: %v", err)
 	}
-	if _, err := graySvc.Publish(item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
+	if _, err := service.ApplyGrayPublishForTest(graySvc, item.ID, "v: gray\n", []string{"s1"}, "alice", "灰度", ""); err != nil {
 		t.Fatalf("发布灰度失败: %v", err)
 	}
-	if _, err := graySvc.Promote(item.ID, "bob", "晋升", ""); err != nil {
+	if _, err := service.ApplyGrayPromoteForTest(graySvc, item.ID, "bob", "晋升", ""); err != nil {
 		t.Fatalf("未注入计数器时晋升应正常: %v", err)
 	}
 }

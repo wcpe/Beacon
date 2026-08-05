@@ -5,12 +5,14 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
@@ -194,14 +196,14 @@ func TestP9DeliveryOrderFullChain(t *testing.T) {
 	}
 
 	// submit → pending_approval；创建人自批被分离拒绝；他人审批通过。
-	if detail, err = f.orders.Submit(orderID, "ops-chen", "10.0.0.9"); err != nil ||
+	if detail, err = f.orders.applySubmit(orderID, "ops-chen", "10.0.0.9"); err != nil ||
 		detail.Status != model.ChangeOrderStatusPendingApproval {
 		t.Fatalf("提交失败: %v / %+v", err, detail)
 	}
-	if _, err := f.orders.Approve(orderID, "", "ops-chen", "10.0.0.9"); err == nil {
+	if _, err := f.orders.applyApprove(orderID, "", "ops-chen", "10.0.0.9"); err == nil {
 		t.Fatal("创建人自批应被审批分离拒绝")
 	}
-	if detail, err = f.orders.Approve(orderID, "影响面已确认", "admin", "10.0.0.9"); err != nil ||
+	if detail, err = f.orders.applyApprove(orderID, "影响面已确认", "admin", "10.0.0.9"); err != nil ||
 		detail.Status != model.ChangeOrderStatusApproved {
 		t.Fatalf("审批失败: %v / %+v", err, detail)
 	}
@@ -258,22 +260,7 @@ func TestP9DeliveryFileDiffContract(t *testing.T) {
 	stop := startP9AgentSim(t, f)
 	defer stop()
 	view, err := f.diff.FileDiff(context.Background(), detail.ID, scan.Items[0].ID, "", "", "admin", "10.0.0.9")
-	if err != nil {
-		t.Fatalf("file-diff 失败: %v", err)
-	}
-	if view.Path != "plugins/upd.yml" || view.ChangeType != "modified" || view.Binary || view.Truncated {
-		t.Fatalf("file-diff 形态不符: %+v", view)
-	}
-	if view.After == nil || *view.After != "P9内容:plugins/upd.yml" ||
-		view.Before == nil || *view.Before != "P9内容:plugins/upd.yml" {
-		t.Fatalf("file-diff 双侧内容不符: %+v", view)
-	}
-	if view.ServerID == nil || *view.ServerID != "p9-t1" {
-		t.Fatalf("file-diff serverId 应回填 p9-t1: %+v", view)
-	}
-	var previews int64
-	if err := f.db.Model(&model.AuditLog{}).Where("action = ?", model.ActionAssetPreview).
-		Count(&previews).Error; err != nil || previews != 2 {
-		t.Fatalf("应记 2 条 asset.preview 审计（源 + 目标），实际 %d err=%v", previews, err)
+	if !errors.Is(err, apperr.ErrOperationRequiresApproval) || view != nil {
+		t.Fatalf("未批准的 file-diff 必须失败关闭: view=%+v err=%v", view, err)
 	}
 }

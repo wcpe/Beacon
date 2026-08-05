@@ -121,6 +121,7 @@ type overrideSetPublishRequest struct {
 	TargetRoot    string `json:"targetRoot"`
 	ReloadCommand string `json:"reloadCommand"`
 	Comment       string `json:"comment"`
+	Reason        string `json:"reason"`
 }
 
 // Publish 处理 PUT /admin/v1/override-sets/{id}。
@@ -135,15 +136,15 @@ func (h *OverrideSetHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	s, err := h.svc.Publish(id, service.PublishOverrideSetParams{
+	ticket, err := h.svc.RequestPublish(id, service.PublishOverrideSetParams{
 		TargetRoot: req.TargetRoot, ReloadCommand: req.ReloadCommand,
 		Operator: auth.Operator(r.Context()), Comment: req.Comment, ClientIP: clientIP(r),
-	})
+	}, req.Reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": s.Version, "targetRoot": s.TargetRoot})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Delete 处理 DELETE /admin/v1/override-sets/{id}（软删）。
@@ -153,11 +154,12 @@ func (h *OverrideSetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	if err := h.svc.Delete(id, auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r)); err != nil {
+	ticket, err := h.svc.RequestDelete(id, r.URL.Query().Get("reason"), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ListRevisions 处理 GET /admin/v1/override-sets/{id}/revisions。
@@ -186,6 +188,7 @@ func (h *OverrideSetHandler) ListRevisions(w http.ResponseWriter, r *http.Reques
 type overrideSetRollbackRequest struct {
 	ToVersion int64  `json:"toVersion"`
 	Comment   string `json:"comment"`
+	Reason    string `json:"reason"`
 }
 
 // Rollback 处理 POST /admin/v1/override-sets/{id}/rollback。
@@ -200,12 +203,12 @@ func (h *OverrideSetHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	s, err := h.svc.Rollback(id, req.ToVersion, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestRollback(id, req.ToVersion, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), req.Comment, clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": s.Version, "targetRoot": s.TargetRoot})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // DryRun 处理 GET /admin/v1/override-sets/{id}/dry-run（只读预览，不落任何东西）。

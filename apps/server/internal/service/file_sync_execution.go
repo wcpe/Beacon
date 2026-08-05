@@ -69,6 +69,9 @@ func (s *FileSyncService) ReceiveSourceManifest(commandID uint, files []FileSync
 	if err != nil {
 		return err
 	}
+	if err := ensureFileSyncTaskRuntimeActive(s.db, task); err != nil {
+		return err
+	}
 	if task.SourceCommandID != cmd.ID || model.IsFileSyncTaskTerminal(task.Status) {
 		return apperr.ErrFileSyncTaskState
 	}
@@ -307,6 +310,9 @@ func firstPendingFileSyncBatch(batches []model.FileSyncBatch) *model.FileSyncBat
 }
 
 func (s *FileSyncService) dispatchBatch(task *model.FileSyncTask, batch *model.FileSyncBatch) error {
+	if err := ensureFileSyncTaskRuntimeActive(s.db, task); err != nil {
+		return err
+	}
 	files, err := s.repo.ListFiles(task.ID)
 	if err != nil {
 		return err
@@ -383,6 +389,9 @@ func (s *FileSyncService) ReceiveTargetResult(commandID uint, result FileSyncTar
 	}
 	task, target, err := s.requireTargetResultScope(cmd, payload)
 	if err != nil {
+		return err
+	}
+	if err := ensureFileSyncTaskRuntimeActive(s.db, task); err != nil {
 		return err
 	}
 	log, advance, err := s.finishTargetResult(cmd, task, target, result)

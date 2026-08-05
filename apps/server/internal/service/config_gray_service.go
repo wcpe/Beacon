@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -16,13 +15,6 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
-
-// errGrayVersionConflict 是灰度发布乐观锁 CAS 未命中的内部哨兵：触发事务回滚 + 重读重试，不外泄。
-var errGrayVersionConflict = errors.New("灰度发布乐观锁版本冲突，需重试")
-
-// maxGrayPublishRetries 是灰度发布乐观锁 CAS 的最大重试次数。
-// 并发 N 路时每轮至少一路 CAS 命中并提交，故 N-1 次内必成功；取 16 足够覆盖现实管理员竞态。
-const maxGrayPublishRetries = 16
 
 // encodeCohort 把 serverId 名单规整（去空白 / 去空串 / 去重 / 字典序）后序列化为 JSON 文本。
 // 名单为空（全空白 / nil）视为非法（无意义灰度），返回 ErrEmptyCohort。
@@ -117,136 +109,84 @@ func (s *ConfigGrayService) List(ns string) ([]model.ConfigGray, error) {
 	return s.grayRepo.ListActive(ns)
 }
 
-// Publish 对某 config_item 发布一条灰度（指定灰度内容 + cohort 名单）。
-// 内容过既有发布前校验（格式 / 大小 / 可解析 / FR-27 schema）；sensitive 与所属 item 镜像。
-// 同一 item 已有活跃灰度则先软删旧的再建新的（保持至多一个活跃灰度的唯一约束）。
-//
-// 重发即覆盖语义：并发对同一 item 发布灰度时，以 config_item.gray_version 为基准做乐观锁 CAS——
-// 抢到的那路才进「先软删后建」段，未抢到的重读版本重试。CAS 在 item 行上串行化（单行锁、无环），
-// 从源头消除「先软删后建」在 uk_gray_item 上的死锁；各路重试后最终都成功、恰留一条活跃灰度。
+// Publish 是已废弃的公开副作用入口；灰度发布只能由审批执行器调用私有事务方法。
 func (s *ConfigGrayService) Publish(itemID uint, content string, cohort []string, operator, comment, clientIP string) (*model.ConfigGray, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	item, err := s.configSvc.Get(itemID)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateContent(item.Format, content); err != nil {
-		return nil, err
-	}
-	encodedCohort, err := encodeCohort(cohort)
-	if err != nil {
-		return nil, err
-	}
-	md5 := merge.MD5Hex(content)
-
-	var gray *model.ConfigGray
-	for attempt := 0; attempt <= maxGrayPublishRetries; attempt++ {
-		// 每次尝试重读最新 gray_version 作为 CAS 基准
-		cur, e := s.configRepo.FindByID(item.ID)
-		if e != nil {
-			return nil, e
-		}
-		if cur == nil {
-			return nil, apperr.ErrConfigNotFound
-		}
-		expected := cur.GrayVersion
-
-		e = s.db.Transaction(func(tx *gorm.DB) error {
-			ok, te := s.configRepo.WithTx(tx).BumpGrayVersion(item.ID, expected)
-			if te != nil {
-				return te
-			}
-			if !ok {
-				// 版本被并发灰度发布改动，回滚后重读重试
-				return errGrayVersionConflict
-			}
-			// CAS 已串行化本段：先软删同 item 旧活跃灰度，再建新的（重发即覆盖）
-			now := time.Now().UTC()
-			g := &model.ConfigGray{
-				ConfigItemID: item.ID, NamespaceCode: item.NamespaceCode, Format: item.Format,
-				Content: content, ContentMD5: md5, Cohort: encodedCohort, Sensitive: item.Sensitive,
-				Comment: comment, Operator: operator,
-			}
-			if _, te := s.grayRepo.WithTx(tx).SoftDelete(item.ID, now); te != nil {
-				return te
-			}
-			if te := s.grayRepo.WithTx(tx).Create(g); te != nil {
-				return te
-			}
-			if te := s.writeGrayAudit(tx, item, operator, model.ActionConfigGrayPublish,
-				fmt.Sprintf(`{"md5":"%s","cohortSize":%d}`, md5, len(decodeMembers(encodedCohort))), clientIP); te != nil {
-				return te
-			}
-			gray = g
-			return nil
-		})
-		if e == nil {
-			slog.Info("发布配置灰度", "itemId", item.ID, "dataId", item.DataID, "cohortSize", len(decodeMembers(encodedCohort)))
-			s.notifyServers(item.NamespaceCode, encodedCohort)
-			return gray, nil
-		}
-		if !errors.Is(e, errGrayVersionConflict) {
-			return nil, e
-		}
-		// CAS 未命中：item 行锁已让重试天然错峰，无需额外退避，直接重读重试
-		slog.Debug("灰度发布乐观锁版本冲突，重读重试", "itemId", item.ID, "第几次重试", attempt+1)
-	}
-	slog.Warn("灰度发布乐观锁重试耗尽，放弃", "itemId", item.ID, "重试上限", maxGrayPublishRetries)
-	return nil, errGrayVersionConflict
+	return nil, apperr.ErrForbidden
 }
 
-// Promote 把某 item 的活跃灰度晋升为全量稳定版（version+1）并软删灰度。
-// 走既有发布路径：灰度内容作为新稳定版本发布、过校验、敏感加密、记审计、唤醒。
+// Promote 是已废弃的公开副作用入口；灰度晋升只能由审批执行器调用私有事务方法。
 func (s *ConfigGrayService) Promote(itemID uint, operator, comment, clientIP string) (*model.ConfigItem, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	item, err := s.configSvc.Get(itemID)
+	return nil, apperr.ErrForbidden
+}
+
+func (s *ConfigGrayService) applyPublishInTx(tx *gorm.DB, payload configApprovalPayload, pending configPendingPayload) (*model.ConfigGray, *model.ConfigItem, error) {
+	item, err := s.configSvc.GetInTx(tx, payload.ConfigItemID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	gray, err := s.grayRepo.FindActiveByItem(item.ID)
+	if item.Version != payload.ExpectedVersion || item.GrayVersion != payload.ExpectedGrayVersion || pending.Operator == "" || configContentHash(pending.Content) != payload.ContentSHA256 {
+		return nil, nil, apperr.ErrApprovalTargetChanged
+	}
+	if err := validateContent(item.Format, pending.Content); err != nil {
+		return nil, nil, err
+	}
+	if _, err := decodeCohort(pending.Cohort); err != nil {
+		return nil, nil, apperr.ErrApprovalTargetChanged
+	}
+	ok, err := s.configRepo.WithTx(tx).BumpGrayVersion(item.ID, payload.ExpectedGrayVersion)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if gray == nil {
-		return nil, apperr.ErrGrayNotFound
+	if !ok {
+		return nil, nil, apperr.ErrApprovalTargetChanged
 	}
-	// 晋升等同把灰度内容作为新版本发布，需同样过发布前校验（兜底防御历史脏灰度）
-	if err := validateContent(item.Format, gray.Content); err != nil {
-		return nil, err
+	gray := &model.ConfigGray{ConfigItemID: item.ID, NamespaceCode: item.NamespaceCode, Format: item.Format, Content: pending.Content, ContentMD5: merge.MD5Hex(pending.Content), Cohort: pending.Cohort, Sensitive: item.Sensitive, Comment: pending.Comment, Operator: pending.Operator}
+	if _, err := s.grayRepo.WithTx(tx).SoftDelete(item.ID, time.Now().UTC()); err != nil {
+		return nil, nil, err
 	}
-	now := time.Now().UTC()
+	if err := s.grayRepo.WithTx(tx).Create(gray); err != nil {
+		return nil, nil, err
+	}
+	if err := s.writeGrayAudit(tx, item, pending.Operator, model.ActionConfigGrayPublish, fmt.Sprintf(`{"md5":"%s","cohortSize":%d}`, gray.ContentMD5, len(decodeMembers(pending.Cohort))), pending.ClientIP); err != nil {
+		return nil, nil, err
+	}
+	return gray, item, nil
+}
+
+func (s *ConfigGrayService) applyPromoteInTx(tx *gorm.DB, payload configApprovalPayload, pending configPendingPayload) (*model.ConfigItem, *model.ConfigGray, error) {
+	item, err := s.configSvc.GetInTx(tx, payload.ConfigItemID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if item.Version != payload.ExpectedVersion || item.GrayVersion != payload.ExpectedGrayVersion || pending.Operator == "" || configContentHash(pending.Content) != payload.ContentSHA256 {
+		return nil, nil, apperr.ErrApprovalTargetChanged
+	}
+	gray, err := s.grayRepo.WithTx(tx).FindActiveByItem(item.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if gray == nil || gray.Content != pending.Content || gray.Cohort != pending.Cohort || gray.ContentMD5 != merge.MD5Hex(pending.Content) {
+		return nil, nil, apperr.ErrApprovalTargetChanged
+	}
+	if err := validateContent(item.Format, pending.Content); err != nil {
+		return nil, nil, err
+	}
 	newVersion := item.Version + 1
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, e := s.configSvc.appendRevisionContent(tx, item.ID, item.Format, newVersion,
-			gray.Content, gray.ContentMD5, item.Sensitive, nil, operator, comment)
-		if e != nil {
-			return e
-		}
-		item.Content, item.ContentMD5, item.Version, item.CurrentRevision = gray.Content, gray.ContentMD5, newVersion, rev.ID
-		if e := s.configRepo.WithTx(tx).Save(item); e != nil {
-			return e
-		}
-		if _, e := s.grayRepo.WithTx(tx).SoftDelete(item.ID, now); e != nil {
-			return e
-		}
-		return s.writeGrayAudit(tx, item, operator, model.ActionConfigGrayPromote,
-			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, gray.ContentMD5), clientIP)
-	})
+	rev, err := s.configSvc.appendRevisionContent(tx, item.ID, item.Format, newVersion, pending.Content, gray.ContentMD5, item.Sensitive, nil, pending.Operator, pending.Comment)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	slog.Info("晋升配置灰度为稳定版", "itemId", item.ID, "version", newVersion)
-	// 晋升走发布路径（生成新稳定版本），与普通发布同样计入发布计数（FR-30）
-	if s.metrics != nil {
-		s.metrics.IncConfigPublish()
+	item.Content, item.ContentMD5, item.Version, item.CurrentRevision = pending.Content, gray.ContentMD5, newVersion, rev.ID
+	if err := s.configRepo.WithTx(tx).Save(item); err != nil {
+		return nil, nil, err
 	}
-	// 晋升影响 item 整 scope（稳定版变了）+ 原 cohort 成员（灰度撤销）；按 scope + cohort 名单并集唤醒
-	s.notifyPromote(item, gray.Cohort)
-	return item, nil
+	if _, err := s.grayRepo.WithTx(tx).SoftDelete(item.ID, time.Now().UTC()); err != nil {
+		return nil, nil, err
+	}
+	if err := s.writeGrayAudit(tx, item, pending.Operator, model.ActionConfigGrayPromote, fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, gray.ContentMD5), pending.ClientIP); err != nil {
+		return nil, nil, err
+	}
+	return item, gray, nil
 }
 
 // Abort 丢弃某 item 的活跃灰度（软删）；cohort 成员回到稳定版本，稳定指针不动。

@@ -163,18 +163,19 @@ func (h *DeliveryAdminHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, view)
 }
 
-// Delete 处理 DELETE /admin/v2/change-orders/{id}：物理删除 draft 单（单 + items 级联 + 审计），204。
+// Delete 处理 DELETE /admin/v2/change-orders/{id}：创建草稿删除审批申请，返回 202。
 func (h *DeliveryAdminHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
 	}
 	reason := decodeReason(r)
-	if err := h.orders.Delete(id, reason, auth.Operator(r.Context()), clientIP(r)); err != nil {
+	ticket, err := h.orders.RequestDelete(id, reason, requestPrincipal(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusNoContent, nil)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // DiffScan 处理 POST /admin/v2/change-orders/{id}/diff-scan：同步读最新文件资产快照重算差异并返回 items。
@@ -218,11 +219,18 @@ func decodeReason(r *http.Request) string {
 	return body.Reason
 }
 
-// Submit 处理 POST /admin/v2/change-orders/{id}/submit：draft → pending_approval（前置校验见 spec §4.1）。
+// Submit 处理 POST /admin/v2/change-orders/{id}/submit：冻结草稿并创建唯一的统一审批申请。
 func (h *DeliveryAdminHandler) Submit(w http.ResponseWriter, r *http.Request) {
-	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
-		return h.orders.Submit(id, operator, ip)
-	})
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	ticket, err := h.orders.RequestSubmit(id, decodeReason(r), requestPrincipal(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Withdraw 处理 POST /admin/v2/change-orders/{id}/withdraw：创建人撤回回 draft（审批一并作废）。
@@ -232,12 +240,9 @@ func (h *DeliveryAdminHandler) Withdraw(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// Approve 处理 POST /admin/v2/change-orders/{id}/approve：审批通过（审批人 ≠ 创建人默认强制）。
+// Approve 拒绝旧的第二步审批入口；审批决定只能在统一审批中心完成。
 func (h *DeliveryAdminHandler) Approve(w http.ResponseWriter, r *http.Request) {
-	reason := decodeReason(r)
-	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
-		return h.orders.Approve(id, reason, operator, ip)
-	})
+	render.WriteError(w, r, apperr.ErrForbidden)
 }
 
 // Reject 处理 POST /admin/v2/change-orders/{id}/reject：驳回（原因必填）回 draft。
@@ -263,12 +268,9 @@ func (h *DeliveryAdminHandler) lifecycle(w http.ResponseWriter, r *http.Request,
 	render.WriteJSON(w, http.StatusOK, view)
 }
 
-// Start 处理 POST /admin/v2/change-orders/{id}/start：启动灰度（二次确认原因可选，冲突守卫 + 目标固化 + payload 准备）。
+// Start 拒绝旧公开启动入口；批准变更单由统一审批 worker 自动启动。
 func (h *DeliveryAdminHandler) Start(w http.ResponseWriter, r *http.Request) {
-	reason := decodeReason(r)
-	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
-		return h.orch.Start(id, reason, operator, ip)
-	})
+	render.WriteError(w, r, apperr.ErrForbidden)
 }
 
 // Pause 处理 POST /admin/v2/change-orders/{id}/pause：人工暂停（不打断在途目标）。
@@ -284,13 +286,21 @@ type resumeBody struct {
 	Reason string `json:"reason"`
 }
 
-// Resume 处理 POST /admin/v2/change-orders/{id}/resume：继续暂停单（熔断 / 准备失败需 mode / reason）。
+// Resume 处理 POST /admin/v2/change-orders/{id}/resume：创建继续灰度审批申请。
 func (h *DeliveryAdminHandler) Resume(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
 	var body resumeBody
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
-		return h.orch.Resume(id, body.Mode, body.Reason, operator, ip)
-	})
+	ticket, err := h.orch.RequestResume(id, body.Mode, body.Reason, requestPrincipal(r), r.Header.Get("Idempotency-Key"),
+		auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Cancel 处理 POST /admin/v2/change-orders/{id}/cancel：紧急终止（原因必填 + 二次确认）。
@@ -301,19 +311,35 @@ func (h *DeliveryAdminHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Rollback 处理 POST /admin/v2/change-orders/{id}/rollback：整单回滚（原因必填 + 高摩擦确认，FR-167）。
+// Rollback 处理 POST /admin/v2/change-orders/{id}/rollback：创建整单回滚审批申请。
 func (h *DeliveryAdminHandler) Rollback(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
 	reason := decodeReason(r)
-	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
-		return h.orch.Rollback(id, reason, operator, ip)
-	})
+	ticket, err := h.orch.RequestRollback(id, reason, requestPrincipal(r), r.Header.Get("Idempotency-Key"),
+		auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // RollbackFinish 处理 POST /admin/v2/change-orders/{id}/rollback/finish：结束回滚（残留失败目标时人工收单，FR-167）。
 func (h *DeliveryAdminHandler) RollbackFinish(w http.ResponseWriter, r *http.Request) {
-	h.lifecycle(w, r, func(id uint, operator, ip string) (*service.ChangeOrderDetailView, error) {
-		return h.orch.FinishRollback(id, operator, ip)
-	})
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	ticket, err := h.orch.RequestFinishRollback(id, requestPrincipal(r), r.Header.Get("Idempotency-Key"),
+		auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ConfirmBatch 处理 POST /admin/v2/change-orders/{id}/batches/{batchNo}/confirm：推进门放行（末批确认即完成整单）。
@@ -326,12 +352,13 @@ func (h *DeliveryAdminHandler) ConfirmBatch(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	view, err := h.orch.ConfirmBatch(id, int(batchNo), auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.orch.RequestConfirmBatch(id, int(batchNo), requestPrincipal(r), r.Header.Get("Idempotency-Key"),
+		auth.Operator(r.Context()), clientIP(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, view)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Targets 处理 GET /admin/v2/change-orders/{id}/targets：目标分页（batch / status / serverId 过滤；未启动为空页）。
@@ -452,20 +479,5 @@ func (s *deliverySSESink) Ping() error {
 // 变更项文件内容预览（?serverId 可选目标、?reason 敏感路径放行原因）。GET 带写副作用
 // （下发 asset-read 命令 + 查看审计），路由挂 requireFullRole 挡 readonly。
 func (h *DeliveryAdminHandler) FileDiff(w http.ResponseWriter, r *http.Request) {
-	id, ok := parseUintParam(w, r, "id")
-	if !ok {
-		return
-	}
-	itemID, ok := parseUintParam(w, r, "itemId")
-	if !ok {
-		return
-	}
-	q := r.URL.Query()
-	view, err := h.diff.FileDiff(r.Context(), id, itemID, q.Get("serverId"), q.Get("reason"),
-		auth.Operator(r.Context()), clientIP(r))
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusOK, view)
+	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
 }

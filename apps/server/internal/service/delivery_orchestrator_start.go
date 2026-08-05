@@ -25,10 +25,13 @@ func changeStartConflict(servers []string) *apperr.Error {
 		fmt.Sprintf("目标集与其他进行中的变更单冲突，冲突目标：%s", strings.Join(servers, ", ")))
 }
 
-// Start 启动变更单灰度（POST .../start，spec §4.1 approved→rolling）：
-// 校验 approved + 冲突守卫 + 目标固化 + 批次规划落库 + payload 准备，事务提交后唤醒推进器与模板源 agent。
-// reason 为可选二次确认原因（前端二次确认弹窗，服务端不强制）。
+// Start 禁止旧公开启动入口，防止批准后由调用方绕过统一审批 worker 直接启动交付。
 func (s *DeliveryOrchestrator) Start(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applyStart 仅供同包测试与已批准的领域适配器内部复用，不能作为管理面写入口。
+func (s *DeliveryOrchestrator) applyStart(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	order, err := requireChangeOrder(s.repo, id)
@@ -51,6 +54,40 @@ func (s *DeliveryOrchestrator) Start(id uint, reason, operator, clientIP string)
 		s.notifyAgent(plan.nsCode, order.SourceServerID)
 	}
 	return s.detailView(order.ID)
+}
+
+// applyStartApprovedInTx 在统一审批 worker 的事务内持久化已批准变更单的启动。
+func (s *DeliveryOrchestrator) applyStartApprovedInTx(tx *gorm.DB, id uint, reason, operator, clientIP string) (func(), error) {
+	if tx == nil {
+		return nil, apperr.ErrForbidden
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	transactional := *s
+	transactional.db = tx
+	transactional.repo = s.repo.WithTx(tx)
+	transactional.cmdRepo = s.cmdRepo.WithTx(tx)
+	transactional.blobs = s.blobs.withTx(tx)
+	order, err := requireChangeOrder(transactional.repo, id)
+	if err != nil {
+		return nil, err
+	}
+	if order.Status != model.ChangeOrderStatusApproved {
+		return nil, changeIllegalState(order.Status, "启动")
+	}
+	plan, err := transactional.prepareStart(order)
+	if err != nil {
+		return nil, err
+	}
+	if err := transactional.persistStart(order, plan, reason, operator, clientIP); err != nil {
+		return nil, err
+	}
+	return func() {
+		s.wake()
+		if plan.uploadCommand != nil {
+			s.notifyAgent(plan.nsCode, order.SourceServerID)
+		}
+	}, nil
 }
 
 // startPlan 是启动前置计算的产物（目标固化 + 批次规划 + payload 准备决策），供 persistStart 一次性落库。

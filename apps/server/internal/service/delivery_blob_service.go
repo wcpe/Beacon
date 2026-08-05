@@ -110,6 +110,20 @@ func (s *DeliveryBlobService) SetRoot(root string) {
 	s.root = filepath.Clean(root)
 }
 
+// withTx 返回复用运行期依赖、但将持久化端口绑定到指定事务的副本。
+func (s *DeliveryBlobService) withTx(tx *gorm.DB) *DeliveryBlobService {
+	transactional := *s
+	transactional.db = tx
+	transactional.blobs = s.blobs.WithTx(tx)
+	transactional.orders = s.orders.WithTx(tx)
+	transactional.artifacts = s.artifacts.WithTx(tx)
+	transactional.cmdRepo = s.cmdRepo.WithTx(tx)
+	if s.configRenderer != nil {
+		transactional.configRenderer = s.configRenderer.withTx(tx)
+	}
+	return &transactional
+}
+
 // blobPath 返回某 sha 的最终落盘路径：<root>/blobs/<前 2 位>/<sha256>。
 func (s *DeliveryBlobService) blobPath(sha string) string {
 	return filepath.Join(s.root, "blobs", sha[:2], sha)

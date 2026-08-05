@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
@@ -77,6 +80,7 @@ type DeliveryOrderService struct {
 	auditRepo *repository.AuditLogRepository
 	settings  deliverySettings
 	health    *healthview.Store
+	approval  *ApprovalService
 	// observe 观察窗实时序列提供方（M3 装配 DeliveryOrchestrator；未注入则 /observe 返回空形态）。
 	observe changeObserveProvider
 }
@@ -91,6 +95,16 @@ func NewDeliveryOrderService(db *gorm.DB, repo *repository.ChangeOrderRepository
 
 // SetObserveProvider 注入观察窗实时序列提供方（M3 启动时装配推进器；未注入则 /observe 恒空形态）。
 func (s *DeliveryOrderService) SetObserveProvider(p changeObserveProvider) { s.observe = p }
+
+// SetApprovalService 注入统一审批服务。
+func (s *DeliveryOrderService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// DeliveryApprovalTicketView 是交付兼容审批入口返回的最小视图。
+type DeliveryApprovalTicketView struct {
+	ApprovalRequestID string `json:"approvalRequestId"`
+	Status            string `json:"status"`
+	OperationKey      string `json:"operationKey"`
+}
 
 // changeIllegalState 构造状态机非法迁移错误（409，message 对齐 devmock）。
 func changeIllegalState(current, action string) *apperr.Error {
@@ -248,7 +262,12 @@ func editableOrderColumns(order *model.ChangeOrder) map[string]any {
 // Delete 物理删除 draft 单（DELETE /admin/v2/change-orders/{id}，spec §4.1：单 + items 级联 + 审计）。
 // Delete 删除 draft 单（高风险，spec §4.8.1：权限 + 原因 + 二次确认）：原因入审计，供运维追溯谁为何删单。
 // reason 由前端人工删除填写；向导自动丢弃草稿传系统原因。后端不强制非空（自动清理场景允许系统原因）。
-func (s *DeliveryOrderService) Delete(id uint, reason, operator, clientIP string) error {
+func (s *DeliveryOrderService) Delete(uint, string, string, string) error {
+	return apperr.ErrForbidden
+}
+
+// applyDelete 仅由统一审批适配器在同一事务内调用。
+func (s *DeliveryOrderService) applyDelete(id uint, reason, operator, clientIP string) error {
 	order, err := s.requireOrder(id)
 	if err != nil {
 		return err
@@ -277,7 +296,12 @@ func (s *DeliveryOrderService) Delete(id uint, reason, operator, clientIP string
 }
 
 // Submit 提交审批（POST .../submit，spec §4.1 前置：≥1 变更项、selector 解析 ≥1 目标、模板源合格）。
-func (s *DeliveryOrderService) Submit(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrderService) Submit(uint, string, string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applySubmit 仅由创建审批申请前的内部流程调用；它不执行领域副作用，只冻结为待审批状态。
+func (s *DeliveryOrderService) applySubmit(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	order, err := s.requireOrder(id)
 	if err != nil {
 		return nil, err
@@ -293,6 +317,18 @@ func (s *DeliveryOrderService) Submit(id uint, operator, clientIP string) (*Chan
 		[]string{model.ChangeOrderStatusDraft},
 		map[string]any{"status": model.ChangeOrderStatusPendingApproval, "submitted_at": now},
 		map[string]any{"orderId": order.ID}, operator, clientIP)
+}
+
+// RequestSubmit 冻结草稿并创建唯一的统一审批申请；批准 worker 会直接启动灰度，不存在第二次 approve。
+func (s *DeliveryOrderService) RequestSubmit(id uint, reason string, principal auth.Principal,
+	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+	if s.approval == nil || strings.TrimSpace(reason) == "" {
+		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
+	}
+	if _, err := s.applySubmit(id, operator, clientIP); err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	return s.requestApprovePending(id, reason, principal, idempotencyKey, operator, clientIP)
 }
 
 // validateSubmitPreconditions 校验提交前置：变更项非空、目标非空、含文件项必有模板源、模板源已确认绑定 + 在线 + backend。
@@ -343,26 +379,86 @@ func (s *DeliveryOrderService) validateSourceEligible(namespaceID uint, serverID
 	return nil
 }
 
-// Withdraw 创建人撤回（POST .../withdraw）：pending_approval / approved → draft，审批记录一并作废。
+// Withdraw 拒绝旧公开撤回入口，防止跳过统一审批终态回调。
 func (s *DeliveryOrderService) Withdraw(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
-	order, err := s.requireOrder(id)
-	if err != nil {
-		return nil, err
-	}
-	if operator != order.CreatedBy {
-		return nil, apperr.ErrChangeNotCreator
-	}
-	from := []string{model.ChangeOrderStatusPendingApproval, model.ChangeOrderStatusApproved}
-	if order.Status != model.ChangeOrderStatusPendingApproval && order.Status != model.ChangeOrderStatusApproved {
-		return nil, changeIllegalState(order.Status, "撤回")
-	}
-	return s.transition(order, "撤回", model.ActionDeliveryOrderWithdraw, from,
-		map[string]any{"status": model.ChangeOrderStatusDraft, "approved_by": "", "approved_at": nil},
-		map[string]any{"orderId": order.ID, "from": order.Status}, operator, clientIP)
+	return nil, apperr.ErrForbidden
 }
 
-// Approve 审批通过（POST .../approve）：审批职责分离默认开启时审批人不得是创建人（spec §4.7）。
+// Approve 拒绝旧公开审批入口，防止绕过统一审批执行器直接产生领域副作用。
 func (s *DeliveryOrderService) Approve(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestApprove 为旧审批入口创建统一审批申请，不产生领域审批副作用。
+func (s *DeliveryOrderService) RequestApprove(id uint, reason string, principal auth.Principal,
+	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+	return DeliveryApprovalTicketView{}, apperr.ErrForbidden
+}
+
+func (s *DeliveryOrderService) requestApprovePending(id uint, reason string, principal auth.Principal,
+	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+	if s.approval == nil || strings.TrimSpace(reason) == "" {
+		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
+	}
+	order, err := s.requireOrder(id)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	if order.Status != model.ChangeOrderStatusPendingApproval {
+		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请审批")
+	}
+	snapshotHash, err := deliveryOrderSnapshotHash(s.repo, order)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	payload := map[string]any{
+		"orderId": id, "expectedStatus": order.Status, "snapshotHash": snapshotHash,
+		"operator": operator, "clientIP": clientIP,
+	}
+	created, err := s.approval.Request(authz.Operation{
+		Kind: authz.OperationDeliveryApprove, Resource: model.TargetTypeChangeOrder,
+		NamespaceID: &order.NamespaceID,
+		ResourceID:  strconv.FormatUint(uint64(id), 10), IdempotencyKey: idempotencyKey,
+		RiskLevel: "high", Reason: reason, EvidenceSnapshot: []authz.ApprovalEvidenceLine{
+			{Label: "变更单", Value: strconv.FormatUint(uint64(order.ID), 10)},
+			{Label: "当前状态", Value: order.Status},
+			{Label: "命名空间", Value: strconv.FormatUint(uint64(order.NamespaceID), 10)},
+		},
+	}, payload, principal, clientIP)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	return DeliveryApprovalTicketView{
+		ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey,
+	}, nil
+}
+
+// RequestDelete 冻结 draft 删除并创建统一审批申请；公开 Delete 永远不可直接删除。
+func (s *DeliveryOrderService) RequestDelete(id uint, reason string, principal auth.Principal,
+	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+	if s.approval == nil || strings.TrimSpace(reason) == "" {
+		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
+	}
+	order, err := s.requireOrder(id)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	if order.Status != model.ChangeOrderStatusDraft {
+		return DeliveryApprovalTicketView{}, changeIllegalState(order.Status, "申请删除")
+	}
+	payload := map[string]any{"orderId": order.ID, "expectedStatus": order.Status, "reason": reason, "operator": operator, "clientIP": clientIP}
+	created, err := s.approval.Request(authz.Operation{Kind: authz.OperationDeliveryDraftDelete,
+		NamespaceID: &order.NamespaceID, Resource: model.TargetTypeChangeOrder,
+		ResourceID: strconv.FormatUint(uint64(order.ID), 10), IdempotencyKey: idempotencyKey, RiskLevel: "high", Reason: reason,
+		EvidenceSnapshot: []authz.ApprovalEvidenceLine{{Label: "变更单", Value: strconv.FormatUint(uint64(order.ID), 10)}, {Label: "当前状态", Value: order.Status}, {Label: "标题", Value: order.Title}}}, payload, principal, clientIP)
+	if err != nil {
+		return DeliveryApprovalTicketView{}, err
+	}
+	return DeliveryApprovalTicketView{ApprovalRequestID: created.RequestID, Status: created.Status, OperationKey: created.OperationKey}, nil
+}
+
+// applyApprove 是统一审批适配器使用的领域状态迁移。
+func (s *DeliveryOrderService) applyApprove(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	order, err := s.requireOrder(id)
 	if err != nil {
 		return nil, err
@@ -384,22 +480,9 @@ func (s *DeliveryOrderService) Approve(id uint, reason, operator, clientIP strin
 		detail, operator, clientIP)
 }
 
-// Reject 审批驳回（POST .../reject）：原因必填，回 draft 并记录最近驳回原因。
+// Reject 拒绝旧公开驳回入口，防止跳过统一审批终态回调。
 func (s *DeliveryOrderService) Reject(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
-	if strings.TrimSpace(reason) == "" {
-		return nil, apperr.New(http.StatusBadRequest, "missing_reason", "驳回原因必填")
-	}
-	order, err := s.requireOrder(id)
-	if err != nil {
-		return nil, err
-	}
-	if order.Status != model.ChangeOrderStatusPendingApproval {
-		return nil, changeIllegalState(order.Status, "驳回")
-	}
-	return s.transition(order, "驳回", model.ActionDeliveryOrderReject,
-		[]string{model.ChangeOrderStatusPendingApproval},
-		map[string]any{"status": model.ChangeOrderStatusDraft, "reject_reason": reason},
-		map[string]any{"orderId": order.ID, "reason": reason}, operator, clientIP)
+	return nil, apperr.ErrForbidden
 }
 
 // transition 在事务内执行一次 CAS 状态迁移 + 专项审计，成功后返回最新详情。
@@ -816,6 +899,9 @@ func changeNamespaceCode(db *gorm.DB, namespaceID uint) (string, error) {
 		return "", changeInvalidParam("namespace 不存在")
 	}
 	if err != nil {
+		return "", err
+	}
+	if err := ensureNamespaceRuntimeActive(&ns); err != nil {
 		return "", err
 	}
 	return ns.Code, nil

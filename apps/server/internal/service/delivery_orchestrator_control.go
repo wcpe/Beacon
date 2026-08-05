@@ -48,9 +48,13 @@ func (s *DeliveryOrchestrator) Pause(id uint, operator, clientIP string) (*Chang
 	return s.detailView(order.ID)
 }
 
-// Resume 继续暂停单（POST .../resume，spec §4.4.5）：manual 直接恢复；circuit_break / prepare_failed 需原因，
-// circuit_break 还需 mode（retry_failed 重推熔断批失败 / skipped 目标；skip_failed 保留失败记录进推进门）。
+// Resume 禁止旧公开继续入口，防止调用方绕过统一审批 worker 扩大灰度影响。
 func (s *DeliveryOrchestrator) Resume(id uint, mode, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applyResume 供同包测试复用；生产执行必须经 applyResumeInTx。
+func (s *DeliveryOrchestrator) applyResume(id uint, mode, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	order, err := requireChangeOrder(s.repo, id)
@@ -68,7 +72,9 @@ func (s *DeliveryOrchestrator) Resume(id uint, mode, reason, operator, clientIP 
 		return nil, err
 	}
 	notifySource := order.PauseKind == model.PauseKindPrepareFailed
-	if err := s.applyResume(order, nsCode, mode, reason, operator, clientIP); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		return s.applyResumeInTx(tx, order, nsCode, mode, reason, operator, clientIP)
+	}); err != nil {
 		return nil, err
 	}
 	if notifySource {
@@ -94,7 +100,7 @@ func validateResumeArgs(pauseKind, mode, reason string) error {
 }
 
 // applyResume 按暂停来源执行恢复：人工 / 准备失败 / 熔断（retry_failed / skip_failed）分别落库 + 审计。
-func (s *DeliveryOrchestrator) applyResume(order *model.ChangeOrder, nsCode, mode, reason, operator, clientIP string) error {
+func (s *DeliveryOrchestrator) applyResumeInTx(tx *gorm.DB, order *model.ChangeOrder, nsCode, mode, reason, operator, clientIP string) error {
 	detail := map[string]any{"orderId": order.ID, "pauseKind": order.PauseKind}
 	if mode != "" {
 		detail["mode"] = mode
@@ -102,13 +108,11 @@ func (s *DeliveryOrchestrator) applyResume(order *model.ChangeOrder, nsCode, mod
 	if strings.TrimSpace(reason) != "" {
 		detail["reason"] = reason
 	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		repoTx := s.repo.WithTx(tx)
-		if err := s.resumeBody(tx, repoTx, order, nsCode, mode); err != nil {
-			return err
-		}
-		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderResume, order.ID, detail)
-	})
+	repoTx := s.repo.WithTx(tx)
+	if err := s.resumeBody(tx, repoTx, order, nsCode, mode); err != nil {
+		return err
+	}
+	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderResume, order.ID, detail)
 }
 
 // resumeBody 事务内按暂停来源迁移状态：清暂停字段回 rolling；准备失败重下上传命令 + 回 uploading；熔断按 mode 处置熔断批。
@@ -218,10 +222,16 @@ func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string
 	return s.detailView(order.ID)
 }
 
-// Rollback 整单回滚（POST .../rollback，spec §4.7.2）：原因必填；completed/paused/cancelled→rolling_back，
+// Rollback 禁止旧公开回滚入口，防止调用方绕过统一审批 worker 恢复已交付内容。
+func (s *DeliveryOrchestrator) Rollback(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applyRollback 供同包测试复用；生产执行必须经 applyRollbackInTx。
+// 整单回滚：原因必填；completed/paused/cancelled→rolling_back，
 // 曾推送目标（pushed_at 非空）置回滚初态（备份缺失直接 failed）；首次进入做 config 版本回退记账（幂等）。
 // 已 rolling_back 单再调 = 重试：仅把 failed 目标重置 pending，不重做 config 回退（避免污染不可变链）。
-func (s *DeliveryOrchestrator) Rollback(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrchestrator) applyRollback(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	if strings.TrimSpace(reason) == "" {
 		return nil, apperr.New(http.StatusBadRequest, "missing_reason", "整单回滚原因必填")
 	}
@@ -254,13 +264,12 @@ func (s *DeliveryOrchestrator) Rollback(id uint, reason, operator, clientIP stri
 	if err != nil {
 		return nil, err
 	}
-	// 首次进入：config 版本回退（各自独立事务、幂等吞 NO_CHANGE，无法并入编排事务，ADR-0071 决策6）。
-	if err := s.rollbackConfigVersions(order, reason, operator, clientIP); err != nil {
-		return nil, err
-	}
 	now := s.now()
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		repoTx := s.repo.WithTx(tx)
+		if e := s.rollbackConfigVersionsInTx(tx, order, reason, operator, clientIP); e != nil {
+			return e
+		}
 		ok, e := repoTx.UpdateStatusCAS(order.ID,
 			[]string{model.ChangeOrderStatusCompleted, model.ChangeOrderStatusPaused, model.ChangeOrderStatusCancelled},
 			map[string]any{"status": model.ChangeOrderStatusRollingBack, "rollback_by": operator,
@@ -281,8 +290,52 @@ func (s *DeliveryOrchestrator) Rollback(id uint, reason, operator, clientIP stri
 	return s.detailView(order.ID)
 }
 
-// FinishRollback 结束回滚（POST .../rollback/finish，spec §4.7.2）：rolling_back→rolled_back（残留 failed 目标保留记录）。
+// applyRollbackInTx 在审批 worker 事务内执行首次整单回滚并写领域审计。
+func (s *DeliveryOrchestrator) applyRollbackInTx(tx *gorm.DB, order *model.ChangeOrder, reason, operator, clientIP string) error {
+	if tx == nil || strings.TrimSpace(reason) == "" {
+		return apperr.ErrForbidden
+	}
+	if order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused &&
+		order.Status != model.ChangeOrderStatusCancelled {
+		return changeIllegalState(order.Status, "整单回滚")
+	}
+	repoTx := s.repo.WithTx(tx)
+	n, err := repoTx.CountTargetsToRollback(order.ID)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return apperr.ErrChangeNoRollbackTarget
+	}
+	nsCode, err := changeNamespaceCode(tx, order.NamespaceID)
+	if err != nil {
+		return err
+	}
+	if err := s.rollbackConfigVersionsInTx(tx, order, reason, operator, clientIP); err != nil {
+		return err
+	}
+	now := s.now()
+	ok, err := repoTx.UpdateStatusCAS(order.ID,
+		[]string{model.ChangeOrderStatusCompleted, model.ChangeOrderStatusPaused, model.ChangeOrderStatusCancelled},
+		map[string]any{"status": model.ChangeOrderStatusRollingBack, "rollback_by": operator,
+			"rollback_reason": reason, "rollback_at": now})
+	if err != nil || !ok {
+		return errOrSkip(err, ok)
+	}
+	if err := repoTx.InitTargetRollbackByOrder(order.ID, "覆盖前备份不存在，无法文件回滚"); err != nil {
+		return err
+	}
+	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderRollback, order.ID,
+		map[string]any{"orderId": order.ID, "reason": reason, "targetCount": n})
+}
+
+// FinishRollback 禁止旧公开结束回滚入口，防止调用方绕过统一审批改变回滚终态。
 func (s *DeliveryOrchestrator) FinishRollback(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applyFinishRollback 供同包测试复用；生产执行必须经 applyFinishRollbackInTx。
+func (s *DeliveryOrchestrator) applyFinishRollback(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	order, err := requireChangeOrder(s.repo, id)
@@ -312,14 +365,39 @@ func (s *DeliveryOrchestrator) FinishRollback(id uint, operator, clientIP string
 	return s.detailView(order.ID)
 }
 
-// rollbackConfigVersions 逐 config_change 项做版本回退记账（只首次进入回滚时调，spec §4.7.2 / ADR-0071 决策6）：
+func (s *DeliveryOrchestrator) applyFinishRollbackInTx(tx *gorm.DB, order *model.ChangeOrder, operator, clientIP string) error {
+	if tx == nil || order.Status != model.ChangeOrderStatusRollingBack {
+		return apperr.ErrForbidden
+	}
+	nsCode, err := changeNamespaceCode(tx, order.NamespaceID)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	ok, err := s.repo.WithTx(tx).UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusRollingBack},
+		map[string]any{"status": model.ChangeOrderStatusRolledBack, "finished_at": now})
+	if err != nil || !ok {
+		return errOrSkip(err, ok)
+	}
+	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderRollbackFinish, order.ID,
+		map[string]any{"orderId": order.ID})
+}
+
+// rollbackConfigVersionsInTx 逐 config_change 项在交付审批领域事务内做回退记账。
 // from!=nil→RollbackVersion(from) 使 head 回 from；from==nil→RemoveScopeContribution 撤销该层贡献；
 // 均幂等——撞 ErrConfigNoChange（head 已=from）或「无可撤销贡献」当成功（回滚重试 / 已对齐）。未装配 config 则跳过。
-func (s *DeliveryOrchestrator) rollbackConfigVersions(order *model.ChangeOrder, reason, operator, clientIP string) error {
+func (s *DeliveryOrchestrator) rollbackConfigVersionsInTx(tx *gorm.DB, order *model.ChangeOrder, reason, operator, clientIP string) error {
 	if s.config == nil {
 		return nil
 	}
-	items, err := s.repo.ListItems(order.ID)
+	config, ok := s.config.(interface {
+		rollbackVersionInTx(*gorm.DB, uint, string, string, string) (*ConfigSaveResultView, error)
+		removeScopeContributionInTx(*gorm.DB, uint, string, uint, string, string, string) (*ConfigRevokeResultView, error)
+	})
+	if !ok {
+		return apperr.ErrForbidden
+	}
+	items, err := s.repo.WithTx(tx).ListItems(order.ID)
 	if err != nil {
 		return err
 	}
@@ -329,17 +407,17 @@ func (s *DeliveryOrchestrator) rollbackConfigVersions(order *model.ChangeOrder, 
 			continue
 		}
 		if it.ConfigFromVersionID != nil {
-			if _, e := s.config.RollbackVersion(*it.ConfigFromVersionID, reason, operator, clientIP); e != nil &&
+			if _, e := config.rollbackVersionInTx(tx, *it.ConfigFromVersionID, reason, operator, clientIP); e != nil &&
 				!errors.Is(e, apperr.ErrConfigNoChange) {
 				return e
 			}
 			continue
 		}
-		fileID, e := s.configFileIDOf(it)
+		fileID, e := s.configFileIDOf(tx, it)
 		if e != nil {
 			return e
 		}
-		if _, e := s.config.RemoveScopeContribution(fileID, derefString(it.ConfigScopeKind), derefUint(it.ConfigScopeID),
+		if _, e := config.removeScopeContributionInTx(tx, fileID, derefString(it.ConfigScopeKind), derefUint(it.ConfigScopeID),
 			reason, operator, clientIP); e != nil && !isConfigRollbackIdempotent(e) {
 			return e
 		}
@@ -348,11 +426,11 @@ func (s *DeliveryOrchestrator) rollbackConfigVersions(order *model.ChangeOrder, 
 }
 
 // configFileIDOf 反查 config_change 项对应配置文件 id（经 to_version → 版本行 → configFileID）。
-func (s *DeliveryOrchestrator) configFileIDOf(it *model.ChangeOrderItem) (uint, error) {
+func (s *DeliveryOrchestrator) configFileIDOf(tx *gorm.DB, it *model.ChangeOrderItem) (uint, error) {
 	if s.cfgVers == nil || it.ConfigToVersionID == nil {
 		return 0, apperr.ErrChangeConfigVersionInvalid
 	}
-	v, err := s.cfgVers.FindByID(*it.ConfigToVersionID)
+	v, err := s.cfgVers.WithTx(tx).FindByID(*it.ConfigToVersionID)
 	if err != nil {
 		return 0, err
 	}
@@ -375,9 +453,13 @@ func isConfigRollbackIdempotent(err error) bool {
 	return false
 }
 
-// ConfirmBatch 推进门放行（POST .../batches/{batchNo}/confirm，spec §4.4.3）：
-// awaiting_confirm→completed，触发下一批 pending→running；末批确认即单 completed。
+// ConfirmBatch 禁止旧公开推进门入口，防止调用方绕过统一审批 worker 放量下一批。
 func (s *DeliveryOrchestrator) ConfirmBatch(id uint, batchNo int, operator, clientIP string) (*ChangeOrderDetailView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applyConfirmBatch 供同包测试复用；生产执行必须经 applyConfirmBatchInTx。
+func (s *DeliveryOrchestrator) applyConfirmBatch(id uint, batchNo int, operator, clientIP string) (*ChangeOrderDetailView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	order, err := requireChangeOrder(s.repo, id)
@@ -396,7 +478,9 @@ func (s *DeliveryOrchestrator) ConfirmBatch(id uint, batchNo int, operator, clie
 		return nil, err
 	}
 	last := isLastBatch(batches, batchNo)
-	if err := s.persistConfirm(order, batch, batches, last, nsCode, operator, clientIP); err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		return s.persistConfirmInTx(tx, order, batch, batches, last, nsCode, operator, clientIP)
+	}); err != nil {
 		return nil, err
 	}
 	s.clearObserve(order.ID)
@@ -408,7 +492,11 @@ func (s *DeliveryOrchestrator) ConfirmBatch(id uint, batchNo int, operator, clie
 
 // loadConfirmBatch 取待确认批并校验其处 awaiting_confirm；返回该批与全批列表（末批判定用）。
 func (s *DeliveryOrchestrator) loadConfirmBatch(orderID uint, batchNo int) (*model.ChangeBatch, []model.ChangeBatch, error) {
-	batches, err := s.repo.ListBatches(orderID)
+	return loadConfirmBatch(s.repo, orderID, batchNo)
+}
+
+func loadConfirmBatch(repo *repository.ChangeOrderRepository, orderID uint, batchNo int) (*model.ChangeBatch, []model.ChangeBatch, error) {
+	batches, err := repo.ListBatches(orderID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -424,38 +512,36 @@ func (s *DeliveryOrchestrator) loadConfirmBatch(orderID uint, batchNo int) (*mod
 }
 
 // persistConfirm 事务内落推进门确认：批 awaiting_confirm→completed；非末批启动下一批；末批则单 completed（含配置切版接缝）。
-func (s *DeliveryOrchestrator) persistConfirm(order *model.ChangeOrder, batch *model.ChangeBatch, batches []model.ChangeBatch,
+func (s *DeliveryOrchestrator) persistConfirmInTx(tx *gorm.DB, order *model.ChangeOrder, batch *model.ChangeBatch, batches []model.ChangeBatch,
 	last bool, nsCode, operator, clientIP string) error {
 	now := s.now()
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		repoTx := s.repo.WithTx(tx)
-		ok, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusAwaitingConfirm},
-			map[string]any{"status": model.ChangeBatchStatusCompleted, "gate_confirmed_by": operator,
-				"gate_confirmed_at": now, "finished_at": now})
-		if e != nil || !ok {
-			return errOrSkip(e, ok)
+	repoTx := s.repo.WithTx(tx)
+	ok, e := repoTx.UpdateBatchCAS(batch.ID, []string{model.ChangeBatchStatusAwaitingConfirm},
+		map[string]any{"status": model.ChangeBatchStatusCompleted, "gate_confirmed_by": operator,
+			"gate_confirmed_at": now, "finished_at": now})
+	if e != nil || !ok {
+		return errOrSkip(e, ok)
+	}
+	if last {
+		// 末批确认即单 completed。含 config_change 项的正式切版（ADR-0071 决策4）：单 completed 后
+		// 「该作用域已交付版本 = to_version」由 FindLatestDeliveredToVersionID 从 completed 单历史反查、
+		// 无需另写版本指针；pin 清除 = 单不再活动自然清（灰度渲染只在活动期按 to_version 冻结一次）。
+		// 此处仅补一条配置切版审计供运维观测切了哪些作用域到哪个版本。
+		if _, e := repoTx.UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusRolling},
+			map[string]any{"status": model.ChangeOrderStatusCompleted, "finished_at": now}); e != nil {
+			return e
 		}
-		if last {
-			// 末批确认即单 completed。含 config_change 项的正式切版（ADR-0071 决策4）：单 completed 后
-			// 「该作用域已交付版本 = to_version」由 FindLatestDeliveredToVersionID 从 completed 单历史反查、
-			// 无需另写版本指针；pin 清除 = 单不再活动自然清（灰度渲染只在活动期按 to_version 冻结一次）。
-			// 此处仅补一条配置切版审计供运维观测切了哪些作用域到哪个版本。
-			if _, e := repoTx.UpdateStatusCAS(order.ID, []string{model.ChangeOrderStatusRolling},
-				map[string]any{"status": model.ChangeOrderStatusCompleted, "finished_at": now}); e != nil {
-				return e
-			}
-			if e := s.auditConfigSwitch(tx, repoTx, order, nsCode, operator, clientIP); e != nil {
-				return e
-			}
-		} else if next := batchByNo(batches, batch.BatchNo+1); next != nil {
-			if _, e := repoTx.UpdateBatchCAS(next.ID, []string{model.ChangeBatchStatusPending},
-				map[string]any{"status": model.ChangeBatchStatusRunning, "started_at": now}); e != nil {
-				return e
-			}
+		if e := s.auditConfigSwitch(tx, repoTx, order, nsCode, operator, clientIP); e != nil {
+			return e
 		}
-		return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderBatchConfirm, order.ID,
-			map[string]any{"orderId": order.ID, "batchNo": batch.BatchNo, "last": last})
-	})
+	} else if next := batchByNo(batches, batch.BatchNo+1); next != nil {
+		if _, e := repoTx.UpdateBatchCAS(next.ID, []string{model.ChangeBatchStatusPending},
+			map[string]any{"status": model.ChangeBatchStatusRunning, "started_at": now}); e != nil {
+			return e
+		}
+	}
+	return s.writeOrchestratorAudit(tx, nsCode, operator, clientIP, model.ActionDeliveryOrderBatchConfirm, order.ID,
+		map[string]any{"orderId": order.ID, "batchNo": batch.BatchNo, "last": last})
 }
 
 // auditConfigSwitch 末批确认后为含配置项单记一条配置正式切版审计（ADR-0071 决策4）：

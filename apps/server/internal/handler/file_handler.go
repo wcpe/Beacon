@@ -105,6 +105,7 @@ type fileCreateRequest struct {
 	ScopeTarget string `json:"scopeTarget"`
 	Content     string `json:"content"`
 	Comment     string `json:"comment"`
+	Reason      string `json:"reason"`
 	// 整文件覆盖豁免（FR-44）：true 则该结构化文件强制整文件覆盖、不深合并。缺省 false。
 	WholeFileOverride bool `json:"wholeFileOverride"`
 	// git 导出敏感排除（FR-47）：true 则该文件不导出到 git 镜像（库内保留、下发不变）。缺省 false。
@@ -118,25 +119,24 @@ func (h *FileHandler) Create(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	o, err := h.svc.Create(service.CreateFileParams{
+	ticket, err := h.svc.RequestCreate(service.CreateFileParams{
 		Namespace: req.Namespace, Group: req.Group, Path: req.Path,
 		ScopeLevel: req.ScopeLevel, ScopeTarget: req.ScopeTarget,
 		Content: req.Content, Operator: auth.Operator(r.Context()), Comment: req.Comment, ClientIP: clientIP(r),
 		WholeFileOverride: req.WholeFileOverride, SensitiveExcluded: req.SensitiveExcluded,
-	})
+	}, req.Reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	v := toFileView(o.ID, o.NamespaceCode, o.GroupCode, o.Path, o.ScopeLevel, o.ScopeTarget, o.Version, o.ContentMD5, o.Enabled, o.UpdatedAt, o.WholeFileOverride)
-	v.Content = o.Content
-	render.WriteJSON(w, http.StatusCreated, v)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // filePublishRequest 是发布文件新版本的请求体。
 type filePublishRequest struct {
 	Content string `json:"content"`
 	Comment string `json:"comment"`
+	Reason  string `json:"reason"`
 }
 
 // Publish 处理 PUT /admin/v1/files/{id}。
@@ -151,12 +151,12 @@ func (h *FileHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	o, err := h.svc.Publish(id, req.Content, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestPublish(id, req.Content, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), req.Comment, clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": o.Version, "md5": o.ContentMD5})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Delete 处理 DELETE /admin/v1/files/{id}（软删）。
@@ -166,11 +166,12 @@ func (h *FileHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	if err := h.svc.Delete(id, auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r)); err != nil {
+	ticket, err := h.svc.RequestDelete(id, r.URL.Query().Get("reason"), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Batch 处理 POST /admin/v1/files/batch（FR-74）：把一组文件对象的删除 / 禁用 / 启用在一个事务内原子完成。
@@ -182,19 +183,20 @@ func (h *FileHandler) Batch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operator, clientIP := auth.Operator(r.Context()), clientIP(r)
+	var ticket service.FileApprovalTicket
 	switch req.Action {
 	case batchActionDelete:
-		err = h.svc.BatchDelete(req.IDs, operator, clientIP)
+		ticket, err = h.svc.RequestBatchDelete(req.IDs, req.Reason, r.Header.Get("Idempotency-Key"), operator, clientIP, requestPrincipal(r))
 	case batchActionDisable:
-		err = h.svc.BatchSetEnabled(req.IDs, false, operator, clientIP)
+		ticket, err = h.svc.RequestBatchSetEnabled(req.IDs, false, req.Reason, r.Header.Get("Idempotency-Key"), operator, clientIP, requestPrincipal(r))
 	case batchActionEnable:
-		err = h.svc.BatchSetEnabled(req.IDs, true, operator, clientIP)
+		ticket, err = h.svc.RequestBatchSetEnabled(req.IDs, true, req.Reason, r.Header.Get("Idempotency-Key"), operator, clientIP, requestPrincipal(r))
 	}
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"action": req.Action, "count": len(req.IDs)})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ListRevisions 处理 GET /admin/v1/files/{id}/revisions。
@@ -246,6 +248,7 @@ func (h *FileHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 type fileRollbackRequest struct {
 	ToVersion int64  `json:"toVersion"`
 	Comment   string `json:"comment"`
+	Reason    string `json:"reason"`
 }
 
 // Rollback 处理 POST /admin/v1/files/{id}/rollback。
@@ -260,12 +263,12 @@ func (h *FileHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	o, err := h.svc.Rollback(id, req.ToVersion, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestRollback(id, req.ToVersion, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), req.Comment, clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": o.Version, "md5": o.ContentMD5})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // multipart 解析驻留内存上限（超出落临时文件，由标准库管理）。
@@ -286,6 +289,7 @@ func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
 	ns := r.FormValue("namespace")
 	group := r.FormValue("group")
 	comment := r.FormValue("comment")
+	reason := r.FormValue("reason")
 	fileHeaders := r.MultipartForm.File["files"]
 	paths := r.MultipartForm.Value["paths"]
 	if ns == "" || group == "" || len(fileHeaders) == 0 {
@@ -318,17 +322,15 @@ func (h *FileHandler) Import(w http.ResponseWriter, r *http.Request) {
 		files = append(files, service.ImportFile{Path: paths[i], Content: content})
 	}
 
-	res, err := h.svc.Import(service.ImportFilesParams{
+	ticket, err := h.svc.RequestImport(service.ImportFilesParams{
 		Namespace: ns, Group: group, Files: files,
 		Operator: auth.Operator(r.Context()), Comment: comment, ClientIP: clientIP(r),
-	})
+	}, reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{
-		"files": len(files), "created": res.Created, "updated": res.Updated,
-	})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // readMultipartFile 读取单个上传文件部件的整文件内容；超单文件上限即拒（防超大文件入库）。

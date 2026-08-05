@@ -136,6 +136,7 @@ func (h *ConfigHandler) Create(w http.ResponseWriter, r *http.Request) {
 type publishRequest struct {
 	Content string `json:"content"`
 	Comment string `json:"comment"`
+	Reason  string `json:"reason"`
 }
 
 // Publish 处理 PUT /admin/v1/configs/{id}。
@@ -150,12 +151,12 @@ func (h *ConfigHandler) Publish(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	it, err := h.svc.Publish(id, req.Content, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestPublish(id, req.Content, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": it.Version, "md5": it.ContentMD5})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Delete 处理 DELETE /admin/v1/configs/{id}（软删）。
@@ -165,11 +166,12 @@ func (h *ConfigHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	if err := h.svc.Delete(id, auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r)); err != nil {
+	ticket, err := h.svc.RequestDelete(id, r.URL.Query().Get("reason"), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), r.URL.Query().Get("comment"), clientIP(r), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Batch 处理 POST /admin/v1/configs/batch（FR-74）：把一组配置项的删除 / 禁用 / 启用在一个事务内原子完成。
@@ -181,19 +183,20 @@ func (h *ConfigHandler) Batch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operator, clientIP := auth.Operator(r.Context()), clientIP(r)
+	var ticket service.ConfigApprovalTicket
 	switch req.Action {
 	case batchActionDelete:
-		err = h.svc.BatchDelete(req.IDs, operator, clientIP)
+		ticket, err = h.svc.RequestBatchDelete(req.IDs, req.Reason, r.Header.Get("Idempotency-Key"), operator, clientIP, requestPrincipal(r))
 	case batchActionDisable:
-		err = h.svc.BatchSetEnabled(req.IDs, false, operator, clientIP)
+		ticket, err = h.svc.RequestBatchSetEnabled(req.IDs, false, req.Reason, r.Header.Get("Idempotency-Key"), operator, clientIP, requestPrincipal(r))
 	case batchActionEnable:
-		err = h.svc.BatchSetEnabled(req.IDs, true, operator, clientIP)
+		ticket, err = h.svc.RequestBatchSetEnabled(req.IDs, true, req.Reason, r.Header.Get("Idempotency-Key"), operator, clientIP, requestPrincipal(r))
 	}
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"action": req.Action, "count": len(req.IDs)})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ListRevisions 处理 GET /admin/v1/configs/{id}/revisions。
@@ -245,6 +248,7 @@ func (h *ConfigHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 type rollbackRequest struct {
 	ToVersion int64  `json:"toVersion"`
 	Comment   string `json:"comment"`
+	Reason    string `json:"reason"`
 }
 
 // Rollback 处理 POST /admin/v1/configs/{id}/rollback。
@@ -259,12 +263,12 @@ func (h *ConfigHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	it, err := h.svc.Rollback(id, req.ToVersion, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestRollback(id, req.ToVersion, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), req.Comment, clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": it.Version, "md5": it.ContentMD5})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // Diff 处理 GET /admin/v1/configs/{id}/diff?from=&to=。
@@ -405,6 +409,7 @@ type grayPublishRequest struct {
 	Content string   `json:"content"`
 	Cohort  []string `json:"cohort"`
 	Comment string   `json:"comment"`
+	Reason  string   `json:"reason"`
 }
 
 // PublishGray 处理 POST /admin/v1/configs/{id}/gray：对某 config_item 发布灰度（FR-9）。
@@ -419,12 +424,12 @@ func (h *ConfigHandler) PublishGray(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	g, err := h.graySvc.Publish(id, req.Content, req.Cohort, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestGrayPublish(id, req.Content, req.Cohort, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), req.Comment, clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusCreated, toGrayView(g))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // PromoteGray 处理 POST /admin/v1/configs/{id}/gray/promote：灰度晋升为稳定版（FR-9）。
@@ -434,14 +439,14 @@ func (h *ConfigHandler) PromoteGray(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	var req publishRequest // 仅取 comment（content 来自灰度）
+	var req publishRequest // 仅取 comment 和 reason（内容来自灰度）
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	it, err := h.graySvc.Promote(id, auth.Operator(r.Context()), req.Comment, clientIP(r))
+	ticket, err := h.svc.RequestGrayPromote(id, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), req.Comment, clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"version": it.Version, "md5": it.ContentMD5})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // AbortGray 处理 DELETE /admin/v1/configs/{id}/gray：中止（丢弃）灰度（FR-9）。
