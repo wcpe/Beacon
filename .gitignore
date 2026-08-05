@@ -6,8 +6,12 @@
 Thumbs.db
 
 # 过程性文档与临时文件（不入库，遵 .claude/rules/git-commit）
-/.tmp/
-apps/.tmp/
+.tmp
+**/.tmp
+.tmp/**
+
+
+
 .narrafork/
 package-lock.json
 
