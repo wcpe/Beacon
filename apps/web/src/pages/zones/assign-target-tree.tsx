@@ -18,8 +18,9 @@ interface AssignTargetTreeProps {
 }
 
 // 小写去空白，做包含式过滤
-function matches(name: string, keyword: string): boolean {
-  return name.toLowerCase().includes(keyword.trim().toLowerCase())
+function matches(item: { name: string; code?: string; displayName?: string }, keyword: string): boolean {
+  const normalized = keyword.trim().toLowerCase()
+  return [item.code, item.displayName, item.name].some((value) => value?.toLowerCase().includes(normalized))
 }
 
 export default function AssignTargetTree({ tree, kind, value, onChange }: AssignTargetTreeProps) {
@@ -49,7 +50,7 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
       return all
     }
     if (kind === 'proxy') {
-      return all.filter((c) => matches(c.name, keyword))
+      return all.filter((c) => matches(c, keyword))
     }
     return all
       .map((c) => ({
@@ -58,7 +59,7 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
           .map((r) => ({
             ...r,
             zones: r.zones.filter(
-              (z) => matches(z.name, keyword) || matches(r.name, keyword) || matches(c.name, keyword),
+              (z) => matches(z, keyword) || matches(r, keyword) || matches(c, keyword),
             ),
           }))
           .filter((r) => r.zones.length > 0),
@@ -103,7 +104,8 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
                     <TargetLeaf
                       depth={0}
                       icon={<Boxes className="size-3.5 text-brand" />}
-                      label={cluster.name}
+                      label={cluster.displayName ?? cluster.name}
+                      code={cluster.code ?? cluster.name}
                       selected={selected}
                       onSelect={() => {
                         onChange(String(cluster.id))
@@ -120,7 +122,8 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
                     depth={0}
                     open={clusterOpen}
                     icon={<Boxes className="size-3.5 text-brand" />}
-                    label={cluster.name}
+                    label={cluster.displayName ?? cluster.name}
+                    code={cluster.code ?? cluster.name}
                     onToggle={() => {
                       toggle(clusterKey)
                     }}
@@ -136,7 +139,8 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
                               depth={1}
                               open={regionOpen}
                               icon={<Layers className="size-3.5 text-ink-4" />}
-                              label={region.name}
+                              label={region.displayName ?? region.name}
+                              code={region.code ?? region.name}
                               onToggle={() => {
                                 toggle(regionKey)
                               }}
@@ -148,7 +152,8 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
                                     <TargetLeaf
                                       depth={2}
                                       icon={<MapPin className="size-3.5 text-brand" />}
-                                      label={zone.name}
+                                      label={zone.displayName ?? zone.name}
+                                      code={zone.code ?? zone.name}
                                       selected={value === String(zone.id)}
                                       onSelect={() => {
                                         onChange(String(zone.id))
@@ -179,12 +184,14 @@ function GroupRow({
   open,
   icon,
   label,
+  code,
   onToggle,
 }: {
   depth: number
   open: boolean
   icon: React.ReactNode
   label: string
+  code: string
   onToggle: () => void
 }) {
   return (
@@ -198,7 +205,10 @@ function GroupRow({
         {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
       </span>
       {icon}
-      <span className="truncate">{label}</span>
+      <span className="grid min-w-0 gap-0.5">
+        <span className="truncate">{label}</span>
+        <code className="truncate text-[10px] font-normal text-ink-4">{code}</code>
+      </span>
     </button>
   )
 }
@@ -208,12 +218,14 @@ function TargetLeaf({
   depth,
   icon,
   label,
+  code,
   selected,
   onSelect,
 }: {
   depth: number
   icon: React.ReactNode
   label: string
+  code: string
   selected: boolean
   onSelect: () => void
 }) {
@@ -231,7 +243,10 @@ function TargetLeaf({
     >
       <span className="size-4 shrink-0" />
       {icon}
-      <span className="truncate font-mono">{label}</span>
+      <span className="grid min-w-0 gap-0.5">
+        <span className="truncate">{label}</span>
+        <code className="truncate text-[10px] text-ink-4">{code}</code>
+      </span>
       {selected && <Check className="ml-auto size-3.5 text-brand" aria-hidden />}
     </button>
   )

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -23,10 +24,10 @@ func newServerLifecycleTestSuite(t *testing.T) (*ApprovalService, *gorm.DB, mode
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.LobbyCluster{}, &model.Server{}, &model.AgentIdentity{}, &model.ApprovalRequest{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.LobbyCluster{}, &model.Server{}, &model.AgentIdentity{}, &model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移生命周期测试表失败: %v", err)
 	}
-	for _, table := range []string{"namespace", "bc_cluster", "region", "zone", "lobby_cluster", "server", "agent_identity", "approval_request", "audit_log"} {
+	for _, table := range []string{"namespace", "bc_cluster", "region", "zone", "lobby_cluster", "server", "agent_identity", "approval_request", "approval_execution_receipt", "audit_log"} {
 		if err := db.Exec("DELETE FROM " + table).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", table, err)
 		}
@@ -162,6 +163,10 @@ func TestServerLifecycleArchiveRestorePreservesBindings(t *testing.T) {
 	}
 	assertServerLifecycleAudit(t, db, model.ActionServerArchive)
 	assertServerLifecycleAudit(t, db, model.ActionServerRestore)
+	var receiptCount int64
+	if err := db.Model(&model.ApprovalExecutionReceipt{}).Where("operation_key IN ?", []string{authz.OperationServerArchive, authz.OperationServerRestore}).Count(&receiptCount).Error; err != nil || receiptCount != 2 {
+		t.Fatalf("生命周期事实与审批执行回执必须一同持久化，count=%d err=%v", receiptCount, err)
+	}
 }
 
 func assertServerLifecycleAudit(t *testing.T, db *gorm.DB, action string) {
@@ -181,8 +186,15 @@ func TestServerLifecycleApprovalRejectsSnapshotDrift(t *testing.T) {
 	if err := db.Model(&model.Server{}).Where("id = ?", server.ID).Update("draining", false).Error; err != nil {
 		t.Fatalf("制造快照漂移失败: %v", err)
 	}
-	if _, err := approval.Approve(created.RequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); !errors.Is(err, apperr.ErrApprovalTargetChanged) {
-		t.Fatalf("快照漂移应拒绝执行，实际 %v", err)
+	if _, err := approval.Approve(created.RequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("快照漂移批准不应在请求链执行，实际 %v", err)
+	}
+	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil {
+		t.Fatalf("快照漂移 worker 执行失败: %v", err)
+	}
+	finished, err := approval.Detail(created.RequestID, auth.HumanPrincipal("alice"))
+	if err != nil || finished.Status != model.ApprovalStatusFailed || !strings.Contains(finished.FailureSummary, "审批目标已变化") {
+		t.Fatalf("快照漂移应进入 failed，实际 request=%+v err=%v", finished, err)
 	}
 	var saved model.Server
 	if err := db.First(&saved, server.ID).Error; err != nil {
@@ -190,6 +202,181 @@ func TestServerLifecycleApprovalRejectsSnapshotDrift(t *testing.T) {
 	}
 	if saved.Lifecycle != model.ServerLifecycleActive {
 		t.Fatalf("快照漂移后不得归档 server，实际 %q", saved.Lifecycle)
+	}
+}
+
+func TestTopologyApprovalRejectsSnapshotDriftWithoutSideEffect(t *testing.T) {
+	approval, db, server := newServerLifecycleTestSuite(t)
+	v2, ok := approval.preparer.(*V2ControlPlaneService)
+	if !ok {
+		t.Fatal("审批冻结器应为 V2 控制面服务")
+	}
+	ticket, err := v2.RequestSetServerDefaultEntry(SetServerDefaultEntryParams{
+		ServerRowID: server.ID, Value: false, Reason: "取消默认入口",
+	}, auth.HumanPrincipal("alice"), "topology-drift")
+	if err != nil {
+		t.Fatalf("拓扑提审失败: %v", err)
+	}
+	var created model.ApprovalRequest
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&created).Error; err != nil {
+		t.Fatalf("读取审批申请失败: %v", err)
+	}
+	var payload defaultEntryPayload
+	if err := json.Unmarshal([]byte(created.Payload), &payload); err != nil {
+		t.Fatalf("解析冻结载荷失败: %v", err)
+	}
+	if len(payload.ServerSnapshot) != 1 || payload.ServerSnapshot[0].ID != server.ID || !payload.ServerSnapshot[0].Draining {
+		t.Fatalf("拓扑申请应冻结服务端 typed 快照，实际 %+v", payload.ServerSnapshot)
+	}
+	if err := db.Model(&model.Server{}).Where("id = ?", server.ID).Update("draining", false).Error; err != nil {
+		t.Fatalf("制造拓扑漂移失败: %v", err)
+	}
+	if _, err := approval.Approve(created.RequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准失败: %v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("执行漂移审批失败，processed=%d err=%v", processed, err)
+	}
+	finished, err := approval.Detail(created.RequestID, auth.HumanPrincipal("alice"))
+	if err != nil || finished.Status != model.ApprovalStatusFailed || !strings.Contains(finished.FailureSummary, "审批目标已变化") {
+		t.Fatalf("拓扑漂移应终止为 failed，request=%+v err=%v", finished, err)
+	}
+	var saved model.Server
+	if err := db.First(&saved, server.ID).Error; err != nil {
+		t.Fatalf("读取服务端状态失败: %v", err)
+	}
+	if !saved.IsDefaultEntry {
+		t.Fatalf("拓扑漂移不得修改默认入口，实际 %+v", saved)
+	}
+}
+
+func TestRequestDefaultEntryByServerIDKeepsDatabaseRowIDInsideService(t *testing.T) {
+	approval, db, server := newServerLifecycleTestSuite(t)
+	v2, ok := approval.preparer.(*V2ControlPlaneService)
+	if !ok {
+		t.Fatal("审批冻结器应为 V2 控制面服务")
+	}
+	ticket, err := v2.RequestSetServerDefaultEntryByServerID(server.ServerID, false, "取消默认入口", "mcp:client", "mcp", "default-entry-by-server-id", auth.MCPPrincipal("client", "自动化", model.MCPClientProfileAutomation))
+	if err != nil {
+		t.Fatalf("按 serverId 提审失败: %v", err)
+	}
+	var request model.ApprovalRequest
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&request).Error; err != nil {
+		t.Fatalf("读取审批请求失败: %v", err)
+	}
+	if request.ResourceID != strconv.FormatUint(uint64(server.ID), 10) || request.OperationKind != authz.OperationTopologyDefaultEntryChange {
+		t.Fatalf("服务端应解析并冻结行主键，实际 %+v", request)
+	}
+}
+
+func TestV2BatchApprovalRejectsCrossNamespaceTargets(t *testing.T) {
+	approval, db, server := newServerLifecycleTestSuite(t)
+	v2, ok := approval.preparer.(*V2ControlPlaneService)
+	if !ok {
+		t.Fatal("审批冻结器应为 V2 控制面服务")
+	}
+	otherNamespace := model.Namespace{Code: "staging", Name: "预发布"}
+	if err := db.Create(&otherNamespace).Error; err != nil {
+		t.Fatalf("创建第二命名空间失败: %v", err)
+	}
+	otherServer := model.Server{NamespaceID: otherNamespace.ID, ServerID: "game-2", DisplayName: "游戏二服", Kind: model.ServerKindBackend}
+	if err := db.Create(&otherServer).Error; err != nil {
+		t.Fatalf("创建第二服务失败: %v", err)
+	}
+	_, err := v2.RequestAssignServers(AssignServersParams{
+		ServerIDs: []uint{server.ID, otherServer.ID}, TargetKind: model.AssignmentTargetZone, TargetID: 1,
+		Reason: "批量调整", Operator: "alice",
+	}, auth.HumanPrincipal("alice"), "cross-namespace-batch")
+	if !errors.Is(err, apperr.ErrSchedCrossNamespace) {
+		t.Fatalf("跨命名空间批量提审必须失败关闭，实际 %v", err)
+	}
+	var count int64
+	if err := db.Model(&model.ApprovalRequest{}).Count(&count).Error; err != nil {
+		t.Fatalf("统计审批申请失败: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("跨命名空间批量提审不得创建审批，实际 %d 条", count)
+	}
+}
+
+func TestV2BatchApprovalPersistsNamespaceAndEvidenceForEachServer(t *testing.T) {
+	approval, db, server := newServerLifecycleTestSuite(t)
+	v2, ok := approval.preparer.(*V2ControlPlaneService)
+	if !ok {
+		t.Fatal("审批冻结器应为 V2 控制面服务")
+	}
+	second := model.Server{NamespaceID: server.NamespaceID, ServerID: "game-2", DisplayName: "游戏二服", Kind: model.ServerKindBackend}
+	if err := db.Create(&second).Error; err != nil {
+		t.Fatalf("创建同命名空间服务失败: %v", err)
+	}
+	ticket, err := v2.RequestAssignServers(AssignServersParams{
+		ServerIDs: []uint{server.ID, second.ID}, TargetKind: model.AssignmentTargetZone, TargetID: 1,
+		Reason: "批量调整", Operator: "alice",
+	}, auth.HumanPrincipal("alice"), "same-namespace-batch")
+	if err != nil {
+		t.Fatalf("同命名空间批量提审应成功: %v", err)
+	}
+	var created model.ApprovalRequest
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&created).Error; err != nil {
+		t.Fatalf("读取审批申请失败: %v", err)
+	}
+	if created.NamespaceID == nil || *created.NamespaceID != server.NamespaceID {
+		t.Fatalf("批量审批应持久化唯一命名空间，实际 %+v", created.NamespaceID)
+	}
+	for _, serverID := range []string{server.ServerID, second.ServerID} {
+		if !strings.Contains(created.EvidenceSnapshot, serverID) {
+			t.Fatalf("审批快照应包含每个服务目标 %q，实际 %s", serverID, created.EvidenceSnapshot)
+		}
+	}
+	_, evidence, err := approval.DetailEvidence(ticket.ApprovalRequestID, auth.HumanPrincipal("alice"))
+	if err != nil || evidence.EvidenceStatus != "available" {
+		t.Fatalf("批量审批应读取实时证据，evidence=%+v err=%v", evidence, err)
+	}
+	for _, serverID := range []string{server.ServerID, second.ServerID} {
+		found := false
+		for _, line := range evidence.CurrentFactsSummary {
+			if line.Value == serverID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("实时证据应包含每个服务目标 %q，实际 %+v", serverID, evidence.CurrentFactsSummary)
+		}
+	}
+}
+
+func TestSetServerDrainingAllowsOnlyDirectDraining(t *testing.T) {
+	approval, _, server := newServerLifecycleTestSuite(t)
+	v2, ok := approval.preparer.(*V2ControlPlaneService)
+	if !ok {
+		t.Fatal("审批冻结器应为 V2 控制面服务")
+	}
+	if _, err := v2.SetServerDraining(SetServerDrainingParams{ServerID: server.ServerID, Draining: true, Reason: "开始排空"}); err != nil {
+		t.Fatalf("设置排空应直接执行: %v", err)
+	}
+	if _, err := v2.SetServerDraining(SetServerDrainingParams{ServerID: server.ServerID, Draining: false, Reason: "停止排空"}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("取消排空必须进入审批，实际 %v", err)
+	}
+}
+
+func TestRuntimeEffectWaitsForOuterTransactionCommit(t *testing.T) {
+	approval, _, _ := newServerLifecycleTestSuite(t)
+	v2, ok := approval.preparer.(*V2ControlPlaneService)
+	if !ok {
+		t.Fatal("审批冻结器应为 V2 控制面服务")
+	}
+	callbacks := make([]func(), 0, 1)
+	v2.afterCommit = func(callback func()) { callbacks = append(callbacks, callback) }
+	called := false
+	v2.scheduleAfterCommit(func() { called = true })
+	if called || len(callbacks) != 1 {
+		t.Fatalf("运行时副作用必须在外层事务提交前保持未执行，called=%t callbacks=%d", called, len(callbacks))
+	}
+	for _, callback := range callbacks {
+		callback()
+	}
+	if !called {
+		t.Fatal("外层事务提交后应执行运行时副作用")
 	}
 }
 
@@ -215,6 +402,9 @@ func requestAndApproveLifecycle(t *testing.T, approval *ApprovalService, kind, k
 	}
 	if _, err := approval.Approve(created.RequestID, approver, "127.0.0.2"); err != nil {
 		t.Fatalf("批准 %s 失败: %v", kind, err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("执行 %s 失败，processed=%d err=%v", kind, processed, err)
 	}
 	var server model.Server
 	if err := approval.db.Where("id = ?", serverID).First(&server).Error; err != nil {

@@ -134,9 +134,25 @@ func TestEnvCreateStableIdentifierCompatibility(t *testing.T) {
 	} else {
 		_ = mustAppErr(t, err, apperr.ErrAmbiguousIdentifier.Code, 400)
 	}
+	if _, err := svc.CreateWithParams(CreateEnvParams{Code: strings.Repeat("c", 65), Operator: "alice"}); err == nil {
+		t.Fatal("超过 64 字符的 code 应返回参数错误")
+	} else {
+		_ = mustAppErr(t, err, apperr.ErrInvalidParam.Code, 400)
+	}
 	changedCode := "test-new"
 	if _, err := svc.UpdateWithParams(legacy.ID, &changedCode, nil, nil, nil, "alice", "10.0.0.1"); err == nil {
 		t.Fatal("修改 code 应返回不可变标识错误")
+	} else {
+		_ = mustAppErr(t, err, apperr.ErrImmutableIdentifier.Code, 400)
+	}
+	legacyName := "test"
+	unchanged, err := svc.UpdateWithParams(legacy.ID, nil, &legacyName, nil, nil, "alice", "10.0.0.1")
+	if err != nil || unchanged.DisplayName != "test" {
+		t.Fatalf("旧 name 与 code 相同时应幂等忽略，实际 %+v err=%v", unchanged, err)
+	}
+	legacyName = "误改标识"
+	if _, err := svc.UpdateWithParams(legacy.ID, nil, &legacyName, nil, nil, "alice", "10.0.0.1"); err == nil {
+		t.Fatal("旧 name 修改标识应返回不可变标识错误")
 	} else {
 		_ = mustAppErr(t, err, apperr.ErrImmutableIdentifier.Code, 400)
 	}

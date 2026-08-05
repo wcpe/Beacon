@@ -1,8 +1,9 @@
 // 变更单详情视图：标题 + 状态徽标 + 生命周期操作区（按 status 显示可用动作）+ 五个 Tab。
-// 每个写操作走确认弹窗；reject/cancel 必填原因，熔断恢复必填 mode+reason，start 提示冲突守卫。
+// 每个写操作走确认弹窗；reject/cancel 必填原因，熔断恢复必填 mode+reason。
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 
 import {
   AsyncSection,
@@ -22,7 +23,6 @@ import {
   pauseChangeOrder,
   rejectChangeOrder,
   resumeChangeOrder,
-  startChangeOrder,
   submitChangeOrder,
   withdrawChangeOrder,
   type ChangeOrderDetail,
@@ -43,7 +43,6 @@ type ActionKind =
   | 'withdraw'
   | 'approve'
   | 'reject'
-  | 'start'
   | 'pause'
   | 'resume'
   | 'cancel'
@@ -80,8 +79,6 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
           return approveChangeOrder(orderId)
         case 'reject':
           return rejectChangeOrder(orderId, result.reason)
-        case 'start':
-          return startChangeOrder(orderId)
         case 'pause':
           return pauseChangeOrder(orderId)
         case 'resume':
@@ -116,6 +113,7 @@ export default function DetailView({ orderId, onBack }: DetailViewProps) {
             {/* 状态徽标 + 生命周期操作区（面板标题已由 MasterDetail 头部承担，此处只留状态与可做动作） */}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5">
               <OrderStatusBadge status={order.status} />
+              {order.approvalRequestId ? <Link className="text-sm text-brand hover:underline" to={`/approvals/${encodeURIComponent(order.approvalRequestId)}`}>查看统一审批</Link> : null}
               <div className="flex flex-wrap items-center gap-2">
                 <LifecycleActions
                   order={order}
@@ -230,7 +228,7 @@ function availableActions(status: ChangeOrderDetail['status']): ActionKind[] {
     case 'pending_approval':
       return ['approve', 'reject', 'withdraw']
     case 'approved':
-      return ['start', 'withdraw']
+      return ['withdraw']
     case 'rolling':
       return ['pause']
     case 'paused':
@@ -275,11 +273,6 @@ function confirmConfig(
       titleKey: 'delivery.changes.confirm.rejectTitle',
       descKey: 'delivery.changes.confirm.rejectDesc',
       labelKey: 'delivery.changes.actions.reject',
-    },
-    start: {
-      titleKey: 'delivery.changes.confirm.startTitle',
-      descKey: 'delivery.changes.confirm.startDesc',
-      labelKey: 'delivery.changes.actions.start',
     },
     pause: {
       titleKey: 'delivery.changes.confirm.pauseTitle',

@@ -2,16 +2,13 @@
 // 右侧主区分「指标时序 / 数据对比 / 调度决策 / 健康快照」板块（吸顶切换常驻）。指标时序 / 数据对比 /
 // 健康快照选服即时出图；调度决策自带时间窗与筛选、不依赖左侧选服。支持 ?view= 定位板块
 //（dashboard 调度概览下钻入口）。选中服务器经 localStorage 持久化，刷新恢复。
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
 import { GitCompareArrows, History, LineChart, MousePointerClick, TrendingUp, Workflow } from 'lucide-react'
 
 import { PageHeader, cn } from '@beacon/ui'
 
-import { fetchServers } from '../api/cluster'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../features/env/use-env-scope'
 import {
   setServiceAnalysisSelected,
   useServiceAnalysisSelected,
@@ -46,32 +43,7 @@ export default function ServiceAnalysisPage() {
     return isPanelTab(view) ? view : 'series'
   })
 
-  // 在线子服列表：用于剪掉 localStorage 里已不存在 / 已下线的幽灵选中（避免右侧卡旧 game1）
-  const envScope = useEnvNamespaceScope()
-  const serversQuery = useQuery({
-    queryKey: ['service-analysis', 'servers', envScope],
-    queryFn: () =>
-      fetchPagedItemsByEnvScope(
-        envScope,
-        (namespaceId, pageRequest) =>
-          fetchServers({ kind: 'backend', namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
-        { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
-      ),
-  })
-  useEffect(() => {
-    if (!serversQuery.isSuccess || persistedIds.length === 0) {
-      return
-    }
-    const onlineIds = new Set(
-      serversQuery.data.items.filter((s) => s.online).map((s) => s.serverId),
-    )
-    // 只保留仍在线的；若全部失效则清空，避免分析区卡在已下线 id
-    const kept = persistedIds.filter((id) => onlineIds.has(id))
-    if (kept.length !== persistedIds.length) {
-      setServiceAnalysisSelected(kept)
-    }
-  }, [serversQuery.isSuccess, serversQuery.data, persistedIds])
-
+  // 选服集合由 ServerPicker 按服务端分页维护；这里不能拿首批页面剪掉后续已选项。
   const toggle = (serverId: string) => {
     const next = new Set(selected)
     if (next.has(serverId)) {
@@ -86,15 +58,8 @@ export default function ServiceAnalysisPage() {
     setServiceAnalysisSelected([])
   }
 
-  // 右侧分析仅用仍在线的选中，避免幽灵 id 触发空/错图
-  const onlineIdSet = useMemo(
-    () => new Set((serversQuery.data?.items ?? []).filter((s) => s.online).map((s) => s.serverId)),
-    [serversQuery.data],
-  )
-  const serverIds = useMemo(
-    () => persistedIds.filter((id) => onlineIdSet.has(id)),
-    [persistedIds, onlineIdSet],
-  )
+  // 选中项即业务集合；当前页未加载时仍必须继续驱动分析与对比。
+  const serverIds = persistedIds
 
   return (
     <section className="grid gap-5">

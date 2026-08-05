@@ -14,6 +14,7 @@ import type {
   MessageEdgeStat,
   NamespaceListResponse,
   ServerItem,
+  ServerLifecycleImpact,
   ServerListResponse,
   ZoneTreeResponse,
 } from '@beacon/contracts'
@@ -61,8 +62,12 @@ export function parseApiJson(text: string, status: number): unknown {
  * 保证鉴权注入与 401 行为四处一致。有令牌则带 `Authorization: Bearer <令牌>`；
  * 遇 401（令牌缺失 / 失效 / 过期，或登录端点凭据错）先清登录态并触发全局跳登录回调，再抛错供调用方提示。
  */
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {}
+export interface RequestOptions {
+  headers?: Record<string, string>
+}
+
+export async function request<T>(method: string, path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+  const headers: Record<string, string> = { ...options?.headers }
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
   }
@@ -186,12 +191,20 @@ export interface ServerQuery {
   zoneId?: number
   bcClusterId?: number
   keyword?: string
+  lifecycleStatus?: 'active' | 'archived' | 'tombstoned' | 'all'
   page?: number
   pageSize?: number
 }
 
 export function fetchServers(query: ServerQuery): Promise<ServerListResponse> {
   return request('GET', `/admin/v2/servers${buildQuery({ ...query })}`)
+}
+
+export function fetchServerLifecycleImpact(id: number, action: 'archive' | 'restore' | 'permanent-delete'): Promise<ServerLifecycleImpact> {
+  const path = action === 'permanent-delete'
+    ? `/admin/v2/servers/${String(id)}/permanent-deletion-impact`
+    : `/admin/v2/servers/${String(id)}/lifecycle-impact${buildQuery({ action })}`
+  return request('GET', path)
 }
 
 export function fetchZoneTree(namespaceId: number): Promise<ZoneTreeResponse> {
@@ -230,7 +243,8 @@ export function transferServerPlacement(
 
 export interface CreateClusterBody {
   namespaceId: number
-  name: string
+  code: string
+  displayName: string
   description?: string
 }
 
@@ -240,7 +254,8 @@ export function createBcCluster(body: CreateClusterBody): Promise<unknown> {
 
 export interface CreateRegionBody {
   bcClusterId: number
-  name: string
+  code: string
+  displayName: string
   description?: string
 }
 
@@ -250,12 +265,34 @@ export function createRegion(body: CreateRegionBody): Promise<unknown> {
 
 export interface CreateZoneBody {
   regionId: number
-  name: string
+  code: string
+  displayName: string
   description?: string
 }
 
 export function createZone(body: CreateZoneBody): Promise<unknown> {
   return request('POST', '/admin/v2/zones', body)
+}
+
+export interface UpdateDisplayNameBody {
+  displayName: string
+  description?: string
+}
+
+export function updateBcCluster(id: number, body: UpdateDisplayNameBody): Promise<unknown> {
+  return request('PATCH', `/admin/v2/bc-clusters/${String(id)}`, body)
+}
+
+export function updateRegion(id: number, body: UpdateDisplayNameBody): Promise<unknown> {
+  return request('PATCH', `/admin/v2/regions/${String(id)}`, body)
+}
+
+export function updateZone(id: number, body: UpdateDisplayNameBody): Promise<unknown> {
+  return request('PATCH', `/admin/v2/zones/${String(id)}`, body)
+}
+
+export function updateServerDisplayName(id: number, displayName: string): Promise<unknown> {
+  return request('PATCH', `/admin/v2/servers/${String(id)}`, { displayName })
 }
 
 /** 删除空的 BC 集群（无大区、无已分配代理）。 */

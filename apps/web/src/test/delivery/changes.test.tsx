@@ -70,7 +70,7 @@ describe('/changes 变更单页', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('审批写闭环：对待审批单点通过后状态变为已批准', async () => {
+  it('审批写闭环：通过后仅展示单一审批状态，不再要求第二次启动', async () => {
     useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ChangesPage />)
@@ -97,6 +97,7 @@ describe('/changes 变更单页', () => {
     await waitFor(() => {
       expect(screen.getAllByText('已批准').length).toBeGreaterThan(0)
     })
+    expect(screen.queryByRole('button', { name: '启动' })).not.toBeInTheDocument()
   })
 
   it('批次推进写闭环：状态机放行待确认批后即时推进到下一批', async () => {

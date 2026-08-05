@@ -7,6 +7,7 @@ import { Badge, Button } from '@beacon/ui'
 import type { NamespaceItem, NamespaceTrustItem, TrustCapability } from '@beacon/contracts'
 
 import { formatIso } from '../../features/system/format'
+import LifecycleApprovalControl from '../../features/lifecycle/approval-control'
 
 interface NamespaceDetailPanelProps {
   // 选中的 namespace
@@ -82,7 +83,10 @@ export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke }
 
   return (
     <div className="grid gap-3 text-sm">
-      <div className="text-[15px] font-semibold text-ink-1">{item.name}</div>
+      <div>
+        <div className="text-[15px] font-semibold text-ink-1">{item.displayName ?? item.name}</div>
+        <code className="text-xs text-ink-4">{item.code ?? item.name}</code>
+      </div>
 
       <Field label={t('system.namespaces.columns.description')} value={item.description || '-'} />
       <div className="grid grid-cols-3 gap-2">
@@ -91,6 +95,13 @@ export default function NamespaceDetailPanel({ item, trusts, onGrant, onRevoke }
         <Metric label={t('system.namespaces.columns.trustCount')} value={item.activeTrustCount} />
       </div>
       <Field label={t('system.namespaces.columns.createdAt')} value={formatIso(item.createdAt)} />
+      <div className="grid gap-2 rounded-lg border border-border bg-surface-1 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[13px] font-semibold text-ink-1">生命周期</span>
+          <LifecycleApprovalControl subject="namespace" id={item.id} stableID={item.code ?? item.name} lifecycle={item.lifecycle} />
+        </div>
+        <span className="text-xs text-ink-3">{item.lifecycle === 'tombstoned' ? '墓碑仅保留历史与审计，不能恢复。' : item.effectiveActive === false ? '当前不具备有效运行资格。' : '归档与恢复均需统一审批。'}</span>
+      </div>
 
       {/* 互通信任关系（出向 / 入向） */}
       <div className="grid gap-2 border-t border-border pt-3">

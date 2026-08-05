@@ -95,8 +95,8 @@ export default function EnvsPage() {
   }
 
   const createMutation = useMutation({
-    mutationFn: ({ name, description }: { name: string; description: string }) =>
-      createEnv({ name, description: description || undefined }),
+    mutationFn: ({ code, displayName, description }: { code: string; displayName: string; description: string }) =>
+      createEnv({ code, displayName, description: description || undefined }),
     onSuccess: async () => {
       await invalidateEnvs()
       setFormState(null)
@@ -107,8 +107,8 @@ export default function EnvsPage() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, name, description }: { id: number; name: string; description: string }) =>
-      updateEnv(id, { name, description }),
+    mutationFn: ({ id, displayName, description }: { id: number; displayName: string; description: string }) =>
+      updateEnv(id, { displayName, description }),
     onSuccess: async () => {
       await invalidateEnvs()
       setFormState(null)
@@ -144,7 +144,15 @@ export default function EnvsPage() {
 
   const columns = useMemo<DataTableColumn<EnvItem>[]>(
     () => [
-      { header: t('system.envs.columns.name'), cell: (row) => <span className="font-medium">{row.name}</span> },
+      {
+        header: t('system.envs.columns.name'),
+        cell: (row) => (
+          <div className="grid gap-0.5">
+            <span className="font-medium">{row.displayName ?? row.name}</span>
+            <code className="text-xs text-ink-4">{row.code ?? row.name}</code>
+          </div>
+        ),
+      },
       { header: t('system.envs.columns.description'), cell: (row) => row.description || '-' },
       {
         header: t('system.envs.columns.namespaceCount'),
@@ -269,7 +277,8 @@ export default function EnvsPage() {
       <EnvFormDialog
         open={formState !== null}
         mode={formState?.mode ?? 'create'}
-        initialName={formState?.mode === 'edit' ? formState.env.name : ''}
+        initialCode={formState?.mode === 'edit' ? (formState.env.code ?? formState.env.name) : ''}
+        initialDisplayName={formState?.mode === 'edit' ? (formState.env.displayName ?? formState.env.name) : ''}
         initialDescription={formState?.mode === 'edit' ? formState.env.description : ''}
         pending={createMutation.isPending || updateMutation.isPending}
         errorText={formError}
@@ -278,12 +287,12 @@ export default function EnvsPage() {
             setFormState(null)
           }
         }}
-        onSubmit={(name, description) => {
+        onSubmit={(code, displayName, description) => {
           setFormError(null)
           if (formState?.mode === 'edit') {
-            updateMutation.mutate({ id: formState.env.id, name, description })
+            updateMutation.mutate({ id: formState.env.id, displayName, description })
           } else {
-            createMutation.mutate({ name, description })
+            createMutation.mutate({ code, displayName, description })
           }
         }}
       />

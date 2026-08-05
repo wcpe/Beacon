@@ -1,5 +1,5 @@
 // 消息链路页（/messages，FR-181）：跨服消息链路检索与逐跳追踪。元数据永不含 payload；
-// payload 仅经受控查看弹窗（原因必填 + 先审计后返回）按需获取。
+// payload 仅经审批申请与一次性授权流程按需获取，批准前不请求正文。
 // 查询防护：精确 messageId / correlationId 直查；热查询可仅时间窗（全局近期）；冷查询仍须 selector。
 // 进页默认 committed 近 1h 全局查询。游标分页；「包含归档」冷查询（FR-152）。行点击右侧详情面板。
 import { useMemo, useState } from 'react'
@@ -398,7 +398,7 @@ function MessageDetailPanel({ row }: { row: MessageItem }) {
 
       <MessageHops messageId={row.messageId} />
 
-      {/* payload 受控查看（原因必填 + 先审计后返回；未存储则禁入口） */}
+      {/* payload 仅可提交审批申请；未存储时禁入口。 */}
       <div className="border-t border-border pt-2.5">
         {row.payloadStored ? (
           <Button

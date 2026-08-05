@@ -1,5 +1,5 @@
 // 链路样本消息列表（拓扑两个侧面板共用）：样本 messageId + 「查看 payload」入口。
-// payload 属敏感内容：仅经受控弹窗按需查看（原因必填 + 后端先审计后返回），本列表只展示 id。
+// payload 属敏感内容：仅经审批申请与一次性授权按需查看，本列表只展示 id。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Eye } from 'lucide-react'

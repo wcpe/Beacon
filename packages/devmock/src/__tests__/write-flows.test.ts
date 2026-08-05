@@ -88,6 +88,21 @@ describe('身份确认闭环（approve）', () => {
 })
 
 describe('审批申请写闭环', () => {
+  it('消息 payload 专用入口创建统一审批申请', async () => {
+    const created = await callJson('POST', '/admin/v2/messages/msg-901/payload/approval-requests', {
+      reason: '排查异常链路失败样本',
+    })
+
+    expect(created.status).toBe(202)
+    expect(created.json).toMatchObject({
+      operationKey: 'message.payload.read',
+      resourceType: 'message',
+      resourceId: 'msg-901',
+      requestReason: '排查异常链路失败样本',
+      status: 'pending',
+    })
+  })
+
   it('批准待审批申请时按路径参数定位并记录 executing 时间线', async () => {
     const requestId = 'apr_change_9101'
     const detail = await callJson('GET', `/admin/v2/approval-requests/${requestId}`)
@@ -406,5 +421,33 @@ describe('env 展示维度写闭环（FR-178）', () => {
     const bad = await callJson('PUT', `/admin/v2/envs/${String(test?.id ?? 0)}/namespaces`, { namespaceIds: [9999] })
     expect(bad.status).toBe(400)
     expect((bad.json as { code: string }).code).toBe('ENV_NAMESPACE_NOT_FOUND')
+  })
+
+  it('双名称创建、检索与仅展示名更新保持稳定 code', async () => {
+    const created = await callJson('POST', '/admin/v2/envs', { code: 'preprod', displayName: '预发布环境' })
+    expect(created.status).toBe(201)
+    const item = created.json as EnvItemShape & { code: string; displayName: string }
+    expect(item).toMatchObject({ name: 'preprod', code: 'preprod', displayName: '预发布环境' })
+    expect((await callJson('GET', '/admin/v2/envs?keyword=预发布环境')).json).toMatchObject({ total: 1 })
+    expect((await callJson('GET', '/admin/v2/envs?keyword=preprod')).json).toMatchObject({ total: 1 })
+    const renamed = await callJson('PATCH', `/admin/v2/envs/${String(item.id)}`, { displayName: '预发布新名' })
+    expect(renamed.json).toMatchObject({ code: 'preprod', displayName: '预发布新名' })
+    const immutable = await callJson('PATCH', `/admin/v2/envs/${String(item.id)}`, { name: 'changed' })
+    expect((immutable.json as { code: string }).code).toBe('IMMUTABLE_IDENTIFIER')
+    const ambiguous = await callJson('POST', '/admin/v2/envs', { name: 'old', code: 'new' })
+    expect((ambiguous.json as { code: string }).code).toBe('AMBIGUOUS_IDENTIFIER')
+  })
+
+  it('namespace 双名称创建、检索与仅展示名更新保持稳定 code', async () => {
+    const created = await callJson('POST', '/admin/v2/namespaces', { code: 'preprod-ns', displayName: '预发布命名空间' })
+    expect(created.status).toBe(201)
+    const item = created.json as { id: number; code: string; displayName: string }
+    expect(item).toMatchObject({ code: 'preprod-ns', displayName: '预发布命名空间' })
+    expect((await callJson('GET', '/admin/v2/namespaces?keyword=预发布命名空间')).json).toMatchObject({ total: 1 })
+    expect((await callJson('GET', '/admin/v2/namespaces?keyword=preprod-ns')).json).toMatchObject({ total: 1 })
+    const renamed = await callJson('PATCH', `/admin/v2/namespaces/${String(item.id)}`, { displayName: '预发布新名' })
+    expect(renamed.json).toMatchObject({ code: 'preprod-ns', displayName: '预发布新名' })
+    const immutable = await callJson('PATCH', `/admin/v2/namespaces/${String(item.id)}`, { code: 'changed' })
+    expect((immutable.json as { code: string }).code).toBe('IMMUTABLE_IDENTIFIER')
   })
 })

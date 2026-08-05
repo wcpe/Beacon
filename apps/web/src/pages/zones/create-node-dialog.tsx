@@ -1,4 +1,4 @@
-// 新建结构节点弹窗（集群 / 大区 / 小区共用）：名称 + 描述，提交带内联错误展示。
+// 新建结构节点弹窗（集群 / 大区 / 小区共用）：业务标识、显示名称与描述，提交带内联错误展示。
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -19,7 +19,7 @@ interface CreateNodeDialogProps {
   title: string
   pending: boolean
   errorText?: string | null
-  onSubmit: (name: string, description: string) => void
+  onSubmit: (code: string, displayName: string, description: string) => void
 }
 
 export default function CreateNodeDialog({
@@ -31,13 +31,15 @@ export default function CreateNodeDialog({
   onSubmit,
 }: CreateNodeDialogProps) {
   const { t } = useTranslation()
-  const [name, setName] = useState('')
+  const [code, setCode] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
 
   // 每次打开清空草稿
   useEffect(() => {
     if (open) {
-      setName('')
+      setCode('')
+      setDisplayName('')
       setDescription('')
     }
   }, [open])
@@ -50,14 +52,26 @@ export default function CreateNodeDialog({
         </DialogHeader>
         <div className="grid gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="create-node-name">{t('cluster.zones.create.name')}</Label>
+            <Label htmlFor="create-node-code">{t('cluster.zones.create.code')}</Label>
             <Input
-              id="create-node-name"
-              value={name}
+              id="create-node-code"
+              value={code}
               onChange={(e) => {
-                setName(e.target.value)
+                setCode(e.target.value)
               }}
-              placeholder={t('cluster.zones.create.namePlaceholder')}
+              placeholder={t('cluster.zones.create.codePlaceholder')}
+            />
+            <p className="text-xs text-ink-4">{t('cluster.zones.create.codeHint')}</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="create-node-display-name">{t('cluster.zones.create.displayName')}</Label>
+            <Input
+              id="create-node-display-name"
+              value={displayName}
+              onChange={(e) => {
+                setDisplayName(e.target.value)
+              }}
+              placeholder={t('cluster.zones.create.displayNamePlaceholder')}
             />
           </div>
           <div className="space-y-1.5">
@@ -82,9 +96,9 @@ export default function CreateNodeDialog({
             {t('cluster.zones.create.cancel')}
           </Button>
           <Button
-            disabled={name.trim() === '' || pending}
+            disabled={code.trim() === '' || displayName.trim() === '' || pending}
             onClick={() => {
-              onSubmit(name.trim(), description.trim())
+              onSubmit(code.trim(), displayName.trim(), description.trim())
             }}
           >
             {t('cluster.zones.create.submit')}

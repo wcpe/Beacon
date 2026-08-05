@@ -12,7 +12,9 @@ import { Server } from 'lucide-react'
 import { PageHeader } from '@beacon/ui'
 
 import { fetchIdentities } from '../api/cluster'
+import { isDemoMode } from '../demo-mode'
 import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../features/env/use-env-scope'
+import LifecycleMockReview from '../features/lifecycle/mock-review'
 import AssetsPanel from './servers/assets-panel'
 import HealthSheet from './servers/health-sheet'
 import PendingSheet from './servers/pending-sheet'
@@ -53,6 +55,7 @@ export default function ServersPage() {
         }}
         pendingCount={pendingCount}
       />
+      {isDemoMode() && <LifecycleMockReview subject="server" />}
       <PendingSheet open={pendingOpen} onOpenChange={setPendingOpen} />
       <HealthSheet
         serverId={healthServerId}

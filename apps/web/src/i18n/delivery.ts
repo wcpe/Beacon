@@ -69,6 +69,8 @@ export const delivery = {
       previewTitle: '内容预览',
       previewLoading: '加载预览中…',
       sensitiveOpen: '填写原因查看',
+      approvalHint: '文件正文必须先申请审批；批准后由系统自动下发浏览命令并签发一次性授权。',
+      requestPreview: '申请查看文件内容',
       fields: {
         serverId: '子服',
         path: '路径',
@@ -108,12 +110,13 @@ export const delivery = {
     // 两侧 diff
     diff: {
       title: '两侧差异',
-      hint: '选两台子服的同名文件做行级比对',
+      hint: '选两台子服的同名文件；左右两侧须分别审批后才能读取差异摘要',
       leftServer: '左侧子服',
       rightServer: '右侧子服',
       pathLabel: '文件路径',
       run: '比对差异',
       identical: '两侧内容一致（哈希相同）',
+      changed: '两侧文件存在差异',
       leftHeading: '左侧',
       rightHeading: '右侧',
       empty: '暂无差异结果',
@@ -123,6 +126,22 @@ export const delivery = {
       reasonLabel: 'diff 原因',
       reasonPlaceholder: '例如：核对两服经济配置差异',
       confirm: '带原因比对',
+      request: '申请两侧审批',
+      requesting: '正在创建两侧审批…',
+      refresh: '刷新审批状态',
+      approvalHint: '左右两侧是独立审批：任一侧未批准、失效或撤回时，均不会读取或展示任何文件正文。',
+      approvalStatus: '两侧审批状态',
+      openApproval: '前往审批中心',
+      approvalState: {
+        pending: '等待审批或 Agent 回传',
+        ready: '授权已就绪',
+        unavailable: '未批准、已失效或授权不可用',
+      },
+      consume: '原子消费两侧授权并查看差异摘要',
+      consuming: '正在消费两侧授权…',
+      summaryTitle: '差异摘要',
+      summaryHint: '仅显示服务端生成的路径、哈希和大小摘要；文件正文不会进入页面。',
+      summaryMeta: '哈希 {{sha256}} · 大小 {{size}}',
     },
     // 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因，整体替换语义
     sensitiveRules: {

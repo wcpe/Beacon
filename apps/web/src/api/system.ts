@@ -15,6 +15,7 @@ import type {
   NamespaceListResponse,
   NamespaceTrustItem,
   NamespaceTrustListResponse,
+  NamespaceLifecycleImpact,
   SettingItem,
   SystemObservability,
   SystemStatus,
@@ -155,6 +156,7 @@ export function cancelArchiveJob(id: number): Promise<ArchiveJobDetail> {
 
 export interface NamespaceQuery {
   keyword?: string
+  lifecycleStatus?: 'active' | 'archived' | 'tombstoned' | 'all'
   page?: number
   pageSize?: number
 }
@@ -163,8 +165,18 @@ export function fetchNamespaceList(query: NamespaceQuery): Promise<NamespaceList
   return request('GET', `/admin/v2/namespaces${buildQuery({ ...query })}`)
 }
 
+export function fetchNamespaceLifecycleImpact(id: number, action: 'archive' | 'restore' | 'permanent-delete'): Promise<NamespaceLifecycleImpact> {
+  return request('GET', `/admin/v2/namespaces/${String(id)}/lifecycle-impact${buildQuery({ action })}`)
+}
+
+export function fetchNamespacePermanentDeletionImpact(id: number): Promise<NamespaceLifecycleImpact> {
+  return request('GET', `/admin/v2/namespaces/${String(id)}/permanent-deletion-impact`)
+}
+
 export interface CreateNamespaceBody {
-  name: string
+  name?: string
+  code?: string
+  displayName?: string
   description?: string
 }
 
@@ -215,7 +227,9 @@ export function fetchEnvList(query: EnvQuery): Promise<EnvListResponse> {
 }
 
 export interface CreateEnvBody {
-  name: string
+  name?: string
+  code?: string
+  displayName?: string
   description?: string
 }
 
@@ -225,6 +239,7 @@ export function createEnv(body: CreateEnvBody): Promise<EnvItem> {
 
 export interface UpdateEnvBody {
   name?: string
+  displayName?: string
   description?: string
 }
 

@@ -36,15 +36,29 @@ afterAll(() => {
   server.close()
 })
 
+async function findZoneRow(name: string): Promise<HTMLElement> {
+  const matches = await screen.findAllByText(name)
+  const row = matches.map((element) => element.closest('[role="button"]')).find((element): element is HTMLElement => element !== null)
+  if (!row) throw new Error(`未找到区服节点 ${name}`)
+  return row
+}
+
+async function findTreeLeaf(name: string): Promise<HTMLElement> {
+  const matches = await screen.findAllByText(name)
+  const leaf = matches.map((element) => element.closest('[draggable="true"]')).find((element): element is HTMLElement => element !== null)
+  if (!leaf) throw new Error(`未找到服务器树叶 ${name}`)
+  return leaf
+}
+
 describe('/zones 区服分配页', () => {
   it('常规态渲染结构树（集群 + 大区 + 小区）', async () => {
     useScenario('normal')
     renderPage(<ZonesPage />)
 
     // 结构树出现已知集群、大区与小区（集群 + 大区默认展开）
-    expect(await screen.findByText('bc-main')).toBeInTheDocument()
-    expect(await screen.findByText('华东大区')).toBeInTheDocument()
-    expect(await screen.findByText('area-1')).toBeInTheDocument()
+    expect(await findZoneRow('bc-main')).toBeInTheDocument()
+    expect(await findZoneRow('华东大区')).toBeInTheDocument()
+    expect(await findZoneRow('area-1')).toBeInTheDocument()
   })
 
   it('集群节点标注代理角色计数', async () => {
@@ -54,6 +68,44 @@ describe('/zones 区服分配页', () => {
     // 集群头带「代理 · N」角色徽标；「全部命名空间」下可能有多集群，取至少一处即可
     expect((await screen.findAllByText(/代理 · \d/)).length).toBeGreaterThan(0)
   })
+
+  it('huge 场景按展开小区分页加载，单区每页最多渲染 40 条且可继续到第 41 台', async () => {
+    useScenario('huge')
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    await findZoneRow('bc-main')
+    const zoneRow = await findZoneRow('area-1-1-1')
+    await user.click(zoneRow)
+
+    const zoneItem = zoneRow.closest('[role="treeitem"]')
+    if (!(zoneItem instanceof HTMLElement)) {
+      throw new Error('未找到小区树节点')
+    }
+    expect((await within(zoneItem).findAllByText('game-0001')).length).toBeGreaterThan(0)
+    expect(within(zoneItem).queryByText('game-0041')).not.toBeInTheDocument()
+    await user.click(within(zoneItem).getByRole('button', { name: '继续加载' }))
+    expect((await within(zoneItem).findAllByText('game-0041')).length).toBeGreaterThan(0)
+  }, 20_000)
+
+  it('huge 场景未分配窄栏显示服务端总数并支持搜索与跨页继续加载', async () => {
+    useScenario('huge')
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    await findZoneRow('bc-main')
+    await user.click(await screen.findByRole('button', { name: /未分配/ }))
+    expect(await screen.findByText('已加载 200 / 共 240 台')).toBeInTheDocument()
+    expect(screen.getByText('pool-200')).toBeInTheDocument()
+    expect(screen.queryByText('pool-201')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: '继续加载' }))
+    expect(await screen.findByText('pool-201')).toBeInTheDocument()
+
+    const search = screen.getByLabelText('搜索未分配服务器 ID')
+    await user.type(search, 'pool-240')
+    expect(await screen.findByText('pool-240')).toBeInTheDocument()
+  }, 20_000)
 
   it('空态给出建集群引导', async () => {
     useScenario('empty')
@@ -70,7 +122,7 @@ describe('/zones 区服分配页', () => {
     renderPage(<ZonesPage />)
 
     // 等结构树加载，再从顶部入口打开未分配窄栏
-    await screen.findByText('bc-main')
+    await findZoneRow('bc-main')
     await user.click(await screen.findByRole('button', { name: /未分配/ }))
 
     // 窄栏内勾选 build-1（chip 内的 checkbox）
@@ -102,7 +154,7 @@ describe('/zones 区服分配页', () => {
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
-    await screen.findByText('bc-main')
+    await findZoneRow('bc-main')
     await user.click(await screen.findByRole('button', { name: /未分配/ }))
     const chip = (await screen.findByText('build-1')).closest('div')
     await user.click(within(chip as HTMLElement).getByRole('checkbox'))
@@ -124,7 +176,7 @@ describe('/zones 区服分配页', () => {
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
-    await screen.findByText('bc-main')
+    await findZoneRow('bc-main')
     await user.click(await screen.findByRole('button', { name: /未分配/ }))
 
     // 定位窄栏里的 build-1 chip（可拖起）
@@ -132,14 +184,13 @@ describe('/zones 区服分配页', () => {
     expect(chip).not.toBeNull()
 
     // 定位小区 area-1 的树行（放置目标）
-    const zoneRow = (await screen.findByText('area-1')).closest('[role="button"]')
-    expect(zoneRow).not.toBeNull()
+    const zoneRow = await findZoneRow('area-1')
 
     // 原生拖拽序列：dragStart（组件写真实载荷）→ dragOver（目标 preventDefault 接收）→ drop（弹确认）
     const dt = makeDragDataTransfer()
     fireEvent.dragStart(chip as HTMLElement, { dataTransfer: dt })
-    fireEvent.dragOver(zoneRow as HTMLElement, { dataTransfer: dt })
-    fireEvent.drop(zoneRow as HTMLElement, { dataTransfer: dt })
+    fireEvent.dragOver(zoneRow, { dataTransfer: dt })
+    fireEvent.drop(zoneRow, { dataTransfer: dt })
 
     // 松手后不立即分配，先弹确认弹窗（显示将 build-1 分配到目标）——build-1 仍在窄栏
     const dialog = await screen.findByRole('alertdialog')
@@ -162,15 +213,15 @@ describe('/zones 区服分配页', () => {
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
-    await screen.findByText('bc-main')
+    await findZoneRow('bc-main')
     await user.click(await screen.findByRole('button', { name: /未分配/ }))
     const chip = (await screen.findByText('build-1')).closest('[draggable="true"]')
-    const zoneRow = (await screen.findByText('area-1')).closest('[role="button"]')
+    const zoneRow = await findZoneRow('area-1')
 
     const dt = makeDragDataTransfer()
     fireEvent.dragStart(chip as HTMLElement, { dataTransfer: dt })
-    fireEvent.dragOver(zoneRow as HTMLElement, { dataTransfer: dt })
-    fireEvent.drop(zoneRow as HTMLElement, { dataTransfer: dt })
+    fireEvent.dragOver(zoneRow, { dataTransfer: dt })
+    fireEvent.drop(zoneRow, { dataTransfer: dt })
 
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '取消' }))
@@ -188,19 +239,17 @@ describe('/zones 区服分配页', () => {
     renderPage(<ZonesPage />)
 
     // 小区默认收起（huge 性能）：先展开 area-2 露出 game-3
-    await screen.findByText('bc-main')
-    const sourceZone = (await screen.findByText('area-2')).closest('[role="button"]')
-    expect(sourceZone).not.toBeNull()
-    await user.click(sourceZone as HTMLElement)
-    const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
-    expect(leaf).not.toBeNull()
+    await findZoneRow('bc-main')
+    const sourceZone = await findZoneRow('area-2')
+    await user.click(sourceZone)
+    const leaf = await findTreeLeaf('game-3')
 
     // 拖到另一小区 area-1（目标不同于原属）
-    const targetZone = (await screen.findByText('area-1')).closest('[role="button"]')
+    const targetZone = await findZoneRow('area-1')
     const dt = makeDragDataTransfer()
-    fireEvent.dragStart(leaf as HTMLElement, { dataTransfer: dt })
-    fireEvent.dragOver(targetZone as HTMLElement, { dataTransfer: dt })
-    fireEvent.drop(targetZone as HTMLElement, { dataTransfer: dt })
+    fireEvent.dragStart(leaf, { dataTransfer: dt })
+    fireEvent.dragOver(targetZone, { dataTransfer: dt })
+    fireEvent.drop(targetZone, { dataTransfer: dt })
 
     // 弹换区改派确认（走换区工单，需填原因）
     const dialog = await screen.findByRole('alertdialog')
@@ -223,12 +272,12 @@ describe('/zones 区服分配页', () => {
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
-    await screen.findByText('bc-main')
+    await findZoneRow('bc-main')
     // 小区默认收起：先展开 area-2 再右键 game-3
-    const sourceZone = (await screen.findByText('area-2')).closest('[role="button"]')
-    await user.click(sourceZone as HTMLElement)
-    const leaf = (await screen.findByText('game-3')).closest('[draggable="true"]')
-    fireEvent.contextMenu(leaf as HTMLElement)
+    const sourceZone = await findZoneRow('area-2')
+    await user.click(sourceZone)
+    const leaf = await findTreeLeaf('game-3')
+    fireEvent.contextMenu(leaf)
 
     // 菜单出现，含改派 / 查看详情 / 解绑
     const menu = await screen.findByRole('menu')

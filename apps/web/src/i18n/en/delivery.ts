@@ -70,6 +70,8 @@ export const delivery = {
       previewTitle: 'Content preview',
       previewLoading: 'Loading preview…',
       sensitiveOpen: 'Provide a reason to view',
+      approvalHint: 'File content requires approval first. After approval, the system queues the browse command and issues a one-time grant.',
+      requestPreview: 'Request file content',
       fields: {
         serverId: 'Server ID',
         path: 'Path',
@@ -109,12 +111,13 @@ export const delivery = {
     // Two-side diff
     diff: {
       title: 'Two-side diff',
-      hint: 'Pick two servers with the same file path to run a line-level diff.',
+      hint: 'Pick the same file on two servers. Each side needs its own approval before a diff summary is available.',
       leftServer: 'Left server',
       rightServer: 'Right server',
       pathLabel: 'File path',
       run: 'Run diff',
       identical: 'Both sides are identical (same hash)',
+      changed: 'The two files differ',
       leftHeading: 'Left',
       rightHeading: 'Right',
       empty: 'No diff result yet',
@@ -124,6 +127,22 @@ export const delivery = {
       reasonLabel: 'Diff reason',
       reasonPlaceholder: 'e.g. reconciling economy config differences across two servers',
       confirm: 'Compare with reason',
+      request: 'Request both approvals',
+      requesting: 'Creating both approvals…',
+      refresh: 'Refresh approval status',
+      approvalHint: 'The two sides are approved independently. If either approval is not granted, expired, or withdrawn, no file content is read or displayed.',
+      approvalStatus: 'Two-side approval status',
+      openApproval: 'Open approval center',
+      approvalState: {
+        pending: 'Waiting for approval or Agent return',
+        ready: 'Grant ready',
+        unavailable: 'Not approved, expired, or grant unavailable',
+      },
+      consume: 'Consume both grants and view diff summary',
+      consuming: 'Consuming both grants…',
+      summaryTitle: 'Diff summary',
+      summaryHint: 'Only the server-generated path, hash, and size summary is shown. File content never enters this page.',
+      summaryMeta: 'Hash {{sha256}} · Size {{size}}',
     },
     // Sensitive path rules editor (FR-164): files matching a glob require a reason for preview/diff; whole-list replace semantics
     sensitiveRules: {

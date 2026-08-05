@@ -28,18 +28,26 @@ interface ServerPickerProps {
 export default function ServerPicker({ selected, onToggle, onClear }: ServerPickerProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
+  const [page, setPage] = useState(1)
   // FR-178：选服列表跟随顶栏 env
   const envScope = useEnvNamespaceScope()
+  const pageSize = 80
 
-  // 每个命名空间单独受限请求，避免多命名空间时全量拉取后过滤。
+  // 关键词与页码都交给服务端，页面只渲染当前页，避免把 pageSize 当成完整集合。
   const query = useQuery({
-    queryKey: ['service-analysis', 'servers', envScope],
+    queryKey: ['service-analysis', 'servers', envScope, keyword, page],
     queryFn: () =>
       fetchPagedItemsByEnvScope(
         envScope,
         (namespaceId, pageRequest) =>
-          fetchServers({ kind: 'backend', namespaceId, pageSize: pageRequest?.pageSize ?? 200 }),
-        { page: 1, pageSize: 200, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
+          fetchServers({
+            kind: 'backend',
+            namespaceId,
+            keyword: keyword.trim() || undefined,
+            page: pageRequest?.page,
+            pageSize: pageRequest?.pageSize ?? pageSize,
+          }),
+        { page, pageSize, compare: (left, right) => left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId) },
       ),
   })
 
@@ -47,6 +55,8 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
     () => (query.data?.items ?? []).filter((server) => server.online),
     [query.data],
   )
+  const total = query.data?.total ?? 0
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
 
   // 已选但当前列表不存在的幽灵项（历史 localStorage / 已下线 / 换 ns 后残留）
   const onlineIds = useMemo(() => new Set(online.map((s) => s.serverId)), [online])
@@ -55,20 +65,8 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
     [selected, onlineIds],
   )
 
-  // 关键词过滤（按 serverId）+ 列表展示上限（超限给「已截断」提示，避免 huge 一次挂上千按钮）
-  const PICKER_RENDER_LIMIT = 80
-  const servers = useMemo<ServerItem[]>(() => {
-    const kw = keyword.trim().toLowerCase()
-    if (kw === '') {
-      return online
-    }
-    return online.filter((s) => s.serverId.toLowerCase().includes(kw))
-  }, [online, keyword])
-  const visibleServers = useMemo(
-    () => servers.slice(0, PICKER_RENDER_LIMIT),
-    [servers],
-  )
-  const hiddenCount = servers.length - visibleServers.length
+  // 服务端已按关键词筛选；当前页最多 80 条，DOM 数量与业务集合解耦。
+  const servers = online
 
   return (
     <div className="lg:sticky lg:top-0 grid max-h-[calc(100vh-9rem)] grid-rows-[auto_auto_minmax(0,1fr)] overflow-hidden rounded-xl border border-border bg-card shadow-card">
@@ -97,6 +95,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
             value={keyword}
             onChange={(e) => {
               setKeyword(e.target.value)
+              setPage(1)
             }}
             className="h-8 w-full pl-8 text-xs"
           />
@@ -163,7 +162,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
             <p className="px-2 py-6 text-xs text-ink-3">{t('observability.serviceAnalysis.searchEmpty')}</p>
           ) : (
             <div className="grid gap-1">
-              {visibleServers.map((s) => {
+              {servers.map((s) => {
                 const checked = selected.has(s.serverId)
                 return (
                   <button
@@ -197,13 +196,32 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
                   </button>
                 )
               })}
-              {hiddenCount > 0 && (
-                <p className="px-2 py-2 text-[11px] text-ink-4">
-                  {t('observability.serviceAnalysis.listTruncated', {
-                    count: hiddenCount,
-                    defaultValue: `另有 ${String(hiddenCount)} 台未列出，请用上方搜索缩小范围`,
-                  })}
-                </p>
+              {pageCount > 1 && (
+                <div className="flex items-center justify-between gap-2 px-1 pt-1 text-[11px] text-ink-4">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    disabled={page <= 1 || query.isFetching}
+                    onClick={() => {
+                      setPage((current) => Math.max(1, current - 1))
+                    }}
+                  >
+                    {t('observability.common.prevPage')}
+                  </Button>
+                  <span>{t('observability.common.pageInfo', { page, pages: pageCount, total })}</span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    disabled={page >= pageCount || query.isFetching}
+                    onClick={() => {
+                      setPage((current) => Math.min(pageCount, current + 1))
+                    }}
+                  >
+                    {t('observability.common.nextPage')}
+                  </Button>
+                </div>
               )}
             </div>
           )}

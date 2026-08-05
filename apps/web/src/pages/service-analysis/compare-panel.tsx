@@ -62,17 +62,11 @@ export default function ComparePanel({ serverIds }: ComparePanelProps) {
       ),
   })
 
-  const scopedServerIds = useMemo(
-    () => new Set((serversQuery.data?.items ?? []).map((server) => server.serverId)),
-    [serversQuery.data],
-  )
-
-  // 逐台拉健康因子分解（仅所选且仍在当前 scope 内的少量服务器，受选择数上限约束，非无界循环）
+  // 逐台拉健康因子分解；不能用首批服务器页判断选中项是否存在，否则第 201 台会被静默跳过。
   const detailQueries = useQueries({
     queries: serverIds.map((serverId) => ({
       queryKey: ['service-analysis', 'health-detail', envScope, serverId],
       queryFn: () => fetchHealthDetail(serverId),
-      enabled: scopedServerIds.has(serverId),
     })),
   })
 

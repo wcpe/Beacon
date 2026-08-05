@@ -1,6 +1,6 @@
 // 连接消息域数据获取：/admin/v2/connections*（明细列表 / 详情 / 玩家流聚合）与
-// /admin/v2/messages*（明细列表 / 详情 / payload 受控查看），真后端均已交付。
-// 聚合 / 列表永不含 payload；payload 仅经受控查看端点（原因必填 + 先审计后返回）按需获取。
+// /admin/v2/messages*（明细列表 / 详情），真后端均已交付。
+// 聚合 / 列表永不含 payload；正文申请与一次性消费由审批领域页面处理。
 // 列表查询防护（spec §4.3）：精确 ID 直查免时间范围；否则必须 serverId 或 playerUuid + 时间范围 ≤168h；
 // includeArchived 冷查询强制时间范围 ≤ 冷查询上限（FR-152）。
 
@@ -9,10 +9,14 @@ import type {
   CursorPage,
   MessageDetail,
   MessageItem,
-  MessagePayloadResponse,
 } from '@beacon/contracts'
 
 import { buildQuery, request } from './http'
+
+export interface SensitiveAccessApprovalResponse {
+  requestId: string
+  status: string
+}
 
 /** 连接 / 玩家流时间桶（connections/stats 响应） */
 export interface ConnStatsBucket {
@@ -40,11 +44,6 @@ export interface ConnStatsQuery {
 /** 连接 / 玩家流时间桶聚合（dashboard 玩家流卡片） */
 export function fetchConnStats(query: ConnStatsQuery): Promise<ConnStatsResponse> {
   return request('GET', `/admin/v2/connections/stats${buildQuery({ ...query })}`)
-}
-
-/** 受控查看消息 payload：原因必填（≤255 字），后端先写审计再返回内容（spec §4.4） */
-export function viewMessagePayload(messageId: string, reason: string): Promise<MessagePayloadResponse> {
-  return request('POST', `/admin/v2/messages/${encodeURIComponent(messageId)}/payload`, { reason })
 }
 
 // ---- 连接明细列表 / 详情（FR-181）----
@@ -110,4 +109,16 @@ export function fetchMessages(query: MessagesQuery): Promise<CursorPage<MessageI
 /** 单消息详情（hops 链路 + 关联消息摘要） */
 export function fetchMessageDetail(messageId: string): Promise<MessageDetail> {
   return request('GET', `/admin/v2/messages/${encodeURIComponent(messageId)}`)
+}
+
+/** 创建消息 payload 专用审批，生产不走通用或 mock 申请入口。 */
+export function requestMessagePayloadApproval(messageId: string, reason: string, idempotencyKey: string): Promise<SensitiveAccessApprovalResponse> {
+  return request('POST', `/admin/v2/messages/${encodeURIComponent(messageId)}/payload/approval-requests`, { reason }, {
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+}
+
+/** 消费成功审批投影的消息授权；响应正文只在本调用栈内经过，调用方不得保存或渲染。 */
+export async function consumeMessagePayloadGrant(grantId: string, messageId: string): Promise<void> {
+  await request('POST', `/admin/v2/sensitive-access-grants/${encodeURIComponent(grantId)}/consume`, { messageId })
 }

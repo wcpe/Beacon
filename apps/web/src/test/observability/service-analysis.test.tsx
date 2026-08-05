@@ -1,5 +1,5 @@
 // /service-analysis 服务分析页测试：服务器选择 + 指标时序渲染、空态、选服后出时序。
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
@@ -118,4 +118,29 @@ describe('/service-analysis 服务分析页', () => {
     })
     expect(screen.getByRole('checkbox', { name: 'lobby-1' })).toBeInTheDocument()
   })
+
+  it('huge 场景首屏限制渲染但可搜索并选择第 201 台服务器，数据对比不会误判缺失', async () => {
+    useScenario('huge')
+    const user = userEvent.setup()
+    renderPage(<ServiceAnalysisPage />)
+
+    await screen.findByText('选择服务器（可多选对比）')
+    await waitFor(() => {
+      expect(screen.getAllByRole('checkbox')).toHaveLength(80)
+    })
+    expect(screen.queryByRole('checkbox', { name: 'game-0201' })).not.toBeInTheDocument()
+
+    const search = screen.getByLabelText('搜索服务器 ID')
+    await user.type(search, 'game-0201')
+    await user.click(await screen.findByRole('checkbox', { name: 'game-0201' }))
+    await user.clear(search)
+    await user.type(search, 'game-0202')
+    await user.click(await screen.findByRole('checkbox', { name: 'game-0202' }))
+    expect(screen.getAllByText('已选 2 台').length).toBeGreaterThan(0)
+
+    await user.click(screen.getByRole('tab', { name: '数据对比' }))
+    const comparisonTable = await screen.findByRole('table')
+    expect(within(comparisonTable).getByRole('columnheader', { name: 'game-0201' })).toBeInTheDocument()
+    expect(within(comparisonTable).getByRole('columnheader', { name: '对比维度' })).toBeInTheDocument()
+  }, 20_000)
 })

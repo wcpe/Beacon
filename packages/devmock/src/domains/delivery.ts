@@ -447,7 +447,8 @@ function buildDelivery(scenario: MockScenario): DeliveryState {
     .sort()
   const smallSet = backends.slice(0, Math.min(12, backends.length))
   makeOrder(state, 1, '大厅插件升级 v2.4', 'draft', { ageDays: 0 })
-  makeOrder(state, 1, '经济系统配置调优', 'pending_approval', { configOnly: true, ageDays: 1 })
+  const pendingOrder = makeOrder(state, 1, '经济系统配置调优', 'pending_approval', { configOnly: true, ageDays: 1 })
+  pendingOrder.approvalRequestId = 'apr_change_9101'
   makeOrder(state, 1, '反作弊组件热更', 'approved', { ageDays: 2 })
   // rolling 与 paused 各占一段目标，留出未被活动单占用的服（冲突守卫演示 / 新单可启动）
   makeOrder(state, 1, 'Quests 插件灰度 v1.9', 'rolling', { serverIds: smallSet.slice(0, 6), ageDays: 0 })
@@ -472,6 +473,25 @@ function buildDelivery(scenario: MockScenario): DeliveryState {
 }
 
 const getDeliveryState: () => DeliveryState = defineScenarioStore(buildDelivery)
+
+/** 审批 mock 批准后的领域入队投影；不复制审批状态。 */
+export function enqueueApprovedChangeOrder(requestId: string): void {
+  const order = getDeliveryState().orders.find((item) => item.approvalRequestId === requestId)
+  if (order?.status !== 'pending_approval') return
+  order.status = 'rolling'
+  order.approvedBy = 'admin'
+  order.approvedAt = isoOffset(0)
+  order.startedAt = isoOffset(0)
+  order.updatedAt = isoOffset(0)
+  const first = order.batches.at(0)
+  if (first) {
+    first.status = 'awaiting_confirm'
+    first.startedAt = isoOffset(0)
+    first.observeStartedAt = isoOffset(0)
+  }
+  pushEvent(order, 'order_status', 'rolling')
+  refreshCounts(order)
+}
 
 function findOrder(info: { params: Record<string, string | readonly string[] | undefined> }): OrderState | undefined {
   const raw = info.params.id

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 
@@ -135,7 +136,7 @@ func (s *EnvService) Update(id uint, name, description *string, operator, client
 		return nil, apperr.ErrEnvNotFound
 	}
 	oldDisplayName := env.Name
-	if err := s.applyEnvDisplayNameChange(env, name, nil); err != nil {
+	if err := s.applyEnvDisplayNameChange(env, nil, name); err != nil {
 		return nil, err
 	}
 	if description != nil {
@@ -214,39 +215,37 @@ func normalizeStableName(name, code, displayName string) (string, string, error)
 	if trimmedDisplay == "" {
 		trimmedDisplay = trimmedCode
 	}
+	if !isValidStableCode(trimmedCode) || !isValidDisplayName(trimmedDisplay) {
+		return "", "", apperr.ErrInvalidParam
+	}
 	return trimmedCode, trimmedDisplay, nil
 }
 
 func normalizeDisplayNamePatch(code, current string, name, displayName *string) (string, bool, error) {
-	if name == nil && displayName == nil {
+	if name != nil {
+		if strings.TrimSpace(*name) != code {
+			return "", false, apperr.ErrImmutableIdentifier
+		}
+	}
+	if displayName == nil {
 		return current, false, nil
 	}
-	var next string
-	if displayName != nil {
-		next = strings.TrimSpace(*displayName)
-	}
-	if name != nil {
-		trimmed := strings.TrimSpace(*name)
-		if next == "" {
-			next = trimmed
-		} else if trimmed != "" && trimmed != next && trimmed != code {
-			return "", false, apperr.ErrAmbiguousIdentifier
-		}
-	}
-	if next == "" {
-		if name != nil {
-			next = strings.TrimSpace(*name)
-		} else {
-			next = current
-		}
-	}
-	if next == "" {
+	next := strings.TrimSpace(*displayName)
+	if !isValidDisplayName(next) {
 		return "", false, apperr.ErrInvalidParam
 	}
 	if next == current {
 		return current, false, nil
 	}
 	return next, true, nil
+}
+
+func isValidStableCode(value string) bool {
+	return value != "" && utf8.RuneCountInString(value) <= 64
+}
+
+func isValidDisplayName(value string) bool {
+	return value != "" && utf8.RuneCountInString(value) <= 128
 }
 
 // Delete 删 env（硬删）；env 不存在返回 NOT_FOUND。删 env 不受映射保护——映射行级联删除、

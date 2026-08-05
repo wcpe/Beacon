@@ -15,6 +15,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
 
 type serverLifecyclePayload struct {
@@ -55,6 +56,9 @@ type serverIdentitySnapshot struct {
 
 // PrepareApprovalRequest 冻结 server 生命周期操作的服务端权威目标。
 func (s *V2ControlPlaneService) PrepareApprovalRequest(op authz.Operation, payload map[string]any, principal auth.Principal, clientIP string) (authz.Operation, map[string]any, error) {
+	if isNamespaceLifecycleOperation(op.Kind) {
+		return s.prepareNamespaceLifecycleApproval(op, payload, principal, clientIP)
+	}
 	if !isServerLifecycleOperation(op.Kind) {
 		return op, payload, nil
 	}
@@ -77,7 +81,7 @@ func (s *V2ControlPlaneService) PrepareApprovalRequest(op authz.Operation, paylo
 }
 
 func isServerLifecycleOperation(operation string) bool {
-	return operation == authz.OperationServerArchive || operation == authz.OperationServerRestore
+	return operation == authz.OperationServerArchive || operation == authz.OperationServerRestore || operation == authz.OperationServerPermanentDelete
 }
 
 func lifecycleServerRowID(payload map[string]any) (uint, error) {
@@ -104,6 +108,9 @@ func validateServerLifecycleRequest(operation, lifecycle string) error {
 		return apperr.ErrServerNotActive
 	}
 	if operation == authz.OperationServerRestore && lifecycle != model.ServerLifecycleArchived {
+		return apperr.ErrServerNotArchived
+	}
+	if operation == authz.OperationServerPermanentDelete && lifecycle != model.ServerLifecycleArchived {
 		return apperr.ErrServerNotArchived
 	}
 	return nil
@@ -165,7 +172,10 @@ func isServerActive(server *model.Server) bool {
 }
 
 func ensureServerActive(db *gorm.DB, namespaceID uint, serverID string) error {
-	if serverID == "" {
+	if err := ensureNamespaceRuntimeActiveByID(db, namespaceID); err != nil {
+		return err
+	}
+	if serverID == "" || !db.Migrator().HasTable(&model.Server{}) {
 		return nil
 	}
 	var server model.Server
@@ -182,6 +192,9 @@ func ensureServerActive(db *gorm.DB, namespaceID uint, serverID string) error {
 }
 
 func ensureServerActiveForNamespace(db *gorm.DB, namespaceCode, serverID string) error {
+	if namespaceCode == "" || serverID == "" || !db.Migrator().HasTable(&model.Namespace{}) {
+		return nil
+	}
 	var namespace model.Namespace
 	if err := db.Where("code = ?", namespaceCode).First(&namespace).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -189,7 +202,57 @@ func ensureServerActiveForNamespace(db *gorm.DB, namespaceCode, serverID string)
 		}
 		return err
 	}
+	if err := ensureNamespaceRuntimeActive(&namespace); err != nil {
+		return err
+	}
 	return ensureServerActive(db, namespace.ID, serverID)
+}
+
+// ensureNamespaceRuntimeActiveByID 是全部运行写入、投递与候选选择共用的环境资格闸。
+// 历史元数据查询不得调用本函数，避免把只读观察误收紧为审批或运行资格检查。
+func ensureNamespaceRuntimeActiveByID(db *gorm.DB, namespaceID uint) error {
+	if namespaceID == 0 || !db.Migrator().HasTable(&model.Namespace{}) {
+		return nil
+	}
+	var namespace model.Namespace
+	if err := db.First(&namespace, namespaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.ErrNamespaceNotFound
+		}
+		return err
+	}
+	return ensureNamespaceRuntimeActive(&namespace)
+}
+
+// ensureNamespaceRuntimeActiveByCode 按稳定 code 校验运行资格。
+func ensureNamespaceRuntimeActiveByCode(db *gorm.DB, namespaceCode string) error {
+	if namespaceCode == "" || !db.Migrator().HasTable(&model.Namespace{}) {
+		return nil
+	}
+	var namespace model.Namespace
+	if err := db.Where("code = ?", namespaceCode).First(&namespace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.ErrNamespaceNotFound
+		}
+		return err
+	}
+	return ensureNamespaceRuntimeActive(&namespace)
+}
+
+func ensureNamespaceRuntimeActive(namespace *model.Namespace) error {
+	if !isNamespaceActive(namespace) {
+		return apperr.ErrNamespaceArchived
+	}
+	return nil
+}
+
+// ensureIdentityRuntimeBindingOpen 阻断已由永久墓碑关闭的身份资产绑定。
+// 墓碑保留 serverId 供历史审计，不能将该历史绑定误作可重新注册或确认的运行资格。
+func ensureIdentityRuntimeBindingOpen(identity *model.AgentIdentity) error {
+	if identity != nil && identity.AssetBindingClosedAt != nil {
+		return apperr.ErrServerArchived
+	}
+	return nil
 }
 
 func (s *V2ControlPlaneService) archiveServerApproved(payload serverLifecyclePayload, permit authz.Permit) error {
@@ -204,12 +267,55 @@ func (s *V2ControlPlaneService) applyServerLifecycle(payload serverLifecyclePayl
 	if err := ensurePermit(permit, operation); err != nil || payload.OperationKey != operation {
 		return apperr.ErrForbidden
 	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		current, err := loadServerLifecycleSnapshot(tx, payload.Server.ID)
 		if err != nil || !reflect.DeepEqual(current, payload.Server) || current.Lifecycle != payload.ExpectedLifecycle {
 			return lifecycleTargetChanged(err)
 		}
 		return updateServerLifecycle(tx, payload, permit, operation)
+	})
+	if err != nil {
+		return err
+	}
+	if operation == authz.OperationServerArchive || operation == authz.OperationServerPermanentDelete {
+		s.scheduleRuntimeServerEviction(payload.Server.NamespaceID, payload.Server.ServerID)
+	}
+	return nil
+}
+
+// scheduleRuntimeServerEviction 在生命周期写入提交后摘除运行实例，恢复不自动复活旧注册。
+func (s *V2ControlPlaneService) scheduleRuntimeServerEviction(namespaceID uint, serverID string) {
+	if s.runtime == nil || namespaceID == 0 || serverID == "" {
+		return
+	}
+	var namespace model.Namespace
+	if err := s.db.First(&namespace, namespaceID).Error; err != nil {
+		return
+	}
+	s.scheduleRuntimeEviction(namespace.Code, []string{serverID})
+}
+
+// scheduleRuntimeNamespaceEviction 在环境归档或墓碑提交后摘除其全部运行实例。
+func (s *V2ControlPlaneService) scheduleRuntimeNamespaceEviction(namespace string, impact namespaceLifecycleImpact) {
+	serverIDs := make([]string, 0, len(impact.Servers))
+	for _, server := range impact.Servers {
+		serverIDs = append(serverIDs, server.ServerID)
+	}
+	s.scheduleRuntimeEviction(namespace, serverIDs)
+}
+
+func (s *V2ControlPlaneService) scheduleRuntimeEviction(namespace string, serverIDs []string) {
+	if s.runtime == nil || namespace == "" || len(serverIDs) == 0 {
+		return
+	}
+	ids := append([]string(nil), serverIDs...)
+	s.scheduleAfterCommit(func() {
+		for _, serverID := range ids {
+			s.runtime.Offline(namespace, serverID)
+		}
+		if s.notifier != nil {
+			s.notifier.NotifyTopologyChange(namespace)
+		}
 	})
 }
 
@@ -236,7 +342,24 @@ func updateServerLifecycle(tx *gorm.DB, payload serverLifecyclePayload, permit a
 	if result.RowsAffected != 1 {
 		return apperr.ErrApprovalTargetChanged
 	}
+	if operation == authz.OperationServerArchive || operation == authz.OperationServerPermanentDelete {
+		if err := expireServerCommands(tx, payload.Server.NamespaceID, payload.Server.ServerID); err != nil {
+			return err
+		}
+	}
 	return createAudit(tx, serverLifecycleAudit(payload, permit, operation))
+}
+
+func expireServerCommands(tx *gorm.DB, namespaceID uint, serverID string) error {
+	var namespace model.Namespace
+	if err := tx.First(&namespace, namespaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	_, err := repository.NewAgentCommandRepository(tx).ExpireForTarget(namespace.Code, serverID)
+	return err
 }
 
 func lifecycleUpdates(payload serverLifecyclePayload, operation string, now time.Time) map[string]any {
@@ -244,6 +367,13 @@ func lifecycleUpdates(payload serverLifecyclePayload, operation string, now time
 		return map[string]any{
 			"lifecycle": model.ServerLifecycleArchived, "archived_at": &now,
 			"archived_by": payload.Operator, "archive_reason": payload.ArchiveReason,
+		}
+	}
+	if operation == authz.OperationServerPermanentDelete {
+		return map[string]any{
+			"lifecycle": model.ServerLifecycleTombstoned, "tombstoned_at": &now,
+			"is_default_entry": false, "draining": false, "zone_id": nil, "bc_cluster_id": nil,
+			"lobby_cluster_id": nil, "pending_zone_id": nil, "pending_bc_cluster_id": nil,
 		}
 	}
 	return map[string]any{

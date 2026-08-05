@@ -31,6 +31,8 @@ function toEnvItem(state: ClusterState, env: EnvRow): EnvItem {
   return {
     id: env.id,
     name: env.name,
+    code: env.code ?? env.name,
+    displayName: env.displayName ?? env.name,
     description: env.description,
     namespaces: refs,
     namespaceCount: refs.length,
@@ -41,11 +43,15 @@ function toEnvItem(state: ClusterState, env: EnvRow): EnvItem {
 
 interface CreateEnvBody {
   name?: string
+  code?: string
+  displayName?: string
   description?: string
 }
 
 interface UpdateEnvBody {
   name?: string
+  code?: string
+  displayName?: string
   description?: string
 }
 
@@ -73,7 +79,7 @@ export const envHandlers: HttpHandler[] = [
     const keyword = queryStr(url, 'keyword')?.toLowerCase() ?? null
     const state = getClusterState()
     const rows: EnvItem[] = state.envs
-      .filter((env) => keyword === null || env.name.toLowerCase().includes(keyword))
+      .filter((env) => keyword === null || (env.code ?? env.name).toLowerCase().includes(keyword) || (env.displayName ?? env.name).toLowerCase().includes(keyword))
       .map((env) => toEnvItem(state, env))
     const { items, total } = paginate(rows, url)
     return HttpResponse.json({ items, total } satisfies EnvListResponse)
@@ -82,18 +88,22 @@ export const envHandlers: HttpHandler[] = [
   // 创建 env（name 全局唯一）
   mockPost('/admin/v2/envs', async ({ request }) => {
     const body = await readBody<CreateEnvBody>(request)
-    const name = body.name?.trim()
-    if (!name) {
-      return jsonError(400, 'INVALID_PARAM', 'name 必填')
+    const code = body.code?.trim() ?? body.name?.trim()
+    if (!code || (body.name !== undefined && body.code !== undefined && body.name.trim() !== code)) {
+      return jsonError(400, body.name !== undefined && body.code !== undefined ? 'AMBIGUOUS_IDENTIFIER' : 'INVALID_PARAM', 'code 必填且 name 不得与 code 不一致')
     }
+    const rawDisplayName = body.displayName?.trim()
+    const displayName = rawDisplayName === '' ? code : rawDisplayName ?? code
     const state = getClusterState()
-    if (state.envs.some((e) => e.name === name)) {
-      return jsonError(409, 'ENV_CONFLICT', `同名 env「${name}」已存在`)
+    if (state.envs.some((e) => (e.code ?? e.name) === code)) {
+      return jsonError(409, 'ENV_CONFLICT', `同 code env「${code}」已存在`)
     }
     const id = state.envs.reduce((max, e) => Math.max(max, e.id), 0) + 1
     const row: EnvRow = {
       id,
-      name,
+      name: code,
+      code,
+      displayName,
       description: body.description ?? '',
       namespaceIds: [],
       createdAt: isoOffset(0),
@@ -112,15 +122,14 @@ export const envHandlers: HttpHandler[] = [
       return jsonError(404, 'ENV_NOT_FOUND', 'env 不存在')
     }
     const body = await readBody<UpdateEnvBody>(info.request)
-    if (body.name !== undefined) {
-      const name = body.name.trim()
-      if (!name) {
-        return jsonError(400, 'INVALID_PARAM', 'name 不能为空')
-      }
-      if (state.envs.some((e) => e.id !== id && e.name === name)) {
-        return jsonError(409, 'ENV_CONFLICT', `同名 env「${name}」已存在`)
-      }
-      env.name = name
+    const code = env.code ?? env.name
+    if ((body.code !== undefined && body.code.trim() !== code) || (body.name !== undefined && body.name.trim() !== code)) {
+      return jsonError(400, 'IMMUTABLE_IDENTIFIER', '稳定业务标识不允许修改')
+    }
+    if (body.displayName !== undefined) {
+      const displayName = body.displayName.trim()
+      if (!displayName) return jsonError(400, 'INVALID_PARAM', 'displayName 不能为空')
+      env.displayName = displayName
     }
     if (body.description !== undefined) {
       env.description = body.description

@@ -51,6 +51,7 @@ import {
   unbindIdentity,
 } from '../../api/cluster'
 import { fetchHealthList, fetchMetricsSeries } from '../../api/metrics'
+import LifecycleApprovalControl from '../../features/lifecycle/approval-control'
 import {
   fetchPagedItemsByEnvScope,
   resolveRequestNamespaceScope,
@@ -335,7 +336,7 @@ export default function AssetsPanel({
           return (
             <span
               className={cn(
-                'flex flex-wrap items-center gap-2 font-mono font-semibold',
+                'flex flex-wrap items-start gap-2 font-semibold',
                 residual ? 'text-ink-4' : 'text-ink-1',
               )}
             >
@@ -352,7 +353,10 @@ export default function AssetsPanel({
               >
                 {isProxy ? <Network className="size-3" /> : <Server className="size-3" />}
               </span>
-              {row.serverId}
+              <span className="grid min-w-0 gap-0.5">
+                <span>{row.displayName ?? row.serverId}</span>
+                <code className="font-mono text-[11px] font-normal text-ink-4">{row.serverId}</code>
+              </span>
               {residual && (
                 <Badge variant="off" title={t('cluster.servers.assets.residualHint')}>
                   {t('cluster.servers.assets.residualBadge')}
@@ -495,6 +499,7 @@ export default function AssetsPanel({
               <Button size="sm" variant="ghost" onClick={() => { onViewHealth(row.serverId) }}>
                 {t('cluster.servers.actions.viewHealth')}
               </Button>
+              <LifecycleApprovalControl subject="server" id={row.id} stableID={row.serverId} lifecycle={row.lifecycle} />
               {/* 次要运维收进菜单：默认入口 / 排空 / 禁用 / 解绑，避免操作列刷屏 */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

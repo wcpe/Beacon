@@ -18,7 +18,8 @@ export default function EnvDetailPanel({ env, onEdit, onSetMapping, onDelete }: 
   return (
     <div className="grid gap-4">
       <div>
-        <h3 className="text-base font-semibold text-ink-1">{env.name}</h3>
+        <h3 className="text-base font-semibold text-ink-1">{env.displayName ?? env.name}</h3>
+        <code className="mt-1 block text-xs text-ink-4">{env.code ?? env.name}</code>
         {env.description && <p className="mt-1 text-sm text-ink-2">{env.description}</p>}
       </div>
 

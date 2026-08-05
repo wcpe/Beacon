@@ -1,6 +1,6 @@
 // 区服结构树：BC 集群 → 大区 → 小区 → 子服，真正的层级树形（缩进 + 连线 + 展开折叠）。
 // 各层可新建。代理服（BC/bungee，kind=proxy）用清晰角色标签与图标区分于子服（bukkit，kind=backend）。
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
@@ -90,9 +90,6 @@ export default function ZoneTree({
   const [expanded, setExpanded] = useState<Set<NodeKey>>(new Set())
   // 首次数据到达后自动展开集群 + 大区一层（只做一次，之后尊重用户手动折叠）
   const [autoExpanded, setAutoExpanded] = useState(false)
-  // 小区叶子「再显示」上限：单区超过此数需点「展开全部」才挂全量 DOM
-  const [zoneLeafLimit, setZoneLeafLimit] = useState<Record<string, number>>({})
-  const DEFAULT_ZONE_LEAF_LIMIT = 40
 
   const query = useQuery({
     queryKey: ['zone-tree', namespaceId],
@@ -105,49 +102,8 @@ export default function ZoneTree({
   useEffect(() => {
     setExpanded(new Set())
     setAutoExpanded(false)
-    setZoneLeafLimit({})
   }, [namespaceId])
 
-  // 仅当存在已展开的小区时再拉 server 列表（代理层始终需要，故有任意 cluster 展开即拉）
-  const needsServerList = useMemo(() => {
-    for (const key of expanded) {
-      if (key.startsWith('cluster:') || key.startsWith('zone:')) {
-        return true
-      }
-    }
-    // 首帧 auto-expand 前也允许预取，避免展开后空白一帧；huge 下数据重但只拉一次
-    return autoExpanded
-  }, [expanded, autoExpanded])
-
-  // 该 namespace 下 server 列表：小区展开时列子服 + 集群下列代理。pageSize 顶到 2000 覆盖 huge。
-  const serversQuery = useQuery({
-    queryKey: ['servers', 'tree', namespaceId],
-    queryFn: () => fetchServers({ namespaceId, pageSize: 2000 }),
-    placeholderData: keepPreviousData,
-    enabled: needsServerList || query.isSuccess,
-  })
-  const serversByZone = useMemo(() => {
-    const map = new Map<number, ServerItem[]>()
-    for (const s of serversQuery.data?.items ?? []) {
-      if (s.kind === 'backend' && s.zoneId !== null) {
-        const list = map.get(s.zoneId) ?? []
-        list.push(s)
-        map.set(s.zoneId, list)
-      }
-    }
-    return map
-  }, [serversQuery.data])
-  const proxiesByCluster = useMemo(() => {
-    const map = new Map<number, ServerItem[]>()
-    for (const s of serversQuery.data?.items ?? []) {
-      if (s.kind === 'proxy' && s.bcClusterId !== null) {
-        const list = map.get(s.bcClusterId) ?? []
-        list.push(s)
-        map.set(s.bcClusterId, list)
-      }
-    }
-    return map
-  }, [serversQuery.data])
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['zone-tree'] })
@@ -155,7 +111,7 @@ export default function ZoneTree({
   }
 
   const createMutation = useMutation({
-    mutationFn: ({ name, description }: { name: string; description: string }) => {
+    mutationFn: ({ code, displayName, description }: { code: string; displayName: string; description: string }) => {
       if (intent === null) {
         return Promise.reject(new Error('无新建意图'))
       }
@@ -164,12 +120,12 @@ export default function ZoneTree({
         if (namespaceId <= 0) {
           return Promise.reject(new Error(t('cluster.zones.create.needNamespace')))
         }
-        return createBcCluster({ namespaceId, name, description })
+        return createBcCluster({ namespaceId, code, displayName, description })
       }
       if (intent.level === 'region') {
-        return createRegion({ bcClusterId: intent.bcClusterId, name, description })
+        return createRegion({ bcClusterId: intent.bcClusterId, code, displayName, description })
       }
-      return createZone({ regionId: intent.regionId, name, description })
+      return createZone({ regionId: intent.regionId, code, displayName, description })
     },
     onSuccess: async () => {
       await invalidate()
@@ -630,7 +586,6 @@ export default function ZoneTree({
               {tree?.clusters.map((cluster) => {
                 const clusterKey = `cluster:${String(cluster.id)}`
                 const clusterOpen = expanded.has(clusterKey)
-                const proxies = proxiesByCluster.get(cluster.id) ?? []
                 return (
                   <li key={cluster.id} role="treeitem" aria-expanded={clusterOpen}>
                     {/* BC 集群节点：代理服（BC/bungee）明确标注，同时作为 proxy 落区目标 */}
@@ -639,7 +594,8 @@ export default function ZoneTree({
                       open={clusterOpen}
                       onToggle={() => { toggle(clusterKey) }}
                       icon={<Boxes className="size-3.5 text-brand" />}
-                      label={cluster.name}
+                      label={cluster.displayName ?? cluster.name}
+                      code={cluster.code ?? cluster.name}
                       tone="cluster"
                       dropTarget={{
                         active: dragOverKey === clusterKey,
@@ -690,20 +646,13 @@ export default function ZoneTree({
                     />
                     {clusterOpen && (
                       <ul role="group">
-                        {/* 代理服子项（BC 层直属，角色徽标区分子服） */}
-                        {proxies.map((proxy) => (
-                          <li key={`proxy-${String(proxy.id)}`}>
-                            <TreeLeaf
-                              depth={1}
-                              icon={<Network className="size-3 text-brand-600" />}
-                              label={proxy.serverId}
-                              role={t('cluster.servers.kind.proxy')}
-                              roleTone="brand"
-                              online={proxy.online}
-                              interactions={leafInteractions(proxy)}
-                            />
-                          </li>
-                        ))}
+                        {/* 代理服子项按展开集群单独分页加载 */}
+                        <ClusterServerList
+                          namespaceId={namespaceId}
+                          clusterId={cluster.id}
+                          leafInteractions={leafInteractions}
+                          roleLabel={t('cluster.servers.kind.proxy')}
+                        />
                         {cluster.regions.map((region) => {
                           const regionKey = `region:${String(region.id)}`
                           const regionOpen = expanded.has(regionKey)
@@ -714,7 +663,8 @@ export default function ZoneTree({
                                 open={regionOpen}
                                 onToggle={() => { toggle(regionKey) }}
                                 icon={<Layers className="size-3.5 text-ink-4" />}
-                                label={region.name}
+                                label={region.displayName ?? region.name}
+                                code={region.code ?? region.name}
                                 tone="region"
                                 trailing={
                                   <>
@@ -757,7 +707,6 @@ export default function ZoneTree({
                                   {region.zones.map((zone) => {
                                     const zoneKey = `zone:${String(zone.id)}`
                                     const zoneOpen = expanded.has(zoneKey)
-                                    const zoneServers = serversByZone.get(zone.id) ?? []
                                     return (
                                       <li key={zone.id} role="treeitem" aria-expanded={zoneOpen}>
                                         <TreeRow
@@ -766,7 +715,8 @@ export default function ZoneTree({
                                           onToggle={() => { toggle(zoneKey) }}
                                           disabled={zone.serverCount === 0}
                                           icon={<MapPin className="size-3.5 text-brand" />}
-                                          label={zone.name}
+                                          label={zone.displayName ?? zone.name}
+                                          code={zone.code ?? zone.name}
                                           mono
                                           tone="zone"
                                           dropTarget={{
@@ -806,65 +756,12 @@ export default function ZoneTree({
                                           }
                                         />
                                         {zoneOpen && (
-                                          <ul role="group">
-                                            {(() => {
-                                              const limit =
-                                                zoneLeafLimit[zoneKey] ?? DEFAULT_ZONE_LEAF_LIMIT
-                                              const visible = zoneServers.slice(0, limit)
-                                              const rest = zoneServers.length - visible.length
-                                              return (
-                                                <>
-                                                  {visible.map((s) => (
-                                                    <li key={s.id}>
-                                                      <TreeLeaf
-                                                        depth={3}
-                                                        icon={<Server className="size-3 text-ink-3" />}
-                                                        label={s.serverId}
-                                                        role={t('cluster.servers.kind.backend')}
-                                                        roleTone="secondary"
-                                                        online={s.online}
-                                                        interactions={leafInteractions(s)}
-                                                        extra={
-                                                          <>
-                                                            {s.isDefaultEntry && (
-                                                              <Badge variant="brand">
-                                                                {t('cluster.zones.tree.defaultEntry')}
-                                                              </Badge>
-                                                            )}
-                                                            {s.draining && (
-                                                              <Badge variant="warn">
-                                                                {t('cluster.zones.tree.draining')}
-                                                              </Badge>
-                                                            )}
-                                                          </>
-                                                        }
-                                                      />
-                                                    </li>
-                                                  ))}
-                                                  {rest > 0 && (
-                                                    <li className="px-2 py-1" style={{ paddingLeft: `${String((3 + 1) * 14)}px` }}>
-                                                      <Button
-                                                        size="sm"
-                                                        variant="ghost"
-                                                        className="h-7 text-[11.5px] text-ink-3"
-                                                        onClick={() => {
-                                                          setZoneLeafLimit((prev) => ({
-                                                            ...prev,
-                                                            [zoneKey]: zoneServers.length,
-                                                          }))
-                                                        }}
-                                                      >
-                                                        {t('cluster.zones.tree.showMoreServers', {
-                                                          count: rest,
-                                                          defaultValue: `再显示 ${String(rest)} 台`,
-                                                        })}
-                                                      </Button>
-                                                    </li>
-                                                  )}
-                                                </>
-                                              )
-                                            })()}
-                                          </ul>
+                                          <ZoneServerList
+                                            namespaceId={namespaceId}
+                                            zoneId={zone.id}
+                                            leafInteractions={leafInteractions}
+                                            roleLabel={t('cluster.servers.kind.backend')}
+                                          />
                                         )}
                                       </li>
                                     )
@@ -894,8 +791,8 @@ export default function ZoneTree({
         title={dialogTitle}
         pending={createMutation.isPending}
         errorText={errorText}
-        onSubmit={(name, description) => {
-          createMutation.mutate({ name, description })
+        onSubmit={(code, displayName, description) => {
+          createMutation.mutate({ code, displayName, description })
         }}
       />
 
@@ -1047,6 +944,136 @@ export default function ZoneTree({
   )
 }
 
+interface LeafInteractions {
+  draggable: boolean
+  onDragStart: (e: React.DragEvent) => void
+  onDragEnd: () => void
+  onContextMenu: (e: React.MouseEvent) => void
+}
+
+interface TreeServerListProps {
+  namespaceId: number
+  filter: { kind: 'backend'; zoneId: number } | { kind: 'proxy'; bcClusterId: number }
+  depth: number
+  roleLabel: string
+  leafInteractions: (server: ServerItem) => LeafInteractions
+}
+
+function useTreeServerPage({ namespaceId, filter }: Pick<TreeServerListProps, 'namespaceId' | 'filter'>) {
+  const [page, setPage] = useState(1)
+  const pageSize = 40
+  const query = useQuery({
+    queryKey: ['servers', 'tree', namespaceId, filter, page],
+    queryFn: () => fetchServers({ namespaceId, page, pageSize, ...filter }),
+    placeholderData: keepPreviousData,
+  })
+  const total = query.data?.total ?? 0
+  const pages = Math.max(1, Math.ceil(total / pageSize))
+  return { page, setPage, pageSize, pages, rows: query.data?.items ?? [], query, total }
+}
+
+function ServerPageRows({
+  rows,
+  page,
+  pages,
+  total,
+  depth,
+  roleLabel,
+  filter,
+  leafInteractions,
+  onPageChange,
+}: TreeServerListProps & ReturnType<typeof useTreeServerPage> & { onPageChange: (page: number) => void }) {
+  const { t } = useTranslation()
+  const isProxy = filter.kind === 'proxy'
+  return (
+    <>
+      {rows.map((server) => (
+        <li key={server.id}>
+          <TreeLeaf
+            depth={depth}
+            icon={isProxy ? <Network className="size-3 text-brand-600" /> : <Server className="size-3 text-ink-3" />}
+            label={server.displayName ?? server.serverId}
+            code={server.serverId}
+            role={roleLabel}
+            roleTone={isProxy ? 'brand' : 'secondary'}
+            online={server.online}
+            interactions={leafInteractions(server)}
+            extra={
+              !isProxy && (
+                <>
+                  {server.isDefaultEntry && <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>}
+                  {server.draining && <Badge variant="warn">{t('cluster.zones.tree.draining')}</Badge>}
+                </>
+              )
+            }
+          />
+        </li>
+      ))}
+      {pages > 1 && (
+        <li className="flex items-center gap-2 px-2 py-1 text-[11px] text-ink-4" style={{ paddingLeft: `${String((depth + 1) * 14)}px` }}>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px]"
+            disabled={page <= 1}
+            onClick={() => {
+              onPageChange(page - 1)
+            }}
+          >
+            {t('observability.common.prevPage')}
+          </Button>
+          <span>{t('observability.common.pageInfo', { page, pages, total })}</span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-[11px]"
+            disabled={page >= pages}
+            onClick={() => {
+              onPageChange(page + 1)
+            }}
+          >
+            {t('cluster.zones.tree.loadMoreServers')}
+          </Button>
+        </li>
+      )}
+    </>
+  )
+}
+
+function ClusterServerList({
+  namespaceId,
+  clusterId,
+  leafInteractions,
+  roleLabel,
+}: {
+  namespaceId: number
+  clusterId: number
+  leafInteractions: (server: ServerItem) => LeafInteractions
+  roleLabel: string
+}) {
+  const state = useTreeServerPage({ namespaceId, filter: { kind: 'proxy', bcClusterId: clusterId } })
+  return <ServerPageRows {...state} namespaceId={namespaceId} filter={{ kind: 'proxy', bcClusterId: clusterId }} depth={1} roleLabel={roleLabel} leafInteractions={leafInteractions} onPageChange={state.setPage} />
+}
+
+function ZoneServerList({
+  namespaceId,
+  zoneId,
+  leafInteractions,
+  roleLabel,
+}: {
+  namespaceId: number
+  zoneId: number
+  leafInteractions: (server: ServerItem) => LeafInteractions
+  roleLabel: string
+}) {
+  const state = useTreeServerPage({ namespaceId, filter: { kind: 'backend', zoneId } })
+  return (
+    <ul role="group">
+      <ServerPageRows {...state} namespaceId={namespaceId} filter={{ kind: 'backend', zoneId }} depth={3} roleLabel={roleLabel} leafInteractions={leafInteractions} onPageChange={state.setPage} />
+    </ul>
+  )
+}
+
 // 可展开的树行（集群 / 大区 / 小区）：左侧缩进 + 展开箭头 + 图标 + 名称 + 右侧尾随内容。
 // 作为放置目标时（dropTarget 提供）：drag-over 兼容则高亮，松手触发落区。
 function TreeRow({
@@ -1056,6 +1083,7 @@ function TreeRow({
   disabled,
   icon,
   label,
+  code,
   mono,
   tone,
   trailing,
@@ -1067,6 +1095,7 @@ function TreeRow({
   disabled?: boolean
   icon: React.ReactNode
   label: string
+  code: string
   mono?: boolean
   tone: 'cluster' | 'region' | 'zone'
   trailing?: React.ReactNode
@@ -1139,7 +1168,10 @@ function TreeRow({
         {disabled ? null : open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
       </span>
       {icon}
-      <span className={cn('text-[12.5px]', mono && 'font-mono')}>{label}</span>
+      <span className="grid min-w-0 gap-0.5">
+        <span className={cn('truncate text-[12.5px]', mono && 'font-mono')}>{label}</span>
+        <code className="truncate text-[10px] text-ink-4">{code}</code>
+      </span>
       {trailing && <span className="ml-auto flex items-center gap-1.5 text-xs">{trailing}</span>}
     </div>
   )
@@ -1151,6 +1183,7 @@ function TreeLeaf({
   depth,
   icon,
   label,
+  code,
   role,
   roleTone,
   online,
@@ -1160,6 +1193,7 @@ function TreeLeaf({
   depth: number
   icon: React.ReactNode
   label: string
+  code: string
   role: string
   roleTone: 'brand' | 'secondary'
   online: boolean
@@ -1188,7 +1222,10 @@ function TreeLeaf({
       {/* 无子项，占位对齐箭头列 */}
       <span className="size-4 shrink-0" />
       {icon}
-      <span className="font-mono font-medium text-ink-1">{label}</span>
+      <span className="grid min-w-0 gap-0.5">
+        <span className="truncate font-medium text-ink-1">{label}</span>
+        <code className="truncate text-[10px] text-ink-4">{code}</code>
+      </span>
       <Badge variant={roleTone} className="gap-1">
         {role}
       </Badge>

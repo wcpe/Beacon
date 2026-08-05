@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import AssetsPage from '../../pages/assets'
+import { approveApproval, fetchApprovalDetail } from '../../api/approvals'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
@@ -112,21 +113,99 @@ describe('/assets 文件资产页', () => {
     expect(await within(dialog).findByText('已保存敏感路径规则')).toBeInTheDocument()
   }, 20_000)
 
-  // FR-164：两侧 diff 命中敏感规则 → 403 后填原因带原因重试（前端 403→原因输入→重试逻辑）
-  it('两侧 diff 敏感命中 403 后填原因重试', async () => {
+  it('单文件查看调用真实专用申请与一次消费接口，正文不进入页面', async () => {
     useScenario('normal')
     const user = userEvent.setup()
-    // 覆盖 diff 端点：无 reason → 403 asset_sensitive_path；带 reason → 一致，锁定前端交互不依赖 mock 清单命中
+    let approved = false
+    let consumed = false
+    let serverId = ''
+    let path = ''
+    const requestId = 'apr_real_asset_preview'
+    const approval = () => ({
+      id: 10002, requestId, operationKey: 'agent.command.fs_browse', operationKind: 'agent.command.fs_browse', resourceType: 'file_asset', resourceId: 'prod/lobby-1/hash',
+      riskLevel: 'high', status: approved ? 'succeeded' : 'pending', requestReason: '核对线上配置', safeSummary: '脱敏摘要', frozenPayloadSha256: 'b'.repeat(64),
+      requesterType: 'human', requesterId: 'admin', deciderType: approved ? 'human' : null, deciderId: approved ? 'admin' : null,
+      approvedBy: approved ? 'admin' : null, rejectReason: null, decisionReason: null, expiresAt: null, version: approved ? 2 : 1,
+      resultRef: approved ? 'agent-sensitive-operation:command:42:grant:sag_real_asset_preview' : null,
+      sensitiveAccessGrant: approved ? { grantId: 'sag_real_asset_preview' } : undefined,
+    })
     server.use(
-      http.post('/admin/v2/assets/diff', async ({ request }) => {
-        const body = (await request.json()) as { reason?: string }
-        if (!body.reason) {
-          return HttpResponse.json(
-            { code: 'asset_sensitive_path', message: '命中敏感路径规则，diff 必须填写原因', sensitive: true, traceId: 't' },
-            { status: 403 },
-          )
-        }
-        return HttpResponse.json({ identical: true })
+      http.post('*/admin/v2/assets/preview/approval-requests', async ({ request }) => {
+        const body = await request.json() as { serverId: string; path: string; reason: string }
+        serverId = body.serverId
+        path = body.path
+        expect(body.reason).toBe('核对线上配置')
+        expect(request.headers.get('Idempotency-Key')).not.toBeNull()
+        return HttpResponse.json({ requestId, status: 'pending' }, { status: 202 })
+      }),
+      http.get(`*/admin/v2/approval-requests/${requestId}`, () => HttpResponse.json(approval())),
+      http.post(`*/admin/v2/approval-requests/${requestId}/approve`, () => {
+        approved = true
+        return HttpResponse.json(approval(), { status: 202 })
+      }),
+      http.post('*/admin/v2/assets/preview/grants/sag_real_asset_preview/consume', async ({ request }) => {
+        expect(await request.json()).toEqual({ commandId: 42 })
+        consumed = true
+        return HttpResponse.json({ content: '不得渲染的文件正文', truncated: false, binary: false, sha256: 'b'.repeat(64), size: 20 })
+      }),
+    )
+    renderPage(<AssetsPage />)
+
+    const row = (await screen.findAllByText('lobby-1'))[0].closest('tr')
+    if (!row) throw new Error('未找到资产清单行')
+    await user.click(row)
+    await user.click(await screen.findByRole('button', { name: '申请查看文件内容' }))
+    const dialog = await screen.findByRole('dialog')
+    await user.type(within(dialog).getByRole('textbox'), '核对线上配置')
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+    expect((await within(dialog).findByRole('link', { name: '前往审批中心' })).getAttribute('href')).toBe(`/approvals/${requestId}`)
+    expect(serverId).toBe('lobby-1')
+    expect(path).not.toBe('')
+    await approveApproval(requestId)
+    await user.click(await within(dialog).findByRole('button', { name: '刷新审批状态' }))
+    await user.click(await within(dialog).findByRole('button', { name: '一次性消费授权' }))
+    expect(await within(dialog).findByText('授权已消费；敏感正文未被页面保存或展示。')).toBeInTheDocument()
+    expect(within(dialog).queryByText('不得渲染的文件正文')).not.toBeInTheDocument()
+    expect(consumed).toBe(true)
+    expect((await fetchApprovalDetail(requestId)).sensitiveAccessGrant?.grantId).toBe('sag_real_asset_preview')
+  }, 20_000)
+
+  it('两侧差异分别提审，任一侧未批准时不消费，双侧就绪后仅展示元数据摘要', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    let leftReady = false
+    let rightReady = false
+    let pairBody: unknown = null
+    let consumed = false
+    const approval = (requestId: string, ready: boolean) => {
+      const commandId = requestId === 'apr_left' ? 41 : 42
+      return {
+      id: requestId, requestId, operationKey: 'agent.command.fs_browse', operationKind: 'agent.command.fs_browse', resourceType: 'file_asset', resourceId: requestId,
+      riskLevel: 'high', status: ready ? 'succeeded' : 'pending', requestReason: '核对两服经济配置差异', safeSummary: '脱敏摘要', frozenPayloadSha256: 'b'.repeat(64),
+      requesterType: 'human', requesterId: 'admin', deciderType: ready ? 'human' : null, deciderId: ready ? 'admin' : null,
+      approvedBy: ready ? 'admin' : null, rejectReason: null, decisionReason: null, expiresAt: null, version: ready ? 2 : 1,
+      resultRef: ready ? `agent-sensitive-operation:command:${String(commandId)}:grant:sag_${requestId}` : null,
+      sensitiveAccessGrant: ready ? { grantId: `sag_${requestId}` } : undefined,
+      }
+    }
+    server.use(
+      http.post('*/admin/v2/assets/pair-read/approval-requests', async ({ request }) => {
+        pairBody = await request.json()
+        return HttpResponse.json({ leftRequestId: 'apr_left', rightRequestId: 'apr_right', status: 'pending' }, { status: 202 })
+      }),
+      http.get('*/admin/v2/approval-requests/apr_left', () => HttpResponse.json(approval('apr_left', leftReady))),
+      http.get('*/admin/v2/approval-requests/apr_right', () => HttpResponse.json(approval('apr_right', rightReady))),
+      http.post('*/admin/v2/assets/pair-read/grants/sag_apr_left/consume', async ({ request }) => {
+        expect(await request.json()).toEqual({ commandId: 41 })
+        consumed = true
+        return HttpResponse.json({
+          identical: false,
+          changed: true,
+          unsupported: false,
+          left: { serverId: 'lobby-1', path: 'plugins/Beacon/config.yml', sha256: 'a'.repeat(64), size: 12 },
+          right: { serverId: 'lobby-2', path: 'plugins/Beacon/config.yml', sha256: 'b'.repeat(64), size: 13 },
+          content: '不得进入页面的正文',
+        })
       }),
     )
     renderPage(<AssetsPage />)
@@ -136,13 +215,25 @@ describe('/assets 文件资产页', () => {
     await user.type(within(region).getByLabelText('左侧子服'), 'lobby-1')
     await user.type(within(region).getByLabelText('右侧子服'), 'lobby-2')
     await user.type(within(region).getByLabelText('文件路径'), 'plugins/Beacon/config.yml')
-    await user.click(within(region).getByRole('button', { name: '比对差异' }))
+    await user.type(within(region).getByLabelText('diff 原因'), '核对两服经济配置差异')
+    await user.click(within(region).getByRole('button', { name: '申请两侧审批' }))
 
-    // 403 → 原因输入出现
-    const reasonInput = await within(region).findByLabelText('diff 原因')
-    await user.type(reasonInput, '核对经济配置差异')
-    await user.click(within(region).getByRole('button', { name: '带原因比对' }))
-    // 带原因重试 → identical 提示
-    expect(await within(region).findByText('两侧内容一致（哈希相同）')).toBeInTheDocument()
+    expect(pairBody).toEqual({
+      left: { serverId: 'lobby-1', path: 'plugins/Beacon/config.yml' },
+      right: { serverId: 'lobby-2', path: 'plugins/Beacon/config.yml' },
+      reason: '核对两服经济配置差异',
+    })
+    expect((await within(region).findAllByText('等待审批或 Agent 回传')).length).toBe(2)
+    expect(within(region).queryByRole('button', { name: '原子消费两侧授权并查看差异摘要' })).not.toBeInTheDocument()
+
+    leftReady = true
+    rightReady = true
+    await user.click(within(region).getByRole('button', { name: '刷新审批状态' }))
+    await user.click(await within(region).findByRole('button', { name: '原子消费两侧授权并查看差异摘要' }))
+
+    expect(await within(region).findByText('两侧文件存在差异')).toBeInTheDocument()
+    expect(within(region).getByText('仅显示服务端生成的路径、哈希和大小摘要；文件正文不会进入页面。')).toBeInTheDocument()
+    expect(within(region).queryByText('不得进入页面的正文')).not.toBeInTheDocument()
+    expect(consumed).toBe(true)
   }, 20_000)
 })

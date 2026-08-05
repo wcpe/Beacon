@@ -2,6 +2,7 @@
 // 契约真源：docs/specs/v2-zone-authority.md §5；分配约束 §4.3、换区工单 §4.7。
 
 import type { Paged } from './common'
+import type { LifecycleImpact, LifecycleStatus } from './lifecycle'
 
 /** 实例类型：代理（proxy）或后端子服（backend） */
 export type ServerKind = 'proxy' | 'backend'
@@ -37,6 +38,8 @@ export interface RezonePrefill {
 export interface ZoneTreeZone {
   id: number
   name: string
+  code?: string
+  displayName?: string
   description: string
   serverCount: number
   defaultEntryCount: number
@@ -46,6 +49,8 @@ export interface ZoneTreeZone {
 export interface ZoneTreeRegion {
   id: number
   name: string
+  code?: string
+  displayName?: string
   description: string
   zones: ZoneTreeZone[]
 }
@@ -54,6 +59,8 @@ export interface ZoneTreeRegion {
 export interface ZoneTreeCluster {
   id: number
   name: string
+  code?: string
+  displayName?: string
   description: string
   proxyCount: number
   regions: ZoneTreeRegion[]
@@ -71,6 +78,7 @@ export interface ServerItem {
   id: number
   namespaceId: number
   serverId: string
+  displayName?: string
   kind: ServerKind
   bcClusterId: number | null
   bcClusterName: string | null
@@ -85,10 +93,32 @@ export interface ServerItem {
   draining: boolean
   online: boolean
   assigned: boolean
+  lifecycle?: LifecycleStatus
+  effectiveActive?: boolean
+  tombstone?: {
+    at: string | null
+    by: string | null
+    reason: string | null
+    approvalRequestId: string | null
+  } | null
   createdAt: string
 }
 
 export type ServerListResponse = Paged<ServerItem>
+
+/** server 生命周期影响预览；关联对象只以计数和脱敏状态返回。 */
+export interface ServerLifecycleImpact extends LifecycleImpact {
+  serverRowId: number
+  namespaceId: number
+  serverId: string
+  online: boolean
+  assigned: boolean
+  defaultEntry: boolean
+  draining: boolean
+  identityCount: number
+  activeIdentityCount: number
+  activeCommandCount: number
+}
 
 /** 批量分配 / 换区的逐台结果（207 风格） */
 export interface AssignmentResult {

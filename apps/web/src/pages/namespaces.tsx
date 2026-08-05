@@ -36,6 +36,8 @@ import {
 } from '../api/system'
 import SystemReasonDialog from '../features/system/reason-dialog'
 import { formatIso } from '../features/system/format'
+import { isDemoMode } from '../demo-mode'
+import LifecycleMockReview from '../features/lifecycle/mock-review'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
@@ -59,7 +61,8 @@ export default function NamespacesPage() {
 
   // 创建 ns 表单态
   const [createOpen, setCreateOpen] = useState(false)
-  const [name, setName] = useState('')
+  const [code, setCode] = useState('')
+  const [displayName, setDisplayName] = useState('')
   const [description, setDescription] = useState('')
   const [createError, setCreateError] = useState<string | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -132,7 +135,8 @@ export default function NamespacesPage() {
   }
 
   const createMutation = useMutation({
-    mutationFn: () => createNamespace({ name: name.trim(), description: description.trim() || undefined }),
+    mutationFn: () =>
+      createNamespace({ code: code.trim(), displayName: displayName.trim(), description: description.trim() || undefined }),
     onSuccess: async (created) => {
       await invalidateAll()
       setCreateOpen(false)
@@ -166,7 +170,8 @@ export default function NamespacesPage() {
   })
 
   const openCreate = () => {
-    setName('')
+    setCode('')
+    setDisplayName('')
     setDescription('')
     setCreateError(null)
     setCreateOpen(true)
@@ -175,7 +180,15 @@ export default function NamespacesPage() {
   // 行内前置：名称 / 描述 / 服务器数 / 信任出入度 / 创建时间
   const columns = useMemo<DataTableColumn<NamespaceItem>[]>(
     () => [
-      { header: t('system.namespaces.columns.name'), cell: (row) => <span className="font-medium">{row.name}</span> },
+      {
+        header: t('system.namespaces.columns.name'),
+        cell: (row) => (
+          <div className="grid gap-0.5">
+            <span className="font-medium">{row.displayName ?? row.name}</span>
+            <code className="text-xs text-ink-4">{row.code ?? row.name}</code>
+          </div>
+        ),
+      },
       { header: t('system.namespaces.columns.description'), cell: (row) => row.description || '-' },
       { header: t('system.namespaces.columns.serverCount'), cell: (row) => row.serverCount },
       {
@@ -280,6 +293,8 @@ export default function NamespacesPage() {
         }}
       />
 
+      {isDemoMode() && <LifecycleMockReview subject="namespace" />}
+
       {/* 创建 namespace 弹窗 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
@@ -289,14 +304,26 @@ export default function NamespacesPage() {
           </DialogHeader>
           <div className="grid gap-4">
             <div className="grid gap-1.5">
-              <Label htmlFor="namespace-name">{t('system.namespaces.nameLabel')}</Label>
+              <Label htmlFor="namespace-code">{t('system.namespaces.codeLabel')}</Label>
               <Input
-                id="namespace-name"
-                value={name}
+                id="namespace-code"
+                value={code}
                 onChange={(e) => {
-                  setName(e.target.value)
+                  setCode(e.target.value)
                 }}
-                placeholder={t('system.namespaces.namePlaceholder')}
+                placeholder={t('system.namespaces.codePlaceholder')}
+              />
+              <p className="text-xs text-ink-4">{t('system.namespaces.codeHint')}</p>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="namespace-display-name">{t('system.namespaces.displayNameLabel')}</Label>
+              <Input
+                id="namespace-display-name"
+                value={displayName}
+                onChange={(e) => {
+                  setDisplayName(e.target.value)
+                }}
+                placeholder={t('system.namespaces.displayNamePlaceholder')}
               />
             </div>
             <div className="grid gap-1.5">
@@ -314,7 +341,7 @@ export default function NamespacesPage() {
           </div>
           <DialogFooter>
             <Button
-              disabled={name.trim() === '' || createMutation.isPending}
+              disabled={code.trim() === '' || displayName.trim() === '' || createMutation.isPending}
               onClick={() => {
                 setCreateError(null)
                 createMutation.mutate()

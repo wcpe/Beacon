@@ -2,10 +2,12 @@
 // 游标分页文案 / payload 受控查看入口。数据走 devmock（查询防护与游标切片在 mock 内真实生效）。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ConnectionsPage from '../../pages/connections'
 import MessagesPage from '../../pages/messages'
+import { approveApproval, fetchApprovalDetail } from '../../api/approvals'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
@@ -160,9 +162,39 @@ describe('/messages 消息链路页', () => {
     expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
   })
 
-  it('payload 受控查看：原因必填提交后展示原文与 SHA-256', async () => {
+  it('payload 受控查看：调用真实专用申请与一次性消费接口，正文不进入页面', async () => {
     useScenario('normal')
     const user = userEvent.setup()
+    let approved = false
+    let consumed = false
+    const requestId = 'apr_real_message_payload'
+    let messageId = ''
+    const approval = () => ({
+      id: 10001, requestId, operationKey: 'message.payload.read', operationKind: 'message.payload.read', resourceType: 'message', resourceId: messageId,
+      riskLevel: 'high', status: approved ? 'succeeded' : 'pending', requestReason: '排查跨服传送失败', safeSummary: '脱敏摘要', frozenPayloadSha256: 'a'.repeat(64),
+      requesterType: 'human', requesterId: 'admin', deciderType: approved ? 'human' : null, deciderId: approved ? 'admin' : null,
+      approvedBy: approved ? 'admin' : null, rejectReason: null, decisionReason: null, expiresAt: null, version: approved ? 2 : 1,
+      sensitiveAccessGrant: approved ? { grantId: 'sag_real_message_payload' } : undefined,
+    })
+    server.use(
+      http.post('*/admin/v2/messages/:messageId/payload/approval-requests', async ({ request, params }) => {
+        messageId = String(params.messageId)
+        expect(messageId).not.toBe('')
+        expect(request.headers.get('Idempotency-Key')).not.toBeNull()
+        expect(await request.json()).toEqual({ reason: '排查跨服传送失败' })
+        return HttpResponse.json({ requestId, status: 'pending' }, { status: 202 })
+      }),
+      http.get(`*/admin/v2/approval-requests/${requestId}`, () => HttpResponse.json(approval())),
+      http.post(`*/admin/v2/approval-requests/${requestId}/approve`, () => {
+        approved = true
+        return HttpResponse.json(approval(), { status: 202 })
+      }),
+      http.post('*/admin/v2/sensitive-access-grants/sag_real_message_payload/consume', async ({ request }) => {
+        expect(await request.json()).toEqual({ messageId })
+        consumed = true
+        return HttpResponse.json({ payload: '不得渲染的敏感正文', sha256: 'a'.repeat(64), size: 27 })
+      }),
+    )
     renderPage(<MessagesPage />)
 
     const rows = await waitForDataRows()
@@ -170,13 +202,25 @@ describe('/messages 消息链路页', () => {
     // 等详情就绪后再点 payload 入口（勿点骨架行）
     await user.click(await screen.findByRole('button', { name: '查看 payload' }))
 
-    // payload 弹窗：详情已非 dialog，唯一 dialog 即为受控查看框
+    // 弹窗只提交审批，批准前不请求或展示 payload 正文。
     const dialog = await screen.findByRole('dialog')
     const reasonBox = within(dialog).getByRole('textbox')
     await user.type(reasonBox, '排查跨服传送失败')
-    await user.click(within(dialog).getByRole('button', { name: /查看|确认/ }))
-    await waitFor(() => {
-      expect(within(dialog).getByText(/SHA-256/i)).toBeInTheDocument()
-    })
+    await user.click(within(dialog).getByRole('button', { name: '提交审批' }))
+
+    const approvalLink = await within(dialog).findByRole('link', { name: '前往审批中心' })
+    const approvalId = approvalLink.getAttribute('href')?.split('/').at(-1)
+    expect(approvalId).toBe(requestId)
+    const detail = await fetchApprovalDetail(requestId)
+    expect(detail.operationKey).toBe('message.payload.read')
+    expect(detail.requestReason).toBe('排查跨服传送失败')
+    await approveApproval(requestId)
+
+    await user.click(await within(dialog).findByRole('button', { name: '刷新审批状态' }))
+    await user.click(await within(dialog).findByRole('button', { name: '一次性消费授权' }))
+    expect(await within(dialog).findByText('授权已消费；敏感正文未被页面保存或展示。')).toBeInTheDocument()
+    expect(within(dialog).queryByText(/SHA-256/i)).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('不得渲染的敏感正文')).not.toBeInTheDocument()
+    expect(consumed).toBe(true)
   })
 })

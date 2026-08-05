@@ -14,7 +14,10 @@ export interface EnvNamespaceRef {
 /** env 列表项 / 单条视图：含映射的 namespace 摘要 */
 export interface EnvItem {
   id: number
+  /** 兼容窗内旧 name 仍等于稳定 code。 */
   name: string
+  code?: string
+  displayName?: string
   description: string
   namespaces: EnvNamespaceRef[]
   namespaceCount: number

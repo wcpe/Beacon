@@ -45,6 +45,7 @@ function toServerItem(state: ClusterState, row: ServerRow): ServerItem {
     id: row.id,
     namespaceId: row.namespaceId,
     serverId: row.serverId,
+    displayName: row.serverId,
     kind: row.kind,
     bcClusterId: row.bcClusterId,
     bcClusterName:
@@ -112,6 +113,8 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
       .map((cluster) => ({
         id: cluster.id,
         name: cluster.name,
+        code: cluster.name,
+        displayName: cluster.name,
         description: cluster.description,
         proxyCount: state.servers.filter((s) => s.kind === 'proxy' && s.bcClusterId === cluster.id).length,
         regions: state.regions
@@ -119,12 +122,16 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
           .map((region) => ({
             id: region.id,
             name: region.name,
+            code: region.name,
+            displayName: region.name,
             description: region.description,
             zones: state.zones
               .filter((z) => z.regionId === region.id)
               .map((zone) => ({
                 id: zone.id,
                 name: zone.name,
+                code: zone.name,
+                displayName: zone.name,
                 description: zone.description,
                 serverCount: state.servers.filter((s) => s.zoneId === zone.id).length,
                 defaultEntryCount: state.servers.filter((s) => s.zoneId === zone.id && s.isDefaultEntry).length,

@@ -18,18 +18,20 @@ import {
 interface EnvFormDialogProps {
   open: boolean
   mode: 'create' | 'edit'
-  initialName: string
+  initialCode: string
+  initialDisplayName: string
   initialDescription: string
   pending: boolean
   errorText: string | null
   onOpenChange: (open: boolean) => void
-  onSubmit: (name: string, description: string) => void
+  onSubmit: (code: string, displayName: string, description: string) => void
 }
 
 export default function EnvFormDialog({
   open,
   mode,
-  initialName,
+  initialCode,
+  initialDisplayName,
   initialDescription,
   pending,
   errorText,
@@ -37,16 +39,18 @@ export default function EnvFormDialog({
   onSubmit,
 }: EnvFormDialogProps) {
   const { t } = useTranslation()
-  const [name, setName] = useState(initialName)
+  const [code, setCode] = useState(initialCode)
+  const [displayName, setDisplayName] = useState(initialDisplayName)
   const [description, setDescription] = useState(initialDescription)
 
   // 每次打开时用传入初值重置表单（创建为空、编辑为当前值）
   useEffect(() => {
     if (open) {
-      setName(initialName)
+      setCode(initialCode)
+      setDisplayName(initialDisplayName)
       setDescription(initialDescription)
     }
-  }, [open, initialName, initialDescription])
+  }, [open, initialCode, initialDisplayName, initialDescription])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,14 +61,27 @@ export default function EnvFormDialog({
         </DialogHeader>
         <div className="grid gap-4">
           <div className="grid gap-1.5">
-            <Label htmlFor="env-name">{t('system.envs.nameLabel')}</Label>
+            <Label htmlFor="env-code">{t('system.envs.codeLabel')}</Label>
             <Input
-              id="env-name"
-              value={name}
+              id="env-code"
+              value={code}
               onChange={(e) => {
-                setName(e.target.value)
+                setCode(e.target.value)
               }}
-              placeholder={t('system.envs.namePlaceholder')}
+              placeholder={t('system.envs.codePlaceholder')}
+              readOnly={mode === 'edit'}
+            />
+            <p className="text-xs text-ink-4">{t('system.envs.codeHint')}</p>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="env-display-name">{t('system.envs.displayNameLabel')}</Label>
+            <Input
+              id="env-display-name"
+              value={displayName}
+              onChange={(e) => {
+                setDisplayName(e.target.value)
+              }}
+              placeholder={t('system.envs.displayNamePlaceholder')}
             />
           </div>
           <div className="grid gap-1.5">
@@ -82,9 +99,9 @@ export default function EnvFormDialog({
         </div>
         <DialogFooter>
           <Button
-            disabled={name.trim() === '' || pending}
+            disabled={code.trim() === '' || displayName.trim() === '' || pending}
             onClick={() => {
-              onSubmit(name.trim(), description.trim())
+              onSubmit(code.trim(), displayName.trim(), description.trim())
             }}
           >
             {pending ? t('system.envs.saving') : t('system.envs.save')}

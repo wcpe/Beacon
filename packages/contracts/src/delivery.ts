@@ -76,6 +76,8 @@ export interface ChangeTarget {
 /** 变更单（列表项） */
 export interface ChangeOrderSummary {
   id: number
+  /** 仅引用统一审批申请；审批状态仍以 approval_request 为准。 */
+  approvalRequestId?: string
   namespaceId: number
   title: string
   description: string

@@ -124,7 +124,13 @@ describe('/service-analysis 调度决策下钻板块', () => {
 
     // huge 场景固定 3200 条 → 214 页
     expect((await screen.findAllByText(/共 3200 条/)).length).toBeGreaterThan(0)
-    await user.click(screen.getByRole('button', { name: '下一页' }))
+    const nextPage = screen.getAllByRole('button', { name: '下一页' }).find((button) =>
+      button.parentElement?.textContent?.includes('第 1 / 214 页'),
+    )
+    if (nextPage === undefined) {
+      throw new Error('未找到调度决策分页的下一页按钮')
+    }
+    await user.click(nextPage)
     expect(await screen.findByText(/第 2 \/ 214 页/)).toBeInTheDocument()
   })
 

@@ -25,6 +25,7 @@ describe('/namespaces 页', () => {
 
     // 命名空间 列表出现已知 namespace（种子数据含 default）
     expect(await screen.findByText(/强隔离/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '命名空间生命周期评审（Mock）' })).toBeInTheDocument()
     // 至少渲染一行 namespace
     await waitFor(() => {
       expect(screen.getAllByRole('row').length).toBeGreaterThan(1)
@@ -47,7 +48,8 @@ describe('/namespaces 页', () => {
 
     await user.click(await screen.findByRole('button', { name: '创建命名空间' }))
     const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByLabelText('名称'), 'game-new')
+    await user.type(within(dialog).getByLabelText('业务标识'), 'game-new')
+    await user.type(within(dialog).getByLabelText('显示名称'), '新游戏环境')
     await user.click(within(dialog).getByRole('button', { name: '创建' }))
 
     expect(await screen.findByText('命名空间已创建')).toBeInTheDocument()
@@ -66,7 +68,9 @@ describe('/namespaces 页', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
 
     // 选中 test 域（种子含出向生效信任 test → prod）
-    await user.click(await screen.findByText('test'))
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
 
     // 固定层详情出现（非 role=dialog）
     expect(await screen.findByText('命名空间详情')).toBeInTheDocument()
@@ -82,7 +86,9 @@ describe('/namespaces 页', () => {
     renderPage(<NamespacesPage />)
 
     // 选中 test 域后在详情面板内发起收回
-    await user.click(await screen.findByText('test'))
+    const testRow = (await screen.findAllByText('test'))[0].closest('tr')
+    expect(testRow).not.toBeNull()
+    await user.click(testRow as HTMLElement)
     const revokeBtn = (await screen.findAllByRole('button', { name: '收回' }))[0]
     await user.click(revokeBtn)
 

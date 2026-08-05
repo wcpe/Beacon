@@ -1,7 +1,7 @@
 // 命令面板条目构建 / 过滤 / 分组（FR-193）：纯函数，便于单测。
 // MVP 以导航为主；可选 server 关键词与审计动作快捷项。
 
-import { ALL_PAGES, NAV_GROUPS, DASHBOARD_PAGE, type NavPage } from '../../routes'
+import { ALL_PAGES, NAV_GROUPS, APPROVALS_PAGE, DASHBOARD_PAGE, type NavPage } from '../../routes'
 
 /** 结果分组 */
 export type CommandGroup = 'nav' | 'servers' | 'audits'
@@ -40,7 +40,10 @@ function navItem(page: NavPage, groupLabelKey: string): CommandItem {
 
 /** 构建全量导航项（含运维总览 + 四大域） */
 export function buildNavItems(): CommandItem[] {
-  const items: CommandItem[] = [navItem(DASHBOARD_PAGE, 'nav.groups.ops')]
+  const items: CommandItem[] = [
+    navItem(DASHBOARD_PAGE, 'nav.groups.ops'),
+    navItem(APPROVALS_PAGE, 'nav.groups.ops'),
+  ]
   for (const group of NAV_GROUPS) {
     for (const page of group.pages) {
       items.push(navItem(page, group.titleKey))

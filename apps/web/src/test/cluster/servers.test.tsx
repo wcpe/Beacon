@@ -22,13 +22,21 @@ afterAll(() => {
   server.close()
 })
 
+async function findServerRow(serverId: string): Promise<HTMLElement> {
+  const matches = await screen.findAllByText(serverId)
+  const row = matches.map((element) => element.closest('tr')).find((element): element is HTMLTableRowElement => element !== null)
+  if (!row) throw new Error(`未找到服务器 ${serverId} 的资产行`)
+  return row
+}
+
 describe('/servers 服务器页', () => {
   it('常规态渲染服务器资产列表，待确认入口带计数', async () => {
     useScenario('normal')
     renderPage(<ServersPage />)
 
     // 资产列表出现已知子服
-    expect(await screen.findByText('lobby-1')).toBeInTheDocument()
+    expect(await findServerRow('lobby-1')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '服务器生命周期评审（Mock）' })).toBeInTheDocument()
     // 吸顶入口按钮存在（待确认收敛为入口，不再默认铺开）
     const pendingBtn = await screen.findByRole('button', { name: /注册待确认/ })
     expect(pendingBtn).toBeInTheDocument()
@@ -47,7 +55,7 @@ describe('/servers 服务器页', () => {
     renderPage(<ServersPage />)
 
     // 等主体加载完，再从吸顶入口打开待确认抽屉
-    await screen.findByText('lobby-1')
+    await findServerRow('lobby-1')
     await user.click(await screen.findByRole('button', { name: /注册待确认/ }))
 
     // 抽屉内定位 game-new-1 所在待确认行的确认按钮
@@ -105,22 +113,22 @@ describe('/servers 服务器页', () => {
     renderPage(<ServersPage />)
 
     // game-1 在 mock 中为小区默认入口：行内带「默认入口」徽标；操作收进「…」菜单
-    const row = (await screen.findByText('game-1')).closest('tr')
-    expect(row).not.toBeNull()
-    expect(within(row as HTMLElement).getByText('默认入口')).toBeInTheDocument()
+    const row = await findServerRow('game-1')
+    expect(within(row).getByText('默认入口')).toBeInTheDocument()
     // 打开行内操作菜单再点「取消默认入口」
-    await user.click(within(row as HTMLElement).getByRole('button', { name: '操作' }))
+    await user.click(within(row).getByRole('button', { name: '操作' }))
     await user.click(await screen.findByRole('menuitem', { name: '取消默认入口' }))
 
     // 无原因确认框：确认后徽标消失、菜单项翻转
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: '取消默认入口' }))
     await waitFor(() => {
-      const fresh = screen.getByText('game-1').closest('tr')
+      const fresh = screen.getAllByText('game-1').map((element) => element.closest('tr')).find((element): element is HTMLTableRowElement => element !== null)
+      expect(fresh).toBeDefined()
       expect(within(fresh as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
     })
-    const fresh = screen.getByText('game-1').closest('tr')
-    await user.click(within(fresh as HTMLElement).getByRole('button', { name: '操作' }))
+    const fresh = await findServerRow('game-1')
+    await user.click(within(fresh).getByRole('button', { name: '操作' }))
     expect(await screen.findByRole('menuitem', { name: '设为默认入口' })).toBeInTheDocument()
   }, 20_000)
 
@@ -129,34 +137,30 @@ describe('/servers 服务器页', () => {
     renderPage(<ServersPage />)
 
     // lobby-1 是独立大厅成员：资产页只展示归属，不复用小区默认入口或未分配摘要。
-    const lobbyCell = await screen.findByText('lobby-1')
-    const lobbyRow = lobbyCell.closest('tr')
-    expect(lobbyRow).not.toBeNull()
-    expect(within(lobbyRow as HTMLElement).getByText('大厅成员')).toBeInTheDocument()
-    expect(within(lobbyRow as HTMLElement).queryByText('- / -')).not.toBeInTheDocument()
-    expect(within(lobbyRow as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
+    const lobbyRow = await findServerRow('lobby-1')
+    expect(within(lobbyRow).getByText('大厅成员')).toBeInTheDocument()
+    expect(within(lobbyRow).queryByText('- / -')).not.toBeInTheDocument()
+    expect(within(lobbyRow).queryByText('默认入口')).not.toBeInTheDocument()
     await waitFor(() => {
-      expect(within(lobbyRow as HTMLElement).getByText('87')).toBeInTheDocument()
+      expect(within(lobbyRow).getByText('87')).toBeInTheDocument()
     })
-    expect(within(lobbyRow as HTMLElement).getByText('健康')).toBeInTheDocument()
+    expect(within(lobbyRow).getByText('健康')).toBeInTheDocument()
     await waitFor(() => {
-      expect(within(lobbyRow as HTMLElement).getByText(/TPS/)).toBeInTheDocument()
+      expect(within(lobbyRow).getByText(/TPS/)).toBeInTheDocument()
     })
-    expect(within(lobbyRow as HTMLElement).getByText(/CPU/)).toBeInTheDocument()
-    expect(within(lobbyRow as HTMLElement).getByText(/人在线/)).toBeInTheDocument()
+    expect(within(lobbyRow).getByText(/CPU/)).toBeInTheDocument()
+    expect(within(lobbyRow).getByText(/人在线/)).toBeInTheDocument()
     // 可调度按例外呈现：可调度行不出现不可调度药丸
-    expect(within(lobbyRow as HTMLElement).queryByText(/不可调度/)).not.toBeInTheDocument()
+    expect(within(lobbyRow).queryByText(/不可调度/)).not.toBeInTheDocument()
 
     // proxy-1（代理，类型不可调度）：直显不可调度原因摘要
-    const proxyRow = screen.getByText('proxy-1').closest('tr')
-    expect(proxyRow).not.toBeNull()
-    expect(within(proxyRow as HTMLElement).getByText(/类型不可调度/)).toBeInTheDocument()
+    const proxyRow = await findServerRow('proxy-1')
+    expect(within(proxyRow).getByText(/类型不可调度/)).toBeInTheDocument()
 
     // game-4（失联）：失联徽标 + 指标列占位不显示误导性旧值
-    const lostRow = screen.getByText('game-4').closest('tr')
-    expect(lostRow).not.toBeNull()
-    expect(within(lostRow as HTMLElement).getByText('失联')).toBeInTheDocument()
-    expect(within(lostRow as HTMLElement).getByText('—')).toBeInTheDocument()
+    const lostRow = await findServerRow('game-4')
+    expect(within(lostRow).getByText('失联')).toBeInTheDocument()
+    expect(within(lostRow).getByText('—')).toBeInTheDocument()
   })
 
   it('点行打开健康详情抽屉：面板已加宽且展示因子分解', async () => {
@@ -164,7 +168,7 @@ describe('/servers 服务器页', () => {
     const user = userEvent.setup()
     renderPage(<ServersPage />)
 
-    await user.click(await screen.findByText('lobby-1'))
+    await user.click(await findServerRow('lobby-1'))
 
     // 抽屉打开并加载因子分解内容
     expect(await screen.findByText('因子分解')).toBeInTheDocument()
@@ -180,14 +184,14 @@ describe('/servers 服务器页', () => {
     renderPage(<ServersPage />)
 
     // 初始能看到 lobby-1 与 mall-1
-    expect(await screen.findByText('lobby-1')).toBeInTheDocument()
+    expect(await findServerRow('lobby-1')).toBeInTheDocument()
 
-    const searchBox = screen.getByLabelText('搜索服务器 ID')
+    const searchBox = screen.getByLabelText('搜索服务器 ID 或显示名称')
     await user.type(searchBox, 'mall')
 
     await waitFor(() => {
-      expect(screen.getByText('mall-1')).toBeInTheDocument()
-      expect(screen.queryByText('lobby-1')).not.toBeInTheDocument()
+      expect(screen.queryAllByText('mall-1').some((element) => element.closest('tr') !== null)).toBe(true)
+      expect(screen.queryAllByText('lobby-1').every((element) => element.closest('tr') === null)).toBe(true)
     })
   })
 

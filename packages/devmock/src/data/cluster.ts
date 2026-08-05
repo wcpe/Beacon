@@ -18,6 +18,8 @@ import { isoOffset, uuidFrom } from '../support'
 export interface NamespaceRow {
   id: number
   name: string
+  code?: string
+  displayName?: string
   description: string
   createdAt: string
 }
@@ -26,6 +28,8 @@ export interface NamespaceRow {
 export interface EnvRow {
   id: number
   name: string
+  code?: string
+  displayName?: string
   description: string
   namespaceIds: number[]
   createdAt: string
@@ -463,20 +467,21 @@ function buildHuge(): ClusterState {
       bcClusterId: 10 + ((p - 1) % 3),
     })
   }
-  // 1200 台已分配子服：round-robin 落 48 个小区，穿插禁用 / 失联 / 排空
+  // 1200 台已分配子服：首个小区集中 240 台，其余 round-robin，覆盖分页与单区继续加载。
   for (let n = 1; n <= 1200; n++) {
     const serverId = `game-${String(n).padStart(4, '0')}`
+    const zoneId = n <= 240 ? zoneIds[0] : zoneIds[1 + ((n - 241) % (zoneIds.length - 1))]
     makeServer(state, 1, {
       serverId,
       kind: 'backend',
-      zoneId: zoneIds[(n - 1) % zoneIds.length],
+      zoneId,
       isDefaultEntry: n % 25 === 1,
       draining: n % 211 === 0,
       online: n % 97 !== 0,
     })
   }
-  // 40 台未分配 + 25 台待确认
-  for (let n = 1; n <= 40; n++) {
+  // 240 台未分配 + 25 台待确认，覆盖窄栏跨页加载。
+  for (let n = 1; n <= 240; n++) {
     makeServer(state, 1, { serverId: `pool-${String(n).padStart(3, '0')}`, kind: 'backend', zoneId: null })
   }
 

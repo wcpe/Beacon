@@ -3,8 +3,8 @@
 // 两种分配路径：① 直接拖 chip 到树里的兼容目标；② 勾选多个 chip → 底部「分配到…」走目标选择器。
 // 选择集只允许同 kind（分配要求同 namespace、同 kind）。
 
-import { useMemo, useState } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
@@ -31,16 +31,30 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [selectedRowsById, setSelectedRowsById] = useState<Map<number, ServerItem>>(new Map())
+  const [keyword, setKeyword] = useState('')
   const [assignOpen, setAssignOpen] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [results, setResults] = useState<AssignmentResult[] | null>(null)
   // 未分配 chip 右键菜单：光标位置 + 目标服务器
   const [menu, setMenu] = useState<{ x: number; y: number; server: ServerItem } | null>(null)
 
-  const query = useQuery({
-    queryKey: ['servers', 'unassigned', namespaceId],
-    queryFn: () => fetchServers({ namespaceId, assigned: false, pageSize: 200 }),
-    placeholderData: keepPreviousData,
+  const query = useInfiniteQuery({
+    queryKey: ['servers', 'unassigned', namespaceId, keyword],
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) =>
+      fetchServers({
+        namespaceId,
+        assigned: false,
+        keyword: keyword.trim() || undefined,
+        page: pageParam,
+        pageSize: 200,
+      }),
+    getNextPageParam: (lastPage, pages) => {
+      const total = lastPage.total
+      const loaded = pages.reduce((count, page) => count + page.items.length, 0)
+      return loaded < total ? pages.length + 1 : undefined
+    },
   })
   const treeQuery = useQuery({
     queryKey: ['zone-tree', namespaceId],
@@ -48,9 +62,26 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
     placeholderData: keepPreviousData,
   })
 
-  const rows = query.data?.items ?? []
+  const rows = useMemo(() => query.data?.pages.flatMap((page) => page.items) ?? [], [query.data])
+  const total = query.data?.pages[0]?.total ?? 0
+  // 记录已经见过的行，搜索或继续加载后仍保留跨页选择。
+  useEffect(() => {
+    if (rows.length === 0) {
+      return
+    }
+    setSelectedRowsById((previous) => {
+      const next = new Map(previous)
+      for (const row of rows) {
+        next.set(row.id, row)
+      }
+      return next
+    })
+  }, [rows])
   // 已选中的 server 行（决定 kind 与分配目标）
-  const selectedRows = useMemo(() => rows.filter((r) => selectedIds.has(r.id)), [rows, selectedIds])
+  const selectedRows = useMemo(
+    () => [...selectedIds].map((id) => selectedRowsById.get(id)).filter((row): row is ServerItem => row !== undefined),
+    [selectedIds, selectedRowsById],
+  )
   // 选择集的 kind：以首个选中项为准（无选中为 null），其余 kind 的行禁选
   const selectionKind: 'backend' | 'proxy' | null = selectedRows.length > 0 ? selectedRows[0].kind : null
 
@@ -103,9 +134,9 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
       <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
         <Inbox className="size-4 text-brand" />
         <h2 className="text-[12.5px] font-semibold text-ink-1">{t('cluster.zones.basket.title')}</h2>
-        {rows.length > 0 && (
+        {total > 0 && (
           <Badge variant="warn" className="tnum">
-            {rows.length}
+            {total}
           </Badge>
         )}
         <Button variant="ghost" size="icon" className="ml-auto size-7" onClick={onClose} aria-label={t('cluster.zones.basket.close')}>
@@ -114,6 +145,20 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
       </div>
 
       <p className="px-3 pt-2 text-[11px] leading-relaxed text-ink-4">{t('cluster.zones.basket.railHint')}</p>
+      <div className="grid gap-1.5 px-2.5 pt-2">
+        <input
+          aria-label={t('cluster.zones.basket.search')}
+          placeholder={t('cluster.zones.basket.search')}
+          value={keyword}
+          onChange={(event) => {
+            setKeyword(event.target.value)
+          }}
+          className="h-8 rounded-md border border-input bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+        />
+        <span className="text-[11px] text-ink-4">
+          {t('cluster.zones.basket.loadedCount', { loaded: rows.length, total })}
+        </span>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
         <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
@@ -183,6 +228,19 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
                 )
               })}
             </ul>
+          )}
+          {query.hasNextPage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-2 w-full text-xs"
+              disabled={query.isFetchingNextPage}
+              onClick={() => {
+                void query.fetchNextPage()
+              }}
+            >
+              {query.isFetchingNextPage ? t('cluster.zones.basket.loadingMore') : t('cluster.zones.basket.loadMore')}
+            </Button>
           )}
         </AsyncSection>
       </div>

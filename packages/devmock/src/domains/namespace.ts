@@ -10,7 +10,7 @@ import type {
   NamespaceTrustListResponse,
   TrustCapability,
 } from '@beacon/contracts'
-import { jsonError, mockGet, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
+import { jsonError, mockGet, mockPatch, mockPost, paginate, pathParam, queryStr, readBody } from '../http'
 import { getClusterState, isAssigned, type TrustRow } from '../data/cluster'
 import { isoOffset, pseudoSha256 } from '../support'
 
@@ -40,6 +40,8 @@ function toTrustItem(row: TrustRow): NamespaceTrustItem {
 
 interface CreateNamespaceBody {
   name?: string
+  code?: string
+  displayName?: string
   description?: string
 }
 
@@ -48,6 +50,13 @@ interface CreateTrustBody {
   toNamespaceId?: number
   capability?: TrustCapability
   note?: string
+}
+
+interface UpdateNamespaceBody {
+  name?: string
+  code?: string
+  displayName?: string
+  description?: string
 }
 
 interface RevokeBody {
@@ -61,10 +70,12 @@ export const namespaceHandlers: HttpHandler[] = [
     const keyword = queryStr(url, 'keyword')?.toLowerCase() ?? null
     const state = getClusterState()
     const rows: NamespaceItem[] = state.namespaces
-      .filter((ns) => keyword === null || ns.name.toLowerCase().includes(keyword))
+      .filter((ns) => keyword === null || (ns.code ?? ns.name).toLowerCase().includes(keyword) || (ns.displayName ?? ns.name).toLowerCase().includes(keyword))
       .map((ns) => ({
         id: ns.id,
         name: ns.name,
+        code: ns.code ?? ns.name,
+        displayName: ns.displayName ?? ns.name,
         description: ns.description,
         serverCount: state.servers.filter((s) => s.namespaceId === ns.id && isAssigned(s)).length,
         bcClusterCount: state.bcClusters.filter((c) => c.namespaceId === ns.id).length,
@@ -80,29 +91,54 @@ export const namespaceHandlers: HttpHandler[] = [
   // 创建 namespace：name 全局唯一，返回一次性明文 token
   mockPost('/admin/v2/namespaces', async ({ request }) => {
     const body = await readBody<CreateNamespaceBody>(request)
-    if (!body.name) {
-      return jsonError(400, 'invalid_param', 'name 必填')
+    const code = body.code?.trim() ?? body.name?.trim()
+    if (!code || (body.name !== undefined && body.code !== undefined && body.name.trim() !== code)) {
+      return jsonError(400, 'invalid_param', 'code 必填且 name 不得与 code 不一致')
     }
+    const rawDisplayName = body.displayName?.trim()
+    const displayName = rawDisplayName === '' ? code : rawDisplayName ?? code
     const state = getClusterState()
-    if (state.namespaces.some((ns) => ns.name === body.name)) {
-      return jsonError(409, 'namespace_duplicate', `namespace ${body.name} 已存在`)
+    if (state.namespaces.some((ns) => (ns.code ?? ns.name) === code)) {
+      return jsonError(409, 'namespace_duplicate', `namespace ${code} 已存在`)
     }
     const id = state.namespaces.reduce((max, ns) => Math.max(max, ns.id), 0) + 1
     const row = {
       id,
-      name: body.name,
+      name: code,
+      code,
+      displayName,
       description: body.description ?? '',
       createdAt: isoOffset(0),
     }
     state.namespaces.push(row)
     const created: NamespaceCreated = {
       ...row,
+      code,
+      displayName,
       serverCount: 0,
       bcClusterCount: 0,
       activeTrustCount: 0,
-      accessToken: `nstk_${pseudoSha256(`token:${body.name}`).slice(0, 40)}`,
+      accessToken: `nstk_${pseudoSha256(`token:${code}`).slice(0, 40)}`,
     }
     return HttpResponse.json(created, { status: 201 })
+  }),
+
+  mockPatch('/admin/v2/namespaces/:id', async (info) => {
+    const id = Number.parseInt(pathParam(info, 'id'), 10)
+    const row = getClusterState().namespaces.find((item) => item.id === id)
+    if (!row) return jsonError(404, 'namespace_not_found', 'namespace 不存在')
+    const body = await readBody<UpdateNamespaceBody>(info.request)
+    const code = row.code ?? row.name
+    if ((body.code !== undefined && body.code.trim() !== code) || (body.name !== undefined && body.name.trim() !== code)) {
+      return jsonError(400, 'IMMUTABLE_IDENTIFIER', '稳定业务标识不允许修改')
+    }
+    if (body.displayName !== undefined) {
+      const displayName = body.displayName.trim()
+      if (!displayName) return jsonError(400, 'invalid_param', 'displayName 不能为空')
+      row.displayName = displayName
+    }
+    if (body.description !== undefined) row.description = body.description
+    return HttpResponse.json({ id: row.id, name: code, code, displayName: row.displayName ?? code, description: row.description, serverCount: 0, bcClusterCount: 0, activeTrustCount: 0, createdAt: row.createdAt })
   }),
 
   // 信任行列表（方向 / capability / status 过滤）
