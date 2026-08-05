@@ -58,6 +58,9 @@ func (s *V2ControlPlaneService) RequestNamespaceDirectoryResync(namespaceID uint
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureNamespaceRuntimeActive(ns); err != nil {
+		return nil, err
+	}
 	var servers []model.Server
 	if err := s.db.Where("namespace_id = ? AND kind = ? AND bc_cluster_id IS NOT NULL AND lifecycle = ?", ns.ID, model.ServerKindProxy, model.ServerLifecycleActive).Order("server_id ASC").Find(&servers).Error; err != nil {
 		return nil, err
@@ -102,10 +105,16 @@ func (s *V2ControlPlaneService) RequestServerDirectoryResync(serverRowID uint, o
 	if err != nil {
 		return DirectoryResyncResult{}, err
 	}
+	if err := ensureNamespaceRuntimeActive(ns); err != nil {
+		return DirectoryResyncResult{}, err
+	}
 	return s.requestDirectoryResync(ns, &server, operator, clientIP, "server")
 }
 
 func (s *V2ControlPlaneService) requestDirectoryResync(ns *model.Namespace, server *model.Server, operator, clientIP, scope string) (DirectoryResyncResult, error) {
+	if err := ensureNamespaceRuntimeActive(ns); err != nil {
+		return DirectoryResyncResult{}, err
+	}
 	if !isServerActive(server) {
 		return DirectoryResyncResult{}, apperr.ErrServerArchived
 	}

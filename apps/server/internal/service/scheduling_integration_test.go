@@ -67,7 +67,7 @@ func TestSchedulingDrainAffectsPlacement(t *testing.T) {
 	}
 
 	// 取消 drain → lobby-1 回到候选并复居首
-	if err := svc.Undrain("prod", "lobby-1", "admin", "127.0.0.1"); err != nil {
+	if err := svc.applyUndrainForTest("prod", "lobby-1", "admin", "127.0.0.1"); err != nil {
 		t.Fatalf("取消 drain 失败: %v", err)
 	}
 	cands, _ = svc.Placement("prod", "area1", "zoneA")
@@ -79,7 +79,7 @@ func TestSchedulingDrainAffectsPlacement(t *testing.T) {
 // TestUndrainNotFound 取消不存在的 drain → DRAIN_NOT_FOUND。
 func TestUndrainNotFound(t *testing.T) {
 	svc, _ := schedStack(t)
-	err := svc.Undrain("prod", "ghost", "admin", "")
+	err := svc.applyUndrainForTest("prod", "ghost", "admin", "")
 	if !errors.Is(err, apperr.ErrDrainNotFound) {
 		t.Fatalf("应返回 DRAIN_NOT_FOUND，实际 %v", err)
 	}

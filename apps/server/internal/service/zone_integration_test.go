@@ -48,7 +48,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	}
 
 	// 指派 zoneA → 含 A
-	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := zone.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("指派失败: %v", err)
 	}
 	valA, md5A := zoneval("lobby-1")
@@ -57,7 +57,7 @@ func TestZoneReassignEffectiveRecompute(t *testing.T) {
 	}
 
 	// 改派 zoneB → 重算为 B，且整体 md5 变化
-	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneB", "admin", "", ""); err != nil {
+	if _, err := zone.applyAssignForTest("prod", "lobby-1", "area1", "zoneB", "admin", "", ""); err != nil {
 		t.Fatalf("改派失败: %v", err)
 	}
 	valB, md5B := zoneval("lobby-1")
@@ -90,12 +90,12 @@ func TestAssignRejectsBungeeAllowsBukkit(t *testing.T) {
 	register("bc-1", "bungee", "10.0.0.9:25577")
 
 	// bukkit 放行：指派成功
-	if _, err := zone.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := zone.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("bukkit 子服指派应成功，实际 %v", err)
 	}
 
 	// bungee 拒绝：返回 ErrZoneNotAssignableToBC
-	if _, err := zone.Assign("prod", "bc-1", "area1", "zoneA", "admin", "", ""); !errors.Is(err, apperr.ErrZoneNotAssignableToBC) {
+	if _, err := zone.applyAssignForTest("prod", "bc-1", "area1", "zoneA", "admin", "", ""); !errors.Is(err, apperr.ErrZoneNotAssignableToBC) {
 		t.Fatalf("bungee 代理指派应返回 ErrZoneNotAssignableToBC，实际 %v", err)
 	}
 }

@@ -17,6 +17,12 @@ import (
 type V2ConnectionAdminHandler struct {
 	svc      *service.ConnQueryService
 	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
+	scope    *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *V2ConnectionAdminHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewV2ConnectionAdminHandler 构造处理器。
@@ -56,7 +62,7 @@ type connStatsBucketJS struct {
 // List 处理 GET /admin/v2/connections：connId 精确直查或条件游标分页（查询防护见 §4.3）。
 func (h *V2ConnectionAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	namespaceID, err := optionalUintQuery(q.Get("namespaceId"))
+	scope, err := resolveObservationScope(r, h.scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -71,12 +77,12 @@ func (h *V2ConnectionAdminHandler) List(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	page, err := h.svc.List(service.ListConnectionsParams{
-		ConnID:          q.Get("connId"),
-		ServerID:        q.Get("serverId"),
-		PlayerUUID:      q.Get("playerUuid"),
-		Status:          q.Get("status"),
-		CloseKind:       q.Get("closeKind"),
-		NamespaceID:     namespaceID,
+		ConnID:       q.Get("connId"),
+		ServerID:     q.Get("serverId"),
+		PlayerUUID:   q.Get("playerUuid"),
+		Status:       q.Get("status"),
+		CloseKind:    q.Get("closeKind"),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
 		FromMs:          fromMs,
 		ToMs:            toMs,
 		Cursor:          intQuery(q.Get("cursor")),
@@ -101,7 +107,12 @@ func (h *V2ConnectionAdminHandler) List(w http.ResponseWriter, r *http.Request) 
 
 // Detail 处理 GET /admin/v2/connections/{connId}：单条连接详情，未命中 404 connection_not_found。
 func (h *V2ConnectionAdminHandler) Detail(w http.ResponseWriter, r *http.Request) {
-	row, err := h.svc.Detail(chi.URLParam(r, "connId"))
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	row, err := h.svc.DetailInScope(chi.URLParam(r, "connId"), scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -112,6 +123,11 @@ func (h *V2ConnectionAdminHandler) Detail(w http.ResponseWriter, r *http.Request
 // Stats 处理 GET /admin/v2/connections/stats：连接流时间桶聚合（缺 from/to 默认最近 1h，dashboard 玩家流数据源）。
 func (h *V2ConnectionAdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	toMs := parseISOms(q.Get("to"))
 	if toMs <= 0 {
 		toMs = time.Now().UTC().UnixMilli()
@@ -121,7 +137,7 @@ func (h *V2ConnectionAdminHandler) Stats(w http.ResponseWriter, r *http.Request)
 		fromMs = toMs - int64(time.Hour/time.Millisecond)
 	}
 	buckets, err := h.svc.Stats(service.ConnStatsParams{
-		ServerID: q.Get("serverId"), FromMs: fromMs, ToMs: toMs, Bucket: q.Get("bucket"),
+		ServerID: q.Get("serverId"), NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, FromMs: fromMs, ToMs: toMs, Bucket: q.Get("bucket"),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)

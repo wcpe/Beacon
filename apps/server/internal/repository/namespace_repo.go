@@ -55,6 +55,31 @@ func (r *NamespaceRepository) FindByCode(code string) (*model.Namespace, error) 
 	return &ns, nil
 }
 
+// FindByID 按主键查找 namespace；不存在返回 (nil, nil)。
+func (r *NamespaceRepository) FindByID(id uint) (*model.Namespace, error) {
+	var ns model.Namespace
+	err := r.db.First(&ns, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ns, nil
+}
+
+// FindByIDs 批量读取 namespace，供观测范围把历史 code 查询绑定到同一冻结快照。
+func (r *NamespaceRepository) FindByIDs(ids []uint) ([]model.Namespace, error) {
+	if len(ids) == 0 {
+		return []model.Namespace{}, nil
+	}
+	var items []model.Namespace
+	if err := r.db.Where("id IN ?", ids).Order("id ASC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // Create 插入一个环境。
 func (r *NamespaceRepository) Create(ns *model.Namespace) error {
 	return r.db.Create(ns).Error

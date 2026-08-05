@@ -32,7 +32,7 @@ func (NamespaceTrust) TableName() string { return "namespace_trust" }
 type Env struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	Code        string    `gorm:"column:code;size:64;uniqueIndex" json:"code"`
-	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	Name        string    `gorm:"column:name;size:128;not null" json:"name"`
 	DisplayName string    `gorm:"-" json:"displayName"`
 	Description string    `gorm:"column:description;size:255" json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -66,7 +66,7 @@ type BCCluster struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	NamespaceID uint      `gorm:"column:namespace_id;not null;uniqueIndex:uk_bc_cluster_code,priority:1;index" json:"namespaceId"`
 	Code        string    `gorm:"column:code;size:64;uniqueIndex:uk_bc_cluster_code,priority:2" json:"code"`
-	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	Name        string    `gorm:"column:name;size:128;not null" json:"name"`
 	DisplayName string    `gorm:"-" json:"displayName"`
 	Description string    `gorm:"column:description;size:255" json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -104,7 +104,7 @@ type Region struct {
 	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
 	BCClusterID uint      `gorm:"column:bc_cluster_id;not null;uniqueIndex:uk_region_code,priority:1;index" json:"bcClusterId"`
 	Code        string    `gorm:"column:code;size:64;uniqueIndex:uk_region_code,priority:2" json:"code"`
-	Name        string    `gorm:"column:name;size:64;not null" json:"name"`
+	Name        string    `gorm:"column:name;size:128;not null" json:"name"`
 	DisplayName string    `gorm:"-" json:"displayName"`
 	Description string    `gorm:"column:description;size:255" json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
@@ -191,7 +191,7 @@ type Server struct {
 	ID                 uint   `gorm:"primaryKey;autoIncrement"`
 	NamespaceID        uint   `gorm:"column:namespace_id;not null;uniqueIndex:uk_server_id,priority:1;index"`
 	ServerID           string `gorm:"column:server_id;size:64;not null;uniqueIndex:uk_server_id,priority:2"`
-	DisplayName        string `gorm:"column:display_name;size:64"`
+	DisplayName        string `gorm:"column:display_name;size:128"`
 	Kind               string `gorm:"column:kind;size:16;not null"`
 	BCClusterID        *uint  `gorm:"column:bc_cluster_id;index"`
 	ZoneID             *uint  `gorm:"column:zone_id;index"`
@@ -200,7 +200,7 @@ type Server struct {
 	PendingBCClusterID *uint  `gorm:"column:pending_bc_cluster_id"`
 	IsDefaultEntry     bool   `gorm:"column:is_default_entry;not null;default:false"`
 	Draining           bool   `gorm:"column:draining;not null;default:false"`
-	// 生命周期状态：active / archived；tombstoned 为后续预留。
+	// 生命周期状态：active / archived / tombstoned。
 	Lifecycle string `gorm:"column:lifecycle;size:16;not null;default:active;index"`
 	// 归档时间；仅 archived 状态有值。
 	ArchivedAt *time.Time `gorm:"column:archived_at"`
@@ -208,8 +208,18 @@ type Server struct {
 	ArchivedBy string `gorm:"column:archived_by;size:128"`
 	// 归档审批原因。
 	ArchiveReason string `gorm:"column:archive_reason;size:255"`
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// 永久墓碑时间；墓碑记录保留以阻止同 serverId 重用。
+	TombstonedAt *time.Time `gorm:"column:tombstoned_at"`
+	// 发起永久墓碑的审批申请人。
+	TombstonedBy string `gorm:"column:tombstoned_by;size:128"`
+	// 永久墓碑审批原因。
+	TombstoneReason string `gorm:"column:tombstone_reason;size:255"`
+	// 永久墓碑审批请求标识。
+	TombstoneApprovalRequestID string `gorm:"column:tombstone_approval_request_id;size:64;index"`
+	// 永久墓碑冻结影响集合哈希。
+	TombstoneImpactHash string `gorm:"column:tombstone_impact_hash;size:64"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (Server) TableName() string { return "server" }
@@ -244,8 +254,14 @@ type AgentIdentity struct {
 	ConflictPeers    string     `gorm:"column:conflict_peers;type:text"`
 	BindingSource    string     `gorm:"column:binding_source;size:24;not null;default:legacy_local"`
 	LegacyMigratedAt *time.Time `gorm:"column:legacy_migrated_at"`
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// 资产绑定关闭时间；永久墓碑后保留原 serverId 供历史关联。
+	AssetBindingClosedAt *time.Time `gorm:"column:asset_binding_closed_at"`
+	// 关闭资产绑定的原因。
+	AssetBindingCloseReason string `gorm:"column:asset_binding_close_reason;size:255"`
+	// 关闭资产绑定的审批请求标识。
+	AssetBindingClosedApprovalRequestID string `gorm:"column:asset_binding_closed_approval_request_id;size:64;index"`
+	CreatedAt                           time.Time
+	UpdatedAt                           time.Time
 }
 
 func (AgentIdentity) TableName() string { return "agent_identity" }

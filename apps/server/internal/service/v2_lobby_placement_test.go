@@ -227,7 +227,7 @@ type lobbyPushRecorder struct{ count int }
 
 func (r *lobbyPushRecorder) IncPushNotify() { r.count++ }
 
-func approveLobbyBackend(t *testing.T, svc *V2ControlPlaneService, token, identityID, serverID string) *model.Server {
+func approveLobbyBackend(t *testing.T, svc *v2ControlPlaneTestService, token, identityID, serverID string) *model.Server {
 	t.Helper()
 	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{Token: token, IdentityID: identityID, ServerID: serverID, Kind: model.ServerKindBackend, BootID: "boot-" + serverID}); err != nil {
 		t.Fatalf("注册 backend 失败: %v", err)
@@ -242,7 +242,7 @@ func approveLobbyBackend(t *testing.T, svc *V2ControlPlaneService, token, identi
 	return &server
 }
 
-func approveLobbyProxy(t *testing.T, svc *V2ControlPlaneService, token, identityID, serverID string) *model.Server {
+func approveLobbyProxy(t *testing.T, svc *v2ControlPlaneTestService, token, identityID, serverID string) *model.Server {
 	t.Helper()
 	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{Token: token, IdentityID: identityID, ServerID: serverID, Kind: model.ServerKindProxy, BootID: "boot-" + serverID}); err != nil {
 		t.Fatalf("注册 proxy 失败: %v", err)
@@ -266,7 +266,7 @@ func lobbyForNamespace(t *testing.T, db *gorm.DB, namespaceID uint) model.LobbyC
 	return lobby
 }
 
-func createLobbyTestZone(t *testing.T, svc *V2ControlPlaneService, namespaceID uint) *model.Zone {
+func createLobbyTestZone(t *testing.T, svc *v2ControlPlaneTestService, namespaceID uint) *model.Zone {
 	t.Helper()
 	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: namespaceID, Name: "bc-lobby", Operator: "admin"})
 	if err != nil {

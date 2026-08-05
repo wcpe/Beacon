@@ -13,6 +13,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/secret"
 )
 
 // lastUsedThrottle 是"最近使用"落库的节流窗口：同一密钥至多每此间隔写一次，
@@ -25,10 +26,11 @@ const apiKeyPrincipalPrefix = "apikey:"
 // APIKeyService 编排管理面 API 密钥（FR-42，见 ADR-0026）：
 // 运行时创建/吊销/重置（事务内写表 + 审计原子完成）+ 认证校验（查库比对哈希，真源在库）。
 type APIKeyService struct {
-	db        *gorm.DB
-	repo      *repository.APIKeyRepository
-	auditRepo *repository.AuditLogRepository
-	approval  *ApprovalService
+	db               *gorm.DB
+	repo             *repository.APIKeyRepository
+	auditRepo        *repository.AuditLogRepository
+	approval         *ApprovalService
+	credentialCipher *secret.Cipher
 }
 
 // NewAPIKeyService 构造服务。
@@ -36,9 +38,17 @@ func NewAPIKeyService(db *gorm.DB, repo *repository.APIKeyRepository, auditRepo 
 	return &APIKeyService{db: db, repo: repo, auditRepo: auditRepo}
 }
 
-// Create 创建一把新密钥：校验入参 → 生成明文/哈希 → 事务内写 api_key + 审计。
-// 返回**明文**（仅此一次可得，调用方一次性回给用户后丢弃）与落库记录。
+// SetCredentialCipher 注入审批凭据一次性兑换所用的独立密钥。
+func (s *APIKeyService) SetCredentialCipher(cipher *secret.Cipher) {
+	s.credentialCipher = cipher
+}
+
+// Create 已废止直接创建入口，危险凭据只能经审批 worker 执行。
 func (s *APIKeyService) Create(name, role string, expiresAt *time.Time, operator, clientIP string) (string, *model.APIKey, error) {
+	return "", nil, apperr.ErrForbidden
+}
+
+func (s *APIKeyService) applyCreateInTx(tx *gorm.DB, name, role string, expiresAt *time.Time, operator, clientIP string) (string, *model.APIKey, error) {
 	if name == "" || !model.IsValidRole(role) {
 		return "", nil, apperr.ErrInvalidParam
 	}
@@ -51,16 +61,14 @@ func (s *APIKeyService) Create(name, role string, expiresAt *time.Time, operator
 		return "", nil, err
 	}
 	key := &model.APIKey{Name: name, KeyHash: hash, KeyPrefix: prefix, Role: role, ExpiresAt: expiresAt}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if e := s.repo.WithTx(tx).Create(key); e != nil {
-			return e
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+	err = s.repo.WithTx(tx).Create(key)
+	if err == nil {
+		err = s.auditRepo.WithTx(tx).Create(&model.AuditLog{
 			Operator: operator, Action: model.ActionAPIKeyCreate,
 			TargetType: model.TargetTypeAPIKey, TargetRef: name,
 			Detail: keyAuditDetail(key), Result: model.ResultOK, ClientIP: clientIP,
 		})
-	})
+	}
 	if err != nil {
 		return "", nil, err
 	}
@@ -95,46 +103,107 @@ func (s *APIKeyService) Revoke(id uint, operator, clientIP string) error {
 	})
 }
 
-// Reset 重置某密钥的明文（轮换：换新哈希/前缀、清空最近使用，旧明文立即失效）：
-// 事务内轮换 + 审计。**密钥不可二次读取，丢失只能重置。** 不存在 / 已吊销返回 API_KEY_NOT_FOUND。
+// Reset 已废止直接轮换入口，危险凭据只能经审批 worker 执行。
 func (s *APIKeyService) Reset(id uint, operator, clientIP string) (string, *model.APIKey, error) {
+	return "", nil, apperr.ErrForbidden
+}
+
+func (s *APIKeyService) applyResetInTx(tx *gorm.DB, id uint, operator, clientIP string) (string, *model.APIKey, error) {
 	plaintext, hash, prefix, err := apikey.Generate()
 	if err != nil {
 		return "", nil, err
 	}
 	var key *model.APIKey
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		repo := s.repo.WithTx(tx)
-		found, e := repo.FindActiveByID(id)
-		if e != nil {
-			return e
-		}
-		if found == nil {
-			return apperr.ErrAPIKeyNotFound
-		}
-		ok, e := repo.RotateSecret(id, hash, prefix)
-		if e != nil {
-			return e
-		}
-		if !ok {
-			return apperr.ErrAPIKeyNotFound
-		}
-		// 用轮换后的明面字段回填视图（旧最近使用已清空）
-		found.KeyHash = hash
-		found.KeyPrefix = prefix
-		found.LastUsedAt = nil
-		key = found
-		slog.Info("重置 API 密钥", "名称", found.Name, "operator", operator)
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			Operator: operator, Action: model.ActionAPIKeyReset,
-			TargetType: model.TargetTypeAPIKey, TargetRef: found.Name,
-			Detail: keyAuditDetail(found), Result: model.ResultOK, ClientIP: clientIP,
-		})
+	repo := s.repo.WithTx(tx)
+	found, e := repo.FindActiveByID(id)
+	if e != nil {
+		return "", nil, e
+	}
+	if found == nil {
+		return "", nil, apperr.ErrAPIKeyNotFound
+	}
+	ok, e := repo.RotateSecret(id, hash, prefix)
+	if e != nil {
+		return "", nil, e
+	}
+	if !ok {
+		return "", nil, apperr.ErrAPIKeyNotFound
+	}
+	// 用轮换后的明面字段回填视图（旧最近使用已清空）。
+	found.KeyHash = hash
+	found.KeyPrefix = prefix
+	found.LastUsedAt = nil
+	key = found
+	slog.Info("重置 API 密钥", "名称", found.Name, "operator", operator)
+	err = s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		Operator: operator, Action: model.ActionAPIKeyReset,
+		TargetType: model.TargetTypeAPIKey, TargetRef: found.Name,
+		Detail: keyAuditDetail(found), Result: model.ResultOK, ClientIP: clientIP,
 	})
 	if err != nil {
 		return "", nil, err
 	}
 	return plaintext, key, nil
+}
+
+// RedeemCredentialSecret 让原申请人工主体原子领取一次审批成功后的 API 密钥明文。
+func (s *APIKeyService) RedeemCredentialSecret(requestID string, principal auth.Principal) (string, error) {
+	principal = auth.NormalizePrincipal(principal)
+	if !principal.IsHuman() {
+		return "", apperr.ErrCredentialSecretLost
+	}
+	ciphertext, err := s.consumeCredentialSecret(requestID, principal)
+	if err != nil {
+		return "", err
+	}
+	if s.credentialCipher == nil {
+		return "", apperr.ErrCredentialSecretLost
+	}
+	plaintext, err := s.credentialCipher.Decrypt(ciphertext)
+	if err != nil {
+		return "", apperr.ErrCredentialSecretLost
+	}
+	return plaintext, nil
+}
+
+func (s *APIKeyService) consumeCredentialSecret(requestID string, principal auth.Principal) (string, error) {
+	var ciphertext string
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		request, err := repository.NewApprovalRequestRepository(tx).FindByPublicID(requestID)
+		if err != nil || !canRedeemCredential(request, principal) {
+			return apperr.ErrCredentialSecretLost
+		}
+		secrets := repository.NewApprovalCredentialSecretRepository(tx)
+		stored, err := secrets.FindByApprovalRequestID(requestID)
+		if err != nil || stored == nil {
+			return apperr.ErrCredentialSecretLost
+		}
+		consumed, err := secrets.Consume(requestID, time.Now().UTC())
+		if err != nil || !consumed {
+			return apperr.ErrCredentialSecretLost
+		}
+		ciphertext = stored.Ciphertext
+		return nil
+	})
+	return ciphertext, err
+}
+
+func canRedeemCredential(request *model.ApprovalRequest, principal auth.Principal) bool {
+	return request != nil && request.Status == model.ApprovalStatusSucceeded &&
+		request.RequesterType == auth.PrincipalKindHuman && request.RequesterID == principal.StableID()
+}
+
+func (s *APIKeyService) storeCredentialSecretInTx(tx *gorm.DB, requestID, plaintext string) error {
+	if s.credentialCipher == nil || !s.credentialCipher.IsEnabled() {
+		return apperr.ErrInternal
+	}
+	ciphertext, err := s.credentialCipher.Encrypt(plaintext)
+	if err != nil {
+		return err
+	}
+	return repository.NewApprovalCredentialSecretRepository(tx).Create(&model.ApprovalCredentialSecret{
+		ApprovalRequestID: requestID, Ciphertext: ciphertext,
+	})
 }
 
 // List 列出全部密钥（含已吊销，供展示状态），按创建时间倒序；不含任何明文 / 哈希。

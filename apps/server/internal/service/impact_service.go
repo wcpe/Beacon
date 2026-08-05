@@ -1,7 +1,10 @@
 package service
 
 import (
+	"errors"
 	"sort"
+
+	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -20,11 +23,16 @@ type Impact struct {
 type ImpactService struct {
 	registry   *runtime.Registry
 	assignRepo *repository.ZoneAssignmentRepository
+	db         *gorm.DB
 }
 
-// NewImpactService 构造服务。
-func NewImpactService(registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository) *ImpactService {
-	return &ImpactService{registry: registry, assignRepo: assignRepo}
+// NewImpactService 构造服务；第三个参数用于生命周期过滤，省略时保持旧调用兼容。
+func NewImpactService(registry *runtime.Registry, assignRepo *repository.ZoneAssignmentRepository, db ...*gorm.DB) *ImpactService {
+	var lifecycleDB *gorm.DB
+	if len(db) > 0 {
+		lifecycleDB = db[0]
+	}
+	return &ImpactService{registry: registry, assignRepo: assignRepo, db: lifecycleDB}
 }
 
 // assignment 是某子服的权威归属（大区 / 小区）。
@@ -45,10 +53,18 @@ func (s *ImpactService) Resolve(ns, scopeLevel, group, scopeTarget string) (Impa
 		byServer[assigns[i].ServerID] = assignment{group: assigns[i].GroupCode, zone: assigns[i].ZoneCode}
 	}
 
+	instances := s.registry.List(runtime.Filter{Namespace: ns})
+	active, err := s.activeServerIDs(ns, instances)
+	if err != nil {
+		return Impact{}, err
+	}
 	affected := make([]string, 0)
-	for _, inst := range s.registry.List(runtime.Filter{Namespace: ns}) {
+	for _, inst := range instances {
 		// 仅可用集合（online+degraded）计入：与发现 / 拓扑 / 长轮询同口径，degraded 仍会收到变更。
 		if inst.Status != runtime.StatusOnline && inst.Status != runtime.StatusDegraded {
+			continue
+		}
+		if !active[inst.ServerID] {
 			continue
 		}
 		// 归属以 DB 为权威；未指派回退 GroupHint、zone 为空（与 EffectiveService.Resolve 同口径）。
@@ -62,6 +78,37 @@ func (s *ImpactService) Resolve(ns, scopeLevel, group, scopeTarget string) (Impa
 	}
 	sort.Strings(affected)
 	return Impact{Affected: affected, Total: len(affected)}, nil
+}
+
+func (s *ImpactService) activeServerIDs(ns string, instances []*runtime.Instance) (map[string]bool, error) {
+	active := make(map[string]bool, len(instances))
+	for _, inst := range instances {
+		active[inst.ServerID] = true
+	}
+	if s.db == nil || len(instances) == 0 {
+		return active, nil
+	}
+	var namespace model.Namespace
+	if err := s.db.Where("code = ?", ns).First(&namespace).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return active, nil
+		}
+		return nil, err
+	}
+	ids := make([]string, 0, len(instances))
+	for _, inst := range instances {
+		ids = append(ids, inst.ServerID)
+	}
+	var servers []model.Server
+	if err := s.db.Where("namespace_id = ? AND server_id IN ?", namespace.ID, ids).Find(&servers).Error; err != nil {
+		return nil, err
+	}
+	for _, server := range servers {
+		if serverLifecycleValue(&server) == model.ServerLifecycleArchived {
+			active[server.ServerID] = false
+		}
+	}
+	return active, nil
 }
 
 // scopeCovers 判定某 scope 是否覆盖某实例（纯函数，集中四层覆盖判定，与 FindEffectiveCandidates 覆盖链对称）。

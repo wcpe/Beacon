@@ -25,7 +25,7 @@ func (s *spyAlertSink) Record(e *model.AlertEvent) error {
 const conflictTestIdentity = "11111111-1111-4111-8111-111111111111"
 
 // newConflictTestService 构造装配了冲突检测（固定 10 分钟窗口 + 告警替身）的 v2 服务。
-func newConflictTestService(t *testing.T) (*gorm.DB, *V2ControlPlaneService, *spyAlertSink) {
+func newConflictTestService(t *testing.T) (*gorm.DB, *v2ControlPlaneTestService, *spyAlertSink) {
 	t.Helper()
 	db, svc := newV2ControlPlaneTestService(t)
 	spy := &spyAlertSink{}
@@ -34,7 +34,7 @@ func newConflictTestService(t *testing.T) (*gorm.DB, *V2ControlPlaneService, *sp
 }
 
 // registerApproveActive 注册并确认一个 active 身份（前置装配）。
-func registerApproveActive(t *testing.T, svc *V2ControlPlaneService, token, serverID, boot string) {
+func registerApproveActive(t *testing.T, svc *v2ControlPlaneTestService, token, serverID, boot string) {
 	t.Helper()
 	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
 		Token: token, IdentityID: conflictTestIdentity, ServerID: serverID,
@@ -47,7 +47,7 @@ func registerApproveActive(t *testing.T, svc *V2ControlPlaneService, token, serv
 	}
 }
 
-func conflictTestNamespace(t *testing.T, svc *V2ControlPlaneService) string {
+func conflictTestNamespace(t *testing.T, svc *v2ControlPlaneTestService) string {
 	t.Helper()
 	_, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
 	if err != nil {
@@ -187,7 +187,7 @@ func TestStaleReportPromptsReregisterThenConflict(t *testing.T) {
 }
 
 // setupConflict 造出一个处于 conflict 态的身份，返回 token 与冲突双方 boot。
-func setupConflict(t *testing.T, svc *V2ControlPlaneService) string {
+func setupConflict(t *testing.T, svc *v2ControlPlaneTestService) string {
 	t.Helper()
 	token := conflictTestNamespace(t, svc)
 	registerApproveActive(t, svc, token, "lobby-1", "boot-A")

@@ -80,13 +80,15 @@ type HealthDetailView struct {
 
 // ListHealthParams 是健康列表的筛选 / 分页参数（参数名对齐 devmock：namespaceId/zone/level/schedulable/keyword）。
 type ListHealthParams struct {
-	NamespaceID uint // 0 = 不筛
-	Zone        string
-	Level       string
-	Schedulable *bool
-	Keyword     string // serverId 子串匹配
-	Page        int
-	PageSize    int
+	NamespaceID  uint // 0 = 不筛
+	NamespaceIDs []uint
+	Scoped       bool
+	Zone         string
+	Level        string
+	Schedulable  *bool
+	Keyword      string // serverId 子串匹配
+	Page         int
+	PageSize     int
 }
 
 // ListHealth 内存实时列出健康视图（筛选 + 稳定排序 + 分页），返回当页与总数。
@@ -119,7 +121,10 @@ func (s *HealthQueryService) ListHealth(p ListHealthParams) ([]HealthItemView, i
 
 // matchHealthFilter 判断单视图是否命中筛选条件。
 func matchHealthFilter(v *healthview.View, p ListHealthParams) bool {
-	if p.NamespaceID != 0 && v.NamespaceID != p.NamespaceID {
+	if p.Scoped && !namespaceInScope(v.NamespaceID, p.NamespaceIDs) {
+		return false
+	}
+	if !p.Scoped && p.NamespaceID != 0 && v.NamespaceID != p.NamespaceID {
 		return false
 	}
 	if p.Zone != "" && v.ZoneName != p.Zone {
@@ -135,6 +140,15 @@ func matchHealthFilter(v *healthview.View, p ListHealthParams) bool {
 		return false
 	}
 	return true
+}
+
+func namespaceInScope(namespaceID uint, ids []uint) bool {
+	for _, id := range ids {
+		if id == namespaceID {
+			return true
+		}
+	}
+	return false
 }
 
 // HealthDetail 取单服健康详情（含因子分解与权重版本）。serverId 跨 namespace 重名时取 namespaceId 最小者；
@@ -161,6 +175,18 @@ func (s *HealthQueryService) HealthDetail(serverID string) (*HealthDetailView, e
 		Factors:        factorViewsOf(hit.Factors),
 		WeightsRev:     hit.WeightsRev,
 	}, nil
+}
+
+// HealthDetailInScope 读取范围内的单服健康详情；域外视图按未命中处理。
+func (s *HealthQueryService) HealthDetailInScope(serverID string, scope ObservationScope) (*HealthDetailView, error) {
+	detail, err := s.HealthDetail(serverID)
+	if err != nil || !scope.Contains(detail.NamespaceID) {
+		if err != nil {
+			return nil, err
+		}
+		return nil, apperr.ErrInstanceNotFound
+	}
+	return detail, nil
 }
 
 // HealthSnapshotPointView 是快照回放点（json 形状对齐 contracts HealthSnapshotPoint）。
@@ -243,12 +269,28 @@ type MetricsSummaryView struct {
 
 // MetricsSummary 内存实时聚合集群概览：计数走健康视图，均值走 60s 指标窗口最新批。
 func (s *HealthQueryService) MetricsSummary() MetricsSummaryView {
+	return s.MetricsSummaryInScope(ObservationScope{All: true})
+}
+
+// HealthSnapshotsInScope 在读取日表前验证目标 server 位于冻结范围。
+func (s *HealthQueryService) HealthSnapshotsInScope(serverID string, scope ObservationScope, fromMs, toMs int64, includeArchived bool) ([]HealthSnapshotPointView, error) {
+	if !s.serverInScope(serverID, scope) {
+		return nil, apperr.ErrInstanceNotFound
+	}
+	return s.HealthSnapshots(serverID, fromMs, toMs, includeArchived)
+}
+
+// MetricsSummaryInScope 在内存事实聚合前应用冻结的 namespace 集合。
+func (s *HealthQueryService) MetricsSummaryInScope(scope ObservationScope) MetricsSummaryView {
 	out := MetricsSummaryView{GeneratedAt: s.now()}
 	views := s.views.List()
 	var tpsSum, cpuSum float64
 	var tpsN, cpuN int
 	for i := range views {
 		v := &views[i]
+		if !scope.Contains(v.NamespaceID) {
+			continue
+		}
 		online := !containsReason(v.Reasons, healthview.ReasonLost)
 		countKind(&out.ByKind, v.Kind, online)
 		countLevel(&out.LevelDistribution, v.Level)
@@ -350,6 +392,28 @@ func (s *HealthQueryService) MetricsSeries(p MetricsSeriesParams) (*MetricsSerie
 		})
 	}
 	return out, nil
+}
+
+// MetricsSeriesInScope 在读取指标日表前验证每个目标 server 位于冻结范围。
+func (s *HealthQueryService) MetricsSeriesInScope(p MetricsSeriesParams, scope ObservationScope) (*MetricsSeriesView, error) {
+	for _, serverID := range p.ServerIDs {
+		if !s.serverInScope(serverID, scope) {
+			return nil, apperr.ErrInstanceNotFound
+		}
+	}
+	return s.MetricsSeries(p)
+}
+
+func (s *HealthQueryService) serverInScope(serverID string, scope ObservationScope) bool {
+	if scope.All {
+		return true
+	}
+	for _, view := range s.views.List() {
+		if view.ServerID == serverID && scope.Contains(view.NamespaceID) {
+			return true
+		}
+	}
+	return false
 }
 
 // seriesRows 按 includeArchived 决定走热库或跨热 / 冷并表（冷查询归档不可达即 503）。

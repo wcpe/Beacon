@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
@@ -51,7 +52,34 @@ func newV2HandlerTestService(t *testing.T) (*gorm.DB, *service.V2ControlPlaneSer
 	approvalRegistry := authz.NewApprovalRegistry()
 	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), approvalRegistry)
 	svc.SetApprovalService(approvalService)
+	service.RegisterV2ControlPlaneApprovalAdapters(approvalRegistry, svc)
 	return db, svc, NewV2ControlPlaneHandler(svc)
+}
+
+func approveV2IdentityForHandlerFixture(t *testing.T, db *gorm.DB, svc *service.V2ControlPlaneService, identityID, serverID string) {
+	t.Helper()
+	ticket, err := svc.RequestApproveAgentIdentity(identityID, service.ApproveAgentIdentityParams{ServerID: serverID, Operator: "admin", Reason: "测试确认"}, auth.HumanPrincipal("admin"), "handler-"+identityID)
+	if err != nil {
+		t.Fatalf("创建身份审批申请失败: %v", err)
+	}
+	runV2ApprovalForHandlerFixture(t, db, svc, ticket)
+}
+
+func runV2ApprovalForHandlerFixture(t *testing.T, db *gorm.DB, svc *service.V2ControlPlaneService, ticket service.ApprovalTicketView) {
+	t.Helper()
+	if err := db.AutoMigrate(&model.ApprovalExecutionReceipt{}); err != nil {
+		t.Fatalf("迁移审批执行回执失败: %v", err)
+	}
+	registry := authz.NewApprovalRegistry()
+	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	svc.SetApprovalService(approvalService)
+	service.RegisterV2ControlPlaneApprovalAdapters(registry, svc)
+	if _, err := approvalService.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("admin"), ""); err != nil {
+		t.Fatalf("批准测试申请失败: %v", err)
+	}
+	if _, err := service.NewApprovalWorker(approvalService).RunOnce(); err != nil {
+		t.Fatalf("执行测试申请失败: %v", err)
+	}
 }
 
 func TestFR203AgentRegisterHTTPPendingThenActive(t *testing.T) {
@@ -103,9 +131,7 @@ func TestFR203AgentRegisterHTTPPendingThenActive(t *testing.T) {
 	if approveCode != http.StatusAccepted || approveBody["status"] != model.ApprovalStatusPending {
 		t.Fatalf("确认身份应创建审批请求，实际 %d：%v", approveCode, approveBody)
 	}
-	if _, err := svc.ApproveAgentIdentity("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", service.ApproveAgentIdentityParams{ServerID: "lobby-203-http", Operator: "admin"}); err != nil {
-		t.Fatalf("确认身份失败: %v", err)
-	}
+	approveV2IdentityForHandlerFixture(t, db, svc, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "lobby-203-http")
 
 	code, parsed = invokeJSON(h.AgentRegister, http.MethodPost, "/beacon/v2/agent/register", token, body)
 	if code != http.StatusOK || parsed["status"] != model.AgentIdentityStatusActive || parsed["serverId"] != "lobby-203-http" {
@@ -196,9 +222,7 @@ func TestFR204EndpointOverrideAuditRecordsBindingAndTrace(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册 endpoint 身份失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity(identityID, service.ApproveAgentIdentityParams{Operator: "admin", ServerID: "bc-endpoint"}); err != nil {
-		t.Fatalf("审批 endpoint 身份失败: %v", err)
-	}
+	approveV2IdentityForHandlerFixture(t, db, svc, identityID, "bc-endpoint")
 	var endpoint model.AgentEndpoint
 	if err := db.Joins("JOIN agent_identity ON agent_identity.id = agent_endpoint.agent_identity_id").
 		Where("agent_identity.identity_id = ?", identityID).First(&endpoint).Error; err != nil {
@@ -277,9 +301,56 @@ func TestFR199ListServersHTTPProjectsNullableLobbyClusterID(t *testing.T) {
 	}
 }
 
+// TestFR215ServerLifecycleImpactHTTP 锁定 lifecycle-impact 只读接口的 action 边界与响应摘要。
+func TestFR215ServerLifecycleImpactHTTP(t *testing.T) {
+	db, svc, h := newV2HandlerTestService(t)
+	ns, _, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: "impact-http", Kind: model.ServerKindBackend}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+	code, response := invokeJSONWithParam(h.ServerLifecycleImpact, http.MethodGet, "/admin/v2/servers/"+fmt.Sprint(server.ID)+"/lifecycle-impact?action=archive", "", nil, "id", fmt.Sprint(server.ID))
+	if code != http.StatusOK || response["action"] != "archive" || response["targetLifecycle"] != model.ServerLifecycleArchived {
+		t.Fatalf("archive impact 响应不正确，code=%d response=%v", code, response)
+	}
+	code, _ = invokeJSONWithParam(h.ServerLifecycleImpact, http.MethodGet, "/admin/v2/servers/"+fmt.Sprint(server.ID)+"/lifecycle-impact?action=invalid", "", nil, "id", fmt.Sprint(server.ID))
+	if code == http.StatusOK {
+		t.Fatalf("非法 action 不应成功")
+	}
+}
+
+func TestLifecycleApprovalRequestHTTPCreatesUnifiedTicket(t *testing.T) {
+	_, svc, h := newV2HandlerTestService(t)
+	namespace, _, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "lifecycle-http", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建测试 namespace 失败: %v", err)
+	}
+	code, response := invokeJSON(h.CreateLifecycleApprovalRequest, http.MethodPost, "/admin/v2/approval-requests", "", map[string]any{
+		"operationKey": "namespace.archive", "parameters": map[string]any{"namespaceId": namespace.ID}, "reason": "归档已退役环境",
+	})
+	if code != http.StatusAccepted || response["approvalRequestId"] == "" || response["operationKey"] != "namespace.archive" {
+		t.Fatalf("生命周期统一申请应返回 202 审批票据，code=%d response=%v", code, response)
+	}
+}
+
+func TestNamespaceLifecycleImpactHTTP(t *testing.T) {
+	_, svc, h := newV2HandlerTestService(t)
+	namespace, _, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "impact-http", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建测试 namespace 失败: %v", err)
+	}
+	code, response := invokeJSONWithParam(h.NamespaceLifecycleImpact, http.MethodGet, "/admin/v2/namespaces/1/lifecycle-impact?action=archive", "", nil, "id", fmt.Sprint(namespace.ID))
+	if code != http.StatusOK || response["namespaceId"] != float64(namespace.ID) || response["targetLifecycle"] != model.NamespaceLifecycleArchived {
+		t.Fatalf("namespace 生命周期影响预览不正确，code=%d response=%v", code, response)
+	}
+}
+
 func arrangeFR203AgentIdentityBindingFacts(t *testing.T) (*V2ControlPlaneHandler, string, string) {
 	t.Helper()
-	_, svc, h := newV2HandlerTestService(t)
+	db, svc, h := newV2HandlerTestService(t)
 	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
 	if err != nil {
 		t.Fatalf("创建 namespace 失败: %v", err)
@@ -296,11 +367,7 @@ func arrangeFR203AgentIdentityBindingFacts(t *testing.T) (*V2ControlPlaneHandler
 	}); err != nil {
 		t.Fatalf("注册 legacy 身份失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity(identityID, service.ApproveAgentIdentityParams{
-		Operator: "admin", ServerID: "legacy-lobby",
-	}); err != nil {
-		t.Fatalf("审批 legacy 身份失败: %v", err)
-	}
+	approveV2IdentityForHandlerFixture(t, db, svc, identityID, "legacy-lobby")
 	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
 		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-list-detail-migrated",
 	}); err != nil {
@@ -398,6 +465,7 @@ func invokeJSON(handler http.HandlerFunc, method, path, token string, body any) 
 	if token != "" {
 		req.Header.Set("X-Beacon-Token", token)
 	}
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.HumanPrincipal("test-admin")))
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 	return decodeRecorder(rr)
@@ -413,6 +481,7 @@ func invokeJSONWithParam(handler http.HandlerFunc, method, path, token string, b
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, value)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.HumanPrincipal("test-admin")))
 	rr := httptest.NewRecorder()
 	handler(rr, req)
 	return decodeRecorder(rr)

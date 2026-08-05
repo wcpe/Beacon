@@ -22,6 +22,12 @@ type V2HealthHandler struct {
 	query    *service.HealthQueryService
 	weights  *service.HealthWeightsService
 	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
+	scope    *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *V2HealthHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewV2HealthHandler 构造处理器。
@@ -32,7 +38,7 @@ func NewV2HealthHandler(query *service.HealthQueryService, weights *service.Heal
 // ListHealth 处理 GET /admin/v2/health：全部服务器当前健康列表（内存实时；分页 + 筛选）。
 func (h *V2HealthHandler) ListHealth(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	namespaceID, err := optionalUintQuery(q.Get("namespaceId"))
+	scope, err := resolveObservationScope(r, h.scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -43,7 +49,7 @@ func (h *V2HealthHandler) ListHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, total, err := h.query.ListHealth(service.ListHealthParams{
-		NamespaceID: namespaceID, Zone: q.Get("zone"), Level: q.Get("level"),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, Zone: q.Get("zone"), Level: q.Get("level"),
 		Schedulable: schedulable, Keyword: q.Get("keyword"),
 		Page: intQuery(q.Get("page")), PageSize: intQuery(q.Get("pageSize")),
 	})
@@ -56,7 +62,12 @@ func (h *V2HealthHandler) ListHealth(w http.ResponseWriter, r *http.Request) {
 
 // GetHealthDetail 处理 GET /admin/v2/health/{serverId}：单服健康详情（因子分解 + 权重版本）。
 func (h *V2HealthHandler) GetHealthDetail(w http.ResponseWriter, r *http.Request) {
-	detail, err := h.query.HealthDetail(chi.URLParam(r, "serverId"))
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	detail, err := h.query.HealthDetailInScope(chi.URLParam(r, "serverId"), scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -80,7 +91,12 @@ func (h *V2HealthHandler) ListHealthSnapshots(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
-	items, err := h.query.HealthSnapshots(q.Get("serverId"), fromMs, toMs, includeArchived)
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	items, err := h.query.HealthSnapshotsInScope(q.Get("serverId"), scope, fromMs, toMs, includeArchived)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -93,8 +109,13 @@ func (h *V2HealthHandler) ListHealthSnapshots(w http.ResponseWriter, r *http.Req
 }
 
 // MetricsSummary 处理 GET /admin/v2/metrics/summary：集群聚合概览（内存实时）。
-func (h *V2HealthHandler) MetricsSummary(w http.ResponseWriter, _ *http.Request) {
-	render.WriteJSON(w, http.StatusOK, h.query.MetricsSummary())
+func (h *V2HealthHandler) MetricsSummary(w http.ResponseWriter, r *http.Request) {
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, h.query.MetricsSummaryInScope(scope))
 }
 
 // MetricsSeries 处理 GET /admin/v2/metrics/series?serverId=&from=&to=&step=：单服 / 多服指标时序
@@ -113,12 +134,17 @@ func (h *V2HealthHandler) MetricsSeries(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	series, err := h.query.MetricsSeries(service.MetricsSeriesParams{
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	series, err := h.query.MetricsSeriesInScope(service.MetricsSeriesParams{
 		ServerIDs: splitCSVQuery(q.Get("serverId")),
 		FromMs:    fromMs, ToMs: toMs,
 		StepSec:         intQuery(q.Get("step")),
 		IncludeArchived: includeArchived,
-	})
+	}, scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
@@ -25,11 +26,24 @@ type V2MessageAdminHandler struct {
 	queryS   *service.MessageQueryService
 	payloadS *service.MessagePayloadService
 	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
+	scope    *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *V2MessageAdminHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewV2MessageAdminHandler 构造处理器。
 func NewV2MessageAdminHandler(queryS *service.MessageQueryService, payloadS *service.MessagePayloadService, settings *service.SettingsService) *V2MessageAdminHandler {
 	return &V2MessageAdminHandler{queryS: queryS, payloadS: payloadS, settings: settings}
+}
+
+// SetSensitiveAccessApproval 装配 payload 的审批与授权服务。
+func (h *V2MessageAdminHandler) SetSensitiveAccessApproval(approval *service.ApprovalService, grants *service.SensitiveAccessGrantService) {
+	if h != nil && h.payloadS != nil {
+		h.payloadS.SetSensitiveAccessApproval(approval, grants)
+	}
 }
 
 // messageItemJS 是消息元数据列表项（键对齐 contracts MessageItem，**永不含 payload**）。
@@ -120,7 +134,7 @@ type payloadResponseJS struct {
 // List 处理 GET /admin/v2/messages：messageId/correlationId 精确直查或条件游标分页（永不含 payload，查询防护见 §4.3）。
 func (h *V2MessageAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	namespaceID, err := optionalUintQuery(q.Get("namespaceId"))
+	scope, err := resolveObservationScope(r, h.scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -140,15 +154,15 @@ func (h *V2MessageAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	page, err := h.queryS.List(service.ListMessagesParams{
-		MessageID:       q.Get("messageId"),
-		CorrelationID:   q.Get("correlationId"),
-		ServerID:        q.Get("serverId"),
-		PlayerUUID:      q.Get("playerUuid"),
-		Status:          q.Get("status"),
-		MsgType:         q.Get("msgType"),
-		TargetKind:      q.Get("targetKind"),
-		CrossNamespace:  crossNS,
-		NamespaceID:     namespaceID,
+		MessageID:      q.Get("messageId"),
+		CorrelationID:  q.Get("correlationId"),
+		ServerID:       q.Get("serverId"),
+		PlayerUUID:     q.Get("playerUuid"),
+		Status:         q.Get("status"),
+		MsgType:        q.Get("msgType"),
+		TargetKind:     q.Get("targetKind"),
+		CrossNamespace: crossNS,
+		NamespaceIDs:   scope.NamespaceIDs, Scoped: !scope.All,
 		FromMs:          fromMs,
 		ToMs:            toMs,
 		Cursor:          intQuery(q.Get("cursor")),
@@ -173,7 +187,12 @@ func (h *V2MessageAdminHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Detail 处理 GET /admin/v2/messages/{messageId}：元数据 + hops 链路 + 关联摘要（payload 仅元信息，未命中 404）。
 func (h *V2MessageAdminHandler) Detail(w http.ResponseWriter, r *http.Request) {
-	res, err := h.queryS.Detail(chi.URLParam(r, "messageId"))
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	res, err := h.queryS.DetailInScope(chi.URLParam(r, "messageId"), scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -193,6 +212,11 @@ func (h *V2MessageAdminHandler) Detail(w http.ResponseWriter, r *http.Request) {
 // Stats 处理 GET /admin/v2/messages/stats：groupBy=type 返回 {types}，其余（edge/默认）返回 {edges}（/topology 数据源）。
 func (h *V2MessageAdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
 	toMs := parseISOms(q.Get("to"))
 	if toMs <= 0 {
 		toMs = time.Now().UTC().UnixMilli()
@@ -201,7 +225,7 @@ func (h *V2MessageAdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	if fromMs <= 0 {
 		fromMs = toMs - defaultMessageStatsWindowMs
 	}
-	result, err := h.queryS.Stats(service.MessageStatsParams{GroupBy: q.Get("groupBy"), FromMs: fromMs, ToMs: toMs})
+	result, err := h.queryS.Stats(service.MessageStatsParams{GroupBy: q.Get("groupBy"), NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, FromMs: fromMs, ToMs: toMs})
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -223,23 +247,55 @@ func (h *V2MessageAdminHandler) Stats(w http.ResponseWriter, r *http.Request) {
 
 // Payload 处理 POST /admin/v2/messages/{messageId}/payload：原因必填 → 先写审计后返回内容（无权限由 readonlyWriteGuard 403）。
 func (h *V2MessageAdminHandler) Payload(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Reason string `json:"reason"`
-	}
-	// 解析失败（空 / 坏体）等同缺原因，交由服务层按 missing_reason 400 裁决。
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	res, err := h.payloadS.View(service.ViewPayloadParams{
-		MessageID: chi.URLParam(r, "messageId"),
-		Reason:    body.Reason,
-		Operator:  auth.Operator(r.Context()),
-		ClientIP:  clientIP(r),
-		TraceID:   render.TraceID(r.Context()),
-	})
+	_, err := h.payloadS.View(service.ViewPayloadParams{})
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, payloadResponseJS{Payload: res.Payload, SHA256: res.SHA256, Size: res.Size})
+}
+
+// RequestPayloadApproval 处理专用 payload 审批申请，旧正文端点不会隐式建申请。
+func (h *V2MessageAdminHandler) RequestPayloadApproval(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	request, err := h.payloadS.RequestAccess(chi.URLParam(r, "messageId"), body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, map[string]any{"requestId": request.RequestID, "status": request.Status})
+}
+
+// ConsumePayloadGrant 处理原申请主体的一次性 payload 消费。
+func (h *V2MessageAdminHandler) ConsumePayloadGrant(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
+	}
+	var body struct {
+		MessageID string `json:"messageId"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	result, err := h.payloadS.Consume(chi.URLParam(r, "grantId"), body.MessageID, principal)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, payloadResponseJS{Payload: result.Payload, SHA256: result.SHA256, Size: result.Size})
 }
 
 // messageItem 把消息元数据行映射为对外列表项：可空字段（target/resolved/correlation/failReason）空串显 null，

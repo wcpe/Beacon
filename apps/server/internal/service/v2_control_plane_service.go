@@ -16,6 +16,7 @@ import (
 
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
@@ -54,10 +55,23 @@ type V2ControlPlaneService struct {
 	trustSet                map[trustKey]struct{}
 	// 并发身份冲突检测（FR-177，spec §4.5）：bootId 活跃注册表（进程内真源）+ 冲突窗口取值 + 告警留痕出口。
 	// 未装配（nil）时检测禁用——保持旧构造 NewV2ControlPlaneService(db) 与既有测试行为不变。
-	bootRegistry   *bootwatch.Registry
-	conflictWindow func() time.Duration
-	alertSink      AlertSink
-	approval       *ApprovalService
+	bootRegistry     *bootwatch.Registry
+	conflictWindow   func() time.Duration
+	alertSink        AlertSink
+	approval         *ApprovalService
+	afterCommit      func(func())
+	legacyZone       *ZoneService
+	legacyScheduling *SchedulingService
+}
+
+// SetLegacyZoneService 注入 V1 区服兼容写入服务；仅审批适配器可在事务内调用其私有写入。
+func (s *V2ControlPlaneService) SetLegacyZoneService(zone *ZoneService) {
+	s.legacyZone = zone
+}
+
+// SetLegacySchedulingService 注入 V1 排空兼容写入服务；仅审批适配器可在事务内调用其私有写入。
+func (s *V2ControlPlaneService) SetLegacySchedulingService(scheduling *SchedulingService) {
+	s.legacyScheduling = scheduling
 }
 
 // NewV2ControlPlaneService 构造第二版控制面服务。
@@ -65,6 +79,14 @@ func NewV2ControlPlaneService(db *gorm.DB) *V2ControlPlaneService {
 	s := &V2ControlPlaneService{db: db, trustSet: map[trustKey]struct{}{}}
 	_ = s.reloadTrustSnapshot()
 	return s
+}
+
+func (s *V2ControlPlaneService) scheduleAfterCommit(callback func()) {
+	if s.afterCommit != nil {
+		s.afterCommit(callback)
+		return
+	}
+	callback()
 }
 
 type CreateV2NamespaceParams struct {
@@ -183,6 +205,9 @@ func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*Agent
 		if err != nil {
 			return err
 		}
+		if err := ensureIdentityRuntimeBindingOpen(current); err != nil {
+			return err
+		}
 		if err := ensureRegistrationServerActive(tx, ns.ID, current, p.ServerID); err != nil {
 			return err
 		}
@@ -248,6 +273,9 @@ func (s *V2ControlPlaneService) AuthenticateAgentV2(token, identityID, bootID st
 	if ident == nil || ident.NamespaceID != ns.ID {
 		return apperr.ErrUnauthorized
 	}
+	if err := ensureIdentityRuntimeBindingOpen(ident); err != nil {
+		return err
+	}
 	// 已判冲突：双方都 409（权威取 DB 状态，跨重启可靠，spec §4.5）。
 	if ident.Status == model.AgentIdentityStatusConflict {
 		return apperr.ErrIdentityConflict
@@ -291,6 +319,9 @@ func (s *V2ControlPlaneService) AuthenticateAgentReport(token, identityID, bootI
 	}
 	if ident == nil || ident.NamespaceID != ns.ID {
 		return agentauth.Identity{}, apperr.ErrUnauthorized
+	}
+	if err := ensureIdentityRuntimeBindingOpen(ident); err != nil {
+		return agentauth.Identity{}, err
 	}
 	// 已判冲突：双方都 409（权威取 DB 状态，跨重启可靠，spec §4.5）。
 	if ident.Status == model.AgentIdentityStatusConflict {
@@ -448,9 +479,13 @@ type ApproveAgentIdentityParams struct {
 	TargetID   *uint
 }
 
-// ApproveAgentIdentity 确认待确认身份。首次确认必须分配 serverId；
-// 若该 server 正处于换区中（pending 归属非空），则按预填 / 指定目标落区（或暂不分配），并清 pending + 记换区完成审计。
+// ApproveAgentIdentity 禁止绕过审批适配器直接确认身份。
+
 func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applyApproveAgentIdentity(identityID string, p ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
 	now := time.Now().UTC()
 	var out model.AgentIdentity
 	err := s.db.Transaction(func(tx *gorm.DB) error {
@@ -460,6 +495,9 @@ func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p Approv
 		}
 		if ident == nil {
 			return apperr.ErrInstanceNotFound
+		}
+		if err := ensureIdentityRuntimeBindingOpen(ident); err != nil {
+			return err
 		}
 		if ident.Status != model.AgentIdentityStatusPending {
 			return apperr.ErrIllegalState
@@ -567,15 +605,12 @@ func (s *V2ControlPlaneService) RejectAgentIdentity(identityID string, p Identit
 	if p.Reason == "" {
 		return nil, apperr.ErrInvalidParam
 	}
-	return s.transitionIdentity(identityID, []string{model.AgentIdentityStatusPending}, model.AgentIdentityStatusRejected, model.ActionIdentityRejected, p)
+	return s.applyTransitionIdentity(identityID, []string{model.AgentIdentityStatusPending}, model.AgentIdentityStatusRejected, model.ActionIdentityRejected, p)
 }
 
-// AllowAgentIdentityReapply 允许已拒绝身份重新申请。
+// AllowAgentIdentityReapply 禁止绕过审批适配器直接恢复重新申请资格。
 func (s *V2ControlPlaneService) AllowAgentIdentityReapply(identityID string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
-	if p.Reason == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	return s.transitionIdentity(identityID, []string{model.AgentIdentityStatusRejected}, model.AgentIdentityStatusExpired, model.ActionIdentityReapplyAllowed, p)
+	return nil, apperr.ErrForbidden
 }
 
 // DisableAgentIdentity 临时禁用已确认身份。
@@ -583,78 +618,84 @@ func (s *V2ControlPlaneService) DisableAgentIdentity(identityID string, p Identi
 	if p.Reason == "" {
 		return nil, apperr.ErrInvalidParam
 	}
-	return s.transitionIdentity(identityID, []string{model.AgentIdentityStatusActive}, model.AgentIdentityStatusDisabled, model.ActionIdentityDisabled, p)
+	return s.applyTransitionIdentity(identityID, []string{model.AgentIdentityStatusActive}, model.AgentIdentityStatusDisabled, model.ActionIdentityDisabled, p)
 }
 
-// EnableAgentIdentity 重新启用禁用身份。
+// EnableAgentIdentity 禁止绕过审批适配器直接启用身份。
+
 func (s *V2ControlPlaneService) EnableAgentIdentity(identityID string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
-	return s.transitionIdentity(identityID, []string{model.AgentIdentityStatusDisabled}, model.AgentIdentityStatusActive, model.ActionIdentityEnabled, p)
+	return nil, apperr.ErrForbidden
 }
 
-// UnbindAgentIdentity 解除当前身份绑定。
+// UnbindAgentIdentity 禁止绕过审批适配器直接解绑身份。
+
 func (s *V2ControlPlaneService) UnbindAgentIdentity(identityID string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
-	if p.Reason == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	return s.transitionIdentity(identityID, []string{
-		model.AgentIdentityStatusActive, model.AgentIdentityStatusDisabled, model.AgentIdentityStatusConflict,
-	}, model.AgentIdentityStatusUnbound, model.ActionIdentityUnbound, p)
+	return nil, apperr.ErrForbidden
 }
 
-func (s *V2ControlPlaneService) transitionIdentity(identityID string, allowed []string, nextStatus, action string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+func (s *V2ControlPlaneService) applyTransitionIdentity(identityID string, allowed []string, nextStatus, action string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
 	now := time.Now().UTC()
 	var out model.AgentIdentity
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		ident, err := findIdentityByID(tx, identityID)
-		if err != nil {
-			return err
-		}
-		if ident == nil {
-			return apperr.ErrInstanceNotFound
-		}
-		if !stringIn(ident.Status, allowed) {
-			return apperr.ErrIllegalState
-		}
-		ns, err := findNamespaceByID(tx, ident.NamespaceID)
-		if err != nil {
-			return err
-		}
-		ident.Status = nextStatus
-		ident.StatusChangedAt = now
-		if nextStatus != model.AgentIdentityStatusPending {
-			ident.PendingExpiresAt = nil
-		}
-		if nextStatus == model.AgentIdentityStatusUnbound {
-			ident.ConflictReason = ""
-			// 解绑同时清 server 归属（zone / bc_cluster / 默认入口），使树与资产列表即时反映「无可信 agent」
-			// （规格：无 active 绑定的服不可调度；归属残留会导致区服树仍挂着已解绑服）。
-			if err := clearServerAssignmentByIdentity(tx, ident); err != nil {
-				return err
-			}
-		}
-		if err := tx.Save(ident).Error; err != nil {
-			return err
-		}
-		out = *ident
-		return createAudit(tx, model.AuditLog{
-			NamespaceCode: ns.Code,
-			Operator:      operatorOrSystem(p.Operator),
-			Action:        action,
-			TargetType:    model.TargetTypeIdentity,
-			TargetRef:     ident.IdentityID,
-			Detail:        p.Reason,
-			Result:        model.ResultOK,
-			ClientIP:      p.ClientIP,
-		})
+		var err error
+		out, err = s.applyTransitionIdentityInTx(tx, identityID, allowed, nextStatus, action, p, now)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	// 解绑终结绑定：清除该身份的 bootId 活跃状态，令重新绑定从干净态开始（FR-177）。
 	if nextStatus == model.AgentIdentityStatusUnbound && s.bootRegistry != nil {
-		s.bootRegistry.Forget(identityID)
+		s.scheduleAfterCommit(func() { s.bootRegistry.Forget(identityID) })
 	}
 	return &out, nil
+}
+
+func (s *V2ControlPlaneService) applyTransitionIdentityInTx(tx *gorm.DB, identityID string, allowed []string, nextStatus, action string, p IdentityTransitionParams, now time.Time) (model.AgentIdentity, error) {
+	ident, err := findIdentityByID(tx, identityID)
+	if err != nil {
+		return model.AgentIdentity{}, err
+	}
+	if ident == nil {
+		return model.AgentIdentity{}, apperr.ErrInstanceNotFound
+	}
+	if err := ensureIdentityRuntimeBindingOpen(ident); err != nil {
+		return model.AgentIdentity{}, err
+	}
+	if !stringIn(ident.Status, allowed) {
+		return model.AgentIdentity{}, apperr.ErrIllegalState
+	}
+	ns, err := findNamespaceByID(tx, ident.NamespaceID)
+	if err != nil {
+		return model.AgentIdentity{}, err
+	}
+	ident.Status = nextStatus
+	ident.StatusChangedAt = now
+	if nextStatus != model.AgentIdentityStatusPending {
+		ident.PendingExpiresAt = nil
+	}
+	if nextStatus == model.AgentIdentityStatusUnbound {
+		ident.ConflictReason = ""
+		// 解绑同时清 server 归属，使树与资产列表即时反映无可信 agent。
+		if err := clearServerAssignmentByIdentity(tx, ident); err != nil {
+			return model.AgentIdentity{}, err
+		}
+	}
+	if err := tx.Save(ident).Error; err != nil {
+		return model.AgentIdentity{}, err
+	}
+	if err := createAudit(tx, model.AuditLog{
+		NamespaceCode: ns.Code,
+		Operator:      operatorOrSystem(p.Operator),
+		Action:        action,
+		TargetType:    model.TargetTypeIdentity,
+		TargetRef:     ident.IdentityID,
+		Detail:        p.Reason,
+		Result:        model.ResultOK,
+		ClientIP:      p.ClientIP,
+	}); err != nil {
+		return model.AgentIdentity{}, err
+	}
+	return *ident, nil
 }
 
 // clearServerAssignmentByIdentity 按身份定位 server 行并清空全部归属（解绑联动）。
@@ -729,12 +770,14 @@ func (s *V2ControlPlaneService) ListAgentIdentityReadViews(p ListAgentIdentities
 }
 
 type ListServersParams struct {
-	NamespaceID uint
-	Kind        string
-	Assigned    *bool
-	Keyword     string
-	Page        int
-	PageSize    int
+	NamespaceID     uint
+	Kind            string
+	Assigned        *bool
+	Keyword         string
+	LifecycleStatus string
+	Lifecycle       string
+	Page            int
+	PageSize        int
 }
 
 type UpdateServerDisplayNameParams struct {
@@ -763,7 +806,7 @@ func (s *V2ControlPlaneService) UpdateServerDisplayName(p UpdateServerDisplayNam
 	}
 	if p.DisplayName != nil {
 		next := strings.TrimSpace(*p.DisplayName)
-		if next == "" {
+		if !isValidDisplayName(next) {
 			return nil, apperr.ErrInvalidParam
 		}
 		server.DisplayName = next
@@ -787,6 +830,11 @@ func (s *V2ControlPlaneService) UpdateServerDisplayName(p UpdateServerDisplayNam
 // ListServers 分页查询 v2 server 资产列表，返回富化视图（含归属名 / 默认入口 / 在线摘要）。
 func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, int64, error) {
 	q := s.db.Model(&model.Server{})
+	lifecycle, err := normalizeLifecycleFilter(p.LifecycleStatus, p.Lifecycle)
+	if err != nil {
+		return nil, 0, err
+	}
+	q = applyLifecycleFilter(q, lifecycle)
 	if p.NamespaceID != 0 {
 		q = q.Where("namespace_id = ?", p.NamespaceID)
 	}
@@ -817,6 +865,133 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, 
 		return nil, 0, err
 	}
 	return views, total, nil
+}
+
+func normalizeLifecycleFilter(status, legacy string) (string, error) {
+	status = strings.TrimSpace(status)
+	legacy = strings.TrimSpace(legacy)
+	if status != "" && legacy != "" && status != legacy {
+		return "", apperr.ErrInvalidParam
+	}
+	if status == "" {
+		status = legacy
+	}
+	if status == "" {
+		return model.ServerLifecycleActive, nil
+	}
+	if status != model.ServerLifecycleActive && status != model.ServerLifecycleArchived && status != model.ServerLifecycleTombstoned && status != "all" {
+		return "", apperr.ErrInvalidParam
+	}
+	return status, nil
+}
+
+func applyLifecycleFilter(q *gorm.DB, lifecycle string) *gorm.DB {
+	switch lifecycle {
+	case model.ServerLifecycleActive:
+		return q.Where("(lifecycle = ? OR lifecycle = '' OR lifecycle IS NULL)", model.ServerLifecycleActive)
+	case model.ServerLifecycleArchived:
+		return q.Where("lifecycle = ?", model.ServerLifecycleArchived)
+	case model.ServerLifecycleTombstoned:
+		return q.Where("lifecycle = ?", model.ServerLifecycleTombstoned)
+	default:
+		return q
+	}
+}
+
+// ServerLifecycleImpactView 是 server 生命周期操作的只读、有界影响摘要。
+type ServerLifecycleImpactView struct {
+	ServerRowID         uint   `json:"serverRowId"`
+	NamespaceID         uint   `json:"namespaceId"`
+	ServerID            string `json:"serverId"`
+	Action              string `json:"action"`
+	CurrentLifecycle    string `json:"currentLifecycle"`
+	TargetLifecycle     string `json:"targetLifecycle"`
+	EffectiveActive     bool   `json:"effectiveActive"`
+	Online              bool   `json:"online"`
+	Assigned            bool   `json:"assigned"`
+	DefaultEntry        bool   `json:"defaultEntry"`
+	Draining            bool   `json:"draining"`
+	IdentityCount       int64  `json:"identityCount"`
+	ActiveIdentityCount int64  `json:"activeIdentityCount"`
+	ActiveCommandCount  int64  `json:"activeCommandCount"`
+}
+
+// GetServerLifecycleImpact 返回当前 server 的脱敏影响预览，不执行状态变更。
+func (s *V2ControlPlaneService) GetServerLifecycleImpact(id uint, action string) (ServerLifecycleImpactView, error) {
+	operation, ok := lifecycleImpactOperation(action)
+	if !ok {
+		return ServerLifecycleImpactView{}, apperr.ErrInvalidParam
+	}
+	var server model.Server
+	if err := s.db.First(&server, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ServerLifecycleImpactView{}, apperr.ErrInstanceNotFound
+		}
+		return ServerLifecycleImpactView{}, err
+	}
+	lifecycle := serverLifecycleValue(&server)
+	if err := validateServerLifecycleRequest(operation, lifecycle); err != nil {
+		return ServerLifecycleImpactView{}, err
+	}
+	var namespace model.Namespace
+	if err := s.db.First(&namespace, server.NamespaceID).Error; err != nil {
+		return ServerLifecycleImpactView{}, err
+	}
+	var identityCount, activeIdentityCount, activeCommandCount int64
+	identityQuery := s.db.Model(&model.AgentIdentity{}).Where("namespace_id = ? AND server_id = ?", server.NamespaceID, server.ServerID)
+	if err := identityQuery.Count(&identityCount).Error; err != nil {
+		return ServerLifecycleImpactView{}, err
+	}
+	if err := identityQuery.Where("status = ?", model.AgentIdentityStatusActive).Count(&activeIdentityCount).Error; err != nil {
+		return ServerLifecycleImpactView{}, err
+	}
+	if s.db.Migrator().HasTable(&model.AgentCommand{}) {
+		if err := s.db.Model(&model.AgentCommand{}).Where("namespace = ? AND server_id = ? AND status IN ?", namespace.Code, server.ServerID, []string{model.CommandStatusPending, model.CommandStatusFetched, model.CommandStatusReady}).Count(&activeCommandCount).Error; err != nil {
+			return ServerLifecycleImpactView{}, err
+		}
+	}
+	return ServerLifecycleImpactView{
+		ServerRowID: id, NamespaceID: server.NamespaceID, ServerID: server.ServerID, Action: action,
+		CurrentLifecycle: lifecycle, TargetLifecycle: targetLifecycle(operation), EffectiveActive: lifecycle == model.ServerLifecycleActive,
+		Online: s.serverOnline(namespace.Code, server.ServerID), Assigned: isServerAssigned(&server),
+		DefaultEntry: server.IsDefaultEntry, Draining: server.Draining,
+		IdentityCount: identityCount, ActiveIdentityCount: activeIdentityCount, ActiveCommandCount: activeCommandCount,
+	}, nil
+}
+
+func lifecycleImpactOperation(action string) (string, bool) {
+	switch action {
+	case "archive", authz.OperationServerArchive:
+		return authz.OperationServerArchive, true
+	case "restore", authz.OperationServerRestore:
+		return authz.OperationServerRestore, true
+	case "permanent-delete", authz.OperationServerPermanentDelete:
+		return authz.OperationServerPermanentDelete, true
+	default:
+		return "", false
+	}
+}
+
+func targetLifecycle(operation string) string {
+	if operation == authz.OperationServerArchive {
+		return model.ServerLifecycleArchived
+	}
+	if operation == authz.OperationServerPermanentDelete {
+		return model.ServerLifecycleTombstoned
+	}
+	return model.ServerLifecycleActive
+}
+
+func (s *V2ControlPlaneService) serverOnline(namespace, serverID string) bool {
+	if s.runtime == nil {
+		return false
+	}
+	for _, inst := range s.runtime.List(runtime.Filter{Namespace: namespace}) {
+		if inst.ServerID == serverID && (inst.Status == runtime.StatusOnline || inst.Status == runtime.StatusDegraded) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *V2ControlPlaneService) ListNamespaceTrusts() ([]NamespaceTrustView, error) {
@@ -876,6 +1051,10 @@ type GrantNamespaceTrustParams struct {
 
 // GrantNamespaceTrust 授予或复活一条 namespace 信任。
 func (s *V2ControlPlaneService) GrantNamespaceTrust(p GrantNamespaceTrustParams) (*NamespaceTrustView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applyGrantNamespaceTrust(p GrantNamespaceTrustParams) (*NamespaceTrustView, error) {
 	if p.FromNamespaceID == 0 || p.ToNamespaceID == 0 || p.FromNamespaceID == p.ToNamespaceID ||
 		!model.IsValidNamespaceTrustCapability(p.Capability) || p.Note == "" {
 		return nil, apperr.ErrInvalidParam
@@ -1362,6 +1541,10 @@ type AssignServersParams struct {
 
 // AssignServers 批量首次分配未分配 server；TargetKind 为空且 TargetID=0 时表示解除分配（target:null）。
 func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Server, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applyAssignServers(p AssignServersParams) ([]model.Server, error) {
 	if len(p.ServerIDs) == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -1548,6 +1731,10 @@ type RezoneServersParams struct {
 // RezoneServers 批量发起换区工单（§4.7）：逐台校验已分配 + 同 namespace + 同 kind，
 // 单事务内解绑清归属 + 写预填目标 + 驱动身份重入 pending + 记 zone.rezone.initiated 审计；任一失败整批回滚。
 func (s *V2ControlPlaneService) RezoneServers(p RezoneServersParams) ([]AssignmentResult, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applyRezoneServers(p RezoneServersParams) ([]AssignmentResult, error) {
 	if len(p.ServerIDs) == 0 || p.TargetID == 0 || p.Reason == "" || !model.IsValidAssignmentTarget(p.TargetKind) {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -1680,6 +1867,13 @@ type SetServerDrainingParams struct {
 // SetServerDraining 切换 server 排空标记（消费方为调度 schedulable 判定），单事务 + 审计，返回富化视图。
 // 路径按业务 serverId 定位（前端契约不带 namespace，同名 serverId 取首条）。
 func (s *V2ControlPlaneService) SetServerDraining(p SetServerDrainingParams) (*ServerView, error) {
+	if !p.Draining {
+		return nil, apperr.ErrForbidden
+	}
+	return s.applySetServerDraining(p)
+}
+
+func (s *V2ControlPlaneService) applySetServerDraining(p SetServerDrainingParams) (*ServerView, error) {
 	if p.ServerID == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -1721,6 +1915,10 @@ type SetServerDefaultEntryParams struct {
 // 同一小区至多一台默认入口：置 true 时先清掉同 zone 其他服的标记，再写本机。
 // 单事务 + 审计，返回富化视图。
 func (s *V2ControlPlaneService) SetServerDefaultEntry(p SetServerDefaultEntryParams) (*ServerView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applySetServerDefaultEntry(p SetServerDefaultEntryParams) (*ServerView, error) {
 	if p.ServerRowID == 0 {
 		return nil, apperr.ErrInvalidParam
 	}

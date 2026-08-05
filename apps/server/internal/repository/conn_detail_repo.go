@@ -210,15 +210,17 @@ func (r *ConnDetailRepository) CloseOrphans(namespaceID uint, proxyServerID stri
 
 // ConnQuery 是连接明细跨日并表查询的过滤与游标分页参数（spec §5.2 列表端点）。
 type ConnQuery struct {
-	ServerID    string // 匹配 proxy / 首后端 / 末后端任一（对齐 devmock 语义）
-	PlayerUUID  string
-	Status      string // "" 全部 / open / closed
-	CloseKind   string
-	NamespaceID uint
-	FromMs      int64
-	ToMs        int64
-	Offset      int
-	Limit       int
+	ServerID     string // 匹配 proxy / 首后端 / 末后端任一（对齐 devmock 语义）
+	PlayerUUID   string
+	Status       string // "" 全部 / open / closed
+	CloseKind    string
+	NamespaceID  uint
+	NamespaceIDs []uint
+	Scoped       bool
+	FromMs       int64
+	ToMs         int64
+	Offset       int
+	Limit        int
 }
 
 // FindByConnID 由 conn_id 内嵌 UUIDv7 时间直定日表按主键查单行（免时间范围，spec §4.3 精确 ID 直查）。
@@ -301,6 +303,12 @@ func (q ConnQuery) applyConnFilters(db *gorm.DB) *gorm.DB {
 	if q.CloseKind != "" {
 		db = db.Where("close_kind = ?", q.CloseKind)
 	}
+	if q.Scoped {
+		if len(q.NamespaceIDs) == 0 {
+			return db.Where("1 = 0")
+		}
+		return db.Where("namespace_id IN ?", q.NamespaceIDs)
+	}
 	if q.NamespaceID != 0 {
 		db = db.Where("namespace_id = ?", q.NamespaceID)
 	}
@@ -318,6 +326,11 @@ type ConnStatRow struct {
 // 限定 opened_at ≤ to 且（closed_at 空 或 closed_at ≥ from），圈定与窗口重叠的会话（含窗口前建立仍在线者，供存量估算）。
 // 只扫范围内已存在日表；窗口前更早日表内仍在线的会话不计入（估算近似，spec §4.5）。
 func (r *ConnDetailRepository) ScanConnStats(proxyServerID string, fromMs, toMs int64) ([]ConnStatRow, error) {
+	return r.ScanConnStatsScoped(proxyServerID, nil, false, fromMs, toMs)
+}
+
+// ScanConnStatsScoped 以冻结 namespace 集合读取连接统计投影。
+func (r *ConnDetailRepository) ScanConnStatsScoped(proxyServerID string, namespaceIDs []uint, scoped bool, fromMs, toMs int64) ([]ConnStatRow, error) {
 	from := msToTime(fromMs)
 	to := msToTime(toMs)
 	out := make([]ConnStatRow, 0, 256)
@@ -328,6 +341,12 @@ func (r *ConnDetailRepository) ScanConnStats(proxyServerID string, fromMs, toMs 
 			Where("closed_at IS NULL OR closed_at >= ?", from)
 		if proxyServerID != "" {
 			q = q.Where("proxy_server_id = ?", proxyServerID)
+		}
+		if scoped {
+			if len(namespaceIDs) == 0 {
+				continue
+			}
+			q = q.Where("namespace_id IN ?", namespaceIDs)
 		}
 		var rows []ConnStatRow
 		if err := q.Find(&rows).Error; err != nil {

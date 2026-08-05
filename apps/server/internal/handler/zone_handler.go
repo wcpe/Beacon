@@ -73,29 +73,30 @@ type assignRequest struct {
 	Note      string `json:"note"`
 }
 
-// Assign 处理 PUT /admin/v1/zones/assignments（upsert）。
+// Assign 处理 PUT /admin/v1/zones/assignments（兼容审批申请）。
 func (h *ZoneHandler) Assign(w http.ResponseWriter, r *http.Request) {
 	var req assignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	a, err := h.svc.Assign(req.Namespace, req.ServerID, req.Group, req.Zone, auth.Operator(r.Context()), req.Note, clientIP(r))
+	ticket, err := h.v2svc.RequestLegacyZoneAssignment(req.Namespace, req.ServerID, req.Group, req.Zone, req.Note, auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, toAssignmentView(*a))
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
-// Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=。
+// Unassign 处理 DELETE /admin/v1/zones/assignments?namespace=&serverId=（兼容审批申请）。
 func (h *ZoneHandler) Unassign(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if err := h.svc.Unassign(q.Get("namespace"), q.Get("serverId"), auth.Operator(r.Context()), clientIP(r)); err != nil {
+	ticket, err := h.v2svc.RequestLegacyZoneUnassign(q.Get("namespace"), q.Get("serverId"), q.Get("reason"), auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // defaultEntryView 是小区默认入口对外视图（FR-48；真源 v2 server.is_default_entry，ADR-0067）。

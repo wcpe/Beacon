@@ -87,6 +87,40 @@ func TestImpactGlobalCoversAllAvailable(t *testing.T) {
 	}
 }
 
+// TestImpactExcludesArchivedServers 配置影响面批量排除 archived server 并重算总量。
+func TestImpactExcludesArchivedServers(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("打开内存 sqlite 失败: %v", err)
+	}
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ZoneAssignment{}); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+	t.Cleanup(func() {
+		if sqlDB, e := db.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
+	ns := model.Namespace{Code: "prod", Name: "prod"}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	if err := db.Create(&model.Server{NamespaceID: ns.ID, ServerID: "active", Kind: model.ServerKindBackend}).Error; err != nil {
+		t.Fatalf("创建 active server 失败: %v", err)
+	}
+	if err := db.Create(&model.Server{NamespaceID: ns.ID, ServerID: "archived", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleArchived}).Error; err != nil {
+		t.Fatalf("创建 archived server 失败: %v", err)
+	}
+	reg := runtime.NewRegistry()
+	regImpactInst(t, reg, "prod", "active", "g1")
+	regImpactInst(t, reg, "prod", "archived", "g1")
+	svc := NewImpactService(reg, repository.NewZoneAssignmentRepository(db), db)
+	imp, err := svc.Resolve("prod", model.ScopeGlobal, "", "")
+	if err != nil || imp.Total != 1 || len(imp.Affected) != 1 || imp.Affected[0] != "active" {
+		t.Fatalf("影响面应仅包含 active，实际 total=%d affected=%v err=%v", imp.Total, imp.Affected, err)
+	}
+}
+
 // TestImpactGroupByAssignment group 层按 DB 归属解析大区命中。
 func TestImpactGroupByAssignment(t *testing.T) {
 	svc, reg, assignRepo := newImpactTestStack(t)

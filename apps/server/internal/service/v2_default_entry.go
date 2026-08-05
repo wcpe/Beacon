@@ -32,6 +32,9 @@ func (s *V2ControlPlaneService) DefaultEntryServerIDs(ns string) (map[string]boo
 	if nsRow == nil {
 		return map[string]bool{}, nil
 	}
+	if err := ensureNamespaceRuntimeActive(nsRow); err != nil {
+		return nil, err
+	}
 	var ids []string
 	if err := s.db.Model(&model.Server{}).
 		Where("namespace_id = ? AND is_default_entry = ? AND lifecycle = ?", nsRow.ID, true, model.ServerLifecycleActive).
@@ -55,6 +58,9 @@ func (s *V2ControlPlaneService) LobbyClusterMemberServerIDs(ns string) (map[stri
 	if nsRow == nil {
 		return map[string]bool{}, nil
 	}
+	if err := ensureNamespaceRuntimeActive(nsRow); err != nil {
+		return nil, err
+	}
 	var ids []string
 	if err := s.db.Model(&model.Server{}).
 		Where("namespace_id = ? AND lobby_cluster_id IS NOT NULL AND lifecycle = ?", nsRow.ID, model.ServerLifecycleActive).
@@ -76,6 +82,9 @@ func (s *V2ControlPlaneService) ListDefaultEntries(ns, group string) ([]DefaultE
 	}
 	if nsRow == nil {
 		return []DefaultEntryItem{}, nil
+	}
+	if err := ensureNamespaceRuntimeActive(nsRow); err != nil {
+		return nil, err
 	}
 	var servers []model.Server
 	if err := s.db.

@@ -14,25 +14,36 @@ import (
 // 名称字段沿 zone→region→bc_cluster 链取；online 为占位口径：存在 active 身份即视为在线
 // （P4 健康域接入前无注册表 / 心跳真源，故以身份 active 近似「已接入」）。
 type ServerView struct {
-	ID              uint      `json:"id"`
-	NamespaceID     uint      `json:"namespaceId"`
-	ServerID        string    `json:"serverId"`
-	DisplayName     string    `json:"displayName"`
-	Kind            string    `json:"kind"`
-	BCClusterID     *uint     `json:"bcClusterId"`
-	BCClusterName   *string   `json:"bcClusterName"`
-	LobbyClusterID  *uint     `json:"lobbyClusterId"`
-	ZoneID          *uint     `json:"zoneId"`
-	ZoneName        *string   `json:"zoneName"`
-	RegionName      *string   `json:"regionName"`
-	PendingZoneID   *uint     `json:"pendingZoneId"`
-	PendingZoneName *string   `json:"pendingZoneName"`
-	IsDefaultEntry  bool      `json:"isDefaultEntry"`
-	Draining        bool      `json:"draining"`
-	Lifecycle       string    `json:"lifecycle"`
-	Online          bool      `json:"online"`
-	Assigned        bool      `json:"assigned"`
-	CreatedAt       time.Time `json:"createdAt"`
+	ID              uint                 `json:"id"`
+	NamespaceID     uint                 `json:"namespaceId"`
+	ServerID        string               `json:"serverId"`
+	DisplayName     string               `json:"displayName"`
+	Kind            string               `json:"kind"`
+	BCClusterID     *uint                `json:"bcClusterId"`
+	BCClusterName   *string              `json:"bcClusterName"`
+	LobbyClusterID  *uint                `json:"lobbyClusterId"`
+	ZoneID          *uint                `json:"zoneId"`
+	ZoneName        *string              `json:"zoneName"`
+	RegionName      *string              `json:"regionName"`
+	PendingZoneID   *uint                `json:"pendingZoneId"`
+	PendingZoneName *string              `json:"pendingZoneName"`
+	IsDefaultEntry  bool                 `json:"isDefaultEntry"`
+	Draining        bool                 `json:"draining"`
+	Lifecycle       string               `json:"lifecycle"`
+	LifecycleStatus string               `json:"lifecycleStatus"`
+	EffectiveActive bool                 `json:"effectiveActive"`
+	Tombstone       *ServerTombstoneView `json:"tombstone,omitempty"`
+	Online          bool                 `json:"online"`
+	Assigned        bool                 `json:"assigned"`
+	CreatedAt       time.Time            `json:"createdAt"`
+}
+
+// ServerTombstoneView 是永久墓碑的脱敏审计摘要。
+type ServerTombstoneView struct {
+	At                time.Time `json:"at"`
+	By                string    `json:"by"`
+	Reason            string    `json:"reason"`
+	ApprovalRequestID string    `json:"approvalRequestId"`
 }
 
 // onlineKey 唯一定位一台 server（namespace 内 serverId 唯一）。
@@ -156,11 +167,13 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 	if displayName == "" {
 		displayName = s.ServerID
 	}
+	lifecycle := serverLifecycleValue(s)
 	view := ServerView{
 		ID: s.ID, NamespaceID: s.NamespaceID, ServerID: s.ServerID, DisplayName: displayName, Kind: s.Kind,
 		BCClusterID: s.BCClusterID, LobbyClusterID: s.LobbyClusterID,
 		ZoneID: s.ZoneID, PendingZoneID: s.PendingZoneID,
-		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining, Lifecycle: serverLifecycleValue(s),
+		IsDefaultEntry: s.IsDefaultEntry, Draining: s.Draining, Lifecycle: lifecycle,
+		LifecycleStatus: lifecycle, EffectiveActive: lifecycle == model.ServerLifecycleActive,
 		Assigned: isServerAssigned(s), CreatedAt: s.CreatedAt,
 	}
 	if s.BCClusterID != nil {
@@ -176,6 +189,9 @@ func buildServerView(s *model.Server, zoneByID map[uint]model.Zone, regionNameBy
 				view.RegionName = &regionName
 			}
 		}
+	}
+	if s.TombstonedAt != nil {
+		view.Tombstone = &ServerTombstoneView{At: *s.TombstonedAt, By: s.TombstonedBy, Reason: s.TombstoneReason, ApprovalRequestID: s.TombstoneApprovalRequestID}
 	}
 	if s.PendingZoneID != nil {
 		if zone, ok := zoneByID[*s.PendingZoneID]; ok {
@@ -344,12 +360,25 @@ type NamespaceStat struct {
 	ServerCount      int64
 	BCClusterCount   int64
 	ActiveTrustCount int64
+	Lifecycle        string
+	EffectiveActive  bool
 }
 
 // ListNamespacesWithStats 列出全部 namespace 并附统计摘要，计数按 namespace 分组聚合、禁逐个查库。
-func (s *V2ControlPlaneService) ListNamespacesWithStats() ([]NamespaceStat, error) {
+// 未传筛选时不返回墓碑；传 all 才显式包含墓碑。
+func (s *V2ControlPlaneService) ListNamespacesWithStats(lifecycleStatus ...string) ([]NamespaceStat, error) {
+	lifecycle, err := normalizeNamespaceLifecycleFilter(lifecycleStatus)
+	if err != nil {
+		return nil, err
+	}
 	var namespaces []model.Namespace
-	if err := s.db.Order("id ASC").Find(&namespaces).Error; err != nil {
+	query := s.db.Order("id ASC")
+	if lifecycle == "" {
+		query = query.Where("lifecycle <> ? OR lifecycle = '' OR lifecycle IS NULL", model.NamespaceLifecycleTombstoned)
+	} else if lifecycle != "all" {
+		query = query.Where("lifecycle = ?", lifecycle)
+	}
+	if err := query.Find(&namespaces).Error; err != nil {
 		return nil, err
 	}
 	serverCounts, err := s.assignedServerCountsByNamespace()
@@ -371,9 +400,26 @@ func (s *V2ControlPlaneService) ListNamespacesWithStats() ([]NamespaceStat, erro
 			ServerCount:      serverCounts[namespaces[i].ID],
 			BCClusterCount:   clusterCounts[namespaces[i].ID],
 			ActiveTrustCount: trustCounts[namespaces[i].ID],
+			Lifecycle:        namespaceLifecycleValue(&namespaces[i]),
+			EffectiveActive:  isNamespaceActive(&namespaces[i]),
 		})
 	}
 	return stats, nil
+}
+
+func normalizeNamespaceLifecycleFilter(values []string) (string, error) {
+	if len(values) == 0 || values[0] == "" {
+		return "", nil
+	}
+	if len(values) != 1 {
+		return "", apperr.ErrInvalidParam
+	}
+	switch values[0] {
+	case model.NamespaceLifecycleActive, model.NamespaceLifecycleArchived, model.NamespaceLifecycleTombstoned, "all":
+		return values[0], nil
+	default:
+		return "", apperr.ErrInvalidParam
+	}
 }
 
 // nsCountRow 承接按 namespace 分组的计数结果。

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
@@ -71,9 +72,11 @@ func TestV2ResolveConflictHTTP(t *testing.T) {
 	if code != http.StatusAccepted || parsed["status"] != model.ApprovalStatusPending {
 		t.Fatalf("有效处置应创建审批请求，实际 %d：%v", code, parsed)
 	}
-	if _, err := svc.ResolveAgentIdentityConflict(id, service.ResolveConflictParams{KeepBootID: "boot-A", Reason: "保留原主实例", Operator: "admin"}); err != nil {
-		t.Fatalf("处置冲突失败: %v", err)
+	ticket, err := svc.RequestResolveAgentIdentityConflict(id, service.ResolveConflictParams{KeepBootID: "boot-A", Reason: "保留原主实例", Operator: "admin"}, auth.HumanPrincipal("admin"), "handler-resolve-"+id)
+	if err != nil {
+		t.Fatalf("创建冲突处置申请失败: %v", err)
 	}
+	runV2ApprovalForHandlerFixture(t, db, svc, ticket)
 
 	// 已恢复 active，再次处置 → 409。
 	code, _ = invokeJSONWithParam(h.ResolveAgentIdentityConflict, http.MethodPost,

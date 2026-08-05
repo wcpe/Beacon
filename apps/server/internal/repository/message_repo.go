@@ -26,6 +26,11 @@ func NewMessageRepository(db *gorm.DB) *MessageRepository {
 	return &MessageRepository{db: db}
 }
 
+// WithTx 返回绑定到事务的仓库副本。
+func (r *MessageRepository) WithTx(tx *gorm.DB) *MessageRepository {
+	return &MessageRepository{db: tx, archiveDB: r.archiveDB}
+}
+
 // SetArchiveDB 注入归档库连接供冷查询（includeArchived）并表（FR-152，见 ADR-0066）。
 func (r *MessageRepository) SetArchiveDB(archiveDB *gorm.DB) { r.archiveDB = archiveDB }
 
@@ -137,6 +142,8 @@ type MessageQuery struct {
 	TargetKind     string // server / player / broadcast（FR-180 additive 过滤），空不过滤
 	CrossNamespace *bool  // nil 不过滤
 	NamespaceID    uint
+	NamespaceIDs   []uint
+	Scoped         bool
 	FromMs         int64
 	ToMs           int64
 	Offset         int
@@ -257,6 +264,12 @@ func (q MessageQuery) applyMsgFilters(db *gorm.DB) *gorm.DB {
 	if q.CrossNamespace != nil {
 		db = db.Where("cross_namespace = ?", *q.CrossNamespace)
 	}
+	if q.Scoped {
+		if len(q.NamespaceIDs) == 0 {
+			return db.Where("1 = 0")
+		}
+		return db.Where("namespace_id IN ?", q.NamespaceIDs)
+	}
 	if q.NamespaceID != 0 {
 		db = db.Where("namespace_id = ?", q.NamespaceID)
 	}
@@ -355,6 +368,11 @@ type MsgStatRow struct {
 // ScanMessageStats 取窗口内消息的聚合投影（created_at 倒序、上限 msgStatsScanCap），供 service 在 Go 侧按边/类型聚合。
 // 只扫范围内已存在日表；不返回 payload 相关内容（异常链路数据源，spec §4.5）。
 func (r *MessageRepository) ScanMessageStats(fromMs, toMs int64) ([]MsgStatRow, error) {
+	return r.ScanMessageStatsScoped(nil, false, fromMs, toMs)
+}
+
+// ScanMessageStatsScoped 以冻结 namespace 集合读取消息聚合投影。
+func (r *MessageRepository) ScanMessageStatsScoped(namespaceIDs []uint, scoped bool, fromMs, toMs int64) ([]MsgStatRow, error) {
 	from := msToTime(fromMs)
 	to := msToTime(toMs)
 	out := make([]MsgStatRow, 0, 512)
@@ -363,14 +381,20 @@ func (r *MessageRepository) ScanMessageStats(fromMs, toMs int64) ([]MsgStatRow, 
 		if remaining <= 0 {
 			break
 		}
-		var rows []MsgStatRow
-		if err := r.db.Table(tbl).
+		if scoped && len(namespaceIDs) == 0 {
+			return out, nil
+		}
+		query := r.db.Table(tbl).
 			Select("message_id", "msg_type", "target_kind", "source_server_id", "resolved_server_id",
 				"status", "fail_reason", "duration_ms").
 			Where("created_at >= ? AND created_at <= ?", from, to).
 			Order("created_at DESC, message_id DESC").
-			Limit(remaining).
-			Find(&rows).Error; err != nil {
+			Limit(remaining)
+		if scoped {
+			query = query.Where("namespace_id IN ?", namespaceIDs)
+		}
+		var rows []MsgStatRow
+		if err := query.Find(&rows).Error; err != nil {
 			return nil, err
 		}
 		out = append(out, rows...)

@@ -152,6 +152,10 @@ type ResolveConflictParams struct {
 // ResolveAgentIdentityConflict 落实 T13（spec §4.3）：以 keepBootId 为准恢复 active，清冲突态 + 审计；
 // 处置后落败方后续请求持续 409（由注册表 evicted 识别）。非 conflict → 409；keepBootId 不在冲突双方 → 400。
 func (s *V2ControlPlaneService) ResolveAgentIdentityConflict(identityID string, p ResolveConflictParams) (*model.AgentIdentity, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applyResolveAgentIdentityConflict(identityID string, p ResolveConflictParams) (*model.AgentIdentity, error) {
 	if p.Reason == "" || p.KeepBootID == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -196,7 +200,9 @@ func (s *V2ControlPlaneService) ResolveAgentIdentityConflict(identityID string, 
 	}
 	// 提交后更新注册表：以保留方为 current，其余窗口内活跃 boot 记为落败（后续持续 409）。
 	if s.bootRegistry != nil {
-		s.bootRegistry.Resolve(identityID, p.KeepBootID, now, s.conflictWindowDur())
+		s.scheduleAfterCommit(func() {
+			s.bootRegistry.Resolve(identityID, p.KeepBootID, now, s.conflictWindowDur())
+		})
 	}
 	return &out, nil
 }

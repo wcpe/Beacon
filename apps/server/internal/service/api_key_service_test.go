@@ -49,7 +49,7 @@ func newAPIKeyTestService(t *testing.T) (*APIKeyService, *repository.APIKeyRepos
 // TestAPIKeyCreateVerify 创建返回明文一次，库内只存哈希（非明文），Verify 通过并给出角色身份。
 func TestAPIKeyCreateVerify(t *testing.T) {
 	svc, repo, _ := newAPIKeyTestService(t)
-	plaintext, key, err := svc.Create("ci-backend", model.RoleReadonly, nil, "admin", "127.0.0.1")
+	plaintext, key, err := createAPIKeyForTest(svc, "ci-backend", model.RoleReadonly, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
 	}
@@ -85,6 +85,16 @@ func TestAPIKeyCreateVerify(t *testing.T) {
 	}
 }
 
+func TestAPIKeyPublicMutatorsFailClosed(t *testing.T) {
+	svc, _, _ := newAPIKeyTestService(t)
+	if _, _, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开创建入口必须拒绝旁路，实际 %v", err)
+	}
+	if _, _, err := svc.Reset(1, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开轮换入口必须拒绝旁路，实际 %v", err)
+	}
+}
+
 // TestAPIKeyVerifyRejectsExpired 过期密钥 Verify 失败（→401）。
 func TestAPIKeyVerifyRejectsExpired(t *testing.T) {
 	svc, repo, _ := newAPIKeyTestService(t)
@@ -104,7 +114,7 @@ func TestAPIKeyVerifyRejectsExpired(t *testing.T) {
 // TestAPIKeyVerifyRejectsRevoked 吊销后 Verify 失败（→401）。
 func TestAPIKeyVerifyRejectsRevoked(t *testing.T) {
 	svc, _, _ := newAPIKeyTestService(t)
-	plaintext, key, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1")
+	plaintext, key, err := createAPIKeyForTest(svc, "ci", model.RoleFull, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
 	}
@@ -123,11 +133,11 @@ func TestAPIKeyVerifyRejectsRevoked(t *testing.T) {
 // TestAPIKeyResetRotates 重置后旧明文失效、新明文生效（密钥只能重置、不能二次读取）。
 func TestAPIKeyResetRotates(t *testing.T) {
 	svc, _, _ := newAPIKeyTestService(t)
-	old, key, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1")
+	old, key, err := createAPIKeyForTest(svc, "ci", model.RoleFull, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
 	}
-	fresh, _, err := svc.Reset(key.ID, "admin", "127.0.0.1")
+	fresh, _, err := resetAPIKeyForTest(svc, key.ID, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("重置失败: %v", err)
 	}
@@ -142,7 +152,7 @@ func TestAPIKeyResetRotates(t *testing.T) {
 	}
 	// 重置已吊销 / 不存在的密钥 → API_KEY_NOT_FOUND
 	_ = svc.Revoke(key.ID, "admin", "127.0.0.1")
-	if _, _, err := svc.Reset(key.ID, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrAPIKeyNotFound) {
+	if _, _, err := resetAPIKeyForTest(svc, key.ID, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrAPIKeyNotFound) {
 		t.Fatalf("重置已吊销密钥应 ErrAPIKeyNotFound，实际 %v", err)
 	}
 }
@@ -160,7 +170,7 @@ func TestAPIKeyCreateRejectsBadInput(t *testing.T) {
 		{"x", model.RoleFull, &past},
 	}
 	for _, c := range cases {
-		if _, _, err := svc.Create(c.name, c.role, c.exp, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrInvalidParam) {
+		if _, _, err := createAPIKeyForTest(svc, c.name, c.role, c.exp, "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrInvalidParam) {
 			t.Fatalf("name=%q role=%q 应 ErrInvalidParam，实际 %v", c.name, c.role, err)
 		}
 	}
@@ -169,11 +179,11 @@ func TestAPIKeyCreateRejectsBadInput(t *testing.T) {
 // TestAPIKeyAuditHasNoSecret 创建/吊销/重置审计落库，且 detail 绝不含明文 / 哈希。
 func TestAPIKeyAuditHasNoSecret(t *testing.T) {
 	svc, _, db := newAPIKeyTestService(t)
-	plaintext, key, err := svc.Create("ci", model.RoleFull, nil, "admin", "127.0.0.1")
+	plaintext, key, err := createAPIKeyForTest(svc, "ci", model.RoleFull, nil, "admin", "127.0.0.1")
 	if err != nil {
 		t.Fatalf("创建密钥失败: %v", err)
 	}
-	if _, _, err := svc.Reset(key.ID, "admin", "127.0.0.1"); err != nil {
+	if _, _, err := resetAPIKeyForTest(svc, key.ID, "admin", "127.0.0.1"); err != nil {
 		t.Fatalf("重置失败: %v", err)
 	}
 	if err := svc.Revoke(key.ID, "admin", "127.0.0.1"); err != nil {

@@ -26,6 +26,57 @@ type V2ControlPlaneHandler struct {
 	svc *service.V2ControlPlaneService
 }
 
+type v2LifecycleApprovalRequest struct {
+	OperationKey string `json:"operationKey"`
+	Parameters   struct {
+		NamespaceID          uint   `json:"namespaceId"`
+		ServerRowID          uint   `json:"serverRowId"`
+		ConfirmationCode     string `json:"confirmationCode"`
+		ConfirmationServerID string `json:"confirmationServerId"`
+	} `json:"parameters"`
+	Reason string `json:"reason"`
+}
+
+// CreateLifecycleApprovalRequest 处理统一审批申请中的生命周期操作。
+func (h *V2ControlPlaneHandler) CreateLifecycleApprovalRequest(w http.ResponseWriter, r *http.Request) {
+	var req v2LifecycleApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	params := service.NamespaceLifecycleParams{
+		Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}
+	principal := requestPrincipal(r)
+	key := r.Header.Get("Idempotency-Key")
+	var ticket service.ApprovalTicketView
+	var err error
+	switch req.OperationKey {
+	case "namespace.archive":
+		ticket, err = h.svc.RequestArchiveNamespace(req.Parameters.NamespaceID, params, principal, key)
+	case "namespace.restore":
+		ticket, err = h.svc.RequestRestoreNamespace(req.Parameters.NamespaceID, params, principal, key)
+	case "namespace.permanent_delete":
+		params.Confirmation = req.Parameters.ConfirmationCode
+		ticket, err = h.svc.RequestPermanentDeleteNamespace(req.Parameters.NamespaceID, params, principal, key)
+	case "server.archive":
+		ticket, err = h.svc.RequestArchiveServer(req.Parameters.ServerRowID, params, principal, key)
+	case "server.restore":
+		ticket, err = h.svc.RequestRestoreServer(req.Parameters.ServerRowID, params, principal, key)
+	case "server.permanent_delete":
+		params.Confirmation = req.Parameters.ConfirmationServerID
+		ticket, err = h.svc.RequestPermanentDeleteServer(req.Parameters.ServerRowID, params, principal, key)
+	default:
+		err = apperr.ErrInvalidParam
+	}
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Location", "/admin/v2/approval-requests/"+ticket.ApprovalRequestID)
+	render.WriteJSON(w, http.StatusAccepted, ticket)
+}
+
 // NamespaceDirectoryResync 处理 POST /admin/v2/namespaces/{id}/bc-directory-resyncs。
 func (h *V2ControlPlaneHandler) NamespaceDirectoryResync(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")
@@ -196,6 +247,10 @@ type v2NamespaceView struct {
 	ServerCount      int64     `json:"serverCount"`
 	BCClusterCount   int64     `json:"bcClusterCount"`
 	ActiveTrustCount int64     `json:"activeTrustCount"`
+	Lifecycle        string    `json:"lifecycle"`
+	LifecycleStatus  string    `json:"lifecycleStatus"`
+	EffectiveActive  bool      `json:"effectiveActive"`
+	Tombstone        any       `json:"tombstone"`
 	AccessToken      string    `json:"accessToken,omitempty"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
@@ -226,7 +281,7 @@ func (h *V2ControlPlaneHandler) DeleteNamespace(w http.ResponseWriter, r *http.R
 
 // ListNamespaces 处理 GET /admin/v2/namespaces（附 server 数 / BC 集群数 / 生效信任数摘要）。
 func (h *V2ControlPlaneHandler) ListNamespaces(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.svc.ListNamespacesWithStats()
+	stats, err := h.svc.ListNamespacesWithStats(r.URL.Query().Get("lifecycleStatus"))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -434,7 +489,19 @@ func (h *V2ControlPlaneHandler) RejectAgentIdentity(w http.ResponseWriter, r *ht
 
 // AllowAgentIdentityReapply 处理 POST /admin/v2/agent-identities/{identityId}/allow-reapply。
 func (h *V2ControlPlaneHandler) AllowAgentIdentityReapply(w http.ResponseWriter, r *http.Request) {
-	h.transitionIdentity(w, r, h.svc.AllowAgentIdentityReapply)
+	var req v2ReasonRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ticket, err := h.svc.RequestAllowAgentIdentityReapply(chi.URLParam(r, "identityId"), service.IdentityTransitionParams{
+		Reason: req.Reason, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	}, requestPrincipal(r), r.Header.Get("Idempotency-Key"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // DisableAgentIdentity 处理 POST /admin/v2/agent-identities/{identityId}/disable。
@@ -952,6 +1019,62 @@ func (h *V2ControlPlaneHandler) SetServerDefaultEntry(w http.ResponseWriter, r *
 	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
+// ServerLifecycleImpact 处理 GET /admin/v2/servers/{id}/lifecycle-impact。
+func (h *V2ControlPlaneHandler) ServerLifecycleImpact(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	impact, err := h.svc.GetServerLifecycleImpact(id, r.URL.Query().Get("action"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, impact)
+}
+
+// ServerPermanentDeletionImpact 处理 server 永久删除前的只读影响预览。
+func (h *V2ControlPlaneHandler) ServerPermanentDeletionImpact(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	impact, err := h.svc.GetServerLifecycleImpact(id, "permanent-delete")
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, impact)
+}
+
+// NamespaceLifecycleImpact 处理 namespace 归档或恢复前的只读影响预览。
+func (h *V2ControlPlaneHandler) NamespaceLifecycleImpact(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	impact, err := h.svc.GetNamespaceLifecycleImpact(id, r.URL.Query().Get("action"))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, impact)
+}
+
+// NamespacePermanentDeletionImpact 处理 namespace 永久删除前的只读影响预览。
+func (h *V2ControlPlaneHandler) NamespacePermanentDeletionImpact(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	impact, err := h.svc.GetNamespacePermanentDeletionImpact(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, impact)
+}
+
 // ListServers 处理 GET /admin/v2/servers。
 func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -967,6 +1090,7 @@ func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Reque
 	}
 	items, total, err := h.svc.ListServers(service.ListServersParams{
 		NamespaceID: namespaceID, Kind: q.Get("kind"), Assigned: assigned, Keyword: q.Get("keyword"),
+		LifecycleStatus: q.Get("lifecycleStatus"), Lifecycle: q.Get("lifecycle"),
 		Page: intQuery(q.Get("page")), PageSize: intQuery(q.Get("pageSize")),
 	})
 	if err != nil {
@@ -980,7 +1104,8 @@ func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Reque
 func v2NamespaceResponse(ns *model.Namespace, token string) v2NamespaceView {
 	return v2NamespaceView{
 		ID: ns.ID, Name: ns.Code, Code: ns.Code, DisplayName: ns.Name, Description: ns.Description,
-		AccessToken: token, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
+		Lifecycle: namespaceLifecycleView(*ns), LifecycleStatus: namespaceLifecycleView(*ns), EffectiveActive: namespaceLifecycleView(*ns) == model.NamespaceLifecycleActive,
+		Tombstone: namespaceTombstoneView(*ns), AccessToken: token, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
 	}
 }
 
@@ -990,7 +1115,25 @@ func v2NamespaceStatView(stat service.NamespaceStat) v2NamespaceView {
 	return v2NamespaceView{
 		ID: ns.ID, Name: ns.Code, Code: ns.Code, DisplayName: ns.Name, Description: ns.Description,
 		ServerCount: stat.ServerCount, BCClusterCount: stat.BCClusterCount,
-		ActiveTrustCount: stat.ActiveTrustCount, CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
+		ActiveTrustCount: stat.ActiveTrustCount, Lifecycle: stat.Lifecycle, LifecycleStatus: stat.Lifecycle,
+		EffectiveActive: stat.EffectiveActive, Tombstone: namespaceTombstoneView(ns), CreatedAt: ns.CreatedAt, UpdatedAt: ns.UpdatedAt,
+	}
+}
+
+func namespaceLifecycleView(ns model.Namespace) string {
+	if ns.Lifecycle == "" {
+		return model.NamespaceLifecycleActive
+	}
+	return ns.Lifecycle
+}
+
+func namespaceTombstoneView(ns model.Namespace) any {
+	if ns.TombstonedAt == nil {
+		return nil
+	}
+	return map[string]any{
+		"tombstonedAt": ns.TombstonedAt, "tombstonedBy": ns.TombstonedBy,
+		"tombstoneReason": ns.TombstoneReason, "approvalRequestId": ns.TombstoneApprovalRequestID,
 	}
 }
 

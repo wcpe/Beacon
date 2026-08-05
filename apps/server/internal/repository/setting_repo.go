@@ -81,3 +81,20 @@ func (r *SettingRepository) Upsert(key, value, valueType string) (*model.Setting
 	}
 	return &saved, nil
 }
+
+// UpdateIfVersion 仅在冻结版本仍匹配时写入设置，冲突时不产生副作用。
+func (r *SettingRepository) UpdateIfVersion(key, value, valueType string, version int) (*model.Setting, error) {
+	res := r.db.Model(&model.Setting{}).Where("setting_key = ? AND version = ?", key, version).
+		Updates(map[string]any{"value": value, "value_type": valueType, "version": version + 1})
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	if res.RowsAffected != 1 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var saved model.Setting
+	if err := r.db.Where("setting_key = ?", key).First(&saved).Error; err != nil {
+		return nil, err
+	}
+	return &saved, nil
+}

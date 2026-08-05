@@ -61,7 +61,7 @@ func newMsgAdminRouter(t *testing.T, name string) (chi.Router, *repository.Messa
 	db := openMsgAdminDB(t, name)
 	repo := repository.NewMessageRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
-	h := NewV2MessageAdminHandler(service.NewMessageQueryService(repo), service.NewMessagePayloadService(repo, auditRepo), newTestSettings(t, db))
+	h := NewV2MessageAdminHandler(service.NewMessageQueryService(repo), service.NewMessagePayloadService(repo), newTestSettings(t, db))
 	r := chi.NewRouter()
 	r.Get("/admin/v2/messages", h.List)
 	r.Get("/admin/v2/messages/stats", h.Stats)
@@ -141,8 +141,8 @@ func postJSON(t *testing.T, r chi.Router, target string, body any) (int, map[str
 	return rec.Code, out
 }
 
-// TestMsgAdminListNoPayload 列表：CursorPage{items,nextCursor} + 列表项 20 键对齐 contracts，**响应不含 payload 字段**。
-func TestMsgAdminListNoPayload(t *testing.T) {
+// TestFR209MessageMetadataDirectRead 列表元数据直接可读，响应不含 payload 字段。
+func TestFR209MessageMetadataDirectRead(t *testing.T) {
 	r, repo, _ := newMsgAdminRouter(t, "msg_adm_list")
 	base := time.Now().UTC().Add(-5 * time.Minute).UnixMilli()
 	seedMsg(t, repo, msgSeed{id: uuidV7AtHandler(base, "m1"), src: "game-1", msgType: "chat:cross",
@@ -152,7 +152,7 @@ func TestMsgAdminListNoPayload(t *testing.T) {
 	from, to := isoOf(base-time.Hour.Milliseconds()), isoOf(base+time.Hour.Milliseconds())
 	code, body := getJSON(t, r, fmt.Sprintf("/admin/v2/messages?serverId=game-1&from=%s&to=%s", from, to))
 	if code != http.StatusOK {
-		t.Fatalf("应 200，实际 %d：%v", code, body)
+		t.Fatalf("消息元数据直读应 200，实际 %d：%v", code, body)
 	}
 	assertKeys(t, body, "items", "nextCursor")
 	items, _ := body["items"].([]any)
@@ -369,7 +369,7 @@ func TestMsgAdminStatsEdgeSkipsBroadcast(t *testing.T) {
 	}
 }
 
-// TestMsgAdminPayloadViewAudits payload 查看：先写审计后返回内容；审计记 message.payload.view、含原因、**不含 payload**。
+// TestMsgAdminPayloadViewAudits 旧 payload 路由统一拒绝，不返回正文也不写旧查看审计。
 func TestMsgAdminPayloadViewAudits(t *testing.T) {
 	r, repo, auditRepo := newMsgAdminRouter(t, "msg_adm_payload")
 	base := time.Now().UTC().Add(-2 * time.Minute).UnixMilli()
@@ -378,38 +378,22 @@ func TestMsgAdminPayloadViewAudits(t *testing.T) {
 	seedMsg(t, repo, msgSeed{id: mid, src: "game-1", msgType: "economy:sync", targetKind: model.MsgTargetKindServer,
 		targetServer: "game-2", resolved: "game-2", status: model.MsgStatusDelivered, payload: secret})
 
-	// 缺原因 400 missing_reason，且不写审计。
+	// 无论 body 内容，旧路径都返回 409 operation_requires_approval。
 	code, body := postJSON(t, r, "/admin/v2/messages/"+mid+"/payload", map[string]any{})
-	if code != http.StatusBadRequest || body["code"] != "missing_reason" {
-		t.Fatalf("缺原因应 400 missing_reason，实际 %d %v", code, body)
+	if code != http.StatusConflict || body["code"] != "operation_requires_approval" {
+		t.Fatalf("旧 payload 路由应 409 operation_requires_approval，实际 %d %v", code, body)
 	}
-
-	// 有原因 200，返回 payload/sha256/size。
 	code, body = postJSON(t, r, "/admin/v2/messages/"+mid+"/payload", map[string]any{"reason": "排查跨服经济异常"})
-	if code != http.StatusOK {
-		t.Fatalf("查看应 200，实际 %d：%v", code, body)
-	}
-	assertKeys(t, body, "payload", "sha256", "size")
-	if body["payload"] != secret || body["size"] != float64(len(secret)) {
-		t.Fatalf("payload 返回不符: %v", body)
+	if code != http.StatusConflict || body["code"] != "operation_requires_approval" || strings.Contains(fmt.Sprint(body), secret) {
+		t.Fatalf("旧 payload 路由不得返回正文：code=%d body=%v", code, body)
 	}
 
-	// 审计：恰有一条 message.payload.view，含原因原文、messageId，detail 绝不含 payload 内容。
+	// 旧路由不应留下旧查看审计。
 	audits, _, err := auditRepo.List(repository.AuditFilter{Action: model.ActionMessagePayloadView, Page: 1, Size: 50})
 	if err != nil {
 		t.Fatalf("查审计失败: %v", err)
 	}
-	if len(audits) != 1 {
-		t.Fatalf("应恰有 1 条 payload 查看审计，实际 %d", len(audits))
-	}
-	a := audits[0]
-	if a.Operator != "tester" || a.TargetRef != mid || a.Action != model.ActionMessagePayloadView {
-		t.Fatalf("审计字段不符: %+v", a)
-	}
-	if !strings.Contains(a.Detail, "排查跨服经济异常") {
-		t.Fatalf("审计 detail 应含原因原文，实际 %s", a.Detail)
-	}
-	if strings.Contains(a.Detail, "s3cr3t") || strings.Contains(a.Detail, secret) {
-		t.Fatalf("审计 detail 绝不应含 payload 内容，实际 %s", a.Detail)
+	if len(audits) != 0 {
+		t.Fatalf("旧 payload 路由不应留下查看审计：%+v", audits)
 	}
 }

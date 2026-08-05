@@ -44,6 +44,8 @@ type ListMessagesParams struct {
 	TargetKind     string // server / player / broadcast（FR-180 additive 过滤），空不过滤
 	CrossNamespace *bool
 	NamespaceID    uint
+	NamespaceIDs   []uint
+	Scoped         bool
 	FromMs         int64
 	ToMs           int64
 	Cursor         int
@@ -89,7 +91,7 @@ func (s *MessageQueryService) List(p ListMessagesParams) (MsgPage, error) {
 	offset := clampOffset(p.Cursor)
 	rows, hasMore, err := s.repo.QueryMessages(repository.MessageQuery{
 		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status, MsgType: p.MsgType,
-		TargetKind: p.TargetKind, CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID,
+		TargetKind: p.TargetKind, CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID, NamespaceIDs: p.NamespaceIDs, Scoped: p.Scoped,
 		FromMs: p.FromMs, ToMs: p.ToMs, Offset: offset, Limit: limit,
 	})
 	if err != nil {
@@ -108,7 +110,7 @@ func (s *MessageQueryService) listCold(p ListMessagesParams) (MsgPage, error) {
 	}
 	rows, nextToken, err := s.repo.QueryMessagesCold(repository.MessageQuery{
 		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status, MsgType: p.MsgType,
-		TargetKind: p.TargetKind, CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID,
+		TargetKind: p.TargetKind, CrossNamespace: p.CrossNamespace, NamespaceID: p.NamespaceID, NamespaceIDs: p.NamespaceIDs, Scoped: p.Scoped,
 		FromMs: p.FromMs, ToMs: p.ToMs,
 	}, p.ColdCursor, clampLimit(p.Limit))
 	if err != nil {
@@ -142,11 +144,25 @@ func (s *MessageQueryService) Detail(messageID string) (MessageDetailResult, err
 	return MessageDetailResult{Trace: *trace, Correlated: corr}, nil
 }
 
+// DetailInScope 按冻结范围读取消息详情，域外记录按未命中处理。
+func (s *MessageQueryService) DetailInScope(messageID string, scope ObservationScope) (MessageDetailResult, error) {
+	result, err := s.Detail(messageID)
+	if err != nil || !scope.Contains(result.Trace.NamespaceID) {
+		if err != nil {
+			return MessageDetailResult{}, err
+		}
+		return MessageDetailResult{}, apperr.ErrMessageNotFound
+	}
+	return result, nil
+}
+
 // MessageStatsParams 是异常链路聚合入参（groupBy 走预定义维度，from/to 为已定窗口）。
 type MessageStatsParams struct {
-	GroupBy string
-	FromMs  int64
-	ToMs    int64
+	GroupBy      string
+	NamespaceIDs []uint
+	Scoped       bool
+	FromMs       int64
+	ToMs         int64
 }
 
 // MsgFailReasonCount 是边聚合中一条失败原因计数。
@@ -185,7 +201,7 @@ type MessageStatsResult struct {
 // Stats 聚合窗口内消息的异常链路：groupBy=type 按类型计数，其余（edge/默认/bucket）按 source→resolved 边聚合。
 // bucket 维度无独立冻结契约与前端消费方，按 devmock 回退等价 edge（不静默造未锚定形态）。
 func (s *MessageQueryService) Stats(p MessageStatsParams) (MessageStatsResult, error) {
-	rows, err := s.repo.ScanMessageStats(p.FromMs, p.ToMs)
+	rows, err := s.repo.ScanMessageStatsScoped(p.NamespaceIDs, p.Scoped, p.FromMs, p.ToMs)
 	if err != nil {
 		return MessageStatsResult{}, err
 	}

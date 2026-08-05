@@ -74,6 +74,9 @@ func (s *SchedulingService) Placement(ns, group, zone string) ([]PlacementCandid
 	if ns == "" || zone == "" {
 		return nil, apperr.ErrInvalidParam
 	}
+	if err := ensureNamespaceRuntimeActiveByCode(s.db, ns); err != nil {
+		return nil, err
+	}
 	insts := s.registry.List(runtime.Filter{
 		Namespace: ns, Group: group, Zone: zone, Status: runtime.StatusOnline,
 	})
@@ -92,6 +95,9 @@ func (s *SchedulingService) Placement(ns, group, zone string) ([]PlacementCandid
 func (s *SchedulingService) Drain(ns, serverID, reason, operator, clientIP string) (*model.ServerDrain, error) {
 	if ns == "" || serverID == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
+	}
+	if err := ensureNamespaceRuntimeActiveByCode(s.db, ns); err != nil {
+		return nil, err
 	}
 	// 审计详情按 json 文本约定写（与 zone 改派一致），reason 经 marshal 转义
 	detail, _ := json.Marshal(map[string]string{"reason": reason})
@@ -115,31 +121,41 @@ func (s *SchedulingService) Drain(ns, serverID, reason, operator, clientIP strin
 	return d, nil
 }
 
-// Undrain 取消某 serverId 的 drain（软删）；不存在返回 DRAIN_NOT_FOUND。
+// Undrain 禁止绕过审批适配器直接恢复 V1 调度资格。
 func (s *SchedulingService) Undrain(ns, serverID, operator, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+// applyUndrainForTest 保留既有领域行为，仅供同包测试验证 V1 状态机。
+func (s *SchedulingService) applyUndrainForTest(ns, serverID, operator, clientIP string) error {
 	if ns == "" || serverID == "" || operator == "" {
 		return apperr.ErrInvalidParam
 	}
-	now := time.Now().UTC()
-	err := s.db.Transaction(func(tx *gorm.DB) error {
-		deleted, e := s.drainRepo.WithTx(tx).SoftDelete(ns, serverID, now)
-		if e != nil {
-			return e
-		}
-		if !deleted {
-			return apperr.ErrDrainNotFound
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns, Operator: operator, Action: model.ActionSchedulingUndrain,
-			TargetType: model.TargetTypeInstance, TargetRef: ns + "/" + serverID,
-			Result: model.ResultOK, ClientIP: clientIP,
-		})
-	})
+	err := s.db.Transaction(func(tx *gorm.DB) error { return s.applyUndrainInTx(tx, ns, serverID, operator, clientIP) })
 	if err != nil {
 		return err
 	}
 	slog.Info("取消 drain", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
+}
+
+// applyUndrainInTx 在调用方事务内取消 V1 排空标记并写审计。
+func (s *SchedulingService) applyUndrainInTx(tx *gorm.DB, ns, serverID, operator, clientIP string) error {
+	if err := ensureNamespaceRuntimeActiveByCode(tx, ns); err != nil {
+		return err
+	}
+	deleted, err := s.drainRepo.WithTx(tx).SoftDelete(ns, serverID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return apperr.ErrDrainNotFound
+	}
+	return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		NamespaceCode: ns, Operator: operator, Action: model.ActionSchedulingUndrain,
+		TargetType: model.TargetTypeInstance, TargetRef: ns + "/" + serverID,
+		Result: model.ResultOK, ClientIP: clientIP,
+	})
 }
 
 // ListDrains 列出某环境内当前 drain 标记。

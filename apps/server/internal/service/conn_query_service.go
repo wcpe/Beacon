@@ -27,16 +27,18 @@ func NewConnQueryService(repo *repository.ConnDetailRepository) *ConnQueryServic
 
 // ListConnectionsParams 是连接列表查询入参（connId 直查免防护；否则走 §4.3 条件查询防护）。
 type ListConnectionsParams struct {
-	ConnID      string
-	ServerID    string
-	PlayerUUID  string
-	Status      string
-	CloseKind   string
-	NamespaceID uint
-	FromMs      int64
-	ToMs        int64
-	Cursor      int
-	Limit       int
+	ConnID       string
+	ServerID     string
+	PlayerUUID   string
+	Status       string
+	CloseKind    string
+	NamespaceID  uint
+	NamespaceIDs []uint
+	Scoped       bool
+	FromMs       int64
+	ToMs         int64
+	Cursor       int
+	Limit        int
 	// IncludeArchived 为 true 时跨热 / 冷并表查询（FR-152）；ColdCursor 为冷查询 keyset 令牌。
 	IncludeArchived bool
 	ColdCursor      string
@@ -71,7 +73,7 @@ func (s *ConnQueryService) List(p ListConnectionsParams) (ConnPage, error) {
 	offset := clampOffset(p.Cursor)
 	rows, hasMore, err := s.repo.QueryConnections(repository.ConnQuery{
 		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status,
-		CloseKind: p.CloseKind, NamespaceID: p.NamespaceID,
+		CloseKind: p.CloseKind, NamespaceID: p.NamespaceID, NamespaceIDs: p.NamespaceIDs, Scoped: p.Scoped,
 		FromMs: p.FromMs, ToMs: p.ToMs, Offset: offset, Limit: limit,
 	})
 	if err != nil {
@@ -91,7 +93,7 @@ func (s *ConnQueryService) listCold(p ListConnectionsParams) (ConnPage, error) {
 	}
 	rows, nextToken, err := s.repo.QueryConnectionsCold(repository.ConnQuery{
 		ServerID: p.ServerID, PlayerUUID: p.PlayerUUID, Status: p.Status,
-		CloseKind: p.CloseKind, NamespaceID: p.NamespaceID,
+		CloseKind: p.CloseKind, NamespaceID: p.NamespaceID, NamespaceIDs: p.NamespaceIDs, Scoped: p.Scoped,
 		FromMs: p.FromMs, ToMs: p.ToMs,
 	}, p.ColdCursor, clampLimit(p.Limit))
 	if err != nil {
@@ -115,12 +117,26 @@ func (s *ConnQueryService) Detail(connID string) (model.ConnDetail, error) {
 	return *row, nil
 }
 
+// DetailInScope 按冻结范围读取连接详情，域外行按未命中处理。
+func (s *ConnQueryService) DetailInScope(connID string, scope ObservationScope) (model.ConnDetail, error) {
+	row, err := s.Detail(connID)
+	if err != nil || !scope.Contains(row.NamespaceID) {
+		if err != nil {
+			return model.ConnDetail{}, err
+		}
+		return model.ConnDetail{}, apperr.ErrConnectionNotFound
+	}
+	return row, nil
+}
+
 // ConnStatsParams 是连接流时间桶聚合入参（serverId 可空按 proxy 过滤；bucket 仅 1m/5m）。
 type ConnStatsParams struct {
-	ServerID string
-	FromMs   int64
-	ToMs     int64
-	Bucket   string // 1m / 5m（非法回退 1m）
+	ServerID     string
+	NamespaceIDs []uint
+	Scoped       bool
+	FromMs       int64
+	ToMs         int64
+	Bucket       string // 1m / 5m（非法回退 1m）
 }
 
 // ConnStatsBucket 是一个时间桶的连接流聚合（对齐 contracts ConnStatsBucket）。
@@ -146,7 +162,7 @@ func (s *ConnQueryService) Stats(p ConnStatsParams) ([]ConnStatsBucket, error) {
 	if toMs-fromMs > maxConnMsgRangeMs {
 		fromMs = toMs - maxConnMsgRangeMs
 	}
-	rows, err := s.repo.ScanConnStats(p.ServerID, fromMs, toMs)
+	rows, err := s.repo.ScanConnStatsScoped(p.ServerID, p.NamespaceIDs, p.Scoped, fromMs, toMs)
 	if err != nil {
 		return nil, err
 	}

@@ -94,14 +94,16 @@ func groupByUTCDay[T any](rows []T, msOf func(T) int64) map[time.Time][]T {
 
 // SchedDecisionQuery 是决策记录跨日并表查询的过滤与分页参数（spec §5.2 列表端点）。
 type SchedDecisionQuery struct {
-	NamespaceID uint
-	Zone        string
-	ServerID    string // 匹配 requester 或 chosen 任一（对齐 devmock 语义）
-	Result      string // "" 全部 / success（fail_reason 空）/ failed（fail_reason 非空）
-	FromMs      int64
-	ToMs        int64
-	Offset      int
-	Limit       int
+	NamespaceID  uint
+	NamespaceIDs []uint
+	Scoped       bool
+	Zone         string
+	ServerID     string // 匹配 requester 或 chosen 任一（对齐 devmock 语义）
+	Result       string // "" 全部 / success（fail_reason 空）/ failed（fail_reason 非空）
+	FromMs       int64
+	ToMs         int64
+	Offset       int
+	Limit        int
 }
 
 // QueryRange 跨日并表分页查询决策记录（ts_ms 降序）：只查范围内**已存在**的日表
@@ -210,14 +212,25 @@ type schedGroupCount struct {
 
 // Summarize 聚合时间窗内决策总数 / 成功数 / 降级补报数 / 失败原因分布（跨已存在日表累加，缺表跳过）。
 func (r *SchedDecisionV2Repository) Summarize(fromMs, toMs int64) (SchedDecisionAggregate, error) {
+	return r.SummarizeScoped(nil, false, fromMs, toMs)
+}
+
+// SummarizeScoped 在聚合前以冻结 namespace 集合过滤决策行。
+func (r *SchedDecisionV2Repository) SummarizeScoped(namespaceIDs []uint, scoped bool, fromMs, toMs int64) (SchedDecisionAggregate, error) {
 	agg := SchedDecisionAggregate{FailReasonCounts: map[string]int64{}}
 	for _, tbl := range r.existingTablesInRange(fromMs, toMs) {
 		var groups []schedGroupCount
-		err := r.db.Table(tbl).
+		if scoped && len(namespaceIDs) == 0 {
+			return agg, nil
+		}
+		query := r.db.Table(tbl).
 			Select("fail_reason, source, COUNT(*) AS n").
 			Where("ts_ms >= ? AND ts_ms <= ?", fromMs, toMs).
-			Group("fail_reason").Group("source").
-			Find(&groups).Error
+			Group("fail_reason").Group("source")
+		if scoped {
+			query = query.Where("namespace_id IN ?", namespaceIDs)
+		}
+		err := query.Find(&groups).Error
 		if err != nil {
 			return SchedDecisionAggregate{}, err
 		}
@@ -254,6 +267,12 @@ func (r *SchedDecisionV2Repository) existingTablesInRange(fromMs, toMs int64) []
 // applySchedFilters 套用决策记录的时间窗与过滤条件（result 语义对齐 contracts / devmock）。
 func applySchedFilters(q *gorm.DB, p SchedDecisionQuery) *gorm.DB {
 	q = q.Where("ts_ms >= ? AND ts_ms <= ?", p.FromMs, p.ToMs)
+	if p.Scoped {
+		if len(p.NamespaceIDs) == 0 {
+			return q.Where("1 = 0")
+		}
+		return q.Where("namespace_id IN ?", p.NamespaceIDs)
+	}
 	if p.NamespaceID != 0 {
 		q = q.Where("namespace_id = ?", p.NamespaceID)
 	}

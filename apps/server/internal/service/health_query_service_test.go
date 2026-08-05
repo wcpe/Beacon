@@ -336,3 +336,20 @@ func TestMetricsSeriesColdRouted(t *testing.T) {
 		t.Fatalf("并表时序应有数据点，实际 %+v", out.Series)
 	}
 }
+
+func TestHealthScopedServerQueriesFailClosedBeforeRead(t *testing.T) {
+	svc, snapshots, _ := newQueryFixture([]healthview.View{queryView(1, "in-scope", model.ServerKindBackend, "", healthview.LevelHealthy, true, nil)})
+	scope := ObservationScope{NamespaceIDs: []uint{1}}
+	if _, err := svc.HealthSnapshotsInScope("outside", scope, 1, 2, false); !errors.Is(err, apperr.ErrInstanceNotFound) {
+		t.Fatalf("域外快照应按未命中拒绝，实际 %v", err)
+	}
+	if snapshots.got.serverID != "" {
+		t.Fatalf("域外快照不得读取日表，实际读取 %q", snapshots.got.serverID)
+	}
+	if _, err := svc.MetricsSeriesInScope(MetricsSeriesParams{ServerIDs: []string{"outside"}, FromMs: 1, ToMs: 2}, scope); !errors.Is(err, apperr.ErrInstanceNotFound) {
+		t.Fatalf("域外指标时序应按未命中拒绝，实际 %v", err)
+	}
+	if _, err := svc.MetricsSeriesInScope(MetricsSeriesParams{ServerIDs: []string{"in-scope"}, FromMs: 1, ToMs: 2}, scope); err != nil {
+		t.Fatalf("范围内指标时序应通过，实际 %v", err)
+	}
+}

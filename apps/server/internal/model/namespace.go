@@ -21,6 +21,24 @@ type Namespace struct {
 	Description string `gorm:"column:description;size:255"`
 	// v2 namespace 接入 token 的 sha256 摘要；明文只在创建 / 轮换响应返回一次。
 	AccessTokenHash string `gorm:"column:access_token_hash;size:64;index"`
+	// 生命周期状态：active / archived / tombstoned。
+	Lifecycle string `gorm:"column:lifecycle;size:16;not null;default:active;index"`
+	// 归档时间；仅 archived 状态有值。
+	ArchivedAt *time.Time `gorm:"column:archived_at"`
+	// 发起归档的审批申请人。
+	ArchivedBy string `gorm:"column:archived_by;size:128"`
+	// 归档审批原因。
+	ArchiveReason string `gorm:"column:archive_reason;size:255"`
+	// 永久墓碑时间；墓碑记录保留以阻止同 code 重用。
+	TombstonedAt *time.Time `gorm:"column:tombstoned_at"`
+	// 发起永久墓碑的审批申请人。
+	TombstonedBy string `gorm:"column:tombstoned_by;size:128"`
+	// 永久墓碑审批原因。
+	TombstoneReason string `gorm:"column:tombstone_reason;size:255"`
+	// 永久墓碑审批请求标识。
+	TombstoneApprovalRequestID string `gorm:"column:tombstone_approval_request_id;size:64;index"`
+	// 永久墓碑冻结影响集合哈希。
+	TombstoneImpactHash string `gorm:"column:tombstone_impact_hash;size:64"`
 	// 创建时间（UTC）
 	CreatedAt time.Time
 	// 更新时间（UTC）
@@ -36,6 +54,9 @@ func (n *Namespace) BeforeSave(*gorm.DB) error {
 	}
 	if n.Name == "" {
 		n.Name = n.Code
+	}
+	if n.Lifecycle == "" {
+		n.Lifecycle = NamespaceLifecycleActive
 	}
 	return nil
 }

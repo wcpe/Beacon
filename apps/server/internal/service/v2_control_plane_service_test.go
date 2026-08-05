@@ -18,7 +18,48 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
-func newV2ControlPlaneTestService(t *testing.T) (*gorm.DB, *V2ControlPlaneService) {
+type v2ControlPlaneTestService struct{ *V2ControlPlaneService }
+
+func (s *v2ControlPlaneTestService) ApproveAgentIdentity(id string, p ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
+	return s.applyApproveAgentIdentity(id, p)
+}
+
+func (s *v2ControlPlaneTestService) EnableAgentIdentity(id string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+	return s.applyTransitionIdentity(id, []string{model.AgentIdentityStatusDisabled}, model.AgentIdentityStatusActive, model.ActionIdentityEnabled, p)
+}
+
+func (s *v2ControlPlaneTestService) AllowAgentIdentityReapply(id string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+	return s.applyTransitionIdentity(id, []string{model.AgentIdentityStatusRejected}, model.AgentIdentityStatusExpired, model.ActionIdentityReapplyAllowed, p)
+}
+
+func (s *v2ControlPlaneTestService) UnbindAgentIdentity(id string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+	return s.applyTransitionIdentity(id, []string{model.AgentIdentityStatusActive, model.AgentIdentityStatusDisabled, model.AgentIdentityStatusConflict}, model.AgentIdentityStatusUnbound, model.ActionIdentityUnbound, p)
+}
+
+func (s *v2ControlPlaneTestService) ResolveAgentIdentityConflict(id string, p ResolveConflictParams) (*model.AgentIdentity, error) {
+	return s.applyResolveAgentIdentityConflict(id, p)
+}
+
+func (s *v2ControlPlaneTestService) GrantNamespaceTrust(p GrantNamespaceTrustParams) (*NamespaceTrustView, error) {
+	return s.applyGrantNamespaceTrust(p)
+}
+func (s *v2ControlPlaneTestService) AssignServers(p AssignServersParams) ([]model.Server, error) {
+	return s.applyAssignServers(p)
+}
+func (s *v2ControlPlaneTestService) RezoneServers(p RezoneServersParams) ([]AssignmentResult, error) {
+	return s.applyRezoneServers(p)
+}
+func (s *v2ControlPlaneTestService) SetServerDraining(p SetServerDrainingParams) (*ServerView, error) {
+	return s.applySetServerDraining(p)
+}
+func (s *v2ControlPlaneTestService) SetServerDefaultEntry(p SetServerDefaultEntryParams) (*ServerView, error) {
+	return s.applySetServerDefaultEntry(p)
+}
+func (s *v2ControlPlaneTestService) TransferServerPlacement(p ServerPlacementTransferParams) (*ServerPlacementTransferView, error) {
+	return s.applyTransferServerPlacement(p)
+}
+
+func newV2ControlPlaneTestService(t *testing.T) (*gorm.DB, *v2ControlPlaneTestService) {
 	t.Helper()
 	dsn := "file:" + url.QueryEscape(t.Name()) + "?mode=memory&cache=shared"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
@@ -43,7 +84,36 @@ func newV2ControlPlaneTestService(t *testing.T) (*gorm.DB, *V2ControlPlaneServic
 	); err != nil {
 		t.Fatalf("迁移 v2 表失败: %v", err)
 	}
-	return db, NewV2ControlPlaneService(db)
+	svc := &v2ControlPlaneTestService{V2ControlPlaneService: NewV2ControlPlaneService(db)}
+	return db, svc
+}
+
+func TestV2DangerousPublicMutatorsFailClosed(t *testing.T) {
+	_, testSvc := newV2ControlPlaneTestService(t)
+	svc := testSvc.V2ControlPlaneService
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{"确认身份", func() error { _, err := svc.ApproveAgentIdentity("id", ApproveAgentIdentityParams{}); return err }},
+		{"启用身份", func() error { _, err := svc.EnableAgentIdentity("id", IdentityTransitionParams{}); return err }},
+		{"恢复重新申请", func() error { _, err := svc.AllowAgentIdentityReapply("id", IdentityTransitionParams{}); return err }},
+		{"解绑身份", func() error { _, err := svc.UnbindAgentIdentity("id", IdentityTransitionParams{}); return err }},
+		{"解决冲突", func() error { _, err := svc.ResolveAgentIdentityConflict("id", ResolveConflictParams{}); return err }},
+		{"授予信任", func() error { _, err := svc.GrantNamespaceTrust(GrantNamespaceTrustParams{}); return err }},
+		{"分配服务器", func() error { _, err := svc.AssignServers(AssignServersParams{}); return err }},
+		{"换区服务器", func() error { _, err := svc.RezoneServers(RezoneServersParams{}); return err }},
+		{"默认入口", func() error { _, err := svc.SetServerDefaultEntry(SetServerDefaultEntryParams{}); return err }},
+		{"迁移大厅成员", func() error { _, err := svc.TransferServerPlacement(ServerPlacementTransferParams{}); return err }},
+		{"关闭排空", func() error { _, err := svc.SetServerDraining(SetServerDrainingParams{}); return err }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			if err := check.call(); !errors.Is(err, apperr.ErrForbidden) {
+				t.Fatalf("公开危险入口必须拒绝，实际 %v", err)
+			}
+		})
+	}
 }
 
 func TestV2AgentRegisterApproveCreatesUnassignedServer(t *testing.T) {
@@ -87,7 +157,7 @@ func TestV2AgentRegisterApproveCreatesUnassignedServer(t *testing.T) {
 }
 
 // approveFR203Identity 以真实强类型审批契约分配 serverId。
-func approveFR203Identity(t *testing.T, svc *V2ControlPlaneService, identityID, serverID string) (*model.AgentIdentity, error) {
+func approveFR203Identity(t *testing.T, svc *v2ControlPlaneTestService, identityID, serverID string) (*model.AgentIdentity, error) {
 	t.Helper()
 	return svc.ApproveAgentIdentity(identityID, ApproveAgentIdentityParams{Operator: "admin", ServerID: serverID})
 }
@@ -312,7 +382,7 @@ func TestFR203BindingSnapshotFailsClosedWhenBoundAtMissing(t *testing.T) {
 	}
 }
 
-func arrangeFR203BindingSnapshot(t *testing.T) (*gorm.DB, *V2ControlPlaneService, string, string, time.Time) {
+func arrangeFR203BindingSnapshot(t *testing.T) (*gorm.DB, *v2ControlPlaneTestService, string, string, time.Time) {
 	t.Helper()
 	db, svc := newV2ControlPlaneTestService(t)
 	_, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
@@ -607,6 +677,68 @@ func TestV2UnbindClearsServerAssignment(t *testing.T) {
 	}
 	if ident.Status != model.AgentIdentityStatusUnbound {
 		t.Fatalf("身份状态应为 unbound，实际 %s", ident.Status)
+	}
+}
+
+// TestFR215ListServersLifecycleFilter 锁定 server 列表默认 active、显式 archived/all 过滤及非法值校验。
+func TestFR215ListServersLifecycleFilter(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	active := model.Server{NamespaceID: ns.ID, ServerID: "active-server", Kind: model.ServerKindBackend}
+	archived := model.Server{NamespaceID: ns.ID, ServerID: "archived-server", Kind: model.ServerKindBackend, Lifecycle: model.ServerLifecycleArchived}
+	if err := db.Create(&active).Error; err != nil {
+		t.Fatalf("创建 active server 失败: %v", err)
+	}
+	if err := db.Create(&archived).Error; err != nil {
+		t.Fatalf("创建 archived server 失败: %v", err)
+	}
+	items, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+	if err != nil || total != 1 || len(items) != 1 || items[0].ServerID != active.ServerID || !items[0].EffectiveActive {
+		t.Fatalf("默认列表应只返回 active，total=%d items=%+v err=%v", total, items, err)
+	}
+	items, total, err = svc.ListServers(ListServersParams{NamespaceID: ns.ID, LifecycleStatus: model.ServerLifecycleArchived, PageSize: 20})
+	if err != nil || total != 1 || len(items) != 1 || items[0].ServerID != archived.ServerID || items[0].EffectiveActive {
+		t.Fatalf("archived 列表不正确，total=%d items=%+v err=%v", total, items, err)
+	}
+	_, total, err = svc.ListServers(ListServersParams{NamespaceID: ns.ID, LifecycleStatus: "all", PageSize: 20})
+	if err != nil || total != 2 {
+		t.Fatalf("all 列表应返回两台，total=%d err=%v", total, err)
+	}
+	if _, _, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, LifecycleStatus: "invalid"}); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("非法 lifecycleStatus 应失败，实际 %v", err)
+	}
+}
+
+// TestFR215ServerLifecycleImpactPreview 锁定 lifecycle impact 只读、有界且按 action 校验当前状态。
+func TestFR215ServerLifecycleImpactPreview(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	server := model.Server{NamespaceID: ns.ID, ServerID: "impact-server", Kind: model.ServerKindBackend}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatalf("创建 server 失败: %v", err)
+	}
+	impact, err := svc.GetServerLifecycleImpact(server.ID, "archive")
+	if err != nil {
+		t.Fatalf("读取 archive impact 失败: %v", err)
+	}
+	if impact.Action != "archive" || impact.CurrentLifecycle != model.ServerLifecycleActive || impact.TargetLifecycle != model.ServerLifecycleArchived || !impact.EffectiveActive {
+		t.Fatalf("archive impact 摘要不正确: %+v", impact)
+	}
+	var unchanged model.Server
+	if err := db.First(&unchanged, server.ID).Error; err != nil || unchanged.Lifecycle != model.ServerLifecycleActive {
+		t.Fatalf("impact 预览不得改变生命周期，server=%+v err=%v", unchanged, err)
+	}
+	if _, err := svc.GetServerLifecycleImpact(server.ID, "invalid"); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("非法 action 应失败，实际 %v", err)
+	}
+	if _, err := svc.GetServerLifecycleImpact(server.ID, "restore"); !errors.Is(err, apperr.ErrServerNotArchived) {
+		t.Fatalf("active server 不应预览 restore，实际 %v", err)
 	}
 }
 
@@ -1069,6 +1201,9 @@ func TestFR205StableNamesCreateAndPatch(t *testing.T) {
 	if _, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "old", Code: "new", Operator: "admin"}); !errors.Is(err, apperr.ErrAmbiguousIdentifier) {
 		t.Fatalf("name/code 不一致应返回 AMBIGUOUS_IDENTIFIER，实际 %v", err)
 	}
+	if _, _, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Code: "too-long", DisplayName: strings.Repeat("名", 129), Operator: "admin"}); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("超过 128 字符的 displayName 应返回参数错误，实际 %v", err)
+	}
 
 	cluster, err := svc.CreateBCCluster(CreateBCClusterParams{NamespaceID: ns.ID, Code: "bc", DisplayName: "代理", Operator: "admin"})
 	if err != nil {
@@ -1092,6 +1227,15 @@ func TestFR205StableNamesCreateAndPatch(t *testing.T) {
 	changedCode := "bc-new"
 	if _, err := svc.UpdateBCCluster(UpdateDisplayResourceParams{ID: cluster.ID, Code: &changedCode, Operator: "admin"}); !errors.Is(err, apperr.ErrImmutableIdentifier) {
 		t.Fatalf("修改 code 应返回 IMMUTABLE_IDENTIFIER，实际 %v", err)
+	}
+	legacyName := "bc"
+	unchanged, err := svc.UpdateBCCluster(UpdateDisplayResourceParams{ID: cluster.ID, Name: &legacyName, Operator: "admin"})
+	if err != nil || unchanged.Name != "代理新名" {
+		t.Fatalf("旧 name 与 code 相同时应幂等忽略，实际 %+v err=%v", unchanged, err)
+	}
+	legacyName = "误改标识"
+	if _, err := svc.UpdateBCCluster(UpdateDisplayResourceParams{ID: cluster.ID, Name: &legacyName, Operator: "admin"}); !errors.Is(err, apperr.ErrImmutableIdentifier) {
+		t.Fatalf("旧 name 修改标识应返回 IMMUTABLE_IDENTIFIER，实际 %v", err)
 	}
 
 	region, err := svc.CreateRegion(CreateRegionParams{BCClusterID: cluster.ID, Code: "region", DisplayName: "大区", Operator: "admin"})
@@ -1138,6 +1282,35 @@ func TestFR205ServerDisplayNameUpdateAndKeyword(t *testing.T) {
 	changedServerID := "lobby-2"
 	if _, err := svc.UpdateServerDisplayName(UpdateServerDisplayNameParams{ID: server.ID, ServerID: &changedServerID, Operator: "admin"}); !errors.Is(err, apperr.ErrImmutableIdentifier) {
 		t.Fatalf("修改 serverId 应返回 IMMUTABLE_IDENTIFIER，实际 %v", err)
+	}
+}
+
+// TestFR205ServerCreatedWithServerIdAsDisplayName 验证身份确认创建 server 时，
+// displayName 自动回填为 serverId（spec §3.2）。
+func TestFR205ServerCreatedWithServerIdAsDisplayName(t *testing.T) {
+	db, svc := newV2ControlPlaneTestService(t)
+	ns, token, err := svc.CreateV2Namespace(CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	if _, err := svc.RegisterAgentV2(AgentRegisterV2Params{
+		Token: token, IdentityID: "20500000-0000-4000-8000-000000000001",
+		ServerID: "lobby-205", Kind: model.ServerKindBackend, BootID: "boot-205",
+		AgentVersion: "0.21.0", Addr: "10.0.0.1:25565",
+	}); err != nil {
+		t.Fatalf("注册失败: %v", err)
+	}
+	if _, err := svc.ApproveAgentIdentity("20500000-0000-4000-8000-000000000001", ApproveAgentIdentityParams{
+		Operator: "admin", ServerID: "lobby-205",
+	}); err != nil {
+		t.Fatalf("确认身份失败: %v", err)
+	}
+	var server model.Server
+	if err := db.Where("namespace_id = ? AND server_id = ?", ns.ID, "lobby-205").First(&server).Error; err != nil {
+		t.Fatalf("确认后应创建 server 行: %v", err)
+	}
+	if server.DisplayName != "lobby-205" {
+		t.Fatalf("server 创建时 displayName 应回填 serverId，实际 %q", server.DisplayName)
 	}
 }
 
@@ -1238,7 +1411,7 @@ func TestListServerViewsArchivedAlwaysOffline(t *testing.T) {
 		t.Fatalf("创建活跃身份失败: %v", err)
 	}
 
-	views, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, PageSize: 20})
+	views, total, err := svc.ListServers(ListServersParams{NamespaceID: ns.ID, LifecycleStatus: model.ServerLifecycleArchived, PageSize: 20})
 	if err != nil {
 		t.Fatalf("列出 server 视图失败: %v", err)
 	}

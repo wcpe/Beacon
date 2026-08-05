@@ -32,14 +32,16 @@ func NewSchedDecisionQueryService(repo *repository.SchedDecisionV2Repository) *S
 
 // ListSchedDecisionsParams 是列表查询入参（from/to 必填，范围 ≤ 保留窗 60 天）。
 type ListSchedDecisionsParams struct {
-	NamespaceID uint
-	Zone        string
-	ServerID    string
-	Result      string // "" / success / failed
-	FromMs      int64
-	ToMs        int64
-	Page        int
-	PageSize    int
+	NamespaceID  uint
+	NamespaceIDs []uint
+	Scoped       bool
+	Zone         string
+	ServerID     string
+	Result       string // "" / success / failed
+	FromMs       int64
+	ToMs         int64
+	Page         int
+	PageSize     int
 	// IncludeArchived 为 true 时跨热 / 冷并表查询（FR-152）；ColdCursor 为冷查询 keyset 令牌。
 	IncludeArchived bool
 	ColdCursor      string
@@ -51,14 +53,14 @@ func (s *SchedDecisionQueryService) List(p ListSchedDecisionsParams) ([]model.Sc
 		return nil, 0, err
 	}
 	return s.repo.QueryRange(repository.SchedDecisionQuery{
-		NamespaceID: p.NamespaceID,
-		Zone:        p.Zone,
-		ServerID:    p.ServerID,
-		Result:      p.Result,
-		FromMs:      p.FromMs,
-		ToMs:        p.ToMs,
-		Offset:      pageOffset(p.Page, p.PageSize),
-		Limit:       pageSize(p.PageSize),
+		NamespaceID: p.NamespaceID, NamespaceIDs: p.NamespaceIDs, Scoped: p.Scoped,
+		Zone:     p.Zone,
+		ServerID: p.ServerID,
+		Result:   p.Result,
+		FromMs:   p.FromMs,
+		ToMs:     p.ToMs,
+		Offset:   pageOffset(p.Page, p.PageSize),
+		Limit:    pageSize(p.PageSize),
 	})
 }
 
@@ -80,7 +82,7 @@ func (s *SchedDecisionQueryService) ListCold(p ListSchedDecisionsParams) (ColdPa
 		return ColdPage{}, apperr.ErrInvalidParam
 	}
 	rows, nextToken, err := s.repo.QueryRangeCold(repository.SchedDecisionQuery{
-		NamespaceID: p.NamespaceID, Zone: p.Zone, ServerID: p.ServerID, Result: p.Result,
+		NamespaceID: p.NamespaceID, NamespaceIDs: p.NamespaceIDs, Scoped: p.Scoped, Zone: p.Zone, ServerID: p.ServerID, Result: p.Result,
 		FromMs: p.FromMs, ToMs: p.ToMs,
 	}, p.ColdCursor, pageSize(p.PageSize))
 	if err != nil {
@@ -120,6 +122,18 @@ func (s *SchedDecisionQueryService) Detail(traceID string) (model.SchedDecisionV
 	return *row, nil
 }
 
+// DetailInScope 按冻结范围读取决策详情，域外记录按未命中处理。
+func (s *SchedDecisionQueryService) DetailInScope(traceID string, scope ObservationScope) (model.SchedDecisionV2, error) {
+	row, err := s.Detail(traceID)
+	if err != nil || !scope.Contains(row.NamespaceID) {
+		if err != nil {
+			return model.SchedDecisionV2{}, err
+		}
+		return model.SchedDecisionV2{}, apperr.ErrSchedDecisionNotFound
+	}
+	return row, nil
+}
+
 // SchedFailReasonCount 是失败原因 Top 中的一项。
 type SchedFailReasonCount struct {
 	Reason string
@@ -139,6 +153,11 @@ type SchedDecisionSummaryResult struct {
 // Summary 聚合最近 window 时间窗内的决策概览：总数、成功率、失败原因 Top、降级补报占比。
 // window 支持 Go 时长写法（至少 1h / 24h），缺省 1h；非法 / 非正 / 超保留窗 → 400。
 func (s *SchedDecisionQueryService) Summary(window string) (SchedDecisionSummaryResult, error) {
+	return s.SummaryInScope(window, ObservationScope{All: true})
+}
+
+// SummaryInScope 在窗口聚合前应用冻结 namespace 集合。
+func (s *SchedDecisionQueryService) SummaryInScope(window string, scope ObservationScope) (SchedDecisionSummaryResult, error) {
 	if window == "" {
 		window = schedSummaryDefaultWindow
 	}
@@ -147,7 +166,7 @@ func (s *SchedDecisionQueryService) Summary(window string) (SchedDecisionSummary
 		return SchedDecisionSummaryResult{}, apperr.ErrInvalidParam
 	}
 	to := s.now()
-	agg, err := s.repo.Summarize(to.Add(-d).UnixMilli(), to.UnixMilli())
+	agg, err := s.repo.SummarizeScoped(scope.NamespaceIDs, !scope.All, to.Add(-d).UnixMilli(), to.UnixMilli())
 	if err != nil {
 		return SchedDecisionSummaryResult{}, err
 	}

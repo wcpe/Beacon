@@ -525,9 +525,12 @@ const (
 	ActionSchedulingDrain   = "scheduling.drain"
 	ActionSchedulingUndrain = "scheduling.undrain"
 	// 环境（namespace）写操作（FR-7/FR-30；改名 / 删除补全见 FR-53）
-	ActionNamespaceCreate = "namespace.create"
-	ActionNamespaceUpdate = "namespace.update"
-	ActionNamespaceDelete = "namespace.delete"
+	ActionNamespaceCreate          = "namespace.create"
+	ActionNamespaceUpdate          = "namespace.update"
+	ActionNamespaceDelete          = "namespace.delete"
+	ActionNamespaceArchive         = "namespace.archive"
+	ActionNamespaceRestore         = "namespace.restore"
+	ActionNamespacePermanentDelete = "namespace.permanent_delete"
 	// 第二版 namespace 互通信任。
 	ActionNamespaceTrustGrant  = "namespace_trust.grant"
 	ActionNamespaceTrustRevoke = "namespace_trust.revoke"
@@ -563,8 +566,9 @@ const (
 	// 第二版 server 排空标记切换（区服权威域，收编自调度域；消费方为调度 schedulable 判定）
 	ActionServerSetDraining = "server.set-draining"
 	// server 生命周期归档与恢复（FR-215）。
-	ActionServerArchive = "server.archive"
-	ActionServerRestore = "server.restore"
+	ActionServerArchive         = "server.archive"
+	ActionServerRestore         = "server.restore"
+	ActionServerPermanentDelete = "server.permanent_delete"
 	// 第二版 env 展示维度（FR-178，见 v2-zone-authority.md §3.4/§4.1）：env 增删改与整体替换 env→namespace 映射。
 	// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；detail 仅记 env 名 / 映射 namespace id 列表。
 	ActionEnvCreate        = "env.create"
@@ -667,6 +671,13 @@ const (
 	ServerLifecycleTombstoned = "tombstoned"
 )
 
+// Namespace 生命周期状态。
+const (
+	NamespaceLifecycleActive     = "active"
+	NamespaceLifecycleArchived   = "archived"
+	NamespaceLifecycleTombstoned = "tombstoned"
+)
+
 // 审计对象类型。
 const (
 	TargetTypeConfig         = "config"
@@ -684,6 +695,8 @@ const (
 	TargetTypeAuth = "auth"
 	// 管理面 API 密钥的审计对象类型
 	TargetTypeAPIKey = "apikey"
+	// MCP OAuth 客户端的审计对象类型
+	TargetTypeMCPClient = "mcp-client"
 	// 统一审批请求的审计对象类型
 	TargetTypeApprovalRequest = "approval-request"
 	// agent 命令（FR-39 反向抓取）的审计对象类型

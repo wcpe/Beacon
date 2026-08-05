@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
@@ -22,9 +23,7 @@ func TestFR199LobbyPlacementHTTPAndReadShape(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("注册 backend 失败: %v", err)
 	}
-	if _, err := svc.ApproveAgentIdentity(identityID, service.ApproveAgentIdentityParams{ServerID: "lobby-http", Operator: "admin"}); err != nil {
-		t.Fatalf("确认 backend 失败: %v", err)
-	}
+	approveV2IdentityForHandlerFixture(t, db, svc, identityID, "lobby-http")
 	var lobby model.LobbyCluster
 	if err := db.Where("namespace_id = ?", ns.ID).First(&lobby).Error; err != nil {
 		t.Fatalf("读取大厅集群失败: %v", err)
@@ -36,9 +35,11 @@ func TestFR199LobbyPlacementHTTPAndReadShape(t *testing.T) {
 	if code != http.StatusAccepted || body["status"] != model.ApprovalStatusPending {
 		t.Fatalf("迁入大厅应创建审批请求，实际 %d：%v", code, body)
 	}
-	if _, err := svc.TransferServerPlacement(service.ServerPlacementTransferParams{ServerID: "lobby-http", TargetKind: "lobby_cluster", TargetID: lobby.ID, Reason: "设置首次大厅", Operator: "admin"}); err != nil {
-		t.Fatalf("迁入大厅失败: %v", err)
+	ticket, err := svc.RequestTransferServerPlacement(service.ServerPlacementTransferParams{ServerID: "lobby-http", TargetKind: "lobby_cluster", TargetID: lobby.ID, Reason: "设置首次大厅", Operator: "admin"}, auth.HumanPrincipal("admin"), "handler-placement-lobby-http")
+	if err != nil {
+		t.Fatalf("创建迁入大厅申请失败: %v", err)
 	}
+	runV2ApprovalForHandlerFixture(t, db, svc, ticket)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v2/lobby-clusters?namespaceId="+lobbyUintText(ns.ID), nil)
 	rr := httptest.NewRecorder()

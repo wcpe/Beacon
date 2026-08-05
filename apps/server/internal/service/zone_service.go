@@ -71,8 +71,13 @@ func (s *ZoneService) exportGit(ns, serverID, action, operator string) {
 	})
 }
 
-// Assign 新增或改派 serverId→(group, zone)，事务内 upsert + 审计原子完成。
+// Assign 禁止绕过审批适配器直接修改 V1 指派。
 func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP string) (*model.ZoneAssignment, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// applyAssignForTest 保留既有领域行为，仅供同包测试验证 V1 状态机。
+func (s *ZoneService) applyAssignForTest(ns, serverID, group, zone, operator, note, clientIP string) (*model.ZoneAssignment, error) {
 	if ns == "" || serverID == "" || group == "" || zone == "" || operator == "" {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -102,15 +107,8 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP
 	var a *model.ZoneAssignment
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		var e error
-		a, e = s.assignRepo.WithTx(tx).Upsert(ns, serverID, group, zone, note)
-		if e != nil {
-			return e
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns, Operator: operator, Action: action,
-			TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID,
-			Detail: fmt.Sprintf(`{"group":"%s","zone":"%s"}`, group, zone), Result: model.ResultOK, ClientIP: clientIP,
-		})
+		a, e = s.applyAssignInTx(tx, ns, serverID, group, zone, operator, note, clientIP)
+		return e
 	})
 	if err != nil {
 		return nil, err
@@ -122,8 +120,58 @@ func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP
 	return a, nil
 }
 
-// Unassign 取消指派（软删）；不存在返回 ASSIGNMENT_NOT_FOUND。
+// applyAssignInTx 在调用方事务内写入 V1 指派与审计；事务提交后的通知由调用方负责。
+func (s *ZoneService) applyAssignInTx(tx *gorm.DB, ns, serverID, group, zone, operator, note, clientIP string) (*model.ZoneAssignment, error) {
+	previous, err := s.assignRepo.WithTx(tx).FindByServer(ns, serverID)
+	if err != nil {
+		return nil, err
+	}
+	assignment, err := s.assignRepo.WithTx(tx).Upsert(ns, serverID, group, zone, note)
+	if err != nil {
+		return nil, err
+	}
+	action := model.ActionZoneAssign
+	if previous != nil && (previous.GroupCode != group || previous.ZoneCode != zone) {
+		action = model.ActionZoneMove
+	}
+	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		NamespaceCode: ns, Operator: operator, Action: action,
+		TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID,
+		Detail: fmt.Sprintf(`{"group":"%s","zone":"%s"}`, group, zone), Result: model.ResultOK, ClientIP: clientIP,
+	}); err != nil {
+		return nil, err
+	}
+	return assignment, nil
+}
+
+// validateAssignForApproval 复用 V1 指派的领域前置条件，避免审批适配器绕过排空与角色约束。
+func (s *ZoneService) validateAssignForApproval(ns, serverID, group, zone, operator string) error {
+	if ns == "" || serverID == "" || group == "" || zone == "" || operator == "" {
+		return apperr.ErrInvalidParam
+	}
+	if inst := s.registry.Get(ns, serverID); inst != nil && inst.Role == roleBungee {
+		return apperr.ErrZoneNotAssignableToBC
+	}
+	previous, err := s.assignRepo.FindByServer(ns, serverID)
+	if err != nil {
+		return err
+	}
+	if previous != nil && previous.GroupCode == group && previous.ZoneCode == zone {
+		return apperr.ErrInvalidParam
+	}
+	if s.isOnlineNonempty(ns, serverID) {
+		return apperr.ErrZoneServerOnlineNonempty
+	}
+	return nil
+}
+
+// Unassign 禁止绕过审批适配器直接取消 V1 指派。
 func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+// applyUnassignForTest 保留既有领域行为，仅供同包测试验证 V1 状态机。
+func (s *ZoneService) applyUnassignForTest(ns, serverID, operator, clientIP string) error {
 	if ns == "" || serverID == "" || operator == "" {
 		return apperr.ErrInvalidParam
 	}
@@ -137,19 +185,8 @@ func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
 	if prev != nil && s.isOnlineNonempty(ns, serverID) {
 		return apperr.ErrZoneServerOnlineNonempty
 	}
-	now := time.Now().UTC()
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		deleted, e := s.assignRepo.WithTx(tx).SoftDelete(ns, serverID, now)
-		if e != nil {
-			return e
-		}
-		if !deleted {
-			return apperr.ErrAssignmentNotFound
-		}
-		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns, Operator: operator, Action: model.ActionZoneUnassign,
-			TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID, Result: model.ResultOK, ClientIP: clientIP,
-		})
+		return s.applyUnassignInTx(tx, ns, serverID, operator, clientIP)
 	})
 	if err != nil {
 		return err
@@ -159,6 +196,21 @@ func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
 	s.exportGit(ns, serverID, model.ActionZoneUnassign, operator)
 	slog.Info("取消 zone 指派", "namespace", ns, "serverId", serverID, "operator", operator)
 	return nil
+}
+
+// applyUnassignInTx 在调用方事务内取消 V1 指派并写审计。
+func (s *ZoneService) applyUnassignInTx(tx *gorm.DB, ns, serverID, operator, clientIP string) error {
+	deleted, err := s.assignRepo.WithTx(tx).SoftDelete(ns, serverID, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return apperr.ErrAssignmentNotFound
+	}
+	return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+		NamespaceCode: ns, Operator: operator, Action: model.ActionZoneUnassign,
+		TargetType: model.TargetTypeZone, TargetRef: ns + "/" + serverID, Result: model.ResultOK, ClientIP: clientIP,
+	})
 }
 
 // isOnlineNonempty 判定目标服是否「在线且在场有玩家」（排空门判据，FR-71/ADR-0036）。

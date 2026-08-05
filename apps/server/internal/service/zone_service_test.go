@@ -27,7 +27,7 @@ func TestAssignRejectsBungee(t *testing.T) {
 	// db/repo 传 nil：bungee 守卫先于事务与仓库访问返回，不会触达。
 	svc := NewZoneService(nil, nil, nil, reg)
 
-	_, err := svc.Assign("prod", "bc-1", "area1", "zoneA", "admin", "", "10.0.0.1")
+	_, err := svc.applyAssignForTest("prod", "bc-1", "area1", "zoneA", "admin", "", "10.0.0.1")
 	if !errors.Is(err, apperr.ErrZoneNotAssignableToBC) {
 		t.Fatalf("对 bungee 实例应返回 ErrZoneNotAssignableToBC，实际 %v", err)
 	}
@@ -63,7 +63,7 @@ func TestAssignSameValueNoOp(t *testing.T) {
 	svc := newZoneSvcWithRegistry(t, db, reg)
 
 	// 首次指派 lobby-1 → area1/zoneA（离线服，放行）
-	first, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "首次", "1.1.1.1")
+	first, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "首次", "1.1.1.1")
 	if err != nil || first == nil {
 		t.Fatalf("首次指派应成功，实际 a=%+v err=%v", first, err)
 	}
@@ -74,7 +74,7 @@ func TestAssignSameValueNoOp(t *testing.T) {
 	// 即便此时该服在线且有玩家，同值指派仍应 no-op 放行（同值先于排空门）
 	registerOnlineWithPlayers(t, reg, "prod", "lobby-1", 5)
 
-	got, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "重复", "1.1.1.1")
+	got, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "重复", "1.1.1.1")
 	if err != nil {
 		t.Fatalf("同值指派应 no-op 成功，实际 err=%v", err)
 	}
@@ -105,14 +105,14 @@ func TestAssignOnlineNonemptyRejectsReassign(t *testing.T) {
 	svc := newZoneSvcWithRegistry(t, db, reg)
 
 	// 先在离线态指派到 zoneA
-	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	// 该服在线且有玩家
 	registerOnlineWithPlayers(t, reg, "prod", "lobby-1", 3)
 
 	// 改派到 zoneB → 排空门 409
-	_, err := svc.Assign("prod", "lobby-1", "area1", "zoneB", "admin", "", "")
+	_, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneB", "admin", "", "")
 	if !errors.Is(err, apperr.ErrZoneServerOnlineNonempty) {
 		t.Fatalf("在线非空改派应返回 ZONE_SERVER_ONLINE_NONEMPTY，实际 %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAssignOnlineNonemptyRejectsFirstAssign(t *testing.T) {
 	// 未指派、但在线且有玩家
 	registerOnlineWithPlayers(t, reg, "prod", "lobby-1", 8)
 
-	_, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", "")
+	_, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", "")
 	if !errors.Is(err, apperr.ErrZoneServerOnlineNonempty) {
 		t.Fatalf("在线非空首次指派应返回 ZONE_SERVER_ONLINE_NONEMPTY，实际 %v", err)
 	}
@@ -158,12 +158,12 @@ func TestUnassignOnlineNonemptyRejected(t *testing.T) {
 	reg := runtime.NewRegistry()
 	svc := newZoneSvcWithRegistry(t, db, reg)
 
-	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	registerOnlineWithPlayers(t, reg, "prod", "lobby-1", 1)
 
-	err := svc.Unassign("prod", "lobby-1", "admin", "")
+	err := svc.applyUnassignForTest("prod", "lobby-1", "admin", "")
 	if !errors.Is(err, apperr.ErrZoneServerOnlineNonempty) {
 		t.Fatalf("在线非空取消指派应返回 ZONE_SERVER_ONLINE_NONEMPTY，实际 %v", err)
 	}
@@ -183,13 +183,13 @@ func TestAssignEmptyServerAllowed(t *testing.T) {
 	reg := runtime.NewRegistry()
 	svc := newZoneSvcWithRegistry(t, db, reg)
 
-	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	// 在线但已排空（0 玩家）
 	registerOnlineWithPlayers(t, reg, "prod", "lobby-1", 0)
 
-	got, err := svc.Assign("prod", "lobby-1", "area1", "zoneB", "admin", "", "")
+	got, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneB", "admin", "", "")
 	if err != nil || got == nil || got.ZoneCode != "zoneB" {
 		t.Fatalf("空服改派应放行，实际 a=%+v err=%v", got, err)
 	}
@@ -204,11 +204,11 @@ func TestAssignOfflineServerAllowed(t *testing.T) {
 	reg := runtime.NewRegistry()
 	svc := newZoneSvcWithRegistry(t, db, reg)
 
-	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	// registry 中无该实例（离线）→ 改派放行
-	got, err := svc.Assign("prod", "lobby-1", "area1", "zoneB", "admin", "", "")
+	got, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneB", "admin", "", "")
 	if err != nil || got == nil || got.ZoneCode != "zoneB" {
 		t.Fatalf("离线服改派应放行，实际 a=%+v err=%v", got, err)
 	}
@@ -223,12 +223,12 @@ func TestUnassignEmptyServerAllowed(t *testing.T) {
 	reg := runtime.NewRegistry()
 	svc := newZoneSvcWithRegistry(t, db, reg)
 
-	if _, err := svc.Assign("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := svc.applyAssignForTest("prod", "lobby-1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	registerOnlineWithPlayers(t, reg, "prod", "lobby-1", 0)
 
-	if err := svc.Unassign("prod", "lobby-1", "admin", ""); err != nil {
+	if err := svc.applyUnassignForTest("prod", "lobby-1", "admin", ""); err != nil {
 		t.Fatalf("空服取消指派应放行，实际 err=%v", err)
 	}
 	if c := auditCount(t, db, model.ActionZoneUnassign); c != 1 {

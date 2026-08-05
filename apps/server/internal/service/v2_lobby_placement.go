@@ -71,6 +71,10 @@ type ServerPlacementTransferView struct {
 // TransferServerPlacement 在大厅、业务小区和未分配之间原子迁移单台 backend。
 // Zone 到 Zone 仍由换区工单处理，绝不在这里驱动身份重新确认。
 func (s *V2ControlPlaneService) TransferServerPlacement(p ServerPlacementTransferParams) (*ServerPlacementTransferView, error) {
+	return nil, apperr.ErrForbidden
+}
+
+func (s *V2ControlPlaneService) applyTransferServerPlacement(p ServerPlacementTransferParams) (*ServerPlacementTransferView, error) {
 	if strings.TrimSpace(p.ServerID) == "" || strings.TrimSpace(p.Reason) == "" || len(p.Reason) > 255 {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -134,7 +138,7 @@ func (s *V2ControlPlaneService) TransferServerPlacement(p ServerPlacementTransfe
 		return nil, err
 	}
 	if changedNamespace != "" && s.notifier != nil {
-		s.notifier.NotifyTopologyChange(changedNamespace)
+		s.scheduleAfterCommit(func() { s.notifier.NotifyTopologyChange(changedNamespace) })
 	}
 	return result, nil
 }

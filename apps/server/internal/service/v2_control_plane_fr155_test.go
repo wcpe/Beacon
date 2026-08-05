@@ -13,7 +13,7 @@ import (
 // fr155Fixture 承载 FR-155 用例共享脚手架：一个 namespace + 一条 BC 集群 / 大区 / 两个小区。
 type fr155Fixture struct {
 	db      *gorm.DB
-	svc     *V2ControlPlaneService
+	svc     *v2ControlPlaneTestService
 	ns      *model.Namespace
 	token   string
 	cluster *model.BCCluster
