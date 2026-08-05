@@ -39,7 +39,7 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingUpdateCheckIntervalHours, "169"}, // 高于上界（168）
 	}
 	for _, c := range bad {
-		if err := svc.Update(c.key, c.value, "admin", "127.0.0.1"); err != apperr.ErrSettingValueInvalid {
+		if err := applySettingUpdateForTest(svc, c.key, c.value, "admin", "127.0.0.1"); err != apperr.ErrSettingValueInvalid {
 			t.Fatalf("%s=%q 应被拒 ErrSettingValueInvalid，实际 %v", c.key, c.value, err)
 		}
 	}
@@ -54,7 +54,7 @@ func TestUpdateValidatesValue(t *testing.T) {
 		{SettingUpdateCheckIntervalHours, "168"}, // 上界
 	}
 	for _, c := range good {
-		if err := svc.Update(c.key, c.value, "admin", "127.0.0.1"); err != nil {
+		if err := applySettingUpdateForTest(svc, c.key, c.value, "admin", "127.0.0.1"); err != nil {
 			t.Fatalf("%s=%q 应通过，实际 %v", c.key, c.value, err)
 		}
 	}
@@ -63,7 +63,7 @@ func TestUpdateValidatesValue(t *testing.T) {
 // TestUpdateWritesAudit Update 入审计 settings.update，detail 仅 key + 新值（不含密钥）。
 func TestUpdateWritesAudit(t *testing.T) {
 	svc, db := newTestSettingsService(t)
-	if err := svc.Update(SettingHealthTTLSec, "45", "alice", "203.0.113.1"); err != nil {
+	if err := applySettingUpdateForTest(svc, SettingHealthTTLSec, "45", "alice", "203.0.113.1"); err != nil {
 		t.Fatalf("更新应成功，实际 %v", err)
 	}
 	var logs []model.AuditLog
@@ -93,7 +93,7 @@ func TestCacheReadAndRefresh(t *testing.T) {
 		t.Fatalf("空 store 应取默认 ttl=%d，实际 %d", config.Default().Health.TTLSec, got)
 	}
 	// Update 后缓存即刷新。
-	if err := svc.Update(SettingHealthTTLSec, "77", "admin", ""); err != nil {
+	if err := applySettingUpdateForTest(svc, SettingHealthTTLSec, "77", "admin", ""); err != nil {
 		t.Fatalf("更新失败: %v", err)
 	}
 	if got := svc.GetInt(SettingHealthTTLSec); got != 77 {
@@ -112,7 +112,7 @@ func TestCacheReadAndRefresh(t *testing.T) {
 func TestSeedFromConfigOnlyFillsMissing(t *testing.T) {
 	svc, _ := newTestSettingsService(t)
 	// 预先把 ttl 改为 99（模拟运维已改过）。
-	if err := svc.Update(SettingHealthTTLSec, "99", "admin", ""); err != nil {
+	if err := applySettingUpdateForTest(svc, SettingHealthTTLSec, "99", "admin", ""); err != nil {
 		t.Fatalf("预设失败: %v", err)
 	}
 	// 用一个 ttl=30 的 config 跑种子：已有 99 不应被覆盖。
@@ -221,7 +221,7 @@ func TestLegacyUpdateChannelMigratesPersistently(t *testing.T) {
 // TestAutoCheckDisabledPersistsForPollingConsumer 验证关闭自动检查后，缓存、API 视图与重启读取均保持 false，供前端停止轮询。
 func TestAutoCheckDisabledPersistsForPollingConsumer(t *testing.T) {
 	svc, db := newTestSettingsService(t)
-	if err := svc.Update(SettingUpdateAutoCheckEnabled, "false", "admin", ""); err != nil {
+	if err := applySettingUpdateForTest(svc, SettingUpdateAutoCheckEnabled, "false", "admin", ""); err != nil {
 		t.Fatalf("关闭自动检查失败: %v", err)
 	}
 	if svc.GetBool(SettingUpdateAutoCheckEnabled) {

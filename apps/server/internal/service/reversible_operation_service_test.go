@@ -89,7 +89,7 @@ func seedPublishedConfig(t *testing.T, kit *undoTestKit, dataID, v1, v2 string) 
 	if err != nil {
 		t.Fatalf("建配置失败: %v", err)
 	}
-	if _, err := kit.configSvc.Publish(item.ID, v2, "alice", "", ""); err != nil {
+	if _, err := ApplyConfigPublishForTest(kit.configSvc, item.ID, v2, "alice", "", ""); err != nil {
 		t.Fatalf("发布配置失败: %v", err)
 	}
 	ops, err := kit.repo.List(repository.ReversibleOperationFilter{Namespace: "prod", OpType: model.ReversibleOpPublish})
@@ -209,7 +209,7 @@ func TestUndo_SupersededRejected(t *testing.T) {
 	item, op1 := seedPublishedConfig(t, kit, "s.yml", "v: 1\n", "v: 2\n")
 
 	// 再发布一版 → 旧 op1 被 superseded、新建 op2
-	if _, err := kit.configSvc.Publish(item.ID, "v: 3\n", "alice", "", ""); err != nil {
+	if _, err := ApplyConfigPublishForTest(kit.configSvc, item.ID, "v: 3\n", "alice", "", ""); err != nil {
 		t.Fatalf("二次发布失败: %v", err)
 	}
 	after1, _ := kit.repo.FindByID(op1.ID)
@@ -277,14 +277,14 @@ func TestUndo_NotFound(t *testing.T) {
 // 撤回下发（push）：撤回后文件回到下发前内容。
 func TestUndoPush_RevertsFile(t *testing.T) {
 	kit := newUndoKit(t)
-	obj, err := kit.fileSvc.Create(CreateFileParams{
+	obj, err := applyFileCreateForTest(kit.fileSvc, CreateFileParams{
 		Namespace: "prod", Group: "main", Path: "plugins/x.yml", ScopeLevel: model.ScopeGroup,
 		Content: "p: 1\n", Operator: "alice",
 	})
 	if err != nil {
 		t.Fatalf("建文件失败: %v", err)
 	}
-	if _, err := kit.fileSvc.Publish(obj.ID, "p: 2\n", "alice", "", ""); err != nil {
+	if _, err := applyFilePublishForTest(kit.fileSvc, obj.ID, "p: 2\n", "alice", "", ""); err != nil {
 		t.Fatalf("下发文件失败: %v", err)
 	}
 	ops, _ := kit.repo.List(repository.ReversibleOperationFilter{OpType: model.ReversibleOpPush})
@@ -306,7 +306,7 @@ func TestUndoFetch_SoftDeletesCreatedAndRollsBackUpdated(t *testing.T) {
 	fileSvc := kit.fileSvc
 
 	// 预置一个已存在的受管文件（将被 ingest 覆盖）
-	existing, err := fileSvc.Create(CreateFileParams{
+	existing, err := applyFileCreateForTest(fileSvc, CreateFileParams{
 		Namespace: "prod", Group: "main", Path: "plugins/keep.yml", ScopeLevel: model.ScopeGroup,
 		Content: "old: 1\n", Operator: "alice",
 	})
@@ -315,7 +315,7 @@ func TestUndoFetch_SoftDeletesCreatedAndRollsBackUpdated(t *testing.T) {
 	}
 
 	// 模拟一次 ingest：Import 新建 new.yml + 覆盖 keep.yml
-	result, err := fileSvc.Import(ImportFilesParams{
+	result, err := applyFileImportForTest(fileSvc, ImportFilesParams{
 		Namespace: "prod", Group: "main", ScopeLevel: model.ScopeGroup,
 		Files: []ImportFile{
 			{Path: "plugins/new.yml", Content: "new: 1\n"},
@@ -375,7 +375,10 @@ func TestUndo_VsNewPublish_Concurrent(t *testing.T) {
 	wg.Add(2)
 	var undoErr, pubErr error
 	go func() { defer wg.Done(); _, undoErr = kit.undoSvc.Undo(op.ID, "bob", "") }()
-	go func() { defer wg.Done(); _, pubErr = kit.configSvc.Publish(item.ID, "r: 9\n", "alice", "", "") }()
+	go func() {
+		defer wg.Done()
+		_, pubErr = ApplyConfigPublishForTest(kit.configSvc, item.ID, "r: 9\n", "alice", "", "")
+	}()
 	wg.Wait()
 
 	if pubErr != nil {

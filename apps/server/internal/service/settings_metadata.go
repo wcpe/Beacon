@@ -330,6 +330,23 @@ var secretSettingKeys = map[string]struct{}{
 	SettingUpdateProxyURL: {},
 }
 
+// dangerousSettingKeys 是运行设置元数据的一部分；危险性只从此处读取，handler 不得自行猜测。
+var dangerousSettingKeys = map[string]struct{}{
+	SettingHealthDegradedAfterSec: {}, SettingHealthTTLSec: {}, SettingHealthOfflineGraceSec: {}, SettingHealthScanIntervalSec: {},
+	SettingMetricSampleIntervalSec: {}, SettingMetricRetentionHours: {}, SettingLongpollMaxHoldMs: {},
+	SettingAlertWebhookURL: {}, SettingAlertWebhookTimeoutMs: {}, SettingUpdateProxyURL: {}, SettingUpdateChannel: {},
+	SettingUpdateAutoCheckEnabled: {}, SettingUpdateCheckIntervalHours: {},
+	SettingArchiveRetentionMetricSample: {}, SettingArchiveRetentionHealthSnapshot: {}, SettingArchiveRetentionSchedDecision: {},
+	SettingArchiveRetentionConnDetail: {}, SettingArchiveRetentionMsgTrace: {}, SettingArchiveRetentionMsgPayload: {},
+	SettingArchiveRetentionAudit: {}, SettingArchiveAutoEnabled: {}, SettingArchiveScheduleHourUTC: {},
+}
+
+// SettingDangerous 返回设置是否已登记为高影响。
+func SettingDangerous(key string) bool {
+	_, ok := dangerousSettingKeys[key]
+	return ok
+}
+
 // isSecretSettingKey 判断某 key 是否为含凭据项（对外须脱敏）。
 func isSecretSettingKey(key string) bool {
 	_, ok := secretSettingKeys[key]

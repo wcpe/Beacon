@@ -138,6 +138,18 @@ func (s *ConfigCenterService) RollbackVersion(versionID uint, remark, operator, 
 	return &ConfigSaveResultView{VersionID: version.ID, VersionNo: version.VersionNo, ContentHash: version.ContentHash}, nil
 }
 
+// rollbackVersionInTx 让交付审批 worker 在其领域事务内追加配置回退版本。
+func (s *ConfigCenterService) rollbackVersionInTx(tx *gorm.DB, versionID uint, remark, operator, clientIP string) (*ConfigSaveResultView, error) {
+	if tx == nil {
+		return nil, apperr.ErrForbidden
+	}
+	transactional := *s
+	transactional.db = tx
+	transactional.files = s.files.WithTx(tx)
+	transactional.versions = s.versions.WithTx(tx)
+	return transactional.RollbackVersion(versionID, remark, operator, clientIP)
+}
+
 // RemoveScopeContribution 撤销某层贡献（spec §4.6）：追加 is_removal=true 的空内容版本；
 // head 已是撤销或链不存在则 400；原因必填并入审计。
 func (s *ConfigCenterService) RemoveScopeContribution(fileID uint, scopeLevel string, scopeRefID uint, reason, operator, clientIP string) (*ConfigRevokeResultView, error) {
@@ -169,6 +181,18 @@ func (s *ConfigCenterService) RemoveScopeContribution(fileID uint, scopeLevel st
 		return nil, err
 	}
 	return &ConfigRevokeResultView{VersionID: version.ID, VersionNo: version.VersionNo, IsRemoval: true}, nil
+}
+
+// removeScopeContributionInTx 让交付审批 worker 在其领域事务内追加撤销层贡献版本。
+func (s *ConfigCenterService) removeScopeContributionInTx(tx *gorm.DB, fileID uint, scopeLevel string, scopeRefID uint, reason, operator, clientIP string) (*ConfigRevokeResultView, error) {
+	if tx == nil {
+		return nil, apperr.ErrForbidden
+	}
+	transactional := *s
+	transactional.db = tx
+	transactional.files = s.files.WithTx(tx)
+	transactional.versions = s.versions.WithTx(tx)
+	return transactional.RemoveScopeContribution(fileID, scopeLevel, scopeRefID, reason, operator, clientIP)
 }
 
 // appendVersion 事务内取链 max(version_no)+1 追加版本并自记审计；

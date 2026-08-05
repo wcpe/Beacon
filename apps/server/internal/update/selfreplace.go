@@ -1,6 +1,7 @@
 package update
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -23,7 +24,8 @@ const (
 	// sentinelName 换版待验证标记文件名（运行二进制同目录）。
 	sentinelName = "beacon.update-pending"
 	// oldSuffix 旧二进制让位备份后缀（仅留 1 份，供自动回退）。
-	oldSuffix = ".old"
+	oldSuffix            = ".old"
+	backupManifestSuffix = ".old.manifest"
 	// failedSuffix 自动回退时坏新版的归档后缀（便于事后排查）。
 	failedSuffix = ".failed"
 )
@@ -36,8 +38,12 @@ var (
 	// osExit 进程退出钩子。
 	osExit = os.Exit
 	// spawnProcess 拉起新进程钩子；默认以原参数 / 环境 / 工作目录 / 标准流启动 exe。
-	spawnProcess = defaultSpawn
+	spawnProcess          = defaultSpawn
+	updateSuccessObserver func(string)
 )
+
+// SetUpdateSuccessObserver 设置稳定换版成功后的进程内观察回调。
+func SetUpdateSuccessObserver(observer func(string)) { updateSuccessObserver = observer }
 
 // sentinelState 是换版待验证标记内容：记新版启动尝试计数与目标版本（计数用于「崩 N 次自动回退」判定）。
 type sentinelState struct {
@@ -45,11 +51,17 @@ type sentinelState struct {
 	Version string `json:"version"`
 }
 
+// BackupSnapshot 是与 .old 同生命周期的可核验回滚备份事实。
+type BackupSnapshot struct {
+	Version string `json:"version"`
+	SHA256  string `json:"sha256"`
+}
+
 // SwapAndRespawn 在主进程优雅关停（端口已释放）后执行自替换并重启（FR-119，见 ADR-0053）。
 // 让位三步换二进制：runPath→.old、pending→runPath；成功则写 sentinel 标记待验证、spawn 新版；
 // 换二进制失败则就地回退（已在 landBinary 内还原旧版）、spawn 旧版继续服务（回退兜底）。
 // spawn 后由调用方（main）正常退出本进程，新进程接管同端口。
-func SwapAndRespawn(runPath, pendingPath, version string) error {
+func SwapAndRespawn(runPath, pendingPath, version, previousVersion string) error {
 	if err := landBinary(runPath, pendingPath); err != nil {
 		// 换二进制失败：landBinary 已就地还原旧版；端口已被调用方关停释放，须 spawn 旧版恢复服务。
 		slog.Error("自替换换二进制失败，保留并重启旧版", "错误", err)
@@ -57,6 +69,9 @@ func SwapAndRespawn(runPath, pendingPath, version string) error {
 			return fmt.Errorf("换二进制失败且重启旧版失败: 换=%v 重启=%w", err, spErr)
 		}
 		return nil
+	}
+	if err := writeBackupSnapshot(runPath, BackupSnapshot{Version: previousVersion}); err != nil {
+		return fmt.Errorf("写回滚备份清单失败: %w", err)
 	}
 	// 换成功：写 sentinel（attempt=0），新版启动早期自检消费（CheckAndAutoRollback）。
 	if err := writeSentinel(runPath, sentinelState{Attempt: 0, Version: version}); err != nil {
@@ -103,12 +118,28 @@ func CheckAndAutoRollback(runPath string) {
 	}()
 }
 
+// PendingUpdateVersion 返回待验证换版的目标版本；无有效 sentinel 时返回空。
+func PendingUpdateVersion(runPath string) string {
+	state, ok := readSentinel(runPath)
+	if !ok {
+		return ""
+	}
+	return state.Version
+}
+
 // ConfirmUpdateSuccess 确认更新成功：清理 sentinel 与 .old 备份（幂等，不存在即忽略）。
 // 由验证定时器与正常关停（管理员 / docker stop 介入=新版已被接受）双路径调用。
 func ConfirmUpdateSuccess(runPath string) {
+	version := PendingUpdateVersion(runPath)
 	removeSentinel(runPath)
 	if err := os.Remove(runPath + oldSuffix); err != nil && !os.IsNotExist(err) {
 		slog.Warn("清理上一版本备份失败", "错误", err)
+	}
+	if err := os.Remove(backupManifestPath(runPath)); err != nil && !os.IsNotExist(err) {
+		slog.Warn("清理上一版本备份清单失败", "错误", err)
+	}
+	if version != "" && updateSuccessObserver != nil {
+		updateSuccessObserver(version)
 	}
 }
 
@@ -165,8 +196,55 @@ func rollbackToOld(runPath string) error {
 			slog.Warn("回退二进制补可执行位失败", "错误", err)
 		}
 	}
+	if err := os.Remove(backupManifestPath(runPath)); err != nil && !os.IsNotExist(err) {
+		slog.Warn("清理已消费回滚备份清单失败", "错误", err)
+	}
 	return nil
 }
+
+// ReadBackupSnapshot 读取并复核当前 .old 备份的版本和哈希；缺失或漂移一律失败。
+func ReadBackupSnapshot(runPath string) (BackupSnapshot, error) {
+	data, err := os.ReadFile(backupManifestPath(runPath))
+	if err != nil {
+		return BackupSnapshot{}, fmt.Errorf("读取回滚备份清单失败: %w", err)
+	}
+	var snapshot BackupSnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil || snapshot.Version == "" || snapshot.SHA256 == "" {
+		return BackupSnapshot{}, fmt.Errorf("回滚备份清单无效")
+	}
+	actual, err := fileSHA256(runPath + oldSuffix)
+	if err != nil || actual != snapshot.SHA256 {
+		return BackupSnapshot{}, fmt.Errorf("回滚备份已变化")
+	}
+	return snapshot, nil
+}
+
+func writeBackupSnapshot(runPath string, snapshot BackupSnapshot) error {
+	if snapshot.Version == "" {
+		return fmt.Errorf("上一版本为空")
+	}
+	sum, err := fileSHA256(runPath + oldSuffix)
+	if err != nil {
+		return err
+	}
+	snapshot.SHA256 = sum
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(backupManifestPath(runPath), data, 0o600)
+}
+
+func fileSHA256(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum[:]), nil
+}
+
+func backupManifestPath(runPath string) string { return runPath + backupManifestSuffix }
 
 // RollbackAvailable 报告是否存在可回退的上一版本备份（.old），供手动回滚前置检查与前端按钮显隐（FR-120）。
 func RollbackAvailable(runPath string) bool {

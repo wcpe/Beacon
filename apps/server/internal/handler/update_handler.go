@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/redact"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
@@ -14,6 +16,10 @@ import (
 // 只读拒写与审计由路由中间件统一裁决；handler 不碰 http.Client（出站由更新核心经 FR-98 工厂收口）、不读 store。
 type UpdateHandler struct {
 	svc *service.UpdateService
+}
+
+type dangerousOperationRequest struct {
+	Reason string `json:"reason"`
 }
 
 // NewUpdateHandler 构造处理器。
@@ -56,11 +62,17 @@ func (h *UpdateHandler) Status(w http.ResponseWriter, _ *http.Request) {
 // fix-1：apply 改异步——受理后立即回 202，下载 / 校验 / 落位 / 重启在后台进行，前端经状态端点轮询进度；
 // 已有更新进行中再触发 → 409 UPDATE_IN_PROGRESS。失败原因写入进度态（脱敏）由前端轮询展示，不静默。
 func (h *UpdateHandler) Apply(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Apply(auth.Operator(r.Context()), clientIP(r)); err != nil {
+	var body dangerousOperationRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ticket, err := h.svc.RequestApply(r.Context(), body.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ProxyTest 处理 GET /admin/v1/system/proxy-test：用已配 update.proxy-url 试连 GitHub（FR-124，只读诊断）。
@@ -88,9 +100,15 @@ func (h *UpdateHandler) Cancel(w http.ResponseWriter, _ *http.Request) {
 // Rollback 处理 POST /admin/v1/system/rollback：触发手动回滚到上一版本（写方法，readonly 经 readonlyWriteGuard 403）。
 // 无 .old 备份返回 409；成功回 202 表示已接受，随后主进程优雅关停并回退重启（FR-120）。
 func (h *UpdateHandler) Rollback(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Rollback(auth.Operator(r.Context()), clientIP(r)); err != nil {
+	var body dangerousOperationRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	ticket, err := h.svc.RequestRollback(body.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }

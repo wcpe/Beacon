@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/redact"
 	"github.com/wcpe/Beacon/apps/server/internal/update"
 )
@@ -91,11 +94,55 @@ type UpdateService struct {
 	baseCtx context.Context
 	// applyCancel 是进行中更新的取消函数（fix-b / FR-125）：存于 mu 下，供关停（经 baseCtx）与手动取消（CancelApply）。
 	applyCancel context.CancelFunc
+	approval    *ApprovalService
 }
 
 // NewUpdateService 构造服务（core=更新核心，settings=设置 store 读口）。
 func NewUpdateService(core updateCore, settings updateSettingsReader) *UpdateService {
 	return &UpdateService{core: core, settings: settings, now: time.Now}
+}
+
+// SetApprovalService 注入统一审批申请服务。
+func (s *UpdateService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// RequestApply 冻结当前确定资产并创建审批申请，不下载或替换二进制。
+func (s *UpdateService) RequestApply(ctx context.Context, reason, key, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s.approval == nil {
+		return ApprovalTicketView{}, apperr.ErrForbidden
+	}
+	core, ok := s.core.(interface {
+		FreezeLatestTarget(context.Context, update.Channel, string) (update.FrozenTarget, error)
+	})
+	if !ok {
+		return ApprovalTicketView{}, apperr.ErrForbidden
+	}
+	frozen, err := core.FreezeLatestTarget(ctx, update.Channel(stableUpdateChannel(s.settings.GetString(SettingUpdateChannel))), s.settings.GetString(SettingUpdateProxyURL))
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationSystemUpdateApply, Resource: model.TargetTypeSystem, ResourceID: frozen.Version,
+		IdempotencyKey: key, RiskLevel: "high", Reason: reason}, map[string]any{"frozen": frozen, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// RequestRollback 冻结当前 .old 备份并创建审批申请。
+func (s *UpdateService) RequestRollback(reason, key, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s.approval == nil {
+		return ApprovalTicketView{}, apperr.ErrForbidden
+	}
+	frozen, err := s.FreezeRollback()
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationSystemUpdateRollback, Resource: model.TargetTypeSystem, ResourceID: frozen.Version,
+		IdempotencyKey: key, RiskLevel: "high", Reason: reason}, map[string]any{"frozen": frozen, "operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
 }
 
 // Check 执行 / 复用一次更新检查（FR-99）：
@@ -168,8 +215,13 @@ func (s *UpdateService) Status() update.Progress {
 //     彻底摆脱"请求被取消即下载中断"；
 //   - 失败原因由核心写入进度态（failApply）+ 审计，前端经状态端点轮询 progress.error（脱敏后）看到，不再静默。
 //
-// 只读拒写 + 审计由上层中间件 / 核心保证。
+// Apply 保留兼容入口，但禁止绕过审批直接触发在线更新。
 func (s *UpdateService) Apply(operator, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+// apply 在审批适配器确认冻结目标后异步执行在线更新。
+func (s *UpdateService) apply(operator, clientIP string) error {
 	if !s.applying.CompareAndSwap(false, true) {
 		return apperr.ErrUpdateInProgress
 	}
@@ -206,6 +258,42 @@ func (s *UpdateService) Apply(operator, clientIP string) error {
 	return nil
 }
 
+// applyFrozen 仅由系统审批适配器执行审批阶段冻结的确定资产，禁止再按渠道选择 latest。
+func (s *UpdateService) applyFrozen(frozen update.FrozenTarget, operator, clientIP string, onFinished func(error)) error {
+	core, ok := s.core.(interface {
+		ApplyFrozenUpdate(context.Context, update.FrozenTarget, string, string, string) error
+	})
+	if !ok || !s.applying.CompareAndSwap(false, true) {
+		return apperr.ErrForbidden
+	}
+	proxyURL := s.settings.GetString(SettingUpdateProxyURL)
+	base := s.baseCtx
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithCancel(base)
+	s.mu.Lock()
+	s.applyCancel = cancel
+	s.mu.Unlock()
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.applyCancel = nil
+			s.mu.Unlock()
+			cancel()
+			s.applying.Store(false)
+		}()
+		err := core.ApplyFrozenUpdate(ctx, frozen, proxyURL, operator, clientIP)
+		if onFinished != nil {
+			onFinished(err)
+		}
+		if err != nil {
+			slog.Warn("审批冻结更新执行失败（详情见进度态）", "错误", err)
+		}
+	}()
+	return nil
+}
+
 // SetBaseContext 设置异步更新的父 context（fix-b）：传入进程信号 ctx，使 Ctrl+C / 关停时取消进行中的下载。
 // 在开始服务前一次性设置（happens-before 任何 Apply），无需加锁。
 func (s *UpdateService) SetBaseContext(ctx context.Context) { s.baseCtx = ctx }
@@ -233,12 +321,39 @@ func (s *UpdateService) RollbackAvailable() bool {
 	return s.core.RollbackAvailable()
 }
 
-// Rollback 触发手动回滚到上一版本（FR-120）：无 .old 返回 ErrNoRollbackAvailable（409），否则调核心回退。
+// Rollback 保留兼容入口，但禁止绕过审批直接回滚。
 func (s *UpdateService) Rollback(operator, clientIP string) error {
+	return apperr.ErrForbidden
+}
+
+// rollback 在审批适配器确认冻结备份后执行回滚。
+func (s *UpdateService) rollback(operator, clientIP string) error {
 	if !s.core.RollbackAvailable() {
 		return apperr.ErrNoRollbackAvailable
 	}
 	return s.core.Rollback(operator, clientIP)
+}
+
+// FreezeRollback 读取可供审批冻结的 .old 备份事实。
+func (s *UpdateService) FreezeRollback() (update.BackupSnapshot, error) {
+	core, ok := s.core.(interface {
+		RollbackSnapshot() (update.BackupSnapshot, error)
+	})
+	if !ok {
+		return update.BackupSnapshot{}, apperr.ErrForbidden
+	}
+	return core.RollbackSnapshot()
+}
+
+// rollbackFrozen 仅由系统审批适配器消费审批冻结的 .old 备份。
+func (s *UpdateService) rollbackFrozen(snapshot update.BackupSnapshot, operator, clientIP string) error {
+	core, ok := s.core.(interface {
+		RollbackFrozen(update.BackupSnapshot, string, string) error
+	})
+	if !ok {
+		return apperr.ErrForbidden
+	}
+	return core.RollbackFrozen(snapshot, operator, clientIP)
 }
 
 // stableUpdateChannel 将历史值和非法值防御性归一为 stable；持久化迁移由 SettingsService 在启动时完成。

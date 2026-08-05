@@ -341,11 +341,26 @@ func TestServiceUnreachableDegrades(t *testing.T) {
 
 // TestArchiveRetentionGuardBelow7 保留期下限守卫：<7 被设置校验拒绝、=7 通过。
 func TestArchiveRetentionGuardBelow7(t *testing.T) {
-	svc, _ := newTestSettingsService(t)
-	if err := svc.Update(SettingArchiveRetentionMetricSample, "6", "admin", "127.0.0.1"); !errors.Is(err, apperr.ErrSettingValueInvalid) {
+	svc, db := newTestSettingsService(t)
+	row := model.Setting{Key: SettingArchiveRetentionMetricSample, Value: "14", ValueType: model.SettingValueTypeInt, Version: 1}
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("写入初始保留期失败: %v", err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		_, err := svc.applyDangerousInTx(tx, SettingArchiveRetentionMetricSample, "6", row.Version, "admin", "127.0.0.1")
+		return err
+	}); !errors.Is(err, apperr.ErrSettingValueInvalid) {
 		t.Fatalf("保留期 6(<7) 应被拒，实际 %v", err)
 	}
-	if err := svc.Update(SettingArchiveRetentionMetricSample, "7", "admin", "127.0.0.1"); err != nil {
+	var after func()
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		after, err = svc.applyDangerousInTx(tx, SettingArchiveRetentionMetricSample, "7", row.Version, "admin", "127.0.0.1")
+		return err
+	}); err != nil {
 		t.Fatalf("保留期 7 应通过，实际 %v", err)
+	}
+	if after != nil {
+		after()
 	}
 }

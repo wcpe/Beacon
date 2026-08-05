@@ -93,7 +93,7 @@ func (f *fakeUpdateCore) Rollback(operator, clientIP string) error {
 func TestRollbackUnavailableReturns409(t *testing.T) {
 	core := &fakeUpdateCore{rollbackAvailable: false}
 	svc := NewUpdateService(core, &fakeSettingsReader{})
-	if err := svc.Rollback("tester", "1.2.3.4"); !errors.Is(err, apperr.ErrNoRollbackAvailable) {
+	if err := svc.rollback("tester", "1.2.3.4"); !errors.Is(err, apperr.ErrNoRollbackAvailable) {
 		t.Fatalf("无 .old 应返回 ErrNoRollbackAvailable，实际 %v", err)
 	}
 	if core.rollbackCalls != 0 {
@@ -105,11 +105,25 @@ func TestRollbackUnavailableReturns409(t *testing.T) {
 func TestRollbackAvailableForwardsToCore(t *testing.T) {
 	core := &fakeUpdateCore{rollbackAvailable: true}
 	svc := NewUpdateService(core, &fakeSettingsReader{})
-	if err := svc.Rollback("tester", "1.2.3.4"); err != nil {
+	if err := svc.rollback("tester", "1.2.3.4"); err != nil {
 		t.Fatalf("有 .old 应成功: %v", err)
 	}
 	if core.rollbackCalls != 1 {
 		t.Fatalf("应转发核心 Rollback 1 次，实际 calls=%d", core.rollbackCalls)
+	}
+}
+
+func TestUpdatePublicMutatorsFailClosed(t *testing.T) {
+	core := &fakeUpdateCore{rollbackAvailable: true}
+	svc := NewUpdateService(core, &fakeSettingsReader{})
+	if err := svc.Apply("tester", "1.2.3.4"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开 Apply 必须拒绝绕过审批，实际 %v", err)
+	}
+	if err := svc.Rollback("tester", "1.2.3.4"); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开 Rollback 必须拒绝绕过审批，实际 %v", err)
+	}
+	if core.applyCalls != 0 || core.rollbackCalls != 0 {
+		t.Fatalf("公开入口不得触发核心副作用，apply=%d rollback=%d", core.applyCalls, core.rollbackCalls)
 	}
 }
 
@@ -309,7 +323,7 @@ func TestApplyNormalizesLegacyChannel(t *testing.T) {
 	settings := &fakeSettingsReader{channel: "prerelease", proxy: "http://p:9090"}
 	svc := NewUpdateService(core, settings)
 
-	if err := svc.Apply("tester", "5.6.7.8"); err != nil {
+	if err := svc.apply("tester", "5.6.7.8"); err != nil {
 		t.Fatalf("apply 不应返回错误：%v", err)
 	}
 	<-core.applyStarted // 等后台 goroutine 进入核心（字段已写毕）
@@ -332,13 +346,13 @@ func TestApplyIsAsyncAndGuardsConcurrency(t *testing.T) {
 	svc := NewUpdateService(core, &fakeSettingsReader{channel: "stable"})
 
 	// 首次触发：异步受理，立即返回（若仍同步阻塞，此调用会卡在核心的 applyBlock 上不返回）。
-	if err := svc.Apply("a", ""); err != nil {
+	if err := svc.apply("a", ""); err != nil {
 		t.Fatalf("首次 Apply 应立即受理返回 nil，实际 %v", err)
 	}
 	<-core.applyStarted // 确认后台已进核心并阻塞在 applyBlock
 
 	// 进行中再触发：并发守卫返回 409 ErrUpdateInProgress（不再开第二次下载）。
-	if err := svc.Apply("b", ""); !errors.Is(err, apperr.ErrUpdateInProgress) {
+	if err := svc.apply("b", ""); !errors.Is(err, apperr.ErrUpdateInProgress) {
 		t.Fatalf("进行中再触发应返回 ErrUpdateInProgress，实际 %v", err)
 	}
 
@@ -360,7 +374,7 @@ func TestCancelApplyCancelsRunningApply(t *testing.T) {
 		t.Fatal("无进行中更新时 CancelApply 应返回 false")
 	}
 
-	if err := svc.Apply("a", ""); err != nil {
+	if err := svc.apply("a", ""); err != nil {
 		t.Fatalf("Apply 应受理返回 nil，实际 %v", err)
 	}
 	<-core.applyStarted // 后台已进核心、阻塞在 ctx 上

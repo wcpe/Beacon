@@ -1,5 +1,5 @@
 // Package secret 提供敏感配置 at-rest 加密的纯加解密原语（AES-256-GCM）。
-// 它是叶子包，无外部依赖；密钥由调用方从环境变量注入，本包不读 env、不打日志、不持久化密钥。
+// 它是叶子包，无外部依赖；密钥由调用方从持久密钥文件注入，本包不读 env、不打日志。
 package secret
 
 import (
@@ -20,7 +20,7 @@ const tokenPrefix = "enc:v1:"
 
 // ErrKeyMissing 表示在未配置加密密钥的情况下被要求加密 / 解密敏感内容。
 // 由 NewCipher("") 产生的未启用 cipher 在加解密时返回，供上层 fail-fast。
-var ErrKeyMissing = errors.New("未配置配置加密密钥（BEACON_CONFIG_ENCRYPTION_KEY），无法加解密敏感配置")
+var ErrKeyMissing = errors.New("未装配配置加密密钥，无法加解密敏感配置")
 
 // ErrNotEncrypted 表示待解密文本不带合法密文前缀（非本包产出的密文）。
 var ErrNotEncrypted = errors.New("待解密文本不是合法密文")

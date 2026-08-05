@@ -101,6 +101,29 @@ func (c *releaseClient) latestForChannel(ctx context.Context, ch Channel) (*ghRe
 	return nil, fmt.Errorf("查 release 列表超过分页上限: %d", maxReleasePages)
 }
 
+// gaForTag 按精确 GA tag 读取发布对象，不按当前最新版本替换目标。
+func (c *releaseClient) gaForTag(ctx context.Context, tag string) (*ghRelease, error) {
+	if !isGATag(tag) {
+		return nil, fmt.Errorf("非法 GA tag: %q", tag)
+	}
+	for page := 1; page <= maxReleasePages; page++ {
+		releases, err := c.listReleasePage(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		for i := range releases {
+			release := &releases[i]
+			if release.TagName == tag && !release.Draft && !release.Prerelease {
+				return release, nil
+			}
+		}
+		if len(releases) < releasePageSize {
+			break
+		}
+	}
+	return nil, fmt.Errorf("找不到冻结 GA release: %s", tag)
+}
+
 func selectLatestGA(releases []ghRelease, latest *ghRelease, latestVersion semver) (*ghRelease, semver) {
 	for i := range releases {
 		release := &releases[i]

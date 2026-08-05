@@ -44,6 +44,40 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
+// TestReadBackupSnapshotRejectsDrift 冻结后 .old 被替换时必须拒绝回滚。
+func TestReadBackupSnapshotRejectsDrift(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	writeFile(t, run+oldSuffix, "旧版")
+	if err := writeBackupSnapshot(run, BackupSnapshot{Version: "v1.0.0"}); err != nil {
+		t.Fatalf("写备份清单失败: %v", err)
+	}
+	if _, err := ReadBackupSnapshot(run); err != nil {
+		t.Fatalf("未漂移备份应可读取: %v", err)
+	}
+	writeFile(t, run+oldSuffix, "被替换的旧版")
+	if _, err := ReadBackupSnapshot(run); err == nil {
+		t.Fatal("备份哈希漂移必须拒绝")
+	}
+}
+
+// TestConfirmUpdateSuccessNotifiesObserver 稳定验证完成后必须携带冻结版本通知主装配层持久化对账。
+func TestConfirmUpdateSuccessNotifiesObserver(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "beacon")
+	if err := writeSentinel(run, sentinelState{Version: "v2.0.0"}); err != nil {
+		t.Fatalf("写 sentinel 失败: %v", err)
+	}
+	original := updateSuccessObserver
+	defer SetUpdateSuccessObserver(original)
+	got := ""
+	SetUpdateSuccessObserver(func(version string) { got = version })
+	ConfirmUpdateSuccess(run)
+	if got != "v2.0.0" {
+		t.Fatalf("应通知冻结版本，实际 %q", got)
+	}
+}
+
 // TestLandBinarySwapsAndKeepsOld 让位三步：新版就位运行路径、旧版保留为 .old、pending 消失。
 func TestLandBinarySwapsAndKeepsOld(t *testing.T) {
 	dir := t.TempDir()
@@ -236,7 +270,7 @@ func TestSwapAndRespawnSuccess(t *testing.T) {
 	writeFile(t, pending, "新版")
 	rec := stubHooks(t)
 
-	if err := SwapAndRespawn(run, pending, "v9.9.9"); err != nil {
+	if err := SwapAndRespawn(run, pending, "v9.9.9", "v9.9.8"); err != nil {
 		t.Fatalf("SwapAndRespawn 应成功: %v", err)
 	}
 	if got := readFile(t, run); got != "新版" {
@@ -261,7 +295,7 @@ func TestSwapAndRespawnLandFailFallback(t *testing.T) {
 	writeFile(t, run, "旧版")
 	rec := stubHooks(t)
 
-	if err := SwapAndRespawn(run, filepath.Join(dir, "不存在.new"), "v9.9.9"); err != nil {
+	if err := SwapAndRespawn(run, filepath.Join(dir, "不存在.new"), "v9.9.9", "v9.9.8"); err != nil {
 		t.Fatalf("换失败应回退兜底、不返回错误: %v", err)
 	}
 	if got := readFile(t, run); got != "旧版" {

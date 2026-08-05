@@ -10,6 +10,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/config"
 	"github.com/wcpe/Beacon/apps/server/internal/httpx"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
@@ -25,8 +27,9 @@ type SettingsService struct {
 	repo      *repository.SettingRepository
 	auditRepo *repository.AuditLogRepository
 
-	mu    sync.RWMutex
-	cache map[string]string // key → 字符串化值；缺则取白名单默认
+	mu       sync.RWMutex
+	cache    map[string]string // key → 字符串化值；缺则取白名单默认
+	approval *ApprovalService
 }
 
 // NewSettingsService 构造服务并从库载入全量缓存（启动装配）。
@@ -52,6 +55,34 @@ func NewSettingsService(db *gorm.DB, repo *repository.SettingRepository, auditRe
 		s.cache[item.Key] = value
 	}
 	return s, nil
+}
+
+// SetApprovalService 注入统一审批申请服务。
+func (s *SettingsService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// RequestUpdate 对高影响设置只创建冻结审批，低风险设置仍由直接更新入口处理。
+func (s *SettingsService) RequestUpdate(key, value, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	meta, ok := settingMetaFor(key)
+	if !ok || !SettingDangerous(key) {
+		return ApprovalTicketView{}, apperr.ErrForbidden
+	}
+	if err := validateSettingValue(meta, value); err != nil {
+		return ApprovalTicketView{}, err
+	}
+	if s.approval == nil {
+		return ApprovalTicketView{}, apperr.ErrForbidden
+	}
+	current, err := s.repo.Get(key)
+	if err != nil || current == nil {
+		return ApprovalTicketView{}, apperr.ErrApprovalTargetChanged
+	}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationSettingsDangerous, Resource: model.TargetTypeSettings, ResourceID: key,
+		IdempotencyKey: idempotencyKey, RiskLevel: "high", Reason: reason}, map[string]any{"key": key, "value": value, "version": current.Version,
+		"operator": operator, "clientIP": clientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
 }
 
 // normalizeUpdateChannel 按当前合法渠道契约归一历史值，预发布或非法旧值统一迁移为 stable。
@@ -135,6 +166,9 @@ func (s *SettingsService) Update(key, value, operator, clientIP string) error {
 	if !ok {
 		return apperr.ErrSettingKeyNotAllowed
 	}
+	if SettingDangerous(key) {
+		return apperr.ErrForbidden
+	}
 	// 含凭据项「未改密码」语义（FR-98，见 ADR-0047）：前端回显的是脱敏值，若用户原样提交脱敏占位
 	// （等于当前值的脱敏形态），视为「未改」——保留 store 原值不覆盖、不入审计，避免把脱敏占位写成真值。
 	if isSecretSettingKey(key) {
@@ -172,6 +206,32 @@ func (s *SettingsService) Update(key, value, operator, clientIP string) error {
 	}
 	slog.Info("运维设置已更新", "key", key, "operator", operator)
 	return nil
+}
+
+// applyDangerousInTx 仅由审批适配器在其领域事务中调用，按冻结版本 CAS 写入。
+func (s *SettingsService) applyDangerousInTx(tx *gorm.DB, key, value string, version int, operator, clientIP string) (func(), error) {
+	meta, ok := settingMetaFor(key)
+	if !ok || !SettingDangerous(key) || tx == nil {
+		return nil, apperr.ErrForbidden
+	}
+	if err := validateSettingValue(meta, value); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.WithTx(tx).UpdateIfVersion(key, value, meta.valueType, version); err != nil {
+		return nil, apperr.ErrApprovalTargetChanged
+	}
+	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{Operator: operator, Action: model.ActionSettingsUpdate,
+		TargetType: model.TargetTypeSettings, TargetRef: key, Detail: settingAuditDetail(key, value), Result: model.ResultOK, ClientIP: clientIP}); err != nil {
+		return nil, err
+	}
+	return func() {
+		s.mu.Lock()
+		s.cache[key] = value
+		s.mu.Unlock()
+		if key == SettingLogLevel {
+			log.SetLevel(value)
+		}
+	}, nil
 }
 
 // SeedFromConfig 首启种子：对每个热改 key，store 无该 key 才用 config.yml 值 Upsert（已有以 store 为准，不覆盖）。

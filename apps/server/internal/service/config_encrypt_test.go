@@ -142,7 +142,7 @@ func TestConfigService_SensitivePublishNewVersion(t *testing.T) {
 	}
 
 	v2 := "redis:\n  password: new\n"
-	updated, err := cfgSvc.Publish(it.ID, v2, "tester", "轮换口令", "")
+	updated, err := service.ApplyConfigPublishForTest(cfgSvc, it.ID, v2, "tester", "轮换口令", "")
 	if err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}

@@ -174,14 +174,14 @@ func TestLongPollReassignHotPush(t *testing.T) {
 	}
 	mkZone("zoneA", "z: \"A\"\n")
 	mkZone("zoneB", "z: \"B\"\n")
-	if _, err := zone.Assign("prod", "s1", "area1", "zoneA", "admin", "", ""); err != nil {
+	if _, err := zone.applyAssignForTest("prod", "s1", "area1", "zoneA", "admin", "", ""); err != nil {
 		t.Fatalf("初始指派失败: %v", err)
 	}
 	cur, _ := eff.Resolve("prod", "s1", "area1")
 
 	ch := waitAsync(eff, "s1", "area1", cur.MD5, 3*time.Second)
 	time.Sleep(80 * time.Millisecond)
-	if _, err := zone.Assign("prod", "s1", "area1", "zoneB", "admin", "", ""); err != nil {
+	if _, err := zone.applyAssignForTest("prod", "s1", "area1", "zoneB", "admin", "", ""); err != nil {
 		t.Fatalf("改派失败: %v", err)
 	}
 	select {

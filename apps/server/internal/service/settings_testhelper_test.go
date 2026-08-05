@@ -7,9 +7,52 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/wcpe/Beacon/apps/server/internal/config"
+	"github.com/wcpe/Beacon/apps/server/internal/httpx"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
+
+// applySettingUpdateForTest 仅供历史设置行为测试模拟审批已执行后的落库，不构成生产旁路。
+func applySettingUpdateForTest(s *SettingsService, key, value, operator, clientIP string) error {
+	if !SettingDangerous(key) {
+		return s.Update(key, value, operator, clientIP)
+	}
+	meta, ok := settingMetaFor(key)
+	if !ok {
+		return s.Update(key, value, operator, clientIP)
+	}
+	if err := validateSettingValue(meta, value); err != nil {
+		return err
+	}
+	if isSecretSettingKey(key) {
+		currentValue, _ := s.cachedOrDefault(key)
+		if value == httpx.RedactURLCredentials(currentValue) && value != currentValue {
+			return nil
+		}
+	}
+	current, err := s.repo.Get(key)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		current, err = s.repo.Upsert(key, meta.defaultFromConfig(config.Default()), meta.valueType)
+		if err != nil {
+			return err
+		}
+	}
+	var after func()
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var applyErr error
+		after, applyErr = s.applyDangerousInTx(tx, key, value, current.Version, operator, clientIP)
+		return applyErr
+	})
+	if err != nil {
+		return err
+	}
+	after()
+	return nil
+}
 
 // newTestSettingsDB 打开内存 sqlite 并迁移 setting + audit_log（不依赖 MySQL/DSN，单测快路）。
 // 用 t.Name() 作每测试**独立**内存库（cache=shared 让本测试内多连接共享同一私有库）——

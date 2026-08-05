@@ -141,7 +141,7 @@ func TestStreamRunLivePushOnPublish(t *testing.T) {
 	sink.waitFor(t, 2*time.Second, func(e sse.Event) bool { return e.Type == sse.EventReady })
 
 	// 直播阶段发布 → 应近实时收到 config-changed，且携带新 md5（≠ 旧）。
-	if _, err := cfg.Publish(id, "k: 2\n", "admin", "改", ""); err != nil {
+	if _, err := service.ApplyConfigPublishForTest(cfg, id, "k: 2\n", "admin", "改", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
 	evt := sink.waitFor(t, 2*time.Second, func(e sse.Event) bool { return e.Type == sse.EventConfigChanged })

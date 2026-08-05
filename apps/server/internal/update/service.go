@@ -39,14 +39,22 @@ type AuditWriter interface {
 
 // CheckResult 是渠道检查结果（FR-99 端点消费；本 FR 提供服务方法）。
 type CheckResult struct {
-	Channel        Channel // 检查的渠道
-	CurrentVersion string  // 当前运行版本
-	LatestVersion  string  // 渠道最新 release 版本（tag）
-	HasUpdate      bool    // 是否有可用更新（远端严格高于当前）
-	IsDevBuild     bool    // 当前为 dev 构建（版本未知、不参与比较、不提示更新）
-	ReleaseNotes   string  // release 正文（FR-100 渲染）
-	ReleaseURL     string  // release 页面 URL
-	PublishedAt    string  // 发布时间（RFC3339 字符串，原样透传，FR-99）
+	Channel        Channel      // 检查的渠道
+	CurrentVersion string       // 当前运行版本
+	LatestVersion  string       // 渠道最新 release 版本（tag）
+	HasUpdate      bool         // 是否有可用更新（远端严格高于当前）
+	IsDevBuild     bool         // 当前为 dev 构建（版本未知、不参与比较、不提示更新）
+	ReleaseNotes   string       // release 正文（FR-100 渲染）
+	ReleaseURL     string       // release 页面 URL
+	PublishedAt    string       // 发布时间（RFC3339 字符串，原样透传，FR-99）
+	FrozenTarget   FrozenTarget // 可供危险审批冻结的确定资产；由冻结调用填充
+}
+
+// FrozenTarget 是审批阶段冻结的确定更新资产。执行阶段只允许消费此对象。
+type FrozenTarget struct {
+	Version   string
+	AssetName string
+	SHA256    string
 }
 
 // Service 编排控制面在线更新（FR-97，见 ADR-0044）：查 Release → 下载 → SHA256 → 落位 pending → 请求重启。
@@ -128,6 +136,22 @@ func (s *Service) Rollback(operator, clientIP string) error {
 	return nil
 }
 
+// RollbackSnapshot 读取当前可回退备份的冻结事实。
+func (s *Service) RollbackSnapshot() (BackupSnapshot, error) { return ReadBackupSnapshot(s.runPath) }
+
+// RollbackFrozen 仅在 .old 备份仍与审批冻结事实一致时触发回滚。
+func (s *Service) RollbackFrozen(snapshot BackupSnapshot, operator, clientIP string) error {
+	current, err := ReadBackupSnapshot(s.runPath)
+	if err != nil || current != snapshot {
+		return fmt.Errorf("冻结回滚备份已变化")
+	}
+	s.writeAudit(model.ActionSystemUpdateRollback, snapshot.Version, model.ResultOK, "已接受审批冻结的回滚备份", operator, clientIP)
+	if s.requestRollback != nil {
+		s.requestRollback()
+	}
+	return nil
+}
+
 // assetName 返回本平台二进制资产名 beacon-<ver>-<os>-<arch>[.exe]。
 func assetName(version string) (string, bool) {
 	return assetNameFor(version, runtime.GOOS, runtime.GOARCH)
@@ -192,6 +216,89 @@ func (s *Service) CheckForUpdate(ctx context.Context, ch Channel, proxyURL, oper
 		fmt.Sprintf("渠道=%s 当前=%s 最新=%s 有更新=%v", ch, s.currentVersion, latest, hasUpdate),
 		operator, clientIP)
 	return res, nil
+}
+
+// FreezeLatestTarget 在申请阶段读取并冻结当前稳定 GA 的确定资产和校验和。
+func (s *Service) FreezeLatestTarget(ctx context.Context, ch Channel, proxyURL string) (FrozenTarget, error) {
+	client, err := s.newHTTPClient(proxyURL, downloadTimeout)
+	if err != nil {
+		return FrozenTarget{}, fmt.Errorf("构造出站客户端失败: %w", err)
+	}
+	rel, err := newReleaseClient(client, s.apiBase, s.repo).latestForChannel(ctx, ch)
+	if err != nil {
+		return FrozenTarget{}, err
+	}
+	return s.freezeTarget(ctx, client, rel)
+}
+
+func (s *Service) freezeTarget(ctx context.Context, client *http.Client, rel *ghRelease) (FrozenTarget, error) {
+	asset, ok := assetName(rel.TagName)
+	if !ok {
+		return FrozenTarget{}, fmt.Errorf("本平台 %s/%s 无可自更新资产", runtime.GOOS, runtime.GOARCH)
+	}
+	if _, ok := findAsset(rel, asset); !ok {
+		return FrozenTarget{}, fmt.Errorf("release 缺本平台资产 %s", asset)
+	}
+	sums, ok := findAsset(rel, "SHA256SUMS.txt")
+	if !ok {
+		return FrozenTarget{}, fmt.Errorf("release 缺 SHA256SUMS.txt")
+	}
+	sum, err := s.fetchExpectedSum(ctx, client, sums.URL, asset)
+	if err != nil {
+		return FrozenTarget{}, err
+	}
+	return FrozenTarget{Version: rel.TagName, AssetName: asset, SHA256: sum}, nil
+}
+
+// ApplyFrozenUpdate 执行审批冻结的确定资产。它绝不重新按 latest 选择版本。
+func (s *Service) ApplyFrozenUpdate(ctx context.Context, frozen FrozenTarget, proxyURL, operator, clientIP string) error {
+	if frozen.Version == "" || frozen.AssetName == "" || frozen.SHA256 == "" {
+		return s.failApply("", fmt.Errorf("冻结更新资产不完整"), operator, clientIP)
+	}
+	s.progress.reset(frozen.Version)
+	client, err := s.newHTTPClient(proxyURL, downloadTimeout)
+	if err != nil {
+		return s.failApply(frozen.Version, fmt.Errorf("构造出站客户端失败: %w", err), operator, clientIP)
+	}
+	rel, err := newReleaseClient(client, s.apiBase, s.repo).gaForTag(ctx, frozen.Version)
+	if err != nil {
+		return s.failApply(frozen.Version, fmt.Errorf("复查冻结 GA release 失败: %w", err), operator, clientIP)
+	}
+	asset, ok := findAsset(rel, frozen.AssetName)
+	if !ok {
+		return s.failApply(frozen.Version, fmt.Errorf("冻结资产已变化: %s 不存在", frozen.AssetName), operator, clientIP)
+	}
+	sums, ok := findAsset(rel, "SHA256SUMS.txt")
+	if !ok {
+		return s.failApply(frozen.Version, fmt.Errorf("冻结资产校验清单已变化"), operator, clientIP)
+	}
+	want, err := s.fetchExpectedSum(ctx, client, sums.URL, frozen.AssetName)
+	if err != nil || !strings.EqualFold(want, frozen.SHA256) {
+		if err != nil {
+			return s.failApply(frozen.Version, fmt.Errorf("复查冻结 SHA256 失败: %w", err), operator, clientIP)
+		}
+		return s.failApply(frozen.Version, fmt.Errorf("冻结资产 SHA256 已变化"), operator, clientIP)
+	}
+	s.progress.setPhase(PhaseDownloading, frozen.Version)
+	tmp, got, err := s.downloadBinary(ctx, client, asset.URL)
+	if err != nil {
+		return s.failApply(frozen.Version, fmt.Errorf("下载冻结资产失败: %w", err), operator, clientIP)
+	}
+	if !strings.EqualFold(got, frozen.SHA256) {
+		_ = os.Remove(tmp)
+		return s.failApply(frozen.Version, fmt.Errorf("冻结资产 SHA256 校验不通过"), operator, clientIP)
+	}
+	s.progress.setPhase(PhaseStaging, frozen.Version)
+	if err := os.Rename(tmp, s.pendingPath); err != nil {
+		_ = os.Remove(tmp)
+		return s.failApply(frozen.Version, fmt.Errorf("落位冻结 pending 失败: %w", err), operator, clientIP)
+	}
+	s.progress.setPhase(PhaseReadyRestart, frozen.Version)
+	s.writeAudit(model.ActionSystemUpdateApply, frozen.Version, model.ResultOK, "已落位审批冻结资产，请求自替换换二进制重启", operator, clientIP)
+	if s.requestRestart != nil {
+		s.requestRestart()
+	}
+	return nil
 }
 
 // ApplyUpdate 执行一次完整更新：查 release → 下载本平台资产 → SHA256 校验 → 原子落位 pending → 请求重启。
