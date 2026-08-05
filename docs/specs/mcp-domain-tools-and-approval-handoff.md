@@ -63,6 +63,8 @@ FR-219 只建立经过认证的 MCP transport 和机器主体。要让外部 Age
 | `beacon.audit.events.list/get` | 脱敏审计 | 只读、分页、按主体/目标/时间过滤 |
 | `beacon.approvals.own.list/get` | 本 MCP client 自己提交的申请与结果 | 不能读取无权申请；结果继续脱敏 |
 
+当前已登记的第一批只读工具为 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。它们同时对 `observer` 与 `automation` 可发现；连接不提供单连接明细，消息不提供 payload、玩家标识或 hop 原文，命令不提供结果正文，审计不提供 detail 与客户端地址。
+
 “数据库元数据”指经 query service 暴露的领域元数据，不是 SQL 或表结构浏览器。所有列表必须有服务端上限和游标/分页，禁止一次加载 1000+ 资源或大时间窗历史。
 
 ### 4.2 `automation` 直接动作
@@ -94,6 +96,30 @@ FR-219 只建立经过认证的 MCP transport 和机器主体。要让外部 Age
 | `beacon.namespace.lifecycle.*` | namespace 归档、恢复、整棵子树永久删除 |
 
 每个具体 operation 必须有独立工具和输入 schema。例如 namespace 永久删除工具必须显式接受 namespace code、资源版本、影响预览摘要和原因，不能通过 `beacon.resource.delete(kind, id)` 这类通用入口表达。
+
+文件与覆盖集的固定工具如下，均只调用对应 application service 的 `Request*` 方法并只返回 `{approvalRequestId,status}`；它们不发布、不回滚、不删除，也不构造 permit：
+
+| 工具 | 输入 |
+|---|---|
+| `beacon.config.delete` | `id`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.config.batch.delete` / `beacon.config.batch.enable` / `beacon.config.batch.disable` | `ids`、`reason`、`idempotencyKey` |
+| `beacon.files.create` | namespace、作用域、path、content、选项、reason、comment、`idempotencyKey` |
+| `beacon.files.import` | namespace、作用域、`files`、reason、comment、`idempotencyKey` |
+| `beacon.files.publish` | `id`、`content`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.files.rollback` | `id`、`version`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.files.delete` | `id`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.files.batch.delete` / `beacon.files.batch.enable` / `beacon.files.batch.disable` | `ids`、`reason`、`idempotencyKey` |
+| `beacon.assets.preview.request` | `serverId`、`path`、`reason`、`idempotencyKey` |
+| `beacon.assets.preview.consume` | `grantId`、`commandId`；仅完成一次性消费校验，不返回正文 |
+| `beacon.messages.payload.request` | `messageId`、`reason`、`idempotencyKey` |
+| `beacon.messages.payload.consume` | `grantId`、`messageId`；仅完成一次性消费校验，不返回正文 |
+| `beacon.override-sets.publish` | `id`、`targetRoot`、`reloadCommand`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.override-sets.rollback` | `id`、`version`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.override-sets.delete` | `id`、`reason`、`comment`、`idempotencyKey` |
+| `beacon.delivery.order.submit` | `orderId`、`reason`、`idempotencyKey`；冻结单与有序 items 摘要并创建唯一审批 |
+| `beacon.delivery.order.delete` | `orderId`、`reason`、`idempotencyKey`；创建 `delivery.draft_delete` 审批，不直接删草稿 |
+
+上述工具仅 `automation` 可发现；`observer` 不可发现也不可调用。敏感内容消费工具沿用原申请主体、冻结目标与一次性 grant 校验，但 MCP 响应固定不含文件或消息正文。
 
 ### 4.4 永久禁止的工具
 

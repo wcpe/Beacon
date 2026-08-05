@@ -32,7 +32,7 @@ Beacon 现有配置、文件树、覆盖集、灰度和 V2 ChangeOrder 各自存
 - 新申请下 ChangeOrder 只走 `draft → pending_approval → rolling`：`pending_approval` 是关联统一申请的领域投影，不拥有独立 approve/reject 判据；稳定 `approved` 仅保留给历史数据兼容，不作为新流程停留态。
 - human 在 `/approvals` 执行“批准并执行”后，持久 worker 经 `ChangeOrderApprovalAdapter` 获取 `ExecutionPermit`，执行现有 Start 不变量和目标固化，然后直接进入 `rolling`。
 - `approved_by/approved_at` 等历史字段可保留为查询投影，但写入来源只能是统一审批事实，领域逻辑不得据它们绕过 permit。
-- 原 `POST .../{id}/approve` 可作为 human 兼容入口：只定位该 order 的 pending 统一申请并调用同一个批准服务；机器主体仍拒绝。原 `POST .../{id}/start` 对新流程不得直接启动，只返回 `approval_required`/关联申请；禁止“generic 批一次、domain 再批一次”。
+- 原 `POST .../{id}/approve` 与 `POST .../{id}/start` 都固定失败关闭；审批人只能在统一审批中心决定，批准 worker 直接启动，不得出现“submit 后再 requestApprove”的双步骤。
 
 ### 2.3 快照、当前 diff 与漂移
 
@@ -96,6 +96,7 @@ pause/cancel/withdraw 不创建申请；它们不得自动触发 resume、重新
 ## 5. 任务拆分
 
 - [ ] 测试先红：完整 operation 覆盖表，锁定 V1/V2、body 风险分支、REST/MCP/内部调用；未分类入口失败。
+- [x] FileService：首次创建、目录导入和批量删除/禁用/启用均冻结为加密 `FilePendingChange`，公开副作用入口失败关闭；仅无内容且不生效的未来草稿可 direct。
 - [ ] 测试先红：ChangeOrder submit 只建一份统一申请，human 批准自动 Start，机器批准/直接 Start/无 permit service 调用均拒绝。
 - [ ] 测试先红：order revision、目标哈希、配置版本、文件 sha256、下一批或备份漂移均 failed 且无副作用。
 - [ ] 最小实现领域 adapters 与 permit 守卫，复用既有 ChangeOrder 状态机、编排器、配置/file/override service。

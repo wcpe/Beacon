@@ -12,7 +12,7 @@ FR-20 给"被标记为敏感"的配置项做 **at-rest（落库）加密**：DB 
 
 - 范围内：
   - 标记为敏感的配置项，其 `content` **加密入库**；DB 列存 base64 文本密文。
-  - 加密算法 **AES-256-GCM**（标准库），密钥从 **env** `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取。
+  - 加密算法 **AES-256-GCM**（标准库），密钥从数据目录同级 `secrets/config-encryption.key` 持久文件读取；首次启动安全生成 32 字节密钥。
   - 密钥**绝不入库 / 不入仓 / 不打日志**。
   - 解密在控制面读取 / 下发（有效配置解析）时进行；下发到 agent 的是**明文**（数据面内网可信不变，agent 不需要密钥）。
   - "如何标记某项为敏感"：新建配置项时传 `sensitive: true`（item 级，最小可用）。
@@ -25,7 +25,7 @@ FR-20 给"被标记为敏感"的配置项做 **at-rest（落库）加密**：DB 
 
 ## 3. 设计（怎么做）
 
-涉及架构决策，单列 **[ADR-0018](../adr/0018-config-encryption-at-rest.md)**（算法 / 密钥来源 / 加密范围 / 密钥不入库 / 与 FR-26 关系 / 可移植性）。此处只述模块改动，不重复决策正文。
+涉及架构决策，单列 **[ADR-0081](../adr/0081-local-persistent-encryption-key-files.md)**（密钥来源 / 持久化 / 权限与备份边界）；算法、加密范围与可移植性沿用 ADR-0018。此处只述模块改动，不重复决策正文。
 
 - **新增 `internal/secret` 包**：纯加解密原语，无外部依赖。
   - `Cipher`：封装 AES-256-GCM。`NewCipher(keyB64)` 解析 base64 32 字节密钥；空串 → 返回"未配置"哨兵 cipher（不持密钥）。
@@ -47,13 +47,13 @@ FR-20 给"被标记为敏感"的配置项做 **at-rest（落库）加密**：DB 
 - [ ] service.Create 透传 sensitive；revision 镜像 item.Sensitive
 - [ ] handler / API：create 入参 + 视图字段
 - [ ] cmd/beacon 装配 cipher + fail-fast 探测
-- [ ] 文档同步：ADR-0018、PRD（状态已预置开发中，不改）、ARCHITECTURE、API、CHANGELOG
+- [ ] 文档同步：ADR-0081、PRD（状态已预置开发中，不改）、ARCHITECTURE、API、CHANGELOG
 
 ## 5. 验收标准
 
 - 加解密往返一致：明文 → Encrypt → Decrypt 得回原文。
 - 错误密钥 / 篡改密文：Decrypt GCM 校验失败返回错误，不返回脏明文。
-- 无密钥 fail-fast：有 sensitive 项却无 `BEACON_CONFIG_ENCRYPTION_KEY` 时启动 / 加解密报错。
+- 密钥文件 fail-closed：目录、权限或文件内容异常时启动 / 加解密报错；不得回退到环境变量或临时内存密钥。
 - 非敏感项不加密：`Sensitive=false` 的 content 落库即明文（与现状一致）。
 - 加密项 md5 / 有效配置解析正确：敏感项入库再读出，md5 与明文一致，有效配置合并结果与明文等价（解密后再算）。
 - DB 里 sensitive 项的 `content` 为 `enc:v1:` 前缀密文（非明文）。

@@ -104,7 +104,14 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 
 - **agent 首次接入（人工确认）**：agent 首启生成并持久化身份文件 → 携 token + identityId 注册 → 控制面落待确认、出现在 `/servers` 待确认列表 → 管理员 approve（可同时落区）/ reject → agent 经 registration 长轮询秒级感知 → 确认且分配后方可调度。冲突 / 禁用 / 解绑同一状态机（[v2-agent-identity.md](specs/v2-agent-identity.md) §4）。
 - **换区工单**：已分配服改归属必须解绑 + 重新人工确认——`server-rezones` 整批事务解绑、清归属、记预填目标 → agent 自动重入待确认（换区中不可调度）→ 管理员重确认按预填落区 → 调度候选 / 配置作用域 / 拓扑按分配变更契约重算（[v2-zone-authority.md](specs/v2-zone-authority.md) §4.7 / §4.5）。
-- **配置发布经变更单灰度生效**：配置中心只管编辑 / 校验 / 版本，保存不下发（[v2-config-center.md](specs/v2-config-center.md)）→ 变更单把模板源文件差异 + 配置版本绑成一单 → 影响预览 → 审批 → 启动后按批次推进：流式 blob 推送 → 生效（restart / hot_reload / push_only）→ 观察窗 → 人工放行下一批；失败率 / 健康恶化自动熔断，支持暂停 / 紧急终止与整单回滚（文件备份还原 + 配置版本回退 + 重新生效，[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §4）。
+- **配置发布经变更单灰度生效**：配置中心只管编辑 / 校验 / 版本，保存不下发（[v2-config-center.md](specs/v2-config-center.md)）→ 变更单把模板源文件差异 + 配置版本绑成一单 → 影响预览 → submit 冻结单与 items 摘要并创建唯一审批 → 统一审批 worker 在同一事务内授权并启动 → 按批次推进：流式 blob 推送 → 生效（restart / hot_reload / push_only）→ 观察窗 → 人工放行下一批；失败率 / 健康恶化自动熔断，支持暂停 / 紧急终止与整单回滚（文件备份还原 + 配置版本回退 + 重新生效，[v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §4）。
+- **危险凭据审批与一次性领取**：API 密钥创建/轮换先冻结审批申请，worker 在同一领域事务内安装哈希、写执行回执并持久化独立密钥加密的临时明文；仅原申请 human 可对成功请求 CAS 兑换一次，审批表、审计和日志均不保存明文或哈希（[identity-credential-trust-and-topology-dangerous-operations.md](specs/identity-credential-trust-and-topology-dangerous-operations.md) §4.2）。
+- **审批中心读模型**：统一审批请求持久化安全 targetRef 与可选 namespaceId；列表只在数据库安全字段上分页筛选。详情由已登记领域 adapter 以 targetRef 读取当前脱敏事实，失败显式标记不可用；前端只消费该 API 的证据和服务端权限字段，不从冻结载荷或领域页面拼接状态。
+- **文件与覆盖集审批适配**：文件发布、回滚、软删及覆盖集发布、回滚、软删的公开 service 入口失败关闭；申请在同一事务写 `file_pending_change` 加密载荷，批准 worker 以私有领域写入、领域审计与 execution receipt 共用事务，拒绝/撤回/过期使待执行记录失效。
+- **配置破坏性操作审批适配**：配置发布、回滚、软删及批量删除 / 置态的公开 service 入口失败关闭；批量提审先按 ID 去重排序并拒绝跨 namespace，安全 targetRef 与证据快照公开 namespace、排序 ID、版本/启用状态摘要，密文载荷冻结完整目标。批准 worker 在同一事务执行领域写入、审计与 execution receipt。任一目标漂移即整批失败，拒绝/撤回/过期使待执行记录失效。
+- **在线文件正文**：单文件读取先冻结 `namespace/serverId/path/清单 SHA-256`，批准 worker 在同一事务创建 `asset-read` 命令、pending grant 与审批 receipt；提交后才唤醒 Agent。回传只有命令、内容版本和 grant 全部匹配时才激活，原申请主体在五分钟内一次消费瞬态内容。跨服务器差异将左右两侧建为独立审批和独立 grant，并以不透明 pairId 绑定；任一侧拒绝、过期、撤回或哈希漂移均不产出结果。消费任一侧 grant 时服务端原子消费两侧、只在内存比较并返回脱敏摘要，不持久化正文或 diff。旧 preview、diff 与变更单 file-diff 入口固定失败关闭，不再直接下发命令或返回正文。
+- **服务器归档生命周期**：`server` 的 `active ↔ archived` 只能由统一审批 worker 持许可执行；执行 adapter 在同一数据库事务写生命周期、强审计和执行回执。归档不改写身份绑定、BC/Zone/Lobby 归属、排空或默认入口事实，运行侧统一按 active 谓词排除归档资产。
+- **观测范围**：管理面只读查询在 handler 入口经唯一 `ObservationScopeResolver` 将 `envId`/`namespaceId` 冻结为 namespace 集合；列表、聚合、冷热查询与详情在各自的分页或汇总前消费该集合。该范围不参与任何 mutation 的目标推导。
 - **消息追踪链路**：业务插件经 agent-api `send` / `call` → agent 面上行 → 控制面内存中转维护状态机与 hops（请求 goroutine 不碰 DB）→ 目标 agent 长轮询取走、`ack` 回执 → 终态（delivered/failed/expired）时同事务一次性写 `msg_trace`（+ 可选 `msg_payload`）→ 管理台按 messageId 追链路；payload 查看必须权限 + 填原因 + 先审计（[v2-connection-message-storage.md](specs/v2-connection-message-storage.md) §4）。
 
 ## 8. 架构块 → 阶段映射（对齐 [ROADMAP.md](ROADMAP.md) §1）
@@ -124,6 +131,8 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 
 发布流程遵循 [ADR-0074](adr/0074-simple-rc-ga-release-flow.md)：RC 是不可变 prerelease，固定一个目标 commit 和一次构建出的产品资产；资产或候选内容变化时必须创建新的 RC。GA 只从最终 RC 原样复制产品资产，先逐项核对文件名、大小和 SHA-256，再创建正式 tag；GA 不重新编译、打包或替换资产。在线更新只自动消费严格匹配 `vX.Y.Z` 的 GA，RC 和开发产物须显式安装。发布检查统一通过 `make release-test`、`make release-check`、`make release-verify-rc` 与 `make release-verify-ga` 执行。
 
+FR-210 的危险系统操作由统一审批 worker 直接调用领域适配器；升级冻结 GA 资产和 SHA-256，回滚冻结 `.old` manifest，危险设置按元数据和版本 CAS 执行。系统执行记录与审批 receipt 同事务持久化；自替换包只发进程内成功事件，启动对账和异步失败共同写入数据库。
+
 ## 9. 关键裁决与不做项
 
 - 不引入 Redis / MQ / DI 框架 / 分布式一致性组件（[ADR-0003](adr/0003-no-redis-in-mvp.md) 精神延续）；编排推进由控制面进程内驱动 + 状态落 MySQL。
@@ -131,3 +140,5 @@ base path 分面与跨域通用约定（认证、错误体、分页、命名风�
 - 不用命令通道传大文件；不做跨 namespace 的配置与变更单。
 - 控制面不实现游戏玩法（经济 / 匹配 / 传送 / 跨服看人 UI），只做决策、编排与事实存储。
 - 技术栈锁定：Go + chi + GORM、React（Vite + TS）内嵌单二进制、agent Kotlin/TabooLib；换栈 / 换框架走新 ADR（[ADR-0002](adr/0002-go-react-embedded-stack.md) 延续）。
+
+MCP 保持在同一 Go + chi 进程：受信反向代理完成 TLS，后端只校验固定转发头与配置后提供 metadata、token 和 Streamable HTTP resource。OAuth client、pending change、短期 token 与审批 receipt 都在权威库；MCP 工具只能调用 application service。`observer` 与 `automation` 共同发现的元数据、拓扑、指标、历史和审计工具只接应用查询服务，并在 MCP 边界投影为脱敏 DTO：不透传 token hash、地址、玩家标识、payload、实时正文、命令结果正文或审计 detail。`automation` 的配置删除/批量操作、文件创建/导入/批量操作及覆盖集变更只通过对应 `Request*` 服务创建审批申请；敏感资产与消息工具沿用原申请主体、冻结目标和一次性 grant 校验，但不把正文写入 MCP 响应。`observer` 不可发现这些工具；不存在通用 HTTP/SQL/文件代理、机器审批工具或 permit 构造入口。

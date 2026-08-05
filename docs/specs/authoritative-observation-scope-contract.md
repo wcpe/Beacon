@@ -1,6 +1,6 @@
 # 功能规格：服务端权威观测范围契约
 
-> 状态：草拟　·　关联 PRD：FR-213　·　依赖：FR-178 env→namespace 映射、[v2-zone-authority.md](v2-zone-authority.md)
+> 状态：开发中　·　关联 PRD：FR-213　·　依赖：FR-178 env→namespace 映射、[v2-zone-authority.md](v2-zone-authority.md)
 
 ## 1. 背景与目标
 
@@ -34,7 +34,9 @@
 - 导出：复用与列表同一 query object 和范围，先过滤再流式导出；页面筛选、total 与导出行集一致。
 - 热/冷查询：范围谓词同时作用于每个热表、归档表和日表，再做跨表游标合并；不能合并后在内存丢行。
 - 内存实时态：先用解析出的 namespace set 过滤 registry/health 快照，再分页/聚合。
-- 订阅/SSE：建立连接时冻结 scope fingerprint，事件进入发送队列前按 namespace set 过滤；env 映射 revision/hash 变化时发送 `observation-scope-stale` 并断开，客户端按新范围重连，不允许旧连接扩大或串入范围外事件。
+- 订阅/SSE：若后续新增管理面观测订阅，建立连接时冻结 scope fingerprint，事件进入发送队列前按 namespace set 过滤；env 映射 revision/hash 变化时发送 `observation-scope-stale` 并断开，客户端按新范围重连，不允许旧连接扩大或串入范围外事件。
+
+当前 SSE 盘点：`/admin/v2/change-orders/{id}/events` 与文件同步 SSE 均是按工单/任务 ID 的变更流，`/beacon/v1/agent/stream` 是数据面 Agent 推送；三者均不是管理面观测查询，且不接受 `envId`/`namespaceId`，故不纳入本 FR 的范围矩阵。不得为满足形式覆盖而把观测 scope 注入这些任务或数据面流。
 
 ### 2.3 必须覆盖的端点
 
@@ -82,9 +84,10 @@
 
 ## 4. 任务拆分
 
-- [ ] 测试先红：resolver 四种合法组合、空映射、非法数值、tombstoned/不存在、archived 只读、E/N 不匹配与旧 namespace code 兼容。
+- [x] 测试先红：resolver 四种合法组合、空映射、非法数值、不存在与 E/N 不匹配。
 - [ ] 测试先红：四个当前无范围聚合端点在多 namespace 数据下只统计目标 env，空映射为零。
-- [ ] 测试先红：列表在过滤后分页/计 total，详情域外未命中，审计导出与列表行集一致，冷热/跨日查询不串域；订阅不发域外事件且映射漂移后断开。
+- [x] 测试先红：列表在过滤后分页/计 total，详情域外未命中，审计导出与列表行集一致，冷热/跨日查询不串域。
+- [x] SSE 盘点：现有 SSE 均非管理面观测订阅，明确排除；后续新增观测订阅时必须实现 scope fingerprint 与映射漂移断开。
 - [ ] 最小实现 resolver 与 query object，按域接 repository 基础 predicate；不建新表、不按 namespace N+1 查询。
 - [ ] 前端 API contracts 增 additive `envId/namespaceId`，移除观测页客户端后过滤。
 - [ ] 独立复核：逐项核对端点矩阵、所有 summary/list/detail/export 的过滤时机和 mutation 排除。

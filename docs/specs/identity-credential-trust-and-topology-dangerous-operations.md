@@ -1,6 +1,6 @@
 # 功能规格：身份、凭据、信任与拓扑危险操作适配
 
-> 状态：草拟　·　关联 PRD：FR-208　·　分支：待执行时创建　·　依赖：FR-205～207、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
+> 状态：开发中　·　关联 PRD：FR-208　·　依赖：FR-205～207、[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
 
 ## 1. 背景与目标
 
@@ -70,12 +70,13 @@ Agent 身份确认/解绑、API key 与 namespace token 生命周期、跨 names
 
 ### 4.2 凭据
 
-创建/轮换在申请创建事务中用安全随机源生成新明文，并由对应凭据领域持久化一条不可变 pending change：其中保存哈希、非敏感前缀、版本、角色/profile、有效期与目标主体。通用审批申请只冻结 `credentialChangeRef`、前缀、版本和脱敏元数据，绝不保存凭据哈希或明文；明文只在该次申请响应显示一次且在批准前不可用。
+创建/轮换申请只冻结角色、有效期、目标与脱敏元数据，绝不生成或保存凭据明文/哈希。批准 worker 在领域事务内生成明文、安装哈希，并把待领取明文以独立密钥加密为一次性密文；通用审批申请、审计和日志均不保存凭据哈希或明文。
 
 - 批准 worker 校验 pending change 与 requestId/版本/状态一致后，原子安装其中的哈希并标记 applied；拒绝、撤回或过期把 change 标记 invalidated，该明文永不生效。worker 重试只消费同一 change，不生成第二份 secret。
 - 库内只允许凭据领域 pending change/活动凭据保存哈希；通用审批表、审批快照、审计和日志都不能保存凭据哈希或明文 secret/token。遗失只能重新申请轮换。
 - 吊销直接写不可逆/即时失效事实并强审计；重新启用不得隐式复用已明确作废的凭据，须按该凭据领域既有安全规则重新生成或显式恢复，并走审批。
 - API key、namespace token 与 MCP client 保持各自表和认证协议，不建立通用 credential 上帝表。
+- 申请成功后不能返回凭据明文。批准执行成功后，仅申请该请求的 human 可调用一次性兑换端点领取明文；兑换必须原子标记已领取，后续同一请求或其他主体一律返回 `credential_secret_lost`，明文绝不写入审批真源、审计或日志。
 
 ### 4.3 信任
 
@@ -98,11 +99,13 @@ Agent 身份确认/解绑、API key 与 namespace token 生命周期、跨 names
 | 领域 | 影响/申请契约 |
 |---|---|
 | identity | 现有 identity 详情提供冻结预览；approve/unbind/enable/conflict 入口返回统一申请 |
-| credential | create/rotate/enable 返回 `{approvalRequestId, credentialId, secret?, status, expiresAt}`；secret 仅首次响应存在 |
+| credential | create/rotate/enable 返回 `{approvalRequestId, status}`；成功后申请该请求的 human 可调用一次性兑换端点领取明文 |
 | trust | grant/expand/regrant 只创建申请；revoke 原端点 direct + 强审计 |
 | topology | server assignment/rezone/default-entry/Lobby move 返回申请；draining=true direct，false 返回申请 |
 
 统一错误体 `{code,message,traceId}`。常见错误包括 `operation_requires_approval`、`approval_target_changed`、`credential_secret_lost`、`identity_state_changed`、`topology_target_changed`、`active_operation_conflict`。兼容入口与 `/admin/v2/approval-requests` 必须使用同一 Idempotency-Key 和申请 ID，不维护领域审批表。
+
+兑换端点为 `POST /admin/v2/approval-requests/{requestId}/credential-secret/redeem`。它只接受该请求的 human requester，且仅当审批已成功并关联可领取凭据时返回一次 `{secret}`；任何非 human、非申请人、非成功请求、重复领取或已失效凭据均返回 `410 credential_secret_lost`，不得返回 secret。
 
 ## 6. UX / 交互
 
@@ -138,7 +141,7 @@ Agent 身份确认/解绑、API key 与 namespace token 生命周期、跨 names
 
 1. 矩阵中每个 operation 恰有分类；所有扩权/恢复/迁移动作在批准前零领域副作用，所有 machine/system 无法批准或构造 permit。
 2. identity approve/unbind/conflict/enable 只由批准 worker 执行；disable/reject 立即止损且不能顺带恢复或迁移。
-3. credential create/rotate/enable 的明文只在申请响应出现一次；哈希只存在对应领域的 pending change/活动凭据，不进入通用审批/审计/日志；批准原子应用同一 change，拒绝/撤回/过期使其永不生效，revoke 即时失效且重新启用走新审批。
+3. credential create/rotate/enable 的明文仅能由申请 human 在审批成功后一次性兑换；哈希只存在对应领域的 pending change/活动凭据，不进入通用审批/审计/日志；批准原子应用同一 change，拒绝/撤回/过期使其永不生效，revoke 即时失效且重新启用走新审批。
 4. trust grant/expand/regrant 走审批，revoke 直接强审计；撤销后旧批准不能复活信任。
 5. assignment/rezone/default-entry/Lobby move/draining=false 走审批，draining=true 直接；目标漂移、互斥或活动任务冲突均 failed 且无半写。
 6. V1/V2/REST/MCP/内部同义入口共享 operation/adapter；删除任一登记使覆盖测试失败，未知入口运行时 fail-closed。

@@ -1,6 +1,6 @@
 # ADR-0018：敏感配置 at-rest 加密——AES-256-GCM、密钥走 env、密文落 TEXT 可移植
 
-**状态**：已接受
+**状态**：已被 [ADR-0081](0081-local-persistent-encryption-key-files.md) 取代
 
 ## 背景
 

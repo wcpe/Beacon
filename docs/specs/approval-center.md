@@ -44,15 +44,18 @@
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| POST | `/admin/v2/approval-requests` | 按已登记 operation adapter 冻结合规申请；未知 operation fail-closed。审批中心页面本身不构造任意 payload |
 | GET | `/admin/v2/approval-requests` | 服务端筛选/排序/分页；`status=pending&pageSize=1` 的 total 供导航徽标 |
 | GET | `/admin/v2/approval-requests/{id}` | 申请、脱敏快照、current diff、timeline 与领域链接 |
 | POST | `/admin/v2/approval-requests/{id}/approve` | human 批准并自动执行 |
 | POST | `/admin/v2/approval-requests/{id}/reject` | human 拒绝，原因必填 |
 | POST | `/admin/v2/approval-requests/{id}/withdraw` | 申请人撤回 pending，原因可选 |
+| POST | `/admin/v2/approval-requests/{id}/credential-secret/redeem` | 原申请 human 在凭据审批成功后一次性领取明文；审批详情与页面 DOM 不显示明文 |
 
-- POST 创建只允许调用已登记 adapter 完成规范化、脱敏、前置校验与冻结；领域原端点可作为兼容申请入口。审批中心 UI 不提供“手填 operation/payload”表单，也不能绕过 adapter。
+- 审批申请仅允许由已登记 adapter 所在的领域入口完成规范化、脱敏、前置校验与冻结；审批中心 UI 不提供“手填 operation/payload”表单，也不能绕过 adapter。
+- 对 `message.payload.read` 等一次性敏感内容审批，`succeeded` 详情仅向原申请主体返回 `{ sensitiveAccessGrant: { grantId } }`；该引用只用于既有消费端点，详情不返回正文、正文哈希或可由前端推导的授权标识。
 - 前端不推导状态、不合并领域状态来“修正”审批状态；current diff 是 adapter 只读投影，不是审批记录。
+- 详情响应携带服务端按当前认证主体计算的 `canApprove`、`canReject`、`canWithdraw`；页面不得从申请人类型或名称猜测权限。
+- adapter 只能以持久化 targetRef/namespaceId 查询实时证据，读取失败统一返回 `evidenceStatus=unavailable` 并禁用批准；不得从 frozen payload 还原或推断当前事实。
 - 对 Agent 命令、ChangeOrder、升级等长任务，审批 `succeeded` 表示领域动作已持久受理；页面继续通过 `resultRef` 展示领域当前状态，不把领域失败回写成另一份审批状态。
 - mock handler 仅模拟同一契约并覆盖四态，不能在生产构建注册或成为实现依据。
 

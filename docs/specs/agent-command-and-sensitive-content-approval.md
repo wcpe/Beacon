@@ -57,6 +57,10 @@ Beacon 已有反向抓取、日志尾取、文件浏览、强制重同步、受�
 
 同一 endpoint 若既能列元数据又能返回正文，必须在服务端按规范化输入拆分 operation；客户端传 `includeContent=true`、path、mode 或 body 分支不能继续沿用普通 read 分类。
 
+文件资产的搜索、扫描概要和哈希比对，消息的列表、详情和链路聚合，以及命令状态和脱敏结果摘要始终是 `direct read`：它们不得因为同一领域存在正文消费端点而返回 `operation_requires_approval`，且响应不得携带正文。
+
+跨服务器文件内容差异不是普通元数据比对：发起方必须为左、右两侧各建一份 `agent.command.fs_browse` 审批申请。两份申请分别冻结本侧与对侧的 namespace、serverId、path、清单 SHA-256 和同一不透明 pairId；任一申请拒绝、撤回、过期、目标离线或任一侧版本漂移时，整组不得生成结果。批准 worker 对每侧各建一条 `asset-read` 命令和一份 pending grant；单侧 pair grant 永不允许走普通正文消费。原申请主体仅可凭任一侧 grant 发起一次双侧原子消费：服务端同时校验并消费两份 grant 后，在内存中比较回传内容，只返回 `identical`/`changed`/`unsupported` 与已可直接读取的 hash、size、path 元数据；两侧正文、diff 片段和 pairId 均不落库、不进审批详情、审计、日志或 MCP 响应。
+
 ### 3.3 覆盖不变量
 
 - 所有创建 AgentCommand/在线任务或返回敏感正文的最终 service 都要求 ExecutionPermit 或消费由批准 worker 生成、绑定申请人的 `SensitiveAccessGrant`。
@@ -94,7 +98,7 @@ human 批准后 worker 携 ExecutionPermit 调领域 adapter：
 | status | pending/active/consumed/expired/revoked |
 
 - 不经 Agent 的既有敏感内容读取在批准事务中直接创建 active grant 与 receipt；receipt 固定写 `resultType=sensitive_access_grant`、`resultRef=grantId`。
-- 会返回敏感正文的 Agent command 在同一批准事务中创建 command、pending grant 与一份 receipt，`resultType=agent_sensitive_operation` 的 resultRef 可解析 commandId + grantId；Agent 成功回传并通过版本/大小/脱敏校验后才把该 grant CAS 为 active，5 分钟从激活时计算。命令失败则 grant 进入 revoked/终态，不产生可消费正文。
+- 会返回敏感正文的 Agent command 在同一批准事务中创建 command、pending grant 与一份 receipt，`resultType=agent_sensitive_operation` 的 resultRef 可解析 commandId + grantId；Agent 成功回传并通过版本/大小/脱敏校验后，将回传正文哈希原子绑定到 commandId 对应 pending grant 并 CAS 为 active，5 分钟从激活时计算。命令失败则 grant 进入 revoked/终态，不产生可消费正文。
 - 两类 grant 均与 `approval_execution_receipt` 同事务，`approval_request_id` 建唯一约束，供审批详情和 MCP `own.get` 返回权威引用。
 - worker 在事务提交后、申请状态收敛前崩溃时，下一次认领先查 receipt 并只把原 request 收敛为 succeeded；不得重复创建命令/任务、签发第二份 grant、延长 expiresAt 或重置 maxUses。
 - grant 创建事务必须验证申请仍为 executing、human 决策与 ExecutionPermit 完全匹配；没有批准事实或 receipt 写失败时不得留下 active grant。
@@ -117,6 +121,8 @@ human 批准后 worker 携 ExecutionPermit 调领域 adapter：
 | POST | `/admin/v2/approval-requests` | typed command/content parameters + reason + Idempotency-Key，返回 pending 申请 |
 | GET | `/admin/v2/agent-operations/{resultRef}` | 查询命令/任务与绑定 grant 的安全状态摘要，不返回敏感正文 |
 | POST | `/admin/v2/sensitive-access-grants/{grantId}/consume` | 原申请主体一次性消费批准内容/日志会话 |
+| POST | `/admin/v2/assets/pair-read/approval-requests` | 左右两侧分别创建文件差异读取审批；请求体 `{left:{serverId,path},right:{serverId,path},reason}`，返回两个 requestId |
+| POST | `/admin/v2/assets/pair-read/grants/{grantId}/consume` | 原申请主体以任一侧 grant + `{commandId}` 原子消费两侧授权，只返回脱敏差异摘要 |
 | POST | `/admin/v2/agent-operations/{resultRef}/cancel` | 未完成命令/任务止损取消，direct + 强审计 |
 
 旧 `/admin/v1` 日志、文件浏览、payload、命令、重同步等入口不得直接下发或返回正文：危险写入口作为兼容申请入口返回 `202`；旧 GET 不隐式创建申请，返回 `409 operation_requires_approval` 与明确 operation/request endpoint。MCP 由 FR-220 暴露每个具体显式工具，高危调用只返回 approvalRequestId；批准后用 own approval/resultRef 工具查询，敏感内容工具再消费同一 grant，不存在 approve 工具。

@@ -49,6 +49,7 @@ FR-207 提供唯一的审批申请、决策、24 小时过期、持久自动执�
 | `frozen_payload` | TEXT | 规范化、脱敏、可执行参数；不得含明文敏感内容 |
 | `frozen_payload_sha256` | CHAR(64) | 对规范化 payload 计算 |
 | `impact_snapshot` | TEXT | 脱敏影响清单/计数/版本摘要 |
+| `evidence_snapshot` | TEXT | adapter 在申请时写入的脱敏领域事实快照，供详情与当前事实比较；不保存 frozen payload、密钥或内容正文 |
 | `precondition_sha256` | CHAR(64) | 目标版本与领域前置事实的规范化 hash |
 | `idempotency_key` | VARCHAR(64) | 申请方提供；同主体+operation 内唯一 |
 | `status` | VARCHAR(16) 索引 | 状态机见 §4 |
@@ -106,6 +107,7 @@ pending ──申请人撤回──> withdrawn
 客户端只能提交 `operationKey + typed parameters + reason`。注册 adapter 必须：
 
 1. 校验 Principal capability、namespace 隔离、输入枚举/长度与目标存在性。
+   - V2 服务批量目标必须全部属于同一 namespace；跨 namespace 集合在创建审批前失败关闭，不得创建全局审批或拆分为隐式多张申请。通过校验后申请持久化该 namespaceId，并在脱敏快照与实时证据中逐个列出服务目标。
 2. 读取权威当前事实，生成固定 schemaVersion 的 typed frozen struct；集合按稳定 ID 排序，禁止把无序 map 直接作为 hash 输入。
 3. 生成 `safeSummary`、`impactSnapshot` 与 `precondition`；displayName 仅展示，目标引用使用稳定 code/id。
 4. 使用 UTF-8、无多余空白的确定性 JSON 计算 SHA-256 小写 hex。
@@ -156,11 +158,12 @@ Permit 是进程内不可序列化值，至少绑定 requestId、operationKey、
 | 方法 | 路径 | 契约 |
 |---|---|---|
 | POST | `/admin/v2/approval-requests` | `{operationKey,parameters,reason}` + `Idempotency-Key`；仅调用注册 adapter 冻结，成功 `202` + Location；未知 operation fail-closed |
-| GET | `/admin/v2/approval-requests` | `status? operationKey? riskLevel? namespaceId? requesterType? requesterId? from? to? page? pageSize?`；普通 human 看全部，machine 只看自己，1000+ 分页 |
-| GET | `/admin/v2/approval-requests/{requestId}` | 安全详情、影响摘要、决定、执行状态、resultRef；machine 仅自己的申请 |
+| GET | `/admin/v2/approval-requests` | `status? operationKey? riskLevel? namespaceId? requesterType? requesterId? keyword? createdFrom? createdTo? expiresFrom? expiresTo? page? pageSize?`；`namespaceId=global` 只查无 namespace 操作；普通 human 看全部，machine 只看自己，1000+ 分页 |
+| GET | `/admin/v2/approval-requests/{requestId}` | 安全详情、影响摘要、决定、执行状态、resultRef，以及 adapter 只读实时证据；`canApprove/canReject/canWithdraw` 只由服务端按当前主体计算；machine 仅自己的申请 |
 | POST | `/admin/v2/approval-requests/{requestId}/approve` | human；`{reason?}`；CAS pending→executing，返回 `202` |
 | POST | `/admin/v2/approval-requests/{requestId}/reject` | human；`{reason}` 必填；pending→rejected |
 | POST | `/admin/v2/approval-requests/{requestId}/withdraw` | 仅申请人；`{reason?}`；pending→withdrawn |
+| POST | `/admin/v2/approval-requests/{requestId}/credential-secret/redeem` | 仅原申请 human；仅 succeeded 的凭据变更可原子领取一次 `{secret}`；其他情形 `410 credential_secret_lost` |
 
 现有危险 POST/PUT/DELETE 路由可作为兼容申请入口：内部调用同一 `Request`，返回 `202 {approvalRequest}`，不得执行原副作用。approval_required 的旧 GET 不创建申请，返回 409：
 
@@ -180,14 +183,14 @@ Permit 是进程内不可序列化值，至少绑定 requestId、operationKey、
 ## 9. 领域状态机兼容
 
 - identity 的 `pending/active/...` 与 ChangeOrder 的 `draft/pending_approval/...` 仍由原规格拥有；approval_request 不复制这些字段。
-- 领域“提交审批”可在同一事务建立领域 pending 投影与 approval request；拒绝/撤回/过期回调只走 adapter 明确的合法迁移。
+- 领域“提交审批”可在同一事务建立领域 pending 投影与 approval request；descriptor 声明需要终态回调时，拒绝/撤回/过期必须与领域合法迁移同一事务提交；缺少已登记回调一律失败关闭，不得只终结 approval request。
 - identity 的 `/approve` 变为创建通用申请；human 在通用审批页批准后，adapter 直接执行原 T3，不再出现第二次身份审批。
 - ChangeOrder 提交创建通用申请；human 批准后 adapter 记录既有批准事实并自动进入持久 start 路径，不再要求公开 start 再确认。执行前仍跑 ADR-0071 冲突守卫。
 - 本规格不定义各领域具体映射；FR-208/209 与后续领域规格只提供 descriptor/adapter。
 
 ## 10. UX 数据契约
 
-审批页至少支持“待我处理、我的申请、全部记录”三视图；列表显示 operation 安全名称、风险、申请人、目标、影响计数、剩余时间与状态。详情显示冻结摘要、版本/hash、原因、决定和 resultRef，不显示原始 payload。human 在详情执行“批准并执行”或拒绝；本人申请不隐藏批准按钮。machine 登录态不显示决定入口，后端仍硬拒。
+审批页至少支持“待我处理、我的申请、全部记录”三视图；列表显示 operation 安全名称、风险、申请人、目标、影响计数、剩余时间与状态。详情显示冻结摘要、版本/hash、原因、决定和 resultRef，不显示原始 payload。领域 adapter 在申请时写入脱敏 evidenceSnapshot，并以持久化目标引用只读生成 current facts/diff；读取失败标 `unavailable`，页面禁用批准，不得解析冻结载荷补造事实。human 在详情执行“批准并执行”或拒绝的权限由响应字段决定，machine 登录态不显示决定入口，后端仍硬拒。
 
 批准后页面立即显示 executing，并轮询详情直至 succeeded/failed；页面刷新不得丢状态。失败、拒绝、过期只提供“按当前事实重新申请”，不能原单重试。大列表必须分页，空态/加载/错误/过期并发冲突均有明确中文文案。
 

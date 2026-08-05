@@ -288,3 +288,7 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/hotreload -run '^TestDeliv
   `apps/server/internal/testsupport` 会在该实例上按 `beacon_<suffix>` 建独立测试库（不污染基础库）；未设 `BEACON_TEST_DSN` 时集成用例 `t.Skip`。FR-32 的 `metric_sample` 仓库与 `/admin/v1/metrics/*` 端点集成亦在此 `-tags=integration` 套内。
 - **CI / 发版前**：单测 + MySQL 集成都跑，E2E 另见 §7（跨平台 `go test -tags=e2e`，CI 见 `.github/workflows/e2e.yml`）。务必确认集成是 PASS 而非 SKIP。
 - **前端单元测试**（vitest + React Testing Library，jsdom 环境、无外部依赖、不连后端）：`cd web && pnpm test`（监听模式 `pnpm test:watch`）。测试文件经 `tsconfig` 排除出生产 `tsc -b`，与 `make web` 的 `go:embed` 构建解耦。
+
+## 9. MCP 反向代理验收
+
+启用前必须把 `mcp.public-base-url` 设为唯一 HTTPS 公网基址，并把实际 TLS 反向代理的来源网段写入 `mcp.trusted-proxy-cidrs`。代理转发 MCP、token 与 `.well-known` 时保留 Host，并固定传递 `X-Forwarded-Proto: https`、`X-Forwarded-Host`；后端不以直连或客户端自带转发头推断公网 URL。未在真实反代上分别验证 observer 与 automation 的换 token、初始化、工具发现、轮换和吊销即时失效前，不得宣称公网 MCP 已验收。

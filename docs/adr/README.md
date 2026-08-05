@@ -21,7 +21,7 @@
 | [0015](0015-sse-server-push-transport.md) | agent↔控制面 server→agent 推送合并为单条 SSE 流（取代 ADR-0006） | 已接受 |
 | [0016](0016-agent-cross-server-messaging-middleware.md) | agent 内置跨服消息中间件：基于 Redis 的通用通信层 | 已被 [0063](0063-cross-server-message-control-plane-relay.md) 取代 |
 | [0017](0017-traffic-scheduling-decision-vs-execution.md) | 流量调度：控制面给决策 / 数据面做执行，drain 落 DB、canary 划范围外 | 已接受 |
-| [0018](0018-config-encryption-at-rest.md) | 敏感配置 at-rest 加密：AES-256-GCM、密钥走 env、密文落 TEXT 可移植 | 已接受 |
+| [0018](0018-config-encryption-at-rest.md) | 敏感配置 at-rest 加密：AES-256-GCM、密钥走 env、密文落 TEXT 可移植 | 已被 [0081](0081-local-persistent-encryption-key-files.md) 取代 |
 | [0019](0019-health-alert-channel-abstraction.md) | 健康告警通道做成可扩展抽象（站内信 + webhook） | 已接受（**「告警不落库」一条被 [0041](0041-alert-event-persistence.md) 取代**） |
 | [0020](0020-prometheus-metrics-observability.md) | 控制面用标准 Prometheus client 暴露运行指标（/metrics） | 已接受 |
 | [0021](0021-config-gray-cohort-version-selection.md) | 配置灰度：按显式 serverId 名单（cohort）在版本选择层叠加，promote/abort 收口 | 已接受 |
@@ -84,6 +84,7 @@
 | [0078](0078-stable-resource-identity-and-lifecycle-tombstones.md) | 资源稳定业务标识、可变显示名称与不可复用墓碑 | 已接受 |
 | [0079](0079-principal-capability-and-dangerous-operation-approval.md) | 统一管理主体、语义能力与危险操作审批执行模型 | 已接受；部分取代 ADR-0026 的角色与判权模型 |
 | [0080](0080-builtin-mcp-oauth-client-credentials.md) | 内置公网 MCP Streamable HTTP 与 OAuth Client Credentials 边界 | 已接受；在 MCP OAuth 范围部分取代 ADR-0026 |
+| [0081](0081-local-persistent-encryption-key-files.md) | 控制面 at-rest 加密密钥使用本地持久文件 | 已接受；取代 ADR-0018 的环境变量密钥来源 |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 

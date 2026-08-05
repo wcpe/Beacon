@@ -18,8 +18,8 @@
 分层不破：`router → handler → service → repository`，handler 不碰 GORM。
 
 - **repository**：`ConfigItemRepository` / `FileObjectRepository` 各加 `SetEnabled(id uint, enabled bool) error`（仅对未软删项按 id 置 `enabled`）。软删复用既有 `SoftDelete`。
-- **service**：`ConfigService` / `FileService` 各加 `BatchDelete` / `BatchSetEnabled`：在**一个** `db.Transaction` 内遍历 id，逐项软删 / 置 enabled 并写一条领域审计（复用既有 `ActionConfigDelete`/`ActionFileDelete` + 新增 `ActionConfigDisable/Enable`、`ActionFileDisable/Enable`）。任一项不存在即整批回滚（事务语义，全成或全不成）。事务提交成功后按受影响 scope 逐项唤醒长轮询（沿用单操作的 `notify` + `exportGit`）。
-- **handler**：新增 `Config.Batch` / `File.Batch`，解析 body `{action, ids}`；非法 action / 空 ids → 400；按 action 分派到对应 service 方法；返回 `{action, count}`。
+- **service**：危险的 `ConfigService` / `FileService` 批量删除、置态公开入口均失败关闭；配置批量提审按 ID 去重排序、拒绝跨 namespace，并以安全 targetRef/证据公开 namespace、排序 ID、版本与启用状态摘要，密文载荷冻结完整目标。审批 worker 在**一个**事务内逐项软删 / 置 enabled、写领域审计与执行回执；任一目标漂移或不存在即整批回滚（全成或全不成）。提交成功后按受影响 scope 逐项唤醒长轮询。
+- **handler**：`Config.Batch` / `File.Batch` 解析 body `{action, ids, reason}`；非法 action / 空 ids → 400；只创建审批 ticket 并返回 202，不直接写领域状态。
 - **router**：`POST /admin/v1/configs/batch`、`POST /admin/v1/files/batch`（静态路由置于 `{id}` 前）；二者各项在事务内自记专项审计，登记进 `coveredWriteRoutes` 避免兜底中间件双记。
 - **前端**：`web/src/api/client.ts` + `types.ts` 加 `batchConfigs` / `batchFiles`；`ConfigsPage.tsx` 新增独立的批量操作面板组件（多选列表 + 批量栏 + 轻量确认），仅动「列表选择 + 批量栏」区域，不碰编辑器单条删除逻辑（减少与 FR-76 的 rebase 冲突）。
 

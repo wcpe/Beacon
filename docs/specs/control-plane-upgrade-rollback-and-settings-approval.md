@@ -1,6 +1,6 @@
 # 功能规格：控制面升级、回滚与运行设置审批
 
-> 状态：草拟　·　关联 PRD：FR-210　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
+> 状态：开发中　·　关联 PRD：FR-210　·　决策：[ADR-0079](../adr/0079-principal-capability-and-dangerous-operation-approval.md)
 
 ## 1. 背景与目标
 
@@ -75,6 +75,8 @@
 升级/回滚与危险 setting 从“直接执行”改为“提交审批 → 批准并自动执行”，属于主流程变化。实现前必须在演示模式提供可点击 mock，覆盖上述四态、批准后重启对账与止损直执；经用户浏览器评审拍板后才能接真实审批 API。
 
 ## 5. 任务拆分
+
+已实现：冻结 GA 资产与 SHA-256、`.old` 备份 manifest、危险设置元数据与版本 CAS、统一审批事务 receipt、最小系统执行记录及启动/稳定成功和失败对账。页面 mockup、完整浏览器验收和独立复核仍未完成。
 
 - [ ] 测试先红：operation 分类覆盖、机器主体无法批准、原端点只建申请且无副作用、内部 permit 无法由 handler 构造。
 - [ ] 测试先红：升级目标/哈希漂移、回滚备份漂移、setting CAS 冲突、审批/审计持久化失败均 fail-closed。

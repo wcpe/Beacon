@@ -5,6 +5,24 @@
 ## 未发布
 
 ### 新增
+- 稳定业务标识与可变显示名称（FR-205）：六类资源返回 id/code/displayName；code 创建后不可变，displayName 可 PATCH；旧 name 等价于 code，不一致返回 AMBIGUOUS_IDENTIFIER；server displayName 为空时自动回填 serverId。
+- 人类与机器主体及语义能力授权（FR-206）：统一 Principal 映射，旧 full/readonly 兼容；operation descriptor 启动校验 fail-closed；机器主体永远不能审批。
+- 危险操作统一审批核心（FR-207）：不可修改冻结申请 + 统一状态机；只有 human 能批准/拒绝；24h 只约束 pending；CAS pending+version → executing；Idempotency-Key 重放保护；worker 内存信号 + DB 轮询兜底；ExecutionPermit 不可伪造。
+- 身份、凭据、信任与拓扑危险操作适配（FR-208）：身份确认、解绑、启用、恢复重新申请资格、信任授予及 V2 拓扑迁移均通过统一审批执行；撤销、禁用和启用排空继续作为强审计止损动作；凭据一次性兑换。
+- Agent 命令与敏感内容访问审批（FR-209）：Agent 命令、实时日志/文件/反向抓取、敏感配置/文件/payload 均通过统一审批；ExecutionPermit 或 SensitiveAccessGrant 一次性消费；未登记时 fail-closed；不保存敏感正文。
+- 控制面升级、回滚与系统设置审批（FR-210）：升级冻结确定 GA 资产和 SHA-256，回滚使用与 `.old` 同生命周期的备份 manifest，设置按元数据和版本 CAS 执行；系统执行记录与 receipt 持久化，并在重启后对账。
+- 配置、文件、覆盖集与交付审批适配（FR-211）：发布、回滚与软删公开入口失败关闭；文件正文和覆盖集参数只存加密待执行记录，批准 worker 与领域写入、审计及 execution receipt 同事务执行；ChangeOrder submit 冻结变更单并一次创建审批，批准后直接启动灰度。
+- 审批中心（FR-212）：全局审批列表 + 徽标不随页眉变；服务端筛选 + 分页稳定；详情比较快照 + timeline；human 批准并执行；机器主体隐藏批准和拒绝动作。
+- 权威观测范围契约（FR-213）：env 映射多 namespace 只包含该集合；失效 fail-closed 不回退全量；旧 namespaceId 保持单 namespace 语义；热库/归档库/跨日表同一范围。
+- 前端观测范围接入（FR-214）：切 env 级联重置 namespace；失效 scope 停止查询；所有观测页发送 FR-213 参数；scope 不改变 mutation 目标。
+- 服务器归档与恢复（FR-215）：`server.archive` / `server.restore` 由统一审批 worker 在领域事务内执行并写执行回执；归档保留身份绑定和拓扑事实，默认列表、目录与命令候选排除归档 server。
+- namespace 归档与恢复（FR-216）：namespace 归档后对整棵子树产生有效停用而不改写子资源自身状态，恢复后按原状态重现；两步均审批并留档。
+- 服务器永久删除与墓碑（FR-217）：归档服务器经批准后执行逻辑永久删除，保留不可复用 serverId、审计与历史关联墓碑，不提供冷却期或复活。
+- namespace 永久删除与子树墓碑（FR-218）：归档 namespace 无额外冷却期，经批准后在单次原子操作中墓碑化权威子树；预览完整影响范围，所有业务标识永久不可复用。
+- 内置 `/admin/v2/mcp` 与 OAuth Client Credentials（FR-219）：Beacon 进程内提供远程 Streamable HTTP MCP，公网仅经 TLS 反代访问；独立 OAuth 客户端短令牌、受众绑定、撤销/轮换可用；MCP bearer 无法调用普通管理 REST。
+- MCP 显式领域工具与审批交接（FR-220）：MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求但无任何审批工具；observer 只读，automation 低风险直执。
+- API 密钥创建/轮换纳入统一审批执行：批准 worker 在领域事务内生成密钥、写执行回执并保存独立密钥加密的一次性领取密文；仅原申请 human 可通过审批端点领取一次明文，审批、审计与日志不保存明文或哈希。
+- MCP 只读工具：新增元数据、拓扑、指标、历史与审计的显式脱敏只读工具，observer 与 automation 均可使用。
 - 全局 LobbyCluster 管理闭环（FR-199～204）：namespace 唯一大厅集群与成员互斥归属、BC 全 namespace 目录和首次大厅落脚、立即目录重同步、BC 本地查询命令、Agent 极简身份接入，以及 BC 多 listener 地址探测与逐项覆盖。真实环境已验证双入口首连、目录命令、故障切换与覆盖恢复；真实 RC tag / Release 仍待发布流程创建。
 - 补齐 UI 控件博物馆开发文档 `docs/UI-WIKI.md`：启动命令、覆盖率门禁、新增控件流程，以及与管理台演示模式的边界说明。
 - README 增加管理台演示截图（运维总览 / 服务器 / 拓扑）与 UI 控件博物馆截图；截图取自 mock `normal` 场景数据加载完成后的页面。
@@ -18,6 +36,11 @@
 - GA 校验新增 RC 基准资产目录：RC 与 GA 目录各自先校验完整资产集合和 `SHA256SUMS.txt`，再逐项比较文件名、字节大小与 SHA-256，并把校验和文件本身纳入 RC/GA 字节一致性检查。
 
 ### 变更
+- 交付变更单旧审批入口改为创建统一审批申请；批准 worker 在同一事务内持久启动变更单并写入执行回执，避免 API Key 或机器主体直批旁路。
+- 交付公开启动入口已移除；变更单只会由已批准的统一审批 worker 在领域事务内启动并写入执行回执。
+- 交付灰度继续操作改为冻结暂停状态与继续参数的统一审批申请；公开 service 入口失败关闭，批准 worker 同事务恢复并写入执行回执。
+- 交付整单回滚改为统一审批申请；回滚的配置版本记账、目标初始化、领域审计和审批回执共用一个数据库事务。
+- 交付批次推进门改为统一审批申请；待确认批和目标状态哈希冻结后，批准 worker 才可放行下一批或完成末批。
 - 开发构建与发布准备流程标准化（FR-182）：移除移动 `dev` tag、开发 GitHub Release 与 `<基线>-dev.<提交距离>.g<sha>` 开发发布版本，临时开发产物改由 GitHub Actions Artifact 承载。
 - pull request 只运行 Go、Web、Agent 与真实集成质量门，不执行产品打包，也不上传产品 Artifact。
 - `master` 仅在全部质量任务成功后按 `linux-amd64`、`linux-arm64`、`windows-amd64`、`darwin-arm64` 四个平台打包；Artifact 按 source commit 与平台命名、保留 7 天，且只有最终状态成功的 run 可供开发验证。

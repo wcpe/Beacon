@@ -231,15 +231,19 @@ data: {}
 
 - **密钥认证头**（二选一）：独立头 `X-Beacon-Api-Key: <bk_...>`，或 `Authorization: Bearer <bk_...>`（密钥以 `bk_` 前缀与登录令牌区分）。缺失 / 错误 / 已吊销 / 已过期 → `401 ADMIN_UNAUTHORIZED`。
 - **只读拒写（统一中间件裁决）**：`readonly` 角色访问任何写方法端点（POST/PUT/PATCH/DELETE）→ `403 FORBIDDEN`；读方法（GET）放行。`full` 角色不受限。
-- **密钥只存哈希、明文一次性**：明文 = `bk_` + 随机串，**仅创建 / 重置响应一次性返回**，之后不可二次读取（丢失只能重置轮换）；列表 / 详情绝不含明文与哈希。
+- **密钥只存哈希、明文一次性**：创建 / 重置先返回审批申请，批准 worker 才生成 `bk_` 明文、安装哈希并加密保存待领取副本；仅原申请 human 可经审批兑换端点领取一次，之后不可二次读取（丢失只能重置轮换）；列表 / 详情绝不含明文、哈希或待领取密文。
 - **审计**：密钥发起的写操作 `operator` 记为 `apikey:<名称>`；密钥创建 / 吊销 / 重置写 `audit_log`（动作 `apikey.create` / `apikey.revoke` / `apikey.reset`，对象类型 `apikey`，**detail 不含明文 / 哈希**），复用审计页按 `action` / `targetType` 过滤可查。
 
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/api-keys` | 列出全部密钥（含已吊销，显示状态）：`{ items: [{ id, name, role, keyPrefix, status, createdAt, expiresAt, lastUsedAt }] }`，**无明文 / 哈希**。`status ∈ {active, expired, revoked}` |
-| `POST /admin/v1/api-keys` | 创建：`{ name, role: "full"\|"readonly", expiresAt?: RFC3339 }` → `201`，响应含**一次性明文** `key` + 元数据。`role` 非法 / `name` 空 / `expiresAt` 已过 → `400 INVALID_PARAM`（operator 由认证态派生） |
+| `POST /admin/v1/api-keys` | 创建审批：`{ name, role: "full"\|"readonly", expiresAt?: RFC3339, reason }` → `202 { approvalRequestId, status }`，不返回明文。`role` 非法 / `name` 空 / `expiresAt` 已过 → `400 INVALID_PARAM`（operator 由认证态派生） |
 | `DELETE /admin/v1/api-keys/{id}` | 吊销（软删，不可逆）→ `{ ok: true }`；不存在 / 已吊销 → `404 API_KEY_NOT_FOUND` |
-| `POST /admin/v1/api-keys/{id}/reset` | 重置（轮换明文，旧明文立即失效）→ 响应含**一次性新明文** `key`；不存在 / 已吊销 → `404 API_KEY_NOT_FOUND` |
+| `POST /admin/v1/api-keys/{id}/reset` | 重置审批：`{reason}` → `202 { approvalRequestId, status }`，批准成功前旧明文保持有效；不存在 / 已吊销 → `404 API_KEY_NOT_FOUND` |
+
+`POST /admin/v2/approval-requests/{requestId}/credential-secret/redeem`：仅原申请的 human 且审批已 `succeeded` 时返回一次 `{secret:"bk_..."}`。非申请人、机器主体、非成功请求、重复兑换或密文失效均返回 `410 credential_secret_lost`；明文不进入审批详情、审计或日志。
+
+`GET /admin/v2/approval-requests` 支持 `status`、`operationKey`、`riskLevel`、`requesterType`、`requesterId`、`namespaceId`、`keyword`、`createdFrom`、`createdTo`、`expiresFrom`、`expiresTo`、`page`、`pageSize`；`namespaceId=global` 只返回无 namespace 的操作。审批中心不提供通用创建端点；申请必须由对应领域入口冻结权威目标和执行参数。排序固定为 pending 按过期时间升序，其余按创建时间降序。详情响应只含安全快照、同源 timeline、适配器脱敏实时证据及服务端计算的 `canApprove`/`canReject`/`canWithdraw`；证据不可读时 `evidenceStatus=unavailable`，不返回 frozen payload、token、secret、凭据 hash 或内容正文。对已成功的一次性敏感内容审批，详情只向原申请主体额外投影 `{sensitiveAccessGrant:{grantId}}`，供调用对应消费端点；非申请主体和已消费/失效授权不返回该字段。
 
 > 密钥管理端点本身受只读拒写约束：`readonly` 密钥对创建 / 吊销 / 重置一律 `403`（只读不能管密钥）。范围外（不做）：细粒度 / 字段级权限、按端点 scope、自动轮换、速率限制、多租户。
 
@@ -250,10 +254,10 @@ data: {}
 |---|---|
 | `GET /admin/v1/configs?namespace=&group=&dataId=&scopeLevel=` | 列出配置项 |
 | `GET /admin/v1/configs/{id}` | 取当前内容 + 元数据 |
-| `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + comment + 可选 `sensitive`（默认 false；true 则 content 加密入库，FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）（operator 由认证态派生） |
-| `PUT /admin/v1/configs/{id}` | 发布新版本：content + comment → version+1，返回新 `version`/`md5`（operator 由认证态派生） |
-| `DELETE /admin/v1/configs/{id}` | 软删（该层从合并链脱落，触发唤醒；operator 由认证态派生） |
-| `POST /admin/v1/configs/batch` | 批量操作（FR-74）：`{ action: "delete"\|"disable"\|"enable", ids: [int...] }`，对一组配置项在**一个事务**内原子完成删除 / 禁用（enabled=false）/ 启用（enabled=true），每项各记一条领域审计（`config.delete`/`config.disable`/`config.enable`），任一 id 不存在则整批回滚；提交后逐项唤醒长轮询。返回 `{ action, count }`（operator 由认证态派生） |
+| `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + comment + 可选 `sensitive`（默认 false；true 则 content 加密入库，密钥来源见 [ADR-0081](adr/0081-local-persistent-encryption-key-files.md)，算法见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）（operator 由认证态派生） |
+| `PUT /admin/v1/configs/{id}` | 发布新版本：content + comment + reason，创建审批 ticket（202）；批准后才 version+1（operator 由认证态派生） |
+| `DELETE /admin/v1/configs/{id}` | 软删：reason + 可选 comment，创建审批 ticket（202）；批准后该层才从合并链脱落并触发唤醒（operator 由认证态派生） |
+| `POST /admin/v1/configs/batch` | 批量操作：`{ action: "delete"\|"disable"\|"enable", ids: [int...], reason }`，创建审批 ticket（202）。提审时按 ID 去重排序，拒绝跨 namespace；安全详情公开 namespace、排序 ID、版本/启用状态摘要，密文载荷冻结完整目标。批准 worker 在一个事务内原子删除 / 禁用 / 启用、逐项写领域审计与执行回执。任一目标漂移或不存在即整批失败，不产生部分变更；提交后逐项唤醒长轮询。 |
 | `GET /admin/v1/configs/{id}/revisions` | 历史版本列表 |
 | `GET /admin/v1/configs/{id}/revisions/{version}` | 取某历史版本内容 |
 | `POST /admin/v1/configs/{id}/rollback` | 回滚：`{ toVersion, comment }`（= 读旧版内容作新版发布；operator 由认证态派生） |
@@ -289,7 +293,7 @@ data: {}
 
 `GET /admin/v1/configs/impact`（FR-79）：发布前只读预览某条配置 scope 此刻会落到哪些**在线**子服，供发布确认展示「将影响 N 台在线服」。归属真源 = `zone_assignment`（DB 权威，见 [ADR-0004](adr/0004-zone-authority-control-plane.md)）；在线真源 = 内存注册表**可用集合**（`online`+`degraded`，与发现 / 拓扑同口径，degraded 仍会收到变更）。覆盖语义与有效配置覆盖链对称：`global` 覆盖该环境全部可用实例；`group` 覆盖解析大区 == `group` 的子服；`zone` 覆盖大区 == `group` 且小区 == `scopeTarget` 的子服；`server` 覆盖 `serverId == scopeTarget` 的那一台（在线才计入）。未指派的实例按 `groupHint` 回退（zone 为空），与 agent 端 `Resolve` 同口径。参数：`namespace` 必填、`scopeLevel` 必填且须为 `global`/`group`/`zone`/`server`；`group` 层需 `group`、`zone` 层需 `group`+`scopeTarget`、`server` 层需 `scopeTarget`，缺失返 `400 INVALID_PARAM`。`affected` 按 serverId 字典序、`total = len(affected)`，纯读、不落 DB、不参与发布决策。
 
-**敏感配置 at-rest 加密（FR-20，见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）**：新建配置项传 `sensitive: true` 时，其 `content` 以 AES-256-GCM 加密落库（DB 列存 `enc:v1:` 前缀的 base64 密文），密钥仅从环境变量 `BEACON_CONFIG_ENCRYPTION_KEY`（base64 的 32 字节）读取。控制面在**读取详情 / 历史版本 / 有效配置解析与下发**时自动解密——agent 拿到的是**明文**（数据面内网可信不变，agent 不持密钥）。配置项视图回吐 `sensitive` 布尔标记，但**永不回吐密钥或密文**。库中已有敏感项却未配置密钥 → 控制面 **fail-fast 拒绝启动**。md5 / 有效配置解析始终基于解密后明文，与非敏感项行为一致。
+**敏感配置 at-rest 加密（FR-20，密钥来源见 [ADR-0081](adr/0081-local-persistent-encryption-key-files.md)，算法见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）**：新建配置项传 `sensitive: true` 时，其 `content` 以 AES-256-GCM 加密落库（DB 列存 `enc:v1:` 前缀的 base64 密文）。控制面首次启动在数据目录同级 `secrets/config-encryption.key` 安全生成并持久化 32 字节密钥，之后只从该文件读取；目录、权限或文件内容异常时 **fail-closed 拒绝启动**。控制面在**读取详情 / 历史版本 / 有效配置解析与下发**时自动解密——agent 拿到的是**明文**（数据面内网可信不变，agent 不持密钥）。配置项视图回吐 `sensitive` 布尔标记，但**永不回吐密钥或密文**。md5 / 有效配置解析始终基于解密后明文，与非敏感项行为一致。
 
 错误：配置不存在 `404 CONFIG_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 CONFIG_CONFLICT`；内容超长（> 256KB）`422 CONTENT_TOO_LARGE`；发布内容解析失败 `422 CONTENT_INVALID`；发布内容结构/类型/必填项校验不通过（顶层非键值映射、含空键等）`422 CONTENT_SCHEMA_INVALID`；覆盖层/目标键不合法 `400 INVALID_SCOPE`；同一 dataId 跨层格式不一致 `422 FORMAT_INCONSISTENT`。批量端点（`/configs/batch`）另有：空 `ids` / `ids` 超上限（> 2000）/ 非法 `action`（非 delete/disable/enable）`400 INVALID_PARAM`；批中含不存在 id 整批回滚并返 `404 CONFIG_NOT_FOUND`（重复 id 去重后再判存在性）。
 
@@ -300,14 +304,14 @@ data: {}
 | `GET /admin/v1/files?namespace=&group=&path=&scopeLevel=` | 列出文件对象 |
 | `GET /admin/v1/files/effective?namespace=&serverId=&group=&zone=` | 只读预览某目标合并后的有效文件树 + 逐文件/逐键来源（FR-45，见 [ADR-0013](adr/0013-admin-effective-config-preview-and-provenance.md) 模式扩展到 [ADR-0029](adr/0029-file-tree-structured-deep-merge.md) 文件树合并） |
 | `GET /admin/v1/files/{id}` | 取当前整文件内容 + 元数据（含 `wholeFileOverride`，FR-44；List/Get 视图均回显） |
-| `POST /admin/v1/files` | 新建（首次发布）：`{ namespace, group, path, scopeLevel, scopeTarget, content, comment, wholeFileOverride?, sensitiveExcluded? }`（`wholeFileOverride` 可选布尔，缺省 false；置真则该结构化文件强制整文件覆盖、不深合并，FR-44。`sensitiveExcluded` 可选布尔，缺省 false；置真则该文件不导出到 git 镜像——库内保留、下发不变、仅 git 排除，防第三方插件明文密码落 git，FR-47/[ADR-0030](adr/0030-git-export-mirror.md)。operator 由认证态派生） |
-| `POST /admin/v1/files/import` | 配置导入（FR-38，`multipart/form-data`）：把一份目录批量上传到某组（`scope=group`）。字段 `namespace`、`group`、可选 `comment` + 多个 `files` 文件部件 + 与之等长一一对应的 `paths` 相对路径字段。每个文件按相对 path「存在则发布新版本、不存在则首发」（整文件覆盖语义），多文件在同一事务内原子落地，提交后唤醒文件长轮询，并记一条 `file.import` 审计。返回 `{ files, created, updated }`（operator 由认证态派生） |
-| `PUT /admin/v1/files/{id}` | 发布新版本：`{ content, comment }` → version+1，返回新 `version`/`md5`（operator 由认证态派生） |
-| `DELETE /admin/v1/files/{id}` | 软删（该层从覆盖链脱落，触发文件唤醒；下游 agent 据 manifest 删该 path 镜像；operator 由认证态派生） |
-| `POST /admin/v1/files/batch` | 批量操作（FR-74）：`{ action: "delete"\|"disable"\|"enable", ids: [int...] }`，对一组文件对象在**一个事务**内原子完成删除 / 禁用 / 启用，每项各记一条领域审计（`file.delete`/`file.disable`/`file.enable`），任一 id 不存在则整批回滚；提交后逐项唤醒文件长轮询。返回 `{ action, count }`（operator 由认证态派生） |
+| `POST /admin/v1/files` | 提交新建审批：`{ namespace, group, path, scopeLevel, scopeTarget, content, comment, reason, wholeFileOverride?, sensitiveExcluded? }` + `Idempotency-Key` → `202 { approvalRequestId, changeId, status }`；批准 worker 才首次发布、唤醒同步并触发 git 导出。 |
+| `POST /admin/v1/files/import` | 提交目录导入审批（FR-38，`multipart/form-data`）：字段 `namespace`、`group`、`reason`、可选 `comment` + 多个 `files` 文件部件 + 与之等长一一对应的 `paths`。内容仅存加密待执行记录；批准 worker 才按 path 原子首发或发布新版本。返回 `202` 审批申请。 |
+| `PUT /admin/v1/files/{id}` | 提交发布审批：`{ content, comment, reason }` + `Idempotency-Key` → `202 { approvalRequestId, changeId, status }`；内容仅保存于加密待执行记录，批准 worker 自动发布 |
+| `DELETE /admin/v1/files/{id}` | 提交软删审批：query `reason`、可选 `comment` + `Idempotency-Key` → `202` 审批申请；批准后该层从覆盖链脱落并唤醒文件同步 |
+| `POST /admin/v1/files/batch` | 提交批量删除 / 禁用 / 启用审批：`{ action: "delete"\|"disable"\|"enable", ids: [int...], reason }` + `Idempotency-Key` → `202` 审批申请；批准 worker 在一个事务内应用冻结目标。 |
 | `GET /admin/v1/files/{id}/revisions` | 历史版本列表 |
 | `GET /admin/v1/files/{id}/revisions/{version}` | 取某历史版本内容 |
-| `POST /admin/v1/files/{id}/rollback` | 回滚：`{ toVersion, comment }`（operator 由认证态派生） |
+| `POST /admin/v1/files/{id}/rollback` | 提交回滚审批：`{ toVersion, comment, reason }` + `Idempotency-Key` → `202` 审批申请 |
 
 错误：文件不存在 `404 FILE_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 FILE_CONFLICT`；路径不合法（空 / 绝对路径 / 含 `..` 穿越 / 含反斜杠）`400 INVALID_PATH`（agent 自身目录 `BeaconAgent` / `BeaconAgentProxy` 顶段**不再拦截**、可托管，自我保护由 agent observe-only 兜底，见 [ADR-0028](adr/0028-allow-hosting-agent-self-dir.md)）；内容超长（> 1MB）`422 CONTENT_TOO_LARGE`；**结构化文件（yml/json）语法错误 `422 CONTENT_SCHEMA_INVALID`**（FR-44，Create/Publish/Import 发布前 `merge.Parse` 解析校验，拒坏内容入库）；覆盖层/目标键不合法 `400 INVALID_SCOPE`。导入（`/files/import`）另有：缺 `namespace`/`group`/文件，或 `paths` 与 `files` 数量不一致 `400 INVALID_PARAM`；目标组非法（如填全局组）`400 INVALID_SCOPE`；单次文件数超上限 `422 TOO_MANY_FILES`；单文件或累计总字节超上限 `422 CONTENT_TOO_LARGE`。批量端点（`/files/batch`）另有：空 `ids` / `ids` 超上限（> 2000）/ 非法 `action` `400 INVALID_PARAM`；批中含不存在 id 整批回滚并返 `404 FILE_NOT_FOUND`（重复 id 去重后再判存在性）。
 
@@ -348,11 +352,12 @@ data: {}
 | `GET /admin/v1/instances/offline?namespace=` | 列出当前主动下线标记（FR-49）：`{ items: [{ namespace, serverId, reason }] }`（已下线实例不在上面的注册表列表出现，前端据此展示「已下线（可取消）」） |
 | `POST /admin/v1/instances/{serverId}/offline?namespace=` | 主动下线（FR-49）：事务内落 DB 拒绝态 `server_offline` + `instance.offline` 审计，提交后移出内存可用集；该实例**重注册被拒**（见 agent register `403`）。body 可选 `{reason}`（空体也允许）；operator 由认证态派生；写操作 readonly→403。允许对不在册实例预先下线。**区别于 drain（排空、仍可连）与健康 TTL（自动衰退）** |
 | `DELETE /admin/v1/instances/{serverId}/offline?namespace=` | 取消主动下线（FR-49）：软删 `server_offline` + `instance.online` 审计，使实例可重新接入；无下线标记返 `404 OFFLINE_NOT_FOUND`。清除后不主动复活（等 agent 降频探测重连或运维 reconnect） |
-| `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | **建反向抓取受管任务并下发扫描命令**（FR-58 重定义，取代 FR-39 一次性 ingest，写操作 readonly→403）。body `{scope,group,target}`（`scope=group` 只需 `group`；`scope=server` 需 `group`+`target`=目标 serverId）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单实例互斥**（该实例已有非终态任务→`409 REVERSE_FETCH_TASK_ACTIVE`，detail 含活跃 taskId+status）→ 事务内建任务（`scanning`）+ 下发 `mode=scan` 命令 + `file.reverse-fetch-scan` 审计 → 经 SSE `command-pending` 唤醒该 agent（见 agent §10、§12）。返回 `202` + 任务视图（见下方 FR-58 任务字段）。见 [ADR-0037](adr/0037-reverse-fetch-managed-task.md) |
-| `POST /admin/v1/instances/{serverId}/logs?namespace=` | **触发取该 agent 自身脱敏日志**（FR-88，写操作 readonly→403，见 [ADR-0040](adr/0040-agent-readonly-log-tail.md)）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）+ **单活跃限速**（该实例已有进行中取日志命令→`409 AGENT_LOG_ACTIVE`）→ 事务内建 `tail-logs` 命令（`pending`）+ `instance.tail-logs` 审计（detail 不含日志内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§14）。返回 `202` + `{ commandId, status, lines: [] }` |
-| `GET /admin/v1/instances/{serverId}/logs?namespace=` | 查询该实例最近一次取日志结果（FR-88，供前端轮询）：`done` 则返回 `{ commandId, status, lines: [{ level, text }] }`（日志已脱敏）；进行中（`pending`/`fetched`）/ 失败（`failed`/`expired`）时 `lines` 为空；**从无取日志命令→`204 No Content`**。日志为瞬态、取一次后随命令过期清空 |
+| `POST /admin/v1/instances/{serverId}/reverse-fetch?namespace=` | 反向抓取扫描审批申请入口。body `{scope,group,target,reason}` + `Idempotency-Key`，返回 `202` 票据；批准 worker 同一事务创建任务（`scanning`）、`mode=scan` 命令、审计与 execution receipt，提交后才唤醒 Agent。|
+| `POST /admin/v1/instances/{serverId}/logs?namespace=` | 取日志兼容申请入口：body `{reason}` + `Idempotency-Key`，创建 `agent.command.tail_logs` 审批申请并返回 `202` 票据；批准 worker 在同一事务下发命令、创建 pending grant 与执行回执，绝不直接返回正文 |
+| `GET /admin/v1/instances/{serverId}/logs?namespace=` | 旧日志正文入口，固定 `409 operation_requires_approval`；命令状态与脱敏结果摘要继续从 `GET /admin/v1/commands` 直接读取，正文只能凭批准后的 grant 消费 |
+| `POST /admin/v1/instances/{serverId}/logs/grants/{grantId}/consume` | 原申请主体一次消费已由 Agent 回传的脱敏日志。body `{commandId}`；回传内容哈希与该命令绑定后才激活 grant，错误主体、过期或重复消费均失败关闭 |
 | `POST /admin/v1/instances/{serverId}/resync?namespace=` | **触发该 agent 强制重同步**（FR-91，写操作 readonly→403，复用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) 命令队列、不新增 ADR）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `resync-config` 命令（`pending`，空载荷）+ `instance.resync` 审计（detail 仅 commandId/serverId、无内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§15）。agent 重拉有效配置/文件树/覆盖集并 apply（幂等，已是最新则 no-op），回传命令结果。返回 `202` + 命令视图。见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md) |
-| `GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=` | **只读浏览该在线服真实 `plugins/`**（FR-110，见 [ADR-0049](adr/0049-agent-fs-browse.md)）。`op ∈ {list, tree, file}`：`list` 懒列 `path` 目录直接子项（`offset`/`limit` 分页）、`tree` 按需展开 `path` 子树（`maxDepth` 逐层有界）、`file` 读 `path` 单文本文件内容。方法是 GET 但有写副作用（建命令 / 唤醒 agent / 入审计），故 **`full` 角色才可触发、`readonly`→`403 FORBIDDEN`**（扩展 [ADR-0026](adr/0026-runtime-api-keys-and-readonly-role.md)）。流程：校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `fs-browse` 命令（`pending`）+ `file.browse` 审计（detail 仅 `commandId`/`op`/`path`、**绝不含文件内容**）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§16）→ **阻塞等待** agent 回传结果（转存命令瞬态后唤醒本请求）→ 把结果 JSON 原文代理给前端。`op` 非法→`400 INVALID_PARAM`；目标越权 / 非目录 / 非文本→`404 BROWSE_TARGET_NOT_FOUND`；agent 离线 / 未在限期内回传→`504 BROWSE_TIMEOUT`。返回 `200` + 浏览结果（形状见 agent §16 `result`）。是 FR-111 配置工作台双面板右侧实时浏览的底座。见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md) |
+| `GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=` | 旧在线浏览入口，固定 `409 operation_requires_approval`；目录/文件正文必须经 `agent.command.fs_browse` 审批与绑定 grant 返回。文件资产的清单、路径、哈希、大小和扫描摘要仍走 V2 直接读取端点 |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 | `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt, status, handledBy, handledAt, handleNote }]`（status 族为处理工作流字段，FR-157 见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；未处理时 handled* 为 `null`）。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
 | `POST /admin/v1/alert-events/{id}/handle` | **告警事件处理**（FR-157，见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；写操作 readonly→403）：入参 `{status: acknowledged\|resolved, note?}`（兼容等价措辞 `{action, handleNote}`），更新处理状态 / 处理人（取登录身份）/ 处理时刻 / 处置说明并**写审计**（`alert-event.acknowledge` / `alert-event.resolve`）。事件不存在 `404`、动作非法 `400`。健康分 `alert` 因子按当前 `status=open` 计数取真值（activeAlerts） |
@@ -371,7 +376,7 @@ data: {}
 |---|---|
 | `GET /admin/v1/reverse-fetch/tasks?namespace=&serverId=&status=` | 任务历史列表（最新在前，供任务台）：`{ items: [任务视图] }`。三个过滤参数均可选 |
 | `GET /admin/v1/reverse-fetch/tasks/{id}` | 任务详情（状态 / 清单 / 计数 / 命令引用，供进度轮询与审核台）。不存在→`404 REVERSE_FETCH_TASK_NOT_FOUND` |
-| `POST /admin/v1/reverse-fetch/tasks/{id}/submit` | 提交选定集（写操作 readonly→403）。body `{selectedPaths: [string], confirmOverThreshold?: bool}`。任务须 `pending-review`（否则 `409 REVERSE_FETCH_TASK_STATE`）；选定 path 须在扫描清单内（否则 `400 INVALID_PARAM`）；含超单文件阈值文件但未带 `confirmOverThreshold:true`→`400 OVER_THRESHOLD_NOT_CONFIRMED`（**只拒该文件、不拒整批**，可去掉它或加确认后重提）；文件数超上限→`422 TOO_MANY_FILES`。通过则下发 `mode=submit`+`selectedPaths` 命令、任务转 `fetching`、记 `file.reverse-fetch-submit` 审计、唤醒 agent。返回 `202` + 任务视图。agent 仅回选定内容（agent §11，落库记 `file.reverse-fetch-ingest`、任务转 `done`） |
+| `POST /admin/v1/reverse-fetch/tasks/{id}/submit` | 提交选定集审批申请。body `{selectedPaths, confirmOverThreshold?, reason}` + `Idempotency-Key`；申请时规范化路径并冻结当前 manifest SHA256，批准执行前重读并比对，漂移失败关闭。通过后同一事务下发 `mode=submit` 命令、任务转 `fetching`、写审计与 receipt，返回 `202` 票据。 |
 | `POST /admin/v1/reverse-fetch/tasks/{id}/cancel` | 取消（写操作 readonly→403）：非终态任务转 `cancelled`、清空清单/暂存瞬态、记 `file.reverse-fetch-cancel` 审计、解除互斥占位。终态再取消→`409 REVERSE_FETCH_TASK_STATE`。返回 `200` + 任务视图 |
 | `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts` | 冲突清单（**FR-59**）：任务须 `conflict-review`（否则 `409 REVERSE_FETCH_TASK_STATE`）。返回 `{ conflicts: [path] }` |
 | `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts/diff?path=` | 单冲突文件 diff（**FR-59**，抓取值 ⟷ 目标已有版本）：`{ path, fetchedContent, fetchedMd5, existingContent, existingMd5, version }`（`fetched*` 取暂存内容、`existing*` 实时取 file_object 当前版本）。`path` 不在冲突集→`404 REVERSE_FETCH_CONFLICT_NOT_FOUND` |
@@ -489,8 +494,8 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/zones/assignments?namespace=&group=&zone=` | 列出 serverId→zone 指派 |
-| `PUT /admin/v1/zones/assignments` | 新增/改派 upsert：`{ namespace, serverId, group, zone, note }`，触发该 serverId 唤醒（operator 由认证态派生） |
-| `DELETE /admin/v1/zones/assignments?namespace=&serverId=` | 取消指派（软删），触发唤醒（operator 由认证态派生） |
+| `PUT /admin/v1/zones/assignments` | 新增/改派兼容审批申请：`{ namespace, serverId, group, zone, note }`，返回 `202 + approvalRequestId`；批准后触发该 serverId 唤醒（operator 由认证态派生） |
+| `DELETE /admin/v1/zones/assignments?namespace=&serverId=&reason=` | 取消指派兼容审批申请，返回 `202 + approvalRequestId`；批准后触发唤醒（operator 由认证态派生） |
 | `GET /admin/v1/zones?namespace=&group=` | zone 维度汇总（每 zone 服数/在线数） |
 
 错误：指派不存在 `404 ASSIGNMENT_NOT_FOUND`。**排空门**：目标服在注册表 `online` 且 `playerCount>0`，而本次（首次指派 / 改到不同区 / 取消指派）会改变其区归属解析时，`PUT` 与 `DELETE` 一律返回 `409 ZONE_SERVER_ONLINE_NONEMPTY`（不落库 / 不审计 / 不唤醒），须先排空（drain 或等玩家离开）后再操作；指派到与现有完全相同的 `(group, zone)` 为同值 no-op，幂等返回现有记录、不落库不审计（先于排空门）。详见 ADR-0036。改派的长轮询唤醒在 M3 长轮询热更落地（M2 已即时重算有效配置、刷新内存归属）。
@@ -516,7 +521,7 @@ data: {}
 | `GET /admin/v1/scheduling/placement?namespace=&group=&zone=` | 某 zone 内落位候选（按推荐优先级排序）。仅纳入 `online` 且未 drain 的实例，按 weight 降序 → capacity 降序 → serverId 升序。`namespace`/`zone` 必填，`group` 可选 |
 | `GET /admin/v1/scheduling/drains?namespace=` | 列出当前 drain 标记 |
 | `PUT /admin/v1/scheduling/drains` | 标记 drain：`{ namespace, serverId, reason }`（幂等；operator 由认证态派生） |
-| `DELETE /admin/v1/scheduling/drains?namespace=&serverId=` | 取消 drain（软删；operator 由认证态派生） |
+| `DELETE /admin/v1/scheduling/drains?namespace=&serverId=&reason=` | 取消 drain 兼容审批申请，返回 `202 + approvalRequestId`；批准后软删（operator 由认证态派生） |
 
 `placement` 返回 `{ "candidates": [ { "serverId", "address", "weight", "capacity", "drained" }, ... ] }`；zone 内无可用候选（空集 / 全部 drain / 全部离线）返回空 `candidates`（`200`，不报错），由数据面兜底。落位**不读** agent 上报的 `playerCount`/`tps`（二者仅展示、不参与决策）。错误：参数缺失 `400 INVALID_PARAM`；取消不存在的 drain `404 DRAIN_NOT_FOUND`。
 
@@ -633,8 +638,9 @@ data: {}
 | `GET /admin/v1/system/update-check` | 检查有无可用更新（只读，full / readonly 皆可见） |
 | `GET /admin/v1/system/update` | 读更新进度内存态（只读、不查库、不打 GitHub） |
 | `GET /admin/v1/system/proxy-test` | 用已配 `update.proxy-url` 试连 GitHub（只读诊断，full/readonly 皆可），回 `{ ok, message? }`（FR-124） |
-| `POST /admin/v1/system/update` | 触发应用更新（写方法，readonly→`403`，入审计 `system.update-apply`/`system.update-failed`） |
+| `POST /admin/v1/system/update` | 冻结确定 GA 资产后创建审批申请，返回 `202` 审批票据 |
 | `POST /admin/v1/system/update/cancel` | 取消进行中的更新下载（写方法，readonly→`403`，下载中断记 `system.update-cancel`，FR-125） |
+| `POST /admin/v1/system/rollback` | 冻结 `.old` 备份 manifest 后创建审批申请，返回 `202` 审批票据 |
 
 `GET /admin/v1/system/update-check`：按固定 `stable` 渠道查 `wcpe/Beacon` 最新合法 GA Release 与当前正式版本比对。**服务端内存缓存**：TTL 取 `update.check-interval-hours`（`int [1,168]`，默认 6），缓存未过期则直接回缓存、**不再打 GitHub**；`?force=true` 绕缓存刷新（仍 `GET`，仅刷缓存不改业务）。管理台仅在 `update.auto-check-enabled=true` 时按该周期低频轮询，关闭后不轮询；手动“立即检查”始终使用 `force=true`。**GitHub 不可达 / 限流 / 解析失败 → `status=check-failed`（仍 `200`、不阻断页面）**，此时可选字段 `failureReason` 返回经 `internal/redact` 脱敏的真实原因，代理 URL userinfo、token 等凭据不得明文返回；`currentVersion`/`channel`/时间字段继续回显，其余业务字段为空。`current=="dev"`（直接 `go run` 未打包）→ `isDevBuild=true` 且 `hasUpdate=false`（不提示）。检查状态与下载 / 校验 / 落位进度隔离，检查请求不会覆盖进行中的更新进度。返回：
 ```json
@@ -660,13 +666,13 @@ data: {}
 ```
 `phase ∈ {idle, checking, downloading, verifying, staging, ready-restart, failed}`；`percent` 仅下载阶段有意义；`error` 仅 `failed` 非空；`rollbackAvailable` 表示是否存在可回退的上一版本（`.old` 备份，FR-120，前端据此显隐回滚按钮）。
 
-`POST /admin/v1/system/update`（无请求体）：**异步**触发更新（fix-1）——受理即回 `202 { "accepted": true }`，「下载 → SHA256 校验 → 原子落位 pending → 请求重启」在后台进行（用非请求 context，下载不因请求结束被取消）；前端经 `GET /admin/v1/system/update` 轮询进度（`phase`/`percent`/`error`）。落位成功后主进程优雅关停 → 自替换（`rename` 让位三步）+ spawn 新进程重启（FR-119，[ADR-0053](adr/0053-single-binary-self-replace.md)）；任一阶段失败 → 保留旧二进制、进程不退，失败原因写入进度态 `error`（**脱敏后**经状态端点展示，FR-122）+ 记 `system.update-failed` 审计与日志。**已有更新进行中再触发 → `409 UPDATE_IN_PROGRESS`**。写方法 readonly→`403`。**不做自动定时应用**（仅手动触发；自动检查开关 / 周期是 FR-101 的 store 项，前端据此轮询）。
+`POST /admin/v1/system/update`：请求体 `{ "reason": "..." }`，冻结确定 GA 资产名与 SHA-256 后只创建审批申请，返回 `202 { "approvalRequestId", "status", "operationKey" }`；不得下载、落位或替换二进制。human 在审批中心批准后，worker 才启动冻结资产的下载、校验和自替换。审批记录的 `succeeded` 仅表示已持久受理执行；最终结果以关联的系统执行记录为准，稳定验证成功、自动回退或失败均会留下脱敏对账结果。写方法 readonly→`403`。
 
 `GET /admin/v1/system/proxy-test`（FR-124，只读诊断）：用已保存的 `update.proxy-url` 构造出站 client 发一个轻量 GitHub release 列表请求，连通且 2xx → `200 { "ok": true }`；网络 / 代理失败或非 2xx → `200 { "ok": false, "message": "<脱敏原因>" }`（非服务端错误，前端行内回显；失败原因经脱敏，不泄露代理账密）。让运维配代理后即时验证能否连通 GitHub，而非等更新时才发现卡住。full / readonly 皆可调（只读、无副作用、不改状态）。
 
 `POST /admin/v1/system/update/cancel`（无请求体，FR-125）：取消进行中的更新下载。有进行中→取消其下载 context 回 `202 { "cancelled": true }`（核心于下载中断时进度回 `idle`、记 `system.update-cancel` 审计，留干净可重试态而非「失败」）；无进行中→幂等回 `200 { "cancelled": false }`（非错误）。写方法 readonly→`403`。注：进程关停（Ctrl+C / SIGTERM）经同一可取消 context 一并中断在途下载（fix-b）。
 
-`POST /admin/v1/system/rollback`（无请求体，FR-120，见 [ADR-0053](adr/0053-single-binary-self-replace.md)）：回退到上一版本（`.old` 备份）。校验存在 `.old` 后回 `202 { "accepted": true }`，随后主进程优雅关停 → `rename` 回退（当前 → `.failed`、`.old` → 运行路径）+ spawn 旧版重启；无 `.old` 可退 → `409 NO_ROLLBACK_AVAILABLE`。写方法 readonly→`403`，触发记 `system.update-rollback` 审计。回退可用性经上面 `GET /system/update` 的 `rollbackAvailable` 回显。
+`POST /admin/v1/system/rollback`：请求体 `{ "reason": "..." }`，读取并冻结 `.old` 备份 manifest 的版本与 SHA-256 后只创建审批申请，返回 `202` 审批票据；批准执行时备份不存在或哈希变化即失败，不猜测其它历史版本。写方法 readonly→`403`。回退可用性经上面 `GET /system/update` 的 `rollbackAvailable` 回显。
 
 ### 运维设置（FR-61，见 [ADR-0038](adr/0038-ops-settings-store-hot-reload.md)）
 热改项真源由 `config.yml` 移到 DB 设置 store；改设置即热生效、免重启。**启动 / 安全项绝不出现在此 API**（`http-addr` / `database.*` / `auth.*` / `agent-token` / `git-export.*` 仍以文件 + env 为真源）。
@@ -674,7 +680,7 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/settings` | 列全部热改项当前值 + 类型 + 默认 + 说明：`{ items: [{ key, value, valueType, default, desc, isStartup }] }`。`valueType ∈ {int,bool,string}`；`isStartup` 恒 `false`（白名单内皆热改项）。读对 full / readonly 都开。**含凭据项（`update.proxy-url`）的 `value` 回显脱敏**：userinfo 段掩为 `***`（如 `http://***:***@h:port`），落库存原值仅供运行（FR-98，见 [ADR-0047](adr/0047-update-outbound-proxy-and-secret-redaction.md)） |
-| `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>" }` → `{ ok: true }`。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。每次改入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**；含凭据项的新值脱敏后再记，FR-98）。**含凭据项「未改密码」语义**：若提交的 `value` 仍是当前值的脱敏占位（如原样回传 `http://***:***@h`），后端**保留原值不覆盖**、不入审计 |
+| `PUT /admin/v1/settings/{key}` | 改单个热改项：请求体 `{ "value": "<字符串化值>", "reason": "..." }`。低风险 key 直接返回 `{ ok: true }`；登记为高影响的 key 只创建审批申请并返回 `202` 审批票据。写方法 readonly→`403`；白名单外 `key` → `400 SETTING_KEY_NOT_ALLOWED`；类型 / 范围 / 枚举校验不过 → `400 SETTING_VALUE_INVALID`。高影响设置在批准时按冻结 version CAS，漂移即失败且不覆盖当前值。每次实际改动入审计 `settings.update`（detail 仅记 `key` + 新值，**绝不含任何密钥 / 口令**；含凭据项的新值脱敏后再记，FR-98）。**含凭据项「未改密码」语义**：若提交的 `value` 仍是当前值的脱敏占位（如原样回传 `http://***:***@h`），后端**保留原值不覆盖**、不入审计 |
 
 热改 key 白名单共 **37 项**，以服务端 `settingsWhitelist` 为契约真源，完整清单如下：
 
@@ -775,7 +781,8 @@ data: {}
 - **路径**：kebab-case 复数资源名（`agent-identities`、`change-orders`、`config-files`）；子动作用 `/{id}/<动词>` 路径段（`/approve`、`/rollback`、`/token/rotate`），**不用 `:verb` 冒号风格**。
 - **query 参数与 JSON 字段**：一律 camelCase（`namespaceId`、`pageSize`、`includeArchived`）。
 - **枚举值 / 错误码等字段值**：snake_case 小写（`pending_approval`、`zone_not_found`、`cross_namespace`），不受 camelCase 约束；审计事件名用点分小写（`identity.approve`、`cross_namespace.*`）。
-- **管理面 namespace 过滤参数**：统一 `namespaceId`（值为 namespace 主键）。
+- **管理面 namespace 过滤参数**：统一 `namespaceId`（值为 namespace 主键）。观测端点可附加 `envId`：服务端将其解析为冻结的 namespace 集合；`envId` 与 `namespaceId` 同传时后者必须属于该 env，非法值为 `400 invalid_observation_scope`，失效或不匹配为 `409 observation_scope_stale`，不会回退全量。
+- **观测 SSE 边界**：当前 `/admin/v2/change-orders/{id}/events` 与文件同步 SSE 是任务事件流，`/beacon/v1/agent/stream` 是数据面流；它们不属于 env/namespace 观测查询，不接受观测范围参数。新增管理面观测 SSE 时必须冻结 scope fingerprint，并在 env 映射漂移后发送 `observation-scope-stale` 后断开。
 - **内容指纹**：v2 统一 `sha256`（全新通道，不沿用 Legacy md5）。
 
 > 裁决记录：以上为各规格收口时的**多数派**用法。起草期少数规格用了 snake_case 参数（zone-authority / namespace-isolation / config-center 的 §5 表、hot-cold 的 `include_archived`）、`:verb` 冒号路径（namespace-isolation 的 `token:rotate` / `{id}:revoke`）与 `namespace` 过滤参数（metrics 的 sched-decisions、file-assets 管理面），均已按本裁决回改对应规格；**DB 列名仍为 snake_case，不受本约定约束**。
@@ -822,7 +829,7 @@ agent 面：
 | GET | `/admin/v2/agent-identities/{identityId}` | 单条身份详情（附 `conflictPeers` 与换区 `rezonePrefill` 预填目标） |
 | POST | `/admin/v2/agent-identities/{identityId}/approve` | 确认接入（Q3 占用冲突须显式强制解绑；首次确认只创建未分配 server；换区中按预填 / 指定 `target` 落区或 `target:null` 暂不分配） |
 | POST | `/admin/v2/agent-identities/{identityId}/reject` | 拒绝接入（原因必填） |
-| POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 允许被拒身份重新申请 |
+| POST | `/admin/v2/agent-identities/{identityId}/allow-reapply` | 申请恢复被拒身份的重新申请资格；返回 `202 + approvalRequestId` |
 | POST | `/admin/v2/agent-identities/{identityId}/disable` | 禁用（摘除调度与指令下发） |
 | POST | `/admin/v2/agent-identities/{identityId}/enable` | 恢复禁用身份 |
 | POST | `/admin/v2/agent-identities/{identityId}/unbind` | 解绑（换 serverId / namespace 的前置） |
@@ -847,7 +854,8 @@ agent 面：
 | POST | `/admin/v2/regions` | 新建大区 |
 | POST | `/admin/v2/zones` | 新建小区 |
 | GET | `/admin/v2/zone-tree?namespaceId=` | 区服结构树只读聚合（BC 集群 → 大区 → 小区，各节点带计数，附未分配计数） |
-| GET | `/admin/v2/servers` | server 分页列表（富化视图：含归属名 / 默认入口 / 在线摘要；`assigned=false` 即未分配篮） |
+| GET | `/admin/v2/servers` | server 分页列表（富化视图：含归属名 / 默认入口 / 在线摘要；`assigned=false` 即未分配篮）；`lifecycleStatus=active|archived|all`，默认 `active` |
+| GET | `/admin/v2/servers/{id}/lifecycle-impact?action=archive|restore` | 读取有界脱敏影响预览；当前状态不满足动作前置条件返回 `409 server_not_active` 或 `server_not_archived`，不产生副作用 |
 | POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server），响应 `{results:[{id,serverId,ok,code?}]}`；已分配服改归属须走换区工单 |
 | POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配、同 namespace 同 kind）：单事务解绑清归属 + 写预填目标 + 身份重入 pending；未分配台 400 `not_assigned`，整批原子回滚 |
 | PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（路径为业务 serverId），写审计，返回富化视图 |
@@ -915,7 +923,7 @@ agent 面：
 | GET | `/admin/v2/connections/stats` | 连接 / 玩家流时间桶聚合 **【已实现·FR-145】** |
 | GET | `/admin/v2/messages` | 消息元数据检索（**永不含 payload**；支持 `targetKind` 过滤，广播行输出 fan-out 聚合字段 `fanoutTotal`/`deliveredCount`/`failedCount`/`expiredCount`/`targetZone`） **【已实现·FR-149/180】** |
 | GET | `/admin/v2/messages/{messageId}` | 消息详情 + hops 链路（payload 仅元信息） **【已实现·FR-149】** |
-| POST | `/admin/v2/messages/{messageId}/payload` | 查看 payload（权限 + 原因必填 + 先审计后返回） **【已实现·FR-150】** |
+| POST | `/admin/v2/messages/{messageId}/payload` | 旧 payload 正文入口，固定 `409 operation_requires_approval`；先通过专用审批申请，再由原申请主体消费一次性 grant **【FR-209】** |
 | GET | `/admin/v2/messages/stats` | 异常链路聚合（拓扑页数据源；`groupBy=edge\|type`，独立 bucket 维度无契约与消费方、暂未提供） **【已实现·FR-149/156】** |
 
 ### 热冷归档（P6 · 0.26.x，真源 [v2-hot-cold-archive.md](specs/v2-hot-cold-archive.md) §5）
@@ -972,8 +980,12 @@ agent 面：
 | GET | `/admin/v2/assets/scan-status` | 每服扫描概要（摘要 / 文件数 / 耗时） |
 | GET | `/admin/v2/assets/compare` | 跨服同路径哈希分组比对 + 缺失服列表 |
 | POST | `/admin/v2/assets/rescan` | 批量下发重扫命令 |
-| POST | `/admin/v2/assets/preview` | 文本文件安全预览（敏感命中须填原因） |
-| POST | `/admin/v2/assets/diff` | 两侧文件内容 diff（二进制 / 超限拒绝） |
+| POST | `/admin/v2/assets/preview` | 旧正文直出入口，固定 `409 operation_requires_approval` |
+| POST | `/admin/v2/assets/preview/approval-requests` | 提交单文件内容读取审批：`{serverId,path,reason}` + `Idempotency-Key`，冻结清单 SHA-256，返回 `202 {requestId,status}` |
+| POST | `/admin/v2/assets/preview/grants/{grantId}/consume` | 原申请主体在 Agent 成功回传后一次消费：`{commandId}`；校验 command、内容版本与 grant，返回正文或元数据 |
+| POST | `/admin/v2/assets/diff` | 旧双文件正文直出入口，固定 `409 operation_requires_approval` |
+| POST | `/admin/v2/assets/pair-read/approval-requests` | 跨服务器内容差异的双侧审批入口：`{left:{serverId,path},right:{serverId,path},reason}` + `Idempotency-Key`；分别冻结左右 server/path/SHA-256，返回 `202 {leftRequestId,rightRequestId,status:"pending"}`，不含正文、diff 或 pairId |
+| POST | `/admin/v2/assets/pair-read/grants/{grantId}/consume` | 原申请主体携任一侧 grant 的 `{commandId}` 触发双侧原子消费；仅当同一 pair 的两份 grant 都已由 Agent 回传激活且当前哈希仍匹配时返回 `{identical,changed,unsupported,left:{serverId,path,sha256,size},right:{...}}`，绝不返回任一正文或 diff 片段 |
 | GET | `/admin/v2/assets/sensitive-rules` | 敏感路径规则清单 |
 | PUT | `/admin/v2/assets/sensitive-rules` | 整体替换敏感路径规则（审计） |
 
@@ -989,26 +1001,25 @@ agent 面：
 | GET | `/admin/v2/change-orders` | 变更单列表 |
 | GET | `/admin/v2/change-orders/{id}` | 详情（单 + items + 批次概要） |
 | PATCH | `/admin/v2/change-orders/{id}` | 编辑（approved 编辑触发回 draft） |
-| DELETE | `/admin/v2/change-orders/{id}` | 删除 draft 单（高风险确认） |
+| DELETE | `/admin/v2/change-orders/{id}` | 创建 draft 删除统一审批申请，返回 `202 + approvalRequestId` |
 | POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新快照重算差异返回 items；重扫另设（复用文件资产域 asset-rescan） |
 | GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页） |
-| POST | `/admin/v2/change-orders/{id}/submit` | 提交审批 |
-| POST | `/admin/v2/change-orders/{id}/withdraw` | 创建人撤回 |
-| POST | `/admin/v2/change-orders/{id}/approve` | 审批通过 |
-| POST | `/admin/v2/change-orders/{id}/reject` | 驳回（原因必填） |
-| POST | `/admin/v2/change-orders/{id}/start` | 启动（冲突守卫 + payload 准备） |
+| POST | `/admin/v2/change-orders/{id}/submit` | 冻结变更单与 items 摘要并创建唯一统一审批申请，返回 `202 + approvalRequestId` |
+| POST | `/admin/v2/change-orders/{id}/withdraw` | 旧入口，统一返回 `403`；创建人应调用对应统一审批申请的 withdraw |
+| POST | `/admin/v2/change-orders/{id}/approve` | 旧第二步审批入口，统一返回 `403`；审批决定只能在审批中心完成 |
+| POST | `/admin/v2/change-orders/{id}/reject` | 旧入口，统一返回 `403`；审批人应调用对应统一审批申请的 reject |
 | POST | `/admin/v2/change-orders/{id}/pause` | 人工暂停 |
-| POST | `/admin/v2/change-orders/{id}/resume` | 继续（retry_failed / skip_failed） |
+| POST | `/admin/v2/change-orders/{id}/resume` | 创建继续灰度审批申请，返回 `202 + approvalRequestId`；批准 worker 执行冻结的 mode / reason |
 | POST | `/admin/v2/change-orders/{id}/cancel` | 紧急终止（原因必填） |
-| POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 批次推进门放行（末批确认即完成） |
-| POST | `/admin/v2/change-orders/{id}/rollback` | 整单回滚（重复调用重试 failed 目标） |
+| POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 创建推进门审批申请，返回 `202 + approvalRequestId`；批准 worker 核对冻结批和目标状态后执行 |
+| POST | `/admin/v2/change-orders/{id}/rollback` | 创建整单回滚审批申请，返回 `202 + approvalRequestId`；批准 worker 事务内执行 |
 | POST | `/admin/v2/change-orders/{id}/rollback/finish` | 残留失败时人工结束回滚 |
 | GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（批次 / 状态过滤） |
 | GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（健康 / TPS / 告警） |
 | GET | `/admin/v2/change-orders/{id}/events` | SSE 实时进度 |
-| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 变更项文件内容预览（before/after；`?serverId` 选目标、`?reason` 敏感放行） |
+| GET | `/admin/v2/change-orders/{id}/items/{itemId}/file-diff` | 旧变更项正文预览入口，固定 `409 operation_requires_approval` |
 
-> file-diff 走文件资产 V2 安全预览通道（FR-164：敏感路径保护 + `asset.preview` 查看审计 + agent 现取），响应 `{path, changeType, before, after, truncated, binary, serverId}`；正式契约（请求 / 响应 / 错误码）见 [v2-delivery-orchestration.md](specs/v2-delivery-orchestration.md) §5.1「file-diff 端点契约」。
+> 文件内容结果只能经 FR-209 批准后的命令与一次性 grant 返回；旧 file-diff 不再下发 `asset-read`、不再写内容查看审计。双文件 diff 的受控结果契约尚未接入前保持失败关闭。
 
 agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）：
 
@@ -1034,3 +1045,13 @@ agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）�
 - **P2 mock 只依赖本草案**：全量 mock 管理台（FR-172）的页面数据形状只依赖本草案（含各规格 §5 的请求 / 响应形状），不接真后端。
 - **此后契约变更按 ADR 管理**：改语义、删字段、改路径、改错误码等破坏性变更，**必须**先写新 ADR 决策，并**同步已拍板的 mock 页面**；纯新增端点 / 新增可选字段类小改可不立 ADR，但仍须同一变更内更新对应规格 §5 与本章索引（doc-sync）。**禁止后端实现随手改契约**（ROADMAP §5 尾部约定）。
 - **漂移处置**：端点索引与规格 §5 不一致时，以规格为准并回补本章索引；通用约定与规格冲突时，以本章裁决为准并回改规格。
+
+## MCP OAuth 公网入口
+
+MCP resource 固定为 `/admin/v2/mcp`，token 固定为 `POST /admin/v2/oauth/token`；仅接受 Client Credentials 表单请求和 metadata 发布的精确 audience。客户端创建、轮换、启用分别通过 `/admin/v2/mcp-clients` 的审批申请端点完成，吊销是直接止损动作。MCP bearer 不可调用普通管理 REST。
+
+当前 `automation` profile 还可发现显式审批工具：配置的删除与批量删除/启停、文件创建/导入/发布/回滚/删除/批量删除/启停、覆盖集发布/回滚/删除，以及资产预览和消息正文的审批申请。危险写入工具均只创建审批申请并返回 `{approvalRequestId,status}`；不会直接执行领域操作、构造 permit 或代理文件路径。资产预览与消息正文的消费工具仍核验原申请主体、冻结目标和一次性 grant，但响应固定只返回消费状态，绝不回吐敏感正文。`observer` 不可发现这些工具。
+
+`observer` 与 `automation` 均可发现 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。列表均分页或受时间窗约束；消息不返回 payload、玩家标识或 hop 原文，连接仅返回聚合，命令不返回结果正文，审计不返回 detail 与客户端地址。
+
+公网入口只有在 `mcp.enabled=true`、`mcp.public-base-url` 为无路径 HTTPS 基址且 `mcp.trusted-proxy-cidrs` 已配置时才挂载；请求必须来自受信代理，并携带与基址一致的 `X-Forwarded-Proto: https`、`X-Forwarded-Host` 和 Host。详见 [built-in-admin-v2-mcp-and-oauth.md](specs/built-in-admin-v2-mcp-and-oauth.md)。

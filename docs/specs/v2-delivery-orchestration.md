@@ -152,7 +152,7 @@ completed / paused / cancelled ──rollback──→ rolling_back → rolled_b
 | 从 | 到 | 触发 | 条件 |
 |---|---|---|---|
 | draft | pending_approval | 提交审批 | ≥1 个变更项；selector 解析出 ≥1 目标；模板源与全部目标同 namespace |
-| pending_approval | draft | 审批人驳回（填原因）或创建人撤回 | |
+| pending_approval | draft | 统一审批请求被驳回、撤回或过期 | 仅由审批 adapter 终态回调在同一事务迁移；变更单旧 reject/withdraw 入口不得直改状态 |
 | pending_approval | approved | 审批通过 | 审批权限；审批人 ≠ 创建人（§4.7） |
 | approved | draft | 创建人撤回；或任何对 items / selector / 批次策略 / 生效策略的编辑 | **approved 后改单 = 审批自动作废回 draft**，重新走审批，作废动作入审计 |
 | draft / pending_approval / approved | cancelled | 放弃整单 | 未执行过任何目标 |
@@ -407,19 +407,18 @@ skipped    failed               failed
 | GET | `/admin/v2/change-orders` | 列表：status / namespace / 创建人 / 时间过滤 + 分页 |
 | GET | `/admin/v2/change-orders/{id}` | 详情：单 + items + 批次概要 + 计数 |
 | PATCH | `/admin/v2/change-orders/{id}` | 编辑（draft；approved 编辑触发回 draft） |
-| DELETE | `/admin/v2/change-orders/{id}` | 删除 draft 单（高风险：原因 + 二次确认） |
+| DELETE | `/admin/v2/change-orders/{id}` | 创建 `delivery.draft_delete` 统一审批申请（原因必填；批准后同事务删除并写回执） |
 | POST | `/admin/v2/change-orders/{id}/diff-scan` | 同步读最新文件资产快照算模板源 vs 目标集差异并返回 items（更新 diff_snapshot_at）；模板源重扫为单独动作（复用文件资产域 `asset-rescan`，完成后重新 /diff-scan） |
 | GET | `/admin/v2/change-orders/{id}/impact` | 影响预览（汇总 + 逐目标分页，§4.2.2） |
-| POST | `/admin/v2/change-orders/{id}/submit` | 提交审批 |
+| POST | `/admin/v2/change-orders/{id}/submit` | 冻结单与有序 items 摘要，创建唯一统一审批申请；批准后直接 rolling |
 | POST | `/admin/v2/change-orders/{id}/withdraw` | 创建人撤回（pending_approval / approved → draft） |
-| POST | `/admin/v2/change-orders/{id}/approve` | 审批通过（原因可选） |
+| POST | `/admin/v2/change-orders/{id}/approve` | 旧第二步审批入口，固定 `403`；审批决定只能在审批中心完成 |
 | POST | `/admin/v2/change-orders/{id}/reject` | 驳回（原因必填）→ draft |
-| POST | `/admin/v2/change-orders/{id}/start` | 启动（二次确认；含冲突守卫与 payload 准备） |
 | POST | `/admin/v2/change-orders/{id}/pause` | 人工暂停 |
-| POST | `/admin/v2/change-orders/{id}/resume` | 继续；body `{mode: "retry_failed"|"skip_failed", reason}`（熔断场景必填） |
+| POST | `/admin/v2/change-orders/{id}/resume` | 创建继续灰度审批申请；冻结暂停状态、mode 与原因，批准 worker 才恢复 |
 | POST | `/admin/v2/change-orders/{id}/cancel` | 紧急终止（原因必填 + 二次确认） |
-| POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 推进门放行（末批确认即完成整单） |
-| POST | `/admin/v2/change-orders/{id}/rollback` | 整单回滚（原因 + 二次确认）；重复调用对 failed 目标重试 |
+| POST | `/admin/v2/change-orders/{id}/batches/{batchNo}/confirm` | 创建推进门审批申请；冻结待确认批及目标状态哈希，批准 worker 才放行 |
+| POST | `/admin/v2/change-orders/{id}/rollback` | 创建整单回滚审批申请；冻结当前状态与原因，批准 worker 在同一事务回滚并写回执 |
 | POST | `/admin/v2/change-orders/{id}/rollback/finish` | 残留失败时人工结束回滚 |
 | GET | `/admin/v2/change-orders/{id}/targets` | 目标分页（batch / status / serverId 过滤） |
 | GET | `/admin/v2/change-orders/{id}/observe` | 当前批观察窗数据（逐目标健康分 / 等级 / TPS / 告警序列） |
