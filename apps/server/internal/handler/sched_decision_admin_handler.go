@@ -19,6 +19,12 @@ import (
 type SchedDecisionAdminHandler struct {
 	svc      *service.SchedDecisionQueryService
 	settings *service.SettingsService // 冷查询读 archive.cold-query-max-days（FR-152）
+	scope    *service.ObservationScopeResolver
+}
+
+// SetObservationScopeResolver 装配统一观测范围解析器。
+func (h *SchedDecisionAdminHandler) SetObservationScopeResolver(resolver *service.ObservationScopeResolver) {
+	h.scope = resolver
 }
 
 // NewSchedDecisionAdminHandler 构造处理器。
@@ -62,24 +68,24 @@ func (h *SchedDecisionAdminHandler) List(w http.ResponseWriter, r *http.Request)
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	namespaceID, err := optionalUintQuery(q.Get("namespaceId"))
+	scope, err := resolveObservationScope(r, h.scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
 	if coldQueryRequested(q) {
-		h.listCold(w, r, q, namespaceID, fromMs, toMs)
+		h.listCold(w, r, q, scope, fromMs, toMs)
 		return
 	}
 	rows, total, err := h.svc.List(service.ListSchedDecisionsParams{
-		NamespaceID: namespaceID,
-		Zone:        q.Get("zone"),
-		ServerID:    q.Get("serverId"),
-		Result:      q.Get("result"),
-		FromMs:      fromMs,
-		ToMs:        toMs,
-		Page:        intQuery(q.Get("page")),
-		PageSize:    intQuery(q.Get("pageSize")),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
+		Zone:     q.Get("zone"),
+		ServerID: q.Get("serverId"),
+		Result:   q.Get("result"),
+		FromMs:   fromMs,
+		ToMs:     toMs,
+		Page:     intQuery(q.Get("page")),
+		PageSize: intQuery(q.Get("pageSize")),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -94,20 +100,20 @@ func (h *SchedDecisionAdminHandler) List(w http.ResponseWriter, r *http.Request)
 
 // listCold 处理决策记录冷查询（FR-152，spec §4.4）：强制时间范围 + 跨热 / 冷 keyset 并表，
 // 响应改游标分页（nextCursor）并带 includeArchived 元信息（不再回 total——归并去重后精确总数需全扫两侧）。
-func (h *SchedDecisionAdminHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Values, namespaceID uint, fromMs, toMs int64) {
+func (h *SchedDecisionAdminHandler) listCold(w http.ResponseWriter, r *http.Request, q url.Values, scope service.ObservationScope, fromMs, toMs int64) {
 	if err := validateColdQueryRange(fromMs, toMs, coldQueryMaxDays(h.settings)); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
 	page, err := h.svc.ListCold(service.ListSchedDecisionsParams{
-		NamespaceID: namespaceID,
-		Zone:        q.Get("zone"),
-		ServerID:    q.Get("serverId"),
-		Result:      q.Get("result"),
-		FromMs:      fromMs,
-		ToMs:        toMs,
-		PageSize:    intQuery(q.Get("pageSize")),
-		ColdCursor:  q.Get("cursor"),
+		NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All,
+		Zone:       q.Get("zone"),
+		ServerID:   q.Get("serverId"),
+		Result:     q.Get("result"),
+		FromMs:     fromMs,
+		ToMs:       toMs,
+		PageSize:   intQuery(q.Get("pageSize")),
+		ColdCursor: q.Get("cursor"),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -124,7 +130,12 @@ func (h *SchedDecisionAdminHandler) listCold(w http.ResponseWriter, r *http.Requ
 
 // Detail 处理 GET /admin/v2/sched-decisions/{traceId}：单条决策详情（含逐台排除原因）。
 func (h *SchedDecisionAdminHandler) Detail(w http.ResponseWriter, r *http.Request) {
-	row, err := h.svc.Detail(chi.URLParam(r, "traceId"))
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	row, err := h.svc.DetailInScope(chi.URLParam(r, "traceId"), scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -137,7 +148,12 @@ func (h *SchedDecisionAdminHandler) Detail(w http.ResponseWriter, r *http.Reques
 
 // Summary 处理 GET /admin/v2/sched-decisions/summary?window=1h：决策概览聚合。
 func (h *SchedDecisionAdminHandler) Summary(w http.ResponseWriter, r *http.Request) {
-	result, err := h.svc.Summary(r.URL.Query().Get("window"))
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	result, err := h.svc.SummaryInScope(r.URL.Query().Get("window"), scope)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

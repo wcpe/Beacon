@@ -13,12 +13,17 @@ import (
 // SchedulingHandler 处理流量调度 admin 请求（FR-10）：落位建议（query-only）+ drain 标记。
 // 控制面只给决策、不执行玩家连接（架构红线，见 ADR-0017）。
 type SchedulingHandler struct {
-	svc *service.SchedulingService
+	svc   *service.SchedulingService
+	v2svc *service.V2ControlPlaneService
 }
 
 // NewSchedulingHandler 构造处理器。
-func NewSchedulingHandler(svc *service.SchedulingService) *SchedulingHandler {
-	return &SchedulingHandler{svc: svc}
+func NewSchedulingHandler(svc *service.SchedulingService, v2svc ...*service.V2ControlPlaneService) *SchedulingHandler {
+	h := &SchedulingHandler{svc: svc}
+	if len(v2svc) > 0 {
+		h.v2svc = v2svc[0]
+	}
+	return h
 }
 
 // placementCandidateView 是落位候选对外视图。
@@ -76,14 +81,19 @@ func (h *SchedulingHandler) Drain(w http.ResponseWriter, r *http.Request) {
 	render.WriteJSON(w, http.StatusOK, drainView{Namespace: d.NamespaceCode, ServerID: d.ServerID, Reason: d.Reason})
 }
 
-// Undrain 处理 DELETE /admin/v1/scheduling/drains?namespace=&serverId=。
+// Undrain 处理 DELETE /admin/v1/scheduling/drains?namespace=&serverId=（兼容审批申请）。
 func (h *SchedulingHandler) Undrain(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	if err := h.svc.Undrain(q.Get("namespace"), q.Get("serverId"), auth.Operator(r.Context()), clientIP(r)); err != nil {
+	if h.v2svc == nil {
+		render.WriteError(w, r, apperr.ErrInternal)
+		return
+	}
+	ticket, err := h.v2svc.RequestLegacyUndrain(q.Get("namespace"), q.Get("serverId"), q.Get("reason"), auth.Operator(r.Context()), clientIP(r), r.Header.Get("Idempotency-Key"), requestPrincipal(r))
+	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // ListDrains 处理 GET /admin/v1/scheduling/drains?namespace=。

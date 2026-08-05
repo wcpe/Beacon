@@ -72,14 +72,14 @@ func TestFileServiceTriggersExportOnWrite(t *testing.T) {
 	exp := &captureExporter{}
 	svc.SetGitExporter(exp)
 
-	obj, err := svc.Create(CreateFileParams{
+	obj, err := applyFileCreateForTest(svc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/config.yml",
 		ScopeLevel: model.ScopeGroup, Content: "a: 1\n", Operator: "alice",
 	})
 	if err != nil {
 		t.Fatalf("Create 应成功：%v", err)
 	}
-	if _, err := svc.Publish(obj.ID, "a: 2\n", "bob", "改值", ""); err != nil {
+	if _, err := svc.applyPublish(obj.ID, "a: 2\n", "bob", "改值", ""); err != nil {
 		t.Fatalf("Publish 应成功：%v", err)
 	}
 
@@ -178,13 +178,13 @@ func TestExportSourceRepoPreservesCiphertextAndExclusion(t *testing.T) {
 	// 文件树：一个普通文件 + 一个标敏感排除文件（含明文密码）
 	fileRepo := repository.NewFileObjectRepository(db)
 	fileSvc := NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), repository.NewAuditLogRepository(db))
-	if _, err := fileSvc.Create(CreateFileParams{
+	if _, err := applyFileCreateForTest(fileSvc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/messages.yml",
 		ScopeLevel: model.ScopeGroup, Content: "hi: hello\n", Operator: "alice",
 	}); err != nil {
 		t.Fatalf("普通文件 Create 应成功：%v", err)
 	}
-	excludedObj, err := fileSvc.Create(CreateFileParams{
+	excludedObj, err := applyFileCreateForTest(fileSvc, CreateFileParams{
 		Namespace: "prod", Group: "area1", Path: "Demo/database.yml",
 		ScopeLevel: model.ScopeGroup, Content: "password: dbpass123\n", Operator: "alice",
 		SensitiveExcluded: true,
