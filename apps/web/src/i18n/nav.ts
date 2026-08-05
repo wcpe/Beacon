@@ -9,6 +9,7 @@ export const nav = {
     system: '系统',
   },
   dashboard: '运维总览',
+  approvals: '审批',
   servers: '服务器',
   identityConflicts: '身份冲突',
   zones: '区服分配',

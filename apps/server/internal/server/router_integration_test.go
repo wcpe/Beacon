@@ -146,7 +146,7 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		V2:               v2Handler,
 		V2Metrics:        v2MetricsHandler,
 		V2Assets:         handler.NewV2AssetsHandler(assetSvc),
-		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo)),
+		Config:           handler.NewConfigHandler(cfgSvc, effSvc, graySvc, service.NewImpactService(registry, assignRepo, db)),
 		File:             handler.NewFileHandler(fileSvc, fileEffSvc, ovrEffSvc, instSvc, settingsSvc),
 		OverrideSet:      handler.NewOverrideSetHandler(ovrSetSvc),
 		Agent:            handler.NewAgentHandler(instSvc, effSvc, settingsSvc),

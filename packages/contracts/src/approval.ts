@@ -21,6 +21,21 @@ export interface ApprovalSnapshotLine {
   value: string
 }
 
+export type ApprovalEvidenceStatus = 'available' | 'unavailable' | 'expired'
+export type ApprovalDriftStatus = 'none' | 'detected'
+
+export interface ApprovalDiffLine {
+  label: string
+  snapshot: string
+  current: string
+  changed: boolean
+}
+
+/** 成功敏感内容审批仅向原申请主体返回的一次性消费授权引用。 */
+export interface SensitiveAccessGrantReference {
+  grantId: string
+}
+
 export interface ApprovalRequest {
   id: number | string
   requestId: string
@@ -33,6 +48,14 @@ export interface ApprovalRequest {
   requestReason: string
   safeSummary: string
   frozenPayloadSha256: string
+  evidenceStatus?: ApprovalEvidenceStatus
+  driftStatus?: ApprovalDriftStatus
+  frozenPayloadSummary?: ApprovalSnapshotLine[]
+  currentFactsSummary?: ApprovalSnapshotLine[]
+  currentDiff?: ApprovalDiffLine[]
+  riskSummary?: string
+  impactSummary?: string
+  securitySummary?: string
   requesterType: ApprovalPrincipalType
   requesterId: string
   requestedBy?: string
@@ -44,12 +67,23 @@ export interface ApprovalRequest {
   expiresAt: string | null
   version: number
   namespaceId?: number | null
+  canApprove?: boolean
+  canReject?: boolean
+  canWithdraw?: boolean
   createdAt?: string
   updatedAt?: string
   resultRef?: string | null
-  frozenPayloadSummary?: ApprovalSnapshotLine[]
-  currentFactsSummary?: ApprovalSnapshotLine[]
+  sensitiveAccessGrant?: SensitiveAccessGrantReference
   timeline?: ApprovalTimelineItem[]
 }
 
 export type ApprovalListResponse = Paged<ApprovalRequest>
+
+/** 仅演示模式的领域入口申请载荷；生产仍由领域 adapter 规范化。 */
+export interface DemoApprovalRequestInput {
+  operationKey: 'agent.command.resync' | 'agent.command.tail_logs' | 'agent.command.fs_browse' | 'config.sensitive_plaintext_read' | 'message.payload.read'
+  resourceType: string
+  resourceId: string
+  requestReason: string
+  safeSummary: string
+}

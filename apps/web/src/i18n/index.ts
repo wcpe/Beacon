@@ -4,12 +4,14 @@
 import i18next from 'i18next'
 import { initReactI18next } from 'react-i18next'
 
+import { approvals } from './approvals'
 import { auth } from './auth'
 import { cluster } from './cluster'
 import { common } from './common'
 import { dashboard } from './dashboard'
 import { delivery } from './delivery'
 import { enCommon } from './en-common'
+import { approvals as enApprovals } from './en/approvals'
 import { auth as enAuth } from './en/auth'
 import { cluster as enCluster } from './en/cluster'
 import { dashboard as enDashboard } from './en/dashboard'
@@ -32,6 +34,7 @@ void i18next.use(initReactI18next).init({
     'zh-CN': {
       translation: {
         nav,
+        approvals,
         common,
         dashboard,
         cluster,
@@ -44,6 +47,7 @@ void i18next.use(initReactI18next).init({
     en: {
       translation: {
         nav: enNav,
+        approvals: enApprovals,
         common: enCommon,
         dashboard: enDashboard,
         cluster: enCluster,

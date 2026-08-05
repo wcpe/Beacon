@@ -13,6 +13,8 @@ type Config struct {
 	Archive ArchiveConfig `yaml:"archive"`
 	// 管理面鉴权（操作者认证 + 令牌，见 ADR-0009）
 	Auth AuthConfig `yaml:"auth"`
+	// MCP 公网协议入口；TLS 由受信反向代理终止，未显式启用时入口失败关闭。
+	MCP MCPConfig `yaml:"mcp"`
 	// 注册健康相关参数
 	Health HealthConfig `yaml:"health"`
 	// 健康告警相关参数（站内信 + webhook，FR-28）
@@ -27,6 +29,13 @@ type Config struct {
 	Update UpdateConfig `yaml:"update"`
 	// 日志配置
 	Log LogConfig `yaml:"log"`
+}
+
+// MCPConfig 是 MCP 公网入口的固定部署信任边界。
+type MCPConfig struct {
+	Enabled           bool     `yaml:"enabled"`
+	PublicBaseURL     string   `yaml:"public-base-url"`
+	TrustedProxyCIDRs []string `yaml:"trusted-proxy-cidrs"`
 }
 
 // UpdateConfig 是控制面在线更新配置（FR-98 起，见 ADR-0047）。

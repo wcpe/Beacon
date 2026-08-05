@@ -109,8 +109,8 @@ describe('双段页眉（FR-187）', () => {
     expect(screen.getByRole('button', { name: '语言' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '通知' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '刷新' })).toBeEnabled()
-    // 环境过滤仍在
-    expect(screen.getByLabelText('环境过滤器')).toBeInTheDocument()
+    // 页眉观测范围选择器仍在
+    expect(screen.getByRole('button', { name: '观测环境' })).toBeInTheDocument()
   })
 })
 
@@ -167,11 +167,11 @@ describe('侧栏图标轨折叠（FR-186）', () => {
     expect(header?.className ?? '').not.toMatch(/backdrop-blur/)
   })
 
-  it('环境过滤器为无底 Dropdown 触发器（FR-192）', () => {
+  it('观测环境为无底 Dropdown 触发器（FR-192）', () => {
     renderAt('/dashboard')
-    const trigger = screen.getByRole('button', { name: '环境过滤器' })
+    const trigger = screen.getByRole('button', { name: '观测环境' })
     expect(trigger).toBeInTheDocument()
-    expect(trigger.getAttribute('data-slot')).toBe('env-filter-trigger')
+    expect(trigger.closest('[data-slot="observation-scope-filter"]')).not.toBeNull()
   })
 
   it('点击收起后进入图标轨：仍可按 aria-label 导航，宽度为折叠值', async () => {

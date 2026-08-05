@@ -14,6 +14,7 @@ import { subscribeMockScenario } from '@beacon/devmock/scenario'
 import { useQueryClient } from '@tanstack/react-query'
 
 import LicensePage from '../pages/license'
+import ApprovalsPage from '../pages/approvals'
 import { ALL_PAGES } from '../routes'
 import { useShellStore } from '../store'
 import Header from './header'
@@ -179,6 +180,7 @@ export default function AppShell() {
               {ALL_PAGES.map((page) => (
                 <Route element={<page.Component />} key={page.path} path={page.path} />
               ))}
+              <Route element={<ApprovalsPage />} path="/approvals/:requestId" />
             </Routes>
           </div>
         </main>

@@ -47,6 +47,8 @@ type Handlers struct {
 	Update            *handler.UpdateHandler
 	Auth              *handler.AuthHandler
 	APIKey            *handler.APIKeyHandler
+	MCPOAuth          *handler.MCPOAuthHandler
+	MCPProtocol       *MCPProtocolHandler
 	Approval          *handler.ApprovalHandler
 	Command           *handler.CommandHandler
 	Browse            *handler.BrowseHandler
@@ -66,6 +68,15 @@ type Handlers struct {
 func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys APIKeyVerifier, audit auditCreator) http.Handler {
 	r := chi.NewRouter()
 	r.Use(recoverMiddleware, traceMiddleware, accessLog)
+	if h.MCPProtocol != nil {
+		r.Get("/.well-known/oauth-protected-resource/admin/v2/mcp", h.MCPProtocol.Metadata)
+		r.Get("/.well-known/oauth-authorization-server", h.MCPProtocol.AuthorizationServerMetadata)
+		r.Post("/admin/v2/oauth/token", h.MCPProtocol.Token)
+		// MCP Streamable HTTP：GET 建立 SSE 流、POST 发 JSON-RPC 请求；
+		// 用显式方法注册避免 HandleFunc 注册全方法导致路由覆盖校验 panic。
+		r.Get("/admin/v2/mcp", h.MCPProtocol.MCP)
+		r.Post("/admin/v2/mcp", h.MCPProtocol.MCP)
+	}
 
 	var v2Auth AgentV2Authenticator
 	if h.V2 != nil {
@@ -173,6 +184,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Use(auditWriteMiddleware(audit))
 
 			r.Get("/namespaces", h.V2.ListNamespaces)
+			r.Get("/namespaces/{id}/lifecycle-impact", h.V2.NamespaceLifecycleImpact)
+			r.Get("/namespaces/{id}/permanent-deletion-impact", h.V2.NamespacePermanentDeletionImpact)
 			r.Post("/namespaces", h.V2.CreateNamespace)
 			r.Patch("/namespaces/{id}", h.V2.UpdateNamespace)
 			r.Delete("/namespaces/{id}", h.V2.DeleteNamespace)
@@ -181,6 +194,15 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Post("/namespace-trusts", h.V2.GrantNamespaceTrust)
 			r.Post("/namespace-trusts/{id}/revoke", h.V2.RevokeNamespaceTrust)
 			registerApprovalRoutes(r, h)
+			r.Post("/approval-requests", h.V2.CreateLifecycleApprovalRequest)
+			if h.MCPOAuth != nil {
+				r.Get("/mcp-clients", h.MCPOAuth.List)
+				r.Post("/mcp-clients", h.MCPOAuth.Create)
+				r.Get("/mcp-clients/{clientId}", h.MCPOAuth.Get)
+				r.Post("/mcp-clients/{clientId}/rotate", h.MCPOAuth.Rotate)
+				r.Post("/mcp-clients/{clientId}/enable", h.MCPOAuth.Enable)
+				r.Post("/mcp-clients/{clientId}/revoke", h.MCPOAuth.Revoke)
+			}
 
 			// env 展示维度（FR-178，见 v2-zone-authority.md §5）：env 增删改 + 整体替换 env→namespace 映射。
 			// env 是纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；写端点由 EnvService 在事务内自记专项审计
@@ -228,6 +250,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 区服结构树只读聚合（FR-155）
 			r.Get("/zone-tree", h.V2.ZoneTree)
 			r.Get("/servers", h.V2.ListServers)
+			r.Get("/servers/{id}/lifecycle-impact", h.V2.ServerLifecycleImpact)
+			r.Get("/servers/{id}/permanent-deletion-impact", h.V2.ServerPermanentDeletionImpact)
 			r.Patch("/servers/{id}", h.V2.UpdateServer)
 			r.Post("/servers/{id}/bc-directory-resyncs", h.V2.ServerDirectoryResync)
 			// 大厅集群独立于大区 / 小区；成员迁移由专用端点原子完成。
@@ -266,6 +290,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.Get("/messages/stats", h.V2MessageAdmin.Stats)
 				r.Get("/messages/{messageId}", h.V2MessageAdmin.Detail)
 				r.Post("/messages/{messageId}/payload", h.V2MessageAdmin.Payload)
+				r.Post("/messages/{messageId}/payload/approval-requests", h.V2MessageAdmin.RequestPayloadApproval)
+				r.Post("/sensitive-access-grants/{grantId}/consume", h.V2MessageAdmin.ConsumePayloadGrant)
 			}
 
 			// 热冷归档管理面端点（FR-153，见 spec §5、ADR-0066）：总览 / 建任务 / 列表 / 详情 / 重试 / 取消。
@@ -312,6 +338,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			// 敏感规则读写底层设置项 assets.sensitive-path-patterns（/settings 不重复暴露），PUT 自记 asset.sensitive_rule_update。
 			// 三个写端点登记 coveredWriteRoutes 使兜底审计跳过、避免双记。与 archive / config-center 一致无条件注册
 			// （assetHandler 在 main.go 恒构造；handler 仅请求期解引用，构造期不调用）。
+			r.Post("/assets/preview/approval-requests", h.Asset.RequestPreviewApproval)
+			r.Post("/assets/preview/grants/{grantId}/consume", h.Asset.ConsumePreviewGrant)
+			r.Post("/assets/pair-read/approval-requests", h.Asset.RequestPairReadApproval)
+			r.Post("/assets/pair-read/grants/{grantId}/consume", h.Asset.ConsumePairReadGrant)
 			r.Post("/assets/preview", h.Asset.Preview)
 			r.Post("/assets/diff", h.Asset.Diff)
 			r.Get("/assets/sensitive-rules", h.Asset.GetSensitiveRules)
@@ -402,6 +432,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 取 agent 日志（FR-88，见 ADR-0040）：触发取自身脱敏日志（写，readonly 403）+ 查询最近一次结果（读）
 		r.Post("/instances/{serverId}/logs", h.AgentLog.Request)
 		r.Get("/instances/{serverId}/logs", h.AgentLog.Get)
+		r.Post("/instances/{serverId}/logs/grants/{grantId}/consume", h.AgentLog.ConsumeApproved)
 		// 强制重同步（FR-91）：触发该实例重拉有效配置/文件树/覆盖集（写，readonly 403）
 		r.Post("/instances/{serverId}/resync", h.Command.Resync)
 		// 在线实例只读文件浏览（FR-110，见 ADR-0049 决策 9）：经命令生命周期代理列目录 / 读子树 / 读单文件。
@@ -427,6 +458,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/instances/{serverId}/imprint", h.Command.Imprint)
 		r.Get("/imprints/{commandId}", h.Command.ImprintStatus)
 		r.Get("/imprints/{commandId}/diff", h.Command.ImprintDiff)
+		r.Post("/imprints/{commandId}/diff/grants/{grantId}/consume", h.Command.ConsumeApprovedImprint)
 		r.Post("/imprints/{commandId}/confirm", h.Command.ConfirmImprint)
 
 		// 多级灰度文件同步中心（FR-129/FR-131）：任务真源 + 目标规划 + 控制动作 + 管理台 SSE。
@@ -526,6 +558,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		}
 	})
 
+	if err := ValidateAdminRouteCoverage(r); err != nil {
+		panic(err)
+	}
+
 	// 非 API、非静态文件的路径交给内嵌前端（含 SPA history 回退）
 	r.NotFound(h.Web.ServeHTTP)
 	return r
@@ -598,7 +634,6 @@ func registerV2DeliveryAdminRoutes(r chi.Router, h Handlers) {
 	r.Post("/change-orders/{id}/approve", h.Delivery.Approve)
 	r.Post("/change-orders/{id}/reject", h.Delivery.Reject)
 	// M3 灰度编排高风险操作（spec §4.8.1 高级：权限 + 原因 + 二次确认）：显式挂 requireFullRole 挡 readonly。
-	r.With(requireFullRole).Post("/change-orders/{id}/start", h.Delivery.Start)
 	r.With(requireFullRole).Post("/change-orders/{id}/pause", h.Delivery.Pause)
 	r.With(requireFullRole).Post("/change-orders/{id}/resume", h.Delivery.Resume)
 	r.With(requireFullRole).Post("/change-orders/{id}/cancel", h.Delivery.Cancel)

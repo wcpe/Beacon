@@ -7,6 +7,7 @@ import {
   Boxes,
   Cable,
   ChartLine,
+  ClipboardCheck,
   Copy,
   FileSliders,
   FolderArchive,
@@ -30,6 +31,8 @@ import {
 
 import ConflictNavBadge from './shell/conflict-nav-badge'
 import AlertEventsPage from './pages/alert-events'
+import ApprovalNavBadge from './shell/approval-nav-badge'
+import ApprovalsPage from './pages/approvals'
 import ApiKeysPage from './pages/api-keys'
 import AssetsPage from './pages/assets'
 import AuditsPage from './pages/audits'
@@ -78,6 +81,14 @@ export const DASHBOARD_PAGE: NavPage = {
   titleKey: 'nav.dashboard',
   icon: LayoutDashboard,
   Component: DashboardPage,
+}
+
+export const APPROVALS_PAGE: NavPage = {
+  path: '/approvals',
+  titleKey: 'nav.approvals',
+  icon: ClipboardCheck,
+  Component: ApprovalsPage,
+  Badge: ApprovalNavBadge,
 }
 
 // 四大域分组（集群 / 可观测 / 交付 / 系统）
@@ -147,4 +158,4 @@ export const NAV_GROUPS: NavGroup[] = [
 ]
 
 // 全部页面的扁平列表（路由注册用）
-export const ALL_PAGES: NavPage[] = [DASHBOARD_PAGE, ...NAV_GROUPS.flatMap((group) => group.pages)]
+export const ALL_PAGES: NavPage[] = [DASHBOARD_PAGE, APPROVALS_PAGE, ...NAV_GROUPS.flatMap((group) => group.pages)]

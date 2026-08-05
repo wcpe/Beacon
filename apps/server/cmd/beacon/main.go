@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,7 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	goruntime "runtime"
-	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -55,6 +54,32 @@ func main() {
 		slog.Error("Beacon 退出", "错误", err)
 		os.Exit(1)
 	}
+}
+
+// keyDirectoryForDatabase 返回控制面持久数据目录同级的密钥目录。
+func keyDirectoryForDatabase(database config.DatabaseConfig) (string, error) {
+	if database.Driver == "sqlite" {
+		dsn := database.DSN
+		if strings.HasPrefix(dsn, "file:") {
+			dsn = strings.TrimPrefix(dsn, "file:")
+		}
+		if index := strings.IndexByte(dsn, '?'); index >= 0 {
+			dsn = dsn[:index]
+		}
+		if strings.TrimSpace(dsn) == "" || dsn == ":memory:" {
+			return "", fmt.Errorf("sqlite 内存数据库不能持久化加密密钥")
+		}
+		absolute, err := filepath.Abs(dsn)
+		if err != nil {
+			return "", fmt.Errorf("解析 sqlite 数据文件目录失败: %w", err)
+		}
+		return filepath.Join(filepath.Dir(absolute), "secrets"), nil
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("读取控制面数据目录失败: %w", err)
+	}
+	return filepath.Join(workingDirectory, "secrets"), nil
 }
 
 // prepareStartup 完成服务装配前的自替换检查、首启配置释放与环境加载。
@@ -115,6 +140,14 @@ func run() error {
 		return err
 	}
 	defer store.Close(db)
+	if err := service.ReconcileSystemExecutions(db, selfPath, version.Version); err != nil {
+		return fmt.Errorf("对账系统执行记录失败: %w", err)
+	}
+	update.SetUpdateSuccessObserver(func(targetVersion string) {
+		if err := service.MarkSystemExecutionSucceeded(db, targetVersion); err != nil {
+			slog.Error("写入系统升级成功对账失败", "目标版本", targetVersion, "错误", err)
+		}
+	})
 
 	// 装配：repository → service → handler（手工注入，不引 DI 框架）
 	auditRepo := repository.NewAuditLogRepository(db)
@@ -150,9 +183,16 @@ func run() error {
 	// 环境服务（含改名 / 删除守卫，FR-53）依赖注册表 / zone 指派 / 配置仓库查在用数据，
 	// 故其构造延后到 registry、assignRepo、configRepo 就绪之后（见下方）。
 
-	// 配置加密 cipher（FR-20）：密钥仅从 env 读，绝不入库 / 不入仓 / 不打日志。
-	// 空密钥得到"未启用"cipher；后续若库中已有敏感项则 fail-fast。
-	configCipher, err := secret.NewCipher(os.Getenv("BEACON_CONFIG_ENCRYPTION_KEY"))
+	// 配置加密密钥由数据目录同级 secrets 持久文件统一管理；目录或文件异常时拒绝启动。
+	keyDirectory, err := keyDirectoryForDatabase(cfg.Database)
+	if err != nil {
+		return err
+	}
+	configCipher, err := secret.LoadOrCreateCipher(filepath.Join(keyDirectory, "config-encryption.key"))
+	if err != nil {
+		return err
+	}
+	credentialCipher, err := secret.LoadOrCreateCipher(filepath.Join(keyDirectory, "approval-credential-encryption.key"))
 	if err != nil {
 		return err
 	}
@@ -164,29 +204,22 @@ func run() error {
 	// 主动下线拒绝态（FR-49）：server_offline 仓库，供注册前查拒绝表与下线/取消下线落库
 	offlineRepo := repository.NewServerOfflineRepository(db)
 	configService := service.NewConfigService(db, configRepo, revRepo, auditRepo)
+	configService.SetPendingChangeCipher(configCipher)
 	// 配置灰度 / Beta（FR-9）：复用 configService 发布路径完成 promote，敏感灰度走同一加密边界
 	configGrayService := service.NewConfigGrayService(db, configService, configRepo, grayRepo, auditRepo)
-
-	// fail-fast：库中已存在敏感配置项却未配置加密密钥 → 拒绝启动，绝不以密文 / 乱码继续。
-	if !configCipher.IsEnabled() {
-		n, err := configRepo.CountSensitive()
-		if err != nil {
-			return err
-		}
-		if n > 0 {
-			return fmt.Errorf("启动失败: 库中存在 %d 个敏感配置项，但未配置加密密钥 BEACON_CONFIG_ENCRYPTION_KEY（base64 的 32 字节），无法解密下发", n)
-		}
-	}
+	configService.SetGrayService(configGrayService)
 
 	// 文件树托管（通道B）：file_object/file_revision 仓库 + 服务
 	fileRepo := repository.NewFileObjectRepository(db)
 	fileRevRepo := repository.NewFileRevisionRepository(db)
 	fileService := service.NewFileService(db, fileRepo, fileRevRepo, auditRepo)
+	fileService.SetPendingChangeCipher(configCipher)
 
 	// 三方插件文件覆盖兼容（FR-15）：覆盖集仓库 + 服务（存"目标根 + 受限重载命令 + 成员清单"事实，提供 dry-run 预览）
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	overrideSetRevRepo := repository.NewFileOverrideSetRevisionRepository(db)
 	overrideSetService := service.NewOverrideSetService(db, overrideSetRepo, overrideSetRevRepo, fileRepo, auditRepo)
+	overrideSetService.SetPendingChangeCipher(configCipher)
 	overrideSetHandler := handler.NewOverrideSetHandler(overrideSetService)
 
 	// 注册/健康运行态：内存注册表 + 健康扫描（注册/健康的内存真源）
@@ -238,6 +271,7 @@ func run() error {
 
 	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
+	v2ControlPlaneService.SetLegacyZoneService(zoneService)
 	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：真源为 v2 server.is_default_entry（ADR-0067），
 	// 管理台分配勾选 / toggle 的默认入口经此下发给 BC fallback 注入。
 	instanceService.SetDefaultEntryResolver(v2ControlPlaneService.DefaultEntryServerIDs)
@@ -266,6 +300,7 @@ func run() error {
 	// 流量调度（FR-10）：drain 标记落 DB + 落位建议（query-only），控制面只给决策不执行玩家连接（ADR-0017）
 	drainRepo := repository.NewServerDrainRepository(db)
 	schedulingService := service.NewSchedulingService(db, drainRepo, auditRepo, registry)
+	v2ControlPlaneService.SetLegacySchedulingService(schedulingService)
 
 	// 长轮询：配置与文件各持独立 Hub（唤醒集合分开，互不触发无谓重算）+ 有效解析 + 事务后唤醒
 	hub := longpoll.NewHub()
@@ -280,7 +315,7 @@ func run() error {
 	// revRepo 注入供 per-server 有效配置变更时间线聚合该服覆盖链各 config 项的发布历史（FR-80）
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
-	impactService := service.NewImpactService(registry, assignRepo)
+	impactService := service.NewImpactService(registry, assignRepo, db)
 	// 配置 admin 处理器持有 effectiveService 以支持有效配置只读预览（FR-22）+ 灰度 svc（FR-9）+ 影响面预览（FR-79）
 	configHandler := handler.NewConfigHandler(configService, effectiveService, configGrayService, impactService)
 	fileEffectiveService := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
@@ -313,10 +348,12 @@ func run() error {
 	// 实例视图渲染健康原因（FR-81）须读当前健康阈值（设置 store 热改项 FR-61），故注入 settingsService；
 	// effectiveService 供 per-server 有效配置变更时间线端点（FR-80）。
 	instanceHandler := handler.NewInstanceHandler(instanceService, settingsService, effectiveService)
-	topologyHandler := handler.NewTopologyHandler(service.NewTopologyService(registry))
+	topologyService := service.NewTopologyService(registry)
+	topologyHandler := handler.NewTopologyHandler(topologyService)
 	zoneHandler := handler.NewZoneHandler(zoneService, v2ControlPlaneService)
-	schedulingHandler := handler.NewSchedulingHandler(schedulingService)
-	auditHandler := handler.NewAuditHandler(service.NewAuditService(auditRepo), settingsService)
+	schedulingHandler := handler.NewSchedulingHandler(schedulingService, v2ControlPlaneService)
+	auditService := service.NewAuditService(auditRepo)
+	auditHandler := handler.NewAuditHandler(auditService, settingsService)
 	alertHandler := handler.NewAlertHandler(inbox)
 	alertEventHandler := handler.NewAlertEventHandler(alertEventService)
 	authHandler := handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo))
@@ -325,15 +362,38 @@ func run() error {
 	// apiKeyService 同时作为 API 密钥校验器注入鉴权中间件（真源在库、查库比对哈希、不引会话存储）。
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
 	apiKeyService := service.NewAPIKeyService(db, apiKeyRepo, auditRepo)
+	apiKeyService.SetCredentialCipher(credentialCipher)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 
 	// 统一审批核心（FR-206/207）：先落审批请求与审计，再由注册表按 operationKind 调用受控执行适配器。
 	approvalRegistry := authz.NewApprovalRegistry()
 	approvalService := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), auditRepo, approvalRegistry)
+	sensitiveAccessGrants := service.NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
+	approvalService.SetSensitiveAccessGrantStore(repository.NewSensitiveAccessGrantRepository(db))
+	service.RegisterMessagePayloadApprovalAdapter(approvalRegistry, repository.NewMessageRepository(db), sensitiveAccessGrants)
 	v2ControlPlaneService.SetApprovalService(approvalService)
+	configService.SetApprovalService(approvalService)
+	fileService.SetApprovalService(approvalService)
+	overrideSetService.SetApprovalService(approvalService)
 	apiKeyService.SetApprovalService(approvalService)
 	service.RegisterV2ControlPlaneApprovalAdapters(approvalRegistry, v2ControlPlaneService)
+	service.RegisterConfigApprovalAdapters(approvalRegistry, configService)
+	service.RegisterFileOverrideApprovalAdapters(approvalRegistry, fileService, overrideSetService)
 	service.RegisterAPIKeyApprovalAdapters(approvalRegistry, apiKeyService)
+	// MCP OAuth 客户端的高危生命周期同样只能由审批 worker 应用；协议端点在受信反代配置完成前保持未挂载。
+	mcpOAuthService := service.NewMCPOAuthService(db, repository.NewMCPOAuthRepository(db), auditRepo)
+	mcpOAuthService.SetApprovalService(approvalService)
+	service.RegisterMCPOAuthApprovalAdapters(approvalRegistry, mcpOAuthService)
+	mcpOAuthHandler := handler.NewMCPOAuthHandler(mcpOAuthService)
+	mcpProxyPolicy, err := server.NewMCPProxyPolicy(cfg.MCP.Enabled, cfg.MCP.PublicBaseURL, cfg.MCP.TrustedProxyCIDRs)
+	if err != nil {
+		return err
+	}
+	mcpToolRegistry := server.NewMCPToolRegistry(approvalService, apiKeyService, v2ControlPlaneService, settingsService)
+	mcpToolRegistry.SetConfigService(configService)
+	mcpToolRegistry.SetFileOverrideServices(fileService, overrideSetService)
+	mcpProtocolHandler := server.NewMCPProtocolHandler(mcpProxyPolicy, mcpOAuthService, mcpOAuthService, mcpToolRegistry)
+	approvalWorker := service.NewApprovalWorker(approvalService)
 	approvalHandler := handler.NewApprovalHandler(approvalService)
 
 	// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：命令仓库 + 服务（建命令 / 拉取 / ingest 复用 FileService.Import）+ 处理器。
@@ -341,6 +401,10 @@ func run() error {
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileService, auditRepo)
 	commandService.SetNotifier(notifier)
+	commandService.SetApprovalService(approvalService)
+	commandService.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	mcpToolRegistry.SetAgentCommandService(commandService)
+	service.RegisterAgentCommandApprovalAdapters(approvalRegistry, commandService, sensitiveAccessGrants)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffectiveService)
 	commandHandler := handler.NewCommandHandler(commandService, instanceService)
@@ -367,6 +431,9 @@ func run() error {
 	assetHub := longpoll.NewHub()
 	assetPreviewService := service.NewAssetPreviewService(db, commandRepo, repository.NewFileAssetRepository(db),
 		repository.NewSettingRepository(db), auditRepo, assetHub, notifier, instanceService)
+	assetPreviewService.SetSensitiveAccessApproval(approvalService, sensitiveAccessGrants)
+	service.RegisterAssetPreviewApprovalAdapter(approvalRegistry, assetPreviewService, sensitiveAccessGrants)
+	mcpToolRegistry.SetSensitiveReadServices(assetPreviewService, nil)
 	assetHandler := handler.NewAssetHandler(assetPreviewService)
 
 	// 多级灰度文件同步中心（FR-129/FR-131）：当前切片只装配任务真源、目标规划、控制动作与管理台 SSE。
@@ -377,6 +444,9 @@ func run() error {
 	// 复用同一 agent_command 通路（tail-logs 类型），命令提交后经 notifier 唤醒目标 agent。
 	agentLogService := service.NewAgentLogService(db, commandRepo, auditRepo)
 	agentLogService.SetNotifier(notifier)
+	agentLogService.SetApprovalService(approvalService)
+	agentLogService.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	service.RegisterAgentLogApprovalAdapter(approvalRegistry, agentLogService, sensitiveAccessGrants)
 	agentLogHandler := handler.NewAgentLogHandler(agentLogService, instanceService)
 
 	// 控制面自观测页（FR-82）：聚合控制面进程内部运行态——DB 连接池（与 FR-33 同一 sqlDB）、
@@ -429,18 +499,7 @@ func run() error {
 	changeOrderRepo := repository.NewChangeOrderRepository(db)
 	deliveryOrderService := service.NewDeliveryOrderService(db, changeOrderRepo,
 		repository.NewConfigLayerVersionRepository(db), auditRepo, settingsService, healthViewStore)
-	approvalRegistry.Register(authz.OperationDeliveryApprove, authz.AdapterFunc(func(req authz.ApprovalRequest, _ authz.Permit) error {
-		orderID, err := strconv.ParseUint(req.Operation.ResourceID, 10, 64)
-		if err != nil {
-			return err
-		}
-		var payload struct {
-			Reason string `json:"reason"`
-		}
-		_ = json.Unmarshal(req.Payload, &payload)
-		_, err = deliveryOrderService.Approve(uint(orderID), payload.Reason, req.Actor, "")
-		return err
-	}))
+	deliveryOrderService.SetApprovalService(approvalService)
 	deliveryDiffService := service.NewDeliveryDiffService(db, changeOrderRepo,
 		repository.NewFileAssetRepository(db), auditRepo, assetPreviewService, healthViewStore)
 
@@ -460,6 +519,10 @@ func run() error {
 	// 回执经 blob 服务 SetProgressWaker 即时唤醒推进器（单一驱动源）、观察窗序列经 SetObserveProvider 供 /observe 接真。
 	deliveryOrchestrator := service.NewDeliveryOrchestrator(db, changeOrderRepo, deliveryBlobService,
 		commandRepo, auditRepo, healthViewStore, metricWindow, notifier)
+	service.RegisterDeliveryApprovalAdapter(approvalRegistry, deliveryOrderService, deliveryOrchestrator)
+	deliveryOrchestrator.SetApprovalService(approvalService)
+	mcpToolRegistry.SetDeliveryOrchestrator(deliveryOrchestrator)
+	mcpToolRegistry.SetDeliveryOrderService(deliveryOrderService)
 	deliveryBlobService.SetProgressWaker(deliveryOrchestrator)
 	deliveryOrderService.SetObserveProvider(deliveryOrchestrator)
 	// 整单回滚配置版本回退装配（FR-167，ADR-0071 决策6）：回滚时经 config 中心把 head 记账回退到 from（幂等吞 NO_CHANGE），
@@ -469,13 +532,16 @@ func run() error {
 
 	// 命令观测 / 审查（FR-104，增强 FR-17/FR-82）：复用同一 commandRepo，只读查询 + 聚合控制面↔agent 命令的双向生命周期。
 	// 区别于 FR-82 控制面健康（仅命令队列计数）——本服务把队列升级为逐条 + 历史过滤 + 趋势；绝不带出瞬态敏感内容（投影在 repo 排除）。
-	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
+	commandObserveService := service.NewCommandObserveService(commandRepo)
+	commandObserveHandler := handler.NewCommandObserveHandler(commandObserveService)
 
 	// 反向抓取受管任务（FR-58，见 ADR-0037）：任务仓库 + 服务（建任务 + 单实例互斥、scan 回传存清单、
 	// submit 编排、ingest 复用 FileService.Import 落库、取消、过期）+ 处理器。任务是真源、命令是其执行手段。
 	reverseFetchTaskRepo := repository.NewReverseFetchTaskRepository(db)
 	// 反向抓取单文件上限从设置 store 读、热生效（FR-61）：ReceiveScan 用该上限 + agent size 重算 overThreshold。
 	reverseFetchTaskService := service.NewReverseFetchTaskService(db, reverseFetchTaskRepo, commandRepo, fileService, auditRepo, settingsService)
+	reverseFetchTaskService.SetApprovalService(approvalService)
+	service.RegisterReverseFetchTaskApprovalAdapters(approvalRegistry, reverseFetchTaskService)
 	reverseFetchTaskService.SetNotifier(notifier)
 	// agent 复用同一 /files/ingest 端点回传 submit 选定内容，控制面据命令 mode=submit 转交受管任务编排落库。
 	commandService.SetSubmitIngestReceiver(reverseFetchTaskService)
@@ -496,7 +562,8 @@ func run() error {
 	schedulingV2Service.SetDecisionEnqueuer(service.SchedDecisionEnqueuer{Writer: asyncDailyWriter})
 	v2SchedHandler := handler.NewV2SchedHandler(schedulingV2Service)
 	// 决策记录管理面查询（§5.2）：跨日并表列表 / 详情 / 概览，只读、查询侧不隐式建日表。
-	schedDecisionAdminHandler := handler.NewSchedDecisionAdminHandler(service.NewSchedDecisionQueryService(schedDecisionRepo), settingsService)
+	schedDecisionQueryService := service.NewSchedDecisionQueryService(schedDecisionRepo)
+	schedDecisionAdminHandler := handler.NewSchedDecisionAdminHandler(schedDecisionQueryService, settingsService)
 
 	// P5a 装配点：连接明细采集（FR-145，见 v2-connection-message-storage.md §3.2/§4.1）。
 	// proxy 上报 open/close 事件 → 接收端只校验 + 更内存名册 + 非阻塞入队 → 后台写入池按 conn_id 内嵌时间
@@ -521,12 +588,27 @@ func run() error {
 	// 连接明细 / 消息元数据 / payload 查看管理面查询装配（FR-145/149/150，见 §5.2）：复用 P5a 的
 	// connDetailRepo / messageRepo / auditRepo；查询侧请求 goroutine 可读 DB（读非采集面），但仍走
 	// 游标分页 + 逐表短路防全量扫描；payload 受控查看先写 message.payload.view 审计后返回内容。
-	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(service.NewConnQueryService(connDetailRepo), settingsService)
+	connQueryService := service.NewConnQueryService(connDetailRepo)
+	v2ConnectionAdminHandler := handler.NewV2ConnectionAdminHandler(connQueryService, settingsService)
+	messagePayloadService := service.NewMessagePayloadService(messageRepo)
+	messageQueryService := service.NewMessageQueryService(messageRepo)
 	v2MessageAdminHandler := handler.NewV2MessageAdminHandler(
-		service.NewMessageQueryService(messageRepo),
-		service.NewMessagePayloadService(messageRepo, auditRepo),
+		messageQueryService,
+		messagePayloadService,
 		settingsService,
 	)
+	v2MessageAdminHandler.SetSensitiveAccessApproval(approvalService, sensitiveAccessGrants)
+	mcpToolRegistry.SetSensitiveReadServices(assetPreviewService, messagePayloadService)
+	observationScopeResolver := service.NewObservationScopeResolver(repository.NewEnvRepository(db), nsRepo)
+	mcpToolRegistry.SetReadServices(server.NewMCPReadServices(v2ControlPlaneService, topologyService, healthQueryService, messageQueryService, connQueryService, commandObserveService, schedDecisionQueryService, auditService, observationScopeResolver))
+	v2HealthHandler.SetObservationScopeResolver(observationScopeResolver)
+	schedDecisionAdminHandler.SetObservationScopeResolver(observationScopeResolver)
+	auditHandler.SetObservationScopeResolver(observationScopeResolver)
+	alertHandler.SetObservationScopeResolver(observationScopeResolver)
+	alertEventHandler.SetObservationScopeResolver(observationScopeResolver)
+	commandObserveHandler.SetObservationScopeResolver(observationScopeResolver)
+	v2ConnectionAdminHandler.SetObservationScopeResolver(observationScopeResolver)
+	v2MessageAdminHandler.SetObservationScopeResolver(observationScopeResolver)
 
 	// 冷查询双连接注入（FR-152，见 ADR-0066 决策 5）：把 P6a 的归档连接注入 6 个查询 repo，
 	// includeArchived 时对热 / 冷两连接同构查询后应用层归并。archiveDB 可能为 nil（不可达降级）——
@@ -582,6 +664,10 @@ func run() error {
 	// HTTP 触发面（FR-99，见 ADR-0044）：把更新核心接到 admin 端点——检查（只读、服务端缓存 + ?force 刷新）/
 	// 状态（读内存进度）/ 触发应用（写、readonly 403 + 审计）。渠道 / 代理 / 缓存 TTL 从设置 store 读、热生效（FR-101）。
 	updateAPIService := service.NewUpdateService(updateService, settingsService)
+	mcpToolRegistry.SetUpdateService(updateAPIService)
+	updateAPIService.SetApprovalService(approvalService)
+	settingsService.SetApprovalService(approvalService)
+	service.RegisterSystemOperationApprovalAdapters(approvalRegistry, updateAPIService, settingsService, db)
 	updateHandler := handler.NewUpdateHandler(updateAPIService)
 	slog.Info("控制面在线更新核心已就绪",
 		"初始阶段", string(updateService.Snapshot().Phase), "pending 路径", resolvePendingPath())
@@ -594,7 +680,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPProtocol: mcpProtocolHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{
@@ -620,6 +706,9 @@ func run() error {
 
 	// 启动后台健康扫描（随关停信号取消退出）
 	go healthScanner.Run(ctx)
+
+	// 启动审批执行器：批准请求只在 HTTP 请求内标记 executing，由此 worker 异步执行并随进程关停。
+	go approvalWorker.Run(ctx)
 
 	// 启动后台指标采样器（FR-32）：恒常驻，每轮从设置 store 读 metric.enabled 决定本轮是否采样 / 清理（FR-61）。
 	// 不再启动期一次性决定起不起——运维改 metric.enabled 即热生效停 / 起采样，免重启。
@@ -692,7 +781,7 @@ func run() error {
 		if selfErr != nil {
 			return fmt.Errorf("自替换失败：无法解析自身可执行路径: %w", selfErr)
 		}
-		return update.SwapAndRespawn(selfPath, resolvePendingPath(), updateService.Snapshot().TargetVersion)
+		return update.SwapAndRespawn(selfPath, resolvePendingPath(), updateService.Snapshot().TargetVersion, version.Version)
 	case <-rollbackCh:
 		// 手动回滚已触发（FR-120）：优雅关停释放端口后回退到上一版本（.old → 运行路径）并重启旧版。
 		slog.Info("手动回滚已触发，优雅关停后回退到上一版本并重启")

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -141,6 +142,15 @@ func (c Config) validate() error {
 		}
 		if c.Metric.RetentionHours <= 0 {
 			return fmt.Errorf("配置校验失败: 启用指标采样时 metric.retention-hours 须为正，实际 %d", c.Metric.RetentionHours)
+		}
+	}
+	if c.MCP.Enabled {
+		base, err := url.Parse(c.MCP.PublicBaseURL)
+		if err != nil || base.Scheme != "https" || base.Host == "" || base.Path != "" || base.RawQuery != "" || base.Fragment != "" {
+			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是无路径的 HTTPS 公网基址")
+		}
+		if len(c.MCP.TrustedProxyCIDRs) == 0 {
+			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.trusted-proxy-cidrs 不能为空")
 		}
 	}
 	return nil

@@ -9,6 +9,7 @@ export const nav = {
     system: 'System',
   },
   dashboard: 'Dashboard',
+  approvals: 'Approvals',
   servers: 'Servers',
   identityConflicts: 'Identity conflicts',
   zones: 'Zones',

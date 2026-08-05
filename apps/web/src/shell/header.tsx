@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Menu, Search, X } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
 
 import { Badge, Button } from '@beacon/ui'
 
@@ -43,6 +44,7 @@ function HeaderUtilities({ onOpenSearch }: { onOpenSearch: () => void }) {
 export default function Header() {
   const { t } = useTranslation()
   const demo = isDemoMode()
+  const location = useLocation()
   const mobileNavOpen = useShellStore((state) => state.mobileNavOpen)
   const toggleMobileNav = useShellStore((state) => state.toggleMobileNav)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -78,7 +80,13 @@ export default function Header() {
         >
           {mobileNavOpen ? <X className="size-4" /> : <Menu className="size-4" />}
         </Button>
-        <EnvFilter />
+        {location.pathname === '/approvals' || location.pathname.startsWith('/approvals/') ? (
+          <div data-slot="global-approval-header" className="rounded-md bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand">
+            全局审批
+          </div>
+        ) : (
+          <EnvFilter />
+        )}
         <div className="flex flex-1 items-center justify-end gap-1.5">
           <HeaderUtilities
             onOpenSearch={() => {
