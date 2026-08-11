@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import {
   ChevronLeft,
   ChevronRight,
@@ -43,6 +44,7 @@ import type { HealthItem, MetricsSeriesPoint, ServerItem } from '@beacon/contrac
 
 import {
   ApiClientError,
+  type ApprovalTicket,
   disableIdentity,
   fetchIdentities,
   fetchServers,
@@ -104,6 +106,7 @@ export default function AssetsPanel({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [action, setAction] = useState<RowAction | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [approvalTicket, setApprovalTicket] = useState<ApprovalTicket | null>(null)
 
   const query = useQuery({
     queryKey: ['servers', 'assets', requestScope, keyword, kind, assigned, page],
@@ -261,10 +264,11 @@ export default function AssetsPanel({
   const drainingMutation = useMutation({
     mutationFn: ({ row, reason, next }: { row: ServerItem; reason: string; next: boolean }) =>
       setDraining(row.serverId, next, reason),
-    onSuccess: async (_data, vars) => {
+    onSuccess: async (result, vars) => {
       await invalidate()
       setAction(null)
       setErrorText(null)
+      setApprovalTicket('approvalRequestId' in result ? result : null)
       notifySuccess(
         vars.next
           ? t('cluster.servers.actions.startDraining')
@@ -686,6 +690,13 @@ export default function AssetsPanel({
             )}
           </Button>
         </div>
+
+        {approvalTicket && (
+          <div className="mx-4 mt-3 grid gap-1 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2" role="status">
+            <span>排空审批申请已创建，等待审批中心执行。</span>
+            <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(approvalTicket.approvalRequestId)}`}>查看统一审批</Link>
+          </div>
+        )}
 
         {/* 批量选择集操作条：紧随筛选条，选择集非空才出现 */}
         {selected.size > 0 && (

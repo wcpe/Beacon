@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 
 import {
   Button,
@@ -13,9 +14,11 @@ import {
   DialogHeader,
   DialogTitle,
   Label,
+  Textarea,
 } from '@beacon/ui'
-import type { AssignmentResult, ServerItem, ZoneTreeResponse } from '@beacon/contracts'
+import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
+import type { ApprovalTicket } from '../../api/cluster'
 import AssignTargetTree from './assign-target-tree'
 
 /** 从结构树按 id 找目标可读名（小区含集群 / 大区路径，集群直接用名）。 */
@@ -49,10 +52,10 @@ interface AssignDialogProps {
   tree: ZoneTreeResponse | undefined
   pending: boolean
   errorText?: string | null
-  // 逐台结果（成功后展示）；null 表示尚未提交
-  results: AssignmentResult[] | null
+  // 审批申请票据；创建后必须等待审批中心和 worker。
+  approvalTicket: ApprovalTicket | null
   // targetId 为目标 id 字符串
-  onConfirm: (targetId: string, isDefaultEntry: boolean) => void
+  onConfirm: (targetId: string, isDefaultEntry: boolean, reason: string) => void
 }
 
 export default function AssignDialog({
@@ -63,25 +66,25 @@ export default function AssignDialog({
   tree,
   pending,
   errorText,
-  results,
+  approvalTicket,
   onConfirm,
 }: AssignDialogProps) {
   const { t } = useTranslation()
   const [target, setTarget] = useState('')
   const [isDefaultEntry, setIsDefaultEntry] = useState(false)
+  const [reason, setReason] = useState('')
 
   // 每次打开清空草稿
   useEffect(() => {
     if (open) {
       setTarget('')
       setIsDefaultEntry(false)
+      setReason('')
     }
   }, [open])
 
   const targetLabel = useMemo(() => targetLabelOf(tree, kind, target), [tree, kind, target])
 
-  const failed = results?.filter((r) => !r.ok) ?? []
-  const succeeded = results?.filter((r) => r.ok) ?? []
   const targetLabelKey = kind === 'backend' ? 'cluster.zones.assign.targetZone' : 'cluster.zones.assign.targetCluster'
 
   return (
@@ -118,28 +121,15 @@ export default function AssignDialog({
             </div>
           )}
 
-          {/* 逐台结果 */}
-          {results && (
-            <div className="grid gap-1 rounded-md border border-border px-3 py-2 text-sm">
-              <p className="font-semibold text-ink-1">{t('cluster.zones.assign.resultTitle')}</p>
-              {succeeded.length > 0 && (
-                <p className="text-ok">{t('cluster.zones.assign.resultOk', { count: succeeded.length })}</p>
-              )}
-              {failed.length > 0 && (
-                <>
-                  <p className="text-crit">{t('cluster.zones.assign.resultFail', { count: failed.length })}</p>
-                  <ul className="list-disc pl-5 text-ink-3">
-                    {failed.map((r) => (
-                      <li key={r.id}>
-                        {r.serverId} ·{' '}
-                        {r.code === 'rezone_required'
-                          ? t('cluster.zones.assign.rezoneRequired')
-                          : t(`cluster.zones.rezoneCode.${r.code ?? ''}`, r.code ?? '')}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
+          <div className="space-y-1.5">
+            <Label htmlFor="assign-reason">申请原因</Label>
+            <Textarea id="assign-reason" aria-label="申请原因" value={reason} onChange={(event) => { setReason(event.target.value) }} rows={2} />
+          </div>
+
+          {approvalTicket && (
+            <div className="grid gap-1 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2" role="status">
+              <span>分配审批申请已创建，等待审批中心执行。</span>
+              <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(approvalTicket.approvalRequestId)}`}>查看统一审批</Link>
             </div>
           )}
 
@@ -156,9 +146,9 @@ export default function AssignDialog({
             {t('cluster.zones.assign.cancel')}
           </Button>
           <Button
-            disabled={target === '' || pending}
+            disabled={target === '' || reason.trim() === '' || pending || approvalTicket !== null}
             onClick={() => {
-              onConfirm(target, isDefaultEntry)
+              onConfirm(target, isDefaultEntry, reason.trim())
             }}
           >
             {t('cluster.zones.assign.confirm')}

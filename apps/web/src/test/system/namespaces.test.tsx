@@ -1,6 +1,7 @@
 // /namespaces 页测试：常规渲染、空态引导、创建出一次性 token、收回信任后状态变化。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import NamespacesPage from '../../pages/namespaces'
@@ -78,6 +79,37 @@ describe('/namespaces 页', () => {
     // 面板内出现互通信任关系区与授予入口
     expect(screen.getByText('互通信任关系')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '授予信任' })).toBeInTheDocument()
+  })
+
+  it('授予信任只创建审批申请，等待审批中心执行', async () => {
+    useScenario('normal')
+    server.use(
+      http.post('/admin/v2/namespace-trusts', () =>
+        HttpResponse.json(
+          { approvalRequestId: 'apr_trust_test', status: 'pending', operationKey: 'namespace_trust.grant' },
+          { status: 202 },
+        ),
+      ),
+    )
+    const user = userEvent.setup()
+    renderPage(<NamespacesPage />)
+
+    const prodRow = (await screen.findAllByText('prod'))[0].closest('tr')
+    expect(prodRow).not.toBeNull()
+    await user.click(prodRow as HTMLElement)
+    await user.click(await screen.findByRole('button', { name: '授予信任' }))
+
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('combobox', { name: '来源命名空间' }))
+    await user.click(await screen.findByRole('option', { name: 'prod' }))
+    await user.click(within(dialog).getByRole('combobox', { name: '目标命名空间' }))
+    await user.click(await screen.findByRole('option', { name: 'test' }))
+    await user.type(within(dialog).getByLabelText('建立原因'), '联调跨域调度')
+    await user.click(within(dialog).getByRole('button', { name: '授予' }))
+
+    const status = await screen.findByRole('status')
+    expect(within(status).getByText('信任授予审批申请已创建，等待审批中心执行。')).toBeInTheDocument()
+    expect(within(status).getByRole('link', { name: '查看统一审批' })).toHaveAttribute('href', '/approvals/apr_trust_test')
   })
 
   it('详情面板收回生效信任后该关系变为已收回（写闭环）', async () => {

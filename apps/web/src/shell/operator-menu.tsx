@@ -37,7 +37,7 @@ export default function OperatorMenu() {
     mutationFn: () => logout(),
     onSettled: () => {
       clearAuth()
-      navigate('/login', { replace: true })
+      void navigate('/login', { replace: true })
     },
   })
 

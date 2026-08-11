@@ -2,6 +2,7 @@
 // 勾选批量分配写闭环、可搜索树目标选择器、拖拽落区（原生 HTML5）。未分配收敛为窄栏入口，故分配用例先开栏。
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ZonesPage from '../../pages/zones'
@@ -116,8 +117,13 @@ describe('/zones 区服分配页', () => {
     ).toBeInTheDocument()
   })
 
-  it('打开未分配窄栏勾选后经可搜索树选目标批量分配，该 server 从窄栏消失（写闭环 + 树选择器）', async () => {
+  it('打开未分配窄栏勾选后经可搜索树选目标创建审批申请，不伪造同步分配', async () => {
     useScenario('normal')
+    server.use(
+      http.post('/admin/v2/server-assignments', () =>
+        HttpResponse.json({ approvalRequestId: 'apr_assign_test', status: 'pending', operationKey: 'topology.server.assign' }, { status: 202 }),
+      ),
+    )
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
@@ -139,14 +145,13 @@ describe('/zones 区服分配页', () => {
     const search = within(dialog).getByLabelText('搜索目标（按名称过滤）')
     await user.type(search, 'area-1')
     await user.click(await within(dialog).findByRole('treeitem', { name: /^area-1/ }))
+    await user.type(within(dialog).getByLabelText('申请原因'), '扩容分配')
     await user.click(within(dialog).getByRole('button', { name: '确认分配' }))
 
-    // build-1 从未分配窄栏消失（分配后会挂到树上，故只断言窄栏内不再出现）
-    await waitFor(() => {
-      const basket = document.querySelector('[data-slot="unassigned-basket"]')
-      expect(basket).not.toBeNull()
-      expect(within(basket as HTMLElement).queryByText('build-1')).not.toBeInTheDocument()
-    })
+    const status = await within(dialog).findByRole('status')
+    expect(within(status).getByText('分配审批申请已创建，等待审批中心执行。')).toBeInTheDocument()
+    expect(within(status).getByRole('link', { name: '查看统一审批' })).toHaveAttribute('href', '/approvals/apr_assign_test')
+    expect(screen.getByText('build-1')).toBeInTheDocument()
   }, 20_000)
 
   it('目标选择器树搜索按名称过滤，命中项可见、非命中项隐藏', async () => {
@@ -171,8 +176,13 @@ describe('/zones 区服分配页', () => {
     expect(await within(dialog).findByRole('treeitem', { name: /^area-1/ })).toBeInTheDocument()
   })
 
-  it('从窄栏拖拽 build-1 落到小区 area-1 弹二次确认，确认后完成分配（原生 HTML5 拖拽 + 二次确认）', async () => {
+  it('从窄栏拖拽 build-1 落到小区 area-1 后创建审批申请（原生 HTML5 拖拽 + 二次确认）', async () => {
     useScenario('normal')
+    server.use(
+      http.post('/admin/v2/server-assignments', () =>
+        HttpResponse.json({ approvalRequestId: 'apr_drag_assign_test', status: 'pending', operationKey: 'topology.server.assign' }, { status: 202 }),
+      ),
+    )
     const user = userEvent.setup()
     renderPage(<ZonesPage />)
 
@@ -197,15 +207,12 @@ describe('/zones 区服分配页', () => {
     expect(within(dialog).getByText(/将 build-1 分配到/)).toBeInTheDocument()
     expect(screen.getByText('build-1')).toBeInTheDocument()
 
-    // 点确认才真正分配
+    await user.type(within(dialog).getByLabelText('原因'), '拖拽分配')
     await user.click(within(dialog).getByRole('button', { name: '确认' }))
 
-    // 分配成功后 build-1 从未分配窄栏消失（可能已出现在树上，故只断言窄栏）
-    await waitFor(() => {
-      const basket = document.querySelector('[data-slot="unassigned-basket"]')
-      expect(basket).not.toBeNull()
-      expect(within(basket as HTMLElement).queryByText('build-1')).not.toBeInTheDocument()
-    })
+    const status = await screen.findByRole('status')
+    expect(within(status).getByRole('link', { name: '查看统一审批' })).toHaveAttribute('href', '/approvals/apr_drag_assign_test')
+    expect(screen.getByText('build-1')).toBeInTheDocument()
   })
 
   it('拖拽落区确认弹窗点取消则不分配（二次确认可撤销）', async () => {
@@ -258,7 +265,7 @@ describe('/zones 区服分配页', () => {
     const confirmBtn = within(dialog).getByRole('button', { name: '确认' })
     expect(confirmBtn).toBeDisabled()
     // 填原因后可确认
-    await user.type(within(dialog).getByLabelText('换区原因'), '业务迁移到主城区')
+    await user.type(within(dialog).getByLabelText('原因'), '业务迁移到主城区')
     expect(confirmBtn).not.toBeDisabled()
     await user.click(confirmBtn)
 

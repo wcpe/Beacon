@@ -23,6 +23,8 @@ import type {
   UpdateProgress,
 } from '@beacon/contracts'
 
+import type { ApprovalTicket } from './cluster'
+
 // 收敛到集群域的全站统一请求封装（含鉴权注入与 401 处理，FR-179）；ApiClientError 再导出供调用方 instanceof。
 import { ApiClientError, buildQuery, request } from './cluster'
 
@@ -205,7 +207,7 @@ export interface GrantTrustBody {
   note: string
 }
 
-export function grantTrust(body: GrantTrustBody): Promise<NamespaceTrustItem> {
+export function grantTrust(body: GrantTrustBody): Promise<ApprovalTicket> {
   return request('POST', '/admin/v2/namespace-trusts', body)
 }
 

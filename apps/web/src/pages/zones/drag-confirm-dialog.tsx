@@ -1,6 +1,5 @@
 // 拖拽落区 / 改派的二次确认弹窗：
-// ① 首次分配（未分配服务器拖到兼容目标）——纯确认，无需原因；
-// ② 已分配服务器改派（换区 / 改集群）——走换区工单，需填原因才放行。
+// 首次分配与已分配服务器改派都会创建审批申请，均需填写原因。
 // 松手后不立即写，先弹此确认，确认才调对应 mutation（首次分配 / 换区）。
 
 import { useEffect, useState } from 'react'
@@ -37,7 +36,7 @@ interface DragConfirmDialogProps {
   onOpenChange: (open: boolean) => void
   submitting: boolean
   errorText?: string | null
-  // 确认回调：rezone 传回原因，assign 传空串
+  // 确认回调：两种操作均传回审批申请原因。
   onConfirm: (reason: string) => void
 }
 
@@ -59,8 +58,7 @@ export default function DragConfirmDialog({
   }, [pending])
 
   const isRezone = pending?.mode === 'rezone'
-  // 改派须填原因；首次分配恒可确认
-  const canConfirm = !submitting && (!isRezone || reason.trim() !== '')
+  const canConfirm = !submitting && reason.trim() !== ''
 
   const title = isRezone
     ? t('cluster.zones.drag.confirmRezoneTitle')
@@ -83,21 +81,19 @@ export default function DragConfirmDialog({
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
 
-        {/* 改派需填原因（换区工单要求） */}
-        {isRezone && (
-          <div className="space-y-1.5">
-            <Label htmlFor="rezone-reason">{t('cluster.zones.drag.rezoneReasonLabel')}</Label>
-            <Textarea
-              id="rezone-reason"
-              value={reason}
-              onChange={(e) => {
-                setReason(e.target.value)
-              }}
-              placeholder={t('cluster.zones.drag.rezoneReasonPlaceholder')}
-              rows={3}
-            />
-          </div>
-        )}
+        <div className="space-y-1.5">
+          <Label htmlFor="rezone-reason">{t('cluster.servers.reason.label')}</Label>
+          <Textarea
+            id="rezone-reason"
+            aria-label={t('cluster.servers.reason.label')}
+            value={reason}
+            onChange={(e) => {
+              setReason(e.target.value)
+            }}
+            placeholder={t('cluster.zones.drag.rezoneReasonPlaceholder')}
+            rows={3}
+          />
+        </div>
 
         {errorText != null && errorText !== '' && <p className="text-sm text-crit">{errorText}</p>}
 

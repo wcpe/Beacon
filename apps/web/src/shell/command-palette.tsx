@@ -106,7 +106,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
 
   const runItem = (item: CommandItem) => {
     onOpenChange(false)
-    navigate(item.to)
+    void navigate(item.to)
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {

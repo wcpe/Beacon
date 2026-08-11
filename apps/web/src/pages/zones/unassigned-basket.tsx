@@ -10,9 +10,9 @@ import { useNavigate } from 'react-router-dom'
 import { GripVertical, Inbox, Network, PanelRightClose, Server } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, Checkbox, cn } from '@beacon/ui'
-import type { AssignmentResult, ServerItem } from '@beacon/contracts'
+import type { ServerItem } from '@beacon/contracts'
 
-import { fetchServers, fetchZoneTree } from '../../api/cluster'
+import { type ApprovalTicket, fetchServers, fetchZoneTree } from '../../api/cluster'
 import { writeAssignDrag } from '../../features/cluster/assign-drag'
 import { messageOf, useAssignServers } from '../../features/cluster/use-assign-servers'
 import AssignDialog from './assign-dialog'
@@ -35,7 +35,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
   const [keyword, setKeyword] = useState('')
   const [assignOpen, setAssignOpen] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
-  const [results, setResults] = useState<AssignmentResult[] | null>(null)
+  const [approvalTicket, setApprovalTicket] = useState<ApprovalTicket | null>(null)
   // 未分配 chip 右键菜单：光标位置 + 目标服务器
   const [menu, setMenu] = useState<{ x: number; y: number; server: ServerItem } | null>(null)
 
@@ -99,19 +99,20 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
     })
   }
 
-  const submitAssign = (targetId: string, isDefaultEntry: boolean) => {
+  const submitAssign = (targetId: string, isDefaultEntry: boolean, reason: string) => {
     setErrorText(null)
-    setResults(null)
+    setApprovalTicket(null)
     const kind = selectionKind === 'proxy' ? 'bc_cluster' : 'zone'
     assignMutation.mutate(
       {
         serverIds: selectedRows.map((r) => r.id),
         target: { kind, id: Number.parseInt(targetId, 10) },
         isDefaultEntry,
+        reason,
       },
       {
-        onSuccess: (response) => {
-          setResults(response.results)
+        onSuccess: (ticket) => {
+          setApprovalTicket(ticket)
           setSelectedIds(new Set())
         },
         onError: (error) => {
@@ -260,7 +261,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
           disabled={selectedIds.size === 0}
           onClick={() => {
             setErrorText(null)
-            setResults(null)
+            setApprovalTicket(null)
             setAssignOpen(true)
           }}
         >
@@ -273,7 +274,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
         onOpenChange={(isOpen) => {
           setAssignOpen(isOpen)
           if (!isOpen) {
-            setResults(null)
+            setApprovalTicket(null)
             setErrorText(null)
           }
         }}
@@ -282,7 +283,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
         tree={treeQuery.data}
         pending={assignMutation.isPending}
         errorText={errorText}
-        results={results}
+        approvalTicket={approvalTicket}
         onConfirm={submitAssign}
       />
 
@@ -297,7 +298,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
                   label: t('cluster.zones.menu.viewDetail'),
                   icon: <Server className="size-3.5" />,
                   onSelect: () => {
-                    navigate(`/servers?keyword=${encodeURIComponent(menu.server.serverId)}`)
+                    void navigate(`/servers?keyword=${encodeURIComponent(menu.server.serverId)}`)
                   },
                 },
               ] satisfies ContextMenuItem[])

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ArrowRightLeft,
   Boxes,
@@ -25,6 +25,7 @@ import type { ServerItem, ZoneTreeResponse } from '@beacon/contracts'
 
 import {
   ApiClientError,
+  type ApprovalTicket,
   createBcCluster,
   createRegion,
   createZone,
@@ -185,10 +186,11 @@ export default function ZoneTree({
   const drainingMutation = useMutation({
     mutationFn: ({ row, next, reason }: { row: ServerItem; next: boolean; reason: string }) =>
       setDraining(row.serverId, next, reason),
-    onSuccess: async (_data, vars) => {
+    onSuccess: async (result, vars) => {
       await invalidate()
       setTreeOpError(null)
       setDrainingServer(null)
+      setApprovalTicket('approvalRequestId' in result ? result : null)
       notifySuccess(
         vars.next
           ? t('cluster.servers.actions.startDraining')
@@ -207,6 +209,7 @@ export default function ZoneTree({
   // 拖拽落区：当前 drag-over 的目标键（高亮）与最近一次落区错误/结果反馈
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [dropFeedback, setDropFeedback] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
+  const [approvalTicket, setApprovalTicket] = useState<ApprovalTicket | null>(null)
   // 待确认的拖拽落区意图（松手后先弹确认，确认才写）
   const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null)
   const [dropError, setDropError] = useState<string | null>(null)
@@ -294,18 +297,15 @@ export default function ZoneTree({
       return
     }
     setDropFeedback(null)
+    setApprovalTicket(null)
     setDropError(null)
     if (drop.mode === 'assign') {
       dropAssign.mutate(
-        { serverIds: [drop.serverRowId], target: drop.target },
+        { serverIds: [drop.serverRowId], target: drop.target, reason },
         {
-          onSuccess: (response) => {
-            const failed = response.results.find((r) => !r.ok)
-            setDropFeedback(
-              failed
-                ? { tone: 'error', text: t('cluster.zones.drag.dropFail', { serverId: drop.serverId }) }
-                : { tone: 'ok', text: t('cluster.zones.drag.dropOk', { serverId: drop.serverId }) },
-            )
+          onSuccess: (ticket) => {
+            setApprovalTicket(ticket)
+            setDropFeedback({ tone: 'ok', text: '首次分配审批申请已创建。' })
             setPendingDrop(null)
           },
           onError: (error) => {
@@ -318,13 +318,9 @@ export default function ZoneTree({
     rezoneMutation.mutate(
       { serverRowId: drop.serverRowId, target: drop.target, reason },
       {
-        onSuccess: (response) => {
-          const failed = response.results.find((r) => !r.ok)
-          setDropFeedback(
-            failed
-              ? { tone: 'error', text: t('cluster.zones.drag.dropFail', { serverId: drop.serverId }) }
-              : { tone: 'ok', text: t('cluster.zones.drag.rezoneOk', { serverId: drop.serverId }) },
-          )
+        onSuccess: (ticket) => {
+          setApprovalTicket(ticket)
+          setDropFeedback({ tone: 'ok', text: '换区审批申请已创建。' })
           setPendingDrop(null)
         },
         onError: (error) => {
@@ -398,7 +394,8 @@ export default function ZoneTree({
     rezoneMutation.mutate(
       { serverRowId: server.id, target, reason },
       {
-        onSuccess: () => {
+        onSuccess: (ticket) => {
+          setApprovalTicket(ticket)
           setRezoneServer(null)
         },
         onError: (error) => {
@@ -452,7 +449,7 @@ export default function ZoneTree({
       label: t('cluster.zones.menu.viewDetail'),
       icon: <Server className="size-3.5" />,
       onSelect: () => {
-        navigate(`/servers?keyword=${encodeURIComponent(server.serverId)}`)
+        void navigate(`/servers?keyword=${encodeURIComponent(server.serverId)}`)
       },
     })
     items.push({
@@ -572,6 +569,12 @@ export default function ZoneTree({
           )}
         >
           {dropFeedback.text}
+        </p>
+      )}
+      {approvalTicket && (
+        <p className="mx-3 mt-2 flex gap-1 rounded-md border border-brand-100 bg-brand-50 px-3 py-1.5 text-[11.5px] text-brand-600" role="status">
+          <span>等待审批中心执行。</span>
+          <Link className="underline" to={`/approvals/${encodeURIComponent(approvalTicket.approvalRequestId)}`}>查看统一审批</Link>
         </p>
       )}
 

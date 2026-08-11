@@ -4,6 +4,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import { Boxes, Search, ShieldCheck } from 'lucide-react'
 
 import {
@@ -34,6 +35,7 @@ import {
   revokeTrust,
   type GrantTrustBody,
 } from '../api/system'
+import type { ApprovalTicket } from '../api/cluster'
 import SystemReasonDialog from '../features/system/reason-dialog'
 import { formatIso } from '../features/system/format'
 import { isDemoMode } from '../demo-mode'
@@ -70,6 +72,7 @@ export default function NamespacesPage() {
   // 授予 / 收回态
   const [grantOpen, setGrantOpen] = useState(false)
   const [grantError, setGrantError] = useState<string | null>(null)
+  const [grantTicket, setGrantTicket] = useState<ApprovalTicket | null>(null)
   const [revoking, setRevoking] = useState<NamespaceTrustItem | null>(null)
   const [revokeError, setRevokeError] = useState<string | null>(null)
 
@@ -149,9 +152,9 @@ export default function NamespacesPage() {
 
   const grantMutation = useMutation({
     mutationFn: (body: GrantTrustBody) => grantTrust(body),
-    onSuccess: async () => {
-      await invalidateAll()
+    onSuccess: (ticket) => {
       setGrantOpen(false)
+      setGrantTicket(ticket)
     },
     onError: (error) => {
       setGrantError(messageOf(error))
@@ -277,6 +280,7 @@ export default function NamespacesPage() {
               trusts={trusts}
               onGrant={() => {
                 setGrantError(null)
+                setGrantTicket(null)
                 setGrantOpen(true)
               }}
               onRevoke={(tr) => {
@@ -292,6 +296,13 @@ export default function NamespacesPage() {
           setSelectedId(null)
         }}
       />
+
+      {grantTicket && (
+        <div className="grid gap-1 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2" role="status">
+          <span>信任授予审批申请已创建，等待审批中心执行。</span>
+          <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(grantTicket.approvalRequestId)}`}>查看统一审批</Link>
+        </div>
+      )}
 
       {isDemoMode() && <LifecycleMockReview subject="namespace" />}
 

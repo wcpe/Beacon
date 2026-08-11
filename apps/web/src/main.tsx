@@ -22,7 +22,7 @@ function AppRoutes() {
     // 注册全局 401 回调（FR-179）：任意 /admin/* 遇 401 时请求层已清令牌，这里负责跳登录。
     // 放应用层持有 router，避免 api 反向依赖 router。
     setOnUnauthorized(() => {
-      navigate('/login', { replace: true })
+      void navigate('/login', { replace: true })
     })
   }, [navigate])
 

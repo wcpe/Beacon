@@ -36,7 +36,7 @@ export default function LoginPage() {
     mutationFn: () => login(username.trim(), password),
     onSuccess: (result) => {
       setAuth(result.token, result.operator)
-      navigate(target, { replace: true })
+      void navigate(target, { replace: true })
     },
     onError: (err) => {
       // 后端脱敏文案直接展示；非 ApiClientError 兜底通用失败文案。

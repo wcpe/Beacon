@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import { Network, Server, UserPlus } from 'lucide-react'
 
 import {
@@ -48,6 +49,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   // Q3 占用冲突强制解绑勾选
   const [forceUnbind, setForceUnbind] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [approvalRequestID, setApprovalRequestID] = useState<string | null>(null)
   const [serverIdDraft, setServerIdDraft] = useState('')
   const [detailIdentityId, setDetailIdentityId] = useState<string | null>(null)
 
@@ -66,13 +68,15 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
   }
 
   const approveMutation = useMutation({
-    mutationFn: (row: AgentIdentityItem) =>
+    mutationFn: ({ row, reason }: { row: AgentIdentityItem; reason: string }) =>
       approveIdentity(row.identityId, {
+        reason,
         serverId: serverIdDraft.trim(),
         forceUnbindOccupier: row.conflictReason === 'server-id-occupied' ? forceUnbind : undefined,
       }),
-    onSuccess: async () => {
+    onSuccess: async (ticket) => {
       await invalidate()
+      setApprovalRequestID(ticket.approvalRequestId)
       setAction(null)
     },
     onError: (error) => {
@@ -145,6 +149,7 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
               size="sm"
               onClick={() => {
                 setErrorText(null)
+                setApprovalRequestID(null)
                 setForceUnbind(false)
                 setServerIdDraft(row.serverId ?? '')
                 setAction({ kind: 'approve', row })
@@ -194,6 +199,12 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
           <SheetDescription>{t('cluster.servers.pending.sheetDesc')}</SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-6">
+          {approvalRequestID && (
+            <div className="mb-4 grid gap-1 rounded-md border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-ink-2" role="status">
+              <span>确认接入审批申请已创建，等待审批中心执行。</span>
+              <Link className="w-fit text-brand hover:underline" to={`/approvals/${encodeURIComponent(approvalRequestID)}`}>查看统一审批</Link>
+            </div>
+          )}
           <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
@@ -216,14 +227,14 @@ export default function PendingSheet({ namespaceId, open, onOpenChange }: Pendin
           title={t('cluster.servers.pending.approveTitle')}
           description={t('cluster.servers.pending.approveDesc')}
           confirmLabel={t('cluster.servers.pending.approve')}
-          requireReason={false}
+          requireReason
           pending={approveMutation.isPending}
           errorText={errorText}
           confirmDisabled={serverIdValidationError !== null}
           impacts={approving ? [`serverId ${approving.serverId ?? '待分配服务器 ID'}`] : undefined}
-          onConfirm={() => {
+          onConfirm={(reason) => {
             if (approving) {
-              approveMutation.mutate(approving)
+              approveMutation.mutate({ row: approving, reason })
             }
           }}
         >

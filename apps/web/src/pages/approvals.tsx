@@ -642,7 +642,7 @@ export default function ApprovalsPage() {
                     row={row}
                     selected={row.requestId === requestId}
                     onOpen={() => {
-                      navigate(`/approvals/${encodeURIComponent(row.requestId)}`)
+                      void navigate(`/approvals/${encodeURIComponent(row.requestId)}`)
                     }}
                   />
                 ))
@@ -682,7 +682,7 @@ export default function ApprovalsPage() {
         }
         detailTitle={selected?.safeSummary ?? '审批详情'}
         onClose={() => {
-          navigate('/approvals')
+          void navigate('/approvals')
         }}
         closeLabel="关闭详情"
       />

@@ -5,7 +5,6 @@ import type {
   AgentIdentityDetail,
   AgentEndpoint,
   AgentIdentityListResponse,
-  AssignmentResponse,
   HealthDetail,
   LobbyClusterDetail,
   LobbyClusterListResponse,
@@ -147,13 +146,21 @@ export function fetchIdentityDetail(identityId: string): Promise<AgentIdentityDe
 }
 
 export interface ApproveBody {
+  /** 审批申请原因；危险身份操作必须填写。 */
+  reason: string
   /** 管理端显式分配的 serverId；pending 候选值只能作为输入提示。 */
   serverId: string
   forceUnbindOccupier?: boolean
   target?: { kind: 'zone' | 'bc_cluster'; id: number } | null
 }
 
-export function approveIdentity(identityId: string, body: ApproveBody): Promise<AgentIdentityDetail> {
+export interface ApprovalTicket {
+  approvalRequestId: string
+  status: string
+  operationKey: string
+}
+
+export function approveIdentity(identityId: string, body: ApproveBody): Promise<ApprovalTicket> {
   return request('POST', `/admin/v2/agent-identities/${identityId}/approve`, body)
 }
 
@@ -314,10 +321,10 @@ export interface AssignmentBody {
   serverIds: number[]
   target: { kind: 'zone' | 'bc_cluster'; id: number } | null
   isDefaultEntry?: boolean
-  reason?: string
+  reason: string
 }
 
-export function assignServers(body: AssignmentBody): Promise<AssignmentResponse> {
+export function assignServers(body: AssignmentBody): Promise<ApprovalTicket> {
   return request('POST', '/admin/v2/server-assignments', body)
 }
 
@@ -327,7 +334,7 @@ export interface RezoneBody {
   reason: string
 }
 
-export function rezoneServers(body: RezoneBody): Promise<AssignmentResponse> {
+export function rezoneServers(body: RezoneBody): Promise<ApprovalTicket> {
   return request('POST', '/admin/v2/server-rezones', body)
 }
 
@@ -335,7 +342,7 @@ export function setDefaultEntry(serverRowId: number, value: boolean): Promise<Se
   return request('PUT', `/admin/v2/servers/${String(serverRowId)}/default-entry`, { value })
 }
 
-export function setDraining(serverId: string, draining: boolean, reason: string): Promise<ServerItem> {
+export function setDraining(serverId: string, draining: boolean, reason: string): Promise<ServerItem | ApprovalTicket> {
   return request('PUT', `/admin/v2/servers/${serverId}/draining`, { draining, reason })
 }
 

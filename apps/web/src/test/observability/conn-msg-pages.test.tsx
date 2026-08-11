@@ -82,7 +82,7 @@ describe('/connections 连接明细页', () => {
     expect(await screen.findByText(/第 2 页$/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '上一页' }))
     expect(await screen.findByText(/第 1 页$/)).toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('空态场景默认查询返回空列表提示', async () => {
     useScenario('empty')

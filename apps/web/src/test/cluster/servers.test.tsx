@@ -2,6 +2,7 @@
 // keyword 筛选。待确认收敛到吸顶入口 → 抽屉里处理，故 approve 用例先开抽屉。
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import ServersPage from '../../pages/servers'
@@ -49,8 +50,13 @@ describe('/servers 服务器页', () => {
     expect(await screen.findByText('当前筛选条件下无服务器')).toBeInTheDocument()
   })
 
-  it('打开待确认抽屉后 approve 该行从抽屉消失（写闭环）', async () => {
+  it('打开待确认抽屉后创建审批申请并保留待确认行，直到 worker 执行', async () => {
     useScenario('normal')
+    server.use(
+      http.post('/admin/v2/agent-identities/:identityId/approve', () =>
+        HttpResponse.json({ approvalRequestId: 'apr_identity_test', status: 'pending', operationKey: 'identity.agent.approve' }, { status: 202 }),
+      ),
+    )
     const user = userEvent.setup()
     renderPage(<ServersPage />)
 
@@ -66,12 +72,13 @@ describe('/servers 服务器页', () => {
 
     // 弹窗确认（确认按钮文案为「确认接入」）
     const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByLabelText('原因'), '确认测试接入')
     await user.click(within(dialog).getByRole('button', { name: '确认接入' }))
 
-    // game-new-1 从待确认抽屉消失
-    await waitFor(() => {
-      expect(screen.queryByText('game-new-1')).not.toBeInTheDocument()
-    })
+    const status = await screen.findByRole('status')
+    expect(within(status).getByText('确认接入审批申请已创建，等待审批中心执行。')).toBeInTheDocument()
+    expect(within(status).getByRole('link', { name: '查看统一审批' })).toHaveAttribute('href', '/approvals/apr_identity_test')
+    expect(screen.getByText('game-new-1')).toBeInTheDocument()
   }, 20_000)
 
   it('待分配身份要求显式填写服务器 ID，并展示绑定详情', async () => {
@@ -95,6 +102,8 @@ describe('/servers 服务器页', () => {
 
     await user.clear(serverId)
     await user.type(serverId, 'lobby-new-1')
+    expect(confirm).toBeDisabled()
+    await user.type(within(approveDialog).getByLabelText('原因'), '确认测试接入')
     expect(confirm).toBeEnabled()
     await user.click(within(approveDialog).getByRole('button', { name: '取消' }))
 
@@ -131,6 +140,31 @@ describe('/servers 服务器页', () => {
     await user.click(within(fresh).getByRole('button', { name: '操作' }))
     expect(await screen.findByRole('menuitem', { name: '设为默认入口' })).toBeInTheDocument()
   }, 20_000)
+
+  it('取消排空只创建审批申请，直到审批 worker 执行', async () => {
+    useScenario('normal')
+    server.use(
+      http.put('/admin/v2/servers/:serverId/draining', () =>
+        HttpResponse.json(
+          { approvalRequestId: 'apr_draining_test', status: 'pending', operationKey: 'topology.draining.disable' },
+          { status: 202 },
+        ),
+      ),
+    )
+    const user = userEvent.setup()
+    renderPage(<ServersPage />)
+
+    const row = await findServerRow('survival-1')
+    await user.click(within(row).getByRole('button', { name: '操作' }))
+    await user.click(await screen.findByRole('menuitem', { name: '取消排空' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByLabelText('原因'), '维护窗口')
+    await user.click(within(dialog).getByRole('button', { name: '取消排空' }))
+
+    const status = await screen.findByRole('status')
+    expect(within(status).getByText('排空审批申请已创建，等待审批中心执行。')).toBeInTheDocument()
+    expect(within(status).getByRole('link', { name: '查看统一审批' })).toHaveAttribute('href', '/approvals/apr_draining_test')
+  })
 
   it('列表行直显健康分/等级/实时指标与不可调度原因摘要', async () => {
     useScenario('normal')
