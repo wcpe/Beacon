@@ -48,7 +48,7 @@ async function main() {
     await ensureRealBinary()
   }
   // 透传 --project 与额外参数给 playwright；PW_TARGET 控制 webServer 选择（见 playwright.config.ts）。
-  const args = ['playwright', 'test', '--project', target, ...extra]
+  const args = ['playwright', 'test', `--project=${target}`, ...extra]
   const spec = commandSpec('pnpm', ['exec', ...args])
   const child = spawn(spec.cmd, spec.args, {
     cwd: webRoot,

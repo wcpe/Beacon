@@ -18,7 +18,7 @@ import { defineConfig, devices } from '@playwright/test'
 import { fileURLToPath } from 'node:url'
 
 // 假后端前端开发服务器端口（避开真后端 18848，避免两套并跑撞端口）
-const MOCK_PORT = 5273
+const MOCK_PORT = 4173
 // 真后端控制面端口（sqlite 开发模式，固定端口，避开默认 8848 以免撞本机已起实例）
 const REAL_PORT = 18848
 
@@ -66,7 +66,7 @@ export default defineConfig({
       testDir: './e2e/mock',
       use: {
         ...devices['Desktop Chrome'],
-        baseURL: `http://localhost:${MOCK_PORT}`,
+        baseURL: `http://127.0.0.1:${MOCK_PORT}`,
       },
     },
     // ===== 真后端 E2E =====
@@ -78,7 +78,7 @@ export default defineConfig({
       workers: 1,
       use: {
         ...devices['Desktop Chrome'],
-        baseURL: `http://localhost:${REAL_PORT}`,
+        baseURL: `http://127.0.0.1:${REAL_PORT}`,
       },
     },
   ],
@@ -98,8 +98,8 @@ function buildWebServers() {
   if (target !== 'real') {
     servers.push({
       // 起假后端前端开发服务器（vite mock 模式，VITE_USE_MOCK=true 由 .env.mock 注入）
-      command: `pnpm exec vite --mode mock --port ${MOCK_PORT} --strictPort`,
-      url: `http://localhost:${MOCK_PORT}`,
+      command: `pnpm exec vite --mode mock --host 127.0.0.1 --port ${MOCK_PORT} --strictPort`,
+      url: `http://127.0.0.1:${MOCK_PORT}`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
     })
@@ -110,13 +110,13 @@ function buildWebServers() {
       // 起真控制面二进制（sqlite + 固定凭据 + 固定端口）；二进制由 globalSetup 预先构建。
       // 工作目录用独立 e2e 运行目录，sqlite 库与首启 config.yml 落在那里，不污染仓库根。
       command: process.platform === 'win32' ? `"${beaconBin}"` : beaconBin,
-      url: `http://localhost:${REAL_PORT}/admin/v1/namespaces`,
+      url: `http://127.0.0.1:${REAL_PORT}/admin/v1/namespaces`,
       cwd: fileURLToPath(new URL('./.e2e-real-run', import.meta.url)),
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
       env: {
         // 监听固定端口（与 baseURL 一致）
-        BEACON_HTTP_ADDR: `:${REAL_PORT}`,
+        BEACON_HTTP_ADDR: `127.0.0.1:${REAL_PORT}`,
         // sqlite 开发模式，零外部依赖
         BEACON_DB_DRIVER: 'sqlite',
         BEACON_DB_DSN: 'beacon-e2e.db',

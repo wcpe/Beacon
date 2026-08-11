@@ -6,7 +6,7 @@
 // 数据 seed 与交叉校验走 page.request 携带同一令牌（page.request 不共享页面 localStorage）。
 
 import { randomUUID } from 'node:crypto'
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 import { loginRealAdmin } from '../shared/auth'
 
 // ---- 携带 admin 令牌的真后端 API 辅助（seed 与交叉校验用）----
@@ -94,9 +94,39 @@ async function registerAgent(
   expect(res.status(), `register ${params.serverId}`).toBe(202)
 }
 
-// 确认（approve）一个待确认身份 → 生成未分配 server 行。
-async function approveIdentity(page: Page, token: string, identityId: string): Promise<void> {
-  await apiPost(page, token, `/admin/v2/agent-identities/${identityId}/approve`, {})
+interface ApprovalTicket {
+  approvalRequestId: string
+  status: string
+}
+
+interface ApprovalView {
+  status: string
+}
+
+// 危险动作只提交申请；审批决定和 worker 执行由统一审批链路完成。
+async function approveTicket(page: Page, token: string, ticket: ApprovalTicket): Promise<void> {
+  expect(ticket.status).toBe('pending')
+
+  const approved = await page.request.post(`/admin/v2/approval-requests/${ticket.approvalRequestId}/approve`, {
+    headers: authHeader(token),
+  })
+  expect(approved.status(), '审批决定应被接受').toBe(202)
+
+  await expect
+    .poll(async () => {
+      const approval = await apiGet<ApprovalView>(page, token, `/admin/v2/approval-requests/${ticket.approvalRequestId}`)
+      return approval.status
+    })
+    .toBe('succeeded')
+}
+
+// 身份确认必须经申请、人工批准与 worker 执行，不允许测试直调领域写入口。
+async function approveIdentity(page: Page, token: string, identityId: string, serverId: string): Promise<void> {
+  const ticket = await apiPost<ApprovalTicket>(page, token, `/admin/v2/agent-identities/${identityId}/approve`, {
+    serverId,
+    reason: '真后端 E2E 确认待接入身份',
+  })
+  await approveTicket(page, token, ticket)
 }
 
 interface ServerItemLike {
@@ -142,7 +172,7 @@ async function seedApprovedServer(
 ): Promise<{ rowId: number; identityId: string }> {
   const identityId = randomUUID()
   await registerAgent(page, ns.accessToken, { identityId, serverId, kind })
-  await approveIdentity(page, token, identityId)
+  await approveIdentity(page, token, identityId, serverId)
   const row = await findServer(page, token, ns.id, serverId)
   return { rowId: row.id, identityId }
 }
@@ -155,7 +185,7 @@ async function assignServer(
   target: { kind: 'zone' | 'bc_cluster'; id: number },
   isDefaultEntry = false,
 ): Promise<void> {
-  const res = await apiPost<{ results: { ok: boolean }[] }>(
+  const ticket = await apiPost<ApprovalTicket>(
     page,
     token,
     '/admin/v2/server-assignments',
@@ -166,7 +196,7 @@ async function assignServer(
       reason: 'seed',
     },
   )
-  expect(res.results[0].ok, '分配应逐台 ok').toBeTruthy()
+  await approveTicket(page, token, ticket)
 }
 
 // 短唯一后缀，隔离并行 / 多次运行的数据。
@@ -185,6 +215,11 @@ async function ensureExpanded(page: Page, name: string): Promise<void> {
     }
     expect(await item.getAttribute('aria-expanded')).toBe('true')
   }).toPass({ timeout: 15000, intervals: [300, 600, 1000] })
+}
+
+async function fillCreateNodeDialog(dialog: Locator, name: string): Promise<void> {
+  await dialog.getByLabel('业务标识').fill(name)
+  await dialog.getByLabel('显示名称').fill(name)
 }
 
 // ================= 可达 + 真数据渲染 =================
@@ -225,14 +260,15 @@ test('命名空间：创建 → 一次性接入 token 展示 → 列表可见（
   await page.goto('/namespaces')
 
   const name = `e2e-ns-${uid()}`
-  await page.getByRole('button', { name: '创建 命名空间' }).click()
+  await page.getByRole('button', { name: '创建命名空间' }).click()
   const createDialog = page.getByRole('dialog')
-  await createDialog.getByLabel('名称').fill(name)
+  await createDialog.getByLabel('业务标识').fill(name)
+  await createDialog.getByLabel('显示名称').fill(name)
   await createDialog.getByRole('button', { name: '创建', exact: true }).click()
 
   // 一次性明文接入 token 弹窗（token 前缀 bn_）
   const tokenDialog = page.getByRole('dialog')
-  await expect(tokenDialog.getByText('命名空间 已创建')).toBeVisible()
+  await expect(tokenDialog.getByText('命名空间已创建')).toBeVisible()
   await expect(tokenDialog.locator('code')).toContainText('bn_')
   await tokenDialog.getByRole('button', { name: '我已保存' }).click()
 
@@ -264,14 +300,20 @@ test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收�
   await page.getByRole('button', { name: '授予信任' }).click()
 
   const grantDialog = page.getByRole('dialog')
-  await grantDialog.getByRole('combobox', { name: '来源 命名空间' }).click()
+  await grantDialog.getByRole('combobox', { name: '来源命名空间' }).click()
   await page.getByRole('option', { name: fromName, exact: true }).click()
-  await grantDialog.getByRole('combobox', { name: '目标 命名空间' }).click()
+  await grantDialog.getByRole('combobox', { name: '目标命名空间' }).click()
   await page.getByRole('option', { name: toName, exact: true }).click()
   await grantDialog.getByLabel('建立原因').fill('联调放通跨域调度')
+  const approvalResponse = page.waitForResponse(
+    (response) => response.url().includes('/admin/v2/namespace-trusts') && response.request().method() === 'POST',
+  )
   await grantDialog.getByRole('button', { name: '授予', exact: true }).click()
+  const ticket = (await (await approvalResponse).json()) as ApprovalTicket
   // 授予成功后弹窗关闭
   await expect(page.getByRole('button', { name: '授予', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('status')).toContainText('等待审批中心执行')
+  await approveTicket(page, token, ticket)
 
   // 交叉校验：真后端确有该 UI 授予的生效信任（列表端点返回 camelCase 富化视图）
   interface TrustItem {
@@ -280,7 +322,11 @@ test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收�
     toNamespaceId: number
     status: string
   }
-  const trusts = await apiGet<{ items: TrustItem[] }>(page, token, '/admin/v2/namespace-trusts')
+  const trusts = await apiGet<{ items: TrustItem[] }>(
+    page,
+    token,
+    `/admin/v2/namespace-trusts?fromNamespaceId=${String(fromNs.id)}&toNamespaceId=${String(toNs.id)}&pageSize=100`,
+  )
   const created = trusts.items.find(
     (t) => t.fromNamespaceId === fromNs.id && t.toNamespaceId === toNs.id && t.status === 'active',
   )
@@ -309,17 +355,16 @@ test('区服分配：新建 集群 → 大区 → 小区，结构树渲染层级
   const zoneName = `z-${suffix}`
 
   await page.goto('/zones')
-  // 等 namespace 选择器自动选中首个（prod），此后 create 才落到有效 namespace
-  await expect(page.getByRole('combobox', { name: '命名空间' })).toContainText('prod')
+  // 显式选择 bootstrap 的 prod，避免前序 E2E 残留的页面状态改变当前命名空间。
+  await page.getByRole('combobox', { name: '命名空间' }).click()
+  await page.getByRole('option', { name: 'prod', exact: true }).click()
   await expect(page.getByRole('heading', { name: '区服结构树' })).toBeVisible()
 
   // 新建集群
   await page.getByRole('button', { name: '新建集群' }).click()
   let dialog = page.getByRole('dialog')
-  await dialog.getByLabel('名称').fill(clusterName)
+  await fillCreateNodeDialog(dialog, clusterName)
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
-  await expect(page.getByText(clusterName, { exact: true })).toBeVisible()
-
   // 展开集群，露出其下大区行
   await ensureExpanded(page, clusterName)
 
@@ -327,15 +372,13 @@ test('区服分配：新建 集群 → 大区 → 小区，结构树渲染层级
   const clusterItem = page.getByRole('treeitem').filter({ hasText: clusterName }).first()
   await clusterItem.getByRole('button', { name: '新建大区', exact: true }).click()
   dialog = page.getByRole('dialog')
-  await dialog.getByLabel('名称').fill(regionName)
+  await fillCreateNodeDialog(dialog, regionName)
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
-  await expect(page.getByText(regionName, { exact: true })).toBeVisible()
-
   // 该大区下新建小区
   const regionItem = page.getByRole('treeitem').filter({ hasText: regionName }).first()
   await regionItem.getByRole('button', { name: '新建小区', exact: true }).click()
   dialog = page.getByRole('dialog')
-  await dialog.getByLabel('名称').fill(zoneName)
+  await fillCreateNodeDialog(dialog, zoneName)
   await dialog.getByRole('button', { name: '创建', exact: true }).click()
 
   // 交叉校验：真后端结构树含 集群 → 大区 → 小区 层级
@@ -383,9 +426,16 @@ test('区服分配：未分配子服首次落小区，分配结果可见（交�
   await assignDialog.getByRole('button', { name: clusterName }).click()
   await assignDialog.getByRole('button', { name: regionName }).click()
   await assignDialog.getByRole('treeitem', { name: zoneName }).click()
+  await assignDialog.getByLabel('申请原因').fill('真后端 E2E 首次分配')
+  const approvalResponse = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/admin/v2/server-assignments',
+  )
   await assignDialog.getByRole('button', { name: '确认分配' }).click()
-
-  await expect(page.getByText('1 台分配成功')).toBeVisible()
+  const ticket = (await (await approvalResponse).json()) as ApprovalTicket
+  await expect(assignDialog.getByRole('status')).toContainText('等待审批中心执行')
+  await approveTicket(page, token, ticket)
+  await page.reload()
 
   // 交叉校验：真后端 server 已落到该小区
   const server = await findServer(page, token, ns.id, serverId)
@@ -419,7 +469,7 @@ test('区服分配：已分配子服右键改派 → 解绑重确认（走换区
   await ensureExpanded(page, clusterName)
   await ensureExpanded(page, regionName)
   await ensureExpanded(page, zoneAName)
-  const leaf = page.getByText(serverId, { exact: true })
+  const leaf = page.getByRole('listitem').filter({ hasText: serverId })
   await expect(leaf).toBeVisible()
 
   // 右键叶子 → 上下文菜单「改派到…」→ 点选式改派弹窗
@@ -431,7 +481,14 @@ test('区服分配：已分配子服右键改派 → 解绑重确认（走换区
   await rezoneDialog.getByRole('button', { name: regionName }).click()
   await rezoneDialog.getByRole('treeitem', { name: zoneBName }).click()
   await rezoneDialog.getByLabel('换区原因').fill('扩容换区')
+  const approvalResponse = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/admin/v2/server-rezones',
+  )
   await rezoneDialog.getByRole('button', { name: '确认', exact: true }).click()
+  const ticket = (await (await approvalResponse).json()) as ApprovalTicket
+  await expect(page.getByRole('status')).toContainText('等待审批中心执行')
+  await approveTicket(page, token, ticket)
 
   // 交叉校验：换区工单发起后解绑清归属 + 写预填目标 zoneB（非后台直接改区）
   await expect
@@ -470,9 +527,17 @@ test('服务器：注册待确认 → 确认接入 → 身份转 active、进入
   // 确认弹窗（无需原因）
   const approveDialog = page.getByRole('alertdialog')
   await expect(approveDialog.getByRole('heading', { name: '确认接入服务器' })).toBeVisible()
+  await approveDialog.getByLabel('原因').fill('真后端 E2E 确认接入')
+  const approvalResponse = page.waitForResponse((response) =>
+    response.request().method() === 'POST'
+      && new URL(response.url()).pathname === `/admin/v2/agent-identities/${identityId}/approve`,
+  )
   await approveDialog.getByRole('button', { name: '确认接入' }).click()
+  const ticket = (await (await approvalResponse).json()) as ApprovalTicket
+  await approveTicket(page, token, ticket)
 
-  // UI 闭环：确认后该待确认行从抽屉消失
+  // worker 完成后刷新资产视图，待确认行应消失。
+  await page.reload()
   await expect(pendingRow).toHaveCount(0)
 
   // 交叉校验：身份转 active、server 已进入真后端资产列表
@@ -502,22 +567,42 @@ test('服务器：已分配子服切换排空标记写闭环（交叉校验真�
   await assignServer(page, token, rowId, { kind: 'zone', id: zoneId })
 
   await page.goto('/servers')
-  await page.getByRole('textbox', { name: '搜索 serverId' }).fill(serverId)
+  await page.getByRole('textbox', { name: '搜索服务器 ID 或显示名称' }).fill(serverId)
   const row = page.getByRole('row').filter({ hasText: serverId })
   await expect(row).toBeVisible()
 
-  // 置为排空 → 原因必填 → 确认
-  await row.getByRole('button', { name: '置为排空' }).click()
+  // 行操作菜单中置为排空 → 原因必填 → 确认
+  await row.getByRole('button', { name: '操作' }).click()
+  await page.getByRole('menuitem', { name: '置为排空' }).click()
   const drainDialog = page.getByRole('alertdialog')
   await expect(drainDialog.getByRole('heading', { name: '切换排空标记' })).toBeVisible()
   await drainDialog.getByLabel('原因').fill('维护窗口')
+  const directResponse = page.waitForResponse(
+    (response) => response.url().includes(`/admin/v2/servers/${serverId}/draining`) && response.request().method() === 'PUT',
+  )
   await drainDialog.getByRole('button', { name: '置为排空' }).click()
+  const direct = await directResponse
+  expect(direct.status(), '置为排空是直接止损动作').toBe(200)
+  expect(((await direct.json()) as ServerItemLike).draining).toBeTruthy()
+  await page.reload()
 
-  // 行内出现「取消排空」按钮（已进入排空态）
-  await expect(row.getByRole('button', { name: '取消排空' })).toBeVisible()
+  // 进入排空态后，恢复调度必须经审批。
+  const refreshedRow = page.getByRole('row').filter({ hasText: serverId })
+  await refreshedRow.getByRole('button', { name: '操作' }).click()
+  await page.getByRole('menuitem', { name: '取消排空' }).click()
+  const restoreDialog = page.getByRole('alertdialog')
+  await restoreDialog.getByLabel('原因').fill('维护完成')
+  const approvalResponse = page.waitForResponse(
+    (response) => response.url().includes(`/admin/v2/servers/${serverId}/draining`) && response.request().method() === 'PUT',
+  )
+  await restoreDialog.getByRole('button', { name: '取消排空' }).click()
+  const ticket = (await (await approvalResponse).json()) as ApprovalTicket
+  await expect(page.getByRole('status')).toContainText('等待审批中心执行')
+  await approveTicket(page, token, ticket)
+  await page.reload()
 
-  // 交叉校验：真后端 server.draining=true
+  // 交叉校验：worker 批准后恢复调度。
   await expect
     .poll(async () => (await findServer(page, token, ns.id, serverId)).draining)
-    .toBeTruthy()
+    .toBeFalsy()
 })
