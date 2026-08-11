@@ -28,6 +28,10 @@ const (
 	backupManifestSuffix = ".old.manifest"
 	// failedSuffix 自动回退时坏新版的归档后缀（便于事后排查）。
 	failedSuffix = ".failed"
+	// cleanupRemoveAttempts 限定更新标记清理的重试次数，吸收 Windows 短暂文件占用而不无限等待。
+	cleanupRemoveAttempts = 20
+	// cleanupRemoveDelay 是相邻清理重试间隔，累计等待不超过半秒。
+	cleanupRemoveDelay = 25 * time.Millisecond
 )
 
 // 进程级钩子（默认真实实现，单测可替换以断言 spawn / exit 行为而不真起进程 / 真退出）。
@@ -132,10 +136,10 @@ func PendingUpdateVersion(runPath string) string {
 func ConfirmUpdateSuccess(runPath string) {
 	version := PendingUpdateVersion(runPath)
 	removeSentinel(runPath)
-	if err := os.Remove(runPath + oldSuffix); err != nil && !os.IsNotExist(err) {
+	if err := removeWithRetry(runPath+oldSuffix, os.Remove); err != nil {
 		slog.Warn("清理上一版本备份失败", "错误", err)
 	}
-	if err := os.Remove(backupManifestPath(runPath)); err != nil && !os.IsNotExist(err) {
+	if err := removeWithRetry(backupManifestPath(runPath), os.Remove); err != nil {
 		slog.Warn("清理上一版本备份清单失败", "错误", err)
 	}
 	if version != "" && updateSuccessObserver != nil {
@@ -327,7 +331,23 @@ func writeSentinel(runPath string, st sentinelState) error {
 
 // removeSentinel 删换版待验证标记（幂等，不存在即忽略）。
 func removeSentinel(runPath string) {
-	if err := os.Remove(sentinelPath(runPath)); err != nil && !os.IsNotExist(err) {
+	if err := removeWithRetry(sentinelPath(runPath), os.Remove); err != nil {
 		slog.Warn("清理换版待验证标记失败", "错误", err)
 	}
+}
+
+// removeWithRetry 删除更新附属文件；不存在视为已清理，短暂占用在有界窗口内重试。
+func removeWithRetry(path string, remove func(string) error) error {
+	for attempt := 1; attempt <= cleanupRemoveAttempts; attempt++ {
+		err := remove(path)
+		if err == nil || os.IsNotExist(err) {
+			return nil
+		}
+		if attempt < cleanupRemoveAttempts {
+			time.Sleep(cleanupRemoveDelay)
+			continue
+		}
+		return err
+	}
+	return nil
 }

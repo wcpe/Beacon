@@ -1,6 +1,7 @@
 package update
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,6 +43,24 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("读文件 %s 失败: %v", path, err)
 	}
 	return string(data)
+}
+
+// TestRemoveWithRetryRetriesTransientFailure Windows 上安全软件短暂占用更新标记时，清理应重试并最终成功。
+func TestRemoveWithRetryRetriesTransientFailure(t *testing.T) {
+	attempts := 0
+	err := removeWithRetry("更新标记", func(string) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("文件暂时被占用")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("临时占用后应重试成功: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("应重试至第三次成功，实际调用 %d 次", attempts)
+	}
 }
 
 // TestReadBackupSnapshotRejectsDrift 冻结后 .old 被替换时必须拒绝回滚。

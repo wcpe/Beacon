@@ -97,6 +97,24 @@ func prepareStartup(cfgPath, selfPath string, selfErr error) error {
 	return config.LoadDotEnv(".env")
 }
 
+func loadRunConfig(cfgPath string) (config.Config, string, error, error) {
+	selfPath, selfErr := os.Executable()
+	if err := prepareStartup(cfgPath, selfPath, selfErr); err != nil {
+		return config.Config{}, "", selfErr, err
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return config.Config{}, "", selfErr, err
+	}
+	return cfg, selfPath, selfErr, nil
+}
+
+func runApprovalWorker(ctx context.Context, worker *service.ApprovalWorker) {
+	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		slog.Error("审批执行器异常退出", "错误", err)
+	}
+}
+
 // run 完成配置加载、依赖装配与服务启动，返回首个致命错误。
 func run() error {
 	options, err := parseCLI(os.Args[1:], os.Stderr)
@@ -111,13 +129,7 @@ func run() error {
 	// 进程启动时间：供控制面自身状态页眉计算运行时长（FR-33）。在 run 入口记录，尽量贴近真实启动点。
 	startedAt := time.Now().UTC()
 
-	cfgPath := options.configPath
-	selfPath, selfErr := os.Executable()
-	if err := prepareStartup(cfgPath, selfPath, selfErr); err != nil {
-		return err
-	}
-
-	cfg, err := config.Load(cfgPath)
+	cfg, selfPath, selfErr, err := loadRunConfig(options.configPath)
 	if err != nil {
 		return err
 	}
@@ -705,7 +717,7 @@ func run() error {
 	go healthScanner.Run(ctx)
 
 	// 启动审批执行器：批准请求只在 HTTP 请求内标记 executing，由此 worker 异步执行并随进程关停。
-	go approvalWorker.Run(ctx)
+	go runApprovalWorker(ctx, approvalWorker)
 
 	// 启动后台指标采样器（FR-32）：恒常驻，每轮从设置 store 读 metric.enabled 决定本轮是否采样 / 清理（FR-61）。
 	// 不再启动期一次性决定起不起——运维改 metric.enabled 即热生效停 / 起采样，免重启。

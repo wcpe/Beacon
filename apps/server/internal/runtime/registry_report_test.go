@@ -23,6 +23,7 @@ func TestReportWritesLoadMetrics(t *testing.T) {
 	got := reg.Get("prod", "lobby-1")
 	if got == nil {
 		t.Fatal("应能取到实例快照")
+		return
 	}
 	if got.AppliedMD5 != "md5x" || got.PlayerCount != 42 || got.TPS != 19.9 {
 		t.Fatalf("人数 / TPS / appliedMd5 写入错误：%+v", got)

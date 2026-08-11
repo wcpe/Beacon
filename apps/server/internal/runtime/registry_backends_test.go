@@ -18,6 +18,7 @@ func TestRegisterStoresBackends(t *testing.T) {
 	got := reg.Get("prod", "bc-1")
 	if got == nil {
 		t.Fatal("应能取到实例快照")
+		return
 	}
 	if len(got.Backends) != 2 || got.Backends[0] != "lobby-1" || got.Backends[1] != "lobby-2" {
 		t.Fatalf("后端集合写入错误：%v", got.Backends)
