@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +32,7 @@ var (
 	adminRequestTimeout = 30 * time.Second
 	artifactSecrets     = make(map[string]struct{})
 	artifactSecretsMu   sync.Mutex
+	approvalRequestSeq  atomic.Uint64
 )
 
 // ProcessGuard 描述可在轮询与 HTTP 请求期间观察的外部进程生命周期。
@@ -186,51 +188,272 @@ func WaitIdentityStatus(
 	return "", fmt.Errorf("等待 %s identity 进入 %s 失败：%w", serverID, status, err)
 }
 
-// ApproveIdentity 批准 pending identity，并校验响应已进入 active。
-// forceUnbindOccupier 为 true 时解绑占用同一 serverID 的旧 active identity，供干净运行目录产生的新 identity 接管。
-func ApproveIdentity(baseURL, token, identityID string, forceUnbindOccupier ...bool) error {
-	return ApproveIdentityContext(context.Background(), baseURL, token, identityID, nil, forceUnbindOccupier...)
+// WaitIdentityStatusByID 按身份 ID 等待状态，用于待确认阶段尚未获得 serverId 的 v2 agent。
+func WaitIdentityStatusByID(
+	baseURL, token, identityID, status string,
+	timeout time.Duration,
+	guards ...ProcessGuard,
+) error {
+	guard := firstProcessGuard(guards)
+	var lastErr error
+	err := WaitForCondition(timeout, time.Second, guard, func(ctx context.Context) bool {
+		var out struct {
+			Status string `json:"status"`
+		}
+		path := "/admin/v2/agent-identities/" + url.PathEscape(identityID)
+		if err := doAdminJSONContext(ctx, baseURL, http.MethodGet, path, token, nil, http.StatusOK, &out, guard); err != nil {
+			lastErr = err
+			return false
+		}
+		return out.Status == status
+	})
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrWaitTimeout) && lastErr != nil {
+		return fmt.Errorf("等待 identity %s 进入 %s 超时（最近错误：%v）：%w", identityID, status, lastErr, err)
+	}
+	return fmt.Errorf("等待 identity %s 进入 %s 失败：%w", identityID, status, err)
 }
 
-// ApproveIdentityWithGuard 在审批期间观察进程生命周期，保留既有 ApproveIdentity 调用兼容性。
-func ApproveIdentityWithGuard(
-	baseURL, token, identityID string,
-	guard ProcessGuard,
-	forceUnbindOccupier ...bool,
-) error {
-	return ApproveIdentityContext(context.Background(), baseURL, token, identityID, guard, forceUnbindOccupier...)
+// WaitAgentIdentityID 从 agent 自管的 identity.yml 等待读取真实身份 ID。
+func WaitAgentIdentityID(path string, timeout time.Duration, guards ...ProcessGuard) (string, error) {
+	guard := firstProcessGuard(guards)
+	var identityID string
+	err := WaitForCondition(timeout, time.Second, guard, func(context.Context) bool {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		identityID = identityIDFromYAML(string(raw))
+		return identityID != ""
+	})
+	if err != nil {
+		return "", fmt.Errorf("读取 agent 身份文件 %s 失败：%w", path, err)
+	}
+	return identityID, nil
 }
 
-// ApproveIdentityContext 允许调用方提供 context 与进程 guard；任一方取消都会中止审批请求。
-func ApproveIdentityContext(
-	ctx context.Context,
-	baseURL, token, identityID string,
+// WaitPendingAgentIdentity 读取 agent 自管身份并按 identityId 等待其进入 pending。
+func WaitPendingAgentIdentity(
+	baseURL, token, identityPath string,
+	timeout time.Duration,
+	guards ...ProcessGuard,
+) (string, error) {
+	identityID, err := WaitAgentIdentityID(identityPath, timeout, guards...)
+	if err != nil {
+		return "", err
+	}
+	if err := WaitIdentityStatusByID(baseURL, token, identityID, "pending", timeout, guards...); err != nil {
+		return "", err
+	}
+	return identityID, nil
+}
+
+func identityIDFromYAML(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "identity-id:") {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "identity-id:")), "\"'")
+	}
+	return ""
+}
+
+// ApprovalTicket 是危险操作申请创建后返回的最小审批票据。
+type ApprovalTicket struct {
+	ApprovalRequestID string `json:"approvalRequestId"`
+	Status            string `json:"status"`
+	immediate         bool
+}
+
+// RequestApprovalAndApprove 提交危险操作申请并作出审批决定，领域写入仍仅由异步 worker 执行。
+func RequestApprovalAndApprove(
+	baseURL, token, method, path string,
+	body any,
 	guard ProcessGuard,
-	forceUnbindOccupier ...bool,
-) error {
+) (ApprovalTicket, error) {
+	return requestApprovalAndApproveWithKey(baseURL, token, method, path, body, newApprovalRequestKey(), guard)
+}
+
+func requestApprovalAndApproveWithKey(
+	baseURL, token, method, path string,
+	body any,
+	idempotencyKey string,
+	guard ProcessGuard,
+) (ApprovalTicket, error) {
 	if err := checkProcessGuard(guard); err != nil {
-		return fmt.Errorf("批准 identity %s 失败：%w", identityID, err)
+		return ApprovalTicket{}, fmt.Errorf("提交审批申请失败：%w", err)
 	}
-	requestCtx, cancel := contextWithGuard(ctx, guard)
+	requestCtx, cancel := contextWithGuard(context.Background(), guard)
 	defer cancel()
-
-	var out struct {
-		Status string `json:"status"`
+	resp, err := submitApprovalRequest(requestCtx, baseURL, token, method, path, body, idempotencyKey, guard)
+	if err != nil {
+		return ApprovalTicket{}, fmt.Errorf("提交审批申请失败：%w", err)
 	}
+	defer resp.Body.Close()
+	ticket, err := approvalTicketFromResponse(method, path, body, resp)
+	if err != nil {
+		return ApprovalTicket{}, fmt.Errorf("提交审批申请失败：%w", err)
+	}
+	if ticket.immediate || ticket.Status == "succeeded" {
+		return ticket, nil
+	}
+	if err := approveApprovalRequest(requestCtx, baseURL, token, ticket.ApprovalRequestID, guard); err != nil {
+		return ApprovalTicket{}, err
+	}
+	return ticket, nil
+}
+
+func submitApprovalRequest(
+	ctx context.Context,
+	baseURL, token, method, path string,
+	body any,
+	idempotencyKey string,
+	guard ProcessGuard,
+) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("编码请求体失败：%w", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(baseURL, "/")+path, reader)
+	if err != nil {
+		return nil, fmt.Errorf("构造请求失败：%w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return DoRequestWithGuard(req, 0, guard)
+}
+
+func approvalTicketFromResponse(method, path string, body any, resp *http.Response) (ApprovalTicket, error) {
+	switch resp.StatusCode {
+	case http.StatusAccepted:
+		var ticket ApprovalTicket
+		if err := json.NewDecoder(resp.Body).Decode(&ticket); err != nil {
+			return ApprovalTicket{}, fmt.Errorf("解析审批申请响应失败：%w", err)
+		}
+		if ticket.ApprovalRequestID == "" || (ticket.Status != "pending" && ticket.Status != "succeeded") {
+			return ApprovalTicket{}, fmt.Errorf("审批申请返回非法票据：%+v", ticket)
+		}
+		return ticket, nil
+	case http.StatusOK:
+		if err := validateImmediateSettingCompletion(method, path, body, resp.Body); err != nil {
+			return ApprovalTicket{}, err
+		}
+		return ApprovalTicket{Status: "succeeded", immediate: true}, nil
+	default:
+		return ApprovalTicket{}, adminUnexpectedStatusError(method, path, http.StatusAccepted, resp.StatusCode, resp.Body)
+	}
+}
+
+// validateImmediateSettingCompletion 只接受设置直改端点明确返回的 {"ok":true}，避免任意 200 绕过审批等待。
+func validateImmediateSettingCompletion(method, path string, body any, raw io.Reader) error {
+	if method != http.MethodPut || !strings.HasPrefix(path, "/admin/v1/settings/") || strings.TrimPrefix(path, "/admin/v1/settings/") == "" {
+		return fmt.Errorf("%s %s 返回 HTTP 200，非可验证的设置即时完成响应", method, path)
+	}
+	request, ok := body.(map[string]any)
+	if !ok || request["value"] == nil || request["reason"] == nil {
+		return fmt.Errorf("%s %s 返回 HTTP 200，但请求不含当前设置变更所需 value/reason", method, path)
+	}
+	var response struct {
+		OK *bool `json:"ok"`
+	}
+	if err := json.NewDecoder(raw).Decode(&response); err != nil {
+		return fmt.Errorf("解析设置即时完成响应失败：%w", err)
+	}
+	if response.OK == nil || !*response.OK {
+		return fmt.Errorf("%s %s 返回 HTTP 200，但未确认当前设置变更完成", method, path)
+	}
+	return nil
+}
+
+func approveApprovalRequest(ctx context.Context, baseURL, token, approvalRequestID string, guard ProcessGuard) error {
+	approvePath := "/admin/v2/approval-requests/" + url.PathEscape(approvalRequestID) + "/approve"
+	if err := doAdminJSONContext(ctx, baseURL, http.MethodPost, approvePath, token, nil, http.StatusAccepted, nil, guard); err != nil {
+		return fmt.Errorf("批准审批申请失败：%w", err)
+	}
+	return nil
+}
+
+// newApprovalRequestKey 为每次领域申请生成独立键；同一次申请在该调用内始终复用这一键。
+func newApprovalRequestKey() string {
+	sequence := approvalRequestSeq.Add(1)
+	return fmt.Sprintf("e2e-approval-%x-%x", time.Now().UnixNano(), sequence)
+}
+
+// WaitApprovalStatus 按审批请求 ID 等待 worker 把申请推进到目标状态。
+func WaitApprovalStatus(
+	baseURL, token, approvalRequestID, status string,
+	timeout time.Duration,
+	guards ...ProcessGuard,
+) error {
+	guard := firstProcessGuard(guards)
+	var lastErr error
+	err := WaitForCondition(timeout, time.Second, guard, func(ctx context.Context) bool {
+		var out struct {
+			Status string `json:"status"`
+		}
+		path := "/admin/v2/approval-requests/" + url.PathEscape(approvalRequestID)
+		if err := doAdminJSONContext(ctx, baseURL, http.MethodGet, path, token, nil, http.StatusOK, &out, guard); err != nil {
+			lastErr = err
+			return false
+		}
+		return out.Status == status
+	})
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrWaitTimeout) && lastErr != nil {
+		return fmt.Errorf("等待审批 %s 进入 %s 超时（最近错误：%v）：%w", approvalRequestID, status, lastErr, err)
+	}
+	return fmt.Errorf("等待审批 %s 进入 %s 失败：%w", approvalRequestID, status, err)
+}
+
+// RequestApprovalAndWait 提交申请、作出审批决定，并等待 worker 到达指定终态。
+func RequestApprovalAndWait(
+	baseURL, token, method, path string,
+	body any,
+	wantStatus string,
+	timeout time.Duration,
+	guard ProcessGuard,
+) (ApprovalTicket, error) {
+	ticket, err := RequestApprovalAndApprove(baseURL, token, method, path, body, guard)
+	if err != nil {
+		return ApprovalTicket{}, err
+	}
+	if ticket.immediate {
+		if wantStatus != "succeeded" {
+			return ApprovalTicket{}, fmt.Errorf("设置即时完成仅支持期望终态 succeeded，实际 %s", wantStatus)
+		}
+		return ticket, nil
+	}
+	if err := WaitApprovalStatus(baseURL, token, ticket.ApprovalRequestID, wantStatus, timeout, guard); err != nil {
+		return ApprovalTicket{}, err
+	}
+	return ticket, nil
+}
+
+// RequestApproveIdentityWithGuard 走身份审批申请、审批决定与异步 worker，不允许直调领域写入。
+func RequestApproveIdentityWithGuard(
+	baseURL, token, identityID, serverID, reason string,
+	guard ProcessGuard,
+	forceUnbindOccupier ...bool,
+) error {
 	force := len(forceUnbindOccupier) > 0 && forceUnbindOccupier[0]
 	path := "/admin/v2/agent-identities/" + url.PathEscape(identityID) + "/approve"
-	body := map[string]bool{"forceUnbindOccupier": force}
-	if err := doAdminJSONContext(requestCtx, baseURL, http.MethodPost, path, token, body, http.StatusOK, &out, guard); err != nil {
-		if guardErr := checkProcessGuard(guard); guardErr != nil {
-			return fmt.Errorf("批准 identity %s 失败：%w", identityID, guardErr)
-		}
-		return fmt.Errorf("批准 identity %s 失败：%w", identityID, err)
-	}
-	if err := checkProcessGuard(guard); err != nil {
-		return fmt.Errorf("批准 identity %s 失败：%w", identityID, err)
-	}
-	if out.Status != "active" {
-		return fmt.Errorf("批准 identity %s 后状态应为 active，实际为 %s", identityID, out.Status)
+	_, err := RequestApprovalAndApprove(baseURL, token, http.MethodPost, path, map[string]any{
+		"serverId": serverID, "reason": reason, "forceUnbindOccupier": force,
+	}, guard)
+	if err != nil {
+		return fmt.Errorf("申请确认 identity %s 失败：%w", identityID, err)
 	}
 	return nil
 }
@@ -504,7 +727,7 @@ func doAdminJSONContext(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != wantStatus {
-		return fmt.Errorf("%s %s 期望 HTTP %d，得 %d", method, path, wantStatus, resp.StatusCode)
+		return adminUnexpectedStatusError(method, path, wantStatus, resp.StatusCode, resp.Body)
 	}
 	if out != nil && resp.StatusCode != http.StatusNoContent {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -512,6 +735,19 @@ func doAdminJSONContext(
 		}
 	}
 	return nil
+}
+
+// adminUnexpectedStatusError 仅提取标准错误码，保留诊断而不把可能敏感的服务端正文写入测试日志。
+func adminUnexpectedStatusError(method, path string, wantStatus, gotStatus int, body io.Reader) error {
+	const maxErrorBodyBytes = 4 << 10
+	raw, _ := io.ReadAll(io.LimitReader(body, maxErrorBodyBytes))
+	var response struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(raw, &response) == nil && response.Code != "" {
+		return fmt.Errorf("%s %s 期望 HTTP %d，得 %d（错误码=%s）", method, path, wantStatus, gotStatus, response.Code)
+	}
+	return fmt.Errorf("%s %s 期望 HTTP %d，得 %d", method, path, wantStatus, gotStatus)
 }
 
 func registerArtifactSecret(value string) error {

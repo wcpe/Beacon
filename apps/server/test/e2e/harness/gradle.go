@@ -71,6 +71,35 @@ func StartGradleTask(repoRoot, task string, args []string, env map[string]string
 	return newGradleProc(task, cmd, outFile, errFile, outLog, errLog), nil
 }
 
+// RemoveStaleAgentIdentityFile 仅删除指定 E2E 运行目录中的普通 identity.yml，避免新进程误读上轮残留身份。
+func RemoveStaleAgentIdentityFile(path string) error {
+	if filepath.Base(path) != "identity.yml" {
+		return fmt.Errorf("拒绝清理非 identity.yml 文件：%s", path)
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("检查残留身份文件失败：%w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("拒绝清理非常规身份文件：%s", path)
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("清理残留身份文件失败：%w", err)
+	}
+	return nil
+}
+
+// ClearStaleAgentIdentityFile 在启动本轮 E2E 进程前清理调用方明确给出的身份文件。
+func ClearStaleAgentIdentityFile(t testing.TB, path string) {
+	t.Helper()
+	if err := RemoveStaleAgentIdentityFile(path); err != nil {
+		t.Fatalf("清理本轮残留身份文件失败：%v", err)
+	}
+}
+
 func newGradleProc(task string, cmd *exec.Cmd, outFile, errFile *os.File, outLog, errLog string) *GradleProc {
 	proc := &GradleProc{
 		cmd: cmd, outFile: outFile, errFile: errFile,

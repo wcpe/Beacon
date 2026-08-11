@@ -114,7 +114,7 @@ func TestRezoneE2E(t *testing.T) {
 	// 相位一：注册 → pending；approve → active。
 	registerAgent(t, nsToken, identityMain, serverMain, kindBackend)
 	assertIdentityStatus(t, token, identityMain, "pending")
-	approved := approveIdentity(t, token, identityMain, nil)
+	approved := approveIdentity(t, token, identityMain, serverMain, "换区 E2E 初次确认身份")
 	if approved["status"] != "active" {
 		t.Fatalf("approve 后身份应 active，实际 %v", approved["status"])
 	}
@@ -137,7 +137,7 @@ func TestRezoneE2E(t *testing.T) {
 	assertRezonePrefill(t, token, identityMain, zoneB)
 
 	// 相位四：换区重确认（缺省取预填目标）→ 落区 B、清 pending、身份回 active。
-	reconfirmed := approveIdentity(t, token, identityMain, nil)
+	reconfirmed := approveIdentity(t, token, identityMain, serverMain, "换区 E2E 重确认身份")
 	if reconfirmed["status"] != "active" {
 		t.Fatalf("换区重确认后身份应 active，实际 %v", reconfirmed["status"])
 	}
@@ -157,9 +157,10 @@ func TestRezoneE2E(t *testing.T) {
 	}
 
 	// 相位六：default-entry 默认入口切换（已分配小区，应成功）。
-	entryView := setDefaultEntry(t, token, rowID, true, http.StatusOK)
-	if entryView["isDefaultEntry"] != true {
-		t.Fatalf("default-entry 切换后响应应 isDefaultEntry=true，实际 %v", entryView)
+	setDefaultEntry(t, token, rowID, true, "succeeded")
+	row = serverRow(t, token, nsID, serverMain)
+	if row["isDefaultEntry"] != true {
+		t.Fatalf("default-entry 审批执行后应 isDefaultEntry=true，实际 %v", row)
 	}
 
 	// 相位六下发：v2 默认入口必须贯通到 v1 发现（BC fallback 注入消费链，ADR-0067）。
@@ -171,11 +172,12 @@ func TestRezoneE2E(t *testing.T) {
 
 	// 相位六负例：未分配小区的 server 置默认入口应 409 not_assigned。
 	registerAgent(t, nsToken, identityBare, serverBare, kindBackend)
-	approveIdentity(t, token, identityBare, nil)
+	approveIdentity(t, token, identityBare, serverBare, "换区 E2E 未分配身份确认")
 	bareRowID := serverRowID(t, token, nsID, serverBare)
-	conflict := setDefaultEntry(t, token, bareRowID, true, http.StatusConflict)
-	if conflict["code"] != "not_assigned" {
-		t.Fatalf("未分配 server 置默认入口应 409 not_assigned，实际 %v", conflict)
+	setDefaultEntry(t, token, bareRowID, true, "failed")
+	bareRow := serverRow(t, token, nsID, serverBare)
+	if bareRow["isDefaultEntry"] == true {
+		t.Fatalf("未分配 server 的默认入口审批必须执行失败，实际 %v", bareRow)
 	}
 
 	// 相位七：zone-tree 结构树含建好的 cluster/region/zone 且计数正确。
@@ -217,7 +219,7 @@ func createNode(t *testing.T, token, path string, body map[string]any) uint {
 func registerAgent(t *testing.T, nsToken, identityID, serverID, kind string) {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]any{
-		"identityId": identityID, "serverId": serverID, "kind": kind, "bootId": "boot-" + serverID,
+		"identityId": identityID, "kind": kind, "bootId": "boot-" + serverID,
 	})
 	req, _ := http.NewRequest(http.MethodPost, beaconURL+"/beacon/v2/agent/register", bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
@@ -233,41 +235,33 @@ func registerAgent(t *testing.T, nsToken, identityID, serverID, kind string) {
 	}
 }
 
-// approveIdentity 确认身份（target 为 nil 时发空对象 {}，即首次接入 / 换区重确认取预填）。返回身份视图。
-func approveIdentity(t *testing.T, token, identityID string, target map[string]any) map[string]any {
+// approveIdentity 走审批申请、审批决定与异步 worker 确认身份，返回完成后的身份视图。
+func approveIdentity(t *testing.T, token, identityID, serverID, reason string) map[string]any {
 	t.Helper()
-	body := map[string]any{}
-	if target != nil {
-		body["target"] = target
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, token, identityID, serverID, reason, nil); err != nil {
+		t.Fatalf("申请确认身份 %s 失败：%v", identityID, err)
 	}
-	var out map[string]any
-	doAdmin(t, http.MethodPost, adminV2+"/agent-identities/"+identityID+"/approve", token, body, http.StatusOK, &out)
-	return out
+	if err := harness.WaitIdentityStatusByID(beaconURL, token, identityID, "active", registerReady); err != nil {
+		t.Fatalf("等待身份 %s 审批执行完成失败：%v", identityID, err)
+	}
+	return identityDetail(t, token, identityID)
 }
 
 // assignServer 首次分配一台 server 到目标（zone / bc_cluster）。
 func assignServer(t *testing.T, token string, rowID uint, targetKind string, targetID uint, isDefaultEntry bool) {
 	t.Helper()
-	doAdmin(t, http.MethodPost, adminV2+"/server-assignments", token, map[string]any{
+	requestAndWaitApproval(t, token, http.MethodPost, adminV2+"/server-assignments", map[string]any{
 		"serverIds": []uint{rowID}, "target": map[string]any{"kind": targetKind, "id": targetID},
 		"isDefaultEntry": isDefaultEntry, "reason": "首次分配",
-	}, http.StatusOK, nil)
+	}, "succeeded")
 }
 
-// rezoneServer 发起换区工单并断言逐台 ok。
+// rezoneServer 创建换区审批并等待 worker 执行完成。
 func rezoneServer(t *testing.T, token string, rowID uint, targetKind string, targetID uint) {
 	t.Helper()
-	var out struct {
-		Results []struct {
-			Ok bool `json:"ok"`
-		} `json:"results"`
-	}
-	doAdmin(t, http.MethodPost, adminV2+"/server-rezones", token, map[string]any{
+	requestAndWaitApproval(t, token, http.MethodPost, adminV2+"/server-rezones", map[string]any{
 		"serverIds": []uint{rowID}, "target": map[string]any{"kind": targetKind, "id": targetID}, "reason": "扩容换区",
-	}, http.StatusOK, &out)
-	if len(out.Results) != 1 || !out.Results[0].Ok {
-		t.Fatalf("换区结果应逐台 ok，实际 %+v", out.Results)
-	}
+	}, "succeeded")
 }
 
 // setDraining 切换 server 排空标记（路径为业务 serverId），返回富化视图。
@@ -279,13 +273,20 @@ func setDraining(t *testing.T, token, serverID string, draining bool) map[string
 	return out
 }
 
-// setDefaultEntry 切换 server 默认入口（路径为行数字 id），按期望状态码返回响应体（成功视图或错误体）。
-func setDefaultEntry(t *testing.T, token string, rowID uint, value bool, wantStatus int) map[string]any {
+// setDefaultEntry 创建默认入口审批，并等待 worker 达到期望终态。
+func setDefaultEntry(t *testing.T, token string, rowID uint, value bool, wantApprovalStatus string) {
 	t.Helper()
-	var out map[string]any
-	doAdmin(t, http.MethodPut, adminV2+"/servers/"+utoa(rowID)+"/default-entry", token,
-		map[string]any{"value": value}, wantStatus, &out)
-	return out
+	requestAndWaitApproval(t, token, http.MethodPut, adminV2+"/servers/"+utoa(rowID)+"/default-entry", map[string]any{
+		"value": value, "reason": "设置默认入口",
+	}, wantApprovalStatus)
+}
+
+// requestAndWaitApproval 保持危险拓扑写入的申请、决定、worker 三段链路完整。
+func requestAndWaitApproval(t *testing.T, token, method, path string, body any, wantStatus string) {
+	t.Helper()
+	if _, err := harness.RequestApprovalAndWait(beaconURL, token, method, path, body, wantStatus, registerReady, nil); err != nil {
+		t.Fatalf("等待 %s 审批执行失败：%v", path, err)
+	}
 }
 
 // registerAgentV1 以共享 agent 令牌把实例注册进 v1 内存注册表（发现视图的数据前提）。

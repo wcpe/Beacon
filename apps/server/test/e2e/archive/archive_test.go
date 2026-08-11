@@ -158,8 +158,7 @@ func TestArchiveAdminAPIE2E(t *testing.T) {
 	}
 
 	// 关每日自动归档，使本用例完全 hermetic（不与手动任务抢单飞）。
-	doAdminJSON(t, base, http.MethodPut, "/admin/v1/settings/archive.auto-enabled", adminToken,
-		map[string]any{"value": "false"}, http.StatusOK, nil)
+	setDangerousSetting(t, base, adminToken, "archive.auto-enabled", "false", "关闭自动归档以隔离 E2E")
 
 	// == overview ==
 	var ov archiveOverviewResp
@@ -301,6 +300,17 @@ func openReadDB(t *testing.T, dbFile string) *gorm.DB {
 
 // ---- admin API 编排助手 ----
 
+// setDangerousSetting 经申请、审批和 worker 更新高风险设置，避免测试直写旁路。
+func setDangerousSetting(t *testing.T, base, token, key, value, reason string) {
+	t.Helper()
+	path := "/admin/v1/settings/" + key
+	if _, err := harness.RequestApprovalAndWait(base, token, http.MethodPut, path, map[string]any{
+		"value": value, "reason": reason,
+	}, "succeeded", terminalWait, nil); err != nil {
+		t.Fatalf("等待设置 %s 审批执行失败：%v", key, err)
+	}
+}
+
 // createJob 建归档任务，断 201，返回任务 id。
 func createJob(t *testing.T, base, token, mode string, domains []string) uint {
 	t.Helper()
@@ -331,19 +341,24 @@ func pollJobTerminal(t *testing.T, base, token string, id uint) archiveJobResp {
 	return job
 }
 
-// createReadonlyKey 建一枚 readonly 管理密钥，返回其明文（作 Bearer）。
+// createReadonlyKey 经凭据审批创建 readonly 管理密钥，并由原申请人一次性领取明文作 Bearer。
 func createReadonlyKey(t *testing.T, base, token string) string {
 	t.Helper()
+	ticket, err := harness.RequestApprovalAndWait(base, token, http.MethodPost, "/admin/v1/api-keys", map[string]any{
+		"name": "archive-e2e-ro", "role": model.RoleReadonly, "reason": "归档 E2E 验证只读写拒绝",
+	}, "succeeded", terminalWait, nil)
+	if err != nil {
+		t.Fatalf("创建 readonly 密钥审批失败：%v", err)
+	}
 	var resp struct {
-		Key  string `json:"key"`
-		Role string `json:"role"`
+		Secret string `json:"secret"`
 	}
-	doAdminJSON(t, base, http.MethodPost, "/admin/v1/api-keys", token,
-		map[string]any{"name": "archive-e2e-ro", "role": model.RoleReadonly}, http.StatusCreated, &resp)
-	if resp.Key == "" || resp.Role != model.RoleReadonly {
-		t.Fatalf("建 readonly 密钥响应异常：%+v", resp)
+	doAdminJSON(t, base, http.MethodPost,
+		"/admin/v2/approval-requests/"+ticket.ApprovalRequestID+"/credential-secret/redeem", token, nil, http.StatusOK, &resp)
+	if resp.Secret == "" {
+		t.Fatal("readonly 密钥审批成功后应可由原申请人一次性领取明文")
 	}
-	return resp.Key
+	return resp.Secret
 }
 
 // findDomain 从 overview 取某域行。

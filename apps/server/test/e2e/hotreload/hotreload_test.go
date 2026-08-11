@@ -158,6 +158,8 @@ func provisionPaper(t *testing.T, env *testEnv) (uint, *harness.GradleProc) {
 	}
 	args := []string{"-Pe2eMcPort=" + mcPort}
 	paperEnv := harness.AgentGradleEnv(beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	identityPath := filepath.Join(harness.BackendRunDir(env.repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	paper, err := harness.StartGradleTask(env.repoRoot, ":agent-e2e:servePaper", args, paperEnv, "paper-hotreload")
 	if err != nil {
 		t.Fatalf("启动 Paper 失败：%v", err)
@@ -168,14 +170,15 @@ func provisionPaper(t *testing.T, env *testEnv) (uint, *harness.GradleProc) {
 // approveAndWaitAgent 批准首次 pending 身份，并等待真实实例 online。
 func approveAndWaitAgent(t *testing.T, env *testEnv) {
 	t.Helper()
-	identityID, err := harness.WaitIdentityStatus(beaconURL, env.adminToken, env.namespaceID, serverID, "pending", onlineWait, env.paper)
+	identityPath := filepath.Join(harness.BackendRunDir(env.repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	identityID, err := harness.WaitPendingAgentIdentity(beaconURL, env.adminToken, identityPath, onlineWait, env.paper)
 	if err != nil {
 		t.Fatalf("等待 Agent pending 超时：%v", err)
 	}
-	if err := harness.ApproveIdentityWithGuard(beaconURL, env.adminToken, identityID, env.paper); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, env.adminToken, identityID, serverID, "热重载 E2E 确认身份", env.paper); err != nil {
 		t.Fatalf("批准 Agent 身份失败：%v", err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, env.adminToken, env.namespaceID, serverID, "active", onlineWait, env.paper); err != nil {
+	if err := harness.WaitIdentityStatusByID(beaconURL, env.adminToken, identityID, "active", onlineWait, env.paper); err != nil {
 		t.Fatalf("等待 Agent active 超时：%v", err)
 	}
 	if err := harness.WaitInstanceOnline(beaconURL, env.adminToken, namespace, serverID, onlineWait, env.paper); err != nil {
@@ -200,7 +203,9 @@ func setupZoneAndAssign(t *testing.T, env *testEnv) {
 		"target":         map[string]any{"kind": "zone", "id": zoneID},
 		"isDefaultEntry": false, "reason": "FR-171 E2E 首次分配",
 	}
-	doAdmin(t, http.MethodPost, "/admin/v2/server-assignments", env.adminToken, body, http.StatusOK, nil, env.paper)
+	if _, err := harness.RequestApprovalAndWait(beaconURL, env.adminToken, http.MethodPost, "/admin/v2/server-assignments", body, "succeeded", onlineWait, env.paper); err != nil {
+		t.Fatalf("提交首次分配审批失败：%v", err)
+	}
 }
 
 // createNode 通过管理 API 创建区服权威节点并返回主键。
@@ -250,7 +255,6 @@ func runPositiveAndRollback(t *testing.T, env *testEnv) {
 	versionID := seedConfig(t, env.db, env.namespaceID, successPath, activatedContent)
 	orderID := createApprovedOrder(t, env, "FR-171 正向与回滚", versionID)
 
-	startOrder(t, env, orderID)
 	assertActivated(t, env, orderID, activatedContent)
 	completeOrder(t, env, orderID)
 	assertRollback(t, env, orderID)
@@ -278,11 +282,10 @@ func completeOrder(t *testing.T, env *testEnv, orderID uint) {
 	t.Helper()
 	waitBatchStatus(t, env, orderID, model.ChangeBatchStatusAwaitingConfirm)
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/batches/1/confirm", orderID)
-	var detail orderDetail
-	doAdmin(t, http.MethodPost, path, env.adminToken, nil, http.StatusOK, &detail, env.paper)
-	if detail.Status != model.ChangeOrderStatusCompleted {
-		t.Fatalf("末批确认后单状态应为 completed，实际=%s", detail.Status)
+	if _, err := harness.RequestApprovalAndWait(beaconURL, env.adminToken, http.MethodPost, path, nil, "succeeded", phaseWait, env.paper); err != nil {
+		t.Fatalf("确认交付批次审批失败：%v", err)
 	}
+	waitOrderStatus(t, env, orderID, model.ChangeOrderStatusCompleted)
 }
 
 // assertRollback 发起真实整单回滚，验证目标与单均 rolled_back，回调和磁盘均恢复原内容。
@@ -290,7 +293,10 @@ func assertRollback(t *testing.T, env *testEnv, orderID uint) {
 	t.Helper()
 	before := countObservation(env.probeLog(), "ON_CHANGE", successPath)
 	path := fmt.Sprintf("/admin/v2/change-orders/%d/rollback", orderID)
-	doAdmin(t, http.MethodPost, path, env.adminToken, map[string]string{"reason": "FR-171 E2E 验证回滚"}, http.StatusOK, nil, env.paper)
+	if _, err := harness.RequestApprovalAndWait(beaconURL, env.adminToken, http.MethodPost, path,
+		map[string]string{"reason": "FR-171 E2E 验证回滚"}, "succeeded", phaseWait, env.paper); err != nil {
+		t.Fatalf("整单回滚审批失败：%v", err)
+	}
 
 	waitTarget(t, env, orderID, func(v targetView) bool {
 		return v.RollbackStatus != nil && *v.RollbackStatus == model.RollbackStatusRolledBack
@@ -309,7 +315,6 @@ func runFailure(t *testing.T, env *testEnv) {
 	failedContent := fmt.Sprintf("marker: rejected-%d\n", time.Now().UnixNano())
 	versionID := seedConfig(t, env.db, env.namespaceID, failurePath, failedContent)
 	orderID := createApprovedOrder(t, env, "FR-171 回调失败", versionID)
-	startOrder(t, env, orderID)
 
 	target := waitTarget(t, env, orderID, func(v targetView) bool { return v.Status == model.ChangeTargetStatusFailed })
 	if target.Error == nil || !strings.Contains(*target.Error, "配置变更通知失败") {
@@ -368,7 +373,7 @@ func seedConfig(t *testing.T, db *gorm.DB, namespaceID uint, path, targetContent
 	return target.ID
 }
 
-// createApprovedOrder 通过管理 API 完成建单、挂配置、提交与审批。
+// createApprovedOrder 通过管理 API 建单、挂配置并走审批 worker 自动启动交付。
 func createApprovedOrder(t *testing.T, env *testEnv, title string, versionID uint) uint {
 	t.Helper()
 	body := map[string]any{
@@ -381,8 +386,11 @@ func createApprovedOrder(t *testing.T, env *testEnv, title string, versionID uin
 	var detail orderDetail
 	doAdmin(t, http.MethodPost, "/admin/v2/change-orders", env.adminToken, body, http.StatusCreated, &detail, env.paper)
 	patchOrderConfig(t, env, detail.ID, versionID)
-	transitionOrder(t, env, detail.ID, "submit")
-	transitionOrder(t, env, detail.ID, "approve")
+	path := fmt.Sprintf("/admin/v2/change-orders/%d/submit", detail.ID)
+	if _, err := harness.RequestApprovalAndWait(beaconURL, env.adminToken, http.MethodPost, path,
+		map[string]string{"reason": "FR-171 E2E 提交并执行交付"}, "succeeded", phaseWait, env.paper); err != nil {
+		t.Fatalf("提交交付审批失败：%v", err)
+	}
 	return detail.ID
 }
 
@@ -395,20 +403,6 @@ func patchOrderConfig(t *testing.T, env *testEnv, orderID, versionID uint) {
 	}}}
 	path := fmt.Sprintf("/admin/v2/change-orders/%d", orderID)
 	doAdmin(t, http.MethodPatch, path, env.adminToken, body, http.StatusOK, nil, env.paper)
-}
-
-// transitionOrder 调用无额外参数的变更单生命周期端点。
-func transitionOrder(t *testing.T, env *testEnv, orderID uint, action string) {
-	t.Helper()
-	path := fmt.Sprintf("/admin/v2/change-orders/%d/%s", orderID, action)
-	doAdmin(t, http.MethodPost, path, env.adminToken, nil, http.StatusOK, nil, env.paper)
-}
-
-// startOrder 仅经生产 start 端点启动执行状态机。
-func startOrder(t *testing.T, env *testEnv, orderID uint) {
-	t.Helper()
-	path := fmt.Sprintf("/admin/v2/change-orders/%d/start", orderID)
-	doAdmin(t, http.MethodPost, path, env.adminToken, map[string]string{"reason": "FR-171 E2E"}, http.StatusOK, nil, env.paper)
 }
 
 // waitTarget 等目标满足谓词，超时输出最后事实。
@@ -544,11 +538,14 @@ func tryAdminGet(ctx context.Context, path, token string, out any, guard harness
 	return json.NewDecoder(resp.Body).Decode(out) == nil
 }
 
-// disableApproverSeparation 仅设置测试前置，使单管理员也能走真实 submit→approve API。
+// disableApproverSeparation 经设置审批关闭测试前置，使单管理员可完成统一审批决定。
 func disableApproverSeparation(t *testing.T, token string, guard harness.ProcessGuard) {
 	t.Helper()
-	body := map[string]any{"value": "false"}
-	doAdmin(t, http.MethodPut, "/admin/v1/settings/delivery.approver-separation-enabled", token, body, http.StatusOK, nil, guard)
+	body := map[string]any{"value": "false", "reason": "FR-171 E2E 使用单管理员审批"}
+	if _, err := harness.RequestApprovalAndWait(beaconURL, token, http.MethodPut,
+		"/admin/v1/settings/delivery.approver-separation-enabled", body, "succeeded", phaseWait, guard); err != nil {
+		t.Fatalf("关闭审批人隔离设置失败：%v", err)
+	}
 }
 
 // readObservations 解析业务插件单行观测文件；忽略并发写入中的不完整末行。

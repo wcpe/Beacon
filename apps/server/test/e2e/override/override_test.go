@@ -155,14 +155,15 @@ func TestOverrideE2E(t *testing.T) {
 	t.Log("== 相位 inert（空白名单）+ filetree（FR-14 文件树镜像落盘）==")
 	paper := startPaper(t, repoRoot, accessToken, "", logPrefixMCInert)
 	harness.CleanupGradle(t, paper)
-	identityID, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "pending", onlineWait, paper)
+	identityPath := filepath.Join(runDir, "plugins", "BeaconAgent", "identity.yml")
+	identityID, err := harness.WaitPendingAgentIdentity(beaconURL, adminToken, identityPath, onlineWait, paper)
 	if err != nil {
 		t.Fatalf("inert：agent identity 未进入 pending：%v", err)
 	}
-	if err := harness.ApproveIdentityWithGuard(beaconURL, adminToken, identityID, paper); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, adminToken, identityID, serverID, "覆盖 E2E 初次确认身份", paper); err != nil {
 		t.Fatalf("inert：批准 agent identity 失败：%v", err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait, paper); err != nil {
+	if err := harness.WaitIdentityStatusByID(beaconURL, adminToken, identityID, "active", onlineWait, paper); err != nil {
 		t.Fatalf("inert：agent identity 未进入 active：%v", err)
 	}
 	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait, paper); err != nil {
@@ -191,22 +192,18 @@ func TestOverrideE2E(t *testing.T) {
 	resetRunDirMirror(t, runDir) // 复位 managed.yml 为 A；DB 覆盖集保留（含命令）
 	paper2 := startPaper(t, repoRoot, accessToken, reloadCmd, logPrefixMCOrdering)
 	harness.CleanupGradle(t, paper2)
-	identityID2, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "pending", onlineWait, paper2)
+	identityID2, err := harness.WaitPendingAgentIdentity(beaconURL, adminToken, identityPath, onlineWait, paper2)
 	if err != nil {
 		t.Fatalf("ordering：本轮新 agent identity 未进入 pending：%v", err)
 	}
 	if identityID2 == identityID {
 		t.Fatalf("ordering：mc-testkit 重建运行目录后应生成新 identity，实际仍命中第一轮 %s", identityID)
 	}
-	if err := harness.ApproveIdentityWithGuard(beaconURL, adminToken, identityID2, paper2, true); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, adminToken, identityID2, serverID, "覆盖 E2E 重建确认身份", paper2, true); err != nil {
 		t.Fatalf("ordering：批准本轮新 agent identity 失败：%v", err)
 	}
-	activeIdentityID, err := harness.WaitIdentityStatus(beaconURL, adminToken, namespaceID, serverID, "active", onlineWait, paper2)
-	if err != nil {
+	if err := harness.WaitIdentityStatusByID(beaconURL, adminToken, identityID2, "active", onlineWait, paper2); err != nil {
 		t.Fatalf("ordering：本轮新 agent identity 未进入 active：%v", err)
-	}
-	if activeIdentityID != identityID2 {
-		t.Fatalf("ordering：active identity 应为本轮新 identity %s，实际 %s", identityID2, activeIdentityID)
 	}
 	if err := harness.WaitInstanceOnline(beaconURL, adminToken, namespace, serverID, onlineWait, paper2); err != nil {
 		t.Fatalf("ordering：本轮新 agent 未 online：%v", err)
@@ -227,6 +224,8 @@ func TestOverrideE2E(t *testing.T) {
 // startPaper 起 Paper，并通过进程环境注入 v2 namespace token；whitelist 为空时保持默认 inert。
 func startPaper(t *testing.T, repoRoot, accessToken, whitelist, logPrefix string) *harness.GradleProc {
 	t.Helper()
+	identityPath := filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	paperEnv := harness.AgentGradleEnv(
 		beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort,
 	)
@@ -412,14 +411,24 @@ func mustFindSet(t *testing.T, token string, guard harness.ProcessGuard) uint {
 
 // publishSet 发布新版本：设定目标根 + 受限重载命令。
 func publishSet(t *testing.T, token string, id uint, cmd string, guard harness.ProcessGuard) {
-	body := map[string]any{"targetRoot": targetRoot, "reloadCommand": cmd, "comment": "e2e 发布命令"}
-	doAdmin(t, http.MethodPut, fmt.Sprintf("/admin/v1/override-sets/%d", id), token, body, http.StatusOK, nil, guard)
+	body := map[string]any{
+		"targetRoot": targetRoot, "reloadCommand": cmd, "comment": "e2e 发布命令", "reason": "发布覆盖集并验证受限重载",
+	}
+	if _, err := harness.RequestApprovalAndWait(beaconURL, token, http.MethodPut,
+		fmt.Sprintf("/admin/v1/override-sets/%d", id), body, "succeeded", onlineWait, guard); err != nil {
+		t.Fatalf("发布覆盖集审批失败：%v", err)
+	}
 }
 
 // rollbackSet 回滚到目标版本（新版本 = 当前 +1，只还原事实）。
 func rollbackSet(t *testing.T, token string, id uint, toVersion int, guard harness.ProcessGuard) {
-	body := map[string]any{"toVersion": toVersion, "comment": "e2e 回滚验证"}
-	doAdmin(t, http.MethodPost, fmt.Sprintf("/admin/v1/override-sets/%d/rollback", id), token, body, http.StatusOK, nil, guard)
+	body := map[string]any{
+		"toVersion": toVersion, "comment": "e2e 回滚验证", "reason": "回滚覆盖集并验证不重放命令",
+	}
+	if _, err := harness.RequestApprovalAndWait(beaconURL, token, http.MethodPost,
+		fmt.Sprintf("/admin/v1/override-sets/%d/rollback", id), body, "succeeded", onlineWait, guard); err != nil {
+		t.Fatalf("回滚覆盖集审批失败：%v", err)
+	}
 }
 
 // publishTreeFile 经 admin REST 建一个文件树文件（global 层），触发 agent 文件树镜像落盘（FR-14）。
@@ -427,9 +436,12 @@ func publishTreeFile(t *testing.T, token string, guard harness.ProcessGuard) {
 	body := map[string]any{
 		"namespace": namespace, "group": model.GlobalGroupCode, "path": treeFilePath,
 		"scopeLevel": model.ScopeGlobal, "scopeTarget": "",
-		"content": treeContent, "comment": "e2e 文件树镜像验收",
+		"content": treeContent, "comment": "e2e 文件树镜像验收", "reason": "发布文件树并验证镜像落盘",
 	}
-	doAdmin(t, http.MethodPost, "/admin/v1/files", token, body, http.StatusCreated, nil, guard)
+	if _, err := harness.RequestApprovalAndWait(beaconURL, token, http.MethodPost,
+		"/admin/v1/files", body, "succeeded", onlineWait, guard); err != nil {
+		t.Fatalf("发布文件树审批失败：%v", err)
+	}
 }
 
 // ensureMember 经数据层把成员文件 managed.yml=B 挂到覆盖集（控制面无成员挂载 API，沿用集成测试做法）。

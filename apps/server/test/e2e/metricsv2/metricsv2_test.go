@@ -124,6 +124,8 @@ func TestMetricsV2IngestE2E(t *testing.T) {
 
 	t.Log("== 起 Paper 子服 + 真 BeaconAgent（agent-e2e 壳，默认已开启 v2 指标采样）==")
 	paperEnv := harness.AgentGradleEnv(base, ns.AccessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	identityPath := filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + mcPort,
 	}, paperEnv, logPrefixMC)
@@ -133,7 +135,7 @@ func TestMetricsV2IngestE2E(t *testing.T) {
 	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等真 agent v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "pending", pendingWait, paper)
+	identityID, err := harness.WaitPendingAgentIdentity(base, adminToken, identityPath, pendingWait, paper)
 	if err != nil {
 		t.Fatalf("等待 pending 身份失败：%v", err)
 	}
@@ -141,7 +143,7 @@ func TestMetricsV2IngestE2E(t *testing.T) {
 
 	t.Log("== approve 使身份 active（指标上报要求 active，否则 403）==")
 	approveIdentity(t, base, adminToken, identityID, paper)
-	if _, err := harness.WaitIdentityStatus(base, adminToken, ns.ID, serverID, "active", pendingWait, paper); err != nil {
+	if err := harness.WaitIdentityStatusByID(base, adminToken, identityID, "active", pendingWait, paper); err != nil {
 		t.Fatalf("等待 active 身份失败：%v", err)
 	}
 	if err := harness.WaitInstanceOnline(base, adminToken, namespace, serverID, onlineWait, paper); err != nil {
@@ -277,7 +279,7 @@ func createNamespace(t *testing.T, base, token string) namespaceView {
 // approveIdentity 首次确认身份（无 target：确认但暂不分配区服），断响应状态 active。
 func approveIdentity(t *testing.T, base, token, identityID string, guard *harness.GradleProc) {
 	t.Helper()
-	if err := harness.ApproveIdentityWithGuard(base, token, identityID, guard); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(base, token, identityID, serverID, "指标 v2 E2E 确认身份", guard); err != nil {
 		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }

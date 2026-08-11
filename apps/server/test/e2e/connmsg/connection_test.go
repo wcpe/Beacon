@@ -14,6 +14,7 @@ package connmsg_e2e
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -57,7 +58,11 @@ func TestConnectionWireE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("定位仓库根失败：%v", err)
 	}
-	sqliteDB := filepath.Join(repoRoot, ".tmp", connSQLiteDB)
+	dataDir, err := os.MkdirTemp(filepath.Join(repoRoot, ".tmp"), "e2e-connmsg-conn-")
+	if err != nil {
+		t.Fatalf("创建连接采集 E2E 隔离数据目录失败：%v", err)
+	}
+	sqliteDB := filepath.Join(dataDir, connSQLiteDB)
 	_ = removeIfExists(sqliteDB)
 
 	t.Log("== 构建控制面二进制 ==")
@@ -89,6 +94,8 @@ func TestConnectionWireE2E(t *testing.T) {
 	t.Log("== 起 BungeeCord 代理 + 真 BeaconAgentProxy（role=bungee + 连接采集探针）==")
 	proxyEnv := harness.AgentGradleEnv(base, ns.AccessToken, connNamespace, connServerID, "127.0.0.1:25577")
 	proxyEnv["BEACON_E2E_CONNINJECT"] = "1"
+	identityPath := filepath.Join(harness.ProxyRunDir(repoRoot), "plugins", "BeaconAgentProxy", "identity.yml")
+	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	bungee, err := harness.StartGradleTask(repoRoot, ":agent-e2e:serveProxy", nil, proxyEnv, connLogPrefixMC)
 	if err != nil {
 		t.Fatalf("起 BungeeCord 失败：%v", err)
@@ -96,12 +103,12 @@ func TestConnectionWireE2E(t *testing.T) {
 	harness.CleanupGradle(t, bungee)
 
 	t.Log("== 等真 agent(proxy) v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, connServerID, connPendingWait, bungee)
+	identityID := waitPendingIdentity(t, base, adminToken, identityPath, connPendingWait, bungee)
 	t.Logf("观测到 pending 身份 identityId=%s", identityID)
 
 	t.Log("== approve 使身份 active 并等 online ==")
-	approveIdentity(t, base, adminToken, identityID, bungee)
-	waitIdentityStatus(t, base, adminToken, ns.ID, connServerID, "active", connPendingWait, bungee)
+	approveIdentity(t, base, adminToken, identityID, connServerID, bungee)
+	waitIdentityStatus(t, base, adminToken, identityID, "active", connPendingWait, bungee)
 	if err := harness.WaitInstanceOnline(base, adminToken, connNamespace, connServerID, connOnlineWait, bungee); err != nil {
 		t.Fatalf("active 后代理应 online（见 .tmp/%s.out.log）：%v", connLogPrefixMC, err)
 	}

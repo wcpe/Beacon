@@ -95,6 +95,8 @@ func TestMessageWireE2E(t *testing.T) {
 	paperEnv := harness.AgentGradleEnv(base, ns.AccessToken, msgNamespace, msgServerID, "127.0.0.1:"+msgMCPort)
 	paperEnv["BEACON_AGENT_MESSAGING_ENABLED"] = "true"
 	paperEnv["BEACON_E2E_MESSAGING"] = "1"
+	identityPath := filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + msgMCPort,
 	}, paperEnv, msgLogPrefixMC)
@@ -104,12 +106,12 @@ func TestMessageWireE2E(t *testing.T) {
 	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等真 agent v2 注册进 pending（首跑含下载/构建，耐心等）==")
-	identityID := waitPendingIdentity(t, base, adminToken, ns.ID, msgServerID, msgPendingWait, paper)
+	identityID := waitPendingIdentity(t, base, adminToken, identityPath, msgPendingWait, paper)
 	t.Logf("观测到 pending 身份 identityId=%s", identityID)
 
 	t.Log("== approve 使身份 active 并等 online ==")
-	approveIdentity(t, base, adminToken, identityID, paper)
-	waitIdentityStatus(t, base, adminToken, ns.ID, msgServerID, "active", msgPendingWait, paper)
+	approveIdentity(t, base, adminToken, identityID, msgServerID, paper)
+	waitIdentityStatus(t, base, adminToken, identityID, "active", msgPendingWait, paper)
 	if err := harness.WaitInstanceOnline(base, adminToken, msgNamespace, msgServerID, msgOnlineWait, paper); err != nil {
 		t.Fatalf("active 后应衔接 legacy 数据面 online（见 .tmp/%s.out.log）：%v", msgLogPrefixMC, err)
 	}

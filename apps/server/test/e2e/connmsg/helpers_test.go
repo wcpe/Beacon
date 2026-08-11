@@ -49,28 +49,28 @@ func createNamespace(t *testing.T, base, token, name, desc string) namespaceView
 	return namespaceView{ID: id, AccessToken: accessToken}
 }
 
-// waitPendingIdentity 等待某 serverId 的 pending 身份出现，并在全程检查 Gradle 生命周期。
-func waitPendingIdentity(t *testing.T, base, token string, namespaceID uint, serverID string, timeout time.Duration, guard *harness.GradleProc) string {
+// waitPendingIdentity 读取真 agent 自管身份并等待其进入未绑定 pending。
+func waitPendingIdentity(t *testing.T, base, token, identityPath string, timeout time.Duration, guard *harness.GradleProc) string {
 	t.Helper()
-	identityID, err := harness.WaitIdentityStatus(base, token, namespaceID, serverID, "pending", timeout, guard)
+	identityID, err := harness.WaitPendingAgentIdentity(base, token, identityPath, timeout, guard)
 	if err != nil {
-		t.Fatalf("等待 %s 的 pending 身份失败：%v", serverID, err)
+		t.Fatalf("等待 pending 身份失败：%v", err)
 	}
 	return identityID
 }
 
-// waitIdentityStatus 等待某 serverId 身份进入目标状态，并在全程检查 Gradle 生命周期。
-func waitIdentityStatus(t *testing.T, base, token string, namespaceID uint, serverID, status string, timeout time.Duration, guard *harness.GradleProc) {
+// waitIdentityStatus 按本轮 identityId 等待目标状态，并在全程检查 Gradle 生命周期。
+func waitIdentityStatus(t *testing.T, base, token, identityID, status string, timeout time.Duration, guard *harness.GradleProc) {
 	t.Helper()
-	if _, err := harness.WaitIdentityStatus(base, token, namespaceID, serverID, status, timeout, guard); err != nil {
-		t.Fatalf("等待 %s 身份进入 %s 失败：%v", serverID, status, err)
+	if err := harness.WaitIdentityStatusByID(base, token, identityID, status, timeout, guard); err != nil {
+		t.Fatalf("等待 identity %s 进入 %s 失败：%v", identityID, status, err)
 	}
 }
 
-// approveIdentity 批准身份使其 active（v2 数据面上报端点须 active 才不被 403）。
-func approveIdentity(t *testing.T, base, token, identityID string, guard *harness.GradleProc) {
+// approveIdentity 经申请、审批和 worker 确认身份，使 v2 数据面可进入 active。
+func approveIdentity(t *testing.T, base, token, identityID, serverID string, guard *harness.GradleProc) {
 	t.Helper()
-	if err := harness.ApproveIdentityWithGuard(base, token, identityID, guard); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(base, token, identityID, serverID, "连接与消息 E2E 确认身份", guard); err != nil {
 		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }

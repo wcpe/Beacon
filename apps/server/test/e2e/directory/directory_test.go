@@ -108,6 +108,11 @@ func TestDirectoryE2E(t *testing.T) {
 		bukkitServerID, "127.0.0.1:"+bukkitPort,
 		bungeeServerID, "127.0.0.1:"+bungeePort,
 	)
+	bukkitIdentityPath := filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	bungeeIdentityPath := filepath.Join(harness.ProxyRunDir(repoRoot), "plugins", "BeaconAgentProxy", "identity.yml")
+	for _, identityPath := range []string{bukkitIdentityPath, bungeeIdentityPath} {
+		harness.ClearStaleAgentIdentityFile(t, identityPath)
+	}
 	directoryProc, err := harness.StartGradleTask(
 		repoRoot, ":agent-e2e:serveDirectory", nil, directoryEnv, "directory",
 	)
@@ -117,32 +122,30 @@ func TestDirectoryE2E(t *testing.T) {
 	harness.CleanupGradle(t, directoryProc)
 
 	t.Log("== 等子服与代理 identity pending，批准后继续等 legacy online ==")
-	bukkitIdentityID, err := harness.WaitIdentityStatus(
-		beaconURL, token, namespaceID, bukkitServerID, "pending", onlineWait, directoryProc,
-	)
+	bukkitIdentityID, err := harness.WaitAgentIdentityID(bukkitIdentityPath, onlineWait, directoryProc)
 	if err != nil {
+		t.Fatalf("读取 %s identity 失败：%v", bukkitServerID, err)
+	}
+	if err := harness.WaitIdentityStatusByID(beaconURL, token, bukkitIdentityID, "pending", onlineWait, directoryProc); err != nil {
 		t.Fatalf("等 %s identity pending 失败：%v", bukkitServerID, err)
 	}
-	if err := harness.ApproveIdentityWithGuard(beaconURL, token, bukkitIdentityID, directoryProc); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, token, bukkitIdentityID, bukkitServerID, "目录 E2E 确认后端身份", directoryProc); err != nil {
 		t.Fatalf("批准 %s identity 失败：%v", bukkitServerID, err)
 	}
-	if _, err := harness.WaitIdentityStatus(
-		beaconURL, token, namespaceID, bukkitServerID, "active", onlineWait, directoryProc,
-	); err != nil {
+	if err := harness.WaitIdentityStatusByID(beaconURL, token, bukkitIdentityID, "active", onlineWait, directoryProc); err != nil {
 		t.Fatalf("等 %s identity active 失败：%v", bukkitServerID, err)
 	}
-	bungeeIdentityID, err := harness.WaitIdentityStatus(
-		beaconURL, token, namespaceID, bungeeServerID, "pending", onlineWait, directoryProc,
-	)
+	bungeeIdentityID, err := harness.WaitAgentIdentityID(bungeeIdentityPath, onlineWait, directoryProc)
 	if err != nil {
+		t.Fatalf("读取 %s identity 失败：%v", bungeeServerID, err)
+	}
+	if err := harness.WaitIdentityStatusByID(beaconURL, token, bungeeIdentityID, "pending", onlineWait, directoryProc); err != nil {
 		t.Fatalf("等 %s identity pending 失败：%v", bungeeServerID, err)
 	}
-	if err := harness.ApproveIdentityWithGuard(beaconURL, token, bungeeIdentityID, directoryProc); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, token, bungeeIdentityID, bungeeServerID, "目录 E2E 确认代理身份", directoryProc); err != nil {
 		t.Fatalf("批准 %s identity 失败：%v", bungeeServerID, err)
 	}
-	if _, err := harness.WaitIdentityStatus(
-		beaconURL, token, namespaceID, bungeeServerID, "active", onlineWait, directoryProc,
-	); err != nil {
+	if err := harness.WaitIdentityStatusByID(beaconURL, token, bungeeIdentityID, "active", onlineWait, directoryProc); err != nil {
 		t.Fatalf("等 %s identity active 失败：%v", bungeeServerID, err)
 	}
 	if err := harness.WaitInstanceOnline(

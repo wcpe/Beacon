@@ -16,6 +16,34 @@ import (
 
 const helperProcessEnv = "BEACON_E2E_HELPER_PROCESS"
 
+func TestRemoveStaleAgentIdentityFile(t *testing.T) {
+	dir := t.TempDir()
+	identityPath := filepath.Join(dir, "identity.yml")
+	otherPath := filepath.Join(dir, "managed.yml")
+	if err := os.WriteFile(identityPath, []byte("identity-id: stale\n"), 0o600); err != nil {
+		t.Fatalf("写入残留身份文件失败：%v", err)
+	}
+	if err := os.WriteFile(otherPath, []byte("保留"), 0o600); err != nil {
+		t.Fatalf("写入相邻文件失败：%v", err)
+	}
+
+	if err := RemoveStaleAgentIdentityFile(identityPath); err != nil {
+		t.Fatalf("清理残留身份文件失败：%v", err)
+	}
+	if _, err := os.Stat(identityPath); !os.IsNotExist(err) {
+		t.Fatalf("身份文件应已删除，实际错误：%v", err)
+	}
+	if _, err := os.Stat(otherPath); err != nil {
+		t.Fatalf("相邻文件不得被删除：%v", err)
+	}
+	if err := RemoveStaleAgentIdentityFile(identityPath); err != nil {
+		t.Fatalf("不存在的身份文件应可重复清理：%v", err)
+	}
+	if err := RemoveStaleAgentIdentityFile(otherPath); err == nil {
+		t.Fatal("不得清理非 identity.yml 文件")
+	}
+}
+
 func TestGradleHelperProcess(t *testing.T) {
 	if os.Getenv(helperProcessEnv) != "1" {
 		return

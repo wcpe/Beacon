@@ -114,6 +114,8 @@ func TestMetricsE2E(t *testing.T) {
 
 	t.Log("== 起 Paper 子服（" + mcPort + "）==")
 	paperEnv := harness.AgentGradleEnv(beaconURL, accessToken, namespace, serverID, "127.0.0.1:"+mcPort)
+	identityPath := filepath.Join(harness.BackendRunDir(repoRoot), "plugins", "BeaconAgent", "identity.yml")
+	harness.ClearStaleAgentIdentityFile(t, identityPath)
 	paper, err := harness.StartGradleTask(repoRoot, ":agent-e2e:servePaper", []string{
 		"-Pe2eMcPort=" + mcPort,
 	}, paperEnv, logPrefixMC)
@@ -123,14 +125,14 @@ func TestMetricsE2E(t *testing.T) {
 	harness.CleanupGradle(t, paper)
 
 	t.Log("== 等 agent identity pending，批准后继续等 legacy online ==")
-	identityID, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "pending", onlineWait, paper)
+	identityID, err := harness.WaitPendingAgentIdentity(beaconURL, token, identityPath, onlineWait, paper)
 	if err != nil {
 		t.Fatalf("等 %s identity pending 超时（见 .tmp/paper.out.log）：%v", serverID, err)
 	}
-	if err := harness.ApproveIdentityWithGuard(beaconURL, token, identityID, paper); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(beaconURL, token, identityID, serverID, "指标 E2E 确认身份", paper); err != nil {
 		t.Fatalf("批准 %s identity 失败：%v", serverID, err)
 	}
-	if _, err := harness.WaitIdentityStatus(beaconURL, token, namespaceID, serverID, "active", onlineWait, paper); err != nil {
+	if err := harness.WaitIdentityStatusByID(beaconURL, token, identityID, "active", onlineWait, paper); err != nil {
 		t.Fatalf("等 %s identity active 超时：%v", serverID, err)
 	}
 	if err := harness.WaitInstanceOnline(beaconURL, token, namespace, serverID, onlineWait, paper); err != nil {

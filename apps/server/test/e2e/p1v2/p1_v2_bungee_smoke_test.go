@@ -24,19 +24,23 @@ import (
 )
 
 const (
-	defaultBungeeDir = `D:\Games\MinecraftServer\BungeeCord`
-
-	adminUser   = "admin"
-	adminPass   = "p1-v2-smoke-pass"
-	authSecret  = "p1-v2-smoke-secret"
-	namespace   = "p1v2"
-	serverID    = "p1-v2-proxy"
-	serverAddr  = "127.0.0.1:25565"
-	beaconURL   = "http://localhost:18848"
-	sqliteDB    = "beacon-e2e-p1-v2.db"
-	onlineWait  = 6 * time.Minute
-	pendingWait = 6 * time.Minute
+	adminUser               = "admin"
+	namespace               = "p1v2"
+	serverID                = "p1-v2-proxy"
+	serverAddr              = "127.0.0.1:25565"
+	beaconURL               = "http://localhost:18848"
+	sqliteDB                = "beacon-e2e-p1-v2.db"
+	p1BungeeIsolationMarker = ".beacon-e2e-isolated"
+	onlineWait              = 6 * time.Minute
+	pendingWait             = 6 * time.Minute
 )
+
+type p1V2E2EConfig struct {
+	BungeeDir      string
+	AdminPassword  string
+	AuthSecret     string
+	BootstrapToken string
+}
 
 type namespaceView struct {
 	ID          uint   `json:"id"`
@@ -82,17 +86,117 @@ type listResponse[T any] struct {
 	Total int `json:"total"`
 }
 
+func requireP1V2E2EConfig(t *testing.T) p1V2E2EConfig {
+	t.Helper()
+	missing := missingP1V2E2EEnv(os.Getenv)
+	if len(missing) != 0 {
+		t.Skipf("缺少隔离 P1 v2 E2E 环境变量 %s，跳过真机 smoke", strings.Join(missing, ", "))
+	}
+	cfg, err := loadP1V2E2EConfig(os.Getenv)
+	if err != nil {
+		t.Fatalf("P1 v2 E2E 隔离环境无效：%v", err)
+	}
+	return cfg
+}
+
+func missingP1V2E2EEnv(getenv func(string) string) []string {
+	names := []string{"E2E_BUNGEE_DIR", "E2E_ADMIN_PASS", "E2E_AUTH_SECRET", "E2E_BOOTSTRAP_TOKEN"}
+	missing := make([]string, 0, len(names))
+	for _, name := range names {
+		if strings.TrimSpace(getenv(name)) == "" {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+func loadP1V2E2EConfig(getenv func(string) string) (p1V2E2EConfig, error) {
+	if missing := missingP1V2E2EEnv(getenv); len(missing) != 0 {
+		return p1V2E2EConfig{}, fmt.Errorf("缺少环境变量 %s", strings.Join(missing, ", "))
+	}
+	cfg := p1V2E2EConfig{
+		BungeeDir:      strings.TrimSpace(getenv("E2E_BUNGEE_DIR")),
+		AdminPassword:  getenv("E2E_ADMIN_PASS"),
+		AuthSecret:     getenv("E2E_AUTH_SECRET"),
+		BootstrapToken: getenv("E2E_BOOTSTRAP_TOKEN"),
+	}
+	if err := validateP1V2BungeeDirectory(cfg.BungeeDir); err != nil {
+		return p1V2E2EConfig{}, err
+	}
+	return cfg, nil
+}
+
+// validateP1V2BungeeDirectory 只接受显式标记的隔离目录，防止 smoke 修改用户日常 Bungee 安装。
+func validateP1V2BungeeDirectory(bungeeDir string) error {
+	if !filepath.IsAbs(bungeeDir) {
+		return fmt.Errorf("E2E_BUNGEE_DIR 必须是绝对路径")
+	}
+	info, err := os.Lstat(bungeeDir)
+	if err != nil {
+		return fmt.Errorf("读取 E2E_BUNGEE_DIR 失败：%w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("E2E_BUNGEE_DIR 必须是非链接的隔离目录")
+	}
+	if err := requireRegularFile(filepath.Join(bungeeDir, p1BungeeIsolationMarker)); err != nil {
+		return fmt.Errorf("E2E_BUNGEE_DIR 缺少隔离标记：%w", err)
+	}
+	if err := requireRegularFile(filepath.Join(bungeeDir, "BungeeCord.jar")); err != nil {
+		return fmt.Errorf("E2E_BUNGEE_DIR 缺少 BungeeCord.jar：%w", err)
+	}
+	return nil
+}
+
+func requireRegularFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("必须是普通文件")
+	}
+	return nil
+}
+
+func TestLoadP1V2E2EConfigRequiresExplicitIsolatedDirectory(t *testing.T) {
+	dir := t.TempDir()
+	values := map[string]string{
+		"E2E_BUNGEE_DIR":      dir,
+		"E2E_ADMIN_PASS":      "test-admin-password",
+		"E2E_AUTH_SECRET":     "test-auth-secret",
+		"E2E_BOOTSTRAP_TOKEN": "test-bootstrap-token",
+	}
+	getenv := func(name string) string { return values[name] }
+
+	if _, err := loadP1V2E2EConfig(getenv); err == nil || !strings.Contains(err.Error(), "隔离标记") {
+		t.Fatalf("未标记目录必须被拒绝，实际 %v", err)
+	}
+	for _, name := range []string{p1BungeeIsolationMarker, "BungeeCord.jar"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("test"), 0o600); err != nil {
+			t.Fatalf("准备隔离目录文件失败：%v", err)
+		}
+	}
+	cfg, err := loadP1V2E2EConfig(getenv)
+	if err != nil {
+		t.Fatalf("显式隔离目录与完整随机凭据应通过：%v", err)
+	}
+	if cfg.BungeeDir != dir || cfg.AdminPassword != values["E2E_ADMIN_PASS"] || cfg.AuthSecret != values["E2E_AUTH_SECRET"] || cfg.BootstrapToken != values["E2E_BOOTSTRAP_TOKEN"] {
+		t.Fatalf("E2E 配置读取错误：目录或凭据字段未按环境变量传入")
+	}
+}
+
+func TestLoadP1V2E2EConfigRequiresAllSecretInputs(t *testing.T) {
+	if _, err := loadP1V2E2EConfig(func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "E2E_BOOTSTRAP_TOKEN") {
+		t.Fatalf("缺少隔离环境输入必须被拒绝：%v", err)
+	}
+}
+
 func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("当前真机 smoke 指向 Windows 本机 BungeeCord 目录")
+		t.Skip("P1 v2 真机 smoke 仅在 Windows 隔离 Bungee 环境执行")
 	}
-	bungeeDir := os.Getenv("E2E_BUNGEE_DIR")
-	if bungeeDir == "" {
-		bungeeDir = defaultBungeeDir
-	}
-	if _, err := os.Stat(filepath.Join(bungeeDir, "BungeeCord.jar")); err != nil {
-		t.Skipf("未找到 BungeeCord.jar，跳过真机 smoke：%v", err)
-	}
+	cfg := requireP1V2E2EConfig(t)
+	bungeeDir := cfg.BungeeDir
 
 	repoRoot, err := harness.RepoRoot()
 	if err != nil {
@@ -116,7 +220,7 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	cp, err := harness.StartControlPlane(harness.ControlPlaneConfig{
 		BinPath: bin, RepoRoot: repoRoot, BaseURL: testBeaconURL(),
 		DBDriver: "sqlite", DBDSN: sqlitePath,
-		AdminPassword: adminPass, AuthSecret: authSecret, BootstrapToken: "legacy-token-unused-by-v2",
+		AdminPassword: cfg.AdminPassword, AuthSecret: cfg.AuthSecret, BootstrapToken: cfg.BootstrapToken,
 		LogPrefix: "beacon-p1-v2",
 	})
 	if err != nil {
@@ -124,7 +228,7 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	}
 	harness.CleanupControlPlane(t, cp)
 
-	adminToken, err := harness.Login(testBeaconURL(), adminUser, adminPass)
+	adminToken, err := harness.Login(testBeaconURL(), adminUser, cfg.AdminPassword)
 	if err != nil {
 		t.Fatalf("登录控制面失败：%v", err)
 	}
@@ -137,7 +241,7 @@ func TestP1V2BungeeRegistrationSmoke(t *testing.T) {
 	identityPath := filepath.Join(bungeeDir, "plugins", "BeaconAgentProxy", "identity.yml")
 	identityID := waitIdentityFile(t, identityPath, pendingWait, bungee)
 	pending := waitIdentityStatus(t, adminToken, identityID, "pending", pendingWait, bungee)
-	if pending.ServerID != serverID || pending.NamespaceID != ns.ID || pending.Kind != "proxy" {
+	if pending.ServerID != "" || pending.NamespaceID != ns.ID || pending.Kind != "proxy" {
 		t.Fatalf("pending 身份归属不符合预期：%+v namespace=%d", pending, ns.ID)
 	}
 
@@ -224,7 +328,7 @@ func createNamespace(t *testing.T, token string) namespaceView {
 
 func approveIdentity(t *testing.T, token, identityID string, guard harness.ProcessGuard) {
 	t.Helper()
-	if err := harness.ApproveIdentityWithGuard(testBeaconURL(), token, identityID, guard); err != nil {
+	if err := harness.RequestApproveIdentityWithGuard(testBeaconURL(), token, identityID, serverID, "P1 v2 E2E 确认代理身份", guard); err != nil {
 		t.Fatalf("批准 identity 失败：%v", err)
 	}
 }
@@ -257,21 +361,15 @@ func createBCCluster(t *testing.T, token string, namespaceID uint, guard harness
 
 func assignServerToBCCluster(t *testing.T, token string, namespaceID, serverRowID, clusterID uint, guard harness.ProcessGuard) serverView {
 	t.Helper()
-	var assignmentResp assignmentResponseView
-	doAdminJSON(t, http.MethodPost, "/admin/v2/server-assignments", token, map[string]any{
+	if _, err := harness.RequestApprovalAndWait(testBeaconURL(), token, http.MethodPost, "/admin/v2/server-assignments", map[string]any{
 		"serverIds": []uint{serverRowID},
 		"target": map[string]any{
 			"kind": "bc_cluster",
 			"id":   clusterID,
 		},
 		"reason": "P1 v2 真机 smoke 首次分配",
-	}, http.StatusOK, &assignmentResp, guard)
-	if len(assignmentResp.Results) != 1 {
-		t.Fatalf("server 分配响应应返回 1 项，实际 %+v", assignmentResp)
-	}
-	result := assignmentResp.Results[0]
-	if result.ID != serverRowID || result.ServerID != serverID || !result.Ok {
-		t.Fatalf("server 分配响应不符合预期：want id=%d serverId=%s ok=true，实际 %+v", serverRowID, serverID, result)
+	}, "succeeded", pendingWait, guard); err != nil {
+		t.Fatalf("提交 server 分配审批失败：%v", err)
 	}
 
 	var servers listResponse[serverView]
@@ -738,10 +836,6 @@ func javaPath() string {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
-	}
-	candidate := `C:\Users\Admin\.jdks\ms-21.0.9\bin\java.exe`
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
 	}
 	return "java"
 }
