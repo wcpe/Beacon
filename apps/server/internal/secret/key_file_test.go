@@ -38,3 +38,34 @@ func TestLoadOrCreateCipherRejectsInvalidKeyFile(t *testing.T) {
 		t.Fatal("无效密钥文件应拒绝启动")
 	}
 }
+
+func TestLoadOrCreateCipherRejectsSymlinkedKeyFile(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "target-secrets", "target.key")
+	if _, err := LoadOrCreateCipher(target); err != nil {
+		t.Fatalf("创建目标密钥失败: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "secrets", "config-encryption.key")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("当前环境不能创建符号链接: %v", err)
+	}
+	if _, err := LoadOrCreateCipher(path); err == nil {
+		t.Fatal("符号链接密钥文件应拒绝启动")
+	}
+}
+
+func TestLoadOrCreateCipherRejectsSymlinkedKeyDirectory(t *testing.T) {
+	targetDirectory := filepath.Join(t.TempDir(), "target-secrets")
+	if err := os.Mkdir(targetDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "secrets", "config-encryption.key")
+	if err := os.Symlink(targetDirectory, filepath.Dir(path)); err != nil {
+		t.Skipf("当前环境不能创建目录符号链接: %v", err)
+	}
+	if _, err := LoadOrCreateCipher(path); err == nil {
+		t.Fatal("符号链接密钥目录应拒绝启动")
+	}
+}

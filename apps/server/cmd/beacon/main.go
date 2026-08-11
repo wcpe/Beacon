@@ -59,10 +59,7 @@ func main() {
 // keyDirectoryForDatabase 返回控制面持久数据目录同级的密钥目录。
 func keyDirectoryForDatabase(database config.DatabaseConfig) (string, error) {
 	if database.Driver == "sqlite" {
-		dsn := database.DSN
-		if strings.HasPrefix(dsn, "file:") {
-			dsn = strings.TrimPrefix(dsn, "file:")
-		}
+		dsn := strings.TrimPrefix(database.DSN, "file:")
 		if index := strings.IndexByte(dsn, '?'); index >= 0 {
 			dsn = dsn[:index]
 		}
