@@ -35,7 +35,7 @@ func newRFTaskTestDB(t *testing.T) *gorm.DB {
 		sqlDB.SetMaxOpenConns(1)
 	}
 	if err := db.AutoMigrate(&model.ReverseFetchTask{}, &model.AgentCommand{},
-		&model.FileObject{}, &model.FileRevision{}, &model.AuditLog{}, &model.Setting{}); err != nil {
+		&model.FileObject{}, &model.FileRevision{}, &model.AuditLog{}, &model.Setting{}, &model.SensitiveAccessGrant{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -43,7 +43,7 @@ func newRFTaskTestDB(t *testing.T) *gorm.DB {
 			_ = sqlDB.Close()
 		}
 	})
-	for _, tbl := range []string{"reverse_fetch_task", "agent_command", "file_object", "file_revision", "audit_log", "setting"} {
+	for _, tbl := range []string{"reverse_fetch_task", "agent_command", "file_object", "file_revision", "audit_log", "setting", "sensitive_access_grant"} {
 		if err := db.Exec("DELETE FROM " + tbl).Error; err != nil {
 			t.Fatalf("清表 %s 失败: %v", tbl, err)
 		}
@@ -62,6 +62,7 @@ func newRFTaskSvc(db *gorm.DB) *ReverseFetchTaskService {
 		panic(err)
 	}
 	svc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo, settingsSvc)
+	svc.SetSensitiveAccessGrants(NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
 	// submit 回传由命令服务据 mode 转交受管任务（与生产装配一致）。
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(svc)
@@ -71,30 +72,49 @@ func newRFTaskSvc(db *gorm.DB) *ReverseFetchTaskService {
 // TestReverseFetchApprovalFreezesManifest 验证扫描、提交均只由审批 worker 下发，提交重验冻结清单。
 func TestReverseFetchApprovalFreezesManifest(t *testing.T) {
 	db := newRFTaskTestDB(t)
-	if err := db.AutoMigrate(&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}); err != nil {
+	if err := db.AutoMigrate(&model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.SensitiveAccessGrant{}); err != nil {
 		t.Fatalf("迁移审批表失败: %v", err)
 	}
 	svc := newRFTaskSvc(db)
 	registry := authz.NewApprovalRegistry()
 	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
 	svc.SetApprovalService(approval)
+	svc.SetSensitiveAccessGrants(NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
 	RegisterReverseFetchTaskApprovalAdapters(registry, svc)
 	if _, err := svc.CreateScanTask("prod", "lobby-1", model.ScopeGroup, "g", "", "alice", ""); err != apperr.ErrForbidden {
 		t.Fatalf("公开扫描创建必须拒绝旁路: %v", err)
 	}
 	ticket, err := svc.RequestCreateScanApproval("prod", "lobby-1", model.ScopeGroup, "g", "", "扫描插件目录", "scan-1", "alice", "", auth.HumanPrincipal("alice"))
-	if err != nil { t.Fatalf("创建扫描审批失败: %v", err) }
-	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil { t.Fatalf("批准扫描失败: %v", err) }
-	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil { t.Fatalf("执行扫描失败: %v", err) }
+	if err != nil {
+		t.Fatalf("创建扫描审批失败: %v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil {
+		t.Fatalf("批准扫描失败: %v", err)
+	}
+	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil {
+		t.Fatalf("执行扫描失败: %v", err)
+	}
 	var task model.ReverseFetchTask
-	if err := db.First(&task).Error; err != nil { t.Fatalf("读取扫描任务失败: %v", err) }
+	if err := db.First(&task).Error; err != nil {
+		t.Fatalf("读取扫描任务失败: %v", err)
+	}
 	manifest := `{"files":[{"path":"Demo/config.yml","size":12,"isText":true,"overThreshold":false}]}`
-	if ok, err := repository.NewReverseFetchTaskRepository(db).SaveManifest(task.ID, manifest, 1, 0, 0); err != nil || !ok { t.Fatalf("写入清单失败: %v", err) }
+	if ok, err := repository.NewReverseFetchTaskRepository(db).SaveManifest(task.ID, manifest, 1, 0, 0); err != nil || !ok {
+		t.Fatalf("写入清单失败: %v", err)
+	}
 	submit, err := svc.RequestSubmitApproval(task.ID, []string{"Demo/config.yml"}, false, "提交选定文件", "submit-1", "alice", "", auth.HumanPrincipal("alice"))
-	if err != nil { t.Fatalf("创建提交审批失败: %v", err) }
-	if _, err := approval.Approve(submit.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil { t.Fatalf("批准提交失败: %v", err) }
-	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil { t.Fatalf("执行提交失败: %v", err) }
-	if err := db.First(&task, task.ID).Error; err != nil || task.Status != model.ReverseFetchTaskFetching || task.SubmitCommandID == 0 { t.Fatalf("提交应下发命令并推进任务: %+v err=%v", task, err) }
+	if err != nil {
+		t.Fatalf("创建提交审批失败: %v", err)
+	}
+	if _, err := approval.Approve(submit.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil {
+		t.Fatalf("批准提交失败: %v", err)
+	}
+	if _, err := NewApprovalWorker(approval).RunOnce(); err != nil {
+		t.Fatalf("执行提交失败: %v", err)
+	}
+	if err := db.First(&task, task.ID).Error; err != nil || task.Status != model.ReverseFetchTaskFetching || task.SubmitCommandID == 0 {
+		t.Fatalf("提交应下发命令并推进任务: %+v err=%v", task, err)
+	}
 }
 
 // fetchCmd 把指定命令从 pending CAS 迁移 fetched（模拟 agent 拉取），返回命令。
@@ -410,6 +430,7 @@ func TestReceiveIngestDispatchesSubmitMode(t *testing.T) {
 		t.Fatalf("装配设置服务失败: %v", err)
 	}
 	taskSvc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo, settingsSvc)
+	taskSvc.SetSensitiveAccessGrants(NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(taskSvc)
 

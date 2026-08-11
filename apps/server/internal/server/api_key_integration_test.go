@@ -39,28 +39,40 @@ func doAPIKey(t *testing.T, method, url, key string, viaBearer bool, body any) (
 	return resp.StatusCode, parsed
 }
 
-// createKey 经登录操作者创建一把密钥，返回明文与 id。
-func createKey(t *testing.T, baseURL, name, role string) (string, int) {
+// createKey 经申请、异人审批、worker 与一次性兑换创建一把密钥。
+func createKey(t *testing.T, ts *integrationTestServer, name, role string) (string, int) {
 	t.Helper()
-	code, body := doJSON(t, http.MethodPost, baseURL+"/admin/v1/api-keys", map[string]any{
-		"name": name, "role": role,
+	ticket := requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/api-keys", t.Name()+"-key-"+name, map[string]any{
+		"name": name, "role": role, "reason": "集成测试创建密钥",
 	})
-	if code != http.StatusCreated {
-		t.Fatalf("创建 %s 密钥应 201，实际 %d：%v", role, code, body)
+	requestID, _ := ticket["approvalRequestId"].(string)
+	code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/approval-requests/"+requestID+"/credential-secret/redeem", nil)
+	if code != http.StatusOK {
+		t.Fatalf("兑换 %s 密钥应 200，实际 %d：%v", role, code, body)
 	}
-	plaintext, _ := body["key"].(string)
+	plaintext, _ := body["secret"].(string)
 	if !strings.HasPrefix(plaintext, "bk_") {
 		t.Fatalf("创建响应应含 bk_ 明文，实际 %v", body["key"])
 	}
-	idF, _ := body["id"].(float64)
-	return plaintext, int(idF)
+	code, list := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/api-keys", nil)
+	if code != http.StatusOK {
+		t.Fatalf("创建后列密钥失败: %d", code)
+	}
+	for _, raw := range asSlice(list["items"]) {
+		item := raw.(map[string]any)
+		if item["name"] == name {
+			return plaintext, int(item["id"].(float64))
+		}
+	}
+	t.Fatalf("创建后未找到密钥 %s", name)
+	return "", 0
 }
 
 // TestAPIKeyReadonlyAllowsReadDeniesWrite 只读密钥可读、写一律 403（统一中间件裁决）。
 func TestAPIKeyReadonlyAllowsReadDeniesWrite(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	roKey, roID := createKey(t, ts.URL, "ext-readonly", "readonly")
+	roKey, roID := createKey(t, ts, "ext-readonly", "readonly")
 
 	// 读端点放行（两种请求头都认）
 	if code, _ := doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances", roKey, false, nil); code != http.StatusOK {
@@ -94,7 +106,7 @@ func TestAPIKeyReadonlyAllowsReadDeniesWrite(t *testing.T) {
 func TestAPIKeyFullCanWriteAndAuditsPrincipal(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	fullKey, _ := createKey(t, ts.URL, "ext-full", "full")
+	fullKey, _ := createKey(t, ts, "ext-full", "full")
 
 	// full 密钥写配置 → 201
 	code, created := doAPIKey(t, http.MethodPost, ts.URL+"/admin/v1/configs", fullKey, true, map[string]any{
@@ -124,7 +136,7 @@ func TestAPIKeyFullCanWriteAndAuditsPrincipal(t *testing.T) {
 func TestAPIKeyCreateAuditAndListNoSecret(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	_, _ = createKey(t, ts.URL, "audited-key", "readonly")
+	_, _ = createKey(t, ts, "audited-key", "readonly")
 
 	// 创建审计 operator = 登录操作者（admin），target_type=apikey
 	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?action=apikey.create", nil)
@@ -170,7 +182,7 @@ func TestAPIKeyRevokeThenUnauthorized(t *testing.T) {
 	defer ts.Close()
 
 	// 吊销
-	revKey, revID := createKey(t, ts.URL, "to-revoke", "readonly")
+	revKey, revID := createKey(t, ts, "to-revoke", "readonly")
 	if code, _ := doJSON(t, http.MethodDelete, ts.URL+"/admin/v1/api-keys/"+itoa(revID), nil); code != http.StatusOK {
 		t.Fatalf("吊销密钥应 200，实际 %d", code)
 	}
@@ -179,12 +191,14 @@ func TestAPIKeyRevokeThenUnauthorized(t *testing.T) {
 	}
 
 	// 重置（轮换明文）
-	resetKey, resetID := createKey(t, ts.URL, "to-reset", "full")
-	code, fresh := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/api-keys/"+itoa(resetID)+"/reset", nil)
+	resetKey, resetID := createKey(t, ts, "to-reset", "full")
+	ticket := requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/api-keys/"+itoa(resetID)+"/reset", t.Name()+"-reset", map[string]any{"reason": "集成测试轮换密钥"})
+	requestID, _ := ticket["approvalRequestId"].(string)
+	code, fresh := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/approval-requests/"+requestID+"/credential-secret/redeem", nil)
 	if code != http.StatusOK {
-		t.Fatalf("重置密钥应 200，实际 %d：%v", code, fresh)
+		t.Fatalf("兑换轮换密钥应 200，实际 %d：%v", code, fresh)
 	}
-	newKey, _ := fresh["key"].(string)
+	newKey, _ := fresh["secret"].(string)
 	if newKey == "" || newKey == resetKey {
 		t.Fatal("重置应返回新明文且不同于旧明文")
 	}

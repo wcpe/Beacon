@@ -504,8 +504,8 @@ func loadZoneRegionIndex(db *gorm.DB, zoneIDs []uint) (map[uint]model.Zone, map[
 // FileDiff 变更项文件内容预览（GET .../items/{itemId}/file-diff，spec §5.1 正式契约）：
 // after = 模板源内容、before = 目标内容；serverId 缺省取字典序第一个与源存在差异的目标；
 // 复用文件资产安全通道（敏感路径 403 / agent 离线 504 / 查看审计）；is_text=false 直接 binary、不取内容。
-func (s *DeliveryDiffService) FileDiff(ctx context.Context, orderID, itemID uint,
-	serverIDParam, reason, operator, clientIP string) (*ChangeFileDiffView, error) {
+func (s *DeliveryDiffService) FileDiff(_ context.Context, _ uint, _ uint,
+	_ string, _ string, _ string, _ string) (*ChangeFileDiffView, error) {
 	return nil, apperr.ErrOperationRequiresApproval
 }
 

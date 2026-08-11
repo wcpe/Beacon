@@ -295,6 +295,7 @@ func TestServiceOverview(t *testing.T) {
 	}
 	if metric == nil {
 		t.Fatalf("总览缺 metric_sample 域")
+		return
 	}
 	if metric.RetentionDays != archiveDefaultRetentionMetricSample {
 		t.Fatalf("metric_sample 保留期应 %d，实际 %d", archiveDefaultRetentionMetricSample, metric.RetentionDays)

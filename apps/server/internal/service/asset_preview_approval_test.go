@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
@@ -165,33 +167,7 @@ func TestAssetPairReadApprovalRequiresBothGrants(t *testing.T) {
 	if leftRequest.RequestID == rightRequest.RequestID {
 		t.Fatal("双侧必须是独立审批申请")
 	}
-	if _, err := approval.Approve(leftRequest.RequestID, auth.HumanPrincipal("alice"), ""); err != nil {
-		t.Fatalf("批准左侧失败: %v", err)
-	}
-	if _, err := approval.Approve(rightRequest.RequestID, auth.HumanPrincipal("alice"), ""); err != nil {
-		t.Fatalf("批准右侧失败: %v", err)
-	}
-	for i := 0; i < 2; i++ {
-		if _, err := NewApprovalWorker(approval).RunOnce(context.Background()); err != nil {
-			t.Fatalf("执行审批 worker 失败: %v", err)
-		}
-	}
-	commands := allCommands(t, db)
-	if len(commands) != 2 {
-		t.Fatalf("双侧批准后应各建一条命令，实际 %d", len(commands))
-	}
-	for _, command := range commands {
-		if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(command.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
-			t.Fatalf("模拟 Agent 拉取命令失败: ok=%v err=%v", ok, err)
-		}
-		content := "左侧正文"
-		if command.ServerID == "lobby-2" {
-			content = "右侧正文"
-		}
-		if err := svc.ReceiveContent("prod", command.ServerID, command.ID, AssetContentPayload{Content: content}); err != nil {
-			t.Fatalf("Agent 回传失败: %v", err)
-		}
-	}
+	commands := approveAndFetchAssetPair(t, db, svc, approval, leftRequest, rightRequest)
 	leftGrant, err := repository.NewSensitiveAccessGrantRepository(db).FindByApprovalRequestID(leftRequest.RequestID)
 	if err != nil || leftGrant == nil || leftGrant.PairID == "" || leftGrant.PairSide != "left" {
 		t.Fatalf("左侧应有成对授权: grant=%+v err=%v", leftGrant, err)
@@ -212,5 +188,46 @@ func TestAssetPairReadApprovalRequiresBothGrants(t *testing.T) {
 	}
 	if countAudit(t, db, model.ActionAssetDiff) != 1 || auditDetailContains(t, db, model.ActionAssetDiff, "左侧正文") || auditDetailContains(t, db, model.ActionAssetDiff, "右侧正文") {
 		t.Fatal("双侧差异审计不得包含正文")
+	}
+}
+
+func approveAndFetchAssetPair(t *testing.T, db *gorm.DB, svc *AssetPreviewService, approval *ApprovalService,
+	leftRequest, rightRequest model.ApprovalRequest,
+) []model.AgentCommand {
+	t.Helper()
+	approveAssetPairRequests(t, approval, leftRequest, rightRequest)
+	commands := allCommands(t, db)
+	if len(commands) != 2 {
+		t.Fatalf("双侧批准后应各建一条命令，实际 %d", len(commands))
+	}
+	for _, command := range commands {
+		fetchAssetPairContent(t, db, svc, command)
+	}
+	return commands
+}
+
+func approveAssetPairRequests(t *testing.T, approval *ApprovalService, leftRequest, rightRequest model.ApprovalRequest) {
+	t.Helper()
+	for _, request := range []model.ApprovalRequest{leftRequest, rightRequest} {
+		if _, err := approval.Approve(request.RequestID, auth.HumanPrincipal("alice"), ""); err != nil {
+			t.Fatalf("批准双侧申请失败: %v", err)
+		}
+		if _, err := NewApprovalWorker(approval).RunOnce(context.Background()); err != nil {
+			t.Fatalf("执行审批 worker 失败: %v", err)
+		}
+	}
+}
+
+func fetchAssetPairContent(t *testing.T, db *gorm.DB, svc *AssetPreviewService, command model.AgentCommand) {
+	t.Helper()
+	if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(command.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
+		t.Fatalf("模拟 Agent 拉取命令失败: ok=%v err=%v", ok, err)
+	}
+	content := "左侧正文"
+	if command.ServerID == "lobby-2" {
+		content = "右侧正文"
+	}
+	if err := svc.ReceiveContent("prod", command.ServerID, command.ID, AssetContentPayload{Content: content}); err != nil {
+		t.Fatalf("Agent 回传失败: %v", err)
 	}
 }

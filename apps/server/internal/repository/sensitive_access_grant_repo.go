@@ -68,6 +68,19 @@ func (r *SensitiveAccessGrantRepository) FindPendingByTargetRef(targetRef string
 	return &grant, nil
 }
 
+// FindByTargetRef 查询绑定既有命令的唯一正文授权；不存在返回 nil。
+func (r *SensitiveAccessGrantRepository) FindByTargetRef(targetRef string) (*model.SensitiveAccessGrant, error) {
+	var grant model.SensitiveAccessGrant
+	err := r.db.Where("target_ref = ?", targetRef).First(&grant).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &grant, nil
+}
+
 // Activate 仅在冻结审批、操作、目标与版本哈希全部一致时把 pending 授权原子激活。
 func (r *SensitiveAccessGrantRepository) Activate(requestID, operation, targetRef, contentHash string, expiresAt time.Time) (bool, error) {
 	result := r.db.Model(&model.SensitiveAccessGrant{}).

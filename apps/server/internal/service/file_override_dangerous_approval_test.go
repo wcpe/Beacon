@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -226,6 +227,66 @@ func TestOverrideSetDangerousActionsRequireApproval(t *testing.T) {
 	}
 	if _, err := sets.Get(set.ID); err != apperr.ErrOverrideSetNotFound {
 		t.Fatalf("批准后覆盖集应删除：%v", err)
+	}
+}
+
+func TestOverrideSetPublishApprovalUsesWorkerTransactionWithSingleSQLiteConnection(t *testing.T) {
+	_, sets, approval, db := newFileOverrideApprovalSuite(t)
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("获取底层 SQLite 连接池失败：%v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	set, err := sets.Create(CreateOverrideSetParams{Namespace: "prod", Name: "Demo", ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/Demo", Operator: "alice"})
+	if err != nil {
+		t.Fatalf("创建覆盖集失败：%v", err)
+	}
+	publish := PublishOverrideSetParams{TargetRoot: "plugins/Demo", ReloadCommand: "demo reload", Operator: "alice"}
+	ticket, err := sets.RequestPublish(set.ID, publish, "发布覆盖集", "override-single-connection", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("申请覆盖集发布审批失败：%v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准覆盖集发布失败：%v", err)
+	}
+
+	type workerResult struct {
+		processed int
+		err       error
+	}
+	done := make(chan workerResult, 1)
+	go func() {
+		processed, workerErr := NewApprovalWorker(approval).RunOnce()
+		done <- workerResult{processed: processed, err: workerErr}
+	}()
+	select {
+	case result := <-done:
+		if result.err != nil || result.processed != 1 {
+			t.Fatalf("单连接 SQLite 下审批 worker 应完成一次发布：processed=%d err=%v", result.processed, result.err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("单连接 SQLite 下覆盖集审批 worker 不得等待第二个连接")
+	}
+
+	updated, err := sets.Get(set.ID)
+	if err != nil || updated.Version != 2 || updated.ReloadCommand != publish.ReloadCommand {
+		t.Fatalf("审批完成后覆盖集版本应原子更新：set=%+v err=%v", updated, err)
+	}
+	var request model.ApprovalRequest
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&request).Error; err != nil {
+		t.Fatalf("读取审批申请失败：%v", err)
+	}
+	if request.Status != model.ApprovalStatusSucceeded {
+		t.Fatalf("审批申请应进入 succeeded，实际 %s", request.Status)
+	}
+	var receipt model.ApprovalExecutionReceipt
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&receipt).Error; err != nil {
+		t.Fatalf("审批成功必须同事务写入执行回执：%v", err)
+	}
+	if receipt.PayloadHash != request.FrozenPayloadSHA256 || receipt.ResultRef != "1" {
+		t.Fatalf("执行回执绑定不符：receipt=%+v request=%+v", receipt, request)
 	}
 }
 

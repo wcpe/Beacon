@@ -201,38 +201,16 @@ func TestFileWriteAuditUsesAuthenticatedOperator(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
-	// 建：请求体故意手填伪造 operator，应被认证身份覆盖。
-	code, created := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/files", map[string]any{
-		"namespace": "prod", "group": "__GLOBAL__", "path": "auth/op.allin",
-		"scopeLevel": "global", "content": "v1\n", "operator": "forged-create",
-	})
-	if code != http.StatusCreated {
-		t.Fatalf("建文件应 201，实际 %d：%v", code, created)
-	}
-	idF, ok := created["id"].(float64)
-	if !ok {
-		t.Fatalf("建文件响应缺 id：%v", created)
-	}
-	itemURL := ts.URL + "/admin/v1/files/" + itoa(int(idF))
-
+	// 建：审批申请主体来自认证身份，不能由请求体伪造 operator。
+	id := createFileForTest(t, ts, "prod", "__GLOBAL__", "auth/op.allin", "global", "v1\n")
 	// 发布：手填伪造 operator。
-	if code, pub := doJSON(t, http.MethodPut, itemURL, map[string]any{
-		"content": "v2\n", "operator": "forged-publish",
-	}); code != http.StatusOK {
-		t.Fatalf("发布文件应 200，实际 %d：%v", code, pub)
-	}
+	publishFileForTest(t, ts, id, "v2\n", "发布第二版")
 
 	// 回滚到 v1：手填伪造 operator。
-	if code, rb := doJSON(t, http.MethodPost, itemURL+"/rollback", map[string]any{
-		"toVersion": 1, "operator": "forged-rollback",
-	}); code != http.StatusOK {
-		t.Fatalf("回滚文件应 200，实际 %d：%v", code, rb)
-	}
+	rollbackFileForTest(t, ts, id, 1, "回滚第一版")
 
 	// 软删：query 故意手填伪造 operator。
-	if code, _ := doJSON(t, http.MethodDelete, itemURL+"?operator=forged-delete&comment=x", nil); code != http.StatusOK {
-		t.Fatalf("软删文件应 200，实际 %d", code)
-	}
+	deleteFileForTest(t, ts, id, "x")
 
 	// 四类文件写审计的 operator 都应为认证身份，而非手填值。
 	for _, action := range []string{"file.create", "file.publish", "file.rollback", "file.delete"} {

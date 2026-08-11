@@ -38,7 +38,7 @@ func TestSettingsSeedUpdateConsume(t *testing.T) {
 	}
 
 	// 改设置（模拟运维调参）→ 消费侧（GetInt）即读新值。
-	if err := svc.Update(service.SettingHealthTTLSec, "45", "alice", "127.0.0.1"); err != nil {
+	if err := service.ApplySettingUpdateForTest(svc, service.SettingHealthTTLSec, "45", "alice", "127.0.0.1"); err != nil {
 		t.Fatalf("更新失败: %v", err)
 	}
 	if got := svc.GetInt(service.SettingHealthTTLSec); got != 45 {
@@ -52,7 +52,7 @@ func TestSettingsReloadFromStore(t *testing.T) {
 	if err := svc.SeedFromConfig(config.Default()); err != nil {
 		t.Fatalf("种子失败: %v", err)
 	}
-	if err := svc.Update(service.SettingLogLevel, "DEBUG", "alice", ""); err != nil {
+	if err := service.ApplySettingUpdateForTest(svc, service.SettingLogLevel, "DEBUG", "alice", ""); err != nil {
 		t.Fatalf("更新 log.level 失败: %v", err)
 	}
 

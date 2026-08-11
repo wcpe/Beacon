@@ -319,8 +319,6 @@ func run() error {
 	// 命令待办（FR-39）：serverId 级唤醒 Hub，与上面三通道独立；建反向抓取命令时唤醒目标 agent 的 SSE 流
 	commandHub := longpoll.NewHub()
 	// 文件浏览结果（FR-110）：serverId 级唤醒 Hub，与命令待办独立；agent 回传浏览结果时唤醒等待中的 admin 请求。
-	// 与 commandHub 分立——commandHub 唤醒 agent 拉命令，browseHub 唤醒 admin 取结果，二者信号不互相干扰。
-	browseHub := longpoll.NewHub()
 	// revRepo 注入供 per-server 有效配置变更时间线聚合该服覆盖链各 config 项的发布历史（FR-80）
 	effectiveService := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	// 发布影响面预览（FR-79）：registry（在线真源）+ assignRepo（zone 归属真源）求交算受影响在线子服
@@ -382,11 +380,13 @@ func run() error {
 	service.RegisterMessagePayloadApprovalAdapter(approvalRegistry, repository.NewMessageRepository(db), sensitiveAccessGrants)
 	v2ControlPlaneService.SetApprovalService(approvalService)
 	configService.SetApprovalService(approvalService)
+	configService.SetSensitiveAccessGrants(sensitiveAccessGrants)
 	fileService.SetApprovalService(approvalService)
 	overrideSetService.SetApprovalService(approvalService)
 	apiKeyService.SetApprovalService(approvalService)
 	service.RegisterV2ControlPlaneApprovalAdapters(approvalRegistry, v2ControlPlaneService)
 	service.RegisterConfigApprovalAdapters(approvalRegistry, configService)
+	service.RegisterSensitiveConfigApprovalAdapter(approvalRegistry, configService, sensitiveAccessGrants)
 	service.RegisterFileOverrideApprovalAdapters(approvalRegistry, fileService, overrideSetService)
 	service.RegisterAPIKeyApprovalAdapters(approvalRegistry, apiKeyService)
 	// MCP OAuth 客户端的高危生命周期同样只能由审批 worker 应用；协议端点在受信反代配置完成前保持未挂载。
@@ -403,7 +403,7 @@ func run() error {
 	mcpToolRegistry.SetFileOverrideServices(fileService, overrideSetService)
 	mcpProtocolHandler := server.NewMCPProtocolHandler(mcpProxyPolicy, mcpOAuthService, mcpOAuthService, mcpToolRegistry)
 	approvalWorker := service.NewApprovalWorker(approvalService)
-	approvalHandler := handler.NewApprovalHandler(approvalService)
+	approvalHandler := handler.NewApprovalHandler(approvalService, apiKeyService)
 
 	// 配置导入·在线实例反向抓取（FR-39，见 ADR-0027）：命令仓库 + 服务（建命令 / 拉取 / ingest 复用 FileService.Import）+ 处理器。
 	// 建命令提交后经 notifier 唤醒目标 agent 的 SSE 流发 command-pending。
@@ -420,10 +420,8 @@ func run() error {
 	v2ControlPlaneService.SetDirectoryResyncCommandPort(commandRepo, notifier)
 	commandHandler.SetReportAuthenticator(v2ControlPlaneService)
 
-	// 只读文件浏览（FR-110，见 ADR-0049 决策 9）：复用同一 commandService（fs-browse 类型）经命令生命周期代理。
-	// 注入 browseHub 供 admin 请求注册结果 waiter、agent 回传后唤醒；命令提交后经 notifier 唤醒目标 agent。
-	commandService.SetBrowseResultHub(browseHub)
 	browseHandler := handler.NewBrowseHandler(commandService, instanceService)
+	browseHandler.SetReportAuthenticator(v2ControlPlaneService)
 
 	// P8 装配点：文件资产索引（FR-163，见 v2-file-assets.md）：agent 面清单上报（增量 / 全量分片，摘要校准）+
 	// 管理面搜索 / 概要 / 跨服比对 / 批量重扫。重扫复用同一 commandRepo（asset-rescan 类型）经既有长轮询命令通道下发，
@@ -550,6 +548,7 @@ func run() error {
 	// 反向抓取单文件上限从设置 store 读、热生效（FR-61）：ReceiveScan 用该上限 + agent size 重算 overThreshold。
 	reverseFetchTaskService := service.NewReverseFetchTaskService(db, reverseFetchTaskRepo, commandRepo, fileService, auditRepo, settingsService)
 	reverseFetchTaskService.SetApprovalService(approvalService)
+	reverseFetchTaskService.SetSensitiveAccessGrants(sensitiveAccessGrants)
 	service.RegisterReverseFetchTaskApprovalAdapters(approvalRegistry, reverseFetchTaskService)
 	reverseFetchTaskService.SetNotifier(notifier)
 	// agent 复用同一 /files/ingest 端点回传 submit 选定内容，控制面据命令 mode=submit 转交受管任务编排落库。

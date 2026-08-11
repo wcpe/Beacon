@@ -11,8 +11,8 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-// mcpReadServices 只聚合已存在的应用查询服务，避免 MCP 越过服务层直读存储。
-type mcpReadServices struct {
+// MCPReadServices 只聚合已存在的应用查询服务，避免 MCP 越过服务层直读存储。
+type MCPReadServices struct {
 	v2          *service.V2ControlPlaneService
 	topology    *service.TopologyService
 	health      *service.HealthQueryService
@@ -25,8 +25,8 @@ type mcpReadServices struct {
 }
 
 // NewMCPReadServices 构造 MCP 只读服务集合；仅允许调用方传入应用查询服务。
-func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, scope *service.ObservationScopeResolver) mcpReadServices {
-	return mcpReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, scope: scope}
+func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.TopologyService, health *service.HealthQueryService, messages *service.MessageQueryService, connections *service.ConnQueryService, commands *service.CommandObserveService, scheduling *service.SchedDecisionQueryService, audits *service.AuditService, scope *service.ObservationScopeResolver) MCPReadServices {
+	return MCPReadServices{v2: v2, topology: topology, health: health, messages: messages, connections: connections, commands: commands, scheduling: scheduling, audits: audits, scope: scope}
 }
 
 var mcpReadToolNames = []string{
@@ -129,11 +129,11 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.metadata.namespaces.list", Description: "分页读取 namespace 元数据摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			items, err := r.reads.v2.ListNamespacesWithStats()
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			items = mcpNamespacesInScope(items, scope)
 			start, end := mcpPageBounds(in.Page, in.PageSize, len(items))
@@ -148,52 +148,22 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.snapshot.get", Description: "读取指定 namespace 的在线拓扑摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpTopologyInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok || in.Namespace == "" || !r.mcpNamespaceVisible(in.Namespace, scope) {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			topology := r.reads.topology.Build(in.Namespace)
 			return &mcp.CallToolResult{}, mcpTopologyView(topology), nil
 		})
 	}
-	if r.reads.health != nil {
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.metrics.health.list", Description: "分页读取实时健康摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpHealthListInput) (*mcp.CallToolResult, map[string]any, error) {
-			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
-			if !ok {
-				return mcpToolError(), nil, nil
-			}
-			items, total, err := r.reads.health.ListHealth(service.ListHealthParams{NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, Zone: in.Zone, Level: in.Level, Keyword: in.Keyword, Page: in.Page, PageSize: in.PageSize})
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, map[string]any{"items": items, "total": total}, nil
-		})
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.metrics.summary.get", Description: "读取集群实时指标摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpScopeInput) (*mcp.CallToolResult, map[string]any, error) {
-			scope, ok := r.mcpObservationScope(in)
-			if !ok {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, map[string]any{"summary": r.reads.health.MetricsSummaryInScope(scope)}, nil
-		})
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.metrics.series.query", Description: "读取指定服务器的有界指标时序"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpMetricsSeriesInput) (*mcp.CallToolResult, map[string]any, error) {
-			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
-			if !ok || len(in.ServerIDs) > 20 {
-				return mcpToolError(), nil, nil
-			}
-			series, err := r.reads.health.MetricsSeriesInScope(service.MetricsSeriesParams{ServerIDs: in.ServerIDs, FromMs: in.FromMs, ToMs: in.ToMs, StepSec: in.StepSec}, scope)
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, map[string]any{"stepSec": series.StepSec, "series": series.Series}, nil
-		})
-	}
+	r.registerReadHealthTools(server)
 	if r.reads.messages != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.history.messages.list", Description: "读取消息元数据历史，不含正文与玩家标识"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpMessageHistoryInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			page, err := r.reads.messages.List(service.ListMessagesParams{ServerID: in.ServerID, NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, FromMs: in.FromMs, ToMs: in.ToMs, Cursor: in.Cursor, Limit: in.Limit})
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpMessageHistoryView(page), nil
 		})
@@ -202,11 +172,11 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.history.connections.stats", Description: "读取连接历史聚合，不含玩家、地址或单连接明细"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpConnectionStatsInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			items, err := r.reads.connections.Stats(service.ConnStatsParams{ServerID: in.ServerID, NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, FromMs: in.FromMs, ToMs: in.ToMs, Bucket: in.Bucket})
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, map[string]any{"items": items}, nil
 		})
@@ -215,11 +185,11 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.history.commands.list", Description: "分页读取 Agent 命令历史元数据，不含结果正文"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpCommandHistoryInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			items, total, err := r.reads.commands.List(repository.CommandFilter{Namespace: in.Namespace, NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All, ServerID: in.ServerID, Type: in.Type, Status: in.Status, From: mcpParseTime(in.From), To: mcpParseTime(in.To), Page: in.Page, Size: in.PageSize})
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpCommandHistoryView(items, total), nil
 		})
@@ -228,11 +198,11 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.history.scheduling-decisions.list", Description: "分页读取调度决策历史摘要，不含候选排除明细"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSchedulingHistoryInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			items, total, err := r.reads.scheduling.List(service.ListSchedDecisionsParams{NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, FromMs: in.FromMs, ToMs: in.ToMs, ServerID: in.ServerID, Result: in.Result, Page: in.Page, PageSize: in.PageSize})
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpSchedulingHistoryView(items, total), nil
 		})
@@ -241,15 +211,50 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.audit.events.list", Description: "分页读取脱敏审计事件摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAuditListInput) (*mcp.CallToolResult, map[string]any, error) {
 			scope, ok := r.mcpObservationScope(in.mcpScopeInput)
 			if !ok {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			items, total, err := r.reads.audits.List(repository.AuditFilter{Namespace: in.Namespace, NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All, Action: in.Action, TargetType: in.TargetType, From: mcpParseTime(in.From), To: mcpParseTime(in.To), Page: in.Page, Size: in.PageSize})
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpAuditHistoryView(items, total), nil
 		})
 	}
+}
+
+func (r *MCPToolRegistry) registerReadHealthTools(server *mcp.Server) {
+	if r.reads.health == nil {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.metrics.health.list", Description: "分页读取实时健康摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpHealthListInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+		if !ok {
+			return mcpRejectedResult()
+		}
+		items, total, err := r.reads.health.ListHealth(service.ListHealthParams{NamespaceIDs: scope.NamespaceIDs, Scoped: !scope.All, Zone: in.Zone, Level: in.Level, Keyword: in.Keyword, Page: in.Page, PageSize: in.PageSize})
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, map[string]any{"items": items, "total": total}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.metrics.summary.get", Description: "读取集群实时指标摘要"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpScopeInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in)
+		if !ok {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, map[string]any{"summary": r.reads.health.MetricsSummaryInScope(scope)}, nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.metrics.series.query", Description: "读取指定服务器的有界指标时序"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpMetricsSeriesInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+		if !ok || len(in.ServerIDs) > 20 {
+			return mcpRejectedResult()
+		}
+		series, err := r.reads.health.MetricsSeriesInScope(service.MetricsSeriesParams{ServerIDs: in.ServerIDs, FromMs: in.FromMs, ToMs: in.ToMs, StepSec: in.StepSec}, scope)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, map[string]any{"stepSec": series.StepSec, "series": series.Series}, nil
+	})
 }
 
 func mcpPageBounds(page, size, total int) (int, int) {

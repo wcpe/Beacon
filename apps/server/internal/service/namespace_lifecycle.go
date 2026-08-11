@@ -253,11 +253,11 @@ func loadNamespaceLifecycleState(db *gorm.DB, namespaceID uint) (namespaceLifecy
 	return namespaceLifecycleSnapshot{ID: namespace.ID, Code: namespace.Code, Name: namespace.Name, Description: namespace.Description, Lifecycle: namespaceLifecycleValue(&namespace)}, impact, nil
 }
 
-func minLifecycleSummary(value, max int) int {
-	if value < max {
+func minLifecycleSummary(value, limit int) int {
+	if value < limit {
 		return value
 	}
-	return max
+	return limit
 }
 
 func namespaceLifecyclePayloadMap(op authz.Operation, namespace namespaceLifecycleSnapshot, impact namespaceLifecycleImpact, operator, clientIP string) map[string]any {
@@ -276,15 +276,6 @@ func namespaceLifecycleHash(namespace namespaceLifecycleSnapshot, impact namespa
 	}{Namespace: namespace, Impact: impact})
 	sum := sha256.Sum256([]byte(body))
 	return hex.EncodeToString(sum[:])
-}
-
-func namespaceHasActiveServer(impact namespaceLifecycleImpact) bool {
-	for _, server := range impact.Servers {
-		if server.Lifecycle != model.ServerLifecycleArchived {
-			return true
-		}
-	}
-	return false
 }
 
 func namespaceLifecycleValue(namespace *model.Namespace) string {

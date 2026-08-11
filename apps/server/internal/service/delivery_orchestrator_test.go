@@ -60,6 +60,7 @@ func TestPlanBatchCounts(t *testing.T) {
 		})
 	}
 }
+
 // TestPlanBatchMembersStable 批成员按字典序稳定切分（同输入必同输出，可复现）。
 func TestPlanBatchMembersStable(t *testing.T) {
 	ids := []string{"a", "b", "c", "d", "e"}
@@ -530,6 +531,7 @@ func TestOrchestratorConfigGrayRendersBlobAndManifest(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatalf("清单 Files 应含渲染后的配置文件: %+v", manifest.Files)
+		return
 	}
 	if cfg.Action != model.ChangeItemActionUpdate || cfg.SHA256 == "" || cfg.Size == 0 {
 		t.Fatalf("配置文件项字段不符: %+v", cfg)

@@ -51,7 +51,7 @@ func TestFileResolveWithProvenance(t *testing.T) {
 
 	// 经 FileService 建多层结构化文件（同一 path app.yml）：global 基线 + zone 增量 + server 增量/减量
 	mk := func(group, scope, target, content string, whole bool) {
-		if _, err := s.files.Create(service.CreateFileParams{
+		if _, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 			Namespace: "prod", Group: group, Path: "app.yml",
 			ScopeLevel: scope, ScopeTarget: target,
 			Content: content, Operator: "alice", WholeFileOverride: whole,
@@ -65,7 +65,7 @@ func TestFileResolveWithProvenance(t *testing.T) {
 
 	// 另建一个非结构化文件，验证整文件来源
 	mk2 := func(group, scope, target, content string) {
-		if _, err := s.files.Create(service.CreateFileParams{
+		if _, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 			Namespace: "prod", Group: group, Path: "boot.allin",
 			ScopeLevel: scope, ScopeTarget: target,
 			Content: content, Operator: "alice",

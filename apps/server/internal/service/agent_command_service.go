@@ -58,21 +58,21 @@ type AgentCommandService struct {
 	fileSvc   *FileService
 	auditRepo *repository.AuditLogRepository
 	notifier  CommandNotifier
-	// 拓印 diff 解期望合并值用（FR-46，可选注入；未注入则 ImprintDiff/ConfirmImprint 不可用）。
+	// 拓印 diff 解期望合并值用（FR-46，可选注入；未注入则 ImprintDiff/确认审批不可用）。
 	effSvc *FileEffectiveService
 	// 受管任务 submit 回传转交（FR-58，可选注入；未注入则 submit 命令回传按未知 mode 拒）。
 	submitReceiver submitIngestReceiver
-	// 文件浏览结果等待 Hub（FR-110，可选注入；未注入则 RequestBrowse 不可用）。
-	browseHub BrowseResultHub
-	approval  *ApprovalService
-	grants    *SensitiveAccessGrantService
+	approval       *ApprovalService
+	grants         *SensitiveAccessGrantService
 }
 
 // SetApprovalService 注入命令危险操作的统一审批入口。
 func (s *AgentCommandService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
 // SetSensitiveAccessGrants 注入拓印正文的一次性访问授权服务。
-func (s *AgentCommandService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) { s.grants = grants }
+func (s *AgentCommandService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) {
+	s.grants = grants
+}
 
 // NewAgentCommandService 构造服务。
 func NewAgentCommandService(db *gorm.DB, repo *repository.AgentCommandRepository, fileSvc *FileService, auditRepo *repository.AuditLogRepository) *AgentCommandService {
@@ -90,7 +90,7 @@ func (s *AgentCommandService) SetSubmitIngestReceiver(r submitIngestReceiver) { 
 
 // RequestReverseFetch 由 admin 触发对某在线实例的反向抓取：事务内建 pending 命令 + file.reverse-fetch 审计。
 // 在线校验与 SSE 唤醒在 handler/server 层。返回命令（含 id 供 agent 回传引用）。
-func (s *AgentCommandService) RequestReverseFetch(ns, serverID, scope, group, target, operator, clientIP string) (*model.AgentCommand, error) {
+func (s *AgentCommandService) RequestReverseFetch(_, _, _, _, _, _, _ string) (*model.AgentCommand, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -129,11 +129,11 @@ func (s *AgentCommandService) applyRequestReverseFetchInTx(tx *gorm.DB, ns, serv
 		return nil, e
 	}
 	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns,
-			Operator:      operator, Action: model.ActionFileReverseFetch,
-			TargetType: model.TargetTypeCommand, TargetRef: serverID,
-			Detail: fmt.Sprintf(`{"commandId":%d,"scope":%q,"group":%q,"target":%q}`, cmd.ID, scope, group, target),
-			Result: model.ResultOK, ClientIP: clientIP,
+		NamespaceCode: ns,
+		Operator:      operator, Action: model.ActionFileReverseFetch,
+		TargetType: model.TargetTypeCommand, TargetRef: serverID,
+		Detail: fmt.Sprintf(`{"commandId":%d,"scope":%q,"group":%q,"target":%q}`, cmd.ID, scope, group, target),
+		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
 	}
@@ -143,7 +143,7 @@ func (s *AgentCommandService) applyRequestReverseFetchInTx(tx *gorm.DB, ns, serv
 // RequestResync 由 admin 触发对某在线实例的强制重同步（FR-91）：事务内建 pending resync-config 命令 + instance.resync 审计。
 // 语义为「重拉控制面权威的有效配置/文件树/覆盖集并 apply」，无业务载荷（空 JSON），复用命令队列既有模式（见 ADR-0027）。
 // 在线校验与 SSE 唤醒在 handler/server 层（与取日志一致）。返回命令（含 id 供 agent 回传结果引用）。
-func (s *AgentCommandService) RequestResync(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+func (s *AgentCommandService) RequestResync(_, _, _, _ string) (*model.AgentCommand, error) {
 	return nil, apperr.ErrForbidden
 }
 

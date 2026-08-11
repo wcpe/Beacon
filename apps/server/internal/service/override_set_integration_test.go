@@ -4,26 +4,61 @@ package service_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
+	"github.com/wcpe/Beacon/apps/server/internal/secret"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
 // newOverrideStack 装配覆盖集服务（FR-15）+ 文件仓库（用于成员关联与 dry-run）。
-func newOverrideStack(t *testing.T) (*service.OverrideSetService, *repository.FileObjectRepository) {
+func newOverrideStack(t *testing.T) (*service.OverrideSetService, *repository.FileObjectRepository, *service.ApprovalService, *gorm.DB) {
 	db := testDB(t)
 	setRepo := repository.NewFileOverrideSetRepository(db)
 	revRepo := repository.NewFileOverrideSetRevisionRepository(db)
 	fileRepo := repository.NewFileObjectRepository(db)
 	auditRepo := repository.NewAuditLogRepository(db)
 	svc := service.NewOverrideSetService(db, setRepo, revRepo, fileRepo, auditRepo)
-	return svc, fileRepo
+	files := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
+	return svc, fileRepo, newFileOverrideApprovalFixture(t, db, files, svc), db
+}
+
+// newFileOverrideApprovalFixture 以临时持久密钥文件装配审批链，避免把测试密钥写入环境或源码。
+func newFileOverrideApprovalFixture(t *testing.T, db *gorm.DB, files *service.FileService, sets *service.OverrideSetService) *service.ApprovalService {
+	t.Helper()
+	cipher, err := secret.LoadOrCreateCipher(filepath.Join(t.TempDir(), "secrets", "approval.key"))
+	if err != nil {
+		t.Fatalf("创建临时审批密钥失败: %v", err)
+	}
+	registry := authz.NewApprovalRegistry()
+	approval := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	files.SetApprovalService(approval)
+	files.SetPendingChangeCipher(cipher)
+	sets.SetApprovalService(approval)
+	sets.SetPendingChangeCipher(cipher)
+	service.RegisterFileOverrideApprovalAdapters(registry, files, sets)
+	return approval
+}
+
+// executeFileOverrideApproval 真实走申请后的人工批准与 worker，不允许测试直调公开危险入口。
+func executeFileOverrideApproval(t *testing.T, approval *service.ApprovalService, ticket service.FileApprovalTicket) {
+	t.Helper()
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("reviewer"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准审批失败: %v", err)
+	}
+	if processed, err := service.NewApprovalWorker(approval).RunOnce(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("审批 worker 应执行一次：processed=%d err=%v", processed, err)
+	}
 }
 
 // overrideDeliveryStack 聚合覆盖集服务 + 文件服务 + 投递服务 + 注册表（验证投递解析与长轮询唤醒）。
@@ -71,7 +106,7 @@ func registerOverrideS1(t *testing.T, reg *runtime.Registry) {
 
 // TestOverrideSetLifecycle 集成验证：建→发布→历史→回滚→软删，覆盖集事实正确流转。
 func TestOverrideSetLifecycle(t *testing.T) {
-	svc, _ := newOverrideStack(t)
+	svc, _, approval, db := newOverrideStack(t)
 	set, err := svc.Create(service.CreateOverrideSetParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Name: "AllinCore",
 		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/AllinCore",
@@ -85,11 +120,20 @@ func TestOverrideSetLifecycle(t *testing.T) {
 	}
 
 	// 发布新版本：改命令。
-	pub, err := svc.Publish(set.ID, service.PublishOverrideSetParams{
+	ticket, err := svc.RequestPublish(set.ID, service.PublishOverrideSetParams{
 		TargetRoot: "plugins/AllinCore", ReloadCommand: "allin reload all", Operator: "alice",
-	})
+	}, "更新覆盖集", "override-publish", auth.HumanPrincipal("alice"))
 	if err != nil {
-		t.Fatalf("发布失败: %v", err)
+		t.Fatalf("申请发布失败: %v", err)
+	}
+	executeFileOverrideApproval(t, approval, ticket)
+	var receipt model.ApprovalExecutionReceipt
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&receipt).Error; err != nil {
+		t.Fatalf("审批执行必须与覆盖集变更同事务写回执: %v", err)
+	}
+	pub, err := svc.Get(set.ID)
+	if err != nil {
+		t.Fatalf("读取发布结果失败: %v", err)
 	}
 	if pub.Version != 2 || pub.ReloadCommand != "allin reload all" {
 		t.Fatalf("期望 v2 且命令更新，得 v=%d cmd=%q", pub.Version, pub.ReloadCommand)
@@ -101,17 +145,24 @@ func TestOverrideSetLifecycle(t *testing.T) {
 	}
 
 	// 回滚到 v1：还原命令，version+1=3。回滚只还原事实，不重放命令（命令重放由 agent 侧禁止）。
-	rb, err := svc.Rollback(set.ID, 1, "alice", "回滚", "")
+	ticket, err = svc.RequestRollback(set.ID, 1, "回滚覆盖集", "override-rollback", "alice", "回滚", "", auth.HumanPrincipal("alice"))
 	if err != nil {
-		t.Fatalf("回滚失败: %v", err)
+		t.Fatalf("申请回滚失败: %v", err)
+	}
+	executeFileOverrideApproval(t, approval, ticket)
+	rb, err := svc.Get(set.ID)
+	if err != nil {
+		t.Fatalf("读取回滚结果失败: %v", err)
 	}
 	if rb.Version != 3 || rb.ReloadCommand != "allin reload" {
 		t.Fatalf("回滚应还原 v1 命令、version=3，得 v=%d cmd=%q", rb.Version, rb.ReloadCommand)
 	}
 
-	if err := svc.Delete(set.ID, "alice", "下线", ""); err != nil {
-		t.Fatalf("软删失败: %v", err)
+	ticket, err = svc.RequestDelete(set.ID, "下线覆盖集", "override-delete", "alice", "下线", "", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("申请软删失败: %v", err)
 	}
+	executeFileOverrideApproval(t, approval, ticket)
 	if _, err := svc.Get(set.ID); err != apperr.ErrOverrideSetNotFound {
 		t.Fatalf("软删后应找不到，得 %v", err)
 	}
@@ -119,7 +170,7 @@ func TestOverrideSetLifecycle(t *testing.T) {
 
 // TestOverrideSetDryRunNoPersist dry-run 只读预览：返回将覆盖的成员清单 + 命令，且绝不落任何东西。
 func TestOverrideSetDryRunNoPersist(t *testing.T) {
-	svc, fileRepo := newOverrideStack(t)
+	svc, fileRepo, _, _ := newOverrideStack(t)
 	set, err := svc.Create(service.CreateOverrideSetParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Name: "AllinCore",
 		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/AllinCore",
@@ -164,7 +215,7 @@ func TestOverrideSetDryRunNoPersist(t *testing.T) {
 
 // TestOverrideSetRejectInvalid 控制面早校验：非法 target_root / 含注入字符的命令被拒。
 func TestOverrideSetRejectInvalid(t *testing.T) {
-	svc, _ := newOverrideStack(t)
+	svc, _, _, _ := newOverrideStack(t)
 	_, err := svc.Create(service.CreateOverrideSetParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Name: "Bad",
 		ScopeLevel: model.ScopeGlobal, TargetRoot: "plugins/../etc",
@@ -352,7 +403,7 @@ func TestOverrideDeliveryContentEditChangesMd5(t *testing.T) {
 	}
 
 	// 编辑成员文件内容（path 不变），经通道B 发布路径更新 content + 按字节算的 content_md5。
-	if _, err := s.files.Publish(member.ID, "v2-changed\n", "alice", "改成员内容", ""); err != nil {
+	if _, err := service.ApplyFilePublishForTest(s.files, member.ID, "v2-changed\n", "alice", "改成员内容", ""); err != nil {
 		t.Fatalf("编辑成员内容失败: %v", err)
 	}
 
@@ -390,7 +441,7 @@ func TestOverrideDeliveryWakesOnMemberContentEdit(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond) // 让 waiter 先挂起
-	if _, err := s.files.Publish(member.ID, "v2-changed\n", "alice", "改成员内容", ""); err != nil {
+	if _, err := service.ApplyFilePublishForTest(s.files, member.ID, "v2-changed\n", "alice", "改成员内容", ""); err != nil {
 		t.Fatalf("编辑成员内容失败: %v", err)
 	}
 

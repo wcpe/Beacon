@@ -89,7 +89,7 @@ func TestLegacyNamespaceDeleteMigrated(t *testing.T) {
 func TestLegacyNamespaceDeleteReadonlyDenied(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	readonlyKey, _ := createKey(t, ts.URL, "namespace-delete-readonly", "readonly")
+	readonlyKey, _ := createKey(t, ts, "namespace-delete-readonly", "readonly")
 
 	for _, path := range []string{
 		"/admin/v1/namespaces/any-code",

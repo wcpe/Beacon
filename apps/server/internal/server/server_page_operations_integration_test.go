@@ -3,11 +3,8 @@
 package server_test
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 	"testing"
-	"time"
 )
 
 // TestServerPageResyncCommandVisible 服务器页重同步闭环：
@@ -17,16 +14,13 @@ func TestServerPageResyncCommandVisible(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "srv-resync-1", "area1")
 
-	code, cmd := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/srv-resync-1/resync?namespace=prod", nil)
-	if code != http.StatusAccepted {
-		t.Fatalf("触发重同步应 202，实际 %d：%v", code, cmd)
-	}
-	cmdID := int(cmd["id"].(float64))
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/instances/srv-resync-1/resync?namespace=prod", t.Name()+"-resync", map[string]any{"reason": "集成测试重同步"})
 
 	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-resync-1", nil)
-	if code != http.StatusOK || int(pulled["id"].(float64)) != cmdID || pulled["type"] != "resync-config" {
+	if code != http.StatusOK || pulled["type"] != "resync-config" {
 		t.Fatalf("agent 应拉到 resync-config 命令，实际 %d：%v", code, pulled)
 	}
+	cmdID := int(pulled["id"].(float64))
 
 	code, _ = doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/commands/result", map[string]any{
 		"commandId": cmdID,
@@ -53,93 +47,62 @@ func TestServerPageResyncCommandVisible(t *testing.T) {
 	}
 }
 
-// TestServerPageBrowseFullChain 服务器页文件浏览闭环：
-// admin 发起浏览 GET → agent 拉 fs-browse 命令并回传目录 → admin 收到目录；readonly 对该 GET 副作用端点被拒。
+// TestServerPageBrowseFullChain 守护旧文件浏览入口的 permit 边界：
+// 公开入口固定失败关闭，不能直连 Agent 读取。
 func TestServerPageBrowseFullChain(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "srv-browse-1", "area1")
 
-	type result struct {
-		code int
-		body map[string]any
-		err  string
-	}
-	done := make(chan result, 1)
-	go func() {
-		req, err := http.NewRequest(http.MethodGet, ts.URL+"/admin/v1/instances/srv-browse-1/browse?namespace=prod&op=list&path=&limit=50", nil)
-		if err != nil {
-			done <- result{err: err.Error()}
-			return
-		}
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			done <- result{err: err.Error()}
-			return
-		}
-		defer func() { _ = resp.Body.Close() }()
-		data, _ := io.ReadAll(resp.Body)
-		var parsed map[string]any
-		if len(data) > 0 {
-			_ = json.Unmarshal(data, &parsed)
-		}
-		done <- result{code: resp.StatusCode, body: parsed}
-	}()
-
-	var cmdID int
-	for i := 0; i < 20; i++ {
-		code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-browse-1", nil)
-		if code == http.StatusOK {
-			if pulled["type"] != "fs-browse" {
-				t.Fatalf("agent 应拉到 fs-browse 命令，实际 %v", pulled)
-			}
-			cmdID = int(pulled["id"].(float64))
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if cmdID == 0 {
-		t.Fatal("agent 未拉到 fs-browse 命令")
+	code, body := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/instances/srv-browse-1/browse?namespace=prod&op=list&path=&limit=50", nil)
+	if code != http.StatusConflict || body["code"] != "operation_requires_approval" {
+		t.Fatalf("未持 permit 浏览文件内容应 409 operation_requires_approval，实际 %d：%v", code, body)
 	}
 
-	code, body := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/browse-result", map[string]any{
-		"namespace": "prod",
-		"serverId":  "srv-browse-1",
-		"commandId": cmdID,
-		"ok":        true,
-		"result": map[string]any{
-			"path":    "",
-			"entries": []map[string]any{{"name": "plugins.yml", "dir": false, "size": 42, "isText": true, "overThreshold": false}},
-			"offset":  0,
-			"limit":   50,
-			"total":   1,
-			"hasMore": false,
-		},
+	roKey, _ := createKey(t, ts, "ro-browse", "readonly")
+	code, body = doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances/srv-browse-1/browse?namespace=prod&op=list", roKey, false, nil)
+	if code != http.StatusConflict || body["code"] != "operation_requires_approval" {
+		t.Fatalf("readonly 调旧浏览 GET 也应保持 409，实际 %d：%v", code, body)
+	}
+}
+
+// TestServerPageBrowseApprovalFlow 验证浏览命令必须经申请、审批、worker、回传和一次性授权消费闭环。
+func TestServerPageBrowseApprovalFlow(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.Close()
+	const identityID = "f1000000-0000-4000-8000-000000000001"
+	v2Token := createV2NamespaceToken(t, ts.URL, "prod")
+	activateAgent(t, ts, v2Token, identityID, "srv-browse-approval")
+	registerOnline(t, ts.URL, "prod", "srv-browse-approval", "area1")
+	agentHeaders := map[string]string{"X-Beacon-Token": v2Token, "X-Beacon-Identity": identityID, "X-Beacon-Boot": "boot-1"}
+
+	code, ticket := doJSONWithHeaders(t, http.MethodPost, ts.URL+"/admin/v1/instances/srv-browse-approval/browse", map[string]any{
+		"namespace": "prod", "op": "file", "path": "Demo/config.yml", "reason": "核对线上文件",
+	}, map[string]string{"Idempotency-Key": t.Name() + "-browse"})
+	if code != http.StatusAccepted {
+		t.Fatalf("提交浏览审批应 202，实际 %d：%v", code, ticket)
+	}
+	applyApprovalTicket(t, ts, ticket)
+
+	code, pulled := doAgentJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=srv-browse-approval", agentHeaders, nil)
+	if code != http.StatusOK || pulled["type"] != "fs-browse" {
+		t.Fatalf("批准后 agent 应拉到 fs-browse，实际 %d：%v", code, pulled)
+	}
+	commandID := int(pulled["id"].(float64))
+	code, body := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/browse-result", agentHeaders, map[string]any{
+		"namespace": "prod", "serverId": "srv-browse-approval", "commandId": commandID, "ok": true,
+		"result": map[string]any{"path": "Demo/config.yml", "content": "enabled: true\n"},
 	})
 	if code != http.StatusOK {
 		t.Fatalf("agent 回传浏览结果应 200，实际 %d：%v", code, body)
 	}
-
-	select {
-	case got := <-done:
-		if got.err != "" {
-			t.Fatalf("浏览请求失败：%s", got.err)
-		}
-		if got.code != http.StatusOK {
-			t.Fatalf("浏览请求应 200，实际 %d：%v", got.code, got.body)
-		}
-		entries := asSlice(got.body["entries"])
-		if len(entries) != 1 || entries[0].(map[string]any)["name"] != "plugins.yml" {
-			t.Fatalf("浏览结果应透传目录项，实际 %v", got.body)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("浏览请求未被 agent 回传唤醒")
+	grantID := sensitiveGrantIDForTest(t, ts, ticket["approvalRequestId"].(string))
+	code, consumed := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/srv-browse-approval/browse/grants/"+grantID+"/consume", map[string]any{"commandId": commandID})
+	if code != http.StatusOK || consumed["content"] != "enabled: true\n" {
+		t.Fatalf("原申请主体应一次消费浏览结果，实际 %d：%v", code, consumed)
 	}
-
-	roKey, _ := createKey(t, ts.URL, "ro-browse", "readonly")
-	code, body = doAPIKey(t, http.MethodGet, ts.URL+"/admin/v1/instances/srv-browse-1/browse?namespace=prod&op=list", roKey, false, nil)
-	if code != http.StatusForbidden || body["code"] != "FORBIDDEN" {
-		t.Fatalf("readonly 浏览 GET 副作用端点应 403 FORBIDDEN，实际 %d：%v", code, body)
+	code, second := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/srv-browse-approval/browse/grants/"+grantID+"/consume", map[string]any{"commandId": commandID})
+	if code != http.StatusGone || second["code"] != "sensitive_access_consumed" {
+		t.Fatalf("浏览授权第二次消费应失败，实际 %d：%v", code, second)
 	}
 }

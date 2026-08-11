@@ -48,7 +48,7 @@ type PayloadResult struct {
 }
 
 // View 是旧正文直出入口，现已永久关闭。
-func (s *MessagePayloadService) View(p ViewPayloadParams) (PayloadResult, error) {
+func (s *MessagePayloadService) View(_ ViewPayloadParams) (PayloadResult, error) {
 	return PayloadResult{}, apperr.ErrOperationRequiresApproval
 }
 

@@ -163,7 +163,7 @@ func (s *FileService) Get(id uint) (*model.FileObject, error) {
 }
 
 // Create 新建文件对象并首次发布（version=1）。
-func (s *FileService) Create(p CreateFileParams) (*model.FileObject, error) {
+func (s *FileService) Create(_ CreateFileParams) (*model.FileObject, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -227,11 +227,30 @@ func (s *FileService) applyCreate(p CreateFileParams) (*model.FileObject, error)
 // Import 把一份目录批量导入到指定覆盖层：对每个文件按相对 path「存在则发布新版本、不存在则首发」，
 // 复用通道B 整文件覆盖语义。全部文件在同一事务内原子完成 + 一条 file.import 审计，提交成功后按 scope 唤醒一次。
 // ScopeLevel 空则默认 group（FR-38 正向导入兼容）；FR-39 反向抓取可落 group / server 层。
-func (s *FileService) Import(p ImportFilesParams) (*ImportResult, error) {
+func (s *FileService) Import(_ ImportFilesParams) (*ImportResult, error) {
 	return nil, apperr.ErrForbidden
 }
 
 func (s *FileService) applyImport(p ImportFilesParams) (*ImportResult, error) {
+	result := &ImportResult{}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		result, err = s.applyImportInTx(tx, p)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.afterImport(p, result)
+	return result, nil
+}
+
+// applyImportInTx 在调用方事务内导入文件，不触发事务外通知或导出。
+// 危险审批适配器必须在同一事务写领域结果与执行回执时使用它。
+func (s *FileService) applyImportInTx(tx *gorm.DB, p ImportFilesParams) (*ImportResult, error) {
+	if tx == nil {
+		return nil, apperr.ErrForbidden
+	}
 	if p.Namespace == "" || p.Operator == "" || len(p.Files) == 0 {
 		return nil, apperr.ErrInvalidParam
 	}
@@ -258,60 +277,68 @@ func (s *FileService) applyImport(p ImportFilesParams) (*ImportResult, error) {
 	}
 
 	result := &ImportResult{}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		fileRepo := s.fileRepo.WithTx(tx)
-		for _, f := range cleaned {
-			existing, err := fileRepo.FindByIdentity(p.Namespace, group, f.Path, scopeLevel, scopeTarget)
-			if err != nil {
-				return err
-			}
-			md5 := filetree.ContentMD5(f.Content)
-			if existing == nil {
-				// 首版：新建对象 + revision 1，回填 current_revision
-				obj := &model.FileObject{
-					NamespaceCode: p.Namespace, GroupCode: group, Path: f.Path,
-					ScopeLevel: scopeLevel, ScopeTarget: scopeTarget,
-					Content: f.Content, ContentMD5: md5, Version: 1, Enabled: true,
-				}
-				if err := fileRepo.Create(obj); err != nil {
-					return err
-				}
-				rev, err := s.appendRevision(tx, obj.ID, 1, f.Content, md5, nil, p.Operator, p.Comment)
-				if err != nil {
-					return err
-				}
-				obj.CurrentRevision = rev.ID
-				if err := fileRepo.Save(obj); err != nil {
-					return err
-				}
-				result.Created++
-				result.CreatedIDs = append(result.CreatedIDs, obj.ID)
-				continue
-			}
-			// 已存在：发布新版本（version+1），整文件覆盖
-			// 先记覆盖前版本号供撤回（FR-116），再前移版本
-			preVersion := existing.Version
-			newVersion := existing.Version + 1
-			rev, err := s.appendRevision(tx, existing.ID, newVersion, f.Content, md5, nil, p.Operator, p.Comment)
-			if err != nil {
-				return err
-			}
-			existing.Content, existing.ContentMD5, existing.Version, existing.CurrentRevision = f.Content, md5, newVersion, rev.ID
-			if err := fileRepo.Save(existing); err != nil {
-				return err
-			}
-			result.Updated++
-			result.UpdatedItems = append(result.UpdatedItems, ImportUpdatedItem{ID: existing.ID, PreVersion: preVersion})
+	fileRepo := s.fileRepo.WithTx(tx)
+	for _, f := range cleaned {
+		existing, err := fileRepo.FindByIdentity(p.Namespace, group, f.Path, scopeLevel, scopeTarget)
+		if err != nil {
+			return nil, err
 		}
-		return s.writeImportAudit(tx, p.Namespace, group, p.Operator,
-			fmt.Sprintf(`{"scope":%q,"target":%q,"files":%d,"created":%d,"updated":%d}`,
-				scopeLevel, scopeTarget, len(cleaned), result.Created, result.Updated), p.ClientIP)
-	})
-	if err != nil {
+		md5 := filetree.ContentMD5(f.Content)
+		if existing == nil {
+			// 首版：新建对象 + revision 1，回填 current_revision
+			obj := &model.FileObject{
+				NamespaceCode: p.Namespace, GroupCode: group, Path: f.Path,
+				ScopeLevel: scopeLevel, ScopeTarget: scopeTarget,
+				Content: f.Content, ContentMD5: md5, Version: 1, Enabled: true,
+			}
+			if err := fileRepo.Create(obj); err != nil {
+				return nil, err
+			}
+			rev, err := s.appendRevision(tx, obj.ID, 1, f.Content, md5, nil, p.Operator, p.Comment)
+			if err != nil {
+				return nil, err
+			}
+			obj.CurrentRevision = rev.ID
+			if err := fileRepo.Save(obj); err != nil {
+				return nil, err
+			}
+			result.Created++
+			result.CreatedIDs = append(result.CreatedIDs, obj.ID)
+			continue
+		}
+		// 已存在：发布新版本（version+1），整文件覆盖。
+		preVersion := existing.Version
+		newVersion := existing.Version + 1
+		rev, err := s.appendRevision(tx, existing.ID, newVersion, f.Content, md5, nil, p.Operator, p.Comment)
+		if err != nil {
+			return nil, err
+		}
+		existing.Content, existing.ContentMD5, existing.Version, existing.CurrentRevision = f.Content, md5, newVersion, rev.ID
+		if err := fileRepo.Save(existing); err != nil {
+			return nil, err
+		}
+		result.Updated++
+		result.UpdatedItems = append(result.UpdatedItems, ImportUpdatedItem{ID: existing.ID, PreVersion: preVersion})
+	}
+	if err := s.writeImportAudit(tx, p.Namespace, group, p.Operator,
+		fmt.Sprintf(`{"scope":%q,"target":%q,"files":%d,"created":%d,"updated":%d}`,
+			scopeLevel, scopeTarget, len(cleaned), result.Created, result.Updated), p.ClientIP); err != nil {
 		return nil, err
 	}
+	return result, nil
+}
+
+func (s *FileService) afterImport(p ImportFilesParams, result *ImportResult) {
+	scopeLevel := p.ScopeLevel
+	if scopeLevel == "" {
+		scopeLevel = model.ScopeGroup
+	}
+	group, scopeTarget, err := normalizeScope(scopeLevel, p.Group, p.ScopeTarget)
+	if err != nil {
+		return
+	}
 	slog.Info("导入托管文件", "namespace", p.Namespace, "scope", scopeLevel, "group", group, "target", scopeTarget,
-		"files", len(cleaned), "created", result.Created, "updated", result.Updated)
+		"files", len(p.Files), "created", result.Created, "updated", result.Updated)
 	// 按覆盖层 scope 唤醒一次（组 / 单服层变更触发对应实例文件长轮询重算）
 	if s.notifier != nil {
 		s.notifier.NotifyFileChange(p.Namespace, scopeLevel, group, scopeTarget)
@@ -324,11 +351,10 @@ func (s *FileService) applyImport(p ImportFilesParams) (*ImportResult, error) {
 			Target:   fmt.Sprintf("%s/%s@%s:%s", p.Namespace, group, scopeLevel, scopeTarget),
 		})
 	}
-	return result, nil
 }
 
 // Publish 发布文件新版本（version+1）。
-func (s *FileService) Publish(id uint, content, operator, comment, clientIP string) (*model.FileObject, error) {
+func (s *FileService) Publish(_ uint, _, _, _, _ string) (*model.FileObject, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -372,46 +398,8 @@ func (s *FileService) applyPublish(id uint, content, operator, comment, clientIP
 }
 
 // Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。
-func (s *FileService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileObject, error) {
+func (s *FileService) Rollback(_ uint, _ int64, _, _, _ string) (*model.FileObject, error) {
 	return nil, apperr.ErrForbidden
-}
-
-func (s *FileService) applyRollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileObject, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	obj, err := s.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	target, err := s.revRepo.FindByObjectAndVersion(id, toVersion)
-	if err != nil {
-		return nil, err
-	}
-	if target == nil {
-		return nil, apperr.ErrRevisionNotFound
-	}
-	newVersion := obj.Version + 1
-	src := target.ID
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevision(tx, obj.ID, newVersion, target.Content, target.ContentMD5, &src, operator, comment)
-		if err != nil {
-			return err
-		}
-		obj.Content, obj.ContentMD5, obj.Version, obj.CurrentRevision = target.Content, target.ContentMD5, newVersion, rev.ID
-		if err := s.fileRepo.WithTx(tx).Save(obj); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, obj, operator, model.ActionFileRollback,
-			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"md5":"%s"}`, newVersion, toVersion, target.ContentMD5), clientIP)
-	})
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("回滚托管文件", "id", id, "toVersion", toVersion, "newVersion", newVersion)
-	s.notify(obj)
-	s.exportGit(obj, model.ActionFileRollback, operator)
-	return obj, nil
 }
 
 // RollbackInTx 在给定事务内把文件对象回滚到目标版本（= 读该版本内容作为新版本发布，version+1），
@@ -461,100 +449,20 @@ func (s *FileService) Notify(obj *model.FileObject) {
 }
 
 // Delete 软删文件对象（该层从覆盖链脱落，下游 agent 据 manifest 比对会删该 path 的镜像）。
-func (s *FileService) Delete(id uint, operator, _, clientIP string) error {
+func (s *FileService) Delete(_ uint, _, _, _ string) error {
 	return apperr.ErrForbidden
-}
-
-func (s *FileService) applyDelete(id uint, operator, _ string, clientIP string) error {
-	if operator == "" {
-		return apperr.ErrInvalidParam
-	}
-	obj, err := s.Get(id)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.fileRepo.WithTx(tx).SoftDelete(id, now); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, obj, operator, model.ActionFileDelete, `{"deleted":true}`, clientIP)
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("软删托管文件", "id", id)
-	s.notify(obj)
-	s.exportGit(obj, model.ActionFileDelete, operator)
-	return nil
 }
 
 // BatchDelete 在一个事务内批量软删一组文件对象（FR-74）：逐项软删 + 各记一条 file.delete 审计，
 // 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒文件长轮询并触发 git 导出。
-func (s *FileService) BatchDelete(ids []uint, operator, clientIP string) error {
+func (s *FileService) BatchDelete(_ []uint, _, _ string) error {
 	return apperr.ErrForbidden
-}
-
-func (s *FileService) applyBatchDelete(ids []uint, operator, clientIP string) error {
-	return s.batchMutate(ids, operator, clientIP, model.ActionFileDelete, `{"deleted":true}`,
-		func(tx *gorm.DB, id uint) error {
-			return s.fileRepo.WithTx(tx).SoftDelete(id, time.Now().UTC())
-		})
 }
 
 // BatchSetEnabled 在一个事务内批量置一组文件对象的启用态（FR-74）：逐项置 enabled + 各记一条
 // file.disable / file.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
-func (s *FileService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
+func (s *FileService) BatchSetEnabled(_ []uint, _ bool, _, _ string) error {
 	return apperr.ErrForbidden
-}
-
-func (s *FileService) applyBatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
-	action := model.ActionFileEnable
-	if !enabled {
-		action = model.ActionFileDisable
-	}
-	return s.batchMutate(ids, operator, clientIP, action, fmt.Sprintf(`{"enabled":%t}`, enabled),
-		func(tx *gorm.DB, id uint) error {
-			return s.fileRepo.WithTx(tx).SetEnabled(id, enabled)
-		})
-}
-
-// batchMutate 是批量软删 / 置启用态的共用骨架：去重后一次性批量取出（任一不存在即 404），再在单事务内
-// 对每项执行 mutate + 写一条审计，提交后逐项唤醒文件长轮询与触发 git 导出。
-// 双保险：预取批量存在性挡明显不存在；事务内 mutate 的 RowsAffected 校验挡预取后被并发软删（防幽灵审计）。
-func (s *FileService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
-	if operator == "" || len(ids) == 0 {
-		return apperr.ErrInvalidParam
-	}
-	uniqueIDs := dedupIDs(ids)
-	objs, err := s.fileRepo.FindByIDs(uniqueIDs)
-	if err != nil {
-		return err
-	}
-	// 取回数量 < 去重后 id 数 → 含不存在 id，整批 404
-	if len(objs) < len(uniqueIDs) {
-		return apperr.ErrFileNotFound
-	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		for i := range objs {
-			if err := mutate(tx, objs[i].ID); err != nil {
-				return err
-			}
-			if err := s.writeAudit(tx, &objs[i], operator, action, detail, clientIP); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("批量操作托管文件", "动作", action, "数量", len(objs))
-	for i := range objs {
-		s.notify(&objs[i])
-		s.exportGit(&objs[i], action, operator)
-	}
-	return nil
 }
 
 // ListRevisions 列出某文件对象的历史版本。

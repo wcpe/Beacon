@@ -103,8 +103,21 @@ func (r *ConfigItemRepository) Save(item *model.ConfigItem) error {
 
 // FindByID 按主键查找未软删项；不存在返回 (nil, nil)。
 func (r *ConfigItemRepository) FindByID(id uint) (*model.ConfigItem, error) {
+	return r.findByID(id, false)
+}
+
+// FindByIDForUpdate 在事务内锁定未软删配置项，供授权消费时把版本复验与一次性消费收敛为同一原子边界。
+func (r *ConfigItemRepository) FindByIDForUpdate(id uint) (*model.ConfigItem, error) {
+	return r.findByID(id, true)
+}
+
+func (r *ConfigItemRepository) findByID(id uint, lock bool) (*model.ConfigItem, error) {
 	var item model.ConfigItem
-	err := r.active().Where("id = ?", id).First(&item).Error
+	query := r.active().Where("id = ?", id)
+	if lock {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err := query.First(&item).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

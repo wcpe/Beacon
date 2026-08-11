@@ -167,7 +167,8 @@ func (h *CommandHandler) ReportResult(w http.ResponseWriter, r *http.Request) {
 // imprintRequest 是 admin 触发按需拓印的请求体（FR-46）：仅需目标文件相对 path；
 // namespace 走查询参数（与 /instances/{serverId} 其他端点一致），落层在确认时再选。
 type imprintRequest struct {
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 // Imprint 创建拓印审批申请；批准后才由 worker 下发命令。
@@ -192,7 +193,7 @@ func (h *CommandHandler) Imprint(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
-	ticket, err := h.svc.RequestImprintApproval(ns, serverID, req.Path, decodeReason(r), r.Header.Get("Idempotency-Key"),
+	ticket, err := h.svc.RequestImprintApproval(ns, serverID, req.Path, req.Reason, r.Header.Get("Idempotency-Key"),
 		auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -232,26 +233,6 @@ type imprintDiffView struct {
 // ImprintDiff 是会返回正文的旧拓印入口；未持 grant 时固定失败关闭。
 func (h *CommandHandler) ImprintDiff(w http.ResponseWriter, r *http.Request) {
 	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
-	return
-
-	id, ok := parseUintParam(w, r, "commandId")
-	if !ok {
-		return
-	}
-	q := r.URL.Query()
-	res, err := h.svc.ImprintDiff(id, q.Get("scope"), q.Get("group"), q.Get("zone"))
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	render.WriteJSON(w, http.StatusOK, imprintDiffView{
-		Path:          res.Path,
-		ActualContent: res.ActualContent, ActualMD5: res.ActualMD5,
-		ExpectedContent: res.ExpectedContent, ExpectedMD5: res.ExpectedMD5,
-		ExpectedWholeFile: res.ExpectedWholeFile,
-		ExpectedSources:   res.ExpectedSources, ExpectedDeletions: res.ExpectedDeletions,
-		Differs: res.Differs,
-	})
 }
 
 // ConsumeApprovedImprint 仅允许原申请主体一次消费已经回传的拓印差异正文。
@@ -282,21 +263,11 @@ type confirmImprintRequest struct {
 	Zone        string `json:"zone"`
 	Target      string `json:"target"`
 	ReviewedMD5 string `json:"reviewedMd5"`
-}
-
-// imprintConfirmView 是拓印确认落库结果视图（落到哪层 / 版本 / md5）。
-type imprintConfirmView struct {
-	FileID     uint   `json:"fileId"`
-	ScopeLevel string `json:"scopeLevel"`
-	Group      string `json:"group"`
-	Target     string `json:"target"`
-	Version    int64  `json:"version"`
-	MD5        string `json:"md5"`
+	Reason      string `json:"reason"`
 }
 
 // ConfirmImprint 处理 POST /admin/v1/imprints/{commandId}/confirm（FR-46）：
-// 命令须 ready 且 imprint 模式；单人自审门——reviewedMd5 须等于命令转存内容 md5（看过 diff），否则 412。
-// 通过后复用 FileService.Create/Publish 落该层覆盖，命令转 done、清空瞬态。返回落库结果（200）。
+// 命令须 ready 且 imprint 模式；自审 md5、并入层与目标冻结为独立审批申请。批准后 worker 才会落库。
 func (h *CommandHandler) ConfirmImprint(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "commandId")
 	if !ok {
@@ -307,16 +278,13 @@ func (h *CommandHandler) ConfirmImprint(w http.ResponseWriter, r *http.Request) 
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	res, err := h.svc.ConfirmImprint(id, req.Scope, req.Group, req.Zone, req.Target, req.ReviewedMD5,
-		auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestImprintConfirmApproval(id, req.Scope, req.Group, req.Zone, req.Target, req.ReviewedMD5,
+		req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, imprintConfirmView{
-		FileID: res.FileID, ScopeLevel: res.ScopeLevel, Group: res.Group,
-		Target: res.Target, Version: res.Version, MD5: res.MD5,
-	})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // agentCommandResponse 是 agent 拉待办命令的响应（含执行参考载荷；ingest 落点由控制面 ReceiveIngest 据库内载荷定）。

@@ -53,12 +53,7 @@ func TestOverrideSetRESTFlow(t *testing.T) {
 	}
 
 	// 发布 v2（命令置空：只覆盖文件不下发命令）
-	code, pub := doJSON(t, http.MethodPut, itemURL, map[string]any{
-		"targetRoot": "plugins/DeluxeMenus", "reloadCommand": "", "comment": "去命令",
-	})
-	if code != http.StatusOK || pub["version"].(float64) != 2 {
-		t.Fatalf("发布应 200 且 version=2，实际 %d：%v", code, pub)
-	}
+	publishOverrideSetForTest(t, ts, int(idF), "plugins/DeluxeMenus", "", "去命令")
 
 	// 历史 2 版
 	code, revs := doJSON(t, http.MethodGet, itemURL+"/revisions", nil)
@@ -67,10 +62,7 @@ func TestOverrideSetRESTFlow(t *testing.T) {
 	}
 
 	// 回滚到 v1 → v3
-	code, rb := doJSON(t, http.MethodPost, itemURL+"/rollback", map[string]any{"toVersion": 1, "comment": "回滚"})
-	if code != http.StatusOK || rb["version"].(float64) != 3 {
-		t.Fatalf("回滚应 200 且 version=3，实际 %d：%v", code, rb)
-	}
+	rollbackOverrideSetForTest(t, ts, int(idF), 1, "回滚")
 
 	// 列表含该集
 	code, list := doJSON(t, http.MethodGet, base+"?namespace=prod", nil)
@@ -97,10 +89,7 @@ func TestOverrideSetRESTFlow(t *testing.T) {
 	}
 
 	// 软删
-	code, _ = doJSON(t, http.MethodDelete, itemURL+"?comment=clean", nil)
-	if code != http.StatusOK {
-		t.Fatalf("软删应 200，实际 %d", code)
-	}
+	deleteOverrideSetForTest(t, ts, int(idF), "clean")
 
 	// 取不存在 → 404
 	code, _ = doJSON(t, http.MethodGet, base+"/999999", nil)

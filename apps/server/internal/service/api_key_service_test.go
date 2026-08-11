@@ -60,6 +60,7 @@ func TestAPIKeyCreateVerify(t *testing.T) {
 	stored, _ := repo.FindActiveByHash(apikey.Hash(plaintext))
 	if stored == nil {
 		t.Fatal("应能按明文哈希查到密钥")
+		return
 	}
 	if stored.KeyHash == plaintext || strings.Contains(stored.KeyHash, plaintext) {
 		t.Fatal("库内 key_hash 绝不应等于/含明文")

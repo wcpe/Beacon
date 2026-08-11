@@ -197,7 +197,7 @@ func NewAssetPreviewService(db *gorm.DB, cmdRepo *repository.AgentCommandReposit
 // Preview 预览单个文件内容（FR-164 §4.5）：
 // 校验 → 存在性（404）→ 敏感规则（无 reason 命中即 403）→ 在线（离线 504）→ 下发 asset-read + 同步等回传 →
 // 先写审计后返回（二进制只回元数据、超限标 truncated）。内容瞬态不落库、不进审计 detail、不缓存。
-func (s *AssetPreviewService) Preview(ctx context.Context, p PreviewParams) (*AssetPreviewResult, error) {
+func (s *AssetPreviewService) Preview(_ context.Context, _ PreviewParams) (*AssetPreviewResult, error) {
 	return nil, apperr.ErrOperationRequiresApproval
 }
 
@@ -250,7 +250,7 @@ func (s *AssetPreviewService) applyPreview(ctx context.Context, p PreviewParams)
 // Diff 比较两侧文件内容（FR-164 §4.5/§4.6）：
 // 存在性 → 二进制 / 超限早拒（asset_diff_unsupported）→ 敏感规则 → 两侧清单哈希相同则短路 identical（不取内容）→
 // 否则在线校验后并行取两侧内容 → 先写审计后返回。任一侧回传二进制 / 截断亦拒。
-func (s *AssetPreviewService) Diff(ctx context.Context, p DiffParams) (*AssetDiffResult, error) {
+func (s *AssetPreviewService) Diff(_ context.Context, _ DiffParams) (*AssetDiffResult, error) {
 	return nil, apperr.ErrOperationRequiresApproval
 }
 

@@ -3,6 +3,8 @@
 package server_test
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"net/http"
 	"testing"
 )
@@ -17,20 +19,15 @@ func findScanFile(items any, path string) map[string]any {
 	return nil
 }
 
-// driveToManifest 触发受管任务并回扫描清单，把任务推到 pending-review，返回 taskID。
-func driveToManifest(t *testing.T, baseURL, serverID, group string, files []map[string]any) int {
+// driveToManifest 经审批创建受管任务并回扫描清单，把任务推到 pending-review，返回 taskID。
+func driveToManifest(t *testing.T, ts *integrationTestServer, serverID, group string, files []map[string]any) int {
 	t.Helper()
-	code, task := doJSON(t, http.MethodPost, baseURL+"/admin/v1/instances/"+serverID+"/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": group,
-	})
-	if code != http.StatusAccepted {
-		t.Fatalf("触发反向抓取应 202，实际 %d：%v", code, task)
-	}
-	taskID := int(task["id"].(float64))
+	task := createReverseFetchTaskForTest(t, ts, serverID, group)
+	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
 	// agent 拉 scan 命令并回清单
-	doJSON(t, http.MethodGet, baseURL+"/beacon/v1/agent/commands?namespace=prod&serverId="+serverID, nil)
-	code, _ = doJSON(t, http.MethodPost, baseURL+"/beacon/v1/agent/files/scan", map[string]any{
+	doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId="+serverID, nil)
+	code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/scan", map[string]any{
 		"commandId": scanCmdID, "files": files,
 	})
 	if code != http.StatusOK {
@@ -59,7 +56,7 @@ func TestIgnoreRuleMarksManifest(t *testing.T) {
 		t.Fatalf("应列出 1 条规则，实际 %d：%v", code, listed["items"])
 	}
 
-	taskID := driveToManifest(t, ts.URL, "rule-1", "area1", []map[string]any{
+	taskID := driveToManifest(t, ts, "rule-1", "area1", []map[string]any{
 		{"path": "AllinCore/config.yml", "size": 100, "isText": true, "overThreshold": false},
 		{"path": "ServerProbe/metrics.jsonl", "size": 200, "isText": true, "overThreshold": false},
 	})
@@ -84,26 +81,21 @@ func TestConflictReviewFullChain(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "conf-1", "area1")
 
-	// 预置目标 group 层已有 A/config.yml（制造冲突）
-	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/files", map[string]any{
-		"namespace": "prod", "group": "area1", "scopeLevel": "group",
-		"path": "A/config.yml", "content": "old: 1\n",
-	})
-	if code != http.StatusCreated {
-		t.Fatalf("预置已有文件应 201，实际 %d", code)
-	}
+	// 预置目标 group 层已有 A/config.yml（制造冲突）。
+	createFileForTest(t, ts, "prod", "area1", "A/config.yml", "group", "old: 1\n")
 
-	taskID := driveToManifest(t, ts.URL, "conf-1", "area1", []map[string]any{
+	taskID := driveToManifest(t, ts, "conf-1", "area1", []map[string]any{
 		{"path": "A/config.yml", "size": 10, "isText": true, "overThreshold": false},
 		{"path": "B/new.yml", "size": 10, "isText": true, "overThreshold": false},
 	})
 
-	// 提交两文件（A 冲突、B 非冲突）
-	code, submitted := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/submit", map[string]any{
-		"selectedPaths": []string{"A/config.yml", "B/new.yml"},
+	// 提交两文件（A 冲突、B 非冲突）并取 submit 审批链创建的一次性授权。
+	submitTicket := requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/submit", t.Name()+"-reverse-submit", map[string]any{
+		"selectedPaths": []string{"A/config.yml", "B/new.yml"}, "reason": "集成测试提交反向抓取文件",
 	})
-	if code != http.StatusAccepted {
-		t.Fatalf("提交应 202，实际 %d：%v", code, submitted)
+	code, submitted := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID), nil)
+	if code != http.StatusOK || submitted["status"] != "fetching" {
+		t.Fatalf("提交审批执行后任务应 fetching，实际 %d：%v", code, submitted)
 	}
 	submitCmdID := int(submitted["submitCommandId"].(float64))
 	// agent 拉 submit 命令并回选定内容（A 新内容与已有冲突）
@@ -135,31 +127,38 @@ func TestConflictReviewFullChain(t *testing.T) {
 		t.Fatalf("冲突清单应含 A/config.yml，实际 %v", cs)
 	}
 
-	// diff：抓取值 ⟷ 已有版本
+	// 抓取正文属于敏感内容；旧 diff 入口必须失败关闭，不能绕过 permit 直接读取。
 	code, diff := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/conflicts/diff?path=A/config.yml", nil)
-	if code != http.StatusOK {
-		t.Fatalf("取冲突 diff 应 200，实际 %d", code)
+	if code != http.StatusConflict || diff["code"] != "operation_requires_approval" {
+		t.Fatalf("未持 permit 读取冲突正文应 409 operation_requires_approval，实际 %d：%v", code, diff)
 	}
-	if diff["fetchedContent"] != "new: 2\n" || diff["existingContent"] != "old: 1\n" {
-		t.Fatalf("diff 应返抓取值⟷已有版本，实际 %v", diff)
+	grantID := sensitiveGrantIDForTest(t, ts, submitTicket["approvalRequestId"].(string))
+	code, bundle := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/conflicts/grants/"+grantID+"/consume", nil)
+	items := asSlice(bundle["items"])
+	if code != http.StatusOK || len(items) != 1 {
+		t.Fatalf("原申请主体一次消费冲突正文应 200 且只含冲突路径，实际 %d：%v", code, bundle)
 	}
-	fetchedMD5, _ := diff["fetchedMd5"].(string)
+	item, _ := items[0].(map[string]any)
+	if item["path"] != "A/config.yml" || item["fetchedContent"] != "new: 2\n" || item["existingContent"] != "old: 1\n" {
+		t.Fatalf("冲突正文包不符：%v", item)
+	}
+	sum := md5.Sum([]byte("new: 2\n"))
+	fetchedMD5 := hex.EncodeToString(sum[:])
 
 	// 盲确认（无 reviewedMd5）→ 412
-	code, _ = doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/resolve", map[string]any{
+	code, _ = doJSONWithHeaders(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/resolve", map[string]any{
 		"decisions": []map[string]any{{"path": "A/config.yml", "action": "overwrite"}},
-	})
+		"reason":    "集成测试验证盲确认",
+	}, map[string]string{"Idempotency-Key": compactIdempotencyKey(t.Name() + "-blind-resolve")})
 	if code != http.StatusPreconditionFailed {
 		t.Fatalf("盲确认应 412，实际 %d", code)
 	}
 
-	// 带正确 reviewedMd5 overwrite → 落库 done
-	code, resolved := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/resolve", map[string]any{
+	// 带正确 reviewedMd5 overwrite → 先创建审批，批准 worker 后落库 done。
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/resolve", t.Name()+"-reverse-resolve", map[string]any{
 		"decisions": []map[string]any{{"path": "A/config.yml", "action": "overwrite", "reviewedMd5": fetchedMD5}},
+		"reason":    "集成测试确认冲突覆盖",
 	})
-	if code != http.StatusOK {
-		t.Fatalf("自审通过 resolve 应 200，实际 %d：%v", code, resolved)
-	}
 	code, done := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID), nil)
 	if code != http.StatusOK || done["status"] != "done" {
 		t.Fatalf("resolve 后应 done，实际 %d：%v", code, done["status"])

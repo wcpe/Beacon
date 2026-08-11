@@ -66,6 +66,7 @@ func TestGrayPromoteIncrementsPublishCounter(t *testing.T) {
 		t.Fatalf("promote 应自增发布计数 1 次，实际 %d", rec.count)
 	}
 }
+
 // TestGrayPromoteWithoutMetricsNoPanic 未注入计数器时 promote 不应 panic（可选注入语义）。
 func TestGrayPromoteWithoutMetricsNoPanic(t *testing.T) {
 	cfgSvc, graySvc := graySqliteStack(t)

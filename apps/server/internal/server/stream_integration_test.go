@@ -23,6 +23,7 @@ func openStream(t *testing.T, baseURL, query string) (<-chan sseEvent, context.C
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/beacon/v1/agent/stream?"+query, nil)
+	req.Header.Set("X-Beacon-Token", testAgentToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		cancel()
@@ -122,7 +123,12 @@ func TestStreamNotRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/beacon/v1/agent/stream?namespace=prod&serverId=ghost")
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/beacon/v1/agent/stream?namespace=prod&serverId=ghost", nil)
+	if err != nil {
+		t.Fatalf("构造请求失败: %v", err)
+	}
+	req.Header.Set("X-Beacon-Token", testAgentToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("请求失败: %v", err)
 	}
@@ -195,11 +201,7 @@ func TestStreamLivePushOnPublish(t *testing.T) {
 	waitForType(t, events, "ready", 3*time.Second)
 
 	// 直播阶段发布新内容 → 应近实时收到 config-changed。
-	if code, _ := doJSON(t, http.MethodPut, ts.URL+"/admin/v1/configs/"+itoa(id), map[string]any{
-		"content": "k: 2\n", "operator": "admin",
-	}); code != http.StatusOK {
-		t.Fatalf("发布应 200，实际 %d", code)
-	}
+	publishConfigForTest(t, ts, id, "k: 2\n", "直播发布")
 	live := waitForType(t, events, "config-changed", 3*time.Second)
 	if extractMD5(live.data) == curMD5 {
 		t.Fatalf("直播事件应携带变更后的新 md5，实际仍为旧 md5 %q", curMD5)
@@ -245,11 +247,7 @@ func TestStreamOnlyAffected(t *testing.T) {
 		t.Fatalf("area2 应有 1 个配置，实际 %d", len(items))
 	}
 	area2ID := int(items[0].(map[string]any)["id"].(float64))
-	if code, _ := doJSON(t, http.MethodPut, ts.URL+"/admin/v1/configs/"+itoa(area2ID), map[string]any{
-		"content": "v: 99\n", "operator": "admin",
-	}); code != http.StatusOK {
-		t.Fatalf("发布 area2 应 200，实际 %d", code)
-	}
+	publishConfigForTest(t, ts, area2ID, "v: 99\n", "他组发布")
 
 	// s1 不应收到任何事件（短窗口内）。
 	select {

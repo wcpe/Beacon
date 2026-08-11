@@ -122,21 +122,8 @@ func (s *SchedulingService) Drain(ns, serverID, reason, operator, clientIP strin
 }
 
 // Undrain 禁止绕过审批适配器直接恢复 V1 调度资格。
-func (s *SchedulingService) Undrain(ns, serverID, operator, clientIP string) error {
+func (s *SchedulingService) Undrain(_, _, _, _ string) error {
 	return apperr.ErrForbidden
-}
-
-// applyUndrainForTest 保留既有领域行为，仅供同包测试验证 V1 状态机。
-func (s *SchedulingService) applyUndrainForTest(ns, serverID, operator, clientIP string) error {
-	if ns == "" || serverID == "" || operator == "" {
-		return apperr.ErrInvalidParam
-	}
-	err := s.db.Transaction(func(tx *gorm.DB) error { return s.applyUndrainInTx(tx, ns, serverID, operator, clientIP) })
-	if err != nil {
-		return err
-	}
-	slog.Info("取消 drain", "namespace", ns, "serverId", serverID, "operator", operator)
-	return nil
 }
 
 // applyUndrainInTx 在调用方事务内取消 V1 排空标记并写审计。

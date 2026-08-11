@@ -219,10 +219,13 @@ func (a v2ApprovalAdapter) readNamespaceTrustApprovalEvidence(resourceID string)
 	}
 	var trust model.NamespaceTrust
 	err := a.svc.db.Where("from_namespace_id = ? AND to_namespace_id = ? AND capability = ?", uint(from), uint(to), parts[2]).First(&trust).Error
-	if err != nil {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return authz.ApprovalEvidence{EvidenceStatus: "available", CurrentFactsSummary: []authz.ApprovalEvidenceLine{
 			{Label: "当前信任状态", Value: "不存在"},
 		}}, nil
+	}
+	if err != nil {
+		return authz.ApprovalEvidence{}, err
 	}
 	return authz.ApprovalEvidence{EvidenceStatus: "available", CurrentFactsSummary: []authz.ApprovalEvidenceLine{
 		{Label: "当前信任状态", Value: trust.Status},
@@ -263,42 +266,9 @@ func (s *V2ControlPlaneService) executeApprovedV2Operation(req authz.ApprovalReq
 		return s.executeApprovedLegacyTopologyOperation(req, permit)
 	}
 	switch permit.Operation() {
-	case authz.OperationIdentityApprove:
-		var p identityApprovePayload
-		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
-			return err
-		}
-		return s.approveAgentIdentityApproved(p, permit)
-	case authz.OperationIdentityUnbind:
-		var p identityTransitionPayload
-		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
-			return err
-		}
-		return s.transitionIdentityApproved(p, authz.OperationIdentityUnbind, permit)
-	case authz.OperationIdentityEnable:
-		var p identityTransitionPayload
-		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
-			return err
-		}
-		return s.transitionIdentityApproved(p, authz.OperationIdentityEnable, permit)
-	case authz.OperationIdentityAllowReapply:
-		var p identityTransitionPayload
-		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
-			return err
-		}
-		return s.transitionIdentityApproved(p, authz.OperationIdentityAllowReapply, permit)
-	case authz.OperationIdentityResolveConflict:
-		var p identityResolveConflictPayload
-		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
-			return err
-		}
-		return s.resolveConflictApproved(p, permit)
-	case authz.OperationNamespaceTrustGrant:
-		var p namespaceTrustGrantPayload
-		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
-			return err
-		}
-		return s.grantNamespaceTrustApproved(p, permit)
+	case authz.OperationIdentityApprove, authz.OperationIdentityUnbind, authz.OperationIdentityEnable,
+		authz.OperationIdentityAllowReapply, authz.OperationIdentityResolveConflict, authz.OperationNamespaceTrustGrant:
+		return s.executeApprovedIdentityOperation(req, permit)
 	case authz.OperationTopologyServerAssign:
 		var p serverAssignPayload
 		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
@@ -368,6 +338,37 @@ func (s *V2ControlPlaneService) executeApprovedV2Operation(req authz.ApprovalReq
 			return err
 		}
 		return s.applyNamespaceLifecycle(p, permit, permit.Operation())
+	default:
+		return apperr.ErrInvalidParam
+	}
+}
+
+func (s *V2ControlPlaneService) executeApprovedIdentityOperation(req authz.ApprovalRequest, permit authz.Permit) error {
+	switch permit.Operation() {
+	case authz.OperationIdentityApprove:
+		var p identityApprovePayload
+		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
+			return err
+		}
+		return s.approveAgentIdentityApproved(p, permit)
+	case authz.OperationIdentityUnbind, authz.OperationIdentityEnable, authz.OperationIdentityAllowReapply:
+		var p identityTransitionPayload
+		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
+			return err
+		}
+		return s.transitionIdentityApproved(p, permit.Operation(), permit)
+	case authz.OperationIdentityResolveConflict:
+		var p identityResolveConflictPayload
+		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
+			return err
+		}
+		return s.resolveConflictApproved(p, permit)
+	case authz.OperationNamespaceTrustGrant:
+		var p namespaceTrustGrantPayload
+		if err := decodeApprovalPayload(req.Payload, &p); err != nil {
+			return err
+		}
+		return s.grantNamespaceTrustApproved(p, permit)
 	default:
 		return apperr.ErrInvalidParam
 	}
@@ -968,11 +969,12 @@ func (s *V2ControlPlaneService) transitionIdentityApproved(p identityTransitionP
 	}
 	params := IdentityTransitionParams{Reason: p.Reason, Operator: p.Operator, ClientIP: p.ClientIP}
 	var err error
-	if kind == authz.OperationIdentityUnbind {
+	switch kind {
+	case authz.OperationIdentityUnbind:
 		_, err = s.UnbindAgentIdentityApproved(p.IdentityID, params, permit)
-	} else if kind == authz.OperationIdentityAllowReapply {
+	case authz.OperationIdentityAllowReapply:
 		_, err = s.AllowAgentIdentityReapplyApproved(p.IdentityID, params, permit)
-	} else {
+	default:
 		_, err = s.EnableAgentIdentityApproved(p.IdentityID, params, permit)
 	}
 	return err
@@ -1054,7 +1056,8 @@ func ensureRequestPermit(req authz.ApprovalRequest, permit authz.Permit) error {
 	if err := ensurePermit(permit, req.Operation.Kind); err != nil ||
 		req.RequestID == "" || req.RequestID != permit.RequestID() ||
 		req.PayloadHash == "" || req.PayloadHash != permit.PayloadHash() ||
-		req.SchemaVersion != permit.SchemaVersion() || req.Version != permit.Version() {
+		req.SchemaVersion != permit.SchemaVersion() || req.Version != permit.Version() ||
+		req.LeaseOwner == "" || req.LeaseOwner != permit.LeaseToken() {
 		return apperr.ErrForbidden
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -16,6 +17,9 @@ import (
 // schedStack 装配调度服务与共享注册表（drain 落 DB、落位读内存 + DB）。
 func schedStack(t *testing.T) (*service.SchedulingService, *runtime.Registry) {
 	db := testDB(t)
+	if err := repository.NewNamespaceRepository(db).Create(&model.Namespace{Code: "prod", Name: "生产"}); err != nil {
+		t.Fatalf("创建调度测试命名空间失败: %v", err)
+	}
 	reg := runtime.NewRegistry()
 	svc := service.NewSchedulingService(db,
 		repository.NewServerDrainRepository(db),
@@ -67,7 +71,7 @@ func TestSchedulingDrainAffectsPlacement(t *testing.T) {
 	}
 
 	// 取消 drain → lobby-1 回到候选并复居首
-	if err := svc.applyUndrainForTest("prod", "lobby-1", "admin", "127.0.0.1"); err != nil {
+	if err := service.UndrainForIntegrationTest(svc, "prod", "lobby-1", "admin", "127.0.0.1"); err != nil {
 		t.Fatalf("取消 drain 失败: %v", err)
 	}
 	cands, _ = svc.Placement("prod", "area1", "zoneA")
@@ -79,7 +83,7 @@ func TestSchedulingDrainAffectsPlacement(t *testing.T) {
 // TestUndrainNotFound 取消不存在的 drain → DRAIN_NOT_FOUND。
 func TestUndrainNotFound(t *testing.T) {
 	svc, _ := schedStack(t)
-	err := svc.applyUndrainForTest("prod", "ghost", "admin", "")
+	err := service.UndrainForIntegrationTest(svc, "prod", "ghost", "admin", "")
 	if !errors.Is(err, apperr.ErrDrainNotFound) {
 		t.Fatalf("应返回 DRAIN_NOT_FOUND，实际 %v", err)
 	}

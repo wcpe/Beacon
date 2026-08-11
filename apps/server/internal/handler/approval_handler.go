@@ -48,12 +48,17 @@ type CredentialSecretRedeemer interface {
 
 // ApprovalHandler 处理统一审批 REST API。
 type ApprovalHandler struct {
-	svc ApprovalService
+	svc                      ApprovalService
+	credentialSecretRedeemer CredentialSecretRedeemer
 }
 
-// NewApprovalHandler 构造审批处理器。
-func NewApprovalHandler(svc ApprovalService) *ApprovalHandler {
-	return &ApprovalHandler{svc: svc}
+// NewApprovalHandler 构造审批处理器；凭据明文兑换器显式注入，避免审批查询服务意外获得明文读取能力。
+func NewApprovalHandler(svc ApprovalService, redeemers ...CredentialSecretRedeemer) *ApprovalHandler {
+	h := &ApprovalHandler{svc: svc}
+	if len(redeemers) != 0 {
+		h.credentialSecretRedeemer = redeemers[0]
+	}
+	return h
 }
 
 type approvalRejectBody struct {
@@ -240,12 +245,11 @@ func (h *ApprovalHandler) RedeemCredentialSecret(w http.ResponseWriter, r *http.
 		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
 		return
 	}
-	redeemer, ok := h.svc.(CredentialSecretRedeemer)
-	if !ok {
+	if h.credentialSecretRedeemer == nil {
 		render.WriteError(w, r, apperr.ErrCredentialSecretLost)
 		return
 	}
-	plaintext, err := redeemer.RedeemCredentialSecret(approvalRef(r), principal)
+	plaintext, err := h.credentialSecretRedeemer.RedeemCredentialSecret(approvalRef(r), principal)
 	if err != nil {
 		render.WriteError(w, r, err)
 		return

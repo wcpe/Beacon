@@ -1,6 +1,8 @@
 package service
 
 import (
+	"time"
+
 	"gorm.io/gorm"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
@@ -13,14 +15,19 @@ func ApplyConfigPublishForTest(s *ConfigService, id uint, content, operator, com
 	if err != nil {
 		return nil, err
 	}
+	return ApplyConfigPublishWithExpectedVersionForTest(s, id, content, operator, comment, clientIP, item.Version)
+}
+
+// ApplyConfigPublishWithExpectedVersionForTest 仅供并发历史测试固定审批冻结时的目标版本，不构成生产旁路。
+func ApplyConfigPublishWithExpectedVersionForTest(s *ConfigService, id uint, content, operator, comment, clientIP string, expectedVersion int64) (*model.ConfigItem, error) {
 	var updated *model.ConfigItem
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var applyErr error
-		updated, applyErr = s.applyPublishInTx(tx, id, content, operator, comment, clientIP, item.Version)
+		updated, applyErr = s.applyPublishInTx(tx, id, content, operator, comment, clientIP, expectedVersion)
 		return applyErr
 	})
 	if err != nil {
-		return nil, err
+		return nil, mapDuplicateKey(err)
 	}
 	s.recordPublish()
 	s.notify(updated)
@@ -55,4 +62,60 @@ func ApplyConfigRollbackForTest(s *ConfigService, id uint, toVersion int64, oper
 	s.notify(updated)
 	s.exportGit(updated, model.ActionConfigRollback, operator)
 	return updated, nil
+}
+
+// ApplyConfigDeleteForTest 仅供历史行为测试构造审批已执行后的软删，不构成生产旁路。
+func ApplyConfigDeleteForTest(s *ConfigService, id uint, operator, clientIP string) error {
+	item, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.configRepo.WithTx(tx).SoftDelete(item.ID, time.Now().UTC()); err != nil {
+			return err
+		}
+		return s.writeAudit(tx, item, operator, model.ActionConfigDelete, `{"deleted":true}`, clientIP)
+	})
+	if err != nil {
+		return err
+	}
+	s.notify(item)
+	s.exportGit(item, model.ActionConfigDelete, operator)
+	return nil
+}
+
+// ApplyConfigBatchSetEnabledForTest 仅供历史行为测试构造审批已执行后的批量启停，不构成生产旁路。
+func ApplyConfigBatchSetEnabledForTest(s *ConfigService, ids []uint, enabled bool, operator, clientIP string) error {
+	uniqueIDs := dedupIDs(ids)
+	items, err := s.configRepo.FindByIDs(uniqueIDs)
+	if err != nil {
+		return err
+	}
+	if len(items) != len(uniqueIDs) {
+		return apperr.ErrConfigNotFound
+	}
+	action, detail := model.ActionConfigDisable, `{"enabled":false}`
+	if enabled {
+		action, detail = model.ActionConfigEnable, `{"enabled":true}`
+	}
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		for index := range items {
+			item := &items[index]
+			if err := s.configRepo.WithTx(tx).SetEnabled(item.ID, enabled); err != nil {
+				return err
+			}
+			if err := s.writeAudit(tx, item, operator, action, detail, clientIP); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for index := range items {
+		s.notify(&items[index])
+		s.exportGit(&items[index], action, operator)
+	}
+	return nil
 }

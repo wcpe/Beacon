@@ -73,12 +73,14 @@ const (
 	OperationOverrideSetRollback  = "override_set.rollback"
 	OperationOverrideSetDelete    = "override_set.delete"
 
-	OperationAgentCommandTailLogs      = "agent.command.tail_logs"
-	OperationAgentCommandFSBrowse      = "agent.command.fs_browse"
-	OperationAgentCommandResync        = "agent.command.resync"
-	OperationAgentCommandReverseScan   = "agent.command.reverse_scan"
-	OperationAgentCommandReverseSubmit = "agent.command.reverse_submit"
-	OperationAgentCommandImprint       = "agent.command.imprint"
+	OperationAgentCommandTailLogs       = "agent.command.tail_logs"
+	OperationAgentCommandFSBrowse       = "agent.command.fs_browse"
+	OperationAgentCommandResync         = "agent.command.resync"
+	OperationAgentCommandReverseScan    = "agent.command.reverse_scan"
+	OperationAgentCommandReverseSubmit  = "agent.command.reverse_submit"
+	OperationAgentCommandReverseResolve = "agent.command.reverse_resolve"
+	OperationAgentCommandImprint        = "agent.command.imprint"
+	OperationAgentCommandImprintConfirm = "agent.command.imprint.confirm"
 	// OperationAgentCommandDirectoryResync 与普通重同步共用同一审批操作键。
 	OperationAgentCommandDirectoryResync = OperationAgentCommandResync
 
@@ -186,7 +188,9 @@ func capabilityFor(kind string) string {
 		OperationAgentCommandResync,
 		OperationAgentCommandReverseScan,
 		OperationAgentCommandReverseSubmit,
+		OperationAgentCommandReverseResolve,
 		OperationAgentCommandImprint,
+		OperationAgentCommandImprintConfirm,
 		OperationMessagePayloadRead,
 		OperationSensitiveFileContentRead,
 		OperationSensitiveConfigPlaintextRead:

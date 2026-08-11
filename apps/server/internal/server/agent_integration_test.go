@@ -12,6 +12,10 @@ func TestAgentRESTFlow(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	reg := ts.URL + "/beacon/v1/agent/register"
+	// 发现仅投影 lifecycle=active 的环境，先经管理面创建 prod 运行环境。
+	if code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/namespaces", map[string]any{"code": "prod", "name": "生产"}); code != http.StatusCreated {
+		t.Fatalf("创建发现环境应 201，实际 %d：%v", code, body)
+	}
 
 	// 注册（未指派 → resolvedZone null、assigned false）
 	code, res := doJSON(t, http.MethodPost, reg, map[string]any{
@@ -60,11 +64,7 @@ func TestAgentRESTFlow(t *testing.T) {
 	}
 
 	// 指派 zone 后重新注册 → 回填 zoneA、assigned true
-	if code, _ := doJSON(t, http.MethodPut, ts.URL+"/admin/v1/zones/assignments", map[string]any{
-		"namespace": "prod", "serverId": "lobby-1", "group": "area1", "zone": "zoneA", "operator": "admin",
-	}); code != http.StatusOK {
-		t.Fatalf("指派应 200，实际 %d", code)
-	}
+	assignZoneForTest(t, ts, "prod", "lobby-1", "area1", "zoneA", "集成测试指派")
 	code, re := doJSON(t, http.MethodPost, reg, map[string]any{
 		"namespace": "prod", "serverId": "lobby-1", "address": "10.0.0.1:25565"})
 	if code != http.StatusOK || re["resolvedZone"] != "zoneA" || re["assigned"] != true {

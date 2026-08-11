@@ -69,6 +69,7 @@ func TestReportRequestParseProxy(t *testing.T) {
 	p := req.Proxy.toRuntime()
 	if p == nil {
 		t.Fatal("bc 上报含 proxy 子对象，toRuntime 不应为 nil")
+		return
 	}
 	if p.OnlineConnections != 128 || p.ThreadCount != 64 || p.UptimeMs != 3600000 ||
 		p.BackendUp != 3 || p.BackendTotal != 4 || p.BackendAvgLatencyMs != 12.5 {

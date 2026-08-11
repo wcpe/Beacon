@@ -15,13 +15,8 @@ func TestSchedulingRESTFlow(t *testing.T) {
 	placeURL := ts.URL + "/admin/v1/scheduling/placement"
 
 	// 先指派 zone（DB 权威），再注册实例 → 注册时解析出 ResolvedZone=zoneA，成为落位候选
-	code, _ := doJSON(t, http.MethodPut, ts.URL+"/admin/v1/zones/assignments", map[string]any{
-		"namespace": "prod", "serverId": "sched-1", "group": "area1", "zone": "zoneA",
-	})
-	if code != http.StatusOK {
-		t.Fatalf("指派 zone 应 200，实际 %d", code)
-	}
-	code, _ = doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
+	assignZoneForTest(t, ts, "prod", "sched-1", "area1", "zoneA", "集成测试指派")
+	code, _ := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
 		"namespace": "prod", "serverId": "sched-1", "role": "bukkit", "group": "area1", "address": "10.0.0.8:25565",
 	})
 	if code != http.StatusOK {
@@ -56,17 +51,14 @@ func TestSchedulingRESTFlow(t *testing.T) {
 	}
 
 	// undrain → 落位恢复
-	code, _ = doJSON(t, http.MethodDelete, drainURL+"?namespace=prod&serverId=sched-1", nil)
-	if code != http.StatusOK {
-		t.Fatalf("undrain 应 200，实际 %d", code)
-	}
+	requestAndApplyApproval(t, ts, http.MethodDelete, "/admin/v1/scheduling/drains?namespace=prod&serverId=sched-1&reason=集成测试取消排空", t.Name()+"-undrain", nil)
 	code, place3 := doJSON(t, http.MethodGet, placeURL+"?namespace=prod&zone=zoneA", nil)
 	if code != http.StatusOK || !hasCandidate(place3, "sched-1") {
 		t.Fatalf("undrain 后落位应恢复 sched-1，实际 %d %v", code, place3["candidates"])
 	}
 
 	// undrain 不存在 → 404
-	code, _ = doJSON(t, http.MethodDelete, drainURL+"?namespace=prod&serverId=ghost", nil)
+	code, _ = doJSONWithHeaders(t, http.MethodDelete, drainURL+"?namespace=prod&serverId=ghost&reason=集成测试取消排空", nil, map[string]string{"Idempotency-Key": t.Name() + "-missing-undrain"})
 	if code != http.StatusNotFound {
 		t.Fatalf("undrain 不存在应 404，实际 %d", code)
 	}

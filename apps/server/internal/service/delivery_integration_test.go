@@ -60,7 +60,7 @@ func newP9Fixture(t *testing.T) *p9Fixture {
 	mustCreate(t, db, &f.target)
 	for _, sid := range []string{"p9-src", "p9-t1"} {
 		mustCreate(t, db, &model.AgentIdentity{
-			IdentityID: "idn-" + sid, NamespaceID: f.ns.ID, ServerID: sid,
+		IdentityID: "idn-" + sid, NamespaceID: f.ns.ID, ServerID: model.NullableServerID(sid),
 			Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, StatusChangedAt: time.Now().UTC(),
 		})
 	}
@@ -196,14 +196,14 @@ func TestP9DeliveryOrderFullChain(t *testing.T) {
 	}
 
 	// submit → pending_approval；创建人自批被分离拒绝；他人审批通过。
-	if detail, err = f.orders.applySubmit(orderID, "ops-chen", "10.0.0.9"); err != nil ||
+	if detail, err = service.SubmitDeliveryOrderForIntegrationTest(f.orders, orderID, "ops-chen", "10.0.0.9"); err != nil ||
 		detail.Status != model.ChangeOrderStatusPendingApproval {
 		t.Fatalf("提交失败: %v / %+v", err, detail)
 	}
-	if _, err := f.orders.applyApprove(orderID, "", "ops-chen", "10.0.0.9"); err == nil {
+	if _, err := service.ApproveDeliveryOrderForIntegrationTest(f.orders, orderID, "", "ops-chen", "10.0.0.9"); err == nil {
 		t.Fatal("创建人自批应被审批分离拒绝")
 	}
-	if detail, err = f.orders.applyApprove(orderID, "影响面已确认", "admin", "10.0.0.9"); err != nil ||
+	if detail, err = service.ApproveDeliveryOrderForIntegrationTest(f.orders, orderID, "影响面已确认", "admin", "10.0.0.9"); err != nil ||
 		detail.Status != model.ChangeOrderStatusApproved {
 		t.Fatalf("审批失败: %v / %+v", err, detail)
 	}

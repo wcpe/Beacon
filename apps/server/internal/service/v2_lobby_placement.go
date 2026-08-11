@@ -70,7 +70,7 @@ type ServerPlacementTransferView struct {
 
 // TransferServerPlacement 在大厅、业务小区和未分配之间原子迁移单台 backend。
 // Zone 到 Zone 仍由换区工单处理，绝不在这里驱动身份重新确认。
-func (s *V2ControlPlaneService) TransferServerPlacement(p ServerPlacementTransferParams) (*ServerPlacementTransferView, error) {
+func (s *V2ControlPlaneService) TransferServerPlacement(_ ServerPlacementTransferParams) (*ServerPlacementTransferView, error) {
 	return nil, apperr.ErrForbidden
 }
 

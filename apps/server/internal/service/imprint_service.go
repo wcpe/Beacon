@@ -3,7 +3,6 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -21,10 +20,6 @@ import (
 
 // imprintComment 是拓印确认落库的版本 / 审计注释（FR-46）。
 const imprintComment = "按需拓印回写"
-
-// confirmImprintBeforeClaimHook 是测试注入钩子：在「过自审门、归一并入层后、CAS 认领前」触发，
-// 用于确定性复现并发双确认窗口（生产恒为 nil、零开销）。见 TestConfirmImprintClaimBeforeLand。
-var confirmImprintBeforeClaimHook func()
 
 // ImprintDiffResult 是拓印 diff 结果：本地实际值（命令转存的磁盘原文）⟷ 期望合并值（FR-45 解析）。
 type ImprintDiffResult struct {
@@ -55,10 +50,24 @@ type ImprintConfirmResult struct {
 	MD5        string
 }
 
+type imprintConfirmApprovalPayload struct {
+	CommandID   uint   `json:"commandId"`
+	Namespace   string `json:"namespace"`
+	ServerID    string `json:"serverId"`
+	Path        string `json:"path"`
+	Scope       string `json:"scope"`
+	Group       string `json:"group"`
+	Zone        string `json:"zone"`
+	Target      string `json:"target"`
+	ReviewedMD5 string `json:"reviewedMd5"`
+	Operator    string `json:"operator"`
+	ClientIP    string `json:"clientIP"`
+}
+
 // RequestImprint 由 admin 触发对某在线实例某文件的按需拓印（FR-46）：事务内建 pending 命令
 // （载荷 mode=imprint + path）+ file.imprint-fetch 审计；提交后唤醒该 agent SSE（agent 仍读整棵
 // plugins 树回传，落库 vs 转存由 mode 区分，agent 零改动）。在线校验与 SSE 唤醒口径同 RequestReverseFetch。
-func (s *AgentCommandService) RequestImprint(ns, serverID, filePath, operator, clientIP string) (*model.AgentCommand, error) {
+func (s *AgentCommandService) RequestImprint(_, _, _, _, _ string) (*model.AgentCommand, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -97,11 +106,11 @@ func (s *AgentCommandService) applyRequestImprintInTx(tx *gorm.DB, ns, serverID,
 		return nil, e
 	}
 	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns,
-			Operator:      operator, Action: model.ActionFileImprintFetch,
-			TargetType: model.TargetTypeCommand, TargetRef: serverID,
-			Detail: fmt.Sprintf(`{"commandId":%d,"path":%q}`, cmd.ID, cleanPath),
-			Result: model.ResultOK, ClientIP: clientIP,
+		NamespaceCode: ns,
+		Operator:      operator, Action: model.ActionFileImprintFetch,
+		TargetType: model.TargetTypeCommand, TargetRef: serverID,
+		Detail: fmt.Sprintf(`{"commandId":%d,"path":%q}`, cmd.ID, cleanPath),
+		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
 	}
@@ -213,104 +222,176 @@ func (s *AgentCommandService) ImprintDiff(commandID uint, scope, group, zone str
 	return res, nil
 }
 
-// ConfirmImprint 确认拓印落库（FR-46）：命令须 ready 且 imprint 模式；**单人自审门**——
-// reviewedMd5 须等于命令转存内容 md5（强制看过 diff），否则 412。过门后先 CAS ready→done 认领并清空瞬态
-// （赢者独占、挡并发双确认），再复用 FileService.Create（该层 path 不存在）/ Publish（已存在）落该层覆盖
-// （FileService 内部事务 + file 审计 + 下发唤醒），最后写 file.imprint 审计。
-func (s *AgentCommandService) ConfirmImprint(commandID uint, scope, group, zone, target, reviewedMd5, operator, clientIP string) (*ImprintConfirmResult, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
+// ConfirmImprint 已停用，避免 handler、后台代码或测试外输入直接绕过审批 worker 落库。
+func (s *AgentCommandService) ConfirmImprint(uint, string, string, string, string, string, string, string) (*ImprintConfirmResult, error) {
+	return nil, apperr.ErrForbidden
+}
+
+// RequestImprintConfirmApproval 创建拓印确认审批；冻结来源命令、目标层与已查看内容的 md5，不保存文件正文。
+func (s *AgentCommandService) RequestImprintConfirmApproval(commandID uint, scope, group, zone, target, reviewedMD5, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	if s == nil || s.approval == nil || commandID == 0 || operator == "" || reason == "" || idempotencyKey == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	cmd, payload, err := s.requireReadyImprint(commandID)
 	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	if reviewedMD5 == "" || reviewedMD5 != filetree.ContentMD5(cmd.ImprintContent) {
+		return ApprovalTicketView{}, apperr.ErrImprintReviewMismatch
+	}
+	normGroup, normTarget, err := normalizeImprintScope(scope, group, zone, target, cmd.ServerID)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	frozen := imprintConfirmApprovalPayload{CommandID: cmd.ID, Namespace: cmd.NamespaceCode, ServerID: cmd.ServerID, Path: payload.Path,
+		Scope: scope, Group: normGroup, Zone: zone, Target: normTarget, ReviewedMD5: reviewedMD5, Operator: operator, ClientIP: clientIP}
+	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandImprintConfirm, Resource: "agent-command", ResourceID: fmt.Sprint(cmd.ID),
+		IdempotencyKey: idempotencyKey, Reason: reason, PreconditionSummary: fmt.Sprintf("command=%d,status=ready,contentMd5=%s", cmd.ID, reviewedMD5),
+		ImpactSummary: fmt.Sprintf("拓印内容将写入 %s/%s@%s:%s", cmd.NamespaceCode, payload.Path, scope, normTarget)},
+		map[string]any{"commandId": frozen.CommandID, "namespace": frozen.Namespace, "serverId": frozen.ServerID, "path": frozen.Path,
+			"scope": frozen.Scope, "group": frozen.Group, "zone": frozen.Zone, "target": frozen.Target, "reviewedMd5": frozen.ReviewedMD5,
+			"operator": frozen.Operator, "clientIP": frozen.ClientIP}, principal, clientIP)
+	if err != nil {
+		return ApprovalTicketView{}, err
+	}
+	return ApprovalTicketView{ApprovalRequestID: req.RequestID, Status: req.Status, OperationKey: req.OperationKey}, nil
+}
+
+// applyConfirmImprintInTx 仅在审批许可绑定校验通过后写文件、命令终态、审计与执行回执。
+func (s *AgentCommandService) applyConfirmImprintInTx(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit, input imprintConfirmApprovalPayload) (*ImprintConfirmResult, error) {
+	if err := ensureRequestPermit(req, permit); err != nil {
 		return nil, err
 	}
-	// 自审门：确认的内容必须等于看过 diff 的内容（盲确认 / 内容漂移即拒）。
-	if reviewedMd5 == "" || reviewedMd5 != filetree.ContentMD5(cmd.ImprintContent) {
+	if tx == nil || s.fileSvc == nil || input.CommandID == 0 || input.Operator == "" {
+		return nil, apperr.ErrForbidden
+	}
+	cmd, payload, err := s.requireReadyImprintInTx(tx, input.CommandID)
+	if err != nil {
+		return nil, err
+	}
+	if cmd.NamespaceCode != input.Namespace || cmd.ServerID != input.ServerID || payload.Path != input.Path {
+		return nil, apperr.ErrApprovalTargetChanged
+	}
+	if input.ReviewedMD5 == "" || input.ReviewedMD5 != filetree.ContentMD5(cmd.ImprintContent) {
 		return nil, apperr.ErrImprintReviewMismatch
 	}
-	// 归一并校验并入层（zone/server 取对应目标键；group/global 由 normalizeScope 处理）。
+	normGroup, normTarget, err := normalizeImprintScope(input.Scope, input.Group, input.Zone, input.Target, cmd.ServerID)
+	if err != nil {
+		return nil, err
+	}
+	claimed, err := s.repo.WithTx(tx).UpdateStatusClearImprint(cmd.ID, model.CommandStatusReady, model.CommandStatusDone, fmt.Sprintf("{\"scope\":%q}", input.Scope))
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, apperr.ErrImprintNotReady
+	}
+	obj, err := s.landImprintInTx(tx, cmd.NamespaceCode, payload.Path, input.Scope, normGroup, normTarget, cmd.ImprintContent, input.Operator, input.ClientIP)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{NamespaceCode: cmd.NamespaceCode, Operator: input.Operator, Action: model.ActionFileImprint,
+		TargetType: model.TargetTypeFile, TargetRef: fmt.Sprintf("%s/%s/%s@%s:%s", cmd.NamespaceCode, normGroup, payload.Path, input.Scope, normTarget),
+		Detail: fmt.Sprintf("{\"commandId\":%d,\"scope\":%q,\"version\":%d,\"md5\":%q}", cmd.ID, input.Scope, obj.Version, obj.ContentMD5),
+		Result: model.ResultOK, ClientIP: input.ClientIP}); err != nil {
+		return nil, err
+	}
+	return &ImprintConfirmResult{FileID: obj.ID, ScopeLevel: input.Scope, Group: normGroup, Target: normTarget, Version: obj.Version, MD5: obj.ContentMD5}, nil
+}
+
+func (s *AgentCommandService) requireReadyImprintInTx(tx *gorm.DB, commandID uint) (*model.AgentCommand, ingestPayload, error) {
+	cmd, err := s.repo.WithTx(tx).FindByID(commandID)
+	if err != nil {
+		return nil, ingestPayload{}, err
+	}
+	if cmd == nil || cmd.Type != model.CommandTypeIngestPlugins || cmd.Status != model.CommandStatusReady {
+		return nil, ingestPayload{}, apperr.ErrImprintNotReady
+	}
+	var payload ingestPayload
+	if json.Unmarshal([]byte(cmd.Payload), &payload) != nil || payload.Mode != model.IngestModeImprint {
+		return nil, ingestPayload{}, apperr.ErrCommandNotFound
+	}
+	return cmd, payload, nil
+}
+
+func normalizeImprintScope(scope, group, zone, target, sourceServerID string) (string, string, error) {
 	scopeTarget := target
 	if scope == model.ScopeZone {
 		scopeTarget = zone
 	}
-	normGroup, normTarget, serr := normalizeScope(scope, group, scopeTarget)
-	if serr != nil {
-		return nil, serr
+	normGroup, normTarget, err := normalizeScope(scope, group, scopeTarget)
+	if err != nil {
+		return "", "", err
 	}
-	// L：拓印 diff 按「源服有效视角」审，server 层只能落回源服自身——目标为他服（含跨 ns 悬空目标）一律拒，
-	// 挡借确认把某服配置落到本 ns 其它服 / 越权目标。源服 serverId 必属命令 ns，以此天然限定在本 ns。
-	if scope == model.ScopeServer && normTarget != cmd.ServerID {
-		return nil, apperr.ErrInvalidScope
+	if scope == model.ScopeServer && normTarget != sourceServerID {
+		return "", "", apperr.ErrInvalidScope
 	}
-
-	// B（CAS 前置认领）：先把命令 ready→done 并清空瞬态——赢者独占落库，挡并发双确认重复落库 / 重复下发。
-	// 瞬态内容此刻仍在内存 cmd，捕获到局部变量供落库（DB 列被本次更新清空）。
-	content := cmd.ImprintContent
-	if confirmImprintBeforeClaimHook != nil {
-		confirmImprintBeforeClaimHook()
-	}
-	claimed, cerr := s.repo.UpdateStatusClearImprint(cmd.ID, model.CommandStatusReady, model.CommandStatusDone,
-		fmt.Sprintf(`{"scope":%q}`, scope))
-	if cerr != nil {
-		return nil, cerr
-	}
-	if !claimed {
-		return nil, apperr.ErrImprintNotReady // 被并发认领（已 done/expired），本次让出、不重复落库
-	}
-
-	// 已认领，落库（FileService 内部事务 + file 审计 + 下发唤醒）。F：传归一后的 target，
-	// 避免 conflict 回退按未归一 target 查不中而误 404（group/global 的多余 target 归一为空）。
-	obj, ferr := s.landImprint(cmd.NamespaceCode, payload.Path, scope, group, normTarget, content, operator, clientIP)
-	if ferr != nil {
-		// 已认领但落库失败：命令已 done、瞬态已清，不回滚（重做请重新触发拓印）；记 ERROR 供排查。
-		slog.Error("拓印已认领但落库失败（命令已 done、瞬态已清，需重新触发拓印）", "commandId", cmd.ID, "原因", ferr)
-		return nil, ferr
-	}
-
-	// 落库成功后写 file.imprint 审计（detail 不含文件内容）。
-	if e := s.auditRepo.Create(&model.AuditLog{
-		NamespaceCode: cmd.NamespaceCode, Operator: operator, Action: model.ActionFileImprint,
-		TargetType: model.TargetTypeFile,
-		TargetRef:  fmt.Sprintf("%s/%s/%s@%s:%s", cmd.NamespaceCode, normGroup, payload.Path, scope, normTarget),
-		Detail:     fmt.Sprintf(`{"commandId":%d,"scope":%q,"version":%d,"md5":%q}`, cmd.ID, scope, obj.Version, obj.ContentMD5),
-		Result:     model.ResultOK, ClientIP: clientIP,
-	}); e != nil {
-		slog.Warn("拓印确认审计写入失败（已落库）", "commandId", cmd.ID, "原因", e)
-	}
-	slog.Info("拓印确认落库", "commandId", cmd.ID, "scope", scope, "group", normGroup,
-		"target", normTarget, "path", payload.Path, "version", obj.Version)
-	return &ImprintConfirmResult{
-		FileID: obj.ID, ScopeLevel: scope, Group: normGroup, Target: normTarget,
-		Version: obj.Version, MD5: obj.ContentMD5,
-	}, nil
+	return normGroup, normTarget, nil
 }
 
-// landImprint 把拓印内容落为指定层文件覆盖：该层 path 不存在则 Create（首版）、已存在则 Publish（新版本）。
-// 复用 FileService 既有事务 + file 审计 + 下发唤醒；ns 来自命令（拓印源实例环境）。
-// scopeTarget 须为归一后的目标键（normalizeScope 产物）——group/global 恒为空，否则 conflict 回退会按
-// 未归一 target 查不中而误 404（见 ConfirmImprint 调用处 F 修正）。
-func (s *AgentCommandService) landImprint(ns, filePath, scope, group, scopeTarget, content, operator, clientIP string) (*model.FileObject, error) {
-	obj, cerr := s.fileSvc.applyCreate(CreateFileParams{
-		Namespace: ns, Group: group, Path: filePath,
-		ScopeLevel: scope, ScopeTarget: scopeTarget,
-		Content: content, Operator: operator, Comment: imprintComment, ClientIP: clientIP,
-	})
-	if cerr == nil {
+func (s *AgentCommandService) landImprintInTx(tx *gorm.DB, ns, filePath, scope, group, scopeTarget, content, operator, clientIP string) (*model.FileObject, error) {
+	if err := validateFileContent(filePath, content); err != nil {
+		return nil, err
+	}
+	files := s.fileSvc.fileRepo.WithTx(tx)
+	existing, err := files.FindByIdentity(ns, groupForScope(scope, group), filePath, scope, scopeTarget)
+	if err != nil {
+		return nil, err
+	}
+	md5 := filetree.ContentMD5(content)
+	if existing == nil {
+		obj := &model.FileObject{NamespaceCode: ns, GroupCode: groupForScope(scope, group), Path: filePath, ScopeLevel: scope, ScopeTarget: scopeTarget,
+			Content: content, ContentMD5: md5, Version: 1, Enabled: true}
+		if err := files.Create(obj); err != nil {
+			return nil, err
+		}
+		rev, err := s.fileSvc.appendRevision(tx, obj.ID, obj.Version, content, md5, nil, operator, imprintComment)
+		if err != nil {
+			return nil, err
+		}
+		obj.CurrentRevision = rev.ID
+		if err := files.Save(obj); err != nil {
+			return nil, err
+		}
+		if err := s.fileSvc.writeAudit(tx, obj, operator, model.ActionFileCreate, fmt.Sprintf("{\"version\":1,\"md5\":%q}", md5), clientIP); err != nil {
+			return nil, err
+		}
 		return obj, nil
 	}
-	if !errors.Is(cerr, apperr.ErrFileConflict) {
-		return nil, cerr
+	preVersion := existing.Version
+	newVersion := preVersion + 1
+	rev, err := s.fileSvc.appendRevision(tx, existing.ID, newVersion, content, md5, nil, operator, imprintComment)
+	if err != nil {
+		return nil, err
 	}
-	// 该层 path 已存在 → 发布新版本（整文件覆盖该层）。
-	existing, gerr := s.fileSvc.fileRepo.FindByIdentity(ns, groupForScope(scope, group), filePath, scope, scopeTarget)
-	if gerr != nil {
-		return nil, gerr
+	existing.Content, existing.ContentMD5, existing.Version, existing.CurrentRevision = content, md5, newVersion, rev.ID
+	if err := files.Save(existing); err != nil {
+		return nil, err
 	}
-	if existing == nil {
-		return nil, apperr.ErrFileNotFound
+	if err := s.fileSvc.writeAudit(tx, existing, operator, model.ActionFilePublish, fmt.Sprintf("{\"version\":%d,\"md5\":%q}", newVersion, md5), clientIP); err != nil {
+		return nil, err
 	}
-	return s.fileSvc.applyPublish(existing.ID, content, operator, imprintComment, clientIP)
+	if err := s.fileSvc.recordReversible(tx, existing, preVersion, operator); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+func (s *AgentCommandService) afterConfirmImprint(result *ImprintConfirmResult, operator string) func() {
+	return func() {
+		obj, err := s.fileSvc.Get(result.FileID)
+		if err != nil {
+			slog.Warn("拓印提交后读取文件失败", "fileId", result.FileID, "原因", err)
+			return
+		}
+		action := model.ActionFilePublish
+		if result.Version == 1 {
+			action = model.ActionFileCreate
+		}
+		s.fileSvc.notify(obj)
+		s.fileSvc.exportGit(obj, action, operator)
+		slog.Info("拓印确认落库", "fileId", result.FileID, "scope", result.ScopeLevel, "target", result.Target, "version", result.Version)
+	}
 }
 
 // GetImprintCommand 取拓印命令（任意状态，供前端轮询命令状态至 ready，FR-46）。

@@ -26,7 +26,7 @@ type MCPToolRegistry struct {
 	overrides *service.OverrideSetService
 	assets    *service.AssetPreviewService
 	messages  *service.MessagePayloadService
-	reads     mcpReadServices
+	reads     MCPReadServices
 }
 
 // NewMCPToolRegistry 构造 MCP 显式工具目录。
@@ -67,7 +67,7 @@ func (r *MCPToolRegistry) SetSensitiveReadServices(assets *service.AssetPreviewS
 }
 
 // SetReadServices 接入 MCP 可公开的脱敏只读查询服务；不接 repository 或运行时内部对象。
-func (r *MCPToolRegistry) SetReadServices(reads mcpReadServices) { r.reads = reads }
+func (r *MCPToolRegistry) SetReadServices(reads MCPReadServices) { r.reads = reads }
 
 // MCPToolNames 返回 profile 可发现的固定工具名，供覆盖门禁验证。
 func MCPToolNames(profile string) []string {
@@ -384,7 +384,7 @@ func registerLifecycleTool(server *mcp.Server, name, description string, princip
 			Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp", Confirmation: confirmation,
 		}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status, "operationKey": ticket.OperationKey}, nil
 	})
@@ -397,35 +397,35 @@ func (r *MCPToolRegistry) registerConfigApproval(server *mcp.Server, principal a
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.config.publish", Description: "提交配置发布审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpConfigInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.configs.RequestPublish(in.ID, in.Content, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.config.rollback", Description: "提交配置回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpConfigInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.configs.RequestRollback(in.ID, in.Version, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.config.gray.publish", Description: "提交配置灰度发布审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpConfigInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.configs.RequestGrayPublish(in.ID, in.Content, in.Cohort, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.config.gray.promote", Description: "提交配置灰度晋升审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpConfigInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.configs.RequestGrayPromote(in.ID, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": ticket.ApprovalRequestID, "status": ticket.Status}, nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.config.delete", Description: "提交配置删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpConfigInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.configs.RequestDelete(in.ID, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpConfigApprovalTicketView(ticket), nil
 	})
@@ -441,7 +441,7 @@ func registerConfigBatchTool(server *mcp.Server, name string, principal auth.Pri
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: "提交配置批量删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBatchIDsInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := request(in.IDs, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpConfigApprovalTicketView(ticket), nil
 	})
@@ -451,74 +451,80 @@ func registerConfigBatchSetEnabledTool(server *mcp.Server, name string, principa
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: "提交配置批量启停审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBatchIDsInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := request(in.IDs, enabled, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpConfigApprovalTicketView(ticket), nil
 	})
 }
 
 func (r *MCPToolRegistry) registerFileOverrideApproval(server *mcp.Server, principal auth.Principal) {
-	if r.files != nil {
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.create", Description: "提交文件创建审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileCreateInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.files.RequestCreate(service.CreateFileParams{Namespace: in.Namespace, Group: in.Group, Path: in.Path, ScopeLevel: in.ScopeLevel, ScopeTarget: in.ScopeTarget, Content: in.Content, Operator: principal.AuditRef(), Comment: in.Comment, WholeFileOverride: in.WholeFileOverride, SensitiveExcluded: in.SensitiveExcluded, ClientIP: "mcp"}, in.Reason, in.IdempotencyKey, principal)
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
-		})
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.import", Description: "提交文件批量导入审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileImportInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.files.RequestImport(service.ImportFilesParams{Namespace: in.Namespace, Group: in.Group, ScopeLevel: in.ScopeLevel, ScopeTarget: in.ScopeTarget, Files: in.Files, Operator: principal.AuditRef(), Comment: in.Comment, ClientIP: "mcp"}, in.Reason, in.IdempotencyKey, principal)
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
-		})
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.publish", Description: "提交文件发布审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFilePublishInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.files.RequestPublish(in.ID, in.Content, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
-		})
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.rollback", Description: "提交文件回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.files.RequestRollback(in.ID, in.Version, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
-		})
-		mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.delete", Description: "提交文件删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
-			ticket, err := r.files.RequestDelete(in.ID, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
-			if err != nil {
-				return mcpToolError(), nil, nil
-			}
-			return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
-		})
-		registerFileBatchTool(server, "beacon.files.batch.delete", principal, r.files.RequestBatchDelete)
-		registerFileBatchSetEnabledTool(server, "beacon.files.batch.enable", principal, true, r.files.RequestBatchSetEnabled)
-		registerFileBatchSetEnabledTool(server, "beacon.files.batch.disable", principal, false, r.files.RequestBatchSetEnabled)
+	if r.files == nil {
+		r.registerOverrideSetApproval(server, principal)
+		return
 	}
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.create", Description: "提交文件创建审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileCreateInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.files.RequestCreate(service.CreateFileParams{Namespace: in.Namespace, Group: in.Group, Path: in.Path, ScopeLevel: in.ScopeLevel, ScopeTarget: in.ScopeTarget, Content: in.Content, Operator: principal.AuditRef(), Comment: in.Comment, WholeFileOverride: in.WholeFileOverride, SensitiveExcluded: in.SensitiveExcluded, ClientIP: "mcp"}, in.Reason, in.IdempotencyKey, principal)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.import", Description: "提交文件批量导入审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileImportInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.files.RequestImport(service.ImportFilesParams{Namespace: in.Namespace, Group: in.Group, ScopeLevel: in.ScopeLevel, ScopeTarget: in.ScopeTarget, Files: in.Files, Operator: principal.AuditRef(), Comment: in.Comment, ClientIP: "mcp"}, in.Reason, in.IdempotencyKey, principal)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.publish", Description: "提交文件发布审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFilePublishInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.files.RequestPublish(in.ID, in.Content, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.rollback", Description: "提交文件回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.files.RequestRollback(in.ID, in.Version, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.files.delete", Description: "提交文件删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpFileDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
+		ticket, err := r.files.RequestDelete(in.ID, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
+	})
+	registerFileBatchTool(server, "beacon.files.batch.delete", principal, r.files.RequestBatchDelete)
+	registerFileBatchSetEnabledTool(server, "beacon.files.batch.enable", principal, true, r.files.RequestBatchSetEnabled)
+	registerFileBatchSetEnabledTool(server, "beacon.files.batch.disable", principal, false, r.files.RequestBatchSetEnabled)
+	r.registerOverrideSetApproval(server, principal)
+}
+
+func (r *MCPToolRegistry) registerOverrideSetApproval(server *mcp.Server, principal auth.Principal) {
 	if r.overrides == nil {
 		return
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.override-sets.publish", Description: "提交覆盖集发布审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpOverridePublishInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.overrides.RequestPublish(in.ID, service.PublishOverrideSetParams{TargetRoot: in.TargetRoot, ReloadCommand: in.ReloadCommand, Comment: in.Comment, Operator: principal.AuditRef(), ClientIP: "mcp"}, in.Reason, in.IdempotencyKey, principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.override-sets.rollback", Description: "提交覆盖集回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpOverrideRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.overrides.RequestRollback(in.ID, in.Version, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.override-sets.delete", Description: "提交覆盖集删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpOverrideDeleteInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.overrides.RequestDelete(in.ID, in.Reason, in.IdempotencyKey, principal.AuditRef(), in.Comment, "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
 	})
@@ -531,7 +537,7 @@ func registerFileBatchTool(server *mcp.Server, name string, principal auth.Princ
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: "提交文件批量删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBatchIDsInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := request(in.IDs, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
 	})
@@ -541,7 +547,7 @@ func registerFileBatchSetEnabledTool(server *mcp.Server, name string, principal 
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: "提交文件批量启停审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBatchIDsInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := request(in.IDs, enabled, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpFileApprovalTicketView(ticket), nil
 	})
@@ -553,13 +559,13 @@ func (r *MCPToolRegistry) registerSensitiveReadApproval(server *mcp.Server, prin
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.assets.preview.request", Description: "提交敏感文件预览审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAssetPreviewRequestInput) (*mcp.CallToolResult, map[string]any, error) {
 			request, err := r.assets.RequestAccess(in.ServerID, in.Path, in.Reason, in.IdempotencyKey, principal, "mcp")
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": request.RequestID, "status": request.Status}, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.assets.preview.consume", Description: "消费已批准的敏感文件预览授权，不返回文件正文"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAssetPreviewConsumeInput) (*mcp.CallToolResult, map[string]any, error) {
 			if _, err := r.assets.ConsumeApproved(in.GrantID, in.CommandID, principal); err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, map[string]any{"status": "consumed"}, nil
 		})
@@ -568,13 +574,13 @@ func (r *MCPToolRegistry) registerSensitiveReadApproval(server *mcp.Server, prin
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.messages.payload.request", Description: "提交消息正文读取审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpMessagePayloadRequestInput) (*mcp.CallToolResult, map[string]any, error) {
 			request, err := r.messages.RequestAccess(in.MessageID, in.Reason, in.IdempotencyKey, principal, "mcp")
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, map[string]any{"approvalRequestId": request.RequestID, "status": request.Status}, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.messages.payload.consume", Description: "消费已批准的消息正文授权，不返回消息正文"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpMessagePayloadConsumeInput) (*mcp.CallToolResult, map[string]any, error) {
 			if _, err := r.messages.Consume(in.GrantID, in.MessageID, principal); err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, map[string]any{"status": "consumed"}, nil
 		})
@@ -587,7 +593,7 @@ func (r *MCPToolRegistry) registerOwnApprovalRead(server *mcp.Server, principal 
 			Status: in.Status, OperationKey: in.Operation, Page: normalizedMCPPage(in.Page), PageSize: normalizedMCPPageSize(in.PageSize),
 		}, principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		views := make([]map[string]any, 0, len(items))
 		for i := range items {
@@ -598,7 +604,7 @@ func (r *MCPToolRegistry) registerOwnApprovalRead(server *mcp.Server, principal 
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.approvals.own.get", Description: "查询当前 MCP 客户端自己的单个审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpOwnApprovalGetInput) (*mcp.CallToolResult, map[string]any, error) {
 		item, err := r.approvals.Detail(in.RequestID, principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
 	})
@@ -608,7 +614,7 @@ func (r *MCPToolRegistry) registerOwnApprovalWithdraw(server *mcp.Server, princi
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.approvals.own.withdraw", Description: "撤回当前 MCP 客户端自己仍处于待处理状态的审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpOwnApprovalGetInput) (*mcp.CallToolResult, map[string]any, error) {
 		item, err := r.approvals.Withdraw(in.RequestID, principal, "mcp")
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
 	})
@@ -621,14 +627,14 @@ func (r *MCPToolRegistry) registerAPIKeyApproval(server *mcp.Server, principal a
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.credentials.api-key.create", Description: "提交 API 密钥创建审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAPIKeyCreateInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.apiKeys.RequestCreate(in.Name, in.Role, nil, in.Reason, principal.AuditRef(), "mcp", in.IdempotencyKey, principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.credentials.api-key.rotate", Description: "提交 API 密钥轮换审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAPIKeyRotateInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.apiKeys.RequestReset(in.ID, in.Reason, principal.AuditRef(), "mcp", in.IdempotencyKey, principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -644,14 +650,14 @@ func (r *MCPToolRegistry) registerIdentityApproval(server *mcp.Server, principal
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.identity.agent.approve", Description: "提交身份确认审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpIdentityApproveInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestApproveAgentIdentity(in.IdentityID, service.ApproveAgentIdentityParams{ServerID: in.ServerID, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.identity.agent.resolve-conflict", Description: "提交身份冲突处置审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpIdentityConflictInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestResolveAgentIdentityConflict(in.IdentityID, service.ResolveConflictParams{KeepBootID: in.KeepBootID, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -663,7 +669,7 @@ func registerIdentityTransitionTool(server *mcp.Server, name string, principal a
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: "提交身份生命周期审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpIdentityTransitionInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := request(in.IdentityID, service.IdentityTransitionParams{Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -676,7 +682,7 @@ func (r *MCPToolRegistry) registerNamespaceTrustApproval(server *mcp.Server, pri
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.trust.namespace.grant", Description: "提交 namespace 信任授予审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpNamespaceTrustInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestGrantNamespaceTrust(service.GrantNamespaceTrustParams{FromNamespaceID: in.FromNamespaceID, ToNamespaceID: in.ToNamespaceID, Capability: in.Capability, Note: in.Note, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -689,35 +695,35 @@ func (r *MCPToolRegistry) registerTopologyApproval(server *mcp.Server, principal
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.servers.assign", Description: "提交服务器分配审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAssignServersInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestAssignServers(service.AssignServersParams{ServerIDs: in.ServerRowIDs, TargetKind: in.TargetKind, TargetID: in.TargetID, IsDefaultEntry: in.IsDefaultEntry, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.servers.rezone", Description: "提交服务器换区审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpRezoneServersInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestRezoneServers(service.RezoneServersParams{ServerIDs: in.ServerRowIDs, TargetKind: in.TargetKind, TargetID: in.TargetID, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.server.transfer-placement", Description: "提交服务器大厅归属迁移审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPlacementTransferInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestTransferServerPlacement(service.ServerPlacementTransferParams{ServerID: in.ServerID, TargetKind: in.TargetKind, TargetID: in.TargetID, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.server.disable-draining", Description: "提交服务器取消排空审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDisableDrainingInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestDisableServerDraining(service.SetServerDrainingParams{ServerID: in.ServerID, Draining: false, Reason: in.Reason, Operator: principal.AuditRef(), ClientIP: "mcp"}, principal, in.IdempotencyKey)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.server.set-default-entry", Description: "提交服务器默认入口变更审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDefaultEntryInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.v2.RequestSetServerDefaultEntryByServerID(in.ServerID, in.Value, in.Reason, principal.AuditRef(), "mcp", in.IdempotencyKey, principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -730,7 +736,7 @@ func (r *MCPToolRegistry) registerAgentCommandApproval(server *mcp.Server, princ
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.agent.server.resync", Description: "提交在线实例强制重同步审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAgentResyncInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.commands.RequestResyncApproval(in.NamespaceCode, in.ServerID, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -741,14 +747,14 @@ func (r *MCPToolRegistry) registerSystemApproval(server *mcp.Server, principal a
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.system.update.apply", Description: "提交控制面更新审批申请"}, func(ctx context.Context, _ *mcp.CallToolRequest, in mcpSystemRequestInput) (*mcp.CallToolResult, map[string]any, error) {
 			ticket, err := r.updates.RequestApply(ctx, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.system.update.rollback", Description: "提交控制面回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSystemRequestInput) (*mcp.CallToolResult, map[string]any, error) {
 			ticket, err := r.updates.RequestRollback(in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 		})
@@ -759,7 +765,7 @@ func (r *MCPToolRegistry) registerSystemApproval(server *mcp.Server, principal a
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.system.settings.update-dangerous", Description: "提交高影响设置变更审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDangerousSettingInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.settings.RequestUpdate(in.Key, in.Value, in.Reason, in.IdempotencyKey, principal.AuditRef(), "mcp", principal)
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpApprovalTicketView(ticket), nil
 	})
@@ -773,14 +779,14 @@ func (r *MCPToolRegistry) registerDeliveryApproval(server *mcp.Server, principal
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.delivery.order.submit", Description: "提交变更单统一审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliverySubmitInput) (*mcp.CallToolResult, map[string]any, error) {
 			ticket, err := r.orders.RequestSubmit(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.delivery.order.delete", Description: "提交变更单草稿删除审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliverySubmitInput) (*mcp.CallToolResult, map[string]any, error) {
 			ticket, err := r.orders.RequestDelete(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
 			if err != nil {
-				return mcpToolError(), nil, nil
+				return mcpRejectedResult()
 			}
 			return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 		})
@@ -791,28 +797,28 @@ func (r *MCPToolRegistry) registerDeliveryApproval(server *mcp.Server, principal
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.delivery.order.resume", Description: "提交交付变更单继续审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryResumeInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.delivery.RequestResume(in.OrderID, in.Mode, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.delivery.order.rollback", Description: "提交交付变更单回滚审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.delivery.RequestRollback(in.OrderID, in.Reason, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.delivery.batch.confirm", Description: "提交交付批次确认审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryBatchInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.delivery.RequestConfirmBatch(in.OrderID, in.BatchNo, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "beacon.delivery.rollback.finish", Description: "提交交付回滚结束审批申请"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeliveryRollbackInput) (*mcp.CallToolResult, map[string]any, error) {
 		ticket, err := r.delivery.RequestFinishRollback(in.OrderID, principal, in.IdempotencyKey, principal.AuditRef(), "mcp")
 		if err != nil {
-			return mcpToolError(), nil, nil
+			return mcpRejectedResult()
 		}
 		return &mcp.CallToolResult{}, mcpDeliveryTicketView(ticket), nil
 	})
@@ -871,4 +877,9 @@ func approvalTime(value *time.Time) string {
 
 func mcpToolError() *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "请求被拒绝或目标不可用"}}, IsError: true}
+}
+
+// mcpRejectedResult 以 MCP 结果表达已处理的业务拒绝，不把领域错误作为协议故障泄露给客户端。
+func mcpRejectedResult() (*mcp.CallToolResult, map[string]any, error) {
+	return mcpToolError(), nil, nil
 }

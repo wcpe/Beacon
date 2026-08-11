@@ -200,7 +200,7 @@ data: {}
 - 命令须存在且处 `fetched`、`type=resync-config`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面；无内容回传、仅推进命令生命周期。返回 `{ "ok": true }`。复用命令队列（见 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md)），不新增 ADR；见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md)。
 
 ### 16. 回传文件浏览结果 `POST /beacon/v1/agent/files/browse-result`（FR-110 只读文件浏览，见 [ADR-0049](adr/0049-agent-fs-browse.md)）
-请求体：`{ "namespace": "prod", "serverId": "lobby-1", "commandId": 1500, "ok": true, "result": { ... } }`（命中）或 `{ ..., "ok": false, "reason": "目标不存在或不可读" }`（原语拒读：越权 / 非目录 / 非文本 / 未启用浏览，**不携任何内容**）。agent 收到 §10 的 `type=fs-browse` 命令后，按 `op` 调只读浏览原语读盘，把结构化结果回传。`result` 按 `op` 形状不同：`list` → `{ type:"list", path, entries:[{name,relPath,dir,size,text}], offset, limit, total, hasMore }`；`tree` → `{ type:"tree", name, relPath, dir, size, text, children:[...递归], truncated }`；`file` → `{ type:"file", path, content, truncated }`。控制面把结果存为该命令**瞬态**（`browse_result`，等待中的 admin 取一次即用、命令过期清空，不落持久真源、**不进审计 detail**、不导出）并 CAS `fetched → done`（`ok=true`）/ `fetched → failed`（`ok=false`），随后唤醒等待中的 admin 请求。
+请求体：`{ "namespace": "prod", "serverId": "lobby-1", "commandId": 1500, "ok": true, "result": { ... } }`（命中）或 `{ ..., "ok": false, "reason": "目标不存在或不可读" }`（原语拒读：越权 / 非目录 / 非文本 / 未启用浏览，**不携任何内容**）。agent 收到 §10 的 `type=fs-browse` 命令后，按 `op` 调只读浏览原语读盘，把结构化结果回传。`result` 按 `op` 形状不同：`list` → `{ type:"list", path, entries:[{name,relPath,dir,size,text}], offset, limit, total, hasMore }`；`tree` → `{ type:"tree", name, relPath, dir, size, text, children:[...递归], truncated }`；`file` → `{ type:"file", path, content, truncated }`。控制面把结果存为该命令**瞬态**（`browse_result`，命令或 grant 过期即清空，不落持久真源、**不进审计 detail**、不导出）；成功回传时在同一事务内 CAS `fetched → done` 并绑定结果 SHA-256 激活 pending grant，失败则 CAS `fetched → failed` 并撤销该 grant。正文只能由原申请主体通过浏览 grant 一次消费。
 - 命令须存在且处 `fetched`、`type=fs-browse`（否则 `404 COMMAND_NOT_FOUND`）。与其它 agent 端点同属 agentToken 防误连信任面。返回 `{ "ok": true }`。见 [docs/specs/control-plane-fs-browse.md](specs/control-plane-fs-browse.md)。
 
 ---
@@ -253,7 +253,9 @@ data: {}
 | 端点 | 说明 |
 |---|---|
 | `GET /admin/v1/configs?namespace=&group=&dataId=&scopeLevel=` | 列出配置项 |
-| `GET /admin/v1/configs/{id}` | 取当前内容 + 元数据 |
+| `GET /admin/v1/configs/{id}` | 非敏感项取当前内容 + 元数据；敏感项返回 `409 operation_requires_approval` |
+| `POST /admin/v1/configs/{id}/plaintext/approval-requests` | 敏感配置正文读取申请：`{reason}` + `Idempotency-Key` → `202 {requestId,status}`；冻结当前版本和 SHA-256，不保存正文 |
+| `POST /admin/v1/configs/{id}/plaintext/grants/{grantId}/consume` | 原申请主体在审批成功后一次性消费当前冻结版本的正文；版本或哈希漂移、非本人、过期或重复消费均拒绝 |
 | `POST /admin/v1/configs` | 新建（首次发布）：三元组 + scopeLevel/scopeTarget + format + content + comment + 可选 `sensitive`（默认 false；true 则 content 加密入库，密钥来源见 [ADR-0081](adr/0081-local-persistent-encryption-key-files.md)，算法见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）（operator 由认证态派生） |
 | `PUT /admin/v1/configs/{id}` | 发布新版本：content + comment + reason，创建审批 ticket（202）；批准后才 version+1（operator 由认证态派生） |
 | `DELETE /admin/v1/configs/{id}` | 软删：reason + 可选 comment，创建审批 ticket（202）；批准后该层才从合并链脱落并触发唤醒（operator 由认证态派生） |
@@ -293,7 +295,7 @@ data: {}
 
 `GET /admin/v1/configs/impact`（FR-79）：发布前只读预览某条配置 scope 此刻会落到哪些**在线**子服，供发布确认展示「将影响 N 台在线服」。归属真源 = `zone_assignment`（DB 权威，见 [ADR-0004](adr/0004-zone-authority-control-plane.md)）；在线真源 = 内存注册表**可用集合**（`online`+`degraded`，与发现 / 拓扑同口径，degraded 仍会收到变更）。覆盖语义与有效配置覆盖链对称：`global` 覆盖该环境全部可用实例；`group` 覆盖解析大区 == `group` 的子服；`zone` 覆盖大区 == `group` 且小区 == `scopeTarget` 的子服；`server` 覆盖 `serverId == scopeTarget` 的那一台（在线才计入）。未指派的实例按 `groupHint` 回退（zone 为空），与 agent 端 `Resolve` 同口径。参数：`namespace` 必填、`scopeLevel` 必填且须为 `global`/`group`/`zone`/`server`；`group` 层需 `group`、`zone` 层需 `group`+`scopeTarget`、`server` 层需 `scopeTarget`，缺失返 `400 INVALID_PARAM`。`affected` 按 serverId 字典序、`total = len(affected)`，纯读、不落 DB、不参与发布决策。
 
-**敏感配置 at-rest 加密（FR-20，密钥来源见 [ADR-0081](adr/0081-local-persistent-encryption-key-files.md)，算法见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）**：新建配置项传 `sensitive: true` 时，其 `content` 以 AES-256-GCM 加密落库（DB 列存 `enc:v1:` 前缀的 base64 密文）。控制面首次启动在数据目录同级 `secrets/config-encryption.key` 安全生成并持久化 32 字节密钥，之后只从该文件读取；目录、权限或文件内容异常时 **fail-closed 拒绝启动**。控制面在**读取详情 / 历史版本 / 有效配置解析与下发**时自动解密——agent 拿到的是**明文**（数据面内网可信不变，agent 不持密钥）。配置项视图回吐 `sensitive` 布尔标记，但**永不回吐密钥或密文**。md5 / 有效配置解析始终基于解密后明文，与非敏感项行为一致。
+**敏感配置 at-rest 加密（FR-20，密钥来源见 [ADR-0081](adr/0081-local-persistent-encryption-key-files.md)，算法见 [ADR-0018](adr/0018-config-encryption-at-rest.md)）**：新建配置项传 `sensitive: true` 时，其 `content` 以 AES-256-GCM 加密落库（DB 列存 `enc:v1:` 前缀的 base64 密文）。控制面首次启动在数据目录同级 `secrets/config-encryption.key` 安全生成并持久化 32 字节密钥，之后只从该文件读取；目录、权限或文件内容异常时 **fail-closed 拒绝启动**。控制面仅在有效配置解析与下发时自动解密——agent 拿到的是**明文**（数据面内网可信不变，agent 不持密钥）；管理面详情、历史版本、差异与有效预览不直出敏感正文：当前配置正文只能经 `config.sensitive_plaintext_read` 的审批申请与一次性授权消费取得，其余敏感视图保持失败关闭。配置项视图回吐 `sensitive` 布尔标记，但**永不回吐密钥或密文**。md5 / 有效配置解析始终基于解密后明文，与非敏感项行为一致。
 
 错误：配置不存在 `404 CONFIG_NOT_FOUND`；回滚目标不存在 `404 REVISION_NOT_FOUND`；同标识重复建 `409 CONFIG_CONFLICT`；内容超长（> 256KB）`422 CONTENT_TOO_LARGE`；发布内容解析失败 `422 CONTENT_INVALID`；发布内容结构/类型/必填项校验不通过（顶层非键值映射、含空键等）`422 CONTENT_SCHEMA_INVALID`；覆盖层/目标键不合法 `400 INVALID_SCOPE`；同一 dataId 跨层格式不一致 `422 FORMAT_INCONSISTENT`。批量端点（`/configs/batch`）另有：空 `ids` / `ids` 超上限（> 2000）/ 非法 `action`（非 delete/disable/enable）`400 INVALID_PARAM`；批中含不存在 id 整批回滚并返 `404 CONFIG_NOT_FOUND`（重复 id 去重后再判存在性）。
 
@@ -358,6 +360,8 @@ data: {}
 | `POST /admin/v1/instances/{serverId}/logs/grants/{grantId}/consume` | 原申请主体一次消费已由 Agent 回传的脱敏日志。body `{commandId}`；回传内容哈希与该命令绑定后才激活 grant，错误主体、过期或重复消费均失败关闭 |
 | `POST /admin/v1/instances/{serverId}/resync?namespace=` | **触发该 agent 强制重同步**（FR-91，写操作 readonly→403，复用 [ADR-0027](adr/0027-reverse-fetch-channel-and-security.md) 命令队列、不新增 ADR）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 事务内建 `resync-config` 命令（`pending`，空载荷）+ `instance.resync` 审计（detail 仅 commandId/serverId、无内容）→ 经 SSE `command-pending` 唤醒 agent（见 agent §10、§15）。agent 重拉有效配置/文件树/覆盖集并 apply（幂等，已是最新则 no-op），回传命令结果。返回 `202` + 命令视图。见 [docs/specs/server-row-quick-actions.md](specs/server-row-quick-actions.md) |
 | `GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=` | 旧在线浏览入口，固定 `409 operation_requires_approval`；目录/文件正文必须经 `agent.command.fs_browse` 审批与绑定 grant 返回。文件资产的清单、路径、哈希、大小和扫描摘要仍走 V2 直接读取端点 |
+| `POST /admin/v1/instances/{serverId}/browse` | 浏览申请入口。body `{namespace,op,path?,offset?,limit?,maxDepth?,reason}` + `Idempotency-Key`，返回 `202` 票据；批准 worker 同一事务创建 `fs-browse` 命令、pending grant 与 execution receipt，提交后才唤醒 Agent。 |
+| `POST /admin/v1/instances/{serverId}/browse/grants/{grantId}/consume` | 原申请主体一次消费已由 Agent 回传的浏览结果。body `{commandId}`；回传结果 SHA-256 与该命令绑定后才激活 grant，消费事务会校验并 CAS grant 后清空瞬态结果，任一步失败即回滚；错误主体、过期或重复消费均失败关闭。 |
 | `GET /admin/v1/alerts` | 健康告警站内信：最近告警列表（最新在前），`{ items: [{ namespace, serverId, address, prevStatus, status, at }] }`（FR-28，进程内、控制面重启清零） |
 | `GET /admin/v1/alert-events?type=&level=&namespace=&from=&to=&page=&size=` | 告警历史 / 事件信息流（FR-89，见 [ADR-0041](adr/0041-alert-event-persistence.md)）：**持久化**的告警事件分页列表（时间倒序），返回 `total` + `items:[{ id, type, level, serverId, namespace, message, detail, createdAt, status, handledBy, handledAt, handleNote }]`（status 族为处理工作流字段，FR-157 见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；未处理时 handled* 为 `null`）。与 `/alerts`（站内信、进程内重启清零）互补——本端点跨重启留存、可过滤回看。`type`（`health-transition`/`publish-fail`/`backend-unreachable`，当前真实触发仅健康流转）、`level`（`info`/`warning`/`critical`）、`namespace` 精确过滤；`from`/`to` 为 RFC3339 时间窗；`page` 从 1 起、`size` 缺省 20 上限 200。区别于 `audit_log`（人对平台的操作）：本表记系统健康事件 |
 | `POST /admin/v1/alert-events/{id}/handle` | **告警事件处理**（FR-157，见 [ADR-0064](adr/0064-alert-event-handling-workflow.md)；写操作 readonly→403）：入参 `{status: acknowledged\|resolved, note?}`（兼容等价措辞 `{action, handleNote}`），更新处理状态 / 处理人（取登录身份）/ 处理时刻 / 处置说明并**写审计**（`alert-event.acknowledge` / `alert-event.resolve`）。事件不存在 `404`、动作非法 `400`。健康分 `alert` 因子按当前 `status=open` 计数取真值（activeAlerts） |
@@ -376,11 +380,12 @@ data: {}
 |---|---|
 | `GET /admin/v1/reverse-fetch/tasks?namespace=&serverId=&status=` | 任务历史列表（最新在前，供任务台）：`{ items: [任务视图] }`。三个过滤参数均可选 |
 | `GET /admin/v1/reverse-fetch/tasks/{id}` | 任务详情（状态 / 清单 / 计数 / 命令引用，供进度轮询与审核台）。不存在→`404 REVERSE_FETCH_TASK_NOT_FOUND` |
-| `POST /admin/v1/reverse-fetch/tasks/{id}/submit` | 提交选定集审批申请。body `{selectedPaths, confirmOverThreshold?, reason}` + `Idempotency-Key`；申请时规范化路径并冻结当前 manifest SHA256，批准执行前重读并比对，漂移失败关闭。通过后同一事务下发 `mode=submit` 命令、任务转 `fetching`、写审计与 receipt，返回 `202` 票据。 |
+| `POST /admin/v1/reverse-fetch/tasks/{id}/submit` | 提交选定集审批申请。body `{selectedPaths, confirmOverThreshold?, reason}` + `Idempotency-Key`；申请时规范化路径并冻结当前 manifest SHA256，批准执行前重读并比对，漂移失败关闭。通过后同一事务下发 `mode=submit` 命令、任务转 `fetching`、创建 pending grant、写审计与含 `commandId + grantId` 的 receipt，返回 `202` 票据。 |
 | `POST /admin/v1/reverse-fetch/tasks/{id}/cancel` | 取消（写操作 readonly→403）：非终态任务转 `cancelled`、清空清单/暂存瞬态、记 `file.reverse-fetch-cancel` 审计、解除互斥占位。终态再取消→`409 REVERSE_FETCH_TASK_STATE`。返回 `200` + 任务视图 |
 | `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts` | 冲突清单（**FR-59**）：任务须 `conflict-review`（否则 `409 REVERSE_FETCH_TASK_STATE`）。返回 `{ conflicts: [path] }` |
-| `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts/diff?path=` | 单冲突文件 diff（**FR-59**，抓取值 ⟷ 目标已有版本）：`{ path, fetchedContent, fetchedMd5, existingContent, existingMd5, version }`（`fetched*` 取暂存内容、`existing*` 实时取 file_object 当前版本）。`path` 不在冲突集→`404 REVERSE_FETCH_CONFLICT_NOT_FOUND` |
-| `POST /admin/v1/reverse-fetch/tasks/{id}/resolve` | 冲突审核落库（**FR-59**，写操作 readonly→403）。body `{decisions: [{path, action: "overwrite"\|"keep", reviewedMd5?}]}`：冲突集每项须恰有一个决定；`overwrite` 须带 `reviewedMd5`=该文件抓取 md5（**自审门**，盲确认 / 漂移→`412 REVERSE_FETCH_REVIEW_MISMATCH`），`keep` 保留已有跳过。CAS 认领 `conflict-review → ingesting`（防并发双 resolve，被并发认领→`409 REVERSE_FETCH_TASK_STATE`）→ 复用 `Import` 落库非冲突集 + 确认覆盖集 → 任务转 `done`、清空暂存瞬态、记 `file.reverse-fetch-ingest` 审计。返回 `200` + `{ created, updated }` |
+| `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts/diff?path=` | 旧正文入口固定返回 `409 operation_requires_approval`；不得直接返回抓取或已有版本正文。 |
+| `POST /admin/v1/reverse-fetch/tasks/{id}/conflicts/grants/{grantId}/consume` | 仅原 submit 审批申请主体一次消费已回传的完整冲突 diff 包，返回 `{items:[{path,fetchedContent,fetchedMd5,existingContent,existingMd5,version}]}`。submit 命令回传冲突后才以 `submit_content` SHA-256 激活 grant；一次只返回冲突路径、不含非冲突正文，过期、转让、重放或哈希漂移均失败关闭。 |
+| `POST /admin/v1/reverse-fetch/tasks/{id}/resolve` | 冲突审核落库审批申请（**FR-59**，写操作 readonly→403）。须由已一次消费冲突正文的原 submit 申请主体调用。body `{decisions: [{path, action: "overwrite"\|"keep", reviewedMd5?}], reason}` + `Idempotency-Key`：冲突集每项须恰有一个决定；`overwrite` 须带 `reviewedMd5`=该文件抓取 md5（**自审门**，盲确认→`412 REVERSE_FETCH_REVIEW_MISMATCH`），`keep` 保留已有跳过。冻结任务、manifest、暂存输出及冲突目标版本/hash；批准 worker 在同一事务内落库、任务转 `done`、清空暂存瞬态、记 `file.reverse-fetch-ingest` 审计和 execution receipt。返回 `202` 票据；任一冻结事实漂移则审批失败关闭。 |
 
 - 生命周期：任务可查 / 可取消 / **会过期**（创建超期仍非终态——含 `conflict-review`——由后台清理器转 `expired` 并清空清单 / 暂存瞬态、解除互斥）。
 - 审计（detail 均不含文件内容，沿 ADR-0027 决策7）：建任务 `file.reverse-fetch-scan`、提交 `file.reverse-fetch-submit`、入库 `file.reverse-fetch-ingest`（直落与冲突审核 resolve 共用）、取消 `file.reverse-fetch-cancel`、错误回传 `file.reverse-fetch-error`（FR-87，agent 回传执行错误致任务 `failed`）。
@@ -450,10 +455,11 @@ data: {}
 
 | 端点 | 说明 |
 |---|---|
-| `POST /admin/v1/instances/{serverId}/imprint?namespace=` | 触发对该**在线实例**某文件的按需拓印（写操作 readonly→403）。body `{path}`（目标文件相对 `plugins/` 的 path）。先校验目标在线（不在册→`404 INSTANCE_NOT_FOUND`）→ 建 `mode=imprint` 的 `pending` 命令 + `file.imprint-fetch` 审计 → 经 SSE `command-pending` 唤醒该 agent。agent 仍拉 `ingest-plugins`、读整棵 `plugins/` 树回传 `/files/ingest`；控制面收到 `mode=imprint` 回传时**不 ingest 落库**，而是同口径再校验后从回传树取该 `path` 的磁盘原文**转存命令瞬态列**、命令转 `ready`（指定 path 不在回传树中→命令 `failed`）。返回 `202` + 命令视图 `{id,namespace,serverId,type,status,createdAt,updatedAt}` |
+| `POST /admin/v1/instances/{serverId}/imprint?namespace=` | 提交对该**在线实例**某文件的拓印审批。body `{path,reason}`，请求头必带 `Idempotency-Key`；目标不在线→`404 INSTANCE_NOT_FOUND`。返回 `202` 审批票据，批准 worker 才建 `mode=imprint` 命令与 `file.imprint-fetch` 审计并唤醒 Agent。回传后仅转存目标文件原文、命令转 `ready`，不落库。|
 | `GET /admin/v1/imprints/{commandId}` | 取拓印命令状态视图（供前端轮询至 `ready`）；仅命令状态、不含瞬态磁盘内容。命令非 imprint 模式或不存在→`404 COMMAND_NOT_FOUND` |
-| `GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=&target=` | 取拓印 diff：命令须 `ready`（否则 `409 IMPRINT_NOT_READY`）。返回 `{path, actualContent, actualMd5, expectedContent, expectedMd5, expectedWholeFile, expectedSources, expectedDeletions, differs}`——`actual*` 为拓印源磁盘当前内容（命令转存）+ md5（确认时回带作自审凭据）；`expected*` 为按所选并入层视角（`scope`/`group`/`zone`/`target`）解出的该 path 覆盖链合并值 + 逐键/整文件来源（复用 FR-45 `ResolveWithProvenance`，期望侧无该文件时 `expectedContent` 为空、`differs=true`）。`scope=global` 不带 group hint，`scope=zone` 带 `group`+`zone`，`scope=server` 带 `group`+`target`=目标 serverId |
-| `POST /admin/v1/imprints/{commandId}/confirm` | 确认拓印落库（写操作 readonly→403）。body `{scope,group,zone,target,reviewedMd5}`。**单人自审门**：`reviewedMd5` 须等于命令转存内容 md5（看过 diff 才拿得到该值；盲确认→`412 IMPRINT_REVIEW_MISMATCH`，不落库、命令仍 `ready` 可重确认）。命令须 `ready`（否则 `409 IMPRINT_NOT_READY`）。通过后复用 `FileService.Create`（该层 path 首次）/`Publish`（已存在则发新版本）落为**该层整文件覆盖**（事务由 FileService 内部保证）、写 `file.imprint` 审计、命令转 `done` 并清空瞬态内容 → 走通道B 既有长轮询 / SSE 正常下发（控制面零新增下发路径）。返回 `200` + `{fileId,scopeLevel,group,target,version,md5}` |
+| `GET /admin/v1/imprints/{commandId}/diff?scope=&group=&zone=&target=` | 旧正文 diff 入口固定返回 `409 operation_requires_approval`，不得直接返回拓印或期望正文。|
+| `POST /admin/v1/imprints/{commandId}/diff/grants/{grantId}/consume?scope=&group=&zone=` | 仅原审批申请主体可一次性消费已回传的拓印 diff。命令须 `ready`，grant 须由 `agent.command.imprint` 批准链创建且仍绑定该命令与内容哈希；成功返回 `{path, actualContent, actualMd5, expectedContent, expectedMd5, expectedWholeFile, expectedSources, expectedDeletions, differs}`。`actual*` 为拓印源磁盘当前内容与 md5；`expected*` 为按所选并入层视角解出的覆盖链合并值与来源。消费后 grant 失效，重复、越权、过期或目标漂移均失败关闭。`scope=global` 不带 group hint，`scope=zone` 带 `group`+`zone`，`scope=server` 带 `group`。|
+| `POST /admin/v1/imprints/{commandId}/confirm` | 提交拓印确认审批（写操作 readonly→403）。body `{scope,group,zone,target,reviewedMd5,reason}`，请求头必带 `Idempotency-Key`。命令须 `ready`，且 `reviewedMd5` 必须匹配瞬态内容；通过后返回 `202` 审批票据，不落库、不改变命令。human 批准后 worker 在同一事务重验命令和 md5，再写目标层文件版本、`file.imprint` 审计、命令 `done`、清空瞬态内容与 receipt；结果从既有只读文件/命令端点查询。|
 
 - 审计：触发记 `file.imprint-fetch`、确认落库记 `file.imprint`（operator / 目标层 / path / md5，**detail 均不含文件内容**，沿 ADR-0027 决策7）。
 - 边界：不做全自动 / 后台双向同步（改动必经控制面人确认）；不引入多人审批 / 变更请求实体（单人自审门即可）；不抓运行时数据文件（沿 FR-39 限 `plugins/` + 排除 `.jar`/二进制 + 上限 + 双校验）。瞬态拓印内容确认 / 失败 / 过期即清。
@@ -858,7 +864,7 @@ agent 面：
 | GET | `/admin/v2/servers/{id}/lifecycle-impact?action=archive|restore` | 读取有界脱敏影响预览；当前状态不满足动作前置条件返回 `409 server_not_active` 或 `server_not_archived`，不产生副作用 |
 | POST | `/admin/v2/server-assignments` | 批量首次分配（仅未分配 server），响应 `{results:[{id,serverId,ok,code?}]}`；已分配服改归属须走换区工单 |
 | POST | `/admin/v2/server-rezones` | 批量发起换区工单（已分配、同 namespace 同 kind）：单事务解绑清归属 + 写预填目标 + 身份重入 pending；未分配台 400 `not_assigned`，整批原子回滚 |
-| PUT | `/admin/v2/servers/{serverId}/draining` | 切换排空标记（路径为业务 serverId），写审计，返回富化视图 |
+| PUT | `/admin/v2/servers/{serverId}/draining` | 设置 `draining=true` 为直接止损：立即写强审计并返回富化视图；设置 `draining=false` 为恢复调度，必须携带原因与 `Idempotency-Key`，返回 `202` 审批票据，批准 worker 执行后才恢复 |
 | PUT | `/admin/v2/servers/{id}/default-entry` | 更新默认入口标记（路径为 server 行 id）；未分配小区 → 409 `not_assigned` |
 
 env 展示维度（FR-178 · P8 · 0.28.x）：纯展示 / 过滤维度，不参与隔离 / 调度 / 配置作用域链；映射整体替换、一个 namespace 至多属一个 env。

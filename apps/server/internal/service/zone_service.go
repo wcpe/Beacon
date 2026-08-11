@@ -72,7 +72,7 @@ func (s *ZoneService) exportGit(ns, serverID, action, operator string) {
 }
 
 // Assign 禁止绕过审批适配器直接修改 V1 指派。
-func (s *ZoneService) Assign(ns, serverID, group, zone, operator, note, clientIP string) (*model.ZoneAssignment, error) {
+func (s *ZoneService) Assign(_, _, _, _, _, _, _ string) (*model.ZoneAssignment, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -166,7 +166,7 @@ func (s *ZoneService) validateAssignForApproval(ns, serverID, group, zone, opera
 }
 
 // Unassign 禁止绕过审批适配器直接取消 V1 指派。
-func (s *ZoneService) Unassign(ns, serverID, operator, clientIP string) error {
+func (s *ZoneService) Unassign(_, _, _, _ string) error {
 	return apperr.ErrForbidden
 }
 

@@ -31,6 +31,10 @@ func TestAdminRouteCatalogSeparatesApproval(t *testing.T) {
 	if pair.Operation != "approval.request" || pair.Classification != routeApprovalRequired {
 		t.Fatalf("双侧读取消费不得退化为普通直执：%+v", pair)
 	}
+	reverse := adminRouteCatalog[adminRouteKey(http.MethodPost, "/admin/v1/reverse-fetch/tasks/{id}/conflicts/grants/{grantId}/consume")]
+	if reverse.Operation != "approval.request" || reverse.Classification != routeApprovalRequired {
+		t.Fatalf("反向抓取正文消费不得退化为普通直执：%+v", reverse)
+	}
 }
 
 // TestAdminRouteCatalogRejectsRedundancy 验证精确目录检查拒绝未装配的残留描述符。

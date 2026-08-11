@@ -22,6 +22,20 @@ func (agentCommandExecutionApprovalAdapter) Execute(authz.ApprovalRequest, authz
 }
 
 func (a agentCommandExecutionApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit) (func(), error) {
+	if permit.Operation() == authz.OperationAgentCommandImprintConfirm {
+		var payload imprintConfirmApprovalPayload
+		if json.Unmarshal(req.Payload, &payload) != nil {
+			return nil, apperr.ErrInvalidParam
+		}
+		result, err := a.commands.applyConfirmImprintInTx(tx, req, permit, payload)
+		if err != nil {
+			return nil, err
+		}
+		if err := a.writeReceipt(tx, req, fmt.Sprintf("file-%d", result.FileID)); err != nil {
+			return nil, err
+		}
+		return a.commands.afterConfirmImprint(result, payload.Operator), nil
+	}
 	var payload struct {
 		Namespace string `json:"namespace"`
 		ServerID  string `json:"serverId"`
@@ -55,7 +69,7 @@ func (a agentCommandExecutionApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz
 			return nil, err
 		}
 	}
-	if err := tx.Create(&model.ApprovalExecutionReceipt{RequestID: req.RequestID, OperationKey: req.OperationKey, PayloadHash: req.PayloadHash, ResultRef: fmt.Sprintf("agent-command-%d", cmd.ID)}).Error; err != nil {
+	if err := a.writeReceipt(tx, req, fmt.Sprintf("agent-command-%d", cmd.ID)); err != nil {
 		return nil, err
 	}
 	return func() {
@@ -63,4 +77,8 @@ func (a agentCommandExecutionApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz
 			a.commands.notifier.NotifyCommand(payload.Namespace, payload.ServerID)
 		}
 	}, nil
+}
+
+func (a agentCommandExecutionApprovalAdapter) writeReceipt(tx *gorm.DB, req authz.ApprovalRequest, resultRef string) error {
+	return tx.Create(&model.ApprovalExecutionReceipt{RequestID: req.RequestID, OperationKey: req.OperationKey, PayloadHash: req.PayloadHash, ResultRef: resultRef}).Error
 }

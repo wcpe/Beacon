@@ -44,7 +44,7 @@ func (s *APIKeyService) SetCredentialCipher(cipher *secret.Cipher) {
 }
 
 // Create 已废止直接创建入口，危险凭据只能经审批 worker 执行。
-func (s *APIKeyService) Create(name, role string, expiresAt *time.Time, operator, clientIP string) (string, *model.APIKey, error) {
+func (s *APIKeyService) Create(_ string, _ string, _ *time.Time, _, _ string) (string, *model.APIKey, error) {
 	return "", nil, apperr.ErrForbidden
 }
 
@@ -104,7 +104,7 @@ func (s *APIKeyService) Revoke(id uint, operator, clientIP string) error {
 }
 
 // Reset 已废止直接轮换入口，危险凭据只能经审批 worker 执行。
-func (s *APIKeyService) Reset(id uint, operator, clientIP string) (string, *model.APIKey, error) {
+func (s *APIKeyService) Reset(_ uint, _, _ string) (string, *model.APIKey, error) {
 	return "", nil, apperr.ErrForbidden
 }
 

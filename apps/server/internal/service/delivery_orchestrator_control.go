@@ -49,7 +49,7 @@ func (s *DeliveryOrchestrator) Pause(id uint, operator, clientIP string) (*Chang
 }
 
 // Resume 禁止旧公开继续入口，防止调用方绕过统一审批 worker 扩大灰度影响。
-func (s *DeliveryOrchestrator) Resume(id uint, mode, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrchestrator) Resume(_ uint, _, _, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -223,7 +223,7 @@ func (s *DeliveryOrchestrator) Cancel(id uint, reason, operator, clientIP string
 }
 
 // Rollback 禁止旧公开回滚入口，防止调用方绕过统一审批 worker 恢复已交付内容。
-func (s *DeliveryOrchestrator) Rollback(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrchestrator) Rollback(_ uint, _, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -330,7 +330,7 @@ func (s *DeliveryOrchestrator) applyRollbackInTx(tx *gorm.DB, order *model.Chang
 }
 
 // FinishRollback 禁止旧公开结束回滚入口，防止调用方绕过统一审批改变回滚终态。
-func (s *DeliveryOrchestrator) FinishRollback(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrchestrator) FinishRollback(_ uint, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -454,7 +454,7 @@ func isConfigRollbackIdempotent(err error) bool {
 }
 
 // ConfirmBatch 禁止旧公开推进门入口，防止调用方绕过统一审批 worker 放量下一批。
-func (s *DeliveryOrchestrator) ConfirmBatch(id uint, batchNo int, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrchestrator) ConfirmBatch(_ uint, _ int, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 

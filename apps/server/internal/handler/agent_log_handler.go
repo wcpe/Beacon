@@ -70,28 +70,6 @@ func (h *AgentLogHandler) Request(w http.ResponseWriter, r *http.Request) {
 // Get 是会返回实时日志正文的旧入口；未持 grant 时固定失败关闭。
 func (h *AgentLogHandler) Get(w http.ResponseWriter, r *http.Request) {
 	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
-	return
-
-	serverID := chi.URLParam(r, "serverId")
-	ns := r.URL.Query().Get("namespace")
-	if ns == "" {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	res, err := h.svc.GetLatest(ns, serverID)
-	if err != nil {
-		render.WriteError(w, r, err)
-		return
-	}
-	if res == nil {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	lines := make([]agentLogLineView, len(res.Lines))
-	for i, l := range res.Lines {
-		lines[i] = agentLogLineView{Level: l.Level, Text: l.Text}
-	}
-	render.WriteJSON(w, http.StatusOK, agentLogView{CommandID: res.CommandID, Status: res.Status, Lines: lines})
 }
 
 // ConsumeApproved 仅允许审批原申请主体一次消费 Agent 已回传的日志正文。

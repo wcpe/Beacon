@@ -11,15 +11,9 @@ import (
 func TestZoneAssignmentRESTFlow(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	assignURL := ts.URL + "/admin/v1/zones/assignments"
-
 	// 指派 z-s1 → area1/zoneA
-	code, a := doJSON(t, http.MethodPut, assignURL, map[string]any{
-		"namespace": "prod", "serverId": "z-s1", "group": "area1", "zone": "zoneA", "note": "n1",
-	})
-	if code != http.StatusOK || a["zone"] != "zoneA" {
-		t.Fatalf("指派应 200 且 zone=zoneA，实际 %d：%v", code, a)
-	}
+	assignZoneForTest(t, ts, "prod", "z-s1", "area1", "zoneA", "n1")
+	assignURL := ts.URL + "/admin/v1/zones/assignments"
 
 	// 列表含该指派
 	code, list := doJSON(t, http.MethodGet, assignURL+"?namespace=prod", nil)
@@ -50,10 +44,7 @@ func TestZoneAssignmentRESTFlow(t *testing.T) {
 	}
 
 	// 取消指派
-	code, _ = doJSON(t, http.MethodDelete, assignURL+"?namespace=prod&serverId=z-s1", nil)
-	if code != http.StatusOK {
-		t.Fatalf("取消指派应 200，实际 %d", code)
-	}
+	unassignZoneForTest(t, ts, "prod", "z-s1", "集成测试取消")
 
 	// 取消后列表为空
 	code, list2 := doJSON(t, http.MethodGet, assignURL+"?namespace=prod", nil)

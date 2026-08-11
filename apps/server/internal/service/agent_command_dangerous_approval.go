@@ -20,7 +20,45 @@ func RegisterAgentCommandApprovalAdapters(registry *authz.ApprovalRegistry, comm
 	}
 	registry.Register(authz.OperationAgentCommandResync, authz.RequireExecutionReceipt(agentCommandApprovalAdapter{commands: commands, grants: grants}))
 	registry.Register(authz.OperationAgentCommandReverseScan, authz.RequireExecutionReceipt(agentCommandExecutionApprovalAdapter{commands: commands, grants: grants}))
+	registry.Register(authz.OperationAgentCommandFSBrowse, authz.RequireExecutionReceipt(agentBrowseApprovalAdapter{commands: commands, grants: grants}))
 	registry.Register(authz.OperationAgentCommandImprint, authz.RequireExecutionReceipt(agentCommandExecutionApprovalAdapter{commands: commands, grants: grants}))
+	registry.Register(authz.OperationAgentCommandImprintConfirm, authz.RequireExecutionReceipt(agentCommandExecutionApprovalAdapter{commands: commands, grants: grants}))
+}
+
+type agentBrowseApprovalAdapter struct {
+	commands *AgentCommandService
+	grants   *SensitiveAccessGrantService
+}
+
+func (agentBrowseApprovalAdapter) Execute(authz.ApprovalRequest, authz.Permit) error {
+	return apperr.ErrForbidden
+}
+
+func (a agentBrowseApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit) (func(), error) {
+	if permit.Operation() != authz.OperationAgentCommandFSBrowse {
+		return nil, apperr.ErrForbidden
+	}
+	var payload browseApprovalPayload
+	if json.Unmarshal(req.Payload, &payload) != nil {
+		return nil, apperr.ErrInvalidParam
+	}
+	params := BrowseParams(payload)
+	cmd, err := a.commands.applyRequestBrowseInTx(tx, params)
+	if err != nil {
+		return nil, err
+	}
+	grant, err := a.grants.WithTx(tx).CreatePending(req.RequestID, req.RequesterType, req.RequesterID, req.Operation.Kind, fmt.Sprintf("agent-command/%d", cmd.ID), req.PayloadHash)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Create(&model.ApprovalExecutionReceipt{RequestID: req.RequestID, OperationKey: req.OperationKey, PayloadHash: req.PayloadHash, ResultRef: fmt.Sprintf("agent-sensitive-operation/%d/%s", cmd.ID, grant.GrantID)}).Error; err != nil {
+		return nil, err
+	}
+	return func() {
+		if a.commands.notifier != nil {
+			a.commands.notifier.NotifyCommand(params.Namespace, params.ServerID)
+		}
+	}, nil
 }
 
 // RegisterAgentLogApprovalAdapter 注册实时日志命令审批适配器。
@@ -36,7 +74,9 @@ type agentLogApprovalAdapter struct {
 	grants *SensitiveAccessGrantService
 }
 
-func (agentLogApprovalAdapter) Execute(authz.ApprovalRequest, authz.Permit) error { return apperr.ErrForbidden }
+func (agentLogApprovalAdapter) Execute(authz.ApprovalRequest, authz.Permit) error {
+	return apperr.ErrForbidden
+}
 
 func (a agentLogApprovalAdapter) ExecuteInTx(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit) (func(), error) {
 	if permit.Operation() != authz.OperationAgentCommandTailLogs {

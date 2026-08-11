@@ -358,7 +358,7 @@ func executeDeliveryRollbackInTx(tx *gorm.DB, req authz.ApprovalRequest, orchest
 	return orchestrator.wake, nil
 }
 
-func executeDeliveryResumeInTx(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit,
+func executeDeliveryResumeInTx(tx *gorm.DB, req authz.ApprovalRequest, _ authz.Permit,
 	orders *DeliveryOrderService, orchestrator *DeliveryOrchestrator) (func(), error) {
 	var payload deliveryResumePayload
 	if err := json.Unmarshal(req.Payload, &payload); err != nil || payload.OrderID == 0 ||

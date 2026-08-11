@@ -24,10 +24,7 @@ func TestConfigDeleteRESTFlow(t *testing.T) {
 	itemURL := base + "/" + itoa(id)
 
 	// 软删
-	code, _ = doJSON(t, http.MethodDelete, itemURL+"?comment=clean", nil)
-	if code != http.StatusOK {
-		t.Fatalf("软删应 200，实际 %d", code)
-	}
+	deleteConfigForTest(t, ts, id, "clean")
 
 	// 删后取详情 → 404
 	code, _ = doJSON(t, http.MethodGet, itemURL, nil)

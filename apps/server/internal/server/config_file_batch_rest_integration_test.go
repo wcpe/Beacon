@@ -22,17 +22,10 @@ func createBatchConfig(t *testing.T, base, dataID string) int {
 	return int(created["id"].(float64))
 }
 
-// createBatchFile 建一个文件对象并返回其 id（供批量用例铺底）。
-func createBatchFile(t *testing.T, base, path string) int {
+// createBatchFile 经审批链创建一个文件对象并返回其 id（供批量用例铺底）。
+func createBatchFile(t *testing.T, ts *integrationTestServer, path string) int {
 	t.Helper()
-	code, created := doJSON(t, http.MethodPost, base, map[string]any{
-		"namespace": "prod", "group": "bw", "path": path,
-		"scopeLevel": "group", "content": "x: 1\n",
-	})
-	if code != http.StatusCreated {
-		t.Fatalf("建文件 %s 应 201，实际 %d：%v", path, code, created)
-	}
-	return int(created["id"].(float64))
+	return createFileForTest(t, ts, "prod", "bw", path, "group", "x: 1\n")
 }
 
 // TestConfigBatchDeleteRESTFlow 配置批量软删 REST 集成：建多条 → 一次批删 → 列表均不含。
@@ -44,19 +37,11 @@ func TestConfigBatchDeleteRESTFlow(t *testing.T) {
 	id1 := createBatchConfig(t, base, "bd1.yml")
 	id2 := createBatchConfig(t, base, "bd2.yml")
 
-	code, resp := doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "delete", "ids": []int{id1, id2},
-	})
-	if code != http.StatusOK {
-		t.Fatalf("批量软删应 200，实际 %d：%v", code, resp)
-	}
-	if int(resp["count"].(float64)) != 2 {
-		t.Fatalf("批量软删 count 应 2，实际 %v", resp["count"])
-	}
+	applyConfigBatchForTest(t, ts, "delete", []int{id1, id2}, "delete")
 
 	// 两条均删后取详情 → 404
 	for _, id := range []int{id1, id2} {
-		code, _ = doJSON(t, http.MethodGet, base+"/"+itoa(id), nil)
+		code, _ := doJSON(t, http.MethodGet, base+"/"+itoa(id), nil)
 		if code != http.StatusNotFound {
 			t.Fatalf("删后取详情 id=%d 应 404，实际 %d", id, code)
 		}
@@ -73,12 +58,7 @@ func TestConfigBatchDisableEnableRESTFlow(t *testing.T) {
 	id2 := createBatchConfig(t, base, "be2.yml")
 
 	// 批量禁用
-	code, _ := doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "disable", "ids": []int{id1, id2},
-	})
-	if code != http.StatusOK {
-		t.Fatalf("批量禁用应 200，实际 %d", code)
-	}
+	applyConfigBatchForTest(t, ts, "disable", []int{id1, id2}, "disable")
 	for _, id := range []int{id1, id2} {
 		_, item := doJSON(t, http.MethodGet, base+"/"+itoa(id), nil)
 		if item["enabled"].(bool) {
@@ -87,12 +67,7 @@ func TestConfigBatchDisableEnableRESTFlow(t *testing.T) {
 	}
 
 	// 批量启用
-	code, _ = doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "enable", "ids": []int{id1, id2},
-	})
-	if code != http.StatusOK {
-		t.Fatalf("批量启用应 200，实际 %d", code)
-	}
+	applyConfigBatchForTest(t, ts, "enable", []int{id1, id2}, "enable")
 	for _, id := range []int{id1, id2} {
 		_, item := doJSON(t, http.MethodGet, base+"/"+itoa(id), nil)
 		if !item["enabled"].(bool) {
@@ -137,9 +112,9 @@ func TestConfigBatchDeleteAtomicRollback(t *testing.T) {
 	id1 := createBatchConfig(t, base, "atomic.yml")
 
 	// 批中混入不存在 id（999999）→ 整批 404、id1 不应被删
-	code, _ := doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "delete", "ids": []int{id1, 999999},
-	})
+	code, _ := doJSONWithHeaders(t, http.MethodPost, base+"/batch", map[string]any{
+		"action": "delete", "ids": []int{id1, 999999}, "reason": "集成测试批量配置变更",
+	}, map[string]string{"Idempotency-Key": t.Name() + "-missing"})
 	if code != http.StatusNotFound {
 		t.Fatalf("批中含不存在 id 应 404，实际 %d", code)
 	}
@@ -155,17 +130,12 @@ func TestFileBatchDeleteRESTFlow(t *testing.T) {
 	defer ts.Close()
 	base := ts.URL + "/admin/v1/files"
 
-	id1 := createBatchFile(t, base, "a/x.yml")
-	id2 := createBatchFile(t, base, "a/y.yml")
+	id1 := createBatchFile(t, ts, "a/x.yml")
+	id2 := createBatchFile(t, ts, "a/y.yml")
 
-	code, resp := doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "delete", "ids": []int{id1, id2},
-	})
-	if code != http.StatusOK {
-		t.Fatalf("文件批量软删应 200，实际 %d：%v", code, resp)
-	}
+	applyFileBatchForTest(t, ts, "delete", []int{id1, id2}, "delete")
 	for _, id := range []int{id1, id2} {
-		code, _ = doJSON(t, http.MethodGet, base+"/"+itoa(id), nil)
+		code, _ := doJSON(t, http.MethodGet, base+"/"+itoa(id), nil)
 		if code != http.StatusNotFound {
 			t.Fatalf("删后取文件详情 id=%d 应 404，实际 %d", id, code)
 		}
@@ -178,25 +148,15 @@ func TestFileBatchDisableEnableRESTFlow(t *testing.T) {
 	defer ts.Close()
 	base := ts.URL + "/admin/v1/files"
 
-	id1 := createBatchFile(t, base, "b/x.yml")
+	id1 := createBatchFile(t, ts, "b/x.yml")
 
-	code, _ := doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "disable", "ids": []int{id1},
-	})
-	if code != http.StatusOK {
-		t.Fatalf("文件批量禁用应 200，实际 %d", code)
-	}
+	applyFileBatchForTest(t, ts, "disable", []int{id1}, "disable")
 	_, item := doJSON(t, http.MethodGet, base+"/"+itoa(id1), nil)
 	if item["enabled"].(bool) {
 		t.Fatalf("禁用后文件 id=%d enabled 应 false", id1)
 	}
 
-	code, _ = doJSON(t, http.MethodPost, base+"/batch", map[string]any{
-		"action": "enable", "ids": []int{id1},
-	})
-	if code != http.StatusOK {
-		t.Fatalf("文件批量启用应 200，实际 %d", code)
-	}
+	applyFileBatchForTest(t, ts, "enable", []int{id1}, "enable")
 	_, item = doJSON(t, http.MethodGet, base+"/"+itoa(id1), nil)
 	if !item["enabled"].(bool) {
 		t.Fatalf("启用后文件 id=%d enabled 应 true", id1)

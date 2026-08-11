@@ -56,6 +56,7 @@ type ConfigService struct {
 	exporter   GitExporter        // 可选，事务提交后触发 git 单向导出（FR-47，best-effort 非阻塞）
 	reversible ReversibleRecorder // 可选，发布时同事务记可逆账目（FR-116，未注入即不可撤回）
 	approval   *ApprovalService
+	grants     *SensitiveAccessGrantService
 	pending    *repository.ConfigPendingChangeRepository
 	cipher     *secret.Cipher
 	gray       *ConfigGrayService
@@ -68,6 +69,11 @@ func NewConfigService(db *gorm.DB, configRepo *repository.ConfigItemRepository, 
 
 // SetApprovalService 注入统一审批核心；危险配置发布与回滚只能由审批执行器应用。
 func (s *ConfigService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+
+// SetSensitiveAccessGrants 注入敏感配置正文的一次性授权消费边界。
+func (s *ConfigService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) {
+	s.grants = grants
+}
 
 // SetPendingChangeCipher 注入待审批配置内容的专用加密器。
 func (s *ConfigService) SetPendingChangeCipher(cipher *secret.Cipher) { s.cipher = cipher }
@@ -207,92 +213,30 @@ func (s *ConfigService) Create(p CreateConfigParams) (*model.ConfigItem, error) 
 }
 
 // Publish 发布配置新版本（version+1）。
-func (s *ConfigService) Publish(id uint, content, operator, comment, clientIP string) (*model.ConfigItem, error) {
+func (s *ConfigService) Publish(_ uint, _, _, _, _ string) (*model.ConfigItem, error) {
 	return nil, apperr.ErrOperationRequiresApproval
 }
 
-func (s *ConfigService) publish(id uint, content, operator, comment, clientIP string, retryRollback bool) (*model.ConfigItem, error) {
-	item, err := s.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateContent(item.Format, content); err != nil {
-		return nil, err
-	}
-	md5 := merge.MD5Hex(content)
-	preVersion := item.Version
-	newVersion := item.Version + 1
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevisionContent(tx, item.ID, item.Format, newVersion, content, md5, item.Sensitive, nil, operator, comment)
-		if err != nil {
-			return err
-		}
-		item.Content, item.ContentMD5, item.Version, item.CurrentRevision = content, md5, newVersion, rev.ID
-		if err := s.configRepo.WithTx(tx).Save(item); err != nil {
-			return err
-		}
-		if err := s.writeAudit(tx, item, operator, model.ActionConfigPublish,
-			fmt.Sprintf(`{"version":%d,"md5":"%s"}`, newVersion, md5), clientIP); err != nil {
-			return err
-		}
-		return s.recordReversible(tx, item, model.ReversibleOpPublish, preVersion, operator)
-	})
-	if err != nil {
-		return s.handlePublishConflict(err, id, preVersion, content, operator, comment, clientIP, retryRollback)
-	}
-	slog.Info("发布配置", "id", id, "version", newVersion)
-	s.recordPublish()
-	s.notify(item)
-	s.exportGit(item, model.ActionConfigPublish, operator)
-	return item, nil
-}
-
-// handlePublishConflict 仅对并发回滚占用下一版本号的冲突重试一次。
-func (s *ConfigService) handlePublishConflict(
-	publishErr error,
-	id uint,
-	preVersion int64,
-	content, operator, comment, clientIP string,
-	retryRollback bool,
-) (*model.ConfigItem, error) {
-	mapped := mapDuplicateKey(publishErr)
-	if !retryRollback || !errors.Is(mapped, apperr.ErrConfigConflict) {
-		return nil, mapped
-	}
-	retry, err := s.shouldRetryAfterRollback(id, preVersion)
-	if err != nil {
-		return nil, err
-	}
-	if !retry {
-		return nil, mapped
-	}
-	return s.publish(id, content, operator, comment, clientIP, false)
-}
-
-// shouldRetryAfterRollback 仅识别并发回滚占用下一版本号；普通并发发布仍保持冲突语义。
-func (s *ConfigService) shouldRetryAfterRollback(id uint, staleVersion int64) (bool, error) {
-	latest, err := s.Get(id)
-	if err != nil {
-		return false, err
-	}
-	if latest.Version <= staleVersion {
-		return false, nil
-	}
-	rev, err := s.revRepo.FindByItemAndVersion(id, latest.Version)
-	if err != nil {
-		return false, err
-	}
-	return rev != nil && rev.SourceRevision != nil, nil
-}
-
 // Rollback 回滚到目标版本（= 读取该版本内容作为新版本发布，version+1）。
-func (s *ConfigService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.ConfigItem, error) {
+func (s *ConfigService) Rollback(_ uint, _ int64, _, _, _ string) (*model.ConfigItem, error) {
 	return nil, apperr.ErrOperationRequiresApproval
 }
 
 // GetInTx 在给定事务内按 id 取配置项；不存在返回 CONFIG_NOT_FOUND（撤回子系统事务内取目标用，FR-116）。
 func (s *ConfigService) GetInTx(tx *gorm.DB, id uint) (*model.ConfigItem, error) {
 	item, err := s.configRepo.WithTx(tx).FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, apperr.ErrConfigNotFound
+	}
+	return item, nil
+}
+
+// GetForUpdateInTx 在事务内锁定配置项，供敏感正文授权消费在提交前复验冻结版本。
+func (s *ConfigService) GetForUpdateInTx(tx *gorm.DB, id uint) (*model.ConfigItem, error) {
+	item, err := s.configRepo.WithTx(tx).FindByIDForUpdate(id)
 	if err != nil {
 		return nil, err
 	}
@@ -336,19 +280,19 @@ func (s *ConfigService) Notify(item *model.ConfigItem) {
 }
 
 // Delete 软删配置项（该层从合并链脱落）。
-func (s *ConfigService) Delete(id uint, operator, _, clientIP string) error {
+func (s *ConfigService) Delete(_ uint, _, _, _ string) error {
 	return apperr.ErrForbidden
 }
 
 // BatchDelete 在一个事务内批量软删一组配置项（FR-74）：逐项软删 + 各记一条 config.delete 审计，
 // 任一项不存在即整批回滚（全成或全不成）。提交成功后逐项唤醒长轮询并触发 git 导出。
-func (s *ConfigService) BatchDelete(ids []uint, operator, clientIP string) error {
+func (s *ConfigService) BatchDelete(_ []uint, _, _ string) error {
 	return apperr.ErrForbidden
 }
 
 // BatchSetEnabled 在一个事务内批量置一组配置项的启用态（FR-74）：逐项置 enabled + 各记一条
 // config.disable / config.enable 审计，任一项不存在即整批回滚。提交成功后逐项唤醒并触发 git 导出。
-func (s *ConfigService) BatchSetEnabled(ids []uint, enabled bool, operator, clientIP string) error {
+func (s *ConfigService) BatchSetEnabled(_ []uint, _ bool, _, _ string) error {
 	return apperr.ErrForbidden
 }
 
@@ -364,44 +308,6 @@ func dedupIDs(ids []uint) []uint {
 		out = append(out, id)
 	}
 	return out
-}
-
-// batchMutate 是批量软删 / 置启用态的共用骨架：去重后一次性批量取出（任一不存在即 404），再在单事务内
-// 对每项执行 mutate + 写一条审计，提交后逐项唤醒长轮询与触发 git 导出。
-// 双保险：预取批量存在性挡明显不存在；事务内 mutate 的 RowsAffected 校验挡预取后被并发软删（防幽灵审计）。
-func (s *ConfigService) batchMutate(ids []uint, operator, clientIP, action, detail string, mutate func(tx *gorm.DB, id uint) error) error {
-	if operator == "" || len(ids) == 0 {
-		return apperr.ErrInvalidParam
-	}
-	uniqueIDs := dedupIDs(ids)
-	items, err := s.configRepo.FindByIDs(uniqueIDs)
-	if err != nil {
-		return err
-	}
-	// 取回数量 < 去重后 id 数 → 含不存在 id，整批 404
-	if len(items) < len(uniqueIDs) {
-		return apperr.ErrConfigNotFound
-	}
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		for i := range items {
-			if err := mutate(tx, items[i].ID); err != nil {
-				return err
-			}
-			if err := s.writeAudit(tx, &items[i], operator, action, detail, clientIP); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("批量操作配置项", "动作", action, "数量", len(items))
-	for i := range items {
-		s.notify(&items[i])
-		s.exportGit(&items[i], action, operator)
-	}
-	return nil
 }
 
 // ListRevisions 列出某配置项的历史版本。

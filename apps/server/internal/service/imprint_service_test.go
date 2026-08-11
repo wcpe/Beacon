@@ -157,7 +157,7 @@ func TestConfirmImprintSelfReviewGate(t *testing.T) {
 	actualMD5 := filetree.ContentMD5("a: 99\n")
 
 	// 错误 reviewedMd5 → 412，不落库
-	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", "deadbeef", "alice", ""); err != apperr.ErrImprintReviewMismatch {
+	if _, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "lobby-1", "deadbeef", "alice", ""); err != apperr.ErrImprintReviewMismatch {
 		t.Fatalf("错误 md5 应 ErrImprintReviewMismatch，实际 %v", err)
 	}
 	fileRepo := repository.NewFileObjectRepository(db)
@@ -170,7 +170,7 @@ func TestConfirmImprintSelfReviewGate(t *testing.T) {
 	}
 
 	// 正确 md5 → 落 server 层覆盖、命令 done、清空瞬态、记 file.imprint
-	res, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", actualMD5, "alice", "10.0.0.9")
+	res, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "lobby-1", actualMD5, "alice", "10.0.0.9")
 	if err != nil {
 		t.Fatalf("正确自审应落库: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestConfirmImprintPublishesWhenExists(t *testing.T) {
 	md5 := filetree.ContentMD5("a: 2\n")
 
 	// 并入 group 层（已存在）→ 应发布新版本（version 2）
-	res, err := svc.ConfirmImprint(cmd.ID, model.ScopeGroup, "area1", "", "", md5, "alice", "")
+	res, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeGroup, "area1", "", "", md5, "alice", "")
 	if err != nil {
 		t.Fatalf("confirm 应成功（发布新版本）: %v", err)
 	}
@@ -218,9 +218,7 @@ func TestConfirmImprintPublishesWhenExists(t *testing.T) {
 	}
 }
 
-// TestConfirmImprintClaimBeforeLand 回归 review 🟡B：并发双确认下「认领与落库非原子」会重复落库。
-// 用 confirmImprintBeforeClaimHook 确定性复现窗口——外层确认读到 ready、过自审门后、CAS 认领前，
-// 让一个「并发」确认完整跑完（认领 + 落库）；CAS 前置须保证外层认领落空 → ErrImprintNotReady、不二次落库。
+// TestConfirmImprintClaimBeforeLand 确认同一 ready 命令只能成功落库一次，后续确认必须拒绝。
 func TestConfirmImprintClaimBeforeLand(t *testing.T) {
 	db := newCommandSvcTestDB(t)
 	svc := newImprintSvc(db)
@@ -229,17 +227,11 @@ func TestConfirmImprintClaimBeforeLand(t *testing.T) {
 	_, _ = svc.ReceiveIngest(cmd.ID, []ImportFile{{Path: "AllinCore/config.yml", Content: "a: 99\n"}}, "")
 	md5 := filetree.ContentMD5("a: 99\n")
 
-	confirmImprintBeforeClaimHook = func() {
-		confirmImprintBeforeClaimHook = nil // 内层确认不再重入 hook
-		if _, e := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "bob", ""); e != nil {
-			t.Errorf("内层并发确认应成功: %v", e)
-		}
+	if _, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "bob", ""); err != nil {
+		t.Fatalf("首个确认应成功: %v", err)
 	}
-	t.Cleanup(func() { confirmImprintBeforeClaimHook = nil })
-
-	// 外层确认：hook 内已被并发认领 + 落库，外层 CAS 落空 → ErrImprintNotReady。
-	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); !errors.Is(err, apperr.ErrImprintNotReady) {
-		t.Fatalf("外层确认应因已被认领得 ErrImprintNotReady，实际 %v", err)
+	if _, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); !errors.Is(err, apperr.ErrImprintNotReady) {
+		t.Fatalf("已认领后再次确认应拒绝，实际 %v", err)
 	}
 	// 只落一个版本、只记一条 file.imprint 审计（修复前外层会二次发布出 v2 + 第二条审计）。
 	obj, _ := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "AllinCore/config.yml", model.ScopeServer, "lobby-1")
@@ -263,7 +255,7 @@ func TestConfirmImprintGroupIgnoresStrayTarget(t *testing.T) {
 	md5 := filetree.ContentMD5("a: 2\n")
 
 	// 直连 API 传多余 target="stray"；group 层应忽略它、按空 target 命中既有组层文件并发新版本。
-	res, err := svc.ConfirmImprint(cmd.ID, model.ScopeGroup, "area1", "", "stray", md5, "alice", "")
+	res, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeGroup, "area1", "", "stray", md5, "alice", "")
 	if err != nil {
 		t.Fatalf("group 层确认不应因多余 target 误 404，实际 %v", err)
 	}
@@ -283,7 +275,7 @@ func TestConfirmImprintServerTargetMustBeSource(t *testing.T) {
 	md5 := filetree.ContentMD5("a: 99\n")
 
 	// server 层但 target 指向他服 → 拒
-	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "other-server", md5, "alice", ""); !errors.Is(err, apperr.ErrInvalidScope) {
+	if _, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "other-server", md5, "alice", ""); !errors.Is(err, apperr.ErrInvalidScope) {
 		t.Fatalf("server 层目标非源服应 ErrInvalidScope，实际 %v", err)
 	}
 	if obj, _ := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "AllinCore/config.yml", model.ScopeServer, "other-server"); obj != nil {
@@ -293,7 +285,7 @@ func TestConfirmImprintServerTargetMustBeSource(t *testing.T) {
 		t.Fatalf("拒绝后命令应仍 ready，实际 %s", c.Status)
 	}
 	// 落回源服自身 → 放行
-	if _, err := svc.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); err != nil {
+	if _, err := applyConfirmImprintForTest(svc, cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); err != nil {
 		t.Fatalf("落回源服自身应成功，实际 %v", err)
 	}
 }

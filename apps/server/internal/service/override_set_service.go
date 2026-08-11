@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -165,120 +164,19 @@ func (s *OverrideSetService) Create(p CreateOverrideSetParams) (*model.FileOverr
 }
 
 // Publish 发布覆盖集新版本（version+1）：更新目标根 + 重载命令，快照成员清单。
-func (s *OverrideSetService) Publish(id uint, p PublishOverrideSetParams) (*model.FileOverrideSet, error) {
+func (s *OverrideSetService) Publish(_ uint, _ PublishOverrideSetParams) (*model.FileOverrideSet, error) {
 	return nil, apperr.ErrForbidden
-}
-
-func (s *OverrideSetService) applyPublish(id uint, p PublishOverrideSetParams) (*model.FileOverrideSet, error) {
-	if p.Operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	set, err := s.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	root, err := filetree.ValidateTargetRoot(p.TargetRoot)
-	if err != nil {
-		return nil, err
-	}
-	cmd, err := normalizeReloadCommand(p.ReloadCommand)
-	if err != nil {
-		return nil, err
-	}
-	memberPaths, err := s.memberPathList(set)
-	if err != nil {
-		return nil, err
-	}
-	newVersion := set.Version + 1
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevision(tx, set.ID, newVersion, root, cmd, strings.Join(memberPaths, "\n"), nil, p.Operator, p.Comment)
-		if err != nil {
-			return err
-		}
-		set.TargetRoot, set.ReloadCommand, set.Version, set.CurrentRevision = root, cmd, newVersion, rev.ID
-		if err := s.setRepo.WithTx(tx).Save(set); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, set, p.Operator, model.ActionOverrideSetPublish,
-			fmt.Sprintf(`{"version":%d,"targetRoot":%q,"hasCommand":%t}`, newVersion, root, cmd != ""), p.ClientIP)
-	})
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("发布覆盖集", "id", id, "version", newVersion, "targetRoot", root)
-	s.notify(set)
-	return set, nil
 }
 
 // Rollback 回滚覆盖集到目标版本（读取该版本目标根 + 命令作为新版本发布，version+1）。
 // 注意：回滚只还原"覆盖集事实"，绝不触发重放重载命令——命令重放由 agent 侧明令禁止（见 ADR-0011 决策 5）。
-func (s *OverrideSetService) Rollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileOverrideSet, error) {
+func (s *OverrideSetService) Rollback(_ uint, _ int64, _, _, _ string) (*model.FileOverrideSet, error) {
 	return nil, apperr.ErrForbidden
 }
 
-func (s *OverrideSetService) applyRollback(id uint, toVersion int64, operator, comment, clientIP string) (*model.FileOverrideSet, error) {
-	if operator == "" {
-		return nil, apperr.ErrInvalidParam
-	}
-	set, err := s.Get(id)
-	if err != nil {
-		return nil, err
-	}
-	target, err := s.revRepo.FindBySetAndVersion(id, toVersion)
-	if err != nil {
-		return nil, err
-	}
-	if target == nil {
-		return nil, apperr.ErrRevisionNotFound
-	}
-	newVersion := set.Version + 1
-	src := target.ID
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		rev, err := s.appendRevision(tx, set.ID, newVersion, target.TargetRoot, target.ReloadCommand, target.MemberPaths, &src, operator, comment)
-		if err != nil {
-			return err
-		}
-		set.TargetRoot, set.ReloadCommand, set.Version, set.CurrentRevision = target.TargetRoot, target.ReloadCommand, newVersion, rev.ID
-		if err := s.setRepo.WithTx(tx).Save(set); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, set, operator, model.ActionOverrideSetRollback,
-			fmt.Sprintf(`{"version":%d,"fromVersion":%d,"targetRoot":%q}`, newVersion, toVersion, target.TargetRoot), clientIP)
-	})
-	if err != nil {
-		return nil, err
-	}
-	slog.Info("回滚覆盖集", "id", id, "toVersion", toVersion, "newVersion", newVersion)
-	s.notify(set)
-	return set, nil
-}
-
 // Delete 软删覆盖集。
-func (s *OverrideSetService) Delete(id uint, operator, _, clientIP string) error {
+func (s *OverrideSetService) Delete(_ uint, _, _, _ string) error {
 	return apperr.ErrForbidden
-}
-
-func (s *OverrideSetService) applyDelete(id uint, operator, _ string, clientIP string) error {
-	if operator == "" {
-		return apperr.ErrInvalidParam
-	}
-	set, err := s.Get(id)
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	err = s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.setRepo.WithTx(tx).SoftDelete(id, now); err != nil {
-			return err
-		}
-		return s.writeAudit(tx, set, operator, model.ActionOverrideSetDelete, `{"deleted":true}`, clientIP)
-	})
-	if err != nil {
-		return err
-	}
-	slog.Info("软删覆盖集", "id", id)
-	s.notify(set)
-	return nil
 }
 
 // ListRevisions 列出某覆盖集的历史版本。
@@ -313,6 +211,19 @@ func (s *OverrideSetService) memberPathList(set *model.FileOverrideSet) ([]strin
 	if err != nil {
 		return nil, err
 	}
+	return memberPathList(set, members)
+}
+
+// memberPathListInTx 在已有事务内读取成员清单，避免审批 worker 持有单连接 SQLite 事务时再次向连接池取连接。
+func (s *OverrideSetService) memberPathListInTx(tx *gorm.DB, set *model.FileOverrideSet) ([]string, error) {
+	members, err := s.fileRepo.WithTx(tx).ListByOverrideSet(set.ID)
+	if err != nil {
+		return nil, err
+	}
+	return memberPathList(set, members)
+}
+
+func memberPathList(set *model.FileOverrideSet, members []model.FileObject) ([]string, error) {
 	paths := make([]string, 0, len(members))
 	for _, m := range members {
 		if err := filetree.ValidateMemberPath(set.TargetRoot, m.Path); err != nil {

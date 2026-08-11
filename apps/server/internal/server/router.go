@@ -177,7 +177,7 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 	// 管理台登录：签发令牌，自身不挂令牌中间件
 	r.Post("/admin/v1/auth/login", h.Auth.Login)
 
-	if h.V2 != nil {
+	registerV2AdminRoutes := func() {
 		r.Route("/admin/v2", func(r chi.Router) {
 			r.Use(adminAuthMiddleware(authn, apiKeys))
 			r.Use(readonlyWriteGuard)
@@ -354,6 +354,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			registerV2DeliveryAdminRoutes(r, h)
 		})
 	}
+	if h.V2 != nil {
+		registerV2AdminRoutes()
+	}
 
 	// admin 侧：除登录外一律校验身份（登录令牌 / API 密钥），再经只读拒写裁决
 	r.Route("/admin/v1", func(r chi.Router) {
@@ -382,6 +385,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 批量删除 / 禁用 / 启用（FR-74，一事务原子）：静态路由置于 {id} 前以免被通配吞掉
 		r.Post("/configs/batch", h.Config.Batch)
 		r.Get("/configs/{id}", h.Config.Get)
+		r.Post("/configs/{id}/plaintext/approval-requests", h.Config.RequestSensitivePlaintextApproval)
+		r.Post("/configs/{id}/plaintext/grants/{grantId}/consume", h.Config.ConsumeSensitivePlaintextGrant)
 		r.Put("/configs/{id}", h.Config.Publish)
 		r.Delete("/configs/{id}", h.Config.Delete)
 		r.Get("/configs/{id}/revisions", h.Config.ListRevisions)
@@ -435,10 +440,10 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/instances/{serverId}/logs/grants/{grantId}/consume", h.AgentLog.ConsumeApproved)
 		// 强制重同步（FR-91）：触发该实例重拉有效配置/文件树/覆盖集（写，readonly 403）
 		r.Post("/instances/{serverId}/resync", h.Command.Resync)
-		// 在线实例只读文件浏览（FR-110，见 ADR-0049 决策 9）：经命令生命周期代理列目录 / 读子树 / 读单文件。
-		// 方法是 GET 但有写副作用（建命令 / 唤醒 agent / 入审计），故显式挂 requireFullRole 挡 readonly（403）；
-		// 触发已在 service 内记 file.browse 专项审计（兜底审计中间件只覆盖写方法、GET 不进，无双记之虞）。
-		r.With(requireFullRole).Get("/instances/{serverId}/browse", h.Browse.Browse)
+		// 旧 GET 固定 409；只有 POST 申请经审批 worker 下发浏览命令。
+		r.Get("/instances/{serverId}/browse", h.Browse.Browse)
+		r.Post("/instances/{serverId}/browse", h.Browse.Request)
+		r.Post("/instances/{serverId}/browse/grants/{grantId}/consume", h.Browse.ConsumeApproved)
 		// 在线实例反向抓取·受管任务（FR-58，重定义旧一次性端点，见 ADR-0037）：建扫描任务 + 下发 scan 命令（写，readonly 403）
 		r.Post("/instances/{serverId}/reverse-fetch", h.ReverseFetchTask.CreateScanTask)
 		// 受管任务台 / 审核台（FR-58）：查 / 列任务（读）+ 提交选定集 / 取消（写，readonly 403）
@@ -449,12 +454,13 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 冲突 diff 审核（FR-59）：冲突清单 / 逐文件 diff（读）+ resolve 落库（写，readonly 403）
 		r.Get("/reverse-fetch/tasks/{id}/conflicts", h.ReverseFetchTask.ListConflicts)
 		r.Get("/reverse-fetch/tasks/{id}/conflicts/diff", h.ReverseFetchTask.ConflictDiff)
+		r.Post("/reverse-fetch/tasks/{id}/conflicts/grants/{grantId}/consume", h.ReverseFetchTask.ConsumeApprovedConflictDiff)
 		r.Post("/reverse-fetch/tasks/{id}/resolve", h.ReverseFetchTask.Resolve)
 		// 持久忽略规则（FR-59）：列规则（读）+ 建 / 删（写，readonly 403）
 		r.Get("/reverse-fetch/ignore-rules", h.ReverseFetchRule.List)
 		r.Post("/reverse-fetch/ignore-rules", h.ReverseFetchRule.Create)
 		r.Delete("/reverse-fetch/ignore-rules/{id}", h.ReverseFetchRule.Delete)
-		// 按需拓印回写（FR-46）：触发拓印某文件（写）→ diff 本地实际值⟷期望合并值（读）→ 单人自审确认落库（写，readonly 403）
+		// 按需拓印回写（FR-46）：触发与确认均只创建审批申请，worker 才下发命令或落库。
 		r.Post("/instances/{serverId}/imprint", h.Command.Imprint)
 		r.Get("/imprints/{commandId}", h.Command.ImprintStatus)
 		r.Get("/imprints/{commandId}/diff", h.Command.ImprintDiff)

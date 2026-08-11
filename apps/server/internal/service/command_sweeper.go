@@ -19,6 +19,7 @@ const (
 // commandExpirer 是清理器对命令服务的窄依赖（由 AgentCommandService 实现），便于以测试替身验证调用。
 type commandExpirer interface {
 	ExpireStale(before time.Time) (int64, error)
+	ClearExpiredBrowseResults(now time.Time) (int64, error)
 }
 
 // CommandSweeper 是陈旧命令清理器（FR-39 / FR-46，单后台 goroutine）：周期把创建超期仍未终结的命令标 expired
@@ -57,7 +58,12 @@ func (s *CommandSweeper) sweepOnce(now time.Time) {
 		slog.Error("命令过期清理失败", "错误", err)
 		return
 	}
-	if n > 0 {
-		slog.Info("命令过期清理完成", "过期条数", n)
+	cleared, err := s.svc.ClearExpiredBrowseResults(now)
+	if err != nil {
+		slog.Error("浏览结果过期清理失败", "错误", err)
+		return
+	}
+	if n > 0 || cleared > 0 {
+		slog.Info("命令过期清理完成", "过期条数", n, "清空浏览结果条数", cleared)
 	}
 }

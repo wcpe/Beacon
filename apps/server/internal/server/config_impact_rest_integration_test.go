@@ -47,16 +47,10 @@ func TestConfigImpactRESTFlow(t *testing.T) {
 	regOnline(t, ts.URL, "prod", "s3", "g2")
 
 	// 经 admin zone 指派写 DB 归属：s1→g1/za、s2→g1/zb、s3→g2/za
-	assignURL := ts.URL + "/admin/v1/zones/assignments"
 	for _, a := range []struct{ sid, group, zone string }{
 		{"s1", "g1", "za"}, {"s2", "g1", "zb"}, {"s3", "g2", "za"},
 	} {
-		code, _ := doJSON(t, http.MethodPut, assignURL, map[string]any{
-			"namespace": "prod", "serverId": a.sid, "group": a.group, "zone": a.zone,
-		})
-		if code != http.StatusOK {
-			t.Fatalf("指派 %s 应 200，实际 %d", a.sid, code)
-		}
+		assignZoneForTest(t, ts, "prod", a.sid, a.group, a.zone, "集成测试指派")
 	}
 
 	// global：覆盖全部在线

@@ -40,12 +40,7 @@ func TestConfigTimelineRESTFlow(t *testing.T) {
 	cfgBase := ts.URL + "/admin/v1/configs"
 
 	// 指派 lobby-1 → area1/zoneA，使其覆盖链含全部四层
-	code, _ := doJSON(t, http.MethodPut, ts.URL+"/admin/v1/zones/assignments", map[string]any{
-		"namespace": "prod", "serverId": "lobby-1", "group": "area1", "zone": "zoneA",
-	})
-	if code != http.StatusOK {
-		t.Fatalf("指派应 200，实际 %d", code)
-	}
+	assignZoneForTest(t, ts, "prod", "lobby-1", "area1", "zoneA", "集成测试指派")
 
 	// 建四层配置（同一 dataId 跨层）
 	mk := func(group, scope, target, content string) int {
@@ -64,12 +59,7 @@ func TestConfigTimelineRESTFlow(t *testing.T) {
 	mk("area1", "server", "lobby-1", "extra: y\n")
 
 	// global 项再发一版 → 该项两条历史
-	code, _ = doJSON(t, http.MethodPut, cfgBase+"/"+itoa(globalID), map[string]any{
-		"content": "pool: 9\n", "comment": "调大池",
-	})
-	if code != http.StatusOK {
-		t.Fatalf("发布新版本应 200，实际 %d", code)
-	}
+	publishConfigForTest(t, ts, globalID, "pool: 9\n", "调大池")
 
 	// 查 lobby-1 时间线：四层各 1 首发 + global 多 1 = 5 条
 	code, body := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/instances/lobby-1/config-timeline?namespace=prod", nil)

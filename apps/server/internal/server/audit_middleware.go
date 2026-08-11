@@ -63,6 +63,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/configs/{id}/gray":         {},
 	"POST /admin/v1/configs/{id}/gray/promote": {},
 	"DELETE /admin/v1/configs/{id}/gray":       {},
+	// 敏感配置正文申请由 ApprovalService 记审批审计；消费与 grant 状态迁移同事务自记摘要审计。
+	"POST /admin/v1/configs/{id}/plaintext/approval-requests":        {},
+	"POST /admin/v1/configs/{id}/plaintext/grants/{grantId}/consume": {},
 	// 批量删除 / 禁用 / 启用（FR-74：service 在事务内逐项自记专项审计）
 	"POST /admin/v1/configs/batch": {},
 	// 文件树托管（file.create / import / publish / delete / rollback / batch delete|disable|enable）
@@ -87,6 +90,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/instances/{serverId}/logs": {},
 	// 已批准日志正文的一次性消费：grant 原子状态迁移是唯一事实，兜底审计不得记录正文。
 	"POST /admin/v1/instances/{serverId}/logs/grants/{grantId}/consume": {},
+	// 文件浏览申请与一次性消费：前者由 worker 专项审计，后者只推进 grant 状态，兜底审计不得记录浏览结果。
+	"POST /admin/v1/instances/{serverId}/browse":                          {},
+	"POST /admin/v1/instances/{serverId}/browse/grants/{grantId}/consume": {},
 	// 强制重同步触发（FR-91：instance.resync，service 在事务内自记专项审计，detail 不含内容）
 	"POST /admin/v1/instances/{serverId}/resync":  {},
 	"POST /admin/v1/imprints/{commandId}/confirm": {},
@@ -102,6 +108,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 反向抓取受管任务·提交选定 / 取消（FR-58：file.reverse-fetch-submit / cancel，各在事务内或服务内自记专项审计）
 	"POST /admin/v1/reverse-fetch/tasks/{id}/submit": {},
 	"POST /admin/v1/reverse-fetch/tasks/{id}/cancel": {},
+	// 已批准冲突正文的一次性消费：只推进授权状态，兜底审计不得记录正文。
+	"POST /admin/v1/reverse-fetch/tasks/{id}/conflicts/grants/{grantId}/consume": {},
 	// 反向抓取冲突审核 resolve + 持久忽略规则建 / 删（FR-59：file.reverse-fetch-ingest / ignore-rule-add / -remove，服务内自记专项审计）
 	"POST /admin/v1/reverse-fetch/tasks/{id}/resolve":  {},
 	"POST /admin/v1/reverse-fetch/ignore-rules":        {},
@@ -140,7 +148,7 @@ var coveredWriteRoutes = map[string]struct{}{
 	// 统一审批请求（FR-206/207）：提审 / 批准 / 驳回 / 撤回均由 ApprovalService 自记专项审计。
 	// 创建端点 POST /admin/v2/approval-requests 经 CreateLifecycleApprovalRequest → requestApproval →
 	// ApprovalService.Request 在事务内自记 ActionApprovalRequest，登记于此使兜底跳过、避免双记。
-	"POST /admin/v2/approval-requests":                                 {},
+	"POST /admin/v2/approval-requests":                                      {},
 	"POST /admin/v2/approval-requests/{requestId}/approve":                  {},
 	"POST /admin/v2/approval-requests/{requestId}/reject":                   {},
 	"POST /admin/v2/approval-requests/{requestId}/withdraw":                 {},

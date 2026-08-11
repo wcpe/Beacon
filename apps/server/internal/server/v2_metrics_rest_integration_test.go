@@ -110,10 +110,7 @@ func TestV2MetricsReportAuthAndDedup(t *testing.T) {
 	}
 
 	// 人工确认（首次确认，无 target）。
-	code, _ = doJSON(t, http.MethodPost, ts.URL+"/admin/v2/agent-identities/"+identityID+"/approve", map[string]any{})
-	if code != http.StatusOK {
-		t.Fatalf("确认身份应 200，实际 %d", code)
-	}
+	approveAgentIdentityForTest(t, ts, identityID, serverID)
 
 	// 确认后上报 → 202 accepted=1。
 	code, body = doAgentJSON(t, http.MethodPost, reportURL,
@@ -190,7 +187,7 @@ func TestV2MetricsClockSkewRejected(t *testing.T) {
 		map[string]string{"X-Beacon-Token": token}, map[string]any{
 			"identityId": identityID, "serverId": serverID, "kind": "backend", "bootId": "boot-1",
 		})
-	doJSON(t, http.MethodPost, ts.URL+"/admin/v2/agent-identities/"+identityID+"/approve", map[string]any{})
+	approveAgentIdentityForTest(t, ts, identityID, serverID)
 
 	bucket := (time.Now().UTC().UnixMilli() / 5000) * 5000
 	body := metricReportBody(serverID, "backend", []int64{bucket})

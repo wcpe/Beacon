@@ -611,7 +611,7 @@ func (a fileOverrideApprovalAdapter) applyOverridePublish(tx *gorm.DB, p fileApp
 	if err != nil {
 		return "", err
 	}
-	paths, err := a.sets.memberPathList(set)
+	paths, err := a.sets.memberPathListInTx(tx, set)
 	if err != nil {
 		return "", err
 	}

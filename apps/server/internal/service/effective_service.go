@@ -203,12 +203,13 @@ type ProvenancedItem struct {
 
 // ProvenancedEffective 是某目标的 admin 只读有效配置预览结果（含逐键来源）。
 type ProvenancedEffective struct {
-	Namespace string
-	ServerID  string
-	Group     string
-	Zone      string
-	MD5       string
-	Items     []ProvenancedItem
+	Namespace    string
+	ServerID     string
+	Group        string
+	Zone         string
+	MD5          string
+	Items        []ProvenancedItem
+	HasSensitive bool
 }
 
 // ResolveWithProvenance 解析某目标的有效配置并附逐键来源（admin 只读预览，见 ADR-0013）。
@@ -233,6 +234,10 @@ func (s *EffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHi
 	// admin 预览与 agent 热路径共用同一灰度叠加逻辑，保证 cohort 内预览结果与下发一致
 	if err := s.applyGrayOverlay(ns, serverID, candidates); err != nil {
 		return ProvenancedEffective{}, err
+	}
+	hasSensitive := false
+	for i := range candidates {
+		hasSensitive = hasSensitive || candidates[i].Sensitive
 	}
 
 	buckets := map[string][]model.ConfigItem{}
@@ -269,7 +274,7 @@ func (s *EffectiveService) ResolveWithProvenance(ns, serverID, groupHint, zoneHi
 
 	return ProvenancedEffective{
 		Namespace: ns, ServerID: serverID, Group: group, Zone: zone,
-		MD5: merge.OverallMD5(dataIDToMD5), Items: items,
+		MD5: merge.OverallMD5(dataIDToMD5), Items: items, HasSensitive: hasSensitive,
 	}, nil
 }
 

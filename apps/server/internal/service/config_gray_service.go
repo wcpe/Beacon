@@ -110,12 +110,12 @@ func (s *ConfigGrayService) List(ns string) ([]model.ConfigGray, error) {
 }
 
 // Publish 是已废弃的公开副作用入口；灰度发布只能由审批执行器调用私有事务方法。
-func (s *ConfigGrayService) Publish(itemID uint, content string, cohort []string, operator, comment, clientIP string) (*model.ConfigGray, error) {
+func (s *ConfigGrayService) Publish(_ uint, _ string, _ []string, _, _, _ string) (*model.ConfigGray, error) {
 	return nil, apperr.ErrForbidden
 }
 
 // Promote 是已废弃的公开副作用入口；灰度晋升只能由审批执行器调用私有事务方法。
-func (s *ConfigGrayService) Promote(itemID uint, operator, comment, clientIP string) (*model.ConfigItem, error) {
+func (s *ConfigGrayService) Promote(_ uint, _, _, _ string) (*model.ConfigItem, error) {
 	return nil, apperr.ErrForbidden
 }
 

@@ -15,19 +15,16 @@ const (
 )
 
 // activateAgent 注册并确认一台 agent（pending → active），返回后其 server 行已建、可调数据面上报端点。
-func activateAgent(t *testing.T, baseURL, token, identityID, serverID string) {
+func activateAgent(t *testing.T, ts *integrationTestServer, token, identityID, serverID string) {
 	t.Helper()
-	code, _ := doAgentJSON(t, http.MethodPost, baseURL+"/beacon/v2/agent/register",
+	code, _ := doAgentJSON(t, http.MethodPost, ts.URL+"/beacon/v2/agent/register",
 		map[string]string{"X-Beacon-Token": token}, map[string]any{
 			"identityId": identityID, "serverId": serverID, "kind": "backend", "bootId": "boot-1",
 		})
 	if code != http.StatusAccepted {
 		t.Fatalf("注册 %s 应 202 pending，实际 %d", serverID, code)
 	}
-	code, _ = doJSON(t, http.MethodPost, baseURL+"/admin/v2/agent-identities/"+identityID+"/approve", map[string]any{})
-	if code != http.StatusOK {
-		t.Fatalf("确认 %s 应 200，实际 %d", serverID, code)
-	}
+	approveAgentIdentityForTest(t, ts, identityID, serverID)
 }
 
 // assetManifestBody 构造一次清单上报请求体。
@@ -51,7 +48,7 @@ func TestV2AssetsManifestAndAdminFlow(t *testing.T) {
 	nsID := nsIDBySelfReport(t, ts.URL, "assetns")
 	identityID := "11111111-1111-4111-8111-111111111111"
 	serverID := "lobby-1"
-	activateAgent(t, ts.URL, token, identityID, serverID)
+	activateAgent(t, ts, token, identityID, serverID)
 
 	manifestURL := ts.URL + "/beacon/v2/agent/assets/manifest"
 	agentHeaders := map[string]string{"X-Beacon-Token": token, "X-Beacon-Identity": identityID}
@@ -148,9 +145,9 @@ func TestV2AssetsCompareAndRescan(t *testing.T) {
 	token := createV2NamespaceToken(t, ts.URL, "cmpns")
 	nsID := nsIDBySelfReport(t, ts.URL, "cmpns")
 
-	activateAgent(t, ts.URL, token, "aaaaaaaa-1111-4111-8111-111111111111", "s1")
-	activateAgent(t, ts.URL, token, "bbbbbbbb-2222-4222-8222-222222222222", "s2")
-	activateAgent(t, ts.URL, token, "cccccccc-3333-4333-8333-333333333333", "s3")
+	activateAgent(t, ts, token, "aaaaaaaa-1111-4111-8111-111111111111", "s1")
+	activateAgent(t, ts, token, "bbbbbbbb-2222-4222-8222-222222222222", "s2")
+	activateAgent(t, ts, token, "cccccccc-3333-4333-8333-333333333333", "s3")
 
 	path := "plugins/A/config.yml"
 	report := func(identityID, serverID, sha string, size int64) {

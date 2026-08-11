@@ -26,7 +26,7 @@ func changeStartConflict(servers []string) *apperr.Error {
 }
 
 // Start 禁止旧公开启动入口，防止批准后由调用方绕过统一审批 worker 直接启动交付。
-func (s *DeliveryOrchestrator) Start(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrchestrator) Start(_ uint, _, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 

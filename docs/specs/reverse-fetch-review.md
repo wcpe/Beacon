@@ -17,7 +17,7 @@ FR-58 把反向抓取做成受管任务 + 两段式（scan 清单 → submit 选
 ### 2.2 冲突 diff 确认（conflict-review）
 - submit 回传内容后，对每个选定文件查目标是否已有版本（`FindByIdentity`）。
 - **无冲突** → 沿 FR-58 原路 ingesting → done（全量落库）。
-- **有冲突** → 任务进新状态 `conflict-review`，**暂存本次 submit 回传的全部内容**（瞬态），不立即落库；暴露冲突清单 + 逐文件 diff（抓取值 ⟷ 已有版本）。
+- **有冲突** → 任务进新状态 `conflict-review`，**暂存本次 submit 回传的全部内容**（瞬态），不立即落库；冲突清单仍可直读，正文经 submit 批准链绑定的一次性授权消费完整冲突 diff 包（抓取值 ⟷ 已有版本）。
 - 用户逐冲突文件决定**保留哪份**：取抓取（覆盖，须带 `reviewedMd5`=抓取内容 md5 过自审门）或保留已有（跳过该文件）。
 - resolve 后落库：非冲突文件 + 确认覆盖的冲突文件（复用 `FileService.Create`/`Publish`），跳过保留已有的 → done。
 - 忽略 / 确认 / 提交入审计。
@@ -40,30 +40,31 @@ FR-58 把反向抓取做成受管任务 + 两段式（scan 清单 → submit 选
   1. 收 submit 回传内容（仅选定集）。
   2. 逐文件查 `FindByIdentity(ns, group, path, scope, scopeTarget)` 判冲突。
   3. **无冲突**：task→ingesting→`FileService.Import` 落库→done（FR-58 原路）。
-  4. **有冲突**：暂存全部回传内容到 `submit_content`、记冲突 path 集、task→`conflict-review`（不落库）。
+  4. **有冲突**：同一事务暂存全部回传内容到 `submit_content`、记冲突 path 集、task→`conflict-review`、命令→done，并以 `submit_content` SHA-256 绑定激活该 submit 审批创建的 pending grant（不落库）。
 - 新端点：
   - `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts` → 冲突 path 清单。
-  - `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts/diff?path=` → `{path, fetchedContent, fetchedMd5, existingContent, existingMd5, version}`（抓取值 ⟷ 已有版本；existing 取自 file_object 当前版本）。
-  - `POST /admin/v1/reverse-fetch/tasks/{id}/resolve` → body `{decisions:[{path, action:"overwrite"|"keep", reviewedMd5?}]}`；每个 overwrite 须 reviewedMd5==该文件 fetched md5（自审门，盲确认→412 复用 `ErrImprintReviewMismatch` 或新 `REVERSE_FETCH_REVIEW_MISMATCH`）。
-- resolve 落库：CAS 认领 conflict-review→ingesting（防并发双 resolve，复用 FR-46 CAS 范式）→ 事务内 Import 非冲突集 + 逐个 overwrite（Create/Publish）+ 跳过 keep → done、清空 `submit_content`、审计 `file.reverse-fetch-ingest`（detail 不含内容）。
+  - 旧 `GET /admin/v1/reverse-fetch/tasks/{id}/conflicts/diff?path=` 固定返回 `409 operation_requires_approval`，不得返回正文。
+  - `POST /admin/v1/reverse-fetch/tasks/{id}/conflicts/grants/{grantId}/consume` → 仅原 submit 申请主体在授权激活后 5 分钟内一次消费 `{items:[{path, fetchedContent, fetchedMd5, existingContent, existingMd5, version}]}`；一次返回全部冲突路径，不含非冲突正文，过期、转让、重放或版本不符均失败关闭。
+  - `POST /admin/v1/reverse-fetch/tasks/{id}/resolve` → 仅已消费冲突正文的原 submit 申请主体可调用；body `{decisions:[{path, action:"overwrite"|"keep", reviewedMd5?}],reason}` + `Idempotency-Key`，创建 `agent.command.reverse_resolve` 审批申请并返回 `202` 票据；每个 overwrite 须 reviewedMd5==该文件 fetched md5（自审门，盲确认→412）。
+- resolve 落库：仅审批 worker 持 permit 执行；冻结任务、manifest SHA-256、暂存输出 SHA-256 与冲突目标版本/hash，任一漂移失败关闭。worker 在同一事务内 CAS 认领 conflict-review→ingesting、Import 非冲突集与确认覆盖集、任务 done、清空 `submit_content`、审计 `file.reverse-fetch-ingest` 与 execution receipt；审批详情/审计不含文件正文。
 - 过期：conflict-review 也是非终态，sweeper 一并扫陈旧→expired + 清 submit_content。互斥（FR-58 active 唯一）：conflict-review 仍占活跃。
 
 ### 3.3 复用点（FR-46 / FR-58）
-- diff 内容对比、reviewedMd5 自审门、CAS 认领清瞬态 → 复用 `imprint_service` 范式（`filetree.ContentMD5`、`UpdateStatusClear*` CAS）。
+- diff 内容对比、一次性正文授权、reviewedMd5 自审门、CAS 认领清瞬态 → 复用 `imprint_service` 与 `SensitiveAccessGrant` 范式（`filetree.ContentMD5`、`UpdateStatusClear*` CAS）。
 - 落库 → `FileService.Create`/`Publish`（同 FR-46 `landImprint` 先 Create 后 Publish 降级）。
 - 冲突的「已有版本内容」→ 取 file_object 当前 `Content`（或最新 revision）。
 
 ## 4. 任务拆分
-- [ ] 模型 `reverse_fetch_ignore_rule` + 仓库 + AutoMigrate；`reverse_fetch_task` 加 `conflict-review` 状态常量 + `submit_content` 列。
-- [ ] 忽略规则 service + CRUD handler/端点 + manifest `ignoredByRule` 标记 + 审计 + FR-72 覆盖集。
-- [ ] conflict-review：改 ReceiveSubmitIngest 检冲突分路 + 暂存；conflicts/diff/resolve 端点 + service（CAS + 自审 + 落库）+ 审计。
-- [ ] 错误码：`REVERSE_FETCH_REVIEW_MISMATCH`(412)（或复用）、冲突/状态相关。
-- [ ] 测试（先行红）：规则 CRUD + manifest 标记(exact/prefix) / 无冲突直 done / 有冲突进 conflict-review 暂存不落库 / diff 返抓取⟷已有 / resolve overwrite 须自审 md5（盲确认 412）/ keep 跳过 / resolve 后 done 落库正确 / 过期清 submit_content / 互斥含 conflict-review。
+- [x] 模型 `reverse_fetch_ignore_rule` + 仓库 + AutoMigrate；`reverse_fetch_task` 加 `conflict-review` 状态常量 + `submit_content` 列。
+- [x] 忽略规则 service + CRUD handler/端点 + manifest `ignoredByRule` 标记 + 审计 + FR-72 覆盖集。
+- [x] conflict-review：改 ReceiveSubmitIngest 检冲突分路 + 暂存 + submit grant 激活；冲突清单 / grant 消费 / resolve 端点 + service（CAS + 自审 + 落库）+ 审计。
+- [x] 错误码：`REVERSE_FETCH_REVIEW_MISMATCH`(412)（或复用）、冲突/状态相关。
+- [x] 测试（先行红）：规则 CRUD + manifest 标记(exact/prefix) / 无冲突直 done / 有冲突进 conflict-review 暂存不落库 / submit 审批原子 pending grant + receipt / 回传绑定激活 / 原主体一次消费完整冲突包 / resolve overwrite 须自审 md5（盲确认 412）/ keep 跳过 / resolve 后 done 落库正确 / 过期清 submit_content / 互斥含 conflict-review。
 - [ ] doc-sync：PRD FR-59、API.md（新端点）、ARCHITECTURE（忽略规则 + conflict-review 状态）、CHANGELOG、本规格。
 
 ## 5. 验收标准
 - 持久忽略规则可建/列/删；下次扫描清单中命中规则的文件 `ignoredByRule=true`（exact/prefix 生效）。
-- 提交后目标无已有版本 → 直接 done 落库；有已有版本 → 进 conflict-review、不落库、出冲突清单 + diff。
+- 提交后目标无已有版本 → 直接 done 落库；有已有版本 → 进 conflict-review、不落库、出冲突清单，正文只能凭 submit grant 一次消费完整冲突包。
 - 冲突 diff 确认：overwrite 须带正确 reviewedMd5（盲确认 412）；keep 跳过保留已有；resolve 后正确落库 done。
 - 忽略 / 确认 / 提交入审计。
 - 受影响组件测试全绿（`go build/test/vet ./...`，集成 `-tags=integration` 跑反向抓取审核全链路）。

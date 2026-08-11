@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+// requestImprintForTest 通过审批链创建拓印命令，避免 REST 夹具走公开旁路。
+func requestImprintForTest(t *testing.T, ts *integrationTestServer, serverID, path string) map[string]any {
+	t.Helper()
+	return requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/instances/"+serverID+"/imprint?namespace=prod", t.Name()+"-imprint-"+serverID, map[string]any{
+		"path": path, "reason": "集成测试拓印文件",
+	})
+}
+
 // TestImprintFullChain 按需拓印全链路（FR-46）：admin 触发拓印(202+审计) → agent 拉命令(200, payload 带 mode=imprint+path)
 // → agent 回传整棵树 ingest(200) → 控制面取目标 path 转存、命令转 ready（不落 file_object）→ admin 拉 diff(200, 本地实际值⟷期望合并值)
 // → 带正确 reviewedMd5 确认(200) → 落 server 层覆盖 + 命令 done + file.imprint 审计。
@@ -17,24 +25,14 @@ func TestImprintFullChain(t *testing.T) {
 	registerOnline(t, ts.URL, "prod", "src-imp-1", "area1")
 
 	// 预置组级该文件 {a:1}，使期望合并值非空（拓印源盘上是 {a:99}，构造真实 diff）
-	code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/files?namespace=prod", map[string]any{
-		"namespace": "prod", "group": "area1", "path": "plugin-a/config.yml", "scopeLevel": "group", "content": "a: 1\n",
-	})
-	if code != http.StatusCreated {
-		t.Fatalf("预置组级文件应 201，实际 %d", code)
-	}
+	createFileForTest(t, ts, "prod", "area1", "plugin-a/config.yml", "group", "a: 1\n")
 
-	// admin 触发拓印 → 202 + pending 命令
-	code, cmd := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-imp-1/imprint?namespace=prod", map[string]any{
-		"path": "plugin-a/config.yml",
-	})
-	if code != http.StatusAccepted {
-		t.Fatalf("触发拓印应 202，实际 %d：%v", code, cmd)
+	// admin 提审后由 worker 创建拓印命令。
+	ticket := requestImprintForTest(t, ts, "src-imp-1", "plugin-a/config.yml")
+	requestID, _ := ticket["approvalRequestId"].(string)
+	if requestID == "" {
+		t.Fatalf("拓印审批响应缺 requestId：%v", ticket)
 	}
-	if cmd["type"] != "ingest-plugins" || cmd["status"] != "pending" {
-		t.Fatalf("命令视图应 type=ingest-plugins status=pending，实际 %v", cmd)
-	}
-	cmdID := int(cmd["id"].(float64))
 
 	// 触发即写一条 file.imprint-fetch 审计
 	code, audits := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/audits?namespace=prod&action=file.imprint-fetch", nil)
@@ -51,6 +49,7 @@ func TestImprintFullChain(t *testing.T) {
 	if payload["mode"] != "imprint" || payload["path"] != "plugin-a/config.yml" {
 		t.Fatalf("命令 payload 应含 mode=imprint path=plugin-a/config.yml，实际 %v", payload)
 	}
+	cmdID := int(pulled["id"].(float64))
 
 	// agent 回传整棵树（含目标 path 与其它文件）→ 200；控制面取目标 path 转存、命令转 ready，不落库
 	code, ing := doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
@@ -70,9 +69,10 @@ func TestImprintFullChain(t *testing.T) {
 		t.Fatalf("拓印回传不应落 server 层文件，实际 %v", files["items"])
 	}
 
-	// admin 拉 diff → 200，本地实际值 a:99、期望合并值 a:1、differs=true
-	code, diff := doJSON(t, http.MethodGet,
-		fmt.Sprintf("%s/admin/v1/imprints/%d/diff?scope=server&group=area1&target=src-imp-1", ts.URL, cmdID), nil)
+	// 原申请人从审批详情取得一次性授权，再消费 diff 正文。
+	grantID := sensitiveGrantIDForTest(t, ts, requestID)
+	code, diff := doJSON(t, http.MethodPost,
+		fmt.Sprintf("%s/admin/v1/imprints/%d/diff/grants/%s/consume?scope=server&group=area1", ts.URL, cmdID, grantID), nil)
 	if code != http.StatusOK {
 		t.Fatalf("拉 diff 应 200，实际 %d：%v", code, diff)
 	}
@@ -90,22 +90,19 @@ func TestImprintFullChain(t *testing.T) {
 		t.Fatal("diff 应返回 actualMd5 供确认自审")
 	}
 
-	// 带正确 reviewedMd5 确认 → 200，落 server 层覆盖（首版 version=1）
-	code, conf := doJSON(t, http.MethodPost,
-		fmt.Sprintf("%s/admin/v1/imprints/%d/confirm", ts.URL, cmdID), map[string]any{
-			"scope": "server", "group": "area1", "target": "src-imp-1", "reviewedMd5": reviewedMD5,
-		})
-	if code != http.StatusOK {
-		t.Fatalf("确认拓印应 200，实际 %d：%v", code, conf)
-	}
-	if conf["scopeLevel"] != "server" || conf["version"].(float64) != 1 {
-		t.Fatalf("确认结果应落 server 层 version=1，实际 %v", conf)
-	}
+	// 带正确 reviewedMd5 提审并执行，worker 才落 server 层覆盖（首版 version=1）。
+	requestAndApplyApproval(t, ts, http.MethodPost, fmt.Sprintf("/admin/v1/imprints/%d/confirm", cmdID), t.Name()+"-imprint-confirm", map[string]any{
+		"scope": "server", "group": "area1", "target": "src-imp-1", "reviewedMd5": reviewedMD5, "reason": "集成测试确认拓印",
+	})
 
 	// server 层覆盖已落库（内容 = 本地实际值）
 	code, files = doJSON(t, http.MethodGet, ts.URL+"/admin/v1/files?namespace=prod&group=area1&scopeLevel=server&scopeTarget=src-imp-1", nil)
 	if code != http.StatusOK || !containsFilePath(files["items"], "plugin-a/config.yml") {
 		t.Fatalf("确认后 server 层应含 plugin-a/config.yml，实际 %v", files["items"])
+	}
+	items := asSlice(files["items"])
+	if len(items) != 1 || items[0].(map[string]any)["version"] != float64(1) {
+		t.Fatalf("确认结果应落 server 层 version=1，实际 %v", files["items"])
 	}
 
 	// 确认落库写一条 file.imprint 审计
@@ -127,17 +124,13 @@ func TestImprintConfirmSelfReviewGate(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-imp-2", "area2")
 
-	code, cmd := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-imp-2/imprint?namespace=prod", map[string]any{
-		"path": "plugin-b/config.yml",
-	})
-	if code != http.StatusAccepted {
-		t.Fatalf("触发拓印应 202，实际 %d", code)
-	}
-	cmdID := int(cmd["id"].(float64))
+	requestImprintForTest(t, ts, "src-imp-2", "plugin-b/config.yml")
 	// 拉取转 fetched 后回传
-	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-2", nil); code != http.StatusOK {
+	code, pulled := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-2", nil)
+	if code != http.StatusOK {
 		t.Fatalf("拉命令应 200，实际 %d", code)
 	}
+	cmdID := int(pulled["id"].(float64))
 	code, _ = doJSON(t, http.MethodPost, ts.URL+"/beacon/v1/agent/files/ingest", map[string]any{
 		"commandId": cmdID,
 		"files":     []map[string]any{{"path": "plugin-b/config.yml", "content": "x: 1\n"}},
@@ -147,10 +140,10 @@ func TestImprintConfirmSelfReviewGate(t *testing.T) {
 	}
 
 	// 错误 reviewedMd5 → 412 IMPRINT_REVIEW_MISMATCH
-	code, body := doJSON(t, http.MethodPost,
+	code, body := doJSONWithHeaders(t, http.MethodPost,
 		fmt.Sprintf("%s/admin/v1/imprints/%d/confirm", ts.URL, cmdID), map[string]any{
-			"scope": "server", "group": "area2", "target": "src-imp-2", "reviewedMd5": "deadbeef",
-		})
+			"scope": "server", "group": "area2", "target": "src-imp-2", "reviewedMd5": "deadbeef", "reason": "集成测试错误自审",
+		}, map[string]string{"Idempotency-Key": compactIdempotencyKey(t.Name() + "-imprint-mismatch")})
 	if code != http.StatusPreconditionFailed || body["code"] != "IMPRINT_REVIEW_MISMATCH" {
 		t.Fatalf("错误 md5 应 412 IMPRINT_REVIEW_MISMATCH，实际 %d：%v", code, body)
 	}
@@ -161,22 +154,23 @@ func TestImprintConfirmSelfReviewGate(t *testing.T) {
 	}
 }
 
-// TestImprintDiffNotReady 命令非 ready（刚建未回传）拉 diff → 409 IMPRINT_NOT_READY。
+// TestImprintDiffNotReady 命令非 ready（刚建未回传）提交确认 → 409 IMPRINT_NOT_READY。
 func TestImprintDiffNotReady(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-imp-3", "area3")
-	code, cmd := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-imp-3/imprint?namespace=prod", map[string]any{
-		"path": "plugin-c/config.yml",
-	})
-	if code != http.StatusAccepted {
-		t.Fatalf("触发拓印应 202，实际 %d", code)
+	requestImprintForTest(t, ts, "src-imp-3", "plugin-c/config.yml")
+	code, pending := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-imp-3", nil)
+	if code != http.StatusOK {
+		t.Fatalf("拉待执行拓印命令应 200，实际 %d", code)
 	}
-	cmdID := int(cmd["id"].(float64))
-	code, body := doJSON(t, http.MethodGet,
-		fmt.Sprintf("%s/admin/v1/imprints/%d/diff?scope=server&group=area3&target=src-imp-3", ts.URL, cmdID), nil)
+	cmdID := int(pending["id"].(float64))
+	code, body := doJSONWithHeaders(t, http.MethodPost,
+		fmt.Sprintf("%s/admin/v1/imprints/%d/confirm", ts.URL, cmdID), map[string]any{
+			"scope": "server", "group": "area3", "target": "src-imp-3", "reviewedMd5": "not-ready", "reason": "集成测试未就绪确认",
+		}, map[string]string{"Idempotency-Key": compactIdempotencyKey(t.Name() + "-imprint-not-ready")})
 	if code != http.StatusConflict || body["code"] != "IMPRINT_NOT_READY" {
-		t.Fatalf("非 ready 拉 diff 应 409 IMPRINT_NOT_READY，实际 %d：%v", code, body)
+		t.Fatalf("非 ready 提交确认应 409 IMPRINT_NOT_READY，实际 %d：%v", code, body)
 	}
 }
 
@@ -196,7 +190,7 @@ func TestImprintOfflineInstance(t *testing.T) {
 func TestImprintReadonlyForbidden(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	roKey, _ := createKey(t, ts.URL, "ro-imp", "readonly")
+	roKey, _ := createKey(t, ts, "ro-imp", "readonly")
 	// 触发拓印（写）
 	code, body := doAPIKey(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-imp-1/imprint?namespace=prod", roKey, false, map[string]any{
 		"path": "plugin-a/config.yml",

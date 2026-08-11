@@ -42,15 +42,9 @@ func TestConfigGrayRESTFlow(t *testing.T) {
 	}
 
 	// 发布灰度 bravo 给 cohort=[gray-s1]
-	code, g := doJSON(t, http.MethodPost, itemURL+"/gray", map[string]any{
-		"content": "v: bravo\n", "cohort": []string{"gray-s1"}, "comment": "beta",
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/configs/"+itoa(id)+"/gray", t.Name()+"-gray-first", map[string]any{
+		"content": "v: bravo\n", "cohort": []string{"gray-s1"}, "comment": "beta", "reason": "集成测试发布灰度",
 	})
-	if code != http.StatusCreated {
-		t.Fatalf("发布灰度应 201，实际 %d：%v", code, g)
-	}
-	if cohort := asSlice(g["cohort"]); len(cohort) != 1 || cohort[0] != "gray-s1" {
-		t.Fatalf("灰度 cohort 应为 [gray-s1]，实际 %v", g["cohort"])
-	}
 
 	// 活跃灰度列表含 1 条
 	code, gl := doJSON(t, http.MethodGet, cfgBase+"/gray?namespace=prod", nil)
@@ -67,10 +61,7 @@ func TestConfigGrayRESTFlow(t *testing.T) {
 	}
 
 	// 晋升：灰度 bravo 成为稳定 v2
-	code, pr := doJSON(t, http.MethodPost, itemURL+"/gray/promote", map[string]any{"comment": "go"})
-	if code != http.StatusOK || pr["version"].(float64) != 2 {
-		t.Fatalf("晋升应 200 且 version=2，实际 %d：%v", code, pr)
-	}
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/configs/"+itoa(id)+"/gray/promote", t.Name()+"-gray-promote", map[string]any{"comment": "go", "reason": "集成测试晋升灰度"})
 	// 晋升后无活跃灰度；非成员也见已晋升的稳定内容 bravo
 	code, gl2 := doJSON(t, http.MethodGet, cfgBase+"/gray?namespace=prod", nil)
 	if code != http.StatusOK || len(asSlice(gl2["items"])) != 0 {
@@ -81,35 +72,32 @@ func TestConfigGrayRESTFlow(t *testing.T) {
 	}
 
 	// 二次发布灰度 charlie 给 [gray-s1]，再中止 → 成员回稳定 bravo
-	code, _ = doJSON(t, http.MethodPost, itemURL+"/gray", map[string]any{
-		"content": "v: charlie\n", "cohort": []string{"gray-s1"},
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/configs/"+itoa(id)+"/gray", t.Name()+"-gray-second", map[string]any{
+		"content": "v: charlie\n", "cohort": []string{"gray-s1"}, "reason": "集成测试发布灰度",
 	})
-	if code != http.StatusCreated {
-		t.Fatalf("二次发布灰度应 201，实际 %d", code)
-	}
 	if c := effContent("gray-s1"); !strings.Contains(c, "charlie") {
 		t.Fatalf("二次灰度成员应见 charlie，实际 %q", c)
 	}
-	code, _ = doJSON(t, http.MethodDelete, itemURL+"/gray?comment=stop", nil)
-	if code != http.StatusOK {
-		t.Fatalf("中止灰度应 200，实际 %d", code)
+	code, canceled := doJSON(t, http.MethodDelete, ts.URL+"/admin/v1/configs/"+itoa(id)+"/gray?comment=stop", nil)
+	if code != http.StatusOK || canceled["ok"] != true {
+		t.Fatalf("中止灰度应 200，实际 %d：%v", code, canceled)
 	}
 	if c := effContent("gray-s1"); strings.Contains(c, "charlie") || !strings.Contains(c, "bravo") {
 		t.Fatalf("中止后成员应回稳定 bravo（无 charlie），实际 %q", c)
 	}
 
 	// 负路径：空 cohort → 拒绝（4xx）
-	code, _ = doJSON(t, http.MethodPost, itemURL+"/gray", map[string]any{"content": "v: x\n", "cohort": []string{}})
+	code, _ = doJSONWithHeaders(t, http.MethodPost, itemURL+"/gray", map[string]any{"content": "v: x\n", "cohort": []string{}, "reason": "集成测试发布灰度"}, map[string]string{"Idempotency-Key": t.Name() + "-empty-gray"})
 	if code < 400 || code >= 500 {
 		t.Fatalf("空 cohort 应 4xx 拒绝，实际 %d", code)
 	}
 	// 负路径：对不存在配置发灰度 → 404
-	code, _ = doJSON(t, http.MethodPost, cfgBase+"/999999/gray", map[string]any{"content": "v: x\n", "cohort": []string{"s1"}})
+	code, _ = doJSONWithHeaders(t, http.MethodPost, cfgBase+"/999999/gray", map[string]any{"content": "v: x\n", "cohort": []string{"s1"}, "reason": "集成测试发布灰度"}, map[string]string{"Idempotency-Key": t.Name() + "-missing-gray"})
 	if code != http.StatusNotFound {
 		t.Fatalf("对不存在配置发灰度应 404，实际 %d", code)
 	}
 	// 负路径：无活跃灰度时晋升 → 404
-	code, _ = doJSON(t, http.MethodPost, itemURL+"/gray/promote", map[string]any{})
+	code, _ = doJSONWithHeaders(t, http.MethodPost, itemURL+"/gray/promote", map[string]any{"reason": "集成测试晋升灰度"}, map[string]string{"Idempotency-Key": t.Name() + "-missing-promote"})
 	if code != http.StatusNotFound {
 		t.Fatalf("无活跃灰度晋升应 404，实际 %d", code)
 	}

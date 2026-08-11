@@ -77,9 +77,7 @@ func TestV2RezoneRestMultiTableTransaction(t *testing.T) {
 	nsID, token := createNamespaceV2(t, ts.URL, "prod")
 	const identityID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
 	registerAgentV2(t, ts.URL, token, identityID, "lobby-1", "backend")
-	if code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/agent-identities/"+identityID+"/approve", map[string]any{}); code != http.StatusOK {
-		t.Fatalf("确认身份应 200，实际 %d：%v", code, body)
-	}
+	approveAgentIdentityForTest(t, ts, identityID, "lobby-1")
 
 	clusterID := createAuthorityNode(t, ts.URL, "/admin/v2/bc-clusters", map[string]any{"namespaceId": nsID, "name": "bc-a"})
 	regionID := createAuthorityNode(t, ts.URL, "/admin/v2/regions", map[string]any{"bcClusterId": clusterID, "name": "r1"})
@@ -87,23 +85,14 @@ func TestV2RezoneRestMultiTableTransaction(t *testing.T) {
 	zoneB := createAuthorityNode(t, ts.URL, "/admin/v2/zones", map[string]any{"regionId": regionID, "name": "z-b"})
 
 	rowID := serverRowID(t, ts.URL, nsID, "lobby-1")
-	if code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/server-assignments", map[string]any{
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v2/server-assignments", t.Name()+"-assign", map[string]any{
 		"serverIds": []uint{rowID}, "target": map[string]any{"kind": "zone", "id": zoneA}, "isDefaultEntry": true, "reason": "首次",
-	}); code != http.StatusOK {
-		t.Fatalf("首次分配应 200，实际 %d：%v", code, body)
-	}
+	})
 
 	// 发起换区工单 → zoneB
-	code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/server-rezones", map[string]any{
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v2/server-rezones", t.Name()+"-rezone", map[string]any{
 		"serverIds": []uint{rowID}, "target": map[string]any{"kind": "zone", "id": zoneB}, "reason": "扩容换区",
 	})
-	if code != http.StatusOK {
-		t.Fatalf("换区工单应 200，实际 %d：%v", code, body)
-	}
-	results := asSlice(body["results"])
-	if len(results) != 1 || results[0].(map[string]any)["ok"] != true {
-		t.Fatalf("换区结果应逐台 ok，实际 %v", body["results"])
-	}
 
 	// server 已解绑清归属 + 记预填目标
 	code, servers := doJSON(t, http.MethodGet, ts.URL+"/admin/v2/servers?namespaceId="+itoa(int(nsID)), nil)
@@ -126,9 +115,7 @@ func TestV2RezoneRestMultiTableTransaction(t *testing.T) {
 	}
 
 	// 重确认（缺省取预填）落区 zoneB
-	if code, resp := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/agent-identities/"+identityID+"/approve", map[string]any{}); code != http.StatusOK {
-		t.Fatalf("换区重确认应 200，实际 %d：%v", code, resp)
-	}
+	approveAgentIdentityWithKeyForTest(t, ts, identityID, "lobby-1", t.Name()+"-identity-reconfirm")
 	code, servers = doJSON(t, http.MethodGet, ts.URL+"/admin/v2/servers?namespaceId="+itoa(int(nsID)), nil)
 	if code != http.StatusOK {
 		t.Fatalf("列 server 应 200，实际 %d", code)
@@ -139,21 +126,25 @@ func TestV2RezoneRestMultiTableTransaction(t *testing.T) {
 	}
 }
 
-// TestV2DefaultEntryRest409 未分配小区的 server 置默认入口经 HTTP 应 409 not_assigned。
-func TestV2DefaultEntryRest409(t *testing.T) {
+// TestV2DefaultEntryRestFailure 未分配小区的 server 置默认入口须经审批；执行时因未分配而失败。
+func TestV2DefaultEntryRestFailure(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 
 	nsID, token := createNamespaceV2(t, ts.URL, "prod")
 	const identityID = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
 	registerAgentV2(t, ts.URL, token, identityID, "lobby-9", "backend")
-	if code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v2/agent-identities/"+identityID+"/approve", map[string]any{}); code != http.StatusOK {
-		t.Fatalf("确认身份应 200，实际 %d：%v", code, body)
-	}
+	approveAgentIdentityForTest(t, ts, identityID, "lobby-9")
 	rowID := serverRowID(t, ts.URL, nsID, "lobby-9")
 
-	code, body := doJSON(t, http.MethodPut, ts.URL+"/admin/v2/servers/"+itoa(int(rowID))+"/default-entry", map[string]any{"value": true})
-	if code != http.StatusConflict || body["code"] != "not_assigned" {
-		t.Fatalf("未分配 server 置默认入口应 409 not_assigned，实际 %d：%v", code, body)
+	code, ticket := doJSONWithHeaders(t, http.MethodPut, ts.URL+"/admin/v2/servers/"+itoa(int(rowID))+"/default-entry", map[string]any{"value": true, "reason": "测试默认入口"}, map[string]string{"Idempotency-Key": t.Name() + "-default-entry"})
+	if code != http.StatusAccepted {
+		t.Fatalf("未分配 server 置默认入口应先返回审批票据，实际 %d：%v", code, ticket)
+	}
+	applyApprovalTicket(t, ts, ticket)
+	requestID, _ := ticket["approvalRequestId"].(string)
+	code, detail := doJSON(t, http.MethodGet, ts.URL+"/admin/v2/approval-requests/"+requestID, nil)
+	if code != http.StatusOK || detail["status"] != "failed" {
+		t.Fatalf("未分配 server 的审批执行应失败，实际 %d：%v", code, detail)
 	}
 }

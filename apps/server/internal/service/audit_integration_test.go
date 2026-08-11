@@ -30,10 +30,10 @@ func TestAuditList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建配置失败: %v", err)
 	}
-	if _, err := cfg.Publish(item.ID, "k: 2\n", "bob", "", ""); err != nil {
+	if _, err := service.ApplyConfigPublishForTest(cfg, item.ID, "k: 2\n", "bob", "", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
-	if _, err := zone.applyAssignForTest("prod", "s1", "area1", "zoneA", "carol", "", ""); err != nil {
+	if _, err := service.AssignZoneForIntegrationTest(zone, "prod", "s1", "area1", "zoneA", "carol", "", ""); err != nil {
 		t.Fatalf("指派失败: %v", err)
 	}
 

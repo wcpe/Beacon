@@ -32,32 +32,35 @@ agent 收命令调原语读盘回传、控制面把结果代理给前端。
 新增命令类型 `fs-browse`（`model.CommandTypeFsBrowse`），与 `ingest-plugins` / `tail-logs` / `resync-config`
 平行。载荷 `browsePayload{ op, path, offset, limit, maxDepth }`（`op` ∈ `list` / `tree` / `file`）。
 
-浏览是**请求 / 响应**语义（admin 要拿到结果代理给前端），不同于反向抓取的 fire-and-forget。实现采用
-**控制面侧阻塞等待**：admin 端点 → service 建 pending `fs-browse` 命令 + 审计（事务内）→ 提交后
-`NotifyCommand` 唤醒 agent SSE → service 注册 `commandHub` waiter 并阻塞 → agent 拉命令、async 读盘、
-回传结果（控制面侧把结果 JSON 转存到命令瞬态列 `BrowseResult` 并 CAS `fetched → done`，同时再 `NotifyCommand`
-唤醒等待中的 admin）→ service 被唤醒后读出瞬态结果、返回给 handler 代理给前端；超时 / agent 离线 → 504。
+浏览命令经审批异步入队，不在 HTTP 请求中等待 Agent：`POST` 申请 → human 批准 → worker 在同一事务创建
+pending `fs-browse` 命令、pending grant、审计与执行回执 → 提交后 `NotifyCommand` 唤醒 agent SSE → agent 拉命令、
+async 读盘并回传 → 控制面在同一事务内转存瞬态结果、CAS `fetched → done` 并以结果 SHA-256 激活 grant。
+原申请主体再凭 grant 一次消费结果；旧 `GET` 不隐式创建申请，固定返回 `409 operation_requires_approval`。
+
+Agent 回传须通过既有 v2 `X-Beacon-Token`、`X-Beacon-Identity`、`X-Beacon-Boot` 权威身份校验，控制面只接受
+与命令 `namespace/serverId` 一致的身份，不信任请求体自报的归属。Agent 失败原因统一归约为安全枚举摘要，绝不保存
+或回显原始原因。
 
 agent 回传内容（目录清单 / 子树 / 文件内容）是受控瞬态：转存到 `agent_command.browse_result`（新增 TEXT 列，
 与 `imprint_content` / `log_content` 同范式——瞬态、done 后即可清、过期清理一并抹除、不入审计 detail、不导出 git）。
 
 ### 3.2 分层（router → handler → service → repository）
 
-- **handler**（`BrowseHandler`）：`GET /admin/v1/instances/{serverId}/browse?namespace=&op=&path=&offset=&limit=&maxDepth=`
-  解析查询参数、校验目标在线（`InstanceService.Get`）、调 `BrowseService.Browse(...)`、渲染结果。
-  handler 不碰 GORM / 内存结构。
-- **service**（`AgentCommandService.RequestBrowse` + `ReceiveBrowseResult`）：建命令 + 审计（事务）+ 唤醒 +
-  等待 + 读瞬态结果；agent 回传入口 `ReceiveBrowseResult` 转存结果 + CAS done + 唤醒等待者。
+- **handler**（`BrowseHandler`）：`POST /admin/v1/instances/{serverId}/browse` 创建审批申请，
+  `POST /admin/v1/instances/{serverId}/browse/grants/{grantId}/consume` 一次消费结果；旧 `GET` 固定失败关闭。
+  handler 解析受限参数、校验目标在线（`InstanceService.Get`），不碰 GORM / 内存结构。
+- **service**（`RequestBrowseApproval` + `applyRequestBrowseInTx` + `ReceiveBrowseResult`）：审批 worker 建命令、
+  pending grant、审计与 receipt；回传原子转存结果并激活 grant，消费端只允许原申请主体一次读取。
 - **repository**：新增 `UpdateStatusWithBrowseResult`（fetched→done 转存结果）；`ExpireStale` 一并清
   `browse_result`。
 
 ### 3.3 鉴权与审计
 
-- 该端点是 `GET`，但**触发浏览是写副作用**（建命令 / 唤醒 agent / 入审计），不能让 readonly 触发。
-  故在 `router` 用一条**显式 full-only 守卫**（`requireFullRole`）包住该端点：readonly → 403。
-  （`readonlyWriteGuard` 只拦写方法，GET 默认放过，故需显式守卫。）
-- 触发 + 结果各记审计：`ActionFileBrowse`（`file.browse`），target=command/serverId，
-  detail 仅 `{commandId, op, path}`（**无文件内容**）。
+- 旧 `GET` 不创建命令，固定 `409 operation_requires_approval`；`POST` 申请及消费端都要求审批申请能力，readonly → 403。
+- worker 入队记 `ActionFileBrowse`（`file.browse`），target=command/serverId，detail 仅 `{commandId, op, path}`；
+  结果内容和目录名均不写审批、审计或日志。
+- grant 消费在单个事务内读取结果、校验并 CAS 消费 grant、清空 `browse_result`；清空失败则整笔回滚。未消费 grant
+  到期后由命令清理器清空相应 `done` 命令的 `browse_result`，命令元数据保留。
 
 ### 3.4 agent 侧
 
@@ -70,26 +73,27 @@ agent 回传内容（目录清单 / 子树 / 文件内容）是受控瞬态：�
 
 ## 4. 任务拆分
 
-- [ ] 控制面：新增 `fs-browse` 命令类型 + 载荷 + `browse_result` 瞬态列 + `file.browse` 审计动作
-- [ ] 控制面：`RequestBrowse`（建命令 + 审计 + 唤醒 + 等待 + 读结果）+ `ReceiveBrowseResult`（转存 + done + 唤醒）
-- [ ] 控制面：repository `UpdateStatusWithBrowseResult` + `ExpireStale` 清 `browse_result`
-- [ ] 控制面：`BrowseHandler` + admin 只读端点 + agent 回传端点 + `requireFullRole` 守卫 + 路由
-- [ ] 控制面：测试先行（service 单测 + handler 鉴权测试）
-- [ ] agent：命令数据类扩展 `op/offset/limit/maxDepth` + `runBrowse` 分支 + `uploadBrowseResult` + 单测
-- [ ] 文档同步：PRD 状态、ARCHITECTURE、API、CHANGELOG（按需）
+- [x] 控制面：新增 `fs-browse` 命令类型 + 载荷 + `browse_result` 瞬态列 + `file.browse` 审计动作
+- [x] 控制面：审批 worker 原子建命令、pending grant、审计与 receipt；回传原子激活 grant，一次性消费结果
+- [x] 控制面：repository `UpdateStatusWithBrowseResult` + `ExpireStale` 清 `browse_result`
+- [x] 控制面：`BrowseHandler` 申请、消费、旧 GET 失败关闭与路由
+- [x] 控制面：测试先行（service、handler、server integration）
+- [x] agent：命令数据类扩展 `op/offset/limit/maxDepth` + `runBrowse` 分支 + `uploadBrowseResult` + 单测
+- [x] 文档同步：PRD 状态、ARCHITECTURE、API、CHANGELOG（按需）
 
 ## 5. 验收标准
 
-- 端点经命令生命周期代理列目录 / 读子树 / 读单文件（service 单测：建命令 + 转存结果 + done）。
-- admin `full` 可触发、`readonly` → 403（handler 鉴权测试）。
-- 触发与结果入审计，detail 不含文件内容（service 单测断言审计 + detail 形状）。
+- 端点经审批和命令生命周期代理列目录 / 读子树 / 读单文件；批准前不创建命令，批准 worker 与 receipt 同事务。
+- admin `full` 可创建申请、`readonly` → 403；旧 GET 不得下发命令或返回结果。
+- 入队审计 detail 不含文件内容；目录/文件结果仅暂存，Agent 成功回传后绑定 grant，原申请主体一次消费且立即清空。
+- 回传身份或命令归属不一致必须失败关闭；Agent 原始失败原因不得进入结果摘要、审批、审计或日志。
 - agent 命令处理识别 `fs-browse`、调 browse 原语回传；未知命令 / 未注入浏览能力忽略 / 回 failed（agent 单测）。
 - 控制面 `go test ./...` 绿、agent 单测绿 + 双端 jar build 绿、`go vet` 不新增问题。
 - 真机维度（控制面端点→命令→agent 读盘→回传 端到端浏览）：本会话无真机能力 → 标「待真机验」。
 
 ## 6. 风险 / 待定
 
-- **请求 / 响应经命令通道的等待窗口**：admin GET 阻塞等待 agent 回传，超时即 504。超时取值复用既有
-  长轮询 / 命令超时口径，避免 admin 端长挂。agent 离线（无 SSE waiter）→ 命令留 pending、admin 等到超时 504。
+- **审批与命令终态分离**：审批成功只表示命令已可靠入队；Agent 离线、超时或拒读由命令状态和 grant 状态反映，
+  不让 HTTP 申请请求阻塞等待回传。
 - **并发同一实例多次浏览**：每次浏览各建独立命令（不互斥，区别于反向抓取受管任务单实例互斥），
   agent 单飞排空逐条处理；commandHub waiter 按 serverId 唤醒，service 按 commandId 校验自己的结果到位才返回。

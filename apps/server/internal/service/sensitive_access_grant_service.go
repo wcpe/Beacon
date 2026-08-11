@@ -143,6 +143,28 @@ func (s *SensitiveAccessGrantService) Consume(grantID string, principal auth.Pri
 	return s.repo.Consume(grantID, principal, now.UTC())
 }
 
+// RequireConsumedCommandGrant 验证命令正文已由原申请主体按固定内容哈希成功消费。
+func (s *SensitiveAccessGrantService) RequireConsumedCommandGrant(commandID uint, principal auth.Principal, operation, contentHash string, now time.Time) error {
+	if s == nil || s.repo == nil || commandID == 0 || operation == "" || contentHash == "" {
+		return apperr.ErrForbidden
+	}
+	grant, err := s.repo.FindByTargetRef(fmt.Sprintf("agent-command/%d", commandID))
+	if err != nil || grant == nil || grant.Operation != operation || grant.ContentVersionHash != contentHash {
+		return apperr.ErrForbidden
+	}
+	principal = auth.NormalizePrincipal(principal)
+	if grant.RequesterType != principal.StableKind() || grant.RequesterID != principal.StableID() {
+		return apperr.ErrSensitiveAccessWrongPrincipal
+	}
+	if grant.Status == model.SensitiveAccessGrantStatusConsumed {
+		return nil
+	}
+	if grant.Status != model.SensitiveAccessGrantStatusActive || !now.UTC().Before(grant.ExpiresAt) {
+		return apperr.ErrSensitiveAccessExpired
+	}
+	return apperr.ErrForbidden
+}
+
 func newSensitiveAccessGrantID() string {
 	var raw [12]byte
 	_, _ = rand.Read(raw[:])

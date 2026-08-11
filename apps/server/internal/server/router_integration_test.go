@@ -4,14 +4,21 @@ package server_test
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/handler"
 	"github.com/wcpe/Beacon/apps/server/internal/metrics"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
@@ -20,6 +27,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/longpoll"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/metricwindow"
+	"github.com/wcpe/Beacon/apps/server/internal/secret"
 	"github.com/wcpe/Beacon/apps/server/internal/server"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 	"github.com/wcpe/Beacon/apps/server/internal/testsupport"
@@ -30,6 +38,7 @@ const (
 	testAuthUser   = "admin"
 	testAuthPass   = "test-pass"
 	testAuthSecret = "test-secret"
+	testAgentToken = "integration-agent-token"
 )
 
 // adminToken 缓存登录后获得的管理台令牌，供 doJSON 自动携带（admin 端已挂鉴权中间件）。
@@ -41,41 +50,63 @@ var testAlertInbox *alert.InboxAlerter
 // testHealthViews 暴露当前测试服的健康视图存储（FR-147）：供指标上报测试预置视图后验证 self 回填。
 var testHealthViews *healthview.Store
 
+// integrationTestServer 保存测试路由及其审批执行器，供危险操作走完整审批链路。
+type integrationTestServer struct {
+	*httptest.Server
+	approval *service.ApprovalService
+}
+
 // newTestServer 装配真实路由与 DB-backed 服务（不启用 agent token）；未设 BEACON_TEST_DSN 则跳过。
-func newTestServer(t *testing.T) *httptest.Server {
-	return newTestServerWithToken(t, "")
+func newTestServer(t *testing.T) *integrationTestServer {
+	return newTestServerWithToken(t, testAgentToken)
 }
 
 // newTestServerWithToken 同上，但启用指定的 agent token。
-func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
+func newTestServerWithToken(t *testing.T, agentToken string) *integrationTestServer {
 	t.Helper()
 	db := testsupport.OpenTestDB(t, "server")
+	for _, table := range []string{
+		"approval_credential_secret", "approval_execution_receipt", "sensitive_access_grant",
+		"config_pending_change", "file_pending_change", "mcp_oauth_client_change", "approval_request",
+	} {
+		if err := db.Exec("DELETE FROM " + table).Error; err != nil {
+			t.Fatalf("清理审批测试表 %s 失败: %v", table, err)
+		}
+	}
+	cipher, err := secret.LoadOrCreateCipher(filepath.Join(t.TempDir(), "secrets", "integration.key"))
+	if err != nil {
+		t.Fatalf("装配集成测试密钥失败: %v", err)
+	}
 	auditRepo := repository.NewAuditLogRepository(db)
 	assignRepo := repository.NewZoneAssignmentRepository(db)
-	configRepo := repository.NewConfigItemRepository(db, noEncryptCipher())
+	configRepo := repository.NewConfigItemRepository(db, cipher)
 	fileRepo := repository.NewFileObjectRepository(db)
 	registry := runtime.NewRegistry()
 	hub := longpoll.NewHub()
 	fileHub := longpoll.NewHub()
 	topologyHub := longpoll.NewHub()
 	nsHandler := handler.NewNamespaceHandler(service.NewNamespaceService(db, repository.NewNamespaceRepository(db), assignRepo, configRepo, fileRepo, repository.NewFileOverrideSetRepository(db), registry, auditRepo))
-	revRepo := repository.NewConfigRevisionRepository(db, noEncryptCipher())
+	revRepo := repository.NewConfigRevisionRepository(db, cipher)
 	cfgSvc := service.NewConfigService(db, configRepo, revRepo, auditRepo)
+	cfgSvc.SetPendingChangeCipher(cipher)
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
+	fileSvc.SetPendingChangeCipher(cipher)
 	instSvc := service.NewInstanceService(db, registry, assignRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
-	grayRepo := repository.NewConfigGrayRepository(db, noEncryptCipher())
+	grayRepo := repository.NewConfigGrayRepository(db, cipher)
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)
 	graySvc := service.NewConfigGrayService(db, cfgSvc, configRepo, grayRepo, auditRepo)
+	cfgSvc.SetGrayService(graySvc)
 	fileEffSvc := service.NewFileEffectiveService(fileRepo, assignRepo, fileHub)
 	overrideSetRepo := repository.NewFileOverrideSetRepository(db)
 	ovrEffSvc := service.NewOverrideEffectiveService(overrideSetRepo, fileRepo, assignRepo, fileHub)
 	ovrSetSvc := service.NewOverrideSetService(db, overrideSetRepo, repository.NewFileOverrideSetRevisionRepository(db), fileRepo, auditRepo)
+	ovrSetSvc.SetPendingChangeCipher(cipher)
 	schedSvc := service.NewSchedulingService(db, repository.NewServerDrainRepository(db), auditRepo, registry)
 	apiKeySvc := service.NewAPIKeyService(db, repository.NewAPIKeyRepository(db), auditRepo)
+	apiKeySvc.SetCredentialCipher(cipher)
 	testAlertInbox = alert.NewInboxAlerter(16)
 	commandHub := longpoll.NewHub()
-	browseHub := longpoll.NewHub()
 	notifier := service.NewChangeNotifier(hub, fileHub, topologyHub, commandHub, registry, assignRepo)
 	metricsSet := metrics.New(registry)
 	notifier.SetMetrics(metricsSet)
@@ -93,17 +124,38 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// SSE 推送流（FR-24 + FR-29 拓扑 watch）：保活间隔给大（测试不依赖保活），复用同源唤醒集合。
 	streamSvc := service.NewStreamService(effSvc, fileEffSvc, ovrEffSvc, registry, hub, fileHub, topologyHub, commandHub, settingsSvc)
 	v2Svc := service.NewV2ControlPlaneService(db)
+	v2Svc.SetLegacyZoneService(zoneSvc)
+	v2Svc.SetLegacySchedulingService(schedSvc)
+	approvalRegistry := authz.NewApprovalRegistry()
+	approvalSvc := service.NewApprovalService(db, repository.NewApprovalRequestRepository(db), auditRepo, approvalRegistry)
+	sensitiveAccessGrants := service.NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
+	approvalSvc.SetSensitiveAccessGrantStore(repository.NewSensitiveAccessGrantRepository(db))
+	v2Svc.SetApprovalService(approvalSvc)
+	cfgSvc.SetApprovalService(approvalSvc)
+	cfgSvc.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	fileSvc.SetApprovalService(approvalSvc)
+	ovrSetSvc.SetApprovalService(approvalSvc)
+	apiKeySvc.SetApprovalService(approvalSvc)
+	settingsSvc.SetApprovalService(approvalSvc)
+	service.RegisterV2ControlPlaneApprovalAdapters(approvalRegistry, v2Svc)
+	service.RegisterConfigApprovalAdapters(approvalRegistry, cfgSvc)
+	service.RegisterSensitiveConfigApprovalAdapter(approvalRegistry, cfgSvc, sensitiveAccessGrants)
+	service.RegisterFileOverrideApprovalAdapters(approvalRegistry, fileSvc, ovrSetSvc)
+	service.RegisterAPIKeyApprovalAdapters(approvalRegistry, apiKeySvc)
 	// 反向抓取命令通道（FR-39）：命令仓库 + 服务（复用 fileSvc.Import 落组/实例覆盖）+ 处理器（校验目标在线）。
 	commandRepo := repository.NewAgentCommandRepository(db)
 	commandService := service.NewAgentCommandService(db, commandRepo, fileSvc, auditRepo)
 	commandService.SetNotifier(notifier)
+	commandService.SetApprovalService(approvalSvc)
+	commandService.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	service.RegisterAgentCommandApprovalAdapters(approvalRegistry, commandService, sensitiveAccessGrants)
 	v2Svc.SetDirectoryResyncCommandPort(commandRepo, notifier)
-	commandService.SetBrowseResultHub(browseHub)
 	// 按需拓印 diff 取期望合并值复用 FR-45 有效文件树解析（FR-46）。
 	commandService.SetFileEffectiveService(fileEffSvc)
 	commandHandler := handler.NewCommandHandler(commandService, instSvc)
 	commandHandler.SetReportAuthenticator(v2Svc)
 	browseHandler := handler.NewBrowseHandler(commandService, instSvc)
+	browseHandler.SetReportAuthenticator(v2Svc)
 	commandObserveHandler := handler.NewCommandObserveHandler(service.NewCommandObserveService(commandRepo))
 	// P8 文件资产索引（FR-163）：清单上报 + 搜索 / 概要 / 比对 / 重扫；复用同一 commandRepo 下发 asset-rescan。
 	assetSvc := service.NewAssetService(db, repository.NewFileAssetRepository(db), repository.NewFileAssetScanRepository(db), commandRepo, auditRepo)
@@ -112,6 +164,9 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// 反向抓取受管任务（FR-58）：任务仓库 + 服务（建任务 + 互斥、scan/submit 编排、ingest 复用 Import）+ 处理器。
 	reverseFetchTaskSvc := service.NewReverseFetchTaskService(db, repository.NewReverseFetchTaskRepository(db), commandRepo, fileSvc, auditRepo, settingsSvc)
 	reverseFetchTaskSvc.SetNotifier(notifier)
+	reverseFetchTaskSvc.SetApprovalService(approvalSvc)
+	reverseFetchTaskSvc.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	service.RegisterReverseFetchTaskApprovalAdapters(approvalRegistry, reverseFetchTaskSvc)
 	commandService.SetSubmitIngestReceiver(reverseFetchTaskSvc)
 	// 反向抓取持久忽略规则（FR-59）：规则服务供任务详情标 ignoredByRule + CRUD 处理器。
 	reverseFetchRuleSvc := service.NewReverseFetchIgnoreRuleService(db, repository.NewReverseFetchIgnoreRuleRepository(db), auditRepo)
@@ -120,6 +175,9 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	// 取 agent 日志（FR-88）：复用同一命令仓库，编排 tail-logs 命令-回传周期 + 处理器。
 	agentLogSvc := service.NewAgentLogService(db, commandRepo, auditRepo)
 	agentLogSvc.SetNotifier(notifier)
+	agentLogSvc.SetApprovalService(approvalSvc)
+	agentLogSvc.SetSensitiveAccessGrants(sensitiveAccessGrants)
+	service.RegisterAgentLogApprovalAdapter(approvalRegistry, agentLogSvc, sensitiveAccessGrants)
 	agentLogHandler := handler.NewAgentLogHandler(agentLogSvc, instSvc)
 	authn, err := auth.New(testAuthUser, testAuthPass, testAuthSecret, time.Hour)
 	if err != nil {
@@ -153,13 +211,14 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 		Stream:           handler.NewStreamHandler(instSvc, streamSvc),
 		Instance:         handler.NewInstanceHandler(instSvc, settingsSvc, effSvc),
 		Zone:             handler.NewZoneHandler(zoneSvc, v2Svc),
-		Scheduling:       handler.NewSchedulingHandler(schedSvc),
+		Scheduling:       handler.NewSchedulingHandler(schedSvc, v2Svc),
 		Audit:            handler.NewAuditHandler(service.NewAuditService(auditRepo), settingsSvc),
 		Alert:            handler.NewAlertHandler(testAlertInbox),
 		AlertEvent:       handler.NewAlertEventHandler(service.NewAlertEventService(db, repository.NewAlertEventRepository(db), auditRepo)),
 		Metric:           handler.NewMetricHandler(service.NewMetricService(registry, repository.NewMetricSampleRepository(db))),
 		Auth:             handler.NewAuthHandler(authn, service.NewAuthAuditService(auditRepo)),
 		APIKey:           handler.NewAPIKeyHandler(apiKeySvc),
+		Approval:         handler.NewApprovalHandler(approvalSvc, apiKeySvc),
 		Command:          commandHandler,
 		CommandObserve:   commandObserveHandler,
 		Browse:           browseHandler,
@@ -173,7 +232,29 @@ func newTestServerWithToken(t *testing.T, agentToken string) *httptest.Server {
 	}, agentToken, authn, apiKeySvc, auditRepo)
 	ts := httptest.NewServer(router)
 	adminToken = loginForToken(t, ts.URL)
-	return ts
+	return &integrationTestServer{Server: ts, approval: approvalSvc}
+}
+
+// approveAndRun 以另一位 human/full 审批人完成申请，再同步驱动一次 worker。
+func (s *integrationTestServer) approveAndRun(t *testing.T, requestID string) {
+	t.Helper()
+	if _, err := s.approval.Approve(requestID, auth.HumanPrincipal("reviewer"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准审批申请失败: %v", err)
+	}
+	processed, err := service.NewApprovalWorker(s.approval).RunOnce(context.Background())
+	if err != nil || processed != 1 {
+		t.Fatalf("执行审批申请失败: processed=%d err=%v", processed, err)
+	}
+}
+
+// applyApprovalTicket 以另一位 human/full 审批人执行 HTTP 提审返回的票据。
+func applyApprovalTicket(t *testing.T, ts *integrationTestServer, ticket map[string]any) {
+	t.Helper()
+	requestID, _ := ticket["approvalRequestId"].(string)
+	if requestID == "" {
+		t.Fatalf("审批申请响应缺 requestId：%v", ticket)
+	}
+	ts.approveAndRun(t, requestID)
 }
 
 // loginForToken 登录测试服务取得管理台令牌。
@@ -200,6 +281,11 @@ func loginForToken(t *testing.T, baseURL string) string {
 
 // doJSON 发起一次 JSON 请求并返回状态码与解析后的响应体；admin 端自动携带登录令牌。
 func doJSON(t *testing.T, method, url string, body any) (int, map[string]any) {
+	return doJSONWithHeaders(t, method, url, body, nil)
+}
+
+// doJSONWithHeaders 与 doJSON 相同，但允许审批申请携带幂等键。
+func doJSONWithHeaders(t *testing.T, method, url string, body any, headers map[string]string) (int, map[string]any) {
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -208,8 +294,14 @@ func doJSON(t *testing.T, method, url string, body any) (int, map[string]any) {
 	}
 	req, _ := http.NewRequest(method, url, reader)
 	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 	if adminToken != "" {
 		req.Header.Set("Authorization", "Bearer "+adminToken)
+	}
+	if strings.Contains(url, "/beacon/v1/") {
+		req.Header.Set("X-Beacon-Token", testAgentToken)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -222,6 +314,207 @@ func doJSON(t *testing.T, method, url string, body any) (int, map[string]any) {
 		_ = json.Unmarshal(data, &parsed)
 	}
 	return resp.StatusCode, parsed
+}
+
+// requestAndApplyApproval 经 HTTP 提交带原因和幂等键的申请，再由另一位 human/full 审批并驱动 worker。
+func requestAndApplyApproval(t *testing.T, ts *integrationTestServer, method, path, idempotencyKey string, body any) map[string]any {
+	return requestAndApplyApprovalWithHeaders(t, ts, method, path, idempotencyKey, nil, body)
+}
+
+// requestAndApplyApprovalWithHeaders 保留来源地址等测试头，验证审批链路仍使用同一审计口径。
+func requestAndApplyApprovalWithHeaders(t *testing.T, ts *integrationTestServer, method, path, idempotencyKey string, headers map[string]string, body any) map[string]any {
+	t.Helper()
+	if headers == nil {
+		headers = make(map[string]string, 1)
+	}
+	headers["Idempotency-Key"] = compactIdempotencyKey(idempotencyKey)
+	code, ticket := doJSONWithHeaders(t, method, ts.URL+path, body, headers)
+	if code != http.StatusAccepted {
+		t.Fatalf("提交审批申请应 202，实际 %d：%v", code, ticket)
+	}
+	applyApprovalTicket(t, ts, ticket)
+	return ticket
+}
+
+// sensitiveGrantIDForTest 从原申请人的审批详情读取一次性敏感内容授权。
+func sensitiveGrantIDForTest(t *testing.T, ts *integrationTestServer, requestID string) string {
+	t.Helper()
+	code, detail := doJSON(t, http.MethodGet, ts.URL+"/admin/v2/approval-requests/"+requestID, nil)
+	if code != http.StatusOK {
+		t.Fatalf("读取敏感内容授权应 200，实际 %d：%v", code, detail)
+	}
+	grant, _ := detail["sensitiveAccessGrant"].(map[string]any)
+	grantID, _ := grant["grantId"].(string)
+	if grantID == "" {
+		t.Fatalf("审批详情缺敏感内容授权：%v", detail)
+	}
+	return grantID
+}
+
+// compactIdempotencyKey 把测试名派生键收敛到接口允许的固定长度，仍保持语义唯一。
+func compactIdempotencyKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return "it-" + hex.EncodeToString(sum[:16])
+}
+
+// assignZoneForTest 让旧 V1 指派兼容路由也覆盖申请、审批和执行三段链路。
+func assignZoneForTest(t *testing.T, ts *integrationTestServer, namespace, serverID, group, zone, note string) {
+	t.Helper()
+	ensureActiveNamespaceForTest(t, ts, namespace)
+	requestAndApplyApproval(t, ts, http.MethodPut, "/admin/v1/zones/assignments", t.Name()+"-assign-"+serverID, map[string]any{
+		"namespace": namespace, "serverId": serverID, "group": group, "zone": zone, "note": note,
+	})
+}
+
+// ensureActiveNamespaceForTest 为依赖生命周期真源的 V1 兼容动作准备 active namespace。
+func ensureActiveNamespaceForTest(t *testing.T, ts *integrationTestServer, namespace string) {
+	t.Helper()
+	code, listed := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/namespaces", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查询环境应 200，实际 %d：%v", code, listed)
+	}
+	for _, raw := range asSlice(listed["items"]) {
+		item, ok := raw.(map[string]any)
+		if ok && item["code"] == namespace {
+			return
+		}
+	}
+	code, created := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/namespaces", map[string]any{"code": namespace, "name": namespace})
+	if code != http.StatusCreated {
+		t.Fatalf("创建活动环境应 201，实际 %d：%v", code, created)
+	}
+}
+
+// unassignZoneForTest 让旧 V1 取消指派兼容路由也覆盖审批执行链路。
+func unassignZoneForTest(t *testing.T, ts *integrationTestServer, namespace, serverID, reason string) {
+	t.Helper()
+	path := "/admin/v1/zones/assignments?namespace=" + namespace + "&serverId=" + serverID + "&reason=" + reason
+	requestAndApplyApproval(t, ts, http.MethodDelete, path, t.Name()+"-unassign-"+serverID, nil)
+}
+
+// approveAgentIdentityForTest 以显式 serverId 提交身份确认，避免测试夹具绕过审批边界。
+func approveAgentIdentityForTest(t *testing.T, ts *integrationTestServer, identityID, serverID string) {
+	t.Helper()
+	approveAgentIdentityWithKeyForTest(t, ts, identityID, serverID, t.Name()+"-identity-"+serverID)
+}
+
+// approveAgentIdentityWithKeyForTest 允许同一身份在同一用例内因换区重入 pending 后使用新的幂等键再次确认。
+func approveAgentIdentityWithKeyForTest(t *testing.T, ts *integrationTestServer, identityID, serverID, idempotencyKey string) {
+	t.Helper()
+	path := "/admin/v2/agent-identities/" + identityID + "/approve"
+	requestAndApplyApproval(t, ts, http.MethodPost, path, idempotencyKey, map[string]any{
+		"serverId": serverID, "reason": "集成测试确认身份",
+	})
+}
+
+// publishConfigForTest 经审批链发布配置，保留生产端原因与幂等键约束。
+func publishConfigForTest(t *testing.T, ts *integrationTestServer, id int, content, comment string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPut, "/admin/v1/configs/"+itoa(id), t.Name()+"-config-publish-"+itoa(id), map[string]any{
+		"content": content, "comment": comment, "reason": "集成测试发布配置",
+	})
+}
+
+// rollbackConfigForTest 经审批链回滚配置。
+func rollbackConfigForTest(t *testing.T, ts *integrationTestServer, id int, version int64, comment string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/configs/"+itoa(id)+"/rollback", t.Name()+"-config-rollback-"+itoa(id), map[string]any{
+		"toVersion": version, "comment": comment, "reason": "集成测试回滚配置",
+	})
+}
+
+// deleteConfigForTest 经审批链软删配置。
+func deleteConfigForTest(t *testing.T, ts *integrationTestServer, id int, comment string) {
+	t.Helper()
+	path := "/admin/v1/configs/" + itoa(id) + "?comment=" + comment + "&reason=集成测试删除配置"
+	requestAndApplyApproval(t, ts, http.MethodDelete, path, t.Name()+"-config-delete-"+itoa(id), nil)
+}
+
+// publishFileForTest 经审批链发布文件内容。
+func publishFileForTest(t *testing.T, ts *integrationTestServer, id int, content, comment string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPut, "/admin/v1/files/"+itoa(id), t.Name()+"-file-publish-"+itoa(id), map[string]any{
+		"content": content, "comment": comment, "reason": "集成测试发布文件",
+	})
+}
+
+// rollbackFileForTest 经审批链回滚文件内容。
+func rollbackFileForTest(t *testing.T, ts *integrationTestServer, id int, version int64, comment string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/files/"+itoa(id)+"/rollback", t.Name()+"-file-rollback-"+itoa(id), map[string]any{
+		"toVersion": version, "comment": comment, "reason": "集成测试回滚文件",
+	})
+}
+
+// deleteFileForTest 经审批链软删文件。
+func deleteFileForTest(t *testing.T, ts *integrationTestServer, id int, comment string) {
+	t.Helper()
+	path := "/admin/v1/files/" + itoa(id) + "?comment=" + comment + "&reason=集成测试删除文件"
+	requestAndApplyApproval(t, ts, http.MethodDelete, path, t.Name()+"-file-delete-"+itoa(id), nil)
+}
+
+// createFileForTest 通过审批链创建文件，再从只读列表定位已落库对象。
+func createFileForTest(t *testing.T, ts *integrationTestServer, namespace, group, path, scopeLevel, content string) int {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/files", t.Name()+"-file-create-"+path, map[string]any{
+		"namespace": namespace, "group": group, "path": path, "scopeLevel": scopeLevel,
+		"content": content, "reason": "集成测试创建文件",
+	})
+	code, listed := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/files?namespace="+url.QueryEscape(namespace)+"&group="+url.QueryEscape(group)+"&path="+url.QueryEscape(path), nil)
+	if code != http.StatusOK {
+		t.Fatalf("创建后查询文件应 200，实际 %d：%v", code, listed)
+	}
+	for _, raw := range asSlice(listed["items"]) {
+		item, ok := raw.(map[string]any)
+		if !ok || item["path"] != path {
+			continue
+		}
+		id, ok := item["id"].(float64)
+		if ok && id > 0 {
+			return int(id)
+		}
+	}
+	t.Fatalf("创建后未找到文件 %s：%v", path, listed)
+	return 0
+}
+
+// applyConfigBatchForTest 经审批链执行配置批量删除或开关。
+func applyConfigBatchForTest(t *testing.T, ts *integrationTestServer, action string, ids []int, suffix string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/configs/batch", t.Name()+"-config-batch-"+suffix, map[string]any{
+		"action": action, "ids": ids, "reason": "集成测试批量配置变更",
+	})
+}
+
+// applyFileBatchForTest 经审批链执行文件批量删除或开关。
+func applyFileBatchForTest(t *testing.T, ts *integrationTestServer, action string, ids []int, suffix string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/files/batch", t.Name()+"-file-batch-"+suffix, map[string]any{
+		"action": action, "ids": ids, "reason": "集成测试批量文件变更",
+	})
+}
+
+// publishOverrideSetForTest 经审批链发布覆盖集。
+func publishOverrideSetForTest(t *testing.T, ts *integrationTestServer, id int, targetRoot, reloadCommand, comment string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPut, "/admin/v1/override-sets/"+itoa(id), t.Name()+"-override-publish", map[string]any{
+		"targetRoot": targetRoot, "reloadCommand": reloadCommand, "comment": comment, "reason": "集成测试发布覆盖集",
+	})
+}
+
+// rollbackOverrideSetForTest 经审批链回滚覆盖集。
+func rollbackOverrideSetForTest(t *testing.T, ts *integrationTestServer, id int, version int64, comment string) {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/override-sets/"+itoa(id)+"/rollback", t.Name()+"-override-rollback", map[string]any{
+		"toVersion": version, "comment": comment, "reason": "集成测试回滚覆盖集",
+	})
+}
+
+// deleteOverrideSetForTest 经审批链软删覆盖集。
+func deleteOverrideSetForTest(t *testing.T, ts *integrationTestServer, id int, comment string) {
+	t.Helper()
+	path := "/admin/v1/override-sets/" + itoa(id) + "?comment=" + comment + "&reason=集成测试删除覆盖集"
+	requestAndApplyApproval(t, ts, http.MethodDelete, path, t.Name()+"-override-delete", nil)
 }
 
 // TestConfigRESTFlow REST 集成：建→发布→历史→回滚→diff 全流程经 HTTP。
@@ -246,10 +539,7 @@ func TestConfigRESTFlow(t *testing.T) {
 	itemURL := ts.URL + "/admin/v1/configs/" + itoa(id)
 
 	// 发布
-	code, pub := doJSON(t, http.MethodPut, itemURL, map[string]any{"content": "k: 2\n", "operator": "bob"})
-	if code != http.StatusOK || pub["version"].(float64) != 2 {
-		t.Fatalf("发布应 200 且 version=2，实际 %d：%v", code, pub)
-	}
+	publishConfigForTest(t, ts, id, "k: 2\n", "发布第二版")
 
 	// 历史
 	code, revs := doJSON(t, http.MethodGet, itemURL+"/revisions", nil)
@@ -261,10 +551,7 @@ func TestConfigRESTFlow(t *testing.T) {
 	}
 
 	// 回滚到 v1
-	code, rb := doJSON(t, http.MethodPost, itemURL+"/rollback", map[string]any{"toVersion": 1, "operator": "carol"})
-	if code != http.StatusOK || rb["version"].(float64) != 3 {
-		t.Fatalf("回滚应 200 且 version=3，实际 %d：%v", code, rb)
-	}
+	rollbackConfigForTest(t, ts, id, 1, "回滚第一版")
 
 	// diff v1 vs v2
 	code, diff := doJSON(t, http.MethodGet, itemURL+"/diff?from=1&to=2", nil)
@@ -285,6 +572,7 @@ func TestAuditClientIPRecorded(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	const wantIP = "203.0.113.7"
+	createV2NamespaceToken(t, ts.URL, "prod")
 
 	// 经 X-Forwarded-For 指定来源 IP 发起一次请求并返回状态码（admin 端携带登录令牌）。
 	doWithIP := func(method, url string, body any) int {
@@ -298,6 +586,9 @@ func TestAuditClientIPRecorded(t *testing.T) {
 		req.Header.Set("X-Forwarded-For", wantIP)
 		if adminToken != "" {
 			req.Header.Set("Authorization", "Bearer "+adminToken)
+		}
+		if strings.Contains(url, "/beacon/v1/") {
+			req.Header.Set("X-Beacon-Token", testAgentToken)
 		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -315,11 +606,10 @@ func TestAuditClientIPRecorded(t *testing.T) {
 		t.Fatalf("建配置应 201，实际 %d", code)
 	}
 	// ② zone.assign（admin 侧）
-	if code := doWithIP(http.MethodPut, ts.URL+"/admin/v1/zones/assignments", map[string]any{
-		"namespace": "prod", "serverId": "ip-s1", "group": "area1", "zone": "zoneA", "operator": "bob",
-	}); code != http.StatusOK {
-		t.Fatalf("zone 指派应 200，实际 %d", code)
-	}
+	registerOnline(t, ts.URL, "prod", "ip-s1", "area1")
+	requestAndApplyApprovalWithHeaders(t, ts, http.MethodPut, "/admin/v1/zones/assignments", t.Name()+"-zone-ip", map[string]string{"X-Forwarded-For": wantIP}, map[string]any{
+		"namespace": "prod", "serverId": "ip-s1", "group": "area1", "zone": "zoneA", "note": "来源地址审计",
+	})
 	// ③ instance.register（agent 侧；来源 IP = agent 连接地址）
 	if code := doWithIP(http.MethodPost, ts.URL+"/beacon/v1/agent/register", map[string]any{
 		"namespace": "prod", "serverId": "ip-s2", "role": "bukkit", "address": "10.0.0.9:25565",

@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +13,10 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
+	"github.com/wcpe/Beacon/apps/server/internal/filetree"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 )
@@ -148,6 +152,72 @@ func TestTailLogsApprovalGrantFlow(t *testing.T) {
 	}
 }
 
+// TestBrowseApprovalGrantFlow 验证文件浏览正文只能在审批 worker 入队、Agent 回传后由原申请主体一次性消费。
+func TestBrowseApprovalGrantFlow(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	commands := newCommandSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	grants := NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
+	commands.SetApprovalService(approval)
+	commands.SetSensitiveAccessGrants(grants)
+	RegisterAgentCommandApprovalAdapters(registry, commands, grants)
+
+	if _, err := commands.RequestBrowse(context.Background(), BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpFile, Path: "Demo/config.yml", Operator: "alice"}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开浏览下发必须拒绝旁路，实际 %v", err)
+	}
+	ticket, err := commands.RequestBrowseApproval(BrowseParams{Namespace: "prod", ServerID: "lobby-1", Op: model.BrowseOpFile, Path: "Demo/config.yml", Operator: "alice", ClientIP: "127.0.0.1"}, "核对线上文件", "browse-approval-1", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建浏览审批失败: %v", err)
+	}
+	var before int64
+	if err := db.Model(&model.AgentCommand{}).Count(&before).Error; err != nil || before != 0 {
+		t.Fatalf("批准前不得创建浏览命令，count=%d err=%v", before, err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准浏览审批失败: %v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("worker 应执行浏览命令，processed=%d err=%v", processed, err)
+	}
+
+	var cmd model.AgentCommand
+	if err := db.Where("namespace = ? AND server_id = ?", "prod", "lobby-1").First(&cmd).Error; err != nil {
+		t.Fatalf("读取浏览命令失败: %v", err)
+	}
+	if cmd.Type != model.CommandTypeFsBrowse || cmd.Status != model.CommandStatusPending {
+		t.Fatalf("worker 应下发 pending fs-browse，实际 %+v", cmd)
+	}
+	if ok, err := repository.NewAgentCommandRepository(db).UpdateStatus(cmd.ID, model.CommandStatusPending, model.CommandStatusFetched, ""); err != nil || !ok {
+		t.Fatalf("模拟 agent 领取浏览命令失败: ok=%v err=%v", ok, err)
+	}
+	const content = `{"path":"Demo/config.yml","content":"enabled: true\\n"}`
+	if err := commands.ReceiveBrowseResult(agentauth.Identity{Namespace: "prod", ServerID: "lobby-1", IdentityID: "identity"}, cmd.ID, true, content, ""); err != nil {
+		t.Fatalf("回传浏览结果失败: %v", err)
+	}
+	var grant model.SensitiveAccessGrant
+	if err := db.Where("approval_request_id = ?", ticket.ApprovalRequestID).First(&grant).Error; err != nil {
+		t.Fatalf("读取浏览授权失败: %v", err)
+	}
+	if grant.Status != model.SensitiveAccessGrantStatusActive {
+		t.Fatalf("Agent 回传后授权应激活，实际 %s", grant.Status)
+	}
+	var audit model.AuditLog
+	if err := db.Where("action = ?", model.ActionFileBrowse).First(&audit).Error; err != nil || strings.Contains(audit.Detail, "enabled: true") {
+		t.Fatalf("浏览审计不得含回传正文，detail=%q err=%v", audit.Detail, err)
+	}
+	if _, err := commands.ConsumeApprovedBrowse(grant.GrantID, cmd.ID, auth.HumanPrincipal("mallory")); !errors.Is(err, apperr.ErrSensitiveAccessWrongPrincipal) {
+		t.Fatalf("非原申请主体不得消费，实际 %v", err)
+	}
+	result, err := commands.ConsumeApprovedBrowse(grant.GrantID, cmd.ID, auth.HumanPrincipal("alice"))
+	if err != nil || result != content {
+		t.Fatalf("原申请主体应一次消费浏览结果，result=%q err=%v", result, err)
+	}
+	if _, err := commands.ConsumeApprovedBrowse(grant.GrantID, cmd.ID, auth.HumanPrincipal("alice")); !errors.Is(err, apperr.ErrSensitiveAccessConsumed) {
+		t.Fatalf("浏览授权必须一次性消费，实际 %v", err)
+	}
+}
+
 // TestImprintApprovalActivatesGrantAfterAgentResult 验证拓印正文不在批准前开放。
 func TestImprintApprovalActivatesGrantAfterAgentResult(t *testing.T) {
 	db := newCommandSvcTestDB(t)
@@ -189,6 +259,202 @@ func TestImprintApprovalActivatesGrantAfterAgentResult(t *testing.T) {
 	if grant.Status != model.SensitiveAccessGrantStatusActive || grant.TargetRef != fmt.Sprintf("agent-command/%d", cmd.ID) {
 		t.Fatalf("拓印回传后授权应绑定命令并激活，实际 %+v", grant)
 	}
+}
+
+// TestImprintConfirmApprovalUsesWorkerReceipt 验证确认拓印不能直写，且文件、命令终态与回执同事务提交。
+func TestImprintConfirmApprovalUsesWorkerReceipt(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	commands := newImprintSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	commands.SetApprovalService(approval)
+	RegisterAgentCommandApprovalAdapters(registry, commands, NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
+
+	cmd, err := applyRequestImprintForTest(commands, "prod", "lobby-1", "Demo/config.yml", "alice", "")
+	if err != nil {
+		t.Fatalf("构造拓印命令失败: %v", err)
+	}
+	if _, err := commands.FetchPending("prod", "lobby-1"); err != nil {
+		t.Fatalf("领取拓印命令失败: %v", err)
+	}
+	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true\n"}}, ""); err != nil {
+		t.Fatalf("回传拓印内容失败: %v", err)
+	}
+	md5 := filetree.ContentMD5("safe: true\n")
+	if _, err := commands.ConfirmImprint(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5, "alice", ""); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("公开确认入口必须拒绝旁路，实际 %v", err)
+	}
+
+	ticket, err := commands.RequestImprintConfirmApproval(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", md5,
+		"确认并入线上覆盖", "imprint-confirm-approval-1", "alice", "127.0.0.1", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建确认审批失败: %v", err)
+	}
+	var request model.ApprovalRequest
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&request).Error; err != nil {
+		t.Fatalf("读取确认审批失败: %v", err)
+	}
+	if request.OperationKind != authz.OperationAgentCommandImprintConfirm || strings.Contains(request.Payload, "safe: true") {
+		t.Fatalf("确认审批应冻结专用 operation 且不得含正文，request=%+v", request)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准确认审批失败: %v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("worker 应执行确认审批，processed=%d err=%v", processed, err)
+	}
+	obj, err := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "Demo/config.yml", model.ScopeServer, "lobby-1")
+	if err != nil || obj == nil || obj.Content != "safe: true\n" {
+		t.Fatalf("worker 应落库拓印内容，obj=%+v err=%v", obj, err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.Status != model.CommandStatusDone || stored.ImprintContent != "" {
+		t.Fatalf("成功后命令应 done 且清空瞬态，command=%+v err=%v", stored, err)
+	}
+	var receipt model.ApprovalExecutionReceipt
+	if err := db.Where("request_id = ?", ticket.ApprovalRequestID).First(&receipt).Error; err != nil || receipt.ResultRef != fmt.Sprintf("file-%d", obj.ID) {
+		t.Fatalf("确认审批必须写同事务回执，receipt=%+v err=%v", receipt, err)
+	}
+}
+
+// TestImprintConfirmReceiptFailureRollsBack 验证回执失败时不得留下文件写入或命令终态。
+func TestImprintConfirmReceiptFailureRollsBack(t *testing.T) {
+	db := newCommandSvcTestDB(t)
+	commands := newImprintSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	commands.SetApprovalService(approval)
+	RegisterAgentCommandApprovalAdapters(registry, commands, NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
+
+	cmd, err := applyRequestImprintForTest(commands, "prod", "lobby-1", "Demo/config.yml", "alice", "")
+	if err != nil {
+		t.Fatalf("构造拓印命令失败: %v", err)
+	}
+	if _, err := commands.FetchPending("prod", "lobby-1"); err != nil {
+		t.Fatalf("领取拓印命令失败: %v", err)
+	}
+	content := "safe: rollback\n"
+	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: content}}, ""); err != nil {
+		t.Fatalf("回传拓印内容失败: %v", err)
+	}
+	ticket, err := commands.RequestImprintConfirmApproval(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", filetree.ContentMD5(content),
+		"验证回执回滚", "imprint-confirm-receipt-rollback", "alice", "", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建确认审批失败: %v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil {
+		t.Fatalf("批准确认审批失败: %v", err)
+	}
+	if err := db.Exec("CREATE TRIGGER reject_imprint_receipt BEFORE INSERT ON approval_execution_receipt BEGIN SELECT RAISE(ABORT, '拒绝回执'); END").Error; err != nil {
+		t.Fatalf("安装回执失败触发器失败: %v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("回执失败后的 worker 应收敛申请，processed=%d err=%v", processed, err)
+	}
+	obj, err := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "Demo/config.yml", model.ScopeServer, "lobby-1")
+	if err != nil || obj != nil {
+		t.Fatalf("回执失败必须回滚文件写入，obj=%+v err=%v", obj, err)
+	}
+	stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+	if err != nil || stored.Status != model.CommandStatusReady || stored.ImprintContent != content {
+		t.Fatalf("回执失败必须回滚命令终态与瞬态，command=%+v err=%v", stored, err)
+	}
+	var receipts int64
+	if err := db.Model(&model.ApprovalExecutionReceipt{}).Where("request_id = ?", ticket.ApprovalRequestID).Count(&receipts).Error; err != nil || receipts != 0 {
+		t.Fatalf("回执失败不得留下收据，count=%d err=%v", receipts, err)
+	}
+}
+
+// TestImprintConfirmRejectsTamperedExecutionBinding 验证执行租约或审批绑定遭篡改时，确认拓印不会开始任何领域写入。
+func TestImprintConfirmRejectsTamperedExecutionBinding(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*gorm.DB, *model.ApprovalRequest)
+	}{
+		{name: "错误申请标识", mutate: func(_ *gorm.DB, req *model.ApprovalRequest) { req.RequestID = "forged-request" }},
+		{name: "错误载荷哈希", mutate: func(_ *gorm.DB, req *model.ApprovalRequest) { req.FrozenPayloadSHA256 = "forged-hash" }},
+		{name: "错误模式版本", mutate: func(db *gorm.DB, req *model.ApprovalRequest) {
+			_ = db.Model(&model.ApprovalRequest{}).Where("id = ?", req.ID).Update("schema_version", 99).Error
+		}},
+		{name: "错误租约", mutate: func(db *gorm.DB, req *model.ApprovalRequest) {
+			_ = db.Model(&model.ApprovalRequest{}).Where("id = ?", req.ID).Update("lease_owner", "forged-lease").Error
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db, _, cmd, worker, claimed := prepareImprintConfirmExecution(t)
+			tc.mutate(db, claimed)
+			_ = worker.execute(claimed)
+			obj, err := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "Demo/config.yml", model.ScopeServer, "lobby-1")
+			if err != nil || obj != nil {
+				t.Fatalf("拒绝后不得写入拓印文件，obj=%+v err=%v", obj, err)
+			}
+			stored, err := repository.NewAgentCommandRepository(db).FindByID(cmd.ID)
+			if err != nil || stored.Status != model.CommandStatusReady || stored.ImprintContent == "" {
+				t.Fatalf("拒绝后命令必须保持 ready 与瞬态，command=%+v err=%v", stored, err)
+			}
+			var receipts int64
+			if err := db.Model(&model.ApprovalExecutionReceipt{}).Count(&receipts).Error; err != nil || receipts != 0 {
+				t.Fatalf("拒绝后不得写入执行回执，count=%d err=%v", receipts, err)
+			}
+			var succeeded int64
+			if err := db.Model(&model.ApprovalRequest{}).Where("status = ?", model.ApprovalStatusSucceeded).Count(&succeeded).Error; err != nil || succeeded != 0 {
+				t.Fatalf("错误审批绑定不得标记成功，count=%d err=%v", succeeded, err)
+			}
+		})
+	}
+}
+
+// TestConfirmImprintApplyRequiresPermit 验证私有领域入口在任何副作用前校验审批许可。
+func TestConfirmImprintApplyRequiresPermit(t *testing.T) {
+	db, commands, cmd, _, _ := prepareImprintConfirmExecution(t)
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		_, err := commands.applyConfirmImprintInTx(tx, authz.ApprovalRequest{}, authz.Permit{}, imprintConfirmApprovalPayload{
+			CommandID: cmd.ID, Namespace: "prod", ServerID: "lobby-1", Path: "Demo/config.yml",
+			Scope: model.ScopeServer, Group: "area1", Target: "lobby-1", ReviewedMD5: filetree.ContentMD5("safe: true\n"), Operator: "alice",
+		})
+		return err
+	}); !errors.Is(err, apperr.ErrForbidden) {
+		t.Fatalf("缺失审批许可必须拒绝，实际 %v", err)
+	}
+	obj, err := repository.NewFileObjectRepository(db).FindByIdentity("prod", "area1", "Demo/config.yml", model.ScopeServer, "lobby-1")
+	if err != nil || obj != nil {
+		t.Fatalf("缺失许可不得写入拓印文件，obj=%+v err=%v", obj, err)
+	}
+}
+
+func prepareImprintConfirmExecution(t *testing.T) (*gorm.DB, *AgentCommandService, *model.AgentCommand, *ApprovalWorker, *model.ApprovalRequest) {
+	t.Helper()
+	db := newCommandSvcTestDB(t)
+	commands := newImprintSvc(db)
+	registry := authz.NewApprovalRegistry()
+	approval := NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry)
+	commands.SetApprovalService(approval)
+	RegisterAgentCommandApprovalAdapters(registry, commands, NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
+	cmd, err := applyRequestImprintForTest(commands, "prod", "lobby-1", "Demo/config.yml", "alice", "")
+	if err != nil {
+		t.Fatalf("构造拓印命令失败: %v", err)
+	}
+	if _, err := commands.FetchPending("prod", "lobby-1"); err != nil {
+		t.Fatalf("领取拓印命令失败: %v", err)
+	}
+	if _, err := commands.ReceiveIngest(cmd.ID, []ImportFile{{Path: "Demo/config.yml", Content: "safe: true\n"}}, ""); err != nil {
+		t.Fatalf("回传拓印内容失败: %v", err)
+	}
+	ticket, err := commands.RequestImprintConfirmApproval(cmd.ID, model.ScopeServer, "area1", "", "lobby-1", filetree.ContentMD5("safe: true\n"),
+		"验证执行绑定", "imprint-binding", "alice", "", auth.HumanPrincipal("alice"))
+	if err != nil {
+		t.Fatalf("创建确认审批失败: %v", err)
+	}
+	if _, err := approval.Approve(ticket.ApprovalRequestID, auth.HumanPrincipal("bob"), ""); err != nil {
+		t.Fatalf("批准确认审批失败: %v", err)
+	}
+	worker := NewApprovalWorker(approval)
+	claimed, found, err := worker.claimNext()
+	if err != nil || !found {
+		t.Fatalf("认领确认审批失败: found=%v err=%v", found, err)
+	}
+	return db, commands, cmd, worker, claimed
 }
 
 func newCommandSvc(db *gorm.DB) *AgentCommandService {

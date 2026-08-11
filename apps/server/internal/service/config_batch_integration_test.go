@@ -63,7 +63,7 @@ func TestConfigBatchMutateRollbackNoAudit(t *testing.T) {
 	db.Model(&model.AuditLog{}).Where("action = ?", model.ActionConfigDisable).Count(&before)
 
 	// 批量禁用含不存在 id（999999）→ 整批 404（FindByIDs 预取数 < 去重 id 数）
-	err = cfg.BatchSetEnabled([]uint{item.ID, 999999}, false, "bob", "")
+	err = service.ApplyConfigBatchSetEnabledForTest(cfg, []uint{item.ID, 999999}, false, "bob", "")
 	if !errors.Is(err, apperr.ErrConfigNotFound) {
 		t.Fatalf("批中含不存在 id 应返回 CONFIG_NOT_FOUND，实际 %v", err)
 	}
@@ -99,7 +99,7 @@ func TestConfigBatchMutateDedupIDs(t *testing.T) {
 	}
 
 	// 同一 id 重复三次 → 去重后只一项，批量禁用成功、只记一条审计
-	if err := cfg.BatchSetEnabled([]uint{item.ID, item.ID, item.ID}, false, "bob", ""); err != nil {
+	if err := service.ApplyConfigBatchSetEnabledForTest(cfg, []uint{item.ID, item.ID, item.ID}, false, "bob", ""); err != nil {
 		t.Fatalf("去重批量禁用应成功，实际 %v", err)
 	}
 	var n int64

@@ -380,18 +380,18 @@ func (s *DeliveryOrderService) validateSourceEligible(namespaceID uint, serverID
 }
 
 // Withdraw 拒绝旧公开撤回入口，防止跳过统一审批终态回调。
-func (s *DeliveryOrderService) Withdraw(id uint, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrderService) Withdraw(_ uint, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 
 // Approve 拒绝旧公开审批入口，防止绕过统一审批执行器直接产生领域副作用。
-func (s *DeliveryOrderService) Approve(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrderService) Approve(_ uint, _, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 
 // RequestApprove 为旧审批入口创建统一审批申请，不产生领域审批副作用。
-func (s *DeliveryOrderService) RequestApprove(id uint, reason string, principal auth.Principal,
-	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
+func (s *DeliveryOrderService) RequestApprove(_ uint, _ string, _ auth.Principal,
+	_, _, _ string) (DeliveryApprovalTicketView, error) {
 	return DeliveryApprovalTicketView{}, apperr.ErrForbidden
 }
 
@@ -481,7 +481,7 @@ func (s *DeliveryOrderService) applyApprove(id uint, reason, operator, clientIP 
 }
 
 // Reject 拒绝旧公开驳回入口，防止跳过统一审批终态回调。
-func (s *DeliveryOrderService) Reject(id uint, reason, operator, clientIP string) (*ChangeOrderDetailView, error) {
+func (s *DeliveryOrderService) Reject(_ uint, _, _, _ string) (*ChangeOrderDetailView, error) {
 	return nil, apperr.ErrForbidden
 }
 

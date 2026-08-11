@@ -117,6 +117,7 @@ type createScanTaskRequest struct {
 	Scope  string `json:"scope"`
 	Group  string `json:"group"`
 	Target string `json:"target"`
+	Reason string `json:"reason"`
 }
 
 // CreateScanTask 创建扫描审批申请；批准后才创建受管任务与命令。
@@ -141,7 +142,7 @@ func (h *ReverseFetchTaskHandler) CreateScanTask(w http.ResponseWriter, r *http.
 		render.WriteError(w, r, err)
 		return
 	}
-	ticket, err := h.svc.RequestCreateScanApproval(ns, serverID, req.Scope, req.Group, req.Target, decodeReason(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
+	ticket, err := h.svc.RequestCreateScanApproval(ns, serverID, req.Scope, req.Group, req.Target, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -200,6 +201,7 @@ func (h *ReverseFetchTaskHandler) ListTasks(w http.ResponseWriter, r *http.Reque
 type submitTaskRequest struct {
 	SelectedPaths        []string `json:"selectedPaths"`
 	ConfirmOverThreshold bool     `json:"confirmOverThreshold"`
+	Reason               string   `json:"reason"`
 }
 
 // SubmitTask 创建提交审批申请；批准 worker 会重验冻结 manifest 再下发命令。
@@ -217,7 +219,7 @@ func (h *ReverseFetchTaskHandler) SubmitTask(w http.ResponseWriter, r *http.Requ
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	ticket, err := h.svc.RequestSubmitApproval(id, req.SelectedPaths, req.ConfirmOverThreshold, decodeReason(r), r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
+	ticket, err := h.svc.RequestSubmitApproval(id, req.SelectedPaths, req.ConfirmOverThreshold, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
@@ -253,39 +255,24 @@ func (h *ReverseFetchTaskHandler) ListConflicts(w http.ResponseWriter, r *http.R
 	render.WriteJSON(w, http.StatusOK, map[string]any{"conflicts": conflicts})
 }
 
-// conflictDiffView 是单个冲突文件 diff 视图（FR-59）：抓取值 ⟷ 目标已有版本。
-type conflictDiffView struct {
-	Path            string `json:"path"`
-	FetchedContent  string `json:"fetchedContent"`
-	FetchedMD5      string `json:"fetchedMd5"`
-	ExistingContent string `json:"existingContent"`
-	ExistingMD5     string `json:"existingMd5"`
-	Version         int64  `json:"version"`
-}
-
-// ConflictDiff 是会返回抓取正文的旧入口；未持 grant 时固定失败关闭。
+// ConflictDiff 是会返回抓取正文的旧入口；未持授权时固定失败关闭。
 func (h *ReverseFetchTaskHandler) ConflictDiff(w http.ResponseWriter, r *http.Request) {
 	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
-	return
+}
 
+// ConsumeApprovedConflictDiff 仅允许原提交审批申请主体一次消费任务的完整冲突正文包。
+func (h *ReverseFetchTaskHandler) ConsumeApprovedConflictDiff(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
 	}
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		render.WriteError(w, r, apperr.ErrInvalidParam)
-		return
-	}
-	diff, err := h.svc.ConflictDiff(id, path)
+	grantID := chi.URLParam(r, "grantId")
+	result, err := h.svc.ConsumeApprovedConflictDiff(grantID, id, requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, conflictDiffView{
-		Path: diff.Path, FetchedContent: diff.FetchedContent, FetchedMD5: diff.FetchedMD5,
-		ExistingContent: diff.ExistingContent, ExistingMD5: diff.ExistingMD5, Version: diff.Version,
-	})
+	render.WriteJSON(w, http.StatusOK, result)
 }
 
 // resolveDecisionRequest 是单个冲突文件的处置（FR-59）：overwrite（取抓取，须自审 md5）/ keep（保留已有）。
@@ -298,11 +285,15 @@ type resolveDecisionRequest struct {
 // resolveRequest 是冲突审核落库请求体（FR-59）。
 type resolveRequest struct {
 	Decisions []resolveDecisionRequest `json:"decisions"`
+	Reason    string                   `json:"reason"`
 }
 
-// Resolve 处理 POST /admin/v1/reverse-fetch/tasks/{id}/resolve（FR-59）：逐冲突文件 overwrite（须自审 md5）/ keep；
-// CAS 认领 conflict-review→ingesting → 落库非冲突集 + overwrite、跳过 keep → done + 审计。返回落地结果（200）。
+// Resolve 处理 POST /admin/v1/reverse-fetch/tasks/{id}/resolve：创建冲突审核落库审批申请。
 func (h *ReverseFetchTaskHandler) Resolve(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	id, ok := parseUintParam(w, r, "id")
 	if !ok {
 		return
@@ -316,12 +307,12 @@ func (h *ReverseFetchTaskHandler) Resolve(w http.ResponseWriter, r *http.Request
 	for i, d := range req.Decisions {
 		decisions[i] = service.ResolveDecision{Path: d.Path, Action: d.Action, ReviewedMD5: d.ReviewedMD5}
 	}
-	result, err := h.svc.Resolve(id, decisions, auth.Operator(r.Context()), clientIP(r))
+	ticket, err := h.svc.RequestResolveApproval(id, decisions, req.Reason, r.Header.Get("Idempotency-Key"), auth.Operator(r.Context()), clientIP(r), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, map[string]any{"created": result.Created, "updated": result.Updated})
+	render.WriteJSON(w, http.StatusAccepted, ticket)
 }
 
 // scanRequestFile 是 agent 回传扫描清单的单文件元信息（无内容，FR-58 线路契约）。

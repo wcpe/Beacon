@@ -143,7 +143,7 @@ func TestApprovalHandlerListDetailApproveRejectWithdraw(t *testing.T) {
 func TestApprovalHandlerRedeemCredentialSecret(t *testing.T) {
 	svc := &approvalServiceStub{}
 	r := chi.NewRouter()
-	r.Post("/admin/v2/approval-requests/{requestId}/credential-secret/redeem", NewApprovalHandler(svc).RedeemCredentialSecret)
+	r.Post("/admin/v2/approval-requests/{requestId}/credential-secret/redeem", NewApprovalHandler(svc, svc).RedeemCredentialSecret)
 	req := httptest.NewRequest(http.MethodPost, "/admin/v2/approval-requests/apr_secret/credential-secret/redeem", nil)
 	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.HumanPrincipal("alice")))
 	resp := httptest.NewRecorder()
@@ -210,5 +210,18 @@ func TestApprovalHandlerDetailExposesActivePayloadGrantToRequester(t *testing.T)
 	other := requestDetail(auth.HumanPrincipal("reviewer"))
 	if _, exists := other["sensitiveAccessGrant"]; exists {
 		t.Fatalf("非申请人详情不得返回授权引用：%+v", other)
+	}
+}
+
+func TestApprovalHandlerRedeemCredentialSecretRequiresExplicitRedeemer(t *testing.T) {
+	svc := &approvalServiceStub{}
+	r := chi.NewRouter()
+	r.Post("/admin/v2/approval-requests/{requestId}/credential-secret/redeem", NewApprovalHandler(svc).RedeemCredentialSecret)
+	req := httptest.NewRequest(http.MethodPost, "/admin/v2/approval-requests/apr_secret/credential-secret/redeem", nil)
+	req = req.WithContext(auth.WithPrincipal(req.Context(), auth.HumanPrincipal("alice")))
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusGone || svc.redeemed != "" {
+		t.Fatalf("未显式注入兑换器时必须 fail-closed：code=%d redeemed=%q", resp.Code, svc.redeemed)
 	}
 }

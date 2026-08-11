@@ -42,7 +42,7 @@ func seedConfigPublish(t *testing.T, cfg *service.ConfigService, repo *repositor
 	if err != nil {
 		t.Fatalf("建配置失败: %v", err)
 	}
-	if _, err := cfg.Publish(item.ID, "a: 2\n", "alice", "", ""); err != nil {
+	if _, err := service.ApplyConfigPublishForTest(cfg, item.ID, "a: 2\n", "alice", "", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
 	ops, err := repo.List(repository.ReversibleOperationFilter{Namespace: "prod", OpType: model.ReversibleOpPublish})
@@ -116,7 +116,7 @@ func TestUndo_VsNewPublish_MySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建配置失败: %v", err)
 	}
-	if _, err := cfg.Publish(item.ID, "v: 2\n", "alice", "", ""); err != nil {
+	if _, err := service.ApplyConfigPublishForTest(cfg, item.ID, "v: 2\n", "alice", "", ""); err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
 	ops, _ := repo.List(repository.ReversibleOperationFilter{Namespace: "prod", OpType: model.ReversibleOpPublish})
@@ -131,7 +131,7 @@ func TestUndo_VsNewPublish_MySQL(t *testing.T) {
 	wg.Add(2)
 	var undoErr, pubErr error
 	go func() { defer wg.Done(); _, undoErr = undoSvc.Undo(op.ID, "bob", "") }()
-	go func() { defer wg.Done(); _, pubErr = cfg.Publish(item.ID, "v: 9\n", "alice", "", "") }()
+	go func() { defer wg.Done(); _, pubErr = service.ApplyConfigPublishForTest(cfg, item.ID, "v: 9\n", "alice", "", "") }()
 	wg.Wait()
 
 	if pubErr != nil {
@@ -149,14 +149,14 @@ func TestUndo_VsNewPublish_MySQL(t *testing.T) {
 // 真 MySQL：撤回 fetch——被新建项软删、被覆盖项回滚到 ingest 前版本。
 func TestUndoFetch_MySQL(t *testing.T) {
 	_, fileSvc, undoSvc, repo, _ := newUndoStack(t)
-	existing, err := fileSvc.Create(service.CreateFileParams{
+	existing, err := service.ApplyFileCreateForTest(fileSvc, service.CreateFileParams{
 		Namespace: "prod", Group: "main", Path: "plugins/keep.yml", ScopeLevel: model.ScopeGroup,
 		Content: "old: 1\n", Operator: "alice",
 	})
 	if err != nil {
 		t.Fatalf("建文件失败: %v", err)
 	}
-	result, err := fileSvc.Import(service.ImportFilesParams{
+	result, err := service.ApplyFileImportForTest(fileSvc, service.ImportFilesParams{
 		Namespace: "prod", Group: "main", ScopeLevel: model.ScopeGroup,
 		Files: []service.ImportFile{
 			{Path: "plugins/new.yml", Content: "new: 1\n"},

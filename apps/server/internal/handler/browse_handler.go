@@ -3,21 +3,25 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 
-// BrowseHandler 代理 agent 只读文件浏览（FR-110，见 ADR-0049 决策 9）：
-// admin 触发浏览（经命令生命周期下发 + 等待回传）+ agent 回传浏览结果。
+// BrowseHandler 编排需审批的 Agent 文件浏览：创建申请、接收回传、一次消费结果。
 type BrowseHandler struct {
 	svc     *service.AgentCommandService
 	instSvc *service.InstanceService
+	reportAuth browseReportAuthenticator
+}
+
+type browseReportAuthenticator interface {
+	AuthenticateAgentReport(token, identityID, bootID, addr string) (agentauth.Identity, error)
 }
 
 // NewBrowseHandler 构造处理器（instSvc 供浏览前校验目标在线）。
@@ -25,45 +29,69 @@ func NewBrowseHandler(svc *service.AgentCommandService, instSvc *service.Instanc
 	return &BrowseHandler{svc: svc, instSvc: instSvc}
 }
 
-// Browse 是会下发命令并返回正文的旧浏览入口；未实现 typed 审批适配前固定失败关闭。
+// SetReportAuthenticator 注入浏览回传的 v2 权威身份校验器。
+func (h *BrowseHandler) SetReportAuthenticator(authn browseReportAuthenticator) { h.reportAuth = authn }
+
+// Browse 是旧浏览入口，固定失败关闭，不能绕过审批直接读取结果。
 func (h *BrowseHandler) Browse(w http.ResponseWriter, r *http.Request) {
 	render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
-	return
+}
 
-	serverID := chi.URLParam(r, "serverId")
-	q := r.URL.Query()
-	ns := q.Get("namespace")
-	if ns == "" {
+type browseApprovalRequest struct {
+	Namespace string `json:"namespace"`
+	Op        string `json:"op"`
+	Path      string `json:"path"`
+	Offset    int    `json:"offset"`
+	Limit     int    `json:"limit"`
+	MaxDepth  int    `json:"maxDepth"`
+	Reason    string `json:"reason"`
+}
+
+type consumeBrowseRequest struct {
+	CommandID uint `json:"commandId"`
+}
+
+// Request 创建文件浏览审批申请；批准 worker 才能下发 fs-browse 命令。
+func (h *BrowseHandler) Request(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.svc == nil || h.instSvc == nil {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
+	var req browseApprovalRequest
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	// 校验目标在线：不在注册表即 INSTANCE_NOT_FOUND，不建命令。
-	if _, err := h.instSvc.Get(ns, serverID); err != nil {
+	serverID := chi.URLParam(r, "serverId")
+	if _, err := h.instSvc.Get(req.Namespace, serverID); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	result, err := h.svc.RequestBrowse(r.Context(), service.BrowseParams{
-		Namespace: ns, ServerID: serverID,
-		Op:       q.Get("op"),
-		Path:     q.Get("path"),
-		Offset:   atoiOr(q.Get("offset"), 0),
-		Limit:    atoiOr(q.Get("limit"), 0),
-		MaxDepth: atoiOr(q.Get("maxDepth"), 0),
-		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
-	})
+	ticket, err := h.svc.RequestBrowseApproval(service.BrowseParams{Namespace: req.Namespace, ServerID: serverID, Op: req.Op, Path: req.Path, Offset: req.Offset, Limit: req.Limit, MaxDepth: req.MaxDepth, Operator: auth.Operator(r.Context()), ClientIP: clientIP(r)}, req.Reason, r.Header.Get("Idempotency-Key"), requestPrincipal(r))
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	// 结果是 agent 回传的浏览结果 JSON 原文（目录清单 / 子树 / 文件内容），逐字透传给前端。
-	if result == "" {
-		result = "{}"
+	render.WriteJSON(w, http.StatusAccepted, ticket)
+}
+
+// ConsumeApproved 仅允许原申请主体一次性消费已由 Agent 回传的浏览结果。
+func (h *BrowseHandler) ConsumeApproved(w http.ResponseWriter, r *http.Request) {
+	var req consumeBrowseRequest
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.CommandID == 0 {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	result, err := h.svc.ConsumeApprovedBrowse(chi.URLParam(r, "grantId"), req.CommandID, requestPrincipal(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
 	}
 	render.WriteJSON(w, http.StatusOK, json.RawMessage(result))
 }
 
-// browseResultRequest 是 agent 回传文件浏览结果的请求体（FR-110）：
-// ok=true 携 result（浏览结果 JSON 原文）；ok=false 携 reason（越权 / 非目录 / 非文本等，无敏感内容）。
+// browseResultRequest 是 Agent 回传文件浏览结果的请求体。
+// namespace/serverId 仅保留协议兼容，归属一律以权威 v2 身份为准；失败 reason 不持久化或回显。
 type browseResultRequest struct {
 	Namespace string          `json:"namespace"`
 	ServerID  string          `json:"serverId"`
@@ -73,26 +101,27 @@ type browseResultRequest struct {
 	Reason    string          `json:"reason"`
 }
 
-// BrowseResult 处理 POST /beacon/v1/agent/files/browse-result（FR-110）：接收 agent 回传的浏览结果，
-// CAS 推进命令 done / failed 并唤醒等待中的 admin。与其它 agent 端点同属 agentToken 防误连信任面。
+// BrowseResult 处理 POST /beacon/v1/agent/files/browse-result：接收 Agent 回传，
+// 原子推进命令与 grant 状态。与其它 Agent 端点同属 agentToken 防误连信任面。
 func (h *BrowseHandler) BrowseResult(w http.ResponseWriter, r *http.Request) {
 	var req browseResultRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
-	if err := h.svc.ReceiveBrowseResult(req.Namespace, req.ServerID, req.CommandID, req.OK,
+	if h == nil || h.svc == nil || h.reportAuth == nil {
+		render.WriteError(w, r, apperr.ErrUnauthorized)
+		return
+	}
+	identity, err := h.reportAuth.AuthenticateAgentReport(r.Header.Get("X-Beacon-Token"), r.Header.Get("X-Beacon-Identity"), r.Header.Get("X-Beacon-Boot"), r.RemoteAddr)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if err := h.svc.ReceiveBrowseResult(identity, req.CommandID, req.OK,
 		string(req.Result), req.Reason); err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// atoiOr 解析十进制整数，非法 / 空串回退到 fallback（浏览分页 / 深度参数缺省由 agent 收口到硬上限）。
-func atoiOr(s string, fallback int) int {
-	if v, err := strconv.Atoi(s); err == nil {
-		return v
-	}
-	return fallback
 }

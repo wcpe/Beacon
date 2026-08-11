@@ -26,7 +26,7 @@ func newConfigApprovalTestSuite(t *testing.T) (*ConfigService, *ApprovalService,
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.ConfigItem{}, &model.ConfigRevision{}, &model.ConfigGray{}, &model.ConfigPendingChange{}, &model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.ConfigItem{}, &model.ConfigRevision{}, &model.ConfigGray{}, &model.ConfigPendingChange{}, &model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.SensitiveAccessGrant{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移配置审批表失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -49,7 +49,58 @@ func newConfigApprovalTestSuite(t *testing.T) (*ConfigService, *ApprovalService,
 	configService.SetPendingChangeCipher(cipher)
 	configService.SetGrayService(NewConfigGrayService(db, configService, repository.NewConfigItemRepository(db, cipher), repository.NewConfigGrayRepository(db, cipher), repository.NewAuditLogRepository(db)))
 	RegisterConfigApprovalAdapters(registry, configService)
+	grants := NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db))
+	configService.SetSensitiveAccessGrants(grants)
+	RegisterSensitiveConfigApprovalAdapter(registry, configService, grants)
 	return configService, approval, db
+}
+
+// TestSensitiveConfigPlaintextApprovalFlow 验证敏感配置正文只能经审批签发的一次性授权返回。
+func TestSensitiveConfigPlaintextApprovalFlow(t *testing.T) {
+	configs, approval, db := newConfigApprovalTestSuite(t)
+	secretText := "password: 只可消费一次\n"
+	item, err := configs.Create(CreateConfigParams{Namespace: "prod", DataID: "secret.yml", ScopeLevel: model.ScopeGlobal, Format: "yaml", Content: secretText, Operator: "alice", Sensitive: true})
+	if err != nil {
+		t.Fatalf("创建敏感配置失败：%v", err)
+	}
+	if _, err := configs.ReadSensitivePlaintext(item.ID); !errors.Is(err, apperr.ErrOperationRequiresApproval) {
+		t.Fatalf("公开敏感正文读取必须关闭：%v", err)
+	}
+	ticket, err := configs.RequestSensitivePlaintextAccess(item.ID, "排查连接异常", "sensitive-config-read", auth.HumanPrincipal("alice"), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("创建敏感配置读取审批失败：%v", err)
+	}
+	var req model.ApprovalRequest
+	if err := db.Where("request_id = ?", ticket.RequestID).First(&req).Error; err != nil {
+		t.Fatalf("查询审批申请失败：%v", err)
+	}
+	if strings.Contains(req.Payload, secretText) || strings.Contains(req.SafeSummary, secretText) || strings.Contains(req.EvidenceSnapshot, secretText) {
+		t.Fatalf("审批申请不得包含敏感配置正文")
+	}
+	if _, err := approval.Approve(ticket.RequestID, auth.HumanPrincipal("bob"), "127.0.0.2"); err != nil {
+		t.Fatalf("批准敏感配置读取失败：%v", err)
+	}
+	if processed, err := NewApprovalWorker(approval).RunOnce(); err != nil || processed != 1 {
+		t.Fatalf("审批 worker 应签发授权：processed=%d err=%v", processed, err)
+	}
+	var grant model.SensitiveAccessGrant
+	if err := db.Where("approval_request_id = ?", ticket.RequestID).First(&grant).Error; err != nil {
+		t.Fatalf("审批成功后应存在授权：%v", err)
+	}
+	if _, err := configs.ConsumeSensitivePlaintext(grant.GrantID, item.ID, auth.HumanPrincipal("bob"), "127.0.0.1"); !errors.Is(err, apperr.ErrSensitiveAccessWrongPrincipal) {
+		t.Fatalf("非原申请人不得消费授权：%v", err)
+	}
+	result, err := configs.ConsumeSensitivePlaintext(grant.GrantID, item.ID, auth.HumanPrincipal("alice"), "127.0.0.1")
+	if err != nil || result.Content != secretText {
+		t.Fatalf("原申请人应凭授权读取正文：result=%+v err=%v", result, err)
+	}
+	var audit model.AuditLog
+	if err := db.Where("action = ?", authz.OperationSensitiveConfigPlaintextRead).First(&audit).Error; err != nil || strings.Contains(audit.Detail, secretText) {
+		t.Fatalf("正文消费审计必须只记录摘要：audit=%+v err=%v", audit, err)
+	}
+	if _, err := configs.ConsumeSensitivePlaintext(grant.GrantID, item.ID, auth.HumanPrincipal("alice"), "127.0.0.1"); !errors.Is(err, apperr.ErrSensitiveAccessConsumed) {
+		t.Fatalf("授权必须只能消费一次：%v", err)
+	}
 }
 
 func TestConfigGrayPublishApprovalFailsClosedThenAppliesWithReceipt(t *testing.T) {

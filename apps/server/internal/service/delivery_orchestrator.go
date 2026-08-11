@@ -74,9 +74,9 @@ type DeliveryOrchestrator struct {
 	now      func() time.Time
 	wakeCh   chan struct{}
 	// mu 串行化控制操作（Start / Pause / Resume / Cancel / ConfirmBatch）与每轮推进，使三层状态机迁移不相互竞争。
-	mu sync.Mutex
+	mu *sync.Mutex
 	// observeMu 独立保护观察窗内存缓冲（推进器采样写、Observe/SSE 读），与 mu 有序嵌套（mu→observeMu，不反向）。
-	observeMu      sync.RWMutex
+	observeMu      *sync.RWMutex
 	observeByOrder map[uint]*observeState
 	approval       *ApprovalService
 	// config 配置版本回退能力（整单回滚记账用，ConfigCenterService 实现；未装配则跳过 config 回退，测试兼容）
@@ -111,6 +111,8 @@ func NewDeliveryOrchestrator(db *gorm.DB, repo *repository.ChangeOrderRepository
 		events:         newDeliveryEventHub(),
 		now:            func() time.Time { return time.Now().UTC() },
 		wakeCh:         make(chan struct{}, 1),
+		mu:             &sync.Mutex{},
+		observeMu:      &sync.RWMutex{},
 		observeByOrder: map[uint]*observeState{},
 	}
 }

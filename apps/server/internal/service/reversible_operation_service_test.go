@@ -381,8 +381,9 @@ func TestUndo_VsNewPublish_Concurrent(t *testing.T) {
 	}()
 	wg.Wait()
 
-	if pubErr != nil {
-		t.Fatalf("新发布不应失败: %v", pubErr)
+	// 发布在撤回后才进入事务时，申请时读取的版本已失效；审批执行必须拒绝陈旧目标，不能重试并覆盖撤回结果。
+	if pubErr != nil && pubErr != apperr.ErrApprovalTargetChanged {
+		t.Fatalf("新发布竞争应为成功 / approval_target_changed, got %v", pubErr)
 	}
 	// 撤回要么成功（赢在覆盖前）、要么因被覆盖/状态拒（输给新发布），二者皆为合法确定结果——不得脏写。
 	if undoErr != nil &&

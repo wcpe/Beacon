@@ -221,6 +221,31 @@ func (r *AgentCommandRepository) UpdateStatusWithBrowseResult(id uint, result st
 	return res.RowsAffected > 0, nil
 }
 
+// ClearBrowseResult 仅在浏览命令仍为 done 且结果未变时清空瞬态正文，防止消费与并发回传错删数据。
+func (r *AgentCommandRepository) ClearBrowseResult(id uint, result string) (bool, error) {
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("id = ? AND type = ? AND status = ? AND browse_result = ?", id, model.CommandTypeFsBrowse, model.CommandStatusDone, result).
+		Update("browse_result", "")
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// ClearBrowseResults 清空已到期授权关联的 done 浏览结果；命令状态保留供无正文的审计与观测使用。
+func (r *AgentCommandRepository) ClearBrowseResults(ids []uint) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := r.db.Model(&model.AgentCommand{}).
+		Where("id IN ? AND type = ? AND status = ? AND browse_result <> ''", ids, model.CommandTypeFsBrowse, model.CommandStatusDone).
+		Update("browse_result", "")
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
 // CountByStatus 按状态分组统计命令条数（跨全部目标汇总，仅观测，FR-82）。
 // 一条 GROUP BY 查询（可移植 GORM、无方言）；无某状态则该键缺省（不返回 0 键）。
 func (r *AgentCommandRepository) CountByStatus() (map[string]int, error) {

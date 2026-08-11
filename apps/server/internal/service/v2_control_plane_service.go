@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
+	"github.com/wcpe/Beacon/apps/server/internal/redact"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/bootwatch"
@@ -44,14 +46,15 @@ type trustKey struct {
 // V2ControlPlaneService 承载第二版身份、namespace 隔离与区服权威写模型。
 type V2ControlPlaneService struct {
 	db                      *gorm.DB
+	trustSnapshotOwner      *V2ControlPlaneService
 	runtime                 *runtime.Registry
 	healthViews             *healthview.Store
 	notifier                *ChangeNotifier
-	registerMu              sync.Mutex
-	directoryResyncMu       sync.Mutex
+	registerMu              *sync.Mutex
+	directoryResyncMu       *sync.Mutex
 	directoryResyncRepo     *repository.AgentCommandRepository
 	directoryResyncNotifier CommandNotifier
-	trustMu                 sync.RWMutex
+	trustMu                 *sync.RWMutex
 	trustSet                map[trustKey]struct{}
 	// 并发身份冲突检测（FR-177，spec §4.5）：bootId 活跃注册表（进程内真源）+ 冲突窗口取值 + 告警留痕出口。
 	// 未装配（nil）时检测禁用——保持旧构造 NewV2ControlPlaneService(db) 与既有测试行为不变。
@@ -76,7 +79,14 @@ func (s *V2ControlPlaneService) SetLegacySchedulingService(scheduling *Schedulin
 
 // NewV2ControlPlaneService 构造第二版控制面服务。
 func NewV2ControlPlaneService(db *gorm.DB) *V2ControlPlaneService {
-	s := &V2ControlPlaneService{db: db, trustSet: map[trustKey]struct{}{}}
+	s := &V2ControlPlaneService{
+		db:                db,
+		registerMu:        &sync.Mutex{},
+		directoryResyncMu: &sync.Mutex{},
+		trustMu:           &sync.RWMutex{},
+		trustSet:          map[trustKey]struct{}{},
+	}
+	s.trustSnapshotOwner = s
 	_ = s.reloadTrustSnapshot()
 	return s
 }
@@ -481,7 +491,7 @@ type ApproveAgentIdentityParams struct {
 
 // ApproveAgentIdentity 禁止绕过审批适配器直接确认身份。
 
-func (s *V2ControlPlaneService) ApproveAgentIdentity(identityID string, p ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
+func (s *V2ControlPlaneService) ApproveAgentIdentity(_ string, _ ApproveAgentIdentityParams) (*model.AgentIdentity, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -609,7 +619,7 @@ func (s *V2ControlPlaneService) RejectAgentIdentity(identityID string, p Identit
 }
 
 // AllowAgentIdentityReapply 禁止绕过审批适配器直接恢复重新申请资格。
-func (s *V2ControlPlaneService) AllowAgentIdentityReapply(identityID string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+func (s *V2ControlPlaneService) AllowAgentIdentityReapply(_ string, _ IdentityTransitionParams) (*model.AgentIdentity, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -623,13 +633,13 @@ func (s *V2ControlPlaneService) DisableAgentIdentity(identityID string, p Identi
 
 // EnableAgentIdentity 禁止绕过审批适配器直接启用身份。
 
-func (s *V2ControlPlaneService) EnableAgentIdentity(identityID string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+func (s *V2ControlPlaneService) EnableAgentIdentity(_ string, _ IdentityTransitionParams) (*model.AgentIdentity, error) {
 	return nil, apperr.ErrForbidden
 }
 
 // UnbindAgentIdentity 禁止绕过审批适配器直接解绑身份。
 
-func (s *V2ControlPlaneService) UnbindAgentIdentity(identityID string, p IdentityTransitionParams) (*model.AgentIdentity, error) {
+func (s *V2ControlPlaneService) UnbindAgentIdentity(_ string, _ IdentityTransitionParams) (*model.AgentIdentity, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -1050,7 +1060,7 @@ type GrantNamespaceTrustParams struct {
 }
 
 // GrantNamespaceTrust 授予或复活一条 namespace 信任。
-func (s *V2ControlPlaneService) GrantNamespaceTrust(p GrantNamespaceTrustParams) (*NamespaceTrustView, error) {
+func (s *V2ControlPlaneService) GrantNamespaceTrust(_ GrantNamespaceTrustParams) (*NamespaceTrustView, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -1099,7 +1109,7 @@ func (s *V2ControlPlaneService) applyGrantNamespaceTrust(p GrantNamespaceTrustPa
 	if err != nil {
 		return nil, err
 	}
-	if err := s.reloadTrustSnapshot(); err != nil {
+	if err := s.reloadTrustSnapshotAfterCommit(); err != nil {
 		return nil, err
 	}
 	return enrichTrust(s.db, &out)
@@ -1540,7 +1550,7 @@ type AssignServersParams struct {
 }
 
 // AssignServers 批量首次分配未分配 server；TargetKind 为空且 TargetID=0 时表示解除分配（target:null）。
-func (s *V2ControlPlaneService) AssignServers(p AssignServersParams) ([]model.Server, error) {
+func (s *V2ControlPlaneService) AssignServers(_ AssignServersParams) ([]model.Server, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -1730,7 +1740,7 @@ type RezoneServersParams struct {
 
 // RezoneServers 批量发起换区工单（§4.7）：逐台校验已分配 + 同 namespace + 同 kind，
 // 单事务内解绑清归属 + 写预填目标 + 驱动身份重入 pending + 记 zone.rezone.initiated 审计；任一失败整批回滚。
-func (s *V2ControlPlaneService) RezoneServers(p RezoneServersParams) ([]AssignmentResult, error) {
+func (s *V2ControlPlaneService) RezoneServers(_ RezoneServersParams) ([]AssignmentResult, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -1914,7 +1924,7 @@ type SetServerDefaultEntryParams struct {
 // SetServerDefaultEntry 更新 server 默认入口标记；未分配小区（zone_id 为空）置默认入口一律 409。
 // 同一小区至多一台默认入口：置 true 时先清掉同 zone 其他服的标记，再写本机。
 // 单事务 + 审计，返回富化视图。
-func (s *V2ControlPlaneService) SetServerDefaultEntry(p SetServerDefaultEntryParams) (*ServerView, error) {
+func (s *V2ControlPlaneService) SetServerDefaultEntry(_ SetServerDefaultEntryParams) (*ServerView, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -2204,18 +2214,33 @@ func findTrust(tx *gorm.DB, from, to uint, capability string) (*model.NamespaceT
 }
 
 func (s *V2ControlPlaneService) reloadTrustSnapshot() error {
+	owner := s.trustSnapshotOwner
+	if owner == nil {
+		owner = s
+	}
 	var trusts []model.NamespaceTrust
-	if err := s.db.Where("status = ?", model.NamespaceTrustStatusActive).Find(&trusts).Error; err != nil {
+	if err := owner.db.Where("status = ?", model.NamespaceTrustStatusActive).Find(&trusts).Error; err != nil {
 		return err
 	}
 	next := make(map[trustKey]struct{}, len(trusts))
 	for _, trust := range trusts {
 		next[trustKey{from: trust.FromNamespaceID, to: trust.ToNamespaceID, capability: trust.Capability}] = struct{}{}
 	}
-	s.trustMu.Lock()
-	s.trustSet = next
-	s.trustMu.Unlock()
+	owner.trustMu.Lock()
+	owner.trustSet = next
+	owner.trustMu.Unlock()
 	return nil
+}
+
+func (s *V2ControlPlaneService) reloadTrustSnapshotAfterCommit() error {
+	var reloadErr error
+	s.scheduleAfterCommit(func() {
+		reloadErr = s.reloadTrustSnapshot()
+		if reloadErr != nil {
+			slog.Warn("审批提交后刷新命名空间信任快照失败，进程内信任将保持原状态", "错误", redact.DesensitizeErr(reloadErr))
+		}
+	})
+	return reloadErr
 }
 
 func auditIdentity(tx *gorm.DB, ns *model.Namespace, ident *model.AgentIdentity, action, operator, result, clientIP string) error {

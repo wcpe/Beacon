@@ -50,7 +50,7 @@ func TestConfigLifecycle(t *testing.T) {
 	}
 
 	// 发布新版本
-	pub, err := cfg.Publish(item.ID, "pool: 20\n", "bob", "调大连接池", "")
+	pub, err := service.ApplyConfigPublishForTest(cfg, item.ID, "pool: 20\n", "bob", "调大连接池", "")
 	if err != nil {
 		t.Fatalf("发布失败: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestConfigLifecycle(t *testing.T) {
 	}
 
 	// 回滚到 v1
-	rb, err := cfg.Rollback(item.ID, 1, "carol", "回退", "")
+	rb, err := service.ApplyConfigRollbackForTest(cfg, item.ID, 1, "carol", "回退", "")
 	if err != nil {
 		t.Fatalf("回滚失败: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestConfigLifecycle(t *testing.T) {
 	}
 
 	// 软删后取不到
-	if err := cfg.Delete(item.ID, "dave", "下线", ""); err != nil {
+	if err := service.ApplyConfigDeleteForTest(cfg, item.ID, "dave", ""); err != nil {
 		t.Fatalf("软删失败: %v", err)
 	}
 	if _, err := cfg.Get(item.ID); !errors.Is(err, apperr.ErrConfigNotFound) {
@@ -149,9 +149,9 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
-// TestPublishConcurrentConflict 集成验证：并发对同一 item 发布同一目标 version 撞 uk_revision_version，
-// 错误应映射为 409 CONFLICT，绝不透出原始 gorm.ErrDuplicatedKey（500）。
-func TestPublishConcurrentConflict(t *testing.T) {
+// TestPublishConcurrentFrozenTarget 集成验证：并发执行同一冻结版本时，只有一条可落库；
+// 其余必须以冲突或审批目标漂移失败，绝不透出原始数据库错误。
+func TestPublishConcurrentFrozenTarget(t *testing.T) {
 	cfg, _, _ := newStack(t)
 	item, err := cfg.Create(service.CreateConfigParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, DataID: "c.yml",
@@ -169,21 +169,26 @@ func TestPublishConcurrentConflict(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			// 各路读到同一 item.Version，算出同一 newVersion，提交时只有一路成功，其余撞 uk_revision_version
-			_, errs[idx] = cfg.Publish(item.ID, "x: 2\n", "bob", "并发发布", "")
+			_, errs[idx] = service.ApplyConfigPublishWithExpectedVersionForTest(cfg, item.ID, "x: 2\n", "bob", "并发发布", "", item.Version)
 		}(i)
 	}
 	wg.Wait()
 
+	succeeded := 0
 	for _, err := range errs {
 		if err == nil {
+			succeeded++
 			continue
 		}
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			t.Fatalf("唯一键冲突透出了原始 gorm.ErrDuplicatedKey（应映射 409），实际 %v", err)
 		}
-		if !errors.Is(err, apperr.ErrConfigConflict) {
-			t.Fatalf("并发撞唯一键应得 CONFIG_CONFLICT，实际 %v", err)
+		if !errors.Is(err, apperr.ErrConfigConflict) && !errors.Is(err, apperr.ErrApprovalTargetChanged) {
+			t.Fatalf("冻结版本并发执行应被冲突或目标漂移拒绝，实际 %v", err)
 		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("冻结版本并发执行应恰有一次成功，实际 %d", succeeded)
 	}
 }
 

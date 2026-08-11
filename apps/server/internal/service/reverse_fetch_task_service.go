@@ -50,6 +50,7 @@ type ReverseFetchTaskService struct {
 	notifier   CommandNotifier
 	reversible FetchReversibleRecorder // 可选，ingest 落库后记 fetch 可逆账目（FR-116，未注入即不可撤回）
 	approval   *ApprovalService
+	grants     *SensitiveAccessGrantService
 }
 
 // FetchReversibleRecorder 是"记一条 fetch 可逆账目"的窄接口（由 ReversibleOperationService 实现，可选注入；
@@ -72,11 +73,18 @@ func (s *ReverseFetchTaskService) SetNotifier(n CommandNotifier) { s.notifier = 
 func (s *ReverseFetchTaskService) SetReversibleRecorder(r FetchReversibleRecorder) { s.reversible = r }
 
 // SetApprovalService 注入反向抓取扫描与提交的统一审批入口。
-func (s *ReverseFetchTaskService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
+func (s *ReverseFetchTaskService) SetApprovalService(approval *ApprovalService) {
+	s.approval = approval
+}
+
+// SetSensitiveAccessGrants 注入提交回传正文的一次性访问授权服务。
+func (s *ReverseFetchTaskService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) {
+	s.grants = grants
+}
 
 // CreateScanTask 由 admin 触发受管反向抓取：互斥查 → 事务内建任务(scanning) + 下发 scan 命令(pending) + 审计 →
 // 提交后唤醒目标 agent SSE。已有非终态任务 → ErrReverseFetchTaskActive(409)。返回任务（含 id）。
-func (s *ReverseFetchTaskService) CreateScanTask(ns, serverID, scope, group, target, operator, clientIP string) (*model.ReverseFetchTask, error) {
+func (s *ReverseFetchTaskService) CreateScanTask(_, _, _, _, _, _, _ string) (*model.ReverseFetchTask, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -125,7 +133,7 @@ func (s *ReverseFetchTaskService) applyCreateScanTaskInTx(tx *gorm.DB, ns, serve
 		return nil, reverseFetchActiveErr(active)
 	}
 	if err := s.taskRepo.WithTx(tx).Create(task); err != nil {
-		return nil, err
+		return nil, s.reloadActiveOnConflict(err, ns, serverID)
 	}
 	if err := s.cmdRepo.WithTx(tx).Create(cmd); err != nil {
 		return nil, err
@@ -134,12 +142,12 @@ func (s *ReverseFetchTaskService) applyCreateScanTaskInTx(tx *gorm.DB, ns, serve
 		return nil, err
 	}
 	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns,
-			Operator:      operator, Action: model.ActionFileReverseFetchScan,
-			TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
-			Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"scope":%q,"group":%q,"target":%q}`,
-				task.ID, cmd.ID, scope, group, target),
-			Result: model.ResultOK, ClientIP: clientIP,
+		NamespaceCode: ns,
+		Operator:      operator, Action: model.ActionFileReverseFetchScan,
+		TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
+		Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"scope":%q,"group":%q,"target":%q}`,
+			task.ID, cmd.ID, scope, group, target),
+		Result: model.ResultOK, ClientIP: clientIP,
 	}); err != nil {
 		return nil, err
 	}
@@ -195,7 +203,7 @@ func (s *ReverseFetchTaskService) ReceiveScan(commandID uint, files []ScanFile, 
 
 // Submit 提交选定集（FR-58）：任务须 pending-review；校验选定（超阈值文件须确认、文件数兜底）→
 // 事务内存 selectedPaths + 下发 submit 命令(pending) + 任务→fetching + 审计 → 提交后唤醒。
-func (s *ReverseFetchTaskService) Submit(taskID uint, selectedPaths []string, confirmOverThreshold bool, operator, clientIP string) (*model.ReverseFetchTask, error) {
+func (s *ReverseFetchTaskService) Submit(_ uint, _ []string, _ bool, _, _ string) (*model.ReverseFetchTask, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -264,11 +272,11 @@ func (s *ReverseFetchTaskService) applySubmitInTx(tx *gorm.DB, taskID uint, mani
 		return nil, apperr.ErrReverseFetchTaskState
 	}
 	if err := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: task.NamespaceCode,
-			Operator:      operator, Action: model.ActionFileReverseFetchSubmit,
-			TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
-			Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"selected":%d}`, task.ID, cmd.ID, len(clean)),
-			Result: model.ResultOK, ClientIP: clientIP,
+		NamespaceCode: task.NamespaceCode,
+		Operator:      operator, Action: model.ActionFileReverseFetchSubmit,
+		TargetType: model.TargetTypeReverseFetchTask, TargetRef: fmt.Sprintf("%d", task.ID),
+		Detail: fmt.Sprintf(`{"taskId":%d,"commandId":%d,"selected":%d}`, task.ID, cmd.ID, len(clean)),
+		Result: model.ResultOK, ClientIP: clientIP,
 	}); err != nil {
 		return nil, err
 	}
@@ -315,6 +323,8 @@ func (s *ReverseFetchTaskService) ReceiveSubmitIngest(commandID uint, files []Im
 	if len(conflicts) > 0 {
 		return nil, s.enterConflictReview(task, cmd, files, conflicts)
 	}
+	// 提交命令无冲突时没有可返回的审核正文；撤销审批期创建的待授权。
+	s.revokeSubmitGrant(cmd.ID)
 
 	// 无冲突：沿 FR-58 原路 fetching→ingesting（落库中）。
 	if ok, e := s.taskRepo.UpdateStatus(task.ID, model.ReverseFetchTaskFetching, model.ReverseFetchTaskIngesting); e != nil {
@@ -426,6 +436,9 @@ func (s *ReverseFetchTaskService) ReceiveError(commandID uint, reason, clientIP 
 	if _, e := s.cmdRepo.UpdateStatus(cmd.ID, model.CommandStatusFetched, model.CommandStatusFailed,
 		fmt.Sprintf(`{"taskId":%d,"error":%q}`, task.ID, lastErr)); e != nil {
 		slog.Warn("命令置 failed 失败（任务已记错误）", "commandId", cmd.ID, "原因", e)
+	}
+	if payload.Mode == model.IngestModeSubmit {
+		s.revokeSubmitGrant(cmd.ID)
 	}
 	if e := s.auditRepo.Create(&model.AuditLog{
 		NamespaceCode: task.NamespaceCode,
@@ -572,12 +585,16 @@ func (s *ReverseFetchTaskService) failTaskFrom(task *model.ReverseFetchTask, exp
 		fmt.Sprintf(`{"error":%q}`, reason)); e != nil {
 		slog.Warn("标记命令失败态出错", "commandId", cmd.ID, "原因", e)
 	}
+	s.revokeSubmitGrant(cmd.ID)
 }
 
-// failTaskOnly 把任务从指定前态终结为 failed 并清瞬态（不涉命令，用于 resolve 落库失败：命令早已 done）。
-func (s *ReverseFetchTaskService) failTaskOnly(taskID uint, expect, reason string) {
-	if _, e := s.taskRepo.MarkTerminal(taskID, expect, model.ReverseFetchTaskFailed, reason, true, time.Now().UTC()); e != nil {
-		slog.Warn("标记反向抓取任务失败态出错", "taskId", taskID, "原因", e)
+// revokeSubmitGrant 撤销尚未形成可消费正文的提交授权；无授权的测试编排不受影响。
+func (s *ReverseFetchTaskService) revokeSubmitGrant(commandID uint) {
+	if s.grants == nil {
+		return
+	}
+	if err := s.grants.RevokePendingCommand(commandID); err != nil {
+		slog.Warn("撤销反向抓取提交正文授权失败", "commandId", commandID, "原因", err)
 	}
 }
 

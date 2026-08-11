@@ -91,9 +91,60 @@ func (h *ConfigHandler) Get(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, err)
 		return
 	}
+	if it.Sensitive {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	v := toView(it)
 	v.Content = it.Content
 	render.WriteJSON(w, http.StatusOK, v)
+}
+
+// RequestSensitivePlaintextApproval 处理敏感配置正文的一次性读取审批申请。
+func (h *ConfigHandler) RequestSensitivePlaintextApproval(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if json.NewDecoder(r.Body).Decode(&body) != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	request, err := h.svc.RequestSensitivePlaintextAccess(id, body.Reason, r.Header.Get("Idempotency-Key"), principal, clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusAccepted, map[string]any{"requestId": request.RequestID, "status": request.Status})
+}
+
+// ConsumeSensitivePlaintextGrant 处理原申请主体的一次性敏感配置正文消费。
+func (h *ConfigHandler) ConsumeSensitivePlaintextGrant(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		render.WriteError(w, r, apperr.ErrAdminUnauthorized)
+		return
+	}
+	result, err := h.svc.ConsumeSensitivePlaintext(chi.URLParam(r, "grantId"), id, principal, clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"content": result.Content, "sha256": result.SHA256, "size": result.Size})
 }
 
 // configCreateRequest 是新建配置项的请求体（operator 由认证态派生，不接收手填）。
@@ -233,6 +284,15 @@ func (h *ConfigHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	item, err := h.svc.Get(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if item.Sensitive {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	rev, err := h.svc.GetRevision(id, version)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -284,6 +344,15 @@ func (h *ConfigHandler) Diff(w http.ResponseWriter, r *http.Request) {
 		render.WriteError(w, r, apperr.ErrInvalidParam)
 		return
 	}
+	item, err := h.svc.Get(id)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	if item.Sensitive {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
+		return
+	}
 	fromContent, toContent, err := h.svc.Diff(id, from, to)
 	if err != nil {
 		render.WriteError(w, r, err)
@@ -327,6 +396,10 @@ func (h *ConfigHandler) Effective(w http.ResponseWriter, r *http.Request) {
 	eff, err := h.effSvc.ResolveWithProvenance(ns, serverID, group, q.Get("zone"))
 	if err != nil {
 		render.WriteError(w, r, err)
+		return
+	}
+	if eff.HasSensitive {
+		render.WriteError(w, r, apperr.ErrOperationRequiresApproval)
 		return
 	}
 	items := make([]effectiveConfigItemView, 0, len(eff.Items))

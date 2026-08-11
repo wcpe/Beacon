@@ -37,7 +37,9 @@ Beacon 已有反向抓取、日志尾取、文件浏览、强制重同步、受�
 |---|---|---|
 | `agent.command.reverse_scan` | plugins 清单扫描 | `approval_required` |
 | `agent.command.reverse_submit` | 回传选定文件内容 | `approval_required` |
+| `agent.command.reverse_resolve` | 冲突审核后将抓取结果创建/覆盖到目标层 | `approval_required` |
 | `agent.command.imprint` | 单文件拓印/对照 | `approval_required` |
+| `agent.command.imprint.confirm` | 将已审拓印写入目标覆盖层 | `approval_required` |
 | `agent.command.tail_logs` | 读取脱敏日志环形缓冲 | `approval_required` |
 | `agent.command.fs_browse` | list/tree/file 浏览 | `approval_required` |
 | `agent.command.resync` | BC/Agent 目录或配置强制重同步 | `approval_required` |
@@ -53,7 +55,7 @@ Beacon 已有反向抓取、日志尾取、文件浏览、强制重同步、受�
 | `file.sensitive_content_read` | 标记敏感或命中敏感路径的文件内容 | `approval_required` |
 | `message.payload.read` | 消息 payload | `approval_required` |
 
-在线日志与 Agent 在线文件内容分别以 `agent.command.tail_logs`、`agent.command.fs_browse/reverse_submit/imprint` 作为唯一对外 operation；底层“读取正文”不是第二个审批 operation。对于会返回敏感正文的命令，同一份批准必须同时创建命令/任务与绑定的 grant，正文只凭该 grant 消费，不能先批命令再批内容，也不能只批命令后直接返回正文。
+在线日志与 Agent 在线文件内容分别以 `agent.command.tail_logs`、`agent.command.fs_browse/reverse_submit/imprint` 作为唯一对外 operation；底层“读取正文”不是第二个审批 operation。对于会返回敏感正文的命令，同一份批准必须同时创建命令/任务与绑定的 grant，正文只凭该 grant 消费，不能先批命令再批内容，也不能只批命令后直接返回正文。`reverse_submit` 的一份 grant 一次返回该任务的全部冲突 diff 包（仅冲突路径，绝不含非冲突正文），使多冲突审核不拆成多份审批或多份 grant。
 
 同一 endpoint 若既能列元数据又能返回正文，必须在服务端按规范化输入拆分 operation；客户端传 `includeContent=true`、path、mode 或 body 分支不能继续沿用普通 read 分类。
 
@@ -80,6 +82,8 @@ human 批准后 worker 携 ExecutionPermit 调领域 adapter：
 2. 在事务中创建既有 `agent_command`/领域任务、强审计与 approval receipt，resultRef 指向命令/任务。若该命令会返回敏感正文，同一事务还创建唯一的 pending grant，receipt 使用可解析 commandId + grantId 的类型化领域 resultRef；不得拆成第二份审批。
 3. 提交后才通过既有 SSE/拉取机制唤醒 Agent；不在审批 worker 内等待网络结果。
 4. approval request `succeeded` 表示命令已可靠入队，不代表 Agent 执行成功；真实终态仍读取 resultRef 对应领域状态。
+
+拓印回传进入 `ready` 后，确认写入是另一项危险操作：申请仅冻结命令标识、目标层、已审内容 md5 与脱敏影响，不保存正文；批准 worker 必须在同一事务内重新校验命令仍为 `ready`、正文 md5 与冻结值一致，再写文件版本、命令终态、审计与 receipt。任何公开确认入口不得直接写入。
 
 重复 worker 先查 receipt，不重复下发。Agent 离线、命令冲突或能力不支持属于确定失败或领域任务失败，必须保留批准事实和安全错误摘要。
 

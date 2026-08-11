@@ -20,6 +20,7 @@ func TestReceiveScanRecomputesOverThresholdFromSetting(t *testing.T) {
 	// 把上限设为 2000 字节：>2000 才算超阈值。
 	settings := settingsWith(t, map[string]string{SettingReverseFetchMaxFileBytes: "2000"})
 	svc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo, settings)
+	svc.SetSensitiveAccessGrants(NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(svc)
 
@@ -68,6 +69,7 @@ func TestSubmitRejectsUnconfirmedOverThreshold(t *testing.T) {
 	fileSvc := NewFileService(db, repository.NewFileObjectRepository(db), repository.NewFileRevisionRepository(db), auditRepo)
 	settings := settingsWith(t, map[string]string{SettingReverseFetchMaxFileBytes: "2000"})
 	svc := NewReverseFetchTaskService(db, taskRepo, cmdRepo, fileSvc, auditRepo, settings)
+	svc.SetSensitiveAccessGrants(NewSensitiveAccessGrantService(repository.NewSensitiveAccessGrantRepository(db)))
 	cmdSvc := NewAgentCommandService(db, cmdRepo, fileSvc, auditRepo)
 	cmdSvc.SetSubmitIngestReceiver(svc)
 

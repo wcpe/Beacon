@@ -58,11 +58,13 @@ func (s *AgentLogService) SetNotifier(n CommandNotifier) { s.notifier = n }
 func (s *AgentLogService) SetApprovalService(approval *ApprovalService) { s.approval = approval }
 
 // SetSensitiveAccessGrants 注入日志正文的一次性访问授权服务。
-func (s *AgentLogService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) { s.grants = grants }
+func (s *AgentLogService) SetSensitiveAccessGrants(grants *SensitiveAccessGrantService) {
+	s.grants = grants
+}
 
 // RequestTailLogs 由 admin 触发取某在线实例的自身日志：单活跃限速 → 事务内建 pending tail-logs 命令 + 审计 → 唤醒。
 // 在线校验与 SSE 唤醒触发点在 handler 层（与反向抓取一致）。返回命令（含 id 供查询引用）。
-func (s *AgentLogService) RequestTailLogs(ns, serverID, operator, clientIP string) (*model.AgentCommand, error) {
+func (s *AgentLogService) RequestTailLogs(_, _, _, _ string) (*model.AgentCommand, error) {
 	return nil, apperr.ErrForbidden
 }
 
@@ -100,11 +102,11 @@ func (s *AgentLogService) applyRequestTailLogsInTx(tx *gorm.DB, ns, serverID, op
 		return nil, e
 	}
 	if e := s.auditRepo.WithTx(tx).Create(&model.AuditLog{
-			NamespaceCode: ns,
-			Operator:      operator, Action: model.ActionInstanceTailLogs,
-			TargetType: model.TargetTypeInstance, TargetRef: serverID,
-			Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
-			Result: model.ResultOK, ClientIP: clientIP,
+		NamespaceCode: ns,
+		Operator:      operator, Action: model.ActionInstanceTailLogs,
+		TargetType: model.TargetTypeInstance, TargetRef: serverID,
+		Detail: fmt.Sprintf(`{"commandId":%d,"serverId":%q}`, cmd.ID, serverID),
+		Result: model.ResultOK, ClientIP: clientIP,
 	}); e != nil {
 		return nil, e
 	}

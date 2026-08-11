@@ -64,7 +64,7 @@ func registerS1(t *testing.T, reg *runtime.Registry) {
 func TestFileLifecycle(t *testing.T) {
 	s := newFileStack(t)
 
-	obj, err := s.files.Create(service.CreateFileParams{
+	obj, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Path: "ui-components/main.allin",
 		ScopeLevel: model.ScopeGlobal, Content: "v1\n", Operator: "alice", Comment: "首次",
 	})
@@ -75,7 +75,7 @@ func TestFileLifecycle(t *testing.T) {
 		t.Fatalf("首发版本/ md5 错误：version=%d md5=%s", obj.Version, obj.ContentMD5)
 	}
 
-	pub, err := s.files.Publish(obj.ID, "v2\n", "bob", "改内容", "")
+	pub, err := service.ApplyFilePublishForTest(s.files, obj.ID, "v2\n", "bob", "改内容", "")
 	if err != nil || pub.Version != 2 {
 		t.Fatalf("发布失败 version=%d err=%v", pub.Version, err)
 	}
@@ -85,12 +85,12 @@ func TestFileLifecycle(t *testing.T) {
 		t.Fatalf("历史应有 2 条，实际 %d err=%v", len(revs), err)
 	}
 
-	rb, err := s.files.Rollback(obj.ID, 1, "carol", "回滚", "")
+	rb, err := service.ApplyFileRollbackForTest(s.files, obj.ID, 1, "carol", "回滚", "")
 	if err != nil || rb.Version != 3 || rb.Content != "v1\n" {
 		t.Fatalf("回滚错误 version=%d content=%q err=%v", rb.Version, rb.Content, err)
 	}
 
-	if err := s.files.Delete(obj.ID, "dave", "", ""); err != nil {
+	if err := service.ApplyFileDeleteForTest(s.files, obj.ID, "dave", ""); err != nil {
 		t.Fatalf("软删失败: %v", err)
 	}
 	if _, err := s.files.Get(obj.ID); err != apperr.ErrFileNotFound {
@@ -103,7 +103,7 @@ func TestFileLifecycle(t *testing.T) {
 func TestFileImportCreatesGroupObjects(t *testing.T) {
 	s := newFileStack(t)
 
-	res, err := s.files.Import(service.ImportFilesParams{
+	res, err := service.ApplyFileImportForTest(s.files, service.ImportFilesParams{
 		Namespace: "prod", Group: "bw",
 		Files: []service.ImportFile{
 			{Path: "plugins/Demo/config.yml", Content: "a: 1\n"},
@@ -128,7 +128,7 @@ func TestFileImportCreatesGroupObjects(t *testing.T) {
 	}
 
 	// 二次导入：一个改内容（version+1）、一个新增
-	res2, err := s.files.Import(service.ImportFilesParams{
+	res2, err := service.ApplyFileImportForTest(s.files, service.ImportFilesParams{
 		Namespace: "prod", Group: "bw",
 		Files: []service.ImportFile{
 			{Path: "plugins/Demo/config.yml", Content: "a: 2\n"},
@@ -165,21 +165,21 @@ func TestFileImportRejectsBadInput(t *testing.T) {
 	s := newFileStack(t)
 
 	// 路径穿越
-	if _, err := s.files.Import(service.ImportFilesParams{
+	if _, err := service.ApplyFileImportForTest(s.files, service.ImportFilesParams{
 		Namespace: "prod", Group: "bw", Operator: "a",
 		Files: []service.ImportFile{{Path: "../escape.yml", Content: "x\n"}},
 	}); err != apperr.ErrInvalidPath {
 		t.Fatalf("穿越路径应 INVALID_PATH，实际 %v", err)
 	}
 	// 绝对路径
-	if _, err := s.files.Import(service.ImportFilesParams{
+	if _, err := service.ApplyFileImportForTest(s.files, service.ImportFilesParams{
 		Namespace: "prod", Group: "bw", Operator: "a",
 		Files: []service.ImportFile{{Path: "/etc/passwd", Content: "x\n"}},
 	}); err != apperr.ErrInvalidPath {
 		t.Fatalf("绝对路径应 INVALID_PATH，实际 %v", err)
 	}
 	// 非法目标组（global 组不可作为导入目标）
-	if _, err := s.files.Import(service.ImportFilesParams{
+	if _, err := service.ApplyFileImportForTest(s.files, service.ImportFilesParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Operator: "a",
 		Files: []service.ImportFile{{Path: "a.yml", Content: "x\n"}},
 	}); err != apperr.ErrInvalidScope {
@@ -187,7 +187,7 @@ func TestFileImportRejectsBadInput(t *testing.T) {
 	}
 	// 单文件超限
 	big := make([]byte, service.MaxFileContentBytes+1)
-	if _, err := s.files.Import(service.ImportFilesParams{
+	if _, err := service.ApplyFileImportForTest(s.files, service.ImportFilesParams{
 		Namespace: "prod", Group: "bw", Operator: "a",
 		Files: []service.ImportFile{{Path: "big.bin", Content: string(big)}},
 	}); err != apperr.ErrContentTooLarge {
@@ -208,13 +208,13 @@ func TestFileImportRejectsBadInput(t *testing.T) {
 func TestFileScopeOverride(t *testing.T) {
 	s := newFileStack(t)
 
-	if _, err := s.files.Create(service.CreateFileParams{
+	if _, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Path: "conf.yml",
 		ScopeLevel: model.ScopeGlobal, Content: "global\n", Operator: "a",
 	}); err != nil {
 		t.Fatalf("建 global 失败: %v", err)
 	}
-	if _, err := s.files.Create(service.CreateFileParams{
+	if _, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 		Namespace: "prod", Group: "bw", Path: "conf.yml",
 		ScopeLevel: model.ScopeServer, ScopeTarget: "s1", Content: "server-s1\n", Operator: "a",
 	}); err != nil {
@@ -257,7 +257,7 @@ func TestFileLongPollWakesOnPublish(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond) // 让 waiter 先挂起
-	if _, err := s.files.Create(service.CreateFileParams{
+	if _, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Path: "a.yml",
 		ScopeLevel: model.ScopeGlobal, Content: "x\n", Operator: "a",
 	}); err != nil {
@@ -299,7 +299,7 @@ func TestFilePublishDoesNotWakeConfigPoll(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	if _, err := s.files.Create(service.CreateFileParams{
+	if _, err := service.ApplyFileCreateForTest(s.files, service.CreateFileParams{
 		Namespace: "prod", Group: model.GlobalGroupCode, Path: "only-file.yml",
 		ScopeLevel: model.ScopeGlobal, Content: "x\n", Operator: "a",
 	}); err != nil {

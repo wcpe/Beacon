@@ -216,7 +216,7 @@ func (s *UpdateService) Status() update.Progress {
 //   - 失败原因由核心写入进度态（failApply）+ 审计，前端经状态端点轮询 progress.error（脱敏后）看到，不再静默。
 //
 // Apply 保留兼容入口，但禁止绕过审批直接触发在线更新。
-func (s *UpdateService) Apply(operator, clientIP string) error {
+func (s *UpdateService) Apply(_, _ string) error {
 	return apperr.ErrForbidden
 }
 
@@ -322,7 +322,7 @@ func (s *UpdateService) RollbackAvailable() bool {
 }
 
 // Rollback 保留兼容入口，但禁止绕过审批直接回滚。
-func (s *UpdateService) Rollback(operator, clientIP string) error {
+func (s *UpdateService) Rollback(_, _ string) error {
 	return apperr.ErrForbidden
 }
 

@@ -151,7 +151,7 @@ type ResolveConflictParams struct {
 
 // ResolveAgentIdentityConflict 落实 T13（spec §4.3）：以 keepBootId 为准恢复 active，清冲突态 + 审计；
 // 处置后落败方后续请求持续 409（由注册表 evicted 识别）。非 conflict → 409；keepBootId 不在冲突双方 → 400。
-func (s *V2ControlPlaneService) ResolveAgentIdentityConflict(identityID string, p ResolveConflictParams) (*model.AgentIdentity, error) {
+func (s *V2ControlPlaneService) ResolveAgentIdentityConflict(_ string, _ ResolveConflictParams) (*model.AgentIdentity, error) {
 	return nil, apperr.ErrForbidden
 }
 

@@ -4,8 +4,11 @@ package server_test
 
 import (
 	"net/http"
+	"sync/atomic"
 	"testing"
 )
+
+var reverseFetchRequestSequence atomic.Uint64
 
 // registerOnline 经 agent 注册端点写一个在线实例到内存注册表（供反向抓取在线校验命中）。
 func registerOnline(t *testing.T, baseURL, ns, serverID, group string) {
@@ -28,6 +31,50 @@ func containsFilePath(items any, path string) bool {
 	return false
 }
 
+// createReverseFetchTaskForTest 经审批链创建扫描任务，再读回 worker 已应用的任务视图。
+func createReverseFetchTaskForTest(t *testing.T, ts *integrationTestServer, serverID, group string) map[string]any {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/instances/"+serverID+"/reverse-fetch?namespace=prod", t.Name()+"-reverse-scan-"+serverID+"-"+itoa(int(reverseFetchRequestSequence.Add(1))), map[string]any{
+		"scope": "group", "group": group, "reason": "集成测试反向抓取扫描",
+	})
+	code, tasks := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/reverse-fetch/tasks?namespace=prod&serverId="+serverID+"&status=scanning", nil)
+	if code != http.StatusOK {
+		t.Fatalf("查询已创建反向抓取任务应 200，实际 %d：%v", code, tasks)
+	}
+	items := asSlice(tasks["items"])
+	if len(items) != 1 {
+		t.Fatalf("应有一条 scanning 反向抓取任务，实际 %v", tasks)
+	}
+	task, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("反向抓取任务视图格式错误：%v", items[0])
+	}
+	return task
+}
+
+// submitReverseFetchForTest 经审批链提交选定集，再读回 worker 已下发的任务视图。
+func submitReverseFetchForTest(t *testing.T, ts *integrationTestServer, taskID int, paths []string) map[string]any {
+	t.Helper()
+	requestAndApplyApproval(t, ts, http.MethodPost, "/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/submit", t.Name()+"-reverse-submit-"+itoa(taskID), map[string]any{
+		"selectedPaths": paths, "reason": "集成测试提交反向抓取文件",
+	})
+	code, task := doJSON(t, http.MethodGet, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID), nil)
+	if code != http.StatusOK {
+		t.Fatalf("提交审批执行后读取任务应 200，实际 %d：%v", code, task)
+	}
+	return task
+}
+
+// taskIDFromView 先校验任务详情再取 ID，避免错误响应被断言为 float64 而触发 panic。
+func taskIDFromView(t *testing.T, task map[string]any) int {
+	t.Helper()
+	id, ok := task["id"].(float64)
+	if !ok || id <= 0 {
+		t.Fatalf("反向抓取任务响应缺有效 id：%v", task)
+	}
+	return int(id)
+}
+
 // TestReverseFetchManagedTaskFullChain 受管任务两段式全链路（FR-58，见 ADR-0037）：
 // admin 触发建扫描任务(202, scanning) → agent 拉 scan 命令(mode=scan) → agent 回扫描清单(/files/scan)
 // → 任务 pending-review → admin 提交选定集(202, fetching) → agent 拉 submit 命令(mode=submit, selectedPaths)
@@ -37,17 +84,12 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-1", "area1")
 
-	// admin 触发反向抓取（组级）→ 202 + scanning 任务
-	code, task := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-1/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area1",
-	})
-	if code != http.StatusAccepted {
-		t.Fatalf("触发反向抓取应 202，实际 %d：%v", code, task)
-	}
+	// admin 提审后由 worker 创建扫描任务。
+	task := createReverseFetchTaskForTest(t, ts, "src-1", "area1")
 	if task["status"] != "scanning" {
 		t.Fatalf("任务视图应 status=scanning，实际 %v", task)
 	}
-	taskID := int(task["id"].(float64))
+	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
 
 	// 触发即写一条 file.reverse-fetch-scan 审计
@@ -88,11 +130,9 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	}
 
 	// admin 提交选定集（仅小配置，不含超阈值文件）→ 202 fetching
-	code, submitted := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/submit", map[string]any{
-		"selectedPaths": []string{"plugin-a/config.yml"},
-	})
-	if code != http.StatusAccepted || submitted["status"] != "fetching" {
-		t.Fatalf("提交应 202 fetching，实际 %d：%v", code, submitted)
+	submitted := submitReverseFetchForTest(t, ts, taskID, []string{"plugin-a/config.yml"})
+	if submitted["status"] != "fetching" {
+		t.Fatalf("提交审批执行后应 fetching，实际 %v", submitted)
 	}
 	submitCmdID := int(submitted["submitCommandId"].(float64))
 
@@ -138,21 +178,23 @@ func TestReverseFetchManagedTaskFullChain(t *testing.T) {
 	}
 }
 
-// TestReverseFetchMutex 同实例已有活跃任务再触发 → 409 REVERSE_FETCH_TASK_ACTIVE。
+// TestReverseFetchMutex 同实例已有活跃任务再触发可进入审批，但执行时不得创建第二条活跃任务。
 func TestReverseFetchMutex(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-m", "area1")
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-m/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area1",
-	}); code != http.StatusAccepted {
-		t.Fatalf("首次触发应 202，实际 %d", code)
+	createReverseFetchTaskForTest(t, ts, "src-m", "area1")
+	code, ticket := doJSONWithHeaders(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-m/reverse-fetch?namespace=prod", map[string]any{
+		"scope": "group", "group": "area1", "reason": "集成测试重复扫描",
+	}, map[string]string{"Idempotency-Key": t.Name() + "-reverse-second"})
+	if code != http.StatusAccepted {
+		t.Fatalf("重复反向抓取应先返回审批票据，实际 %d：%v", code, ticket)
 	}
-	code, body := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-m/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area1",
-	})
-	if code != http.StatusConflict || body["code"] != "REVERSE_FETCH_TASK_ACTIVE" {
-		t.Fatalf("已有活跃任务应 409 REVERSE_FETCH_TASK_ACTIVE，实际 %d：%v", code, body)
+	applyApprovalTicket(t, ts, ticket)
+	requestID, _ := ticket["approvalRequestId"].(string)
+	code, detail := doJSON(t, http.MethodGet, ts.URL+"/admin/v2/approval-requests/"+requestID, nil)
+	if code != http.StatusOK || detail["status"] != "failed" {
+		t.Fatalf("第二条反向抓取执行应因单活跃限制失败，实际 %d：%v", code, detail)
 	}
 }
 
@@ -185,7 +227,7 @@ func TestReverseFetchOfflineInstance(t *testing.T) {
 func TestReverseFetchReadonlyForbidden(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.Close()
-	roKey, _ := createKey(t, ts.URL, "ro-rf", "readonly")
+	roKey, _ := createKey(t, ts, "ro-rf", "readonly")
 	code, body := doAPIKey(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-1/reverse-fetch?namespace=prod", roKey, false, map[string]any{
 		"scope": "group", "group": "area1",
 	})
@@ -200,10 +242,8 @@ func TestReverseFetchSubmitIngestRejectsJar(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-2", "area2")
 	// 建任务 → 回扫描清单 → 提交选定 → agent 回传含 jar
-	_, task := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-2/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area2",
-	})
-	taskID := int(task["id"].(float64))
+	task := createReverseFetchTaskForTest(t, ts, "src-2", "area2")
+	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
 	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-2", nil); code != http.StatusOK {
 		t.Fatalf("拉 scan 命令应 200，实际 %d", code)
@@ -212,9 +252,7 @@ func TestReverseFetchSubmitIngestRejectsJar(t *testing.T) {
 		"commandId": scanCmdID,
 		"files":     []map[string]any{{"path": "evil/plugin.yml", "size": 10, "isText": true, "overThreshold": false}},
 	})
-	_, submitted := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/submit", map[string]any{
-		"selectedPaths": []string{"evil/plugin.yml"},
-	})
+	submitted := submitReverseFetchForTest(t, ts, taskID, []string{"evil/plugin.yml"})
 	submitCmdID := int(submitted["submitCommandId"].(float64))
 	if code, _ := doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-2", nil); code != http.StatusOK {
 		t.Fatalf("拉 submit 命令应 200，实际 %d", code)
@@ -242,13 +280,8 @@ func TestReverseFetchScanErrorReport(t *testing.T) {
 	defer ts.Close()
 	registerOnline(t, ts.URL, "prod", "src-e", "area3")
 
-	code0, task := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-e/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area3",
-	})
-	if code0 != http.StatusAccepted {
-		t.Fatalf("建任务应 202，实际 %d：%v", code0, task)
-	}
-	taskID := int(task["id"].(float64))
+	task := createReverseFetchTaskForTest(t, ts, "src-e", "area3")
+	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
 	// 视图含 elapsedSec 字段（派生、≥0）
 	if _, ok := task["elapsedSec"]; !ok {
@@ -288,11 +321,7 @@ func TestReverseFetchScanErrorReport(t *testing.T) {
 	}
 
 	// 互斥解除：同实例可再建任务
-	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-e/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area3",
-	}); code != http.StatusAccepted {
-		t.Fatalf("失败终结后同实例应可再建，实际 %d", code)
-	}
+	createReverseFetchTaskForTest(t, ts, "src-e", "area3")
 }
 
 // TestReverseFetchErrorRejectsMismatch 错误回传幂等守卫（FR-87）：命令不存在 → 404；终态任务回传 → 409。
@@ -310,10 +339,8 @@ func TestReverseFetchErrorRejectsMismatch(t *testing.T) {
 	}
 
 	// 建任务 → 拉 scan 命令 → 取消任务（终态）后再回传错误 → 409 STATE
-	_, task := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/instances/src-em/reverse-fetch?namespace=prod", map[string]any{
-		"scope": "group", "group": "area4",
-	})
-	taskID := int(task["id"].(float64))
+	task := createReverseFetchTaskForTest(t, ts, "src-em", "area4")
+	taskID := taskIDFromView(t, task)
 	scanCmdID := int(task["scanCommandId"].(float64))
 	doJSON(t, http.MethodGet, ts.URL+"/beacon/v1/agent/commands?namespace=prod&serverId=src-em", nil)
 	if code, _ := doJSON(t, http.MethodPost, ts.URL+"/admin/v1/reverse-fetch/tasks/"+itoa(taskID)+"/cancel", nil); code != http.StatusOK {

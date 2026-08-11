@@ -54,6 +54,11 @@ func applySettingUpdateForTest(s *SettingsService, key, value, operator, clientI
 	return nil
 }
 
+// ApplySettingUpdateForTest 仅供外部测试包构造审批已执行后的设置更新，不构成生产旁路。
+func ApplySettingUpdateForTest(s *SettingsService, key, value, operator, clientIP string) error {
+	return applySettingUpdateForTest(s, key, value, operator, clientIP)
+}
+
 // newTestSettingsDB 打开内存 sqlite 并迁移 setting + audit_log（不依赖 MySQL/DSN，单测快路）。
 // 用 t.Name() 作每测试**独立**内存库（cache=shared 让本测试内多连接共享同一私有库）——
 // 不接入全局 file::memory: 共享缓存，避免跨测试共用一个内存库导致事务在 shared-cache 写锁上死锁。
