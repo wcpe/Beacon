@@ -159,7 +159,7 @@ export default function CodeEditor({
     tabCompletion: 'on',
     wordBasedSuggestions: 'off' as const,
     parameterHints: { enabled: true, cycle: true },
-    hover: { enabled: true },
+    hover: { enabled: 'on' },
     links: true,
     mouseWheelZoom: true,
     find: {

@@ -2,6 +2,10 @@ packages:
   - .
   - packages/*
   - apps/*
+overrides:
+  dompurify: 3.4.13
+  nanoid: 3.3.18
+  postcss: 8.5.26
 onlyBuiltDependencies:
   - esbuild
 allowBuilds:
