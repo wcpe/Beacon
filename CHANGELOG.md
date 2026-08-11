@@ -4,6 +4,8 @@
 
 ## 未发布
 
+## 1.1.0（2026-08-12）
+
 ### 新增
 - 稳定业务标识与可变显示名称（FR-205）：六类资源返回 id/code/displayName；code 创建后不可变，displayName 可 PATCH；旧 name 等价于 code，不一致返回 AMBIGUOUS_IDENTIFIER；server displayName 为空时自动回填 serverId。
 - 人类与机器主体及语义能力授权（FR-206）：统一 Principal 映射，旧 full/readonly 兼容；operation descriptor 启动校验 fail-closed；机器主体永远不能审批。
@@ -74,7 +76,7 @@
 - 修复配置时间线 MySQL 集成测试对 RFC3339 时间字符串直接做字典序比较导致的偶发误判；改为解析真实时间后校验倒序，并覆盖同秒不同小数精度碰撞。
 
 ### 已知问题
-- 截至 2026-07-20，仓库尚未创建真实 `v1.0.0-rc.N`、`v1.0.0` tag 或 GitHub Release；在正式 GA tag / Release 实际公开前，任何本地校验、workflow 文件或未发布记录都不代表真实 GA。
+- v1.1.0 发布提交与本地质量门已完成；公开前仍须在同一提交创建 RC/GA 标签、执行跨平台 RC 构建并将 RC 资产原样复制为 GA。
 - `release-check` 只证明格式和 GA workflow 静态约束，不能替代针对真实 tag 与下载资产目录执行 `release-verify-rc` / `release-verify-ga`。
 
 ## 0.30.0（2026-07-17）

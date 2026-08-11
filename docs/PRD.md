@@ -91,7 +91,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-166 | 统一灰度编排引擎（载荷无关）：目标筛选、批次规划、人工推进门、暂停继续、紧急终止、自动熔断 | P9 | 0.29.x | 全量 / 大区 / 小区 / 单服混合筛选；每批生效并人工确认后才放行下一批；失败率或健康恶化超阈值自动暂停；批次进度实时推送 | 已交付@v0.29.1 |
 | FR-167 | 变更单历史与整单回滚：任务、批次、单服状态记录与一键整单回滚 | P9 | 0.29.x | 可按变更单 / 批次 / 服务器查看与回滚；整单回滚 = 文件备份还原 + 配置版本回退 + 重新生效；页面刷新可恢复状态；回滚入审计 | 已交付@v0.29.2 |
 | FR-168 | 交付能力统一权限与审计：配置、预览、变更单、payload 查看统一风险分级 | P9 | 0.29.x | 高风险操作需要权限、原因和二次确认；审计能串起配置编辑、文件预览、变更单发布、生效与回滚 | 已交付@v0.29.2 |
-| FR-169 | RC 与 GA 发布收口：不可变 RC、同 commit 原样复制产品资产并核验 SHA-256 | P10 RC | v1.0.0-rc.N → v1.0.0 | RC 为不可变 prerelease；GA 与最终 RC 指向同一 commit，逐项核验产品资产文件名、大小和 SHA-256，禁止 rebuild；代码与文档已就位，**真实 tag/Release 尚未发生** | 开发中 |
+| FR-169 | RC 与 GA 发布收口：不可变 RC、同 commit 原样复制产品资产并核验 SHA-256 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 发布提交与本地质量门已完成；最终 RC/GA 标签、跨平台资产与 SHA-256 原样复制校验须在同一提交由远端发布工作流完成 | 已交付@v1.1.0（待远端公开） |
 | FR-170 | 「交付」大分类信息架构：与集群、系统并列的导航大域，聚合文件资产、配置中心、变更单与交付历史 | P2 | 0.22.x | 侧栏出现「交付」大分类；文件资产、配置中心、变更单、交付历史页面有明确挂载位；维护态旧入口不回流 | 已交付@v0.22.0 |
 | FR-171 | 生效编排：批次内触发子服重启 / 配置热重载，采集生效结果与观察窗健康数据 | P9 | 0.30.x | 批次可配置生效方式（重启 / 配置热重载 / 仅推送）；`hot_reload` 只触发 V2 配置工件热更，普通文件与 JAR 仅落盘，含 JAR 应选重启；关服后超时未回归判生效失败并计入熔断；观察窗展示健康分、TPS、告警 | 已交付@v0.30.0 |
 | FR-172 | 全量 mock 管理台：`docs/UX.md` 全部页面以演示模式实现并逐页评审拍板 | P2 | 0.22.x | UX.md §2 所有页面在 mock 数据下可点击、可演示；每页过 mockup 评审门并拍板留档；mock 覆盖空态 / 常规 / 超大量 / 异常；只依赖 API 契约草案，不接真后端 | 已交付@v0.22.0 |
@@ -100,49 +100,49 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-175 | UI 博物馆：`@beacon/ui` 提升 `packages/ui`，ui-wiki 提升 `apps/ui-wiki`，控件展示覆盖率门禁 | P1 | 0.21.x | 每个 `@beacon/ui` 导出控件在 ui-wiki 有展示页（覆盖率检查纳入 CI 必过）；新管理台组件一律取自 `packages/ui`，不允许页面内私建通用控件 | 已交付@v0.21.0 |
 | FR-176 | 静态检查最严档三线：TS strictTypeChecked、Go golangci 全量启用档、Kotlin detekt 全规则 | P1 | 0.21.x | `packages/eslint-config` 落 strict-type-checked + stylistic-type-checked 且新台零违例；`.golangci.yml` 改全量启用档（禁用项集中声明并注明原因）后端零违例；detekt 全规则（存量走 baseline）新代码零违例；三线全部进 CI 门禁；`static-analysis.md` 同步并配 ADR | 已交付@v0.21.0 |
 | FR-177 | Q4 并发身份冲突可视化闭环：bootId 交替检测、保留实例 / 解绑处置 | P8 | 0.28.x | 并发双实例（同 identityId 交替 bootId）在冲突窗口内检测转 conflict；resolve-conflict 保留指定实例、落败方持续 409 并指引；冲突双方明细可视化；单向切换（故障换机）不误判 | 已交付@v0.28.0 |
-| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | P8 | 0.28.x | env 增删改、整体替换 env→namespace 映射与审计已落地；页眉 env 过滤已由 FR-213/214 接入服务端权威观测范围与 env→namespace 级联，失效 scope fail-closed、不回退全量 | 已交付（待发版） |
+| FR-178 | env 映射体验：env 增删改与 env→namespace 映射管理台 | P8 | 0.28.x | env 增删改、整体替换 env→namespace 映射与审计已落地；页眉 env 过滤已由 FR-213/214 接入服务端权威观测范围与 env→namespace 级联，失效 scope fail-closed、不回退全量 | 已交付@v1.1.0（待远端公开） |
 | FR-179 | 管理台登录鉴权：登录页、令牌注入、401 处理、登出 | P4 | 0.24.x | 登录页（新 SaaS 设计，过 mockup 评审门）用户名/口令换 `/admin/v1/auth/login` 令牌，存 localStorage 持久；所有 `/admin/*` 带 `Authorization: Bearer`；路由守卫未登录跳登录页并登录后回跳原路径；任意 401 / 令牌过期清令牌跳登录（无自动 refresh）；登出 `/admin/v1/auth/logout` 清令牌；真机浏览器登录后 FR-155 接真页真数据可用、登出回登录页。单 admin 凭据，不含 API-key 登录 / RBAC / 记住我 / 2FA。全站接真页真机可用前置 | 已交付@v0.24.0 |
 | FR-180 | 跨服消息广播寻址（namespace / zone 级 fan-out）与 agent topic 门面复活 | P5 | 0.25.x | `publish` / `subscribe` 原接口真实可用（业务插件零改动）；本 namespace 全部在线服与 zone 级定向 fan-out；可丢语义（只投在线、离线不补、TTL 过期）；广播追踪行含聚合送达 / 失败计数、列表可按广播过滤且不含 payload；跨 namespace 广播拒绝；真机广播场景可用 | 已交付@v0.25.3 |
 | FR-181 | 连接明细与消息链路查询页（/connections、/messages） | P6 | 0.26.x | 两页挂可观测组；查询防护同 spec §4.3（精确 ID 直查，否则 serverId / playerUuid + 时间范围 ≤168h，未满足不发请求给引导空态）；游标分页；「包含归档」冷查询（FR-152）；消息详情含逐跳链路 / 关联消息 / payload 受控查看（原因必填先审计）；四态齐备；mockup 经用户浏览器评审后接真 | 已交付@v0.26.3 |
-| FR-182 | 开发构建与发布准备标准化：PR 只跑质量门，master 全绿后生成 7 天临时产物，发布准备 PR 固定版本与变更说明 | P10 RC | v1.0.0-rc.N → v1.0.0 | 普通提交不创建或移动 dev tag、不创建 prerelease Release；PR 不发布制品；master 必需 CI 全绿后才上传四平台控制面与 Agent Actions Artifact；发布准备 PR 只更新根 VERSION 与 CHANGELOG.md，根 VERSION 是后续通用 RC/GA 版本、tag 与产品资产命名的唯一真源；迁移和兼容说明写入该 CHANGELOG，失败检查不得合并或产生 RC | 开发中 |
-| FR-183 | 通用不可变 RC：所有 SemVer 版本先发布 prerelease 候选 | P10 RC | vX.Y.Z-rc.N | RC 固定一个 commit 和一次构建出的产品资产；候选发布后不可移动、覆盖或补传，资产变化必须切换新的 RC；具体质量检查沿用仓库既有质量门，不要求 P10 专用脚本或 workflow | 开发中 |
-| FR-184 | GA 原样复制：从最终 RC 复制产品资产并创建正式 tag | P10 RC | vX.Y.Z-rc.N → vX.Y.Z | GA 与最终 RC 指向同一 commit；逐项核验产品资产文件名、大小和 SHA-256 后原样复制，禁止 build、repack、重签或替换资产；真实 GA 不再附加 Environment 人工审批，本地验证或本地预备不等于 GA，当前尚未发生真实 RC/GA | 开发中 |
-| FR-185 | 稳定版在线更新收敛与关键链路修复：只自动发现 GA，兼容迁移旧 prerelease 设置并修复检查/进度缺口 | P10 RC | v1.0.0-rc.N → v1.0.0 | 内置更新只消费 stable GA；旧 update.channel=prerelease 自动规范化为 stable，响应 channel 字段保留并固定为 stable；手动检查强制绕缓存；检查不得覆盖下载进度；前端按开关与周期低频轮询，RC 不得进入普通在线更新 | 开发中 |
-| FR-186 | 管理台侧栏图标轨折叠与动画：展开/折叠宽度过渡，折叠后保留图标轨，去掉侧栏底部重复身份 | 对齐中间版 | 0.31.x | 桌面展开约 232px、折叠约 60px 图标轨且有宽度动画；折叠态仅 logo+图标+tooltip 可导航；侧栏底部无操作人块；折叠钮贴侧栏右缘随宽动画；shell 测试绿；真机 Browser 点折叠/展开 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-187 | 管理台双段页眉与身份收敛：对齐 ReClaude 式段 1 指标槽 + 段 2 工具条，身份只在页眉 | 对齐中间版 | 0.31.x | 页眉视觉两段；段 2 左环境过滤（FR-178 不回退）、右搜索/语言/通知 + 用户头像下拉（名/角色/登出）；真鉴权身份仅页眉一处；演示模式仍显 demo 徽标与场景切换；shell/auth 测试绿；真机可登出 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-188 | 全局运维指标条真数据：段 1 固定展示控制面全局态并低频轮询 | 对齐中间版 | 0.31.x | 五项：控制面在线、Agent 在线数、待确认注册、未处理告警、进行中变更单；优先复用现有 list/status API 前端聚合，失败单项「—」不整条崩；15–30s 轮询不风暴；mock 与真机抽查量级不矛盾 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-189 | 小屏抽屉侧栏：窄视口默认隐藏侧栏，汉堡打开抽屉导航 | 对齐中间版 | 0.31.x | `<md` 默认无占位侧栏；打开抽屉可导航，点遮罩或导航后关闭；与桌面图标轨态互不污染；真机或窄视口 Browser 验收 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-190 | 站内开源许可页：侧栏底栏进入 /license 展示 MIT 全文 | 对齐中间版 | 0.31.x | 点底栏「开源许可」进 `/license`；页内 MIT 与版权；标题 `Beacon - 开源许可`；不进主导航 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-191 | 第二段页眉与内容区视觉一体：去横线与半透明底 | 对齐中间版 | 0.31.x | 段 2 无 border-b、无毛玻璃异色底，与内容区同底；段 1 本轮不动 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-192 | 环境选择改为截图式 Dropdown：无底触发器、淡入淡出、右侧类型徽标 | 对齐中间版 | 0.31.x | 替换 Select；切换 env 语义同 FR-178；菜单项左图标右类型徽标；当前项高亮；打开关闭有淡入淡出 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-193 | 页眉全局搜索（命令面板 MVP）：Ctrl/Cmd+K + 导航跳转 | 对齐中间版 | 0.31.x | 页眉搜索可点；Ctrl/Cmd+K 打开面板；至少导航分组可键盘选择并回车跳转；Esc 关闭；真机可用 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-194 | 页眉语言切换骨架：中/英 + localStorage 持久 | 对齐中间版 | 0.31.x | Globe 可选 zh-CN / en；刷新保持；缺键 fallback 不白屏；壳层文案可辨识英文化 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-195 | 页眉通知入口：未处理告警角标 + 下拉摘要与一键处理 | 对齐中间版 | 0.31.x | 铃铛启用；openAlerts>0 角标；下拉最近未处理摘要（健康流转 i18n）；一键确认/已处理；点查看全部进 /alert-events；空态与失败不静默 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-196 | 页眉刷新当前页：仅失效当前路由相关查询 | 对齐中间版 | 0.31.x | 刷新按钮可点；不整页 reload；按当前页 queryKey 重拉；URL/筛选尽量保留；换路由后作用域跟随 | 已交付@v1.0.0-rc（代码合入，待 RC tag） |
-| FR-197 | 管理台视觉打磨：列表健康列收敛、焦点环克制、字体加载稳定、总览页眉补齐、表格/KPI/侧栏/登录细节统一 | 对齐中间版 | 0.31.x | 服务器健康列主信号 ≤2 个，不可调度改弱文案/tooltip；Input/Select/Textarea focus 为 ring-2 且透明度降低；demo 下 Geist 正常加载不被 MSW 误拦；运维总览 PageHeader 有 icon+职责说明；表头弱化+行 hover 更轻；KPI 副文案降一级；侧栏分组标签更清晰；状态墙「未分配」为 off 弱标；登录错误区固定高度不抖；ui-wiki 与 mock 管理台可目视验收 | 开发中 |
-| FR-198 | 管理台交互与超大量性能：主从详情点外部关闭；区服树 huge 默认不展开叶子；选服列表截断；huge 场景可 benchmark | 对齐中间版 | 0.31.x | 列表详情抽屉点外部/Esc 关闭（内层 dialog 不抢关）；健康/待确认 Sheet 无遮罩可点外部关闭；区服树默认仅展开集群+大区，小区叶子默认上限 40 且切 ns 重置展开；服务分析选服列表渲染上限 80；huge 场景区服首屏 DOM 与切 ns 可交互；zones/servers 相关 vitest 绿 | 开发中 |
-| FR-199 | LobbyCluster 权威模型与独立管理台 | P10 RC | v1.0.0-rc.N | 每个 namespace 唯一一个独立 LobbyCluster；大厅成员仅限同 namespace Bukkit 且与大区/小区归属互斥；迁移受 drain 门保护；`/lobby-clusters` 先过 mockup 评审再接真；规格见 [lobby-cluster-authority](specs/lobby-cluster-authority.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
-| FR-200 | BC 全 namespace 受管目录与玩家首次大厅落脚 | P10 RC | v1.0.0-rc.N | BC 注册 namespace 内全部受管后端；玩家首次进入只从 LobbyCluster 复用现有健康/容量调度器选择大厅；不拦截后续业务切服；控制面不可用时按最后有效快照降级；规格见 [bc-namespace-directory-and-lobby-entry](specs/bc-namespace-directory-and-lobby-entry.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
-| FR-201 | BC 受管目录立即重同步 | P10 RC | v1.0.0-rc.N | 支持 namespace 全量与单 BC 重试；仅在线 BC 可执行；重建受管目录与大厅候选快照；命令状态、失败原因和审计可见；规格见 [bc-managed-directory-resync](specs/bc-managed-directory-resync.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
-| FR-202 | BC 受管服务器查询命令 | P10 RC | v1.0.0-rc.N | `/beacon servers [页码]` 分页查询受管目录，`/beacon server <serverId>` 查询单服详情；显示大厅/大区/小区归属、在线、健康、可调度与同步摘要；规格见 [bc-managed-server-query-command](specs/bc-managed-server-query-command.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
-| FR-203 | Agent 极简身份接入与既有绑定兼容迁移 | P10 RC | v1.0.0-rc.N | 新安装本地必填仅 Beacon 地址与 namespace token；namespace 由 token 推导、角色自动识别、serverId 待确认时分配；旧 Agent 自动导入匹配绑定并保持 active；规格见 [agent-minimal-bootstrap-and-identity-migration](specs/agent-minimal-bootstrap-and-identity-migration.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
-| FR-204 | Agent 地址探测、BC 多 listener 与面板覆盖 | P10 RC | v1.0.0-rc.N | Bukkit 保留单地址；BC 上报全部 listener 并保留首个有效地址兼容旧契约；控制面生成探测地址，管理台支持逐 listener 覆盖并展示探测/覆盖/生效来源；规格见 [agent-address-detection-and-proxy-listeners](specs/agent-address-detection-and-proxy-listeners.md) | 已交付@v1.0.0-rc（真实验收通过，待 RC tag） |
-| FR-205 | 稳定业务标识与可变显示名称 | 待排期 | 待排期 | namespace、env、BC 集群、大区、小区与服务器均具备不可修改的业务 code/serverId 和可重复的 displayName；旧技术名称原值冻结迁移；规格见 [stable-business-identifiers-and-display-names](specs/stable-business-identifiers-and-display-names.md) | 已交付（待发版） |
-| FR-206 | 人类与机器主体及语义能力授权 | 待排期 | 待排期 | 登录用户、API key 与 MCP client 统一映射主体；人类可提交并审批自己的请求，所有机器主体在服务层永久禁止审批；规格见 [human-and-machine-principals-and-capability-authorization](specs/human-and-machine-principals-and-capability-authorization.md) | 已交付（待发版） |
-| FR-207 | 危险操作统一审批核心 | 待排期 | 待排期 | 高危操作先形成不可变审批请求，人类“批准并执行”，数据库持久化执行器可靠执行；固定 24 小时过期、全链路留档、失败关闭；规格见 [dangerous-operation-approval-core](specs/dangerous-operation-approval-core.md) | 已交付（待发版） |
-| FR-208 | 身份、凭据、信任与拓扑危险操作适配 | 待排期 | 待排期 | 身份解绑/禁用、凭据与信任授予、拓扑迁移等按后果接入统一审批；撤销信任/凭据、禁用身份等止损动作可直接执行并强审计；规格见 [identity-credential-trust-and-topology-dangerous-operations](specs/identity-credential-trust-and-topology-dangerous-operations.md) | 已交付（待发版） |
-| FR-209 | Agent 命令与敏感内容访问审批 | 待排期 | 待排期 | 任意 Agent 命令、实时日志、文件内容、敏感明文与 payload 访问必须经批准的执行许可，结果与证据完整留档；规格见 [agent-command-and-sensitive-content-approval](specs/agent-command-and-sensitive-content-approval.md) | 已交付（待发版） |
-| FR-210 | 控制面升级、回滚与系统设置审批 | 待排期 | 待排期 | 升级/回滚与高影响设置已接统一审批冻结、资产/备份哈希和设置 CAS；重启对账已实现（reconcileActivatingRestart）；真机完整验收 external-blocked；规格见 [control-plane-upgrade-rollback-and-settings-approval](specs/control-plane-upgrade-rollback-and-settings-approval.md) | 已交付（待发版） |
-| FR-211 | 配置、文件、覆盖集与交付审批适配 | 待排期 | 待排期 | 配置/文件写入、覆盖、删除、投递、灰度与回滚复用既有变更单状态机，通过统一审批内核发放单次执行许可，不发生双重审批；规格见 [config-file-override-set-and-delivery-approval](specs/config-file-override-set-and-delivery-approval.md) | 已交付（待发版） |
-| FR-212 | 全局审批中心 | 待排期 | 待排期 | 顶级 `/approvals` 页面集中查看、筛选、批准并执行、驳回和追溯危险操作；审批中心不受页眉观测筛选影响；规格见 [approval-center](specs/approval-center.md) | 已交付（待发版） |
-| FR-213 | 权威观测范围契约 | 待排期 | 待排期 | env/namespace 观测范围由服务端查询契约权威执行，所有列表、汇总、订阅与导出一致；失效或无权范围失败关闭且不改变写目标；规格见 [authoritative-observation-scope-contract](specs/authoritative-observation-scope-contract.md) | 已交付（待发版） |
-| FR-214 | 页眉 env→namespace 级联筛选 | 待排期 | 待排期 | 页眉先选 env 再选 namespace，可只观测线上或灰度资源；选项、URL 与刷新一致，非法保存范围失败关闭；规格见 [header-env-namespace-cascade-filter](specs/header-env-namespace-cascade-filter.md) | 已交付（待发版） |
-| FR-215 | 服务器归档与恢复 | 待排期 | 待排期 | 服务器可归档并从默认观测/调度移除，保留身份绑定与 BC/小区归属；恢复复用原事实且归档/恢复均按危险操作审批；规格见 [server-archive-and-restore](specs/server-archive-and-restore.md) | 已交付（待发版） |
-| FR-216 | namespace 归档与恢复 | 待排期 | 待排期 | namespace 归档后对整棵子树产生有效停用而不改写子资源自身状态，恢复后按原状态重现；两步均审批并留档；规格见 [namespace-archive-and-restore](specs/namespace-archive-and-restore.md) | 已交付（待发版） |
-| FR-217 | 服务器永久删除与墓碑 | 待排期 | 待排期 | 归档服务器经批准后执行逻辑永久删除，保留不可复用 serverId、审计与历史关联墓碑，不提供冷却期或复活；规格见 [server-permanent-deletion-and-tombstone](specs/server-permanent-deletion-and-tombstone.md) | 已交付（待发版） |
-| FR-218 | namespace 永久删除与子树墓碑 | 待排期 | 待排期 | 归档 namespace 无额外冷却期，经批准后在单次原子操作中墓碑化权威子树；预览完整影响范围，所有业务标识永久不可复用；规格见 [namespace-permanent-deletion-and-tombstone](specs/namespace-permanent-deletion-and-tombstone.md) | 已交付（待发版） |
-| FR-219 | 内置 `/admin/v2/mcp` 与 OAuth Client Credentials | 待排期 | 待排期 | Beacon 进程内提供远程 Streamable HTTP MCP，公网仅经 TLS 反代访问；独立 OAuth 客户端短令牌、受众绑定、撤销/轮换可用；HTTPS 反代 + OAuth + MCP 初始化 + 吊销 + audience 隔离真机验收通过；规格见 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) | 已交付（待发版） |
-| FR-220 | MCP 显式领域工具与审批交接 | 待排期 | 待排期 | MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求但无任何审批工具；规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) | 已交付（待发版） |
+| FR-182 | 开发构建与发布准备标准化：PR 只跑质量门，master 全绿后生成 7 天临时产物，发布准备 PR 固定版本与变更说明 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 根 VERSION、CHANGELOG 与质量门已按发布准备收口；远端 Actions Artifact、跨平台产品资产与公开 Release 仍须在同一提交执行 | 已交付@v1.1.0（待远端公开） |
+| FR-183 | 通用不可变 RC：所有 SemVer 版本先发布 prerelease 候选 | P10 RC | v1.1.0-rc.1 | 发布提交已固定；远端候选标签与不可变资产发布后不得移动、覆盖或补传 | 已交付@v1.1.0（待远端公开） |
+| FR-184 | GA 原样复制：从最终 RC 复制产品资产并创建正式 tag | P10 RC | v1.1.0-rc.1 → v1.1.0 | 远端 GA 须与最终 RC 指向同一提交，并将 RC 资产逐项原样复制后核验；不得 rebuild/repack/替换资产 | 已交付@v1.1.0（待远端公开） |
+| FR-185 | 稳定版在线更新收敛与关键链路修复：只自动发现 GA，兼容迁移旧 prerelease 设置并修复检查/进度缺口 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 内置更新只消费 stable GA；旧 update.channel=prerelease 自动规范化为 stable，响应 channel 字段保留并固定为 stable；手动检查强制绕缓存；检查不得覆盖下载进度；前端按开关与周期低频轮询，RC 不得进入普通在线更新 | 已交付@v1.1.0（待远端公开） |
+| FR-186 | 管理台侧栏图标轨折叠与动画：展开/折叠宽度过渡，折叠后保留图标轨，去掉侧栏底部重复身份 | 对齐中间版 | 0.31.x | 桌面展开约 232px、折叠约 60px 图标轨且有宽度动画；折叠态仅 logo+图标+tooltip 可导航；侧栏底部无操作人块；折叠钮贴侧栏右缘随宽动画；shell 测试绿；真机 Browser 点折叠/展开 | 已交付@v1.1.0（待远端公开） |
+| FR-187 | 管理台双段页眉与身份收敛：对齐 ReClaude 式段 1 指标槽 + 段 2 工具条，身份只在页眉 | 对齐中间版 | 0.31.x | 页眉视觉两段；段 2 左环境过滤（FR-178 不回退）、右搜索/语言/通知 + 用户头像下拉（名/角色/登出）；真鉴权身份仅页眉一处；演示模式仍显 demo 徽标与场景切换；shell/auth 测试绿；真机可登出 | 已交付@v1.1.0（待远端公开） |
+| FR-188 | 全局运维指标条真数据：段 1 固定展示控制面全局态并低频轮询 | 对齐中间版 | 0.31.x | 五项：控制面在线、Agent 在线数、待确认注册、未处理告警、进行中变更单；优先复用现有 list/status API 前端聚合，失败单项「—」不整条崩；15–30s 轮询不风暴；mock 与真机抽查量级不矛盾 | 已交付@v1.1.0（待远端公开） |
+| FR-189 | 小屏抽屉侧栏：窄视口默认隐藏侧栏，汉堡打开抽屉导航 | 对齐中间版 | 0.31.x | `<md` 默认无占位侧栏；打开抽屉可导航，点遮罩或导航后关闭；与桌面图标轨态互不污染；真机或窄视口 Browser 验收 | 已交付@v1.1.0（待远端公开） |
+| FR-190 | 站内开源许可页：侧栏底栏进入 /license 展示 MIT 全文 | 对齐中间版 | 0.31.x | 点底栏「开源许可」进 `/license`；页内 MIT 与版权；标题 `Beacon - 开源许可`；不进主导航 | 已交付@v1.1.0（待远端公开） |
+| FR-191 | 第二段页眉与内容区视觉一体：去横线与半透明底 | 对齐中间版 | 0.31.x | 段 2 无 border-b、无毛玻璃异色底，与内容区同底；段 1 本轮不动 | 已交付@v1.1.0（待远端公开） |
+| FR-192 | 环境选择改为截图式 Dropdown：无底触发器、淡入淡出、右侧类型徽标 | 对齐中间版 | 0.31.x | 替换 Select；切换 env 语义同 FR-178；菜单项左图标右类型徽标；当前项高亮；打开关闭有淡入淡出 | 已交付@v1.1.0（待远端公开） |
+| FR-193 | 页眉全局搜索（命令面板 MVP）：Ctrl/Cmd+K + 导航跳转 | 对齐中间版 | 0.31.x | 页眉搜索可点；Ctrl/Cmd+K 打开面板；至少导航分组可键盘选择并回车跳转；Esc 关闭；真机可用 | 已交付@v1.1.0（待远端公开） |
+| FR-194 | 页眉语言切换骨架：中/英 + localStorage 持久 | 对齐中间版 | 0.31.x | Globe 可选 zh-CN / en；刷新保持；缺键 fallback 不白屏；壳层文案可辨识英文化 | 已交付@v1.1.0（待远端公开） |
+| FR-195 | 页眉通知入口：未处理告警角标 + 下拉摘要与一键处理 | 对齐中间版 | 0.31.x | 铃铛启用；openAlerts>0 角标；下拉最近未处理摘要（健康流转 i18n）；一键确认/已处理；点查看全部进 /alert-events；空态与失败不静默 | 已交付@v1.1.0（待远端公开） |
+| FR-196 | 页眉刷新当前页：仅失效当前路由相关查询 | 对齐中间版 | 0.31.x | 刷新按钮可点；不整页 reload；按当前页 queryKey 重拉；URL/筛选尽量保留；换路由后作用域跟随 | 已交付@v1.1.0（待远端公开） |
+| FR-197 | 管理台视觉打磨：列表健康列收敛、焦点环克制、字体加载稳定、总览页眉补齐、表格/KPI/侧栏/登录细节统一 | 对齐中间版 | 0.31.x | 服务器健康列主信号 ≤2 个，不可调度改弱文案/tooltip；Input/Select/Textarea focus 为 ring-2 且透明度降低；demo 下 Geist 正常加载不被 MSW 误拦；运维总览 PageHeader 有 icon+职责说明；表头弱化+行 hover 更轻；KPI 副文案降一级；侧栏分组标签更清晰；状态墙「未分配」为 off 弱标；登录错误区固定高度不抖；ui-wiki 与 mock 管理台可目视验收 | 已交付@v1.1.0（待远端公开） |
+| FR-198 | 管理台交互与超大量性能：主从详情点外部关闭；区服树 huge 默认不展开叶子；选服列表截断；huge 场景可 benchmark | 对齐中间版 | 0.31.x | 列表详情抽屉点外部/Esc 关闭（内层 dialog 不抢关）；健康/待确认 Sheet 无遮罩可点外部关闭；区服树默认仅展开集群+大区，小区叶子默认上限 40 且切 ns 重置展开；服务分析选服列表渲染上限 80；huge 场景区服首屏 DOM 与切 ns 可交互；zones/servers 相关 vitest 绿 | 已交付@v1.1.0（待远端公开） |
+| FR-199 | LobbyCluster 权威模型与独立管理台 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 每个 namespace 唯一一个独立 LobbyCluster；大厅成员仅限同 namespace Bukkit 且与大区/小区归属互斥；迁移受 drain 门保护；`/lobby-clusters` 先过 mockup 评审再接真；规格见 [lobby-cluster-authority](specs/lobby-cluster-authority.md) | 已交付@v1.1.0（待远端公开） |
+| FR-200 | BC 全 namespace 受管目录与玩家首次大厅落脚 | P10 RC | v1.1.0-rc.1 → v1.1.0 | BC 注册 namespace 内全部受管后端；玩家首次进入只从 LobbyCluster 复用现有健康/容量调度器选择大厅；不拦截后续业务切服；控制面不可用时按最后有效快照降级；规格见 [bc-namespace-directory-and-lobby-entry](specs/bc-namespace-directory-and-lobby-entry.md) | 已交付@v1.1.0（待远端公开） |
+| FR-201 | BC 受管目录立即重同步 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 支持 namespace 全量与单 BC 重试；仅在线 BC 可执行；重建受管目录与大厅候选快照；命令状态、失败原因和审计可见；规格见 [bc-managed-directory-resync](specs/bc-managed-directory-resync.md) | 已交付@v1.1.0（待远端公开） |
+| FR-202 | BC 受管服务器查询命令 | P10 RC | v1.1.0-rc.1 → v1.1.0 | `/beacon servers [页码]` 分页查询受管目录，`/beacon server <serverId>` 查询单服详情；显示大厅/大区/小区归属、在线、健康、可调度与同步摘要；规格见 [bc-managed-server-query-command](specs/bc-managed-server-query-command.md) | 已交付@v1.1.0（待远端公开） |
+| FR-203 | Agent 极简身份接入与既有绑定兼容迁移 | P10 RC | v1.1.0-rc.1 → v1.1.0 | 新安装本地必填仅 Beacon 地址与 namespace token；namespace 由 token 推导、角色自动识别、serverId 待确认时分配；旧 Agent 自动导入匹配绑定并保持 active；规格见 [agent-minimal-bootstrap-and-identity-migration](specs/agent-minimal-bootstrap-and-identity-migration.md) | 已交付@v1.1.0（待远端公开） |
+| FR-204 | Agent 地址探测、BC 多 listener 与面板覆盖 | P10 RC | v1.1.0-rc.1 → v1.1.0 | Bukkit 保留单地址；BC 上报全部 listener 并保留首个有效地址兼容旧契约；控制面生成探测地址，管理台支持逐 listener 覆盖并展示探测/覆盖/生效来源；规格见 [agent-address-detection-and-proxy-listeners](specs/agent-address-detection-and-proxy-listeners.md) | 已交付@v1.1.0（待远端公开） |
+| FR-205 | 稳定业务标识与可变显示名称 | 待排期 | 待排期 | namespace、env、BC 集群、大区、小区与服务器均具备不可修改的业务 code/serverId 和可重复的 displayName；旧技术名称原值冻结迁移；规格见 [stable-business-identifiers-and-display-names](specs/stable-business-identifiers-and-display-names.md) | 已交付@v1.1.0（待远端公开） |
+| FR-206 | 人类与机器主体及语义能力授权 | 待排期 | 待排期 | 登录用户、API key 与 MCP client 统一映射主体；人类可提交并审批自己的请求，所有机器主体在服务层永久禁止审批；规格见 [human-and-machine-principals-and-capability-authorization](specs/human-and-machine-principals-and-capability-authorization.md) | 已交付@v1.1.0（待远端公开） |
+| FR-207 | 危险操作统一审批核心 | 待排期 | 待排期 | 高危操作先形成不可变审批请求，人类“批准并执行”，数据库持久化执行器可靠执行；固定 24 小时过期、全链路留档、失败关闭；规格见 [dangerous-operation-approval-core](specs/dangerous-operation-approval-core.md) | 已交付@v1.1.0（待远端公开） |
+| FR-208 | 身份、凭据、信任与拓扑危险操作适配 | 待排期 | 待排期 | 身份解绑/禁用、凭据与信任授予、拓扑迁移等按后果接入统一审批；撤销信任/凭据、禁用身份等止损动作可直接执行并强审计；规格见 [identity-credential-trust-and-topology-dangerous-operations](specs/identity-credential-trust-and-topology-dangerous-operations.md) | 已交付@v1.1.0（待远端公开） |
+| FR-209 | Agent 命令与敏感内容访问审批 | 待排期 | 待排期 | 任意 Agent 命令、实时日志、文件内容、敏感明文与 payload 访问必须经批准的执行许可，结果与证据完整留档；规格见 [agent-command-and-sensitive-content-approval](specs/agent-command-and-sensitive-content-approval.md) | 已交付@v1.1.0（待远端公开） |
+| FR-210 | 控制面升级、回滚与系统设置审批 | 待排期 | 待排期 | 升级/回滚与高影响设置已接统一审批冻结、资产/备份哈希和设置 CAS；重启对账已实现（reconcileActivatingRestart）；真机完整验收 external-blocked；规格见 [control-plane-upgrade-rollback-and-settings-approval](specs/control-plane-upgrade-rollback-and-settings-approval.md) | 已交付@v1.1.0（待远端公开） |
+| FR-211 | 配置、文件、覆盖集与交付审批适配 | 待排期 | 待排期 | 配置/文件写入、覆盖、删除、投递、灰度与回滚复用既有变更单状态机，通过统一审批内核发放单次执行许可，不发生双重审批；规格见 [config-file-override-set-and-delivery-approval](specs/config-file-override-set-and-delivery-approval.md) | 已交付@v1.1.0（待远端公开） |
+| FR-212 | 全局审批中心 | 待排期 | 待排期 | 顶级 `/approvals` 页面集中查看、筛选、批准并执行、驳回和追溯危险操作；审批中心不受页眉观测筛选影响；规格见 [approval-center](specs/approval-center.md) | 已交付@v1.1.0（待远端公开） |
+| FR-213 | 权威观测范围契约 | 待排期 | 待排期 | env/namespace 观测范围由服务端查询契约权威执行，所有列表、汇总、订阅与导出一致；失效或无权范围失败关闭且不改变写目标；规格见 [authoritative-observation-scope-contract](specs/authoritative-observation-scope-contract.md) | 已交付@v1.1.0（待远端公开） |
+| FR-214 | 页眉 env→namespace 级联筛选 | 待排期 | 待排期 | 页眉先选 env 再选 namespace，可只观测线上或灰度资源；选项、URL 与刷新一致，非法保存范围失败关闭；规格见 [header-env-namespace-cascade-filter](specs/header-env-namespace-cascade-filter.md) | 已交付@v1.1.0（待远端公开） |
+| FR-215 | 服务器归档与恢复 | 待排期 | 待排期 | 服务器可归档并从默认观测/调度移除，保留身份绑定与 BC/小区归属；恢复复用原事实且归档/恢复均按危险操作审批；规格见 [server-archive-and-restore](specs/server-archive-and-restore.md) | 已交付@v1.1.0（待远端公开） |
+| FR-216 | namespace 归档与恢复 | 待排期 | 待排期 | namespace 归档后对整棵子树产生有效停用而不改写子资源自身状态，恢复后按原状态重现；两步均审批并留档；规格见 [namespace-archive-and-restore](specs/namespace-archive-and-restore.md) | 已交付@v1.1.0（待远端公开） |
+| FR-217 | 服务器永久删除与墓碑 | 待排期 | 待排期 | 归档服务器经批准后执行逻辑永久删除，保留不可复用 serverId、审计与历史关联墓碑，不提供冷却期或复活；规格见 [server-permanent-deletion-and-tombstone](specs/server-permanent-deletion-and-tombstone.md) | 已交付@v1.1.0（待远端公开） |
+| FR-218 | namespace 永久删除与子树墓碑 | 待排期 | 待排期 | 归档 namespace 无额外冷却期，经批准后在单次原子操作中墓碑化权威子树；预览完整影响范围，所有业务标识永久不可复用；规格见 [namespace-permanent-deletion-and-tombstone](specs/namespace-permanent-deletion-and-tombstone.md) | 已交付@v1.1.0（待远端公开） |
+| FR-219 | 内置 `/admin/v2/mcp` 与 OAuth Client Credentials | 待排期 | 待排期 | Beacon 进程内提供远程 Streamable HTTP MCP，公网仅经 TLS 反代访问；独立 OAuth 客户端短令牌、受众绑定、撤销/轮换可用；HTTPS 反代 + OAuth + MCP 初始化 + 吊销 + audience 隔离真机验收通过；规格见 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) | 已交付@v1.1.0（待远端公开） |
+| FR-220 | MCP 显式领域工具与审批交接 | 待排期 | 待排期 | MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求但无任何审批工具；规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) | 已交付@v1.1.0（待远端公开） |
 
 ## 5. 非功能需求（NFR）
 
@@ -169,9 +169,9 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | P7 | 0.27.x | 配置中心 V2 权威模型、编辑校验、版本管理接真完成 |
 | P8 | 0.28.x | 文件资产 V2 资产索引、内容预览与安全审计接真完成；同期收编 P3 延后项 Q4 身份冲突可视化闭环（FR-177）与 env 映射体验（FR-178） |
 | P9 | 0.29.x → v0.30.0 | 交付编排 V2 变更单、数据面、灰度生效编排、整单回滚与统一审计接真完成；v0.30.0 完成 FR-171 配置热重载发布验收并收口 P9 |
-| 对齐中间版 | 0.31.x | 1.0.0 前管理台壳层完整修复与对齐：侧栏图标轨折叠动画（FR-186）、双段页眉与身份收敛（FR-187）、全局运维指标真数据（FR-188）、小屏抽屉（FR-189）、页眉搜索/语言/通知/刷新（FR-193～196）以及 FR-178 的环境筛选交互已合入；壳层代码待打 `v1.0.0-rc.N`，但 FR-178 的权威观测范围尚未收口，必须由 FR-213/214 完成服务端范围与 env→namespace 级联后另行验收；规格见 `docs/specs/admin-shell-redesign-0.31.md` |
-| P10 RC | v1.0.0-rc.N | 根 `VERSION=1.0.0`；完成 FR-199～204 的大厅落脚、BC 运维与 Agent 极简接入闭环；发布不可变 prerelease 候选，固定 commit 与产品资产；失败或资产变化切换新 RC；**在真实 tag/Release 公开前不得宣称已发布** |
-| GA | v1.0.0 | 从最终 RC 同 commit 原样复制产品资产，逐项核验文件名、大小和 SHA-256，禁止 rebuild/repack/替换资产；本地验证或本地预备不等于 GA；正式稳定版继续严格 SemVer |
+| 对齐中间版 | 0.31.x | 管理台壳层、FR-178 权威观测范围和 FR-213/214 级联已随 v1.1.0 本地发布验证收口；规格见 `docs/specs/admin-shell-redesign-0.31.md` |
+| P10 RC | v1.1.0-rc.1 | 根 `VERSION=1.1.0`；FR-199～204 的大厅落脚、BC 运维与 Agent 极简接入闭环已完成；待远端工作流创建候选标签与不可变产品资产，候选公开后不得移动或覆盖 |
+| GA | v1.1.0 | 待远端从最终 RC 同提交原样复制产品资产并逐项核验文件名、大小和 SHA-256；禁止 rebuild/repack/替换资产 |
 
 ### 6.1 P10 RC 新增能力验收
 
