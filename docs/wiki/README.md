@@ -13,6 +13,7 @@
 | 主题 | 阅读文档 | 覆盖能力 |
 | --- | --- | --- |
 | 配置、文件与交付 | [配置、文件与交付](configuration-and-delivery.md) | 有效配置、受管文件、配置版本、变更单、Agent 拉取与回退。 |
+| 审批、生命周期与自动化 | [审批、生命周期与 MCP](approval-lifecycle-and-mcp.md) | 审批中心、归档/恢复/墓碑、一次性敏感正文授权和 MCP OAuth 客户端。 |
 | Agent 本地可选项 | [Bukkit/Paper 全量配置](bukkit-agent-full-config.md) / [BC/Bungee 全量配置](bc-agent-full-config.md) | 最小引导外的本地运行参数、默认值与安全边界。 |
 | 拓扑与玩家首连 | [全局大厅与 BC 接入操作手册](global-lobby-operations.md) | namespace、BCCluster、Region、Zone、LobbyCluster、多 listener 与首连落点。 |
 | 健康、命令与审计 | [可观测与日常运维](observability-and-operations.md) | 健康状态、告警、BC 查询/目录命令、重同步、审计与调度判断。 |

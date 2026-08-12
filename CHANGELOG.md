@@ -7,6 +7,7 @@
 ## 1.1.0（2026-08-12）
 
 ### 新增
+- 更新 README 与使用 Wiki：明确公开 GA 和待公开发布基线的边界，并补齐统一审批、资源生命周期、敏感正文授权与 MCP 自动化的运维入口。
 - 稳定业务标识与可变显示名称（FR-205）：六类资源返回 id/code/displayName；code 创建后不可变，displayName 可 PATCH；旧 name 等价于 code，不一致返回 AMBIGUOUS_IDENTIFIER；server displayName 为空时自动回填 serverId。
 - 人类与机器主体及语义能力授权（FR-206）：统一 Principal 映射，旧 full/readonly 兼容；operation descriptor 启动校验 fail-closed；机器主体永远不能审批。
 - 危险操作统一审批核心（FR-207）：不可修改冻结申请 + 统一状态机；只有 human 能批准/拒绝；24h 只约束 pending；CAS pending+version → executing；Idempotency-Key 重放保护；worker 内存信号 + DB 轮询兜底；ExecutionPermit 不可伪造。

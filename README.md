@@ -3,7 +3,7 @@
 > 面向 Minecraft 多群组服务器的集群调度中间件控制面  
 > 区服治理 · 健康调度 · 跨服消息 · 可观测审计 · 配置与交付
 
-[![version](https://img.shields.io/badge/version-1.0.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-1.1.0-blue)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
 [![CI](https://github.com/wcpe/Beacon/actions/workflows/ci.yml/badge.svg)](https://github.com/wcpe/Beacon/actions/workflows/ci.yml)
@@ -12,7 +12,7 @@ Beacon 把多个 **BungeeCord / Velocity 代理** 与 **Bukkit / Paper 子服** 
 
 **控制面挂 ≠ 数据面挂**：Agent 持本地快照 fail-static，控制面不可用时按快照继续跑，不阻断玩家进服。
 
-> **发布状态**：当前变更仍处于未发布的 RC 收口阶段；正式 GA 以实际创建的 GitHub Release `vX.Y.Z` 为准。在线更新只消费严格 `vX.Y.Z` GA。
+> **发布状态**：当前公开 GA 为 GitHub Release `v1.0.0`；`1.1.0` 已完成本地验收与发布基线固定，仍待远端 RC/GA 工作流创建不可变资产。正式 GA 以实际创建的 GitHub Release `vX.Y.Z` 为准；在线更新只消费严格 `vX.Y.Z` GA。
 
 ---
 
@@ -70,6 +70,8 @@ pnpm --filter @beacon/ui-wiki dev
 - **配置与交付 V2** — 作用域配置、文件资产、变更单灰度、热重载 / 重启生效、整单回滚  
 - **热冷数据** — 近期热库；过期归档与冷查询；清理前必归档  
 - **在线自更新（GA only）** — 单二进制自我替换；只发现正式 GA，不把 RC 当自动更新源  
+- **统一审批与受控正文** — 高风险写入由审批 worker 与执行回执同事务完成；敏感配置、文件、反向抓取和命令结果使用一次性授权读取
+- **资源生命周期与 MCP 自动化** — 归档、恢复、墓碑化均保留影响预览与审批轨迹；MCP 以 OAuth 客户端身份、最小权限和审批交接运行
 
 ---
 
@@ -116,8 +118,8 @@ docker compose up -d      # 单 Beacon 容器 + SQLite 持久卷
 ```kotlin
 repositories { mavenLocal() /* 或贵方私有仓库 */ }
 dependencies {
-    compileOnly("top.wcpe.beacon:beacon-agent-api:1.0.0")
-    compileOnly("top.wcpe.beacon:beacon-agent-kit:1.0.0")
+    compileOnly("top.wcpe.beacon:beacon-agent-api:<GA_VERSION>")
+    compileOnly("top.wcpe.beacon:beacon-agent-kit:<GA_VERSION>")
 }
 ```
 

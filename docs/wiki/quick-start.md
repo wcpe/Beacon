@@ -73,8 +73,8 @@ beacon:
 
 1. 启动 Paper/Bukkit 服务。
 2. 在管理台的“服务器 → 待确认”中找到新身份。
-3. 核对它是 backend 角色以及上报的监听事实，再为它分配唯一 `serverId` 并批准。
-4. 等待身份从 `pending` 变为 `active`。
+3. 核对它是 backend 角色以及上报的监听事实，填写审批原因并申请分配唯一 `serverId`。
+4. 在审批中心由另一位 human 批准，等待 worker 执行后身份从 `pending` 变为 `active`。
 
 首次批准可以先保持该服务未分配到 Region/Zone；这足以验证身份闭环。要让它参与
 业务小区调度，后续必须在控制面创建拓扑后再分配，不要把区服关系写回 Agent
