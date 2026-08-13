@@ -63,6 +63,7 @@ export default function ApiKeysPage() {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [createdApprovalRequestId, setCreatedApprovalRequestId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null)
   const [plaintext, setPlaintext] = useState<PlaintextView | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -76,11 +77,11 @@ export default function ApiKeysPage() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['api-keys'] })
 
   const createMutation = useMutation({
-    mutationFn: (body: CreateApiKeyBody) => createApiKey(body),
-    onSuccess: async (created) => {
+    mutationFn: (body: CreateApiKeyBody) => createApiKey(body, crypto.randomUUID()),
+    onSuccess: async (ticket) => {
       await invalidate()
       setCreateOpen(false)
-      setPlaintext({ title: t('system.apiKeys.plaintextTitle'), plaintext: created.key })
+      setCreatedApprovalRequestId(ticket.approvalRequestId)
     },
     onError: (error) => {
       setCreateError(messageOf(error))
@@ -245,6 +246,15 @@ export default function ApiKeysPage() {
           setSelectedId(null)
         }}
       />
+
+      {createdApprovalRequestId !== null && (
+        <p className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-ink-2">
+          {t('system.apiKeys.approvalSubmitted')}{' '}
+          <a className="font-medium text-brand underline" href={`/approvals?requestId=${encodeURIComponent(createdApprovalRequestId)}`}>
+            {t('system.apiKeys.viewApproval')}
+          </a>
+        </p>
+      )}
 
       <CreateDialog
         open={createOpen}

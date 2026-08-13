@@ -81,11 +81,18 @@ export interface CreateApiKeyBody {
   name: string
   role: 'full' | 'readonly'
   expiresAt?: string
+  reason: string
 }
 
-/** 创建密钥：响应含一次性明文 key（仅此一次可见）。 */
-export function createApiKey(body: CreateApiKeyBody): Promise<ApiKeyItem & { key: string }> {
-  return request('POST', '/admin/v1/api-keys', body)
+export interface ApiKeyApprovalTicket {
+  approvalRequestId: string
+  status: string
+  operationKey: string
+}
+
+/** 创建密钥只提交审批申请；明文只能在审批成功后由原申请人一次性领取。 */
+export function createApiKey(body: CreateApiKeyBody, idempotencyKey: string): Promise<ApiKeyApprovalTicket> {
+  return request('POST', '/admin/v1/api-keys', body, { headers: { 'Idempotency-Key': idempotencyKey } })
 }
 
 export function revokeApiKey(id: number): Promise<{ ok: boolean }> {

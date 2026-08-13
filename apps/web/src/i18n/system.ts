@@ -374,8 +374,12 @@ export const system = {
     roleLabel: '角色',
     expiresLabel: '过期时间（可选）',
     expiresHint: '留空表示永不过期',
+    reasonLabel: '审批原因',
+    reasonPlaceholder: '说明创建该密钥的业务用途',
     createConfirm: '创建',
     creating: '创建中…',
+    approvalSubmitted: 'API 密钥审批申请已创建，审批执行完成后可由原申请人一次性领取明文。',
+    viewApproval: '前往审批中心查看进度',
     // 一次性明文
     plaintextTitle: '密钥已创建',
     plaintextDesc: '这是唯一一次显示明文密钥，请立即复制妥善保存，关闭后无法再次查看。',

@@ -43,7 +43,7 @@ test('下钻入口可达：dashboard 调度概览 → 服务分析，调度决�
   await expect(page.getByRole('tab', { name: '调度决策' })).toHaveAttribute('aria-selected', 'true')
   // 筛选控件齐备（时间窗必选默认近 1h）
   await expect(page.getByLabel('时间范围')).toBeVisible()
-  await expect(page.getByLabel('搜索 serverId（发起方或选中）')).toBeVisible()
+  await expect(page.getByLabel('搜索服务器 ID（发起方或选中）')).toBeVisible()
   // 列表：空态文案 或 真数据（原因摘要列表头随表渲染常驻）
   await expect(
     page.getByText('当前时间窗与筛选条件下无调度决策').or(page.getByText('原因摘要')).first(),

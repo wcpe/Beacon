@@ -18,6 +18,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Textarea,
 } from '@beacon/ui'
 
 import type { CreateApiKeyBody } from '../../api/system'
@@ -35,6 +36,7 @@ export default function CreateDialog({ open, onOpenChange, pending, errorText, o
   const [name, setName] = useState('')
   const [role, setRole] = useState<'full' | 'readonly'>('readonly')
   const [expiresAt, setExpiresAt] = useState('')
+  const [reason, setReason] = useState('')
 
   // 每次打开清空草稿
   useEffect(() => {
@@ -42,10 +44,11 @@ export default function CreateDialog({ open, onOpenChange, pending, errorText, o
       setName('')
       setRole('readonly')
       setExpiresAt('')
+      setReason('')
     }
   }, [open])
 
-  const canSubmit = name.trim() !== '' && !pending
+  const canSubmit = name.trim() !== '' && reason.trim() !== '' && !pending
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -95,6 +98,18 @@ export default function CreateDialog({ open, onOpenChange, pending, errorText, o
             />
             <p className="text-xs text-muted-foreground">{t('system.apiKeys.expiresHint')}</p>
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="api-key-reason">{t('system.apiKeys.reasonLabel')}</Label>
+            <Textarea
+              id="api-key-reason"
+              value={reason}
+              onChange={(e) => {
+                setReason(e.target.value)
+              }}
+              placeholder={t('system.apiKeys.reasonPlaceholder')}
+              rows={2}
+            />
+          </div>
           {errorText && <p className="text-sm text-destructive">{errorText}</p>}
         </div>
         <DialogFooter>
@@ -105,6 +120,7 @@ export default function CreateDialog({ open, onOpenChange, pending, errorText, o
                 name: name.trim(),
                 role,
                 expiresAt: expiresAt === '' ? undefined : new Date(expiresAt).toISOString(),
+                reason: reason.trim(),
               })
             }}
           >

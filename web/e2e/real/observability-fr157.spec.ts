@@ -136,7 +136,7 @@ test('互跳链真点击：审计详情 → 命令观测，serverId 筛选按 UR
   await expect(page.getByRole('heading', { name: '命令观测', exact: true })).toBeVisible()
 
   // 落位页 serverId 筛选以 URL 参数初始化（FR-157 贯通核心断言）
-  await expect(page.getByLabel('搜索 serverId')).toHaveValue(nsName)
+  await expect(page.getByLabel('搜索服务器 ID')).toHaveValue(nsName)
   // 该 serverId 无命令 → 历史列表空态（服务端过滤确被驱动）
   await expect(page.getByText('当前筛选条件下无命令记录')).toBeVisible()
 })

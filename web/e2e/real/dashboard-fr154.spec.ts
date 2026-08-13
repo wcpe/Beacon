@@ -39,7 +39,7 @@ test('运维总览：健康 / 状态墙 / 调度概览打真端点渲染，真�
   await expect(page.getByText('服务器状态墙')).toBeVisible()
   await expect(page.getByText('玩家流 / 连接流')).toBeVisible()
   await expect(page.getByText('告警概览')).toBeVisible()
-  await expect(page.getByText('调度概览')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '调度概览', exact: true })).toBeVisible()
 
   // FlowOverview：连接流端点已交付 → 空态文案 或 图例（库里有无连接数据均可）
   await expect(

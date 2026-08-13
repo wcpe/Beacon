@@ -380,8 +380,13 @@ export const system = {
     roleLabel: 'Role',
     expiresLabel: 'Expires at (optional)',
     expiresHint: 'Leave empty for no expiry',
+    reasonLabel: 'Approval reason',
+    reasonPlaceholder: 'Explain the business purpose for this key',
     createConfirm: 'Create',
     creating: 'Creating…',
+    approvalSubmitted:
+      'The API key approval request was created. After execution, only the original requester can redeem the plaintext once.',
+    viewApproval: 'View progress in Approval Center',
     // One-time plaintext
     plaintextTitle: 'Key created',
     plaintextDesc:

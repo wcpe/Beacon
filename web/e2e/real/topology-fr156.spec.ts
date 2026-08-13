@@ -49,7 +49,7 @@ test('拓扑页：可视化 / 数据剖析两模式打真端点渲染，真数�
   await page.getByRole('tab', { name: '数据剖析' }).click()
   await expect(page.getByText('消息异常链路')).toBeVisible()
   await expect(
-    page.getByText('当前无跨服消息链路').or(page.getByText('源服务器')).first(),
+    page.getByText('当前无点对点跨服消息链路').or(page.getByText('源服务器')).first(),
   ).toBeVisible()
 
   // 全页不得出现「加载失败」（各区块均为真数据 / 空态，无错误分支）
@@ -95,21 +95,21 @@ test('契约交叉校验：messages/stats 与 connections/stats 响应形状对�
     expect(typeof field(firstBucket, 'estimatedOpen')).toBe('number')
   }
 
-  // payload 受控查看：缺原因 → 400 missing_reason（原因校验先于消息存在性）
+  // 旧正文直出端点永久关闭：无论请求体如何都必须先走审批申请。
   const noReason = await page.request.post('/admin/v2/messages/ghost-fr156/payload', {
     headers: authHeader(token),
     data: {},
   })
-  expect(noReason.status()).toBe(400)
-  expect(field((await noReason.json()) as unknown, 'code')).toBe('missing_reason')
+  expect(noReason.status()).toBe(409)
+  expect(field((await noReason.json()) as unknown, 'code')).toBe('operation_requires_approval')
 
-  // payload 受控查看：带原因但消息不存在 → 404 message_not_found
+  // 带原因也不能回退为旧正文直出；不存在消息不应泄露分支差异。
   const notFound = await page.request.post('/admin/v2/messages/ghost-fr156/payload', {
     headers: authHeader(token),
     data: { reason: 'FR-156 真后端契约校验' },
   })
-  expect(notFound.status()).toBe(404)
-  expect(field((await notFound.json()) as unknown, 'code')).toBe('message_not_found')
+  expect(notFound.status()).toBe(409)
+  expect(field((await notFound.json()) as unknown, 'code')).toBe('operation_requires_approval')
 })
 
 test('拓扑页空态或真数据：消息边聚合与页面剖析指标一致渲染', async ({ page }) => {
@@ -125,7 +125,7 @@ test('拓扑页空态或真数据：消息边聚合与页面剖析指标一致�
   const edgeStats = await apiGetJson(page, token, '/admin/v2/messages/stats?groupBy=edge')
   const edges = field(edgeStats, 'edges') as unknown[]
   if (edges.length === 0) {
-    await expect(page.getByText('当前无跨服消息链路')).toBeVisible()
+    await expect(page.getByText('当前无点对点跨服消息链路')).toBeVisible()
   } else {
     const source = field(edges[0], 'sourceServerId') as string
     await expect(page.getByText(source).first()).toBeVisible()
