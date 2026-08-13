@@ -131,7 +131,10 @@ func TestUndo_VsNewPublish_MySQL(t *testing.T) {
 	wg.Add(2)
 	var undoErr, pubErr error
 	go func() { defer wg.Done(); _, undoErr = undoSvc.Undo(op.ID, "bob", "") }()
-	go func() { defer wg.Done(); _, pubErr = service.ApplyConfigPublishForTest(cfg, item.ID, "v: 9\n", "alice", "", "") }()
+	go func() {
+		defer wg.Done()
+		_, pubErr = service.ApplyConfigPublishForTest(cfg, item.ID, "v: 9\n", "alice", "", "")
+	}()
 	wg.Wait()
 
 	if pubErr != nil {

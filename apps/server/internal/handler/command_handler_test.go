@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/glebarez/sqlite"
+	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 

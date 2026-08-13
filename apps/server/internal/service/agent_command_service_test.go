@@ -12,8 +12,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/authz"
 	"github.com/wcpe/Beacon/apps/server/internal/filetree"

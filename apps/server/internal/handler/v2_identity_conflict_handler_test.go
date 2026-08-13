@@ -8,8 +8,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
+	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
 )
 

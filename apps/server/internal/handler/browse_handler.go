@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
+	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
@@ -15,8 +15,8 @@ import (
 
 // BrowseHandler 编排需审批的 Agent 文件浏览：创建申请、接收回传、一次消费结果。
 type BrowseHandler struct {
-	svc     *service.AgentCommandService
-	instSvc *service.InstanceService
+	svc        *service.AgentCommandService
+	instSvc    *service.InstanceService
 	reportAuth browseReportAuthenticator
 }
 

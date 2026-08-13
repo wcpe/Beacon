@@ -60,7 +60,7 @@ func newP9Fixture(t *testing.T) *p9Fixture {
 	mustCreate(t, db, &f.target)
 	for _, sid := range []string{"p9-src", "p9-t1"} {
 		mustCreate(t, db, &model.AgentIdentity{
-		IdentityID: "idn-" + sid, NamespaceID: f.ns.ID, ServerID: model.NullableServerID(sid),
+			IdentityID: "idn-" + sid, NamespaceID: f.ns.ID, ServerID: model.NullableServerID(sid),
 			Kind: model.ServerKindBackend, Status: model.AgentIdentityStatusActive, StatusChangedAt: time.Now().UTC(),
 		})
 	}
