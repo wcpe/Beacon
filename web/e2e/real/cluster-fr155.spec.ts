@@ -107,25 +107,42 @@ interface ApprovalView {
 async function approveTicket(page: Page, token: string, ticket: ApprovalTicket): Promise<void> {
   expect(ticket.status).toBe('pending')
 
-  const approved = await page.request.post(`/admin/v2/approval-requests/${ticket.approvalRequestId}/approve`, {
-    headers: authHeader(token),
-  })
+  const approved = await page.request.post(
+    `/admin/v2/approval-requests/${ticket.approvalRequestId}/approve`,
+    {
+      headers: authHeader(token),
+    },
+  )
   expect(approved.status(), '审批决定应被接受').toBe(202)
 
   await expect
     .poll(async () => {
-      const approval = await apiGet<ApprovalView>(page, token, `/admin/v2/approval-requests/${ticket.approvalRequestId}`)
+      const approval = await apiGet<ApprovalView>(
+        page,
+        token,
+        `/admin/v2/approval-requests/${ticket.approvalRequestId}`,
+      )
       return approval.status
     })
     .toBe('succeeded')
 }
 
 // 身份确认必须经申请、人工批准与 worker 执行，不允许测试直调领域写入口。
-async function approveIdentity(page: Page, token: string, identityId: string, serverId: string): Promise<void> {
-  const ticket = await apiPost<ApprovalTicket>(page, token, `/admin/v2/agent-identities/${identityId}/approve`, {
-    serverId,
-    reason: '真后端 E2E 确认待接入身份',
-  })
+async function approveIdentity(
+  page: Page,
+  token: string,
+  identityId: string,
+  serverId: string,
+): Promise<void> {
+  const ticket = await apiPost<ApprovalTicket>(
+    page,
+    token,
+    `/admin/v2/agent-identities/${identityId}/approve`,
+    {
+      serverId,
+      reason: '真后端 E2E 确认待接入身份',
+    },
+  )
   await approveTicket(page, token, ticket)
 }
 
@@ -185,17 +202,12 @@ async function assignServer(
   target: { kind: 'zone' | 'bc_cluster'; id: number },
   isDefaultEntry = false,
 ): Promise<void> {
-  const ticket = await apiPost<ApprovalTicket>(
-    page,
-    token,
-    '/admin/v2/server-assignments',
-    {
-      serverIds: [rowId],
-      target,
-      isDefaultEntry,
-      reason: 'seed',
-    },
-  )
+  const ticket = await apiPost<ApprovalTicket>(page, token, '/admin/v2/server-assignments', {
+    serverIds: [rowId],
+    target,
+    isDefaultEntry,
+    reason: 'seed',
+  })
   await approveTicket(page, token, ticket)
 }
 
@@ -306,7 +318,9 @@ test('命名空间：经 UI 授予单向信任（真写入）+ 端点校验收�
   await page.getByRole('option', { name: toName, exact: true }).click()
   await grantDialog.getByLabel('建立原因').fill('联调放通跨域调度')
   const approvalResponse = page.waitForResponse(
-    (response) => response.url().includes('/admin/v2/namespace-trusts') && response.request().method() === 'POST',
+    (response) =>
+      response.url().includes('/admin/v2/namespace-trusts') &&
+      response.request().method() === 'POST',
   )
   await grantDialog.getByRole('button', { name: '授予', exact: true }).click()
   const ticket = (await (await approvalResponse).json()) as ApprovalTicket
@@ -427,9 +441,10 @@ test('区服分配：未分配子服首次落小区，分配结果可见（交�
   await assignDialog.getByRole('button', { name: regionName }).click()
   await assignDialog.getByRole('treeitem', { name: zoneName }).click()
   await assignDialog.getByLabel('申请原因').fill('真后端 E2E 首次分配')
-  const approvalResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST'
-      && new URL(response.url()).pathname === '/admin/v2/server-assignments',
+  const approvalResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/admin/v2/server-assignments',
   )
   await assignDialog.getByRole('button', { name: '确认分配' }).click()
   const ticket = (await (await approvalResponse).json()) as ApprovalTicket
@@ -481,9 +496,10 @@ test('区服分配：已分配子服右键改派 → 解绑重确认（走换区
   await rezoneDialog.getByRole('button', { name: regionName }).click()
   await rezoneDialog.getByRole('treeitem', { name: zoneBName }).click()
   await rezoneDialog.getByLabel('换区原因').fill('扩容换区')
-  const approvalResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST'
-      && new URL(response.url()).pathname === '/admin/v2/server-rezones',
+  const approvalResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/admin/v2/server-rezones',
   )
   await rezoneDialog.getByRole('button', { name: '确认', exact: true }).click()
   const ticket = (await (await approvalResponse).json()) as ApprovalTicket
@@ -528,9 +544,10 @@ test('服务器：注册待确认 → 确认接入 → 身份转 active、进入
   const approveDialog = page.getByRole('alertdialog')
   await expect(approveDialog.getByRole('heading', { name: '确认接入服务器' })).toBeVisible()
   await approveDialog.getByLabel('原因').fill('真后端 E2E 确认接入')
-  const approvalResponse = page.waitForResponse((response) =>
-    response.request().method() === 'POST'
-      && new URL(response.url()).pathname === `/admin/v2/agent-identities/${identityId}/approve`,
+  const approvalResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === `/admin/v2/agent-identities/${identityId}/approve`,
   )
   await approveDialog.getByRole('button', { name: '确认接入' }).click()
   const ticket = (await (await approvalResponse).json()) as ApprovalTicket
@@ -578,7 +595,9 @@ test('服务器：已分配子服切换排空标记写闭环（交叉校验真�
   await expect(drainDialog.getByRole('heading', { name: '切换排空标记' })).toBeVisible()
   await drainDialog.getByLabel('原因').fill('维护窗口')
   const directResponse = page.waitForResponse(
-    (response) => response.url().includes(`/admin/v2/servers/${serverId}/draining`) && response.request().method() === 'PUT',
+    (response) =>
+      response.url().includes(`/admin/v2/servers/${serverId}/draining`) &&
+      response.request().method() === 'PUT',
   )
   await drainDialog.getByRole('button', { name: '置为排空' }).click()
   const direct = await directResponse
@@ -593,7 +612,9 @@ test('服务器：已分配子服切换排空标记写闭环（交叉校验真�
   const restoreDialog = page.getByRole('alertdialog')
   await restoreDialog.getByLabel('原因').fill('维护完成')
   const approvalResponse = page.waitForResponse(
-    (response) => response.url().includes(`/admin/v2/servers/${serverId}/draining`) && response.request().method() === 'PUT',
+    (response) =>
+      response.url().includes(`/admin/v2/servers/${serverId}/draining`) &&
+      response.request().method() === 'PUT',
   )
   await restoreDialog.getByRole('button', { name: '取消排空' }).click()
   const ticket = (await (await approvalResponse).json()) as ApprovalTicket

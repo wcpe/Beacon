@@ -116,7 +116,7 @@ func validatePrivateUnixHandle(fd int, directory bool) error {
 	if directory {
 		wantType = unix.S_IFDIR
 	}
-	if uint32(stat.Mode)&uint32(unix.S_IFMT) != wantType {
+	if uint32(stat.Mode)&unix.S_IFMT != wantType {
 		return fmt.Errorf("不是受支持的文件类型")
 	}
 	uid := os.Geteuid()

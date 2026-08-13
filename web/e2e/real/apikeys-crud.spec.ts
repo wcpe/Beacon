@@ -17,7 +17,9 @@ async function approveAndWait(page: Page, token: string, requestId: string): Pro
   expect(approved.status()).toBe(202)
   await expect
     .poll(async () => {
-      const response = await page.request.get(`/admin/v2/approval-requests/${requestId}`, { headers: authHeader(token) })
+      const response = await page.request.get(`/admin/v2/approval-requests/${requestId}`, {
+        headers: authHeader(token),
+      })
       expect(response.ok()).toBeTruthy()
       return ((await response.json()) as { status: string }).status
     })
@@ -39,7 +41,9 @@ test('真后端密钥：创建 → 列表可见 → 详情面板吊销 → 状�
   await createDialog.getByRole('button', { name: '创建', exact: true }).click()
 
   // ② 创建仅产生审批票据；批准并执行后由原申请人一次性领取明文。
-  await expect(page.getByText('API 密钥审批申请已创建，审批执行完成后可由原申请人一次性领取明文。')).toBeVisible()
+  await expect(
+    page.getByText('API 密钥审批申请已创建，审批执行完成后可由原申请人一次性领取明文。'),
+  ).toBeVisible()
   const approvalLink = page.getByRole('link', { name: '前往审批中心查看进度' })
   const approvalHref = await approvalLink.getAttribute('href')
   expect(approvalHref).toMatch(/^\/approvals\?requestId=.+/)
@@ -47,9 +51,12 @@ test('真后端密钥：创建 → 列表可见 → 详情面板吊销 → 状�
   expect(requestId).not.toBeNull()
   await approveAndWait(page, token, requestId ?? '')
 
-  const redeemed = await page.request.post(`/admin/v2/approval-requests/${requestId ?? ''}/credential-secret/redeem`, {
-    headers: authHeader(token),
-  })
+  const redeemed = await page.request.post(
+    `/admin/v2/approval-requests/${requestId ?? ''}/credential-secret/redeem`,
+    {
+      headers: authHeader(token),
+    },
+  )
   expect(redeemed.status()).toBe(200)
   expect(typeof ((await redeemed.json()) as { secret: string }).secret).toBe('string')
 
