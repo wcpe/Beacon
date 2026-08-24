@@ -8,9 +8,11 @@ plugins {
     id("io.gitlab.arturbosch.detekt") apply false
 }
 
-// 从仓库根 VERSION 文件读取版本号并注入所有模块（ADR-0007：根 VERSION 为唯一版本来源、三组件版本恒一致）。
+// 默认从仓库根 VERSION 读取版本；发布工作流可用 -PbeaconVersion 覆盖 Maven 坐标，产品版本仍以 VERSION 为准。
 // agent 为独立 Gradle 构建（根在 apps/agent/），VERSION 位于仓库根。
-val beaconVersion: String = rootProject.projectDir.parentFile.parentFile.resolve("VERSION").readText().trim()
+val beaconVersion: String = (findProperty("beaconVersion") as String?)
+    ?.takeIf { it.isNotBlank() }
+    ?: rootProject.projectDir.parentFile.parentFile.resolve("VERSION").readText().trim()
 
 allprojects {
     version = beaconVersion

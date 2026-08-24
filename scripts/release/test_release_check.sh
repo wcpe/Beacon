@@ -284,6 +284,9 @@ expect_file_not_contains "GA 恢复不得删除既有 Release" "$promoter" 'gh r
 printf '%s\n' 'jobs:' '  release:' '    steps:' '      - run: true' > "$work/good-release.yml"
 expect_pass "GA job 无审批环境也可通过静态断言" sh "$checker" audit-ga-workflow \
     --workflow "$work/good-release.yml"
+printf '%s\r\n' 'jobs:' '  release:' '    steps:' '      - run: true' > "$work/good-release-crlf.yml"
+expect_pass "GA job 的 CRLF 工作流也可通过静态断言" sh "$checker" audit-ga-workflow \
+    --workflow "$work/good-release-crlf.yml"
 printf '%s\n' 'jobs:' '  release:' '    environment: production' '    steps:' '      - run: true' > "$work/optional-production-release.yml"
 expect_pass "GA job 即使残留 production 声明也不作为发布条件" sh "$checker" audit-ga-workflow \
     --workflow "$work/optional-production-release.yml"

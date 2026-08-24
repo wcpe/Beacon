@@ -1,4 +1,4 @@
-# Beacon 可复用 RC 构建：只构建并发布 GitHub 产品资产。
+# Beacon 可复用 RC 构建：构建 GitHub 产品资产并发布 RC Maven SDK。
 name: 可复用发布构建
 
 on:
@@ -8,6 +8,13 @@ on:
         description: "门禁后创建的不可变 RC tag"
         required: true
         type: string
+    secrets:
+      BEACON_PUBLISH_URL:
+        required: true
+      BEACON_PUBLISH_USERNAME:
+        required: true
+      BEACON_PUBLISH_PASSWORD:
+        required: true
 
 permissions: {}
 
@@ -117,7 +124,7 @@ jobs:
           if-no-files-found: error
 
   java:
-    name: Agent 与 Maven 产品
+    name: Agent 与 RC Maven 产品
     needs: [meta]
     runs-on: ubuntu-latest
     permissions:
@@ -140,10 +147,11 @@ jobs:
           make agent
           test -s "dist/BeaconAgent-${PAYLOAD_VERSION}.jar"
           test -s "dist/BeaconAgentProxy-${PAYLOAD_VERSION}.jar"
-      - name: 组装 Maven 产品 ZIP
+      - name: 组装 RC Maven 产品 ZIP
         shell: sh
         env:
           PAYLOAD_VERSION: ${{ needs.meta.outputs.version }}
+          CANDIDATE_TAG: ${{ needs.meta.outputs.tag }}
         run: |
           set -eu
           if ! command -v zip >/dev/null 2>&1; then
@@ -153,10 +161,14 @@ jobs:
           stage="$GITHUB_WORKSPACE/maven-staging"
           bundle="$GITHUB_WORKSPACE/beacon-maven-${PAYLOAD_VERSION}.zip"
           mkdir -p "$stage"
+          rc_suffix="${CANDIDATE_TAG#v${PAYLOAD_VERSION}-}"
+          test "$CANDIDATE_TAG" = "v${PAYLOAD_VERSION}-${rc_suffix}"
+          maven_version="${PAYLOAD_VERSION}-${rc_suffix}"
           export BEACON_PUBLISH_URL="file://${stage}"
           (
             cd apps/agent
             ./gradlew \
+              -PbeaconVersion="$maven_version" \
               :agent-api:publishMavenPublicationToBeaconRemoteRepository \
               :agent-kit:publishMavenPublicationToBeaconRemoteRepository \
               --no-daemon
@@ -284,3 +296,43 @@ jobs:
           prerelease: true
           body_path: release-body.md
           fail_on_unmatched_files: true
+
+  publish-rc-maven:
+    name: 发布 RC Maven SDK
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 发布候选 Maven SDK
+        shell: sh
+        env:
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          BEACON_PUBLISH_URL: ${{ secrets.BEACON_PUBLISH_URL }}
+          BEACON_PUBLISH_USERNAME: ${{ secrets.BEACON_PUBLISH_USERNAME }}
+          BEACON_PUBLISH_PASSWORD: ${{ secrets.BEACON_PUBLISH_PASSWORD }}
+        run: |
+          set -eu
+          version="$(tr -d '\r\n' < VERSION)"
+          rc_suffix="${CANDIDATE_TAG#v${version}-}"
+          test "$CANDIDATE_TAG" = "v${version}-${rc_suffix}"
+          maven_version="${version}-${rc_suffix}"
+          : "${BEACON_PUBLISH_URL:?缺少 Maven 发布地址}"
+          : "${BEACON_PUBLISH_USERNAME:?缺少 Maven 发布用户名}"
+          : "${BEACON_PUBLISH_PASSWORD:?缺少 Maven 发布密码}"
+          (
+            cd apps/agent
+            ./gradlew \
+              -PbeaconVersion="$maven_version" \
+              :agent-api:publishMavenPublicationToBeaconRemoteRepository \
+              :agent-kit:publishMavenPublicationToBeaconRemoteRepository \
+              --no-daemon
+          )

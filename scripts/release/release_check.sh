@@ -269,6 +269,7 @@ audit_workflow() {
         }
         {
             line = $0
+            sub(/\r$/, "", line)
             if (line == "  promote:" || line == "  ga:" || line == "  release:") {
                 in_ga = 1
                 found_ga = 1

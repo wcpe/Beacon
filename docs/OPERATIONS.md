@@ -44,13 +44,14 @@
 - agent：按批替换 Bukkit/Bungee JAR 并重启节点，保留 `plugins/Beacon/` 本地身份、配置快照、流位置与幂等账本。控制面与 agent 的产品版本必须一致。
 - 产品资产发布前使用 `SHA256SUMS.txt` 校验；平台是否发布由本次 RC 的实际资产决定，不额外引入阶段专属平台准入。
 
-### 2.1 开发构建、发布准备与 RC/GA 流程（FR-182，[ADR-0074](adr/0074-simple-rc-ga-release-flow.md)）
+### 2.1 开发构建、发布准备与 RC/GA 流程（FR-182，[ADR-0074](adr/0074-simple-rc-ga-release-flow.md)、[ADR-0082](adr/0082-rc-ga-sdk-maven-publication.md)）
 
 - **PR 只过质量门**：pull request 运行现有质量任务，不执行 `make package`，也不上传可下载产品包。
 - **`master` 临时开发构建**：质量任务全部成功后，CI 才运行现有 `make package` 并上传短期 Actions Artifact。该 Artifact 仅用于开发验证，不能直接晋级为 RC 或 GA。
 - **发布准备**：发布准备只更新根 `VERSION` 与 `CHANGELOG.md`，版本由根 `VERSION` 唯一确定。
-- **RC**：按目标版本创建 `vX.Y.Z-rc.N`，固定一个 commit 和一次构建出的产品资产；候选发布后不可移动、覆盖或补传。`release-verify-rc` 必须从仓库中的真实 RC tag 解析 peeled commit，并与 workflow 锁定的 40 位提交身份一致，手工传入任意 SHA 不能替代真实 tag。
-- **GA**：最终 RC 与 GA 必须指向同一 commit。GA 先把最终 RC 资产原样复制到独立目录，再以 RC 下载目录为不可变基准运行 `release-verify-ga`；创建前与公开回拉后都逐项比较名称、字节大小和 SHA-256。GA 不重新编译、打包、重建、重签或替换资产。
+- **RC**：按目标版本创建 `vX.Y.Z-rc.N`，固定一个 commit 和一次构建出的 GitHub 产品资产；候选发布后不可移动、覆盖或补传。完成候选 Release 后，只向远程 Maven releases 仓库发布 `beacon-agent-api` 与 `beacon-agent-kit` 的 `X.Y.Z-rc.N` 坐标。`release-verify-rc` 必须从仓库中的真实 RC tag 解析 peeled commit，并与 workflow 锁定的 40 位提交身份一致，手工传入任意 SHA 不能替代真实 tag。
+- **GA**：最终 RC 与 GA 必须指向同一 commit。GA 先把最终 RC GitHub 产品资产原样复制到独立目录，再以 RC 下载目录为不可变基准运行 `release-verify-ga`；创建前与公开回拉后都逐项比较名称、字节大小和 SHA-256。GitHub 产品资产不得重新编译、打包、重建、重签或替换；资产晋级成功后，GA 只为 `beacon-agent-api` 与 `beacon-agent-kit` 的不同 `X.Y.Z` Maven 坐标重新生成并发布制品。
+- **Maven 凭据与失败处理**：发布地址及凭据仅从 GitHub Actions Secrets 的 `BEACON_PUBLISH_*` 注入。远程 Maven release 坐标不可覆盖、删除或重传；发布失败时 workflow 必须失败，处理前先核验远端坐标状态。
 - **在线更新**：只自动消费严格 `vX.Y.Z` 的 GA，RC 和开发 Artifact 必须显式安装。
 
 通用校验入口：

@@ -18,7 +18,7 @@
 - **坐标**：`top.wcpe.beacon:beacon-agent-api:<版本>`、`top.wcpe.beacon:beacon-agent-kit:<版本>`。
 - **版本**：跟随仓库根 `VERSION`，与控制面 / 两个 agent jar **三组件恒一致**（[ADR-0007](adr/0007-versioning-and-release-channels.md)）。`1.0.0` 起按 SemVer 管理公开契约。
 - **本地开发**：默认可发 `mavenLocal()`；命令为 `./gradlew publishToMavenLocal`。可选私有远程仓库仍由 `beaconPublishUrl` / `beaconPublishUsername` / `beaconPublishPassword` 或对应环境变量注入。
-- **正式发布**：RC 固定目标版本、候选 tag、commit 和一次构建出的产品资产；GA 只从最终 RC 原样复制同一组资产，并逐项核验文件名、大小和 SHA-256。GA 不重新运行会生成产品字节的构建或发布任务。
+- **正式发布**：RC 在不可变 GitHub 产品资产发布后，自动发布 `X.Y.Z-rc.N` 的两个 SDK Maven 坐标；GA 先从最终 RC 原样复制 GitHub 产品资产并逐项核验文件名、大小和 SHA-256，再仅为 `agent-api` 与 `agent-kit` 的不同 `X.Y.Z` Maven 正式坐标重新生成并发布制品。GitHub 产品资产不重新生成、替换或补传（见 [ADR-0082](adr/0082-rc-ga-sdk-maven-publication.md)）。
 - **版本对齐矩阵（硬约束）**：**部署的 BeaconAgent 版本必须 ≥ 下游编译所用 agent-api/kit 版本**（运行期提供方不得旧于编译期契约），否则可能 `NoSuchMethodError`。
 
 RC/GA 的通用检查入口为 `make release-test`、`make release-check`、`make release-verify-rc` 和 `make release-verify-ga`；这些入口校验正式版本、RC/GA 标签、产品资产闭集、SHA-256 以及 RC/GA commit 一致性。
@@ -41,7 +41,7 @@ cd apps/agent
 # 或一并发 mavenLocal + 远程：./gradlew :agent-api:publish :agent-kit:publish
 ```
 
-- 产出两件工件 `beacon-agent-api` / `beacon-agent-kit`（均含 sources jar），version 跟随根 `VERSION`。
+- 产出两件工件 `beacon-agent-api` / `beacon-agent-kit`（均含 sources jar）；发布 workflow 分别以 `X.Y.Z-rc.N` 和 `X.Y.Z` 作为候选与正式 Maven 版本。
 - 远程仓库选 **releases**（version 不含 `-SNAPSHOT` 即按 release 发，覆盖策略由仓库侧 release 规则约束）。
 - Artifactory 同理：`BEACON_PUBLISH_URL` 填 `https://<artifactory>/artifactory/<repo-key>/`，凭据用账号 + API Key / 令牌。
 

@@ -1,4 +1,4 @@
-# Beacon GA 发布：将公开 RC 的产品资产原样复制为同提交 GA。
+# Beacon GA 发布：将公开 RC 产品资产原样复制为同提交 GA，并发布同提交的 GA Maven SDK。
 name: Release
 
 on:
@@ -20,6 +20,9 @@ jobs:
   release:
     name: 晋级 RC 为 GA
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      rc_commit: ${{ steps.identity.outputs.rc_commit }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,3 +97,40 @@ jobs:
           RC_COMMIT: ${{ steps.identity.outputs.rc_commit }}
           VERSION: ${{ steps.identity.outputs.version }}
         run: sh scripts/release/promote_ga.sh
+
+  publish-maven:
+    name: 发布 GA Maven SDK
+    needs: [release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.rc_commit }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 发布正式 Maven SDK
+        shell: sh
+        env:
+          MAVEN_VERSION: ${{ needs.release.outputs.version }}
+          BEACON_PUBLISH_URL: ${{ secrets.BEACON_PUBLISH_URL }}
+          BEACON_PUBLISH_USERNAME: ${{ secrets.BEACON_PUBLISH_USERNAME }}
+          BEACON_PUBLISH_PASSWORD: ${{ secrets.BEACON_PUBLISH_PASSWORD }}
+        run: |
+          set -eu
+          : "${MAVEN_VERSION:?缺少 GA Maven 版本}"
+          : "${BEACON_PUBLISH_URL:?缺少 Maven 发布地址}"
+          : "${BEACON_PUBLISH_USERNAME:?缺少 Maven 发布用户名}"
+          : "${BEACON_PUBLISH_PASSWORD:?缺少 Maven 发布密码}"
+          (
+            cd apps/agent
+            ./gradlew \
+              -PbeaconVersion="$MAVEN_VERSION" \
+              :agent-api:publishMavenPublicationToBeaconRemoteRepository \
+              :agent-kit:publishMavenPublicationToBeaconRemoteRepository \
+              --no-daemon
+          )

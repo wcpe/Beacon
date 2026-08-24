@@ -255,3 +255,7 @@ jobs:
       contents: write
     with:
       candidate_tag: ${{ needs.create-tag.outputs.tag }}
+    secrets:
+      BEACON_PUBLISH_URL: ${{ secrets.BEACON_PUBLISH_URL }}
+      BEACON_PUBLISH_USERNAME: ${{ secrets.BEACON_PUBLISH_USERNAME }}
+      BEACON_PUBLISH_PASSWORD: ${{ secrets.BEACON_PUBLISH_PASSWORD }}
