@@ -230,7 +230,7 @@ jobs:
           print(f"敏感内容扫描通过：已检查 {len(candidates)} 个归档候选文件")
           PY
       - name: 归档 Agent E2E 日志与 mc-testkit 结果
-        if: always() && steps.directory.outcome == 'success' && steps.override.outcome == 'success' && steps.scan_e2e_artifacts.outcome == 'success'
+        if: always() && steps.scan_e2e_artifacts.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: agent-e2e-${{ runner.os }}-directory-override-${{ github.run_id }}

@@ -31,8 +31,8 @@ const (
 	namespace      = "e2e-directory"
 	bukkitServerID = "e2e-bukkit-1"
 	bungeeServerID = "e2e-bungee-1"
-	bukkitPort     = "25566"
-	bungeePort     = "25577"
+	bukkitPort     = "25666"
+	bungeePort     = "25677"
 	manualServer   = "backend"
 	bootstrap      = "beacon-bootstrap-2026"
 	onlineWait     = 12 * time.Minute // 首跑含下载 Paper/BungeeCord + 构建 jar，给足时间
@@ -102,7 +102,7 @@ func TestDirectoryE2E(t *testing.T) {
 	}
 	t.Logf("已建 v2 namespace id=%d", namespaceID)
 
-	t.Log("== 单进程起 Paper 后端（25566）+ 原生 BungeeCord 代理（25577）==")
+	t.Log("== 单进程起 Paper 后端（25666）+ 原生 BungeeCord 代理（25677）==")
 	directoryEnv := harness.DirectoryGradleEnv(
 		beaconURL, accessToken, namespace,
 		bukkitServerID, "127.0.0.1:"+bukkitPort,
@@ -114,7 +114,10 @@ func TestDirectoryE2E(t *testing.T) {
 		harness.ClearStaleAgentIdentityFile(t, identityPath)
 	}
 	directoryProc, err := harness.StartGradleTask(
-		repoRoot, ":agent-e2e:serveDirectory", nil, directoryEnv, "directory",
+		repoRoot, ":agent-e2e:serveDirectory", []string{
+			"-Pe2eMcPort=" + bukkitPort,
+			"-Pe2eProxyPort=" + bungeePort,
+		}, directoryEnv, "directory",
 	)
 	if err != nil {
 		t.Fatalf("起 Directory 拓扑失败：%v", err)
