@@ -161,7 +161,7 @@ jobs:
           stage="$GITHUB_WORKSPACE/maven-staging"
           bundle="$GITHUB_WORKSPACE/beacon-maven-${PAYLOAD_VERSION}.zip"
           mkdir -p "$stage"
-          rc_suffix="${CANDIDATE_TAG#v${PAYLOAD_VERSION}-}"
+          rc_suffix="${CANDIDATE_TAG#"v${PAYLOAD_VERSION}-"}"
           test "$CANDIDATE_TAG" = "v${PAYLOAD_VERSION}-${rc_suffix}"
           maven_version="${PAYLOAD_VERSION}-${rc_suffix}"
           export BEACON_PUBLISH_URL="file://${stage}"
@@ -322,7 +322,7 @@ jobs:
         run: |
           set -eu
           version="$(tr -d '\r\n' < VERSION)"
-          rc_suffix="${CANDIDATE_TAG#v${version}-}"
+          rc_suffix="${CANDIDATE_TAG#"v${version}-"}"
           test "$CANDIDATE_TAG" = "v${version}-${rc_suffix}"
           maven_version="${version}-${rc_suffix}"
           : "${BEACON_PUBLISH_URL:?缺少 Maven 发布地址}"
