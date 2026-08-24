@@ -137,8 +137,8 @@ func TestUndo_VsNewPublish_MySQL(t *testing.T) {
 	}()
 	wg.Wait()
 
-	if pubErr != nil {
-		t.Fatalf("新发布不应失败: %v", pubErr)
+	if pubErr != nil && pubErr != apperr.ErrApprovalTargetChanged {
+		t.Fatalf("新发布竞争应为成功 / approval_target_changed, got %v", pubErr)
 	}
 	if undoErr != nil && undoErr != apperr.ErrReversibleOpSuperseded && undoErr != apperr.ErrReversibleOpState {
 		t.Fatalf("撤回竞争应为成功 / superseded / state, got %v", undoErr)

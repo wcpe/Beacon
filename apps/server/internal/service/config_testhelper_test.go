@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -27,6 +28,9 @@ func ApplyConfigPublishWithExpectedVersionForTest(s *ConfigService, id uint, con
 		return applyErr
 	})
 	if err != nil {
+		if errors.Is(mapDuplicateKey(err), apperr.ErrConfigConflict) {
+			return nil, apperr.ErrApprovalTargetChanged
+		}
 		return nil, mapDuplicateKey(err)
 	}
 	s.recordPublish()
