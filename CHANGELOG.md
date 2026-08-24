@@ -2,8 +2,6 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## 未发布
-
 ## 1.1.0（2026-08-12）
 
 ### 新增
@@ -39,6 +37,7 @@
 - GA 校验新增 RC 基准资产目录：RC 与 GA 目录各自先校验完整资产集合和 `SHA256SUMS.txt`，再逐项比较文件名、字节大小与 SHA-256，并把校验和文件本身纳入 RC/GA 字节一致性检查。
 
 ### 变更
+- RC/GA 发布流程新增 SDK Maven 双坐标：RC 发布 `beacon-agent-api` 与 `beacon-agent-kit` 的 `X.Y.Z-rc.N`，GA 在 GitHub 产品资产原样晋级成功后发布不同的 `X.Y.Z` 正式坐标；仅此 Maven 制品允许在 GA 重新生成，GitHub 产品资产继续逐项原样校验（[ADR-0082](docs/adr/0082-rc-ga-sdk-maven-publication.md)）。
 - 交付变更单旧审批入口改为创建统一审批申请；批准 worker 在同一事务内持久启动变更单并写入执行回执，避免 API Key 或机器主体直批旁路。
 - 交付公开启动入口已移除；变更单只会由已批准的统一审批 worker 在领域事务内启动并写入执行回执。
 - 交付灰度继续操作改为冻结暂停状态与继续参数的统一审批申请；公开 service 入口失败关闭，批准 worker 同事务恢复并写入执行回执。
