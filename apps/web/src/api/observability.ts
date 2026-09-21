@@ -3,6 +3,7 @@
 // 读端点用于 useQuery，写端点（告警处理）用于 useMutation；错误按脱敏 message 抛出（ADR-0057）。
 
 import type {
+  AlertContext,
   AlertEventItem,
   AlertEventStatus,
   AuditAnalytics,
@@ -174,4 +175,9 @@ export interface HandleAlertBatchBody {
 
 export function handleAlertEventsBatch(body: HandleAlertBatchBody): Promise<{ affected: number }> {
   return request('POST', '/admin/v1/alert-events/handle', body)
+}
+
+/** 告警详情聚合（FR-230）：该服近期状态 + 该服告警时间线。 */
+export function fetchAlertContext(id: number): Promise<AlertContext> {
+  return request('GET', `/admin/v1/alert-events/${String(id)}/context`)
 }

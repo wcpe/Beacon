@@ -69,3 +69,23 @@ export interface AlertEventItem {
   handledAt: string | null
   handleNote: string | null
 }
+
+/** 告警详情内嵌的「该服近期状态」（FR-230，取健康真源）。 */
+export interface AlertContextServer {
+  serverId: string
+  online: boolean
+  level: string
+  score: number
+  schedulable: boolean
+  reasons: string[]
+  sampledAtMs: number
+}
+
+/** 告警详情聚合（GET /admin/v1/alert-events/{id}/context）：该服近期状态 + 该服告警时间线。 */
+export interface AlertContext {
+  /** 无 serverId（集群级）或服务器已归档 / 域外时为 null。 */
+  server: AlertContextServer | null
+  timeline: AlertEventItem[]
+  timelineLimit: number
+  timelineWindowHours: number
+}

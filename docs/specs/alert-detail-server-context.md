@@ -1,6 +1,6 @@
 # 功能规格：告警详情关联服务器近期状态与时间线
 
-> 状态：草拟（**已按评审重写**）　·　关联 PRD：FR-230（增强 FR-157 / FR-89）　·　分支：feature/alert-detail-server-context
+> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-230（增强 FR-157 / FR-89）　·　分支：feature/alert-detail-server-context
 
 ## 1. 背景与目标
 
@@ -39,11 +39,11 @@
 
 ## 5. 任务拆分
 
-- [ ] 聚合接口 `GET /admin/v1/alert-events/{id}/context`
-- [ ] `alert_event` 按 `serverId` 的有界查询（窗口：20 条 / 24h）
-- [ ] 健康 / 指标真源读取复用
-- [ ] 前端：既有详情面板内嵌状态卡 + 时间线
-- [ ] 文档同步：PRD 状态、API、CHANGELOG
+- [x] 聚合接口 `GET /admin/v1/alert-events/{id}/context`
+- [x] `alert_event` 按 `serverId` 的有界查询（窗口：20 条 / 24h）
+- [x] 健康 / 指标真源读取复用
+- [x] 前端：既有详情面板内嵌状态卡 + 时间线
+- [x] 文档同步：PRD 状态、API、CHANGELOG
 
 ## 6. 验收标准
 

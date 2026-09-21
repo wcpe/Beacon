@@ -319,3 +319,67 @@ func TestHandleBatchAcknowledgeWording(t *testing.T) {
 		t.Fatalf("非法动作应 ErrAlertActionInvalid，实际 %v", err)
 	}
 }
+
+// TestAlertContextAggregatesServerAndTimeline 校验 FR-230：详情聚合返回该服告警时间线（查 alert_event，
+// 24h 内、倒序、上限 20）；无健康真源（已归档 / 无 serverId）时 server 为 nil 但时间线仍返回，不报错。
+func TestAlertContextAggregatesServerAndTimeline(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	base := time.Now().UTC()
+	for i := 0; i < 25; i++ {
+		at := base.Add(-time.Duration(i) * time.Minute)
+		if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s1", Message: "m", CreatedAt: at}).Error; err != nil {
+			t.Fatalf("seed s1 失败: %v", err)
+		}
+	}
+	if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s1", Message: "old", CreatedAt: base.Add(-48 * time.Hour)}).Error; err != nil {
+		t.Fatalf("seed old 失败: %v", err)
+	}
+	if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s2", Message: "other", CreatedAt: base}).Error; err != nil {
+		t.Fatalf("seed s2 失败: %v", err)
+	}
+	anchor := &model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s1", Message: "anchor"}
+	if err := svc.Record(anchor); err != nil {
+		t.Fatalf("record anchor 失败: %v", err)
+	}
+
+	res, err := svc.Context(anchor.ID, ObservationScope{All: true})
+	if err != nil {
+		t.Fatalf("聚合失败: %v", err)
+	}
+	if len(res.Timeline) != 20 {
+		t.Fatalf("时间线应上限 20，实际 %d", len(res.Timeline))
+	}
+	for _, e := range res.Timeline {
+		if e.ServerID != "s1" {
+			t.Fatalf("时间线串入了其它服：%q", e.ServerID)
+		}
+		if e.CreatedAt.Before(base.Add(-24 * time.Hour)) {
+			t.Fatalf("时间线越出 24h 窗口：%v", e.CreatedAt)
+		}
+	}
+	if res.TimelineLimit != 20 || res.TimelineWindowHours != 24 {
+		t.Fatalf("窗口常量应为 20/24，实际 %d/%d", res.TimelineLimit, res.TimelineWindowHours)
+	}
+	if res.Server != nil {
+		t.Fatalf("未装配健康真源时 server 应为 nil")
+	}
+
+	if _, err := svc.Context(999999, ObservationScope{All: true}); !errors.Is(err, apperr.ErrAlertEventNotFound) {
+		t.Fatalf("未知告警应 ErrAlertEventNotFound，实际 %v", err)
+	}
+
+	nsEvent := &model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelInfo, Namespace: "prod", ServerID: "", Message: "cluster"}
+	if err := svc.Record(nsEvent); err != nil {
+		t.Fatalf("record ns 事件失败: %v", err)
+	}
+	res2, err := svc.Context(nsEvent.ID, ObservationScope{All: true})
+	if err != nil {
+		t.Fatalf("集群级聚合失败: %v", err)
+	}
+	if res2.Server != nil {
+		t.Fatalf("无 serverId 时 server 应为 nil")
+	}
+	if len(res2.Timeline) == 0 {
+		t.Fatalf("无 serverId 时应按 namespace 退化返回时间线")
+	}
+}

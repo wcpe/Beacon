@@ -11,6 +11,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
 
 // 告警事件分页默认与上限（FR-89）。
@@ -33,6 +34,86 @@ type AlertEventService struct {
 	db        *gorm.DB
 	repo      *repository.AlertEventRepository
 	auditRepo *repository.AuditLogRepository
+	// healthQuery 供详情聚合读取该服近期健康真源（FR-230）；未装配时降级为仅时间线。
+	healthQuery *HealthQueryService
+}
+
+// SetHealthQuery 装配健康查询服务，供告警详情内嵌「该服近期状态」（FR-230）。
+func (s *AlertEventService) SetHealthQuery(q *HealthQueryService) {
+	s.healthQuery = q
+}
+
+// 告警详情时间线窗口（FR-230 §7 已定默认）：最近 24h 内最多 20 条。
+const (
+	alertContextTimelineLimit       = 20
+	alertContextTimelineWindowHours = 24
+)
+
+// AlertContextServer 是告警详情内嵌的「该服近期状态」（取健康既有真源，不复制存储）。
+type AlertContextServer struct {
+	ServerID    string   `json:"serverId"`
+	Online      bool     `json:"online"`
+	Level       string   `json:"level"`
+	Score       int      `json:"score"`
+	Schedulable bool     `json:"schedulable"`
+	Reasons     []string `json:"reasons"`
+	SampledAtMs int64    `json:"sampledAtMs"`
+}
+
+// AlertContextResult 是告警详情聚合结果：该服近期状态 + 该服 / 该 namespace 的告警时间线。
+type AlertContextResult struct {
+	Server              *AlertContextServer
+	Timeline            []model.AlertEvent
+	TimelineLimit       int
+	TimelineWindowHours int
+}
+
+// Context 聚合一条告警的「该服近期状态 + 告警时间线」（FR-230）：状态实时查健康真源（域外 / 已归档降级为 nil），
+// 时间线实时查 alert_event（按 serverId；无 serverId 的集群级告警退化为按 namespace）。观测范围循 FR-213。
+func (s *AlertEventService) Context(id uint, scope ObservationScope) (*AlertContextResult, error) {
+	e, err := s.repo.Get(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperr.ErrAlertEventNotFound
+		}
+		return nil, err
+	}
+	res := &AlertContextResult{TimelineLimit: alertContextTimelineLimit, TimelineWindowHours: alertContextTimelineWindowHours}
+	if e.ServerID != "" && s.healthQuery != nil {
+		if detail, herr := s.healthQuery.HealthDetailInScope(e.ServerID, scope); herr == nil {
+			res.Server = &AlertContextServer{
+				ServerID: e.ServerID, Online: !containsString(detail.Reasons, healthview.ReasonLost),
+				Level: detail.Level, Score: detail.Score, Schedulable: detail.Schedulable,
+				Reasons: detail.Reasons, SampledAtMs: detail.SampledAtMs,
+			}
+		}
+	}
+	from := time.Now().UTC().Add(-time.Duration(alertContextTimelineWindowHours) * time.Hour)
+	f := repository.AlertEventFilter{
+		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
+		From: from, Page: 1, Size: alertContextTimelineLimit,
+	}
+	if e.ServerID != "" {
+		f.ServerID = e.ServerID
+	} else {
+		f.Namespace = e.Namespace
+	}
+	items, _, err := s.repo.List(f)
+	if err != nil {
+		return nil, err
+	}
+	res.Timeline = items
+	return res, nil
+}
+
+// containsString 判断字符串切片是否含目标值。
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
+		}
+	}
+	return false
 }
 
 // NewAlertEventService 构造服务。db + auditRepo 供处理工作流在同事务内原子更新状态并写审计（FR-157）。

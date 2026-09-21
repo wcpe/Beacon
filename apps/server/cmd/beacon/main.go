@@ -512,6 +512,8 @@ func run() error {
 	// 管理面只读查询（§5.2）：实时走内存视图 + 60s 窗口，回放走快照 / 指标日表（缺表跳过、禁隐式建表）。
 	healthQueryService := service.NewHealthQueryService(healthViewStore, metricWindow, healthSnapshotRepo, metricSampleV2Repo)
 	v2HealthHandler := handler.NewV2HealthHandler(healthQueryService, healthWeightsService, settingsService)
+	// FR-230：告警详情聚合内嵌该服近期状态，复用健康查询服务。
+	alertEventHandler.SetHealthQuery(healthQueryService)
 	// 指标上报响应回填自身健康视图（§5.1 self）：接收端注入视图存储，尚无视图时响应 null。
 	metricIngestService.SetHealthViews(healthViewStore)
 
