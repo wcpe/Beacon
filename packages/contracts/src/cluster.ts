@@ -101,7 +101,15 @@ export interface ServerItem {
     reason: string | null
     approvalRequestId: string | null
   } | null
+  /** server 键值标签（FR-227），按 key 升序；无标签为空数组。 */
+  tags?: ServerTagItem[]
   createdAt: string
+}
+
+/** server 键值标签项（FR-227）。 */
+export interface ServerTagItem {
+  key: string
+  value: string
 }
 
 export type ServerListResponse = Paged<ServerItem>

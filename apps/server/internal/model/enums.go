@@ -563,6 +563,7 @@ const (
 	ActionZoneUpdate       = "zone.update"
 	ActionZoneDelete       = "zone.delete"
 	ActionServerUpdate     = "server.update"
+	ActionServerTagUpdated = "server.tag_updated"
 	ActionServerAssign     = "server.assign"
 	ActionServerUnassign   = "server.unassign"
 	ActionServerRezoneInit = "zone.rezone.initiated"

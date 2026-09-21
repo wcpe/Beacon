@@ -199,12 +199,22 @@ export interface ServerQuery {
   bcClusterId?: number
   keyword?: string
   lifecycleStatus?: 'active' | 'archived' | 'tombstoned' | 'all'
+  /** 键值标签交集筛选（FR-227），如 ['env:beta', 'tier:core']；多 tag 取交集。 */
+  tags?: string[]
   page?: number
   pageSize?: number
 }
 
 export function fetchServers(query: ServerQuery): Promise<ServerListResponse> {
-  return request('GET', `/admin/v2/servers${buildQuery({ ...query })}`)
+  const { tags, ...rest } = query
+  const base = buildQuery({ ...rest })
+  if (tags === undefined || tags.length === 0) {
+    return request('GET', `/admin/v2/servers${base}`)
+  }
+  // buildQuery 单值化会吞掉重复 tag，这里手动追加重复查询参数（与后端 q["tag"] 对齐）。
+  const extra = tags.map((tag) => `tag=${encodeURIComponent(tag)}`).join('&')
+  const joined = base === '' ? `?${extra}` : `${base}&${extra}`
+  return request('GET', `/admin/v2/servers${joined}`)
 }
 
 export function fetchServerLifecycleImpact(id: number, action: 'archive' | 'restore' | 'permanent-delete'): Promise<ServerLifecycleImpact> {
@@ -345,6 +355,18 @@ export function setDefaultEntry(serverRowId: number, value: boolean): Promise<Se
 
 export function setDraining(serverId: string, draining: boolean, reason: string): Promise<ServerItem | ApprovalTicket> {
   return request('PUT', `/admin/v2/servers/${serverId}/draining`, { draining, reason })
+}
+
+// ---- server 键值标签（FR-227）----
+
+/** 按 key 增改 server 标签（未出现的既有 key 保留）；返回更新后的 server 视图。 */
+export function setServerTags(serverId: string, tags: Record<string, string>): Promise<ServerItem> {
+  return request('PUT', `/admin/v2/servers/${encodeURIComponent(serverId)}/tags`, { tags })
+}
+
+/** 删除 server 单个标签（幂等）；返回更新后的 server 视图。 */
+export function deleteServerTag(serverId: string, key: string): Promise<ServerItem> {
+  return request('DELETE', `/admin/v2/servers/${encodeURIComponent(serverId)}/tags/${encodeURIComponent(key)}`)
 }
 
 // ---- 指标健康域（健康详情）----

@@ -1,6 +1,6 @@
 # 功能规格：服务器键值标签
 
-> 状态：草拟（已按评审重写；§7 已确认默认）　·　关联 PRD：FR-227（与 FR-29 发现过滤对齐）　·　分支：feature/server-key-value-tags
+> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-227（与 FR-29 发现过滤对齐）　·　分支：feature/server-key-value-tags
 
 ## 1. 背景与目标
 
@@ -41,12 +41,12 @@
 
 ## 5. 任务拆分
 
-- [ ] 数据模型：`server_tag` 表 + 迁移 + 唯一约束
-- [ ] 落实「同源」：FR-29 `tag.*` 过滤改读 `server_tag`（§7 拍板）
-- [ ] 增 / 删 / 覆盖接口 + 校验 + 审计
-- [ ] 列表 tag 过滤（多 tag 交集）
-- [ ] 前端：标签 chip 展示、编辑、筛选器
-- [ ] 文档同步：PRD 状态、API、ARCHITECTURE、CHANGELOG
+- [x] 数据模型：`server_tag` 表 + 迁移 + 唯一约束
+- [x] 落实「同源」：FR-29 `tag.*` 过滤改读 `server_tag`（§7 拍板）
+- [x] 增 / 删 / 覆盖接口 + 校验 + 审计
+- [x] 列表 tag 过滤（多 tag 交集）
+- [x] 前端：标签 chip 展示、编辑、筛选器
+- [x] 文档同步：PRD 状态、API、ARCHITECTURE、CHANGELOG
 
 ## 6. 验收标准
 

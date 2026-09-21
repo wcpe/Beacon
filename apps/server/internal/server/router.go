@@ -263,6 +263,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 			r.Get("/servers/{id}/lifecycle-impact", h.V2.ServerLifecycleImpact)
 			r.Get("/servers/{id}/permanent-deletion-impact", h.V2.ServerPermanentDeletionImpact)
 			r.Patch("/servers/{id}", h.V2.UpdateServer)
+			// FR-227：server 键值标签（低风险直执 + 强审计）。
+			r.Put("/servers/{serverId}/tags", h.V2.SetServerTags)
+			r.Delete("/servers/{serverId}/tags/{key}", h.V2.DeleteServerTag)
 			r.Post("/servers/{id}/bc-directory-resyncs", h.V2.ServerDirectoryResync)
 			// 大厅集群独立于大区 / 小区；成员迁移由专用端点原子完成。
 			r.Get("/lobby-clusters", h.V2.ListLobbyClusters)
