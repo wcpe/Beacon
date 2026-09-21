@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -70,10 +71,20 @@ func (r *MCPToolRegistry) SetSensitiveReadServices(assets *service.AssetPreviewS
 func (r *MCPToolRegistry) SetReadServices(reads MCPReadServices) { r.reads = reads }
 
 // MCPToolNames 返回 profile 可发现的固定工具名，供覆盖门禁验证。
+//
+// 审批决定工具（beacon.approvals.approve / reject）**按运行时开关动态纳入**：
+// 默认关闭时不在清单内（保持 FR-220「机器主体不发现审批决定工具」的分权原则）；
+// 仅当部署显式开启 mcp.allow-approval-decide 时才出现，与实际注册行为一致
+// （见 NewMCPServer 里 principal.HasCapability(CapabilityApprovalDecide) 的判定）。
 func MCPToolNames(profile string) []string {
 	names := append([]string{"beacon.approvals.own.list", "beacon.approvals.own.get"}, mcpReadToolNames...)
 	if profile == model.MCPClientProfileAutomation {
-		return append(names, "beacon.approvals.own.withdraw", "beacon.config.publish", "beacon.config.rollback", "beacon.config.gray.publish", "beacon.config.gray.promote", "beacon.config.delete", "beacon.config.batch.delete", "beacon.config.batch.enable", "beacon.config.batch.disable", "beacon.files.create", "beacon.files.import", "beacon.files.publish", "beacon.files.rollback", "beacon.files.delete", "beacon.files.batch.delete", "beacon.files.batch.enable", "beacon.files.batch.disable", "beacon.assets.preview.request", "beacon.assets.preview.consume", "beacon.messages.payload.request", "beacon.messages.payload.consume", "beacon.override-sets.publish", "beacon.override-sets.rollback", "beacon.override-sets.delete", "beacon.credentials.api-key.create", "beacon.credentials.api-key.rotate", "beacon.identity.agent.unbind", "beacon.identity.agent.enable", "beacon.identity.agent.allow-reapply", "beacon.identity.agent.approve", "beacon.identity.agent.resolve-conflict", "beacon.trust.namespace.grant", "beacon.topology.servers.assign", "beacon.topology.servers.rezone", "beacon.topology.server.transfer-placement", "beacon.topology.server.disable-draining", "beacon.topology.server.set-default-entry", "beacon.lifecycle.namespace.archive", "beacon.lifecycle.namespace.restore", "beacon.lifecycle.namespace.permanent-delete", "beacon.lifecycle.server.archive", "beacon.lifecycle.server.restore", "beacon.lifecycle.server.permanent-delete", "beacon.agent.server.resync", "beacon.system.update.apply", "beacon.system.update.rollback", "beacon.system.settings.update-dangerous", "beacon.delivery.order.submit", "beacon.delivery.order.delete", "beacon.delivery.order.resume", "beacon.delivery.order.rollback", "beacon.delivery.batch.confirm", "beacon.delivery.rollback.finish")
+		names = append(names, "beacon.approvals.own.withdraw")
+		// 审批决定权默认归人类；仅显式开启的内网部署才向 automation 暴露（FR-223）。
+		if auth.MCPApprovalDecideEnabled() {
+			names = append(names, "beacon.approvals.approve", "beacon.approvals.reject")
+		}
+		return append(names, "beacon.topology.bc-clusters.create", "beacon.topology.bc-clusters.update", "beacon.topology.bc-clusters.delete", "beacon.topology.regions.create", "beacon.topology.regions.update", "beacon.topology.regions.delete", "beacon.topology.zones.create", "beacon.topology.zones.update", "beacon.topology.zones.delete", "beacon.config.publish", "beacon.config.rollback", "beacon.config.gray.publish", "beacon.config.gray.promote", "beacon.config.delete", "beacon.config.batch.delete", "beacon.config.batch.enable", "beacon.config.batch.disable", "beacon.files.create", "beacon.files.import", "beacon.files.publish", "beacon.files.rollback", "beacon.files.delete", "beacon.files.batch.delete", "beacon.files.batch.enable", "beacon.files.batch.disable", "beacon.assets.preview.request", "beacon.assets.preview.consume", "beacon.messages.payload.request", "beacon.messages.payload.consume", "beacon.override-sets.publish", "beacon.override-sets.rollback", "beacon.override-sets.delete", "beacon.credentials.api-key.create", "beacon.credentials.api-key.rotate", "beacon.identity.agent.unbind", "beacon.identity.agent.enable", "beacon.identity.agent.allow-reapply", "beacon.identity.agent.approve", "beacon.identity.agent.resolve-conflict", "beacon.trust.namespace.grant", "beacon.topology.servers.assign", "beacon.topology.servers.rezone", "beacon.topology.server.transfer-placement", "beacon.topology.server.disable-draining", "beacon.topology.server.set-default-entry", "beacon.lifecycle.namespace.archive", "beacon.lifecycle.namespace.restore", "beacon.lifecycle.namespace.permanent-delete", "beacon.lifecycle.server.archive", "beacon.lifecycle.server.restore", "beacon.lifecycle.server.permanent-delete", "beacon.agent.server.resync", "beacon.system.update.apply", "beacon.system.update.rollback", "beacon.system.settings.update-dangerous", "beacon.delivery.order.submit", "beacon.delivery.order.delete", "beacon.delivery.order.resume", "beacon.delivery.order.rollback", "beacon.delivery.batch.confirm", "beacon.delivery.rollback.finish")
 	}
 	if profile == model.MCPClientProfileObserver {
 		return names
@@ -98,10 +109,16 @@ func (r *MCPToolRegistry) NewMCPServer(principal auth.Principal) *mcp.Server {
 		r.registerIdentityApproval(server, principal)
 		r.registerNamespaceTrustApproval(server, principal)
 		r.registerTopologyApproval(server, principal)
+		// 建树（FR-221）：低风险结构操作，直接执行不走审批票据；与 topologyApproval 同组可见。
+		r.registerTopologyAuthoring(server, principal)
 		r.registerLifecycleApproval(server, principal)
 		r.registerAgentCommandApproval(server, principal)
 		r.registerSystemApproval(server, principal)
 		r.registerDeliveryApproval(server, principal)
+	}
+	// 审批决定需专用能力；仅受信 automation 客户端持有，用于内网闭环审批。
+	if principal.HasCapability(auth.CapabilityApprovalDecide) {
+		r.registerApprovalDecision(server, principal)
 	}
 	return server
 }
@@ -620,6 +637,40 @@ func (r *MCPToolRegistry) registerOwnApprovalWithdraw(server *mcp.Server, princi
 	})
 }
 
+// mcpApprovalDecisionInput 审批决定入参；reason 为拒绝/批准理由（拒绝必填）。
+type mcpApprovalDecisionInput struct {
+	RequestID string `json:"requestId"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// registerApprovalDecision 登记审批决定工具；仅 automation profile 可见，供内网受信客户端闭环审批。
+// 批准与拒绝都写强审计；批准后由 approval worker 执行领域动作。
+func (r *MCPToolRegistry) registerApprovalDecision(server *mcp.Server, principal auth.Principal) {
+	if r.approvals == nil {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.approvals.approve", Description: "批准一条待处理审批申请（受信 automation 客户端；服务端记强审计）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpApprovalDecisionInput) (*mcp.CallToolResult, map[string]any, error) {
+		if in.RequestID == "" {
+			return mcpRejectedResultWithReason("缺少 requestId")
+		}
+		item, err := r.approvals.Approve(in.RequestID, principal, "mcp")
+		if err != nil {
+			return mcpRejectedResultWithReason(err.Error())
+		}
+		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.approvals.reject", Description: "拒绝一条待处理审批申请（须给理由；受信 automation 客户端）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpApprovalDecisionInput) (*mcp.CallToolResult, map[string]any, error) {
+		if in.RequestID == "" || in.Reason == "" {
+			return mcpRejectedResultWithReason("缺少 requestId 或 reason")
+		}
+		item, err := r.approvals.Reject(in.RequestID, principal, "mcp", in.Reason)
+		if err != nil {
+			return mcpRejectedResultWithReason(err.Error())
+		}
+		return &mcp.CallToolResult{}, mcpApprovalView(&item), nil
+	})
+}
+
 func (r *MCPToolRegistry) registerAPIKeyApproval(server *mcp.Server, principal auth.Principal) {
 	if r.apiKeys == nil {
 		return
@@ -879,7 +930,22 @@ func mcpToolError() *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "请求被拒绝或目标不可用"}}, IsError: true}
 }
 
+// mcpToolErrorWithReason 同 mcpToolError，但附带可读原因（用于审批决定等需要运维定位的场景）。
+func mcpToolErrorWithReason(reason string) *mcp.CallToolResult {
+	text := "请求被拒绝或目标不可用"
+	if strings.TrimSpace(reason) != "" {
+		text = text + "：" + reason
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}, IsError: true}
+}
+
 // mcpRejectedResult 以 MCP 结果表达已处理的业务拒绝，不把领域错误作为协议故障泄露给客户端。
+// 第三个返回值给出非 null 的空对象，避免 SDK 校验 structuredContent 为 record 时报错。
 func mcpRejectedResult() (*mcp.CallToolResult, map[string]any, error) {
-	return mcpToolError(), nil, nil
+	return mcpToolError(), map[string]any{}, nil
+}
+
+// mcpRejectedResultWithReason 带原因的拒绝结果（同样满足 structuredContent 非 null）。
+func mcpRejectedResultWithReason(reason string) (*mcp.CallToolResult, map[string]any, error) {
+	return mcpToolErrorWithReason(reason), map[string]any{}, nil
 }

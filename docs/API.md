@@ -1067,6 +1067,10 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 
 当前 `automation` profile 还可发现显式审批工具：配置的删除与批量删除/启停、文件创建/导入/发布/回滚/删除/批量删除/启停、覆盖集发布/回滚/删除，以及资产预览和消息正文的审批申请。危险写入工具均只创建审批申请并返回 `{approvalRequestId,status}`；不会直接执行领域操作、构造 permit 或代理文件路径。资产预览与消息正文的消费工具仍核验原申请主体、冻结目标和一次性 grant，但响应固定只返回消费状态，绝不回吐敏感正文。`observer` 不可发现这些工具。
 
+**拓扑建树工具（FR-221）**：`automation` 另可发现九个低风险结构写工具——`beacon.topology.bc-clusters.create/update/delete`、`beacon.topology.regions.create/update/delete`、`beacon.topology.zones.create/update/delete`，语义与既有 `/admin/v2` HTTP 端点逐一对齐。与分配/换区等高风险动作**刻意不同**：建树按 FR-220 的「低风险按能力直执」原则**直接执行并写审计**，不产生审批票据。删除非空节点（大区下含小区、小区下含服务器、集群下含大区或已分配代理）按既有约束拒绝。`regions.create` 须 `parentId` = 所属 BC 集群 id，`zones.create` 须 `parentId` = 所属大区 id。`observer` 不可发现写工具。
+
+**审批决定工具（FR-223，归真项）**：`beacon.approvals.approve` / `beacon.approvals.reject`（拒绝须给理由）**仅当 `mcp.allow-approval-decide=true` 时**对 `automation` profile 暴露，默认关闭——关闭时审批决定权归人类，保持原分权设计；内网单操作者部署可显式开启以打通自动化闭环。批准与拒绝均写强审计，批准后由 approval worker 执行领域动作。`observer` 任何情况下不可发现审批决定工具。该开关只影响这两个工具，不影响 FR-221 建树工具等其他能力。
+
 `observer` 与 `automation` 均可发现 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。列表均分页或受时间窗约束；消息不返回 payload、玩家标识或 hop 原文，连接仅返回聚合，命令不返回结果正文，审计不返回 detail 与客户端地址。
 
 公网入口只有在 `mcp.enabled=true`、`mcp.public-base-url` 为无路径 HTTPS 基址且 `mcp.trusted-proxy-cidrs` 已配置时才挂载；请求必须来自受信代理，并携带与基址一致的 `X-Forwarded-Proto: https`、`X-Forwarded-Host` 和 Host。详见 [built-in-admin-v2-mcp-and-oauth.md](specs/built-in-admin-v2-mcp-and-oauth.md)。

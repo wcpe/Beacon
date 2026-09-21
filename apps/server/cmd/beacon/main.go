@@ -109,6 +109,12 @@ func loadRunConfig(cfgPath string) (config.Config, string, error, error) {
 	return cfg, selfPath, selfErr, nil
 }
 
+// mcpApprovalDecideEnabled 判定是否放行 MCP 机器主体的审批决定能力（FR-223）：
+// 仅当 MCP 入口启用且显式开启 mcp.allow-approval-decide 时成立；抽出以免 run 判定点越限。
+func mcpApprovalDecideEnabled(cfg config.MCPConfig) bool {
+	return cfg.Enabled && cfg.AllowApprovalDecide
+}
+
 func runApprovalWorker(ctx context.Context, worker *service.ApprovalWorker) {
 	if err := worker.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("审批执行器异常退出", "错误", err)
@@ -403,6 +409,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// automation 客户端的审批决定能力默认关闭；仅显式配置时开启（内网单操作者闭环）。
+	auth.SetMCPApprovalDecide(mcpApprovalDecideEnabled(cfg.MCP))
 	mcpToolRegistry := server.NewMCPToolRegistry(approvalService, apiKeyService, v2ControlPlaneService, settingsService)
 	mcpToolRegistry.SetConfigService(configService)
 	mcpToolRegistry.SetFileOverrideServices(fileService, overrideSetService)

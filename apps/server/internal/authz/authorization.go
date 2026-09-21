@@ -524,7 +524,7 @@ func (r *ApprovalRegistry) executionAdapter(req ApprovalRequest, leaseToken stri
 	if req.Status != model.ApprovalStatusExecuting || req.RequestID == "" || req.LeaseOwner == "" || req.LeaseUntil == nil {
 		return nil, Permit{}, apperr.ErrForbidden
 	}
-	if !time.Now().UTC().Before(req.LeaseUntil.UTC()) || req.DeciderType != auth.PrincipalKindHuman || req.DeciderID == "" || req.ApprovedAt == nil {
+	if !time.Now().UTC().Before(req.LeaseUntil.UTC()) || !decisionPrincipalAllowed(req) || req.DeciderID == "" || req.ApprovedAt == nil {
 		return nil, Permit{}, apperr.ErrForbidden
 	}
 	r.mu.RLock()
@@ -545,6 +545,16 @@ func (r *ApprovalRegistry) executionAdapter(req ApprovalRequest, leaseToken stri
 		payloadHash: req.PayloadHash, leaseToken: req.LeaseOwner, version: req.Version,
 	}
 	return adapter, permit, nil
+}
+
+// decisionPrincipalAllowed 判定审批人主体类型是否可执行许可签发。
+// 默认仅 human（分权保证）；显式开启 mcp.allow-approval-decide 的内网部署
+// 额外放行 MCP 机器主体，用于自动化闭环。
+func decisionPrincipalAllowed(req ApprovalRequest) bool {
+	if req.DeciderType == auth.PrincipalKindHuman {
+		return true
+	}
+	return req.DeciderType == auth.PrincipalKindMCP && auth.MCPApprovalDecideEnabled()
 }
 
 func loadApprovalRequest(tx *gorm.DB, requestID string) (ApprovalRequest, error) {
