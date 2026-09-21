@@ -664,6 +664,13 @@ export const observability = {
     batchNotePlaceholder: '批量处理备注（标记已处理时必填）',
     batchProgress: '处理中 {{done}} / {{total}}…',
     batchPartialFail: '部分失败：成功 {{ok}}，失败 {{fail}}',
+    // FR-229：按当前筛选跨页批量（作用于全部命中 open 条目）
+    filterBatch: '处理当前筛选',
+    filterBatchHint: '对当前筛选命中的全部「待处理」告警跨页处理（不止当前页）',
+    filterBatchAck: '一键已读',
+    filterBatchResolve: '一键已处理',
+    filterBatchResult: '已处理 {{count}} 条',
+    filterBatchEmpty: '当前筛选无待处理告警',
     detailTitle: '告警详情',
     listTitle: '告警事件',
     handleTitle: '处理告警',

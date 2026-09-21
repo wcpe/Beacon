@@ -159,3 +159,19 @@ export interface HandleAlertBody {
 export function handleAlertEvent(id: number, body: HandleAlertBody): Promise<AlertEventItem> {
   return request('POST', `/admin/v1/alert-events/${String(id)}/handle`, body)
 }
+
+/** 告警按筛选批量处理（FR-229）：对当前筛选命中的全部未处理（open）条目一次性处理。 */
+export interface HandleAlertBatchBody {
+  filter: {
+    type?: string
+    level?: string
+    from?: string
+    to?: string
+  }
+  status: Extract<AlertEventStatus, 'acknowledged' | 'resolved'>
+  note?: string
+}
+
+export function handleAlertEventsBatch(body: HandleAlertBatchBody): Promise<{ affected: number }> {
+  return request('POST', '/admin/v1/alert-events/handle', body)
+}

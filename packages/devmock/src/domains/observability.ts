@@ -336,6 +336,36 @@ export const observabilityHandlers: HttpHandler[] = [
     return HttpResponse.json({ items, total })
   }),
 
+  // 告警按筛选批量处理（FR-229）：对当前筛选命中的全部 open 条目一条 UPDATE 语义，返回命中数。
+  // 注意与下方 `:id/handle`（5 段）不同路径长度（4 段），不会误匹配。
+  mockPost('/admin/v1/alert-events/handle', async (info) => {
+    const body = await readBody<{ filter?: { type?: string; level?: string }; status?: string; note?: string }>(info.request)
+    const status = body.status
+    if (status !== 'acknowledged' && status !== 'resolved') {
+      return jsonError(400, 'INVALID_PARAM', 'status 仅支持 acknowledged / resolved')
+    }
+    const filter = body.filter ?? {}
+    const note = body.note?.trim() ?? ''
+    let affected = 0
+    for (const row of getObservabilityState().alertEvents) {
+      if (row.status !== 'open') {
+        continue
+      }
+      if (filter.type !== undefined && row.type !== filter.type) {
+        continue
+      }
+      if (filter.level !== undefined && row.level !== filter.level) {
+        continue
+      }
+      row.status = status
+      row.handledBy = 'admin'
+      row.handledAt = new Date(BASE_MS).toISOString()
+      row.handleNote = note === '' ? null : note
+      affected += 1
+    }
+    return HttpResponse.json({ affected })
+  }),
+
   // 处理告警事件（确认 / 处理写闭环）：更新状态 + 处理人 / 时间 / 备注，返回更新后的行。
   // 对齐真后端行为（alert_event_handler.go Handle）：备注非必填（必填约束在前端面板），空备注落 null。
   mockPost('/admin/v1/alert-events/:id/handle', async (info) => {

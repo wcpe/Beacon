@@ -117,3 +117,19 @@ func (r *AlertEventRepository) List(f AlertEventFilter) ([]model.AlertEvent, int
 	}
 	return items, total, nil
 }
+
+// HandleBatch 按过滤条件批量处理「未处理（open）」告警（FR-229）：一条 UPDATE，仅影响 status='open' 的行，
+// 返回受影响行数。已非 open 的行不变，故重复执行幂等。仅标准 SQL + 占位符，保 Postgres 可移植。
+func (r *AlertEventRepository) HandleBatch(f AlertEventFilter, status, handledBy, note string, now time.Time) (int64, error) {
+	q := applyAlertEventFilter(r.db.Model(&model.AlertEvent{}), f)
+	res := q.Where("status = ?", model.AlertEventStatusOpen).Updates(map[string]any{
+		"status":      status,
+		"handled_by":  handledBy,
+		"handled_at":  now,
+		"handle_note": note,
+	})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
