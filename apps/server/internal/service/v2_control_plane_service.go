@@ -153,12 +153,12 @@ func (s *V2ControlPlaneService) CreateV2Namespace(p CreateV2NamespaceParams) (*m
 }
 
 type AgentRegisterV2Params struct {
-	Token             string
-	IdentityID        string
-	ServerID          string
-	Kind              string
-	BootID            string
-	AgentVersion      string
+	Token        string
+	IdentityID   string
+	ServerID     string
+	Kind         string
+	BootID       string
+	AgentVersion string
 	// ServerWorkDir agent 上报的服务器工作目录绝对路径（FR-226，可选；空表示旧 agent 未上报）。
 	ServerWorkDir     string
 	Addr              string
@@ -239,7 +239,7 @@ func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*Agent
 			IdentityID: p.IdentityID, NamespaceID: ns.ID, ServerID: model.NullableServerID(p.ServerID),
 			Kind: p.Kind, Status: model.AgentIdentityStatusPending,
 			BootID: p.BootID, LastAddr: p.Addr, AgentVersion: p.AgentVersion,
-			ServerWorkDir: p.ServerWorkDir,
+			ServerWorkDir:    p.ServerWorkDir,
 			PendingExpiresAt: &expiresAt, StatusChangedAt: now,
 			BindingSource: identityBindingSourceForRegistration(p.ServerID),
 		}
