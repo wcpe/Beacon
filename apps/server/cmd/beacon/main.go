@@ -405,7 +405,16 @@ func run() error {
 	mcpOAuthService.SetApprovalService(approvalService)
 	service.RegisterMCPOAuthApprovalAdapters(approvalRegistry, mcpOAuthService)
 	mcpOAuthHandler := handler.NewMCPOAuthHandler(mcpOAuthService)
-	mcpProxyPolicy, err := server.NewMCPProxyPolicy(cfg.MCP.Enabled, cfg.MCP.PublicBaseURL, cfg.MCP.TrustedProxyCIDRs)
+	// MCP 入口部署配置只读视图（启动项、无写入端点）：始终装配，使 MCP 未启用时
+	// 管理台也能读到 enabled=false 并展示配置指引。
+	mcpConfigHandler := handler.NewMCPConfigHandler(cfg.MCP)
+	mcpProxyPolicy, err := server.NewMCPProxyPolicy(
+		cfg.MCP.Enabled, cfg.MCP.PublicBaseURL, cfg.MCP.TrustedProxyCIDRs,
+		server.MCPProxyOptions{
+			AllowInsecureInternal: cfg.MCP.AllowInsecureInternal,
+			AllowedHosts:          cfg.MCP.AllowedHosts,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -701,7 +710,7 @@ func run() error {
 	router := server.NewRouter(server.Handlers{
 		Namespace: nsHandler, Env: envHandler, V2: v2ControlPlaneHandler, V2Metrics: v2MetricsHandler, V2Health: v2HealthHandler, V2Sched: v2SchedHandler, V2Connection: v2ConnectionHandler, V2Message: v2MessageHandler, V2ConnectionAdmin: v2ConnectionAdminHandler, V2MessageAdmin: v2MessageAdminHandler, V2Archive: v2ArchiveHandler, V2ConfigCenter: v2ConfigCenterHandler, V2Assets: v2AssetsHandler, Delivery: deliveryHandler, DeliveryStream: deliveryStreamHandler, DeliveryAgent: deliveryAgentHandler, SchedDecision: schedDecisionAdminHandler, Config: configHandler, File: fileHandler, OverrideSet: overrideSetHandler,
 		Agent: agentHandler, Stream: streamHandler, Instance: instanceHandler, Topology: topologyHandler, Zone: zoneHandler, Scheduling: schedulingHandler,
-		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPProtocol: mcpProtocolHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
+		Audit: auditHandler, Alert: alertHandler, AlertEvent: alertEventHandler, Metric: metricHandler, System: systemHandler, Observability: observabilityHandler, CommandObserve: commandObserveHandler, Update: updateHandler, Auth: authHandler, APIKey: apiKeyHandler, MCPOAuth: mcpOAuthHandler, MCPConfig: mcpConfigHandler, MCPProtocol: mcpProtocolHandler, Approval: approvalHandler, Command: commandHandler, Browse: browseHandler, Asset: assetHandler, FileSync: fileSyncHandler, AgentLog: agentLogHandler, ReverseFetchTask: reverseFetchTaskHandler, ReverseFetchRule: reverseFetchIgnoreRuleHandler, Settings: settingsHandler, ReversibleOp: reversibleOpHandler, Metrics: metricsSet.Handler(), Web: embedweb.Handler(dist),
 	}, cfg.AgentToken, authn, apiKeyService, auditRepo)
 
 	srv := &http.Server{

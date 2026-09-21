@@ -48,6 +48,7 @@ type Handlers struct {
 	Auth              *handler.AuthHandler
 	APIKey            *handler.APIKeyHandler
 	MCPOAuth          *handler.MCPOAuthHandler
+	MCPConfig         *handler.MCPConfigHandler
 	MCPProtocol       *MCPProtocolHandler
 	Approval          *handler.ApprovalHandler
 	Command           *handler.CommandHandler
@@ -206,6 +207,11 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 				r.Post("/mcp-clients/{clientId}/rotate", h.MCPOAuth.Rotate)
 				r.Post("/mcp-clients/{clientId}/enable", h.MCPOAuth.Enable)
 				r.Post("/mcp-clients/{clientId}/revoke", h.MCPOAuth.Revoke)
+			}
+			// MCP 入口部署配置只读视图（启动项、无写入端点）：与 MCPOAuth 独立判空——
+			// MCP 未启用时也要能返回 enabled=false，供管理台展示配置指引而非报错。
+			if h.MCPConfig != nil {
+				r.Get("/mcp/config", h.MCPConfig.Get)
 			}
 
 			// env 展示维度（FR-178，见 v2-zone-authority.md §5）：env 增删改 + 整体替换 env→namespace 映射。
