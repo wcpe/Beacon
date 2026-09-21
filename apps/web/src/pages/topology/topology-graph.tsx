@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { ArrowRight, Boxes, Maximize, Network, TriangleAlert, Waves, ZoomIn, ZoomOut } from 'lucide-react'
+import { ArrowRight, Boxes, DoorOpen, Maximize, Network, TriangleAlert, Waves, ZoomIn, ZoomOut } from 'lucide-react'
 
 import { AsyncSection, Badge, Button, cn } from '@beacon/ui'
 import type { HealthItem, MessageEdgeStat, ZoneTreeResponse } from '@beacon/contracts'
@@ -54,6 +54,8 @@ const GROUP_X = 260
 const PROXY_CX = 104
 // 分区内每行最多节点数
 const MAX_COLS = 4
+// 大厅成员层最多直显的入口服台数（超出折叠为计数提示，避免节点墙）
+const MAX_LOBBY_NODES = 12
 // 画布内边距
 const PAD = 24
 
@@ -118,10 +120,21 @@ interface ProxyNode {
   cy: number
 }
 
+// 大厅集群成员（=入口服，FR-225 / ADR-0083）：逐台呈现在线 / 离线态
+interface LobbyNode {
+  serverId: string
+  online: boolean
+  level: string
+  cx: number
+  cy: number
+}
+
 interface GraphLayout {
   nodes: GraphNode[]
   groups: GraphGroup[]
   proxies: ProxyNode[]
+  lobbyNodes: LobbyNode[]
+  lobbyGroup: GraphGroup | null
   width: number
   height: number
 }
@@ -139,8 +152,8 @@ interface GraphLink {
   flow: boolean
 }
 
-// 侧面板选中态：原始消息边（server→server）或节点概要
-type Selection = { kind: 'edge'; key: string } | { kind: 'node'; id: number } | null
+// 侧面板选中态：原始消息边（server→server）、节点概要或大厅成员
+type Selection = { kind: 'edge'; key: string } | { kind: 'node'; id: number } | { kind: 'lobby'; serverId: string } | null
 
 // 统计一棵树里的小区节点总数（判定是否需要折叠）
 function countZones(tree: ZoneTreeResponse): number {
@@ -195,7 +208,12 @@ function clamp(v: number, min: number, max: number): number {
 }
 
 // 放射布局：分区盒纵向堆叠在右侧，分区内节点按网格排布；代理列在左侧纵向均匀分布
-function buildLayout(tree: ZoneTreeResponse, collapsed: boolean): GraphLayout {
+function buildLayout(
+  tree: ZoneTreeResponse,
+  collapsed: boolean,
+  lobbyMembers: LobbyNode[],
+  lobbyLabel: string,
+): GraphLayout {
   const nodes: GraphNode[] = []
   const groups: GraphGroup[] = []
   let cursorY = PAD
@@ -265,6 +283,38 @@ function buildLayout(tree: ZoneTreeResponse, collapsed: boolean): GraphLayout {
     cursorY += h + GROUP_GAP
   }
 
+  // 大厅集群层（=入口服，FR-225 / ADR-0083）：附在树分组之后，逐台呈现成员在线 / 离线态。
+  const lobbyNodes: LobbyNode[] = []
+  let lobbyGroup: GraphGroup | null = null
+  if (lobbyMembers.length > 0) {
+    const n = lobbyMembers.length
+    const cols = Math.min(Math.max(n, 1), MAX_COLS)
+    const rows = Math.max(Math.ceil(n / cols), 1)
+    const w = GROUP_PAD_X * 2 + cols * CELL_W
+    const h = GROUP_HEAD + rows * CELL_H + GROUP_PAD_B
+    lobbyGroup = {
+      id: 0,
+      name: lobbyLabel,
+      nodeCount: n,
+      serverCount: n,
+      x: GROUP_X,
+      y: cursorY,
+      w,
+      h,
+    }
+    lobbyMembers.forEach((member, i) => {
+      const col = i % cols
+      const row = Math.floor(i / cols)
+      lobbyNodes.push({
+        ...member,
+        cx: GROUP_X + GROUP_PAD_X + col * CELL_W + CELL_W / 2,
+        cy: cursorY + GROUP_HEAD + row * CELL_H + NODE_R + 12,
+      })
+    })
+    maxGroupW = Math.max(maxGroupW, w)
+    cursorY += h + GROUP_GAP
+  }
+
   // 画布尺寸：右侧分区决定宽度；高度保证代理列有起码的呼吸空间
   const clusterCount = tree.clusters.length
   const minProxyHeight = PAD + 40 + clusterCount * (PROXY_R * 2 + 28) + PAD
@@ -282,7 +332,7 @@ function buildLayout(tree: ZoneTreeResponse, collapsed: boolean): GraphLayout {
     cy: top + (span * (i + 0.5)) / clusterCount,
   }))
 
-  return { nodes, groups, proxies, width, height }
+  return { nodes, groups, proxies, lobbyNodes, lobbyGroup, width, height }
 }
 
 // 健康占比环分段：pathLength=100 便于按百分比切段，起点在圆顶部（dashoffset 25）
@@ -464,6 +514,21 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     return map
   }, [healthQuery.data])
 
+  // 大厅集群成员 = 入口服（FR-225 / ADR-0083：入口服即大厅成员，无独立实体）：
+  // 取 lobbyClusterId != null 的后端子服，逐台带在线 / 健康态，供拓扑「大厅层」呈现（含离线）。
+  const lobbyMembers = useMemo<LobbyNode[]>(() => {
+    const rows = (serversQuery.data?.items ?? [])
+      .filter((s) => s.kind === 'backend' && s.lobbyClusterId !== null)
+      .slice(0, MAX_LOBBY_NODES)
+    return rows.map((s) => ({
+      serverId: s.serverId,
+      online: s.online,
+      level: healthByServer.get(s.serverId)?.level ?? 'healthy',
+      cx: 0,
+      cy: 0,
+    }))
+  }, [serversQuery.data, healthByServer])
+
   // 节点健康占比：展开态按小区聚合、折叠态按大区聚合（离线优先于健康等级）
   const healthOfNode = useMemo(() => {
     const map = new Map<number, NodeHealth>()
@@ -498,8 +563,8 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     if (!tree || tree.clusters.length === 0) {
       return null
     }
-    return buildLayout(tree, collapsed)
-  }, [tree, collapsed])
+    return buildLayout(tree, collapsed, lobbyMembers, t('cluster.topology.graph.lobbyLayerTitle'))
+  }, [tree, collapsed, lobbyMembers, t])
 
   // 计算「适应视图」基准倍率：全图 + 四周留白正好放进可视区。
   // 不再 clamp ≤1：小图（常规规模）fit 后放大占满可视区、大图缩小到全览，两种场景 fit 都定义为 100%
@@ -768,6 +833,13 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
     return links.find((l) => l.worstEdge !== null && edgeKey(l.worstEdge) === selection.key) ?? null
   }, [links, selection])
   const selectedNode = selection?.kind === 'node' ? (nodeById.get(selection.id) ?? null) : null
+  // 侧栏选中大厅成员（=入口服）：从 servers 取该台在线 / 健康态
+  const selectedLobby = useMemo(() => {
+    if (selection?.kind !== 'lobby') {
+      return null
+    }
+    return (serversQuery.data?.items ?? []).find((s) => s.serverId === selection.serverId) ?? null
+  }, [selection, serversQuery.data])
   const selectedNodeHealth = selectedNode ? (healthOfNode.get(selectedNode.id) ?? null) : null
   // 侧栏真实服务器列表：展开态 = 该小区子服；折叠态 = 该大区下全部小区的子服
   const selectedNodeServers = useMemo(() => {
@@ -1123,6 +1195,71 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                         </g>
                       )
                     })}
+                    {/* ===== 大厅集群层（=入口服，FR-225 / ADR-0083）：逐台成员在线 / 离线态 ===== */}
+                    {layout.lobbyGroup && (
+                      <g>
+                        <rect
+                          x={layout.lobbyGroup.x}
+                          y={layout.lobbyGroup.y}
+                          width={layout.lobbyGroup.w}
+                          height={layout.lobbyGroup.h}
+                          rx={16}
+                          fill="var(--color-brand)"
+                          fillOpacity={0.03}
+                          stroke="var(--color-brand-100)"
+                          strokeDasharray="6 6"
+                        />
+                        <text x={layout.lobbyGroup.x + 18} y={layout.lobbyGroup.y + 26} fontSize={12} fontWeight={700} fill="var(--color-ink-3)">
+                          {layout.lobbyGroup.name}
+                        </text>
+                        <text
+                          x={layout.lobbyGroup.x + 18}
+                          y={layout.lobbyGroup.y + 26}
+                          dx={layout.lobbyGroup.name.length * 13 + 10}
+                          fontSize={10}
+                          fill="var(--color-ink-4)"
+                          className="beacon-lod"
+                        >
+                          {t('cluster.topology.graph.lobbyMeta', { count: layout.lobbyGroup.nodeCount })}
+                        </text>
+                      </g>
+                    )}
+                    {layout.lobbyNodes.map((member) => {
+                      const active = selection?.kind === 'lobby' && selection.serverId === member.serverId
+                      const dotColor = !member.online
+                        ? 'var(--color-off)'
+                        : member.level === 'unhealthy'
+                          ? 'var(--color-crit)'
+                          : member.level === 'degraded'
+                            ? 'var(--color-warn)'
+                            : 'var(--color-ok)'
+                      return (
+                        <g
+                          key={`lobby-${member.serverId}`}
+                          className="cursor-pointer"
+                          role="button"
+                          aria-label={member.serverId}
+                          onClick={() => {
+                            setSelection(active ? null : { kind: 'lobby', serverId: member.serverId })
+                          }}
+                        >
+                          <title>{`${member.serverId} · ${t('cluster.topology.graph.lobbyLayerTitle')}`}</title>
+                          {active && (
+                            <circle cx={member.cx} cy={member.cy} r={NODE_R + 9} fill="none" stroke="var(--color-brand)" strokeOpacity={0.5} strokeWidth={1.5} strokeDasharray="4 5" />
+                          )}
+                          <circle cx={member.cx} cy={member.cy} r={NODE_R} fill="var(--color-card)" stroke="var(--color-border)" />
+                          {/* 入口服标识：DoorOpen 字形 + 在线 / 离线状态点 */}
+                          <DoorOpen x={member.cx - 10} y={member.cy - 10} width={20} height={20} color="var(--color-brand-600)" strokeWidth={1.7} aria-hidden />
+                          <circle cx={member.cx + NODE_R * 0.66} cy={member.cy - NODE_R * 0.66} r={4.5} fill={dotColor} stroke="var(--color-card)" strokeWidth={2} />
+                          <text x={member.cx} y={member.cy + NODE_R + 18} textAnchor="middle" fontSize={11.5} fontWeight={700} fill="var(--color-ink-1)">
+                            {member.serverId}
+                          </text>
+                          <text x={member.cx} y={member.cy + NODE_R + 32} textAnchor="middle" fontSize={9.5} fill="var(--color-ink-3)" className="beacon-lod">
+                            {t(member.online ? 'cluster.topology.graph.memberOnline' : 'cluster.topology.graph.memberOffline')}
+                          </text>
+                        </g>
+                      )
+                    })}
                   </svg>
                 </div>
 
@@ -1335,6 +1472,27 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                           ))}
                         </ul>
                       )}
+                    </div>
+                  </div>
+                ) : selectedLobby ? (
+                  <div className="grid gap-2.5 text-sm">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold text-ink-1">
+                      <DoorOpen className="size-3.5 shrink-0 text-brand" />
+                      <span className="truncate font-mono">{selectedLobby.serverId}</span>
+                    </p>
+                    <p className="text-[11px] font-semibold tracking-[0.3px] text-ink-4 uppercase">
+                      {t('cluster.topology.graph.lobbyLayerTitle')}
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge variant={selectedLobby.online ? 'ok' : 'off'}>
+                        {t(selectedLobby.online ? 'cluster.topology.graph.memberOnline' : 'cluster.topology.graph.memberOffline')}
+                      </Badge>
+                      <Badge variant="secondary">
+                        {t(`cluster.servers.kind.${selectedLobby.kind}`)}
+                      </Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 text-xs text-ink-3">
+                      <span>{t('cluster.topology.graph.lobbyHint')}</span>
                     </div>
                   </div>
                 ) : (
