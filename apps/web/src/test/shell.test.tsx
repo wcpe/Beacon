@@ -60,14 +60,16 @@ function pageBreadcrumb() {
 describe('全站路由', () => {
   it.each(pageCases)('%s 面包屑展示页面身份「%s」', (path, title) => {
     renderAt(path)
-    expect(pageBreadcrumb().getByText(title)).toBeInTheDocument()
+    // 面包屑当前页那一档即页面标题地标（<h1>，位于页眉；屏幕阅读器可跳转）
+    const identity = pageBreadcrumb().getByRole('heading', { name: title })
+    expect(identity.tagName).toBe('H1')
     // E5：内容区不再出现大标题（h1），身份改由页眉面包屑承担
     expect(document.querySelector('main h1')).toBeNull()
   })
 
   it('根路径 / 重定向到 /dashboard', () => {
     renderAt('/')
-    expect(pageBreadcrumb().getByText('运维总览')).toBeInTheDocument()
+    expect(pageBreadcrumb().getByRole('heading', { name: '运维总览' })).toBeInTheDocument()
   })
 })
 
