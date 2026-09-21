@@ -114,6 +114,16 @@ update:
 # MCP 入口与内部信任通道（FR-219 / FR-222）。公网 MCP 仅在 enabled=true 且基址 / 可信代理合规时挂载；
 # 机器注册通道默认关闭，仅内网单操作者部署可开启。
 mcp:
+  # 是否挂载 MCP 协议入口（默认 false）。详见 docs/specs/built-in-admin-v2-mcp-and-oauth.md
+  enabled: false
+  # 入口基址：默认要求无路径的 HTTPS 公网基址；内网直连（无 TLS 终止）时置 allow-insecure-internal=true 放宽为 http
+  public-base-url: ""
+  # 可信反向代理网段（CIDR）：经反代部署时必填且非空；内网直连模式可留空
+  trusted-proxy-cidrs: []
+  # 允许内网明文 HTTP 直连 MCP 入口（无 TLS 终止、无反向代理）。仅供内网 / 回环部署，公网必须保持 false
+  allow-insecure-internal: false
+  # 直连模式下允许的 Host 头白名单（host 或 host:port）；留空回退 SDK 默认
+  allowed-hosts: []
   # 允许 automation 客户端执行审批决定（默认 false）。默认关闭以保持"审批决定权归人类"的分权设计（FR-223）
   allow-approval-decide: false
   # 允许受信内部调用方机器化注册 agent（跳过人工审批，FR-222）。默认 false。

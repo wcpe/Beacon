@@ -108,6 +108,32 @@ func applyEnv(cfg *Config) {
 }
 
 // validate 校验关键项，缺失即 fail-fast（中文报错）。
+// validateMCP 校验启用 MCP 时的公网基址与可信代理网段（FR-212；内网直连见 FR-222）。
+// 拆为独立方法，避免 validate 内嵌套过深触发 nestif 门禁。
+func (c Config) validateMCP() error {
+	if !c.MCP.Enabled {
+		return nil
+	}
+	base, err := url.Parse(c.MCP.PublicBaseURL)
+	schemeOK := err == nil && base.Host != "" && base.Path == "" && base.RawQuery == "" && base.Fragment == ""
+	if schemeOK && c.MCP.AllowInsecureInternal {
+		// 内网直连模式：允许 http（无 TLS 终止）
+		schemeOK = base.Scheme == "https" || base.Scheme == "http"
+	} else if schemeOK {
+		schemeOK = base.Scheme == "https"
+	}
+	if !schemeOK {
+		if c.MCP.AllowInsecureInternal {
+			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是 host 非空且无路径的 http(s) 基址")
+		}
+		return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是无路径的 HTTPS 公网基址（内网明文请置 mcp.allow-insecure-internal=true）")
+	}
+	// 直连模式（allow-insecure-internal）允许空 CIDR；其余情况必须显式列出可信代理。
+	if len(c.MCP.TrustedProxyCIDRs) == 0 && !c.MCP.AllowInsecureInternal {
+		return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.trusted-proxy-cidrs 不能为空")
+	}
+	return nil
+}
 func (c Config) validate() error {
 	if strings.TrimSpace(c.HTTPAddr) == "" {
 		return fmt.Errorf("配置校验失败: 监听地址 http-addr 不能为空")
@@ -144,14 +170,8 @@ func (c Config) validate() error {
 			return fmt.Errorf("配置校验失败: 启用指标采样时 metric.retention-hours 须为正，实际 %d", c.Metric.RetentionHours)
 		}
 	}
-	if c.MCP.Enabled {
-		base, err := url.Parse(c.MCP.PublicBaseURL)
-		if err != nil || base.Scheme != "https" || base.Host == "" || base.Path != "" || base.RawQuery != "" || base.Fragment != "" {
-			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是无路径的 HTTPS 公网基址")
-		}
-		if len(c.MCP.TrustedProxyCIDRs) == 0 {
-			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.trusted-proxy-cidrs 不能为空")
-		}
+	if err := c.validateMCP(); err != nil {
+		return err
 	}
 	// 机器注册通道（FR-222）：开启即把 agent 共享 token 升级为安全边界（持有即受信内部调用方），
 	// 故必须显式换为强随机值——留空或仍是出厂默认值一律拒绝启动（fail-fast，避免弱 token 直通注册）。

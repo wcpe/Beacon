@@ -1081,12 +1081,13 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 
 | 方法 | 路径 | 语义 |
 |---|---|---|
-| GET | `/admin/v2/mcp-clients` | 客户端全量列表（按创建时间倒序）；返回 `clientId`、`displayName`、`secretPrefix`、`profile`、`status`、`secretVersion`。不含 secret 哈希或明文 |
+| GET | `/admin/v2/mcp-clients` | 客户端全量列表（按创建时间倒序）；返回 `clientId`、`displayName`、`secretPrefix`、`profile`、`status`、`secretVersion` 与 `createdBy` / `createdAt` / `updatedAt` / `revokedAt`（未吊销时省略）。不含 secret 哈希或明文 |
 | GET | `/admin/v2/mcp-clients/{clientId}` | 单个客户端脱敏视图（字段同上） |
 | POST | `/admin/v2/mcp-clients` | 申请创建客户端（`displayName` / `profile` / `reason`），202 + `{approvalRequestId, clientId, clientSecret, status}`；`clientSecret` 仅本次响应出现一次 |
 | POST | `/admin/v2/mcp-clients/{clientId}/rotate` | 申请轮换 secret（`reason`），202 + 同形票据 |
 | POST | `/admin/v2/mcp-clients/{clientId}/enable` | 申请重新启用已吊销客户端（`reason`），202 + 同形票据 |
 | POST | `/admin/v2/mcp-clients/{clientId}/revoke` | 立即吊销（止损，不等待审批），200 + `{ok:true}` |
+| GET | `/admin/v2/mcp/config` | MCP 入口部署配置只读视图（见下） |
 
 三个申请端点的硬约束：
 
@@ -1094,3 +1095,20 @@ token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审�
 - 同键重放返回既有票据，此时 `clientSecret` **不返回**（明文只在首次生成时出现一次，遗失只能重新申请轮换）。
 - `readonly` 角色被写守卫拒绝。
 - 轮换批准后旧 secret 与已签发 token 即时失效；吊销后该客户端无法再换取 token。
+
+`GET /admin/v2/mcp/config` 返回 MCP 入口的部署事实，**任何启用状态下都返回 200**（未启用时 `enabled=false`，供管理台展示配置指引而非报错）：
+
+```json
+{
+  "enabled": true,
+  "publicBaseUrl": "https://beacon.example.com",
+  "trustedProxyCidrs": ["10.0.0.0/8"],
+  "allowInsecureInternal": false,
+  "allowedHosts": [],
+  "allowApprovalDecide": false,
+  "allowMachineRegister": false,
+  "directMode": false
+}
+```
+
+字段集合固定为上述八项。这些配置全部是**启动项**（改后须重启控制面），因此只提供读取、不提供写入端点。响应**绝不回显任何凭据**（如 agent 共享 token）；`directMode` 表示内网明文直连（无 TLS 反代），与 `MCPProxyPolicy` 的判定一致，未启用时恒为 `false`。

@@ -142,3 +142,5 @@ FR-210 的危险系统操作由统一审批 worker 直接调用领域适配器�
 - 技术栈锁定：Go + chi + GORM、React（Vite + TS）内嵌单二进制、agent Kotlin/TabooLib；换栈 / 换框架走新 ADR（[ADR-0002](adr/0002-go-react-embedded-stack.md) 延续）。
 
 MCP 保持在同一 Go + chi 进程：受信反向代理完成 TLS，后端只校验固定转发头与配置后提供 metadata、token 和 Streamable HTTP resource。OAuth client、pending change、短期 token 与审批 receipt 都在权威库；MCP 工具只能调用 application service。`observer` 与 `automation` 共同发现的元数据、拓扑、指标、历史和审计工具只接应用查询服务，并在 MCP 边界投影为脱敏 DTO：不透传 token hash、地址、玩家标识、payload、实时正文、命令结果正文或审计 detail。`automation` 的配置删除/批量操作、文件创建/导入/批量操作及覆盖集变更只通过对应 `Request*` 服务创建审批申请；敏感资产与消息工具沿用原申请主体、冻结目标和一次性 grant 校验，但不把正文写入 MCP 响应。`observer` 不可发现这些工具；不存在通用 HTTP/SQL/文件代理、机器审批工具或 permit 构造入口。
+
+客户端生命周期在管理台 `/mcp-clients` 运维，复用与 MCP 协议端点在**同一套** `/admin/v2/mcp-clients*` 管理服务：创建 / 轮换 / 启用仍是「提审」语义（202 + 审批票据，明文 secret 只在首次响应出现一次，服务端只存哈希与前缀），吊销是直接止损动作；管理台不引入第二套业务端点，也不改变「机器主体永不审批」的分权。MCP 入口的部署配置（启用状态、公网基址、可信代理网段、内网直连与两个开关）是**启动项**，经只读的 `GET /admin/v2/mcp/config` 暴露给管理台供运维判断「外部 Agent 为何连不上」，不提供写入路径、不回显任何凭据；该端点的直连判定必须与 `MCPProxyPolicy` 保持同一口径。

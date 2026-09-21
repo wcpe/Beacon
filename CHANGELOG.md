@@ -8,8 +8,11 @@
 - 拓扑建树 MCP 工具（FR-221）：新增 `beacon.topology.bc-clusters.*`、`regions.*`、`zones.*` 共九个工具，语义与既有 `/admin/v2` 端点逐一对齐。建树是低风险结构操作，按「低风险按能力直执」原则直接执行并写审计，不产生审批票据；删除非空节点按既有约束拒绝；observer profile 不暴露写工具。
 - 内部信任通道与机器注册（FR-222）：新增 `mcp.allow-machine-register` 开关（默认 false，公网部署必须保持关闭）。开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册直接置为 active 并完成绑定；关闭时行为与现状完全一致（仍落 pending 待人工确认）。无论开关状态，机器注册意图均写 `identity.machine_registered` 强审计（含 serverId、lastAddr 与调用来源 IP）。开启时启动校验强制 `agent-token` 为强随机值（拒绝留空与已知弱默认），否则拒绝启动。
 - 审批决定工具与闭环自动化（FR-223）：新增 `beacon.approvals.approve` / `beacon.approvals.reject`（拒绝须给理由），仅 automation profile 可见；新增 `mcp.allow-approval-decide` 开关（默认 false）控制放行。默认关闭时审批决定权仍归人类，保持原分权设计；内网单操作者部署可显式开启以打通自动化闭环。批准与拒绝均写强审计。
+- MCP 客户端管理台页（FR-224）：管理台新增 `/mcp-clients`（系统大域），承载 OAuth 客户端的日常运维——客户端清单（名称 / profile / secret 前缀与版本 / 状态 / 创建时间）、profile 能力说明、创建 / 轮换 / 启用 / 吊销四个生命周期动作，以及 MCP 入口部署配置的只读查看。创建 / 轮换 / 启用沿用既有审批申请端点（明文 secret 仅首次响应出现一次），吊销为二次确认后的直接止损；空 / 常规 / 超大量 / 异常四态齐备。
+- 新增只读端点 `GET /admin/v2/mcp/config`：暴露 MCP 入口的启用状态、公网基址、可信代理网段、内网直连模式与两个开关，供运维判断外部 Agent 为何无法连接。任何启用状态下均返回 200；字段集合固定，绝不回显任何凭据（如 agent 共享 token）。
 
 ### 变更
+- `GET /admin/v2/mcp-clients` 与单条详情补充生命周期字段 `createdBy` / `createdAt` / `updatedAt` / `revokedAt`（未吊销时省略 `revokedAt`），供管理台回答「何时建的、谁建的、何时被吊销」。纯增字段，向后兼容。
 
 ### 修复
 - 提审与执行路径的服务端装配错误不再报成调用方错误：十余个提审入口（资产预览、日志/浏览、消息正文、拓印、反向抓取、配置与文件覆盖集、交付编排）此前把「服务未装配」「密钥不可用」这类服务端故障与「缺参数」混用同一个 400 或 403，会把排查方向引偏。现装配缺失统一回 500 `INTERNAL`，参数问题保留 400，交付编排的非法状态改回 409 `illegal_state`；文件覆盖集执行适配器不再把「执行许可不符」（安全事件）掩盖成「审批目标已变化」。

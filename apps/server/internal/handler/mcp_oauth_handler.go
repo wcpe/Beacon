@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -27,10 +28,27 @@ type mcpClientView struct {
 	Profile       string `json:"profile"`
 	Status        string `json:"status"`
 	SecretVersion uint   `json:"secretVersion"`
+	// 生命周期时间戳：供管理台回答"何时建的、谁建的、何时被吊销"。
+	// RevokedAt 仅吊销后存在，用指针区分"未吊销"与零值时间。
+	CreatedBy string     `json:"createdBy"`
+	CreatedAt time.Time  `json:"createdAt"`
+	UpdatedAt time.Time  `json:"updatedAt"`
+	RevokedAt *time.Time `json:"revokedAt,omitempty"`
 }
 
 func toMCPClientView(client *model.MCPOAuthClient) mcpClientView {
-	return mcpClientView{ClientID: client.ClientID, DisplayName: client.DisplayName, SecretPrefix: client.SecretPrefix, Profile: client.Profile, Status: client.Status, SecretVersion: client.SecretVersion}
+	return mcpClientView{
+		ClientID:      client.ClientID,
+		DisplayName:   client.DisplayName,
+		SecretPrefix:  client.SecretPrefix,
+		Profile:       client.Profile,
+		Status:        client.Status,
+		SecretVersion: client.SecretVersion,
+		CreatedBy:     client.CreatedBy,
+		CreatedAt:     client.CreatedAt,
+		UpdatedAt:     client.UpdatedAt,
+		RevokedAt:     client.RevokedAt,
+	}
 }
 
 // List 处理 GET /admin/v2/mcp-clients。
