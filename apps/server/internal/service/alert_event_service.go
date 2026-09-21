@@ -108,7 +108,38 @@ func (s *AlertEventService) Handle(id uint, action, handleNote, operator, client
 	return updated, nil
 }
 
+// HandleBatch 按过滤条件批量处理「未处理（open）」告警（FR-229）：一条 UPDATE 仅影响 open 行，
+// 同事务内写一条批量审计（条件 + 命中数 + 操作者）。返回受影响行数；已非 open 的行不变，故重复执行幂等。
+func (s *AlertEventService) HandleBatch(f repository.AlertEventFilter, action, note, operator, clientIP string) (int64, error) {
+	status, err := resolveAlertActionStatus(action)
+	if err != nil {
+		return 0, err
+	}
+	var affected int64
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		n, err := s.repo.WithTx(tx).HandleBatch(f, status, operator, note, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		affected = n
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			Operator:   operator,
+			Action:     model.ActionAlertEventBatchHandled,
+			TargetType: model.TargetTypeAlertEvent,
+			TargetRef:  "batch",
+			Detail:     alertBatchHandleAuditDetail(f, status, affected, note),
+			Result:     model.ResultOK,
+			ClientIP:   clientIP,
+		})
+	})
+	if txErr != nil {
+		return 0, txErr
+	}
+	return affected, nil
+}
+
 // ActiveCounts 一次性批量取各实例当前活跃（open）告警数，键为 (namespace, serverId)（FR-157）。
+
 // 供健康计算轮每轮取一次注入 activeAlerts 因子——严禁在逐实例循环里查库（testing-and-quality §3 / 规则 §17）。
 func (s *AlertEventService) ActiveCounts() (map[AlertActiveKey]int, error) {
 	rows, err := s.repo.ActiveCounts()
@@ -133,6 +164,25 @@ func resolveAlertAction(action string) (status, auditAction string, err error) {
 	default:
 		return "", "", apperr.ErrAlertActionInvalid
 	}
+}
+
+// resolveAlertActionStatus 只要目标状态（不产审计动作），供批量处理复用动作归一。
+func resolveAlertActionStatus(action string) (string, error) {
+	status, _, err := resolveAlertAction(action)
+	return status, err
+}
+
+// alertBatchHandleAuditDetail 组装批量处理审计 detail（json 文本）：筛选条件 + 目标状态 + 命中数 + 说明。
+func alertBatchHandleAuditDetail(f repository.AlertEventFilter, status string, affected int64, note string) string {
+	raw, _ := json.Marshal(map[string]any{
+		"filter": map[string]any{
+			"type": f.Type, "level": f.Level, "namespace": f.Namespace,
+			"namespaceCodes": f.NamespaceCodes, "scoped": f.Scoped,
+			"from": f.From, "to": f.To,
+		},
+		"status": status, "affected": affected, "note": note,
+	})
+	return string(raw)
 }
 
 // alertHandleAuditDetail 组装处理审计 detail（json 文本）：目标状态 + 处置说明。

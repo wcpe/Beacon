@@ -614,6 +614,8 @@ const (
 	// 告警事件处理（FR-157，见 ADR-0064）：确认 / 标记已处理，detail 记事件 id / 动作 / 处置说明（不含凭据）
 	ActionAlertEventAcknowledge = "alert-event.acknowledge"
 	ActionAlertEventResolve     = "alert-event.resolve"
+	// ActionAlertEventBatchHandled 是按筛选批量处理的专项审计（FR-229：一条含条件 + 命中数 + 操作者）。
+	ActionAlertEventBatchHandled = "alert-event.batch_handled"
 	// 热冷归档任务（FR-151，见 ADR-0066）：创建（含 dry-run）/ 完成 / 失败 / 重试 / 取消，detail 记任务 id / 模式 / 域（不含数据内容）
 	ActionArchiveJobCreate   = "archive.job-create"
 	ActionArchiveJobComplete = "archive.job-complete"

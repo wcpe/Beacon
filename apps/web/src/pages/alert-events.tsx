@@ -4,7 +4,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { TriangleAlert } from 'lucide-react'
+import { Filter as FilterIcon, TriangleAlert } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -19,7 +19,8 @@ import {
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/http'
-import { fetchAlertEvents, handleAlertEvent } from '../api/observability'
+import { fetchAlertEvents, handleAlertEvent, handleAlertEventsBatch } from '../api/observability'
+import { notifySuccess } from '../lib/notify'
 import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../features/env/use-env-scope'
 import {
   alertSubtitle,
@@ -83,6 +84,11 @@ export default function AlertEventsPage() {
   // 批量进度 / 批量错误（工具栏内联，与详情错误分离）
   const [batchProgress, setBatchProgress] = useState<string | null>(null)
   const [batchErrorText, setBatchErrorText] = useState<string | null>(null)
+  // FR-229：按当前筛选跨页批量（作用于全部命中 open 条目，而非仅当前页勾选）
+  const [filterBatchOpen, setFilterBatchOpen] = useState(false)
+  const [filterBatchNote, setFilterBatchNote] = useState('')
+  const [filterBatchPending, setFilterBatchPending] = useState(false)
+  const [filterBatchResult, setFilterBatchResult] = useState<string | null>(null)
 
   const query = useQuery({
     queryKey: ['alert-events', level, type, status, page, envCodes],
@@ -216,6 +222,32 @@ export default function AlertEventsPage() {
   }
 
   const batchPending = batchProgress !== null
+
+  // FR-229：按当前筛选（level/type；观测范围由服务端解析）跨页批量处理全部命中 open 条目。
+  const runFilterBatch = async (intent: Extract<HandleIntent, 'acknowledged' | 'resolved'>, note: string) => {
+    setBatchErrorText(null)
+    setFilterBatchResult(null)
+    setFilterBatchPending(true)
+    try {
+      const res = await handleAlertEventsBatch({
+        filter: {
+          level: level === 'all' ? undefined : level,
+          type: type === 'all' ? undefined : type,
+        },
+        status: intent,
+        note: note === '' ? undefined : note,
+      })
+      await queryClient.invalidateQueries({ queryKey: ['alert-events'] })
+      setFilterBatchResult(t('observability.alertEvents.filterBatchResult', { count: res.affected }))
+      setFilterBatchOpen(false)
+      setFilterBatchNote('')
+      notifySuccess(t('observability.alertEvents.filterBatchResult', { count: res.affected }))
+    } catch (error) {
+      setBatchErrorText(error instanceof ApiClientError ? error.message : String(error))
+    } finally {
+      setFilterBatchPending(false)
+    }
+  }
 
   const columns = useMemo<DataTableColumn<AlertEventItem>[]>(
     () => [
@@ -362,6 +394,59 @@ export default function AlertEventsPage() {
             clearSelection()
           }}
         />
+      </div>
+      {/* FR-229：按当前筛选跨页批量（作用于全部命中 open 条目，而非仅当前页勾选） */}
+      <div className="grid gap-2 rounded-lg border border-border bg-card px-2.5 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={filterBatchPending || total === 0}
+            title={t('observability.alertEvents.filterBatchHint')}
+            onClick={() => {
+              setFilterBatchOpen((v) => !v)
+              setBatchErrorText(null)
+            }}
+          >
+            <FilterIcon className="size-3.5" />
+            {t('observability.alertEvents.filterBatch')}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={filterBatchPending || total === 0}
+            onClick={() => {
+              void runFilterBatch('acknowledged', '')
+            }}
+          >
+            {t('observability.alertEvents.filterBatchAck')}
+          </Button>
+          {filterBatchResult !== null && <span className="text-xs text-ok">{filterBatchResult}</span>}
+          {filterBatchPending && <span className="text-xs text-ink-3">{t('observability.alertEvents.batchProgress', { done: 0, total: 1 })}</span>}
+        </div>
+        {filterBatchOpen && (
+          <div className="grid gap-2">
+            <Textarea
+              value={filterBatchNote}
+              placeholder={t('observability.alertEvents.batchNotePlaceholder')}
+              onChange={(e) => {
+                setFilterBatchNote(e.target.value)
+              }}
+              disabled={filterBatchPending}
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                disabled={filterBatchPending || filterBatchNote.trim() === ''}
+                onClick={() => {
+                  void runFilterBatch('resolved', filterBatchNote.trim())
+                }}
+              >
+                {t('observability.alertEvents.filterBatchResolve')}
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
       {/* 批量操作条：已选 N + 批量确认 / 批量标记已处理 */}
       {checkedIds.size > 0 && (

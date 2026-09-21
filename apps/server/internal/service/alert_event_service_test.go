@@ -238,3 +238,84 @@ func TestActiveCountsOnlyOpen(t *testing.T) {
 		t.Fatalf("dev/s3 应 2 条 open，实际 %d", counts[AlertActiveKey{Namespace: "dev", ServerID: "s3"}])
 	}
 }
+
+// TestHandleBatchByFilterCrossPage 按筛选跨页批量处理：一条 UPDATE 作用于全部命中 open 行（非仅当前页）。
+func TestHandleBatchByFilterCrossPage(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	// 45 条 critical/open（> 默认页 20，验证「跨页」在服务端一次性生效）+ 10 条 warning + 5 条已 resolved
+	for i := 0; i < 45; i++ {
+		if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s", Message: "m"}); err != nil {
+			t.Fatalf("seed critical 失败: %v", err)
+		}
+	}
+	for i := 0; i < 10; i++ {
+		if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s", Message: "m"}); err != nil {
+			t.Fatalf("seed warning 失败: %v", err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s", Message: "m", Status: model.AlertEventStatusResolved}); err != nil {
+			t.Fatalf("seed resolved 失败: %v", err)
+		}
+	}
+
+	affected, err := svc.HandleBatch(repository.AlertEventFilter{Level: model.AlertLevelCritical}, "resolve", "批量处置", "admin", "203.0.113.7")
+	if err != nil {
+		t.Fatalf("批量处理失败: %v", err)
+	}
+	if affected != 45 {
+		t.Fatalf("应命中全部 45 条 open critical（跨页），实际 %d", affected)
+	}
+	// 15 条（10 warning + 5 已 resolved）不受影响
+	var stillOpenOrResolved int64
+	db.Model(&model.AlertEvent{}).Where("level = ? AND status = ?", model.AlertLevelWarning, model.AlertEventStatusOpen).Count(&stillOpenOrResolved)
+	if stillOpenOrResolved != 10 {
+		t.Fatalf("warning 应保持 open（10 条），实际 %d", stillOpenOrResolved)
+	}
+	var resolvedCount int64
+	db.Model(&model.AlertEvent{}).Where("status = ?", model.AlertEventStatusResolved).Count(&resolvedCount)
+	if resolvedCount != 50 {
+		t.Fatalf("resolved 应为 50（原 5 + 新 45），实际 %d", resolvedCount)
+	}
+
+	// 幂等：重复执行 0 命中
+	again, err := svc.HandleBatch(repository.AlertEventFilter{Level: model.AlertLevelCritical}, "resolve", "", "admin", "")
+	if err != nil {
+		t.Fatalf("重复批量失败: %v", err)
+	}
+	if again != 0 {
+		t.Fatalf("重复执行应 0 命中（幂等），实际 %d", again)
+	}
+
+	// 审计：一条批量审计（含条件 + 命中数 + 操作者）
+	var audit model.AuditLog
+	if err := db.Where("action = ?", model.ActionAlertEventBatchHandled).Order("id ASC").First(&audit).Error; err != nil {
+		t.Fatalf("批量处理未落审计: %v", err)
+	}
+	if audit.Operator != "admin" || !strings.Contains(audit.Detail, `"affected":45`) || !strings.Contains(audit.Detail, `"level":"critical"`) {
+		t.Fatalf("批量审计明细不符：operator=%q detail=%s", audit.Operator, audit.Detail)
+	}
+}
+
+// TestHandleBatchAcknowledgeWording 批量同样接受动词 / 目标状态两种措辞（acknowledge → acknowledged）。
+func TestHandleBatchAcknowledgeWording(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelInfo, Namespace: "prod", ServerID: "s", Message: "m"}); err != nil {
+		t.Fatalf("seed 失败: %v", err)
+	}
+	affected, err := svc.HandleBatch(repository.AlertEventFilter{}, "acknowledge", "", "admin", "")
+	if err != nil {
+		t.Fatalf("批量确认失败: %v", err)
+	}
+	if affected != 1 {
+		t.Fatalf("应命中 1 条，实际 %d", affected)
+	}
+	var got model.AlertEvent
+	db.First(&got)
+	if got.Status != model.AlertEventStatusAcknowledged {
+		t.Fatalf("应落 acknowledged，实际 %q", got.Status)
+	}
+	if _, err := svc.HandleBatch(repository.AlertEventFilter{}, "bogus", "", "admin", ""); !errors.Is(err, apperr.ErrAlertActionInvalid) {
+		t.Fatalf("非法动作应 ErrAlertActionInvalid，实际 %v", err)
+	}
+}

@@ -143,3 +143,49 @@ func (h *AlertEventHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	render.WriteJSON(w, http.StatusOK, toAlertEventView(*updated))
 }
+
+// handleAlertBatchRequest 是批量处理请求体（FR-229）：按筛选条件处理整个结果集，而非仅当前页勾选行。
+// 观测范围由服务端解析器决定（客户端不传 namespace 时即当前观测范围，越界不由客户端指定）；status 亦为筛选维。
+type handleAlertBatchRequest struct {
+	Status string `json:"status"`
+	Action string `json:"action"`
+	Note   string `json:"note"`
+	Filter struct {
+		Type   string `json:"type"`
+		Level  string `json:"level"`
+		Status string `json:"status"`
+		From   string `json:"from"`
+		To     string `json:"to"`
+	} `json:"filter"`
+}
+
+// HandleBatch 处理 POST /admin/v1/alert-events/handle（FR-229）：按筛选条件跨页批量确认 / 标记已处理。
+// 走 adminAuth → readonlyWriteGuard → auditWrite 链（写方法，readonly 403）；service 在事务内一条 UPDATE + 一条批量审计。
+func (h *AlertEventHandler) HandleBatch(w http.ResponseWriter, r *http.Request) {
+	var req handleAlertBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	action := req.Status
+	if action == "" {
+		action = req.Action
+	}
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	affected, err := h.svc.HandleBatch(repository.AlertEventFilter{
+		Type:           req.Filter.Type,
+		Level:          req.Filter.Level,
+		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
+		From: parseRFC3339(req.Filter.From),
+		To:   parseRFC3339(req.Filter.To),
+	}, action, req.Note, auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{"affected": affected})
+}
