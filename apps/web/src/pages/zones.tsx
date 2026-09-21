@@ -32,10 +32,11 @@ export default function ZonesPage() {
   const unassignedCount = treeQuery.data?.unassignedCount ?? 0
 
   return (
-    <section className="grid gap-3.5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<Boxes className="size-5" />}
+        icon={<Boxes className="size-4" />}
         title={t('nav.zones')}
+        description={t('cluster.zones.mission')}
         actions={
           <>
             <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />

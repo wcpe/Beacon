@@ -255,9 +255,9 @@ export default function ConnectionsPage() {
   )
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<Cable className="size-5" />}
+        icon={<Cable className="size-4" />}
         title={t('nav.connections')}
         description={t('observability.connections.mission')}
       />

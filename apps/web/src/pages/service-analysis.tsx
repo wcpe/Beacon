@@ -62,9 +62,9 @@ export default function ServiceAnalysisPage() {
   const serverIds = persistedIds
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<LineChart className="size-5" />}
+        icon={<LineChart className="size-4" />}
         title={t('nav.serviceAnalysis')}
         description={t('observability.serviceAnalysis.mission')}
       />

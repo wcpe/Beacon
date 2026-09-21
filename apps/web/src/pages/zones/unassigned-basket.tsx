@@ -164,7 +164,7 @@ export default function UnassignedBasket({ namespaceId, open, onClose, onDraggin
       <div className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
         <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
           {rows.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border-strong px-3 py-6 text-center text-xs text-ink-3">
+            <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-ink-3">
               {t('cluster.zones.basket.empty')}
             </p>
           ) : (

@@ -50,8 +50,8 @@ export default function AlertOverview() {
   const latest: AlertEventItem[] = openItems.slice(0, 5)
 
   return (
-    <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      <div className="flex items-center gap-2.5">
+    <section className="grid grid-cols-1 grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
+      <div className="flex min-w-0 items-center gap-2.5">
         <span className="grid size-[26px] place-items-center rounded-lg bg-crit-bg text-crit">
           <TriangleAlert className="size-[15px]" />
         </span>
@@ -59,7 +59,7 @@ export default function AlertOverview() {
         <span className="text-[11px] text-ink-4">
           {t('dashboard.alerts.open')} {openItems.length}
         </span>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-2">
           {criticalOpen > 0 && <Badge variant="crit">{t('dashboard.alerts.critical')} {criticalOpen}</Badge>}
           {warningOpen > 0 && <Badge variant="warn">{t('dashboard.alerts.warning')} {warningOpen}</Badge>}
           {infoOpen > 0 && <Badge variant="brand">{t('dashboard.alerts.info')} {infoOpen}</Badge>}
@@ -79,15 +79,15 @@ export default function AlertOverview() {
             </Link>
           </div>
         ) : (
-          <div className="grid gap-2">
-            <ul className="flex flex-col">
+          <div className="grid min-w-0 gap-2">
+            <ul className="flex min-w-0 flex-col">
               {latest.map((item) => {
                 const meta = sevMeta(item.level)
                 const Icon = meta.icon
                 return (
                   <li
                     key={item.id}
-                    className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+                    className="flex min-w-0 items-center gap-3 border-b border-border py-2.5 last:border-b-0"
                   >
                     <span className={cn('grid size-[30px] shrink-0 place-items-center rounded-lg', meta.box)}>
                       <Icon className="size-[15px]" />

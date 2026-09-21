@@ -174,7 +174,7 @@ export default function KpiStrip() {
           />
 
           {/* 健康等级分布环 */}
-          <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-[15px] shadow-card">
+          <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 shadow-card">
             <div className="flex items-center gap-2">
               <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
                 <Activity className="size-[15px]" />

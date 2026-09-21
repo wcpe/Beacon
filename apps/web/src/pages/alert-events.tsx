@@ -476,9 +476,9 @@ export default function AlertEventsPage() {
   )
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<TriangleAlert className="size-5" />}
+        icon={<TriangleAlert className="size-4" />}
         title={t('nav.alertEvents')}
         description={t('observability.alertEvents.mission')}
       />

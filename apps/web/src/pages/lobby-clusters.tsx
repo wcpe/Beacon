@@ -165,9 +165,9 @@ export default function LobbyClustersPage() {
   const error = listQuery.error ?? detailQuery.error
 
   return (
-    <section className="grid gap-3.5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<DoorOpen className="size-5" />}
+        icon={<DoorOpen className="size-4" />}
         title="大厅集群"
         description="首个代理连接的唯一落脚集群；不参与大区/小区业务路由。"
         actions={
