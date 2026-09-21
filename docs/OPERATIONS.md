@@ -293,3 +293,29 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/hotreload -run '^TestDeliv
 ## 9. MCP 反向代理验收
 
 启用前必须把 `mcp.public-base-url` 设为唯一 HTTPS 公网基址，并把实际 TLS 反向代理的来源网段写入 `mcp.trusted-proxy-cidrs`。代理转发 MCP、token 与 `.well-known` 时保留 Host，并固定传递 `X-Forwarded-Proto: https`、`X-Forwarded-Host`；后端不以直连或客户端自带转发头推断公网 URL。未在真实反代上分别验证 observer 与 automation 的换 token、初始化、工具发现、轮换和吊销即时失效前，不得宣称公网 MCP 已验收。
+
+## 10. 内部信任通道（机器注册，FR-222）
+
+单操作者内网部署下，外部管理平台（如 JianManager）批量创建实例后逐个走人工审批不可行（60 台 = 60 次审批）。`mcp.allow-machine-register` 提供一条**默认关闭**的内部信任通道：开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册**直接创建 active 身份并绑定指定 serverId**，跳过人工审批。规格见 [internal-trust-channel.md](specs/internal-trust-channel.md)。
+
+> 落点说明：共享 token 的判定由 `agentTokenMiddleware` 完成，该中间件只挂在 `/beacon/v1/agent` 组；v2 身份注册端点（`/beacon/v2/agent/register`）要求 namespace token 且不在该组内，行为不受本开关影响（仍落 pending 待人工确认）。
+
+```yaml
+mcp:
+  # 允许受信内部调用方机器化注册 agent（跳过人工审批）。默认 false。
+  # 仅内网单操作者部署可开启；公网部署必须保持 false。
+  allow-machine-register: false
+# 开启上面的开关时，本项必须换为强随机值（默认值 / 留空会导致启动校验失败）
+agent-token: "<强随机值，或经环境变量 BEACON_BOOTSTRAP_TOKEN 注入>"
+```
+
+**安全警告（开启前必读）**
+
+- 开启该开关即把共享 token 升级为**安全边界**：持有它等价于可批量注册 agent。故启动校验强制 `agent-token` 不为留空或已知默认值，否则**拒绝启动**。
+- 共享 token 只在受信内网传输；公网部署必须保持开关关闭（默认即为关闭）。
+- 该通道**只覆盖注册**（创建未分配 server）：区服分配、换区、默认入口仍各自走审批，不受本开关影响。
+- 与 `mcp.allow-approval-decide` 相互独立：只开本开关 = 注册自动化；两者全开 = 内网端到端闭环（仅限单操作者内网）。
+
+**审计与核查**：无论开关状态，机器注册意图都写 `identity.machine_registered`（操作者 `system:machine-register`，目标 `agent-identity/<identityId>`，detail 含 serverId、lastAddr 与调用来源 IP 及本次结果 `active`/`pending`）。开关关闭时记 `pending`（已提交待审批），开启时记 `active`（已直落）。
+
+**回归自检**：开关关闭时行为与既有分权设计逐字一致——携共享 token 的注册仍落 pending 待人工确认；缺 / 错 token 一律 401（与开关无关）。

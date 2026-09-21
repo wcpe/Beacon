@@ -153,5 +153,28 @@ func (c Config) validate() error {
 			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.trusted-proxy-cidrs 不能为空")
 		}
 	}
+	// 机器注册通道（FR-222）：开启即把 agent 共享 token 升级为安全边界（持有即受信内部调用方），
+	// 故必须显式换为强随机值——留空或仍是出厂默认值一律拒绝启动（fail-fast，避免弱 token 直通注册）。
+	if c.MCP.AllowMachineRegister && isWeakAgentToken(c.AgentToken) {
+		return fmt.Errorf("配置校验失败: 开启 allow-machine-register 时 agent-token 必须改为强随机值（当前为留空或出厂默认值）")
+	}
 	return nil
+}
+
+// weakAgentTokens 是已知的弱 / 出厂默认 agent 共享 token（内置默认、配置样例默认与 .env.example 占位值）。
+// 机器注册通道开启时持有该 token 等价于受信调用方，故这些值必须被拒绝。
+// 键一律小写：比对前会把候选值规范化小写（见 isWeakAgentToken），防止大小写变体绕过。
+var weakAgentTokens = map[string]struct{}{
+	"":                   {}, // 留空：无从比对，等于无门禁
+	DefaultAgentToken:    {}, // 内置默认（config.Default()）
+	ExampleAgentToken:    {}, // 配置样例默认（config.example.yml 与 agent 样例开箱匹配值）
+	EnvExampleAgentToken: {}, // .env.example 占位值（照抄 .env 即带入，公开已知）
+}
+
+// isWeakAgentToken 判断 agent 共享 token 是否属于须拒绝的弱值。
+// 比对前做「去空白 + 转小写」规范化：空白等价留空，大小写变体（如 CHANGE-ME）也不得绕过；
+// 强随机 token 不可能规范化后等于名单中的弱值，故不会误伤。
+func isWeakAgentToken(token string) bool {
+	_, weak := weakAgentTokens[strings.ToLower(strings.TrimSpace(token))]
+	return weak
 }

@@ -52,6 +52,7 @@
 - **重复 serverId 守卫**：同 `(namespace, serverId)` 已有**仍新鲜**（`lastHeartbeat` 在心跳周期内）的另一 address 在线实例 → `409 DUPLICATE_SERVER_ID` + 写 fail 审计。旧条目已超期视为僵尸 → 允许新 address 顶替并告警（故障换机不被误杀）。同 address 重连幂等覆盖。
 - **主动下线拒绝（FR-49）**：注册前查 `server_offline`，命中 → `403 INSTANCE_OFFLINE_REJECTED` + 写 fail 审计（区别于 `409` 重复 / `404` 未注册）。agent 据此进入 `OFFLINE` 态、停止猛重连、不刷日志，取消下线后经降频探测恢复（见 agent §生命周期）。**心跳不查库**：下线在线实例时同步移出内存，其心跳 `404 NOT_REGISTERED` → 重注册 → 在此被拒。
 - 身份缺失（serverId/namespace 空）→ `400 IDENTITY_REQUIRED`。
+- **机器注册通道（FR-222，见 [internal-trust-channel.md](specs/internal-trust-channel.md)）**：默认关闭。开启 `mcp.allow-machine-register` 后，请求经本端点所在组的共享 token 中间件分支（`X-Beacon-Token` = 部署的 `agent-token`）者被判定为**受信内部调用方**，注册时直接创建 `active` 身份并绑定请求的 serverId（响应回带 `machineRegistered: true`、`identityId`、`boundAt`）；其余调用方（含 agent 自持身份、v2 注册端点）行为逐字不变。分支依据是中间件对共享 token 的比对结果，**不读请求体字段**，调用方无法伪造。开启时 `agent-token` 必须为强随机值（启动校验拒绝默认值 / 留空，否则拒绝启动）；无论开关状态，受信调用方的机器注册意图都写 `identity.machine_registered` 审计（含 serverId、lastAddr 与调用来源 IP；开启记 `active`，关闭记 `pending` 已提交待审批）。该通道**只覆盖注册**：分配、换区、默认入口仍走各自审批。
 
 ### 2. 心跳 `POST /beacon/v1/agent/heartbeat`
 请求：`{ "namespace": "prod", "serverId": "lobby-1" }`

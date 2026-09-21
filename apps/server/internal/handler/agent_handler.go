@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wcpe/Beacon/apps/server/internal/agentauth"
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/render"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime"
@@ -46,6 +47,7 @@ type registerRequest struct {
 }
 
 // registerResponse 是注册响应（未分配时 resolvedZone 为 null）。
+// machineRegistered / identityId / boundAt 仅机器注册通道（FR-222）命中时非空，常规注册保持原状（旧 agent 缺键即可）。
 type registerResponse struct {
 	InstanceKey          string  `json:"instanceKey"`
 	ResolvedGroup        string  `json:"resolvedGroup"`
@@ -53,6 +55,12 @@ type registerResponse struct {
 	HeartbeatIntervalSec int     `json:"heartbeatIntervalSec"`
 	TTLSec               int     `json:"ttlSec"`
 	Assigned             bool    `json:"assigned"`
+	// MachineRegistered 标记本次注册经机器注册通道直落 active 并完成绑定（FR-222）。
+	MachineRegistered bool `json:"machineRegistered,omitempty"`
+	// IdentityID 是机器注册生成 / 复用的 agent 身份标识（仅 machineRegistered=true 时回带）。
+	IdentityID string `json:"identityId,omitempty"`
+	// BoundAt 是机器注册的激活绑定时刻（仅 machineRegistered=true 时回带）。
+	BoundAt *time.Time `json:"boundAt,omitempty"`
 }
 
 // Register 处理 POST /beacon/v1/agent/register。
@@ -67,15 +75,26 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Address: req.Address, Version: req.Version, AgentVersion: req.AgentVersion,
 		Capacity: req.Capacity, Weight: req.Weight, Metadata: req.Metadata,
 		Backends: req.Backends, ClientIP: clientIP(r),
+		// 机器注册分支依据（FR-222，spec §3.3）：调用方类型取自 agentTokenMiddleware 注入的 context 标记
+		// （仅命中 X-Beacon-Token 共享 token 的请求带），**不来自请求体**，调用方无法伪造。
+		TrustedInternal: agentauth.IsTrustedInternal(r.Context()),
 	})
 	if err != nil {
 		render.WriteError(w, r, err)
 		return
 	}
-	render.WriteJSON(w, http.StatusOK, registerResponse{
+	view := registerResponse{
 		InstanceKey: res.InstanceKey, ResolvedGroup: res.ResolvedGroup, ResolvedZone: nilIfEmpty(res.ResolvedZone),
 		HeartbeatIntervalSec: res.HeartbeatIntervalSec, TTLSec: res.TTLSec, Assigned: res.Assigned,
-	})
+	}
+	// 机器注册通道命中（FR-222）：回带权威绑定事实，供内部调用方核对绑定结果。
+	if res.MachineRegister != nil {
+		view.MachineRegistered = true
+		view.IdentityID = res.MachineRegister.IdentityID
+		boundAt := res.MachineRegister.BoundAt
+		view.BoundAt = &boundAt
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 // heartbeatRequest 是心跳请求体。
