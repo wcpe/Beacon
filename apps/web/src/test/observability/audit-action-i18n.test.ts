@@ -29,6 +29,7 @@ const COMMON_AUDIT_ACTIONS = [
   'auth.login',
   'identity.unbound',
   'identity.approved',
+  'identity.machine_registered',
   'bc_cluster.create',
   'server.assign',
   'server.unassign',

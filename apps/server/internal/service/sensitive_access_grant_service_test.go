@@ -107,11 +107,12 @@ func TestSensitiveAccessGrantServiceCreatesPendingInTx(t *testing.T) {
 // 可区分的错误码，而不是统一的泛化 403。
 //
 // 设计意图核查（为何不是「有意的不泄露」）：
-//   1. 同文件内的 createPending 对同类参数校验已返回 ErrInvalidParam(400)，Activate/Consume 却报 403——同类不同码，是漏改而非设计；
-//   2. repo 层与 Consume 的后续路径本就返回 ErrSensitiveAccessExpired/Consumed/WrongPrincipal 三种精确码，
-//      即系统已选择「对原申请主体精确告知授权状态」；
-//   3. 外部调用方（如 POST /admin/v2/assets/pair-read/grants/{grantId}/consume）拿到 403 会去查权限，
-//      而真实原因可能是 grantId 拼错或审批后目标漂移。
+//  1. 同文件内的 createPending 对同类参数校验已返回 ErrInvalidParam(400)，Activate/Consume 却报 403——同类不同码，是漏改而非设计；
+//  2. repo 层与 Consume 的后续路径本就返回 ErrSensitiveAccessExpired/Consumed/WrongPrincipal 三种精确码，
+//     即系统已选择「对原申请主体精确告知授权状态」；
+//  3. 外部调用方（如 POST /admin/v2/assets/pair-read/grants/{grantId}/consume）拿到 403 会去查权限，
+//     而真实原因可能是 grantId 拼错或审批后目标漂移。
+//
 // 仍保留的防枚举约束：「授权不存在」与「已失效」同回 410，不区分（见 ErrSensitiveAccessNotFound 注释）。
 func TestSensitiveAccessGrantServiceDistinguishesFailures(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:sensitive_access_distinguish?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
