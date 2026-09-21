@@ -181,8 +181,19 @@ func (s *MCPOAuthService) RequestEnable(clientID, reason, idempotencyKey string,
 }
 
 func (s *MCPOAuthService) requestCredentialChange(kind, displayName, profile, reason, idempotencyKey string, principal auth.Principal, clientIP string, current *model.MCPOAuthClient) (MCPClientApprovalTicket, error) {
-	if s.approval == nil || !principal.IsHuman() || strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
-		return MCPClientApprovalTicket{}, apperr.ErrForbidden
+	// 逐条给出可区分的原因：装配缺失是服务端问题（500，去查部署），换主体 / 补原因 / 补头是调用方问题
+	// （403 / 400），合并成同一个 403 会把调用方引向错误方向。
+	if s.approval == nil {
+		return MCPClientApprovalTicket{}, apperr.ErrInternal
+	}
+	if !principal.IsHuman() {
+		return MCPClientApprovalTicket{}, apperr.ErrHumanOnlyOperation
+	}
+	if strings.TrimSpace(reason) == "" {
+		return MCPClientApprovalTicket{}, apperr.ErrReasonRequired
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return MCPClientApprovalTicket{}, apperr.ErrIdempotencyKeyRequired
 	}
 	s.requestMu.Lock()
 	defer s.requestMu.Unlock()

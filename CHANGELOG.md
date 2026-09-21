@@ -9,6 +9,7 @@
 ### 变更
 
 ### 修复
+- MCP 客户端申请的失败原因不再误导：此前「缺 `Idempotency-Key`」「缺审批原因」「机器主体提审」三类失败统一返回 `403 FORBIDDEN`（文案「只读密钥无权执行写操作」），会把调用方引向排查权限。现分别返回 `400 idempotency_key_required`、`400 reason_required`、`403 human_only_operation`，各自指向正确的处置方向。
 
 ## 1.1.0（2026-08-12）
 
