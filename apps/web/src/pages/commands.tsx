@@ -20,9 +20,9 @@ export default function CommandsPage() {
   const selectedId = detail?.commandId ?? null
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<TerminalSquare className="size-5" />}
+        icon={<TerminalSquare className="size-4" />}
         title={t('nav.commands')}
         description={t('observability.commands.mission')}
       />

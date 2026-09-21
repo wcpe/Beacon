@@ -31,9 +31,9 @@ export default function IdentityConflictsPage() {
   const conflicts = query.data?.items ?? []
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<Copy className="size-5" />}
+        icon={<Copy className="size-4" />}
         title={t('nav.identityConflicts')}
         description={t('cluster.identityConflicts.mission')}
       />

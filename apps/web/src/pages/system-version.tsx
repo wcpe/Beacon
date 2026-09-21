@@ -130,8 +130,12 @@ export default function SystemVersionPage() {
   const rollbackAvailable = progress?.rollbackAvailable ?? false
 
   return (
-    <section className="grid gap-5">
-      <PageHeader icon={<PackageCheck className="size-5" />} title={t('nav.systemVersion')} />
+    <section className="grid gap-4">
+      <PageHeader
+        icon={<PackageCheck className="size-4" />}
+        title={t('nav.systemVersion')}
+        description={t('system.version.mission')}
+      />
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
       <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>

@@ -25,7 +25,11 @@ export default function SettingsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader icon={<SlidersHorizontal className="size-5" />} title={t('nav.settings')} />
+      <PageHeader
+        icon={<SlidersHorizontal className="size-4" />}
+        title={t('nav.settings')}
+        description={t('system.settings.mission')}
+      />
       <div className="grid gap-4 lg:grid-cols-[13rem_minmax(0,1fr)]">
         {/* 左侧吸顶分区导航：切换分区只换右侧内容，不滚长页 */}
         <nav

@@ -39,7 +39,7 @@ const TONE_CLASS: Record<KpiTone, string> = {
 
 export default function KpiCard({ label, value, unit, icon, tone = 'brand', meta, visual }: KpiCardProps) {
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-[15px] shadow-card">
+    <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 shadow-card">
       <div className="flex items-center justify-between">
         <span className="text-[11.5px] font-medium text-ink-3">{label}</span>
         <span className={cn('grid size-7 place-items-center rounded-lg', TONE_CLASS[tone])} aria-hidden>

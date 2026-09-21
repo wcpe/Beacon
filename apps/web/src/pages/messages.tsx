@@ -274,9 +274,9 @@ export default function MessagesPage() {
   )
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<MessagesSquare className="size-5" />}
+        icon={<MessagesSquare className="size-4" />}
         title={t('nav.messages')}
         description={t('observability.messages.mission')}
       />

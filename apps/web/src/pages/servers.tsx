@@ -41,9 +41,9 @@ export default function ServersPage() {
   const pendingCount = useMemo(() => pendingQuery.data?.items.length ?? 0, [pendingQuery.data])
 
   return (
-    <section className="grid gap-3.5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<Server className="size-5" />}
+        icon={<Server className="size-4" />}
         title={t('nav.servers')}
         description={t('cluster.servers.mission')}
       />

@@ -581,7 +581,7 @@ export default function ZoneTree({
       <div className="max-h-[calc(100vh-16rem)] overflow-y-auto p-3">
         <AsyncSection isLoading={query.isLoading} isError={query.isError} error={query.error}>
           {tree?.clusters.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border-strong px-4 py-8 text-center text-sm text-ink-3">
+            <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-ink-3">
               {t('cluster.zones.tree.empty')}
             </p>
           ) : (

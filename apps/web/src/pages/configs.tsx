@@ -28,6 +28,7 @@ export default function ConfigsPage() {
       <PageHeader
         icon={<FileCog className="size-4" />}
         title={t('delivery.configs.title')}
+        description={t('delivery.configs.mission')}
         actions={
           <NamespacePicker
             value={namespaceId}

@@ -18,9 +18,9 @@ export default function AuditsPage() {
   const [detail, setDetail] = useState<AuditItem | null>(null)
 
   return (
-    <section className="grid gap-5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<ScrollText className="size-5" />}
+        icon={<ScrollText className="size-4" />}
         title={t('nav.audits')}
         description={t('observability.audits.mission')}
       />
