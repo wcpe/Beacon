@@ -9,6 +9,7 @@
 ### 变更
 
 ### 修复
+- 提审入口的失败原因不再误导（同一类缺陷的其余实例）：`beacon.agent.server.resync` 缺 namespace/serverId、设置提审 key 不存在或选错入口、OAuth token 端点缺参数或 scope 越权，此前均报泛化 403「只读密钥无权执行写操作」，会把调用方引向排查权限。现分别返回可区分的 400（`INVALID_PARAM` / `SETTING_KEY_NOT_ALLOWED` / `SETTING_KEY_NOT_DANGEROUS` / OAuth 规范错误码），服务端装配缺失改报 500 `INTERNAL`，与各自的真实处置方向一致。
 - MCP 客户端申请的失败原因不再误导：此前「缺 `Idempotency-Key`」「缺审批原因」「机器主体提审」三类失败统一返回 `403 FORBIDDEN`（文案「只读密钥无权执行写操作」），会把调用方引向排查权限。现分别返回 `400 idempotency_key_required`、`400 reason_required`、`403 human_only_operation`，各自指向正确的处置方向。
 
 ## 1.1.0（2026-08-12）

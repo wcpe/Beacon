@@ -62,15 +62,20 @@ func (s *SettingsService) SetApprovalService(approval *ApprovalService) { s.appr
 
 // RequestUpdate 对高影响设置只创建冻结审批，低风险设置仍由直接更新入口处理。
 func (s *SettingsService) RequestUpdate(key, value, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
+	// key 不在白名单 / 不是高影响项都是调用方选错了入口（400），与权限无关；
+	// 此前统一报 ErrForbidden 会让运维去查密钥权限。
 	meta, ok := settingMetaFor(key)
-	if !ok || !SettingDangerous(key) {
-		return ApprovalTicketView{}, apperr.ErrForbidden
+	if !ok {
+		return ApprovalTicketView{}, apperr.ErrSettingKeyNotAllowed
+	}
+	if !SettingDangerous(key) {
+		return ApprovalTicketView{}, apperr.ErrSettingKeyNotDangerous
 	}
 	if err := validateSettingValue(meta, value); err != nil {
 		return ApprovalTicketView{}, err
 	}
 	if s.approval == nil {
-		return ApprovalTicketView{}, apperr.ErrForbidden
+		return ApprovalTicketView{}, apperr.ErrInternal
 	}
 	current, err := s.repo.Get(key)
 	if err != nil || current == nil {

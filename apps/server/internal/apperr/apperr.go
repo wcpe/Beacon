@@ -292,6 +292,15 @@ var (
 	ErrSettingKeyNotAllowed = New(http.StatusBadRequest, "SETTING_KEY_NOT_ALLOWED", "设置项不存在或不可热改")
 	// ErrSettingValueInvalid 设置值非法（类型 / 范围 / 枚举校验不通过，FR-61）。
 	ErrSettingValueInvalid = New(http.StatusBadRequest, "SETTING_VALUE_INVALID", "设置值不合法")
+	// ErrSettingKeyNotDangerous 该设置项存在但非高影响项，不应走审批提审入口。
+	// 单独成错（而非复用 ErrForbidden）：这是「选错入口」的调用方问题（400），与权限无关；
+	// 普通更新走 PUT /admin/v1/settings/{key}。
+	ErrSettingKeyNotDangerous = New(http.StatusBadRequest, "SETTING_KEY_NOT_DANGEROUS", "该设置项非高影响项，请走普通更新入口")
+	// ErrOAuthInvalidRequest OAuth token 请求缺少必填参数（RFC 6749 §5.2，400 invalid_request）。
+	// 与无效凭证（401 invalid_client）分开：前者是调用方漏传，后者才需核对 secret。
+	ErrOAuthInvalidRequest = New(http.StatusBadRequest, "invalid_request", "缺少必填参数")
+	// ErrOAuthInvalidScope 请求的 scope 超出该客户端 profile 允许范围（RFC 6749 §5.2，400 invalid_scope）。
+	ErrOAuthInvalidScope = New(http.StatusBadRequest, "invalid_scope", "请求的 scope 超出允许范围")
 
 	// ErrReversibleOpNotFound 可逆操作账目不存在（撤回目标缺失，FR-116，见 ADR-0051）。
 	ErrReversibleOpNotFound = New(http.StatusNotFound, "REVERSIBLE_OP_NOT_FOUND", "可逆操作不存在")
