@@ -96,7 +96,11 @@ func (s *AgentCommandService) RequestReverseFetch(_, _, _, _, _, _, _ string) (*
 
 // RequestReverseFetchApproval 创建反向扫描审批申请，命令仅由批准 worker 在同一事务中下发。
 func (s *AgentCommandService) RequestReverseFetchApproval(ns, serverID, scope, group, target, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	payload := map[string]any{"namespace": ns, "serverId": serverID, "scope": scope, "group": group, "target": target, "operator": operator, "clientIP": clientIP}

@@ -397,7 +397,8 @@ func executeDeliveryResumeInTx(tx *gorm.DB, req authz.ApprovalRequest, _ authz.P
 func (s *DeliveryOrchestrator) RequestResume(id uint, mode, reason string, principal auth.Principal,
 	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
 	if s.approval == nil {
-		return DeliveryApprovalTicketView{}, apperr.ErrForbidden
+		// 装配缺失是服务端问题（500），不是调用方越权。
+		return DeliveryApprovalTicketView{}, apperr.ErrInternal
 	}
 	order, err := requireChangeOrder(s.repo, id)
 	if err != nil {
@@ -424,7 +425,11 @@ func (s *DeliveryOrchestrator) RequestResume(id uint, mode, reason string, princ
 // RequestRollback 冻结可回滚单的当前状态和原因，创建统一审批申请。
 func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal auth.Principal,
 	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
-	if s.approval == nil || strings.TrimSpace(reason) == "" {
+	if s.approval == nil {
+		// 装配缺失报 500；此前与缺原因合并，调用方会去补一个并非缺失的字段且永远不成功。
+		return DeliveryApprovalTicketView{}, apperr.ErrInternal
+	}
+	if strings.TrimSpace(reason) == "" {
 		return DeliveryApprovalTicketView{}, apperr.ErrApprovalReasonRequired
 	}
 	order, err := requireChangeOrder(s.repo, id)
@@ -450,7 +455,8 @@ func (s *DeliveryOrchestrator) RequestRollback(id uint, reason string, principal
 func (s *DeliveryOrchestrator) RequestConfirmBatch(id uint, batchNo int, principal auth.Principal,
 	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
 	if s.approval == nil {
-		return DeliveryApprovalTicketView{}, apperr.ErrForbidden
+		// 装配缺失是服务端问题（500），不是调用方越权。
+		return DeliveryApprovalTicketView{}, apperr.ErrInternal
 	}
 	order, err := requireChangeOrder(s.repo, id)
 	if err != nil {
@@ -483,7 +489,8 @@ func (s *DeliveryOrchestrator) RequestConfirmBatch(id uint, batchNo int, princip
 func (s *DeliveryOrchestrator) RequestFinishRollback(id uint, principal auth.Principal,
 	idempotencyKey, operator, clientIP string) (DeliveryApprovalTicketView, error) {
 	if s.approval == nil {
-		return DeliveryApprovalTicketView{}, apperr.ErrForbidden
+		// 装配缺失是服务端问题（500），不是调用方越权。
+		return DeliveryApprovalTicketView{}, apperr.ErrInternal
 	}
 	order, err := requireChangeOrder(s.repo, id)
 	if err != nil {

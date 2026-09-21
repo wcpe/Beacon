@@ -292,8 +292,11 @@ func (s *DeliveryOrchestrator) applyRollback(id uint, reason, operator, clientIP
 
 // applyRollbackInTx 在审批 worker 事务内执行首次整单回滚并写领域审计。
 func (s *DeliveryOrchestrator) applyRollbackInTx(tx *gorm.DB, order *model.ChangeOrder, reason, operator, clientIP string) error {
-	if tx == nil || strings.TrimSpace(reason) == "" {
-		return apperr.ErrForbidden
+	if tx == nil {
+		return apperr.ErrInternal
+	}
+	if strings.TrimSpace(reason) == "" {
+		return apperr.ErrApprovalReasonRequired
 	}
 	if order.Status != model.ChangeOrderStatusCompleted && order.Status != model.ChangeOrderStatusPaused &&
 		order.Status != model.ChangeOrderStatusCancelled {
@@ -366,8 +369,12 @@ func (s *DeliveryOrchestrator) applyFinishRollback(id uint, operator, clientIP s
 }
 
 func (s *DeliveryOrchestrator) applyFinishRollbackInTx(tx *gorm.DB, order *model.ChangeOrder, operator, clientIP string) error {
-	if tx == nil || order.Status != model.ChangeOrderStatusRollingBack {
-		return apperr.ErrForbidden
+	if tx == nil {
+		return apperr.ErrInternal
+	}
+	if order.Status != model.ChangeOrderStatusRollingBack {
+		// 状态不符走本文件既有的 illegal_state(409) 口径，与同函数族一致（此前误报 403 越权）。
+		return changeIllegalState(order.Status, "结束回滚")
 	}
 	nsCode, err := changeNamespaceCode(tx, order.NamespaceID)
 	if err != nil {
