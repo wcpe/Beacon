@@ -676,6 +676,16 @@ export const observability = {
     filterBatchResolve: 'Resolve all',
     filterBatchResult: 'Handled {{count}}',
     filterBatchEmpty: 'No open alerts in the current filter',
+    // FR-230: detail embeds server recent status + alert timeline
+    context: {
+      serverTitle: 'Server recent status',
+      serverEmpty: 'No recent status (archived / no serverId / out of scope)',
+      online: 'Online',
+      offline: 'Offline',
+      score: 'Score',
+      timelineTitle: 'Alert timeline (last {{hours}}h)',
+      timelineEmpty: 'No other alerts in window',
+    },
     batchPartialFail: 'Partial failure: {{ok}} succeeded, {{fail}} failed',
     detailTitle: 'Alert detail',
     listTitle: 'Alert events',

@@ -10,9 +10,11 @@ import (
 
 // AlertEventFilter 是告警事件查询的过滤与分页条件（零值字段不过滤；时间零值不设界）。
 type AlertEventFilter struct {
-	Type           string
-	Level          string
-	Namespace      string
+	Type      string
+	Level     string
+	Namespace string
+	// ServerID 非空时按涉及实例过滤（FR-230 详情时间线）。
+	ServerID       string
 	NamespaceCodes []string
 	Scoped         bool
 	From           time.Time
@@ -83,6 +85,9 @@ func applyAlertEventFilter(q *gorm.DB, f AlertEventFilter) *gorm.DB {
 	}
 	if f.Level != "" {
 		q = q.Where("level = ?", f.Level)
+	}
+	if f.ServerID != "" {
+		q = q.Where("server_id = ?", f.ServerID)
 	}
 	if f.Scoped {
 		if len(f.NamespaceCodes) == 0 {

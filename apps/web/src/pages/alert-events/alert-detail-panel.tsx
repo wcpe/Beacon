@@ -1,14 +1,17 @@
 // 告警详情面板内容（非模态右侧列）：单条告警全字段 + 处理写闭环（确认 / 标记已处理）在面板内完成。
 // 待处理态展示确认 / 标记已处理表单（resolved 备注必填），已处理态展示处理人 / 时间 / 备注 + 互跳。
 // message 为人读摘要；detail 用 JsonDetail 键值可视化（非 JSON 则原文）。
+// FR-230：内嵌「该服近期状态」与「该服告警时间线」，供 5 秒内判断「已过去 / 需立刻处理」。
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ArrowUpRight } from 'lucide-react'
 
 import { Badge, Button, Label, Textarea } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
 
+import { fetchAlertContext } from '../../api/observability'
 import {
   healthStatusLabel,
   parseHealthTransition,
@@ -131,6 +134,9 @@ export default function AlertDetailPanel({ item, pending, errorText, onHandle }:
         </>
       )}
 
+      {/* FR-230：该服近期状态 + 该服告警时间线（数据实时取健康真源与 alert_event，不复制存储） */}
+      <AlertContextSection eventId={item.id} />
+
       {/* 待处理态：面板内处理写闭环（确认无需备注，标记已处理备注必填） */}
       {isOpen && (
         <div className="grid gap-2 border-t border-border pt-3">
@@ -192,6 +198,69 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
     <div className="grid gap-1">
       <span className="text-xs text-ink-4">{label}</span>
       <span className={mono ? 'font-mono text-xs text-ink-2' : 'text-sm text-ink-1'}>{value}</span>
+    </div>
+  )
+}
+
+// FR-230：该服近期状态卡 + 该服告警时间线（按需拉取聚合端点，切告警自动重取）。
+function AlertContextSection({ eventId }: { eventId: number }) {
+  const { t } = useTranslation()
+  const query = useQuery({
+    queryKey: ['alert-events', 'context', eventId],
+    queryFn: () => fetchAlertContext(eventId),
+  })
+  const data = query.data
+  return (
+    <div className="grid gap-2 border-t border-border pt-3">
+      <span className="text-xs text-ink-4">{t('observability.alertEvents.context.serverTitle')}</span>
+      {query.isLoading ? (
+        <div className="h-12 animate-pulse rounded-lg bg-muted" />
+      ) : data?.server == null ? (
+        <p className="rounded-lg border border-dashed border-border px-2.5 py-2 text-xs text-ink-4">
+          {t('observability.alertEvents.context.serverEmpty')}
+        </p>
+      ) : (
+        <div className="grid gap-1.5 rounded-lg bg-secondary/50 px-2.5 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant={data.server.level === 'healthy' ? 'ok' : data.server.level === 'degraded' ? 'warn' : 'crit'}>
+              {healthStatusLabel(t, data.server.level)}
+            </Badge>
+            <Badge variant={data.server.online ? 'ok' : 'off'}>
+              {t(data.server.online ? 'observability.alertEvents.context.online' : 'observability.alertEvents.context.offline')}
+            </Badge>
+            <span className="text-ink-2">
+              {t('observability.alertEvents.context.score')} <span className="font-semibold">{data.server.score}</span>
+            </span>
+          </div>
+          {data.server.reasons.length > 0 && (
+            <span className="text-ink-4">{data.server.reasons.join(' · ')}</span>
+          )}
+        </div>
+      )}
+
+      <span className="text-xs text-ink-4">
+        {t('observability.alertEvents.context.timelineTitle', { hours: data?.timelineWindowHours ?? 24 })}
+      </span>
+      {(data?.timeline.length ?? 0) === 0 ? (
+        <p className="rounded-lg border border-dashed border-border px-2.5 py-2 text-xs text-ink-4">
+          {t('observability.alertEvents.context.timelineEmpty')}
+        </p>
+      ) : (
+        <ul className="grid gap-1">
+          {data?.timeline.map((row) => (
+            <li key={row.id} className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-ink-4">{new Date(row.createdAt).toLocaleString()}</span>
+              <Badge variant={row.level === 'critical' ? 'crit' : row.level === 'warning' ? 'warn' : 'off'}>
+                {t(`observability.alertEvents.level.${row.level}`)}
+              </Badge>
+              <Badge variant={row.status === 'open' ? 'crit' : row.status === 'resolved' ? 'ok' : 'off'}>
+                {t(`observability.alertEvents.status.${row.status}`)}
+              </Badge>
+              <span className="truncate text-ink-3">{row.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

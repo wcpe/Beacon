@@ -671,6 +671,16 @@ export const observability = {
     filterBatchResolve: '一键已处理',
     filterBatchResult: '已处理 {{count}} 条',
     filterBatchEmpty: '当前筛选无待处理告警',
+    // FR-230：详情内嵌该服近期状态 + 告警时间线
+    context: {
+      serverTitle: '该服近期状态',
+      serverEmpty: '无近期状态（服务器已归档 / 无 serverId / 观测范围外）',
+      online: '在线',
+      offline: '离线',
+      score: '健康分',
+      timelineTitle: '该服告警时间线（近 {{hours}}h）',
+      timelineEmpty: '窗口内无其它告警',
+    },
     detailTitle: '告警详情',
     listTitle: '告警事件',
     handleTitle: '处理告警',
