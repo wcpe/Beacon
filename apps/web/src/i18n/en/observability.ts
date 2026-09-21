@@ -367,6 +367,7 @@ export const observability = {
       'identity.address_changed': 'Identity address changed',
       'identity.reapply_allowed': 'Allow identity re-apply',
       'identity.rebind_with_force_unbind': 'Force rebind identity',
+      'identity.machine_registered': 'Machine-registered identity',
       // Cluster authority
       'bc_cluster.create': 'Create BC cluster',
       'bc_cluster.delete': 'Delete BC cluster',

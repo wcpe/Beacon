@@ -366,6 +366,7 @@ export const observability = {
       'identity.address_changed': '身份地址变更',
       'identity.reapply_allowed': '允许身份重新申请',
       'identity.rebind_with_force_unbind': '强制换绑身份',
+      'identity.machine_registered': '机器注册身份',
       // 区服权威
       'bc_cluster.create': '新建 BC 集群',
       'bc_cluster.delete': '删除 BC 集群',
