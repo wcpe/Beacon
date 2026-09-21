@@ -214,7 +214,8 @@ export function fetchServerLifecycleImpact(id: number, action: 'archive' | 'rest
   return request('GET', path)
 }
 
-export function fetchZoneTree(namespaceId: number): Promise<ZoneTreeResponse> {
+/** 区服结构树；namespaceId 省略表示「全部命名空间」（观测范围契约拒绝显式 0）。 */
+export function fetchZoneTree(namespaceId?: number): Promise<ZoneTreeResponse> {
   return request('GET', `/admin/v2/zone-tree${buildQuery({ namespaceId })}`)
 }
 

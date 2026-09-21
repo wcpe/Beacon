@@ -28,8 +28,12 @@ export default function SystemPage() {
   })
 
   return (
-    <section className="grid gap-6">
-      <PageHeader icon={<HeartPulse className="size-5" />} title={t('nav.system')} />
+    <section className="grid gap-4">
+      <PageHeader
+        icon={<HeartPulse className="size-4" />}
+        title={t('nav.system')}
+        description={t('system.health.mission')}
+      />
 
       <AsyncSection
         isLoading={statusQuery.isLoading}

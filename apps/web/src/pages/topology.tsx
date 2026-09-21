@@ -8,23 +8,27 @@ import { Network, Table2 } from 'lucide-react'
 
 import { PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
-import NamespaceSelect from '../features/cluster/namespace-select'
+import NamespaceSelect, { ALL_NAMESPACES } from '../features/cluster/namespace-select'
 import EdgesPanel from './topology/edges-panel'
 import TopologyGraph from './topology/topology-graph'
 
 export default function TopologyPage() {
   const { t } = useTranslation()
-  // 当前作用域 namespace；null 时按 0 取全量（空态无 namespace 亦能渲染引导）
+  // 当前作用域 namespace；null / ALL_NAMESPACES(0) 均表示「全部命名空间」
   const [namespaceId, setNamespaceId] = useState<number | null>(null)
-  const effectiveNamespaceId = namespaceId ?? 0
+  // 「全部」只用参数省略表达：观测范围契约（FR-213）拒绝显式 namespaceId=0
+  // （返回 400 invalid_observation_scope），故此处不把 0 透传给查询。
+  const apiNamespaceId =
+    namespaceId === null || namespaceId === ALL_NAMESPACES ? undefined : namespaceId
   // 视图模式：graph 可视化 / data 数据剖析
   const [mode, setMode] = useState('graph')
 
   return (
-    <section className="grid gap-3.5">
+    <section className="grid gap-4">
       <PageHeader
-        icon={<Network className="size-5" />}
+        icon={<Network className="size-4" />}
         title={t('nav.topology')}
+        description={t('cluster.topology.mission')}
         actions={<NamespaceSelect value={namespaceId} onChange={setNamespaceId} />}
       />
 
@@ -40,7 +44,7 @@ export default function TopologyPage() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="graph">
-          <TopologyGraph namespaceId={effectiveNamespaceId} />
+          <TopologyGraph namespaceId={apiNamespaceId} />
         </TabsContent>
         <TabsContent value="data">
           <EdgesPanel />

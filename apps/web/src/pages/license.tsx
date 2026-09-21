@@ -97,9 +97,9 @@ export default function LicensePage() {
   const visibleTotal = filteredGroups.reduce((n, g) => n + g.items.length, 0)
 
   return (
-    <section className="grid max-w-5xl gap-6" data-slot="license-page">
+    <section className="grid max-w-5xl gap-4" data-slot="license-page">
       <PageHeader
-        icon={<Scale className="size-5" />}
+        icon={<Scale className="size-4" />}
         title={t('common.license.pageTitle')}
         description={t('common.license.intro')}
       />

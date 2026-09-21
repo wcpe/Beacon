@@ -75,7 +75,8 @@ const FIT_MARGIN = 24
 const LABEL_TS = [0.5, 0.34, 0.66, 0.42, 0.58, 0.26, 0.74, 0.5]
 
 interface TopologyGraphProps {
-  namespaceId: number
+  /** undefined 表示「全部命名空间」；观测范围契约拒绝显式 0，故全量必须省略参数 */
+  namespaceId?: number
 }
 
 // 节点健康占比计数（小区聚合内部子服 / 折叠态为大区聚合）
@@ -865,7 +866,7 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
 
       <AsyncSection isLoading={treeQuery.isLoading} isError={treeQuery.isError} error={treeQuery.error}>
         {isEmpty || !layout ? (
-          <p className="rounded-lg border border-dashed border-border-strong px-4 py-8 text-center text-sm text-ink-3">
+          <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-ink-3">
             {t('cluster.topology.graph.empty')}
           </p>
         ) : (
@@ -886,9 +887,12 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                 onPointerDown={onCanvasPointerDown}
                 onClickCapture={onCanvasClickCapture}
               >
-                {/* 舞台层：CSS transform 由 ref 直改并走合成器（will-change），缩放平移不重绘 SVG */}
+                {/* 舞台层：CSS transform 由 ref 直改并走合成器（will-change），缩放平移不重绘 SVG。
+                    绝对定位使其脱离文档流：画布按 layout 尺寸平移缩放查看，不撑宽父容器
+                    （否则会把内容区推到超出视口，触发 useFitToWidth 全页等比缩小）。 */}
                 <div
                   ref={stageRef}
+                  className="absolute top-0 left-0"
                   style={{
                     width: layout.width,
                     height: layout.height,
