@@ -226,7 +226,6 @@ export default function ApiKeysPage() {
       <PageHeader
         icon={<KeyRound className="size-4" />}
         title={t('nav.apiKeys')}
-        description={t('system.apiKeys.mission')}
       />
 
       <MasterDetail

@@ -259,7 +259,6 @@ export default function ConnectionsPage() {
       <PageHeader
         icon={<Cable className="size-4" />}
         title={t('nav.connections')}
-        description={t('observability.connections.mission')}
       />
       <MasterDetail
         master={

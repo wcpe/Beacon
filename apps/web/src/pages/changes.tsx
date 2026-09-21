@@ -58,7 +58,6 @@ export default function ChangesPage() {
       <PageHeader
         icon={<GitPullRequestArrow className="size-4" />}
         title={t('delivery.changes.title')}
-        description={t('delivery.changes.mission')}
         actions={
           <>
             <Button

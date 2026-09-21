@@ -22,7 +22,6 @@ export default function AuditsPage() {
       <PageHeader
         icon={<ScrollText className="size-4" />}
         title={t('nav.audits')}
-        description={t('observability.audits.mission')}
       />
       <AuditKpi />
       <MasterDetail

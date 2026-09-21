@@ -28,7 +28,6 @@ export default function TopologyPage() {
       <PageHeader
         icon={<Network className="size-4" />}
         title={t('nav.topology')}
-        description={t('cluster.topology.mission')}
         actions={<NamespaceSelect value={namespaceId} onChange={setNamespaceId} />}
       />
 

@@ -36,7 +36,6 @@ export default function ZonesPage() {
       <PageHeader
         icon={<Boxes className="size-4" />}
         title={t('nav.zones')}
-        description={t('cluster.zones.mission')}
         actions={
           <>
             <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />

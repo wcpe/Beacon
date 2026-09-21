@@ -45,7 +45,6 @@ export default function ServersPage() {
       <PageHeader
         icon={<Server className="size-4" />}
         title={t('nav.servers')}
-        description={t('cluster.servers.mission')}
       />
       <AssetsPanel
         initialKeyword={initialKeyword}

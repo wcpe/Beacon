@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, Layers, Network, TriangleAlert } from 'lucide-react'
 
 import { Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@beacon/ui'
@@ -17,6 +18,7 @@ import {
 
 /** FR-214 页眉观测范围选择器：当前仅 mock-first 交互，不改变任何写目标。 */
 export default function EnvFilter() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const selection = useObservationScopeSelection()
   const envs = useEnvOptions()
@@ -36,32 +38,32 @@ export default function EnvFilter() {
   return (
     <div data-slot="observation-scope-filter" className="flex items-center gap-1.5">
       <ScopeMenu
-        label="观测环境"
+        label={t('common.envFilter.envLabel')}
         icon={<Layers className="size-3.5 text-ink-4" aria-hidden />}
-        value={scope.kind === 'invalid' ? '范围失效' : selectedEnv?.name ?? '全部环境'}
-        badge={scope.kind === 'invalid' ? '需重选' : scope.kind === 'env' ? '环境' : '全部'}
+        value={scope.kind === 'invalid' ? t('common.envFilter.invalid') : selectedEnv?.name ?? t('common.envFilter.all')}
+        badge={scope.kind === 'invalid' ? t('common.envFilter.needReselect') : scope.kind === 'env' ? t('common.envFilter.badgeEnv') : t('common.envFilter.badgeAll')}
         invalid={scope.kind === 'invalid'}
       >
-        <ScopeItem active={scope.kind === 'all'} label="全部环境" onSelect={() => { update(selectObservationEnv(selection, ALL_OBSERVATION_ENV)) }} />
+        <ScopeItem active={scope.kind === 'all'} label={t('common.envFilter.all')} onSelect={() => { update(selectObservationEnv(selection, ALL_OBSERVATION_ENV)) }} />
         {envs.map((env) => (
-          <ScopeItem key={env.id} active={scope.kind === 'env' && scope.envId === env.id} label={env.name} meta={`${String(env.namespaces.length)} 个 namespace`} onSelect={() => { update(selectObservationEnv(selection, env.id)) }} />
+          <ScopeItem key={env.id} active={scope.kind === 'env' && scope.envId === env.id} label={env.name} meta={t('common.envFilter.nsCount', { count: env.namespaces.length })} onSelect={() => { update(selectObservationEnv(selection, env.id)) }} />
         ))}
       </ScopeMenu>
       <ScopeMenu
-        label="观测 namespace"
+        label={t('common.envFilter.nsLabel')}
         icon={<Network className="size-3.5 text-ink-4" aria-hidden />}
-        value={scope.kind === 'invalid' ? '请选择有效范围' : selectedNamespace?.name ?? (scope.kind === 'env' ? '该环境全部' : '全部 namespace')}
-        badge={scope.empty ? '空映射' : scope.kind === 'invalid' ? '已停止' : '范围'}
+        value={scope.kind === 'invalid' ? t('common.envFilter.invalidPick') : selectedNamespace?.name ?? (scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces'))}
+        badge={scope.empty ? t('common.envFilter.emptyMapping') : scope.kind === 'invalid' ? t('common.envFilter.stopped') : t('common.envFilter.scopeBadge')}
         invalid={scope.kind === 'invalid'}
         disabled={scope.kind === 'invalid'}
       >
-        <ScopeItem active={scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={scope.kind === 'env' ? '该环境全部' : '全部 namespace'} onSelect={() => { update(selectObservationNamespace(selection, ALL_OBSERVATION_NAMESPACE)) }} />
+        <ScopeItem active={scope.namespaceId === ALL_OBSERVATION_NAMESPACE} label={scope.kind === 'env' ? t('common.envFilter.envAllNamespaces') : t('common.envFilter.allNamespaces')} onSelect={() => { update(selectObservationNamespace(selection, ALL_OBSERVATION_NAMESPACE)) }} />
         {namespaces.map((namespace) => (
           <ScopeItem key={namespace.id} active={scope.namespaceId === namespace.id} label={namespace.name} meta={`#${String(namespace.id)}`} onSelect={() => { update(selectObservationNamespace(selection, namespace.id)) }} />
         ))}
-        {scope.empty ? <p className="px-2 py-2 text-xs text-ink-4">该环境没有映射 namespace，观测页将显示空态。</p> : null}
+        {scope.empty ? <p className="px-2 py-2 text-xs text-ink-4">{t('common.envFilter.emptyNote')}</p> : null}
       </ScopeMenu>
-      {scope.kind === 'invalid' ? <TriangleAlert className="size-4 text-warning" aria-label="观测范围失效，请重新选择环境" /> : null}
+      {scope.kind === 'invalid' ? <TriangleAlert className="size-4 text-warning" aria-label={t('common.envFilter.invalidRangeAria')} /> : null}
     </div>
   )
 }

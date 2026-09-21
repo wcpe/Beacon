@@ -101,7 +101,6 @@ export default function LicensePage() {
       <PageHeader
         icon={<Scale className="size-4" />}
         title={t('common.license.pageTitle')}
-        description={t('common.license.intro')}
       />
 
       {/* 搜索 + 运行时依赖表（参考截图：单一清单） */}

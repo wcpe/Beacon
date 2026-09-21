@@ -221,14 +221,14 @@ function ApprovalFilters({ filters, onChange, onReset }: ApprovalFiltersProps) {
         <label className="grid gap-1 text-xs text-ink-3">
           目标 namespace
           <select
-            aria-label="目标 namespace"
+            aria-label="目标命名空间"
             className="h-8 rounded-md border border-input bg-background px-2 text-sm text-ink-1"
             value={filters.namespaceId}
             onChange={(event) => {
               onChange({ namespaceId: event.target.value })
             }}
           >
-            <option value="all">全部 namespace</option>
+            <option value="all">全部命名空间</option>
             <option value="global">全局操作</option>
             <option value="1">namespace 1</option>
             <option value="2">namespace 2</option>
@@ -574,7 +574,6 @@ export default function ApprovalsPage() {
       <PageHeader
         icon={<ClipboardCheck className="size-4" />}
         title={t('nav.approvals')}
-        description={t('approvals.mission')}
       />
       <div
         data-slot="global-approval-scope"

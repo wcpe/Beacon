@@ -21,7 +21,6 @@ export default function DashboardPage() {
       <PageHeader
         icon={<LayoutDashboard className="size-4" />}
         title={t('nav.dashboard')}
-        description={t('dashboard.mission')}
       />
       {/* 顶部 KPI 指标带（含区段标题与健康分布环） */}
       <HealthOverview />

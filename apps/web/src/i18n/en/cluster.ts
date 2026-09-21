@@ -1,7 +1,6 @@
 // English cluster domain copy (full mirror of zh-CN)
 export const cluster = {
   servers: {
-    mission: 'Join approval, asset ops, health, draining / default entry',
     pending: {
       title: 'Pending registration',
       sheetDesc: 'Confirm or reject new agents on first connect; after confirm, assign them on the zone allocation page.',
@@ -148,7 +147,6 @@ export const cluster = {
     },
   },
   zones: {
-    mission: 'BC / Region / Zone structure and backend assignment',
     tree: {
       title: 'Zone structure tree',
       empty: 'No BC cluster yet; create one to start planning zones',
@@ -245,7 +243,6 @@ export const cluster = {
     },
   },
   topology: {
-    mission: 'BC–backend links, message flow, request topology, and abnormal edges',
     mode: {
       graph: 'Graph',
       data: 'Data breakdown',
@@ -340,7 +337,6 @@ export const cluster = {
   },
   // Identity conflicts page (/identity-conflicts, FR-177): concurrent dual instances of same identityId after full-server directory copy
   identityConflicts: {
-    mission: 'Concurrent dual instances of the same identity after full-server directory copy: see both sides at a glance, keep one or unbind',
     empty: 'No identity conflicts',
     emptyHint: 'All clear—each identity currently has one active instance. Conflicts appear here when a second instance is started from a full-server directory copy.',
     reason: {

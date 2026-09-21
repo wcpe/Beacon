@@ -24,7 +24,6 @@ export const observability = {
     jsonRaw: '查看原文',
   },
   serviceAnalysis: {
-    mission: '指标聚合、趋势与对比',
     pickServers: '选择服务器（可多选对比）',
     searchServers: '搜索服务器 ID',
     searchEmpty: '无匹配的在线子服',
@@ -164,7 +163,6 @@ export const observability = {
     },
   },
   commands: {
-    mission: 'agent 命令双向生命周期与队列',
     kpi: {
       total: '命令总数',
       pending: '待取走',
@@ -260,7 +258,6 @@ export const observability = {
     filterWindow: '时间范围',
   },
   audits: {
-    mission: '审计查询、追溯与导出',
     kpi: {
       total: '审计总数',
       ok: '成功',
@@ -465,7 +462,6 @@ export const observability = {
   },
   // 连接明细页（/connections，FR-181）
   connections: {
-    mission: '连接会话明细查询与追溯',
     // 查询防护：热查询可仅时间窗；冷查询须 selector；精确 connId 直查
     guardHint: '默认可按时间范围查全局近期；精确 connId 直查；服务器 ID / 玩家 UUID 可选收窄；含归档时须 selector',
     guardEmpty: '默认可仅选时间范围查全局近期；精确 connId 直查；含归档时需服务器 ID 或玩家 UUID',
@@ -520,7 +516,6 @@ export const observability = {
   },
   // 消息链路页（/messages，FR-181；元数据永不含 payload）
   messages: {
-    mission: '跨服消息链路检索与逐跳追踪',
     // 查询防护：热查询可仅时间窗；冷查询须 selector；精确 ID 直查
     guardHint: '默认可按时间范围查全局近期；精确 messageId / correlationId 直查；服务器 ID / 玩家 UUID 可选收窄；含归档时须 selector',
     guardEmpty: '默认可仅选时间范围查全局近期；精确 messageId / correlationId 直查；含归档时需服务器 ID 或玩家 UUID',
@@ -594,7 +589,6 @@ export const observability = {
     durationMs: '{{count}} 毫秒',
   },
   alertEvents: {
-    mission: '告警事件列表与处理状态',
     kpi: {
       total: '告警总数',
       open: '待处理',
