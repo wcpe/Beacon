@@ -1,6 +1,6 @@
 # 功能规格：告警分级与人工升降
 
-> 状态：草拟（**已按评审重写**）　·　关联 PRD：FR-231（增强 FR-157 / FR-89）　·　分支：feature/alert-severity-grading
+> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-231（增强 FR-157 / FR-89）　·　分支：feature/alert-severity-grading
 
 ## 1. 背景与目标
 
@@ -48,12 +48,12 @@
 
 ## 5. 任务拆分
 
-- [ ] `GradeAlert` 纯函数 + 矩阵 + 穷举单测
-- [ ] 角色解析（proxy / lobby / backend）
-- [ ] 告警产生路径写入 `level`
-- [ ] `severity_override` 等列 + 迁移 + 覆盖接口 + 审计
-- [ ] 前端：级别徽标 / 覆盖标记 / 调级入口
-- [ ] 文档同步：PRD 状态、API、CHANGELOG
+- [x] `GradeAlert` 纯函数 + 矩阵 + 穷举单测
+- [x] 角色解析（proxy / lobby / backend）
+- [x] 告警产生路径写入 `level`
+- [x] `severity_override` 等列 + 迁移 + 覆盖接口 + 审计
+- [x] 前端：级别徽标 / 覆盖标记 / 调级入口
+- [x] 文档同步：PRD 状态、API、CHANGELOG
 
 ## 6. 验收标准
 

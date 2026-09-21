@@ -671,6 +671,12 @@ export const observability = {
     filterBatchResolve: '一键已处理',
     filterBatchResult: '已处理 {{count}} 条',
     filterBatchEmpty: '当前筛选无待处理告警',
+    // FR-231：人工升降级别
+    override: {
+      title: '调整级别',
+      badge: '已手动调整',
+      by: '手动调整为 {{by}}·{{at}}',
+    },
     // FR-230：详情内嵌该服近期状态 + 告警时间线
     context: {
       serverTitle: '该服近期状态',

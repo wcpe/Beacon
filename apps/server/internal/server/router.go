@@ -505,6 +505,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/alert-events/handle", h.AlertEvent.HandleBatch)
 		// 告警详情聚合（FR-230）：内嵌该服近期状态（健康真源）+ 该服告警时间线（alert_event）。
 		r.Get("/alert-events/{id}/context", h.AlertEvent.Context)
+		// 告警人工分级覆盖（FR-231）：升降级别 + 落审计。
+		r.Post("/alert-events/{id}/level", h.AlertEvent.OverrideLevel)
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)

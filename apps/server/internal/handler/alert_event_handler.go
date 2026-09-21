@@ -50,6 +50,10 @@ type alertEventView struct {
 	HandledBy  *string    `json:"handledBy"`
 	HandledAt  *time.Time `json:"handledAt"`
 	HandleNote *string    `json:"handleNote"`
+	// 人工分级覆盖（FR-231）：非空表示已手动调整；overriddenBy/At 记录改级人与时刻。
+	SeverityOverride *string    `json:"severityOverride"`
+	OverriddenBy     *string    `json:"overriddenBy"`
+	OverriddenAt     *time.Time `json:"overriddenAt"`
 }
 
 // toAlertEventView 把模型转对外视图；空串的处理人 / 说明映射为 null（契约为 string | null）。
@@ -57,10 +61,13 @@ func toAlertEventView(e model.AlertEvent) alertEventView {
 	return alertEventView{
 		ID: e.ID, Type: e.Type, Level: e.Level, ServerID: e.ServerID,
 		Namespace: e.Namespace, Message: e.Message, Detail: e.Detail, CreatedAt: e.CreatedAt,
-		Status:     e.Status,
-		HandledBy:  ptrIfNotEmpty(e.HandledBy),
-		HandledAt:  e.HandledAt,
-		HandleNote: ptrIfNotEmpty(e.HandleNote),
+		Status:           e.Status,
+		HandledBy:        ptrIfNotEmpty(e.HandledBy),
+		HandledAt:        e.HandledAt,
+		HandleNote:       ptrIfNotEmpty(e.HandleNote),
+		SeverityOverride: ptrIfNotEmpty(e.SeverityOverride),
+		OverriddenBy:     ptrIfNotEmpty(e.OverriddenBy),
+		OverriddenAt:     e.OverriddenAt,
 	}
 }
 
@@ -193,6 +200,30 @@ func (h *AlertEventHandler) HandleBatch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"affected": affected})
+}
+
+// alertLevelOverrideRequest 是人工改级请求体（FR-231）。
+type alertLevelOverrideRequest struct {
+	Level string `json:"level"`
+}
+
+// OverrideLevel 处理 POST /admin/v1/alert-events/{id}/level（FR-231）：人工升降级别 + 落审计。
+func (h *AlertEventHandler) OverrideLevel(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	var req alertLevelOverrideRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	updated, err := h.svc.OverrideAlertLevel(id, req.Level, auth.Operator(r.Context()), clientIP(r))
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, toAlertEventView(*updated))
 }
 
 // alertContextServerView 是该服近期状态视图（json 形状对齐 contracts AlertContext.server）。

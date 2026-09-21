@@ -13,7 +13,7 @@ var errInvalidMCPProxyConfig = errors.New("MCP 反向代理配置无效")
 
 // MCPProxyPolicy 只信任部署配置列出的反向代理；直连模式下改用 Host 白名单。
 type MCPProxyPolicy struct {
-	enabled  bool
+	enabled bool
 	// direct 为 true 表示内网明文直连模式：跳过 X-Forwarded-* 与来源网段校验，
 	// 改为按 allowedHosts 校验 Host 头（防 DNS rebinding）。
 	direct       bool
