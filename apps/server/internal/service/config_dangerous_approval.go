@@ -128,8 +128,13 @@ func normalizeConfigBatchIDs(ids []uint) []uint {
 }
 
 func (s *ConfigService) requestConfigBatch(kind, namespaceCode string, ids []uint, expected []configPendingExpected, hash, changeType string, pending configPendingPayload, reason, idempotencyKey string, principal auth.Principal, clientIP string) (ConfigApprovalTicket, error) {
-	if pending.Operator == "" || s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() {
-		return ConfigApprovalTicket{}, apperr.ErrForbidden
+	// 分档：装配 / 密钥缺失是服务端问题（500），operator 缺失是调用方参数问题（400）。
+	// 此前合并报 403，会把排查引向权限。
+	if s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() {
+		return ConfigApprovalTicket{}, apperr.ErrInternal
+	}
+	if pending.Operator == "" {
+		return ConfigApprovalTicket{}, apperr.ErrInvalidParam
 	}
 	changeID := configApprovalChangeID(principal, kind, 0, idempotencyKey)
 	ciphertext, err := s.encryptPendingPayload(pending)
@@ -184,8 +189,13 @@ func configBatchEvidence(namespaceCode string, ids []uint, expected []configPend
 }
 
 func (s *ConfigService) requestConfigChange(kind string, itemID uint, expectedVersion int64, hash, changeType string, pending configPendingPayload, reason, idempotencyKey string, principal auth.Principal, clientIP string) (ConfigApprovalTicket, error) {
-	if pending.Operator == "" || s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() {
-		return ConfigApprovalTicket{}, apperr.ErrForbidden
+	// 分档：装配 / 密钥缺失是服务端问题（500），operator 缺失是调用方参数问题（400）。
+	// 此前合并报 403，会把排查引向权限。
+	if s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() {
+		return ConfigApprovalTicket{}, apperr.ErrInternal
+	}
+	if pending.Operator == "" {
+		return ConfigApprovalTicket{}, apperr.ErrInvalidParam
 	}
 	changeID := configApprovalChangeID(principal, kind, itemID, idempotencyKey)
 	ciphertext, err := s.encryptPendingPayload(pending)

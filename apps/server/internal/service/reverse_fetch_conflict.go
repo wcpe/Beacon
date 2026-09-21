@@ -219,7 +219,11 @@ func (s *ReverseFetchTaskService) Resolve(_ uint, _ []ResolveDecision, _, _ stri
 // RequestResolveApproval 冻结冲突审核任务、清单、暂存结果与目标版本；批准后执行器才能落库。
 func (s *ReverseFetchTaskService) RequestResolveApproval(taskID uint, decisions []ResolveDecision, reason, idempotencyKey,
 	operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || taskID == 0 || operator == "" || reason == "" || idempotencyKey == "" {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if taskID == 0 || operator == "" || reason == "" || idempotencyKey == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	task, env, err := s.requireConflictReview(taskID)

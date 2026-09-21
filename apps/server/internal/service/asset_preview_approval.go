@@ -51,7 +51,11 @@ func (assetPreviewApprovalAdapter) Execute(authz.ApprovalRequest, authz.Permit) 
 
 // RequestAccess 冻结单个文件的权威目标与清单哈希，正文绝不进入审批载荷。
 func (s *AssetPreviewService) RequestAccess(serverID, path, reason, idempotencyKey string, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
-	if s == nil || s.approval == nil || strings.TrimSpace(serverID) == "" || strings.TrimSpace(path) == "" ||
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return model.ApprovalRequest{}, apperr.ErrInternal
+	}
+	if strings.TrimSpace(serverID) == "" || strings.TrimSpace(path) == "" ||
 		strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
@@ -78,7 +82,11 @@ func (s *AssetPreviewService) RequestAccess(serverID, path, reason, idempotencyK
 
 // RequestPairAccess 为跨服务器双侧文件读取分别创建审批申请；正文不会写入任一审批载荷。
 func (s *AssetPreviewService) RequestPairAccess(left, right AssetRef, reason, idempotencyKey string, principal auth.Principal, clientIP string) (model.ApprovalRequest, model.ApprovalRequest, error) {
-	if s == nil || s.approval == nil || left.ServerID == "" || left.Path == "" || right.ServerID == "" || right.Path == "" ||
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return model.ApprovalRequest{}, model.ApprovalRequest{}, apperr.ErrInternal
+	}
+	if left.ServerID == "" || left.Path == "" || right.ServerID == "" || right.Path == "" ||
 		left.ServerID == right.ServerID || strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return model.ApprovalRequest{}, model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
