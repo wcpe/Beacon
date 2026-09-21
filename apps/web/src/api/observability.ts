@@ -181,3 +181,8 @@ export function handleAlertEventsBatch(body: HandleAlertBatchBody): Promise<{ af
 export function fetchAlertContext(id: number): Promise<AlertContext> {
   return request('GET', `/admin/v1/alert-events/${String(id)}/context`)
 }
+
+/** 人工升降告警级别（FR-231）：写覆盖列 + 落审计。 */
+export function overrideAlertLevel(id: number, level: AlertEventItem['level']): Promise<AlertEventItem> {
+  return request('POST', `/admin/v1/alert-events/${String(id)}/level`, { level })
+}

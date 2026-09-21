@@ -136,6 +136,8 @@ var coveredWriteRoutes = map[string]struct{}{
 	"POST /admin/v1/alert-events/{id}/handle": {},
 	// 告警按筛选批量处理（FR-229，alert-event.batch_handled；service 在事务内一条 UPDATE + 一条批量审计）
 	"POST /admin/v1/alert-events/handle": {},
+	// 告警人工分级覆盖（FR-231，alert-event.level_overridden；service 在事务内自记专项审计）
+	"POST /admin/v1/alert-events/{id}/level": {},
 
 	// —— /admin/v2 控制面：各域写端点一律在 service 事务内自记专项审计，登记于此使兜底跳过、避免双记 ——
 	// 环境创建与已迁移的删除端点（namespace.create；删除不产生审计）

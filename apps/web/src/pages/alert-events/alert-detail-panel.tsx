@@ -52,9 +52,19 @@ interface AlertDetailPanelProps {
   errorText: string | null
   // 处理写操作提交（resolved 时携带备注）
   onHandle: (intent: HandleIntent, note: string) => void
+  // FR-231：人工升降告警级别
+  onOverrideLevel: (level: AlertEventItem['level']) => void
+  levelPending: boolean
 }
 
-export default function AlertDetailPanel({ item, pending, errorText, onHandle }: AlertDetailPanelProps) {
+export default function AlertDetailPanel({
+  item,
+  pending,
+  errorText,
+  onHandle,
+  onOverrideLevel,
+  levelPending,
+}: AlertDetailPanelProps) {
   const { t } = useTranslation()
   // 处理备注（仅 resolved 需要）
   const [note, setNote] = useState('')
@@ -70,7 +80,32 @@ export default function AlertDetailPanel({ item, pending, errorText, onHandle }:
     <div className="grid gap-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={levelBadgeVariant(item.level)}>{t(`observability.alertEvents.level.${item.level}`)}</Badge>
+        {item.severityOverride != null && (
+          <Badge
+            variant="secondary"
+            title={t('observability.alertEvents.override.by', { by: item.overriddenBy ?? '—', at: item.overriddenAt ? new Date(item.overriddenAt).toLocaleString() : '—' })}
+          >
+            {t('observability.alertEvents.override.badge')}
+          </Badge>
+        )}
         <Badge variant={statusBadgeVariant(item.status)}>{t(`observability.alertEvents.status.${item.status}`)}</Badge>
+      </div>
+      {/* FR-231：人工升降级别（色 + 文字双编码；改级落审计） */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs text-ink-4">{t('observability.alertEvents.override.title')}</span>
+        {(['info', 'warning', 'critical'] as const).map((lv) => (
+          <Button
+            key={lv}
+            size="sm"
+            variant={item.level === lv ? 'default' : 'outline'}
+            disabled={levelPending || item.level === lv}
+            onClick={() => {
+              onOverrideLevel(lv)
+            }}
+          >
+            {t(`observability.alertEvents.level.${lv}`)}
+          </Button>
+        ))}
       </div>
 
       <Field label={t('observability.alertEvents.columns.time')} value={new Date(item.createdAt).toLocaleString()} />

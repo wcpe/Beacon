@@ -37,6 +37,12 @@ type AlertEvent struct {
 	HandledAt *time.Time `gorm:"column:handled_at"`
 	// 处理说明（运维填写的确认 / 处置原因）；未处理为空串
 	HandleNote string `gorm:"column:handle_note;size:512;not null;default:''"`
+
+	// 以下为人工分级覆盖字段（FR-231）：非空表示运维手动改过级别，列表 / 排序以 override 为准并标「已手动调整」。
+	// SeverityOverride 非空时即以它为准（覆盖矩阵自动定级）；OverriddenBy/At 记录改级人与时刻（审计另存一份）。
+	SeverityOverride string     `gorm:"column:severity_override;size:16;not null;default:''"`
+	OverriddenBy     string     `gorm:"column:overridden_by;size:128;not null;default:''"`
+	OverriddenAt     *time.Time `gorm:"column:overridden_at"`
 }
 
 // TableName 固定表名为 alert_event。

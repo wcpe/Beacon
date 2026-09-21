@@ -616,6 +616,8 @@ const (
 	ActionAlertEventResolve     = "alert-event.resolve"
 	// ActionAlertEventBatchHandled 是按筛选批量处理的专项审计（FR-229：一条含条件 + 命中数 + 操作者）。
 	ActionAlertEventBatchHandled = "alert-event.batch_handled"
+	// ActionAlertEventLevelOverridden 是人工升降告警级别的专项审计（FR-231：含新旧级别 + 操作者）。
+	ActionAlertEventLevelOverridden = "alert-event.level_overridden"
 	// 热冷归档任务（FR-151，见 ADR-0066）：创建（含 dry-run）/ 完成 / 失败 / 重试 / 取消，detail 记任务 id / 模式 / 域（不含数据内容）
 	ActionArchiveJobCreate   = "archive.job-create"
 	ActionArchiveJobComplete = "archive.job-complete"

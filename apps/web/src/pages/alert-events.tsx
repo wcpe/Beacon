@@ -19,7 +19,7 @@ import {
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { ApiClientError } from '../api/http'
-import { fetchAlertEvents, handleAlertEvent, handleAlertEventsBatch } from '../api/observability'
+import { fetchAlertEvents, handleAlertEvent, handleAlertEventsBatch, overrideAlertLevel } from '../api/observability'
 import { notifySuccess } from '../lib/notify'
 import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../features/env/use-env-scope'
 import {
@@ -177,6 +177,17 @@ export default function AlertEventsPage() {
   const mutation = useMutation({
     mutationFn: ({ id, intent, note }: { id: number; intent: HandleIntent; note: string }) =>
       handleAlertEvent(id, { status: intent, note: note === '' ? undefined : note }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['alert-events'] })
+    },
+    onError: (error) => {
+      setErrorText(error instanceof ApiClientError ? error.message : String(error))
+    },
+  })
+
+  // FR-231：人工升降告警级别
+  const levelMutation = useMutation({
+    mutationFn: ({ id, level }: { id: number; level: AlertEventItem['level'] }) => overrideAlertLevel(id, level),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['alert-events'] })
     },
@@ -573,6 +584,11 @@ export default function AlertEventsPage() {
                 setErrorText(null)
                 mutation.mutate({ id: selected.id, intent, note })
               }}
+              onOverrideLevel={(level) => {
+                setErrorText(null)
+                levelMutation.mutate({ id: selected.id, level })
+              }}
+              levelPending={levelMutation.isPending}
             />
           ) : null
         }

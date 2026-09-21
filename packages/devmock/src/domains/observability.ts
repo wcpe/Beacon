@@ -366,6 +366,25 @@ export const observabilityHandlers: HttpHandler[] = [
     return HttpResponse.json({ affected })
   }),
 
+  // 告警人工分级覆盖（FR-231）：改 level + 记录覆盖人 / 时刻。
+  mockPost('/admin/v1/alert-events/:id/level', async (info) => {
+    const id = Number.parseInt(pathParam(info, 'id'), 10)
+    const row = getObservabilityState().alertEvents.find((r) => r.id === id)
+    if (!row) {
+      return jsonError(404, 'NOT_FOUND', '告警事件不存在')
+    }
+    const body = await readBody<{ level?: string }>(info.request)
+    const level = body.level
+    if (level !== 'info' && level !== 'warning' && level !== 'critical') {
+      return jsonError(400, 'INVALID_PARAM', 'level 仅支持 info / warning / critical')
+    }
+    row.level = level
+    row.severityOverride = level
+    row.overriddenBy = 'admin'
+    row.overriddenAt = new Date(BASE_MS).toISOString()
+    return HttpResponse.json(row)
+  }),
+
   // 告警详情聚合（FR-230）：该服近期状态 + 该服告警时间线（24h / 上限 20）。
   mockGet('/admin/v1/alert-events/:id/context', (info) => {
     const id = Number.parseInt(pathParam(info, 'id'), 10)

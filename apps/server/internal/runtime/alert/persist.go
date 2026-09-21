@@ -12,6 +12,8 @@ import (
 type EventSink interface {
 	// Record 落库一条告警事件；失败返回 error 由 Dispatcher 兜错（仅 WARN、不阻断）。
 	Record(e *model.AlertEvent) error
+	// ResolveAlertRole 解析实例分级角色（proxy / lobby / backend，FR-231）；未知 / 查不到返回空串（→ 按 backend 规则）。
+	ResolveAlertRole(namespace, serverID string) string
 }
 
 // PersistAlerter 是告警留痕通道（FR-89，见 ADR-0041）：把一条告警额外持久化为 alert_event，
@@ -32,27 +34,20 @@ func (p *PersistAlerter) Name() string { return "persist" }
 
 // Notify 把一条健康告警映射为 alert_event 落库。
 // created_at 不在此设，交由 GORM 全局 NowFunc 统一填 UTC（保与全表一致）。
+// 级别按 FR-231 判定矩阵（健康级别 × 角色）计算；角色经 sink 查控制面权威事实（查不到按 backend 规则降级）。
 func (p *PersistAlerter) Notify(_ context.Context, a Alert) error {
+	role := ""
+	if p.sink != nil {
+		role = p.sink.ResolveAlertRole(a.Namespace, a.ServerID)
+	}
 	return p.sink.Record(&model.AlertEvent{
 		Type:      model.AlertEventTypeHealthTransition,
-		Level:     levelForStatus(a.Status),
+		Level:     GradeAlert(a.Status, role, nil),
 		ServerID:  a.ServerID,
 		Namespace: a.Namespace,
 		Message:   a.ServerID + " " + a.PrevStatus + " → " + a.Status,
 		Detail:    healthAlertDetail(a),
 	})
-}
-
-// levelForStatus 把健康状态映射到告警级别：degraded=warning，lost/offline=critical，其余=info。
-func levelForStatus(status string) string {
-	switch status {
-	case "degraded":
-		return model.AlertLevelWarning
-	case "lost", "offline":
-		return model.AlertLevelCritical
-	default:
-		return model.AlertLevelInfo
-	}
 }
 
 // healthAlertDetail 把告警上下文序列化为 json 文本（落 detail TEXT 列）；序列化失败回退空串（不阻断留痕）。
