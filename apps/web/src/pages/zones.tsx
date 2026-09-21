@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { Boxes, Inbox } from 'lucide-react'
+import { Inbox } from 'lucide-react'
 
 import { Badge, Button, PageHeader } from '@beacon/ui'
 
@@ -34,8 +34,6 @@ export default function ZonesPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<Boxes className="size-4" />}
-        title={t('nav.zones')}
         actions={
           <>
             <NamespaceSelect value={namespaceId} onChange={setNamespaceId} />

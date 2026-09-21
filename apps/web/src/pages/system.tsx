@@ -1,10 +1,8 @@
 // 控制面健康页（/system，只读）：Beacon 自身运行时（版本 / 协程 / 堆 / CPU）+ 子系统健康仪表与明细。
 // 数据来自 Legacy /admin/v1/system/status 与 /system/observability，定期轮询刷新。
 import { useQuery } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
-import { HeartPulse } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton, PageHeader } from '@beacon/ui'
+import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
 
 import { fetchSystemObservability, fetchSystemStatus } from '../api/system'
 import RuntimeCard from './system/runtime-card'
@@ -13,8 +11,6 @@ import SubsystemPanel from './system/subsystem-panel'
 const REFETCH_MS = 5000
 
 export default function SystemPage() {
-  const { t } = useTranslation()
-
   const statusQuery = useQuery({
     queryKey: ['system', 'status'],
     queryFn: fetchSystemStatus,
@@ -29,10 +25,6 @@ export default function SystemPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<HeartPulse className="size-4" />}
-        title={t('nav.system')}
-      />
 
       <AsyncSection
         isLoading={statusQuery.isLoading}

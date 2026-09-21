@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { FileCog, Info } from 'lucide-react'
+import { Info } from 'lucide-react'
 
 import { Button, PageHeader } from '@beacon/ui'
 import type { ConfigFileItem } from '@beacon/contracts'
@@ -26,8 +26,6 @@ export default function ConfigsPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<FileCog className="size-4" />}
-        title={t('delivery.configs.title')}
         actions={
           <NamespacePicker
             value={namespaceId}

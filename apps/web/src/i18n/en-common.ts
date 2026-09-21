@@ -13,6 +13,7 @@ export const enCommon = {
     huge: 'Huge',
     error: 'Error',
   },
+  breadcrumb: 'Breadcrumb',
   envFilter: {
     label: 'Environment filter',
     envLabel: 'Environment',

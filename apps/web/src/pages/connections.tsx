@@ -14,7 +14,6 @@ import {
   Checkbox,
   DataTable,
   Input,
-  PageHeader,
   TableSkeleton,
   type DataTableColumn,
 } from '@beacon/ui'
@@ -256,10 +255,6 @@ export default function ConnectionsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<Cable className="size-4" />}
-        title={t('nav.connections')}
-      />
       <MasterDetail
         master={
           <ListCard

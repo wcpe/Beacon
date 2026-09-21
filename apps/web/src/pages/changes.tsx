@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
-import { CircleHelp, GitPullRequestArrow } from 'lucide-react'
+import { CircleHelp } from 'lucide-react'
 
 import { Button, PageHeader } from '@beacon/ui'
 import type { ChangeOrderSummary } from '@beacon/contracts'
@@ -56,8 +56,6 @@ export default function ChangesPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<GitPullRequestArrow className="size-4" />}
-        title={t('delivery.changes.title')}
         actions={
           <>
             <Button

@@ -52,15 +52,22 @@ const pageCases: [string, string][] = [
   ['/envs', '环境'],
 ]
 
+/** 页眉面包屑作用域（E3）：页面身份已由内容区大标题上移到此 */
+function pageBreadcrumb() {
+  return within(screen.getByRole('navigation', { name: '面包屑' }))
+}
+
 describe('全站路由', () => {
-  it.each(pageCases)('%s 渲染页面标题「%s」', (path, title) => {
+  it.each(pageCases)('%s 面包屑展示页面身份「%s」', (path, title) => {
     renderAt(path)
-    expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
+    expect(pageBreadcrumb().getByText(title)).toBeInTheDocument()
+    // E5：内容区不再出现大标题（h1），身份改由页眉面包屑承担
+    expect(document.querySelector('main h1')).toBeNull()
   })
 
   it('根路径 / 重定向到 /dashboard', () => {
     renderAt('/')
-    expect(screen.getByRole('heading', { name: '运维总览' })).toBeInTheDocument()
+    expect(pageBreadcrumb().getByText('运维总览')).toBeInTheDocument()
   })
 })
 
