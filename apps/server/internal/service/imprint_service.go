@@ -73,7 +73,11 @@ func (s *AgentCommandService) RequestImprint(_, _, _, _, _ string) (*model.Agent
 
 // RequestImprintApproval 创建拓印审批申请，Agent 命令与内容访问授权由批准事务一并生成。
 func (s *AgentCommandService) RequestImprintApproval(ns, serverID, filePath, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || ns == "" || serverID == "" || filePath == "" || reason == "" || idempotencyKey == "" {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if ns == "" || serverID == "" || filePath == "" || reason == "" || idempotencyKey == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	cleanPath, err := normalizePath(filePath)
@@ -229,7 +233,11 @@ func (s *AgentCommandService) ConfirmImprint(uint, string, string, string, strin
 
 // RequestImprintConfirmApproval 创建拓印确认审批；冻结来源命令、目标层与已查看内容的 md5，不保存文件正文。
 func (s *AgentCommandService) RequestImprintConfirmApproval(commandID uint, scope, group, zone, target, reviewedMD5, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || commandID == 0 || operator == "" || reason == "" || idempotencyKey == "" {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if commandID == 0 || operator == "" || reason == "" || idempotencyKey == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	cmd, payload, err := s.requireReadyImprint(commandID)

@@ -90,7 +90,11 @@ func (s *ReverseFetchTaskService) CreateScanTask(_, _, _, _, _, _, _ string) (*m
 
 // RequestCreateScanApproval 冻结扫描目标，批准后才创建受管任务与扫描命令。
 func (s *ReverseFetchTaskService) RequestCreateScanApproval(ns, serverID, scope, group, target, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if ns == "" || serverID == "" || reason == "" || idempotencyKey == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandReverseScan, Resource: "reverse-fetch-task", ResourceID: ns + "/" + serverID, IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"namespace": ns, "serverId": serverID, "scope": scope, "group": group, "target": target, "operator": operator, "clientIP": clientIP}, principal, clientIP)
@@ -209,7 +213,11 @@ func (s *ReverseFetchTaskService) Submit(_ uint, _ []string, _ bool, _, _ string
 
 // RequestSubmitApproval 规范化选定路径并冻结当前 manifest 哈希，批准后才下发提交命令。
 func (s *ReverseFetchTaskService) RequestSubmitApproval(taskID uint, selectedPaths []string, confirmOverThreshold bool, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || taskID == 0 || reason == "" || idempotencyKey == "" || operator == "" {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if taskID == 0 || reason == "" || idempotencyKey == "" || operator == "" {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	task, err := s.requireTask(taskID)

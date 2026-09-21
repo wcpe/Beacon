@@ -93,7 +93,11 @@ func (s *ConfigService) ReadSensitivePlaintext(uint) (SensitiveConfigPlaintextRe
 
 // RequestSensitivePlaintextAccess 冻结当前敏感配置的稳定版本和正文哈希，不保存正文。
 func (s *ConfigService) RequestSensitivePlaintextAccess(id uint, reason, idempotencyKey string, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
-	if s == nil || s.approval == nil || s.grants == nil || strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
+	if s == nil || s.approval == nil || s.grants == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return model.ApprovalRequest{}, apperr.ErrInternal
+	}
+	if strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
 	item, err := s.Get(id)

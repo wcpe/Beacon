@@ -54,7 +54,11 @@ func (s *MessagePayloadService) View(_ ViewPayloadParams) (PayloadResult, error)
 
 // RequestAccess 创建消息 payload 的专用审批申请；冻结消息 ID 与当前正文 SHA-256，绝不冻结正文。
 func (s *MessagePayloadService) RequestAccess(messageID, reason, idempotencyKey string, principal auth.Principal, clientIP string) (model.ApprovalRequest, error) {
-	if s == nil || s.repo == nil || s.approval == nil || strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
+	if s == nil || s.repo == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return model.ApprovalRequest{}, apperr.ErrInternal
+	}
+	if strings.TrimSpace(reason) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return model.ApprovalRequest{}, apperr.ErrInvalidParam
 	}
 	payload, err := s.repo.FindPayload(messageID)

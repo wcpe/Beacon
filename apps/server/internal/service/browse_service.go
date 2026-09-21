@@ -69,7 +69,11 @@ func (s *AgentCommandService) RequestBrowse(_ context.Context, _ BrowseParams) (
 
 // RequestBrowseApproval 冻结受限浏览参数并创建审批申请；批准 worker 才能下发命令与待激活授权。
 func (s *AgentCommandService) RequestBrowseApproval(p BrowseParams, reason, idempotencyKey string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || reason == "" || idempotencyKey == "" || !validBrowseParams(p) {
+	if s == nil || s.approval == nil {
+		// 装配缺失是服务端问题，不把故障甩给调用方（此前与参数错误混用同一 400）。
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if reason == "" || idempotencyKey == "" || !validBrowseParams(p) {
 		return ApprovalTicketView{}, apperr.ErrInvalidParam
 	}
 	payload := map[string]any{"namespace": p.Namespace, "serverId": p.ServerID, "op": p.Op, "path": p.Path, "offset": p.Offset, "limit": p.Limit, "maxDepth": p.MaxDepth, "operator": p.Operator, "clientIP": p.ClientIP}

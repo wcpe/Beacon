@@ -237,8 +237,12 @@ func (s *OverrideSetService) RequestDelete(id uint, reason, key, operator, comme
 }
 
 func (s *FileService) requestChange(kind, target string, id uint, expected int64, hash string, pending filePendingPayload, reason, key string, principal auth.Principal, clientIP string) (FileApprovalTicket, error) {
-	if s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() || pending.Operator == "" {
-		return FileApprovalTicket{}, apperr.ErrForbidden
+	// 分档：装配 / 密钥缺失是服务端问题（500），operator 缺失是调用方参数问题（400）。
+	if s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() {
+		return FileApprovalTicket{}, apperr.ErrInternal
+	}
+	if pending.Operator == "" {
+		return FileApprovalTicket{}, apperr.ErrInvalidParam
 	}
 	changeID := fileChangeID(principal, kind, target, id, key)
 	ciphertext, err := encryptFilePending(s.cipher, pending)
@@ -255,8 +259,12 @@ func (s *FileService) requestChange(kind, target string, id uint, expected int64
 	return FileApprovalTicket{ApprovalRequestID: req.RequestID, ChangeID: changeID, Status: req.Status}, nil
 }
 func (s *OverrideSetService) requestChange(kind string, id uint, expected int64, hash string, pending filePendingPayload, reason, key string, principal auth.Principal) (FileApprovalTicket, error) {
-	if s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() || pending.Operator == "" {
-		return FileApprovalTicket{}, apperr.ErrForbidden
+	// 分档：装配 / 密钥缺失是服务端问题（500），operator 缺失是调用方参数问题（400）。
+	if s.approval == nil || s.pending == nil || s.cipher == nil || !s.cipher.IsEnabled() {
+		return FileApprovalTicket{}, apperr.ErrInternal
+	}
+	if pending.Operator == "" {
+		return FileApprovalTicket{}, apperr.ErrInvalidParam
 	}
 	changeID := fileChangeID(principal, kind, pendingTargetOverrideSet, id, key)
 	ciphertext, err := encryptFilePending(s.cipher, pending)
@@ -393,8 +401,13 @@ func (a fileOverrideApprovalAdapter) CompleteTerminalInTx(tx *gorm.DB, req authz
 }
 func (a fileOverrideApprovalAdapter) load(tx *gorm.DB, req authz.ApprovalRequest, permit authz.Permit) (fileApprovalPayload, *model.FilePendingChange, filePendingPayload, error) {
 	var p fileApprovalPayload
-	if json.Unmarshal(req.Payload, &p) != nil || p.SchemaVersion != approvalSchemaVersion || p.ChangeID == "" || len(p.SHA256) != 64 || ensurePermit(permit, req.Operation.Kind) != nil {
-		return p, nil, filePendingPayload{}, apperr.ErrApprovalTargetChanged
+	// 载荷合法性与执行许可分开判定（与 configApprovalAdapter.loadPending 同口径）：
+	// 载荷非法是数据问题（400），许可不符是安全事件（403），此前合并会把许可伪造掩盖成「目标已变化」。
+	if json.Unmarshal(req.Payload, &p) != nil || p.SchemaVersion != approvalSchemaVersion || p.ChangeID == "" || len(p.SHA256) != 64 {
+		return p, nil, filePendingPayload{}, apperr.ErrInvalidParam
+	}
+	if err := ensurePermit(permit, req.Operation.Kind); err != nil {
+		return p, nil, filePendingPayload{}, err
 	}
 	change, err := a.files.pending.WithTx(tx).FindByApprovalRequest(req.RequestID)
 	if err != nil || change == nil {
