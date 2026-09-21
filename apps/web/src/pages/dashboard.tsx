@@ -17,7 +17,7 @@ export default function DashboardPage() {
   const { t } = useTranslation()
   return (
     <div className="grid gap-4">
-      {/* 页标题：icon + 职责说明，与其余业务页页眉节奏一致（FR-197） */}
+      {/* 页标题：icon + 标题，与其余业务页页眉节奏一致（FR-197） */}
       <PageHeader
         icon={<LayoutDashboard className="size-4" />}
         title={t('nav.dashboard')}
