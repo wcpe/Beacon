@@ -12,6 +12,7 @@
 - 新增只读端点 `GET /admin/v2/mcp/config`：暴露 MCP 入口的启用状态、公网基址、可信代理网段、内网直连模式与两个开关，供运维判断外部 Agent 为何无法连接。任何启用状态下均返回 200；字段集合固定，绝不回显任何凭据（如 agent 共享 token）。
 
 ### 变更
+- MCP 客户端管理由「仅管理 API + 审批中心」扩展为独立管理台页；相应修订 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md) 原「不新增独立 MCP 客户端管理页面」的决定，并在 `docs/UX.md` 的信息架构表登记该页。该页只消费既有管理端点，不改变「机器主体永不审批」的分权设计。
 - `GET /admin/v2/mcp-clients` 与单条详情补充生命周期字段 `createdBy` / `createdAt` / `updatedAt` / `revokedAt`（未吊销时省略 `revokedAt`），供管理台回答「何时建的、谁建的、何时被吊销」。纯增字段，向后兼容。
 
 ### 修复

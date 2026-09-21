@@ -32,10 +32,10 @@ import {
 import { formatIso } from '../features/system/format'
 import ListCard from '../features/shared/list-card'
 import MasterDetail from '../features/shared/master-detail'
+import PlaintextDialog from '../features/shared/plaintext-dialog'
 import Pager from '../features/observability/pager'
 import CreateDialog from './api-keys/create-dialog'
 import DetailPanel from './api-keys/detail-panel'
-import PlaintextDialog from './api-keys/plaintext-dialog'
 
 const PAGE_SIZE = 12
 
@@ -223,7 +223,11 @@ export default function ApiKeysPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader icon={<KeyRound className="size-5" />} title={t('nav.apiKeys')} />
+      <PageHeader
+        icon={<KeyRound className="size-4" />}
+        title={t('nav.apiKeys')}
+        description={t('system.apiKeys.mission')}
+      />
 
       <MasterDetail
         master={master}

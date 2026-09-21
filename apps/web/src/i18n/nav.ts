@@ -29,6 +29,7 @@ export const nav = {
   system: '控制面健康',
   systemVersion: '版本与更新',
   apiKeys: '密钥',
+  mcpClients: 'MCP 客户端',
   namespaces: '命名空间',
   envs: '环境',
 } as const

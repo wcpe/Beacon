@@ -20,6 +20,7 @@ import {
   DoorOpen,
   LayoutDashboard,
   MessagesSquare,
+  Plug,
   RefreshCw,
   ScrollText,
   Server,
@@ -34,6 +35,7 @@ import AlertEventsPage from './pages/alert-events'
 import ApprovalNavBadge from './shell/approval-nav-badge'
 import ApprovalsPage from './pages/approvals'
 import ApiKeysPage from './pages/api-keys'
+import McpClientsPage from './pages/mcp-clients'
 import AssetsPage from './pages/assets'
 import AuditsPage from './pages/audits'
 import ChangesPage from './pages/changes'
@@ -151,6 +153,7 @@ export const NAV_GROUPS: NavGroup[] = [
         Component: SystemVersionPage,
       },
       { path: '/api-keys', titleKey: 'nav.apiKeys', icon: KeyRound, Component: ApiKeysPage },
+      { path: '/mcp-clients', titleKey: 'nav.mcpClients', icon: Plug, Component: McpClientsPage },
       { path: '/namespaces', titleKey: 'nav.namespaces', icon: Globe, Component: NamespacesPage },
       { path: '/envs', titleKey: 'nav.envs', icon: Layers, Component: EnvsPage },
     ],
