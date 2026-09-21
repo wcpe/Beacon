@@ -246,16 +246,29 @@ func (s *AssetPreviewService) ConsumeApproved(grantID string, commandID uint, pr
 
 // ConsumePairApproved 原子消费双侧授权，只返回不含正文的差异摘要。
 func (s *AssetPreviewService) ConsumePairApproved(grantID string, commandID uint, principal auth.Principal) (*AssetPairDiffResult, error) {
-	if s == nil || s.grants == nil || commandID == 0 {
-		return nil, apperr.ErrForbidden
+	// 逐条区分：装配缺失是服务端问题、缺参数是调用方问题、授权查不到是凭据问题——
+	// 此前统一 403 会把排查方向全部指向权限。
+	if s == nil || s.grants == nil {
+		return nil, apperr.ErrInternal
 	}
+	if commandID == 0 {
+		return nil, apperr.ErrInvalidParam
+	}
+	// 「授权不存在」与「已过期」同回 HTTP 410（语义都是「该凭据不可用」），响应体 code 仍区分
+	// 处置方向（口径见 ErrSensitiveAccessNotFound 注释）。
 	requested, err := s.grants.repo.FindByID(grantID)
-	if err != nil || requested == nil || requested.PairID == "" {
-		return nil, apperr.ErrForbidden
+	if err != nil {
+		return nil, err
 	}
+	if requested == nil || requested.PairID == "" {
+		return nil, apperr.ErrSensitiveAccessNotFound
+	}
+	// FindPairByGrantID 的 SQL 已按「pair_id = 本 grant 的 pair_id」过滤，返回的两条必然与
+	// requested 同组，故无需再比对 PairID（比对条件恒为假）；组不完整 / 同侧重复由仓库层
+	// 失败关闭（ErrForbidden）拦截。
 	leftGrant, rightGrant, err := s.grants.repo.FindPairByGrantID(grantID)
-	if err != nil || leftGrant.PairID != requested.PairID || rightGrant.PairID != requested.PairID {
-		return nil, apperr.ErrForbidden
+	if err != nil {
+		return nil, err
 	}
 	leftCommandID, rightCommandID, err := pairCommandIDs(leftGrant, rightGrant, grantID, commandID)
 	if err != nil {
@@ -274,7 +287,8 @@ func (s *AssetPreviewService) ConsumePairApproved(grantID string, commandID uint
 	leftContent, leftReady := s.relay.take(leftCommandID)
 	rightContent, rightReady := s.relay.take(rightCommandID)
 	if !leftReady || !rightReady {
-		return nil, apperr.ErrForbidden
+		// 正文尚未由 Agent 回传：属时序问题，报「尚未就绪」而非越权。
+		return nil, apperr.ErrSensitiveAccessNotConsumed
 	}
 	if _, _, err := s.grants.ConsumePair(grantID, principal, time.Now().UTC()); err != nil {
 		return nil, err

@@ -9,6 +9,7 @@
 ### 变更
 
 ### 修复
+- 敏感内容授权消费的失败原因不再误导：资产双侧读取消费端点此前在授权不存在、参数缺失、正文尚未回传时一律返回泛化 403「只读密钥无权执行写操作」，调用方会去查权限，而真实原因可能是 `grantId` 拼错或顺序不对。现分别返回 410 `sensitive_access_not_found`、400 `INVALID_PARAM`、409 `sensitive_access_not_consumed`，服务端装配缺失改报 500 `INTERNAL`。共享授权服务层同时把「审批后目标 / 哈希漂移」区分为 409 `sensitive_access_target_drift`，该系列其余消费入口在授权判定这一层一并受益；但各入口自身的前置校验（缺 `commandId`、命令未就绪或类型不符、配置项非敏感、单文件预览正文尚未回传、授权组不完整等）本轮未迁移，仍返回泛化 403——「配对不完整」（授权组不足两条或同侧重复）由授权仓库层失败关闭，本轮未作区分。
 - 提审入口的失败原因不再误导（同一类缺陷的其余实例）：`beacon.agent.server.resync` 缺 namespace/serverId、设置提审 key 不存在或选错入口、OAuth token 端点缺参数或 scope 越权，此前均报泛化 403「只读密钥无权执行写操作」，会把调用方引向排查权限。现分别返回可区分的 400（`INVALID_PARAM` / `SETTING_KEY_NOT_ALLOWED` / `SETTING_KEY_NOT_DANGEROUS` / OAuth 规范错误码），服务端装配缺失改报 500 `INTERNAL`，与各自的真实处置方向一致。
 - MCP 客户端申请的失败原因不再误导：此前「缺 `Idempotency-Key`」「缺审批原因」「机器主体提审」三类失败统一返回 `403 FORBIDDEN`（文案「只读密钥无权执行写操作」），会把调用方引向排查权限。现分别返回 `400 idempotency_key_required`、`400 reason_required`、`403 human_only_operation`，各自指向正确的处置方向。
 

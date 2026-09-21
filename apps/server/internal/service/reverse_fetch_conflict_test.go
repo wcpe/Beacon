@@ -551,7 +551,7 @@ func TestReverseSubmitGrantConsumesConflictBundle(t *testing.T) {
 	}
 	reviewedMD5 := filetree.ContentMD5("new: 2\n")
 	if _, err := svc.RequestResolveApproval(task.ID, []ResolveDecision{{Path: "A/config.yml", Action: ResolveActionOverwrite, ReviewedMD5: reviewedMD5}, {Path: "C/other.yml", Action: ResolveActionKeep}},
-		"未消费正文不得处置", "reverse-resolve-before-consume", "alice", "", auth.HumanPrincipal("alice")); err != apperr.ErrForbidden {
+		"未消费正文不得处置", "reverse-resolve-before-consume", "alice", "", auth.HumanPrincipal("alice")); err != apperr.ErrSensitiveAccessNotConsumed {
 		t.Fatalf("未消费正文不得提交 resolve 审批，实际 %v", err)
 	}
 	if _, err := svc.ConsumeApprovedConflictDiff(grant.GrantID, task.ID, auth.HumanPrincipal("mallory")); err != apperr.ErrSensitiveAccessWrongPrincipal {
