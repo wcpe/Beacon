@@ -669,6 +669,13 @@ export const observability = {
     batchResolve: 'Batch mark resolved',
     batchNotePlaceholder: 'Batch handle note (required when marking resolved)',
     batchProgress: 'Processing {{done}} / {{total}}…',
+    // FR-229: batch handle across the current filter (all matching open rows, cross-page)
+    filterBatch: 'Handle current filter',
+    filterBatchHint: 'Handle ALL matching "open" alerts across pages (not just this page)',
+    filterBatchAck: 'Acknowledge all',
+    filterBatchResolve: 'Resolve all',
+    filterBatchResult: 'Handled {{count}}',
+    filterBatchEmpty: 'No open alerts in the current filter',
     batchPartialFail: 'Partial failure: {{ok}} succeeded, {{fail}} failed',
     detailTitle: 'Alert detail',
     listTitle: 'Alert events',

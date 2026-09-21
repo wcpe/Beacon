@@ -501,6 +501,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		// 告警事件处理工作流（FR-157，见 ADR-0064）：确认 / 标记已处理（写方法，readonly 经 readonlyWriteGuard 403）；
 		// service 内在事务中更新 status/handledBy/handledAt/handleNote 并写专项审计（含操作者 / 事件 id / 动作 / 原因）。
 		r.Post("/alert-events/{id}/handle", h.AlertEvent.Handle)
+		// 告警按筛选批量处理（FR-229）：对当前筛选命中的全部 open 条目一条 UPDATE + 一条批量审计。
+		r.Post("/alert-events/handle", h.AlertEvent.HandleBatch)
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)
