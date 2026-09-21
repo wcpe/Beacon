@@ -548,6 +548,10 @@ const (
 	ActionIdentityReapplyAllowed  = "identity.reapply_allowed"
 	ActionIdentityForceRebind     = "identity.rebind_with_force_unbind"
 	ActionIdentityLegacyMigrated  = "identity.legacy_migrated"
+	// ActionIdentityMachineRegistered 是机器注册（FR-222，见 specs/internal-trust-channel.md §3.4）：
+	// 受信内部调用方经共享 token 提交的注册意图，无论开关是否开启都记一条——开启时记「已直落 active」，
+	// 关闭时记「已提交待人工审批」。detail 含 serverId / lastAddr / 调用来源 IP。
+	ActionIdentityMachineRegistered = "identity.machine_registered"
 	// 第二版区服权威结构。
 	ActionBCClusterCreate  = "bc_cluster.create"
 	ActionBCClusterUpdate  = "bc_cluster.update"

@@ -63,6 +63,11 @@ func newTestServer(t *testing.T) *integrationTestServer {
 
 // newTestServerWithToken 同上，但启用指定的 agent token。
 func newTestServerWithToken(t *testing.T, agentToken string) *integrationTestServer {
+	return newTestServerWithOptions(t, agentToken, false)
+}
+
+// newTestServerWithOptions 装配测试路由，并可显式开启机器注册通道（FR-222）。
+func newTestServerWithOptions(t *testing.T, agentToken string, allowMachineRegister bool) *integrationTestServer {
 	t.Helper()
 	db := testsupport.OpenTestDB(t, "server")
 	for _, table := range []string{
@@ -92,6 +97,8 @@ func newTestServerWithToken(t *testing.T, agentToken string) *integrationTestSer
 	fileSvc := service.NewFileService(db, fileRepo, repository.NewFileRevisionRepository(db), auditRepo)
 	fileSvc.SetPendingChangeCipher(cipher)
 	instSvc := service.NewInstanceService(db, registry, assignRepo, repository.NewServerOfflineRepository(db), auditRepo, 10*time.Second, 30*time.Second)
+	// 机器注册通道（FR-222）：默认关闭；显式开启时受信内部调用方（共享 token）的注册直落 active。
+	instSvc.SetMachineRegisterAllowed(allowMachineRegister)
 	zoneSvc := service.NewZoneService(db, assignRepo, auditRepo, registry)
 	grayRepo := repository.NewConfigGrayRepository(db, cipher)
 	effSvc := service.NewEffectiveService(configRepo, assignRepo, grayRepo, revRepo, hub)

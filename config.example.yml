@@ -12,7 +12,9 @@
 http-addr: ":8848"
 
 # agent 端共享 token，仅防误连（非安全边界）。需与各 agent 的 bootstrap-token 一致；
-# 默认固定值与 agent 样例开箱匹配，可直接改本项，或用环境变量 BEACON_BOOTSTRAP_TOKEN 覆盖
+# 默认固定值与 agent 样例开箱匹配，可直接改本项，或用环境变量 BEACON_BOOTSTRAP_TOKEN 覆盖。
+# 注意（FR-222）：开启下方 mcp.allow-machine-register 时本项即升级为安全边界，必须换为强随机值，
+# 否则控制面启动校验失败。
 agent-token: "beacon-bootstrap-token"
 
 # 管理面鉴权（FR-11，单操作者模型，见 docs/adr/0009）。口令与密钥为敏感项，走环境变量，勿写入此文件
@@ -108,3 +110,11 @@ update:
   auto-check-enabled: true
   # 自动检查更新周期（小时）：每隔多少小时查一次有无新版本。下界 1、上界 168，默认 6
   check-interval-hours: 6
+
+# MCP 入口与内部信任通道（FR-219 / FR-222）。公网 MCP 仅在 enabled=true 且基址 / 可信代理合规时挂载；
+# 机器注册通道默认关闭，仅内网单操作者部署可开启。
+mcp:
+  # 允许受信内部调用方机器化注册 agent（跳过人工审批，FR-222）。默认 false。
+  # 仅内网单操作者部署可开启；公网部署必须保持 false。开启时 agent-token 不得为默认值 / 留空（启动校验强制）。
+  # 该通道只覆盖注册：分配、换区、默认入口仍走各自审批。
+  allow-machine-register: false

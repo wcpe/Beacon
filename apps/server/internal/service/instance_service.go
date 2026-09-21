@@ -29,6 +29,10 @@ type RegisterParams struct {
 	// Backends 是 bc 上报的当前后端子服 serverId 集合（仅 bc 填，FR-36 事实）；透传写入内存注册表。
 	Backends []string
 	ClientIP string
+	// TrustedInternal 标记本次注册来自受信内部调用方（FR-222，spec §3.3）。
+	// 由 agentTokenMiddleware 按 X-Beacon-Token 共享 token 比对结果注入 handler，再透传到此，
+	// **绝不取自请求体**——调用方无法把自己伪装成受信内部调用方。
+	TrustedInternal bool
 }
 
 // RegisterResult 是注册结果（含解析回填的归属与下发的心跳参数）。
@@ -39,6 +43,9 @@ type RegisterResult struct {
 	Assigned             bool
 	HeartbeatIntervalSec int
 	TTLSec               int
+	// MachineRegister 非 nil 表示本次注册经机器注册通道直落 active 并完成绑定（FR-222）；
+	// 常规（pending 分权）路径恒为 nil，供 handler 回带权威绑定事实。
+	MachineRegister *MachineRegisterResult
 }
 
 // DefaultEntryResolver 解析某环境下被指定为「小区默认入口」的 serverId 集合（FR-48）。
@@ -62,6 +69,8 @@ type InstanceService struct {
 	notifier             *ChangeNotifier      // 可选，注册/下线后唤醒拓扑 watch（FR-29）
 	defaultEntryResolver DefaultEntryResolver // 可选，发现/实例视图标 zoneDefaultEntry（FR-48）；nil 时恒空集
 	lobbyMemberResolver  LobbyClusterMemberResolver
+	// machineRegisterAllowed 是机器注册通道开关（FR-222）的部署快照；默认 false，行为与分权设计逐字一致。
+	machineRegisterAllowed bool
 }
 
 // NewInstanceService 构造服务。
@@ -122,11 +131,18 @@ func (s *InstanceService) notifyTopology(ns string) {
 }
 
 // Register 注册实例：按 zone_assignment 解析回填 (group, zone)，写内存注册表，记审计。
+// 受信内部调用方（FR-222 机器注册通道）的注册额外直落 active 身份并绑定 serverId，见 machineRegisterIfTrusted。
 func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	if p.Namespace == "" || p.ServerID == "" {
 		return nil, apperr.ErrIdentityRequired
 	}
 	if err := ensureServerActiveForNamespace(s.db, p.Namespace, p.ServerID); err != nil {
+		return nil, err
+	}
+	// 机器注册通道（FR-222）：受信内部调用方 + 开关开启 → 身份直落 active 并绑定 serverId（不写 pending）。
+	// 开关关闭时仅补记意图审计，注册按既有投影路径继续（行为逐字不变）。
+	machineRegistered, err := s.machineRegisterIfTrusted(p)
+	if err != nil {
 		return nil, err
 	}
 	// 主动下线拒绝态（FR-49）：注册前查拒绝表，命中则拒绝接入（专门错误码，区别于自然 lost/offline 与重复 serverId）。
@@ -169,12 +185,17 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 	// 实例进入/刷新可用集合 → 唤醒拓扑 watch（同址重连摘要不变，由 StreamService 去重不推）。
 	s.notifyTopology(p.Namespace)
 	slog.Info("实例注册", "namespace", p.Namespace, "serverId", p.ServerID,
-		"group", saved.ResolvedGroup, "zone", saved.ResolvedZone, "assigned", assigned)
-	return &RegisterResult{
+		"group", saved.ResolvedGroup, "zone", saved.ResolvedZone, "assigned", assigned,
+		"machineRegister", machineRegistered.IdentityID != "")
+	res := &RegisterResult{
 		InstanceKey:   p.Namespace + "/" + p.ServerID,
 		ResolvedGroup: saved.ResolvedGroup, ResolvedZone: saved.ResolvedZone, Assigned: assigned,
 		HeartbeatIntervalSec: int(s.heartbeatInterval.Seconds()), TTLSec: int(s.ttl.Seconds()),
-	}, nil
+	}
+	if machineRegistered.IdentityID != "" {
+		res.MachineRegister = &machineRegistered
+	}
+	return res, nil
 }
 
 // Heartbeat 刷新心跳；未注册返回 NOT_REGISTERED。返回 ttlSec。

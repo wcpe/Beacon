@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- 内部信任通道与机器注册（FR-222）：新增 `mcp.allow-machine-register` 开关（默认 false，公网部署必须保持关闭）。开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册直接置为 active 并完成绑定；关闭时行为与现状完全一致（仍落 pending 待人工确认）。无论开关状态，机器注册意图均写 `identity.machine_registered` 强审计（含 serverId、lastAddr 与调用来源 IP）。开启时启动校验强制 `agent-token` 为强随机值（拒绝留空与已知弱默认），否则拒绝启动。
 
 ### 变更
 

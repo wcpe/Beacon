@@ -143,6 +143,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-218 | namespace 永久删除与子树墓碑 | 待排期 | 待排期 | 归档 namespace 无额外冷却期，经批准后在单次原子操作中墓碑化权威子树；预览完整影响范围，所有业务标识永久不可复用；规格见 [namespace-permanent-deletion-and-tombstone](specs/namespace-permanent-deletion-and-tombstone.md) | 已交付@v1.1.0（待远端公开） |
 | FR-219 | 内置 `/admin/v2/mcp` 与 OAuth Client Credentials | 待排期 | 待排期 | Beacon 进程内提供远程 Streamable HTTP MCP，公网仅经 TLS 反代访问；独立 OAuth 客户端短令牌、受众绑定、撤销/轮换可用；HTTPS 反代 + OAuth + MCP 初始化 + 吊销 + audience 隔离真机验收通过；规格见 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) | 已交付@v1.1.0（待远端公开） |
 | FR-220 | MCP 显式领域工具与审批交接 | 待排期 | 待排期 | MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求但无任何审批工具；规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) | 已交付@v1.1.0（待远端公开） |
+| FR-222 | 内部信任通道与机器注册（feat，增强 FR-219）：新增 `mcp.allow-machine-register` 开关（默认 false，公网部署必须保持关闭）。开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的 agent 身份**直接置为 active 并完成绑定**，跳过 FR-220 的人工审批流；关闭时行为与现状完全一致（一律进 pending 待人工确认）。无论开关如何，机器注册均写强审计并记录调用来源 | 待排期 | 待排期 | 开关开启时：携共享 token 注册的 agent 直接 active 且绑定指定 serverId，审计可查；开关关闭时：同一请求仍落 pending 待审批（行为不变）；缺/错 token 一律 401；规格见 [internal-trust-channel](specs/internal-trust-channel.md) | 🔨 开发中·实现完成（待发版） |
 
 ## 5. 非功能需求（NFR）
 
@@ -200,6 +201,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 - **FR-218**：仅归档 namespace 可申请永久删除且无额外冷却期；批准前预览整棵权威子树，执行要么全部墓碑化要么全部不变，所有受影响 code/serverId 永久不可复用。
 - **FR-219**：标准 MCP 客户端可在 `/admin/v2/mcp` 完成初始化、工具发现与调用；OAuth 客户端凭据不落明文，短令牌受众固定，撤销/轮换即时阻断后续换令牌，后端直连被部署门禁拒绝。
 - **FR-220**：工具清单不存在通用 HTTP/SQL/文件代理；observer 只读，automation 低风险直执；每个高危工具只返回 approvalRequestId 并可轮询或撤回自己的请求，服务端无机器审批通路。
+- **FR-222**：`allow-machine-register` 关闭时，携共享 token 的注册请求仍落 pending 待人工审批（行为与现状一致）；开启时同一请求直接置 active 并完成绑定，且强审计可查调用来源；缺/错 token 一律 401。
 
 ## 7. Legacy 策略
 
