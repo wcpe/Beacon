@@ -1,6 +1,5 @@
 // English dashboard domain copy (full mirror of zh-CN)
 export const dashboard = {
-  mission: 'One-screen ops overview: health, player flow, connection flow, alerts, scheduling; read-only with drill-down on issues',
   loadFailed: 'Load failed',
   retry: 'Retry',
   // Top KPI cards

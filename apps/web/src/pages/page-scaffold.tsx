@@ -7,15 +7,13 @@ import { Badge, PageHeader } from '@beacon/ui'
 interface PageScaffoldProps {
   // 页面标题的 i18n 键（nav 域，与侧栏共用）
   titleKey: string
-  // 页面唯一职责的 i18n 键（所属页面域）
-  missionKey: string
 }
 
-export default function PageScaffold({ titleKey, missionKey }: PageScaffoldProps) {
+export default function PageScaffold({ titleKey }: PageScaffoldProps) {
   const { t } = useTranslation()
   return (
     <section className="grid gap-3">
-      <PageHeader title={t(titleKey)} description={t(missionKey)} />
+      <PageHeader title={t(titleKey)} />
       <div>
         <Badge variant="outline">{t('common.mockBuilding')}</Badge>
       </div>

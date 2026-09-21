@@ -267,7 +267,6 @@ export default function NamespacesPage() {
       <PageHeader
         icon={<ShieldCheck className="size-4" />}
         title={t('nav.namespaces')}
-        description={t('system.namespaces.mission')}
       />
       {/* 隔离原则提示：品牌浅底 + 盾牌图标，突出「默认强隔离、显式授予放通」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">

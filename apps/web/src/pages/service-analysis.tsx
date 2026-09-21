@@ -66,7 +66,6 @@ export default function ServiceAnalysisPage() {
       <PageHeader
         icon={<LineChart className="size-4" />}
         title={t('nav.serviceAnalysis')}
-        description={t('observability.serviceAnalysis.mission')}
       />
       {/* 左侧选择列（固定宽度吸顶）+ 右侧主区（占剩余宽度） */}
       <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[19rem_minmax(0,1fr)]">

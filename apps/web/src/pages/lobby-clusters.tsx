@@ -169,7 +169,6 @@ export default function LobbyClustersPage() {
       <PageHeader
         icon={<DoorOpen className="size-4" />}
         title="大厅集群"
-        description="首个代理连接的唯一落脚集群；不参与大区/小区业务路由。"
         actions={
           <>
             <NamespaceSelect value={namespaceId} onChange={setNamespaceId} allowAll={false} />

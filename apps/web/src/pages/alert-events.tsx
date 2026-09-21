@@ -480,7 +480,6 @@ export default function AlertEventsPage() {
       <PageHeader
         icon={<TriangleAlert className="size-4" />}
         title={t('nav.alertEvents')}
-        description={t('observability.alertEvents.mission')}
       />
       <MasterDetail
         master={master}

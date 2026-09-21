@@ -10,7 +10,6 @@ export const system = {
     detail: 'Details',
   },
   settings: {
-    mission: 'Runtime parameters: sampling, retention, health weights; includes archive & cleanup',
     // Anchor section titles (distinct from inner card titles to avoid duplicate text)
     paramsTitle: 'Runtime parameters',
     weightsSection: 'Health weights',
@@ -203,7 +202,6 @@ export const system = {
     },
   },
   health: {
-    mission: 'Beacon control-plane runtime and subsystem health',
     title: 'Control plane health',
     // Subsystem health level → status pill copy
     level: {
@@ -268,7 +266,6 @@ export const system = {
     },
   },
   version: {
-    mission: 'Version, channel, and online updates',
     title: 'Version & updates',
     // Compact section titles (avoid long stacked pages)
     sections: {
@@ -519,7 +516,6 @@ export const system = {
     },
   },
   namespaces: {
-    mission: 'Namespace management and inter-namespace trust',
     title: 'Namespaces',
     isolationHint:
       'Namespaces are strongly isolated by default: schedule, message, and agent ops are invisible across namespaces unless unidirectional trust is explicitly granted.',
@@ -610,7 +606,6 @@ export const system = {
   },
   // env display dimension (FR-178): CRUD + env→namespace mapping
   envs: {
-    mission: 'Env display dimension: CRUD and env→namespace mapping',
     hint: 'Env is a pure display/filter dimension: group one or more namespaces under an env for top-bar filtering. Env is not part of isolation, scheduling, or config scope chains; deleting only affects the filter view and never mutates authoritative data.',
     listTitle: 'Environments',
     detailTitle: 'Environment details',

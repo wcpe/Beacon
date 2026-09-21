@@ -27,7 +27,6 @@ export default function AssetsPage() {
       <PageHeader
         icon={<FolderTree className="size-4" aria-hidden />}
         title={t('delivery.assets.title')}
-        description={t('delivery.assets.mission')}
         actions={
           <>
             {/* 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因放行 */}

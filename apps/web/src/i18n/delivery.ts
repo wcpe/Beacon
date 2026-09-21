@@ -12,7 +12,6 @@ export const delivery = {
     next: '下一页',
   },
   assets: {
-    mission: '看：目录清单、哈希、内容预览与 diff，只读',
     title: '文件资产',
     // 去向提示：文件差异的下发统一走变更单（与 /configs 提示同款式）
     deliveryHint: '文件差异经变更单统一交付，本页只看不改',
@@ -170,7 +169,6 @@ export const delivery = {
     },
   },
   configs: {
-    mission: '改：作用域配置编辑、校验、版本管理（下发走变更单）',
     title: '配置中心',
     deliveryHint: '配置修改不即时下发，生效请到「变更单」发起',
     goChanges: '前往变更单',
@@ -389,7 +387,6 @@ export const delivery = {
     masked: '（敏感，已脱敏）',
   },
   changes: {
-    mission: '发：变更单创建、影响预览、审批、灰度批次、生效观察',
     title: '变更单',
     // ?order= 深链（历史页「在变更单中打开」）加载失败提示
     deepLinkError: '打开变更单 #{{id}} 失败：{{message}}',
@@ -941,7 +938,6 @@ export const delivery = {
     progressNote: '残留失败目标处理完后，可「人工结束回滚」收单。',
   },
   changesHistory: {
-    mission: '溯：任务 / 批次 / 单服状态与整单回滚',
     title: '交付历史',
     // 列表
     list: {

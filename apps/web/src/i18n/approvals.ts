@@ -1,5 +1,4 @@
 export const approvals = {
-  mission: '全局审批申请、证据对照与执行追踪',
   demo: {
     title: '敏感内容审批（Mock）',
     desc: '仅用于评审申请、批准、自动执行与一次性授权消费；不调用真实内容接口。',

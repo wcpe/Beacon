@@ -24,7 +24,6 @@ export default function ChangesHistoryPage() {
       <PageHeader
         icon={<History className="size-4" />}
         title={t('delivery.changesHistory.title')}
-        description={t('delivery.changesHistory.mission')}
         actions={
           <NamespacePicker
             value={namespaceId}

@@ -24,7 +24,6 @@ export default function CommandsPage() {
       <PageHeader
         icon={<TerminalSquare className="size-4" />}
         title={t('nav.commands')}
-        description={t('observability.commands.mission')}
       />
       <CommandKpi />
       <MasterDetail
