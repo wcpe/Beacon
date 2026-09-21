@@ -12,7 +12,6 @@ import {
   Button,
   Checkbox,
   DataTable,
-  PageHeader,
   TableSkeleton,
   Textarea,
   type DataTableColumn,
@@ -477,10 +476,6 @@ export default function AlertEventsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<TriangleAlert className="size-4" />}
-        title={t('nav.alertEvents')}
-      />
       <MasterDetail
         master={master}
         detail={

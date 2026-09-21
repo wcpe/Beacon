@@ -5,11 +5,7 @@
 // URL ?keyword= 承接区服树「查看健康详情」跳转，预填搜索。
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
-import { Server } from 'lucide-react'
-
-import { PageHeader } from '@beacon/ui'
 
 import { fetchIdentities } from '../api/cluster'
 import { isDemoMode } from '../demo-mode'
@@ -20,7 +16,6 @@ import HealthSheet from './servers/health-sheet'
 import PendingSheet from './servers/pending-sheet'
 
 export default function ServersPage() {
-  const { t } = useTranslation()
   const [searchParams] = useSearchParams()
   // 区服树 / 告警互跳：?keyword=serverId 预填资产搜索
   const initialKeyword = searchParams.get('keyword') ?? ''
@@ -42,10 +37,6 @@ export default function ServersPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<Server className="size-4" />}
-        title={t('nav.servers')}
-      />
       <AssetsPanel
         initialKeyword={initialKeyword}
         onViewHealth={setHealthServerId}

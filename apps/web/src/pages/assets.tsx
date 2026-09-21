@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { FolderTree, Info, ShieldAlert } from 'lucide-react'
+import { Info, ShieldAlert } from 'lucide-react'
 
 import { Button, PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@beacon/ui'
 
@@ -25,8 +25,6 @@ export default function AssetsPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<FolderTree className="size-4" aria-hidden />}
-        title={t('delivery.assets.title')}
         actions={
           <>
             {/* 敏感路径规则编辑（FR-164）：命中 glob 的文件预览 / diff 需原因放行 */}

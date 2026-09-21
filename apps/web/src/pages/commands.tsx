@@ -2,9 +2,7 @@
 // 右侧非模态详情面板看命令双向生命周期。与 /audits 互跳（FR-157）。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { TerminalSquare } from 'lucide-react'
 
-import { PageHeader } from '@beacon/ui'
 import type { CommandItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -21,10 +19,6 @@ export default function CommandsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<TerminalSquare className="size-4" />}
-        title={t('nav.commands')}
-      />
       <CommandKpi />
       <MasterDetail
         master={

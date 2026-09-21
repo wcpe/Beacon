@@ -9,7 +9,6 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
-import { Plug } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -17,7 +16,6 @@ import {
   Button,
   DataTable,
   DestructiveConfirmDialog,
-  PageHeader,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
@@ -195,10 +193,6 @@ export default function McpClientsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<Plug className="size-4" />}
-        title={t('nav.mcpClients')}
-      />
 
       <ConfigCard
         data={configQuery.data}

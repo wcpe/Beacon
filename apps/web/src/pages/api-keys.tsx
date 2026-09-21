@@ -13,7 +13,6 @@ import {
   Button,
   DataTable,
   DestructiveConfirmDialog,
-  PageHeader,
   SummaryStrip,
   TableSkeleton,
   type DataTableColumn,
@@ -223,11 +222,6 @@ export default function ApiKeysPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<KeyRound className="size-4" />}
-        title={t('nav.apiKeys')}
-      />
-
       <MasterDetail
         master={master}
         detail={

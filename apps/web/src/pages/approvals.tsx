@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ClipboardCheck, Clock3, ShieldAlert } from 'lucide-react'
-import { Badge, Button, Input, PageHeader } from '@beacon/ui'
+import { AlertTriangle, Clock3, ShieldAlert } from 'lucide-react'
+import { Badge, Button, Input } from '@beacon/ui'
 
 import type { ApprovalRequest, ApprovalStatus } from '@beacon/contracts'
 
@@ -510,7 +510,6 @@ function isConflictError(error: unknown): boolean {
 export default function ApprovalsPage() {
   const { requestId } = useParams<{ requestId: string }>()
   const navigate = useNavigate()
-  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [page, setPage] = useState(1)
@@ -571,10 +570,6 @@ export default function ApprovalsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<ClipboardCheck className="size-4" />}
-        title={t('nav.approvals')}
-      />
       <div
         data-slot="global-approval-scope"
         className="flex items-start gap-2 rounded-lg border border-brand-100 bg-brand-50 px-3 py-2 text-sm text-brand"
