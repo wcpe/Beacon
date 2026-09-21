@@ -1,5 +1,4 @@
 export const approvals = {
-  mission: 'Global approval requests, evidence comparison, and execution tracking',
   demo: {
     title: 'Sensitive content approval (Mock)',
     desc: 'Used only to review request, approval, automatic execution, and one-time grant consumption. It never calls a real content endpoint.',

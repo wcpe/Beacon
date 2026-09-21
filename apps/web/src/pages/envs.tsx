@@ -239,7 +239,6 @@ export default function EnvsPage() {
       <PageHeader
         icon={<Layers className="size-4" />}
         title={t('nav.envs')}
-        description={t('system.envs.mission')}
       />
       {/* env 定位提示：品牌浅底，突出「纯展示 / 过滤维度、不动权威数据」 */}
       <div className="flex items-start gap-2.5 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3">

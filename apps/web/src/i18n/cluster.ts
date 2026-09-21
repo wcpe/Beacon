@@ -1,7 +1,6 @@
 // 集群域文案（/servers /zones /topology）：由集群域页面 agent 维护，其他域勿改
 export const cluster = {
     servers: {
-    mission: '接入确认、资产运维、健康与排空 / 默认入口',
     pending: {
       title: '注册待确认',
       sheetDesc: '新 agent 首次接入后在此确认或拒绝；确认后可到区服分配页落区。',
@@ -148,7 +147,6 @@ export const cluster = {
     },
   },
   zones: {
-    mission: 'BC / 大区 / 小区结构与子服分配',
     tree: {
       title: '区服结构树',
       empty: '尚未建立任何 BC 集群，先新建一个集群开始规划区服',
@@ -254,7 +252,6 @@ export const cluster = {
     },
   },
   topology: {
-    mission: 'BC-子服链路、消息流、请求拓扑与异常链路',
     mode: {
       graph: '可视化',
       data: '数据剖析',
@@ -349,7 +346,6 @@ export const cluster = {
   },
   // 身份冲突页（/identity-conflicts，FR-177）：复制整服目录导致的同 identityId 并发双实例，卡片平铺处置
   identityConflicts: {
-    mission: '复制整服目录导致的同身份标识并发双实例：一眼看清冲突双方，保留一方或解绑',
     empty: '当前没有身份冲突',
     emptyHint: '一切正常——每个身份标识当前只有一个活跃实例。复制整服目录起第二份实例时，冲突会在此出现待处置。',
     reason: {

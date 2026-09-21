@@ -25,7 +25,6 @@ export const observability = {
     jsonRaw: 'View raw',
   },
   serviceAnalysis: {
-    mission: 'Metric aggregation, trends, and comparison',
     pickServers: 'Select servers (multi-select to compare)',
     searchServers: 'Search Server ID',
     searchEmpty: 'No matching online backends',
@@ -165,7 +164,6 @@ export const observability = {
     },
   },
   commands: {
-    mission: 'Agent command lifecycle and queue (bidirectional)',
     kpi: {
       total: 'Total commands',
       pending: 'Pending fetch',
@@ -261,7 +259,6 @@ export const observability = {
     filterWindow: 'Time range',
   },
   audits: {
-    mission: 'Audit search, tracing, and export',
     kpi: {
       total: 'Total audits',
       ok: 'Success',
@@ -466,7 +463,6 @@ export const observability = {
   },
   // Connection detail page (/connections, FR-181)
   connections: {
-    mission: 'Connection session query and tracing',
     // Query guard: hot can use time window only; cold needs selector; exact connId lookup
     guardHint:
       'Default: recent global by time range; exact connId lookup; optional Server ID / player UUID narrowing; archived requires a selector',
@@ -523,7 +519,6 @@ export const observability = {
   },
   // Message path page (/messages, FR-181; metadata never includes payload)
   messages: {
-    mission: 'Cross-server message path search and hop tracing',
     // Query guard: hot can use time window only; cold needs selector; exact ID lookup
     guardHint:
       'Default: recent global by time range; exact messageId / correlationId lookup; optional Server ID / player UUID narrowing; archived requires a selector',
@@ -600,7 +595,6 @@ export const observability = {
     durationMs: '{{count}} ms',
   },
   alertEvents: {
-    mission: 'Alert events list and handling status',
     kpi: {
       total: 'Total alerts',
       open: 'Open',

@@ -32,7 +32,6 @@ export default function SystemPage() {
       <PageHeader
         icon={<HeartPulse className="size-4" />}
         title={t('nav.system')}
-        description={t('system.health.mission')}
       />
 
       <AsyncSection

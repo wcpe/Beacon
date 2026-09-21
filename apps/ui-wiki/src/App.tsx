@@ -210,7 +210,6 @@ function PageHeaderPreview() {
         <PageHeader
           icon={<Server className="size-4" />}
           title="服务器资产"
-          description="查看健康、待确认接入与资产清单"
           actions={
             <>
               <Button variant="outline" size="sm">
@@ -223,7 +222,6 @@ function PageHeaderPreview() {
         <PageHeader
           icon={<Terminal className="size-4" />}
           title="命令观测"
-          description="在途队列与历史命令生命周期"
           actions={
             <Select defaultValue="1h">
               <SelectTrigger className="w-28">

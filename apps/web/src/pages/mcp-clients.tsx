@@ -198,7 +198,6 @@ export default function McpClientsPage() {
       <PageHeader
         icon={<Plug className="size-4" />}
         title={t('nav.mcpClients')}
-        description={t('system.mcpClients.mission')}
       />
 
       <ConfigCard

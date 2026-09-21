@@ -10,7 +10,6 @@ export const system = {
     detail: '详情',
   },
   settings: {
-    mission: '采样、保留期、健康权重等运行参数；含归档与清理',
     // 锚点分区标题（与各块内部卡片标题区分，避免重复文本）
     paramsTitle: '运行参数',
     weightsSection: '健康权重',
@@ -199,7 +198,6 @@ export const system = {
     },
   },
   health: {
-    mission: 'Beacon 自身运行时与子系统健康',
     title: '控制面健康',
     // 子系统健康等级 → 状态药丸文案
     level: {
@@ -264,7 +262,6 @@ export const system = {
     },
   },
   version: {
-    mission: '版本、渠道与在线更新',
     title: '版本与更新',
     // 紧凑分区标题（避免长页堆叠）
     sections: {
@@ -504,7 +501,6 @@ export const system = {
     },
   },
   namespaces: {
-    mission: '命名空间 管理与互通信任关系',
     title: '命名空间管理',
     isolationHint: '命名空间之间默认强隔离：调度、消息、代理端操作互不可见，仅在显式授予信任后单向放通。',
     // 命名空间列表
@@ -595,7 +591,6 @@ export const system = {
   },
   // 环境展示维度（FR-178）：增删改 + 环境→命名空间映射
   envs: {
-    mission: '环境展示维度：增删改与环境→命名空间映射',
     hint: '环境是纯展示 / 过滤维度：把一个或多个命名空间归到一个环境，供顶栏按环境过滤视图。环境不参与隔离、调度与配置作用域链，删除只影响过滤视图、不动任何权威数据。',
     listTitle: '环境列表',
     detailTitle: '环境详情',

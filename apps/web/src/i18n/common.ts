@@ -19,9 +19,22 @@ export const common = {
   // 顶栏环境过滤器（FR-178 / FR-192）：按环境过滤各页视图的作用域
   envFilter: {
     label: '环境过滤器',
+    envLabel: '观测环境',
+    nsLabel: '观测命名空间',
     all: '全部环境',
     badgeAll: '全部',
     badgeEnv: '环境',
+    invalid: '范围失效',
+    needReselect: '需重选',
+    invalidPick: '请选择有效范围',
+    envAllNamespaces: '该环境全部',
+    allNamespaces: '全部命名空间',
+    nsCount: '{{count}} 个命名空间',
+    emptyMapping: '空映射',
+    stopped: '已停止',
+    scopeBadge: '范围',
+    emptyNote: '该环境没有映射命名空间，观测页将显示空态。',
+    invalidRangeAria: '观测范围失效，请重新选择环境',
   },
   // 站内开源协议页（FR-190）：项目 MIT + 运行时第三方依赖协议清单
   license: {

@@ -35,7 +35,6 @@ export default function IdentityConflictsPage() {
       <PageHeader
         icon={<Copy className="size-4" />}
         title={t('nav.identityConflicts')}
-        description={t('cluster.identityConflicts.mission')}
       />
       <AsyncSection
         isLoading={query.isLoading}

@@ -13,7 +13,6 @@ export const delivery = {
     next: 'Next',
   },
   assets: {
-    mission: 'View: directory listing, hash, content preview and diff — read-only',
     title: 'File assets',
     // Routing hint: file diffs are dispatched through Change orders (same style as /configs hint)
     deliveryHint: 'File diffs are delivered via Change orders; this page is only view, not edit',
@@ -171,7 +170,6 @@ export const delivery = {
     },
   },
   configs: {
-    mission: 'Edit: scope configuration editing, validation, version management (dispatch via Change orders)',
     title: 'Config center',
     deliveryHint: 'Config changes are not pushed instantly. Apply them by creating a Change order.',
     goChanges: 'Go to Change orders',
@@ -390,7 +388,6 @@ export const delivery = {
     masked: '(sensitive, redacted)',
   },
   changes: {
-    mission: 'Dispatch: Change order creation, impact preview, approval, staged rollout, post-activation observation',
     title: 'Change orders',
     // ?order= deep link (history page "Open in Change orders") load failure notice
     deepLinkError: 'Failed to open Change order #{{id}}: {{message}}',
@@ -942,7 +939,6 @@ export const delivery = {
     progressNote: 'After residual failed targets are handled, "Finish rollback manually" closes the order.',
   },
   changesHistory: {
-    mission: 'Trace: task / batch / per-server status and full-order rollback',
     title: 'Delivery history',
     // Listing
     list: {

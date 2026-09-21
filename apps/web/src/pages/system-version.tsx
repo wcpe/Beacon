@@ -134,7 +134,6 @@ export default function SystemVersionPage() {
       <PageHeader
         icon={<PackageCheck className="size-4" />}
         title={t('nav.systemVersion')}
-        description={t('system.version.mission')}
       />
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}

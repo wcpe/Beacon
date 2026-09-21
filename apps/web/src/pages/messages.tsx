@@ -278,7 +278,6 @@ export default function MessagesPage() {
       <PageHeader
         icon={<MessagesSquare className="size-4" />}
         title={t('nav.messages')}
-        description={t('observability.messages.mission')}
       />
       <MasterDetail
         master={
