@@ -86,6 +86,7 @@
 | [0080](0080-builtin-mcp-oauth-client-credentials.md) | 内置公网 MCP Streamable HTTP 与 OAuth Client Credentials 边界 | 已接受；在 MCP OAuth 范围部分取代 ADR-0026 |
 | [0081](0081-local-persistent-encryption-key-files.md) | 控制面 at-rest 加密密钥使用本地持久文件 | 已接受；取代 ADR-0018 的环境变量密钥来源 |
 | [0082](0082-rc-ga-sdk-maven-publication.md) | RC/GA 发布 agent-api 与 agent-kit 的候选/正式 Maven 坐标，并保留 GitHub 产品资产原样晋级 | 已接受；取代 ADR-0074 中 GA 完全禁止重新发布的约束 |
+| [0083](0083-entry-server-as-lobby-member.md) | 入口 / 登录服作为 LobbyCluster 成员，不新增第二落脚真源 | 已接受；在 ADR-0075 约束内落地 FR-225，不取代任何 ADR |
 
 > 模板：状态 / 背景 / 决策 / 理由 / 后果 / 备选方案。
 
