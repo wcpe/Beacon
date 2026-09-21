@@ -2,6 +2,25 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## 未发布
+
+### 新增
+- 拓扑建树 MCP 工具（FR-221）：新增 `beacon.topology.bc-clusters.*`、`regions.*`、`zones.*` 共九个工具，语义与既有 `/admin/v2` 端点逐一对齐。建树是低风险结构操作，按「低风险按能力直执」原则直接执行并写审计，不产生审批票据；删除非空节点按既有约束拒绝；observer profile 不暴露写工具。
+- 内部信任通道与机器注册（FR-222）：新增 `mcp.allow-machine-register` 开关（默认 false，公网部署必须保持关闭）。开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册直接置为 active 并完成绑定；关闭时行为与现状完全一致（仍落 pending 待人工确认）。无论开关状态，机器注册意图均写 `identity.machine_registered` 强审计（含 serverId、lastAddr 与调用来源 IP）。开启时启动校验强制 `agent-token` 为强随机值（拒绝留空与已知弱默认），否则拒绝启动。
+- 审批决定工具与闭环自动化（FR-223）：新增 `beacon.approvals.approve` / `beacon.approvals.reject`（拒绝须给理由），仅 automation profile 可见；新增 `mcp.allow-approval-decide` 开关（默认 false）控制放行。默认关闭时审批决定权仍归人类，保持原分权设计；内网单操作者部署可显式开启以打通自动化闭环。批准与拒绝均写强审计。
+- MCP 客户端管理台页（FR-224）：管理台新增 `/mcp-clients`（系统大域），承载 OAuth 客户端的日常运维——客户端清单（名称 / profile / secret 前缀与版本 / 状态 / 创建时间）、profile 能力说明、创建 / 轮换 / 启用 / 吊销四个生命周期动作，以及 MCP 入口部署配置的只读查看。创建 / 轮换 / 启用沿用既有审批申请端点（明文 secret 仅首次响应出现一次），吊销为二次确认后的直接止损；空 / 常规 / 超大量 / 异常四态齐备。
+- 新增只读端点 `GET /admin/v2/mcp/config`：暴露 MCP 入口的启用状态、公网基址、可信代理网段、内网直连模式与两个开关，供运维判断外部 Agent 为何无法连接。任何启用状态下均返回 200；字段集合固定，绝不回显任何凭据（如 agent 共享 token）。
+
+### 变更
+- MCP 客户端管理由「仅管理 API + 审批中心」扩展为独立管理台页；相应修订 [built-in-admin-v2-mcp-and-oauth](docs/specs/built-in-admin-v2-mcp-and-oauth.md) 原「不新增独立 MCP 客户端管理页面」的决定，并在 `docs/UX.md` 的信息架构表登记该页。该页只消费既有管理端点，不改变「机器主体永不审批」的分权设计。
+- `GET /admin/v2/mcp-clients` 与单条详情补充生命周期字段 `createdBy` / `createdAt` / `updatedAt` / `revokedAt`（未吊销时省略 `revokedAt`），供管理台回答「何时建的、谁建的、何时被吊销」。纯增字段，向后兼容。
+- 管理台页眉与卡片样式统一：页面根间距、卡片内边距与页眉图标尺寸此前各页取值不一（间距有五种取值、内边距含 15px 魔数），现统一为设计系统刻度；并为此前缺少副标题的页面补齐职责说明。
+
+### 修复
+- 拓扑页健康数据加载失败：`/topology` 此前把「全部命名空间」以显式 `namespaceId=0` 传给 `/admin/v2/health`，触发 400 `invalid_observation_scope`，导致拓扑图节点着色与代理在线数取不到数据。现按观测范围契约以「省略参数」表达全量。
+- 运维总览底部告警卡内容被裁切：告警卡的长文本（如并发身份冲突摘要）会把内部网格撑宽，超出部分被内容区的横向裁剪静默截掉。现补齐收缩约束链，溢出归零。
+- 拓扑图画布撑破布局导致整页缩放：画布舞台层用固定像素宽度且未脱离文档流，会把内容区推到超出视口，触发内容区宽度自适应把**整页**等比缩小（标题、按钮、文字、图标一并变小）。现改为绝对定位，画布按自身尺寸缩放平移查看，不再影响页面布局。
+
 ## 1.1.0（2026-08-12）
 
 ### 新增

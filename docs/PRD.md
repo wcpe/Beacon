@@ -142,7 +142,11 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-217 | 服务器永久删除与墓碑 | 待排期 | 待排期 | 归档服务器经批准后执行逻辑永久删除，保留不可复用 serverId、审计与历史关联墓碑，不提供冷却期或复活；规格见 [server-permanent-deletion-and-tombstone](specs/server-permanent-deletion-and-tombstone.md) | 已交付@v1.1.0（待远端公开） |
 | FR-218 | namespace 永久删除与子树墓碑 | 待排期 | 待排期 | 归档 namespace 无额外冷却期，经批准后在单次原子操作中墓碑化权威子树；预览完整影响范围，所有业务标识永久不可复用；规格见 [namespace-permanent-deletion-and-tombstone](specs/namespace-permanent-deletion-and-tombstone.md) | 已交付@v1.1.0（待远端公开） |
 | FR-219 | 内置 `/admin/v2/mcp` 与 OAuth Client Credentials | 待排期 | 待排期 | Beacon 进程内提供远程 Streamable HTTP MCP，公网仅经 TLS 反代访问；独立 OAuth 客户端短令牌、受众绑定、撤销/轮换可用；HTTPS 反代 + OAuth + MCP 初始化 + 吊销 + audience 隔离真机验收通过；规格见 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) | 已交付@v1.1.0（待远端公开） |
-| FR-220 | MCP 显式领域工具与审批交接 | 待排期 | 待排期 | MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求但无任何审批工具；规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) | 已交付@v1.1.0（待远端公开） |
+| FR-220 | MCP 显式领域工具与审批交接 | 待排期 | 待排期 | MCP 仅暴露显式领域工具；低风险按能力直执，高风险只创建审批请求并返回 ID；机器可查询/撤回自己的请求；审批决定工具默认不暴露，仅在显式开启 `allow-approval-decide` 时对 automation profile 放行（见 FR-223）；规格见 [mcp-domain-tools-and-approval-handoff](specs/mcp-domain-tools-and-approval-handoff.md) | 已交付@v1.1.0（待远端公开） |
+| FR-221 | 拓扑建树 MCP 工具（feat，增强 FR-219/FR-220）：补齐 MCP 侧区服结构维护能力——`beacon.topology.bc-clusters.create/update/delete`、`regions.*`、`zones.*` 共九个工具，语义与既有 `/admin/v2` HTTP 端点逐一对齐。与分配/换区等高风险动作**刻意不同**：建树是低风险结构操作，按 FR-220 的「低风险按能力直执」原则直接执行并写审计，不走审批票据。observer profile 不暴露写工具 | 待排期 | 待排期 | 经 MCP 可创建/改名/删除 BC 集群、大区、小区；删除非空节点按既有约束拒绝；写操作落审计；observer 仅可见读工具；规格见 [topology-authoring-mcp-tools](specs/topology-authoring-mcp-tools.md) | 🔨 开发中·实现完成（待发版） |
+| FR-222 | 内部信任通道与机器注册（feat，增强 FR-219）：新增 `mcp.allow-machine-register` 开关（默认 false，公网部署必须保持关闭）。开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的 agent 身份**直接置为 active 并完成绑定**，跳过 FR-220 的人工审批流；关闭时行为与现状完全一致（一律进 pending 待人工确认）。无论开关如何，机器注册均写强审计并记录调用来源 | 待排期 | 待排期 | 开关开启时：携共享 token 注册的 agent 直接 active 且绑定指定 serverId，审计可查；开关关闭时：同一请求仍落 pending 待审批（行为不变）；缺/错 token 一律 401；规格见 [internal-trust-channel](specs/internal-trust-channel.md) | 🔨 开发中·实现完成（待发版） |
+| FR-223 | 审批决定工具与闭环自动化（feat，增强 FR-220，**归真项**）：FR-220 原定「机器无任何审批工具」，实操中内网单操作者部署无法闭环（每次分配都需人工到管理台点击）。现新增 `beacon.approvals.approve` / `beacon.approvals.reject`（拒绝须给理由），**仅 automation profile 可见**（observer 不可见），并新增 `mcp.allow-approval-decide` 开关（默认 false）控制是否放行。默认关闭时审批决定权仍归人类，保持原分权设计；内网单操作者部署可显式开启以打通自动化闭环。批准与拒绝均写强审计，批准后由 approval worker 执行领域动作 | 待排期 | 待排期 | 开关关闭时 automation 调用审批工具被拒（分权不破）；开启时 automation 能闭环批准自己提交的申请且审计可查；observer 任何情况下不可见审批工具 | 🔨 开发中·实现完成（待发版） |
+| FR-224 | MCP 客户端管理台页（feat，增强 FR-219）：管理台新增 `/mcp-clients`，承载 MCP OAuth 客户端的日常运维——清单（名称 / profile / secret 前缀与版本 / 状态 / 创建时间）、profile 能力说明、创建 / 轮换 / 启用 / 吊销四个生命周期动作，以及 MCP 入口部署配置的只读查看。创建 / 轮换 / 启用沿用既有 `POST /admin/v2/mcp-clients*` 审批申请端点（202 + 审批票据，明文 secret 仅在首次响应出现一次），吊销沿用直接止损动作；新增 `GET /admin/v2/mcp/config` 只读端点暴露启用状态、公网基址、信任边界与两个开关（启动项，无写入端点，不回显任何凭据）。本次一并修订 [built-in-admin-v2-mcp-and-oauth](specs/built-in-admin-v2-mcp-and-oauth.md) 原「不新增独立管理页面」的决定 | 待排期 | 待排期 | 客户端清单可见且四动作闭环：创建 / 轮换返回一次性明文 secret 且重放不静默，吊销二次确认后立即生效；配置卡在未启用时展示配置指引而非报错；空 / 常规 / 超大量 / 异常四态齐备；页面不引入新交互模式 | 🔨 开发中·实现完成（待发版） |
 
 ## 5. 非功能需求（NFR）
 
@@ -199,7 +203,11 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 - **FR-217**：仅归档服务器可申请永久删除；批准后落不可逆墓碑，原 serverId 永久拒绝复用，所有历史引用仍能解析到删除摘要。
 - **FR-218**：仅归档 namespace 可申请永久删除且无额外冷却期；批准前预览整棵权威子树，执行要么全部墓碑化要么全部不变，所有受影响 code/serverId 永久不可复用。
 - **FR-219**：标准 MCP 客户端可在 `/admin/v2/mcp` 完成初始化、工具发现与调用；OAuth 客户端凭据不落明文，短令牌受众固定，撤销/轮换即时阻断后续换令牌，后端直连被部署门禁拒绝。
-- **FR-220**：工具清单不存在通用 HTTP/SQL/文件代理；observer 只读，automation 低风险直执；每个高危工具只返回 approvalRequestId 并可轮询或撤回自己的请求，服务端无机器审批通路。
+- **FR-220**：工具清单不存在通用 HTTP/SQL/文件代理；observer 只读，automation 低风险直执；每个高危工具只返回 approvalRequestId 并可轮询或撤回自己的请求；服务端默认无机器审批通路，仅在显式开启 `allow-approval-decide` 时向 automation 放行审批决定工具（FR-223）。
+- **FR-221**：经 MCP 可创建、改名、删除 BC 集群 / 大区 / 小区；删除非空节点按既有约束拒绝；建树为低风险结构操作，直接执行并落审计，不产生审批票据；observer profile 不可发现写工具。
+- **FR-222**：`allow-machine-register` 关闭时，携共享 token 的注册请求仍落 pending 待人工审批（行为与现状一致）；开启时同一请求直接置 active 并完成绑定，且强审计可查调用来源；缺/错 token 一律 401。
+- **FR-223**：`allow-approval-decide` 关闭时 automation 调用审批决定工具被拒，分权设计不破；开启时 automation 可闭环批准/拒绝自己提交的申请，拒绝须给理由，两者均写强审计；observer 任何情况下不可见审批决定工具。
+- **FR-224**：`/mcp-clients` 可见全部客户端及其 profile / 状态 / secret 版本与创建时间；创建与轮换返回一次性明文 secret（幂等重放不返回明文时给出重新申请提示，不静默），吊销为二次确认后的直接止损；`GET /admin/v2/mcp/config` 在任何启用状态下都返回 200、字段集合固定且不含任何凭据（agent token 不回显），未启用时页面展示配置指引而非报错；空 / 常规 / 超大量 / 异常四态齐备。
 
 ## 7. Legacy 策略
 

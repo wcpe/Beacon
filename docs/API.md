@@ -52,6 +52,7 @@
 - **重复 serverId 守卫**：同 `(namespace, serverId)` 已有**仍新鲜**（`lastHeartbeat` 在心跳周期内）的另一 address 在线实例 → `409 DUPLICATE_SERVER_ID` + 写 fail 审计。旧条目已超期视为僵尸 → 允许新 address 顶替并告警（故障换机不被误杀）。同 address 重连幂等覆盖。
 - **主动下线拒绝（FR-49）**：注册前查 `server_offline`，命中 → `403 INSTANCE_OFFLINE_REJECTED` + 写 fail 审计（区别于 `409` 重复 / `404` 未注册）。agent 据此进入 `OFFLINE` 态、停止猛重连、不刷日志，取消下线后经降频探测恢复（见 agent §生命周期）。**心跳不查库**：下线在线实例时同步移出内存，其心跳 `404 NOT_REGISTERED` → 重注册 → 在此被拒。
 - 身份缺失（serverId/namespace 空）→ `400 IDENTITY_REQUIRED`。
+- **机器注册通道（FR-222，见 [internal-trust-channel.md](specs/internal-trust-channel.md)）**：默认关闭。开启 `mcp.allow-machine-register` 后，请求经本端点所在组的共享 token 中间件分支（`X-Beacon-Token` = 部署的 `agent-token`）者被判定为**受信内部调用方**，注册时直接创建 `active` 身份并绑定请求的 serverId（响应回带 `machineRegistered: true`、`identityId`、`boundAt`）；其余调用方（含 agent 自持身份、v2 注册端点）行为逐字不变。分支依据是中间件对共享 token 的比对结果，**不读请求体字段**，调用方无法伪造。开启时 `agent-token` 必须为强随机值（启动校验拒绝默认值 / 留空，否则拒绝启动）；无论开关状态，受信调用方的机器注册意图都写 `identity.machine_registered` 审计（含 serverId、lastAddr 与调用来源 IP；开启记 `active`，关闭记 `pending` 已提交待审批）。该通道**只覆盖注册**：分配、换区、默认入口仍走各自审批。
 
 ### 2. 心跳 `POST /beacon/v1/agent/heartbeat`
 请求：`{ "namespace": "prod", "serverId": "lobby-1" }`
@@ -1061,3 +1062,40 @@ MCP resource 固定为 `/admin/v2/mcp`，token 固定为 `POST /admin/v2/oauth/t
 `observer` 与 `automation` 均可发现 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。列表均分页或受时间窗约束；消息不返回 payload、玩家标识或 hop 原文，连接仅返回聚合，命令不返回结果正文，审计不返回 detail 与客户端地址。
 
 公网入口只有在 `mcp.enabled=true`、`mcp.public-base-url` 为无路径 HTTPS 基址且 `mcp.trusted-proxy-cidrs` 已配置时才挂载；请求必须来自受信代理，并携带与基址一致的 `X-Forwarded-Proto: https`、`X-Forwarded-Host` 和 Host。详见 [built-in-admin-v2-mcp-and-oauth.md](specs/built-in-admin-v2-mcp-and-oauth.md)。
+
+### MCP 客户端管理端点
+
+管理面（`/admin/v2` 组内，走登录令牌 / API 密钥鉴权）提供 MCP OAuth 客户端生命周期：
+
+| 方法 | 路径 | 语义 |
+|---|---|---|
+| GET | `/admin/v2/mcp-clients` | 客户端全量列表（按创建时间倒序）；返回 `clientId`、`displayName`、`secretPrefix`、`profile`、`status`、`secretVersion` 与 `createdBy` / `createdAt` / `updatedAt` / `revokedAt`（未吊销时省略）。不含 secret 哈希或明文 |
+| GET | `/admin/v2/mcp-clients/{clientId}` | 单个客户端脱敏视图（字段同上） |
+| POST | `/admin/v2/mcp-clients` | 申请创建客户端（`displayName` / `profile` / `reason`），202 + `{approvalRequestId, clientId, clientSecret, status}`；`clientSecret` 仅本次响应出现一次 |
+| POST | `/admin/v2/mcp-clients/{clientId}/rotate` | 申请轮换 secret（`reason`），202 + 同形票据 |
+| POST | `/admin/v2/mcp-clients/{clientId}/enable` | 申请重新启用已吊销客户端（`reason`），202 + 同形票据 |
+| POST | `/admin/v2/mcp-clients/{clientId}/revoke` | 立即吊销（止损，不等待审批），200 + `{ok:true}` |
+| GET | `/admin/v2/mcp/config` | MCP 入口部署配置只读视图（见下） |
+
+三个申请端点的硬约束：
+
+- 必须携带 `Idempotency-Key` 头，缺失返回 `403`；同键重放返回既有票据，此时 `clientSecret` **不返回**（明文只在首次生成时出现一次，遗失只能重新申请轮换）。
+- 仅人类主体可提审；`readonly` 角色被写守卫拒绝。
+- 轮换批准后旧 secret 与已签发 token 即时失效；吊销后该客户端无法再换取 token。
+
+`GET /admin/v2/mcp/config` 返回 MCP 入口的部署事实，**任何启用状态下都返回 200**（未启用时 `enabled=false`，供管理台展示配置指引而非报错）：
+
+```json
+{
+  "enabled": true,
+  "publicBaseUrl": "https://beacon.example.com",
+  "trustedProxyCidrs": ["10.0.0.0/8"],
+  "allowInsecureInternal": false,
+  "allowedHosts": [],
+  "allowApprovalDecide": false,
+  "allowMachineRegister": false,
+  "directMode": false
+}
+```
+
+字段集合固定为上述八项。这些配置全部是**启动项**（改后须重启控制面），因此只提供读取、不提供写入端点。响应**绝不回显任何凭据**（如 agent 共享 token）；`directMode` 表示内网明文直连（无 TLS 反代），与 `MCPProxyPolicy` 的判定一致，未启用时恒为 `false`。
