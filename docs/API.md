@@ -1061,3 +1061,22 @@ MCP resource 固定为 `/admin/v2/mcp`，token 固定为 `POST /admin/v2/oauth/t
 `observer` 与 `automation` 均可发现 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。列表均分页或受时间窗约束；消息不返回 payload、玩家标识或 hop 原文，连接仅返回聚合，命令不返回结果正文，审计不返回 detail 与客户端地址。
 
 公网入口只有在 `mcp.enabled=true`、`mcp.public-base-url` 为无路径 HTTPS 基址且 `mcp.trusted-proxy-cidrs` 已配置时才挂载；请求必须来自受信代理，并携带与基址一致的 `X-Forwarded-Proto: https`、`X-Forwarded-Host` 和 Host。详见 [built-in-admin-v2-mcp-and-oauth.md](specs/built-in-admin-v2-mcp-and-oauth.md)。
+
+### MCP 客户端管理端点
+
+管理面（`/admin/v2` 组内，走登录令牌 / API 密钥鉴权）提供 MCP OAuth 客户端生命周期：
+
+| 方法 | 路径 | 语义 |
+|---|---|---|
+| GET | `/admin/v2/mcp-clients` | 客户端全量列表（按创建时间倒序）；返回 `clientId`、`displayName`、`secretPrefix`、`profile`、`status`、`secretVersion`。不含 secret 哈希或明文 |
+| GET | `/admin/v2/mcp-clients/{clientId}` | 单个客户端脱敏视图（字段同上） |
+| POST | `/admin/v2/mcp-clients` | 申请创建客户端（`displayName` / `profile` / `reason`），202 + `{approvalRequestId, clientId, clientSecret, status}`；`clientSecret` 仅本次响应出现一次 |
+| POST | `/admin/v2/mcp-clients/{clientId}/rotate` | 申请轮换 secret（`reason`），202 + 同形票据 |
+| POST | `/admin/v2/mcp-clients/{clientId}/enable` | 申请重新启用已吊销客户端（`reason`），202 + 同形票据 |
+| POST | `/admin/v2/mcp-clients/{clientId}/revoke` | 立即吊销（止损，不等待审批），200 + `{ok:true}` |
+
+三个申请端点的硬约束：
+
+- 必须携带 `Idempotency-Key` 头，缺失返回 `403`；同键重放返回既有票据，此时 `clientSecret` **不返回**（明文只在首次生成时出现一次，遗失只能重新申请轮换）。
+- 仅人类主体可提审；`readonly` 角色被写守卫拒绝。
+- 轮换批准后旧 secret 与已签发 token 即时失效；吊销后该客户端无法再换取 token。
