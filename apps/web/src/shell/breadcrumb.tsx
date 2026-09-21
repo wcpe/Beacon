@@ -1,6 +1,8 @@
 // 页眉面包屑（E3）：按当前路由在导航 IA（routes.tsx）解析「分组 › 页面」，紧随环境 / 命名空间
 // 选择器展示当前页身份。E5 后内容区不再渲染大标题，页面身份由「选择器 + 本面包屑」共同承担，
 // 故此处不重复渲染环境名（已由 EnvFilter 展示）。复用 nav i18n 键，不新增业务文案。
+// 当前页那一档语义为 <h1>：E5 去掉内容区大标题后，需由它承担「页面标题地标」（屏幕阅读器可跳转），
+// 视觉仍保持小号——位于页眉、在 <main> 之外，不影响「内容区无大标题」的验收。
 import { useTranslation } from 'react-i18next'
 import { useLocation } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
@@ -64,7 +66,7 @@ export default function Breadcrumb() {
           <ChevronRight className="size-3 shrink-0 text-ink-4" aria-hidden />
         </>
       )}
-      <span className="truncate text-[12.5px] font-medium text-ink-1">{t(crumb.titleKey)}</span>
+      <h1 className="truncate text-[12.5px] font-medium text-ink-1">{t(crumb.titleKey)}</h1>
     </nav>
   )
 }
