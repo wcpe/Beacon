@@ -1,5 +1,7 @@
 # 拓扑建树 MCP 工具（FR-221）
 
+> 状态：开发中·真机验收通过（待发版）　·　关联 PRD：FR-221　·　依赖：FR-219、FR-220
+
 ## 1. 背景
 
 Beacon 已具备两套管理面：
@@ -117,6 +119,21 @@ Beacon 的动作分两档（FR-220）：
 | 6 | observer profile 工具列表中**不含**本组九个工具 | 真机（不同 profile 的 token） |
 | 7 | 各操作在审计页可查（动作名与 HTTP 侧一致） | 管理台审计 |
 | 8 | 建树后 `zone-tree.get` 能正确反映新结构 | 真机 |
+
+### 6.1 真机验证记录（2026-09-21，隔离 Beacon 实例 :18999 + automation profile MCP 客户端）
+
+| # | 结果 | 证据 |
+|---|---|---|
+| 1 | ✅ 通过 | 依次调 `bc-clusters.create`(id=1) → `regions.create`(parentId=1, id=1) → `zones.create`(parentId=1, id=1)，三层归属正确（各层 id 独立空间） |
+| 2 | ⚠️ 未验 | update 工具未逐一实调（注册与门控已验，语义与 HTTP 端点对齐由单测覆盖） |
+| 3 | ⚠️ 未验 | 删除非空节点的拒绝路径未实调 |
+| 4 | ⚠️ 未验 | 删除空节点与 `confirmCode` 校验未实调 |
+| 5 | ✅ 通过 | 建树响应直接返回领域结果（`{"code":…,"id":…,"name":…}`），**无 `approvalRequestId`/`status` 票据字段**——与 assign 的审批模式差异可观测 |
+| 6 | ⚠️ 未验 | observer profile 的不可见性由 `MCPToolNames(profile)` 单测（`mcp_tools_test.go`）覆盖，未在真机换 observer token 复验 |
+| 7 | ⚠️ 未验 | 管理台审计页未直接核验 |
+| 8 | ✅ 通过 | `zone-tree.get` 回读结构与建树结果一致：`clusters[0]{code:e2e-cluster, id:1, regions[0]{code:e2e-region, id:1, zones[0]{code:e2e-zone, id:1, serverCount:0}}}` |
+
+> 工具注册面已真机确认：automation profile 的 `tools/list` 含全部 9 个建树工具。未验项集中在 update/delete 分支与审计页核验，属**下一轮补验范围**。
 
 ## 7. 影响面
 

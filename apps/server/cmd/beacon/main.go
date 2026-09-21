@@ -403,6 +403,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// automation 客户端的审批决定能力默认关闭；仅显式配置时开启（内网单操作者闭环）。
+	auth.SetMCPApprovalDecide(cfg.MCP.Enabled && cfg.MCP.AllowApprovalDecide)
 	mcpToolRegistry := server.NewMCPToolRegistry(approvalService, apiKeyService, v2ControlPlaneService, settingsService)
 	mcpToolRegistry.SetConfigService(configService)
 	mcpToolRegistry.SetFileOverrideServices(fileService, overrideSetService)

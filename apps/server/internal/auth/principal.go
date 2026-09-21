@@ -1,6 +1,9 @@
 package auth
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // 主体来源，保留给旧调用方兼容。
 const (
@@ -99,8 +102,23 @@ func mcpCapabilities(profile string) []string {
 	if profile != "automation" {
 		return caps
 	}
-	return append(caps, CapabilityManagementDirect, CapabilityApprovalRequest, CapabilityApprovalWithdrawOwn)
+	caps = append(caps, CapabilityManagementDirect, CapabilityApprovalRequest, CapabilityApprovalRead, CapabilityApprovalWithdrawOwn)
+	if mcpDecideCapability.Load() {
+		// 仅显式开启的内网部署：允许 automation 客户端闭环审批（默认 false，保持人类独决）。
+		caps = append(caps, CapabilityApprovalDecide)
+	}
+	return caps
 }
+
+// mcpDecideCapability 让 automation 客户端按部署开关获得 approval.decide。
+// 默认关闭：审批决定权归人类，机器自审会破坏分权。仅内网单操作者部署可显式开启。
+var mcpDecideCapability atomic.Bool
+
+// SetMCPApprovalDecide 设置 automation 客户端是否可执行审批决定（进程启动时按配置调用一次）。
+func SetMCPApprovalDecide(enabled bool) { mcpDecideCapability.Store(enabled) }
+
+// MCPApprovalDecideEnabled 报告 automation 客户端当前是否可执行审批决定。
+func MCPApprovalDecideEnabled() bool { return mcpDecideCapability.Load() }
 
 // HasCapability 判断主体是否具备指定能力。
 func (p Principal) HasCapability(capability string) bool {
@@ -203,7 +221,11 @@ func normalize(p Principal) Principal {
 	if len(p.Capabilities) == 0 && p.Role != "" {
 		p.Capabilities = CapabilitiesForRole(p.Kind, p.Role)
 	}
-	if p.Kind == PrincipalKindAPIKey || p.Kind == PrincipalKindMCP || p.Kind == PrincipalKindSystem {
+	if p.Kind == PrincipalKindAPIKey || p.Kind == PrincipalKindSystem {
+		p.Capabilities = removeCapability(p.Capabilities, CapabilityApprovalDecide)
+	}
+	// MCP 主体默认同样剥离审批决定权（人类独决）；仅显式开启的内网部署保留。
+	if p.Kind == PrincipalKindMCP && !mcpDecideCapability.Load() {
 		p.Capabilities = removeCapability(p.Capabilities, CapabilityApprovalDecide)
 	}
 	return p

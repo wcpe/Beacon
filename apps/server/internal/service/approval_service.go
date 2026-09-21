@@ -470,7 +470,9 @@ func ensureFound(req *model.ApprovalRequest, err error) (*model.ApprovalRequest,
 }
 
 func ensureDecidable(req *model.ApprovalRequest, principal auth.Principal) error {
-	if !principal.IsHuman() {
+	// 默认仅人类可决（分权）；显式开启 mcp.allow-approval-decide 的内网部署
+	// 允许持有 approval.decide 的机器主体闭环审批。
+	if !principal.IsHuman() && !auth.MCPApprovalDecideEnabled() {
 		return apperr.ErrMachinePrincipalCannotDecide
 	}
 	if !principal.HasCapability(auth.CapabilityApprovalDecide) {
