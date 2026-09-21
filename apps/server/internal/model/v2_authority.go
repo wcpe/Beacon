@@ -234,6 +234,27 @@ func (s *Server) BeforeSave(*gorm.DB) error {
 	return nil
 }
 
+// ServerTag 是 server 的键值标签（FR-227）：唯一键 (server_pk, tag_key)，value 允许空串。
+// 以本表为 server 标签的唯一真源，FR-29 的 tag.<key>=<value> 发现过滤直接读它（不再依赖注册 metadata）。
+type ServerTag struct {
+	ID       uint   `gorm:"primaryKey;autoIncrement"`
+	ServerPK uint   `gorm:"column:server_pk;not null;uniqueIndex:uk_server_tag,priority:1;index"`
+	TagKey   string `gorm:"column:tag_key;size:32;not null;uniqueIndex:uk_server_tag,priority:2"`
+	TagValue string `gorm:"column:tag_value;size:128;not null;default:''"`
+	// 创建 / 最近更新时间，供标签编辑审计对照。
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (ServerTag) TableName() string { return "server_tag" }
+
+// ServerTagLimits 是标签校验上限（FR-227 §7 拍板：key ≤32、value ≤128、单 server ≤20 个）。
+const (
+	ServerTagKeyMaxLen    = 32
+	ServerTagValueMaxLen  = 128
+	ServerTagMaxPerServer = 20
+)
+
 // AgentIdentity 是 v2 agent 身份绑定事实。
 type AgentIdentity struct {
 	ID               uint             `gorm:"primaryKey;autoIncrement"`

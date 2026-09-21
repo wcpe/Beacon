@@ -12,6 +12,7 @@ import type {
 } from '@beacon/contracts'
 import {
   jsonError,
+  mockDelete,
   mockGet,
   mockPost,
   mockPut,
@@ -62,6 +63,7 @@ function toServerItem(state: ClusterState, row: ServerRow): ServerItem {
     draining: row.draining,
     online: row.online,
     assigned: isAssigned(row),
+    tags: row.tags ?? [],
     createdAt: row.createdAt,
   }
 }
@@ -232,6 +234,14 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
     const zoneId = queryStr(url, 'zoneId')
     const bcClusterId = queryStr(url, 'bcClusterId')
     const keyword = queryStr(url, 'keyword')?.toLowerCase() ?? null
+    // FR-227：重复 tag=k:v 交集筛选（与真后端 parseServerTagQuery 对齐）
+    const tagPairs = url.searchParams
+      .getAll('tag')
+      .map((raw) => {
+        const idx = raw.indexOf(':')
+        return idx > 0 ? { key: raw.slice(0, idx), value: raw.slice(idx + 1) } : null
+      })
+      .filter((pair): pair is { key: string; value: string } => pair !== null)
     const rows = state.servers
       .filter((row) => {
         // 与真后端 ListServers 对齐：namespaceId 缺省或 0 = 全量（不按 ns 过滤）
@@ -252,6 +262,10 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
         }
         if (keyword !== null && !row.serverId.toLowerCase().includes(keyword)) {
           return false
+        }
+        if (tagPairs.length > 0) {
+          const tags = row.tags ?? []
+          return tagPairs.every((pair) => tags.some((t) => t.key === pair.key && t.value === pair.value))
         }
         return true
       })
@@ -423,6 +437,47 @@ export const zoneAuthorityHandlers: HttpHandler[] = [
       return jsonError(400, 'invalid_param', 'draining 必填')
     }
     row.draining = body.draining
+    return HttpResponse.json(toServerItem(state, row))
+  }),
+
+  // FR-227：server 键值标签增改（按 key 增改，未出现的既有 key 保留）
+  mockPut('/admin/v2/servers/:serverId/tags', async (info) => {
+    const serverId = pathParam(info, 'serverId')
+    const state = getClusterState()
+    const row = state.servers.find((s) => s.serverId === serverId)
+    if (!row) {
+      return jsonError(404, 'server_not_found', 'server 不存在')
+    }
+    const body = await readBody<{ tags?: Record<string, string> }>(info.request)
+    const incoming = body.tags ?? {}
+    const keys = Object.keys(incoming)
+    if (keys.length === 0) {
+      return jsonError(400, 'invalid_param', 'tags 必填')
+    }
+    const existing = new Map((row.tags ?? []).map((t) => [t.key, t.value]))
+    for (const key of keys) {
+      if (!/^[A-Za-z0-9_.-]+$/.test(key) || key.length > 32 || incoming[key].length > 128) {
+        return jsonError(400, 'invalid_param', '标签 key / value 非法')
+      }
+      existing.set(key, incoming[key])
+    }
+    if (existing.size > 20) {
+      return jsonError(400, 'invalid_param', '单 server 标签数超上限')
+    }
+    row.tags = [...existing.entries()].map(([key, value]) => ({ key, value })).sort((a, b) => a.key.localeCompare(b.key))
+    return HttpResponse.json(toServerItem(state, row))
+  }),
+
+  // FR-227：删除单个标签（幂等）
+  mockDelete('/admin/v2/servers/:serverId/tags/:key', (info) => {
+    const serverId = pathParam(info, 'serverId')
+    const key = pathParam(info, 'key')
+    const state = getClusterState()
+    const row = state.servers.find((s) => s.serverId === serverId)
+    if (!row) {
+      return jsonError(404, 'server_not_found', 'server 不存在')
+    }
+    row.tags = (row.tags ?? []).filter((t) => t.key !== key)
     return HttpResponse.json(toServerItem(state, row))
   }),
 ]

@@ -23,7 +23,7 @@ func newNamespaceRuntimeGateDB(t *testing.T, lifecycle string) (*gorm.DB, *model
 	if err != nil {
 		t.Fatalf("打开内存数据库失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.AgentIdentity{}, &model.AgentCommand{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.AgentIdentity{}, &model.AgentCommand{}); err != nil {
 		t.Fatalf("迁移运行资格测试表失败: %v", err)
 	}
 	for _, table := range []string{"agent_command", "agent_identity", "server", "namespace"} {

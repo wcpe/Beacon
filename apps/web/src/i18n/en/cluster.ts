@@ -68,6 +68,17 @@ export const cluster = {
       helpHint:
         'Health details: view the health score and factor breakdown. More: set / clear default entry, start / stop draining, disable, unbind, lifecycle archive — write actions require a reason.',
     },
+    tags: {
+      title: 'Server tags',
+      empty: 'No tags',
+      key: 'Key',
+      value: 'Value',
+      add: 'Add',
+      remove: 'Remove tag {{key}}',
+      invalid: 'Invalid tag: key allows letters / digits / _ . - (≤32), value ≤128',
+      filterPlaceholder: 'Filter by tag key:value (space-separated)',
+      filterLabel: 'Tag filter',
+    },
     confirm: {
       disableTitle: 'Disable server',
       disableDesc: 'Disabling removes it from scheduling and command dispatch; binding is kept and can be re-enabled anytime.',

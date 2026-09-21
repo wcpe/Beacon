@@ -40,7 +40,7 @@ func newV2HandlerTestService(t *testing.T) (*gorm.DB, *service.V2ControlPlaneSer
 		&model.Region{},
 		&model.Zone{},
 		&model.LobbyCluster{},
-		&model.Server{},
+		&model.Server{}, &model.ServerTag{},
 		&model.AgentIdentity{},
 		&model.AgentEndpoint{},
 		&model.ApprovalRequest{},
@@ -518,6 +518,7 @@ func decodeRecorder(rr *httptest.ResponseRecorder) (int, map[string]any) {
 	}
 	return rr.Code, parsed
 }
+
 // TestFR226ServerWorkDirRoundTrip 校验 FR-226：agent 上报的服务器工作目录落库并在身份视图回显；
 // 旧 agent 未上报时落空串、视图输出 null（前端降级展示「未上报」），不报错。
 func TestFR226ServerWorkDirRoundTrip(t *testing.T) {

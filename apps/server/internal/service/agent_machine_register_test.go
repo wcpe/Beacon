@@ -37,7 +37,7 @@ func machineRegisterTestStack(t *testing.T, allowed bool) (*InstanceService, *go
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerOffline{},
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ServerOffline{},
 		&model.ZoneAssignment{}, &model.AgentIdentity{}, &model.AgentEndpoint{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移机器注册表失败: %v", err)
 	}

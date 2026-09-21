@@ -47,7 +47,7 @@ func newDeliveryTestEnv(t *testing.T) *deliveryTestEnv {
 	}
 	sqlDB.SetMaxOpenConns(1)
 	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{},
-		&model.Server{}, &model.AgentIdentity{}, &model.ChangeOrder{}, &model.ChangeOrderItem{},
+		&model.Server{}, &model.ServerTag{}, &model.AgentIdentity{}, &model.ChangeOrder{}, &model.ChangeOrderItem{},
 		&model.ChangeBatch{}, &model.ChangeTarget{}, &model.DeliveryBlob{}, &model.DeliveryConfigArtifact{},
 		&model.FileAsset{}, &model.FileAssetScan{},
 		&model.AgentCommand{}, &model.Setting{}, &model.AuditLog{},

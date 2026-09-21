@@ -25,7 +25,7 @@ func newAssetTestService(t *testing.T) (*gorm.DB, *AssetService, uint) {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
 	if err := db.AutoMigrate(
-		&model.Namespace{}, &model.Server{}, &model.AgentIdentity{},
+		&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.AgentIdentity{},
 		&model.FileAsset{}, &model.FileAssetScan{}, &model.AgentCommand{}, &model.AuditLog{},
 	); err != nil {
 		t.Fatalf("迁移文件资产相关表失败: %v", err)

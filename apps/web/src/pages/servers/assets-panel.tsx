@@ -20,6 +20,7 @@ import {
   Search,
   Server,
   ShieldAlert,
+  Tag,
   X,
 } from 'lucide-react'
 
@@ -72,6 +73,7 @@ import {
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { LEVEL_META, badgeOf } from './health-level'
 import ReasonDialog from './reason-dialog'
+import TagDialog from './tag-dialog'
 
 const PAGE_SIZE = 15
 
@@ -130,6 +132,18 @@ export default function AssetsPanel({
   const [keyword, setKeyword] = useState(initialKeyword)
   const [kind, setKind] = useState<string>('all')
   const [assigned, setAssigned] = useState<string>('all')
+  // FR-227：标签交集筛选（空格 / 逗号分隔 key:value），与列表 API 的重复 tag 参数对齐。
+  const [tagFilter, setTagFilter] = useState('')
+  // 标签编辑弹窗目标 server（null 关闭）
+  const [tagServer, setTagServer] = useState<ServerItem | null>(null)
+  const tagFilterList = useMemo(
+    () =>
+      tagFilter
+        .split(/[\s,]+/)
+        .map((part) => part.trim())
+        .filter((part) => part.includes(':') && !part.startsWith(':')),
+    [tagFilter],
+  )
   // 身份维：all | active（有可迁绑定）| residual（无活跃身份的遗留行）
   const [identityFilter, setIdentityFilter] = useState<string>('all')
   const [page, setPage] = useState(1)
@@ -139,7 +153,7 @@ export default function AssetsPanel({
   const [approvalTicket, setApprovalTicket] = useState<ApprovalTicket | null>(null)
 
   const query = useQuery({
-    queryKey: ['servers', 'assets', requestScope, keyword, kind, assigned, page],
+    queryKey: ['servers', 'assets', requestScope, keyword, kind, assigned, tagFilterList, page],
     queryFn: () =>
       fetchPagedItemsByEnvScope(
         requestScope,
@@ -149,6 +163,7 @@ export default function AssetsPanel({
             keyword: keyword.trim() === '' ? undefined : keyword.trim(),
             kind: kind === 'all' ? undefined : kind,
             assigned: assigned === 'all' ? undefined : assigned === 'yes',
+            tags: tagFilterList.length === 0 ? undefined : tagFilterList,
             page: pageRequest?.page ?? page,
             pageSize: pageRequest?.pageSize ?? PAGE_SIZE,
           }),
@@ -405,6 +420,15 @@ export default function AssetsPanel({
                 <Badge variant="brand">{t('cluster.zones.tree.defaultEntry')}</Badge>
               )}
               {row.draining && <Badge variant="warn">{t('cluster.zones.tree.draining')}</Badge>}
+              {/* FR-227：标签 chip（key=value），过多则折叠为 +N */}
+              {(row.tags ?? []).slice(0, 3).map((tag) => (
+                <Badge key={tag.key} variant="outline" className="font-mono">
+                  {tag.key}={tag.value}
+                </Badge>
+              ))}
+              {(row.tags ?? []).length > 3 && (
+                <Badge variant="outline">+{(row.tags ?? []).length - 3}</Badge>
+              )}
             </span>
           )
         },
@@ -540,6 +564,15 @@ export default function AssetsPanel({
                 {t('cluster.servers.actions.viewHealth')}
               </Button>
               <LifecycleApprovalControl subject="server" id={row.id} stableID={row.serverId} lifecycle={row.lifecycle} />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1"
+                aria-label={t('cluster.servers.tags.title')}
+                onClick={() => { setTagServer(row) }}
+              >
+                <Tag className="size-3.5" />
+              </Button>
               {/* 次要运维收进菜单：默认入口 / 排空 / 禁用 / 解绑，避免操作列刷屏 */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -674,6 +707,17 @@ export default function AssetsPanel({
               className="w-48 pl-8"
             />
           </div>
+          {/* FR-227：标签交集筛选（key:value，空格分隔多个） */}
+          <Input
+            aria-label={t('cluster.servers.tags.filterLabel')}
+            placeholder={t('cluster.servers.tags.filterPlaceholder')}
+            value={tagFilter}
+            onChange={(e) => {
+              setTagFilter(e.target.value)
+              setPage(1)
+            }}
+            className="w-56"
+          />
           <Select
             value={kind}
             onValueChange={(value) => {
@@ -875,6 +919,19 @@ export default function AssetsPanel({
           }}
         />
       )}
+
+      {/* FR-227：标签编辑弹窗 */}
+      <TagDialog
+        server={tagServer}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTagServer(null)
+          }
+        }}
+        onSaved={() => {
+          void queryClient.invalidateQueries({ queryKey: ['servers'] })
+        }}
+      />
     </section>
   )
 }

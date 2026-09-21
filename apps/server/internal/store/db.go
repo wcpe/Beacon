@@ -93,6 +93,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&model.LobbyCluster{},
 		&model.Server{},
 		&model.AgentIdentity{},
+		&model.ServerTag{},
 		&model.AgentEndpoint{},
 		&model.HealthWeightsRev{},
 		// 热冷归档任务表（FR-151，见 ADR-0066）：落热库、控制面事实，不随数据归档

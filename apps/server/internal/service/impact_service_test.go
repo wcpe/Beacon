@@ -93,7 +93,7 @@ func TestImpactExcludesArchivedServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ZoneAssignment{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.ZoneAssignment{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {

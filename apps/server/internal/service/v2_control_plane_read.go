@@ -35,7 +35,9 @@ type ServerView struct {
 	Tombstone       *ServerTombstoneView `json:"tombstone,omitempty"`
 	Online          bool                 `json:"online"`
 	Assigned        bool                 `json:"assigned"`
-	CreatedAt       time.Time            `json:"createdAt"`
+	// Tags server 键值标签（FR-227），按 key 升序；无标签为空数组。
+	Tags      []ServerTagView `json:"tags"`
+	CreatedAt time.Time       `json:"createdAt"`
 }
 
 // ServerTombstoneView 是永久墓碑的脱敏审计摘要。
@@ -75,11 +77,29 @@ func enrichServers(db *gorm.DB, servers []model.Server) ([]ServerView, error) {
 	if err != nil {
 		return nil, err
 	}
+	tagsByServer, err := loadServerTags(db, collectServerPKs(servers))
+	if err != nil {
+		return nil, err
+	}
 	views := make([]ServerView, 0, len(servers))
 	for i := range servers {
-		views = append(views, buildServerView(&servers[i], zoneByID, regionNameByID, bcNameByID, onlineKeys))
+		view := buildServerView(&servers[i], zoneByID, regionNameByID, bcNameByID, onlineKeys)
+		view.Tags = tagsByServer[servers[i].ID]
+		if view.Tags == nil {
+			view.Tags = []ServerTagView{}
+		}
+		views = append(views, view)
 	}
 	return views, nil
+}
+
+// collectServerPKs 收集 server 主键集合（标签批量查询用）。
+func collectServerPKs(servers []model.Server) []uint {
+	pks := make([]uint, 0, len(servers))
+	for i := range servers {
+		pks = append(pks, servers[i].ID)
+	}
+	return pks
 }
 
 // collectServerRefs 收集需批量查名的 zone / bc_cluster id 与 serverId 去重集合。

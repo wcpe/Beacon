@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- 服务器键值标签（FR-227）：server 支持可维护的 `key=value` 标签（单机 ≤20 个，key ≤32 / value ≤128，key 唯一、重复覆盖）。新增 `server_tag` 表；`PUT /admin/v2/servers/{serverId}/tags`（按 key 增改）、`DELETE /admin/v2/servers/{serverId}/tags/{key}`（幂等删除），均为低风险直执 + `server.tag_updated` 强审计（含 key 与新旧值）；列表支持 `?tag=k:v` 重复参数交集筛选，`ServerView` 回带 `tags`；资产列表展示标签 chip、支持标签筛选与弹窗增删。**同源**：FR-29 的 `tag.<key>=<value>` 发现过滤改读 `server_tag`（不再匹配实例注册 metadata），以本表为 server 标签唯一真源。
 - Agent 上报容量上限（FR-228，增强 FR-32 健康打分）：agent-bukkit 反射读取 Paper `max-players` 并注入身份 `capacity`（取不到回 0），使健康 `capacity` 因子由「不适用」转为参与打分（该列已存在，此前恒为 0）。旧 agent 仍降级为不适用，不改总分口径。**注**：`conn` 因子现行实现仅对 proxy 适用，与本 FR 规格设想的「backend 饱和度」不一致，属待拍板项，未改动。
 - Agent 上报服务器工作目录（FR-226，增强 FR-208）：v2 注册请求体新增可选字段 `serverWorkDir`（服务器工作目录绝对路径，取 agent 的 plugins 上级目录，与 FR-163 扫描根一致）；控制面 `agent_identity` 新增 `server_work_dir` 列并在身份 / 冲突视图回显，使并发身份冲突下能一眼分辨「哪台、哪个目录」。仅注册时上报一次，心跳可选携带（空值不覆盖上次上报）；旧 agent 未上报时字段为 `null`，视图降级展示「未上报」且不报错；纯增字段，向后兼容（旧控制面忽略该键）。
 - 拓扑建树 MCP 工具（FR-221）：新增 `beacon.topology.bc-clusters.*`、`regions.*`、`zones.*` 共九个工具，语义与既有 `/admin/v2` 端点逐一对齐。建树是低风险结构操作，按「低风险按能力直执」原则直接执行并写审计，不产生审批票据；删除非空节点按既有约束拒绝；observer profile 不暴露写工具。

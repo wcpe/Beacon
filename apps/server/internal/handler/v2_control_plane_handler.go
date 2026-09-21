@@ -1094,6 +1094,7 @@ func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Reque
 	items, total, err := h.svc.ListServers(service.ListServersParams{
 		NamespaceID: namespaceID, Kind: q.Get("kind"), Assigned: assigned, Keyword: q.Get("keyword"),
 		LifecycleStatus: q.Get("lifecycleStatus"), Lifecycle: q.Get("lifecycle"),
+		Tags: parseServerTagQuery(q["tag"]),
 		Page: intQuery(q.Get("page")), PageSize: intQuery(q.Get("pageSize")),
 	})
 	if err != nil {
@@ -1101,6 +1102,58 @@ func (h *V2ControlPlaneHandler) ListServers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// parseServerTagQuery 解析重复查询参数 tag=k:v（FR-227，多 tag 取交集）；非法（无冒号 / 空 key）项忽略。
+func parseServerTagQuery(values []string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for _, raw := range values {
+		idx := strings.Index(raw, ":")
+		if idx <= 0 {
+			continue
+		}
+		out[raw[:idx]] = raw[idx+1:]
+	}
+	return out
+}
+
+// v2ServerTagsRequest 是标签增改请求体（按 key 增改，未出现的既有 key 保留）。
+type v2ServerTagsRequest struct {
+	Tags map[string]string `json:"tags"`
+}
+
+// SetServerTags 处理 PUT /admin/v2/servers/{serverId}/tags：按 key 增改标签（FR-227，低风险直执 + 强审计）。
+func (h *V2ControlPlaneHandler) SetServerTags(w http.ResponseWriter, r *http.Request) {
+	var req v2ServerTagsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		render.WriteError(w, r, apperr.ErrInvalidParam)
+		return
+	}
+	view, err := h.svc.SetServerTags(service.SetServerTagsParams{
+		ServerID: chi.URLParam(r, "serverId"), Tags: req.Tags,
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
+}
+
+// DeleteServerTag 处理 DELETE /admin/v2/servers/{serverId}/tags/{key}：删除单个标签（幂等）。
+func (h *V2ControlPlaneHandler) DeleteServerTag(w http.ResponseWriter, r *http.Request) {
+	view, err := h.svc.DeleteServerTag(service.DeleteServerTagParams{
+		ServerID: chi.URLParam(r, "serverId"), TagKey: chi.URLParam(r, "key"),
+		Operator: auth.Operator(r.Context()), ClientIP: clientIP(r),
+	})
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	render.WriteJSON(w, http.StatusOK, view)
 }
 
 // v2NamespaceResponse 构造 namespace 创建响应（新建 namespace 计数恒为 0）。
