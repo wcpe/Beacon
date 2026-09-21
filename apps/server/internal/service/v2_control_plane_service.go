@@ -159,6 +159,8 @@ type AgentRegisterV2Params struct {
 	Kind              string
 	BootID            string
 	AgentVersion      string
+	// ServerWorkDir agent 上报的服务器工作目录绝对路径（FR-226，可选；空表示旧 agent 未上报）。
+	ServerWorkDir     string
 	Addr              string
 	DetectedHost      string
 	ListenPort        *int
@@ -237,6 +239,7 @@ func (s *V2ControlPlaneService) RegisterAgentV2(p AgentRegisterV2Params) (*Agent
 			IdentityID: p.IdentityID, NamespaceID: ns.ID, ServerID: model.NullableServerID(p.ServerID),
 			Kind: p.Kind, Status: model.AgentIdentityStatusPending,
 			BootID: p.BootID, LastAddr: p.Addr, AgentVersion: p.AgentVersion,
+			ServerWorkDir: p.ServerWorkDir,
 			PendingExpiresAt: &expiresAt, StatusChangedAt: now,
 			BindingSource: identityBindingSourceForRegistration(p.ServerID),
 		}
@@ -409,6 +412,10 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 		current.BootID = p.BootID
 		current.LastAddr = p.Addr
 		current.AgentVersion = p.AgentVersion
+		// FR-226：工作目录仅在新值非空时覆盖（心跳可不携带，不抹掉上次上报值）。
+		if p.ServerWorkDir != "" {
+			current.ServerWorkDir = p.ServerWorkDir
+		}
 		current.PendingExpiresAt = &expiresAt
 	case model.AgentIdentityStatusExpired, model.AgentIdentityStatusUnbound:
 		if p.ServerID != "" {
@@ -424,6 +431,10 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 		current.BootID = p.BootID
 		current.LastAddr = p.Addr
 		current.AgentVersion = p.AgentVersion
+		// FR-226：工作目录仅在新值非空时覆盖（心跳可不携带，不抹掉上次上报值）。
+		if p.ServerWorkDir != "" {
+			current.ServerWorkDir = p.ServerWorkDir
+		}
 		current.PendingExpiresAt = &expiresAt
 		current.StatusChangedAt = now
 	case model.AgentIdentityStatusActive, model.AgentIdentityStatusDisabled:
@@ -436,6 +447,10 @@ func (s *V2ControlPlaneService) registerExistingIdentity(tx *gorm.DB, ns *model.
 		current.BootID = p.BootID
 		current.LastAddr = p.Addr
 		current.AgentVersion = p.AgentVersion
+		// FR-226：工作目录仅在新值非空时覆盖（心跳可不携带，不抹掉上次上报值）。
+		if p.ServerWorkDir != "" {
+			current.ServerWorkDir = p.ServerWorkDir
+		}
 	case model.AgentIdentityStatusRejected:
 		return apperr.ErrIdentityRejected
 	case model.AgentIdentityStatusConflict:

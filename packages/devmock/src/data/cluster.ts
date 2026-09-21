@@ -111,6 +111,8 @@ export interface IdentityRow {
   status: IdentityStatus
   bootId: string | null
   lastAddr: string | null
+  /** agent 上报的服务器工作目录（FR-226）；mock 给稳定可辨识路径 */
+  serverWorkDir: string | null
   agentVersion: string | null
   pendingExpiresAt: string | null
   boundAt: string | null
@@ -169,6 +171,7 @@ function makeIdentity(
     status,
     bootId: uuidFrom(`boot:${identitySeed}`),
     lastAddr: endpoints.find((endpoint) => endpoint.active)?.effectiveAddress ?? null,
+    serverWorkDir: `/srv/mc/${identitySeed}`,
     agentVersion: AGENT_VERSION,
     pendingExpiresAt: status === 'pending' ? isoOffset(48 * HOUR) : null,
     boundAt: status === 'active' || status === 'disabled' ? isoOffset(-20 * DAY) : null,

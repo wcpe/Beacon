@@ -18,6 +18,8 @@ package top.wcpe.beacon.agent.core.identity
  *                     非运维手填，与业务 [version] 语义不同；空表示未注入（旧 agent，向后兼容）。
  * @param identityId agent 首启生成并持久化的 v2 身份标识；空表示沿用 legacy 注册。
  * @param bootId     本次进程启动标识；只存内存，随 v2 注册上报。
+ * @param serverWorkDir 服务器工作目录绝对路径（FR-226）：随 v2 注册上报，供控制面冲突 / 身份视图分辨
+ *                      「哪台、哪个目录」；取不到时为空串，不阻断接入（旧控制面忽略即可）。
  */
 data class AgentIdentity(
     var namespace: String,
@@ -32,6 +34,7 @@ data class AgentIdentity(
     val agentVersion: String = "",
     val identityId: String = "",
     val bootId: String = "",
+    val serverWorkDir: String = "",
     val endpointReport: EndpointReport = EndpointReport(),
 ) {
     /** 写入控制面确认的运行期绑定。 */
