@@ -36,6 +36,9 @@ type MCPConfig struct {
 	Enabled           bool     `yaml:"enabled"`
 	PublicBaseURL     string   `yaml:"public-base-url"`
 	TrustedProxyCIDRs []string `yaml:"trusted-proxy-cidrs"`
+	// AllowApprovalDecide 允许 automation 客户端执行审批决定（默认 false）。
+	// 默认关闭以保持"审批决定权归人类"的分权设计；仅内网单操作者部署可显式开启闭环自动化。
+	AllowApprovalDecide bool `yaml:"allow-approval-decide"`
 	// AllowMachineRegister 允许受信内部调用方（命中 X-Beacon-Token 共享 token 的请求）机器化注册 agent：
 	// 注册直接落 active 并绑定 serverId，跳过人工审批（FR-222，见 specs/internal-trust-channel.md）。
 	// 默认 false —— 关闭时行为与既有分权设计完全一致（一律落 pending 待人工确认）。

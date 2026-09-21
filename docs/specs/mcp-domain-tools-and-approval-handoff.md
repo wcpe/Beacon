@@ -21,7 +21,7 @@ FR-219 只建立经过认证的 MCP transport 和机器主体。要让外部 Age
 ### 2.2 明确不做
 
 - 不提供 `http.request`、`rest.call`、`sql.query`、`service.invoke`、任意文件路径读写或任意 Agent 命令代理。
-- 不提供 approve、reject、approve-and-execute 或可构造 ExecutionPermit 的工具。
+- 不提供 approve、reject、approve-and-execute 或可构造 ExecutionPermit 的工具。**FR-223 归真**：审批决定工具默认不暴露；仅当部署显式开启 `mcp.allow-approval-decide` 时，`beacon.approvals.approve` / `beacon.approvals.reject` 才对 `automation` profile 放行（observer 任何情况下不可见），用于内网单操作者部署打通自动化闭环。`approve-and-execute` 与 permit 构造仍属禁止项。
 - 不让 MCP 工具直接访问 repository、GORM、Agent session/connection map 或绕过 application service。
 - 不把实时日志、文件内容、敏感配置明文或消息 payload 归类为普通读取。
 - 不复制领域状态机、风险判定或审批状态机；FR-207～211 与各领域 service 是唯一真源。
@@ -155,7 +155,7 @@ registry 构建与测试必须拒绝任何 operation 等价于：批准、驳回
 - `beacon.approvals.own.get` 返回申请状态、时间线、批准主体摘要、执行结果/错误摘要和审计引用。
 - `beacon.approvals.own.list` 服务端分页，支持状态、operation 和时间筛选，只返回当前 client 的申请。
 - `beacon.approvals.own.withdraw` 只允许申请主体在 `pending` 状态撤回；已批准、执行中或终态返回稳定冲突。
-- 不提供 approve/reject 工具；外部 Agent 也不能通过管理 REST bearer 完成这些动作。
+- 不提供 approve/reject 工具（**默认**）；外部 Agent 也不能通过管理 REST bearer 完成这些动作。**FR-223 归真**：仅当部署显式开启 `mcp.allow-approval-decide` 时，`automation` profile 可发现 `beacon.approvals.approve`（批准）与 `beacon.approvals.reject`（拒绝须给理由），二者均写强审计、批准后由 approval worker 执行领域动作；`observer` 任何情况下不可见。默认关闭以保持「审批决定权归人类」的分权设计。
 
 ## 6. 观测范围与目标安全
 
@@ -184,7 +184,7 @@ registry 构建与测试必须拒绝任何 operation 等价于：批准、驳回
 1. 每个管理 REST、后台危险入口和领域副作用 operation 都已登记风险分类。
 2. 每个面向操作者的管理 operation 恰有一个显式 MCP tool；除 human approve/reject、ExecutionPermit、MCP/OAuth 协议内部动作和无稳定外部契约的纯内部诊断外，不允许以“不要求自动化”为由豁免。
 3. 所有 `approval_required` tool adapter 只能调用申请服务，不能直接取得 ExecutionPermit。
-4. 固定禁止清单只包含 human approve/reject、permit 构造、协议内部动作与纯内部诊断；不存在 MCP approve/reject/permit 工具，也不存在通用 HTTP/SQL/文件/内部服务代理。
+4. 固定禁止清单只包含 human approve/reject（**FR-223 归真**：开关 `allow-approval-decide` 显式开启时该两项对 automation 放行，属受控例外）、permit 构造、协议内部动作与纯内部诊断；不存在 `approve-and-execute`/permit 构造工具，也不存在通用 HTTP/SQL/文件/内部服务代理。
 5. 工具 schema 的目标字段使用稳定 code/serverId，不使用 displayName 寻址。
 6. 新增面向操作者的 operation 未映射到恰好一个显式工具时测试失败；新增禁止项未进入固定安全审查清单时同样失败，运行时一律 fail-closed。
 
@@ -221,7 +221,7 @@ registry 构建与测试必须拒绝任何 operation 等价于：批准、驳回
 - 每个 direct 动作的 capability、幂等、止损审计和恢复动作升级审批覆盖。
 - 每个危险工具只创建申请，业务表/Agent 在批准前零副作用；重复 key 返回同一申请。
 - human 批准后 worker 自动执行；MCP 轮询看到 succeeded/failed，无第二次 execute。
-- MCP 调 approve/reject REST、伪造 Principal、构造 permit、改审批载荷全部失败。
+- MCP 调 approve/reject REST、伪造 Principal、构造 permit、改审批载荷全部失败。**FR-223 归真**：开关开启后 automation 可经 `beacon.approvals.approve`/`reject` 决定审批，但该路径同样只能调用审批服务、不能构造 permit 或改写冻结载荷；未开启开关时该工具不可发现，直接调 REST 仍失败。
 - Agent 命令/日志/文件/明文/payload 均进入审批；普通历史元数据读取不被误升级。
 - registry coverage 覆盖 V1/V2 同义入口、body 分支与后台任务；新增未分类 operation 使测试失败。
 - 工具清单中不存在通用 HTTP、SQL、路径读写或内部 service 调用。
@@ -238,7 +238,7 @@ registry 构建与测试必须拒绝任何 operation 等价于：批准、驳回
 ## 13. 风险与收口条件
 
 - “覆盖所有操作”不等于提供通用代理；只有具备稳定领域契约、风险分类和显式 schema 的操作才能暴露。
-- 隐藏 approve 工具不是安全边界；机器审批服务层负向测试未通过前不得启用 automation profile。
+- 隐藏 approve 工具不是安全边界；机器审批服务层负向测试未通过前不得启用 automation profile。**FR-223 归真**：审批决定能力的安全边界是「服务层负向测试 + 显式开关 `mcp.allow-approval-decide`（默认关闭）+ 仅 automation profile 可见」三者叠加，不是「工具不存在」这一事实本身。
 - 工具数量会随领域增长，必须依赖 registry/coverage test 防漂移，不能手工复制 REST 路由。
 - 本规格自动化测试绿不能替代真实外部 MCP 客户端、TLS 反代和人审执行验收。
 

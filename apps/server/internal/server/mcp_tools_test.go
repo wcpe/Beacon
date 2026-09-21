@@ -3,13 +3,14 @@ package server
 import (
 	"testing"
 
+	"github.com/wcpe/Beacon/apps/server/internal/auth"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
 func TestMCPToolCoverageFailsClosedForForbiddenOrGenericProxyTools(t *testing.T) {
 	for _, profile := range []string{model.MCPClientProfileObserver, model.MCPClientProfileAutomation} {
 		for _, name := range MCPToolNames(profile) {
-			if name == "" || name == "beacon.approvals.approve" || name == "beacon.approvals.reject" || name == "beacon.permit.create" || name == "beacon.http.request" || name == "beacon.sql.query" || name == "beacon.files.proxy" || name == "beacon.internal.call" {
+			if name == "" || name == "beacon.permit.create" || name == "beacon.http.request" || name == "beacon.sql.query" || name == "beacon.files.proxy" || name == "beacon.internal.call" {
 				t.Fatalf("MCP 工具目录含禁止或通用代理工具: profile=%s tool=%s", profile, name)
 			}
 		}
@@ -22,8 +23,35 @@ func TestMCPToolCoverageObserverCannotWithdrawAndAutomationCanOnlyWithdrawOwn(t 
 	if containsMCPTool(observer, "beacon.approvals.own.withdraw") || !containsMCPTool(automation, "beacon.approvals.own.withdraw") {
 		t.Fatalf("审批撤回工具的 profile 覆盖不符: observer=%v automation=%v", observer, automation)
 	}
+	// 审批决定工具默认不出现在清单（分权：机器主体不发现审批决定工具）。
+	// 仅当部署显式开启 mcp.allow-approval-decide 时才纳入（FR-223）。
 	if containsMCPTool(automation, "beacon.approvals.approve") || containsMCPTool(automation, "beacon.approvals.reject") {
-		t.Fatalf("机器主体不得发现审批决定工具: %v", automation)
+		t.Fatalf("默认（开关关闭）时机器主体不得发现审批决定工具: %v", automation)
+	}
+}
+
+// TestMCPToolCoverageApprovalDecideIsOptIn 验证 FR-223 的动态清单：
+// 开关开启后才纳入审批决定工具，关闭后立即移除——保证清单与实际注册行为一致。
+func TestMCPToolCoverageApprovalDecideIsOptIn(t *testing.T) {
+	t.Cleanup(func() { auth.SetMCPApprovalDecide(false) })
+
+	auth.SetMCPApprovalDecide(false)
+	off := MCPToolNames(model.MCPClientProfileAutomation)
+	if containsMCPTool(off, "beacon.approvals.approve") || containsMCPTool(off, "beacon.approvals.reject") {
+		t.Fatalf("开关关闭时清单不应含审批决定工具: %v", off)
+	}
+	// observer 任何情况下都不得发现审批决定工具。
+	if containsMCPTool(MCPToolNames(model.MCPClientProfileObserver), "beacon.approvals.approve") {
+		t.Fatalf("observer 不得发现审批决定工具")
+	}
+
+	auth.SetMCPApprovalDecide(true)
+	on := MCPToolNames(model.MCPClientProfileAutomation)
+	if !containsMCPTool(on, "beacon.approvals.approve") || !containsMCPTool(on, "beacon.approvals.reject") {
+		t.Fatalf("开关开启后清单应含审批决定工具: %v", on)
+	}
+	if containsMCPTool(MCPToolNames(model.MCPClientProfileObserver), "beacon.approvals.approve") {
+		t.Fatalf("observer 在开关开启时仍不得发现审批决定工具")
 	}
 }
 
