@@ -7,13 +7,19 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import {
+  Activity,
+  Ban,
   ChevronLeft,
   ChevronRight,
+  CircleHelp,
+  DoorOpen,
   Inbox,
+  Link2Off,
   MoreHorizontal,
   Network,
   Search,
   Server,
+  ShieldAlert,
   X,
 } from 'lucide-react'
 
@@ -36,6 +42,10 @@ import {
   SelectTrigger,
   SelectValue,
   SummaryStrip,
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
   cn,
   levelText,
   type DataTableColumn,
@@ -64,6 +74,26 @@ import { LEVEL_META, badgeOf } from './health-level'
 import ReasonDialog from './reason-dialog'
 
 const PAGE_SIZE = 15
+
+// F1：操作「?」说明——小问号按钮 + 悬停 / 聚焦弹出解释（自带 Provider，不依赖全局挂载）。
+function HelpTip({ text }: { text: string }) {
+  return (
+    <TooltipProvider delayDuration={100}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={text}
+            className="grid size-4 shrink-0 place-items-center rounded-full text-ink-4 transition-colors hover:text-ink-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+          >
+            <CircleHelp className="size-3.5" aria-hidden />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[260px] text-[11.5px] leading-relaxed">{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 // 行动作意图（defaultEntry 走无原因确认框：v2 端点仅收 value，操作人经审计记录）
 type RowAction =
@@ -492,7 +522,12 @@ export default function AssetsPanel({
         },
       },
       {
-        header: t('cluster.servers.columns.actions'),
+        header: (
+          <span className="inline-flex items-center justify-end gap-1">
+            {t('cluster.servers.columns.actions')}
+            <HelpTip text={t('cluster.servers.actions.helpHint')} />
+          </span>
+        ),
         headClassName: 'text-right',
         className: 'text-right',
         cell: (row) => {
@@ -500,7 +535,8 @@ export default function AssetsPanel({
           const isBackendAssigned = row.kind === 'backend' && row.zoneId !== null
           return (
             <div className="flex flex-wrap items-center justify-end gap-1" onClick={(e) => { e.stopPropagation() }}>
-              <Button size="sm" variant="ghost" onClick={() => { onViewHealth(row.serverId) }}>
+              <Button size="sm" variant="ghost" className="gap-1" onClick={() => { onViewHealth(row.serverId) }}>
+                <Activity className="size-3.5" />
                 {t('cluster.servers.actions.viewHealth')}
               </Button>
               <LifecycleApprovalControl subject="server" id={row.id} stableID={row.serverId} lifecycle={row.lifecycle} />
@@ -511,7 +547,8 @@ export default function AssetsPanel({
                     size="sm"
                     variant="ghost"
                     className="px-2"
-                    aria-label={t('cluster.servers.columns.actions')}
+                    aria-label={t('cluster.servers.actions.moreActions')}
+                    title={t('cluster.servers.actions.moreActions')}
                   >
                     <MoreHorizontal className="size-4" />
                   </Button>
@@ -520,21 +557,25 @@ export default function AssetsPanel({
                   {isBackendAssigned && (
                     <>
                       <DropdownMenuItem
+                        className="gap-2"
                         onSelect={() => {
                           setErrorText(null)
                           setAction({ kind: 'defaultEntry', row, next: !row.isDefaultEntry })
                         }}
                       >
+                        <DoorOpen className="size-3.5 text-ink-4" aria-hidden />
                         {row.isDefaultEntry
                           ? t('cluster.servers.actions.clearDefaultEntry')
                           : t('cluster.servers.actions.setDefaultEntry')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        className="gap-2"
                         onSelect={() => {
                           setErrorText(null)
                           setAction({ kind: 'draining', row, next: !row.draining })
                         }}
                       >
+                        <ShieldAlert className="size-3.5 text-ink-4" aria-hidden />
                         {row.draining
                           ? t('cluster.servers.actions.stopDraining')
                           : t('cluster.servers.actions.startDraining')}
@@ -545,20 +586,23 @@ export default function AssetsPanel({
                   {canOps ? (
                     <>
                       <DropdownMenuItem
+                        className="gap-2"
                         onSelect={() => {
                           setErrorText(null)
                           setAction({ kind: 'disable', row })
                         }}
                       >
+                        <Ban className="size-3.5 text-ink-4" aria-hidden />
                         {t('cluster.servers.actions.disable')}
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        className="text-crit focus:text-crit"
+                        className="gap-2 text-crit focus:text-crit"
                         onSelect={() => {
                           setErrorText(null)
                           setAction({ kind: 'unbind', row })
                         }}
                       >
+                        <Link2Off className="size-3.5" aria-hidden />
                         {t('cluster.servers.actions.unbind')}
                       </DropdownMenuItem>
                     </>

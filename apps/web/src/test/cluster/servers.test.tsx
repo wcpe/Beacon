@@ -125,7 +125,7 @@ describe('/servers 服务器页', () => {
     const row = await findServerRow('game-1')
     expect(within(row).getByText('默认入口')).toBeInTheDocument()
     // 打开行内操作菜单再点「取消默认入口」
-    await user.click(within(row).getByRole('button', { name: '操作' }))
+    await user.click(within(row).getByRole('button', { name: '更多操作' }))
     await user.click(await screen.findByRole('menuitem', { name: '取消默认入口' }))
 
     // 无原因确认框：确认后徽标消失、菜单项翻转
@@ -137,7 +137,7 @@ describe('/servers 服务器页', () => {
       expect(within(fresh as HTMLElement).queryByText('默认入口')).not.toBeInTheDocument()
     })
     const fresh = await findServerRow('game-1')
-    await user.click(within(fresh).getByRole('button', { name: '操作' }))
+    await user.click(within(fresh).getByRole('button', { name: '更多操作' }))
     expect(await screen.findByRole('menuitem', { name: '设为默认入口' })).toBeInTheDocument()
   }, 20_000)
 
@@ -155,7 +155,7 @@ describe('/servers 服务器页', () => {
     renderPage(<ServersPage />)
 
     const row = await findServerRow('survival-1')
-    await user.click(within(row).getByRole('button', { name: '操作' }))
+    await user.click(within(row).getByRole('button', { name: '更多操作' }))
     await user.click(await screen.findByRole('menuitem', { name: '取消排空' }))
     const dialog = await screen.findByRole('alertdialog')
     await user.type(within(dialog).getByLabelText('原因'), '维护窗口')

@@ -62,6 +62,11 @@ export const cluster = {
       setDefaultEntry: '设为默认入口',
       clearDefaultEntry: '取消默认入口',
       viewHealth: '健康详情',
+      // F1：操作列「?」说明——各操作含义与写操作前提
+      help: '操作说明',
+      moreActions: '更多操作',
+      helpHint:
+        '健康详情：查看该服务器的健康分与因子分解。更多操作：设为 / 取消默认入口、置为 / 取消排空、禁用、解绑、生命周期归档——写操作均需填写原因。',
     },
     confirm: {
       disableTitle: '禁用服务器',
