@@ -1079,8 +1079,9 @@ MCP resource 固定为 `/admin/v2/mcp`，token 固定为 `POST /admin/v2/oauth/t
 
 三个申请端点的硬约束：
 
-- 必须携带 `Idempotency-Key` 头，缺失返回 `403`；同键重放返回既有票据，此时 `clientSecret` **不返回**（明文只在首次生成时出现一次，遗失只能重新申请轮换）。
-- 仅人类主体可提审；`readonly` 角色被写守卫拒绝。
+- 必须携带 `Idempotency-Key` 头，缺失返回 `400 idempotency_key_required`；`reason` 必填，缺失返回 `400 reason_required`；仅人类主体可提审，机器主体返回 `403 human_only_operation`。三类失败给出**可区分的错误码**而非泛化 403——它们的处置方向完全不同（补请求头 / 补原因 / 换主体）。
+- 同键重放返回既有票据，此时 `clientSecret` **不返回**（明文只在首次生成时出现一次，遗失只能重新申请轮换）。
+- `readonly` 角色被写守卫拒绝。
 - 轮换批准后旧 secret 与已签发 token 即时失效；吊销后该客户端无法再换取 token。
 
 `GET /admin/v2/mcp/config` 返回 MCP 入口的部署事实，**任何启用状态下都返回 200**（未启用时 `enabled=false`，供管理台展示配置指引而非报错）：

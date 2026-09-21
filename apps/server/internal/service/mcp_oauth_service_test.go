@@ -173,3 +173,59 @@ func TestMCPOAuthRejectsExpiredToken(t *testing.T) {
 		t.Fatal("过期 token 不应通过")
 	}
 }
+
+// TestMCPOAuthRequestCredentialChangeDistinguishesPreconditions 验证四类前置失败各自返回
+// 可区分的错误码，而不是合并成一个泛化 403。
+//
+// 动机：这四类失败的正确处置完全不同——无审批服务要去查部署，非人类主体要换主体，
+// 缺原因要补原因，缺幂等键要补请求头。此前统一回 ErrForbidden（文案「只读密钥无权执行写操作」），
+// 会把调用方引向排查权限，方向完全错误。
+func TestMCPOAuthRequestCredentialChangeDistinguishesPreconditions(t *testing.T) {
+	const (
+		reason = "需要连接控制面"
+		key    = "mcp-precond-1"
+	)
+	cases := []struct {
+		name      string
+		reason    string
+		key       string
+		principal auth.Principal
+		want      *apperr.Error
+	}{
+		{"缺原因", " ", key, auth.HumanPrincipal("alice"), apperr.ErrReasonRequired},
+		{"缺幂等键", reason, "", auth.HumanPrincipal("alice"), apperr.ErrIdempotencyKeyRequired},
+		{"非人类主体", reason, key, auth.MCPPrincipal("mcp_robot", "自动化", model.MCPClientProfileAutomation), apperr.ErrHumanOnlyOperation},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oauth, _, _ := newMCPOAuthApprovalTest(t)
+			_, err := oauth.RequestCreate("机器人", model.MCPClientProfileObserver, tc.reason, tc.key, tc.principal, "127.0.0.1")
+			if err == nil {
+				t.Fatal("应拒绝，实际通过")
+			}
+			var ae *apperr.Error
+			if !errors.As(err, &ae) {
+				t.Fatalf("应为 *apperr.Error，实际 %T", err)
+			}
+			if ae.Code != tc.want.Code {
+				t.Fatalf("错误码应为 %q，实际 %q（文案 %q）", tc.want.Code, ae.Code, ae.Message)
+			}
+			// 明确不得退化为泛化 403 文案，否则等于回到修复前。
+			if ae.Code == apperr.ErrForbidden.Code {
+				t.Fatalf("不应复用泛化 %q", apperr.ErrForbidden.Code)
+			}
+		})
+	}
+}
+
+// TestMCPOAuthRequestCredentialChangeHumanStillWorks 保证收敛错误码后正常人类提审不受影响。
+func TestMCPOAuthRequestCredentialChangeHumanStillWorks(t *testing.T) {
+	oauth, _, _ := newMCPOAuthApprovalTest(t)
+	ticket, err := oauth.RequestCreate("正常机器人", model.MCPClientProfileObserver, "合法原因", "mcp-precond-ok", auth.HumanPrincipal("alice"), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("人类主体带齐参数应成功，实际 %v", err)
+	}
+	if ticket.ApprovalRequestID == "" || ticket.ClientSecret == "" {
+		t.Fatalf("应返回票据与一次性明文，实际 %+v", ticket)
+	}
+}

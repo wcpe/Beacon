@@ -243,6 +243,14 @@ var (
 	ErrOperationRequiresApproval = New(http.StatusConflict, "operation_requires_approval", "该操作必须先提交审批申请")
 	// ErrIdempotencyKeyReused 幂等键被不同冻结载荷复用。
 	ErrIdempotencyKeyReused = New(http.StatusConflict, "idempotency_key_reused", "幂等键已被不同申请内容使用")
+	// ErrIdempotencyKeyRequired 危险申请缺少 Idempotency-Key 头。
+	// 单独成错（而非复用 ErrForbidden）：缺头是调用方漏传参数，与权限无关；
+	// 复用泛化 403 会把人引向排查权限，方向完全错误。
+	ErrIdempotencyKeyRequired = New(http.StatusBadRequest, "idempotency_key_required", "缺少 Idempotency-Key 请求头")
+	// ErrHumanOnlyOperation 机器主体（API 密钥 / MCP）不能发起需人工负责的危险申请（FR-206）。
+	ErrHumanOnlyOperation = New(http.StatusForbidden, "human_only_operation", "该操作仅人类主体可发起")
+	// ErrReasonRequired 危险申请缺少必填原因。
+	ErrReasonRequired = New(http.StatusBadRequest, "reason_required", "缺少审批原因")
 	// ErrRezoneRequired 已分配 server 改归属必须走换区工单。
 	ErrRezoneRequired = New(http.StatusConflict, "rezone_required", "已分配 server 改归属必须走换区工单")
 	// ErrRezoneNotAssigned 换区工单选中未分配 server（应走首次分配，FR-155）。
