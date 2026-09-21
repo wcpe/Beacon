@@ -812,3 +812,62 @@ func TestExpireStale(t *testing.T) {
 		t.Fatalf("应过期 1 条，实际 %d / %v", n, err)
 	}
 }
+
+// TestRequestResyncApprovalRejectsWithActionableErrors 验证强制重同步提审的四类前置失败
+// 各自返回可区分的错误码，而不是统一的泛化 403。
+//
+// 动机：该入口由 MCP 工具 beacon.agent.server.resync 直接暴露给外部集成方，namespaceCode /
+// serverId 完全由调用方控制。此前缺参数也报 ErrForbidden（「只读密钥无权执行写操作」），
+// 会把调用方引向排查密钥权限，而真实原因是请求体漏字段。
+func TestRequestResyncApprovalRejectsWithActionableErrors(t *testing.T) {
+	human := auth.HumanPrincipal("alice")
+	const (
+		ns       = "prod"
+		serverID = "lobby-1"
+		reason   = "排查连接异常"
+		key      = "resync-key-1"
+	)
+	cases := []struct {
+		name       string
+		svc        *AgentCommandService
+		ns         string
+		serverID   string
+		reason     string
+		key        string
+		wantStatus int
+		wantCode   string
+	}{
+		{"未装配审批服务", &AgentCommandService{}, ns, serverID, reason, key, 500, "INTERNAL"},
+		{"缺 namespace", nil, "", serverID, reason, key, 400, "INVALID_PARAM"},
+		{"缺 serverId", nil, ns, "", reason, key, 400, "INVALID_PARAM"},
+		{"缺原因", nil, ns, serverID, "  ", key, 400, "approval_reason_required"},
+		{"缺幂等键", nil, ns, serverID, reason, "", 400, "idempotency_key_required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := tc.svc
+			if svc == nil {
+				db := newCommandSvcTestDB(t)
+				svc = newCommandSvc(db)
+				// 装配 approval，使用例命中参数校验分支而非装配分支。
+				registry := authz.NewApprovalRegistry()
+				svc.SetApprovalService(NewApprovalService(db, repository.NewApprovalRequestRepository(db), repository.NewAuditLogRepository(db), registry))
+			}
+			_, err := svc.RequestResyncApproval(tc.ns, tc.serverID, tc.reason, tc.key, "alice", "127.0.0.1", human)
+			if err == nil {
+				t.Fatal("应拒绝，实际通过")
+			}
+			var ae *apperr.Error
+			if !errors.As(err, &ae) {
+				t.Fatalf("应为 *apperr.Error，实际 %T", err)
+			}
+			if ae.Status != tc.wantStatus || ae.Code != tc.wantCode {
+				t.Fatalf("应为 %d/%s，实际 %d/%s（%s）", tc.wantStatus, tc.wantCode, ae.Status, ae.Code, ae.Message)
+			}
+			// 不得退化为泛化 403，否则等于回到修复前。
+			if ae.Code == apperr.ErrForbidden.Code {
+				t.Fatal("不应复用泛化 FORBIDDEN")
+			}
+		})
+	}
+}

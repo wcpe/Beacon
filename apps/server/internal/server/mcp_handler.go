@@ -19,17 +19,17 @@ type MCPAccessTokenVerifier interface {
 	VerifyAccessToken(raw, audience string) (auth.Principal, error)
 }
 
+// MCPToolRegistrar 按认证后的机器主体构造仅含其可发现工具的 MCP server。
+type MCPToolRegistrar interface {
+	NewMCPServer(principal auth.Principal) *mcp.Server
+}
+
 // MCPHandler 是 Streamable HTTP MCP 的协议与认证边界；领域工具另行静态登记。
 type MCPHandler struct {
 	audience  string
 	verifier  MCPAccessTokenVerifier
 	transport http.Handler
 	policy    *MCPProxyPolicy
-}
-
-// MCPToolRegistrar 按认证后的机器主体构造仅含其可发现工具的 MCP server。
-type MCPToolRegistrar interface {
-	NewMCPServer(principal auth.Principal) *mcp.Server
 }
 
 // NewPublicMCPHandler 构造仅允许受信 TLS 反向代理转发的 MCP transport。
@@ -40,15 +40,25 @@ func NewPublicMCPHandler(verifier MCPAccessTokenVerifier, policy *MCPProxyPolicy
 }
 
 // NewPublicMCPHandlerWithTools 为公网 MCP resource 注入按主体隔离的显式工具目录。
-func NewPublicMCPHandlerWithTools(verifier MCPAccessTokenVerifier, policy *MCPProxyPolicy, tools MCPToolRegistrar) *MCPHandler {
-	h := NewMCPHandlerWithTools(verifier, policy.Audience(), tools)
+// disableLocalhostProtection 为 true 时关闭 SDK 的 DNS rebinding Host 校验（内网直连部署）。
+func NewPublicMCPHandlerWithTools(verifier MCPAccessTokenVerifier, policy *MCPProxyPolicy, tools MCPToolRegistrar, disableLocalhostProtection bool) *MCPHandler {
+	h := newMCPHandler(verifier, policy.Audience(), func(r *http.Request) *mcp.Server {
+		if tools == nil {
+			return newEmptyMCPServer()
+		}
+		principal, ok := auth.FromContext(r.Context())
+		if !ok || principal.Kind != auth.PrincipalKindMCP {
+			return newEmptyMCPServer()
+		}
+		return tools.NewMCPServer(principal)
+	}, disableLocalhostProtection)
 	h.policy = policy
 	return h
 }
 
 // NewMCPHandler 构造空工具 MCP transport。未登记工具时不暴露任何领域写入能力。
 func NewMCPHandler(verifier MCPAccessTokenVerifier, audience string) *MCPHandler {
-	return newMCPHandler(verifier, audience, func(*http.Request) *mcp.Server { return newEmptyMCPServer() })
+	return newMCPHandler(verifier, audience, func(*http.Request) *mcp.Server { return newEmptyMCPServer() }, false)
 }
 
 // NewMCPHandlerWithTools 构造按 MCP 主体隔离工具发现的 transport。
@@ -62,14 +72,18 @@ func NewMCPHandlerWithTools(verifier MCPAccessTokenVerifier, audience string, to
 			return newEmptyMCPServer()
 		}
 		return tools.NewMCPServer(principal)
-	})
+	}, false)
 }
 
-func newMCPHandler(verifier MCPAccessTokenVerifier, audience string, factory func(*http.Request) *mcp.Server) *MCPHandler {
+// newMCPHandler 构造 transport；disableLocalhostProtection 为 true 时关闭 SDK 的
+// DNS rebinding Host 校验（内网直连部署由 MCPProxyPolicy 的 Host 白名单接管该职责）。
+func newMCPHandler(verifier MCPAccessTokenVerifier, audience string, factory func(*http.Request) *mcp.Server, disableLocalhostProtection bool) *MCPHandler {
 	return &MCPHandler{
 		audience: audience, verifier: verifier,
 		transport: mcp.NewStreamableHTTPHandler(factory, &mcp.StreamableHTTPOptions{
-			JSONResponse: true, SessionTimeout: 5 * time.Minute,
+			JSONResponse:               true,
+			SessionTimeout:             5 * time.Minute,
+			DisableLocalhostProtection: disableLocalhostProtection,
 		}),
 	}
 }

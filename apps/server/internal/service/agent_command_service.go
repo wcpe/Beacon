@@ -149,8 +149,19 @@ func (s *AgentCommandService) RequestResync(_, _, _, _ string) (*model.AgentComm
 
 // RequestResyncApproval 创建强制重同步审批申请，命令仅在批准 worker 内下发。
 func (s *AgentCommandService) RequestResyncApproval(ns, serverID, reason, idempotencyKey, operator, clientIP string, principal auth.Principal) (ApprovalTicketView, error) {
-	if s == nil || s.approval == nil || ns == "" || serverID == "" {
-		return ApprovalTicketView{}, apperr.ErrForbidden
+	// 逐条区分：装配缺失是服务端问题（500），缺参数是调用方问题（400）。
+	// 此前合并成 ErrForbidden，会让 MCP 调用方去查密钥权限，而实际是请求体漏字段。
+	if s == nil || s.approval == nil {
+		return ApprovalTicketView{}, apperr.ErrInternal
+	}
+	if ns == "" || serverID == "" {
+		return ApprovalTicketView{}, apperr.ErrInvalidParam
+	}
+	if strings.TrimSpace(reason) == "" {
+		return ApprovalTicketView{}, apperr.ErrApprovalReasonRequired
+	}
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return ApprovalTicketView{}, apperr.ErrIdempotencyKeyRequired
 	}
 	req, err := s.approval.Request(authz.Operation{Kind: authz.OperationAgentCommandResync, Resource: "agent-command", ResourceID: ns + "/" + serverID, IdempotencyKey: idempotencyKey, Reason: reason}, map[string]any{"namespace": ns, "serverId": serverID, "operator": operator, "clientIP": clientIP}, principal, clientIP)
 	if err != nil {

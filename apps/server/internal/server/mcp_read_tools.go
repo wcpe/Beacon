@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -9,6 +11,12 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
 	"github.com/wcpe/Beacon/apps/server/internal/service"
+)
+
+// MCP 只读拓扑工具的失败原因（不向客户端透传内部细节）。
+var (
+	errMCPNamespaceRequired = errors.New("需要指定 namespace")
+	errMCPNamespaceDenied   = errors.New("namespace 不在授权范围内")
 )
 
 // MCPReadServices 只聚合已存在的应用查询服务，避免 MCP 越过服务层直读存储。
@@ -32,6 +40,8 @@ func NewMCPReadServices(v2 *service.V2ControlPlaneService, topology *service.Top
 var mcpReadToolNames = []string{
 	"beacon.metadata.namespaces.list",
 	"beacon.topology.snapshot.get",
+	"beacon.topology.zone-tree.get",
+	"beacon.topology.servers.list",
 	"beacon.metrics.health.list",
 	"beacon.metrics.summary.get",
 	"beacon.metrics.series.query",
@@ -56,6 +66,20 @@ type mcpScopeInput struct {
 type mcpTopologyInput struct {
 	mcpScopeInput
 	Namespace string `json:"namespace"`
+}
+
+type mcpZoneTreeInput struct {
+	mcpScopeInput
+	Namespace string `json:"namespace,omitempty"`
+}
+
+type mcpServerListInput struct {
+	mcpScopeInput
+	Namespace       string `json:"namespace,omitempty"`
+	Keyword         string `json:"keyword,omitempty"`
+	LifecycleStatus string `json:"lifecycleStatus,omitempty"`
+	Page            int    `json:"page,omitempty"`
+	PageSize        int    `json:"pageSize,omitempty"`
 }
 
 type mcpHealthListInput struct {
@@ -154,6 +178,7 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 			return &mcp.CallToolResult{}, mcpTopologyView(topology), nil
 		})
 	}
+	r.registerReadV2TopologyTools(server)
 	r.registerReadHealthTools(server)
 	if r.reads.messages != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "beacon.history.messages.list", Description: "读取消息元数据历史，不含正文与玩家标识"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpMessageHistoryInput) (*mcp.CallToolResult, map[string]any, error) {
@@ -222,6 +247,50 @@ func (r *MCPToolRegistry) registerReadTools(server *mcp.Server) {
 	}
 }
 
+// registerReadV2TopologyTools 登记依赖 V2 控制面读取层的拓扑只读工具（FR-221）。
+// 从 registerReadTools 抽出，避免其圈复杂度与嵌套深度超限（gocyclo / nestif 门禁）。
+func (r *MCPToolRegistry) registerReadV2TopologyTools(server *mcp.Server) {
+	if r.reads.v2 == nil {
+		return
+	}
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.zone-tree.get", Description: "读取区服结构树（BC 集群 → 大区 → 小区，含各节点计数与默认入口统计）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpZoneTreeInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+		nsID, err := r.mcpResolveNamespaceID(in.Namespace, in.NamespaceID, scope)
+		if !ok || err != nil {
+			return mcpRejectedResult()
+		}
+		tree, err := r.reads.v2.ZoneTree(nsID)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpZoneTreeView(tree), nil
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "beacon.topology.servers.list", Description: "分页读取 server 富化视图（含归属名 / 默认入口 / 在线摘要 / 排空状态）"}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpServerListInput) (*mcp.CallToolResult, map[string]any, error) {
+		scope, ok := r.mcpObservationScope(in.mcpScopeInput)
+		if !ok {
+			return mcpRejectedResult()
+		}
+		nsID, err := r.mcpResolveNamespaceID(in.Namespace, in.NamespaceID, scope)
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		lifecycle := in.LifecycleStatus
+		if lifecycle == "" {
+			lifecycle = "active"
+		}
+		views, total, err := r.reads.v2.ListServers(service.ListServersParams{
+			NamespaceID:     nsID,
+			LifecycleStatus: lifecycle,
+			Keyword:         in.Keyword,
+			Page:            in.Page,
+			PageSize:        in.PageSize,
+		})
+		if err != nil {
+			return mcpRejectedResult()
+		}
+		return &mcp.CallToolResult{}, mcpServerListView(views, total), nil
+	})
+}
 func (r *MCPToolRegistry) registerReadHealthTools(server *mcp.Server) {
 	if r.reads.health == nil {
 		return
@@ -323,6 +392,110 @@ func mcpTopologyView(topology service.Topology) map[string]any {
 		groups = append(groups, map[string]any{"group": group.Group, "zone": group.Zone, "members": group.Members})
 	}
 	return map[string]any{"namespace": topology.Namespace, "nodes": nodes, "edges": edges, "groups": groups}
+}
+
+// mcpResolveNamespaceID 把 namespace code 解析为 ID；两者都缺省时回落到 scope 内唯一 namespace。
+func (r *MCPToolRegistry) mcpResolveNamespaceID(code, rawID string, scope service.ObservationScope) (uint, error) {
+	if code == "" && rawID == "" {
+		if scope.All || len(scope.NamespaceIDs) != 1 {
+			return 0, errMCPNamespaceRequired
+		}
+		return scope.NamespaceIDs[0], nil
+	}
+	if rawID != "" {
+		id, err := strconv.ParseUint(rawID, 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		if !scope.All && !scope.Contains(uint(id)) {
+			return 0, errMCPNamespaceDenied
+		}
+		return uint(id), nil
+	}
+	items, err := r.reads.v2.ListNamespacesWithStats()
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		if item.Namespace.Code == code {
+			if !scope.Contains(item.Namespace.ID) {
+				return 0, errMCPNamespaceDenied
+			}
+			return item.Namespace.ID, nil
+		}
+	}
+	return 0, errMCPNamespaceDenied
+}
+
+// mcpZoneTreeView 投影区服结构树：只暴露结构、计数与默认入口，不含凭据类字段。
+func mcpZoneTreeView(tree *service.ZoneTreeResponse) map[string]any {
+	if tree == nil {
+		return map[string]any{"namespaceId": 0, "unassignedCount": 0, "clusters": []any{}}
+	}
+	clusters := make([]map[string]any, 0, len(tree.Clusters))
+	for _, c := range tree.Clusters {
+		regions := make([]map[string]any, 0, len(c.Regions))
+		for _, rg := range c.Regions {
+			zones := make([]map[string]any, 0, len(rg.Zones))
+			for _, z := range rg.Zones {
+				zones = append(zones, map[string]any{
+					"id": z.ID, "code": z.Code, "name": z.Name, "displayName": z.DisplayName,
+					"description": z.Description,
+					"serverCount": z.ServerCount, "defaultEntryCount": z.DefaultEntryCount,
+				})
+			}
+			regions = append(regions, map[string]any{
+				"id": rg.ID, "code": rg.Code, "name": rg.Name, "displayName": rg.DisplayName,
+				"description": rg.Description, "zones": zones,
+			})
+		}
+		clusters = append(clusters, map[string]any{
+			"id": c.ID, "code": c.Code, "name": c.Name, "displayName": c.DisplayName,
+			"description": c.Description, "proxyCount": c.ProxyCount, "regions": regions,
+		})
+	}
+	return map[string]any{
+		"namespaceId": tree.NamespaceID, "unassignedCount": tree.UnassignedCount, "clusters": clusters,
+	}
+}
+
+// mcpServerListView 投影 server 富化视图（归属 / 默认入口 / 在线 / 排空 / 生命周期）。
+func mcpServerListView(items []service.ServerView, total int64) map[string]any {
+	views := make([]map[string]any, 0, len(items))
+	for _, s := range items {
+		views = append(views, map[string]any{
+			"id": s.ID, "serverId": s.ServerID, "displayName": s.DisplayName, "kind": s.Kind,
+			"namespaceId":     s.NamespaceID,
+			"bcClusterId":     mcpDerefUint(s.BCClusterID),
+			"bcClusterName":   mcpDerefString(s.BCClusterName),
+			"zoneId":          mcpDerefUint(s.ZoneID),
+			"zoneName":        mcpDerefString(s.ZoneName),
+			"regionName":      mcpDerefString(s.RegionName),
+			"isDefaultEntry":  s.IsDefaultEntry,
+			"draining":        s.Draining,
+			"lifecycle":       s.Lifecycle,
+			"lifecycleStatus": s.LifecycleStatus,
+			"effectiveActive": s.EffectiveActive,
+			"online":          s.Online,
+			"assigned":        s.Assigned,
+			"createdAt":       s.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return map[string]any{"items": views, "total": total}
+}
+
+func mcpDerefUint(v *uint) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func mcpDerefString(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
 
 func mcpMessageHistoryView(page service.MsgPage) map[string]any {
