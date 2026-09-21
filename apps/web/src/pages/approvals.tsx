@@ -14,6 +14,7 @@ import {
   withdrawApproval,
   type ApprovalListQuery,
 } from '../api/approvals'
+import { fetchNamespaces } from '../api/cluster'
 import ConfirmDialog from './changes/confirm-dialog'
 import MasterDetail from '../features/shared/master-detail'
 import Pager from '../features/observability/pager'
@@ -141,6 +142,10 @@ interface ApprovalFiltersProps {
 
 function ApprovalFilters({ filters, onChange, onReset }: ApprovalFiltersProps) {
   const { t } = useTranslation()
+  // 命名空间筛选取真实全量列表（本页为全局审批，不继承页眉 env 作用域）；
+  // 保留 all / global 两个语义哨兵项，其余为真实命名空间 name + #id。
+  const nsQuery = useQuery({ queryKey: ['namespaces'], queryFn: fetchNamespaces })
+  const namespaces = nsQuery.data?.items ?? []
   return (
     <div className="grid gap-2 rounded-xl border border-border bg-card p-3 shadow-card">
       <div className="grid gap-2 md:grid-cols-4">
@@ -230,8 +235,11 @@ function ApprovalFilters({ filters, onChange, onReset }: ApprovalFiltersProps) {
           >
             <option value="all">全部命名空间</option>
             <option value="global">全局操作</option>
-            <option value="1">namespace 1</option>
-            <option value="2">namespace 2</option>
+            {namespaces.map((ns) => (
+              <option key={ns.id} value={String(ns.id)}>
+                {ns.displayName ?? ns.name}（#{ns.id}）
+              </option>
+            ))}
           </select>
         </label>
         <label className="grid gap-1 text-xs text-ink-3">
