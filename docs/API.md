@@ -271,6 +271,12 @@ data: {}
 | `DELETE /admin/v1/configs/{id}/gray?comment=` | 中止灰度：丢弃灰度，cohort 成员回到稳定版本，稳定指针不动（operator 由认证态派生） |
 | `GET /admin/v1/configs/gray?namespace=` | 列出某环境当前活跃灰度（`configItemId`/`md5`/`cohort`/`sensitive` 等，不回吐 content） |
 
+**敏感内容访问授权的错误码（`*/grants/{grantId}/consume` 系列）**：这类端点的失败判定分两层，本轮**只迁移了其中一层**，勿按「系列已统一」理解。
+
+- **授权服务层判定的失败**（授权是否存在 / 是否可用 / 冻结事实是否漂移）已按性质回可区分错误码。该系列的各个消费入口都经过这一层，故下列错误码在该系列内一致：`410 sensitive_access_not_found`（授权不存在）、`410 sensitive_access_expired`（已过期）、`410 sensitive_access_consumed`（已消费）、`403 sensitive_access_wrong_principal`（非原申请主体）、`409 sensitive_access_target_drift`（审批后目标 / 哈希漂移，须重新提审）、`400 INVALID_PARAM`（服务层必填参数缺失）。
+- **各端点自身的前置校验**（缺 `commandId`、命令未就绪或类型不符、配置项非敏感、授权组不完整、单文件预览正文尚未回传等）本轮**未迁移**，仍返回既有泛化 `403`「只读密钥无权执行写操作」。仅资产双侧读取消费端点 `POST /admin/v2/assets/pair-read/grants/{grantId}/consume` 另做了入口级迁移：`400 INVALID_PARAM`（缺 `commandId`）、`409 sensitive_access_not_consumed`（正文尚未由 Agent 回传，顺序不对）、`500 INTERNAL`（服务端装配缺失）。其余同类入口（单文件预览 `/admin/v2/assets/preview/...`、日志 `/admin/v1/instances/{serverId}/logs/...`、浏览 `/admin/v1/instances/{serverId}/browse/...`、消息正文 `/admin/v2/sensitive-access-grants/...`、拓印 `/admin/v1/imprints/{commandId}/diff/...`、反向抓取 `/admin/v1/reverse-fetch/tasks/{id}/conflicts/...`、配置覆盖集 `/admin/v1/configs/{id}/plaintext/...`）**未做入口级迁移**，其自身的上述前置校验仍旧回 `403`，区分它们属后续切片。
+- `410 sensitive_access_not_found` 与 `410 sensitive_access_expired` 的 HTTP 状态码相同（对外语义都是「该凭据不可用」），但响应体 `code` 原样回写，调用方可据 `code` 区分处置方向；`grantId` 为 12 字节随机值且该系列端点均需管理员鉴权，无实际枚举风险。
+
 **配置灰度 / Beta（FR-9，见 [ADR-0021](adr/0021-config-gray-cohort-version-selection.md)）**：灰度作用在"某 dataId 用哪个版本内容"的**版本选择**层，与 scope 覆盖链正交叠加（不新增覆盖层）。发布灰度需给 `content` + **非空** `cohort`（显式 serverId 名单，去重 / 去空白）；灰度内容同样过发布前 schema 校验（FR-27），灰度项 `sensitive` 与所属配置项镜像（敏感则灰度 content 加密落库，FR-20）。cohort 内 `serverId` 解析到灰度内容，**名单外解析结果与无灰度时逐字节相同**。`promote` 把灰度内容晋升为全量稳定版（走既有发布路径、进版本历史、可回滚）；`abort` 丢弃灰度。两操作提交后只唤醒受影响 `serverId`（发布 / abort 唤醒 cohort、promote 唤醒该配置项 scope ∪ cohort）。一个配置项**至多一个活跃灰度**（重复发布即覆盖）。错误：无活跃灰度时 promote/abort 返 `404 GRAY_NOT_FOUND`；空 cohort 返 `400 EMPTY_COHORT`；灰度内容非法同发布（`422 CONTENT_INVALID` / `422 CONTENT_SCHEMA_INVALID`）。
 
 `GET /admin/v1/configs/effective`：只读预览某目标按覆盖链合并后的有效配置，与 agent 端 `/beacon/v1/agent/config/effective` 同源、内容与 `md5` 一致，但**不挂长轮询、不强制注册**，可预览未注册/假定指派的目标。参数：`namespace` 必填；`serverId` 与 `group` 至少给一个（给 `serverId` 时按 `zone_assignment` 解出 group/zone，未指派则用传入的 `group`/`zone`）。返回：
