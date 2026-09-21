@@ -146,10 +146,21 @@ func (c Config) validate() error {
 	}
 	if c.MCP.Enabled {
 		base, err := url.Parse(c.MCP.PublicBaseURL)
-		if err != nil || base.Scheme != "https" || base.Host == "" || base.Path != "" || base.RawQuery != "" || base.Fragment != "" {
-			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是无路径的 HTTPS 公网基址")
+		schemeOK := err == nil && base.Host != "" && base.Path == "" && base.RawQuery == "" && base.Fragment == ""
+		if schemeOK && c.MCP.AllowInsecureInternal {
+			// 内网直连模式：允许 http（无 TLS 终止）
+			schemeOK = base.Scheme == "https" || base.Scheme == "http"
+		} else if schemeOK {
+			schemeOK = base.Scheme == "https"
 		}
-		if len(c.MCP.TrustedProxyCIDRs) == 0 {
+		if !schemeOK {
+			if c.MCP.AllowInsecureInternal {
+				return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是 host 非空且无路径的 http(s) 基址")
+			}
+			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.public-base-url 必须是无路径的 HTTPS 公网基址（内网明文请置 mcp.allow-insecure-internal=true）")
+		}
+		// 直连模式（allow-insecure-internal）允许空 CIDR；其余情况必须显式列出可信代理。
+		if len(c.MCP.TrustedProxyCIDRs) == 0 && !c.MCP.AllowInsecureInternal {
 			return fmt.Errorf("配置校验失败: 启用 MCP 时 mcp.trusted-proxy-cidrs 不能为空")
 		}
 	}

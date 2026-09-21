@@ -31,11 +31,21 @@ type Config struct {
 	Log LogConfig `yaml:"log"`
 }
 
-// MCPConfig 是 MCP 公网入口的固定部署信任边界。
+// MCPConfig 是 MCP 入口的固定部署信任边界。
 type MCPConfig struct {
-	Enabled           bool     `yaml:"enabled"`
-	PublicBaseURL     string   `yaml:"public-base-url"`
+	Enabled bool `yaml:"enabled"`
+	// PublicBaseURL 入口基址。默认要求无路径的 HTTPS 公网基址；
+	// 置 allow-insecure-internal=true 时放宽为 http，供内网直连（无反向代理）部署。
+	PublicBaseURL string `yaml:"public-base-url"`
+	// TrustedProxyCIDRs 可信反向代理网段（CIDR）。经反代部署时必填且非空；
+	// allow-insecure-internal=true 且留空时视为直连模式，此时跳过 X-Forwarded-* 校验。
 	TrustedProxyCIDRs []string `yaml:"trusted-proxy-cidrs"`
+	// AllowInsecureInternal 允许内网明文 HTTP 直连 MCP 入口（无 TLS 终止、无反向代理）。
+	// 仅供内网/回环部署；公网环境必须保持 false。
+	AllowInsecureInternal bool `yaml:"allow-insecure-internal"`
+	// AllowedHosts 直连模式下允许的 Host 头白名单（host 或 host:port）。
+	// 供 go-sdk 的 DNS rebinding 保护放行内网地址；留空则回退 SDK 默认（localhost/127.0.0.1 等）。
+	AllowedHosts []string `yaml:"allowed-hosts"`
 	// AllowApprovalDecide 允许 automation 客户端执行审批决定（默认 false）。
 	// 默认关闭以保持"审批决定权归人类"的分权设计；仅内网单操作者部署可显式开启闭环自动化。
 	AllowApprovalDecide bool `yaml:"allow-approval-decide"`
