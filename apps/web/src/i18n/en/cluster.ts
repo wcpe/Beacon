@@ -62,6 +62,11 @@ export const cluster = {
       setDefaultEntry: 'Set as default entry',
       clearDefaultEntry: 'Clear default entry',
       viewHealth: 'Health details',
+      // F1: operations-column "?" hint — meaning of each action and write-action preconditions
+      help: 'Actions help',
+      moreActions: 'More actions',
+      helpHint:
+        'Health details: view the health score and factor breakdown. More: set / clear default entry, start / stop draining, disable, unbind, lifecycle archive — write actions require a reason.',
     },
     confirm: {
       disableTitle: 'Disable server',
