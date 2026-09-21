@@ -294,6 +294,8 @@ go test -tags=e2e -timeout=30m ./apps/server/test/e2e/hotreload -run '^TestDeliv
 
 启用前必须把 `mcp.public-base-url` 设为唯一 HTTPS 公网基址，并把实际 TLS 反向代理的来源网段写入 `mcp.trusted-proxy-cidrs`。代理转发 MCP、token 与 `.well-known` 时保留 Host，并固定传递 `X-Forwarded-Proto: https`、`X-Forwarded-Host`；后端不以直连或客户端自带转发头推断公网 URL。未在真实反代上分别验证 observer 与 automation 的换 token、初始化、工具发现、轮换和吊销即时失效前，不得宣称公网 MCP 已验收。
 
+**日常运维入口**：管理台「系统 → MCP 客户端」（`/mcp-clients`）用于查看客户端清单、创建 / 轮换 / 启用 / 吊销，并只读查看入口的部署配置（启用状态、公网基址、可信网段与两个开关）——排查「外部 Agent 连不上」时可先看该页确认 `enabled` 与基址是否符合预期。该页只读展示这些**启动项**：修改仍需编辑配置文件并重启控制面。创建与轮换的明文 secret 只在提交申请的那次响应出现一次，遗失需重新申请轮换。
+
 ## 10. 内部信任通道（机器注册，FR-222）
 
 单操作者内网部署下，外部管理平台（如 JianManager）批量创建实例后逐个走人工审批不可行（60 台 = 60 次审批）。`mcp.allow-machine-register` 提供一条**默认关闭**的内部信任通道：开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册**直接创建 active 身份并绑定指定 serverId**，跳过人工审批。规格见 [internal-trust-channel.md](specs/internal-trust-channel.md)。

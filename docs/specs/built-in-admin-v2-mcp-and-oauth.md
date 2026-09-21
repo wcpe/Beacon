@@ -27,7 +27,7 @@ Beacon 需要让外部 Agent 以机器身份完成远程观测和运维申请，
 - 不支持 Authorization Code、Device Code、refresh token、动态客户端注册或第三方身份联合。
 - 不提供 `full` profile，也不向任何 MCP client 分配批准/驳回能力。
 - 不在本 FR 定义具体领域工具；工具清单与审批交接由 FR-220 定义。
-- 不新增独立 MCP 客户端管理页面；客户端动作使用管理 API，并在 FR-212 审批中心展示审批记录。
+- 客户端生命周期动作以管理 API 为准；管理台提供独立 MCP 客户端页（`/mcp-clients`）承载日常运维（列表、创建、轮换、启用、吊销），并保留 FR-212 审批中心对申请记录的展示。该页只消费上述管理 API，不新增第二套业务端点。
 
 ## 3. 总体设计
 
@@ -46,8 +46,9 @@ Beacon 需要让外部 Agent 以机器身份完成远程观测和运维申请，
 | POST | `/admin/v2/oauth/token` | `client_credentials` 换取 MCP access token |
 | GET | 协议规定的 `.well-known` resource metadata | 只发布 `/admin/v2/mcp` 与授权服务器元数据 |
 | GET | 协议规定的 `.well-known` authorization server metadata | 只发布 token endpoint 与支持的 grant |
-| GET | `/admin/v2/mcp-clients` | 人类管理端分页查询客户端 |
+| GET | `/admin/v2/mcp-clients` | 人类管理端查询客户端全量列表（按创建时间倒序） |
 | GET | `/admin/v2/mcp-clients/{id}` | 人类管理端查看客户端摘要与审计引用 |
+| GET | `/admin/v2/mcp/config` | 人类管理端只读查看 MCP 入口部署配置（启动项，不可热改） |
 | POST | `/admin/v2/mcp-clients` | 申请创建客户端，危险操作 |
 | POST | `/admin/v2/mcp-clients/{id}/rotate` | 申请轮换 secret，危险操作 |
 | POST | `/admin/v2/mcp-clients/{id}/enable` | 申请重新启用，危险操作 |
@@ -173,3 +174,4 @@ access token 使用高熵不透明随机值，库内只存哈希，至少记录 
 - 使用 OAuth Client Credentials，每个外部 Agent 独立 client、短期 audience-bound token、可撤销轮换。
 - 固定 `observer`、`automation` 两种 profile，机器主体永远不能审批。
 - 只使用官方稳定 MCP Go SDK；确有缺口时最多增加一项成熟稳定 OAuth 库。
+- **（2026-09-21 修订）** 管理台提供独立 MCP 客户端页 `/mcp-clients`：外部集成数量会随接入方增长，纯靠审批中心无法回答"现在有哪些客户端、各自什么 profile、谁被吊销了"。该页只消费上文既有管理 API，不新增业务端点，也不改变"机器主体永不审批"的分权设计。原"不新增独立页面"的决定由本条取代。

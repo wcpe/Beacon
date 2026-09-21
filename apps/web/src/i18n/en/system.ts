@@ -409,6 +409,115 @@ export const system = {
     confirmReset: 'Confirm reset',
     resetTitle: 'Key reset',
   },
+  mcpClients: {
+    mission:
+      'External agent credentials: OAuth client inventory, profile capability notes, create / rotate / enable / revoke',
+    columns: {
+      displayName: 'Name',
+      profile: 'Profile',
+      secretPrefix: 'Secret prefix',
+      secretVersion: 'Version',
+      status: 'Status',
+      createdAt: 'Created at',
+    },
+    profile: {
+      observer: 'Read-only',
+      automation: 'Automation',
+    },
+    // Profile capability notes (detail panel): mirrors the backend capability bundle
+    profileHint: {
+      observer: 'Can only call read-only observation tools; cannot file any change request.',
+      automation:
+        'Read-only observation plus low-risk domain writes and submitting / querying / withdrawing its own approval requests; cannot decide approvals.',
+    },
+    status: {
+      active: 'Active',
+      revoked: 'Revoked',
+    },
+    // Top summary
+    summary: {
+      total: 'Total clients',
+      active: 'Active',
+      revoked: 'Revoked',
+    },
+    empty: 'No MCP clients yet. Click “Request client” to onboard the first external agent',
+    loadFail: 'Failed to load MCP clients',
+    listTitle: 'MCP clients',
+    detailTitle: 'Client details',
+    selectHint: 'Select a client on the left for details and rotate / enable / revoke actions',
+    // Detail fields
+    clientId: 'Client ID',
+    createdBy: 'Created by',
+    updatedAt: 'Last updated',
+    revokedAt: 'Revoked at',
+    // Create
+    create: 'Request client',
+    createTitle: 'Request MCP client',
+    displayNameLabel: 'Name',
+    displayNamePlaceholder: 'e.g. internal automation platform',
+    profileLabel: 'Profile',
+    reasonLabel: 'Approval reason',
+    reasonPlaceholder: 'Explain the business purpose of this integration',
+    createConfirm: 'Submit request',
+    creating: 'Submitting…',
+    // Rotate
+    rotate: 'Rotate secret',
+    rotateTitle: 'Request secret rotation for “{{name}}”?',
+    rotateDesc:
+      'After rotation the old secret and issued tokens become invalid immediately; update the caller with the new secret.',
+    rotateReasonPlaceholder: 'Explain the rotation reason (e.g. credential leak suspected)',
+    rotateConfirm: 'Submit request',
+    // Enable
+    enable: 'Re-enable',
+    enableTitle: 'Request re-enabling “{{name}}”?',
+    enableDesc:
+      'The client can exchange for new tokens again; previously revoked tokens stay invalid.',
+    enableReasonPlaceholder: 'Explain the re-enable reason',
+    enableConfirm: 'Submit request',
+    // Revoke
+    revoke: 'Revoke now',
+    confirmRevokeTitle: 'Revoke “{{name}}” now?',
+    confirmRevokeDesc:
+      'Revoke is a stop-loss action: it runs immediately without approval. All tokens issued to this client become invalid at once and no new token can be issued.',
+    confirmRevoke: 'Confirm revoke',
+    revoked: 'Client revoked',
+    // Approval handoff
+    approvalSubmitted: 'Request submitted. It takes effect only after approval in the Approval Center.',
+    viewApproval: 'View progress in Approval Center',
+    // One-time plaintext
+    plaintextCreatedTitle: 'Client created — save the secret',
+    plaintextRotatedTitle: 'Secret rotated — save the new secret',
+    plaintextDesc:
+      'This is the only time the plaintext secret is shown. Copy and store it securely; it cannot be viewed again after closing. If lost, request another rotation.',
+    plaintextMissing:
+      'This was a duplicate submission, so the server did not generate a new plaintext secret. Request another rotation to obtain one.',
+    // Config card
+    config: {
+      title: 'MCP endpoint config',
+      docsLink: 'Deployment docs',
+      docsPathHint: 'Docs path: docs/OPERATIONS.md §9 MCP reverse-proxy acceptance',
+      status: 'Status',
+      enabled: 'Enabled',
+      disabled: 'Disabled',
+      publicBaseUrl: 'Public endpoint',
+      deployMode: 'Deploy mode',
+      deployModeProxy: 'Reverse proxy',
+      deployModeDirect: 'Internal plaintext direct',
+      deployModeProxyHint: '{{count}} trusted CIDR(s)',
+      allowedHosts: 'Host allowlist',
+      approvalDecide: 'Approval decision',
+      approvalDecideOn: 'automation may decide approvals',
+      approvalDecideOff: 'Only humans may decide approvals',
+      machineRegister: 'Machine registration',
+      machineRegisterOn: 'Enabled (registration skips manual approval)',
+      machineRegisterOff: 'Disabled',
+      restartHint:
+        'These are startup settings: changing them requires editing the config file and restarting the control plane. The console is read-only.',
+      disabledHint:
+        'The MCP endpoint is disabled, so external agents cannot connect. Set mcp.enabled in the config file, configure the public base URL and trusted proxy, then restart the control plane.',
+      loadFail: 'Failed to load MCP config',
+    },
+  },
   namespaces: {
     mission: 'Namespace management and inter-namespace trust',
     title: 'Namespaces',

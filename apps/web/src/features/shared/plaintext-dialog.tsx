@@ -1,5 +1,8 @@
-// 一次性明文展示弹窗：密钥创建 / 重置后仅此一次显示明文，提供复制。
+// 一次性明文展示弹窗：凭据创建 / 重置后仅此一次显示明文，提供复制。
 // 明文属敏感瞬态，仅当前会话内存持有，关闭即弃。
+//
+// 由 api-keys（API 密钥）与 mcp-clients（MCP OAuth secret）共用；
+// 文案键经 descriptionKey 传入，避免共用组件耦合到某一页的 i18n 命名空间。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,11 +20,19 @@ interface PlaintextDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   title: string
-  // 一次性明文（密钥或接入 token）
+  // 一次性明文（密钥 / secret / 接入 token）
   plaintext: string
+  // i18n 命名空间前缀（默认 API 密钥页口径）；调用方传自己的节以复用同款弹窗
+  keysPrefix?: string
 }
 
-export default function PlaintextDialog({ open, onOpenChange, title, plaintext }: PlaintextDialogProps) {
+export default function PlaintextDialog({
+  open,
+  onOpenChange,
+  title,
+  plaintext,
+  keysPrefix = 'system.apiKeys',
+}: PlaintextDialogProps) {
   const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
 
@@ -55,14 +66,14 @@ export default function PlaintextDialog({ open, onOpenChange, title, plaintext }
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{t('system.apiKeys.plaintextDesc')}</DialogDescription>
+          <DialogDescription>{t(`${keysPrefix}.plaintextDesc`)}</DialogDescription>
         </DialogHeader>
         <div className="flex items-center gap-2">
           <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-3 py-2 font-mono text-sm">
             {plaintext}
           </code>
           <Button size="sm" variant="outline" onClick={copy}>
-            {copied ? t('system.apiKeys.copied') : t('system.apiKeys.copy')}
+            {copied ? t(`${keysPrefix}.copied`) : t(`${keysPrefix}.copy`)}
           </Button>
         </div>
         <DialogFooter>
@@ -71,7 +82,7 @@ export default function PlaintextDialog({ open, onOpenChange, title, plaintext }
               onOpenChange(false)
             }}
           >
-            {t('system.apiKeys.plaintextClose')}
+            {t(`${keysPrefix}.plaintextClose`)}
           </Button>
         </DialogFooter>
       </DialogContent>
