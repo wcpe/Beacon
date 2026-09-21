@@ -122,17 +122,17 @@ func (h *V2ControlPlaneHandler) AuthenticateAgentReport(token, identityID, bootI
 }
 
 type v2AgentRegisterRequest struct {
-	IdentityID   string          `json:"identityId"`
-	ServerID     string          `json:"serverId"`
-	Kind         string          `json:"kind"`
-	BootID       string          `json:"bootId"`
-	AgentVersion string          `json:"agentVersion"`
+	IdentityID   string `json:"identityId"`
+	ServerID     string `json:"serverId"`
+	Kind         string `json:"kind"`
+	BootID       string `json:"bootId"`
+	AgentVersion string `json:"agentVersion"`
 	// ServerWorkDir agent 上报的服务器工作目录绝对路径（FR-226，可选）。
-	ServerWorkDir string `json:"serverWorkDir"`
-	Addr         string          `json:"addr"`
-	Address      string          `json:"address"`
-	ListenPort   *int            `json:"listenPort"`
-	Listeners    json.RawMessage `json:"listeners"`
+	ServerWorkDir string          `json:"serverWorkDir"`
+	Addr          string          `json:"addr"`
+	Address       string          `json:"address"`
+	ListenPort    *int            `json:"listenPort"`
+	Listeners     json.RawMessage `json:"listeners"`
 }
 
 type v2AgentListener struct {
@@ -188,7 +188,7 @@ func (h *V2ControlPlaneHandler) AgentRegister(w http.ResponseWriter, r *http.Req
 		Token: r.Header.Get(beaconTokenHeader), IdentityID: req.IdentityID, ServerID: req.ServerID,
 		Kind: req.Kind, BootID: req.BootID, AgentVersion: req.AgentVersion,
 		ServerWorkDir: req.ServerWorkDir,
-		Addr: addr, DetectedHost: detectedHost, ListenPort: req.ListenPort,
+		Addr:          addr, DetectedHost: detectedHost, ListenPort: req.ListenPort,
 		Listeners: listeners, ListenersProvided: listenersProvided, ClientIP: clientIP(r),
 	})
 	if err != nil {

@@ -257,22 +257,22 @@ const (
 
 // AgentIdentity 是 v2 agent 身份绑定事实。
 type AgentIdentity struct {
-	ID               uint             `gorm:"primaryKey;autoIncrement"`
-	IdentityID       string           `gorm:"column:identity_id;size:64;not null;uniqueIndex"`
-	NamespaceID      uint             `gorm:"column:namespace_id;not null;index:idx_agent_identity_ns_server,priority:1;index"`
-	ServerID         NullableServerID `gorm:"column:server_id;size:64;index:idx_agent_identity_ns_server,priority:2"`
-	Kind             string           `gorm:"column:kind;size:16;not null"`
-	Status           string           `gorm:"column:status;size:16;not null;index"`
-	BootID           string           `gorm:"column:boot_id;size:36"`
-	LastAddr         string           `gorm:"column:last_addr;size:320"`
-	AgentVersion     string           `gorm:"column:agent_version;size:32"`
+	ID           uint             `gorm:"primaryKey;autoIncrement"`
+	IdentityID   string           `gorm:"column:identity_id;size:64;not null;uniqueIndex"`
+	NamespaceID  uint             `gorm:"column:namespace_id;not null;index:idx_agent_identity_ns_server,priority:1;index"`
+	ServerID     NullableServerID `gorm:"column:server_id;size:64;index:idx_agent_identity_ns_server,priority:2"`
+	Kind         string           `gorm:"column:kind;size:16;not null"`
+	Status       string           `gorm:"column:status;size:16;not null;index"`
+	BootID       string           `gorm:"column:boot_id;size:36"`
+	LastAddr     string           `gorm:"column:last_addr;size:320"`
+	AgentVersion string           `gorm:"column:agent_version;size:32"`
 	// ServerWorkDir 是 agent 上报的服务器工作目录绝对路径（FR-226）：供冲突 / 身份视图分辨「哪台、哪个目录」。
 	// 旧 agent 未上报时为空串（降级展示「—」）；心跳可不携带，故仅在新值非空时覆盖。
-	ServerWorkDir    string           `gorm:"column:server_work_dir;size:512"`
-	PendingExpiresAt *time.Time       `gorm:"column:pending_expires_at"`
-	BoundAt          *time.Time       `gorm:"column:bound_at"`
-	StatusChangedAt  time.Time        `gorm:"column:status_changed_at;not null"`
-	ConflictReason   string           `gorm:"column:conflict_reason;size:255"`
+	ServerWorkDir    string     `gorm:"column:server_work_dir;size:512"`
+	PendingExpiresAt *time.Time `gorm:"column:pending_expires_at"`
+	BoundAt          *time.Time `gorm:"column:bound_at"`
+	StatusChangedAt  time.Time  `gorm:"column:status_changed_at;not null"`
+	ConflictReason   string     `gorm:"column:conflict_reason;size:255"`
 	// ConflictPeers 是并发身份冲突（Q4，FR-177）双方 boot 明细的持久化载体：
 	// JSON 序列化的 [{bootId,lastAddr,lastSeenAt}] 落 TEXT 列（禁 JSON 列，守 DB 可移植）；非冲突态为空串。
 	ConflictPeers    string     `gorm:"column:conflict_peers;type:text"`
