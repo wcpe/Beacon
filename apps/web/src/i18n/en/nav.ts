@@ -29,6 +29,7 @@ export const nav = {
   system: 'Control plane health',
   systemVersion: 'Version & updates',
   apiKeys: 'API keys',
+  mcpClients: 'MCP clients',
   namespaces: 'Namespaces',
   envs: 'Environments',
 } as const

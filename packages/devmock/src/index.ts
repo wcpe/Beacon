@@ -17,6 +17,7 @@ import { approvalHandlers } from './domains/approval'
 import { systemHandlers } from './domains/system'
 import { observabilityHandlers } from './domains/observability'
 import { envHandlers } from './domains/env'
+import { mcpHandlers } from './domains/mcp'
 import { fallbackHandlers } from './http'
 
 export {
@@ -51,6 +52,7 @@ export * from './domains/approval'
 export * from './domains/system'
 export * from './domains/observability'
 export * from './domains/env'
+export * from './domains/mcp'
 
 export interface ControlPlaneStatusFixture {
   phase: string
@@ -87,6 +89,7 @@ export const domainHandlers = {
   system: systemHandlers,
   observability: observabilityHandlers,
   env: envHandlers,
+  mcp: mcpHandlers,
 } satisfies Record<string, HttpHandler[]>
 
 /** 全量 handlers：浏览器 worker 与 Node setupServer 共用。
