@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- 拓扑呈现大厅集群成员（A4 / FR-225）：可视化拓扑在树分组下方新增「大厅集群（入口服）」层，逐台渲染 `lobby_cluster_id` 非空的子服（门字形 + 在线/离线状态点），标签显示「入口服 N 台 · 含离线」；点成员节点出右侧面板给出入口服身份与在线/离线态。按 ADR-0083「入口服 = 大厅成员」，不新增独立入口实体，数据取既有 `/admin/v2/servers`。
 - 告警收敛与防堆积（FR-232，增强 FR-89/FR-157）：`alert_event` 新增 `occurrence_count` / `last_at` / `to_status`（方向维度）列与 `(server_id, type, to_status)` 复合索引。`health-transition` 告警写入改为按收敛键合并——同一未恢复键重复触发只 `occurrence_count+1`、刷新 `last_at`、取最高级，不插新行；已 `acknowledged` 的条目再触发不回退 `open`；实例恢复 `online` 时其未恢复告警自动置 `resolved`（`handled_by=system`，note 标明自动消解，复用健康扫描循环、不新起定时器）。列表显示合并计数徽标「×N」与「最后」触发时刻，抖动场景下待办计数保持有界。
 - 告警分级与人工升降（FR-231，增强 FR-157）：按「健康级别 × 角色」矩阵自动定级（`offline`/`lost` 的 proxy/大厅成员 → `critical`、普通 backend → `warning`；`degraded` 的 proxy/大厅 → `warning`、其余 → `info`），角色由控制面权威事实解析（`kind=proxy` → proxy、`lobby_cluster_id` 非空 → lobby、其余 → backend；无角色信息按 backend 规则安全降级）。新增 `GradeAlert` 纯函数（穷举单测）；新增 `severity_override` / `overridden_by` / `overridden_at` 列与 `POST /admin/v1/alert-events/{id}/level` 人工改级端点（写覆盖列 + `alert-event.level_overridden` 审计）；前端详情面板新增「调整级别」与「已手动调整」标记。
 - 告警详情关联该服近期状态与时间线（FR-230，增强 FR-157）：新增只读聚合端点 `GET /admin/v1/alert-events/{id}/context`，一次性返回该服近期状态（健康真源：级别 / 分数 / 在线 / 原因 / 采样时刻）+ 该服告警时间线（查 `alert_event`，近 24h 内最多 20 条、时间倒序、含级别与处理状态），`/alert-events` 详情面板内嵌呈现。服务器已归档 / 域外 / 无 `serverId` 时状态卡降级空态（无 `serverId` 的集群级告警时间线按 namespace 退化），不报错；不复制存储、观测范围循 FR-213。
