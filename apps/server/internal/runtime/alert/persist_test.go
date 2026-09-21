@@ -9,10 +9,11 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 )
 
-// fakeEventSink 是 EventSink 测试替身：记录落库的事件，可选注入错误（验兜错）。
+// fakeEventSink 是 EventSink 测试替身：记录落库的事件，可选注入错误（验兜错）与角色（FR-231 分级）。
 type fakeEventSink struct {
-	got []*model.AlertEvent
-	err error
+	got  []*model.AlertEvent
+	err  error
+	role string
 }
 
 func (f *fakeEventSink) Record(e *model.AlertEvent) error {
@@ -20,9 +21,11 @@ func (f *fakeEventSink) Record(e *model.AlertEvent) error {
 	return f.err
 }
 
+func (f *fakeEventSink) ResolveAlertRole(string, string) string { return f.role }
+
 // TestPersistAlerterMapsHealthAlert persist 通道把健康告警映射为 alert_event：类型/级别/字段/detail 正确。
 func TestPersistAlerterMapsHealthAlert(t *testing.T) {
-	sink := &fakeEventSink{}
+	sink := &fakeEventSink{role: RoleProxy}
 	p := NewPersistAlerter(sink)
 	if err := p.Notify(context.Background(), sampleAlert()); err != nil {
 		t.Fatalf("留痕不应报错: %v", err)
@@ -34,9 +37,9 @@ func TestPersistAlerterMapsHealthAlert(t *testing.T) {
 	if e.Type != model.AlertEventTypeHealthTransition {
 		t.Fatalf("类型应为 health-transition，实际 %q", e.Type)
 	}
-	// sampleAlert 状态为 degraded → warning
+	// sampleAlert 状态为 degraded；sink 角色为 proxy → 矩阵 degraded×proxy = warning
 	if e.Level != model.AlertLevelWarning {
-		t.Fatalf("degraded 应映射 warning，实际 %q", e.Level)
+		t.Fatalf("degraded×proxy 应映射 warning，实际 %q", e.Level)
 	}
 	if e.ServerID != "lobby-1" || e.Namespace != "prod" {
 		t.Fatalf("serverId/namespace 错误：%+v", e)
@@ -54,17 +57,30 @@ func TestPersistAlerterMapsHealthAlert(t *testing.T) {
 	}
 }
 
-// TestPersistAlerterLevelByStatus 不同状态映射不同级别：lost/offline=critical。
-func TestPersistAlerterLevelByStatus(t *testing.T) {
-	cases := map[string]string{
-		"degraded": model.AlertLevelWarning,
-		"lost":     model.AlertLevelCritical,
-		"offline":  model.AlertLevelCritical,
-		"online":   model.AlertLevelInfo,
+// TestPersistAlerterLevelByRoleAndStatus 落库级别走 FR-231 矩阵：角色经 sink 解析，offline 的 backend 降为 warning。
+func TestPersistAlerterLevelByRoleAndStatus(t *testing.T) {
+	cases := []struct {
+		status string
+		role   string
+		want   string
+	}{
+		{"degraded", RoleProxy, model.AlertLevelWarning},
+		{"lost", RoleProxy, model.AlertLevelCritical},
+		{"offline", RoleProxy, model.AlertLevelCritical},
+		{"offline", RoleLobby, model.AlertLevelCritical},
+		{"offline", RoleBackend, model.AlertLevelWarning},
+		{"degraded", RoleBackend, model.AlertLevelInfo},
+		{"online", RoleBackend, model.AlertLevelInfo},
 	}
-	for status, wantLevel := range cases {
-		if got := levelForStatus(status); got != wantLevel {
-			t.Fatalf("状态 %q 应映射 %q，实际 %q", status, wantLevel, got)
+	for _, c := range cases {
+		sink := &fakeEventSink{role: c.role}
+		a := sampleAlert()
+		a.Status = c.status
+		if err := NewPersistAlerter(sink).Notify(context.Background(), a); err != nil {
+			t.Fatalf("Notify 失败: %v", err)
+		}
+		if got := sink.got[0].Level; got != c.want {
+			t.Fatalf("状态 %q × 角色 %q 应映射 %q，实际 %q", c.status, c.role, c.want, got)
 		}
 	}
 }

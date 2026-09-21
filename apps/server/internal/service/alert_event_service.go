@@ -11,6 +11,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 	"github.com/wcpe/Beacon/apps/server/internal/runtime/healthview"
 )
 
@@ -41,6 +42,75 @@ type AlertEventService struct {
 // SetHealthQuery 装配健康查询服务，供告警详情内嵌「该服近期状态」（FR-230）。
 func (s *AlertEventService) SetHealthQuery(q *HealthQueryService) {
 	s.healthQuery = q
+}
+
+// ResolveAlertRole 解析实例的分级角色（proxy / lobby / backend，FR-231），供告警分级通道查控制面权威事实。
+// namespace 无 node / 查不到 → 空串（通道按 backend 规则安全降级）；DB 未装配亦回空串。
+func (s *AlertEventService) ResolveAlertRole(namespace, serverID string) string {
+	if s.db == nil || serverID == "" {
+		return ""
+	}
+	var server model.Server
+	if err := s.db.
+		Joins("JOIN namespace ON namespace.id = server.namespace_id").
+		Select("server.kind, server.lobby_cluster_id").
+		Where("namespace.code = ? AND server.server_id = ?", namespace, serverID).
+		First(&server).Error; err != nil {
+		return ""
+	}
+	lobbyID := uint(0)
+	if server.LobbyClusterID != nil {
+		lobbyID = *server.LobbyClusterID
+	}
+	return alert.RoleOf(server.Kind, lobbyID)
+}
+
+// OverrideAlertLevel 人工升降一条告警的级别（FR-231）：写 severity_override/overridden_by/overridden_at，
+// 并在同事务写专项审计（含新旧级别 + 操作者）。事件不存在 → ErrAlertEventNotFound；级别非法 → ErrInvalidParam。
+func (s *AlertEventService) OverrideAlertLevel(id uint, level, operator, clientIP string) (*model.AlertEvent, error) {
+	if level != model.AlertLevelInfo && level != model.AlertLevelWarning && level != model.AlertLevelCritical {
+		return nil, apperr.ErrInvalidParam
+	}
+	var updated *model.AlertEvent
+	txErr := s.db.Transaction(func(tx *gorm.DB) error {
+		repo := s.repo.WithTx(tx)
+		e, err := repo.Get(id)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.ErrAlertEventNotFound
+			}
+			return err
+		}
+		oldLevel := e.Level
+		now := time.Now().UTC()
+		e.SeverityOverride = level
+		e.OverriddenBy = operator
+		e.OverriddenAt = &now
+		if err := repo.Save(e); err != nil {
+			return err
+		}
+		updated = e
+		return s.auditRepo.WithTx(tx).Create(&model.AuditLog{
+			NamespaceCode: e.Namespace,
+			Operator:      operator,
+			Action:        model.ActionAlertEventLevelOverridden,
+			TargetType:    model.TargetTypeAlertEvent,
+			TargetRef:     strconv.FormatUint(uint64(id), 10),
+			Detail:        alertLevelOverrideAuditDetail(oldLevel, level),
+			Result:        model.ResultOK,
+			ClientIP:      clientIP,
+		})
+	})
+	if txErr != nil {
+		return nil, txErr
+	}
+	return updated, nil
+}
+
+// alertLevelOverrideAuditDetail 组装人工改级审计 detail（json 文本）：原级别 → 新级别。
+func alertLevelOverrideAuditDetail(oldLevel, newLevel string) string {
+	raw, _ := json.Marshal(map[string]string{"oldLevel": oldLevel, "newLevel": newLevel})
+	return string(raw)
 }
 
 // 告警详情时间线窗口（FR-230 §7 已定默认）：最近 24h 内最多 20 条。

@@ -68,6 +68,10 @@ export interface AlertEventItem {
   handledBy: string | null
   handledAt: string | null
   handleNote: string | null
+  /** 人工分级覆盖（FR-231）：非空表示已手动调整级别。 */
+  severityOverride?: AlertEventItem['level'] | null
+  overriddenBy?: string | null
+  overriddenAt?: string | null
 }
 
 /** 告警详情内嵌的「该服近期状态」（FR-230，取健康真源）。 */

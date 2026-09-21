@@ -13,6 +13,7 @@ import (
 	"github.com/wcpe/Beacon/apps/server/internal/apperr"
 	"github.com/wcpe/Beacon/apps/server/internal/model"
 	"github.com/wcpe/Beacon/apps/server/internal/repository"
+	"github.com/wcpe/Beacon/apps/server/internal/runtime/alert"
 )
 
 // newAlertEventService 用私有内存 sqlite 装配告警事件服务（迁移 alert_event + audit_log，不依赖 MySQL）。
@@ -28,7 +29,7 @@ func newAlertEventService(t *testing.T) (*AlertEventService, *gorm.DB) {
 	if sqlDB, e := db.DB(); e == nil {
 		sqlDB.SetMaxOpenConns(1)
 	}
-	if err := db.AutoMigrate(&model.AlertEvent{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.AlertEvent{}, &model.AuditLog{}, &model.Namespace{}, &model.Server{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}
 	t.Cleanup(func() {
@@ -381,5 +382,60 @@ func TestAlertContextAggregatesServerAndTimeline(t *testing.T) {
 	}
 	if len(res2.Timeline) == 0 {
 		t.Fatalf("无 serverId 时应按 namespace 退化返回时间线")
+	}
+}
+
+// TestResolveAlertRoleAndOverrideLevel 校验 FR-231：角色解析（proxy / lobby / backend）与人工改级（落列 + 审计）。
+func TestResolveAlertRoleAndOverrideLevel(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	ns := model.Namespace{Code: "prod", Name: "prod", Lifecycle: model.NamespaceLifecycleActive}
+	if err := db.Create(&ns).Error; err != nil {
+		t.Fatalf("建 namespace 失败: %v", err)
+	}
+	lobby := uint(9)
+	seed := []model.Server{
+		{NamespaceID: ns.ID, ServerID: "bk1", Kind: model.ServerKindBackend},
+		{NamespaceID: ns.ID, ServerID: "px1", Kind: model.ServerKindProxy},
+		{NamespaceID: ns.ID, ServerID: "lb1", Kind: model.ServerKindBackend, LobbyClusterID: &lobby},
+	}
+	for i := range seed {
+		if err := db.Create(&seed[i]).Error; err != nil {
+			t.Fatalf("建 server 失败: %v", err)
+		}
+	}
+	cases := map[string]string{"bk1": alert.RoleBackend, "px1": alert.RoleProxy, "lb1": alert.RoleLobby, "nope": ""}
+	for serverID, want := range cases {
+		if got := svc.ResolveAlertRole("prod", serverID); got != want {
+			t.Fatalf("%s 角色应为 %q，实际 %q", serverID, want, got)
+		}
+	}
+	if got := svc.ResolveAlertRole("nosuchns", "bk1"); got != "" {
+		t.Fatalf("未知 namespace 应空串，实际 %q", got)
+	}
+
+	// 人工改级：写 override 列 + 审计
+	e := &model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelInfo, Namespace: "prod", ServerID: "bk1", Message: "m"}
+	if err := svc.Record(e); err != nil {
+		t.Fatalf("record 失败: %v", err)
+	}
+	updated, err := svc.OverrideAlertLevel(e.ID, model.AlertLevelCritical, "admin", "203.0.113.9")
+	if err != nil {
+		t.Fatalf("改级失败: %v", err)
+	}
+	if updated.SeverityOverride != model.AlertLevelCritical || updated.OverriddenBy != "admin" || updated.OverriddenAt == nil {
+		t.Fatalf("覆盖列未正确落库：%+v", updated)
+	}
+	var audit model.AuditLog
+	if err := db.Where("action = ?", model.ActionAlertEventLevelOverridden).First(&audit).Error; err != nil {
+		t.Fatalf("改级未落审计: %v", err)
+	}
+	if !strings.Contains(audit.Detail, `"newLevel":"critical"`) {
+		t.Fatalf("审计明细应含新级别，实际 %s", audit.Detail)
+	}
+	if _, err := svc.OverrideAlertLevel(e.ID, "bogus", "admin", ""); !errors.Is(err, apperr.ErrInvalidParam) {
+		t.Fatalf("非法级别应 ErrInvalidParam，实际 %v", err)
+	}
+	if _, err := svc.OverrideAlertLevel(999999, model.AlertLevelInfo, "admin", ""); !errors.Is(err, apperr.ErrAlertEventNotFound) {
+		t.Fatalf("未知告警应 ErrAlertEventNotFound，实际 %v", err)
 	}
 }

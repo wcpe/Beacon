@@ -676,6 +676,12 @@ export const observability = {
     filterBatchResolve: 'Resolve all',
     filterBatchResult: 'Handled {{count}}',
     filterBatchEmpty: 'No open alerts in the current filter',
+    // FR-231: manual level override
+    override: {
+      title: 'Set level',
+      badge: 'Manually adjusted',
+      by: 'Adjusted to {{by}} · {{at}}',
+    },
     // FR-230: detail embeds server recent status + alert timeline
     context: {
       serverTitle: 'Server recent status',

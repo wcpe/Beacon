@@ -22,6 +22,9 @@ func (s *spyAlertSink) Record(e *model.AlertEvent) error {
 	return nil
 }
 
+// ResolveAlertRole 满足 alert.EventSink（FR-231）；测试替身不需要真实角色解析。
+func (s *spyAlertSink) ResolveAlertRole(string, string) string { return "" }
+
 const conflictTestIdentity = "11111111-1111-4111-8111-111111111111"
 
 // newConflictTestService 构造装配了冲突检测（固定 10 分钟窗口 + 告警替身）的 v2 服务。
