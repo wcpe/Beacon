@@ -14,6 +14,8 @@ export interface AgentIdentityItem {
   status: string
   bootId: string | null
   lastAddr: string | null
+  /** agent 上报的服务器工作目录绝对路径（FR-226）；旧 agent 未上报为空串。 */
+  serverWorkDir: string | null
   agentVersion: string | null
   pendingExpiresAt: string | null
   boundAt: string | null

@@ -112,9 +112,11 @@ object BeaconAgentBukkit : Plugin() {
         val endpointReport = EndpointReport(backendListenPort = readListenPort())
         submitAsync {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
+            // 服务器工作目录（FR-226）：agent dataFolder 的父（plugins）的父 = 服务器根，与 FR-163 扫描根一致。
+            val serverWorkDir = getDataFolder().absoluteFile.parentFile?.parentFile?.absolutePath.orEmpty()
             // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
-                AgentBootstrap.readIdentity(role = "bukkit", agentVersion = pluginVersion)
+                AgentBootstrap.readIdentity(role = "bukkit", agentVersion = pluginVersion, serverWorkDir = serverWorkDir)
                     .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
 
             // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。

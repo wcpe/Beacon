@@ -20,6 +20,7 @@ function toItem(row: IdentityRow): AgentIdentityItem {
     status: row.status,
     bootId: row.bootId,
     lastAddr: row.lastAddr,
+    serverWorkDir: row.serverWorkDir,
     agentVersion: row.agentVersion,
     pendingExpiresAt: row.pendingExpiresAt,
     boundAt: row.boundAt,

@@ -127,6 +127,8 @@ type v2AgentRegisterRequest struct {
 	Kind         string          `json:"kind"`
 	BootID       string          `json:"bootId"`
 	AgentVersion string          `json:"agentVersion"`
+	// ServerWorkDir agent 上报的服务器工作目录绝对路径（FR-226，可选）。
+	ServerWorkDir string `json:"serverWorkDir"`
 	Addr         string          `json:"addr"`
 	Address      string          `json:"address"`
 	ListenPort   *int            `json:"listenPort"`
@@ -185,6 +187,7 @@ func (h *V2ControlPlaneHandler) AgentRegister(w http.ResponseWriter, r *http.Req
 	res, err := h.svc.RegisterAgentV2(service.AgentRegisterV2Params{
 		Token: r.Header.Get(beaconTokenHeader), IdentityID: req.IdentityID, ServerID: req.ServerID,
 		Kind: req.Kind, BootID: req.BootID, AgentVersion: req.AgentVersion,
+		ServerWorkDir: req.ServerWorkDir,
 		Addr: addr, DetectedHost: detectedHost, ListenPort: req.ListenPort,
 		Listeners: listeners, ListenersProvided: listenersProvided, ClientIP: clientIP(r),
 	})
@@ -1138,10 +1141,16 @@ func namespaceTombstoneView(ns model.Namespace) any {
 }
 
 func agentIdentityView(ident *model.AgentIdentity) map[string]any {
+	// FR-226：工作目录未上报（旧 agent）时输出 null，与「已上报空值」区分。
+	var serverWorkDir any
+	if ident.ServerWorkDir != "" {
+		serverWorkDir = ident.ServerWorkDir
+	}
 	return map[string]any{
 		"id": ident.ID, "identityId": ident.IdentityID, "namespaceId": ident.NamespaceID,
 		"serverId": optionalAgentIdentityServerID(ident), "kind": ident.Kind, "status": ident.Status,
 		"bootId": ident.BootID, "lastAddr": ident.LastAddr, "agentVersion": ident.AgentVersion,
+		"serverWorkDir":    serverWorkDir,
 		"pendingExpiresAt": ident.PendingExpiresAt, "boundAt": ident.BoundAt,
 		"statusChangedAt": ident.StatusChangedAt, "conflictReason": ident.ConflictReason,
 		"bindingSource": ident.BindingSource, "legacyMigratedAt": ident.LegacyMigratedAt,

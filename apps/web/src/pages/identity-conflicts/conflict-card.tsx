@@ -93,6 +93,26 @@ export default function ConflictCard({ identity, namespaceName }: ConflictCardPr
         </Badge>
       </div>
 
+      {/* 身份级事实（FR-226 / B2）：工作目录 + 注册时间，与下方双方的 bootId / 地址并列，
+          直接暴露「同 serverId 被两个不同目录注册」。旧 agent 未上报目录时显式标注。 */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-surface-2/40 px-3 py-2 text-[12px]">
+        <span className="text-[10.5px] tracking-[0.3px] text-ink-4 uppercase">
+          {t('cluster.identityConflicts.card.serverWorkDir')}
+        </span>
+        <span
+          className={cn('truncate font-mono', identity.serverWorkDir != null ? 'text-ink-2' : 'text-ink-4')}
+          title={identity.serverWorkDir ?? undefined}
+        >
+          {identity.serverWorkDir ?? t('cluster.identityConflicts.card.notReported')}
+        </span>
+        <span className="ml-auto text-[10.5px] tracking-[0.3px] text-ink-4 uppercase">
+          {t('cluster.identityConflicts.card.registeredAt')}
+        </span>
+        <span className="text-ink-2">
+          {identity.boundAt ? new Date(identity.boundAt).toLocaleString() : '—'}
+        </span>
+      </div>
+
       {/* 卡体：左右两栏平铺冲突双方 */}
       <AsyncSection
         isLoading={detailQuery.isLoading}

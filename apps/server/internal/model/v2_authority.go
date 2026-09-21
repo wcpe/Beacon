@@ -245,6 +245,9 @@ type AgentIdentity struct {
 	BootID           string           `gorm:"column:boot_id;size:36"`
 	LastAddr         string           `gorm:"column:last_addr;size:320"`
 	AgentVersion     string           `gorm:"column:agent_version;size:32"`
+	// ServerWorkDir 是 agent 上报的服务器工作目录绝对路径（FR-226）：供冲突 / 身份视图分辨「哪台、哪个目录」。
+	// 旧 agent 未上报时为空串（降级展示「—」）；心跳可不携带，故仅在新值非空时覆盖。
+	ServerWorkDir    string           `gorm:"column:server_work_dir;size:512"`
 	PendingExpiresAt *time.Time       `gorm:"column:pending_expires_at"`
 	BoundAt          *time.Time       `gorm:"column:bound_at"`
 	StatusChangedAt  time.Time        `gorm:"column:status_changed_at;not null"`

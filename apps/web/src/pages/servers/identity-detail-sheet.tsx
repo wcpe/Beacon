@@ -49,6 +49,7 @@ export default function IdentityDetailSheet({ identityId, onOpenChange }: Identi
                 <IdentityField label="命名空间" value={String(detail.namespaceId)} mono />
                 <IdentityField label="类型" value={detail.kind === 'proxy' ? '代理' : '子服'} />
                 <IdentityField label="Agent 版本" value={detail.agentVersion ?? '未提供'} mono />
+                <IdentityField label="工作目录" value={detail.serverWorkDir ?? '未上报（旧 agent）'} mono />
                 <IdentityField label="来源地址" value={detail.lastAddr ?? '未提供'} mono />
                 <IdentityField label="绑定来源" value={bindingSourceLabel(detail.bindingSource)} />
                 <IdentityField label="迁移状态" value={migrationStateLabel(detail.migrationState)} />

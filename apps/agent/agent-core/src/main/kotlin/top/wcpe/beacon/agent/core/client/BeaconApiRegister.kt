@@ -91,6 +91,8 @@ internal fun BeaconApiClient.registerV2Status(identity: AgentIdentity): Register
             put("bootId", identity.bootId)
             // serverId 仅由控制面分配；旧本地键只留作 agent 侧迁移提示，绝不上传。
             if (identity.agentVersion.isNotBlank()) put("agentVersion", identity.agentVersion)
+            // 服务器工作目录（FR-226）：仅非空时附加，旧控制面 / 旧 agent 缺键即可。
+            if (identity.serverWorkDir.isNotBlank()) put("serverWorkDir", identity.serverWorkDir)
             appendEndpointReport(this, identity)
         }
     val resp =
