@@ -9,6 +9,7 @@ import { Badge, Button } from '@beacon/ui'
 
 import { isDemoMode } from '../demo-mode'
 import { useShellStore } from '../store'
+import Breadcrumb from './breadcrumb'
 import CommandPalette from './command-palette'
 import EnvFilter from './env-filter'
 import LanguageMenu from './language-menu'
@@ -87,6 +88,8 @@ export default function Header() {
         ) : (
           <EnvFilter />
         )}
+        {/* 当前页面面包屑（E3）：环境/命名空间选择器之后给出「分组 › 页面」身份 */}
+        <Breadcrumb />
         <div className="flex flex-1 items-center justify-end gap-1.5">
           <HeaderUtilities
             onOpenSearch={() => {

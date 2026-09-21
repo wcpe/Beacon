@@ -14,7 +14,6 @@ import {
   Checkbox,
   DataTable,
   Input,
-  PageHeader,
   Skeleton,
   TableSkeleton,
   type DataTableColumn,
@@ -275,10 +274,6 @@ export default function MessagesPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<MessagesSquare className="size-4" />}
-        title={t('nav.messages')}
-      />
       <MasterDetail
         master={
           <ListCard

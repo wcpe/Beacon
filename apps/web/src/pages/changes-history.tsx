@@ -2,7 +2,6 @@
 // 顶部 namespace 作用域；列表视图与详情视图切换（选中某单进详情，可整单回滚 / 结束回滚）。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { History } from 'lucide-react'
 
 import { PageHeader } from '@beacon/ui'
 import type { ChangeOrderSummary } from '@beacon/contracts'
@@ -22,8 +21,6 @@ export default function ChangesHistoryPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<History className="size-4" />}
-        title={t('delivery.changesHistory.title')}
         actions={
           <NamespacePicker
             value={namespaceId}

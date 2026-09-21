@@ -208,8 +208,6 @@ function PageHeaderPreview() {
     <ComponentShell>
       <div className="space-y-5">
         <PageHeader
-          icon={<Server className="size-4" />}
-          title="服务器资产"
           actions={
             <>
               <Button variant="outline" size="sm">
@@ -220,8 +218,6 @@ function PageHeaderPreview() {
           }
         />
         <PageHeader
-          icon={<Terminal className="size-4" />}
-          title="命令观测"
           actions={
             <Select defaultValue="1h">
               <SelectTrigger className="w-28">
@@ -799,9 +795,9 @@ const items: MuseumItem[] = [
     id: 'page-header',
     title: '二阶页眉',
     group: '展示组件',
-    description: '业务页顶栏：图标徽章 + 标题/副文案 + 右侧操作槽；区段标题 base/lg 对照。',
+    description: '业务页顶栏操作行：仅右侧操作槽（图标徽章与标题已上移到页眉面包屑）；区段标题 base/lg 对照。',
     exports: ['PageHeader', 'SectionHeader'],
-    states: ['with actions', 'with description', 'section base', 'section lg'],
+    states: ['with actions', 'section base', 'section lg'],
     preview: <PageHeaderPreview />,
   },
   {

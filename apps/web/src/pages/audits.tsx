@@ -2,9 +2,7 @@
 // KPI + 过滤列表（操作人/动作/目标类型/关键词）+ 分页 + 右侧详情面板（追溯明细）+ 导出；与 /commands 互跳（FR-157）。
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScrollText } from 'lucide-react'
 
-import { PageHeader } from '@beacon/ui'
 import type { AuditItem } from '@beacon/contracts'
 
 import MasterDetail from '../features/shared/master-detail'
@@ -19,10 +17,6 @@ export default function AuditsPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<ScrollText className="size-4" />}
-        title={t('nav.audits')}
-      />
       <AuditKpi />
       <MasterDetail
         master={<AuditList onView={setDetail} selectedId={detail?.id ?? null} />}

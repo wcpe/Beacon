@@ -33,7 +33,8 @@ describe('开源协议页（FR-190）', () => {
 
   it('展示项目 MIT 全文与第三方依赖清单', () => {
     renderAt('/license')
-    expect(screen.getByRole('heading', { name: '开源协议' })).toBeInTheDocument()
+    // E3/E5：页面身份由页眉面包屑承担（内容区不再渲染大标题）
+    expect(within(screen.getByRole('navigation', { name: '面包屑' })).getByText('开源协议')).toBeInTheDocument()
     const full = document.querySelector('[data-slot="license-full-text"]')
     expect(full).not.toBeNull()
     const body = full?.textContent ?? ''
@@ -85,7 +86,7 @@ describe('开源协议页（FR-190）', () => {
     const footer = desktop?.querySelector('[data-slot="sidebar-footer"]')
     expect(footer).not.toBeNull()
     await user.click(within(footer as HTMLElement).getByRole('link', { name: '开源协议' }))
-    expect(await screen.findByRole('heading', { name: '开源协议' })).toBeInTheDocument()
+    expect(await screen.findByText('开源协议', { selector: '[data-slot="page-breadcrumb"] *' })).toBeInTheDocument()
     expect(document.title).toBe('Beacon - 开源协议')
   })
 })

@@ -26,8 +26,6 @@ export default function TopologyPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<Network className="size-4" />}
-        title={t('nav.topology')}
         actions={<NamespaceSelect value={namespaceId} onChange={setNamespaceId} />}
       />
 

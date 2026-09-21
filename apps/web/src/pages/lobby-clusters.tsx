@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { DoorOpen, RefreshCw, UserPlus } from 'lucide-react'
+import { RefreshCw, UserPlus } from 'lucide-react'
 
 import {
   AsyncSection,
@@ -167,8 +167,6 @@ export default function LobbyClustersPage() {
   return (
     <section className="grid gap-4">
       <PageHeader
-        icon={<DoorOpen className="size-4" />}
-        title="大厅集群"
         actions={
           <>
             <NamespaceSelect value={namespaceId} onChange={setNamespaceId} allowAll={false} />

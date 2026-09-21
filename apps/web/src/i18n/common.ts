@@ -16,6 +16,8 @@ export const common = {
     huge: '超大量',
     error: '异常',
   },
+  // 顶栏页面面包屑（E3）的无障碍标签
+  breadcrumb: '面包屑',
   // 顶栏环境过滤器（FR-178 / FR-192）：按环境过滤各页视图的作用域
   envFilter: {
     label: '环境过滤器',

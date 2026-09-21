@@ -4,9 +4,9 @@
 // 清单数据由 apps/web/src/data/third-party-licenses.json 预生成，构建期内嵌。
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight, ExternalLink, Search, Scale } from 'lucide-react'
+import { ChevronDown, ChevronRight, ExternalLink, Search } from 'lucide-react'
 
-import { Badge, Input, PageHeader } from '@beacon/ui'
+import { Badge, Input } from '@beacon/ui'
 
 import licenseData from '../data/third-party-licenses.json'
 
@@ -98,10 +98,6 @@ export default function LicensePage() {
 
   return (
     <section className="grid max-w-5xl gap-4" data-slot="license-page">
-      <PageHeader
-        icon={<Scale className="size-4" />}
-        title={t('common.license.pageTitle')}
-      />
 
       {/* 搜索 + 运行时依赖表（参考截图：单一清单） */}
       <div className="grid gap-3" data-slot="license-deps">

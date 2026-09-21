@@ -3,14 +3,13 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { CheckCircle2, Cloud, DownloadCloud, PackageCheck, Rocket, Wifi } from 'lucide-react'
+import { CheckCircle2, Cloud, DownloadCloud, Rocket, Wifi } from 'lucide-react'
 
 import {
   AsyncSection,
   Badge,
   Button,
   MarkdownLite,
-  PageHeader,
   SectionHeader,
 } from '@beacon/ui'
 
@@ -131,10 +130,6 @@ export default function SystemVersionPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<PackageCheck className="size-4" />}
-        title={t('nav.systemVersion')}
-      />
 
       {/* 版本信息卡（紧凑：版本号 + 渠道 / 状态 + 检查 + 更新说明，不含操作按钮） */}
       <AsyncSection isLoading={checkQuery.isLoading} isError={checkQuery.isError} error={checkQuery.error}>

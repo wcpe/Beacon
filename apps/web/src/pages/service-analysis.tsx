@@ -5,9 +5,9 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSearchParams } from 'react-router-dom'
-import { GitCompareArrows, History, LineChart, MousePointerClick, TrendingUp, Workflow } from 'lucide-react'
+import { GitCompareArrows, History, MousePointerClick, TrendingUp, Workflow } from 'lucide-react'
 
-import { PageHeader, cn } from '@beacon/ui'
+import { cn } from '@beacon/ui'
 
 import {
   setServiceAnalysisSelected,
@@ -63,10 +63,6 @@ export default function ServiceAnalysisPage() {
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        icon={<LineChart className="size-4" />}
-        title={t('nav.serviceAnalysis')}
-      />
       {/* 左侧选择列（固定宽度吸顶）+ 右侧主区（占剩余宽度） */}
       <div className="grid gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] xl:grid-cols-[19rem_minmax(0,1fr)]">
         <ServerPicker selected={selected} onToggle={toggle} onClear={clearSelected} />
