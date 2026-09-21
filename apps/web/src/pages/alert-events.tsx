@@ -301,12 +301,32 @@ export default function AlertEventsPage() {
       },
       {
         header: t('observability.alertEvents.columns.time'),
-        cell: (row) => <span className="tabular-nums text-xs text-ink-3">{new Date(row.createdAt).toLocaleString()}</span>,
+        cell: (row) => (
+          <div className="grid gap-0.5 text-xs">
+            <span className="tabular-nums text-ink-3">{new Date(row.createdAt).toLocaleString()}</span>
+            {/* FR-232：收敛后展示最近一次触发时刻，便于分辨「反复发生」 */}
+            {(row.occurrenceCount ?? 1) > 1 && row.lastAt != null && (
+              <span className="tabular-nums text-ink-4">
+                {t('observability.alertEvents.lastAt', { time: new Date(row.lastAt).toLocaleTimeString() })}
+              </span>
+            )}
+          </div>
+        ),
       },
       {
         header: t('observability.alertEvents.columns.level'),
         cell: (row) => (
-          <Badge variant={levelBadgeVariant(row.level)}>{t(`observability.alertEvents.level.${row.level}`)}</Badge>
+          <span className="inline-flex items-center gap-1">
+            <Badge variant={levelBadgeVariant(row.level)}>{t(`observability.alertEvents.level.${row.level}`)}</Badge>
+            {/* FR-232：同键合并计数徽标（×N） */}
+            {(row.occurrenceCount ?? 1) > 1 && (
+              <Badge variant="secondary" className="tnum">
+                ×{row.occurrenceCount}
+              </Badge>
+            )}
+            {/* FR-231：人工调整标记 */}
+            {row.severityOverride != null && <Badge variant="outline">✎</Badge>}
+          </span>
         ),
       },
       {

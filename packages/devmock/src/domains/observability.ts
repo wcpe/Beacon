@@ -125,6 +125,9 @@ function buildObservability(scenario: MockScenario): ObservabilityState {
       handledBy: resolved ? 'ops-chen' : null,
       handledAt: resolved ? new Date(BASE_MS - i * 40 * MINUTE + 5 * MINUTE).toISOString() : null,
       handleNote: resolved ? '已重启 agent 恢复心跳' : null,
+      // FR-232：部分行演示收敛计数与「最后触发」时刻
+      occurrenceCount: i % 5 === 0 ? 3 : 1,
+      lastAt: new Date(BASE_MS - i * 40 * MINUTE + 2 * MINUTE).toISOString(),
     })
   }
 

@@ -776,4 +776,6 @@ const (
 	AlertEventStatusOpen         = "open"
 	AlertEventStatusAcknowledged = "acknowledged"
 	AlertEventStatusResolved     = "resolved"
+	// AutoResolveOperator 是实例恢复自动消解时写入的 handled_by，供 UI 区分「系统自动消解」vs「人工已处理」（FR-232）。
+	AutoResolveOperator = "system"
 )

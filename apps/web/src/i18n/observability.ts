@@ -671,6 +671,8 @@ export const observability = {
     filterBatchResolve: '一键已处理',
     filterBatchResult: '已处理 {{count}} 条',
     filterBatchEmpty: '当前筛选无待处理告警',
+    // FR-232：收敛计数提示
+    lastAt: '最后 {{time}}',
     // FR-231：人工升降级别
     override: {
       title: '调整级别',

@@ -43,6 +43,7 @@ func (p *PersistAlerter) Notify(_ context.Context, a Alert) error {
 	return p.sink.Record(&model.AlertEvent{
 		Type:      model.AlertEventTypeHealthTransition,
 		Level:     GradeAlert(a.Status, role, nil),
+		ToStatus:  a.Status,
 		ServerID:  a.ServerID,
 		Namespace: a.Namespace,
 		Message:   a.ServerID + " " + a.PrevStatus + " → " + a.Status,
