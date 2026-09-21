@@ -81,13 +81,15 @@ func TestRecordKeepsExplicitStatus(t *testing.T) {
 }
 
 // seedOpenEvent 落一条 open 告警并返回其 id。
+// seedOpenEvent 直插一条 open 告警（绕过 Record 的 FR-232 收敛，便于构造「同键多行」场景）。
 func seedOpenEvent(t *testing.T, svc *AlertEventService, ns, serverID string) uint {
 	t.Helper()
 	e := &model.AlertEvent{
 		Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
-		Namespace: ns, ServerID: serverID, Message: serverID + " degraded",
+		Namespace: ns, ServerID: serverID, Message: serverID + " degraded", Status: model.AlertEventStatusOpen,
+		OccurrenceCount: 1,
 	}
-	if err := svc.Record(e); err != nil {
+	if err := svc.db.Create(e).Error; err != nil {
 		t.Fatalf("落 open 告警失败: %v", err)
 	}
 	return e.ID
@@ -244,18 +246,19 @@ func TestActiveCountsOnlyOpen(t *testing.T) {
 func TestHandleBatchByFilterCrossPage(t *testing.T) {
 	svc, db := newAlertEventService(t)
 	// 45 条 critical/open（> 默认页 20，验证「跨页」在服务端一次性生效）+ 10 条 warning + 5 条已 resolved
+	// 直插绕过 FR-232 收敛（否则同键会合并为 1 行，测不出跨页）。
 	for i := 0; i < 45; i++ {
-		if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s", Message: "m"}); err != nil {
+		if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s", Message: "m", Status: model.AlertEventStatusOpen, OccurrenceCount: 1}).Error; err != nil {
 			t.Fatalf("seed critical 失败: %v", err)
 		}
 	}
 	for i := 0; i < 10; i++ {
-		if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s", Message: "m"}); err != nil {
+		if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s", Message: "m", Status: model.AlertEventStatusOpen, OccurrenceCount: 1}).Error; err != nil {
 			t.Fatalf("seed warning 失败: %v", err)
 		}
 	}
 	for i := 0; i < 5; i++ {
-		if err := svc.Record(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s", Message: "m", Status: model.AlertEventStatusResolved}); err != nil {
+		if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s", Message: "m", Status: model.AlertEventStatusResolved, OccurrenceCount: 1}).Error; err != nil {
 			t.Fatalf("seed resolved 失败: %v", err)
 		}
 	}
@@ -338,8 +341,8 @@ func TestAlertContextAggregatesServerAndTimeline(t *testing.T) {
 	if err := db.Create(&model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning, Namespace: "prod", ServerID: "s2", Message: "other", CreatedAt: base}).Error; err != nil {
 		t.Fatalf("seed s2 失败: %v", err)
 	}
-	anchor := &model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s1", Message: "anchor"}
-	if err := svc.Record(anchor); err != nil {
+	anchor := &model.AlertEvent{Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelCritical, Namespace: "prod", ServerID: "s1", Message: "anchor", Status: model.AlertEventStatusOpen, OccurrenceCount: 1}
+	if err := db.Create(anchor).Error; err != nil {
 		t.Fatalf("record anchor 失败: %v", err)
 	}
 
@@ -437,5 +440,80 @@ func TestResolveAlertRoleAndOverrideLevel(t *testing.T) {
 	}
 	if _, err := svc.OverrideAlertLevel(999999, model.AlertLevelInfo, "admin", ""); !errors.Is(err, apperr.ErrAlertEventNotFound) {
 		t.Fatalf("未知告警应 ErrAlertEventNotFound，实际 %v", err)
+	}
+}
+
+// TestFR232ConvergenceAndAutoResolve 校验 FR-232：同键收敛计数、已处理不回退、取最高级、方向区分、恢复自动消解。
+func TestFR232ConvergenceAndAutoResolve(t *testing.T) {
+	svc, db := newAlertEventService(t)
+	trigger := func(level, toStatus string) {
+		t.Helper()
+		if err := svc.Record(&model.AlertEvent{
+			Type: model.AlertEventTypeHealthTransition, Level: level,
+			ToStatus: toStatus, Namespace: "prod", ServerID: "s1", Message: "m",
+		}); err != nil {
+			t.Fatalf("触发失败: %v", err)
+		}
+	}
+	// 同键连续触发 5 次 → 只有 1 行、计数 5
+	for i := 0; i < 5; i++ {
+		trigger(model.AlertLevelWarning, "lost")
+	}
+	var rows []model.AlertEvent
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
+	if len(rows) != 1 {
+		t.Fatalf("同键应收敛为 1 行，实际 %d", len(rows))
+	}
+	if rows[0].OccurrenceCount != 5 {
+		t.Fatalf("计数应为 5，实际 %d", rows[0].OccurrenceCount)
+	}
+	if rows[0].LastAt == nil {
+		t.Fatalf("last_at 应被刷新")
+	}
+
+	// 已 acknowledged 再触发：不回退 open，仅计数 / 取最高级
+	if _, err := svc.Handle(rows[0].ID, "acknowledge", "", "alice", ""); err != nil {
+		t.Fatalf("acknowledge 失败: %v", err)
+	}
+	trigger(model.AlertLevelCritical, "lost")
+	var one model.AlertEvent
+	db.First(&one, rows[0].ID)
+	if one.Status != model.AlertEventStatusAcknowledged {
+		t.Fatalf("已处理行不应回退 open，实际 %q", one.Status)
+	}
+	if one.OccurrenceCount != 6 {
+		t.Fatalf("计数应递增为 6，实际 %d", one.OccurrenceCount)
+	}
+	if one.Level != model.AlertLevelCritical {
+		t.Fatalf("合并应取最高级 critical，实际 %q", one.Level)
+	}
+
+	// 不同方向（to_status）不合并：新增 offline 方向 → s1 变 2 行
+	trigger(model.AlertLevelCritical, "offline")
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
+	if len(rows) != 2 {
+		t.Fatalf("不同 to_status 应分别成行，实际 %d", len(rows))
+	}
+
+	// 恢复自动消解：两条未恢复行全部 resolved、handled_by=system
+	n, err := svc.AutoResolveAlerts("prod", "s1")
+	if err != nil {
+		t.Fatalf("自动消解失败: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("应消解 2 行，实际 %d", n)
+	}
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
+	for _, r := range rows {
+		if r.Status != model.AlertEventStatusResolved || r.HandledBy != model.AutoResolveOperator {
+			t.Fatalf("恢复后应全 resolved 且 handled_by=system，实际 %+v", r)
+		}
+	}
+
+	// 消解后再触发同键 → 视为新事件，另起一行
+	trigger(model.AlertLevelWarning, "lost")
+	db.Where("namespace = ? AND server_id = ?", "prod", "s1").Find(&rows)
+	if len(rows) != 3 {
+		t.Fatalf("已 resolved 后同键再触发应新起一行，实际 %d", len(rows))
 	}
 }

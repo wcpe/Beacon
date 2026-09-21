@@ -72,6 +72,10 @@ export interface AlertEventItem {
   severityOverride?: AlertEventItem['level'] | null
   overriddenBy?: string | null
   overriddenAt?: string | null
+  /** 收敛计数（FR-232）：同键未恢复期间重复触发递增，首发 1。 */
+  occurrenceCount?: number
+  /** 最近一次触发时刻（FR-232）；首发等于 createdAt。 */
+  lastAt?: string | null
 }
 
 /** 告警详情内嵌的「该服近期状态」（FR-230，取健康真源）。 */

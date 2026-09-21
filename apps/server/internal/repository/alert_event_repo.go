@@ -138,3 +138,34 @@ func (r *AlertEventRepository) HandleBatch(f AlertEventFilter, status, handledBy
 	}
 	return res.RowsAffected, nil
 }
+
+// FindUnresolvedByDedupKey 按收敛键查最近一条「未恢复」（status != resolved）告警（FR-232）。
+// 命中则走合并计数；未命中（含已 resolved 的旧行）→ 视为该键当前无未恢复行，由调用方插新行。
+func (r *AlertEventRepository) FindUnresolvedByDedupKey(namespace, serverID, typ, toStatus string) (*model.AlertEvent, error) {
+	var e model.AlertEvent
+	err := r.db.
+		Where("namespace = ? AND server_id = ? AND type = ? AND to_status = ? AND status <> ?",
+			namespace, serverID, typ, toStatus, model.AlertEventStatusResolved).
+		Order("id DESC").First(&e).Error
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// AutoResolveByServer 把某实例的全部未恢复告警批量置为 resolved（FR-232 实例恢复自动消解）：
+// 一条 UPDATE，仅影响 status != resolved 的行；handled_by 记 system、note 标明自动消解，使 UI 可区分人机处理。返回受影响行数。
+func (r *AlertEventRepository) AutoResolveByServer(namespace, serverID string, now time.Time, note string) (int64, error) {
+	res := r.db.Model(&model.AlertEvent{}).
+		Where("namespace = ? AND server_id = ? AND status <> ?", namespace, serverID, model.AlertEventStatusResolved).
+		Updates(map[string]any{
+			"status":      model.AlertEventStatusResolved,
+			"handled_by":  model.AutoResolveOperator,
+			"handled_at":  now,
+			"handle_note": note,
+		})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}

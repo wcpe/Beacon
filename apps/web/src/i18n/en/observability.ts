@@ -676,6 +676,8 @@ export const observability = {
     filterBatchResolve: 'Resolve all',
     filterBatchResult: 'Handled {{count}}',
     filterBatchEmpty: 'No open alerts in the current filter',
+    // FR-232: convergence count hints
+    lastAt: 'Last {{time}}',
     // FR-231: manual level override
     override: {
       title: 'Set level',

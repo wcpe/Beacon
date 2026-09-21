@@ -192,12 +192,72 @@ func NewAlertEventService(db *gorm.DB, repo *repository.AlertEventRepository, au
 }
 
 // Record 落库一条告警事件；未显式指定处理状态时默认 open（新告警即待处理，FR-157）。
+// FR-232 收敛：health-transition 类按收敛键 (namespace, serverId, type, toStatus) 合并——存在未恢复行时
+// 只 occurrence_count+1、刷新 last_at、取最高级（不插新行、不把 acknowledged 回退 open）；否则插新行。
 // created_at 交由 GORM 全局 NowFunc 统一填 UTC（不在此设时间，保与全表一致）。
 func (s *AlertEventService) Record(e *model.AlertEvent) error {
 	if e.Status == "" {
 		e.Status = model.AlertEventStatusOpen
 	}
+	if e.OccurrenceCount <= 0 {
+		e.OccurrenceCount = 1
+	}
+	if e.Type == model.AlertEventTypeHealthTransition {
+		existing, err := s.repo.FindUnresolvedByDedupKey(e.Namespace, e.ServerID, e.Type, e.ToStatus)
+		if err == nil && existing != nil {
+			return s.mergeOccurrence(existing, e)
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
+	now := time.Now().UTC()
+	e.LastAt = &now
 	return s.repo.Create(e)
+}
+
+// mergeOccurrence 把再次触发的同类告警并入既有未恢复行（FR-232）：计数 +1、刷新 last_at、取最高级。
+// 状态保持不变（已 acknowledged 的条目再触发不回退 open）；人工覆盖过级别的条目不因自动合并改级。
+func (s *AlertEventService) mergeOccurrence(existing, incoming *model.AlertEvent) error {
+	now := time.Now().UTC()
+	existing.OccurrenceCount++
+	existing.LastAt = &now
+	if existing.SeverityOverride == "" {
+		existing.Level = maxAlertLevel(existing.Level, incoming.Level)
+	}
+	return s.repo.Save(existing)
+}
+
+// maxAlertLevel 取两个级别中更高者（FR-231 合并时取最高级）；未知级别视作最低。
+func maxAlertLevel(a, b string) string {
+	if alertLevelRank(b) > alertLevelRank(a) {
+		return b
+	}
+	return a
+}
+
+// alertLevelRank 级别严重度排序权重（info < warning < critical）。
+func alertLevelRank(level string) int {
+	switch level {
+	case model.AlertLevelCritical:
+		return 3
+	case model.AlertLevelWarning:
+		return 2
+	case model.AlertLevelInfo:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// AutoResolveAlerts 在实例恢复 online 时把其全部未恢复告警自动置为 resolved（FR-232），
+// handled_by=system、note 标明自动消解，使 UI 能区分系统自动消解 vs 人工已处理。返回受影响行数。
+// 一条批量 UPDATE，不逐条写审计（量大；自动消解语义由 note 表达）。
+func (s *AlertEventService) AutoResolveAlerts(namespace, serverID string) (int64, error) {
+	if namespace == "" || serverID == "" {
+		return 0, nil
+	}
+	return s.repo.AutoResolveByServer(namespace, serverID, time.Now().UTC(), "实例恢复 online，自动消解")
 }
 
 // List 分页查询告警事件；规整 page/size 后委托仓库（时间倒序）。
