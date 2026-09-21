@@ -41,7 +41,7 @@ func newAssetSvcTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("取底层连接池失败: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.FileAsset{},
+	if err := db.AutoMigrate(&model.Namespace{}, &model.Server{}, &model.ServerTag{}, &model.FileAsset{},
 		&model.AgentCommand{}, &model.Setting{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移失败: %v", err)
 	}

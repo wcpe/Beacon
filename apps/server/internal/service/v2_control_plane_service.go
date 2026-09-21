@@ -801,8 +801,10 @@ type ListServersParams struct {
 	Keyword         string
 	LifecycleStatus string
 	Lifecycle       string
-	Page            int
-	PageSize        int
+	// Tags 按 server 标签交集筛选（FR-227，键值全等命中）；空表示不过滤。
+	Tags     map[string]string
+	Page     int
+	PageSize int
 }
 
 type UpdateServerDisplayNameParams struct {
@@ -876,6 +878,31 @@ func (s *V2ControlPlaneService) ListServers(p ListServersParams) ([]ServerView, 
 	if p.Keyword != "" {
 		like := "%" + p.Keyword + "%"
 		q = q.Where("server_id LIKE ? OR display_name LIKE ?", like, like)
+	}
+	// 标签交集筛选（FR-227）：先求命中 server_pk 集合再限定 id IN，避免 join 重复行。
+	if len(p.Tags) > 0 {
+		matched, err := serverRefsMatchingTags(s.db, p.NamespaceID, p.Tags)
+		if err != nil {
+			return nil, 0, err
+		}
+		if len(matched) == 0 {
+			return []ServerView{}, 0, nil
+		}
+		ids := make([]uint, 0, len(matched))
+		pkQ := s.db.Model(&model.Server{}).Select("id")
+		nsConds := make([]string, 0, len(matched))
+		args := make([]any, 0, len(matched)*2)
+		for k := range matched {
+			nsConds = append(nsConds, "(namespace_id = ? AND server_id = ?)")
+			args = append(args, k.namespaceID, k.serverID)
+		}
+		if err := pkQ.Where(strings.Join(nsConds, " OR "), args...).Pluck("id", &ids).Error; err != nil {
+			return nil, 0, err
+		}
+		if len(ids) == 0 {
+			return []ServerView{}, 0, nil
+		}
+		q = q.Where("id IN ?", ids)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {

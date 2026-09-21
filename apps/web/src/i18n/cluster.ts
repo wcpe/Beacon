@@ -68,6 +68,17 @@ export const cluster = {
       helpHint:
         '健康详情：查看该服务器的健康分与因子分解。更多操作：设为 / 取消默认入口、置为 / 取消排空、禁用、解绑、生命周期归档——写操作均需填写原因。',
     },
+    tags: {
+      title: '服务器标签',
+      empty: '暂无标签',
+      key: '键',
+      value: '值',
+      add: '添加',
+      remove: '删除标签 {{key}}',
+      invalid: '标签格式非法：键限字母 / 数字 / _ . -（≤32），值 ≤128',
+      filterPlaceholder: '标签筛选 key:value（空格分隔多个）',
+      filterLabel: '标签筛选',
+    },
     confirm: {
       disableTitle: '禁用服务器',
       disableDesc: '禁用后摘除调度与指令下发，绑定保留，可随时启用。',

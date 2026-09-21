@@ -340,11 +340,32 @@ func (s *InstanceService) Discover(f runtime.Filter) []*runtime.Instance {
 		return []*runtime.Instance{}
 	}
 	f.Status = "" // 不走单值 Status 过滤，下方按“可用”集合（online+degraded）筛
+	// FR-227 / FR-29 同源：标签过滤以 server_tag 为唯一真源（不再读注册 metadata），多 tag 取交集。
+	var tagMatched map[string]struct{}
+	var hasTagFilter bool
+	if len(f.Tags) > 0 {
+		if s.db == nil {
+			return []*runtime.Instance{}
+		}
+		matched, err := ServerCodesMatchingTags(s.db, f.Namespace, f.Tags)
+		if err != nil {
+			return []*runtime.Instance{}
+		}
+		tagMatched = matched
+		hasTagFilter = true
+		// 交 server_tag 判定，避免叠加旧 metadata 口径（守「单一真源」）。
+		f.Tags = nil
+	}
 	all := s.registry.List(f)
 	out := make([]*runtime.Instance, 0, len(all))
 	for _, i := range all {
 		if activeNamespaces != nil && !activeNamespaces[i.Namespace] {
 			continue
+		}
+		if hasTagFilter {
+			if _, hit := tagMatched[i.Namespace+"/"+i.ServerID]; !hit {
+				continue
+			}
 		}
 		if i.Status == runtime.StatusOnline || i.Status == runtime.StatusDegraded {
 			out = append(out, i)

@@ -24,7 +24,7 @@ func newServerLifecycleTestSuite(t *testing.T) (*ApprovalService, *gorm.DB, mode
 	if err != nil {
 		t.Fatalf("打开内存 sqlite 失败: %v", err)
 	}
-	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.LobbyCluster{}, &model.Server{}, &model.AgentIdentity{}, &model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.AuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.Namespace{}, &model.BCCluster{}, &model.Region{}, &model.Zone{}, &model.LobbyCluster{}, &model.Server{}, &model.ServerTag{}, &model.AgentIdentity{}, &model.ApprovalRequest{}, &model.ApprovalExecutionReceipt{}, &model.AuditLog{}); err != nil {
 		t.Fatalf("迁移生命周期测试表失败: %v", err)
 	}
 	for _, table := range []string{"namespace", "bc_cluster", "region", "zone", "lobby_cluster", "server", "agent_identity", "approval_request", "approval_execution_receipt", "audit_log"} {

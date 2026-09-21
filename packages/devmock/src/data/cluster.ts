@@ -100,6 +100,8 @@ export interface ServerRow {
   draining: boolean
   /** 在线摘要（活性来自指标批上报，mock 直接给结论） */
   online: boolean
+  /** server 键值标签（FR-227），按 key 升序。 */
+  tags?: { key: string; value: string }[]
   createdAt: string
 }
 
@@ -216,6 +218,7 @@ interface ServerSeed {
   draining?: boolean
   online?: boolean
   pendingZoneId?: number | null
+  tags?: { key: string; value: string }[]
 }
 
 function makeServer(state: ClusterState, namespaceId: number, seed: ServerSeed): ServerRow {
@@ -232,6 +235,7 @@ function makeServer(state: ClusterState, namespaceId: number, seed: ServerSeed):
     isDefaultEntry: seed.isDefaultEntry ?? false,
     draining: seed.draining ?? false,
     online: seed.online ?? true,
+    tags: seed.tags ?? [],
     createdAt: isoOffset(-25 * DAY),
   }
   state.servers.push(row)
@@ -323,9 +327,9 @@ function buildNormal(): ClusterState {
   makeServer(state, 1, { serverId: 'proxy-2', kind: 'proxy', bcClusterId: 10 })
   makeServer(state, 1, { serverId: 'lobby-1', kind: 'backend', lobbyClusterNamespaceId: 1 })
   makeServer(state, 1, { serverId: 'lobby-2', kind: 'backend', lobbyClusterNamespaceId: 1, draining: true })
-  makeServer(state, 1, { serverId: 'game-1', kind: 'backend', zoneId: 30, isDefaultEntry: true })
-  makeServer(state, 1, { serverId: 'game-2', kind: 'backend', zoneId: 30 })
-  makeServer(state, 1, { serverId: 'game-3', kind: 'backend', zoneId: 31 })
+  makeServer(state, 1, { serverId: 'game-1', kind: 'backend', zoneId: 30, isDefaultEntry: true, tags: [{ key: 'env', value: 'beta' }, { key: 'tier', value: 'core' }] })
+  makeServer(state, 1, { serverId: 'game-2', kind: 'backend', zoneId: 30, tags: [{ key: 'env', value: 'beta' }] })
+  makeServer(state, 1, { serverId: 'game-3', kind: 'backend', zoneId: 31, tags: [{ key: 'tier', value: 'core' }] })
   makeServer(state, 1, { serverId: 'game-4', kind: 'backend', zoneId: 31, online: false })
   makeServer(state, 1, { serverId: 'game-5', kind: 'backend', zoneId: 31 })
   makeServer(state, 1, { serverId: 'game-6', kind: 'backend', zoneId: 31 })

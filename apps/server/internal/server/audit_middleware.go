@@ -189,6 +189,9 @@ var coveredWriteRoutes = map[string]struct{}{
 	"PUT /admin/v2/servers/{serverRef}/draining":       {},
 	"PUT /admin/v2/servers/{serverRef}/default-entry":  {},
 	"POST /admin/v2/servers/{id}/bc-directory-resyncs": {},
+	// server 键值标签（FR-227，server.tag_updated；service 在事务内自记专项审计）
+	"PUT /admin/v2/servers/{serverId}/tags":          {},
+	"DELETE /admin/v2/servers/{serverId}/tags/{key}": {},
 	// 大厅成员迁移（lobby_cluster.member.assign / move_in / move_out / unassign）
 	"POST /admin/v2/server-placement-transfers": {},
 	// 健康权重版本化配置全量替换（health-weights.update，service 在事务内自记专项审计）
