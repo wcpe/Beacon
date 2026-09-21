@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- Agent 上报服务器工作目录（FR-226，增强 FR-208）：v2 注册请求体新增可选字段 `serverWorkDir`（服务器工作目录绝对路径，取 agent 的 plugins 上级目录，与 FR-163 扫描根一致）；控制面 `agent_identity` 新增 `server_work_dir` 列并在身份 / 冲突视图回显，使并发身份冲突下能一眼分辨「哪台、哪个目录」。仅注册时上报一次，心跳可选携带（空值不覆盖上次上报）；旧 agent 未上报时字段为 `null`，视图降级展示「未上报」且不报错；纯增字段，向后兼容（旧控制面忽略该键）。
 - 拓扑建树 MCP 工具（FR-221）：新增 `beacon.topology.bc-clusters.*`、`regions.*`、`zones.*` 共九个工具，语义与既有 `/admin/v2` 端点逐一对齐。建树是低风险结构操作，按「低风险按能力直执」原则直接执行并写审计，不产生审批票据；删除非空节点按既有约束拒绝；observer profile 不暴露写工具。
 - 内部信任通道与机器注册（FR-222）：新增 `mcp.allow-machine-register` 开关（默认 false，公网部署必须保持关闭）。开启后，持 `X-Beacon-Token` 共享 token 的受信内部调用方经 `POST /beacon/v1/agent/register` 提交的注册直接置为 active 并完成绑定；关闭时行为与现状完全一致（仍落 pending 待人工确认）。无论开关状态，机器注册意图均写 `identity.machine_registered` 强审计（含 serverId、lastAddr 与调用来源 IP）。开启时启动校验强制 `agent-token` 为强随机值（拒绝留空与已知弱默认），否则拒绝启动。
 - 审批决定工具与闭环自动化（FR-223）：新增 `beacon.approvals.approve` / `beacon.approvals.reject`（拒绝须给理由），仅 automation profile 可见；新增 `mcp.allow-approval-decide` 开关（默认 false）控制放行。默认关闭时审批决定权仍归人类，保持原分权设计；内网单操作者部署可显式开启以打通自动化闭环。批准与拒绝均写强审计。

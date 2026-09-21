@@ -73,6 +73,7 @@ object AgentBootstrap {
     fun readIdentity(
         role: String,
         agentVersion: String = "",
+        serverWorkDir: String = "",
     ): AgentIdentity {
         return AgentIdentity(
             // namespace / serverId 只接受控制面确认；旧键仅供迁移兼容，不能覆盖运行期绑定。
@@ -86,6 +87,7 @@ object AgentBootstrap {
             weight = 0,
             metadata = emptyMap(),
             agentVersion = agentVersion,
+            serverWorkDir = serverWorkDir,
         )
     }
 }

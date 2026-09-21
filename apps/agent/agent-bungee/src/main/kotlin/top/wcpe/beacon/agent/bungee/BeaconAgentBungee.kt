@@ -138,9 +138,11 @@ object BeaconAgentBungee : Plugin() {
             )
         submitAsync {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
+            // 服务器工作目录（FR-226）：agent dataFolder 的父（plugins）的父 = 代理根。
+            val serverWorkDir = getDataFolder().absoluteFile.parentFile?.parentFile?.absolutePath.orEmpty()
             // 角色按壳固定为 bungee；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
-                AgentBootstrap.readIdentity(role = "bungee", agentVersion = pluginVersion)
+                AgentBootstrap.readIdentity(role = "bungee", agentVersion = pluginVersion, serverWorkDir = serverWorkDir)
                     .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
 
             confirmedBinding?.takeIf { it.namespace.isNotBlank() && it.serverId.isNotBlank() }?.let {

@@ -518,3 +518,48 @@ func decodeRecorder(rr *httptest.ResponseRecorder) (int, map[string]any) {
 	}
 	return rr.Code, parsed
 }
+// TestFR226ServerWorkDirRoundTrip 校验 FR-226：agent 上报的服务器工作目录落库并在身份视图回显；
+// 旧 agent 未上报时落空串、视图输出 null（前端降级展示「未上报」），不报错。
+func TestFR226ServerWorkDirRoundTrip(t *testing.T) {
+	db, svc, _ := newV2HandlerTestService(t)
+	_, token, err := svc.CreateV2Namespace(service.CreateV2NamespaceParams{Name: "prod", Operator: "admin"})
+	if err != nil {
+		t.Fatalf("创建 namespace 失败: %v", err)
+	}
+	identityID := "22600000-0000-4000-8000-000000000001"
+	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+		Token: token, IdentityID: identityID, Kind: model.ServerKindBackend, BootID: "boot-226",
+		Addr: "10.0.0.5:25565", DetectedHost: "10.0.0.5", ServerWorkDir: "/srv/mc/game-1",
+	}); err != nil {
+		t.Fatalf("注册上报目录的身份失败: %v", err)
+	}
+	var ident model.AgentIdentity
+	if err := db.Where("identity_id = ?", identityID).First(&ident).Error; err != nil {
+		t.Fatalf("读取身份失败: %v", err)
+	}
+	if ident.ServerWorkDir != "/srv/mc/game-1" {
+		t.Fatalf("工作目录未落库，实际 %q", ident.ServerWorkDir)
+	}
+	if got := agentIdentityView(&ident)["serverWorkDir"]; got != "/srv/mc/game-1" {
+		t.Fatalf("身份视图未回显工作目录，实际 %v", got)
+	}
+
+	// 旧 agent（未上报）→ 落空串、视图输出 null，供前端降级。
+	legacyID := "22600000-0000-4000-8000-000000000002"
+	if _, err := svc.RegisterAgentV2(service.AgentRegisterV2Params{
+		Token: token, IdentityID: legacyID, Kind: model.ServerKindBackend, BootID: "boot-226-legacy",
+		Addr: "10.0.0.6:25565", DetectedHost: "10.0.0.6",
+	}); err != nil {
+		t.Fatalf("注册未上报目录的身份失败: %v", err)
+	}
+	var legacy model.AgentIdentity
+	if err := db.Where("identity_id = ?", legacyID).First(&legacy).Error; err != nil {
+		t.Fatalf("读取旧 agent 身份失败: %v", err)
+	}
+	if legacy.ServerWorkDir != "" {
+		t.Fatalf("未上报目录应落空串，实际 %q", legacy.ServerWorkDir)
+	}
+	if got := agentIdentityView(&legacy)["serverWorkDir"]; got != nil {
+		t.Fatalf("未上报目录视图应输出 null，实际 %v", got)
+	}
+}
