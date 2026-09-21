@@ -1057,6 +1057,8 @@ agent 面 `/beacon/v2/agent/delivery`（命令经既有长轮询通道下发）�
 
 MCP resource 固定为 `/admin/v2/mcp`，token 固定为 `POST /admin/v2/oauth/token`；仅接受 Client Credentials 表单请求和 metadata 发布的精确 audience。客户端创建、轮换、启用分别通过 `/admin/v2/mcp-clients` 的审批申请端点完成，吊销是直接止损动作。MCP bearer 不可调用普通管理 REST。
 
+token 端点按 RFC 6749 §5.2 回写错误码，且与 `mcp.token.denied` 审计记录的原因一致——三类失败各自成码，不合并成 `invalid_client`：缺 `client_id`/`client_secret`/`audience` 回 `400 invalid_request`（缺必填参数）；`scope` 超出该客户端 profile 允许范围回 `400 invalid_scope`；凭证错误、客户端不存在或已吊销统一回 `401 invalid_client`，且不区分内部原因以防枚举探测。
+
 当前 `automation` profile 还可发现显式审批工具：配置的删除与批量删除/启停、文件创建/导入/发布/回滚/删除/批量删除/启停、覆盖集发布/回滚/删除，以及资产预览和消息正文的审批申请。危险写入工具均只创建审批申请并返回 `{approvalRequestId,status}`；不会直接执行领域操作、构造 permit 或代理文件路径。资产预览与消息正文的消费工具仍核验原申请主体、冻结目标和一次性 grant，但响应固定只返回消费状态，绝不回吐敏感正文。`observer` 不可发现这些工具。
 
 `observer` 与 `automation` 均可发现 `beacon.metadata.namespaces.list`、`beacon.topology.snapshot.get`、`beacon.metrics.health.list`、`beacon.metrics.summary.get`、`beacon.metrics.series.query`、`beacon.history.messages.list`、`beacon.history.connections.stats`、`beacon.history.commands.list`、`beacon.history.scheduling-decisions.list` 与 `beacon.audit.events.list`。列表均分页或受时间窗约束；消息不返回 payload、玩家标识或 hop 原文，连接仅返回聚合，命令不返回结果正文，审计不返回 detail 与客户端地址。

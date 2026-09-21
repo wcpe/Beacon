@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"mime"
 	"net/http"
 	"strings"
@@ -24,11 +25,15 @@ type MCPProtocolHandler struct {
 }
 
 // NewMCPProtocolHandler 只在有效受信反代策略下构造协议入口。
+// 直连模式（policy.Direct()）下关闭 SDK 的 DNS rebinding Host 校验，改由 policy 的 Host 白名单负责。
 func NewMCPProtocolHandler(policy *MCPProxyPolicy, issuer MCPOAuthIssuer, verifier MCPAccessTokenVerifier, tools MCPToolRegistrar) *MCPProtocolHandler {
 	if policy == nil || !policy.Enabled() || issuer == nil || verifier == nil {
 		return nil
 	}
-	return &MCPProtocolHandler{policy: policy, issuer: issuer, mcp: NewPublicMCPHandlerWithTools(verifier, policy, tools)}
+	return &MCPProtocolHandler{
+		policy: policy, issuer: issuer,
+		mcp: NewPublicMCPHandlerWithTools(verifier, policy, tools, policy.Direct()),
+	}
 }
 
 // Metadata 处理 OAuth Protected Resource Metadata。
@@ -60,6 +65,17 @@ func (h *MCPProtocolHandler) Token(w http.ResponseWriter, r *http.Request) {
 	}
 	token, ttl, principal, err := h.issuer.IssueAccessTokenFrom(r.Form.Get("client_id"), r.Form.Get("client_secret"), r.Form.Get("audience"), r.Form.Get("scope"), trustedMCPClientIP(r))
 	if err != nil || principal.Kind != auth.PrincipalKindMCP {
+		// 按 apperr 的规范错误码回写 OAuth error 字段，与 auditTokenDenied 记录的原因一致。
+		// 其余（含凭证错误）统一 401 invalid_client，不区分内部原因以防枚举探测（RFC 6749 §5.2）。
+		var ae *apperr.Error
+		if errors.As(err, &ae) && ae.Code == apperr.ErrOAuthInvalidScope.Code {
+			render.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_scope"})
+			return
+		}
+		if errors.As(err, &ae) && ae.Code == apperr.ErrOAuthInvalidRequest.Code {
+			render.WriteJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid_request"})
+			return
+		}
 		render.WriteJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid_client"})
 		return
 	}

@@ -71,10 +71,14 @@ func (s *MCPOAuthService) IssueAccessToken(clientID, clientSecret, audience, sco
 
 // IssueAccessTokenFrom 按已认证 client secret 签发 token，并以来源地址记专项审计。
 func (s *MCPOAuthService) IssueAccessTokenFrom(clientID, clientSecret, audience, scope, clientIP string) (string, time.Duration, auth.Principal, error) {
+	// 三类失败按 OAuth 规范各自成码，并与 auditTokenDenied 记录的原因保持一致：
+	// 此前参数缺失记 invalid_request 却返回 401、scope 越权记 invalid_scope 却返回 403，
+	// 响应与审计自相矛盾，外部集成方会去反复核对 client_secret 而真实原因是漏参数 / scope 写错。
 	if clientID == "" || clientSecret == "" || audience == "" {
 		s.auditTokenDenied(clientID, "invalid_request", clientIP)
-		return "", 0, auth.Principal{}, apperr.ErrAdminUnauthorized
+		return "", 0, auth.Principal{}, apperr.ErrOAuthInvalidRequest
 	}
+	// 凭证错误、客户端不存在与已吊销统一回 401，且不区分内部原因（规范要求，防客户端枚举探测）。
 	client, err := s.repo.FindClient(clientID)
 	if err != nil || client == nil || client.Status != model.MCPClientStatusActive ||
 		subtle.ConstantTimeCompare([]byte(client.SecretHash), []byte(mcpHash(clientSecret))) != 1 {
@@ -87,7 +91,7 @@ func (s *MCPOAuthService) IssueAccessTokenFrom(clientID, clientSecret, audience,
 	}
 	if !mcpScopeAllowed(client.Profile, effectiveScope) {
 		s.auditTokenDenied(client.ClientID, "invalid_scope", clientIP)
-		return "", 0, auth.Principal{}, apperr.ErrForbidden
+		return "", 0, auth.Principal{}, apperr.ErrOAuthInvalidScope
 	}
 	token, err := mcpRandom(mcpTokenPrefix)
 	if err != nil {

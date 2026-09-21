@@ -17,6 +17,7 @@
 - 管理台页眉与卡片样式统一：页面根间距、卡片内边距与页眉图标尺寸此前各页取值不一（间距有五种取值、内边距含 15px 魔数），现统一为设计系统刻度；并为此前缺少副标题的页面补齐职责说明。
 
 ### 修复
+- 提审入口的失败原因不再误导（同一类缺陷的其余实例）：`beacon.agent.server.resync` 缺 namespace/serverId、设置提审 key 不存在或选错入口、OAuth token 端点缺参数或 scope 越权，此前均报泛化 403「只读密钥无权执行写操作」，会把调用方引向排查权限。现分别返回可区分的 400（`INVALID_PARAM` / `SETTING_KEY_NOT_ALLOWED` / `SETTING_KEY_NOT_DANGEROUS` / OAuth 规范错误码），服务端装配缺失改报 500 `INTERNAL`，与各自的真实处置方向一致。
 - MCP 客户端申请的失败原因不再误导：此前「缺 `Idempotency-Key`」「缺审批原因」「机器主体提审」三类失败统一返回 `403 FORBIDDEN`（文案「只读密钥无权执行写操作」），会把调用方引向排查权限。现分别返回 `400 idempotency_key_required`、`400 reason_required`、`403 human_only_operation`，各自指向正确的处置方向。
 - 拓扑页健康数据加载失败：`/topology` 此前把「全部命名空间」以显式 `namespaceId=0` 传给 `/admin/v2/health`，触发 400 `invalid_observation_scope`，导致拓扑图节点着色与代理在线数取不到数据。现按观测范围契约以「省略参数」表达全量。
 - 运维总览底部告警卡内容被裁切：告警卡的长文本（如并发身份冲突摘要）会把内部网格撑宽，超出部分被内容区的横向裁剪静默截掉。现补齐收缩约束链，溢出归零。
