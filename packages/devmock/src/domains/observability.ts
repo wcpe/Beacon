@@ -366,6 +366,38 @@ export const observabilityHandlers: HttpHandler[] = [
     return HttpResponse.json({ affected })
   }),
 
+  // 告警详情聚合（FR-230）：该服近期状态 + 该服告警时间线（24h / 上限 20）。
+  mockGet('/admin/v1/alert-events/:id/context', (info) => {
+    const id = Number.parseInt(pathParam(info, 'id'), 10)
+    const state = getObservabilityState()
+    const row = state.alertEvents.find((r) => r.id === id)
+    if (!row) {
+      return jsonError(404, 'NOT_FOUND', '告警事件不存在')
+    }
+    const sinceMs = BASE_MS - 24 * 3_600_000
+    const timeline = state.alertEvents
+      .filter((r) => (row.serverId === '' ? r.namespace === row.namespace : r.serverId === row.serverId))
+      .filter((r) => Date.parse(r.createdAt) >= sinceMs)
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+      .slice(0, 20)
+    // mock 无健康真源接线：按该服最新告警级别合成一个可辨识状态；无 serverId 时 server 为 null。
+    const latest = timeline[0]
+    const server =
+      row.serverId === ''
+        ? null
+        : {
+            serverId: row.serverId,
+            online: latest.level !== 'critical',
+            level: latest.level === 'critical' ? 'unhealthy' : latest.level === 'warning' ? 'degraded' : 'healthy',
+            score: latest.level === 'critical' ? 40 : latest.level === 'warning' ? 65 : 95,
+            schedulable: latest.level !== 'critical',
+            reasons: [],
+            sampledAtMs: BASE_MS,
+          }
+    return HttpResponse.json({ server, timeline, timelineLimit: 20, timelineWindowHours: 24 })
+  }),
+
+
   // 处理告警事件（确认 / 处理写闭环）：更新状态 + 处理人 / 时间 / 备注，返回更新后的行。
   // 对齐真后端行为（alert_event_handler.go Handle）：备注非必填（必填约束在前端面板），空备注落 null。
   mockPost('/admin/v1/alert-events/:id/handle', async (info) => {

@@ -503,6 +503,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		r.Post("/alert-events/{id}/handle", h.AlertEvent.Handle)
 		// 告警按筛选批量处理（FR-229）：对当前筛选命中的全部 open 条目一条 UPDATE + 一条批量审计。
 		r.Post("/alert-events/handle", h.AlertEvent.HandleBatch)
+		// 告警详情聚合（FR-230）：内嵌该服近期状态（健康真源）+ 该服告警时间线（alert_event）。
+		r.Get("/alert-events/{id}/context", h.AlertEvent.Context)
 
 		// zone 分配
 		r.Get("/zones/assignments", h.Zone.ListAssignments)

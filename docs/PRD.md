@@ -152,6 +152,7 @@ Beacon 的第一版围绕配置中心、文件树、服务发现、健康检查�
 | FR-227 | 服务器键值标签（feat）：server 支持 `key=value` 标签，与 FR-29 的 `tag.<key>=<value>` 发现过滤口径对齐；可增删、可在资产 / 拓扑展示、列表可按 tag 筛选、写操作落审计 | 待排期 | 待排期 | 可给服务器加 / 删 `key=value`；资产 / 拓扑展示标签；列表可按 tag 筛选；写操作落审计；规格见 [server-key-value-tags](specs/server-key-value-tags.md) | 🔨 开发中·单测通过（真机验收待做） |
 | FR-228 | Agent 上报容量与在线人数（feat，增强 FR-32 健康打分）：agent 上报 `capacity`（最大人数）与 `playerCount`（在线），使健康因子 `capacity` / `conn` 由 `applicable:false`（"不适用"）转为参与打分 | 待排期 | 待排期 | 健康详情 `capacity` / `conn` 为 `applicable:true` 且参与打分；旧 agent 未上报时仍降级为"不适用"；规格见 [agent-capacity-and-playercount-report](specs/agent-capacity-and-playercount-report.md) | 🔨 部分实现（capacity 已接通；conn 语义待拍板） |
 | FR-229 | 告警批量处理（已读 = 已处理）（feat，**增强 FR-157 / FR-89**）：告警已落库（`alert_event`，ADR-0041）且已有处理工作流（`status` open/acknowledged/resolved + `handled_*`，ADR-0064）与管理页。本项只补三处缺口：①术语对齐「已读 = 已处理」（收敛到既有三态，**不新增第四态**）②**按当前筛选**一键批量（现状批量只作用于当前页勾选行，**批量端点缺失需补**）③补批量审计 | 待排期 | 待排期 | 按筛选一键后**跨页**全部命中条目变更；命中数与实际一致、重复执行幂等；落一条批量审计；UI 上"已读 / 已处理"不再指代不同状态；规格见 [alert-read-and-handle](specs/alert-read-and-handle.md) | 🔨 开发中·单测通过（真机验收待做） |
+| FR-230 | 告警详情关联服务器近期状态与时间线（feat，增强 **FR-157 / FR-89**）：在既有 `/alert-events` 详情面板内嵌"该服近期状态（健康真源）+ 该服告警时间线（查 **`alert_event` 表**，建议最近 20 条 / 近 24h）"，供运维判断"已过去 / 需立刻处理" | 待排期 | 待排期 | 详情可见该服近期状态与 ≥1 条时间线（数据来自 `alert_event` 而非内存环）；有界查询命中索引；无 `serverId` 的集群级告警按默认退化；规格见 [alert-detail-server-context](specs/alert-detail-server-context.md) | 🔨 开发中·单测通过（真机验收待做） |
 
 ## 5. 非功能需求（NFR）
 

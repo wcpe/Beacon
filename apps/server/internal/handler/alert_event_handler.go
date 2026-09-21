@@ -25,6 +25,11 @@ func (h *AlertEventHandler) SetObservationScopeResolver(resolver *service.Observ
 	h.scope = resolver
 }
 
+// SetHealthQuery 装配健康查询服务，供详情聚合内嵌「该服近期状态」（FR-230）。
+func (h *AlertEventHandler) SetHealthQuery(q *service.HealthQueryService) {
+	h.svc.SetHealthQuery(q)
+}
+
 // NewAlertEventHandler 构造处理器。
 func NewAlertEventHandler(svc *service.AlertEventService) *AlertEventHandler {
 	return &AlertEventHandler{svc: svc}
@@ -188,4 +193,52 @@ func (h *AlertEventHandler) HandleBatch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	render.WriteJSON(w, http.StatusOK, map[string]any{"affected": affected})
+}
+
+// alertContextServerView 是该服近期状态视图（json 形状对齐 contracts AlertContext.server）。
+type alertContextServerView struct {
+	ServerID    string   `json:"serverId"`
+	Online      bool     `json:"online"`
+	Level       string   `json:"level"`
+	Score       int      `json:"score"`
+	Schedulable bool     `json:"schedulable"`
+	Reasons     []string `json:"reasons"`
+	SampledAtMs int64    `json:"sampledAtMs"`
+}
+
+// Context 处理 GET /admin/v1/alert-events/{id}/context（FR-230）：内嵌该服近期状态 + 该服告警时间线。
+// 只读端点（观测范围循 FR-213）；服务器已归档 / 无 serverId 时 server 为 null，时间线按默认退化，不报错。
+func (h *AlertEventHandler) Context(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseUintParam(w, r, "id")
+	if !ok {
+		return
+	}
+	scope, err := resolveObservationScope(r, h.scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	res, err := h.svc.Context(id, scope)
+	if err != nil {
+		render.WriteError(w, r, err)
+		return
+	}
+	var server *alertContextServerView
+	if res.Server != nil {
+		server = &alertContextServerView{
+			ServerID: res.Server.ServerID, Online: res.Server.Online, Level: res.Server.Level,
+			Score: res.Server.Score, Schedulable: res.Server.Schedulable,
+			Reasons: res.Server.Reasons, SampledAtMs: res.Server.SampledAtMs,
+		}
+	}
+	timeline := make([]alertEventView, 0, len(res.Timeline))
+	for _, e := range res.Timeline {
+		timeline = append(timeline, toAlertEventView(e))
+	}
+	render.WriteJSON(w, http.StatusOK, map[string]any{
+		"server":              server,
+		"timeline":            timeline,
+		"timelineLimit":       res.TimelineLimit,
+		"timelineWindowHours": res.TimelineWindowHours,
+	})
 }
