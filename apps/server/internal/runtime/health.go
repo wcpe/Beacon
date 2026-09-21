@@ -20,6 +20,12 @@ type HealthSettings interface {
 	GetInt(key string) int
 }
 
+// RecoverySink 是实例恢复 online 时自动消解其未恢复告警的窄依赖（FR-232），由 service.AlertEventService 实现。
+type RecoverySink interface {
+	// AutoResolveAlerts 把该实例全部未恢复告警置为 resolved（handled_by=system）；返回受影响行数。
+	AutoResolveAlerts(namespace, serverID string) (int64, error)
+}
+
 // HealthScanner 是单个后台 goroutine，定期按陈旧度推进实例健康状态机并对异常转移主动告警（FR-28）。
 // 健康阈值 / 扫描周期不再启动期固定：每轮从设置 store 读最新值热生效（FR-61，见 ADR-0038）。
 type HealthScanner struct {
@@ -27,6 +33,7 @@ type HealthScanner struct {
 	settings         HealthSettings
 	dispatcher       *alert.Dispatcher
 	topologyNotifier TopologyNotifier // 可选，离开可用集合（转 lost/offline）时唤醒拓扑 watch（FR-29）
+	recovery         RecoverySink     // 可选，实例恢复 online 时自动消解其未恢复告警（FR-232）
 }
 
 // NewHealthScanner 构造健康扫描器（settings 提供热改阈值 / 扫描周期，dispatcher 收口告警通道扇出）。
@@ -41,6 +48,11 @@ func NewHealthScanner(registry *Registry, settings HealthSettings, dispatcher *a
 // SetTopologyNotifier 注入拓扑唤醒器（启动时装配；未注入则不唤醒拓扑 watch）。
 func (s *HealthScanner) SetTopologyNotifier(n TopologyNotifier) {
 	s.topologyNotifier = n
+}
+
+// SetRecoverySink 注入恢复自动消解器（FR-232；未注入则不自动消解）。
+func (s *HealthScanner) SetRecoverySink(r RecoverySink) {
+	s.recovery = r
 }
 
 // 健康相关热改设置 key（与 service.SettingsService 同字面值，FR-61）。
@@ -98,10 +110,18 @@ func (s *HealthScanner) scanIntervalDur() time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
-// dispatchAlerts 对进入异常态（degraded/lost/offline）的变更触发告警；恢复 online 不告警（避免噪音，FR-28）。
+// dispatchAlerts 对进入异常态（degraded/lost/offline）的变更触发告警；恢复 online 不告警（避免噪音，FR-28），
+// 但触发其未恢复告警的自动消解（FR-232，复用本扫描循环，不新起定时器）。
 func (s *HealthScanner) dispatchAlerts(ctx context.Context, changed []*Instance) {
 	for _, inst := range changed {
 		if !isAbnormal(inst.Status) {
+			if inst.Status == StatusOnline && s.recovery != nil {
+				if n, err := s.recovery.AutoResolveAlerts(inst.Namespace, inst.ServerID); err != nil {
+					slog.Warn("告警自动消解失败", "namespace", inst.Namespace, "serverId", inst.ServerID, "err", err)
+				} else if n > 0 {
+					slog.Info("实例恢复，自动消解未恢复告警", "namespace", inst.Namespace, "serverId", inst.ServerID, "count", n)
+				}
+			}
 			continue
 		}
 		s.dispatcher.Dispatch(ctx, alert.Alert{

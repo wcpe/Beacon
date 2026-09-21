@@ -1,6 +1,6 @@
 # 功能规格：告警收敛与防堆积
 
-> 状态：草拟（**已按评审重写**）　·　关联 PRD：FR-232（增强 FR-89 / FR-157）　·　分支：feature/alert-dedup-and-auto-resolve
+> 状态：已实现（单测通过；真机验收待做）　·　关联 PRD：FR-232（增强 FR-89 / FR-157）　·　分支：feature/alert-dedup-and-auto-resolve
 
 ## 1. 背景与目标
 
@@ -42,12 +42,12 @@
 
 ## 5. 任务拆分
 
-- [ ] `alert_event` 增 `occurrence_count` / `last_at` 列 + 迁移
-- [ ] 写入路径改为按收敛键 upsert（合并计数 + 取最高级）
-- [ ] 健康扫描恢复点接入自动 resolve
-- [ ] `acknowledged` 状态保持（不因再触发回退 `open`）
-- [ ] 前端：计数徽标 / `resolved` 样式 / 待办计数口径
-- [ ] 文档同步：PRD 状态、ADR-0041/0064 引用、CHANGELOG
+- [x] `alert_event` 增 `occurrence_count` / `last_at` 列 + 迁移（另加 `to_status` 作方向维度）
+- [x] 写入路径改为按收敛键合并（计数 + 取最高级）
+- [x] 健康扫描恢复点接入自动 resolve
+- [x] `acknowledged` 状态保持（不因再触发回退 `open`）
+- [x] 前端：计数徽标 / `resolved` 样式 / 待办计数口径
+- [x] 文档同步：PRD 状态、ADR-0041/0064 引用、CHANGELOG
 
 ## 6. 验收标准
 

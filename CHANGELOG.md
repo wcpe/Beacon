@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- 告警收敛与防堆积（FR-232，增强 FR-89/FR-157）：`alert_event` 新增 `occurrence_count` / `last_at` / `to_status`（方向维度）列与 `(server_id, type, to_status)` 复合索引。`health-transition` 告警写入改为按收敛键合并——同一未恢复键重复触发只 `occurrence_count+1`、刷新 `last_at`、取最高级，不插新行；已 `acknowledged` 的条目再触发不回退 `open`；实例恢复 `online` 时其未恢复告警自动置 `resolved`（`handled_by=system`，note 标明自动消解，复用健康扫描循环、不新起定时器）。列表显示合并计数徽标「×N」与「最后」触发时刻，抖动场景下待办计数保持有界。
 - 告警分级与人工升降（FR-231，增强 FR-157）：按「健康级别 × 角色」矩阵自动定级（`offline`/`lost` 的 proxy/大厅成员 → `critical`、普通 backend → `warning`；`degraded` 的 proxy/大厅 → `warning`、其余 → `info`），角色由控制面权威事实解析（`kind=proxy` → proxy、`lobby_cluster_id` 非空 → lobby、其余 → backend；无角色信息按 backend 规则安全降级）。新增 `GradeAlert` 纯函数（穷举单测）；新增 `severity_override` / `overridden_by` / `overridden_at` 列与 `POST /admin/v1/alert-events/{id}/level` 人工改级端点（写覆盖列 + `alert-event.level_overridden` 审计）；前端详情面板新增「调整级别」与「已手动调整」标记。
 - 告警详情关联该服近期状态与时间线（FR-230，增强 FR-157）：新增只读聚合端点 `GET /admin/v1/alert-events/{id}/context`，一次性返回该服近期状态（健康真源：级别 / 分数 / 在线 / 原因 / 采样时刻）+ 该服告警时间线（查 `alert_event`，近 24h 内最多 20 条、时间倒序、含级别与处理状态），`/alert-events` 详情面板内嵌呈现。服务器已归档 / 域外 / 无 `serverId` 时状态卡降级空态（无 `serverId` 的集群级告警时间线按 namespace 退化），不报错；不复制存储、观测范围循 FR-213。
 - 告警按筛选批量处理（FR-229，增强 FR-157）：新增 `POST /admin/v1/alert-events/handle`，按当前筛选条件（类型 / 级别 / 观测范围）对全部「未处理」告警一条 UPDATE 跨页批量落 `acknowledged`（一键已读）或 `resolved`（一键已处理），并在同事务写一条 `alert-event.batch_handled` 批量审计（含条件 + 命中数 + 操作者）；已非 open 条目不受影响，重复执行幂等。前端 `/alert-events` 新增「处理当前筛选」入口。术语统一为「已读 = acknowledged、已处理 = resolved」，不改既有三态 UI。
