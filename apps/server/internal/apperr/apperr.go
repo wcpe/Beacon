@@ -239,6 +239,16 @@ var (
 	ErrSensitiveAccessConsumed = New(http.StatusGone, "sensitive_access_consumed", "敏感内容访问授权已消费")
 	// ErrSensitiveAccessWrongPrincipal 当前主体不是原申请主体。
 	ErrSensitiveAccessWrongPrincipal = New(http.StatusForbidden, "sensitive_access_wrong_principal", "当前主体不能消费该敏感内容授权")
+	// ErrSensitiveAccessNotFound 授权不存在或不属于该审批请求。
+	// 与「已过期」同回 410：授权是一次性短周期凭据，对外不区分「不存在」与「已失效」可防枚举探测
+	// （grantId 为 12 字节随机值，泄露存在性无收益但会扩大攻击面）。
+	ErrSensitiveAccessNotFound = New(http.StatusGone, "sensitive_access_not_found", "敏感内容访问授权不存在或已失效")
+	// ErrSensitiveAccessTargetDrift 授权的冻结事实（操作 / 目标 / 内容哈希）与当前请求不符。
+	// 独立成码（而非 ErrForbidden）：这不是权限问题，而是审批后目标发生漂移，须重新提审。
+	ErrSensitiveAccessTargetDrift = New(http.StatusConflict, "sensitive_access_target_drift", "敏感内容授权目标已漂移，请重新提审")
+	// ErrSensitiveAccessNotConsumed 授权仍处于未消费状态，调用方在消费正文前就推进了后续动作。
+	// 报「顺序错误」而非「越权」或「已过期」，直接指明该先做什么。
+	ErrSensitiveAccessNotConsumed = New(http.StatusConflict, "sensitive_access_not_consumed", "敏感内容授权尚未消费，请先读取正文")
 	// ErrOperationRequiresApproval 当前操作必须先创建审批申请。
 	ErrOperationRequiresApproval = New(http.StatusConflict, "operation_requires_approval", "该操作必须先提交审批申请")
 	// ErrIdempotencyKeyReused 幂等键被不同冻结载荷复用。
