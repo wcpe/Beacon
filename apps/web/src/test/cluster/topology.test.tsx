@@ -305,3 +305,27 @@ describe('/topology 消息 payload 审批申请弹窗', () => {
     expect(screen.queryByText('SHA-256')).not.toBeInTheDocument()
   })
 })
+
+describe('/topology 大厅集群层（=入口服，A4）', () => {
+  it('渲染大厅集群层：入口服逐台呈现，含在线态', async () => {
+    useScenario('normal')
+    renderPage(<TopologyPage />)
+
+    expect(await screen.findByText('大厅集群（入口服）')).toBeInTheDocument()
+    expect(await screen.findByText('入口服 3 台 · 含离线')).toBeInTheDocument()
+    expect(await screen.findByText('lobby-1')).toBeInTheDocument()
+    expect(await screen.findByText('lobby-2')).toBeInTheDocument()
+    expect(await screen.findByText('test-lobby-1')).toBeInTheDocument()
+    expect(await screen.findAllByText('在线')).not.toHaveLength(0)
+  })
+
+  it('点大厅成员节点，侧面板展示入口服身份与 ADR-0083 说明', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<TopologyPage />)
+
+    const node = await screen.findByText('lobby-1')
+    await user.click(node)
+    expect(await screen.findByText('入口服即大厅集群成员（ADR-0083），不设独立入口实体。')).toBeInTheDocument()
+  })
+})
