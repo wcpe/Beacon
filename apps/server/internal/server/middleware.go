@@ -58,14 +58,19 @@ func agentV2ReportMiddleware(authn AgentV2ReportAuthenticator) func(http.Handler
 	}
 }
 
-// agentTokenMiddleware 校验 agent 端共享 token（仅防误连，非安全边界）。
+// agentTokenMiddleware 校验 agent 端共享 token。
 // 全局 token 为空时仅接受成功的 v2 兼容鉴权，避免匿名请求绕过校验。
+//
+// 共享 token 命中的请求额外注入「受信内部调用方」标记（FR-222，见 specs/internal-trust-channel.md §3.3）：
+// 机器注册开关开启时，该标记是注册直落 active 的唯一依据（绝非请求体字段，防伪造）；
+// 本中间件只挂在 v1 数据面（`/beacon/v1/agent` 组），故机器注册分支也落在 v1 注册端点；
+// v2 兼容鉴权分支与失败分支一律不注入，故 agent 自持身份仍走人工审批（默认语义不破）。
 func agentTokenMiddleware(token string, v2 AgentV2Authenticator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawToken := r.Header.Get("X-Beacon-Token")
 			if token != "" && rawToken == token {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, r.WithContext(agentauth.WithTrustedInternal(r.Context())))
 				return
 			}
 			if v2 != nil {

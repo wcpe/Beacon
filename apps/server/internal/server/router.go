@@ -83,7 +83,9 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 		v2Auth = h.V2
 	}
 
-	// agent 侧：内网信任，仅以共享 token 防误连
+	// agent 侧：内网信任，以共享 token（或 v2 已确认身份）鉴权。
+	// 机器注册通道（FR-222）的判定依据也在此：命中共享 token 的请求被注入「受信内部调用方」标记，
+	// 供 v1 注册 handler 决定是否直落 active（开关 mcp.allow-machine-register 另由部署配置注入）。
 	r.Route("/beacon/v1/agent", func(r chi.Router) {
 		r.Use(agentTokenMiddleware(agentToken, v2Auth))
 		r.Post("/register", h.Agent.Register)
@@ -125,6 +127,8 @@ func NewRouter(h Handlers, agentToken string, authn *auth.Authenticator, apiKeys
 
 	if h.V2 != nil {
 		// v2 agent 侧：namespace token 在注册 handler 内按库中哈希校验，未确认身份仅开放 register / registration。
+		// 注意：本组不在 agentTokenMiddleware 之下，故共享 token（机器注册通道 FR-222 的判定依据）**不**流经此处；
+		// 受信内部调用方的机器注册分支落在 v1 注册端点（见上方 /beacon/v1/agent 组）。
 		r.Route("/beacon/v2/agent", func(r chi.Router) {
 			r.Post("/register", h.V2.AgentRegister)
 			r.Get("/registration", h.V2.AgentRegistration)

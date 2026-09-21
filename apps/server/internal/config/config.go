@@ -36,7 +36,22 @@ type MCPConfig struct {
 	Enabled           bool     `yaml:"enabled"`
 	PublicBaseURL     string   `yaml:"public-base-url"`
 	TrustedProxyCIDRs []string `yaml:"trusted-proxy-cidrs"`
+	// AllowMachineRegister 允许受信内部调用方（命中 X-Beacon-Token 共享 token 的请求）机器化注册 agent：
+	// 注册直接落 active 并绑定 serverId，跳过人工审批（FR-222，见 specs/internal-trust-channel.md）。
+	// 默认 false —— 关闭时行为与既有分权设计完全一致（一律落 pending 待人工确认）。
+	// 开启即把共享 token 升级为安全边界，故启动校验强制要求 agent-token 必须为强随机值（禁默认值）；
+	// 仅内网单操作者部署可开启，公网部署必须保持 false。
+	AllowMachineRegister bool `yaml:"allow-machine-register"`
 }
+
+// agent 共享 token 的两个已知弱默认值：机器注册通道（FR-222）开启时启动校验一律拒绝它们。
+// 二者都是公开已知的弱口令，仅防误连；升级为安全边界前必须显式换为强随机值。
+const (
+	// DefaultAgentToken 是内置默认值（config.Default() 与 .env.example）。
+	DefaultAgentToken = "change-me"
+	// ExampleAgentToken 是配置样例（config.example.yml）与 agent 样例开箱匹配的默认值。
+	ExampleAgentToken = "beacon-bootstrap-token"
+)
 
 // UpdateConfig 是控制面在线更新配置（FR-98 起，见 ADR-0047）。
 // 全部字段均为热改项（首启种子 + DB store 真源），config.yml 仅作出厂默认。

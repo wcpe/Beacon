@@ -279,6 +279,11 @@ func run() error {
 	metricsSet := metrics.New(registry)
 
 	instanceService := service.NewInstanceService(db, registry, assignRepo, offlineRepo, auditRepo, heartbeatInterval, ttl)
+	// 机器注册通道（FR-222，见 specs/internal-trust-channel.md）：默认关闭；仅显式开启时，受信内部调用方
+	// （命中 X-Beacon-Token 共享 token，由 agentTokenMiddleware 判定并透传）经 /beacon/v1/agent/register
+	// 提交的注册才直落 active 并绑定 serverId。启动校验（config.validate）已保证开启时 agent-token 为强随机值；
+	// 分配 / 换区 / 默认入口仍走各自审批，不受本开关影响。
+	instanceService.SetMachineRegisterAllowed(cfg.MCP.AllowMachineRegister)
 	zoneService := service.NewZoneService(db, assignRepo, auditRepo, registry)
 	v2ControlPlaneService.SetLegacyZoneService(zoneService)
 	// 发现/实例视图按小区默认入口标 zoneDefaultEntry（FR-48）：真源为 v2 server.is_default_entry（ADR-0067），
