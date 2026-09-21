@@ -1,6 +1,6 @@
 # 功能规格：Agent 上报容量与在线人数
 
-> 状态：草拟（已按评审重写；§7 已确认默认）　·　关联 PRD：FR-228（增强 FR-32 健康打分）　·　分支：feature/agent-capacity-and-playercount-report
+> 状态：部分实现（agent 侧 capacity 采集已补；`conn` 因子语义待拍板，见下）　·　关联 PRD：FR-228（增强 FR-32 健康打分）　·　分支：feature/agent-capacity-and-playercount-report
 
 ## 1. 背景与目标
 
@@ -47,10 +47,10 @@ conn      raw 0  normalized 0  weight 10  applicable:false
 
 ## 5. 任务拆分
 
-- [ ] 协议：心跳新增 `capacity` / `playerCount`
-- [ ] agent 采集（Paper max-players + online count）
-- [ ] 控制面接收 + 注册表存储
-- [ ] 健康打分接入两因子（含 applicable 判定与归一化公式）
+- [x] 协议：心跳新增 `capacity` / `playerCount`
+- [x] agent 采集（Paper max-players + online count）
+- [x] 控制面接收 + 注册表存储
+- [ ] 健康打分接入两因子（含 applicable 判定与归一化公式）——`capacity` 已接通；**`conn` 语义待拍板**：本 spec §7 要求 backend 的 `conn` = 饱和度 `playerCount/capacity`，但现行 FR-32 实现把 `conn` 定义为**仅 proxy** 的连接数，子服恒不适用。改语义会改变落位排序（spec §7 亦提示需评估现网调度影响），故保持现状待决策。
 - [ ] 前端：健康详情显示真实值 / 未上报态
 - [ ] 文档同步：PRD 状态、API、ARCHITECTURE、CHANGELOG
 

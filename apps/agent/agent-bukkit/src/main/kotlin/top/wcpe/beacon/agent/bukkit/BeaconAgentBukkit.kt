@@ -110,6 +110,8 @@ object BeaconAgentBukkit : Plugin() {
         val reader = EnvOverridingConfigReader(TabooLibConfigReader(config), System::getenv)
         val settings = AgentBootstrap.readSettings(reader)
         val endpointReport = EndpointReport(backendListenPort = readListenPort())
+        // 容量上限（FR-228）：主线程反射读 Paper `max-players`，取不到回 0（→ 控制面 capacity 因子判「不适用」）。
+        val maxPlayers = readMaxPlayers()
         submitAsync {
             val storedIdentity = AgentIdentityStore(getDataFolder().toPath()).loadOrCreate()
             // 服务器工作目录（FR-226）：agent dataFolder 的父（plugins）的父 = 服务器根，与 FR-163 扫描根一致。
@@ -117,7 +119,12 @@ object BeaconAgentBukkit : Plugin() {
             // 角色按壳固定为 bukkit；agent 构建版本经 TabooLib pluginVersion 注入（FR-86，见 ADR-0039）。
             val identity =
                 AgentBootstrap.readIdentity(role = "bukkit", agentVersion = pluginVersion, serverWorkDir = serverWorkDir)
-                    .copy(identityId = storedIdentity.identityId, bootId = UUID.randomUUID().toString(), endpointReport = endpointReport)
+                    .copy(
+                        identityId = storedIdentity.identityId,
+                        bootId = UUID.randomUUID().toString(),
+                        endpointReport = endpointReport,
+                        capacity = maxPlayers,
+                    )
 
             // fail-fast：身份缺失则打 ERROR 且不启循环（不阻断服务器，仅 agent 不接入）。
             var canConnect = true
@@ -253,5 +260,17 @@ object BeaconAgentBukkit : Plugin() {
         } catch (e: ReflectiveOperationException) {
             warning("读取 Bukkit 监听端口失败，等待控制面按连接事实补全：${e.message}")
             null
+        }
+
+    /**
+     * 主线程反射读 Paper `max-players`（FR-228）：作为容量上限上报，使健康 `capacity` 因子可参与打分。
+     * 取不到（非 Paper / API 变更）回 0——控制面据此判因子「不适用」，不报错、不阻断接入。
+     */
+    private fun readMaxPlayers(): Int =
+        try {
+            (Class.forName("org.bukkit.Bukkit").getMethod("getMaxPlayers").invoke(null) as? Number)?.toInt() ?: 0
+        } catch (e: ReflectiveOperationException) {
+            warning("读取 Bukkit max-players 失败，capacity 因子将不适用：${e.message}")
+            0
         }
 }
