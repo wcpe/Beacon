@@ -110,6 +110,7 @@ export const cluster = {
       normalized: 'Normalized',
       weight: 'Weight',
       notApplicable: 'N/A',
+      notReported: 'Not reported',
       reasons: 'Not-schedulable reasons',
       weightsRev: 'Weights revision',
       level_healthy: 'Healthy',

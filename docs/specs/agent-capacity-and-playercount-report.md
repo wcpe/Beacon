@@ -52,7 +52,7 @@ conn      raw 0  normalized 0  weight 10  applicable:false
 - [x] 控制面接收 + 注册表存储
 - [x] 健康打分接入 `capacity` 因子（占用率 `online/maxOnline`，`applicable = backend && 上限已上报`）
 - [x] `conn` 语义**已拍板（2026-09-22）：保持 FR-32 母规格的 proxy 口径，不改公式**。原稿要求 backend 的 `conn` = 饱和度 `playerCount/capacity`，与母规格冲突且会导致重复计分，故不采纳；详见 §7。
-- [ ] 前端：健康详情显示因子真实值与未上报态（当前仍统一显示「不适用」，未区分「角色不适用」与「agent 未上报」）
+- [x] 前端：健康详情区分「角色不适用」与「未上报 / 数据不可得」。实现方式：**纯前端按 `kind` + 因子名推导**（`health-factor-reason.ts`），不改契约、不改后端——控制面只下发 `applicable: bool` 不区分成因，而前端已持有 `kind`，足以反推（依据 FR-32 §4.4 适用矩阵 + 后端 `health_calc.go` 判定，后者已由 `TestFactorApplicabilityByKind` 固化）：tps/conn 仅单角色适用 → 另一角色为 `role`；capacity 在 backend 不适用只可能是 `missing`（maxOnline≤0 未上报）；latency/cpu 两者皆适用 → 不适用即 `missing`（数据不可得）。
 - [x] 文档同步：PRD 状态、CHANGELOG
 
 ## 6. 验收标准

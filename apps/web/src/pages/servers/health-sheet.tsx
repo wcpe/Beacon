@@ -23,6 +23,7 @@ import {
 } from '@beacon/ui'
 
 import { fetchHealthDetail } from '../../api/cluster'
+import { inapplicableReasonOf } from './health-factor-reason'
 import { LEVEL_META, badgeOf } from './health-level'
 
 interface HealthSheetProps {
@@ -143,7 +144,14 @@ export default function HealthSheet({ serverId, onOpenChange }: HealthSheetProps
                                 <span className="w-9 text-right text-ink-2">{factor.normalized}</span>
                               </div>
                             ) : (
-                              <span className="text-ink-4">{t('cluster.servers.health.notApplicable')}</span>
+                              // FR-228 §4：区分「角色本就不适用」与「未上报 / 不可得」，后者需运维排查
+                              <span className="text-ink-4">
+                                {t(
+                                  inapplicableReasonOf(factor.factor, detail.kind) === 'role'
+                                    ? 'cluster.servers.health.notApplicable'
+                                    : 'cluster.servers.health.notReported',
+                                )}
+                              </span>
                             )}
                           </TableCell>
                           <TableCell className="text-ink-3">{factor.weight}</TableCell>
