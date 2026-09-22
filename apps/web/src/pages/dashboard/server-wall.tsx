@@ -11,6 +11,7 @@ import { ChevronRight, Network, Server } from 'lucide-react'
 import {
   AsyncSection,
   Badge,
+  SectionHeader,
   Table,
   TableBody,
   TableCell,
@@ -65,98 +66,106 @@ export default function ServerWall() {
   })
   const items = useMemo(() => (query.data?.items ?? []).slice(0, WALL_LIMIT), [query.data])
 
-  return (
-    <section className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-            <Server className="size-[15px]" />
-          </span>
-          <h2 className="text-[13px] font-semibold text-ink-1">{t('dashboard.wall.title')}</h2>
-        </div>
-        <Link
-          className="flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[11.5px] text-ink-4 hover:bg-surface-2 hover:text-brand"
-          to="/servers"
-        >
-          {t('dashboard.wall.viewAll')}
-          <ChevronRight className="size-3" />
-        </Link>
-      </div>
-      <AsyncSection
-        isLoading={query.isPending}
-        isError={query.isError}
-        error={query.error}
-        skeleton={<TableSkeleton columns={4} rows={6} />}
-      >
-        {items.length === 0 ? (
-          <p className="text-sm text-ink-3">{t('dashboard.wall.empty')}</p>
-        ) : (
-          <Table className="tnum">
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('dashboard.wall.server')}</TableHead>
-                <TableHead>{t('dashboard.wall.zone')}</TableHead>
-                <TableHead>{t('dashboard.wall.status')}</TableHead>
-                <TableHead>{t('dashboard.wall.score')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((item) => {
-                const meta = LEVEL_META[item.level]
-                const isProxy = item.kind === 'proxy'
-                return (
-                  <TableRow key={item.serverId}>
-                    <TableCell>
-                      <div className="flex items-center gap-2 font-semibold text-ink-1">
+  // 列表主体
+  const body = (
+    <AsyncSection
+      isLoading={query.isPending}
+      isError={query.isError}
+      error={query.error}
+      skeleton={<TableSkeleton columns={4} rows={6} />}
+    >
+      {items.length === 0 ? (
+        <p className="text-sm text-ink-3">{t('dashboard.wall.empty')}</p>
+      ) : (
+        <Table className="tnum">
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('dashboard.wall.server')}</TableHead>
+              <TableHead>{t('dashboard.wall.zone')}</TableHead>
+              <TableHead>{t('dashboard.wall.status')}</TableHead>
+              <TableHead>{t('dashboard.wall.score')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item) => {
+              const meta = LEVEL_META[item.level]
+              const isProxy = item.kind === 'proxy'
+              return (
+                <TableRow key={item.serverId}>
+                  <TableCell>
+                    <div className="flex items-center gap-2 font-semibold text-ink-1">
+                      <span
+                        className={cn(
+                          'grid size-5 place-items-center rounded-md',
+                          isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
+                        )}
+                        aria-hidden
+                      >
+                        {isProxy ? (
+                          <Network className="size-3" />
+                        ) : (
+                          <Server className="size-3" />
+                        )}
+                      </span>
+                      {item.serverId}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {item.zoneName ? (
+                      <span className="rounded-md border border-border-strong bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-3">
+                        {item.zoneName}
+                      </span>
+                    ) : (
+                      <Badge variant="off">{t('dashboard.wall.unassigned')}</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={meta.variant} className="gap-1.5">
+                      <span className="size-1.5 rounded-full bg-current" />
+                      {t(meta.labelKey)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
                         <span
-                          className={cn(
-                            'grid size-5 place-items-center rounded-md',
-                            isProxy ? 'bg-brand-100 text-brand-600' : 'bg-brand-50 text-brand',
-                          )}
-                          aria-hidden
-                        >
-                          {isProxy ? (
-                            <Network className="size-3" />
-                          ) : (
-                            <Server className="size-3" />
-                          )}
-                        </span>
-                        {item.serverId}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {item.zoneName ? (
-                        <span className="rounded-md border border-border-strong bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-3">
-                          {item.zoneName}
-                        </span>
-                      ) : (
-                        <Badge variant="off">{t('dashboard.wall.unassigned')}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={meta.variant} className="gap-1.5">
-                        <span className="size-1.5 rounded-full bg-current" />
-                        {t(meta.labelKey)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <span className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
-                          <span
-                            className={cn('block h-full rounded-full', levelSolid(meta.level))}
-                            style={{ width: `${String(Math.max(0, Math.min(100, item.score)))}%` }}
-                          />
-                        </span>
-                        <span className="w-9 text-right text-ink-2">{item.score}</span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </AsyncSection>
+                          className={cn('block h-full rounded-full', levelSolid(meta.level))}
+                          style={{ width: `${String(Math.max(0, Math.min(100, item.score)))}%` }}
+                        />
+                      </span>
+                      <span className="w-9 text-right text-ink-2">{item.score}</span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      )}
+    </AsyncSection>
+  )
+
+  // 下钻链接：href 与文案不变
+  const viewAllLink = (
+    <Link
+      className="flex items-center gap-0.5 rounded-md px-1.5 py-1 text-[11.5px] text-ink-4 hover:bg-surface-2 hover:text-brand"
+      to="/servers"
+    >
+      {t('dashboard.wall.viewAll')}
+      <ChevronRight className="size-3" />
+    </Link>
+  )
+
+  // 标题行：复用 @beacon/ui SectionHeader（FR-107 已抽出的统一区段头），下钻链接进 actions 槽
+  const header = (
+    <SectionHeader icon={<Server className="size-4" />} title={t('dashboard.wall.title')} actions={viewAllLink} />
+  )
+
+  return (
+    <section className="grid gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
+      {header}
+      {/* 列表区固定高度自区滚，12 行不再撑高整页 */}
+      <div className="max-h-[11rem] overflow-y-auto">{body}</div>
     </section>
   )
 }

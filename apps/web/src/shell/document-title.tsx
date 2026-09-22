@@ -17,7 +17,9 @@ function titleForPath(pathname: string, t: (key: string) => string): string {
   if (pathname === '/license') {
     return t('common.license.pageTitle')
   }
-  const page = ALL_PAGES.find((p) => p.path === pathname || (p.path === '/approvals' && pathname.startsWith('/approvals/')))
+  const page = ALL_PAGES.find(
+    (p) => p.path === pathname || (p.path === '/approvals' && pathname.startsWith('/approvals/')),
+  )
   if (!page) {
     return BRAND
   }

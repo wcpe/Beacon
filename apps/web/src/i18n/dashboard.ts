@@ -37,9 +37,8 @@ export const dashboard = {
     unassigned: '未分配',
     empty: '暂无服务器，接入后展示状态墙',
   },
-  // 集群健康总览
+  // 集群健康总览（E5：区段标题已移除，页面身份在页眉面包屑）
   health: {
-    title: '集群健康总览',
     proxy: '代理',
     backend: '子服',
     online: '在线',
@@ -53,7 +52,6 @@ export const dashboard = {
     levelUnhealthy: '不健康',
     distribution: '健康等级分布',
     empty: '暂无健康数据，接入服务器后展示集群健康总览',
-    viewServers: '前往服务器',
   },
   // 玩家流 / 连接流趋势
   flow: {

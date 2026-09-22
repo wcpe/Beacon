@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { CircleAlert, Info, TriangleAlert } from 'lucide-react'
 
-import { AsyncSection, Badge, CardGridSkeleton, cn } from '@beacon/ui'
+import { AsyncSection, Badge, CardGridSkeleton, SectionHeader, cn } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { fetchAlertEvents } from '../../api/observability'
@@ -51,24 +51,43 @@ export default function AlertOverview() {
   const criticalOpen = openItems.filter((i) => i.level === 'critical').length
   const warningOpen = openItems.filter((i) => i.level === 'warning').length
   const infoOpen = openItems.filter((i) => i.level !== 'critical' && i.level !== 'warning').length
-  const latest: AlertEventItem[] = openItems.slice(0, 5)
+  // 只列 4 条（配下方限高自区滚），一屏放得下更多区段
+  const latest: AlertEventItem[] = openItems.slice(0, 4)
+
+  // 等级计数药丸（仅在计数 > 0 时出现）
+  const sevBadges = (
+    <>
+      {criticalOpen > 0 && <Badge variant="crit">{t('dashboard.alerts.critical')} {criticalOpen}</Badge>}
+      {warningOpen > 0 && <Badge variant="warn">{t('dashboard.alerts.warning')} {warningOpen}</Badge>}
+      {infoOpen > 0 && <Badge variant="brand">{t('dashboard.alerts.info')} {infoOpen}</Badge>}
+    </>
+  )
+
+  // 下钻链接：href 与文案不变
+  const viewAllLink = (
+    <Link className="text-xs text-brand-600 hover:underline" to="/alert-events">
+      {t('dashboard.alerts.viewAll')}
+    </Link>
+  )
+
+  // 标题行：复用 @beacon/ui SectionHeader；「查看告警事件」在此，列表内不再重复
+  const header = (
+    <SectionHeader
+      icon={<TriangleAlert className="size-4" />}
+      title={t('dashboard.alerts.title')}
+      count={`${t('dashboard.alerts.open')} ${String(openItems.length)}`}
+      actions={
+        <>
+          {sevBadges}
+          {viewAllLink}
+        </>
+      }
+    />
+  )
 
   return (
-    <section className="grid grid-cols-1 grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <span className="grid size-[26px] place-items-center rounded-lg bg-crit-bg text-crit">
-          <TriangleAlert className="size-[15px]" />
-        </span>
-        <h2 className="text-[13px] font-semibold text-ink-1">{t('dashboard.alerts.title')}</h2>
-        <span className="text-[11px] text-ink-4">
-          {t('dashboard.alerts.open')} {openItems.length}
-        </span>
-        <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-2">
-          {criticalOpen > 0 && <Badge variant="crit">{t('dashboard.alerts.critical')} {criticalOpen}</Badge>}
-          {warningOpen > 0 && <Badge variant="warn">{t('dashboard.alerts.warning')} {warningOpen}</Badge>}
-          {infoOpen > 0 && <Badge variant="brand">{t('dashboard.alerts.info')} {infoOpen}</Badge>}
-        </div>
-      </div>
+    <section className="grid grid-cols-1 grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
+      {header}
       <AsyncSection
         isLoading={query.isPending}
         isError={query.isError}
@@ -76,24 +95,19 @@ export default function AlertOverview() {
         skeleton={<CardGridSkeleton count={2} />}
       >
         {openItems.length === 0 ? (
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-ink-3">{t('dashboard.alerts.empty')}</p>
-            <Link className="text-xs text-brand-600 hover:underline" to="/alert-events">
-              {t('dashboard.alerts.viewAll')}
-            </Link>
-          </div>
+          <p className="text-sm text-ink-3">{t('dashboard.alerts.empty')}</p>
         ) : (
           <div className="grid min-w-0 gap-2">
-            <ul className="flex min-w-0 flex-col">
+            <ul className="flex max-h-[9.5rem] min-w-0 flex-col overflow-y-auto">
               {latest.map((item) => {
                 const meta = sevMeta(item.level)
                 const Icon = meta.icon
                 return (
                   <li
                     key={item.id}
-                    className="flex min-w-0 items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+                    className="flex min-w-0 items-center gap-3 border-b border-border py-2 last:border-b-0"
                   >
-                    <span className={cn('grid size-[30px] shrink-0 place-items-center rounded-lg', meta.box)}>
+                    <span className={cn('grid size-[26px] shrink-0 place-items-center rounded-lg', meta.box)}>
                       <Icon className="size-[15px]" />
                     </span>
                     <div className="min-w-0 flex-1">
@@ -106,12 +120,6 @@ export default function AlertOverview() {
                 )
               })}
             </ul>
-            <Link
-              className="text-xs text-brand-600 hover:underline"
-              to="/alert-events"
-            >
-              {t('dashboard.alerts.viewAll')}
-            </Link>
           </div>
         )}
       </AsyncSection>
