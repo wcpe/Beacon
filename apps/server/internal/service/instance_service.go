@@ -56,6 +56,14 @@ type DefaultEntryResolver func(ns string) (map[string]bool, error)
 // 由控制面 DB 权威投影，发现响应不把归属复制进运行态注册表。
 type LobbyClusterMemberResolver func(ns string) (map[string]bool, error)
 
+// RecoverySink 是实例恢复 online 时自动消解其未恢复告警的窄依赖（FR-232），由 AlertEventService 实现。
+// 恢复（非 online → online）只可能发生在 registry.Register / registry.Heartbeat 两个写点，
+// 故触发挂在 InstanceService.Register / Heartbeat（而非健康扫描——扫描的 Sweep 输出永不包含 online）。
+type RecoverySink interface {
+	// AutoResolveAlerts 把该实例全部未恢复告警置为 resolved（handled_by=system）；返回受影响行数。
+	AutoResolveAlerts(namespace, serverID string) (int64, error)
+}
+
 // InstanceService 编排实例注册/心跳/上报/下线/发现（操作内存注册表 + 解析归属 + 审计）。
 // 主动下线拒绝态（FR-49）落 DB（offlineRepo），与内存注册/健康真源解耦：注册前查拒绝表、下线/取消下线在事务内写库。
 type InstanceService struct {
@@ -69,6 +77,8 @@ type InstanceService struct {
 	notifier             *ChangeNotifier      // 可选，注册/下线后唤醒拓扑 watch（FR-29）
 	defaultEntryResolver DefaultEntryResolver // 可选，发现/实例视图标 zoneDefaultEntry（FR-48）；nil 时恒空集
 	lobbyMemberResolver  LobbyClusterMemberResolver
+	// recovery 可选：实例由非 online 恢复为 online 时自动消解其未恢复告警（FR-232；未注入则跳过）。
+	recovery RecoverySink
 	// machineRegisterAllowed 是机器注册通道开关（FR-222）的部署快照；默认 false，行为与分权设计逐字一致。
 	machineRegisterAllowed bool
 }
@@ -94,6 +104,24 @@ func (s *InstanceService) SetDefaultEntryResolver(r DefaultEntryResolver) {
 // SetLobbyClusterMemberResolver 注入大厅成员解析器（启动时装配；未注入则大厅标记恒为 false）。
 func (s *InstanceService) SetLobbyClusterMemberResolver(r LobbyClusterMemberResolver) {
 	s.lobbyMemberResolver = r
+}
+
+// SetRecoverySink 注入恢复自动消解器（FR-232；启动时装配，未注入则不自动消解）。
+func (s *InstanceService) SetRecoverySink(r RecoverySink) {
+	s.recovery = r
+}
+
+// maybeAutoResolve 在实例「由非 online 恢复为 online」时自动消解其未恢复告警（FR-232）。
+// prevWasOnline 为 true 表示「无需消解」：旧态已是 online（常规续约），或实例此前不存在（全新注册，非恢复）。
+// 即调用方传 `before == nil || before.Status == Online`。失败仅 WARN，绝不阻断注册 / 心跳主流程。
+func (s *InstanceService) maybeAutoResolve(ns, serverID string, prevWasOnline bool) {
+	if !prevWasOnline && s.recovery != nil {
+		if n, err := s.recovery.AutoResolveAlerts(ns, serverID); err != nil {
+			slog.Warn("告警自动消解失败", "namespace", ns, "serverId", serverID, "err", err)
+		} else if n > 0 {
+			slog.Info("实例恢复，自动消解未恢复告警", "namespace", ns, "serverId", serverID, "count", n)
+		}
+	}
 }
 
 // DefaultEntrySet 返回某环境下被指定为小区默认入口的 serverId 集合（FR-48）。
@@ -172,6 +200,8 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 		Capacity: p.Capacity, Weight: p.Weight, Metadata: p.Metadata,
 		Backends: p.Backends,
 	}
+	// FR-232：注册前的旧状态快照，供判断本次注册是否构成「恢复 online」。
+	before := s.registry.Get(p.Namespace, p.ServerID)
 	saved, err := s.registry.Register(inst, s.ttl, time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, runtime.ErrDuplicateServerID) {
@@ -182,6 +212,9 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 		return nil, err
 	}
 	s.audit(p.Namespace, model.ActionInstanceRegister, p.ServerID, "agent", model.ResultOK, p.ClientIP)
+	// FR-232：注册把实例置为 online；若此前已存在且非 online（僵尸重连 / 被下线后重接）则为恢复 → 自动消解。
+	// 全新实例（before==nil）不是恢复，同 online 处理（消解为空操作）。
+	s.maybeAutoResolve(p.Namespace, p.ServerID, before == nil || before.Status == runtime.StatusOnline)
 	// 实例进入/刷新可用集合 → 唤醒拓扑 watch（同址重连摘要不变，由 StreamService 去重不推）。
 	s.notifyTopology(p.Namespace)
 	slog.Info("实例注册", "namespace", p.Namespace, "serverId", p.ServerID,
@@ -199,15 +232,18 @@ func (s *InstanceService) Register(p RegisterParams) (*RegisterResult, error) {
 }
 
 // Heartbeat 刷新心跳；未注册返回 NOT_REGISTERED。返回 ttlSec。
+// FR-232：心跳在实例由非 online 翻回 online（失联 / 掉线后重新心跳）时自动消解其未恢复告警。
 func (s *InstanceService) Heartbeat(ns, serverID string) (int, error) {
 	if s.db != nil {
 		if err := ensureServerActiveForNamespace(s.db, ns, serverID); err != nil {
 			return 0, err
 		}
 	}
+	before := s.registry.Get(ns, serverID)
 	if !s.registry.Heartbeat(ns, serverID, time.Now().UTC()) {
 		return 0, apperr.ErrNotRegistered
 	}
+	s.maybeAutoResolve(ns, serverID, before == nil || before.Status == runtime.StatusOnline)
 	return int(s.ttl.Seconds()), nil
 }
 
