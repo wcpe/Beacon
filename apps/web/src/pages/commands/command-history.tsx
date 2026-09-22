@@ -96,6 +96,8 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
       )
     },
     placeholderData: keepPreviousData,
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
 
   const rows = useMemo(() => query.data?.items ?? [], [query.data])
@@ -211,7 +213,7 @@ export default function CommandHistory({ onView, selectedId }: CommandHistoryPro
       }
     >
       <AsyncSection
-        isLoading={query.isLoading || envPending}
+        isLoading={query.isPending}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={columns.length} rows={8} />}

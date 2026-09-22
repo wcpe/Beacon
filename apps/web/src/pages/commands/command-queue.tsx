@@ -44,6 +44,8 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
         fetchCommands({ status: 'pending', namespace, size: 50 }),
       ),
     refetchInterval: REFETCH_MS,
+    // 观测范围未就绪时不发请求（含轮询），交回 react-query 原生 pending 态
+    enabled: !envPending,
   })
   const fetchedQuery = useQuery({
     queryKey: ['commands', 'queue', 'fetched', envCodes],
@@ -52,6 +54,8 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
         fetchCommands({ status: 'fetched', namespace, size: 50 }),
       ),
     refetchInterval: REFETCH_MS,
+    // 观测范围未就绪时不发请求（含轮询），交回 react-query 原生 pending 态
+    enabled: !envPending,
   })
 
   const rows = useMemo<CommandItem[]>(() => {
@@ -101,7 +105,7 @@ export default function CommandQueue({ onView, selectedId }: CommandQueueProps) 
         count={rows.length > 0 ? t('observability.common.total', { count: rows.length }) : undefined}
       />
       <AsyncSection
-        isLoading={pendingQuery.isLoading || fetchedQuery.isLoading || envPending}
+        isLoading={pendingQuery.isPending || fetchedQuery.isPending}
         isError={pendingQuery.isError || fetchedQuery.isError}
         error={pendingQuery.error ?? fetchedQuery.error}
         skeleton={<TableSkeleton columns={columns.length} rows={4} />}

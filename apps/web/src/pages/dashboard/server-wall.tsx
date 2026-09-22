@@ -60,6 +60,8 @@ export default function ServerWall() {
             left.namespaceId - right.namespaceId || left.serverId.localeCompare(right.serverId),
         },
       ),
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
   const items = useMemo(() => (query.data?.items ?? []).slice(0, WALL_LIMIT), [query.data])
 
@@ -81,7 +83,7 @@ export default function ServerWall() {
         </Link>
       </div>
       <AsyncSection
-        isLoading={query.isLoading || envPending}
+        isLoading={query.isPending}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={4} rows={6} />}
