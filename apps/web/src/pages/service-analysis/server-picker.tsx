@@ -16,7 +16,7 @@ import {
 import type { ServerItem } from '@beacon/contracts'
 
 import { fetchServers } from '../../api/cluster'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope, useEnvScopePending } from '../../features/env/use-env-scope'
 
 interface ServerPickerProps {
   // 已选 serverId 集合
@@ -31,6 +31,8 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
   const [page, setPage] = useState(1)
   // FR-178：选服列表跟随顶栏 env
   const envScope = useEnvNamespaceScope()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const pageSize = 80
 
   // 关键词与页码都交给服务端，页面只渲染当前页，避免把 pageSize 当成完整集合。
@@ -113,7 +115,7 @@ export default function ServerPicker({ selected, onToggle, onClear }: ServerPick
       {/* 可选服务器列表（自身滚动） */}
       <div className="overflow-y-auto p-2">
         <AsyncSection
-          isLoading={query.isLoading}
+          isLoading={query.isLoading || envPending}
           isError={query.isError}
           error={query.error}
           skeleton={<CardGridSkeleton count={4} />}

@@ -3,10 +3,13 @@
 // backend 选到小区叶（zone id），proxy 选到集群叶（bc_cluster id）。
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Boxes, Check, ChevronDown, ChevronRight, Layers, MapPin, Search } from 'lucide-react'
+import { Boxes, Check, ChevronDown, ChevronRight, DoorOpen, Layers, MapPin, Search } from 'lucide-react'
 
 import { Input, cn } from '@beacon/ui'
 import type { ZoneTreeResponse } from '@beacon/contracts'
+
+/** 大厅集群目标值前缀（FR-225 / A1）：无归属后端可指派为大厅集群成员（=入口服）。 */
+export const LOBBY_TARGET_PREFIX = 'lobby:'
 
 interface AssignTargetTreeProps {
   tree: ZoneTreeResponse | undefined
@@ -15,6 +18,8 @@ interface AssignTargetTreeProps {
   // 选中目标 id（字符串，空串未选）
   value: string
   onChange: (value: string) => void
+  // 可选：当前 namespace 的大厅集群（backend 时可指派为大厅成员）。null 表示不提供该目标。
+  lobbyCluster?: { id: number; name: string } | null
 }
 
 // 小写去空白，做包含式过滤
@@ -23,7 +28,7 @@ function matches(item: { name: string; code?: string; displayName?: string }, ke
   return [item.code, item.displayName, item.name].some((value) => value?.toLowerCase().includes(normalized))
 }
 
-export default function AssignTargetTree({ tree, kind, value, onChange }: AssignTargetTreeProps) {
+export default function AssignTargetTree({ tree, kind, value, onChange, lobbyCluster = null }: AssignTargetTreeProps) {
   const { t } = useTranslation()
   const [keyword, setKeyword] = useState('')
   // 展开的集群 / 大区键；搜索时全展开以露出命中叶
@@ -69,6 +74,9 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
 
   const isOpen = (key: string) => searching || expanded.has(key)
 
+  // 大厅目标同样受搜索过滤：搜索无命中时与小区 / 集群一起隐藏，保证「无匹配」空态语义一致。
+  const lobbyVisible = kind === 'backend' && lobbyCluster !== null && (!searching || matches(lobbyCluster, keyword))
+
   return (
     <div className="grid gap-2">
       {/* 搜索框：按名称过滤树节点 */}
@@ -90,7 +98,22 @@ export default function AssignTargetTree({ tree, kind, value, onChange }: Assign
         aria-label={t(kind === 'backend' ? 'cluster.zones.assign.targetZone' : 'cluster.zones.assign.targetCluster')}
         className="max-h-64 overflow-y-auto rounded-md border border-border bg-surface-2 p-1.5"
       >
-        {clusters.length === 0 ? (
+        {/* 大厅集群目标（FR-225 / A1）：后端可指派为大厅成员（=入口服），与小区 / 集群并列在树顶 */}
+        {lobbyVisible && (
+          <div className="mb-1 border-b border-border pb-1">
+            <TargetLeaf
+              depth={0}
+              icon={<DoorOpen className="size-3.5 text-brand" />}
+              label={t('cluster.zones.assign.targetLobby')}
+              code={lobbyCluster.name}
+              selected={value === `${LOBBY_TARGET_PREFIX}${String(lobbyCluster.id)}`}
+              onSelect={() => {
+                onChange(`${LOBBY_TARGET_PREFIX}${String(lobbyCluster.id)}`)
+              }}
+            />
+          </div>
+        )}
+        {clusters.length === 0 && !lobbyVisible ? (
           <p className="px-2 py-4 text-center text-xs text-ink-4">{t('cluster.zones.assign.noTargetMatch')}</p>
         ) : (
           <ul className="grid gap-0.5">

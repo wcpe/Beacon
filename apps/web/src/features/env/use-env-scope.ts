@@ -19,13 +19,29 @@ import {
   useObservationScopeSelection,
 } from './observation-scope'
 
-/** 全量 env 选项（顶栏过滤器与作用域解析共用同一 query key，避免重复请求）。 */
-export function useEnvOptions(): EnvItem[] {
-  const query = useQuery({
+/** 全量 env 选项查询（顶栏过滤器与作用域解析共用同一 query key，避免重复请求）。 */
+export function useEnvOptionsQuery() {
+  return useQuery({
     queryKey: ['envs', 'options'],
     queryFn: () => fetchEnvList({ pageSize: 100 }),
   })
-  return query.data?.items ?? []
+}
+
+/** 全量 env 选项（顶栏过滤器与作用域解析共用同一 query key，避免重复请求）。 */
+export function useEnvOptions(): EnvItem[] {
+  return useEnvOptionsQuery().data?.items ?? []
+}
+
+/**
+ * 观测范围是否仍在解析（选了具体 env 但 env 选项尚未就绪）。
+ *
+ * 此间 `useEnvNamespaceScope()` 会返回空集合（fail-closed）——页面**应显示骨架而非空态**，
+ * 否则会把「范围还在解析」误报成「无数据」。全部环境无需 env 选项即可解析，故不算 pending。
+ */
+export function useEnvScopePending(): boolean {
+  const selection = useObservationScopeSelection()
+  const query = useEnvOptionsQuery()
+  return selection.kind === 'env' && query.isLoading
 }
 
 /** 将选中的 env id 解析为 namespace id 作用域；失效选项和空映射均停止查询。 */

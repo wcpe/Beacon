@@ -11,7 +11,7 @@ import { AsyncSection, Badge, CardGridSkeleton, cn } from '@beacon/ui'
 import type { AlertEventItem } from '@beacon/contracts'
 
 import { fetchAlertEvents } from '../../api/observability'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useEnvScopePending } from '../../features/env/use-env-scope'
 import { alertSubtitle } from '../../features/observability/alert-transition'
 
 // 告警等级 → 图标框样式 + 图标。
@@ -32,6 +32,8 @@ export default function AlertOverview() {
   const { t } = useTranslation()
   // FR-178：告警概览按每个 env 的命名空间受限请求。
   const envCodes = useEnvNamespaceCodes()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const query = useQuery({
     queryKey: ['dashboard', 'alerts', envCodes],
     queryFn: () =>
@@ -66,7 +68,7 @@ export default function AlertOverview() {
         </div>
       </div>
       <AsyncSection
-        isLoading={query.isLoading}
+        isLoading={query.isLoading || envPending}
         isError={query.isError}
         error={query.error}
         skeleton={<CardGridSkeleton count={2} />}

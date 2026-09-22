@@ -5,6 +5,7 @@
 ## 未发布
 
 ### 新增
+- 未归属服可直接指派为大厅成员（A1 / FR-225）：`/zones` 未分配篮的目标选择树新增「大厅集群（入口服）」节点，与小区 / 集群并列呈现（同样受搜索过滤）。选中大厅目标后对每台服逐条**走统一审批**提交归属迁移（`transferServerPlacement`，与小区 / 集群分配同一通道，不新增直改通道）；「同时设为默认入口」在大厅目标下隐藏（默认入口是小区级语义，大厅成员不适用）。大厅集群按 namespace 唯一（ADR-0075），故选「全部命名空间」时按所选服的共同命名空间回退解析，跨命名空间选择时不提供该目标。
 - 拓扑呈现大厅集群成员（A4 / FR-225）：可视化拓扑在树分组下方新增「大厅集群（入口服）」层，逐台渲染 `lobby_cluster_id` 非空的子服（门字形 + 在线/离线状态点），标签显示「入口服 N 台 · 含离线」；点成员节点出右侧面板给出入口服身份与在线/离线态。按 ADR-0083「入口服 = 大厅成员」，不新增独立入口实体，数据取既有 `/admin/v2/servers`。
 - 告警收敛与防堆积（FR-232，增强 FR-89/FR-157）：`alert_event` 新增 `occurrence_count` / `last_at` / `to_status`（方向维度）列与 `(server_id, type, to_status)` 复合索引。`health-transition` 告警写入改为按收敛键合并——同一未恢复键重复触发只 `occurrence_count+1`、刷新 `last_at`、取最高级，不插新行；已 `acknowledged` 的条目再触发不回退 `open`；实例由非 online 恢复为 online（心跳续上 / 重新注册）时其未恢复告警自动置 `resolved`（`handled_by=system`，note 标明自动消解；触发挂在 `InstanceService.Register`/`Heartbeat`——恢复不经健康扫描的 Sweep 输出）。列表显示合并计数徽标「×N」与「最后」触发时刻，抖动场景下待办计数保持有界。
 - 告警分级与人工升降（FR-231，增强 FR-157）：按「健康级别 × 角色」矩阵自动定级（`offline`/`lost` 的 proxy/大厅成员 → `critical`、普通 backend → `warning`；`degraded` 的 proxy/大厅 → `warning`、其余 → `info`），角色由控制面权威事实解析（`kind=proxy` → proxy、`lobby_cluster_id` 非空 → lobby、其余 → backend；无角色信息按 backend 规则安全降级）。新增 `GradeAlert` 纯函数（穷举单测）；新增 `severity_override` / `overridden_by` / `overridden_at` 列与 `POST /admin/v1/alert-events/{id}/level` 人工改级端点（写覆盖列 + `alert-event.level_overridden` 审计）；前端详情面板新增「调整级别」与「已手动调整」标记。
@@ -26,6 +27,7 @@
 - **服务器 `tag.*` 发现过滤真源切换（FR-227，破坏性）**：`/beacon/v1/agent/discovery?tag.<key>=<value>` 的匹配目标由**实例注册 metadata**（agent 上报、内存态）改为 **`server_tag` 表**（标签接口写入）。升级后，仅经标签接口登记的标签参与过滤；原先依赖 agent metadata 打标签的用法**不再命中**。因 metadata 不落库、无历史可迁移，需在升级后重新登记标签。
 
 ### 修复
+- **观测范围解析期不再误报空态**：页眉选了具体环境但 env 选项尚未就绪时，`useEnvNamespaceScope()` 依 fail-closed 语义返回空集合，各页会把这**未解析**的一瞬渲染成「无数据」空态。现统一以 `useEnvScopePending()` 表达解析中：11 个观测数据页（/alert-events、/audits、/commands 历史与队列、运维总览状态墙与告警卡、/servers 资产与待确认、服务分析对比 / 选服 / 决策）在解析期显示骨架而非空态；`NamespaceSelect` 解析期禁用并显示「范围解析中…」；`/servers` 待确认计数解析期置未知（徽标不渲染、KPI 显示「—」），不再显示假 0。骨架语义为「新数据来到前不残留旧范围数据」，与 FR-214 的「切范围以骨架替代旧数据」一致。
 - **观测范围收窄此前整体失效（修复）**：页眉「观测环境 / 命名空间」选择器自 FR-213 起已切到 `observation-scope` 真源，但数据侧 `useEnvNamespaceScope` / `useEnvNamespaceCodes` 仍读旧的 `state/env-filter`（该 store 再无写入方、恒为「全部环境」），导致 `/servers`、`/zones`、`/topology`、`/audits`、`/commands`、运维总览等**所有观测 / 集群页的 env 收窄静默失效**——按环境过滤后仍请求全量。现统一改读页眉实际选择（`observation-scope`），并删除已死的 `state/env-filter.ts`；范围失效 / 空映射仍 fail-closed（不回退全量）。
 - 提审与执行路径的服务端装配错误不再报成调用方错误：十余个提审入口（资产预览、日志/浏览、消息正文、拓印、反向抓取、配置与文件覆盖集、交付编排）此前把「服务未装配」「密钥不可用」这类服务端故障与「缺参数」混用同一个 400 或 403，会把排查方向引偏。现装配缺失统一回 500 `INTERNAL`，参数问题保留 400，交付编排的非法状态改回 409 `illegal_state`；文件覆盖集执行适配器不再把「执行许可不符」（安全事件）掩盖成「审批目标已变化」。
 - 敏感内容授权消费的失败原因不再误导：资产双侧读取消费端点在授权不存在、参数缺失、配对不完整、正文尚未回传时此前一律返回泛化 403「只读密钥无权执行写操作」，调用方会去查权限，而真实原因可能是 `grantId` 拼错或顺序不对。现按性质分别返回 410 `sensitive_access_not_found`（与「已失效」同码，保留防枚举）、400 `INVALID_PARAM`、409 `sensitive_access_target_drift`、409 `sensitive_access_not_consumed`；服务端装配缺失改报 500。

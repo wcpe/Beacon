@@ -25,7 +25,7 @@ import {
 import type { HealthItem } from '@beacon/contracts'
 
 import { fetchHealthList } from '../../api/metrics'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceScope } from '../../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceScope, useEnvScopePending } from '../../features/env/use-env-scope'
 
 // 展示上限：状态墙只列前若干台，全量在 /servers。
 // 多命名空间分别受限请求后合并，保证不依赖客户端后过滤。
@@ -45,6 +45,8 @@ export default function ServerWall() {
   const { t } = useTranslation()
   // FR-178：状态墙跟随顶栏 env
   const envScope = useEnvNamespaceScope()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const query = useQuery({
     queryKey: ['dashboard', 'health-list', envScope],
     queryFn: () =>
@@ -79,7 +81,7 @@ export default function ServerWall() {
         </Link>
       </div>
       <AsyncSection
-        isLoading={query.isLoading}
+        isLoading={query.isLoading || envPending}
         isError={query.isError}
         error={query.error}
         skeleton={<TableSkeleton columns={4} rows={6} />}

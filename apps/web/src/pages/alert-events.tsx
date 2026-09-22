@@ -21,7 +21,7 @@ import type { AlertEventItem } from '@beacon/contracts'
 import { ApiClientError } from '../api/http'
 import { fetchAlertEvents, handleAlertEvent, handleAlertEventsBatch, overrideAlertLevel } from '../api/observability'
 import { notifySuccess } from '../lib/notify'
-import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useObservationScopeQuery } from '../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useObservationScopeQuery, useEnvScopePending } from '../features/env/use-env-scope'
 import {
   alertSubtitle,
   healthStatusLabel,
@@ -68,6 +68,8 @@ export default function AlertEventsPage() {
   const queryClient = useQueryClient()
   // 列表与批量写共用页眉「观测范围」选择器（observation-scope 真源），保证所见即所改（FR-229 guard）。
   const envCodes = useEnvNamespaceCodes()
+  // 观测范围仍在解析（env 选项未就绪）时显示骨架，不把「范围待解析」误报成空态。
+  const envPending = useEnvScopePending()
   const scopeQuery = useObservationScopeQuery()
 
   const [level, setLevel] = useState('all')
@@ -569,7 +571,7 @@ export default function AlertEventsPage() {
         }
       >
         <AsyncSection
-          isLoading={query.isLoading}
+          isLoading={query.isLoading || envPending}
           isError={query.isError}
           error={query.error}
           skeleton={<TableSkeleton columns={columns.length} rows={8} />}

@@ -293,3 +293,64 @@ describe('/zones 区服分配页', () => {
     expect(within(menu).getByRole('menuitem', { name: /解绑/ })).toBeInTheDocument()
   })
 })
+
+// A1（FR-225）：未分配后端可经「分配到…」直接指派为大厅集群成员（=入口服）。
+// 大厅迁移走统一审批（POST /server-placement-transfers，逐台），与小区/集群分配口径一致。
+describe('/zones 未分配 → 大厅集群（A1）', () => {
+  it('目标选择器提供大厅集群目标，确认后逐台创建大厅迁移审批申请', async () => {
+    useScenario('normal')
+    const seen: string[] = []
+    server.use(
+      http.post('/admin/v2/server-placement-transfers', async ({ request }) => {
+        const body = (await request.json()) as { serverId: string; target: { kind: string; id: number } | null }
+        seen.push(`${body.serverId}->${body.target?.kind ?? 'null'}:${String(body.target?.id ?? 0)}`)
+        return HttpResponse.json({ approvalRequestId: 'apr_lobby_test', status: 'pending', operationKey: 'topology.lobby.member.move_in' }, { status: 202 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    await findZoneRow('bc-main')
+    await user.click(await screen.findByRole('button', { name: /未分配/ }))
+
+    // 勾选未分配后端 build-1
+    const chip = (await screen.findByText('build-1')).closest('div')
+    expect(chip).not.toBeNull()
+    await user.click(within(chip as HTMLElement).getByRole('checkbox'))
+    await user.click(screen.getByRole('button', { name: '分配到…' }))
+
+    // 大厅集群目标位于树顶（与小区 / 集群并列）
+    const dialog = await screen.findByRole('dialog')
+    const lobbyTarget = await within(dialog).findByRole('treeitem', { name: /大厅集群/ })
+    await user.click(lobbyTarget)
+    await user.type(within(dialog).getByLabelText('申请原因'), '登录入口纳入大厅')
+    await user.click(within(dialog).getByRole('button', { name: '确认分配' }))
+
+    await waitFor(() => {
+      expect(seen).toHaveLength(1)
+    })
+    // 目标为大厅集群（mock 大厅 id 901），且不误走小区分配
+    expect(seen[0]).toBe('build-1->lobby_cluster:901')
+  }, 20_000)
+
+  it('大厅目标不显示「同时设为默认入口」（默认入口是小区级语义）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    renderPage(<ZonesPage />)
+
+    await findZoneRow('bc-main')
+    await user.click(await screen.findByRole('button', { name: /未分配/ }))
+    const chip = (await screen.findByText('build-1')).closest('div')
+    await user.click(within(chip as HTMLElement).getByRole('checkbox'))
+    await user.click(screen.getByRole('button', { name: '分配到…' }))
+
+    const dialog = await screen.findByRole('dialog')
+    // 未选目标时默认入口勾选沿用既有行为（backend 可勾）；选中大厅目标后应隐藏。
+    await user.click(await within(dialog).findByRole('treeitem', { name: /大厅集群/ }))
+    expect(within(dialog).queryByLabelText('同时设为默认入口')).not.toBeInTheDocument()
+    // 改选小区目标 area-1（树未搜索时小区收起，先搜索展开）→ 默认入口勾选重新出现
+    await user.type(within(dialog).getByLabelText('搜索目标（按名称过滤）'), 'area-1')
+    await user.click(await within(dialog).findByRole('treeitem', { name: /^area-1/ }))
+    expect(within(dialog).getByLabelText('同时设为默认入口')).toBeInTheDocument()
+  }, 20_000)
+})
