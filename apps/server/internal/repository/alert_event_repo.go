@@ -13,6 +13,9 @@ type AlertEventFilter struct {
 	Type      string
 	Level     string
 	Namespace string
+	// Status 非空时按处理状态过滤（open / acknowledged / resolved）。
+	// 真机验收发现此前缺此字段，导致 `?status=open` 被静默忽略、列表把已处理条目一并返回。
+	Status string
 	// ServerID 非空时按涉及实例过滤（FR-230 详情时间线）。
 	ServerID       string
 	NamespaceCodes []string
@@ -87,6 +90,9 @@ func applyAlertEventFilter(q *gorm.DB, f AlertEventFilter) *gorm.DB {
 	}
 	if f.Level != "" {
 		q = q.Where("level = ?", f.Level)
+	}
+	if f.Status != "" {
+		q = q.Where("status = ?", f.Status)
 	}
 	if f.ServerID != "" {
 		q = q.Where("server_id = ?", f.ServerID)

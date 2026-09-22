@@ -54,6 +54,10 @@ type alertEventView struct {
 	SeverityOverride *string    `json:"severityOverride"`
 	OverriddenBy     *string    `json:"overriddenBy"`
 	OverriddenAt     *time.Time `json:"overriddenAt"`
+	// 收敛（FR-232）：同键未恢复期间重复触发只递增 occurrenceCount，lastAt 记最近一次触发时刻。
+	// 二者此前定义了契约与 DB 列却漏在视图层，导致前端收敛徽标「×N / 最后」永远拿不到数据。
+	OccurrenceCount int        `json:"occurrenceCount"`
+	LastAt          *time.Time `json:"lastAt"`
 }
 
 // toAlertEventView 把模型转对外视图；空串的处理人 / 说明映射为 null（契约为 string | null）。
@@ -68,6 +72,8 @@ func toAlertEventView(e model.AlertEvent) alertEventView {
 		SeverityOverride: ptrIfNotEmpty(e.SeverityOverride),
 		OverriddenBy:     ptrIfNotEmpty(e.OverriddenBy),
 		OverriddenAt:     e.OverriddenAt,
+		OccurrenceCount:  e.OccurrenceCount,
+		LastAt:           e.LastAt,
 	}
 }
 
@@ -92,6 +98,7 @@ func (h *AlertEventHandler) List(w http.ResponseWriter, r *http.Request) {
 	items, total, err := h.svc.List(repository.AlertEventFilter{
 		Type:           q.Get("type"),
 		Level:          q.Get("level"),
+		Status:         q.Get("status"),
 		Namespace:      q.Get("namespace"),
 		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
 		From: parseRFC3339(q.Get("from")),
