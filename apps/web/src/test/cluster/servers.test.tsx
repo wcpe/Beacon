@@ -212,6 +212,46 @@ describe('/servers 服务器页', () => {
     expect((content as HTMLElement).className).toContain('max-w-[min(32rem,90vw)]')
   })
 
+  it('不适用因子区分「角色不适用」与「未上报」（FR-228 §4 接线）', async () => {
+    useScenario('normal')
+    const user = userEvent.setup()
+    // 覆盖详情端点：backend 的 capacity 未上报（maxOnline<=0）、conn 为角色不适用；
+    // tps 适用、latency 数据不可得。断言渲染层真的按成因分流，而非统一「不适用」。
+    server.use(
+      http.get('/admin/v2/health/:serverId', () =>
+        HttpResponse.json({
+          serverId: 'lobby-1',
+          namespaceId: 1,
+          kind: 'backend',
+          zoneName: 'r1-z1',
+          score: 70,
+          level: 'degraded',
+          schedulable: true,
+          reasons: [],
+          sampledAtMs: 1_752_000_000_000,
+          weightsRev: 3,
+          factors: [
+            { factor: 'tps', raw: 19.5, normalized: 100, weight: 30, applicable: true },
+            // backend 恒适用 capacity → 不适用只可能是「未上报」
+            { factor: 'capacity', raw: 0, normalized: 0, weight: 20, applicable: false },
+            // conn 仅 proxy 适用 → backend 上是「角色不适用」
+            { factor: 'conn', raw: 0, normalized: 0, weight: 10, applicable: false },
+            // latency 两者皆适用 → 不适用是「数据不可得」
+            { factor: 'latency', raw: -1, normalized: 0, weight: 10, applicable: false },
+          ],
+        }),
+      ),
+    )
+    renderPage(<ServersPage />)
+
+    await user.click(await findServerRow('lobby-1'))
+    expect(await screen.findByText('因子分解')).toBeInTheDocument()
+
+    // 「未上报」与「不适用」都必须出现：证明按成因分流，而非统一成一种文案
+    expect(screen.getAllByText('未上报').length).toBe(2) // capacity + latency
+    expect(screen.getAllByText('不适用').length).toBe(1) // conn
+  })
+
   it('keyword 搜索按 serverId 过滤资产列表', async () => {
     useScenario('normal')
     const user = userEvent.setup()

@@ -110,6 +110,8 @@ export const cluster = {
       normalized: '归一化',
       weight: '权重',
       notApplicable: '不适用',
+      // FR-228 §4：区别于「角色不适用」——该指标本应有值但没采到（agent 未上报 / 窗口无有效值），需运维排查
+      notReported: '未上报',
       reasons: '不可调度原因',
       weightsRev: '权重版本',
       level_healthy: '健康',
