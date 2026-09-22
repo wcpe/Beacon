@@ -42,6 +42,8 @@ export default function AlertOverview() {
         (namespace, pageRequest) => fetchAlertEvents({ page: 1, size: pageRequest?.pageSize ?? 100, namespace }),
         { page: 1, pageSize: 100, compare: (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) },
       ),
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
   const items = useMemo(() => query.data?.items ?? [], [query.data])
 
@@ -68,7 +70,7 @@ export default function AlertOverview() {
         </div>
       </div>
       <AsyncSection
-        isLoading={query.isLoading || envPending}
+        isLoading={query.isPending}
         isError={query.isError}
         error={query.error}
         skeleton={<CardGridSkeleton count={2} />}

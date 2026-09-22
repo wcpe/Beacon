@@ -177,6 +177,8 @@ export default function AssetsPanel({
         },
       ),
     placeholderData: keepPreviousData,
+    // 观测范围未就绪时不发请求，交回 react-query 原生 pending 态（骨架由此承接）
+    enabled: !envPending,
   })
 
   // 身份端点按 identityId 定位，server 列表只给 serverId，故拉一份身份表建 serverId→identityId 映射。
@@ -810,7 +812,7 @@ export default function AssetsPanel({
 
         {/* 列表区：自身滚动（max-height），页面整体高度可控，1000+ 台亦不无限增高 */}
         <div className="max-h-[calc(100vh-20rem)] overflow-y-auto px-4 pt-2 pb-1">
-          <AsyncSection isLoading={query.isLoading || envPending} isError={query.isError} error={query.error}>
+          <AsyncSection isLoading={query.isPending} isError={query.isError} error={query.error}>
             <DataTable
               columns={columns}
               rows={rows}
