@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import { Cable, Search } from 'lucide-react'
 
 import {
@@ -43,17 +44,31 @@ interface Committed {
   cold: boolean
 }
 
+// URL ?window= 解析：仅接受 WindowSelect 的合法 key，非法 / 缺省回落 1h（不因脏参数改变默认口径）。
+function windowFromUrl(raw: string | null): WindowKey {
+  return raw !== null && raw in WINDOW_MS ? (raw as WindowKey) : '1h'
+}
+
 export default function ConnectionsPage() {
   const { t } = useTranslation()
+  // URL 深链（?serverId=&window=）：供 /dashboard 玩家流 / 连接流卡的「明细」跳转带参进入，
+  // 落位即按该服 + 该时间窗查询（与 audits / commands 的 URL 初始化口径一致）。
+  const [searchParams] = useSearchParams()
+  const initialServerId = searchParams.get('serverId') ?? ''
+  const initialWindowKey = windowFromUrl(searchParams.get('window'))
   const [connId, setConnId] = useState('')
-  const [serverId, setServerId] = useState('')
+  const [serverId, setServerId] = useState(initialServerId)
   const [playerUuid, setPlayerUuid] = useState('')
   const [status, setStatus] = useState('all')
   const [closeKind, setCloseKind] = useState('all')
-  const [windowKey, setWindowKey] = useState<WindowKey>('1h')
+  const [windowKey, setWindowKey] = useState<WindowKey>(initialWindowKey)
   const [cold, setCold] = useState(false)
-  // 进页默认近 1h 全局热查询（无需 selector）
-  const [committed, setCommitted] = useState<Committed>(() => ({ windowKey: '1h', cold: false }))
+  // 进页默认近 1h 全局热查询（无需 selector）；带 URL selector 时直接按该服收窄
+  const [committed, setCommitted] = useState<Committed>(() => ({
+    serverId: initialServerId.trim() === '' ? undefined : initialServerId,
+    windowKey: initialWindowKey,
+    cold: false,
+  }))
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const cursor = useCursorStack()
 

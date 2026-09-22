@@ -46,8 +46,57 @@ describe('/connections 连接明细页', () => {
     await waitForDataRows()
   })
 
-  it('按服务器 ID 收窄后点行开详情面板', async () => {
+  it('URL 深链 ?serverId=&window= 进页即按该服 / 该时间窗查询（供 dashboard 明细下钻）', async () => {
     useScenario('normal')
+    const capturedUrls: string[] = []
+    server.use(
+      http.get('/admin/v2/connections', ({ request }) => {
+        capturedUrls.push(request.url)
+        return HttpResponse.json({ items: [], nextCursor: null })
+      }),
+    )
+
+    renderPage(<ConnectionsPage />, ['/connections?serverId=proxy-1&window=24h'])
+
+    // URL 的 serverId 已预填到筛选框，且进页首次请求即带上该 serverId（无需再点「查询」）
+    expect(await screen.findByLabelText('服务器 ID（代理或后端）')).toHaveValue('proxy-1')
+    await waitFor(() => {
+      expect(capturedUrls.some((u) => u.includes('serverId=proxy-1'))).toBe(true)
+    })
+  })
+
+  it('URL 深链 window 为非法值时回落 1h 默认口径，不因脏参数改变默认', async () => {
+    useScenario('normal')
+    const capturedUrls: string[] = []
+    server.use(
+      http.get('/admin/v2/connections', ({ request }) => {
+        capturedUrls.push(request.url)
+        return HttpResponse.json({ items: [], nextCursor: null })
+      }),
+    )
+
+    renderPage(<ConnectionsPage />, ['/connections?window=999d'])
+
+    await waitFor(() => {
+      expect(capturedUrls.length).toBeGreaterThan(0)
+    })
+    const first = capturedUrls.at(0)
+    if (first === undefined) {
+      throw new Error('未捕获 connections 请求')
+    }
+    const url = new URL(first)
+    const from = url.searchParams.get('from')
+    const to = url.searchParams.get('to')
+    if (from === null || to === null) {
+      throw new Error('热查询应带 from/to 时间窗')
+    }
+    // 默认 1h 窗口：跨度落在 1 小时附近（容忍毫秒级取整偏差）
+    const spanMs = Date.parse(to) - Date.parse(from)
+    expect(spanMs).toBeGreaterThan(3_500_000)
+    expect(spanMs).toBeLessThan(3_700_000)
+  })
+
+  it('按服务器 ID 收窄后点行开详情面板', async () => {    useScenario('normal')
     const user = userEvent.setup()
     renderPage(<ConnectionsPage />)
 
