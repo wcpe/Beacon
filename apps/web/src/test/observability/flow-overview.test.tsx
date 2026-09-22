@@ -99,4 +99,13 @@ describe('FlowOverview 玩家流 / 连接流卡', () => {
     expect(await screen.findByText(/加载失败：数据库连接失败/)).toBeInTheDocument()
     expect(screen.queryByText('连接流数据暂未开放（随后续版本提供）')).not.toBeInTheDocument()
   })
+
+  it('「明细」是可达链接并带 1h 时间窗（此前为无链接死标签，点击无任何跳转）', async () => {
+    useScenario('normal')
+    renderPage(<FlowOverview />)
+
+    const detail = await screen.findByRole('link', { name: /明细/ })
+    // 必须指向连接明细页并带上与卡片一致的时间窗，使下钻后观测窗不漂移
+    expect(detail).toHaveAttribute('href', '/connections?window=1h')
+  })
 })
