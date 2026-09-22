@@ -167,3 +167,87 @@ func TestHandleEndpointNotFound(t *testing.T) {
 		t.Fatalf("不存在应 404，实际 %d", rec.Code)
 	}
 }
+
+// TestAlertEventListViewHasConvergenceFields 锁定 FR-232 收敛字段回带真实值：
+// occurrenceCount / lastAt 此前定义了契约与 DB 列，却漏在视图层 DTO —— 真机验收发现时
+// 前端收敛徽标「×N / 最后」永远拿不到数据。本用例不只断言字段存在，还断言值正确回带。
+func TestAlertEventListViewHasConvergenceFields(t *testing.T) {
+	h, svc, _ := newAlertEventHandler(t)
+	lastAt := time.Date(2026, 9, 22, 15, 11, 55, 0, time.UTC)
+	e := &model.AlertEvent{
+		Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
+		Namespace: "prod", ServerID: "s1", Message: "s1 online → degraded",
+		Status: model.AlertEventStatusOpen, ToStatus: "degraded",
+		OccurrenceCount: 5, LastAt: &lastAt,
+	}
+	if err := svc.Record(e); err != nil {
+		t.Fatalf("落库失败: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/alert-events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List 应 200，实际 %d", rec.Code)
+	}
+	var resp struct {
+		Items []struct {
+			OccurrenceCount int    `json:"occurrenceCount"`
+			LastAt          string `json:"lastAt"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if len(resp.Items) != 1 {
+		t.Fatalf("应有 1 条，实际 %d", len(resp.Items))
+	}
+	// 值必须回带：字段存在但恒为 0/null 等于没修（前端徽标仍不显示计数）
+	if resp.Items[0].OccurrenceCount != 5 {
+		t.Fatalf("occurrenceCount 应回带 5，实际 %d", resp.Items[0].OccurrenceCount)
+	}
+	if resp.Items[0].LastAt == "" {
+		t.Fatal("lastAt 应回带时间戳，实际为空")
+	}
+}
+
+// TestAlertEventListFiltersByStatus 锁定 `?status=` 真正参与过滤：
+// 真机验收发现此前 filter 无 Status 字段，`?status=open` 被静默忽略——列表把已处理条目
+// 一并返回（实测 18 条里 16 条 resolved），前端「只看未处理」形同虚设。
+func TestAlertEventListViewFiltersByStatus(t *testing.T) {
+	h, svc, _ := newAlertEventHandler(t)
+	open := &model.AlertEvent{
+		Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
+		Namespace: "prod", ServerID: "s-open", Message: "s-open lost", Status: model.AlertEventStatusOpen,
+	}
+	done := &model.AlertEvent{
+		Type: model.AlertEventTypeHealthTransition, Level: model.AlertLevelWarning,
+		Namespace: "prod", ServerID: "s-done", Message: "s-done lost", Status: model.AlertEventStatusResolved,
+	}
+	for _, e := range []*model.AlertEvent{open, done} {
+		if err := svc.Record(e); err != nil {
+			t.Fatalf("落库失败: %v", err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest(http.MethodGet, "/admin/v1/alert-events?status=open", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("List 应 200，实际 %d", rec.Code)
+	}
+	var resp struct {
+		Total int `json:"total"`
+		Items []struct {
+			ServerID string `json:"serverId"`
+			Status   string `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Items) != 1 {
+		t.Fatalf("status=open 应只命中 1 条，实际 total=%d items=%d", resp.Total, len(resp.Items))
+	}
+	if resp.Items[0].ServerID != "s-open" || resp.Items[0].Status != model.AlertEventStatusOpen {
+		t.Fatalf("命中的应是 s-open/open，实际 %+v", resp.Items[0])
+	}
+}
