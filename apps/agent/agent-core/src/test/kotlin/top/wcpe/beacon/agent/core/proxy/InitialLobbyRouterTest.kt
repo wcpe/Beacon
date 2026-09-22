@@ -197,10 +197,67 @@ class InitialLobbyRouterTest {
                 ),
         )
 
+    @Test
+    fun `多入口时最高分者胜，失联入口自动切到备用入口`() {
+        // A3 核心诉求：login-1 / login-2 同为入口（大厅成员），一台失联时自动换另一台。
+        // 该能力由 ADR-0083 决策 2 复用共享排序契约实现，不新增轮询 / 第二真源。
+        val bothHealthy =
+            InitialLobbyRouter(
+                snapshot = {
+                    managedSnapshot(
+                        candidates =
+                            listOf(
+                                candidate("login-1", score = 95, online = 10),
+                                candidate("login-2", score = 80, online = 10),
+                            ),
+                    )
+                },
+            )
+        assertEquals("login-1", assertIs<InitialLobbyRoute.Selected>(bothHealthy.route()).serverId)
+
+        // login-1 失联（不可调度）→ 必须落到 login-2，且不得选中已失联的 login-1。
+        val firstLost =
+            InitialLobbyRouter(
+                snapshot = {
+                    managedSnapshot(
+                        candidates =
+                            listOf(
+                                candidate("login-1", score = 95, online = 10, schedulable = false, reasons = listOf("lost")),
+                                candidate("login-2", score = 80, online = 10),
+                            ),
+                    )
+                },
+            )
+        assertEquals("login-2", assertIs<InitialLobbyRoute.Selected>(firstLost.route()).serverId)
+    }
+
+    @Test
+    fun `全部入口不可用时明确拒绝，不回退普通区服`() {
+        // 入口全挂 → 拒绝（no_candidate），绝不把玩家引到非入口的普通子服。
+        val allDown =
+            InitialLobbyRouter(
+                snapshot = {
+                    managedSnapshot(
+                        candidates =
+                            listOf(
+                                candidate("login-1", score = 95, online = 10, schedulable = false, reasons = listOf("lost")),
+                                candidate("login-2", score = 80, online = 10, schedulable = false, reasons = listOf("draining")),
+                            ),
+                    )
+                },
+            )
+
+        val rejected = assertIs<InitialLobbyRoute.Rejected>(allDown.route())
+        assertEquals("no_candidate", rejected.reason)
+    }
+
     private fun candidate(
         serverId: String,
         score: Int,
         online: Int,
         maxOnline: Int = 300,
-    ): CandidateEntry = CandidateEntry(serverId, score, "healthy", true, online, maxOnline)
+        schedulable: Boolean = true,
+        reasons: List<String> = emptyList(),
+    ): CandidateEntry =
+        CandidateEntry(serverId, score, if (schedulable) "healthy" else "unhealthy", schedulable, online, maxOnline, reasons)
 }
