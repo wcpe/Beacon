@@ -453,3 +453,63 @@ func TestSchedExcludedJSONShape(t *testing.T) {
 		t.Fatalf("excluded json 形状应为 %s，实际 %s", want, raw)
 	}
 }
+
+// TestDecideLobbyMultiEntryFailover 实测 A3 目标「多入口 + 单入口不可用时自动换下一个」：
+// 该能力由 ADR-0083 决策 2 复用既有共享排序契约实现，不新增轮询 / 权重 / 第二真源。
+// 场景：login-1 / login-2 同为大厅成员（=入口服），先按健康分择优；任一台转为失联 / 排空
+// （不可调度）后，决策必须自动落到另一台，且被排除者带原因解释。
+func TestDecideLobbyMultiEntryFailover(t *testing.T) {
+	// 阶段一：两台入口均在线，高分者胜（多入口分流走共享排序契约）。
+	store := healthview.NewStore()
+	store.ReplaceAll([]healthview.View{
+		lobbyView("login-1", 12, 95, true),
+		lobbyView("login-2", 12, 80, true),
+	})
+	svc := newSchedServiceForTest(store, 1)
+
+	out, err := svc.DecideScoped(schedTestIdentity(), SchedScopeLobby, "", "proxy-initial-entry", "")
+	if err != nil {
+		t.Fatalf("大厅决策不应出错: %v", err)
+	}
+	if out.ChosenServerID != "login-1" || out.CandidateCount != 2 {
+		t.Fatalf("多入口应按健康分择优 login-1，实际 %+v", out)
+	}
+
+	// 阶段二：login-1 失联（不可调度）→ 必须自动切到 login-2，且 login-1 带原因入 excluded。
+	lost := lobbyView("login-1", 12, 95, false)
+	lost.Reasons = []string{healthview.ReasonLost}
+	store.ReplaceAll([]healthview.View{
+		lost,
+		lobbyView("login-2", 12, 80, true),
+	})
+	out, err = svc.DecideScoped(schedTestIdentity(), SchedScopeLobby, "", "proxy-initial-entry", "")
+	if err != nil {
+		t.Fatalf("入口失联后仍应选出备用入口: %v", err)
+	}
+	if out.ChosenServerID != "login-2" {
+		t.Fatalf("login-1 失联后应自动切到 login-2，实际 %+v", out)
+	}
+	if len(out.Excluded) != 1 || out.Excluded[0].ServerID != "login-1" ||
+		out.Excluded[0].Reason != healthview.ReasonLost {
+		t.Fatalf("失联入口应带 lost 原因入排除解释，实际 %+v", out.Excluded)
+	}
+
+	// 阶段三：全部入口不可用 → 业务失败 no_candidate（不得 panic、不得回退小区/未分配服）。
+	store.ReplaceAll([]healthview.View{
+		lost,
+		lobbyView("login-2", 12, 80, false),
+		backendView("zone-fallback", "area-1", 99, 0, 100),
+	})
+	out, err = svc.DecideScoped(schedTestIdentity(), SchedScopeLobby, "", "proxy-initial-entry", "")
+	if err != nil {
+		t.Fatalf("入口全挂不应报错，应以 no_candidate 表达: %v", err)
+	}
+	// CandidateCount 语义为「进入评估的候选数」（含不可调度者，见既有 TestDecideNoCandidate），
+	// 故此处为 2；区分业务结果看 FailReason 与 Excluded。
+	if out.FailReason != SchedFailNoCandidate || len(out.Excluded) != 2 {
+		t.Fatalf("入口全不可用应为 no_candidate 且两台均入排除，实际 %+v", out)
+	}
+	if out.ChosenServerID != "" {
+		t.Fatalf("no_candidate 时不得选出任何服（含小区回退），实际选中 %q", out.ChosenServerID)
+	}
+}
