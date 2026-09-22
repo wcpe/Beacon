@@ -4,6 +4,7 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import { ChartLine, ChevronRight } from 'lucide-react'
 
 import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
@@ -85,10 +86,14 @@ export default function FlowOverview() {
         </span>
         <h2 className="text-[13px] font-semibold text-ink-1">{t('dashboard.flow.title')}</h2>
         <span className="text-[11px] text-ink-4">{t('dashboard.flow.window1h')}</span>
-        <span className="ml-auto flex items-center gap-0.5 text-[11.5px] text-ink-4">
+        {/* 「明细」下钻到连接明细页：带 1h 时间窗，落位即同一观测窗（此前为无链接的死标签） */}
+        <Link
+          className="ml-auto flex items-center gap-0.5 text-[11.5px] text-brand-600 hover:underline"
+          to="/connections?window=1h"
+        >
           {t('dashboard.flow.detail')}
           <ChevronRight className="size-3" />
-        </span>
+        </Link>
       </div>
       <AsyncSection
         isLoading={query.isLoading}
