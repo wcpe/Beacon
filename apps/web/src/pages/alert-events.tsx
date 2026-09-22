@@ -21,7 +21,7 @@ import type { AlertEventItem } from '@beacon/contracts'
 import { ApiClientError } from '../api/http'
 import { fetchAlertEvents, handleAlertEvent, handleAlertEventsBatch, overrideAlertLevel } from '../api/observability'
 import { notifySuccess } from '../lib/notify'
-import { fetchPagedItemsByEnvScope, useObservationScopeNamespaceCodes, useObservationScopeQuery } from '../features/env/use-env-scope'
+import { fetchPagedItemsByEnvScope, useEnvNamespaceCodes, useObservationScopeQuery } from '../features/env/use-env-scope'
 import {
   alertSubtitle,
   healthStatusLabel,
@@ -67,7 +67,7 @@ export default function AlertEventsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   // 列表与批量写共用页眉「观测范围」选择器（observation-scope 真源），保证所见即所改（FR-229 guard）。
-  const envCodes = useObservationScopeNamespaceCodes()
+  const envCodes = useEnvNamespaceCodes()
   const scopeQuery = useObservationScopeQuery()
 
   const [level, setLevel] = useState('all')

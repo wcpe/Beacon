@@ -100,6 +100,8 @@ ObservationScopeSelection =
 
 ## 7. 风险 / 待定
 
+- **（已修复）作用域真源错位**：本 FR 依赖页眉 env/namespace 级联选择驱动各页收窄。FR-213 引入 `observation-scope` 并接管页眉后，数据侧 hooks 一度仍读旧 `state/env-filter`（已停用），致收窄静默失效。现统一以 `observation-scope` 为唯一真源。
+
 - “全部环境 + 单 namespace”需要可搜索的全量 namespace 数据源，不能沿用当前固定 100 条选项；实施时优先复用现有分页 API，不新增依赖。
 - scope 切换时保留旧数据会造成误读，完全清空又可能闪烁；默认以骨架替代旧范围，正确性优先。
 - 混合读写页面最容易误把 scope 当默认目标，必须以静态依赖检查和交互测试双重守护，不能只靠代码注释。

@@ -26,6 +26,7 @@
 - **服务器 `tag.*` 发现过滤真源切换（FR-227，破坏性）**：`/beacon/v1/agent/discovery?tag.<key>=<value>` 的匹配目标由**实例注册 metadata**（agent 上报、内存态）改为 **`server_tag` 表**（标签接口写入）。升级后，仅经标签接口登记的标签参与过滤；原先依赖 agent metadata 打标签的用法**不再命中**。因 metadata 不落库、无历史可迁移，需在升级后重新登记标签。
 
 ### 修复
+- **观测范围收窄此前整体失效（修复）**：页眉「观测环境 / 命名空间」选择器自 FR-213 起已切到 `observation-scope` 真源，但数据侧 `useEnvNamespaceScope` / `useEnvNamespaceCodes` 仍读旧的 `state/env-filter`（该 store 再无写入方、恒为「全部环境」），导致 `/servers`、`/zones`、`/topology`、`/audits`、`/commands`、运维总览等**所有观测 / 集群页的 env 收窄静默失效**——按环境过滤后仍请求全量。现统一改读页眉实际选择（`observation-scope`），并删除已死的 `state/env-filter.ts`；范围失效 / 空映射仍 fail-closed（不回退全量）。
 - 提审与执行路径的服务端装配错误不再报成调用方错误：十余个提审入口（资产预览、日志/浏览、消息正文、拓印、反向抓取、配置与文件覆盖集、交付编排）此前把「服务未装配」「密钥不可用」这类服务端故障与「缺参数」混用同一个 400 或 403，会把排查方向引偏。现装配缺失统一回 500 `INTERNAL`，参数问题保留 400，交付编排的非法状态改回 409 `illegal_state`；文件覆盖集执行适配器不再把「执行许可不符」（安全事件）掩盖成「审批目标已变化」。
 - 敏感内容授权消费的失败原因不再误导：资产双侧读取消费端点在授权不存在、参数缺失、配对不完整、正文尚未回传时此前一律返回泛化 403「只读密钥无权执行写操作」，调用方会去查权限，而真实原因可能是 `grantId` 拼错或顺序不对。现按性质分别返回 410 `sensitive_access_not_found`（与「已失效」同码，保留防枚举）、400 `INVALID_PARAM`、409 `sensitive_access_target_drift`、409 `sensitive_access_not_consumed`；服务端装配缺失改报 500。
 - 提审入口的失败原因不再误导（同一类缺陷的其余实例）：`beacon.agent.server.resync` 缺 namespace/serverId、设置提审 key 不存在或选错入口、OAuth token 端点缺参数或 scope 越权，此前均报泛化 403「只读密钥无权执行写操作」，会把调用方引向排查权限。现分别返回可区分的 400（`INVALID_PARAM` / `SETTING_KEY_NOT_ALLOWED` / `SETTING_KEY_NOT_DANGEROUS` / OAuth 规范错误码），服务端装配缺失改报 500 `INTERNAL`，与各自的真实处置方向一致。

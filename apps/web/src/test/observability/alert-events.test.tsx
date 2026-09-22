@@ -172,4 +172,24 @@ describe('/alert-events 批量按筛选的观测范围 guard', () => {
     })
     expect(seen[0]).not.toContain('envId=')
   })
+
+  it('选择环境后列表请求按该 env 的 namespace 收窄（FR-178 回归：此前静默不收窄）', async () => {
+    useScenario('normal')
+    const seen: string[] = []
+    server.use(
+      http.get('/admin/v1/alert-events', ({ request }) => {
+        seen.push(request.url)
+        return HttpResponse.json({ items: [], total: 0 })
+      }),
+    )
+    setObservationScope({ kind: 'env', envId: 1 })
+    renderPage(<AlertEventsPage />)
+    await screen.findByText('告警总数')
+    await waitFor(() => {
+      expect(seen.some((u) => u.includes('namespace=prod'))).toBe(true)
+    })
+    // 不得出现无 scope 的全量请求被当作收窄后的结果
+    expect(seen.some((u) => !u.includes('namespace='))).toBe(false)
+    setObservationScope({ kind: 'all' })
+  })
 })
