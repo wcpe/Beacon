@@ -34,12 +34,18 @@ test('运维总览：健康 / 状态墙 / 调度概览打真端点渲染，真�
   await loginRealAdmin(page)
   await expect(page.getByRole('heading', { name: '运维总览', exact: true })).toBeVisible()
 
-  // 五卡区块标题齐备（卡骨架渲染，未白屏）；健康卡空态文案含标题子串，须精确匹配标题
-  await expect(page.getByText('集群健康总览', { exact: true })).toBeVisible()
+  // 各卡区块标题齐备（卡骨架渲染，未白屏）。
+  // 健康区按 E5 已无区段标题（页面身份在页眉面包屑），故断言其 KPI 卡行与下钻入口。
   await expect(page.getByText('服务器状态墙')).toBeVisible()
   await expect(page.getByText('玩家流 / 连接流')).toBeVisible()
   await expect(page.getByText('告警概览')).toBeVisible()
   await expect(page.getByRole('heading', { name: '调度概览', exact: true })).toBeVisible()
+  // 健康区已无标题与重复下钻入口；/servers 入口由状态墙卡的「查看全部」承担
+  await expect(page.getByRole('link', { name: '查看全部' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '前往服务器' })).toHaveCount(0)
+  // 精确匹配标题本身：空态文案「暂无健康数据，接入服务器后展示集群健康总览」含同串，
+  // 非精确匹配会被它误命中而假通过。
+  await expect(page.getByText('集群健康总览', { exact: true })).toHaveCount(0)
 
   // FlowOverview：连接流端点已交付 → 空态文案 或 图例（库里有无连接数据均可）
   await expect(

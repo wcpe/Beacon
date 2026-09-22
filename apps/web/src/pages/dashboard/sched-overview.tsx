@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { ChevronRight, Workflow } from 'lucide-react'
 
-import { AsyncSection, CardGridSkeleton } from '@beacon/ui'
+import { AsyncSection, CardGridSkeleton, SectionHeader } from '@beacon/ui'
 
 import { fetchSchedSummary } from '../../api/metrics'
 
@@ -24,25 +24,38 @@ export default function SchedOverview() {
   const successCount = data ? data.successCount : 0
   const failCount = data ? data.total - data.successCount : 0
 
+  // 两个下钻链接，href 与文案不变
+  const analysisLink = (
+    <Link className="flex items-center gap-0.5 text-brand-600 hover:underline" to="/service-analysis">
+      {t('dashboard.sched.viewAnalysis')}
+      <ChevronRight className="size-3" />
+    </Link>
+  )
+  const alertsLink = (
+    <Link className="flex items-center gap-0.5 text-brand-600 hover:underline" to="/alert-events">
+      {t('dashboard.sched.viewAlerts')}
+      <ChevronRight className="size-3" />
+    </Link>
+  )
+
+  // 标题行：复用 @beacon/ui SectionHeader，时间窗进 count 槽、两个下钻链接进 actions 槽
+  const header = (
+    <SectionHeader
+      icon={<Workflow className="size-4" />}
+      title={t('dashboard.sched.title')}
+      count={t('dashboard.sched.window1h')}
+      actions={
+        <>
+          {analysisLink}
+          {alertsLink}
+        </>
+      }
+    />
+  )
+
   return (
-    <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-4 shadow-card">
-      <div className="flex items-center gap-2.5">
-        <span className="grid size-[26px] place-items-center rounded-lg bg-brand-50 text-brand">
-          <Workflow className="size-[15px]" />
-        </span>
-        <h2 className="text-[13px] font-semibold text-ink-1">{t('dashboard.sched.title')}</h2>
-        <span className="text-[11px] text-ink-4">{t('dashboard.sched.window1h')}</span>
-        <div className="ml-auto flex gap-3 text-[11.5px]">
-          <Link className="flex items-center gap-0.5 text-brand-600 hover:underline" to="/service-analysis">
-            {t('dashboard.sched.viewAnalysis')}
-            <ChevronRight className="size-3" />
-          </Link>
-          <Link className="flex items-center gap-0.5 text-brand-600 hover:underline" to="/alert-events">
-            {t('dashboard.sched.viewAlerts')}
-            <ChevronRight className="size-3" />
-          </Link>
-        </div>
-      </div>
+    <section className="grid grid-rows-[auto_1fr] gap-3 rounded-xl border border-border bg-card p-3.5 shadow-card">
+      {header}
       <AsyncSection
         isLoading={query.isLoading}
         isError={query.isError}
@@ -55,16 +68,16 @@ export default function SchedOverview() {
             <p className="text-[11.5px] leading-relaxed text-ink-4">{t('dashboard.sched.emptyHint')}</p>
           </div>
         ) : (
-          <div className="grid gap-3.5">
+          <div className="grid gap-2.5">
             {/* 大号成功率 + KV */}
             <div className="flex items-center gap-5">
               <div className="flex flex-col">
-                <div className="text-[30px] leading-none font-bold tracking-[-1px] text-ink-1 tnum">
+                <div className="text-2xl leading-none font-bold tracking-[-1px] text-ink-1 tnum">
                   {data.successRatePercent}%
                 </div>
                 <div className="mt-1.5 text-[11.5px] text-ink-3">{t('dashboard.sched.successRate')}</div>
               </div>
-              <div className="h-11 w-px bg-border" />
+              <div className="h-9 w-px bg-border" />
               <div className="flex flex-1 flex-col gap-1">
                 <KvRow label={t('dashboard.sched.total')} value={data.total} />
                 <KvRow label={t('dashboard.sched.landed')} value={successCount} tone="ok" />
@@ -77,7 +90,7 @@ export default function SchedOverview() {
                 <div className="text-[10.5px] font-semibold tracking-[0.5px] text-ink-4 uppercase">
                   {t('dashboard.sched.failTop')}
                 </div>
-                <div className="flex flex-col gap-2.5">
+                <div className="flex flex-col gap-2">
                   {failTop.map((reason) => (
                     <div key={reason.reason} className="flex items-center gap-2.5 text-[12px]">
                       <span className="w-28 shrink-0 text-ink-2">{reason.reason}</span>
