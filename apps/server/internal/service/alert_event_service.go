@@ -121,7 +121,8 @@ const (
 
 // AlertContextServer 是告警详情内嵌的「该服近期状态」（取健康既有真源，不复制存储）。
 type AlertContextServer struct {
-	ServerID    string   `json:"serverId"`
+	ServerID string `json:"serverId"`
+	// Online 表示该服当前「非失联」（可达）；与 ServerView.Online（active 身份即在线）口径不同，勿直接互比。
 	Online      bool     `json:"online"`
 	Level       string   `json:"level"`
 	Score       int      `json:"score"`
@@ -151,6 +152,8 @@ func (s *AlertEventService) Context(id uint, scope ObservationScope) (*AlertCont
 	res := &AlertContextResult{TimelineLimit: alertContextTimelineLimit, TimelineWindowHours: alertContextTimelineWindowHours}
 	if e.ServerID != "" && s.healthQuery != nil {
 		if detail, herr := s.healthQuery.HealthDetailInScope(e.ServerID, scope); herr == nil {
+			// Online 口径：该服当前「非失联」（健康视图 reasons 不含 lost）。
+			// 注意与列表 ServerView.Online（存在 active 身份即在线）语义不同——此处表达「告警视角下该服是否可达」。
 			res.Server = &AlertContextServer{
 				ServerID: e.ServerID, Online: !containsString(detail.Reasons, healthview.ReasonLost),
 				Level: detail.Level, Score: detail.Score, Schedulable: detail.Schedulable,
@@ -159,14 +162,15 @@ func (s *AlertEventService) Context(id uint, scope ObservationScope) (*AlertCont
 		}
 	}
 	from := time.Now().UTC().Add(-time.Duration(alertContextTimelineWindowHours) * time.Hour)
+	// 时间线始终锁定该告警所属 namespace；serverId 非空时再收敛到该台。
+	// 与观测范围叠加（Scoped）：受限下不回退、不越界；无 serverId 的集群级告警按 namespace 退化。
 	f := repository.AlertEventFilter{
+		Namespace:      e.Namespace,
 		NamespaceCodes: scope.NamespaceCodes, Scoped: !scope.All,
 		From: from, Page: 1, Size: alertContextTimelineLimit,
 	}
 	if e.ServerID != "" {
 		f.ServerID = e.ServerID
-	} else {
-		f.Namespace = e.Namespace
 	}
 	items, _, err := s.repo.List(f)
 	if err != nil {

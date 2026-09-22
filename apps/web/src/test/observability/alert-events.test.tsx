@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import AlertEventsPage from '../../pages/alert-events'
+import { setObservationScope } from '../../features/env/observation-scope'
 import { createTestServer, renderPage, useScenario } from './harness'
 
 const server = createTestServer()
@@ -126,5 +127,49 @@ describe('/alert-events 告警事件页', () => {
     expect(await screen.findByText('只读模式禁止写操作')).toBeInTheDocument()
     // 告警仍为待处理，处理表单未消失（可重试）
     expect(screen.getByRole('button', { name: '确认' })).toBeInTheDocument()
+  })
+})
+
+// FR-229 guard：按筛选批量必须携带页眉观测范围（envId），不得越出当前范围写。
+describe('/alert-events 批量按筛选的观测范围 guard', () => {
+  it('选择环境后批量携带 envId（不越界）', async () => {
+    useScenario('normal')
+    const seen: string[] = []
+    server.use(
+      http.post('/admin/v1/alert-events/handle', ({ request }) => {
+        seen.push(request.url)
+        return HttpResponse.json({ affected: 0 })
+      }),
+    )
+    setObservationScope({ kind: 'env', envId: 1 })
+    const user = userEvent.setup()
+    renderPage(<AlertEventsPage />)
+    await screen.findByText('告警总数')
+    await user.click(await screen.findByRole('button', { name: '一键已读' }))
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0)
+    })
+    expect(seen[0]).toContain('envId=1')
+    setObservationScope({ kind: 'all' })
+  })
+
+  it('「全部环境」时批量不带 envId（全量，与列表一致）', async () => {
+    useScenario('normal')
+    const seen: string[] = []
+    server.use(
+      http.post('/admin/v1/alert-events/handle', ({ request }) => {
+        seen.push(request.url)
+        return HttpResponse.json({ affected: 0 })
+      }),
+    )
+    setObservationScope({ kind: 'all' })
+    const user = userEvent.setup()
+    renderPage(<AlertEventsPage />)
+    await screen.findByText('告警总数')
+    await user.click(await screen.findByRole('button', { name: '一键已读' }))
+    await waitFor(() => {
+      expect(seen.length).toBeGreaterThan(0)
+    })
+    expect(seen[0]).not.toContain('envId=')
   })
 })

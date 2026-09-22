@@ -516,6 +516,10 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
 
   // 大厅集群成员 = 入口服（FR-225 / ADR-0083：入口服即大厅成员，无独立实体）：
   // 取 lobbyClusterId != null 的后端子服，逐台带在线 / 健康态，供拓扑「大厅层」呈现（含离线）。
+  const lobbyTotal = useMemo(
+    () => (serversQuery.data?.items ?? []).filter((s) => s.kind === 'backend' && s.lobbyClusterId !== null).length,
+    [serversQuery.data],
+  )
   const lobbyMembers = useMemo<LobbyNode[]>(() => {
     const rows = (serversQuery.data?.items ?? [])
       .filter((s) => s.kind === 'backend' && s.lobbyClusterId !== null)
@@ -1220,7 +1224,9 @@ export default function TopologyGraph({ namespaceId }: TopologyGraphProps) {
                           fill="var(--color-ink-4)"
                           className="beacon-lod"
                         >
-                          {t('cluster.topology.graph.lobbyMeta', { count: layout.lobbyGroup.nodeCount })}
+                          {t('cluster.topology.graph.lobbyMeta', { count: lobbyTotal })}
+                          {lobbyTotal > layout.lobbyGroup.nodeCount &&
+                            ` · ${t('cluster.topology.graph.lobbyTruncated', { shown: layout.lobbyGroup.nodeCount })}`}
                         </text>
                       </g>
                     )}

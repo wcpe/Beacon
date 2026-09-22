@@ -289,6 +289,7 @@ export const cluster = {
       proxyBadge: '代理 × {{count}}',
       lobbyLayerTitle: '大厅集群（入口服）',
       lobbyMeta: '入口服 {{count}} 台 · 含离线',
+      lobbyTruncated: '仅显示前 {{shown}} 台',
       memberOnline: '在线',
       memberOffline: '离线',
       lobbyHint: '入口服即大厅集群成员（ADR-0083），不设独立入口实体。',

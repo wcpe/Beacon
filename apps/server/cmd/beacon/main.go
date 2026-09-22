@@ -348,8 +348,8 @@ func run() error {
 	// 实例注册/下线唤醒拓扑 watch；健康扫描转 lost/offline 也唤醒（FR-29）
 	instanceService.SetNotifier(notifier)
 	healthScanner.SetTopologyNotifier(notifier)
-	// 实例恢复 online 时自动消解其未恢复告警（FR-232）：复用健康扫描循环，不新起定时器。
-	healthScanner.SetRecoverySink(alertEventService)
+	// FR-232：实例由非 online 恢复为 online（心跳 / 重注册）时自动消解其未恢复告警。
+	instanceService.SetRecoverySink(alertEventService)
 
 	// 单条 SSE 推送流（FR-24）：合并配置/文件树/覆盖集三条长轮询 + 拓扑 watch（FR-29），复用同源唤醒集合 + 连接即对账。
 	// 保活间隔取长轮询挂起上限（longpoll.max-hold-ms）：从设置 store 读、热生效（FR-61）。

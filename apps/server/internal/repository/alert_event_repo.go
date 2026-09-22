@@ -79,6 +79,8 @@ func (r *AlertEventRepository) ActiveCounts() ([]AlertActiveCount, error) {
 }
 
 // applyAlertEventFilter 把过滤条件叠加到查询上（仅占位符 + 标准 SQL，不依赖方言函数，保 Postgres 可移植）。
+// Scoped（观测范围）与 Namespace（精确 namespace）**可叠加**：Scoped 施加 `namespace IN codes`，
+// Namespace 非空再 AND 上 `namespace = ?`——供 FR-230 详情在受限范围内进一步锁定该告警所属 namespace。
 func applyAlertEventFilter(q *gorm.DB, f AlertEventFilter) *gorm.DB {
 	if f.Type != "" {
 		q = q.Where("type = ?", f.Type)
@@ -94,7 +96,8 @@ func applyAlertEventFilter(q *gorm.DB, f AlertEventFilter) *gorm.DB {
 			return q.Where("1 = 0")
 		}
 		q = q.Where("namespace IN ?", f.NamespaceCodes)
-	} else if f.Namespace != "" {
+	}
+	if f.Namespace != "" {
 		q = q.Where("namespace = ?", f.Namespace)
 	}
 	if !f.From.IsZero() {
